@@ -1778,8 +1778,9 @@ test('오피스 출처: 드레인이 잡에 표지를 싣고, 실행 맥락·답
 test('오피스 출처: 다른 1:1 방으로 전달된 글(meta.relay)도 출처 글을 보고 표지를 잇는다 · 출처를 못 읽으면 내리는 쪽', async () => {
   M._autoLogForTest.clear();
   const zed = crew({ id: ZED, slug: 'zed', display_name: '제드' });
-  const relayed = (sourceId) => msg(300, { author_user_id: OWNER, mentions: [{ kind: 'crew', id: CREW }], meta: { relay: { source_id: sourceId, channel_id: 'other-dm', role: 'to', depth: 1 } } });
-  const jobFor = async (source) => { const db = fakeDb({ crews: [crew(), zed], parent: (id) => (id === 290 ? source : null), messages: [relayed(290)] }); const enq = fakeEnqueue(); await M.drain(WS, { db, uid: OWNER, enqueue: enq }); return jobsOf(enq)[0]; };
+  const DMR = 'bbbbbbbb-0000-4000-8000-0000000000d9'; // 전달 트리거는 받는 크루의 1:1 방(DM)에만 쓴다 — 전달 표지는 DM에서만 인정(마지막 확인 검수 MEDIUM-1)
+  const relayed = (sourceId) => msg(300, { channel_id: DMR, author_user_id: OWNER, mentions: [{ kind: 'crew', id: CREW }], meta: { relay: { source_id: sourceId, channel_id: 'other-dm', role: 'to', depth: 1 } } });
+  const jobFor = async (source) => { const db = fakeDb({ crews: [crew(), zed], dm: [DMR], parent: (id) => (id === 290 ? source : null), messages: [relayed(290)] }); const enq = fakeEnqueue(); await M.drain(WS, { db, uid: OWNER, enqueue: enq }); return jobsOf(enq)[0]; };
   assert.equal((await jobFor(msg(290, { author_user_id: OWNER, meta: { source: 'office_mail' } }))).office, true, '오피스 글을 전달한 글');
   assert.equal((await jobFor(msg(290, { author_kind: 'crew', author_user_id: null, crew_id: ZED, meta: { office: true } }))).office, true, '오피스 사슬 크루 답글을 전달한 글');
   assert.equal((await jobFor(null)).office, true, '출처를 못 읽으면 오피스로 본다(권한을 올리지 않는 쪽)');
@@ -2213,5 +2214,37 @@ test('LOW-1 — 넘긴 크루가 받는 DM의 구성원이 아니어도 조직 �
     await M.makeMsgrHandler(WS, { session: async () => ({ db: fakeDb({ peers, chCrews: [CREW], dm: [DM] }), uid: OWNER }), runChat: async (_w, _s, _t, _sid, opts) => { seen = opts; return { reply: 'ok', sessionId: null, artifacts: [] }; } })({ ...base, msgId: expect === 'zed' ? 95 : 96 });
     assert.equal(seen?.notOwnerDirect, expect);
   }
+});
+
+// ── 마지막 확인 검수 MEDIUM-1: 위조한 전달 표지가 크루의 메신저 처리를 멈추지 못한다 ──
+test('독 글 — 공개 채널 글의 위조 전달 표지(via_crew_id 비UUID·source_id 비정수)는 조회 없이 무시되고 커서가 오른다', async () => {
+  for (const meta of [{ relay: { via_crew_id: 'not-a-uuid', via_name: 'FAKE' } }, { relay: { source_id: 'abc' } }, { relay: { via_crew_id: ZED, via_name: 'FAKE' } }]) {
+    M._autoLogForTest.clear();
+    const poison = msg(70, { author_user_id: MEMBER, body: '@서윤 hi', mentions: [{ kind: 'crew', id: CREW, role: 'to' }], meta });
+    const next = msg(71, { author_user_id: MEMBER, body: '@서윤 다음 글', mentions: [{ kind: 'crew', id: CREW, role: 'to' }] });
+    const db = fakeDb({ crews: [crew()], messages: [poison, next] });
+    const strict = (fn, re, kind) => async (id) => { if (!re.test(String(id))) throw new Error(`msgr db: invalid input syntax for type ${kind}`); return fn.call(db, id); };
+    db.crewOwner = strict(db.crewOwner, /^[0-9a-f-]{36}$/, 'uuid'); db.message = strict(db.message, /^\d+$/, 'bigint');
+    const enq = fakeEnqueue();
+    await M.drain(WS, { db, uid: OWNER, enqueue: enq });
+    assert.deepEqual(db.calls.filter((c) => c[0] === 'setCursor').map((c) => c[2]), [71], `커서가 독 글을 지나간다(${JSON.stringify(meta)})`);
+    const jobs = jobsOf(enq);
+    assert.deepEqual(jobs.map((j) => j.msgId), [70, 71], '독 글과 다음 글 모두 적재');
+    assert.ok(!jobs[0].relayVia && !jobs[0].relayViaName, '공개 채널의 전달 표지는 인정하지 않는다(위조 이름이 결재 카드로 나가지 않게)');
+    assert.equal(db.calls.some((c) => (c[0] === 'crewOwner' && c[1] !== CREW) || (c[0] === 'message' && String(c[1]) !== '70')), false, '위조 값으로 조회하지 않는다');
+  }
+});
+
+test('독 글 — DM의 전달 표지라도 via_crew_id가 UUID가 아니면 조회하지 않고 손님 턴, source_id가 정수가 아니면 조회 없이 출처 미확인(내리는 쪽)', async () => {
+  const DM = 'bbbbbbbb-0000-4000-8000-0000000000d4';
+  M._autoLogForTest.clear();
+  const m1 = msg(72, { channel_id: DM, author_user_id: OWNER, body: '@서윤 해 줘', mentions: [{ kind: 'crew', id: CREW, role: 'to' }], meta: { relay: { source_id: 'abc', via_crew_id: 'not-a-uuid', via_name: '이상한' } } });
+  const db = fakeDb({ crews: [crew()], messages: [m1], dm: [DM] });
+  const before = db.crewOwner; db.crewOwner = async (id) => { if (!/^[0-9a-f-]{36}$/.test(String(id))) throw new Error('msgr db: invalid input syntax for type uuid'); return before.call(db, id); };
+  const enq = fakeEnqueue();
+  await M.drain(WS, { db, uid: OWNER, enqueue: enq });
+  const j = jobsOf(enq)[0];
+  assert.ok(j, '적재'); assert.equal(j.guest, true, '확인할 수 없는 넘긴 크루 = 손님'); assert.equal(j.office, true, '출처를 못 읽으면 오피스로(내리는 쪽)');
+  assert.deepEqual(db.calls.filter((c) => c[0] === 'setCursor').map((c) => c[2]), [72]);
 });
 
