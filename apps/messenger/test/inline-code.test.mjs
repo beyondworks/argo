@@ -28,11 +28,12 @@ test('백틱이 든 문구는 전부 InlineCode로 그리는 키뿐 — 날것�
   const withTicks = entries.filter((e) => e.ko.includes('`') || e.en.includes('`')).map((e) => e.key);
   assert.ok(withTicks.length >= 4, withTicks.join(','));
   for (const key of withTicks) {
-    const ok = key.startsWith('org.agents.setup.') || key === 'org.agents.openclaw.outdated';
+    const ok = key.startsWith('org.agents.setup.') || key === 'org.agents.openclaw.outdated' || key === 'runner.server.after';
     assert.ok(ok, `${key}: 새 백틱 문구는 InlineCode로 그릴 곳을 정하고 여기에 등록한다`);
   }
   assert.match(app, /<li><InlineCode text=\{t\(`org\.agents\.setup\.\$\{setup\.kind \?\? 'custom'\}\.1`\)\} \/><\/li>/);
   assert.match(app, /<InlineCode text=\{t\('org\.agents\.openclaw\.outdated'/);
+  assert.match(app, /<InlineCode text=\{t\('runner\.server\.after'\)\} \/>/, '실행기 시트의 `argo`');
 });
 
 test('"노드"는 한국어 화면에, "node"는 영어 화면에 없다 — 같은 기능은 "서버"/"server"로 통일', () => {

@@ -1702,6 +1702,18 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 .msgr-friendlink { display: grid; gap: 8px; margin: 10px 0 14px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--card-2); }
 .msgr-friendlink .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .msgr-friendlink .msgr-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--fg-2); }
+.msgr-crewsheet.msgr-runner { grid-template-columns: minmax(0, 1fr); } /* '실행기 연결' 시트(폰·데스크톱 공용, 2026-10-02) — 줄바꿈 없는 설치 명령이 열 폭을 늘리지 않게 */
+.msgr-runner .head strong { flex: 1 1 auto; min-width: 0; }
+.msgr-runner .peek { display: flex; flex-direction: column; gap: 10px; }
+.msgr-runner .run-desc { margin: 0; font-size: 13px; line-height: 1.5; color: var(--fg-2); }
+.msgr-runner .run-opt { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 12px 14px; border: 1px solid var(--border-soft); border-radius: 14px; background: var(--card-2); }
+.msgr-runner .run-opt h3 { margin: 0; font-size: 14px; font-weight: 700; color: var(--fg); }
+.msgr-runner .run-opt p { margin: 0; font-size: 13px; line-height: 1.45; color: var(--fg-2); }
+.msgr-runner .run-opt .run-small { font-size: 12px; }
+.msgr-runner .run-cmd { display: flex; align-items: center; gap: 8px; align-self: stretch; min-width: 0; }
+.msgr-runner .run-cmd .msgr-code { flex: 1 1 auto; min-width: 0; overflow-x: auto; white-space: nowrap; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--border-soft); background: var(--card); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--fg); user-select: all; -webkit-user-select: all; }
+.msgr-runner .run-cmd .btn { flex: none; }
+.msgr-runbtn { vertical-align: middle; }
 .msgr-friendlink input { flex: 1 1 200px; min-width: 0; }
 
 /* 참여 전 미리보기 — 입력창 자리에 참여 버튼(유건 검수 2026-09-16: 알림함에서 참여 안 한 채널을 열면 안내 화면이 떴다) */
@@ -2029,6 +2041,8 @@ html { -webkit-tap-highlight-color: transparent; }
   .msgr-phone .ph-fa-h { margin: 10px 0 0; font-size: 15px; font-weight: 700; color: var(--fg); }
   .msgr-phone .ph-fa-h:first-child { margin-top: 2px; }
   .msgr-phone .ph-fa-sub { margin: 0 0 2px; font-size: 13px; line-height: 1.45; color: var(--fg-2); }
+  .msgr-phone .msgr-runner .run-opt .btn, .msgr-phone .msgr-runbtn { min-height: 44px; padding: 0 14px; border-radius: 12px; } /* 실행기 시트·버튼 — 손가락 44px */
+  .msgr-phone .ph-emptyacts { display: flex; justify-content: center; margin-top: 12px; }
   .msgr-phone .ph-fa-link { display: grid; gap: 8px; }
   .msgr-phone .ph-fa-link .msgr-code { display: block; padding: 10px 12px; border-radius: 12px; background: var(--card-2); border: 1px solid var(--border-soft); font-size: 14px; letter-spacing: .04em; overflow-wrap: anywhere; user-select: all; }
   .msgr-phone .ph-fa-acts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
