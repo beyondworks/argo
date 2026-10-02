@@ -55,7 +55,8 @@ const state = window.__instant = {
   if (sp.get('noorg')) state.tables.msgr_org_members = [];
   if (sp.get('nocrews')) state.tables.msgr_crews = [];
   if (sp.get('noname')) state.tables.msgr_org_members[0].display_name = sp.get('noname') === 'empty' ? null : 'fixture'; // &noname=1 표시 이름 = 이메일 앞부분(가입 기본값, D5) · =empty 비어 있음
-  if (sp.get('gap')) { const T = state.tables; const msg = (id, who, body) => ({ id, org_id: org, channel_id: 'general', author_kind: 'user', author_user_id: who, kind: 'text', body, created_at: now, edited_at: null, deleted_at: null, mentions: [], reply_to: null, meta: null, client_msg_id: null });
+  if (sp.get('gap')) { const T = state.tables; const msg = (id, who, body) => ({ id, org_id: org, channel_id: 'general', author_kind: 'user', author_user_id: who, kind: 'text', body, created_at: new Date(Date.parse(now) + (id - 100) * 1000).toISOString(), edited_at: null, deleted_at: null, mentions: [], reply_to: null, meta: null, client_msg_id: null });
+    // 글 시각은 1초씩 — 같은 시각이면 폰 조회 순서가 뒤집힌다
     // &gap=1 간격 장면(2026-10-02 유건 제보 재현): 같은 사람이 이어 보낸 글 9개 + 그 사이 '새 메시지' 구분선(읽음 커서 114) + 내 글 3개
     for (let i = 1; i <= 9; i++) T.msgr_messages.push(msg(109 + i, 'user-crystal', `마케팅 뱃지 점검 ${i}`));
     for (let i = 1; i <= 3; i++) T.msgr_messages.push(msg(118 + i, uid, `확인했어요 ${i}`));
