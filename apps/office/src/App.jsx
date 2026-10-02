@@ -38,6 +38,8 @@ const Perf = lazy(() => import('./pages/Perf.jsx')); // 성과 기록(유건 9/2
 const Assets = lazy(() => import('./pages/Assets.jsx')); // 노하우·업무 세트(유건 9/29)
 const Tools = lazy(() => import('./pages/Tools.jsx')); // 도구함(유건 9/29)
 const Calendar = lazy(() => import('./calendar/Calendar.jsx')); // 일정(유건 9/30)
+const Contracts = lazy(() => import('./docs/DocsPage.jsx')); // 견적·계약·전자서명(10/2 인트라넷 이식)
+const SignPage = lazy(() => import('./docs/SignPage.jsx')); // 서명 링크(로그인 없음)
 // 메일 화면은 메일을 열 때만 필요하다 — 첫 화면 JS 150KB 상한(할 일 화면을 붙이며 넘은 0.1KB를 여기서 되찾는다)
 const Mail = lazy(() => import('./pages/Mail.jsx').then((m) => ({ default: m.Mail })));
 const MailConnect = lazy(() => import('./pages/Mail.jsx').then((m) => ({ default: m.MailConnect })));
@@ -72,6 +74,7 @@ const Lazy = ({ fallback = <div className="boot" aria-busy="true" />, quiet, res
 function route(path) {
   let m;
   if ((m = match('/s/:id', path))) return { space: null, view: 'public', id: m.id };
+  if ((m = match('/sign/:token', path))) return { space: null, view: 'sign', token: m.token };
   const me = path === '/me' || path.startsWith('/me/');
   const org = !me && match('/o/:org', path.split('/').slice(0, 3).join('/'));
   const space = me ? 'me' : org && SPACES.some((s) => s.key === org.org) ? org.org : null;
@@ -197,6 +200,7 @@ export default function App() {
   }, [r.space]);
 
   if (r.view === 'public') return <><Lazy fallback={<div className="public" aria-busy="true" />}><PublicPage id={r.id} /></Lazy><ToastHost /></>;
+  if (r.view === 'sign') return <><Lazy fallback={<div className="boot" aria-busy="true" />}><SignPage token={r.token} /></Lazy><ToastHost /></>;
   if (mode === 'loading') return <div className="boot" aria-busy="true" />;
   if (mode === 'signedOut') return <Login />;
   if (r.redirect) return null;
@@ -218,7 +222,7 @@ export default function App() {
   const params = new URLSearchParams(query ?? '');
   const views = {
     business: <Lazy reset={path}>{r.tab === 'library' ? <ModuleLibrary key={r.space} space={r.space} targetId={params.get('target')} /> : <BusinessPage key={r.space} space={r.space} tab={r.tab} openId={params.get('open')} />}</Lazy>,
-    home: <Home space={r.space} />, calendar: <Calendar key={r.space} space={r.space} day={params.get('day')} />, mail: <Mail id={r.id} />, mailConnect: <MailConnect query={query} />, page: <PageView id={r.id} />, shared: <Shared />,
+    home: <Home space={r.space} />, contracts: <Contracts key={r.space} space={r.space} params={params} />, calendar: <Calendar key={r.space} space={r.space} day={params.get('day')} />, mail: <Mail id={r.id} />, mailConnect: <MailConnect query={query} />, page: <PageView id={r.id} />, shared: <Shared />,
     work: <Work space={r.space} openId={params.get('open')} />, approvals: <Approvals space={r.space} openId={params.get('open')} folder={params.get('folder')} />, decisions: <Decisions space={r.space} openId={params.get('open')} folder={params.get('folder')} />,
     outputs: <Outputs space={r.space} openId={params.get('open')} folder={params.get('folder')} />, journal: <Journal space={r.space} folder={params.get('folder')} />, docs: <Docs space={r.space} openId={params.get('open')} />, perf: <Perf space={r.space} />, knowhow: <Assets space={r.space} />, tools: <Tools space={r.space} />, trash: <Trash space={r.space} />, settings: <Settings />,
   };

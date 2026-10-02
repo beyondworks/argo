@@ -107,6 +107,7 @@ const DICT = {
   'mail.connect': ['메일 계정 연결', 'Connect mail account'],
   'crew.assign': ['에이전트에게 맡기기', 'Hand off to agent'], 'crew.assignTo': ['{crew}에게 맡기기', 'Hand off to {crew}'], 'crew.dm': ['DM 열기', 'Open DM'],
   'nav.tools': ['플러그인', 'Plugins'],
+  'nav.contracts': ['견적·계약', 'Quotes & contracts'],
   'crew.sent': ['{crew}에게 보냈습니다 · 메신저 1:1 대화에서 이어집니다', 'Sent to {crew} · continues in your Messenger 1:1 chat'],
   'crew.fail.unentitled': ['체험 기간이 끝나 에이전트가 멈춰 있습니다. 조직 결제를 확인해 주세요.', 'The trial has ended, so agents are paused. Check your organization billing.'],
   'crew.fail.locked': ['결제 문제로 조직이 잠겨 있어 보낼 수 없습니다.', 'The organization is locked due to a billing issue.'],

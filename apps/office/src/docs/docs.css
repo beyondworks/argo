@@ -1,0 +1,145 @@
+/* 견적·계약·전자서명 — 공용 부품(탭·표·버튼·모달·패널)을 쓰고 여기에는 이 화면만의 배치만 둔다 */
+:root { --signer-0: #3b6a9e; --signer-1: #b5642a; --signer-2: #2f8a5b; --signer-3: #8a4fb0; --signer-4: #a33d4f; }
+:root:is([data-theme$='-dark'], .dark-emul) { --signer-0: #7fa6d4; --signer-1: #e09a62; --signer-2: #6cc394; --signer-3: #bb8ae0; --signer-4: #e27c8d; }
+
+.docs-page .spacer, .docs-items-foot .spacer, .docs-result .spacer, .docs-signer-list .spacer { flex: 1; }
+.docs-head-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.docs-back { margin: -4px 0 6px -8px; }
+.docs-sample-note { display: flex; align-items: center; gap: 6px; color: var(--fg-3); margin: -8px 0 14px; }
+.docs-page .tabs { align-items: center; }
+.docs-table td.docs-title-cell { font-weight: 550; max-width: 380px; }
+.docs-table td { vertical-align: middle; }
+.docs-row-acts { display: flex; gap: 4px; justify-content: flex-end; align-items: center; }
+.docs-signers { display: inline-flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12.5px; color: var(--fg-2); }
+.docs-signers > span { display: inline-flex; align-items: center; gap: 5px; }
+.docs-signers i { width: 6px; height: 6px; border-radius: 50%; background: color-mix(in oklab, var(--fg-3) 50%, transparent); }
+.docs-signers .on i { background: var(--ok); }
+.docs-result { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; margin-bottom: 16px; border-radius: var(--rs); background: var(--surface); box-shadow: inset 0 0 0 1px var(--border); }
+
+/* 작성 화면: 왼쪽 입력, 오른쪽 미리보기 */
+.docs-editor { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.95fr); gap: 24px; align-items: start; }
+.docs-form { display: grid; gap: 16px; min-width: 0; }
+.docs-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 14px; }
+.docs-field { min-width: 0; }
+.docs-field .input, .docs-field textarea { width: 100%; }
+.docs-field textarea.area { margin-top: 0; min-height: 84px; }
+.docs-field.wide, .docs-check.wide { grid-column: 1 / -1; }
+.docs-inline { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.docs-inline .input { flex: 1; min-width: 140px; }
+.docs-check { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; line-height: 1.45; cursor: pointer; }
+.docs-check input { margin-top: 2px; }
+.docs-from { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--fg-2); padding: 8px 10px; border-radius: var(--rs); background: var(--surface); }
+.docs-card { display: grid; gap: 12px; padding: 14px; border-radius: var(--rs); background: var(--surface); box-shadow: inset 0 0 0 1px var(--border-soft); }
+.docs-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.docs-card-head h3 { font-size: 13px; font-weight: 620; }
+.docs-ocr-result { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 12.5px; color: var(--fg-2); }
+.docs-warn { display: flex; align-items: center; gap: 6px; color: var(--warn); }
+.docs-actions { display: flex; justify-content: flex-end; gap: 8px; position: sticky; bottom: 0; padding: 12px 0 4px; background: linear-gradient(to top, var(--bg) 70%, transparent); z-index: 2; }
+
+.docs-items { display: grid; gap: 6px; }
+.docs-item-head, .docs-item { display: grid; grid-template-columns: minmax(0, 1fr) 110px 64px 78px 96px 30px; gap: 6px; align-items: start; }
+.docs-item-head { font-size: 11.5px; color: var(--fg-3); padding: 0 2px; }
+.docs-item-head .num, .docs-item > .num { text-align: right; }
+.docs-item > .mono { padding-top: 8px; }
+.docs-item-name { display: grid; gap: 4px; min-width: 0; }
+.docs-item .input { width: 100%; min-width: 0; }
+.docs-item .input.sub { height: 28px; font-size: 12px; }
+.docs-item input.num { text-align: right; font-family: var(--mono); font-size: 13px; }
+.docs-items-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.docs-items-foot .input.sm { height: 28px; font-size: 12.5px; max-width: 220px; }
+.docs-total { color: var(--fg); }
+.docs-option { display: grid; gap: 8px; }
+.docs-option > summary { cursor: pointer; font-size: 12.5px; font-weight: 600; color: var(--fg-2); }
+.docs-option[open] { padding: 12px; border-radius: var(--rs); background: var(--surface); }
+.docs-option-row { display: grid; grid-template-columns: minmax(0, 1fr) 120px minmax(0, 1.4fr) 30px; gap: 6px; }
+
+.docs-preview-col { position: sticky; top: 12px; display: grid; gap: 8px; min-width: 0; max-height: calc(100vh - 90px); overflow: auto; }
+.docs-preview-head { display: flex; justify-content: space-between; align-items: baseline; }
+.docs-preview { position: relative; width: 100%; overflow: hidden; border-radius: 4px; box-shadow: 0 1px 8px rgba(0, 0, 0, 0.14); background: #fff; min-height: 200px; }
+.docs-preview iframe { position: absolute; top: 0; left: 0; border: 0; transform-origin: top left; background: #fff; }
+
+/* 패널 */
+.docs-pdf { width: 100%; height: min(72vh, 900px); border: 0; border-radius: var(--rs); background: var(--surface); }
+.docs-meta { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px 16px; }
+.docs-meta dt { font-size: 11.5px; color: var(--fg-3); }
+.docs-meta dd { font-size: 13px; margin: 2px 0 0; }
+.docs-sub { display: grid; gap: 8px; }
+.docs-sub h3 { font-size: 12.5px; font-weight: 620; color: var(--fg-2); }
+.docs-signer-list { display: grid; gap: 6px; list-style: none; padding: 0; margin: 0; }
+.docs-signer-list > li { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 10px; border-radius: var(--rs); background: var(--surface); font-size: 13px; }
+.docs-log { display: grid; gap: 4px; list-style: none; padding: 0; margin: 0; font-size: 12.5px; }
+.docs-log > li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--border-soft); }
+
+/* 서명 세팅 */
+.esign-setup { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 20px; align-items: start; }
+.esign-side { position: sticky; top: 12px; display: grid; gap: 14px; max-height: calc(100vh - 90px); overflow: auto; padding: 4px 4px 12px; }
+.esign-side .page-h1 { font-size: 19px; }
+.esign-signer { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 6px; align-items: start; padding: 8px; border-radius: var(--rs); background: var(--surface); box-shadow: inset 3px 0 0 var(--c); }
+.esign-signer .party { font-size: 12px; font-weight: 700; color: var(--c); padding-top: 7px; text-align: center; }
+.esign-signer-fields { display: grid; gap: 4px; }
+.esign-signer .input { width: 100%; height: 30px; font-size: 13px; }
+.esign-signer .input.bad { border-color: var(--danger); }
+.esign-target { height: 26px; padding: 0 10px; border-radius: 13px; font-size: 12px; font-weight: 600; background: var(--lift); color: var(--fg-2); }
+.esign-target.on { background: var(--c); color: #fff; }
+.esign-side-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.docs-file { cursor: pointer; }
+.esign-doc { min-width: 0; }
+.esign-drop { display: grid; place-items: center; height: 420px; border-radius: var(--rs); border: 1px dashed var(--border); color: var(--fg-3); font-size: 13px; text-align: center; padding: 16px; }
+.esign-pages { position: relative; }
+.pdf-page { position: relative; margin: 0 auto 14px; box-shadow: 0 1px 8px rgba(0, 0, 0, 0.16); background: #fff; }
+.pdf-page canvas { display: block; }
+.esign-field { position: absolute; box-sizing: border-box; }
+.esign-field .body { width: 100%; height: 100%; cursor: move; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: var(--c); border: 1.5px solid var(--c); border-radius: 4px; background: color-mix(in srgb, var(--c) 14%, transparent); touch-action: none; user-select: none; }
+.esign-field .del, .sign-slot .del { position: absolute; top: -10px; right: -10px; width: 20px; height: 20px; border-radius: 50%; background: var(--danger); color: #fff; font-size: 12px; line-height: 20px; text-align: center; padding: 0; z-index: 2; }
+.esign-field .rz, .sign-slot .rz { position: absolute; right: -7px; bottom: -7px; width: 14px; height: 14px; border-radius: 4px; background: var(--c, var(--fg)); border: 2px solid var(--bg); cursor: nwse-resize; touch-action: none; z-index: 2; }
+.esign-sent { max-width: 720px; display: grid; gap: 14px; }
+
+/* 서명 페이지(로그인 없음) */
+.sign-page { min-height: 100vh; background: var(--bg); color: var(--fg); word-break: keep-all; }
+.sign-wrap { max-width: 1120px; margin: 0 auto; padding: 22px 20px 96px; }
+.sign-wrap.narrow { max-width: 460px; padding-top: 48px; }
+.sign-brand { font-weight: 800; font-size: 20px; letter-spacing: -0.02em; margin-bottom: 10px; }
+.sign-brand em { font-style: normal; color: var(--fg-2); }
+.sign-card { display: grid; gap: 12px; padding: 20px; border-radius: 14px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--border); }
+.sign-card h1 { font-size: 20px; font-weight: 720; letter-spacing: -0.02em; }
+.sign-card .input { width: 100%; height: 40px; font-size: 15px; }
+.sign-lock { justify-items: center; text-align: center; padding: 34px 20px; }
+.sign-two { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 18px; align-items: start; }
+.sign-side { position: sticky; top: 14px; max-height: calc(100vh - 28px); overflow: auto; }
+.sign-tools { display: grid; gap: 6px; }
+.sign-tools .btn { justify-content: flex-start; }
+.sign-ready img { display: block; height: 38px; margin-top: 6px; border: 1px dashed var(--border); background: #fff; }
+.sign-pending { color: var(--fg); font-weight: 650; }
+.sign-font { display: flex; align-items: center; gap: 6px; }
+.sign-progress { display: grid; gap: 8px; border-top: 1px solid var(--border-soft); padding-top: 12px; }
+.sign-nav { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.sign-doc { min-width: 0; }
+.sign-doc .page-h1 { margin-bottom: 12px; }
+.sign-slot { position: absolute; box-sizing: border-box; --c: var(--fg); }
+.sign-slot .body { width: 100%; height: 100%; cursor: move; outline: 1.5px dashed color-mix(in srgb, var(--fg) 45%, transparent); outline-offset: 1px; display: flex; align-items: center; justify-content: center; touch-action: none; }
+.sign-slot.empty .body { background: color-mix(in srgb, #f5c542 22%, transparent); }
+.sign-slot.active .body { outline: 2.5px solid var(--fg); box-shadow: 0 0 0 4px color-mix(in srgb, var(--fg) 18%, transparent); }
+.sign-slot .ph { font-size: 11px; font-weight: 700; color: #6b5300; pointer-events: none; }
+.sign-slot img { width: 100%; height: auto; display: block; pointer-events: none; }
+.sign-slot textarea { width: 100%; border: 0; background: transparent; resize: none; overflow: hidden; font-family: 'Pretendard', -apple-system, sans-serif; color: #111; line-height: 1.3; padding: 0; outline: none; }
+.sign-canvas { width: 100%; height: auto; aspect-ratio: 560 / 220; border: 1px solid var(--border); border-radius: 8px; touch-action: none; background: #fff; cursor: crosshair; }
+
+@container (max-width: 900px) { .docs-editor { grid-template-columns: 1fr; } .docs-preview-col { position: static; max-height: none; } }
+@media (max-width: 900px) {
+  .docs-editor, .esign-setup, .sign-two { grid-template-columns: 1fr; }
+  .docs-preview-col, .esign-side, .sign-side { position: static; max-height: none; }
+}
+@media (max-width: 640px) {
+  .docs-grid { grid-template-columns: 1fr; }
+  .docs-item-head { display: none; }
+  .docs-item { grid-template-columns: 1fr 1fr 30px; }
+  .docs-item-name { grid-column: 1 / -1; }
+  .docs-item > .mono { text-align: left; }
+  .docs-table .hide-sm { display: none; }
+  .docs-option-row { grid-template-columns: 1fr 30px; }
+}
+
+/* 면 위에 바로 놓이는 입력 — 바탕과 같은 색이라 경계를 준다(업무 필터와 같은 방식) */
+.docs-form .input, .esign-side .input { background: var(--lift); }
+.docs-card .input, .docs-option[open] .input { background: var(--bg); }
+.esign-side .field-block > .btn, .esign-side .field-block > .chip { justify-self: start; }
