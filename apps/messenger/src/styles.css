@@ -2246,12 +2246,12 @@ html { -webkit-tap-highlight-color: transparent; }
 
 /* 탭과 토글을 서로 다른 모양으로(유건 2026-10-02 "상단 메뉴탭 모양이랑 토글 모양이 왜이래") — 둘 다 검은 알약이라 메뉴인지 고르기인지 구분이 안 됐다.
    고르기(radiogroup) = 회색 트랙 위 흰 알약(다크는 한 단계 밝은 알약). 폰 화면 안 메뉴(tablist) = 밑줄 탭. 데스크톱 상단 탭 줄은 그대로 둔다 */
-.msgr-seg[role='radiogroup'] { padding: 3px; border: 0; border-radius: 10px; background: color-mix(in srgb, var(--fg) 7%, transparent); }
-.msgr-seg[role='radiogroup'] > button { border-radius: 7px; }
+.msgr-seg[role='radiogroup'] { padding: 3px; border: 0; border-radius: 999px; background: color-mix(in srgb, var(--fg) 7%, transparent); }
+.msgr-seg[role='radiogroup'] > button { border-radius: 999px; } /* 알약 모양 유지 — 앱의 다른 알약들과 같은 결(유건 2026-10-02) */
 .msgr-seg[role='radiogroup'] > button.active { background: var(--card); color: var(--fg); box-shadow: 0 1px 2px rgba(0, 0, 0, .12); }
 @supports (color: light-dark(#000, #fff)) { .msgr-seg[role='radiogroup'] > button.active { background: light-dark(var(--card), color-mix(in srgb, var(--fg) 16%, var(--card))); } } /* 다크 테마는 모두 color-scheme: dark를 선언한다 */
-.msgr-phone .msgr-seg[role='radiogroup'] { padding: 5px 0; border-radius: 10px / 15px; background-clip: content-box; } /* 누르는 영역용 위아래 투명 테두리 8px·안쪽 5px만큼 세로 반지름을 더해야 보이는 모서리가 10·7px로 맞는다 */
-.msgr-phone .msgr-seg[role='radiogroup'] > button, .msgr-phone .msgr-seg[role='radiogroup'] > button.active { border-radius: 7px / 15px; background-clip: padding-box; } /* 위 background 단축 속성이 자르기를 border-box로 되돌려 알약·트랙이 44px로 꽉 찼다 */
+.msgr-phone .msgr-seg[role='radiogroup'] { padding: 5px 0; border-radius: 999px; background-clip: content-box; } 
+.msgr-phone .msgr-seg[role='radiogroup'] > button, .msgr-phone .msgr-seg[role='radiogroup'] > button.active { border-radius: 999px; background-clip: padding-box; } /* 위 background 단축 속성이 자르기를 border-box로 되돌려 알약·트랙이 44px로 꽉 찼다 */
 .msgr-phone .msgr-seg[role='radiogroup'] > button.active { box-shadow: none; } /* 그림자는 투명 테두리까지 포함한 44px 상자를 따라가 알약 밖으로 번진다 */
 .msgr-phone .msgr-seg[role='tablist'] { gap: 0; padding: 0; border: 0; border-bottom: 1px solid var(--border-soft); border-radius: 0; background: none; }
 .msgr-phone .msgr-seg[role='tablist'] > button { flex: 1 0 auto; justify-content: center; height: 44px; min-height: 44px; margin: 0; padding: 0 10px; border: 0; border-radius: 0; background: none; font-size: 14px; font-weight: 500; color: var(--fg-3); }
