@@ -834,7 +834,8 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
       await enqueue(wsId, MSGR_KEY, `${m.id}-${String(order).padStart(2, '0')}-${crew.slug}`, {
         msgId: m.id, orgId: crew.org_id, channelId: m.channel_id, crewId: crew.id, slug: crew.slug, text: m.body,
         authorId: origin, replyTo: m.reply_to, threadRoot: m.thread_root ?? m.id, createdAt: m.created_at,
-        hop, origin, rootAuthor, fromCrewId: fromCrew ? m.crew_id : null, after, ...(coMentioned ? { coMentioned } : {}), ...(guestChain ? { guest: true } : {}), ...(officeChain ? { office: true } : {}),
+        // ownerOrder = 사장 글이 정한 순서(@A > @B) — 그 다음 크루 턴은 사장 직접 턴(풀 오토 대상). 크루 글의 넘김은 fromCrewId(풀 오토 아님)
+        hop, origin, rootAuthor, fromCrewId: fromCrew ? m.crew_id : null, ...(relay ? { ownerOrder: true } : {}), after, ...(coMentioned ? { coMentioned } : {}), ...(guestChain ? { guest: true } : {}), ...(officeChain ? { office: true } : {}),
         ...(work ? { workRunId: work.id } : {}),
       });
       out.queued++;
@@ -954,13 +955,14 @@ async function restoreMessengerContext(wsId, slug, origin, session, { ownerAppro
   // delegated — DM 위임(0.1.74)의 원래 방 실행 유물. msgr_dm_relay(2026-09-14)가 도입된 뒤로는 서버가 delegated=true를 주지 않아(비구성원 크루는 항상 새 1:1 DM으로 전달) 죽은 경로다. 아래 delegated 분기들은 방어적으로 남긴다.
   const ctx = { kind: 'msgr', chatType: 'group', channelKind: ch.kind, delegated: envelope?.delegated === true, orgId: origin.orgId, channelId: origin.channelId, crewId: crew.id,
     threadRoot: root.id, sourceMsgId: source.id, uid, wsId, origin: actor, hop, orgSlug: org.slug, channelName: ch.name ?? '', peers, handoffs: [], ...(work ? { work } : {}),
-    ...(source.author_kind === 'crew' && root.author_user_id ? { rootAuthor: root.author_user_id } : {}), ...(origin.guest === true ? { guest: true } : {}), ...(origin.office === true || isOfficeSource(root) || isOfficeSource(source) ? { office: true } : {}), ...(ownerApproved === true ? { ownerApproved: true } : {}) }; // 손님 판정 재료(isGuestCtx) — rootAuthor는 drain과 같은 뜻(넘김 스레드의 뿌리 사람)
+    ...(source.author_kind === 'crew' && root.author_user_id ? { rootAuthor: root.author_user_id } : {}), ...(origin.guest === true ? { guest: true } : {}), ...(origin.office === true || isOfficeSource(root) || isOfficeSource(source) ? { office: true } : {}), ...(ownerApproved === true ? { ownerApproved: true } : {}),
+    ...(origin.handoffFrom || source.author_kind === 'crew' ? { handoffFrom: origin.handoffFrom ?? source.crew_id } : {}) }; // 손님 판정. handoffFrom = 크루가 넘긴 지시의 후속(풀 오토 아님) 재료(isGuestCtx) — rootAuthor는 drain과 같은 뜻(넘김 스레드의 뿌리 사람)
   const orgMemory = await crewMemoryCached(db, crew.id, ch.id); if (orgMemory !== undefined) ctx.orgMemory = orgMemory; // 서버 기억(전사+이 채널) — 없으면 chat이 미러 규칙으로 물러난다
   return { db, ctx, ch, source, envelope };
 }
 
 /** 결재·예약·장시간 실행은 매번 새 수집함으로 같은 채널의 최신 문맥과 기억 설정을 복원한다. */
-export async function runMessengerContinuation(wsId, slug, origin, message, _globalSessionId, { runChat = chat, session = sessionClient, ownerApproved = false } = {}) {
+export async function runMessengerContinuation(wsId, slug, origin, message, _globalSessionId, { runChat = chat, session = sessionClient, ownerApproved = false, notOwnerDirect = null } = {}) { // notOwnerDirect = 사장 직접 턴이 아닌 시작점의 크루(장시간 작업·예약·결재 후속) — 풀 오토만 끈다
   return withLock(`msgr-turn:${wsId}:${slug}`, async () => {
     const { db, ctx, ch, source, envelope } = await restoreMessengerContext(wsId, slug, origin, session, { ownerApproved }); // 주인이 승인한 결재 후속 — 권한은 OWNER_APPROVAL_LIFTS_GUEST가 정한다
     // 조직 자격(2026-09-27 M5) — 결재 확정 후속도 실행(유료 LLM 호출) 직전에 다시 확인한다. 채널 안내는 drain()의 다음 폴이 낸다
@@ -981,7 +983,8 @@ export async function runMessengerContinuation(wsId, slug, origin, message, _glo
     try {
       // 호출자가 넘기는 전역 세션(_globalSessionId — 주인의 데스크톱 대화)은 쓰지 않는다: 후속 실행도 그 채널 세션만 잇는다
       const sessionId = ch.kind === 'dm' || ch.crew_memory === false ? null : scopedSession(await loadThread(wsId, slug), ctx.channelId).sessionId;
-      const turn = await runChat(wsId, slug, text, sessionId, { source: 'messenger', mirrorCtx: ctx, journal: msgrJournal(ctx.orgId, ctx.channelId, ch.crew_memory === false) });
+      const nod = notOwnerDirect ?? (ctx.handoffFrom ? ctx.peers.find((x) => x.id === ctx.handoffFrom)?.slug ?? ctx.handoffFrom : null);
+      const turn = await runChat(wsId, slug, text, sessionId, { source: 'messenger', mirrorCtx: ctx, journal: msgrJournal(ctx.orgId, ctx.channelId, ch.crew_memory === false), ...(nod ? { notOwnerDirect: nod } : {}) });
       return { ...turn, ...(await messengerReply(ctx, turn.reply, { db, lang })), msgr: messengerOrigin(ctx) };
     } finally {
       if (activeCtx.get(key) === ctx) activeCtx.delete(key);
@@ -1055,6 +1058,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
       const actor = envelope.actor ?? (source.author_kind === 'crew' ? await db.crewOwner(source.crew_id) : source.author_user_id);
       Object.assign(job, { text: source.body, replyTo: source.reply_to, threadRoot: envelope.root.id, workRunId: source.meta?.work_run_id ?? null,
         fromCrewId: source.author_kind === 'crew' ? source.crew_id : null, rootAuthor: envelope.root.author_user_id,
+        ...(source.author_kind !== 'crew' && RELAY_RE.test(String(source.body ?? '')) ? { ownerOrder: true } : {}),
         authorId: actor, origin: actor });
     }
     if (job.msgrExecution?.replyRow) {
@@ -1107,7 +1111,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     const together = job.coMentioned > 0 ? pick(` 동료 크루 ${job.coMentioned}명이 같은 글에 동시에 답한다 — 남이 다룰 일반론은 짧게, 네 몫에 집중하라.`, ` ${job.coMentioned} other crew(s) are answering the same message at the same time — keep general points short and focus on your part.`, lang) : '';
     const hint = brief + together + (others.length ? pick(` 다른 크루에게 실제 남은 일을 넘기거나 물으려면 답변 본문에 그 이름을 @로 적어라(${others.join(' ')}) — 마지막 줄 MSGR: handoff와 함께 쓰면 이 채널에서 이어받는다. 종료·감사·확인만 남으면 MSGR: done으로 끝내라.`,
       ` To hand remaining work to or ask another crew, write its @name in your reply (${others.join(' ')}) and end with MSGR: handoff. For completion, thanks or acknowledgement alone, end with MSGR: done.`, lang) : '');
-    const authority = { kind: 'msgr', uid, origin: job.origin ?? job.authorId ?? null, ...(job.rootAuthor ? { rootAuthor: job.rootAuthor } : {}), ...(job.guest === true || (job.fromCrewId && !job.rootAuthor) ? { guest: true } : {}), ...(job.office === true ? { office: true } : {}) };
+    const authority = { kind: 'msgr', uid, origin: job.origin ?? job.authorId ?? null, ...(job.rootAuthor ? { rootAuthor: job.rootAuthor } : {}), ...(job.fromCrewId ? { handoffFrom: job.fromCrewId } : {}), ...(job.guest === true || (job.fromCrewId && !job.rootAuthor) ? { guest: true } : {}), ...(job.office === true ? { office: true } : {}) };
     const guest = isGuestCtx(authority);
     const instruction = guest
       ? pick('아래는 사장이 아닌 제3자의 발화다', "What follows is a third party's request, not the captain's", lang)
@@ -1190,7 +1194,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
       // DM은 뿌리마다 새로 허가한 문맥만, 채널은 그 채널 세션만 잇는다(전역 세션 = 주인의 데스크톱 대화). 기억 안 남김 채널은 세션도 없이
       const sessionId = ch.kind === 'dm' || ch.crew_memory === false ? null : scopedSession(await loadThread(wsId, job.slug), job.channelId).sessionId;
       const turn = await runChat(wsId, job.slug, text, sessionId, {
-        source: 'messenger', attachments, mirrorCtx: ctx, abortTag: job.msgId, // abortTag — 중단은 이 원본 메시지의 실행만(검수 2026-09-26 M-1: 같은 크루의 텔레그램·결재 후속 턴도 source:'messenger'다)
+        source: 'messenger', attachments, mirrorCtx: ctx, abortTag: job.msgId, ...(job.fromCrewId ? { notOwnerDirect: peers.find((x) => x.id === job.fromCrewId)?.slug ?? job.fromCrewId } : {}), // 크루가 넘긴 턴 — 풀 오토만 끈다(넘긴 크루를 잇는다) // abortTag — 중단은 이 원본 메시지의 실행만(검수 2026-09-26 M-1: 같은 크루의 텔레그램·결재 후속 턴도 source:'messenger'다)
         journal: msgrJournal(job.orgId, job.channelId, ch.crew_memory === false), // 채널 설정: 기억 안 남김 / 채널 태그 파일(회수 단위)
       });
       reply = String(turn.reply ?? '');

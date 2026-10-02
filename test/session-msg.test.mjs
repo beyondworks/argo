@@ -357,3 +357,56 @@ test('이름 매칭(L7) — slug 정확히 일치가 먼저, 이름이 겹치면
   } finally { for (const s of ['dup1', 'dup2', 'x9']) await rm(join(paths(WS).agents, `${s}.md`), { force: true }); }
 });
 
+// ── 통합본 재검수(rev3) LOW ──
+test('LOW-1 — 같은 pid라도 owner가 다르면 죽은 기록(컨테이너 재시작 pid 재사용), 살아 있는 프로세스라도 기한 + 30분이 지나면 정리', async () => {
+  const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore' });
+  await new Promise((r) => child.once('spawn', r));
+  const file = join(paths(WS).root, 'sessmsg', 'pending.json');
+  await mkdir(join(paths(WS).root, 'sessmsg'), { recursive: true });
+  const old = Date.now() - 3 * 3600_000;
+  await writeFile(file, JSON.stringify({
+    samePid: { id: 'samePid', room: 'a', from: 'a', to: 'b', toName: '브라보', owner: `${process.pid}-${old}`, pid: process.pid, createdAt: Date.now(), deadline: Date.now() + 3600_000 },
+    stale: { id: 'stale', room: 'c', from: 'c', to: 'b', toName: '브라보', owner: `${child.pid}-1`, pid: child.pid, createdAt: old, deadline: old + 3600_000 },
+    alive: { id: 'alive', room: 'd', from: 'd', to: 'b', toName: '브라보', owner: `${child.pid}-1`, pid: child.pid, createdAt: Date.now(), deadline: Date.now() + 3600_000 },
+  }));
+  try {
+    assert.equal(await mod.sweepSessionMessages(), 2);
+    assert.deepEqual(Object.keys(JSON.parse(await readFile(file, 'utf8'))), ['alive']);
+    assert.equal((await msgs(WS, 'c')).find((m) => m.src?.dir === 'notice')?.src.code, 'expired', '기한 지난 살아 있는 프로세스 기록 — 기한 안내');
+  } finally { child.kill(); await new Promise((r) => child.once('exit', r)); }
+});
+
+test('LOW-2 — 기다리는 사이 크루가 다시 바빠지면 기록 대기 시간을 새로 잡는다(새 턴의 세션을 읽는다)', async () => {
+  mod._setGraceForTest(100);
+  try {
+    const turnId = await thread.beginTurn(WS, 'b', { userMsg: '사장 지시' }); // 열린 줄 — 실행 등록은 조금 뒤(채팅 라우트 모양)
+    await mod.sendSessionMessage(WS, { room: 'a', sender: 'captain', to: 'b', message: '끝나면 봐 줘' });
+    await new Promise((r) => setTimeout(r, 50));
+    const reg = abort.registerTurn(WS, 'b', () => {}, { source: 'chat' });
+    await new Promise((r) => setTimeout(r, 250)); // 대기 시간(100ms)보다 오래 실행
+    reg.release();
+    await new Promise((r) => setTimeout(r, 30));
+    await thread.appendTurn(WS, 'b', { turnId, userMsg: '사장 지시', reply: 'B 답', sessionId: 'b-late-session' });
+    await mod._drainForTest();
+    assert.equal(calls.find((c) => c.slug === 'b')?.sessionId, 'b-late-session');
+  } finally { mod._setGraceForTest(null); }
+});
+
+test('LOW-3 — 이 프로세스가 시작되기 전의 열린 줄(이전 프로세스의 고아)은 기다리지 않는다', async () => {
+  const t = await thread.loadThread(WS, 'b');
+  t.messages.push({ who: 'user', text: '옛 지시', ts: 1000, turnId: 'told', awaiting: true });
+  await writeFile(join(paths(WS).chats, 'b.json'), JSON.stringify(t));
+  const t0 = Date.now();
+  await mod.sendSessionMessage(WS, { room: 'a', sender: 'captain', to: 'b', message: '바로' });
+  await mod._drainForTest();
+  assert.equal(calls.length, 1);
+  assert.ok(Date.now() - t0 < 3000, `기록 대기(10초) 없이 돌았다 — ${Date.now() - t0}ms`);
+});
+
+test('LOW-4 — 예산이 모자란 안내도 사슬마다 한 번만', async () => {
+  const { newTree, spendTree } = await import('../src/delegation-limits.mjs');
+  const tree = newTree({ kind: 'session' }); spendTree(tree, tree.left);
+  for (let i = 0; i < 2; i += 1) await assert.rejects(mod.sendSessionMessage(WS, { room: 'a', sender: { slug: 'a' }, to: i ? 'c' : 'b', message: 'x', hop: 1, chain: ['d'], tree: tree.id }), (e) => e.code === 'TREE_CAP');
+  assert.equal((await msgs(WS, 'a')).filter((m) => m.src?.code === 'budget').length, 1);
+});
+

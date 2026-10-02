@@ -11,7 +11,9 @@ export function messengerOrigin(ctx, targetSlug = null) {
     threadRoot: ctx.threadRoot ?? null, sourceMsgId: ctx.sourceMsgId ?? ctx.threadRoot ?? null,
     uid: ctx.uid, wsId: ctx.wsId, origin: ctx.origin ?? null, hop: ctx.hop ?? 0,
     // 손님 표지는 사슬을 따라간다 — 쪽지·예약·결재로 옮겨 탄 뒤에도 "주인이 시킨 일"로 되살아나지 않게(넘김 뒤 쪽지는 rootAuthor를 잃는다).
-    ...(ctx.rootAuthor ? { rootAuthor: ctx.rootAuthor } : {}), ...(isGuestCtx(ctx) ? { guest: true } : {}), ...(ctx.office === true ? { office: true } : {}) };
+    ...(ctx.rootAuthor ? { rootAuthor: ctx.rootAuthor } : {}), ...(isGuestCtx(ctx) ? { guest: true } : {}), ...(ctx.office === true ? { office: true } : {}),
+    // 크루가 넘긴 턴 표지 — 예약·작업·결재 후속으로 옮겨 탄 뒤에도 사장 직접 턴으로 되살아나지 않게(풀 오토 제외, 유건 결정 2026-10-03)
+    ...(ctx.handoffFrom ? { handoffFrom: ctx.handoffFrom } : {}) };
 }
 
 /** messengerOrigin 기록 → 턴 맥락(kind:'msgr')의 역방향. 요청자 사슬(uid·origin·rootAuthor·guest)을 **그대로** 옮긴다 —
@@ -20,7 +22,7 @@ export function messengerOrigin(ctx, targetSlug = null) {
 export function mirrorCtxFromOrigin(o, extra = {}) {
   return { kind: 'msgr', orgId: o.orgId, channelId: o.channelId, threadRoot: o.threadRoot ?? null,
     uid: o.uid ?? null, wsId: o.wsId ?? null, origin: o.origin ?? null,
-    ...(o.rootAuthor ? { rootAuthor: o.rootAuthor } : {}), ...(o.guest === true ? { guest: true } : {}), ...(o.office === true ? { office: true } : {}), ...extra };
+    ...(o.rootAuthor ? { rootAuthor: o.rootAuthor } : {}), ...(o.guest === true ? { guest: true } : {}), ...(o.office === true ? { office: true } : {}), ...(o.handoffFrom ? { handoffFrom: o.handoffFrom } : {}), ...extra };
 }
 
 /** 오피스에서 맡긴 글인가 — 메시지 meta.source가 office_로 시작한다(아르고 오피스 '크루에게 맡기기'). 멤버가 쓸 수 있는 값이지만
@@ -31,7 +33,8 @@ export const isOfficeSource = (message) => typeof message?.meta?.source === 'str
     (유건 9/26 오피스 계획 8절 "메일발 턴은 풀 오토 제외", 9/29 확정). 오피스 턴은 손님이 아니다 — 주인의 도구는 쓰되 쓰기는 결재로 간다.
     풀 오토를 정하는 곳(chat.mjs·connectors.mjs)은 전부 이 한 함수만 본다. */
 export function fullAutoAllowed(ctx) {
-  return !isGuestCtx(ctx) && ctx?.office !== true;
+  // handoffFrom — 크루가 스스로 넘긴 턴(@넘김·MSGR: handoff). 사장이 정한 순서(사장 글의 @A > @B)의 다음 크루 턴은 사장 글에서 바로 생겨 이 표지가 없다(유건 결정 2026-10-03)
+  return !isGuestCtx(ctx) && ctx?.office !== true && !ctx?.handoffFrom;
 }
 
 /** 손님 턴 판정 — 이 메신저 턴을 크루 주인이 아닌 사람이 시켰는가(규칙 7·9: 주인의 몸은 주인만, 주인의 개인 기억은 공유한 것만).

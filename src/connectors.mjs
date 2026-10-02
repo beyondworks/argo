@@ -453,7 +453,7 @@ async function needsApprovalNow(wsId, serverId, tool, { fullAuto = false } = {})
  * 커넥터 도구 호출 — 러너 무관 단일 경로. 결과 정규화 { ok, content, isError }(+실패 시 error 코드).
  * 401은 SDK 자동 refresh에 맡기고(스파이크 실증) 최종 실패만 'reauth' 강등. 호출마다 원장 기록.
  */
-export async function callConnectorTool(wsId, serverId, tool, args = {}, { lang = 'ko', slug = null, approved = false, mirrorCtx = null, fullAuto: turnFullAuto = true } = {}) { // fullAuto = 부른 턴의 판정(chat.mjs) — false면 회사가 켜져 있어도 이 호출은 풀 오토가 아니다. 생략하면 종전 판정만
+export async function callConnectorTool(wsId, serverId, tool, args = {}, { lang = 'ko', slug = null, approved = false, mirrorCtx = null, fullAuto: turnFullAuto = true, from = null } = {}) { // fullAuto = 부른 턴의 판정(chat.mjs) — false면 회사가 켜져 있어도 이 호출은 풀 오토가 아니다. 생략하면 종전 판정만
   let ok = false;
   // 풀 오토로 원래 결재가 걸렸을 쓰기를 건너뛴 경우만 채운다 — 활동 기록용(요구사항 c). 애초에
   // 자유였던 조회까지 기록하면 소음이라 남기지 않는다(DB 위생 규칙, CLAUDE.md 2026-09-23).
@@ -501,6 +501,7 @@ export async function callConnectorTool(wsId, serverId, tool, args = {}, { lang 
       }
       await addApproval(wsId, {
         slug: ownerSlug,
+        ...(typeof from === 'string' && from ? { from } : {}), // 사장 직접 턴이 아닌 턴의 결재 — 승인 뒤 후속 턴이 풀 오토가 되지 않게(통합본 재검수 MEDIUM-2, chat.mjs request_approval과 같은 규칙)
         kind: 'connector',
         ...(msgr ? { msgr } : {}),
         ...(await import('./thread.mjs')).approvalScope(mirrorCtx), // 동적 — 위 순환 방지와 같은 이유

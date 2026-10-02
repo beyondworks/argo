@@ -47,6 +47,9 @@ const MAX_REPLY_IN_WAKE = 12000;
 /** 실행 등록이 풀린 뒤 스레드 기록(appendTurn — 새 sessionId)이 오기를 기다리는 최대 시간. 그 안에 기록이 오면 바로 깨고, 안 오면(다른 프로세스의
     닫히지 않은 줄 등) 더 기다리지 않고 진행한다 — 타이머 1개, 주기 확인 없음. */
 const RECORD_GRACE_MS = 10_000;
+const grace = () => S.grace ?? RECORD_GRACE_MS;
+/** 기록을 만든 프로세스가 살아 있어도 기한 + 이 여유가 지나면 정리한다(pid 재사용·멈춘 프로세스 — 통합본 재검수 LOW-1). */
+const STALE_AFTER_DEADLINE_MS = 30 * 60_000;
 const BOOT_AT = Date.now() - process.uptime() * 1000;
 
 // 상태는 globalThis에 — Next는 서버 진입점마다 모듈을 따로 번들한다(turn-abort.mjs와 같은 이유). API 라우트와 크루 도구가 같은 대기 목록을 봐야 한다.
@@ -57,8 +60,11 @@ const S = (globalThis.__argoSessMsg ??= {
   timers: new Map(),  // rec.id → 기한 타이머
   runTurn: null,
   ttl: null,
+  grace: null,
+  budgetNoticed: new Set(), // 예산을 모르는(이 프로세스가 모르는) 사슬의 안내 한 번 — 아는 예산은 예산 객체에 표시한다
   owner: `${process.pid}-${Math.round(BOOT_AT)}`,
 });
+S.budgetNoticed ??= new Set(); // 이 필드가 없던 버전이 먼저 만든 상태 객체(같은 프로세스의 다른 번들 사본)
 
 const fail = (code, message) => Object.assign(new Error(message), { code });
 const pairKey = (ws, room, to) => `${ws}:${room}>${to}`;
@@ -159,14 +165,18 @@ function enqueue(ws, slug, job) {
 async function idleSession(ws, slug) {
   let graceUntil = 0;
   for (;;) {
+    // 크루가 다시 바빴다면(새 턴이 돌았다면) 그 턴의 기록을 기다릴 시간을 새로 잡는다(통합본 재검수 LOW-2)
+    if (crewBusy(ws, slug)) graceUntil = 0;
     await whenCrewIdle(ws, slug);
     const written = nextThreadWrite(ws, slug); // 읽기 전에 걸어 둔다 — 읽는 사이 끝난 기록을 놓치지 않게
     const t = await loadThread(ws, slug).catch(() => ({ sessionId: null, messages: [] }));
     if (crewBusy(ws, slug)) { written.cancel(); continue; }
-    const open = (t.messages ?? []).some((m) => m.awaiting && m.turnId && m.via !== 'session');
+    // 이 프로세스가 시작되기 전의 열린 줄은 이전 프로세스의 고아다(고아 턴 정리가 곧 닫는다) — 기다리지 않는다(LOW-3).
+    // 부팅 뒤 생긴 줄이 이 프로세스 것인지 같은 폴더를 쓰는 다른 프로세스(CLI 등) 것인지는 줄에 표시가 없어 가르지 못한다 — 그 경우만 대기 상한까지 기다린다.
+    const open = (t.messages ?? []).some((m) => m.awaiting && m.turnId && m.via !== 'session' && (m.ts ?? 0) >= BOOT_AT);
     if (!open) { written.cancel(); return t.sessionId ?? null; }
     const now = Date.now();
-    if (!graceUntil) graceUntil = now + RECORD_GRACE_MS;
+    if (!graceUntil) graceUntil = now + grace();
     if (now >= graceUntil) { written.cancel(); return t.sessionId ?? null; }
     let timer;
     await Promise.race([written.promise, new Promise((r) => { timer = setTimeout(r, graceUntil - now); timer.unref?.(); })]);
@@ -229,7 +239,11 @@ export async function sendSessionMessage(ws, { room, sender, to, message, hop = 
   const budget = tree ? getTree(tree) : newTree({ kind: 'session' });
   const cost = captain ? 1 : 2;
   if (!budget || !spendTree(budget, cost)) {
-    await notice(ws, roomCrew.slug, 'budget', { to: target.slug, toName: target.name }, lang);
+    // 사슬마다 한 번만 안내(noticeCapOnce와 같은 규칙 — 통합본 재검수 LOW-4). 이 프로세스가 모르는 예산 id도 id 단위로 한 번
+    const first = budget ? !budget.sessionBudgetNoticed : !S.budgetNoticed.has(String(tree));
+    if (budget) budget.sessionBudgetNoticed = true;
+    else { if (S.budgetNoticed.size > 1000) S.budgetNoticed.clear(); S.budgetNoticed.add(String(tree)); }
+    if (first) await notice(ws, roomCrew.slug, 'budget', { to: target.slug, toName: target.name }, lang);
     throw fail('TREE_CAP', '이번 지시에서 이어진 크루 턴이 합계 상한에 닿았습니다');
   }
   const now = Date.now();
@@ -331,6 +345,7 @@ async function expire(rec) {
 function ownerAlive(r) {
   const pid = Number(r.pid ?? String(r.owner ?? '').split('-')[0]);
   if (!Number.isInteger(pid) || pid <= 0) return false;
+  if (pid === process.pid && r.owner !== S.owner) return false; // 같은 pid를 다시 받은 새 생애(컨테이너 재시작 등) — 이전 생애의 기록은 죽은 것(LOW-1)
   try { process.kill(pid, 0); return true; } catch (e) { return e?.code === 'EPERM'; }
 }
 
@@ -344,9 +359,11 @@ async function sweepWorkspace(ws, now = Date.now()) {
         if (![...S.pending.values()].some((x) => x.id === id)) { delete cur[id]; dropped.push(null); }
         continue;
       }
-      // 다른 프로세스(같은 폴더를 쓰는 앱·상주 등)가 살아 있으면 그 기다림은 그 프로세스의 것 — 기한도 그쪽 타이머가 맡는다(0.1.94 분리 검수 MEDIUM-3)
-      if (ownerAlive(r)) continue;
-      const orphan = (r.createdAt ?? 0) < BOOT_AT || !!r.pid; // pid가 있고 죽었으면 부팅 순서와 무관하게 끝난 프로세스
+      // 다른 프로세스(같은 폴더를 쓰는 앱·상주 등)가 살아 있으면 그 기다림은 그 프로세스의 것 — 기한도 그쪽 타이머가 맡는다(0.1.94 분리 검수 MEDIUM-3).
+      // 단 기한 + 30분이 지나도 남아 있으면 pid를 다른 프로세스가 다시 받았거나 멈춘 것 — 살아 있어도 정리한다(LOW-1)
+      const alive = ownerAlive(r);
+      if (alive && now <= (r.deadline ?? 0) + STALE_AFTER_DEADLINE_MS) continue;
+      const orphan = !alive && ((r.createdAt ?? 0) < BOOT_AT || !!r.pid); // pid가 있고 죽었으면 부팅 순서와 무관하게 끝난 프로세스. 살아 있는데 오래된 것은 기한 초과(expired)
       const late = (r.deadline ?? 0) < now;
       if (!orphan && !late) continue;
       delete cur[id];
@@ -369,6 +386,7 @@ export async function sweepSessionMessages({ now = Date.now() } = {}) {
 // ── 테스트 전용
 export function _setRunTurnForTest(fn) { S.runTurn = fn; }
 export function _setTtlForTest(ms) { S.ttl = ms; }
+export function _setGraceForTest(ms) { S.grace = ms; }
 export async function _drainForTest() { while (S.jobs.size) await Promise.allSettled([...S.jobs]); }
 export async function _resetForTest() {
   await _drainForTest();
