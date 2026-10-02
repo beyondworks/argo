@@ -70,6 +70,7 @@ before(() => {
   OTHER = last(asUser(U.owner, `select msgr_create_channel('${ORG}','public','design','[]')`));
   // 봇·Argo 크루 모두 두 방의 구성원 — 아래 거부가 구성원 판정이 아니라 경로 판정 때문임을 보이려고
   for (const ch of [PUB, OTHER]) for (const id of [A.crew_id, ARGO_CREW]) sql(`insert into msgr_channel_members(channel_id, member_kind, member_id) values ('${ch}','crew','${id}') on conflict do nothing`);
+  for (const id of [U.admin, U.member]) sql(`insert into msgr_channel_members(channel_id, member_kind, member_id) values ('${PUB}','user','${id}') on conflict do nothing`);
 });
 
 const crewPost = (ch, body) => last(asUser(U.owner, `insert into msgr_messages(channel_id, author_kind, crew_id, body) values ('${ch}','crew','${ARGO_CREW}','${body}') returning id`));
@@ -87,9 +88,6 @@ test('N-1: 같은 방 재사용 첨부 행(원본 글 경로)도 외부 봇이 �
   const got = j(asAnon(`select public.msgr_bot_file('${A.token}', '${a2}')`));
   assert.equal(got.storage_path, path, '재사용 행도 내준다');
   assert.equal(got.file_name, '시안-사본.png');
-  // 원본 글이 지워져도(삭제 표시) 객체는 남으므로 재사용 행은 그대로 받는다
-  sql(`update msgr_messages set deleted_at = now() where id = ${m1}`);
-  assert.equal(j(asAnon(`select public.msgr_bot_file('${A.token}', '${a2}')`)).storage_path, path);
 });
 
 test('N-1 방 경계: 다른 방 글의 경로를 가리키는 행·원본 첨부 행이 없는 경로는 거부한다', { skip }, () => {
@@ -112,4 +110,52 @@ test('N-1 방 경계: 다른 방 글의 경로를 가리키는 행·원본 첨�
   putObject(orphan);
   const m6 = crewPost(PUB, '원본 없는 재사용');
   fails(asAnonRaw(`select public.msgr_bot_file('${A.token}', '${attach(m6, orphan, 'o.png')}')`), /msgr_bot_no_file/, '원본 첨부 행 없음');
+});
+
+// 3차 검수 F-1: 첨부 행 정책은 경로를 묻지 않아, 같은 방 구성원이 자기 글에 남의 글 원본 경로를 넣은 행을 만들 수 있다.
+// 그 행으로 봇이 동의 거부자 글의 파일·삭제한 글의 파일을 받으면 안 된다(수정 전 msgr_bot_file은 둘 다 msgr_bot_no_file이었다).
+// 게이트웨이 재사용은 크루 답 원본에서만, DM이 아닌 방에서만 생기므로 원본은 '지워지지 않은 크루 글'·'DM 아닌 방'으로 좁힌다.
+const userPost = (uid, ch, body) => last(asUser(uid, `insert into msgr_messages(channel_id, author_kind, author_user_id, body) values ('${ch}','user','${uid}','${body}') returning id`));
+const userAttach = (uid, msg, path, name) => last(asUser(uid, `insert into msgr_attachments(message_id, org_id, storage_path, name, mime, bytes) values (${msg}, '${ORG}', '${path}', '${name}', 'image/png', 7) returning id`));
+const consents = () => { asUser(U.admin, `select public.msgr_set_ai_consent(true)`); asUser(U.member, `select public.msgr_set_ai_consent(false)`); }; // U1(admin)=동의, U2(member)=거부
+test('F-1 X1b: 동의 거부자 원본 경로를 다른 구성원 글에 붙인 행은 거부', { skip }, () => {
+  consents();
+  const h = userPost(U.member, PUB, '내 파일');
+  const hp = `${ORG}/${PUB}/${h}/0-mine.png`; putObject(hp); const ha = userAttach(U.member, h, hp, 'mine.png');
+  fails(asAnonRaw(`select public.msgr_bot_file('${A.token}', '${ha}')`), /msgr_bot_no_file/, '원본 자체도 거부(동의 거부)');
+  const u1 = userPost(U.admin, PUB, '남의 파일 경로');
+  fails(asAnonRaw(`select public.msgr_bot_file('${A.token}', '${userAttach(U.admin, u1, hp, 'x.png')}')`), /msgr_bot_no_file/, 'X1b 동의 거부자 원본');
+});
+
+test('F-1 X2b: 삭제한 원본(크루 글이어도)의 경로를 가리키는 행은 거부 — 사람 글 행·크루 글 행 모두', { skip }, () => {
+  consents();
+  const c = crewPost(PUB, '지울 시안');
+  const cp = `${ORG}/${PUB}/${c}/0-gone.png`; putObject(cp); attach(c, cp, 'gone.png');
+  sql(`update msgr_messages set deleted_at = now() where id = ${c}`);
+  const u2 = userPost(U.admin, PUB, '지운 글 경로');
+  fails(asAnonRaw(`select public.msgr_bot_file('${A.token}', '${userAttach(U.admin, u2, cp, 'g.png')}')`), /msgr_bot_no_file/, 'X2b 삭제한 원본(사람 글 행)');
+  fails(asAnonRaw(`select public.msgr_bot_file('${A.token}', '${attach(crewPost(PUB, '지운 글 재사용'), cp, 'g.png')}')`), /msgr_bot_no_file/, 'X2b 삭제한 원본(크루 글 행)');
+});
+
+test('F-1: 사람이 쓴 원본(동의한 사람이어도)의 경로를 가리키는 행은 거부 — 게이트웨이 재사용은 크루 답 원본에서만 생긴다', { skip }, () => {
+  consents();
+  const h2 = userPost(U.admin, PUB, '내 파일');
+  const h2p = `${ORG}/${PUB}/${h2}/0-ok.png`; putObject(h2p); const h2a = userAttach(U.admin, h2, h2p, 'ok.png');
+  assert.equal(j(asAnon(`select public.msgr_bot_file('${A.token}', '${h2a}')`)).storage_path, h2p, '원본 자체는 받는다');
+  fails(asAnonRaw(`select public.msgr_bot_file('${A.token}', '${attach(crewPost(PUB, '사람 글 경로'), h2p, 'h.png')}')`), /msgr_bot_no_file/, '사람이 쓴 원본');
+});
+
+test('F-1: DM 방의 재사용 행은 크루 원본이어도 거부(게이트웨이도 DM은 재사용하지 않는다 — N-2), 정상 크루 재사용은 통과', { skip }, () => {
+  const dm = last(sql(`insert into msgr_channels(org_id, kind, name, created_by) values ('${ORG}','dm','o','${U.owner}') returning id`));
+  sql(`insert into msgr_channel_members(channel_id, member_kind, member_id) values ('${dm}','user','${U.owner}'), ('${dm}','crew','${ARGO_CREW}'), ('${dm}','crew','${A.crew_id}')`);
+  const d1 = last(sql(`insert into msgr_messages(channel_id, author_kind, crew_id, body) values ('${dm}','crew','${ARGO_CREW}','시안') returning id`));
+  const dp = `${ORG}/${dm}/${d1}/0-dm.png`; putObject(dp);
+  const da = last(sql(`insert into msgr_attachments(message_id, org_id, storage_path, name, mime, bytes) values (${d1}, '${ORG}', '${dp}', 'dm.png', 'image/png', 7) returning id`));
+  assert.equal(j(asAnon(`select public.msgr_bot_file('${A.token}', '${da}')`)).storage_path, dp, 'DM 원본 자체는 받는다');
+  const d2 = last(sql(`insert into msgr_messages(channel_id, author_kind, crew_id, body) values ('${dm}','crew','${ARGO_CREW}','다시') returning id`));
+  const dr = last(sql(`insert into msgr_attachments(message_id, org_id, storage_path, name, mime, bytes) values (${d2}, '${ORG}', '${dp}', 'dm.png', 'image/png', 7) returning id`));
+  fails(asAnonRaw(`select public.msgr_bot_file('${A.token}', '${dr}')`), /msgr_bot_no_file/, 'DM 재사용 행');
+  const k = crewPost(PUB, '시안 v2');
+  const kp = `${ORG}/${PUB}/${k}/0-v2.png`; putObject(kp); attach(k, kp, 'v2.png');
+  assert.equal(j(asAnon(`select public.msgr_bot_file('${A.token}', '${attach(crewPost(PUB, '다시 v2'), kp, 'v2.png')}')`)).storage_path, kp, '정상 크루 재사용');
 });

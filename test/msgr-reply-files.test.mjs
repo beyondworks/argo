@@ -332,17 +332,18 @@ test('L-2: 확장자 없고 홈·작업 루트·임시 폴더 밖인 절대 경�
   assert.equal(r.uploads.length, 0);
 });
 
-test('N-5: 구역 밖 경로는 있는 파일과 없는 파일의 결과가 같다 — 확장자 있거나 홈·임시 폴더 아래면 지우고 같은 안내, 아니면 둘 다 그대로', async () => {
+test('N-5: 구역 밖 경로는 있는 파일과 없는 파일의 결과가 같다 — 홈·작업 루트·임시 폴더 아래면 지우고 같은 안내, 아니면 둘 다 그대로', async () => {
   const { planReplyFiles } = await import('../src/gateway/msgr-reply-files.mjs');
   const { homedir } = await import('node:os');
   await mkdir(join(OUTSIDE, 'dir-exists'), { recursive: true });
   const pairs = [ // [있는 것, 없는 것]
-    [join(OUTSIDE, 'report.pdf'), join(OUTSIDE, 'nope.pdf')],                       // 확장자
+    [join(OUTSIDE, 'report.pdf'), join(OUTSIDE, 'nope.pdf')],                       // 임시 폴더 아래 파일
     [join(OUTSIDE, 'dir-exists'), join(OUTSIDE, 'dir-nope')],                        // 임시 폴더 아래(확장자 없음)
     [homedir(), join(homedir(), 'nobody-xyz-argo', 'Desktop', 'plan')],              // 홈 아래(확장자 없음)
-    ['/usr', '/usrx-argo-nope'],                                                     // 홈·임시 밖, 확장자 없음 → 둘 다 손대지 않는다
+    ['/usr', '/usrx-argo-nope'],                                                     // 홈·임시 밖 → 둘 다 손대지 않는다
+    ['/etc/hosts', '/etc/argo-nope-hosts.pdf'],                                      // 홈·임시 밖은 확장자가 있어도 손대지 않는다(F-3)
   ];
-  const shape = (r) => ({ body: r.body.replace(/\S*(nope|exists|nobody|usr|report)\S*/g, 'X'), files: r.files.length, fails: r.fails.map((f) => f.reason) });
+  const shape = (r) => ({ body: r.body.replace(/\S*(nope|exists|nobody|usr|report|hosts)\S*/g, 'X'), files: r.files.length, fails: r.fails.map((f) => f.reason) });
   for (const [there, absent] of pairs) {
     const a = await planReplyFiles(WS, `[링크](${there})`);
     const b = await planReplyFiles(WS, `[링크](${absent})`);
@@ -372,13 +373,47 @@ test('N-4: 비밀 낱말(password·api key·private key·service account·camelC
   await link(join(OUTSIDE, 'report.pdf'), join(PROJ, 'hard.pdf'));
   const h = await planReplyFiles(WS, `[h](${join(PROJ, 'hard.pdf')})`);
   assert.deepEqual(h.files, []);
-  assert.match(h.fails[0].reason, /작업 폴더 밖이거나 없는 파일/);
+  assert.match(h.fails[0].reason, /하드 링크라서 보내지 않았습니다/);
+  assert.match(r.fails[0].reason, /비밀 정보가 담긴 이름으로 보여 보내지 않았습니다/);
   // 계획 뒤에 하드 링크가 생겨도 읽을 때 다시 막는다
   await writeFile(join(PROJ, 'later.pdf'), 'LEGIT');
   const plan = await planReplyFiles(WS, `[l](${join(PROJ, 'later.pdf')})`);
   assert.equal(plan.files.length, 1);
   await link(join(PROJ, 'later.pdf'), join(OUTSIDE, 'later-copy.pdf'));
-  await assert.rejects(readReplyFile(WS, plan.files[0]), (e) => e.roomSafe === true);
+  await assert.rejects(readReplyFile(WS, plan.files[0]), (e) => e.roomSafe === true && /하드 링크/.test(e.message));
+});
+
+// 3차 검수 F-2: 구역 안 심링크 폴더가 밖을 가리키면, 있는 파일은 '밖'·없는 파일은 '없음'으로 갈려 밖에 파일이 있는지 드러났다.
+test('F-2: 구역 안 심링크 폴더를 거친 경로는 있든 없든 같은 사유("밖이거나 없는 파일") — 구역 안 진짜 폴더의 없는 파일만 "없음"', async () => {
+  const { planReplyFiles } = await import('../src/gateway/msgr-reply-files.mjs');
+  // PROJ/escape → OUTSIDE(심링크 폴더, 맨 위에서 만들었다). OUTSIDE/report.pdf는 있고 OUTSIDE/nope.pdf는 없다
+  for (const shape of [(n) => join(PROJ, 'escape', n), (n) => `projects/20261002_페퍼-아바타/escape/${n}`]) {
+    const there = await planReplyFiles(WS, `[a](${shape('report.pdf')})`);
+    const absent = await planReplyFiles(WS, `[a](${shape('nope.pdf')})`);
+    assert.deepEqual(absent.fails.map((f) => f.reason), there.fails.map((f) => f.reason), `있음/없음 같은 사유: ${shape('…')}`);
+    assert.match(absent.fails[0].reason, /작업 폴더 밖이거나 없는 파일/);
+    assert.equal(absent.body, there.body);
+  }
+  const deeper = await planReplyFiles(WS, `[a](${join(PROJ, 'escape', 'no-dir', 'x.pdf')})`); // 없는 하위 폴더까지 — 가장 가까운 있는 부모(escape)가 밖
+  assert.match(deeper.fails[0].reason, /작업 폴더 밖이거나 없는 파일/);
+  const real = await planReplyFiles(WS, `[a](${join(PROJ, 'nope.pdf')}) [b](${join(p.vault, 'projects', 'no-such-dir', 'x.pdf')})`);
+  assert.deepEqual(real.fails.map((f) => f.reason), ['파일이 없습니다', '파일이 없습니다'], '구역 안 진짜 폴더(없는 하위 폴더 포함)는 그대로 "없음"');
+});
+
+// 3차 검수 F-3: 확장자만으로 지우다 보니 `[가이드](/docs/guide.pdf)` 같은 웹 다운로드 링크가 사라졌다.
+test('F-3: 홈·작업 루트·임시 폴더 밖 절대 경로는 확장자가 있어도 본문 그대로 — 홈 판정은 macOS에서 대소문자를 무시한다', async () => {
+  const { planReplyFiles } = await import('../src/gateway/msgr-reply-files.mjs');
+  const { homedir } = await import('node:os');
+  const web = '[가이드](/docs/guide.pdf) [호스트](/etc/hosts) [이미지](/static/logo.png)';
+  const r = await planReplyFiles(WS, web);
+  assert.equal(r.body, web);
+  assert.deepEqual(r.fails, []);
+  if (process.platform === 'darwin') {
+    const upper = join(homedir().toUpperCase(), 'Desktop', 'plan.pdf');
+    const h = await planReplyFiles(WS, `[계획](${upper})`);
+    assert.equal(h.body, '계획', '대문자로 쓴 홈 경로도 지운다');
+    assert.match(h.fails[0].reason, /작업 폴더 밖이거나 없는 파일/);
+  }
 });
 
 // M-5: 같은 파일을 답마다 새 경로로 다시 올렸다(루틴 결과 글·대화 중 같은 시안 재언급). 같은 방에 이미 올린 같은 내용이면 기존 객체를 재사용한다.
