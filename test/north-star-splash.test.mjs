@@ -1,17 +1,13 @@
-// 북극성 시작 스플래시 정본 엔진(public/splash/north-star.mjs) — 메신저와 Argo 본체(부트 화면 1단계·Next 첫 화면 2단계)가 같이 쓴다.
-// 1) 행동: 가짜 DOM·가짜 시계로 엔진을 그대로 돌린다(창이 가려져 애니메이션이 멈춰도 등장 끝·닫기가 타이머로 진행되는지 등).
-// 2) CSP: Tauri가 HTML의 <style>에 nonce를 붙이면 'unsafe-inline'이 무시돼 style 속성이 전부 막힌다(반대 검토 2026-10-01 WKWebView 재현 —
-//    메신저 설치본에서 로고 폭 0). 엔진은 style 속성을 만들지 않고, 부트 화면 HTML에는 <style>도 style 속성도 두지 않는다.
-// 3) 색: 본체 스플래시는 graphite(시스템 밝기를 따름) — app/globals.css 토큰과 부트 화면 boot.css·엔진 GRAPHITE가 같은 값이어야 한다.
+// 1) 북극성 스플래시 정본 엔진(public/splash/north-star.mjs) — 지금은 메신저 시작 화면이 쓴다(본체 부트 화면은 배·파도로 되돌렸다, 2026-10-02).
+//    행동: 가짜 DOM·가짜 시계로 엔진을 그대로 돌린다(창이 가려져 애니메이션이 멈춰도 등장 끝·닫기가 타이머로 진행되는지 등).
+//    CSP: Tauri가 HTML의 <style>에 nonce를 붙이면 'unsafe-inline'이 무시돼 style 속성이 전부 막힌다(메신저 설치본에서 로고 폭 0).
+//    엔진은 style 속성을 만들지 않는다.
+// 2) 본체 부트 화면(public/index.html·boot.css) — 배·파도 모션. 색은 graphite(시스템 밝기를 따름)이고 globals.css 토큰과 같아야 한다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import vm from 'node:vm';
-import { fileURLToPath } from 'node:url';
+import { existsSync } from 'node:fs';
 import { startNorthStar, GRAPHITE, INTRO_CAP_MS, graphitePalette } from '../public/splash/north-star.mjs';
-import { continueSplash, markSplashReady, homeSplashReady, STAGE2_MAX_MS, __resetSplashContinue } from '../app/splash-continue-core.mjs';
-import { loadComponent } from './helpers/load-component.mjs';
-import { mount } from './helpers/mini-react.mjs';
 
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
 const PALETTE = GRAPHITE.light;
@@ -154,14 +150,9 @@ test('graphite 팔레트는 시스템 밝기를 따른다', () => {
   assert.equal(graphitePalette(env({ dark: true }).win), GRAPHITE.dark);
 });
 
-test('CSP — 엔진 소스에 style 속성·innerHTML이 없고, 부트 화면 HTML에 <style>도 style 속성도 없다', () => {
+test('CSP — 엔진 소스에 style 속성·innerHTML이 없다(메신저 설치본)', () => {
   const src = read('public/splash/north-star.mjs').replace(/^\s*\/\/.*$/gm, '');
   assert.doesNotMatch(src, /innerHTML|style="|setAttribute\(\s*['"]style/);
-  const html = read('public/index.html').replace(/<!--[\s\S]*?-->/g, '');
-  assert.doesNotMatch(html, /<style[\s>]/i);
-  assert.doesNotMatch(html, /\sstyle\s*=/i);
-  assert.ok(html.indexOf('src="/boot-splash.mjs"') > -1 && html.indexOf('type="module"') > -1, '스플래시는 별도 module 파일(인라인 스크립트 금지)');
-  assert.doesNotMatch(html, /ship\.png|wave\.png/, '옛 배·파도 장면은 북극성으로 바뀌었다');
 });
 
 function graphiteTokens() {
@@ -174,13 +165,21 @@ function graphiteTokens() {
   return { light: pick(blocks[0]), dark: pick(blocks[1]) };
 }
 
-test('색 — 엔진 GRAPHITE·부트 화면 boot.css가 globals.css graphite 토큰과 같다(라이트·다크)', () => {
+test('색 — 엔진 GRAPHITE(메신저가 쓰는 정본)가 globals.css graphite 토큰과 같다(라이트·다크)', () => {
   const tok = graphiteTokens();
   for (const mode of ['light', 'dark']) {
     assert.equal(GRAPHITE[mode].bg, tok[mode].bg, `${mode} 바탕 = --bg`);
     assert.equal(GRAPHITE[mode].mark, tok[mode].primary, `${mode} 마크 = --primary`);
   }
-  const boot = read('public/boot.css').replace(/\/\*[\s\S]*?\*\//g, '');
+});
+
+// ── 본체 부트 화면(배·파도) ──
+const bootCss = () => read('public/boot.css').replace(/\/\*[\s\S]*?\*\//g, '');
+const bootHtml = () => read('public/index.html').replace(/<!--[\s\S]*?-->/g, '');
+
+test('부트 화면 색 — boot.css가 globals.css graphite 토큰과 같다(라이트·다크), 폐기된 금색 막대·#212121 바탕은 없다', () => {
+  const tok = graphiteTokens();
+  const boot = bootCss();
   const [lightVars, darkVars] = [boot.slice(boot.indexOf(':root {')), boot.slice(boot.indexOf('@media (prefers-color-scheme: dark)'))];
   const v = (block, name) => new RegExp(`--boot-${name}:\\s*(#[0-9a-f]{6})`, 'i').exec(block)?.[1].toLowerCase();
   for (const [mode, block] of [['light', lightVars], ['dark', darkVars]]) {
@@ -190,236 +189,52 @@ test('색 — 엔진 GRAPHITE·부트 화면 boot.css가 globals.css graphite �
     assert.equal(v(block, 'fg-3'), tok[mode]['fg-3'], `${mode} --boot-fg-3`);
     assert.equal(v(block, 'danger'), tok[mode].danger, `${mode} --boot-danger`);
   }
-  assert.doesNotMatch(boot, /#d9b23a|#212121/i, '옛 금색 진행 막대·#212121 바탕은 폐기');
+  assert.doesNotMatch(boot, /#d9b23a|#212121|#f2ecdd/i, '옛 금색 진행 막대·#212121 바탕·크림색 글자는 폐기');
+  assert.match(boot, /\.fill\s*\{[^}]*background:\s*var\(--boot-mark\)/, '진행 막대는 graphite primary');
+  assert.match(boot, /html, body\s*\{[^}]*background:\s*var\(--boot-bg\)/, '바탕은 graphite');
 });
 
-
-// ── Next 첫 화면(2단계) 행동 테스트(검수 #792 MEDIUM-1) — 배선 한 줄을 지우면 여기서 실패해야 한다 ──
-const CORE = fileURLToPath(new URL('../app/splash-continue-core.mjs', import.meta.url));
-const NORTH = fileURLToPath(new URL('../public/splash/north-star.mjs', import.meta.url));
-const file = (p) => fileURLToPath(new URL(`../${p}`, import.meta.url));
-
-function htmlEl({ splash = true, zoom = '' } = {}) {
-  const attrs = new Set(splash ? ['data-argo-splash'] : []);
-  return { style: { zoom }, hasAttribute: (k) => attrs.has(k), removeAttribute: (k) => attrs.delete(k), attrs };
-}
-function spyStart() {
-  const calls = [];
-  const sp = { readies: [], ready(at) { sp.readies.push(at); } };
-  return { calls, sp, start: (o) => { calls.push(o); return sp; } };
-}
-function fakePage({ splash = true, zoom = '', path = '/' } = {}) {
-  const html = htmlEl({ splash, zoom });
-  const queried = [];
-  const doc = { documentElement: html, querySelector: (q) => { queried.push(q); return { q }; } };
-  const win = { location: { pathname: path }, matchMedia: () => ({ matches: false }) };
-  return { html, doc, win, queried };
-}
-
-test('2단계: 표시가 없으면(일반 브라우저) 아무것도 안 한다', () => {
-  __resetSplashContinue();
-  const s = spyStart(); const p = fakePage({ splash: false });
-  assert.equal(continueSplash({ doc: p.doc, win: p.win, start: s.start }), null);
-  assert.equal(s.calls.length, 0);
+test('부트 화면 장면 — 배·파도 이미지가 있고 둘 다 움직인다(움직임 줄이기에서만 멈춤)', () => {
+  const html = bootHtml();
+  for (const f of ['ship', 'wave']) {
+    assert.match(html, new RegExp(`<img class="${f}" src="/assets/boot/${f}\\.png"`), `${f} 이미지 참조`);
+    assert.ok(existsSync(new URL(`../public/assets/boot/${f}.png`, import.meta.url)), `${f}.png 파일`);
+  }
+  const css = bootCss();
+  assert.match(css, /\.ship\s*\{[^}]*animation:\s*sail [^;]*infinite/, '배는 sail 반복');
+  assert.match(css, /\.wave\s*\{[^}]*animation:\s*sway [^;]*infinite/, '파도는 sway 반복');
+  assert.match(css, /@keyframes sail\b/);
+  assert.match(css, /@keyframes sway\b/);
+  assert.match(css, /prefers-reduced-motion:\s*reduce\)\s*\{\s*\.ship, \.wave\s*\{\s*animation:\s*none/);
+  assert.match(css, /\.wave\s*\{[^}]*z-index:\s*2/, '파도가 배 앞(선체가 물에 잠겨 보인다)');
 });
 
-test('2단계: 표시가 있으면 엔진 오버레이를 hold·최소 0·최대 2초로 띄우고 정적 오버레이 표시를 지운다', () => {
-  __resetSplashContinue();
-  const s = spyStart(); const p = fakePage();
-  assert.equal(continueSplash({ doc: p.doc, win: p.win, start: s.start }), s.sp);
-  const o = s.calls[0];
-  assert.equal(o.hold, true); assert.equal(o.minMs, 0);
-  assert.equal(o.maxMs, 2000); assert.equal(STAGE2_MAX_MS, 2000, '2단계 최대 대기 2초(검수 #792 결정) — 메신저 5초 기본값과 별개');
-  assert.equal(o.size, '112px'); assert.equal(o.fullWidth, true);
-  assert.equal(p.html.hasAttribute('data-argo-splash'), false, '정적 오버레이를 숨긴다(안 지우면 엔진이 닫혀도 정적 로고가 8초까지 남는다)');
-  assert.equal(continueSplash({ doc: p.doc, win: p.win, start: s.start }), null, '두 번 띄우지 않는다');
-  assert.equal(o.target().q, 'header.topbar [data-splash-target] path', '홈은 상단바 별 자리로 날아가 앉는다');
+test('부트 화면 그림은 검은 바탕 그림이라 라이트에선 뒤집어 곱하기, 다크에선 그대로 screen — 어느 쪽이든 검정이 바탕에 녹는다', () => {
+  const css = bootCss();
+  const light = css.slice(css.indexOf(':root {'), css.indexOf('@media (prefers-color-scheme: dark)'));
+  const dark = css.slice(css.indexOf('@media (prefers-color-scheme: dark)'), css.indexOf('html, body'));
+  assert.match(light, /--boot-art-filter:\s*invert\(1\)[^;]*;\s*--boot-art-blend:\s*multiply/);
+  assert.match(dark, /--boot-art-filter:\s*none;\s*--boot-art-blend:\s*screen/);
+  for (const f of ['ship', 'wave']) {
+    assert.match(css, new RegExp(`\\.${f}\\s*\\{[^}]*filter:\\s*var\\(--boot-art-filter\\);\\s*mix-blend-mode:\\s*var\\(--boot-art-blend\\)`), `${f}가 변수를 쓴다`);
+  }
 });
 
-test('2단계: 로그인 등 홈이 아닌 화면과 표시 배율≠1은 날아가 앉지 않고(페이드) 크기를 배율로 나눈다', () => {
-  __resetSplashContinue();
-  const a = spyStart(); const p = fakePage({ path: '/login' });
-  continueSplash({ doc: p.doc, win: p.win, start: a.start });
-  assert.equal(a.calls[0].target(), null);
-  __resetSplashContinue();
-  const b = spyStart(); const q = fakePage({ zoom: '1.25' });
-  continueSplash({ doc: q.doc, win: q.win, start: b.start });
-  assert.equal(b.calls[0].size, '89.6px'); assert.equal(b.calls[0].fullWidth, false); assert.equal(b.calls[0].target, null);
+test('부트 화면 CSP — HTML에 <style>도 style 속성도 없고 인라인 스크립트가 없다(Tauri nonce)', () => {
+  const html = bootHtml();
+  assert.doesNotMatch(html, /<style[\s>]/i);
+  assert.doesNotMatch(html, /\sstyle\s*=/i);
+  assert.doesNotMatch(html, /<script(?![^>]*\ssrc=)[^>]*>/i, '인라인 스크립트 금지(P0-4)');
+  assert.match(html, /<meta name="color-scheme" content="light dark"/, '시스템 밝기를 따른다(첫 페인트 전 바탕)');
+  assert.ok(html.includes('<script src="/boot.js"></script>'));
+  assert.doesNotMatch(html, /boot-splash|argo-splash/, '북극성은 본체 부트 화면에서 뺐다');
 });
 
-test('2단계: 스플래시보다 먼저 온 준비 신호는 시각을 기억했다가 넘기고, 뒤에 온 신호는 바로 넘긴다', () => {
-  __resetSplashContinue();
-  markSplashReady(() => 123);
-  markSplashReady(() => 456); // 첫 시각만
-  const s = spyStart(); const p = fakePage();
-  continueSplash({ doc: p.doc, win: p.win, start: s.start });
-  assert.deepEqual(s.sp.readies, [123]);
-  __resetSplashContinue();
-  const t = spyStart(); const q = fakePage();
-  continueSplash({ doc: q.doc, win: q.win, start: t.start });
-  assert.deepEqual(t.sp.readies, []);
-  markSplashReady();
-  assert.deepEqual(t.sp.readies, [undefined]);
-});
-
-test('2단계 + 실제 엔진: 준비 신호가 없으면 2초에 닫힌다(첫 화면을 5초까지 가리지 않는다)', async () => {
-  __resetSplashContinue();
-  const e = env();
-  e.doc.documentElement = htmlEl();
-  e.win.location = { pathname: '/' };
-  e.doc.querySelector = () => null;
-  const sp = continueSplash({ doc: e.doc, win: e.win });
-  await e.advance(1999);
-  assert.equal(sp.root.style.pointerEvents, 'auto');
-  await e.advance(1);
-  assert.equal(sp.root.style.pointerEvents, 'none');
-});
-
-test('홈 준비 판정 — 회사 목록(빈 목록 포함)이나 오류가 오면 준비', () => {
-  assert.equal(homeSplashReady(null, ''), false);
-  assert.equal(homeSplashReady([], ''), true);
-  assert.equal(homeSplashReady(null, 'boom'), true);
-});
-
-// 홈·로그인 화면을 mini-react로 그대로 돌린다 — 준비 신호 effect를 지우면 splash.ready가 안 불려 실패한다
-async function withSplash(run) {
-  __resetSplashContinue();
-  const s = spyStart(); const p = fakePage();
-  continueSplash({ doc: p.doc, win: p.win, start: s.start });
-  await run();
-  return s.sp.readies.length;
-}
-const fn = (n) => `export function ${n}() { return null; }`;
-const homeStubs = {
-  'next/link': 'export default function Link() { return null; }',
-  'next/navigation': 'export const useRouter = () => ({ push() {}, replace() {} });',
-  './ui': ['Logo', 'Icon', 'Avatar', 'Spinner', 'Skeleton', 'ConfirmModal'].map(fn).join('\n')
-    + '\nexport const api = (u) => globalThis.__api(u); export const imeGuard = () => ({}); export const timeAgo = () => "";',
-  './runner-connect': `${fn('AiConnectionCard')}\nexport const ACCOUNT_WS = '@account'; export const anyRunnerUsable = () => true; export const runnerNeedsReconnect = () => false;`,
-  './i18n': 'export const useLang = () => ({ t: (k) => k, lang: "ko" });',
-  './components/LocalAssetImport': fn('LocalAssetOffer'),
-};
-
-async function mountHome(companies) {
-  globalThis.window = { addEventListener() {}, removeEventListener() {}, location: { reload() {} } };
-  globalThis.__api = (u) => (u.startsWith('/api/companies?') ? companies.promise : Promise.resolve({}));
-  const { default: Home } = await loadComponent(file('app/page.jsx'), { stubs: homeStubs, real: [CORE] });
-  const m = mount(Home);
-  await m.flush();
-  return m;
-}
-const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
-
-test('홈 화면: 회사 목록이 오기 전에는 스플래시를 닫지 않고, 목록이 오면 한 번 닫는다', async () => {
-  __resetSplashContinue();
-  const s = spyStart(); const p = fakePage();
-  continueSplash({ doc: p.doc, win: p.win, start: s.start });
-  const c = deferred();
-  const m = await mountHome(c);
-  assert.equal(s.sp.readies.length, 0, '목록 전에는 아직');
-  c.resolve({ companies: [], presets: [] });
-  await m.flush();
-  assert.equal(s.sp.readies.length, 1, '목록 뒤 준비 신호');
-});
-
-test('홈 화면: 회사 목록을 못 불러와도(오류) 스플래시를 닫는다', async () => {
-  const c = deferred();
-  const n = await withSplash(async () => {
-    const m = await mountHome(c);
-    c.reject(new Error('500'));
-    await m.flush();
-  });
-  assert.equal(n, 1);
-});
-
-test('로그인 화면: 열리자마자 스플래시를 닫는다', async () => {
-  const n = await withSplash(async () => {
-    globalThis.window = { location: { hostname: 'localhost', search: '' }, addEventListener() {}, removeEventListener() {} };
-    const { default: Login } = await loadComponent(file('app/login/page.jsx'), {
-      real: [CORE],
-      define: { 'process.env.NEXT_PUBLIC_SUPABASE_URL': '"https://example.supabase.co"', 'process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY': '"anon"', 'process.env.NEXT_PUBLIC_ARGO_CONTACT': '""' },
-      stubs: {
-        'next/link': 'export default function Link() { return null; }',
-        '@supabase/ssr': 'export const createBrowserClient = () => ({});',
-        '../ui': `${fn('Logo')}\n${fn('Spinner')}`,
-        '../i18n': 'export const useLang = () => ({ t: (k) => k, lang: "ko" });',
-        '@tauri-apps/plugin-opener': 'export const openUrl = async () => {};',
-        '@tauri-apps/api/window': 'export const getCurrentWindow = () => ({});',
-      },
-    });
-    await mount(Login).flush();
-  });
-  assert.equal(n, 1);
-});
-
-// layout을 그대로 렌더해(mini-react 트리) 부트 스크립트를 실제로 실행하고, 정적 오버레이 CSS 규칙을 읽는다
-async function renderLayout() {
-  const { default: RootLayout } = await loadComponent(file('app/layout.jsx'), {
-    real: [NORTH],
-    stubs: {
-      './globals.css': '', './i18n': fn('LanguageProvider'), './theme': fn('ThemeProvider'),
-      './build-watch': 'export default function BuildWatch() { return null; }',
-      './splash-continue': 'export default function SplashContinue() { return null; }',
-    },
-  });
-  const tree = RootLayout({ children: 'PAGE' });
-  const all = [];
-  const walk = (n) => { if (!n || typeof n !== 'object') return; if (Array.isArray(n)) return n.forEach(walk); all.push(n); walk(n.props?.children); };
-  walk(tree);
-  return all;
-}
-function runBoot(code, { hash, pathname = '/login', search = '?x=1' }) {
-  const replaced = [];
-  const ctx = { location: { hash, pathname, search }, history: { state: { k: 1 }, replaceState: (...a) => replaced.push(a) }, document: { documentElement: { dataset: {} } } };
-  vm.runInNewContext(code, ctx);
-  return { dataset: ctx.document.documentElement.dataset, replaced };
-}
-
-test('Next 첫 화면 부트 스크립트: #argo-splash면 표시를 붙이고 해시를 바로 지운다(BuildWatch 새로고침에 다시 안 뜨게), 아니면 아무것도 안 한다', async () => {
-  const nodes = await renderLayout();
-  const code = nodes.filter((n) => n.type === 'script').map((n) => n.props.dangerouslySetInnerHTML.__html).find((c) => c.includes('argo-splash'));
-  assert.ok(code, 'head에 스플래시 부트 스크립트');
-  const hit = runBoot(code, { hash: '#argo-splash' });
-  assert.equal(hit.dataset.argoSplash, '1');
-  assert.deepEqual(hit.replaced, [[{ k: 1 }, '', '/login?x=1']], '경로·쿼리·history.state는 그대로, 해시만 지운다');
-  const miss = runBoot(code, { hash: '' });
-  assert.deepEqual(miss.dataset, {}); assert.deepEqual(miss.replaced, []);
-  const head = nodes.find((n) => n.type === 'head');
-  const inHead = []; const walk = (n) => { if (!n || typeof n !== 'object') return; if (Array.isArray(n)) return n.forEach(walk); inHead.push(n); walk(n.props?.children); };
-  walk(head);
-  assert.ok(inHead.some((n) => n.type === 'script' && n.props.dangerouslySetInnerHTML?.__html === code), '첫 페인트 전(head)');
-});
-
-test('Next 첫 화면 정적 오버레이: 보이는 동안 클릭을 막고 8초 뒤 visibility:hidden으로 풀린다, 크기는 배율 보정, 페이지보다 앞', async () => {
-  const nodes = await renderLayout();
-  const css = nodes.find((n) => n.type === 'style').props.dangerouslySetInnerHTML.__html;
-  const rule = (sel) => { const i = css.indexOf(`${sel}{`); assert.ok(i > -1, sel); return css.slice(i + sel.length + 1, css.indexOf('}', i)); };
-  assert.match(rule('#argo-splash-ssr'), /display:none/, '표시 없으면 안 보인다');
-  const on = rule('html[data-argo-splash] #argo-splash-ssr');
-  assert.match(on, /position:fixed;inset:0/);
-  assert.match(on, /pointer-events:auto/, '보이는 동안 클릭 막기(검수 #792 LOW-1)');
-  assert.match(on, /animation:argoSplashGone \.3s 8s forwards/);
-  assert.match(css, /@keyframes argoSplashGone\{to\{opacity:0;visibility:hidden\}\}/, 'visibility:hidden이 되면 클릭도 풀린다');
-  assert.match(on, new RegExp(`background:${GRAPHITE.light.bg};color:${GRAPHITE.light.mark}`));
-  assert.match(css, new RegExp(`prefers-color-scheme:dark\\)\\{html\\[data-argo-splash\\] #argo-splash-ssr\\{background:${GRAPHITE.dark.bg};color:${GRAPHITE.dark.mark}`));
-  assert.match(rule('#argo-splash-ssr svg'), /width:calc\(112px \/ var\(--z, 1\)\)/);
-  const body = nodes.find((n) => n.type === 'body');
-  const kids = body.props.children;
-  const ssrAt = kids.findIndex((k) => k?.props?.id === 'argo-splash-ssr');
-  assert.ok(ssrAt > -1 && kids.findIndex((k) => k?.type?.name === 'SplashContinue') > ssrAt, '정적 오버레이 → SplashContinue → 페이지 순');
-  assert.equal(kids[ssrAt].props.children.props.children.length, 2, '돛·별 두 path');
-});
-
-test('SplashContinue 컴포넌트: 마운트되면 2단계를 넘겨받는다(표시를 지운다)', async () => {
-  __resetSplashContinue();
-  const html = htmlEl();
-  globalThis.document = { documentElement: html }; // body가 없으면 엔진은 그리지 않지만 넘겨받기(표시 제거)는 한다
-  globalThis.window = { location: { pathname: '/' }, matchMedia: () => ({ matches: false }), performance };
-  try {
-    const { default: SplashContinue } = await loadComponent(file('app/splash-continue.jsx'), { real: [CORE] });
-    const m = mount(SplashContinue);
-    await m.flush();
-    assert.equal(m.state.out, null, '아무것도 그리지 않는다');
-    assert.equal(html.hasAttribute('data-argo-splash'), false);
-  } finally { delete globalThis.document; }
+test('본체는 북극성 2단계 연결을 쓰지 않는다 — layout·홈·로그인에 스플래시 배선이 없고 부트는 해시 없이 이동한다', () => {
+  for (const f of ['app/layout.jsx', 'app/page.jsx', 'app/login/page.jsx', 'app/ui.jsx', 'public/boot.js']) {
+    assert.doesNotMatch(read(f), /splash|north-star/i, `${f}에 스플래시 배선 없음`);
+  }
+  assert.ok(!existsSync(new URL('../app/splash-continue.jsx', import.meta.url)));
+  assert.ok(!existsSync(new URL('../public/boot-splash.mjs', import.meta.url)));
+  assert.ok(existsSync(new URL('../public/splash/north-star.mjs', import.meta.url)), '공용 엔진은 메신저가 쓰므로 남는다');
 });
