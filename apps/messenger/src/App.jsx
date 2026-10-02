@@ -151,6 +151,19 @@ const RT_SWEEP_MS = 60_000;  // 실시간이 살아 있어도 이 주기로는 �
 const RT_DOWN = new Set(['CHANNEL_ERROR', 'TIMED_OUT', 'CLOSED']); // 구독이 끊겼다고 알려 주는 상태
 const ATTACH_MAX = 25 * 1024 * 1024; // 브리지 ATTACH_MAX(src/gateway/msgr.mjs)와 같은 값 — 받는 쪽에서만 거절하면 보낸 사람은 이유를 모른다
 const fmtTs = (iso, lang) => new Date(iso).toLocaleTimeString(lang === 'en' ? 'en-US' : 'ko-KR', { hour: '2-digit', minute: '2-digit' });
+// 데스크톱: 마우스를 올린 글이 속한 턴의 마지막 행에 data-turn-hover를 단다 — 턴 끝 아이콘 줄은 이 표시가 있을 때만 보인다(유건 2026-10-02).
+// 턴 = notail로 이어진 행들. 말풍선 사이 틈(척추 자체)에 올라가면 표시를 그대로 두어 깜빡이지 않게 하고, 척추를 벗어날 때만 지운다.
+const markTurnHover = (e) => {
+  const spine = e.currentTarget;
+  const row = e.type === 'pointerleave' ? null : e.target.closest?.('.msgr-row, .msgr-mine');
+  if (e.type !== 'pointerleave' && !row) return;
+  let tail = row;
+  while (tail?.classList.contains('notail')) tail = tail.nextElementSibling;
+  const cur = spine.querySelector(':scope > [data-turn-hover]');
+  if (cur === tail) return;
+  cur?.removeAttribute('data-turn-hover');
+  if (tail?.matches('.msgr-row, .msgr-mine')) tail.setAttribute('data-turn-hover', '');
+};
 const dayKey = (iso) => new Date(iso).toDateString();
 /** 서버 거절 원문 → 사람 문구(검수 M-5: RLS·check 제약 원문이 그대로 뜨던 자리들의 공통 매핑). 모르는 오류는 원문 유지(정직). */
 const friendlyErr = (msg, t) => /msgr_session_refreshing/.test(msg) ? t('err.sessionRefreshing') : /row-level security/.test(msg) ? t('err.denied') : /_check\b|violates check constraint/.test(msg) ? t('err.invalid') : /msgr_seat_limit/.test(msg) ? t('seat.limit') : /msgr_approver_not_member/.test(msg) ? t('set.policy.approverNotMember') : /msgr_org_locked|read-only/.test(msg) ? t('org.locked.short') : /msgr_room_limit/.test(msg) ? t('room.limit') : msg; // 무료 인원 한도(개인 공간 2026-09-30)
@@ -5553,7 +5566,7 @@ function Channel({ onCrewFailed = null, onScreen = true, namePrompt = null, onOu
     </div>
     <div className="msgr-thread" ref={setFeed}>
       <PullIndicator phase={pullThread.phase} pulse={pullThread.pulse} t={t} />
-      <div className="msgr-spine">
+      <div className="msgr-spine" onPointerOver={markTurnHover} onPointerLeave={markTurnHover}>
         {msgs === null && <div className="msgr-row ghost"><span className="msgr-av" /><div className="msgr-skel"><i /><i /><i /></div></div>}
         {tab === 'all' && msgs !== null && !hasMore && startCard}
         {msgs !== null && roomTabEmptyKey({ tab, total: all.length, shown: shown.length }) && <div className="msgr-row ghost"><span className="msgr-av" /><div className="msgr-sys">{t(roomTabEmptyKey({ tab, total: all.length, shown: shown.length }))}</div></div>}{/* 멘션·결재·에이전트 탭이 비면 안내(점검 A·B #6) */}
