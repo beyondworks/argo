@@ -1,16 +1,8 @@
-// 모듈 크기 규칙(유건 10/1 확정, 10/1 저녁 자유 격자) — 가장자리를 끌어 폭(12열 격자의 열 단위)과 높이(8px 단위)를 바꾼다. 늘 그 모듈만 바뀐다.
-// 끌기 화면 코드(ui/module-resize.js)와 ⋯ '크기 되돌리기'가 같이 쓰는 순수 함수. 첫 화면 묶음에 넣지 않는다(쓸 때 불러온다).
+// 모듈 크기 규칙 — 높이는 아래 가장자리를 끌어 8px 단위로(9차: 위·왼쪽·오른쪽 손잡이 없음, 폭은 열 경계선). 옛 앱용 열 수(span·size·baseSize) 쓰기.
+// 끌기 화면 코드(ui/module-resize.js)·저장(core/block-move.js)·⋯ '크기 되돌리기'가 같이 쓰는 순수 함수. 첫 화면 묶음에 넣지 않는다(쓸 때 불러온다).
 import { SPAN, spanOf, sizeForSpan } from './layout.js';
 
 export const MIN_H = 120, MAX_H = 1200, STEP_H = 8;
-
-/** 폭 끌기 — 그 모듈만(옆 모듈과 경계를 같이 끌지 않는다). side 'r'은 오른쪽 끝, 'l'은 왼쪽 끝이 d열 움직인다.
- *  열 범위(ra)와 격자(0~12열) 안에서 멈춘다. 왼쪽 끝을 끌면 시작 열도 같이 움직인다 → { x, w } */
-export function resizeX({ x, w, d, side, ra }) {
-  if (side === 'r') return { x, w: Math.max(ra[0], Math.min(ra[1], 12 - x, w + d)) };
-  const next = Math.max(ra[0], Math.min(ra[1], x + w, w - d));
-  return { x: x + w - next, w: next };
-}
 
 /** 높이 눈금: 8px 단위, 최소(기본 120)~1200 */
 export const snapH = (px, min = MIN_H) => Math.min(MAX_H, Math.max(min, Math.round(px / STEP_H) * STEP_H));

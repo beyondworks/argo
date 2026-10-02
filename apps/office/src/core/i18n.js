@@ -70,7 +70,7 @@ const DICT = {
   'nav.collapse': ['사이드바 접기', 'Collapse sidebar'], 'nav.open': ['메뉴 열기', 'Open menu'],
   'width.full': ['전체 너비로 보기', 'Full width'], 'width.center': ['가운데로 보기', 'Centered width'],
   'save.saved': ['저장됨', 'Saved'], 'save.saving': ['저장 중…', 'Saving…'], 'save.unsaved': ['저장 안 됨', 'Not saved'], 'save.offline': ['오프라인 — 연결되면 저장', 'Offline — saves when back online'],
-  'home.title': ['오늘', 'Today'], 'home.addModule': ['모듈 추가', 'Add module'], 'home.noHidden': ['추가할 모듈이 없습니다', 'All modules are on the board'], 'home.addCopy': ['{name} 하나 더', 'Another {name}'],
+  'home.title': ['오늘', 'Today'], 'home.addModule': ['모듈 추가', 'Add module'], 'home.noHidden': ['추가할 모듈이 없습니다', 'All modules are on the board'], 'home.addCopy': ['{name} 하나 더', 'Another {name}'], 'mod.failed': ['이 모듈을 표시하지 못했습니다', "This module couldn't be shown"],
   'home.fit': ['모듈 맞춤', 'Fit modules'],
   'home.presets': ['저장본', 'Presets'],
   'mod.stats': ['현황', 'Overview'], 'stat.pick': ['이 카드에 보일 지표', 'Show on this card'], 'stat.add': ['카드 추가', 'Add card'], 'stat.remove': ['카드 빼기', 'Remove card'],
@@ -85,7 +85,7 @@ const DICT = {
   'mod.approvals': ['결재 대기', 'Waiting for approval'], 'mod.work': ['에이전트 작업', 'Agent work'], 'mod.mail': ['안 읽은 메일', 'Unread mail'],
   'mod.todos': ['할 일', 'To-dos'], 'mod.calendar': ['캘린더', 'Calendar'], 'mod.pages': ['최근 페이지', 'Recent pages'], 'mod.outputs': ['최근 산출물', 'Recent deliverables'],
   'mod.journal': ['에이전트 일지', 'Agent journal'], 'mod.decisions': ['결정 기록', 'Decisions'],
-  'mod.size.reset': ['크기 되돌리기', 'Reset size'], 'mod.resize.w': ['폭 조절 — 끌거나 ←/→', 'Resize width — drag or ←/→'], 'mod.resize.h': ['높이 조절 — 끌거나 ↑/↓', 'Resize height — drag or ↑/↓'],
+  'mod.size.reset': ['높이 되돌리기', 'Reset height'], 'mod.resize.w': ['열 폭 조절 — 끌거나 ←/→, 두 번 누르면 똑같이', 'Resize columns — drag or ←/→, double-click to equalize'], 'mod.resize.h': ['높이 조절 — 끌거나 ↑/↓', 'Resize height — drag or ↑/↓'],
   'mod.hide': ['숨기기', 'Hide'], 'mod.empty': ['비어 있습니다', 'Nothing here'], 'mod.drag': ['끌어서 옮기기', 'Drag to move'],
   'status.running': ['진행 중', 'Running'], 'status.blocked': ['멈춤', 'Blocked'], 'status.approved': ['승인', 'Approved'], 'status.rejected': ['거절', 'Rejected'],
   'risk.high': ['꼭 확인', 'Review closely'], // 위험도 문구(유건 9/30 #7) — 결재가 보이는 모든 곳이 이 셋만 쓴다
