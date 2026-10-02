@@ -1,7 +1,7 @@
 // 견적서·계약서 작성 — 왼쪽 입력, 오른쪽 실제 서식 미리보기(인트라넷은 만들고 나서야 PDF로 볼 수 있었다).
 // 입력 칸은 인트라넷 app/quote-contract/page.tsx와 같고, 서식에는 있었지만 화면에 없던 칸(작성일·유효기간·옵션 표·착수 기준·비고·부제)도 연다.
 // 'PDF 만들기'는 브라우저 안에서 PDF를 만들어(pdf/html-to-pdf.js) 보관하고, 거래·문서함에 잇는다.
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { t } from '../core/i18n.js';
 import { showToast } from '../ui/Overlay.jsx';
 import { Icon } from '../ui/Icon.jsx';
@@ -12,7 +12,10 @@ import { sha256Hex } from './esign-model.js';
 import { backend } from './backend.js';
 import { fileToDocStore } from './doc-store-bridge.js';
 import { DOC } from './doc-text.js';
+import { navigate } from '../core/router.jsx';
+import { baseOf } from '../core/commands.js';
 
+const DocZoom = lazy(() => import('./DocZoom.jsx'));
 const lines = (v) => (Array.isArray(v) ? v.join('\n') : v ?? '');
 
 function Field({ label, hint, wide, children }) {
@@ -62,7 +65,7 @@ function OptionEditor({ option, setOption }) {
 }
 
 /** 미리보기 — 794px(210mm) 폭 서식을 칸 폭에 맞춰 줄인다. 입력이 멈추고 0.25초 뒤에 다시 그린다 */
-function Preview({ html, pages }) {
+function Preview({ html, pages, onOpen }) {
   const box = useRef(null);
   const [scale, setScale] = useState(0.5);
   const [shown, setShown] = useState(html);
@@ -73,7 +76,8 @@ function Preview({ html, pages }) {
     ro.observe(el); return () => ro.disconnect();
   }, []);
   const h = pages * 1123;
-  return <div className="docs-preview" ref={box} style={{ height: h * scale }}>
+  const open = (e) => { if (e.type === 'click' || e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } };
+  return <div className="docs-preview zoomable" ref={box} style={{ height: h * scale }} role="button" tabIndex={0} aria-label={t('docs.zoom.hint')} title={t('docs.zoom.hint')} onClick={open} onKeyDown={open}>
     <iframe title={t('docs.preview')} srcDoc={shown} sandbox="allow-same-origin" style={{ width: 794, height: h, transform: `scale(${scale})` }} tabIndex={-1} />
   </div>;
 }
@@ -87,6 +91,7 @@ export function DocEditor({ space, kind, initial, business, onDone, onCancel }) 
   const [ocr, setOcr] = useState(null);
   const [sealSupplier, setSealSupplier] = useState(false);
   const [asDeal, setAsDeal] = useState(kind === 'quote' && !initial.orderId);
+  const [zoom, setZoom] = useState(false);
   const fileRef = useRef(null);
   const data = business?.data;
   const canDeal = !!data?.can_write;
@@ -181,6 +186,17 @@ export function DocEditor({ space, kind, initial, business, onDone, onCancel }) 
     } finally { setBusy(null); }
   };
 
+  /** 크게 보기의 'PDF 받기' — 'PDF 만들기'와 같은 서식·같은 변환으로 만들어 받기만 한다(보관·거래 등록은 하지 않는다) */
+  const downloadPdf = async () => {
+    try {
+      const { htmlToPdf } = await import('./pdf/html-to-pdf.js');
+      const { bytes } = await htmlToPdf(renderDocHtml(kind, input, company, { sealSupplier }));
+      const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+      Object.assign(document.createElement('a'), { href: url, download: docFilename(doc) }).click();
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    } catch (err) { console.warn('[office docs] zoom pdf', err); showToast(t('docs.err.make')); }
+  };
+
   const ocrText = ocr?.step === 'ocr' ? t('docs.ocr.reading') : ocr?.step && !ocr.done ? t('docs.ocr.loading') : null;
   return <form className="docs-editor" onSubmit={submit}>
     <div className="docs-form">
@@ -238,7 +254,9 @@ export function DocEditor({ space, kind, initial, business, onDone, onCancel }) 
         <Field label={t('docs.f.method')}><input className="input" value={doc.method} onChange={(e) => set('method', e.target.value)} placeholder={t('docs.ph.method')} maxLength={200} /></Field>
         <Field label={t('docs.f.deliverable')}><input className="input" value={doc.deliverable} onChange={(e) => set('deliverable', e.target.value)} placeholder={t('docs.ph.deliverable')} maxLength={300} /></Field>
         <Field label={t('docs.f.note')} wide><input className="input" value={doc.note} onChange={(e) => set('note', e.target.value)} placeholder={t('docs.ph.note')} maxLength={1000} /></Field>
-        {company?.seal && <label className="docs-check wide"><input type="checkbox" checked={sealSupplier} onChange={(e) => setSealSupplier(e.target.checked)} /><span>{t('docs.f.seal')}<span className="dim small"> · {t('docs.f.sealHint')}</span></span></label>}
+        {/* 도장은 회사가 직접 올린 PNG만(유건 10/2 13차) — 있으면 켠 채 시작, 없으면 칸 대신 회사 정보로 가는 안내 */}
+        {company?.seal ? <label className="docs-check wide"><input type="checkbox" checked={sealSupplier} onChange={(e) => setSealSupplier(e.target.checked)} /><span>{t('docs.f.seal')}<span className="dim small"> · {t('docs.f.sealHint')}</span></span></label>
+          : company && <p className="docs-seal-note wide dim small"><Icon name="info" size={13} />{t('docs.f.sealNone')}<button type="button" className="link-btn small" onClick={() => navigate(`${baseOf(space)}/company`)}>{t('docs.f.sealGo')}</button></p>}
       </div>}
 
       {kind === 'quote' && !doc.orderId && canDeal && <label className="docs-check"><input type="checkbox" checked={asDeal} onChange={(e) => setAsDeal(e.target.checked)} /><span>{t('docs.f.asDeal')}<span className="dim small"> · {t('docs.f.asDealHint')}</span></span></label>}
@@ -251,7 +269,8 @@ export function DocEditor({ space, kind, initial, business, onDone, onCancel }) 
     </div>
     <aside className="docs-preview-col" aria-label={t('docs.preview')}>
       <div className="docs-preview-head"><span className="label">{t('docs.preview')}</span><span className="dim small">{t('docs.pages', { n: pages })}</span></div>
-      {company ? <Preview html={html} pages={pages} /> : <div className="docs-preview boot" aria-busy="true" />}
+      {company ? <Preview html={html} pages={pages} onOpen={() => setZoom(true)} /> : <div className="docs-preview boot" aria-busy="true" />}
     </aside>
+    {zoom && company && <Suspense fallback={null}><DocZoom title={docTitle(doc)} html={html} pages={pages} onClose={() => setZoom(false)} onDownload={downloadPdf} /></Suspense>}
   </form>;
 }

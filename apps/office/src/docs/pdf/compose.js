@@ -30,6 +30,7 @@ export async function composeSignedPdf({ origPdf, signers, docHash, title, compl
         const size = Math.max(6, (p.sizeR || 0.02) * ph), lineH = size * 1.32;
         const x = p.xr * pw;
         let y = ph - p.yr * ph - size; // 좌상단 기준 → 첫 줄 글자 바닥선
+        if (p.cover) page.drawRectangle({ x: x - 1, y: y - size * 0.35, width: Math.max(p.wr * pw, font.widthOfTextAtSize(text, size)) + 2, height: size * 1.4, color: rgb(1, 1, 1) }); // 인쇄된 빈칸 안내를 덮는다(서식 바탕은 흰색)
         for (const line of text.split('\n')) { page.drawText(line, { x, y, size, font, color: ink0 }); y -= lineH; }
         continue;
       }

@@ -86,3 +86,9 @@ export function keyMenu(item, { manager = false } = {}) {
     ...(manager ? [{ id: 'change', edit: true }] : []),
   ];
 }
+
+/** 도장 파일 검사(유건 10/2 13차 "도장은 직접 올린 PNG로만") — 파일 종류와 첫 8바이트(PNG 서명) 둘 다 PNG여야 한다. 확장자만 바꾼 JPG·SVG는 거절.
+ *  file: { type, head } (head = 첫 바이트들) → true/false */
+const PNG_SIG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+export const isPngHead = (head) => !!head && PNG_SIG.every((b, i) => head[i] === b);
+export const sealFileOk = (file) => file?.type === 'image/png' && isPngHead(file.head);

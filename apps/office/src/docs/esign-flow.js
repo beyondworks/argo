@@ -4,7 +4,11 @@ import { getMode } from '../core/session.js';
 import { getState } from '../core/store.js';
 import { backend } from './backend.js';
 import { signRequestMail, signCompletedMail } from './esign-mail.js';
-import { signedFilename, TOKEN_DAYS } from './esign-model.js';
+import { signedFilename, TOKEN_DAYS, normEmail } from './esign-model.js';
+import { getLang } from '../core/i18n.js';
+
+/** 받는 사람이 요청을 보낸 우리 회사인가 — 그러면 내부용 요청 문구 */
+const internalOf = (email, company) => !!company?.email && normEmail(email) === normEmail(company.email);
 
 /** 보낼 수 있는 메일 계정(연결 상태 'ok') */
 export const mailAccounts = () => (getState().mailAccounts ?? []).filter((a) => a.status === 'ok');
@@ -25,7 +29,7 @@ export async function requestSignatures({ space, esign, signers, fields, company
   const be = await backend();
   const { esign: next, links } = await be.sendEsign(space, esign.id, { signers, fields, account });
   for (const l of links) {
-    const mail = signRequestMail({ name: l.name, title: next.title, link: l.link, company: company?.name, days: TOKEN_DAYS });
+    const mail = signRequestMail({ name: l.name, title: next.title, link: l.link, company: company?.name, days: TOKEN_DAYS, internal: internalOf(l.email, company), lang: getLang() });
     try { l.delivery = await deliver(space, esign.id, account, { ...mail, to: l.email }, { link: l.link, kind: 'request' }); }
     catch (e) { l.delivery = 'failed'; l.error = e?.code ?? 'mail'; }
   }
@@ -36,7 +40,7 @@ export async function requestSignatures({ space, esign, signers, fields, company
 export async function resendLink({ space, esign, signer, company, account }) {
   const be = await backend();
   const l = await be.resend(space, esign.id, signer.id);
-  const mail = signRequestMail({ name: l.name, title: esign.title, link: l.link, company: company?.name, days: TOKEN_DAYS });
+  const mail = signRequestMail({ name: l.name, title: esign.title, link: l.link, company: company?.name, days: TOKEN_DAYS, internal: internalOf(l.email, company), lang: getLang() });
   try { l.delivery = await deliver(space, esign.id, account, { ...mail, to: l.email }, { link: l.link, kind: 'request' }); }
   catch (e) { l.delivery = 'failed'; l.error = e?.code ?? 'mail'; }
   return l;

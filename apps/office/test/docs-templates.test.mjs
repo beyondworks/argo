@@ -84,8 +84,11 @@ test('계약서 조항 선택: 분할/완납 지급, 착수 기준 자동, 용�
   assert.match(contract({ note: '별첨 기준' }), /· 별첨 기준<br>/);
 });
 
-test('회사 도장: 고르면 을 대표자 칸에 도장 그림, 도장이 없거나 안 고르면 없음', () => {
-  assert.match(contract({}, { sealSupplier: true }), /<img class="seal" src="data:image\/svg\+xml/);
+test('회사 도장: 올린 PNG가 있고 고르면 을 대표자 칸에 그 그림, 도장이 없거나 안 고르면 없음 — 예시 회사도 기본은 도장 없음(유건 10/2 13차)', () => {
+  assert.equal(co.seal, '', '코드가 그린 예시 도장은 없다');
+  assert.doesNotMatch(contract({}, { sealSupplier: true }), /class="seal"/, '도장이 없으면 찍을 것도 없다');
+  const png = 'data:image/png;base64,iVBORw0KGgo=';
+  assert.match(renderContractHtml(contractInput({ ...emptyDoc('contract'), customer: 'x', items: items(1) }), { ...co, seal: png }, { sealSupplier: true }), /<img class="seal" src="data:image\/png;base64,iVBORw0KGgo="/);
   assert.doesNotMatch(contract(), /class="seal"/);
   assert.doesNotMatch(renderContractHtml(contractInput({ ...emptyDoc('contract'), customer: 'x', items: items(1) }), { ...co, seal: '' }, { sealSupplier: true }), /class="seal"/);
 });

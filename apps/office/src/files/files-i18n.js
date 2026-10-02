@@ -39,7 +39,7 @@ export const FILES_DICT = {
   'files.toDrive': ['드라이브로 보내기', 'Send to Drive'], 'files.sentDrive': ['드라이브에 올렸습니다', 'Saved to Drive'], 'files.openDrive': ['드라이브에서 열기', 'Open in Drive'],
   'files.saved': ['저장했습니다', 'Saved'],
   // 미리보기
-  'files.preview': ['미리보기', 'Preview'], 'files.noPreview': ['이 형식은 미리 볼 수 없습니다. 받아서 여세요.', 'This type can’t be previewed. Download to open.'],
+  'files.preview': ['미리보기', 'Preview'], 'files.zoom': ['크게 보기', 'Open large'], 'files.noPreview': ['이 형식은 미리 볼 수 없습니다. 받아서 여세요.', 'This type can’t be previewed. Download to open.'],
   'files.textHead': ['읽은 글자 (원문 양식)', 'Extracted text (original layout)'], 'files.noText': ['읽은 글자가 없습니다.', 'No extracted text.'],
   'files.field.title': ['이름', 'Name'], 'files.field.category': ['분류', 'Category'], 'files.field.customer': ['거래처', 'Customer'], 'files.field.tags': ['태그(쉼표로 나눔)', 'Tags (comma separated)'],
   'files.field.folder': ['폴더', 'Folder'], 'files.addedBy': ['{date} 올림', 'Added {date}'], 'files.linkNote': ['구글 드라이브 파일을 가리키는 링크입니다. 내용은 드라이브에 있습니다.', 'A link to a Google Drive file. The content stays in Drive.'],

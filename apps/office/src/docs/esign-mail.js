@@ -8,7 +8,22 @@ const wrap = (inner) => `<div style="font-family:'Pretendard',-apple-system,sans
 const kicker = (t) => `<p style="font-size:11px;font-weight:700;letter-spacing:2px;color:#6b6b6b;text-transform:uppercase">e-sign · ${t}</p>`;
 
 /** 서명 요청 메일 — { subject, text, html } (인트라넷 mail.ts:57-65, 제목 "[서명 요청] 제목") */
-export function signRequestMail({ name, title, link, company = '', days = 30 }) {
+export function signRequestMail({ name, title, link, company = '', days = 30, internal = false, lang = 'ko' }) {
+  // 받는 사람이 요청을 보낸 우리 회사면 "(주)비욘드웍스님, (주)비욘드웍스에서…"처럼 겹치지 않게 내부용 문구(유건 10/2 13차). 내부 메일은 보낸 사람 화면 언어로
+  if (internal) {
+    const en = lang === 'en';
+    const head = en ? `Our company's turn to sign — please sign "${title}".` : `우리 회사 서명 차례입니다 — "${title}" 계약서에 서명해 주세요.`;
+    const body = en ? `Open the link below and sign online. You will confirm with this email address.\n\n${link}\n\nThe link works for ${days} days.` : `아래 링크를 열어 온라인으로 서명해 주세요. 이 이메일 주소로 본인 확인을 합니다.\n\n${link}\n\n링크는 ${days}일 동안 쓸 수 있습니다.`;
+    return {
+      subject: en ? `[Signature request] ${title}` : `[서명 요청] ${title}`,
+      text: `${head}\n${body}`,
+      html: wrap(`${kicker(en ? 'our turn' : '우리 회사 서명')}
+    <h2 style="color:#1a1a1a;font-size:20px;margin:6px 0 14px">${esc(title)}</h2>
+    <p style="color:#5a5a5a;line-height:1.7;font-size:14px">${esc(head)}</p>
+    <p><a href="${esc(link)}" style="display:inline-block;margin:16px 0;background:#1a1a1a;color:#fff;padding:12px 22px;border-radius:9px;text-decoration:none;font-weight:700">${en ? 'Sign now' : '서명하러 가기'}</a></p>
+    <p style="color:#999;font-size:12px;word-break:break-all">${en ? 'Link' : '링크'}: ${esc(link)}</p>`),
+    };
+  }
   const from = company ? `${company}에서 ` : '';
   return {
     subject: `[서명 요청] ${title}`,

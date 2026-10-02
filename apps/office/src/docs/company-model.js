@@ -4,20 +4,19 @@
  *  manager 담당자 · phone 연락처 · email 이메일 · bank { name 은행, account 계좌번호, holder 예금주 } · logo 로고(그림 주소, 흰색 로고 권장) · seal 도장(그림 주소) */
 export const FIELDS = ['name', 'legalName', 'bizNo', 'ceo', 'address', 'openDate', 'bizType', 'bizItem', 'manager', 'phone', 'email', 'logo', 'seal'];
 
-// 예시 회사(전부 가상 — 번호·주소·연락처는 실제가 아니다)
-const SEAL = (text) => `data:image/svg+xml;utf8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 120 120"><rect x="6" y="6" width="108" height="108" rx="10" fill="none" stroke="#c8102e" stroke-width="7"/><text x="60" y="56" font-family="serif" font-size="30" font-weight="700" fill="#c8102e" text-anchor="middle">${text.slice(0, 2)}</text><text x="60" y="92" font-family="serif" font-size="30" font-weight="700" fill="#c8102e" text-anchor="middle">${text.slice(2, 4)}</text></svg>`)}`;
+// 예시 회사(전부 가상 — 번호·주소·연락처는 실제가 아니다). 도장은 비워 둔다 — 회사가 직접 올린 PNG만 쓴다(유건 10/2 13차, 코드가 그린 예시 도장 금지)
 export const SAMPLE_COMPANY = {
   beyondworks: {
     name: '비욘드웍스', legalName: '주식회사 비욘드웍스', bizNo: '000-00-00001', ceo: '김유건',
     address: '서울특별시 성동구 예시로 00, 0층 (예시동)', openDate: '2024-03-02 / 2024-03-04',
     bizType: '정보통신업, 전문·과학 및 기술서비스업', bizItem: '응용 소프트웨어 개발 및 공급업, 경영컨설팅업',
     manager: '김유건', phone: '02-000-0000', email: 'yoogeon@beyondworks.example',
-    bank: { name: '예시은행', account: '000-000000-00-000', holder: '주식회사 비욘드웍스' }, logo: '', seal: SEAL('비욘드인'),
+    bank: { name: '예시은행', account: '000-000000-00-000', holder: '주식회사 비욘드웍스' }, logo: '', seal: '',
   },
   'lean-studio': {
     name: '린 스튜디오', legalName: '린 스튜디오', bizNo: '000-00-00002', ceo: '최민지', address: '경기도 예시시 예시로 00',
     openDate: '2025-01-02 / 2025-01-03', bizType: '정보통신업', bizItem: '영상 제작업', manager: '최민지', phone: '031-000-0000', email: 'minji@lean-studio.example',
-    bank: { name: '예시은행', account: '000-0000-0000', holder: '린 스튜디오' }, logo: '', seal: SEAL('린스튜디'),
+    bank: { name: '예시은행', account: '000-0000-0000', holder: '린 스튜디오' }, logo: '', seal: '',
   },
   me: {
     name: '김유건', legalName: '김유건(개인)', bizNo: '', ceo: '김유건', address: '', openDate: '', bizType: '', bizItem: '',

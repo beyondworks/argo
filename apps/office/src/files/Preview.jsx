@@ -1,6 +1,6 @@
 // 문서 미리보기(인트라넷 documents/page.tsx:551-648) — 오른쪽 패널(폭 조절·전체 화면). 위: 그림·PDF·글 미리보기, 아래: 읽은 글자(원문 양식, 전문),
 // 옆: 이름·분류·거래처·태그·폴더 고치기(인트라넷은 미리보기에서 못 고쳤다). 전체 화면에서는 미리보기와 글자가 나란히.
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { t, useLang } from '../core/i18n.js';
 import { navigate } from '../core/router.jsx';
 import { configured } from '../core/supabase.js';
@@ -13,24 +13,26 @@ import { getFile, fileBlob, updateFile, trashFiles, restoreFiles, downloadFile, 
 import { FIcon } from './FIcon.jsx';
 import { catLabel, day, kindKey, ocrBadge, withQuery } from './FilesPage.jsx';
 
+const DocZoom = lazy(() => import('../docs/DocZoom.jsx')); // PDF 크게 보기 — 견적·계약 미리보기와 같은 창
+
 export default function Preview({ space, id, customers, folders, onClose }) {
   useLang();
   const list = useFiles(space, {}); // 목록이 바뀌면(글자 읽기 끝·다른 곳에서 고침) 다시 읽는다
   const [f, setF] = useState(undefined), [url, setUrl] = useState(null), [text, setText] = useState(null), [err, setErr] = useState(null);
-  const [form, setForm] = useState(null), [reading, setReading] = useState(false);
+  const [form, setForm] = useState(null), [reading, setReading] = useState(false), [pdf, setPdf] = useState(null), [zoom, setZoom] = useState(false);
   const stamp = list.files?.find((x) => x.id === id)?.updated_at ?? list.at;
   useEffect(() => { let live = true; getFile(space, id).then((x) => { if (!live) return; setF(x); setForm({ title: x.title, tags: (x.tags ?? []).join(', ') }); }).catch(() => live && setF(null)); return () => { live = false; }; }, [space, id, stamp]);
   const kind = f ? kindKey(f) : null, fileId = f?.id;
   useEffect(() => {
     if (!fileId || f.kind !== 'file') return undefined;
     let live = true, made = null;
-    setUrl(null); setText(null); setErr(null);
+    setUrl(null); setText(null); setErr(null); setPdf(null);
     const k = kindOf(f.filename || f.title, f.mime);
     if (k !== 'pdf' && k !== 'image' && !/^text\//.test(f.mime) && !/\.(txt|md|csv|json|log)$/i.test(f.filename)) return undefined;
     fileBlob(space, f).then(async (blob) => {
       if (!live) return;
       if (!blob) { setErr('files.previewFail'); return; }
-      if (k === 'pdf' || k === 'image') { made = URL.createObjectURL(k === 'pdf' ? new Blob([blob], { type: 'application/pdf' }) : blob); setUrl(made); }
+      if (k === 'pdf' || k === 'image') { made = URL.createObjectURL(k === 'pdf' ? new Blob([blob], { type: 'application/pdf' }) : blob); setUrl(made); if (k === 'pdf') setPdf(new Uint8Array(await blob.arrayBuffer())); }
       else setText((await blob.text()).slice(0, 200_000));
     }).catch(() => live && setErr('files.previewFail'));
     return () => { live = false; if (made) URL.revokeObjectURL(made); };
@@ -50,7 +52,7 @@ export default function Preview({ space, id, customers, folders, onClose }) {
       : <a className="btn primary" href={f.link_url} target="_blank" rel="noreferrer noopener"><FIcon name="link" />{t('files.openDrive')}</a>}
   </>;
 
-  return <Sheet open onClose={onClose} title={f?.title ?? t('files.preview')} footer={footer}>
+  return <><Sheet open onClose={onClose} title={f?.title ?? t('files.preview')} footer={footer}>
     {f === undefined ? <div className="skeleton-lines"><span /><span /><span /></div> : !f ? <p className="dim">{t('files.err.missing')}</p> : <div className="files-preview">
       <div className="files-meta">
         <span className="badge">{t(`files.kind.${kind}`)}</span>{ocrBadge(f)}
@@ -58,6 +60,7 @@ export default function Preview({ space, id, customers, folders, onClose }) {
         {f.source !== 'upload' && <span className="badge">{t(`files.src.${f.source}`)}</span>}
         <span className="dim small">{t('files.addedBy', { date: day(f.created_at) })}</span>
         {(f.tags ?? []).map((x) => <span key={x} className="badge">{x}</span>)}
+        {pdf && <button type="button" className="btn sm files-zoom" onClick={() => setZoom(true)}><Icon name="expand" size={13} />{t('files.zoom')}</button>}
       </div>
       <div className="files-preview-grid">
         <div className="files-view">
@@ -89,5 +92,6 @@ export default function Preview({ space, id, customers, folders, onClose }) {
         {!configured && <p className="dim small">{t('files.sampleNote')}</p>}
       </form>}
     </div>}
-  </Sheet>;
+  </Sheet>
+    {zoom && pdf && <Suspense fallback={null}><DocZoom title={f.title} pdf={pdf} onClose={() => setZoom(false)} onDownload={() => downloadFile(space, f).catch(() => showToast(t('files.previewFail')))} /></Suspense>}</>;
 }

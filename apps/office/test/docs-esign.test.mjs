@@ -79,7 +79,9 @@ test('자동 서명란(인트라넷 autofields.ts): "(서명 또는 인)" 왼쪽
   assert.equal(sig.length, 2, '본문 문장 속 "서명 또는 날인"은 서명란이 아니다');
   assert.deepEqual(sig.map((x) => x.signer_ord).sort(), [0, 1]);
   const date = f.find((x) => x.kind === 'date');
-  assert.ok(date.xr >= 0.3, '인쇄된 "2026년 월 일" 뒤에 놓인다(인트라넷은 겹쳤다)');
+  // 유건 10/2 13차: 인쇄된 "2026년   월   일" 자리를 덮어 날짜로 채운다(옆에 큰 날짜를 따로 찍지 않는다) — 빈칸 글자 전체를 덮고, 높이는 글자 높이 × 1.4
+  assert.ok(date.xr <= 0.2 && date.xr + date.wr >= 0.3, '빈칸 글자 자리를 덮는다');
+  assert.ok(Math.abs(date.hr - 0.012 * 1.4) < 1e-9, '칸 높이 = 서식 글자 높이 × 1.4');
   assert.equal(date.signer_ord, 0, '날짜 칸 서명자는 라벨 자리(왼쪽) 기준');
   assert.ok(f.some((x) => x.kind === 'text' && x.page === 0), '"(계약 체결 시 기입)"은 기입란');
   assert.ok(f.every((x) => x.xr >= 0 && x.xr <= 1 && x.wr >= 0.02));

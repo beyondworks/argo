@@ -28,6 +28,7 @@ export function EsignSetup({ space, esignId, company, onBack, onSent }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [sent, setSent] = useState(null);          // 발송 결과(링크·메일 여부)
+  const [sealedB, setSealedB] = useState(false);   // 원본 계약서에 을 도장을 찍었는가(을이 서명자에서 빠진 이유를 알린다)
   const [account, setAccount] = useState(() => mailAccounts()[0]?.id ?? '');
   const [, force] = useState(0);
   const holder = useRef(null); // pdfjs가 쪽을 그리는 자리(React 자식 없음)
@@ -53,6 +54,7 @@ export function EsignSetup({ space, esignId, company, onBack, onSent }) {
         if (e.signers.length) setSigners(e.signers.map((s) => ({ name: s.name, email: s.email })));
         setFields((e.fields ?? []).map((f) => ({ ...f, id: f.id || uid() })));
         setBytes(await be.esignPdf(space, e, 'orig'));
+        if (e.doc_id) be.getDoc(space, e.doc_id).then((d) => { if (live) setSealedB(!!d?.input?.sealSupplier); }, () => {});
       } catch { setErr(t('esign.err.load')); }
     })();
     return () => { live = false; };
@@ -173,6 +175,7 @@ export function EsignSetup({ space, esignId, company, onBack, onSent }) {
           </div>
           {signers.length > 1 && <button type="button" className="icon-btn" aria-label={t('esign.removeSigner')} onClick={() => { setSigners((p) => p.filter((_, j) => j !== i)); setFields((f) => f.filter((x) => x.signer_ord !== i).map((x) => (x.signer_ord > i ? { ...x, signer_ord: x.signer_ord - 1 } : x))); if (active >= i && active > 0) setActive(active - 1); }}><Icon name="trash" size={13} /></button>}
         </div>)}
+        {sealedB && !signers.some((s) => company?.email && s.email === company.email) && <p className="dim small esign-sealed" role="note"><Icon name="stamp" size={13} />{t('esign.sealedB')}</p>}
         {signers.length < 5 && <button type="button" className="btn sm ghost" onClick={() => setSigners((s) => [...s, { name: '', email: '' }])}><Icon name="plus" size={13} />{t('esign.addSigner')}</button>}
         {company?.email && !signers.some((s) => s.email === company.email) && <button type="button" className="btn sm ghost" onClick={() => setSigners((s) => { const i = s.findIndex((x) => !x.name && !x.email); const me = { name: company.name, email: company.email }; return i >= 0 ? s.map((x, j) => (j === i ? me : x)) : [...s, me]; })}><Icon name="person" size={13} />{t('esign.addCompany', { name: company.name })}</button>}
       </div>

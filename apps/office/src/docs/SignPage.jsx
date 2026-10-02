@@ -8,9 +8,8 @@ import { t, useLang } from '../core/i18n.js';
 import { Icon } from '../ui/Icon.jsx';
 import { backend } from './backend.js';
 import { detectFields } from './detect.js';
-import { signedFilename } from './esign-model.js';
+import { signedFilename, koDate } from './esign-model.js';
 
-const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 const uid = () => Math.random().toString(36).slice(2, 9);
 const ERR = { invalid: 'sign.err.invalid', email: 'sign.err.email', completed: 'sign.err.completed', cancelled: 'sign.err.cancelled', already: 'sign.err.already', empty: 'sign.err.empty', tampered: 'sign.err.tampered' };
 const errKey = (e) => ERR[e?.code] ?? 'sign.err.request';
@@ -60,7 +59,7 @@ export default function SignPage({ token }) {
       const d = await be.publicOpen(token, email.trim());
       setInfo(d);
       if (d.fields?.length) {
-        setSlots(d.fields.map((f) => ({ id: f.id || uid(), page: f.page, kind: f.kind, xr: f.xr, yr: f.yr, wr: f.wr, hr: f.hr, ...(f.kind === 'signature' ? {} : { text: f.kind === 'date' ? today() : '', sizeR: Math.max(0.014, Math.min(0.03, (f.hr || 0.03) * 0.6)) }) })));
+        setSlots(d.fields.map((f) => ({ id: f.id || uid(), page: f.page, kind: f.kind, xr: f.xr, yr: f.yr, wr: f.wr, hr: f.hr, ...(f.kind === 'signature' ? {} : f.kind === 'date' ? { text: koDate(), sizeR: (f.hr || 0.02) / 1.4, cover: true } : { text: '', sizeR: Math.max(0.014, Math.min(0.03, (f.hr || 0.03) * 0.6)) }) }))); // 날짜 = 서식 빈칸 자리를 같은 글자 크기로 채운다(유건 10/2 13차)
         setActiveIdx(0);
       }
       setPhase(d.alreadySigned ? 'alreadySigned' : 'signing');
@@ -151,7 +150,7 @@ export default function SignPage({ token }) {
   }
   async function submit() {
     const items = slots.filter((s) => (s.kind === 'signature' ? s.imgDataUrl : (s.text || '').trim()))
-      .map((s) => ({ page: s.page, kind: s.kind === 'signature' ? 'signature' : 'text', xr: s.xr, yr: s.yr, wr: s.wr, imgDataUrl: s.imgDataUrl, text: s.text, sizeR: s.sizeR }));
+      .map((s) => ({ page: s.page, kind: s.kind === 'signature' ? 'signature' : 'text', xr: s.xr, yr: s.yr, wr: s.wr, imgDataUrl: s.imgDataUrl, text: s.text, sizeR: s.sizeR, cover: !!s.cover }));
     if (!items.length) { setSignErr(t('sign.err.empty')); return; }
     const emptyRequired = slots.filter((s) => s.kind === 'signature' && !s.imgDataUrl && !s.auto).length;
     if (emptyRequired) { setSignErr(t('sign.err.missingSig', { n: emptyRequired })); return; } // 오피스 추가: 소유자가 놓은 서명란을 비운 채 낼 수 없다
@@ -214,7 +213,7 @@ export default function SignPage({ token }) {
             const width = it.wr * lr.width;
             const height = it.kind === 'signature' ? Math.max(it.hr * lr.height, width * 0.4) : undefined;
             const empty = it.kind === 'signature' ? !it.imgDataUrl : !(it.text || '').trim();
-            return <div key={it.id} className={`sign-slot${idx === activeIdx ? ' active' : ''}${empty ? ' empty' : ''}`} style={{ top: lr.top - hb.top + it.yr * lr.height, left: lr.left - hb.left + it.xr * lr.width, width, height }}>
+            return <div key={it.id} className={`sign-slot${idx === activeIdx ? ' active' : ''}${empty ? ' empty' : ''}${it.cover ? ' cover' : ''}`} style={{ top: lr.top - hb.top + it.yr * lr.height, left: lr.left - hb.left + it.xr * lr.width, width, height }}>
               <div className="body" onPointerDown={(e) => start(e, it, 'move')} onClick={() => { setActiveIdx(idx); if (it.kind === 'signature' && !it.imgDataUrl) { if (sig) update(it.id, { imgDataUrl: sig }); else setModal(true); } }}>
                 {it.kind === 'signature' ? (it.imgDataUrl ? <img src={it.imgDataUrl} alt="" /> : <span className="ph">{t('sign.slotSig')}</span>)
                   : <textarea id={`ta-${it.id}`} value={it.text} rows={1} placeholder={t('sign.slotText')} style={{ fontSize: (it.sizeR || 0.02) * lr.height }}

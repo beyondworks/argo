@@ -9,6 +9,7 @@ export const DOC = {
   contractTitle: (customer) => `${customer} 용역 계약서`,
   dealTitle: (customer) => `${customer} 견적`,
   untitledEsign: '무제 계약',
+  signDate: (y, m, d) => `${y}년 ${m}월 ${d}일`, // 서명본 계약일자(서식 "2026년   월   일" 자리를 채운다)
   startBasis: { split: '착수금 지급일', full: '계약 체결일' },
   fileFallback: '문서',
   party: ['갑', '을', '병', '정', '무'],

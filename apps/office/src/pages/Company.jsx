@@ -3,7 +3,7 @@
 import { useId, useMemo, useState } from 'react';
 import { t, registerDict, useLang } from '../core/i18n.js';
 import { useCompany, companyWrite } from '../core/company.js';
-import { CATEGORIES, COMPANY_KEYS, KEY_CATEGORY, DOC_KEYS, IMAGE_KEYS, isImage, guessKey, groupItems, itemPayload, moveInCategory, keyMenu } from '../core/company-model.js';
+import { CATEGORIES, COMPANY_KEYS, KEY_CATEGORY, DOC_KEYS, IMAGE_KEYS, isImage, guessKey, groupItems, itemPayload, moveInCategory, keyMenu, sealFileOk } from '../core/company-model.js';
 import { navigate } from '../core/router.jsx';
 import { baseOf } from '../core/commands.js';
 import { Modal, showToast } from '../ui/Overlay.jsx';
@@ -20,18 +20,21 @@ registerDict(COMPANY_DICT);
 const fail = (e) => showToast(t(e.message));
 const LABEL_HINTS = COMPANY_KEYS.map(([k]) => k);
 const MAX_IMAGE = 200000;
-/** 도장·로고 그림 → data:image 주소. SVG는 그대로(작으면), 그 밖은 512px 안으로 줄여 PNG(크면 WebP) */
-function readImage(file) {
+/** 도장·로고 그림 → data:image 주소. 로고: SVG는 그대로(작으면), 그 밖은 512px 안으로 줄여 PNG(크면 WebP).
+ *  도장(png: true): PNG만 받고 PNG 그대로 — 투명 배경을 지킨다(WebP로 바꾸지 않는다, 유건 10/2 13차). 작으면 올린 파일 그대로, 크면 512px 안 PNG로 */
+async function readImage(file, { png = false } = {}) {
   const asUrl = (f) => new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(String(r.result)); r.onerror = no; r.readAsDataURL(f); });
+  if (png && !sealFileOk({ type: file.type, head: new Uint8Array(await file.slice(0, 8).arrayBuffer()) })) throw new Error('png');
   if (file.type === 'image/svg+xml' && file.size < MAX_IMAGE * 0.7) return asUrl(file);
   return asUrl(file).then((src) => new Promise((ok, no) => {
     const img = new Image();
     img.onload = () => {
+      if (png && Math.max(img.width, img.height) <= 512 && src.length <= MAX_IMAGE) { ok(src); return; }
       const k = Math.min(1, 512 / Math.max(img.width, img.height)), c = document.createElement('canvas');
       c.width = Math.max(1, Math.round(img.width * k)); c.height = Math.max(1, Math.round(img.height * k));
       c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
       let out = c.toDataURL('image/png');
-      if (out.length > MAX_IMAGE) out = c.toDataURL('image/webp', 0.85);
+      if (out.length > MAX_IMAGE && !png) out = c.toDataURL('image/webp', 0.85);
       if (out.length > MAX_IMAGE) no(new Error('big')); else ok(out);
     };
     img.onerror = no; img.src = src;
@@ -174,10 +177,10 @@ function ItemForm({ edit, setEdit, onSave, onDelete }) {
         <datalist id={listId}>{LABEL_HINTS.map((k) => <option key={k} value={t(`company.key.${k}`)} />)}</datalist></label>
       {IMAGE_KEYS.includes(edit.key) ? <div className="field-block"><span className="label">{t('company.f.value')}</span>
         <div className="co-img-pick">{isImage(edit.value) && <img className="co-img big" src={edit.value} alt={edit.label} />}
-          <label className="btn sm"><Icon name="plus" size={13} />{t('company.f.image')}<input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" hidden
-            onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) readImage(f).then((value) => set({ value })).catch(() => showToast(t('company.f.imageBad'))); }} /></label>
+          <label className="btn sm"><Icon name="plus" size={13} />{t('company.f.image')}<input type="file" accept={edit.key === 'seal' ? 'image/png' : 'image/png,image/jpeg,image/webp,image/svg+xml'} hidden
+            onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) readImage(f, { png: edit.key === 'seal' }).then((value) => set({ value })).catch((err) => showToast(t(err?.message === 'png' ? 'company.f.sealPng' : 'company.f.imageBad'))); }} /></label>
           {edit.value && <button type="button" className="btn ghost sm" onClick={() => set({ value: '' })}>{t('company.f.imageClear')}</button>}</div>
-        <p className="dim small">{t('company.f.imageHint')}</p></div>
+        <p className="dim small">{t(edit.key === 'seal' ? 'company.f.sealHint' : 'company.f.imageHint')}</p></div>
         : <label className="field-block"><span className="label">{t('company.f.value')}</span>
           <input className="input" maxLength={2000} value={edit.value} placeholder={t('company.f.valuePh')} onChange={(e) => set({ value: e.target.value })} /></label>}
       <div className="co-form-row">

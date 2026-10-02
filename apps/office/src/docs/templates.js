@@ -207,6 +207,7 @@ export function renderContractHtml(c, co, { fontCss = '', sealSupplier = false }
   .sign-table th { background: #111; color: #fff; text-align: center; padding: 8px; border: 1px solid #111; }
   .sign-table td { border: 1px solid #ccc; padding: 8px 10px; vertical-align: top; }
   .sign-table .label { width: 20%; background: #f2f2f2; font-weight: 700; }
+  .sign-table td.sign-date { background: #fff; } /* 서명 때 이 빈칸 자리를 흰 바탕으로 덮어 날짜를 채운다 — 같은 흰색이라 덧댄 자국이 안 보인다 */
   .sign-space { height: 16mm; position: relative; }
   .sign-space .seal { position: absolute; width: 15mm; height: 15mm; left: 34mm; top: 0.5mm; opacity: 0.92; }
   .note { font-size: 8.5px; color: #666; border-top: 1px solid #bbb; padding-top: 2.5mm; margin-top: 5mm; line-height: 1.6; }
@@ -334,7 +335,7 @@ ${rows}
       <tr><th style="width:8%">구분</th><th style="width:36%">갑 (발주자)</th><th style="width:56%">을 (수행자)</th></tr>
       <tr><td class="label">회사명</td><td>${esc(c.party.company)}</td><td>${esc(co.name)}</td></tr>
       <tr><td class="label">대표자</td><td class="sign-space" data-sign="0">${c.party.ceo ? esc(c.party.ceo) : ''}${pad}(서명 또는 인)</td><td class="sign-space" data-sign="1">${esc(co.ceo)}${pad}(서명 또는 인)${seal}</td></tr>
-      <tr><td class="label">계약일자</td><td colspan="2">${esc(date.slice(0, 4))}년 &nbsp;&nbsp;월 &nbsp;&nbsp;일</td></tr>
+      <tr><td class="label">계약일자</td><td colspan="2" class="sign-date">${esc(date.slice(0, 4))}년 &nbsp;&nbsp;월 &nbsp;&nbsp;일</td></tr>
     </table>
 
     <div class="note">

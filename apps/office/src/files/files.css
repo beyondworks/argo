@@ -64,6 +64,7 @@
 /* 미리보기 */
 .files-preview { display: grid; gap: 14px; container-type: inline-size; }
 .files-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.files-zoom { margin-left: auto; }
 .files-preview-grid { display: grid; gap: 12px; }
 @container (min-width: 900px) { .files-preview-grid { grid-template-columns: 1.2fr 1fr; } }
 .files-view { min-height: 240px; height: min(62vh, 720px); border-radius: var(--rs); background: var(--bg); overflow: hidden; display: grid; }

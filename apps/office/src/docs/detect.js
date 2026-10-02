@@ -43,9 +43,13 @@ export function autoFields(items = []) {
     const s = String(it.str || '').trim();
     if (FILL_RE.test(s)) out.push({ page: it.page, xr: it.xr, yr: Math.max(0, it.yr - it.hr * 0.2), wr: Math.max(it.wr, 0.16), hr: it.hr * 1.6, kind: 'text', label: '기입란' });
     if (DATE_LABEL_RE.test(s)) {
-      // 같은 줄 오른쪽에 이미 글자(예: "2026년 월 일")가 있으면 그 뒤에 놓는다 — 인쇄된 빈칸 안내와 겹치지 않게(인트라넷은 라벨 바로 옆에 겹쳐 놓였다)
-      const right = items.filter((x) => x.page === it.page && x !== it && x.xr > it.xr && Math.abs((x.yr + x.hr / 2) - (it.yr + it.hr / 2)) < it.hr).reduce((m, x) => Math.max(m, x.xr + x.wr), it.xr + it.wr);
-      out.push({ page: it.page, xr: Math.min(0.82, right + 0.02), yr: Math.max(0, it.yr - it.hr * 0.2), wr: 0.16, hr: it.hr * 1.6, kind: 'date', label: '계약일자', ordX: it.xr }); // 서명자는 라벨 자리로 정한다
+      // 같은 줄 오른쪽에 인쇄된 빈칸 안내(예: "2026년   월   일")가 있으면 그 자리를 덮어 날짜로 채운다(유건 10/2 13차 — 옆에 큰 날짜를 따로 찍지 않는다).
+      // 칸 높이 = 글자 높이 × 1.4(서명 화면이 글자 크기를 칸 높이 ÷ 1.4로 맞춰 서식 글자 크기 그대로), 폭은 "10월 2일"이 들어가게 조금 넉넉히
+      const row = items.filter((x) => x.page === it.page && x !== it && x.xr > it.xr && Math.abs((x.yr + x.hr / 2) - (it.yr + it.hr / 2)) < it.hr);
+      if (row.length) {
+        const x0 = Math.min(...row.map((x) => x.xr)), x1 = Math.max(...row.map((x) => x.xr + x.wr)), h = Math.max(...row.map((x) => x.hr)), y0 = Math.min(...row.map((x) => x.yr));
+        out.push({ page: it.page, xr: Math.max(0, x0 - 0.004), yr: Math.max(0, y0 - h * 0.2), wr: Math.min(0.6, x1 - x0 + 0.06), hr: h * 1.4, kind: 'date', label: '계약일자', ordX: it.xr }); // 서명자는 라벨 자리로 정한다
+      } else out.push({ page: it.page, xr: Math.min(0.82, it.xr + it.wr + 0.02), yr: Math.max(0, it.yr - it.hr * 0.2), wr: 0.16, hr: it.hr * 1.4, kind: 'date', label: '계약일자', ordX: it.xr });
     }
   }
   return out.sort((a, b) => a.page - b.page || a.yr - b.yr || a.xr - b.xr).map((f, i) => ({

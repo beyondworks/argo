@@ -1,6 +1,6 @@
 // 견적·계약·전자서명 화면(메뉴 '견적·계약') — 인트라넷 /quote-contract + /esign 두 화면을 한 화면의 두 탭으로.
 // 주소가 곧 상태: ?new=quote|contract(&order=거래|&from=문서) 작성 · ?tab=esign · ?esign=new 새 서명 요청 · ?setup=<서명 id> 세팅 · ?open=<서명 id>|doc:<문서 id> 옆 패널.
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import './register-i18n.js';
 import './docs.css';
 import { t, useLang, getLang } from '../core/i18n.js';
@@ -25,6 +25,7 @@ import { DOC } from './doc-text.js';
 import { useSelection, selProps } from '../core/selection.js';
 import { Hide } from '../business/Redact.jsx';
 
+const DocZoom = lazy(() => import('./DocZoom.jsx'));
 const when = (v) => (v ? new Date(v).toLocaleString(getLang() === 'en' ? 'en-US' : 'ko-KR', { dateStyle: 'medium', timeStyle: 'short' }) : '—');
 const day = (v) => (v ? new Date(v).toLocaleDateString(getLang() === 'en' ? 'en-US' : 'ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' }) : '—');
 const STATUS_BADGE = { draft: '', sent: 'warn', completed: 'ok', cancelled: 'danger' };
@@ -38,10 +39,17 @@ export function download(bytes, name) {
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
-function PdfFrame({ bytes, title }) {
+/** 패널 안 PDF — 위에 '크게 보기'(작성 화면 미리보기와 같은 창, 같은 돋보기 줄) */
+function PdfFrame({ bytes, title, filename }) {
   const url = useMemo(() => (bytes ? URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' })) : null), [bytes]);
+  const [zoom, setZoom] = useState(false);
   useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
-  return url ? <iframe className="docs-pdf" title={title} src={url} /> : <div className="docs-pdf boot" aria-busy="true" />;
+  if (!url) return <div className="docs-pdf boot" aria-busy="true" />;
+  return <div className="docs-pdf-wrap">
+    <button type="button" className="btn sm docs-pdf-zoom" onClick={() => setZoom(true)}><Icon name="expand" size={13} />{t('docs.zoom.open')}</button>
+    <iframe className="docs-pdf" title={title} src={url} />
+    {zoom && <Suspense fallback={null}><DocZoom title={title} pdf={bytes} onClose={() => setZoom(false)} onDownload={async () => download(bytes, filename || `${title}.pdf`)} /></Suspense>}
+  </div>;
 }
 
 export function useDocs(space) {
@@ -280,7 +288,7 @@ function DocPanel({ space, row, onClose, canWrite, onEsign, go }) {
     {canWrite && row.kind === 'contract' && <button type="button" className="btn primary" onClick={onEsign}><Icon name="stamp" size={13} />{t('docs.act.esign')}</button>}
   </>}>
     <dl className="docs-meta"><div><dt>{t('docs.col.customer')}</dt><dd>{row.customer_name ? <Hide k={`doc:${row.id}:customer`}>{row.customer_name}</Hide> : '—'}</dd></div><div><dt>{t('docs.col.total')}</dt><dd className="mono"><Hide k={`doc:${row.id}:total`}>{won(row.total)}{t('docs.wonUnit')}</Hide></dd></div><div><dt>{t('docs.col.created')}</dt><dd>{when(row.created_at)}</dd></div></dl>
-    <PdfFrame bytes={bytes} title={row.title} />
+    <PdfFrame bytes={bytes} title={row.title} filename={row.filename} />
   </Panel>;
 }
 
@@ -337,7 +345,7 @@ function EsignPanel({ space, row, company, canWrite, onClose, reload, orderTitle
     </section>
     {allSigned(row) && <p className="docs-warn small" role="status">{t('esign.stuck')}</p>}
     {row.final_path && <p className="dim small">{t('esign.finalShown')}</p>}
-    <PdfFrame bytes={bytes} title={row.title} />
+    <PdfFrame bytes={bytes} title={row.title} filename={row.final_path ? signedFilename(row.title) : undefined} />
     {mails.length > 0 && <section className="docs-sub"><h3>{t('esign.mails')}</h3><p className="dim small">{t('esign.mailsHint')}</p>
       <ul className="docs-log">{mails.slice().reverse().map((m) => <li key={m.id}><span className="mono small">{when(m.at)}</span><span>{m.to}</span><span className="dim">{m.subject}</span>{m.link && <a className="bizui-link" href={m.link} target="_blank" rel="noreferrer">{t('esign.openLink')}</a>}{m.attachment && <span className="badge">{m.attachment}</span>}</li>)}</ul></section>}
     <section className="docs-sub"><h3>{t('esign.events')}</h3>

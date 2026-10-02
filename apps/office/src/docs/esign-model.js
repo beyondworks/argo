@@ -64,6 +64,9 @@ export function checkSend({ hasPdf, signers, fields, status = 'draft' }) {
 }
 
 /** 서명 제출 정규화(인트라넷 sign route:89-106) — 텍스트 1000자·글자 크기 범위, 이미지는 png/jpg data URL만. 반환: [{ page, kind, xr, yr, wr, text?, sizeR?, img? }] */
+/** 계약일자 글자 — 서식의 빈칸 안내 자리를 채우는 모양(문서 서식 문구 DOC.signDate) */
+export const koDate = (d = new Date()) => DOC.signDate(d.getFullYear(), d.getMonth() + 1, d.getDate());
+
 export function normalizePlacements(raw, pageCount = Infinity) {
   const out = [];
   for (const p of Array.isArray(raw) ? raw.slice(0, 100) : []) {
@@ -72,7 +75,7 @@ export function normalizePlacements(raw, pageCount = Infinity) {
     if (p.kind === 'text') {
       const text = String(p.text || '').slice(0, 1000).replace(/\r/g, '');
       if (!text.trim()) continue;
-      out.push({ ...base, kind: 'text', text, sizeR: Math.min(0.1, Math.max(0.008, +p.sizeR || 0.02)) });
+      out.push({ ...base, kind: 'text', text, sizeR: Math.min(0.1, Math.max(0.008, +p.sizeR || 0.02)), ...(p.cover === true ? { cover: true } : {}) }); // cover: 인쇄된 빈칸 안내(계약일자 "2026년 월 일")를 흰 바탕으로 덮고 그 자리에 쓴다
     } else {
       const m = /^data:image\/(png|jpe?g);base64,([A-Za-z0-9+/=]+)$/.exec(String(p.imgDataUrl || ''));
       if (!m || m[2].length > 2_800_000) continue; // 그림 하나 2MB 상한
