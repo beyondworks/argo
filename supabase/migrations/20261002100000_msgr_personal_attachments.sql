@@ -47,12 +47,14 @@ create policy msgr_personal_files_insert on storage.objects for insert to authen
   with check (bucket_id = 'msgr' and (storage.foldername(name))[1] = 'p' and public.msgr_personal_file_ok(name));
 
 -- 첨부 행 — 객체가 실제로 올라와 있고 25MB 이하일 때만(업로드 정책은 크기를 모른다: Storage가 행을 먼저 넣고 나중에 크기를 채운다).
+-- plpgsql — storage.objects 열은 실행할 때 확인한다(msgr_bot_attach_commit과 같은 방식).
 create or replace function public.msgr_personal_attachment_ok(p_path text, p_message bigint) returns boolean
-  language sql stable security definer set search_path = public, pg_temp as $$
-  select p_path like 'p/%' and split_part(p_path, '/', 3) = p_message::text and public.msgr_personal_file_ok(p_path)
-     and exists (select 1 from storage.objects o where o.bucket_id = 'msgr' and o.name = p_path
-                  and coalesce((o.metadata->>'size')::bigint, 0) <= 26214400)
-$$;
+  language plpgsql stable security definer set search_path = public, pg_temp as $$
+begin
+  if coalesce(p_path, '') not like 'p/%' or split_part(p_path, '/', 3) <> p_message::text or not public.msgr_personal_file_ok(p_path) then return false; end if;
+  return exists (select 1 from storage.objects o where o.bucket_id = 'msgr' and o.name = p_path
+                  and coalesce((o.metadata->>'size')::bigint, 0) <= 26214400);
+end $$;
 revoke all on function public.msgr_personal_attachment_ok(text, bigint) from public, anon;
 grant execute on function public.msgr_personal_attachment_ok(text, bigint) to authenticated;
 
