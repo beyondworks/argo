@@ -22,8 +22,10 @@ test('빌드 산출물(dist/)에도 R2 키 이름·서명 코드가 없다(빌�
   for (const f of files) { const t = readFileSync(f, 'utf8'); for (const re of BAD) assert.ok(!re.test(t), `${f.slice(root.length)}: ${re}`); }
 });
 
-test('CORS 설정안: 출처 셋(운영·데스크톱·로컬)에 GET·PUT, 서명에 넣은 헤더(content-type·if-none-match)만', () => {
-  const rules = JSON.parse(readFileSync(join(root, 'r2-cors.json'), 'utf8'));
-  assert.deepEqual(rules.flatMap((r) => r.AllowedOrigins), ['https://argo-office.vercel.app', 'tauri://localhost', 'http://tauri.localhost', 'https://tauri.localhost', 'http://localhost:5190', 'http://localhost:5192']);
-  for (const r of rules) { assert.deepEqual(r.AllowedMethods, ['GET', 'PUT']); assert.deepEqual(r.AllowedHeaders, ['content-type', 'if-none-match']); assert.ok(r.MaxAgeSeconds <= 3600); assert.ok(!r.AllowedOrigins.includes('*')); }
+test('CORS 설정안: 운영 버킷(r2-cors.json)은 운영·데스크톱 출처만, 로컬 출처는 개발용(r2-cors.dev.json) — GET·PUT, 서명에 넣은 헤더만', () => {
+  const prod = JSON.parse(readFileSync(join(root, 'r2-cors.json'), 'utf8')), dev = JSON.parse(readFileSync(join(root, 'r2-cors.dev.json'), 'utf8'));
+  assert.deepEqual(prod.flatMap((r) => r.AllowedOrigins), ['https://argo-office.vercel.app', 'tauri://localhost', 'http://tauri.localhost', 'https://tauri.localhost']);
+  assert.ok(!prod.flatMap((r) => r.AllowedOrigins).some((o) => /localhost:\d/.test(o)), '운영 버킷에 로컬 개발 출처를 넣지 않는다');
+  assert.deepEqual(dev.flatMap((r) => r.AllowedOrigins), ['http://localhost:5190', 'http://localhost:5192']);
+  for (const r of [...prod, ...dev]) { assert.deepEqual(r.AllowedMethods, ['GET', 'PUT']); assert.deepEqual(r.AllowedHeaders, ['content-type', 'if-none-match']); assert.ok(r.MaxAgeSeconds <= 3600); assert.ok(!r.AllowedOrigins.includes('*')); }
 });
