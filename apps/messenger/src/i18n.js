@@ -1401,6 +1401,7 @@ export const DICT = {
   'grp.created': ["'{name}' 그룹을 만들었습니다", 'Created "{name}"'],
   'grp.deleted': ['그룹을 지웠습니다', 'Group deleted'],
   'grp.saved': ['그룹을 저장했습니다', 'Group saved'],
+  'grp.linkFail': ["'{name}' 그룹은 만들었지만 채널을 넣지 못했습니다. 그룹을 길게 눌러 다시 넣어 주세요.", 'Created "{name}", but the channels could not be added. Press and hold the group to add them again.'],
   'grp.limit': ['그룹은 조직마다 50개까지 만들 수 있습니다.', 'You can create up to 50 groups per organization.'],
   'grp.empty': ["이 그룹에 채널이 없습니다. 칩을 길게 눌러 채널을 넣거나, 채널을 길게 눌러 '그룹에 넣기'를 고르세요.", 'No channels in this group. Long-press this chip to add channels, or long-press a channel and choose Move to group.'],
   'grp.fav.empty': ['즐겨찾기한 채널이 없습니다. 채널을 오른쪽으로 밀거나 길게 눌러 즐겨찾기하세요.', 'No favorite channels. Swipe a channel right or long-press it to add it to favorites.'],

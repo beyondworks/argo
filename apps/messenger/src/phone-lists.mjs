@@ -32,6 +32,7 @@ export function groupOfChannel(links, groups, channelId) {
 
 /** 메뉴별 채널 — 즐겨찾기 = 고정한 채널 전부(그룹과 상관없이), 채널 = 그룹에 안 넣은 채널, 그룹 = 그 그룹의 채널. 순서는 들어온 그대로. */
 export function menuChannels(key, list, { pinned = new Set(), links = [], groups = [] } = {}) {
+  if (key === 'all') return list; // 검색 중(searchMenu) — 메뉴와 상관없이 전부
   if (key === 'fav') return list.filter((c) => pinned.has(c.id));
   if (key?.startsWith('g:')) { const gid = key.slice(2); return list.filter((c) => groupOfChannel(links, groups, c.id)?.id === gid); }
   return list.filter((c) => !groupOfChannel(links, groups, c.id));
@@ -39,6 +40,7 @@ export function menuChannels(key, list, { pinned = new Set(), links = [], groups
 
 /** '이 조직의 대화' 단락 — 채널 메뉴는 전부(종전 화면 그대로), 즐겨찾기는 고정한 대화만, 그룹 메뉴엔 없다(대화방은 그룹에 넣지 않는다) */
 export function menuTalks(key, talks, pinned = new Set()) {
+  if (key === 'all') return talks;
   if (key === 'fav') return talks.filter((c) => pinned.has(c.id));
   if (key?.startsWith('g:')) return [];
   return talks;
@@ -58,4 +60,22 @@ export function groupDiff(links, groupId, checked) {
   const want = new Set(checked);
   const now = new Set(links.filter((l) => l.group_id === groupId).map((l) => l.channel_id));
   return { add: [...want].filter((id) => !now.has(id)), remove: [...now].filter((id) => !want.has(id)) };
+}
+// ── 분리 검수 M-4·L-4·L-5(2026-10-02) ──
+
+/** 채널 탭 검색 범위(M-4) — 검색어가 있으면 고른 메뉴와 상관없이 전체('all': 채널·대화 전부), 지우면 고른 메뉴로 돌아간다 */
+export const searchMenu = (key, query) => (String(query ?? '').trim() ? 'all' : key);
+
+/** 토스트가 떠 있는 시간(L-5) — 오류 8초, flash로 띄운 그 문구만 flashed.ms, 그 밖의 안내는 종전 4초.
+    flash 시간을 문구와 짝지어 두지 않으면 그 사이 뜬 다른 안내까지 짧은 시간에 사라졌다. */
+export function toastMs({ err, note, flashed }) {
+  if (err) return 8000;
+  return flashed && note && flashed.text === note ? flashed.ms : 4000;
+}
+
+/** 그룹 만들기(L-4) — 그룹 행을 만든 뒤 채널을 넣는다. 그룹을 못 만들면 던지고, 넣기만 실패하면 만든 그룹과 그 오류를 함께 돌려준다
+    (만든 그룹을 버리면 목록엔 있는데 시트가 실패로 남아 다시 누를 때 '같은 이름' 오류가 났다). */
+export async function createGroupFlow({ insertGroup, linkChannels }) {
+  const row = await insertGroup();
+  try { await linkChannels(row); return { row, linkError: null }; } catch (e) { return { row, linkError: e }; }
 }

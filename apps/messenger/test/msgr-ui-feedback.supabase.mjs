@@ -71,6 +71,24 @@ const state = window.__instant = {
     T.msgr_attachments.push({ id: 'att-123', message_id: 123, storage_path: 'fixture/photo-a.svg', name: 'site-a.svg', mime: 'image/svg+xml', bytes: 2048 },
       { id: 'att-124', message_id: 124, storage_path: 'fixture/photo-b.svg', name: 'site-b.svg', mime: 'image/svg+xml', bytes: 2048 },
       { id: 'att-127', message_id: 127, storage_path: 'fixture/photo-c.svg', name: 'mine-c.svg', mime: 'image/svg+xml', bytes: 2048 }); }
+  // &approvals=1 폰 결재 페이지(분리 검수 M-2·M-3, 2026-10-02): 꼭 확인 긴 셸 명령 · 꼭 확인 + 쉬운 문장 · 보통 + 쉬운 문장 · 남의 크루 일반 결재(결정 못 함 — 숫자·목록에서 빠진다)
+  //   · 서버가 거절하는 꼭 확인(화면 판정은 결정 가능, 승인하면 RLS 42501 — 버튼 대신 안내). &role=member와 함께 쓰면 꼭 확인은 정책(관리자)에 따라 빠진다
+  if (sp.get('approvals')) { const T = state.tables; const at = (m) => new Date(Date.parse(now) - m * 60_000).toISOString();
+    T.msgr_crews.push({ ...crew('nova', '노바', '재무 정리'), owner_user_id: 'user-other' });
+    const row = (id, crewId, risk, action, extra = {}) => ({ id, org_id: org, channel_id: 'general', crew_id: crewId, approval_id: id, action, reason: null, payload: null, risk, kind: 'action', status: 'pending', decided_by: null, decided_at: null, message_id: null, created_at: at(Number(id.slice(3))), ...extra });
+    T.msgr_crew_approvals.push(
+      row('ap-1', 'crew-carmack', 'high', 'rm -rf ./dist ./build && npm ci --ignore-scripts && npm run build -- --mode production && rsync -avz --delete ./dist/ deploy@prod-web-01.example.internal:/srv/www/argo/releases/2026-10-02/ && ssh deploy@prod-web-01.example.internal "ln -sfn /srv/www/argo/releases/2026-10-02 /srv/www/argo/current && sudo systemctl reload nginx"', { payload: { shell: true }, reason: '배포 서버에 새 빌드를 올립니다' }),
+      row('ap-2', 'crew-beast', 'high', 'sendGmail(to=subscribers@list, template=october-newsletter, schedule=now)', { payload: { plain: { purpose: '이번 달 뉴스레터 발송', task: '구독자 1,200명에게 10월 뉴스레터 메일 보내기', need: 'Gmail 보내기 권한' } } }),
+      row('ap-3', 'crew-davinci', 'low', 'figma.export(frames=["landing-hero","pricing"], format=png, scale=2)', { payload: { plain: { purpose: '랜딩 시안 공유', task: '랜딩 두 화면을 PNG로 내보내기' } } }),
+      row('ap-4', 'crew-nova', 'low', 'ledger.close(month=2026-09)', { payload: { plain: { task: '9월 장부 마감' } } }),
+      row('ap-5', 'crew-feynman', 'high', 'notion.delete_page(id=research-archive-2025)', { payload: { plain: { purpose: '오래된 연구 기록 정리', task: '2025 연구 기록 페이지 지우기' } } }));
+    T.msgr_crew_approvals.forEach((a, i) => { const id = 130 + i; a.message_id = id; // 데스크톱 슬립은 결재 카드 글(approval_card)에 붙는다 — 데스크톱 화면이 그대로인지 같이 본다
+      T.msgr_messages.push({ id, org_id: org, channel_id: 'general', author_kind: 'crew', crew_id: a.crew_id, kind: 'approval_card', body: a.action, created_at: a.created_at, edited_at: null, deleted_at: null, mentions: [{ kind: 'approval', id: a.id }], reply_to: null, meta: null, client_msg_id: null }); });
+    T.msgr_org_policies = [{ org_id: org, approval_high_by: 'admin', approver_user_ids: [] }];
+    state.denyApprovals = new Set(['ap-5']); // 서버(RLS)가 거절하는 결재 — 화면 판정과 서버가 어긋나는 경우의 안내 확인용
+    state.aiConsentAt = now; }
+  // &groups=1 채널 탭 그룹(분리 검수 M-4): '운영' 그룹에 비공개 채널 둘 — 그룹 메뉴를 고른 채로 검색하면 다른 채널·대화도 찾아야 한다
+  if (sp.get('groups')) { state.tables.msgr_channel_groups = [{ id: 'g-ops', user_id: uid, org_id: org, name: '운영', pos: 0, created_at: now, msgr_channel_group_links: [{ channel_id: 'priv' }, { channel_id: 'long' }] }]; state.aiConsentAt = now; }
   state.loggedOut = !!sp.get('loggedout'); } // &loggedout=1 세션 없음 — 로그인 화면(3차 검수 M-2 시각 확인용, 2026-09-27)
  // &noorg=1 조직 없는 첫 화면(D4)
 // 구독을 놓으면 그 채널이 걸어 둔 핸들러도 실제로 걷어낸다(실제 전송처럼).
@@ -117,14 +135,19 @@ function query(table) {
         const lim = filters.find((f) => f.__limit)?.__limit;
         if (lim != null && op === 'select') rows = rows.slice(0, lim);
         if (op === 'insert' && table === 'msgr_invites') values = state.inviteInsert(values);
+        if (op === 'upsert' && table === 'msgr_channel_group_links' && state.failLinks) throw Object.assign(new Error('fetch failed'), { code: 'FIXTURE' }); // 그룹에 채널 넣기 실패 대역(분리 검수 L-4)
         if (op === 'insert' || op === 'upsert') {
           rows = (Array.isArray(values) ? values : [values]).map((v) => {
             const row = { id: state.nextId++, org_id: org, kind: 'text', created_at: new Date().toISOString(),
               edited_at: null, deleted_at: null, mentions: [], reply_to: null, meta: null, client_msg_id: null, ...v };
             all.push(row); return row;
           });
-        } else if (op === 'update') rows.forEach((r) => Object.assign(r, values));
+        } else if (op === 'update') {
+          if (table === 'msgr_crew_approvals' && rows.some((r) => state.denyApprovals?.has(r.id))) throw Object.assign(new Error('new row violates row-level security policy for table "msgr_crew_approvals"'), { code: '42501' }); // with check 거절 대역
+          rows.forEach((r) => Object.assign(r, values));
+        }
         else if (op === 'delete') state.tables[table] = all.filter((r) => !rows.includes(r));
+        if (table === 'msgr_crew_approvals' && cols.includes('msgr_crews(')) rows = rows.map((r) => ({ ...r, msgr_crews: (({ owner_user_id }) => ({ owner_user_id }))(state.tables.msgr_crews.find((c) => c.id === r.crew_id) ?? {}) })); // 외래 키 임베드 대역
         if (table === 'msgr_channel_members' && cols.includes('msgr_channels')) rows = rows.map((r) => ({ ...r, msgr_channels: state.tables.msgr_channels.find((c) => c.id === r.channel_id) }));
         const out = structuredClone(one ? rows[0] ?? null : rows);
         if (op !== 'select') { memo.clear(); return out; } // 쓰기 뒤에는 캐시를 버린다

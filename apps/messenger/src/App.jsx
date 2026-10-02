@@ -38,7 +38,7 @@ import { MobileUpdateBar } from './mobile-update.jsx';
 import { useLongPress, longPressHandlers } from './long-press.js';
 import { groupFlags } from './msg-group.mjs';
 import { t as tm } from './i18n.js';
-import { plainField, approvalPlainFields, orgDocTitle, approvalOneLineSummary, approvalExpandDefault, approvalGrade, approvalSummaryKey, approvalPageItems } from './approval-display.js';
+import { plainField, approvalPlainFields, orgDocTitle, approvalOneLineSummary, approvalGrade, approvalSummaryKey, approvalPageItems, approvalDecider, phoneApprovalDecider, decidableApprovals, approvalOnlyKey, approvalDenied, approvalCmdMode } from './approval-display.js';
 import { AGENT_FILTERS, AGENT_FAV_KEY, groupAgents, rowForSpace, agentSections, groupIsFav, favChanges, readAgentFav } from './agent-groups.mjs'; // 폰 에이전트 탭 — 같은 에이전트 한 줄·상단 메뉴·즐겨찾기(유건 2026-10-02)
 import { toggleId, foldAll, allFolded } from './collapse-set.mjs';
 import { useLang } from '@argo/i18n';
@@ -105,7 +105,7 @@ import { dmApprovalState, dmNeedsApproval } from './dm-approval.js';
 import { twinRelink, twinLeftOrg, twinPaused, twinOrgLabel, crewAddable, crewSeenAt } from './personal-bots.mjs';
 import { scrollLeftToCenter } from './nav-scroll.mjs';
 import { toastPlace, toastMaxWidth } from './toast-place.mjs';
-import { FLASH_MS, flashKey, splitFavs, cleanGroupName, groupNameTaken, sortGroups, channelMenu, resolveMenu, menuChannels, menuTalks, groupOfChannel, linkChange, groupDiff, nextGroupPos } from './phone-lists.mjs';
+import { FLASH_MS, flashKey, splitFavs, cleanGroupName, groupNameTaken, sortGroups, channelMenu, resolveMenu, menuChannels, menuTalks, groupOfChannel, linkChange, groupDiff, nextGroupPos, searchMenu, toastMs, createGroupFlow } from './phone-lists.mjs';
 import { faceOf, faceFromStored, faceInner, crewFaceState, nextDoneIn, nextSurpriseIn, nextErrorIn, failedCrewsInFetch, FACE_COLORS, FACE_SHAPES, faceToStore } from './crew-face.mjs';
 import { faceGestures } from './face-gestures.mjs';
 import { coverScale, clampOffset, cropRect, clampZoom, ZOOM_MAX } from './avatar-crop.mjs';
@@ -821,10 +821,11 @@ function Shell({ session }) {
   useEffect(() => { if (chId && channels.length && !channels.some((c) => c.id === chId) && !previewChannels.some((c) => c.id === chId)) setChId(null); }, [channels, previewChannels, chId]); // 사라진 채널(보관·삭제·조직 전환) — 빈 상태로. 참여 전 미리보기 채널은 사라진 것이 아니다
   useEffect(() => { if (!pushCard) return; const id = setTimeout(() => setPushCard(null), 6000); return () => clearTimeout(id); }, [pushCard]);
   // 폰 즐겨찾기·알림 끄기 토스트(유건 요청 2026-10-02) — 같은 토스트를 쓰되 짧게(FLASH_MS). 같은 문구를 다시 띄워도 시간이 처음부터 다시 간다(noteSeq)
-  const noteMs = useRef(null); const [noteSeq, bumpNote] = useReducer((x) => x + 1, 0);
-  const flash = (key, vars) => { if (!isPhoneRef.current) return; noteMs.current = FLASH_MS; setErr(''); setNote(t(key, vars)); bumpNote(); }; // 데스크톱은 종전대로(띄우지 않는다)
-  const clearToast = () => { noteMs.current = null; setErr(''); setNote(''); };
-  useEffect(() => { if (!err && !note) return; const id = setTimeout(clearToast, err ? 8000 : (noteMs.current ?? 4000)); return () => clearTimeout(id); }, [err, note, noteSeq]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 짧은 시간은 flash가 띄운 그 문구에만 붙는다(flashed = { text, ms }) — 그 사이 다른 안내가 뜨면 그 안내는 종전 4초(분리 검수 L-5: 남은 시간이 다른 안내까지 2.5초에 지웠다)
+  const flashed = useRef(null); const [noteSeq, bumpNote] = useReducer((x) => x + 1, 0);
+  const flash = (key, vars) => { if (!isPhoneRef.current) return; const text = t(key, vars); flashed.current = { text, ms: FLASH_MS }; setErr(''); setNote(text); bumpNote(); }; // 데스크톱은 종전대로(띄우지 않는다)
+  const clearToast = () => { flashed.current = null; setErr(''); setNote(''); };
+  useEffect(() => { if (!err && !note) return; const id = setTimeout(clearToast, toastMs({ err, note, flashed: flashed.current })); return () => clearTimeout(id); }, [err, note, noteSeq]); // eslint-disable-line react-hooks/exhaustive-deps
   // 토스트 자리 — 아래쪽에 깔린 것(탭 바·새 대화 단추·입력창 받침)의 윗선 바로 위, 가로는 입력창 열(폰은 화면) 가운데. 화면마다 머리 높이가 달라 위쪽 고정은 머리·제목·시트를 가렸다(#801 재검수)
   const toastRef = useRef(null);
   useLayoutEffect(() => {
@@ -1298,11 +1299,14 @@ function Shell({ session }) {
     const org = orgId; const name = cleanGroupName(rawName);
     if (!name || !org || org === PERSONAL) return null;
     if (groupNameTaken(grp.groups, name)) { setErr(t('grp.name.taken')); return null; }
-    try {
-      const [row] = await q(supabase.from('msgr_channel_groups').insert({ user_id: uid, org_id: org, name, pos: nextGroupPos(grp.groups) }).select('id, name, pos, created_at'));
-      setGrp(org, (g) => ({ ...g, groups: [...g.groups, row] }));
-      await putInGroup(org, grp.links, channelIds, row.id);
-      flash('grp.created', { name }); return row;
+    try { // 그룹을 만들었는데 채널 넣기만 실패하면 만든 그룹은 목록·메뉴에 두고 넣기 실패만 알린다 — 시트가 실패로 남으면 다시 누를 때 '같은 이름' 오류가 났다(분리 검수 L-4)
+      const { row, linkError } = await createGroupFlow({
+        insertGroup: async () => { const [r] = await q(supabase.from('msgr_channel_groups').insert({ user_id: uid, org_id: org, name, pos: nextGroupPos(grp.groups) }).select('id, name, pos, created_at')); setGrp(org, (g) => ({ ...g, groups: [...g.groups, r] })); return r; },
+        linkChannels: (r) => putInGroup(org, grp.links, channelIds, r.id),
+      });
+      if (linkError) setErr(t('grp.linkFail', { name }));
+      else flash('grp.created', { name });
+      return row;
     } catch (e) { groupErr(e); return null; }
   };
   const saveGroup = async (g, rawName, checked) => {
@@ -1409,12 +1413,17 @@ function Shell({ session }) {
     if (!uid || !isPhoneRef.current) return;
     const ids = orgIdsKey ? orgIdsKey.split(',') : [];
     const [aps, joins] = await Promise.all([
-      ids.length ? q(supabase.from('msgr_crew_approvals').select('id, org_id, channel_id, crew_id, action, reason, payload, risk, kind, created_at').in('org_id', ids).eq('status', 'pending').order('created_at', { ascending: false }).limit(40)).catch(() => null) : [],
+      ids.length ? q(supabase.from('msgr_crew_approvals').select('id, org_id, channel_id, crew_id, action, reason, payload, risk, kind, created_at, msgr_crews(owner_user_id)').in('org_id', ids).eq('status', 'pending').order('created_at', { ascending: false }).limit(40)).catch(() => null) : [],
       q(supabase.from('msgr_channel_crew_requests').select('id, channel_id, crew_id, requested_by, created_at').eq('status', 'pending').neq('requested_by', uid).order('created_at', { ascending: false }).limit(40)).catch(() => null),
     ]);
     if (aps === null && joins === null) return; // 둘 다 실패하면 지난 값을 둔다
+    // 결재권 판정 재료(분리 검수 M-2) — '꼭 확인'(high) 결재가 있는 조직의 정책만 한 번 더 읽는다(없으면 요청 0). 게스트는 정책을 못 읽는데(RLS) 정책이 없으면 관리자 결정으로 보고, 게스트는 어차피 high를 결정 못 한다
+    const highOrgs = [...new Set((aps ?? []).filter((a) => a.risk === 'high').map((a) => a.org_id))];
+    const pols = highOrgs.length ? await q(supabase.from('msgr_org_policies').select('org_id, approval_high_by, approver_user_ids').in('org_id', highOrgs)).catch(() => null) : [];
+    if (pols === null) return; // 정책을 못 읽으면 결정할 수 있는지 모른다 — 지난 값을 둔다
+    const polOf = Object.fromEntries(pols.map((p) => [p.org_id, p]));
     const meta = joins?.length ? await joinReqMeta(joins).catch(() => ({ crew: {}, room: {} })) : { crew: {}, room: {} }; // 넣기 요청이 있을 때만 — 어떤 에이전트를 어느 방에(D6)
-    setApprovals([...(aps ?? []).map((a) => ({ ...a, apKind: a.kind, key: `approval:${a.id}`, kind: 'approval', at: a.created_at })), /* 결재 표의 종류(action·org_doc·connector…)는 apKind — 등급·요약 문구가 쓴다 */ ...(joins ?? []).map((r) => ({ ...r, key: `crewjoin:${r.id}`, kind: 'join', at: r.created_at, crewName: meta.crew[r.crew_id] ?? null, roomName: meta.room[r.channel_id] ?? null }))].sort((a, b) => Date.parse(b.at) - Date.parse(a.at)));
+    setApprovals([...(aps ?? []).map(({ msgr_crews: crewRow, ...a }) => ({ ...a, apKind: a.kind, key: `approval:${a.id}`, kind: 'approval', at: a.created_at, crewOwnerId: crewRow ? crewRow.owner_user_id : undefined, policy: polOf[a.org_id] ?? null })), /* 결재 표의 종류(action·org_doc·connector…)는 apKind — 등급·요약 문구가 쓴다 */ ...(joins ?? []).map((r) => ({ ...r, key: `crewjoin:${r.id}`, kind: 'join', at: r.created_at, crewName: meta.crew[r.crew_id] ?? null, roomName: meta.room[r.channel_id] ?? null }))].sort((a, b) => Date.parse(b.at) - Date.parse(a.at)));
   }, [uid, orgIdsKey]);
   const approvalsSoon = useRef(() => {});
   approvalsSoon.current = () => { if (!isPhoneRef.current) return; clearTimeout(approvalsTimer.current); approvalsTimer.current = setTimeout(() => { loadApprovals().catch(() => {}); }, 600); };
@@ -2452,7 +2461,7 @@ function Shell({ session }) {
   const spaceReady = loadedOrg.current === orgId;
   const friendReqs = friends.filter((f) => f.status === 'pending' && f.requested_by !== uid);
   const friendList = withoutHidden(friends.filter((f) => f.status === 'accepted'), hiddenUserIds).sort((a, b) => String(a.display_name || a.handle || '').localeCompare(String(b.display_name || b.handle || ''), 'ko'));
-  const approvalItems = approvals; // 결재 대기(모든 조직 — loadApprovals). 알림함의 '결재' 거르개와 같은 행(결재 표 + 에이전트 참여 요청)
+  const approvalItems = decidableApprovals(approvals, { uid, orgs }); // 결재 대기(모든 조직 — loadApprovals) 중 내가 결정할 수 있는 것만(분리 검수 M-2 — 숫자·뱃지·페이지 모두). 내 역할은 조직 목록(orgs[].role)
   const tabBadgeN = tabBadges({ hereKey, here: hereCount, hereReady: unreadSpace === orgId, totals: spaceTotals, orgIds: orgIdList, approvals: approvalItems.length, friendRequests: friendReqs.length });
   const tabQText = tabQ ?? '';
   const decideFriend = async (f, accept) => { try { await q(supabase.rpc('msgr_friend_decide', { other: f.user_id, accept })); setNote(t(accept ? 'friends.accepted' : 'friends.declined')); await onFriendsChanged(); } catch (e) { setErr(/msgr_friend_closed/.test(e.message) ? t('friends.err.closed') : e.message); } };
@@ -2525,10 +2534,11 @@ function Shell({ session }) {
   const chChannels = onOrgTab ? sortRooms(channels.filter((c) => c.kind !== 'dm'), { sort: chBase.some((c) => dmSortPos[c.id] != null) ? 'custom' : 'recent', atOf: (c) => rowOf(c).at, unread, pinned, pinPos, nameOf: (c) => c.name, sortPos: dmSortPos }) : [];
   const chTalks = onOrgTab ? sortRooms(channels.filter((c) => c.kind === 'dm'), { sort: dmSort, atOf: (c) => rowOf(c).at, unread, pinned, pinPos, nameOf: dmBaseName, sortPos: dmSortPos }) : [];
   // 채널 탭 메뉴 '즐겨찾기 · 채널 · <그룹들…>'(유건 2026-10-02) — 그룹에 넣은 채널은 '채널'에서 빠지고 그 그룹에서 보인다. '이 조직의 대화'는 채널 메뉴에서 종전 그대로, 즐겨찾기는 고정한 대화만, 그룹 메뉴엔 없다
-  const chMenuKey = resolveMenu(chMenu, grp.groups);
-  const chMenuGroup = chMenuKey.startsWith('g:') ? grp.groups.find((g) => `g:${g.id}` === chMenuKey) : null;
-  const chMenuList = menuChannels(chMenuKey, chChannels, { pinned, links: grp.links, groups: grp.groups });
-  const chTalksMenu = menuTalks(chMenuKey, chTalks, pinned);
+  const chMenuKey = resolveMenu(chMenu, grp.groups); // 고른 메뉴(칩 강조)
+  const chListKey = searchMenu(chMenuKey, tabQText); // 보여 줄 범위 — 검색어가 있으면 메뉴와 상관없이 채널·대화 전체('all'), 지우면 고른 메뉴로(분리 검수 M-4)
+  const chMenuGroup = chListKey.startsWith('g:') ? grp.groups.find((g) => `g:${g.id}` === chListKey) : null;
+  const chMenuList = menuChannels(chListKey, chChannels, { pinned, links: grp.links, groups: grp.groups });
+  const chTalksMenu = menuTalks(chListKey, chTalks, pinned);
   const chChannelsShown = tabSearch(chMenuList, tabQText, (c) => [c.name, c.topic, previewForSearch(c)], bodyHit);
   const chTalksShown = tabSearch(chTalksMenu, tabQText, (c) => [dmBaseName(c), previewForSearch(c)], bodyHit);
   const otherOrgsUnread = (orgs ?? []).filter((o) => o.id !== chOrg).reduce((a, o) => ({ n: a.n + (spaceCount(o.id)?.n || 0), mention: a.mention + (spaceCount(o.id)?.mention || 0) }), { n: 0, mention: 0 });
@@ -2852,7 +2862,7 @@ function Shell({ session }) {
         ) : page === 'activity' && isPersonal ? (
           <><div className="msgr-top"><NavButton onMenu={openNav} /><span className="title">{t('personal')}</span></div><div className="msgr-thread" style={{ display: 'flex' }}><div className="msgr-empty"><p>{t('personal.noActivity')}</p></div></div></>
         ) : isPhone && page === 'approvals' ? (
-          <PhoneApprovals items={approvalItems} uid={uid} crewName={(it) => myAgents?.find((c) => c.id === it.crew_id)?.display_name ?? crewOf(it.crew_id)?.display_name ?? it.crewName ?? null} spaceName={spaceName} onBack={backFromPage} onMenu={openNav} onOpen={openApproval} onDecided={() => { approvalsSoon.current(); }} onNote={setNote} onError={setErr} />
+          <PhoneApprovals items={approvalItems} uid={uid} orgs={orgs} crewName={(it) => myAgents?.find((c) => c.id === it.crew_id)?.display_name ?? crewOf(it.crew_id)?.display_name ?? it.crewName ?? null} spaceName={spaceName} onBack={backFromPage} onMenu={openNav} onOpen={openApproval} onDecided={() => { approvalsSoon.current(); }} onNote={setNote} onError={setErr} />
         ) : isPhone && page === 'memdoc' && memDoc ? (
           <PhoneMemDoc doc={memDoc.doc} label={memDoc.label} nameOfUser={nameOfUser} onBack={backFromPage} onMenu={openNav} />
         ) : page === 'activity' && org ? (
@@ -4514,10 +4524,11 @@ function PhoneMemDoc({ doc, label, nameOfUser, onBack, onMenu }) {
 /* ─── 폰 결재 페이지(유건 2026-10-02) — 에이전트 탭 '결재 대기' 카드를 누르면 연다. 결재 카드만: 한두 줄 요약 + 등급(꼭 확인·보통·가벼운 일) + 승인·거절,
    '자세히'를 펼치면 원래 내용(목적·할 일·필요한 것·명령·이유). 자료는 에이전트 탭과 같은 목록(loadApprovals — 이 화면이 조회를 늘리지 않는다).
    결정은 데스크톱 슬립(decide)·방 넣기 요청(msgr_crew_join_decide)과 같은 쓰기이고, 최종 판정은 서버(RLS·msgr_can_decide)다 — 0행이면 결재권이 없다는 안내. ─── */
-function PhoneApprovals({ items, uid, crewName, spaceName, onBack, onMenu, onOpen, onDecided, onNote, onError }) {
+function PhoneApprovals({ items, uid, orgs, crewName, spaceName, onBack, onMenu, onOpen, onDecided, onNote, onError }) {
   const { t, lang } = useT();
   const [open, setOpen] = useState(() => new Set());
   const [done, setDone] = useState(() => new Set()); // 방금 결정한 카드 — 목록을 다시 읽기 전에도 바로 빠진다
+  const [denied, setDenied] = useState(() => new Set()); // 서버가 결재권 없다고 거절한 카드 — 버튼 대신 안내(목록을 다시 읽으면 정책 판정으로 빠진다)
   const [busy, setBusy] = useState(null);
   const list = approvalPageItems(items, { done });
   const josa = lang === 'en' ? (x) => x : koJosa;
@@ -4527,8 +4538,9 @@ function PhoneApprovals({ items, uid, crewName, spaceName, onBack, onMenu, onOpe
       if (it.kind === 'join') await q(supabase.rpc('msgr_crew_join_decide', { req: it.id, approve: ok }));
       else {
         const res = await supabase.from('msgr_crew_approvals').update({ status: ok ? 'approved' : 'rejected', decided_by: uid, decided_at: new Date().toISOString() }).eq('id', it.id).select('id');
+        // 결재권 없음 — USING이면 0행, WITH CHECK(예: '꼭 확인'의 크루 소유자)면 RLS 오류. 둘 다 '권한이 없습니다' 대신 누가 결정하는지 안내한다(분리 검수 M-2)
+        if (approvalDenied(res.error, res.data)) { setDenied((d) => new Set(d).add(it.key)); onError(t(approvalOnlyKey(phoneApprovalDecider(it, { uid, orgs })))); onDecided?.(); return; }
         if (res.error) throw res.error;
-        if (!res.data?.length) { onError(t(it.risk === 'high' ? 'ap.approverOnly' : 'ap.ownerOnly')); return; }
       }
       setDone((d) => new Set(d).add(it.key)); onNote(t(ok ? 'phone.ap.approved' : 'phone.ap.rejected')); onDecided?.();
     } catch (e) { onError(friendlyErr(e?.message ?? String(e), t)); } finally { setBusy(null); }
@@ -4538,6 +4550,8 @@ function PhoneApprovals({ items, uid, crewName, spaceName, onBack, onMenu, onOpe
     const join = it.kind === 'join'; const lv = approvalGrade(join ? it : { ...it, kind: it.apKind });
     const [k, v] = join ? joinReqKey({ crew: it.crewName, room: it.roomName }) : approvalSummaryKey({ ...it, kind: it.apKind });
     const plain = join ? null : approvalPlainFields(it.payload); const shown = open.has(it.key); const name = crewName(it); const sum = josa(t(k, v));
+    const dec = phoneApprovalDecider(it, { uid, orgs }); const can = dec.can && !denied.has(it.key);
+    const cmd = join ? null : approvalCmdMode(it); // 꼭 확인 = 명령 전체(줄바꿈), 그 밖 = 쉬운 문장이 있을 때 한 줄(분리 검수 M-3)
     const doc = !join && it.apKind === 'org_doc' && it.payload && typeof it.payload === 'object' ? it.payload : null;
     return (
       <article key={it.key} className={`ph-apitem${lv ? ` lv-${lv}` : ''}`}>
@@ -4548,7 +4562,7 @@ function PhoneApprovals({ items, uid, crewName, spaceName, onBack, onMenu, onOpe
           <span className="meta">{[it.org_id ? spaceName(it.org_id) : null, fmtDmWhen(t('time.yesterday'), Date.parse(it.at), lang)].filter(Boolean).join(' · ')}</span>
         </div>
         <p className="ph-apsum">{sum}</p>
-        {lv === 'must' && !shown && plainField(it.action) && !sum.includes(it.action) && <p className="ph-apcmd"><b>{t('ap.plain.command')}</b><code>{it.action}</code></p>}{/* 꼭 확인 결재는 실제로 실행될 명령을 펼치지 않아도 한 줄 보인다(데스크톱 슬립의 기본 펼침과 같은 규칙 — 분리 검수 M-1·H-1) */}
+        {cmd && !shown && <p className={`ph-apcmd ${cmd}`}><b>{t('ap.plain.command')}</b><code>{it.action}</code></p>}{/* 꼭 확인 결재는 실제로 실행될 명령을 펼치지 않아도 전부 보인다(데스크톱 슬립의 기본 펼침과 같은 규칙 — 요약이 두 줄에서 잘려도 명령은 안 잘린다) */}
         {shown && <div className="ph-apdetail" id={`apd-${it.id}`}>
           {join ? <p>{t('phone.ap.joinNote')}</p> : (<>
             {plain?.purpose && <p><b>{t('ap.plain.purpose')}</b> {plain.purpose}</p>}
@@ -4562,8 +4576,10 @@ function PhoneApprovals({ items, uid, crewName, spaceName, onBack, onMenu, onOpe
         </div>}
         <div className="ph-apacts">
           <button type="button" className="ph-apmorebtn" aria-expanded={shown} aria-controls={`apd-${it.id}`} onClick={() => toggle(it.key)}>{t(shown ? 'phone.ap.less' : 'phone.ap.more')}<I name="caret" size={16} className={shown ? 'up' : ''} /></button>
-          <button type="button" className="btn" disabled={!!busy} onClick={() => decide(it, false)}><I name="x" size={15} />{t('ap.reject')}</button>
-          <button type="button" className="btn btn-primary" disabled={!!busy} onClick={() => decide(it, true)}><I name="check" size={15} />{t('ap.approve')}</button>
+          {can ? (<>
+            <button type="button" className="btn" disabled={!!busy} onClick={() => decide(it, false)}><I name="x" size={15} />{t('ap.reject')}</button>
+            <button type="button" className="btn btn-primary" disabled={!!busy} onClick={() => decide(it, true)}><I name="check" size={15} />{t('ap.approve')}</button>
+          </>) : <span className="ph-apnote" role="note">{t(approvalOnlyKey(dec))}</span>}
         </div>
       </article>);
   };
@@ -6390,12 +6406,8 @@ function ExecCard({ crew, t, canStop = false, stopping = false, stopRequested = 
 /** 결재 슬립 — 머리띠(요청=옐로 / 확정=차콜 / 만료=회색) + 본문 + 도장 실. 보는 사람이 소유자면 버튼, 아니면 대기 표시. */
 function Slip({ ap, uid, lang, t, crew, nameOfUser, decide, isAdmin, policy }) {
   // 결재권 판정은 화면용 — 최종은 RLS(msgr_can_decide, decide의 0행 처리). 크루가 목록에 없으면(비활성 등) 소유자 미상으로 보고 버튼을 띄운다(검수 M1).
-  const owner = crew ? crew.owner_user_id === uid : true;
-  const high = approvalExpandDefault(ap);
-  const mode = policy?.approval_high_by ?? 'admin';
-  const byAdmin = high && mode !== 'owner'; // H-1: 고위험은 정책의 결재권자(기본 관리자). J-1: 'approvers'면 지정 결재권자도
-  const isApprover = (policy?.approver_user_ids ?? []).includes(uid);
-  const can = byAdmin ? (!!isAdmin || (mode === 'approvers' && isApprover)) : owner;
+  // H-1: 고위험은 정책의 결재권자(기본 관리자). J-1: 'approvers'면 지정 결재권자도. 판정은 폰 결재 페이지와 같은 함수(approval-display.js approvalDecider)
+  const { can, byAdmin, mode, high } = approvalDecider({ ap, uid, crewOwnerId: crew ? crew.owner_user_id : undefined, isAdmin, policy });
   const ownerName = nameOfUser(crew?.owner_user_id);
   const cls = `msgr-slip ${ap.status}${ap.status === 'pending' && !can ? ' wait' : ''}${high ? ' high' : ''}`;
   const band = ap.status === 'pending' ? (can ? t('ap.request') : (byAdmin ? t('ap.wait.admin') : t('ap.wait', { name: ownerName }))) : t(`ap.${ap.status}.band`);

@@ -81,3 +81,60 @@ test('결재 페이지 — 대기 중인 결재 카드와 넣기 요청만, 방�
   assert.deepEqual(approvalPageItems(items, { done: new Set(['approval:4']) }).map((x) => x.key), ['crewjoin:2', 'approval:1']);
   assert.deepEqual(approvalPageItems(null).length, 0);
 });
+
+// ── 분리 검수 M-2(2026-10-02): 폰 결재 페이지가 내가 결정할 수 없는 결재에도 승인·거절을 보였다.
+// 판정은 데스크톱 슬립과 같은 함수(approvalDecider) — 서버 msgr_can_decide와 같은 갈래: low는 크루 소유자, high는 정책(admin 기본·approvers·owner).
+import { approvalDecider, phoneApprovalDecider, decidableApprovals, approvalOnlyKey, approvalDenied, approvalCmdMode } from '../src/approval-display.js';
+
+const ME = 'user-me';
+const ORGS = [{ id: 'o-admin', role: 'admin' }, { id: 'o-member', role: 'member' }, { id: 'o-owner', role: 'owner' }];
+const ap = (id, org, risk, owner, policy = null, extra = {}) => ({ key: `approval:${id}`, kind: 'approval', id, org_id: org, risk, crewOwnerId: owner, policy, at: '2026-10-02T01:00:00Z', ...extra });
+
+test('결재권 판정 — 데스크톱 슬립과 같은 갈래(서버 msgr_can_decide)', () => {
+  const d = (a) => approvalDecider({ ap: a.ap, uid: ME, crewOwnerId: a.owner, isAdmin: a.admin, policy: a.policy }).can;
+  assert.equal(d({ ap: { risk: 'low' }, owner: ME }), true, 'low — 내 크루');
+  assert.equal(d({ ap: { risk: 'low' }, owner: 'other', admin: true }), false, 'low — 남의 크루는 관리자라도 못 한다');
+  assert.equal(d({ ap: { risk: 'high' }, owner: ME }), false, 'high — 기본(관리자 결정)은 소유자라도 관리자가 아니면 못 한다');
+  assert.equal(d({ ap: { risk: 'high' }, owner: 'other', admin: true }), true, 'high — 관리자');
+  assert.equal(d({ ap: { risk: 'high' }, owner: 'other', policy: { approval_high_by: 'approvers', approver_user_ids: [ME] } }), true, 'high — 지정 결재권자');
+  assert.equal(d({ ap: { risk: 'high' }, owner: 'other', policy: { approval_high_by: 'approvers', approver_user_ids: ['x'] } }), false);
+  assert.equal(d({ ap: { risk: 'high' }, owner: ME, policy: { approval_high_by: 'owner' } }), true, 'high — 정책이 소유자 결정이면 소유자');
+  assert.equal(d({ ap: { risk: 'high' }, owner: 'other', admin: true, policy: { approval_high_by: 'owner' } }), false);
+  assert.equal(d({ ap: { risk: 'low' }, owner: undefined }), true, '크루를 모르면(목록에 없음) 소유자로 본다 — 데스크톱과 같고 최종은 서버');
+});
+
+test('폰 결재 목록·숫자 — 내가 결정할 수 있는 결재만, 넣기 요청은 서버가 이미 거른 것이라 그대로', () => {
+  const items = [
+    ap('1', 'o-member', 'low', ME),                                              // 내 크루 low → 결정 가능
+    ap('2', 'o-member', 'low', 'other'),                                         // 남의 크루 low → 못 함
+    ap('3', 'o-member', 'high', ME),                                             // 멤버 + 기본 정책 high → 못 함
+    ap('4', 'o-admin', 'high', 'other'),                                         // 관리자 high → 가능
+    ap('5', 'o-member', 'high', 'other', { approval_high_by: 'approvers', approver_user_ids: [ME] }), // 지정 결재권자 → 가능
+    ap('6', 'o-gone', 'high', 'other'),                                          // 내 역할을 모르는 조직 → 관리자 아님
+    { key: 'crewjoin:7', kind: 'join', id: '7', at: '2026-10-02T02:00:00Z' },
+  ];
+  const ctx = { uid: ME, orgs: ORGS };
+  assert.deepEqual(decidableApprovals(items, ctx).map((x) => x.key), ['approval:1', 'approval:4', 'approval:5', 'crewjoin:7']);
+  assert.equal(phoneApprovalDecider(items[2], ctx).can, false);
+  assert.equal(approvalOnlyKey(phoneApprovalDecider(items[2], ctx)), 'ap.approverOnly', 'high는 결재권자 안내');
+  assert.equal(approvalOnlyKey(phoneApprovalDecider(items[1], ctx)), 'ap.ownerOnly', 'low는 소유자 안내');
+  assert.equal(decidableApprovals(null, ctx).length, 0);
+});
+
+test('결정 거절 판정 — 0행(USING에 걸림)과 RLS with check 오류(42501) 둘 다 결재권 없음, 다른 오류는 아님', () => {
+  assert.equal(approvalDenied(null, []), true, '0행');
+  assert.equal(approvalDenied({ code: '42501', message: 'new row violates row-level security policy for table "msgr_crew_approvals"' }, null), true, 'with check 거절');
+  assert.equal(approvalDenied({ message: 'new row violates row-level security policy' }, null), true, '코드 없이 문구만 와도');
+  assert.equal(approvalDenied({ code: '08006', message: 'connection failure' }, null), false, '연결 오류는 결재권 문제가 아니다');
+  assert.equal(approvalDenied(null, [{ id: 'x' }]), false, '바뀐 행이 있으면 성공');
+});
+
+test('M-3 접힌 카드의 명령 줄 — 꼭 확인은 전체(줄바꿈), 보통·가벼운 일은 쉬운 문장이 있을 때 한 줄, 명령 없으면 없음', () => {
+  const plain = { plain: { purpose: '배포', task: '빌드 정리' } };
+  assert.equal(approvalCmdMode({ risk: 'high', action: 'rm -rf build && deploy --prod', payload: { shell: true } }), 'full', '요약에 명령이 들어 있어도 꼭 확인은 명령 전체를 따로 보인다');
+  assert.equal(approvalCmdMode({ risk: 'high', action: 'x', payload: plain }), 'full');
+  assert.equal(approvalCmdMode({ risk: 'low', apKind: 'action', action: 'npm run clean', payload: plain }), 'line', '보통 + 쉬운 문장 — 예전 approvalOneLineSummary처럼 명령 한 줄');
+  assert.equal(approvalCmdMode({ risk: 'low', apKind: 'action', action: 'npm run clean' }), null, '쉬운 문장이 없으면 요약이 곧 명령(겹쳐 보이지 않게)');
+  assert.equal(approvalCmdMode({ risk: 'high', action: '   ' }), null, '명령이 비면 없음');
+  assert.equal(approvalCmdMode({ risk: 'high', action: { bad: 1 } }), null, '손상 데이터는 그리지 않는다');
+});

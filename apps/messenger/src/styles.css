@@ -2247,6 +2247,10 @@ html { -webkit-tap-highlight-color: transparent; }
   .msgr-phone .ph-apcmd { margin: -2px 0 0; display: flex; align-items: baseline; gap: 6px; min-width: 0; font-size: 12.5px; color: var(--fg-2); }
   .msgr-phone .ph-apcmd b { flex: none; font-weight: 600; }
   .msgr-phone .ph-apcmd code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); }
+  /* 꼭 확인 — 실제로 실행될 명령을 줄바꿈해 전부(말줄임 없음, 분리 검수 M-3). 이름표 아래 상자로 내려 긴 명령도 폭을 다 쓴다 */
+  .msgr-phone .ph-apcmd.full { display: grid; gap: 4px; }
+  .msgr-phone .ph-apcmd.full code { display: block; padding: 6px 8px; border-radius: 8px; background: var(--bg); font-size: 12.5px; white-space: pre-wrap; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }
+  .msgr-phone .ph-apnote { flex: 1 1 auto; min-width: 0; font-size: 13px; line-height: 1.4; color: var(--fg-2); text-align: right; }
   .msgr-phone .ph-apdetail { display: grid; gap: 6px; padding: 10px 12px; border-radius: 12px; background: var(--bg); font-size: 13.5px; line-height: 1.5; color: var(--fg-2); overflow-wrap: anywhere; }
   .msgr-phone .ph-apdetail p { margin: 0; }
   .msgr-phone .ph-apdetail b { font-weight: 600; color: var(--fg); margin-right: 4px; }

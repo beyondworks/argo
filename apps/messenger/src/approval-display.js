@@ -77,3 +77,41 @@ export function approvalPageItems(items, { done = new Set() } = {}) {
   return (items ?? []).filter((it) => (it?.kind === 'approval' || it?.kind === 'join') && (!it.status || it.status === 'pending') && !done.has(it.key) && !seen.has(it.key) && seen.add(it.key))
     .sort((a, b) => (Date.parse(b.at) || 0) - (Date.parse(a.at) || 0));
 }
+// ── 결재권 판정(분리 검수 M-2, 2026-10-02) — 데스크톱 슬립과 폰 결재 페이지가 같은 함수를 쓴다.
+// 서버 msgr_can_decide(20260918193000)와 같은 갈래: low → 크루 소유자, high → 조직 정책(기본 관리자 · 'approvers'면 관리자 또는 지정 결재권자 · 'owner'면 크루 소유자).
+// 화면용이다 — 최종 판정은 RLS. 크루를 모르면(crewOwnerId === undefined, 비활성 등) 소유자로 보고 버튼을 띄운다(데스크톱 검수 M1과 같은 규칙, 서버가 거절하면 안내).
+export function approvalDecider({ ap, uid, crewOwnerId, isAdmin, policy }) {
+  const high = approvalExpandDefault(ap);
+  const mode = policy?.approval_high_by ?? 'admin';
+  const byAdmin = high && mode !== 'owner';
+  const owner = crewOwnerId === undefined ? true : crewOwnerId === uid;
+  const isApprover = (policy?.approver_user_ids ?? []).includes(uid);
+  return { can: byAdmin ? (!!isAdmin || (mode === 'approvers' && isApprover)) : owner, byAdmin, mode, high };
+}
+
+/** 폰 결재 페이지의 한 줄(loadApprovals가 붙인 crewOwnerId·policy) — 내 역할은 조직 목록(orgs[].role)에서. 넣기 요청은 서버가 결정할 사람에게만 보여 준 행이라 그대로 가능. */
+export function phoneApprovalDecider(it, { uid, orgs } = {}) {
+  if (it?.kind !== 'approval') return { can: true, byAdmin: false, mode: null, high: false };
+  const role = (orgs ?? []).find((o) => o.id === it.org_id)?.role;
+  return approvalDecider({ ap: it, uid, crewOwnerId: it.crewOwnerId, isAdmin: role === 'owner' || role === 'admin', policy: it.policy ?? null });
+}
+
+/** '결재 대기' 숫자·페이지 목록 — 내가 결정할 수 있는 것만 */
+export const decidableApprovals = (items, ctx) => (items ?? []).filter((it) => phoneApprovalDecider(it, ctx).can);
+
+/** 결정할 수 없는 카드·거절 안내 문구 키 — 정책의 결재권자 갈래면 approverOnly, 소유자 갈래면 ownerOnly */
+export const approvalOnlyKey = (dec) => (dec?.byAdmin ? 'ap.approverOnly' : 'ap.ownerOnly');
+
+/** 결정 쓰기가 결재권 때문에 막혔나 — USING에 걸리면 0행, WITH CHECK에 걸리면(예: high의 크루 소유자) RLS 오류(42501). 다른 오류(연결 등)는 아니다. */
+export function approvalDenied(error, rows) {
+  if (error) return error.code === '42501' || /row-level security/i.test(String(error.message ?? ''));
+  return Array.isArray(rows) && rows.length === 0;
+}
+
+/** 접힌 카드의 명령 줄(분리 검수 M-3) — 'full' = 꼭 확인: 실제로 실행될 명령을 줄바꿈해 전부(데스크톱 approvalExpandDefault의 기본 펼침과 같은 규칙),
+    'line' = 그 밖: 쉬운 문장이 있을 때 명령 한 줄(예전 approvalOneLineSummary와 같다 — 쉬운 문장이 없으면 요약이 곧 명령이라 겹쳐 그리지 않는다), null = 없음. */
+export function approvalCmdMode(it) {
+  if (!plainField(it?.action)) return null;
+  if (approvalExpandDefault(it)) return 'full';
+  return approvalPlainFields(it?.payload) ? 'line' : null;
+}

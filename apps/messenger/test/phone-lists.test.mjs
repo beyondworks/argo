@@ -108,11 +108,11 @@ test('배선 — 토스트는 폰에서만, 2.5초 뒤 저절로·누르면 바�
   const src = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
   assert.match(src, /from '\.\/phone-lists\.mjs'/);
   assert.match(src, /const flash = \(key, vars\) => \{ if \(!isPhoneRef\.current\) return;/, '데스크톱은 토스트를 띄우지 않는다');
-  assert.match(src, /setTimeout\(clearToast, err \? 8000 : \(noteMs\.current \?\? 4000\)\)/, '토스트 시간은 flash가 정한 값, 없으면 종전 4초');
+  assert.match(src, /flashed\.current = \{ text, ms: FLASH_MS \}/, 'flash 시간은 그 문구와 짝지어 둔다(L-5)');
+  assert.match(src, /setTimeout\(clearToast, toastMs\(\{ err, note, flashed: flashed\.current \}\)\)/, '토스트 시간은 toastMs가 정한다(행동은 위 L-5 테스트가 잠근다)');
   assert.match(src, /onClick=\{clearToast\} role="status"/, '누르면 바로 닫힌다');
   assert.match(src, /flash\(flashKey\('fav', on\)\)/);
   assert.match(src, /flash\(flashKey\('mute', on\)\)/);
-  assert.match(src, /noteMs\.current \?\? 4000/, '다른 안내는 종전 4초');
 });
 
 test('배선 — 그룹 표는 폰 조직 공간에서만, 바뀔 때·복귀 때만 읽는다(주기 없음)', () => {
@@ -124,10 +124,47 @@ test('배선 — 그룹 표는 폰 조직 공간에서만, 바뀔 때·복귀 �
 test('i18n — 새 문구는 ko/en 모두', () => {
   const keys = ['flash.fav.on', 'flash.fav.off', 'flash.mute.on', 'flash.mute.off', 'phone.sec.fav', 'phone.sec.chats', 'phone.chmenu', 'phone.chmenu.fav', 'phone.chmenu.channels', 'phone.chmenu.add',
     'grp.new', 'grp.edit', 'grp.name', 'grp.name.taken', 'grp.save', 'grp.create', 'grp.delete', 'grp.delete.confirm', 'grp.delete.note', 'grp.channels', 'grp.in', 'grp.pick', 'grp.pick.none', 'grp.pick.new',
-    'grp.moved', 'grp.removed', 'grp.created', 'grp.deleted', 'grp.empty', 'grp.fav.empty', 'grp.channels.allGrouped', 'ch.group'];
+    'grp.moved', 'grp.removed', 'grp.created', 'grp.deleted', 'grp.linkFail', 'grp.empty', 'grp.fav.empty', 'grp.channels.allGrouped', 'ch.group'];
   for (const k of keys) {
     const row = DICT[k];
     assert.ok(Array.isArray(row) && row.length === 2 && row.every((s) => typeof s === 'string' && s.trim()), `${k} ko/en`);
     assert.match(row[0], /[가-힣]/, `${k} 한국어`);
   }
+});
+
+// ── 분리 검수 M-4·L-4·L-5(2026-10-02) — 행동 테스트
+import { searchMenu, toastMs, createGroupFlow } from '../src/phone-lists.mjs';
+
+test('M-4 채널 탭 검색 — 검색어가 있으면 고른 메뉴를 무시하고 채널·대화 전체에서, 지우면 고른 메뉴로', () => {
+  const list = [ch('lean'), ch('general'), ch('ops')];
+  const talks = [ch('d1', { kind: 'dm' }), ch('d2', { kind: 'dm' })];
+  const links = [{ channel_id: 'lean', group_id: 'g1' }, { channel_id: 'ops', group_id: 'g2' }];
+  const ctx = { pinned: new Set(['d2']), links, groups: G };
+  for (const key of ['g:g1', 'fav', 'channels']) {
+    const k = searchMenu(key, 'o');
+    assert.equal(ids(menuChannels(k, list, ctx)), 'lean,general,ops', `${key}에서 검색 — 채널 전부`);
+    assert.equal(ids(menuTalks(k, talks, ctx.pinned)), 'd1,d2', `${key}에서 검색 — 대화 전부`);
+  }
+  assert.equal(searchMenu('g:g1', '   '), 'g:g1', '공백만이면 검색이 아니다');
+  assert.equal(searchMenu('g:g1', ''), 'g:g1', '검색어를 지우면 고른 메뉴');
+  assert.equal(ids(menuChannels(searchMenu('g:g1', ''), list, ctx)), 'lean');
+});
+
+test('L-5 토스트 시간 — 짧은 토스트(flash)의 시간은 그 문구에만, 그 사이 뜬 다른 안내는 종전 4초, 오류는 8초', () => {
+  const flashed = { text: '즐겨찾기에 추가했습니다', ms: FLASH_MS };
+  assert.equal(toastMs({ note: '즐겨찾기에 추가했습니다', flashed }), FLASH_MS);
+  assert.equal(toastMs({ note: '링크를 복사했습니다', flashed }), 4000, 'flash 뒤 다른 안내가 2.5초 만에 사라지지 않는다');
+  assert.equal(toastMs({ err: '실패', note: '', flashed }), 8000);
+  assert.equal(toastMs({ note: '저장했습니다', flashed: null }), 4000);
+});
+
+test('L-4 그룹 만들기 — 그룹은 만들어졌는데 채널 넣기가 실패하면 만든 그룹을 돌려주고 넣기 실패만 알린다(다시 누르면 같은 이름 오류가 나던 것)', async () => {
+  const made = { id: 'g-new', name: '마케팅', pos: 0 };
+  const ok = await createGroupFlow({ insertGroup: async () => made, linkChannels: async () => {} });
+  assert.deepEqual(ok, { row: made, linkError: null });
+  const boom = new Error('network');
+  const half = await createGroupFlow({ insertGroup: async () => made, linkChannels: async () => { throw boom; } });
+  assert.equal(half.row, made, '만든 그룹은 그대로 돌려준다');
+  assert.equal(half.linkError, boom);
+  await assert.rejects(createGroupFlow({ insertGroup: async () => { throw new Error('dup'); }, linkChannels: async () => {} }), /dup/, '그룹 자체를 못 만들면 던진다');
 });
