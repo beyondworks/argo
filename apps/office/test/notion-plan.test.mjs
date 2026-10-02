@@ -83,3 +83,17 @@ test('실행기 시험 실행(--fixture): 네트워크·토큰 없이 계획 건
   try { execFileSync(process.execPath, [fileURLToPath(new URL('../scripts/notion-migrate.mjs', import.meta.url)), '--fixture', '--apply'], { env, encoding: 'utf8', stdio: 'pipe' }); } catch (e) { code = e.status; }
   assert.equal(code, 2, '--apply는 --org 없이 실행되지 않는다');
 });
+
+test('--json 계획 출력은 계좌·사업자번호를 가린다(분리 검수) — 끝 4자리만', () => {
+  const out = execFileSync(process.execPath, [fileURLToPath(new URL('../scripts/notion-migrate.mjs', import.meta.url)), '--fixture', '--json'], { env: { ...process.env, NOTION_TOKEN: '' }, encoding: 'utf8' });
+  assert.ok(out.includes('주거래 계좌'), '항목 이름은 보인다');
+  assert.ok(!out.includes('000-000-000000'), '계좌 번호 원문은 나오지 않는다');
+  assert.match(out, /예시은행 \*\*\*-\*\*\*-\*\*0000/);
+});
+
+test('maskForPrint: 계좌 분류·사업자·법인 번호만 숫자를 가리고 다른 값은 그대로', async () => {
+  const { maskForPrint } = await import('../scripts/notion-plan.mjs');
+  const m = maskForPrint({ company: [{ category: 'bank', value: '국민 123456-78-901234' }, { category: 'basic', key: 'biz_no', value: '214-86-12345' }, { category: 'basic', key: 'name', value: '(주)한빛 2026' }], evals: [{ title: 't' }] });
+  assert.deepEqual(m.company.map((c) => c.value), ['국민 ******-**-**1234', '***-**-*2345', '(주)한빛 2026']);
+  assert.deepEqual(m.evals, [{ title: 't' }]);
+});

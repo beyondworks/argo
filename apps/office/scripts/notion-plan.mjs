@@ -190,6 +190,12 @@ export function planEvals(rows, org, people = {}) {
 export const planPeople = (rows, org) => rows.map((e) => ({ id: stableId(org, 'person', String(e.id)), name: clip(e.name, 100), title: clip(e.role ?? '', 100), agent: clip(agentLabel(e.agent ?? ''), 100), source: 'intranet', source_id: String(e.id) }));
 
 /** 전체 계획 + 대조용 건수 */
+/** 화면·터미널에 찍을 계획 사본 — 계좌 분류 값과 사업자·법인 번호의 숫자를 끝 4자리만 남기고 가린다(--json 출력용, 실제 이관 값은 그대로) */
+const maskDigits = (v) => { const s = String(v ?? ''); let n = (s.match(/\d/g) ?? []).length - 4; return s.replace(/\d/g, (d) => (n-- > 0 ? '*' : d)); };
+export function maskForPrint(plan) {
+  return { ...plan, company: (plan.company ?? []).map((c) => (c.category === 'bank' || ['biz_no', 'corp_no'].includes(c.key) ? { ...c, value: maskDigits(c.value) } : c)) };
+}
+
 export function planAll({ calendar = [], parents = [], workboard = null, company = [], reports = [], employees = [] }, { org = null, people = {}, now = Date.now() } = {}) {
   const parentNames = new Map(parents.map((p) => [p.id, plain(p.properties?.['Entry name']?.title)]));
   const entries = calendar.map((p) => normalizeEntry(p, parentNames));

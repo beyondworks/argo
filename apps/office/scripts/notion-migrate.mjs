@@ -5,15 +5,16 @@
 //   node scripts/notion-migrate.mjs --fixture                    예시 원본(scripts/fixtures/notion-sample.mjs)으로 시험 실행 — 네트워크 없음
 //   node scripts/notion-migrate.mjs                              실제 Notion을 읽어 시험 실행(쓰기 없음) — NOTION_TOKEN 필요
 //   node scripts/notion-migrate.mjs --apply --org <조직 id>        이관 실행 + 대조(유건 승인 뒤에만)
-//   옵션: --only events,tasks,pages,company,evals,people · --people <이름→계정 id JSON 파일> · --resume · --json(계획 전체 출력)
+//   옵션: --only events,tasks,pages,company,evals,people · --people <이름→계정 id JSON 파일> · --resume · --json(계획 전체 출력 — 계좌·사업자번호는 가린다)
 // 환경 변수(값은 출력하지 않는다): NOTION_TOKEN(읽기 전용 내부 통합 토큰), OFFICE_MIGRATE_URL, OFFICE_MIGRATE_ANON_KEY, OFFICE_MIGRATE_EMAIL, OFFICE_MIGRATE_PASSWORD,
+//   OFFICE_MIGRATE_SERVICE_KEY(평가 레포트를 옮길 때만 — 원본 작성자·작성 시각은 이관 전용 함수 office_perf_eval_import(service_role)만 받는다. 실행자 = 로그인한 관리자),
 //   INTRANET_DB(직원 표, 기본 ~/lean-projects/AI-Native/data/board.db — 없으면 직원은 건너뜀),
 //   NOTION_CALENDAR_DS · NOTION_PARENT_DS · NOTION_COMPANY_DS · NOTION_REPORTS_DS · NOTION_WORKBOARD_ROOT(기본 = 인트라넷 lib/integrations/notion.ts의 값)
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { planAll } from './notion-plan.mjs';
+import { planAll, maskForPrint } from './notion-plan.mjs';
 
 const args = process.argv.slice(2);
 const flag = (k) => args.includes(k);
@@ -88,7 +89,7 @@ for (const k of Object.keys(plan)) if (!ONLY.has(k)) plan[k] = [];
 log(`원본(${source.from}): Beyond_Tasks ${summary.source.calendar}줄(날짜 없음 ${summary.source.undated}) · 워크보드 ${summary.source.workboardPages}쪽 · 회사정보 ${summary.source.company} · 레포트 ${summary.source.reports} · 직원 ${summary.source.employees}`);
 log(`계획: 일정 ${plan.events.length} · 할 일 ${plan.tasks.length}(끝낸 일 ${plan.tasks.filter((t) => t.done_at).length}) · 위키 페이지 ${plan.pages.length} · 회사 정보 ${plan.company.length}(서식 칸 ${plan.company.filter((c) => c.key).length}) · 평가 ${plan.evals.length}(계정 못 찾은 사람 ${plan.evals.filter((e) => e.subject_kind === 'person' && !e.subject_user).length}) · 직원 ${plan.people.length}`);
 log(`기간 ${summary.range ? summary.range.join(' ~ ') : '—'} · 본문 블록 ${summary.blocks}개 · 글자로만 옮긴 블록 ${JSON.stringify(summary.textOnlyBlocks)}`);
-if (flag('--json')) log(JSON.stringify(plan, null, 2));
+if (flag('--json')) log(JSON.stringify(maskForPrint(plan), null, 2)); // 계좌·사업자번호는 가린다(터미널·로그에 남지 않게)
 if (!APPLY) { log('시험 실행 — 쓰기 없음. 실제 이관은 --apply --org <조직 id>(유건 승인 뒤)'); process.exit(0); }
 
 /* ── 이관 실행(--apply) ── */
@@ -110,7 +111,11 @@ for (const p of plan.people) { await rpc('office_people_write', { p_org: ORG, p_
 for (const e of plan.events) { await rpc('office_event_write', { p_action: 'save', p_data: e }); done.events++; }
 for (const t of plan.tasks) { await rpc('office_task_import', { p_org: ORG, p_data: t }); done.tasks++; }
 for (const p of plan.pages) { await rpc('office_page_create', { p_id: p.id, p_org: ORG, p_parent: p.parent, p_position: p.position, p_title: p.title, p_content: p.content, p_template: false }); done.pages++; }
-for (const e of plan.evals) { await rpc('office_perf_eval_write', { p_org: ORG, p_action: 'eval.add', p_data: e }); done.evals++; }
+if (plan.evals.length) { // 평가: 이관 전용 함수(service_role) — 보통 쓰기는 출처·원본 작성 시각을 받지 않는다(분리 검수 LOW 3)
+  const svc = createClient(need('OFFICE_MIGRATE_URL'), need('OFFICE_MIGRATE_SERVICE_KEY'), { auth: { persistSession: false } });
+  const actor = (await sb.auth.getUser()).data?.user?.id;
+  for (const e of plan.evals) { const { error } = await svc.rpc('office_perf_eval_import', { p_org: ORG, p_actor: actor, p_data: e }); if (error) throw new Error(`office_perf_eval_import: ${error.message}`); done.evals++; }
+}
 
 // 대조: 계획한 id가 오피스에 실제로 있는가(같은 조직, 다시 읽기)
 const ids = (list) => new Set(list.map((x) => x.id));

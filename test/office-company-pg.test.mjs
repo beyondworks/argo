@@ -25,6 +25,8 @@ const pwrite=(u,a,d)=>call(u,'office_people_write',`${quote(ORG)},${quote(a)},${
 const elist=u=>call(u,'office_perf_eval_list',quote(ORG));
 const ewrite=(u,d)=>call(u,'office_perf_eval_write',`${quote(ORG)},'eval.add',${j(d)}`);
 const ewriteFail=(u,d)=>callFail(u,'office_perf_eval_write',`${quote(ORG)},'eval.add',${j(d)}`);
+const svc=(fn,args)=>JSON.parse(last(sql(`set role service_role; select ${fn}(${args})`)));
+const eimport=(actor,d,org=ORG)=>svc('office_perf_eval_import',`${quote(org)},${quote(actor)},${j(d)}`);
 const kst=d=>new Date(d.getTime()+9*3600e3).toISOString().slice(0,10);
 const TODAY=kst(new Date());
 const THIS=TODAY.slice(0,7);
@@ -191,31 +193,67 @@ test('평가 레포트 근거: 본인이 공유한 월말 사본의 합계만 �
  assert.equal(b.kind,'review'); assert.equal(b.period,LAST); assert.ok(b.totals && 'contract' in b.totals);
 });
 
-test('평가 레포트 이관: source가 같으면 다시 돌려도 한 건, 원본 작성 시각·기간 글 유지', {skip}, ()=>{
+test('평가 레포트 이관(LOW 3): 이관 경로(service_role 전용 함수)만 출처·작성자·작성 시각을 정한다 — source가 같으면 다시 돌려도 한 건', {skip}, ()=>{
  const d={id:randomUUID(),source:'notion',source_id:'page-1',subject_kind:'person',subject_name:'예전 직원',subject_type:'staff',scope:'week',from:'2026-08-03',to:'2026-08-08',
   period_label:'8월 1주차',title:'주간',total:71,author_name:'페퍼',created_at:'2026-08-09T12:30:00Z'};
- const a=ewrite(U.owner,d);
- const b=ewrite(U.owner,{...d,id:randomUUID()});
+ const a=eimport(U.owner,d);
+ const b=eimport(U.owner,{...d,id:randomUUID()});
  assert.equal(a.eval.id,b.eval.id);
  assert.equal(a.eval.author_kind,'import'); assert.equal(a.eval.author_name,'페퍼'); assert.equal(a.eval.period_label,'8월 1주차');
  assert.equal(new Date(a.eval.created_at).toISOString(),'2026-08-09T12:30:00.000Z');
  assert.ok(!elist(U.member).evals.some(e=>e.id===a.eval.id),'계정 없는 대상은 관리자만');
+ assert.match(callFail(U.owner,'office_perf_eval_import',`${quote(ORG)},${quote(U.owner)},${j(d)}`),/permission denied/,'사람 계정(관리자 포함)은 이관 함수를 못 부른다');
+ assert.match(raw(`set role service_role; select office_perf_eval_import(${quote(ORG)},${quote(U.member)},${j({...d,id:randomUUID(),source_id:'page-2'})})`).stderr,/perf_forbidden/,'이관 실행자는 그 조직 관리자여야');
+});
+
+test('평가 레포트(LOW 3): 보통 쓰기는 출처·작성자 이름·작성 시각을 받지 않는다(서버 시각·부른 사람)', {skip}, ()=>{
+ const base={id:randomUUID(),subject_kind:'person',subject_user:U.member,scope:'month',from:`${LAST}-01`,to:endOf(LAST),title:'월간'};
+ assert.match(ewriteFail(U.owner,{...base,source:'notion',source_id:'forged-1',from:'2020-01-03',to:'2020-01-09'}),/perf_input/);
+ assert.match(ewriteFail(U.owner,{...base,created_at:'2020-01-01T00:00:00Z'}),/perf_input/);
+ assert.match(ewriteFail(U.owner,{...base,author_name:'남의 이름'}),/perf_input/);
+ const ok=ewrite(U.admin,base);
+ assert.equal(ok.eval.author_kind,'person'); assert.equal(ok.eval.author_name,'admin');
+ assert.ok(Math.abs(Date.parse(ok.eval.created_at)-Date.now())<60_000,'작성 시각은 서버 시각');
+});
+
+test('원본 id는 조직마다(LOW 1): 다른 조직이 같은 Notion id를 옮겨도 막히지 않는다(회사 정보·직원·평가)', {skip}, ()=>{
+ const item=src=>({id:randomUUID(),label:'상호',value:'x',category:'basic',source:'notion',source_id:src});
+ cwrite(U.owner,'item.save',item('co-page-9'));
+ assert.equal(cwrite(U.outsider,'item.save',item('co-page-9'),ORG2).ok,true);
+ const person=()=>({id:randomUUID(),name:'예전 직원',source:'intranet',source_id:'emp-9'});
+ pwrite(U.owner,'person.save',person());
+ assert.equal(call(U.outsider,'office_people_write',`${quote(ORG2)},'person.save',${j(person())}`).ok,true);
+ const ev={source:'notion',source_id:'rep-9',subject_kind:'crew',subject_name:'루나',scope:'week',from:'2026-08-03',to:'2026-08-09',title:'주간'};
+ const a=eimport(U.owner,{...ev,id:randomUUID()});
+ const b=eimport(U.outsider,{...ev,id:randomUUID()},ORG2);
+ assert.notEqual(a.eval.id,b.eval.id,'다른 조직의 같은 원본은 따로 한 건씩');
 });
 
 test('이관 전용 할 일: 원본의 끝낸 날짜를 지키고(오늘 실적으로 안 잡힌다), 다시 돌려도 한 건, 남에게는 못 맡긴다', {skip}, ()=>{
  const id=randomUUID(), done=`${LAST}-03T05:00:00Z`;
- const t=call(U.member,'office_task_import',`${quote(ORG)},${j({id,title:'옛 업무',note:'[카테고리] 개발',due_on:`${LAST}-03`,done_at:done,source:{kind:'notion',id:'n-1'},assignee:U.owner})}`);
- assert.equal(t.assignee,U.member,'맡는 사람은 부른 사람');
+ const t=call(U.admin,'office_task_import',`${quote(ORG)},${j({id,title:'옛 업무',note:'[카테고리] 개발',due_on:`${LAST}-03`,done_at:done,source:{kind:'notion',id:'n-1'},assignee:U.owner})}`);
+ assert.equal(t.assignee,U.admin,'맡는 사람은 부른 사람');
  assert.equal(new Date(t.done_at).toISOString(),new Date(done).toISOString());
- const again=call(U.member,'office_task_import',`${quote(ORG)},${j({id:randomUUID(),title:'옛 업무',source:{kind:'notion',id:'n-1'}})}`);
+ const again=call(U.admin,'office_task_import',`${quote(ORG)},${j({id:randomUUID(),title:'옛 업무',source:{kind:'notion',id:'n-1'}})}`);
  assert.equal(again.id,id,'같은 원본은 한 번만');
- const today=call(U.member,'office_perf_report',`${quote(ORG)},${quote(TODAY)}::date,${quote(TODAY)}::date`);
+ const today=call(U.admin,'office_perf_report',`${quote(ORG)},${quote(TODAY)}::date,${quote(TODAY)}::date`);
  assert.ok(!today.tasks.some(x=>x.id===id),'오늘 실적에 없다');
- const then=call(U.member,'office_perf_report',`${quote(ORG)},${quote(`${LAST}-01`)}::date,${quote(endOf(LAST))}::date`);
+ const then=call(U.admin,'office_perf_report',`${quote(ORG)},${quote(`${LAST}-01`)}::date,${quote(endOf(LAST))}::date`);
  assert.ok(then.tasks.some(x=>x.id===id && x.done));
- assert.match(callFail(U.member,'office_task_import',`${quote(ORG)},${j({id:randomUUID(),title:'x',source:{kind:'msgr',id:'1'}})}`),/task_input/);
- assert.match(callFail(U.member,'office_task_import',`${quote(ORG)},${j({id:randomUUID(),title:'x',done_at:'2999-01-01T00:00:00Z',source:{kind:'notion',id:'n-2'}})}`),/task_input/);
- assert.match(callFail(U.guest,'office_task_import',`${quote(ORG)},${j({id:randomUUID(),title:'x',source:{kind:'notion',id:'n-3'}})}`),/business_forbidden/);
+ assert.match(callFail(U.admin,'office_task_import',`${quote(ORG)},${j({id:randomUUID(),title:'x',source:{kind:'msgr',id:'1'}})}`),/task_input/);
+ assert.match(callFail(U.admin,'office_task_import',`${quote(ORG)},${j({id:randomUUID(),title:'x',done_at:'2999-01-01T00:00:00Z',source:{kind:'notion',id:'n-2'}})}`),/task_input/);
+ assert.match(callFail(U.guest,'office_task_import',`${quote(ORG)},${j({id:randomUUID(),title:'x',source:{kind:'notion',id:'n-3'}})}`),/business_forbidden|task_forbidden/);
+});
+
+test('이관 전용 할 일(LOW 2): 조직 관리자만, 평가가 끝나 잠긴 달에는 끝낸 일·만든 일을 넣지 못한다', {skip}, ()=>{
+ assert.match(callFail(U.member,'office_task_import',`${quote(ORG)},${j({id:randomUUID(),title:'x',source:{kind:'notion',id:'m-1'}})}`),/task_forbidden/);
+ sql(`insert into office_perf_reviews(org_id,user_id,period,status,done_at) values(${quote(ORG)},${quote(U.owner)},${quote(LAST)},'done',now())`);
+ assert.match(callFail(U.owner,'office_task_import',`${quote(ORG)},${j({id:randomUUID(),title:'x',done_at:`${LAST}-10T03:00:00Z`,source:{kind:'notion',id:'l-1'}})}`),/task_locked/);
+ assert.match(callFail(U.owner,'office_task_import',`${quote(ORG)},${j({id:randomUUID(),title:'x',created_at:`${LAST}-10T03:00:00Z`,source:{kind:'notion',id:'l-2'}})}`),/task_locked/);
+ const ok=call(U.owner,'office_task_import',`${quote(ORG)},${j({id:randomUUID(),title:'이번 달 일',done_at:new Date(Date.now()-3600e3).toISOString(),source:{kind:'notion',id:'l-3'}})}`);
+ assert.equal(ok.title,'이번 달 일');
+ // 내 공간(조직 없음)은 본인 공간이라 된다
+ assert.equal(call(U.member,'office_task_import',`null,${j({id:randomUUID(),title:'내 일',source:{kind:'notion',id:'p-1'}})}`).title,'내 일');
 });
 
 test('퇴사 3년 정리: 시험 실행은 세기만 한다', {skip}, ()=>{

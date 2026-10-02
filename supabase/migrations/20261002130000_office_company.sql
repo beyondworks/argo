@@ -8,6 +8,8 @@
 -- · 직원 명부: 멤버는 이름·직무·부서·연락처·재직 상태를 보고, 메모는 관리자만 본다. 고치기는 관리자만.
 --   계정이 있는 멤버는 명부 행이 없어도 목록에 나온다. 인트라넷의 CLI 토큰은 두지 않는다 — 직원마다 자기 계정으로 로그인한다.
 -- · 평가 레포트: 성과 기록(office_perf_*)의 규칙을 깨지 않는다.
+--   - 출처(source)·작성자 이름·작성 시각을 정하는 길은 이관 전용 함수(office_perf_eval_import — service_role만, 실행자는 그 조직 관리자)뿐이다.
+--     화면·크루 도구의 보통 쓰기(office_perf_eval_write)는 서버 시각과 부른 사람으로만 남긴다(분리 검수 LOW 3).
 --   - 추가만 한다. 고치기는 새 판(replaces)으로 한 번씩, 원래 판은 남는다. 지우기 없음.
 --   - 사람 대상 레포트는 그 사람 본인과 관리자만 본다. 크루(에이전트) 대상은 관리자만 본다.
 --   - 근거(basis)는 그 사람이 공유한 월말·연말 사본(office_perf_reviews.snapshot)의 합계만 붙인다 — 공유 안 한 개인 기록은 관리자에게 열리지 않는다.
@@ -32,7 +34,7 @@ create table if not exists public.office_company_items (
   created_by uuid, updated_by uuid,
   created_at timestamptz not null default clock_timestamp(),
   updated_at timestamptz not null default clock_timestamp(),
-  unique (source, source_id),
+  unique (org_id, source, source_id),                             -- 원본 id는 조직마다(다른 조직이 같은 Notion id를 옮겨도 막히지 않게 — 분리 검수 LOW 1)
   check ((source is null) = (source_id is null))
 );
 create unique index if not exists office_company_items_key on public.office_company_items(org_id, key) where key is not null;
@@ -67,7 +69,7 @@ create table if not exists public.office_employees (
   created_by uuid, updated_by uuid,
   created_at timestamptz not null default clock_timestamp(),
   updated_at timestamptz not null default clock_timestamp(),
-  unique (source, source_id),
+  unique (org_id, source, source_id),                             -- 원본 id는 조직마다(다른 조직이 같은 Notion id를 옮겨도 막히지 않게 — 분리 검수 LOW 1)
   check ((source is null) = (source_id is null)),
   check (left_on is null or joined_on is null or left_on >= joined_on)
 );
@@ -104,7 +106,7 @@ create table if not exists public.office_perf_evals (
   source text check (source is null or length(source) between 1 and 40),
   source_id text check (source_id is null or length(source_id) between 1 and 200),
   created_at timestamptz not null default clock_timestamp(),
-  unique (source, source_id),
+  unique (org_id, source, source_id),                             -- 원본 id는 조직마다(다른 조직이 같은 Notion id를 옮겨도 막히지 않게 — 분리 검수 LOW 1)
   check ((source is null) = (source_id is null)),
   check (period_to >= period_from and period_to - period_from <= 366),
   check ((subject_kind = 'crew') = (subject_type = 'agent')),
@@ -352,16 +354,18 @@ begin
       order by e.period_from desc, e.created_at desc limit 1000) e), '[]'::jsonb));
 end $$;
 
--- 쓰기(관리자만): eval.add(새 레포트 또는 replaces로 새 판). 크루 도구는 p_data.crew(크루 이름)를 붙인다. 이관은 source='notion'
-create or replace function public.office_perf_eval_write(p_org uuid, p_action text, p_data jsonb) returns jsonb
+-- 한 건 추가(내부용) — p_import면 이관(출처·원본 작성 시각·작성자 이름을 받는다), 아니면 보통 쓰기(서버 시각·부른 사람). 권한은 부르는 쪽이 본다.
+create or replace function public.office_perf_eval_add(p_org uuid, p_who uuid, p_data jsonb, p_import boolean) returns jsonb
 language plpgsql security definer set search_path = public, pg_temp as $$
 declare
-  who uuid := auth.uid(); eid uuid; e public.office_perf_evals%rowtype; prev public.office_perf_evals%rowtype; ex public.office_perf_evals%rowtype;
+  who uuid := p_who; eid uuid; e public.office_perf_evals%rowtype; prev public.office_perf_evals%rowtype; ex public.office_perf_evals%rowtype;
   v_kind text; v_user uuid; v_name text; v_type text; v_scope text; v_from date; v_to date; v_src text; v_srcid text; v_crew text; v_at timestamptz;
   sc smallint[]; v_total smallint; k text; snap jsonb; rv public.office_perf_reviews%rowtype;
 begin
-  if p_org is null or public.office_perf_role(p_org) is distinct from 'manager' then raise exception 'perf_forbidden' using errcode = '42501'; end if;
-  if p_action <> 'eval.add' or jsonb_typeof(p_data) is distinct from 'object' or octet_length(p_data::text) > 80000 then raise exception 'perf_input'; end if;
+  if jsonb_typeof(p_data) is distinct from 'object' or octet_length(p_data::text) > 80000 then raise exception 'perf_input'; end if;
+  -- 보통 쓰기는 출처·원본 id·작성 시각·작성자 이름을 받지 않는다(LOW 3) — 이관 경로만
+  if not p_import and exists (select 1 from jsonb_each(p_data) x where x.key in ('source', 'source_id', 'created_at', 'author_name') and jsonb_typeof(x.value) <> 'null') then raise exception 'perf_input'; end if;
+  if p_import and (p_data->>'source') is distinct from 'notion' then raise exception 'perf_input'; end if; -- 이관 원본은 지금 Notion 하나
   begin
     eid := (p_data->>'id')::uuid;
     v_src := nullif(btrim(p_data->>'source'), ''); v_srcid := nullif(btrim(p_data->>'source_id'), '');
@@ -375,11 +379,8 @@ begin
     raise exception 'perf_conflict';
   end if;
   if v_src is not null then
-    select * into ex from public.office_perf_evals where source = v_src and source_id = v_srcid;
-    if ex.id is not null then
-      if ex.org_id = p_org then return jsonb_build_object('ok', true, 'eval', public.office_perf_eval_json(ex)); end if; -- 이관을 다시 돌려도 한 건
-      raise exception 'perf_conflict';
-    end if;
+    select * into ex from public.office_perf_evals where org_id = p_org and source = v_src and source_id = v_srcid;
+    if ex.id is not null then return jsonb_build_object('ok', true, 'eval', public.office_perf_eval_json(ex)); end if; -- 이관을 다시 돌려도 한 건(원본 id는 조직마다)
   end if;
 
   if prev.id is not null then -- 새 판: 대상·범위·기간은 원래 판을 따른다
@@ -453,15 +454,37 @@ exception
   when check_violation or not_null_violation or invalid_text_representation or numeric_value_out_of_range then raise exception 'perf_input';
 end $$;
 
+-- 쓰기(관리자만): eval.add(새 레포트 또는 replaces로 새 판). 크루 도구는 p_data.crew(크루 이름)를 붙인다. 출처·작성 시각은 받지 않는다
+create or replace function public.office_perf_eval_write(p_org uuid, p_action text, p_data jsonb) returns jsonb
+language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  if p_org is null or public.office_perf_role(p_org) is distinct from 'manager' then raise exception 'perf_forbidden' using errcode = '42501'; end if;
+  if p_action <> 'eval.add' then raise exception 'perf_input'; end if;
+  return public.office_perf_eval_add(p_org, auth.uid(), p_data, false);
+end $$;
+
+-- 이관 전용(scripts/notion-migrate.mjs — 서비스 키로만 부른다): 실행자 p_actor는 그 조직의 소유자·관리자여야 하고, 기록의 작성 계정이 된다
+create or replace function public.office_perf_eval_import(p_org uuid, p_actor uuid, p_data jsonb) returns jsonb
+language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  if p_org is null or not exists (select 1 from public.msgr_org_members m join public.msgr_orgs o on o.id = m.org_id
+      where m.org_id = p_org and m.user_id = p_actor and m.removed_at is null and m.role in ('owner', 'admin') and o.deleted_at is null) then
+    raise exception 'perf_forbidden' using errcode = '42501';
+  end if;
+  return public.office_perf_eval_add(p_org, p_actor, p_data, true);
+end $$;
+
 -- ── 이관 전용: 할 일 한 건(Notion 업무보드 → 오피스 할 일) ──
 -- task.done은 끝낸 시각을 지금으로 찍어 옛 업무가 오늘 실적으로 잡힌다 — 이관은 원본의 끝낸 날짜를 그대로 둔다.
 -- 부른 사람 자신에게 맡긴 일만, source.kind='notion'만. 같은 id로 다시 부르면 한 건(재실행 안전).
+-- 조직은 소유자·관리자만(멤버가 옛 날짜로 실적을 끼워 넣지 못하게), 평가가 끝나 잠긴 달(office_perf_locked)의 만든 날·끝낸 날은 거절(분리 검수 LOW 2).
 create or replace function public.office_task_import(p_org uuid, p_data jsonb) returns jsonb
 language plpgsql security definer set search_path = public, pg_temp as $$
 declare who uuid := auth.uid(); sc text; tid uuid; t public.office_tasks%rowtype; v_title text; v_note text; v_due date; v_done timestamptz; v_created timestamptz;
 begin
   if jsonb_typeof(p_data) is distinct from 'object' or octet_length(p_data::text) > 20000 then raise exception 'task_input'; end if;
   sc := public.office_business_scope(p_org, false);
+  if p_org is not null and public.office_perf_role(p_org) is distinct from 'manager' then raise exception 'task_forbidden' using errcode = '42501'; end if;
   if jsonb_typeof(p_data->'source') is distinct from 'object' or p_data->'source'->>'kind' is distinct from 'notion'
      or length(coalesce(p_data->'source'->>'id', '')) not between 1 and 200 then raise exception 'task_input'; end if;
   begin
@@ -473,6 +496,8 @@ begin
   v_title := btrim(coalesce(p_data->>'title', '')); v_note := coalesce(p_data->>'note', '');
   if tid is null or length(v_title) not between 1 and 200 or length(v_note) > 4000 or v_done > clock_timestamp() or v_created > clock_timestamp() + interval '1 minute'
      or (v_due is not null and v_due not between date '2000-01-01' and date '2100-12-31') then raise exception 'task_input'; end if;
+  if p_org is not null and (public.office_perf_locked(p_org, who, (v_created at time zone 'Asia/Seoul')::date)
+     or (v_done is not null and public.office_perf_locked(p_org, who, (v_done at time zone 'Asia/Seoul')::date))) then raise exception 'task_locked'; end if;
   select * into t from public.office_tasks where id = tid;
   if t.id is not null then
     if t.scope = sc and t.created_by = who and t.source->>'id' = p_data->'source'->>'id' then return to_jsonb(t) - 'scope'; end if;
@@ -509,7 +534,9 @@ begin
 end $$;
 
 revoke all on function public.office_member_name(uuid, uuid), public.office_company_in(jsonb, text, text, integer), public.office_company_item_json(public.office_company_items), public.office_company_history_json(public.office_company_items),
-  public.office_perf_eval_json(public.office_perf_evals), public.office_company_purge(boolean) from public, anon, authenticated;
+  public.office_perf_eval_json(public.office_perf_evals), public.office_company_purge(boolean), public.office_perf_eval_add(uuid, uuid, jsonb, boolean),
+  public.office_perf_eval_import(uuid, uuid, jsonb) from public, anon, authenticated;
+grant execute on function public.office_perf_eval_import(uuid, uuid, jsonb) to service_role; -- 이관 스크립트(서비스 키)만
 revoke all on function public.office_company_read(uuid), public.office_company_write(uuid, text, jsonb), public.office_people_read(uuid), public.office_people_write(uuid, text, jsonb),
   public.office_perf_eval_list(uuid), public.office_perf_eval_write(uuid, text, jsonb), public.office_task_import(uuid, jsonb) from public, anon;
 grant execute on function public.office_company_read(uuid), public.office_company_write(uuid, text, jsonb), public.office_people_read(uuid), public.office_people_write(uuid, text, jsonb),
