@@ -3,8 +3,9 @@ import { Icon } from './Icon.jsx';
 import { openMenu, menuProps } from './Menu.jsx';
 import { Link } from '../core/router.jsx';
 import { t } from '../core/i18n.js';
-import { spanOf, spanRange, heightOf, minHeight, rowInfo, hasXY, freeOrder, pack } from '../core/layout.js';
+import { spanOf, spanRange, heightOf, minHeight, rowInfo, hasXY, tOf, freeOrder, pack } from '../core/layout.js';
 import { flipPrepare } from '../core/motion.js';
+import { record, attach } from '../core/history.js';
 
 // 가장자리 끌기·옮기기(유건 10/1) — 손잡이는 늘 그리고, 끄는 코드는 처음 다가갈 때 불러온다(첫 화면 150KB 상한)
 const EDGES = ['l', 'r', 't', 'b'];
@@ -23,7 +24,7 @@ function ModuleCard({ item, space, items, place, canEdit, editable, commit, reso
     ro.observe(el);
     return () => ro.disconnect();
   }, [editable]);
-  const set = (patch) => commit(items.map((x) => (x.id === item.id ? { ...x, ...patch } : x)));
+  const set = (patch, quiet) => commit(items.map((x) => (x.id === item.id ? { ...x, ...patch } : x)), quiet); // quiet = 되돌리기 기록에 쌓지 않는다(보기·필터 같은 모듈 설정)
   // 끄기·키보드·두 번 누르기는 module-resize.js(크기)·module-move.js(옮기기)가 맡는다 — 지금 자리(DOM)와 항목을 넘긴다
   const run = (load, kind, ...args) => load().then((m) => card.current && m[kind]?.({ el: card.current, items, modOf: resolveModule, commit, canEdit, title: mod.title }, ...args), () => {});
   const edge = (kind, e, side) => run(resizer, kind, e, side);
@@ -49,7 +50,7 @@ function ModuleCard({ item, space, items, place, canEdit, editable, commit, reso
           onKeyDown={(e) => { if ((e.key === ' ' || e.key === 'Enter') && !e.repeat) { e.preventDefault(); e.stopPropagation(); run(mover, 'pick', e.currentTarget); } }}><Icon name="grip" size={14} /></button>}
         <button type="button" className="icon-btn sm" aria-label={t('more')} onClick={(e) => openMenu(e, menu(), { anchor: e.currentTarget })}><Icon name="dots" size={14} /></button>
       </header>
-      <div className={`module-body${bodyClassName ? ` ${bodyClassName}` : ''}`}><Body space={space} item={item} canEdit={canEdit} menu={own} onSub={setSub} setCfg={(cfg) => set({ cfg: { ...item.cfg, ...cfg } })} /></div>
+      <div className={`module-body${bodyClassName ? ` ${bodyClassName}` : ''}`}><Body space={space} item={item} canEdit={canEdit} menu={own} onSub={setSub} setCfg={(cfg) => set({ cfg: { ...item.cfg, ...cfg } }, true)} /></div>
       {editable && EDGES.map((side) => { // 저장 중(canEdit 꺼짐)에도 그대로 둔다 — 키보드 초점이 손잡이에 남는다. 그동안은 aria-disabled
         if (place.first && side === 'l') return null; // 0열에 붙은 모듈의 왼쪽은 잡은 선이 손을 따라오지 않는다(반대편이 움직인다) — 그리지 않는다(유건 10/1 확정)
         const x = side === 'l' || side === 'r'; // 좌우 = 폭, 위아래 = 높이
@@ -81,7 +82,8 @@ export function ModuleGrid({ id, items, canEdit, locked = false, onChange, resol
   useLayoutEffect(() => {
     if (optimistic && (optimistic.id !== id || (!pending && optimistic.source !== items))) setOptimistic(null);
   }, [id, items, pending, optimistic]);
-  const commit = async (next) => {
+  // quiet = 되돌리기·다시 하기가 저장할 때(그 단계는 되돌리기 코드가 옮긴다)·모듈 설정. 아니면 저장에 성공한 사용자 동작으로 되돌리기에 쌓는다(7차)
+  const commit = async (next, quiet) => {
     if (lock.current?.id === id || !latest.current.canEdit || latest.current.locked || latest.current.id !== id || !mounted.current) return false;
     const request = { id }, source = latest.current.items, write = latest.current.onChange;
     lock.current = request;
@@ -89,6 +91,7 @@ export function ModuleGrid({ id, items, canEdit, locked = false, onChange, resol
     let saved = false;
     try {
       saved = await write(next) !== false;
+      if (saved && !quiet) record(id, source);
       return saved;
     } catch { return false; }
     finally {
@@ -99,6 +102,9 @@ export function ModuleGrid({ id, items, canEdit, locked = false, onChange, resol
       if (lock.current === request) lock.current = null;
     }
   };
+  const apply = useRef(null);
+  apply.current = commit;
+  useEffect(() => attach(id, { items: () => latest.current.items, apply: (next) => apply.current(next, true) }), [id]); // ⌘Z 대상(화면에 있는 동안)
   const visible = displayed.filter((item) => !item.hidden);
   // 자유 격자(자리 x·y가 있는 배치) — 높이를 정하지 않은 모듈은 내용 높이라 화면에서 재서 쌓는다(그리기 전에 한 번, 내용·폭이 바뀌면 다시).
   // 자리가 없는 옛 배치는 예전 그대로(CSS 격자 + 줄 높이 공유) — 바꾼 직후 사용자 홈이 달라 보이지 않는다. 옮기거나 크기를 바꿀 때 자리를 같이 저장한다
@@ -123,7 +129,7 @@ export function ModuleGrid({ id, items, canEdit, locked = false, onChange, resol
   const flip = useRef(null);
   const animate = (write) => { if (grid.current) flip.current = flipPrepare(grid.current); write(); };
   useLayoutEffect(() => { if (hold.current) { hold.current = false; return; } const run = flip.current; flip.current = null; run?.(); });
-  const boxes = free && new Map(pack(freeOrder(visible).map(({ it, x }, o) => ({ id: it.id, x, w: spanOf(it), h: heightOf(it) || seen?.[it.id] || 0, o })), seen?.gap ?? 12).map((b) => [b.id, b]));
+  const boxes = free && new Map(pack(freeOrder(visible).map(({ it, x }, o) => ({ id: it.id, x, w: spanOf(it), h: heightOf(it) || seen?.[it.id] || 0, o, t: tOf(it) })), seen?.gap ?? 12).map((b) => [b.id, b]));
   const rows = !free && rowInfo(visible, resolveModule);
   const place = (item) => (free ? { ...boxes.get(item.id), h: heightOf(item), min: minHeight(resolveModule(item)), first: !boxes.get(item.id).x } : rows.get(item.id));
   return <div className={`grid${free ? ' free' : ''}`} ref={grid} aria-busy={pending} style={free ? { '--gh': `${Math.max(0, ...[...boxes.values()].map((b) => b.top + b.h))}px` } : undefined}>

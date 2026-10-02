@@ -22,9 +22,10 @@ import { PageModuleNode } from '../ui/PageModuleNode.jsx';
 import { getStorageScope } from '../core/save.js';
 import { RedactMark, BlockPick, pickKey, pickRange, blockRects, redactStatus, setRedact, menuRange, unpick } from './block-pick.js';
 import { EDITOR_DICT } from './editor-i18n.js';
+import { PAGE_EDIT_DICT } from './page-i18n.js';
 import { BlockHover, HANDLE_POSITION, measureAnchor, setHover } from './block-handle.js';
 
-registerDict(EDITOR_DICT);
+registerDict({ ...EDITOR_DICT, ...PAGE_EDIT_DICT });
 // 여백에서 끌기를 시작하지 않는 자리 — 누를 수 있는 것, 창, 블록 손잡이
 /** 고른 블록 복사 — 문서 조각을 HTML·글자로 직접 만든다(원자 블록만 골라도 비지 않게, 분리 검수 M1). 실패하면 false */
 async function copySlice(view, from, to) {

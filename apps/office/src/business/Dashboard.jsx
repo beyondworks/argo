@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useId, useMemo, useRef, useState 
 import { getLang, t, useLang } from '../core/i18n.js';
 import { CHART_MODULES } from '../core/module-registry.js';
 import { ModuleGrid, ModuleAddButton } from '../ui/ModuleGrid.jsx';
+import { record } from '../core/history.js';
 import { Modal } from '../ui/Overlay.jsx';
 import { Icon } from '../ui/Icon.jsx';
 import { InfoTip } from '../ui/InfoTip.jsx';
@@ -128,7 +129,7 @@ export function BusinessDashboard({ business, space, onOpenOrder }) {
     try {
       if (!editing && current.widgets.length >= 30) return;
       const widgets = editing ? configureWidget(current.widgets, editing, type, metric) : [...current.widgets, newWidget(type, metric)];
-      if (await update({ widgets })) { setAdding(false); setEditing(null); }
+      if (await update({ widgets })) { if (!editing) record(`business:${space}:${current.id}`, current.widgets); setAdding(false); setEditing(null); } // 위젯 추가는 ⌘Z로 되돌린다(7차)
     } catch (failure) { setError(businessError(failure)); }
   };
   const resolveModule = (item) => { const module = CHART_MODULES.find((entry) => entry.id === item.type); return { ...module, title: `${t(`biz.metric.${item.metric}`)} · ${t(module.title)}`, render: ChartModule, actions: [{ label: t('bizui.edit'), run: () => editWidget(item) }] }; };

@@ -310,6 +310,8 @@ body.edge-drag-y, body.edge-drag-y * { cursor: ns-resize !important; user-select
 .grid-slot { position: absolute; left: 0; top: 0; z-index: 3; pointer-events: none; border-radius: var(--rs); background: var(--primary-soft); box-shadow: inset 0 0 0 2px var(--primary);
   transition: transform 140ms var(--ease-out), width 140ms var(--ease-out), height 140ms var(--ease-out), opacity 120ms var(--ease-out); }
 .grid-slot.off { opacity: 0; } .grid-slot.fresh { transition: none; }
+/* 바뀌어 가거나 밀려날 모듈이 갈 자리(7차) — 놓일 자리 윤곽보다 옅은 점선 */
+.grid-slot.ghost { z-index: 2; background: none; box-shadow: none; outline: 1.5px dashed var(--primary); outline-offset: -1.5px; opacity: 0.7; }
 body.module-moving, body.module-moving * { cursor: grabbing !important; user-select: none; }
 /* 터치: 폭은 바꾸지 않고(좁은 화면과 같게), 높이는 아래 가장자리 하나 — 잡을 자리가 보이게 작은 막대를 늘 둔다 */
 @media (pointer: coarse) {

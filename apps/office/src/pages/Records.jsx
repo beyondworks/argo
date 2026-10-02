@@ -6,7 +6,8 @@ import { Face } from '../ui/Face.jsx';
 import { menuProps, mergeHandlers } from '../ui/Menu.jsx';
 import { showToast } from '../ui/Overlay.jsx';
 import { Sheet } from '../ui/Panel.jsx';
-import { t, ago, useLang } from '../core/i18n.js';
+import { t, ago, useLang, registerDict } from '../core/i18n.js';
+import { RECORDS_DICT } from './records-i18n.js';
 import { useStore, decide, crewName, approvalsIn } from '../core/store.js';
 import { recordMenu, fileMenu } from '../core/commands.js';
 import { fmtBytes, fileKind } from '../core/files.js';
@@ -21,6 +22,8 @@ import { FolderView, DateSections, useFolder, folderName, FolderIcon, openItem, 
 import { kstDay } from '../core/task-model.js';
 import { DocView } from '../ui/DocView.jsx';
 import { SPACES, ME } from '../core/session.js';
+
+registerDict(RECORDS_DICT);
 
 const inSpace = (space) => (x) => space === 'me' || x.space === space;
 const spaceName = (key) => SPACES.find((s) => s.key === key)?.name ?? '';

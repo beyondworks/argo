@@ -1,9 +1,10 @@
 // 모듈 가장자리 끌기(유건 10/1, 10/1 저녁 자유 격자) — 처음 가장자리에 다가갈 때 불러온다(첫 화면 묶음 밖).
 // 늘 그 모듈만 바뀐다(옆 모듈과 경계를 같이 끌지 않는다). 끄는 동안은 그 모듈만 크기가 바뀌어 보이고 다른 모듈은 제자리에 있다.
-// 손을 떼면 한 번 저장하고, 새 크기와 겹친 모듈은 아래로 밀린 뒤 위로 붙는다. Esc = 취소, 두 번 누르기 = 그 방향 되돌리기(그 모듈만).
+// 손을 떼면 한 번 저장하고, 새 크기와 겹친 모듈만 아래로 밀린다(7차 — 위로 붙지 않는다, 줄이면 빈칸). Esc = 취소, 두 번 누르기 = 그 방향 되돌리기(그 모듈만).
+// 위 가장자리(넓은 화면)는 위 끝이 움직이고 아래 끝은 그대로다(유건 7차 3) — 위로는 위 모듈 아래 끝 + 틈에서 멈춘다. 좁은 폭(한 줄에 하나)은 높이만.
 import { spanOf, spanRange, minHeight } from '../core/layout.js';
-import { resizeX, snapH, stepH, magnet, applySizes, resetPatch, STEP_H } from '../core/module-size.js';
-import { around, settle } from '../core/grid-move.js';
+import { resizeX, snapH, stepH, magnet, applySizes, resetPatch, STEP_H, MAX_H } from '../core/module-size.js';
+import { around, ceiling, settle } from '../core/grid-move.js';
 import { readGrid } from './grid-dom.js';
 
 const isX = (side) => side === 'l' || side === 'r';
@@ -12,7 +13,17 @@ const isX = (side) => side === 'l' || side === 'r';
 function planOf(ctx, side) {
   const g = readGrid(ctx.el, ctx.items), id = ctx.el.dataset.mod, me = g.boxes.find((b) => b.id === id), mod = ctx.modOf(ctx.items.find((it) => it.id === id));
   // 최소 높이 = 머리 + 본문 최소(머리를 숨긴 모양이면 0)
-  return { ...g, ctx, id, me, side, x: isX(side), ra: spanRange(mod.sizes), min: minHeight(mod, ctx.el.querySelector(':scope > .module-head')?.offsetHeight ?? 0), from: isX(side) ? { x: me.x, w: me.w } : me.h };
+  const pl = { ...g, ctx, id, me, side, x: isX(side), ra: spanRange(mod.sizes), min: minHeight(mod, ctx.el.querySelector(':scope > .module-head')?.offsetHeight ?? 0), from: isX(side) ? { x: me.x, w: me.w } : me.h };
+  // 위 가장자리(넓은 화면): 아래 끝 고정, 위 끝은 ceil(위 모듈 아래 끝 + 틈) ~ 아래 끝 - 최소 높이
+  if (side === 't' && !g.narrow) Object.assign(pl, { top: true, bottom: me.top + me.h, ceil: ceiling(g.boxes, id, g.gap), tops: g.boxes.filter((b) => b.id !== id).map((b) => b.top) });
+  return pl;
+}
+
+/** 위 가장자리 높이 — 위 끝(8px 눈금)을 위 모듈 아래 끝 + 틈과 최대 높이 사이로, 다른 모듈 위 끝 6px 안이면 맞춘다. 돌려주는 값 = 높이(아래 끝 - 위 끝) */
+function topH(pl, top) {
+  const lo = Math.max(pl.ceil, pl.bottom - MAX_H), hi = pl.bottom - pl.min, at = Math.max(lo, Math.min(hi, Math.round(top / STEP_H) * STEP_H));
+  const near = pl.tops.find((v) => Math.abs(v - at) <= 6 && v >= lo && v <= hi);
+  return pl.bottom - (near ?? at);
 }
 
 const changed = (pl, cur) => (pl.x ? cur.x !== pl.from.x || cur.w !== pl.from.w : Math.abs(cur - pl.from) >= STEP_H / 2); // 반 눈금 미만이면 그대로(살짝 누른 것으로 높이가 고정되지 않게)
@@ -47,13 +58,14 @@ function show(pl, cur, keep) {
   if (pl.x) { Object.assign(el.style, { left: `${cur.x * pl.col}px`, width: `${cur.w * pl.col - pl.gap}px` }); valueNow(el, 'x', cur.w); ruler(el); return; }
   for (const name of ['sized-h', 'own-h']) if (!el.classList.contains(name)) { el.classList.add(name); keep.added.push(name); } // 정한 높이 안에서 본문이 스크롤되게
   el.style.height = `${cur}px`; valueNow(el, 'y', cur);
+  if (pl.top) el.style.top = `${pl.bottom - cur}px`; // 위 가장자리: 아래 끝은 그대로
 }
 
 /** 한 번 저장 — 이 모듈 크기만 바꾸고(옛 앱용 size·span도 같이), 모두의 자리(x·y)를 다시 쌓아 저장한다. 미리 보인 모습은 저장 요청 직후(다시 그리기 전) 걷는다 — 그 자리에서 미끄러진다 */
 function save(pl, cur, keep) {
   const { ctx, id } = pl, patch = pl.x ? { span: cur.w } : { h: cur };
   const items = applySizes(ctx.items, { [id]: patch }, ctx.modOf);
-  const placed = pl.narrow ? pl.boxes.map((b) => (b.id === id ? { ...b, h: cur } : b)) : around(pl.boxes, id, pl.x ? cur : { h: cur }, pl.gap);
+  const placed = pl.narrow ? pl.boxes.map((b) => (b.id === id ? { ...b, h: cur } : b)) : around(pl.boxes, id, pl.x ? cur : pl.top ? { h: cur, top: pl.bottom - cur } : { h: cur }, pl.gap);
   ctx.commit(settle(items, placed, pl.narrow ? pl.xs : null));
   unpin(keep);
 }
@@ -74,6 +86,7 @@ export function drag(ctx, p, side) {
       saved = pin(pl); states.forEach(([node, name]) => node.classList.add(name)); if (pl.x) ruler(el);
     }
     const next = pl.x ? resizeX({ ...pl.from, d: Math.round((e.clientX - p.x) / pl.col), side, ra: pl.ra })
+      : pl.top ? topH(pl, pl.me.top + e.clientY - p.y)
       : magnet(snapH(pl.from + (side === 'b' ? 1 : -1) * (e.clientY - p.y), pl.min), pl.me.top, edges, pl.min);
     if (pl.x ? next.x === cur.x && next.w === cur.w : next === cur) return;
     cur = next; show(pl, cur, saved);
@@ -112,7 +125,7 @@ export function key(ctx, { key: name }, side) {
   const k = typing, { pl } = k;
   pl.ctx = ctx;
   // 오른쪽 가장자리 →는 넓게, 왼쪽 가장자리 ←는 넓게(시작 열이 왼쪽으로). 높이: 아래 가장자리 ↓·위 가장자리 ↑가 높게
-  const next = x ? resizeX({ ...k.cur, d: dir, side, ra: pl.ra }) : stepH(k.cur, (side === 'b' ? 1 : -1) * dir, pl.min);
+  const next = x ? resizeX({ ...k.cur, d: dir, side, ra: pl.ra }) : pl.top ? topH(pl, pl.bottom - k.cur + dir * 16) : stepH(k.cur, (side === 'b' ? 1 : -1) * dir, pl.min);
   if (x ? next.x !== k.cur.x || next.w !== k.cur.w : next !== k.cur) { k.cur = next; show(pl, next, k.saved); }
   clearTimeout(k.timer);
   k.timer = setTimeout(flush, 400);

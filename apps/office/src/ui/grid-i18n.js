@@ -4,9 +4,15 @@ export const GRID_DICT = {
   'grid.at': ['{col}번째 열, 위에서 {n}번째 자리', 'Column {col}, position {n} from the top'],
   'grid.drop': ['{name} 자리를 옮겼습니다.', 'Moved {name}.'],
   'grid.cancel': ['옮기기를 취소했습니다.', 'Move cancelled.'],
+  'grid.swap': ['{name} 모듈과 자리를 바꿉니다.', 'Swapping places with {name}.'],
 };
 // 모듈 맞춤 알림(유건 10/1 밤 6차) — 맞춤 코드(module-fit.js)와 함께 지연 로드된다
 export const FIT_DICT = {
   'home.fitDone': ['모듈 높이를 맞췄습니다', 'Module heights fitted'],
   'home.fitSame': ['이미 맞춰져 있습니다', 'Already fitted'],
+};
+// 배치 되돌리기 알림(유건 10/2 7차 4) — 되돌리기 코드(layout-undo.js)와 함께 지연 로드된다
+export const UNDO_DICT = {
+  'layout.undone': ['배치를 되돌렸습니다', 'Layout change undone'],
+  'layout.redone': ['배치를 다시 적용했습니다', 'Layout change redone'],
 };

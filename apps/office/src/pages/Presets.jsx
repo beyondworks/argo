@@ -11,6 +11,7 @@ import { readTheme, readShell, applyTheme, applyShell, isFullWidth, toggleWidth 
 import { readCustom, saveCustom, refreshCustom, isEmpty, EMPTY } from '../core/custom-theme.js';
 import { PRESETS_KEY, PRESET_LIMIT, NAME_MAX, presetsFor, capture, addPreset, removePreset, applyPreset } from '../core/presets-model.js';
 import { reloadLayout } from '../core/pull.js';
+import { record } from '../core/history.js';
 import { PRESET_DICT } from './presets-i18n.js';
 import './presets.css';
 
@@ -45,7 +46,8 @@ export default function Presets({ space, items: home, open }) {
   };
   const restore = (p) => {
     const key = `home:${space}`;
-    const ok = applyPreset(p, { current: getState().layouts[key]?.items, saveHome: (h) => saveLayout(key, h), applyTheme, applyShell,
+    const ok = applyPreset(p, { current: getState().layouts[key]?.items, saveHome: (h) => { const ok = saveLayout(key, h); if (ok) record(key, home); return ok; }, // 배치 되돌리기(⌘Z)에 쌓는다(7차)
+      applyTheme, applyShell,
       saveCustom: (c) => saveCustom(c ?? EMPTY), refreshCustom, setLang, setWidth: (full) => { if (isFullWidth() !== full) toggleWidth(); } });
     close();
     showToast(ok ? t('presets.restored', { name: p.name }) : t('home.layoutBlocked'));

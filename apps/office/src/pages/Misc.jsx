@@ -4,6 +4,7 @@ import { Icon } from '../ui/Icon.jsx';
 import { showToast } from '../ui/Overlay.jsx';
 import { t, ago, useLang, getLang, setLang, registerDict } from '../core/i18n.js';
 import { CUSTOM_DICT } from './custom-i18n.js';
+import { MISC_DICT } from './misc-i18n.js';
 import { FONTS, COLORS, RADIUS_MAX, ALPHA_MAX, EMPTY, readCustom, saveCustom, refreshCustom, isEmpty } from '../core/custom-theme.js';
 import { MODES, SHELLS, applyTheme, applyShell, readTheme, readShell, familyOf, modeOf } from '../core/theme.js';
 import { useStore, restorePage, resetDraft } from '../core/store.js';
@@ -19,7 +20,7 @@ function ShellMini({ shell }) {
   return <span className="shell-mini" data-s={shell} aria-hidden="true"><span className="sm-win"><span className="sm-side"><i /><i /><i /></span><span className="sm-main"><i /><i /></span></span></span>;
 }
 
-registerDict(CUSTOM_DICT);
+registerDict({ ...CUSTOM_DICT, ...MISC_DICT });
 
 /** 커스텀 테마 — 둥글기·글꼴·투명도는 모드 공통, 색은 지금 보이는 모드에만. 값을 바꿀 때마다 저장·적용한다 */
 function CustomTheme({ dark }) {

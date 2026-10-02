@@ -9,7 +9,8 @@ import { openMenu, menuProps, mergeHandlers } from '../ui/Menu.jsx';
 import { Modal, showToast } from '../ui/Overlay.jsx';
 import { SplitHandle, useWidth } from '../ui/Split.jsx';
 import { navigate } from '../core/router.jsx';
-import { t, ago, useLang } from '../core/i18n.js';
+import { t, ago, useLang, registerDict } from '../core/i18n.js';
+import { MAIL_DICT } from './mail-i18n.js';
 import { useStore, setMail, archiveMail } from '../core/store.js';
 import { setUi, useUi } from '../core/ui-state.js';
 import { mailMenu } from '../core/commands.js';
@@ -22,6 +23,8 @@ import {
   loadAccounts, pullMail, readMail, connectGoogle, finishConnect, disconnectAccount, mailConfig, adminNote,
   saveDraft, sendMail, fileToPart, openAttachment, mailDoc, mailPaper, ATTACH_CAP,
 } from '../core/mail.js';
+
+registerDict(MAIL_DICT);
 
 const ok = (a) => a.status === 'ok';
 const domain = (addr) => String(addr ?? '').split('@')[1] ?? '';

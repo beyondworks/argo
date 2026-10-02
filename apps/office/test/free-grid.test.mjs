@@ -80,31 +80,31 @@ test('세로 중력: 각자 높이로 쌓고 빈 곳은 위로, 겹치지 않는
   assert.deepEqual(tops(pack([{ id: 'a', x: 0, w: 4, h: 100 }, { id: 'b', x: 9, w: 6, h: 100 }], GAP)), { a: [0, 0], b: [6, 0] });
 });
 
-// 이유(유건 10/1 저녁 추가사항 1): 끄는 동안 보인 윤곽 자리에 놓이고, 그 자리와 겹치는 모듈은 아래로 밀린 뒤 중력으로 정리된다.
-test('놓기: 보인 자리에 놓이고 겹친 모듈은 아래로 밀린다', () => {
+// 이유(유건 10/1 저녁 추가사항 1, 7차 10/2): 끄는 동안 보인 윤곽 자리에 놓이고, 그 자리와 겹치는 모듈은 아래로 밀린다. 7차부터 세로 중력은 없다(빈칸 허용).
+test('놓기: 보인 자리에 놓이고 겹친 모듈은 아래로 밀린다(중력 없음)', () => {
   const now = [box('cal', 0, 6, 0, 480), box('todos', 6, 6, 0, 232), box('work', 6, 6, 244, 232), box('pages', 0, 12, 492, 200)];
-  // 그대로 놓으면(포인터가 원래 자리) 아무것도 안 바뀐다
-  assert.deepEqual(tops(landing(now, 'work', 6, 250, GAP)), tops(now));
-  // 작업을 할 일 위쪽 절반에 놓으면 작업이 맨 위, 할 일은 아래로
-  assert.deepEqual(tops(landing(now, 'work', 6, 40, GAP)), { cal: [0, 0], work: [6, 0], todos: [6, 244], pages: [0, 492] });
-  // 할 일을 캘린더 자리(0열) 위쪽에 놓으면 캘린더가 아래로 밀리고, 오른쪽 작업은 빈 위로 붙는다
-  assert.deepEqual(tops(landing(now, 'todos', 0, 10, GAP)), { todos: [0, 0], work: [6, 0], cal: [0, 244], pages: [0, 736] });
-  // 맨 아래 빈 곳에 놓아도 공중에 뜨지 않는다(중력)
-  assert.deepEqual(tops(landing(now, 'todos', 6, 5000, GAP)).todos, [6, 704]);
+  // 그대로 놓으면(윤곽이 원래 자리) 아무것도 안 바뀐다
+  assert.deepEqual(tops(landing(now, 'work', 6, 244, GAP)), tops(now));
+  // 작업을 왼쪽 캘린더 아래쪽 절반에 놓으면 캘린더 아래로 들어가고, 겹친 페이지는 아래로 밀린다. 오른쪽 위 빈칸은 그대로(할 일은 올라가지 않는다)
+  assert.deepEqual(tops(landing(now, 'work', 0, 300, GAP)), { cal: [0, 0], todos: [6, 0], work: [0, 492], pages: [0, 736] });
+  // 맨 아래 빈 곳에 놓으면 그 높이에 그대로 — 공중에 떠도 위로 끌려 올라가지 않는다(7차)
+  assert.deepEqual(tops(landing(now, 'todos', 6, 5000, GAP)).todos, [6, 5000]);
 });
 
-// 이유(기능 후퇴 금지): 키보드 ↑/↓는 같은 열에 걸친 모듈 하나씩 넘는다(한 칸), 넘을 것이 없으면 그대로.
-test('키보드 한 칸: 같은 열의 모듈을 하나씩 넘는다', () => {
+// 이유(기능 후퇴 금지, 7차 같은 규칙): 키보드도 끌기와 같이 처음 자리 기준 — ↑/↓는 같은 열에 걸친 모듈의 위 끝(그 모듈과 자리 바꾸기) 또는 처음 자리로.
+// 넘을 것이 없으면 ↓는 그대로, ↑는 맨 위. 한 열씩 옮기는 중간 칸의 결과는 쌓이지 않는다(10/2 화면 실측: 중간 칸 바꾸기가 쌓여 모듈이 엉뚱한 자리로)
+test('키보드 한 칸: 처음 자리 기준으로 같은 열 모듈과 자리를 바꾼다', () => {
   const now = [box('cal', 0, 6, 0, 480), box('todos', 6, 6, 0, 232), box('work', 6, 6, 244, 232)];
-  let ty = 244; // 작업의 지금 자리
-  ty = stepY(now, 'work', 6, 6, ty, -1);
-  assert.deepEqual(tops(landing(now, 'work', 6, ty, GAP)).work, [6, 0]);
-  assert.equal(stepY(now, 'work', 6, 6, ty, -1), ty); // 더 위에 넘을 것이 없다
-  ty = stepY(now, 'work', 6, 6, ty, 1);
-  assert.deepEqual(tops(landing(now, 'work', 6, ty, GAP)).work, [6, 244]);
-  assert.equal(stepY(now, 'work', 6, 6, ty, 1), ty);
-  // 왼쪽 열(캘린더)로 옮기면 캘린더 하나를 넘는다
-  assert.deepEqual(tops(landing(now, 'work', 0, stepY(now, 'work', 0, 6, 0, 1), GAP)).work, [0, 492]);
+  let ty = stepY(now, 'work', 6, 6, 244, -1);
+  assert.equal(ty, 0);
+  assert.deepEqual(tops(landing(now, 'work', 6, ty, GAP)), { cal: [0, 0], work: [6, 0], todos: [6, 244] });
+  assert.equal(stepY(now, 'work', 6, 6, ty, -1), 0); // 더 위에 넘을 것이 없다
+  ty = stepY(now, 'work', 6, 6, ty, 1); // ↓ = 처음 자리로 돌아온다
+  assert.equal(ty, 244);
+  assert.deepEqual(tops(landing(now, 'work', 6, ty, GAP)), tops(now));
+  assert.equal(stepY(now, 'work', 6, 6, ty, 1), 244); // 아래에 넘을 것이 없다
+  // 왼쪽 열로 한 칸씩 옮겨도(중간 칸에서 할 일·작업 열에 걸쳐도) 결과는 마지막 칸만으로 정해진다
+  assert.deepEqual(tops(landing(now, 'work', 0, 244, GAP)), { cal: [0, 0], todos: [6, 0], work: [0, 492] });
 });
 
 // 이유(유건 10/1 저녁): 가장자리 크기 조절은 그 모듈만 — 옆 모듈과 경계를 같이 끌지 않는다. 늘어나 겹치면 겹친 모듈이 아래로 밀린다.
@@ -136,21 +136,21 @@ test('크기 되돌리기: 그 모듈만', () => {
   assert.deepEqual(resetPatch([{ id: 'c', size: 'm' }], 'c'), {});
 });
 
-// 이유: 저장은 x·y를 더하고 옛 필드를 지킨다 — y→x 순으로 정렬(옛 앱은 순서·열 수로 그린다), 숨긴 모듈은 뒤에 그대로.
-test('저장할 항목: x·y를 더하고 y→x 순, 숨긴 모듈·옛 필드 보존', () => {
+// 이유: 저장은 x·y·t를 더하고 옛 필드를 지킨다 — y→x 순으로 정렬(옛 앱은 순서·열 수로 그린다), 숨긴 모듈은 뒤에 그대로. t = 놓인 위 끝(7차).
+test('저장할 항목: x·y·t를 더하고 y→x 순, 숨긴 모듈·옛 필드 보존', () => {
   const items = [{ id: 'cal', size: 'm', h: 480, cfg: { v: 'month' } }, { id: 'hid', size: 's', hidden: true, x: 3, y: 9 }, { id: 'todos', size: 'm', span: 6, baseSize: 'm' }, { id: 'work', size: 'm' }];
-  const placed = landing([box('cal', 0, 6, 0, 480), box('todos', 6, 6, 0, 232), box('work', 6, 6, 244, 232)], 'work', 6, 40, GAP);
+  const placed = landing([box('cal', 0, 6, 0, 480), box('todos', 6, 6, 0, 232), box('work', 6, 6, 244, 232)], 'work', 6, 0, GAP);
   const next = settle(items, placed);
   assert.deepEqual(next, [
-    { id: 'cal', size: 'm', h: 480, cfg: { v: 'month' }, x: 0, y: 0 },
-    { id: 'work', size: 'm', x: 6, y: 1 },
-    { id: 'todos', size: 'm', span: 6, baseSize: 'm', x: 6, y: 2 },
+    { id: 'cal', size: 'm', h: 480, cfg: { v: 'month' }, x: 0, y: 0, t: 0 },
+    { id: 'work', size: 'm', x: 6, y: 1, t: 0 },
+    { id: 'todos', size: 'm', span: 6, baseSize: 'm', x: 6, y: 2, t: 244 },
     { id: 'hid', size: 's', hidden: true, x: 3, y: 9 },
   ]);
-  // 다시 읽어 그리면 같은 자리(순서 y만으로 중력이 같은 배치를 만든다)
-  const again = pack(freeOrder(next.filter((it) => !it.hidden)).map(({ it, x }) => ({ id: it.id, x, w: 6, h: { cal: 480, todos: 232, work: 232 }[it.id] })), GAP);
+  // 다시 읽어 그리면 같은 자리
+  const again = pack(freeOrder(next.filter((it) => !it.hidden)).map(({ it, x }) => ({ id: it.id, x, w: 6, h: { cal: 480, todos: 232, work: 232 }[it.id], t: it.t })), GAP);
   assert.deepEqual(tops(again), tops(placed));
-  // 좁은 폭에서 순서만 바꾸면 넓은 화면의 열은 그대로
-  assert.deepEqual(settle(items, [box('todos', 0, 12, 0, 232), box('cal', 0, 12, 244, 480), box('work', 0, 12, 736, 232)], new Map([['todos', 6], ['cal', 0], ['work', 6]])).map((it) => [it.id, it.x, it.y]),
-    [['todos', 6, 0], ['cal', 0, 1], ['work', 6, 2], ['hid', 3, 9]]);
+  // 좁은 폭에서 순서만 바꾸면 넓은 화면의 열·t는 그대로(t를 지우는 건 옮기기 화면 코드가 정한다)
+  assert.deepEqual(settle([...items.slice(0, 3), { id: 'work', size: 'm', t: 40 }], [box('todos', 0, 12, 0, 232), box('cal', 0, 12, 244, 480), box('work', 0, 12, 736, 232)], new Map([['todos', 6], ['cal', 0], ['work', 6]])).map((it) => [it.id, it.x, it.y, it.t]),
+    [['todos', 6, 0, undefined], ['cal', 0, 1, undefined], ['work', 6, 2, 40], ['hid', 3, 9, undefined]]);
 });

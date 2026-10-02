@@ -4,7 +4,8 @@ import '../business/register-i18n.js';
 import { LIBRARY_MODULES } from '../core/module-registry.js';
 import { useStore } from '../core/store.js';
 import { canManage } from '../core/session.js';
-import { t, useLang } from '../core/i18n.js';
+import { t, useLang, registerDict } from '../core/i18n.js';
+import { LIBRARY_DICT } from './library-i18n.js';
 import { canEditModulePage } from '../core/module-placement-model.js';
 import { placeModule } from '../core/module-placement.js';
 import { baseOf } from '../core/commands.js';
@@ -13,6 +14,8 @@ import { Modal, showToast } from '../ui/Overlay.jsx';
 import { Icon } from '../ui/Icon.jsx';
 import { defaultPeriod, widgetMetrics } from '../business/dashboard-model.js';
 import './module-library.css';
+
+registerDict(LIBRARY_DICT);
 
 function PlacementDialog({ space, module, targetId, onClose }) {
   const formId = useId();

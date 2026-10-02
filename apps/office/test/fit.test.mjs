@@ -20,6 +20,20 @@ test('1:n — 1의 높이가 기준, n쪽은 내용 비율로 나누고 합(틈 
   assert.equal(h.get('todo') + GAP + h.get('appr'), h.get('cal'));
 });
 
+// 이유(유건 10/2 제보): 캘린더를 늘려 둔 뒤 맞춤을 누르면 캘린더가 내용 높이로 줄었다 — '1'은 지금 높이가 기준이고 n쪽이 거기에 맞춘다.
+// 지금 높이가 내용보다 작아 스크롤바가 생기는 경우에만 내용 높이까지 늘린다.
+test('1:n — 늘려 둔 1은 줄이지 않고, n쪽이 1의 정한 높이에 맞춘다', () => {
+  const boxes = [box('cal', 0, 6, 0, 700), box('todo', 6, 6, 0, 200), box('appr', 6, 6, 212, 300)];
+  const h = fitHeights(boxes, { cal: 480, todo: 150, appr: 330 }, { cal: 120, todo: 120, appr: 120 }, no, GAP, { cal: 700 });
+  assert.equal(h.get('cal'), 700);
+  assert.equal(h.get('todo') + GAP + h.get('appr'), 700);
+  const short = fitHeights([box('cal', 0, 6, 0, 300), box('todo', 6, 6, 0, 200), box('appr', 6, 6, 212, 300)], { cal: 480, todo: 150, appr: 330 }, { cal: 120, todo: 120, appr: 120 }, no, GAP, { cal: 300 });
+  assert.equal(short.get('cal'), 480); // 300이면 캘린더 안에 스크롤바 — 내용 높이까지
+  // 정한 적 없는 1(고정 320으로 그려진 쌓이는 모듈 등)은 내용 높이로 — 화면 높이를 기준으로 삼지 않는다
+  const unset = fitHeights([box('a', 0, 6, 0, 320), box('b', 6, 6, 0, 320)], { a: 265, b: 150 }, { a: 120, b: 120 }, no, GAP);
+  assert.deepEqual([unset.get('a'), unset.get('b')], [265, 265]);
+});
+
 // 이유: 모듈 최소 높이 밑으로는 줄이지 않는다 — 모자란 쪽을 최소로 묶고 나머지를 다시 비율로 나눈다.
 test('1:n — 최소 높이를 지키고 나머지를 비율로', () => {
   const boxes = [box('cal', 0, 6, 0, 480), box('a', 6, 6, 0, 100), box('b', 6, 6, 112, 100)];
