@@ -1,0 +1,19 @@
+[package]
+name = "tauri-plugin-media-share"
+version = "0.1.0"
+description = "모바일 첨부 저장·공유(2026-10-02) — 사진은 사진 앱/갤러리, 파일은 iOS '파일에 저장'·Android 다운로드 폴더, 공유는 시스템 공유 시트"
+edition = "2021"
+rust-version = "1.77.2"
+links = "tauri-plugin-media-share"
+publish = false
+
+[dependencies]
+tauri = { version = "2", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
+tauri = { version = "2", default-features = false, features = ["wry"] }
+
+[build-dependencies]
+tauri-plugin = { version = "2", features = ["build"] }

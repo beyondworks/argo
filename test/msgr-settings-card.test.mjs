@@ -258,7 +258,10 @@ test('QA(2026-09-04): 네이티브 prompt/confirm/alert 0 — 새 채널·새 �
   assert.match(app, /<form className="msgr-inline" onSubmit=\{\(e\) => \{ e\.preventDefault\(\); createOrg\(newOrg\); \}\}>/, '새 조직 인라인 폼');
   assert.match(app, /const \[confirmArchive, setConfirmArchive\] = useState\(false\);/, '보관 2단계 상태');
   assert.match(app, /: <div className="confirm"><p>\{t\('ch\.archive\.confirm'\)\}<\/p>/, '보관 확인 문구');
-  assert.match(app, /if \(error\) return onError\?\.\(error\.message\);/, '첨부 오류 토스트');
+  { const media = read('apps/messenger/src/media.jsx'); // 2026-10-02 첨부 말풍선 — 첨부 오류는 말풍선(받지 못함 · 다시 시도)·크게 보기 안내로 보인다(조용히 삼키지 않는다)
+    assert.match(media, /catch \{ setSt\(\{ phase: 'fail', p: null, path: null \}\); \}/, '파일 받기 실패 → 실패 상태');
+    assert.match(media, /st\.phase === 'fail' \? t\('file\.failed'\)/, '실패 문구(다시 시도)');
+    assert.match(media, /setNote\(\{ text: t\(kind === 'save' \? 'media\.saveFail'/, '크게 보기 저장·공유 실패 안내'); }
   assert.match(app, /<span className="q">\{parentBlockedUser \? t\('msg\.blockedUser'\) : parentMutedCrew \? t\('msg\.mutedCrew'\) : <>\{parent\.author_kind === 'user'/, '인용 말줄임 span(차단한 사람·숨긴 크루의 글이면 가림 문구, 2026-09-26)');
   assert.match(app, /crs\.sort\(\(a, b\) => \(crewTier\(b, orgRow\) === 'company'\) - \(crewTier\(a, orgRow\) === 'company'\) \|\| a\.display_name\.localeCompare\(b\.display_name, 'ko'\)\);/, '크루 순서 고정');
   assert.match(app, /\{\(import\.meta\.env\.DEV \|\| import\.meta\.env\.VITE_DEV_LOGIN === '1'\) && \(<>/, '개발용 로그인은 DEV 또는 검수용 번들 플래그(VITE_DEV_LOGIN=1)에서만 — 발행 빌드 env엔 이 플래그가 없다');
@@ -616,8 +619,8 @@ test('i18n 전수 스윕 — App.jsx·graph3d.jsx의 정적 t(\'키\')는 전부
 
 test('컴포저 첨부: 드래그앤드롭 수용·칩마다 취소 단추·선택창과 같은 수용 규칙(유건 제보 2026-09-11 밤)', () => {
   const comp = read('apps/messenger/src/App.jsx');
-  assert.match(comp, /onDrop=\{\(e\) => \{ e\.preventDefault\(\); setDragging\(false\); if \(!busy && !isPersonal\) addFiles\(e\.dataTransfer\?\.files\); \}\}/, '드롭 → addFiles(개인 공간 제외 — 행동은 apps/messenger/test/personal-space.browser.mjs)');
-  assert.match(comp, /onDragOver=\{\(e\) => \{ if \(!isPersonal && e\.dataTransfer\?\.types\?\.includes\('Files'\)\) \{ e\.preventDefault\(\); setDragging\(true\); \}/, '파일 드래그만 강조(텍스트 드래그는 무시)');
+  assert.match(comp, /onDrop=\{\(e\) => \{ e\.preventDefault\(\); setDragging\(false\); if \(!busy\) addFiles\(e\.dataTransfer\?\.files\); \}\}/, '드롭 → addFiles(2026-10-02부터 개인 공간도 — 저장 경로 p/<방>/<글>/<파일>)');
+  assert.match(comp, /onDragOver=\{\(e\) => \{ if \(e\.dataTransfer\?\.types\?\.includes\('Files'\)\) \{ e\.preventDefault\(\); setDragging\(true\); \}/, '파일 드래그만 강조(텍스트 드래그는 무시)');
   assert.match(comp, /onChange=\{\(e\) => \{ addFiles\(e\.target\.files\); e\.target\.value = ''; \}\}/, '선택창도 같은 addFiles');
   assert.match(comp, /setFiles\(\(cur\) => acceptFiles\(cur, incoming, ATTACH_MAX\)\.files\)/, '누적·중복 제거·상한은 acceptFiles 한 곳');
   assert.match(comp, /uploading !== f\.name && <button type="button" className="x"[\s\S]{0,140}?onClick=\{\(\) => setFiles\(\(cur\) => withoutFile\(cur, f\)\)\}/, '칩 취소 단추(업로드 중엔 없음)');
@@ -644,7 +647,7 @@ test('사이드바: 열린 채널이 안 읽음이어도 이름이 보인다(활
 
 test('컴포저: 클립보드 이미지 붙여넣기 → 같은 addFiles 수용 규칙, 이름 없는 캡처는 paste-시각(유건 2026-09-11 밤)', () => {
   const comp = read('apps/messenger/src/App.jsx');
-  assert.match(comp, /onPaste=\{\(e\) => \{ const pasted = \[\.\.\.\(e\.clipboardData\?\.files \?\? \[\]\)\]; if \(!pasted\.length \|\| busy \|\| isPersonal\) return;[^\n]*addFiles\(/, '붙여넣기 → addFiles(개인 공간은 첨부 저장 경로가 없어 막는다)');
+  assert.match(comp, /onPaste=\{\(e\) => \{ const pasted = \[\.\.\.\(e\.clipboardData\?\.files \?\? \[\]\)\]; if \(!pasted\.length \|\| busy\) return;[^\n]*addFiles\(/, '붙여넣기 → addFiles(2026-10-02부터 개인 공간도)');
   assert.match(comp, /new File\(\[f\], `paste-\$\{new Date\(\)\.toISOString\(\)/, '이름 없는 캡처 이름');
 });
 
@@ -654,8 +657,11 @@ test('점검 2026-09-12 소형 결함 4건: 읽음은 초점 있을 때만 · �
   assert.match(app, /window\.addEventListener\('focus', mark\);/, '초점 복귀 시 읽음');
   assert.match(app, /if \(!payload \|\| payload\.kind !== 'text' \|\| \(payload\.author_user_id && payload\.author_user_id === r\.uid\)\) return;/, '사람 발신도 알림(내 글 제외)');
   assert.match(app, /legacyBadge\.current = badgeTotal\(\{ current: unread, currentKey: [^,]+, muted, totals: spaceTotals \}\);\n\s+useEffect\(\(\) => \{ if \(!iconBadge\) setBadge\(legacyBadge\.current\); \}/, '독 배지 음소거 제외 — 모든 공간 합(badgeTotal, 음소거 제외 행동은 apps/messenger/test/cross-space.test.mjs)');
-  assert.match(app, /<button type="button" ref=\{imgBtn\} tabIndex=\{tab\} className="msgr-imgbtn" aria-label=\{a\.name\} onClick=\{\(\) => setZoom\(true\)\}><img className="msgr-imgprev" src=\{src\} alt="" loading="lazy" onError=\{\(\) => setImgFail\(true\)\} \/><\/button>/, '이미지 인라인 — 누르면(키보드 포함, K10) 그 자리에서 확대(유건 2026-09-16), 못 그리면 파일 칩으로(D21)');
-  assert.match(app, /\{\(!isImg \|\| imgFail\) && <button type="button" tabIndex=\{tab\} className="msgr-file"/, '이미지는 미리보기가 곧 파일 — 칩 중복 없음(D21)');
-  assert.match(app, /className="msgr-lightbox"[\s\S]{0,400}onClick=\{\(\) => setZoom\(false\)\}/, '덮개를 누르면 닫힌다');
-  assert.match(app, /if \(e\.key === 'Escape'\) setZoom\(false\);/, 'Esc로도 닫힌다');
+  // 이미지 첨부 인라인 — 2026-10-02부터 media.jsx(사람·에이전트 같은 부품). 행동은 apps/messenger/test/media-viewer.test.mjs·ux3.browser.mjs
+  const media = read('apps/messenger/src/media.jsx');
+  assert.match(app, /const attRow = atts\.length > 0 && <MediaAttachments atts=\{atts\}/, '메시지 첨부 줄은 MediaAttachments 하나');
+  assert.match(media, /<button type="button" className=\{`msgr-thumb[^`]*`\} tabIndex=\{tab\} aria-label=\{t\('media\.view', \{ name: a\.name \}\)\} onClick=\{onOpen\}>/, '이미지 인라인 — 누르면(키보드 포함, K10) 그 자리에서 크게 보기');
+  assert.match(media, /const \{ images, files \} = useMemo\(\(\) => splitAttachments\(atts, failed\)/, '못 그린 그림은 파일 말풍선으로(D21) — 칩 중복 없음');
+  assert.match(media, /tapTimer\.current = setTimeout\(\(\) => \{ if \(mouse && !onPhoto\) onClose\(\);/, '바탕을 누르면 닫힌다');
+  assert.match(media, /if \(k === 'Escape'\) onClose\(\);/, 'Esc로도 닫힌다');
 });

@@ -214,17 +214,72 @@
 @media (hover: none) { [data-acts='open'] .msgr-acts { opacity: 1; } }
 .msgr-acts button { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--fg-3); padding: 3px 8px; border-radius: 999px; border: 1px solid transparent; background: none; cursor: pointer; transition: background 120ms ease, color 120ms ease; }
 @media (hover: hover) { .msgr-acts button:hover { background: var(--card); border-color: var(--border); color: var(--fg); } } .msgr-acts button:active { background: var(--card); border-color: var(--border); color: var(--fg); }
-.msgr-file { display: inline-flex; align-items: center; gap: 7px; padding: 5px 10px 5px 7px; border-radius: 10px; background: var(--card-2); border: 1px solid var(--border-soft); font-family: var(--mono); font-size: 11px; color: var(--fg-2); vertical-align: middle; cursor: pointer; margin: 6px 6px 0 0; }
-.msgr-file .mi { color: var(--fg-3); }
-.msgr-attach { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
-.msgr-attachments { min-width: 0; }
-.msgr-mine .msgr-attachments { display: flex; flex-direction: column; align-items: flex-end; width: fit-content; max-width: 100%; justify-self: end; }
-.msgr-mine .msgr-attach { align-items: flex-end; }
-.msgr-imgprev { max-width: min(420px, 100%); max-height: 320px; border-radius: 12px; border: 1px solid var(--border); display: block; cursor: zoom-in; object-fit: contain; background: var(--card-2); }
-.msgr-imgbtn { display: block; width: fit-content; max-width: min(420px, 100%); padding: 0; border: 0; background: none; border-radius: 12px; cursor: zoom-in; }
-.msgr-imgbtn .msgr-imgprev { max-width: 100%; } /* 폭 상한은 버튼이 진다 — 이미지 % 상한은 버튼 폭 계산에서 무시돼 초점 링이 넓어졌다 */
-.msgr-imgbtn:focus-visible { outline: 2px solid var(--msgr-focus); outline-offset: 2px; }
-.msgr-imgph { display: block; width: 240px; max-width: 100%; height: 160px; border-radius: 12px; border: 1px solid var(--border); background: var(--card-2); }
+/* ── 첨부 말풍선·크게 보기·링크 카드(2026-10-02, media.jsx) — 사람·에이전트 첨부가 같은 부품. 사진 뷰어는 테마와 상관없이 어두운 바탕 ── */
+.msgr-media { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; max-width: 100%; }
+.msgr-mine .msgr-media { align-items: flex-end; width: fit-content; }
+.msgr-thumb { position: relative; display: block; margin: 0; padding: 0; border: 0; border-radius: 14px; overflow: hidden; background: var(--card-2); cursor: zoom-in; }
+.msgr-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity 160ms ease; -webkit-user-drag: none; user-select: none; }
+.msgr-thumb.loaded img { opacity: 1; }
+.msgr-thumb.single { width: fit-content; max-width: min(280px, 100%); min-width: 96px; min-height: 72px; border: 1px solid var(--border-soft); }
+.msgr-thumb.single img { width: auto; height: auto; max-width: 100%; max-height: 320px; object-fit: contain; }
+.msgr-thumb.single:not(.loaded) { width: 220px; height: 160px; }
+.msgr-thumb:focus-visible { outline: 2px solid var(--msgr-focus); outline-offset: 2px; }
+.msgr-mgrid { display: flex; flex-direction: column; gap: 2px; width: min(280px, 100%); border-radius: 14px; overflow: hidden; }
+.msgr-mgrid .mrow { display: grid; grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); gap: 2px; }
+.msgr-mgrid .msgr-thumb { border-radius: 0; aspect-ratio: 1; }
+.msgr-mgrid .msgr-thumb:focus-visible { outline-offset: -2px; }
+.msgr-fileb { position: relative; display: flex; align-items: center; gap: 10px; width: min(300px, 100%); min-height: 58px; padding: 9px 10px 9px 9px; border: 1px solid var(--border-soft); border-radius: 14px; background: var(--card); color: var(--fg); font: inherit; text-align: left; cursor: pointer; overflow: hidden; box-sizing: border-box; }
+.msgr-fileb .fic { flex: none; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 10px; background: var(--card-2); color: var(--fg-2); }
+.msgr-fileb .fmeta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.msgr-fileb .fname { display: flex; min-width: 0; font-size: 13.5px; font-weight: 600; line-height: 1.3; white-space: nowrap; }
+.msgr-fileb .fname .fh { min-width: 0; overflow: hidden; text-overflow: ellipsis; } /* 폭이 모자라면 앞 칸만 …로 줄고 끝 칸(마지막 글자 + 확장자)은 지킨다 — 가운데 말줄임 */
+.msgr-fileb .fname .ft { flex: none; }
+.msgr-fileb .fsub { font-size: 11.5px; color: var(--fg-3); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.msgr-fileb.fail .fsub { color: var(--danger); }
+.msgr-fileb .fact { flex: none; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; background: var(--card-2); color: var(--fg-2); }
+.msgr-fileb .fbar { position: absolute; left: 0; bottom: 0; height: 3px; width: calc(var(--p, 0) * 100%); background: var(--fg-2); transition: width 120ms linear; }
+.msgr-fileb:focus-visible { outline: 2px solid var(--msgr-focus); outline-offset: 2px; }
+.msgr-spin { display: inline-block; width: 16px; height: 16px; border-radius: 50%; border: 2px solid currentColor; border-right-color: transparent; animation: msgrSpin .8s linear infinite; opacity: .8; box-sizing: border-box; }
+.msgr-spin.lg { width: 30px; height: 30px; border-width: 3px; color: #fff; }
+.msgr-link { color: inherit; text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 2px; overflow-wrap: anywhere; word-break: break-all; }
+.msgr-linkcard { display: flex; flex-direction: column; width: min(320px, 100%); margin: 0; padding: 0; border: 1px solid var(--border-soft); border-radius: 14px; background: var(--card); color: var(--fg); font: inherit; text-align: left; overflow: hidden; cursor: pointer; box-sizing: border-box; }
+.msgr-linkcard .lc-img { display: block; aspect-ratio: 1.91 / 1; background: var(--card-2); overflow: hidden; }
+.msgr-linkcard .lc-img img { display: block; width: 100%; height: 100%; object-fit: cover; -webkit-user-drag: none; }
+.msgr-linkcard .lc-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; padding: 10px 12px 11px; }
+.msgr-linkcard .lc-site { font-size: 11px; font-weight: 600; color: var(--fg-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.msgr-linkcard .lc-title { font-size: 13.5px; font-weight: 600; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.msgr-linkcard .lc-desc { font-size: 12.5px; line-height: 1.4; color: var(--fg-2); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.msgr-linkcard .lc-host { display: flex; align-items: center; gap: 4px; margin-top: 2px; font-size: 11px; color: var(--fg-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.msgr-linkcard:focus-visible { outline: 2px solid var(--msgr-focus); outline-offset: 2px; }
+@media (hover: hover) { .msgr-fileb:hover, .msgr-linkcard:hover { background: var(--card-2); } .msgr-fileb:hover .fic, .msgr-fileb:hover .fact { background: var(--card); } }
+.msgr-fileb:active, .msgr-linkcard:active { background: var(--card-2); } /* 터치 기기의 눌림 반응(hover 짝) */
+.msgr-viewer { position: fixed; inset: 0; z-index: 95; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; background: rgb(0 0 0 / calc(.94 * var(--lb-fade, 1))); color: #fff; touch-action: none; overscroll-behavior: contain; user-select: none; -webkit-user-select: none; animation: msgrLbIn 160ms ease-out both; }
+@keyframes msgrLbIn { from { opacity: 0; } to { opacity: 1; } }
+.msgr-viewer .lb-top { display: flex; align-items: center; gap: 8px; padding: max(8px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) 8px max(10px, env(safe-area-inset-left)); transition: opacity 160ms; z-index: 2; }
+.msgr-viewer .lb-icon { flex: none; display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 50%; background: rgb(255 255 255 / .12); color: #fff; cursor: pointer; }
+.msgr-viewer .lb-icon.ghost { background: none; }
+.msgr-viewer .lb-title { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 1px; text-align: center; }
+.msgr-viewer .lb-name { max-width: 100%; font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.msgr-viewer .lb-count { font-size: 12px; color: rgb(255 255 255 / .75); font-variant-numeric: tabular-nums; }
+.msgr-viewer .lb-stage { position: relative; min-height: 0; overflow: hidden; touch-action: none; }
+.msgr-viewer .lb-stage .msgr-spin { position: absolute; inset: 0; margin: auto; }
+.msgr-viewer .lb-stage img { position: absolute; inset: 0; margin: auto; max-width: 100%; max-height: 100%; object-fit: contain; transform-origin: center; /* 절대 위치 — 그리드 칸 안의 % 높이는 칸 높이가 정해지지 않아 무시됐다(세로 사진이 잘림) */ transition: transform 220ms cubic-bezier(.2, .8, .2, 1); will-change: transform; -webkit-user-drag: none; }
+.msgr-viewer .lb-stage img.dragging { transition: none; }
+.msgr-viewer .lb-nav { position: absolute; top: 50%; z-index: 2; display: grid; place-items: center; width: 48px; height: 48px; padding: 0; border: 0; border-radius: 50%; background: rgb(255 255 255 / .14); color: #fff; transform: translateY(-50%); cursor: pointer; transition: opacity 160ms; }
+.msgr-viewer .lb-nav.prev { left: max(12px, env(safe-area-inset-left)); }
+.msgr-viewer .lb-nav.next { right: max(12px, env(safe-area-inset-right)); }
+@media (pointer: coarse) { .msgr-viewer .lb-nav { display: none; } }
+.msgr-viewer .lb-bottom { display: flex; justify-content: center; gap: 8px; min-height: 56px; padding: 10px max(12px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); z-index: 2; transition: opacity 160ms; }
+.msgr-viewer .lb-act { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-width: 76px; min-height: 56px; padding: 6px 10px; border: 0; border-radius: 14px; background: rgb(255 255 255 / .12); color: #fff; font: inherit; font-size: 12px; cursor: pointer; }
+.msgr-viewer .lb-act:disabled { opacity: .55; cursor: default; }
+.msgr-viewer.bare .lb-top, .msgr-viewer.bare .lb-bottom, .msgr-viewer.bare .lb-nav { opacity: 0; pointer-events: none; }
+.msgr-viewer .lb-note { position: absolute; left: 50%; bottom: calc(max(14px, env(safe-area-inset-bottom)) + 84px); z-index: 3; display: flex; align-items: center; gap: 12px; max-width: calc(100% - 32px); padding: 10px 14px; border-radius: 12px; background: rgb(40 40 40 / .94); color: #fff; font-size: 13px; transform: translateX(-50%); box-sizing: border-box; }
+.msgr-viewer .lb-note.err { background: rgb(120 30 30 / .95); }
+.msgr-viewer .lb-reveal { flex: none; padding: 0; border: 0; background: none; color: #fff; font: inherit; font-weight: 600; text-decoration: underline; cursor: pointer; }
+.msgr-viewer :focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+@media (hover: hover) { .msgr-viewer .lb-icon:hover, .msgr-viewer .lb-act:hover:not(:disabled), .msgr-viewer .lb-nav:hover { background: rgb(255 255 255 / .22); } }
+.msgr-viewer .lb-icon:active, .msgr-viewer .lb-act:active:not(:disabled), .msgr-viewer .lb-nav:active { background: rgb(255 255 255 / .22); }
+@media (prefers-reduced-motion: reduce) { .msgr-viewer { animation: none; } .msgr-viewer .lb-stage img, .msgr-thumb img { transition: none; } .msgr-spin { animation-duration: 2.4s; } }
 .msgr-mine { display: grid; grid-template-columns: minmax(0, 1fr); justify-items: end; gap: 4px; margin-left: 42px; animation: msgrRise 250ms cubic-bezier(.23,1,.32,1) both; } /* 열을 minmax(0,1fr)로 — 암묵 auto 열은 인용 줄(nowrap)의 최대 콘텐츠 폭까지 자라 긴 원문에 단 내 답글이 스레드를 1만 px 넘게 넓혔다(로컬 실물 재현 2026-09-12: scrollWidth 12,863/1,592) */
 .msgr-mine .bubble { max-width: min(88%, 620px); background: var(--primary); color: var(--primary-fg); border-radius: 20px 6px 20px 20px; padding: 10px 15px; font-size: 13.5px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
 .msgr-mine .meta { font-size: 11px; color: var(--fg-3); display: flex; gap: 8px; align-items: center; }
@@ -1149,7 +1204,6 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-sheet, .msgr-slip .body { padding: 10px 12px; overflow-wrap: anywhere; }
   .msgr-mine { margin-left: 28px; min-width: 0; }
   .msgr-mine .bubble { max-width: 100%; }
-  .msgr-file { max-width: 100%; overflow-wrap: anywhere; word-break: break-word; }
   .msgr-slip .band { flex-wrap: wrap; gap: 6px; }
   .msgr-editbox { min-width: 0; width: 100%; }
   .msgr-dock { padding: 8px max(12px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
@@ -1694,9 +1748,6 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 }
 
 /* 이미지 확대(유건 2026-09-16) — 클릭하면 그 자리에서 크게 본다. 스크림을 눌러도, Esc로도 닫힌다. */
-.msgr-lightbox { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; padding: 24px; background: color-mix(in srgb, var(--bg) 82%, black); cursor: zoom-out; }
-.msgr-lightbox img { max-width: min(96vw, 1600px); max-height: 88vh; object-fit: contain; border-radius: 12px; border: 1px solid var(--border); background: var(--card-2); cursor: default; }
-.msgr-lightbox .acts { position: absolute; right: 16px; top: 16px; display: flex; gap: 8px; cursor: default; }
 
 /* 친구 링크(유건 2026-09-16) — 조직 초대와 다른 자리, 다른 말. 조용한 두 줄로 둔다. */
 .msgr-friendlink { display: grid; gap: 8px; margin: 10px 0 14px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--card-2); }

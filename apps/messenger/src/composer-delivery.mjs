@@ -1,4 +1,5 @@
 import { storageKey } from './attach-files.mjs';
+import { shouldRequestPreview } from './media-actions.mjs';
 import { isNetworkFailure } from './net-errors.mjs';
 
 // 전송 실패의 영어 원문은 카드에 보이지 않는다(검수 E: 'TypeError: Failed to fetch'가 빨간 글씨로 나왔다). 앱이 진단 기록(설정 > 진단)으로 보내는 통로.
@@ -87,6 +88,8 @@ export function createComposerDelivery(transport, uuid = () => crypto.randomUUID
         return false;
       }
       patch({ job: null, lastDeliveredId: job.messageId });
+      // 링크 미리보기 — 다 올라간 글에 한 번만(보낸 사람 기기만 부른다, 읽는 사람은 meta에 저장된 카드를 읽는다). 실패해도 전송은 성공.
+      try { transport.preview?.(job); } catch { /* 미리보기는 부가 기능 */ }
       return true;
     } catch (error) {
       const offline = !error.uiKey && isNetworkFailure(error.message);
@@ -119,8 +122,9 @@ export function createComposerDelivery(transport, uuid = () => crypto.randomUUID
 
 // Stable IDs cover ambiguous network failures: a committed message/attachment is looked up, never
 // posted again with a fresh ID. Storage paths also stay fixed when only metadata needs a retry.
-export function composerTransport(client, { orgId, chId, uid, onDiscard = null }) {
-  const pathFor = (job, item) => `${orgId}/${chId}/${job.messageId}/${item.id}-${item.key}`; // 3번째 칸 = 글 번호 — 서버 msgr_bot_file(봇 첨부)·msgr_can_read_dm_attachment(위임 1:1 첨부 읽기)가 이 칸을 본다
+export function composerTransport(client, { orgId, chId, uid, personal = false, onDiscard = null }) {
+  // 개인 방(org 없음 — 친구 1:1·그룹·개인 에이전트 방)은 p/<방>/<글>/<파일>, 첨부 행 org_id NULL(20261002100000 정책)
+  const pathFor = (job, item) => `${personal ? 'p' : orgId}/${chId}/${job.messageId}/${item.id}-${item.key}`; // 3번째 칸 = 글 번호 — 서버 msgr_bot_file(봇 첨부)·msgr_can_read_dm_attachment(위임 1:1 첨부 읽기)·msgr_personal_file_ok가 이 칸을 본다
   return {
     async message(job) {
       const insert = () => client.from('msgr_messages').insert({ channel_id: chId, author_kind: 'user', author_user_id: uid,
@@ -167,9 +171,13 @@ export function composerTransport(client, { orgId, chId, uid, onDiscard = null }
       }
       try { onDiscard?.(job.messageId); } catch { /* 방송은 최선 — 이미 받은 사람의 화면은 다음 보정 조회에서도 바로잡힌다 */ } // 이미 이 글을 받은 다른 사람의 화면이 빈 말풍선을 바로 지우도록(앱의 삭제와 같은 'edit' 방송)
     },
+    preview(job) {
+      if (!shouldRequestPreview({ body: job.body, messageId: job.messageId }) || !client.functions?.invoke) return;
+      Promise.resolve().then(() => client.functions.invoke('msgr-link-preview', { body: { message_id: job.messageId } })).catch(() => {}); // 카드는 엣지 함수가 저장하고 'edit' 방송으로 모든 화면에 붙는다
+    },
     async attachment(job, item) {
       const result = await client.from('msgr_attachments').insert({ id: item.id, message_id: job.messageId,
-        org_id: orgId, storage_path: pathFor(job, item), name: item.file.name, mime: item.file.type, bytes: item.file.size });
+        org_id: personal ? null : orgId, storage_path: pathFor(job, item), name: item.file.name, mime: item.file.type, bytes: item.file.size });
       if (!result.error) return;
       const found = await client.from('msgr_attachments').select('id,message_id').eq('id', item.id).maybeSingle();
       if (!found.error && found.data && String(found.data.message_id) === String(job.messageId)) return;

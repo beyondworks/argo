@@ -4,14 +4,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
-test('첨부 열기는 Tauri 셸이면 오프너로, 브라우저만 window.open', () => {
-  const body = app.slice(app.indexOf('function Attachment('), app.indexOf('const isImg =', app.indexOf('function Attachment(')));
-  assert.match(body, /if \(inTauri\(\)\) await \(await import\('@tauri-apps\/plugin-opener'\)\)\.openUrl\(data\.signedUrl\);\s*else window\.open\(data\.signedUrl, '_blank', 'noopener'\);/);
+const io = readFileSync(new URL('../src/media-io.js', import.meta.url), 'utf8'); // 2026-10-02 첨부 말풍선 — 첨부·링크 열기는 media-io.js openExternalUrl 한 곳
+test('첨부·링크 열기는 Tauri 셸이면 오프너로, 브라우저만 window.open', () => {
+  const body = io.slice(io.indexOf('export async function openExternalUrl('), io.indexOf('export async function revealSaved('));
+  assert.match(body, /if \(inTauri\(\)\) await \(await import\('@tauri-apps\/plugin-opener'\)\)\.openUrl\(url\); else window\.open\(url, '_blank', 'noopener'\);/);
 });
 test('앱 어디에도 Tauri 분기 없는 window.open이 없다', () => {
-  const lines = app.split('\n').filter((l) => l.includes('window.open(') && !/^\s*\/\//.test(l));
-  for (const l of lines) assert.match(l, /inTauri\(\)[\s\S]*else window\.open|^\s*else window\.open/, `분기 없는 window.open: ${l.trim().slice(0, 120)}`);
-  assert.equal(lines.length, 2, 'openExternal·첨부 두 곳만');
+  const check = (src) => { const lines = src.split('\n').filter((l) => l.includes('window.open(') && !/^\s*\/\//.test(l)); for (const l of lines) assert.match(l, /inTauri\(\)[\s\S]*else window\.open|^\s*else window\.open/, `분기 없는 window.open: ${l.trim().slice(0, 120)}`); return lines.length; };
+  assert.equal(check(app), 1, 'App.jsx는 openExternal 한 곳');
+  assert.equal(check(io), 1, 'media-io.js는 openExternalUrl 한 곳');
 });
 test('오프너 권한은 https 서명 URL을 허용한다(Supabase Storage)', () => {
   const cap = JSON.parse(readFileSync(new URL('../src-tauri/capabilities/default.json', import.meta.url), 'utf8'));

@@ -43,6 +43,7 @@ tokio-tungstenite = { version = "0.27", default-features = false, features = ["c
 tauri-plugin-deep-link = "2"
 tauri-plugin-haptics = "2" # 짧은 진동(길게 누르기·당겨서 새로고침·보내기·끌어 집기) — 앱 느낌 통일 초안 승인 2026-09-29
 tauri-plugin-push-notifications = "0.1" # APNs·FCM 기기 토큰 + 알림 탭(모바일 푸시, 2026-09-12) — 발송은 엣지 msgr-push
+tauri-plugin-media-share = { path = "plugins/media-share" } # 첨부 저장·공유(사진 앱·파일·공유 시트, 2026-10-02) — 웹뷰로는 할 수 없다
 
 [target.'cfg(target_os = "ios")'.dependencies]
 tauri-plugin-web-auth = { path = "plugins/web-auth" } # 로그인 창 — Chrome 등 기본 브라우저가 콜백을 앱에 안 넘기는 문제(2026-09-10)
