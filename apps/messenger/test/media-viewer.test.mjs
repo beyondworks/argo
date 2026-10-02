@@ -106,6 +106,7 @@ test('shouldRequestPreview — 링크가 든 내 글만, 한 번', () => {
   assert.equal(shouldRequestPreview({ body: '링크 없음', messageId: 5 }), false);
   assert.equal(shouldRequestPreview({ body: 'https://example.com', messageId: null }), false);
   assert.equal(shouldRequestPreview({ body: '`https://in-code.example`', messageId: 5 }), false);
+  assert.equal(shouldRequestPreview({ body: '로그인 https://app.example/login?token=abc', messageId: 5 }), false, '일회용 링크는 부르지 않는다(검수 2026-10-02)');
 });
 
 test('previewFor — 저장된 카드는 본문에 그 링크가 남아 있고 모양이 맞을 때만 그린다', () => {

@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  firstUrl, urlSegments, checkUrl, isBlockedIp, parseHtmlPreview, cleanPreview, fetchLinkPreview, decodeHtml, PREVIEW_LIMITS, headScanner,
+  firstUrl, urlSegments, checkUrl, isBlockedIp, parseHtmlPreview, cleanPreview, fetchLinkPreview, decodeHtml, PREVIEW_LIMITS, headScanner, canPreview,
 } from '../src/link-preview.mjs';
 
 test('firstUrl — 본문의 첫 http(s) 링크 하나만, 문장 부호는 떼고 괄호 짝은 지킨다', () => {
@@ -197,4 +197,22 @@ test('fetchLinkPreview — 문자 집합(euc-kr)을 헤더·meta에서 읽어 �
   const body = new Uint8Array([...head, 0xc7, 0xd1, 0xb1, 0xdb, ...tail]);
   const net = fakeNet({ 'https://kr.example/': { status: 200, headers: { 'content-type': 'text/html' }, body } });
   assert.equal((await fetchLinkPreview('https://kr.example/', net)).title, '한글');
+});
+
+// 검수(2026-10-02) LOW — 일회용 링크 소진: 로그인·인증·초대 링크를 서버가 대신 열면 받는 사람이 쓸 링크가 먼저 소진될 수 있다.
+test('canPreview·fetchLinkPreview — 쿼리에 token·code·auth 같은 이름이 있으면 열지 않는다(리다이렉트로 가는 곳도), 그 밖은 그대로', async () => {
+  for (const u of ['https://app.example/login?token=abc', 'https://idp.example/cb?code=123&state=x', 'https://x.example/?Auth=1', 'https://x.example/?access_token=a',
+    'https://s3.example/o?X-Amz-Signature=ab', 'https://x.example/r?key=1', 'https://x.example/reset?otp=9', 'https://x.example/?session_id=1', 'https://x.example/v?magic=1']) {
+    assert.equal(canPreview(u), false, u);
+    const net = fakeNet({ [u]: page(OG) });
+    assert.equal(await fetchLinkPreview(u, net), null, u);
+    assert.equal(net.calls.length, 0, `요청이 나가면 안 됨: ${u}`);
+  }
+  for (const u of ['https://www.youtube.com/watch?v=abc&si=x', 'https://example.com/a?keyword=b&page=2', 'https://news.example/a#token=1']) assert.equal(canPreview(u), true, u);
+  assert.equal(canPreview('http://127.0.0.1/'), false, '주소 검사는 그대로');
+  assert.equal(canPreview(null), false);
+  const hop = { status: 302, headers: { location: 'https://idp.example/cb?code=1' }, body: enc('') };
+  const net = fakeNet({ 'https://a.example/': hop, 'https://idp.example/cb?code=1': page(OG) });
+  assert.equal(await fetchLinkPreview('https://a.example/', net), null);
+  assert.equal(net.calls.length, 1, '리다이렉트로 가는 일회용 주소는 열지 않는다');
 });

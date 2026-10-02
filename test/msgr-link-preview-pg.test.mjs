@@ -127,3 +127,48 @@ test('에이전트 글은 insert 때 meta에 싣는다(가드 대상 밖)', { sk
   assert.equal(r.status, 0, r.stderr);
   assert.equal(sql(`select meta->'link_preview'->>'site' from public.msgr_messages where id = ${last(r.stdout)}`), '예시');
 });
+
+// 검수(2026-10-02) LOW — 카드 위조: 가드가 UPDATE에만 걸려 사람 글 INSERT에 meta.link_preview를 직접 넣을 수 있었다.
+test('사람 글 INSERT에 넣은 link_preview·시도 표시는 지워진다(다른 meta는 그대로) — 카드는 RPC로만', { skip }, () => {
+  for (const ch of [PUB, AB]) {
+    const r = asUserRaw(U.a, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, kind, body, meta, client_msg_id) values ('${ch}', 'user', '${U.a}', 'text', 'https://example.com/a', '{"link_preview":${q(P({ title: '가짜' }))},"link_preview_try":"2026-10-02","keep":1}'::jsonb, gen_random_uuid()::text) returning id`);
+    assert.equal(r.status, 0, r.stderr);
+    const m = last(r.stdout);
+    assert.deepEqual(JSON.parse(sql(`select meta from public.msgr_messages where id = ${m}`)), { keep: 1 }, ch === AB ? '1:1' : '공개 채널');
+    assert.equal(last(asUser(U.a, `select public.msgr_claim_link_preview(${m})`)), 't', '지워졌으니 정해진 경로로는 카드를 만들 수 있다');
+    assert.equal(set(U.a, m), 't');
+  }
+});
+
+// 검수(2026-10-02) LOW — 재시도 무제한: 카드 저장에 실패한 글은 10분 동안 엣지 함수를 불러 외부 요청을 반복할 수 있었다.
+test('가져오기 전 시도 표시(msgr_claim_link_preview) — 글당 한 번, 작성자만, 표시는 RPC로만 바뀐다', { skip }, () => {
+  const m = post(U.a, PUB, 'https://example.com/a');
+  fails(asUserRaw(U.b, `select public.msgr_claim_link_preview(${m})`), /msgr_forbidden/, '남의 글');
+  assert.equal(last(asUser(U.a, `select public.msgr_claim_link_preview(${m})`)), 't');
+  assert.equal(last(asUser(U.a, `select public.msgr_claim_link_preview(${m})`)), 'f', '두 번째 시도는 거절(외부 요청 없음)');
+  assert.notEqual(sql(`select meta->>'link_preview_try' from public.msgr_messages where id = ${m}`), '');
+  fails(asUserRaw(U.a, `update public.msgr_messages set meta = meta - 'link_preview_try' where id = ${m}`), /msgr_link_preview_rpc_only/, '표시를 지워 다시 시도하기');
+  assert.equal(set(U.a, m), 't', '시도 뒤 저장은 그대로 된다');
+  const dm = post(U.a, AB, 'https://example.com/a');
+  assert.equal(last(asUser(U.a, `select public.msgr_claim_link_preview(${dm})`)), 't', '1:1에서도(라우팅 가드가 시도 표시만 바뀌는 것은 통과)');
+  const old = post(U.a, AB, 'https://example.com/a');
+  sql(`update public.msgr_messages set created_at = now() - interval '11 minutes' where id = ${old}`);
+  assert.equal(last(asUser(U.a, `select public.msgr_claim_link_preview(${old})`)), 'f', '10분 지난 글');
+  const done = post(U.a, PUB, 'https://example.com/a'); asUser(U.a, `select public.msgr_claim_link_preview(${done})`); set(U.a, done);
+  assert.equal(last(asUser(U.a, `select public.msgr_claim_link_preview(${done})`)), 'f', '카드가 이미 있는 글');
+});
+
+test('사용자당 분당 상한 — 넘으면 거절하고 쓰기 0, 1분이 지나면 다시 된다', { skip }, () => {
+  sql(`delete from public.msgr_link_preview_quota where user_id = '${U.c}'`);
+  const g = last(asUser(U.c, `select public.msgr_dm_personal('${U.a}')`));
+  const ids = Array.from({ length: 11 }, () => post(U.c, g, 'https://example.com/a'));
+  const got = ids.map((m) => last(asUser(U.c, `select public.msgr_claim_link_preview(${m})`)));
+  assert.deepEqual(got, [...Array(10).fill('t'), 'f'], '분당 10번까지');
+  const before = sql(`select xmin from public.msgr_link_preview_quota where user_id = '${U.c}'`);
+  assert.equal(last(asUser(U.c, `select public.msgr_claim_link_preview(${ids[10]})`)), 'f');
+  assert.equal(sql(`select xmin from public.msgr_link_preview_quota where user_id = '${U.c}'`), before, '거절은 상한 행을 다시 쓰지 않는다');
+  assert.equal(sql(`select meta ? 'link_preview_try' from public.msgr_messages where id = ${ids[10]}`), 'f', '거절된 글에는 시도 표시도 없다');
+  sql(`update public.msgr_link_preview_quota set window_start = now() - interval '61 seconds' where user_id = '${U.c}'`);
+  assert.equal(last(asUser(U.c, `select public.msgr_claim_link_preview(${ids[10]})`)), 't', '1분 뒤');
+  fails(asUserRaw(U.c, `select * from public.msgr_link_preview_quota`), /permission denied/, '상한 표는 직접 읽지 못한다');
+});

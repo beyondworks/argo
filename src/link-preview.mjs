@@ -13,6 +13,7 @@
 //   http(s)만 · 자격 정보(user:pw@) 금지 · 포트는 80/443/8080/8443만 · 점 없는 이름·localhost·.local·.internal 금지 ·
 //   DNS로 얻은 주소 전부가 공인 주소일 때만 요청 · 리다이렉트는 최대 3번, 매번 같은 검사 · 응답은 </head>를 만나면 멈추고 1MB까지만 읽어 HTML만 파싱 ·
 //   전체 5초 · og:image도 같은 검사(https만 — 앱 CSP img-src와 혼합 콘텐츠) · 결과 문자열은 길이를 자르고 제어 문자를 지운다.
+//   요청은 홉마다 GET 한 번(다시 시도 없음) · 쿼리에 token·code·auth 같은 이름이 있는 주소(일회용 링크)는 열지 않는다.
 
 // 읽기 상한 1MB + </head>에서 멈춤(2026-10-02 총괄 결정) — 유튜브는 og 태그가 큰 스크립트 뒤 710KB 지점에 있어 512KB로는 카드가 안 생겼다.
 // 카드 재료(og·title)는 head 안에만 있으므로 </head>를 받으면 더 읽지 않는다 — 대부분의 페이지는 수십 KB에서 끝난다.
@@ -178,6 +179,13 @@ export function checkUrl(raw) {
   return u;
 }
 
+// 일회용 링크(검수 2026-10-02) — 로그인·인증·초대·재설정 링크를 서버가 먼저 열면 받는 사람이 쓸 링크가 소진될 수 있다.
+// 쿼리 이름에 이런 말이 있으면 열지 않는다(카드 없음). 조각(#…)은 서버로 가지 않아 보지 않는다. 경로에 박힌 토큰은 알 수 없어 남는 위험.
+const SECRET_PARAM = /^(code|key|sig|otp|pin|jwt|nonce|state)$|token|auth|secret|passw|ticket|signature|credential|session|magic|invite|verif|reset|login|api_?key/i;
+const hasSecretParams = (u) => [...u.searchParams.keys()].some((k) => SECRET_PARAM.test(k));
+/** 미리보기로 열어도 되는 주소인가 — 주소 검사(checkUrl) + 일회용 링크 아님. 네트워크·DNS는 보지 않는다. */
+export function canPreview(raw) { const u = checkUrl(raw); return !!u && !hasSecretParams(u); }
+
 async function publicHost(u, resolve) {
   const host = u.hostname.replace(/^\[|\]$/g, '');
   if (isIpLiteral(host)) return !isBlockedIp(host);
@@ -268,7 +276,7 @@ function decodeBody(body, ctype) {
 export async function fetchLinkPreview(url, { resolve, request, now = Date.now } = {}) {
   const start = now();
   let cur = checkUrl(url);
-  if (!cur || !resolve || !request) return null;
+  if (!cur || hasSecretParams(cur) || !resolve || !request) return null;
   for (let hop = 0; ; hop += 1) {
     if (!(await publicHost(cur, resolve))) return null;
     const left = PREVIEW_LIMITS.timeoutMs - (now() - start);
@@ -283,7 +291,7 @@ export async function fetchLinkPreview(url, { resolve, request, now = Date.now }
       let next;
       try { next = new URL(loc, cur).href; } catch { return null; }
       cur = loc ? checkUrl(next) : null;
-      if (!cur) return null;
+      if (!cur || hasSecretParams(cur)) return null;
       continue;
     }
     if (status < 200 || status > 299) return null;

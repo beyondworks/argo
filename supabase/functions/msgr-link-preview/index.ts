@@ -52,6 +52,10 @@ Deno.serve(async (req) => {
       const rows = await r.json();
       return Array.isArray(rows) ? rows[0] ?? null : null;
     },
+    claim: async (id: number) => { // 가져오기 전 시도 표시 — 글당 한 번·사용자당 분당 상한(20261002110000)
+      const r = await rest('rpc/msgr_claim_link_preview', { method: 'POST', body: JSON.stringify({ p_message: id }) });
+      return r.ok && (await r.json()) === true;
+    },
     setPreview: async (id: number, preview: unknown) => {
       const r = await rest('rpc/msgr_set_link_preview', { method: 'POST', body: JSON.stringify({ p_message: id, p_preview: preview }) });
       return r.ok && (await r.json()) === true;
