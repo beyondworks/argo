@@ -189,6 +189,7 @@ export function mentionsIn(text, peers, selfId) {
     (유건 원칙 2026-09-11: 채널에 초대된 에이전트만 답한다. 2026-09-16부터 공개 채널도 같다 — 종전에는 파견된 에이전트 전원이었다). 채널 없음 = 거부. */
 /** 넘긴 크루를 출처(notOwnerDirect)로 적을 이름 — 조직 크루 목록의 slug, 없으면 전달 표지의 이름, 그것도 없으면 id. 받는 방의 구성원이 아니어도
     UUID가 결재 카드에 그대로 보이지 않게(최종 재검수 LOW-1). */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i; // 전달 표지의 크루 id 형식(위조 값으로 db를 조회하지 않는다)
 export function handoffLabel(orgPeers, crewId, viaName = null) {
   const p = (orgPeers ?? []).find((x) => x.id === crewId);
   return p?.slug || p?.display_name || (typeof viaName === 'string' && viaName.trim() ? viaName.trim().slice(0, 40) : crewId);
@@ -764,18 +765,23 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
       // DM 전달(msgr_dm_relay 트리거): 크루가 DM에서 비구성원 크루를 부르면 그 글을 받는 크루의 1:1 방에 사람 글(작성자 = 사장)로 옮겨 적고 meta.relay.via_crew_id에
       // 넘긴 크루를 남긴다. 사람 글처럼 보여도 크루 넘김이다 — 풀 오토에서 뺀다(통합본 3차 재검수 HIGH-1). 이 표지는 트리거만 쓰고, 위조돼도 풀 오토를 끄는 쪽뿐이다.
       // 손님·정책 판정(origin·rootAuthor)은 바꾸지 않는다 — fromCrewId로 처리하면 rootAuthor 없는 크루 글이 되어 손님 턴(도구 차단)이 된다.
-      const relayVia = !fromCrew && typeof m.meta?.relay?.via_crew_id === 'string' && m.meta.relay.via_crew_id ? m.meta.relay.via_crew_id : null;
-      const relayViaName = relayVia && typeof m.meta.relay.via_name === 'string' ? m.meta.relay.via_name.slice(0, 40) : null; // 넘긴 크루가 받는 쪽 조직 목록에 없을 때의 표시 이름(LOW-1)
+      // 전달 표지는 DM(이 크루의 1:1 방)에서만 인정한다 — 트리거는 DM에만 쓰고, 공개 채널 글의 meta는 멤버가 쓸 수 있다. 공개 채널에서 위조한 표지가
+      // 조회 오류로 이 크루의 커서를 영영 멈추거나(마지막 확인 검수 MEDIUM-1) 위조 이름이 결재 카드에 나가지 않게.
+      const relayMeta = !fromCrew && dm.has(m.channel_id) && m.meta?.relay && typeof m.meta.relay === 'object' ? m.meta.relay : null;
+      const relayVia = relayMeta && typeof relayMeta.via_crew_id === 'string' && relayMeta.via_crew_id ? relayMeta.via_crew_id : null;
+      const relayViaName = relayVia && typeof relayMeta.via_name === 'string' ? relayMeta.via_name.slice(0, 40) : null; // 넘긴 크루가 받는 쪽 조직 목록에 없을 때의 표시 이름(LOW-1)
       let hop = 0; let origin = m.author_user_id; let rootAuthor = null; let guestChain = false; let officeChain = isOfficeSource(m);
       // 서버 트리거 msgr_dm_relay가 다른 1:1 방으로 옮겨 적은 글은 meta를 {relay}로 새로 만들어 오피스 표지가 빠진다 — 출처 글을 보고 잇는다(분리 검수 HIGH, 9/29).
       // 못 읽으면(다른 주인의 방) 오피스로 본다: 내리는 방향이고, 그 경우는 손님 판정이 이미 풀 오토를 끈다. 조회 순단은 던져서 재시도.
-      if (!fromCrew && m.meta?.relay?.source_id != null && !officeChain) {
-        const src = await db.message(m.meta.relay.source_id);
+      if (relayMeta && relayMeta.source_id != null && !officeChain) {
+        // 정수 id가 아니면 조회하지 않는다(형식 오류를 순단으로 보고 커서를 멈추지 않게) — 출처를 못 읽은 것과 같게 내리는 쪽(오피스)
+        const src = /^\d+$/.test(String(relayMeta.source_id)) ? await db.message(relayMeta.source_id) : null;
         officeChain = !src || isOfficeSource(src) || src.meta?.office === true;
       }
       // DM 전달 손님 판정 — 같은 채널 넘김과 같은 규칙: 넘긴 크루의 주인이 이 DM의 사람(origin)과 다르면 손님 턴(남의 크루가 시킨 일).
       // 같은 주인 크루의 전달은 주인 턴(풀 오토만 아님 — relayVia). 주인을 못 찾으면(크루 삭제) 손님으로 본다(fail-closed). 조회 순단은 던져 재시도.
-      if (relayVia && await db.crewOwner(relayVia) !== origin) guestChain = true;
+      // UUID 형식이 아니면 조회하지 않고 손님으로 본다(형식 오류가 커서를 멈추지 않게)
+      if (relayVia && (!UUID_RE.test(relayVia) || await db.crewOwner(relayVia) !== origin)) guestChain = true;
       if (fromCrew) {
         // 권한 주체 = 발신 크루의 소유자(크루는 소유자의 권한으로 말한다). 크루 글 insert는 RLS가 소유자에게만 허용하므로 위조 불가.
         // meta.origin·thread_root·reply_to는 멤버가 쓸 수 있는 값이라 권한 판정에 쓰지 않는다(검수 1R C-2·2R H-3).
@@ -972,7 +978,7 @@ async function restoreMessengerContext(wsId, slug, origin, session, { ownerAppro
   const ctx = { kind: 'msgr', chatType: 'group', channelKind: ch.kind, delegated: envelope?.delegated === true, orgId: origin.orgId, channelId: origin.channelId, crewId: crew.id,
     threadRoot: root.id, sourceMsgId: source.id, uid, wsId, origin: actor, hop, orgSlug: org.slug, channelName: ch.name ?? '', peers, handoffs: [], ...(work ? { work } : {}),
     ...(source.author_kind === 'crew' && root.author_user_id ? { rootAuthor: root.author_user_id } : {}), ...(origin.guest === true ? { guest: true } : {}), ...(origin.office === true || isOfficeSource(root) || isOfficeSource(source) ? { office: true } : {}), ...(ownerApproved === true ? { ownerApproved: true } : {}),
-    ...(origin.handoffFrom || source.author_kind === 'crew' || (typeof source.meta?.relay?.via_crew_id === 'string' && source.meta.relay.via_crew_id) ? { handoffFrom: origin.handoffFrom ?? (source.author_kind === 'crew' ? source.crew_id : source.meta.relay.via_crew_id) } : {}) }; // 손님 판정. handoffFrom = 크루가 넘긴 지시(DM 전달로 옮겨 적힌 것 포함)의 후속(풀 오토 아님) 재료(isGuestCtx) — rootAuthor는 drain과 같은 뜻(넘김 스레드의 뿌리 사람)
+    ...(origin.handoffFrom || source.author_kind === 'crew' || (ch.kind === 'dm' && typeof source.meta?.relay?.via_crew_id === 'string' && source.meta.relay.via_crew_id) ? { handoffFrom: origin.handoffFrom ?? (source.author_kind === 'crew' ? source.crew_id : source.meta.relay.via_crew_id) } : {}) }; // 전달 표지는 DM에서만 // 손님 판정. handoffFrom = 크루가 넘긴 지시(DM 전달로 옮겨 적힌 것 포함)의 후속(풀 오토 아님) 재료(isGuestCtx) — rootAuthor는 drain과 같은 뜻(넘김 스레드의 뿌리 사람)
   const orgMemory = await crewMemoryCached(db, crew.id, ch.id); if (orgMemory !== undefined) ctx.orgMemory = orgMemory; // 서버 기억(전사+이 채널) — 없으면 chat이 미러 규칙으로 물러난다
   return { db, ctx, ch, source, envelope, orgPeers }; // orgPeers — 넘긴 크루의 표시 이름(handoffLabel)용. 문맥(ctx)에는 싣지 않는다
 }
@@ -999,7 +1005,7 @@ export async function runMessengerContinuation(wsId, slug, origin, message, _glo
     try {
       // 호출자가 넘기는 전역 세션(_globalSessionId — 주인의 데스크톱 대화)은 쓰지 않는다: 후속 실행도 그 채널 세션만 잇는다
       const sessionId = ch.kind === 'dm' || ch.crew_memory === false ? null : scopedSession(await loadThread(wsId, slug), ctx.channelId).sessionId;
-      const nod = notOwnerDirect ?? (ctx.handoffFrom ? handoffLabel(orgPeers ?? ctx.peers, ctx.handoffFrom, source.meta?.relay?.via_name) : null);
+      const nod = notOwnerDirect ?? (ctx.handoffFrom ? handoffLabel(orgPeers ?? ctx.peers, ctx.handoffFrom, ch.kind === 'dm' ? source.meta?.relay?.via_name : null) : null);
       const turn = await runChat(wsId, slug, text, sessionId, { source: 'messenger', mirrorCtx: ctx, journal: msgrJournal(ctx.orgId, ctx.channelId, ch.crew_memory === false), ...(nod ? { notOwnerDirect: nod } : {}) });
       return { ...turn, ...(await messengerReply(ctx, turn.reply, { db, lang })), msgr: messengerOrigin(ctx) };
     } finally {
@@ -1074,8 +1080,8 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
       const actor = envelope.actor ?? (source.author_kind === 'crew' ? await db.crewOwner(source.crew_id) : source.author_user_id);
       Object.assign(job, { text: source.body, replyTo: source.reply_to, threadRoot: envelope.root.id, workRunId: source.meta?.work_run_id ?? null,
         fromCrewId: source.author_kind === 'crew' ? source.crew_id : null, rootAuthor: envelope.root.author_user_id,
-        relayVia: source.author_kind !== 'crew' && typeof source.meta?.relay?.via_crew_id === 'string' && source.meta.relay.via_crew_id ? source.meta.relay.via_crew_id : null, // DM 전달로 옮겨 적힌 크루 넘김(HIGH-1)
-        relayViaName: typeof source.meta?.relay?.via_name === 'string' ? source.meta.relay.via_name.slice(0, 40) : null,
+        relayVia: envelope.channel?.kind === 'dm' && source.author_kind !== 'crew' && typeof source.meta?.relay?.via_crew_id === 'string' && source.meta.relay.via_crew_id ? source.meta.relay.via_crew_id : null, // DM 전달로 옮겨 적힌 크루 넘김(HIGH-1) — DM에서만 인정
+        relayViaName: envelope.channel?.kind === 'dm' && typeof source.meta?.relay?.via_name === 'string' ? source.meta.relay.via_name.slice(0, 40) : null,
         authorId: actor, origin: actor });
     }
     if (job.msgrExecution?.replyRow) {

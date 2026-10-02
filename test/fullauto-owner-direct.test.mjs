@@ -265,3 +265,26 @@ test('MEDIUM-1 — 크루 slug에 captain을 주지 않는다(영입 문은 -n�
   assert.equal(isAssignableSlug('captain'), false); assert.equal(isAssignableSlug('room-main'), false); assert.equal(isAssignableSlug('captain-2'), true);
 });
 
+// ── 마지막 확인 검수 LOW-1·LOW-2 ──
+test('LOW-1 — 사장 쪽지의 배달 턴은 1:1 공유 노트를 모델에 싣지도 가져가지도 않는다', async () => {
+  const { appendSharedNote, takeSharedNotes } = await import('../src/thread.mjs');
+  await appendSharedNote(ws, 'b', 'SHARED-NOTE-MARKER');
+  reset({});
+  await crewmailTurn(ws, 'b', { id: 'mn', from: 'captain', fromName: '사장', fromRole: 'captain', kind: 'to', message: '확인해 줘', hop: 0, chain: [] }, { from: 'captain', hop: 0, chain: [] });
+  assert.ok(reqs.some((r) => r.who === 'b'), '배달 턴이 돌았다');
+  assert.ok(!reqs.some((r) => r.messages.includes('SHARED-NOTE-MARKER')), '공유 노트가 모델 요청에 실리지 않았다');
+  assert.equal((await takeSharedNotes(ws, 'b')).length, 1, '공유 노트는 다음 1:1 턴을 위해 남아 있다');
+});
+
+test('LOW-2 — 사장 쪽지의 배달 턴 활동 기록은 fromRole로 사장을 남긴다(from 문자열이 아니라)', async () => {
+  const { readEvents } = await import('../src/events.mjs');
+  reset({});
+  await crewmailTurn(ws, 'b', { id: 'me', from: 'captain', fromName: '사장', fromRole: 'captain', kind: 'to', message: '활동 기록 확인', hop: 0, chain: [] }, { from: 'captain', hop: 0, chain: [] });
+  const ev = (await readEvents(ws)).filter((e) => e.type === 'turn' && e.slug === 'b' && e.source === 'crewmail')[0]; // readEvents는 최신순
+  assert.equal(ev?.fromRole, 'captain'); assert.ok(!ev.from);
+  reset({});
+  await crewmailTurn(ws, 'b', { id: 'mf', from: 'captain', fromName: '캡틴', kind: 'to', message: '크루 captain', hop: 1, chain: ['captain'] }, { from: 'captain', hop: 1, chain: ['captain'] });
+  const ev2 = (await readEvents(ws)).filter((e) => e.type === 'turn' && e.slug === 'b' && e.source === 'crewmail')[0]; // readEvents는 최신순
+  assert.equal(ev2?.from, 'captain', 'slug captain 크루의 쪽지는 크루 출처'); assert.ok(!ev2.fromRole);
+});
+

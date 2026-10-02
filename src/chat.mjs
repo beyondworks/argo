@@ -1258,6 +1258,9 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
   const skillScope = parseScopeList(meta.skills);
   const mcpScope = parseScopeList(meta.mcp);
   const skills = await loadSkills(wsId, SKILL_INJECT_CAP, lang, skillScope);
+  // 활동 기록의 발신자 — 쪽지 배달 턴인데 from이 없으면 사장 쪽지다(scheduler가 fromRole 'captain' 쪽지만 from 없이 돌린다). 화면은 fromRole로 "사장 → 크루"를 그린다.
+  // 스킬 주입 뒤에 둔다(그 앞에는 출처 분기를 두지 않는다 — room-slash-commander 핀). 예산 차단 턴(이보다 앞에서 끝남)은 종전 기록 그대로
+  const evFrom = from ? { from } : source === 'crewmail' ? { fromRole: 'captain' } : {};
   // 풀 오토 판정(위 설명 주석) — 스킬 주입 뒤에 계산한다: loadSkills 앞에는 출처(source) 분기를 두지 않는다(room-slash-commander 핀). 그 사이 쓰는 곳은 없다.
   // 풀 오토는 사장이 직접 시킨 크루가 자기 일로 하는 턴에만(유건 결정 2026-10-03 "위임도 막기"). 빠지는 턴:
   //   from이 있는 턴 — 위임받은 동료 턴·쪽지 배달 턴·크루가 보낸 세션 메시지의 받는 턴·깨움 턴
@@ -1393,7 +1396,7 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
     if (guest) return { reply: guestCliRefusal(meta.name || agentSlug, lang), sessionId: null, handover: null };
     const t0 = Date.now();
     const gist = userMsg.replace(/\s+/g, ' ').trim().slice(0, 60);
-    const evBase = { type: 'turn', slug: agentSlug, source: source ?? (from ? 'delegate' : 'deck'), ...(from ? { from } : {}), ...(resolved.fellBack ? { fellBackFrom: wantRunner } : {}), gist, runner };
+    const evBase = { type: 'turn', slug: agentSlug, source: source ?? (from ? 'delegate' : 'deck'), ...evFrom, ...(resolved.fellBack ? { fellBackFrom: wantRunner } : {}), gist, runner };
     await setTurnStatus(wsId, agentSlug, 'runner', RUNNERS[runner].name, undefined, turnSource); // 코드+러너명(detail) — 클라가 번역
     // 중단 배선 — SDK 경로처럼 정지 버튼이 실제로 프로세스를 끊게 한다(외부 CLI는 signal로 자식 kill).
     const ac = new AbortController();
@@ -1806,7 +1809,7 @@ ${lang === 'en'
   const evBase = {
     type: 'turn', slug: agentSlug, source: source ?? (from ? 'delegate' : 'deck'),
     // runner — 설정 연결 카드의 "마지막 턴 상태" 원천(P1-1). CLI 갈래 evBase에는 이미 있었다(비대칭 봉합).
-    ...(from ? { from } : {}), ...(resolved.fellBack ? { fellBackFrom: wantRunner } : {}), gist, runner, msg: userMsg.slice(0, 2000),
+    ...evFrom, ...(resolved.fellBack ? { fellBackFrom: wantRunner } : {}), gist, runner, msg: userMsg.slice(0, 2000),
   };
   const steps = [];
   const step = (stage, detail = '') => { if (steps.length < 40) steps.push({ t: Date.now() - t0, stage, detail }); };
