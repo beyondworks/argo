@@ -266,7 +266,7 @@ function AvatarCrop({ file, t, onCancel, onSave, onError }) {
       <div ref={frameRef} className="msgr-crop-frame" style={{ width: frame, height: frame }} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} aria-label={t('avatar.crop.frame')} role="img">
         {img ? <img src={img.url} alt="" draggable={false} style={{ width: img.w * s, height: img.h * s, left: frame / 2 + off.x - (img.w * s) / 2, top: frame / 2 + off.y - (img.h * s) / 2 }} /> : <span className="note" role="status">{t('ui.loading')}</span>}
       </div>
-      <label className="msgr-crop-zoom"><I name="search" size={14} className="fill" /><span className="sr">{t('avatar.crop.zoom')}</span><input type="range" min="1" max={ZOOM_MAX} step="0.01" value={zoom} disabled={!img} onChange={(e) => apply(Number(e.target.value), off.x, off.y)} aria-label={t('avatar.crop.zoom')} /></label>
+      <label className="msgr-crop-zoom"><I name="search" size={14} /><span className="sr">{t('avatar.crop.zoom')}</span><input type="range" min="1" max={ZOOM_MAX} step="0.01" value={zoom} disabled={!img} onChange={(e) => apply(Number(e.target.value), off.x, off.y)} aria-label={t('avatar.crop.zoom')} /></label>
       <div className="acts"><button type="button" className="btn" onClick={onCancel} disabled={busy}>{t('ui.cancel')}</button><button type="button" className="btn btn-primary" onClick={save} disabled={!img || busy}><I name="check" size={14} />{t('ui.save')}</button></div>
     </section>
   </div>, document.body);
@@ -555,7 +555,7 @@ function PhoneTabs({ active, onPick, badges = {} }) {
       <div className="msgr-island" role="tablist">
         {PHONE_TABS.map((k) => { const n = badges[k] || 0; const label = t(`phone.tab.${k}`); return (
           <button key={k} type="button" role="tab" data-tour={`tab-${k}`} aria-selected={active === k} className={active === k ? 'on' : ''} onClick={() => onPick(k)} aria-label={n > 0 ? t(`phone.tab.badge.${k}`, { tab: label, n: badgeText(n) }) : label}>
-            <span className="ic"><I name={PHONE_TAB_ICONS[k]} size={22} /></span>{n > 0 && <span className="msgr-tabn" aria-hidden="true">{badgeText(n)}</span>}
+            <span className="ic"><I name={PHONE_TAB_ICONS[k]} size={22} filled={active === k} /></span>{n > 0 && <span className="msgr-tabn" aria-hidden="true">{badgeText(n)}</span>}
           </button>
         ); })}
       </div>
@@ -596,7 +596,7 @@ function PhoneHead({ title, left = null, actions = [], children = null }) {
       <div className="ph-head-l">{left ?? <h1 className="ph-title">{title}</h1>}</div>
       <div className="ph-head-r">
         {actions.filter(Boolean).map((a) => (
-          <button key={a.key} type="button" className={`ph-hbtn${a.on ? ' on' : ''}`} onClick={a.run} aria-label={a.label} title={a.label} data-tour={a.tour} aria-haspopup={a.menu ? 'menu' : undefined} aria-expanded={a.menu ? !!a.on : undefined}><I name={a.icon} size={22} className={a.icon === 'search' ? 'fill' : ''} /></button>
+          <button key={a.key} type="button" className={`ph-hbtn${a.on ? ' on' : ''}`} onClick={a.run} aria-label={a.label} title={a.label} data-tour={a.tour} aria-haspopup={a.menu ? 'menu' : undefined} aria-expanded={a.menu ? !!a.on : undefined}><I name={a.icon} size={22} /></button>
         ))}
       </div>
       {children}
@@ -2229,11 +2229,11 @@ function Shell({ session }) {
   };
   const searchBar = tabQ !== null && (
     <form className="ph-search" role="search" onSubmit={(e) => { e.preventDefault(); e.currentTarget.querySelector('input')?.blur(); }}>
-      <I name="search" size={16} className="fill" /><input autoFocus value={tabQText} onChange={(e) => setTabQ(e.target.value)} placeholder={t(`phone.search.ph.${rootTab}`)} aria-label={t(`phone.search.ph.${rootTab}`)} enterKeyHint="search" />
+      <I name="search" size={16} /><input autoFocus value={tabQText} onChange={(e) => setTabQ(e.target.value)} placeholder={t(`phone.search.ph.${rootTab}`)} aria-label={t(`phone.search.ph.${rootTab}`)} enterKeyHint="search" />
       <button type="button" className="ph-searchx" onClick={() => setTabQ(null)}>{t('ui.cancel')}</button>
     </form>
   );
-  const searchFoot = (found) => tabQText.trim() ? (<div className="ph-searchfoot">{!found && <p className="msgr-hint">{t('phone.search.none')}</p>}<button type="button" className="btn ph-searchall" onClick={searchAll}><I name="search" size={14} className="fill" />{t('phone.search.all', { q: tabQText.trim() })}</button></div>) : null;
+  const searchFoot = (found) => tabQText.trim() ? (<div className="ph-searchfoot">{!found && <p className="msgr-hint">{t('phone.search.none')}</p>}<button type="button" className="btn ph-searchall" onClick={searchAll}><I name="search" size={14} />{t('phone.search.all', { q: tabQText.trim() })}</button></div>) : null;
   // ── 채팅 탭(개인 공간) ──
   const chatsAll = isPersonal && spaceReady ? channels.filter((c) => c.kind === 'dm') : [];
   const chatSorted = sortRooms(chatsAll, { sort: dmSort, atOf: (c) => rowOf(c).at, unread, pinned, pinPos, nameOf: dmBaseName, sortPos: dmSortPos });
@@ -3409,7 +3409,7 @@ function SearchPage({ res, busy = false, channels, crews, nameOfUser, dmName, on
       <button type="button" className="btn sm msgr-backchat" style={{ marginLeft: 'auto' }} onClick={onBack}><I name="reply" size={13} />{t('ui.back')}</button>
     </div>
     <div className="msgr-thread page"><div className="msgr-inbox msgr-searchres">
-      {phone && phoneQ && <form className="ph-search ph-search-page" role="search" onSubmit={(e) => { e.preventDefault(); phoneQ.run(phoneQ.q); e.currentTarget.querySelector('input')?.blur(); }}><I name="search" size={16} className="fill" /><input value={phoneQ.q} onChange={(e) => phoneQ.set(e.target.value)} placeholder={t('search.ph.phone')} aria-label={t('search.title')} enterKeyHint="search" /></form>}{/* 폰: 떠 있던 검색 칸(아래 탭 바 안)을 없애 결과 맨 위에 둔다 */}
+      {phone && phoneQ && <form className="ph-search ph-search-page" role="search" onSubmit={(e) => { e.preventDefault(); phoneQ.run(phoneQ.q); e.currentTarget.querySelector('input')?.blur(); }}><I name="search" size={16} /><input value={phoneQ.q} onChange={(e) => phoneQ.set(e.target.value)} placeholder={t('search.ph.phone')} aria-label={t('search.title')} enterKeyHint="search" /></form>}{/* 폰: 떠 있던 검색 칸(아래 탭 바 안)을 없애 결과 맨 위에 둔다 */}
       {view.loading && <p className="empty" role="status">{t('ui.loading')}</p>}
       {view.hintKey && <p className="empty">{t(view.hintKey)}</p>}
       {view.noticeKey && <p className="note danger" role="alert">{t(view.noticeKey)}</p>}
@@ -5501,7 +5501,7 @@ function Channel({ onCrewFailed = null, onScreen = true, namePrompt = null, onOu
       {phone && <span className="msgr-sub">{channel.org_id === null && `${t('personal.badge')} · `}{channel.kind === 'dm' && chCrews.length === 1 && people.length <= 1 ? (chCrews[0].role_text || t('org.crew')) : t('phone.meta', { n: people.length, c: chCrews.length })}</span>}
       {/* 켜고 끄는 자리가 안 보인다(유건 2026-09-09) → 표지 자체가 토글. 아이콘만, 꺼짐 = 취소선·붉은색 */}
       <span className="msgr-hchips"><button type="button" className={`msgr-hchip${muted ? ' off' : ''}`} onClick={onToggleMute} title={t(muted ? 'ch.mute.off.tip' : 'ch.mute.on.tip')} aria-pressed={muted} aria-label={t('ch.muted')}><I name={muted ? 'belloff' : 'bell'} size={14} /></button>
-      {!isPersonal && <button type="button" className={`msgr-hchip${channel.crew_memory === false ? ' off' : ''}`} onClick={onToggleMemory} title={t(channel.crew_memory === false ? 'ch.memory.off.tip' : 'ch.memory.on.tip')} aria-pressed={channel.crew_memory === false} aria-label={t('ch.memoryOff')}><I name={channel.crew_memory === false ? 'memoff' : 'memory'} size={14} /></button>}</span>
+      {!isPersonal && <button type="button" className={`msgr-hchip${channel.crew_memory === false ? ' off' : ''}`} onClick={onToggleMemory} title={t(channel.crew_memory === false ? 'ch.memory.off.tip' : 'ch.memory.on.tip')} aria-pressed={channel.crew_memory === false} aria-label={t('ch.memoryOff')}><I name={channel.crew_memory === false ? 'memoff' : 'folder'} size={14} /></button>}</span>
       <button type="button" className="members" onClick={onTitle} title={t('ch.composition')} aria-label={t('ch.composition')}>{phone && <I name="dots" size={20} className="ph-dots" />}{people.slice(0, 4).map((m) => <Av key={m.user_id} name={m.display_name || m.user_id} size="sm" userId={m.user_id} />)}{chCrews.slice(0, 3).map((c) => <Av key={c.id} name={c.display_name} crew size="sm" company={crewTier(c, org) === 'company'} crewId={c.id} />)}<span className="n">{t('ch.composition.count', { p: people.length, c: chCrews.length })}</span></button>
       {!isPersonal && <button type="button" className="btn sm msgr-work-button" onClick={() => setWorkOpen((v) => !v)} aria-pressed={workOpen} aria-label={t('work.title')}>{t('work.button')}</button>}
       <div className="msgr-seg" role="tablist">{tabs.map(([k, ic, n]) => <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? 'active' : ''} onClick={() => setTab(k)} title={t(`tab.${k}`)} aria-label={n > 0 ? `${t(`tab.${k}`)} ${n}` : t(`tab.${k}`)}>{ic && <I name={ic} size={13} />}<span className={ic ? 'lbl' : undefined}>{t(`tab.${k}`)}</span>{n > 0 && <span className="n">{n}</span>}</button>)}</div>{/* .lbl = 좁은 폭에서 숨기는 글자(아이콘 있는 탭만). 이름은 title·aria-label로 남는다 */}

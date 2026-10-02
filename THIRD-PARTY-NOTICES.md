@@ -10,4 +10,12 @@
 - 동봉 판: BusyBox v1.38.0-FRP-6075-g169694ebd, 675,840B (sha256은 `scripts/fetch-busybox.mjs`에 고정)
 - 대응 소스(GPLv2 §3): 같은 판의 소스 타르볼 `busybox-w32-FRP-6075-g169694ebd.tgz`(3,690,927B, sha256 고정)가 이 배포본이 올라간 릴리스 페이지에 자산으로 함께 있다. `node scripts/fetch-busybox.mjs source <dir>`로도 받는다.
 
+## Material Symbols (Argo 메신저 아이콘)
+
+- 파일: `apps/messenger/src/icons.jsx`의 `MS` 표(앱이 쓰는 아이콘의 SVG path만 복사, 무수정). 런타임에 글꼴·CSS를 내려받지 않는다.
+- 용도: 메신저 화면 아이콘(폰·데스크톱 공용). Outlined, 글자 무게 400, FILL 0(선택된 아래 탭만 FILL 1), GRAD 0, 광학 크기 24
+- 저작권: Copyright Google LLC
+- 라이선스: Apache License 2.0 — 전문은 메신저 배포본의 `icons/material-symbols-LICENSE.txt`(소스 `apps/messenger/public/icons/material-symbols-LICENSE.txt`)
+- 출처: https://github.com/google/material-design-icons · npm `@material-symbols/svg-400` 0.47.5 (`outlined`). 다시 뽑기: `node apps/messenger/scripts/extract-material-icons.mjs <압축 푼 package 폴더>`
+
 Argo 자체 라이선스는 [LICENSE.md](LICENSE.md)를 본다.
