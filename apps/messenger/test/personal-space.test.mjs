@@ -23,7 +23,7 @@ test('loadOrgs가 개인 공간(PERSONAL)을 유지한다', () => {
 });
 
 test('조직 전환 메뉴에 개인 항목이 맨 위에 있다', () => {
-  const menuStart = src.indexOf('msgr-menu-pop');
+  const menuStart = src.indexOf('msgr-menu-pop', src.indexOf('className={`msgr-org${orgMenu')); // 데스크톱 레일 조직 메뉴(폰 OrgMenuCard 부품은 앞쪽에 정의돼 있다)
   const personalBtn = src.indexOf("setOrgId(PERSONAL)", menuStart);
   const orgMap = src.indexOf("orgs.map", menuStart);
   assert.ok(personalBtn > 0 && orgMap > 0 && personalBtn < orgMap, '개인 버튼이 조직 목록보다 앞');
@@ -43,14 +43,17 @@ test('개인 공간의 안 읽음은 org=null로 센다(건너뛰지 않는다 �
 });
 
 test('개인 공간에서는 알림함 조직 질의를 쏘지 않는다(가상 org id는 uuid가 아니다 — 검수 M-2)', () => {
-  const eff = src.slice(src.indexOf('if (!org || !uid) { setInbox([]); return; }'));
+  const eff = src.slice(src.indexOf('if (!org || !uid) { setInboxNet([]); return; }'));
   assert.ok(eff.length > 0, '알림함 집계');
-  const personal = eff.indexOf('if (isPersonal) { setInbox(friendItems()); return; }'), orgQuery = eff.indexOf("supabase.from('msgr_messages')");
-  assert.ok(personal > 0 && orgQuery > personal, '개인 공간은 친구 요청만 싣고 조직 질의 전에 돌아간다(S15)');
+  const personal = eff.indexOf('if (isPersonal || isPhone) { setInboxNet([]); return; }'), orgQuery = eff.indexOf("supabase.from('msgr_messages')");
+  assert.ok(personal > 0 && orgQuery > personal, '개인 공간(과 알림함이 없는 폰)은 조직 질의 전에 돌아간다(S15·기능 점검 D2)');
+  assert.match(src, /return \[\.\.\.inboxNet, \.\.\.friendItems\(\)\]/, '친구 요청은 조회 없이 합친다(개인 공간 벨·탭 배지)');
 });
 
-test('개인 공간에서는 붙여넣기 첨부도 막는다(검수 L-4)', () => {
-  assert.match(src, /if \(!pasted\.length \|\| busy \|\| isPersonal\) return;/);
+test('개인 공간도 붙여넣기·끌어 놓기 첨부를 받는다(2026-10-02 — 개인 경로 p/<방>/<글>/<파일>)', () => {
+  assert.match(src, /if \(!pasted\.length \|\| busy\) return;/);
+  assert.match(src, /if \(!busy\) addFiles\(e\.dataTransfer\?\.files\);/);
+  assert.match(src, /composerTransport\(supabase, \{ orgId, chId, uid, personal: isPersonal,/, '개인 방이면 전송 경로가 p/로 바뀐다');
 });
 
 test('개인 공간에서 실시간은 dm:<채널> 토픽을 구독한다', () => {
@@ -64,9 +67,10 @@ test('개인 공간에서 채널 절·멤버 절은 감춰지고, 내 에이전�
   assert.match(src, /\{\(isPersonal \? railVisible\.length > 0 : !orgBlocked && org && \(myAvailable\.length > 0/, '개인 공간은 내 개인 크루가 있으면 보인다');
 });
 
-test('개인 공간에서 업무 버튼·첨부 버튼이 감춰진다', () => {
+test('개인 공간에서 업무 버튼은 감춰지고 첨부 버튼은 조직과 같이 보인다(2026-10-02)', () => {
   assert.match(src, /\{!isPersonal && <button type="button" className="btn sm msgr-work-button"/);
-  assert.match(src, /\{!isPersonal && <button type="button" className="tb" onMouseDown.*msg\.attach/);
+  assert.doesNotMatch(src, /\{!isPersonal && <button type="button" className="tb" onMouseDown.*msg\.attach/);
+  assert.match(src, /<button type="button" className="tb" onMouseDown=\{\(e\) => e\.preventDefault\(\)\} onClick=\{\(\) => fileRef\.current\?\.click\(\)\}/);
 });
 
 test('Channel 컴포넌트가 isPersonal prop을 받는다', () => {

@@ -35,6 +35,31 @@ test('만들기 — 새 서버는 새 행 그대로, 옛 서버(열 없음)는 �
   assert.equal(denied.log.length, 1, '권한 거절은 옛 모양으로 재시도하지 않는다');
 });
 
+// 분리 검수 MEDIUM(2026-10-02): 서버는 넣기만으로 이전 링크를 취소하지 않는다(옛 앱 창 열고 닫기가 공유 링크를 죽이던 것).
+// '새 링크로 바꾸기'만 새 링크를 만든 뒤 msgr_invite_replace로 나머지를 취소한다 — 그 호출이 실패하면 새 링크를 지워 이전 링크가 그대로 남는다.
+test('만들기(replace) — 멤버·관리자 링크는 만든 뒤 msgr_invite_replace(keep=새 id), 그냥 만들기·게스트는 부르지 않는다', async () => {
+  const ok = fakeSb({ insert: () => ({ data: { id: 'n1', code: 'NEW' }, error: null }), rpc: { msgr_invite_replace: { data: 2, error: null } } });
+  assert.deepEqual(await createInvite(ok, { orgId: 'o', uid: 'u', role: 'member', channelIds: [], replace: true }, NOW), { id: 'n1', code: 'NEW', legacy: false });
+  assert.deepEqual(ok.log.map((x) => x.slice(0, 2)), [['insert', 'msgr_invites'], ['rpc', 'msgr_invite_replace']]);
+  assert.deepEqual(ok.log[1][2], { keep: 'n1' });
+  assert.equal('replace' in ok.log[0][2], false, '행에는 replace를 싣지 않는다');
+  const plain = fakeSb({ insert: () => ({ data: { id: 'n2', code: 'P' }, error: null }) });
+  await createInvite(plain, { orgId: 'o', uid: 'u', role: 'member' }, NOW);
+  assert.deepEqual(plain.log.map((x) => x[0]), ['insert'], '그냥 만들기는 아무것도 취소하지 않는다');
+  const guest = fakeSb({ insert: () => ({ data: { id: 'n3', code: 'G' }, error: null }) });
+  await createInvite(guest, { orgId: 'o', uid: 'u', role: 'guest', channelIds: ['p'], replace: true }, NOW);
+  assert.deepEqual(guest.log.map((x) => x[0]), ['insert'], '게스트 링크는 사람마다 — 바꾸기 대상 아님');
+});
+
+test('만들기(replace) 실패 — 바꾸기가 거절되면 새 링크를 지우고 오류, 서버에 함수가 없으면(적용 전) 새 링크만 둔다', async () => {
+  const denied = fakeSb({ insert: () => ({ data: { id: 'n1', code: 'NEW' }, error: null }), rpc: { msgr_invite_replace: { data: null, error: { code: 'P0001', message: 'msgr_invite_revoked' } } } });
+  await assert.rejects(createInvite(denied, { orgId: 'o', uid: 'u', role: 'admin', replace: true }, NOW), /msgr_invite_revoked/);
+  assert.deepEqual(denied.log.at(-1), ['delete', 'msgr_invites', 'n1', 'use_count', 0], '새 링크를 지운다(안 쓰였을 때만) — 이전 링크가 그대로 남는다');
+  const old = fakeSb({ insert: () => ({ data: { id: 'n2', code: 'NEW' }, error: null }) }); // rpc 기본 = 함수 없음
+  assert.deepEqual(await createInvite(old, { orgId: 'o', uid: 'u', role: 'member', replace: true }, NOW), { id: 'n2', code: 'NEW', legacy: false });
+  assert.ok(!old.log.some((x) => x[0] === 'delete'));
+});
+
 test('미리보기 — 서버에 없으면 null(옛 즉시 수락으로), 틀린 코드는 예외', async () => {
   assert.equal(await previewInvite(fakeSb(), 'c'), null);
   const sb = fakeSb({ rpc: { msgr_invite_preview: { data: { state: 'valid', org_name: 'Lean' }, error: null } } });
@@ -112,4 +137,29 @@ test('창이 버린 링크 정리 — 안 쓰였으면 삭제(새 서버는 use_
   assert.deepEqual(old.log.at(-1), ['delete', 'msgr_invites', 'i']);
   assert.equal(await discardInvite(fakeSb({ row: { data: null, error: { code: '42501', message: 'denied' } } }), 'i'), false);
   assert.equal(await discardInvite(fakeSb(), null), false);
+});
+
+// 5차 피드백(유건 2026-10-02): 조직마다 멤버 링크 하나·관리자 링크 하나. 쓸 수 있는 링크가 있으면 다시 쓰고, 여러 개면 가장 최근 것만 보인다.
+// 만료·취소·소진된 링크는 목록에서 숨긴다(지우지 않는다 — 서버 보존 기간이 30일 뒤 지운다). 채널 칩은 둘까지, 나머지는 +N.
+import { currentLink, shownInvites, chipPreview } from '../src/invite-flow.mjs';
+test('지금 링크 — 종류별로 쓸 수 있는 것 중 가장 최근(노드 코드 제외), 없으면 null', () => {
+  const now = Date.parse('2026-10-02T00:00:00Z');
+  const inv = (id, role, created, o = {}) => ({ id, role, created_at: created, expires_at: null, max_uses: null, use_count: 0, revoked_at: null, for_node: false, ...o });
+  const rows = [
+    inv('m-old', 'member', '2026-09-30T00:00:00Z'),
+    inv('m-new', 'member', '2026-10-01T00:00:00Z'),
+    inv('m-rev', 'member', '2026-10-01T12:00:00Z', { revoked_at: '2026-10-01T13:00:00Z' }),
+    inv('m-exp', 'member', '2026-10-01T18:00:00Z', { expires_at: '2026-10-01T19:00:00Z' }),
+    inv('m-node', 'member', '2026-10-01T20:00:00Z', { for_node: true }),
+    inv('a-used', 'admin', '2026-10-01T00:00:00Z', { max_uses: 1, use_count: 1 }),
+    inv('g1', 'guest', '2026-10-01T00:00:00Z', { channel_ids: ['c1'], max_uses: 1 }),
+  ];
+  assert.equal(currentLink(rows, 'member', now)?.id, 'm-new');
+  assert.equal(currentLink(rows, 'admin', now), null, '소진된 관리자 링크는 쓸 수 없다');
+  assert.deepEqual(shownInvites(rows, now).map((i) => i.id), ['m-new', 'g1'], '멤버 하나 + 살아 있는 게스트 링크, 나머지 숨김');
+});
+test("채널 칩 — 둘까지 보이고 나머지는 '+N'", () => {
+  assert.deepEqual(chipPreview(['a', 'b']), { shown: ['a', 'b'], more: 0 });
+  assert.deepEqual(chipPreview(['a', 'b', 'c', 'd', 'e']), { shown: ['a', 'b'], more: 3 });
+  assert.deepEqual(chipPreview([]), { shown: [], more: 0 });
 });

@@ -1,4 +1,5 @@
 import { storageKey } from './attach-files.mjs';
+import { shouldRequestPreview } from './media-actions.mjs';
 import { isNetworkFailure } from './net-errors.mjs';
 
 // 전송 실패의 영어 원문은 카드에 보이지 않는다(검수 E: 'TypeError: Failed to fetch'가 빨간 글씨로 나왔다). 앱이 진단 기록(설정 > 진단)으로 보내는 통로.
@@ -10,9 +11,17 @@ const OFFLINE_KEY = 'msg.delivery.offline';
 // Keeping the File objects in memory lets navigation preserve attachments without copying them to disk.
 const sessions = new Map();
 const tabStorage = () => { try { return globalThis.sessionStorage; } catch { return undefined; } };
+// 세션이 없을 때만 넘긴 통로로 만든다 — 대화 열기(초안 넣기)·첫 글 보내기처럼 방 입력창 밖에서 부르는 곳.
 export function getComposerSession(key, transport, storage = tabStorage()) {
   if (!sessions.has(key)) sessions.set(key, createComposerDelivery(transport, undefined, draftStore(storage, key)));
   return sessions.get(key);
+}
+// 방 입력창 전용 — 그 방의 통로(personal·onDiscard 삭제 방송)를 세션에 묶는다. 먼저 만든 쪽이 누구든, 나중에 누가 getComposerSession을 부르든 이 통로가 쓰인다.
+// 검수(2026-10-02): 개인 공간 대화 열기가 personal 없는 통로로 세션을 먼저 만들면 그 통로가 남아 방 입력창 첨부가 Storage에서 거절됐다(앱을 다시 켤 때까지).
+export function bindComposerSession(key, transport, storage = tabStorage()) {
+  const session = getComposerSession(key, transport, storage);
+  session.useTransport(transport);
+  return session;
 }
 export function clearComposerSessions(storage = tabStorage(), { keepUser } = {}) {
   for (const session of sessions.values()) session.dispose();
@@ -52,7 +61,7 @@ export function createComposerDelivery(transport, uuid = () => crypto.randomUUID
   const update = (key, value) => patch({ [key]: typeof value === 'function' ? value(state[key]) : value });
   async function deliver(job) {
     if (disposed || state.busy) return false;
-    patch({ busy: true, uploading: '', job: { ...job, error: '', errorKey: '' } });
+    patch({ busy: true, uploading: '', job: { ...job, error: '', errorKey: '', permanent: false } });
     try {
       job.messageId ??= await transport.message(job);
       if (disposed) return false;
@@ -87,11 +96,13 @@ export function createComposerDelivery(transport, uuid = () => crypto.randomUUID
         return false;
       }
       patch({ job: null, lastDeliveredId: job.messageId });
+      // 링크 미리보기 — 다 올라간 글에 한 번만(보낸 사람 기기만 부른다, 읽는 사람은 meta에 저장된 카드를 읽는다). 실패해도 전송은 성공.
+      try { transport.preview?.(job); } catch { /* 미리보기는 부가 기능 */ }
       return true;
     } catch (error) {
       const offline = !error.uiKey && isNetworkFailure(error.message);
       if (offline) reporter?.('send', String(error)); // 'TypeError: Failed to fetch' — 화면에는 문구만, 원문은 진단 기록에
-      patch({ job: { ...job, error: error.message, errorKey: error.uiKey ?? (offline ? OFFLINE_KEY : '') } }); // errorKey가 있으면 카드는 원문 대신 그 문구를 쓴다(D50)
+      patch({ job: { ...job, error: error.message, errorKey: error.uiKey ?? (offline ? OFFLINE_KEY : ''), permanent: !!error.permanent } }); // errorKey가 있으면 카드는 원문 대신 그 문구를 쓴다(D50)
       return false;
     } finally { patch({ busy: false, uploading: '' }); }
   }
@@ -113,14 +124,16 @@ export function createComposerDelivery(transport, uuid = () => crypto.randomUUID
     },
     retry() { return state.job ? deliver(state.job) : Promise.resolve(false); },
     dismiss() { if (!state.busy) patch({ job: null }); },
+    useTransport(next) { transport = next; }, // 같은 방 키(같은 서버·사용자·공간·방)라 경로 규칙은 같고, 진행 중 전송도 다음 요청부터 새 통로를 쓴다
     dispose() { disposed = true; listeners.clear(); state = { text: '', mentions: [], recipients: [], files: [], replyTo: null, job: null, busy: false, uploading: '' }; },
   };
 }
 
 // Stable IDs cover ambiguous network failures: a committed message/attachment is looked up, never
 // posted again with a fresh ID. Storage paths also stay fixed when only metadata needs a retry.
-export function composerTransport(client, { orgId, chId, uid, onDiscard = null }) {
-  const pathFor = (job, item) => `${orgId}/${chId}/${job.messageId}/${item.id}-${item.key}`; // 3번째 칸 = 글 번호 — 서버 msgr_bot_file(봇 첨부)·msgr_can_read_dm_attachment(위임 1:1 첨부 읽기)가 이 칸을 본다
+export function composerTransport(client, { orgId, chId, uid, personal = false, onDiscard = null }) {
+  // 개인 방(org 없음 — 친구 1:1·그룹·개인 에이전트 방)은 p/<방>/<글>/<파일>, 첨부 행 org_id NULL(20261002100000 정책)
+  const pathFor = (job, item) => `${personal ? 'p' : orgId}/${chId}/${job.messageId}/${item.id}-${item.key}`; // 3번째 칸 = 글 번호 — 서버 msgr_bot_file(봇 첨부)·msgr_can_read_dm_attachment(위임 1:1 첨부 읽기)·msgr_personal_file_ok가 이 칸을 본다
   return {
     async message(job) {
       const insert = () => client.from('msgr_messages').insert({ channel_id: chId, author_kind: 'user', author_user_id: uid,
@@ -143,6 +156,8 @@ export function composerTransport(client, { orgId, chId, uid, onDiscard = null }
       const found = await client.from('msgr_messages').select('id').eq('channel_id', chId).eq('author_kind', 'user')
         .eq('author_user_id', uid).eq('client_msg_id', job.clientId).maybeSingle();
       if (!found.error && found.data) return found.data.id;
+      // RLS 거절(42501 — 1:1 상대가 나를 차단했거나 방에서 빠짐 등)은 다시 보내도 같은 결과 — 영구 실패로 알린다(기능 점검 D14)
+      if (result.error.code === '42501') throw Object.assign(new Error(result.error.message), { uiKey: 'msg.delivery.rejected', permanent: true });
       throw new Error(result.error.message);
     },
     async upload(job, item) {
@@ -167,9 +182,13 @@ export function composerTransport(client, { orgId, chId, uid, onDiscard = null }
       }
       try { onDiscard?.(job.messageId); } catch { /* 방송은 최선 — 이미 받은 사람의 화면은 다음 보정 조회에서도 바로잡힌다 */ } // 이미 이 글을 받은 다른 사람의 화면이 빈 말풍선을 바로 지우도록(앱의 삭제와 같은 'edit' 방송)
     },
+    preview(job) {
+      if (!shouldRequestPreview({ body: job.body, messageId: job.messageId }) || !client.functions?.invoke) return;
+      Promise.resolve().then(() => client.functions.invoke('msgr-link-preview', { body: { message_id: job.messageId } })).catch(() => {}); // 카드는 엣지 함수가 저장하고 'edit' 방송으로 모든 화면에 붙는다
+    },
     async attachment(job, item) {
       const result = await client.from('msgr_attachments').insert({ id: item.id, message_id: job.messageId,
-        org_id: orgId, storage_path: pathFor(job, item), name: item.file.name, mime: item.file.type, bytes: item.file.size });
+        org_id: personal ? null : orgId, storage_path: pathFor(job, item), name: item.file.name, mime: item.file.type, bytes: item.file.size });
       if (!result.error) return;
       const found = await client.from('msgr_attachments').select('id,message_id').eq('id', item.id).maybeSingle();
       if (!found.error && found.data && String(found.data.message_id) === String(job.messageId)) return;

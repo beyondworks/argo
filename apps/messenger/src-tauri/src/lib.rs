@@ -16,6 +16,8 @@ mod notification_sound;
 mod native_realtime;
 #[cfg(desktop)]
 mod pair;
+#[cfg(desktop)]
+mod save_download; // 첨부 저장 — 다운로드 폴더(웹뷰 <a download>는 처리기가 없어 무시된다)
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -36,10 +38,14 @@ pub fn run() {
     let builder = builder.plugin(tauri_plugin_push_notifications::init());
     #[cfg(mobile)]
     let builder = builder.plugin(tauri_plugin_haptics::init()); // 짧은 진동 — JS는 src/haptics.js만 부른다 // APNs·FCM 기기 토큰 + 알림 탭 — 발송은 서버(msgr-push)
+    #[cfg(mobile)]
+    let builder = builder.plugin(tauri_plugin_media_share::init()); // 첨부 저장·공유 — JS는 src/media-io.js만 부른다
     #[cfg(target_os = "ios")]
     let builder = builder.plugin(tauri_plugin_web_auth::init());
     #[cfg(target_os = "android")]
     let builder = builder.plugin(tauri_plugin_apk_installer::init());
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(tauri_plugin_notif_tray::init()); // 읽은 채널의 트레이 알림 지우기(app-badge.mjs)
     #[cfg(target_os = "macos")]
     let builder = builder
         .manage(native_realtime::NativeRealtimeState::default())
@@ -57,14 +63,16 @@ pub fn run() {
             native_realtime::native_realtime_stop,
             native_realtime::native_realtime_snapshot,
             native_realtime::native_realtime_current_session,
-            native_realtime::native_notify_claim_and_send
+            native_realtime::native_notify_claim_and_send,
+            save_download::save_download
         ]);
     #[cfg(all(desktop, not(target_os = "macos")))]
     let builder = builder.invoke_handler(tauri::generate_handler![
         pair::pair_start,
         pair::pair_claim,
         agents::agent_connect,
-        agents::agent_list
+        agents::agent_list,
+        save_download::save_download
     ]);
     builder
         // macOS: 창 닫기(빨간 버튼·cmd+W) = 앱 가리기 — Argo 본체·Claude Desktop과 같은 관례(유건 요청 2026-09-15).
