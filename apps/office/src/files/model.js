@@ -10,6 +10,13 @@ export const CUSTOMER_TYPES = ['bizcert', 'bankbook', 'contract', 'card', 'gener
 export const MAX_BYTES = 50 * 1024 * 1024; // 오피스 파일 상한(core/files.js MAX_FILE, 버킷 file_size_limit과 같다)
 export const TRASH_DAYS = 30;              // 휴지통 보존(페이지 휴지통과 같은 값 — 유건 승인 2026-09-26)
 export const SUMMARY_MAX = 1900, TEXT_MAX = 100_000;
+/** 쓴 용량 / 한도(LOW-B) — 목록이 주는 usage(판정과 같은 함수)를 그대로. 한도의 80%부터 안내 한 줄. 요금제 이름·가격은 넣지 않는다(결제 연결 때) */
+export function usageInfo(u) {
+  if (!u || !(u.quota > 0) || !(u.used >= 0)) return null;
+  return { used: u.used, quota: u.quota, ratio: u.used / u.quota, near: u.used >= u.quota * 0.8 };
+}
+/** 용량 글자 — GB(2^30)까지. 판정 숫자와 같은 단위 */
+export const fmtSize = (n) => (n >= 1073741824 ? `${+(n / 1073741824).toFixed(n % 1073741824 ? 1 : 0)} GB` : n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : n >= 1024 ? `${Math.round(n / 1024)} KB` : `${n} B`);
 /** 서버·DB 오류 코드 → 화면 문구 키(files.err.<값>) — 모든 값에 ko/en 문구가 있어야 한다(test/files-model.test.mjs) */
 export const FILE_ERRORS = { file_forbidden: 'permission', file_input: 'input', file_not_found: 'missing', file_missing: 'missing', file_conflict: 'conflict', file_limit: 'limit', file_quota: 'quota',
   file_folder_not_empty: 'notEmpty', task_signin: 'signin', file_daily_limit: 'daily', file_too_big: 'too_big', uploads_paused: 'paused', file_size_mismatch: 'request',

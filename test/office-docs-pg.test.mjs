@@ -309,3 +309,31 @@ test('검수 6: 같은 문서를 PDF와 함께 동시에 저장해도 두 판이
   const d = call(U.admin, 'office_docs_get', `${quote(ORG)},'doc',${quote(id)}`);
   assert.deepEqual([d.pdf_path, ...d.versions.map((v) => v.key)].sort(), [k1, k2].sort(), '진 쪽 PDF도 그 문서의 판으로 남는다(주인 없는 claimed가 생기지 않는다)');
 });
+
+test('LOW-B 사용량 표시 = 판정: 문서함 목록의 usage는 판정 함수와 같은 값 — 예전 PDF 판·서명본·서명 그림·처리 중인 자리 포함, 남은 만큼은 받고 1바이트 넘으면 거절', { skip }, () => {
+  const s = `u-${U.guest}`; // 다른 테스트와 안 겹치는 내 공간(손님도 자기 공간은 쓴다)
+  const usage = () => call(U.guest, 'office_file_list', 'null').usage;
+  const u0 = usage();
+  assert.deepEqual(Object.keys(u0).sort(), ['quota', 'used']); assert.equal(u0.quota, 1073741824, '한도는 office_storage_limits·office_seat_plan(지금 Free 1GB)');
+  const id = randomUUID();
+  const k1 = docPdf(U.guest, id, 1000, null); call(U.guest, 'office_docs_write', `null,'doc.save',${j({ id, kind: 'quote', title: 'v1', pdf_path: k1 })}`);
+  const k2 = docPdf(U.guest, id, 2000, null); call(U.guest, 'office_docs_write', `null,'doc.save',${j({ id, kind: 'quote', title: 'v2', pdf_path: k2 })}`);
+  const e = randomUUID();
+  serverPut(`${s}/esign/${e}/final-0123456789ab.pdf`, 300, 'claimed', e); serverPut(`${s}/esign/${e}/s-${randomUUID()}-0-a.png`, 40, 'uploaded', e, 'image/png');
+  call(U.guest, 'office_docs_write', `null,'doc.reserve',${j({ id: randomUUID(), size: 5 })}`); // 처리 중인 자리
+  assert.equal(usage().used - u0.used, 1000 + 2000 + 300 + 40 + 5, '예전 판(1000)·현재 판·서명본·서명 그림·자리까지');
+  assert.equal(usage().used, Number(sql(`select office_storage_taken(${quote(s)})`)), '판정과 같은 함수');
+  // 판정 경계: 남은 바이트만큼은 받고 1바이트 넘으면 거절 — 표시값이 판정값과 같다는 행동 증거
+  const fill = `${s}/files/${randomUUID()}.bin`;
+  sql(`insert into r2_objects(bucket,key,seg,created_by,bytes,state,ref_kind) values('argo-office',${quote(fill)},${quote(s)},${quote(U.guest)},${u0.quota - usage().used - 1000},'claimed','file')`);
+  const left = usage().quota - usage().used;
+  assert.equal(left, 1000);
+  assert.match(fails(U.guest, 'office_file_write', `null,'file.reserve',${j({ id: randomUUID(), filename: 'a.bin', size: left + 1 })}`), /file_quota/);
+  call(U.guest, 'office_file_write', `null,'file.reserve',${j({ id: randomUUID(), filename: 'a.bin', size: left })}`);
+  assert.equal(usage().used, usage().quota);
+  const before = sql(`select string_agg(key||':'||xmin::text,',' order by key) from r2_objects where seg=${quote(s)}`);
+  usage(); usage();
+  assert.equal(sql(`select string_agg(key||':'||xmin::text,',' order by key) from r2_objects where seg=${quote(s)}`), before, '읽기 쓰기 0');
+  assert.equal(sql(`select string_agg(proname||'='||provolatile,',' order by proname) from pg_proc where proname in ('office_file_list','office_storage_taken')`), 'office_file_list=s,office_storage_taken=s');
+  sql(`delete from r2_objects where seg=${quote(s)}`);
+});

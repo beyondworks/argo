@@ -47,6 +47,8 @@
 .files-tags { display: inline-flex; gap: 4px; flex-wrap: wrap; }
 .files-table .c-date, .files-table .c-size, .files-table .c-left { white-space: nowrap; }
 .files-used { text-align: right; }
+.files-used p { margin: 0; }
+.files-near { color: var(--fg-2); margin-top: 2px; }
 .files .grow { flex: 1; }
 
 /* 폰 폭 — 이름·분류·동작만(인트라넷과 같이 나머지 칸을 숨긴다) */

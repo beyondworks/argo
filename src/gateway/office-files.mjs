@@ -54,14 +54,14 @@ function unwrap({ data, error }) {
 }
 const ERRORS = {
   file_forbidden: ['권한이 없다(손님은 조직 문서함을 쓰지 못한다)', 'not allowed'], file_input: ['입력이 올바르지 않다(거래처·폴더는 이 조직 것이어야 한다)', 'invalid input (customer/folder must belong to this org)'],
-  file_not_found: ['그런 파일이 없다 — files로 다시 확인하라', 'no such file — check with files'], file_quota: ['저장 공간이 가득 찼다(조직 풀 — Free 1GB) — 사장에게 휴지통 정리를 부탁하라', 'storage is full (org pool — 1 GB on Free) — ask the owner to clean up'],
+  file_not_found: ['그런 파일이 없다 — files로 다시 확인하라', 'no such file — check with files'], file_quota: ['저장 공간이 가득 찼다(조직 풀) — 사장에게 휴지통 정리를 부탁하라', 'storage is full (org pool) — ask the owner to clean up'],
   file_limit: ['한도에 걸렸다(열린 올리기 50개·파일 2만 개)', 'limit reached'], file_conflict: ['같은 항목이 이미 있다', 'already exists'],
   not_connected: ['주인의 구글 드라이브가 오피스에 연결돼 있지 않다 — 오피스 문서함 › 구글 드라이브에서 연결해 달라고 알려라', 'the owner has not connected Google Drive in Office'],
   expired: ['드라이브 연결이 만료됐다 — 오피스에서 다시 연결해 달라고 알려라', 'the Drive connection expired — reconnect in Office'],
   need_write: ['드라이브 보내기 권한(drive.file)이 아직 없다 — 오피스 문서함 › 구글 드라이브에서 보내기 권한을 한 번 켜 달라고 알려라', 'Drive write permission is not granted yet — enable it once in Office'],
   scopes: ['드라이브 권한이 모자란다 — 다시 연결해 달라고 알려라', 'missing Drive permission — reconnect'], link_only: ['그 드라이브 항목은 링크로만 붙일 수 있다(양식·폴더)', 'that Drive item can only be linked'],
   too_big: ['50MB가 넘는다', 'over 50 MB'], missing: ['드라이브에 그 파일이 없다', 'not found in Drive'], not_configured: ['오피스의 구글 연결이 설정돼 있지 않다', 'Google is not configured in Office'],
-  quota: ['저장 공간이 가득 찼다(조직 풀 — Free 1GB)', 'storage is full'], file_too_big: ['파일 하나 한도를 넘는다(Free 25MB)', 'over the per-file limit (25 MB on Free)'],
+  quota: ['저장 공간이 가득 찼다(조직 풀)', 'storage is full'], file_too_big: ['파일 하나 한도를 넘는다(25MB)', 'over the per-file limit (25 MB)'],
 };
 function errText(code, lang, raw = '') {
   if (ERRORS[code]) return pick(`오피스 거절: ${ERRORS[code][0]}.`, `Office refused: ${ERRORS[code][1]}.`, lang);

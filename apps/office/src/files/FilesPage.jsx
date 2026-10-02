@@ -10,7 +10,7 @@ import { openMenu } from '../ui/Menu.jsx';
 import { Icon } from '../ui/Icon.jsx';
 import { fmtBytes, dragHasFiles, filesFromTransfer } from '../core/files.js';
 import { FILES_DICT } from './files-i18n.js';
-import { CATEGORIES, pageMenuIds, kindOf, countBy, filterFiles, folderPath, childFolders, canMoveFolder, uploadSummary, daysLeft, missingBizcert } from './model.js';
+import { usageInfo, fmtSize, CATEGORIES, pageMenuIds, kindOf, countBy, filterFiles, folderPath, childFolders, canMoveFolder, uploadSummary, daysLeft, missingBizcert } from './model.js';
 import { useFiles, uploadMany, trashFiles, restoreFiles, purgeFiles, purgeExpired, updateFile, downloadFile, createFolder, renameFolder, moveFolder, deleteFolder, loadCustomers, ocrPending, fileError } from './api.js';
 import { FIcon } from './FIcon.jsx';
 import { useSelection, selProps } from '../core/selection.js';
@@ -18,6 +18,15 @@ import { CustomerFiles } from './CustomerFiles.jsx';
 import './files.css';
 
 registerDict(FILES_DICT);
+/** 쓴 용량 / 한도 — 판정과 같은 값(서버 office_storage_taken·quota). 80%부터 은은한 안내 한 줄 */
+function UsageLine({ usage }) {
+  const u = usageInfo(usage);
+  if (!u) return null;
+  return <div className="files-used small">
+    <p className="dim">{t('files.used', { size: fmtSize(u.used), quota: fmtSize(u.quota) })}</p>
+    {u.near && <p className="files-near" role="status">{t('files.near')}</p>}
+  </div>;
+}
 const Preview = lazy(() => import('./Preview.jsx'));
 const Drive = lazy(() => import('./Drive.jsx'));
 
@@ -186,7 +195,7 @@ export default function FilesPage({ space, query }) {
               <td className="files-act"><button type="button" className="icon-btn" aria-label={t('more')} onClick={(e) => rowMenu(e, f)}><Icon name="dots" size={14} /></button></td>
             </tr>)}</tbody></table></div>}
       {data.more && <p className="dim small">{t('files.more')}</p>}
-      {data.bytes > 0 && <p className="dim small files-used">{t('files.used', { size: fmtBytes(data.bytes) })}</p>}
+      <UsageLine usage={data.usage} />
     </>}
 
     {tab === 'customers' && <CustomersView space={space} tabs={tabs} customers={customers} files={all.files ?? []} cust={cust} onUpload={(list, c, category) => upload(list, { customerId: c, category })} />}

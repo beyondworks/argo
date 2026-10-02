@@ -123,3 +123,13 @@ test('재검수 LOW-D: 서버·DB 오류 코드마다 화면 문구(ko/en)가 �
   }
   assert.match(FILES_DICT['files.err.uploadExpired'][0], /다시 올려/);
 });
+
+test('LOW-B 사용량 줄: "쓴 용량 / 한도", 한도의 80%부터 안내(요금제 이름·가격 없음)', async () => {
+  const { usageInfo } = await import('../src/files/model.js');
+  assert.deepEqual(usageInfo({ used: 1363149, quota: 1073741824 }), { used: 1363149, quota: 1073741824, ratio: 1363149 / 1073741824, near: false });
+  assert.equal(usageInfo({ used: 858993459, quota: 1073741824 }).near, false, '80% 바로 아래');
+  assert.equal(usageInfo({ used: 858993460, quota: 1073741824 }).near, true, '80%부터');
+  assert.equal(usageInfo({ used: 2e9, quota: 1073741824 }).near, true, '넘쳐도(옛 데이터) 안내만');
+  assert.equal(usageInfo(null), null, '사용량이 없으면 줄을 그리지 않는다');
+  assert.equal(usageInfo({ used: 5, quota: 0 }), null);
+});

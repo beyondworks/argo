@@ -102,6 +102,11 @@ language sql stable security definer set search_path = public, pg_temp as $$
   select coalesce(sum(o.bytes), 0)::bigint from public.r2_objects o
   where o.bucket = 'argo-office' and o.seg = p_seg and o.state = 'pending' and o.expires_at > now() - interval '1 hour' and o.key is distinct from p_except -- 느린 올리기 유예 1시간도 센다
 $$;
+/** 풀이 지금 차지한 크기 — 올라온 객체 + 열린 자리(유예 포함). 판정(office_storage_reserve)과 화면 표시(office_file_list usage)가 이 한 함수를 쓴다(LOW-B — 두 벌로 세지 않는다) */
+create or replace function public.office_storage_taken(p_seg text) returns bigint
+language sql stable security definer set search_path = public, pg_temp as $$
+  select public.office_storage_used(p_seg) + public.office_storage_open(p_seg)
+$$;
 /** 서명에 넣을 형식 — 'type/subtype'만(매개변수·줄바꿈 없음), 아니면 application/octet-stream */
 create or replace function public.office_storage_mime(p text) returns text
 language sql immutable set search_path = public, pg_temp as $$
@@ -128,7 +133,7 @@ begin
     if day_bytes + p_bytes > coalesce((lim->>'daily_upload_bytes_per_user')::bigint, 9223372036854775807)
        or day_n + 1 > coalesce((lim->>'daily_upload_count_per_user')::bigint, 9223372036854775807) then raise exception 'file_daily_limit'; end if;
   end if;
-  if public.office_storage_used(p_seg) + public.office_storage_open(p_seg) + p_bytes > public.office_storage_quota(p_seg) then raise exception 'file_quota'; end if;
+  if public.office_storage_taken(p_seg) + p_bytes > public.office_storage_quota(p_seg) then raise exception 'file_quota'; end if;
   insert into public.r2_objects(bucket, key, seg, created_by, bytes, mime, state, expires_at)
     values ('argo-office', p_key, p_seg, who, p_bytes, public.office_storage_mime(p_mime), 'pending', now() + interval '15 minutes');
 end $$;
@@ -170,7 +175,7 @@ begin
   return r is not null and r <> 'guest';
 end $$;
 revoke all on function public.office_storage_quota(text), public.office_storage_limits(text), public.office_seat_plan(text), public.office_storage_file_max(text), public.office_storage_used(text), public.office_storage_open(text, text),
-  public.office_storage_mime(text), public.office_storage_reserve(text, text, bigint, text, bigint), public.office_storage_fits(text, text),
+  public.office_storage_mime(text), public.office_storage_taken(text), public.office_storage_reserve(text, text, bigint, text, bigint), public.office_storage_fits(text, text),
   public.office_storage_claim(text, text, text, uuid), public.office_storage_tombstone(text[]), public.office_storage_seg_ok(text) from public, anon, authenticated; -- 내부용
 
 -- ── 서버 함수(apps/office/api/storage)가 서명 전에 부르는 판정 — 사용자 JWT로. 둘 다 stable(DB 쓰기 0 — 열 때마다 쓰지 않는다) ──
@@ -415,7 +420,8 @@ begin
     'files', case when n > 1000 then rows - 1000 else rows end, 'more', n > 1000, -- ponytail: 1000건까지, 넘으면 검색으로 좁힌다
     'folders', coalesce((select jsonb_agg(jsonb_build_object('id', d.id, 'parent_id', d.parent_id, 'name', d.name, 'created_by', d.created_by) order by d.name)
       from public.office_file_folders d where d.scope = c.sc), '[]'::jsonb),
-    'bytes', coalesce((select sum(size) from public.office_files where scope = c.sc), 0),
+    -- 쓴 용량 / 한도 — 판정과 같은 함수(조직 공간은 조직 풀, 내 공간은 개인 몫). 예전 PDF 판·서명본·서명 그림·처리 중인 자리 포함(LOW-B)
+    'usage', jsonb_build_object('used', public.office_storage_taken(c.seg), 'quota', public.office_storage_quota(c.seg)),
     'manager', c.manager, 'me', c.who);
 end $$;
 

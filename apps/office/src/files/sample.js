@@ -7,6 +7,7 @@ import { seedBusiness, loadSample, sampleId } from '../business/sample-business.
 
 const META = (space) => `argo-office-files:sample:v2:${space}`; // v2: 거래처를 업무 예시 원장 id로(LOW 5) — 예전 예시 기록은 새로 씨앗을 뿌린다
 const BLOB = (id) => `argo-office-files:sample:blob:${id}`;
+const SAMPLE_QUOTA = 1073741824; // 예시 모드 한도 — Free 풀 1GB(DB office_storage_limits와 같은 값, 표시용)
 const fail = (code) => { throw Object.assign(new Error(code), { code }); };
 const ago = (days, h = 10) => new Date(Date.now() - days * 864e5 - (Date.now() % 864e5) + h * 36e5).toISOString();
 
@@ -86,7 +87,8 @@ export async function sampleList(space, { q, trash = false, customer = null, mat
   const m = await load(space);
   const files = m.files.filter((f) => (trash ? !!f.deleted_at : !f.deleted_at) && (!customer || f.customer_id === customer) && (!q || match(f, q)))
     .sort((a, b) => Date.parse(b.deleted_at ?? b.created_at) - Date.parse(a.deleted_at ?? a.created_at));
-  return { files: files.map((f) => pick(f)), folders: [...m.folders], more: false, bytes: m.files.reduce((s, f) => s + (f.size ?? 0), 0), manager: true, me: 'u-me' };
+  // 쓴 용량 / 한도 — 로그인 모드(office_file_list usage)와 같은 모양. 예시 저장소의 파일 크기 합, 한도는 Free 풀(1GB — DB office_storage_limits 값)
+  return { files: files.map((f) => pick(f)), folders: [...m.folders], more: false, usage: { used: m.files.reduce((s, f) => s + (f.size ?? 0), 0), quota: SAMPLE_QUOTA }, manager: true, me: 'u-me' };
 }
 export async function sampleGet(space, id) {
   const f = (await load(space)).files.find((x) => x.id === id);
