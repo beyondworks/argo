@@ -2074,6 +2074,9 @@ html { -webkit-tap-highlight-color: transparent; }
 
   /* ── 기억 탭: 폴더 묶음 · 문서 줄 · 읽기 전용 문서 ── */
   .msgr-phone .ph-memgroup { padding-bottom: 4px; }
+  .msgr-phone .ph-memsort { margin-left: auto; }
+  .msgr-phone .ph-memsort .msgr-sortbtn { width: 44px; height: 44px; min-width: 44px; display: grid; place-items: center; border-radius: 50%; color: var(--fg-2); }
+  .msgr-phone .ph-memsort .msgr-rowmenu { right: 0; left: auto; z-index: 20; }
   .msgr-phone .ph-memfolder { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 44px; padding: 4px var(--ph-pad); border: 0; background: none; font-size: 13.5px; font-weight: 600; color: var(--fg); text-align: left; cursor: pointer; }
   .msgr-phone .ph-memfolder:active { background: var(--card-2); }
   .msgr-phone .ph-memcaret { color: var(--fg-2); transition: transform 150ms ease; }
@@ -2106,6 +2109,32 @@ html { -webkit-tap-highlight-color: transparent; }
   .msgr-phone :is(.ph-setme, .ph-setrow) .ph-kbody > * { min-width: 0; max-width: 100%; }
   .msgr-phone .ph-setme .snip { display: block; }
   .msgr-phone .ph-setsec { display: grid; gap: 6px; scroll-margin-top: 8px; }
+  /* 개인 에이전트 카드 — 잠긴 칸: 값 상자 + 그 아래 자물쇠와 이유 */
+  .msgr-phone .ph-lockedfield { display: grid; gap: 4px; }
+  .msgr-phone .ph-lockedfield > span:first-child { display: block; min-height: 40px; padding: 9px 12px; border-radius: 10px; background: var(--card-2); border: 1px dashed var(--border); color: var(--fg); font-size: 15px; }
+  .msgr-phone .ph-lockwhy { display: flex; align-items: flex-start; gap: 5px; font-size: 12.5px; line-height: 1.45; color: var(--fg-2); }
+  .msgr-phone .ph-lockwhy svg { flex: none; margin-top: 2px; }
+  .msgr-phone .ph-agentcard section + section { margin-top: 6px; }
+  /* 친구 관리(설정) — 친구 탭과 같은 줄 모양 + 위 가로 탭 */
+  .msgr-phone .ph-fmanage { display: grid; gap: 6px; }
+  .msgr-phone .ph-fm-hint { margin: 0 2px 4px; font-size: 13px; color: var(--fg-2); }
+  .msgr-phone .ph-fm-tabs { display: flex; padding: 2px; margin-bottom: 4px; order: 0; } /* 폰 폭 전역 .msgr-seg order:9(맨 아래로)를 되돌린다 */
+  .msgr-phone .ph-setseg { order: 0; }
+  .msgr-phone .ph-fm-tabs button { flex: 1 1 0; justify-content: center; min-height: 40px; height: 40px; font-size: 14px; }
+  .msgr-phone .ph-mrow { display: flex; align-items: center; gap: 14px; min-height: 64px; padding: 8px 2px; }
+  .msgr-phone .ph-mrow + .ph-mrow { border-top: 1px solid var(--border-soft); }
+  .msgr-phone .ph-mrow .msgr-av.lg { width: 44px; height: 44px; border-radius: 16px; font-size: 16px; }
+  .msgr-phone .ph-mrow .ph-kbody .name { font-size: 16px; font-weight: 500; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .msgr-phone .ph-mrow .ph-kbody .snip { font-size: 13px; color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .msgr-phone .ph-mrow > .btn, .msgr-phone .ph-macts .btn { flex: none; min-height: 44px; padding: 0 14px; border-radius: 12px; font-size: 14px; }
+  .msgr-phone .ph-macts { display: flex; gap: 6px; flex: none; }
+  .msgr-phone .ph-mmore { flex: none; width: 44px; height: 44px; display: grid; place-items: center; border: 0; border-radius: 50%; background: none; color: var(--fg-2); }
+  .msgr-phone .ph-mmore:active { background: var(--card-2); }
+  .msgr-phone .ph-mmore svg { fill: currentColor; }
+  .msgr-phone .ph-mhead { padding: 10px 2px 2px; font-size: 13px; font-weight: 600; color: var(--fg-2); }
+  .msgr-phone .ph-mempty { margin: 0; padding: 28px 0; text-align: center; font-size: 14px; color: var(--fg-2); }
+  .msgr-phone .ph-mreq { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 66px; color: var(--fg); text-align: left; border-radius: 14px; border: 1px solid var(--border-soft) !important; padding-inline: 12px !important; background: var(--card-2) !important; }
+  .msgr-phone .ph-mreq .name { text-align: left; }
   .msgr-phone .ph-setgh { margin: 0; padding: 0 4px; font-size: 13px; font-weight: 600; color: var(--fg-2); }
   .msgr-phone .ph-setnote { margin: 0; padding: 12px 14px; font-size: 13.5px; line-height: 1.5; color: var(--fg-2); }
   .msgr-phone .ph-setrow .ph-kbody { flex: 1 1 auto; min-width: 0; gap: 1px; }
