@@ -2210,6 +2210,54 @@ html { -webkit-tap-highlight-color: transparent; }
   .msgr-phone .ph-astate .msgr-dot { position: static; margin: 0; }
   .msgr-phone .ph-arow .ph-kl2 { align-items: center; }
   .msgr-phone .ph-arow .ph-kl2 .snip { -webkit-line-clamp: 1; }
+  /* 결재 대기 카드 = 버튼 하나 — 누르면 결재 페이지(유건 2026-10-02) */
+  .msgr-phone button.ph-apcard { width: 100%; padding: 0; font: inherit; text-align: left; cursor: pointer; }
+  .msgr-phone button.ph-apcard:disabled { opacity: 1; cursor: default; }
+  .msgr-phone button.ph-apcard:not(:disabled):active { background: var(--border-soft); }
+  .msgr-phone .ph-apcard .ph-aphead .ph-kbody { flex: 1 1 auto; }
+  .msgr-phone .ph-apgo { flex: none; color: var(--fg-3); }
+  /* 같은 에이전트 한 줄 — 공간 칩은 줄 오른쪽(여럿이면 눌러서 고르는 버튼) */
+  .msgr-phone .ph-arowwrap { align-items: stretch; background: var(--bg); }
+  .msgr-phone.phone-home .msgr-side .ph-root .ph-arowwrap > .ph-arow { padding-right: 6px; }
+  .msgr-phone .ph-aspaces { flex: 0 1 auto; max-width: 42%; min-width: 0; align-self: center; margin-right: var(--ph-pad); display: inline-flex; align-items: center; gap: 2px; font-size: 12px; color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .msgr-phone .ph-aspaces .txt { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .msgr-phone button.ph-aspaces.multi { min-height: 44px; padding: 0 6px 0 10px; margin-right: calc(var(--ph-pad) - 6px); border: 0; border-radius: 999px; background: none; font: inherit; font-size: 12px; color: var(--fg); cursor: pointer; }
+  .msgr-phone button.ph-aspaces.multi .txt { padding: 4px 0; }
+  .msgr-phone button.ph-aspaces.multi .mi { flex: none; color: var(--fg-2); }
+  .msgr-phone button.ph-aspaces.multi:active { background: var(--card-2); }
+  .msgr-phone .ph-afav { display: inline-flex; flex: none; color: var(--fg-2); }
+  .msgr-phone .ph-setagent { display: flex; align-items: center; min-width: 0; }
+  .msgr-phone .ph-setagent > .ph-setrow { flex: 1 1 auto; min-width: 0; }
+  .msgr-phone .ph-setagent + .ph-setagent { border-top: 1px solid var(--border-soft); }
+  .msgr-phone .ph-setspaces { flex: none; display: grid; place-items: center; width: 44px; height: 44px; margin-right: 4px; border: 0; border-radius: 50%; background: none; color: var(--fg-2); cursor: pointer; }
+  .msgr-phone .ph-setspaces:active { background: var(--border-soft); }
+  .msgr-phone .ph-spacedesc { margin: 0 0 6px; font-size: 13.5px; line-height: 1.5; color: var(--fg-2); }
+  .msgr-phone .ph-spacesheet .ph-setrow .snip { font-size: 12.5px; color: var(--fg-2); }
+  /* 결재 페이지 — 결재 카드만. 요약 두 줄 + 등급 + 승인·거절, '자세히'를 펼치면 원래 내용 */
+  .msgr-phone .ph-aplist { display: grid; gap: 10px; padding: 0 0 8px; }
+  .msgr-phone .ph-apitem { display: grid; gap: 8px; padding: 14px; border-radius: 16px; border: 1px solid var(--border); background: var(--card-2); color: var(--fg); }
+  .msgr-phone .ph-apitem.lv-must { border-color: var(--fg); }
+  .msgr-phone .ph-aptop { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .msgr-phone .ph-aptop .who { min-width: 0; font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .msgr-phone .ph-aptop .meta { margin-left: auto; flex: none; max-width: 45%; font-size: 12px; color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .msgr-phone .ph-aplv { flex: none; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); font-size: 11.5px; font-weight: 600; line-height: 18px; color: var(--fg-2); white-space: nowrap; }
+  .msgr-phone .ph-aplv.must { background: var(--fg); border-color: var(--fg); color: var(--bg); }
+  .msgr-phone .ph-aplv.normal { color: var(--fg); }
+  .msgr-phone .ph-apsum { margin: 0; font-size: 15.5px; line-height: 1.45; font-weight: 500; color: var(--fg); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+  .msgr-phone .ph-apcmd { margin: -2px 0 0; display: flex; align-items: baseline; gap: 6px; min-width: 0; font-size: 12.5px; color: var(--fg-2); }
+  .msgr-phone .ph-apcmd b { flex: none; font-weight: 600; }
+  .msgr-phone .ph-apcmd code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); }
+  .msgr-phone .ph-apdetail { display: grid; gap: 6px; padding: 10px 12px; border-radius: 12px; background: var(--bg); font-size: 13.5px; line-height: 1.5; color: var(--fg-2); overflow-wrap: anywhere; }
+  .msgr-phone .ph-apdetail p { margin: 0; }
+  .msgr-phone .ph-apdetail b { font-weight: 600; color: var(--fg); margin-right: 4px; }
+  .msgr-phone .ph-apdetail .cmd { display: grid; gap: 4px; }
+  .msgr-phone .ph-apdetail .cmd code { display: block; padding: 6px 8px; border-radius: 8px; background: var(--card-2); font-size: 12.5px; white-space: pre-wrap; color: var(--fg); }
+  .msgr-phone .ph-apdetail .ph-apopen { justify-self: start; min-height: 40px; }
+  .msgr-phone .ph-apacts { display: flex; align-items: center; gap: 8px; }
+  .msgr-phone .ph-apacts .btn { min-height: 44px; padding: 0 16px; border-radius: 12px; font-size: 14.5px; }
+  .msgr-phone .ph-apmorebtn { margin-right: auto; display: inline-flex; white-space: nowrap; flex: none; align-items: center; gap: 2px; min-height: 44px; padding: 0 4px; border: 0; background: none; font: inherit; font-size: 13.5px; font-weight: 600; color: var(--fg-2); cursor: pointer; }
+  .msgr-phone .ph-apmorebtn .mi.up { transform: rotate(180deg); }
+  .msgr-phone .ph-memsort { display: inline-flex; align-items: center; }
 
   /* ── 기억 탭: 폴더 묶음 · 문서 줄 · 읽기 전용 문서 ── */
   .msgr-phone .ph-memgroup { padding-bottom: 4px; }

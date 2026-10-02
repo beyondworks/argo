@@ -150,12 +150,12 @@ test('H-1: 결재 슬립은 위험 등급·정책으로 확정권을 나누고(�
   // "명령 보기 기본 펼침"으로 바꾸는 표시 규칙 하나뿐이고(../src/approval-display.js), 여전히 새 위험
   // 판정을 만들지 않는다. 그 함수의 행동은 apps/messenger/test/approval-display.test.mjs가 잠근다.
   assert.match(slip, /const high = approvalExpandDefault\(ap\);/, '위험 판정(표시 규칙 함수 경유)');
-  assert.match(app, /import \{ approvalPlainFields, orgDocTitle, approvalOneLineSummary, approvalExpandDefault \} from '\.\/approval-display\.js';/, '결정 로직을 JSX 없는 파일로 분리 — node --test가 실제로 import해 검증할 수 있게(분리 검수 M-2·M-4)');
+  assert.match(app, /import \{ [^}]*approvalPlainFields, orgDocTitle, approvalOneLineSummary, approvalExpandDefault[^}]*\} from '\.\/approval-display\.js';/, '결정 로직을 JSX 없는 파일로 분리 — node --test가 실제로 import해 검증할 수 있게(분리 검수 M-2·M-4)');
   assert.match(slip, /const mode = policy\?\.approval_high_by \?\? 'admin';\n\s*const byAdmin = high && mode !== 'owner';/, '정책 기본값은 admin이어야 한다');
   assert.match(slip, /const can = byAdmin \? \(!!isAdmin \|\| \(mode === 'approvers' && isApprover\)\) : owner;/, '확정권 = 고위험이면 관리자(또는 지정 결재권자), 아니면 소유자');
   assert.match(slip, /\{ap\.status === 'pending' && can && \(<>/, '버튼은 확정권자에게만');
   assert.match(slip, /\{ap\.status === 'pending' && !can && <span className="note">\{byAdmin \? \(mode === 'approvers' \? t\('ap\.approverNote'\) : t\('ap\.adminNote'\)\) : t\('ap\.ownerNote'\)\}<\/span>\}/, '비권자 안내가 등급별이 아니다');
-  assert.match(slip, /\{high && <span className="msgr-klabel risk">\{t\('ap\.high'\)\}<\/span>\}/, '고위험 배지가 없다');
+  assert.match(slip, /\{high && <span className="msgr-klabel risk">\{t\('ap\.level\.must'\)\}<\/span>\}/, '고위험 배지가 없다(표시 문구는 \'꼭 확인\' — 2026-10-02, 서버 등급 값 high는 그대로)');
   assert.match(app, /onError\(t\(ap\.risk === 'high' \? 'ap\.approverOnly' : 'ap\.ownerOnly'\)\)/, 'RLS 0행 문구가 등급별이 아니다');
   const pc = app.slice(app.indexOf('function PolicyCard('), app.indexOf('function EmptyOrg('));
   assert.match(pc, /approval_high_by: draft\.approval_high_by, approver_user_ids: draft\.approver_user_ids \?\? \[\], crew_create: draft\.crew_create \?\? 'channel_admin', crew_runner: draft\.crew_runner\?\.trim\(\) \|\| null, crew_model: draft\.crew_model\?\.trim\(\) \|\| null, guest_seats: !!draft\.guest_seats \}\)/, '정책 저장에 approval_high_by·approver_user_ids가 없다');
@@ -168,7 +168,7 @@ test('H-1: 결재 슬립은 위험 등급·정책으로 확정권을 나누고(�
   const sql = read('supabase/migrations/20260903120000_msgr.sql');
   assert.match(sql, /'approval_id', 'action', 'created_at', 'risk'\);/, 'risk가 잠긴 컬럼이 아니다(등급 하향 가능)');
   assert.match(sql, /and decided_by = \(select auth\.uid\(\)\) and public\.msgr_can_decide\(id\)\)\);/, '확정 with check가 msgr_can_decide를 안 본다');
-  for (const k of ['ap.high', 'ap.wait.admin', 'ap.adminNote', 'ap.approverOnly', 'set.policy.approval', 'set.policy.approval.admin', 'set.policy.approval.owner', 'set.policy.approval.desc']) {
+  for (const k of ['ap.level.must', 'ap.wait.admin', 'ap.adminNote', 'ap.approverOnly', 'set.policy.approval', 'set.policy.approval.admin', 'set.policy.approval.owner', 'set.policy.approval.desc']) {
     assert.match(msgrI18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
   }
 });
