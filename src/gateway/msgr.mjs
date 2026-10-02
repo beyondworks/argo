@@ -36,6 +36,8 @@ import { loadApprovals, setApprovalMeta, approvalPlainText, approvalCommandLabel
 import { approvalRisk } from '../approval-risk.mjs';
 import { resolveWithFollowUp } from '../approval-actions.mjs';
 import { extractFileRefs, attachFailureNote, isImagePath } from '../tg-format.mjs';
+import { mimeOf } from '../media-kind.mjs';
+import { replyLinkPreview } from './link-preview-node.mjs';
 import { createHash } from 'node:crypto';
 import { channelSends } from '../channel-events.mjs';
 import { getTurnStatus } from '../turn-status.mjs';
@@ -1008,21 +1010,21 @@ async function noteJobDenied(wsId, job, { db, uid, lang }) {
   await db.insertMessage({ channel_id: job.channelId, author_kind: 'crew', crew_id: job.crewId, kind: 'system', reply_to: job.msgId,
     thread_root: job.threadRoot ?? job.msgId, client_msg_id: `deny:${job.crewId}:${job.msgId}`, body: denyBody(why === 'ok' ? null : why, crew, lang) });
 }
-export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat, now = Date.now } = {}) {
+export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat, now = Date.now, linkPreview = replyLinkPreview } = {}) {
   const deliverAttachments = async (db, job, row, reply, lang) => {
     // 답변 속 파일 참조 → Storage 업로드 + 첨부 행. 실패는 채널에 알린다(침묵 금지).
     const fails = [];
-    if (!job.orgId) { // 개인 방(2026-09-30): 파일 첨부는 다음 단계 — 조직 경로(<org>/…)로 올리면 저장소 정책에 막힌다. 조용히 빠뜨리지 않고 알린다.
-      for (const ref of extractFileRefs(reply)) fails.push({ name: basename(ref), reason: pick('개인 공간에서는 아직 파일을 보낼 수 없습니다', 'files cannot be sent in the personal space yet', lang) });
-    } else for (const [i, ref] of extractFileRefs(reply).entries()) {
+    for (const [i, ref] of extractFileRefs(reply).entries()) {
       const name = basename(ref);
       try {
         const buf = await readFile(join(paths(wsId).vault, ref));
         if (buf.length > ATTACH_MAX) throw Object.assign(new Error(pick('25MB 초과', 'over 25MB', lang)), { roomSafe: true }); // 방에 그대로 보여도 되는 사유
-        const path = `${job.orgId}/${job.channelId}/${row.id}/${storageKey(name, i)}`;
-        const mime = isImagePath(ref) ? `image/${ref.split('.').pop().toLowerCase().replace('jpg', 'jpeg')}` : '';
+        // 저장 경로: 조직 방 <org>/<방>/<글>/<키>, 개인 방(org 없음) p/<방>/<글>/<키> — 20261002100000 정책이 개인 경로를 받는다(앱 업로드와 같은 규칙)
+        const path = `${job.orgId ?? 'p'}/${job.channelId}/${row.id}/${storageKey(name, i)}`;
+        // mime은 확장자로 — 예전에는 png·jpg·webp·gif만 image/*를 붙이고 나머지는 빈 값이라 앱이 파일 종류를 몰랐다(운영 2026-10-02: 크루 첨부 21건 전부 빈 mime)
+        const mime = mimeOf(name, '');
         await db.upload(path, buf, mime);
-        await db.insertAttachment({ message_id: row.id, org_id: job.orgId, storage_path: path, name: safeName(name), mime, bytes: buf.length });
+        await db.insertAttachment({ message_id: row.id, org_id: job.orgId ?? null, storage_path: path, name: safeName(name), mime, bytes: buf.length });
       } catch (e) { // 원문(절대 경로가 들어 있을 수 있음)은 방에 싣지 않는다(D26) — 주인 로컬 콘솔에만
         if (!/ENOENT/.test(e.message) && !e.roomSafe) console.error(`[argo] msgr 첨부 전달 실패(${wsId}/${job.slug}/${name}):`, e.message);
         fails.push({ name, reason: roomAttachReason(e, lang) });
@@ -1233,7 +1235,10 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
       client_msg_id: `reply:${job.crewId}:${job.msgId}`, body: String(reply ?? '').slice(0, MSG_MAX),
       mentions: (failed || aborted) ? [] : replyMentions, // 보이는 원문 멘션 + slug로 확정한 도구 수신자(동명이인을 다시 찾지 않음) — 중단된 턴은 넘기지 않는다
     };
-    const metaBase = { ...replyMeta, hop: job.hop ?? 0, origin: job.origin ?? job.authorId ?? null, ...(failed ? { failed: true } : {}), ...(aborted ? { stopped: true } : {}) }; // hop/origin=연쇄 상한·정책 기준
+    // 링크 미리보기 — 보내기 전에 첫 링크를 한 번 가져와 같은 insert에 싣는다(읽는 사람마다 다시 가져오지 않는다). 실패·중단 답은 대상 밖, 실패하면 카드 없음.
+    // 게시가 재시도되면 큐 파일에 보존된 replyRow(카드 포함)를 그대로 쓴다 — 다시 가져오지 않는다.
+    const linkCard = failed || aborted ? null : await Promise.resolve().then(() => linkPreview(replyRow.body)).catch(() => null);
+    const metaBase = { ...replyMeta, hop: job.hop ?? 0, origin: job.origin ?? job.authorId ?? null, ...(failed ? { failed: true } : {}), ...(aborted ? { stopped: true } : {}), ...(linkCard ? { link_preview: linkCard } : {}) }; // hop/origin=연쇄 상한·정책 기준
     try {
       row = await finishMessengerExecution(wsId, db, job, { ...replyRow, meta: metaBase }, executionMeta); // 궤적은 저장하지 않는다(유건 결정 2026-09-24 — 메신저엔 '답변 준비 중'만)
     } catch (e) {
