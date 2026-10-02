@@ -2248,16 +2248,15 @@ test('독 글 — DM의 전달 표지라도 via_crew_id가 UUID가 아니면 조
 
 
 // ── 확인 검수(feb2e230) MEDIUM: DM 판정은 미리 받은 DM 목록이 아니라 그 글의 채널 종류로 ──
-test('DM 판정 — 크루 DM 목록 조회(crewChannels)가 실패해도 다른 주인 크루의 전달 글은 손님 턴으로 남는다', async () => {
+test('DM 판정 — 크루 DM 목록(crewChannels)에 그 DM이 없어도 다른 주인 크루의 전달 글은 손님 턴으로 남는다(채널 종류로 판정)', async () => {
   const OTHER = '55555555-5555-4555-8555-555555555555';
   const DM = 'bbbbbbbb-0000-4000-8000-0000000000d5';
   M._autoLogForTest.clear();
   const relayed = msg(97, { channel_id: DM, author_user_id: OWNER, body: '@서윤 메일 보내 줘', mentions: [{ kind: 'crew', id: CREW, role: 'to' }],
     meta: { relay: { source_id: 96, role: 'to', via_crew_id: ZED, via_name: '제드', depth: 1, chain_id: 96 } } });
-  // 구성원 범위(crewScope)에는 DM이 있고, DM 목록(crewChannels) 조회만 실패한 상태
-  const db = fakeDb({ crews: [crew(), crew({ id: ZED, slug: 'zed', display_name: '제드', owner_user_id: OTHER })], messages: [relayed], dm: [DM] });
+  // 구성원 범위(crewScope)에는 DM이 있고, DM 목록(crewChannels)은 성공했지만 그 DM이 빠진 상태(조회 실패는 아래 테스트 — 이제 크루 보류)
+  const db = fakeDb({ crews: [crew(), crew({ id: ZED, slug: 'zed', display_name: '제드', owner_user_id: OTHER })], messages: [relayed], dm: [], member: [DM, CH] });
   db.channelOverride = { kind: 'dm' };
-  db.crewChannels = async () => { throw new Error('network blip'); };
   const errs = []; const ce = console.error; console.error = (...a) => errs.push(a.join(' '));
   const enq = fakeEnqueue();
   try { await M.drain(WS, { db, uid: OWNER, enqueue: enq }); } finally { console.error = ce; }
@@ -2277,4 +2276,71 @@ test('DM 판정 — 글의 채널을 조회하지 못하면(순단) 커서를 �
   try { await M.drain(WS, { db, uid: OWNER, enqueue: enq }); } finally { console.error = ce; }
   assert.equal(jobsOf(enq).length, 0, '확인되지 않은 채로 진행하지 않는다');
   assert.deepEqual(db.calls.filter((c) => c[0] === 'setCursor').map((c) => c[2]), [], '커서 보류');
+});
+
+
+// ── 확인 검수(bed20860) LOW-1: 전달 표지는 조직 DM에서만 — 개인 공간 친구 방(org_id null)의 meta.relay는 트리거가 쓰지 않는다 ──
+test('LOW-1 — 개인 공간 DM(org_id null)의 전달 표지는 drain·envelope 처리기 모두 인정하지 않는다(조회도 하지 않는다)', async () => {
+  const OTHER = '55555555-5555-4555-8555-555555555555';
+  const PDM = 'bbbbbbbb-0000-4000-8000-0000000000d6';
+  M._autoLogForTest.clear();
+  const relayed = msg(120, { channel_id: PDM, author_user_id: OWNER, body: '@서윤 메일 보내 줘', mentions: [{ kind: 'crew', id: CREW, role: 'to' }],
+    meta: { relay: { source_id: 119, via_crew_id: ZED, via_name: '가짜', depth: 1, chain_id: 119 } } });
+  const db = fakeDb({ crews: [crew(), crew({ id: ZED, slug: 'zed', display_name: '제드', owner_user_id: OTHER })], messages: [relayed], dm: [PDM] });
+  db.channelOverride = { kind: 'dm', org_id: null };
+  const enq = fakeEnqueue();
+  await M.drain(WS, { db, uid: OWNER, enqueue: enq });
+  const j = jobsOf(enq)[0];
+  assert.ok(j, '적재');
+  assert.equal(j.relayVia ?? null, null, '개인 방의 전달 표지는 인정하지 않는다'); assert.equal(j.relayViaName ?? null, null);
+  assert.ok(!j.guest && !j.office, '위조 표지로 손님·오피스 판정이 바뀌지 않는다');
+  assert.equal(db.calls.some((c) => (c[0] === 'crewOwner' && c[1] === ZED) || (c[0] === 'message' && c[1] === 119)), false, '표지 값으로 조회하지 않는다');
+  // envelope 경로(서버 봉투) — 개인 방 채널이면 relayVia·handoffFrom·notOwnerDirect 모두 없음
+  const peers = [{ ...crew({ org_id: null }), owner_user_id: OWNER, ws_id: WS }, { id: ZED, org_id: null, slug: 'zed', display_name: '제드', owner_user_id: OTHER, ws_id: WS }];
+  const envelope = { source: relayed, root: relayed, channel: { id: PDM, org_id: null, kind: 'dm', name: '', crew_memory: true, archived_at: null, excluded_crew_ids: [] }, org: null, delivery_role: 'to', actor: OWNER,
+    peers, context: [relayed], attachments: [], delegated: false, settled_source: false, settled_root: false, settled_root_before_source: false, auto_turns: 0, settled_predecessors: [] };
+  const hdb = fakeDb({ crews: [crew({ org_id: null })], peers }); hdb.crewContext = async () => envelope;
+  let seen;
+  await M.makeMsgrHandler(WS, { session: async () => ({ db: hdb, uid: OWNER }), runChat: async (_w, _s, _t, _sid, opts) => { seen = opts; return { reply: 'ok', sessionId: null, artifacts: [] }; } })(
+    { msgId: 120, orgId: null, channelId: PDM, crewId: CREW, slug: 'seoyun', text: 'stale', authorId: OWNER, threadRoot: 120, hop: 0, origin: OWNER, createdAt: new Date().toISOString() });
+  assert.ok(seen, 'envelope 실행');
+  assert.equal(seen.notOwnerDirect, undefined, '개인 방 전달 표지로 풀 오토 판정이 바뀌지 않는다'); assert.equal(seen.mirrorCtx.handoffFrom, undefined);
+});
+
+// ── 확인 검수(bed20860) LOW-2: source_id 형식 판정 잠금 — 옛 /^\d+$/로 되돌리면 실패한다 ──
+test('LOW-2 — source_id가 앞자리 0·0·배열·안전 정수 밖이면 message를 조회하지 않고 출처 미확인(오피스)', async () => {
+  const DM = 'bbbbbbbb-0000-4000-8000-0000000000d7';
+  // eslint-disable-next-line no-loss-of-precision
+  for (const sid of ['0079', 0, [79], 9007199254740993]) {
+    M._autoLogForTest.clear();
+    const m1 = msg(130, { channel_id: DM, author_user_id: OWNER, body: '@서윤 해 줘', mentions: [{ kind: 'crew', id: CREW, role: 'to' }], meta: { relay: { source_id: sid, via_crew_id: ZED, via_name: '제드' } } });
+    const db = fakeDb({ crews: [crew(), crew({ id: ZED, slug: 'zed', display_name: '제드' })], messages: [m1], dm: [DM], parent: () => msg(79, { channel_id: DM }) });
+    db.channelOverride = { kind: 'dm' };
+    const enq = fakeEnqueue();
+    await M.drain(WS, { db, uid: OWNER, enqueue: enq });
+    const j = jobsOf(enq)[0];
+    assert.ok(j, `적재(${JSON.stringify(sid)})`);
+    assert.equal(db.calls.filter((c) => c[0] === 'message').length, 0, `message 조회 0번(${JSON.stringify(sid)})`);
+    assert.equal(j.office, true, `출처를 못 읽은 것과 같게 오피스(${JSON.stringify(sid)})`);
+  }
+});
+
+// ── 기존 결함(확인 검수 bed20860): DM 목록 조회 실패 때 멘션 없는 1:1 글이 적재 없이 커서만 지나갔다 ──
+test('crewChannels 실패 — 이 크루는 이번 틱에 커서를 올리지 않고 보류, 다음 틱에 멘션 없는 1:1 글에 답한다', async () => {
+  const DM = 'bbbbbbbb-0000-4000-8000-0000000000d8';
+  M._autoLogForTest.clear();
+  const plain = msg(81, { channel_id: DM, author_user_id: OWNER, body: '안녕', mentions: [] });
+  const db = fakeDb({ crews: [crew()], messages: [plain], dm: [DM] });
+  db.channelOverride = { kind: 'dm' };
+  const ok = db.crewChannels; db.crewChannels = async () => { throw new Error('network blip'); };
+  const enq = fakeEnqueue();
+  const errs = []; const ce = console.error; console.error = (...a) => errs.push(a.join(' '));
+  try { await M.drain(WS, { db, uid: OWNER, enqueue: enq }); } finally { console.error = ce; }
+  assert.equal(jobsOf(enq).length, 0, '실패 틱에는 적재하지 않는다');
+  assert.deepEqual(db.calls.filter((c) => c[0] === 'setCursor'), [], '커서 보류(글이 지나가 버리지 않게)');
+  assert.equal(db.calls.some((c) => c[0] === 'crewScope' || c[0] === 'messagesAfter'), false, '보류할 크루의 범위·받은 글은 조회하지 않는다(부하는 실패 조회 1건)');
+  db.crewChannels = ok;
+  await M.drain(WS, { db, uid: OWNER, enqueue: enq });
+  assert.deepEqual(jobsOf(enq).map((j) => j.msgId), [81], '회복 틱에 그 글에 답한다');
+  assert.deepEqual(db.calls.filter((c) => c[0] === 'setCursor').map((c) => c[2]), [81]);
 });
