@@ -2088,6 +2088,23 @@ html { -webkit-tap-highlight-color: transparent; }
   .msgr-phone .ph-chips button { position: relative; flex: none; height: 34px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg); color: var(--fg-2); font-size: 14px; font-weight: 500; white-space: nowrap; }
   .msgr-phone .ph-chips button::after { content: ''; position: absolute; inset: -5px -2px; }
   .msgr-phone .ph-chips button.active { background: var(--fg); border-color: var(--fg); color: var(--bg); font-weight: 600; }
+  /* 채널 탭 메뉴 '즐겨찾기 · 채널 · <그룹들…> · +'(유건 2026-10-02) — 칩은 채팅 탭과 같은 모양. 그룹 칩은 길게 눌러 편집하므로 길게 누를 때 글자 선택·콜아웃이 뜨지 않게 */
+  .msgr-phone .ph-chmenu .ph-chips button { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; max-width: 60vw; overflow: hidden; text-overflow: ellipsis; }
+  .msgr-phone .ph-chips .ph-chipadd { width: 34px; padding: 0; display: grid; place-items: center; color: var(--fg-2); border-style: dashed; }
+  .msgr-phone .msgr-sheetwrap .msgr-crewsheet.ph-grpsheet .peek { gap: 4px; grid-template-columns: minmax(0, 1fr); overflow-x: hidden; } /* 긴 채널 이름이 열 폭을 키워 시트 밖으로 나가던 것(ph-memsheet와 같은 처방) */
+  .msgr-phone .ph-grpsheet .peek > .msgr-input { margin: 4px 0; width: 100%; box-sizing: border-box; }
+  .msgr-phone .ph-grph { margin: 10px 2px 2px; font-size: 12.5px; font-weight: 600; color: var(--fg-3); }
+  .msgr-phone .ph-grpsheet .pickrow .msgr-klabel { max-width: 45%; min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .msgr-phone .ph-grprow { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 4px 8px; border: 0; border-radius: 10px; background: none; color: var(--fg); font: inherit; font-size: 15px; text-align: left; }
+  .msgr-phone .ph-grprow:active { background: var(--card-2); }
+  .msgr-phone .ph-grprow .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .msgr-phone .ph-grprow.on { font-weight: 600; }
+  .msgr-phone .ph-grprow .ok { color: var(--fg); }
+  .msgr-phone .ph-grpnew { display: flex; gap: 8px; align-items: center; margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--border-soft); }
+  .msgr-phone .ph-grpnew .msgr-input { flex: 1; min-width: 0; }
+  .msgr-phone .ph-grpnew .btn { flex: none; min-height: 40px; }
+  .msgr-phone .ph-grpsheet .foot { display: grid; gap: 8px; }
+  .msgr-phone .ph-grpsheet .foot .note { margin: 0; }
   @media (max-width: 374px) { .msgr-phone .ph-chips button { font-size: 13px; padding: 0 11px; } } /* 360 폭 영어에서 'Groups'가 정렬 버튼에 걸려 잘렸다(기능 점검 D11) — 좁은 폭은 칩을 줄여 네 개가 다 들어간다, 더 길면 가로 스크롤 */
   /* 폰 조직 설정 멤버 탭(5차 피드백) — 나: 사진·이름·역할 한 줄 + 부서·직급 칸 반씩, 나머지: 친구 줄 모양(버튼 없음), 줄을 누르면 시트 */
   .msgr-phone .ph-memme-head { display: flex; align-items: center; gap: 12px; min-width: 0; }
