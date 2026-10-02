@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { mkdtemp } from './helpers/tmp.mjs';
+import { userInfo } from 'node:os';
 import { beforeEach } from 'node:test';
 
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-reply-files-'));
@@ -342,8 +343,9 @@ test('N-5: 구역 밖 경로는 있는 파일과 없는 파일의 결과가 같�
     [homedir(), join(homedir(), 'nobody-xyz-argo', 'Desktop', 'plan')],              // 홈 아래(확장자 없음)
     ['/usr', '/usrx-argo-nope'],                                                     // 홈·임시 밖 → 둘 다 손대지 않는다
     ['/etc/hosts', '/etc/argo-nope-hosts.pdf'],                                      // 홈·임시 밖은 확장자가 있어도 손대지 않는다(F-3)
-    ['/Volumes', '/Volumes/argo-nope-vol/계약서.pdf'],                                  // 로컬 위치 첫 칸(MEDIUM-4) — 둘 다 지운다
+    ['/Users/Shared', '/Users/argo-nope-xyz'],                                        // 로컬 위치 첫 칸 + 칸 둘 이상(MEDIUM-4·LOW-4) — 둘 다 지운다
     ['/Users/Shared', '/Users/Shared/argo-nope/draft.png'],
+    ['/Volumes', '/Volumes-argo-nope'],                                               // 칸 하나뿐인 로컬 첫 칸은 웹 경로로 본다(LOW-4) — 둘 다 그대로
   ];
   const shape = (r) => ({ body: r.body.replace(/\S*(nope|exists|nobody|usr|report|hosts|Volumes|Shared)\S*/g, 'X'), files: r.files.length, fails: r.fails.map((f) => f.reason) });
   for (const [there, absent] of pairs) {
@@ -404,12 +406,13 @@ test('F-2: 구역 안 심링크 폴더를 거친 경로는 있든 없든 같은 
 
 // 통합본 재검수 MEDIUM-4: 홈·작업 루트 밖이라도 로컬 위치(외장 볼륨·공유 사용자 폴더·/opt 등)나 드라이브 문자 경로가 본문에 그대로 남아
 // 고객사 폴더 이름이 손님에게 보이고, 크루는 보냈다고 믿는데 사용자는 깨진 링크만 받았다.
-test('MEDIUM-4: 로컬 위치 첫 칸(/Volumes·/Users·/home·/mnt·/media·/opt·/private·/var/folders)과 드라이브 문자 경로는 지우고 안내 하나 — 웹 경로는 그대로', async () => {
+test('MEDIUM-4·LOW-4·LOW-5: 로컬 위치 첫 칸(/Volumes·/Users·/home·/mnt·/opt·/private·/var/folders, 칸 둘 이상)·/media/<사용자>/…·드라이브 문자 경로(/C:/ 포함)는 지우고 안내 하나 — 웹 경로는 그대로', async () => {
   const { planReplyFiles } = await import('../src/gateway/msgr-reply-files.mjs');
   const local = [
     ['[계약서](/Volumes/고객사A/계약/계약서.pdf)', '계약서'], ['![시안](/Users/Shared/고객B/draft.png)', '시안'], ['[x](/opt/acme-client/report.pdf)', 'x'],
-    ['[a](/home/kim/고객C/a.pdf)', 'a'], ['[b](/mnt/nas/고객D/b.png)', 'b'], ['[c](/media/usb/고객E/c.pdf)', 'c'], ['[d](/private/etc/고객F.pdf)', 'd'],
+    ['[a](/home/kim/고객C/a.pdf)', 'a'], ['[b](/mnt/nas/고객D/b.png)', 'b'], [`[c](/media/${userInfo().username}/USB/고객E/c.pdf)`, 'c'], ['[d](/private/etc/고객F.pdf)', 'd'],
     ['[e](/var/folders/zz/고객G.pdf)', 'e'], ['[윈](C:\\Users\\kim\\고객H\\견적.pdf)', '윈'], ['[윈2](D:/고객I/시안.png)', '윈2'], ['[윈3](c:/x.pdf)', '윈3'],
+    ['[L](file:///C:/Users/kim/고객J/x.pdf)', 'L'], ['[L2](/C:/Users/kim/고객K/y.pdf)', 'L2'], // macOS fileURLToPath가 돌려주는 /C:/… 꼴(LOW-5)
   ];
   for (const [src, text] of local) {
     const r = await planReplyFiles(WS, src);
@@ -420,9 +423,10 @@ test('MEDIUM-4: 로컬 위치 첫 칸(/Volumes·/Users·/home·/mnt·/media·/op
     assert.equal(r.fails[0].name, src.match(/\(([^)]*)\)/)[1].split(/[\\/]/).pop(), `안내에는 마지막 이름만(폴더 이름 없이): ${r.fails[0].name}`);
     assert.deepEqual(r.files, []);
   }
-  const web = '[가이드](/docs/guide.pdf) [로그인](/login) [옵션](/optional/x.pdf) [볼륨](/volumes-info) [홈](/homepage)';
+  const web = '[가이드](/docs/guide.pdf) [로그인](/login) [옵션](/optional/x.pdf) [볼륨](/volumes-info) [홈](/homepage)'
+    + ' [로고](/media/logo.png) [업로드](/media/uploads/2024/x.png) [h](/home) [o](/opt) [m](/mnt) [u](/Users) [v](/Volumes) [md](/media)';
   const w = await planReplyFiles(WS, web);
-  assert.equal(w.body, web, '첫 칸이 목록과 정확히 같을 때만 로컬 위치(접두 글자만 같은 웹 경로는 그대로)');
+  assert.equal(w.body, web, '첫 칸이 목록과 정확히 같고 칸이 둘 이상일 때만 로컬 위치 — /media는 두 번째 칸이 이 컴퓨터 사용자 이름일 때만(LOW-4)');
   assert.deepEqual(w.fails, []);
 });
 
