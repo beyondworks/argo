@@ -2,9 +2,10 @@
 // docs_list·docs_read·docs_upload·customers_attach·drive_list·drive_mkdir·drive_upload를 아르고 오피스로 옮긴 것("에이전트도 오피스로 쓴다").
 // 규칙은 회사 도구(office-company.mjs)와 같다: 다루는 범위는 지금 메신저 조직 채널의 그 조직뿐, 주인의 기기 세션으로만(사람 권한 그대로 — 서버 RLS·함수가 판정),
 // 손님 턴은 chat.mjs 처리기가 먼저 거절, 손님·조직 밖 사람이 있을 수 있는 방에서는 다루지 않는다. 통장사본 글자는 주인과의 1:1에서만(office-audience.mjs).
-// 문서함: RPC office_file_list(검색) · office_file_get(전문) · office_file_write(자리 → Storage → 등록, 출처 agent).
+// 문서함: RPC office_file_list(검색) · office_file_get(전문) · office_file_write(자리 → R2 → 등록, 출처 agent). 파일 바이트는 R2(argo-office) —
+// 오피스 서버 함수 api/storage가 DB가 허락한 키로만 서명 주소를 주고(upload-url), 이 기기가 R2에 직접 PUT한 뒤 commit(서버가 크기 확인)한다. R2 접근 키는 이 기기에 두지 않는다.
 // 드라이브: 오피스 서버 함수(api/drive list·import·mkdir·export)를 주인 로그인 JWT로 — 구글 토큰은 서버에만 있다. 오피스 주소 ARGO_OFFICE_ORIGIN(https 또는 루프백).
-// 부하: 사람이 시킬 때만 부른다(폴링 없음). 붙이기는 파일당 RPC 2 + Storage 1.
+// 부하: 사람이 시킬 때만 부른다(폴링 없음). 붙이기는 파일당 RPC 2 + 오피스 서버 함수 2 + R2 PUT 1.
 import { randomUUID } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { basename, extname, isAbsolute, resolve } from 'node:path';
@@ -23,7 +24,7 @@ export const filesDeps = {
 
 const pick = (ko, en, lang) => (lang === 'en' ? en : ko);
 const CATS = ['quote', 'contract', 'bizcert', 'card', 'bankbook', 'evidence', 'archive', 'general'];
-const MAX_BYTES = 50 * 1024 * 1024; // 오피스 파일 상한(버킷 file_size_limit과 같다)
+const MAX_BYTES = 50 * 1024 * 1024; // 오피스 파일 상한(DB 자리 받기와 같은 값)
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const LIST_CAP = 30, READ_CAP = 20_000;
 const MIME = { '.pdf': 'application/pdf', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.heic': 'image/heic',
@@ -80,6 +81,16 @@ async function deskPath(p, wsId) {
   return abs;
 }
 
+/** 오피스 파일 저장소 서버 함수(api/storage) — 주인 로그인 JWT로 */
+async function storageApi(op, body, origin, jwt) {
+  const r = await filesDeps.fetch(`${origin}/api/storage/${op}`, { method: 'POST', headers: { authorization: `Bearer ${jwt}`, 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(60_000) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw Object.assign(new Error(d.error ?? `HTTP ${r.status}`), { rpc: true });
+  return d;
+}
+/** R2 서명 주소는 https(로컬 시험만 루프백 http) — 다른 곳으로 파일을 보내지 않게 */
+const signedTarget = (u) => { try { const x = new URL(u); return x.protocol === 'https:' || (x.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(x.hostname)); } catch { return false; } };
+
 async function officeApi(method, op, body, lang) {
   const origin = officeOrigin(filesDeps.origin());
   if (!origin) return { text: pick('오피스 주소(ARGO_OFFICE_ORIGIN)가 https가 아니라 드라이브를 쓰지 않는다 — 사장에게 알려라.', 'The Office address (ARGO_OFFICE_ORIGIN) is not https, so Drive is not used — tell the owner.', lang) };
@@ -135,15 +146,21 @@ export async function filesTool(args, { ctx = null, lang = 'ko', ownerId = null 
       const st = await stat(abs).catch(() => null);
       if (!st?.isFile()) return pick('그 경로에 파일이 없다.', 'No file at that path.', lang);
       if (st.size > MAX_BYTES) return pick('50MB가 넘어 올리지 않는다.', 'Over 50 MB — not uploaded.', lang);
+      const origin = officeOrigin(filesDeps.origin());
+      if (!origin) return pick('오피스 주소(ARGO_OFFICE_ORIGIN)가 https가 아니라 문서함에 올리지 않는다 — 사장에게 알려라.', 'The Office address (ARGO_OFFICE_ORIGIN) is not https, so nothing is uploaded — tell the owner.', lang);
+      const jwt = await filesDeps.jwt().catch(() => null);
+      if (!jwt) return pick('메신저(오피스) 로그인이 없어 문서함에 올릴 수 없다 — 사장에게 알려라.', 'Not signed in, so the file box is unavailable — tell the owner.', lang);
       const bytes = await readFile(abs), name = safeName(a.title || basename(abs)), mime = MIME[extname(abs).toLowerCase()] ?? 'application/octet-stream';
-      const id = filesDeps.newId(), path = `o-${org}/${id}/${name}`;
-      unwrap(await c.client.rpc('office_file_write', { p_org: org, p_action: 'file.reserve', p_data: { id, storage_path: path, size: bytes.length } }));
-      const up = await c.client.storage.from('office-files').upload(path, bytes, { contentType: mime, upsert: false });
-      if (up?.error) return pick(`저장소에 올리지 못했다: ${String(up.error.message ?? up.error).slice(0, 160)}.`, `Upload failed: ${String(up.error.message ?? up.error).slice(0, 160)}.`, lang);
-      try {
-        unwrap(await c.client.rpc('office_file_write', { p_org: org, p_action: 'file.create', p_data: { id, title: name, filename: name, mime, size: bytes.length, storage_path: path,
-          category: a.category ?? 'general', customer_id: a.customer_id || null, source: 'agent', tags: a.customer_id ? [] : ['agent'] } }));
-      } catch (e) { await c.client.storage.from('office-files').remove([path]).catch(() => {}); throw e; } // 등록 실패 → 올린 객체 정리
+      const id = filesDeps.newId();
+      const { key } = unwrap(await c.client.rpc('office_file_write', { p_org: org, p_action: 'file.reserve', p_data: { id, filename: name, size: bytes.length, mime } })); // 자리(키는 DB가 정함)
+      const up = await storageApi('upload-url', { key }, origin, jwt);
+      if (!signedTarget(up.url)) return pick('오피스가 준 올리기 주소가 https가 아니라 올리지 않았다 — 사장에게 알려라.', 'The upload address from Office is not https — not uploaded.', lang);
+      const put = await filesDeps.fetch(up.url, { method: 'PUT', headers: up.headers, body: bytes, signal: AbortSignal.timeout(120_000) });
+      if (!put.ok) return pick(`저장소에 올리지 못했다(HTTP ${put.status}).`, `Upload failed (HTTP ${put.status}).`, lang);
+      await storageApi('commit', { key }, origin, jwt); // 서버가 R2 크기를 확인해 기록
+      // 등록이 실패하면 객체는 등록 전으로 남고 오피스 정리 크론이 1시간 뒤 지운다(이 기기는 R2를 지울 수 없다)
+      unwrap(await c.client.rpc('office_file_write', { p_org: org, p_action: 'file.create', p_data: { id, title: name, filename: name, mime, size: bytes.length, storage_path: key,
+        category: a.category ?? 'general', customer_id: a.customer_id || null, source: 'agent', tags: a.customer_id ? [] : ['agent'] } }));
       return pick(`문서함에 붙였다: ${name} · ${a.category ?? 'general'}${a.customer_id ? ` · 거래처 ${a.customer_id}` : ''} (id=${id}). 글자 읽기는 사람이 오피스에서 열 때 한다.`,
         `Attached to Office files: ${name} · ${a.category ?? 'general'}${a.customer_id ? ` · customer ${a.customer_id}` : ''} (id=${id}).`, lang);
     }

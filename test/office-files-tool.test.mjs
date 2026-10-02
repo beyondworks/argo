@@ -46,13 +46,11 @@ function fake({ members = { 'dm-1': [ME] }, rpcError = null, createError = null,
       if (name === 'office_file_list') return { data: { files: FILES, more: false, folders: [] }, error: null };
       if (name === 'office_file_get') return { data: { ...FILES.find((f) => f.id === args.p_id), full_text: args.p_id === 'f2' ? '예금주 넥스트필드 계좌번호 123456-78-901234' : '견 적 서 ... 합계 5,940,000원' }, error: null };
       if (name === 'office_file_write' && args.p_action === 'file.create' && createError) return { data: null, error: { message: createError } };
-      if (name === 'office_file_write') return { data: { id: args.p_data.id, path: args.p_data.storage_path }, error: null };
+      if (name === 'office_file_write' && args.p_action === 'file.reserve') return { data: { key: `o-${args.p_org}/files/${args.p_data.id}.png` }, error: null };
+      if (name === 'office_file_write') return { data: { id: args.p_data.id }, error: null };
       return { data: null, error: { message: 'unknown' } };
     },
-    storage: { from: (bucket) => ({
-      upload: async (path, body, opts) => { calls.push({ name: 'storage.upload', bucket, path, size: body.length, opts }); return { data: { path }, error: null }; },
-      remove: async (paths) => { calls.push({ name: 'storage.remove', bucket, paths }); return { data: [], error: null }; },
-    }) },
+    storage: { from: () => { throw new Error('Supabase Storage를 쓰면 안 된다(R2로 옮김)'); } },
   };
   Object.assign(filesDeps, {
     session: async () => ({ client, uid: ME }), jwt: async () => 'jwt-1', newId: () => '33333333-3333-4333-8333-333333333333', wsRoot: () => WSROOT, workRoots: async () => [],
@@ -91,23 +89,37 @@ test('F3(O2). file_read는 한 건 전문(office_file_get), 통장사본 글자�
   assert.match(await run({ action: 'file_read' }), /id/);
 });
 
-test('F4(C9). attach: 작업 공간 안 파일만 — 자리 받기 → Storage(주인 권한) → 등록(거래처·분류·agent), 등록 실패 시 올린 객체를 지운다', async () => {
-  let calls = fake();
+const STORE = {
+  'api/storage/upload-url': (u, init) => new Response(JSON.stringify({ key: JSON.parse(init.body).key, url: 'https://r2.example.com/argo-office/k?X-Amz-Signature=x', headers: { 'content-type': 'image/png', 'if-none-match': '*' } })),
+  'r2\\.example\\.com': () => new Response(null, { status: 200 }),
+  'api/storage/commit': (u, init) => new Response(JSON.stringify({ key: JSON.parse(init.body).key, bytes: 7 })),
+};
+test('F4(C9). attach: 작업 공간 안 파일만 — 자리(키는 DB가 정함) → 오피스 서명 주소 → R2에 PUT → 확인 → 등록(거래처·분류·agent)', async () => {
+  let calls = fake({ api: STORE });
   assert.match(await run({ action: 'attach', path: join(OUTSIDE, 'secret.pdf'), customer_id: CUST }), /작업 공간/);
   assert.match(await run({ action: 'attach', path: 'vault/files/link.pdf', customer_id: CUST }), /작업 공간/, '심링크로 밖을 가리켜도 거절');
-  assert.ok(!calls.some((c) => c.name.startsWith('office_') || c.name.startsWith('storage')));
+  assert.ok(!calls.some((c) => c.name.startsWith('office_') || c.name === 'fetch'));
   const out = await run({ action: 'attach', path: 'vault/files/김민수_명함.png', customer_id: CUST, category: 'card' });
-  const seq = calls.filter((c) => c.name === 'office_file_write' || c.name === 'storage.upload').map((c) => c.name === 'storage.upload' ? 'upload' : c.args.p_action);
-  assert.deepEqual(seq, ['file.reserve', 'upload', 'file.create']);
+  const seq = calls.filter((c) => c.name === 'office_file_write' || c.name === 'fetch').map((c) => (c.name === 'fetch' ? (c.init.method === 'PUT' ? 'PUT' : c.url.split('/').pop()) : c.args.p_action));
+  assert.deepEqual(seq, ['file.reserve', 'upload-url', 'PUT', 'commit', 'file.create']);
   const reserve = calls.find((c) => c.args?.p_action === 'file.reserve').args;
-  assert.equal(reserve.p_org, ORG); assert.equal(reserve.p_data.size, 7); assert.match(reserve.p_data.storage_path, new RegExp(`^o-${ORG}/33333333-3333-4333-8333-333333333333/`));
+  assert.equal(reserve.p_org, ORG); assert.deepEqual(reserve.p_data, { id: '33333333-3333-4333-8333-333333333333', filename: '김민수_명함.png', size: 7, mime: 'image/png' }, '키는 보내지 않는다(DB가 정함)');
+  const key = `o-${ORG}/files/33333333-3333-4333-8333-333333333333.png`;
+  const fetches = calls.filter((c) => c.name === 'fetch');
+  assert.deepEqual(JSON.parse(fetches[0].init.body), { key }); assert.equal(fetches[0].init.headers.authorization, 'Bearer jwt-1');
+  assert.equal(fetches[1].url, 'https://r2.example.com/argo-office/k?X-Amz-Signature=x'); assert.deepEqual(fetches[1].init.headers, { 'content-type': 'image/png', 'if-none-match': '*' });
+  assert.equal(fetches[1].init.headers.authorization, undefined, 'R2에는 로그인 토큰을 보내지 않는다'); assert.equal(fetches[1].init.body.length, 7);
   const create = calls.find((c) => c.args?.p_action === 'file.create').args.p_data;
-  assert.deepEqual([create.customer_id, create.category, create.source, create.mime], [CUST, 'card', 'agent', 'image/png']);
-  assert.equal(calls.find((c) => c.name === 'storage.upload').bucket, 'office-files');
+  assert.deepEqual([create.customer_id, create.category, create.source, create.mime, create.storage_path], [CUST, 'card', 'agent', 'image/png', key]);
   assert.match(out, /붙였다/);
-  calls = fake({ createError: 'file_quota' });
+  calls = fake({ createError: 'file_quota', api: STORE });
   assert.match(await run({ action: 'attach', path: 'vault/files/김민수_명함.png' }), /저장 공간/);
-  assert.ok(calls.some((c) => c.name === 'storage.remove'), '등록 실패 → 올린 객체 정리');
+  calls = fake({ api: { ...STORE, 'api/storage/upload-url': () => new Response(JSON.stringify({ key: 'k', url: 'http://evil.example/x', headers: {} })) } });
+  assert.match(await run({ action: 'attach', path: 'vault/files/김민수_명함.png' }), /https가 아니라/);
+  assert.ok(!calls.some((c) => c.name === 'fetch' && c.init.method === 'PUT'), 'https가 아닌 곳으로는 파일을 보내지 않는다');
+  calls = fake({ api: { ...STORE, 'api/storage/commit': () => new Response('{"error":"file_size_mismatch"}', { status: 409 }) } });
+  assert.match(await run({ action: 'attach', path: 'vault/files/김민수_명함.png' }), /오피스 호출 실패: file_size_mismatch/);
+  assert.ok(!calls.some((c) => c.args?.p_action === 'file.create'), '확인이 실패하면 등록하지 않는다');
 });
 
 test('F5(V14). 드라이브: 목록·가져오기·새 폴더·보내기는 오피스 서버 함수(주인 로그인 JWT)로, 오피스 주소는 https·루프백만', async () => {
