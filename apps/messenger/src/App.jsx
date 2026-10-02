@@ -49,7 +49,7 @@ import { getMobileAuthSnapshot, subscribeMobileAuth, startMobileSignIn, cancelMo
 import { useMobileViewport } from './mobile-viewport.js';
 import { useIsPhone, useEdgeSwipeBack } from './use-phone.js';
 import { bindRowSwipe, bindSwipeReply } from './row-swipe.js';
-import { PHONE_TABS, isPhoneRoot, spaceForTab, pickChannelOrg, startTab, tabBadges, badgeText, roomTraits, chatVisible, chatUnreadTotal, roomRow, sortRooms, tabSearch, CHAT_FILTERS, memoryGroups, memSnippet, agentCardAction, orgCardStep, personalCardLocks, orgMenuItems, savedOrgAfter, withoutHidden, hiddenGroups, settingsOrgRows, orgScreen, joinReqKey, maskedPreview } from './phone-shell.mjs'; // 폰 셸 v2(친구·채팅·채널·에이전트·기억, 유건 확정 2026-10-01) — 판단은 이 모듈 한 곳
+import { PHONE_TABS, isPhoneRoot, spaceForTab, pickChannelOrg, startTab, tabBadges, badgeText, roomTraits, chatVisible, chatUnreadTotal, roomRow, sortRooms, tabSearch, CHAT_FILTERS, memoryGroups, memSnippet, agentCardAction, orgCardStep, personalCardLocks, orgMenuItems, savedOrgAfter, withoutHidden, hiddenGroups, settingsOrgRows, orgScreen, joinReqKey, maskedPreview, tabBodyQuery } from './phone-shell.mjs'; // 폰 셸 v2(친구·채팅·채널·에이전트·기억, 유건 확정 2026-10-01) — 판단은 이 모듈 한 곳
 import { bindPullRefresh, enteredReady } from './pull-refresh.mjs';
 import { haptic } from './haptics.js';
 import { refreshMessageWindow, mergeRefreshedMessages } from './refresh-messages.mjs';
@@ -2009,6 +2009,24 @@ function Shell({ session }) {
     document.addEventListener('touchmove', f, { passive: false }); window.addEventListener('pointerup', end); window.addEventListener('pointercancel', end);
     return () => { document.removeEventListener('touchmove', f); window.removeEventListener('pointerup', end); window.removeEventListener('pointercancel', end); };
   }, []);
+  // 채팅·채널 탭 검색의 본문 찾기(기능 점검 D9) — 목록은 마지막 글만 알아서 예전 대화를 못 찾았다. 전체 검색(runSearch)과 같은 조회·같은 차단 거르기로
+  // 지금 공간의 글에서 맞은 방 id만 모은다. 검색 칸을 연 동안, 두 글자부터, 입력이 300ms 멈췄을 때 한 번(유휴 0, 칸을 닫으면 요청 없음).
+  const [tabHits, setTabHits] = useState(null); // { space, q, ids: Set }
+  const tabBodyQ = isPhone && (page === 'chats' || page === 'channels') ? tabBodyQuery(tabQ) : null;
+  useEffect(() => {
+    if (!tabBodyQ || !uid) { setTabHits(null); return undefined; }
+    const space = orgId; let off = false;
+    const timer = setTimeout(async () => {
+      const like = `%${tabBodyQ.replace(/[%_\\]/g, (m) => `\\${m}`)}%`;
+      const sel = supabase.from('msgr_messages').select('channel_id, author_kind, crew_id');
+      const base = blockedIds.size ? sel.or(`author_user_id.is.null,author_user_id.not.in.(${[...blockedIds].join(',')})`) : sel;
+      const scoped = space === PERSONAL ? base.is('org_id', null) : base.eq('org_id', space);
+      const rows = await q(scoped.is('deleted_at', null).ilike('body', like).order('id', { ascending: false }).limit(300)).catch((e) => { pushDiag('tab-search', e?.message ?? e); return []; }); // ponytail: 최근 300건 안에서만 — 방이 더 오래된 글뿐이면 '전체에서 찾기'로
+      if (off) return;
+      setTabHits({ space, q: tabBodyQ, ids: new Set(rows.filter((m) => !(m.author_kind === 'crew' && mutedCrewIds.has(m.crew_id))).map((m) => m.channel_id)) });
+    }, 300);
+    return () => { off = true; clearTimeout(timer); };
+  }, [tabBodyQ, uid, orgId, blockedIds, mutedCrewIds]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (orgs !== null) markAppReady(); }, [orgs]); // 스플래시 준비 신호 — 조직을 불러온 뒤(조기 반환 앞, 훅 순서)
   if (orgs === null) return <div className="msgr-auth"><span className="msgr-klabel">{t('ui.loading')}</span></div>;
   const joinedChannel = loadedOrg.current === orgId ? channels.find((c) => c.id === chId) : undefined;
@@ -2307,6 +2325,7 @@ function Shell({ session }) {
   const searchAll = () => { const qv = tabQText.trim(); if (!qv) return; setSearchQ(qv); runSearch(qv); }; // '전체에서 찾기' — 지금 공간의 통합 검색(메시지·사람·에이전트·채널)
   const rowOf = (c) => roomRow({ c, lastMsg: lastMsg[c.id], lastAt: lastAt[c.id], unread: unread[c.id], muted: muted.has(c.id), pinned: pinned.has(c.id) });
   const maskOf = (c) => { const r = rowOf(c); const lm = lastMsg[c.id]; return maskedPreview({ preview: r.preview, userId: r.userId ?? lm?.userId, crewId: r.crewId ?? lm?.crewId }, { blocked: blockedIds, muted: mutedCrewIds }); };
+  const bodyHit = (c) => !!tabHits && tabHits.space === orgId && tabHits.q === tabBodyQ && tabHits.ids.has(c.id); // 서버 본문 찾기에서 맞은 방(D9) — 검색어·공간이 바뀌면 옛 결과는 쓰지 않는다
   const previewForSearch = (c) => { const m = maskOf(c); return m.masked === 'blocked' ? t('msg.blockedUser') : m.text; }; // 목록 검색도 가린 글자로(D7)
   const openRoom = (c) => { setTabQ(null); setChId(c.id); setRail(false); setPage('chat'); };
   const roomAvatar = (c, tr) => {
@@ -2350,15 +2369,15 @@ function Shell({ session }) {
   const chatsAll = isPersonal && spaceReady ? channels.filter((c) => c.kind === 'dm') : [];
   const chatSorted = sortRooms(chatsAll, { sort: dmSort, atOf: (c) => rowOf(c).at, unread, pinned, pinPos, nameOf: dmBaseName, sortPos: dmSortPos });
   const chatFiltered = chatSorted.filter((c) => chatVisible(dmFilter, { ...rowOf(c), ...traitsOf(c) }));
-  const chatShown = tabSearch(chatFiltered, tabQText, (c) => [dmBaseName(c), previewForSearch(c)]);
+  const chatShown = tabSearch(chatFiltered, tabQText, (c) => [dmBaseName(c), previewForSearch(c)], bodyHit);
   const chatDrop = (c) => ({ onDrop: pinned.has(c.id) ? reorderFav : (id, before, visible) => reorderChannelPos(chatSorted.filter((x) => !pinned.has(x.id)), id, before, visible, () => { if (dmSort !== 'custom') pickDmSort('custom'); }) });
   // ── 채널 탭(고른 조직) ──
   const orgRow = orgs?.find((o) => o.id === chOrg) ?? null;
   const onOrgTab = !!orgRow && orgId === orgRow.id && spaceReady;
   const chChannels = onOrgTab ? sortRooms(channels.filter((c) => c.kind !== 'dm'), { sort: chBase.some((c) => dmSortPos[c.id] != null) ? 'custom' : 'recent', atOf: (c) => rowOf(c).at, unread, pinned, pinPos, nameOf: (c) => c.name, sortPos: dmSortPos }) : [];
   const chTalks = onOrgTab ? sortRooms(channels.filter((c) => c.kind === 'dm'), { sort: dmSort, atOf: (c) => rowOf(c).at, unread, pinned, pinPos, nameOf: dmBaseName, sortPos: dmSortPos }) : [];
-  const chChannelsShown = tabSearch(chChannels, tabQText, (c) => [c.name, c.topic, previewForSearch(c)]);
-  const chTalksShown = tabSearch(chTalks, tabQText, (c) => [dmBaseName(c), previewForSearch(c)]);
+  const chChannelsShown = tabSearch(chChannels, tabQText, (c) => [c.name, c.topic, previewForSearch(c)], bodyHit);
+  const chTalksShown = tabSearch(chTalks, tabQText, (c) => [dmBaseName(c), previewForSearch(c)], bodyHit);
   const otherOrgsUnread = (orgs ?? []).filter((o) => o.id !== chOrg).reduce((a, o) => ({ n: a.n + (spaceCount(o.id)?.n || 0), mention: a.mention + (spaceCount(o.id)?.mention || 0) }), { n: 0, mention: 0 });
   const orgMenuPop = orgMenu && ((items) => (
     <OrgMenuCard orgs={orgs ?? []} current={chOrg} onClose={() => setOrgMenu(false)} onPick={(o) => { setTabQ(null); if (o.id !== orgId) setOrgId(o.id); }} badge={items.includes('joinable') ? (o) => <SpaceBadge c={spaceCount(o.id)} /> : null}>

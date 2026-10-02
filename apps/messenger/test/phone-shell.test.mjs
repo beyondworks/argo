@@ -122,6 +122,23 @@ test('탭 안 검색 — 이름·본문에서 대소문자 없이 찾는다, 빈
   assert.deepEqual(tabSearch(items, '없음', fields), []);
 });
 
+import { tabBodyQuery } from '../src/phone-shell.mjs';
+// 기능 점검 D9(2026-10-02): 채팅 탭 검색이 마지막 글만 봐서 예전 대화를 못 찾았다 → 서버 본문 검색 결과(방 id)도 맞은 것으로 친다.
+test('탭 안 검색 — 서버 본문 검색에서 맞은 방도 결과에 넣는다(이름·미리보기에 없어도)', () => {
+  const items = [{ id: 'a', name: '서윤', text: '안녕' }, { id: 'b', name: '하나', text: '사진' }];
+  const fields = (x) => [x.name, x.text];
+  const hit = new Set(['b']);
+  assert.deepEqual(tabSearch(items, '견적서', fields, (x) => hit.has(x.id)).map((x) => x.id), ['b']);
+  assert.deepEqual(tabSearch(items, '서윤', fields, (x) => hit.has(x.id)).map((x) => x.id), ['a', 'b']);
+  assert.deepEqual(tabSearch(items, '', fields, (x) => hit.has(x.id)).map((x) => x.id), ['a', 'b'], '빈 검색어는 전부');
+});
+test('서버 본문 검색은 두 글자부터 — 한 글자·공백은 요청하지 않는다', () => {
+  assert.equal(tabBodyQuery(''), null);
+  assert.equal(tabBodyQuery(' 견 '), null);
+  assert.equal(tabBodyQuery(' 견적 '), '견적');
+  assert.equal(tabBodyQuery(null), null);
+});
+
 import { memoryGroups, memSnippet } from '../src/phone-shell.mjs';
 test('기억 폴더 — 조직 전체(규칙·용어·프로젝트) / 채널별(문서 먼저, 일지는 최신이 위), 기본 최근순', () => {
   const d = (id, path, ch = null, at = '2026-10-01T00:00:00Z', title = path, body = '') => ({ id, path, channel_id: ch, updated_at: at, title, body });

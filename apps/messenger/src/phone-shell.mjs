@@ -112,10 +112,16 @@ export function sortRooms(list, { sort = 'recent', atOf = () => 0, unread = {}, 
 }
 
 /** 탭 안 검색 — fields(item)가 돌려준 글자들에서 대소문자 없이 찾는다. 빈 검색어는 전부 */
-export function tabSearch(items, query, fields) {
+export function tabSearch(items, query, fields, alsoHit = null) {
   const q = String(query ?? '').trim().toLowerCase();
   if (!q) return items;
-  return items.filter((x) => fields(x).some((v) => String(v ?? '').toLowerCase().includes(q)));
+  return items.filter((x) => alsoHit?.(x) || fields(x).some((v) => String(v ?? '').toLowerCase().includes(q)));
+}
+
+/** 채팅·채널 탭 검색의 서버 본문 검색어(기능 점검 D9) — 두 글자부터만 요청한다(한 글자는 거의 모든 방이 맞고 요청만 늘린다). */
+export function tabBodyQuery(query) {
+  const q = String(query ?? '').trim();
+  return q.length >= 2 ? q : null;
 }
 
 /** 기억 탭 폴더 — 조직 전체 기억(규칙·용어·프로젝트 순) / 채널별 기억(문서 먼저, 일지는 늘 최신이 위).
