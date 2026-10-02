@@ -119,3 +119,11 @@ test('D6 넣기 요청이 지워지면(주인이 방을 나감) 요청자와 방
   assert.deepEqual(Object.keys(p).sort(), ['channel_id', 'crew_id', 'id', 'org_id', 'status'], '같은 모양 — 이름·본문 없음');
   assert.equal(p.id, req); assert.equal(p.status, 'removed'); assert.equal(p.org_id, ORG);
 });
+
+// 2차 검수 LOW(2026-10-02): 이미 결정된(승인·거절) 요청 행이 연쇄 삭제될 때는 방송하지 않는다.
+test('D6 결정된 넣기 요청이 지워질 때는 방송하지 않는다', { skip }, () => {
+  const id = sql(`insert into public.msgr_channel_crew_requests (channel_id, crew_id, requested_by, status, decided_by, decided_at) values ('${PUB}', '${D1}', '${U.d}', 'approved', '${U.a}', now()) returning id`);
+  clear();
+  sql(`delete from public.msgr_channel_crew_requests where id = '${id}'`);
+  assert.deepEqual(sent('crew_join'), [], '결정된 행 삭제는 알리지 않는다');
+});
