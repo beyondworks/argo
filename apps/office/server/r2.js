@@ -63,7 +63,8 @@ export function r2Client({ endpoint, bucket, accessKeyId, secretAccessKey, regio
     },
     /** 크기·etag·형식 — 없으면 null */
     async head(key) {
-      const r = await call('HEAD', objectUrl(key));
+      // accept-encoding: identity — Node fetch 기본값(gzip)이면 R2가 text/*·json을 gzip으로 답하며 Content-Length를 빼서 크기를 알 수 없다(운영 결함 10/3)
+      const r = await call('HEAD', objectUrl(key), { headers: { 'accept-encoding': 'identity' } });
       if (r.status === 404) return null;
       if (!r.ok) throw fail(502, 'r2');
       return { bytes: Number(r.headers.get('content-length') ?? NaN), etag: String(r.headers.get('etag') ?? '').replace(/"/g, ''), mime: r.headers.get('content-type') ?? '' };
