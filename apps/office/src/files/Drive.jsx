@@ -52,7 +52,7 @@ export default function Drive({ space, folderId, onClose }) {
   const doSend = async () => {
     if (!status?.write) { setNeedWrite(true); return; }
     setBusy(true);
-    try { await driveExport(space, send, folder ?? 'root'); showToast(t('files.sentDrive')); close(); }
+    try { for (const id of send.split(',').filter(Boolean).slice(0, 50)) await driveExport(space, id, folder ?? 'root'); showToast(t('files.sentDrive')); close(); } // 여러 개(인트라넷 드라이브 여러 파일 올리기)
     catch (e) { if (e.code === 'need_write') setNeedWrite(true); else showToast(errText(e)); } finally { setBusy(false); }
   };
   const doMkdir = async (e) => {

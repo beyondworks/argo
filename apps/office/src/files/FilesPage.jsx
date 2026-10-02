@@ -145,6 +145,7 @@ export default function FilesPage({ space, query }) {
         <button type="button" className="btn sm" onClick={(e) => catMenu(e, selected)}><Icon name="tag" size={13} />{t('files.setCategory')}</button>
         <button type="button" className="btn sm" onClick={() => setDialog({ kind: 'move', files: selected })}><Icon name="folder" size={13} />{t('files.move')}</button>
         <button type="button" className="btn sm" onClick={() => download(selected)}><FIcon name="download" />{t('files.download')}</button>
+        {selected.some((f) => f.kind === 'file') && <button type="button" className="btn sm" onClick={() => go({ drive: 1, send: selected.filter((f) => f.kind === 'file').map((f) => f.id).join(',') })}><FIcon name="drive" />{t('files.toDrive')}</button>}
         <button type="button" className="btn sm" onClick={() => trash(selected)}><Icon name="trash" size={13} />{t('files.trash')}</button>
         <span className="grow" /><button type="button" className="btn sm ghost" onClick={() => setSel(new Set())}>{t('files.selNone')}</button>
       </div>}
