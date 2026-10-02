@@ -59,7 +59,7 @@ before(() => {
   sql(`update public.msgr_orgs set service_user_id = '${U.e}' where id = '${ORG}'`); // 회사 에이전트 = 조직 서비스 계정이 소유한 상주 에이전트
   CO = sql(`insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name, hosting, status, allow) values ('${ORG}', '${U.e}', 'ws-node', 'co', 'Company', 'resident', 'active', 'all') returning id`);
   A1 = personalCrew(U.a, 'a1'); B1 = personalCrew(U.b, 'b1');
-  befriend(U.a, U.b); befriend(U.a, U.c); befriend(U.b, U.c);
+  befriend(U.a, U.b); befriend(U.a, U.c); befriend(U.b, U.c); befriend(U.b, U.d); befriend(U.b, U.e); // b-d·b-e: 아래 내보내기 시험이 구성원이 다른 새 그룹방을 만든다(같은 구성원이면 같은 방을 돌려준다)
   AB = last(asUser(U.a, `select public.msgr_dm_personal('${U.b}')`)); // a가 만든 방(a = 결재자)
   GRP = last(asUser(U.b, `select public.msgr_dm_personal_group(array['${U.a}', '${U.c}']::uuid[], 'B방')`)); // b가 만든 방(b = 방장)
 });
@@ -73,9 +73,12 @@ test('내가 만든 방 — 내 에이전트는 허락 없이 넣고, 내가 뺀
   assert.equal(join(U.a, AB, A1), 'joined', '다시 넣기도 바로');
 });
 
-test('방장이 아닌 친구는 남의 에이전트를 못 뺀다 — RPC 거절, 직접 삭제는 지워지지 않는다', { skip }, () => {
+// 남의 에이전트 빼기를 방 관리자가 부르면 예외 대신 아무것도 하지 않고 'owner_only'를 돌려준다 — 이미 나간 옛 앱은 사람을 내보낼 때
+// 그 사람의 에이전트부터 이 RPC로 빼고, 오류가 나면 거기서 멈췄다(분리 검수 HIGH, 2026-10-02). 관리자가 아니면 종전대로 거절한다.
+test('1:1 상대 친구는 남의 에이전트를 못 뺀다 — RPC는 아무것도 안 하고(owner_only), 직접 삭제도 지워지지 않는다', { skip }, () => {
   assert.equal(inRoom(AB, A1), true);
-  fails(asUserRaw(U.b, `select public.msgr_crew_leave_channel('${AB}', '${A1}')`), /msgr_crew_remove_owner_only/, 'b가 a의 에이전트 빼기(RPC)');
+  assert.equal(last(asUser(U.b, `select public.msgr_crew_leave_channel('${AB}', '${A1}')`)), 'owner_only', 'b가 a의 에이전트 빼기(RPC) — 그대로 둔다');
+  assert.equal(inRoom(AB, A1), true, 'RPC가 빼지 않았다');
   asUser(U.b, `delete from public.msgr_channel_members where channel_id = '${AB}' and member_kind = 'crew' and member_id = '${A1}'`);
   assert.equal(inRoom(AB, A1), true, '직접 삭제도 RLS가 막는다');
 });
@@ -84,7 +87,9 @@ test('친구가 방장이어도 남의 에이전트를 못 뺀다 — 넣기는 
   assert.equal(join(U.a, GRP, A1), 'requested', '친구 방에는 허락이 필요');
   decideAll(U.b, GRP);
   assert.equal(inRoom(GRP, A1), true);
-  fails(asUserRaw(U.b, `select public.msgr_crew_leave_channel('${GRP}', '${A1}')`), /msgr_crew_remove_owner_only/, '방장 b가 a의 에이전트 빼기(RPC)');
+  assert.equal(last(asUser(U.b, `select public.msgr_crew_leave_channel('${GRP}', '${A1}')`)), 'owner_only', '방장 b가 a의 에이전트 빼기(RPC) — 그대로 둔다');
+  assert.equal(inRoom(GRP, A1), true, 'RPC가 빼지 않았다');
+  fails(asUserRaw(U.c, `select public.msgr_crew_leave_channel('${GRP}', '${A1}')`), /msgr_crew_remove_owner_only/, '방장이 아닌 c는 종전대로 거절');
   asUser(U.b, `delete from public.msgr_channel_members where channel_id = '${GRP}' and member_kind = 'crew' and member_id = '${A1}'`);
   assert.equal(inRoom(GRP, A1), true, '방장의 직접 삭제도 막힌다');
   assert.equal(last(asUser(U.a, `select public.msgr_crew_leave_channel('${GRP}', '${A1}')`)), 'removed', '주인은 친구 방에서도 뺄 수 있다');
@@ -103,4 +108,59 @@ test('주인이 방을 나가면 그 주인의 에이전트도 빠진다(규칙 
   assert.equal(inRoom(GRP, A1), true);
   asUser(U.a, `delete from public.msgr_channel_members where channel_id = '${GRP}' and member_kind = 'user' and member_id = '${U.a}'`);
   assert.equal(inRoom(GRP, A1), false);
+});
+
+// 분리 검수 HIGH(2026-10-02): 방장이 에이전트를 둔 사람을 내보내면 그 사람의 에이전트도 같이 빠져야 한다(규칙 14 트리거).
+// 옛 앱(스토어에 나가 있는 것)은 에이전트를 msgr_crew_leave_channel로 먼저 빼고 사람 행을 지운다 — 앞 단계가 거절되면 내보내기가 멈췄다.
+const kickOldOrder = (host, ch, member, crews) => { // 옛 앱 removeMember 순서: 에이전트마다 RPC(오류면 중단) → 사람 행 삭제
+  for (const id of crews) asUser(host, `select public.msgr_crew_leave_channel('${ch}', '${id}')`);
+  return last(asUser(host, `with d as (delete from public.msgr_channel_members where channel_id = '${ch}' and member_kind = 'user' and member_id = '${member}' returning 1) select count(*) from d`));
+};
+const userIn = (ch, u) => sql(`select count(*) from public.msgr_channel_members where channel_id = '${ch}' and member_kind = 'user' and member_id = '${u}'`) === '1';
+
+test('친구 그룹방 — 방장이 에이전트를 둔 친구를 내보내면 그 에이전트도 같이 빠진다(새 앱: 사람 행만 삭제)', { skip }, () => {
+  const g = last(asUser(U.b, `select public.msgr_dm_personal_group(array['${U.a}', '${U.d}']::uuid[], 'B방2')`));
+  assert.equal(join(U.a, g, A1), 'requested'); decideAll(U.b, g);
+  assert.equal(inRoom(g, A1), true);
+  assert.equal(last(asUser(U.b, `with d as (delete from public.msgr_channel_members where channel_id = '${g}' and member_kind = 'user' and member_id = '${U.a}' returning 1) select count(*) from d`)), '1', '방장이 사람 행을 지운다');
+  assert.equal(userIn(g, U.a), false); assert.equal(inRoom(g, A1), false, '규칙 14 — 주인과 함께 에이전트도 빠진다');
+});
+
+test('친구 그룹방 — 옛 앱 순서(에이전트 먼저 빼기 → 사람 빼기)로도 내보내기가 끝난다', { skip }, () => {
+  const g = last(asUser(U.b, `select public.msgr_dm_personal_group(array['${U.a}', '${U.e}']::uuid[], 'B방3')`));
+  assert.equal(join(U.a, g, A1), 'requested'); decideAll(U.b, g);
+  assert.equal(kickOldOrder(U.b, g, U.a, [A1]), '1', '첫 단계가 거절되지 않아 사람 행까지 지운다');
+  assert.equal(userIn(g, U.a), false); assert.equal(inRoom(g, A1), false);
+});
+
+test('조직 비공개 채널 — 방장이 에이전트를 둔 멤버를 옛 앱 순서로 내보낸다, 회사 에이전트는 남는다', { skip }, () => {
+  const priv = last(asUser(U.a, `select public.msgr_create_channel('${ORG}','private','Secret')`));
+  asUser(U.a, `insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${priv}', 'user', '${U.d}', '${U.a}')`);
+  assert.equal(join(U.d, priv, D1), 'requested'); decideAll(U.a, priv);
+  asUser(U.a, `select public.msgr_crew_join('${priv}', '${CO}')`);
+  assert.equal(inRoom(priv, D1), true); assert.equal(inRoom(priv, CO), true);
+  assert.equal(kickOldOrder(U.a, priv, U.d, [D1]), '1');
+  assert.equal(userIn(priv, U.d), false); assert.equal(inRoom(priv, D1), false, 'd의 에이전트도 빠진다');
+  assert.equal(inRoom(priv, CO), true, '회사 에이전트는 사람 주인이 없어 그대로');
+});
+
+test('조직 공개 채널 — 옛 앱 내보내기(에이전트 빼기 → 제외 목록에 사람)로 그 사람의 에이전트도 빠진다', { skip }, () => {
+  if (!inRoom(PUB, D1)) { assert.equal(join(U.d, PUB, D1), 'requested'); decideAll(U.a, PUB); }
+  assert.equal(inRoom(PUB, D1), true);
+  assert.equal(last(asUser(U.a, `select public.msgr_crew_leave_channel('${PUB}', '${D1}')`)), 'owner_only', '방장이 남의 에이전트를 빼려 하면 그대로 두고 정상 반환');
+  asUser(U.a, `update public.msgr_channels set excluded_user_ids = array['${U.d}']::uuid[] where id = '${PUB}'`);
+  assert.equal(inRoom(PUB, D1), false, '제외 목록에 든 사람의 에이전트도 빠진다(규칙 14 제외 트리거)');
+  asUser(U.a, `update public.msgr_channels set excluded_user_ids = '{}' where id = '${PUB}'`);
+});
+
+test('방장이 남의 에이전트만 단독으로 빼는 것은 여전히 막힌다 — RPC는 그대로 두고, 직접 삭제도 막힌다', { skip }, () => {
+  const priv = last(asUser(U.a, `select public.msgr_create_channel('${ORG}','private','Secret2')`));
+  asUser(U.a, `insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${priv}', 'user', '${U.d}', '${U.a}')`);
+  assert.equal(join(U.d, priv, D1), 'requested'); decideAll(U.a, priv);
+  assert.equal(last(asUser(U.a, `select public.msgr_crew_leave_channel('${priv}', '${D1}')`)), 'owner_only');
+  asUser(U.a, `delete from public.msgr_channel_members where channel_id = '${priv}' and member_kind = 'crew' and member_id = '${D1}'`);
+  assert.equal(inRoom(priv, D1), true, '사람은 남아 있고 에이전트만 빼는 것은 안 된다');
+  assert.equal(userIn(priv, U.d), true);
+  assert.equal(sql(`select count(*) from public.msgr_audit_log where action = 'crew_removed_from_channel' and meta->>'channel_id' = '${priv}'`), '0', '빼지 않았으니 감사 기록도 없다');
+  assert.equal(last(asUser(U.d, `select public.msgr_crew_leave_channel('${priv}', '${D1}')`)), 'removed', '주인은 언제든 뺀다');
 });

@@ -5,6 +5,7 @@
 --   회사 에이전트(조직 서비스 계정이 소유한 상주 에이전트 — msgr_crew_is_company)는 사람 주인이 없어 종전처럼 방장이 뺀다.
 --   주인이 방을 나가면 그 주인의 에이전트도 빠진다 — 규칙 14(20260918130000 트리거) 그대로, 이 파일은 바꾸지 않는다.
 -- 막는 길 셋: ① 참여 행 직접 삭제(RLS) ② msgr_crew_leave_channel RPC ③ 공개 채널의 '내보내기' = 제외 목록(excluded_crew_ids)에 넣기.
+-- ②는 방 관리자에게는 거절 대신 'owner_only'(아무것도 안 함)를 돌려준다 — 옛 앱의 사람 내보내기 순서(에이전트 RPC → 사람 행 삭제)가 멈추지 않게.
 
 create or replace function public.msgr_crew_removable(ch uuid, crew uuid) returns boolean
   language sql stable security definer set search_path = public, pg_temp as $$
@@ -31,6 +32,10 @@ begin
   if c.id is null or cr.id is null then raise exception 'msgr_bad_member' using errcode = '22023'; end if;
   by_owner := cr.owner_user_id = me;
   if not public.msgr_crew_removable(ch, crew) then
+    -- 방 관리자가 남의 에이전트를 빼려 하면 아무것도 하지 않고 'owner_only'를 돌려준다(예외 아님, 분리 검수 HIGH 2026-10-02).
+    -- 이미 나간 옛 앱은 사람을 내보낼 때 그 사람의 에이전트부터 이 함수로 빼고, 오류가 나면 사람 행 삭제까지 가지 못했다.
+    -- 사람 행이 지워지면 규칙 14 트리거(msgr_crews_follow_owner_out)가 그 사람의 에이전트를 같이 뺀다 — 에이전트만 단독으로 빼는 길은 여전히 없다.
+    if coalesce(public.msgr_can_manage_channel(ch), false) then return 'owner_only'; end if;
     raise exception 'msgr_crew_remove_owner_only' using errcode = '42501';
   end if;
 

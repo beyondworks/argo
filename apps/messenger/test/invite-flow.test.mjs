@@ -35,6 +35,31 @@ test('만들기 — 새 서버는 새 행 그대로, 옛 서버(열 없음)는 �
   assert.equal(denied.log.length, 1, '권한 거절은 옛 모양으로 재시도하지 않는다');
 });
 
+// 분리 검수 MEDIUM(2026-10-02): 서버는 넣기만으로 이전 링크를 취소하지 않는다(옛 앱 창 열고 닫기가 공유 링크를 죽이던 것).
+// '새 링크로 바꾸기'만 새 링크를 만든 뒤 msgr_invite_replace로 나머지를 취소한다 — 그 호출이 실패하면 새 링크를 지워 이전 링크가 그대로 남는다.
+test('만들기(replace) — 멤버·관리자 링크는 만든 뒤 msgr_invite_replace(keep=새 id), 그냥 만들기·게스트는 부르지 않는다', async () => {
+  const ok = fakeSb({ insert: () => ({ data: { id: 'n1', code: 'NEW' }, error: null }), rpc: { msgr_invite_replace: { data: 2, error: null } } });
+  assert.deepEqual(await createInvite(ok, { orgId: 'o', uid: 'u', role: 'member', channelIds: [], replace: true }, NOW), { id: 'n1', code: 'NEW', legacy: false });
+  assert.deepEqual(ok.log.map((x) => x.slice(0, 2)), [['insert', 'msgr_invites'], ['rpc', 'msgr_invite_replace']]);
+  assert.deepEqual(ok.log[1][2], { keep: 'n1' });
+  assert.equal('replace' in ok.log[0][2], false, '행에는 replace를 싣지 않는다');
+  const plain = fakeSb({ insert: () => ({ data: { id: 'n2', code: 'P' }, error: null }) });
+  await createInvite(plain, { orgId: 'o', uid: 'u', role: 'member' }, NOW);
+  assert.deepEqual(plain.log.map((x) => x[0]), ['insert'], '그냥 만들기는 아무것도 취소하지 않는다');
+  const guest = fakeSb({ insert: () => ({ data: { id: 'n3', code: 'G' }, error: null }) });
+  await createInvite(guest, { orgId: 'o', uid: 'u', role: 'guest', channelIds: ['p'], replace: true }, NOW);
+  assert.deepEqual(guest.log.map((x) => x[0]), ['insert'], '게스트 링크는 사람마다 — 바꾸기 대상 아님');
+});
+
+test('만들기(replace) 실패 — 바꾸기가 거절되면 새 링크를 지우고 오류, 서버에 함수가 없으면(적용 전) 새 링크만 둔다', async () => {
+  const denied = fakeSb({ insert: () => ({ data: { id: 'n1', code: 'NEW' }, error: null }), rpc: { msgr_invite_replace: { data: null, error: { code: 'P0001', message: 'msgr_invite_revoked' } } } });
+  await assert.rejects(createInvite(denied, { orgId: 'o', uid: 'u', role: 'admin', replace: true }, NOW), /msgr_invite_revoked/);
+  assert.deepEqual(denied.log.at(-1), ['delete', 'msgr_invites', 'n1', 'use_count', 0], '새 링크를 지운다(안 쓰였을 때만) — 이전 링크가 그대로 남는다');
+  const old = fakeSb({ insert: () => ({ data: { id: 'n2', code: 'NEW' }, error: null }) }); // rpc 기본 = 함수 없음
+  assert.deepEqual(await createInvite(old, { orgId: 'o', uid: 'u', role: 'member', replace: true }, NOW), { id: 'n2', code: 'NEW', legacy: false });
+  assert.ok(!old.log.some((x) => x[0] === 'delete'));
+});
+
 test('미리보기 — 서버에 없으면 null(옛 즉시 수락으로), 틀린 코드는 예외', async () => {
   assert.equal(await previewInvite(fakeSb(), 'c'), null);
   const sb = fakeSb({ rpc: { msgr_invite_preview: { data: { state: 'valid', org_name: 'Lean' }, error: null } } });

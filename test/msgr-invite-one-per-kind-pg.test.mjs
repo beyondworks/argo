@@ -1,4 +1,4 @@
-// 조직 초대 링크는 멤버 하나·관리자 하나 + 지난 초대 30일 보존(20261002130000, 5차 피드백). 실행: bash scripts/billing-pg-drill.sh test/msgr-invite-one-per-kind-pg.test.mjs
+// 조직 초대 링크는 멤버 하나·관리자 하나(새 앱의 '새 링크로 바꾸기' = msgr_invite_replace) + 지난 초대 30일 보존(20261002130000, 5차 피드백). 실행: bash scripts/billing-pg-drill.sh test/msgr-invite-one-per-kind-pg.test.mjs
 import test, { before } from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
@@ -59,20 +59,47 @@ before(() => {
 const mk = (role) => last(asUser(U.a, `insert into public.msgr_invites (org_id, role, created_by) values ('${ORG}', '${role}', '${U.a}') returning id`));
 const revoked = (id) => sql(`select revoked_at is not null from public.msgr_invites where id = '${id}'`) === 't';
 
-test('멤버 링크를 새로 만들면 이전 멤버 링크가 취소된다 — 관리자 링크는 따로 하나', { skip }, () => {
-  const m1 = mk('member'); const a1 = mk('admin');
-  assert.equal(revoked(m1), false); assert.equal(revoked(a1), false, '종류가 다르면 서로 건드리지 않는다');
-  const m2 = mk('member');
-  assert.equal(revoked(m1), true, '이전 멤버 링크 취소'); assert.equal(revoked(m2), false); assert.equal(revoked(a1), false);
-  const a2 = mk('admin');
-  assert.equal(revoked(a1), true); assert.equal(revoked(a2), false); assert.equal(revoked(m2), false);
-  assert.equal(sql(`select count(*) from public.msgr_invites where org_id = '${ORG}' and role in ('member','admin') and not for_node and revoked_at is null`), '2', '쓸 수 있는 조직 링크는 종류마다 하나');
+const replace = (id) => last(asUser(U.a, `select public.msgr_invite_replace('${id}')`));
+const audits = (id) => sql(`select count(*) from public.msgr_audit_log where action = 'invite.revoke' and target_kind = 'invite' and target_id = '${id}'`);
+
+// 분리 검수 MEDIUM(2026-10-02): 옛 앱(스토어 버전)은 초대 창을 열자마자 링크를 만들고, 복사하지 않고 닫으면 그 링크를 지운다.
+// 새 링크를 넣을 때마다 이전 링크를 취소하면, 창을 열고 닫기만 해도 밖에 뿌린 링크가 말없이 죽는다 — 넣기만으로는 아무것도 취소하지 않는다.
+test('새 링크를 넣기만 해서는 이전 링크가 취소되지 않는다 — 옛 앱이 창을 열고(만들고) 닫아도(지움) 공유한 링크가 산다', { skip }, () => {
+  const shared = mk('member');
+  const opened = mk('member'); // 옛 앱: 창을 열면 바로 만든다
+  assert.equal(revoked(shared), false, '공유한 링크는 그대로');
+  asUser(U.a, `delete from public.msgr_invites where id = '${opened}' and use_count = 0`); // 옛 앱: 복사 안 하고 닫으면 지운다
+  assert.equal(revoked(shared), false);
+  const code = sql(`select code from public.msgr_invites where id = '${shared}'`);
+  assert.equal(last(asUser(U.b, `select public.msgr_accept_invite_v2('${code}')->>'org_id'`)), ORG, '공유한 링크로 들어올 수 있다');
 });
 
-test('취소된 이전 링크로는 들어올 수 없다(새 링크로 바꾸기)', { skip }, () => {
-  const old = last(asUser(U.a, `insert into public.msgr_invites (org_id, role, created_by) values ('${ORG}', 'member', '${U.a}') returning code`));
-  mk('member');
-  fails(asUserRaw(U.b, `select public.msgr_accept_invite_v2('${old}')`), /msgr_invite_revoked/, '이전 링크 수락');
+test('새 링크로 바꾸기(msgr_invite_replace) — 같은 종류의 다른 살아 있는 링크만 취소하고, 취소마다 invite.revoke 감사를 남긴다', { skip }, () => {
+  sql(`delete from public.msgr_invites where org_id = '${ORG}'`);
+  const m1 = mk('member'); const m2 = mk('member'); const a1 = mk('admin');
+  const gone = last(sql(`insert into public.msgr_invites (org_id, role, created_by, expires_at) values ('${ORG}', 'member', '${U.a}', now() - interval '1 day') returning id`)); // 이미 만료 — 다시 쓸 일 없음
+  const m3 = mk('member');
+  assert.equal(replace(m3), '2', '살아 있는 이전 멤버 링크 둘');
+  assert.equal(revoked(m1), true); assert.equal(revoked(m2), true); assert.equal(revoked(m3), false, '새 링크는 산다');
+  assert.equal(revoked(a1), false, '관리자 링크는 따로 하나');
+  assert.equal(revoked(gone), false, '이미 못 쓰는 링크는 건드리지 않는다(쓰기 0)');
+  assert.equal(audits(m1), '1'); assert.equal(audits(m2), '1'); assert.equal(audits(m3), '0'); assert.equal(audits(gone), '0');
+  assert.equal(sql(`select actor_user_id from public.msgr_audit_log where action = 'invite.revoke' and target_id = '${m1}'`), U.a, '누가 바꿨는지');
+  assert.equal(replace(m3), '0', '두 번째는 할 일이 없다');
+  const a2 = mk('admin'); assert.equal(replace(a2), '1'); assert.equal(revoked(a1), true); assert.equal(revoked(m3), false);
+  assert.equal(sql(`select count(*) from public.msgr_invites where org_id = '${ORG}' and role in ('member','admin') and not for_node and revoked_at is null and (expires_at is null or expires_at > now())`), '2', '쓸 수 있는 조직 링크는 종류마다 하나');
+});
+
+test('바꾸기 권한·대상 — 관리자만, 취소된 링크로는 못 바꾸고, 취소된 이전 링크로는 들어올 수 없다', { skip }, () => {
+  const old = mk('member'); const oldCode = sql(`select code from public.msgr_invites where id = '${old}'`);
+  const neo = mk('member');
+  fails(asUserRaw(U.c, `select public.msgr_invite_replace('${neo}')`), /msgr_invite_not_found/, '조직 밖 사람');
+  fails(psqlRaw(['-A', '-t', '-c', `set role anon; select public.msgr_invite_replace('${neo}')`]), /permission denied/, 'anon');
+  assert.equal(revoked(old), false, '거절된 호출은 아무것도 취소하지 않는다');
+  replace(neo);
+  fails(asUserRaw(U.c, `select public.msgr_accept_invite_v2('${oldCode}')`), /msgr_invite_revoked/, '이전 링크 수락');
+  fails(asUserRaw(U.a, `select public.msgr_invite_replace('${old}')`), /msgr_invite_revoked/, '취소된 링크를 남기고 나머지를 취소하지 않는다');
+  assert.equal(revoked(neo), false);
 });
 
 test('노드 코드·게스트 링크는 이 규칙 밖 — 멤버 링크를 취소하지도, 취소되지도 않는다', { skip }, () => {
@@ -81,8 +108,10 @@ test('노드 코드·게스트 링크는 이 규칙 밖 — 멤버 링크를 취
   assert.equal(revoked(m), false, '노드 코드가 멤버 링크를 취소하지 않는다');
   const g1 = last(asUser(U.a, `insert into public.msgr_invites (org_id, role, created_by, channel_ids, max_uses) values ('${ORG}', 'guest', '${U.a}', array['${PRIV}']::uuid[], 1) returning id`));
   const g2 = last(asUser(U.a, `insert into public.msgr_invites (org_id, role, created_by, channel_ids, max_uses) values ('${ORG}', 'guest', '${U.a}', array['${PRIV}']::uuid[], 1) returning id`));
-  mk('member');
-  assert.equal(revoked(node), false, '멤버 링크를 새로 만들어도 노드 코드는 그대로');
+  replace(mk('member'));
+  assert.equal(revoked(node), false, '멤버 링크를 바꿔도 노드 코드는 그대로');
+  assert.equal(last(asUser(U.a, `select public.msgr_invite_replace('${node}')`)), '0', '노드 코드로 바꾸기는 아무것도 하지 않는다');
+  assert.equal(last(asUser(U.a, `select public.msgr_invite_replace('${g1}')`)), '0', '게스트 링크도 마찬가지');
   assert.equal(revoked(g1), false); assert.equal(revoked(g2), false, '게스트 링크는 여러 개');
 });
 

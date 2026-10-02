@@ -590,7 +590,7 @@ function PhoneTabs({ active, onPick, badges = {} }) {
     <nav className="msgr-tabbar" aria-label={t('phone.tabs')}>
       <div className="msgr-island" role="tablist">
         {PHONE_TABS.map((k) => { const n = badges[k] || 0; const label = t(`phone.tab.${k}`); return (
-          <button key={k} type="button" role="tab" data-tour={`tab-${k}`} aria-selected={active === k} className={active === k ? 'on' : ''} onClick={() => onPick(k)} aria-label={n > 0 ? t(`phone.tab.badge.${k}`, { tab: label, n: badgeText(n) }) : label}>
+          <button key={k} type="button" role="tab" aria-selected={active === k} className={active === k ? 'on' : ''} onClick={() => onPick(k)} aria-label={n > 0 ? t(`phone.tab.badge.${k}`, { tab: label, n: badgeText(n) }) : label}>
             <span className="ic"><I name={PHONE_TAB_ICONS[k]} size={22} filled={active === k} /></span>{n > 0 && <span className="msgr-tabn" aria-hidden="true">{badgeText(n)}</span>}
           </button>
         ); })}
@@ -632,7 +632,7 @@ function PhoneHead({ title, left = null, actions = [], children = null }) {
       <div className="ph-head-l">{left ?? <h1 className="ph-title">{title}</h1>}</div>
       <div className="ph-head-r">
         {actions.filter(Boolean).map((a) => (
-          <button key={a.key} type="button" className={`ph-hbtn${a.on ? ' on' : ''}`} onClick={a.run} aria-label={a.label} title={a.label} data-tour={a.tour} aria-haspopup={a.menu ? 'menu' : undefined} aria-expanded={a.menu ? !!a.on : undefined}><I name={a.icon} size={22} /></button>
+          <button key={a.key} type="button" className={`ph-hbtn${a.on ? ' on' : ''}`} onClick={a.run} aria-label={a.label} title={a.label} aria-haspopup={a.menu ? 'menu' : undefined} aria-expanded={a.menu ? !!a.on : undefined}><I name={a.icon} size={22} /></button>
         ))}
       </div>
       {children}
@@ -859,7 +859,7 @@ function Shell({ session }) {
   // 폰(2026-10-01, 유건 제보 "다 읽어도 아이콘 '1'이 남는다"): iOS는 앱이 앞에 있을 때 받은 푸시의 배지를 적용하지 않는다(플러그인 willPresent → [],
   // 시뮬레이터 실측). 그래서 위 재전송 푸시는 앞에 있는 폰에서 버려지고, 아이콘에는 앱이 쓴 숫자(예전엔 모든 채널 합계 — 서버와 다른 셈법)가 남았다.
   // → 폰은 서버 배지(msgr_my_badge, 푸시와 같은 정의)를 읽어 앱이 직접 쓴다. 읽기 RPC뿐 — 서버 쓰기·pg_net·APNs 호출이 없다(재전송 RPC는 데스크톱만).
-  // Android는 아이콘 숫자가 트레이 알림 수라서 읽은 채널의 알림을 지운다.
+  // Android는 아이콘 숫자가 트레이 알림 수라서 다 읽은 채널의 알림만 지운다 — 남길 목록은 안 읽은 글이 있는 모든 채널(msgr_my_badge의 unread, 배지 n이 아니다).
   const legacyBadge = useRef(null); // 서버 함수가 아직 없을 때(라이브 적용 전) 쓸 예전 숫자 — 아래 렌더에서 갱신
   const iconBadge = useMemo(() => (isMobileNative ? createIconBadge({
     fetchRows: async () => { const { data, error } = await supabase.rpc('msgr_my_badge'); if (error) throw error; return data ?? []; },
@@ -2070,21 +2070,18 @@ function Shell({ session }) {
     document.addEventListener('touchmove', f, { passive: false }); window.addEventListener('pointerup', end); window.addEventListener('pointercancel', end);
     return () => { document.removeEventListener('touchmove', f); window.removeEventListener('pointerup', end); window.removeEventListener('pointercancel', end); };
   }, []);
-  // 채팅·채널 탭 검색의 본문 찾기(기능 점검 D9) — 목록은 마지막 글만 알아서 예전 대화를 못 찾았다. 전체 검색(runSearch)과 같은 조회·같은 차단 거르기로
-  // 지금 공간의 글에서 맞은 방 id만 모은다. 검색 칸을 연 동안, 두 글자부터, 입력이 300ms 멈췄을 때 한 번(유휴 0, 칸을 닫으면 요청 없음).
+  // 채팅·채널 탭 검색의 본문 찾기(기능 점검 D9) — 목록은 마지막 글만 알아서 예전 대화를 못 찾았다. 서버 msgr_tab_search가 내가 든 방만, 방마다 최근 500개 글
+  // 안에서 찾아 맞은 방 id만 돌려준다(차단한 사람·숨긴 에이전트 글 제외 — 20261002150000). 공간 전체 글을 입력마다 ilike로 훑던 것을 줄였다(분리 검수 MEDIUM 2026-10-02).
+  // 검색 칸을 연 동안, 두 글자부터, 입력이 300ms 멈췄을 때 한 번(유휴 0, 칸을 닫으면 요청 없음). 차단·숨김이 바뀌면 다시 찾는다.
   const [tabHits, setTabHits] = useState(null); // { space, q, ids: Set }
   const tabBodyQ = isPhone && (page === 'chats' || page === 'channels') ? tabBodyQuery(tabQ) : null;
   useEffect(() => {
     if (!tabBodyQ || !uid) { setTabHits(null); return undefined; }
     const space = orgId; let off = false;
     const timer = setTimeout(async () => {
-      const like = `%${tabBodyQ.replace(/[%_\\]/g, (m) => `\\${m}`)}%`;
-      const sel = supabase.from('msgr_messages').select('channel_id, author_kind, crew_id');
-      const base = blockedIds.size ? sel.or(`author_user_id.is.null,author_user_id.not.in.(${[...blockedIds].join(',')})`) : sel;
-      const scoped = space === PERSONAL ? base.is('org_id', null) : base.eq('org_id', space);
-      const rows = await q(scoped.is('deleted_at', null).ilike('body', like).order('id', { ascending: false }).limit(300)).catch((e) => { pushDiag('tab-search', e?.message ?? e); return []; }); // ponytail: 최근 300건 안에서만 — 방이 더 오래된 글뿐이면 '전체에서 찾기'로
+      const rows = await q(supabase.rpc('msgr_tab_search', { org: space === PERSONAL ? null : space, q: tabBodyQ })).catch((e) => { pushDiag('tab-search', e?.message ?? e); return []; }); // 방마다 최근 500개 글 안에서만 — 더 오래된 글은 '전체에서 찾기'로
       if (off) return;
-      setTabHits({ space, q: tabBodyQ, ids: new Set(rows.filter((m) => !(m.author_kind === 'crew' && mutedCrewIds.has(m.crew_id))).map((m) => m.channel_id)) });
+      setTabHits({ space, q: tabBodyQ, ids: new Set((rows ?? []).map((r) => r.channel_id)) });
     }, 300);
     return () => { off = true; clearTimeout(timer); };
   }, [tabBodyQ, uid, orgId, blockedIds, mutedCrewIds]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -2479,9 +2476,9 @@ function Shell({ session }) {
   }; // 다른 조직이면 알림 탭과 같은 길(decideNav)이 공간을 바꿔 연다. 참여 요청은 그 방 설정창까지
   const phoneRoot = (
     <div className="ph-root" data-tab={rootTab}>
-      {rootTab === 'friends' && (<PhoneHead title={t('phone.tab.friends')} actions={[searchAct, { key: 'add', icon: 'personplus', label: t('friends.add'), tour: 'hdr-add-friend', run: () => { setTabQ(null); setFriendAdd(true); } }, gearAct]} />)}
-      {rootTab === 'chats' && (<PhoneHead title={t('phone.tab.chats')} actions={[searchAct, { key: 'new', icon: 'chatplus', label: t('dm.new'), tour: 'hdr-new-chat', run: () => { if (!isPersonal) return; setTabQ(null); setDmGroup(true); } }, gearAct]} />)}
-      {rootTab === 'channels' && (<PhoneHead left={orgRow ? <button type="button" className="ph-orgtitle" data-tour="org-switch" onClick={() => { setChPlus(false); setOrgMenu((v) => !v); }} aria-haspopup="menu" aria-expanded={orgMenu} aria-label={t('phone.org.switchNamed', { name: orgRow.name })}><I name="hash" size={22} className="ph-orgmark" /><span className="name">{orgRow.name}</span><SpaceBadge c={otherOrgsUnread} /><I name="caret" size={18} className="caret" /></button> : null} title={t('phone.tab.channels')} actions={[onOrgTab && !orgBlocked && searchAct, onOrgTab && !orgBlocked && { key: 'plus', icon: 'plus', label: t('phone.ch.add'), menu: true, on: chPlus, run: () => { setOrgMenu(false); setChPlus((v) => !v); } }, gearAct]}>{orgMenuPop}{chPlusPop}</PhoneHead>)}
+      {rootTab === 'friends' && (<PhoneHead title={t('phone.tab.friends')} actions={[searchAct, { key: 'add', icon: 'personplus', label: t('friends.add'), run: () => { setTabQ(null); setFriendAdd(true); } }, gearAct]} />)}
+      {rootTab === 'chats' && (<PhoneHead title={t('phone.tab.chats')} actions={[searchAct, { key: 'new', icon: 'chatplus', label: t('dm.new'), run: () => { if (!isPersonal) return; setTabQ(null); setDmGroup(true); } }, gearAct]} />)}
+      {rootTab === 'channels' && (<PhoneHead left={orgRow ? <button type="button" className="ph-orgtitle" onClick={() => { setChPlus(false); setOrgMenu((v) => !v); }} aria-haspopup="menu" aria-expanded={orgMenu} aria-label={t('phone.org.switchNamed', { name: orgRow.name })}><I name="hash" size={22} className="ph-orgmark" /><span className="name">{orgRow.name}</span><SpaceBadge c={otherOrgsUnread} /><I name="caret" size={18} className="caret" /></button> : null} title={t('phone.tab.channels')} actions={[onOrgTab && !orgBlocked && searchAct, onOrgTab && !orgBlocked && { key: 'plus', icon: 'plus', label: t('phone.ch.add'), menu: true, on: chPlus, run: () => { setOrgMenu(false); setChPlus((v) => !v); } }, gearAct]}>{orgMenuPop}{chPlusPop}</PhoneHead>)}
       {rootTab === 'agents' && (<PhoneHead title={t('phone.tab.agents')} actions={[searchAct, { ...gearAct, run: () => openSettings(null, 'agents') }]} />)}
       {rootTab === 'memory' && (<PhoneHead left={orgRow ? <button type="button" className="ph-orgtitle" onClick={() => setOrgMenu((v) => !v)} aria-haspopup="menu" aria-expanded={orgMenu} aria-label={t('phone.org.switchNamed', { name: orgRow.name })}><I name="folder" size={22} className="ph-orgmark" /><span className="name">{orgRow.name}</span><I name="caret" size={18} className="caret" /></button> : null} title={t('phone.tab.memory')} actions={[onOrgTab && !orgBlocked && searchAct, { ...gearAct, run: () => openSettings(null, 'memory') }]}>{orgMenuPop}</PhoneHead>)}
       {searchBar}
@@ -2554,7 +2551,7 @@ function Shell({ session }) {
         {rootTab === 'agents' && (<>
           {!tabQText.trim() && <div className="ph-apcard-wrap">
             <div className={`ph-apcard${approvalItems.length ? ' on' : ''}`}>
-              <button type="button" className="ph-aphead" data-tour="approvals-card" onClick={() => openApproval(approvalItems[0])} disabled={!approvalItems.length}>
+              <button type="button" className="ph-aphead" onClick={() => openApproval(approvalItems[0])} disabled={!approvalItems.length}>
                 <span className="ph-apic"><I name="stamp" size={18} /></span><span className="ph-kbody"><span className="name">{t('phone.agents.approvals', { n: approvalItems.length })}</span><span className="snip">{approvalItems.length ? t('phone.agents.approvals.tap') : t('phone.agents.approvals.none')}</span></span>
               </button>
               {approvalItems.slice(0, 3).map((it) => (
@@ -2839,6 +2836,7 @@ function CrewSheet({ crew, org, uid, me, members, policy, channelId, channelName
     const { data, error } = await supabase.rpc('msgr_crew_leave_channel', { ch: channelId, crew: crew.id });
     setBusy(false);
     if (error) return onError(missingSchema(error) ? t('crew.leaveHere.upgrade') : friendlyErr(error.message, t));
+    if (data === 'owner_only') return onError(t('err.crewRemoveOwnerOnly')); // 남의 에이전트 — 서버가 아무것도 하지 않았다(20261002120000)
     onNote(t(data === 'removed' ? 'crew.leaveHere.done' : 'crew.leaveHere.absent', { name: crew.display_name, channel: channelName })); onChanged();
   };
   const save = async (nextAllow, nextList) => {
@@ -2989,23 +2987,26 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
     onNote(koJosa(t(ok ? 'ch.crew.join.approved' : 'ch.crew.join.rejected', { name: pendingCrewLabel({ crewId: r.crew_id, crews, requesterName: nameOfUser(r.requested_by), t }) }))); // 조사는 이름에 맞춰(영문 문장엔 바꿀 조사가 없다)
     await loadJoinReqs(); await onChanged();
   };
-  // 규칙 14: 사람이 빠지면 그 사람의 에이전트도 같이 빠진다. 서버(20260918130000)가 최종 강제하고, 앱은 그 마이그레이션이 없는
-  // 서버를 위해 먼저 이 방에서 뺀다. 빼는 함수가 없는 서버면 'old'를 돌려 종전 차단으로 돌아간다(주인 없이 죽은 에이전트를 남기지 않게).
+  // 규칙 14: 사람이 빠지면 그 사람의 에이전트도 같이 빠진다 — 서버 트리거(20260918130000 msgr_crews_follow_owner_out·_excluded)가 한다.
+  // 앱이 먼저 빼는 것은 내 에이전트뿐이다(남의 에이전트 빼기는 주인만 — 20261002120000. 방장이 부르면 서버가 'owner_only'로 아무것도 안 한다).
+  // 빼는 함수가 없는 서버면 'old'를 돌려 종전 차단으로 돌아간다.
   const dropCrews = async (ids) => {
     for (const id of ids) {
       const r = await supabase.rpc('msgr_crew_leave_channel', { ch: channel.id, crew: id });
       if (r.error) return missingSchema(r.error) ? 'old' : friendlyErr(r.error.message, t);
+      if (r.data === 'owner_only') return t('err.crewRemoveOwnerOnly');
     }
     return null;
   };
+  const myCrewsHere = (id, inHere) => (id === uid ? crews.filter((c) => c.owner_user_id === uid && inHere(c.id)).map((c) => c.id) : []); // 내보내는 사람이 나일 때만 — 남의 에이전트는 서버 트리거가 사람과 함께 뺀다(분리 검수 HIGH 2026-10-02)
   const leaveCrew = async (id) => { // 주인이 방장이 아니어도 자기 에이전트는 이 방에서 뺄 수 있다(데려온 것이 동의라면 빼는 것은 동의 철회)
     setBusy(true); const err = await dropCrews([id]); setBusy(false);
     if (err) return onError(err === 'old' ? t('crew.leaveHere.upgrade') : err);
     await onChanged();
   };
   const removeMember = async (kind, id) => {
-    const owned = kind === 'user' ? crews.filter((c) => c.owner_user_id === id && chMembers.some((m) => m.member_kind === 'crew' && m.member_id === c.id)).map((c) => c.id) : [];
-    if (owned.length) { setBusy(true); const err = await dropCrews(owned); setBusy(false); if (err) return onError(err === 'old' ? t('ch.remove.ownerBlocked') : err); } // 검수 HIGH-3: 소유자만 빠지면 크루가 조용히 죽는다
+    const owned = kind === 'user' ? myCrewsHere(id, (cid) => chMembers.some((m) => m.member_kind === 'crew' && m.member_id === cid)) : [];
+    if (owned.length) { setBusy(true); const err = await dropCrews(owned); setBusy(false); if (err) return onError(err === 'old' ? t('ch.remove.ownerBlocked') : err); }
     setBusy(true);
     const res = await supabase.from('msgr_channel_members').delete().eq('channel_id', channel.id).eq('member_kind', kind).eq('member_id', id).select('member_id');
     setBusy(false);
@@ -3016,7 +3017,7 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
   // 공개 채널 '내보내기' = 채널 제외 목록(행 삭제가 아님 — 공개 채널 구성원은 암묵). 되돌리기는 목록에서 뺀다. 최종은 RLS(msgr_can_manage_channel·msgr_can_read_channel).
   const excludedUsers = channel.excluded_user_ids ?? []; const excludedCrews = channel.excluded_crew_ids ?? [];
   const excludeMember = async (kind, id) => {
-    const owned = kind === 'user' ? crews.filter((c) => c.owner_user_id === id && chCrews.some((x) => x.id === c.id)).map((c) => c.id) : [];
+    const owned = kind === 'user' ? myCrewsHere(id, (cid) => chCrews.some((x) => x.id === cid)) : [];
     if (owned.length) { setBusy(true); const err = await dropCrews(owned); setBusy(false); if (err) return onError(err === 'old' ? t('ch.remove.ownerBlocked') : err); } // 규칙 14 — removeMember와 같은 처리
     const key = kind === 'user' ? 'excluded_user_ids' : 'excluded_crew_ids'; const cur = kind === 'user' ? excludedUsers : excludedCrews;
     if (!cur.includes(id)) await upd({ [key]: [...cur, id] }, t('ch.exclude.done'));

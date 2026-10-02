@@ -27,10 +27,12 @@ export function InviteDialog({ org, channels, isAdmin, hostOf = new Set(), initi
   const cur = useRef(null); // { id, code, copied }
   const drop = (inv) => { if (inv && !inv.copied && discard) discard(inv.id).catch(() => {}); };
   // 조직 멤버 링크는 하나(5차 피드백, 서버 20261002130000) — 쓸 수 있는 링크가 있으면 그 링크를 보여 주고 설정을 잠근다(base).
-  // '새 링크로 바꾸기'(확인)를 누르면 잠금을 풀고 새 링크를 만든다 — 서버가 같은 트랜잭션에서 이전 링크를 취소한다. 복사한 링크도 다시 잠근다
+  // '새 링크로 바꾸기'(확인)를 누르면 잠금을 풀고 새 링크를 만든 뒤 서버가 이전 링크를 취소한다(createInvite replace → msgr_invite_replace —
+  // 넣기만으로는 취소하지 않는다, 분리 검수 MEDIUM 2026-10-02). 복사한 링크도 다시 잠근다
   // (잠그지 않으면 설정을 바꾸는 순간 새 링크가 만들어져, 이미 보낸 링크가 말없이 취소된다). undefined = 아직 읽는 중.
   const [base, setBase] = useState(() => (loadCurrent && perm.member ? undefined : null));
   const [asking, setAsking] = useState(false);
+  const replacing = useRef(false); // '새 링크로 바꾸기'를 확인한 뒤 다음으로 만드는 링크가 이전 링크를 대신한다
   const readBase = () => loadCurrent().then((l) => { if (seq.current >= 0) setBase(l ?? null); }).catch(() => { if (seq.current >= 0) setBase(null); });
   useEffect(() => { if (base === undefined) readBase(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const locked = s.role === 'member' && !!base;
@@ -46,7 +48,8 @@ export function InviteDialog({ org, channels, isAdmin, hostOf = new Set(), initi
     const my = ++seq.current; drop(cur.current); cur.current = null; setMade(null); setErr(null); setBusy(!needChannel && want != null); // 화면에서 지운 링크는 복사할 수 없다 — 안 건너갔으면 바로 정리
     if (needChannel || want == null) return undefined;
     const timer = setTimeout(async () => {
-      try { const inv = await create({ role: s.role, channelIds: picked, expiryDays: s.expiryDays, maxUses: s.role === 'guest' ? 1 : s.maxUses, guestDays: s.guestDays });
+      try { const inv = await create({ role: s.role, channelIds: picked, expiryDays: s.expiryDays, maxUses: s.role === 'guest' ? 1 : s.maxUses, guestDays: s.guestDays, replace: replacing.current });
+        replacing.current = false;
         if (seq.current !== my) { drop(inv); return; } // 늦게 온 옛 응답·닫힌 창 — 보여 준 적 없는 링크
         cur.current = { ...inv, copied: false };
         setMade({ code: inv.code, key: want }); setBusy(false);
@@ -74,7 +77,7 @@ export function InviteDialog({ org, channels, isAdmin, hostOf = new Set(), initi
   };
   const shownIds = locked ? (base.channel_ids ?? []) : picked;
   const names = shownIds.map((id) => eligible.find((c) => c.id === id)?.name).filter(Boolean);
-  const replace = () => { const keep = (base.channel_ids ?? []).filter((id) => { const c = eligible.find((x) => x.id === id); return c && channelPick(c, { isAdmin, hostOf }, 'member').ok; }); setPicked(keep); setAsking(false); setBase(null); }; // 같은 채널로 새 링크 — 바꾸고 싶으면 그다음에 고른다
+  const replace = () => { const keep = (base.channel_ids ?? []).filter((id) => { const c = eligible.find((x) => x.id === id); return c && channelPick(c, { isAdmin, hostOf }, 'member').ok; }); setPicked(keep); setAsking(false); replacing.current = true; setBase(null); }; // 같은 채널로 새 링크 — 바꾸고 싶으면 그다음에 고른다
   // 부제 = 행선지 문장(칩과 겹치는 채널 나열 대신). 채널이 없으면 경고색 — 멤버는 복사를 막지 않고, 게스트는 채널을 고를 때까지 링크가 없다
   const sub = needChannel ? t('inv.sub.guestNone') : names.length === 0 ? t('inv.sub.none') : names.length === 1 ? t('inv.sub.one', { name: names[0] }) : t('inv.sub.more', { name: names[0], n: names.length - 1 });
   const lockTip = (why) => t(why === 'guestPrivate' ? 'inv.ch.guestPrivateTip' : 'inv.ch.lockedTip');
