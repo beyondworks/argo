@@ -2825,6 +2825,7 @@ function CrewSheet({ crew, org, uid, me, members, policy, channelId, channelName
     const { data, error } = await supabase.rpc('msgr_crew_leave_channel', { ch: channelId, crew: crew.id });
     setBusy(false);
     if (error) return onError(missingSchema(error) ? t('crew.leaveHere.upgrade') : friendlyErr(error.message, t));
+    if (data === 'owner_only') return onError(t('err.crewRemoveOwnerOnly')); // 남의 에이전트 — 서버가 아무것도 하지 않았다(20261002120000)
     onNote(t(data === 'removed' ? 'crew.leaveHere.done' : 'crew.leaveHere.absent', { name: crew.display_name, channel: channelName })); onChanged();
   };
   const save = async (nextAllow, nextList) => {
@@ -2975,23 +2976,26 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
     onNote(koJosa(t(ok ? 'ch.crew.join.approved' : 'ch.crew.join.rejected', { name: pendingCrewLabel({ crewId: r.crew_id, crews, requesterName: nameOfUser(r.requested_by), t }) }))); // 조사는 이름에 맞춰(영문 문장엔 바꿀 조사가 없다)
     await loadJoinReqs(); await onChanged();
   };
-  // 규칙 14: 사람이 빠지면 그 사람의 에이전트도 같이 빠진다. 서버(20260918130000)가 최종 강제하고, 앱은 그 마이그레이션이 없는
-  // 서버를 위해 먼저 이 방에서 뺀다. 빼는 함수가 없는 서버면 'old'를 돌려 종전 차단으로 돌아간다(주인 없이 죽은 에이전트를 남기지 않게).
+  // 규칙 14: 사람이 빠지면 그 사람의 에이전트도 같이 빠진다 — 서버 트리거(20260918130000 msgr_crews_follow_owner_out·_excluded)가 한다.
+  // 앱이 먼저 빼는 것은 내 에이전트뿐이다(남의 에이전트 빼기는 주인만 — 20261002120000. 방장이 부르면 서버가 'owner_only'로 아무것도 안 한다).
+  // 빼는 함수가 없는 서버면 'old'를 돌려 종전 차단으로 돌아간다.
   const dropCrews = async (ids) => {
     for (const id of ids) {
       const r = await supabase.rpc('msgr_crew_leave_channel', { ch: channel.id, crew: id });
       if (r.error) return missingSchema(r.error) ? 'old' : friendlyErr(r.error.message, t);
+      if (r.data === 'owner_only') return t('err.crewRemoveOwnerOnly');
     }
     return null;
   };
+  const myCrewsHere = (id, inHere) => (id === uid ? crews.filter((c) => c.owner_user_id === uid && inHere(c.id)).map((c) => c.id) : []); // 내보내는 사람이 나일 때만 — 남의 에이전트는 서버 트리거가 사람과 함께 뺀다(분리 검수 HIGH 2026-10-02)
   const leaveCrew = async (id) => { // 주인이 방장이 아니어도 자기 에이전트는 이 방에서 뺄 수 있다(데려온 것이 동의라면 빼는 것은 동의 철회)
     setBusy(true); const err = await dropCrews([id]); setBusy(false);
     if (err) return onError(err === 'old' ? t('crew.leaveHere.upgrade') : err);
     await onChanged();
   };
   const removeMember = async (kind, id) => {
-    const owned = kind === 'user' ? crews.filter((c) => c.owner_user_id === id && chMembers.some((m) => m.member_kind === 'crew' && m.member_id === c.id)).map((c) => c.id) : [];
-    if (owned.length) { setBusy(true); const err = await dropCrews(owned); setBusy(false); if (err) return onError(err === 'old' ? t('ch.remove.ownerBlocked') : err); } // 검수 HIGH-3: 소유자만 빠지면 크루가 조용히 죽는다
+    const owned = kind === 'user' ? myCrewsHere(id, (cid) => chMembers.some((m) => m.member_kind === 'crew' && m.member_id === cid)) : [];
+    if (owned.length) { setBusy(true); const err = await dropCrews(owned); setBusy(false); if (err) return onError(err === 'old' ? t('ch.remove.ownerBlocked') : err); }
     setBusy(true);
     const res = await supabase.from('msgr_channel_members').delete().eq('channel_id', channel.id).eq('member_kind', kind).eq('member_id', id).select('member_id');
     setBusy(false);
@@ -3002,7 +3006,7 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
   // 공개 채널 '내보내기' = 채널 제외 목록(행 삭제가 아님 — 공개 채널 구성원은 암묵). 되돌리기는 목록에서 뺀다. 최종은 RLS(msgr_can_manage_channel·msgr_can_read_channel).
   const excludedUsers = channel.excluded_user_ids ?? []; const excludedCrews = channel.excluded_crew_ids ?? [];
   const excludeMember = async (kind, id) => {
-    const owned = kind === 'user' ? crews.filter((c) => c.owner_user_id === id && chCrews.some((x) => x.id === c.id)).map((c) => c.id) : [];
+    const owned = kind === 'user' ? myCrewsHere(id, (cid) => chCrews.some((x) => x.id === cid)) : [];
     if (owned.length) { setBusy(true); const err = await dropCrews(owned); setBusy(false); if (err) return onError(err === 'old' ? t('ch.remove.ownerBlocked') : err); } // 규칙 14 — removeMember와 같은 처리
     const key = kind === 'user' ? 'excluded_user_ids' : 'excluded_crew_ids'; const cur = kind === 'user' ? excludedUsers : excludedCrews;
     if (!cur.includes(id)) await upd({ [key]: [...cur, id] }, t('ch.exclude.done'));

@@ -115,8 +115,8 @@ test('남의 에이전트는 같은 방 멤버도 방장도 못 뺀다 — 주�
   put(ch, 'user', U.mate); put(ch, 'user', U.other); put(ch, 'crew', MINE);
   const r = asUserRaw(U.other, `select public.msgr_crew_leave_channel('${ch}', '${MINE}')`);
   assert.notEqual(r.status, 0, '같은 방 멤버라도 남의 에이전트는 못 뺀다'); assert.match(r.stderr, /msgr_crew_remove_owner_only/);
-  const h = asUserRaw(U.host, `select public.msgr_crew_leave_channel('${ch}', '${MINE}')`);
-  assert.notEqual(h.status, 0, '방장도 남의 에이전트는 못 뺀다'); assert.match(h.stderr, /msgr_crew_remove_owner_only/);
+  // 방장에게는 거절 대신 아무것도 하지 않고 'owner_only' — 옛 앱의 사람 내보내기(에이전트 RPC → 사람 행 삭제)가 멈추지 않게(분리 검수 HIGH 2026-10-02)
+  assert.equal(last(asUser(U.host, `select public.msgr_crew_leave_channel('${ch}', '${MINE}')`)), 'owner_only', '방장도 남의 에이전트는 못 뺀다(그대로 둔다)');
   assert.equal(crewIn(ch, MINE), '1');
   assert.equal(last(asUser(U.mate, `select public.msgr_crew_leave_channel('${ch}', '${MINE}')`)), 'removed', '주인');
   assert.equal(sql(`select meta->>'by' from public.msgr_audit_log where action = 'crew_removed_from_channel' and meta->>'channel_id' = '${ch}'`), 'owner');
