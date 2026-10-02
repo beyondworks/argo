@@ -89,6 +89,20 @@ test('남의 그룹 고치기·지우기·채널 넣기 불가', { skip }, () =>
   assert.equal(sql(`select group_id from public.msgr_channel_group_links where user_id = '${U.a}' and channel_id = '${GEN}'`), g);
 });
 
+test('내 그룹이라도 소속(org_id)·주인(user_id)·만든 때는 바꿀 수 없다 — 이름·순서만 고친다(검수 L-1)', { skip }, () => {
+  // b가 두 조직에 속하면 RLS with check(새 org_id의 멤버인가)만으로는 그룹을 다른 조직으로 옮길 수 있었다 —
+  // 그러면 옛 조직 채널의 연결이 다른 조직 그룹 아래 남는다. 옛 값을 보는 트리거(msgr_lock_cols)로만 막을 수 있다.
+  const code2 = last(asUser(U.c, `insert into public.msgr_invites (org_id, role, created_by) values ('${ORG2}', 'member', '${U.c}') returning code`));
+  assert.equal(last(asUser(U.b, `select public.msgr_accept_invite('${code2}')`)), ORG2);
+  const g = newGroup(U.b, ORG, '옮기기 시험', 7);
+  link(U.b, LEAN, g);
+  fails(asUserRaw(U.b, `update public.msgr_channel_groups set org_id = '${ORG2}' where id = '${g}'`), /msgr_immutable_org_id/, 'b가 자기 그룹의 org_id를 다른 조직으로');
+  fails(asUserRaw(U.b, `update public.msgr_channel_groups set user_id = '${U.a}' where id = '${g}'`), /msgr_immutable_user_id|row-level security/, 'b가 자기 그룹을 a에게 넘기기');
+  fails(asUserRaw(U.b, `update public.msgr_channel_groups set created_at = now() - interval '1 year' where id = '${g}'`), /msgr_immutable_created_at/, '만든 때 고치기');
+  assert.equal(sql(`select org_id || '|' || user_id from public.msgr_channel_groups where id = '${g}'`), `${ORG}|${U.b}`);
+  assert.equal(asUser(U.b, `with x as (update public.msgr_channel_groups set name = '새 이름', pos = 9 where id = '${g}' returning 1) select count(*) from x`), '1', '이름·순서는 고칠 수 있다');
+});
+
 test('채널 하나는 그룹 하나에만 — (user_id, channel_id) 유일, 옮기면 한 행', { skip }, () => {
   const g1 = newGroup(U.a, ORG, '하나', 2); const g2 = newGroup(U.a, ORG, '둘', 3);
   const ch = last(asUser(U.a, `select public.msgr_create_channel('${ORG}','public','Uniq')`));

@@ -43,6 +43,11 @@ create policy msgr_channel_groups_update on public.msgr_channel_groups for updat
   using (user_id = (select auth.uid()))
   with check (user_id = (select auth.uid()) and public.msgr_is_member(org_id));
 
+-- 소속·주인·만든 때는 바꿀 수 없다(검수 L-1) — RLS with check는 새 값만 본다. 두 조직에 속한 사람이 org_id를 바꾸면
+-- 그룹이 다른 조직으로 넘어가고 옛 조직 채널의 연결이 그 아래 남았다. 옛 값을 보는 트리거로 잠근다(저장소 공통 msgr_lock_cols).
+create trigger msgr_lock_channel_groups before update on public.msgr_channel_groups
+  for each row execute function public.msgr_lock_cols('user_id', 'org_id', 'created_at');
+
 -- 연결: 본인 행만. 넣거나 옮기는 곳은 내 그룹이고, 채널은 그 그룹과 같은 조직의 채널(dm 아님)이며 내가 볼 수 있는 것.
 -- (msgr_channels 조회는 호출자 RLS를 거친다 — 볼 수 없는 채널은 없는 것과 같다)
 create policy msgr_channel_group_links_select on public.msgr_channel_group_links for select to authenticated
@@ -71,3 +76,5 @@ begin
 end $$;
 create trigger msgr_channel_groups_cap before insert on public.msgr_channel_groups
   for each row execute function public.msgr_channel_groups_cap();
+
+notify pgrst, 'reload schema';
