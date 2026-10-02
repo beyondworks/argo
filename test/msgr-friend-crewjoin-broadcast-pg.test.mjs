@@ -102,3 +102,20 @@ test('D6 조직 채널 넣기 요청 — 요청자와 방장(만든 사람·조�
   assert.ok(to.includes(`u:${U.d}`) && to.includes(`u:${U.a}`), to.join(','));
   assert.ok(!to.includes(`u:${U.e}`), '다른 멤버는 받지 않는다');
 });
+
+// 분리 검수 LOW(2026-10-02): 대기 중인 넣기 요청이 지워질 때(주인이 방을 나감 — 규칙 14 트리거, 주인이 에이전트를 뺌) 결정할 사람에게 방송이 없어
+// 방장 화면의 결재 카드가 남았다. 지울 때도 요청자와 결정할 사람에게 같은 모양(status = 'removed')으로 보낸다.
+test('D6 넣기 요청이 지워지면(주인이 방을 나감) 요청자와 방장에게 removed를 보낸다', { skip }, () => {
+  const req = sql(`select id from public.msgr_channel_crew_requests where channel_id = '${PUB}' and crew_id = '${D1}' and status = 'pending'`);
+  assert.ok(req, '앞 시험이 남긴 대기 요청');
+  clear();
+  asUser(U.d, `delete from public.msgr_channel_members where channel_id = '${PUB}' and member_kind = 'user' and member_id = '${U.d}'`);
+  assert.equal(sql(`select count(*) from public.msgr_channel_crew_requests where id = '${req}'`), '0', '규칙 14 — 나간 주인의 대기 요청은 지워진다');
+  const got = sent('crew_join');
+  const to = got.map((x) => x.split(' ')[0]);
+  assert.ok(to.includes(`u:${U.a}`), `결정할 방장에게: ${to.join(',')}`); assert.ok(to.includes(`u:${U.d}`), '요청자에게');
+  assert.ok(!to.includes(`u:${U.e}`), '다른 멤버는 받지 않는다');
+  const p = JSON.parse(got[0].slice(got[0].indexOf(' ') + 1));
+  assert.deepEqual(Object.keys(p).sort(), ['channel_id', 'crew_id', 'id', 'org_id', 'status'], '같은 모양 — 이름·본문 없음');
+  assert.equal(p.id, req); assert.equal(p.status, 'removed'); assert.equal(p.org_id, ORG);
+});

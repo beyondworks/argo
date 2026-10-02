@@ -41,18 +41,22 @@ create or replace function public.msgr_crew_join_recipients(ch uuid, requester u
 $$;
 revoke all on function public.msgr_crew_join_recipients(uuid, uuid) from public, anon, authenticated;
 
+-- 지울 때(대기 요청을 주인이 방을 나가며 거둠 — 규칙 14 트리거·msgr_crew_leave_channel)도 같은 사람들에게 status 'removed'로 보낸다
+-- (분리 검수 LOW 2026-10-02: 방송이 없어 방장 화면의 결재 카드가 남았다). 채널 삭제 연쇄라 채널이 없으면 받는 사람은 요청자뿐이다.
 create or replace function public.msgr_crew_join_broadcast() returns trigger
   language plpgsql security definer set search_path = public, pg_temp as $$
-declare org uuid;
+declare org uuid; r public.msgr_channel_crew_requests; st text;
 begin
-  select c.org_id into org from public.msgr_channels c where c.id = new.channel_id;
-  perform realtime.send(jsonb_build_object('id', new.id, 'channel_id', new.channel_id, 'crew_id', new.crew_id, 'status', new.status, 'org_id', org), 'crew_join', 'u:' || r::text, true)
-    from public.msgr_crew_join_recipients(new.channel_id, new.requested_by) r where r is not null;
+  if tg_op = 'DELETE' then r := old; st := 'removed'; else r := new; st := new.status; end if;
+  select c.org_id into org from public.msgr_channels c where c.id = r.channel_id;
+  perform realtime.send(jsonb_build_object('id', r.id, 'channel_id', r.channel_id, 'crew_id', r.crew_id, 'status', st, 'org_id', org), 'crew_join', 'u:' || x::text, true)
+    from public.msgr_crew_join_recipients(r.channel_id, r.requested_by) x where x is not null;
   return null;
 end $$;
 revoke all on function public.msgr_crew_join_broadcast() from public, anon, authenticated;
 drop trigger if exists msgr_channel_crew_requests_broadcast_ins on public.msgr_channel_crew_requests;
-create trigger msgr_channel_crew_requests_broadcast_ins after insert on public.msgr_channel_crew_requests
+drop trigger if exists msgr_channel_crew_requests_broadcast_ins_del on public.msgr_channel_crew_requests;
+create trigger msgr_channel_crew_requests_broadcast_ins_del after insert or delete on public.msgr_channel_crew_requests
   for each row execute function public.msgr_crew_join_broadcast();
 drop trigger if exists msgr_channel_crew_requests_broadcast_upd on public.msgr_channel_crew_requests;
 create trigger msgr_channel_crew_requests_broadcast_upd after update on public.msgr_channel_crew_requests
