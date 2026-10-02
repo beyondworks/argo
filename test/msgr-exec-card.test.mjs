@@ -34,7 +34,9 @@ test('서버: chat.mjs가 steps를 상태 파일에 싣고 trace를 반환(데�
 });
 
 test('클라이언트: progress 방송 → ExecCard는 "답변 준비 중" 한 줄(사고·도구 단계·작성 중 본문·궤적 없음 — 유건 결정 2026-09-24) · 점 세 개는 progress 없는 크루만', () => {
-  assert.match(app, /\.on\('broadcast', \{ event: 'progress' \}, active\(onProgressEvent\)\)/, 'progress 수신 — 해제 뒤 콜백을 막는 active() 안에서');
+  assert.match(app, /\.on\('broadcast', \{ event: 'progress' \}, mine\(onProgressEvent\)\)/, 'progress 수신 — 해제 뒤 콜백을 막는 on() 안에서(보는 조직만 — 기능 점검 D3)');
+  assert.match(app, /const on = \(fn\) => \(e\) => \{ if \(!isDisposed\(\)\) fn\(e\); \};/, 'on()은 해제 뒤 콜백을 막는다');
+  assert.match(app, /const mine = \(fn\) => on\(\(e\) => \{ if \(here\(o\.id\)\) fn\(e\); \}\);/, 'mine()은 on() 안에서 보는 조직만');
   assert.match(app, /const onProgressEvent = \(\{ payload \}\) => \{ if \(acceptTyping\(settledRef\.current, payload\)\) setProgress\(/, 'progress 처리기 = 답글 직후 늦은 방송 거름 + setProgress(2026-09-23 유령 표시)');
   assert.match(app, /const working = Object\.entries\(progress\)\.filter\(\(\[k, p\]\) => k\.startsWith\(`\$\{chId\}:`\) && Date\.now\(\) - p\.at < 8000 && typing\[k\]/, '실행 카드 대상 = progress+typing 살아 있는 크루');
   assert.match(app, /\{working\.map\(\(\[c, p\]\) => <ExecCard key=\{`exec-\$\{c\.id\}`\} crew=\{c\} t=\{t\} canStop=\{canStop\(c, p\)\} stopping=\{!!stopping\[`\$\{c\.id\}:\$\{p\.source_msg_id\}`\]\} stopRequested=\{!!stopRequested\[`\$\{c\.id\}:\$\{p\.source_msg_id\}`\]\} onStop=\{\(\) => requestStop\(c\.id, p\.source_msg_id\)\} \/>\)\}\n\s*\{typingBubbleGrouped/, '중단 버튼 3단 상태 배선(2026-09-26) — 실행 카드 바로 뒤에 입력 중 말풍선');

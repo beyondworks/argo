@@ -2,7 +2,7 @@
 // 룩 = linen v2(apps/messenger/design): 타임라인 척추 · 사람 원/크루 타일 · 2단 다크 독 · 결재 슬립 · 자체 아이콘(icons.jsx).
 // Argo 부품은 .shell/.side(테마 토큰 스코프)·.btn·Markdown·imeGuardWith만 쓰고, 나머지는 styles.css의 .msgr-*.
 // 1차 범위(MESSENGER-DESIGN.md P1): 로그인 · 조직/초대 · 공개/비공개 채널 · 메시지 · @멘션 · 첨부 · 결재 · 크루 부재중 · 타이핑.
-import { Component, createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { Component, createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { acceptTyping, typingKey, withoutKey, typingIn as typingInState, roomTopicIds, TYPING_WINDOW_MS } from './typing-state.js';
 import { dismissHandlers } from './dismiss.mjs';
@@ -67,7 +67,8 @@ import { selfMember, personalSelfName } from './self-member.mjs';
 import { crewRowMenuKeys, crewOpeners, creatorTagVisible } from './crew-row-menu.mjs';
 import { crewAwayNotice } from './crew-dm-notice.mjs';
 import { crewListEmptyKey } from './crews-empty.mjs';
-import { runnerOptions, RUNNER_INSTALL } from './runner-sheet.mjs'; // '실행기 연결' 시트(아르고 패밀리 구조, 2026-10-02)
+import { runnerOptions, RUNNER_INSTALL } from './runner-sheet.mjs';
+import { seenWithin, stampFetched, markSeen } from './presence-clock.mjs'; // 접속 판정 = 받아 온 때 기준(기능 점검 D2) // '실행기 연결' 시트(아르고 패밀리 구조, 2026-10-02)
 import { shortcutLabel } from './shortcut.mjs';
 import { koJosa } from './ko-josa.mjs';
 import { reconcilePending, messageEvent, broadcastEvent, onForeground } from './instant-delivery.mjs';
@@ -131,7 +132,7 @@ const adapterOutdated = (b) => !!ADAPTER_LATEST[b.kind] && (!b.state?.adapter_ve
 // 승인 방식: 사람에게 묻는다(ask) / 보조 AI가 판단해 스스로 승인(ai) / 묻지 않고 실행(none) / 모름(unknown). Hermes manual·smart·off, OpenClaw ask·allowlist·deny·auto·full
 const approvalLevel = (mode) => ({ manual: 'ask', ask: 'ask', allowlist: 'ask', deny: 'ask', smart: 'ai', auto: 'ai', off: 'none', full: 'none' })[String(mode ?? '').toLowerCase()] ?? 'unknown';
 const APPROVAL_FIX = { hermes: 'hermes config set approvals.mode manual', openclaw: 'openclaw config set tools.exec.mode ask' };
-const crewAway = (c) => !c?.last_seen_at || Date.now() - Date.parse(c.last_seen_at) >= AWAY_MS;
+const crewAway = (c) => !seenWithin(c, AWAY_MS); // 받아 온 때 기준(presence-clock.mjs)
 /** 개인 공간을 뜻하는 orgId 상수. null은 "조직 없음(EmptyOrg)"이므로 센티넬로 구분한다. */
 export const PERSONAL = '__personal__';
 // 알림 탭·카드·초대에서 온 "이 채널 열기" 요청 — 셸 밖(앱 수준)에 둔다. 셸이 연결 대기 화면 등으로 내려갔다 올라와도 요청이 남고,
@@ -144,8 +145,6 @@ const shellLink = { mounted: false, page: null, orgId: null, onForeground: null 
 export const limitsPersonal = (channel) => channel?.personal_crews === 'read_only';
 export const crewTier = (crew, org) => (org?.service_user_id && crew?.owner_user_id === org.service_user_id && crew?.hosting === 'resident') ? 'company' : 'personal'; // 외부 에이전트(봇)도 개인 등급 — Argo 에이전트처럼 소유자가 초대한 곳에서만(유건 2026-09-24). 서버 msgr_crew_tier와 같은 규칙
 const PAGE = 100;
-const RT_QUIET_MS = 30_000;  // 이 시간 안에 방송이 있었으면 실시간이 살아 있다고 본다
-const RT_SWEEP_MS = 60_000;  // 실시간이 살아 있어도 이 주기로는 보정 조회를 한 번 돌린다
 const RT_DOWN = new Set(['CHANNEL_ERROR', 'TIMED_OUT', 'CLOSED']); // 구독이 끊겼다고 알려 주는 상태
 const ATTACH_MAX = 25 * 1024 * 1024; // 브리지 ATTACH_MAX(src/gateway/msgr.mjs)와 같은 값 — 받는 쪽에서만 거절하면 보낸 사람은 이유를 모른다
 const fmtTs = (iso, lang) => new Date(iso).toLocaleTimeString(lang === 'en' ? 'en-US' : 'ko-KR', { hour: '2-digit', minute: '2-digit' });
@@ -805,7 +804,12 @@ function Shell({ session }) {
     const vv = window.visualViewport; window.addEventListener('resize', again); vv?.addEventListener('resize', again); vv?.addEventListener('scroll', again);
     return () => { cancelAnimationFrame(raf); ro?.disconnect(); mo?.disconnect(); window.removeEventListener('resize', again); vv?.removeEventListener('resize', again); vv?.removeEventListener('scroll', again); };
   }, [err, note]);
-  const [tick, setTick] = useState(0);
+  const [tick, setTick] = useState(0); // 화면 다시 그리기 시계 — 네트워크 효과는 여기에 묶지 않는다(유휴 요청 0, 기능 점검 D2 2026-10-02)
+  const [prefsEpoch, bumpPrefs] = useReducer((x) => x + 1, 0); // 내가 쓴 설정(음소거·고정·즐겨찾기)을 다시 읽는 신호
+  const [friendsEpoch, bumpFriends] = useReducer((x) => x + 1, 0); // 친구 목록 다시 읽기 — 친구 방송(u:)·친구 화면에 들어갈 때
+  const [membersEpoch, bumpMembers] = useReducer((x) => x + 1, 0); // 열린 방 구성원 다시 읽기 — 그 방의 시스템 글·넣기 요청 방송
+  const [inboxEpoch, bumpInbox] = useReducer((x) => x + 1, 0); // 알림함 다시 모으기 — 나를 부른 글·DM·크루 답글·결재 방송
+  const [syncEpoch, bumpSync] = useReducer((x) => x + 1, 0); // 방송이 없는 값(친구·차단·설정·목록)을 다시 읽는 때 — 모바일 복귀·데스크톱 창 복귀(30초 이상 가려진 뒤)·실시간 재연결
   useEffect(() => { // 모바일 푸시(유건 제보 2026-09-12): 로그인 뒤 토큰 등록. 알림 탭·전경 수신은 앱 수준 리스너(App)가 받아 대기함·shellLink로 넘긴다(2026-10-01)
     if (!isMobilePlatform) return;
     activatePush(supabase, uid);
@@ -927,7 +931,7 @@ function Shell({ session }) {
   const [chSheetAdd, setChSheetAdd] = useState(null); // 시트를 열 때 바로 펼칠 패널('crew') — 상단 "크루" 버튼(유건 지적 2026-09-08: 크루를 채널에 넣는 UI가 안 보임)
   const [mentionReq, setMentionReq] = useState(null); // 시트 "@로 부르기" → 작성창에 멘션 삽입
   const [inboxKind, setInboxKind] = useState('all'); // 알림함을 열 때 미리 고를 거르개
-  const [inbox, setInbox] = useState([]); const [inboxSeen, setInboxSeen] = useState(() => readInboxSeen()); const [inboxPrev, setInboxPrev] = useState(0); // 알림함 v1
+  const [inboxNet, setInboxNet] = useState([]); /* 알림함 서버 조회분(멘션·답글·DM·결재·참여 요청·공지) — 친구 요청·차단·숨김은 아래 useMemo가 조회 없이 합친다 */ const [inboxSeen, setInboxSeen] = useState(() => readInboxSeen()); const [inboxPrev, setInboxPrev] = useState(0); // 알림함 v1
   const [railSort, setRailSort] = useState(() => { try { const v = localStorage.getItem('argo-msgr-rail-sort'); return v === 'added' || v === 'custom' ? v : 'name'; } catch { return 'name'; } }); // 내 에이전트 정렬: name(이름순) | added(추가순) | custom(직접 배치, 2026-09-29) — 소속별·그룹은 뺐다(유건 결정 2026-09-09: 평평한 목록)
   const pickSort = (v) => { setRailSort(v); try { localStorage.setItem('argo-msgr-rail-sort', v); } catch {} };
   const [meMenu, setMeMenu] = useState(false);
@@ -964,7 +968,7 @@ function Shell({ session }) {
   }; // 하단 프로필(이름) 클릭 → 메뉴(내 계정·로그아웃) — 로그아웃 버튼은 여기로(유건 지시 2026-09-09)
   const [friends, setFriends] = useState([]); // 친구·요청(msgr_my_friends) — 레일 '친구' 절·알림함·설정 카드가 같이 쓴다
   const loadFriends = useCallback(async () => { setFriends(await q(supabase.rpc('msgr_my_friends')).catch(() => [])); }, []);
-  useEffect(() => { if (uid) loadFriends(); }, [uid, tick, loadFriends]);
+  useEffect(() => { if (uid) loadFriends(); }, [uid, loadFriends, syncEpoch, friendsEpoch]); // 주기 없음 — 시작·복귀·친구 방송·친구 화면 진입
   // 친구 숨김(4차 피드백 2026-10-02, msgr_user_hides) — 내 목록·새 채팅·초대 후보에서만 뺀다(친구 관계·대화·알림은 그대로).
   // 숨김은 나만 바꾸므로 시작·모바일 복귀 때만 읽는다(15초 tick에 묶지 않는다): 기기당 시작 1회 + 복귀마다 1회, 유휴 0.
   const [hiddenUserIds, setHiddenUserIds] = useState(null);
@@ -973,7 +977,7 @@ function Shell({ session }) {
   const unhideUser = useCallback(async (id) => { await q(supabase.rpc('msgr_unhide_user', { target: id })); setHiddenUserIds((p) => { const n = new Set(p ?? []); n.delete(id); return n; }); setNote(t('fm.unhidden.done')); }, [t]);
   const [blockedIds, setBlockedIds] = useState(() => new Set()); // 서버 차단은 개인 1:1·친구만 막는다 — 조직 채널의 글은 화면에서 가린다
   const loadBlocked = useCallback(async () => { const rows = await q(supabase.rpc('msgr_my_blocked')).catch(() => null); if (!rows) return; const next = new Set(rows.map((r) => r.user_id)); setBlockedIds((cur) => (cur.size === next.size && [...next].every((id) => cur.has(id)) ? cur : next)); }, []); // 같은 목록이면 같은 Set 유지 — 15초 폴마다 알림함 재조회·전체 메시지 재렌더가 두 번씩 돌던 것(검수 #683)
-  useEffect(() => { if (uid) loadBlocked(); }, [uid, tick, loadBlocked]);
+  useEffect(() => { if (uid) loadBlocked(); }, [uid, loadBlocked, syncEpoch]); // 차단은 내가 바꿀 때 onFriendsChanged가 다시 읽는다
   const onFriendsChanged = useCallback(() => Promise.all([loadFriends(), loadBlocked()]), [loadFriends, loadBlocked]);
   const blockUser = useCallback(async (id) => { await q(supabase.rpc('msgr_friend_remove', { other: id, block: true })); await onFriendsChanged(); setNote(t('friends.blocked')); }, [onFriendsChanged, t]);
   const [mutedCrewIds, setMutedCrewIds] = useState(() => new Set()); // 크루·봇 숨기기(App Store 1.2, 2026-09-26) — 사람 차단과 같은 표(msgr_user_blocks)를 재사용
@@ -1003,7 +1007,7 @@ function Shell({ session }) {
   const aiConsented = !!aiConsent; // 로딩 중(undefined)도 false — 동의 화면은 aiConsent!==undefined로 따로 가른다(로딩 깜빡임 방지)
   const safetyCtx = useMemo(() => ({ blocked: blockedIds, block: blockUser, mutedCrewIds, muteCrew, unmuteCrew, hiddenUserIds, hideUser, unhideUser, profanityFilterOn, aiConsented, aiConsentAt: aiConsent ?? null, aiConsentKnown: aiConsent !== undefined || aiConsentFailOpen, setAiConsent, onNote: setNote }), [aiConsentFailOpen, blockedIds, blockUser, mutedCrewIds, muteCrew, unmuteCrew, hiddenUserIds, hideUser, unhideUser, profanityFilterOn, aiConsented, aiConsent, setAiConsent]);
   const [botKinds, setBotKinds] = useState([]); // 내 에이전트 출처(헤르메스·오픈클로) — 훅은 조기 return보다 앞에(실측: 순서 오류로 빈 화면)
-  useEffect(() => { if (!orgId || orgId === PERSONAL) { setBotKinds([]); return; } let live = true; q(supabase.from('msgr_bots').select('crew_id, kind').eq('org_id', orgId).is('revoked_at', null)).then((rows) => { if (live && activeOrg.current === orgId) setBotKinds(rows); }).catch(() => { if (live && activeOrg.current === orgId) setBotKinds([]); }); return () => { live = false; }; }, [orgId, tick]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (!orgId || orgId === PERSONAL) { setBotKinds([]); return; } if (restoredSpace.current?.space === orgId) return; let live = true; q(supabase.from('msgr_bots').select('crew_id, kind').eq('org_id', orgId).is('revoked_at', null)).then((rows) => { if (live && activeOrg.current === orgId) setBotKinds(rows); }).catch(() => { if (live && activeOrg.current === orgId) setBotKinds([]); }); return () => { live = false; }; }, [orgId, syncEpoch]); // eslint-disable-line react-hooks/exhaustive-deps -- 봇 종류는 연결할 때 바뀐다 — 복귀·재연결 때만(15초 tick에서 뺐다, 기능 점검 D2)
   // 내가 참여한 채널(공개 포함) — 목록 필터의 근거. 조직 전환과 무관하게 계정 단위라 한 번만 읽는다.
   const joinedRef = useRef(new Set());
   const loadJoined = useCallback(async () => {
@@ -1065,8 +1069,9 @@ function Shell({ session }) {
     if (!current()) return;
     if (joined) joinedRef.current = new Set(joined.map((r) => r.channel_id)); // 늦게 온 옛 요청은 위 current()가 이미 버렸다 — 참여 버튼의 낙관적 추가를 덮지 않는다
     loadedOrg.current = id;
-    setMyAvailable(allCrews.filter((r) => r.status === 'available' && r.owner_user_id === uid).sort((x, y) => x.display_name.localeCompare(y.display_name, 'ko')));
-    const crs = allCrews.filter((r) => r.status === 'active');
+    const fetchedCrews = stampFetched(allCrews); // 접속 판정 기준 시각(presence-clock.mjs)
+    setMyAvailable(fetchedCrews.filter((r) => r.status === 'available' && r.owner_user_id === uid).sort((x, y) => x.display_name.localeCompare(y.display_name, 'ko')));
+    const crs = fetchedCrews.filter((r) => r.status === 'active');
     const orgRow = orgs.find((o) => o.id === id);
     crs.sort((a, b) => (crewTier(b, orgRow) === 'company') - (crewTier(a, orgRow) === 'company') || a.display_name.localeCompare(b.display_name, 'ko')); // 순서 고정: 회사 크루 먼저, 이름순(QA: 화면마다 순서가 달랐다)
     // 조직에 들어왔다고 모든 채널이 열리지 않는다(유건 2026-09-16, 슬랙식) — 사이드바는 **참여한 채널**만.
@@ -1092,7 +1097,7 @@ function Shell({ session }) {
       const friendsList = await q(supabase.rpc('msgr_my_friends')).catch(() => []);
       if (!current()) return;
       // 개인 공간 에이전트(2026-09-30): 내 개인 크루 + 내가 든 개인 방의 크루(친구 것 포함 — 표시용 열만). 옛 서버(함수 없음)면 크루 없이 종전대로.
-      const roomCrews = (await q(supabase.rpc('msgr_personal_room_crews')).catch(() => [])).filter((c) => c.status === 'active');
+      const roomCrews = stampFetched((await q(supabase.rpc('msgr_personal_room_crews')).catch(() => [])).filter((c) => c.status === 'active'));
       if (!current()) return;
       const accepted = friendsList.filter((f) => f.status === 'accepted');
       const chs = rows.map((r) => ({ // 그룹 방(친구 여럿, 유건 2026-09-17)은 members가 셋 이상 — 이름은 dmName이 구성원으로 짓는다
@@ -1116,11 +1121,34 @@ function Shell({ session }) {
       return chs;
     } catch (error) { if (current()) throw error; }
   }, [uid]);
-  useEffect(() => { if (isPersonal) loadPersonal().catch((e) => setErr(e.message)); else loadOrg(orgId).catch((e) => setErr(e.message)); }, [orgId, isPersonal, loadOrg, loadPersonal]);
+  useEffect(() => { if (restoredSpace.current?.space === orgId) return; if (isPersonal) loadPersonal().catch((e) => setErr(e.message)); else loadOrg(orgId).catch((e) => setErr(e.message)); }, [orgId, isPersonal, loadOrg, loadPersonal]); // 저장 목록으로 연 공간은 다시 읽지 않는다(D3)
+  // 목록에 없는 방의 글(새 1:1·그룹·비공개 채널의 첫 글, D4) — 그 방 하나만 불러와 목록에 넣는다. 개인 공간은 목록 RPC가 한 번에 주므로 그 목록을 다시 읽는다.
+  // 같은 방은 한 번만 묻는다(공개 채널·보관 채널처럼 넣지 않는 방이 방송마다 조회를 부르지 않게). 복귀·재연결 때 비운다.
+  const roomAsked = useRef(new Set());
+  const addRoom = useRef(async () => {});
+  addRoom.current = async (cid) => {
+    if (roomAsked.current.has(cid)) return; roomAsked.current.add(cid);
+    const space = activeOrg.current;
+    if (space === PERSONAL) { await loadPersonal().catch(() => {}); return; }
+    const row = await q(supabase.from('msgr_channels').select('id, kind, name, topic, crew_memory, personal_crews, created_by, admin_user_ids, excluded_user_ids, excluded_crew_ids, org_id, archived_at').eq('id', cid).maybeSingle()).catch(() => null);
+    if (!row || row.archived_at || row.org_id !== space || row.kind === 'public' || activeOrg.current !== space) return; // 공개 채널은 참여 전엔 목록에 없다
+    const mem = row.kind === 'dm' ? await q(supabase.from('msgr_channel_members').select('channel_id, member_kind, member_id, added_at').eq('channel_id', cid)).catch(() => []) : null;
+    if (activeOrg.current !== space) return;
+    const { org_id: _o, archived_at: _a, ...ch } = row;
+    setChannels((cur) => (cur.some((c) => c.id === cid) ? cur : [...cur, ch]));
+    if (mem) setDmMembers((m) => ({ ...m, [cid]: mem }));
+  };
   useEffect(() => {
     if (!isMobilePlatform) return;
-    return observeMobileResume(() => { setOnline(navigator.onLine !== false); setResumeEpoch((x) => x + 1); setTick((x) => x + 1); (isPersonal ? loadPersonal() : loadOrg(orgId)).catch((e) => setErr(e.message)); resyncBadge(); });
+    return observeMobileResume(() => { setOnline(navigator.onLine !== false); setResumeEpoch((x) => x + 1); bumpSync(); setTick((x) => x + 1); resyncBadge(); }); // 목록 다시 읽기는 아래 syncEpoch 효과가 한 번
   }, [orgId, isPersonal, loadOrg, loadPersonal]);
+  useEffect(() => { // 데스크톱: 30초 넘게 가려졌다가 돌아오면 방송이 없는 값을 한 번 다시 읽는다(주기 없음 — 기능 점검 D2)
+    if (isMobilePlatform) return undefined;
+    let hiddenAt = 0;
+    const on = () => { if (document.visibilityState === 'hidden') { hiddenAt = Date.now(); return; } if (hiddenAt && Date.now() - hiddenAt >= 30_000) bumpSync(); hiddenAt = 0; };
+    document.addEventListener('visibilitychange', on); return () => document.removeEventListener('visibilitychange', on);
+  }, []);
+  useEffect(() => { if (syncEpoch) (isPersonal ? loadPersonal() : loadOrg(orgId)).catch((e) => setErr(e.message)); }, [syncEpoch]); // eslint-disable-line react-hooks/exhaustive-deps -- 복귀·재연결 때 지금 공간 목록 한 번
   // 부록 M: 그 자리 파견 — available → active → 채널 멤버(+소유자 동반). 채널 없이 부르면 조직에만 파견.
   // available은 소유자가 파견을 해제한 상태(20260908140000)라 다시 파견은 복귀다 — 허용 범위는 건드리지 않는다(D31: 「모두」가 조용히
   // 조직 기본값으로 바뀌었다). 잠금 정책이면 서버 게이트(msgr_crew_policy_gate)와 잠글 때의 일괄 맞춤이 기본값을 보장한다.
@@ -1138,7 +1166,8 @@ function Shell({ session }) {
     return joined; // 'joined' | 'requested' | 'already' | null(조직에만 파견)
   }, [uid, orgId, loadOrg, t]);
   const loadChMembers = useCallback(async (id) => { if (id !== activeChannel.current) return; const current = memberRequests.current.begin(`${activeOrg.current}:${id}`); if (!id) { setChMembers([]); return; } try { const rows = await q(supabase.from('msgr_channel_members').select('member_kind, member_id, added_by').eq('channel_id', id)); if (current()) setChMembers(rows); } catch { if (current()) setChMembers([]); } }, []);
-  useEffect(() => { loadChMembers(chId).catch(() => setChMembers([])); }, [chId, loadChMembers, tick]); // eslint-disable-line react-hooks/exhaustive-deps
+  const chMembersWanted = !isPhone || page === 'chat'; // 폰 목록 뒤에는 대화방을 그리지 않는다 — 구성원도 방을 열 때 읽는다(기능 점검 D3)
+  useEffect(() => { if (!chMembersWanted) return; loadChMembers(chId).catch(() => setChMembers([])); }, [chId, loadChMembers, syncEpoch, membersEpoch, chMembersWanted]); // eslint-disable-line react-hooks/exhaustive-deps
   const [sheetReqTick, setSheetReqTick] = useState(0); // 열린 설정창의 참여 요청을 다시 읽게
   const sheetAfterNav = useRef(false); // 알림함의 에이전트 참여 요청 → 그 채널로 가서 설정을 연다
   useEffect(() => { setChSheet(sheetAfterNav.current); sheetAfterNav.current = false; }, [chId]); // 채널을 바꿀 때만 닫는다(검수 HIGH-1: tick 의존이면 15초마다 시트가 닫혔다)
@@ -1147,29 +1176,30 @@ function Shell({ session }) {
   const [dmSortPos, setDmSortPos] = useState(() => ({})); // DM 탭 '직접 배치' 순서(msgr_channel_prefs.sort_pos, 유건 확정 2026-09-29) — 즐겨찾기 pin_pos와 별개
   // 안 읽음 — org=null이면 개인 공간(조직 밖 1:1)을 센다(검수 L-1)
   const loadUnread = useCallback(async () => { if (!orgId || orgId !== activeOrg.current) return; const current = unreadRequests.current.begin(orgId); const rows = await q(supabase.rpc('msgr_unread', { org: orgId === PERSONAL ? null : orgId })).catch(() => null); if (rows && current()) { setUnread(Object.fromEntries(rows.map((r) => [r.channel_id, { n: r.n, mention: r.mention }]))); setUnreadSpace(orgId); } }, [orgId]);
-  useEffect(() => { loadUnread(); }, [loadUnread, tick]);
-  useEffect(() => { if (!uid) return; let live = true; const revision = prefQueue.current.revision; q(supabase.from('msgr_channel_prefs').select('channel_id, muted, pinned, pin_pos, sort_pos').eq('user_id', uid)).then((rows) => { if (!live || prefQueue.current.busy || revision !== prefQueue.current.revision) return; setMuted(new Set(rows.filter((r) => r.muted).map((r) => r.channel_id))); setPinned(new Set(rows.filter((r) => r.pinned).map((r) => r.channel_id))); setPinPos(new Map(rows.filter((r) => r.pin_pos != null).map((r) => [r.channel_id, r.pin_pos]))); setDmSortPos(Object.fromEntries(rows.filter((r) => r.sort_pos != null).map((r) => [r.channel_id, r.sort_pos]))); }).catch(() => {}); q(supabase.from('msgr_profiles').select('quiet_from, quiet_to').eq('user_id', uid).maybeSingle()).then((p) => { if (live) setQuiet(p && p.quiet_from != null && p.quiet_to != null ? { from: p.quiet_from, to: p.quiet_to } : null); }).catch(() => {}); return () => { live = false; }; }, [uid, tick]);
+  useEffect(() => { const r = restoredSpace.current; if (r?.space === orgId && r.sync === syncEpoch) return; loadUnread(); }, [loadUnread, syncEpoch]); // eslint-disable-line react-hooks/exhaustive-deps -- 새 글 방송은 아래 event 효과가 다시 센다. 저장본으로 연 공간은 건너뛴다(D3)
+  useEffect(() => { if (!uid) return; let live = true; const revision = prefQueue.current.revision; q(supabase.from('msgr_channel_prefs').select('channel_id, muted, pinned, pin_pos, sort_pos').eq('user_id', uid)).then((rows) => { if (!live || prefQueue.current.busy || revision !== prefQueue.current.revision) return; setMuted(new Set(rows.filter((r) => r.muted).map((r) => r.channel_id))); setPinned(new Set(rows.filter((r) => r.pinned).map((r) => r.channel_id))); setPinPos(new Map(rows.filter((r) => r.pin_pos != null).map((r) => [r.channel_id, r.pin_pos]))); setDmSortPos(Object.fromEntries(rows.filter((r) => r.sort_pos != null).map((r) => [r.channel_id, r.sort_pos]))); }).catch(() => {}); q(supabase.from('msgr_profiles').select('quiet_from, quiet_to').eq('user_id', uid).maybeSingle()).then((p) => { if (live) setQuiet(p && p.quiet_from != null && p.quiet_to != null ? { from: p.quiet_from, to: p.quiet_to } : null); }).catch(() => {}); return () => { live = false; }; }, [uid, prefsEpoch, syncEpoch]);
   const savePrefs = async (patches) => {
     if (!patches.length) return;
     try { await prefQueue.current.enqueue(() => q(supabase.from('msgr_channel_prefs').upsert(patches.map((patch) => ({ ...patch, user_id: uid, updated_at: new Date().toISOString() }))))); }
-    finally { setTick((x) => x + 1); }
+    finally { bumpPrefs(); }
   };
   const toggleMute = async (c) => { const on = !muted.has(c.id); setMuted((s) => { const n = new Set(s); if (on) n.add(c.id); else n.delete(c.id); return n; }); try { await savePrefs([{ channel_id: c.id, muted: on }]); } catch (e) { setErr(e.message); } };
   const togglePin = async (c) => { const on = !pinned.has(c.id); setPinned((st) => { const n = new Set(st); if (on) n.add(c.id); else n.delete(c.id); return n; }); try { await savePrefs([{ channel_id: c.id, pinned: on }]); } catch (e) { setErr(e.message); } };
-  // One indexed user+org read per 15-second tick (4/minute/device; 400/minute for 100 devices), plus successful preference writes.
+  // 내가 쓸 때(bumpPrefs)·복귀 때만 읽는다 — 주기 없음(기능 점검 D2).
   const [targetPrefs, setTargetPrefs] = useState([]);
   const [favoriteBusy, setFavoriteBusy] = useState(false); const favoriteLock = useRef(false);
   useEffect(() => {
-    setTargetPrefs([]);
-  }, [uid, orgId]);
+    if (restoredSpace.current?.space !== orgId) setTargetPrefs([]);
+  }, [uid, orgId]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!uid || !orgId || orgId === PERSONAL) { setTargetPrefs([]); return; }
+    { const r = restoredSpace.current; if (r?.space === orgId && r.prefs === prefsEpoch && r.sync === syncEpoch) return; } // 저장본(D3) — 내가 설정을 바꾸면 다시 읽는다
     let live = true; const revision = prefQueue.current.revision;
     q(supabase.from('msgr_target_prefs').select('target_kind, target_id, pinned, pin_pos, sort_pos').eq('user_id', uid).eq('org_id', orgId))
       .then((rows) => { if (live && activeOrg.current === orgId && !prefQueue.current.busy && revision === prefQueue.current.revision) setTargetPrefs(rows); })
       .catch((e) => { if (live && activeOrg.current === orgId) setErr(friendlyErr(e.message, t)); });
     return () => { live = false; };
-  }, [uid, orgId, tick]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [uid, orgId, prefsEpoch, syncEpoch]); // eslint-disable-line react-hooks/exhaustive-deps
   const targetPinned = (kind, id) => targetPrefs.some((p) => p.target_kind === kind && p.target_id === id && p.pinned);
   const saveTargetPrefs = async (patches) => {
     if (!patches.length) return;
@@ -1183,56 +1213,30 @@ function Shell({ session }) {
       await prefQueue.current.enqueue(() => saveTargetPrefs([{ target_kind: kind, target_id: id, pinned: on }]));
       if (activeOrg.current === orgId) setTargetPrefs((rows) => [...rows.filter((p) => p.target_kind !== kind || p.target_id !== id), { target_kind: kind, target_id: id, pinned: on, pin_pos: rows.find((p) => p.target_kind === kind && p.target_id === id)?.pin_pos ?? null }]);
     } catch (e) { setErr(friendlyErr(e.message, t)); }
-    finally { favoriteLock.current = false; setFavoriteBusy(false); setTick((x) => x + 1); }
+    finally { favoriteLock.current = false; setFavoriteBusy(false); bumpPrefs(); }
   };
   const toggleMemory = async (c) => { const r = await supabase.from('msgr_channels').update({ crew_memory: c.crew_memory === false }).eq('id', c.id).select('id'); if (r.error) return setErr(friendlyErr(r.error.message, t)); if (!r.data?.length) return setErr(t('err.denied')); setNote(t(c.crew_memory === false ? 'ch.memory.nowOn' : 'ch.memory.nowOff')); loadOrg(orgId).catch(() => {}); }; // 권한 최종 판정은 RLS(msgr_can_manage_channel)·정책 트리거
-  const markRead = useCallback(async (channelId, lastId) => { setUnread((u) => (u[channelId]?.n ? { ...u, [channelId]: { n: 0, mention: 0 } } : u)); try { await q(supabase.from('msgr_reads').upsert({ channel_id: channelId, user_id: uid, last_read_id: lastId, updated_at: new Date().toISOString() })); } catch { /* 커서 저장 실패는 다음 조회에서 다시 */ } iconBadge?.request(); }, [uid, iconBadge]); // 폰 아이콘은 커서가 저장된 뒤 서버 숫자로
+  const readMark = useRef({}); // 채널 → 이 기기에서 마지막으로 쓴 읽음 커서 — 같은 값을 다시 쓰지 않는다(기능 점검 D2: 초점·가시성 바뀔 때마다 upsert)
+  const markRead = useCallback(async (channelId, lastId) => { setUnread((u) => (u[channelId]?.n ? { ...u, [channelId]: { n: 0, mention: 0 } } : u)); if (!channelId || !lastId || (readMark.current[channelId] ?? 0) >= lastId) return; readMark.current[channelId] = lastId; try { await q(supabase.from('msgr_reads').upsert({ channel_id: channelId, user_id: uid, last_read_id: lastId, updated_at: new Date().toISOString() })); } catch { /* 커서 저장 실패는 다음 조회에서 다시 */ } iconBadge?.request(); }, [uid, iconBadge]); // 폰 아이콘은 커서가 저장된 뒤 서버 숫자로
   // event.kind는 '무슨 방송인가'(message·approval·reaction·edit)다. 서버 payload에도 kind가 있는데
   // 그건 '글 종류'(text·system)다. 전개를 뒤에 두면 후자가 전자를 덮어 방송이 통째로 버려진다 —
   // 그래서 구분자는 항상 전개 **뒤**에 놓고, 글 종류는 msgKind로 따로 싣는다.
   const [event, setEvent] = useState(null); const [typing, setTyping] = useState({}); const [progress, setProgress] = useState({}); // progress = 실행 카드(단계·도구·사고 과정) 스냅샷, 키 channel:crew
   const settledRef = useRef({}); // 키 → 크루 답글 도착 시각 — 답글 직후 늦게 온 방송이 표시를 되살리지 않게(typing-state.js)
   const typingStartRef = useRef({}); // 키 → "지금 이어지는 입력"을 처음 시작한 시각(typing-summary.mjs 정렬 기준) — 6초 창이 끊기면 다음은 새 시작(유건 확정 2026-09-29)
+  const crewActive = (crewId) => { if (!crewId) return; setCrews((rows) => markSeen(rows, crewId)); setMyAgents((rows) => (rows ? markSeen(rows, crewId) : rows)); }; // 에이전트가 방금 무언가를 보냈다 — 요청 없이 '방금 봄'으로
   const onTypingEvent = ({ payload }) => {
     if (!acceptTyping(settledRef.current, payload)) return;
+    crewActive(payload?.crew_id);
     const k = typingKey(payload); const now = Date.now();
     setTyping((m) => {
       if (m[k] === undefined || now - m[k] >= TYPING_WINDOW_MS) typingStartRef.current[k] = now; // 직전 방송이 창 밖이면(끊겼다 재개) 새 시작
       return { ...m, [k]: now };
     });
   };
-  const onProgressEvent = ({ payload }) => { if (acceptTyping(settledRef.current, payload)) setProgress((m) => ({ ...m, [typingKey(payload)]: { ...payload, at: Date.now() } })); };
+  const onProgressEvent = ({ payload }) => { if (acceptTyping(settledRef.current, payload)) setProgress((m) => ({ ...m, [typingKey(payload)]: { ...payload, at: Date.now() } })); crewActive(payload?.crew_id); }; // 진행 방송 = 그 에이전트가 켜져 있다(요청 없이 '방금 봄')
   const settleCrew = (payload) => { const k = typingKey(payload); settledRef.current[k] = Date.now(); setTyping((m) => withoutKey(m, k)); setProgress((m) => withoutKey(m, k)); delete typingStartRef.current[k]; };
-  useEffect(() => { // Realtime — 조직 topic 하나. 방송은 id·채널만 싣는다(본문은 RLS를 지난 조회로).
-    if (!orgId || orgId === PERSONAL) return; // 개인 공간은 아래 별도 effect(dm:<채널> 토픽)
-    let ch;
-    const remove = async () => {
-      if (!ch) return;
-      // This client has one org subscription. A timed-out unsubscribe must still release its cache.
-      if (await supabase.removeChannel(ch) !== 'ok') { await supabase.removeAllChannels(); setRoomReset((x) => x + 1); } // 방 구독도 함께 사라졌다 — 다시 맞추게(검수 #690 재검 MEDIUM)
-      if (rt.current === ch) rt.current = null;
-    };
-    const cleanup = realtimeScope.run(async (isDisposed, registerDispose) => {
-      await supabase.realtime.setAuth(session.access_token);
-      if (isDisposed()) return;
-      const active = (handle) => (event) => { if (!isDisposed()) handle(event); };
-      ch = supabase.channel(`org:${orgId}`, { config: { private: true } });
-      registerDispose(remove);
-      ch
-        .on('broadcast', { event: 'message' }, active(({ payload }) => handleMessageRef.current(payload))) // 본문은 handleMessage(org:·u:·dm: 공통)
-        .on('broadcast', { event: 'approval' }, active(({ payload }) => { setEvent(broadcastEvent('approval', payload)); notifyApproval(payload); approvalsSoon.current(); }))
-        .on('broadcast', { event: 'typing' }, active(onTypingEvent))
-        .on('broadcast', { event: 'reaction' }, active(({ payload }) => setEvent(broadcastEvent('reaction', payload))))
-        .on('broadcast', { event: 'edit' }, active(({ payload }) => setEvent(broadcastEvent('edit', payload))))
-        .on('broadcast', { event: 'attach' }, active(({ payload }) => setEvent(broadcastEvent('attach', payload)))) // 글보다 늦게 붙은 첨부(서버 20260930160000) — 그 글의 첨부를 다시 읽는다
-        .on('broadcast', { event: 'progress' }, active(onProgressEvent))
-        .subscribe((status, e) => { if (import.meta.env.DEV) console.log('[rt]', status, e?.message ?? ''); if (RT_DOWN.has(status)) setEvent(broadcastEvent('rt_down', {})); }); // 끊김을 알면 폴이 바로 10초로 복귀
-      rt.current = ch;
-      if (import.meta.env.DEV) window.__argoRt = ch;
-      return remove;
-    });
-    return () => { if (rt.current === ch) rt.current = null; cleanup(); }; // React cleanup is synchronous; scope serializes the async removal.
-  }, [orgId, session.access_token, resumeEpoch]);
+  // (조직 구독은 아래 '내가 속한 조직 전체 + u:' 효과 하나로 합쳤다 — 기능 점검 D3)
   // ── 열린 방의 채널 토픽 dm:<채널> 구독 — 개인 방과 조직의 비공개 방(DM·비공개 채널) ──
   // 비공개 방의 typing·progress는 조직 토픽이 아니라 이 토픽으로 온다(20260918190000 — 조직 토픽은 조직 전원이 들어 방의 존재·크루 활동이 샜다).
   // 옛 서버에서는 조직 방 typing이 org:로 계속 오고 이 토픽은 조용할 뿐이라 깨지지 않는다. 글은 handleMessage가 id로 한 번만 처리한다.
@@ -1241,6 +1245,7 @@ function Shell({ session }) {
   const openKind = useMemo(() => (chId ? channels.find((c) => c.id === chId)?.kind ?? null : null), [channels, chId]);
   const roomTopic = !!chId && (isPersonal || (openKind !== null && openKind !== 'public')); // 열린 방의 반응·수정 방송은 그 방 토픽으로(아래 broadcast)
   const roomSubs = useRef(new Map()); // 방 id → 구독 채널
+  const roomSpaces = useRef(new Map()); // 방 id → 그 방이 속한 공간(조직 id·PERSONAL) — 공간을 오가도 구독을 유지하고 방송을 그 공간으로 보낸다(D3)
   const [roomReset, setRoomReset] = useState(0); // removeAllChannels 뒤 방 구독을 다시 맞추는 신호(데스크톱엔 resumeEpoch가 없다)
   const typingIn = (id) => typingInState(typing, id); // 채널 화면의 typingCrews와 같은 6초 창
   const anyTyping = Object.values(typing).some((at) => Date.now() - at < TYPING_WINDOW_MS); // 끝난 표시가 남은 동안만 2초 주기 재그리기
@@ -1271,55 +1276,97 @@ function Shell({ session }) {
   }, [uid, orgIdsKey]);
   const approvalsSoon = useRef(() => {});
   approvalsSoon.current = () => { if (!isPhoneRef.current) return; clearTimeout(approvalsTimer.current); approvalsTimer.current = setTimeout(() => { loadApprovals().catch(() => {}); }, 600); };
-  useEffect(() => { if (isPhone && orgs) loadApprovals().catch(() => {}); }, [isPhone, !!orgs, loadApprovals, resumeEpoch]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (isPhone && orgs) loadApprovals().catch(() => {}); }, [isPhone, !!orgs, loadApprovals, resumeEpoch, syncEpoch]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => clearTimeout(approvalsTimer.current), []);
-  useEffect(() => { loadTotals().catch(() => {}); }, [loadTotals, tick, orgId]);
+  useEffect(() => { loadTotals().catch(() => {}); }, [loadTotals, orgId, syncEpoch]); // 다른 공간의 새 글은 crossRef가 다시 센다(주기 없음)
   const crossRef = useRef(() => {});
+  const inboxTimer = useRef(null);
+  const inboxSoon = useRef(() => {}); inboxSoon.current = () => { clearTimeout(inboxTimer.current); inboxTimer.current = setTimeout(bumpInbox, 1500); }; // 연달아 온 방송은 한 번에(알림함 조회 6건)
+  useEffect(() => () => clearTimeout(inboxTimer.current), []);
+  useEffect(() => { if (syncEpoch) { spaceCache.current.clear(); roomAsked.current.clear(); } }, [syncEpoch]); // 복귀·재연결 — 방송을 놓쳤을 수 있다
+  // 공간 저장 목록(기능 점검 D3) — 탭·조직을 바꿀 때 떠나는 공간의 목록을 저장해 두고, 그 사이 그 공간에 방송이 오지 않았으면 돌아올 때 다시 읽지 않는다.
+  const spaceCache = useRef(new Map()); const dirtySpaces = useRef(new Set());
+  const spaceChanged = useRef(() => {}); spaceChanged.current = (space) => { dirtySpaces.current.add(space ?? PERSONAL); };
   crossRef.current = (payload, space) => { // 다른 공간 글: 합계 다시 세고, 읽히는 글이면 알림
+    if (payload) spaceChanged.current(space); // 돌아가면 다시 읽는다(D3)
     if (!payload || (payload.author_user_id && payload.author_user_id === uid)) return;
     if (!seenOnce(seenMsgRef.current, payload.id)) return; // 같은 글이 옛 토픽(org:)과 u:로 함께 와도(전환기 이중 송신) 알림은 한 번
     loadTotalsSoon();
     notifyReadable(payload, space);
   };
+  // ── Realtime — 내가 속한 조직 전체(org:<각 조직>) + u:<나>를 한 번 걸어 유지한다(기능 점검 D3, 2026-10-02).
+  // 탭·고른 조직이 바뀌어도 다시 걸지 않는다 — 방송마다 "지금 보는 공간인가"(activeOrg)로 갈라 처리한다:
+  //   보는 공간 = 본문 처리(handleMessage·결재·입력 중·반응·수정·첨부·실행 카드), 다른 공간 = 합계·알림(crossRef) + 그 공간 저장 목록을 '바뀜'으로.
+  // 방송은 id·채널만 싣는다(본문은 RLS를 지난 조회로). 구독 수 = 조직 수 + 1. 끊겼다 다시 붙으면 방송이 없는 값을 한 번 다시 읽는다(syncEpoch).
+  const subsRef = useRef(new Map());
   useEffect(() => {
-    if (!uid || !session.access_token || !orgs) return;
-    const chans = [];
-    let live = true; let stopU = () => {};
-    (async () => {
+    if (!uid || !session.access_token || !orgs) return undefined;
+    const subs = new Map(); let stopU = () => {}; const downAt = {};
+    const cleanup = realtimeScope.run(async (isDisposed, registerDispose) => {
       await supabase.realtime.setAuth(session.access_token);
-      if (!live) return;
-      const here = (space) => (space == null ? orgId === PERSONAL : space === orgId);
-      chans.push(...orgs.filter((o) => o.id !== orgId).map((o) => supabase.channel(`org:${o.id}`, { config: { private: true } })
-        .on('broadcast', { event: 'message' }, ({ payload }) => crossRef.current(payload, o.id))
-        .on('broadcast', { event: 'approval' }, () => approvalsSoon.current()) // 다른 조직의 결재 — 폰 에이전트 탭 뱃지(데스크톱은 아무 일도 안 한다)
-        .subscribe()));
-      // u:<나> — 서버 적용 전에는 거절된다. 거절되면 1분부터 두 배씩 최대 10분 간격으로만 다시 붙는다(Realtime 로그 잡음 방지). 그동안은 합계 재조회로 물러난다.
+      if (isDisposed()) return;
+      const here = (space) => (space == null ? activeOrg.current === PERSONAL : space === activeOrg.current);
+      const on = (fn) => (e) => { if (!isDisposed()) fn(e); };
+      const status = (key, space) => on((st, e) => { // 끊김 → 보던 방은 보정 조회를 켜고, 다시 붙으면 한 번 따라잡는다
+        if (import.meta.env.DEV) console.log('[rt]', key, st, e?.message ?? '');
+        if (RT_DOWN.has(st)) { downAt[key] = Date.now(); if (here(space)) setEvent(broadcastEvent('rt_down', {})); }
+        else if (st === 'SUBSCRIBED' && downAt[key]) { delete downAt[key]; bumpSync(); if (here(space)) setEvent(broadcastEvent('rt_up', {})); }
+      });
+      const remove = async () => {
+        stopU(); const all = [...subs.values()]; subs.clear(); if (subsRef.current === subs) subsRef.current = new Map(); rt.current = null;
+        const res = await Promise.all(all.map((c) => supabase.removeChannel(c).catch(() => 'error')));
+        if (res.some((r) => r !== 'ok')) { await supabase.removeAllChannels(); setRoomReset((x) => x + 1); } // 방 구독도 함께 사라졌다 — 다시 맞추게(검수 #690 재검 MEDIUM)
+      };
+      registerDispose(remove);
+      for (const o of orgs) {
+        const ch = supabase.channel(`org:${o.id}`, { config: { private: true } });
+        const mine = (fn) => on((e) => { if (here(o.id)) fn(e); });
+        ch.on('broadcast', { event: 'message' }, on(({ payload }) => (here(o.id) ? handleMessageRef.current(payload) : crossRef.current(payload, o.id)))) // 본문은 handleMessage(org:·u:·dm: 공통)
+          .on('broadcast', { event: 'approval' }, on(({ payload }) => { approvalsSoon.current(); if (here(o.id)) { setEvent(broadcastEvent('approval', payload)); notifyApproval(payload); inboxSoon.current(); } else spaceChanged.current(o.id); }))
+          .on('broadcast', { event: 'crew_request' }, mine(({ payload }) => { if (payload?.channel_id && payload.channel_id === activeChannel.current) bumpMembers(); }))
+          .on('broadcast', { event: 'typing' }, mine(onTypingEvent))
+          .on('broadcast', { event: 'reaction' }, mine(({ payload }) => setEvent(broadcastEvent('reaction', payload))))
+          .on('broadcast', { event: 'edit' }, mine(({ payload }) => setEvent(broadcastEvent('edit', payload))))
+          .on('broadcast', { event: 'attach' }, mine(({ payload }) => setEvent(broadcastEvent('attach', payload)))) // 글보다 늦게 붙은 첨부(서버 20260930160000) — 그 글의 첨부를 다시 읽는다
+          .on('broadcast', { event: 'progress' }, mine(onProgressEvent))
+          .subscribe(status(`org:${o.id}`, o.id));
+        subs.set(o.id, ch);
+      }
+      subsRef.current = subs; rt.current = subs.get(activeOrg.current) ?? null;
+      if (import.meta.env.DEV) window.__argoRt = rt.current;
+      // u:<나> — 비공개 방 글·결재·첨부, 친구·에이전트 넣기 요청 변화. 서버 적용 전에는 거절된다 — 거절되면 1분부터 두 배씩 최대 10분 간격으로만 다시 붙는다(Realtime 로그 잡음 방지).
       stopU = joinWithBackoff(supabase, () => supabase.channel(`u:${uid}`, { config: { private: true } })
-        .on('broadcast', { event: 'message' }, ({ payload }) => { const space = payload?.org_id ?? null; if (here(space)) handleMessageRef.current(payload); else crossRef.current(payload, space); })
-        .on('broadcast', { event: 'approval' }, ({ payload }) => { approvalsSoon.current(); if (here(payload?.org_id ?? null)) { setEvent(broadcastEvent('approval', payload)); notifyApproval(payload); } })
-        .on('broadcast', { event: 'attach' }, ({ payload }) => { if (here(payload?.org_id ?? null)) setEvent(broadcastEvent('attach', payload)); }));
-    })();
-    return () => { live = false; stopU(); for (const c of chans) supabase.removeChannel(c).catch(() => {}); }; // 조직 전환·재연결·로그아웃 때 이 효과가 연 구독만 걷는다(현재 조직 구독은 따로)
-  }, [uid, orgIdsKey, orgId, session.access_token, resumeEpoch, roomReset]); // eslint-disable-line react-hooks/exhaustive-deps — roomReset: 조직 구독 해제 실패의 removeAllChannels가 u:·다른 조직 구독도 뗐다(재검 #690)
+        .on('broadcast', { event: 'message' }, on(({ payload }) => { const space = payload?.org_id ?? null; if (here(space)) handleMessageRef.current(payload); else crossRef.current(payload, space); }))
+        .on('broadcast', { event: 'approval' }, on(({ payload }) => { approvalsSoon.current(); if (here(payload?.org_id ?? null)) { setEvent(broadcastEvent('approval', payload)); notifyApproval(payload); inboxSoon.current(); } }))
+        .on('broadcast', { event: 'attach' }, on(({ payload }) => { if (here(payload?.org_id ?? null)) setEvent(broadcastEvent('attach', payload)); }))
+        .on('broadcast', { event: 'crew_request' }, on(({ payload }) => { if (here(payload?.org_id ?? null) && payload?.channel_id === activeChannel.current) bumpMembers(); }))
+        .on('broadcast', { event: 'friend' }, on(() => bumpFriends())) // 친구 요청·수락·삭제·차단(서버 20261002110000 — 종류와 상대 id만) — 받았을 때만 친구 목록을 다시 읽는다(D5)
+        .on('broadcast', { event: 'crew_join' }, on(({ payload }) => { approvalsSoon.current(); inboxSoon.current(); if (payload?.channel_id && payload.channel_id === activeChannel.current) setEvent(broadcastEvent('crew_join', payload)); }))); // 에이전트 넣기 요청 생성·처리(D6)
+      return remove;
+    });
+    return () => { rt.current = null; cleanup(); }; // 송신 참조는 비동기 제거를 기다리지 않고 비운다(분리 검수 P2)
+  }, [uid, orgIdsKey, session.access_token, resumeEpoch, roomReset]); // eslint-disable-line react-hooks/exhaustive-deps — 조직 목록(집합)·토큰·모바일 복귀·전체 해제 뒤에만 다시 건다(탭·고른 조직은 아니다)
+  useEffect(() => { rt.current = subsRef.current.get(orgId) ?? null; }, [orgId]);
   useEffect(() => { const iv = setInterval(() => setTick((x) => x + 1), 15_000); return () => clearInterval(iv); }, []);
   useEffect(() => { if (event?.kind === 'message') loadUnread(); }, [event]); // eslint-disable-line react-hooks/exhaustive-deps
   const dmIdsKey = useMemo(() => channels.filter((c) => c.kind === 'dm').map((c) => c.id).sort().join(','), [channels]); // DM 집합(개수가 아니라 집합 — 하나 끝나고 하나 생겨도 재조회)
   useEffect(() => { dmIdsRef.current = new Set(dmIdsKey ? dmIdsKey.split(',') : []); }, [dmIdsKey]); // 방송 필터용(렌더 중 ref 대입 대신 효과에서)
   useEffect(() => { // DM 최근순 재료 — 채널당 마지막 메시지 시각(RPC msgr_dm_latest, 채널당 1행·id 인덱스). 폰 DM 탭 정렬에만. 재연결·조직 전환 때도 다시.
-    if (!orgId || orgId === PERSONAL || !isPhone || !dmIdsKey) return; let live = true; // 개인 공간은 loadPersonal이 _personal_last_at를 채운다
+    if (!orgId || orgId === PERSONAL || !isPhone || !dmIdsKey || (restoredSpace.current?.space === orgId && restoredSpace.current.sync === syncEpoch)) return; let live = true; // 개인 공간은 loadPersonal이 _personal_last_at를 채운다. 저장본(D3)은 건너뛴다
     supabase.rpc('msgr_dm_latest', { org: orgId }).then(async ({ data }) => { if (!live || !data) return; const m = {}; for (const r of data) m[r.channel_id] = Date.parse(r.last_at); setLastAt((cur) => ({ ...cur, ...m }));
       const ids = data.map((r) => r.last_id).filter(Boolean); if (!ids.length) return; // 한 줄 미리보기 본문 — 마지막 글 id로 한 번에(RLS: 내 DM만 읽힌다)
       const { data: rows } = await supabase.from('msgr_messages').select('id, channel_id, body, author_user_id, crew_id, created_at').in('id', ids).is('deleted_at', null); if (!live || !rows) return;
       const lm = {}; for (const r of rows) lm[r.channel_id] = { body: plainPreview(r.body), mine: r.author_user_id === uid, userId: r.author_user_id ?? null, crewId: r.crew_id ?? null, at: Date.parse(r.created_at) }; setLastMsg((cur) => ({ ...cur, ...lm })); }, () => {});
     return () => { live = false; };
-  }, [orgId, dmIdsKey, isPhone, resumeEpoch]);
+  }, [orgId, dmIdsKey, isPhone, resumeEpoch, syncEpoch]);
   // 폰 채널 탭 줄 재료(오픈채팅 모양 — 인원 수·마지막 글·시각) — 서버 msgr_channel_latest(20261001170000), 참여한 채널마다 1행.
   // 부르는 때: 폰에서 조직 목록(참여 채널 집합)이 바뀔 때·재연결 때 한 번. 주기 호출 없음(유휴 0). 새 글은 아래 방송 처리기가 그 줄만 갱신한다.
   // 서버에 함수가 아직 없으면(운영 적용 전) 조용히 건너뛴다 — 줄은 이름과 안 읽은 수만 보인다.
   const chIdsKey = useMemo(() => channels.filter((c) => c.kind !== 'dm').map((c) => c.id).sort().join(','), [channels]);
   useEffect(() => { listIdsRef.current = new Set(channels.map((c) => c.id)); }, [channels]);
+  const previewIdsRef = useRef(new Set()); useEffect(() => { previewIdsRef.current = new Set(previewChannels.map((c) => c.id)); }, [previewChannels]); // 참여 전 공개 채널 글은 '새 방'이 아니다
   useEffect(() => {
-    if (!orgId || orgId === PERSONAL || !isPhone || !chIdsKey) return; let live = true;
+    if (!orgId || orgId === PERSONAL || !isPhone || !chIdsKey || (restoredSpace.current?.space === orgId && restoredSpace.current.sync === syncEpoch)) return; let live = true;
     supabase.rpc('msgr_channel_latest', { org: orgId }).then(async ({ data }) => { if (!live || !data || activeOrg.current !== orgId) return;
       const at = {}; const cnt = {}; for (const r of data) { if (r.last_at) at[r.channel_id] = Date.parse(r.last_at); cnt[r.channel_id] = r.members ?? 0; }
       setLastAt((cur) => ({ ...cur, ...at })); setChCount(cnt);
@@ -1327,11 +1374,11 @@ function Shell({ session }) {
       const { data: rows } = await supabase.from('msgr_messages').select('id, channel_id, body, author_user_id, crew_id, created_at').in('id', ids).is('deleted_at', null); if (!live || !rows || activeOrg.current !== orgId) return;
       const lm = {}; for (const r of rows) lm[r.channel_id] = { body: plainPreview(r.body), mine: r.author_user_id === uid, userId: r.author_user_id ?? null, crewId: r.crew_id ?? null, at: Date.parse(r.created_at) }; setLastMsg((cur) => ({ ...cur, ...lm })); }, () => {});
     return () => { live = false; };
-  }, [orgId, chIdsKey, isPhone, resumeEpoch]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [orgId, chIdsKey, isPhone, resumeEpoch, syncEpoch]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (!rail && !orgMenu) return; const on = (e) => { if (e.key === 'Escape') { setRail(false); setOrgMenu(false); } }; window.addEventListener('keydown', on); return () => window.removeEventListener('keydown', on); }, [rail, orgMenu]);
   useEffect(() => { if (orgId) writeLastOrg(orgId); }, [orgId]);
   useEffect(() => { if (loadedOrg.current === orgId && orgId && chId && (channels.some((c) => c.id === chId) || previewChannels.some((c) => c.id === chId))) writeLastCh(orgId, chId); }, [orgId, chId, channels, previewChannels]); // 지금 조직의 목록이 도착한 뒤 그 채널일 때만 적는다(공간 전환 중 옛 채널 제외)
-  useEffect(() => { if (tick % 2 === 0 && orgId) (orgId === PERSONAL ? loadPersonal() : loadOrg(orgId)).catch(() => {}); }, [tick]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 30초 목록 다시 읽기는 없앴다(기능 점검 D2) — 새 방은 그 방 글 방송이 알려 주고(목록에 없는 방 → 목록 다시 읽기, D4), 나머지는 복귀·재연결 때 다시 읽는다.
   const personalOrg = useMemo(() => ({ id: PERSONAL, name: t('personal'), slug: 'personal', role: 'owner' }), [t]); // 개인 공간용 가상 조직 객체
   const org = isPersonal ? personalOrg : orgs?.find((o) => o.id === orgId);
   // ── 폰 셸 v2: 채팅 탭 = 개인 공간, 채널·기억 탭 = 고른 조직(chOrg). 공간 전환 버튼은 없다(유건 확정 2026-10-01) ──
@@ -1360,11 +1407,13 @@ function Shell({ session }) {
   const aiConsentLoading = !isPersonal && !!org && aiConsent === undefined && !aiConsentFailOpen; // 3차 검수 L-3 — 아직 모르고 실패도 아니면(=진짜 조회 중) 조직 화면 대신 로딩 표시
   const orgBlocked = orgGateActive || aiConsentLoading; // 사이드바·크루 시트 등은 "동의 안 함"과 "아직 모름" 둘 다 똑같이 가린다 — 다른 건 본문에 뭘 보여줄지뿐
   const friendItems = () => friends.filter((f) => f.status === 'pending' && f.requested_by !== uid).map((f) => ({ kind: 'friend', key: `friend:${f.user_id}`, channel_id: null, at: f.created_at, who: f.user_id, whoKind: 'user', text: t('inbox.friend.text', { name: f.display_name || f.handle || '' }), friendName: f.display_name || f.handle })); // 받은 친구 요청 — 조직·개인 공간 알림함이 같이 쓴다
+  const inboxChKey = useMemo(() => [...channels, ...previewChannels].map((c) => `${c.id}:${c.kind}`).sort().join(','), [channels, previewChannels]);
   useEffect(() => { // 알림함 v1(클라이언트 집계): 나를 멘션한 글 · 내 글에 달린 크루 답글 · 대기 결재 · DM 새 글. 읽음 기준은 이 기기(localStorage) — 서버 표(msgr_notifications)는 친구 요청과 함께 v2.
-    if (!org || !uid) { setInbox([]); return; }
+    if (!org || !uid) { setInboxNet([]); return; }
     // 개인 공간: 조직 질의는 가상 org id로 매번 실패한다(검수 M-2) — 친구 요청만 싣는다(S15: 친구 요청이 가장 많이 오는 곳인데 벨·탭 배지가 0이었다).
     // 읽음 기준은 공간별(inboxSeen[공간 id])이라 조직 알림함의 같은 요청과 따로 센다 — 한 화면에 두 번 세지는 않는다
-    if (isPersonal) { setInbox(friendItems()); return; }
+    if (isPersonal || isPhone) { setInboxNet([]); return; } // 개인 공간은 친구 요청만(아래 useMemo). 폰은 알림함이 없다(v2) — 서버 조회를 하지 않는다(기능 점검 D2)
+    if (loadedOrg.current !== org.id) return; // 목록이 다 온 뒤 한 번 — 비웠다 채우는 사이마다 6건씩 다시 묻던 것
     let dead = false;
     (async () => {
       const dmIds = channels.filter((c) => c.kind === 'dm').map((c) => c.id);
@@ -1390,17 +1439,18 @@ function Shell({ session }) {
       const item = (kind, m) => ({ kind, key: `${kind}:${m.id}`, channel_id: m.channel_id, at: m.created_at, who: m.author_kind === 'crew' ? m.crew_id : m.author_user_id, whoKind: m.author_kind === 'crew' ? 'crew' : 'user', text: m.body ?? '' });
       const dmSet = new Set(dmIds); // DM 안의 크루 답글은 '1:1 대화'에만(같은 글이 '에이전트 답글'에도 실리던 중복 — 유건 제보 2026-09-11)
       const list = [...ments.map((m) => item('mention', m)), ...replies.filter((m) => !dmSet.has(m.channel_id)).map((m) => item('reply', m)), ...dms.map((m) => item('dm', m)),
-        ...friendItems(),
         ...joins.map((r) => ({ kind: 'approval', key: `crewjoin:${r.id}`, joinReq: r.id, channel_id: r.channel_id, at: r.created_at, who: r.crew_id, whoKind: 'crew', text: t('inbox.crewjoin.text', { name: nameOfUser(r.requested_by) }) })),
         ...aps.map((a) => ({ kind: 'approval', key: `approval:${a.id}`, channel_id: a.channel_id, at: a.created_at, who: a.crew_id, whoKind: 'crew', text: approvalOneLineSummary(a, t('ap.plain.command')) })),
         ...announces.map((a) => ({ kind: 'system', key: `system:${a.id}`, channel_id: null, at: a.created_at, who: null, whoKind: 'system',
           text: a.kind === 'trial_extended' ? t('inbox.system.trialExtended', { date: fmtDay(a.meta?.trial_ends_at, lang)[0] }) : '' }))];
-      const seenKeys = new Set();
-      setInbox(list.filter((it) => !(it.whoKind === 'user' && blockedIds.has(it.who))).filter((it) => it.kind === 'approval' || !(it.whoKind === 'crew' && mutedCrewIds.has(it.who))) // 숨긴 크루는 알림함에서도 빠진다(검수 M4) — 결재 카드는 예외(검수 L5)
-        .filter((it) => !seenKeys.has(it.key) && seenKeys.add(it.key)).sort((a, b) => Date.parse(b.at) - Date.parse(a.at)).slice(0, 80));
+      setInboxNet(list);
     })();
     return () => { dead = true; };
-  }, [org?.id, uid, tick, channels, previewChannels, friends, blockedIds, mutedCrewIds, lang]); // eslint-disable-line react-hooks/exhaustive-deps // lang: 회사 공지 문구가 언어 전환에 다시 그려지게(2026-09-27 L11)
+  }, [org?.id, uid, isPhone, inboxEpoch, syncEpoch, inboxChKey, lang]); // eslint-disable-line react-hooks/exhaustive-deps // lang: 회사 공지 문구가 언어 전환에 다시 그려지게(2026-09-27 L11). 채널은 집합(inboxChKey)으로 — 목록 객체가 새로 만들어질 때마다 다시 조회하지 않게(기능 점검 D2)
+  const inbox = useMemo(() => { const seenKeys = new Set(); // 친구 요청·차단·숨김은 조회 없이 합친다(친구 목록이 바뀌어도 서버 조회 6건을 다시 보내지 않는다)
+    return [...inboxNet, ...friendItems()].filter((it) => !(it.whoKind === 'user' && blockedIds.has(it.who))).filter((it) => it.kind === 'approval' || !(it.whoKind === 'crew' && mutedCrewIds.has(it.who))) // 숨긴 크루는 알림함에서도 빠진다(검수 M4) — 결재 카드는 예외(검수 L5)
+      .filter((it) => !seenKeys.has(it.key) && seenKeys.add(it.key)).sort((a, b) => Date.parse(b.at) - Date.parse(a.at)).slice(0, 80);
+  }, [inboxNet, friends, blockedIds, mutedCrewIds, uid, lang]); // eslint-disable-line react-hooks/exhaustive-deps
   const nodeSeenAt = org?.node_seen_at ? Date.parse(org.node_seen_at) : 0; // 상주 노드 하트비트 — 설정 화면과 같은 판정(AWAY_MS)
   const nodeAlive = !!org?.service_user_id && nodeSeenAt > 0 && Date.now() - nodeSeenAt < AWAY_MS;
   const nodeInd = nodeIndicator({ org, isPersonal, now: Date.now(), awayMs: AWAY_MS }); // 폰 위쪽 서버 표시 — 대상·모양은 순수 함수(src/node-indicator.mjs)
@@ -1487,7 +1537,11 @@ function Shell({ session }) {
   const handleMessageRef = useRef(() => {});
   handleMessageRef.current = (payload) => {
     if (!seenOnce(seenMsgRef.current, payload?.id)) return;
-    if (payload?.author_kind === 'crew' && payload.crew_id) { settleCrew(payload); setDoneAt((m) => ({ ...m, [payload.crew_id]: Date.now() })); } // 답글이 오면 그 크루의 '입력 중'·실행 카드를 즉시 내린다(6~8초 만료를 기다리던 유령 표시)
+    const cid = payload?.channel_id;
+    if (cid && loadedOrg.current === activeOrg.current && !listIdsRef.current.has(cid) && !previewIdsRef.current.has(cid)) addRoom.current(cid); // 목록에 없는 방의 첫 글 — 그 방만 불러와 넣는다(30초 목록 재조회를 기다리지 않게, D4)
+    if (cid && cid === activeChannel.current && payload.kind === 'system') bumpMembers(); // 들어오기·나가기·에이전트 넣기 안내 글 — 열린 방 구성원만 다시 읽는다
+    if (!isPhoneRef.current && payload.author_user_id !== uid && ((Array.isArray(payload.mentions) && payload.mentions.some((m) => m?.kind === 'user' && m.id === uid)) || dmIdsRef.current.has(cid) || (payload.author_kind === 'crew' && payload.reply_to))) inboxSoon.current(); // 알림함에 들어갈 글만(데스크톱 벨)
+    if (payload?.author_kind === 'crew' && payload.crew_id) { crewActive(payload.crew_id); settleCrew(payload); setDoneAt((m) => ({ ...m, [payload.crew_id]: Date.now() })); } // 답글이 오면 그 크루의 '입력 중'·실행 카드를 즉시 내린다(6~8초 만료를 기다리던 유령 표시)
     if (payload?.author_kind === 'user') { // 사람이 보낸 글 — 멘션된 크루, 또는 그 DM 방의 크루가 1초 놀란다(유건 확정 2026-09-24)
       const surprised = new Set((Array.isArray(payload.mentions) ? payload.mentions : []).filter((m) => m?.kind === 'crew').map((m) => m.id));
       for (const m of dmMembers[payload.channel_id] ?? []) if (m.member_kind === 'crew') surprised.add(m.member_id);
@@ -1511,8 +1565,10 @@ function Shell({ session }) {
     const ch = r.channels.find((c) => c.id === payload.channel_id);
     osNotify(t('notify.approval', { channel: ch?.name ?? '' }), '', `a:${payload.id}`, payload.channel_id);
   };
-  const loadAvatars = useCallback(async () => { const ids = [...new Set([uid, ...members.map((m) => m.user_id)].filter(Boolean))]; if (!ids.length) return; const rows = await q(supabase.rpc('msgr_avatars', { ids })).catch(() => []); setAvatars(Object.fromEntries(rows.map((r) => [r.user_id, r.avatar_url]))); }, [uid, members]);
-  useEffect(() => { loadAvatars(); }, [loadAvatars, tick]);
+  const avatarIdsKey = useMemo(() => [...new Set([uid, ...members.map((m) => m.user_id)].filter(Boolean))].sort().join(','), [uid, members]);
+  const avatarAsked = useRef(new Set()); // 이미 물어본 사람 — 공간을 오가도 다시 묻지 않는다(복귀·재연결 때 비운다)
+  const loadAvatars = useCallback(async () => { const ids = avatarIdsKey ? avatarIdsKey.split(',').filter((id) => !avatarAsked.current.has(id)) : []; if (!ids.length) return; ids.forEach((id) => avatarAsked.current.add(id)); const rows = await q(supabase.rpc('msgr_avatars', { ids })).catch(() => { ids.forEach((id) => avatarAsked.current.delete(id)); return []; }); if (rows.length) setAvatars((cur) => ({ ...cur, ...Object.fromEntries(rows.map((r) => [r.user_id, r.avatar_url])) })); }, [avatarIdsKey]);
+  useEffect(() => { if (syncEpoch) avatarAsked.current.clear(); loadAvatars(); }, [loadAvatars, syncEpoch]); // 사람 집합이 바뀔 때·복귀 때만 — 주기 없음(기능 점검 D2)
   const [doneAt, setDoneAt] = useState({}); // crew_id → 답이 온 시각(얼굴 '완료' 2초)
   useEffect(() => { const ms = nextDoneIn(doneAt); if (ms == null) { if (Object.keys(doneAt).length) setDoneAt({}); return; } const tm = setTimeout(() => setDoneAt((m) => { const now = Date.now(); return Object.fromEntries(Object.entries(m).filter(([, at]) => nextDoneIn({ x: at }, now) != null)); }), ms + 20); return () => clearTimeout(tm); }, [doneAt]); // 크루마다 정확히 2초
   const [surprisedAt, setSurprisedAt] = useState({}); // crew_id → 멘션·수신 글이 온 시각(얼굴 '놀람' 1초, doneAt과 같은 모양·같은 만료 로직)
@@ -1523,12 +1579,12 @@ function Shell({ session }) {
   const avatarCtx = useMemo(() => {
     const now = Date.now();
     const working = new Set(Object.entries(typing).filter(([, at]) => now - at < TYPING_WINDOW_MS).map(([k]) => k.split(':')[1]));
-    const asking = new Set(inbox.filter((it) => it.key.startsWith('approval:') && it.whoKind === 'crew').map((it) => it.who));
+    const asking = new Set(isPhoneRef.current ? approvals.filter((a) => a.kind === 'approval').map((a) => a.crew_id) : inbox.filter((it) => it.key.startsWith('approval:') && it.whoKind === 'crew').map((it) => it.who)); // 폰은 에이전트 탭 결재 목록(모든 조직)으로 — 폰은 알림함을 모으지 않는다(기능 점검 D2)
     const byId = new Map([...(myAgents ?? []), ...crews, ...myAvailable].map((c) => [c.id, c])); // 폰 에이전트 탭 — 다른 공간의 내 에이전트도 저장한 얼굴로
     return { users: avatars, crews: Object.fromEntries(crews.filter((c) => c.avatar_url).map((c) => [c.id, c.avatar_url])),
       faceOverride: (id) => byId.get(id)?.face ?? null,
       faceState: (id) => crewFaceState({ crew: byId.get(id) ?? null, working: working.has(id), asking: asking.has(id), surprisedAt: surprisedAt[id] ?? 0, erroredAt: erroredAt[id] ?? 0, doneAt: doneAt[id] ?? 0, now }) };
-  }, [avatars, crews, myAvailable, myAgents, typing, inbox, doneAt, surprisedAt, erroredAt, tick]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [avatars, crews, myAvailable, myAgents, typing, inbox, approvals, doneAt, surprisedAt, erroredAt, tick]); // eslint-disable-line react-hooks/exhaustive-deps
   const crewOf = (id) => crews.find((c) => c.id === id) ?? myAvailable.find((c) => c.id === id);
   const [newOrg, setNewOrg] = useState(null);
   const [joinCode, setJoinCode] = useState(null); // 초대 코드로 가입 — 앱에는 링크가 열릴 오리진이 없어 코드를 직접 붙여 넣는다(invite.mjs)
@@ -1618,21 +1674,28 @@ function Shell({ session }) {
       await supabase.realtime.setAuth(session.access_token);
       if (!live) return;
       const subs = roomSubs.current;
-      if (roomEpoch.current !== resumeEpoch) { for (const c of subs.values()) supabase.removeChannel(c).catch(() => {}); subs.clear(); roomEpoch.current = resumeEpoch; }
+      if (roomEpoch.current !== resumeEpoch) { for (const c of subs.values()) supabase.removeChannel(c).catch(() => {}); subs.clear(); roomSpaces.current.clear(); roomEpoch.current = resumeEpoch; }
+      // 공간을 오가도 다른 공간의 방 구독은 유지한다(기능 점검 D3) — 지금 공간 목록이 다 온 뒤 그 공간에서 빠진 방(나간 방)만 뗀다. 전체 상한 50(Realtime 연결당 채널 여유).
+      const space = activeOrg.current; const ready = loadedOrg.current === space;
       const want = new Set(roomIdsKey ? roomIdsKey.split(',') : []);
-      for (const [id, c] of subs) if (!want.has(id) || c.state === 'closed' || supabase.getChannels?.().includes(c) === false) { supabase.removeChannel(c).catch(() => {}); subs.delete(id); } // 빠진 방, 그리고 밖에서 닫힌 채널(removeAllChannels)은 떼고 아래에서 다시 만든다
+      const spaces = roomSpaces.current;
+      for (const [id, c] of subs) if ((ready && spaces.get(id) === space && !want.has(id)) || c.state === 'closed' || supabase.getChannels?.().includes(c) === false) { supabase.removeChannel(c).catch(() => {}); subs.delete(id); spaces.delete(id); } // 빠진 방, 그리고 밖에서 닫힌 채널(removeAllChannels)은 떼고 아래에서 다시 만든다
       for (const id of want) {
-        if (subs.has(id)) continue;
+        if (subs.has(id)) { spaces.set(id, space); continue; }
+        spaces.set(id, space);
+        const here = () => spaces.get(id) === activeOrg.current;
+        const mine = (fn) => (e) => { if (here()) fn(e); };
         const c = supabase.channel(`dm:${id}`, { config: { private: true } });
-        c.on('broadcast', { event: 'message' }, ({ payload }) => handleMessageRef.current(payload)) // 조직 처리기와 같은 처리 — id로 한 번만(u:와 겹쳐도)
-          .on('broadcast', { event: 'typing' }, onTypingEvent)
-          .on('broadcast', { event: 'progress' }, onProgressEvent)
-          .on('broadcast', { event: 'reaction' }, ({ payload }) => setEvent(broadcastEvent('reaction', payload)))
-          .on('broadcast', { event: 'edit' }, ({ payload }) => setEvent(broadcastEvent('edit', payload)))
-          .on('broadcast', { event: 'attach' }, ({ payload }) => setEvent(broadcastEvent('attach', payload)))
-          .subscribe((status) => { if (isPersonal && RT_DOWN.has(status)) setEvent(broadcastEvent('rt_down', {})); }); // 조직 방의 끊김은 조직 구독이 알린다
+        c.on('broadcast', { event: 'message' }, ({ payload }) => { if (here()) handleMessageRef.current(payload); else { const sp = spaces.get(id); crossRef.current(payload, sp === PERSONAL ? null : sp); } }) // 보는 공간이면 본문 처리, 아니면 합계·알림 — id로 한 번만(u:와 겹쳐도)
+          .on('broadcast', { event: 'typing' }, mine(onTypingEvent))
+          .on('broadcast', { event: 'progress' }, mine(onProgressEvent))
+          .on('broadcast', { event: 'reaction' }, mine(({ payload }) => setEvent(broadcastEvent('reaction', payload))))
+          .on('broadcast', { event: 'edit' }, mine(({ payload }) => setEvent(broadcastEvent('edit', payload))))
+          .on('broadcast', { event: 'attach' }, mine(({ payload }) => setEvent(broadcastEvent('attach', payload))))
+          .subscribe((status) => { if (here() && spaces.get(id) === PERSONAL && RT_DOWN.has(status)) setEvent(broadcastEvent('rt_down', {})); }); // 조직 방의 끊김은 조직 구독이 알린다
         subs.set(id, c);
       }
+      if (subs.size > 50) for (const [id, c] of subs) { if (subs.size <= 50) break; if (!want.has(id)) { supabase.removeChannel(c).catch(() => {}); subs.delete(id); spaces.delete(id); } } // 오래 전에 넣은 다른 공간 방부터
     })();
     return () => { live = false; };
   }, [roomIdsKey, isPersonal, resumeEpoch, roomReset]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1780,7 +1843,7 @@ function Shell({ session }) {
     const orgCrews = async () => { if (Date.now() - faceCol.missingAt > 600_000) try { return await q(supabase.from('msgr_crews').select(`${cols}, face`).eq('owner_user_id', uid).not('org_id', 'is', null).in('status', ['active', 'available'])); } catch { /* 옛 서버(face 열 없음) */ } return q(supabase.from('msgr_crews').select(cols).eq('owner_user_id', uid).not('org_id', 'is', null).in('status', ['active', 'available'])); };
     const [org, personal] = await Promise.all([orgCrews().catch(() => null), q(supabase.rpc('msgr_personal_room_crews')).catch(() => [])]);
     if (org === null) return;
-    setMyAgents([...(personal ?? []).filter((c) => c.owner_user_id === uid && c.status === 'active').map((c) => ({ ...c, org_id: null })), ...org]);
+    setMyAgents(stampFetched([...(personal ?? []).filter((c) => c.owner_user_id === uid && c.status === 'active').map((c) => ({ ...c, org_id: null })), ...org]));
   }, [uid]);
   useEffect(() => { if (isPhone && page === 'agents') { loadMyAgents().catch(() => {}); loadApprovals().catch(() => {}); } if (isPhone && page === 'set-agents') loadMyAgents().catch(() => {}); }, [isPhone, page, resumeEpoch]); // eslint-disable-line react-hooks/exhaustive-deps
   // 다른 공간의 에이전트·대화를 열 때 — 공간을 바꾸고, 그 공간 목록이 도착하면 그때의 최신 함수로 연다(옛 렌더의 함수는 옛 공간 목록을 본다)
@@ -1879,9 +1942,20 @@ function Shell({ session }) {
  // 기본 비공개(유건 2026-09-16) — 공개는 고를 때만
   const [ctx, setCtx] = useState(null); // 우클릭 메뉴 {x, y, items}
   const [drag, setDrag] = useState(null); // 즐겨찾기 안에서 끌어 정렬 중인 id
+  // 공간 전환(기능 점검 D3) — 떠나는 공간의 다 불러온 목록을 저장하고, 돌아갈 공간에 저장본이 있고 그 사이 방송이 없었으면(dirtySpaces) 저장본으로 바로 연다.
+  // 저장본으로 연 공간은 목록·안 읽음·마지막 글 조회를 건너뛴다(restoredSpace — 같은 커밋의 효과들이 본 뒤 아래 효과가 비운다). 없거나 바뀌었으면 종전처럼 비우고 다시 읽는다.
+  const spaceSnap = useRef(null);
+  spaceSnap.current = { channels, previewChannels, members, crews, myAvailable, lastAt, lastMsg, chId, dmMembers, ent, policy, unread, unreadSpace, chCount, botKinds, otherNames, targetPrefs };
+  const prevSpace = useRef(null); const restoredSpace = useRef(null);
   useLayoutEffect(() => {
-    loadedOrg.current = null;
-    setChannels([]); setPreviewChannels([]); setMembers([]); setCrews([]); setMyAvailable([]); setLastAt({}); setLastMsg({}); setChId(null); setChMembers([]); setDmMembers({}); setEnt(null); setPolicy(null); setUnread({}); setUnreadSpace(null); setChCount({}); setBotKinds([]);
+    const prev = prevSpace.current; prevSpace.current = orgId;
+    if (prev && prev !== orgId && loadedOrg.current === prev) { spaceCache.current.set(prev, spaceSnap.current); dirtySpaces.current.delete(prev); }
+    const hit = orgId && !dirtySpaces.current.has(orgId) ? spaceCache.current.get(orgId) ?? null : null;
+    restoredSpace.current = hit ? { space: orgId, sync: syncEpoch, prefs: prefsEpoch } : null; // 머무는 동안 유지 — 다시 읽기 신호(syncEpoch·설정 변경)가 오면 각 효과가 무효로 본다
+    loadedOrg.current = hit ? orgId : null;
+    const d = hit ?? {};
+    setChannels(d.channels ?? []); setPreviewChannels(d.previewChannels ?? []); setMembers(d.members ?? []); setCrews(d.crews ?? []); setMyAvailable(d.myAvailable ?? []); setLastAt(d.lastAt ?? {}); setLastMsg(d.lastMsg ?? {}); setChId(d.chId ?? null); setChMembers([]); setDmMembers(d.dmMembers ?? {}); setEnt(d.ent ?? null); setPolicy(d.policy ?? null); setUnread(d.unread ?? {}); setUnreadSpace(d.unreadSpace ?? null); setChCount(d.chCount ?? {}); setBotKinds(d.botKinds ?? []);
+    if (hit) { setOtherNames(d.otherNames ?? {}); setTargetPrefs(d.targetPrefs ?? []); }
     setCtx(null); setDrag(null); setRailAction(null); setSheet(null); setChSheet(false); setSearchRes(null); setNewCh(null); setDmGroup(false); // 그룹 대화 시트는 공간을 넘기지 않는다(개인 공간에서 여러 명 생성이 __personal__로 가던 길)
   }, [orgId]);
   const openCtx = (e, items, trigger = null) => { e.preventDefault(); e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); const returnFocus = e.currentTarget.closest('.msgr-railrow')?.querySelector('button.item') ?? e.currentTarget; setCtx({ x: e.clientX || r.left, y: e.clientY || r.bottom, items, trigger, returnFocus }); };
@@ -1965,7 +2039,7 @@ function Shell({ session }) {
         setTargetPrefs((rows) => rows.map((p) => ({ ...p, pin_pos: targetPatches.find((x) => x.target_kind === p.target_kind && x.target_id === p.target_id)?.pin_pos ?? p.pin_pos })));
       }
     } catch (e) { setErr(friendlyErr(e.message, t)); }
-    finally { favoriteLock.current = false; setFavoriteBusy(false); setTick((x) => x + 1); }
+    finally { favoriteLock.current = false; setFavoriteBusy(false); bumpPrefs(); }
   };
   // DM 탭 '직접 배치' 순서(유건 확정 2026-09-29) — msgr_channel_prefs.sort_pos. 새로 생긴 DM은 sortByCustomOrder가 맨 아래로(sort_pos 없음).
   // 채널 목록도 같은 열(유건 2026-09-29) — 걸러 보이는 일부에서 끌어도 전체 순서에 반영한다(검수 MEDIUM-1: 부분 목록만 0..k로 매기면 전체가 섞였다). 위치가 바뀐 행만 쓴다(DB 위생)
@@ -2149,7 +2223,7 @@ function Shell({ session }) {
   // '내 에이전트' 직접 배치 드래그는 내 소유 크루만(railCompany는 대상 밖, 유건 확정 2026-09-29 #7) — mine 여부로 드래그 속성 자체를 끈다.
   const railRow = (c) => { const mine = c.owner_user_id === uid; const items = crewCtx(c); return (
     <div key={c.id} data-drag-id={c.id} className={`msgr-railrow nomore${ctx?.trigger === c.id ? ' open' : ''}${drag === c.id ? ' dragging' : ''}${twinPaused(c) ? ' paused' : ''}`} onDragStart={mine ? dragStart(c) : undefined} onDragEnd={() => setDrag(null)} onDragOver={dragOver} onDrop={(e) => dropOnRow(e, c)} onContextMenu={(e) => { if (Date.now() - (lpStates.current[c.id]?.firedAt ?? 0) < 800) { e.preventDefault(); return; } openCtx(e, items, c.id); }} draggable={!isPhone && mine && railSort === 'custom'} {...(isPhone ? rowLongPress(c, items, mine ? { onDrop: reorderRailCustom } : null) : {})}>
-      <button type="button" className="item" onClick={() => { if (isPersonal) dmWithCrew(c.id); else setSheet(c.id); setRail(false); }} title={`${c.display_name}${twinOrgLabel(c) ? ` · ${t('rail.twin.org', { org: twinOrgLabel(c) })}` : ` · ${t(`rail.src.${sourceOf(c)}`)}`}${c.role_text ? ` · ${c.role_text}` : ''}${twinRelink(c) ? ` · ${t('rail.relink.title')}` : ''}${twinLeftOrg(c) ? ` · ${t('rail.leftorg.title')}` : ''}`}><Av name={c.display_name} crew size="xs" company={crewTier(c, org) === 'company'} crewId={c.id} /><span className="name">{c.display_name}{!twinOrgLabel(c) && crewHints.get(c.id) && <small className="msgr-namehint">{crewHints.get(c.id)}</small>}</span>{twinOrgLabel(c) && <span className="msgr-orglabel">{twinOrgLabel(c)}</span>}{twinRelink(c) && <span className="msgr-relink">{t('rail.relink')}</span>}{twinLeftOrg(c) && <span className="msgr-relink">{t('rail.leftorg')}</span>}<span className={`msgr-dot${crewSeenAt(c) && Date.now() - Date.parse(crewSeenAt(c)) < AWAY_MS ? ' mark' : ''}`} /></button>
+      <button type="button" className="item" onClick={() => { if (isPersonal) dmWithCrew(c.id); else setSheet(c.id); setRail(false); }} title={`${c.display_name}${twinOrgLabel(c) ? ` · ${t('rail.twin.org', { org: twinOrgLabel(c) })}` : ` · ${t(`rail.src.${sourceOf(c)}`)}`}${c.role_text ? ` · ${c.role_text}` : ''}${twinRelink(c) ? ` · ${t('rail.relink.title')}` : ''}${twinLeftOrg(c) ? ` · ${t('rail.leftorg.title')}` : ''}`}><Av name={c.display_name} crew size="xs" company={crewTier(c, org) === 'company'} crewId={c.id} /><span className="name">{c.display_name}{!twinOrgLabel(c) && crewHints.get(c.id) && <small className="msgr-namehint">{crewHints.get(c.id)}</small>}</span>{twinOrgLabel(c) && <span className="msgr-orglabel">{twinOrgLabel(c)}</span>}{twinRelink(c) && <span className="msgr-relink">{t('rail.relink')}</span>}{twinLeftOrg(c) && <span className="msgr-relink">{t('rail.leftorg')}</span>}<span className={`msgr-dot${seenWithin(c, AWAY_MS, Date.now(), crewSeenAt(c)) ? ' mark' : ''}`} /></button>
     </div>
   ); };
   // 평평한 목록(유건 결정 2026-09-09). 외부 에이전트(헤르메스·오픈클로 봇)가 있을 때만 '외부' 소제목 하나로 아래에 구분한다.
@@ -2277,7 +2351,7 @@ function Shell({ session }) {
   const agentShown = (list) => tabSearch(list, tabQText, (c) => [c.display_name, c.role_text]);
   const agentState = (c) => (twinPaused(c) ? 'relink' : Object.entries(typing).some(([k, at]) => k.endsWith(`:${c.id}`) && Date.now() - at < TYPING_WINDOW_MS) || !!progress && Object.entries(progress).some(([k, v]) => k.endsWith(`:${c.id}`) && Date.now() - (v?.at ?? 0) < 8000) ? 'working' : 'idle');
   const openAgent = (c) => { setTabQ(null); const space = c.org_id ?? PERSONAL; if (c.status === 'available') { runInSpace(space, (fn) => fn.setSheet(c.id)); return; } runInSpace(space, (fn) => (space === PERSONAL ? fn.openPersonalCrewDm(c.id) : fn.dmWithCrew(c.id))); }; // 꺼 둔(파견 해제) 에이전트는 다시 켜는 카드로
-  const agentRow = (c) => { const st = agentState(c); const on = !!crewSeenAt(c) && Date.now() - Date.parse(crewSeenAt(c)) < AWAY_MS; return (
+  const agentRow = (c) => { const st = agentState(c); const on = seenWithin(c, AWAY_MS, Date.now(), crewSeenAt(c)); return (
     <button key={c.id} type="button" className="item ph-arow" onClick={() => openAgent(c)}>
       <Av name={c.display_name} crew size="kk" crewId={c.id} src={c.avatar_url ?? null} />
       <span className="ph-kbody"><span className="ph-kl1"><span className="name">{c.display_name}</span><span className="when">{spaceName(c.org_id)}</span></span><span className="ph-kl2"><span className={`ph-astate ${st}`}><span className={`msgr-dot${on && st !== 'relink' ? ' mark' : ''}`} />{t(`phone.agent.${st}`)}</span>{c.role_text && <span className="snip">{c.role_text}</span>}</span></span>
@@ -2551,8 +2625,8 @@ function Shell({ session }) {
         ) : page === 'inbox' && org ? (
           <Inbox items={inbox} prevSeen={inboxPrev} initialKind={inboxKind} onReadAll={() => { const now = Date.now(); setInboxPrev(now); const next = { ...inboxSeen, [org.id]: now }; setInboxSeen(next); writeInboxSeen(next); const dmIds = new Set(channels.filter((c) => c.kind === 'dm').map((c) => c.id)); const top = new Map(); for (const it of inbox) { const mid = Number(it.key.split(':')[1]); if (it.channel_id && dmIds.has(it.channel_id) && it.kind !== 'approval' && it.kind !== 'friend' && Number.isInteger(mid) && mid > (top.get(it.channel_id) ?? 0)) top.set(it.channel_id, mid); } for (const [cid, mid] of top) markRead(cid, mid); resyncBadge(); }} channels={channels} crews={crews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id, it) => { if (!id) { if (it?.kind === 'system') { if (isAdmin) { setPage('settings'); setSettingsTab('org'); } return; } setPage('settings'); setSettingsTab('friends'); return; } if (it?.joinReq) { if (id === chId) { setChSheet(true); setSheetReqTick((x) => x + 1); } else sheetAfterNav.current = true; } setChId(id); setPage('chat'); }} onBack={backFromPage} onMenu={openNav} />
         ) : page === 'settings' || page === 'orgsettings' || (isPhone && page.startsWith('set-')) ? (
-          <Settings phoneView={isPhone ? (page === 'settings' ? 'list' : page === 'orgsettings' ? 'orgadmin' : page.slice(4)) : null} onSub={(k) => setPage(`set-${k}`)} crews={crews} myName={profileName} myAgents={myAgents} onOpenAgent={openAgentCard} onOrgSub={openOrgSub} onPickOrg={pickSettingsOrg} onOrgAdmin={() => setPage('orgsettings')} onToggleMemory={toggleMemory} spaceReady={loadedOrg.current === orgId} memSort={memSort} onMemSort={pickMemSort} focusGroup={settingsFocus} onFocusUsed={() => setSettingsFocus(null)} chOrgId={chOrg} session={session} me={me} uid={uid} onAvatar={loadAvatars} onProfileSaved={() => { askName(uid, true); setProfileTick((x) => x + 1); }} invitesTick={invitesTick} org={isPersonal ? null : org} orgs={orgs} isAdmin={!!isAdmin} gated={orgBlocked} policy={policy} ent={isPersonal ? null : ent} members={isPersonal ? [] : members} nameOfUser={nameOfUser} onOpenCrew={setSheet} friends={friends} onFriendsChanged={onFriendsChanged} onDm={(id) => openDm('user', id)} onPersonalDm={openPersonalDm} channels={inviteChannels} onInvite={isAdmin && !isPersonal ? orgInvite : null} initialTab={settingsTab} onTabUsed={() => setSettingsTab(null)} onChanged={() => (isPersonal ? loadPersonal() : loadOrg(orgId)).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={backFromPage} onMenu={openNav} />
-        ) : channel ? (
+          <Settings phoneView={isPhone ? (page === 'settings' ? 'list' : page === 'orgsettings' ? 'orgadmin' : page.slice(4)) : null} onSub={(k) => setPage(`set-${k}`)} crews={crews} myName={profileName} myAgents={myAgents} onOpenAgent={openAgentCard} onOrgSub={openOrgSub} onPickOrg={pickSettingsOrg} onOrgAdmin={() => setPage('orgsettings')} onToggleMemory={toggleMemory} spaceReady={loadedOrg.current === orgId} memSort={memSort} onMemSort={pickMemSort} focusGroup={settingsFocus} onFocusUsed={() => setSettingsFocus(null)} chOrgId={chOrg} session={session} me={me} uid={uid} onAvatar={() => { avatarAsked.current.delete(uid); loadAvatars(); }} onProfileSaved={() => { askName(uid, true); setProfileTick((x) => x + 1); }} invitesTick={invitesTick} org={isPersonal ? null : org} orgs={orgs} isAdmin={!!isAdmin} gated={orgBlocked} policy={policy} ent={isPersonal ? null : ent} members={isPersonal ? [] : members} nameOfUser={nameOfUser} onOpenCrew={setSheet} friends={friends} onFriendsChanged={onFriendsChanged} onDm={(id) => openDm('user', id)} onPersonalDm={openPersonalDm} channels={inviteChannels} onInvite={isAdmin && !isPersonal ? orgInvite : null} initialTab={settingsTab} onTabUsed={() => setSettingsTab(null)} onChanged={() => (isPersonal ? loadPersonal() : loadOrg(orgId)).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={backFromPage} onMenu={openNav} />
+        ) : isPhone && page !== 'chat' ? null /* 폰 목록·설정 뒤에 숨은 대화방을 그리지 않는다 — 공간을 바꿀 때마다 보이지 않는 방의 글·첨부·반응을 읽던 것(기능 점검 D3) */ : channel ? (
           <Channel key={chId} onCrewFailed={noteCrewFailed} onPersonalChanged={async () => { await loadPersonal().catch(() => {}); await loadChMembers(chId).catch(() => {}); }} onScreen={channelOnScreen({ isPhone, page })} namePrompt={org && !isPersonal && me && !orgLocked ? <NamePrompt key={orgId} org={org} me={me} email={session.user.email} onChanged={() => loadOrg(orgId).catch(() => {})} onNote={setNote} onError={setErr} /> : null} onOutsideDm={dmWithCrew} startCard={org && !isPersonal && org.role !== 'guest' && channel.kind !== 'dm' ? <OnboardCard key={orgId} orgId={orgId} t={t} steps={orgSteps({ t, ...onboard, hasChannel: true, invite: isAdmin ? orgInvite : null })} /> : null} jumpTo={jump?.ch === chId ? jump.mid : null} onJumped={() => setJump(null)} channel={channel} preview={!!previewing} onJoin={() => joinChannel(channel)} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} mentionPeople={mentionPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} typingStart={typingStartRef.current} progress={progress} onRead={markRead} muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} onToggleMemory={() => toggleMemory(channel)} broadcast={(ev, payload) => (roomTopic ? roomSubs.current.get(chId) : rt.current)?.send({ type: 'broadcast', event: ev, payload }).catch?.(() => {})} onError={setErr} onNote={setNote} onMenu={openNav} onCrew={openers.channel} onTitle={() => setChSheet(true)} onCrewAdd={() => { setChSheetAdd('crew'); setChSheet(true); }} mentionReq={mentionReq} onMentionDone={() => setMentionReq(null)} dmName={dmName} channels={channels} onOpenRelay={openRelay} isPersonal={isPersonal} />
         ) : isPersonal ? (
           <><div className="msgr-top"><NavButton onMenu={openNav} /><span className="title">{t('personal')}</span><span className="topic">{t('personal.space')}</span></div><div className="msgr-thread" style={{ display: 'flex' }}><div className="msgr-empty"><p>{t('personal.empty')}</p><button type="button" className="btn btn-primary sm" onClick={() => setFriendAdd(true)}><I name="plus" size={13} />{t('friends.add')}</button></div></div></>
@@ -2967,7 +3041,7 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
               <button type="button" className="btn sm" disabled={busy} onClick={() => { const id = kickAsk.id; setKickAsk(null); kick('user', id); }}>{t('ch.kick.anyway')}</button>
               {onManageInvites && <button type="button" className="btn sm" onClick={() => { setKickAsk(null); onManageInvites(); }}>{t('inv.manage')}</button>}
               <button type="button" className="btn sm" onClick={() => setKickAsk(null)}>{t('ui.cancel')}</button></div></div>}
-            {chCrews.map((c) => { const on = crewSeenAt(c) && Date.now() - Date.parse(crewSeenAt(c)) < AWAY_MS; const company = crewTier(c, org) === 'company'; const key = `c:${c.id}`; return (
+            {chCrews.map((c) => { const on = seenWithin(c, AWAY_MS, Date.now(), crewSeenAt(c)); const company = crewTier(c, org) === 'company'; const key = `c:${c.id}`; return (
               <div key={key} className="row">
                 <Av name={c.display_name} crew size="sm" company={company} crewId={c.id} /><span className="name">{c.display_name}</span>
                 <span className="sub">{company ? t('crew.tier.company.sub', { org: org?.name ?? '', role: c.role_text ?? '' }) : t('crew.tier.personal.sub', { name: nameOfUser(c.owner_user_id), role: c.role_text ?? '' })}</span>{!on && <span className="msgr-offline">{t('crew.offline')}</span>}
@@ -5248,6 +5322,7 @@ function PersonalRoomBar({ chId, uid, hasCrews, event, nameOfUser, crewName = ()
   const { t, lang } = useT();
   const { aiConsented, aiConsentKnown, setAiConsent } = useContext(SafetyCtx);
   const [reqs, setReqs] = useState([]); const [busy, setBusy] = useState(false);
+  const reqSignal = event && event.channel_id === chId && (event.kind === 'crew_join' || event.kind === 'approval' || (event.kind === 'message' && event.msgKind === 'system')) ? event.at : 0; // 이 방의 넣기 요청·결재·안내 글 방송에만 다시 읽는다(방송마다 2건 조회하던 것, 기능 점검 D2)
   const nameAsked = useRef(new Set()); // 이름을 다시 읽어 본 요청 id — 옛 서버(대기 크루 이름을 안 주는 정의)에서 방송마다 다시 읽지 않게 요청당 한 번
   useEffect(() => { let live = true; (async () => {
     const approver = (await supabase.rpc('msgr_dm_approver', { ch: chId }))?.data;
@@ -5258,7 +5333,7 @@ function PersonalRoomBar({ chId, uid, hasCrews, event, nameOfUser, crewName = ()
     // 방금 온 요청의 에이전트가 목록에 없으면 한 번 다시 읽는다 — 서버(20261001160000)가 대기 크루 이름을 방 구성원에게 준다. 주기 재조회(30초)를 기다리면 그동안 이름 없이 보였다
     const fresh = mine.filter((r) => !crewName(r.crew_id) && !nameAsked.current.has(r.id));
     if (fresh.length) { fresh.forEach((r) => nameAsked.current.add(r.id)); onChanged?.(); }
-  })().catch(() => {}); return () => { live = false; }; }, [chId, uid, event?.at]); // eslint-disable-line react-hooks/exhaustive-deps
+  })().catch(() => {}); return () => { live = false; }; }, [chId, uid, reqSignal]); // eslint-disable-line react-hooks/exhaustive-deps
   const decide = async (r, ok) => { setBusy(true); try { await q(supabase.rpc('msgr_crew_join_decide', { req: r.id, approve: ok })); setReqs((xs) => xs.filter((x) => x.id !== r.id)); onChanged?.(); } catch (e) { onError?.(friendlyErr(e.message, t)); } finally { setBusy(false); } };
   const agree = async () => { setBusy(true); try { await setAiConsent(true); } catch { onError?.(t('consent.ai.failed')); } finally { setBusy(false); } };
   return (<>
@@ -5378,7 +5453,7 @@ function Channel({ onCrewFailed = null, onScreen = true, namePrompt = null, onOu
   const editMsg = async (m, body) => { try { await q(supabase.from('msgr_messages').update({ body, edited_at: new Date().toISOString() }).eq('id', m.id)); await reloadMsg(m.id); broadcast?.('edit', { channel_id: chId, message_id: m.id }); } catch (e) { onError(e.message); } };
   const deleteMsg = async (m) => { try { await q(supabase.from('msgr_messages').update({ body: '', deleted_at: new Date().toISOString() }).eq('id', m.id)); await reloadMsg(m.id); broadcast?.('edit', { channel_id: chId, message_id: m.id }); } catch (e) { onError(e.message); } };
   const lastId = msgs?.at(-1)?.id ?? 0;
-  const rtSeen = useRef(0); const swept = useRef(0); // 마지막 방송 시각·마지막 보정 조회 시각
+  const rtSeen = useRef(0); const [rtDown, setRtDown] = useState(false); // 마지막 방송 시각 · 실시간이 끊겼다고 알려진 동안(보정 조회는 이때만 — 기능 점검 D2)
   useEffect(() => {
     if (!event) return;
     // 방송이 실어 오는 것은 id·채널·멘션뿐이라 본문은 조회로 채운다. 이 분기는 구분자가
@@ -5390,7 +5465,8 @@ function Channel({ onCrewFailed = null, onScreen = true, namePrompt = null, onOu
       // 비어 있게 된다(크루는 결정을 기다리며 멈추고 사람은 요청을 모른다). 카드 글을 봤으면 결재도 읽는다.
       if (event.msgKind === 'approval_card') loadApprovals().catch(() => {});
     }
-    if (event.kind === 'rt_down') rtSeen.current = 0; // 알려진 끊김 — 30초 창을 기다리지 않고 다음 폴부터 조회한다
+    if (event.kind === 'rt_down') { rtSeen.current = 0; setRtDown(true); } // 알려진 끊김 — 보정 조회를 켠다
+    if (event.kind === 'rt_up') { setRtDown(false); load(lastId).catch(() => {}); loadApprovals().catch(() => {}); } // 다시 붙었다 — 끊긴 동안 놓친 글을 한 번 따라잡고 보정 조회를 끈다
     if (event.kind === 'approval' && event.channel_id === chId) { rtSeen.current = Date.now(); loadApprovals().catch(() => {}); load(lastId).catch(() => {}); }
     if (event.kind === 'reaction' && event.channel_id === chId && event.message_id) reloadReacts(event.message_id).catch(() => {});
     if (event.kind === 'edit' && event.channel_id === chId && event.message_id) reloadMsg(event.message_id).catch(() => {});
@@ -5452,17 +5528,11 @@ function Channel({ onCrewFailed = null, onScreen = true, namePrompt = null, onOu
   useEffect(() => { if (!lastId || !onScreen) return; const mark = () => { if (document.visibilityState !== 'hidden' && document.hasFocus()) onRead?.(chId, lastId); }; mark(); document.addEventListener('visibilitychange', mark); window.addEventListener('focus', mark); return () => { document.removeEventListener('visibilitychange', mark); window.removeEventListener('focus', mark); }; }, [chId, lastId, onScreen]); // eslint-disable-line react-hooks/exhaustive-deps -- 폰 목록 뒤에 숨은 대화는 읽음이 아니다(onScreen). 창이 보여도 초점이 다른 앱에 있으면 읽음으로 치지 않는다(자리 비운 사이 온 글이 조용히 읽음이 되던 결함, 2026-09-12 점검)
   // 앞으로 온 순간 따라잡기 — 가려진 창에서 밀린 글을 다음 폴·밀린 방송 처리까지 기다리지 않고 한 번에(유건 제보 2026-09-18 "앞으로 오면 하나씩 뜬다")
   useEffect(() => onForeground(() => { load(lastId).catch(() => {}); loadApprovals().catch(() => {}); }), [load, lastId]); // eslint-disable-line react-hooks/exhaustive-deps
-  // 폴링 폴백(10s) — Realtime이 끊기거나 구독이 거부돼도 새 메시지가 화면에 도달한다(정본은 언제나 조회, 방송은 깨우기 신호)
-  useEffect(() => { const iv = setInterval(() => {
-    // 방송이 살아 있으면 전량 조회를 반복하지 않는다. 방송이 막 같은 일을 했기 때문이다.
-    // 다만 첨부·반응이 빈 묶음은 방송과 무관하게 계속 메운다(검수 #531 M-1의 목적).
-    // id는 채널마다 이어지지 않아 빠진 글을 번호로 알아낼 수 없다. 그래서 방송이 흐르는 동안에도
-    // 보정 조회를 없애지 않고 간격만 늘린다(방송이 끊기면 즉시 10초로 돌아온다).
-    const now = Date.now();
-    const quiet = now - rtSeen.current > RT_QUIET_MS;
-    if (quiet || now - swept.current > RT_SWEEP_MS) { swept.current = now; load(lastId).catch(() => {}); loadApprovals().catch(() => {}); } // 결재도 함께 — 방송 유실의 이중 방어
-    const { msgs: ms, atts: at } = live.current; const miss = (ms ?? []).filter((m) => !(m.id in at)).map((m) => m.id); if (miss.length) hydrate(miss).catch(() => {});
-  }, 10_000); return () => clearInterval(iv); }, [load, lastId, hydrate]);
+  // 보정 조회(10s)는 화면에 보이는 방에서 실시간이 끊겼다고 알려진 동안만 돈다(기능 점검 D2 — 숨겨 둔 방·조용한 방에서 10초마다 글·결재를 읽던 것).
+  // 방송이 살아 있으면 새 글은 방송이, 놓친 글은 앞으로 올 때(onForeground)·다시 붙을 때(rt_up)가 따라잡는다.
+  useEffect(() => { if (!onScreen || !rtDown) return undefined; const iv = setInterval(() => { load(lastId).catch(() => {}); loadApprovals().catch(() => {}); }, 10_000); return () => clearInterval(iv); }, [onScreen, rtDown, load, lastId]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 첨부·반응이 빈 묶음 메우기 — 빈 것이 있을 때만 조회한다(없으면 요청 0, 검수 #531 M-1)
+  useEffect(() => { if (!onScreen) return undefined; const iv = setInterval(() => { const { msgs: ms, atts: at } = live.current; const miss = (ms ?? []).filter((m) => !(m.id in at)).map((m) => m.id); if (miss.length) hydrate(miss).catch(() => {}); }, 10_000); return () => clearInterval(iv); }, [onScreen, hydrate]);
   const decide = async (ap, status) => {
     const res = await supabase.from('msgr_crew_approvals').update({ status, decided_by: uid, decided_at: new Date().toISOString() }).eq('id', ap.id).select('id');
     if (res.error) return onError(res.error.message);

@@ -31,7 +31,8 @@ test('배지 재동기화 — 앱 전면 복귀·알림함 열기·다 읽음에
   assert.match(src, /supabase\.rpc\('msgr_push_badge_resync'\)/);
   assert.match(src, /if \(now - badgeSyncAt\.current < 3000\) return;/, '3초 스로틀');
   assert.match(src, /document\.visibilityState === 'visible'\) resyncBadge\(\)/, '전면 복귀');
-  assert.match(src, /\(isPersonal \? loadPersonal\(\) : loadOrg\(orgId\)\)\.catch\(\(e\) => setErr\(e\.message\)\); resyncBadge\(\); \}\);/, '모바일 resume 관찰자(개인 공간 분기)');
+  assert.match(src, /setResumeEpoch\(\(x\) => x \+ 1\); bumpSync\(\); setTick\(\(x\) => x \+ 1\); resyncBadge\(\); \}\);/, '모바일 resume 관찰자 — 배지 재동기화');
+  assert.match(src, /useEffect\(\(\) => \{ if \(syncEpoch\) \(isPersonal \? loadPersonal\(\) : loadOrg\(orgId\)\)\.catch\(\(e\) => setErr\(e\.message\)\); \}, \[syncEpoch\]\);/, '복귀 때 지금 공간 목록 한 번(개인 공간 분기 포함 — syncEpoch)');
   assert.match(src, /setPage\('inbox'\); setRail\(false\); resyncBadge\(\); \};/, '알림함 열기');
   assert.match(src, /const pickRoot = \(k\) => \{ setTabQ\(null\); setOrgMenu\(false\); setChPlus\(false\); setPage\(k\); \};/, '폰 아래 탭에는 알림함이 없다(폰 셸 v2) — 안 읽음은 탭 뱃지, 결재는 에이전트 탭. 알림함 열기(데스크톱 벨)의 배지 재동기화는 위 openInbox가 그대로');
   assert.match(src, /if \(!uid\) return; resyncBadge\(\); const onVis/, '콜드 스타트 1회(검수 M-2)');
