@@ -1043,7 +1043,8 @@
 .msgr-turnacts { display: flex; align-items: center; gap: 12px; height: 18px; }
 .msgr-row > .msgr-col > .msgr-turnacts { align-self: flex-start; } .msgr-mine > .msgr-turnacts { justify-self: end; }
 .msgr-turnacts button { display: grid; place-items: center; width: 28px; height: 28px; margin: -5px -6px; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--fg-3); opacity: .6; cursor: pointer; transition: opacity 120ms ease, color 120ms ease, background 120ms ease; }
-@media (hover: hover) { .msgr-turnacts button:hover:not(:disabled) { opacity: 1; color: var(--fg); background: var(--card-2); } } .msgr-turnacts button:active:not(:disabled) { opacity: 1; color: var(--fg); background: var(--card-2); }
+@media (hover: hover) { .msgr-turnacts button:hover:not(:disabled) { opacity: 1; color: var(--fg); } } .msgr-turnacts button:active:not(:disabled) { opacity: 1; color: var(--fg); } /* 올리면 아이콘만 진해진다 — 바탕 없음(유건 2026-10-02) */
+@media (pointer: fine) { .msgr-shell:not(.msgr-phone) .msgr-turnacts { visibility: hidden; } .msgr-shell:not(.msgr-phone) :is(.msgr-row, .msgr-mine):is([data-turn-hover], :focus-within, :has(.msgr-turnacts [aria-expanded='true'])) .msgr-turnacts { visibility: visible; } } /* 데스크톱: 턴에 마우스를 올렸을 때만 보인다(자리는 그대로라 밀리지 않는다). 폰·터치는 항상 보인다 */
 .msgr-turnacts button[aria-expanded='true'] { opacity: 1; color: var(--fg); }
 .msgr-turnacts button:disabled { cursor: default; } /* 보내는 중인 내 글 — 모양은 그대로(서버 행으로 바뀔 때 깜빡이지 않게), 누를 수만 없다 */
 .msgr-turnacts button:focus-visible { opacity: 1; outline: 2px solid var(--primary); outline-offset: -2px; }
