@@ -20,7 +20,7 @@
 // supabase-js 체인 호출·RLS 왕복은 로컬 Supabase 스택 E2E(scripts/e2e-msgr-bridge.mjs)가 검증한다.
 import { createClient } from '@supabase/supabase-js';
 import { chmod, mkdir, readFile, rm, unlink, writeFile } from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { getFreshDeviceSession } from '../devicesession.mjs';
 import { interruptTurn } from '../turn-abort.mjs';
 import { createAgentCard } from '../persona.mjs'; // I-5: 회사 노드가 요청 행으로 카드를 쓴다(모델 호출 없음)
@@ -35,7 +35,8 @@ import { relocateOrgJournals, purgeDepartedJournals } from '../memory.mjs';
 import { loadApprovals, setApprovalMeta, approvalPlainText, approvalCommandLabel } from '../approvals.mjs';
 import { approvalRisk } from '../approval-risk.mjs';
 import { resolveWithFollowUp } from '../approval-actions.mjs';
-import { extractFileRefs, attachFailureNote, isImagePath } from '../tg-format.mjs';
+import { attachFailureNote, isImagePath } from '../tg-format.mjs';
+import { ATTACH_MAX, planReplyFiles, readReplyFile } from './msgr-reply-files.mjs';
 import { mimeOf } from '../media-kind.mjs';
 import { replyLinkPreview } from './link-preview-node.mjs';
 import { createHash } from 'node:crypto';
@@ -67,7 +68,6 @@ export const RELAY_RE = />[ \t\r\n]*@/; // 공백은 명시 클래스 — JS \s�
 const TYPING_MS = 4_000;
 const PROGRESS_MS = 1_500; // 상태 파일 폴 주기 — 크루 상태 변화를 빨리 본다
 const PROGRESS_MIN_GAP_MS = 4_000; // 실제 방송 최소 간격(재검수 2026-09-26 L-b) — 폴은 1.5초마다지만 전송은 크루당 최소 4초에 한 번(8초 만료 여유는 충분히 남긴다)
-const ATTACH_MAX = 25 * 1024 * 1024;   // 첨부 내려받기 상한 — 소유자 디스크 보호(앱 업로드 상한과 동일)
 const clean = (s, n) => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, n); // 채널명·이름 세척 — 프롬프트 문맥 줄에 실린다(인젝션 표면)
 
 /* ─── 허용 범위 게이트(순수) — 누가 이 크루에게 일을 시킬 수 있나. 'all' 조직 멤버 전원 / 'list' 지정 멤버 / 'owner' 소유자만.
@@ -898,6 +898,31 @@ export const storageKey = (name, index = 0) => { // export: 앱 규칙과의 교
   const stem = (dot > 0 ? raw.slice(0, dot) : raw).replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^[_.]+|[_.]+$/g, '').slice(0, 60) || 'file';
   return `${index}-${stem}${ext ? `.${ext}` : ''}`;
 };
+/** 크루 답에 계획한 파일(planReplyFiles)을 첨부 — Storage 업로드 + 첨부 행. 실패·경계 밖은 같은 스레드에 안내(침묵 금지, 로컬 경로 없음).
+    저장 경로: 조직 방 <org>/<방>/<글>/<키>, 개인 방(org 없음) p/<방>/<글>/<키> — 20261002100000 정책이 개인 경로를 받는다(앱 업로드와 같은 규칙).
+    부하: 파일 하나당 업로드 1 + 첨부 행 1, 한 답 최대 REPLY_FILES_MAX개. 주기 호출 없음. */
+async function deliverReplyFiles(wsId, db, { orgId, channelId, crewId, threadRoot, failKey }, row, plan, lang) {
+  const fails = [...(plan?.fails ?? [])];
+  for (const [i, f] of (plan?.files ?? []).entries()) {
+    try {
+      const buf = await readReplyFile(wsId, f, lang); // 경계 재판정 + 심링크 안 따라감
+      const path = `${orgId ?? 'p'}/${channelId}/${row.id}/${storageKey(f.name, i)}`;
+      // mime은 확장자로 — 예전에는 png·jpg·webp·gif만 image/*를 붙이고 나머지는 빈 값이라 앱이 파일 종류를 몰랐다(운영 2026-10-02: 크루 첨부 21건 전부 빈 mime)
+      const mime = mimeOf(f.name, '');
+      await db.upload(path, buf, mime);
+      await db.insertAttachment({ message_id: row.id, org_id: orgId ?? null, storage_path: path, name: safeName(f.name), mime, bytes: buf.length });
+    } catch (e) { // 원문(절대 경로가 들어 있을 수 있음)은 방에 싣지 않는다(D26) — 주인 로컬 콘솔에만
+      if (!e.roomSafe) console.error(`[argo] msgr 첨부 전달 실패(${wsId}/${f.name}):`, e.message);
+      fails.push({ name: f.name, reason: roomAttachReason(e, lang) });
+    }
+  }
+  if (!fails.length) return;
+  await db.insertMessage({ channel_id: channelId, author_kind: 'crew', crew_id: crewId, kind: 'system', reply_to: row.id, thread_root: threadRoot ?? row.id,
+    client_msg_id: failKey, body: attachFailureNote(fails, lang) }).catch((e) => console.error('[argo] msgr 첨부 실패 안내 실패:', e.message));
+}
+/** 게시 직전 본문 정리 + 첨부 계획. 계획이 실패하면 예전처럼 본문 그대로(첨부 없음) — 답 게시를 막지 않는다. */
+const planOrRaw = (wsId, text, lang) => planReplyFiles(wsId, text, { lang })
+  .catch((e) => { console.error(`[argo] msgr 첨부 계획 실패(${wsId}):`, e?.message ?? e); return { body: String(text ?? ''), files: [], fails: [] }; });
 
 async function messengerReply(ctx, text, { db = null, lang = 'ko' } = {}) {
   const workReply = parseWorkReply(ctx.work, ctx.crewId, text);
@@ -1011,30 +1036,9 @@ async function noteJobDenied(wsId, job, { db, uid, lang }) {
     thread_root: job.threadRoot ?? job.msgId, client_msg_id: `deny:${job.crewId}:${job.msgId}`, body: denyBody(why === 'ok' ? null : why, crew, lang) });
 }
 export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat, now = Date.now, linkPreview = replyLinkPreview } = {}) {
-  const deliverAttachments = async (db, job, row, reply, lang) => {
-    // 답변 속 파일 참조 → Storage 업로드 + 첨부 행. 실패는 채널에 알린다(침묵 금지).
-    const fails = [];
-    for (const [i, ref] of extractFileRefs(reply).entries()) {
-      const name = basename(ref);
-      try {
-        const buf = await readFile(join(paths(wsId).vault, ref));
-        if (buf.length > ATTACH_MAX) throw Object.assign(new Error(pick('25MB 초과', 'over 25MB', lang)), { roomSafe: true }); // 방에 그대로 보여도 되는 사유
-        // 저장 경로: 조직 방 <org>/<방>/<글>/<키>, 개인 방(org 없음) p/<방>/<글>/<키> — 20261002100000 정책이 개인 경로를 받는다(앱 업로드와 같은 규칙)
-        const path = `${job.orgId ?? 'p'}/${job.channelId}/${row.id}/${storageKey(name, i)}`;
-        // mime은 확장자로 — 예전에는 png·jpg·webp·gif만 image/*를 붙이고 나머지는 빈 값이라 앱이 파일 종류를 몰랐다(운영 2026-10-02: 크루 첨부 21건 전부 빈 mime)
-        const mime = mimeOf(name, '');
-        await db.upload(path, buf, mime);
-        await db.insertAttachment({ message_id: row.id, org_id: job.orgId ?? null, storage_path: path, name: safeName(name), mime, bytes: buf.length });
-      } catch (e) { // 원문(절대 경로가 들어 있을 수 있음)은 방에 싣지 않는다(D26) — 주인 로컬 콘솔에만
-        if (!/ENOENT/.test(e.message) && !e.roomSafe) console.error(`[argo] msgr 첨부 전달 실패(${wsId}/${job.slug}/${name}):`, e.message);
-        fails.push({ name, reason: roomAttachReason(e, lang) });
-      }
-    }
-    if (fails.length) {
-      await db.insertMessage({ channel_id: job.channelId, author_kind: 'crew', crew_id: job.crewId, kind: 'system', reply_to: row.id, thread_root: job.threadRoot ?? job.msgId,
-        client_msg_id: `attfail:${job.crewId}:${job.msgId}`, body: attachFailureNote(fails, lang) }).catch((e) => console.error('[argo] msgr 첨부 실패 안내 실패:', e.message));
-    }
-  };
+  // 크루 답 속 파일 → 첨부(공통 deliverReplyFiles). plan = planReplyFiles 결과(게시 전에 만들어 잡에 보존 — job.msgrAttach).
+  const deliverAttachments = (db, job, row, plan, lang) => deliverReplyFiles(wsId, db, { orgId: job.orgId, channelId: job.channelId, crewId: job.crewId,
+    threadRoot: job.threadRoot ?? job.msgId, failKey: `attfail:${job.crewId}:${job.msgId}` }, row, plan, lang);
   const run = async (job, executionMeta = {}) => {
     const c = await session();
     if (!c) { throw new Error('기기 세션 없음 — 다음 틱 재시도'); } // 인프라 예외 = 파일 유지·재시도(queue.mjs 계약)
@@ -1059,7 +1063,8 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     }
     if (job.msgrExecution?.replyRow) {
       const { row } = await beginMessengerExecution(wsId, db, job, executionMeta);
-      if (!job.msgrExecution.replyRow.meta?.failed) await deliverAttachments(db, job, row, job.msgrExecution.replyRow.body, lang);
+      // 본문에서 경로를 지운 뒤라 저장해 둔 계획(job.msgrAttach)으로 붙인다. 이전 버전이 남긴 잡 파일(계획 없음)은 본문에 경로가 그대로라 본문으로 계획한다.
+      if (!job.msgrExecution.replyRow.meta?.failed) await deliverAttachments(db, job, row, job.msgrAttach ?? await planOrRaw(wsId, job.msgrExecution.replyRow.body, lang), lang);
       return;
     }
     // 턴 전 필수 조회 실패는 큐로 전파한다 — 순서·문맥을 확인하지 못한 채 유료 실행하거나 잡을 폐기하지 않는다.
@@ -1230,9 +1235,12 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     }
     // 결과를 큐 파일에 먼저 보존하고 DB 답글+실행 완료를 원자적으로 게시한다. 실패 재시도는 위 checkpoint 갈래만 타며 유료 턴을 다시 돌리지 않는다.
     let row = null;
+    // 답 속 로컬 파일 — 게시 전에 경계 판정·본문 정리(경로 제거). 계획은 잡에 실어 아래 체크포인트(finishMessengerExecution)가 잡 파일에 같이 저장한다.
+    const plan = failed || aborted ? null : await planOrRaw(wsId, reply, lang);
+    if (plan) job.msgrAttach = plan;
     const replyRow = {
       channel_id: job.channelId, author_kind: 'crew', crew_id: job.crewId, kind: 'text', reply_to: job.msgId, thread_root: job.threadRoot ?? job.msgId, // 명시 — 트리거는 null일 때 reply_to(크루 글)로 채워 스레드가 끊긴다(검수 2R C-2)
-      client_msg_id: `reply:${job.crewId}:${job.msgId}`, body: String(reply ?? '').slice(0, MSG_MAX),
+      client_msg_id: `reply:${job.crewId}:${job.msgId}`, body: String(plan?.body ?? reply ?? '').slice(0, MSG_MAX),
       mentions: (failed || aborted) ? [] : replyMentions, // 보이는 원문 멘션 + slug로 확정한 도구 수신자(동명이인을 다시 찾지 않음) — 중단된 턴은 넘기지 않는다
     };
     // 링크 미리보기 — 보내기 전에 첫 링크를 한 번 가져와 같은 insert에 싣는다(읽는 사람마다 다시 가져오지 않는다). 실패·중단 답은 대상 밖, 실패하면 카드 없음.
@@ -1247,7 +1255,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
       row = await finishMessengerExecution(wsId, db, job, { ...replyRow, meta: metaBase }, executionMeta);
     }
     if (!row || failed || aborted) return; // 중복(다른 기기가 먼저 답함)·실패·중단 — 첨부 없음
-    await deliverAttachments(db, job, row, reply, lang);
+    await deliverAttachments(db, job, row, plan, lang);
   };
   return async (job, meta) => {
     const k = `${wsId}:${job.slug}`;
@@ -1378,12 +1386,14 @@ export async function msgrPush(event, { session = sessionClient } = {}) {
     if (!(c.db.orgEntitled ? await c.db.orgEntitled(target.orgId).catch(() => true) : true)) return false;
     const key = [event.wsId, event.routine.id, event.runAt ?? event.routine.lastRun, target.channelId, event.phase ?? (event.ok === false ? 'failed' : 'result')].join(':');
     const digest = createHash('sha256').update(key).digest('hex').slice(0, 32);
-    await c.db.insertMessage({ channel_id: target.channelId, author_kind: 'crew', crew_id: crew.id, kind: 'text',
+    // 루틴 답에도 모델이 넘김 표지를 붙인다 — 결과 글에는 판정이 없으니 본문에서만 뗀다(유건 2026-09-30 "말 끝마다 MSGR Done")
+    const plan = await planOrRaw(event.wsId, parseMessengerDisposition(event.reply ?? '').text, company.lang); // 답 속 로컬 파일 → 첨부(경로는 본문에서 지운다)
+    const posted = await c.db.insertMessage({ channel_id: target.channelId, author_kind: 'crew', crew_id: crew.id, kind: 'text',
       reply_to: null, thread_root: null, client_msg_id: `rn:${crew.id}:${digest}`,
-      // 루틴 답에도 모델이 넘김 표지를 붙인다 — 결과 글에는 판정이 없으니 본문에서만 뗀다(유건 2026-09-30 "말 끝마다 MSGR Done")
-      body: pick(`[루틴] ${event.routine.title}${event.ok === false ? ' (실패)' : ''}\n\n${parseMessengerDisposition(event.reply ?? '').text}`,
-        `[Routine] ${event.routine.title}${event.ok === false ? ' (failed)' : ''}\n\n${parseMessengerDisposition(event.reply ?? '').text}`, company.lang).slice(0, MSG_MAX),
+      body: pick(`[루틴] ${event.routine.title}${event.ok === false ? ' (실패)' : ''}\n\n${plan.body}`,
+        `[Routine] ${event.routine.title}${event.ok === false ? ' (failed)' : ''}\n\n${plan.body}`, company.lang).slice(0, MSG_MAX),
       mentions: [], meta: { disposition: 'done', notification: 'routine', routine_id: event.routine.id } });
+    if (posted) await deliverReplyFiles(event.wsId, c.db, { orgId: target.orgId, channelId: target.channelId, crewId: crew.id, threadRoot: null, failKey: `attfail:rn:${crew.id}:${digest}` }, posted, plan, company.lang);
     return true;
   }
   if (event.type === 'approval') {
@@ -1457,15 +1467,21 @@ export async function msgrPush(event, { session = sessionClient } = {}) {
     const digest = createHash('sha1').update(key).digest('hex').slice(0, 20);
     const done = event.msgrReply?.meta?.disposition === 'done';
     const mentions = event.ok === false || done ? [] : (event.msgrReply?.mentions ?? []).filter((m) => m.kind === 'crew' && m.id !== ctx.crewId && ctx.peers.some((p) => p.id === m.id));
+    const lang = company?.lang ?? 'ko';
+    // 답 속 로컬 파일 → 첨부(경로는 본문에서 지운다). 위임(delegated) 갈래는 죽은 경로라(restoreMessengerContext 주석) 예전 그대로 둔다
+    const plan = ctx.delegated ? null : await planOrRaw(event.wsId, event.reply ?? '', lang);
     const row = { channel_id: ctx.channelId, author_kind: 'crew', crew_id: ctx.crewId, kind: 'text',
       reply_to: ctx.channelKind === 'dm' ? ctx.sourceMsgId : it?.msgr?.messageId ?? ctx.threadRoot, thread_root: ctx.threadRoot, client_msg_id: `ct:${ctx.crewId}:${digest}`,
-      body: String(event.reply ?? '').slice(0, MSG_MAX), mentions, meta: { hop: ctx.hop, origin: ctx.origin, ...(isGuestCtx(ctx) ? { guest: true } : {}), ...(ctx.office === true ? { office: true } : {}), ...(done || event.ok === false ? { disposition: 'done' } : {}) } };
+      body: String(plan?.body ?? event.reply ?? '').slice(0, MSG_MAX), mentions, meta: { hop: ctx.hop, origin: ctx.origin, ...(isGuestCtx(ctx) ? { guest: true } : {}), ...(ctx.office === true ? { office: true } : {}), ...(done || event.ok === false ? { disposition: 'done' } : {}) } };
     if (ctx.delegated) {
       row.meta.disposition = done || event.ok === false || mentions.length === 0 ? 'done' : 'handoff';
       if (!db.postThreadFollowup) throw new Error('메신저 위임 후속 보고 기능을 사용할 수 없습니다');
       if (event.type === 'approval_followup' && !it?.msgr?.rowId) throw new Error('메신저 위임 결재 기록을 확인할 수 없습니다');
       await db.postThreadFollowup(event.wsId, ctx.crewId, ctx.sourceMsgId, ctx.channelId, row, event.type === 'approval_followup' ? it.msgr.rowId : null);
-    } else await db.insertMessage(row);
+    } else {
+      const posted = await db.insertMessage(row);
+      if (posted && plan) await deliverReplyFiles(event.wsId, db, { orgId: ctx.orgId, channelId: ctx.channelId, crewId: ctx.crewId, threadRoot: ctx.threadRoot, failKey: `attfail:${row.client_msg_id}` }, posted, plan, lang);
+    }
     return true;
   }
   // 아래 'delegate' 미러는 이미 죽은 경로다 — chat.mjs의 delegate 도구가 mirrorCtx.kind==='msgr'(또는 'msgr-rules')이면 항상 stageMessengerHandoff로 조기 반환해 이 emitNotify('delegate')에 절대 닿지 않는다(DM·공개 채널 공통). msgr_dm_relay 도입과 무관하게 이전부터 미도달이었다.
