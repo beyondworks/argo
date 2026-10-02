@@ -21,4 +21,7 @@ async function confirmOrder(space, orderId, at) {
   return 'confirmed';
 }
 
-export default createSampleDocs({ kv: { get, set, del }, compose, confirmOrder });
+/** 우리 회사 주소(회사 정보 이메일) — 서명 완료 메일 사본을 받는다 */
+const ownEmail = async (space) => (await (await import('./company-info.js')).getCompanyInfo(space))?.email ?? '';
+
+export default createSampleDocs({ kv: { get, set, del }, compose, confirmOrder, ownEmail });

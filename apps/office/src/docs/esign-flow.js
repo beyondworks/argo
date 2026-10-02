@@ -4,7 +4,7 @@ import { getMode } from '../core/session.js';
 import { getState } from '../core/store.js';
 import { backend } from './backend.js';
 import { signRequestMail, signCompletedMail } from './esign-mail.js';
-import { signedFilename, TOKEN_DAYS, normEmail } from './esign-model.js';
+import { signedFilename, TOKEN_DAYS, normEmail, completionRecipients } from './esign-model.js';
 import { getLang } from '../core/i18n.js';
 
 /** 받는 사람이 요청을 보낸 우리 회사인가 — 그러면 내부용 요청 문구 */
@@ -52,6 +52,7 @@ export async function sendCompletedNotice({ space, esign, account }) {
   const pdf = await be.esignPdf(space, esign, 'final');
   const mail = signCompletedMail({ title: esign.title, signers: esign.signers });
   const attachments = [{ name: signedFilename(esign.title), type: 'application/pdf', data: b64(pdf) }];
-  for (const s of esign.signers) await deliver(space, esign.id, account, { ...mail, to: s.email, attachments }, { kind: 'completed', attachment: attachments[0].name });
+  const own = mailAccounts().find((a) => a.id === account)?.address ?? '';
+  for (const to of completionRecipients(esign.signers, own)) await deliver(space, esign.id, account, { ...mail, to, attachments }, { kind: 'completed', attachment: attachments[0].name });
   await be.markNotified?.(space, esign.id);
 }

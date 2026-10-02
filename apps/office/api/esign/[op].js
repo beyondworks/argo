@@ -11,6 +11,7 @@ import { mailKey, unseal } from '../../server/seal.js';
 import { buildRaw } from '../../server/gmail.js';
 import { normalizePlacements, tokenOk, signedFilename } from '../../src/docs/esign-model.js';
 import { signCompletedMail } from '../../src/docs/esign-mail.js';
+import { completionRecipients } from '../../src/docs/esign-model.js';
 import { composeSignedPdf } from '../../src/docs/pdf/compose.js';
 
 const env = process.env;
@@ -84,8 +85,8 @@ async function sendCompletionMails(bundle, finalPdf) {
   const mail = signCompletedMail({ title: bundle.title, signers: bundle.signers });
   const attachments = [{ name: signedFilename(bundle.title), type: 'application/pdf', data: Buffer.from(finalPdf).toString('base64') }];
   let ok = true;
-  for (const s of bundle.signers) {
-    const r = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ raw: buildRaw({ to: s.email, subject: mail.subject, text: mail.text, html: mail.html, attachments }) }) });
+  for (const to of completionRecipients(bundle.signers, acc.address)) { // 서명자 + 우리 회사(보낸 계정) — 도장으로 대신해 빠졌어도 사본을 받는다
+    const r = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ raw: buildRaw({ to, subject: mail.subject, text: mail.text, html: mail.html, attachments }) }) });
     if (!r.ok) ok = false;
   }
   return ok;

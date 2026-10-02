@@ -19,6 +19,12 @@ export function maskEmail(e) {
 }
 export const normEmail = (e) => String(e || '').trim().toLowerCase();
 export const isEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(e || '').trim());
+/** 서명 완료 메일 받는 사람 — 서명자 전원 + 우리 회사(도장으로 대신해 서명자에서 빠졌어도 서명본을 받는다, 유건 10/2). 같은 주소는 한 번만 */
+export function completionRecipients(signers = [], ownEmail = '') {
+  const seen = new Set(), out = [];
+  for (const e of [...signers.map((s) => s.email), ownEmail]) { const n = normEmail(e); if (isEmail(e) && !seen.has(n)) { seen.add(n); out.push(String(e).trim()); } }
+  return out;
+}
 
 const c01 = (v) => Math.min(1, Math.max(0, Number(v) || 0));
 

@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { PDFDocument } from 'pdf-lib';
 import { createSampleDocs } from '../src/docs/backend-sample.js';
 import { composeSignedPdf } from '../src/docs/pdf/compose.js';
-import { sha256Hex } from '../src/docs/esign-model.js';
+import { sha256Hex, completionRecipients } from '../src/docs/esign-model.js';
 import { seedBusiness, applyBusiness, reportBusiness, createSampleBusinessClient } from '../src/business/sample-business.js';
 import { dealStage, dealAmounts } from '../src/business/deal-model.js';
 
@@ -17,14 +17,14 @@ const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJA
 const tokenOf = (link) => link.split('/sign/')[1];
 
 const FONTS = { font: readFileSync(new URL('../public/fonts/Pretendard-Regular.ttf', import.meta.url)), bold: readFileSync(new URL('../public/fonts/Pretendard-Bold.ttf', import.meta.url)) };
-function setup(now = '2026-10-02T03:00:00.000Z') {
+function setup(now = '2026-10-02T03:00:00.000Z', { ownEmail } = {}) {
   const kv = memKv();
   const confirmed = [];
   let clock = Date.parse(now);
   const ctl = { composeFails: 0 };
   const be = createSampleDocs({ kv, origin: () => 'http://localhost:5411', now: () => new Date(clock += 1000).toISOString(),
     compose: async (b) => { if (ctl.composeFails > 0) { ctl.composeFails--; throw new Error('compose timeout'); } return composeSignedPdf({ ...b, ...FONTS }); },
-    confirmOrder: async (space, orderId, at) => { confirmed.push({ space, orderId, at }); return 'confirmed'; } });
+    confirmOrder: async (space, orderId, at) => { confirmed.push({ space, orderId, at }); return 'confirmed'; }, ...(ownEmail ? { ownEmail } : {}) });
   return { kv, be, confirmed, ctl, tick: (ms) => { clock += ms; } };
 }
 const hashOf = (b) => sha256Hex(b);
@@ -210,4 +210,22 @@ test('예시 업무 클라이언트: 화면이 쓰는 모양(subscribe·refresh�
   await assert.rejects(c.mutate('nope', {}), { message: 'business_action' });
   assert.ok(calls >= 2);
   assert.deepEqual(await c.call('office_org_people'), []);
+});
+
+// 이유(유건 10/2): 을(우리 회사)이 도장으로 대신해 서명자에서 빠져도 우리 회사가 서명본을 메일로 받는다. 같은 주소는 한 번만.
+test('완료 메일 받는 사람 = 서명자 전원 + 우리 회사(도장으로 빠져도), 같은 주소·잘못된 주소는 빼고 한 번만', async () => {
+  assert.deepEqual(completionRecipients([{ email: 'p@h.example' }], 'me@b.example'), ['p@h.example', 'me@b.example']);
+  assert.deepEqual(completionRecipients([{ email: 'p@h.example' }, { email: 'Me@B.example' }], ' me@b.example '), ['p@h.example', 'Me@B.example'], '우리 회사가 이미 서명자면 한 번만');
+  assert.deepEqual(completionRecipients([{ email: 'p@h.example' }], ''), ['p@h.example'], '회사 이메일이 없으면 서명자만');
+  assert.deepEqual(completionRecipients([{ email: 'p@h.example' }], 'not-an-email'), ['p@h.example']);
+
+  const { be } = setup(undefined, { ownEmail: async (space) => (space === 'beyondworks' ? 'me@b.example' : '') });
+  const pdf = await blankPdf(1);
+  const e = await be.createEsign('beyondworks', { title: '도장 계약서', pdf, docHash: await hashOf(pdf), signers: [{ name: '한빛', email: 'p@h.example' }], pages: 1 });
+  const { links } = await be.sendEsign('beyondworks', e.id, { signers: [{ name: '한빛', email: 'p@h.example' }], fields: [{ kind: 'signature', page: 0, xr: 0.3, yr: 0.6, wr: 0.15, hr: 0.05, signer_ord: 0 }] });
+  const r = await be.publicSubmit(tokenOf(links[0].link), 'p@h.example', [{ page: 0, kind: 'signature', imgDataUrl: PNG, xr: 0.3, yr: 0.6, wr: 0.15 }]);
+  assert.equal(r.done, true, '갑 한 명이면 바로 완료');
+  const done = (await be.mails('beyondworks', e.id)).filter((m) => m.kind === 'completed');
+  assert.deepEqual(done.map((m) => m.to).sort(), ['me@b.example', 'p@h.example'], '서명자가 아닌 우리 회사도 서명본 메일');
+  assert.ok(done.every((m) => m.attachment === '도장_계약서_서명본.pdf'));
 });

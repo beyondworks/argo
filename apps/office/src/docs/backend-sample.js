@@ -2,7 +2,7 @@
 // 서명 링크(/sign/<토큰>)를 같은 브라우저의 새 탭에서 열면 서명까지 이어지고, 메일은 "가짜 발송 기록"으로 남는다.
 // 실제 경로(backend-live.js)와 같은 모양을 돌려준다 — 화면은 둘을 구분하지 않는다. kv·compose를 주입받아 노드 테스트로 흐름 전체를 잠근다.
 import { signCompletedMail } from './esign-mail.js';
-import { signedFilename, cleanSigners, normalizeFields, normalizePlacements, normEmail, maskEmail, sha256Hex, newToken, expiresAt, signLink, tokenOk, TOKEN_DAYS } from './esign-model.js';
+import { signedFilename, cleanSigners, normalizeFields, normalizePlacements, normEmail, maskEmail, completionRecipients, sha256Hex, newToken, expiresAt, signLink, tokenOk, TOKEN_DAYS } from './esign-model.js';
 import { DOC } from './doc-text.js';
 
 const KEY = 'argo-office-docs:sample';
@@ -16,7 +16,7 @@ const allSigned = (st, esignId) => { const list = st.signers.filter((s) => s.esi
 const publicEsign = (e, signers) => ({ ...e, signers: signers.filter((s) => s.esign_id === e.id).sort((a, b) => a.ord - b.ord).map(publicSigner) });
 
 /** kv: { get(key) → Promise<값>, set(key, 값) → Promise, del(key) → Promise } · compose(bundle) → Uint8Array(서명본) · confirmOrder(space, orderId, at) · now() */
-export function createSampleDocs({ kv, compose, confirmOrder = async () => 'skipped', now = () => new Date().toISOString(), origin = () => globalThis.location?.origin ?? 'http://localhost' }) {
+export function createSampleDocs({ kv, compose, confirmOrder = async () => 'skipped', ownEmail = async () => '', now = () => new Date().toISOString(), origin = () => globalThis.location?.origin ?? 'http://localhost' }) {
   let chain = Promise.resolve();
   const read = async () => ({ docs: [], esign: [], signers: [], events: [], mails: [], ...((await kv.get(KEY)) ?? {}) });
   /** 한 번에 하나씩(같은 탭 안의 동시 쓰기가 서로를 덮지 않게) */
@@ -51,13 +51,14 @@ export function createSampleDocs({ kv, compose, confirmOrder = async () => 'skip
     const finalPath = `${e.space}/esign/${e.id}/final.pdf`;
     await putBlob(finalPath, final);
     const finalHash = await sha256Hex(final);
+    const own = await ownEmail(e.space).catch(() => '');
     const sync = e.order_id ? await confirmOrder(e.space, e.order_id, completedAt).catch((err) => `failed:${err?.code ?? err?.message ?? 'error'}`) : null;
     await tx((s2) => {
       const row = s2.esign.find((x) => x.id === e.id);
       Object.assign(row, { status: 'completed', final_path: finalPath, final_hash: finalHash, completed_at: completedAt, order_sync: sync });
       event(s2, row.id, 'system', 'completed');
       const mail = signCompletedMail({ title: row.title, signers });
-      signers.forEach((sg) => s2.mails.push({ id: uid(), esign_id: row.id, at: completedAt, to: sg.email, subject: mail.subject, text: mail.text, attachment: signedFilename(row.title), kind: 'completed' })); // 가짜 발송 기록(서버 경로는 발신 계정으로 실제 발송)
+      completionRecipients(signers, own).forEach((to) => s2.mails.push({ id: uid(), esign_id: row.id, at: completedAt, to, subject: mail.subject, text: mail.text, attachment: signedFilename(row.title), kind: 'completed' })); // 가짜 발송 기록(서버 경로는 발신 계정으로 실제 발송)
     });
     return { done: true, final, signers: signers.map(publicSigner), title: e.title, esignId: e.id };
   }
