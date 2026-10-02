@@ -109,27 +109,46 @@ test('실제 R2: 올리기 → 확인 → 등록 → 열기(바이트 같음) �
   console.log('# 한 바퀴: PUT 200 · commit 200 · GET 1500바이트 일치 · flush 1개 · HEAD 없음 · 행 없음');
 });
 
-test('실제 R2: 자리보다 큰 몸체 PUT은 R2가 403, commit은 file_missing(등록 불가), 정리 크론이 지난 자리를 지운다', async()=>{
+test('실제 R2: 자리보다 큰 몸체 PUT은 R2가 403, commit은 file_missing(등록 불가), 정리 크론은 만료 뒤 유예 1시간이 지난 자리만 지운다', async()=>{
   const id=randomUUID();
   const {key}=write(U.member,'file.reserve',{id,filename:'a.pdf',size:10,mime:'application/pdf'});
   const up=await upload(key,bytes(11));
   assert.equal(up.put,403); assert.equal(up.commit.status,409); assert.equal(up.commit.body.error,'file_missing');
   sql(`update r2_objects set expires_at=now()-interval '1 minute' where key=${quote(key)}`);
+  assert.equal((await sweepStorage({url:'http://sb',key:'svc-key',r2})).objects,0,'검수 4: 만료 직후(유예 1시간 안)에는 지우지 않는다');
+  sql(`update r2_objects set expires_at=now()-interval '2 hours' where key=${quote(key)}`);
   const out=await sweepStorage({url:'http://sb',key:'svc-key',r2});
   assert.ok(out.objects>=1); assert.equal(out.left,0);
   assert.equal(sql(`select count(*) from r2_objects where key=${quote(key)}`),'0');
   console.log(`# 크기 다름: PUT ${up.put} · commit ${up.commit.status} ${up.commit.body.error} · 크론 지움 ${out.objects}`);
 });
 
-test('실제 R2: 같은 문서를 PDF와 함께 다시 저장(saveDoc 같은 id) — 판마다 새 키, 옛 PDF는 크론이 R2에서 지운다', async()=>{
+test('실제 R2: 같은 문서를 PDF와 함께 다시 저장 — 판마다 새 키, 옛 판은 지우지 않고 남는다(검수 7), 사람이 문서를 지우면 모든 판을 flush로 R2에서 지운다', async()=>{
   const id=randomUUID();
   const k1=dwrite(U.admin,'doc.reserve',{id,size:300}).path; assert.equal((await upload(k1,bytes(300),U.admin)).put,200);
   dwrite(U.admin,'doc.save',{id,kind:'quote',title:'v1',pdf_path:k1});
   const k2=dwrite(U.admin,'doc.reserve',{id,size:320}).path; assert.notEqual(k2,k1); assert.equal((await upload(k2,bytes(320),U.admin)).put,200);
   const v2=dwrite(U.admin,'doc.save',{id,kind:'quote',title:'v2',pdf_path:k2});
   assert.deepEqual([v2.pdf_path,v2.pdf_size],[k2,320]);
-  const out=await sweepStorage({url:'http://sb',key:'svc-key',r2});
-  assert.ok(out.objects>=1);
-  assert.equal(await r2.head(k1),null,'옛 판은 R2에서 지워졌다'); assert.equal((await r2.head(k2))?.bytes,320,'새 판은 남는다');
-  console.log('# 문서 다시 저장: 새 키 · 옛 판 R2 삭제 · 새 판 320바이트 유지');
+  await sweepStorage({url:'http://sb',key:'svc-key',r2});
+  assert.equal((await r2.head(k1))?.bytes,300,'옛 판은 크론이 지우지 않는다'); assert.equal((await r2.head(k2))?.bytes,320);
+  const del=dwrite(U.admin,'doc.delete',{id});
+  assert.deepEqual(del.keys,[k1,k2].sort());
+  assert.deepEqual((await api('flush',{keys:del.keys},U.admin)).body,{deleted:2,left:0});
+  assert.equal(await r2.head(k1),null); assert.equal(await r2.head(k2),null);
+  console.log('# 문서 다시 저장: 새 키 · 크론 뒤에도 옛 판 300바이트 유지 · 문서 삭제 flush 2개 · R2에서 없어짐');
+});
+
+test('실제 R2: html 파일은 내려받기로 서명된다(검수 9) — 응답 content-disposition: attachment, 바이트는 그대로', async()=>{
+  const id=randomUUID(), data=new TextEncoder().encode('<b>hi</b>');
+  const {key}=write(U.member,'file.reserve',{id,filename:'a.html',size:data.length,mime:'text/html'});
+  assert.equal((await upload(key,data)).put,200);
+  write(U.member,'file.create',{id,title:'a.html',storage_path:key});
+  const ru=await api('read-url',{keys:[key]});
+  const r=await realFetch(ru.body.urls[key]);
+  const got=await r.text();
+  assert.equal(r.headers.get('content-disposition'),'attachment'); assert.equal(got,'<b>hi</b>');
+  write(U.member,'file.trash',{ids:[id]}); const p=write(U.member,'file.purge',{ids:[id]});
+  assert.deepEqual((await api('flush',{keys:p.keys})).body,{deleted:1,left:0});
+  console.log(`# html: GET ${r.status} · content-disposition ${r.headers.get('content-disposition')} · flush 1개`);
 });

@@ -4,6 +4,9 @@
 -- 파일은 Cloudflare R2 버킷 argo-office(문서함과 같은 버킷·같은 객체 목록 r2_objects — 20261002201700): <o-조직|u-사람>/docs/<문서>/<판>.pdf,
 -- <…>/esign/<서명>/orig.pdf·final.pdf·s-<서명자>-<n>-<시도>.(png|jpg). 키는 DB 함수가 정하고, 서명 주소는 오피스 서버 함수가 DB가 허락한 키만 만든다.
 -- 문서 PDF 키에 판(<판> = 서버가 만든 uuid)을 넣는다 — 같은 문서를 PDF와 함께 다시 저장해도 키가 겹치지 않는다(옛 구조는 같은 경로라 두 번째 자리 받기가 file_conflict).
+-- 옛 판은 자동으로 지우지 않는다(검수 7 — 문서는 계약 증빙, 삭제는 사람이 할 때만): 그 문서에 딸린 판(r2_objects ref doc)으로 남아 용량에 들고,
+-- 사람이 문서를 지울 때 모든 판을 함께 지운다. 한 건 열기(office_docs_get)가 이전 판 목록(versions)을 준다(판 보기 화면은 나중).
+-- 서명본 키는 마무리 시도마다 다르다(final-<시도>.pdf, 검수 1) — 겹친 마무리 중 먼저 완료한 쪽의 경로·해시만 남고, 진 쪽 객체는 등록 전이라 정리 크론이 지운다.
 -- 공개 서명(로그인 없음)은 서버 함수(apps/office/api/esign, 서비스 키)만 부르는 office_esign_public_* 함수로 — 토큰 원문은 저장하지 않고 SHA-256만.
 --
 -- 부하(DB 위생): 사람이 버튼을 누를 때만 쓴다(만들기·보내기·서명 제출). 폴링·심박 없음. 서명 링크 열람 기록은 서명자마다 10분에 한 번,
@@ -115,7 +118,10 @@ create function public.office_docs_get(p_org uuid, p_kind text, p_id uuid) retur
 language plpgsql stable security definer set search_path = public, pg_temp as $$
 declare sc text := public.office_business_scope(p_org, false); out jsonb;
 begin
-  if p_kind = 'doc' then select to_jsonb(d) - 'scope' into out from public.office_docs d where d.id = p_id and d.scope = sc;
+  if p_kind = 'doc' then
+    select (to_jsonb(d) - 'scope') || jsonb_build_object('versions', coalesce((select jsonb_agg(jsonb_build_object('key', o.key, 'bytes', o.bytes, 'created_at', o.created_at) order by o.created_at desc, o.key)
+        from public.r2_objects o where o.ref_id = d.id and o.ref_kind = 'doc' and o.state = 'claimed' and o.key <> d.pdf_path), '[]'::jsonb))
+      into out from public.office_docs d where d.id = p_id and d.scope = sc;
   elsif p_kind = 'esign' then select public.office_docs_esign_json(e) into out from public.office_esign e where e.id = p_id and e.scope = sc;
   end if;
   if out is null then raise exception 'docs_not_found'; end if;
@@ -172,9 +178,9 @@ begin
     if p_data ? 'pdf_path' and coalesce(p_data->>'pdf_path', '') !~ ('^' || seg || '/docs/' || rid || '/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.pdf$') then raise exception 'docs_path'; end if;
     if nullif(p_data->>'customer_id', '') is not null and not exists(select 1 from public.office_business_customers where id = (p_data->>'customer_id')::uuid and scope = sc) then raise exception 'docs_not_found'; end if;
     if nullif(p_data->>'order_id', '') is not null and not exists(select 1 from public.office_business_orders where id = (p_data->>'order_id')::uuid and scope = sc) then raise exception 'docs_not_found'; end if;
-    select * into d from public.office_docs where id = rid;
+    perform pg_advisory_xact_lock(hashtextextended('office-doc:' || rid, 0)); -- 같은 문서를 동시에 저장해도 차례로(검수 6 — 아직 없는 문서도)
+    select * into d from public.office_docs where id = rid for update;
     if found and d.scope <> sc then raise exception 'docs_not_found'; end if;
-    old_path := case when found then nullif(d.pdf_path, '') end;
     -- 새 PDF는 내가 올려 서버가 확인한 객체여야 한다(크기도 그 객체의 실제 크기 — 클라이언트 값을 믿지 않는다)
     if p_data ? 'pdf_path' then new_size := public.office_storage_claim(p_data->>'pdf_path', seg, 'doc', rid); end if;
     insert into public.office_docs as t(id, scope, kind, title, customer_name, customer_id, order_id, input, pdf_path, pdf_size, pdf_hash, filename, supply, vat, total, created_by)
@@ -185,13 +191,13 @@ begin
       pdf_path = case when p_data ? 'pdf_path' then excluded.pdf_path else t.pdf_path end, pdf_size = case when p_data ? 'pdf_path' then excluded.pdf_size else t.pdf_size end,
       pdf_hash = case when p_data ? 'pdf_path' then excluded.pdf_hash else t.pdf_hash end, filename = excluded.filename, supply = excluded.supply, vat = excluded.vat, total = excluded.total, updated_at = clock_timestamp()
     returning * into d;
-    if old_path is not null and old_path is distinct from d.pdf_path then perform public.office_storage_tombstone(array[old_path]); end if; -- 바뀐 판의 옛 PDF는 정리 대상
-    return to_jsonb(d) - 'scope';
+    return to_jsonb(d) - 'scope'; -- 바뀐 판의 옛 PDF는 그 문서의 판으로 남는다(지우지 않는다 — 검수 7)
   elsif p_action = 'doc.delete' then
     delete from public.office_docs where id = rid and scope = sc returning * into d;
     if not found then raise exception 'docs_not_found'; end if;
-    paths := array_remove(array[nullif(d.pdf_path, '')], null);
-    perform public.office_storage_tombstone(paths); -- 기록과 같은 트랜잭션에서 지우기로 정한다(R2 삭제는 flush·정리 크론)
+    select coalesce(array_agg(k order by k), '{}') into paths from (select o.key k from public.r2_objects o where o.ref_id = d.id and o.ref_kind = 'doc' and o.state <> 'deleting'
+      union select nullif(d.pdf_path, '')) q where k is not null;
+    perform public.office_storage_tombstone(paths); -- 사람이 지울 때 모든 판을 함께 — 기록과 같은 트랜잭션(R2 삭제는 flush·정리 크론)
     return jsonb_build_object('keys', to_jsonb(paths));
   elsif p_action = 'esign.create' then
     if rid is null or length(trim(coalesce(p_data->>'title', ''))) not between 1 and 200 or coalesce(p_data->>'doc_hash', '') !~ '^[0-9a-f]{64}$'
@@ -379,9 +385,14 @@ declare e public.office_esign%rowtype; ord_status text; sync text; org uuid; old
 begin
   select * into e from public.office_esign where id = p_esign for update;
   if not found then raise exception 'docs_not_found'; end if;
-  if e.status = 'completed' then return jsonb_build_object('order_sync', e.order_sync, 'already', true); end if;
+  -- 겹친 마무리(검수 1): 이 줄 잠금(for update)으로 하나만 완료한다. 진 쪽은 이긴 쪽 서명본 경로를 받아 간다(진 쪽 객체는 등록 전이라 정리 크론이 지운다)
+  if e.status = 'completed' then return jsonb_build_object('order_sync', e.order_sync, 'already', true, 'final_path', e.final_path); end if;
   if e.status <> 'sent' or exists(select 1 from public.office_esign_signers where esign_id = e.id and status <> 'signed') then raise exception 'docs_state'; end if;
-  if p_final_path is distinct from public.office_docs_seg(e.scope) || '/esign/' || e.id || '/final.pdf' or coalesce(p_final_hash, '') !~ '^[0-9a-f]{64}$' then raise exception 'docs_input'; end if;
+  if coalesce(p_final_path, '') !~ ('^' || public.office_docs_seg(e.scope) || '/esign/' || e.id || '/final-[0-9a-f]{12}\.pdf$') or coalesce(p_final_hash, '') !~ '^[0-9a-f]{64}$' then raise exception 'docs_input'; end if;
+  -- 서명본은 서버가 R2에 올려 등록한(uploaded) 이 서명의 객체여야 하고, 완료가 가져간다(claimed)
+  update public.r2_objects set state = 'claimed', ref_kind = 'esign', ref_id = e.id, expires_at = null, updated_at = clock_timestamp()
+    where bucket = 'argo-office' and key = p_final_path and state = 'uploaded' and ref_id = e.id;
+  if not found then raise exception 'docs_input'; end if;
   if e.order_id is not null then
     select status into ord_status from public.office_business_orders where id = e.order_id;
     if ord_status is null then sync := 'missing';
@@ -403,7 +414,7 @@ begin
   update public.office_esign set status = 'completed', final_path = p_final_path, final_hash = p_final_hash, completed_at = clock_timestamp(), order_sync = sync where id = e.id;
   update public.office_esign_signers set token_hash = null where esign_id = e.id; -- 완료 뒤 링크 잠금(인트라넷: 완료 계약 접근 차단)
   perform public.office_docs_event(e.id, 'system', 'completed');
-  return jsonb_build_object('order_sync', sync);
+  return jsonb_build_object('order_sync', sync, 'final_path', p_final_path);
 end $$;
 
 create function public.office_esign_public_notified(p_esign uuid) returns void

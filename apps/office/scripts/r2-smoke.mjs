@@ -62,6 +62,13 @@ try {
   const nx = await presignUrl({ url: objectUrl(`${PREFIX}none.pdf`), method: 'DELETE', expires: 60, accessKeyId: env.R2_OFFICE_ACCESS_KEY_ID, secretAccessKey: env.R2_OFFICE_SECRET_ACCESS_KEY });
   r = await fetch(nx, { method: 'DELETE' }); note('없는 키 DELETE', `HTTP ${r.status}`, `Code ${r.status === 204 ? '-' : await code(r)}`);
 
+  // 6-1. 응답 헤더 덮어쓰기(검수 9 — html·svg 같은 활성 형식을 내려받기로): response-content-disposition 지원 여부
+  const hk = `${PREFIX}x.html`;
+  await r2.put(hk, new TextEncoder().encode('<b>x</b>'), { contentType: 'text/html' });
+  const att = await r2.presign({ method: 'GET', key: hk, attachment: true });
+  r = await fetch(att.url); await r.arrayBuffer();
+  note('GET response-content-disposition=attachment', `HTTP ${r.status}`, `content-disposition ${r.headers.get('content-disposition') ?? '없음'}, 형식 ${r.headers.get('content-type')}`);
+
   // 7. 브라우저 CORS — 지금 버킷 설정 그대로 사전 요청(OPTIONS)과 GET의 Access-Control-Allow-Origin
   for (const origin of ['https://argo-office.vercel.app', 'http://localhost:5190', 'tauri://localhost']) {
     const pre = await putUrl(`${PREFIX}cors.pdf`, 4);

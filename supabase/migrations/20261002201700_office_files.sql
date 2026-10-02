@@ -49,6 +49,7 @@ create table if not exists public.r2_objects (
 create index if not exists r2_objects_seg on public.r2_objects(seg, state); -- 풀 합산(3앱 공용 — bucket을 앞에 두지 않는다)
 create index if not exists r2_objects_user on public.r2_objects(created_by, state, expires_at);
 create index if not exists r2_objects_state on public.r2_objects(state, updated_at);
+create index if not exists r2_objects_ref on public.r2_objects(ref_id) where ref_id is not null; -- 문서의 판 목록·문서 삭제
 alter table public.r2_objects enable row level security; -- 정책 없음: 함수로만
 revoke all on public.r2_objects from anon, authenticated;
 
@@ -99,7 +100,7 @@ $$;
 create or replace function public.office_storage_open(p_seg text, p_except text default null) returns bigint
 language sql stable security definer set search_path = public, pg_temp as $$
   select coalesce(sum(o.bytes), 0)::bigint from public.r2_objects o
-  where o.bucket = 'argo-office' and o.seg = p_seg and o.state = 'pending' and o.expires_at > now() and o.key is distinct from p_except
+  where o.bucket = 'argo-office' and o.seg = p_seg and o.state = 'pending' and o.expires_at > now() - interval '1 hour' and o.key is distinct from p_except -- 느린 올리기 유예 1시간도 센다
 $$;
 /** 서명에 넣을 형식 — 'type/subtype'만(매개변수·줄바꿈 없음), 아니면 application/octet-stream */
 create or replace function public.office_storage_mime(p text) returns text
@@ -173,23 +174,26 @@ revoke all on function public.office_storage_quota(text), public.office_storage_
   public.office_storage_claim(text, text, text, uuid), public.office_storage_tombstone(text[]), public.office_storage_seg_ok(text) from public, anon, authenticated; -- 내부용
 
 -- ── 서버 함수(apps/office/api/storage)가 서명 전에 부르는 판정 — 사용자 JWT로. 둘 다 stable(DB 쓰기 0 — 열 때마다 쓰지 않는다) ──
-/** 올리기: 내가 받은, 아직 지나지 않은 자리(pending)나 방금 확인된 객체(uploaded) — 서버는 이 결과의 key·bytes·mime으로만 서명한다(요청 본문 값을 쓰지 않는다) */
+/** 올리기: 내가 받은 자리(pending — 만료 뒤 1시간 유예까지, expired 표시)나 방금 확인된 객체(uploaded).
+ *  서버는 이 결과의 key·bytes·mime으로만 서명하고(요청 본문 값을 쓰지 않는다), 만료된 자리(expired)에는 새 올리기 주소를 주지 않는다 — 확인(commit)만.
+ *  유예가 있는 이유(검수 4): 큰 파일 PUT이 자리 만료(15분) 뒤에 끝나도 그 객체를 행으로 찾을 수 있게 — 정리 크론도 같은 유예 뒤에만 지운다 */
 create or replace function public.r2_object_pending_mine(p_key text) returns jsonb
 language sql stable security definer set search_path = public, pg_temp as $$
-  select jsonb_build_object('key', o.key, 'bytes', o.bytes, 'mime', o.mime, 'state', o.state) from public.r2_objects o
+  select jsonb_build_object('key', o.key, 'bytes', o.bytes, 'mime', o.mime, 'state', o.state, 'expired', o.state = 'pending' and o.expires_at <= now()) from public.r2_objects o
   where o.bucket = 'argo-office' and o.key = p_key and auth.uid() is not null and o.created_by = auth.uid()
-    and ((o.state = 'pending' and o.expires_at > now()) or o.state = 'uploaded')
+    and ((o.state = 'pending' and o.expires_at > now() - interval '1 hour') or o.state = 'uploaded')
 $$;
 /** 열기: 요청한 키 중 읽어도 되는 것만(최대 50개) — 기록이 가져간 객체(claimed)는 그 범위를 읽을 수 있는 사람, 아직 등록 전(uploaded)은 올린 사람만.
  *  지우기로 정한 객체(deleting)·자리(pending)는 주지 않는다 */
-create or replace function public.r2_object_read_grant(p_keys text[]) returns text[]
+create or replace function public.r2_object_read_grant(p_keys text[]) returns jsonb
 language plpgsql stable security definer set search_path = public, pg_temp as $$
 begin
   if auth.uid() is null then raise exception 'file_forbidden' using errcode = '42501'; end if;
   if p_keys is null or cardinality(p_keys) > 50 then raise exception 'file_input'; end if;
-  return coalesce((select array_agg(o.key order by o.key) from public.r2_objects o
+  -- 돌려주는 값 [{key, mime}] — 서버가 미리보기 대상이 아닌 형식(html·svg 등)은 내려받기(attachment)로 서명한다(검수 9)
+  return coalesce((select jsonb_agg(jsonb_build_object('key', o.key, 'mime', o.mime) order by o.key) from public.r2_objects o
     where o.bucket = 'argo-office' and o.key = any(p_keys)
-      and ((o.state = 'claimed' and public.office_storage_seg_ok(o.seg)) or (o.state = 'uploaded' and o.created_by = auth.uid()))), '{}');
+      and ((o.state = 'claimed' and public.office_storage_seg_ok(o.seg)) or (o.state = 'uploaded' and o.created_by = auth.uid()))), '[]'::jsonb);
 end $$;
 
 -- ── 서버만(service_role) — 상태만 바꾼다. 권한 판정은 그 전에 사용자 JWT 함수가 했다 ──
@@ -201,7 +205,7 @@ begin
   select * into o from public.r2_objects where bucket = 'argo-office' and key = p_key for update;
   if not found then raise exception 'file_missing'; end if;
   if o.state = 'uploaded' and o.bytes = p_bytes then return jsonb_build_object('state', o.state, 'bytes', o.bytes); end if;
-  if o.state <> 'pending' or o.expires_at <= now() then raise exception 'file_missing'; end if;
+  if o.state <> 'pending' or o.expires_at <= now() - interval '1 hour' then raise exception 'file_missing'; end if; -- 만료 뒤 유예 1시간까지는 확인(느린 올리기)
   if p_bytes is distinct from o.bytes then raise exception 'file_size_mismatch'; end if;
   update public.r2_objects set state = 'uploaded', etag = left(p_etag, 200), expires_at = null, updated_at = clock_timestamp() where bucket = 'argo-office' and key = p_key;
   return jsonb_build_object('state', 'uploaded', 'bytes', o.bytes);
@@ -222,13 +226,15 @@ language plpgsql security definer set search_path = public, pg_temp as $$
 begin
   if p_state not in ('pending', 'uploaded', 'claimed') or p_bytes is null or p_bytes < 0 or split_part(coalesce(p_key, ''), '/', 1) <> p_seg
      or p_seg !~ '^[ou]-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' or p_key like '%..%' then raise exception 'file_input'; end if;
-  if exists (select 1 from public.r2_objects where bucket = 'argo-office' and key = p_key and state = 'deleting') then raise exception 'file_conflict'; end if;
+  -- 기록이 가진(claimed)·지우기로 정한(deleting) 행은 건드리지 않는다(검수 1 — 겹친 마무리가 완료된 서명본을 pending으로 되돌려 정리되게 하지 않는다)
+  if exists (select 1 from public.r2_objects where bucket = 'argo-office' and key = p_key and state in ('claimed', 'deleting')) then raise exception 'file_conflict'; end if;
   insert into public.r2_objects as t(bucket, key, seg, created_by, bytes, mime, state, ref_kind, ref_id, etag, expires_at)
     values ('argo-office', p_key, p_seg, null, p_bytes, public.office_storage_mime(p_mime), p_state, p_ref_kind, p_ref_id, left(p_etag, 200),
       case when p_state = 'pending' then now() + interval '15 minutes' end)
   on conflict (bucket, key) do update set bytes = excluded.bytes, mime = excluded.mime, state = excluded.state, ref_kind = excluded.ref_kind, ref_id = excluded.ref_id,
     etag = excluded.etag, expires_at = excluded.expires_at, updated_at = clock_timestamp()
-  where (t.bytes, t.mime, t.state, t.ref_kind, t.ref_id, t.etag) is distinct from (excluded.bytes, excluded.mime, excluded.state, excluded.ref_kind, excluded.ref_id, excluded.etag);
+  where t.state in ('pending', 'uploaded')
+    and (t.bytes, t.mime, t.state, t.ref_kind, t.ref_id, t.etag) is distinct from (excluded.bytes, excluded.mime, excluded.state, excluded.ref_kind, excluded.ref_id, excluded.etag);
 end $$;
 /** 요청한 키 중 지우기로 정한 것만(flush가 R2에서 지울 목록) */
 create or replace function public.r2_object_deleting(p_keys text[]) returns text[]
@@ -566,7 +572,8 @@ end $$;
 
 -- ── 서버 정리(service_role — Vercel 크론 하루 1회 api/files sweep, 또는 scripts/files-sweep.mjs). 화면을 아무도 열지 않아도 쌓이지 않게 ──
 -- R2 객체는 SQL로 지울 수 없다 — 이 함수는 지울 키 목록을 주고, 서버가 R2에서 지운 뒤 r2_object_forget이 행을 지운다(지우지 못한 키는 행이 남아 다음 날 다시).
--- 대상: ① 휴지통 30일 지난 문서함 파일(기록 삭제 + 객체 deleting — 유건 승인 보존 기간) ② 만료된 올리기 자리(pending) ③ 1시간 넘게 기록이 가져가지 않은 객체(uploaded)
+-- 대상: ① 휴지통 30일 지난 문서함 파일(기록 삭제 + 객체 deleting — 유건 승인 보존 기간) ② 만료 뒤 유예 1시간도 지난 올리기 자리(pending — 느린 PUT이 끝날 시간, 검수 4)
+--       ③ 1시간 넘게 기록이 가져가지 않은 객체(uploaded). 기록이 가진 객체(claimed)는 오래돼도 대상이 아니다
 --       ④ deleting 전부(flush가 못 지운 것 포함). 함께: 하루 지난 OCR 한도 줄. 부하: 하루 1회, 한 번에 최대 p_limit개(쓰기 = 대상 수만큼 — 유휴 때 0).
 create or replace function public.office_storage_sweep(p_limit integer default 500) returns jsonb
 language plpgsql security definer set search_path = public, pg_temp as $$
@@ -579,7 +586,7 @@ begin
     where bucket = 'argo-office' and key in (select storage_path from d where storage_path is not null) and state <> 'deleting';
   update public.r2_objects set state = 'deleting', updated_at = clock_timestamp()
     where (bucket, key) in (select bucket, key from public.r2_objects where bucket = 'argo-office'
-      and ((state = 'pending' and expires_at < now()) or (state = 'uploaded' and updated_at < now() - interval '1 hour')) limit lim);
+      and ((state = 'pending' and expires_at < now() - interval '1 hour') or (state = 'uploaded' and updated_at < now() - interval '1 hour')) limit lim);
   return jsonb_build_object('keys', coalesce((select jsonb_agg(x.key) from (select key from public.r2_objects where bucket = 'argo-office' and state = 'deleting' order by updated_at limit lim) x), '[]'::jsonb));
 end $$;
 revoke all on function public.office_storage_sweep(integer) from public, anon, authenticated;

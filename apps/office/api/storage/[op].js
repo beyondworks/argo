@@ -14,6 +14,8 @@ const env = process.env;
 const fail = (status, code) => Object.assign(new Error(code), { status, code });
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
 const MAX_KEYS = 50;
+/** 화면이 미리보기하는 형식만 그대로 연다. 나머지(html·svg·문서 등)는 내려받기로 서명한다(검수 9) — 화면은 fetch로 바이트를 받으므로 미리보기에 영향 없다 */
+const INLINE = new Set(['application/pdf', 'image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/heic', 'image/bmp', 'text/plain']);
 const codeOf = (t) => /file_[a-z_]+/.exec(t)?.[0];
 const STATUS = { file_forbidden: 403, file_input: 400, file_missing: 409, file_size_mismatch: 409, file_conflict: 409, file_quota: 507, file_too_big: 413, file_daily_limit: 429 };
 
@@ -54,6 +56,7 @@ const OPS = {
     if (env.R2_OFFICE_UPLOADS_OFF === '1') throw fail(503, 'uploads_paused');
     const row = await rpc(jwt, 'r2_object_pending_mine', { p_key: oneKey(key) });
     if (!row || row.state !== 'pending') throw fail(409, 'file_missing');
+    if (row.expired) throw fail(409, 'file_expired'); // 만료된 자리(유예 중)에는 새 주소를 주지 않는다 — 진행 중인 느린 PUT의 확인만 받는다
     const p = await r2.presign({ method: 'PUT', key: row.key, contentType: row.mime || 'application/octet-stream', contentLength: Number(row.bytes) });
     return { key: row.key, url: p.url, headers: p.headers, expiresIn: p.expiresIn };
   },
@@ -75,9 +78,9 @@ const OPS = {
   async 'read-url'(jwt, { keys }) {
     const r2 = r2FromEnv(env);
     const asked = manyKeys(keys);
-    const granted = new Set(await rpc(jwt, 'r2_object_read_grant', { p_keys: asked }) ?? []);
+    const granted = new Map((await rpc(jwt, 'r2_object_read_grant', { p_keys: asked }) ?? []).map((g) => [g.key, g.mime]));
     const urls = {};
-    for (const k of asked) if (granted.has(k)) urls[k] = (await r2.presign({ method: 'GET', key: k })).url; // 요청에 섞인 남의 키는 빠진다
+    for (const k of asked) if (granted.has(k)) urls[k] = (await r2.presign({ method: 'GET', key: k, attachment: !INLINE.has(granted.get(k)) })).url; // 요청에 섞인 남의 키는 빠진다
     return { urls, expiresIn: 600 };
   },
   async flush(jwt, { keys }) {

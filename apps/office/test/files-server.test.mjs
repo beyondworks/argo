@@ -7,7 +7,7 @@ import { ocrBytes, ocrProvider, sidecarUrl } from '../server/ocr.js';
 import { seal } from '../server/seal.js';
 
 const realFetch = globalThis.fetch;
-afterEach(() => { globalThis.fetch = realFetch; for (const k of ['OFFICE_OCR_URL', 'OFFICE_OCR_KEY', 'OFFICE_VISION_API_KEY', 'OFFICE_GOOGLE_CLIENT_ID', 'OFFICE_GOOGLE_CLIENT_SECRET', 'OFFICE_MAIL_KEY', 'VITE_SUPABASE_URL', 'VITE_SUPABASE_ANON_KEY', 'OFFICE_SUPABASE_SERVICE_KEY', 'CRON_SECRET', 'R2_ENDPOINT', 'R2_OFFICE_BUCKET', 'R2_OFFICE_ACCESS_KEY_ID', 'R2_OFFICE_SECRET_ACCESS_KEY']) delete process.env[k]; });
+afterEach(() => { globalThis.fetch = realFetch; for (const k of ['OFFICE_OCR_URL', 'OFFICE_OCR_KEY', 'OFFICE_VISION_API_KEY', 'OFFICE_GOOGLE_CLIENT_ID', 'OFFICE_GOOGLE_CLIENT_SECRET', 'OFFICE_MAIL_KEY', 'VITE_SUPABASE_URL', 'VITE_SUPABASE_ANON_KEY', 'OFFICE_SUPABASE_SERVICE_KEY', 'CRON_SECRET', 'R2_ENDPOINT', 'R2_OFFICE_BUCKET', 'R2_OFFICE_ACCESS_KEY_ID', 'R2_OFFICE_SECRET_ACCESS_KEY', 'R2_OFFICE_UPLOADS_OFF']) delete process.env[k]; });
 
 test('드라이브 목록 요청: q > folder > view, 따옴표 이스케이프, 공유 드라이브는 drives', () => {
   assert.equal(quoteQ("a'b\\c"), "'a\\'b\\\\c'");
@@ -236,4 +236,49 @@ test('정리 실행기: R2 삭제가 실패한 키는 행 정리에서 뺀다(de
   assert.deepEqual(forgot, ['a/ok']);
   const none = async (url) => { assert.match(url, /office_storage_sweep$/, '지울 것이 없으면 forget을 부르지 않는다'); return new Response('{"keys":[]}'); };
   assert.deepEqual(await sweepStorage({ url: 'http://sb', key: 'k', r2 }, none), { objects: 0, left: 0, rows: 0 });
+});
+
+/** 드라이브 가져오기 공통 준비 — 구글 문서 하나, 자리·확인·등록 경로 */
+async function driveImportSetup({ createFails = false, failRows = 1 } = {}) {
+  const { startFakeR2 } = await import('./helpers/fake-r2.mjs');
+  const r2 = await startFakeR2();
+  const key = randomBytes(32);
+  Object.assign(process.env, { VITE_SUPABASE_URL: 'http://sb', VITE_SUPABASE_ANON_KEY: 'anon', OFFICE_SUPABASE_SERVICE_KEY: 'svc-key', OFFICE_GOOGLE_CLIENT_ID: 'cid', OFFICE_GOOGLE_CLIENT_SECRET: 'sec', OFFICE_MAIL_KEY: key.toString('base64'), ...r2.env });
+  const row = { user_id: 'u1', address: 'me@x.com', scopes: READ_SCOPE, status: 'ok', sealed: seal(key, 'r1', 'u1:drive:me@x.com'), access_sealed: seal(key, 'a1', 'u1:drive:me@x.com'), access_expires: new Date(Date.now() + 3600e3).toISOString() };
+  const order = [];
+  const calls = fake([
+    [/rpc\/office_drive_secret/, () => new Response(JSON.stringify([row]))],
+    [/auth\/v1\/user/, () => new Response(JSON.stringify({ id: 'u1' }))],
+    [/drive\/v3\/files\/g1\?/, () => { order.push('google'); return new Response(JSON.stringify({ id: 'g1', name: 'a.pdf', mimeType: 'application/pdf' })); }],
+    [/drive\/v3\/files\/g1/, () => new Response(Buffer.from('%PDF-1.4'))],
+    [/rpc\/r2_object_commit/, () => { order.push('commit'); return new Response('{"state":"uploaded"}'); }],
+    [/rpc\/r2_object_fail/, () => { order.push(`fail:${[...r2.objects.keys()].length}`); return new Response(String(failRows)); }],
+    [/rpc\/office_file_write/, (u, init) => { const b = JSON.parse(init.body); order.push(b.p_action); if (b.p_action === 'file.create' && createFails) return new Response('{"message":"file_quota"}', { status: 400 }); return new Response(JSON.stringify(b.p_action === 'file.reserve' ? { key: `u-u1/files/${b.p_data.id}.pdf` } : { id: 'x' })); }],
+  ]);
+  return { r2, order, calls, d: await import('../api/drive/[op].js') };
+}
+
+test('검수 5: 드라이브 가져오기 등록 실패 — 행을 먼저 지우고(r2_object_fail), 지웠을 때만 R2를 지운다', async () => {
+  let s = await driveImportSetup({ createFails: true, failRows: 1 });
+  try {
+    assert.equal((await s.d.POST(req('/api/drive/import', { org: null, id: 'g1' }))).status, 507);
+    assert.deepEqual(s.order.slice(-2), ['file.create', 'fail:1'], '행 정리를 R2 삭제보다 먼저(그때 R2에는 아직 객체가 있다)');
+    assert.equal(s.r2.objects.size, 0, '행을 지웠으니 R2 객체도 지운다');
+  } finally { await s.r2.close(); }
+  s = await driveImportSetup({ createFails: true, failRows: 0 });
+  try {
+    await s.d.POST(req('/api/drive/import', { org: null, id: 'g1' }));
+    assert.equal(s.r2.objects.size, 1, '행이 이미 등록(claimed)됐으면 R2 객체를 지우지 않는다');
+  } finally { await s.r2.close(); }
+});
+
+test('검수 8: 긴급 차단(R2_OFFICE_UPLOADS_OFF=1)은 드라이브 가져오기(서버 PUT)도 막는다 — 구글에서 받기 전에 503', async () => {
+  const s = await driveImportSetup();
+  process.env.R2_OFFICE_UPLOADS_OFF = '1';
+  try {
+    const r = await s.d.POST(req('/api/drive/import', { org: null, id: 'g1' }));
+    assert.equal(r.status, 503); assert.deepEqual(await r.json(), { error: 'uploads_paused' });
+    assert.ok(!s.order.includes('google') && !s.order.includes('file.reserve'));
+    assert.equal(s.r2.objects.size, 0);
+  } finally { delete process.env.R2_OFFICE_UPLOADS_OFF; await s.r2.close(); }
 });

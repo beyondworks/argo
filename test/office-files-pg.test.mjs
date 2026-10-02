@@ -28,7 +28,8 @@ const writeFail=(u,a,d,o=ORG)=>fails(u,`office_file_write(${org(o)},${quote(a)},
 const list=(u,o=ORG,extra='')=>call(u,`office_file_list(${org(o)}${extra})`);
 const seg=o=>o?`o-${o}`:null;
 const row=k=>{const r=sql(`select state||'|'||bytes||'|'||coalesce(created_by::text,'')||'|'||coalesce(ref_kind,'')||'|'||mime from r2_objects where key=${quote(k)}`); if(!r)return null; const [state,bytes,by,ref,mime]=r.split('|'); return {state,bytes:Number(bytes),by,ref,mime};};
-const grant=(u,keys)=>{const r=last(sql(userSql(u,`select array_to_json(r2_object_read_grant(${arr(keys)}))`))); return JSON.parse(r);};
+const grantRows=(u,keys)=>JSON.parse(last(sql(userSql(u,`select r2_object_read_grant(${arr(keys)})`))));
+const grant=(u,keys)=>grantRows(u,keys).map(x=>x.key);
 const pending=(u,k)=>{const r=last(sql(userSql(u,`select r2_object_pending_mine(${quote(k)})`))); return r?JSON.parse(r):null;};
 /** 자리 받기 → 키(서버가 정함) */
 const reserve=(u,{o=ORG,id=randomUUID(),filename='a.pdf',size=1234,mime='application/pdf'}={})=>({id,key:write(u,'file.reserve',{id,filename,size,mime},o).key});
@@ -95,11 +96,13 @@ test('올리기: 키는 서버가 정하고(<범위>/files/<id>.<확장자>, 이
 
 test('서명 판정(pending_mine): 내가 받은 지나지 않은 자리만 — 키·크기·형식은 DB 값, 형식은 type/subtype만', {skip}, ()=>{
  const {key}=reserve(U.member,{size:77,mime:'text/html\r\nx-evil: 1'});
- assert.deepEqual(pending(U.member,key),{key,bytes:77,mime:'application/octet-stream',state:'pending'},'줄바꿈 섞인 형식은 서명에 넣지 않는다');
+ assert.deepEqual(pending(U.member,key),{key,bytes:77,mime:'application/octet-stream',state:'pending',expired:false},'줄바꿈 섞인 형식은 서명에 넣지 않는다');
  assert.equal(pending(U.admin,key),null,'남의 자리');
  assert.equal(pending(U.member,`${seg(ORG)}/files/${randomUUID()}.pdf`),null,'없는 키');
  sql(`update r2_objects set expires_at=now()-interval '1 second' where key=${quote(key)}`);
- assert.equal(pending(U.member,key),null,'지난 자리');
+ assert.equal(pending(U.member,key).expired,true,'느린 올리기: 지난 자리도 유예 1시간 동안은 확인(commit)할 수 있다 — 새 올리기 주소는 안 준다(서버가 expired를 본다)');
+ sql(`update r2_objects set expires_at=now()-interval '61 minutes' where key=${quote(key)}`);
+ assert.equal(pending(U.member,key),null,'유예도 지난 자리');
  const b=reserve(U.member,{mime:'IMAGE/PNG'}); assert.equal(pending(U.member,b.key).mime,'image/png');
  commit(b.key); assert.equal(pending(U.member,b.key).state,'uploaded','확인된 뒤에는 uploaded(확인 다시 부르기용)');
 });
@@ -143,8 +146,10 @@ test('확인(commit, service_role만): 크기가 다르면 file_size_mismatch, �
  const x1=sql(`select xmin from r2_objects where key=${quote(a.key)}`);
  assert.equal(commit(a.key,100).state,'uploaded');
  assert.equal(sql(`select xmin from r2_objects where key=${quote(a.key)}`),x1,'두 번째 확인은 쓰지 않는다');
- const b=reserve(U.member); sql(`update r2_objects set expires_at=now()-interval '1 second' where key=${quote(b.key)}`);
- assert.match(svcFail(`r2_object_commit(${quote(b.key)},1234,'e')`),/file_missing/);
+ const slow=reserve(U.member); sql(`update r2_objects set expires_at=now()-interval '10 minutes' where key=${quote(slow.key)}`);
+ assert.equal(commit(slow.key).state,'uploaded','검수 4: 자리 만료 뒤 유예 1시간 안에 끝난 느린 PUT은 확인된다');
+ const b=reserve(U.member); sql(`update r2_objects set expires_at=now()-interval '61 minutes' where key=${quote(b.key)}`);
+ assert.match(svcFail(`r2_object_commit(${quote(b.key)},1234,'e')`),/file_missing/,'유예도 지나면 확인하지 않는다');
  const f=newFile(U.member,{title:'남길것.pdf'});
  assert.equal(svc(`r2_object_fail(${arr([a.key,b.key,f.path])})`),'2','등록된 객체 행은 지우지 않는다');
  assert.equal(row(f.path).state,'claimed');
@@ -250,14 +255,15 @@ test('서버 정리(service_role): 휴지통 30일 기록 삭제+deleting, 지�
  sql(`update office_files set deleted_at=now()-interval '31 days' where id=${quote(old.id)}`);
  const recent=newFile(U.member,{title:'최근휴지통.pdf'}); write(U.member,'file.trash',{ids:[recent.id]});
  const live=newFile(U.member,{title:'산것.pdf'});
- const expired=reserve(U.member); sql(`update r2_objects set expires_at=now()-interval '1 minute' where key=${quote(expired.key)}`);
+ const expired=reserve(U.member); sql(`update r2_objects set expires_at=now()-interval '2 hours' where key=${quote(expired.key)}`);
+ const slow=reserve(U.member); sql(`update r2_objects set expires_at=now()-interval '1 minute' where key=${quote(slow.key)}`); // 느린 올리기(PUT이 아직 끝나지 않았을 수 있다)
  const fresh=reserve(U.member);
  const stale=upload(U.member); sql(`update r2_objects set updated_at=now()-interval '2 hours' where key=${quote(stale.key)}`);
  const newUp=upload(U.member);
  sql(`insert into office_ocr_usage(user_id,hour,n) values(${quote(U.admin)},now()-interval '3 days',1)`);
  const keys=JSON.parse(svc(`office_storage_sweep(500)`)).keys;
  for(const k of [old.path,expired.key,stale.key]) assert.ok(keys.includes(k),`정리 대상: ${k}`);
- for(const k of [recent.path,live.path,fresh.key,newUp.key]) assert.ok(!keys.includes(k),`남길 것: ${k}`);
+ for(const k of [recent.path,live.path,fresh.key,newUp.key,slow.key]) assert.ok(!keys.includes(k),`남길 것: ${k}`);
  assert.equal(sql(`select count(*) from office_files where id=${quote(old.id)}`),'0','휴지통 30일 기록은 지운다(유건 승인 보존 기간)');
  assert.equal(sql(`select count(*) from office_files where id=${quote(recent.id)}`),'1');
  assert.equal(sql(`select count(*) from office_ocr_usage where hour < now()-interval '1 day'`),'0');
@@ -363,4 +369,45 @@ test('귀속: 조직 공간 파일은 조직 풀 — 올린 직원이 나가도 
  assert.equal(used(seg(ORG))-org0,7000,'직원이 나가도 조직 풀에 남는다');
  assert.ok(list(U.admin).files.some(x=>x.id===r.id),'조직 파일도 그대로 보인다');
  assert.deepEqual(grant(U.admin,[r.key]),[r.key]);
+});
+
+test('검수 2: 기록이 가진 객체(claimed)는 오래돼도 정리 대상이 아니다 — 문서함 파일·문서 PDF·서명 원본·서명본·서명 그림', {skip}, ()=>{
+ const f=newFile(U.member,{title:'오래 둔 파일.pdf'});
+ const s=seg(ORG), e=randomUUID(), d=randomUUID();
+ const others=[`${s}/docs/${d}/${randomUUID()}.pdf`,`${s}/esign/${e}/orig.pdf`,`${s}/esign/${e}/final-abcdef012345.pdf`,`${s}/esign/${e}/s-${randomUUID()}-0-abc.png`];
+ for(const k of others) svc(`r2_object_server_put(${quote(k)},${quote(s)},10,'application/pdf','claimed',${k.includes('/docs/')?"'doc'":"'esign'"},${quote(k.includes('/docs/')?d:e)})`);
+ const all=[f.path,...others];
+ sql(`update r2_objects set updated_at=now()-interval '3 hours', created_at=now()-interval '3 hours' where key in (${all.map(quote).join(',')})`);
+ const keys=JSON.parse(svc(`office_storage_sweep(1000)`)).keys;
+ for(const k of all) assert.ok(!keys.includes(k),`claimed는 남긴다: ${k.split('/').slice(1,3).join('/')}`);
+ assert.ok(all.every(k=>row(k).state==='claimed'));
+});
+
+test('검수 1: 서버 쓰기는 이미 기록이 가진(claimed) 행을 되돌리지 않는다 — 겹친 마무리가 서명본을 pending으로 바꿔 정리되게 하지 않는다', {skip}, ()=>{
+ const s=seg(ORG), e=randomUUID(), k=`${s}/esign/${e}/final-0123456789ab.pdf`;
+ svc(`r2_object_server_put(${quote(k)},${quote(s)},100,'application/pdf','claimed','esign',${quote(e)})`);
+ assert.match(svcFail(`r2_object_server_put(${quote(k)},${quote(s)},200,'application/pdf','pending')`),/file_conflict/);
+ assert.equal(row(k).state,'claimed'); assert.equal(row(k).bytes,100); assert.equal(row(k).ref,'esign');
+});
+
+test('검수 3: 자리 받기는 풀마다 줄을 세운다 — 남은 30MB 조직 풀에 20MB 두 자리를 동시에 받으면 하나만 된다', {skip}, async()=>{
+ const s=seg(ORG2), filler=`${s}/files/${randomUUID()}.bin`;
+ const room=30*1048576, quota=Number(sql(`select office_storage_quota(${quote(s)})`)), used=Number(sql(`select office_storage_used(${quote(s)})+office_storage_open(${quote(s)})`));
+ sql(`insert into r2_objects(bucket,key,seg,bytes,state,ref_kind) values('argo-office',${quote(filler)},${quote(s)},${quota-used-room},'claimed','file')`);
+ const { spawn } = await import('node:child_process');
+ const run=(delay,sleep)=>new Promise(ok=>setTimeout(()=>{
+  const id=randomUUID();
+  const q=`begin; set role authenticated; select set_config('argo.uid',${quote(U.outsider)},true); select office_file_write(${quote(ORG2)}::uuid,'file.reserve',${j({id,filename:'a.bin',size:20*1048576,mime:'application/octet-stream'})}); select pg_sleep(${sleep}); commit;`;
+  const p=spawn('psql',[DB,'-X','-q','-v','ON_ERROR_STOP=1','-c',q]); let err=''; p.stderr.on('data',d=>err+=d); p.on('close',code=>ok({code,err}));
+ },delay));
+ const [a,b]=await Promise.all([run(0,1.5),run(400,0)]);
+ const okN=[a,b].filter(r=>r.code===0).length;
+ assert.equal(okN,1,`하나만 성공해야 한다: ${[a,b].map(r=>r.code===0?'ok':(/file_\w+/.exec(r.err)?.[0]??'err')).join(',')}`);
+ assert.match([a,b].find(r=>r.code!==0).err,/file_quota/);
+ sql(`delete from r2_objects where seg=${quote(s)}`);
+});
+
+test('검수 9: 열기 판정은 형식도 준다(서버가 미리보기 대상이 아닌 형식은 내려받기로 서명한다)', {skip}, ()=>{
+ const f=newFile(U.member,{title:'공용2.pdf'});
+ assert.deepEqual(grantRows(U.member,[f.path]),[{key:f.path,mime:'application/pdf'}]);
 });

@@ -48,7 +48,7 @@ export function r2Client({ endpoint, bucket, accessKeyId, secretAccessKey, regio
     bucket,
     /** 브라우저용 서명 주소. PUT은 content-type·content-length·if-none-match: *를 서명에 넣는다 — 다른 형식·크기·덮어쓰기는 R2가 거절한다.
      *  돌려주는 headers는 브라우저가 그대로 보낼 것(content-length는 브라우저가 몸체 길이로 직접 채운다) */
-    async presign({ method, key, expires, contentType, contentLength }) {
+    async presign({ method, key, expires, contentType, contentLength, attachment = false }) {
       if (expires != null && (!Number.isInteger(expires) || expires < 1 || expires > MAX_TTL)) throw fail(400, 'expires');
       if (method === 'PUT') {
         if (!contentType || !Number.isSafeInteger(contentLength) || contentLength < 0) throw fail(400, 'put_headers');
@@ -57,7 +57,9 @@ export function r2Client({ endpoint, bucket, accessKeyId, secretAccessKey, regio
         return { url, headers: { 'content-type': contentType, 'if-none-match': '*' }, expiresIn: expires ?? PUT_TTL };
       }
       if (method !== 'GET') throw fail(400, 'method');
-      return { url: await presignUrl({ url: objectUrl(key), method, expires: expires ?? GET_TTL, accessKeyId, secretAccessKey, region }), expiresIn: expires ?? GET_TTL };
+      // attachment: 응답을 내려받기로(response-content-disposition — 쿼리도 서명에 들어간다. R2 실측 10/2: 지원). html·svg 같은 활성 형식이 주소를 직접 열었을 때 그 형식으로 열리지 않게
+      const url = attachment ? `${objectUrl(key)}?response-content-disposition=attachment` : objectUrl(key);
+      return { url: await presignUrl({ url, method, expires: expires ?? GET_TTL, accessKeyId, secretAccessKey, region }), expiresIn: expires ?? GET_TTL };
     },
     /** 크기·etag·형식 — 없으면 null */
     async head(key) {

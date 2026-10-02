@@ -62,7 +62,7 @@ test('끝까지: 서명 주소로 R2에 PUT → commit(HEAD 크기 = 자리 크�
   const calls = supabase({
     r2_object_pending_mine: () => ({ key: KEY, bytes: 5, mime: 'application/pdf', state }),
     r2_object_commit: (b) => { state = 'uploaded'; return { state, bytes: b.p_bytes }; },
-    r2_object_read_grant: ({ p_keys }) => p_keys.filter((k) => k === KEY),
+    r2_object_read_grant: ({ p_keys }) => p_keys.filter((k) => k === KEY).map((key) => ({ key, mime: 'application/pdf' })),
   });
   const up = (await post('upload-url', { key: KEY })).body;
   const put = await realFetch(up.url, { method: 'PUT', headers: up.headers, body: new Uint8Array([1, 2, 3, 4, 5]) });
@@ -107,7 +107,7 @@ test('flush: DB가 지우기로 정한(deleting) 키만 R2에서 지우고 그 �
 });
 
 test('설정 없음·긴급 차단·로그인 없음: R2 변수가 없으면 503 r2_not_configured, R2_OFFICE_UPLOADS_OFF=1이면 올리기만 503', async () => {
-  supabase({ r2_object_pending_mine: () => ({ key: KEY, bytes: 5, mime: 'application/pdf', state: 'pending' }), r2_object_read_grant: () => [KEY] });
+  supabase({ r2_object_pending_mine: () => ({ key: KEY, bytes: 5, mime: 'application/pdf', state: 'pending' }), r2_object_read_grant: () => [{ key: KEY, mime: 'application/pdf' }] });
   delete process.env.R2_OFFICE_SECRET_ACCESS_KEY;
   assert.deepEqual(await post('upload-url', { key: KEY }), { status: 503, body: { error: 'r2_not_configured' } });
   assert.deepEqual(await post('read-url', { keys: [KEY] }), { status: 503, body: { error: 'r2_not_configured' } });
@@ -116,4 +116,25 @@ test('설정 없음·긴급 차단·로그인 없음: R2 변수가 없으면 503
   assert.equal((await post('read-url', { keys: [KEY] })).status, 200, '열기는 그대로');
   assert.equal((await post('upload-url', { key: KEY }, null)).status, 401);
   assert.equal((await post('nope', {})).status, 404);
+});
+
+test('검수 9: 미리보기 대상이 아닌 형식(html·svg 등)은 내려받기(attachment)로 서명한다 — R2 주소를 직접 열어도 그 형식으로 열리지 않는다', async () => {
+  fake.objects.clear();
+  const H = 'u-me/files/a.html', P = 'u-me/files/b.pdf', S = 'u-me/files/c.svg';
+  for (const [k, t] of [[H, 'text/html'], [P, 'application/pdf'], [S, 'image/svg+xml']]) fake.objects.set(k, { bytes: Buffer.from('x'), type: t, etag: 'e' });
+  supabase({ r2_object_read_grant: () => [{ key: H, mime: 'text/html' }, { key: P, mime: 'application/pdf' }, { key: S, mime: 'image/svg+xml' }] });
+  const { body } = await post('read-url', { keys: [H, P, S] });
+  const disp = (k) => new URL(body.urls[k]).searchParams.get('response-content-disposition');
+  assert.equal(disp(H), 'attachment'); assert.equal(disp(S), 'attachment'); assert.equal(disp(P), null, 'PDF·그림은 미리보기 그대로');
+  const r = await realFetch(body.urls[H]);
+  assert.equal(r.headers.get('content-disposition'), 'attachment', '가짜 R2도 실제 R2처럼 응답 헤더를 바꾼다(실측 10/2)');
+  assert.equal(r.status, 200, '쿼리도 서명에 들어 있다');
+});
+
+test('검수 4: 만료된 자리(유예 중)에는 새 올리기 주소를 주지 않고, 확인(commit)만 받는다', async () => {
+  fake.objects.clear();
+  supabase({ r2_object_pending_mine: () => ({ key: KEY, bytes: 1, mime: 'application/pdf', state: 'pending', expired: true }), r2_object_commit: (b) => ({ state: 'uploaded', bytes: b.p_bytes }) });
+  assert.deepEqual(await post('upload-url', { key: KEY }), { status: 409, body: { error: 'file_expired' } });
+  fake.objects.set(KEY, { bytes: Buffer.from('1'), type: 'application/pdf', etag: 'e' });
+  assert.deepEqual(await post('commit', { key: KEY }), { status: 200, body: { key: KEY, bytes: 1 } }, '느린 PUT은 유예 안에서 확인된다');
 });

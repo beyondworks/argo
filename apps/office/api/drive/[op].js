@@ -141,6 +141,7 @@ const OPS = {
   async import(jwt, { org = null, id, folderId = null, customerId = null }) {
     if ((org !== null && !UUID.test(String(org))) || !validId(id) || (folderId && !UUID.test(folderId)) || (customerId && !UUID.test(customerId))) throw fail(400, 'input');
     const store = r2FromEnv(env); // 설정이 없으면 구글에서 받기 전에 503
+    if (env.R2_OFFICE_UPLOADS_OFF === '1') throw fail(503, 'uploads_paused'); // 긴급 차단 — 사람이 시킨 서버 올리기도 멈춘다(서명 그림·서명본은 막지 않는다, 검수 8)
     if (!env.OFFICE_SUPABASE_SERVICE_KEY) throw fail(503, 'not_configured');
     const token = await access(jwt);
     const meta = mapFile(await drive(token, `/files/${id}`, { params: { fields: 'id,name,mimeType,size,webViewLink,shortcutDetails', supportsAllDrives: 'true' } }));
@@ -160,9 +161,9 @@ const OPS = {
       await svc('r2_object_commit', { p_key: key, p_bytes: bytes.length, p_etag: etag });
       await rpc(jwt, 'office_file_write', { p_org: org, p_action: 'file.create', p_data: { id: fid, title: name, filename: name, mime, size: bytes.length, storage_path: key, source: 'drive', drive_id: meta.id,
         category: classify({ name, mime }), folder_id: folderId, customer_id: customerId } });
-    } catch (e) { // 확인·등록 실패 → 올린 객체와 등록 전 행 정리(못 하면 정리 크론이 1시간 뒤)
-      await store.del(key).catch(() => {});
-      await svc('r2_object_fail', { p_keys: [key] }).catch(() => {});
+    } catch (e) { // 확인·등록 실패 → 등록 전 행을 먼저 지우고, 지웠을 때만 R2를 지운다(이미 기록이 가져간 객체를 지우지 않게, 검수 5). 못 하면 정리 크론이 1시간 뒤
+      const rows = await svc('r2_object_fail', { p_keys: [key] }).catch(() => 0);
+      if (Number(rows) > 0) await store.del(key).catch(() => {});
       throw e;
     }
     return { id: fid, title: name, mime, size: bytes.length };

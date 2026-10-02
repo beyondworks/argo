@@ -70,7 +70,9 @@ export async function startFakeR2({ accessKeyId = 'AKFAKER2', secretAccessKey = 
     if (req.method === 'DELETE') { objects.delete(key); res.writeHead(204, cors); return res.end(); }
     const o = objects.get(key);
     if (!o) return req.method === 'HEAD' ? (res.writeHead(404, cors), res.end()) : xmlError(res, 404, 'NoSuchKey', cors);
-    res.writeHead(200, { 'content-type': o.type, 'content-length': String(o.bytes.length), etag: `"${o.etag}"`, ...cors });
+    const q = url.searchParams; // 실제 R2처럼 응답 헤더 덮어쓰기 쿼리를 따른다(실측 10/2: response-content-disposition·response-content-type)
+    res.writeHead(200, { 'content-type': q.get('response-content-type') ?? o.type, 'content-length': String(o.bytes.length), etag: `"${o.etag}"`,
+      ...(q.get('response-content-disposition') ? { 'content-disposition': q.get('response-content-disposition') } : {}), ...cors });
     return res.end(req.method === 'HEAD' ? undefined : o.bytes);
   });
   await new Promise((ok) => server.listen(0, '127.0.0.1', ok));

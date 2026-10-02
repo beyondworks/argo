@@ -43,12 +43,13 @@ async function rpc(fn, args) {
   return t ? JSON.parse(t) : null;
 }
 const r2 = () => r2FromEnv(env);
-/** 서버가 쓰는 객체 — 행 먼저(pending, 행 없는 객체가 생기지 않게) → R2 PUT(덮어쓰기 허용 — 끊긴 마무리를 다시 할 수 있게) → 등록 */
+/** 서버가 쓰는 객체 — 행 먼저(pending, 행 없는 객체가 생기지 않게) → R2 PUT(if-none-match — 키가 시도마다 다르다) → 등록.
+ *  긴급 차단(R2_OFFICE_UPLOADS_OFF)은 여기를 막지 않는다 — 서명자의 서명이 실패하면 안 된다(검수 8) */
 async function put(key, seg, bytes, type, state, ref) {
   const row = { p_key: key, p_seg: seg, p_bytes: bytes.length, p_mime: type };
   await rpc('r2_object_server_put', { ...row, p_state: 'pending' });
   let etag;
-  try { ({ etag } = await r2().put(key, bytes, { contentType: type })); } catch (e) { throw fail(e.status === 503 ? 503 : 502, e.status === 503 ? e.code : 'storage'); }
+  try { ({ etag } = await r2().put(key, bytes, { contentType: type, ifNoneMatch: true })); } catch (e) { throw fail(e.status === 503 ? 503 : 502, e.status === 503 ? e.code : 'storage'); } // 키가 시도마다 달라 덮어쓰지 않는다
   await rpc('r2_object_server_put', { ...row, p_state: state, p_ref_kind: 'esign', p_ref_id: ref, p_etag: etag });
 }
 /** 실패한 제출의 그림 — R2에서 지우고 등록 전 행을 지운다(못 지우면 정리 크론이 1시간 뒤 다시) */
@@ -98,7 +99,8 @@ async function sendCompletionMails(bundle, finalPdf) {
 const b64bytes = (s) => new Uint8Array(Buffer.from(s, 'base64'));
 
 /** 전원 서명 뒤 마무리 — 서명본 합성(크롬 없이 pdf-lib)·보관·완료(거래 '계약' 넘기기는 DB 함수가)·완료 메일.
- *  다시 불러도 같은 결과: 이미 완료면 서명본 주소만, 서명본 파일은 덮어쓴다(중간에 끊긴 뒤 서명자 재제출·소유자 '완료 다시 시도'가 이어서 끝낸다). */
+ *  다시 불러도 같은 결과: 이미 완료면 서명본 주소만. 서명본 키는 시도마다 다르고(final-<시도>.pdf), 완료 함수가 서명 줄을 잠가 하나만 완료한다 —
+ *  겹친 마무리(검수 1)에서 진 쪽은 이긴 쪽 경로를 받아 주소를 주고, 진 쪽 객체는 등록 전이라 정리 크론이 지운다. */
 async function complete(esignId) {
   const bundle = await rpc('office_esign_public_bundle', { p_esign: esignId });
   if (!bundle) throw fail(404, 'invalid');
@@ -108,11 +110,12 @@ async function complete(esignId) {
   const completedAt = new Date().toISOString();
   const signers = await Promise.all(bundle.signers.map(async (s) => ({ ...s, placements: await Promise.all((s.placements ?? []).map(async (p) => (p.img_path ? { ...p, img: { type: p.img_path.endsWith('.jpg') ? 'jpg' : 'png', bytes: await get(p.img_path) } } : p))) })));
   const final = await composeSignedPdf({ origPdf, signers, docHash: bundle.doc_hash, title: bundle.title, completedAt, ...(await fonts()) });
-  const finalPath = `${bundle.seg}/esign/${bundle.id}/final.pdf`;
-  await put(finalPath, bundle.seg, final, 'application/pdf', 'claimed', bundle.id); // 서명 폴더 객체 — 서명을 지우면 함께 지워진다
-  await rpc('office_esign_public_finalize', { p_esign: bundle.id, p_final_path: finalPath, p_final_hash: sha(final) });
+  const finalPath = `${bundle.seg}/esign/${bundle.id}/final-${randomBytes(6).toString('hex')}.pdf`;
+  await put(finalPath, bundle.seg, final, 'application/pdf', 'uploaded', bundle.id); // 등록 전 — 완료 함수가 가져간다(claimed)
+  const done = await rpc('office_esign_public_finalize', { p_esign: bundle.id, p_final_path: finalPath, p_final_hash: sha(final) });
+  if (done?.already) return { done: true, title: bundle.title, finalUrl: await signed(done.final_path) }; // 겹친 마무리 — 이긴 쪽 서명본(메일도 이긴 쪽이 보냈다)
   try { if (await sendCompletionMails(bundle, final)) await rpc('office_esign_public_notified', { p_esign: bundle.id }); } catch (e) { console.error('[office esign] completion mail', e?.message); }
-  return { done: true, title: bundle.title, finalUrl: await signed(finalPath) };
+  return { done: true, title: bundle.title, finalUrl: await signed(done?.final_path ?? finalPath) };
 }
 
 const OPS = {
