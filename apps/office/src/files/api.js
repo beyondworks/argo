@@ -115,7 +115,7 @@ let customers = new Map();
 export async function loadCustomers(space) {
   if (!customers.has(space)) customers.set(space, (configured
     ? rpc('office_business_read', { p_org: orgOf(space) }).then((d) => (d?.customers ?? []).map((c) => ({ id: c.id, name: c.name, biz_no: c.biz_no ?? '', status: c.status ?? 'active' })))
-    : Promise.resolve(S.SAMPLE_CUSTOMERS[space] ?? [])).catch((e) => { customers.delete(space); throw e; }));
+    : Promise.resolve(S.sampleCustomers(space))).catch((e) => { customers.delete(space); throw e; })); // 예시: 업무 예시 원장 하나(LOW 5)
   return customers.get(space);
 }
 

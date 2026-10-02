@@ -10,11 +10,13 @@ const uid = () => globalThis.crypto.randomUUID();
 const kstDay = (t) => new Date(Date.parse(t) + 9 * 3600e3).toISOString().slice(0, 10);
 const SETTINGS = { enabled: ['customers', 'catalog', 'orders', 'inventory', 'payments', 'analytics'], dashboards: [], performance: {}, version: 1 };
 
+/** 예시 원장의 고정 id — 공간마다 다르다. 문서함 예시(files/sample.js)도 이 id로 거래처를 가리킨다(예시 거래처는 이 원장 하나 — 분리 검수 LOW 5) */
+export const sampleId = (space, n) => `00000000-0000-4000-8000-${space === 'me' ? '1' : space === 'lean-studio' ? '2' : '3'}${String(n).padStart(11, '0')}`;
+
 /** 공간별 첫 데이터 — 견적(초안) 하나, 계약 하나, 계산서 발행 하나, 입금 완료 하나 */
 export function seedBusiness(space, now = Date.now()) {
   const C = (id, name, extra) => ({ id, name, email: '', notes: '', ceo: '', biz_no: '', manager: '', phone: '', address: '', account: '', category: 'customer', status: 'active', redacted: ['account', 'biz_no'], version: 1, created_at: iso(now - 40 * DAY), ...extra });
-  const prefix = space === 'me' ? '1' : space === 'lean-studio' ? '2' : '3';
-  const id = (n) => `00000000-0000-4000-8000-${prefix}${String(n).padStart(11, '0')}`;
+  const id = (n) => sampleId(space, n);
   const customers = [
     C(id(1), '한빛코퍼레이션', { ceo: '이한빛', biz_no: '000-00-10001', manager: '박서준', phone: '010-0000-1001', email: 'sj.park@hanbit.example', address: '서울특별시 강남구 예시대로 100, 5층' }),
     C(id(2), '주식회사 오름', { ceo: '정오름', biz_no: '000-00-10002', manager: '김하늘', phone: '010-0000-1002', email: 'sky@orum.example', address: '경기도 성남시 분당구 예시로 20' }),

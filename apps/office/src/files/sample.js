@@ -3,38 +3,37 @@
 // 예시 파일 내용(명함·사업자등록증 그림, 견적서 PDF, 회의록 docx)은 열 때 브라우저에서 그려 만든다(저장소에 큰 덩어리를 두지 않게).
 import { get, set, del } from 'idb-keyval';
 import { canMoveFolder, TRASH_DAYS } from './model.js';
+import { seedBusiness, loadSample, sampleId } from '../business/sample-business.js';
 
-const META = (space) => `argo-office-files:sample:v1:${space}`;
+const META = (space) => `argo-office-files:sample:v2:${space}`; // v2: 거래처를 업무 예시 원장 id로(LOW 5) — 예전 예시 기록은 새로 씨앗을 뿌린다
 const BLOB = (id) => `argo-office-files:sample:blob:${id}`;
 const fail = (code) => { throw Object.assign(new Error(code), { code }); };
 const ago = (days, h = 10) => new Date(Date.now() - days * 864e5 - (Date.now() % 864e5) + h * 36e5).toISOString();
 
-export const SAMPLE_CUSTOMERS = {
-  me: [{ id: 'c-me-1', name: '프리랜서 계약처', status: 'active' }],
-  beyondworks: [
-    { id: 'c-hanbit', name: '한빛코퍼레이션', biz_no: '214-86-12345', status: 'active' },
-    { id: 'c-next', name: '넥스트필드', biz_no: '123-45-67890', status: 'active' },
-    { id: 'c-tax', name: '한국세무회계', biz_no: '', status: 'active', category: 'partner' },
-    { id: 'c-old', name: '옛날상회', biz_no: '', status: 'closed' },
-  ],
-  'lean-studio': [{ id: 'c-sori', name: '소리스튜디오', status: 'active' }],
-};
+/** 예시 거래처 = 업무 예시 원장 하나(business/sample-business.js) — 문서함의 거래처 칸·필터와 업무 › 거래처 카드가 같은 id·이름을 쓴다(분리 검수 LOW 5).
+ *  예시 모드에서 업무 화면에 새로 만든 거래처도 이 브라우저 원장에서 함께 읽는다 */
+export function sampleCustomers(space) {
+  let st = null;
+  try { st = globalThis.localStorage ? loadSample(globalThis.localStorage, space) : null; } catch { st = null; }
+  return ((st ?? seedBusiness(space)).customers ?? []).map((c) => ({ id: c.id, name: c.name, biz_no: c.biz_no ?? '', status: c.status ?? 'active', category: c.category ?? 'customer' }));
+}
 
 const T = {
-  bizcert: '사업자등록증\n(법인사업자)\n등록번호: 214-86-12345\n법인명(단체명): 주식회사 한빛코퍼레이션\n대표자: 이한빛\n개업연월일: 2019년 03월 04일\n법인등록번호: 110111-1234567\n사업장 소재지: 서울특별시 강남구 테헤란로 123, 7층\n업태: 서비스업  종목: 소프트웨어 개발 및 공급\n2019년 03월 04일\n역삼세무서장',
-  card: '한빛코퍼레이션\n김민수 팀장 | 사업개발팀\nM. 010-1234-5678\nE. minsu.kim@hanbit.example\n서울특별시 강남구 테헤란로 123, 7층',
-  bankbook: '통장사본\n예금주: 넥스트필드 주식회사\n은행: 국민은행\n계좌번호: 123456-78-901234\n개설일: 2021.05.10',
+  bizcert: '사업자등록증\n(법인사업자)\n등록번호: 000-00-10001\n법인명(단체명): 주식회사 한빛코퍼레이션\n대표자: 이한빛\n개업연월일: 2019년 03월 04일\n법인등록번호: 000000-0000001\n사업장 소재지: 서울특별시 강남구 예시대로 100, 5층\n업태: 서비스업  종목: 소프트웨어 개발 및 공급\n2019년 03월 04일\n역삼세무서장',
+  card: '한빛코퍼레이션\n김민수 팀장 | 사업개발팀\nM. 010-0000-1234\nE. minsu.kim@hanbit.example\n서울특별시 강남구 예시대로 100, 5층',
+  bankbook: '통장사본\n예금주: 주식회사 오름\n은행: 예시은행\n계좌번호: 000000-00-000002\n개설일: 2021.05.10',
   quote: '견 적 서\n견적일자: 2026년 9월 18일\n수신: 한빛코퍼레이션 귀중\n공급자: 비욘드웍스\n\n품목 | 수량 | 단가 | 금액\nAI 업무 자동화 구축 | 1 | 4,500,000 | 4,500,000\n운영 지원(3개월) | 3 | 300,000 | 900,000\n\n공급가액 5,400,000원\n부가세 540,000원\n합계 5,940,000원',
   contract: '용역 계약서\n갑: 주식회사 한빛코퍼레이션 (대표 이한빛)\n을: 비욘드웍스\n제1조(목적) 본 계약은 갑이 을에게 의뢰한 AI 업무 자동화 구축 용역에 관한 사항을 정한다.\n제2조(계약금액) 금 5,940,000원(부가세 포함)\n제3조(기간) 2026년 10월 1일 ~ 2026년 12월 31일\n전자서명 완료: 2026-09-25 14:02 (갑·을)',
-  invoice: '전자세금계산서\n공급자: 비욘드웍스\n공급받는자: 넥스트필드 주식회사 (123-45-67890)\n작성일자: 2026-09-30\n공급가액 2,000,000 세액 200,000 합계 2,200,000\n품목: 9월 운영 대행',
-  minutes: '3분기 회의록\n일시: 2026-09-26 10:00\n참석: 김유건, 최민지, 박준\n1. 한빛코퍼레이션 계약 진행 상황 — 서명 완료, 10월 착수\n2. 넥스트필드 9월 세금계산서 발행 확인\n3. 다음 주 할 일 배분',
+  invoice: '전자세금계산서\n공급자: 비욘드웍스\n공급받는자: 주식회사 오름 (000-00-10002)\n작성일자: 2026-09-30\n공급가액 2,000,000 세액 200,000 합계 2,200,000\n품목: 9월 운영 대행',
+  minutes: '3분기 회의록\n일시: 2026-09-26 10:00\n참석: 김유건, 최민지, 박준\n1. 한빛코퍼레이션 계약 진행 상황 — 서명 완료, 10월 착수\n2. 주식회사 오름 9월 세금계산서 발행 확인\n3. 다음 주 할 일 배분',
   taxi: '영수증\n카드 승인\n가맹점: 서울택시\n금액: 18,400원\n일시: 2026-09-29 22:41',
   memo: '개인 메모\n- 10월 캠페인 초안 검토\n- 영수증 정리 마감 10/5',
   conti: '촬영 콘티\n#1 오프닝 — 스튜디오 전경\n#2 인터뷰 — 대표 인사\n#3 제품 클로즈업',
-  old: '견적서(초안)\n수신: 옛날상회\n합계 1,100,000원',
+  old: '견적서(초안)\n수신: 새벽베이커리\n합계 1,100,000원',
 };
 
 function seed(space) {
+  const cust = (n) => sampleId(space, n); // 업무 예시 원장의 거래처(1 한빛코퍼레이션 · 2 주식회사 오름 · 3 새벽베이커리)
   const f = (id, o) => ({ id, kind: 'file', folder_id: null, mime: 'application/pdf', source: 'upload', drive_id: null, tags: [], customer_id: null, deal_id: null,
     ocr_status: 'none', summary: '', full_text: '', created_by: 'u-me', created_at: ago(1), updated_at: ago(1), deleted_at: null, link_url: null, sample: true, ...o,
     storage_path: o.kind === 'link' ? null : `sample/${id}`, filename: o.filename ?? o.title });
@@ -43,15 +42,15 @@ function seed(space) {
     return {
       folders: [{ id: 'fo-deal', name: '견적·계약', parent_id: null, created_by: 'u-me' }, { id: 'fo-evid', name: '증빙', parent_id: null, created_by: 'u-minji' }, { id: 'fo-2026', name: '2026', parent_id: 'fo-evid', created_by: 'u-minji' }],
       files: [
-        f('sf-quote', { title: '한빛코퍼레이션_견적서_2026-09.pdf', folder_id: 'fo-deal', category: 'quote', customer_id: 'c-hanbit', source: 'generated', tags: ['견적서', '한빛코퍼레이션'], size: 182_311, created_at: ago(14), sampleKind: 'quote', ...text('quote') }),
-        f('sf-contract', { title: '한빛코퍼레이션_용역계약서_서명본.pdf', folder_id: 'fo-deal', category: 'contract', customer_id: 'c-hanbit', source: 'esign', tags: ['계약서', 'signed'], size: 241_002, created_at: ago(7), sampleKind: 'contract', ...text('contract') }),
-        f('sf-bizcert', { title: '사업자등록증_한빛코퍼레이션.png', mime: 'image/png', category: 'bizcert', customer_id: 'c-hanbit', size: 412_877, created_at: ago(20), ocr_status: 'done', sampleKind: 'bizcert', ...text('bizcert') }),
-        f('sf-card', { title: '김민수_명함.png', mime: 'image/png', category: 'card', customer_id: 'c-hanbit', size: 98_220, created_at: ago(3), ocr_status: 'done', sampleKind: 'card', created_by: 'u-jun', ...text('card') }),
-        f('sf-bank', { title: '넥스트필드_통장사본.png', mime: 'image/png', category: 'bankbook', customer_id: 'c-next', size: 133_104, created_at: ago(10), ocr_status: 'done', sampleKind: 'bankbook', created_by: 'u-minji', ...text('bankbook') }),
-        f('sf-invoice', { title: '9월_세금계산서_넥스트필드.pdf', folder_id: 'fo-2026', category: 'evidence', customer_id: 'c-next', size: 156_330, created_at: ago(2), ocr_status: 'done', sampleKind: 'invoice', created_by: 'u-minji', ...text('invoice') }),
+        f('sf-quote', { title: '한빛코퍼레이션_견적서_2026-09.pdf', folder_id: 'fo-deal', category: 'quote', customer_id: cust(1), source: 'generated', tags: ['견적서', '한빛코퍼레이션'], size: 182_311, created_at: ago(14), sampleKind: 'quote', ...text('quote') }),
+        f('sf-contract', { title: '한빛코퍼레이션_용역계약서_서명본.pdf', folder_id: 'fo-deal', category: 'contract', customer_id: cust(1), source: 'esign', tags: ['계약서', 'signed'], size: 241_002, created_at: ago(7), sampleKind: 'contract', ...text('contract') }),
+        f('sf-bizcert', { title: '사업자등록증_한빛코퍼레이션.png', mime: 'image/png', category: 'bizcert', customer_id: cust(1), size: 412_877, created_at: ago(20), ocr_status: 'done', sampleKind: 'bizcert', ...text('bizcert') }),
+        f('sf-card', { title: '김민수_명함.png', mime: 'image/png', category: 'card', customer_id: cust(1), size: 98_220, created_at: ago(3), ocr_status: 'done', sampleKind: 'card', created_by: 'u-jun', ...text('card') }),
+        f('sf-bank', { title: '오름_통장사본.png', mime: 'image/png', category: 'bankbook', customer_id: cust(2), size: 133_104, created_at: ago(10), ocr_status: 'done', sampleKind: 'bankbook', created_by: 'u-minji', ...text('bankbook') }),
+        f('sf-invoice', { title: '9월_세금계산서_오름.pdf', folder_id: 'fo-2026', category: 'evidence', customer_id: cust(2), size: 156_330, created_at: ago(2), ocr_status: 'done', sampleKind: 'invoice', created_by: 'u-minji', ...text('invoice') }),
         f('sf-minutes', { title: '3분기 회의록.docx', mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', category: 'general', size: 21_448, created_at: ago(5), ocr_status: 'done', sampleKind: 'minutes', ...text('minutes') }),
         f('sf-link', { kind: 'link', title: '하반기 제안서 (구글 문서)', mime: 'application/vnd.google-apps.document', link_url: 'https://docs.google.com/document/d/sample-proposal/edit', drive_id: 'sample-proposal', source: 'drive', category: 'general', size: 0, created_at: ago(4) }),
-        f('sf-old', { title: '옛 견적서 초안.pdf', category: 'quote', customer_id: 'c-old', size: 90_112, created_at: ago(40), deleted_at: ago(3), sampleKind: 'old', ...text('old') }),
+        f('sf-old', { title: '옛 견적서 초안.pdf', category: 'quote', customer_id: cust(3), size: 90_112, created_at: ago(40), deleted_at: ago(3), sampleKind: 'old', ...text('old') }),
       ],
     };
   }
@@ -60,7 +59,7 @@ function seed(space) {
     f('sf-memo', { title: '개인 메모.txt', mime: 'text/plain', category: 'general', size: 120, created_at: ago(6), ocr_status: 'done', sampleKind: 'memo', ...text('memo') }),
   ] };
   if (space === 'lean-studio') return { folders: [], files: [
-    f('sf-conti', { title: '촬영 콘티.pdf', category: 'general', customer_id: 'c-sori', size: 301_220, created_at: ago(8), sampleKind: 'conti', ...text('conti') }),
+    f('sf-conti', { title: '촬영 콘티.pdf', category: 'general', customer_id: cust(2), size: 301_220, created_at: ago(8), sampleKind: 'conti', ...text('conti') }),
   ] };
   return { folders: [], files: [] };
 }
@@ -219,7 +218,7 @@ const DRIVE = {
     D('d-plan', '하반기 사업계획 (구글 문서)', 'application/vnd.google-apps.document', { kind: 'minutes', days: 2 }),
     D('d-sheet', '거래처 연락처 (구글 시트)', 'application/vnd.google-apps.spreadsheet', { days: 5 }),
     D('d-form', '고객 설문 (구글 설문지)', 'application/vnd.google-apps.form', { days: 30 })],
-  'd-f-sales': [D('d-q-next', '넥스트필드_견적서_v2.pdf', 'application/pdf', { size: 188_200, kind: 'quote', days: 6 }), D('d-card-scan', '명함_스캔_박지현.jpg', 'image/jpeg', { size: 520_100, kind: 'card', days: 4 })],
+  'd-f-sales': [D('d-q-next', '오름_견적서_v2.pdf', 'application/pdf', { size: 188_200, kind: 'quote', days: 6 }), D('d-card-scan', '명함_스캔_박지현.jpg', 'image/jpeg', { size: 520_100, kind: 'card', days: 4 })],
   'd-f-tax': [D('d-f-2026', '2026', FOLDER, { days: 20 })],
   'd-f-2026': [D('d-inv-09', '9월_세금계산서_모음.pdf', 'application/pdf', { size: 410_002, kind: 'invoice', days: 1 })],
   'd-shared-drive': [D('d-team-guide', '팀 업무 안내.pdf', 'application/pdf', { size: 120_000, kind: 'minutes', days: 15, owner: '최민지' })],
