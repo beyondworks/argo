@@ -2056,21 +2056,18 @@ function Shell({ session }) {
     document.addEventListener('touchmove', f, { passive: false }); window.addEventListener('pointerup', end); window.addEventListener('pointercancel', end);
     return () => { document.removeEventListener('touchmove', f); window.removeEventListener('pointerup', end); window.removeEventListener('pointercancel', end); };
   }, []);
-  // 채팅·채널 탭 검색의 본문 찾기(기능 점검 D9) — 목록은 마지막 글만 알아서 예전 대화를 못 찾았다. 전체 검색(runSearch)과 같은 조회·같은 차단 거르기로
-  // 지금 공간의 글에서 맞은 방 id만 모은다. 검색 칸을 연 동안, 두 글자부터, 입력이 300ms 멈췄을 때 한 번(유휴 0, 칸을 닫으면 요청 없음).
+  // 채팅·채널 탭 검색의 본문 찾기(기능 점검 D9) — 목록은 마지막 글만 알아서 예전 대화를 못 찾았다. 서버 msgr_tab_search가 내가 든 방만, 방마다 최근 500개 글
+  // 안에서 찾아 맞은 방 id만 돌려준다(차단한 사람·숨긴 에이전트 글 제외 — 20261002150000). 공간 전체 글을 입력마다 ilike로 훑던 것을 줄였다(분리 검수 MEDIUM 2026-10-02).
+  // 검색 칸을 연 동안, 두 글자부터, 입력이 300ms 멈췄을 때 한 번(유휴 0, 칸을 닫으면 요청 없음). 차단·숨김이 바뀌면 다시 찾는다.
   const [tabHits, setTabHits] = useState(null); // { space, q, ids: Set }
   const tabBodyQ = isPhone && (page === 'chats' || page === 'channels') ? tabBodyQuery(tabQ) : null;
   useEffect(() => {
     if (!tabBodyQ || !uid) { setTabHits(null); return undefined; }
     const space = orgId; let off = false;
     const timer = setTimeout(async () => {
-      const like = `%${tabBodyQ.replace(/[%_\\]/g, (m) => `\\${m}`)}%`;
-      const sel = supabase.from('msgr_messages').select('channel_id, author_kind, crew_id');
-      const base = blockedIds.size ? sel.or(`author_user_id.is.null,author_user_id.not.in.(${[...blockedIds].join(',')})`) : sel;
-      const scoped = space === PERSONAL ? base.is('org_id', null) : base.eq('org_id', space);
-      const rows = await q(scoped.is('deleted_at', null).ilike('body', like).order('id', { ascending: false }).limit(300)).catch((e) => { pushDiag('tab-search', e?.message ?? e); return []; }); // ponytail: 최근 300건 안에서만 — 방이 더 오래된 글뿐이면 '전체에서 찾기'로
+      const rows = await q(supabase.rpc('msgr_tab_search', { org: space === PERSONAL ? null : space, q: tabBodyQ })).catch((e) => { pushDiag('tab-search', e?.message ?? e); return []; }); // 방마다 최근 500개 글 안에서만 — 더 오래된 글은 '전체에서 찾기'로
       if (off) return;
-      setTabHits({ space, q: tabBodyQ, ids: new Set(rows.filter((m) => !(m.author_kind === 'crew' && mutedCrewIds.has(m.crew_id))).map((m) => m.channel_id)) });
+      setTabHits({ space, q: tabBodyQ, ids: new Set((rows ?? []).map((r) => r.channel_id)) });
     }, 300);
     return () => { off = true; clearTimeout(timer); };
   }, [tabBodyQ, uid, orgId, blockedIds, mutedCrewIds]); // eslint-disable-line react-hooks/exhaustive-deps
