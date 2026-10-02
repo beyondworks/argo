@@ -635,7 +635,10 @@ test('G-4 조직 문서 제안: 브리지 미러가 kind org_doc·payload를 싣
   assert.match(chatSrc, /startLongTask,\n\s*\.\.\.\(mirrorCtx\?\.kind === 'msgr' \? \[proposeOrgDoc\] : \[\]\),/, '메신저 턴에만 등록(최종 배열 한 원천 — 네이티브 sink도 같은 배열, 검수 핀 유지를 위해 뒤에 붙인다)');
   assert.match(chatSrc, /kind: 'org_doc',[\s\S]{0,400}payload: \{ scope, channel_id: scope === 'channel' \? mirrorCtx\.channelId : null, path, title: String\(title\)\.slice\(0, 120\), body: String\(body\)\.slice\(0, 65536\) \}/, '제안 payload');
   const actions = readFileSync(new URL('../src/approval-actions.mjs', import.meta.url), 'utf8');
-  assert.match(actions, /\} else if \(item\.kind === 'org_doc'\) \{[\s\S]*?서버가 문서에 반영했다[\s\S]*?다시 쓰거나 제안하지 마라/, '후속 문구');
+  assert.match(actions, /\} else if \(item\.kind === 'org_doc'\) \{[\s\S]*?서버가 문서에 반영했다[\s\S]*?'docApplied'/, '후속 문구');
+  // 지시문 꼬리는 inbound-marks(1:1 화면이 같은 상수로 뗀다) — 실제 문자열은 approval-followup-card.test.mjs가 바꾸기 전과 비교해 잠근다
+  const marks = readFileSync(new URL('../src/inbound-marks.mjs', import.meta.url), 'utf8');
+  assert.match(marks, /docApplied: '[^']*다시 쓰거나 제안하지 마라/, '후속 문구 꼬리');
   const app = readFileSync(new URL('../apps/messenger/src/App.jsx', import.meta.url), 'utf8');
   assert.match(app, /\{ap\.kind === 'org_doc' && ap\.payload && \(/, '슬립 제안 미리보기');
   assert.match(app, /message_id, risk, kind, payload'\)/, '결재 조회에 kind·payload');
