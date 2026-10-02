@@ -211,7 +211,7 @@ test('E7. 배선 핀 — chat.mjs가 플래그 러너를 nativeQuery로 갈라 �
   const src = await readFile(join(ROOT, 'src', 'chat.mjs'), 'utf8');
   assert.match(src, /import \{ query, createSdkMcpServer, tool as sdkTool \} from '@anthropic-ai\/claude-agent-sdk';/);
   assert.match(src, /const tool = \(name, description, shape, handler\) => \{ const t = sdkTool\(name, description, shape, handler\); if \(sink\) defs\.set\(t, \{ name, description, shape, handler \}\); return t; \};/, 'sink 정의 수집(WeakMap) — 등재는 최종 배열에서');
-  assert.match(src, /const nativeOn = nativeRunnerEnabled\(runner\);\n\s*const crewSink = nativeOn \? \[\] : null;\n\s*const crewServer = makeCrewServer\([^\n]*workFolder, crewSink, journal, fullAuto, lim, tree, turnCounters\);/); // journal = 팀 메신저 일지 정책(위임 턴 전달), fullAuto = 풀 오토 모드(2026-09-26)
+  assert.match(src, /const nativeOn = nativeRunnerEnabled\(runner\);\n\s*const crewSink = nativeOn \? \[\] : null;\n\s*const crewServer = makeCrewServer\([^\n]*workFolder, crewSink, journal, fullAuto, lim, tree, turnCounters(?:, [^\n]*)?\);/); // 뒤에 세션 메시지 도구 인자(sessionPeersFor)가 붙을 수 있다 // journal = 팀 메신저 일지 정책(위임 턴 전달), fullAuto = 풀 오토 모드(2026-09-26)
   const branch = src.split('const q = nativeOn ? nativeQuery({')[1]?.split('}) : query({')[0] ?? '';
   assert.ok(branch, 'q 분기가 존재');
   for (const re of [/systemPrompt: systemPromptFor\(md, p\.root, skills, meta, lang\) \+ sysTail/, /env: sdkEnv, model: sdkModel, crewTools: crewSink, mcpServers: servers \?\? \{\}/, /canUseTool: makePermissionGate\(wsId, agentSlug, p\.root, chain\.length \? chain\[chain\.length - 1\] : null, lang, workRoots, \{ computerUse: computerOn, guest, msgr: gateMsgr \}\)/, /resume: resumeId/, /prompt: promptBlocks \?\? promptText/]) assert.match(branch, re);

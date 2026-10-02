@@ -67,7 +67,7 @@ export async function loadThread(wsId, slug) {
     브라우저 메모리에만 있었고, 페이지를 벗어나거나 새로고침하면 **내가 쓴 글이 사라졌다가 답변이
     끝나야 다시 나타났다**(실사용 신고 2026-08-02). 오래 걸리는 턴일수록 오래 사라져 있는 셈이다.
     반환한 turnId로 나중에 같은 줄을 찾아 답변을 붙인다 — 새 줄을 밀어 넣지 않으므로 중복이 없다. */
-export async function beginTurn(wsId, slug, { userMsg, attachments, via, contextScope } = {}) {
+export async function beginTurn(wsId, slug, { userMsg, attachments, via, contextScope, src } = {}) {
   const turnId = `t${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   await lockThread(wsId, slug, async () => {
     const t = await loadThread(wsId, slug);
@@ -77,10 +77,22 @@ export async function beginTurn(wsId, slug, { userMsg, attachments, via, context
       ...(attachments?.length ? { attachments } : {}),
       ...(via ? { via } : {}),
       ...(contextScope ? { contextScope } : {}),
+      ...(src ? { src } : {}), // 출처 표지(세션 메시지 — session-msg.mjs). 화면 카드와 맥락 줄이 이 값으로 화자·출처를 적는다
     });
     await writeJsonAtomic(file(wsId, slug), t);
   });
   return turnId;
+}
+
+/** 턴 없이 한 줄을 더한다 — 세션 메시지의 보낸 줄·돌아온 답 카드·안내(session-msg.mjs). 줄 모양은 호출부가 정한다(ts는 없으면 지금). */
+export async function appendLine(wsId, slug, line) {
+  return lockThread(wsId, slug, async () => {
+    const t = await loadThread(wsId, slug);
+    const m = { ts: Date.now(), ...line };
+    t.messages.push(m);
+    await writeJsonAtomic(file(wsId, slug), t);
+    return m;
+  });
 }
 
 export async function appendTurn(wsId, slug, { turnId, userMsg, reply, handover, sessionId, attachments, artifacts, via, actor, failed, aborted, cancellationIncomplete, fellBack, failedCode, failedOrigin, modelFallback, contextScope, steerFailed }) {

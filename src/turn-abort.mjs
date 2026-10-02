@@ -9,6 +9,8 @@ const active = (globalThis.__argoTurnAbort ??= new Map());
 // Steer state per execution group: messages that arrive while the turn is still booting (no engine has attached its
 // channel yet) wait here and are handed over on attach. Once an engine attached, a group without a channel is closing.
 const steerState = (globalThis.__argoTurnSteer ??= new Map()); // group → { pending: string[], attached: boolean }
+// 크루가 한가해지기를 기다리는 쪽(세션 메시지 대기열 — session-msg.mjs). 마지막 실행이 끝나는 순간(release) 한 번 깨운다 — 주기 확인(폴링) 없음.
+const idleWaiters = (globalThis.__argoTurnIdle ??= new Map()); // `${wsId}:${slug}` → Set<resolve>
 export const turnAbortedError = (cause) => Object.assign(new Error('중단됨'), { aborted: true, ...(cause?.cancellationIncomplete ? { cancellationIncomplete: true, cause } : {}) });
 
 // tag: an optional caller-chosen id (e.g. the messenger source message id) that narrows interruptTurn to one
@@ -41,7 +43,11 @@ export function registerTurn(wsId, slug, interrupt, { group = Symbol('turn'), so
     release: () => {
       entries.delete(entry);
       if (![...entries].some((e) => e.group === group)) steerState.delete(group);
-      if (!entries.size && active.get(key) === entries) active.delete(key);
+      if (!entries.size && active.get(key) === entries) {
+        active.delete(key);
+        const waiters = idleWaiters.get(key);
+        if (waiters) { idleWaiters.delete(key); for (const wake of waiters) wake(); }
+      }
     },
   };
 }
@@ -93,4 +99,20 @@ export async function withTurnControl(wsId, slug, inherited, run, { source = 'ch
     if (registration.wasAborted()) throw turnAbortedError(error); // Preserve incomplete cleanup while keeping cancellation terminal.
     throw error;
   } finally { registration.release(); }
+}
+
+/** 이 프로세스에서 이 크루의 실행(어떤 출처든)이 하나라도 도는 중인가. */
+export function crewBusy(wsId, slug) {
+  return (active.get(`${wsId}:${slug}`)?.size ?? 0) > 0;
+}
+
+/** 이 크루의 실행이 모두 끝나면 풀리는 약속 — 지금 한가하면 바로 풀린다. 마지막 실행의 release가 깨운다(폴링 없음).
+    풀린 뒤 다른 턴이 먼저 시작할 수 있으니, 호출부는 시작 직전에 crewBusy를 다시 보고 필요하면 다시 기다린다. */
+export function whenCrewIdle(wsId, slug) {
+  const key = `${wsId}:${slug}`;
+  if (!crewBusy(wsId, slug)) return Promise.resolve();
+  return new Promise((resolve) => {
+    const set = idleWaiters.get(key) ?? new Set();
+    set.add(resolve); idleWaiters.set(key, set);
+  });
 }
