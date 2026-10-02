@@ -1,5 +1,6 @@
-// 문서함 데이터 — 로그인: Storage 버킷 office-files + office_file_* 함수(표를 직접 읽는 길 없음), 예시 모드: 이 브라우저 IndexedDB(sample.js).
-// 부하: 문서함을 열거나 검색어가 바뀔 때 목록 1회 읽기, 사람이 누를 때만 쓰기, 글자 읽기 결과는 파일당 1회 쓰기, 정리 목록은 사람·기기당 하루 1회.
+// 문서함 데이터 — 로그인: office_file_* 함수(표를 직접 읽는 길 없음) + 파일 바이트는 R2(core/r2.js — 브라우저 ↔ R2 직접, 서명은 DB가 허락한 키만),
+// 예시 모드: 이 브라우저 IndexedDB(sample.js). 부하: 문서함을 열거나 검색어가 바뀔 때 목록 1회 읽기, 사람이 누를 때만 쓰기, 글자 읽기 결과는 파일당 1회 쓰기.
+// 휴지통 30일·남은 객체 정리는 서버 크론만 한다(로그인 모드 — 화면은 정리하지 않는다).
 // 같은 목록 키(공간·휴지통·검색·거래처)는 한 번만 읽어 화면 메모리에 두고, 쓰기 뒤에는 보고 있는 목록만 다시 읽는다. 폴링 없음.
 import { useEffect, useSyncExternalStore } from 'react';
 import { configured, getClient } from '../core/supabase.js';
@@ -9,8 +10,9 @@ import { apiUrl, isDesktop, saveAttachment } from '../core/platform.js';
 import { matches, uploadCheck, storagePath, segOf, classify, findCustomer, matchCustomer, clip, kindOf, ocrable, purgeDue } from './model.js';
 import * as S from './sample.js';
 
-export const BUCKET = 'office-files';
-const ERR = { file_forbidden: 'permission', file_input: 'input', file_not_found: 'missing', file_missing: 'missing', file_conflict: 'conflict', file_limit: 'limit', file_quota: 'quota', file_folder_not_empty: 'notEmpty', task_signin: 'signin' };
+const ERR = { file_forbidden: 'permission', file_input: 'input', file_not_found: 'missing', file_missing: 'missing', file_conflict: 'conflict', file_limit: 'limit', file_quota: 'quota', file_folder_not_empty: 'notEmpty', task_signin: 'signin',
+  file_daily_limit: 'daily', uploads_paused: 'paused', file_size_mismatch: 'request', r2_not_configured: 'storage', storage: 'storage' };
+const r2 = () => import('../core/r2.js'); // 로그인 모드에서만 받는다(첫 화면 묶음에 넣지 않는다)
 const why = (e) => (/^files\.err\.[a-zA-Z_]+$/.test(e?.message ?? '') ? e.message.slice(10) : 'request'); // write()가 던진 사전 키 → 올리기 실패 이유
 export const fileError = (e) => `files.err.${ERR[e?.code] ?? ERR[e?.message] ?? (String(e?.code) === '42501' ? 'permission' : 'request')}`;
 const orgKey = (space) => (configured ? orgOf(space) : space); // 예시 공간은 id가 없어 키를 쓴다
@@ -68,24 +70,20 @@ export const moveFolder = (space, id, parent) => write(space, 'folder.move', { i
 export const deleteFolder = (space, id) => write(space, 'folder.delete', { id });
 export const addLink = (space, link) => write(space, 'link.create', { id: crypto.randomUUID(), source: 'drive', ...link });
 
-/** 영구 삭제 — Storage 객체를 먼저 지우고(Storage API로만), 서버가 객체가 없어진 것만 행을 지운다 */
+/** 영구 삭제 — DB가 기록을 지우며 객체를 지우기로 정하고(한 트랜잭션), 그 키만 서버가 R2에서 지운다(실패해도 정리 크론이 지운다) */
 export async function purgeFiles(space, files) {
-  const paths = files.filter((f) => f.kind === 'file' && f.storage_path).map((f) => f.storage_path);
-  if (configured && paths.length) {
-    const sb = await getClient();
-    const { error } = await sb.storage.from(BUCKET).remove(paths);
-    if (error) throw Object.assign(new Error('files.err.request'), { code: 'storage' });
-  }
-  return write(space, 'file.purge', { ids: files.map((f) => f.id) });
+  const out = await write(space, 'file.purge', { ids: files.map((f) => f.id) });
+  if (configured && out?.keys?.length) await (await r2()).flushKeys(out.keys);
+  return out;
 }
-/** 휴지통 30일·행 없는 객체 정리 — 사람·기기당 하루 한 번(문서함을 열 때). 실패하면 다음에 다시 */
+/** 예시 모드 휴지통 30일 정리 — 기기당 하루 한 번(문서함을 열 때). 로그인 모드는 서버 크론이 한다(화면이 R2를 지우지 않는다) */
 export async function purgeExpired(space) {
+  if (configured) return 0;
   const key = `argo-office-files:purged:${ME.id}:${space}`;
   let last = null; try { last = localStorage.getItem(key); } catch { /* 저장소 없음 */ }
   if (!purgeDue(last)) return 0;
   try { localStorage.setItem(key, String(Date.now())); } catch { /* 저장소 없음 */ }
-  const ex = configured ? await rpc('office_file_expired', { p_org: orgOf(space) }) : await S.sampleExpired(space);
-  if (configured && ex.orphans?.length) { const sb = await getClient(); await sb.storage.from(BUCKET).remove(ex.orphans); }
+  const ex = await S.sampleExpired(space);
   if (!ex.files?.length) return 0;
   await purgeFiles(space, ex.files.map((f) => ({ id: f.id, kind: 'file', storage_path: f.path })));
   return ex.files.length;
@@ -94,10 +92,8 @@ export async function purgeExpired(space) {
 /* ── 파일 내용 ── */
 export async function fileBlob(space, f) {
   if (!configured) return S.sampleBlobGet(f);
-  const sb = await getClient();
-  const { data, error } = await sb.storage.from(BUCKET).download(f.storage_path);
-  if (error) throw Object.assign(new Error('files.err.request'), { code: 'storage' });
-  return data;
+  try { return await (await r2()).objectBlob(f.storage_path); }
+  catch (e) { throw Object.assign(new Error('files.err.request'), { code: e?.code ?? 'storage' }); }
 }
 /** 받기 — 데스크톱은 저장 창, 웹은 내려받기 */
 export async function downloadFile(space, f) {
@@ -165,12 +161,14 @@ export async function ocrFile(space, f, { blob = null, auto = false } = {}) {
 }
 
 /* ── 올리기 ── */
-/** 한 파일: 검사 → 자동 분류(이름) → 거래처 찾기(이름) → Storage에 올리기 → 등록 → (뒤에서) 글자 읽기. 실패하면 올린 객체를 지운다 */
+/** 한 파일: 검사 → 자동 분류(이름) → 거래처 찾기(이름) → 자리(키는 서버가 정함) → R2에 올리기·확인 → 등록 → (뒤에서) 글자 읽기.
+ *  등록이 실패하면 객체는 등록 전(uploaded)으로 남고 정리 크론이 1시간 뒤 지운다(화면은 R2를 지울 수 없다) */
 export async function uploadOne(space, file, { folderId = null, customerId = null, category = null, source = 'upload', title, summary, tags = [], dealId = null, ocr = true, refDoc = null, refEsign = null } = {}) {
   const bad = uploadCheck(file);
   if (bad) return { ok: false, reason: bad };
   const id = crypto.randomUUID(), name = file.name;
-  const org = orgKey(space), path = storagePath(segOf(configured ? org : 'sample', ME.id), id, name);
+  const org = orgKey(space);
+  let path = storagePath(segOf(configured ? org : 'sample', ME.id), id, name); // 예시 모드 경로(로그인 모드는 서버가 준 키로 바꾼다)
   const cs = await loadCustomers(space).catch(() => []);
   const cust = customerId ?? findCustomer({ name: title || name, text: summary ?? '' }, cs)?.id ?? null;
   const cat = category ?? classify({ name: title || name, text: summary ?? '', mime: file.type });
@@ -178,19 +176,14 @@ export async function uploadOne(space, file, { folderId = null, customerId = nul
   const row = { id, title: (title || name).slice(0, 300), filename: name.slice(0, 300), mime: (file.type || '').slice(0, 200), size: file.size, storage_path: path,
     category: cat, customer_id: cust, folder_id: folderId, source, tags, deal_id: dealId, ...(refDoc ? { ref_doc: refDoc } : {}), ...(refEsign ? { ref_esign: refEsign } : {}),
     ...(text ? { ocr_status: 'done', ...text } : {}) };
-  let sb = null;
   if (configured) {
-    // 올리기 자리 먼저(용량·Storage 정책 — 분리 검수 MEDIUM 1). 자리 없이는 Storage가 올리기를 받지 않는다
-    try { await write(space, 'file.reserve', { id, storage_path: path, size: file.size }, { refresh: false }); } catch (e) { return { ok: false, reason: why(e) }; }
-    sb = await getClient();
-    const { error } = await sb.storage.from(BUCKET).upload(path, file, { contentType: file.type || 'application/octet-stream', upsert: false });
-    if (error) return { ok: false, reason: 'storage' };
+    // 올리기 자리 먼저(용량 — 분리 검수 MEDIUM 1). 서버는 이 자리의 키·크기·형식으로만 서명한다
+    try { path = (await write(space, 'file.reserve', { id, filename: name, size: file.size, mime: file.type || '' }, { refresh: false })).key; } catch (e) { return { ok: false, reason: why(e) }; }
+    row.storage_path = path;
+    try { await (await r2()).putObject(path, file); } catch (e) { return { ok: false, reason: ERR[e?.code] ?? 'storage' }; }
   } else await S.sampleBlobPut(id, file);
   try { await write(space, 'file.create', row, { refresh: false }); }
-  catch (e) {
-    if (sb) await sb.storage.from(BUCKET).remove([path]).catch(() => {}); // 기록 실패 → 올린 객체 정리(인트라넷 upload/route.ts:126-130)
-    return { ok: false, reason: why(e) };
-  }
+  catch (e) { return { ok: false, reason: why(e) }; }
   const f = { ...row, kind: 'file' };
   if (ocr && !text && (ocrable(f) || kindOf(name, file.type) === 'doc')) queueOcr(space, f, file);
   return { ok: true, file: f };
