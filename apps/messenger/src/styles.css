@@ -2014,6 +2014,30 @@ html { -webkit-tap-highlight-color: transparent; }
   .msgr-phone .ph-chips button::after { content: ''; position: absolute; inset: -5px -2px; }
   .msgr-phone .ph-chips button.active { background: var(--fg); border-color: var(--fg); color: var(--bg); font-weight: 600; }
   @media (max-width: 374px) { .msgr-phone .ph-chips button { font-size: 13px; padding: 0 11px; } } /* 360 폭 영어에서 'Groups'가 정렬 버튼에 걸려 잘렸다(기능 점검 D11) — 좁은 폭은 칩을 줄여 네 개가 다 들어간다, 더 길면 가로 스크롤 */
+  /* 폰 조직 설정 멤버 탭(5차 피드백) — 나: 사진·이름·역할 한 줄 + 부서·직급 칸 반씩, 나머지: 친구 줄 모양(버튼 없음), 줄을 누르면 시트 */
+  .msgr-phone .ph-memme-head { display: flex; align-items: center; gap: 12px; min-width: 0; }
+  .msgr-phone .ph-memme-head .name, .msgr-phone .ph-memrow .name, .msgr-phone .ph-memwho .name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 16px; font-weight: 600; color: var(--fg); }
+  .msgr-phone .ph-memme-head .role, .msgr-phone .ph-memrow .role { flex: none; margin-left: auto; font-size: 13px; color: var(--fg-3); }
+  .msgr-phone .ph-memme .msgr-profile { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 4px; }
+  .msgr-phone .ph-memme .msgr-profile .msgr-input { width: 100%; min-width: 0; height: 44px; font-size: 16px; }
+  .msgr-phone .ph-memlist .ph-search { margin: 2px 0 2px; }
+  .msgr-phone .ph-memlist .ph-chips { margin: 0 -14px; padding: 5px 14px; }
+  .msgr-phone .ph-memrows { display: flex; flex-direction: column; margin: 0 -14px; }
+  .msgr-phone .ph-memrow { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 60px; padding: 6px 14px; border: 0; background: none; text-align: left; color: inherit; min-width: 0; }
+  .msgr-phone .ph-memrow:active { background: var(--card-2); }
+  .msgr-phone .ph-memrow .ph-kbody, .msgr-phone .ph-memwho .ph-kbody { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; gap: 2px; }
+  .msgr-phone .ph-memrow .snip, .msgr-phone .ph-memwho .snip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--fg-3); }
+  .msgr-phone .ph-memsheet .peek { display: flex; flex-direction: column; gap: 12px; }
+  .msgr-phone .ph-memwho { display: flex; align-items: center; gap: 12px; min-width: 0; }
+  .msgr-phone .ph-memfacts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; margin: 0; }
+  .msgr-phone .ph-memfacts dt { font-size: 12px; color: var(--fg-3); }
+  .msgr-phone .ph-memfacts dd { margin: 2px 0 0; font-size: 15px; color: var(--fg); overflow-wrap: anywhere; }
+  .msgr-phone .ph-memsheet h3 { margin: 4px 0 0; font-size: 13px; font-weight: 600; color: var(--fg-2); }
+  .msgr-phone .ph-memremove { align-self: flex-start; min-height: 44px; }
+  .msgr-phone .msgr-sheetwrap .msgr-crewsheet.ph-memsheet { grid-template-columns: minmax(0, 1fr); } /* 20자 이름이 열 폭을 키워 시트가 화면 밖으로 나갔다 */
+  .msgr-phone .ph-memsheet .head strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .msgr-phone .ph-memsheet .peek > * { min-width: 0; }
+  .msgr-phone .ph-memsheet .msgr-seg { order: 0; } /* 폰 전역 .msgr-seg order:9(탭 줄바꿈용)가 역할 버튼을 '내보내기' 아래로 보냈다 */
   .msgr-phone .ph-chiprow .msgr-sortbtn { width: 44px; height: 44px; min-width: 44px; display: grid; place-items: center; border-radius: 50%; }
   /* ── 친구 탭 ── */
   .msgr-phone.phone-home .msgr-side .ph-root .ph-me { min-height: 84px; gap: 14px; border-bottom: 1px solid var(--border-soft); }

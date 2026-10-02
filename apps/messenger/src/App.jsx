@@ -60,6 +60,7 @@ import { acceptFiles, withoutFile } from './attach-files.mjs';
 import { slashCandidates, slashInsert, rolePickCandidates, ROLE_PICK_RE } from './slash-commands.mjs';
 import { getComposerSession, clearComposerSessions, composerTransport, setDeliveryReporter } from './composer-delivery.mjs';
 import { fetchSearchRows } from './search-rows.mjs';
+import { memberRows, memberPerms, MEMBER_CHIPS } from './phone-members.mjs';
 import { searchView } from './search-view.mjs';
 import { deliveryCardView } from './delivery-card.mjs';
 import { watchOnline } from './connection.mjs';
@@ -3755,7 +3756,7 @@ function Settings({ session, me, uid, invitesTick = 0, org, orgs = [], isAdmin, 
         <div className="msgr-setbody">
           {ot === 'members' && (isAdmin
             ? <OrgCard part="members" invitesTick={invitesTick} org={org} uid={uid} members={members} channels={channels} onInvite={onInvite} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} />
-            : <MemberListCard org={org} uid={uid} members={members} onNote={onNote} onError={onError} t={t} />)}
+            : <PhoneMembers org={org} uid={uid} members={members} onNote={onNote} onError={onError} />)}
           {ot === 'org' && (isAdmin
             ? <OrgCard part="org" org={org} uid={uid} members={members} ent={ent} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} myEmail={session.user.email} />
             : <section className="msgr-setcard"><h2>{t('set.org')}</h2><p>{t('org.noEdit')}</p></section>)}
@@ -4638,6 +4639,59 @@ function MemberProfile({ org, m, uid, profiles, reload, onNote, onError, t }) {
   };
   return <span className="msgr-profile">{['department', 'title'].map((k) => <input key={`${k}:${cur[k] ?? ''}`} className="msgr-input sm" maxLength={60} defaultValue={cur[k] ?? ''} placeholder={t(`org.member.${k}`)} aria-label={t(`org.member.${k}`)} onBlur={(e) => { const [department, title] = [...e.currentTarget.parentElement.querySelectorAll('input')].map((i) => i.value.trim()); save({ department, title }); }} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />)}</span>;
 }
+// 폰 조직 설정 멤버 탭(5차 피드백, 유건 2026-10-02) — 맨 위 나(사진·이름·역할 한 줄 + 부서·직급 칸), 검색(이름·부서)·역할 칩, 나머지는 친구 줄처럼(버튼 없음).
+// 줄을 누르면 시트: 이름·부서·직급(보기), 역할 바꾸기·내보내기는 권한이 있을 때만(memberPerms). onRole·onRemove는 관리자 화면(OrgCard)만 넘긴다. 데스크톱은 종전 목록.
+function PhoneMembers({ org, uid, members, onRole = null, onRemove = null, busy = false, onNote, onError }) {
+  const { t, lang } = useT();
+  const [profiles, reload] = useMemberProfiles(org.id, true);
+  const [q, setQ] = useState(''); const [chip, setChip] = useState('all'); const [openId, setOpenId] = useState(null); const [confirm, setConfirm] = useState(false);
+  const svc = org.service_user_id ?? null;
+  const me = members.find((m) => m.user_id === uid) ?? null;
+  const rows = memberRows(members, { uid, profiles, serviceId: svc, chip, q });
+  const cur = openId ? memberRows(members, { uid, profiles, serviceId: svc }).find((m) => m.user_id === openId) ?? null : null; // 역할을 바꾸면 새 목록에서 다시 읽는다
+  const perms = memberPerms({ viewerRole: org.role, target: cur, uid, serviceId: svc });
+  const nameOf = (m) => m.display_name || m.user_id.slice(0, 8);
+  const roleOf = (m) => (m.user_id === svc ? t('org.node') : t(`role.${m.role}`));
+  const close = () => { if (!busy) { setOpenId(null); setConfirm(false); } };
+  useEffect(() => { if (!openId) return undefined; const k = (e) => { if (e.key === 'Escape') close(); }; window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }); // eslint-disable-line react-hooks/exhaustive-deps
+  return (<>
+    {me && <section className="msgr-setcard ph-memme">
+      <div className="ph-memme-head"><Av name={nameOf(me)} size="lg" userId={uid} /><span className="name">{nameOf(me)}</span><span className="role">{t(`role.${me.role}`)}</span></div>
+      <MemberProfile org={org} m={me} uid={uid} profiles={profiles} reload={reload} onNote={onNote} onError={onError} t={t} />
+    </section>}
+    <section className="msgr-setcard ph-memlist">
+      <h2>{t('org.members')} · {members.length}</h2>
+      <div className="ph-search ph-memsearch" role="search"><I name="search" size={16} /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('phone.mem.search')} aria-label={t('phone.mem.search')} enterKeyHint="search" /></div>
+      <div className="ph-chips" role="radiogroup" aria-label={t('org.member.role')}>{MEMBER_CHIPS.map((k) => <button key={k} type="button" role="radio" aria-checked={chip === k} className={chip === k ? 'active' : ''} onClick={() => setChip(k)}>{k === 'all' ? t('phone.chip.all') : t(`role.${k}`)}</button>)}</div>
+      <div className="ph-memrows">{rows.map((m) => (
+        <button key={m.user_id} type="button" className="ph-memrow" onClick={() => setOpenId(m.user_id)}>
+          <Av name={nameOf(m)} size="lg" userId={m.user_id} /><span className="ph-kbody"><span className="name">{nameOf(m)}</span>{m.sub && <span className="snip">{m.sub}</span>}</span><span className="role">{roleOf(m)}</span>
+        </button>))}</div>
+      {!rows.length && <p className="empty">{t('org.members.noMatch')}</p>}
+    </section>
+    {cur && <div className="msgr-sheetwrap">
+      <div className="msgr-scrim clear" onClick={close} />
+      <section className="msgr-crewsheet msgr-dmpeek ph-friendadd ph-memsheet" role="dialog" aria-label={nameOf(cur)}>
+        <header className="head"><strong>{nameOf(cur)}</strong><button type="button" className="msgr-titlebtn" onClick={close} aria-label={t('ui.close')}><I name="x" size={16} /></button></header>
+        <div className="peek">
+          <div className="ph-memwho"><Av name={nameOf(cur)} size="lg" userId={cur.user_id} /><span className="ph-kbody"><span className="name">{nameOf(cur)}</span><span className="snip">{roleOf(cur)}</span></span></div>
+          <dl className="ph-memfacts">
+            <div><dt>{t('org.member.department')}</dt><dd>{cur.department || '—'}</dd></div>
+            <div><dt>{t('org.member.title')}</dt><dd>{cur.title || '—'}</dd></div>
+            {cur.expires_at && <div><dt>{t('role.guest')}</dt><dd>{Date.parse(cur.expires_at) < Date.now() ? t('org.guest.expired') : t('org.guest.until', { when: fmtWhen(cur.expires_at, lang) })}</dd></div>}
+          </dl>
+          {perms.canRole && onRole && <><h3>{t('org.member.role')}</h3><div className="msgr-seg" role="radiogroup" aria-label={t('org.member.role')}>{ROLES_ASSIGNABLE.map((r) => <button key={r} type="button" role="radio" aria-checked={cur.role === r} className={cur.role === r ? 'active' : ''} disabled={busy} onClick={() => onRole(cur, r)}>{t(`role.${r}`)}</button>)}</div></>}
+          {cur.role === 'owner' && <p className="note">{t('phone.mem.ownerLocked')}</p>}
+          {perms.canRemove && onRemove && <button type="button" className="btn danger ph-memremove" disabled={busy} onClick={() => setConfirm(true)}>{t('phone.mem.remove')}</button>}
+        </div>
+      </section>
+    </div>}
+    {cur && confirm && createPortal(<div className="shell" style={{ display: 'contents' }} role="dialog" aria-modal="true" aria-label={t('phone.mem.remove')}>
+      <ConfirmModal title={t('phone.mem.remove.title', { name: nameOf(cur) })} description={t('phone.mem.remove.note')} confirmLabel={t('phone.mem.remove')} busy={busy}
+        onConfirm={async () => { await onRemove(cur); setConfirm(false); setOpenId(null); }} onClose={() => { if (!busy) setConfirm(false); }} />
+    </div>, document.body)}
+  </>);
+}
 /** 관리자가 아닌 사람의 멤버 탭 — 이름·역할 + 내 부서·직급 칸(남은 글자). 재검수 #699 H1: 이 갈래엔 칸이 없어 멤버·게스트가 자기 부서를 못 정했다. */
 function MemberListCard({ org, uid, members, onNote, onError, t, editSelf = true }) { // editSelf=false: 폰 조직 프로필 화면 — 내 칸은 위 카드에 있어 목록은 보기만
   const [profiles, reload] = useMemberProfiles(org.id, true);
@@ -4695,7 +4749,7 @@ function OrgCard({ org, orgs = [], uid, invitesTick = 0, members, channels = [],
     if (!res.data?.length) return onError(t('org.noEdit'));
     onNote(t('org.name.saved')); onOrgsChanged();
   };
-  const [profiles, loadProfiles] = useMemberProfiles(org.id, part === 'members');
+  const [profiles, loadProfiles] = useMemberProfiles(org.id, part === 'members' && !phone); // 폰은 PhoneMembers가 읽는다
   const setRole = async (m, role) => {
     if (role === m.role) return;
     setBusy(true);
@@ -4754,8 +4808,9 @@ function OrgCard({ org, orgs = [], uid, invitesTick = 0, members, channels = [],
   </>);
   // 멤버가 50·100명이 되어도 한 화면에 다 쌓지 않는다(유건 질문 2026-09-09): 검색 + 30명씩 더 보기. 목록 자체는 조직 멤버 표 전체를 이미 받아 두므로 서버 페이징은 1,000명 넘을 때(v2).
   if (part === 'members') { const q = memberQ.trim().toLowerCase(); const shown = members.filter((m) => !q || (m.display_name || '').toLowerCase().includes(q) || (m.user_id || '').includes(q)); return (
+    <>{phone && <PhoneMembers org={org} uid={uid} members={members} busy={busy} onRole={setRole} onRemove={remove} onNote={onNote} onError={onError} />}
     <section className="msgr-setcard">
-      <h2>{t('org.members')} · {members.length}</h2>
+      {!phone && <><h2>{t('org.members')} · {members.length}</h2>
       {members.length > 8 && <input className="msgr-input sm" value={memberQ} onChange={(e) => { setMemberQ(e.target.value); setMemberN(30); }} placeholder={t('org.members.search')} aria-label={t('org.members.search')} />}
       <div className="msgr-rows">
         {shown.slice(0, memberN).map((m) => { const isMe = m.user_id === uid; const isSvc = m.user_id === org.service_user_id; const canEdit = !isMe && !isSvc && m.role !== 'owner'; return (
@@ -4771,7 +4826,7 @@ function OrgCard({ org, orgs = [], uid, invitesTick = 0, members, channels = [],
         ); })}
         {shown.length > memberN && <div className="row"><button type="button" className="btn sm" onClick={() => setMemberN((n) => n + 30)}>{t('org.members.more', { n: shown.length - memberN })}</button></div>}
         {!shown.length && <p className="empty">{t('org.members.noMatch')}</p>}
-      </div>
+      </div></>}
       <h3>{t('org.invites.h')}</h3>
       <p>{t('org.invites.desc2')}</p>
       <div className="row">
@@ -4781,7 +4836,7 @@ function OrgCard({ org, orgs = [], uid, invitesTick = 0, members, channels = [],
       </div>
       {open.length > 0 && <div className="msgr-rows">{open.map((inv) => <InviteRow key={inv.id} inv={inv} channels={channels} nameOfUser={nameOfUser} busy={busy} onCopy={() => copyLink(inv)} onRevoke={() => revoke(inv)} />)}</div>}
       {past.length > 0 && <details className="inv-past"><summary>{t('inv.m.past', { n: past.length })}</summary><div className="msgr-rows">{past.map((inv) => <InviteRow key={inv.id} inv={inv} channels={channels} nameOfUser={nameOfUser} />)}</div></details>}
-    </section>
+    </section></>
   ); }
 
   // ── 부록 N: 외부 에이전트(헤르메스·오픈클로)는 텔레그램·슬랙에 붙듯 **봇**으로 이 메신저에 접속한다. 봇 = 회사 등급 크루 + 토큰(서버 msgr_bots).
