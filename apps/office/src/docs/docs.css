@@ -1,0 +1,181 @@
+/* 견적·계약·전자서명 — 공용 부품(탭·표·버튼·모달·패널)을 쓰고 여기에는 이 화면만의 배치만 둔다 */
+:root { --signer-0: #3b6a9e; --signer-1: #b5642a; --signer-2: #2f8a5b; --signer-3: #8a4fb0; --signer-4: #a33d4f; }
+:root:is([data-theme$='-dark'], .dark-emul) { --signer-0: #7fa6d4; --signer-1: #e09a62; --signer-2: #6cc394; --signer-3: #bb8ae0; --signer-4: #e27c8d; }
+
+.docs-page .spacer, .docs-items-foot .spacer, .docs-result .spacer, .docs-signer-list .spacer { flex: 1; }
+.docs-head-actions { flex-wrap: wrap; }
+.docs-refresh { align-self: center; }
+.docs-table td.docs-title-cell { font-weight: 550; max-width: 380px; }
+.docs-table td { vertical-align: middle; }
+.docs-row-acts { display: flex; gap: 4px; justify-content: flex-end; align-items: center; }
+.docs-signers { display: inline-flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12.5px; color: var(--fg-2); }
+.docs-signers > span { display: inline-flex; align-items: center; gap: 5px; }
+.docs-signers i { width: 6px; height: 6px; border-radius: 50%; background: color-mix(in oklab, var(--fg-3) 50%, transparent); }
+.docs-signers .on i { background: var(--ok); }
+.docs-result { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; margin-bottom: 16px; border-radius: var(--rs); background: var(--surface); }
+
+/* 작성 화면: 왼쪽 입력, 오른쪽 미리보기 */
+.docs-editor { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.95fr); grid-template-rows: auto 124px; gap: 0 24px; align-items: start; margin-bottom: -124px; }
+/* 미리보기는 빈 둘째 줄(= 페이지 아래 여백 96 + 페이드 28)까지 차지한다 — 끈끈이(sticky)는 부모 칸 안에서만 움직여, 끝까지 내리면 양식 끝에 밀려 위가 잘렸다(유건 10/2 10차) */
+.docs-editor > .docs-form { grid-row: 1; }
+.docs-editor > .docs-preview-col { grid-row: 1 / 3; }
+.docs-form { display: grid; gap: 16px; min-width: 0; }
+.docs-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 14px; align-items: start; } /* 같은 줄 칸은 위 끝·높이가 같게 — 늘이면 도움말이 있는 칸 옆 칸의 제목 줄이 커져 입력칸이 내려갔다 */
+.docs-field { min-width: 0; }
+.docs-field .input, .docs-field textarea { width: 100%; }
+.docs-field textarea.area { margin-top: 0; min-height: 84px; }
+.docs-field.wide, .docs-check.wide { grid-column: 1 / -1; }
+.docs-inline { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.docs-inline .input { flex: 1; min-width: 140px; }
+.docs-check { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; line-height: 1.45; cursor: pointer; }
+.docs-check input { margin-top: 2px; }
+.docs-seal-note { grid-column: 1 / -1; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 0; }
+.docs-from { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--fg-2); padding: 8px 10px; border-radius: var(--rs); background: var(--surface); }
+.docs-card { display: grid; gap: 12px; padding: 14px 16px; border-radius: var(--rs); background: var(--surface); } /* 외곽선 없이 면으로(유건 10/1) */
+.docs-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.docs-card-head h3 { font-size: 13px; font-weight: 620; }
+.docs-ocr-result { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 12.5px; color: var(--fg-2); }
+.docs-warn { display: flex; align-items: center; gap: 6px; color: var(--warn); }
+.docs-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 16px; border-top: 1px solid var(--border-soft); } /* 모달 바닥과 같은 줄 — 고정 바는 내용을 덮고 뒤에 빈 막대가 깔려 뺐다(유건 10/2 10차) */
+
+.docs-items { display: grid; gap: 6px; }
+/* 머리와 줄이 같은 격자(유건 10/2 10차 "머리가 열과 어긋남") — 머리 글자는 입력칸 글자 자리(안쪽 10px)에, 금액은 값과 같은 오른쪽 끝에. 마지막 칸 = 지우기 단추 폭 */
+.docs-item-head, .docs-item { display: grid; grid-template-columns: minmax(0, 1fr) 110px 64px 78px 96px var(--ctl); gap: 6px; align-items: start; }
+.docs-item-head { font-size: 11.5px; color: var(--fg-3); }
+.docs-item-head > span { padding: 0 10px; }
+.docs-item-head > span:nth-child(5) { padding: 0; }
+.docs-item-head .num, .docs-item > .num { text-align: right; }
+.docs-item > .mono { padding-top: 8px; }
+.docs-item-name { display: grid; gap: 4px; min-width: 0; }
+.docs-item .input { width: 100%; min-width: 0; }
+.docs-item .input.sub { height: var(--ctl-sm); font-size: 12px; }
+.docs-item input.num { text-align: right; font-family: var(--mono); font-size: 13px; }
+.docs-items-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.docs-items-foot .input.sm { max-width: 220px; }
+.docs-total { color: var(--fg); }
+.docs-option { display: grid; gap: 8px; }
+.docs-option > summary { cursor: pointer; font-size: 12.5px; font-weight: 600; color: var(--fg-2); }
+.docs-option[open] { padding: 12px; border-radius: var(--rs); background: var(--surface); }
+.docs-option-row { display: grid; grid-template-columns: minmax(0, 1fr) 120px minmax(0, 1.4fr) 30px; gap: 6px; }
+
+.docs-preview-col { position: sticky; top: 28px; display: grid; gap: 8px; min-width: 0; max-height: calc(100dvh - var(--top-h) - 152px); overflow: auto; } /* top = 본문 위 여백 — 위 20px 페이드 아래에 선다(12px이면 미리보기 머리가 잘려 보였다). 높이 = 창 − 머리 − 위·아래 여백(28+96+28): 끝까지 내려도 양식 끝에 밀려 위가 잘리지 않게 */
+.docs-preview-head { display: flex; justify-content: space-between; align-items: baseline; }
+.docs-preview { position: relative; width: 100%; overflow: hidden; border-radius: 4px; box-shadow: 0 1px 8px rgba(0, 0, 0, 0.14); background: #fff; min-height: 200px; }
+.docs-preview iframe { position: absolute; top: 0; left: 0; border: 0; transform-origin: top left; background: #fff; }
+
+/* 패널 */
+.docs-pdf-wrap { display: grid; gap: 8px; }
+.docs-pdf-zoom { justify-self: end; }
+.docs-pdf { width: 100%; height: min(72vh, 900px); border: 0; border-radius: var(--rs); background: var(--surface); }
+.docs-meta { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px 16px; }
+.docs-meta dt { font-size: 11.5px; color: var(--fg-3); }
+.docs-meta dd { font-size: 13px; margin: 2px 0 0; }
+.docs-sub { display: grid; gap: 8px; }
+.docs-sub h3 { font-size: 12.5px; font-weight: 620; color: var(--fg-2); }
+.docs-signer-list { display: grid; gap: 6px; list-style: none; padding: 0; margin: 0; }
+.docs-signer-list > li { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 10px; border-radius: var(--rs); background: var(--surface); font-size: 13px; }
+.docs-log { display: grid; gap: 4px; list-style: none; padding: 0; margin: 0; font-size: 12.5px; }
+.docs-log > li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--border-soft); }
+
+/* 서명 세팅 */
+.esign-setup { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 20px; align-items: start; }
+.esign-side { position: sticky; top: 28px; display: grid; gap: 14px; max-height: calc(100dvh - var(--top-h) - 152px); overflow: auto; padding: 4px 4px 12px; }
+/* 서명자 카드 — 왼쪽 색 막대 금지(유건 9/30, 10/2 재발). 갑·을 구분은 글자 표지 색으로만 */
+.esign-signer { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 6px; align-items: start; padding: 8px; border-radius: var(--rs); background: var(--surface); }
+.esign-signer .party { font-size: 12px; font-weight: 700; color: var(--c); line-height: var(--ctl); text-align: center; }
+.esign-signer-fields { display: grid; gap: 6px; }
+.esign-signer .input { width: 100%; }
+.esign-signer .input.bad { border-color: var(--danger); }
+.esign-target { height: 26px; padding: 0 10px; border-radius: 13px; font-size: 12px; font-weight: 600; background: var(--lift); color: var(--fg-2); }
+.esign-target.on { background: var(--c); color: #fff; }
+.esign-sealed { display: flex; align-items: center; gap: 6px; margin: 0; }
+.esign-side-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.docs-file { cursor: pointer; }
+.esign-doc { min-width: 0; }
+.esign-drop { display: grid; place-content: center; justify-items: center; gap: 10px; min-height: 420px; height: calc(100dvh - var(--top-h) - 200px); border-radius: var(--rs); border: 1.5px dashed var(--border); color: var(--fg-3); font-size: 13px; text-align: center; padding: 16px; }
+.esign-drop.pick { cursor: pointer; } /* 빈 칸을 눌러도 PDF를 고른다(문서함 올리기 칸과 같은 모양) */
+@media (hover: hover) { .esign-drop.pick:hover { border-color: var(--fg-3); background: var(--surface); } }
+.esign-pages { position: relative; }
+.pdf-page { position: relative; margin: 0 auto 14px; box-shadow: 0 1px 8px rgba(0, 0, 0, 0.16); background: #fff; }
+.pdf-page canvas { display: block; }
+.esign-field { position: absolute; box-sizing: border-box; }
+.esign-field .body { width: 100%; height: 100%; cursor: move; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: var(--c); border: 1.5px solid var(--c); border-radius: 4px; background: color-mix(in srgb, var(--c) 14%, transparent); touch-action: none; user-select: none; }
+.esign-field .del, .sign-slot .del { display: grid; place-items: center; position: absolute; top: -10px; right: -10px; width: 20px; height: 20px; border-radius: 50%; background: var(--danger); color: #fff; font-size: 12px; line-height: 20px; text-align: center; padding: 0; z-index: 2; }
+.esign-field .rz, .sign-slot .rz { position: absolute; right: -7px; bottom: -7px; width: 14px; height: 14px; border-radius: 4px; background: var(--c, var(--fg)); border: 2px solid var(--bg); cursor: nwse-resize; touch-action: none; z-index: 2; }
+.esign-sent { max-width: 720px; display: grid; gap: 14px; }
+
+/* 서명 페이지(로그인 없음) */
+.sign-page { min-height: 100vh; background: var(--bg); color: var(--fg); word-break: keep-all; }
+.sign-wrap { max-width: 1120px; margin: 0 auto; padding: 22px 20px 96px; }
+.sign-wrap.narrow { max-width: 460px; padding-top: 48px; }
+.sign-brand { font-weight: 800; font-size: 20px; letter-spacing: -0.02em; margin-bottom: 10px; }
+.sign-brand em { font-style: normal; color: var(--fg-2); }
+.sign-card { display: grid; gap: 12px; padding: 20px; border-radius: var(--rs); background: var(--surface); }
+.sign-card h1 { font-size: 20px; font-weight: 720; letter-spacing: -0.02em; }
+.sign-card .input { width: 100%; height: 40px; font-size: 15px; }
+.sign-lock { justify-items: center; text-align: center; padding: 34px 20px; }
+.sign-two { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 18px; align-items: start; }
+.sign-side { position: sticky; top: 14px; max-height: calc(100vh - 28px); overflow: auto; }
+.sign-tools { display: grid; gap: 6px; }
+.sign-tools .btn { justify-content: flex-start; }
+.sign-ready img { display: block; height: 38px; margin-top: 6px; border: 1px dashed var(--border); background: #fff; }
+.sign-pending { color: var(--fg); font-weight: 650; }
+.sign-font { display: flex; align-items: center; gap: 6px; }
+.sign-progress { display: grid; gap: 8px; border-top: 1px solid var(--border-soft); padding-top: 12px; }
+.sign-nav { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.sign-doc { min-width: 0; }
+.sign-doc .page-h1 { margin-bottom: 12px; }
+.sign-slot { position: absolute; box-sizing: border-box; --c: var(--fg); }
+.sign-slot .body { width: 100%; height: 100%; cursor: move; outline: 1.5px dashed color-mix(in srgb, var(--fg) 45%, transparent); outline-offset: 1px; display: flex; align-items: center; justify-content: center; touch-action: none; }
+.sign-slot.empty .body { background: color-mix(in srgb, #f5c542 22%, transparent); }
+.sign-slot.active .body { outline: 2.5px solid var(--fg); box-shadow: 0 0 0 4px color-mix(in srgb, var(--fg) 18%, transparent); }
+.sign-slot .ph { font-size: 11px; font-weight: 700; color: #6b5300; pointer-events: none; }
+.sign-slot img { width: 100%; height: auto; display: block; pointer-events: none; }
+.sign-slot.cover textarea { background: #fff; } /* 계약일자 — 인쇄된 빈칸 안내 위를 덮어 쓴다(서명본과 같은 모양) */
+.sign-slot textarea { width: 100%; border: 0; background: transparent; resize: none; overflow: hidden; font-family: 'Pretendard', -apple-system, sans-serif; color: #111; line-height: 1.3; padding: 0; outline: none; }
+.sign-canvas { width: 100%; height: auto; aspect-ratio: 560 / 220; border: 1px solid var(--border); border-radius: 8px; touch-action: none; background: #fff; cursor: crosshair; }
+
+@container (max-width: 900px) { .docs-editor { grid-template-columns: 1fr; grid-template-rows: none; gap: 24px; margin-bottom: 0; } .docs-editor > .docs-preview-col { grid-row: auto; position: static; max-height: none; } }
+@media (max-width: 900px) {
+  .docs-editor, .esign-setup, .sign-two { grid-template-columns: 1fr; }
+  .docs-editor { grid-template-rows: none; gap: 24px; margin-bottom: 0; } .docs-editor > .docs-preview-col { grid-row: auto; }
+  .docs-preview-col, .esign-side, .sign-side { position: static; max-height: none; }
+}
+@media (max-width: 640px) {
+  .docs-grid { grid-template-columns: 1fr; }
+  .docs-item-head { display: none; }
+  /* 폰 폭: 항목명 한 줄 → 단가·수량·과세·지우기 한 줄 → 금액은 오른쪽 끝 한 줄 */
+  .docs-item { grid-template-columns: repeat(3, minmax(0, 1fr)) var(--ctl); }
+  .docs-item-name { grid-column: 1 / -1; }
+  .docs-item > .icon-btn { grid-column: 4; grid-row: 2; }
+  .docs-item > .mono { grid-column: 1 / -1; grid-row: 3; padding-top: 0; }
+  .docs-table .hide-sm { display: none; }
+  .docs-option-row { grid-template-columns: 1fr 30px; }
+}
+
+/* 면 위에 바로 놓이는 입력 — 바탕과 같은 색이라 경계를 준다(업무 필터와 같은 방식) */
+.docs-form .input, .esign-side .input { background: var(--lift); }
+.docs-card .input, .docs-option[open] .input { background: var(--bg); }
+.esign-side .field-block > .btn, .esign-side .field-block > .chip { justify-self: start; }
+.esign-side > .docs-back { justify-self: start; }
+
+/* 크게 보기(유건 10/2 13차) — 화면을 덮는 창, 모달 머리 규칙. 쪽은 흰 종이(서식 색), 무대는 오피스 바탕 */
+.doc-zoom-scrim { padding: 12px; }
+.doc-zoom { width: 100%; height: 100%; max-height: none; grid-template-rows: auto minmax(0, 1fr); }
+.doc-zoom .modal-head { flex-wrap: wrap; row-gap: 6px; }
+.doc-zoom .modal-head h2 { flex: 1 1 160px; }
+.doc-zoom-page { flex: none; min-width: 44px; text-align: center; }
+.doc-zoom-bar { display: flex; align-items: center; gap: 2px; padding: 2px; border-radius: var(--rc); background: var(--wash); }
+.doc-zoom-pct { min-width: 56px; justify-content: center; font-size: 12px; }
+.doc-zoom-stage { overflow: auto; background: var(--bg); padding: 24px; outline: none; touch-action: pan-x pan-y; overscroll-behavior: contain; }
+.doc-zoom-stage.pan { cursor: grab; } .doc-zoom-stage.pan:active { cursor: grabbing; }
+.doc-zoom-pages { display: grid; gap: 16px; margin: 0 auto; }
+.doc-zoom-sheet { position: relative; overflow: hidden; background: #fff; box-shadow: 0 1px 8px rgba(0, 0, 0, 0.16); }
+.doc-zoom-sheet iframe { position: absolute; top: 0; left: 0; border: 0; transform-origin: 0 0; pointer-events: none; background: #fff; }
+.doc-zoom-sheet img { display: block; width: 100%; height: 100%; user-select: none; -webkit-user-drag: none; }
+/* 작성 화면 미리보기 = 크게 보기 단추(눌러서 연다) */
+.docs-preview.zoomable { cursor: zoom-in; }
+.docs-preview.zoomable iframe { pointer-events: none; }
+.docs-preview.zoomable:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+@media (max-width: 640px) { .doc-zoom-scrim { padding: 0; } .doc-zoom { border-radius: 0; } .doc-zoom-stage { padding: 12px; }
+  .doc-zoom .modal-head h2 { order: 1; flex: 1 1 calc(100% - 132px); } .doc-zoom-page { order: 2; } .doc-zoom .modal-head .icon-btn.x { order: 3; } .doc-zoom-bar { order: 4; } .doc-zoom .modal-head > .btn { order: 5; } } /* 폰: 첫 줄 = 제목·쪽·닫기, 둘째 줄 = 돋보기 줄·받기 */

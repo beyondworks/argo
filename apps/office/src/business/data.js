@@ -3,6 +3,7 @@ import { getClient } from '../core/supabase.js';
 import { ME, SPACES, getMode, useSession } from '../core/session.js';
 import { validateFilters } from './dashboard-model.js';
 import { isSameUserEcho } from '../core/auth-events.js';
+import { createSampleBusinessClient } from './sample-business.js';
 
 const fail = (message, code = message) => Object.assign(new Error(message), { code });
 const journalKey = (scope, namespace) => `${namespace}:${scope.uid}:${scope.org ?? 'me'}`;
@@ -165,6 +166,21 @@ export function useScopedBusiness(space, createClient = createBusinessClient) {
   return { ...snapshot, data: visible ? snapshot.data : null, ...scoped };
 }
 
+/** 예시 데이터 모드(서버 없음) — 이 브라우저의 예시 원장(sample-business.js). 다른 화면·다른 탭(서명 링크)에서 바뀌면 다시 읽는다 */
+function useSampleBusiness(space) {
+  const client = useMemo(() => createSampleBusinessClient({ storage: globalThis.localStorage, space, people: [{ user_id: ME.id, name: ME.name }] }), [space]);
+  const snapshot = useSyncExternalStore(client.subscribe, client.getSnapshot, client.getSnapshot);
+  useEffect(() => {
+    client.refresh();
+    const again = () => client.refresh();
+    const onStorage = (e) => { if (e.key?.startsWith('argo-office-sample-business:')) again(); };
+    window.addEventListener('office:biz-refresh', again); window.addEventListener('storage', onStorage);
+    return () => { window.removeEventListener('office:biz-refresh', again); window.removeEventListener('storage', onStorage); };
+  }, [client]);
+  return { ...snapshot, ...client };
+}
+
 export function useBusiness(space) {
-  return useScopedBusiness(space);
+  // 모드는 앱이 뜰 때 정해지고 바뀌지 않는다(서버 설정 유무) — 훅 순서가 흔들리지 않는다
+  return getMode() === 'sample' ? useSampleBusiness(space) : useScopedBusiness(space);
 }

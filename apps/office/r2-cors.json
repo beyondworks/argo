@@ -1,0 +1,34 @@
+[
+  {
+    "AllowedOrigins": [
+      "https://argo-office.vercel.app"
+    ],
+    "AllowedMethods": [
+      "GET",
+      "PUT"
+    ],
+    "AllowedHeaders": [
+      "content-type",
+      "if-none-match"
+    ],
+    "ExposeHeaders": [],
+    "MaxAgeSeconds": 3600
+  },
+  {
+    "AllowedOrigins": [
+      "tauri://localhost",
+      "http://tauri.localhost",
+      "https://tauri.localhost"
+    ],
+    "AllowedMethods": [
+      "GET",
+      "PUT"
+    ],
+    "AllowedHeaders": [
+      "content-type",
+      "if-none-match"
+    ],
+    "ExposeHeaders": [],
+    "MaxAgeSeconds": 3600
+  }
+]

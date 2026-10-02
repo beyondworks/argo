@@ -1,5 +1,5 @@
 // 업무 사전 등록(biz.*/bizui.*/mkt.*) — core/i18n.js는 이걸 정적으로 갖지 않는다(첫 화면 150KB 상한, 유건 9/26).
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { cloneElement, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import './register-i18n.js';
 import { t, useLang, getLang } from '../core/i18n.js';
 import { baseOf } from '../core/commands.js';
@@ -14,11 +14,12 @@ import { useBusiness, businessError } from './data.js';
 import { BusinessDashboard } from './Dashboard.jsx';
 import Marketing from './Marketing.jsx';
 import { DealBoard, DealDetail } from './DealBoard.jsx';
-import { Redact } from './Redact.jsx';
-import { cellsInBox, bulkRedact } from './cell-pick.js';
+import { Redact, Hide } from './Redact.jsx';
+import { bulkRedactRows, redactDefaults, redactState } from './cell-pick.js';
 import { dealAmounts, vatOf, CUSTOMER_SORTS, sortCustomers } from './deal-model.js';
 import './business.css';
 import { BUSINESS_MODULES } from '../core/module-registry.js';
+import { useSelection, selProps } from '../core/selection.js';
 import { SortableContext, useSortable, horizontalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useStore, saveLayout } from '../core/store.js';
@@ -47,8 +48,11 @@ function Field({ name, children }) {
 // 숫자 열은 오른쪽 맞춤·Mono(유건 9/29), 수정 열은 머리글 없이 행 끝에 작은 버튼
 const NUM = new Set(['price', 'amount', 'total', 'receivable', 'stock', 'reserved', 'available', 'quantity', 'supply', 'vat']);
 const cls = (column) => (NUM.has(column) ? 'num' : column === 'edit' || column === 'receive' ? 'act' : undefined);
-function Table({ columns, rows }) {
-  return rows.length ? <div className="table-wrap bizui-table-wrap"><table className="table bizui-table"><thead><tr>{columns.map((column) => <th key={column} className={cls(column)}>{cls(column) === 'act' ? '' : label(column)}</th>)}</tr></thead><tbody>{rows}</tbody></table></div> : <p className="empty-state">{label('empty')}</p>;
+/** 업무 표 — 행은 끌어 감싸기·⇧/⌘ 클릭·⌘A로 고를 수 있다(11차). 표마다 이미 있는 행 동작(수정·입고)은 한 건씩 여는 창이라 일괄 동작은 없다(선택 막대 = 개수·해제) */
+function Table({ columns, rows, select }) {
+  const auto = `biz:${useId()}`, scope = select?.scope ?? auto;
+  const [own] = useSelection(select ? null : scope, { keys: rows.map((row) => row.key) }), sel = select?.sel ?? own; // select = 표를 쓰는 쪽이 묶음을 등록(거래처 — 일괄 가리기)
+  return rows.length ? <div className="table-wrap bizui-table-wrap" data-sel-scope={scope}><table className="table bizui-table"><thead><tr>{columns.map((column) => <th key={column} className={cls(column)}>{cls(column) === 'act' ? '' : label(column)}</th>)}</tr></thead><tbody>{rows.map((row) => cloneElement(row, selProps(sel, row.key)))}</tbody></table></div> : <p className="empty-state">{label('empty')}</p>;
 }
 const EditButton = ({ disabled, onClick, children }) => <button type="button" className="btn sm ghost" disabled={disabled} onClick={onClick}>{children ?? label('edit')}</button>;
 const ENTRY_ORDER = ['invoice', 'payment', 'refund', 'credit']; // 같은 시각이면 업무 순서대로(청구 → 입금)
@@ -56,7 +60,7 @@ function EntryRows({ entries, orders, openOrder }) {
   // 청구는 청색, 입금은 녹색, 되돌린 기록(청구 취소·환불)은 붉은색 — 행 전체 글자색, 금액은 굵게(유건 9/29)
   return <Table columns={['date', 'orders', 'kind', 'supply', 'vat', 'amount', 'notes']} rows={entries.slice().sort((a, b) => a.at.localeCompare(b.at) || ENTRY_ORDER.indexOf(a.kind) - ENTRY_ORDER.indexOf(b.kind)).map((entry) => <tr key={entry.id} className={{ invoice: 'entry-bill', payment: 'entry-pay' }[entry.kind] ?? 'entry-back'}>
     <td>{date(entry.at)}</td><td><button className="bizui-link" onClick={() => openOrder(entry.order_id)}>{orders.find((o) => o.id === entry.order_id)?.title || '—'}</button></td>
-    <td>{label(entry.kind)}</td><td className="num">{entry.supply == null ? '—' : money(entry.supply)}</td><td className="num">{entry.vat == null ? '—' : money(entry.vat)}</td><td className="num strong">{money(entry.amount)}</td><td>{entry.note}</td>
+    <td>{label(entry.kind)}</td><td className="num">{entry.supply == null ? '—' : <Hide k={`entry:${entry.id}:supply`}>{money(entry.supply)}</Hide>}</td><td className="num">{entry.vat == null ? '—' : <Hide k={`entry:${entry.id}:vat`}>{money(entry.vat)}</Hide>}</td><td className="num strong"><Hide k={`entry:${entry.id}:amount`}>{money(entry.amount)}</Hide></td><td>{entry.note}</td>
   </tr>)} />;
 }
 const balance = dealAmounts;
@@ -77,40 +81,39 @@ function Customers({ data, blocked, run, launch, openCard }) {
     <CustomerTable key={sort} rows={sortCustomers(data.customers, data.orders, sort)} dated={dated} blocked={blocked} run={run} launch={launch} openCard={openCard} />
   </>;
 }
-/** 거래처 표 — 민감 칸은 우클릭으로 가리고, 칸을 누른 채 다른 칸까지 끌어 여러 칸을 고르면 우클릭으로 한 번에 가리기·해제(유건 9/29, 노션처럼) */
+/** 거래처 표 — 민감 칸은 우클릭으로 가린다(유건 9/29). 여러 칸은 공용 선택 상자(12차): 끌면 사각형에 걸친 칸만, ⇧ + 끌기 = 줄 통째, ⌘ = 영역 더하기 —
+ *  고른 칸·줄은 선택 막대·우클릭으로 한 번에 가리기·가림 해제(바뀌는 칸만 redact.bulk 한 번, 토스트 '되돌리기'로 통째로) */
 function CustomerTable({ rows, dated, blocked, run, launch, openCard }) {
-  const [pick, setPick] = useState(null), drag = useRef(false);
-  const cells = pick ? cellsInBox(pick.a, pick.b) : [], many = cells.length > 1;
-  const at = (event) => event.target.closest?.('[data-cell]')?.dataset.cell.split(':').map(Number);
-  useEffect(() => {
-    const up = () => { drag.current = false; };
-    const down = (event) => { if (!event.target.closest?.('.cell-pick')) setPick(null); }; // 표 밖을 누르면 고르기를 푼다
-    const key = (event) => { if (event.key === 'Escape') setPick(null); };
-    addEventListener('mouseup', up); addEventListener('mousedown', down); addEventListener('keydown', key);
-    return () => { removeEventListener('mouseup', up); removeEventListener('mousedown', down); removeEventListener('keydown', key); };
-  }, []);
-  const menu = (event) => {
-    const cell = at(event);
-    if (blocked || !many || !cell || !cells.some(([r, c]) => r === cell[0] && c === cell[1])) return; // 고른 칸 밖은 칸 하나 메뉴(Redact)
-    const hide = bulkRedact(rows, REDACT_FIELDS, cells, true), show = bulkRedact(rows, REDACT_FIELDS, cells, false);
-    // 바뀌는 칸만, 서버 한도(500칸)씩 나눠 보낸다 — 100줄 넘게 골라도 전체가 거절되지 않게(분리 검수 M4)
-    const send = async (items) => { try { for (let i = 0; i < items.length; i += 500) await run('redact.bulk', { items: items.slice(i, i + 500) }); setPick(null); } catch { /* run이 안내를 띄운다 */ } };
-    openMenu(event, [
-      hide.length > 0 && { label: t('bizui.redactMany', { n: hide.length }), icon: 'eyeOff', run: () => send(hide) },
-      show.length > 0 && { label: t('bizui.unredactMany', { n: show.length }), icon: 'eye', run: () => send(show) },
-    ]);
+  const scope = `biz:customers:${useId()}`;
+  // 바뀌는 칸만, 서버 한도(500칸)씩 나눠 보낸다 — 100줄 넘게 골라도 전체가 거절되지 않게(분리 검수 M4)
+  const send = async (items) => { try { for (let i = 0; i < items.length; i += 500) await run('redact.bulk', { items: items.slice(i, i + 500) }); return true; } catch { return false; /* run이 안내를 띄운다 */ } };
+  const bulk = useRef(null);
+  bulk.current = (items) => send(items).then((ok) => { if (!ok) throw new Error('redact'); });
+  const batch = useMemo(() => (items) => bulk.current(items), []); // 칸 고르기 쓰기 묶음 — 표 하나에 하나(같은 함수여야 한 번에 보낸다)
+  const rowMenu = (ids, clear) => {
+    if (blocked || !ids.length) return [];
+    const cells = rows.filter((row) => ids.includes(row.id)).flatMap((row) => REDACT_FIELDS.map((field) => (row.redacted ?? []).includes(field)));
+    const st = redactState(cells, Boolean), go = (on) => async () => {
+      const items = bulkRedactRows(rows, REDACT_FIELDS, ids, on);
+      if (await send(items)) { clear?.(); showToast(t(on ? 'sel.redacted' : 'sel.unredacted', { n: items.length }), { undo: () => send(items.map((x) => ({ ...x, on: !x.on }))) }); }
+    };
+    return [!st.all && { label: t('bizui.redact'), icon: 'eyeOff', run: go(true) }, st.any && { label: t('bizui.unredact'), icon: 'eye', run: go(false) }];
   };
-  return <div className={`cell-pick${many ? ' picking' : ''}`} onContextMenu={menu}
-    onMouseDown={(event) => { if (event.ctrlKey) return; const cell = event.button === 0 && at(event); /* 맥 Ctrl+클릭은 우클릭 */ drag.current = !!cell; if (event.button === 0) setPick(cell ? { a: cell, b: cell } : null); }}
-    onMouseOver={(event) => { if (!(event.buttons & 1)) drag.current = false; /* 창 밖에서 버튼을 놓았으면 끌기 끝 */ const cell = drag.current && at(event); if (cell) setPick((old) => old && (old.b[0] === cell[0] && old.b[1] === cell[1] ? old : { ...old, b: cell })); }}>
-    <Table columns={['name', 'manager', 'phone', 'email', 'biz_no', 'account', 'category', 'customerStatus', ...(dated ? ['createdAt'] : []), 'edit']} rows={rows.map((row, r) => {
-      const hide = (field) => { const c = REDACT_FIELDS.indexOf(field); return { on: row.redacted?.includes(field), disabled: blocked, cell: `${r}:${c}`, picked: many && cells.some(([x, y]) => x === r && y === c),
-        onToggle: () => run('redact.set', { entity: 'customer', id: row.id, field, on: !row.redacted?.includes(field) }).catch(() => {}) }; };
-      // 줄 어디를 눌러도 오른쪽 패널에 거래처 카드(유건 9/30) — 버튼·가린 값(누르고 있으면 보기)·여러 칸 끌기·Ctrl+클릭(맥 우클릭)은 제외
+  const [sel] = useSelection(scope, { keys: rows.map((row) => row.id), actions: (keys, clear) => rowMenu(keys, clear) });
+  const menu = (event) => { // 고른 행(⇧ 끌기) 위 우클릭 = 고른 행 전체
+    const id = event.target.closest?.('[data-sel]')?.dataset.sel;
+    if (!id || sel.size < 2 || !sel.has(id) || event.target.closest('[data-cell-on]')) return;
+    const items = rowMenu([...sel]).filter(Boolean);
+    if (items.length) { event.preventDefault(); openMenu(event, [{ heading: t('sel.count', { n: sel.size }) }, ...items]); }
+  };
+  return <div className="cell-pick" onContextMenu={menu}>
+    <Table select={{ scope, sel }} columns={['name', 'manager', 'phone', 'email', 'biz_no', 'account', 'category', 'customerStatus', ...(dated ? ['createdAt'] : []), 'edit']} rows={rows.map((row) => {
+      const hide = (field) => ({ on: row.redacted?.includes(field), disabled: blocked, cellKey: `cust:${row.id}:${field}`, batch, item: { entity: 'customer', id: row.id, field }, defer: sel.size > 1 && sel.has(row.id),
+        onToggle: () => run('redact.set', { entity: 'customer', id: row.id, field, on: !row.redacted?.includes(field) }).catch(() => {}) });
+      // 줄 어디를 눌러도 오른쪽 패널에 거래처 카드(유건 9/30) — 버튼·가린 값(누르고 있으면 보기)·Ctrl+클릭(맥 우클릭)은 제외
       const open = (event) => {
-        if (many || event.ctrlKey || event.target.closest('button, a, input, select')) return;
-        const cell = at(event);
-        if (cell && row.redacted?.includes(REDACT_FIELDS[cell[1]])) return;
+        if (event.ctrlKey || event.target.closest('button, a, input, select')) return;
+        if (event.target.closest('.redact.on')) return;
         openCard('c', row.id);
       };
       return <tr key={row.id} className="row-open" onClick={open}><td><button type="button" className="bizui-link" onClick={() => openCard('c', row.id)}>{row.name}</button></td><td><Redact {...hide('manager')}>{row.manager || '—'}</Redact></td><td className="mono"><Redact {...hide('phone')}>{row.phone || '—'}</Redact></td><td><Redact {...hide('email')}>{row.email || '—'}</Redact></td><td className="mono"><Redact {...hide('biz_no')}>{row.biz_no || '—'}</Redact></td><td><Redact {...hide('account')}>{row.account || '—'}</Redact></td><td>{label(`category.${row.category ?? 'customer'}`)}</td><td>{label(`status.${row.status ?? 'active'}`)}</td>{dated && <td className="mono">{day(row.created_at)}</td>}<td className="act"><EditButton disabled={blocked} onClick={() => launch('customer', row)} /></td></tr>;
@@ -194,7 +197,7 @@ export default function BusinessPage({ space, tab: requested = null, openId }) {
         {current === 'analytics' && <BusinessDashboard business={business} space={space} onOpenOrder={openOrder} />}
         {current === 'marketing' && <Marketing space={space} business={business} />}
         {current === 'customers' && <Customers data={data} blocked={blocked} run={run} launch={launch} openCard={openCard} />}
-        {current === 'catalog' && <Table columns={['name', 'kind', 'sku', 'price', 'edit']} rows={data.items.map((row) => <tr key={row.id}><td><button type="button" className="bizui-link" onClick={() => openCard('i', row.id)}>{row.name}</button></td><td>{label(row.kind)}</td><td>{row.sku || '—'}</td><td className="num">{money(row.price)}</td><td className="act"><EditButton disabled={blocked} onClick={() => launch('item', row)} /></td></tr>)} />}
+        {current === 'catalog' && <Table columns={['name', 'kind', 'sku', 'price', 'edit']} rows={data.items.map((row) => <tr key={row.id}><td><button type="button" className="bizui-link" onClick={() => openCard('i', row.id)}>{row.name}</button></td><td>{label(row.kind)}</td><td>{row.sku || '—'}</td><td className="num"><Hide k={`item:${row.id}:price`}>{money(row.price)}</Hide></td><td className="act"><EditButton disabled={blocked} onClick={() => launch('item', row)} /></td></tr>)} />}
         {current === 'orders' && <>{(!data.customers.length || !data.items.length) && <p className="bizui-muted">{label('prerequisites')}</p>}<DealBoard data={data} blocked={blocked} run={run} openOrder={openOrder} space={space} call={business.call} /></>}
         {current === 'inventory' && <><Table columns={['name', 'sku', 'stock', 'reserved', 'available', 'receive']} rows={data.items.filter((item) => item.kind === 'product').map((row) => <tr key={row.id}><td>{row.name}</td><td>{row.sku || '—'}</td><td className="num">{row.stock}</td><td className="num">{row.reserved}</td><td className="num">{row.stock - row.reserved}</td><td className="act"><EditButton disabled={blocked} onClick={() => launch('receive', { item_id: row.id, quantity: 1 })}>{label('receive')}</EditButton></td></tr>)} /><div className="biz-section"><h2>{label('movements')}</h2></div><Table columns={['date', 'name', 'kind', 'quantity', 'orders']} rows={data.movements.map((row) => <tr key={row.id}><td>{date(row.at)}</td><td>{data.items.find((i) => i.id === row.item_id)?.name}</td><td>{label(row.kind)}</td><td className="num">{row.quantity}</td><td>{row.order_id && <button className="bizui-link" onClick={() => openOrder(row.order_id)}>{data.orders.find((o) => o.id === row.order_id)?.title}</button>}</td></tr>)} /></>}
         {current === 'payments' && <EntryRows entries={data.entries} orders={data.orders} openOrder={openOrder} />}
@@ -203,7 +206,7 @@ export default function BusinessPage({ space, tab: requested = null, openId }) {
         {formError && <p className="bizui-error" role="alert">{t(formError)}</p>}
         {uncertain && <div className="bizui-error" role="alert"><p>{label('pending')}</p><button className="btn" disabled={busy} onClick={() => { setFormError(null); business.retryPending().catch(() => {}); }}>{label('retry')}</button></div>}
         {order && <DealDetail order={order} data={data} blocked={blocked} launch={launch} run={run} space={space} refresh={() => business.refresh().catch(() => {})} call={business.call} />}
-        {customer && <CustomerCard customer={customer} data={data} blocked={blocked} run={run} launch={launch} openOrder={openOrder} />}
+        {customer && <CustomerCard customer={customer} data={data} blocked={blocked} run={run} launch={launch} openOrder={openOrder} space={space} />}
         {item && <ItemCard item={item} data={data} blocked={blocked} launch={launch} openOrder={openOrder} />}
       </Peek>}
       {settings && <Modal open title={label('modules')} onClose={closeSettings} footer={<button type="button" className="btn" onClick={closeSettings}>{label('cancel')}</button>}>
@@ -235,7 +238,7 @@ function BusinessForm({ dialog, data, blocked, busy, error, dismiss, submit }) {
       if (!value.name.trim() || (kind === 'item' && !integer(value.price))) { setInvalid(true); return; }
       action = `${kind}.save`; payload = { name: value.name.trim(), ...(value.id ? { id: value.id, version: value.version } : {}) };
       if (kind === 'customer' && value.biz_no && !/^[0-9-]{1,20}$/.test(value.biz_no)) { setInvalid(true); return; }
-      if (kind === 'customer' && !value.id) payload.redacted = ['account', 'biz_no']; // 새 거래처도 이관과 같이 계좌·사업자번호는 가린 채로 시작(유건 9/29 기본 가림)
+      Object.assign(payload, redactDefaults(kind, value)); // 새 거래처도 이관과 같이 계좌·사업자번호는 가린 채로 시작(유건 9/29 기본 가림)
       Object.assign(payload, kind === 'customer' ? { email: value.email, notes: value.notes, ceo: value.ceo, biz_no: value.biz_no, manager: value.manager, phone: value.phone, address: value.address, account: value.account, category: value.category, status: value.status } : { kind: value.kind, sku: value.sku, price: Number(value.price) });
     } else if (kind === 'order') {
       if (!value.title.trim() || !value.customer_id || !value.lines.every((line) => line.item_id && integer(line.quantity, 1, 1e6) && integer(line.unit_price))) { setInvalid(true); return; }

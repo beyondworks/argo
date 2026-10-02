@@ -2,6 +2,11 @@
 // 외부 자료는 "지시 아님" 표지로 감싸 지시와 분리하고, 메일·페이지 본문은 앞 8천 자까지만 싣는다.
 // meta.source(office_*)는 게이트웨이가 이 턴의 풀 오토를 끄는 표지다(src/gateway/msgr-handoff.mjs fullAutoAllowed).
 
+import { registerDict } from './i18n.js';
+import { CREW_ASSIGN_DICT } from './crew-assign-i18n.js';
+
+registerDict(CREW_ASSIGN_DICT); // 표지 문구(crew.msg.*)는 이 파일과 함께 지연 로드된다(첫 화면 150KB 상한)
+
 export const EXCERPT_MAX = 8000;
 export const SOURCES = { mail: 'office_mail', page: 'office_page', file: 'office_file', record: 'office_record' };
 

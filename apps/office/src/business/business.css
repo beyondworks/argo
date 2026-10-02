@@ -16,7 +16,7 @@
 .biz-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: var(--ctl); margin-bottom: 12px; }
 .biz-bar > .spacer { flex: 1; }
 .biz-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.biz-filter .input { height: 30px; font-size: 12.5px; background: var(--lift); } /* 면 위에 바로 놓이는 입력 — 채운 입력이 바탕과 같은 색이라 경계를 준다 */
+.biz-filter .input { height: var(--ctl-sm); font-size: 12.5px; background: var(--lift); } /* 같은 줄 '조건 적용'(.btn.sm)과 같은 높이 토큰(유건 10/2 10차) */ /* 면 위에 바로 놓이는 입력 — 채운 입력이 바탕과 같은 색이라 경계를 준다 */
 .biz-filter .dash { color: var(--fg-3); }
 .biz-section { display: flex; align-items: center; gap: 6px; margin: 24px 0 10px; }
 .biz-section:first-child { margin-top: 0; }
@@ -68,7 +68,7 @@
 .bizui-balances { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding: 14px 16px; border-radius: var(--rs); background: var(--lift); margin: 0; }
 .bizui-balances dt { font-size: 12.5px; color: var(--fg-2); }
 .bizui-balances dd { margin: 4px 0 0; font-family: var(--mono); font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.bizui-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.bizui-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .bizui-line { display: grid; gap: 6px; padding: 12px 14px; border-radius: var(--rs); background: var(--lift); }
 .bizui-line-head { display: flex; align-items: baseline; gap: 8px; }
 .bizui-line-head strong { font-weight: 600; }
@@ -195,28 +195,6 @@
 .deal-note select { max-width: 220px; }
 .deal-log .push { margin-left: auto; }
 @media (max-width: 700px) { .deal-board { grid-template-columns: 1fr; overflow: visible; } }
-
-/* 부분 가림 — 인트라넷 시머와 같은 먼지(노이즈 마스크 2겹이 서로 반대로 흐르며 명멸). 누르고 있으면 잠깐 보인다 */
-.redact { position: relative; }
-/* 표에서는 칸 전체가 가림 영역 — 칸의 안쪽 여백을 가림 영역이 대신 가져서 가장자리를 우클릭해도 메뉴가 뜬다(유건 9/29) */
-.table td:has(> .redact) { padding: 0; }
-.table td > .redact { display: block; padding: 10px 14px; }
-.table td > .redact.on::before, .table td > .redact.on::after { inset: 12px 14px; }
-.redact.on { color: transparent !important; user-select: none; cursor: pointer; display: inline-block; min-width: 3.5em; overflow: hidden; vertical-align: bottom;
-  mask-image: radial-gradient(100% 100% at 50% 50%, #000 30%, rgba(0,0,0,.5) 60%, transparent 88%); }
-.redact.on > [aria-hidden] { visibility: hidden; }
-.redact.on::before, .redact.on::after { content: ""; position: absolute; inset: 10% 0; pointer-events: none;
-  background: color-mix(in oklab, var(--fg) 72%, transparent);
-  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='110' height='110'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.25' numOctaves='2' seed='7' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 13 -8.6'/%3E%3C/filter%3E%3Crect width='110' height='110' filter='url(%23n)'/%3E%3C/svg%3E");
-  mask-size: 110px 110px; animation: redact-a 5.3s linear infinite, redact-twinkle 1.7s ease-in-out infinite; }
-.redact.on::after { background: color-mix(in oklab, var(--fg) 48%, transparent);
-  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.5' numOctaves='2' seed='23' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 13 -8.6'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
-  mask-size: 140px 140px; animation: redact-b 7.1s linear infinite, redact-twinkle 2.9s ease-in-out .9s infinite; }
-.redact .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-@keyframes redact-a { 0% { mask-position: 0 0; } 33% { mask-position: 38px 3px; } 66% { mask-position: 74px -3px; } 100% { mask-position: 110px 0; } }
-@keyframes redact-b { 0% { mask-position: 0 0; } 50% { mask-position: -68px 4px; } 100% { mask-position: -140px 0; } }
-@keyframes redact-twinkle { 0%, 100% { opacity: .2; } 50% { opacity: .9; } }
-@media (prefers-reduced-motion: reduce) { .redact.on::before, .redact.on::after { animation: none; opacity: .6; } }
 
 /* 들어온 경로별 매출 — 이름 · 막대 · 비율 · 금액 한 줄 */
 .biz-source { grid-column: auto; } /* .module의 12칸 격자용 span 6을 끈다 — 이 칸은 모듈 격자 밖(대시보드 세로 목록)에 놓인다 */

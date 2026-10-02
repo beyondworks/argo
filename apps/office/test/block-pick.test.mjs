@@ -114,3 +114,15 @@ test('unpick never leaves a node selection on a trailing atom block', () => {
     assert.equal(state.selection.empty, true);
   }
 });
+
+// 11차(유건 10/2): 편집기 블록 고르기가 공용 선택 상자로 — 블록 key(맨 위 블록 문서 위치) ↔ 고른 범위가 서로 바뀌어도 같은 범위다. 이어지지 않게 골라도 처음부터 끝까지 한 범위(노션처럼)
+test('block keys and the picked range round-trip', async () => {
+  const { blockKeys, keysRange } = await import('../src/pages/block-pick.js');
+  const d = doc(p('하나'), p('둘'), p('셋'));
+  const a = d.child(0).nodeSize, b = a + d.child(1).nodeSize;
+  assert.deepEqual([...blockKeys(d, { from: a, to: d.content.size })], [String(a), String(b)]);
+  assert.deepEqual(keysRange(d, new Set([String(a), String(b)])), { from: a, to: d.content.size });
+  assert.deepEqual(keysRange(d, new Set(['0', String(b)])), { from: 0, to: d.content.size });
+  assert.equal(keysRange(d, new Set(['999'])), null);
+  assert.deepEqual(blockKeys(d, null), new Set());
+});

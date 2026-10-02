@@ -107,6 +107,7 @@ export function crewMenu(crew, space) {
 
 /** 드래그로 놓인 항목 → 맡기기 창의 항목 */
 export function itemsFromDrag(data) {
+  if (data.items?.length) return data.items; // 고른 것 여러 개를 같이 끌었다(11차)
   const s = getState();
   if (data.kind === 'mail') return [{ kind: 'mail', id: data.id, label: s.mails.find((m) => m.id === data.id)?.subject }];
   if (data.kind === 'page') return [{ kind: 'page', id: data.id, label: s.pages.find((p) => p.id === data.id)?.title || t('page.untitled') }];
