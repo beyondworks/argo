@@ -1,7 +1,7 @@
 // 성과 기록(유건 9/29) — 사람 직원의 일과 성과가 매일 자동으로 쌓이는 개인 기록. 연봉 협상·월말/연말 평가 자료.
 // 일간 기록이 주·월·연으로 모인다(숫자는 서버가 원본에서 계산). 본인만 보고, 월말·연말에 공유하면 관리자가 그 사본을 본다.
 // 고치기·지우기는 없고 추가만 — 성과 한 줄은 관리자가 허용한 고치기 요청으로 한 번 고친다(원래 내용이 같이 남는다).
-import { useEffect, useId, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useId, useMemo, useState } from 'react';
 import { t, getLang, registerDict, useLang } from '../core/i18n.js';
 import { ME, canManage } from '../core/session.js';
 import { useTasks } from '../core/tasks.js';
@@ -18,6 +18,9 @@ import { PERF_DICT } from './perf-i18n.js';
 import './perf.css';
 
 registerDict(PERF_DICT);
+// 평가 레포트(트랙 C, 유건 10/2 — 인트라넷 인사고과 레포트)는 그 탭을 열 때만 받는다
+const PerfEvals = lazy(() => import('./PerfEvals.jsx'));
+const EvalStrip = lazy(() => import('./PerfEvals.jsx').then((m) => ({ default: m.EvalStrip })));
 const locale = () => (getLang() === 'en' ? 'en-US' : 'ko-KR');
 const money = (n) => new Intl.NumberFormat(locale(), { style: 'currency', currency: 'KRW', maximumFractionDigits: 0 }).format(Number(n || 0));
 const dayText = (d, opts) => new Date(`${d}T00:00:00+09:00`).toLocaleDateString(locale(), { timeZone: 'Asia/Seoul', ...opts });
@@ -33,14 +36,16 @@ function periodLabel(p) {
   return dayText(p.from, { year: 'numeric' });
 }
 
-export default function Perf({ space }) {
+export default function Perf({ space, tab: asked }) {
   useLang();
   const manager = canManage(space);
-  const [tab, setTab] = useState('mine');
+  const tabs = manager ? ['mine', 'evals', 'team'] : ['mine', 'evals'];
+  const [tab, setTab] = useState(tabs.includes(asked) ? asked : 'mine'), [evalOpen, setEvalOpen] = useState(null);
   if (space === 'me') return <div className="page-wrap"><Head /><div className="empty-state"><Icon name="target" size={20} /><p>{t('perf.orgOnly')}</p></div></div>;
+  const openEval = (id) => { setEvalOpen(id); setTab('evals'); };
   return <div className="page-wrap wide perf">
-    <Head right={manager && <div className="seg" role="tablist">{['mine', 'team'].map((k) => <button key={k} type="button" role="tab" aria-selected={tab === k} className={`seg-btn${tab === k ? ' on' : ''}`} onClick={() => setTab(k)}>{t(`perf.tab.${k}`)}</button>)}</div>} />
-    {tab === 'team' && manager ? <Team space={space} /> : <Mine space={space} />}
+    <Head right={<div className="seg" role="tablist">{tabs.map((k) => <button key={k} type="button" role="tab" aria-selected={tab === k} className={`seg-btn${tab === k ? ' on' : ''}`} onClick={() => { setTab(k); setEvalOpen(null); }}>{t(`perf.tab.${k}`)}</button>)}</div>} />
+    {tab === 'team' && manager ? <Team space={space} onEval={openEval} /> : tab === 'evals' ? <Suspense fallback={<p className="dim small" role="status">{t('perf.loading')}</p>}><PerfEvals key={evalOpen ?? 'list'} space={space} manager={manager} openId={evalOpen} /></Suspense> : <Mine space={space} onEval={openEval} />}
   </div>;
 }
 
@@ -48,7 +53,7 @@ function Head({ right }) {
   return <div className="page-title-row"><div><h1 className="page-h1">{t('perf.title')}</h1><p className="dim">{t('perf.subtitle')}</p></div>{right}</div>;
 }
 
-function Mine({ space }) {
+function Mine({ space, onEval }) {
   const today = kstDay();
   const [unit, setUnit] = useState('day'), [anchor, setAnchor] = useState(today);
   const p = periodRange(unit, anchor);
@@ -75,6 +80,7 @@ function Mine({ space }) {
       {unit === 'day' && p.from === today && <Briefing space={space} />}
       <Numbers totals={r.totals} />
       <Goals space={space} goals={r.goals} year={Number(p.to.slice(0, 4))} reload={report.reload} />
+      {p.key && <Suspense fallback={null}><EvalStrip space={space} from={p.from} to={p.to} onOpen={onEval} /></Suspense>}
       {p.key && <Review space={space} period={p.key} review={r.reviews?.find((x) => x.period === p.key)} today={today} reload={report.reload} />}
       <Log report={r} space={space} requests={r.requests ?? []} goals={r.goals} reload={report.reload} day={unit === 'day' ? p.from : today} canAdd={p.from <= today && today <= p.to} unit={unit} />
     </>}
@@ -282,7 +288,7 @@ function Review({ space, period, review, today, reload }) {
 }
 
 /** 관리자: 구성원별 공유 상태, 공유된 사본 보기·메모·평가 완료, 고치기 요청 허용/거절 */
-function Team({ space }) {
+function Team({ space, onEval }) {
   const today = kstDay();
   const lastMonth = periodRange('month', shiftAnchor('month', today, -1)).key;
   const [period, setPeriod] = useState(lastMonth), [open, setOpen] = useState(null), [memo, setMemo] = useState(''), [finish, setFinish] = useState(false);
@@ -312,6 +318,7 @@ function Team({ space }) {
       <div className="perf-snapshot">
         <p className="dim small">{t(review.status === 'done' ? 'perf.review.done' : 'perf.review.shared', { date: stamp(review.done_at ?? review.shared_at) })}</p>
         <Numbers totals={review.snapshot.totals} />
+        <Suspense fallback={null}><EvalStrip space={space} user={review.user_id} from={periodRange(review.period.length === 4 ? 'year' : 'month', review.period.length === 4 ? `${review.period}-01-01` : `${review.period}-01`).from} to={periodRange(review.period.length === 4 ? 'year' : 'month', review.period.length === 4 ? `${review.period}-01-01` : `${review.period}-01`).to} onOpen={(id) => { setOpen(null); onEval(id); }} /></Suspense>
         {review.snapshot.goals?.length > 0 && <Goals goals={review.snapshot.goals} year={Number(review.period.slice(0, 4))} readOnly />}
         <Log report={review.snapshot} unit={review.period.length === 4 ? 'year' : 'month'} />
         <Thread comments={review.comments} />

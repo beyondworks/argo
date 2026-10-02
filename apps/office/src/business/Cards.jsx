@@ -1,5 +1,8 @@
 // 거래처·상품 카드(유건 9/29: "볼 수 있는 곳이 '수정' 밖에 없니?") — 줄을 누르면 모든 칸과 관련 거래를 보여 주고, 수정은 카드 안에서.
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { t, getLang } from '../core/i18n.js';
+import { baseOf } from '../core/commands.js';
+import { navigate } from '../core/router.jsx';
 import { Icon } from '../ui/Icon.jsx';
 import { Redact } from './Redact.jsx';
 import { dealAmounts, dealStage } from './deal-model.js';
@@ -7,6 +10,8 @@ import { dealAmounts, dealStage } from './deal-model.js';
 const label = (key) => t(`bizui.${key}`);
 const money = (n) => new Intl.NumberFormat(getLang() === 'en' ? 'en-US' : 'ko-KR', { style: 'currency', currency: 'KRW', maximumFractionDigits: 0 }).format(Number(n || 0));
 const REDACTABLE = ['manager', 'phone', 'email', 'biz_no', 'account'];
+// 거래처 파일(명함·사업자등록증·견적·계약·서명본) — 문서함과 같은 저장소, 카드를 열 때만 받는다(인트라넷 거래처 첨부·허브 문서 탭, 유건 10/2)
+const CustomerFiles = lazy(() => import('../files/CustomerFiles.jsx'));
 
 function Deals({ orders, data, openOrder }) {
   if (!orders.length) return <p className="dim small card-empty">{label('card.noDeals')}</p>;
@@ -17,7 +22,26 @@ function Deals({ orders, data, openOrder }) {
   })}</ul>;
 }
 
-export function CustomerCard({ customer: c, data, blocked, run, launch, openOrder }) {
+/** 이 거래처의 견적서·계약서(인트라넷 거래처 허브 '문서' — "견적서·계약서 생성 시 자동 연결") — 견적·계약 저장소를 열 때만 불러온다 */
+function CustomerDocs({ space, customer }) {
+  const [docs, setDocs] = useState(null);
+  useEffect(() => {
+    let live = true;
+    import('../docs/backend.js').then((m) => m.backend()).then((be) => be.load(space))
+      .then((d) => { if (live) setDocs(d.docs.filter((x) => x.customer_id === customer.id || (!x.customer_id && x.customer_name === customer.name))); })
+      .catch(() => { if (live) setDocs([]); });
+    return () => { live = false; };
+  }, [space, customer.id, customer.name]);
+  const go = (q) => navigate(`${baseOf(space)}/contracts?${new URLSearchParams(q)}`);
+  return <>
+    <h3>{label('card.docs')} {docs && <span className="dim small">{docs.length}</span>}</h3>
+    {docs?.length ? <ul className="card-deals">{docs.map((d) => <li key={d.id}><button type="button" className="bizui-link" onClick={() => go({ open: `doc:${d.id}` })}>{d.title}</button><strong className="mono">{money(d.total)}</strong></li>)}</ul>
+      : docs && <p className="dim small card-empty">{label('card.noDocs')}</p>}
+    <div className="bizui-actions"><button type="button" className="btn sm" onClick={() => go({ new: 'quote', customer: customer.id })}><Icon name="doc" size={12} /> {label('makeQuote')}</button><button type="button" className="btn sm" onClick={() => go({ new: 'contract', customer: customer.id })}><Icon name="sign" size={12} /> {label('makeContract')}</button></div>
+  </>;
+}
+
+export function CustomerCard({ customer: c, data, blocked, run, launch, openOrder, space }) {
   const hide = (field) => ({ on: c.redacted?.includes(field), disabled: blocked, onToggle: () => run('redact.set', { entity: 'customer', id: c.id, field, on: !c.redacted?.includes(field) }).catch(() => {}) });
   const rows = [['ceo', c.ceo], ['manager', c.manager], ['phone', c.phone], ['email', c.email], ['biz_no', c.biz_no], ['account', c.account],
     ['category', label(`category.${c.category ?? 'customer'}`)], ['customerStatus', label(`status.${c.status ?? 'active'}`)], ['address', c.address],
@@ -30,6 +54,8 @@ export function CustomerCard({ customer: c, data, blocked, run, launch, openOrde
     {c.notes && <div className="card-notes"><h3>{label('notes')}</h3><p>{c.notes}</p></div>}
     <h3>{label('card.deals')} <span className="dim small">{orders.length} · {money(total)}</span></h3>
     <Deals orders={orders} data={data} openOrder={openOrder} />
+    {space && <CustomerDocs space={space} customer={c} />}
+    {space && <Suspense fallback={null}><CustomerFiles space={space} customer={c} /></Suspense>}
   </div>;
 }
 

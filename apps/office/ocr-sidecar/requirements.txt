@@ -1,0 +1,8 @@
+# 아르고 오피스 OCR 사이드카 — 인트라넷 .venv-ocr와 같은 판(2026-10-02 확인: paddleocr 3.7.0, fastapi 0.128.8)
+paddleocr==3.7.0
+paddlepaddle>=3.0
+fastapi==0.128.8
+uvicorn>=0.30
+pypdfium2>=4.30
+pillow>=10
+numpy>=1.26

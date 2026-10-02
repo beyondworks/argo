@@ -183,6 +183,11 @@ export function DealDetail({ order, data, blocked, run, space, launch, refresh, 
       {back && <button className="btn" disabled={blocked} onClick={() => setStep({ ...back, revert: true, title: order.title, min: dates[stage] ? kstDay(dates[stage]) : undefined })}>{label(`back.${back.to}`)}</button>}
       {canCancel(order, amounts) && <button className="btn" disabled={blocked} onClick={() => launch('cancel', { id: order.id, billed: amounts.invoiced })}>{label('cancelOrder')}</button>}
     </div>
+    {/* 거래에서 바로 견적서·계약서(10/2 인트라넷 이식) — 거래처·거래 줄을 채운 작성 화면으로 간다. 만든 문서는 아래 자료에 붙는다 */}
+    {stage !== 'cancelled' && <div className="bizui-actions deal-docs">
+      <button type="button" className="btn sm" onClick={() => navigate(`${baseOf(space)}/contracts?new=quote&order=${order.id}`)}><Icon name="doc" size={12} /> {label('makeQuote')}</button>
+      <button type="button" className="btn sm" onClick={() => navigate(`${baseOf(space)}/contracts?new=contract&order=${order.id}`)}><Icon name="sign" size={12} /> {label('makeContract')}</button>
+    </div>}
     {lines.map((line) => <article className="bizui-line" key={line.id}><div className="bizui-line-head"><strong>{line.name}</strong><span className="badge">{label(`tax.${line.tax_type}`)}</span></div>
       <p className="mono">{line.quantity} × {money(line.unit_price)} + {label('vat')} {money(line.vat)}</p>
       {line.kind === 'product' && <p>{label('fulfilled')} <span className="mono">{line.fulfilled}</span> · {label('returned')} <span className="mono">{line.returned}</span></p>}
@@ -190,7 +195,9 @@ export function DealDetail({ order, data, blocked, run, space, launch, refresh, 
     </article>)}
     <h3>{label('attachments')}</h3>
     {links.length ? <ul className="deal-log">{links.map((l) => <li key={l.id}>
-      {l.kind === 'page' ? <button className="bizui-link" onClick={() => navigate(`${baseOf(space)}/p/${l.ref}`)}><Icon name="doc" size={12} /> {pages.find((p) => p.id === l.ref)?.title || l.title || label('untitled')}</button> : <span className="badge">{label(`link.${l.kind}`)}</span>}
+      {l.kind === 'page' ? <button className="bizui-link" onClick={() => navigate(`${baseOf(space)}/p/${l.ref}`)}><Icon name="doc" size={12} /> {pages.find((p) => p.id === l.ref)?.title || l.title || label('untitled')}</button>
+        : l.kind === 'file' && l.ref.startsWith('office-doc:') ? <button className="bizui-link" onClick={() => navigate(`${baseOf(space)}/contracts?open=doc:${l.ref.slice(11)}`)}><Icon name="file" size={12} /> {l.title || label('untitled')}</button>
+        : <span className="badge">{label(`link.${l.kind}`)}</span>}
       <span className="when">{day(l.created_at)}</span>
       <button type="button" className="btn sm ghost push" disabled={blocked} onClick={() => run('link.remove', { id: l.id }).catch(() => {})}>{label('remove')}</button>
       {l.kind === 'note' && <p>{l.body}</p>}

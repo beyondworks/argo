@@ -39,6 +39,7 @@ const PATHS = {
   history: '<path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9M2.5 2.5v2.8h2.8"/><path d="M8 5v3l2 1.3"/>',
   template: '<rect x="2.5" y="2.5" width="11" height="11" rx="1.8"/><path d="M2.5 6h11M6 6v7.5"/>',
   resize: '<path d="M13 7v6H7M13 13 8.5 8.5"/>',
+  building: '<path d="M3 14V3.5A1 1 0 0 1 4 2.5h5a1 1 0 0 1 1 1V14M10 6.5h2a1 1 0 0 1 1 1V14M2 14h12M5.5 5.5h2M5.5 8h2M5.5 10.5h2"/>',
   person: '<circle cx="8" cy="5.5" r="2.7"/><path d="M2.8 14a5.2 5.2 0 0 1 10.4 0"/>',
   info: '<circle cx="8" cy="8" r="5.8"/><path d="M8 7.3v3.7M8 5.1v.1"/>',
   refresh: '<path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2.5v2.8h-2.8"/>',
@@ -50,6 +51,8 @@ const PATHS = {
   megaphone: '<path d="M2.5 6.5v3h2.2l5.3 3v-9l-5.3 3zM12 6.2a2.5 2.5 0 0 1 0 3.6M5 9.5l.8 3.5"/>',
   calendar: '<rect x="2.5" y="3.5" width="11" height="10" rx="1.8"/><path d="M2.5 6.5h11M5.5 2v3M10.5 2v3"/>',
   star: '<path d="m8 2.3 1.8 3.6 4 .6-2.9 2.8.7 4L8 11.4l-3.6 1.9.7-4L2.2 6.5l4-.6z"/>',
+  sign: '<path d="M2.5 13.5h11M4 11.2l6.9-6.9a1.5 1.5 0 0 1 2.1 2.1L6.1 13.3H4z"/>', // 서명(펜)
+  folder: '<path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.8l1.5 1.7h4.7A1.5 1.5 0 0 1 14 6.2v5.8a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 12z"/>',
   target: '<circle cx="8" cy="8" r="5.8"/><circle cx="8" cy="8" r="3"/><circle cx="8" cy="8" r="0.6"/>',
 };
 

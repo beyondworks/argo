@@ -69,6 +69,20 @@ test('보낼 메시지: 첨부는 multipart/mixed, 한글 파일명', () => {
   assert.match(raw, /--B--$/);
 });
 
+// 이유(10/2 견적·계약): 서명 요청 메일은 버튼이 있는 HTML과 글자 본문을 함께 보낸다 — 글자만 보는 메일 앱도 링크를 본다
+test('보낼 메시지: html을 주면 글자·HTML 두 갈래(multipart/alternative), 첨부와 함께여도 바깥은 mixed', () => {
+  const raw = decodeRaw(buildRaw({ to: 'a@x.com', subject: '[서명 요청] 계약서', text: '링크: https://x/sign/t', html: '<a href="https://x/sign/t">서명하러 가기</a>' }, 'B'));
+  assert.match(raw, /Content-Type: multipart\/alternative; boundary="B-alt"/);
+  assert.match(raw, /--B-alt\r\nContent-Type: text\/plain/);
+  assert.match(raw, /--B-alt\r\nContent-Type: text\/html; charset=UTF-8/);
+  assert.match(raw, /--B-alt--$/);
+  const html = raw.split('Content-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n')[1].split('\r\n--B-alt--')[0];
+  assert.match(Buffer.from(html.replace(/\r\n/g, ''), 'base64').toString(), /서명하러 가기/);
+  const mixed = decodeRaw(buildRaw({ to: 'a@x.com', subject: 's', text: 't', html: '<b>t</b>', attachments: [{ name: 'a.pdf', type: 'application/pdf', data: 'UERG' }] }, 'M'));
+  assert.match(mixed, /multipart\/mixed; boundary="M"[\s\S]*--M\r\nContent-Type: multipart\/alternative; boundary="M-alt"[\s\S]*--M-alt--[\s\S]*--M--$/);
+  assert.doesNotMatch(decodeRaw(buildRaw({ to: 'a@x.com', subject: 's', text: 't' })), /alternative/, 'html이 없으면 예전과 같다');
+});
+
 test('권한: 동의 화면에서 하나라도 끄면 빠진 권한을 알려 준다', () => {
   assert.deepEqual(missingScopes(`openid ${SCOPES.join(' ')}`), []);
   assert.deepEqual(missingScopes(`openid ${SCOPES[0]}`), [SCOPES[1]]);
