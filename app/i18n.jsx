@@ -1305,6 +1305,8 @@ const DICT = {
   'chat.inbound.captainShared': ['회의실 공유', 'Shared from meeting'],
   'chat.inbound.expand': ['전체 보기', 'Show all'],
   'chat.inbound.collapse': ['접기', 'Collapse'],
+  'chat.inbound.context': ['앞선 대화 {n}건', 'Earlier messages ({n})'],
+  'chat.inbound.replyTo': ['답글 대상: {text}', 'In reply to: {text}'],
   'chat.newChatConfirm': ['새 대화를 시작할까요? 지금 대화는 보관함에 적재되고(삭제 아님), 회사 기억(vault)도 그대로 남습니다.', 'Start a new chat? The current thread is archived (not deleted), and company memory stays intact.'],
   'chat.cardTitle': ['크루 카드', 'Crew Card'],
   'chat.systemPromptEq': ['= System Prompt', '= System Prompt'],

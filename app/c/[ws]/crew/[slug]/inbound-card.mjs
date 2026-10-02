@@ -21,7 +21,9 @@ export function inboundKind(m) {
   return null;
 }
 
-/** 카드 재료: { kind, channel?, name?, title?, cc?, captain?, body } — body는 머리말·기계 안내를 뺀 본문(요약 재료) */
+/** 카드 재료: { kind, channel?, name?, title?, cc?, captain?, body, context?, replyTo? }
+    body = 머리말·참고 대화·프로토콜·회신 안내를 뺀 본문(접힌 요약 재료이자 펼친 화면의 본문 — 크루용 지시문은 화면에 안 보인다).
+    context·replyTo = 메신저 참고 대화·답글 원글(펼친 화면에서 작게 접어 둔다). 머리말을 못 알아보면 body = 원문 그대로. */
 export function inboundCard(m) {
   const kind = inboundKind(m);
   if (!kind) return null;
@@ -31,7 +33,7 @@ export function inboundCard(m) {
     case 'msgr':
     case 'msgr-dm': {
       const p = parseMsgr(text, actor.split(' ← ')[0]); // 넘긴 턴의 actor = '넘긴 크루 ← 사람', 본문 줄 앞 이름은 넘긴 크루
-      return { kind, channel: p?.channel ?? '', name: actor, body: p ? p.body : text };
+      return { kind, channel: p?.channel ?? '', name: actor, body: p ? p.body : text, context: p?.context ?? [], replyTo: p?.replyTo ?? '' };
     }
     case 'routine': {
       const p = parseRoutine(text);

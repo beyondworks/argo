@@ -964,8 +964,8 @@ export default function CrewChat({ params, embedded = false, onClose }) {
         ); })()}
         {(() => { const all = (viewing ? archMsgs : thread) ?? []; const base = Math.max(0, all.length - shown); return all.slice(base).map((m, k) => { const i = base + k; return (
           inboundKind(m) ? (
-            /* 바깥에서 들어온 글(메신저·루틴·쪽지·위임·결재 결과) — 출처 줄 + 앞 2줄 요약 카드, ▾로 원문(inbound-card.jsx) */
-            <InboundCard key={i} m={m} />
+            /* 바깥에서 들어온 글(메신저·루틴·쪽지·위임·결재 결과) — 출처 줄 + 앞 2줄 요약 카드, ▾로 본문 전체(inbound-card.jsx) */
+            <InboundCard key={i} m={m} wsId={ws} />
           ) : m.who === 'user' ? (
             <div key={i} className="msg-wrap fade-up" style={{ alignSelf: 'flex-end', alignItems: 'flex-end', maxWidth: '75%' }}
               ref={(el) => { if (!m.mid) return; if (el) msgRefs.current.set(m.mid, el); else msgRefs.current.delete(m.mid); }}>
