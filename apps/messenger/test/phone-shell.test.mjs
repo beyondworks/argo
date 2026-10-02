@@ -240,3 +240,13 @@ test('넣기 요청 카드 문구 — 에이전트·방 이름이 있으면 둘 
   assert.deepEqual(joinReqKey({ crew: '효일', room: null }), ['phone.agents.joinReq.crew', { crew: '효일' }]);
   assert.deepEqual(joinReqKey({ crew: null, room: '유건, 하나' }), ['phone.agents.joinReq', {}]);
 });
+
+// 기능 점검 D7(2026-10-02) — 차단한 사람의 글이 채팅 목록 미리보기·목록 검색에 그대로 보이던 것. 방 안과 같이 가린다.
+test('미리보기 가리기 — 차단한 사람의 마지막 글은 "차단한 사용자의 메시지", 숨긴 에이전트의 글은 빈칸, 그 밖은 그대로', async () => {
+  const { maskedPreview } = await import('../src/phone-shell.mjs');
+  const blocked = new Set(['u-bad']); const muted = new Set(['c-hid']);
+  assert.deepEqual(maskedPreview({ preview: '욕설', userId: 'u-bad' }, { blocked, muted }), { text: '', masked: 'blocked' });
+  assert.deepEqual(maskedPreview({ preview: '비밀', crewId: 'c-hid' }, { blocked, muted }), { text: '', masked: 'muted' });
+  assert.deepEqual(maskedPreview({ preview: '안녕', userId: 'u-ok' }, { blocked, muted }), { text: '안녕', masked: null });
+  assert.deepEqual(maskedPreview({ preview: '안녕' }, {}), { text: '안녕', masked: null }, '작성자를 모르면 그대로');
+});

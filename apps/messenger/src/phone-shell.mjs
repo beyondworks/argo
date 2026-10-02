@@ -202,3 +202,10 @@ export function joinReqKey({ crew = null, room = null } = {}) {
   if (crew) return ['phone.agents.joinReq.crew', { crew }];
   return ['phone.agents.joinReq', {}];
 }
+
+/** 목록 미리보기 가리기(기능 점검 D7) — 방 안과 같이: 차단한 사람의 글은 '차단한 사용자의 메시지'(masked 'blocked'), 숨긴 에이전트의 글은 빈칸. 목록 검색도 이 글자로 찾는다 */
+export function maskedPreview(row, { blocked = null, muted = null } = {}) {
+  if (row?.userId && blocked?.has(row.userId)) return { text: '', masked: 'blocked' };
+  if (row?.crewId && muted?.has(row.crewId)) return { text: '', masked: 'muted' };
+  return { text: row?.preview ?? '', masked: null };
+}

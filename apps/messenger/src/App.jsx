@@ -49,7 +49,7 @@ import { getMobileAuthSnapshot, subscribeMobileAuth, startMobileSignIn, cancelMo
 import { useMobileViewport } from './mobile-viewport.js';
 import { useIsPhone, useEdgeSwipeBack } from './use-phone.js';
 import { bindRowSwipe, bindSwipeReply } from './row-swipe.js';
-import { PHONE_TABS, isPhoneRoot, spaceForTab, pickChannelOrg, startTab, tabBadges, badgeText, roomTraits, chatVisible, chatUnreadTotal, roomRow, sortRooms, tabSearch, CHAT_FILTERS, memoryGroups, memSnippet, agentCardAction, orgCardStep, personalCardLocks, orgMenuItems, savedOrgAfter, withoutHidden, hiddenGroups, settingsOrgRows, orgScreen, joinReqKey } from './phone-shell.mjs'; // 폰 셸 v2(친구·채팅·채널·에이전트·기억, 유건 확정 2026-10-01) — 판단은 이 모듈 한 곳
+import { PHONE_TABS, isPhoneRoot, spaceForTab, pickChannelOrg, startTab, tabBadges, badgeText, roomTraits, chatVisible, chatUnreadTotal, roomRow, sortRooms, tabSearch, CHAT_FILTERS, memoryGroups, memSnippet, agentCardAction, orgCardStep, personalCardLocks, orgMenuItems, savedOrgAfter, withoutHidden, hiddenGroups, settingsOrgRows, orgScreen, joinReqKey, maskedPreview } from './phone-shell.mjs'; // 폰 셸 v2(친구·채팅·채널·에이전트·기억, 유건 확정 2026-10-01) — 판단은 이 모듈 한 곳
 import { bindPullRefresh, enteredReady } from './pull-refresh.mjs';
 import { haptic } from './haptics.js';
 import { refreshMessageWindow, mergeRefreshedMessages } from './refresh-messages.mjs';
@@ -1120,6 +1120,13 @@ function Shell({ session }) {
       setMyAvailable([]); setDmMembers(dmMem); setOtherNames(names);
       setChId((cur) => { const has = (x) => x && chs.some((c) => c.id === x); if (has(cur)) return cur; const last = readLastCh(PERSONAL); return has(last) ? last : (chs[0]?.id ?? null); });
       setFriends(friendsList);
+      // 차단한 사람이 구성원인 방만 마지막 글의 작성자를 읽는다 — 목록 RPC는 본문만 줘서 미리보기를 가릴 수 없었다(D7). 그런 방이 없으면 요청 0.
+      const blockedNow = notifyRef.current.blocked ?? new Set();
+      const risky = chs.filter((ch, i) => (rows[i].members ?? []).some((m) => blockedNow.has(m.id))).map((ch) => ch.id);
+      if (risky.length) {
+        const last = await q(supabase.from('msgr_messages').select('id, channel_id, body, author_user_id, crew_id, created_at').in('channel_id', risky).is('deleted_at', null).order('id', { ascending: false }).limit(Math.min(200, risky.length * 20))).catch(() => []);
+        if (current()) { const lm = {}; for (const m of last) if (!lm[m.channel_id]) lm[m.channel_id] = { body: plainPreview(m.body), mine: m.author_user_id === uid, userId: m.author_user_id ?? null, crewId: m.crew_id ?? null, at: Date.parse(m.created_at) }; setLastMsg((cur) => ({ ...cur, ...lm })); }
+      }
       return chs;
     } catch (error) { if (current()) throw error; }
   }, [uid]);
@@ -2299,6 +2306,8 @@ function Shell({ session }) {
   const searchAct = { key: 'search', icon: 'search', label: t('phone.hdr.search'), on: tabQ !== null, run: () => setTabQ((v) => (v === null ? '' : null)) };
   const searchAll = () => { const qv = tabQText.trim(); if (!qv) return; setSearchQ(qv); runSearch(qv); }; // '전체에서 찾기' — 지금 공간의 통합 검색(메시지·사람·에이전트·채널)
   const rowOf = (c) => roomRow({ c, lastMsg: lastMsg[c.id], lastAt: lastAt[c.id], unread: unread[c.id], muted: muted.has(c.id), pinned: pinned.has(c.id) });
+  const maskOf = (c) => { const r = rowOf(c); const lm = lastMsg[c.id]; return maskedPreview({ preview: r.preview, userId: r.userId ?? lm?.userId, crewId: r.crewId ?? lm?.crewId }, { blocked: blockedIds, muted: mutedCrewIds }); };
+  const previewForSearch = (c) => { const m = maskOf(c); return m.masked === 'blocked' ? t('msg.blockedUser') : m.text; }; // 목록 검색도 가린 글자로(D7)
   const openRoom = (c) => { setTabQ(null); setChId(c.id); setRail(false); setPage('chat'); };
   const roomAvatar = (c, tr) => {
     if (c.kind !== 'dm') return <span className={`ph-chav${c.kind === 'private' ? ' lock' : ''}`} aria-hidden="true"><I name={c.kind === 'private' ? 'lock' : 'hash'} size={20} /></span>;
@@ -2316,7 +2325,7 @@ function Shell({ session }) {
     const name = isDm ? dmBaseName(c) : c.name;
     const count = isDm ? (tr.group ? tr.size : 0) : (chCount[c.id] ?? 0);
     const items = isDm ? dmItemsOf(c, true) : chItemsOf(c);
-    const hidden = !!lm?.crewId && mutedCrewIds.has(lm.crewId); // 숨긴 에이전트의 글은 미리보기에도 없다
+    const mp = maskOf(c); const hidden = !!mp.masked; // 차단한 사람·숨긴 에이전트의 글은 미리보기에서 방 안과 같이 가린다(D7)
     const prefix = lm && r.preview === lm.body ? (isDm ? dmSnipWho(c, lm) : (lm.mine ? t('dm.snip.me') : `${dmWho(c, lm)}: `)) : '';
     return (
       <div key={c.id} data-drag-id={c.id} data-swipe-id={c.id} className={`msgr-railrow ph-krow${ctx?.trigger === c.id ? ' open' : ''}${drag === c.id ? ' dragging' : ''}`} onContextMenu={(e) => { if (Date.now() - (lpStates.current[c.id]?.firedAt ?? 0) < 800) { e.preventDefault(); return; } openCtx(e, items, c.id); }} {...rowLongPress(c, items, dragCtx)}>{swipeActs(c)}
@@ -2324,7 +2333,7 @@ function Shell({ session }) {
           {roomAvatar(c, tr)}
           <span className="ph-kbody">
             <span className="ph-kl1"><span className="name">{name}</span>{count > 0 && <span className="ph-kcount" aria-label={t('phone.row.members', { n: count })}>{count}</span>}{r.pinned && <I name="pin" size={13} className="ph-kic" />}{r.muted && <I name="belloff" size={13} className="ph-kic" />}<span className="when">{r.at > 0 ? fmtDmWhen(t('time.yesterday'), r.at, lang) : ''}</span></span>
-            <span className="ph-kl2"><span className="snip">{typingIn(c.id) ? <span className="ph-typing">{t('side.typing')}</span> : hidden ? '' : `${prefix}${r.preview}`}</span><span className="ph-kbadges">{r.mention && <span className="ph-at" role="img" aria-label={t('phone.row.mention')}>@</span>}{r.unreadN > 0 && <span className={`msgr-badge${r.muted ? ' dim' : ''}`}>{badgeText(r.unreadN)}</span>}</span></span>
+            <span className="ph-kl2"><span className="snip">{typingIn(c.id) ? <span className="ph-typing">{t('side.typing')}</span> : mp.masked === 'blocked' ? t('msg.blockedUser') : hidden ? '' : `${prefix}${r.preview}`}</span><span className="ph-kbadges">{r.mention && <span className="ph-at" role="img" aria-label={t('phone.row.mention')}>@</span>}{r.unreadN > 0 && <span className={`msgr-badge${r.muted ? ' dim' : ''}`}>{badgeText(r.unreadN)}</span>}</span></span>
           </span>
         </button>
       </div>
@@ -2341,15 +2350,15 @@ function Shell({ session }) {
   const chatsAll = isPersonal && spaceReady ? channels.filter((c) => c.kind === 'dm') : [];
   const chatSorted = sortRooms(chatsAll, { sort: dmSort, atOf: (c) => rowOf(c).at, unread, pinned, pinPos, nameOf: dmBaseName, sortPos: dmSortPos });
   const chatFiltered = chatSorted.filter((c) => chatVisible(dmFilter, { ...rowOf(c), ...traitsOf(c) }));
-  const chatShown = tabSearch(chatFiltered, tabQText, (c) => [dmBaseName(c), rowOf(c).preview]);
+  const chatShown = tabSearch(chatFiltered, tabQText, (c) => [dmBaseName(c), previewForSearch(c)]);
   const chatDrop = (c) => ({ onDrop: pinned.has(c.id) ? reorderFav : (id, before, visible) => reorderChannelPos(chatSorted.filter((x) => !pinned.has(x.id)), id, before, visible, () => { if (dmSort !== 'custom') pickDmSort('custom'); }) });
   // ── 채널 탭(고른 조직) ──
   const orgRow = orgs?.find((o) => o.id === chOrg) ?? null;
   const onOrgTab = !!orgRow && orgId === orgRow.id && spaceReady;
   const chChannels = onOrgTab ? sortRooms(channels.filter((c) => c.kind !== 'dm'), { sort: chBase.some((c) => dmSortPos[c.id] != null) ? 'custom' : 'recent', atOf: (c) => rowOf(c).at, unread, pinned, pinPos, nameOf: (c) => c.name, sortPos: dmSortPos }) : [];
   const chTalks = onOrgTab ? sortRooms(channels.filter((c) => c.kind === 'dm'), { sort: dmSort, atOf: (c) => rowOf(c).at, unread, pinned, pinPos, nameOf: dmBaseName, sortPos: dmSortPos }) : [];
-  const chChannelsShown = tabSearch(chChannels, tabQText, (c) => [c.name, c.topic, rowOf(c).preview]);
-  const chTalksShown = tabSearch(chTalks, tabQText, (c) => [dmBaseName(c), rowOf(c).preview]);
+  const chChannelsShown = tabSearch(chChannels, tabQText, (c) => [c.name, c.topic, previewForSearch(c)]);
+  const chTalksShown = tabSearch(chTalks, tabQText, (c) => [dmBaseName(c), previewForSearch(c)]);
   const otherOrgsUnread = (orgs ?? []).filter((o) => o.id !== chOrg).reduce((a, o) => ({ n: a.n + (spaceCount(o.id)?.n || 0), mention: a.mention + (spaceCount(o.id)?.mention || 0) }), { n: 0, mention: 0 });
   const orgMenuPop = orgMenu && ((items) => (
     <OrgMenuCard orgs={orgs ?? []} current={chOrg} onClose={() => setOrgMenu(false)} onPick={(o) => { setTabQ(null); if (o.id !== orgId) setOrgId(o.id); }} badge={items.includes('joinable') ? (o) => <SpaceBadge c={spaceCount(o.id)} /> : null}>
