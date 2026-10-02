@@ -39,6 +39,7 @@ const PATHS = {
   history: '<path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9M2.5 2.5v2.8h2.8"/><path d="M8 5v3l2 1.3"/>',
   template: '<rect x="2.5" y="2.5" width="11" height="11" rx="1.8"/><path d="M2.5 6h11M6 6v7.5"/>',
   resize: '<path d="M13 7v6H7M13 13 8.5 8.5"/>',
+  building: '<path d="M3 14V3.5A1 1 0 0 1 4 2.5h5a1 1 0 0 1 1 1V14M10 6.5h2a1 1 0 0 1 1 1V14M2 14h12M5.5 5.5h2M5.5 8h2M5.5 10.5h2"/>',
   person: '<circle cx="8" cy="5.5" r="2.7"/><path d="M2.8 14a5.2 5.2 0 0 1 10.4 0"/>',
   info: '<circle cx="8" cy="8" r="5.8"/><path d="M8 7.3v3.7M8 5.1v.1"/>',
   refresh: '<path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2.5v2.8h-2.8"/>',

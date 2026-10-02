@@ -52,6 +52,12 @@ const CONTRACT = {
   // 오피스 일정(에이전트 calendar 도구, 2026-09-30) — Argo 크루는 주인의 기기 세션으로 부른다(src/gateway/office-calendar.mjs)
   office_event_list: { pending: '다음 단계 — 외부 에이전트(봇) 일정 도구. 봇 API 메서드가 아직 없고, 봇 토큰으로 주인 일정을 읽는 범위부터 정해야 한다' },
   office_event_write: { pending: '다음 단계 — 외부 에이전트(봇) 일정 쓰기. 서버는 p_data.crew가 있으면 주인 일정만 고치게 이미 막는다' },
+  // 오피스 회사 기록(에이전트 office 도구, 2026-10-02 트랙 C) — Argo 크루는 주인의 기기 세션으로 부른다(src/gateway/office-company.mjs)
+  office_company_read: { pending: '다음 단계 — 외부 에이전트(봇) 회사 정보 읽기. 봇 토큰으로 조직 회사 정보를 읽는 범위(견적 작성 봇 등)부터 정한다' },
+  office_company_write: { pending: '다음 단계 — 외부 에이전트(봇) 회사 정보 쓰기. 서버가 관리자인지 판정하므로 봇 주인의 역할을 넘겨받는 방식이 필요하다' },
+  office_people_read: { pending: '다음 단계 — 외부 에이전트(봇) 직원 명부 읽기. 메모는 관리자만이라 봇 응답 범위를 정해야 한다' },
+  office_perf_eval_list: { pending: '다음 단계 — 외부 에이전트(봇) 평가 레포트 읽기. 사람 대상은 본인·관리자만이라 봇 권한 범위부터' },
+  office_perf_eval_write: { pending: '다음 단계 — 외부 에이전트(봇) 평가 쓰기(헤르메스 페퍼 루틴 이관). 관리자 판정과 crew 표시를 봇 토큰에 맞춘다' },
   // Argo PC 전용
   msgr_create_channel: { argoOnly: '크루 1:1 방은 메신저 앱이 만든다 — 봇 1:1 방도 사람이 앱에서 연다' },
   msgr_crew_requests: { argoOnly: 'Argo PC가 크루를 새로 만드는 영입 요청 — 외부 에이전트는 서버 연결(connect) 절차로 추가한다' },
@@ -62,7 +68,7 @@ const CONTRACT = {
   msgr_notification_finish: { argoOnly: 'Argo 데스크톱 알림 경로' },
 };
 // 다음 단계로 미룬 항목 — 늘리거나 줄일 때 이 목록을 같이 고친다(조용히 늘지 않게).
-const PENDING = ['msgr_crew_memory', 'msgr_execution_heartbeat', 'msgr_org_docs', 'msgr_personal_ai_consent_ok', 'msgr_work_heartbeat', 'office_event_list', 'office_event_write'];
+const PENDING = ['msgr_crew_memory', 'msgr_execution_heartbeat', 'msgr_org_docs', 'msgr_personal_ai_consent_ok', 'msgr_work_heartbeat', 'office_company_read', 'office_company_write', 'office_event_list', 'office_event_write', 'office_people_read', 'office_perf_eval_list', 'office_perf_eval_write'];
 
 function gatewayCalls() {
   const dir = root('src/gateway');
