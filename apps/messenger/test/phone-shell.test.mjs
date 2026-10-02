@@ -232,3 +232,11 @@ test('설정 조직 화면 — 처음엔 고른 조직, 하나뿐이면 고르�
   assert.deepEqual(orgScreen('org', { orgs: [orgs[1]], orgId: 'o2' }), { org: orgs[1], multi: false, locked: false });
   assert.deepEqual(orgScreen('org', { orgs, orgId: 'gone' }), { org: null, multi: true, locked: false });
 });
+
+// 기능 점검 D6(2026-10-02) — 결재 카드에서 어떤 에이전트를 어느 방에 넣어 달라는지 구분되지 않던 것. 이름을 모르면 종전 문구로.
+test('넣기 요청 카드 문구 — 에이전트·방 이름이 있으면 둘 다, 에이전트만 있으면 에이전트만, 없으면 종전 문구', async () => {
+  const { joinReqKey } = await import('../src/phone-shell.mjs');
+  assert.deepEqual(joinReqKey({ crew: '효일', room: '유건, 하나' }), ['phone.agents.joinReq.named', { crew: '효일', room: '유건, 하나' }]);
+  assert.deepEqual(joinReqKey({ crew: '효일', room: null }), ['phone.agents.joinReq.crew', { crew: '효일' }]);
+  assert.deepEqual(joinReqKey({ crew: null, room: '유건, 하나' }), ['phone.agents.joinReq', {}]);
+});

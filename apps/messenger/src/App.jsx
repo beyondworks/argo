@@ -49,7 +49,7 @@ import { getMobileAuthSnapshot, subscribeMobileAuth, startMobileSignIn, cancelMo
 import { useMobileViewport } from './mobile-viewport.js';
 import { useIsPhone, useEdgeSwipeBack } from './use-phone.js';
 import { bindRowSwipe, bindSwipeReply } from './row-swipe.js';
-import { PHONE_TABS, isPhoneRoot, spaceForTab, pickChannelOrg, startTab, tabBadges, badgeText, roomTraits, chatVisible, chatUnreadTotal, roomRow, sortRooms, tabSearch, CHAT_FILTERS, memoryGroups, memSnippet, agentCardAction, orgCardStep, personalCardLocks, orgMenuItems, savedOrgAfter, withoutHidden, hiddenGroups, settingsOrgRows, orgScreen } from './phone-shell.mjs'; // 폰 셸 v2(친구·채팅·채널·에이전트·기억, 유건 확정 2026-10-01) — 판단은 이 모듈 한 곳
+import { PHONE_TABS, isPhoneRoot, spaceForTab, pickChannelOrg, startTab, tabBadges, badgeText, roomTraits, chatVisible, chatUnreadTotal, roomRow, sortRooms, tabSearch, CHAT_FILTERS, memoryGroups, memSnippet, agentCardAction, orgCardStep, personalCardLocks, orgMenuItems, savedOrgAfter, withoutHidden, hiddenGroups, settingsOrgRows, orgScreen, joinReqKey } from './phone-shell.mjs'; // 폰 셸 v2(친구·채팅·채널·에이전트·기억, 유건 확정 2026-10-01) — 판단은 이 모듈 한 곳
 import { bindPullRefresh, enteredReady } from './pull-refresh.mjs';
 import { haptic } from './haptics.js';
 import { refreshMessageWindow, mergeRefreshedMessages } from './refresh-messages.mjs';
@@ -968,7 +968,9 @@ function Shell({ session }) {
   }; // 하단 프로필(이름) 클릭 → 메뉴(내 계정·로그아웃) — 로그아웃 버튼은 여기로(유건 지시 2026-09-09)
   const [friends, setFriends] = useState([]); // 친구·요청(msgr_my_friends) — 레일 '친구' 절·알림함·설정 카드가 같이 쓴다
   const loadFriends = useCallback(async () => { setFriends(await q(supabase.rpc('msgr_my_friends')).catch(() => [])); }, []);
-  useEffect(() => { if (uid) loadFriends(); }, [uid, loadFriends, syncEpoch, friendsEpoch]); // 주기 없음 — 시작·복귀·친구 방송·친구 화면 진입
+  useEffect(() => { if (uid) loadFriends(); }, [uid, loadFriends, syncEpoch, friendsEpoch]); // 주기 없음 — 시작·복귀·친구 방송(u: friend, 서버 20261002115000)·친구 화면 진입
+  const friendsScreen = isPhone ? page === 'friends' || page === 'set-friends' : page === 'settings';
+  useEffect(() => { if (friendsScreen) bumpFriends(); }, [friendsScreen]); // 친구 화면에 들어갈 때 한 번(방송이 막혀 있던 동안의 변화를 따라잡는다)
   // 친구 숨김(4차 피드백 2026-10-02, msgr_user_hides) — 내 목록·새 채팅·초대 후보에서만 뺀다(친구 관계·대화·알림은 그대로).
   // 숨김은 나만 바꾸므로 시작·모바일 복귀 때만 읽는다(15초 tick에 묶지 않는다): 기기당 시작 1회 + 복귀마다 1회, 유휴 0.
   const [hiddenUserIds, setHiddenUserIds] = useState(null);
@@ -1264,6 +1266,28 @@ function Shell({ session }) {
   const [approvals, setApprovals] = useState([]);
   const [myAgents, setMyAgents] = useState(null); // 폰 에이전트 탭 — 내 에이전트(모든 공간). 아래 loadMyAgents가 채운다(선언은 얼굴 문맥(avatarCtx)보다 앞)
   const approvalsTimer = useRef(null);
+  // 넣기 요청 카드의 이름(기능 점검 D6) — 에이전트 이름: 조직 에이전트는 조직 행, 개인 에이전트는 160000의 대기 에이전트 이름(msgr_personal_room_crews).
+  // 방 이름: 채널·이름 붙은 그룹방은 그 이름, 대화방은 나를 뺀 사람 이름(조직 표시명 → 프로필). 요청이 있을 때만 부른다.
+  const joinReqMeta = async (rows) => {
+    const chIds = [...new Set(rows.map((r) => r.channel_id))]; const crewIds = [...new Set(rows.map((r) => r.crew_id))];
+    const [chs, crs, mems] = await Promise.all([
+      q(supabase.from('msgr_channels').select('id, name, kind, org_id').in('id', chIds)).catch(() => []),
+      q(supabase.from('msgr_crews').select('id, display_name').in('id', crewIds)).catch(() => []),
+      q(supabase.from('msgr_channel_members').select('channel_id, member_id').eq('member_kind', 'user').in('channel_id', chIds)).catch(() => []),
+    ]);
+    const crew = Object.fromEntries((crs ?? []).map((c) => [c.id, c.display_name]));
+    if (crewIds.some((id) => !crew[id])) for (const c of await q(supabase.rpc('msgr_personal_room_crews')).catch(() => [])) if (crewIds.includes(c.id)) crew[c.id] = c.display_name;
+    const room = {};
+    for (const c of chs ?? []) if (c.name && c.name !== 'dm' && !c.name.startsWith('dm:')) room[c.id] = c.name; // 'dm'·'dm:…'은 이름 없는 대화방(사람 이름으로 짓는다)
+    const people = (chs ?? []).filter((c) => !room[c.id]);
+    for (const org of [...new Set(people.map((c) => c.org_id ?? null))]) {
+      const these = people.filter((c) => (c.org_id ?? null) === org);
+      const ids = [...new Set((mems ?? []).filter((m) => these.some((c) => c.id === m.channel_id) && m.member_id !== uid).map((m) => m.member_id))];
+      const names = ids.length ? await resolvePeopleNames(supabase, { orgId: org, ids }).catch(() => ({})) : {};
+      for (const c of these) { const ns = (mems ?? []).filter((m) => m.channel_id === c.id && m.member_id !== uid).map((m) => names[m.member_id]).filter(Boolean); if (ns.length) room[c.id] = ns.join(', '); }
+    }
+    return { crew, room };
+  };
   const loadApprovals = useCallback(async () => {
     if (!uid || !isPhoneRef.current) return;
     const ids = orgIdsKey ? orgIdsKey.split(',') : [];
@@ -1272,7 +1296,8 @@ function Shell({ session }) {
       q(supabase.from('msgr_channel_crew_requests').select('id, channel_id, crew_id, requested_by, created_at').eq('status', 'pending').neq('requested_by', uid).order('created_at', { ascending: false }).limit(40)).catch(() => null),
     ]);
     if (aps === null && joins === null) return; // 둘 다 실패하면 지난 값을 둔다
-    setApprovals([...(aps ?? []).map((a) => ({ ...a, key: `approval:${a.id}`, kind: 'approval', at: a.created_at })), ...(joins ?? []).map((r) => ({ ...r, key: `crewjoin:${r.id}`, kind: 'join', at: r.created_at }))].sort((a, b) => Date.parse(b.at) - Date.parse(a.at)));
+    const meta = joins?.length ? await joinReqMeta(joins).catch(() => ({ crew: {}, room: {} })) : { crew: {}, room: {} }; // 넣기 요청이 있을 때만 — 어떤 에이전트를 어느 방에(D6)
+    setApprovals([...(aps ?? []).map((a) => ({ ...a, key: `approval:${a.id}`, kind: 'approval', at: a.created_at })), ...(joins ?? []).map((r) => ({ ...r, key: `crewjoin:${r.id}`, kind: 'join', at: r.created_at, crewName: meta.crew[r.crew_id] ?? null, roomName: meta.room[r.channel_id] ?? null }))].sort((a, b) => Date.parse(b.at) - Date.parse(a.at)));
   }, [uid, orgIdsKey]);
   const approvalsSoon = useRef(() => {});
   approvalsSoon.current = () => { if (!isPhoneRef.current) return; clearTimeout(approvalsTimer.current); approvalsTimer.current = setTimeout(() => { loadApprovals().catch(() => {}); }, 600); };
@@ -1341,7 +1366,7 @@ function Shell({ session }) {
         .on('broadcast', { event: 'attach' }, on(({ payload }) => { if (here(payload?.org_id ?? null)) setEvent(broadcastEvent('attach', payload)); }))
         .on('broadcast', { event: 'crew_request' }, on(({ payload }) => { if (here(payload?.org_id ?? null) && payload?.channel_id === activeChannel.current) bumpMembers(); }))
         .on('broadcast', { event: 'friend' }, on(() => bumpFriends())) // 친구 요청·수락·삭제·차단(서버 20261002110000 — 종류와 상대 id만) — 받았을 때만 친구 목록을 다시 읽는다(D5)
-        .on('broadcast', { event: 'crew_join' }, on(({ payload }) => { approvalsSoon.current(); inboxSoon.current(); if (payload?.channel_id && payload.channel_id === activeChannel.current) setEvent(broadcastEvent('crew_join', payload)); }))); // 에이전트 넣기 요청 생성·처리(D6)
+        .on('broadcast', { event: 'crew_join' }, on(({ payload }) => { approvalsSoon.current(); inboxSoon.current(); if (payload?.channel_id && payload.channel_id === activeChannel.current) { bumpMembers(); setEvent(broadcastEvent('crew_join', payload)); } }))); // 에이전트 넣기 요청 생성·처리(D6, 서버 20261002115000)
       return remove;
     });
     return () => { rt.current = null; cleanup(); }; // 송신 참조는 비동기 제거를 기다리지 않고 비운다(분리 검수 P2)
@@ -2356,7 +2381,7 @@ function Shell({ session }) {
       <Av name={c.display_name} crew size="kk" crewId={c.id} src={c.avatar_url ?? null} />
       <span className="ph-kbody"><span className="ph-kl1"><span className="name">{c.display_name}</span><span className="when">{spaceName(c.org_id)}</span></span><span className="ph-kl2"><span className={`ph-astate ${st}`}><span className={`msgr-dot${on && st !== 'relink' ? ' mark' : ''}`} />{t(`phone.agent.${st}`)}</span>{c.role_text && <span className="snip">{c.role_text}</span>}</span></span>
     </button>); };
-  const approvalText = (it) => (it.kind === 'join' ? t('phone.agents.joinReq') : approvalOneLineSummary(it, t('ap.plain.command')));
+  const approvalText = (it) => { if (it.kind !== 'join') return approvalOneLineSummary(it, t('ap.plain.command')); const [k, p] = joinReqKey({ crew: it.crewName, room: it.roomName }); return (lang === 'en' ? (x) => x : koJosa)(t(k, p)); }; // "'효일'을 '유건, 하나' 방에 넣어 달라는 요청"(D6)
   const openApproval = (it) => { if (!it?.channel_id) return; setTabQ(null); if (it.kind === 'join') sheetAfterNav.current = true; requestNav(it.channel_id, 'approval'); }; // 다른 조직이면 알림 탭과 같은 길(decideNav)이 공간을 바꿔 연다. 참여 요청은 그 방 설정창까지
   const phoneRoot = (
     <div className="ph-root" data-tab={rootTab}>
@@ -2598,7 +2623,7 @@ function Shell({ session }) {
       <main className="msgr-main" {...edgeBack}>
         {personalCard && <PersonalAgentCard crewId={personalCard} uid={uid} onClose={() => setPersonalCard(null)} onNote={setNote} onError={setErr} onChanged={() => { loadMyAgents().catch(() => {}); if (isPersonal) loadPersonal().catch(() => {}); }} />}
         {sheet && crewOf(sheet) && !orgBlocked && !isPersonal && <CrewSheet crew={crewOf(sheet)} org={org} uid={uid} me={me} members={members} policy={policy} channelId={chId} channelName={channel?.kind === 'dm' ? null : channel?.name} nameOfUser={nameOfUser} onClose={() => setSheet(null)} onChanged={() => loadOrg(orgId).catch(() => {})} onPosted={() => setEvent({ kind: 'message', channel_id: chId, at: Date.now() })} onNote={setNote} onError={setErr} onDm={() => dmWithCrew(sheet)} />}
-        {chSheet && channel && !orgBlocked && <ChannelSheet muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} myAvailable={myAvailable} onDispatch={dispatchCrew} channel={channel} dmName={dmName} org={org} uid={uid} isAdmin={isAdmin} policy={policy} members={members} crews={crews} chMembers={chMembers} people={chPeople} chCrews={chCrews} ent={ent} onInvite={isAdmin ? orgInvite : null} onInviteHere={(role) => setInviteFor({ channelIds: [channel.id], role })} onManageInvites={isAdmin ? manageInvites : null} askAdmin={askAdmin} onCrew={(id) => { setChSheet(false); setSheet(id); }} onDm={(id) => openDm('user', id)} onWiden={widenDm} isPersonal={isPersonal} needConsent={isPersonal ? needPersonalConsent : null} refreshKey={`${tick}:${sheetReqTick}`} nameOfUser={nameOfUser} initialAdd={chSheetAdd} onMention={(c) => { setChSheet(false); setChSheetAdd(null); setMentionReq(c); }} onClose={() => { setChSheet(false); setChSheetAdd(null); }} onChanged={async () => { await (isPersonal ? loadPersonal() : loadOrg(orgId)).catch(() => {}); await loadChMembers(chId).catch(() => {}); }} onArchived={() => { setChSheet(false); setChId(null); loadOrg(orgId).catch(() => {}); }} onNote={setNote} onError={setErr} />}
+        {chSheet && channel && !orgBlocked && <ChannelSheet muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} myAvailable={myAvailable} onDispatch={dispatchCrew} channel={channel} dmName={dmName} org={org} uid={uid} isAdmin={isAdmin} policy={policy} members={members} crews={crews} chMembers={chMembers} people={chPeople} chCrews={chCrews} ent={ent} onInvite={isAdmin ? orgInvite : null} onInviteHere={(role) => setInviteFor({ channelIds: [channel.id], role })} onManageInvites={isAdmin ? manageInvites : null} askAdmin={askAdmin} onCrew={(id) => { setChSheet(false); setSheet(id); }} onDm={(id) => openDm('user', id)} onWiden={widenDm} isPersonal={isPersonal} needConsent={isPersonal ? needPersonalConsent : null} refreshKey={`${membersEpoch}:${sheetReqTick}`} nameOfUser={nameOfUser} initialAdd={chSheetAdd} onMention={(c) => { setChSheet(false); setChSheetAdd(null); setMentionReq(c); }} onClose={() => { setChSheet(false); setChSheetAdd(null); }} onChanged={async () => { await (isPersonal ? loadPersonal() : loadOrg(orgId)).catch(() => {}); await loadChMembers(chId).catch(() => {}); }} onArchived={() => { setChSheet(false); setChId(null); loadOrg(orgId).catch(() => {}); }} onNote={setNote} onError={setErr} />}
         {inviteFor && org && !isPersonal && <InviteDialog org={org} channels={inviteChannels} isAdmin={!!isAdmin} hostOf={hostChannels} initialChannelIds={inviteFor.channelIds} initialRole={inviteFor.role} create={createInviteCode} discard={async (id) => { inviteSync.current.start(); let gone = 0; try { const r = await discardInvite(supabase, id); gone = r ? -1 : 0; return r; } finally { inviteSync.current.finish(gone); } }} shareText={inviteShare} linkOf={inviteLinkOf} errorText={inviteErr} onClose={() => setInviteFor(null)} onManage={isAdmin ? manageInvites : null} t={t} phone={isPhone} />}
         {joinPreview && <InvitePreview p={joinPreview} avatar={<Av name={joinPreview.org_name} size="lg" />} busy={joinBusy} err={joinErr} onJoin={joinFromPreview} onOpen={() => { const p = joinPreview; setJoinPreview(null); if (p.org_id) setOrgId(p.org_id); if (p.channels?.[0]) requestNav(p.channels[0].id, 'invite'); }} onClose={() => setJoinPreview(null)} fmtWhen={(iso) => fmtWhen(iso, lang)} t={t} phone={isPhone} />}
         {orgLocked && <div className="msgr-notice locked"><span>{t(isAdmin ? 'org.locked.admin' : 'org.locked')}</span></div>}
@@ -2842,7 +2867,7 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
     const rows = await q(supabase.from('msgr_channel_crew_requests').select('id, crew_id, requested_by, created_at').eq('channel_id', channel.id).eq('status', 'pending').order('created_at')).catch(() => []);
     setJoinReqs(rows ?? []);
   }, [channel.id, channel.kind, uid]);
-  useEffect(() => { loadJoinReqs(); }, [loadJoinReqs, refreshKey]); // 열려 있는 동안에도 — 알림함에서 같은 채널을 누르거나 주기 재조회 때(검수 M-3)
+  useEffect(() => { loadJoinReqs(); }, [loadJoinReqs, refreshKey]); // 열려 있는 동안에도 — 알림함에서 같은 채널을 누를 때·그 방의 넣기 요청·안내 글 방송 때(검수 M-3, 주기 재조회는 없앴다 — 기능 점검 D2)
   const joinCrew = async (id) => { // 반환 'joined' | 'requested' | 'already' — 여러 명을 한 번에 넣을 때 한 명씩 부른다(서버 판정은 에이전트마다 다르다)
     const res = await supabase.rpc('msgr_crew_join', { ch: channel.id, crew: id });
     if (res.error) throw new Error(/msgr_channel_personal_blocked/.test(res.error.message) ? t('err.channelPersonalBlocked') : /msgr_request_recently_rejected/.test(res.error.message) ? t('ch.crew.join.cooldown') : friendlyErr(res.error.message, t));

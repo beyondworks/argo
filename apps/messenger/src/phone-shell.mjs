@@ -195,3 +195,10 @@ export function orgScreen(view, { orgs = [], orgId = null } = {}) {
   const org = orgs.find((o) => o.id === orgId) ?? null;
   return { org, multi: orgs.length > 1, locked: !!org && ADMIN_ONLY.has(view) && !isOrgAdmin(org) };
 }
+
+/** 에이전트 넣기 요청 카드 문구(기능 점검 D6) — 에이전트·방 이름을 알면 "'효일'을 '유건, 하나' 방에 넣어 달라는 요청", 모르면 종전 문구 */
+export function joinReqKey({ crew = null, room = null } = {}) {
+  if (crew && room) return ['phone.agents.joinReq.named', { crew, room }];
+  if (crew) return ['phone.agents.joinReq.crew', { crew }];
+  return ['phone.agents.joinReq', {}];
+}

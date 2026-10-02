@@ -1343,6 +1343,8 @@ export const DICT = {
   'phone.set.privacy': ['개인정보', 'Privacy'],
   'phone.set.about': ['정보·약관', 'About & terms'],
   'phone.agents.joinReq': ['대화방에 에이전트를 넣어 달라는 요청', 'Request to add an agent to a conversation'],
+  'phone.agents.joinReq.named': ["'{crew}'을(를) '{room}' 방에 넣어 달라는 요청", "Request to add '{crew}' to '{room}'"],
+  'phone.agents.joinReq.crew': ["'{crew}'을(를) 대화방에 넣어 달라는 요청", "Request to add '{crew}' to a conversation"],
   'phone.agents.approvals.tap': ['눌러서 그 결재가 있는 대화로 갑니다.', 'Tap to open the conversation with that approval.'],
   'phone.agents.approvals.more': ['그 밖에 {n}개 더', '{n} more'],
   'phone.mem.org': ['조직 전체 기억', 'Organization memory'],
