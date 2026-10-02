@@ -2013,6 +2013,7 @@ html { -webkit-tap-highlight-color: transparent; }
   .msgr-phone .ph-chips button { position: relative; flex: none; height: 34px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg); color: var(--fg-2); font-size: 14px; font-weight: 500; white-space: nowrap; }
   .msgr-phone .ph-chips button::after { content: ''; position: absolute; inset: -5px -2px; }
   .msgr-phone .ph-chips button.active { background: var(--fg); border-color: var(--fg); color: var(--bg); font-weight: 600; }
+  @media (max-width: 374px) { .msgr-phone .ph-chips button { font-size: 13px; padding: 0 11px; } } /* 360 폭 영어에서 'Groups'가 정렬 버튼에 걸려 잘렸다(기능 점검 D11) — 좁은 폭은 칩을 줄여 네 개가 다 들어간다, 더 길면 가로 스크롤 */
   .msgr-phone .ph-chiprow .msgr-sortbtn { width: 44px; height: 44px; min-width: 44px; display: grid; place-items: center; border-radius: 50%; }
   /* ── 친구 탭 ── */
   .msgr-phone.phone-home .msgr-side .ph-root .ph-me { min-height: 84px; gap: 14px; border-bottom: 1px solid var(--border-soft); }
