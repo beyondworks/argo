@@ -12,7 +12,10 @@ export const COMPANY_KEYS = [
   ['name', 'basic'], ['reg_name', 'basic'], ['ceo', 'basic'], ['biz_no', 'basic'], ['corp_no', 'basic'], ['open_date', 'basic'], ['address', 'basic'],
   ['biz_type', 'tax'], ['biz_item', 'tax'], ['tax_email', 'tax'],
   ['manager', 'contact'], ['phone', 'contact'], ['fax', 'contact'], ['email', 'contact'], ['website', 'contact'],
+  ['seal', 'basic'], ['logo', 'basic'], // 도장·로고 그림(트랙 A 계약서 도장·배너 — 값 = data:image 또는 https 주소)
 ];
+export const IMAGE_KEYS = ['seal', 'logo'];
+export const isImage = (v) => /^(data:image\/(png|jpeg|webp|svg\+xml);base64,|https:\/\/)/.test(String(v ?? ''));
 export const KEY_CATEGORY = Object.fromEntries(COMPANY_KEYS);
 // 견적서·계약서 공급자 칸에 실제로 찍히는 값(인트라넷 lib/docgen/render.ts SUPPLIER와 같은 칸) — 비어 있으면 화면이 알려 준다
 export const DOC_KEYS = ['name', 'ceo', 'biz_no', 'address', 'open_date', 'biz_type', 'biz_item', 'manager', 'phone', 'email'];
@@ -46,6 +49,7 @@ export function companyProfile(items = []) {
   return {
     name: v.name, regName: v.reg_name, ceo: v.ceo, bizNo: v.biz_no, corpNo: v.corp_no, openDate: v.open_date, address: v.address,
     bizType: v.biz_type, bizItem: v.biz_item, taxEmail: v.tax_email, manager: v.manager, phone: v.phone, fax: v.fax, email: v.email, website: v.website,
+    seal: isImage(v.seal) ? v.seal : '', logo: isImage(v.logo) ? v.logo : '', // 그림이 아니면 빈 값(서식은 글자로 대신)
     accounts: list.filter((x) => x.category === 'bank' && x.value).map((x) => ({ label: x.label, value: x.value })),
     missing: DOC_KEYS.filter((k) => !v[k]),
   };
@@ -56,7 +60,7 @@ export function itemPayload(form) {
   const label = String(form.label ?? '').trim();
   if (!label) return null;
   return {
-    id: form.id, label: label.slice(0, 100), value: String(form.value ?? '').trim().slice(0, 2000), notes: String(form.notes ?? '').trim().slice(0, 2000),
+    id: form.id, label: label.slice(0, 100), value: String(form.value ?? '').trim().slice(0, IMAGE_KEYS.includes(form.key) ? 200000 : 2000), notes: String(form.notes ?? '').trim().slice(0, 2000),
     category: CATEGORIES.includes(form.category) ? form.category : 'other', key: KEY_CATEGORY[form.key] ? form.key : null,
     ...(typeof form.redacted === 'boolean' ? { redacted: form.redacted } : {}),
   };

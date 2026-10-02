@@ -28,6 +28,11 @@ button.co-label { padding: 0; border: 0; background: none; font: inherit; font-w
 .co-doc.empty dt { color: var(--danger); }
 .co-doc .link-btn { display: inline-flex; align-items: center; gap: 4px; }
 .co-form { display: grid; gap: 14px; }
+.co-img { display: block; max-height: 48px; max-width: 160px; object-fit: contain; border-radius: 6px; background: var(--lift); padding: 4px; }
+.co-img.big { max-height: 120px; max-width: 240px; }
+.co-img-pick { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.co-row-main:has(.co-img), .co-doc:has(.co-img) { align-items: center; }
+.co-doc-imgs { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
 .co-form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 @media (max-width: 560px) { .co-form-row { grid-template-columns: 1fr; } .co-doc { grid-template-columns: 96px minmax(0, 1fr); } }
 

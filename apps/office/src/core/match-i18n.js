@@ -15,6 +15,8 @@ export const COMPANY_KEY_LABELS = {
   phone: ['전화', '전화번호', '대표전화', '대표번호', '연락처', 'phone', 'tel'],
   fax: ['팩스', '팩스번호', 'fax'],
   email: ['이메일', '대표이메일', '메일', 'email', 'e-mail'],
+  seal: ['도장', '회사도장', '직인', '법인인감', '인감', 'seal'],
+  logo: ['로고', '회사로고', 'logo'],
   website: ['홈페이지', '웹사이트', '사이트', 'website', 'homepage', 'url'],
 };
 export const CATEGORY_FROM_KO = { 기본정보: 'basic', 계좌: 'bank', 연락처: 'contact', 세무: 'tax', 기타: 'other' };

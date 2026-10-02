@@ -111,6 +111,16 @@ test('회사 정보: 잘 알려진 항목(key)은 조직에 하나, 순서는 �
  assert.equal(sql(`select xmin from office_company_items where id=${quote(b)}`),xmin,'같은 순서면 행을 다시 쓰지 않는다');
 });
 
+test('회사 정보: 도장·로고는 그림(data:image·https)만, 큰 그림도 되고 이력에는 그림 본문을 싣지 않는다', {skip}, ()=>{
+ const id=randomUUID(), png='data:image/png;base64,'+'A'.repeat(60000);
+ cwrite(U.owner,'item.save',{id,key:'seal',category:'basic',label:'회사 도장',value:png});
+ assert.equal(cread(U.member).items.find(x=>x.id===id).value.length,png.length);
+ assert.match(cwriteFail(U.owner,'item.save',{id:randomUUID(),key:'logo',label:'로고',value:'javascript:alert(1)'}),/company_input/);
+ assert.match(cwriteFail(U.owner,'item.save',{id:randomUUID(),label:'긴 글',value:'x'.repeat(3000)}),/company_input/,'일반 항목은 2,000자');
+ cwrite(U.owner,'item.save',{id,key:'seal',category:'basic',label:'회사 도장',value:'https://example.test/seal.png'});
+ assert.equal(JSON.parse(sql(`select before from office_company_history where item_id=${quote(id)}`)).value,'','이력에는 그림 본문 없음');
+});
+
 test('직원 명부: 계정 멤버는 행이 없어도 나오고, 메모·계정 이메일은 관리자만, 쓰기는 관리자만', {skip}, ()=>{
  const id=randomUUID();
  pwrite(U.owner,'person.save',{id,name:'이름만 직원',title:'디자이너',department:'제작',phone:'010-1',agent:'Claude Code',joined_on:'2026-01-02',notes:'연봉 메모'});

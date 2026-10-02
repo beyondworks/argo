@@ -3,7 +3,7 @@
 import { useId, useMemo, useState } from 'react';
 import { t, registerDict, useLang } from '../core/i18n.js';
 import { useCompany, companyWrite } from '../core/company.js';
-import { CATEGORIES, COMPANY_KEYS, KEY_CATEGORY, DOC_KEYS, guessKey, groupItems, itemPayload, moveInCategory } from '../core/company-model.js';
+import { CATEGORIES, COMPANY_KEYS, KEY_CATEGORY, DOC_KEYS, IMAGE_KEYS, isImage, guessKey, groupItems, itemPayload, moveInCategory } from '../core/company-model.js';
 import { Modal, showToast } from '../ui/Overlay.jsx';
 import { openMenu } from '../ui/Menu.jsx';
 import { Icon } from '../ui/Icon.jsx';
@@ -15,6 +15,24 @@ import './company.css';
 registerDict(COMPANY_DICT);
 const fail = (e) => showToast(t(e.message));
 const LABEL_HINTS = COMPANY_KEYS.map(([k]) => k);
+const MAX_IMAGE = 200000;
+/** 도장·로고 그림 → data:image 주소. SVG는 그대로(작으면), 그 밖은 512px 안으로 줄여 PNG(크면 WebP) */
+function readImage(file) {
+  const asUrl = (f) => new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(String(r.result)); r.onerror = no; r.readAsDataURL(f); });
+  if (file.type === 'image/svg+xml' && file.size < MAX_IMAGE * 0.7) return asUrl(file);
+  return asUrl(file).then((src) => new Promise((ok, no) => {
+    const img = new Image();
+    img.onload = () => {
+      const k = Math.min(1, 512 / Math.max(img.width, img.height)), c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(img.width * k)); c.height = Math.max(1, Math.round(img.height * k));
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      let out = c.toDataURL('image/png');
+      if (out.length > MAX_IMAGE) out = c.toDataURL('image/webp', 0.85);
+      if (out.length > MAX_IMAGE) no(new Error('big')); else ok(out);
+    };
+    img.onerror = no; img.src = src;
+  }));
+}
 
 export default function Company({ space }) {
   useLang();
@@ -57,7 +75,7 @@ export default function Company({ space }) {
             {manager && <input type="checkbox" className="co-row-check" checked={sel.has(x.id)} onChange={() => toggleSel(x.id)} aria-label={t('company.select', { name: x.label })} />}
             <div className="co-row-main">
               {manager ? <button type="button" className="co-label link-btn" onClick={() => openEdit(x)}>{x.label}</button> : <strong className="co-label">{x.label}</strong>}
-              {x.value && <Redact on={hidden(x)} onToggle={() => toggleRedact(x)}><span className="co-value">{x.value}</span></Redact>}
+              {x.value && (IMAGE_KEYS.includes(x.key) && isImage(x.value) ? <img className="co-img" src={x.value} alt={x.label} /> : <Redact on={hidden(x)} onToggle={() => toggleRedact(x)}><span className="co-value">{x.value}</span></Redact>)}
               {x.notes && <small className="co-notes dim">{x.notes}</small>}
             </div>
             {x.key && <span className="badge co-key" title={`${t('company.f.key')}: ${t(`company.key.${x.key}`)}`}><Icon name="file" size={11} />{t('company.docShort')}{x.label !== t(`company.key.${x.key}`) ? ` · ${t(`company.key.${x.key}`)}` : ''}</span>}
@@ -104,6 +122,8 @@ function DocsCard({ profile, items, manager, hidden, onFill }) {
       <dd>{value[k] ? (it ? <Redact on={hidden(it)} focusable={false}><span>{value[k]}</span></Redact> : value[k]) : manager ? <button type="button" className="link-btn" onClick={() => onFill(k)}><Icon name="plus" size={12} />{t('company.fill')}</button> : <span className="dim">—</span>}</dd>
     </div>; })}
       <div className="co-doc"><dt>{t('company.cat.bank')}</dt><dd>{profile.accounts.length ? profile.accounts.map((a) => a.label).join(' · ') : <span className="dim">—</span>}</dd></div>
+      <div className="co-doc"><dt>{t('company.images')}</dt><dd className="co-doc-imgs">{IMAGE_KEYS.map((k) => profile[k] ? <img key={k} className="co-img" src={profile[k]} alt={t(`company.key.${k}`)} title={t(`company.key.${k}`)} />
+        : manager ? <button key={k} type="button" className="link-btn" onClick={() => onFill(k)}><Icon name="plus" size={12} />{t(`company.key.${k}`)}</button> : null)}{!manager && !profile.seal && !profile.logo && <span className="dim">—</span>}</dd></div>
     </dl>
   </section>;
 }
@@ -126,8 +146,14 @@ function ItemForm({ edit, setEdit, onSave, onDelete }) {
       <label className="field-block"><span className="label">{t('company.f.label')} *</span>
         <input className="input" list={listId} maxLength={100} value={edit.label} placeholder={t('company.f.labelPh')} onChange={(e) => onLabel(e.target.value)} data-autofocus />
         <datalist id={listId}>{LABEL_HINTS.map((k) => <option key={k} value={t(`company.key.${k}`)} />)}</datalist></label>
-      <label className="field-block"><span className="label">{t('company.f.value')}</span>
-        <input className="input" maxLength={2000} value={edit.value} placeholder={t('company.f.valuePh')} onChange={(e) => set({ value: e.target.value })} /></label>
+      {IMAGE_KEYS.includes(edit.key) ? <div className="field-block"><span className="label">{t('company.f.value')}</span>
+        <div className="co-img-pick">{isImage(edit.value) && <img className="co-img big" src={edit.value} alt={edit.label} />}
+          <label className="btn sm"><Icon name="plus" size={13} />{t('company.f.image')}<input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" hidden
+            onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) readImage(f).then((value) => set({ value })).catch(() => showToast(t('company.f.imageBad'))); }} /></label>
+          {edit.value && <button type="button" className="btn ghost sm" onClick={() => set({ value: '' })}>{t('company.f.imageClear')}</button>}</div>
+        <p className="dim small">{t('company.f.imageHint')}</p></div>
+        : <label className="field-block"><span className="label">{t('company.f.value')}</span>
+          <input className="input" maxLength={2000} value={edit.value} placeholder={t('company.f.valuePh')} onChange={(e) => set({ value: e.target.value })} /></label>}
       <div className="co-form-row">
         <label className="field-block"><span className="label">{t('company.f.category')}</span>
           <select className="input" value={edit.category} onChange={(e) => set({ category: e.target.value })}>{CATEGORIES.map((c) => <option key={c} value={c}>{t(`company.cat.${c}`)}</option>)}</select></label>

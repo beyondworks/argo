@@ -20,10 +20,10 @@ create table if not exists public.office_company_items (
   id uuid primary key,                                            -- 브라우저·이관 스크립트가 만든 id(두 번 눌려도 한 건)
   org_id uuid not null references public.msgr_orgs(id) on delete cascade,
   key text check (key is null or key in ('name', 'reg_name', 'ceo', 'biz_no', 'corp_no', 'open_date', 'address', 'biz_type', 'biz_item',
-    'manager', 'phone', 'fax', 'email', 'tax_email', 'website')),   -- 서식이 찾는 잘 알려진 항목. 그 밖은 null(자유 항목)
+    'manager', 'phone', 'fax', 'email', 'tax_email', 'website', 'seal', 'logo')),   -- 서식이 찾는 잘 알려진 항목. 그 밖은 null(자유 항목)
   category text not null default 'other' check (category in ('basic', 'bank', 'contact', 'tax', 'other')),
   label text not null check (length(btrim(label)) between 1 and 100),
-  value text not null default '' check (length(value) <= 2000),
+  value text not null default '' check (length(value) <= case when key in ('seal', 'logo') then 200000 else 2000 end), -- 도장·로고는 그림(data:image 또는 https 주소)
   notes text not null default '' check (length(notes) <= 2000),
   position integer not null default 0 check (position between 0 and 100000),
   redacted boolean not null default false,                         -- 화면에서 처음부터 가림(계좌·사업자번호 등) — 값은 그대로
@@ -152,6 +152,12 @@ language sql stable set search_path = public, pg_temp as $$
     'position', c.position, 'redacted', c.redacted, 'updated_at', c.updated_at, 'source', c.source);
 $$;
 
+-- 이력에 남길 모습 — 도장·로고 그림 본문은 이력에 싣지 않는다(이력 200건 × 그림이 쌓이지 않게. 되살리면 그림은 다시 올린다)
+create or replace function public.office_company_history_json(c public.office_company_items) returns jsonb
+language sql stable set search_path = public, pg_temp as $$
+  select public.office_company_item_json(c) || case when c.key in ('seal', 'logo') then jsonb_build_object('value', '') else '{}'::jsonb end;
+$$;
+
 -- 읽기: 멤버면 항목 전부. 관리자에게는 되살릴 수 있는 최근 지운 항목도
 create or replace function public.office_company_read(p_org uuid) returns jsonb
 language plpgsql stable security definer set search_path = public, pg_temp as $$
@@ -176,7 +182,7 @@ declare
   v_key text; v_cat text; v_label text; v_value text; v_notes text; v_pos integer; v_red boolean; h public.office_company_history%rowtype; b jsonb; n integer;
 begin
   if p_org is null or public.office_perf_role(p_org) is distinct from 'manager' then raise exception 'company_forbidden' using errcode = '42501'; end if;
-  if jsonb_typeof(p_data) is distinct from 'object' or octet_length(p_data::text) > 20000 then raise exception 'company_input'; end if;
+  if jsonb_typeof(p_data) is distinct from 'object' or octet_length(p_data::text) > 260000 then raise exception 'company_input'; end if;
 
   if p_action = 'items.order' then -- 한 분류 안의 순서: 바뀐 항목만 쓴다
     if jsonb_typeof(p_data->'ids') is distinct from 'array' or jsonb_array_length(p_data->'ids') > 300 then raise exception 'company_input'; end if;
@@ -206,7 +212,7 @@ begin
 
   if p_action = 'item.delete' then
     if old.id is null then return jsonb_build_object('ok', true, 'id', iid); end if; -- 이미 지웠으면 그대로(두 번 눌려도 한 번)
-    insert into public.office_company_history(org_id, item_id, kind, before, actor) values (p_org, iid, 'delete', public.office_company_item_json(old), who);
+    insert into public.office_company_history(org_id, item_id, kind, before, actor) values (p_org, iid, 'delete', public.office_company_history_json(old), who);
     delete from public.office_company_items where id = iid;
     delete from public.office_company_history where org_id = p_org and id <= (select id from public.office_company_history where org_id = p_org order by id desc offset 200 limit 1);
     return jsonb_build_object('ok', true, 'id', iid);
@@ -214,17 +220,18 @@ begin
   if p_action <> 'item.save' then raise exception 'company_input'; end if;
 
   v_label := public.office_company_in(p_data, 'label', 'text', 100);
-  v_value := coalesce(public.office_company_in(p_data, 'value', 'text', 2000), '');
+  v_key := public.office_company_in(p_data, 'key', 'text', 20);
+  v_value := coalesce(public.office_company_in(p_data, 'value', 'text', case when v_key in ('seal', 'logo') then 200000 else 2000 end), '');
+  if v_key in ('seal', 'logo') and v_value <> '' and v_value !~ '^(data:image/(png|jpeg|webp|svg\+xml);base64,[A-Za-z0-9+/=]+|https://\S+)$' then raise exception 'company_input'; end if; -- 그림만
   v_notes := coalesce(public.office_company_in(p_data, 'notes', 'text', 2000), '');
   v_cat := coalesce(public.office_company_in(p_data, 'category', 'text', 20), 'other');
-  v_key := public.office_company_in(p_data, 'key', 'text', 20);
   if jsonb_typeof(p_data->'redacted') not in ('boolean', 'null') and p_data ? 'redacted' then raise exception 'company_input'; end if;
   v_red := coalesce((p_data->>'redacted')::boolean, old.redacted, v_cat = 'bank' or coalesce(v_key in ('biz_no', 'corp_no'), false));
   if jsonb_typeof(p_data->'position') not in ('number', 'null') and p_data ? 'position' then raise exception 'company_input'; end if;
   v_pos := coalesce((p_data->>'position')::int, old.position,
     (select coalesce(max(x.position) + 1, 0) from public.office_company_items x where x.org_id = p_org and x.category = v_cat));
   if v_label is null or v_cat not in ('basic', 'bank', 'contact', 'tax', 'other') or v_pos not between 0 and 100000
-     or (v_key is not null and v_key not in ('name', 'reg_name', 'ceo', 'biz_no', 'corp_no', 'open_date', 'address', 'biz_type', 'biz_item', 'manager', 'phone', 'fax', 'email', 'tax_email', 'website')) then
+     or (v_key is not null and v_key not in ('name', 'reg_name', 'ceo', 'biz_no', 'corp_no', 'open_date', 'address', 'biz_type', 'biz_item', 'manager', 'phone', 'fax', 'email', 'tax_email', 'website', 'seal', 'logo')) then
     raise exception 'company_input';
   end if;
   if v_key is not null and exists (select 1 from public.office_company_items where org_id = p_org and key = v_key and id <> iid) then raise exception 'company_key'; end if;
@@ -240,7 +247,7 @@ begin
   if (old.key, old.category, old.label, old.value, old.notes, old.position, old.redacted) is not distinct from (v_key, v_cat, v_label, v_value, v_notes, v_pos, v_red) then
     return jsonb_build_object('ok', true, 'item', public.office_company_item_json(old)); -- 같은 값은 다시 쓰지 않는다
   end if;
-  insert into public.office_company_history(org_id, item_id, kind, before, actor) values (p_org, iid, 'update', public.office_company_item_json(old), who);
+  insert into public.office_company_history(org_id, item_id, kind, before, actor) values (p_org, iid, 'update', public.office_company_history_json(old), who);
   update public.office_company_items set key = v_key, category = v_cat, label = v_label, value = v_value, notes = v_notes, position = v_pos, redacted = v_red,
     updated_by = who, updated_at = clock_timestamp() where id = iid returning * into c;
   delete from public.office_company_history where org_id = p_org and id <= (select id from public.office_company_history where org_id = p_org order by id desc offset 200 limit 1);
@@ -501,7 +508,7 @@ begin
   return jsonb_build_object('dry', p_dry, 'evals', n_evals, 'people', n_people);
 end $$;
 
-revoke all on function public.office_member_name(uuid, uuid), public.office_company_in(jsonb, text, text, integer), public.office_company_item_json(public.office_company_items),
+revoke all on function public.office_member_name(uuid, uuid), public.office_company_in(jsonb, text, text, integer), public.office_company_item_json(public.office_company_items), public.office_company_history_json(public.office_company_items),
   public.office_perf_eval_json(public.office_perf_evals), public.office_company_purge(boolean) from public, anon, authenticated;
 revoke all on function public.office_company_read(uuid), public.office_company_write(uuid, text, jsonb), public.office_people_read(uuid), public.office_people_write(uuid, text, jsonb),
   public.office_perf_eval_list(uuid), public.office_perf_eval_write(uuid, text, jsonb), public.office_task_import(uuid, jsonb) from public, anon;

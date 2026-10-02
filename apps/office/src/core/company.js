@@ -5,7 +5,8 @@
 // ── 견적·계약 서식(트랙 A)이 읽는 API ──
 //   import { getCompanyProfile } from '../core/company.js';
 //   const p = await getCompanyProfile(space);   // { name, regName, ceo, bizNo, corpNo, openDate, address, bizType, bizItem, taxEmail,
-//                                               //   manager, phone, fax, email, website, accounts: [{ label, value }], missing: [key…] }
+//                                               //   manager, phone, fax, email, website, seal, logo(그림 주소 — data:image·https, 없으면 ''),
+//                                               //   accounts: [{ label, value }], missing: [key…] }
 //   - 내 공간('me')은 회사가 없어 빈 값(missing = 서식 칸 전부)을 돌려준다. 읽지 못하면(권한·네트워크) 오류를 던진다.
 //   - 화면에서 쓰려면 useCompany(space) → { data: { role, items, deleted }, profile, error, loading, reload }
 import { useCallback, useEffect, useState } from 'react';

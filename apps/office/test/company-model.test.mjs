@@ -19,6 +19,10 @@ test('회사 정보 서식 값: key가 붙은 항목 먼저, 없으면 항목 �
   assert.ok(p.missing.includes('address') && !p.missing.includes('name'));
   assert.deepEqual(companyProfile([]).missing, DOC_KEYS, '빈 회사는 서식 칸 전부가 빈 칸');
   assert.deepEqual(companyProfile(null).accounts, []);
+  // 도장·로고(트랙 A 계약서) — 그림 주소만, 그림이 아니면 빈 값
+  const img = companyProfile([it('회사 도장', 'data:image/png;base64,AAAA', { key: 'seal' }), it('로고', 'javascript:x', { key: 'logo' })]);
+  assert.deepEqual([img.seal, img.logo], ['data:image/png;base64,AAAA', '']);
+  assert.equal(itemPayload({ label: '도장', key: 'seal', value: 'data:image/png;base64,' + 'A'.repeat(5000) }).value.length, 22 + 5000, '그림은 2,000자에서 자르지 않는다');
 });
 
 test('항목 이름 짐작은 전체가 같을 때만(부분 일치로 엉뚱한 칸에 들어가지 않게)', () => {

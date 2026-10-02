@@ -7,6 +7,8 @@ const weekOf = (day, back) => { const d = new Date(`${day}T00:00:00Z`); d.setUTC
 const ago = (days) => new Date(Date.now() - days * 86400e3).toISOString();
 const uid = () => crypto.randomUUID();
 
+// 예시 도장 — 가상의 붉은 원형 인장(SVG)
+const SEAL = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="44" fill="none" stroke="#c0392b" stroke-width="6"/><text x="50" y="46" font-size="20" text-anchor="middle" fill="#c0392b" font-family="serif">비욘드</text><text x="50" y="70" font-size="20" text-anchor="middle" fill="#c0392b" font-family="serif">웍스인</text></svg>')))}`;
 const item = (category, key, label, value, extra = {}) => ({ id: uid(), key, category, label, value, notes: '', position: 0, redacted: category === 'bank' || key === 'biz_no', updated_at: ago(3), source: null, ...extra });
 function companyItems(space) {
   if (space !== 'beyondworks') return [item('basic', 'name', '상호', '린 스튜디오(예시)'), item('contact', 'email', '대표 이메일', 'hello@lean-studio.example')];
@@ -18,7 +20,7 @@ function companyItems(space) {
     item('contact', 'website', '홈페이지', 'https://beyondworks.example'),
     item('tax', 'biz_type', '업태', '정보통신업, 전문·과학 및 기술서비스업'), item('tax', 'biz_item', '종목', '응용 소프트웨어 개발 및 공급업'),
     item('tax', 'tax_email', '세금계산서 이메일', 'tax@beyondworks.example'), item('tax', null, '관할 세무서', '가상세무서', { notes: '부가세 신고는 분기마다' }),
-    item('other', null, '회사 도장 보관', '대표 책상 둘째 서랍'),
+    item('basic', 'seal', '회사 도장', SEAL), item('other', null, '회사 도장 보관', '대표 책상 둘째 서랍'),
   ];
   const pos = {};
   return list.map((x) => ({ ...x, position: (pos[x.category] = (pos[x.category] ?? -1) + 1) }));
