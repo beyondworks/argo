@@ -4,6 +4,8 @@
 // 메신저에선 눌러도 반응 없는 링크와 깨진 그림만 남았다.
 //
 // 보안 경계(절대): 파일을 realpath로 풀어 **그 회사 vault의 첨부 구역(SERVE_PREFIXES — files/·projects/·_imported/, 각 구역의 realpath)** 안일 때만 붙인다.
+// 구역 안이어도 결과물 확장자(tg-format ATTACH_EXT — 텔레그램과 같은 목록)만 붙이고, _imported/unsorted/(가져오기가 분류 못 한 개인 파일)는
+// 구역에서 뺀다 — 분리 검수 M-1(2026-10-02): 마크다운 링크 하나로 _imported/unsorted/…/credentials.json·secrets.yaml·wallet.kdbx 등이 방에 올라갔다.
 // 회사 루트 전체가 아닌 이유: 루트에는 connections.json·mcp.json·capabilities.json 같은 설정이, vault에는 journal/·notes/ 같은 기억이 있다.
 // 심링크로 밖을 가리키는 것·`..`·다른 회사·홈의 다른 폴더는 realpath 결과가 구역 밖이라 걸린다. 구역 안 경로라도 숨김 조각(.env, .ssh 등)·
 // env 이름은 거부한다. 읽을 때 다시 realpath·O_NOFOLLOW·inode 대조로 판정한다(계획과 읽기 사이 바꿔치기 방어).
@@ -18,18 +20,24 @@ import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { paths } from '../workspace.mjs';
 import { SERVE_PREFIXES } from '../artifact-zones.mjs';
-import { extractFileRefs } from '../tg-format.mjs';
+import { ATTACH_EXT, extractFileRefs } from '../tg-format.mjs';
 import { pick } from './protocol.mjs';
 
 export const ATTACH_MAX = 25 * 1024 * 1024; // 첨부 상한 — 앱 업로드·DB 정책(26214400)과 같은 값
 export const REPLY_FILES_MAX = 10;          // 한 답에 붙이는 파일 수 상한(Storage 업로드·첨부 행 폭주 방지)
+export const ROUTINE_FILES_MAX = 3;         // 루틴 결과 글 상한 — 일정마다 반복되는 글이라 더 낮게(분리 검수 M-5)
 
 // 마크다운 이미지·링크: !?[글자](대상) — 대상 안 괄호는 한 겹까지(이름 (1).pdf). 펼친 반복(겹치는 갈래 없음)이고 글자는 다음 `[`를 넘지 않아 입력 길이에 선형이다 —
 // 예전 꼴(지연 반복 + \s* + 제목 선택)은 `[a](x` 뒤 공백 8천 개에 282초가 걸렸다(실측). 제목("…")은 정규식 밖에서 뗀다(splitTitle).
 const MD_LINK = /(!?)\[([^[\]\n]*)\]\(([^()\n]*(?:\([^()\n]*\)[^()\n]*)*)\)/g;
 const CODE = /```[\s\S]*?(?:```|$)|`[^`\n]*`/g;
 const ZONES = SERVE_PREFIXES.map((z) => z.replace(/\/$/, ''));
-const SECRET_NAME = /(^|\.)env(\.|$)|^id_(rsa|dsa|ecdsa|ed25519)|\.(pem|p12|pfx)$/i;
+const SECRET_NAME = /(^|\.)env(\.|$)|^id_(rsa|dsa|ecdsa|ed25519)|\.(pem|p12|pfx|key|kdbx|sqlite3?|db)$/i; // 경로의 모든 조각
+const SECRET_WORD = /(^|[^a-z0-9])(credentials?|secrets?|tokens?|auth)([^a-z0-9]|$)/i;  // 파일 이름(마지막 조각) 안의 낱말
+const SECRET_DIR = /^(credentials?|secrets?|tokens?|auth)$/i;                           // 폴더 조각은 이름 전체가 그 낱말일 때만(auth-flow 같은 프로젝트 폴더는 통과)
+const UNSORTED = 'unsorted';                                                            // _imported/unsorted/ — 첨부 구역에서 뺀다
+const secretName = (name) => name.startsWith('.') || SECRET_NAME.test(name) || SECRET_WORD.test(name);
+const secretDir = (seg) => seg.startsWith('.') || SECRET_NAME.test(seg) || SECRET_DIR.test(seg);
 
 const safeDecode = (s) => { try { return decodeURIComponent(s); } catch { return s; } };
 /** `대상 "제목"`에서 제목을 뗀다(문자열 처리 — 정규식 되돌아가기 없음). */
@@ -55,44 +63,57 @@ function localTarget(dest, vault) {
   return ZONES.some((z) => rel.startsWith(`${z}/`)) ? join(vault, rel) : null;
 }
 
-async function zoneRoots(vault) {
-  const roots = await Promise.all(ZONES.map((z) => realpath(join(vault, z)).catch(() => null)));
-  return roots.filter(Boolean);
+async function zoneRoots(vault) { // [{ zone, root }] — 구역 이름은 _imported/unsorted 제외 판정용
+  const roots = await Promise.all(ZONES.map(async (zone) => ({ zone, root: await realpath(join(vault, zone)).catch(() => null) })));
+  return roots.filter((r) => r.root);
 }
-const zoneLiterals = (vault) => ZONES.map((z) => resolve(vault, z)); // 풀지 못한 경로(없는 파일)의 글자 그대로 판정용
+const zoneLiterals = (vault) => ZONES.map((zone) => ({ zone, root: resolve(vault, zone) })); // 풀지 못한 경로(없는 파일)의 글자 그대로 판정용
 
-/** realpath가 첨부 구역 안이고 숨김·비밀 이름 조각이 없을 때만 true. */
-function inZone(real, roots) {
-  for (const root of roots) {
-    const rel = relative(root, real);
+/** 경로가 어느 첨부 구역 아래인지(글자 그대로의 포함 관계만) — { zone, segs } 또는 null. */
+function zoneRel(path, roots) {
+  for (const { zone, root } of roots) {
+    const rel = relative(root, path);
     if (!rel || isAbsolute(rel) || rel === '..' || rel.startsWith(`..${sep}`)) continue;
-    const segs = rel.split(sep);
-    if (segs.some((s) => s.startsWith('.') || SECRET_NAME.test(s))) return false;
-    return true;
+    return { zone, segs: rel.split(sep) };
   }
-  return false;
+  return null;
+}
+/** realpath가 첨부 구역 안이고(_imported/unsorted 제외) 숨김·비밀 이름 조각이 없을 때만 true. */
+function inZone(real, roots) {
+  const z = zoneRel(real, roots);
+  if (!z) return false;
+  if (z.zone === '_imported' && z.segs.length > 1 && z.segs[0].toLowerCase() === UNSORTED) return false; // 대소문자 무시 FS(macOS)에서 Unsorted/ 우회 방지
+  return !z.segs.slice(0, -1).some(secretDir) && !secretName(z.segs[z.segs.length - 1]);
 }
 
-const reasonText = (kind, lang) => ({
+const reasonText = (kind, lang, max = REPLY_FILES_MAX) => ({
   missing: pick('파일이 없습니다', 'file not found', lang),
   outside: pick('작업 폴더 밖 파일이라 첨부하지 않았습니다', 'outside the company work folder — not attached', lang),
+  secret: pick('설정·비밀 파일로 보여 첨부하지 않았습니다', 'looks like a settings or secret file — not attached', lang),
+  type: pick('첨부하지 않는 파일 형식입니다', 'file type not attached', lang),
   big: pick('25MB 초과', 'over 25MB', lang),
-  many: pick(`한 답에 최대 ${REPLY_FILES_MAX}개까지 첨부합니다`, `at most ${REPLY_FILES_MAX} files per reply`, lang),
+  many: pick(`한 답에 최대 ${max}개까지 첨부합니다`, `at most ${max} files per reply`, lang),
 }[kind]);
 
-/** 판정 하나 — { ok:true, abs, name, bytes } 또는 { ok:false, name, kind }.
-    풀지 못한 경로(없는 파일)는 글자 그대로 구역 안일 때만 '없음' — 밖이면 존재와 무관하게 '밖'(방 사람이 크루를 통해 남의 경로에 파일이 있는지 알아내지 못하게). */
+/** 판정 하나 — { ok:true, abs, name, bytes } 또는 { ok:false, name, kind } 또는 { skip:true }(첨부 후보가 아님 — 본문·안내 모두 손대지 않는다).
+    풀지 못한 경로(없는 파일)는 글자 그대로 구역 안이면 '없음', 구역 밖이면 후보가 아니다 — `/login`·`/api/v1/users` 같은 웹 경로 링크를
+    로컬 파일로 보고 본문에서 지우고 '작업 폴더 밖' 안내를 붙이던 것(분리 검수 L-2). 있는 구역 밖 파일은 그대로 '밖'으로 막는다. */
 async function judge(abs, roots, literals) {
   const shown = basename(abs) || 'file';
-  // 쓴 이름이 숨김·비밀 이름이면 풀어 보기 전에 거부(.env가 구역 안 다른 파일을 가리키는 심링크여도). 경로 중간 조각은 아래 realpath 기준
-  // 구역 상대 경로로 본다 — 실제 루트가 ~/.argo/workspaces라 절대 경로 전체의 숨김 조각을 보면 정상 파일까지 막힌다.
-  if (shown.startsWith('.') || SECRET_NAME.test(shown)) return { ok: false, name: shown, kind: 'outside' };
+  // 쓴 이름이 숨김·비밀 파일 이름(.env·id_rsa·*.key 등 파일 꼴)이면 풀어 보기 전에 거부(.env가 구역 안 다른 파일을 가리키는 심링크여도).
+  // 낱말 규칙(auth·token 등)은 풀어 본 뒤에만 쓴다 — `/auth`·`/api/token` 같은 웹 경로 링크를 막지 않게(L-2).
+  // 경로 중간 조각은 아래 realpath 기준 구역 상대 경로로 본다 — 실제 루트가 ~/.argo/workspaces라 절대 경로 전체의 숨김 조각을 보면 정상 파일까지 막힌다.
+  if (shown.startsWith('.') || SECRET_NAME.test(shown)) return { ok: false, name: shown, kind: 'secret' };
   let real;
   try { real = await realpath(abs); } catch (e) {
-    const lexical = inZone(resolve(abs), [...literals, ...roots]);
-    return { ok: false, name: shown, kind: lexical && (e?.code === 'ENOENT' || e?.code === 'ENOTDIR') ? 'missing' : 'outside' };
+    const gone = e?.code === 'ENOENT' || e?.code === 'ENOTDIR';
+    if (zoneRel(resolve(abs), [...literals, ...roots])) return { ok: false, name: shown, kind: gone ? 'missing' : 'outside' };
+    return gone ? { skip: true } : { ok: false, name: shown, kind: 'outside' };
   }
-  if (!inZone(real, roots)) return { ok: false, name: shown, kind: 'outside' };
+  if (!zoneRel(real, roots)) return { ok: false, name: shown, kind: 'outside' };
+  if (secretName(shown) || secretName(basename(real))) return { ok: false, name: shown, kind: 'secret' };
+  if (!inZone(real, roots)) return { ok: false, name: shown, kind: 'outside' }; // _imported/unsorted·비밀 이름 폴더
+  if (!ATTACH_EXT.test(basename(real))) return { ok: false, name: basename(real), kind: 'type' }; // 실제 파일 이름 기준(심링크 이름을 .pdf로 붙여도 소용없다)
   const st = await stat(real).catch(() => null);
   if (!st?.isFile()) return { ok: false, name: shown, kind: 'missing' };
   if (st.size > ATTACH_MAX) return { ok: false, name: basename(real), kind: 'big' };
@@ -109,13 +130,14 @@ export async function planReplyFiles(wsId, text, { lang = 'ko', max = REPLY_FILE
   const files = []; const fails = []; const seen = new Map(); // 후보 키(realpath 또는 쓴 경로) → 판정
   const take = async (abs) => {
     const j = await judge(abs, roots, literals);
+    if (j.skip) return j;
     const key = j.ok ? j.abs : abs;
     if (seen.has(key)) return seen.get(key);
     let out = j;
     if (j.ok && files.length >= max) out = { ok: false, name: j.name, kind: 'many' };
     seen.set(key, out); if (key !== abs) seen.set(abs, out);
     if (out.ok) files.push({ abs: out.abs, name: out.name, bytes: out.bytes });
-    else if (!fails.some((f) => f.key === key)) fails.push({ key, name: out.name, reason: reasonText(out.kind, lang) });
+    else if (!fails.some((f) => f.key === key)) fails.push({ key, name: out.name, reason: reasonText(out.kind, lang, max) });
     return out;
   };
   // 1) 코드 밖의 마크다운 이미지·링크 — 순서대로 판정하고 경로를 지운다
@@ -129,6 +151,7 @@ export async function planReplyFiles(wsId, text, { lang = 'ko', max = REPLY_FILE
       const abs = localTarget(m[3], vault);
       if (!abs) continue;
       const j = await take(abs);
+      if (j.skip) continue; // 첨부 후보가 아니다(웹 경로 링크 등) — 원문 그대로
       const label = m[2].trim();
       const labelText = label && !localTarget(label, vault) ? label : (j.name ?? basename(abs));
       let rep;
@@ -145,15 +168,25 @@ export async function planReplyFiles(wsId, text, { lang = 'ko', max = REPLY_FILE
   return { body, files, fails: fails.map(({ name, reason }) => ({ name, reason })) };
 }
 
-/** 계획한 파일 읽기 — 같은 경계를 다시 판정하고(계획 뒤 바꿔치기 방어) 마지막 조각은 심링크를 따라가지 않는다. 실패는 roomSafe 사유. */
-export async function readReplyFile(wsId, file, lang = 'ko') {
+/** 계획한 파일 읽기 — 같은 경계를 다시 판정하고(계획 뒤 바꿔치기 방어) 마지막 조각은 심링크를 따라가지 않는다. 실패는 roomSafe 사유.
+    io — 시험용 주입(기본은 node:fs/promises). 바꿔치기 방어(분리 검수 L-6): 예전에는 realpath → open → stat(경로)였는데,
+    open과 stat이 같은 중간 폴더 심링크를 따라가 둘 다 밖 파일을 보고 통과했다. 지금은 **연 뒤에** 경로를 다시 풀어 그대로인지 보고
+    (바꿔치기를 유지하면 구역 밖으로 풀린다) 그 경로의 inode를 연 fd의 fstat와 대조한다(열자마자 되돌려도 fd는 밖 파일이라 다르다).
+    남는 틈: 연 뒤 되돌림 → 다시 풀기 → 다시 바꿔치기 → stat을 마이크로초 안에 맞추는 경합. 노드에 openat·fd 경로 조회가 없어 이 이상은 비용이 크다. */
+export async function readReplyFile(wsId, file, lang = 'ko', io = { open, realpath, stat }) {
   const roots = await zoneRoots(paths(wsId).vault);
   const fail = (kind) => Object.assign(new Error(reasonText(kind, lang)), { roomSafe: true });
-  const real = await realpath(file.abs).catch((e) => { throw e?.code === 'ENOENT' ? fail('missing') : fail('outside'); });
-  if (real !== file.abs || !inZone(real, roots)) throw fail('outside');
-  const fh = await open(real, FS.O_RDONLY | (FS.O_NOFOLLOW ?? 0)).catch((e) => { throw e?.code === 'ENOENT' ? fail('missing') : fail('outside'); });
+  const resolveIn = async () => {
+    const real = await io.realpath(file.abs).catch((e) => { throw e?.code === 'ENOENT' ? fail('missing') : fail('outside'); });
+    if (real !== file.abs || !inZone(real, roots) || !ATTACH_EXT.test(basename(real))) throw fail('outside');
+    return real;
+  };
+  const real = await resolveIn();
+  const fh = await io.open(real, FS.O_RDONLY | (FS.O_NOFOLLOW ?? 0)).catch((e) => { throw e?.code === 'ENOENT' ? fail('missing') : fail('outside'); });
   try {
-    const [st, again] = await Promise.all([fh.stat(), stat(real).catch(() => null)]);
+    const st = await fh.stat();
+    await resolveIn(); // 연 뒤 경로가 그대로인가
+    const again = await io.stat(real).catch(() => null);
     if (!st.isFile() || !again || again.ino !== st.ino || again.dev !== st.dev) throw fail('outside');
     if (st.size > ATTACH_MAX) throw fail('big');
     const buf = await fh.readFile();

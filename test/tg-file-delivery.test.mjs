@@ -48,8 +48,8 @@ test('배선: 게이트웨이 발신이 실패를 수집·통보하고, 메신�
   // 아르고 메신저 자동 첨부(2026-10-02) — 구역·상한·구역 밖 불가를 두 언어 모두 가르친다(예전 "텔레그램만 자동 첨부" 문구는 사실과 달랐다)
   assert.match(chat, /vault\/projects\/·vault\/files\/·vault\/_imported\/ 안에 저장/, '첨부 구역(ko)');
   assert.match(chat, /아르고 메신저에서는 그 파일이 자동 첨부된다\(답변당 최대 10개\)/, '메신저 자동 첨부·상한(ko)');
-  assert.match(chat, /그 구역 밖 파일\([^)]*\.env\)은 붙지 않는다\. 결과물은 반드시 그 구역에 저장하라/, '구역 밖 불가(ko)');
+  assert.match(chat, /그 구역 밖 파일\([^)]*_imported\/unsorted\/[^)]*\.env\)은 붙지 않고, 결과물 형식\([^)]*\)만 붙는다[^.]*\. 결과물은 반드시 그 구역에 저장하라/, '구역 밖·형식 불가(ko)');
   assert.match(chat, /under vault\/projects\/, vault\/files\/ or vault\/_imported\//, '첨부 구역(en)');
   assert.match(chat, /Argo Messenger attaches those files automatically \(up to 10 per reply\)/, '메신저 자동 첨부·상한(en)');
-  assert.match(chat, /are never attached\. Save deliverables in those folders\./, '구역 밖 불가(en)');
+  assert.match(chat, /_imported\/unsorted\/, hidden files and \.env — are never attached, and only deliverable formats are attached \([^)]*\)\. Save deliverables in those folders\./, '구역 밖·형식 불가(en)');
 });
