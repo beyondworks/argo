@@ -21,7 +21,7 @@ export function useSelection(id, opts = {}) {
   const { value, onChange, keys } = opts;
   const [own, setOwn] = useState(NONE);
   const raw = value ?? own, set = onChange ?? setOwn, list = keys?.join('\n');
-  const sel = useMemo(() => { if (!keys) return raw; const ok = new Set(keys); const out = new Set([...raw].filter((k) => ok.has(k))); return out.size === raw.size ? raw : out; }, [raw, list]); // eslint-disable-line react-hooks/exhaustive-deps
+  const sel = useMemo(() => { if (!keys) return raw; const ok = new Set(keys); const out = new Set([...raw].filter((k) => ok.has(k))); return out.size === raw.size ? raw : out; }, [raw, list]);
   const ref = useRef(null);
   ref.current = { ...opts, sel, set }; // actions·boxes(항목 상자를 직접 주는 묶음)·onEnd(끌기를 끝낸 뒤)
   useEffect(() => {

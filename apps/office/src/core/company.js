@@ -60,7 +60,7 @@ function useLoad(loader, space) {
     setState((s) => ({ ...s, loading: true, error: null }));
     try { setState({ data: await loader(space, { again }), error: null, loading: false }); }
     catch (e) { setState({ data: null, error: companyError(e), loading: false }); }
-  }, [space]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [space]);
   useEffect(() => { load(false); }, [load]);
   return { ...state, reload: () => load(true) };
 }
