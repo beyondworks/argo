@@ -18,7 +18,7 @@ const money = (amount) => new Intl.NumberFormat(getLang() === 'en' ? 'en-US' : '
 const day = (value) => (value ? new Date(value).toLocaleDateString(getLang() === 'en' ? 'en-US' : 'ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' }) : '');
 const kstDay = (value) => new Date(Date.parse(value) + 9 * 3600e3).toISOString().slice(0, 10); // 한국 날짜
 const today = () => kstDay(new Date().toISOString());
-const orderRedact = (order, field, run, blocked) => ({ on: order.redacted?.includes(field), disabled: blocked, onToggle: () => run('redact.set', { entity: 'order', id: order.id, field, on: !order.redacted?.includes(field) }).catch(() => {}) });
+const orderRedact = (order, field, run, blocked) => ({ on: order.redacted?.includes(field), disabled: blocked, cellKey: `order:${order.id}:${field}`, onToggle: () => run('redact.set', { entity: 'order', id: order.id, field, on: !order.redacted?.includes(field) }).catch(() => {}) });
 
 // 묶기는 사람마다 이 기기에 기억한다(보기 설정과 같은 성격 — 서버에 쓰지 않는다)
 const GROUP_KEY = 'argo-office-deal-group';

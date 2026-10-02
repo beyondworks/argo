@@ -1,11 +1,11 @@
 // 가림 입자(12차 추가 2, 유건 10/2 — 참고 영상 refs10/shimmer.mov, 텔레그램 스포일러 계열). 가림이 처음 보일 때 받는다(Redact.jsx, 첫 화면 150KB 상한).
 // 글자는 안 보이고 그 자리 줄 높이 띠 안에 1~2px(가끔 3px) 또렷한 점이 흩어져 떠다니며 깜빡이고 새로 생긴다. 띠 가장자리로 갈수록 듬성해 테두리가 들쭉날쭉하다.
-// 열기(누르면) = 약 0.28초 동안 입자가 바깥으로 흩어지며 사라지고 글자는 옅게 나타나 원래 색으로(redact.css 투명도 전환). 다시 덮일 때는 반대로.
+// 열기(누르면) = 약 0.28초 — 처음 0.15초쯤은 입자가 바깥으로 흩어지고, 이어서 사라지며 글자가 옅게 나타나 원래 색으로(redact.css 투명도 전환, 0.17초 뒤 0.11초). 다시 덮일 때는 반대로.
 // 성능: 루프(requestAnimationFrame) 하나가 화면에 보이는 가림만 그린다 — 화면 밖(IntersectionObserver)·숨긴 탭은 멈춘다. 움직임 줄이기 설정이면 정지 입자 한 장.
 // 참고 영상 실측(450×148, 글자 높이 12px): 띠 높이 ≈ 글자 높이 × 1.25, 진한 점 ≈ 32px²에 하나(평균 2×2px) + 옅은 점 비슷한 수, 띠 넓이의 15~20%가 칠해진다.
-import { particleCount, spawn, step, burst } from './dust-model.js';
+import { particleCount, spawn, step, burst, revealFade } from './dust-model.js';
 
-const DUR = 280; // 열기·덮기(ms)
+const DUR = 290; // 열기·덮기(ms)
 const items = new Map(); // span.redact → 상태
 let raf = 0, io = null, ro = null;
 const opened = new WeakSet(); // 막 열렸던 가림 — 다시 덮일 때 입자가 모여드는 전환을 한다
@@ -20,7 +20,7 @@ function measure(it) {
   c.style.cssText = `left:${left - pad}px;top:${top - pad}px;width:${w + pad * 2}px;height:${h + pad * 2}px`;
   c.width = Math.ceil((w + pad * 2) * dpr); c.height = Math.ceil((h + pad * 2) * dpr);
   it.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  it.w = w; it.h = h; it.pad = pad;
+  it.w = w; it.h = h; it.pad = pad; it.dpr = dpr;
   const n = particleCount(w, h);
   it.parts = Array.from({ length: n }, () => spawn(w, h, Math.random));
   it.colorAt = 0;
@@ -31,12 +31,12 @@ function draw(it, now) {
   if (now - it.colorAt > 1000) { it.color = getComputedStyle(it.el.parentElement ?? it.el).color; it.colorAt = now; } // 글자색(라이트·다크·테마) — 1초마다 다시 읽는다
   ctx.clearRect(0, 0, w + pad * 2, h + pad * 2);
   ctx.fillStyle = it.color;
-  const k = it.mode === 'reveal' ? 1 - Math.min(1, (now - it.t0) / DUR) : it.mode === 'cover' ? Math.min(1, (now - it.t0) / DUR) : 1;
+  const k = it.mode === 'reveal' ? revealFade(now - it.t0) : it.mode === 'cover' ? Math.min(1, (now - it.t0) / DUR) : 1;
   for (const p of it.parts) {
     const a = p.alpha * k;
     if (a < 0.02) continue;
     ctx.globalAlpha = a;
-    ctx.fillRect(pad + p.x, pad + p.y, p.s, p.s);
+    ctx.fillRect(Math.round((pad + p.x) * it.dpr) / it.dpr, Math.round((pad + p.y) * it.dpr) / it.dpr, p.s, p.s); // 기기 화소에 맞춰 또렷하게
   }
   ctx.globalAlpha = 1;
 }

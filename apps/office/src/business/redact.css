@@ -5,9 +5,9 @@
 /* 표에서는 칸 전체가 가림 영역 — 칸의 안쪽 여백을 가림 영역이 대신 가져서 가장자리를 우클릭해도 메뉴가 뜬다(유건 9/29) */
 .table td:has(> .redact) { padding: 0; }
 .table td > .redact { display: block; padding: 10px 14px; }
-.redact > .redact-v { transition: opacity 280ms cubic-bezier(0.23, 1, 0.32, 1); }
+.redact > .redact-v { transition: opacity 110ms ease-out 170ms; } /* 열기: 입자가 먼저 흩어지고(0.17초) 글자가 옅은 색에서 원래 색으로(0.11초) — 참고 영상 4.55~4.85초 */
 .redact.on { color: transparent !important; user-select: none; cursor: pointer; display: inline-block; min-width: 3.5em; vertical-align: bottom; }
-.redact.on > .redact-v { opacity: 0; }
+.redact.on > .redact-v { opacity: 0; transition-duration: 120ms; transition-delay: 0s; } /* 덮기: 글자가 먼저 사라지고 입자가 모여든다 */
 .redact > canvas.dust { position: absolute; pointer-events: none; }
 .redact .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 @media (prefers-reduced-motion: reduce) { .redact > .redact-v { transition: none; } }

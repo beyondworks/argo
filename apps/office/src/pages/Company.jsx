@@ -97,7 +97,7 @@ export default function Company({ space }) {
             {manager && <input type="checkbox" className="co-row-check" checked={sel.has(x.id)} onChange={() => toggleSel(x.id)} aria-label={t('company.select', { name: x.label })} />}
             <div className="co-row-main">
               {manager ? <button type="button" className="co-label link-btn" onClick={() => openEdit(x)}>{x.label}</button> : <strong className="co-label">{x.label}</strong>}
-              {x.value && (IMAGE_KEYS.includes(x.key) && isImage(x.value) ? <img className="co-img" src={x.value} alt={x.label} /> : <Redact on={hidden(x)} defer={sel.size > 1 && sel.has(x.id)} onToggle={() => toggleRedact(x)}><span className="co-value">{x.value}</span></Redact>)}
+              {x.value && (IMAGE_KEYS.includes(x.key) && isImage(x.value) ? <img className="co-img" src={x.value} alt={x.label} /> : <Redact on={hidden(x)} cellKey={`company:${x.id}`} defer={sel.size > 1 && sel.has(x.id)} onToggle={() => toggleRedact(x)}><span className="co-value">{x.value}</span></Redact>)}
               {x.notes && <small className="co-notes dim">{x.notes}</small>}
             </div>
             {x.key && <button type="button" className="badge co-key" aria-haspopup="menu" title={`${t('company.f.key')}: ${t(`company.key.${x.key}`)}`} onClick={(e) => openMenu(e, [
