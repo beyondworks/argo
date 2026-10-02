@@ -145,7 +145,7 @@ test('guardedLookup — 이름이 내부 주소로 풀리면 연결하지 않는
 });
 
 test('nodeRequest — HTML은 상한까지만, 3xx는 따라가지 않고 그대로, 비 HTML은 본문 없이, 시간 초과는 실패', async () => {
-  const big = `<head><title>큰 문서</title></head>${'x'.repeat(700 * 1024)}`;
+  const big = `<head><title>큰 문서</title>${'x'.repeat(700 * 1024)}`; // </head>가 없어야 상한에서 끊기는지 본다(있으면 거기서 멈춘다 — msgr-link-preview-node-head.test.mjs)
   const s = await server((req, res) => {
     if (req.url === '/big') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); res.end(big); }
     else if (req.url === '/hop') { res.writeHead(302, { location: 'http://169.254.169.254/' }); res.end(); }

@@ -3,9 +3,9 @@
 // 환경변수: SUPABASE_URL·SUPABASE_ANON_KEY(엣지 기본 제공). 서비스 키는 쓰지 않는다 — 글 읽기·저장 모두 부른 사람 권한(RLS·RPC 검사).
 // 규칙·SSRF 검사는 ../_shared/link-preview.js(게이트웨이·앱과 같은 파일), 요청 처리는 ./core.js.
 // 남은 위험(기록): Deno fetch는 연결할 때 이름을 다시 풀어 검사한 주소와 다른 주소로 붙을 수 있다(DNS 재바인딩).
-//   이름 풀기 → 검사 → 요청 사이 간격이 짧고, 리다이렉트마다 다시 검사하며, 응답은 HTML 512KB만 읽어 카드 글자만 돌려준다.
+//   이름 풀기 → 검사 → 요청 사이 간격이 짧고, 리다이렉트마다 다시 검사하며, 응답은 HTML을 </head>(최대 1MB)까지만 읽어 카드 글자만 돌려준다.
 //   본체 게이트웨이(Node)는 연결 시점 주소 검사(lookup 훅)로 이 틈이 없다.
-import { CORS, handle, jwtSub, readLimited } from './core.js';
+import { CORS, handle, jwtSub, readHead } from './core.js';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const ANON = Deno.env.get('SUPABASE_ANON_KEY')!;
@@ -30,7 +30,7 @@ async function request(url: string, { timeoutMs, maxBytes }: { timeoutMs: number
     const headers = { 'content-type': r.headers.get('content-type') ?? '', location: r.headers.get('location') ?? '' };
     const html = /^(text\/html|application\/xhtml\+xml)\b/i.test(headers['content-type']);
     if (r.status !== 200 || !html) { await r.body?.cancel().catch(() => {}); return { status: r.status, headers, body: new Uint8Array() }; }
-    return { status: r.status, headers, body: await readLimited(r.body, maxBytes) };
+    return { status: r.status, headers, body: await readHead(r.body, maxBytes) };
   } finally { clearTimeout(timer); }
 }
 

@@ -4,7 +4,7 @@
 //   링크 주소는 요청 본문으로 받지 않는다 — 자기 글에 실제로 있는 링크만 가져온다(임의 주소를 대신 열어 주는 통로가 되지 않게).
 // 판정 순서(돈 드는 네트워크 전에 거른다): 로그인 → 글 번호 → 글 읽기(못 읽으면 404) → 작성자 본인 → 이미 카드 있음(그대로 돌려줌)
 //   → 지운 글·10분 지남 → 첫 링크 → 가져오기(실패하면 카드 없음, 다시 시도 없음) → 저장.
-import { firstUrl, fetchLinkPreview } from '../_shared/link-preview.js';
+import { firstUrl, fetchLinkPreview, headScanner } from '../_shared/link-preview.js';
 
 export const CORS = {
   'Access-Control-Allow-Origin': '*', // 쿠키가 아니라 Authorization 헤더로만 인증 — 앱 출처(tauri://localhost 등)가 여러 개다
@@ -25,24 +25,18 @@ export function jwtSub(authHeader) {
   } catch { return null; }
 }
 
-/** 웹 스트림을 maxBytes까지만 읽고 끊는다(512KB 상한 — 큰 응답을 끝까지 받지 않는다). */
-export async function readLimited(stream, maxBytes) {
+/** 웹 스트림을 </head>를 만나거나 maxBytes(1MB)에 닿을 때까지만 읽고 끊는다 — 큰 응답·느린 본문을 끝까지 받지 않는다(게이트웨이와 같은 headScanner). */
+export async function readHead(stream, maxBytes) {
   if (!stream) return new Uint8Array();
   const reader = stream.getReader();
-  const chunks = [];
-  let n = 0;
+  const scan = headScanner(maxBytes);
   try {
-    while (n < maxBytes) {
+    for (;;) {
       const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(value);
-      n += value.length;
+      if (done || scan.push(value) !== 'more') break;
     }
   } finally { reader.cancel().catch(() => {}); }
-  const out = new Uint8Array(Math.min(n, maxBytes));
-  let at = 0;
-  for (const c of chunks) { const part = c.subarray(0, out.length - at); out.set(part, at); at += part.length; if (at >= out.length) break; }
-  return out;
+  return scan.bytes();
 }
 
 /** 요청 하나 처리 → { status, body }. deps: { getMessage(id), setPreview(id, preview) → boolean, net: { resolve, request }, now? } */

@@ -1,12 +1,12 @@
 // 에이전트 답의 링크 미리보기(2026-10-02) — 본체 게이트웨이가 답을 게시하기 전에 첫 링크를 한 번 가져와 meta.link_preview에 싣는다.
-// 규칙(SSRF 검사·파싱·길이)은 엣지 함수와 같은 파일(supabase/functions/_shared/link-preview.js)을 쓴다. 여기는 Node 네트워크만.
+// 규칙(SSRF 검사·파싱·길이)은 src/link-preview.mjs(엣지 함수는 같은 내용의 사본)를 쓴다. 여기는 Node 네트워크만.
 // 엣지(Deno)와 다른 점: 연결할 때 http(s).request의 lookup 훅이 실제로 붙을 주소를 다시 검사한다 —
 // 이름 풀기와 연결 사이에 DNS가 내부 주소로 바뀌는(재바인딩) 틈이 없다. 주인 PC에서 돌므로 사내망·공유기 주소에 닿지 않는 것이 중요하다.
 // 부하: 링크가 든 에이전트 답 1건당 외부 요청 최대 4번(리다이렉트 3번 포함), 5초 상한. DB 호출은 늘지 않는다(같은 insert에 실린다).
 import http from 'node:http';
 import https from 'node:https';
 import { lookup as dnsLookup } from 'node:dns';
-import { firstUrl, fetchLinkPreview, isBlockedIp } from '../../supabase/functions/_shared/link-preview.js';
+import { firstUrl, fetchLinkPreview, isBlockedIp, headScanner } from '../link-preview.mjs';
 
 const UA = 'Mozilla/5.0 (compatible; ArgoLinkPreview/1.0; +https://argo.ceo)';
 
@@ -35,9 +35,9 @@ export function nodeRequest(url, { timeoutMs, maxBytes }, { lookup = guardedLook
       const headers = { 'content-type': String(res.headers['content-type'] ?? ''), location: String(res.headers.location ?? '') };
       const html = /^(text\/html|application\/xhtml\+xml)\b/i.test(headers['content-type']);
       if (res.statusCode !== 200 || !html) { res.destroy(); return finish(resolve, { status: res.statusCode, headers, body: new Uint8Array() }); }
-      const chunks = []; let n = 0;
-      const done = () => finish(resolve, { status: res.statusCode, headers, body: new Uint8Array(Buffer.concat(chunks).subarray(0, maxBytes)) });
-      res.on('data', (c) => { chunks.push(c); n += c.length; if (n >= maxBytes) { res.destroy(); done(); } });
+      const scan = headScanner(maxBytes); // </head>를 만나거나 1MB에 닿으면 멈춘다(엣지 readHead와 같은 규칙)
+      const done = () => finish(resolve, { status: res.statusCode, headers, body: scan.bytes() });
+      res.on('data', (c) => { if (scan.push(new Uint8Array(c.buffer, c.byteOffset, c.length)) !== 'more') { res.destroy(); done(); } });
       res.on('end', done);
       res.on('error', (e) => finish(reject, e));
       res.on('close', done);

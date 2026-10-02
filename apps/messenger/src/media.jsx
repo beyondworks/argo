@@ -10,7 +10,7 @@ import { useLang } from '@argo/i18n';
 import { t as tm } from './i18n.js';
 import { I } from './icons.jsx';
 import { gridRows } from '../../../src/media-kind.mjs';
-import { urlSegments } from '../../../supabase/functions/_shared/link-preview.js';
+import { urlSegments } from '../../../src/link-preview.mjs';
 import { splitAttachments, fileView, previewFor } from './media-actions.mjs';
 import { clampPan, clampZoom, zoomAt, swipeDecision, dismissDecision, isDoubleTap, wheelZoom, DOUBLE_TAP_ZOOM } from './lightbox-gesture.mjs';
 import { inTauri } from './platform.js';
@@ -236,7 +236,7 @@ export function Lightbox({ items, start = 0, onClose, t }) {
     try {
       if (kind === 'save') {
         const r = await saveAttachment(a);
-        if (!r?.cancelled) setNote({ text: t({ photos: 'media.savedPhotos', files: 'media.savedFiles', downloads: 'media.savedDownloads' }[r?.where] ?? 'media.saved'), reveal: r?.where === 'downloads' ? r.path : null });
+        if (!r?.cancelled && r?.where !== 'share') setNote({ text: t({ photos: 'media.savedPhotos', files: 'media.savedFiles', downloads: 'media.savedDownloads' }[r?.where] ?? 'media.saved'), reveal: r?.where === 'downloads' ? r.path : null });
       } else if (kind === 'share') await shareAttachment(a);
       else if (kind === 'copyImage') { await copyImage(a); setNote({ text: t('media.copiedImage') }); }
       else if (kind === 'copyLink') { await copyLink(a); setNote({ text: t('media.copiedLink') }); }

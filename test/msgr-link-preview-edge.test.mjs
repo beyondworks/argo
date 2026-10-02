@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { handle, jwtSub, readLimited, FRESH_MS } from '../supabase/functions/msgr-link-preview/core.js';
+import { handle, jwtSub, readHead, FRESH_MS } from '../supabase/functions/msgr-link-preview/core.js';
 
 const ME = '11111111-1111-4111-8111-111111111111';
 const OTHER = '22222222-2222-4222-8222-222222222222';
@@ -93,20 +93,29 @@ test('jwtSub — Bearer JWT의 sub(uuid)만', () => {
   assert.equal(jwtSub(null), null);
 });
 
-test('readLimited — 상한에서 끊고 나머지는 읽지 않는다', async () => {
+test('readHead — </head> 없이 1MB에 닿으면 끊고 나머지는 읽지 않는다', async () => {
   let pulled = 0;
-  const stream = new ReadableStream({ pull(c) { pulled += 1; c.enqueue(new Uint8Array(100 * 1024).fill(65)); if (pulled > 20) c.close(); } });
-  const out = await readLimited(stream, 512 * 1024);
-  assert.equal(out.length, 512 * 1024);
-  assert.ok(pulled <= 7, `덜 읽음: ${pulled}`);
-  assert.equal((await readLimited(null, 10)).length, 0);
+  const stream = new ReadableStream({ pull(c) { pulled += 1; c.enqueue(new Uint8Array(100 * 1024).fill(65)); if (pulled > 30) c.close(); } });
+  const out = await readHead(stream, 1024 * 1024);
+  assert.equal(out.length, 1024 * 1024);
+  assert.ok(pulled <= 12, `덜 읽음: ${pulled}`);
+  assert.equal((await readHead(null, 10)).length, 0);
+});
+
+test('readHead — </head>를 만나면 바로 멈춘다(뒤 본문을 더 읽지 않는다)', async () => {
+  let pulled = 0;
+  const parts = ['<html><head><meta property="og:title" content="t"></he', 'ad><body>', 'x'.repeat(50000), 'y'.repeat(50000)];
+  const stream = new ReadableStream({ pull(c) { const p = parts[pulled++]; if (p == null) { c.close(); return; } c.enqueue(new TextEncoder().encode(p)); } });
+  const out = new TextDecoder().decode(await readHead(stream, 1024 * 1024));
+  assert.equal(out, '<html><head><meta property="og:title" content="t">');
+  assert.ok(pulled <= 3, `본문을 더 읽지 않았다: ${pulled}`);
 });
 
 test('index.ts — 서비스 키 없이 부른 사람 권한으로만 읽고 쓴다, 공통 규칙 파일을 쓴다', () => {
   const src = readFileSync(fileURLToPath(new URL('../supabase/functions/msgr-link-preview/index.ts', import.meta.url)), 'utf8');
   assert.doesNotMatch(src, /SERVICE_ROLE/);
   assert.match(src, /redirect: 'manual'/, '리다이렉트는 core가 홉마다 검사한다');
-  assert.match(src, /readLimited\(r\.body, maxBytes\)/);
+  assert.match(src, /readHead\(r\.body, maxBytes\)/, '</head>·1MB에서 멈추는 읽기(게이트웨이와 같은 headScanner)');
   const core = readFileSync(fileURLToPath(new URL('../supabase/functions/msgr-link-preview/core.js', import.meta.url)), 'utf8');
   assert.match(core, /from '\.\.\/_shared\/link-preview\.js'/);
 });

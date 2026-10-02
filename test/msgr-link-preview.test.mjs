@@ -1,11 +1,11 @@
 // 링크 미리보기 공통 규칙(2026-10-02 유건 요청) — 엣지 함수(msgr-link-preview)·본체 게이트웨이·앱이 같은 모듈을 쓴다.
-// 정본: supabase/functions/_shared/link-preview.js. 여기서 잠그는 것: 첫 링크 추출, URL 안전 검사(SSRF — 막아야 할 주소 목록),
+// 정본: src/link-preview.mjs(엣지 함수는 supabase/functions/_shared/link-preview.js 사본). 여기서 잠그는 것: 첫 링크 추출, URL 안전 검사(SSRF — 막아야 할 주소 목록),
 // OG 파싱, 길이 자르기, 리다이렉트마다 다시 검사, 512KB·HTML만·5초.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  firstUrl, urlSegments, checkUrl, isBlockedIp, parseHtmlPreview, cleanPreview, fetchLinkPreview, decodeHtml, PREVIEW_LIMITS,
-} from '../supabase/functions/_shared/link-preview.js';
+  firstUrl, urlSegments, checkUrl, isBlockedIp, parseHtmlPreview, cleanPreview, fetchLinkPreview, decodeHtml, PREVIEW_LIMITS, headScanner,
+} from '../src/link-preview.mjs';
 
 test('firstUrl — 본문의 첫 http(s) 링크 하나만, 문장 부호는 떼고 괄호 짝은 지킨다', () => {
   assert.equal(firstUrl('보세요 https://example.com/a?b=1. 그리고 https://two.example'), 'https://example.com/a?b=1');
@@ -106,7 +106,7 @@ test('fetchLinkPreview — 정상 페이지: 한 번 가져와 카드 하나', a
   const p = await fetchLinkPreview('https://example.com/a', net);
   assert.deepEqual(p, { v: 1, url: 'https://example.com/a', title: '제목', description: '', image: 'https://img.example/a.png', site: '' });
   assert.equal(net.calls.length, 1);
-  assert.equal(net.calls[0].opts.maxBytes, 512 * 1024);
+  assert.equal(net.calls[0].opts.maxBytes, 1024 * 1024, '상한 1MB(2026-10-02 총괄 결정)');
   assert.ok(net.calls[0].opts.timeoutMs <= 5000 && net.calls[0].opts.timeoutMs > 0);
 });
 
@@ -138,19 +138,41 @@ test('fetchLinkPreview — 리다이렉트는 최대 3번, 매 홉마다 다시 
   assert.equal(loop.calls.length, 4);
 });
 
-test('fetchLinkPreview — HTML만 파싱, 512KB 넘게 읽지 않음, 실패는 카드 없음(null)', async () => {
+test('fetchLinkPreview — HTML만 파싱, 실패는 카드 없음(null)', async () => {
   assert.equal(await fetchLinkPreview('https://x.example/', fakeNet({ 'https://x.example/': page(OG, { 'content-type': 'image/png' }) })), null);
   assert.equal(await fetchLinkPreview('https://x.example/', fakeNet({ 'https://x.example/': page(OG, { 'content-type': 'application/json' }) })), null);
   assert.equal(await fetchLinkPreview('https://x.example/', fakeNet({ 'https://x.example/': { status: 404, headers: { 'content-type': 'text/html' }, body: enc(OG) } })), null);
   assert.equal(await fetchLinkPreview('https://x.example/', fakeNet({ 'https://x.example/': () => { throw new Error('timeout'); } })), null);
-  const big = `${OG}${'x'.repeat(600 * 1024)}`;
-  const truncated = fakeNet({ 'https://x.example/': (opts) => ({ status: 200, headers: { 'content-type': 'text/html' }, body: enc(big).slice(0, opts.maxBytes) }) });
-  assert.equal((await fetchLinkPreview('https://x.example/', truncated)).title, '제목', '앞부분(head)만으로 카드를 만든다');
-  const liar = fakeNet({ 'https://x.example/': { status: 200, headers: { 'content-type': 'text/html' }, body: enc(big) } });
-  const p = await fetchLinkPreview('https://x.example/', liar);
-  assert.equal(p.title, '제목', '요청기가 상한을 어겨도 모듈이 512KB에서 자른다');
   assert.equal(await fetchLinkPreview('http://127.0.0.1/', fakeNet({})), null);
   assert.equal(await fetchLinkPreview('not a url', fakeNet({})), null);
+});
+
+test('상한 1MB — 큰 스크립트 뒤(900KB 지점) og는 읽는다(유튜브 모양), 1MB 뒤 og는 읽지 않는다(요청기가 상한을 어겨도)', async () => {
+  const pad = (n) => `<script>${'x'.repeat(n)}</script>`;
+  const youtube = `<head>${pad(900 * 1024)}<meta property="og:title" content="유튜브 제목"></head><body>`;
+  assert.equal((await fetchLinkPreview('https://x.example/', fakeNet({ 'https://x.example/': page(youtube) }))).title, '유튜브 제목');
+  const tooFar = `<head>${pad(1100 * 1024)}<meta property="og:title" content="너무 뒤"></head>`;
+  assert.equal(await fetchLinkPreview('https://x.example/', fakeNet({ 'https://x.example/': page(tooFar) })), null, '1MB에서 멈춰 그 뒤 og는 보지 않는다');
+});
+
+test('</head> 뒤의 og는 무시한다(본문에 끼운 가짜 카드)', async () => {
+  const html = '<head><title>진짜 제목</title></HEAD><body><meta property="og:title" content="본문 가짜"><meta property="og:image" content="https://evil.example/a.png">';
+  const p = await fetchLinkPreview('https://x.example/', fakeNet({ 'https://x.example/': page(html) }));
+  assert.equal(p.title, '진짜 제목');
+  assert.equal(p.image, '');
+});
+
+test('headScanner — 조각으로 받아도 </head>(대소문자 무관, 조각 경계에 걸쳐도)를 찾으면 멈추고, 상한을 넘으면 중단', () => {
+  const s = headScanner(1024);
+  assert.equal(s.push(enc('<html><head><title>a</title></HE')), 'more');
+  assert.equal(s.push(enc('AD><body>뒤')), 'done', '조각 경계에 걸친 </HEAD>');
+  assert.equal(new TextDecoder().decode(s.bytes()), '<html><head><title>a</title>', '</head> 앞까지만');
+  assert.equal(s.push(enc('더')), 'done', '멈춘 뒤에는 더 받지 않는다');
+  const big = headScanner(10);
+  assert.equal(big.push(enc('<head>12')), 'more');
+  assert.equal(big.push(enc('3456789')), 'over');
+  assert.equal(big.bytes().length, 10);
+  assert.equal(big.push(enc('x')), 'over');
 });
 
 test('fetchLinkPreview — og:image도 같은 검사(내부 주소·http·자격 정보는 이미지 없이)', async () => {
