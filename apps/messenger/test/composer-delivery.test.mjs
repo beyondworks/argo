@@ -234,7 +234,7 @@ test('D50: 세션은 있는데 서버가 토큰을 거절(401·PGRST303)하면 �
 test('D50: 세션이 살아 있는 403 거절(진짜 권한 없음)은 갱신하지 않는다 — 원인 은폐·헛 갱신 방지', async () => {
   const { client, calls } = authClient({ inserts: [{ status: 403, error: { code: '42501', message: RLS } }] });
   const io = composerTransport(client, { orgId: 'org', chId: 'ch', uid: 'user' });
-  await assert.rejects(io.message({ clientId: 'c3', body: 'b', mentions: [] }), (e) => !e.uiKey && /row-level security/.test(e.message));
+  await assert.rejects(io.message({ clientId: 'c3', body: 'b', mentions: [] }), (e) => e.uiKey !== 'msg.delivery.authExpired' && e.permanent === true && /row-level security/.test(e.message)); // 인증 만료로 덮지 않고 원문은 남긴다 — 카드는 영구 거절 문구(D14)
   assert.deepEqual([calls.insert, calls.refresh, calls.lookup], [1, 0, 1]);
 });
 
@@ -322,4 +322,26 @@ test('discard: when the reread shows the message still alive (or the reread fail
   }
   const c = discardClient({ updateData: [], reread: { data: { deleted_at: null }, error: null } });
   await assert.rejects(composerTransport(c, { orgId: 'o', chId: 'c', uid: 'me' }).discard({ messageId: 9 }), /no row/);
+});
+
+// 기능 점검 D14(2026-10-02): 나를 차단한 사람에게 보낸 1:1 글이 RLS 거절(42501·403)로 실패하는데 카드가 '다시 보내기'를 계속 권했다.
+// 실측(로컬 스택): fof가 friend.qa를 차단 → friend.qa의 insert = {code:'42501', status:403, 'new row violates row-level security policy'}.
+// RLS 거절은 다시 보내도 같은 결과 — 영구 실패로 표시하고, 카드는 다시 보내기 대신 이유를 보인다.
+test('RLS 거절(42501)은 영구 실패 — job.permanent, errorKey msg.delivery.rejected(다시 보내도 같은 결과)', async () => {
+  const client = {
+    from() { const query = { insert() { return query; }, select() { return query; }, eq() { return query; },
+      single: async () => ({ data: null, status: 403, error: { code: '42501', message: 'new row violates row-level security policy for table "msgr_messages"' } }),
+      maybeSingle: async () => ({ data: null, error: null }) }; return query; },
+    auth: { getSession: async () => ({ data: { session: { user: { id: 'user' } } } }), refreshSession: async () => assert.fail('RLS 거절은 인증 실패가 아니다') },
+  };
+  const s = createComposerDelivery(composerTransport(client, { orgId: 'o', chId: 'c', uid: 'user' }));
+  s.setText('hi'); assert.equal(await s.send([]), false);
+  assert.equal(s.snapshot().job.permanent, true);
+  assert.equal(s.snapshot().job.errorKey, 'msg.delivery.rejected');
+});
+
+test('네트워크·응답 유실 실패는 영구 실패가 아니다(다시 보내기 그대로)', async () => {
+  const s = createComposerDelivery(transport({ message: async () => { throw new TypeError('Failed to fetch'); } }));
+  s.setText('x'); await s.send([]);
+  assert.equal(!!s.snapshot().job.permanent, false);
 });

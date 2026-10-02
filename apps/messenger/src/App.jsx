@@ -1900,7 +1900,7 @@ function Shell({ session }) {
   const sendFirstDm = async (targetUserId, body) => {
     try {
       const cid = await q(supabase.rpc('msgr_dm_personal', { target: targetUserId }));
-      const session = getComposerSession(JSON.stringify([SB_URL, uid, PERSONAL, cid]), composerTransport(supabase, { orgId: PERSONAL, chId: cid, uid }));
+      const session = getComposerSession(JSON.stringify([SB_URL, uid, PERSONAL, cid]), composerTransport(supabase, { orgId: PERSONAL, chId: cid, uid, personal: true })); // personal: 개인 방 첨부 경로(feat/msgr-media 병합 뒤 쓰인다 — 같은 세션 키를 그 방 입력창이 이어 쓴다)
       roomAsked.current.add(cid); // 내 첫 글의 방송이 '모르는 방'으로 목록을 또 읽어 아래 읽기를 낡은 요청으로 만들지 않게(실측: 그러면 chId가 목록에 없어 마지막 방이 열렸다)
       session.setText(body); await session.send([]);
       let rows = await loadPersonal(); if (activeOrg.current !== PERSONAL) return;
@@ -6148,7 +6148,8 @@ function Composer({ broadcast = null, chId, orgId, org, uid, members, crews, cha
   const currentDeliveryMentions = dmDeliveryMentions(mentionsFromBody(text.trim(), byName, mentions, allByName), recipients);
   const unavailableRecipients = isDm ? dmUnavailableRecipients(currentDeliveryMentions, recipientLoad === 'ready' ? dmCandidates : [], (scopeCrews ?? []).map((c) => c.id)) : [];
   const deliveryBlocked = unavailableRecipients.length > 0;
-  const retryBlocked = isDm && job && !job.messageId && dmUnavailableRecipients(job.mentions, recipientLoad === 'ready' ? dmCandidates : [], (scopeCrews ?? []).map((c) => c.id)).length > 0;
+  const dmRetryBlocked = isDm && job && !job.messageId && dmUnavailableRecipients(job.mentions, recipientLoad === 'ready' ? dmCandidates : [], (scopeCrews ?? []).map((c) => c.id)).length > 0;
+  const retryBlocked = !!job?.permanent || dmRetryBlocked; // 영구 거절(RLS — D14)도 다시 보내기를 막는다. 아래 받는 사람 경고는 dmRetryBlocked일 때만
   const candidates = useMemo(() => {
     if (!pop) return [];
     const needle = pop.q.toLowerCase();
@@ -6282,7 +6283,7 @@ function Composer({ broadcast = null, chId, orgId, org, uid, members, crews, cha
   // 첨부 칩 — 폰은 알약 위 자기 줄(흐름 안, 멘션 후보창과 같은 쌓임)로, 데스크톱은 기존처럼 툴바 줄 안에(유건 2026-09-27 재검수)
   const fileChipsNode = files.length > 0 && <span className="msgr-filechips">{files.map((f) => <span key={`${f.name}:${f.size}`} className={`filechip${uploading === f.name ? ' busy' : ''}`}><I name="doc" size={12} /><span className="filechip-name">{f.name}</span><span className="msgr-klabel">{uploading === f.name ? t('att.uploading') : `${Math.max(1, Math.round(f.size / 1024))}KB`}</span>
     {uploading !== f.name && <button type="button" className="x" onMouseDown={(e) => e.preventDefault()} onClick={() => setFiles((cur) => withoutFile(cur, f))} disabled={busy} aria-label={t('att.remove', { name: f.name })} title={t('att.remove', { name: f.name })}>×</button>}</span>)}</span>;
-  const card = job ? deliveryCardView({ busy, job }) : null; // 카드 제목·오류 줄 선택은 delivery-card.mjs(행동 테스트가 잠근다)
+  const card = job ? deliveryCardView({ busy, job, isDm }) : null; // 카드 제목·오류 줄 선택은 delivery-card.mjs(행동 테스트가 잠근다)
   return (
     <div className="msgr-dock" style={{ '--sbw': `${sbw}px` }}><div>
       {rolePick && (
@@ -6312,15 +6313,15 @@ function Composer({ broadcast = null, chId, orgId, org, uid, members, crews, cha
           </button>)}
         </div>
       )}
-      {isDm && (deliveryBlocked || retryBlocked) && <p className="msgr-dm-delivery-warning" role="alert">{t('dm.delivery.blocked')}</p>}
+      {isDm && (deliveryBlocked || dmRetryBlocked) && <p className="msgr-dm-delivery-warning" role="alert">{t('dm.delivery.blocked')}</p>}
       {recipients.length > 0 && <div className="msgr-chips msgr-cc-chips" role="group" aria-label={t('dm.delivery.cc')}>{recipients.map((r) => <button key={r.id} type="button" className="msgr-chan" aria-label={t('dm.delivery.remove', { name: r.name })} disabled={busy || locked} onMouseDown={(e) => e.preventDefault()} onClick={() => setRecipients((rows) => rows.filter((x) => x.id !== r.id))}><span>{t(`dm.delivery.${r.role}`)} · {r.name}</span><I name="x" size={12} className="mi" /></button>)}</div>}
       {job && (!busy || job.files.length > 0) && <div className="msgr-delivery" role="status" aria-live="polite">
         <strong>{t(card.titleKey)}</strong>
         <p className="delivery-preview">{job.body || job.files.map((item) => item.file.name).join(', ')}</p>
         {uploading && <p>{t('att.uploading')} · {uploading}</p>}
         {card.errorLine && <p className="delivery-error">{card.errorLine.key ? t(card.errorLine.key) : friendlyErr(card.errorLine.raw, t)}{card.errorLine.files.length > 0 && ` · ${card.errorLine.files.join(', ')}`}</p>}
-        {!busy && <div className="delivery-actions"><button type="button" className="btn" disabled={locked || retryBlocked} onClick={async () => { if (!locked && !retryBlocked && await delivery.retry()) onSent(delivery.snapshot().lastDeliveredId); }}>{t('msg.delivery.retry')}</button>
-          <button type="button" className="btn" onClick={() => delivery.dismiss()}>{t('msg.delivery.dismiss')}</button></div>}
+        {!busy && <div className="delivery-actions">{card.canRetry && <button type="button" className="btn" disabled={locked || retryBlocked} onClick={async () => { if (!locked && !retryBlocked && await delivery.retry()) onSent(delivery.snapshot().lastDeliveredId); }}>{t('msg.delivery.retry')}</button>}
+          <button type="button" className="btn" onClick={() => delivery.dismiss()}>{t(card.canRetry ? 'msg.delivery.dismiss' : 'ui.close')}</button></div>}
       </div>}
       {awayNote && <div className="msgr-replychip msgr-awaychip" role="status"><span className="q">{awayNote.map((c) => t('mention.away', { name: c.display_name })).join(' ')}</span><button type="button" className="msgr-titlebtn" onClick={() => setAwayNote(null)} aria-label={t('ui.close')}><I name="x" size={13} /></button></div>}
       {outside && <div className="msgr-outsidechip" role="status"><div className="rows">{outside.crews.map((c) => { const can = canInstructCrew(c, uid); const done = outside.done[c.id]; return (

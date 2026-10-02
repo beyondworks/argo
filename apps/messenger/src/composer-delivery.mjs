@@ -52,7 +52,7 @@ export function createComposerDelivery(transport, uuid = () => crypto.randomUUID
   const update = (key, value) => patch({ [key]: typeof value === 'function' ? value(state[key]) : value });
   async function deliver(job) {
     if (disposed || state.busy) return false;
-    patch({ busy: true, uploading: '', job: { ...job, error: '', errorKey: '' } });
+    patch({ busy: true, uploading: '', job: { ...job, error: '', errorKey: '', permanent: false } });
     try {
       job.messageId ??= await transport.message(job);
       if (disposed) return false;
@@ -91,7 +91,7 @@ export function createComposerDelivery(transport, uuid = () => crypto.randomUUID
     } catch (error) {
       const offline = !error.uiKey && isNetworkFailure(error.message);
       if (offline) reporter?.('send', String(error)); // 'TypeError: Failed to fetch' — 화면에는 문구만, 원문은 진단 기록에
-      patch({ job: { ...job, error: error.message, errorKey: error.uiKey ?? (offline ? OFFLINE_KEY : '') } }); // errorKey가 있으면 카드는 원문 대신 그 문구를 쓴다(D50)
+      patch({ job: { ...job, error: error.message, errorKey: error.uiKey ?? (offline ? OFFLINE_KEY : ''), permanent: !!error.permanent } }); // errorKey가 있으면 카드는 원문 대신 그 문구를 쓴다(D50)
       return false;
     } finally { patch({ busy: false, uploading: '' }); }
   }
@@ -143,6 +143,8 @@ export function composerTransport(client, { orgId, chId, uid, onDiscard = null }
       const found = await client.from('msgr_messages').select('id').eq('channel_id', chId).eq('author_kind', 'user')
         .eq('author_user_id', uid).eq('client_msg_id', job.clientId).maybeSingle();
       if (!found.error && found.data) return found.data.id;
+      // RLS 거절(42501 — 1:1 상대가 나를 차단했거나 방에서 빠짐 등)은 다시 보내도 같은 결과 — 영구 실패로 알린다(기능 점검 D14)
+      if (result.error.code === '42501') throw Object.assign(new Error(result.error.message), { uiKey: 'msg.delivery.rejected', permanent: true });
       throw new Error(result.error.message);
     },
     async upload(job, item) {

@@ -114,20 +114,20 @@ test('#795 첨부 순서(글 먼저·전부 실패하면 삭제)와 #793 카드(
     let job = off.snapshot().job;
     assert.deepEqual(discarded, [7], '빈 글을 지웠다');
     assert.equal(job.messageId, null); assert.equal(job.errorKey, 'msg.delivery.offline');
-    assert.deepEqual(deliveryCardView({ busy: false, job }), { titleKey: 'msg.delivery.offline', errorLine: null });
+    assert.deepEqual(deliveryCardView({ busy: false, job }), { titleKey: 'msg.delivery.offline', errorLine: null , canRetry: true });
     assert.equal(reported.length, 1);
     // 글을 지우지 못하면 글은 남고 → 카드는 '일부 첨부 실패' + 이유 + 실패한 파일 이름
     const keep = createComposerDelivery(mk({ discard: async () => { throw new Error('no'); }, upload: async () => { throw new TypeError('Load failed'); } }));
     keep.setFiles([file('a.txt')]); await keep.send([]);
     job = keep.snapshot().job;
     assert.equal(job.messageId, 7);
-    assert.deepEqual(deliveryCardView({ busy: false, job }), { titleKey: 'msg.delivery.attachFailed', errorLine: { key: 'msg.delivery.offline', raw: null, files: ['a.txt'] } });
+    assert.deepEqual(deliveryCardView({ busy: false, job }), { titleKey: 'msg.delivery.attachFailed', errorLine: { key: 'msg.delivery.offline', raw: null, files: ['a.txt'] } , canRetry: true });
     // 네트워크가 아닌 실패(서버 거절)는 원문 줄 + 지운 글이므로 '전송 실패' 제목
     const srv = createComposerDelivery(mk({ upload: async () => { throw new Error('new row violates row-level security policy'); } }));
     srv.setFiles([file('c.txt')]); await srv.send([]);
     job = srv.snapshot().job;
     assert.deepEqual([job.messageId, job.errorKey], [null, '']);
-    assert.deepEqual(deliveryCardView({ busy: false, job }), { titleKey: 'msg.delivery.failed', errorLine: { key: null, raw: 'c.txt: new row violates row-level security policy', files: [] } });
+    assert.deepEqual(deliveryCardView({ busy: false, job }), { titleKey: 'msg.delivery.failed', errorLine: { key: null, raw: 'c.txt: new row violates row-level security policy', files: [] } , canRetry: true });
   } finally { setDeliveryReporter(null); }
 });
 
@@ -136,7 +136,8 @@ test('#795 첨부 순서(글 먼저·전부 실패하면 삭제)와 #793 카드(
 const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
 const has = (re, why) => assert.match(app, re, why);
 test('App 배선 — 카드: 순수 함수 결과(제목·오류 줄)를 그린다', () => {
-  has(/const card = job \? deliveryCardView\(\{ busy, job \}\) : null;/, '카드 선택은 순수 함수');
+  has(/const card = job \? deliveryCardView\(\{ busy, job, isDm \}\) : null;/, '카드 선택은 순수 함수(1:1이면 영구 거절 문구가 다르다, D14)');
+  has(/\{card\.canRetry && <button type="button" className="btn" disabled=\{locked \|\| retryBlocked\}/, '영구 거절이면 다시 보내기를 그리지 않는다(D14)');
   has(/<strong>\{t\(card\.titleKey\)\}<\/strong>/, '제목은 card.titleKey');
   has(/\{card\.errorLine && <p className="delivery-error">\{card\.errorLine\.key \? t\(card\.errorLine\.key\) : friendlyErr\(card\.errorLine\.raw, t\)\}\{card\.errorLine\.files\.length > 0 && ` · \$\{card\.errorLine\.files\.join\(', '\)\}`\}<\/p>\}/, '오류 줄은 card.errorLine(키 → 번역, 없으면 원문, 파일 이름)');
 });
@@ -178,4 +179,11 @@ test('App 배선 — 일반: 에이전트 꺼짐 안내·대기 요청 안내·�
   has(/crewAwayNotice\(\{ channel, chCrews, people, uid, now: Date\.now\(\), awayMs: AWAY_MS \}\)/, '꺼짐 안내 판정');
   has(/crewListEmptyKey\(\{ crewCount: chCrews\.length, pendingCount: joinReqs\.length, isPersonal, canAddCrew, scoped \}\)/, '대기 요청 수를 넘긴다');
   has(/placeholder=\{t\('search\.ph', \{ key: shortcutLabel\('K'\) \}\)\}/, '단축키는 OS에 맞춰');
+});
+
+test('deliveryCardView: 영구 거절 — 1:1은 "보낼 수 없는 상대입니다", 채널은 "이 방에 보낼 수 없습니다", 둘 다 다시 보내기 없음(기능 점검 D14)', () => {
+  const job = { messageId: null, error: 'new row violates row-level security policy', errorKey: 'msg.delivery.rejected', permanent: true, files: [] };
+  assert.deepEqual(deliveryCardView({ busy: false, job, isDm: true }), { titleKey: 'msg.delivery.notSent', errorLine: { key: 'msg.delivery.unreachable', raw: null, files: [] }, canRetry: false }); // 제목이 '다시 시도해 주세요'면 안 된다
+  assert.deepEqual(deliveryCardView({ busy: false, job, isDm: false }).errorLine.key, 'msg.delivery.rejected');
+  assert.equal(deliveryCardView({ busy: false, job: { ...job, permanent: false, errorKey: '' } }).canRetry, true);
 });
