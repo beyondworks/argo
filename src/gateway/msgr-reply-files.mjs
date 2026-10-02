@@ -19,7 +19,7 @@
 import { open, realpath, stat } from 'node:fs/promises';
 import { constants as FS } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep, win32 } from 'node:path';
-import { homedir, tmpdir } from 'node:os';
+import { homedir, tmpdir, userInfo } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { paths, WS_ROOT } from '../workspace.mjs';
 import { SERVE_PREFIXES } from '../artifact-zones.mjs';
@@ -69,18 +69,22 @@ function localTarget(dest, vault) {
 }
 
 // 구역 밖 절대 경로 중 지우는 자리 — 홈·작업 루트·임시 폴더 아래(사용자 이름·폴더 구조가 드러나는 자리). macOS·윈도우는 대소문자를 무시한다(/users/X도 홈).
-const DRIVE = /^[A-Za-z]:[\\/]/;
+const DRIVE = /^\/?[A-Za-z]:[\\/]/; // C:\·D:/ 그리고 macOS·리눅스 fileURLToPath('file:///C:/…')가 돌려주는 /C:/… 꼴(LOW-5)
 const FOLD = process.platform === 'darwin' || process.platform === 'win32' ? (p) => p.toLowerCase() : (p) => p;
 const PRIVATE_ROOTS = [...new Set([homedir(), WS_ROOT, tmpdir(), '/tmp', '/private/tmp', '/var/folders', '/private/var/folders'].filter(Boolean).map((r) => FOLD(resolve(r))))];
 const within = (p, root) => { const rel = relative(root, p); return rel === '' || (!!rel && !isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`)); };
 // 첫 칸이 이 목록이면 로컬 위치(외장 볼륨·공유 사용자 폴더·리눅스 홈·마운트·/opt 등) — 고객사 폴더 이름이 드러나는 자리(통합본 재검수 MEDIUM-4).
-// 첫 칸이 정확히 같을 때만(`/optional`·`/homepage` 같은 웹 경로는 아님). 드라이브 문자 경로(C:\·D:/)도 항상 로컬.
-const LOCAL_FIRST = new Set(['Volumes', 'Users', 'home', 'mnt', 'media', 'opt', 'private'].map(FOLD));
+// 첫 칸이 정확히 같고 칸이 둘 이상일 때만(`/home`·`/opt` 한 칸, `/optional`·`/homepage`는 웹 경로 — LOW-4). 드라이브 문자 경로(C:\·D:/·/C:/)도 항상 로컬.
+// /media는 웹 사이트 이미지 경로(/media/logo.png·/media/uploads/…)와 겹쳐 목록에서 빼고, 리눅스 이동식 디스크 꼴 /media/<이 컴퓨터 사용자 이름>/…만 로컬로 본다
+// (칸 수만으로는 /media/uploads/2024/x.png 같은 흔한 웹 경로도 지워진다).
+const LOCAL_FIRST = new Set(['Volumes', 'Users', 'home', 'mnt', 'opt', 'private'].map(FOLD));
+const ME = (() => { try { return FOLD(userInfo().username); } catch { return null; } })();
 const privatePath = (abs) => {
   if (DRIVE.test(abs)) return true;
   const p = FOLD(resolve(abs));
   const segs = p.split(sep).filter(Boolean);
-  if (segs.length && LOCAL_FIRST.has(segs[0])) return true;
+  if (segs.length >= 2 && LOCAL_FIRST.has(segs[0])) return true;
+  if (ME && segs.length >= 3 && segs[0] === 'media' && segs[1] === ME) return true;
   if (segs[0] === FOLD('var') && segs[1] === 'folders') return true;
   return PRIVATE_ROOTS.some((r) => within(p, r));
 };
