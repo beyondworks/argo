@@ -20,6 +20,8 @@ import { useSplitAlive } from '../../split-alive';
 import { keepSide, keepSideExcept, sideParam, withSide } from '../../split.mjs';
 import { dropUpClamp } from '../../zoom-math.mjs';
 import { matchSlash } from '../../slash-match.mjs';
+import { useSessionMention, SessionMentionPanel, SessionMsgCard, isSessionCard } from './session-msg.jsx'; // 세션 메시지 — @크루 자동 완성·접힌 카드
+import { parseSessionTarget } from './session-msg-parse.mjs';
 
 // 러너 표시명(폴백 안내용) — runner-connect의 RUNNER_NAMES와 동일 값(서버 RUNNERS.name 준거)
 const RUNNER_LABELS = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', antigravity: 'Antigravity', glm: 'GLM', kimi: 'Kimi', openrouter: 'OpenRouter', grok: 'Grok' };
@@ -162,6 +164,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
   function onInputKeyDown(e) {
     // imeGuard 병합 — 이 입력은 스프레드 대신 여기서 IME Enter를 막는다({...imeGuard}가 onKeyDown을 덮는 문제)
     if (e.key === 'Enter' && e.nativeEvent.isComposing) { e.preventDefault(); return; }
+    if (sm.onKeyDown(e)) return; // '@' 크루 자동 완성이 떠 있으면 Enter·Tab=완성, ↑↓=이동
     // Enter=전송, Shift+Enter=줄바꿈(textarea 기본 동작) — 유건 지시 2026-07-19
     // 단 '/' 커맨더가 떠 있으면 Enter=선택 항목 실행, ↑↓=항목 이동(명령은 크루에게 전송되지 않는다)
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -631,6 +634,18 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     }
   }
 
+  async function sendSessionMsg(target, raw) {
+    setError('');
+    try {
+      const r = await api(`/api/companies/${ws}/session-msg`, { room: slug, to: target.to, message: target.message });
+      if (r.line) setThread((cur) => [...(cur ?? []), r.line]); // B의 답은 폴링이 카드로 가져온다
+    } catch (err) {
+      setInput(raw); // 보낸 글을 잃지 않게 입력창으로 되돌린다
+      const code = err?.data?.code;
+      setError(['DUP', 'NOT_FOUND', 'TOO_LONG'].includes(code) ? t(`chat.session.err.${code}`, { name: target.toName }) : t('chat.session.err.generic', { msg: String(err.message) }));
+    }
+  }
+
   async function send(e) {
     e?.preventDefault();
     // 전송 버튼 경로에서도 '/' 커맨더 우선 — '/new' 같은 명령 토큰이 크루에게 전송되지 않게
@@ -643,6 +658,9 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     if (uploading) return;
     const attachments = att;
     histIdx.current = -1; // 히스토리로 불러온 지시를 전송했으면 탐색 위치 초기화
+    // `@다른크루 내용` = 세션 메시지 — 이 크루의 턴은 만들지 않으므로 답변 중이어도 대기열을 거치지 않는다(첨부는 아직 싣지 않는다)
+    const target = !attachments.length ? parseSessionTarget(message, crewList, slug) : null;
+    if (target) { setInput(''); await sendSessionMsg(target, message); return; }
     setInput(''); setAtt([]);
     if (!attachments.length && isStopCommand(message)) {
       setQueueHeld(true);
@@ -789,6 +807,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
   const slashMatches = slashToken ? matchSlash(input, { builtins: SLASH_CMDS, aliases, skills: skillCmds ?? [], skillInsert: (s) => t('chat.cmd.skillPrefix', { name: s.title }) }) : [];
   const [slashIdx, setSlashIdx] = useState(0);
   useEffect(() => { setSlashIdx(0); }, [slashQ, slashToken?.[0]]);
+  const sm = useSessionMention({ input, setInput, crew: crewList, selfSlug: slug, disabled: !!viewing, onPicked: () => inputRef.current?.focus() });
   const slashPanelRef = useRef(null);
   const slashWrapRef = useRef(null);
   const slashNatW = useRef(0);
@@ -978,7 +997,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
           </button>
         ); })()}
         {(() => { const all = (viewing ? archMsgs : thread) ?? []; const base = Math.max(0, all.length - shown); return all.slice(base).map((m, k) => { const i = base + k; return (
-          m.who === 'user' && m.via ? (
+          isSessionCard(m) ? <SessionMsgCard key={i} m={m} t={t} ws={ws} /> : m.who === 'user' && m.via ? (
             /* 배달 지시(쪽지·위임·루틴) — 사장 말풍선(우측)과 구분해 좌측 중립 카드로. who:'user'는
                러너 프롬프트 관점의 역할일 뿐 사장이 쓴 글이 아니다(신고 2026-07-28 "내가 쓴 게 아니거든"). */
             <div key={i} className="fade-up" style={{ alignSelf: 'flex-start', maxWidth: '85%', display: 'grid', gap: 4 }}>
@@ -1254,6 +1273,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
         {/* '/' 커맨더 드롭업 — 클로드코드 커맨더 문법(입력창 위 세로 목록, ↑↓ 이동·Enter 실행).
             위치 기준은 이 relative 래퍼(입력바). 별칭 행은 ✕로 삭제, 하단 고정 행으로 새 별칭 등록. */}
         <div ref={slashWrapRef} style={{ position: 'relative' }}>
+        <SessionMentionPanel sm={sm} t={t} />
         {slashToken && (
           <div ref={slashPanelRef} className="card card-float" role="listbox" style={{
             position: 'absolute', bottom: 'calc(100% + 8px)', left: slashClamp.shift, zIndex: 40,
