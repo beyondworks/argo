@@ -165,3 +165,31 @@ test('runRoutine: 루프 턴이 연속 실패하면 3회에 blocked 정지 + 결
   const c2 = await byId(r2.id);
   assert.equal(c2.enabled, false); assert.equal(c2.loop.stoppedReason, 'maxRuns');
 });
+
+// 루프 판정 표지(LOOP: …)는 엔진용 — 사용자에게 나가는 곳(알림 이벤트·마지막 결과 요약·지금 실행 응답)에서는 한 번만 빼고,
+// 판정은 원문으로 한다. 1:1 대화 기록(크루 답)은 원문 그대로 남긴다(화면이 표시할 때 뺀다). 유건 확인 2026-10-03.
+test('루프 표지: 알림·마지막 결과·실행 응답에서는 빠지고, 판정은 원문으로·1:1 기록은 원문 그대로', async () => {
+  const r = await mkLoop({ maxRuns: 5 });
+  const raw = '## 점검 결과\n서버 정상\n\nLOOP: done 목표 달성';
+  const got = []; const off = onNotify((e) => { if (e.type === 'routine' && e.routine?.id === r.id) got.push(e); });
+  let out;
+  try { out = await runRoutine(WS, r.id, { chatFn: fakeChat([{ reply: raw }]) }); } finally { off(); }
+  const result = got.find((e) => e.phase !== 'stop');
+  assert.equal(result.reply, '## 점검 결과\n서버 정상');
+  assert.equal(out.reply, '## 점검 결과\n서버 정상');
+  const cur = await byId(r.id);
+  assert.doesNotMatch(cur.lastResult, /LOOP/);
+  assert.match(cur.lastResult, /서버 정상/);
+  assert.equal(cur.loop.stoppedReason, 'done'); // 원문의 마지막 줄을 판정이 읽었다
+  assert.equal(cur.loop.stoppedDetail, '목표 달성');
+  const thread = JSON.parse(await readFile(join(process.env.ARGO_ROOT, WS, 'chats', 'alpha.json'), 'utf8'));
+  assert.equal(thread.messages.filter((m) => m.who === 'crew').at(-1).text, raw);
+});
+
+test('루프 표지: 루프가 아닌 루틴의 답은 그대로(표지 형식을 설명한 답까지 지우지 않는다)', async () => {
+  const r = await addRoutine(WS, { agentSlug: 'alpha', title: '일간', prompt: '형식 안내', schedule: { type: 'interval', everyMinutes: 30 } });
+  const reply = '마지막 줄 예시입니다.\nLOOP: done 이유';
+  const got = []; const off = onNotify((e) => { if (e.type === 'routine' && e.routine?.id === r.id) got.push(e); });
+  try { await runRoutine(WS, r.id, { chatFn: fakeChat([{ reply }]) }); } finally { off(); }
+  assert.equal(got[0].reply, reply);
+});

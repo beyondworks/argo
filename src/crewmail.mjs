@@ -17,6 +17,7 @@ import { paths, loadCompany } from './workspace.mjs';
 import { monthCost } from './billing.mjs'; // 동시 배달 착수 전 예산 게이트(2R 검수 MEDIUM-2 — 회의실 room.mjs 라운드 경계 게이트와 같은 규칙)
 import { writeJsonAtomic } from './jsonstore.mjs';
 import { runLimited } from './run-limited.mjs';
+import { mailHead, mailReplyHint } from './inbound-marks.mjs'; // 머리말 = 1:1 화면 출처 카드와 같은 함수
 import { DELEGATION_LIMITS, getTree, spendTree } from './delegation-limits.mjs'; // 위임 제한 표 — 쪽지 회신 안내의 단계 상한
 
 /** 회사별 동시 배달 상한 — 회의실 동시 발언(ROOM_CONCURRENCY)과 같은 규칙: 기본 8, ARGO_MAIL_CONCURRENCY로 1~16 클램프.
@@ -250,18 +251,10 @@ export async function deleteDead(wsId, file) {
     유효 러너로 내린다. */
 export function mailPrompt(msg, lang = 'ko', { hasTools = true, relaxed = msg.relaxed === true } = {}) { // relaxed = 배달 직전에 다시 판정한 값(시작 대화가 그 사이 제한을 다시 걸었으면 쪽지에 relaxed가 있어도 false)
   const canReply = msg.kind === 'to' && (msg.hop ?? 0) < (relaxed ? DELEGATION_LIMITS.off.hop : DELEGATION_LIMITS.on.hop) && hasTools; // 풀린 쪽지는 단계 상한이 4라 hop 2·3에서도 회신 도구가 있다(chat.mjs turnColleagues와 같은 표)
-  const ccNote = msg.kind === 'cc'
-    ? (lang === 'en' ? ' (CC — for your awareness; no reply expected)' : ' (참조 — 알아두라고 보낸 사본이다. 회신 의무는 없다)')
-    : '';
+  const cc = msg.kind === 'cc'; // 참조 — 알아두라고 보낸 사본(회신 의무 없음)
   // 사장이 회의실에서 참조로 돌린 것 — "동료의 쪽지"라고 하면 발신자를 잘못 알려준다(회의실 cc 경로).
-  if (msg.fromRole === 'captain') {
-    return lang === 'en'
-      ? `(From the captain — shared from the meeting room${ccNote}) ${msg.message}`
-      : `(사장이 회의실에서 공유${ccNote}) ${msg.message}`;
-  }
-  return lang === 'en'
-    ? `(Message from colleague ${msg.fromName}${ccNote}) ${msg.message}${canReply ? `\n(If a reply is needed, use send_to_crew to message ${msg.fromName} back.)` : ''}`
-    : `(동료 ${msg.fromName}의 쪽지${ccNote}) ${msg.message}${canReply ? `\n(회신이 필요하면 send_to_crew 도구로 ${msg.fromName}에게 답장을 보내라.)` : ''}`;
+  if (msg.fromRole === 'captain') return `${mailHead(lang, { cc, captain: true })}${msg.message}`;
+  return `${mailHead(lang, { fromName: msg.fromName, cc })}${msg.message}${canReply ? mailReplyHint(lang, msg.fromName) : ''}`;
 }
 
 /** 우편 배달 — 스케줄러 틱에서 호출. runTurn(slug, msg, { from, hop, chain })을 주입받는다
