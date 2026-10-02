@@ -71,6 +71,9 @@ assert.equal((await done).ok, true, '사전 조건: 커넥터 연결');
 const SEND = (to) => ({ name: 'mcp__crew__use_connector', input: { server: ID, tool: 'send_mail_demo', args: { to, body: 'hi' } } });
 const sent = () => s.counters.toolCalls.send_mail_demo ?? 0;
 const reset = (next) => { plan = next; firedBy.clear(); reqs.length = 0; };
+// 새로 생긴 결재만 — addApproval은 목록 앞에 넣는다(unshift). 길이로 자르면 가장 오래된 결재를 본다(재검수 3차 MEDIUM-1)
+const snap = async () => new Set((await loadApprovals(ws)).map((x) => x.id));
+const newer = async (ids) => (await loadApprovals(ws)).filter((x) => !ids.has(x.id));
 
 test('사장 직접 턴 — 풀 오토 회사에서 커넥터 쓰기가 결재 없이 실행된다(대조군)', async () => {
   reset({ a: SEND('owner@example.com') });
@@ -82,11 +85,11 @@ test('사장 직접 턴 — 풀 오토 회사에서 커넥터 쓰기가 결재 �
 
 test('위임받은 동료 턴 — 커넥터 쓰기가 결재로 간다(발송은 서버에 닿지 않는다)', async () => {
   reset({ a: { name: 'mcp__crew__delegate', input: { to: 'b', task: '메일 보내 줘' } }, b: SEND('deleg@example.com') });
-  const before = sent(); const apBefore = (await loadApprovals(ws)).length;
+  const before = sent(); const ap0 = await snap();
   await chat(ws, 'a', '브라보에게 맡겨', null, {});
   assert.ok(reqs.some((r) => r.who === 'b'), '위임 턴이 돌았다');
   assert.equal(sent(), before, '위임 턴에서 결재 없이 발송됐다');
-  const ap = (await loadApprovals(ws)).slice(apBefore);
+  const ap = await newer(ap0);
   assert.equal(ap.length, 1); assert.equal(ap[0].slug, 'b');
 });
 
@@ -184,12 +187,12 @@ test('LOW-7 — 사장 직접 턴의 A가 B에게 장시간 작업·예약을 �
 
 test('MEDIUM-2 — CLI 지시 블록의 결재와 커넥터 결재도 출처(위임 사슬의 크루)를 남긴다', async () => {
   const { runDirectives } = await import('../src/cli-directives.mjs');
-  const before = (await loadApprovals(ws)).length;
+  const ap0 = await snap();
   await runDirectives(ws, 'b', [{ action: 'approval', request: '메일 발송', reason: '보고' }], { chain: ['a'], hop: 1 });
   const { callConnectorTool } = await import('../src/connectors.mjs');
   const r = await callConnectorTool(ws, ID, 'send_mail_demo', { to: 'x@example.com', body: 'x' }, { slug: 'b', fullAuto: false, from: 'a' });
   assert.equal(r.error, 'approval_pending');
-  const added = (await loadApprovals(ws)).slice(before);
+  const added = await newer(ap0);
   assert.equal(added.length, 2);
   assert.deepEqual(added.map((x) => x.from), ['a', 'a'], 'CLI 지시 블록·커넥터 결재 모두 from=a');
 });
@@ -212,5 +215,28 @@ test('LOW-5 — 풀 오토 표지는 모델에게 가는 글을 바꾸지 않는
       assert.deepEqual(x, y, '표지가 있어도 시스템 프롬프트·메시지가 같다');
     }
   } finally { await updateCompany(ws, { fullAuto: true }); }
+});
+
+// ── 통합본 3차 재검수 ──
+test('LOW-1 — 사장 직접 턴의 A가 B의 예약을 다시 켜면 A의 위임, 자기 예약이면 사장 직접', async () => {
+  const forB = await addRoutine(ws, { agentSlug: 'b', title: 'B 예약', prompt: 'x', schedule: { type: 'daily', time: '07:00' }, enabled: false });
+  const forA = await addRoutine(ws, { agentSlug: 'a', title: 'A 예약', prompt: 'x', schedule: { type: 'daily', time: '07:00' }, enabled: false });
+  for (const id of [forB.id, forA.id]) { reset({ a: { name: 'mcp__crew__cancel_routine', input: { id, action: 'on' } } }); await chat(ws, 'a', '예약 다시 켜', null, {}); }
+  const rs = await loadRoutines(ws);
+  const b = rs.find((r) => r.id === forB.id); const a = rs.find((r) => r.id === forA.id);
+  assert.equal(b.enabled, true); assert.equal(b.from, 'a', '다른 크루의 예약을 켜면 A의 위임');
+  assert.equal(a.enabled, true); assert.ok(!a.from, '자기 예약은 사장 직접');
+});
+
+test('LOW-2 — 사장이 보낸 쪽지(쪽지 API·회의실 참조, from=captain)의 배달 턴은 사장 직접 턴: 커넥터 쓰기가 결재 없이', async () => {
+  reset({ b: SEND('captain-mail@example.com') });
+  const before = sent(); const ap0 = await snap();
+  await crewmailTurn(ws, 'b', { id: 'mc', from: 'captain', fromName: '사장', fromRole: 'captain', kind: 'to', message: '메일 보내 줘', hop: 0, chain: [] }, { from: 'captain', hop: 0, chain: [] });
+  assert.equal(sent(), before + 1, '사장 쪽지의 배달 턴은 풀 오토');
+  assert.equal((await newer(ap0)).length, 0);
+  // 그 턴에서 올라온 결재(출처 captain)의 후속도 사장 직접 턴이다
+  const seen = [];
+  await _followUpForTest(ws, { id: 'capf', slug: 'b', from: 'captain', kind: 'action', action: '메일 발송', status: 'approved' }, true, { runChat: async (w, slug, msg, sid, opts) => { seen.push(opts); return { reply: 'ok', sessionId: null }; } });
+  assert.ok(!seen[0].notOwnerDirect, '출처 captain = 사장 직접');
 });
 
