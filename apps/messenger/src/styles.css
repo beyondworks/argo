@@ -192,7 +192,7 @@
    --msg-gap-in    같은 글 안(이름 줄↔첫 말풍선·글↔사진 묶음↔파일↔링크 카드↔시각) · 같은 묶음의 다음 글
    --msg-gap-group 보낸 사람이 바뀌거나 시간이 벌어진 새 묶음(msg-group.mjs 기준)
    --msg-gap-sys   날짜 줄·새 메시지 줄·시스템 글·안내 띠(실행기 꺼짐 등) 위아래 */
-.msgr-shell { --msg-gap-in: 4px; --msg-gap-group: 14px; --msg-gap-sys: 14px; }
+.msgr-shell { --acts-h: 26px; --msg-gap-in: 4px; --msg-gap-group: 14px; --msg-gap-sys: 14px; }
 .msgr-spine { position: relative; display: flex; flex-direction: column; gap: var(--msg-gap-group); }
 .msgr-spine > .msgr-row.cont, .msgr-spine > .msgr-mine.cont { margin-top: calc(var(--msg-gap-in) - var(--msg-gap-group)); }
 .msgr-spine > :is(.msgr-tnode, .msgr-newline), .msgr-spine > .msgr-row:has(> .msgr-col > .msgr-sys) { margin-block: calc(var(--msg-gap-sys) - var(--msg-gap-group)); }
@@ -1033,11 +1033,31 @@
 .msgr-reacts button.on { border-color: var(--primary); box-shadow: inset 0 0 0 1px var(--primary); color: var(--fg); }
 .msgr-mine .msgr-reacts { justify-content: flex-end; }
 .msgr-acts { position: relative; flex-wrap: wrap; }
-/* 데스크톱 동작 줄은 글 위에 떠 있는 도구 줄 — 보이지 않을 때도 글마다 31px를 차지해 간격 표가 무너졌다(1440 실측 51~61px). 글 바로 위(줄 바깥) 오른쪽에 띄운다 — 지금 글을 가리지 않게 */
+/* 데스크톱 동작 줄 — LLM 채팅(Claude·ChatGPT)처럼 글 바로 아래 작은 회색 아이콘 줄(유건 2026-10-02). 글 위에 뜨는 상자는 없앴다 — 구분선·윗글을 덮었다.
+   A안(기본): 닫혀 있으면 자리도 없다(display none → 묶음 안 4px 그대로), 올린·키보드 포커스한 글 아래에 열리며 아래 글을 민다.
+   B안: 묶음 마지막 글 아래에 고정 자리(--acts-h)를 두고 묶음 사이 14px을 그 자리로 대신한다. 올린 글의 줄이 그 자리에 뜬다(App.jsx aimSlot → --acts-slot-top). */
 .msgr-shell:not(.msgr-phone) .msgr-mine { position: relative; }
-.msgr-shell:not(.msgr-phone) :is(.msgr-row > .msgr-col, .msgr-mine) > .msgr-acts:not(.ctx) { position: absolute; bottom: calc(100% - 2px); right: 0; z-index: 5; margin: 0; padding: 3px; flex-wrap: nowrap; white-space: nowrap; border: 1px solid var(--border); border-radius: 10px; background: var(--card); box-shadow: var(--shadow-float); pointer-events: none; }
-.msgr-shell:not(.msgr-phone) :is(.msgr-row:is(:focus-within, [data-acts='open']) > .msgr-col, .msgr-mine:is(:focus-within, [data-acts='open'])) > .msgr-acts:not(.ctx) { pointer-events: auto; } /* 위 규칙과 같은 구조라야 우선순위가 이긴다 */
-@media (hover: hover) { .msgr-shell:not(.msgr-phone) :is(.msgr-row:hover > .msgr-col, .msgr-mine:hover) > .msgr-acts:not(.ctx) { pointer-events: auto; } }
+.msgr-shell:not(.msgr-phone) .msgr-acts.bar { display: none; align-items: center; gap: 2px; height: var(--acts-h); margin: 0; opacity: 1; flex-wrap: nowrap; white-space: nowrap; color: var(--fg-3); }
+.msgr-row > .msgr-col > .msgr-acts.bar { justify-self: start; align-self: flex-start; } .msgr-mine > .msgr-acts.bar { justify-self: end; }
+.msgr-acts.bar button { width: 26px; height: 24px; padding: 0; justify-content: center; border: 0; border-radius: 6px; color: var(--fg-3); }
+@media (hover: hover) { .msgr-acts.bar button:hover { background: var(--card-2); color: var(--fg); } } .msgr-acts.bar button:active { background: var(--card-2); color: var(--fg); }
+.msgr-acts.bar button:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.msgr-acts.bar .ts { margin-left: 6px; font-family: var(--mono); font-size: 11px; font-variant-numeric: tabular-nums; color: var(--fg-3); }
+/* A안 — 열기: 올림(hover 기기)·키보드 포커스(:focus-visible — 마우스로 누른 뒤 남는 포커스로 줄이 계속 열려 있지 않게)·터치 길게 누르기(data-acts) */
+.msgr-shell[data-acts-mode='a']:not(.msgr-phone) :is(.msgr-row, .msgr-mine):is(:focus-visible, :has(:focus-visible), [data-acts='open']) .msgr-acts.bar:not(.pending) { display: flex; }
+@media (hover: hover) { .msgr-shell[data-acts-mode='a']:not(.msgr-phone) :is(.msgr-row, .msgr-mine):hover .msgr-acts.bar:not(.pending) { display: flex; } }
+.msgr-shell[data-acts-mode='a']:not(.msgr-phone) .msgr-acts.bar { transition: height 140ms ease, opacity 140ms ease, display 140ms allow-discrete; }
+@starting-style { .msgr-shell[data-acts-mode='a']:not(.msgr-phone) .msgr-acts.bar { height: 0; opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .msgr-shell[data-acts-mode='a']:not(.msgr-phone) .msgr-acts.bar { transition: none; } }
+/* B안 — 묶음 마지막 글(.notail이 아닌 글)만 아래 자리를 갖는다. 자리는 줄 바깥 여백이라 묶음 안 4px은 그대로 */
+.msgr-shell[data-acts-mode='b']:not(.msgr-phone) .msgr-spine > :is(.msgr-row, .msgr-mine):not(.notail):not(.ghost):not(.msgr-typing-group) { padding-bottom: var(--acts-h); margin-bottom: calc(var(--msg-gap-in) - var(--msg-gap-group)); } /* 자리 아래 4px — 다음 묶음·구분선에 아이콘이 붙지 않게 */
+.msgr-shell[data-acts-mode='b']:not(.msgr-phone) .msgr-acts.bar[data-slot] { display: flex; position: absolute; top: var(--acts-slot-top); left: 42px; z-index: 2; visibility: hidden; }
+.msgr-shell[data-acts-mode='b']:not(.msgr-phone) .msgr-mine > .msgr-acts.bar[data-slot] { left: auto; right: 0; }
+.msgr-shell[data-acts-mode='b']:not(.msgr-phone) :is(.msgr-row, .msgr-mine):is(:focus-visible, :has(:focus-visible), [data-acts='open']) .msgr-acts.bar:not(.pending)[data-slot] { visibility: visible; }
+@media (hover: hover) { .msgr-shell[data-acts-mode='b']:not(.msgr-phone) :is(.msgr-row, .msgr-mine):hover .msgr-acts.bar:not(.pending)[data-slot] { visibility: visible; } }
+/* 대상 글 표시 — 동작이 어느 글에 걸리는지(자리는 묶음 끝에 하나라). 아래 자리(padding)는 칠하지 않는다 */
+.msgr-shell[data-acts-mode='b']:not(.msgr-phone) :is(.msgr-row, .msgr-mine):is(:focus-visible, :has(:focus-visible)), .msgr-shell[data-acts-mode='b']:not(.msgr-phone) :is(.msgr-row, .msgr-mine):active { background: color-mix(in srgb, var(--fg) 5%, transparent); background-clip: content-box; border-radius: 6px; }
+@media (hover: hover) { .msgr-shell[data-acts-mode='b']:not(.msgr-phone) :is(.msgr-row, .msgr-mine):hover { background: color-mix(in srgb, var(--fg) 5%, transparent); background-clip: content-box; border-radius: 6px; } }
 .msgr-acts button.danger { color: var(--danger, #d05a5a); }
 .msgr-editbox { display: grid; gap: 8px; max-width: 640px; min-width: 320px; }
 .msgr-editbox textarea.msgr-input { width: 100%; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font: inherit; font-size: 13.5px; resize: vertical; outline: 0; }
@@ -1824,7 +1844,7 @@ html { -webkit-tap-highlight-color: transparent; }
 /* ─── 모바일 정돈(2026-09-29 유건 지시 "메이저 메신저와 이질감 없게" — 카카오톡·라인·텔레그램·슬랙 대조) ─── */
 /* 연속 메시지 묶음(msg-group.mjs): 이름·아바타는 묶음 첫 글에만, 시간·전송 표시는 마지막 글에만. 줄 간격 20 → 6 */
 /* 폰 한정 — 데스크톱은 말풍선 아래 도구 막대(.msgr-acts, 32px)가 흐름 안에 있어 묶어도 38px씩 벌어졌다(2026-09-29 실측). 데스크톱 묶음은 막대를 띄우는 설계와 함께 따로 */
-.msgr-row.cont > .msgr-av, .msgr-row.cont > .msgr-avbtn { visibility: hidden; } /* 묶음 표시는 폰·데스크톱 공통(2026-10-02 간격 표) */
+.msgr-row.cont > :is(.msgr-av, .msgr-avbtn) { display: none; } .msgr-row.cont > .msgr-col { grid-column: 2; } /* 숨긴 아바타(28px)가 한 줄 글(21.6px)보다 높아 둘째 글부터 행이 6.4px 길어졌다 — 첫 쌍 9.6px·나머지 16px(2026-10-02 1440 실측). 자리째 뺀다 */ /* 묶음 표시는 폰·데스크톱 공통(2026-10-02 간격 표) */
 .msgr-row.cont .who { display: none; }
 .msgr-mine.notail > .meta { display: none; }
 @media (max-width: 720px) {
