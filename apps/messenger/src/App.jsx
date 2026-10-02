@@ -103,6 +103,7 @@ import { dmApprovalState, dmNeedsApproval } from './dm-approval.js';
 import { twinRelink, twinLeftOrg, twinPaused, twinOrgLabel, crewAddable, crewSeenAt } from './personal-bots.mjs';
 import { scrollLeftToCenter } from './nav-scroll.mjs';
 import { toastPlace, toastMaxWidth } from './toast-place.mjs';
+import { FLASH_MS, flashKey, splitFavs, cleanGroupName, groupNameTaken, sortGroups, channelMenu, resolveMenu, menuChannels, menuTalks, groupOfChannel, linkChange, groupDiff, nextGroupPos } from './phone-lists.mjs';
 import { faceOf, faceFromStored, faceInner, crewFaceState, nextDoneIn, nextSurpriseIn, nextErrorIn, failedCrewsInFetch, FACE_COLORS, FACE_SHAPES, faceToStore } from './crew-face.mjs';
 import { faceGestures } from './face-gestures.mjs';
 import { coverScale, clampOffset, cropRect, clampZoom, ZOOM_MAX } from './avatar-crop.mjs';
@@ -817,7 +818,11 @@ function Shell({ session }) {
   }, []);
   useEffect(() => { if (chId && channels.length && !channels.some((c) => c.id === chId) && !previewChannels.some((c) => c.id === chId)) setChId(null); }, [channels, previewChannels, chId]); // 사라진 채널(보관·삭제·조직 전환) — 빈 상태로. 참여 전 미리보기 채널은 사라진 것이 아니다
   useEffect(() => { if (!pushCard) return; const id = setTimeout(() => setPushCard(null), 6000); return () => clearTimeout(id); }, [pushCard]);
-  useEffect(() => { if (!err && !note) return; const id = setTimeout(() => { setErr(''); setNote(''); }, err ? 8000 : 4000); return () => clearTimeout(id); }, [err, note]);
+  // 폰 즐겨찾기·알림 끄기 토스트(유건 요청 2026-10-02) — 같은 토스트를 쓰되 짧게(FLASH_MS). 같은 문구를 다시 띄워도 시간이 처음부터 다시 간다(noteSeq)
+  const noteMs = useRef(null); const [noteSeq, bumpNote] = useReducer((x) => x + 1, 0);
+  const flash = (key, vars) => { if (!isPhoneRef.current) return; noteMs.current = FLASH_MS; setErr(''); setNote(t(key, vars)); bumpNote(); }; // 데스크톱은 종전대로(띄우지 않는다)
+  const clearToast = () => { noteMs.current = null; setErr(''); setNote(''); };
+  useEffect(() => { if (!err && !note) return; const id = setTimeout(clearToast, err ? 8000 : (noteMs.current ?? 4000)); return () => clearTimeout(id); }, [err, note, noteSeq]); // eslint-disable-line react-hooks/exhaustive-deps
   // 토스트 자리 — 아래쪽에 깔린 것(탭 바·새 대화 단추·입력창 받침)의 윗선 바로 위, 가로는 입력창 열(폰은 화면) 가운데. 화면마다 머리 높이가 달라 위쪽 고정은 머리·제목·시트를 가렸다(#801 재검수)
   const toastRef = useRef(null);
   useLayoutEffect(() => {
@@ -1230,8 +1235,8 @@ function Shell({ session }) {
     try { await prefQueue.current.enqueue(() => q(supabase.from('msgr_channel_prefs').upsert(patches.map((patch) => ({ ...patch, user_id: uid, updated_at: new Date().toISOString() }))))); }
     finally { bumpPrefs(); }
   };
-  const toggleMute = async (c) => { const on = !muted.has(c.id); setMuted((s) => { const n = new Set(s); if (on) n.add(c.id); else n.delete(c.id); return n; }); try { await savePrefs([{ channel_id: c.id, muted: on }]); } catch (e) { setErr(e.message); } };
-  const togglePin = async (c) => { const on = !pinned.has(c.id); setPinned((st) => { const n = new Set(st); if (on) n.add(c.id); else n.delete(c.id); return n; }); try { await savePrefs([{ channel_id: c.id, pinned: on }]); } catch (e) { setErr(e.message); } };
+  const toggleMute = async (c) => { const on = !muted.has(c.id); setMuted((s) => { const n = new Set(s); if (on) n.add(c.id); else n.delete(c.id); return n; }); flash(flashKey('mute', on)); try { await savePrefs([{ channel_id: c.id, muted: on }]); } catch (e) { setErr(e.message); } }; // 폰은 누르는 즉시 토스트(유건 2026-10-02 "눌러도 아무 표시가 없음") — 화면 상태와 같이 바로, 저장이 실패하면 오류 토스트가 덮는다
+  const togglePin = async (c) => { const on = !pinned.has(c.id); setPinned((st) => { const n = new Set(st); if (on) n.add(c.id); else n.delete(c.id); return n; }); flash(flashKey('fav', on)); try { await savePrefs([{ channel_id: c.id, pinned: on }]); } catch (e) { setErr(e.message); } };
   // 내가 쓸 때(bumpPrefs)·복귀 때만 읽는다 — 주기 없음(기능 점검 D2).
   const [targetPrefs, setTargetPrefs] = useState([]);
   const [favoriteBusy, setFavoriteBusy] = useState(false); const favoriteLock = useRef(false);
@@ -1261,6 +1266,69 @@ function Shell({ session }) {
       if (activeOrg.current === orgId) setTargetPrefs((rows) => [...rows.filter((p) => p.target_kind !== kind || p.target_id !== id), { target_kind: kind, target_id: id, pinned: on, pin_pos: rows.find((p) => p.target_kind === kind && p.target_id === id)?.pin_pos ?? null }]);
     } catch (e) { setErr(friendlyErr(e.message, t)); }
     finally { favoriteLock.current = false; setFavoriteBusy(false); bumpPrefs(); }
+  };
+  // 폰 채널 탭 그룹(유건 확정 2026-10-02) — 나만 보이고(내 기기끼리 맞춰짐) 조직 공간마다 따로, 채널 하나는 그룹 하나에만(phone-lists.mjs).
+  // 폰이 조직 공간을 열 때·앞으로 올 때(syncEpoch) 그룹과 연결을 한 요청으로 한 번 읽는다. 폴링·방송 없음, 바꿀 때만 쓴다. 데스크톱은 읽지 않는다
+  const [groupsBy, setGroupsBy] = useState({}); // 조직 id → { groups, links } — 공간을 오가도 마지막 값을 먼저 보여 준다(칩이 깜빡이지 않게)
+  const [chMenu, setChMenu] = useState('channels'); // 채널 탭 메뉴: 'fav' | 'channels' | 'g:<id>'
+  const [grpSheet, setGrpSheet] = useState(null); // { mode: 'new' } | { mode: 'edit', id } | { mode: 'pick', channelId }
+  useEffect(() => {
+    if (!isPhone || !uid || !orgId || orgId === PERSONAL) return;
+    let live = true; const org = orgId;
+    q(supabase.from('msgr_channel_groups').select('id, name, pos, created_at, msgr_channel_group_links(channel_id)').eq('org_id', org))
+      .then((rows) => { if (!live) return; setGroupsBy((m) => ({ ...m, [org]: { groups: rows.map(({ msgr_channel_group_links: _l, ...g }) => g), links: rows.flatMap((g) => (g.msgr_channel_group_links ?? []).map((l) => ({ channel_id: l.channel_id, group_id: g.id }))) } })); })
+      .catch((e) => { if (live) pushDiag('ch-groups', e?.message ?? String(e)); });
+    return () => { live = false; };
+  }, [uid, orgId, isPhone, syncEpoch]);
+  const NO_GROUPS = { groups: [], links: [] };
+  const grp = groupsBy[orgId] ?? NO_GROUPS;
+  const setGrp = (org, fn) => setGroupsBy((m) => ({ ...m, [org]: fn(m[org] ?? NO_GROUPS) }));
+  const groupErr = (e) => setErr(/msgr_group_limit/.test(e.message) ? t('grp.limit') : /duplicate key|unique/.test(e.message) ? t('grp.name.taken') : friendlyErr(e.message, t));
+  const putInGroup = async (org, links, ids, groupId) => { // 넣기·옮기기(다른 그룹에서 옮겨 오는 것 포함) — 이미 그 그룹이면 쓰지 않는다
+    const rows = ids.filter((id) => linkChange(links, id, groupId).op !== 'none').map((id) => ({ user_id: uid, channel_id: id, group_id: groupId }));
+    if (!rows.length) return;
+    await q(supabase.from('msgr_channel_group_links').upsert(rows));
+    setGrp(org, (g) => ({ ...g, links: [...g.links.filter((l) => !rows.some((r) => r.channel_id === l.channel_id)), ...rows.map((r) => ({ channel_id: r.channel_id, group_id: groupId }))] }));
+  };
+  const createGroup = async (rawName, channelIds = []) => {
+    const org = orgId; const name = cleanGroupName(rawName);
+    if (!name || !org || org === PERSONAL) return null;
+    if (groupNameTaken(grp.groups, name)) { setErr(t('grp.name.taken')); return null; }
+    try {
+      const [row] = await q(supabase.from('msgr_channel_groups').insert({ user_id: uid, org_id: org, name, pos: nextGroupPos(grp.groups) }).select('id, name, pos, created_at'));
+      setGrp(org, (g) => ({ ...g, groups: [...g.groups, row] }));
+      await putInGroup(org, grp.links, channelIds, row.id);
+      flash('grp.created', { name }); return row;
+    } catch (e) { groupErr(e); return null; }
+  };
+  const saveGroup = async (g, rawName, checked) => {
+    const org = orgId; const name = cleanGroupName(rawName);
+    if (!name) return false;
+    if (groupNameTaken(grp.groups, name, g.id)) { setErr(t('grp.name.taken')); return false; }
+    const d = groupDiff(grp.links, g.id, checked);
+    try {
+      if (name !== g.name) { await q(supabase.from('msgr_channel_groups').update({ name }).eq('id', g.id)); setGrp(org, (s) => ({ ...s, groups: s.groups.map((x) => (x.id === g.id ? { ...x, name } : x)) })); }
+      await putInGroup(org, grp.links, d.add, g.id);
+      if (d.remove.length) { await q(supabase.from('msgr_channel_group_links').delete().eq('user_id', uid).eq('group_id', g.id).in('channel_id', d.remove)); setGrp(org, (s) => ({ ...s, links: s.links.filter((l) => !(l.group_id === g.id && d.remove.includes(l.channel_id))) })); }
+      flash('grp.saved'); return true;
+    } catch (e) { groupErr(e); return false; }
+  };
+  const deleteGroup = async (g) => { // 그룹만 지운다 — 연결은 서버에서 함께 사라지고(cascade) 채널은 '채널' 메뉴로 돌아간다
+    const org = orgId;
+    try {
+      await q(supabase.from('msgr_channel_groups').delete().eq('id', g.id));
+      setGrp(org, (s) => ({ groups: s.groups.filter((x) => x.id !== g.id), links: s.links.filter((l) => l.group_id !== g.id) }));
+      flash('grp.deleted'); return true;
+    } catch (e) { groupErr(e); return false; }
+  };
+  const moveChannel = async (channelId, groupId) => { // 채널 줄 '그룹에 넣기' — 한 채널을 한 그룹으로(groupId null = 빼기)
+    const org = orgId; const ch = linkChange(grp.links, channelId, groupId);
+    if (ch.op === 'none') return;
+    try {
+      if (ch.op === 'upsert') await putInGroup(org, grp.links, [channelId], groupId);
+      else { await q(supabase.from('msgr_channel_group_links').delete().eq('user_id', uid).eq('channel_id', channelId)); setGrp(org, (s) => ({ ...s, links: s.links.filter((l) => l.channel_id !== channelId) })); }
+      flash(groupId ? 'grp.moved' : 'grp.removed', { name: grp.groups.find((x) => x.id === groupId)?.name ?? '' });
+    } catch (e) { groupErr(e); }
   };
   const toggleMemory = async (c) => { const r = await supabase.from('msgr_channels').update({ crew_memory: c.crew_memory === false }).eq('id', c.id).select('id'); if (r.error) return setErr(friendlyErr(r.error.message, t)); if (!r.data?.length) return setErr(t('err.denied')); setNote(t(c.crew_memory === false ? 'ch.memory.nowOn' : 'ch.memory.nowOff')); loadOrg(orgId).catch(() => {}); }; // 권한 최종 판정은 RLS(msgr_can_manage_channel)·정책 트리거
   const readMark = useRef({}); // 채널 → 이 기기에서 마지막으로 쓴 읽음 커서 — 같은 값을 다시 쓰지 않는다(기능 점검 D2: 초점·가시성 바뀔 때마다 upsert)
@@ -2257,6 +2325,7 @@ function Shell({ session }) {
                 { icon: 'gear', label: t('ch.menu.settings'), run: () => { setChId(c.id); setPage('chat'); setRail(false); setChSheet(true); } },
                 { icon: 'star', label: t(pinned.has(c.id) ? 'ch.unpin' : 'ch.pin'), run: () => togglePin(c) },
                 { icon: muted.has(c.id) ? 'bell' : 'belloff', label: t(muted.has(c.id) ? 'ch.unmute' : 'ch.mute'), run: () => toggleMute(c) },
+                isPhone && !isPersonal && { icon: 'folder', label: t('ch.group'), run: () => setGrpSheet({ mode: 'pick', channelId: c.id }) }, // 폰 채널 탭 그룹(유건 2026-10-02) — 데스크톱 레일 메뉴는 그대로
                 { icon: 'out', label: t('ch.leave'), run: () => confirmVia('leave') }, // 공개 채널도 나간다 — 참여 행을 지우면 찾아보기로 다시 들어온다(D16, 종전엔 비공개만)
                 canManage && { icon: 'archive', label: t('ch.archive'), run: () => confirmVia('archive') },
                 ...orderItems(c),
@@ -2434,8 +2503,13 @@ function Shell({ session }) {
   const onOrgTab = !!orgRow && orgId === orgRow.id && spaceReady;
   const chChannels = onOrgTab ? sortRooms(channels.filter((c) => c.kind !== 'dm'), { sort: chBase.some((c) => dmSortPos[c.id] != null) ? 'custom' : 'recent', atOf: (c) => rowOf(c).at, unread, pinned, pinPos, nameOf: (c) => c.name, sortPos: dmSortPos }) : [];
   const chTalks = onOrgTab ? sortRooms(channels.filter((c) => c.kind === 'dm'), { sort: dmSort, atOf: (c) => rowOf(c).at, unread, pinned, pinPos, nameOf: dmBaseName, sortPos: dmSortPos }) : [];
-  const chChannelsShown = tabSearch(chChannels, tabQText, (c) => [c.name, c.topic, previewForSearch(c)], bodyHit);
-  const chTalksShown = tabSearch(chTalks, tabQText, (c) => [dmBaseName(c), previewForSearch(c)], bodyHit);
+  // 채널 탭 메뉴 '즐겨찾기 · 채널 · <그룹들…>'(유건 2026-10-02) — 그룹에 넣은 채널은 '채널'에서 빠지고 그 그룹에서 보인다. '이 조직의 대화'는 채널 메뉴에서 종전 그대로, 즐겨찾기는 고정한 대화만, 그룹 메뉴엔 없다
+  const chMenuKey = resolveMenu(chMenu, grp.groups);
+  const chMenuGroup = chMenuKey.startsWith('g:') ? grp.groups.find((g) => `g:${g.id}` === chMenuKey) : null;
+  const chMenuList = menuChannels(chMenuKey, chChannels, { pinned, links: grp.links, groups: grp.groups });
+  const chTalksMenu = menuTalks(chMenuKey, chTalks, pinned);
+  const chChannelsShown = tabSearch(chMenuList, tabQText, (c) => [c.name, c.topic, previewForSearch(c)], bodyHit);
+  const chTalksShown = tabSearch(chTalksMenu, tabQText, (c) => [dmBaseName(c), previewForSearch(c)], bodyHit);
   const otherOrgsUnread = (orgs ?? []).filter((o) => o.id !== chOrg).reduce((a, o) => ({ n: a.n + (spaceCount(o.id)?.n || 0), mention: a.mention + (spaceCount(o.id)?.mention || 0) }), { n: 0, mention: 0 });
   const orgMenuPop = orgMenu && ((items) => (
     <OrgMenuCard orgs={orgs ?? []} current={chOrg} onClose={() => setOrgMenu(false)} onPick={(o) => { setTabQ(null); if (o.id !== orgId) setOrgId(o.id); }} badge={items.includes('joinable') ? (o) => <SpaceBadge c={spaceCount(o.id)} /> : null}>
@@ -2505,7 +2579,10 @@ function Shell({ session }) {
             <div className="ph-chips" role="radiogroup" aria-label={t('dm.filter')}>{CHAT_FILTERS.map((k) => <button key={k} type="button" role="radio" aria-checked={dmFilter === k} className={dmFilter === k ? 'active' : ''} onClick={() => pickDmFilter(k)}>{k === 'unread' ? t('phone.chip.unread', { n: chatUnreadTotal(chatsAll, unread, muted) }) : t(`phone.chip.${k}`)}</button>)}</div>
             <span className="msgr-sortwrap msgr-dmsort"><button type="button" className={`msgr-sortbtn${dmSortMenu ? ' on' : ''}`} onClick={() => setDmSortMenu((v) => !v)} title={t('dm.sort')} aria-label={t('dm.sort')} aria-haspopup="menu" aria-expanded={dmSortMenu}><I name="sort" size={16} /></button>{dmSortMenu && <div className="msgr-rowmenu" role="menu">{DM_SORTS.map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={dmSort === v} onClick={() => { pickDmSort(v); setDmSortMenu(false); }}>{dmSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`dm.sort.${v}`)}</button>)}</div>}</span>
           </div>
-          <div className={`msgr-list ph-rooms${dmAnim ? ` anim-list-${dmAnim}` : ''}`}>{chatShown.map((c) => kRow(c, chatDrop(c)))}</div>
+          {(() => { const { favs: chatFavs, rest: chatRest } = splitFavs(chatShown, pinned); return (<>{/* 즐겨찾기한 대화는 맨 위 단락으로 따로(유건 2026-10-02) — 끌기는 단락 안에서만(.msgr-list가 끌기 범위) */}
+            {chatFavs.length > 0 && (<><div className="ph-sechead">{t('phone.sec.fav')}</div><div className={`msgr-list ph-rooms ph-favs${dmAnim ? ` anim-list-${dmAnim}` : ''}`}>{chatFavs.map((c) => kRow(c, chatDrop(c)))}</div>{chatRest.length > 0 && <div className="ph-sechead">{t('phone.sec.chats')}</div>}</>)}
+            <div className={`msgr-list ph-rooms${dmAnim ? ` anim-list-${dmAnim}` : ''}`}>{chatRest.map((c) => kRow(c, chatDrop(c)))}</div>
+          </>); })()}
           {isPersonal && spaceReady && !chatShown.length && !tabQText.trim() && <div className="msgr-hint ph-empty">{t(chatsAll.length ? `phone.chats.empty.${dmFilter}` : 'phone.chats.empty')}</div>}
           {(!isPersonal || !spaceReady) && <div className="msgr-hint ph-empty" role="status">{t('ui.loading')}</div>}
           {searchFoot(chatShown.length > 0)}
@@ -2522,6 +2599,12 @@ function Shell({ session }) {
           : orgGateActive ? <AiConsentGate t={t} onMenu={openNav} onError={setErr} onDecline={() => setPage('chats')} bare />
           : aiConsentLoading ? <OrgGateLoading t={t} bare />
           : (<>
+          <div className="ph-chiprow ph-chmenu">{/* 채팅 탭 칩과 같은 모양 — 그룹이 늘면 가로 스크롤, 그룹 칩을 길게 누르면 이름 바꾸기·채널 넣고 빼기·지우기 */}
+            <div className="ph-chips" role="radiogroup" aria-label={t('phone.chmenu')}>
+              {channelMenu(grp.groups).map((k) => { const g = k.startsWith('g:') ? grp.groups.find((x) => `g:${x.id}` === k) : null; return <HoldChip key={k} on={chMenuKey === k} label={g ? g.name : t(`phone.chmenu.${k}`)} onPick={() => setChMenu(k)} onHold={g ? () => setGrpSheet({ mode: 'edit', id: g.id }) : null} />; })}
+              <button type="button" className="ph-chipadd" onClick={() => setGrpSheet({ mode: 'new' })} aria-label={t('phone.chmenu.add')} title={t('phone.chmenu.add')}><I name="plus" size={16} /></button>
+            </div>
+          </div>
           {newCh && (
             <form className="msgr-inline ph-inline" onSubmit={(e) => { e.preventDefault(); createChannel(); }}>
               <input className="msgr-input" placeholder={t('ch.name')} value={newCh.name} onChange={(e) => setNewCh((c) => ({ ...c, name: e.target.value }))} autoFocus maxLength={80} />
@@ -2534,13 +2617,14 @@ function Shell({ session }) {
             {browse.length === 0 ? <p className="empty">{t('ch.browse.none')}</p>
               : browse.map((c) => (<div key={c.id} className="row"><span className="name"><I name="hash" size={13} />{c.name}</span><span className="msgr-klabel">{t('ch.browse.members', { n: c.members })}</span><button type="button" className="btn btn-primary sm" onClick={() => joinChannel(c)}>{t('ch.browse.join')}</button></div>))}
           </div>)}
-          <div className="ph-sechead">{t('phone.sec.channels')}</div>
+          <div className="ph-sechead">{chMenuGroup ? chMenuGroup.name : t('phone.sec.channels')}</div>
           <div className="msgr-list ph-rooms">{chChannelsShown.map((c) => kRow(c, { onDrop: pinned.has(c.id) ? reorderFav : reorderChannels }))}</div>
           {!chChannels.length && !tabQText.trim() && (isAdmin && !previewChannels.length ? <div className="msgr-phsteps"><OrgStepList steps={orgSteps({ t, ...onboard, hasChannel: false, createChannel: openNewCh, invite: orgInvite })} /></div>
             : <div className="msgr-hint ph-empty">{t(previewChannels.length ? 'inv.empty.title' : 'ch.noneYet')} {previewChannels.length > 0 && <button type="button" className="btn sm" onClick={openBrowse}><I name="hash" size={13} />{t('inv.empty.browse')}</button>}</div>)}
-          {(chTalks.length > 0 || !tabQText.trim()) && <div className="ph-sechead">{t('phone.sec.talks')}<button type="button" className="ph-secbtn" onClick={() => { setTabQ(null); setDmGroup(true); }}><I name="chatplus" size={15} />{t('dm.new')}</button></div>}
+          {chChannels.length > 0 && !chMenuList.length && !tabQText.trim() && <div className="msgr-hint ph-empty">{t(chMenuKey === 'fav' ? 'grp.fav.empty' : chMenuGroup ? 'grp.empty' : 'grp.channels.allGrouped')}</div>}
+          {!chMenuGroup && (chTalksMenu.length > 0 || (chMenuKey === 'channels' && !tabQText.trim())) && <div className="ph-sechead">{t('phone.sec.talks')}<button type="button" className="ph-secbtn" onClick={() => { setTabQ(null); setDmGroup(true); }}><I name="chatplus" size={15} />{t('dm.new')}</button></div>}
           <div className="msgr-list ph-rooms">{chTalksShown.map((c) => kRow(c, { onDrop: pinned.has(c.id) ? reorderFav : (id, before, visible) => reorderChannelPos(chTalks.filter((x) => !pinned.has(x.id)), id, before, visible) }))}</div>
-          {!chTalks.length && !tabQText.trim() && <div className="msgr-hint ph-empty">{t('phone.talks.empty')}</div>}
+          {chMenuKey === 'channels' && !chTalks.length && !tabQText.trim() && <div className="msgr-hint ph-empty">{t('phone.talks.empty')}</div>}
           {searchFoot(chChannelsShown.length + chTalksShown.length > 0)}
         </>))}
         {rootTab === 'memory' && (!orgs?.length ? <div className="msgr-hint ph-empty">{t('phone.memory.noOrg')}</div>
@@ -2716,7 +2800,7 @@ function Shell({ session }) {
         {orgLocked && <div className="msgr-notice locked"><span>{t(isAdmin ? 'org.locked.admin' : 'org.locked')}</span></div>}
         {pushCard && createPortal(<button type="button" className="msgr-pushcard" onClick={() => { if (pushCard.channel_id) requestNav(pushCard.channel_id, 'card'); setPushCard(null); }}><span className="t">{pushCard.title}</span><span className="b">{pushCard.body}</span></button>, document.body)}
         {(err || note) && createPortal( /* 토스트 — 상단 바는 레이아웃을 밀었다(유건 2026-09-09). 자동 소멸(안내 4초·오류 8초), 클릭하면 즉시 */
-          <button type="button" ref={toastRef} className={`msgr-toast${err ? ' err' : ''}`} onClick={() => { setErr(''); setNote(''); }} role="status" aria-live="polite">{err ? (/msgr_session_refreshing/.test(err) || err === t('err.sessionRefreshing') ? t('err.sessionRefreshing') : `${t('ui.error')}: ${err}`) : note}</button>,
+          <button type="button" ref={toastRef} className={`msgr-toast${err ? ' err' : ''}`} onClick={clearToast} role="status" aria-live="polite">{err ? (/msgr_session_refreshing/.test(err) || err === t('err.sessionRefreshing') ? t('err.sessionRefreshing') : `${t('ui.error')}: ${err}`) : note}</button>,
           document.body,
         )}
         <PageBoundary key={`${page}:${chId ?? ''}`} title={t('ui.pageError')} retry={t('ui.pageError.retry')} onReset={() => setPage('chat')}>
@@ -2753,6 +2837,7 @@ function Shell({ session }) {
       {friendAdd && <FriendAddSheet onClose={() => setFriendAdd(false)} uid={uid} friends={friends} members={isPersonal ? [] : members} onChanged={onFriendsChanged}
         onDm={(id) => { setFriendAdd(false); openDm('user', id); }} onPersonalDm={(id) => { setFriendAdd(false); openPersonalDm(id); setRail(false); }} onNote={setNote} onError={setErr} />}
       {dmGroup && <DmGroupSheet personal={isPersonal} onAddFriend={() => { setDmGroup(false); setFriendAdd(true); }} members={withoutHidden(members.filter((m) => m.user_id !== uid && (!m.expires_at || Date.parse(m.expires_at) > Date.now())), isPersonal ? hiddenUserIds : null)} crews={railVisible} hints={crewHints} uid={uid} nameOfUser={nameOfUser} onCreate={createGroupDm} onClose={() => setDmGroup(false)} />}
+      {grpSheet && isPhone && !isPersonal && <ChannelGroupSheet {...grpSheet} groups={sortGroups(grp.groups)} links={grp.links} channels={chChannels} onCreate={createGroup} onSave={saveGroup} onDelete={deleteGroup} onMove={moveChannel} onPicked={(k) => setChMenu(k)} onClose={() => setGrpSheet(null)} />}
       {isPhone && <PhoneTabs active={rootTab} badges={tabBadgeN} onPick={pickRoot} />}
     </div>
     </RunnerCtx.Provider></SafetyCtx.Provider></AvatarCtx.Provider>
@@ -2806,6 +2891,80 @@ function DmGroupSheet({ members, crews, uid, nameOfUser, onCreate, onClose, pers
           {!rows.length && <p className="note">{t(personal ? 'dm.group.none.personal' : 'dm.group.none')}{personal && onAddFriend && <> <button type="button" className="btn sm" onClick={onAddFriend}><I name="plus" size={12} />{t('friends.add')}</button></>}</p>}{/* 개인 공간 친구 0명이면 막다른 길이었다(검수 MEDIUM-3) */}
         </div>
         <footer className="foot">{joiners.length > 0 && <p className="note">{t('dm.group.joiners', { names: joiners.map(nameOfUser).join(', ') })}</p>}<button type="button" className="btn btn-primary" disabled={busy || picks.size === 0} onClick={submit}>{picks.size >= 2 ? t('dm.group.create') : t('ui.dm')}</button></footer>
+      </section>
+    </div>
+  );
+}
+/* 채널 탭 메뉴 칩 — 누르면 고르고, 길게 누르면(터치) 또는 오른쪽 클릭하면 onHold(그룹 편집 시트). 길게 누른 뒤 손을 뗄 때 오는 클릭은 고르기로 치지 않는다 */
+function HoldChip({ on, label, onPick, onHold }) {
+  const held = useRef(0); const fired = useRef(false);
+  const lp = useLongPress(() => { held.current = Date.now(); fired.current = true; onHold?.(); });
+  // 길게 눌러 시트가 뜬 뒤 손을 떼면 그 클릭이 시트 뒤 배경에 떨어져 시트를 바로 닫았다(2026-10-02 실측) — 행 길게 누르기(rowLongPress)와 같이 pointerup 직후 300ms 안 클릭 한 번을 삼킨다
+  const swallowNext = () => { if (!fired.current) return; fired.current = false; const swallow = (e) => { e.preventDefault(); e.stopPropagation(); }; document.addEventListener('click', swallow, { capture: true, once: true }); setTimeout(() => document.removeEventListener('click', swallow, { capture: true }), 300); };
+  const hold = onHold ? { ...lp, onPointerDown: (e) => { fired.current = false; lp.onPointerDown(e); }, onPointerUp: (e) => { lp.onPointerUp(e); swallowNext(); } } : {};
+  return <button type="button" role="radio" aria-checked={on} className={on ? 'active' : ''} {...hold}
+    onContextMenu={onHold ? (e) => { e.preventDefault(); if (Date.now() - held.current > 800) { held.current = Date.now(); onHold(); } } : undefined}
+    onClick={() => { if (Date.now() - held.current < 800) return; onPick(); }}>{label}</button>;
+}
+/* 채널 그룹 시트(유건 확정 2026-10-02 — 나만 보이는 그룹, 채널 하나는 그룹 하나에만)
+   new: 이름 + 넣을 채널 → 만들기 / edit: 이름 바꾸기 + 채널 넣고 빼기 + 지우기(채널은 '채널'로 돌아간다) / pick: 채널 줄 '그룹에 넣기' — 그룹 고르기·빼기·새 그룹 만들어 넣기 */
+function ChannelGroupSheet({ mode, id = null, channelId = null, groups, links, channels, onCreate, onSave, onDelete, onMove, onPicked, onClose }) {
+  const { t } = useT();
+  const group = mode === 'edit' ? groups.find((g) => g.id === id) : null;
+  const [name, setName] = useState(group?.name ?? '');
+  const [checked, setChecked] = useState(() => new Set(group ? links.filter((l) => l.group_id === group.id).map((l) => l.channel_id) : []));
+  const [busy, setBusy] = useState(false); const [confirmDel, setConfirmDel] = useState(false);
+  useEffect(() => { const k = (e) => { if (e.key === 'Escape') onClose(); }; window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, [onClose]);
+  useEffect(() => { if (mode === 'edit' && !group) onClose(); }, [mode, group, onClose]); // 다른 기기에서 지운 그룹
+  const clean = cleanGroupName(name); const taken = !!clean && groupNameTaken(groups, clean, group?.id ?? null);
+  const run = async (fn) => { setBusy(true); try { return await fn(); } finally { setBusy(false); } };
+  if (mode === 'edit' && !group) return null;
+  if (mode === 'pick') {
+    const c = channels.find((x) => x.id === channelId); const cur = groupOfChannel(links, groups, channelId)?.id ?? null;
+    const pick = (gid) => run(async () => { await onMove(channelId, gid); onClose(); });
+    return (
+      <div className="msgr-sheetwrap">
+        <div className="msgr-scrim clear" onClick={onClose} />
+        <section className="msgr-crewsheet msgr-dmpeek msgr-dmgroup ph-grpsheet" role="dialog" aria-label={t('grp.pick')}>
+          <header className="head"><strong>{t('grp.pick')}</strong>{c && <span className="msgr-klabel"># {c.name}</span>}<button type="button" className="msgr-titlebtn" onClick={onClose} aria-label={t('ui.close')}><I name="x" size={16} /></button></header>
+          <div className="peek" role="radiogroup" aria-label={t('grp.pick')}>
+            {[{ id: null, name: t('grp.pick.none') }, ...groups].map((g) => (
+              <button key={g.id ?? 'none'} type="button" role="radio" aria-checked={cur === g.id} className={`ph-grprow${cur === g.id ? ' on' : ''}`} disabled={busy} onClick={() => pick(g.id)}>
+                <I name={g.id ? 'folder' : 'hash'} size={16} /><span className="name">{g.name}</span>{cur === g.id && <I name="check" size={16} className="ok" />}
+              </button>))}
+            <form className="ph-grpnew" onSubmit={(e) => { e.preventDefault(); if (!clean || taken) return; run(async () => { const row = await onCreate(clean, [channelId]); if (row) onClose(); }); }}>
+              <input className="msgr-input" placeholder={t('grp.name')} aria-label={t('grp.pick.new')} value={name} onChange={(e) => setName(e.target.value)} maxLength={60} />
+              <button type="submit" className="btn btn-primary sm" disabled={busy || !clean || taken}><I name="plus" size={13} />{t('grp.pick.new')}</button>
+            </form>
+            {taken && <p className="msgr-inline-err" role="alert">{t('grp.name.taken')}</p>}
+          </div>
+        </section>
+      </div>
+    );
+  }
+  const toggle = (cid) => setChecked((st) => { const n = new Set(st); if (n.has(cid)) n.delete(cid); else n.add(cid); return n; });
+  const submit = () => run(async () => {
+    if (mode === 'new') { const row = await onCreate(clean, [...checked]); if (row) { onPicked(`g:${row.id}`); onClose(); } return; }
+    if (await onSave(group, clean, [...checked])) onClose();
+  });
+  return (
+    <div className="msgr-sheetwrap">
+      <div className="msgr-scrim clear" onClick={onClose} />
+      <section className="msgr-crewsheet msgr-dmpeek msgr-dmgroup ph-grpsheet" role="dialog" aria-label={t(mode === 'new' ? 'grp.new' : 'grp.edit')}>
+        <header className="head"><strong>{t(mode === 'new' ? 'grp.new' : 'grp.edit')}</strong><button type="button" className="msgr-titlebtn" onClick={onClose} aria-label={t('ui.close')}><I name="x" size={16} /></button></header>
+        <div className="peek">
+          <input className="msgr-input" placeholder={t('grp.name')} aria-label={t('grp.name')} value={name} onChange={(e) => setName(e.target.value)} maxLength={60} autoFocus={mode === 'new' && !('ontouchstart' in window)} />
+          {taken && <p className="msgr-inline-err" role="alert">{t('grp.name.taken')}</p>}
+          <h3 className="ph-grph">{t('grp.channels')}</h3>
+          {channels.map((c) => { const other = groupOfChannel(links, groups, c.id); const inOther = other && other.id !== group?.id; return (
+            <label key={c.id} className="msgr-check pickrow"><input type="checkbox" checked={checked.has(c.id)} onChange={() => toggle(c.id)} /><I name={c.kind === 'private' ? 'lock' : 'hash'} size={14} /><span className="name">{c.name}</span>{inOther && <span className="msgr-klabel">{t('grp.in', { name: other.name })}</span>}</label>); })}
+        </div>
+        <footer className="foot">
+          {mode === 'edit' && (confirmDel
+            ? <><p className="note">{t('grp.delete.note')}</p><button type="button" className="btn btn-primary danger" disabled={busy} onClick={() => run(async () => { if (await onDelete(group)) onClose(); })}><I name="trash" size={14} />{t('grp.delete.confirm')}</button><button type="button" className="btn" onClick={() => setConfirmDel(false)}>{t('ui.cancel')}</button></>
+            : <button type="button" className="btn ph-grpdel" disabled={busy} onClick={() => setConfirmDel(true)}><I name="trash" size={14} />{t('grp.delete')}</button>)}
+          {!confirmDel && <button type="button" className="btn btn-primary" disabled={busy || !clean || taken} onClick={submit}>{t(mode === 'new' ? 'grp.create' : 'grp.save')}</button>}
+        </footer>
       </section>
     </div>
   );
