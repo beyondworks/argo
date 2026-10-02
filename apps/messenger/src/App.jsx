@@ -1735,7 +1735,7 @@ function Shell({ session }) {
   const dmWithCrew = async (crewId, body = '') => {
     const c = crewOf(crewId); const cid = await openDm('crew', crewId);
     const draft = body || (c && c.owner_user_id !== uid ? `@${c.display_name} ` : '');
-    if (cid && draft) getComposerSession(JSON.stringify([SB_URL, uid, orgId, cid]), composerTransport(supabase, { orgId, chId: cid, uid })).setText(draft);
+    if (cid && draft) getComposerSession(JSON.stringify([SB_URL, uid, orgId, cid]), null).setText(draft); // 초안만 — 통로는 그 방 입력창이 넘긴다(personal·삭제 방송, composer-delivery getComposerSession)
   };
   const openDm = async (kind, id) => {
     if (isPersonal && kind === 'crew') return openPersonalCrewDm(id);

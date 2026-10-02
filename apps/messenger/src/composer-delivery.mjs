@@ -11,9 +11,13 @@ const OFFLINE_KEY = 'msg.delivery.offline';
 // Keeping the File objects in memory lets navigation preserve attachments without copying them to disk.
 const sessions = new Map();
 const tabStorage = () => { try { return globalThis.sessionStorage; } catch { return undefined; } };
+// transport를 넘기면 그 세션의 통로가 된다(마지막에 넘긴 쪽 = 방 입력창). null이면 초안만 다루고 지금 통로는 그대로 둔다.
+// 검수(2026-10-02): 개인 공간 대화 열기가 personal 없는 통로로 세션을 먼저 만들면 그 통로가 남아 방 입력창 첨부가 Storage에서 거절됐다.
 export function getComposerSession(key, transport, storage = tabStorage()) {
   if (!sessions.has(key)) sessions.set(key, createComposerDelivery(transport, undefined, draftStore(storage, key)));
-  return sessions.get(key);
+  const session = sessions.get(key);
+  if (transport) session.useTransport(transport);
+  return session;
 }
 export function clearComposerSessions(storage = tabStorage(), { keepUser } = {}) {
   for (const session of sessions.values()) session.dispose();
@@ -116,6 +120,7 @@ export function createComposerDelivery(transport, uuid = () => crypto.randomUUID
     },
     retry() { return state.job ? deliver(state.job) : Promise.resolve(false); },
     dismiss() { if (!state.busy) patch({ job: null }); },
+    useTransport(next) { transport = next; }, // 같은 방 키(같은 서버·사용자·공간·방)라 경로 규칙은 같고, 진행 중 전송도 다음 요청부터 새 통로를 쓴다
     dispose() { disposed = true; listeners.clear(); state = { text: '', mentions: [], recipients: [], files: [], replyTo: null, job: null, busy: false, uploading: '' }; },
   };
 }
