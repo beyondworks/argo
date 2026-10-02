@@ -1,10 +1,13 @@
 // 공개 서명 서버 함수(Vercel, 로컬은 vite.config.js가 같은 파일을 연결) — 로그인 없는 서명자(/sign/<토큰>)를 위한 길 하나.
 // 인트라넷 app/api/esign/sign/[token]/route.ts와 같은 규칙: 링크 확인 → 본인 이메일 확인 → 계약서 공개 → 서명 제출 → 전원 완료 시 서명본 합성·보관·완료 메일.
-// 서명자는 로그인하지 않으므로 서비스 키(OFFICE_SUPABASE_SERVICE_KEY, 서버에만)로 office_esign_public_* 함수(service_role 전용)와 Storage(office-docs)를 쓴다.
+// 서명자는 로그인하지 않으므로 서비스 키(OFFICE_SUPABASE_SERVICE_KEY, 서버에만)로 office_esign_public_* 함수(service_role 전용)를 부르고, 파일은 R2(argo-office)에 직접 쓴다.
+// 서버가 쓰는 객체(서명 그림·서명본)는 "행 먼저(pending) → R2 PUT → 등록(uploaded·claimed)" 순서로 r2_object_server_put에 남긴다 — 용량에 들어가지만 막지 않는다.
+// 서명자에게 주는 원본·서명본 주소는 DB 함수가 돌려준 키로만 만든 10분짜리 R2 서명 주소다.
 // 서비스 키로 하는 일은 이 파일의 네 동작뿐이고, 무엇을 읽고 쓸지는 토큰 해시를 받은 DB 함수가 정한다(토큰 원문은 DB에 없다).
 // 서명본은 크롬 없이 pdf-lib로 합성한다(src/docs/pdf/compose.js — 예시 모드 브라우저 합성과 같은 함수).
 // 완료 메일은 서명 요청을 보낸 메일 계정(Gmail)으로 — 봉인된 토큰을 OFFICE_MAIL_KEY로 연다. 못 보내면 화면이 '완료 알림 보내기'를 보인다.
 // env: VITE_SUPABASE_URL · VITE_SUPABASE_ANON_KEY(완료 다시 시도의 권한 확인) · OFFICE_SUPABASE_SERVICE_KEY · OFFICE_MAIL_KEY · OFFICE_GOOGLE_CLIENT_ID · OFFICE_GOOGLE_CLIENT_SECRET · OFFICE_ORIGIN
+//      R2_ENDPOINT · R2_OFFICE_BUCKET · R2_OFFICE_ACCESS_KEY_ID · R2_OFFICE_SECRET_ACCESS_KEY
 import { createHash, randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { mailKey, unseal } from '../../server/seal.js';
@@ -13,9 +16,9 @@ import { normalizePlacements, tokenOk, signedFilename } from '../../src/docs/esi
 import { signCompletedMail } from '../../src/docs/esign-mail.js';
 import { completionRecipients } from '../../src/docs/esign-model.js';
 import { composeSignedPdf } from '../../src/docs/pdf/compose.js';
+import { r2FromEnv } from '../../server/r2.js';
 
 const env = process.env;
-const BUCKET = 'office-docs';
 const fail = (status, code) => Object.assign(new Error(code), { status, code });
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
 const sha = (s) => createHash('sha256').update(s).digest('hex');
@@ -39,26 +42,26 @@ async function rpc(fn, args) {
   }
   return t ? JSON.parse(t) : null;
 }
-async function put(path, bytes, type, upsert = false) {
-  const r = await fetch(`${service().url}/storage/v1/object/${BUCKET}/${path}`, { method: 'POST', headers: headers({ 'content-type': type, 'x-upsert': String(upsert) }), body: bytes });
-  if (!r.ok) throw fail(502, 'storage');
+const r2 = () => r2FromEnv(env);
+/** 서버가 쓰는 객체 — 행 먼저(pending, 행 없는 객체가 생기지 않게) → R2 PUT(덮어쓰기 허용 — 끊긴 마무리를 다시 할 수 있게) → 등록 */
+async function put(key, seg, bytes, type, state, ref) {
+  const row = { p_key: key, p_seg: seg, p_bytes: bytes.length, p_mime: type };
+  await rpc('r2_object_server_put', { ...row, p_state: 'pending' });
+  let etag;
+  try { ({ etag } = await r2().put(key, bytes, { contentType: type })); } catch (e) { throw fail(e.status === 503 ? 503 : 502, e.status === 503 ? e.code : 'storage'); }
+  await rpc('r2_object_server_put', { ...row, p_state: state, p_ref_kind: 'esign', p_ref_id: ref, p_etag: etag });
 }
-async function removeFiles(paths) {
-  if (!paths.length) return;
-  await fetch(`${service().url}/storage/v1/object/${BUCKET}`, { method: 'DELETE', headers: headers({ 'content-type': 'application/json' }), body: JSON.stringify({ prefixes: paths }) }).catch(() => {});
+/** 실패한 제출의 그림 — R2에서 지우고 등록 전 행을 지운다(못 지우면 정리 크론이 1시간 뒤 다시) */
+async function removeFiles(keys) {
+  if (!keys.length) return;
+  for (const k of keys) await r2().del(k).catch(() => {});
+  await rpc('r2_object_fail', { p_keys: keys }).catch(() => {});
 }
-async function get(path) {
-  const r = await fetch(`${service().url}/storage/v1/object/${BUCKET}/${path}`, { headers: headers() });
-  if (!r.ok) throw fail(502, 'storage');
-  return new Uint8Array(await r.arrayBuffer());
+async function get(key) {
+  try { return await r2().get(key); } catch (e) { throw fail(e.status === 503 ? 503 : 502, e.status === 503 ? e.code : 'storage'); }
 }
-/** 10분짜리 서명 주소 — 서명자 브라우저가 PDF를 직접 받는다(이 함수를 거치지 않아 4.5MB 응답 한도와 무관) */
-async function signed(path, seconds = 600) {
-  const r = await fetch(`${service().url}/storage/v1/object/sign/${BUCKET}/${path}`, { method: 'POST', headers: headers({ 'content-type': 'application/json' }), body: JSON.stringify({ expiresIn: seconds }) });
-  if (!r.ok) throw fail(502, 'storage');
-  const { signedURL } = await r.json();
-  return `${service().url}/storage/v1${signedURL}`;
-}
+/** 10분짜리 R2 서명 주소 — 서명자 브라우저가 PDF를 R2에서 직접 받는다(이 함수를 거치지 않아 4.5MB 응답 한도와 무관). 키는 DB 함수가 준 값만 */
+async function signed(key) { return (await r2().presign({ method: 'GET', key })).url; }
 
 async function fonts() {
   const read = (name) => readFile(new URL(`../../public/fonts/${name}`, import.meta.url)).catch(async () => {
@@ -106,7 +109,7 @@ async function complete(esignId) {
   const signers = await Promise.all(bundle.signers.map(async (s) => ({ ...s, placements: await Promise.all((s.placements ?? []).map(async (p) => (p.img_path ? { ...p, img: { type: p.img_path.endsWith('.jpg') ? 'jpg' : 'png', bytes: await get(p.img_path) } } : p))) })));
   const final = await composeSignedPdf({ origPdf, signers, docHash: bundle.doc_hash, title: bundle.title, completedAt, ...(await fonts()) });
   const finalPath = `${bundle.seg}/esign/${bundle.id}/final.pdf`;
-  await put(finalPath, final, 'application/pdf', true);
+  await put(finalPath, bundle.seg, final, 'application/pdf', 'claimed', bundle.id); // 서명 폴더 객체 — 서명을 지우면 함께 지워진다
   await rpc('office_esign_public_finalize', { p_esign: bundle.id, p_final_path: finalPath, p_final_hash: sha(final) });
   try { if (await sendCompletionMails(bundle, final)) await rpc('office_esign_public_notified', { p_esign: bundle.id }); } catch (e) { console.error('[office esign] completion mail', e?.message); }
   return { done: true, title: bundle.title, finalUrl: await signed(finalPath) };
@@ -143,8 +146,8 @@ const OPS = {
         const p = clean[i];
         if (p.kind !== 'signature') { stored.push(p); continue; }
         const path = `${who.seg}/esign/${who.esign_id}/s-${who.signer_id}-${i}-${attempt}.${p.img.type}`;
-        await put(path, b64bytes(p.img.data), p.img.type === 'png' ? 'image/png' : 'image/jpeg');
-        uploaded.push(path);
+        uploaded.push(path); // 행을 먼저 남기므로 PUT 중간 실패도 정리 대상
+        await put(path, who.seg, b64bytes(p.img.data), p.img.type === 'png' ? 'image/png' : 'image/jpeg', 'uploaded', who.esign_id); // 제출이 가져간다(claimed)
         const { img, ...rest } = p;
         stored.push({ ...rest, img_path: path });
       }

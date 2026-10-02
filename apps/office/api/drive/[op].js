@@ -1,12 +1,16 @@
-// 구글 드라이브 서버 함수(Vercel, 로컬은 vite.config.js가 같은 파일을 연결) — 요청자의 Supabase JWT로만 움직인다(서비스 키 없음).
+// 구글 드라이브 서버 함수(Vercel, 로컬은 vite.config.js가 같은 파일을 연결) — 판정은 요청자의 Supabase JWT로 한다.
+// 문서함 파일 바이트는 R2: 가져오기는 그 사람 권한으로 자리(file.reserve — 키는 DB가 정함)를 받은 뒤 서버가 R2에 직접 올리고,
+// 서버가 보낸 바이트라 크기를 알므로 HEAD 없이 서비스 키 r2_object_commit으로 확인 기록한다(서비스 키로 하는 일은 이것과 실패 정리뿐).
 // 연결은 메일과 같은 방식(OAuth 코드 + PKCE, 갱신 토큰을 OFFICE_MAIL_KEY로 봉인해 office_drive_secrets에). 기본은 읽기 전용(drive.readonly),
 // '드라이브로 보내기'·'새 폴더'를 처음 쓸 때만 drive.file(이 앱이 만든 파일만)을 더 받는다.
 // env: OFFICE_GOOGLE_CLIENT_ID · OFFICE_GOOGLE_CLIENT_SECRET · OFFICE_MAIL_KEY · OFFICE_ORIGIN · VITE_SUPABASE_URL · VITE_SUPABASE_ANON_KEY
-// 부하: 목록은 사람이 열거나 폴더를 바꿀 때 Drive 호출 1회(DB 0), 접근 토큰 갱신은 최대 시간당 1회 쓰기, 가져오기는 파일당 Storage 1 + 쓰기 1.
+//      OFFICE_SUPABASE_SERVICE_KEY(확인 기록) · R2_ENDPOINT · R2_OFFICE_BUCKET · R2_OFFICE_ACCESS_KEY_ID · R2_OFFICE_SECRET_ACCESS_KEY
+// 부하: 목록은 사람이 열거나 폴더를 바꿀 때 Drive 호출 1회(DB 0), 접근 토큰 갱신은 최대 시간당 1회 쓰기, 가져오기는 파일당 R2 PUT 1 + DB 쓰기 3(자리·확인·등록).
 import { mailKey, seal, unseal, sealState, openState } from '../../server/seal.js';
 import { listRequest, mapFile, mapDrive, exportFormat, exportName, importable, isGoogleNative, validId, scopesFor, hasScope, READ_SCOPE, WRITE_SCOPE, multipartBody, FOLDER_MIME } from '../../server/drive.js';
 import { classify, safeName, MAX_BYTES } from '../../src/files/model.js';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { r2FromEnv } from '../../server/r2.js';
 
 const env = process.env;
 const over = (name, def) => (env.VERCEL_ENV !== 'production' && env[name]) || def; // 가짜 구글 서버로 흐름 전체를 시험할 때만
@@ -30,6 +34,14 @@ async function rpc(jwt, fn, args) {
   if (!r.ok) { const t = await r.text(); throw fail(/file_forbidden|42501/.test(t) ? 403 : /file_quota/.test(t) ? 507 : /file_limit/.test(t) ? 409 : 502, /file_quota/.test(t) ? 'quota' : /file_limit/.test(t) ? 'limit' : 'db'); }
   const t = await r.text();
   return t ? JSON.parse(t) : null;
+}
+/** 서비스 키로 상태만 바꾸기(r2_object_commit·r2_object_fail) — 판정은 그 전에 사용자 JWT 자리 받기가 했다 */
+async function svc(fn, args) {
+  const key = env.OFFICE_SUPABASE_SERVICE_KEY;
+  if (!key) throw fail(503, 'not_configured');
+  const r = await fetch(`${supa()}/rest/v1/rpc/${fn}`, { method: 'POST', headers: { apikey: key, authorization: `Bearer ${key}`, 'content-type': 'application/json' }, body: JSON.stringify(args) });
+  if (!r.ok) throw fail(502, 'db');
+  return r.json().catch(() => null);
 }
 async function me(jwt) {
   const r = await fetch(`${supa()}/auth/v1/user`, { headers: { apikey: anon(), authorization: `Bearer ${jwt}` } });
@@ -128,6 +140,8 @@ const OPS = {
   /** 가져오기 — 드라이브 파일 하나를 이 사람 권한으로 문서함 Storage에 복사하고 등록. 구글 문서류는 PDF·xlsx·png로 내보내 받는다 */
   async import(jwt, { org = null, id, folderId = null, customerId = null }) {
     if ((org !== null && !UUID.test(String(org))) || !validId(id) || (folderId && !UUID.test(folderId)) || (customerId && !UUID.test(customerId))) throw fail(400, 'input');
+    const store = r2FromEnv(env); // 설정이 없으면 구글에서 받기 전에 503
+    if (!env.OFFICE_SUPABASE_SERVICE_KEY) throw fail(503, 'not_configured');
     const token = await access(jwt);
     const meta = mapFile(await drive(token, `/files/${id}`, { params: { fields: 'id,name,mimeType,size,webViewLink,shortcutDetails', supportsAllDrives: 'true' } }));
     if (!importable(meta)) throw fail(415, 'link_only');
@@ -138,16 +152,17 @@ const OPS = {
     const bytes = Buffer.from(await res.arrayBuffer());
     if (bytes.length > MAX_BYTES) throw fail(413, 'too_big');
     const name = ex ? exportName(meta.name, ex.ext) : meta.name, mime = ex?.mime ?? meta.mimeType;
-    const fid = randomUUID(), uid = await me(jwt), path = `${org ? `o-${org}` : `u-${uid}`}/${fid}/${safeName(name)}`;
-    await rpc(jwt, 'office_file_write', { p_org: org, p_action: 'file.reserve', p_data: { id: fid, storage_path: path, size: bytes.length } }); // 올리기 자리(용량·정책 — MEDIUM 1)
-    const up = await fetch(`${supa()}/storage/v1/object/office-files/${path.split('/').map(encodeURIComponent).join('/')}`, {
-      method: 'POST', headers: { apikey: anon(), authorization: `Bearer ${jwt}`, 'content-type': mime || 'application/octet-stream', 'x-upsert': 'false' }, body: bytes });
-    if (!up.ok) throw fail(up.status === 403 || up.status === 400 ? 403 : 502, 'storage');
+    const fid = randomUUID();
+    const { key } = await rpc(jwt, 'office_file_write', { p_org: org, p_action: 'file.reserve', p_data: { id: fid, filename: safeName(name), size: bytes.length, mime } }); // 자리(용량·권한 — 키는 DB가 정함)
+    let etag;
+    try { ({ etag } = await store.put(key, bytes, { contentType: mime || 'application/octet-stream', ifNoneMatch: true })); } catch { throw fail(502, 'storage'); }
     try {
-      await rpc(jwt, 'office_file_write', { p_org: org, p_action: 'file.create', p_data: { id: fid, title: name, filename: name, mime, size: bytes.length, storage_path: path, source: 'drive', drive_id: meta.id,
+      await svc('r2_object_commit', { p_key: key, p_bytes: bytes.length, p_etag: etag });
+      await rpc(jwt, 'office_file_write', { p_org: org, p_action: 'file.create', p_data: { id: fid, title: name, filename: name, mime, size: bytes.length, storage_path: key, source: 'drive', drive_id: meta.id,
         category: classify({ name, mime }), folder_id: folderId, customer_id: customerId } });
-    } catch (e) { // 등록 실패 → 올린 객체 정리
-      await fetch(`${supa()}/storage/v1/object/office-files`, { method: 'DELETE', headers: { apikey: anon(), authorization: `Bearer ${jwt}`, 'content-type': 'application/json' }, body: JSON.stringify({ prefixes: [path] }) }).catch(() => {});
+    } catch (e) { // 확인·등록 실패 → 올린 객체와 등록 전 행 정리(못 하면 정리 크론이 1시간 뒤)
+      await store.del(key).catch(() => {});
+      await svc('r2_object_fail', { p_keys: [key] }).catch(() => {});
       throw e;
     }
     return { id: fid, title: name, mime, size: bytes.length };
@@ -159,9 +174,8 @@ const OPS = {
     const token = await access(jwt, WRITE_SCOPE);
     const f = await rpc(jwt, 'office_file_get', { p_org: org, p_id: id });
     if (f.kind !== 'file') throw fail(415, 'link_only');
-    const r = await fetch(`${supa()}/storage/v1/object/authenticated/office-files/${f.storage_path.split('/').map(encodeURIComponent).join('/')}`, { headers: { apikey: anon(), authorization: `Bearer ${jwt}` } });
-    if (!r.ok) throw fail(502, 'storage');
-    const { body, type } = multipartBody({ name: f.filename || f.title, parents: [folder] }, Buffer.from(await r.arrayBuffer()), f.mime);
+    const bytes = await r2FromEnv(env).get(f.storage_path).catch((e) => { throw fail(e.status === 503 ? 503 : 502, e.status === 503 ? e.code : 'storage'); }); // 키는 office_file_get(사용자 JWT)이 준 값
+    const { body, type } = multipartBody({ name: f.filename || f.title, parents: [folder] }, Buffer.from(bytes), f.mime);
     const out = await drive(token, '/files', { method: 'POST', params: { uploadType: 'multipart', supportsAllDrives: 'true', fields: 'id,name,webViewLink' }, headers: { 'content-type': type }, body }, G.upload());
     return { id: out.id, name: out.name, link: out.webViewLink ?? null };
   },

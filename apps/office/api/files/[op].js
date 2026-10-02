@@ -1,5 +1,5 @@
-// 문서함 서버 함수(Vercel, 로컬은 vite.config.js가 같은 파일을 연결) — 글자 읽기(OCR)만. 파일 올리기·받기는 브라우저 ↔ Storage가 직접 한다.
-// 요청자의 Supabase JWT로만 움직인다(서비스 키 없음): 파일은 그 사람 권한으로 Storage에서 받고, 결과도 그 사람 권한으로 office_file_write에 쓴다.
+// 문서함 서버 함수(Vercel, 로컬은 vite.config.js가 같은 파일을 연결) — 글자 읽기(OCR)와 정리 크론. 파일 올리기·받기는 브라우저 ↔ R2가 직접 한다(api/storage).
+// OCR은 요청자의 Supabase JWT로 판정한다: office_file_get(그 사람 권한)이 돌려준 키만 R2에서 받고(접근 키), 결과도 그 사람 권한으로 office_file_write에 쓴다.
 // OCR 전에 반드시 ① Supabase로 로그인을 확인하고(가짜 토큰은 401) ② 사람마다 시간당 한도(office_ocr_take, 60회)를 센다(넘으면 429) — 두 경로(바이트·문서함 파일) 모두.
 // env: OFFICE_OCR_URL + OFFICE_OCR_KEY(PaddleOCR 사이드카 — server/ocr.js 규칙) · VITE_SUPABASE_URL · VITE_SUPABASE_ANON_KEY
 //      정리(sweep): OFFICE_SUPABASE_SERVICE_KEY · CRON_SECRET(Vercel 크론이 Authorization: Bearer로 보낸다) · R2_*(server/r2.js r2FromEnv)
@@ -34,13 +34,13 @@ async function gate(jwt) {
   await me(jwt);
   if (await rpc(jwt, 'office_ocr_take', {}) !== true) throw fail(429, 'rate_limited');
 }
-/** 그 사람 권한으로 Storage 객체 받기(RLS office_files_read) */
-async function download(jwt, path) {
-  const r = await fetch(`${env.VITE_SUPABASE_URL}/storage/v1/object/authenticated/office-files/${path.split('/').map(encodeURIComponent).join('/')}`, { headers: { apikey: env.VITE_SUPABASE_ANON_KEY, authorization: `Bearer ${jwt}` } });
-  if (!r.ok) throw fail(r.status === 404 || r.status === 400 ? 404 : 502, 'storage');
-  const len = Number(r.headers.get('content-length') ?? 0);
-  if (len > OCR_MAX) throw fail(413, 'too_big');
-  return Buffer.from(await r.arrayBuffer());
+/** R2에서 객체 받기 — 키는 office_file_get(사용자 JWT)이 돌려준 값만. 크기를 먼저 봐서 큰 파일은 받지 않는다 */
+async function download(key) {
+  const store = r2FromEnv(env);
+  const h = await store.head(key).catch(() => { throw fail(502, 'storage'); });
+  if (!h) throw fail(404, 'storage');
+  if (h.bytes > OCR_MAX) throw fail(413, 'too_big');
+  return Buffer.from(await store.get(key).catch((e) => { throw fail(e.status === 404 ? 404 : 502, 'storage'); }));
 }
 
 const OPS = {
@@ -59,8 +59,8 @@ const OPS = {
     const f = await rpc(jwt, 'office_file_get', { p_org: org, p_id: id });
     if (f.kind !== 'file' || !f.storage_path) throw fail(415, 'unsupported');
     let status = 'done', text = '';
-    try { text = await ocrBytes({ bytes: await download(jwt, f.storage_path), mime: f.mime, name: f.filename || f.title }, env); }
-    catch (e) { if (e.code === 'unsupported') status = 'unsupported'; else if (e.code === 'storage' || e.code === 'not_configured') throw e; else status = 'failed'; }
+    try { text = await ocrBytes({ bytes: await download(f.storage_path), mime: f.mime, name: f.filename || f.title }, env); }
+    catch (e) { if (e.code === 'unsupported') status = 'unsupported'; else if (['storage', 'not_configured', 'r2_not_configured', 'too_big'].includes(e.code)) throw e; else status = 'failed'; }
     const { summary, full_text } = clip(text);
     await rpc(jwt, 'office_file_write', { p_org: org, p_action: 'file.ocr', p_data: { id, ocr_status: status, summary, full_text } });
     return { status, text: full_text };

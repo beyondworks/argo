@@ -79,11 +79,13 @@ test('서버 OCR 호출: 사이드카 바이트 끝점(Bearer 키·원본 바이
   await assert.rejects(ocrBytes({ bytes: Buffer.from('x'), mime: 'image/png' }, env, async () => new Response('no', { status: 401 })), (e) => e.code === 'ocr');
 });
 
-/** 가짜 Supabase·구글 — 경로별 응답 */
+/** 가짜 Supabase·구글 — 경로별 응답. 가짜 R2(127.0.0.1) 요청은 진짜 fetch로 보낸다 */
 function fake(routes) {
   const calls = [];
   globalThis.fetch = async (url, init = {}) => {
-    const u = String(url); calls.push({ url: u, init });
+    const u = String(url);
+    if (u.startsWith('http://127.0.0.1:')) return realFetch(url, init);
+    calls.push({ url: u, init });
     for (const [re, fn] of routes) if (re.test(u)) return fn(u, init);
     return new Response('not found', { status: 404 });
   };
@@ -91,26 +93,32 @@ function fake(routes) {
 }
 const req = (path, body, jwt = 'jwt-1') => new Request(`http://x${path}`, { method: body ? 'POST' : 'GET', headers: { authorization: `Bearer ${jwt}`, 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
 
-test('api/files: 설정 상태, 문서함 파일 OCR → 그 사람 권한으로 받고 결과 저장', async () => {
+test('api/files: 설정 상태, 문서함 파일 OCR → 그 사람 권한(office_file_get)이 준 키만 R2에서 받고 결과 저장', async () => {
+  const { startFakeR2 } = await import('./helpers/fake-r2.mjs');
+  const r2 = await startFakeR2();
   const files = await import('../api/files/[op].js');
   assert.deepEqual(await (await files.GET(new Request('http://x/api/files/config'))).json(), { ocr: null });
   assert.equal((await files.POST(req('/api/files/ocr', { org: null, id: '00000000-0000-0000-0000-000000000001' }))).status, 503);
-  Object.assign(process.env, { OFFICE_OCR_URL: 'http://127.0.0.1:8765', OFFICE_OCR_KEY: KEY, VITE_SUPABASE_URL: 'http://sb', VITE_SUPABASE_ANON_KEY: 'anon' });
+  Object.assign(process.env, { OFFICE_OCR_URL: 'https://ocr.test', OFFICE_OCR_KEY: KEY, VITE_SUPABASE_URL: 'http://sb', VITE_SUPABASE_ANON_KEY: 'anon', ...r2.env });
+  r2.objects.set('u-1/files/f.png', { bytes: Buffer.from('png'), type: 'image/png', etag: 'e' });
   let saved;
   const calls = fake([
     [/auth\/v1\/user/, () => new Response(JSON.stringify({ id: 'u1' }))],
     [/rpc\/office_ocr_take/, () => new Response('true')],
-    [/rpc\/office_file_get/, () => new Response(JSON.stringify({ id: 'f', kind: 'file', storage_path: 'u-1/f/명함.png', mime: 'image/png', filename: '명함.png' }))],
-    [/storage\/v1\/object\/authenticated/, () => new Response(Buffer.from('png'))],
-    [/ocr-bytes/, () => new Response(JSON.stringify({ text: '김민수 010-1234-5678' }))],
+    [/rpc\/office_file_get/, () => new Response(JSON.stringify({ id: 'f', kind: 'file', storage_path: 'u-1/files/f.png', mime: 'image/png', filename: '명함.png' }))],
+    [/ocr-bytes/, (u, init) => { assert.equal(Buffer.from(init.body).toString(), 'png'); return new Response(JSON.stringify({ text: '김민수 010-1234-5678' })); }],
     [/rpc\/office_file_write/, (u, init) => { saved = JSON.parse(init.body); return new Response('{"id":"f"}'); }],
   ]);
   const r = await files.POST(req('/api/files/ocr', { org: null, id: '00000000-0000-0000-0000-000000000001' }));
   assert.equal(r.status, 200);
   assert.deepEqual(await r.json(), { status: 'done', text: '김민수 010-1234-5678' });
   assert.equal(saved.p_action, 'file.ocr'); assert.equal(saved.p_data.ocr_status, 'done');
-  assert.ok(calls.find((c) => /authenticated\/office-files\/u-1\/f\/%EB%AA%85%ED%95%A8\.png/.test(c.url)).init.headers.authorization === 'Bearer jwt-1'); // 서비스 키가 아니라 요청자 JWT
+  assert.equal(calls.find((c) => /office_file_get/.test(c.url)).init.headers.authorization, 'Bearer jwt-1', '받을 키는 요청자 권한으로 정한다');
+  assert.deepEqual(r2.log.map((l) => [l.method, l.key, l.status]), [['HEAD', 'u-1/files/f.png', 'ok'], ['GET', 'u-1/files/f.png', 'ok']], '크기를 먼저 보고 받는다');
+  r2.objects.set('u-1/files/f.png', { bytes: Buffer.alloc(20 * 1024 * 1024 + 1), type: 'image/png', etag: 'e' });
+  assert.equal((await files.POST(req('/api/files/ocr', { org: null, id: '00000000-0000-0000-0000-000000000001' }))).status, 413, '20MB 넘으면 받지 않는다');
   assert.equal((await files.POST(new Request('http://x/api/files/ocr', { method: 'POST', body: '{}' }))).status, 401);
+  await r2.close();
 });
 
 test('api/files ocr(HIGH 1): 바이트 경로도 로그인 확인 뒤에만 OCR — 가짜 토큰은 401, 사이드카에 닿지 않는다', async () => {
@@ -142,9 +150,11 @@ test('api/files ocr(HIGH 1): 사람마다 시간당 한도 — 넘으면 429, �
   assert.ok(!calls.some((c) => /ocr-bytes/.test(c.url)));
 });
 
-test('api/drive: 설정 없음 503, 연결 안 됨 404, 목록·가져오기(구글 문서 → PDF 내보내기 → Storage → 등록)', async () => {
+test('api/drive: 설정 없음 503, 연결 안 됨 404, 목록·가져오기(구글 문서 → PDF 내보내기 → 자리 → R2 → 확인 → 등록)', async () => {
+  const { startFakeR2 } = await import('./helpers/fake-r2.mjs');
+  const r2 = await startFakeR2();
   const d = await import('../api/drive/[op].js');
-  Object.assign(process.env, { VITE_SUPABASE_URL: 'http://sb', VITE_SUPABASE_ANON_KEY: 'anon' });
+  Object.assign(process.env, { VITE_SUPABASE_URL: 'http://sb', VITE_SUPABASE_ANON_KEY: 'anon', OFFICE_SUPABASE_SERVICE_KEY: 'svc-key', ...r2.env });
   fake([[/auth\/v1\/user/, () => new Response(JSON.stringify({ id: 'u1' }))]]);
   assert.equal((await d.POST(req('/api/drive/start', {}))).status, 503);
   const key = randomBytes(32);
@@ -163,20 +173,26 @@ test('api/drive: 설정 없음 503, 연결 안 됨 404, 목록·가져오기(구
     [/drive\/v3\/files\?/, (u, init) => { assert.equal(init.headers.authorization, 'Bearer a1'); return new Response(JSON.stringify({ files: [{ id: 'g1', name: '제안서', mimeType: 'application/vnd.google-apps.document' }] })); }],
     [/drive\/v3\/files\/g1\/export/, (u) => { assert.match(u, /mimeType=application%2Fpdf/); return new Response(Buffer.from('%PDF-1.4')); }],
     [/drive\/v3\/files\/g1\?/, () => new Response(JSON.stringify({ id: 'g1', name: '제안서', mimeType: 'application/vnd.google-apps.document' }))],
-    [/storage\/v1\/object\/office-files\//, (u, init) => { order.push('upload'); uploaded = { u, init }; return new Response('{}'); }],
-    [/rpc\/office_file_write/, (u, init) => { const b = JSON.parse(init.body); order.push(b.p_action); if (b.p_action === 'file.create') registered = b; else assert.equal(b.p_data.size, Buffer.from('%PDF-1.4').length); return new Response('{"id":"x"}'); }],
+    [/rpc\/r2_object_commit/, (u, init) => { order.push('commit'); uploaded = { body: JSON.parse(init.body), auth: init.headers.authorization }; return new Response('{"state":"uploaded"}'); }],
+    [/rpc\/office_file_write/, (u, init) => { const b = JSON.parse(init.body); order.push(b.p_action); if (b.p_action === 'file.create') { registered = b; return new Response('{"id":"x"}'); }
+      assert.equal(b.p_data.size, Buffer.from('%PDF-1.4').length); assert.equal(b.p_data.storage_path, undefined, '키는 클라이언트(서버 함수)가 아니라 DB가 정한다');
+      return new Response(JSON.stringify({ key: `u-u1/files/${b.p_data.id}.pdf` })); }],
   ]);
   const l = await (await d.GET(req('/api/drive/list?view=mydrive'))).json();
   assert.equal(l.files[0].name, '제안서');
   const out = await (await d.POST(req('/api/drive/import', { org: null, id: 'g1' }))).json();
   assert.equal(out.title, '제안서.pdf'); assert.equal(out.mime, 'application/pdf');
-  assert.match(uploaded.u, /office-files\/u-u1\//); assert.equal(uploaded.init.headers.authorization, 'Bearer jwt-1');
-  assert.deepEqual(order, ['file.reserve', 'upload', 'file.create'], 'MEDIUM 1: 자리를 받은 뒤에만 올린다');
-  assert.equal(registered.p_data.source, 'drive'); assert.equal(registered.p_data.drive_id, 'g1'); assert.equal(registered.p_data.storage_path, uploaded.u.split('/office-files/')[1].split('/').map(decodeURIComponent).join('/'));
+  const fkey = registered.p_data.storage_path;
+  assert.match(fkey, /^u-u1\/files\/[0-9a-f-]{36}\.pdf$/);
+  assert.equal(r2.objects.get(fkey).bytes.toString(), '%PDF-1.4', '서버가 R2에 직접 올렸다');
+  assert.deepEqual(order, ['file.reserve', 'commit', 'file.create'], 'MEDIUM 1: 자리를 받은 뒤에만 올리고, 확인 기록 뒤 등록');
+  assert.deepEqual([uploaded.body.p_key, uploaded.body.p_bytes, uploaded.auth], [fkey, 8, 'Bearer svc-key']);
+  assert.equal(registered.p_data.source, 'drive'); assert.equal(registered.p_data.drive_id, 'g1');
   // 보내기는 drive.file이 없으면 need_write(화면이 쓰기 권한을 더 받는다)
   const e = await d.POST(req('/api/drive/export', { org: null, id: '00000000-0000-0000-0000-000000000001' }));
   assert.equal(e.status, 403); assert.deepEqual(await e.json(), { error: 'need_write' });
   assert.equal((await d.GET(req('/api/drive/import'))).status, 405); // 바꾸는 동작은 POST로만
+  await r2.close();
 });
 
 test('api/files sweep(MEDIUM 1): 화면 없이 서버가 정리 — 크론 비밀 없으면 401, 서비스 키로 목록 → R2 삭제 → 지운 키의 행만 정리', async () => {
