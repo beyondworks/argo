@@ -192,7 +192,7 @@
    --msg-gap-in    같은 글 안(이름 줄↔첫 말풍선·글↔사진 묶음↔파일↔링크 카드↔시각) · 같은 묶음의 다음 글
    --msg-gap-group 보낸 사람이 바뀌거나 시간이 벌어진 새 묶음(msg-group.mjs 기준)
    --msg-gap-sys   날짜 줄·새 메시지 줄·시스템 글·안내 띠(실행기 꺼짐 등) 위아래 */
-.msgr-shell { --acts-h: 26px; --msg-gap-in: 4px; --msg-gap-group: 14px; --msg-gap-sys: 14px; }
+.msgr-shell { --msg-gap-in: 4px; --msg-gap-group: 14px; --msg-gap-sys: 14px; }
 .msgr-spine { position: relative; display: flex; flex-direction: column; gap: var(--msg-gap-group); }
 .msgr-spine > .msgr-row.cont, .msgr-spine > .msgr-mine.cont { margin-top: calc(var(--msg-gap-in) - var(--msg-gap-group)); }
 .msgr-spine > :is(.msgr-tnode, .msgr-newline), .msgr-spine > .msgr-row:has(> .msgr-col > .msgr-sys) { margin-block: calc(var(--msg-gap-sys) - var(--msg-gap-group)); }
@@ -1033,31 +1033,25 @@
 .msgr-reacts button.on { border-color: var(--primary); box-shadow: inset 0 0 0 1px var(--primary); color: var(--fg); }
 .msgr-mine .msgr-reacts { justify-content: flex-end; }
 .msgr-acts { position: relative; flex-wrap: wrap; }
-/* 데스크톱 동작 줄 — LLM 채팅(Claude·ChatGPT)처럼 글 바로 아래 작은 회색 아이콘 줄(유건 2026-10-02). 글 위에 뜨는 상자는 없앴다 — 구분선·윗글을 덮었다.
-   A안(기본): 닫혀 있으면 자리도 없다(display none → 묶음 안 4px 그대로), 올린·키보드 포커스한 글 아래에 열리며 아래 글을 민다.
-   B안: 묶음 마지막 글 아래에 고정 자리(--acts-h)를 두고 묶음 사이 14px을 그 자리로 대신한다. 올린 글의 줄이 그 자리에 뜬다(App.jsx aimSlot → --acts-slot-top). */
+/* 턴 전체 복사(유건 2026-10-02) — 같은 사람이 이어 보낸 묶음의 마지막 글 아래에 복사 아이콘 하나. 폰·데스크톱 같고 늘 보인다(평소 흐리게, 올리면 진하게).
+   자리는 턴마다 한 번(높이 18px), 턴 안 글 사이(4px)는 그대로. 버튼의 누르는 영역은 음수 여백으로 넓혀 자리를 키우지 않는다 */
+.msgr-turncopy { display: flex; align-items: center; height: 18px; }
+.msgr-row > .msgr-col > .msgr-turncopy { align-self: flex-start; } .msgr-mine > .msgr-turncopy { justify-self: end; }
+.msgr-turncopy button { display: grid; place-items: center; width: 28px; height: 28px; margin: -5px -6px; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--fg-3); opacity: .6; cursor: pointer; transition: opacity 120ms ease, color 120ms ease, background 120ms ease; }
+@media (hover: hover) { .msgr-turncopy button:hover { opacity: 1; color: var(--fg); background: var(--card-2); } } .msgr-turncopy button:active { opacity: 1; color: var(--fg); background: var(--card-2); }
+.msgr-turncopy button:focus-visible { opacity: 1; outline: 2px solid var(--primary); outline-offset: -2px; }
+.msgr-phone .msgr-turncopy button { width: 44px; height: 44px; margin: -13px -14px; } /* 폰 누르는 영역 44px — 자리는 그대로 18px */
+@media (prefers-reduced-motion: reduce) { .msgr-turncopy button { transition: none; } }
+/* 데스크톱 도구 막대 — 올린 글의 오른쪽 위에 겹쳐 뜬다(답글·반응·더보기, 복사 없음). 절대 위치라 레이아웃이 밀리지 않고, 위쪽은 자기 행 안에서 시작해 윗글·구분선을 덮지 않는다 */
 .msgr-shell:not(.msgr-phone) .msgr-mine { position: relative; }
-.msgr-shell:not(.msgr-phone) .msgr-acts.bar { display: none; align-items: center; gap: 2px; height: var(--acts-h); margin: 0; opacity: 1; flex-wrap: nowrap; white-space: nowrap; color: var(--fg-3); }
-.msgr-row > .msgr-col > .msgr-acts.bar { justify-self: start; align-self: flex-start; } .msgr-mine > .msgr-acts.bar { justify-self: end; }
-.msgr-acts.bar button { width: 26px; height: 24px; padding: 0; justify-content: center; border: 0; border-radius: 6px; color: var(--fg-3); }
-@media (hover: hover) { .msgr-acts.bar button:hover { background: var(--card-2); color: var(--fg); } } .msgr-acts.bar button:active { background: var(--card-2); color: var(--fg); }
-.msgr-acts.bar button:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
-.msgr-acts.bar .ts { margin-left: 6px; font-family: var(--mono); font-size: 11px; font-variant-numeric: tabular-nums; color: var(--fg-3); }
-/* A안 — 열기: 올림(hover 기기)·키보드 포커스(:focus-visible — 마우스로 누른 뒤 남는 포커스로 줄이 계속 열려 있지 않게)·터치 길게 누르기(data-acts) */
-.msgr-shell[data-acts-mode='a']:not(.msgr-phone) :is(.msgr-row, .msgr-mine):is(:focus-visible, :has(:focus-visible), [data-acts='open']) .msgr-acts.bar:not(.pending) { display: flex; }
-@media (hover: hover) { .msgr-shell[data-acts-mode='a']:not(.msgr-phone) :is(.msgr-row, .msgr-mine):hover .msgr-acts.bar:not(.pending) { display: flex; } }
-.msgr-shell[data-acts-mode='a']:not(.msgr-phone) .msgr-acts.bar { transition: height 140ms ease, opacity 140ms ease, display 140ms allow-discrete; }
-@starting-style { .msgr-shell[data-acts-mode='a']:not(.msgr-phone) .msgr-acts.bar { height: 0; opacity: 0; } }
-@media (prefers-reduced-motion: reduce) { .msgr-shell[data-acts-mode='a']:not(.msgr-phone) .msgr-acts.bar { transition: none; } }
-/* B안 — 묶음 마지막 글(.notail이 아닌 글)만 아래 자리를 갖는다. 자리는 줄 바깥 여백이라 묶음 안 4px은 그대로 */
-.msgr-shell[data-acts-mode='b']:not(.msgr-phone) .msgr-spine > :is(.msgr-row, .msgr-mine):not(.notail):not(.ghost):not(.msgr-typing-group) { padding-bottom: var(--acts-h); margin-bottom: calc(var(--msg-gap-in) - var(--msg-gap-group)); } /* 자리 아래 4px — 다음 묶음·구분선에 아이콘이 붙지 않게 */
-.msgr-shell[data-acts-mode='b']:not(.msgr-phone) .msgr-acts.bar[data-slot] { display: flex; position: absolute; top: var(--acts-slot-top); left: 42px; z-index: 2; visibility: hidden; }
-.msgr-shell[data-acts-mode='b']:not(.msgr-phone) .msgr-mine > .msgr-acts.bar[data-slot] { left: auto; right: 0; }
-.msgr-shell[data-acts-mode='b']:not(.msgr-phone) :is(.msgr-row, .msgr-mine):is(:focus-visible, :has(:focus-visible), [data-acts='open']) .msgr-acts.bar:not(.pending)[data-slot] { visibility: visible; }
-@media (hover: hover) { .msgr-shell[data-acts-mode='b']:not(.msgr-phone) :is(.msgr-row, .msgr-mine):hover .msgr-acts.bar:not(.pending)[data-slot] { visibility: visible; } }
-/* 대상 글 표시 — 동작이 어느 글에 걸리는지(자리는 묶음 끝에 하나라). 아래 자리(padding)는 칠하지 않는다 */
-.msgr-shell[data-acts-mode='b']:not(.msgr-phone) :is(.msgr-row, .msgr-mine):is(:focus-visible, :has(:focus-visible)), .msgr-shell[data-acts-mode='b']:not(.msgr-phone) :is(.msgr-row, .msgr-mine):active { background: color-mix(in srgb, var(--fg) 5%, transparent); background-clip: content-box; border-radius: 6px; }
-@media (hover: hover) { .msgr-shell[data-acts-mode='b']:not(.msgr-phone) :is(.msgr-row, .msgr-mine):hover { background: color-mix(in srgb, var(--fg) 5%, transparent); background-clip: content-box; border-radius: 6px; } }
+.msgr-hovbar { position: absolute; top: 0; right: 0; z-index: 4; display: flex; gap: 2px; padding: 1px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); box-shadow: var(--shadow-float); visibility: hidden; }
+.msgr-hovbar button { display: grid; place-items: center; width: 26px; height: 22px; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--fg-3); cursor: pointer; }
+@media (hover: hover) { .msgr-hovbar button:hover { background: var(--card-2); color: var(--fg); } } .msgr-hovbar button:active { background: var(--card-2); color: var(--fg); }
+.msgr-hovbar button:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.msgr-shell:not(.msgr-phone) :is(.msgr-row, .msgr-mine):is(:focus-visible, :has(:focus-visible), [data-acts='open']) .msgr-hovbar { visibility: visible; }
+@media (hover: hover) { .msgr-shell:not(.msgr-phone) :is(.msgr-row, .msgr-mine):hover .msgr-hovbar { visibility: visible; } }
+.msgr-phone .msgr-hovbar { display: none; }
+.msgr-mine .bubble { position: relative; } .msgr-mine .bubble > .msgr-hovbar { top: 0; right: calc(100% + 6px); } /* 내 글: 말풍선 바깥 왼쪽, 윗선에 맞춤 — 말풍선 안 오른쪽 위는 짧은 글 본문을 통째로 가렸고, 위로 걸치면 윗글·복사 아이콘·'새 메시지' 줄을 덮었다(2026-10-02 1440 실측) */
 .msgr-acts button.danger { color: var(--danger, #d05a5a); }
 .msgr-editbox { display: grid; gap: 8px; max-width: 640px; min-width: 320px; }
 .msgr-editbox textarea.msgr-input { width: 100%; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font: inherit; font-size: 13.5px; resize: vertical; outline: 0; }

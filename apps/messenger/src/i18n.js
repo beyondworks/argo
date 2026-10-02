@@ -410,6 +410,8 @@ export const DICT = {
   'composer.replyCancel': ['답글 취소(Esc)', 'Cancel reply (Esc)'],
   'msg.react': ['반응', 'React'],
   'msg.more': ['더보기', 'More'],
+  'msg.copyTurn': ['이어 보낸 글 전체 복사', 'Copy all messages in this turn'],
+  'msg.actions': ['메시지 동작', 'Message actions'],
   'emoji.search': ['이모티콘 검색', 'Search emoji'],
   'emoji.none': ['맞는 이모티콘이 없습니다', 'No matching emoji'],
   'emoji.frequent': ['자주 사용', 'Frequently used'],
