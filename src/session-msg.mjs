@@ -179,8 +179,10 @@ async function idleSession(ws, slug) {
     if (!graceUntil) graceUntil = now + grace();
     if (now >= graceUntil) { written.cancel(); return t.sessionId ?? null; }
     let timer;
+    S.trace?.('wait'); // 테스트가 실제 시간 대신 이 순서로 맞춘다(Windows CI에서 setTimeout 틈이 대기 시간을 넘어 순서가 뒤집혔다)
     await Promise.race([written.promise, new Promise((r) => { timer = setTimeout(r, graceUntil - now); timer.unref?.(); })]);
     clearTimeout(timer); written.cancel();
+    S.trace?.('wake');
   }
 }
 const handoverRel = (ws, h) => (h?.file ? { rel: relative(paths(ws).vault, h.file), linked: h.linked } : null);
@@ -388,10 +390,11 @@ export async function sweepSessionMessages({ now = Date.now() } = {}) {
 export function _setRunTurnForTest(fn) { S.runTurn = fn; }
 export function _setTtlForTest(ms) { S.ttl = ms; }
 export function _setGraceForTest(ms) { S.grace = ms; }
+export function _setTraceForTest(fn) { S.trace = fn; }
 export async function _drainForTest() { while (S.jobs.size) await Promise.allSettled([...S.jobs]); }
 export async function _resetForTest() {
   await _drainForTest();
   for (const t of S.timers.values()) clearTimeout(t);
-  S.timers.clear(); S.pending.clear(); S.queues.clear(); S.ttl = null;
+  S.timers.clear(); S.pending.clear(); S.queues.clear(); S.ttl = null; S.trace = null;
   for (const ws of await listCompanyIds().catch(() => [])) await rm(join(paths(ws).root, 'sessmsg'), { recursive: true, force: true }).catch(() => {});
 }

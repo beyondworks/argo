@@ -377,19 +377,29 @@ test('LOW-1 — 같은 pid라도 owner가 다르면 죽은 기록(컨테이너 �
 });
 
 test('LOW-2 — 기다리는 사이 크루가 다시 바빠지면 기록 대기 시간을 새로 잡는다(새 턴의 세션을 읽는다)', async () => {
+  // 순서는 실제 시간(setTimeout 몇 ms)이 아니라 대기 루프의 사건(wait = 기록 대기 창에 들어감, wake = 깨어남)으로 맞춘다.
+  // 옛 테스트는 50·250·30ms 틈이 대기 시간 100ms 안에 든다고 가정해, 느린 Windows 러너에서 옛 세션(sess-b-0)을 읽었다(PR #812 CI).
+  const seen = { wait: 0, wake: 0 }; const waiters = [];
+  mod._setTraceForTest((k) => { seen[k]++; for (const w of [...waiters]) if (seen[w.k] >= w.n) { waiters.splice(waiters.indexOf(w), 1); w.r(); } });
+  const reach = (k, n) => (seen[k] >= n ? Promise.resolve() : new Promise((r) => waiters.push({ k, n, r })));
   mod._setGraceForTest(100);
+  const keepAlive = setInterval(() => {}, 1000); // 대기 창 타이머는 unref라 사건을 기다리는 동안 이벤트 루프를 붙잡아 둔다
   try {
     const turnId = await thread.beginTurn(WS, 'b', { userMsg: '사장 지시' }); // 열린 줄 — 실행 등록은 조금 뒤(채팅 라우트 모양)
     await mod.sendSessionMessage(WS, { room: 'a', sender: 'captain', to: 'b', message: '끝나면 봐 줘' });
-    await new Promise((r) => setTimeout(r, 50));
-    const reg = abort.registerTurn(WS, 'b', () => {}, { source: 'chat' });
-    await new Promise((r) => setTimeout(r, 250)); // 대기 시간(100ms)보다 오래 실행
+    await reach('wait', 1); // 열린 줄을 보고 기록 대기 창(100ms)을 열었다
+    const t0 = Date.now();
+    const reg = abort.registerTurn(WS, 'b', () => {}, { source: 'chat' }); // 창의 타이머보다 먼저(같은 마이크로태스크 흐름) 크루가 바빠진다
+    await reach('wake', 1); // 창이 실행 중에 깨어났다
+    await new Promise((r) => setTimeout(r, Math.max(0, t0 + 150 - Date.now()))); // 첫 창이 확실히 지나간 뒤(느리면 더 지날 뿐 — 순서는 안 바뀐다)
+    mod._setGraceForTest(10_000); // 새로 잡는 창은 넉넉하게 — 해제 뒤 기록이 느린 러너에서 늦어도 닿게
     reg.release();
-    await new Promise((r) => setTimeout(r, 30));
+    const ran = mod._drainForTest();
+    await Promise.race([reach('wait', 2), ran]); // 고친 코드: 새 창을 열고 기록을 기다린다 / 결함 코드: 지난 창이 만료돼 옛 세션으로 바로 실행
     await thread.appendTurn(WS, 'b', { turnId, userMsg: '사장 지시', reply: 'B 답', sessionId: 'b-late-session' });
-    await mod._drainForTest();
+    await ran;
     assert.equal(calls.find((c) => c.slug === 'b')?.sessionId, 'b-late-session');
-  } finally { mod._setGraceForTest(null); }
+  } finally { clearInterval(keepAlive); mod._setGraceForTest(null); mod._setTraceForTest(null); }
 });
 
 test('LOW-3 — 이 프로세스가 시작되기 전의 열린 줄(이전 프로세스의 고아)은 기다리지 않는다', async () => {
