@@ -35,5 +35,11 @@
         }
       ]
     }
-  ]
+  ],
+  "functions": {
+    "api/esign/[op].js": {
+      "includeFiles": "public/fonts/Pretendard-*.ttf",
+      "maxDuration": 30
+    }
+  }
 }
