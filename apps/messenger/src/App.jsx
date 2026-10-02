@@ -845,7 +845,7 @@ function Shell({ session }) {
   // 폰(2026-10-01, 유건 제보 "다 읽어도 아이콘 '1'이 남는다"): iOS는 앱이 앞에 있을 때 받은 푸시의 배지를 적용하지 않는다(플러그인 willPresent → [],
   // 시뮬레이터 실측). 그래서 위 재전송 푸시는 앞에 있는 폰에서 버려지고, 아이콘에는 앱이 쓴 숫자(예전엔 모든 채널 합계 — 서버와 다른 셈법)가 남았다.
   // → 폰은 서버 배지(msgr_my_badge, 푸시와 같은 정의)를 읽어 앱이 직접 쓴다. 읽기 RPC뿐 — 서버 쓰기·pg_net·APNs 호출이 없다(재전송 RPC는 데스크톱만).
-  // Android는 아이콘 숫자가 트레이 알림 수라서 읽은 채널의 알림을 지운다.
+  // Android는 아이콘 숫자가 트레이 알림 수라서 다 읽은 채널의 알림만 지운다 — 남길 목록은 안 읽은 글이 있는 모든 채널(msgr_my_badge의 unread, 배지 n이 아니다).
   const legacyBadge = useRef(null); // 서버 함수가 아직 없을 때(라이브 적용 전) 쓸 예전 숫자 — 아래 렌더에서 갱신
   const iconBadge = useMemo(() => (isMobileNative ? createIconBadge({
     fetchRows: async () => { const { data, error } = await supabase.rpc('msgr_my_badge'); if (error) throw error; return data ?? []; },

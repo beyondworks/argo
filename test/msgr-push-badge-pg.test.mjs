@@ -113,11 +113,16 @@ test('msgr_my_badge — 내 채널별 배지(합 = msgr_push_unread_total), 음�
   post(U.a, DM, 'dm 3'); post(U.a, DM, 'dm 4');
   post(U.a, PUB, '@b 다시', `[{"kind":"user","id":"${U.b}"}]`);
   assert.equal(last(asUser(U.b, `select string_agg(channel_id::text || '=' || n, ',' order by n) from public.msgr_my_badge()`)), `${PUB}=1,${DM}=2`, '채널별 셈');
+  // 트레이(Android)에 남길 목록은 안 읽은 글이 있는 모든 채널 — 멘션 없는 채널 잡담도(분리 검수 MEDIUM 2026-10-02). 아이콘 숫자(n)에는 들지 않는다.
+  post(U.a, PUB, '잡담 3');
+  assert.equal(last(asUser(U.b, `select string_agg(channel_id::text || '=' || n || '/' || unread, ',' order by n) from public.msgr_my_badge()`)), `${PUB}=1/2,${DM}=2/2`, '채널별 배지/안 읽음');
+  assert.equal(total(U.b), 3, '잡담은 배지가 아니다');
   assert.equal(total(U.b), 3, '합계 함수 = 채널별 합');
-  assert.equal(last(asUser(U.a, `select count(*) from public.msgr_my_badge()`)), '0', '남의 배지는 안 보인다(auth.uid 기준)');
+  assert.equal(last(asUser(U.a, `select coalesce(sum(n), 0) from public.msgr_my_badge()`)), '0', '남의 배지는 안 보인다(auth.uid 기준 — a의 행은 a가 안 읽은 크루 답글뿐, 배지 0)');
+  assert.equal(last(asUser(U.a, `select count(*) from public.msgr_my_badge() where channel_id = '${DM}'`)), '0', 'b가 안 읽은 DM은 a의 목록에 없다');
   asUser(U.b, `insert into public.msgr_channel_prefs (channel_id, user_id, muted) values ('${DM}', '${U.b}', true) on conflict (channel_id, user_id) do update set muted = true`);
   assert.equal(total(U.b), 1, '음소거한 DM은 배지에서 빠진다(푸시도 안 오는 채널)');
-  assert.equal(last(asUser(U.b, `select string_agg(channel_id::text || '=' || n, ',') from public.msgr_my_badge()`)), `${PUB}=1`);
+  assert.equal(last(asUser(U.b, `select string_agg(channel_id::text || '=' || n, ',' order by n) from public.msgr_my_badge()`)), `${DM}=0,${PUB}=1`, '음소거 DM은 배지 0 — 안 읽은 글이 있어 트레이 목록에는 남는다');
   asUser(U.b, `update public.msgr_channel_prefs set muted = false where channel_id = '${DM}' and user_id = '${U.b}'`);
   assert.equal(total(U.b), 3, '음소거를 풀면 다시 센다');
   const anonRow = psqlRaw(['-A', '-t', '-c', `set role authenticated; select count(*) from public.msgr_my_badge()`]);

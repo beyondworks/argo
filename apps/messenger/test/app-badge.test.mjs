@@ -91,3 +91,18 @@ test('unreadSignature — 15초 재조회로 같은 값이 새 객체로 와도 
   assert.notEqual(unreadSignature({ unread: { c1: { n: 0 } }, totals: { o: { n: 2, mention: 1 } } }), a);
   assert.notEqual(unreadSignature({ unread: { c1: { n: 1, mention: 0 } }, totals: { o: { n: 2, mention: 1 } }, muted: new Set(['c1']) }), a);
 });
+
+// 분리 검수 MEDIUM(2026-10-02): 트레이에 남길 목록을 배지 셈법(1:1·멘션·답글만)으로 정하면, 멘션 없는 채널 글 알림이 앱을 열기만 해도 지워졌다.
+// 트레이 = 안 읽은 글이 있는 모든 채널(unread), 아이콘 숫자만 배지(n). 서버 msgr_my_badge가 두 값을 같이 준다(20261001150000).
+test('Android: 멘션 없는 채널 글(배지 0, 안 읽음 있음) 알림은 남기고, 아이콘 숫자에는 넣지 않는다', async () => {
+  const icon = []; const tray = [];
+  let rows = [{ channel_id: 'dm', n: 1, unread: 1 }, { channel_id: 'pub', n: 0, unread: 3 }];
+  const b = createIconBadge({ fetchRows: async () => rows, setIcon: (n) => icon.push(n), clearTray: ({ keep }) => tray.push(keep.slice().sort()) });
+  await b.sync();
+  assert.deepEqual(icon, [1], '아이콘 = 배지 숫자(채널 잡담 제외)');
+  assert.deepEqual(tray, [['ch-dm', 'ch-pub']], '안 읽은 채널 잡담 알림은 남긴다');
+  rows = [{ channel_id: 'pub', n: 0, unread: 3 }];
+  await b.sync();
+  assert.deepEqual(icon, [1, 0]); assert.deepEqual(tray.at(-1), ['ch-pub'], 'DM을 읽으면 DM 알림만 지운다');
+  assert.deepEqual(badgeFromRows([{ channel_id: 'x', n: 2 }]), { total: 2, tags: ['ch-x'] }, 'unread가 없는 행은 배지 숫자로 판단(옛 모양)');
+});
