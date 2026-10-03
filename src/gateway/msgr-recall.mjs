@@ -13,6 +13,7 @@ import { appendEvent } from '../events.mjs';
 import { CHANNEL_ID } from '../departed.mjs';
 
 const HOME_DIR = () => process.env.HOME || process.env.USERPROFILE || ''; // homedir() 금지 — Next 파일 추적이 홈 전체를 훑는다(nft-homedir-guard)
+export const PRESENCE_MAX = 500; // msgr_crew_presence 입력 상한과 같다
 const JOURNAL = /^\d{4}-\d{2}-\d{2}-(.+)\.org-[0-9a-f-]{36}-ch-([0-9a-f-]{36})\.md$/i;
 
 /** SDK 세션 전사가 놓이는 설정 폴더 후보 — 호스트(CLAUDE_CONFIG_DIR 또는 ~/.claude)와 호환 러너 격리 폴더(~/.argo/claude-config-*). */
@@ -42,6 +43,11 @@ export async function dropTranscripts(wsId, slug, sessionIds, { configDirs } = {
     for (const p of projects) for (const id of uuids) {
       for (const f of [join(dir, 'projects', p, `${id}.jsonl`), join(dir, 'projects', p, id)]) if (existsSync(f)) { await rm(f, { recursive: true, force: true }); n++; }
     }
+    // 세션에 딸린 SDK 사본 — 편집 파일 이력·세션 환경(같은 uuid 이름), 할 일 목록(<uuid>-*.json). 정확한 uuid 접두만(분리 검수 M-3)
+    for (const id of uuids) for (const f of [join(dir, 'file-history', id), join(dir, 'session-env', id)]) if (existsSync(f)) { await rm(f, { recursive: true, force: true }); n++; }
+    let todos = [];
+    try { todos = await readdir(join(dir, 'todos')); } catch { /* 없음 */ }
+    for (const t of todos) if (uuids.some((id) => t.startsWith(`${id}-`))) { await rm(join(dir, 'todos', t), { force: true }); n++; }
   }
   return n;
 }
@@ -65,8 +71,12 @@ export async function recallDeparted(wsId, slugs, presence, { configDirs } = {})
   }
   const pairs = [...want].flatMap(([slug, ids]) => [...ids].map((id) => ({ slug, id })));
   if (!pairs.length) return sum;
-  const ans = await presence(pairs).catch(() => null);
-  if (!(ans instanceof Map)) return sum; // 조회 실패·옛 서버 — 아무것도 지우지 않는다
+  const ans = new Map();
+  for (let i = 0; i < pairs.length; i += PRESENCE_MAX) { // 서버 상한(500쌍)씩 — 넘친 꼬리가 영영 답을 못 받지 않게(분리 검수 M-2)
+    const part = await presence(pairs.slice(i, i + PRESENCE_MAX)).catch(() => null);
+    if (!(part instanceof Map)) return sum; // 조회 실패·옛 서버 — 아무것도 지우지 않는다
+    for (const [k, v] of part) ans.set(k, v);
+  }
   for (const [slug, ids] of want) {
     const gone = [...ids].filter((id) => ans.get(`${slug}:${id}`) === false);
     if (!gone.length) continue;

@@ -3,7 +3,7 @@
 //   ts = 지운 줄 가운데 가장 늦은 ts(실제 메시지에 앵커 — 벽시계로 자르면 시계가 다른 기기의 재입장 뒤 줄을 지운다, sync cutTs와 같은 이유)
 //   sids = 지운 채널 세션 id — 세션은 시각이 아니라 id로 지운다(다시 들어온 뒤 새 세션은 남는다).
 // 각인은 읽을 때(loadThread)와 동기화 병합(sync.mjs mergeThread)에서도 다시 적용된다 — 예전 버전·다른 기기가 든 옛 줄이 되살아나도 쓰이지 않게.
-// 다른 크루가 쪽지·위임으로 전해 준 줄(via)과 그 답은 지우지 않는다 — 이 크루가 그 채널에 있었던 기록이 아니라 전해 받은 일이다(설계 검수 M2).
+// 다른 크루가 쪽지·위임·세션 메시지로 전해 준 줄과 그 답은 지우지 않는다 — 이 크루가 그 채널에 있었던 기록이 아니라 전해 받은 일이다(설계 검수 M2).
 export const CHANNEL_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** 메신저 채널 범위 줄이면 그 채널 id(소문자), 아니면 null. 텔레그램·슬랙·범위 없는 줄은 대상이 아니다. */
@@ -12,13 +12,16 @@ export const msgChannel = (m) => {
   return (s?.kind === 'msgr' || s?.kind === 'msgr-dm') && CHANNEL_ID.test(String(s.channelId ?? '')) ? String(s.channelId).toLowerCase() : null;
 };
 
-/** 회수 대상 줄의 채널 — 전해 받은 일(via가 붙은 지시와 그 바로 뒤 크루 답)은 null. */
+// 다른 크루가 보낸 일 — 쪽지·위임·세션 메시지. 메신저 턴(via:'msgr')·루틴·작업·회의실은 이 크루가 직접 받은 일이다(분리 검수 H-1: via 전체를 건너뛰면 실제 채널 줄이 하나도 안 지워졌다).
+const RELAYED = new Set(['crewmail', 'delegate', 'session']);
+/** 회수 대상 줄의 채널 — 전해 받은 일(RELAYED 지시와 그 바로 뒤 크루 답)은 null. */
 function ownChannels(messages) {
   const out = []; let relayed = null;
   for (const m of messages) {
     const c = msgChannel(m);
-    if (m?.who === 'user') relayed = m.via ? c : null;
-    out.push(c && !(m.via || (m.who === 'crew' && relayed === c)) ? c : null);
+    const r = RELAYED.has(m?.via);
+    if (m?.who === 'user') relayed = r ? c : null;
+    out.push(c && !(r || (m.who === 'crew' && relayed === c)) ? c : null);
   }
   return out;
 }

@@ -70,8 +70,8 @@ test('같은 에이전트의 조직·개인 행 어느 쪽이든 들어 있는 �
   assert.deepEqual(presence(U.a, 'ws-a', 'pepper', [PUB, PUB2, AB, NOPE]), { [PUB]: true, [PUB2]: true, [AB]: true, [NOPE]: false });
 });
 
-test('남이 물으면 전부 false(남의 에이전트·채널 존재가 새지 않는다), 로그인 없으면 답 없음', { skip }, () => {
-  assert.deepEqual(presence(U.b, 'ws-a', 'pepper', [PUB, AB]), { [PUB]: false, [AB]: false });
+test('남이 물으면 판정 없음(남의 에이전트·채널 존재가 새지 않는다), 로그인 없으면 답 없음', { skip }, () => {
+  assert.equal(asUser(U.b, `select string_agg(coalesce(present::text, 'null'), ',') from public.msgr_crew_presence('ws-a', array['pepper', 'pepper'], array['${PUB}', '${AB}']::uuid[])`), 'null,null', '남(b)이 물으면 판정 없음 — 소속 여부가 새지 않고, 본체는 지우지 않는다');
   assert.equal(sql(`select count(*) from public.msgr_crew_presence('ws-a', array['pepper'], array['${PUB}']::uuid[])`), '0');
 });
 
@@ -121,4 +121,9 @@ test('조직 소프트 삭제(30일 복구 가능)는 true로 둔다', { skip },
 test('여러 에이전트를 한 번에 — 쌍마다 그 에이전트 기준으로 답한다(다른 slug는 남의 소속을 빌리지 않는다)', { skip }, () => {
   const out = asUser(U.a, `select slug || ':' || id || '=' || present from public.msgr_crew_presence('ws-a', array['pepper', 'ghost'], array['${PUB}', '${PUB}']::uuid[])`).split('\n').filter(Boolean).sort();
   assert.deepEqual(out, [`ghost:${PUB}=false`, `pepper:${PUB}=true`].sort());
+});
+
+test('이 회사(ws)에 내 에이전트 행이 하나도 없으면 판정 없음(null) — 다른 계정 소유 회사의 PC 기록을 지우지 않는다', { skip }, () => {
+  assert.equal(asUser(U.b, `select coalesce(present::text, 'null') from public.msgr_crew_presence('ws-a', array['pepper'], array['${PUB}']::uuid[])`), 'null');
+  assert.equal(asUser(U.a, `select coalesce(present::text, 'null') from public.msgr_crew_presence('ws-a', array['deleted-agent'], array['${PUB}']::uuid[])`), 'false', '회사 행은 있는데 그 에이전트만 없음 = 빠짐');
 });

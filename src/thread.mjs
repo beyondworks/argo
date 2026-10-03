@@ -270,7 +270,11 @@ export async function listArchivedSessions(wsId, slug) {
 export async function readArchivedSession(wsId, slug, id) {
   const safe = slug.replace(/[^a-z0-9-]/g, '');
   if (!new RegExp(`^${safe}-\\d+\\.json$`).test(id)) throw new Error('잘못된 세션 id');
-  return JSON.parse(await readFile(join(paths(wsId).chats, '.archive', id), 'utf8'));
+  const t = JSON.parse(await readFile(join(paths(wsId).chats, '.archive', id), 'utf8'));
+  const cur = await readJson(file(wsId, slug), null).catch(() => null);
+  const departed = mergeDeparted(cur?.departed, t.departed); // 보관 화면도 지운 채널 줄을 보이지 않는다(분리 검수 L-3)
+  if (departed) { t.departed = departed; applyDeparted(t); }
+  return t;
 }
 
 /** 새 대화 — 삭제가 아니라 적재. 이전 대화는 chats/.archive/에 보관되고, vault 기억은 그대로다(그게 제품의 핵심). */
@@ -285,7 +289,7 @@ export async function resetThread(wsId, slug) {
     // salvage 게이트), 새 대화가 파일을 지우면 옛 손상본이 되살아난다(검수 CRITICAL-1 C 케이스 실측).
     // 회의실 endMeeting이 {messages:[], sid+1}을 쓰는 것과 같은 계약으로 통일한다.
     // resetAt = 비움 각인(tombstone) — 근거·산식은 src/reset-stamp.mjs에 있다(벽시계 미사용 이유 포함).
-    await writeJsonAtomic(file(wsId, slug), { sessionId: null, messages: [], ...resetStamp(t), ...resetDelegationLimit() }); // 새 대화 = 위임 제한 켜짐(기본값) — 이전이 풀림이었으면 명시적 true(동기화 병합에서 옛 꺼짐이 되살아나지 않게)
+    await writeJsonAtomic(file(wsId, slug), { sessionId: null, messages: [], ...resetStamp(t), ...resetDelegationLimit(), ...(t.departed ? { departed: t.departed } : {}) }); // 회수 각인은 새 대화로 이어진다 — 각인 없는 옛 보관본을 되살려도 지운 줄이 돌아오지 않게(분리 검수 L-2) // 새 대화 = 위임 제한 켜짐(기본값) — 이전이 풀림이었으면 명시적 true(동기화 병합에서 옛 꺼짐이 되살아나지 않게)
   });
 }
 
@@ -482,7 +486,8 @@ async function noteChannelSession(wsId, slug, scope, sessionId) {
   const c = msgChannel({ contextScope: scope });
   if (!c || !sessionId) return;
   await withLock(`msgr-sessions:${wsId}`, async () => {
-    const l = await readJson(ledgerFile(wsId), {}).catch(() => ({}));
+    const l = await readJson(ledgerFile(wsId), {}).catch(() => null);
+    if (!l) return; // 손상된 장부를 빈 것으로 덮으면 다른 채널의 세션 id가 사라진다(분리 검수 L-5)
     const k = `${slug}:${c}`; const list = Array.isArray(l[k]) ? l[k] : [];
     if (list.includes(sessionId)) return;
     l[k] = [...list, sessionId].slice(-LEDGER_MAX);
@@ -492,7 +497,8 @@ async function noteChannelSession(wsId, slug, scope, sessionId) {
 /** 회수 — 그 채널들의 장부 세션 id를 꺼내고 장부에서 지운다. */
 export async function takeChannelSessions(wsId, slug, ids) {
   return withLock(`msgr-sessions:${wsId}`, async () => {
-    const l = await readJson(ledgerFile(wsId), {}).catch(() => ({}));
+    const l = await readJson(ledgerFile(wsId), {}).catch(() => null);
+    if (!l) return [];
     const out = [];
     for (const id of ids) { const k = `${slug}:${String(id).toLowerCase()}`; if (Array.isArray(l[k])) { out.push(...l[k]); delete l[k]; } }
     if (out.length) await writeJsonAtomic(ledgerFile(wsId), l);

@@ -160,3 +160,56 @@ test('채널 세션 장부: 이 기기에서 그 채널에 쓴 세션 전부를 
   const ledger = JSON.parse(await readFile(join(p.root, '.msgr-sessions.json'), 'utf8'));
   assert.deepEqual(Object.keys(ledger), [`pepper:${IN}`], '남은 채널 장부는 그대로');
 });
+
+test('실제 저장 모양(msgr.mjs appendTurn 인자 그대로): 메신저 채널·DM·루틴 줄은 회수, 쪽지 줄은 보존', async () => {
+  const { appendTurn, loadThread } = await import('../src/thread.mjs');
+  const ws = 'co-shape';
+  await mkdir(paths(ws).chats, { recursive: true });
+  const actor = { uid: 'u1', name: '유건' };
+  // msgr.mjs:1294 — 채널 턴과 DM 턴(같은 인자 모양)
+  await appendTurn(ws, 'pepper', { userMsg: '채널 지시', reply: '채널 답', sessionId: SESS_OUT, contextScope: { kind: 'msgr', channelId: OUT, threadRoot: null }, via: 'msgr', actor });
+  await appendTurn(ws, 'pepper', { userMsg: 'DM 지시', reply: 'DM 답', sessionId: null, contextScope: { kind: 'msgr-dm', channelId: OUT, threadRoot: 'r1' }, via: 'msgr', actor });
+  await appendTurn(ws, 'pepper', { userMsg: '루틴 지시', reply: '루틴 답', contextScope: { kind: 'msgr', channelId: OUT }, via: 'routine' });
+  await appendTurn(ws, 'pepper', { userMsg: '쪽지 지시', reply: '쪽지 답', contextScope: { kind: 'msgr', channelId: OUT }, via: 'crewmail' });
+  await appendTurn(ws, 'pepper', { userMsg: '남은 채널', reply: '남은 답', contextScope: { kind: 'msgr', channelId: IN }, via: 'msgr', actor });
+  const r = await recallDeparted(ws, ['pepper'], async () => new Map([[`pepper:${OUT}`, false], [`pepper:${IN}`, true]]), { configDirs: [] });
+  assert.equal(r.removed, 6);
+  assert.deepEqual((await loadThread(ws, 'pepper')).messages.map((m) => m.text), ['쪽지 지시', '쪽지 답', '남은 채널', '남은 답']);
+});
+
+test('500쌍이 넘으면 나눠 묻는다 — 꼬리도 답을 받는다', async () => {
+  const ws = 'co-chunk'; const p = paths(ws);
+  await mkdir(p.chats, { recursive: true });
+  const hex = (n) => n.toString(16).padStart(12, '0');
+  const msgs = Array.from({ length: 620 }, (_, i) => ({ who: 'user', text: `m${i}`, ts: i + 1, via: 'msgr', contextScope: ch(`aaaaaaaa-aaaa-4aaa-8aaa-${hex(i)}`) }));
+  await writeFile(join(p.chats, 'pepper.json'), JSON.stringify({ messages: msgs }));
+  const sizes = [];
+  const r = await recallDeparted(ws, ['pepper'], async (pairs) => { sizes.push(pairs.length); return new Map(pairs.map((x) => [`${x.slug}:${x.id}`, false])); }, { configDirs: [] });
+  assert.deepEqual(sizes, [500, 120]);
+  assert.equal(r.removed, 620);
+});
+
+test('한 조각이라도 조회에 실패하면 아무것도 지우지 않는다', async () => {
+  const ws = 'co-chunk-fail'; const p = paths(ws);
+  await mkdir(p.chats, { recursive: true });
+  const hex = (n) => n.toString(16).padStart(12, '0');
+  const msgs = Array.from({ length: 520 }, (_, i) => ({ who: 'user', text: `m${i}`, ts: i + 1, via: 'msgr', contextScope: ch(`aaaaaaaa-aaaa-4aaa-8aaa-${hex(i)}`) }));
+  await writeFile(join(p.chats, 'pepper.json'), JSON.stringify({ messages: msgs }));
+  let n = 0;
+  const r = await recallDeparted(ws, ['pepper'], async (pairs) => { if (n++) throw new Error('timeout'); return new Map(pairs.map((x) => [`${x.slug}:${x.id}`, false])); }, { configDirs: [] });
+  assert.equal(r.removed, 0);
+  assert.equal(JSON.parse(await readFile(join(p.chats, 'pepper.json'), 'utf8')).messages.length, 520);
+});
+
+test('새 대화(reset)와 보관 보기에도 각인이 이어진다', async () => {
+  const { resetThread, readArchivedSession, listArchivedSessions } = await import('../src/thread.mjs');
+  const ws = 'co-reset'; const p = paths(ws);
+  await mkdir(join(p.chats, '.archive'), { recursive: true });
+  const t = thread(); forgetChannels(t, [OUT]);
+  await writeFile(join(p.chats, 'pepper.json'), JSON.stringify(t));
+  await resetThread(ws, 'pepper');
+  assert.equal(JSON.parse(await readFile(join(p.chats, 'pepper.json'), 'utf8')).departed[OUT].ts, 4);
+  await writeFile(join(p.chats, '.archive', 'pepper-7.json'), JSON.stringify({ messages: [{ who: 'crew', text: '각인 없는 보관본 기밀', ts: 2, via: 'msgr', contextScope: ch(OUT) }] }));
+  assert.deepEqual((await readArchivedSession(ws, 'pepper', 'pepper-7.json')).messages, []);
+  assert.ok((await listArchivedSessions(ws, 'pepper')).length >= 1);
+});

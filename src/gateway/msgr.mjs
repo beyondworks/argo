@@ -244,7 +244,7 @@ export function makeDb(client) {
     async crewPresence(wsId, pairs) {
       const { data, error } = await client.rpc('msgr_crew_presence', { p_ws: wsId, p_slugs: pairs.map((p) => p.slug), p_ids: pairs.map((p) => p.id) });
       if (error) { if (['PGRST202', '42883'].includes(error.code)) return null; throw new Error(`msgr db: ${error.message}`); }
-      return new Map((data ?? []).map((r) => [`${r.slug}:${String(r.id).toLowerCase()}`, r.present === true]));
+      return new Map((data ?? []).filter((r) => typeof r.present === 'boolean').map((r) => [`${r.slug}:${String(r.id).toLowerCase()}`, r.present])); // present null = 판정 없음(이 계정에 이 회사 에이전트 행이 없음) — 지우지 않는다
     },
     async heartbeat(ids) {
       // HEARTBEAT_WRITE_MS(30초) 넘게 지난 행만 쓴다 — 15초 틱마다 모든 크루 행을 갱신해 msgr_crews가 분당 1,335행씩 다시 써졌다(2026-09-23 DB 점검).
