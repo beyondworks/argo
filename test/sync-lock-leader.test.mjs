@@ -52,7 +52,8 @@ test('재시작 경쟁(HIGH-1 재현): A 실행 → B 실행 → A 강제 종료
   const all = [A, B, A2];
   const { max, end } = scan(all, killedAt, Date.now() - 300);
   assert.ok(max <= 1, `게이트웨이를 동시에 도는 프로세스가 ${max}개 — 이중 실행`);
-  assert.equal(end, 1, `끝 상태 B=${JSON.stringify(B.last())} A'=${JSON.stringify(A2.last())} — 아무도 실행 안 함(#791 1차 수정: B proc:true cloud:false, A' proc:false cloud:true)`);
+  const leaseWarn = all.flatMap((k) => k.err.split('\n').filter((l) => l.includes('리스 갱신 실패')).map((l) => `${k.name}: ${l}`)).join(' | ');
+  assert.equal(end, 1, `끝 상태 B=${JSON.stringify(B.last())} A'=${JSON.stringify(A2.last())} — 아무도 실행 안 함(#791 1차 수정: B proc:true cloud:false, A' proc:false cloud:true) 리스 경고: ${leaseWarn || '없음'}`);
   assert.equal(scan(all, Date.now() - 2000, Date.now() - 300, 'sched').end, 1, '루틴 스케줄러도 정확히 하나');
 });
 
