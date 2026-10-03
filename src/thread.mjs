@@ -6,6 +6,7 @@ import { paths, getDeviceId } from './workspace.mjs';
 import { withLock } from './mutex.mjs';
 import { writeJsonAtomic, readJson, salvageFromCorrupt } from './jsonstore.mjs';
 import { resetStamp, resumeStamp } from './reset-stamp.mjs';
+import { channelIdsOf, forgetChannels, applyDeparted, mergeDeparted, msgChannel } from './departed.mjs'; // 채널 기억 회수(유건 결정 2026-10-03)
 import { isRelaxedStored, resetDelegationLimit } from './delegation-limits.mjs'; // 위임 제한 스위치 — 대화방(스레드)마다 저장
 import { sanitizeFileSlug } from './slug.mjs'; // 파일 이름 세척의 단일 원천 — 회의록 충돌 판정(sync 반입 문)과 같은 규칙
 
@@ -69,6 +70,7 @@ async function keepSession(t, sessionId, scope) {
 export async function loadThread(wsId, slug) {
   // 대화는 유실이 치명적 — 손상 시 조용히 빈 상태로 리셋하지 않고 throw로 드러낸다(readJson).
   const t = await readJson(file(wsId, slug), { sessionId: null, messages: [] });
+  applyDeparted(t); // 회수 각인 — 예전 버전·다른 기기가 되살린 옛 채널 줄·세션은 읽는 자리에서 거른다(설계 검수 M4)
   // 회의실과 동일 계약 — 파일 부재일 때만 손상본에서 건져 화면에 되돌리고, 파일은 쓰지 않는다.
   // (새 대화·신규 크루처럼 정상적으로 비어 있는 경우는 파일이 존재하므로 복구가 발동하지 않는다.)
   // sessionId는 복구하지 않는다 — 이어가기 세션은 새로 시작(대화 기록 보존이 우선).
@@ -151,6 +153,7 @@ async function appendTurnLocked(wsId, slug, { turnId, userMsg, reply, handover, 
       if (!failed) t.messages.splice(end + 1, 0, { who: 'crew', text: reply, handover, ts, ...scoped, ...(artifacts?.length ? { artifacts } : {}), ...(fellBack ? { fellBack } : {}), ...(modelFallback ? { modelFallback } : {}) }); // fellBack = 폴백 투명화(P2) — UI가 대체 실행 안내를 그린다
       await keepSession(t, sessionId, scope);
       await writeJsonAtomic(file(wsId, slug), t);
+      await noteChannelSession(wsId, slug, scope, sessionId);
       return t;
     }
     t.messages.push(
@@ -169,6 +172,7 @@ async function appendTurnLocked(wsId, slug, { turnId, userMsg, reply, handover, 
     );
     await keepSession(t, sessionId, scope);
     await writeJsonAtomic(file(wsId, slug), t);
+    await noteChannelSession(wsId, slug, scope, sessionId);
     return t;
   });
 }
@@ -305,6 +309,8 @@ export async function resumeSession(wsId, slug, id) {
     delete restored.resetAt;
     delete restored.cutTs; // 보관본의 옛 자르기 지점 정리 — 방어적: 되살림 직후엔 resumedAt >= resetAt 게이트가 먼저 걸려 현재 무행동(4R 차등 탐색 4000시드 차이 0), 옛 각인이 새 문맥에 실려 다니지 않게만 한다
     restored.resumedAt = resumeStamp(cur); // 각인 보유자는 활성 스레드(cur) — 보관본은 리셋을 모른다
+    const departed = mergeDeparted(cur.departed, restored.departed); // 회수 각인은 보관본으로 바꿔도 이어진다 — 되살린 대화에 지운 채널 기억이 돌아오지 않게(설계 검수 H2)
+    if (departed) { restored.departed = departed; applyDeparted(restored); }
     await writeJsonAtomic(file(wsId, slug), restored);
     await rm(join(dir, id), { force: true });
     return restored;
@@ -428,4 +434,73 @@ export async function purgeTrashed(wsId, id) {
   if (!ANY_ARCH_ID.test(id)) throw new Error('잘못된 세션 id');
   await rm(join(trashDir(wsId), id), { force: true });
   return { id };
+}
+
+/** 이 크루의 대화 파일(활성·보관·보관함)에 남은 메신저 채널 id 전부 — 기억 회수 판정에 물을 목록. */
+export async function threadChannelIds(wsId, slug) {
+  const out = new Set();
+  for (const f of await threadFiles(wsId, slug)) {
+    const t = await readJson(f, null).catch(() => null);
+    for (const c of channelIdsOf(t)) out.add(c);
+  }
+  return out;
+}
+
+/** 채널 기억 회수 — 이 크루의 활성·보관·보관함 대화에서 그 채널 줄과 채널 세션을 지우고 각인(departed)을 남긴다.
+    활성 스레드 잠금 하나로 직렬화한다(보관·보관함 편집과 같은 잠금). 반환: 지운 줄 수, 지운 세션 id(전사 파일 정리용). */
+export async function forgetThreadChannels(wsId, slug, ids) {
+  if (!ids?.length) return { removed: 0, sessionIds: [] };
+  return lockThread(wsId, slug, async () => {
+    let removed = 0; const sessionIds = [];
+    const hit = new Set(ids.map((x) => String(x).toLowerCase()));
+    for (const f of await threadFiles(wsId, slug)) {
+      const t = await readJson(f, null).catch(() => null);
+      if (!t || !Array.isArray(t.messages)) continue;
+      if (![...channelIdsOf(t)].some((c) => hit.has(c))) continue; // 이 파일엔 그 채널 기록이 없다 — 각인도 쓰지 않는다
+      const r = forgetChannels(t, ids);
+      removed += r.removed; sessionIds.push(...r.sessionIds);
+      await writeJsonAtomic(f, t);
+    }
+    return { removed, sessionIds };
+  });
+}
+
+async function threadFiles(wsId, slug) {
+  const safe = slug.replace(/[^a-z0-9-]/g, ''); // 보관본 이름 규칙(resetThread·listArchivedSessions)과 같다
+  const out = [file(wsId, slug)];
+  for (const dir of [join(paths(wsId).chats, '.archive'), trashDir(wsId)]) {
+    try { for (const n of await readdir(dir)) if (ARCH_ID(safe).test(n)) out.push(join(dir, n)); } catch { /* 폴더 없음 */ }
+  }
+  return out;
+}
+
+// 채널 세션 장부(기기 로컬 — 점 파일이라 동기화되지 않는다): <회사>/.msgr-sessions.json = { "<slug>:<channelId>": [세션 id…] }.
+// 채널·DM 턴이 이 기기에서 쓴 세션 id를 모두 남긴다 — 스레드에는 마지막 하나만 남아(기기 전환·새 세션 재시도) 회수 때 전사를 다 못 지운다(설계 검수 H3).
+const ledgerFile = (wsId) => join(paths(wsId).root, '.msgr-sessions.json');
+const LEDGER_MAX = 50; // ponytail: 채널당 최근 50개 — 더 오래된 전사는 SDK가 따로 정리한다
+async function noteChannelSession(wsId, slug, scope, sessionId) {
+  const c = msgChannel({ contextScope: scope });
+  if (!c || !sessionId) return;
+  await withLock(`msgr-sessions:${wsId}`, async () => {
+    const l = await readJson(ledgerFile(wsId), {}).catch(() => ({}));
+    const k = `${slug}:${c}`; const list = Array.isArray(l[k]) ? l[k] : [];
+    if (list.includes(sessionId)) return;
+    l[k] = [...list, sessionId].slice(-LEDGER_MAX);
+    await writeJsonAtomic(ledgerFile(wsId), l);
+  }, { file: ledgerFile(wsId) }).catch(() => {}); // 장부 실패가 턴 기록을 막지 않는다
+}
+/** 회수 — 그 채널들의 장부 세션 id를 꺼내고 장부에서 지운다. */
+export async function takeChannelSessions(wsId, slug, ids) {
+  return withLock(`msgr-sessions:${wsId}`, async () => {
+    const l = await readJson(ledgerFile(wsId), {}).catch(() => ({}));
+    const out = [];
+    for (const id of ids) { const k = `${slug}:${String(id).toLowerCase()}`; if (Array.isArray(l[k])) { out.push(...l[k]); delete l[k]; } }
+    if (out.length) await writeJsonAtomic(ledgerFile(wsId), l);
+    return out;
+  }, { file: ledgerFile(wsId) });
+}
+/** 장부에 남은 이 크루의 채널 id — 스레드 줄이 이미 없어도 전사가 남은 채널까지 묻는다. */
+export async function channelSessionIds(wsId, slug) {
+  const l = await readJson(ledgerFile(wsId), {}).catch(() => ({}));
+  return Object.keys(l).filter((k) => k.startsWith(`${slug}:`)).map((k) => k.slice(slug.length + 1));
 }

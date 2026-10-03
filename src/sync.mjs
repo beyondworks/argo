@@ -22,6 +22,7 @@ import { join, dirname, basename, sep } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import { WS_ROOT, WS_ID_RE, paths, archiveCompany, writeTombstone, TOMBSTONE_DIR, getDeviceId } from './workspace.mjs';
+import { applyDeparted, mergeDeparted } from './departed.mjs';
 import { writeJsonAtomic, writeFileAtomic, readJsonLenient } from './jsonstore.mjs';
 import { withLock, withDirLock, withFileLock } from './mutex.mjs';
 import { cryptoOn, isSecretRel, isSecretNameRel, isEncRel, encVaultOn, sealSecret, sealSecretV3, openSecret, openSecretCompat, isEnvelopeGeneration, CRED_WITHDRAWN, isCredWithdrawn } from './secretbox.mjs';
@@ -584,6 +585,9 @@ export function mergeThread(localBuf, remoteBuf, prefer = 'remote') {
   // sessionDevice는 sessionId를 제공한 쪽과 짝으로 — 어긋나면 남의 기기 세션을 내 것으로 오판한다
   merged.sessionDevice = (primary.sessionId != null ? primary.sessionDevice : other.sessionDevice) ?? null;
   if (L.scopedSessions || R.scopedSessions) merged.scopedSessions = { ...other.scopedSessions, ...primary.scopedSessions }; // 메신저 채널 세션은 채널 단위로 합친다(세션·기기 짝은 항목 안에 함께 있다)
+  // 채널 기억 회수 각인(departed.mjs) — 채널마다 늦은 시각으로 합치고 병합 결과에 다시 적용한다. 다른 기기가 아직 든 옛 채널 줄·세션이 합집합으로 되살아나지 않게.
+  const departed = mergeDeparted(L.departed, R.departed);
+  if (departed) { merged.departed = departed; applyDeparted(merged); } else delete merged.departed;
   return Buffer.from(JSON.stringify(merged, null, 2));
 }
 
