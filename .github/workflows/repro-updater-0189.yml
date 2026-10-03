@@ -18,11 +18,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: applications-arm, os: macos-15, dmg: argo_0.1.89_aarch64.dmg, variant: applications }
-          - { name: applications-intel, os: macos-15-intel, dmg: argo_0.1.89_x64.dmg, variant: applications }
-          - { name: dmg-quarantined, os: macos-15, dmg: argo_0.1.89_aarch64.dmg, variant: dmg }
-          - { name: external-volume, os: macos-15, dmg: argo_0.1.89_aarch64.dmg, variant: external }
-          - { name: root-owned, os: macos-15, dmg: argo_0.1.89_aarch64.dmg, variant: rootowned }
+          # 2차 실행: macOS 26(1차는 macOS 15.7.9 — 커밋 94fbcd89, run 37128685504)
+          - { name: applications-arm-macos26, os: macos-26, dmg: argo_0.1.89_aarch64.dmg, variant: applications }
+          - { name: applications-intel-macos26, os: macos-26-intel, dmg: argo_0.1.89_x64.dmg, variant: applications }
     steps:
       - uses: actions/checkout@v4
         with:
