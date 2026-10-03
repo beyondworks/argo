@@ -161,10 +161,11 @@ test('concurrent attribution writers cannot overwrite the same expected version'
  const run=(u,campaign_id)=>new Promise(resolve=>{
   const probe=psqlSpawn(DB,['--version']);assert.equal(probe.status,0);
   const child=spawn('psql',[DB,'-X','-v','ON_ERROR_STOP=1','-At','-c',mq(u,ORG,'attribution.save',{order_id:o,campaign_id,version:0})],{env:process.env});
-  let stderr='';child.stderr.on('data',chunk=>{stderr+=chunk;});child.on('exit',code=>resolve({code,stderr}));
+  // 'close' — 'exit'는 stderr를 다 읽기 전에 올 수 있다(리눅스 CI에서 빈 문자열, 10/3 #813)
+  let stderr='';child.stderr.on('data',chunk=>{stderr+=chunk;});child.on('close',(code,signal)=>resolve({code,signal,stderr}));
  });
  const replies=await Promise.all([run(U.owner,ca),run(U.admin,cb)]);
- assert.equal(replies.filter(r=>r.code===0).length,1);assert.match(replies.find(r=>r.code!==0).stderr,/marketing_version_conflict/);
+ assert.equal(replies.filter(r=>r.code===0).length,1);assert.match(replies.find(r=>r.code!==0).stderr,/marketing_version_conflict/,JSON.stringify(replies));
  const snapshot=mr(U.owner,ORG);assert.equal(snapshot.attributions.find(a=>a.order_id===o).version,1);assert.equal(snapshot.history.filter(h=>h.order_id===o).length,1);
 });
 
