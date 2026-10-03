@@ -19,7 +19,11 @@
 import { open, realpath, stat } from 'node:fs/promises';
 import { constants as FS } from 'node:fs';
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep, win32 } from 'node:path';
-import { homedir, tmpdir, userInfo } from 'node:os';
+import { userInfo } from 'node:os';
+// 홈·임시 폴더는 env로만 읽는다. node:os의 홈·임시 폴더 함수를 동적 join·map 인자로 쓰면 Next 추적기(nft)가 빌드타임에 실평가해 홈 전체를 글롭하고,
+// Windows 릴리스 빌드가 러너 홈의 WindowsApps 별칭(EACCES)에서 죽는다(v0.1.30·v0.1.35·v0.1.94 CI 실측, permission-gate.mjs 같은 규칙).
+const HOME_DIR = () => process.env.HOME || process.env.USERPROFILE || '';
+const TMP_DIR = () => process.env.TMPDIR || process.env.TEMP || process.env.TMP || '';
 import { fileURLToPath } from 'node:url';
 import { paths, WS_ROOT } from '../workspace.mjs';
 import { SERVE_PREFIXES } from '../artifact-zones.mjs';
@@ -63,7 +67,7 @@ function localTarget(dest, vault) {
   if (DRIVE.test(d)) return d; // 윈도우 드라이브 경로 — 어느 OS에서든 로컬 경로(MEDIUM-4). 윈도우가 아니면 judge가 풀지 않고 '밖'으로 본다
   if (/^[a-z][a-z0-9+.-]*:/i.test(d) || d.startsWith('#')) return null; // https:·mailto:·앵커
   d = safeDecode(d);
-  if (d === '~' || d.startsWith('~/')) return join(homedir(), d.slice(1));
+  if (d === '~' || d.startsWith('~/')) { const h = HOME_DIR(); return h ? join(h, d.slice(1)) : null; } // 홈을 모르면 후보가 아니다
   if (isAbsolute(d)) return d;
   // 상대 경로는 기존 규칙(extractFileRefs) 그대로 — vault 기준 첨부 구역만. 역슬래시(윈도우 크루가 쓰는 projects\x\a.png 꼴)도 구분자로 본다 —
   // 윈도우 CI에서 이 꼴이 후보로 잡히지 않아 첨부도 안내도 없이 본문에 남았다(PR #812 Windows CI). 어느 OS에서든 같은 판정.
@@ -74,7 +78,7 @@ function localTarget(dest, vault) {
 // 구역 밖 절대 경로 중 지우는 자리 — 홈·작업 루트·임시 폴더 아래(사용자 이름·폴더 구조가 드러나는 자리). macOS·윈도우는 대소문자를 무시한다(/users/X도 홈).
 const DRIVE = /^\/?[A-Za-z]:[\\/]/; // C:\·D:/ 그리고 macOS·리눅스 fileURLToPath('file:///C:/…')가 돌려주는 /C:/… 꼴(LOW-5)
 const FOLD = process.platform === 'darwin' || process.platform === 'win32' ? (p) => p.toLowerCase() : (p) => p;
-const PRIVATE_ROOTS = [...new Set([homedir(), WS_ROOT, tmpdir(), '/tmp', '/private/tmp', '/var/folders', '/private/var/folders'].filter(Boolean).map((r) => FOLD(resolve(r))))];
+const PRIVATE_ROOTS = [...new Set([HOME_DIR(), WS_ROOT, TMP_DIR(), '/tmp', '/private/tmp', '/var/folders', '/private/var/folders'].filter(Boolean).map((r) => FOLD(resolve(r))))];
 const within = (p, root) => { const rel = relative(root, p); return rel === '' || (!!rel && !isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`)); };
 // 첫 칸이 이 목록이면 로컬 위치(외장 볼륨·공유 사용자 폴더·리눅스 홈·마운트·/opt 등) — 고객사 폴더 이름이 드러나는 자리(통합본 재검수 MEDIUM-4).
 // 첫 칸이 정확히 같고 칸이 둘 이상일 때만(`/home`·`/opt` 한 칸, `/optional`·`/homepage`는 웹 경로 — LOW-4). 드라이브 문자 경로(C:\·D:/·/C:/)도 항상 로컬.
