@@ -1394,7 +1394,9 @@ export const _startTypingForTest = startTyping;
 
 /* ─── push — 코어 이벤트(onNotify)를 채널로. msgr 문맥이 없는 이벤트는 즉시 반환(클라이언트 생성 0). ─── */
 /** 크루 알림을 아르고 메신저로 — 원점 없는 이벤트를 **그 크루와 나의 1:1 방**에 그 크루 이름으로 올린다(src/msgr-notify.mjs, 유건 결정 2026-09-15: 방 선택 없음).
-    크루가 파견된 조직마다 1:1 방을 찾고(크루의 DM 채널 ∩ 내가 구성원인 채널), 없으면 msgr_create_channel(kind dm)로 만든다(메신저 앱과 같은 경로).
+    에이전트 = 한 사람(유건 2026-10-03, P2): 같은 slug의 개인 행(org 없음·활성 — 본체 0.1.92부터 mirrorPersonal이 만든다)이 있으면 개인 공간의 1:1 방
+    하나에만 한 번 올린다(msgr_dm_personal_crew — 메신저 앱이 여는 방과 같다). 개인 행이 없거나(옛 본체) 그 방을 열지 못하면(서버 거절·연결 실패)
+    종전대로 크루가 파견된 조직마다 1:1 방을 찾고(크루의 DM 채널 ∩ 내가 구성원인 채널), 없으면 msgr_create_channel(kind dm)로 만든다 — 알림을 잃지 않게.
     같은 이벤트는 client_msg_id(자연 id·시각 축·본문 해시)로 한 번만. */
 export async function msgrNotifyPush(event, _target = null, { session = sessionClient, now = Date.now() } = {}) {
   const { formatMsgrNotify, msgrNotifyCrewSlug } = await import('../msgr-notify.mjs');
@@ -1405,26 +1407,42 @@ export async function msgrNotifyPush(event, _target = null, { session = sessionC
   if (!c) throw new Error('Messenger notification session unavailable');
   if (company.ownerId !== c.uid) throw new Error('Messenger notification owner mismatch');
   const slug = msgrNotifyCrewSlug(event);
-  const crews = slug ? (await c.db.myCrews(c.uid, event.wsId)).filter((r) => r.slug === slug && r.org_id != null) : []; // 개인 행은 알림 대상이 아니다(조직 1:1 방이 목적지)
-  if (!crews.length) { console.error(`[argo] 메신저 알림: 크루 ${slug ?? '?'}가 파견된 조직이 없음(${event.wsId})`); return false; }
+  const mine = slug ? (await c.db.myCrews(c.uid, event.wsId)).filter((r) => r.slug === slug) : []; // myCrews = 이 회사의 내 활성 행(개인·조직)
+  const personal = mine.find((r) => r.org_id == null) ?? null;
+  const crews = mine.filter((r) => r.org_id != null);
+  if (!personal && !crews.length) { console.error(`[argo] 메신저 알림: 크루 ${slug ?? '?'}의 메신저 행이 없음(${event.wsId})`); return false; }
   const agents = await listAgents(event.wsId).catch(() => []);
   const names = Object.fromEntries(agents.map((a) => [a.slug, a.name || a.slug]));
   const body = formatMsgrNotify(event, company.lang, names).slice(0, MSG_MAX);
   if (!body) return false;
   const natural = event.id ?? event.item?.id ?? event.routine?.id ?? '';
   const when = event.runAt ?? event.phase ?? new Date(Math.floor(now / 600_000) * 600_000).toISOString();
+  const post = (crew, channelId) => {
+    const key = [event.wsId, event.type, slug, channelId, natural, when, body].join('\u0000');
+    const digest = createHash('sha256').update(key).digest('hex').slice(0, 32);
+    return c.db.insertMessage({ channel_id: channelId, author_kind: 'crew', crew_id: crew.id, kind: 'text',
+      reply_to: null, thread_root: null, client_msg_id: `nt:${crew.id}:${digest}`,
+      body, mentions: [], meta: { disposition: 'done', notification: event.type } });
+  };
+  if (personal) {
+    const room = await personalCrewRoom(c, personal).catch((e) => { console.error(`[argo] 메신저 알림: 개인 1:1 방 확보 실패(${personal.display_name}) — 조직 1:1로 보냄: ${e.message}`); return null; });
+    if (room) return !!(await post(personal, room)); // 중복(같은 이벤트 재배달)이면 null → false. 조직 방에는 올리지 않는다
+  }
   let posted = 0;
   for (const crew of crews) {
     const channelId = await dmWithOwner(c, crew).catch((e) => { console.error(`[argo] 메신저 알림: 1:1 방 확보 실패(${crew.display_name}): ${e.message}`); return null; });
     if (!channelId) continue;
-    const key = [event.wsId, event.type, slug, channelId, natural, when, body].join('\u0000');
-    const digest = createHash('sha256').update(key).digest('hex').slice(0, 32);
-    const row = await c.db.insertMessage({ channel_id: channelId, author_kind: 'crew', crew_id: crew.id, kind: 'text',
-      reply_to: null, thread_root: null, client_msg_id: `nt:${crew.id}:${digest}`,
-      body, mentions: [], meta: { disposition: 'done', notification: event.type } });
-    if (row) posted++;
+    if (await post(crew, channelId)) posted++;
   }
   return posted > 0;
+}
+/** 개인 공간의 크루 1:1 방 id — 메신저 앱 openPersonalCrewDm과 같은 RPC(서버가 주인·개인 행·활성만 받고, 한 크루에 한 방을 찾거나 만들며,
+    보관했으면 다시 꺼낸다 — 조직 경로가 보관 방 대신 새 방을 만드는 것과 같은 결과). 실패는 던진다(호출부가 조직 1:1로 물러난다). */
+async function personalCrewRoom(c, crew) {
+  const { data, error } = await c.client.rpc('msgr_dm_personal_crew', { crew: crew.id });
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error('msgr_dm_personal_crew: no room');
+  return data;
 }
 /** 크루와 나의 1:1 방 id — 크루가 든 DM 중 **사람 멤버가 정확히 나 한 명, 크루 멤버가 정확히 그 크루**인 방(메신저 앱 App.jsx의 DM 매처와 같은 규칙).
     DM 모양(msgr_dm_shape)은 사람 2명+크루 1명까지 허용하고, 다른 구성원이 내 크루와 연 DM에는 소유자인 내가 동반 멤버로 들어가므로
