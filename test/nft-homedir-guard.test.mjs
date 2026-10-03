@@ -5,8 +5,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const ROOT = new URL('..', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('..', import.meta.url)); // .pathname은 윈도우에서 /D:/… 꼴이 되어 D:\D:\…로 풀린다
 function files(dir) {
   const out = [];
   for (const n of readdirSync(join(ROOT, dir))) {
