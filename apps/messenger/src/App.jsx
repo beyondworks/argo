@@ -39,7 +39,7 @@ import { useLongPress, longPressHandlers } from './long-press.js';
 import { groupFlags } from './msg-group.mjs';
 import { t as tm } from './i18n.js';
 import { plainField, approvalPlainFields, orgDocTitle, approvalOneLineSummary, approvalGrade, approvalSummaryKey, approvalPageItems, approvalDecider, phoneApprovalDecider, decidableApprovals, approvalOnlyKey, approvalDenied, approvalCmdMode } from './approval-display.js';
-import { AGENT_FILTERS, AGENT_FAV_KEY, groupAgents, rowForSpace, agentSections, groupIsFav, favChanges, readAgentFav } from './agent-groups.mjs'; // 폰 에이전트 탭 — 같은 에이전트 한 줄·상단 메뉴·즐겨찾기(유건 2026-10-02)
+import { AGENT_FILTERS, AGENT_FAV_KEY, groupAgents, rowForSpace, agentRoomTarget, personalTwinOf, agentSections, groupIsFav, favChanges, readAgentFav } from './agent-groups.mjs'; // 폰 에이전트 탭 — 같은 에이전트 한 줄·상단 메뉴·즐겨찾기(유건 2026-10-02), 1:1은 개인 방 하나(2026-10-03)
 import { toggleId, foldAll, allFolded } from './collapse-set.mjs';
 import { useLang } from '@argo/i18n';
 import { useTheme, THEMES } from '@argo/theme';
@@ -969,7 +969,6 @@ function Shell({ session }) {
   const [memSort, setMemSort] = useState(readMemSort); // 기억 폴더 정렬(설정 > 기억)
   const pickMemSort = (v) => { setMemSort(v); try { localStorage.setItem(MEM_SORT_KEY, v); } catch { /* 이번 세션만 */ } };
   const [agentFilter, setAgentFilter] = useState('all'); // 폰 에이전트 탭 상단 메뉴(전체·즐겨찾기·내 에이전트·외부 에이전트)
-  const [agentPick, setAgentPick] = useState(null); // 같은 에이전트가 여러 공간에 있을 때 열 공간 고르기 시트 — 묶음 { rows, name }
   const [memDoc, setMemDoc] = useState(null); // 폰 기억 탭에서 연 문서 { doc, label } — 읽기 전용 보기(page 'memdoc') // 폰 친구 탭 '받은 친구 요청 N' 펼침 // 폰 채널 탭 머리의 + 메뉴(새 채널 만들기 / 채널 찾아보기)
   const [chCount, setChCount] = useState({}); // 채널 id → 참여 인원(폰 채널 줄의 인원 수)
   const [sheet, setSheet] = useState(null); // 크루 시트(크루 id) — 허용 범위·소유자·접속
@@ -1935,7 +1934,7 @@ function Shell({ session }) {
   const orgAdmins = members.filter((m) => ['owner', 'admin'].includes(m.role) && m.user_id !== org?.service_user_id);
   const askAdmin = orgAdmins.length ? t(orgAdmins.length > 1 ? 'inv.askAdmin.more' : 'inv.askAdmin', { name: orgAdmins[0].display_name || orgAdmins[0].user_id.slice(0, 8), n: orgAdmins.length - 1 }) : null; // 멤버에게는 초대 버튼 대신 누구에게 말할지(총괄 결정 B)
   // 1:1 대화 — 사람(user) 또는 크루(crew)와. 이미 있으면 열고, 없으면 dm 채널 + 멤버(나·상대·크루면 소유자까지) 생성
-  // 에이전트와 1:1(D14) — 내 에이전트는 그 에이전트 DM, 남의 에이전트는 주인과의 1:1(openDm이 돌린다)에서 @에이전트로 위임.
+  // 에이전트와 1:1(D14) — 내 에이전트는 개인 공간의 그 에이전트 1:1(개인 행이 없으면 이 조직의 에이전트 DM), 남의 에이전트는 주인과의 1:1(openDm이 돌린다)에서 @에이전트로 위임.
   // body(방 밖 멘션으로 보냈던 본문)가 있으면 그 방 입력창에 옮겨 두고, 남의 에이전트인데 본문이 없으면 "@이름 "만 넣어 둔다. 보내기는 사람이 누른다.
   const dmWithCrew = async (crewId, body = '') => {
     const c = crewOf(crewId);
@@ -1943,9 +1942,24 @@ function Shell({ session }) {
     const cid = await openDm('crew', crewId, draft); // 개인 공간에서 아직 방이 없으면 초안 화면이 이 글을 받는다(D13)
     if (cid && draft) getComposerSession(JSON.stringify([SB_URL, uid, orgId, cid]), composerTransport(supabase, { orgId, chId: cid, uid })).setText(draft);
   };
+  // 내 에이전트의 개인 공간 행 — 조직 크루 목록에는 회사(ws_id)가 없어, 1:1을 열 때만 내 행 중 같은 slug를 한 번 읽어 판정한다(agent-groups.mjs personalTwinOf.
+  // RLS: 개인 행은 주인만 읽힌다). 주기 호출 없음. 읽기에 실패하면 null — 종전 조직 1:1로 연다.
+  const personalTwin = async (c) => {
+    if (!c?.slug || !uid) return null;
+    const rows = await q(supabase.from('msgr_crews').select('id, org_id, owner_user_id, ws_id, slug, status').eq('owner_user_id', uid).eq('slug', c.slug).in('status', ['active', 'available'])).catch(() => null);
+    return personalTwinOf(rows?.find((r) => r.id === c.id), rows, uid);
+  };
   const openDm = async (kind, id, text = '') => {
     if (isPersonal && kind === 'crew') return openPersonalCrewDm(id, text);
     if (isPersonal && kind === 'user') return openPersonalDm(id, text); // 개인 공간에서 사람을 누르면(검색·새 채팅 시트) 개인 1:1 — 조직 DM 생성은 가상 org id로 400이었다
+    // 에이전트 = 한 사람(유건 2026-10-03, P2): 조직에서 내 에이전트와 1:1을 새로 만들지 않고 개인 공간의 방 하나를 연다(글은 그 방 입력창으로 옮긴다).
+    // 레일 메뉴·크루 카드·방 밖 멘션·전달 알림(dmWithCrew)과 새 대화 시트의 한 명 고르기가 모두 여기를 지난다. 개인 행이 없으면(0.1.92 이전 본체) 아래 종전 경로.
+    // 이미 있는 조직 1:1은 지우거나 숨기지 않는다(목록에서 그대로 열린다). 남의 에이전트는 종전대로 주인과의 1:1.
+    if (kind === 'crew' && crewOf(id)?.owner_user_id === uid) {
+      const here = orgId; const twin = await personalTwin(crewOf(id));
+      if (activeOrg.current !== here) return null;
+      if (twin) { runInSpace(PERSONAL, (fn) => fn.openPersonalCrewDm(twin.id, text)); return null; }
+    }
     if (kind === 'user') supabase.rpc('msgr_friend_request', { target: id }).then(({ error }) => { if (!error) loadFriends(); }).catch(() => {}); // 사람 1:1을 열면 친구 목록과 동기화(같은 조직이면 서버가 바로 accepted) — DM 열기를 막지 않는다, 실패는 무시
     try {
       const mine = await q(supabase.from('msgr_channel_members').select('channel_id, msgr_channels!inner(id, kind, org_id, archived_at)').eq('member_kind', 'user').eq('member_id', uid));
@@ -1973,13 +1987,15 @@ function Shell({ session }) {
     } catch (e) { setErr(e.message); return null; }
   };
   // ── 개인 공간 에이전트 1:1(2026-09-30): 내 개인 크루와 한 방. 남의 크루면 그 주인(친구)과의 1:1. AI 이용 동의 전이면 동의부터 받는다 ──
+  // text = 그 방 입력창에 옮겨 둘 글(조직에서 방 밖 멘션으로 쓴 글을 개인 1:1로 가져올 때 — openDm). 동의를 거쳐도 남는다. 보내기는 사람이 누른다.
   const openPersonalCrewDm = async (crewId, text = '') => {
     const c = crewOf(crewId);
     if (c && c.owner_user_id !== uid) return openPersonalDm(c.owner_user_id, text);
-    if (needPersonalConsent(() => openPersonalCrewDm(crewId))) return null;
+    if (needPersonalConsent(() => openPersonalCrewDm(crewId, text))) return null;
     try {
       const cid = await q(supabase.rpc('msgr_dm_personal_crew', { crew: crewId }));
       await loadPersonal(); if (activeOrg.current !== PERSONAL) return null;
+      if (text) getComposerSession(JSON.stringify([SB_URL, uid, PERSONAL, cid]), composerTransport(supabase, { orgId: PERSONAL, chId: cid, uid, personal: true })).setText(text); // 그 방 입력창과 같은 세션 키·개인 통로(sendFirstDm과 같다)
       setChId(cid); setPage('chat'); setRail(false); setSheet(null); return cid;
     } catch (e) { setErr(friendlyErr(e.message, t)); return null; }
   };
@@ -2562,30 +2578,26 @@ function Shell({ session }) {
   </>);
   // ── 에이전트 탭: 내 에이전트·외부 에이전트(개인 공간 + 모든 조직) ──
   const spaceName = (orgIdOf) => (orgIdOf ? (orgs?.find((o) => o.id === orgIdOf)?.name ?? '') : t('personal.space'));
-  // 같은 에이전트는 한 줄(agent-groups.mjs — 주인·회사·slug). 공간은 줄 오른쪽 칩('개인 · Lean-AX'), 줄을 누르면 지금 공간의 것(없으면 첫 공간)
+  // 같은 에이전트는 한 줄(agent-groups.mjs — 주인·회사·slug). 에이전트 = 한 사람(유건 2026-10-03, P2): 줄을 누르면 개인 공간의 1:1 방 하나 — 공간 고르기 없음.
+  // 개인 행이 없으면(0.1.92 이전 본체) 종전대로 지금 공간의 것(없으면 첫 공간). 조직 이야기는 다음 단계의 '조직 기억 찾기'로 꺼낸다.
   const agentGroups = groupAgents(myAgents ?? [], { orgOrder: orgIdList });
   const agentFavOf = (g) => groupIsFav(g, { pinned: agentPins, local: agentLocalFav });
   const agentShown = (list) => tabSearch(list, tabQText, (g) => [g.display_name, g.role_text]);
   const agentSecs = agentSections(agentShown(agentGroups), { filter: agentFilter, isFav: agentFavOf });
-  const spaceShort = (r) => (r.org_id ? spaceName(r.org_id) : t('phone.agents.personalShort'));
-  const spacesText = (g) => g.rows.map(spaceShort).filter(Boolean).join(' · ');
   const agentState = (c) => (twinPaused(c) ? 'relink' : Object.entries(typing).some(([k, at]) => k.endsWith(`:${c.id}`) && Date.now() - at < TYPING_WINDOW_MS) || !!progress && Object.entries(progress).some(([k, v]) => k.endsWith(`:${c.id}`) && Date.now() - (v?.at ?? 0) < 8000) ? 'working' : 'idle');
   const openAgent = (c) => { setTabQ(null); const space = c.org_id ?? PERSONAL; if (c.status === 'available') { runInSpace(space, (fn) => fn.setSheet(c.id)); return; } runInSpace(space, (fn) => (space === PERSONAL ? fn.openPersonalCrewDm(c.id) : fn.dmWithCrew(c.id))); }; // 꺼 둔(파견 해제) 에이전트는 다시 켜는 카드로
-  const groupState = (g) => (g.rows.some((r) => agentState(r) === 'working') ? 'working' : agentState(rowForSpace(g, orgId, PERSONAL)));
-  const openAgentGroup = (g) => openAgent(rowForSpace(g, orgId, PERSONAL));
-  const pickSpaceFor = (g, open) => setAgentPick({ rows: g.rows, name: g.display_name, open });
+  const agentOpenRow = (g) => agentRoomTarget(g, { uid, space: orgId, personalKey: PERSONAL }); // 줄이 여는 행 — 얼굴·상태도 이 행으로
+  const groupState = (g) => (g.rows.some((r) => agentState(r) === 'working') ? 'working' : agentState(agentOpenRow(g)));
+  const openAgentGroup = (g) => openAgent(agentOpenRow(g));
   const agentItems = (g) => [
     { icon: 'star', label: t(agentFavOf(g) ? 'phone.agents.fav.remove' : 'phone.agents.fav.add'), run: () => { toggleAgentFav(g).catch(() => {}); } },
-    ...(g.rows.length > 1 ? [{ icon: 'caret', label: t('phone.agents.spaces'), run: () => pickSpaceFor(g, openAgent) }] : []),
   ];
-  const agentRow = (g) => { const st = groupState(g); const on = g.rows.some((r) => seenWithin(r, AWAY_MS, Date.now(), crewSeenAt(r))); const lpId = `agent:${g.key}`; const multi = g.rows.length > 1; const fav = agentFavOf(g); const def = rowForSpace(g, orgId, PERSONAL); return (
+  const agentRow = (g) => { const st = groupState(g); const on = g.rows.some((r) => seenWithin(r, AWAY_MS, Date.now(), crewSeenAt(r))); const lpId = `agent:${g.key}`; const fav = agentFavOf(g); const def = agentOpenRow(g); return (
     <div key={g.key} className={`msgr-railrow ph-arowwrap${ctx?.trigger === lpId ? ' open' : ''}`} onContextMenu={(e) => { if (Date.now() - (lpStates.current[lpId]?.firedAt ?? 0) < 800) { e.preventDefault(); return; } openCtx(e, agentItems(g), lpId); }} {...rowLongPress({ id: lpId }, agentItems(g))}>
       <button type="button" className="item ph-arow" onClick={() => openAgentGroup(g)}>
         <Av name={g.display_name} crew size="kk" crewId={def.id} src={def.avatar_url ?? g.avatar_url ?? null} />
         <span className="ph-kbody"><span className="ph-kl1"><span className="name">{g.display_name}</span>{fav && <span className="ph-afav" role="img" aria-label={t('phone.agents.fav')}><I name="star" size={12} /></span>}</span><span className="ph-kl2"><span className={`ph-astate ${st}`}><span className={`msgr-dot${on && st !== 'relink' ? ' mark' : ''}`} />{t(`phone.agent.${st}`)}</span>{g.role_text && <span className="snip">{g.role_text}</span>}</span></span>
       </button>
-      {multi ? <button type="button" className="ph-aspaces multi" onClick={() => pickSpaceFor(g, openAgent)} aria-label={t('phone.agents.spaces.n', { spaces: spacesText(g) })}><span className="txt">{spacesText(g)}</span><I name="caret" size={14} /></button>
-        : <span className="ph-aspaces">{spacesText(g)}</span>}
     </div>); };
   const levelOf = (it) => approvalGrade(it.kind === 'join' ? it : { ...it, kind: it.apKind }); // 결재 표의 종류는 apKind(loadApprovals)
   const approvalSum = (it) => { const [k, p] = it.kind === 'join' ? joinReqKey({ crew: it.crewName, room: it.roomName }) : approvalSummaryKey({ ...it, kind: it.apKind }); return (lang === 'en' ? (x) => x : koJosa)(t(k, p)); }; // 한두 줄 요약 — "목적을 위해 할 일"(결재 페이지와 같은 문장), 넣기 요청은 "'효일'을 '유건, 하나' 방에 넣어 달라는 요청"(D6)
@@ -2872,7 +2884,7 @@ function Shell({ session }) {
         ) : page === 'inbox' && org ? (
           <Inbox items={inbox} prevSeen={inboxPrev} initialKind={inboxKind} onReadAll={() => { const now = Date.now(); setInboxPrev(now); const next = { ...inboxSeen, [org.id]: now }; setInboxSeen(next); writeInboxSeen(next); const dmIds = new Set(channels.filter((c) => c.kind === 'dm').map((c) => c.id)); const top = new Map(); for (const it of inbox) { const mid = Number(it.key.split(':')[1]); if (it.channel_id && dmIds.has(it.channel_id) && it.kind !== 'approval' && it.kind !== 'friend' && Number.isInteger(mid) && mid > (top.get(it.channel_id) ?? 0)) top.set(it.channel_id, mid); } for (const [cid, mid] of top) markRead(cid, mid); resyncBadge(); }} channels={channels} crews={crews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id, it) => { if (!id) { if (it?.kind === 'system') { if (isAdmin) { setPage('settings'); setSettingsTab('org'); } return; } setPage('settings'); setSettingsTab('friends'); return; } if (it?.joinReq) { if (id === chId) { setChSheet(true); setSheetReqTick((x) => x + 1); } else sheetAfterNav.current = true; } setChId(id); setPage('chat'); }} onBack={backFromPage} onMenu={openNav} />
         ) : page === 'settings' || page === 'orgsettings' || (isPhone && page.startsWith('set-')) ? (
-          <Settings phoneView={isPhone ? (page === 'settings' ? 'list' : page === 'orgsettings' ? 'orgadmin' : page.slice(4)) : null} onSub={(k) => setPage(`set-${k}`)} crews={crews} myName={profileName} myAgents={myAgents} onOpenAgent={(g) => openAgentCard(rowForSpace(g, orgId, PERSONAL))} onPickAgentSpace={(g) => setAgentPick({ rows: g.rows, name: g.display_name, open: openAgentCard })} onOrgSub={openOrgSub} onPickOrg={pickSettingsOrg} onOrgAdmin={() => setPage('orgsettings')} onToggleMemory={toggleMemory} spaceReady={loadedOrg.current === orgId} memSort={memSort} onMemSort={pickMemSort} focusGroup={settingsFocus} onFocusUsed={() => setSettingsFocus(null)} chOrgId={chOrg} session={session} me={me} uid={uid} onAvatar={() => { avatarAsked.current.delete(uid); loadAvatars(); }} onProfileSaved={() => { askName(uid, true); setProfileTick((x) => x + 1); }} invitesTick={invitesTick} org={isPersonal ? null : org} orgs={orgs} isAdmin={!!isAdmin} gated={orgBlocked} policy={policy} ent={isPersonal ? null : ent} members={isPersonal ? [] : members} nameOfUser={nameOfUser} onOpenCrew={setSheet} friends={friends} onFriendsChanged={onFriendsChanged} onDm={(id) => openDm('user', id)} onPersonalDm={openPersonalDm} channels={inviteChannels} onInvite={isAdmin && !isPersonal ? orgInvite : null} initialTab={settingsTab} onTabUsed={() => setSettingsTab(null)} onChanged={() => (isPersonal ? loadPersonal() : loadOrg(orgId)).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={backFromPage} onMenu={openNav} />
+          <Settings phoneView={isPhone ? (page === 'settings' ? 'list' : page === 'orgsettings' ? 'orgadmin' : page.slice(4)) : null} onSub={(k) => setPage(`set-${k}`)} crews={crews} myName={profileName} myAgents={myAgents} onOpenAgent={(g) => openAgentCard(rowForSpace(g, orgId, PERSONAL))} onOrgSub={openOrgSub} onPickOrg={pickSettingsOrg} onOrgAdmin={() => setPage('orgsettings')} onToggleMemory={toggleMemory} spaceReady={loadedOrg.current === orgId} memSort={memSort} onMemSort={pickMemSort} focusGroup={settingsFocus} onFocusUsed={() => setSettingsFocus(null)} chOrgId={chOrg} session={session} me={me} uid={uid} onAvatar={() => { avatarAsked.current.delete(uid); loadAvatars(); }} onProfileSaved={() => { askName(uid, true); setProfileTick((x) => x + 1); }} invitesTick={invitesTick} org={isPersonal ? null : org} orgs={orgs} isAdmin={!!isAdmin} gated={orgBlocked} policy={policy} ent={isPersonal ? null : ent} members={isPersonal ? [] : members} nameOfUser={nameOfUser} onOpenCrew={setSheet} friends={friends} onFriendsChanged={onFriendsChanged} onDm={(id) => openDm('user', id)} onPersonalDm={openPersonalDm} channels={inviteChannels} onInvite={isAdmin && !isPersonal ? orgInvite : null} initialTab={settingsTab} onTabUsed={() => setSettingsTab(null)} onChanged={() => (isPersonal ? loadPersonal() : loadOrg(orgId)).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={backFromPage} onMenu={openNav} />
         ) : dmDraft && isPersonal && page === 'chat' ? (
           <DmDraft key={dmDraft.userId} userId={dmDraft.userId} name={nameOfUser(dmDraft.userId)} initialText={dmDraft.text} onSend={(body) => sendFirstDm(dmDraft.userId, body)} onMenu={openNav} />
         ) : isPhone && page !== 'chat' ? null /* 폰 목록·설정 뒤에 숨은 대화방을 그리지 않는다 — 공간을 바꿀 때마다 보이지 않는 방의 글·첨부·반응을 읽던 것(기능 점검 D3) */ : channel ? (
@@ -2884,7 +2896,6 @@ function Shell({ session }) {
         )}
         </PageBoundary>
       </main>
-      {agentPick && <AgentSpaceSheet pick={agentPick} here={(r) => (r.org_id ?? PERSONAL) === orgId} spaceLabel={(r) => (r.org_id ? spaceName(r.org_id) : t('personal.space'))} onPick={(r) => agentPick.open(r)} onClose={() => setAgentPick(null)} />}
       {runnerOpen && <RunnerSheet hasOrg={(orgs ?? []).length > 0} onClose={() => setRunnerOpen(false)} onAgents={runnerAgents} onNote={setNote} onError={setErr} />}
       {friendAdd && <FriendAddSheet onClose={() => setFriendAdd(false)} uid={uid} friends={friends} members={isPersonal ? [] : members} onChanged={onFriendsChanged}
         onDm={(id) => { setFriendAdd(false); openDm('user', id); }} onPersonalDm={(id) => { setFriendAdd(false); openPersonalDm(id); setRail(false); }} onNote={setNote} onError={setErr} />}
@@ -3913,7 +3924,7 @@ function Inbox({ items, prevSeen = 0, initialKind = 'all', channels, crews, name
   </>);
 }
 
-function Settings({ session, me, uid, invitesTick = 0, org, orgs = [], isAdmin, gated = false, policy, ent = null, members = [], nameOfUser, onOpenCrew, onAvatar, onProfileSaved, friends = [], onFriendsChanged, onDm, onPersonalDm, channels = [], onInvite = null, initialTab = null, onTabUsed, onChanged, onOrgsChanged, onNote, onError, onBack, onMenu, phoneView = null, onSub = null, crews = [], myName: myProfileName = null, myAgents = null, onOpenAgent = null, onPickAgentSpace = null, onOrgSub = null, onPickOrg = null, onOrgAdmin = null, onToggleMemory = null, spaceReady = true, memSort = 'recent', onMemSort = null, focusGroup = null, onFocusUsed = null, chOrgId = null }) { // phoneView(폰만): 'list' = 내 설정 줄 목록, 'profile'|'notify'|'display'|'friends'|'privacy'|'about' = 하위 화면, 'org' = 조직 설정
+function Settings({ session, me, uid, invitesTick = 0, org, orgs = [], isAdmin, gated = false, policy, ent = null, members = [], nameOfUser, onOpenCrew, onAvatar, onProfileSaved, friends = [], onFriendsChanged, onDm, onPersonalDm, channels = [], onInvite = null, initialTab = null, onTabUsed, onChanged, onOrgsChanged, onNote, onError, onBack, onMenu, phoneView = null, onSub = null, crews = [], myName: myProfileName = null, myAgents = null, onOpenAgent = null, onOrgSub = null, onPickOrg = null, onOrgAdmin = null, onToggleMemory = null, spaceReady = true, memSort = 'recent', onMemSort = null, focusGroup = null, onFocusUsed = null, chOrgId = null }) { // phoneView(폰만): 'list' = 내 설정 줄 목록, 'profile'|'notify'|'display'|'friends'|'privacy'|'about' = 하위 화면, 'org' = 조직 설정
   const { signOut, signingOut, accountDeleted } = useContext(SignOutContext);
   const { t, ta, lang, setLang } = useT();
   const { theme, setTheme } = useTheme();
@@ -4002,10 +4013,8 @@ function Settings({ session, me, uid, invitesTick = 0, org, orgs = [], isAdmin, 
     if (view === 'agents') return body(t('phone.set.myAgents'), (<div className="msgr-setbody">
       <section className="msgr-setcard"><p>{t('phone.set.myAgents.desc')}</p>
         {myAgents === null ? <p className="note" role="status">{t('ui.loading')}</p> : !myAgents.length ? <p className="empty">{t('phone.agents.none')} <RunnerButton /></p> : (
-          <div className="ph-setgroup">{groupAgents(myAgents, { orgOrder: orgs.map((o) => o.id) }).map((g) => { const spaces = g.rows.map((r) => (r.org_id ? (orgs.find((o) => o.id === r.org_id)?.name ?? '') : t('phone.agents.personalShort'))).filter(Boolean).join(' · '); return (<div key={g.key} className="ph-setagent">{/* 같은 에이전트는 한 줄(에이전트 탭과 같은 판정 — agent-groups.mjs). 줄 = 지금 공간(없으면 첫 공간)의 카드, 공간이 여럿이면 오른쪽 칩에서 고른다 */}
-            <button type="button" className="ph-setrow" onClick={() => onOpenAgent?.(g)}><Av name={g.display_name} crew size="sm" crewId={g.id} src={g.avatar_url ?? null} /><span className="ph-kbody"><span className="name">{g.display_name}</span><span className="snip">{[spaces, g.ext ? t('agentcard.ext') : null].filter(Boolean).join(' · ')}</span></span>{g.rows.length > 1 ? null : chev}</button>
-            {g.rows.length > 1 && <button type="button" className="ph-setspaces" onClick={() => onPickAgentSpace?.(g)} aria-label={t('phone.agents.spaces.n', { spaces })} title={t('phone.agents.spaces')}><I name="caret" size={18} /></button>}
-          </div>); })}</div>)}
+          <div className="ph-setgroup">{groupAgents(myAgents, { orgOrder: orgs.map((o) => o.id) }).map((g) => (/* 같은 에이전트는 한 줄(에이전트 탭과 같은 판정 — agent-groups.mjs). 에이전트 = 한 사람(2026-10-03): 공간 글자·공간 고르기 없음, 줄 = 지금 공간(없으면 첫 공간)의 카드 */
+            <button key={g.key} type="button" className="ph-setrow" onClick={() => onOpenAgent?.(g)}><Av name={g.display_name} crew size="sm" crewId={g.id} src={g.avatar_url ?? null} /><span className="ph-kbody"><span className="name">{g.display_name}</span>{g.ext && <span className="snip">{t('agentcard.ext')}</span>}</span>{chev}</button>))}</div>)}
       </section>
     </div>));
     const sub = view === 'list' ? null : view;
@@ -4589,27 +4598,6 @@ function PhoneApprovals({ items, uid, orgs, crewName, spaceName, onBack, onMenu,
       {list.length ? list.map(card) : <p className="msgr-hint ph-empty">{t('phone.ap.empty')}</p>}
     </div></div>
   </>);
-}
-
-/* ─── 같은 에이전트가 여러 공간에 있을 때 열 공간 고르기(유건 2026-10-02) — 공간마다 권한·기억이 따로라 고른 공간의 행을 연다 ─── */
-function AgentSpaceSheet({ pick, here, spaceLabel, onPick, onClose }) {
-  const { t } = useT();
-  useEffect(() => { const k = (e) => { if (e.key === 'Escape') onClose(); }; window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, [onClose]);
-  return (
-    <div className="msgr-sheetwrap">
-      <div className="msgr-scrim clear" onClick={onClose} />
-      <section className="msgr-crewsheet msgr-dmpeek msgr-dmgroup ph-friendadd ph-spacesheet" role="dialog" aria-label={t('phone.agents.spaces')}>
-        <header className="head"><strong>{pick.name}</strong><button type="button" className="msgr-titlebtn" onClick={onClose} aria-label={t('ui.close')}><I name="x" size={16} /></button></header>
-        <div className="peek">
-          <p className="ph-spacedesc">{t('phone.agents.spaces.desc')}</p>
-          <div className="ph-setgroup">{pick.rows.map((r) => (<button key={r.id} type="button" className="ph-setrow" onClick={() => { onClose(); onPick(r); }}>
-            {r.org_id ? <Av name={spaceLabel(r)} size="sm" /> : <PersonalMark sm />}
-            <span className="ph-kbody"><span className="name">{spaceLabel(r)}</span>{here(r) && <span className="snip">{t('phone.agents.spaces.here')}</span>}</span><I name="caret" size={14} className="ph-chev" />
-          </button>))}</div>
-        </div>
-      </section>
-    </div>
-  );
 }
 
 /* ─── 폰 설정 > 친구 관리(유건 2차 피드백 5) — 친구 탭과 같은 줄 모양, 위 가로 탭(친구 / 차단 / 숨긴 에이전트).
