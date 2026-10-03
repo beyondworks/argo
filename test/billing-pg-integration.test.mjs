@@ -283,6 +283,10 @@ const ACC = {
   manual2: 'c1000000-0000-4000-8000-00000000000a',    // manual2@example.test — 같은 경우, 결제 이메일이 다른 인증 계정(buyer)과 맞는다
   dupA: 'c1000000-0000-4000-8000-00000000000b',       // dupa@example.test ┐ 같은 구독이 두 계정에 연결된 비정상 상태
   dupB: 'c1000000-0000-4000-8000-00000000000c',       // dupb@example.test ┘
+  victim: 'c1000000-0000-4000-8000-00000000000d',     // victim@example.test — 유효한 구독을 가진 사람(남이 이 이메일로 결제)
+  switcher: 'c1000000-0000-4000-8000-00000000000e',   // switcher@example.test — 새 구독으로 갈아탄 사람(옛 구독 이벤트가 늦게 온다)
+  lapsed: 'c1000000-0000-4000-8000-00000000000f',     // lapsed@example.test — 만료된 옛 구독(plan free)만 있는 사람
+  lapsed2: 'c1000000-0000-4000-8000-000000000010',    // lapsed2@example.test — 해지 기간이 끝난 옛 구독(plan pro, ends_at 지남)만 있는 사람
 };
 function seedAccounts() {
   sql(`insert into auth.users (id, email, email_confirmed_at) values
@@ -291,7 +295,9 @@ function seedAccounts() {
     ('${ACC.twinB}', 'twin@example.test', now()), ('${ACC.granted}', 'granted@example.test', now()),
     ('${ACC.byId}', 'byid@example.test', now()), ('${ACC.buyerUnv}', 'BUYER@example.test', null),
     ('${ACC.manual}', 'manual@example.test', now()), ('${ACC.manual2}', 'manual2@example.test', now()),
-    ('${ACC.dupA}', 'dupa@example.test', now()), ('${ACC.dupB}', 'dupb@example.test', now())
+    ('${ACC.dupA}', 'dupa@example.test', now()), ('${ACC.dupB}', 'dupb@example.test', now()),
+    ('${ACC.victim}', 'victim@example.test', now()), ('${ACC.switcher}', 'switcher@example.test', now()),
+    ('${ACC.lapsed}', 'lapsed@example.test', now()), ('${ACC.lapsed2}', 'lapsed2@example.test', now())
     on conflict (id) do nothing`);
 }
 /** 운영자가 손으로 연결한 것과 같은 모양 — 정본 apply_ls_event를 직접 부른다(2026-10-03 두 건과 같은 방식). */
@@ -357,7 +363,8 @@ function pgSb() {
             eq(c, v) { where.push(`${ident(c)} = ${qlit(v)}`); return q; },
             neq(c, v) { where.push(`${ident(c)} <> ${qlit(v)}`); return q; },
             async limit(n) {
-              const { out, error } = run(`select coalesce(json_agg(t), '[]'::json) from (select ${ident(cols)} from public.${ident(table)}
+              const list = String(cols).split(',').map((c) => ident(c.trim())).join(', '); // 'a, b, c' — PostgREST select 목록과 같은 모양
+              const { out, error } = run(`select coalesce(json_agg(t), '[]'::json) from (select ${list} from public.${ident(table)}
                 where ${where.join(' and ') || 'true'} limit ${Number(n)}) t`);
               return error ? { data: null, error } : { data: JSON.parse(out), error: null };
             },
@@ -483,12 +490,60 @@ test('엣지→SQL: 운영자 부여(granted) 계정은 구독 연결로 만료 
   assert.equal(sql(`select public.is_pro_for('${ACC.granted}')`), 't');
 });
 
-test('엣지→SQL: 같은 구독의 과거 이벤트는 stale, 다른 구독의 강등은 other_subscription — 둘 다 200이고 행은 그대로', { skip }, async () => {
+test('엣지→SQL: 같은 구독의 과거 이벤트는 stale(구독 연결 경로), 같은 계정 다른 구독의 강등은 other_subscription(user_id 경로) — 둘 다 200이고 행은 그대로', { skip }, async () => {
   seedAccounts();
   setEnt(ACC.buyer, { plan: 'pro', ls_subscription_id: 'LS-S', ls_status: 'cancelled', ls_updated_at: T_NEW });
   const stale = await deliver(lsEvent({ name: 'subscription_updated', sub: 'LS-S', email: 'buyer@example.test', status: 'active', updatedAt: T_OLD }));
   assert.deepEqual(stale.json, { ok: true, stale: true });
-  const other = await deliver(lsEvent({ name: 'subscription_expired', sub: 'LS-OLD', email: 'buyer@example.test', status: 'expired' }));
+  const other = await deliver(lsEvent({ name: 'subscription_expired', sub: 'LS-OLD', userId: ACC.buyer, email: 'buyer@example.test', status: 'expired' }));
   assert.deepEqual(other.json, { ok: true, otherSubscription: true });
   assert.equal(ent(ACC.buyer), 'pro|LS-S|cancelled', '과거·다른 구독 이벤트가 지금 상태를 덮지 않는다');
+});
+
+// 분리 검수 HIGH-1(2026-10-04): 이메일 경로가 그 계정의 현재 구독을 보지 않아, 다른 구독의 pro 쪽 이벤트(active·cancelled 등)가
+// 유효한 구독 연결을 덮어썼다 — apply_ls_event의 구독 신원 가드는 plan='free' 이벤트만 막는다. 덮인 뒤 그 구독이 해지·만료되면
+// 지금 쓰는 Pro가 꺼진다. 해지 이벤트의 ends_at은 과거 날짜 — 덮이면 그 자리에서 is_pro_for가 false가 된다(날짜와 무관하게 재현).
+test('엣지→SQL: (a) 남이 피해자 이메일로 결제·해지·만료해도 피해자의 유효한 구독 연결은 그대로 — email-account-has-subscription 기록', { skip }, async () => {
+  seedAccounts();
+  linkByHand(ACC.victim, 'LS-VICTIM', '2026-09-01T00:00:00Z');
+  for (const [name, status, endsAt, updatedAt] of [
+    ['subscription_created', 'active', null, '2026-10-05T00:00:00Z'],
+    ['subscription_cancelled', 'cancelled', '2026-01-01T00:00:00Z', '2026-10-05T01:00:00Z'],
+    ['subscription_expired', 'expired', '2026-01-01T00:00:00Z', '2026-10-06T00:00:00Z'],
+  ]) {
+    const r = await deliver(lsEvent({ name, sub: 'LS-ATTACK', email: 'Victim@Example.test', status, updatedAt, endsAt }));
+    assert.equal(r.status, 200, name);
+    assert.deepEqual(r.json, { ok: true, unmatched: 'email-account-has-subscription' }, name);
+    assert.equal(ent(ACC.victim), 'pro|LS-VICTIM|active', `${name}: 피해자 행은 그대로`);
+    assert.equal(sql(`select public.is_pro_for('${ACC.victim}')`), 't', `${name}: 피해자는 계속 Pro`);
+  }
+  assert.equal(unmatchedOf('LS-ATTACK'), 'email-account-has-subscription|Victim@Example.test', '들어온 구독은 한 행으로 기록');
+});
+
+test('엣지→SQL: (b) 같은 사람의 옛 구독 해지·만료가 늦게 와도 새 구독 연결을 옛 것으로 바꾸지 않는다', { skip }, async () => {
+  seedAccounts();
+  linkByHand(ACC.switcher, 'LS-SW-NEW', '2026-10-01T00:00:00Z'); // 새 구독이 연결된 상태 — 옛 구독 번호는 행에 없다
+  for (const [name, status, updatedAt] of [['subscription_cancelled', 'cancelled', '2026-10-05T00:00:00Z'], ['subscription_expired', 'expired', '2026-10-06T00:00:00Z']]) {
+    const r = await deliver(lsEvent({ name, sub: 'LS-SW-OLD', email: 'switcher@example.test', status, updatedAt, endsAt: '2026-01-01T00:00:00Z' }));
+    assert.equal(r.status, 200, name);
+    assert.deepEqual(r.json, { ok: true, unmatched: 'email-account-has-subscription' }, name);
+    assert.equal(ent(ACC.switcher), 'pro|LS-SW-NEW|active', `${name}: 새 구독 연결 그대로`);
+    assert.equal(sql(`select public.is_pro_for('${ACC.switcher}')`), 't', `${name}: 계속 Pro`);
+  }
+  assert.equal(unmatchedOf('LS-SW-OLD'), 'email-account-has-subscription|switcher@example.test');
+});
+
+test('엣지→SQL: (c) 계정에 유효하지 않은 옛 행만 있으면(만료된 다른 구독·해지 기간이 끝난 구독) 이메일 경로가 지금처럼 새 구독을 연결한다', { skip }, async () => {
+  seedAccounts();
+  setEnt(ACC.lapsed, { plan: 'free', ls_subscription_id: 'LS-LAPSED-OLD', ls_status: 'expired', ends_at: '2026-01-01T00:00:00Z' });
+  setEnt(ACC.lapsed2, { plan: 'pro', ls_subscription_id: 'LS-LAPSED2-OLD', ls_status: 'cancelled', ends_at: '2026-01-01T00:00:00Z' }); // expired가 아직 안 온 상태
+  for (const [acct, email, sub] of [[ACC.lapsed, 'lapsed@example.test', 'LS-LAPSED-NEW'], [ACC.lapsed2, 'lapsed2@example.test', 'LS-LAPSED2-NEW']]) {
+    assert.equal(sql(`select public.is_pro_for('${acct}')`), 'f', `${sub}: 시작 상태는 Pro 아님`);
+    const r = await deliver(lsEvent({ sub, email }));
+    assert.equal(r.status, 200, sub);
+    assert.deepEqual(r.json, { ok: true, plan: 'pro', status: 'active' }, sub);
+    assert.equal(ent(acct), `pro|${sub}|active`, sub);
+    assert.equal(sql(`select public.is_pro_for('${acct}')`), 't', `${sub}: 새 구독으로 Pro`);
+    assert.equal(unmatchedOf(sub), 'none', sub);
+  }
 });

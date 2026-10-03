@@ -31,8 +31,9 @@ function event({ name = 'subscription_created', userId, sub = SUB, ...attrs } = 
   };
 }
 
-/** 메모리 가짜 supabase 클라이언트 — 엣지 함수가 쓰는 호출만. entitlements 행(rows)에 eq/neq 필터를 실제로 적용한다
-    (조회 조건이 틀리면 가짜도 틀린 답을 준다). RPC는 정해 준 답을 돌려주고 인자를 기록한다. fail: { lookup|select|apply|upsert: 메시지 }
+/** 메모리 가짜 supabase 클라이언트 — 엣지 함수가 쓰는 호출만. entitlements 행(rows)에 eq/neq 필터를 실제로 적용하고,
+    select 목록('a, b, c')의 열만 돌려준다(조회 조건·열이 틀리면 가짜도 틀린 답을 준다). RPC는 정해 준 답을 돌려주고 인자를 기록한다.
+    fail: { lookup|select|accountSelect|apply|upsert: 메시지 } — select는 모든 조회, accountSelect는 user_id로 계정 행을 읽는 조회만 실패.
     기록은 structuredClone으로 — vm 안에서 만든 객체는 프로토타입이 달라 deepStrictEqual이 값이 같아도 다르다고 본다. */
 function memSb({ rows = [], emailOwner = null, applyResult = 'applied', fail = {} } = {}) {
   const calls = { rpc: [], selects: [], upserts: [] };
@@ -47,15 +48,18 @@ function memSb({ rows = [], emailOwner = null, applyResult = 'applied', fail = {
     from(table) {
       return {
         select(cols) {
-          const where = [];
+          const filters = [];
           const q = {
-            eq(c, v) { where.push((r) => r[c] === v); return q; },
-            neq(c, v) { where.push((r) => r[c] !== v); return q; },
+            eq(c, v) { filters.push(['eq', c, v]); return q; },
+            neq(c, v) { filters.push(['neq', c, v]); return q; },
             async limit(n) {
-              calls.selects.push({ table, cols });
+              calls.selects.push({ table, cols, filters: structuredClone(filters) });
               if (fail.select) return { data: null, error: err('select') };
-              const hit = table === 'entitlements' ? rows.filter((r) => where.every((f) => f(r))) : [];
-              return { data: hit.slice(0, n).map((r) => ({ [cols]: r[cols] })), error: null };
+              if (fail.accountSelect && filters.some(([op, c]) => op === 'eq' && c === 'user_id')) return { data: null, error: err('accountSelect') };
+              const keep = (r) => filters.every(([op, c, v]) => (op === 'eq' ? r[c] === v : r[c] !== v));
+              const list = String(cols).split(',').map((c) => c.trim());
+              const hit = table === 'entitlements' ? rows.filter(keep) : [];
+              return { data: hit.slice(0, n).map((r) => Object.fromEntries(list.map((c) => [c, r[c] ?? null]))), error: null };
             },
           };
           return q;
@@ -138,7 +142,6 @@ test('user_id가 없으면 결제 이메일로 찾은 계정에 적용 — 공�
   withId.meta.custom_data = { user_id: UID };
   assert.deepEqual(calls.rpc[1], await canonicalApply(withId), '계정만 이메일로 정했을 뿐 나머지 인자는 정본과 같다');
   assert.equal(calls.upserts.length, 0);
-  assert.deepEqual(calls.selects, [{ table: 'entitlements', cols: 'user_id' }], '이메일보다 먼저 그 구독에 연결된 계정을 본다(여기서는 없음)');
 });
 
 test('user_id가 UUID가 아니면 없는 것으로 보고 이메일로 찾는다', async () => {
@@ -245,14 +248,54 @@ test('user_id 없음 + 그 구독이 두 계정 이상에 연결(정상이면 �
 });
 
 test('구독 번호가 비면 구독 연결 확인을 건너뛰고 이메일 경로로 — 구독 번호 없는 옛 행(빈 값)을 연결로 오인하지 않는다', async () => {
-  const { sb, calls } = memSb({ emailOwner: UID, rows: [{ user_id: OTHER, ls_subscription_id: '' }] });
+  // 미끼: 구독 번호가 빈 다른 계정의 행. 빈 구독 번호로 연결을 찾으면 이 계정(OTHER)에 적용되어 아래 단언이 깨진다.
+  const { sb, calls } = memSb({ emailOwner: UID, rows: [{ user_id: OTHER, ls_subscription_id: '', plan: 'pro', ends_at: null }] });
   const fn = loadLsWebhook({ sb });
   const r = await fn.post(event({ sub: null })); // undefined는 기본값(SUB)이 들어간다
   assert.deepEqual(r.json, { ok: true, plan: 'pro', status: 'active' });
-  assert.equal(calls.selects.length, 0);
   assert.deepEqual(calls.rpc.map(([f]) => f), ['ls_user_by_email', 'apply_ls_event']);
   assert.equal(applies(calls)[0][1].p_user_id, UID, '빈 구독 번호 행의 계정(OTHER)이 아니라 이메일 계정');
   assert.equal(applies(calls)[0][1].p_sub_id, '', '정본과 같이 빈 문자열(apply_ls_event의 coalesce와 같은 값)');
+});
+
+// 분리 검수 HIGH-1(2026-10-04): 이메일 경로가 찾은 계정의 현재 구독을 보지 않아, 남이 같은 이메일로 결제한 구독이나 같은
+// 사람의 옛 구독 이벤트(pro 쪽 상태)가 유효한 구독 연결을 덮어썼다. apply_ls_event의 구독 신원 가드는 plan='free' 이벤트만 막는다.
+test('이메일 경로: 찾은 계정이 다른 구독으로 유효한 Pro면 적용하지 않고 email-account-has-subscription 기록 후 200 — 이벤트 plan과 무관', async () => {
+  const future = new Date(Date.now() + 86_400_000).toISOString();
+  for (const held of [
+    { ls_status: 'active', plan: 'pro', ends_at: null },        // 정상 구독
+    { ls_status: 'cancelled', plan: 'pro', ends_at: future },   // 해지 예약 — 말일까지 Pro
+  ]) {
+    for (const [name, status] of [['subscription_created', 'active'], ['subscription_cancelled', 'cancelled'], ['subscription_expired', 'expired']]) {
+      const label = `${held.ls_status}/${name}`;
+      const payload = event({ name, status, ends_at: status === 'active' ? null : '2026-01-01T00:00:00.000000Z' });
+      const { sb, calls } = memSb({ emailOwner: UID, rows: [{ user_id: UID, ls_subscription_id: 'held-sub', ...held }] });
+      const fn = loadLsWebhook({ sb });
+      const r = await fn.post(payload);
+      assert.equal(r.status, 200, label);
+      assert.deepEqual(r.json, { ok: true, unmatched: 'email-account-has-subscription' }, label);
+      assert.equal(applies(calls).length, 0, `${label}: 지금 쓰는 구독 연결을 덮지 않는다`);
+      assert.deepEqual(calls.upserts, [{ table: 'billing_unmatched', row: unmatchedRow(name, 'email-account-has-subscription', payload), opts: UNMATCHED_OPTS }], label);
+    }
+  }
+});
+
+test('이메일 경로: 찾은 계정 행이 유효한 Pro가 아니면(만료된 다른 구독·해지 기간 끝남·구독 번호 없음) 지금처럼 적용', async () => {
+  const past = '2026-01-01T00:00:00.000Z';
+  for (const held of [
+    { ls_subscription_id: 'old-sub', plan: 'free', ends_at: past }, // 만료된 다른 구독
+    { ls_subscription_id: 'old-sub', plan: 'pro', ends_at: past },  // 해지 기간이 끝났는데 expired가 아직 안 온 상태
+    { ls_subscription_id: '', plan: 'pro', ends_at: null },         // 구독 번호 없는 Pro(그랜드파더링·운영자 부여) — 다른 구독이 아니다
+    { ls_subscription_id: null, plan: 'pro', ends_at: null },
+  ]) {
+    const { sb, calls } = memSb({ emailOwner: UID, rows: [{ user_id: UID, ...held }] });
+    const fn = loadLsWebhook({ sb });
+    const r = await fn.post(event());
+    assert.deepEqual(r.json, { ok: true, plan: 'pro', status: 'active' }, JSON.stringify(held));
+    assert.equal(applies(calls).length, 1, JSON.stringify(held));
+    assert.equal(applies(calls)[0][1].p_user_id, UID);
+    assert.equal(calls.upserts.length, 0);
+  }
 });
 
 test('모르는 상태·라이프사이클 밖 이벤트는 200 — DB를 읽지도 쓰지도 않는다', async () => {
@@ -271,13 +314,14 @@ test('모르는 상태·라이프사이클 밖 이벤트는 200 — DB를 읽지
   }
 });
 
-test('DB 오류는 500 — LS 재시도로 한 번 더 기회를 준다(구독 연결 확인·계정 찾기·중복 확인·적용 각각)', async () => {
+test('DB 오류는 500 — LS 재시도로 한 번 더 기회를 준다(구독 연결 확인·계정 찾기·계정 구독 확인·중복 확인·적용 각각)', async () => {
   for (const [fail, payload] of [
     [{ lookup: 'function public.ls_user_by_email(p_email => text) does not exist' }, event()],
     [{ select: 'timeout' }, event()],                 // user_id 없음 — 구독 연결 확인
     [{ select: 'timeout' }, event({ userId: UID })], // user_id 있음 — 다른 계정 연결 확인
     [{ apply: 'deadlock detected' }, event()],
     [{ apply: 'deadlock detected' }, event({ userId: UID })],
+    [{ accountSelect: 'timeout' }, event()],          // 이메일 경로 — 찾은 계정의 현재 구독 확인
   ]) {
     const { sb, calls } = memSb({ emailOwner: UID, fail });
     const fn = loadLsWebhook({ sb });
@@ -288,13 +332,23 @@ test('DB 오류는 500 — LS 재시도로 한 번 더 기회를 준다(구독 �
   }
 });
 
-test('billing_unmatched 기록이 실패해도 200 — 로그만 남긴다(셀프호스트 수신자와 같은 처리)', async () => {
-  const { sb } = memSb({ emailOwner: null, fail: { upsert: 'permission denied' } });
-  const fn = loadLsWebhook({ sb });
-  const r = await fn.post(event());
-  assert.equal(r.status, 200);
-  assert.deepEqual(r.json, { ok: true, unmatched: 'no-user' });
-  assert.ok(fn.logs.some((l) => l.startsWith('error:') && l.includes('미연결 기록 실패')));
+// 분리 검수 LOW-1: 기록 실패를 200으로 덮으면 수동 연결의 근거가 조용히 사라진다. ignoreDuplicates라 재시도해도 중복 행이
+// 생기지 않으니 500으로 LS 재시도·대시보드 재전송을 남긴다. 실패했는데 "남겼다" 로그가 찍히면 안 된다.
+test('billing_unmatched 기록이 실패하면 500 — "남겼다" 로그를 찍지 않는다(사유마다)', async () => {
+  for (const [opts, payload, reason] of [
+    [{ emailOwner: null }, event(), 'no-user'],
+    [{ emailOwner: UID, rows: [{ user_id: OTHER, ls_subscription_id: SUB }] }, event({ userId: UID }), 'duplicate-attribution'],
+    [{ emailOwner: UID, rows: [{ user_id: UID, ls_subscription_id: 'held-sub', plan: 'pro', ends_at: null }] }, event(), 'email-account-has-subscription'],
+  ]) {
+    const { sb, calls } = memSb({ ...opts, fail: { upsert: 'permission denied' } });
+    const fn = loadLsWebhook({ sb });
+    const r = await fn.post(payload);
+    assert.equal(r.status, 500, reason);
+    assert.deepEqual(calls.upserts.map((u) => u.row.reason), [reason], `${reason}: 기록을 시도했다`);
+    assert.equal(applies(calls).length, 0, reason);
+    assert.ok(fn.logs.some((l) => l.startsWith('error:') && l.includes('[유실 위험]') && l.includes(`미연결 기록(${reason})`)), `${reason}: 실패 원인을 남긴다`);
+    assert.ok(!fn.logs.some((l) => l.includes('연결 안 함')), `${reason}: 기록이 실패했는데 남겼다는 로그가 있다`);
+  }
 });
 
 test('apply_ls_event가 stale·other_subscription이면 셀프호스트 수신자와 같은 200 본문', async () => {

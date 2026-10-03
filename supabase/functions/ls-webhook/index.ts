@@ -14,7 +14,9 @@
 //   서명된 웹훅이나 운영자가 만든 연결이라 믿는다(결제 이메일 ≠ 계정 이메일이라 손으로 연결한 구독의 해지·만료도
 //   그 계정에 반영되게). 두 계정 이상이면(정상이면 없다) 적용하지 않는다. 구독 번호가 비면 건너뛴다.
 //   ③ 연결된 계정이 없으면 결제 이메일과 같은 이메일로 인증된 계정이 정확히 하나일 때만(public.ls_user_by_email).
-//   못 찾았거나 연결하지 않은 건은 billing_unmatched에 남기고 200 — LS가 재시도해도 결과가 같다.
+//   단 그 계정이 지금 다른 구독으로 유효한 Pro면 적용하지 않는다(email-account-has-subscription) — 남이 같은 이메일로
+//   결제한 구독이나 같은 사람의 옛 구독 이벤트가 지금 쓰는 구독 연결을 덮어쓰지 못하게(분리 검수 HIGH-1).
+//   못 찾았거나 연결하지 않은 건은 billing_unmatched에 남기고 200 — LS가 재시도해도 결과가 같다. 기록이 실패하면 500.
 //   로그에는 구독 번호와 가린 이메일만 남긴다.
 // 응답: stale·other_subscription은 셀프호스트 수신자(app/api/billing/webhook/route.js)와 같은 200 본문.
 //       DB 오류는 500 — LS 재시도(3회·약 155초)로 한 번 더 기회를 준다.
@@ -75,6 +77,18 @@ function maskEmail(email: string): string {
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
+type EntRow = { ls_subscription_id?: string | null; plan?: string | null; ends_at?: string | null };
+
+// 계정 행이 지금 "다른" 구독으로 유효한 Pro인가 — is_pro의 결제 조건(plan='pro' and (ends_at is null or ends_at > now()))과
+// 같은 판정. 구독 번호가 빈 행(그랜드파더링·운영자 부여)은 다른 구독이 아니다. ends_at을 읽지 못하면 유효한 것으로 본다
+// (모를 때는 덮어쓰지 않는 쪽으로).
+function holdsOtherActiveSub(row: EntRow | undefined, subId: string): boolean {
+  if (!row?.ls_subscription_id || row.ls_subscription_id === subId) return false;
+  if (row.plan !== 'pro') return false;
+  if (row.ends_at == null) return true;
+  return !(Date.parse(row.ends_at) <= Date.now());
+}
+
 Deno.serve(async (req) => {
   if (req.method !== 'POST') return new Response('method not allowed', { status: 405 });
   const secret = Deno.env.get('LS_WEBHOOK_SECRET');
@@ -112,7 +126,8 @@ Deno.serve(async (req) => {
     return new Response('db error', { status: 500 });
   };
   // 연결하지 못한 결제 — 수동 연결의 근거로 billing_unmatched에 남긴다(src/lsbilling.mjs unmatchedRow와 같은 필드).
-  // 같은 (구독, 사유)는 1행. 기록 실패는 로그만 — 셀프호스트 수신자와 같다(여기서 5xx를 주면 재시도만 늘고 결과는 같다).
+  // 같은 (구독, 사유)는 1행. 기록이 실패하면 500 — ignoreDuplicates라 재시도해도 중복 행이 생기지 않고, LS 대시보드에
+  // 실패로 남아 다시 보낼 수 있다(분리 검수 LOW-1). 실패했을 때는 "남겼다" 로그를 찍지 않는다.
   const unmatched = async (reason: string) => {
     const { error } = await sb.from('billing_unmatched').upsert({
       event_name: name,
@@ -121,7 +136,7 @@ Deno.serve(async (req) => {
       ls_customer_id: String(a.customer_id ?? ''),
       user_email: String(a.user_email ?? ''),
     }, { onConflict: 'ls_subscription_id,reason', ignoreDuplicates: true });
-    if (error) console.error(`[ls-webhook] 미연결 기록 실패(수동 연결 근거 없음) ${tag}: ${error.message}`);
+    if (error) return dbError(`미연결 기록(${reason})`, error.message);
     console.warn(`[ls-webhook] 연결 안 함(${reason}) — billing_unmatched ${tag}`);
     return json({ ok: true, unmatched: reason });
   };
@@ -157,6 +172,13 @@ Deno.serve(async (req) => {
       if (error) return dbError('계정 찾기', error.message);
       if (typeof data !== 'string' || !UUID_RE.test(data)) return unmatched('no-user');
       userId = data.toLowerCase();
+      // 그 계정이 지금 다른 구독으로 유효한 Pro면 덮어쓰지 않는다. apply_ls_event의 구독 신원 가드는 plan='free' 이벤트만
+      // 막아서, 다른 구독의 pro 쪽 이벤트(active·cancelled 등)는 연결을 바꾸고 그 구독이 끝날 때 지금 쓰는 Pro가 꺼진다.
+      // 이벤트 plan과 무관하게 막는다(free는 신원 가드가 어차피 막지만 기록을 남긴다).
+      const { data: cur, error: curErr } = await sb.from('entitlements')
+        .select('ls_subscription_id, plan, ends_at').eq('user_id', userId).limit(1);
+      if (curErr) return dbError('계정 구독 확인', curErr.message);
+      if (holdsOtherActiveSub(cur?.[0], subId)) return unmatched('email-account-has-subscription');
     }
   }
   // 적용 — 인자는 정본 src/lsbilling.mjs mapSubscriptionEvent·applyLsEvent와 같다
