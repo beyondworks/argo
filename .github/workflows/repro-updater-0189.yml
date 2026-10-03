@@ -13,14 +13,15 @@ jobs:
   repro:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         include:
-          # 2차 실행: macOS 26(1차는 macOS 15.7.9 — 커밋 94fbcd89, run 37128685504)
-          - { name: applications-arm-macos26, os: macos-26, dmg: argo_0.1.89_aarch64.dmg, variant: applications }
-          - { name: applications-intel-macos26, os: macos-26-intel, dmg: argo_0.1.89_x64.dmg, variant: applications }
+          # 3차 실행: DMG 직접 실행(macOS 15·26)과 외장 볼륨 고객 화면 재현. 1차 run 37128685504, 2차 run 37129644300
+          - { name: dmg-quarantined, os: macos-15, dmg: argo_0.1.89_aarch64.dmg, variant: dmg }
+          - { name: dmg-quarantined-macos26, os: macos-26, dmg: argo_0.1.89_aarch64.dmg, variant: dmg }
+          - { name: external-volume, os: macos-15, dmg: argo_0.1.89_aarch64.dmg, variant: external }
     steps:
       - uses: actions/checkout@v4
         with:

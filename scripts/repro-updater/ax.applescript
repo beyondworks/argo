@@ -34,7 +34,7 @@ on run argv
 		set wanted to rest of argv
 		repeat with e in els
 			set r to my roleOf(e)
-			if r is in {"AXButton", "AXLink", "AXMenuItem"} then
+			if r is in {"AXButton", "AXLink", "AXMenuItem", "AXRadioButton"} then
 				set labels to my labelsOf(e)
 				repeat with w in wanted
 					repeat with lb in labels
