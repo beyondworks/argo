@@ -321,7 +321,7 @@ test('ls_user_by_email 권한: anon·authenticated·PUBLIC은 실행 불가(이�
     assert.match(r.stderr, /permission denied/i, role);
   }
   assert.equal(sql(`select exists (select 1 from pg_proc p, aclexplode(p.proacl) a
-    where p.oid = 'public.ls_user_by_email(text)'::regprocedure and a.grantee = 0 and a.privilege_type = 'EXECUTE')`), 'f', 'PUBLIC 실행권이 남아 있다');
+    where p.oid = 'public.ls_user_by_email(text)'::regprocedure and a.grantee = 0::oid and a.privilege_type = 'EXECUTE')`), 'f', 'PUBLIC 실행권이 남아 있다');
   assert.equal(psql(['-A', '-t', '-c', `set role service_role; select public.ls_user_by_email('buyer@example.test')`]).trim(), ACC.buyer);
 });
 
