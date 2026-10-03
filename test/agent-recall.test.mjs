@@ -213,3 +213,27 @@ test('새 대화(reset)와 보관 보기에도 각인이 이어진다', async ()
   assert.deepEqual((await readArchivedSession(ws, 'pepper', 'pepper-7.json')).messages, []);
   assert.ok((await listArchivedSessions(ws, 'pepper')).length >= 1);
 });
+
+test('본체 판정 읽기: 서버의 present=null(판정 없음)은 Map에 넣지 않는다 — 넣으면 false로 읽혀 전부 지운다(분리 검수 M-1)', async () => {
+  const { makeDb } = await import('../src/gateway/msgr.mjs');
+  const calls = [];
+  const client = { rpc: async (name, args) => { calls.push([name, args]); return { data: [{ slug: 'pepper', id: OUT, present: false }, { slug: 'pepper', id: IN, present: null }, { slug: 'kim', id: IN, present: true }], error: null }; } };
+  const m = await makeDb(client).crewPresence('co-a', [{ slug: 'pepper', id: OUT }, { slug: 'pepper', id: IN }, { slug: 'kim', id: IN }]);
+  assert.deepEqual(calls, [['msgr_crew_presence', { p_ws: 'co-a', p_slugs: ['pepper', 'pepper', 'kim'], p_ids: [OUT, IN, IN] }]]);
+  assert.deepEqual([...m].sort(), [[`kim:${IN}`, true], [`pepper:${OUT}`, false]].sort());
+  const old = { rpc: async () => ({ data: null, error: { code: 'PGRST202', message: 'no fn' } }) };
+  assert.equal(await makeDb(old).crewPresence('co-a', [{ slug: 'pepper', id: OUT }]), null, '옛 서버 = 판정 없음');
+});
+
+test('채널 줄이 보관본에만 있어도 활성 대화에 각인을 남긴다 — 각인 없는 옛 보관본이 돌아와도 거른다(재검수 L-a)', async () => {
+  const { readArchivedSession } = await import('../src/thread.mjs');
+  const ws = 'co-arch-only'; const p = paths(ws);
+  await mkdir(join(p.chats, '.archive'), { recursive: true });
+  await writeFile(join(p.chats, 'pepper.json'), JSON.stringify({ messages: [{ who: 'user', text: '새 대화', ts: 50 }] }));
+  const arch = { messages: [{ who: 'user', text: '보관 채널 글', ts: 9, via: 'msgr', contextScope: ch(OUT) }] };
+  await writeFile(join(p.chats, '.archive', 'pepper-1.json'), JSON.stringify(arch));
+  await recallDeparted(ws, ['pepper'], async () => new Map([[`pepper:${OUT}`, false]]), { configDirs: [] });
+  assert.equal(JSON.parse(await readFile(join(p.chats, 'pepper.json'), 'utf8')).departed[OUT].ts, 9);
+  await writeFile(join(p.chats, '.archive', 'pepper-1.json'), JSON.stringify(arch)); // 다른 기기에서 각인 없는 보관본이 돌아옴
+  assert.deepEqual((await readArchivedSession(ws, 'pepper', 'pepper-1.json')).messages, []);
+});

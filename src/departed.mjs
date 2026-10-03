@@ -50,8 +50,8 @@ export function applyDeparted(t) {
   return before - t.messages.length;
 }
 
-/** 채널들을 빠진 것으로 각인하고 적용한다(제자리 수정). 반환: 지운 줄 수, 지운 채널 세션 id. */
-export function forgetChannels(t, ids) {
+/** 채널들을 빠진 것으로 각인하고 적용한다(제자리 수정). tsByChannel = 다른 파일까지 본 채널별 최대 ts. 반환: 지운 줄 수, 지운 채널 세션 id. */
+export function forgetChannels(t, ids, tsByChannel = {}) {
   const want = new Set((ids ?? []).map((x) => String(x).toLowerCase()).filter((c) => CHANNEL_ID.test(c)));
   if (!want.size) return { removed: 0, sessionIds: [] };
   const own = ownChannels(t.messages ?? []);
@@ -59,6 +59,7 @@ export function forgetChannels(t, ids) {
   const sessionIds = [];
   for (const c of want) {
     const e = entry(t.departed[c]);
+    e.ts = Math.max(e.ts, Number(tsByChannel[c]) || 0); // 다른 파일(보관본)의 그 채널 줄까지 — 호출부가 모아 준다
     t.messages.forEach((m, i) => { if (own[i] === c) e.ts = Math.max(e.ts, Number(m.ts) || 0); });
     for (const [k, v] of Object.entries(t.scopedSessions ?? {})) if (k.toLowerCase() === c && v?.sessionId && !e.sids.includes(v.sessionId)) { e.sids.push(v.sessionId); sessionIds.push(v.sessionId); }
     t.departed[c] = e;

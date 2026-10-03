@@ -457,11 +457,19 @@ export async function forgetThreadChannels(wsId, slug, ids) {
   return lockThread(wsId, slug, async () => {
     let removed = 0; const sessionIds = [];
     const hit = new Set(ids.map((x) => String(x).toLowerCase()));
+    const files = [];
     for (const f of await threadFiles(wsId, slug)) {
       const t = await readJson(f, null).catch(() => null);
-      if (!t || !Array.isArray(t.messages)) continue;
-      if (![...channelIdsOf(t)].some((c) => hit.has(c))) continue; // 이 파일엔 그 채널 기록이 없다 — 각인도 쓰지 않는다
-      const r = forgetChannels(t, ids);
+      if (t && Array.isArray(t.messages)) files.push([f, t]);
+    }
+    // 각인 시각은 모든 파일(활성·보관·보관함)에 걸친 그 채널 줄의 가장 늦은 ts — 활성 파일에는 줄이 없어도 각인을 쓴다.
+    // 채널 줄이 보관본에만 있을 때 활성에 각인이 없으면, 각인 없는 옛 보관본이 동기화로 돌아와도 거를 근거가 없다(재검수 L-a).
+    const ts = {};
+    for (const [, t] of files) for (const m of t.messages) { const c = msgChannel(m); if (c && hit.has(c)) ts[c] = Math.max(ts[c] ?? 0, Number(m.ts) || 0); }
+    const active = file(wsId, slug);
+    for (const [f, t] of files) {
+      if (f !== active && ![...channelIdsOf(t)].some((c) => hit.has(c))) continue; // 그 채널 기록이 없는 보관본은 쓰지 않는다
+      const r = forgetChannels(t, ids, ts);
       removed += r.removed; sessionIds.push(...r.sessionIds);
       await writeJsonAtomic(f, t);
     }
