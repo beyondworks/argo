@@ -1,0 +1,42 @@
+name: repro-updater-0189
+
+# 재현 전용 브랜치(2026-10-03 고객 문의): 깨끗한 macOS에서 공개된 0.1.89 설치본의 앱 내 업데이트를 실제로 눌러
+# 결과와 파일 시스템 호출을 남긴다. 시크릿을 쓰지 않고 공개 릴리스 자산만 받는다. main에 병합하지 않는다.
+on:
+  push:
+    branches: [repro/updater-0189]
+
+permissions:
+  contents: read
+
+jobs:
+  repro:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: applications-arm, os: macos-15, dmg: argo_0.1.89_aarch64.dmg, variant: applications }
+          - { name: applications-intel, os: macos-15-intel, dmg: argo_0.1.89_x64.dmg, variant: applications }
+          - { name: dmg-quarantined, os: macos-15, dmg: argo_0.1.89_aarch64.dmg, variant: dmg }
+          - { name: external-volume, os: macos-15, dmg: argo_0.1.89_aarch64.dmg, variant: external }
+          - { name: root-owned, os: macos-15, dmg: argo_0.1.89_aarch64.dmg, variant: rootowned }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/repro-updater
+      - name: Download Argo 0.1.89 (public release)
+        run: curl -fsSL -o "$RUNNER_TEMP/argo.dmg" "https://github.com/beyondworks/argo-agent/releases/download/v0.1.89/${{ matrix.dmg }}"
+      - name: Reproduce in-app update
+        env:
+          OUT: ${{ github.workspace }}/out
+        run: bash scripts/repro-updater/run.sh "${{ matrix.variant }}" "$RUNNER_TEMP/argo.dmg"
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: repro-${{ matrix.name }}
+          path: out/
+          if-no-files-found: warn
