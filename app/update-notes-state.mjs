@@ -7,6 +7,7 @@ export const UPDATE_NOTES = Object.freeze({
   '0.1.91': Object.freeze(['updates.note.sonnet55', 'updates.note.msgrMarker']),
   '0.1.92': Object.freeze(['updates.note.personalCrews', 'updates.note.crewCalendar', 'updates.note.msgrAutoConnect']),
   '0.1.93': Object.freeze(['updates.note.cliBundled', 'updates.note.delegationSwitch', 'updates.note.splash']),
+  '0.1.94': Object.freeze(['updates.note.sessionMsg', 'updates.note.inboundCard', 'updates.note.fullAutoScope', 'updates.note.autoAttach', 'updates.note.shipSplash']),
 });
 
 export function stableVersion(value) {
