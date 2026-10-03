@@ -15,6 +15,23 @@ const lockKey = (wsId, slug) => `thread:${wsId}:${sanitizeFileSlug(slug)}`;
 // 앱 사이드카·argo CLI가 같은 폴더를 쓰면 프로세스 간 잠금도 필요하다(M-b) — 파일 단위(<chat>.json.lockd). 보관·휴지통 편집도 활성 스레드 잠금 하나로 직렬화한다.
 const lockThread = (wsId, slug, fn) => withLock(lockKey(wsId, slug), fn, { file: file(wsId, slug) });
 
+// 턴 기록(appendTurn)을 기다리는 쪽 — 세션 메시지가 크루의 직전 턴이 새 sessionId를 쓸 때까지 기다린다(session-msg.mjs idleSession).
+// globalThis: Next가 진입점마다 모듈을 따로 번들한다(turn-abort.mjs와 같은 이유). 같은 프로세스 안의 기록만 알린다.
+const writeWaiters = (globalThis.__argoThreadWrite ??= new Map()); // lockKey → Set<resolve>
+const notifyWrite = (wsId, slug) => {
+  const k = lockKey(wsId, slug); const set = writeWaiters.get(k);
+  if (set) { writeWaiters.delete(k); for (const wake of set) wake(); }
+};
+/** 이 스레드의 다음 턴 기록에 풀리는 약속. cancel()로 걸어 둔 것을 거둔다(쌓이지 않게). */
+export function nextThreadWrite(wsId, slug) {
+  const k = lockKey(wsId, slug);
+  let resolve;
+  const promise = new Promise((r) => { resolve = r; });
+  const set = writeWaiters.get(k) ?? new Set();
+  set.add(resolve); writeWaiters.set(k, set);
+  return { promise, cancel: () => { const cur = writeWaiters.get(k); cur?.delete(resolve); if (cur && !cur.size) writeWaiters.delete(k); } };
+}
+
 /** 스레드 파일 mtime(ms) — 폴링 dedup용. 파일이 없으면 0. */
 export async function threadMtime(wsId, slug) {
   try { return (await stat(file(wsId, slug))).mtimeMs; } catch { return 0; }
@@ -67,7 +84,7 @@ export async function loadThread(wsId, slug) {
     브라우저 메모리에만 있었고, 페이지를 벗어나거나 새로고침하면 **내가 쓴 글이 사라졌다가 답변이
     끝나야 다시 나타났다**(실사용 신고 2026-08-02). 오래 걸리는 턴일수록 오래 사라져 있는 셈이다.
     반환한 turnId로 나중에 같은 줄을 찾아 답변을 붙인다 — 새 줄을 밀어 넣지 않으므로 중복이 없다. */
-export async function beginTurn(wsId, slug, { userMsg, attachments, via, contextScope } = {}) {
+export async function beginTurn(wsId, slug, { userMsg, attachments, via, contextScope, src } = {}) {
   const turnId = `t${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   await lockThread(wsId, slug, async () => {
     const t = await loadThread(wsId, slug);
@@ -77,13 +94,30 @@ export async function beginTurn(wsId, slug, { userMsg, attachments, via, context
       ...(attachments?.length ? { attachments } : {}),
       ...(via ? { via } : {}),
       ...(contextScope ? { contextScope } : {}),
+      ...(src ? { src } : {}), // 출처 표지(세션 메시지 — session-msg.mjs). 화면 카드와 맥락 줄이 이 값으로 화자·출처를 적는다
     });
     await writeJsonAtomic(file(wsId, slug), t);
   });
   return turnId;
 }
 
-export async function appendTurn(wsId, slug, { turnId, userMsg, reply, handover, sessionId, attachments, artifacts, via, actor, failed, aborted, cancellationIncomplete, fellBack, failedCode, failedOrigin, modelFallback, contextScope, steerFailed }) {
+/** 턴 없이 한 줄을 더한다 — 세션 메시지의 보낸 줄·돌아온 답 카드·안내(session-msg.mjs). 줄 모양은 호출부가 정한다(ts는 없으면 지금). */
+export async function appendLine(wsId, slug, line) {
+  return lockThread(wsId, slug, async () => {
+    const t = await loadThread(wsId, slug);
+    const m = { ts: Date.now(), ...line };
+    t.messages.push(m);
+    await writeJsonAtomic(file(wsId, slug), t);
+    return m;
+  });
+}
+
+export async function appendTurn(wsId, slug, opts) {
+  const out = await appendTurnLocked(wsId, slug, opts);
+  notifyWrite(wsId, slug); // 기록이 끝난 뒤 — 기다리던 세션 메시지가 새 sessionId를 읽는다
+  return out;
+}
+async function appendTurnLocked(wsId, slug, { turnId, userMsg, reply, handover, sessionId, attachments, artifacts, via, actor, failed, aborted, cancellationIncomplete, fellBack, failedCode, failedOrigin, modelFallback, contextScope, steerFailed }) {
   return lockThread(wsId, slug, async () => {
     const t = await loadThread(wsId, slug); // 락 안에서 최신 상태를 다시 읽는다
     const ts = Date.now();

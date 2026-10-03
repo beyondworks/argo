@@ -15,3 +15,10 @@ export const ROOM_FILE_SLUG = 'room-main';
     한쪽만 바뀌면 반입 문이 다른 이름을 지키게 된다(검수 2R LOW-A: 규칙이 세 곳에 복제되면 목록이 반드시 뒤처진다). */
 export const sanitizeFileSlug = (slug) => String(slug ?? '').replace(/[^a-z0-9-]/g, '');
 export const collidesWithRoom = (slug) => sanitizeFileSlug(slug) === ROOM_FILE_SLUG;
+/** 크루 slug로 주지 않는 정확한 이름 — 'captain'은 사장 쪽지·결재의 표시 이름으로 쓰였다(sendCrewMail from:'captain'). 사장 판정은 별도 표지로 하지만
+    (fromRole·세션 메시지 captain 칸), 이름이 같으면 사람이 읽는 출처가 헷갈린다(최종 재검수 MEDIUM-1). 영입 문·가져오기는 -n을 붙이거나 바꿔 받는다.
+    이미 있는 크루는 바꾸지 않는다(동기화 반입도 이름을 바꾸지 않는다 — 바꾸면 다른 기기에서 삭제 + 새 크루로 보이고 대화 파일 연결이 끊긴다). */
+export const TAKEN_SLUGS = Object.freeze(new Set(['captain']));
+export const isTakenSlug = (slug) => TAKEN_SLUGS.has(sanitizeFileSlug(String(slug ?? '').toLowerCase()));
+/** 새 크루에게 줄 수 있는 slug인가 — 예약 접두(room-)도 이름 표지(captain)도 아님. */
+export const isAssignableSlug = (slug) => !isReservedSlug(slug) && !isTakenSlug(slug);

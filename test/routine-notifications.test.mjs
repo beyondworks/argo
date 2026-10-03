@@ -219,3 +219,25 @@ test('in-flight edits take effect next run: success, failure, loop stop and lega
     } finally { unsubscribe(); }
   }
 });
+
+// 루프 표지(LOOP: …)는 루틴이 emitNotify에 넘기기 전에 한 번만 뺀다 — 텔레그램·슬랙·메신저 알림(선택한 목적지)과
+// 옛 텔레그램·슬랙 브리핑(목적지 미선택)이 모두 같은 event.reply를 쓰므로 출구마다 따로 처리하지 않는다. 실제 전송은 가짜(fetch·DB).
+test('loop verdict marker never reaches any routine alert exit; the verdict still comes from the raw reply', async () => {
+  const ws = await workspace();
+  const { onNotify } = await import('../src/notify.mjs');
+  const r = await addRoutine(ws, { agentSlug: 'pepper', title: 'Loop', prompt: 'check', schedule: { type: 'interval', everyMinutes: 10 }, loop: {}, notifications: { channels: ['telegram', 'slack'] } }); // 메신저 목적지 검증은 실세션이 필요해 이벤트에서 덧붙인다
+  const got = []; const off = onNotify((e) => { if (e.wsId === ws && e.type === 'routine') got.push(e); });
+  let out;
+  try { out = await runRoutine(ws, r.id, { chatFn: async () => ({ reply: 'All green\n\n`LOOP: done goal reached`', handover: null, sessionId: null }) }); } finally { off(); }
+  assert.equal(out.stopped, 'done');
+  const emitted = got.find((e) => e.phase !== 'stop');
+  const result = { ...emitted, routine: { ...emitted.routine, notifications: selected() } };
+  const fixture = messenger();
+  const pushMsgr = (e) => msgrPush(e, { session: fixture.session });
+  const chosen = await capture(() => _pushEventForTest(result, { pushMsgr }));
+  const legacy = await capture(() => _pushEventForTest({ ...result, routine: { ...result.routine, notifications: undefined } }, { pushMsgr: async () => false }));
+  const bodies = [...chosen.calls, ...legacy.calls].map((c) => JSON.stringify(c.body));
+  assert.ok(chosen.calls.length >= 2 && legacy.calls.length >= 1, 'telegram·slack both called');
+  assert.equal(fixture.sent.length, 1);
+  for (const b of [...bodies, fixture.sent[0].body]) { assert.doesNotMatch(b, /LOOP/); assert.match(b, /All green/); }
+});

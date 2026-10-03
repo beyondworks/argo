@@ -33,7 +33,7 @@ export async function messengerNotificationChannels(wsId, agentSlug, { session }
     .in('org_id', crews.map((r) => r.org_id)).is('archived_at', null));
   const scopes = new Map(await Promise.all(crews.map(async (r) => [r.id, await c.db.crewScope(r.id)])));
   return channels.filter((ch) => crews.some((r) => r.org_id === ch.org_id && bridge.crewInScope(ch, r.id, scopes.get(r.id).has(ch.id))))
-    .map((ch) => ({ orgId: ch.org_id, channelId: ch.id, name: ch.name, orgName: orgs.find((o) => o.org_id === ch.org_id).msgr_orgs.name }));
+    .map((ch) => ({ orgId: ch.org_id, channelId: ch.id, kind: ch.kind, name: ch.name, orgName: orgs.find((o) => o.org_id === ch.org_id).msgr_orgs.name }));
 }
 
 export async function routineNotificationOptions(wsId, agentSlug, { session } = {}) {

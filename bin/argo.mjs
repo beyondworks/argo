@@ -320,7 +320,7 @@ async function turn(ws, crew, message, sessionId) {
   }, 800);
   draw('');
   try {
-    const t = await chat(ws, crew.slug, message, sessionId, { ...(turnId ? { abortTag: turnId } : {}) });
+    const t = await chat(ws, crew.slug, message, sessionId, { ...(turnId ? { abortTag: turnId } : {}), sessionChain: { blocked: true } }); // 세션 메시지는 싣지 않는다 — 이 프로세스는 턴 뒤 곧 끝나 답을 받을 수 없다(보낸 기다림이 고아가 된다)
     const handover = t.handover ? { rel: relative(paths(ws).vault, t.handover.file), linked: t.handover.linked } : null;
     await appendTurn(ws, crew.slug, { turnId, userMsg: message, reply: t.reply, handover, sessionId: t.sessionId, steerFailed: t.steerFailed, artifacts: t.artifacts, fellBack: t.fellBack, modelFallback: t.modelFallback });
     clearInterval(tick);

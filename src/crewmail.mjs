@@ -17,6 +17,7 @@ import { paths, loadCompany } from './workspace.mjs';
 import { monthCost } from './billing.mjs'; // 동시 배달 착수 전 예산 게이트(2R 검수 MEDIUM-2 — 회의실 room.mjs 라운드 경계 게이트와 같은 규칙)
 import { writeJsonAtomic } from './jsonstore.mjs';
 import { runLimited } from './run-limited.mjs';
+import { mailHead, mailReplyHint } from './inbound-marks.mjs'; // 머리말 = 1:1 화면 출처 카드와 같은 함수
 import { DELEGATION_LIMITS, getTree, spendTree } from './delegation-limits.mjs'; // 위임 제한 표 — 쪽지 회신 안내의 단계 상한
 
 /** 회사별 동시 배달 상한 — 회의실 동시 발언(ROOM_CONCURRENCY)과 같은 규칙: 기본 8, ARGO_MAIL_CONCURRENCY로 1~16 클램프.
@@ -83,7 +84,7 @@ export async function sendCrewMail(wsId, { from, fromName, fromRole = null, to, 
   assertSlug(to); for (const c of cc) assertSlug(c);
   const id = `m${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   const base = {
-    id, from, fromName: fromName || from, ...(fromRole ? { fromRole } : {}), message: String(message).trim(),
+    id, from, fromName: fromName || from, fromRole: fromRole === 'captain' ? 'captain' : 'crew', message: String(message).trim(), // fromRole — 사장 쪽지(쪽지 API·회의실)만 'captain'. 화면·배달 턴은 from 문자열이 아니라 이것으로 사장을 판정한다(새 기록은 항상 있다 — 없으면 옛 기록)
     hop, chain, ts: new Date().toISOString(), attempts: 0,
     ...(msgr?.channelId ? { msgr } : {}), // 메신저 채널 문맥(orgId·channelId·crewId(발신)·threadRoot) — 배달 턴과 회신이 그 채널로 간다
   };
@@ -216,7 +217,7 @@ export async function cancelMail(wsId, slug, id) {
   let body = {};
   try { body = JSON.parse(await readFile(join(dir, target), 'utf8')); } catch { /* 기록은 파일명 기준 */ }
   await rm(join(dir, target), { force: true });
-  await appendLog(wsId, { id, to: slug, from: body.from ?? null, fromName: body.fromName ?? null, kind: body.kind ?? null, ok: false, error: 'cancelled', attempts: body.attempts ?? 0 });
+  await appendLog(wsId, { id, to: slug, from: body.from ?? null, fromName: body.fromName ?? null, ...(body.fromRole ? { fromRole: body.fromRole } : {}), kind: body.kind ?? null, ok: false, error: 'cancelled', attempts: body.attempts ?? 0 });
   return { ok: true };
 }
 
@@ -250,18 +251,10 @@ export async function deleteDead(wsId, file) {
     유효 러너로 내린다. */
 export function mailPrompt(msg, lang = 'ko', { hasTools = true, relaxed = msg.relaxed === true } = {}) { // relaxed = 배달 직전에 다시 판정한 값(시작 대화가 그 사이 제한을 다시 걸었으면 쪽지에 relaxed가 있어도 false)
   const canReply = msg.kind === 'to' && (msg.hop ?? 0) < (relaxed ? DELEGATION_LIMITS.off.hop : DELEGATION_LIMITS.on.hop) && hasTools; // 풀린 쪽지는 단계 상한이 4라 hop 2·3에서도 회신 도구가 있다(chat.mjs turnColleagues와 같은 표)
-  const ccNote = msg.kind === 'cc'
-    ? (lang === 'en' ? ' (CC — for your awareness; no reply expected)' : ' (참조 — 알아두라고 보낸 사본이다. 회신 의무는 없다)')
-    : '';
+  const cc = msg.kind === 'cc'; // 참조 — 알아두라고 보낸 사본(회신 의무 없음)
   // 사장이 회의실에서 참조로 돌린 것 — "동료의 쪽지"라고 하면 발신자를 잘못 알려준다(회의실 cc 경로).
-  if (msg.fromRole === 'captain') {
-    return lang === 'en'
-      ? `(From the captain — shared from the meeting room${ccNote}) ${msg.message}`
-      : `(사장이 회의실에서 공유${ccNote}) ${msg.message}`;
-  }
-  return lang === 'en'
-    ? `(Message from colleague ${msg.fromName}${ccNote}) ${msg.message}${canReply ? `\n(If a reply is needed, use send_to_crew to message ${msg.fromName} back.)` : ''}`
-    : `(동료 ${msg.fromName}의 쪽지${ccNote}) ${msg.message}${canReply ? `\n(회신이 필요하면 send_to_crew 도구로 ${msg.fromName}에게 답장을 보내라.)` : ''}`;
+  if (msg.fromRole === 'captain') return `${mailHead(lang, { cc, captain: true })}${msg.message}`;
+  return `${mailHead(lang, { fromName: msg.fromName, cc })}${msg.message}${canReply ? mailReplyHint(lang, msg.fromName) : ''}`;
 }
 
 /** 우편 배달 — 스케줄러 틱에서 호출. runTurn(slug, msg, { from, hop, chain })을 주입받는다
@@ -317,7 +310,7 @@ export async function deliverCrewMail(wsId, runTurn, { limit = MAIL_PER_TICK, co
     // 태우지 않게, 턴 실행 **전에** 상한을 본다(재검 LOW: "상한이 결국 잡는다"가 이 경로에선 거짓이었다).
     if ((msg.attempts ?? 0) >= MAIL_MAX_ATTEMPTS) {
       await moveToDead(wsId, item.slug, item.file, claimedPath, { ...msg, lastError: msg.lastError ?? 'attempts exhausted' });
-      await appendLog(wsId, { id: msg.id, to: item.slug, from: msg.from, fromName: msg.fromName, kind: msg.kind, ok: false, error: msg.lastError ?? 'attempts exhausted', attempts: msg.attempts ?? 0 });
+      await appendLog(wsId, { id: msg.id, to: item.slug, from: msg.from, fromName: msg.fromName, ...(msg.fromRole ? { fromRole: msg.fromRole } : {}), kind: msg.kind, ok: false, error: msg.lastError ?? 'attempts exhausted', attempts: msg.attempts ?? 0 });
       inFlight.delete(claimedPath);
       continue;
     }
@@ -373,11 +366,11 @@ async function deliverOne(wsId, runTurn, { item, claimedPath, msg, hb, claimBy }
   try {
     await runTurn(item.slug, msg, { from: msg.from, hop: msg.hop ?? 0, chain: msg.chain ?? [], relaxed: msg.relaxed === true, tree: msg.tree ?? null });
     await rm(claimedPath, { force: true }).catch(() => {});
-    await appendLog(wsId, { id: msg.id, to: item.slug, from: msg.from, fromName: msg.fromName, kind: msg.kind, ok: true, attempts: (msg.attempts ?? 0) + 1 });
+    await appendLog(wsId, { id: msg.id, to: item.slug, from: msg.from, fromName: msg.fromName, ...(msg.fromRole ? { fromRole: msg.fromRole } : {}), kind: msg.kind, ok: true, attempts: (msg.attempts ?? 0) + 1 });
   } catch (e) {
     const attempts = (msg.attempts ?? 0) + 1;
     const error = String(e.message ?? e).slice(0, 200);
-    await appendLog(wsId, { id: msg.id, to: item.slug, from: msg.from, fromName: msg.fromName, kind: msg.kind, ok: false, error, attempts, exhausted: attempts >= MAIL_MAX_ATTEMPTS });
+    await appendLog(wsId, { id: msg.id, to: item.slug, from: msg.from, fromName: msg.fromName, ...(msg.fromRole ? { fromRole: msg.fromRole } : {}), kind: msg.kind, ok: false, error, attempts, exhausted: attempts >= MAIL_MAX_ATTEMPTS });
     // 되돌리기·실패함 이동은 .claimed가 **아직 내 것일 때만**. 심박 정체·잠자기로 다른 프로세스가 회수(·배달)했으면 손대지 않는다 —
     // writeJsonAtomic은 없는 파일을 새로 만들어 이미 배달된 쪽지를 큐에 부활시켰다(2R 검수 MEDIUM-3 실측, 회수 창 3분이 되며 60배 잦아진 창).
     const cur = await readClaimBy(claimedPath); // 선점 신원 일치만 내 것 — 존재·시각 폴백 없음(4R 검수 MEDIUM-1). 손상·부재·소멸 전부 흡수(5R LOW-A)

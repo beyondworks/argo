@@ -183,9 +183,9 @@ test('넘김 줄: 상대 심박이 90초를 넘거나 없으면 "(부재중 — 
 test('배선: messengerReply가 넘김 대상 심박을 한 번 조회해 렌더에 넘기고, 두 호출부가 db·lang을 전달한다', async () => {
   const { readFile } = await import('node:fs/promises');
   const src = await readFile(new URL('../src/gateway/msgr.mjs', import.meta.url), 'utf8');
-  assert.match(src, /async function messengerReply\(ctx, text, \{ db = null, lang = 'ko' \} = \{\}\)/);
+  assert.match(src, /async function messengerReply\(ctx, text, \{ db = null, lang = 'ko', loopTurn = false \} = \{\}\)/); // loopTurn — 루프 회차 채널 글의 판정 표지 제거(기본 꺼짐)
   assert.match(src, /db\?\.crewSeen \? await db\.crewSeen\(handoffs\.map\(\(h\) => h\.to\.id\)\)\.catch\(\(\) => null\) : null/, '조회 실패는 표시 생략');
   assert.match(src, /renderMessengerHandoffs\(\{ handoffs \}, \{ seenAt, lang \}\)/);
-  assert.equal((src.match(/await messengerReply\(ctx, [a-z.]+, \{ db, lang \}\)/g) ?? []).length, 2, '후속 실행·드레인 두 호출부');
+  assert.equal((src.match(/await messengerReply\(ctx, [a-z.]+, \{ db, lang(?:, loopTurn)? \}\)/g) ?? []).length, 2, '후속 실행·드레인 두 호출부');
   assert.match(src, /async crewSeen\(ids\)/);
 });

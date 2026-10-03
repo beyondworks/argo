@@ -3,16 +3,19 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<meta name="color-scheme" content="light dark" />
+<meta name="color-scheme" content="dark" />
 <title>Argo</title>
 <link rel="stylesheet" href="/boot.css" />
 </head>
 <body>
-  <!-- 데스크톱 앱 셸 부트 화면 — 북극성 스플래시(boot-splash.mjs)를 띄우고, 로컬 서버(3001) 준비를 기다렸다가 연다.
-       준비가 1.2초를 넘기면 단계 문구·진행률이 로고 아래에 드러나고, 실패는 지연 없이 보인다(무한 대기 방지) — Rust가 emit하는 boot / boot-log 이벤트 수신.
-       이 파일에는 style 요소를 두지 않는다 — Tauri가 style 요소에 nonce를 붙이면 style 속성이 막힌다(test/north-star-splash.test.mjs). -->
-  <div id="argo-splash" aria-hidden="true"></div>
+  <!-- 데스크톱 앱 셸 부트 화면 — 로컬 서버(3001) 준비를 실시간 단계로 보여주고, 준비되면 연다.
+       색은 graphite 다크 고정(boot.css). 이 파일에는 style 요소를 두지 않는다 — Tauri가 style 요소에 nonce를 붙이면 style 속성이 막힌다.
+       실패도 화면에 보인다(무한 대기 방지) — Rust가 emit하는 boot / boot-log 이벤트 수신. -->
   <div class="box">
+    <div class="scene" aria-hidden="true">
+      <img class="ship" src="/assets/boot/ship.png" alt="" draggable="false" />
+      <img class="wave" src="/assets/boot/wave.png" alt="" draggable="false" />
+    </div>
     <div class="msg">Connecting to Argo…</div>
     <div class="sub" id="status">Preparing the app shell…</div>
     <div class="bar" role="progressbar" aria-label="startup progress"><div class="fill" id="fill"></div></div>
@@ -20,7 +23,6 @@
     <div class="err" id="err" hidden></div>
   </div>
   <!-- CSP 견고성(P0-4): 인라인 스크립트 금지 유지 — self-served 파일 -->
-  <script type="module" src="/boot-splash.mjs"></script>
   <script src="/boot.js"></script>
 </body>
 </html>

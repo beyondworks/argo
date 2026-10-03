@@ -35,7 +35,10 @@ export default function Mail({ params }) {
   }, [load]);
   useEffect(() => { if (!to && agents.length) setTo(agents[0].slug); }, [agents, to]);
 
-  const nameOf = (slug) => (slug === 'captain' ? t('mail.fromCaptain') : (agents.find((a) => a.slug === slug)?.name ?? slug));
+  const nameOf = (slug) => agents.find((a) => a.slug === slug)?.name ?? slug; // 받는 쪽은 언제나 크루
+  // 보낸 쪽 — 사장 판정은 fromRole. fromRole이 없는 옛 기록만 종전처럼 from 문자열로 본다(마지막 확인 검수 LOW-2)
+  const isCaptain = (r) => (r.fromRole ? r.fromRole === 'captain' : r.from === 'captain');
+  const senderOf = (r) => (isCaptain(r) ? t('mail.fromCaptain') : (r.fromName ?? r.from));
 
   async function send(e) {
     e.preventDefault();
@@ -171,7 +174,7 @@ export default function Mail({ params }) {
               {pending.map((m) => (
                 <tr key={`${m.to}/${m.file}`} style={{ cursor: 'default' }}>
                   <td>{who(m.to)}</td>
-                  <td style={{ fontSize: 12, color: 'var(--fg-2)' }}>{m.fromRole === 'captain' ? t('mail.fromCaptain') : (m.fromName ?? m.from)} {kindChip(m.kind)}</td>
+                  <td style={{ fontSize: 12, color: 'var(--fg-2)' }}>{senderOf(m)} {kindChip(m.kind)}</td>
                   <td><span style={{ fontSize: 12.5, display: 'block', maxWidth: 420, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }} title={m.message}>{m.message}</span></td>
                   <td style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>
                     {m.ts ? timeAgo(m.ts, lang) : '—'} · {t('mail.attempts', { n: m.attempts })}
@@ -209,7 +212,7 @@ export default function Mail({ params }) {
                       style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 999, background: l.ok ? 'var(--primary)' : (l.error === 'cancelled' ? 'var(--fg-3)' : 'var(--danger)') }} />
                   </td>
                   <td style={{ width: 150 }}>{who(l.to)}</td>
-                  <td style={{ fontSize: 12, color: 'var(--fg-2)' }}>{l.from === 'captain' ? t('mail.fromCaptain') : (l.fromName ?? l.from)} {l.kind && kindChip(l.kind)}</td>
+                  <td style={{ fontSize: 12, color: 'var(--fg-2)' }}>{senderOf(l)} {l.kind && kindChip(l.kind)}</td>
                   <td style={{ fontSize: 11.5, color: l.ok ? 'var(--fg-2)' : 'var(--danger)' }}>
                     {l.ok ? t('mail.ok') : (l.error === 'cancelled' ? t('mail.cancelled') : `${t('mail.fail')} — ${l.error ?? ''}`)}
                   </td>
@@ -243,7 +246,7 @@ export default function Mail({ params }) {
               {dead.map((d) => (
                 <tr key={d.file} style={{ cursor: 'default' }}>
                   <td style={{ width: 150 }}>{d.corrupt ? <span className="mono" style={{ fontSize: 11 }}>{d.file}</span> : who(d.to)}</td>
-                  <td style={{ fontSize: 12, color: 'var(--fg-2)' }}>{d.corrupt ? '' : <>{d.from === 'captain' ? t('mail.fromCaptain') : (d.fromName ?? d.from)} {d.kind && kindChip(d.kind)}</>}</td>
+                  <td style={{ fontSize: 12, color: 'var(--fg-2)' }}>{d.corrupt ? '' : <>{senderOf(d)} {d.kind && kindChip(d.kind)}</>}</td>
                   <td>
                     {d.corrupt
                       ? <span style={{ fontSize: 12, color: 'var(--danger)' }}>{t('mail.corrupt')}</span>

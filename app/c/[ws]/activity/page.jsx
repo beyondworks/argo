@@ -78,7 +78,8 @@ export default function Activity({ params }) {
   const row = (e) => {
     if (e.type === 'turn') {
       return {
-        who: (e.source === 'delegate' || e.source === 'crewmail') && e.from ? `${nameOf(e.from)} → ${nameOf(e.slug)}` : nameOf(e.slug),
+        who: (e.source === 'delegate' || e.source === 'crewmail') && e.from ? `${nameOf(e.from)} → ${nameOf(e.slug)}`
+          : e.source === 'crewmail' && e.fromRole === 'captain' ? `${t('mail.fromCaptain')} → ${nameOf(e.slug)}` : nameOf(e.slug), // 사장 쪽지(fromRole) — from 문자열로 판정하지 않는다
         avatar: nameOf(e.slug),
         desc: isError(e) ? e.error : (e.gist || t('activity.instructionDone')),
         chip: isError(e) ? t('activity.error') : (SOURCE[e.source] ?? t('activity.conversation')),

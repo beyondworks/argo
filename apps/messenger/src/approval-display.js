@@ -44,3 +44,74 @@ export function approvalOneLineSummary(a, commandLabel) {
   const bits = [plain.purpose, plain.task, plain.need].filter(Boolean).join(' · ');
   return `${bits} — ${commandLabel}: ${action}`;
 }
+
+// ── 폰 결재 페이지(유건 2026-10-02) ──
+// 등급 표시 문구 — 서버 값(msgr_crew_approvals.risk: 'low' | 'high', src/approval-risk.mjs가 정하고 잠근다)은 그대로 두고 표시만 바꾼다.
+// high → '꼭 확인'. low 중 회사 안 행동(approval-risk.mjs LOW_KINDS와 같은 집합: 프로필·영입·루프 재개) → '가벼운 일', 나머지 low → '보통'.
+// 새 판정을 만들지 않는다 — 꼭 확인은 서버가 high로 잠근 것뿐이다(낮추는 쪽으로 틀리지 않게).
+export const APPROVAL_GRADES = ['must', 'normal', 'light'];
+const LIGHT_KINDS = new Set(['profile', 'hire', 'loop']);
+export function approvalGrade(a) {
+  if (!a || a.kind === 'join') return null; // 에이전트 넣기 요청은 결재 표가 아니라 등급이 없다
+  if (a.risk === 'high') return 'must';
+  return LIGHT_KINDS.has(a.kind) ? 'light' : 'normal';
+}
+
+/** 카드의 한두 줄 요약 — [i18n 키, 값]. 새 조회 없이 이미 받은 결재 행(payload·kind·action)만으로 만든다.
+    목적+할 일 → "목적을 위해 할 일", 할 일만 → 그 문장, 조직 문서 → 제목, 연결 서비스 → 서비스·도구, 셸 → 명령, 없으면 기존 제목(action). */
+export function approvalSummaryKey(a) {
+  const plain = approvalPlainFields(a?.payload);
+  const action = plainField(a?.action) ?? '';
+  const p = a?.payload && typeof a.payload === 'object' ? a.payload : {};
+  if (plain?.purpose && (plain.task || action)) return ['ap.sum.for', { purpose: plain.purpose, task: plain.task ?? action }];
+  if (plain?.task) return ['ap.sum.text', { text: plain.task }];
+  if (a?.kind === 'org_doc' && plainField(p.title)) return ['ap.sum.orgDoc', { title: p.title }];
+  if (a?.kind === 'connector' && plainField(p.tool)) return ['ap.sum.connector', { server: plainField(p.serverId) ?? '', tool: p.tool }];
+  if (p.shell && action) return ['ap.sum.shell', { cmd: action }];
+  return ['ap.sum.text', { text: action }];
+}
+
+/** 결재 페이지에 보일 카드 — 대기 중인 결재와 에이전트 넣기 요청만, 같은 키는 한 번, 방금 결정한 것(done)은 빼고, 최신이 위 */
+export function approvalPageItems(items, { done = new Set() } = {}) {
+  const seen = new Set();
+  return (items ?? []).filter((it) => (it?.kind === 'approval' || it?.kind === 'join') && (!it.status || it.status === 'pending') && !done.has(it.key) && !seen.has(it.key) && seen.add(it.key))
+    .sort((a, b) => (Date.parse(b.at) || 0) - (Date.parse(a.at) || 0));
+}
+// ── 결재권 판정(분리 검수 M-2, 2026-10-02) — 데스크톱 슬립과 폰 결재 페이지가 같은 함수를 쓴다.
+// 서버 msgr_can_decide(20260918193000)와 같은 갈래: low → 크루 소유자, high → 조직 정책(기본 관리자 · 'approvers'면 관리자 또는 지정 결재권자 · 'owner'면 크루 소유자).
+// 화면용이다 — 최종 판정은 RLS. 크루를 모르면(crewOwnerId === undefined, 비활성 등) 소유자로 보고 버튼을 띄운다(데스크톱 검수 M1과 같은 규칙, 서버가 거절하면 안내).
+export function approvalDecider({ ap, uid, crewOwnerId, isAdmin, policy }) {
+  const high = approvalExpandDefault(ap);
+  const mode = policy?.approval_high_by ?? 'admin';
+  const byAdmin = high && mode !== 'owner';
+  const owner = crewOwnerId === undefined ? true : crewOwnerId === uid;
+  const isApprover = (policy?.approver_user_ids ?? []).includes(uid);
+  return { can: byAdmin ? (!!isAdmin || (mode === 'approvers' && isApprover)) : owner, byAdmin, mode, high };
+}
+
+/** 폰 결재 페이지의 한 줄(loadApprovals가 붙인 crewOwnerId·policy) — 내 역할은 조직 목록(orgs[].role)에서. 넣기 요청은 서버가 결정할 사람에게만 보여 준 행이라 그대로 가능. */
+export function phoneApprovalDecider(it, { uid, orgs } = {}) {
+  if (it?.kind !== 'approval') return { can: true, byAdmin: false, mode: null, high: false };
+  const role = (orgs ?? []).find((o) => o.id === it.org_id)?.role;
+  return approvalDecider({ ap: it, uid, crewOwnerId: it.crewOwnerId, isAdmin: role === 'owner' || role === 'admin', policy: it.policy ?? null });
+}
+
+/** '결재 대기' 숫자·페이지 목록 — 내가 결정할 수 있는 것만 */
+export const decidableApprovals = (items, ctx) => (items ?? []).filter((it) => phoneApprovalDecider(it, ctx).can);
+
+/** 결정할 수 없는 카드·거절 안내 문구 키 — 정책의 결재권자 갈래면 approverOnly, 소유자 갈래면 ownerOnly */
+export const approvalOnlyKey = (dec) => (dec?.byAdmin ? 'ap.approverOnly' : 'ap.ownerOnly');
+
+/** 결정 쓰기가 결재권 때문에 막혔나 — USING에 걸리면 0행, WITH CHECK에 걸리면(예: high의 크루 소유자) RLS 오류(42501). 다른 오류(연결 등)는 아니다. */
+export function approvalDenied(error, rows) {
+  if (error) return error.code === '42501' || /row-level security/i.test(String(error.message ?? ''));
+  return Array.isArray(rows) && rows.length === 0;
+}
+
+/** 접힌 카드의 명령 줄(분리 검수 M-3) — 'full' = 꼭 확인: 실제로 실행될 명령을 줄바꿈해 전부(데스크톱 approvalExpandDefault의 기본 펼침과 같은 규칙),
+    'line' = 그 밖: 쉬운 문장이 있을 때 명령 한 줄(예전 approvalOneLineSummary와 같다 — 쉬운 문장이 없으면 요약이 곧 명령이라 겹쳐 그리지 않는다), null = 없음. */
+export function approvalCmdMode(it) {
+  if (!plainField(it?.action)) return null;
+  if (approvalExpandDefault(it)) return 'full';
+  return approvalPlainFields(it?.payload) ? 'line' : null;
+}
