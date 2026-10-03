@@ -34,6 +34,7 @@ import { chat } from '../chat.mjs';
 import { mirrorRoutines, applyRoutineEdits } from './msgr-routines.mjs'; // 업무 > 자동화 1단계 — Argo 루틴 ↔ msgr_crew_routines 양방향 미러
 import { loadThread, appendTurn, scopedSession } from '../thread.mjs';
 import { relocateOrgJournals, purgeDepartedJournals } from '../memory.mjs';
+import { recallDeparted } from './msgr-recall.mjs'; // 에이전트 기억 회수(유건 결정 2026-10-03)
 import { loadApprovals, setApprovalMeta, approvalPlainText, approvalCommandLabel } from '../approvals.mjs';
 import { approvalRisk } from '../approval-risk.mjs';
 import { resolveWithFollowUp } from '../approval-actions.mjs';
@@ -238,6 +239,12 @@ export function makeDb(client) {
       const { data, error } = await client.rpc('msgr_channel_access', { ids });
       if (error) { if (['PGRST202', '42883'].includes(error.code)) return null; throw new Error(`msgr db: ${error.message}`); }
       return new Map((data ?? []).map((r) => [String(r.id).toLowerCase(), r.ok === true]));
+    },
+    /** 에이전트 기억 회수 판정 — pairs[{slug, id}] → Map(`slug:channelId` → 그 에이전트(ws+slug)의 어느 행이든 그 채널에 있음). 옛 서버(RPC 없음)면 null → 아무것도 지우지 않는다. */
+    async crewPresence(wsId, pairs) {
+      const { data, error } = await client.rpc('msgr_crew_presence', { p_ws: wsId, p_slugs: pairs.map((p) => p.slug), p_ids: pairs.map((p) => p.id) });
+      if (error) { if (['PGRST202', '42883'].includes(error.code)) return null; throw new Error(`msgr db: ${error.message}`); }
+      return new Map((data ?? []).filter((r) => typeof r.present === 'boolean').map((r) => [`${r.slug}:${String(r.id).toLowerCase()}`, r.present])); // present null = 판정 없음(이 계정에 이 회사 에이전트 행이 없음) — 지우지 않는다
     },
     async heartbeat(ids) {
       // HEARTBEAT_WRITE_MS(30초) 넘게 지난 행만 쓴다 — 15초 틱마다 모든 크루 행을 갱신해 msgr_crews가 분당 1,335행씩 다시 써졌다(2026-09-23 DB 점검).
@@ -658,6 +665,20 @@ export async function mapLimited(items, limit, fn) {
   return out;
 }
 
+/** 10분마다(회사별) 퇴장 회수 — 옛 채널 일지(주인 읽기 권한 기준)와 에이전트 기억(에이전트 소속 기준, 유건 결정 2026-10-03). */
+async function periodicRecall(wsId, { db, uid, inventory }) {
+  if (!db.channelAccess || Date.now() - (purgeAt.get(wsId) ?? 0) < PURGE_MS) return;
+  purgeAt.set(wsId, Date.now());
+  await purgeDepartedJournals(wsId, (ids) => db.channelAccess(ids)).then((n) => n && console.log(`[argo] msgr 퇴장한 채널의 PC 기억 ${n}개 회수`)).catch((e) => console.error('[argo] msgr 채널 기억 회수 실패:', e?.message ?? e));
+  if (!db.crewPresence) return;
+  try {
+    // 이 회사의 메신저 에이전트 = 서버 행(상태 무관 — 파견 해제·오프보딩된 것 포함) + 로컬 카드. 회의실 등 에이전트가 아닌 대화 파일은 대상이 아니다
+    const slugs = new Set([...(await db.myCrewRows(uid, wsId)).map((c) => c.slug), ...(inventory ? await inventory(wsId).catch(() => []) : []).map((a) => a.slug)].filter(Boolean));
+    const r = await recallDeparted(wsId, [...slugs], (pairs) => db.crewPresence(wsId, pairs));
+    if (r.channels) console.log(`[argo] msgr 에이전트가 빠진 채널 ${r.channels}개의 기억 회수(줄 ${r.removed} · 전사 ${r.transcripts} · 일지 ${r.journals})`);
+  } catch (e) { console.error('[argo] msgr 에이전트 기억 회수 실패:', e?.message ?? e); }
+}
+
 export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, now = Date.now, nodeOrgId = null, ownerId = null, runnerInfo = nodeRunnerInfo, inventory = listAgentsForInventory, commandsFor = listCommandsForWs, housekeeping = true } = {}) {
   // housekeeping=false = 새 메시지 방송이 깨운 tick(2026-09-23 '입력 중' 5~10초 지연 실측): 미러·하트비트·조직 문서는 15초 주기 tick에만 돈다 — 깨우기는 턴 적재만
   // 회사 소유자 게이트(실사고 2026-09-11): 같은 PC에서 다른 계정으로 로그인하면 기기 세션(uid)이 바뀌는데, 로컬 회사 폴더는 그대로라
@@ -683,7 +704,7 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
   if (housekeeping && !nodeOrgId && orgCrewRows.length) await mirrorRoutines(wsId, { db, crews: orgCrewRows }).catch((e) => console.error('[argo] msgr 루틴 미러 실패:', e.message));
   // 접속 표시: 조직 행 + 방에 든 개인 행. 조직 행이 없는 계정은 개인 행 전부(방 없는 개인 크루는 msgr_personal_room_crews가 같은 크루의 조직 행 시각을 쓴다 — 쓰기 0)
   const idleBeat = orgCrewRows.length ? [] : allCrews.filter((c) => c.org_id == null && !inRooms.has(c.id));
-  if (!crews.length) { if (housekeeping && idleBeat.length) await db.heartbeat(idleBeat.map((c) => c.id)).catch((e) => console.error('[argo] msgr 하트비트 실패:', e.message)); return out; }
+  if (!crews.length) { if (housekeeping && idleBeat.length) await db.heartbeat(idleBeat.map((c) => c.id)).catch((e) => console.error('[argo] msgr 하트비트 실패:', e.message)); if (housekeeping) await periodicRecall(wsId, { db, uid, inventory }); return out; } // 회수는 활성 크루가 0이어도 — 모두 파견 해제된 뒤가 바로 회수할 때다
   if (housekeeping) {
     await db.heartbeat([...crews, ...idleBeat].map((c) => c.id)).catch((e) => console.error('[argo] msgr 하트비트 실패:', e.message));
     await db.workHeartbeat?.(orgCrewRows.map((c) => c.id)).catch((e) => console.warn('[argo] msgr work capability:', e.message)); // 업무 기능은 조직 전용 — 개인 행은 보내지 않는다(분리 검수 M3)
@@ -695,7 +716,7 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
       await syncOrgDocs(wsId, orgId, { db }).catch((e) => console.error('[argo] msgr 조직 문서 미러 실패:', e?.message ?? e));
     }
     await relocateOrgJournals(wsId).catch((e) => console.error('[argo] msgr 채널 일지 이관 실패:', e?.message ?? e));
-    if (db.channelAccess && Date.now() - (purgeAt.get(wsId) ?? 0) >= PURGE_MS && purgeAt.set(wsId, Date.now())) await purgeDepartedJournals(wsId, (ids) => db.channelAccess(ids)).then((n) => n && console.log(`[argo] msgr 퇴장한 채널의 PC 기억 ${n}개 회수`)).catch((e) => console.error('[argo] msgr 채널 기억 회수 실패:', e?.message ?? e));
+    await periodicRecall(wsId, { db, uid, inventory });
   }
   for (const crew of crews) { crewIds.set(`${wsId}:${crew.org_id}:${crew.slug}`, crew.id); crewSlugs.set(`${wsId}:${crew.id}`, crew.slug); } // 조직 축 포함 — 다조직이면 같은 slug가 조직마다 다른 id(검수 3R L-10). crewSlugs = 중단 방송(crew_id)의 역인덱스
   const chCache = new Map(); // 이 틱 안의 채널 행(kind·제외 목록) — 크루마다 다시 읽지 않는다

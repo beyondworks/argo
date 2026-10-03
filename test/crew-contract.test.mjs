@@ -65,6 +65,7 @@ const CONTRACT = {
   // Argo PC 전용
   msgr_create_channel: { argoOnly: '크루 1:1 방은 메신저 앱이 만든다 — 봇 1:1 방도 사람이 앱에서 연다' },
   msgr_crew_requests: { argoOnly: 'Argo PC가 크루를 새로 만드는 영입 요청 — 외부 에이전트는 서버 연결(connect) 절차로 추가한다' },
+  msgr_crew_presence: { argoOnly: 'Argo PC에 남은 크루 대화 기록의 회수 판정(유건 결정 2026-10-03) — 외부 에이전트의 기억은 그 에이전트 쪽 저장소라 Argo가 지울 수 없다(봇 연결 해제·채널 빼기까지만)' },
   msgr_node_heartbeat: { argoOnly: '상주 노드 심박 — 봇 가용성은 getUpdates의 last_seen_at' },
   msgr_notification_routes_sync: { argoOnly: 'Argo 데스크톱 알림 경로 — 외부 에이전트는 예약 작업 deliver=argo_msgr' },
   msgr_notification_authorize: { argoOnly: 'Argo 데스크톱 알림 경로' },
