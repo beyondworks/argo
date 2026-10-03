@@ -212,8 +212,15 @@ for (const kind of ['skill', 'profile', 'mcp', 'memory']) {
 test('concurrent processes importing same scan converge on a single crew', async () => {
   const f = await fixture(), p = await api.previewLocalAssets(f.wsId, context, {}, f.options);
   const req = { ...request(p), selectedIds: [p.items.find(i => i.kind === 'profile').id] };
+  // 잠금 대기 상한은 10초(localImport.error.busy)이고 살아 있는 주인은 밀어내지 않는다 — 느린 러너에서 앞선 둘의 가져오기가 10초를 넘기면
+  // 셋째는 설계대로 busy로 끝난다(2026-10-01 PR #806 Windows CI: 17초, busy 1건). 여기서 잠그는 것은 속도가 아니라
+  // ①중복 없이 하나로 모인다 ②busy 외의 실패가 없다 ③busy였던 쪽도 다시 시도하면 끝난다(잠금이 새지 않는다)이다.
+  // 대기 자체(즉시 busy로 포기하지 않음)는 아래 'old lock timestamp never evicts a live importer'가 잠근다.
   const results = await Promise.all([child(f, req, 'never'), child(f, req, 'never'), child(f, req, 'never')]);
-  for (const result of results) assert.equal(result.code, 0, result.stderr);
+  const busy = results.filter(result => result.code !== 0);
+  for (const result of busy) assert.match(result.stderr, /localImport\.error\.busy/, result.stderr);
+  assert.ok(busy.length < results.length, '적어도 한 프로세스는 가져와야 한다');
+  for (const _ of busy) { const retry = await child(f, req, 'never'); assert.equal(retry.code, 0, retry.stderr); }
   assert.equal((await readdir(paths(f.wsId).agents)).length, 1);
 });
 

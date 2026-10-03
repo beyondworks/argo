@@ -24,12 +24,12 @@ async function seed(ws, { lang = 'ko' } = {}) {
   await writeFile(join(p.root, 'company.json'), JSON.stringify({ name: ws, lang }));
   await writeFile(join(p.chats, 'room-main.json'), JSON.stringify({ messages: [], sid: 1 }));
   for (const [slug, name] of CREW) await writeFile(join(p.root, 'agents', `${slug}.md`), `---\nname: ${name}\nrole: 검증\nrunner: claude\n---\n검증용.\n`);
-  stub.state.calls.length = 0; stub.state.delayMs = 0; stub.state.holdUntil = 0; stub.state.inflight = 0; stub.state.maxInflight = 0; stub.state.reply = (slug) => `${slug} 답변`;
+  stub.state.calls.length = 0; stub.state.delayMs = 0; stub.state.holdUntil = 0; stub.state.gate = null; stub.state.inflight = 0; stub.state.maxInflight = 0; stub.state.reply = (slug) => `${slug} 답변`;
 }
 const kinds = async (ws) => (await loadRoom(ws)).messages.map((m) => m.kind ?? m.who);
 
 test('이름 멘션 4명은 동시에 시작한다 — 총 소요가 발언 1건 수준(순차면 4배), 동시 진행 ≥2', async () => {
-  await seed('rp-par'); stub.state.delayMs = 300; // 부하 아래에서도 4명이 겹치도록 넉넉히 — 판정은 동시 진행 수(벽시계 아님)
+  await seed('rp-par'); stub.state.delayMs = 300; stub.state.holdUntil = 2; // 겹침은 순서로 — 300ms만으로는 윈도우 CI에서 다음 발언자의 준비 IO가 더 길어 1로 찍혔다(2026-10-01 실측 15.8초). 순차로 무너지면 3초 뒤 풀려 1로 남는다(=실패)
   await runRoomTurn('rp-par', '@비스트 @울프 @슈리 @에드나 각자 의견', [], { rounds: 1 });
   assert.ok(stub.state.maxInflight >= 2, `동시 진행 최대 ${stub.state.maxInflight} — 순차면 1`);
   assert.deepEqual(new Set(stub.state.calls.map((c) => c.slug)), new Set(['beast', 'wolf', 'shuri', 'edna']), '전원 발언');
@@ -95,16 +95,21 @@ test('일부 실패 — 나머지는 계속 답하고 실패는 줄로 남으며
 });
 
 test('마커 v2 — 진행 중 getRoomTurn이 발언자별 상태(speaking/queued/done)·라운드·인원을 싣고, 끝나면 null', async () => {
-  await seed('rp-marker'); stub.state.delayMs = 600; stub.state.holdUntil = 2; // 두 명이 함께 발언 중인 구간을 순서로 보장한다
+  await seed('rp-marker'); stub.state.holdUntil = 2;
+  // 두 명이 발언 중인 구간을 테스트가 풀 때까지 유지한다 — 600ms 창을 10ms×300회로 찾던 방식은 윈도우 CI의 느린 순간에 창을 놓치거나
+  // 턴 준비가 끝나기 전에 횟수가 바닥났다(2026-10-01 main 실행 36869001714: 5.5초 뒤 mid가 v2 마커가 아님).
+  let release; stub.state.gate = new Promise((r) => { release = r; });
   const p = runRoomTurn('rp-marker', '@비스트 @울프 @슈리 @에드나 검토', [], { rounds: 1, concurrency: 2 });
-  // 폴링형 — 부하 아래 고정 지연 샘플은 흔들린다. 두 명이 발언 중이 될 때까지 기다린다(상한 3초 — 윈도우 CI에서 600ms 창을 놓쳤다).
-  let mid = null;
-  for (let i = 0; i < 300 && !(mid?.speakers?.filter((s) => s.state === 'speaking').length === 2); i++) { await new Promise((r) => setTimeout(r, 10)); mid = await getRoomTurn('rp-marker'); }
-  assert.equal(mid?.v, 2); assert.equal(mid.total, 4); assert.equal(mid.round, 1); assert.equal(mid.rounds, 1);
-  const states = Object.fromEntries(mid.speakers.map((s) => [s.slug, s.state]));
-  assert.deepEqual(states, { beast: 'speaking', wolf: 'speaking', shuri: 'queued', edna: 'queued' }, '상한 2 — 둘은 발언 중, 둘은 대기');
-  assert.equal(mid.done, 0); assert.equal(mid.slug, 'beast', '구형 소비자용 slug = 첫 발언 중');
-  await p;
+  let settled = false; p.then(() => { settled = true; }, () => { settled = true; });
+  try {
+    // 상한은 결함 판정이 아니라 매달림 방지다 — 상태가 나오지 않은 채 턴이 끝나면(settled) 바로 실패로 넘어간다
+    let mid = null;
+    for (const until = Date.now() + 60_000; !settled && Date.now() < until && !(mid?.speakers?.filter((s) => s.state === 'speaking').length >= 2);) { await new Promise((r) => setTimeout(r, 10)); mid = await getRoomTurn('rp-marker'); }
+    assert.equal(mid?.v, 2); assert.equal(mid.total, 4); assert.equal(mid.round, 1); assert.equal(mid.rounds, 1);
+    const states = Object.fromEntries(mid.speakers.map((s) => [s.slug, s.state]));
+    assert.deepEqual(states, { beast: 'speaking', wolf: 'speaking', shuri: 'queued', edna: 'queued' }, '상한 2 — 둘은 발언 중, 둘은 대기');
+    assert.equal(mid.done, 0); assert.equal(mid.slug, 'beast', '구형 소비자용 slug = 첫 발언 중');
+  } finally { release(); stub.state.gate = null; await p; }
   assert.equal(await getRoomTurn('rp-marker'), null, '종료 후 마커 소멸');
 });
 

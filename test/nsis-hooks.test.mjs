@@ -86,6 +86,7 @@ test('hooks.nsh — Windows에서 특수문자 경로만 종료하고 다른 app
     const powershell = join(process.env.WINDIR, 'SysWOW64', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
     // 예열: 새 CI 러너에서 32비트 PowerShell의 첫 기동은 .NET 이미지 로딩으로 수십 초까지 걸린다(실측 2026-09-17: 30s 제한에 걸려
     // spawn이 죽이고 exit code null). 검증 대상(CIM 조회·정확한 경로 종료)과 무관한 기동 비용을 먼저 치러 둔다 — 8코어 PC 실측은 기동 1.4~1.7s·전체 2.3~3.3s.
+    // 첫 기동은 이미지 디스크의 첫 읽기라 유휴 러너에서도 16~70초였다(2026-10-01 실측, 90초 초과로 실패 6회) — CI는 test.yml이 설치 단계 동안 미리 띄워 둔다(scripts/ci-windows-prewarm.ps1).
     warm = spawn(powershell, ['-NoProfile', '-NonInteractive', '-Command', 'exit 0'], { stdio: 'ignore', timeout: 90000 });
     const [warmCode, warmSignal] = await once(warm, 'exit', { signal: t.signal });
     phase('powershell-warm');

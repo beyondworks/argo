@@ -14,7 +14,7 @@ import { mkdtemp } from './helpers/tmp.mjs';
 const MUTEX = new URL('../src/mutex.mjs', import.meta.url).href;
 const ROUNDS = 60; const PERIOD = 250;
 
-function racer(dir, idx, t0) {
+function racer(dir, idx, t0, signal) {
   const script = `
 const { withDirLock } = await import(${JSON.stringify(MUTEX)});
 const { mkdir, utimes, writeFile, rm } = await import('node:fs/promises');
@@ -22,7 +22,7 @@ const { join } = await import('node:path');
 const lock = join(${JSON.stringify(dir)}, 'x.lock');
 const mark = join(${JSON.stringify(dir)}, 'inside');
 const wait = (at) => new Promise((r) => setTimeout(r, Math.max(0, at - Date.now())));
-let overlaps = 0, entered = 0, staged = 0; const other = {};
+let overlaps = 0, entered = 0, staged = 0, maxWait = 0; const other = {}, lockErr = {};
 for (let i = 0; i < ${ROUNDS}; i++) {
   const at = ${t0} + i * ${PERIOD};
   if (${idx} === 0) { // 회차 시작 전에 크래시가 남긴 오래된 잠금을 깐다 — 내가 새로 만든 폴더일 때만 시각을 돌린다
@@ -33,8 +33,9 @@ for (let i = 0; i < ${ROUNDS}; i++) {
     if (made) { const old = new Date(Date.now() - 60_000); await utimes(lock, old, old).catch(() => {}); staged++; }
   }
   await wait(at);
+  const asked = Date.now();
   await withDirLock(lock, async () => {
-    entered++;
+    entered++; maxWait = Math.max(maxWait, Date.now() - asked);
     try { await writeFile(mark, String(process.pid), { flag: 'wx' }); } catch (e) {
       // 겹침은 EEXIST(다른 프로세스가 잠금 안에서 만든 표식이 아직 있음)만이다. Windows는 방금 지운 파일이 "삭제 대기"로 남아 EPERM·EBUSY를
       // 낼 수 있다 — 그건 잠금 결함이 아니라 파일 시스템 상태라 따로 센다.
@@ -43,11 +44,13 @@ for (let i = 0; i < ${ROUNDS}; i++) {
     }
     await new Promise((r) => setTimeout(r, 15));
     await rm(mark, { force: true });
-  }, { staleMs: 5_000, retryMs: 5, timeoutMs: 3_000 }).catch(() => {});
+  }, { staleMs: 5_000, retryMs: 5, timeoutMs: 15_000 }).catch((e) => { lockErr[e?.code ?? 'unknown'] = (lockErr[e?.code ?? 'unknown'] ?? 0) + 1; });
 }
-process.stdout.write('@@' + JSON.stringify({ overlaps, entered, staged, other }) + '\\n');`;
+process.stdout.write('@@' + JSON.stringify({ overlaps, entered, staged, other, maxWait, lockErr }) + '\\n');`;
   return new Promise((resolve, reject) => {
-    const p = spawn(process.execPath, ['--input-type=module', '-e', script], { stdio: ['ignore', 'pipe', 'pipe'] });
+    // signal — 테스트가 끝나거나 시간 초과로 취소되면 자식을 끝낸다. 없으면 회수가 막히는 결함에서 자식이 회차마다 대기 상한을 다 쓰며 남아 CI 잡을 붙잡는다.
+    const p = spawn(process.execPath, ['--input-type=module', '-e', script], { stdio: ['ignore', 'pipe', 'pipe'], signal });
+    p.on('error', reject);
     let out = ''; let err = '';
     p.stdout.on('data', (c) => { out += c; }); p.stderr.on('data', (c) => { err += c; });
     p.on('exit', () => {
@@ -57,14 +60,16 @@ process.stdout.write('@@' + JSON.stringify({ overlaps, entered, staged, other })
   });
 }
 
-test('오래된 잠금을 두 프로세스가 동시에 회수해도 잠금 안에 둘이 같이 들어가지 않는다(60회차 겹침 0)', { timeout: 60_000 }, async () => {
+test('오래된 잠금을 두 프로세스가 동시에 회수해도 잠금 안에 둘이 같이 들어가지 않는다(60회차 겹침 0)', { timeout: 60_000 }, async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'argo-mutex-race-'));
   mkdirSync(dir, { recursive: true });
   const t0 = Date.now() + 1500;
-  const [a, b] = await Promise.all([racer(dir, 0, t0), racer(dir, 1, t0)]);
+  const [a, b] = await Promise.all([racer(dir, 0, t0, t.signal), racer(dir, 1, t0, t.signal)]);
   assert.equal(a.overlaps + b.overlaps, 0, `겹침 ${a.overlaps + b.overlaps}회 (오래된 잠금 깐 회차 ${a.staged}, 표식 기타 오류 ${JSON.stringify({ ...a.other, ...b.other })})`);
   assert.ok(a.staged >= ROUNDS / 2, `오래된 잠금을 깐 회차가 너무 적다(${a.staged}) — 회수 경로를 충분히 타지 않았다`);
-  assert.equal(a.entered + b.entered, ROUNDS * 2, '모든 회차에 둘 다 결국 잠금을 얻는다(회수가 막히지 않는다)');
+  // 대기 상한(15초)은 회수 복구 시간(staleMs 5초 — 크래시로 남은 2차 잠금도 이만큼 지나야 치운다)보다 길어야 "막힘"과 "느림"이 갈린다.
+  // 예전 3초는 그보다 짧아, 느린 Windows CI에서 한 번의 대기가 3초를 넘긴 것만으로 119/120이 났다(2026-10-01 PR #806 실행 36878124419).
+  assert.equal(a.entered + b.entered, ROUNDS * 2, `모든 회차에 둘 다 결국 잠금을 얻는다(회수가 막히지 않는다) — 실패 ${JSON.stringify({ ...a.lockErr, ...b.lockErr })}, 최장 대기 ${Math.max(a.maxWait, b.maxWait)}ms`);
 });
 
 test('2차 잠금을 늦게 얻은 쪽은 그사이 새로 잡힌 잠금을 지우지 않는다(재 stat) — 순서를 훅으로 고정한 결정적 재현', async () => {
