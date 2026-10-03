@@ -138,7 +138,7 @@ test('user_id가 없으면 결제 이메일로 찾은 계정에 적용 — 공�
   withId.meta.custom_data = { user_id: UID };
   assert.deepEqual(calls.rpc[1], await canonicalApply(withId), '계정만 이메일로 정했을 뿐 나머지 인자는 정본과 같다');
   assert.equal(calls.upserts.length, 0);
-  assert.deepEqual(calls.selects, [{ table: 'entitlements', cols: 'user_id' }], '적용 전에 다른 계정 연결 여부를 본다');
+  assert.deepEqual(calls.selects, [{ table: 'entitlements', cols: 'user_id' }], '이메일보다 먼저 그 구독에 연결된 계정을 본다(여기서는 없음)');
 });
 
 test('user_id가 UUID가 아니면 없는 것으로 보고 이메일로 찾는다', async () => {
@@ -164,7 +164,7 @@ test('이메일로 계정을 못 찾으면(0개·2개 이상은 null) billing_un
     '셀프호스트 수신자와 같은 필드·같은 중복 처리');
 });
 
-test('결제 이메일도 user_id도 없으면 조회 없이 no-user 기록 후 200', async () => {
+test('결제 이메일도 user_id도 없고 구독 연결도 없으면 이메일 조회 없이 no-user 기록 후 200', async () => {
   for (const user_email of [undefined, '', '   ']) {
     const payload = event({ user_email });
     const { sb, calls } = memSb({ emailOwner: UID });
@@ -176,35 +176,82 @@ test('결제 이메일도 user_id도 없으면 조회 없이 no-user 기록 후 
   }
 });
 
-test('같은 구독이 이미 다른 계정에 붙어 있으면 적용하지 않고 duplicate-attribution 기록 후 200 — 이메일·user_id 경로 둘 다', async () => {
-  for (const userId of [undefined, UID]) {
-    const payload = event({ userId });
-    const { sb, calls } = memSb({ emailOwner: UID, rows: [{ user_id: OTHER, ls_subscription_id: SUB }] });
-    const fn = loadLsWebhook({ sb });
-    const r = await fn.post(payload);
-    assert.equal(r.status, 200);
-    assert.deepEqual(r.json, { ok: true, unmatched: 'duplicate-attribution' }, `via=${userId ? 'user_id' : 'email'}`);
-    assert.equal(applies(calls).length, 0, '한 결제로 두 계정이 Pro가 되면 안 된다');
-    assert.deepEqual(calls.upserts, [{ table: 'billing_unmatched', row: unmatchedRow('subscription_created', 'duplicate-attribution', payload), opts: UNMATCHED_OPTS }]);
-  }
+test('user_id 경로: 같은 구독이 이미 다른 계정에 붙어 있으면 적용하지 않고 duplicate-attribution 기록 후 200', async () => {
+  const payload = event({ userId: UID });
+  const { sb, calls } = memSb({ emailOwner: UID, rows: [{ user_id: OTHER, ls_subscription_id: SUB }] });
+  const fn = loadLsWebhook({ sb });
+  const r = await fn.post(payload);
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.json, { ok: true, unmatched: 'duplicate-attribution' });
+  assert.equal(applies(calls).length, 0, '한 결제로 두 계정이 Pro가 되면 안 된다');
+  assert.deepEqual(calls.upserts, [{ table: 'billing_unmatched', row: unmatchedRow('subscription_created', 'duplicate-attribution', payload), opts: UNMATCHED_OPTS }]);
 });
 
-test('그 구독을 이미 가진 계정이 같은 계정이면 중복이 아니다 — 갱신·해지 이벤트는 계속 적용된다', async () => {
+test('user_id 경로: 그 구독을 이미 가진 계정이 같은 계정이면 중복이 아니다 — 갱신·해지 이벤트는 계속 적용된다', async () => {
   const rows = [{ user_id: UID, ls_subscription_id: SUB }, { user_id: OTHER, ls_subscription_id: 'another-sub' }];
-  const { sb, calls } = memSb({ emailOwner: UID, rows });
+  const { sb, calls } = memSb({ emailOwner: OTHER, rows });
   const fn = loadLsWebhook({ sb });
-  const r = await fn.post(event({ name: 'subscription_cancelled', status: 'cancelled', ends_at: '2026-11-03T00:00:00.000000Z' }));
+  const r = await fn.post(event({ name: 'subscription_cancelled', userId: UID, status: 'cancelled', ends_at: '2026-11-03T00:00:00.000000Z' }));
   assert.deepEqual(r.json, { ok: true, plan: 'pro', status: 'cancelled' });
   assert.equal(applies(calls).length, 1);
+  assert.equal(applies(calls)[0][1].p_user_id, UID);
   assert.equal(calls.upserts.length, 0);
 });
 
-test('구독 번호가 비면 중복 확인을 건너뛴다 — 구독 번호 없는 옛 행(빈 값)을 다른 계정 연결로 오인하지 않는다', async () => {
+// 2026-10-03 추가 규칙: user_id가 없으면 이메일보다 먼저 "그 구독 번호에 이미 연결된 계정". 결제 이메일 ≠ 계정 이메일이라
+// 운영자가 손으로 연결한 구독(9/27 건)은 이메일로 계정을 못 찾으니, 이 규칙이 없으면 해지·만료가 그 계정에 반영되지 않는다.
+test('user_id 없음 + 구독이 계정 A에 이미 연결 + 결제 이메일은 어떤 계정과도 안 맞음 → A에 적용(해지·결제 실패·만료)', async () => {
+  const A = OTHER; // 손으로 연결해 둔 계정
+  for (const [name, status, plan, ends_at] of [
+    ['subscription_cancelled', 'cancelled', 'pro', '2026-11-03T00:00:00.000000Z'], // 해지 예약 — 말일까지 pro, ends_at 기록
+    ['subscription_updated', 'past_due', 'pro', null],                           // 결제 실패 — 던닝 중 pro
+    ['subscription_expired', 'expired', 'free', '2026-11-03T00:00:00.000000Z'],   // 만료 — free
+  ]) {
+    const payload = event({ name, status, ends_at, user_email: 'payer-only@pay.example' });
+    const { sb, calls } = memSb({ emailOwner: null, rows: [{ user_id: A, ls_subscription_id: SUB }] });
+    const fn = loadLsWebhook({ sb });
+    const r = await fn.post(payload);
+    assert.equal(r.status, 200, name);
+    assert.deepEqual(r.json, { ok: true, plan, status }, name);
+    assert.deepEqual(calls.rpc.map(([f]) => f), ['apply_ls_event'], `${name}: 이메일 조회 없이 연결된 계정에 적용`);
+    const withId = structuredClone(payload);
+    withId.meta.custom_data = { user_id: A };
+    assert.deepEqual(calls.rpc[0], await canonicalApply(withId), `${name}: 계정만 구독 연결로 정했을 뿐 인자는 정본과 같다`);
+    assert.equal(calls.upserts.length, 0, `${name}: 미연결로 적지 않는다`);
+    assert.ok(fn.logs.some((l) => l.includes('via=subscription')), `${name}: 어떤 경로로 정했는지 로그에 남긴다`);
+  }
+});
+
+test('user_id 없음 + 구독이 A에 연결 + 결제 이메일은 다른 계정 B와 맞음 → A에 적용, B에 새로 붙이지 않는다', async () => {
+  const { sb, calls } = memSb({ emailOwner: UID /* B */, rows: [{ user_id: OTHER /* A */, ls_subscription_id: SUB }] });
+  const fn = loadLsWebhook({ sb });
+  const r = await fn.post(event({ name: 'subscription_updated' }));
+  assert.deepEqual(r.json, { ok: true, plan: 'pro', status: 'active' });
+  assert.deepEqual(calls.rpc.map(([f]) => f), ['apply_ls_event'], '이메일 조회를 하지 않는다');
+  assert.equal(calls.rpc[0][1].p_user_id, OTHER, 'A에 적용');
+  assert.equal(calls.upserts.length, 0);
+});
+
+test('user_id 없음 + 그 구독이 두 계정 이상에 연결(정상이면 없음) → 적용하지 않고 duplicate-attribution 기록 후 200', async () => {
+  const payload = event();
+  const rows = [{ user_id: UID, ls_subscription_id: SUB }, { user_id: OTHER, ls_subscription_id: SUB }];
+  const { sb, calls } = memSb({ emailOwner: UID, rows });
+  const fn = loadLsWebhook({ sb });
+  const r = await fn.post(payload);
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.json, { ok: true, unmatched: 'duplicate-attribution' });
+  assert.deepEqual(calls.rpc, [], '이메일 조회도 적용도 하지 않는다');
+  assert.deepEqual(calls.upserts, [{ table: 'billing_unmatched', row: unmatchedRow('subscription_created', 'duplicate-attribution', payload), opts: UNMATCHED_OPTS }]);
+});
+
+test('구독 번호가 비면 구독 연결 확인을 건너뛰고 이메일 경로로 — 구독 번호 없는 옛 행(빈 값)을 연결로 오인하지 않는다', async () => {
   const { sb, calls } = memSb({ emailOwner: UID, rows: [{ user_id: OTHER, ls_subscription_id: '' }] });
   const fn = loadLsWebhook({ sb });
   const r = await fn.post(event({ sub: null })); // undefined는 기본값(SUB)이 들어간다
   assert.deepEqual(r.json, { ok: true, plan: 'pro', status: 'active' });
   assert.equal(calls.selects.length, 0);
+  assert.deepEqual(calls.rpc.map(([f]) => f), ['ls_user_by_email', 'apply_ls_event']);
+  assert.equal(applies(calls)[0][1].p_user_id, UID, '빈 구독 번호 행의 계정(OTHER)이 아니라 이메일 계정');
   assert.equal(applies(calls)[0][1].p_sub_id, '', '정본과 같이 빈 문자열(apply_ls_event의 coalesce와 같은 값)');
 });
 
@@ -224,11 +271,11 @@ test('모르는 상태·라이프사이클 밖 이벤트는 200 — DB를 읽지
   }
 });
 
-test('DB 오류는 500 — LS 재시도로 한 번 더 기회를 준다(계정 찾기·중복 확인·적용 각각)', async () => {
+test('DB 오류는 500 — LS 재시도로 한 번 더 기회를 준다(구독 연결 확인·계정 찾기·중복 확인·적용 각각)', async () => {
   for (const [fail, payload] of [
     [{ lookup: 'function public.ls_user_by_email(p_email => text) does not exist' }, event()],
-    [{ select: 'timeout' }, event()],
-    [{ select: 'timeout' }, event({ userId: UID })],
+    [{ select: 'timeout' }, event()],                 // user_id 없음 — 구독 연결 확인
+    [{ select: 'timeout' }, event({ userId: UID })], // user_id 있음 — 다른 계정 연결 확인
     [{ apply: 'deadlock detected' }, event()],
     [{ apply: 'deadlock detected' }, event({ userId: UID })],
   ]) {

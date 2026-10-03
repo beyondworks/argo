@@ -8,10 +8,14 @@
 //       expired/unpaid/paused → free. 그 외 미지 상태는 쓰기 없이 200 무시(신규 상태 방어).
 // 계정 연결(2026-10-03): 앱 설정의 결제 버튼은 custom user_id를 붙이지만 랜딩 결제 링크는 붙이지 않는다.
 //   예전에는 user_id가 없으면 400으로 끝나 실결제 2건(9/27·10/3)이 Pro에 연결되지 않았고 기록도 남지 않았다.
-//   ① user_id가 있으면 그 계정. ② 없으면 결제 이메일과 같은 이메일로 인증된 계정이 정확히 하나일 때만
-//   (public.ls_user_by_email). ③ 같은 구독이 이미 다른 계정에 붙어 있으면 적용하지 않는다(1결제 N계정 Pro 차단 —
-//   대사 src/lsreconcile.mjs의 duplicate-attribution 가드와 같은 조회). 못 찾았거나 연결하지 않은 건은
-//   billing_unmatched에 남기고 200 — LS가 재시도해도 결과가 같다. 로그에는 구독 번호와 가린 이메일만 남긴다.
+//   ① user_id가 있으면 그 계정 — 같은 구독이 이미 다른 계정에 붙어 있으면 적용하지 않는다(1결제 N계정 Pro 차단 —
+//   대사 src/lsreconcile.mjs의 duplicate-attribution 가드와 같은 조회).
+//   ② user_id가 없으면 먼저 그 구독 번호에 이미 연결된 계정(entitlements.ls_subscription_id). 정확히 한 계정이면 그 계정 —
+//   서명된 웹훅이나 운영자가 만든 연결이라 믿는다(결제 이메일 ≠ 계정 이메일이라 손으로 연결한 구독의 해지·만료도
+//   그 계정에 반영되게). 두 계정 이상이면(정상이면 없다) 적용하지 않는다. 구독 번호가 비면 건너뛴다.
+//   ③ 연결된 계정이 없으면 결제 이메일과 같은 이메일로 인증된 계정이 정확히 하나일 때만(public.ls_user_by_email).
+//   못 찾았거나 연결하지 않은 건은 billing_unmatched에 남기고 200 — LS가 재시도해도 결과가 같다.
+//   로그에는 구독 번호와 가린 이메일만 남긴다.
 // 응답: stale·other_subscription은 셀프호스트 수신자(app/api/billing/webhook/route.js)와 같은 200 본문.
 //       DB 오류는 500 — LS 재시도(3회·약 155초)로 한 번 더 기회를 준다.
 // 테스트: test/ls-webhook-edge.test.mjs(이 파일을 타입만 지워 node vm에서 실행),
@@ -122,25 +126,38 @@ Deno.serve(async (req) => {
     return json({ ok: true, unmatched: reason });
   };
 
+  // 구독 번호로 entitlements를 볼 때는 번호가 있을 때만 — 빈 값으로 조회하면 구독 번호 없는 옛 행 전부가 걸린다.
   // ① custom user_id — 앱 설정의 결제 버튼(app/c/[ws]/settings/checkout-link.mjs)이 붙인다. 정본과 같이 UUID일 때만 쓴다.
   const customId = evt?.meta?.custom_data?.user_id;
   let userId = typeof customId === 'string' && UUID_RE.test(customId) ? customId.toLowerCase() : null;
-  const via = userId ? 'user_id' : 'email';
-  // ② user_id가 없으면(랜딩 결제 링크) 결제 이메일로 — 인증된 계정이 정확히 하나일 때만 id가 온다.
-  if (!userId) {
-    if (!email) return unmatched('no-user');
-    const { data, error } = await sb.rpc('ls_user_by_email', { p_email: email });
-    if (error) return dbError('계정 찾기', error.message);
-    if (typeof data !== 'string' || !UUID_RE.test(data)) return unmatched('no-user');
-    userId = data.toLowerCase();
-  }
-  // ③ 같은 구독이 이미 다른 계정에 붙어 있으면 적용하지 않는다. 구독 번호가 비면 비교할 대상이 없다
-  //    (빈 값으로 조회하면 구독 번호 없는 옛 행 전부가 걸린다).
-  if (subId) {
-    const { data: dupes, error } = await sb.from('entitlements')
-      .select('user_id').eq('ls_subscription_id', subId).neq('user_id', userId).limit(1);
-    if (error) return dbError('중복 연결 확인', error.message);
-    if (dupes?.length) return unmatched('duplicate-attribution');
+  let via = 'user_id';
+  if (userId) {
+    // 같은 구독이 이미 다른 계정에 붙어 있으면 적용하지 않는다.
+    if (subId) {
+      const { data: dupes, error } = await sb.from('entitlements')
+        .select('user_id').eq('ls_subscription_id', subId).neq('user_id', userId).limit(1);
+      if (error) return dbError('중복 연결 확인', error.message);
+      if (dupes?.length) return unmatched('duplicate-attribution');
+    }
+  } else {
+    // ② user_id가 없으면(랜딩 결제 링크) 먼저 그 구독에 이미 연결된 계정 — 정확히 한 계정이면 그 계정.
+    if (subId) {
+      const { data: linked, error } = await sb.from('entitlements')
+        .select('user_id').eq('ls_subscription_id', subId).limit(2);
+      if (error) return dbError('구독 연결 확인', error.message);
+      if ((linked?.length ?? 0) > 1) return unmatched('duplicate-attribution');
+      if (linked?.length === 1) { userId = String(linked[0].user_id); via = 'subscription'; }
+    }
+    // ③ 연결된 계정이 없으면 결제 이메일로 — 인증된 계정이 정확히 하나일 때만 id가 온다.
+    //    (②에서 이 구독에 연결된 계정이 없음을 봤으니 다른 계정 연결 확인은 다시 하지 않는다.)
+    if (!userId) {
+      via = 'email';
+      if (!email) return unmatched('no-user');
+      const { data, error } = await sb.rpc('ls_user_by_email', { p_email: email });
+      if (error) return dbError('계정 찾기', error.message);
+      if (typeof data !== 'string' || !UUID_RE.test(data)) return unmatched('no-user');
+      userId = data.toLowerCase();
+    }
   }
   // 적용 — 인자는 정본 src/lsbilling.mjs mapSubscriptionEvent·applyLsEvent와 같다
   // (test/ls-webhook-edge.test.mjs가 같은 페이로드로 두 쪽 인자를 대조한다).

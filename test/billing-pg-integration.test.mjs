@@ -279,15 +279,23 @@ const ACC = {
   granted: 'c1000000-0000-4000-8000-000000000006',    // granted@example.test, 운영자 부여 Pro
   byId: 'c1000000-0000-4000-8000-000000000007',       // user_id 경로 — 결제 이메일과 계정 이메일이 다르다
   buyerUnv: 'c1000000-0000-4000-8000-000000000008',   // BUYER@example.test, 인증 안 됨 — buyer와 같은 주소의 미인증 계정
+  manual: 'c1000000-0000-4000-8000-000000000009',     // manual@example.test — 결제 이메일과 달라 운영자가 손으로 연결한 계정
+  manual2: 'c1000000-0000-4000-8000-00000000000a',    // manual2@example.test — 같은 경우, 결제 이메일이 다른 인증 계정(buyer)과 맞는다
+  dupA: 'c1000000-0000-4000-8000-00000000000b',       // dupa@example.test ┐ 같은 구독이 두 계정에 연결된 비정상 상태
+  dupB: 'c1000000-0000-4000-8000-00000000000c',       // dupb@example.test ┘
 };
 function seedAccounts() {
   sql(`insert into auth.users (id, email, email_confirmed_at) values
     ('${ACC.buyer}', 'buyer@example.test', now()), ('${ACC.other}', 'other@example.test', now()),
     ('${ACC.unverified}', 'unverified@example.test', null), ('${ACC.twinA}', 'Twin@example.test', now()),
     ('${ACC.twinB}', 'twin@example.test', now()), ('${ACC.granted}', 'granted@example.test', now()),
-    ('${ACC.byId}', 'byid@example.test', now()), ('${ACC.buyerUnv}', 'BUYER@example.test', null)
+    ('${ACC.byId}', 'byid@example.test', now()), ('${ACC.buyerUnv}', 'BUYER@example.test', null),
+    ('${ACC.manual}', 'manual@example.test', now()), ('${ACC.manual2}', 'manual2@example.test', now()),
+    ('${ACC.dupA}', 'dupa@example.test', now()), ('${ACC.dupB}', 'dupb@example.test', now())
     on conflict (id) do nothing`);
 }
+/** 운영자가 손으로 연결한 것과 같은 모양 — 정본 apply_ls_event를 직접 부른다(2026-10-03 두 건과 같은 방식). */
+const linkByHand = (uid, sub, at) => sql(`select public.apply_ls_event('${uid}'::uuid, 'pro', '${sub}', '7001', 'active', '${at}'::timestamptz, null, null)`);
 const byEmail = (e) => sql(`select coalesce(public.ls_user_by_email(${e === null ? 'null' : `'${e}'`})::text, 'NULL')`);
 const ent = (uid) => sql(`select coalesce((select plan || '|' || ls_subscription_id || '|' || ls_status from public.entitlements where user_id = '${uid}'), 'none')`);
 const unmatchedOf = (sub) => sql(`select coalesce(string_agg(reason || '|' || user_email, ',' order by reason), 'none') from public.billing_unmatched where ls_subscription_id = '${sub}'`);
@@ -401,19 +409,61 @@ test('엣지→SQL: 계정을 못 찾으면(없음·인증 안 됨·대소문자
   assert.equal(ent(ACC.twinB), 'none');
 });
 
-test('엣지→SQL: 같은 구독이 이미 다른 계정에 있으면 이메일·user_id 어느 경로로도 적용하지 않고 duplicate-attribution, 200', { skip }, async () => {
+test('엣지→SQL: user_id 경로 — 같은 구독이 이미 다른 계정에 있으면 적용하지 않고 duplicate-attribution, 200', { skip }, async () => {
   seedAccounts();
-  setEnt(ACC.other, { plan: 'pro', ls_subscription_id: 'LS-DUP', ls_status: 'active' }); // 운영자가 손으로 연결해 둔 경우와 같은 모양
-  const buyerBefore = ent(ACC.buyer);
-  const r = await deliver(lsEvent({ sub: 'LS-DUP', email: 'buyer@example.test' }));
-  assert.equal(r.status, 200);
-  assert.deepEqual(r.json, { ok: true, unmatched: 'duplicate-attribution' });
-  const r2 = await deliver(lsEvent({ sub: 'LS-DUP', userId: ACC.twinB, email: 'buyer@example.test' }));
-  assert.deepEqual(r2.json, { ok: true, unmatched: 'duplicate-attribution' });
-  assert.equal(ent(ACC.buyer), buyerBefore, '이메일로 찾은 계정에 적용하지 않았다');
-  assert.equal(ent(ACC.twinB), 'none', 'user_id 계정에도 적용하지 않았다');
+  setEnt(ACC.other, { plan: 'pro', ls_subscription_id: 'LS-DUP', ls_status: 'active' });
+  for (let i = 0; i < 2; i++) { // 재시도해도 기록은 한 행
+    const r = await deliver(lsEvent({ sub: 'LS-DUP', userId: ACC.twinB, email: 'buyer@example.test' }));
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.json, { ok: true, unmatched: 'duplicate-attribution' });
+  }
+  assert.equal(ent(ACC.twinB), 'none', 'user_id 계정에 적용하지 않았다');
   assert.equal(ent(ACC.other), 'pro|LS-DUP|active', '원래 계정은 그대로');
   assert.equal(unmatchedOf('LS-DUP'), 'duplicate-attribution|buyer@example.test', '같은 구독·사유는 한 행');
+});
+
+test('엣지→SQL: user_id 없음 + 그 구독이 두 계정에 연결(비정상) → 어느 쪽에도 적용하지 않고 duplicate-attribution, 200', { skip }, async () => {
+  seedAccounts();
+  setEnt(ACC.dupA, { plan: 'pro', ls_subscription_id: 'LS-DUP2', ls_status: 'active' });
+  setEnt(ACC.dupB, { plan: 'pro', ls_subscription_id: 'LS-DUP2', ls_status: 'active' });
+  const r = await deliver(lsEvent({ name: 'subscription_expired', sub: 'LS-DUP2', email: 'dupa@example.test', status: 'expired' }));
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.json, { ok: true, unmatched: 'duplicate-attribution' });
+  assert.equal(ent(ACC.dupA), 'pro|LS-DUP2|active', '이메일이 맞는 계정에도 적용하지 않았다');
+  assert.equal(ent(ACC.dupB), 'pro|LS-DUP2|active');
+  assert.equal(unmatchedOf('LS-DUP2'), 'duplicate-attribution|dupa@example.test');
+});
+
+// 2026-10-03 추가 규칙: user_id가 없으면 이메일보다 먼저 그 구독 번호에 이미 연결된 계정. 9/27 건처럼 결제 이메일 ≠ 계정
+// 이메일이라 운영자가 apply_ls_event로 손으로 연결한 구독은, 이 규칙이 없으면 해지·만료가 no-user 기록으로만 끝나 Pro가 남는다.
+test('엣지→SQL: user_id 없음 + 손으로 연결한 구독 + 결제 이메일이 어떤 계정과도 안 맞음 → 해지·만료가 그 계정에 반영', { skip }, async () => {
+  seedAccounts();
+  linkByHand(ACC.manual, 'LS-M1', '2026-09-27T08:56:00Z');
+  const cancel = await deliver(lsEvent({ name: 'subscription_cancelled', sub: 'LS-M1', email: 'payer-only@pay.example', status: 'cancelled',
+    updatedAt: '2026-10-05T00:00:00Z', endsAt: '2026-10-27T08:56:00Z' }));
+  assert.equal(cancel.status, 200);
+  assert.deepEqual(cancel.json, { ok: true, plan: 'pro', status: 'cancelled' });
+  assert.equal(ent(ACC.manual), 'pro|LS-M1|cancelled', '해지 예약 — 말일까지 pro');
+  assert.equal(sql(`select ends_at = '2026-10-27T08:56:00Z'::timestamptz from public.entitlements where user_id = '${ACC.manual}'`), 't', 'ends_at 기록');
+  const expire = await deliver(lsEvent({ name: 'subscription_expired', sub: 'LS-M1', email: 'payer-only@pay.example', status: 'expired',
+    updatedAt: '2026-10-27T09:00:00Z', endsAt: '2026-10-27T08:56:00Z' }));
+  assert.deepEqual(expire.json, { ok: true, plan: 'free', status: 'expired' });
+  assert.equal(ent(ACC.manual), 'free|LS-M1|expired', '만료 — free');
+  assert.equal(sql(`select public.is_pro_for('${ACC.manual}')`), 'f', '해지한 뒤 Pro가 남지 않는다');
+  assert.equal(unmatchedOf('LS-M1'), 'none', '미연결로 적지 않는다');
+});
+
+test('엣지→SQL: user_id 없음 + 구독이 A에 연결 + 결제 이메일은 인증된 다른 계정 B와 맞음 → A에 적용, B에 붙이지 않는다', { skip }, async () => {
+  seedAccounts();
+  linkByHand(ACC.manual2, 'LS-M2', '2026-09-27T08:56:00Z');
+  const buyerBefore = ent(ACC.buyer);
+  const r = await deliver(lsEvent({ name: 'subscription_updated', sub: 'LS-M2', email: 'buyer@example.test', status: 'past_due', updatedAt: '2026-10-27T09:00:00Z' }));
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.json, { ok: true, plan: 'pro', status: 'past_due' });
+  assert.equal(ent(ACC.manual2), 'pro|LS-M2|past_due', 'A(연결된 계정)에 반영');
+  assert.equal(ent(ACC.buyer), buyerBefore, 'B(이메일 계정)는 그대로');
+  assert.equal(sql(`select count(*) from public.entitlements where ls_subscription_id = 'LS-M2'`), '1', '구독은 여전히 한 계정에만');
+  assert.equal(unmatchedOf('LS-M2'), 'none');
 });
 
 test('엣지→SQL: user_id가 있으면 결제 이메일과 상관없이 그 계정 — 지금까지와 같다', { skip }, async () => {
@@ -423,10 +473,11 @@ test('엣지→SQL: user_id가 있으면 결제 이메일과 상관없이 그 �
   assert.equal(ent(ACC.byId), 'pro|LS-U1|active');
 });
 
-test('엣지→SQL: 운영자 부여(granted) 계정은 만료 이벤트가 와도 plan이 pro로 남고 결제 상태만 기록된다', { skip }, async () => {
+test('엣지→SQL: 운영자 부여(granted) 계정은 구독 연결로 만료 이벤트가 와도 plan이 pro로 남고 결제 상태만 기록된다', { skip }, async () => {
   seedAccounts();
   setEnt(ACC.granted, { plan: 'pro', granted: true, ls_subscription_id: 'LS-G', ls_status: 'active' });
-  const r = await deliver(lsEvent({ name: 'subscription_expired', sub: 'LS-G', email: 'granted@example.test', status: 'expired', endsAt: '2026-10-01T00:00:00Z' }));
+  // 결제 이메일은 어떤 계정과도 안 맞는다 — 구독 연결로만 이 계정을 찾는다
+  const r = await deliver(lsEvent({ name: 'subscription_expired', sub: 'LS-G', email: 'payer-of-granted@pay.example', status: 'expired', endsAt: '2026-10-01T00:00:00Z' }));
   assert.equal(r.status, 200);
   assert.equal(ent(ACC.granted), 'pro|LS-G|expired');
   assert.equal(sql(`select public.is_pro_for('${ACC.granted}')`), 't');
