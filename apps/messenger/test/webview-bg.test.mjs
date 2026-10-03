@@ -92,7 +92,11 @@ test('iOS 네이티브 배선 — 플러그인 등록·권한·명령 이름이 
   assert.match(read('src-tauri/plugins/ios-webview/build.rs'), /COMMANDS: &\[&str\] = &\["set_background"\]/);
   assert.match(read('src-tauri/plugins/ios-webview/src/lib.rs'), /Builder::new\("ios-webview"\)[\s\S]*generate_handler!\[ios::set_background\]/);
   const swift = read('src-tauri/plugins/ios-webview/ios/Sources/IosWebviewPlugin.swift');
-  assert.match(swift, /override func load\(webview: WKWebView\)[\s\S]*hideFormAccessoryBar\(\)/, '플러그인이 실릴 때 보조 막대를 숨긴다');
+  // load() 본문 안의 호출만 인정한다 — [\s\S]*로 두면 아래 hideFormAccessoryBar 정의와도 맞아 호출을 지워도 통과했다(분리 검수 M2).
+  // 네이티브 동작(막대가 실제로 사라지는지·바탕색)은 문자열로 증명되지 않는다 — 시뮬레이터 확인 항목으로 따로 남긴다.
+  assert.match(swift, /override func load\(webview: WKWebView\) \{[^}]*Self\.hideFormAccessoryBar\(\)[^}]*\}/, '플러그인이 실릴 때 보조 막대를 숨긴다');
+  assert.match(swift, /@convention\(block\) \(AnyObject\) -> UIView\? = \{ _ in nil \}/, '보조 막대 getter는 nil을 돌려준다');
+  assert.match(swift, /webview\.backgroundColor = color\s+webview\.scrollView\.backgroundColor = color/, '웹뷰와 스크롤 뷰를 테마 색으로 칠한다');
   assert.match(swift, /@objc public func setBackground\(_ invoke: Invoke\)/, 'Rust의 run_mobile_plugin("setBackground")와 같은 이름');
   assert.match(swift, /@_cdecl\("init_plugin_ios_webview"\)/);
 });
