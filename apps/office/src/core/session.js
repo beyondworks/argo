@@ -5,7 +5,7 @@ import * as SAMPLE from '../data/sample.js';
 import { configured, getClient, devPasswordLogin } from './supabase.js';
 import { isDesktop } from './platform.js';
 import { restore, persist, setStorageScope } from './save.js';
-import { isSameUserEcho } from './auth-events.js';
+import { isSameUserEcho, switchNeedsReload } from './auth-events.js';
 
 export let SPACES = SAMPLE.SPACES;
 export let ME = SAMPLE.ME;
@@ -19,7 +19,7 @@ export const useSession = () => useSyncExternalStore((l) => { listeners.add(l); 
 export const canManage = (key) => { const s = SPACES.find((x) => x.key === key); return s?.kind === 'me' || s?.role === 'owner' || s?.role === 'admin'; };
 
 const CACHE = 'argo-office-session';
-let applying = 0, spacesAt = 0;
+let applying = 0, spacesAt = 0, pageUid = null; // pageUid: 이 페이지에서 처음 데이터를 읽은 계정(auth-events.js switchNeedsReload)
 
 /** 내가 속한 조직(퇴사·삭제 제외) → 공간. 조직 키는 주소에 쓰는 slug, 서버 키는 id */
 async function loadSpaces(sb, me) {
@@ -32,8 +32,10 @@ async function loadSpaces(sb, me) {
 }
 
 async function apply(sb, session) {
-  const request = ++applying;
   const uid = session?.user.id ?? null;
+  if (switchNeedsReload(pageUid, uid)) { location.reload(); return; } // 다른 계정 — 앞 계정 데이터가 남은 메모리를 버린다(저장 범위를 바꾸기 전에)
+  if (uid) pageUid ??= uid;
+  const request = ++applying;
   mode = 'loading'; setStorageScope(uid); emit();
   const [{ activateDraftScope }, { activateSyncScope }] = await Promise.all([import('./store.js'), import('./sync.js')]);
   if (request !== applying) return;

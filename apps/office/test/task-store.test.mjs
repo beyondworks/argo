@@ -8,7 +8,7 @@ import { refetchDue, keepResponse, makeDayClock } from '../src/core/refetch.js';
 import { viewRows, taskOrgKeys } from '../src/core/task-model.js';
 
 const TODAY = '2026-10-04';
-function load({ failPeople = [] } = {}) {
+function load({ failPeople = [], gate = null } = {}) {
   const ME = { id: 'u1', name: '나' };
   const SPACES = [{ key: 'me', kind: 'me', role: 'owner' }, { key: 'acme', id: 'org-1', kind: 'org', role: 'member' }, { key: 'beta', id: 'org-2', kind: 'org', role: 'member' }];
   const db = {
@@ -17,9 +17,9 @@ function load({ failPeople = [] } = {}) {
     'org-2': [{ id: 'Z', assignee: 'u1', created_by: 'u2', due_on: TODAY, done_at: null }],
   };
   const calls = [];
-  const handle = (fn, args) => {
+  const handle = async (fn, args) => {
     calls.push(`${fn}:${args.p_org}`);
-    if (fn === 'office_task_list') return { data: db[args.p_org].map((r) => ({ ...r })) };
+    if (fn === 'office_task_list') { const data = db[args.p_org].map((r) => ({ ...r })); if (gate) await gate(); return { data }; } // 부른 때의 목록을 gate가 풀릴 때 돌려준다
     if (fn === 'office_org_people') return failPeople.includes(args.p_org) ? { error: { message: 'boom' } } : { data: [{ user_id: 'u1', name: '나' }, { user_id: 'u2', name: '동료' }] };
     if (fn === 'office_task_write') { const r = db[args.p_org].find((x) => x.id === args.p_data.id); if (args.p_action === 'task.done') r.done_at = '2026-10-04T03:00:00Z'; return { data: r }; }
     throw new Error(`unexpected ${fn}`);
@@ -38,7 +38,7 @@ function load({ failPeople = [] } = {}) {
   const module = { exports: {} };
   const globals = { ...deps, module, exports: module.exports };
   new Function(...Object.keys(globals), transformSync(source, { loader: 'js', format: 'cjs' }).code)(...Object.values(globals));
-  return { tasks: module.exports, calls, SPACES, tabReturn: () => tabReturn() };
+  return { tasks: module.exports, calls, SPACES, db, failPeople, tabReturn: () => tabReturn() };
 }
 const ids = (rows) => (rows ?? []).map((r) => r.id).sort();
 
@@ -87,4 +87,44 @@ test('탭 복귀: 개인 공간이 떠 있으면 지금 속한 조직만 다시 
     assert.deepEqual(calls.filter((c) => c.startsWith('office_task_list')).sort(), ['office_task_list:null', 'office_task_list:org-1']);
     assert.equal(calls.filter((c) => c.startsWith('office_org_people')).length, 0, '탭 복귀는 직원 목록을 다시 받지 않는다');
   } finally { Date.now = realNow; delete globalThis.document; }
+});
+
+const flush = () => new Promise((r) => setTimeout(r, 0));
+
+// 이유(10/4 분리 검수 LOW 2·3차 검수 LOW 3): 할 일을 연달아 고치면 다시 읽기 L1·L2가 겹친다. L2가 먼저 도착해 적용된 뒤 늦게 온 L1이 화면을 옛 값으로 덮으면 안 된다
+test('다시 읽기가 거꾸로 도착해도 화면은 더 늦게 시작한 읽기의 값', async () => {
+  const waits = [];
+  const { tasks, db } = load({ gate: () => new Promise((r) => waits.push(r)) });
+  const first = tasks.loadTasks('acme'); await flush(); waits.shift()(); await first;
+  db['org-1'][0].title = '첫째';
+  const l1 = tasks.loadTasks('acme', true); await flush();
+  db['org-1'][0].title = '둘째';
+  const l2 = tasks.loadTasks('acme', true); await flush();
+  const [r1, r2] = waits.splice(0);
+  r2(); await l2;
+  assert.equal(tasks.useTaskRows('acme').find((r) => r.id === 'X').title, '둘째');
+  r1(); await l1;
+  assert.equal(tasks.useTaskRows('acme').find((r) => r.id === 'X').title, '둘째', '늦게 온 L1은 버린다');
+});
+
+// 이유(10/4 3차 검수 LOW 3): 쓰기 뒤에는 직원 목록을 다시 받지 않지만, 30초가 지나 화면을 다시 열면 받는다 — 새 직원이 맡길 사람 목록에 나와야 한다
+test('30초 뒤 다시 열면 직원 목록도 다시 받는다', async () => {
+  const { tasks, calls } = load();
+  const realNow = Date.now;
+  try {
+    await tasks.loadTasks('acme');
+    const base = realNow(); Date.now = () => base + 31_000;
+    await tasks.loadTasks('acme');
+    assert.equal(calls.filter((c) => c === 'office_org_people:org-1').length, 2);
+  } finally { Date.now = realNow; }
+});
+
+// 이유(10/4 3차 검수 LOW 1): 직원 목록을 한 번 못 받으면 빈 목록이 "받아 둔 목록"으로 남아 다시 묻지 않았다 — 다음 다시 읽기에서 다시 받는다
+test('직원 목록을 못 받았으면 다음 다시 읽기에서 다시 받는다', async () => {
+  const { tasks, failPeople } = load({ failPeople: ['org-2'] });
+  await tasks.loadTasks('beta');
+  assert.deepEqual(tasks.peopleIn('beta'), []);
+  failPeople.length = 0; // 서버 회복
+  await tasks.loadTasks('beta', true);
+  assert.deepEqual(tasks.peopleIn('beta').map((p) => p.user_id), ['u1', 'u2']);
 });

@@ -46,13 +46,14 @@ async function fetchTasks(space, quiet, again) {
   const org = orgOf(space);
   if (org === undefined) return;
   if (!quiet) set(space, { loading: true, error: null });
-  const started = Date.now(), order = ++seq, owner = ME.id, had = mine(space)?.people;
+  const started = Date.now(), order = ++seq, owner = ME.id, prev = mine(space);
   try {
-    const [rows, people] = await Promise.all([rpc('office_task_list', { p_org: org }),
-      (quiet || again) && had ? had : org ? rpc('office_org_people', { p_org: org }).catch(() => had ?? []) : []]);
+    // 직원 목록: 다시 읽기는 받아 둔 것을 쓰되, 지난번에 못 받았으면(peopleOk false) 다시 받는다(10/4 3차 검수: 한 번 실패한 빈 목록이 계속 남았다). 못 받으면 null
+    const [rows, got] = await Promise.all([rpc('office_task_list', { p_org: org }),
+      (quiet || again) && prev?.peopleOk ? prev.people : org ? rpc('office_org_people', { p_org: org }).then((p) => p ?? [], () => null) : []]);
     // 계정이 바뀌었거나(LOW 10), 더 늦게 시작한 읽기가 이미 적용됐거나, 탭 복귀 읽기 사이 쓰기가 시작됐거나 더 새 읽기가 먼저 끝났으면 이 응답은 옛것이다
     if (!keepResponse({ owner, nowOwner: ME.id, quiet, writing, started, newerAt: mine(space)?.at ?? 0, order, appliedOrder: mine(space)?.order ?? 0 })) return;
-    set(space, { rows: rows ?? [], people: people ?? [], loading: false, error: null, at: Date.now(), order });
+    set(space, { rows: rows ?? [], people: got ?? prev?.people ?? [], peopleOk: got !== null, loading: false, error: null, at: Date.now(), order });
   } catch (e) { if (!quiet && owner === ME.id) set(space, { loading: false, error: taskError(e) }); }
 }
 

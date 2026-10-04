@@ -35,9 +35,9 @@ async function fetchWindow(key, from, to) {
   const owner = ME.id;
   try {
     const data = configured ? await list(from, to) : sampleList();
-    if (!keepResponse({ owner, nowOwner: ME.id })) return stale(key, from, to); // 계정을 바꾸는 사이 온 옛 계정 응답은 버린다(18차 검수 LOW 10)
+    if (!keepResponse({ owner, nowOwner: ME.id })) return cacheOwner === owner ? stale(key, from, to) : undefined; // 계정을 바꾸는 사이 온 옛 계정 응답은 버린다(18차 검수 LOW 10) — 이미 새 계정으로 비웠으면 새 계정 읽기가 따로 돈다(10/4 3차 검수: 같은 창을 한 번 더 읽었다)
     cache.set(key, { events: data?.events ?? [], orgs: data?.orgs ?? [], loading: false, error: null, at: Date.now() });
-  } catch (e) { if (owner !== ME.id) return stale(key, from, to); cache.set(key, { ...cache.get(key), loading: false, error: calError(e) }); }
+  } catch (e) { if (owner !== ME.id) return cacheOwner === owner ? stale(key, from, to) : undefined; cache.set(key, { ...cache.get(key), loading: false, error: calError(e) }); }
   emit();
 }
 

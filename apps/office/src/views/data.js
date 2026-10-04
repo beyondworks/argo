@@ -32,8 +32,8 @@ export function useViewTasks(space) {
   const demo = useMemo(() => {
     if (!sample()) return null;
     // 예시 할 일에는 분류 이름을 붙여 준다(서버 office_task_list가 붙이는 것과 같은 칸)
-    const rowsIn = (key) => SAMPLE_TASKS.filter((x) => x.org === (key === 'me' ? null : key) && !x.cancelled_at).map((x) => ({ ...x, category: SAMPLE_TASK_CATEGORIES[key]?.find((c) => c.id === x.category_id)?.name ?? null }));
-    const mineRows = rowsIn(space), byOrg = new Map(orgs.map((k) => [k, rowsIn(k)]));
+    const sampleIn = (key) => SAMPLE_TASKS.filter((x) => x.org === (key === 'me' ? null : key) && !x.cancelled_at).map((x) => ({ ...x, category: SAMPLE_TASK_CATEGORIES[key]?.find((c) => c.id === x.category_id)?.name ?? null }));
+    const mineRows = sampleIn(space), byOrg = new Map(orgs.map((k) => [k, sampleIn(k)]));
     return { rows: viewRows({ space, own: mineRows, orgRows: byOrg, orgKeys: orgs, me: ME.id }), mineRows, byOrg };
   }, [space, version, orgs.join(), ME.id]);
   // 예시 모드: 같은 예시 행을 메뉴 배지·챙길 것(18차)에도 — 배지는 할 일 저장소만 보고 예시 데이터는 이 묶음에 있다
