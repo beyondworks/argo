@@ -16,6 +16,15 @@ export function checkKey(key) {
   return k;
 }
 const encodeKey = (key) => checkKey(key).split('/').map(encodeURIComponent).join('/');
+/** 받는 파일 이름(공유 링크 내려받기) — 200글자(코드 포인트)를 넘으면 확장자는 남기고 그 앞 이름을 자른다(분리 검수 2차 LOW-5: 확장자가 잘리면 받은 파일이 열리지 않는다).
+ *  확장자 = 마지막 '.' 뒤 1~16글자(이름 전체가 확장자인 '.env' 같은 경우는 이름으로 본다). 코드 포인트로 세므로 경계의 이모지가 반만 남지 않는다(LOW-7) */
+export function downloadName(filename, max = 200) {
+  const chars = Array.from(String(filename));
+  if (chars.length <= max) return chars.join('');
+  const dot = chars.lastIndexOf('.');
+  const ext = dot > 0 && chars.length - dot - 1 >= 1 && chars.length - dot - 1 <= 16 ? chars.slice(dot) : [];
+  return [...chars.slice(0, (ext.length ? dot : chars.length)).slice(0, max - ext.length), ...ext].join('');
+}
 
 /** 환경 변수에서 R2 설정 — 하나라도 없으면 503 r2_not_configured(Preview 배포에는 일부러 넣지 않는다 — 총괄 결정 7) */
 export function r2FromEnv(env, fetchImpl = fetch) {
@@ -48,7 +57,7 @@ export function r2Client({ endpoint, bucket, accessKeyId, secretAccessKey, regio
     bucket,
     /** 브라우저용 서명 주소. PUT은 content-type·content-length·if-none-match: *를 서명에 넣는다 — 다른 형식·크기·덮어쓰기는 R2가 거절한다.
      *  돌려주는 headers는 브라우저가 그대로 보낼 것(content-length는 브라우저가 몸체 길이로 직접 채운다) */
-    async presign({ method, key, expires, contentType, contentLength, attachment = false }) {
+    async presign({ method, key, expires, contentType, contentLength, attachment = false, filename = null }) {
       if (expires != null && (!Number.isInteger(expires) || expires < 1 || expires > MAX_TTL)) throw fail(400, 'expires');
       if (method === 'PUT') {
         if (!contentType || !Number.isSafeInteger(contentLength) || contentLength < 0) throw fail(400, 'put_headers');
@@ -58,7 +67,10 @@ export function r2Client({ endpoint, bucket, accessKeyId, secretAccessKey, regio
       }
       if (method !== 'GET') throw fail(400, 'method');
       // attachment: 응답을 내려받기로(response-content-disposition — 쿼리도 서명에 들어간다. R2 실측 10/2: 지원). html·svg 같은 활성 형식이 주소를 직접 열었을 때 그 형식으로 열리지 않게
-      const url = attachment ? `${objectUrl(key)}?response-content-disposition=attachment` : objectUrl(key);
+      // filename: 받는 파일 이름(공유 링크 내려받기 — 키에는 이름이 없다). 줄바꿈·따옴표가 끼지 않게 RFC 5987 인코딩으로만 싣는다.
+      // 200글자(코드 포인트)를 넘으면 확장자를 남기고 앞 이름을 자른다(downloadName) — UTF-16 단위로 자르면 이모지가 반만 남아 encodeURIComponent가 URIError를 던진다(분리 검수 LOW-7)
+      const disposition = filename ? `attachment; filename*=UTF-8''${encodeURIComponent(downloadName(filename))}` : 'attachment';
+      const url = attachment ? `${objectUrl(key)}?response-content-disposition=${encodeURIComponent(disposition)}` : objectUrl(key);
       return { url: await presignUrl({ url, method, expires: expires ?? GET_TTL, accessKeyId, secretAccessKey, region }), expiresIn: expires ?? GET_TTL };
     },
     /** 크기·etag·형식 — 없으면 null */

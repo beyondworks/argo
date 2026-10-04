@@ -278,3 +278,39 @@
 .card-deals .bizui-link { flex: 1; min-width: 0; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card-deals strong.mono { font-size: 13.5px; }
 .card-empty { margin: 0; padding: 14px 16px; border-radius: var(--rs); background: var(--lift); }
+
+/* 14차 거래·거래처 보강 — 상태는 글자 배지로만(카드·행 한쪽 색 막대 없음) */
+/* 거래처 탭 위 '챙길 것' — 세 칸, 누르면 그 거래처만(누른 칸은 테두리 전체 고리) */
+.biz-attn { display: grid; gap: 8px; margin-bottom: 12px; padding: 12px 14px; border-radius: var(--rs); background: var(--surface); }
+.biz-attn h2 { font-size: 13px; font-weight: 620; }
+.biz-attn-items { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.biz-attn-item { display: grid; justify-items: start; align-content: start; gap: 4px; min-width: 0; padding: 10px 12px; border-radius: var(--rs); background: var(--lift); text-align: left; transition: box-shadow 120ms var(--ease-out); }
+.biz-attn-item .name { font-size: 13px; font-weight: 550; }
+.biz-attn-item .hint { font-size: 12px; color: var(--fg-3); overflow-wrap: anywhere; }
+.biz-attn-item.on { box-shadow: inset 0 0 0 1.5px var(--fg-2); }
+.biz-attn-item:disabled { cursor: default; }
+.biz-attn-item:disabled .name { color: var(--fg-3); }
+@media (hover: hover) { .biz-attn-item:not(:disabled):hover { background-image: linear-gradient(var(--wash), var(--wash)); } }
+@media (max-width: 700px) { .biz-attn-items { grid-template-columns: minmax(0, 1fr); } }
+@media (prefers-reduced-motion: reduce) { .biz-attn-item { transition: none; } }
+.biz-list-tools { flex-wrap: wrap; }
+/* 거래처 카드 요약(받은 돈·진행 중 금액·입금 지연) — 넓으면 세 칸, 좁으면 한 줄씩 */
+.card-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@container (max-width: 520px) { .card-summary { grid-template-columns: minmax(0, 1fr); } }
+.card-summary .sub { margin: 4px 0 0; font-size: 12px; color: var(--fg-3); overflow-wrap: anywhere; }
+.card-summary .sub .badge { margin-right: 4px; }
+.card-basis { margin: -10px 0 0; text-align: right; }
+.card-archived { display: flex; align-items: center; gap: 8px; margin: 0; }
+.card-fields dd { display: flex; align-items: baseline; gap: 6px; }
+.card-fields dd > .redact { min-width: 0; }
+.card-copy { flex: none; margin-left: auto; color: var(--fg-3); align-self: center; }
+.card-deals .grow { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.card-deals .when { flex: none; font-size: 12px; color: var(--fg-3); }
+.card-deals .bizui-link.dim { color: var(--fg-3); font-weight: 450; }
+.card-deals li.card-links-head { padding: 8px 0 2px; border-bottom: 0; }
+/* 칸반 카드·거래 상세의 입금 예정일 */
+.deal-card-due { display: flex; align-items: center; gap: 6px; }
+.deal-head { display: flex; align-items: center; gap: 8px; }
+.deal-head > p { flex: 1; min-width: 0; }
+.deal-due { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 13px; }
+.deal-due > .label { color: var(--fg-3); }

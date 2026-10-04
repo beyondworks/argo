@@ -29,9 +29,13 @@ const rig = (props) => { const calls = { menu: [], peek: [] }; let peek = false;
 
 // 이유(9/29): 값 위 우클릭 = 가리기(가려져 있으면 가리기 해제) 한 줄 메뉴. 읽기 전용·바꿀 수 없는 값·여러 칸 고름(표가 한 번에 연다)이면 메뉴 없음
 test('잠금: 값 하나 우클릭 가리기·해제', () => {
-  const toggle = () => {};
+  let toggled = 0;
+  const toggle = () => { toggled += 1; };
   let r = rig({ on: false, onToggle: toggle }); r.h.onContextMenu(ev());
-  assert.deepEqual(r.calls.menu, [[{ label: 'bizui.redact', icon: 'eyeOff', run: toggle }]]);
+  const [only] = r.calls.menu[0];
+  assert.equal(r.calls.menu.length, 1); assert.equal(r.calls.menu[0].length, 1);
+  assert.deepEqual({ label: only.label, icon: only.icon }, { label: 'bizui.redact', icon: 'eyeOff' });
+  only.run(); assert.equal(toggled, 1, '누르면 그 값의 가리기를 바꾼다(전체 가리기가 켜져 있으면 쓰지 않도록 감싼다 — 18차 2차 검수 LOW-A)');
   r = rig({ on: true, onToggle: toggle }); r.h.onContextMenu(ev());
   assert.equal(r.calls.menu[0][0].label, 'bizui.unredact');
   for (const p of [{ disabled: true }, { onToggle: null }, { picked: true }, { defer: true }]) { r = rig({ on: true, onToggle: toggle, ...p }); r.h.onContextMenu(ev()); assert.equal(r.calls.menu.length, 0, JSON.stringify(p)); }

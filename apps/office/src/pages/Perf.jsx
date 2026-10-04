@@ -16,7 +16,7 @@ import { openMenu } from '../ui/Menu.jsx';
 import { Icon } from '../ui/Icon.jsx';
 import { PERF_DICT } from './perf-i18n.js';
 import './perf.css';
-import { Hide } from '../business/Redact.jsx';
+import { Hide, Redact } from '../business/Redact.jsx';
 
 registerDict(PERF_DICT);
 // 평가 레포트(트랙 C, 유건 10/2 — 인트라넷 인사고과 레포트)는 그 탭을 열 때만 받는다
@@ -146,7 +146,7 @@ function Goals({ space, goals, year, reload, readOnly }) {
       return <div key={g.position} className="perf-goal">
         <div className="perf-goal-head"><strong>{g.title}</strong>{!readOnly && <button type="button" className="icon-btn" aria-label={t('perf.goals.edit')} onClick={() => setEdit({ id: g.id, position: g.position, title: g.title, metric: g.metric ?? '', target: g.target ?? '' })}><Icon name="draft" size={13} /></button>}</div>
         {pct != null && <span className="bar" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}><i style={{ width: `${pct}%` }} /></span>}
-        <span className="dim small mono">{goalValue(g)}{pct != null ? ` · ${pct}%` : ''}</span>
+        <span className="dim small mono">{['contract', 'paid'].includes(g.metric) ? <Redact kind="amount">{goalValue(g)}</Redact> : goalValue(g)}{pct != null ? ` · ${pct}%` : ''}</span>
       </div>;
     })}</div>
     {edit && <Modal open title={t(edit.id ? 'perf.goals.edit' : 'perf.goals.add')} onClose={() => setEdit(null)} footer={<>

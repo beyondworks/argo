@@ -17,6 +17,8 @@ import { groupCrews, isMine } from '../core/crew-list.js';
 import { showToast } from './Overlay.jsx';
 import { SPACES, ME, canManage, getMode } from '../core/session.js';
 import { restore, persist, scopedStorageKey } from '../core/save.js';
+import { useTaskRows, useTaskDay } from '../core/tasks.js';
+import { dueCounts } from '../core/task-model.js';
 
 const ACCEPTS = ['mail', 'page', 'file', 'record'];
 
@@ -34,7 +36,7 @@ function SpaceSwitcher({ space }) {
   return (
     <button type="button" className="space-switch" onClick={open} aria-haspopup="menu">
       <SpaceMark space={cur} />
-      <span className="space-name"><b>{cur.kind === 'me' ? t('space.me') : cur.name}</b><small>{cur.kind === 'me' ? ME.email : [t(`space.role.${cur.role}`), cur.members != null && t('space.members', { n: cur.members })].filter(Boolean).join(' · ')}</small></span>
+      <span className="space-name"><b>{cur.kind === 'me' ? t('space.me') : cur.name}</b><small>{cur.kind === 'me' ? <span className="ha">{ME.email}</span> : [t(`space.role.${cur.role}`), cur.members != null && t('space.members', { n: cur.members })].filter(Boolean).join(' · ')}</small></span>
       <Icon name="caret" size={14} />
     </button>
   );
@@ -84,7 +86,7 @@ function PageRow({ page, depth, path, open, onToggle, hasKids }) {
   const to = `${baseOf(page.space)}/p/${page.id}`;
   const menu = menuProps(() => pageMenu(page));
   return (
-    <div ref={setNodeRef} style={{ transform: CSS.Translate.toString(transform), transition, paddingLeft: 6 + depth * 14 }} className={`tree-row${path === to ? ' active' : ''}${isDragging ? ' dragging' : ''}`}
+    <div ref={setNodeRef} data-tree-id={page.id} style={{ transform: CSS.Translate.toString(transform), transition, paddingLeft: 6 + depth * 14 }} className={`tree-row${path === to ? ' active' : ''}${isDragging ? ' dragging' : ''}`}
       {...attributes} {...mergeHandlers(mouseListeners, menu)} role="treeitem" aria-expanded={hasKids ? open : undefined} aria-selected={path === to}>
       <button type="button" className={`tree-toggle${hasKids ? '' : ' leaf'}`} tabIndex={-1} aria-label={t('more')} onClick={(e) => { e.stopPropagation(); onToggle(page.id); }}>
         <Icon name={hasKids ? (open ? 'caret' : 'chevron') : (page.restricted ? 'lock' : 'doc')} size={14} />
@@ -128,11 +130,12 @@ function CrewRow({ crew, space, group, order, mode, movable }) {
   const owner = crew.company ? t('crew.owner.company') : isMine(crew, ME.id) ? t('crew.owner.me') : crew.ownerName || t('crew.owner.unknown');
   const job = crew.job || (crew.dept ? '' : crew.role); // 예시 데이터는 role 하나뿐
   const tip = [job ? t('crew.tip.job', { job }) : t('crew.tip.noJob'), crew.dept && t('crew.tip.dept', { dept: crew.dept }), t('crew.tip.owner', { name: isMine(crew, ME.id) ? ME.name : owner })].filter(Boolean).join('\n');
-  // 터치는 길게 누르기 = 메뉴(트리와 같은 규칙). 키보드는 끌기를 시작하지 않는다 — Enter·Space는 맡기기(검수 MEDIUM-1), 순서는 마우스로
+  // 터치는 길게 누르기 = 메뉴(트리와 같은 규칙). 키보드는 끌기를 시작하지 않는다 — Enter·Space는 누르기와 같이 상세 열기(검수 MEDIUM-1), 순서는 마우스로
   const { onTouchStart, onKeyDown, ...dragListeners } = sort.listeners ?? {};
   const { role, tabIndex, ...sortAttrs } = sort.attributes ?? {}; // 줄 자체는 초점을 받지 않는다(안쪽 버튼 하나만)
   const menu = menuProps(() => crewMenu(crew, space));
-  const open = () => (direct ? setUi({ assign: { space, crew: crew.id, items: [] } }) : showToast(t('crew.viaChannel', { crew: crew.name })));
+  // 누르면 오른쪽 에이전트 상세(17차 A-1) — 맡기기는 상세 맨 위 단추·크루 메뉴·끌어 놓기로. 1:1을 받지 않는 크루의 안내도 상세가 보인다
+  const open = () => setUi({ crew: { id: crew.id, space } });
   return (
     <div ref={sort.setNodeRef} style={{ transform: CSS.Translate.toString(sort.transform), transition: sort.transition }} className={`crew-row${can ? ' drop-ok' : ''}${isOver || fileOver ? ' drop-over' : ''}${sort.isDragging ? ' dragging' : ''}`}
       {...sortAttrs} {...mergeHandlers(dragListeners, menu)}
@@ -191,7 +194,7 @@ function FavRow({ fav, space, path }) {
   const inner = page ? <Icon name={page.restricted ? 'lock' : 'doc'} /> : r ? <Icon name={routeIcon(r)} /> : <Face id={crew.id} size={18} />;
   return <div ref={setNodeRef} style={{ transform: CSS.Translate.toString(transform), transition }} className={isDragging ? 'dragging' : ''} {...attributes} {...mergeHandlers(mouse, menu)} role="none">
     {to ? <Link to={to} className={`nav-item${path === to ? ' active' : ''}`} aria-current={path === to ? 'page' : undefined} draggable={false}>{inner}<span className="nav-label">{label}</span>{sp && <small className="fav-space">{sp.kind === 'me' ? t('space.me') : sp.name}</small>}</Link>
-      : <button type="button" className="nav-item" onClick={() => setUi({ assign: { space, crew: crew.id, items: [] } })}>{inner}<span className="nav-label">{label}</span></button>}
+      : <button type="button" className="nav-item" onClick={() => setUi({ crew: { id: crew.id, space } })}>{inner}<span className="nav-label">{label}</span></button>}
   </div>;
 }
 
@@ -222,6 +225,9 @@ export function Sidebar({ space, path }) {
   const pendingHere = approvals.filter(approvalsIn(space)).length;
   const crews = crewsIn(useStore((s) => s.crews), space, ME.id);
   const unread = mails.filter((m) => m.folder === 'inbox' && m.unread).length;
+  // 할 일 배지(18차) = 내가 맡은 일의 기한 지남 + 오늘 마감 — 할 일 화면과 같은 행(개인 공간은 읽어 둔 조직 할 일 포함)을 같은 함수로 센다. 이미 받아 둔 것만(새로 읽지 않는다),
+  // 아직 안 받았으면 숨긴다. 탭 복귀 때 할 일 화면과 같은 키로 1분에 한 번까지 다시 읽고(watch), 자정을 넘겼으면 '오늘'을 다시 계산한다
+  const due = dueCounts(useTaskRows(space, true), useTaskDay(), ME.id);
   const at = (p) => path === p;
   const kind = isMe ? 'me' : 'org';
   const nav = readNav(useStore((s) => s.layouts['nav:me']?.items), kind);
@@ -239,7 +245,8 @@ export function Sidebar({ space, path }) {
     journal: { to: `${base}/journal`, icon: NAV_ICON.journal, label: t('nav.journal'), active: at(`${base}/journal`) },
     docs: { to: `${base}/docs`, icon: NAV_ICON.docs, label: t('nav.docs'), active: at(`${base}/docs`) },
     perf: { to: `${base}/perf`, icon: NAV_ICON.perf, label: t('nav.perf'), active: at(`${base}/perf`) },
-    ...Object.fromEntries(['people', 'company'].map((v) => [v, { to: `${base}/${v}`, icon: NAV_ICON[v], label: t(`nav.${v}`), active: at(`${base}/${v}`) }])),
+    ...Object.fromEntries(['people', 'company', 'agents'].map((v) => [v, { to: `${base}/${v}`, icon: NAV_ICON[v], label: t(`nav.${v}`), active: at(`${base}/${v}`) }])),
+    tasks: { to: `${base}/tasks`, icon: NAV_ICON.tasks, label: t('nav.tasks'), count: due && due.overdue + due.today, active: at(`${base}/tasks`) },
     shared: { to: '/me/shared', icon: NAV_ICON.shared, label: t('nav.shared'), active: at('/me/shared') },
     knowhow: { to: `${base}/knowhow`, icon: NAV_ICON.knowhow, label: t('nav.knowhow'), active: at(`${base}/knowhow`) },
     tools: { to: `${base}/tools`, icon: NAV_ICON.tools, label: t('nav.tools'), active: at(`${base}/tools`) },

@@ -17,9 +17,10 @@ export async function sweepStorage({ url, key, r2, limit = 500 }, fetchImpl = fe
     if (!r.ok) throw fail('db');
     return r.json();
   };
-  const keys = ((await rpc('office_storage_sweep', { p_limit: limit }))?.keys ?? []).filter((k) => typeof k === 'string' && k);
+  const out = await rpc('office_storage_sweep', { p_limit: limit });
+  const keys = (out?.keys ?? []).filter((k) => typeof k === 'string' && k);
   const done = await eachLimited(keys, 8, (k) => r2.del(k));
   const gone = keys.filter((k) => done.get(k));
   const rows = gone.length ? await rpc('r2_object_forget', { p_keys: gone }) : 0;
-  return { objects: gone.length, left: keys.length - gone.length, rows: Number(rows) || 0 };
+  return { objects: gone.length, left: keys.length - gone.length, rows: Number(rows) || 0, links: Number(out?.links) || 0 }; // links: 지운 만료·끊은 공유 링크 행(15차)
 }

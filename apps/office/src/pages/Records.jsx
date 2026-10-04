@@ -17,11 +17,14 @@ import { setUi } from '../core/ui-state.js';
 import { navigate } from '../core/router.jsx';
 import { loadDocBody } from '../core/pull.js';
 import { mdToDoc } from '../core/board.js';
-import { folderKey, isoDay, byDate, journalDigest, fileGroup, canQuickDecide } from '../core/folders.js';
+import { folderKey, isoDay, byDate, journalDigest, fileGroup, canQuickDecide, HUMAN } from '../core/folders.js';
 import { FolderView, DateSections, useFolder, folderName, FolderIcon, openItem, closeItem, pickFolder, when, countText } from '../ui/FolderView.jsx';
 import { kstDay } from '../core/task-model.js';
 import { DocView } from '../ui/DocView.jsx';
-import { SPACES, ME } from '../core/session.js';
+import { Markdown } from '../ui/Markdown.jsx';
+import { stripFrontMatter } from '../core/markdown.js';
+import { restore, persist } from '../core/save.js';
+import { SPACES, ME, getMode } from '../core/session.js';
 import { useSelection, selProps } from '../core/selection.js';
 
 registerDict(RECORDS_DICT);
@@ -135,22 +138,33 @@ function Table({ cols, rows, render, rowProps, sel, scope }) {
 /** 자세히 보기 한 줄 — 이름표와 값 */
 const Fact = ({ k, children }) => children ? <div className="fact"><span className="dim">{t(k)}</span><span>{children}</span></div> : null;
 
-export function Work({ space, openId }) {
+// 크루별로 묶어 보기(17차 A-3, PARITY-agents D8) — 결재·결정과 같은 폴더 보기. 폴더 = 이끄는 에이전트, 오른쪽은 지금 표 그대로.
+// 크루가 만든 할 일은 이 표(메신저 진행 중인 일)와 다른 기록이라 에이전트 상세의 '맡은 일'에서 같이 본다 — 폴더에서 상세로 가는 단추를 둔다
+const workKey = (w) => folderKey(w.lead);
+const workAt = (w) => Date.parse(w.started ?? '') || 0;
+
+export function Work({ space, openId, folder }) {
   useLang();
   const list = useStore((s) => s.work);
   const rows = useMemo(() => list.filter(inSpace(space)), [list, space]);
+  const { folders, current, visible } = useFolder(rows, workKey, workAt, folder);
   const cur = rows.find((w) => w.id === openId);
-  const [sel] = useSelection('work', { keys: rows.map((w) => w.id), actions: (keys) => [assignMany(rows.filter((w) => keys.includes(w.id)), (w) => w.goal)] });
+  const [sel] = useSelection('work', { keys: visible.map((w) => w.id), actions: (keys) => [assignMany(rows.filter((w) => keys.includes(w.id)), (w) => w.goal)] });
+  const crewOpen = current !== 'all' && !current.startsWith('name:') && current !== HUMAN && crewName(current);
+  const tools = crewOpen && <div className="fold-tools"><button type="button" className="btn sm" onClick={() => setUi({ crew: { id: current, space } })}><Icon name="info" size={13} />{t('work.crewDetail', { crew: crewOpen })}</button></div>;
   return (
     <div className="page-wrap wide">
       <Title h={t('nav.work')} />
-      <Table scope="work" sel={sel} cols={['col.goal', 'col.lead', 'col.status', 'col.progress', 'col.channel', 'col.started']} rows={rows} rowProps={(w) => menuProps(() => recordMenu(w, w.goal))}
-        render={(w) => <>
-          <td className="strong">{w.goal}</td>
-          <td><span className="who"><Face id={w.lead} size={16} />{crewName(w.lead)}</span></td>
-          <td><span className={`badge ${w.status === 'blocked' ? 'warn' : 'ok'}`}>{t(`status.${w.status}`)}</span>{w.blockedBy && <small className="dim"> · {w.blockedBy}</small>}</td>
-          <td className="mono">{w.steps ?? '—'}</td><td className="dim">{w.channel && `#${w.channel}`}</td><td className="dim">{ago(w.started)}</td>
-        </>} />
+      {rows.length === 0 ? <div className="empty-state"><Icon name="run" size={20} /><p>{t('fold.empty')}</p></div> : (
+        <FolderView folders={folders} current={current} total={rows.length} human="fold.people" toolbar={tools}>
+          <Table scope="work" sel={sel} cols={['col.goal', 'col.lead', 'col.status', 'col.progress', 'col.channel', 'col.started']} rows={visible} rowProps={(w) => menuProps(() => recordMenu(w, w.goal))}
+            render={(w) => <>
+              <td className="strong">{w.goal}</td>
+              <td><span className="who"><Face id={w.lead} size={16} />{crewName(w.lead)}</span></td>
+              <td><span className={`badge ${w.status === 'blocked' ? 'warn' : 'ok'}`}>{t(`status.${w.status}`)}</span>{w.blockedBy && <small className="dim"> · {w.blockedBy}</small>}</td>
+              <td className="mono">{w.steps ?? '—'}</td><td className="dim">{w.channel && `#${w.channel}`}</td><td className="dim">{ago(w.started)}</td>
+            </>} />
+        </FolderView>)}
       <Sheet open={!!cur} onClose={closeOpen} title={t('nav.work')}>
         {cur && <div className="ap-detail">
           <div className="ap-who"><Face id={cur.lead} size={28} /><div><b>{crewName(cur.lead)}</b><small className="dim">{[cur.channel && `#${cur.channel}`, ago(cur.started)].filter(Boolean).join(' · ')}</small></div><span className={`badge ${cur.status === 'blocked' ? 'warn' : 'ok'}`}>{t(`status.${cur.status}`)}</span></div>
@@ -330,34 +344,58 @@ export function Journal({ space, folder }) {
 }
 
 const FOLDERS = ['rules', 'glossary', 'projects'];
+const DOC_FOLD = 'argo-office-docs-fold';
 
-/** 크루 공용 문서(메신저 조직 문서 — 규칙·용어·프로젝트). 편집은 메신저에서(문서 변경은 결재를 거친다) — 오피스는 읽기 */
+/** 크루 공용 문서(메신저 조직 문서 — 규칙·용어·프로젝트). 편집은 메신저에서(문서 변경은 결재를 거친다) — 오피스는 읽기.
+ *  16차(PARITY-common W4·W5·W7): 폴더마다 문서 수와 접기(이 기기에 기억), 제목으로 찾기(찾는 동안은 모두 펼침), 본문은 마크다운 보기(표·목록·체크·코드·링크, 머리말 뺌) */
 export function Docs({ space, openId }) {
   useLang();
   const all = useStore((s) => s.docs);
-  const rows = useMemo(() => all.filter(inSpace(space)), [all, space]);
+  const [sample, setSample] = useState(null);                                       // 예시 데이터 모드(서버 없음)의 예시 문서 — 화면과 함께만 받는다
+  useEffect(() => { if (getMode() === 'sample' && !all.length) import('../data/docs-sample.js').then(setSample).catch(() => {}); }, [all.length]);
+  const source = all.length ? all : sample?.SAMPLE_DOCS ?? all;
+  const rows = useMemo(() => source.filter(inSpace(space)), [source, space]);
+  const [q, setQ] = useState('');
+  const [fold, setFold] = useState(() => restore(DOC_FOLD, {}));
+  const term = q.trim().toLowerCase();
+  const shown = useMemo(() => (term ? rows.filter((d) => (d.title ?? '').toLowerCase().includes(term)) : rows), [rows, term]);
   const cur = rows.find((d) => d.id === openId);
   const [body, setBody] = useState(undefined);
-  useEffect(() => { let live = true; setBody(undefined); if (openId) loadDocBody(openId).then((b) => live && setBody(b)); return () => { live = false; }; }, [openId]);
+  useEffect(() => {
+    let live = true;
+    setBody(undefined);
+    const local = sample?.SAMPLE_DOC_BODIES?.[openId];
+    if (openId) (local != null ? Promise.resolve(local) : loadDocBody(openId)).then((b) => live && setBody(b)).catch(() => live && setBody(null));
+    return () => { live = false; };
+  }, [openId, sample]);
   const close = () => navigate(location.pathname);
-  const [sel] = useSelection('crew-docs', { keys: rows.map((d) => d.id) }); // 읽기만 — 고르기만(일괄 동작 없음)
+  const flip = (f) => setFold((m) => { const next = { ...m, [f]: !m[f] }; persist(DOC_FOLD, next); return next; });
+  const [sel] = useSelection('crew-docs', { keys: shown.map((d) => d.id) }); // 읽기만 — 고르기만(일괄 동작 없음)
   return (
     <div className="page-wrap" data-sel-scope="crew-docs">
       <Title h={t('nav.docs')} sub={t('docs.sub')} />
-      {rows.length === 0 && <div className="empty-state"><Icon name="book" size={20} /><p>{t('docs.empty')}</p></div>}
-      {FOLDERS.map((f) => { const list = rows.filter((d) => d.folder === f); return list.length > 0 && (
-        <section key={f} className="doc-group">
-          <h2 className="label">{t(`docs.${f}`)}</h2>
-          <div className="list">{list.map((d) => (
-            <button key={d.id} type="button" className={`list-row${d.id === openId ? ' on' : ''}`} {...selProps(sel, d.id)} onClick={() => navigate(`${location.pathname}?open=${d.id}`)}>
-              <Icon name="doc" size={14} className="dim" /><span className="grow">{d.title}</span><small className="dim">{[d.channel && `#${d.channel}`, ago(d.updated)].filter(Boolean).join(' · ')}</small>
-            </button>))}
-          </div>
-        </section>); })}
+      {rows.length === 0 ? <div className="empty-state"><Icon name="book" size={20} /><p>{t('docs.empty')}</p></div>
+        : <div className="docs-find"><Icon name="search" size={14} className="dim" /><input className="input" type="search" value={q} placeholder={t('docs.search')} aria-label={t('docs.search')}
+          onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape' && q) { e.stopPropagation(); setQ(''); } }} /></div>}
+      {term && rows.length > 0 && !shown.length && <p className="dim docs-none">{t('docs.noMatch')}</p>}
+      {FOLDERS.map((f) => {
+        const total = rows.filter((d) => d.folder === f).length, list = shown.filter((d) => d.folder === f), open = !!term || !fold[f];
+        return list.length > 0 && (
+          <section key={f} className="doc-group">
+            <h2 className="doc-group-title"><button type="button" className="doc-group-head" aria-expanded={open} disabled={!!term} onClick={() => flip(f)}>
+              <Icon name={open ? 'caret' : 'chevron'} size={14} /><span>{t(`docs.${f}`)}</span><small className="dim">{term ? t('docs.found', { n: list.length, total }) : total}</small>
+            </button></h2>
+            {open && <div className="list">{list.map((d) => (
+              <button key={d.id} type="button" className={`list-row${d.id === openId ? ' on' : ''}`} {...selProps(sel, d.id)} onClick={() => navigate(`${location.pathname}?open=${d.id}`)}>
+                <Icon name="doc" size={14} className="dim" /><span className="grow">{d.title}</span><small className="dim">{[d.channel && `#${d.channel}`, ago(d.updated)].filter(Boolean).join(' · ')}</small>
+              </button>))}
+            </div>}
+          </section>);
+      })}
       <Sheet open={!!cur} onClose={close} title={cur?.title ?? ''}>
         {cur && <div className="doc-read">
           <p className="dim small mono">{cur.path}</p>
-          {body === undefined ? <div className="skeleton-lines"><span /><span /></div> : body ? <article className="prose"><DocView doc={mdToDoc(body)} /></article> : <p className="dim">{t('docs.empty')}</p>}
+          {body === undefined ? <div className="skeleton-lines"><span /><span /></div> : body ? <Markdown text={stripFrontMatter(body)} className="doc-md" /> : <p className="dim">{t('docs.empty')}</p>}
           <p className="dim small">{t('docs.readOnly')}</p>
         </div>}
       </Sheet>

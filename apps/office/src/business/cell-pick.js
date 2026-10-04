@@ -1,4 +1,5 @@
 // 표 여러 칸 고르기(유건 9/29) — 칸을 누른 채 다른 칸까지 끌면 두 칸이 만드는 사각형을 고르고, 우클릭으로 한 번에 가리기·해제.
+import { redactMenu } from './redact-rule.js';
 
 /** 시작 칸과 끝 칸 사이의 모든 칸 [줄, 열] — 위에서 아래, 왼쪽에서 오른쪽 순서 */
 export function cellsInBox([r1, c1], [r2, c2]) {
@@ -17,24 +18,26 @@ export const bulkRedact = (rows, fields, cells, on) => cells
 export const NEW_CUSTOMER_REDACT = ['account', 'biz_no'];
 export const redactDefaults = (kind, value) => (kind === 'customer' && !value.id ? { redacted: [...NEW_CUSTOMER_REDACT] } : {});
 
-/** 값 하나 가림(Redact.jsx)의 손동작 — 화면 없이 시험한다. state = { on, onToggle, disabled, focusable, picked, defer }, peek = 지금 잠깐 보는 중.
- *  우클릭 = 가리기·해제 메뉴(여러 칸·여러 행을 고른 상태면 표·목록이 한 번에 여는 메뉴에 맡긴다 — picked·defer), 왼쪽 버튼을 누르고 있는 동안만 보기,
+/** 값 하나 가림(Redact.jsx)의 손동작 — 화면 없이 시험한다. state = { on, masked, onToggle, disabled, focusable, picked, defer }, peek = 지금 잠깐 보는 중.
+ *  on = 이 값을 따로 가렸나(메뉴 글자 '가리기'·'가리기 해제'), masked = 지금 가려져 있나(따로 가림 또는 화면 전체 가리기, 18차 — 없으면 on),
+ *  all = 화면 전체 가리기 중(메뉴는 쓰기 대신 안내 한 줄 — redact-rule.js redactMenu).
+ *  우클릭 = 가리기·해제 메뉴(여러 칸·여러 행을 고른 상태면 표·목록이 한 번에 여는 메뉴에 맡긴다 — picked·defer), 가려진 값은 왼쪽 버튼을 누르고 있는 동안만 보기,
  *  키보드: 메뉴 키(Shift+F10·ContextMenu)로 메뉴, 가린 값은 Enter로 잠깐 보기(초점이 떠나면 다시 가림) */
-export function redactHandlers({ on, onToggle, disabled, focusable = true, picked, defer, mode = REVEAL_MODE }, setPeek, open) {
+export function redactHandlers({ on, masked = on, all = false, onToggle, disabled, focusable = true, picked, defer, mode = REVEAL_MODE }, setPeek, open) {
   const menu = (event) => {
     if (disabled || !onToggle || picked || defer) return;
-    open(event, [{ label: on ? 'bizui.unredact' : 'bizui.redact', icon: on ? 'eye' : 'eyeOff', run: onToggle }]);
+    open(event, redactMenu([{ label: on ? 'bizui.unredact' : 'bizui.redact', icon: on ? 'eye' : 'eyeOff', run: onToggle }], all));
   };
   const hide = () => setPeek(false);
   return {
     onContextMenu: menu,
     ...(focusable && onToggle && !disabled ? { tabIndex: 0, onBlur: hide, onKeyDown: (event) => {
       if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) { menu(event); return; }
-      if (on && event.key === 'Enter') { event.preventDefault(); setPeek((v) => !v); }
+      if (masked && event.key === 'Enter') { event.preventDefault(); setPeek((v) => !v); }
     } } : {}),
     // 'toggle'(눌러서 열어 두기)은 누를 때마다 열고 닫는다 — 떼거나 벗어나도 그대로
-    ...(on && mode === 'toggle' ? { onPointerDown: (event) => { if (event.button === 0) setPeek((v) => !v); } } : {}),
-    ...(on && mode !== 'toggle' ? { onPointerDown: (event) => { if (event.button === 0) setPeek(true); }, onPointerUp: hide, onPointerLeave: hide, onPointerCancel: hide } : {}),
+    ...(masked && mode === 'toggle' ? { onPointerDown: (event) => { if (event.button === 0) setPeek((v) => !v); } } : {}),
+    ...(masked && mode !== 'toggle' ? { onPointerDown: (event) => { if (event.button === 0) setPeek(true); }, onPointerUp: hide, onPointerLeave: hide, onPointerCancel: hide } : {}),
   };
 }
 

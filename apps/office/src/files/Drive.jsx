@@ -8,6 +8,7 @@ import { Icon } from '../ui/Icon.jsx';
 import { fmtBytes } from '../core/files.js';
 import { driveStatus, driveConnect, driveDisconnect, driveList, driveImport, driveLink, driveExport, driveMkdir, readFavs, toggleFav, readPin, setPin } from './drive.js';
 import { FIcon } from './FIcon.jsx';
+import { HideIn } from '../business/Redact.jsx';
 import { day, withQuery } from './FilesPage.jsx';
 
 const VIEWS = ['home', 'mydrive', 'shared', 'drives', 'starred'];
@@ -74,7 +75,7 @@ export default function Drive({ space, folderId, onClose }) {
               <button type="button" className={`icon-btn drive-pin${pin === v ? ' on' : ''}`} aria-pressed={pin === v} title={t(pin === v ? 'files.dv.unpin' : 'files.dv.pin')} aria-label={t(pin === v ? 'files.dv.unpin' : 'files.dv.pin')} onClick={() => togglePin(v)}><FIcon name="pin" size={13} /></button>
             </div>)}
             {pin && <p className="dim small drive-start">{t('files.dv.start', { v: t(`files.dv.${pin}`) })}</p>}
-            <p className="dim small drive-acct">{status.sample ? t('files.dv.sample') : t('files.dv.account', { addr: status.address })}</p>
+            <p className="dim small drive-acct">{status.sample ? t('files.dv.sample') : <HideIn text={t('files.dv.account', { addr: '\n' })} kind="contact">{status.address}</HideIn>}</p>
             {!status.sample && <button type="button" className="link-btn small" onClick={() => driveDisconnect().then(() => { showToast(t('files.dv.disconnected')); setStatus({ configured: true, connected: false }); }).catch((e) => showToast(errText(e)))}>{t('files.dv.disconnect')}</button>}
           </nav>
           <section className="drive-main">

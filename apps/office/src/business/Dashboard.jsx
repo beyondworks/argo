@@ -66,7 +66,7 @@ function TimeSeries({ series, type, label }) {
     const point = geometry.current?.points[hover];
     if (!point) return null;
     const side = point.x < 90 ? 'start' : point.x > width - 90 ? 'end' : 'mid';
-    return <div className={`biz-chart-tip ${side}`} style={{ left: side === 'end' ? undefined : point.x, right: side === 'end' ? width - point.x : undefined }} aria-hidden="true"><span className="mono">{point.date}</span> · <strong>{shortMoney(point.value, getLang())}</strong></div>;
+    return <div className={`biz-chart-tip ${side}`} style={{ left: side === 'end' ? undefined : point.x, right: side === 'end' ? width - point.x : undefined }} aria-hidden="true"><span className="mono">{point.date}</span> · <strong className="ha">{shortMoney(point.value, getLang())}</strong></div>;
   };
   return <ResponsiveChart label={label} svg={svg} overlay={overlay}>{(width, height) => {
     const extent = [Math.min(0, ...series.map((point) => point.value)), Math.max(0, ...series.map((point) => point.value))];
@@ -78,7 +78,7 @@ function TimeSeries({ series, type, label }) {
     return <>
       {[chart.high, (chart.high + chart.low) / 2, chart.low].filter((value, index, all) => all.indexOf(value) === index).map((value) => {
         const y = chart.bottom - (value - chart.low) / (chart.high - chart.low || 1) * (chart.bottom - chart.top);
-        return <g key={value}><line className="biz-chart-axis" x1={chart.left} x2={chart.right} y1={y} y2={y} /><text x={chart.left - 8} y={y + 4} textAnchor="end">{axisMoney(value)}</text></g>;
+        return <g key={value}><line className="biz-chart-axis" x1={chart.left} x2={chart.right} y1={y} y2={y} /><text className="ha" x={chart.left - 8} y={y + 4} textAnchor="end">{axisMoney(value)}</text></g>;
       })}
       {chart.low < 0 && chart.high > 0 && <line className="biz-chart-axis" x1={chart.left} x2={chart.right} y1={chart.baseline} y2={chart.baseline} />}
       <text x={chart.left} y={height - 8}>{dateLabel(series[0].date)}</text>{series.length > 1 && <text x={chart.right} y={height - 8} textAnchor="end">{dateLabel(series.at(-1).date)}</text>}

@@ -52,15 +52,20 @@ export function pageMenu(page) {
   const base = baseOf(page.space);
   const canRestrict = page.space !== 'me' && canManage(page.space);
   const canTop = page.parent || canManage(page.space); // 위키 최상위에 만들기·복제는 관리자만(서버와 같은 기준)
+  const canEdit = !page.template && (page.access === 'edit' || page.access === 'full' || (getMode() === 'sample' && page.space !== 'shared'));
+  const tree = (fn) => () => import('../pages/tree-actions.jsx').then((m) => m[fn](page)); // 이름 바꾸기·옮기기 창은 누를 때 받는다(16차)
   return [
     { label: t('page.open'), icon: 'doc', run: () => navigate(`${base}/p/${page.id}`) },
     { label: t('page.openTab'), icon: 'share', run: () => openExternal(publicWebUrl(`${base}/p/${page.id}`)).catch(() => showToast(t('share.failed'))) },
     !page.template && favItem('page', page.id),
     { sep: true },
+    canEdit && { label: t('page.rename'), icon: 'draft', run: tree('startRename') },
+    canEdit && page.space !== 'shared' && { label: t('page.move'), icon: 'folder', run: tree('openMove') },
     { label: t('page.addChild'), icon: 'plus', run: () => navigate(`${base}/p/${createPage(page.space, page.id)}`) },
     canTop && { label: t('page.duplicate'), icon: 'copy', shortcut: `${mod}D`, run: () => { const id = duplicatePage(page.id); showToast(t('page.duplicated')); navigate(`${base}/p/${id}`); } },
     { label: t('page.copyLink'), icon: 'link', run: () => copyLink(`${base}/p/${page.id}`) },
     { label: t('page.asTemplate'), icon: 'template', run: () => saveAsTemplate(page) },
+    !page.template && { label: t('page.toTask'), icon: 'todo', run: () => import('../views/task-new.jsx').then((m) => m.openTaskFromPage(page)) }, // 제목·본문 앞부분을 채운 새 할 일 창(유건 10/4) — 창 코드는 누를 때 받는다
     { sep: true },
     { label: t('page.share'), icon: 'share', run: () => setUi({ share: page.id }) },
     { label: t('crew.assign'), icon: 'hand', run: () => setUi({ assign: { space: page.space, items: [{ kind: 'page', id: page.id, label: page.title || t('page.untitled') }] } }) },
@@ -74,8 +79,8 @@ export function mailMenu(mail) {
   return [
     { label: t('crew.assign'), icon: 'hand', run: () => setUi({ assign: { space: 'me', items: [{ kind: 'mail', id: mail.id, label: mail.subject }] } }) },
     { sep: true },
-    { label: t('mail.reply'), icon: 'reply', shortcut: 'R', run: () => setUi({ compose: { to: mail.addr, subject: `Re: ${mail.subject}` } }) },
-    { label: t('mail.forward'), icon: 'send', run: () => setUi({ compose: { to: '', subject: `Fwd: ${mail.subject}` } }) },
+    { label: t('mail.reply'), icon: 'reply', shortcut: 'R', run: () => setUi({ compose: { mode: 'reply', of: mail.id } }) }, // 계정·스레드·인용은 작성 창이 원래 메일에서 채운다(15차)
+    { label: t('mail.forward'), icon: 'send', run: () => setUi({ compose: { mode: 'forward', of: mail.id } }) },
     { label: mail.unread ? t('mail.markRead') : t('mail.markUnread'), icon: 'mail', run: () => setMail(mail.id, { unread: !mail.unread }) },
     { label: t('mail.archiveIt'), icon: 'archive', shortcut: 'E', run: () => { const undo = archiveMail(mail.id); showToast(t('mail.archived'), { undo }); } },
   ];
@@ -97,10 +102,12 @@ export function recordMenu(rec, label) {
 
 export function crewMenu(crew, space) {
   const ok = usable(crew) && (getMode() !== 'signedIn' || isMine(crew, ME.id)); // 좌측 목록은 쓸 수 있는 내 크루만 싣는다
+  const home = crew.space ?? space; // 맡기기는 크루가 사는 조직으로 — 다른 조직 공간에서 연 즐겨찾기 크루가 맡기기 창 목록에서 빠지던 것(17차 A 검수 LOW-5)
   return [
-    ok && { label: t('crew.assignTo', { crew: crew.name }), icon: 'hand', run: () => setUi({ assign: { space, crew: crew.id, items: [] } }) },
+    { label: t('crew.detail'), icon: 'info', run: () => setUi({ crew: { id: crew.id, space } }) }, // 에이전트 상세(17차) — 조직도의 남의 크루도 본다
+    ok && { label: t('crew.assignTo', { crew: crew.name }), icon: 'hand', run: () => setUi({ assign: { space: home, crew: crew.id, items: [] } }) },
     { sep: true },
-    canPin(crew) && { label: t(crew.pinned ? 'crew.unpin' : 'crew.pin'), run: () => pinCrew(crew, !crew.pinned).catch(() => showToast(t('crew.saveFail'))) },
+    ok && canPin(crew) && { label: t(crew.pinned ? 'crew.unpin' : 'crew.pin'), run: () => pinCrew(crew, !crew.pinned).catch(() => showToast(t('crew.saveFail'))) },
     ok && isMine(crew, ME.id) && favItem('crew', crew.id),
   ];
 }

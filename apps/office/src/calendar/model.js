@@ -155,6 +155,17 @@ export function windowOf(view, anchor) {
   const g = monthGrid(anchor);
   return [addDays(g[0], -1), addDays(g[41], 2)]; // 시간대 차이(브라우저 ↔ 한국)로 격자 끝에 걸치는 일정까지
 }
+/* ── 탭 복귀 다시 읽기(18차) — 떠 있는 창 여럿을 한 번에 읽고 창마다 나눈다(읽기 1회) ── */
+/** 창 키('from|to') 여럿을 덮는 한 창 { from, to } — 서버 한도(400일)를 넘으면 null(창마다 따로 읽는다) */
+export function unionWindow(keys, maxDays = 400) {
+  if (!keys.length) return null;
+  const wins = keys.map((k) => k.split('|')), from = wins.map((w) => w[0]).sort()[0], to = wins.map((w) => w[1]).sort().at(-1);
+  return dayDiff(from, to) <= maxDays ? { from, to } : null;
+}
+/** 한 번에 읽은 일정 중 창 [lo, hi)(ms)에 들 것 — 서버 office_event_list와 같은 조건: 창 끝 전에 시작하고, 반복 없는 일정은 창 시작 뒤에 끝난다.
+ *  반복 일정은 창 끝 전에 시작했으면 넣는다(서버는 UNTIL까지 보지만, 회차는 화면이 창 안에서만 펼치니 더 넣어도 보이는 것은 같다) */
+export const eventsIn = (events, lo, hi) => events.filter((e) => Date.parse(e.starts_at) < hi && (!!e.rrule || Date.parse(e.ends_at) > lo));
+
 /** ‹ › 한 번에 옮기는 양 */
 export function shift(view, anchor, dir) {
   if (view === 'day') return addDays(anchor, dir);

@@ -1,0 +1,25 @@
+/* 편집기 도구(16차) — 콜아웃 아이콘 격자 · 표 도구 막대 · 링크 말풍선 · 손잡이 [+]. 편집기와 함께 지연 로드된다. 떠 있는 층은 --float, 둥글기는 토큰 */
+.icon-grid { position: fixed; z-index: 60; display: grid; grid-template-columns: repeat(6, 32px); gap: 2px; padding: 6px; border-radius: var(--rs); background: var(--float); box-shadow: var(--shadow-float); }
+.icon-grid button { display: grid; place-items: center; width: 32px; height: 32px; border-radius: var(--rc); color: var(--fg-2); }
+.icon-grid button.on { background: var(--secondary); color: var(--fg); }
+@media (hover: hover) { .icon-grid button:hover { background: var(--wash); color: var(--fg); } }
+.icon-grid button:focus-visible { outline: 2px solid var(--ring, var(--primary)); outline-offset: -2px; }
+
+.table-bar { position: absolute; z-index: 20; display: flex; align-items: center; gap: 2px; padding: 3px; border-radius: var(--rs); background: var(--float); box-shadow: var(--shadow-float); white-space: nowrap; max-width: 100%; overflow-x: auto; }
+.table-bar .btn.sm { height: 26px; padding: 0 8px; }
+.table-bar .btn.danger-text { color: var(--danger); }
+.table-bar-sep { width: 1px; height: 16px; margin: 0 3px; background: var(--border); flex: none; }
+
+.link-pop { position: absolute; z-index: 20; display: flex; align-items: center; flex-wrap: wrap; gap: 4px; max-width: min(420px, 100%); padding: 4px 4px 4px 10px; border-radius: var(--rs); background: var(--float); box-shadow: var(--shadow-float); }
+.link-pop-url { flex: 1; min-width: 0; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; color: var(--fg-2); text-decoration: none; }
+@media (hover: hover) { .link-pop-url:hover { color: var(--fg); text-decoration: underline; } }
+form.link-pop { padding: 4px; }
+form.link-pop .input { width: 240px; max-width: 100%; }
+.link-pop-bad { flex-basis: 100%; padding: 0 4px 2px; color: var(--danger); font-size: 12px; }
+
+/* 손잡이 — [+] 아래에 줄 추가 · [⋮⋮] 끌기·메뉴 */
+.block-handle.has-add { width: auto; display: flex; gap: 1px; padding: 0; cursor: default; }
+.block-handle.has-add .block-add, .block-handle.has-add .block-grip { display: grid; place-items: center; width: 20px; height: 24px; border-radius: 5px; color: var(--fg-3); }
+.block-handle.has-add .block-add { cursor: pointer; }
+.block-handle.has-add .block-grip { cursor: grab; }
+@media (hover: hover) { .block-handle.has-add:hover { background: transparent; } .block-handle.has-add .block-add:hover, .block-handle.has-add .block-grip:hover { background: var(--wash); color: var(--fg); } }

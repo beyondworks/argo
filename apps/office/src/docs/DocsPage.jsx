@@ -23,7 +23,9 @@ import { fileSignedCopies } from './filing.js';
 import { mailAccounts, resendLink, sendCompletedNotice } from './esign-flow.js';
 import { DOC } from './doc-text.js';
 import { useSelection, selProps } from '../core/selection.js';
-import { Hide } from '../business/Redact.jsx';
+import { Hide, Redact } from '../business/Redact.jsx';
+import { setUi } from '../core/ui-state.js';
+import { quoteText } from '../core/crew-items.js';
 
 const DocZoom = lazy(() => import('./DocZoom.jsx'));
 const when = (v) => (v ? new Date(v).toLocaleString(getLang() === 'en' ? 'en-US' : 'ko-KR', { dateStyle: 'medium', timeStyle: 'short' }) : '—');
@@ -47,7 +49,7 @@ function PdfFrame({ bytes, title, filename }) {
   if (!url) return <div className="docs-pdf boot" aria-busy="true" />;
   return <div className="docs-pdf-wrap">
     <button type="button" className="btn sm docs-pdf-zoom" onClick={() => setZoom(true)}><Icon name="expand" size={13} />{t('docs.zoom.open')}</button>
-    <iframe className="docs-pdf" title={title} src={url} />
+    <div className="ha ha-cover"><iframe className="docs-pdf" title={title} src={url} /></div>{/* 화면 전체 가리기 중 흐림 — 누르고 있으면 보인다(18차 검수 M3) */}
     {zoom && <Suspense fallback={null}><DocZoom title={title} pdf={bytes} onClose={() => setZoom(false)} onDownload={async () => download(bytes, filename || `${title}.pdf`)} /></Suspense>}
   </div>;
 }
@@ -157,9 +159,12 @@ export default function DocsPage({ space, params }) {
     navigate(`${base}?${new URLSearchParams({ setup: esign.id })}`);
   };
 
+  // 에이전트에게 맡기기(17차 A-5) — 목록 한 줄(종류·거래처·거래·합계·만든 날)을 글자로. 크루는 맡기기 창에서 고른다
+  const assignDocs = (rows) => setUi({ assign: { space, items: rows.map((row) => ({ kind: 'doc', id: row.id, label: row.title, text: quoteText(row, { t, money: (n) => `${won(n)}${t('docs.wonUnit')}`, day, deal: row.order_id ? business.data?.orders.find((o) => o.id === row.order_id)?.title : '' }) })) } });
   const docMenu = (event, row) => openMenu(event, [
     { label: t('docs.act.preview'), icon: 'eye', run: () => go({ open: `doc:${row.id}` }) },
     { label: t('docs.act.download'), icon: 'archive', run: () => openDoc(row, 'download').catch(() => showToast(t('docs.err.file'))) },
+    { label: t('crew.assign'), icon: 'hand', run: () => assignDocs([row]) },
     canWrite && { label: t('docs.act.again'), icon: 'copy', run: () => go({ new: row.kind, from: row.id }) },
     canWrite && row.kind === 'quote' && { label: t('docs.act.toContract'), icon: 'doc', run: () => go({ new: 'contract', from: row.id }) },
     canWrite && row.kind === 'contract' && { label: t('docs.act.esign'), icon: 'stamp', run: () => startEsignFromDoc(row).catch(() => showToast(t('esign.err.create'))) },
@@ -178,8 +183,9 @@ export default function DocsPage({ space, params }) {
   ], { anchor: event.currentTarget });
 
   // 여러 개 고르기(11차) — 문서는 한 번에 다운로드, 전자서명은 완료본 한 번에 받기(행 메뉴와 같은 동작). 지우기·취소는 한 건씩 확인 창으로
-  const [docSel] = useSelection(data && tab === 'docs' ? 'docs' : null, { keys: (data?.docs ?? []).map((d) => d.id), actions: (keys) => [
+  const [docSel] = useSelection(data && tab === 'docs' ? 'docs' : null, { keys: (data?.docs ?? []).map((d) => d.id), actions: (keys, clear) => [
     { label: t('docs.act.download'), icon: 'download', run: () => data.docs.filter((d) => keys.includes(d.id)).reduce((p, row) => p.then(() => openDoc(row, 'download')).catch(() => showToast(t('docs.err.file'))), Promise.resolve()) },
+    { label: t('crew.assign'), icon: 'hand', run: () => { assignDocs(data.docs.filter((d) => keys.includes(d.id))); clear?.(); } },
   ] });
   const [esSel] = useSelection(data && tab === 'esign' ? 'esign' : null, { keys: (data?.esign ?? []).map((e) => e.id), actions: (keys) => {
     const done = data.esign.filter((e) => keys.includes(e.id) && e.final_path);
@@ -250,7 +256,7 @@ export default function DocsPage({ space, params }) {
       <tbody>{data.docs.map((d) => <tr key={d.id} className="row-open" {...selProps(docSel, d.id)} onClick={(e) => { if (!e.target.closest('button')) go({ open: `doc:${d.id}` }); }}>
         <td><span className="badge">{t(`docs.kind.${d.kind}`)}</span></td>
         <td className="docs-title-cell">{d.title}</td>
-        <td className="hide-sm">{d.customer_name ? <Hide k={`doc:${d.id}:customer`}>{d.customer_name}</Hide> : '—'}</td>
+        <td className="hide-sm">{d.customer_name ? <Hide k={`doc:${d.id}:customer`} kind="name">{d.customer_name}</Hide> : '—'}</td>
         <td className="hide-sm">{d.order_id ? <button type="button" className="bizui-link" onClick={() => navigate(`${baseOf(space)}/business/orders?open=${d.order_id}`)}>{orderTitle(d.order_id) ?? t('docs.deal')}</button> : <span className="dim">—</span>}</td>
         <td className="num"><Hide k={`doc:${d.id}:total`}>{won(d.total)}</Hide></td>
         <td className="hide-sm mono">{day(d.created_at)}</td>
@@ -269,7 +275,7 @@ export default function DocsPage({ space, params }) {
       </tr>; })}</tbody></table></div>
       : <div className="empty-state"><Icon name="stamp" size={22} /><p>{t('esign.empty')}</p>{canWrite && <button type="button" className="btn primary" onClick={() => go({ esign: 'new' })}>{t('esign.first')}</button>}</div>)}
 
-    {openDocRow && <DocPanel space={space} row={openDocRow} onClose={() => go(null)} canWrite={canWrite} onEsign={() => startEsignFromDoc(openDocRow).catch(() => showToast(t('esign.err.create')))} go={go} />}
+    {openDocRow && <DocPanel space={space} row={openDocRow} onClose={() => go(null)} canWrite={canWrite} onEsign={() => startEsignFromDoc(openDocRow).catch(() => showToast(t('esign.err.create')))} go={go} onAssign={() => assignDocs([openDocRow])} />}
     {openEsign && <EsignPanel space={space} row={openEsign} company={company} canWrite={canWrite} onClose={() => go({ tab: 'esign' })} reload={docs.reload} orderTitle={orderTitle(openEsign.order_id)} />}
     {confirm && <Modal open title={t(`esign.confirm.${confirm.kind}.title`)} onClose={() => setConfirm(null)}
       footer={<><button type="button" className="btn" onClick={() => setConfirm(null)}>{t('docs.cancel')}</button><button type="button" className={`btn ${confirm.kind === 'cancel' ? 'primary' : 'danger'}`} onClick={runConfirm}>{t(`esign.confirm.${confirm.kind}.ok`)}</button></>}>
@@ -279,15 +285,16 @@ export default function DocsPage({ space, params }) {
   </section>;
 }
 
-function DocPanel({ space, row, onClose, canWrite, onEsign, go }) {
+function DocPanel({ space, row, onClose, canWrite, onEsign, go, onAssign }) {
   const [bytes, setBytes] = useState(null);
   useEffect(() => { let live = true; backend().then((be) => be.docPdf(space, row)).then((b) => { if (live) setBytes(b); }).catch(() => showToast(t('docs.err.file'))); return () => { live = false; }; }, [space, row]);
   return <Panel title={row.title} onClose={onClose} footer={<>
+    <button type="button" className="btn" onClick={onAssign}><Icon name="hand" size={13} />{t('crew.assign')}</button>
     <button type="button" className="btn" disabled={!bytes} onClick={() => download(bytes, row.filename || `${row.title}.pdf`)}>{t('docs.act.download')}</button>
     {canWrite && <button type="button" className="btn" onClick={() => go({ new: row.kind, from: row.id })}>{t('docs.act.again')}</button>}
     {canWrite && row.kind === 'contract' && <button type="button" className="btn primary" onClick={onEsign}><Icon name="stamp" size={13} />{t('docs.act.esign')}</button>}
   </>}>
-    <dl className="docs-meta"><div><dt>{t('docs.col.customer')}</dt><dd>{row.customer_name ? <Hide k={`doc:${row.id}:customer`}>{row.customer_name}</Hide> : '—'}</dd></div><div><dt>{t('docs.col.total')}</dt><dd className="mono"><Hide k={`doc:${row.id}:total`}>{won(row.total)}{t('docs.wonUnit')}</Hide></dd></div><div><dt>{t('docs.col.created')}</dt><dd>{when(row.created_at)}</dd></div></dl>
+    <dl className="docs-meta"><div><dt>{t('docs.col.customer')}</dt><dd>{row.customer_name ? <Hide k={`doc:${row.id}:customer`} kind="name">{row.customer_name}</Hide> : '—'}</dd></div><div><dt>{t('docs.col.total')}</dt><dd className="mono"><Hide k={`doc:${row.id}:total`}>{won(row.total)}{t('docs.wonUnit')}</Hide></dd></div><div><dt>{t('docs.col.created')}</dt><dd>{when(row.created_at)}</dd></div></dl>
     <PdfFrame bytes={bytes} title={row.title} filename={row.filename} />
   </Panel>;
 }
@@ -337,7 +344,7 @@ function EsignPanel({ space, row, company, canWrite, onClose, reload, orderTitle
     </dl>
     <section className="docs-sub"><h3>{t('esign.col.signers')}</h3>
       <ul className="docs-signer-list">{row.signers.map((s) => <li key={s.id}>
-        <span className={`badge ${s.status === 'signed' ? 'ok' : ''}`}>{partyLabel(s.ord)}</span><span><strong>{s.name}</strong> <span className="dim small">{s.email}</span></span><span className="spacer" />
+        <span className={`badge ${s.status === 'signed' ? 'ok' : ''}`}>{partyLabel(s.ord)}</span><span><strong>{s.name}</strong> <span className="dim small"><Hide k={`doc:${row.id}:signer:${s.id}`}>{s.email}</Hide></span></span><span className="spacer" />
         <span className="dim small">{s.status === 'signed' ? `${t('esign.signer.signed')} ${when(s.signed_at)}` : s.opened_at ? `${t('esign.signer.opened')} ${when(s.opened_at)}` : t('esign.signer.pending')}</span>
         {row.status === 'sent' && s.status !== 'signed' && canWrite && <button type="button" className="btn sm" onClick={() => resend(s)}>{t('esign.resend')}</button>}
         {links[s.id] && <button type="button" className="btn sm ghost" onClick={() => copy(links[s.id])}><Icon name="copy" size={12} />{t('esign.copyLink')}</button>}
@@ -347,7 +354,7 @@ function EsignPanel({ space, row, company, canWrite, onClose, reload, orderTitle
     {row.final_path && <p className="dim small">{t('esign.finalShown')}</p>}
     <PdfFrame bytes={bytes} title={row.title} filename={row.final_path ? signedFilename(row.title) : undefined} />
     {mails.length > 0 && <section className="docs-sub"><h3>{t('esign.mails')}</h3><p className="dim small">{t('esign.mailsHint')}</p>
-      <ul className="docs-log">{mails.slice().reverse().map((m) => <li key={m.id}><span className="mono small">{when(m.at)}</span><span>{m.to}</span><span className="dim">{m.subject}</span>{m.link && <a className="bizui-link" href={m.link} target="_blank" rel="noreferrer">{t('esign.openLink')}</a>}{m.attachment && <span className="badge">{m.attachment}</span>}</li>)}</ul></section>}
+      <ul className="docs-log">{mails.slice().reverse().map((m) => <li key={m.id}><span className="mono small">{when(m.at)}</span><span><Redact kind="contact">{m.to}</Redact></span><span className="dim ha">{m.subject}</span>{m.link && <a className="bizui-link" href={m.link} target="_blank" rel="noreferrer">{t('esign.openLink')}</a>}{m.attachment && <span className="badge">{m.attachment}</span>}</li>)}</ul></section>}
     <section className="docs-sub"><h3>{t('esign.events')}</h3>
       <ul className="docs-log">{events.slice().reverse().map((ev) => <li key={ev.id}><span className="mono small">{when(ev.at)}</span><span className="badge">{t(`esign.ev.${ev.action}`)}</span><span className="dim small">{ev.actor === 'owner' ? t('esign.actor.owner') : ev.actor === 'system' ? t('esign.actor.system') : ev.actor}{ev.ip ? ` · ${ev.ip}` : ''}</span></li>)}</ul>
     </section>

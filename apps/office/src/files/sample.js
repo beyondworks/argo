@@ -145,6 +145,53 @@ export async function sampleWrite(space, action, d) {
   await save(space, m);
   return out;
 }
+/* ── 예시 공유 링크(15차) — 서버 office_file_link_*와 같은 판정. 같은 브라우저에서 /f#<토큰>을 열면 이 기록으로 연다 ── */
+const LINKS = 'argo-office-files:sample:links';
+async function loadLinks() { try { return (await get(LINKS)) ?? mem.get(LINKS) ?? []; } catch { return mem.get(LINKS) ?? []; } }
+async function saveLinks(list) { mem.set(LINKS, list); try { await set(LINKS, list); } catch { /* 화면 메모리에만 */ } }
+const alive = (l, now = Date.now()) => !l.revoked_at && Date.parse(l.expires_at) > now;
+export async function sampleLinkWrite(space, action, d) {
+  const links = (await loadLinks()).filter((l) => alive(l)); // 만료·끊은 링크는 여기서 정리(서버는 정리 작업이 지운다)
+  if (action === 'link.create') {
+    if (!d?.id || !/^[0-9a-f]{64}$/.test(d.token_hash ?? '') || !(d.days >= 1 && d.days <= 90)) fail('file_input');
+    const f = (await load(space)).files.find((x) => x.id === d.file_id && !x.deleted_at) ?? fail('file_not_found');
+    if (f.kind !== 'file') fail('file_input');
+    const same = links.find((l) => l.id === d.id);
+    if (same) return { id: same.id, expires_at: same.expires_at };
+    if (links.filter((l) => l.file_id === f.id).length >= 20) fail('file_limit');
+    const now = Date.now(), l = { id: d.id, space, file_id: f.id, token_hash: d.token_hash, source: d.source === 'mail' ? 'mail' : 'manual', created_at: new Date(now).toISOString(), expires_at: new Date(now + d.days * 864e5).toISOString(), revoked_at: null };
+    await saveLinks([...links, l]);
+    return { id: l.id, expires_at: l.expires_at };
+  }
+  if (action === 'link.revoke') {
+    const l = links.find((x) => x.id === d?.id && x.space === space) ?? fail('file_not_found');
+    l.revoked_at = new Date().toISOString();
+    await saveLinks(links);
+    return { id: l.id };
+  }
+  return fail('file_input');
+}
+export async function sampleLinkList(space, fileId) {
+  const links = (await loadLinks()).filter((l) => alive(l) && l.space === space && l.file_id === fileId);
+  return { can: true, links: links.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at)).map(({ id, source, created_at, expires_at }) => ({ id, source, created_at, expires_at, mine: true })) };
+}
+async function linkFile(hash) {
+  const l = (await loadLinks()).find((x) => x.token_hash === hash && alive(x));
+  const f = l ? (await load(l.space)).files.find((x) => x.id === l.file_id && !x.deleted_at && x.kind === 'file') : null;
+  if (!f) fail('gone');
+  return { l, f };
+}
+export async function sampleLinkOpen(hash) {
+  const { l, f } = await linkFile(hash);
+  return { name: f.filename || f.title, size: f.size ?? 0, mime: f.mime ?? '', expiresAt: l.expires_at, space: l.space }; // 공간 이름은 화면(links.js)이 붙인다(이 파일은 node 시험에서도 읽힌다)
+}
+export async function sampleLinkBlob(hash) {
+  const { f } = await linkFile(hash);
+  const blob = await sampleBlobGet(f);
+  if (!blob) fail('gone');
+  return { blob, name: f.filename || f.title };
+}
+
 /** 정리 대상(예시) — 30일 지난 휴지통 파일 */
 export async function sampleExpired(space) {
   const m = await load(space);

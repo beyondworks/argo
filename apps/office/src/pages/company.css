@@ -100,15 +100,4 @@ button.co-label { padding: 0; border: 0; background: none; font: inherit; font-w
 .ev-form .scores { display: grid; grid-template-columns: repeat(auto-fit, minmax(92px, 1fr)); gap: 8px; }
 .ev-form .scores .input { font-family: var(--mono); }
 
-/* 마크다운(평가 총평) */
-.md { display: grid; gap: 8px; font-size: 13.5px; line-height: 1.6; overflow-wrap: anywhere; }
-.md h1, .md h2, .md h3 { margin: 4px 0 0; font-size: 14px; font-weight: 650; }
-.md h1 { font-size: 15px; }
-.md p, .md ul, .md ol, .md blockquote { margin: 0; }
-.md ul, .md ol { padding-left: 20px; }
-.md blockquote { padding-left: 10px; border-left: 2px solid var(--border); color: var(--fg-2); }
-.md code { font-family: var(--mono); font-size: 12.5px; padding: 1px 4px; border-radius: 4px; background: var(--secondary); }
-.md .md-table { overflow-x: auto; }
-.md table { border-collapse: collapse; font-size: 12.5px; min-width: 100%; }
-.md th, .md td { padding: 5px 9px; border-bottom: 1px solid var(--border-soft); text-align: left; vertical-align: top; }
-.md th { font-weight: 600; color: var(--fg-2); border-bottom-color: var(--border); }
+/* 마크다운 보기 스타일은 ui/markdown.css(Markdown.jsx가 함께 불러온다 — 공용 문서 화면에서도 쓰려고 옮겼다, 16차) */

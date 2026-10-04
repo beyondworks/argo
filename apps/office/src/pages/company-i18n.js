@@ -59,4 +59,6 @@ export const COMPANY_DICT = {
   'people.deletedN': ['{n}명을 지웠습니다', 'Removed {n}'], 'people.selectedN': ['{n}명 고름', '{n} selected'], 'people.deleteSel': ['고른 사람 지우기', 'Remove selected'],
   'people.select': ['{name} 고르기', 'Select {name}'], 'people.selectAll': ['전체 고르기', 'Select all'],
   'people.readOnly': ['보기 전용 — 명부는 조직 관리자가 고칩니다.', 'View only — organization admins edit the directory.'],
+  // 에이전트에게 맡기기(17차) — 여러 항목의 이름, 값을 싣지 않는 항목(계좌·사업자번호·그림)의 자리
+  'company.crewItems': ['회사 정보 {n}개', '{n} company items'], 'company.crewWithheld': ['(값은 보내지 않습니다)', '(value not sent)'],
 };

@@ -9,7 +9,7 @@ import { OFFICE_MODULES, BUSINESS_MODULES, CHART_MODULES } from '../src/core/mod
 import { linkedTotals, effectOf } from '../src/business/marketing-model.js';
 
 test('shared registry preserves legacy modules and exposes all eight business home cards', () => {
-  assert.deepEqual(OFFICE_MODULES.filter((m) => !m.businessTab).map((m) => m.id), ['stats','approvals','mail','calendar','todos','pages','work','outputs','journal','decisions']);
+  assert.deepEqual(OFFICE_MODULES.filter((m) => !m.businessTab).map((m) => m.id), ['stats','attention','approvals','mail','calendar','todos','pages','work','outputs','journal','decisions']);
   assert.equal(new Set(OFFICE_MODULES.map((m) => m.id)).size, OFFICE_MODULES.length);
   assert.deepEqual(BUSINESS_MODULES.map((m) => m.businessTab), ['customers','catalog','orders','inventory','payments','analytics','marketing','performance']);
   for (const module of BUSINESS_MODULES) {

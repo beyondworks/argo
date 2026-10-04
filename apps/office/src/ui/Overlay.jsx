@@ -14,6 +14,7 @@ function useScrollLock(on) {
   }, [on]);
 }
 
+const stack = []; // 열린 대화상자(모달·패널·크게 보기) 순서 — Esc·Tab은 맨 위 하나만 받는다(겹친 창에서 Esc가 아래 창까지 닫던 결함, 10/4)
 export function useDialog(open, onClose) {
   const ref = useRef(null);
   const close = useRef(onClose);
@@ -21,10 +22,12 @@ export function useDialog(open, onClose) {
   useScrollLock(open);
   useEffect(() => {
     if (!open) return;
-    const back = document.activeElement;
+    const back = document.activeElement, me = {};
+    stack.push(me);
     // autoFocus 대신 마운트 뒤 포커스 — 폰에서는 키보드가 튀어나오지 않게 생략
     if (!matchMedia('(pointer: coarse)').matches) (ref.current?.querySelector('[data-autofocus]') ?? ref.current?.querySelector('input, textarea, select, button:not(.x)'))?.focus({ preventScroll: true }); // data-autofocus: 첫 칸이 이미 정해진 창(예: 캠페인이 고정된 광고비 기록)
     const onKey = (e) => {
+      if (stack.at(-1) !== me) return;
       if (e.key === 'Escape') { e.stopPropagation(); close.current(); }
       if (e.key === 'Tab' && ref.current) { // 포커스를 대화상자 안에 가둔다
         const f = [...ref.current.querySelectorAll('button, [href], input, textarea, select, [tabindex]:not([tabindex="-1"])')].filter((el) => !el.disabled);
@@ -34,7 +37,7 @@ export function useDialog(open, onClose) {
       }
     };
     document.addEventListener('keydown', onKey);
-    return () => { document.removeEventListener('keydown', onKey); back?.focus?.({ preventScroll: true }); };
+    return () => { stack.splice(stack.indexOf(me), 1); document.removeEventListener('keydown', onKey); back?.focus?.({ preventScroll: true }); };
   }, [open]);
   return ref;
 }

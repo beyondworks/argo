@@ -12,6 +12,8 @@ import { InfoTip } from '../ui/InfoTip.jsx';
 import { Hide } from './Redact.jsx';
 
 const HomeBusiness = createContext(null);
+/** 홈의 업무 읽기(업무 카드가 놓여 있으면 그 읽기) — '챙길 것'(18차, HomeAttention.jsx)이 같은 읽기를 쓴다. 없으면 null */
+export const useHomeBusiness = () => useContext(HomeBusiness);
 const money = (value) => new Intl.NumberFormat(getLang() === 'en' ? 'en-US' : 'ko-KR', { style: 'currency', currency: 'KRW', maximumFractionDigits: 0 }).format(value);
 
 export function BusinessHomeProvider({ space, tabs, children }) {
@@ -65,7 +67,7 @@ export function BusinessHomeCard({ space, tab }) {
   const rowPath = () => path;
   const main = (title, detail) => <span className="mod-main"><span className="clamp">{title}</span>{detail && <small>{detail}</small>}</span>;
   let content;
-  if (tab === 'customers') content = <Rows rows={data.customers} path={rowPath} render={(row) => main(row.name, row.email)} />;
+  if (tab === 'customers') content = <Rows rows={data.customers.filter((row) => !row.archived_at)} path={rowPath} render={(row) => main(row.name, row.email && <Hide k={`customer:${row.id}:email`} focusable={false}>{row.email}</Hide>)} />;
   if (tab === 'catalog') content = <Rows rows={data.items} path={rowPath} render={(row) => main(row.name, <>{t(`bizui.${row.kind}`)} · <Hide k={`item:${row.id}:price`} focusable={false}>{money(row.price)}</Hide></>)} />;
   if (tab === 'orders') content = <Rows rows={data.orders} path={(row) => `${path}?open=${encodeURIComponent(row.id)}`} render={(row) => main(row.title, t(`bizui.${row.status}`))} />;
   if (tab === 'inventory') content = <Rows rows={data.items.filter((row) => row.kind === 'product')} path={rowPath} render={(row) => main(row.name, `${t('bizui.available')}: ${row.stock - row.reserved} · ${t('bizui.reserved')}: ${row.reserved}`)} />;

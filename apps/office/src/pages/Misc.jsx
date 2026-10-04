@@ -13,9 +13,11 @@ import { baseOf, mod } from '../core/commands.js';
 import { SPACES, ME, getMode, signOut } from '../core/session.js';
 import { getClient } from '../core/supabase.js';
 import { DocView } from '../ui/DocView.jsx';
+import { stripPublic } from '../core/public-doc.js';
 import { useSelection, selProps } from '../core/selection.js';
 import { SWATCH, COLOR_GROUPS } from './theme-picks.js';
 import { Hide } from '../business/Redact.jsx';
+import { MailAccountsSettings, MailNotifySettings } from './MailAccounts.jsx';
 
 /** 셸 견본 — 지금 고른 색으로 그린 작은 창. 모양만 셸마다 다르다 */
 function ShellMini({ shell }) {
@@ -65,7 +67,7 @@ export function Settings() {
   const pick = (th) => { applyTheme(th); refreshCustom(); setTheme(th); };
   const pickShell = (sh) => { applyShell(sh); refreshCustom(); setShell(sh); };
   const dark = mode === '-dark' || (mode === '' && matchMedia('(prefers-color-scheme: dark)').matches);
-  const keys = [[`${mod}K`, t('nav.search')], [`${mod}\\`, t('cmd.toggleSidebar')], [`${mod}/`, t('cmd.toggleLang')], [`${mod}⌥N`, t('cmd.newPage')], ['J / K', t('nav.mail')], ['E', t('mail.archiveIt')], ['R', t('mail.reply')], ['Shift+F10', t('more')]];
+  const keys = [[`${mod}K`, t('nav.search')], [`${mod}\\`, t('cmd.toggleSidebar')], [`${mod}/`, t('cmd.toggleLang')], [`${mod}⌥N`, t('cmd.newPage')], ['J / K', t('nav.mail')], ['E', t('mail.archiveIt')], ['R', t('mail.reply')], ['S', t('mailx.star')], ['/', t('mailx.search')], ['Shift+F10', t('more')]]; // S·/ — 메일 별표·검색(15차)
   return (
     <div className="page-wrap">
       <div className="page-title-row"><h1 className="page-h1">{t('settings.title')}</h1></div>
@@ -99,7 +101,11 @@ export function Settings() {
       </section>}
       <section className="set-card">
         <h2>{t('settings.mail')}</h2>
-        <div className="person"><span className="dot ok" /><span className="person-main"><b><Hide k="mail:me">{ME.email}</Hide></b><small>IMAP · SMTP</small></span><button type="button" className="btn sm">{t('mail.connect')}</button></div>
+        <MailAccountsSettings />
+      </section>
+      <section className="set-card">
+        <h2>{t('notify.head')}</h2>
+        <MailNotifySettings />
       </section>
       <section className="set-card">
         <h2>{t('settings.shortcuts')}</h2>
@@ -152,7 +158,8 @@ export function PublicPage({ id: token }) {
     }).catch(() => live && setDoc(null));
     return () => { live = false; };
   }, [token]);
-  const view = doc ?? (doc === null && local ? { title: local.title, content: local.content, org: SPACES.find((s) => s.key === local.space && s.kind === 'org')?.name, index: false } : doc);
+  // 예시 데이터 모드는 서버가 없어 이 기기 본문을 쓴다 — 서버(office_strip)와 같은 규칙으로 비공개·파일·기록 블록을 뺀다(core/public-doc.js)
+  const view = doc ?? (doc === null && local ? { title: local.title, content: stripPublic(local.content), org: SPACES.find((s) => s.key === local.space && s.kind === 'org')?.name, index: false } : doc);
   useEffect(() => {                                                      // 검색 노출은 기본 끔(유건 확정) — 켠 페이지만 허용
     let m = document.querySelector('meta[name="robots"]');
     if (!m) { m = document.createElement('meta'); m.name = 'robots'; document.head.append(m); }
