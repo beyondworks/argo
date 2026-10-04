@@ -99,7 +99,8 @@ export async function listAgents(wsId) {
   let names = [];
   try { names = await readdir(p.agents); } catch { return []; }
   const out = [];
-  for (const n of names.filter((f) => f.endsWith('.md')).sort()) {
+  // 동기화 충돌 사본(`<slug>.conflict-<기기>-<ts>.md`, sync.mjs)은 크루가 아니다 — 목록·메신저 미러에 같은 이름 크루가 하나 더 생겼다(2026-10-04).
+  for (const n of names.filter((f) => f.endsWith('.md') && !/\.conflict-.*\.md$/.test(f)).sort()) {
     const md = await readFile(join(p.agents, n), 'utf8');
     const meta = parseFrontmatter(md);
     out.push({
