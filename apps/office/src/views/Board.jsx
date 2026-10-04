@@ -34,7 +34,7 @@ export function TaskBadges({ it, noStatus = false, today = null }) {
   const late = !!today && V.isOverdue(it, today);
   if (!st && !pr && !late) return null;
   return <span className="tk-badges">
-    {late && <span className="badge danger">{t('task.late')}</span>}
+    {late && <span className="badge danger">{t('task.overdue')}</span>}
     {st && <span className={`badge${st === 'hold' ? ' warn' : ''}`}>{t(`task.st.${st}`)}</span>}
     {pr && <span className={`badge${pr === 1 ? ' danger' : ''}`}>{t('task.prBadge', { p: t(`task.pr.${pr}`) })}</span>}
   </span>;

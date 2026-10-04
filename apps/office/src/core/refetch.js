@@ -15,10 +15,10 @@ export function onTabReturn(fn) {
 }
 
 /** 늦게 온 응답을 받을지 — 요청 때와 지금 계정이 다르면 버린다(계정을 바꾸는 사이 옛 계정 응답이 섞이지 않게, 검수 LOW 10).
- *  더 늦게 시작한 읽기가 이미 적용됐으면(appliedStarted > started) 버린다 — 쓰기 두 번 뒤 읽기가 거꾸로 도착해도 옛 값으로 덮지 않는다(10/4 분리 검수).
+ *  더 늦게 시작한 읽기가 이미 적용됐으면(appliedOrder > order, 읽기 시작 순번) 버린다 — 쓰기 두 번 뒤 읽기가 거꾸로 도착해도 옛 값으로 덮지 않는다(10/4 분리 검수).
  *  탭 복귀 읽기(quiet)는 그 사이 쓰기가 시작됐거나(writing) 더 새 읽기가 먼저 끝났으면(newerAt > started) 버린다 — 막 고친 값을 옛 값으로 덮지 않게 */
-export const keepResponse = ({ owner, nowOwner, quiet = false, writing = 0, started = 0, newerAt = 0, appliedStarted = 0 }) =>
-  owner === nowOwner && !(appliedStarted > started) && !(quiet && (writing > 0 || newerAt > started));
+export const keepResponse = ({ owner, nowOwner, quiet = false, writing = 0, started = 0, newerAt = 0, order = 0, appliedOrder = 0 }) =>
+  owner === nowOwner && !(appliedOrder > order) && !(quiet && (writing > 0 || newerAt > started));
 
 /** 받아 둔 것을 다시 쓸지 — 같은 계정이고 gap(기본 30초) 안에 받은 것. 이유(DB 위생, 검수 LOW 11): 화면을 열 때마다 같은 것을 다시 읽지 않는다(할 일 읽기와 같은 30초) */
 export const cacheFresh = (entry, { now, owner, gap = 30_000 }) => !!entry && entry.owner === owner && now - entry.at < gap;

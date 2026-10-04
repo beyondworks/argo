@@ -33,7 +33,7 @@ export default function TaskList({ space }) {
   const name = (row, id) => (id === ME.id ? t('task.me') : peopleOf(row).find((p) => p.user_id === id)?.name ?? '?');
   const today = kstDay();
   const focus = new URLSearchParams(useUrl().split('?')[1] ?? '').get('open'); // 예전 주소(?open=id)로 왔을 때 그 줄로 가서 할 일 패널을 연다
-  useEffect(() => { if (focus && rows) { document.querySelector(`[data-task="${CSS.escape(focus)}"]`)?.scrollIntoView({ block: 'center' }); const row = rows.find((r) => r.id === focus); if (row) setPanel({ id: row.id, space: sp(row) }); } }, [focus, !!rows]);
+  useEffect(() => { if (focus && rows) { document.querySelector(`[data-task="${CSS.escape(focus)}"]`)?.scrollIntoView({ block: 'center' }); const row = rows.find((r) => r.id === focus); if (row) setPanel({ id: row.id, space: sp(row) }); } }, [focus, !!rows?.some((r) => r.id === focus)]); // 조직 할 일이 내 할 일보다 늦게 와도 그 줄을 찾는다
   const run = (row, action, data, patch) => taskAction(sp(row), action, data, patch).catch((e) => showToast(t(e.message)));
   const add = async (event) => {
     event.preventDefault();
@@ -45,7 +45,7 @@ export default function TaskList({ space }) {
       setTitle(''); setDue(''); setAssignee(''); // 다음 할 일에 앞의 기한·맡을 사람이 몰래 따라가지 않게
     } catch (e) { showToast(t(e.message)); } finally { setBusy(false); }
   };
-  const menu = (row) => [{ label: t('task.details'), icon: 'doc', run: () => setPanel({ id: row.id, space: sp(row) }) }, ...(managerOf(row) || row.created_by === ME.id ? [ // 남이 맡긴 일은 끝내기·상태 바꾸기만(서버도 같은 규칙)
+  const menu = (row) => [{ label: t('task.details'), icon: 'doc', run: () => setPanel({ id: row.id, space: sp(row) }) }, ...(managerOf(row) || (row.created_by === ME.id && row.assignee === ME.id) ? [ // 기한·이름·취소는 관리자, 또는 내가 만들고 내가 맡은 일만(서버 office_task_write와 같은 규칙 — 관리자가 남에게 다시 맡긴 일은 만든 사람도 못 바꾼다)
     !row.done_at && { sep: true },
     !row.done_at && { label: t('task.changeDue'), icon: 'history', run: () => setEdit({ kind: 'due', row, value: row.due_on ?? '' }) },
     !row.done_at && { label: t('task.rename'), icon: 'draft', run: () => setEdit({ kind: 'title', row, value: row.title }) },

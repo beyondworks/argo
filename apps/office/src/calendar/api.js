@@ -17,6 +17,9 @@ export const calError = (e) => `cal.error.${ERRORS[e?.message] ?? (String(e?.cod
 
 /* ── 읽기 창 캐시 ── */
 let cache = new Map(), version = 0;
+// 캐시는 읽은 계정 것만 — 새로고침 없이 계정이 바뀌면(로그아웃 뒤 다른 계정 로그인 등) 옛 계정의 일정·사람·거래처를 버린다(10/4 재검수: 앞 계정의 개인 일정이 보였다)
+let cacheOwner = null;
+const ownCache = () => { if (cacheOwner !== ME.id) { cacheOwner = ME.id; cache = new Map(); once.clear(); gen++; } };
 const active = new Map(); // 지금 화면에 떠 있는 창(키 → 보는 곳 수) — 쓰기 뒤 이것만 다시 읽는다
 const listeners = new Set();
 const emit = () => { version++; listeners.forEach((l) => l()); };
@@ -26,6 +29,7 @@ const subscribe = (l) => { listeners.add(l); return () => listeners.delete(l); }
 const stale = (key, from, to) => { cache.delete(key); if (active.has(key)) return fetchWindow(key, from, to); emit(); };
 const list = (from, to) => rpc('office_event_list', { p_from: new Date(kstStart(from)).toISOString(), p_to: new Date(kstStart(to)).toISOString() });
 async function fetchWindow(key, from, to) {
+  ownCache();
   cache.set(key, { ...cache.get(key), loading: true, error: null });
   emit();
   const owner = ME.id;
@@ -40,6 +44,7 @@ async function fetchWindow(key, from, to) {
 /* ── 탭 복귀 다시 읽기(18차) ── */
 let writing = 0, tried = 0, gen = 0; // gen = 캐시를 비우고 다시 읽은 횟수(쓰기 뒤 refreshEvents) — 그 사이에 시작한 탭 복귀 읽기는 옛것이라 버린다
 onTabReturn(async () => {
+  ownCache();
   const keys = [...active.keys()], now = Date.now(), g = gen, owner = ME.id;
   if (!keys.length || !configured || getMode() !== 'signedIn') return;
   const oldest = Math.min(...keys.map((k) => cache.get(k)?.at ?? 0)); // 떠 있는 창 중 가장 오래전에 읽은 것
@@ -66,11 +71,12 @@ onTabReturn(async () => {
 export function useEvents(from, to) {
   const key = `${from}|${to}`;
   useSyncExternalStore(subscribe, () => version, () => version);
+  ownCache();
   useEffect(() => {
     active.set(key, (active.get(key) ?? 0) + 1);
     if (!cache.has(key)) fetchWindow(key, from, to);
     return () => { const n = active.get(key) - 1; if (n > 0) active.set(key, n); else active.delete(key); };
-  }, [key]);
+  }, [key, ME.id]);
   return cache.get(key) ?? { loading: true };
 }
 
@@ -80,16 +86,17 @@ export function useEventWindows(fetchWins, showWins) {
   const v = useSyncExternalStore(subscribe, () => version, () => version);
   const keyOf = ([f, t]) => `${f}|${t}`;
   const fkeys = fetchWins.map(keyOf), fsig = fkeys.join(','), ssig = showWins.map(keyOf).join(',');
+  ownCache();
   useEffect(() => {
     for (const k of fkeys) { active.set(k, (active.get(k) ?? 0) + 1); if (!cache.has(k)) fetchWindow(k, ...k.split('|')); }
     return () => { for (const k of fkeys) { const n = active.get(k) - 1; if (n > 0) active.set(k, n); else active.delete(k); } };
-  }, [fsig]);
+  }, [fsig, ME.id]);
   return useMemo(() => {
     const byId = new Map();
     for (const k of ssig.split(',')) for (const e of cache.get(k)?.events ?? []) byId.set(e.id, e);
     const wins = fkeys.map((k) => cache.get(k));
     return { events: [...byId.values()], loading: wins.some((w) => !w || w.loading), error: wins.find((w) => w?.error)?.error ?? null };
-  }, [ssig, fsig, v]);
+  }, [ssig, fsig, v, ME.id]);
 }
 
 /** 쓰기 — 실패하면 사전 키를 담은 오류를 던진다. 성공하면 읽은 창을 비우고 보고 있는 창만 다시 읽는다 */
@@ -104,13 +111,14 @@ export async function writeEvent(action, data, { refresh = true } = {}) {
 }
 /** 읽은 창을 비우고 보고 있는 창만 다시 읽는다 — 여러 건을 한꺼번에 쓴 뒤 한 번만(여러 보기의 한꺼번에 바꾸기) */
 export async function refreshEvents() {
+  ownCache();
   cache = new Map(); gen++;
   await Promise.all([...active.keys()].map((k) => fetchWindow(k, ...k.split('|'))));
 }
 
 /* ── 조직 사람·거래처(상세 창을 열 때만, 화면 메모리에 한 번) ── */
 const once = new Map();
-const remember = (key, fn) => { if (!once.has(key)) once.set(key, fn().catch((e) => { once.delete(key); throw e; })); return once.get(key); };
+const remember = (key, fn) => { ownCache(); if (!once.has(key)) once.set(key, fn().catch((e) => { once.delete(key); throw e; })); return once.get(key); };
 export const loadPeople = (org) => remember(`people:${org}`, async () => (configured ? (await rpc('office_org_people', { p_org: org })) ?? [] : SAMPLE_PEOPLE[org] ?? []));
 /** 일정 scope('o:'+조직 또는 'u:'+나)의 거래처 — 업무 데이터 읽기(office_business_read)의 거래처 목록을 쓴다 */
 export const loadCustomers = (org) => remember(`cust:${org ?? 'me'}`, async () => (configured

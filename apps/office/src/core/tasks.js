@@ -34,21 +34,25 @@ const busy = new Map(), bk = (space) => `${ME.id ?? ''}|${space}`;
 export function loadTasks(space, again, quiet) {
   const k = bk(space);
   if (!again && (busy.has(k) || Date.now() - (mine(space)?.at ?? 0) < 30e3)) return busy.get(k);
-  const p = fetchTasks(space, quiet).finally(() => { if (busy.get(k) === p) busy.delete(k); });
+  const p = fetchTasks(space, quiet, again).finally(() => { if (busy.get(k) === p) busy.delete(k); });
   busy.set(k, p);
   return p;
 }
-/** quiet = 탭 복귀 다시 읽기 — '불러오는 중'을 띄우지 않고 직원 목록은 다시 받지 않으며, 실패하면 보던 목록을 그대로 둔다 */
-async function fetchTasks(space, quiet) {
+/** quiet = 탭 복귀 다시 읽기 — '불러오는 중'을 띄우지 않고, 실패하면 보던 목록을 그대로 둔다.
+ *  탭 복귀·쓰기 뒤 다시 읽기(again)는 받아 둔 직원 목록을 그대로 쓴다(10/4 재검수: 쓰기마다 직원 목록을 다시 받았다).
+ *  직원 목록만 못 읽으면 할 일은 그대로 보이고 직원 목록은 보던 것(없으면 빈 목록) */
+let seq = 0; // 읽기 시작 순번 — 같은 밀리초에 시작한 두 읽기도 순서를 가린다
+async function fetchTasks(space, quiet, again) {
   const org = orgOf(space);
   if (org === undefined) return;
   if (!quiet) set(space, { loading: true, error: null });
-  const started = Date.now(), owner = ME.id;
+  const started = Date.now(), order = ++seq, owner = ME.id, had = mine(space)?.people;
   try {
-    const [rows, people] = await Promise.all([rpc('office_task_list', { p_org: org }), quiet ? mine(space)?.people : org ? rpc('office_org_people', { p_org: org }) : []]);
-    // 계정이 바뀌었거나(LOW 10), 탭 복귀 읽기 사이 쓰기가 시작됐거나 더 새 읽기가 먼저 끝났으면 이 응답은 옛것이다
-    if (!keepResponse({ owner, nowOwner: ME.id, quiet, writing, started, newerAt: mine(space)?.at ?? 0, appliedStarted: mine(space)?.from ?? 0 })) return;
-    set(space, { rows: rows ?? [], people: people ?? [], loading: false, error: null, at: Date.now(), from: started });
+    const [rows, people] = await Promise.all([rpc('office_task_list', { p_org: org }),
+      (quiet || again) && had ? had : org ? rpc('office_org_people', { p_org: org }).catch(() => had ?? []) : []]);
+    // 계정이 바뀌었거나(LOW 10), 더 늦게 시작한 읽기가 이미 적용됐거나, 탭 복귀 읽기 사이 쓰기가 시작됐거나 더 새 읽기가 먼저 끝났으면 이 응답은 옛것이다
+    if (!keepResponse({ owner, nowOwner: ME.id, quiet, writing, started, newerAt: mine(space)?.at ?? 0, order, appliedOrder: mine(space)?.order ?? 0 })) return;
+    set(space, { rows: rows ?? [], people: people ?? [], loading: false, error: null, at: Date.now(), order });
   } catch (e) { if (!quiet && owner === ME.id) set(space, { loading: false, error: taskError(e) }); }
 }
 
@@ -105,6 +109,8 @@ const samples = {}, rowsCache = new Map();
 let sampleVer = 0;
 export const shareSampleTasks = (space, rows) => { if (samples[space] !== rows) { samples[space] = rows; sampleVer++; emit(); } };
 const rowsOf = (space) => mine(space)?.rows ?? samples[space];
+/** 받아 둔 그 공간의 할 일 행(없으면 undefined) — 내 할 일을 못 읽었을 때 조직 할 일만이라도 보이게(views/data.js) */
+export const rowsIn = rowsOf;
 function badgeRows(space) {
   const c = rowsCache.get(space);
   if (c && c.state === state && c.sampleVer === sampleVer && c.me === ME.id && c.spaces === SPACES) return c.rows;

@@ -22,7 +22,7 @@ export const TASK_DICT = {
   'task.error.category': ['그 분류를 찾을 수 없습니다. 지워졌을 수 있습니다.', "That category wasn't found. It may have been deleted."],
   'task.error.categoryName': ['같은 이름의 분류가 이미 있습니다.', 'A category with that name already exists.'],
   'task.st.todo': ['할 일', 'To do'], 'task.st.doing': ['진행 중', 'In progress'], 'task.st.hold': ['보류', 'On hold'], 'task.st.done': ['끝냄', 'Done'],
-  'task.late': ['기한 지남', 'Overdue'],
+  'task.overdue': ['기한 지남', 'Overdue'], // 끝내지 않은 일의 기한 지남(칸반 배지). 'task.late'(기한 넘겨 끝냄)와 다른 말 — 같은 키로 두 번 적혀 뒤의 값이 앞을 덮었다(10/4 재검수)
   'task.pr.1': ['높음', 'High'], 'task.pr.2': ['보통', 'Normal'], 'task.pr.3': ['낮음', 'Low'], 'task.prBadge': ['중요도 {p}', '{p} priority'], 'task.uncategorized': ['미분류', 'No category'],
   'task.details': ['자세히 보기', 'Details'], 'task.panel': ['할 일', 'To-do'],
   'task.f.title': ['제목', 'Title'], 'task.f.status': ['상태', 'Status'], 'task.f.priority': ['중요도', 'Priority'], 'task.f.category': ['분류', 'Category'],
