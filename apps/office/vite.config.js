@@ -2,6 +2,7 @@ import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
+import { buildId } from './build-id.mjs';
 
 // 메신저와 같은 방식 — 공용 모듈은 복사하지 않고 별칭으로 함께 쓴다(크루 얼굴 규칙의 정본은 메신저).
 const shared = (p) => fileURLToPath(new URL(`../../${p}`, import.meta.url));
@@ -36,7 +37,7 @@ export default defineConfig(({ mode }) => {
   // 서버 함수가 읽을 env(.env.local의 OFFICE_*·VITE_SUPABASE_*) — 브라우저 번들에는 VITE_ 접두사만 들어간다
   Object.assign(process.env, loadEnv(mode, process.cwd(), ''), { ...process.env });
   return {
-    plugins: [react(), localApi()],
+    plugins: [react(), localApi(), buildId()], // buildId: 새 버전 안내용 빌드 표시(build-id.mjs)
     server: {
       cors: { origin: [/^https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/, 'tauri://localhost', 'http://tauri.localhost', 'https://tauri.localhost'] },
       watch: { ignored: ['**/src-tauri/**'] },

@@ -230,8 +230,8 @@ html.nav-collapsed .side { visibility: hidden; }
 .draft-badge { font-size: 11px; padding: 0 8px; height: 20px; display: inline-flex; align-items: center; border-radius: 6px; background: var(--mark-wash); box-shadow: inset 0 0 0 1px var(--border); color: var(--fg-2); white-space: nowrap; }
 .width-toggle[aria-pressed='true'] { color: var(--fg); background: var(--primary-soft); } /* 전체 너비가 켜져 있음 */
 /* 화면 전체 가리기(18차) — 켜지면 머리글 단추가 '가리는 중' 알약으로 바뀐다(한눈에 보이게). 좁은 화면은 글자 없이 채운 단추만 */
-.hide-all.on { display: inline-flex; align-items: center; justify-content: center; width: auto; gap: 6px; padding: 0 10px 0 8px; background: var(--primary); color: var(--primary-fg); font-size: 12px; font-weight: 560; white-space: nowrap; }
-@media (max-width: 767px) { .hide-all.on { padding: 0; aspect-ratio: 1; } .hide-all.on span { display: none; } }
+.hide-all.on { color: var(--danger); } /* 켜짐 = 같은 자리 사선 그은 눈(eyeOff)·붉은색만(유건 10/4) */
+:root[data-shell] .topbar .hide-all.on[aria-pressed='true'] { box-shadow: none; background: none; } /* 셸의 눌림 모양(뉴모피즘 안쪽 그림자 등)도 빼고 색만 */
 /* 메일 제목·요약·본문과 첫 화면 글자(.ha)는 흐리게, 누르고 있는 동안(:active)만 보인다. 금액·연락처 같은 값은 Redact가 입자로 덮는다 */
 :root[data-hide-all] .ha { filter: blur(6px); user-select: none; -webkit-user-select: none; cursor: pointer; transition: filter 120ms ease-out; }
 :root[data-hide-all] .ha:active { filter: none; }
@@ -592,6 +592,7 @@ body.split-resizing { cursor: col-resize; user-select: none; }
 .sheet { width: min(var(--panel-w, 520px), 100vw); height: 100%; background: var(--float); box-shadow: inset 1px 0 0 var(--border); display: grid; grid-template-rows: auto minmax(0, 1fr) auto; animation: slide-in 260ms var(--ease-drawer); }
 .sheet-body { padding: 18px; overflow: auto; display: grid; gap: 18px; align-content: start; }
 .toast { position: fixed; left: 50%; bottom: max(20px, env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 70; display: flex; align-items: center; gap: 14px; padding: 10px 12px 10px 16px; border-radius: var(--rc); background: var(--primary); color: var(--primary-fg); font-size: 13px; animation: toast-in 220ms var(--ease-out); max-width: calc(100vw - 32px); }
+.ver-bar { bottom: calc(max(20px, env(safe-area-inset-bottom)) + 56px); z-index: 69; animation: none; } /* 새 버전 안내 — 보통 알림 바로 위에 남아 있다 */
 .toast-undo { font-weight: 620; text-decoration: underline; text-underline-offset: 3px; padding: 2px 4px; }
 @keyframes fade { from { opacity: 0; } }
 @keyframes pop { from { opacity: 0; transform: scale(0.97); } }

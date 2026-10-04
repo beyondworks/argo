@@ -69,6 +69,7 @@ const DICT = {
   'nav.trash': ['휴지통', 'Trash'], 'nav.settings': ['설정', 'Settings'], 'nav.newPage': ['새 페이지', 'New page'],
   'nav.collapse': ['사이드바 접기', 'Collapse sidebar'], 'nav.open': ['메뉴 열기', 'Open menu'],
   'width.full': ['전체 너비로 보기', 'Full width'], 'width.center': ['가운데로 보기', 'Centered width'],
+  'ver.new': ['새 버전이 나왔습니다. 새로고침하면 바로 적용됩니다', 'A new version is available. Reload to update'], 'ver.reload': ['새로고침', 'Reload'], 'ver.saving': ['저장하는 중…', 'Saving…'],
   'hideAll.on': ['화면 가리기', 'Hide sensitive info'], 'hideAll.state': ['가리는 중', 'Hidden'],
   'save.saved': ['저장됨', 'Saved'], 'save.saving': ['저장 중…', 'Saving…'], 'save.unsaved': ['저장 안 됨', 'Not saved'], 'save.offline': ['오프라인 — 연결되면 저장', 'Offline — saves when back online'],
   'home.title': ['오늘', 'Today'], 'home.addModule': ['모듈 추가', 'Add module'], 'home.noHidden': ['추가할 모듈이 없습니다', 'All modules are on the board'], 'home.addCopy': ['{name} 하나 더', 'Another {name}'], 'mod.failed': ['이 모듈을 표시하지 못했습니다', "This module couldn't be shown"],

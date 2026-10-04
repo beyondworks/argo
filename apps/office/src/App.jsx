@@ -18,6 +18,7 @@ import { VIEWS, favTarget } from './core/nav-model.js';
 import { useUi, setUi } from './core/ui-state.js';
 import { baseOf, pageMenu, itemsFromDrag, mod } from './core/commands.js';
 import { useHideAll, toggleHideAll } from './core/hide-all.js';
+import { useNewVersion } from './core/version-check.js';
 import { isFullWidth, onWidth, toggleWidth } from './core/theme.js';
 import { PEOPLE } from './data/sample.js';
 import { SPACES, ME, useSession, canManage } from './core/session.js';
@@ -124,10 +125,19 @@ function FavToggle({ path, page }) {
 }
 
 /** 화면 전체 가리기(18차, 유건 결정 4) — 회의·화면 공유 전에 한 번에. 켜면 '가리는 중' 알약으로 바뀐다. 단축키 ⌘⇧H(아래 onKey) */
+/** 새 버전 안내(유건 10/4) — 누르면 편집기의 입력 대기(0.8초)가 저장 목록에 들어가길 기다리고 보낸 뒤 새로고침한다 */
+function NewVersionBar() {
+  const fresh = useNewVersion();
+  const [busy, setBusy] = useState(false);
+  if (!fresh) return null;
+  const reload = async () => { setBusy(true); await new Promise((r) => setTimeout(r, 1000)); try { await flushNow(); } catch { /* 못 보낸 것은 저장 목록(IndexedDB)에 남아 새로고침 뒤 다시 보낸다 */ } location.reload(); };
+  return <div className="toast ver-bar" role="status"><span>{t('ver.new')}</span><button type="button" className="toast-undo" disabled={busy} onClick={reload}>{t(busy ? 'ver.saving' : 'ver.reload')}</button></div>;
+}
+
 function HideAllToggle() {
   const on = useHideAll();
-  const label = t('hideAll.on'); // 이름은 그대로, 켜짐은 눌림 상태(aria-pressed)와 '가리는 중' 글자로
-  return <button type="button" className={`icon-btn hide-all${on ? ' on' : ''}`} aria-pressed={on} aria-label={label} title={`${label} (${mod === '⌘' ? '⌘⇧H' : 'Ctrl+Shift+H'})`} onClick={() => toggleHideAll()}><Icon name={on ? 'eyeOff' : 'eye'} />{on && <span>{t('hideAll.state')}</span>}</button>;
+  const label = t('hideAll.on'); // 켜짐은 같은 자리 눈 아이콘이 사선 그은 눈·붉은색으로만 바뀐다(유건 10/4 "가리는 중 UI 별로") — 상태는 눌림(aria-pressed)과 설명 글로
+  return <button type="button" className={`icon-btn hide-all${on ? ' on' : ''}`} aria-pressed={on} aria-label={label} title={`${on ? t('hideAll.state') : label} (${mod === '⌘' ? '⌘⇧H' : 'Ctrl+Shift+H'})`} onClick={() => toggleHideAll()}><Icon name={on ? 'eyeOff' : 'eye'} /></button>;
 }
 
 function Header({ r, page, path }) {
@@ -267,6 +277,7 @@ export default function App() {
       <Lazy fallback={null} quiet><Compose /></Lazy>
       <Lazy fallback={null} quiet reset={path}><SelectionHost /></Lazy>
       <MenuHost />
+      <NewVersionBar />
       <ToastHost />
     </DndContext>
   );
