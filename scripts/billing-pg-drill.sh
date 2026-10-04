@@ -27,7 +27,10 @@ cleanup() { pg_ctl -D "$DIR/data" stop -m immediate >/dev/null 2>&1 || true; rm 
 trap cleanup EXIT
 
 echo "[drill] 임시 Postgres 기동 (port $PORT, $DIR)"
-initdb -D "$DIR/data" -A trust -U postgres >/dev/null
+# 인코딩·로캘을 셸에서 물려받지 않는다 — LANG/LC_ALL=C 셸(에이전트 Bash 등)에서는 SQL_ASCII 클러스터가 되어 한글이 깨지고
+# 글자 수를 바이트로 셌다(2026-10-03, 4개 파일 거짓 실패). C.UTF-8 = 맥·리눅스 같은 결과(바이트 순 정렬 + 유니코드 대소문자·정규식).
+# ponytail: 운영은 ICU en-US라 텍스트 정렬 순서는 운영과 다르다. 순서까지 맞추려면 PG15+에서 --locale-provider=icu --icu-locale=en-US
+initdb -D "$DIR/data" -A trust -U postgres -E UTF8 --locale=C.UTF-8 >/dev/null
 pg_ctl -D "$DIR/data" -o "-p $PORT -k $DIR -c listen_addresses=127.0.0.1" -l "$DIR/pg.log" start >/dev/null
 
 FILES=("${@:-}")
