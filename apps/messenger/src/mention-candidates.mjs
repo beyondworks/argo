@@ -40,17 +40,39 @@ export function mentionsFromBody(body, candidates, picked = [], allCandidates = 
 
 // 방 밖 에이전트 멘션 — 본문의 @이름 중 이 방 후보(사람·크루)에 없는 조직 에이전트(D14). 멘션 후보는 방 안만 유지하고(유건 0.1.29 재확인),
 // 전송 뒤 "이 방에 없어요" 안내를 띄우는 데만 쓴다. 방 안 이름을 먼저 지워 "@페퍼 (VPS)" 안의 "@페퍼"가 방 밖 동명으로 새지 않게(mentionsFromBody와 같은 규칙).
-export function outsideCrewMentions(body, inRoom = [], orgCrews = []) {
+// 같은 이름이 여럿이면 맞춘 구간이 지워져 앞의 하나만 잡힌다 — 내 것 → 먼저 만든 것 순으로 앞에 둔다. 받는 목록은 켜진(active) 크루뿐이고
+// 충돌 사본은 조회 단계(withoutCopies)에서 이미 빠져 있다(실사고 2026-10-04: 사본 '페퍼'가 앞에 있어 [이 방에 추가]가 사본을 넣었다).
+export function outsideCrewMentions(body, inRoom = [], orgCrews = [], uid = null) {
   let text = String(body ?? '');
   const blank = (m, lead) => lead + ' '.repeat(m.length - lead.length);
   for (const x of inRoom.filter((x) => x?.name).sort((a, b) => b.name.length - a.name.length)) text = text.replace(mentionRe(x.name, 'g'), blank);
   const inIds = new Set(inRoom.filter((x) => x?.kind === 'crew').map((x) => x.id));
+  const rank = (c) => (c.owner_user_id === uid ? 0 : 1);
   const out = [];
-  for (const c of orgCrews.filter((c) => c?.display_name && !inIds.has(c.id)).sort((a, b) => b.display_name.length - a.display_name.length)) {
+  for (const c of orgCrews.filter((c) => c?.display_name && !inIds.has(c.id)).sort((a, b) => b.display_name.length - a.display_name.length || rank(a) - rank(b) || String(a.created_at ?? '').localeCompare(String(b.created_at ?? '')))) {
     if (!mentionRe(c.display_name).test(text)) continue;
     out.push(c); text = text.replace(mentionRe(c.display_name, 'g'), blank);
   }
   return out;
+}
+// 동기화 충돌 사본(본체 sync.mjs가 남기는 `<slug>.conflict-<기기>-<ts>` 카드가 옛 앱에서 미러된 크루)인가.
+export const isCopyCrew = (c) => /\.conflict-/.test(c?.slug ?? '');
+// 메신저 크루 목록에서 충돌 사본을 뺀다 — 고르기·@멘션·넣기·1:1 받는이 후보 어디에도 나오지 않게(재검수 #826 MEDIUM-2: 정렬만 바꾸면 1:1 후보·@ 팝업·
+// 파견 전 목록·내 에이전트에 그대로 남았다). 조회 지점: loadOrg · 개인 공간 방 크루 · 내 에이전트 · 1:1 받는이 후보.
+export const withoutCopies = (rows) => (Array.isArray(rows) ? rows.filter((r) => !isCopyCrew(r)) : rows);
+// 크루 목록 순서 — 회사 크루 먼저, 이름순(QA: 화면마다 순서가 달랐다).
+export const crewOrder = (isCompany) => (a, b) => isCompany(b) - isCompany(a) || a.display_name.localeCompare(b.display_name, 'ko');
+// [이 방에 추가] 응답 → 안내 줄 상태. joined·already = 방에 있다(결과 줄만 보이고 구성원을 다시 읽는다), 그 밖은 방장에게 요청한 것.
+export const outsideAddDone = (data) => (data === 'joined' || data === 'already' ? data : 'requested');
+// 방 밖 안내 한 줄의 모양 — done: undefined | 'pending'(응답 대기) | 'joined' | 'already' | 'requested'.
+// 들어간 뒤엔 '없어요'를 지운다(0.1.49: "없어요 · 넣었어요"가 한 줄에 같이 보였다).
+// request: 'on'(누를 수 있음) | 'busy'(응답 대기 — 같은 글자로 꺼짐) | 'slot'(결과 뒤 — 보이지 않는 같은 크기 자리) | null(처음부터 없음: 남의 에이전트·1:1 방).
+// 한 번 보인 버튼은 안내가 닫힐 때까지 크기·자리를 바꾸지 않는다 — 지우거나 글자가 짧아지면 줄바꿈·정렬이 바뀌어 더블탭 둘째 번이
+// [1:1로 시키기]를 눌렀다(재검수 #826 N2 데스크톱 오른쪽 정렬, 3차 NEW-1 폰 폭 왼쪽 줄바꿈).
+export function outsideRowView({ crew, uid, done, isDm, can }) {
+  const request = crew?.owner_user_id === uid && !isDm ? (!done ? 'on' : done === 'pending' ? 'busy' : 'slot') : null;
+  if (done === 'joined' || done === 'already') return { line: `mention.outside.${done}`, denied: false, suffix: null, request };
+  return { line: 'mention.outside', denied: !can, suffix: done === 'requested' ? 'mention.outside.requested' : null, request };
 }
 // 방 밖에서 이 에이전트에게 시킬 수 있나(크루 시트 canMe와 같은 규칙 — 최종 판정은 서버 msgr_instruct_check).
 export const canInstructCrew = (c, uid) => !!c && (c.owner_user_id === uid || c.allow === 'all' || (c.allow === 'list' && (c.allow_users ?? []).includes(uid)));

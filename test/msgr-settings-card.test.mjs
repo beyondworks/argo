@@ -269,7 +269,7 @@ test('QA(2026-09-04): 네이티브 prompt/confirm/alert 0 — 새 채널·새 �
     assert.match(media, /st\.phase === 'fail' \? t\('file\.failed'\)/, '실패 문구(다시 시도)');
     assert.match(media, /setNote\(\{ text: t\(kind === 'save' \? 'media\.saveFail'/, '크게 보기 저장·공유 실패 안내'); }
   assert.match(app, /<span className="q">\{parentBlockedUser \? t\('msg\.blockedUser'\) : parentMutedCrew \? t\('msg\.mutedCrew'\) : <>\{parent\.author_kind === 'user'/, '인용 말줄임 span(차단한 사람·숨긴 크루의 글이면 가림 문구, 2026-09-26)');
-  assert.match(app, /crs\.sort\(\(a, b\) => \(crewTier\(b, orgRow\) === 'company'\) - \(crewTier\(a, orgRow\) === 'company'\) \|\| a\.display_name\.localeCompare\(b\.display_name, 'ko'\)\);/, '크루 순서 고정');
+  // 크루 순서 고정(회사 크루 먼저·이름순)은 정렬식 문자열 대신 실제 loadOrg를 돌려 확인한다 — apps/messenger/test/rail-state.test.mjs 'loadOrg: 충돌 사본은…'(재검수 #826 N1)
   assert.match(app, /\{\(import\.meta\.env\.DEV \|\| import\.meta\.env\.VITE_DEV_LOGIN === '1'\) && \(<>/, '개발용 로그인은 DEV 또는 검수용 번들 플래그(VITE_DEV_LOGIN=1)에서만 — 발행 빌드 env엔 이 플래그가 없다');
   const css = read('apps/messenger/src/styles.css');
   assert.match(css, /^\.msgr-quote \.q \{ min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; \}/m, '인용 말줄임 CSS');
