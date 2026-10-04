@@ -40,13 +40,16 @@ export function mentionsFromBody(body, candidates, picked = [], allCandidates = 
 
 // 방 밖 에이전트 멘션 — 본문의 @이름 중 이 방 후보(사람·크루)에 없는 조직 에이전트(D14). 멘션 후보는 방 안만 유지하고(유건 0.1.29 재확인),
 // 전송 뒤 "이 방에 없어요" 안내를 띄우는 데만 쓴다. 방 안 이름을 먼저 지워 "@페퍼 (VPS)" 안의 "@페퍼"가 방 밖 동명으로 새지 않게(mentionsFromBody와 같은 규칙).
-export function outsideCrewMentions(body, inRoom = [], orgCrews = []) {
+// 같은 이름이 여럿이면 맞춘 구간이 지워져 앞의 하나만 잡힌다 — 내 것 → 켜진 것 → 충돌 사본(sync.mjs `.conflict-`)이 아닌 것 → 먼저 만든 것 순으로 앞에 둔다
+// (실사고 2026-10-04: 사본 '페퍼'가 앞에 있어 [이 방에 추가]가 사본을 넣었다).
+export function outsideCrewMentions(body, inRoom = [], orgCrews = [], uid = null) {
   let text = String(body ?? '');
   const blank = (m, lead) => lead + ' '.repeat(m.length - lead.length);
   for (const x of inRoom.filter((x) => x?.name).sort((a, b) => b.name.length - a.name.length)) text = text.replace(mentionRe(x.name, 'g'), blank);
   const inIds = new Set(inRoom.filter((x) => x?.kind === 'crew').map((x) => x.id));
+  const rank = (c) => (c.owner_user_id === uid ? 0 : 4) + (c.status === 'active' ? 0 : 2) + (/\.conflict-/.test(c.slug ?? '') ? 1 : 0);
   const out = [];
-  for (const c of orgCrews.filter((c) => c?.display_name && !inIds.has(c.id)).sort((a, b) => b.display_name.length - a.display_name.length)) {
+  for (const c of orgCrews.filter((c) => c?.display_name && !inIds.has(c.id)).sort((a, b) => b.display_name.length - a.display_name.length || rank(a) - rank(b) || String(a.created_at ?? '').localeCompare(String(b.created_at ?? '')))) {
     if (!mentionRe(c.display_name).test(text)) continue;
     out.push(c); text = text.replace(mentionRe(c.display_name, 'g'), blank);
   }

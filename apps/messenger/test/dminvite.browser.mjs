@@ -263,6 +263,13 @@ await scenario(1280, 'outside-mention-notice', async (p) => {
   await chip.locator('button', { hasText: '이 방에 추가 요청' }).click(); await p.waitForTimeout(700);
   const joins = await p.evaluate(() => window.__dmInviteFixture.calls.filter((c) => c.rpc === 'msgr_crew_join'));
   assert.ok(joins.some((c) => c.args?.crew === 'crew-1' && c.args?.ch === 'general'), '기존 에이전트 참여 경로(msgr_crew_join)로 요청');
+  // 0.1.49 실기기 "반응 없음": 넣은 뒤에도 "없어요 · 넣었어요"가 한 줄에 보였고, 구성원을 다시 읽지 않아 다시 불러도 멘션 없이 '없어요'만 반복됐다
+  assert.match(await chip.innerText(), /Fixture Agent를 이 방에 넣었어요/);
+  assert.doesNotMatch(await chip.innerText(), /없어요/, '넣은 뒤엔 결과만 보인다');
+  await ta.fill('@Fixture Agent 다시'); await ta.press('Escape'); await ta.press('Enter'); await p.waitForTimeout(800);
+  const again = await p.evaluate(() => window.__dmInviteFixture.calls.filter((c) => c.table === 'msgr_messages' && c.op === 'insert').map((c) => [].concat(c.values)[0]).at(-1));
+  assert.deepEqual(again?.mentions, [{ kind: 'crew', id: 'crew-1' }], '방금 넣은 에이전트를 다시 부르면 멘션이 붙는다');
+  assert.equal(await p.locator('.msgr-outsidechip').count(), 0, '"없어요" 안내가 다시 뜨지 않는다');
 });
 
 // D31(원장 P2-8). 파견을 해제했다가 다시 파견하면 허용 범위가 조직 기본값으로 조용히 바뀌었다(「모두」→「에이전트 주인만」).

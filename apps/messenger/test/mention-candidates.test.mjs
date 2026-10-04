@@ -72,6 +72,13 @@ test('outsideCrewMentions: 방 밖 조직 에이전트만, 방 안 이름·동�
   assert.deepEqual(outsideCrewMentions('서윤 얘기 좀 하자', room, org).map((c) => c.id), [], '@ 없이 이름만은 멘션이 아님');
   assert.deepEqual(outsideCrewMentions('@페퍼 (VPS) 상태?', [...room, { kind: 'crew', id: 'pv', name: '페퍼 (VPS)' }], org).map((c) => c.id), [], '방 안 "페퍼 (VPS)"의 접두 "페퍼"가 방 밖으로 새지 않는다');
   assert.deepEqual(outsideCrewMentions('@서윤 @페퍼 둘 다', room, org).map((c) => c.id).sort(), ['p', 's'], '여럿');
+  // 같은 이름이 여럿이면 하나만, 진짜를 고른다 — 동기화 충돌 사본이 '페퍼' 크루로 미러돼 [이 방에 추가]가 사본을 넣었다(2026-10-04 실기기)
+  const pick = (org) => outsideCrewMentions('@페퍼 봐 줘', room, org, 'me').map((c) => c.id);
+  const p = (id, o) => ({ id, display_name: '페퍼', owner_user_id: 'me', status: 'active', slug: 'pepper', created_at: '2026-09-01', ...o });
+  assert.deepEqual(pick([p('theirs', { owner_user_id: 'x', created_at: '2026-01-01' }), p('mine')]), ['mine'], '내 것이 먼저');
+  assert.deepEqual(pick([p('off', { status: 'available', created_at: '2026-01-01' }), p('on')]), ['on'], '켜진 것이 먼저(꺼진 크루는 서버가 msgr_bad_member로 거절)');
+  assert.deepEqual(pick([p('copy', { slug: 'pepper.conflict-mac-1759000000000', created_at: '2026-01-01' }), p('real')]), ['real'], '충돌 사본이 아닌 것이 먼저');
+  assert.deepEqual(pick([p('new', { created_at: '2026-10-04' }), p('old')]), ['old'], '그다음은 먼저 만든 것');
   assert.equal(canInstructCrew({ owner_user_id: 'me', allow: 'owner' }, 'me'), true, '주인');
   assert.equal(canInstructCrew({ owner_user_id: 'x', allow: 'all' }, 'me'), true, '모두');
   assert.equal(canInstructCrew({ owner_user_id: 'x', allow: 'list', allow_users: ['me'] }, 'me'), true, '정한 사람');
