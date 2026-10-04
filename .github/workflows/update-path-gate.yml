@@ -1,0 +1,68 @@
+# 업데이트 경로 관문(발행 전) — 지금 공개된 버전을 깨끗한 맥에 깔고, 앱 안 업데이트로 아직 공개하지 않은 새 빌드를 받아
+# 재시작·화면·데이터까지 되는지 실제로 확인한다(2026-10-04 유건 지시: 업데이트 과정에서 또 다른 오류가 나면 안 된다).
+# 새 빌드 = 릴리스 워크플로(Build desktop apps / Build messenger app) 실행의 산출물. 발행 드릴에서 초안을 공개하기 전에 돌린다:
+#   gh workflow run update-path-gate.yml -f app=argo -f run_id=<Build desktop apps 실행 번호>
+#   gh workflow run update-path-gate.yml -f app=messenger -f run_id=<Build messenger app 실행 번호>
+# 러너 안에서만 github.com을 로컬 HTTPS 미러로 돌린다(scripts/update-gate/gate.sh). 아무것도 발행하지 않는다.
+# 범위: 맥 Apple Silicon·Intel. Windows(NSIS 설치 프로그램 경로)는 이 관문이 보지 않는다.
+name: Update path gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      app:
+        description: 'Which app'
+        type: choice
+        options: [argo, messenger]
+        required: true
+      run_id:
+        description: 'Release build run id whose artifacts are the new version'
+        type: string
+        required: true
+  # 관문 자체를 시험할 때만(병합 전에 뺀다): 이 브랜치에 푸시하면 메신저 0.1.49 빌드(run 37174069109)로 돈다
+  push:
+    branches: [ci/update-path-gate]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  gate:
+    name: ${{ inputs.app || 'messenger' }}-${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-15, arch: aarch64-apple-darwin, platform: darwin-aarch64 }
+          - { os: macos-15-intel, arch: x86_64-apple-darwin, platform: darwin-x86_64 }
+    env:
+      APP: ${{ inputs.app || 'messenger' }}
+      RUN_ID: ${{ inputs.run_id || '37174069109' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/update-gate
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ (inputs.app || 'messenger') == 'argo' && 'argo' || 'argo-messenger' }}-${{ matrix.arch }}
+          run-id: ${{ inputs.run_id || '37174069109' }}
+          github-token: ${{ github.token }}
+          path: new
+      - name: Public version -> in-app update -> new build
+        env:
+          ARCH: ${{ matrix.arch }}
+          PLATFORM: ${{ matrix.platform }}
+          OUT: ${{ github.workspace }}/out
+          NEW: ${{ github.workspace }}/new
+        run: bash scripts/update-gate/gate.sh
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: update-gate-${{ env.APP }}-${{ matrix.arch }}
+          path: out/
+          if-no-files-found: warn
+          retention-days: 14
