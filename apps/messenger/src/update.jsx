@@ -7,9 +7,14 @@ import { useEffect, useRef, useState } from 'react';
 import { isDesktopTauri } from './platform.js';
 import { pushDiag } from './diag.jsx';
 import { shouldCheckDesktop, shouldShowVersion } from './update-schedule.mjs';
+import { MOVE_REQUIRED, updateBarView, updateLocationIssue } from './update-location.mjs';
+import { openExternalUrl } from './media-io.js';
+
+const RELEASES_URL = 'https://github.com/beyondworks/argo-messenger/releases/latest';
 
 export function useUpdate() {
   const [st, setSt] = useState({ phase: 'idle', version: '', error: '' }); // idle | available | installing | ready | error
+  const [loc, setLoc] = useState(null); // 맥 설치 위치 문제 { issue, path } | null(문제 없음·옛 앱이라 모름) — src/update-location.mjs
   const ref = useRef({ lastCheckAt: null, dismissedVersion: null, phase: 'idle', busy: false, upd: null });
   // 확인마다 새로 생기는 Update는 Tauri Resource(백엔드 쪽에 열려 있는 자원)라 안 쓸 게 되면 close()로 정리한다 —
   // 안 그러면 확인이 반복될수록(30분마다) 예전 Update가 계속 열린 채로 쌓인다.
@@ -34,6 +39,10 @@ export function useUpdate() {
         pushDiag('update-check', String(e?.message ?? e));
       } finally { r.busy = false; }
     };
+    // 설치 위치(맥) — 켜질 때 한 번. DMG·다운로드 폴더에서 바로 열었거나 외장 디스크면 업데이트를 저장하지 못한다(고객 문의 2026-10-03·10-04)
+    import('@tauri-apps/api/core').then((m) => m.invoke('update_location'))
+      .then((facts) => { const issue = updateLocationIssue(facts); if (alive) setLoc(issue ? { issue, path: facts.path } : null); })
+      .catch((e) => pushDiag('update-location', String(e?.message ?? e)));
     check('start');
     const onFocus = () => check('focus');
     const onVisibility = () => { if (document.visibilityState === 'visible') check('focus'); };
@@ -43,7 +52,7 @@ export function useUpdate() {
     return () => { alive = false; window.removeEventListener('focus', onFocus); document.removeEventListener('visibilitychange', onVisibility); clearInterval(timer); };
   }, []);
   const install = async () => {
-    if (!st.upd) return;
+    if (!st.upd || (loc && MOVE_REQUIRED.has(loc.issue))) return; // 옮기기 전에는 설치가 실패한다 — 막대가 옮기는 방법을 보인다
     ref.current.phase = 'installing';
     setSt((s) => ({ ...s, phase: 'installing' }));
     try { await st.upd.downloadAndInstall(); ref.current.phase = 'ready'; setSt((s) => ({ ...s, phase: 'ready' })); }
@@ -58,18 +67,20 @@ export function useUpdate() {
     ref.current.phase = 'idle';
     setSt({ phase: 'idle', version: '', error: '' });
   };
-  return { ...st, install, relaunch, dismiss };
+  return { ...st, issue: loc?.issue ?? null, path: loc?.path ?? null, install, relaunch, dismiss };
 }
 
 export function UpdateBar({ t }) {
   const u = useUpdate();
-  if (u.phase === 'idle') return null;
+  const v = updateBarView({ phase: u.phase, issue: u.issue, error: u.error });
+  if (v.mode === 'hidden') return null;
   return (
-    <div className="msgr-updbar" role="status">
-      {u.phase === 'available' && <><span>{t('upd.available', { v: u.version })}</span><button type="button" className="btn sm btn-primary" onClick={u.install}>{t('upd.install')}</button><button type="button" className="btn sm ghost" onClick={u.dismiss}>{t('upd.later')}</button></>}
-      {u.phase === 'installing' && <span>{t('upd.installing')}</span>}
-      {u.phase === 'ready' && <><span>{t('upd.ready')}</span><button type="button" className="btn sm btn-primary" onClick={u.relaunch}>{t('upd.restart')}</button></>}
-      {u.phase === 'error' && <><span style={{ color: 'var(--danger)' }}>{t('upd.error')} {u.error}</span><button type="button" className="btn sm ghost" onClick={u.dismiss}>{t('upd.later')}</button></>}
+    <div className="msgr-updbar" role="status" data-update-mode={v.mode}>
+      {v.mode === 'move' && <><span title={u.path || undefined}>{t(`upd.where.${v.reason}`, { v: u.version })}</span><button type="button" className="btn sm btn-primary" onClick={() => openExternalUrl(RELEASES_URL)}>{t('upd.where.download')}</button><button type="button" className="btn sm ghost" onClick={u.dismiss}>{t('upd.later')}</button></>}
+      {v.mode === 'install' && <><span>{t('upd.available', { v: u.version })}{v.reason === 'needs_admin' ? ` ${t('upd.where.needs_admin')}` : ''}</span><button type="button" className="btn sm btn-primary" onClick={u.install}>{t('upd.install')}</button><button type="button" className="btn sm ghost" onClick={u.dismiss}>{t('upd.later')}</button></>}
+      {v.mode === 'installing' && <span>{t('upd.installing')}</span>}
+      {v.mode === 'ready' && <><span>{t('upd.ready')}</span><button type="button" className="btn sm btn-primary" onClick={u.relaunch}>{t('upd.restart')}</button></>}
+      {v.mode === 'error' && <><span style={{ color: 'var(--danger)' }}>{t('upd.error')} {v.reason ? t(`upd.fail.${v.reason}`) : ''}{u.error && <small className="mono" style={{ display: 'block', color: 'var(--fg-3)', overflowWrap: 'anywhere' }}>{u.error}</small>}</span><button type="button" className="btn sm ghost" onClick={u.dismiss}>{t('upd.later')}</button></>}
     </div>
   );
 }

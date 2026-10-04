@@ -5,7 +5,7 @@ import { randomUUID, createHmac, randomBytes } from 'node:crypto';
 import { WS_ROOT, paths, loadCompany } from './workspace.mjs';
 import { writeJsonAtomic, writeFileAtomic } from './jsonstore.mjs';
 import { updateMcp } from './market.mjs';
-import { isReservedSlug } from './slug.mjs';
+import { isReservedSlug, isTakenSlug } from './slug.mjs';
 import { scanLocalAssetSources, readLocalAssetFile } from './local-asset-sources.mjs';
 
 const TTL = 24 * 60 * 60 * 1000;
@@ -89,7 +89,7 @@ async function locked(dir, fn) {
     try { return await fn(); } finally { await unlink(lock); }
   } finally { await unlink(claim).catch(() => {}); }
 }
-const safeName = value => typeof value === 'string' && /^[a-z0-9][a-z0-9-]{0,47}$/.test(value) && !isReservedSlug(value);
+const safeName = value => typeof value === 'string' && /^[a-z0-9][a-z0-9-]{0,47}$/.test(value) && !isReservedSlug(value) && !isTakenSlug(value); // captain 이름의 프로필은 asset-<해시>로 바꿔 받는다
 function metadata(item, id, key) {
   return { id, source: item.source, groupId: digest(key, item.group).slice(0, 24), groupLabel: item.groupLabel,
     label: item.label, kind: item.kind, name: safeName(item.name) ? item.name : `asset-${digest(key, item.key).slice(0, 12)}`,

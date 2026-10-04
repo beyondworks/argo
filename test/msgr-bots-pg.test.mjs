@@ -400,7 +400,7 @@ test('two pollers get one permanent execution, bot→crew same original channel/
   const run = () => new Promise((resolve, reject) => {
     const p = spawn('psql', [DB, '-X', '-q', '-A', '-t', '-v', 'ON_ERROR_STOP=1', '-c', query]);
     let out = '', err = ''; p.stdout.on('data', (v) => { out += v; }); p.stderr.on('data', (v) => { err += v; });
-    p.on('exit', (code) => code === 0 ? resolve(JSON.parse(out.trim())) : reject(new Error(err)));
+    p.on('close', (code) => code === 0 ? resolve(JSON.parse(out.trim())) : reject(new Error(err)));
   });
   const batches = await Promise.all([run(), run()]);
   assert.equal(batches.flat().length, 1);

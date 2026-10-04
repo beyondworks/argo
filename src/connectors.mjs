@@ -453,7 +453,7 @@ async function needsApprovalNow(wsId, serverId, tool, { fullAuto = false } = {})
  * 커넥터 도구 호출 — 러너 무관 단일 경로. 결과 정규화 { ok, content, isError }(+실패 시 error 코드).
  * 401은 SDK 자동 refresh에 맡기고(스파이크 실증) 최종 실패만 'reauth' 강등. 호출마다 원장 기록.
  */
-export async function callConnectorTool(wsId, serverId, tool, args = {}, { lang = 'ko', slug = null, approved = false, mirrorCtx = null } = {}) {
+export async function callConnectorTool(wsId, serverId, tool, args = {}, { lang = 'ko', slug = null, approved = false, mirrorCtx = null, fullAuto: turnFullAuto = true, from = null } = {}) { // fullAuto = 부른 턴의 판정(chat.mjs) — false면 회사가 켜져 있어도 이 호출은 풀 오토가 아니다. 생략하면 종전 판정만
   let ok = false;
   // 풀 오토로 원래 결재가 걸렸을 쓰기를 건너뛴 경우만 채운다 — 활동 기록용(요구사항 c). 애초에
   // 자유였던 조회까지 기록하면 소음이라 남기지 않는다(DB 위생 규칙, CLAUDE.md 2026-09-23).
@@ -467,7 +467,9 @@ export async function callConnectorTool(wsId, serverId, tool, args = {}, { lang 
     // isGuest는 손님·조직 채널 타인·뿌리가 주인이 아닌 넘김을 이미 전부 걸러 준다(isGuestCtx 단일 판정,
     // src/gateway/msgr-handoff.mjs). 웹 채팅·주인의 텔레그램·슬랙은 mirrorCtx가 'msgr'이 아니라
     // isGuestCtx가 애초에 false를 준다 — 즉 이 한 줄이 요구사항 2의 적용 범위 그대로다.
-    const fullAuto = fullAutoAllowed(mirrorCtx) && (await loadCompany(wsId).catch(() => ({}))).fullAuto === true; // 손님·오피스에서 맡긴 턴 제외
+    // 부른 턴이 주인 직접 턴이 아니라고 판정했으면(크루가 보낸 세션 메시지의 받는 턴·깨움 턴 — chat.mjs) 그대로 따른다(0.1.94 분리 검수 MEDIUM-4).
+    // 이 게이트가 실제 강제 지점이다 — 시스템 프롬프트의 풀 오토 문구는 SDK가 세션을 이어받을 때 첫 턴 것을 쓸 수 있어 믿을 수 없다.
+    const fullAuto = turnFullAuto !== false && fullAutoAllowed(mirrorCtx) && (await loadCompany(wsId).catch(() => ({}))).fullAuto === true; // 손님·오피스에서 맡긴 턴 제외
     if (isGuest) {
       // 러너 무관 단일 지점(설계서 §1) — SDK use_connector·CLI 지시 블록이 전부 여기로 모인다. approved(결재 완결 재진입)여도 막지 않는다:
       // 손님 턴이 만든 커넥터 결재는 없다(위 문구가 결재를 '주인에게' 올리라고 하고, 그 결재 완결은 주인의 컨텍스트에서 돈다).
@@ -499,6 +501,7 @@ export async function callConnectorTool(wsId, serverId, tool, args = {}, { lang 
       }
       await addApproval(wsId, {
         slug: ownerSlug,
+        ...(typeof from === 'string' && from ? { from } : {}), // 사장 직접 턴이 아닌 턴의 결재 — 승인 뒤 후속 턴이 풀 오토가 되지 않게(통합본 재검수 MEDIUM-2, chat.mjs request_approval과 같은 규칙)
         kind: 'connector',
         ...(msgr ? { msgr } : {}),
         ...(await import('./thread.mjs')).approvalScope(mirrorCtx), // 동적 — 위 순환 방지와 같은 이유

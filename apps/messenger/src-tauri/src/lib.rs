@@ -17,6 +17,8 @@ mod native_realtime;
 #[cfg(desktop)]
 mod pair;
 #[cfg(desktop)]
+mod update_location; // 앱 안 업데이트 설치 위치(맥) — 판정은 src/update-location.mjs
+#[cfg(desktop)]
 mod save_download; // 첨부 저장 — 다운로드 폴더(웹뷰 <a download>는 처리기가 없어 무시된다)
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -42,6 +44,8 @@ pub fn run() {
     let builder = builder.plugin(tauri_plugin_media_share::init()); // 첨부 저장·공유 — JS는 src/media-io.js만 부른다
     #[cfg(target_os = "ios")]
     let builder = builder.plugin(tauri_plugin_web_auth::init());
+    #[cfg(target_os = "ios")]
+    let builder = builder.plugin(tauri_plugin_ios_webview::init()); // 키보드 위 ↑↓✓ 막대 숨김 + 웹뷰 바탕을 테마 색으로 — JS는 src/webview-bg.js만 부른다
     #[cfg(target_os = "android")]
     let builder = builder.plugin(tauri_plugin_apk_installer::init());
     #[cfg(target_os = "android")]
@@ -64,7 +68,8 @@ pub fn run() {
             native_realtime::native_realtime_snapshot,
             native_realtime::native_realtime_current_session,
             native_realtime::native_notify_claim_and_send,
-            save_download::save_download
+            save_download::save_download,
+            update_location::update_location
         ]);
     #[cfg(all(desktop, not(target_os = "macos")))]
     let builder = builder.invoke_handler(tauri::generate_handler![
@@ -72,7 +77,8 @@ pub fn run() {
         pair::pair_claim,
         agents::agent_connect,
         agents::agent_list,
-        save_download::save_download
+        save_download::save_download,
+        update_location::update_location
     ]);
     builder
         // macOS: 창 닫기(빨간 버튼·cmd+W) = 앱 가리기 — Argo 본체·Claude Desktop과 같은 관례(유건 요청 2026-09-15).

@@ -13,6 +13,7 @@ use tauri_plugin_shell::process::CommandEvent;
 #[cfg(target_os = "macos")]
 mod no_dock;
 mod update_notes;
+mod update_location;
 
 // 부트 화면(public/index.html)에 실시간 상태를 알린다 — 실패도 화면에 보이게(무한 대기 방지).
 // port: 프론트가 이동할 서버 포트(선택 확정 후) — boot.js가 후보 목록 맨 앞에 넣는다.
@@ -162,7 +163,7 @@ async fn acknowledge_update_notes_version(app: tauri::AppHandle, version: String
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![save_download, read_update_notes_version, acknowledge_update_notes_version])
+        .invoke_handler(tauri::generate_handler![save_download, read_update_notes_version, acknowledge_update_notes_version, update_location::update_location])
         .plugin(
             tauri::plugin::Builder::<tauri::Wry, ()>::new("file-nav-guard")
                 .on_navigation(|_webview, url| !is_file_route_nav(url))

@@ -1,6 +1,6 @@
 // 북극성 시작 스플래시 엔진(정본 하나) — 초안 A2 '북극성'(유건 선택 2026-09-29): 별이 꼬리를 끌며 내려와 자리를 잡고, 그 순간 돛이 올라온다.
-// 쓰는 곳: 메신저(apps/messenger/src/splash.js, 별칭 @argo/splash), Argo 본체 부트 화면(public/boot-splash.mjs)과 Next 첫 화면(app/splash-continue.jsx).
-// 부트 화면은 번들러 없이 public 파일만 읽으므로 정본이 public/에 있다(사본 금지 — 메신저는 vite 별칭, Next는 상대 경로로 가져간다).
+// 쓰는 곳: 메신저만(apps/messenger/src/splash.js, 별칭 @argo/splash). 본체 부트 화면은 배·파도로 되돌려 더는 쓰지 않는다(2026-10-02).
+// 정본이 public/에 있는 것은 본체 부트 화면이 번들러 없이 읽던 때의 흔적이다(사본 금지 — 메신저는 vite 별칭으로 가져간다).
 //
 // CSP 규칙(반대 검토 2026-10-01, WKWebView 재현): style 속성을 만들지 않는다. Tauri는 HTML에 <style>이 있으면 style-src에 nonce를 붙이고,
 // nonce가 있으면 'unsafe-inline'이 무시돼 HTML·innerHTML·setAttribute의 style 속성이 전부 막힌다(로고 폭 0으로 아무것도 안 보였다).

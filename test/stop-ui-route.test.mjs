@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import { parse } from 'espree';
 import { interruptTurn, withTurnControl } from '../src/turn-abort.mjs';
 import { isStopCommand } from '../src/stop-command.mjs';
+import { parseSessionTarget } from '../app/c/[ws]/crew/[slug]/session-msg-parse.mjs'; // send()가 `@다른크루 내용`을 세션 메시지로 가른다
 
 const ui=await readFile(new URL('../app/c/[ws]/crew/[slug]/page.jsx',import.meta.url),'utf8');
 function findFunction(source,name){
@@ -15,7 +16,7 @@ function findFunction(source,name){
 }
 test('actual composer standalone stop bypasses busy queue, holds queued work immediately',async()=>{
  const queued=[],states=[],calls=[];
- const ctx=vm.createContext({isStopCommand,busy:true,working:true,aborting:false,uploading:false,sendingNow:false,slashMatches:[],input:'멈춰줘',att:[],histIdx:{current:0},ws:'w',slug:'alpha',
+ const ctx=vm.createContext({isStopCommand,parseSessionTarget,crewList:[],busy:true,working:true,aborting:false,uploading:false,sendingNow:false,slashMatches:[],input:'멈춰줘',att:[],histIdx:{current:0},ws:'w',slug:'alpha',
   setInput:()=>{},setAtt:()=>{},setQueue:q=>queued.push(q),setQueueHeld:b=>states.push(b),setAborting:()=>{},setError:()=>{},
   api:async(url)=>calls.push(url), sendMessage:()=>{throw new Error('must not run model');}});
  vm.runInContext(findFunction(ui,'abortTurn')+';'+findFunction(ui,'send'),ctx);
@@ -24,10 +25,18 @@ test('actual composer standalone stop bypasses busy queue, holds queued work imm
 });
 test('actual composer preserves non-control negation and attachment messages in queue',async()=>{
  for(const [input,att] of [['멈추지마',[]],['stop',[{rel:'files/instructions.txt'}]]]){
-  const queued=[];const ctx=vm.createContext({isStopCommand,busy:true,working:true,uploading:false,sendingNow:false,slashMatches:[],input,att,histIdx:{current:0},setInput:()=>{},setAtt:()=>{},
+  const queued=[];const ctx=vm.createContext({isStopCommand,parseSessionTarget,crewList:[],slug:'alpha',busy:true,working:true,uploading:false,sendingNow:false,slashMatches:[],input,att,histIdx:{current:0},setInput:()=>{},setAtt:()=>{},
    setQueue:fn=>queued.push(...fn([])),abortTurn:()=>{throw new Error('false stop');},setQueueHeld:()=>{throw new Error('false hold');}});
   vm.runInContext(findFunction(ui,'send'),ctx);await ctx.send({preventDefault(){}});assert.equal(queued[0].text,input);
  }
+});
+test('actual composer sends `@other-crew message` as a session message even while busy (no queue, no own turn)',async()=>{
+ const queued=[],sent=[];
+ const ctx=vm.createContext({isStopCommand,parseSessionTarget,crewList:[{slug:'alpha',name:'알파'},{slug:'bravo',name:'브라보'}],busy:true,working:true,uploading:false,sendingNow:false,slashMatches:[],input:'@브라보 일정 봐 줘',att:[],histIdx:{current:0},slug:'alpha',
+  setInput:()=>{},setAtt:()=>{},setQueue:q=>queued.push(q),setQueueHeld:()=>{},sendMessage:()=>{throw new Error('must not run own turn');},
+  sendSessionMsg:async(target,raw)=>sent.push([target,raw])});
+ vm.runInContext(findFunction(ui,'send'),ctx);await ctx.send({preventDefault(){}});
+ assert.equal(queued.length,0);assert.deepEqual(sent,[[{to:'bravo',toName:'브라보',message:'일정 봐 줘'},'@브라보 일정 봐 줘']]);
 });
 test('actual stop button holds queue before HTTP cancellation and exposes failure',async()=>{
  const states=[];const ctx=vm.createContext({aborting:false,busy:true,ws:'w',slug:'a',setQueueHeld:()=>states.push('held'),setAborting:()=>{},setError:e=>states.push(e),api:async()=>{states.push('http');throw new Error('unavailable');}});

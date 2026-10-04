@@ -1,9 +1,9 @@
 // 기기 링크 — 이미 발급된 Supabase 세션(access+refresh)을 검증해 기기 파일로 귀속시킨다.
 // 사용처: 앱 브라우저 핸드오프(claim 결과), 헤드리스 E2E. 토큰 검증 실패 = 401.
-import { createClient } from '@supabase/supabase-js';
 import { saveDeviceSession } from '../../../../src/devicesession.mjs';
 import { ensureSync } from '../../../../src/sync.mjs';
 import { AUTH_ON, isLoopbackHost } from '../../../auth.mjs';
+import { verifyAccessToken, linkFailure, describeFailure } from '../../../../src/auth-error.mjs';
 
 const marker = () => `argo-device=1; Path=/; HttpOnly; SameSite=Lax; Max-Age=${60 * 60 * 24 * 365}`;
 
@@ -17,9 +17,13 @@ export async function POST(req) {
     if (!access_token || !refresh_token) return Response.json({ error: '토큰이 필요합니다' }, { status: 400 });
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    const sb = createClient(url, anonKey, { auth: { persistSession: false, autoRefreshToken: false } });
-    const { data: { user }, error } = await sb.auth.getUser(access_token); // 토큰 진위 검증
-    if (error || !user) return Response.json({ error: '유효하지 않은 세션입니다' }, { status: 401 });
+    // 토큰 진위 검증 — 연결 실패(이 컴퓨터가 로그인 서버에 못 닿음, 502)와 토큰 거부(401)를 나눠 알린다. 로그에는 토큰 없이 오류 이름·status·code만.
+    const { user, failure } = await verifyAccessToken({ url, anonKey, accessToken: access_token });
+    if (failure) {
+      console.warn(`[device/link] ${describeFailure(failure)}`);
+      const { status, body } = linkFailure(failure);
+      return Response.json(body, { status });
+    }
     await saveDeviceSession({ url, anonKey, session: { access_token, refresh_token, expires_at: 0, user } }); // expires 0 = 첫 사용 시 즉시 회전
     ensureSync();
     return Response.json({ ok: true, user: { id: user.id, email: user.email ?? '' } }, { headers: { 'Set-Cookie': marker() } });

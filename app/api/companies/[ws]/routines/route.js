@@ -16,7 +16,8 @@ export async function POST(req, { params }) {
   try {
     const { ws } = await params;
     const denied = await guardCompany(ws); if (denied) return denied;
-    const routine = await addRoutine(ws, await req.json());
+    const { from: _ignored, ...body } = await req.json(); // 화면·API = 사장 — 출처(from)는 크루 턴에서만 정해진다
+    const routine = await addRoutine(ws, body);
     return Response.json({ routine });
   } catch (e) {
     return Response.json({ error: String(e.message || e) }, { status: 400 });

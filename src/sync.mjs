@@ -22,6 +22,7 @@ import { join, dirname, basename, sep } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import { WS_ROOT, WS_ID_RE, paths, archiveCompany, writeTombstone, TOMBSTONE_DIR, getDeviceId } from './workspace.mjs';
+import { applyDeparted, mergeDeparted } from './departed.mjs';
 import { writeJsonAtomic, writeFileAtomic, readJsonLenient } from './jsonstore.mjs';
 import { withLock, withDirLock, withFileLock } from './mutex.mjs';
 import { cryptoOn, isSecretRel, isSecretNameRel, isEncRel, encVaultOn, sealSecret, sealSecretV3, openSecret, openSecretCompat, isEnvelopeGeneration, CRED_WITHDRAWN, isCredWithdrawn } from './secretbox.mjs';
@@ -119,6 +120,9 @@ export const EXCLUDE = (rel) => { // (export: 회귀 테스트용)
   // 타면 지운 파일이 원격에서 되살아나 같은 쪽지를 이중 배달한다(.gw-queue와 동일 결함 계급,
   // 분리 검수 CRITICAL-2 2026-07-27). 세션 간 소통은 배달 결과가 스레드(동기화 대상)로 남아 성립한다.
   if (rel.split('/')[0] === 'mail') return true;
+  // 세션 메시지 대기 기록(sessmsg/ — session-msg.mjs) — 이 기기 프로세스가 답을 기다리는 상태. 다른 기기로 가면 그 기기의 부팅 정리가
+  // 남의 살아 있는 기다림을 "재시작으로 끊김"으로 지운다. 주고받은 글은 스레드(동기화 대상)에 남는다.
+  if (rel.split('/')[0] === 'sessmsg') return true;
   // 조직 문서 미러(vault/org/) — 팀 메신저 서버가 정본이고 브리지가 기기마다 내려받는 파생물(G-2). 동기화를 타면
   // 두 기기의 미러가 서로를 덮고, 오프보딩 회수(미러 삭제)가 원격에서 되살아난다.
   if (rel.startsWith('vault/org/')) return true;
@@ -581,6 +585,9 @@ export function mergeThread(localBuf, remoteBuf, prefer = 'remote') {
   // sessionDevice는 sessionId를 제공한 쪽과 짝으로 — 어긋나면 남의 기기 세션을 내 것으로 오판한다
   merged.sessionDevice = (primary.sessionId != null ? primary.sessionDevice : other.sessionDevice) ?? null;
   if (L.scopedSessions || R.scopedSessions) merged.scopedSessions = { ...other.scopedSessions, ...primary.scopedSessions }; // 메신저 채널 세션은 채널 단위로 합친다(세션·기기 짝은 항목 안에 함께 있다)
+  // 채널 기억 회수 각인(departed.mjs) — 채널마다 늦은 시각으로 합치고 병합 결과에 다시 적용한다. 다른 기기가 아직 든 옛 채널 줄·세션이 합집합으로 되살아나지 않게.
+  const departed = mergeDeparted(L.departed, R.departed);
+  if (departed) { merged.departed = departed; applyDeparted(merged); } else delete merged.departed;
   return Buffer.from(JSON.stringify(merged, null, 2));
 }
 

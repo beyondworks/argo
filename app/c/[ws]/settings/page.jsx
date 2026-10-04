@@ -8,6 +8,7 @@ import { useLang, adjustZoom } from '../../../i18n';
 import { useTheme, THEMES } from '../../../theme';
 import { AiConnectionCard, fieldStyle, usableRunnerNames } from '../../../runner-connect';
 import { useAppUpdate } from '../../../use-app-update';
+import { MOVE_REQUIRED } from '../../../update-location.mjs';
 import LocalAssetImport from '../../../components/LocalAssetImport';
 import { proRowActive, trialBadgeState } from '../../../../src/entitlement.mjs';
 
@@ -1889,8 +1890,9 @@ function UpgradeButtons() {
 function UpdateCard() {
   const { t } = useLang();
   // 상단 뱃지와 동일한 단일 출처(use-app-update) — 네이티브 설치 버전 + Tauri 업데이터.
-  const { isApp, current, available, checked, phase, check, install } = useAppUpdate();
+  const { isApp, current, available, checked, phase, check, install, installError, location } = useAppUpdate();
   const busy = phase === 'checking' || phase === 'installing';
+  const moveRequired = !!location && MOVE_REQUIRED.has(location.issue); // 옮기기 전에는 설치가 실패한다 — 설치 버튼 대신 최신 설치 파일
   // 웹(상주·셀프호스트) — 자가 설치는 없지만 새 버전 존재를 알리고 갱신 방법을 안내한다
   // (실사용 요청 2026-07-27). 데스크톱과 같은 카드 자리·같은 훅(단일 출처).
   if (!isApp) {
@@ -1927,18 +1929,43 @@ function UpdateCard() {
         {available ? ` · ${t('settings.update.found', { v: available })}` : ''}
         {!available && checked ? ` · ${t('settings.update.none')}` : ''}
       </p>
-      {available ? (
+      {location && <UpdateLocationNote issue={location.issue} path={location.path} />}
+      {available && moveRequired ? (
+        <a className="btn btn-primary sm" href="https://github.com/beyondworks/argo-agent/releases/latest" target="_blank" rel="noopener noreferrer" style={{ alignSelf: 'flex-start', textDecoration: 'none' }}>
+          {t('settings.update.where.download')}
+        </a>
+      ) : available ? (
         <button type="button" className="btn btn-primary sm" onClick={install} disabled={busy} style={{ alignSelf: 'flex-start' }}>
           {busy ? <Spinner size={12} /> : null}
           {phase === 'installing' ? t('settings.update.installing') : t('settings.update.install', { v: available })}
         </button>
       ) : (
-        <button type="button" className="btn sm" onClick={check} disabled={busy} style={{ alignSelf: 'flex-start' }}>
+        <button type="button" className="btn sm" onClick={() => check({ byUser: true })} disabled={busy || phase === 'ready'} style={{ alignSelf: 'flex-start' }}>
           {busy ? <Spinner size={12} /> : null}{t('settings.update.check')}
         </button>
       )}
-      {phase === 'ready' && <p style={{ fontSize: 12, color: 'var(--fg-2)' }}>{t('settings.update.restarting')}</p>}
-      {phase === 'error' && <p style={{ fontSize: 12, color: 'var(--danger)' }}>{t('settings.update.error')}</p>}
+      {phase === 'ready' && <p style={{ fontSize: 12, color: 'var(--fg-2)' }}>{t(installError?.reason === 'relaunch' ? 'settings.update.relaunchFail' : 'settings.update.restarting')}</p>}
+      {/* 설치 실패 이유는 이 카드의 진행 상태와 상관없이 보인다 — 뱃지에서 실패하고 카드를 나중에 열어도(분리 검수 MEDIUM-1) */}
+      {installError && installError.reason !== 'relaunch' ? (
+        <p style={{ fontSize: 12, color: 'var(--danger)', lineHeight: 1.6, margin: 0 }}>
+          {t('settings.update.fail')}{installError.reason ? ` ${t(`settings.update.fail.${installError.reason}`)}` : ''}
+          {installError.raw && <span className="mono" style={{ display: 'block', fontSize: 11, color: 'var(--fg-3)', overflowWrap: 'anywhere' }}>{installError.raw}</span>}
+        </p>
+      ) : phase === 'error' ? <p style={{ fontSize: 12, color: 'var(--danger)' }}>{t('settings.update.error')}</p> : null}
+    </div>
+  );
+}
+
+/** 맥 설치 위치 안내 — 업데이트가 이 위치에서 저장되지 않는 이유와 옮기는 방법(이유 키는 app/update-location.mjs). 새 버전이 없어도 미리 보인다 */
+function UpdateLocationNote({ issue, path }) {
+  const { t } = useLang();
+  return (
+    <div role="note" data-update-location={issue} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: '10px 12px', display: 'grid', gap: 6, fontSize: 12.5, lineHeight: 1.6 }}>
+      <b style={{ fontSize: 13 }}>{t(issue === 'needs_admin' ? 'settings.update.where.adminTitle' : 'settings.update.where.title')}</b>
+      <span style={{ color: 'var(--fg-2)' }}>{t(`settings.update.where.${issue}`)}</span>
+      {issue !== 'needs_admin' && <span style={{ color: 'var(--fg-2)' }}>{t('settings.update.where.steps')}</span>}
+      {/* translocated 경로는 macOS가 만든 임시 위치(/private/var/folders/…/AppTranslocation/…)라 사용자가 알아볼 수 없어 숨긴다 */}
+      {path && issue !== 'translocated' && <span className="mono" style={{ fontSize: 11, color: 'var(--fg-3)', overflowWrap: 'anywhere' }}>{t('settings.update.where.path', { path })}</span>}
     </div>
   );
 }

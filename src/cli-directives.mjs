@@ -110,10 +110,13 @@ export const handledByTool = (d, calls) => { const f = SAME_AS_TOOL[String(d?.ac
     실패도 줄로 남긴다: 조용한 실패는 크루의 거짓말이 된다.
     `results`는 호출측이 건네는 수집함이다(커넥터 도구에 실제로 닿은 호출만 담긴다) — 채워지면
     호출측이 runToolFollowUp으로 후속 턴 1회를 돌린다. `toolHop`은 그 후속 턴 카운터. */
-export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', bad = [], hop = 0, chain = [], toolHop = 0, results = [], mirrorCtx = null, turnControl = null, usedTools = null, delegationRelaxed = false, delegationTree = null, counters = null } = {}) { // counters = 이 턴의 {delegate, mail} 횟수 — runChat이 SDK/CLI 도구와 같은 카운터를 끼워 넣기 구간·마지막 처리에 함께 넘긴다(블록 25개 = 쪽지 25건 구멍, 검수 2026-10-01 MEDIUM-4)
+export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', bad = [], hop = 0, chain = [], toolHop = 0, results = [], mirrorCtx = null, turnControl = null, usedTools = null, delegationRelaxed = false, delegationTree = null, counters = null, fullAuto = true, origin = null } = {}) { // origin = 이 턴의 notOwnerDirect(사장 직접 턴이 아닌 시작점의 크루) — 결재·예약 출처 // fullAuto = 이 턴의 풀 오토 판정(chat.mjs) — 커넥터 게이트에 그대로 넘긴다 // counters = 이 턴의 {delegate, mail} 횟수 — runChat이 SDK/CLI 도구와 같은 카운터를 끼워 넣기 구간·마지막 처리에 함께 넘긴다(블록 25개 = 쪽지 25건 구멍, 검수 2026-10-01 MEDIUM-4)
   const en = lang === 'en';
   const lim = limitsFor(delegationRelaxed && !!delegationTree, mirrorCtx); // 위임 제한 표 — SDK 도구(chat.mjs)와 같은 값(러너 패리티). 메신저 맥락은 항상 켜짐. 합계 예산 객체 없는 풀림은 켜짐(fail-closed)
   const cnt = counters ?? { delegate: 0, mail: 0 };
+  // 결재·예약 출처 — SDK 경로(chat.mjs delegatedBy·originFor)와 같은 규칙. 사장 직접 턴이 아니면 그 시작점, 다른 크루에게 건 예약은 이 크루의 위임
+  const delegatedBy = chain.length ? chain[chain.length - 1] : (origin ?? null);
+  const originFor = (target) => delegatedBy ?? (target && target !== fromSlug ? fromSlug : null);
   const notes = [];
   let budget = TOOL_RESULT_BUDGET_BYTES; // 턴 전체 주입 예산 — 블록이 여럿이면 앞에서부터 소진된다
   const agents = await listAgents(wsId).catch(() => []);
@@ -143,6 +146,7 @@ export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', b
         const schedule = normalizeSchedule(toSchedule(d));
         const r = await addRoutine(wsId, {
           agentSlug: target?.slug ?? fromSlug, msgr: messengerOrigin(mirrorCtx, target?.slug ?? fromSlug),
+          ...(originFor(target?.slug ?? fromSlug) ? { from: originFor(target?.slug ?? fromSlug) } : {}),
           title: String(d.title ?? prompt).replace(/\s+/g, ' ').slice(0, 60),
           prompt,
           schedule,
@@ -197,7 +201,7 @@ export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', b
         // 하나도 없으면 addApproval의 sanitizePlain이 null을 만들어 카드가 기존 action/reason 그대로다(폴백).
         const { purpose, task, need } = d;
         const item = await addApproval(wsId, {
-          slug: fromSlug, msgr: messengerOrigin(mirrorCtx), ...approvalScope(mirrorCtx), action: request.replace(/[\r\n\t\x00-\x1f]+/g, ' ').slice(0, 200),
+          slug: fromSlug, ...(delegatedBy ? { from: delegatedBy } : {}), msgr: messengerOrigin(mirrorCtx), ...approvalScope(mirrorCtx), action: request.replace(/[\r\n\t\x00-\x1f]+/g, ' ').slice(0, 200),
           reason: String(d.reason ?? '').replace(/[\r\n\t\x00-\x1f]+/g, ' ').slice(0, 300),
           ...((purpose || task || need) ? { plain: { purpose, task, need } } : {}),
         });
@@ -220,7 +224,7 @@ export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', b
             ? `connector follow-up limit reached (${TOOL_FOLLOWUP_MAX} per turn) — answer with the results you already have`
             : `커넥터 후속 턴 상한(턴당 ${TOOL_FOLLOWUP_MAX}회)에 도달했다 — 이미 받은 결과로 답하라`);
         }
-        const r = await callConnectorTool(wsId, server, tool, args, { lang, slug: fromSlug, mirrorCtx });
+        const r = await callConnectorTool(wsId, server, tool, args, { lang, slug: fromSlug, mirrorCtx, fullAuto, from: delegatedBy });
         const text = connectorContentText(r.content);
         if (r.error) {
           // 미연결·재인증 필요·전송 실패 — 도구에 닿지 못했다. 정직한 줄만 남기고 후속 턴 재료로 삼지

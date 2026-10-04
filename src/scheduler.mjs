@@ -199,6 +199,9 @@ async function treeOriginRelaxed(cid, origin) {
 /** 쪽지 배달 턴 한 통 — 스케줄러가 deliverCrewMail에 넘기는 실행기. 메신저발이면 그 채널 문맥, 메신저 밖이면 배달 브리핑의 목적지 범위(briefingCtx)로 돈다.
     (export: 목적지 기준 붙여넣기 행동 테스트 — test/shared-dest-context.test.mjs) */
 export async function crewmailTurn(cid, slug, msg, opts) {
+  // 사장이 보낸 쪽지(쪽지 API·회의실 참조 — fromRole 'captain', 크루 도구는 이 표지를 넣지 않는다)의 배달 턴은 사장 직접 턴 — from 없이 돈다.
+  // 사장 판정을 from 문자열('captain')로 하면 slug가 captain인 크루의 쪽지가 사장으로 둔갑한다(최종 재검수 MEDIUM-1). 프롬프트(mailPrompt)는 msg를 그대로 쓴다.
+  if (msg.fromRole === 'captain') opts = { ...opts, from: null };
   // 수신 크루의 유효 러너 판정 — CLI 러너(codex/gemini/antigravity) 턴에는 send_to_crew가
   // 없어 회신 안내가 없는 도구 지시가 된다(분리 검수 MEDIUM 2026-07-28). chat.mjs의 해석
   // (meta.runner → resolveRunner 폴백)과 같은 경로로 근사한다 — chat()이 턴 시점에 재해석
