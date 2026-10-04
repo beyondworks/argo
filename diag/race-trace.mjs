@@ -13,7 +13,7 @@ const LABEL = process.argv[4] ?? 'local';
 const ROUNDS = +(process.argv[5] ?? 60);
 const OUT = process.argv[6] ?? null;
 const PERIOD = 250;
-const OPTS = { staleMs: 5_000, retryMs: 5, timeoutMs: +(process.env.DIAG_TIMEOUT_MS ?? 3_000) }; // 기본은 테스트와 같은 3초 — 환경 변수는 출력 경로 자체 점검용
+const OPTS = { staleMs: +(process.env.DIAG_STALE_MS || 5_000), retryMs: 5, timeoutMs: +(process.env.DIAG_TIMEOUT_MS || 3_000) }; // 기본은 예전 테스트 값(5초·3초) — 빈 문자열도 기본값으로
 const MUTEX_PATH = join(repo, 'src', 'mutex.mjs');
 if (OUT) mkdirSync(OUT, { recursive: true });
 
@@ -26,9 +26,16 @@ const lock = join(${JSON.stringify(dir)}, 'x.lock');
 const mark = join(${JSON.stringify(dir)}, 'inside');
 const tag = (p) => p.endsWith('.reclaim') ? 'guard' : p.endsWith('x.lock') ? 'lock' : p.endsWith('inside') ? 'mark' : 'parent';
 let cur = null; const slow = []; const all = [];
+const [injKind, injRound, injMs] = (${JSON.stringify(process.env.DIAG_INJECT ?? '')}).split(':'); let curRound = -1, guardHeld = false, injDone = false;
+const nap = (ms) => new Promise((r) => setTimeout(r, ms));
 const wrap = (name) => async (p, ...args) => {
   const s = Date.now(); const h = performance.now(); let code = 'ok', age;
-  try { const r = await real[name](p, ...args); if (name === 'stat') age = Math.round(s - r.mtimeMs); return r; }
+  try {
+    if (injKind === 'reclaimer' && ${idx} === 1 && curRound >= +injRound && !injDone && name === 'rm' && tag(String(p)) === 'lock' && guardHeld) { guardHeld = false; injDone = true; await nap(+injMs); }
+    const r = await real[name](p, ...args);
+    if (tag(String(p)) === 'guard') guardHeld = name === 'mkdir';
+    if (name === 'stat') age = Math.round(s - r.mtimeMs); return r;
+  }
   catch (e) { code = e?.code ?? String(e); throw e; }
   finally {
     const ev = [s - T0, name, tag(String(p)), code, Math.round(performance.now() - h)];
@@ -45,29 +52,34 @@ const lagTimer = setInterval(() => { const now = Date.now(); const lag = now - e
 const wait = (at) => new Promise((r) => setTimeout(r, Math.max(0, at - Date.now())));
 let overlaps = 0, entered = 0, staged = 0; const other = {}, lockErr = {}; const rounds = [];
 for (let i = 0; i < ${ROUNDS}; i++) {
-  const at = T0 + i * ${PERIOD};
+  const at = T0 + i * ${PERIOD}; curRound = i;
   if (${idx} === 0) {
     await wait(at - 120);
     cur = []; const made = await fs.mkdir(lock).then(() => true, () => false);
+    if (made && injKind === 'stager' && i === +injRound) await nap(+injMs);
     if (made) { const old = new Date(Date.now() - 60_000); await fs.utimes(lock, old, old).catch(() => {}); staged++; }
     all.push({ i, stage: made, ops: cur }); cur = null;
   }
   await wait(at);
-  cur = []; const asked = Date.now(); let enteredAt = null, code = null, released = null;
+  cur = []; const asked = Date.now(); let enteredAt = null, code = null, released = null, ov = null;
   try {
     await withDirLock(lock, async () => {
-      enteredAt = Date.now(); entered++;
-      try { await fs.writeFile(mark, String(process.pid), { flag: 'wx' }); } catch (e) {
-        if (e?.code === 'EEXIST') overlaps++; else other[e?.code ?? 'unknown'] = (other[e?.code ?? 'unknown'] ?? 0) + 1;
+      enteredAt = Date.now(); entered++; cur.push([enteredAt - T0, 'ENTER', 'lock', 'r' + i, 0]);
+      try { await fs.writeFile(mark, process.pid + ':' + i, { flag: 'wx' }); } catch (e) {
+        // 겹침이면 표식에 적힌 "누가:몇 회차"를 읽는다 — 다른 프로세스의 지금 회차면 진짜 동시 진입, 예전 회차면 남은 표식
+        if (e?.code === 'EEXIST') { overlaps++; ov = await real.readFile(mark, 'utf8').catch((x) => 'read:' + x?.code); }
+        else other[e?.code ?? 'unknown'] = (other[e?.code ?? 'unknown'] ?? 0) + 1;
+        cur.push([Date.now() - T0, 'EXIT', 'lock', 'r' + i, 0]);
         return;
       }
-      await new Promise((r) => setTimeout(r, 15));
+      await new Promise((r) => setTimeout(r, injKind === 'holder' && ${idx} === 1 && i === +injRound ? +injMs : 15));
       await fs.rm(mark, { force: true });
+      cur.push([Date.now() - T0, 'EXIT', 'lock', 'r' + i, 0]);
     }, ${JSON.stringify(OPTS)});
   } catch (e) { code = e?.code ?? 'unknown'; if (!enteredAt) lockErr[code] = (lockErr[code] ?? 0) + 1; }
   released = Date.now();
   rounds.push([i, asked - T0, enteredAt ? enteredAt - asked : null, released - asked, code]);
-  all.push({ i, asked: asked - T0, enter: enteredAt ? enteredAt - T0 : null, done: released - T0, code, ops: cur });
+  all.push({ i, asked: asked - T0, enter: enteredAt ? enteredAt - T0 : null, done: released - T0, code, ov, ops: cur });
   cur = null;
 }
 clearInterval(lagTimer);
@@ -129,16 +141,17 @@ for (let r = 0; r < RUNS; r++) {
   for (const x of res) for (const c of x.all) {
     if (c.asked === undefined) continue;
     const waited = (c.enter ?? c.done) - c.asked;
-    if (!c.code && waited < 1000) continue;
-    const lo = c.asked - 300, hi = (c.enter ?? c.done) + 50;
-    console.log(` >> P${x.idx} round ${c.i}: code=${c.code} asked=${c.asked} enter=${c.enter} done=${c.done} waited=${waited}ms`);
+    if (!c.code && waited < 1000 && !c.ov) continue;
+    const lo = c.ov ? c.enter - 6000 : c.asked - 1000, hi = (c.ov ? c.done : (c.enter ?? c.done)) + 100;
+    console.log(` >> P${x.idx} round ${c.i}: code=${c.code} overlapMark=${c.ov} asked=${c.asked} enter=${c.enter} done=${c.done} waited=${waited}ms (pids ${res.map((y) => 'P' + y.idx + '=' + y.pid).join(' ')})`);
     console.log(`    summary: ${summary(c.ops)}`);
     const evs = [];
     for (const y of res) for (const d of y.all) for (const ev of d.ops) if (ev[0] >= lo && ev[0] <= hi) evs.push([y.idx, ev, d.i, d.stage !== undefined]);
+    for (const y of res) for (const l of y.lags) if (l[0] >= lo && l[0] <= hi) evs.push([y.idx, [l[0] - l[1], 'LAG', '-', '+' + l[1] + 'ms', l[1]], '-', false]);
     evs.sort((p, q) => p[1][0] - q[1][0]);
     const lines = evs.map(([who, ev, i, isStage]) => ({ key: `${who}|${ev[1]}|${ev[2]}|${ev[3]}|${i}`, text: fmt(who, ev) + `  [r${i}${isStage ? ' stage' : ''}]` }));
     for (const l of compress(lines)) console.log(l);
-    tally.failures.push({ run: r + 1, proc: x.idx, round: c.i, code: c.code, waited });
+    tally.failures.push({ run: r + 1, proc: x.idx, round: c.i, code: c.code, ov: c.ov, waited });
   }
   if (OUT) writeFileSync(join(OUT, `${LABEL}-run${r + 1}.json`), JSON.stringify({ dur, res }));
   rmSync(dir, { recursive: true, force: true, maxRetries: 3 });

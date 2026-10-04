@@ -3,10 +3,6 @@
 // 잠금 안에 들어간다(검수 실측: 2개 60회 중 7회 겹침). withDirLock은 자격 파일·기기 세션·게이트웨이 큐가 같이 쓴다.
 // 방법: 매 회차 오래된(크래시가 남긴) 잠금을 깔고 두 자식이 같은 순간 withDirLock에 들어간다. 잠금 안에서 표식 파일을 배타 생성(wx)해
 // 이미 있으면 겹침으로 센다.
-// 시간 설정은 제품 기본값(staleMs 30초·대기 상한 10초 — 제품 호출부 중 가장 짧은 대기)을 그대로 쓴다. 깔아 둔 잠금은 60초 전 시각이라
-// staleMs와 무관하게 오래된 것으로 보인다. 예전 테스트 전용 5초·3초는 제품보다 빡빡했다: 테스트 스위트가 C: 임시 폴더를 같이 쓰는
-// Windows CI에서 mkdir 한 번이 1.6초 걸려 잠금 한 번에 5.2초가 드는 것을 진단 실행으로 봤다(run 37204022054). 3초를 넘기면 119/120,
-// 5초를 넘기면 살아 있는 주인의 잠금이 회수돼 겹침까지 났다(10/1~10/4 Windows 69잡 중 6건, 맥 0건). 이 테스트가 잡을 것은 회수 경쟁이다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -18,15 +14,15 @@ import { mkdtemp } from './helpers/tmp.mjs';
 const MUTEX = new URL('../src/mutex.mjs', import.meta.url).href;
 const ROUNDS = 60; const PERIOD = 250;
 
-function racer(dir, idx, t0, signal) {
+function racer(dir, idx, t0) {
   const script = `
 const { withDirLock } = await import(${JSON.stringify(MUTEX)});
-const { mkdir, utimes, writeFile, readFile, rm } = await import('node:fs/promises');
+const { mkdir, utimes, writeFile, rm } = await import('node:fs/promises');
 const { join } = await import('node:path');
 const lock = join(${JSON.stringify(dir)}, 'x.lock');
 const mark = join(${JSON.stringify(dir)}, 'inside');
 const wait = (at) => new Promise((r) => setTimeout(r, Math.max(0, at - Date.now())));
-let overlaps = 0, entered = 0, staged = 0, maxWait = 0; const other = {}, fails = [], marks = [];
+let overlaps = 0, entered = 0, staged = 0; const other = {};
 for (let i = 0; i < ${ROUNDS}; i++) {
   const at = ${t0} + i * ${PERIOD};
   if (${idx} === 0) { // 회차 시작 전에 크래시가 남긴 오래된 잠금을 깐다 — 내가 새로 만든 폴더일 때만 시각을 돌린다
@@ -37,26 +33,21 @@ for (let i = 0; i < ${ROUNDS}; i++) {
     if (made) { const old = new Date(Date.now() - 60_000); await utimes(lock, old, old).catch(() => {}); staged++; }
   }
   await wait(at);
-  const asked = Date.now();
   await withDirLock(lock, async () => {
-    entered++; maxWait = Math.max(maxWait, Date.now() - asked);
-    try { await writeFile(mark, '${idx}:' + i, { flag: 'wx' }); } catch (e) {
+    entered++;
+    try { await writeFile(mark, String(process.pid), { flag: 'wx' }); } catch (e) {
       // 겹침은 EEXIST(다른 프로세스가 잠금 안에서 만든 표식이 아직 있음)만이다. Windows는 방금 지운 파일이 "삭제 대기"로 남아 EPERM·EBUSY를
-      // 낼 수 있다 — 그건 잠금 결함이 아니라 파일 시스템 상태라 따로 센다. 표식의 "프로세스:회차"로 같은 회차 동시 진입인지 남은 표식인지 가른다.
-      if (e?.code === 'EEXIST') { overlaps++; marks.push('${idx}:' + i + '<-' + await readFile(mark, 'utf8').catch((x) => x?.code)); }
-      else other[e?.code ?? 'unknown'] = (other[e?.code ?? 'unknown'] ?? 0) + 1;
+      // 낼 수 있다 — 그건 잠금 결함이 아니라 파일 시스템 상태라 따로 센다.
+      if (e?.code === 'EEXIST') overlaps++; else other[e?.code ?? 'unknown'] = (other[e?.code ?? 'unknown'] ?? 0) + 1;
       return;
     }
     await new Promise((r) => setTimeout(r, 15));
     await rm(mark, { force: true });
-  }, { retryMs: 5 }).catch((e) => { fails.push('r' + i + ' ' + (e?.code ?? e) + ' ' + (Date.now() - asked) + 'ms'); });
-  if (fails.length) break; // 이미 실패한 테스트다 — 남은 회차마다 대기 상한(10초)을 다 쓰며 시간 초과로 사유를 잃지 않고 바로 보고한다
+  }, { staleMs: 5_000, retryMs: 5, timeoutMs: 3_000 }).catch(() => {});
 }
-process.stdout.write('@@' + JSON.stringify({ overlaps, entered, staged, maxWait, other, fails, marks }) + '\\n');`;
+process.stdout.write('@@' + JSON.stringify({ overlaps, entered, staged, other }) + '\\n');`;
   return new Promise((resolve, reject) => {
-    // signal — 테스트가 끝나거나 시간 초과로 취소되면 자식을 끝낸다(회수가 막히면 자식이 회차마다 대기 상한을 다 쓰며 남는다)
-    const p = spawn(process.execPath, ['--input-type=module', '-e', script], { stdio: ['ignore', 'pipe', 'pipe'], signal });
-    p.on('error', reject);
+    const p = spawn(process.execPath, ['--input-type=module', '-e', script], { stdio: ['ignore', 'pipe', 'pipe'] });
     let out = ''; let err = '';
     p.stdout.on('data', (c) => { out += c; }); p.stderr.on('data', (c) => { err += c; });
     p.on('exit', () => {
@@ -66,16 +57,14 @@ process.stdout.write('@@' + JSON.stringify({ overlaps, entered, staged, maxWait,
   });
 }
 
-test('오래된 잠금을 두 프로세스가 동시에 회수해도 잠금 안에 둘이 같이 들어가지 않는다(60회차 겹침 0)', { timeout: 60_000 }, async (t) => {
+test('오래된 잠금을 두 프로세스가 동시에 회수해도 잠금 안에 둘이 같이 들어가지 않는다(60회차 겹침 0)', { timeout: 60_000 }, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'argo-mutex-race-'));
   mkdirSync(dir, { recursive: true });
   const t0 = Date.now() + 1500;
-  const [a, b] = await Promise.all([racer(dir, 0, t0, t.signal), racer(dir, 1, t0, t.signal)]);
-  // 실패 사유를 메시지에 남긴다 — 잠금 실패는 "회차 오류코드 기다린시간", 겹침은 "들어간쪽:회차<-표식을 쓴쪽:회차"
-  const why = `잠금 실패 [${[...a.fails, ...b.fails].join(', ')}], 최장 대기 ${Math.max(a.maxWait, b.maxWait)}ms, 오래된 잠금 깐 회차 ${a.staged}`;
-  assert.equal(a.overlaps + b.overlaps, 0, `겹침 ${a.overlaps + b.overlaps}회 [${[...a.marks, ...b.marks].join(', ')}], 표식 기타 오류 ${JSON.stringify({ ...a.other, ...b.other })}, ${why}`);
-  assert.equal(a.entered + b.entered, ROUNDS * 2, `모든 회차에 둘 다 결국 잠금을 얻는다(회수가 막히지 않는다) — ${why}`);
+  const [a, b] = await Promise.all([racer(dir, 0, t0), racer(dir, 1, t0)]);
+  assert.equal(a.overlaps + b.overlaps, 0, `겹침 ${a.overlaps + b.overlaps}회 (오래된 잠금 깐 회차 ${a.staged}, 표식 기타 오류 ${JSON.stringify({ ...a.other, ...b.other })})`);
   assert.ok(a.staged >= ROUNDS / 2, `오래된 잠금을 깐 회차가 너무 적다(${a.staged}) — 회수 경로를 충분히 타지 않았다`);
+  assert.equal(a.entered + b.entered, ROUNDS * 2, '모든 회차에 둘 다 결국 잠금을 얻는다(회수가 막히지 않는다)');
 });
 
 test('2차 잠금을 늦게 얻은 쪽은 그사이 새로 잡힌 잠금을 지우지 않는다(재 stat) — 순서를 훅으로 고정한 결정적 재현', async () => {
