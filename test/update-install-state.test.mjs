@@ -12,13 +12,15 @@ const { code } = swc.transformSync(readFileSync(filename, 'utf8'), {
   filename, jsc: { target: 'es2022', parser: { syntax: 'ecmascript' } }, module: { type: 'commonjs' },
 });
 const flush = () => new Promise(resolve => setImmediate(resolve));
+const updateLocation = await import('../app/update-location.mjs'); // 훅이 쓰는 실제 판정 모듈(가짜 아님)
+const MAC_OK = { platform: 'macos', path: '/Applications/argo.app', translocated: false, parentErrno: null, bundleErrno: null, sameVolume: true };
 const deferred = () => {
   let resolve, reject;
   const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
   return { promise, resolve, reject };
 };
 
-function fixture({ getVersion = async () => '1.2.3', relaunch = async () => {} } = {}) {
+function fixture({ getVersion = async () => '1.2.3', relaunch = async () => {}, location = async () => MAC_OK } = {}) {
   let active, cursor, checks = 0, downloads = 0, relaunches = 0;
   let checkImpl;
   let download = deferred();
@@ -56,6 +58,8 @@ function fixture({ getVersion = async () => '1.2.3', relaunch = async () => {} }
     '@tauri-apps/api/app': { getVersion },
     '@tauri-apps/plugin-updater': { check: () => { checks++; return checkImpl(); } },
     '@tauri-apps/plugin-process': { relaunch: () => { relaunches++; return relaunch(); } },
+    '@tauri-apps/api/core': { invoke: (cmd) => { assert.equal(cmd, 'update_location'); return location(); } },
+    './update-location.mjs': updateLocation,
   };
   const module = { exports: {} };
   const load = new Function('require', 'module', 'exports', 'window', 'navigator', 'process', 'setInterval', 'clearInterval', 'fetch', code);
@@ -80,7 +84,7 @@ function fixture({ getVersion = async () => '1.2.3', relaunch = async () => {} }
     setCheck(fn) { checkImpl = fn; },
     nextDownload() { download = deferred(); return download; },
     resolveDownload() { download.resolve(); },
-    rejectDownload() { download.reject(new Error('fixture download failed')); },
+    rejectDownload(message = 'fixture download failed') { download.reject(new Error(message)); },
     update,
   };
 }
@@ -191,4 +195,55 @@ test('unmounted hook unsubscribes and ignores a late native version response', a
     assert.equal(f.render(removed).phase, before);
     f.resolveDownload(); await install;
   } finally { f.close(); }
+});
+
+// 설치 위치(고객 문의 2건, 2026-10-03·10-04) — DMG·다운로드 폴더에서 바로 연 앱은 업데이트를 저장하지 못해 "확인하지 못했어요"만 떴다.
+test('move-required location: no download, every instance sees the reason and the location', async t => {
+  const translocated = { ...MAC_OK, path: '/private/var/folders/x/T/AppTranslocation/1F2E/d/argo.app', translocated: true, bundleErrno: 30, parentErrno: 30, sameVolume: false };
+  const f = fixture({ location: async () => translocated }); t.after(() => f.close());
+  const shell = f.mount(), settings = f.mount(); await flush();
+  assert.deepEqual(f.render(settings).location, { issue: 'translocated', path: translocated.path });
+  await shell.result.install();
+  assert.equal(f.counts().downloads, 0, '옮기기 전에는 내려받지 않는다');
+  for (const hook of [shell, settings]) {
+    const r = f.render(hook);
+    assert.equal(r.phase, 'error');
+    assert.deepEqual(r.installError, { reason: 'translocated', raw: '' });
+  }
+});
+
+test('install failure: reason and original message reach every instance; a later check clears it', async t => {
+  const f = fixture(); t.after(() => f.close());
+  const shell = f.mount(), settings = f.mount(); await flush();
+  assert.equal(f.render(settings).location, null, '응용 프로그램 폴더면 안내 없음');
+  const install = shell.result.install();
+  f.rejectDownload('failed to move the app: Read-only file system (os error 30)'); await install;
+  for (const hook of [shell, settings]) {
+    const r = f.render(hook);
+    assert.equal(r.phase, 'error');
+    assert.equal(r.installError.reason, 'read_only');
+    assert.match(r.installError.raw, /os error 30/);
+  }
+  f.setCheck(async () => { throw new Error('fixture offline'); });
+  await settings.result.check();
+  assert.equal(f.render(settings).phase, 'error');
+  assert.equal(f.render(settings).installError, null, '확인 실패는 설치 실패 문구로 보이지 않는다');
+  assert.equal(f.render(shell).installError, null);
+});
+
+test('old app without the update_location command: no location, install proceeds', async t => {
+  const f = fixture({ location: async () => { throw new Error('command update_location not found'); } }); t.after(() => f.close());
+  const hook = f.mount(); await flush();
+  assert.equal(f.render(hook).location, null);
+  const install = hook.result.install(); f.resolveDownload(); await install;
+  assert.equal(f.counts().downloads, 1);
+  assert.equal(f.render(hook).phase, 'ready');
+});
+
+test('admin-owned location: reported, but install is still attempted (macOS may ask for the admin password)', async t => {
+  const f = fixture({ location: async () => ({ ...MAC_OK, bundleErrno: 13 }) }); t.after(() => f.close());
+  const hook = f.mount(); await flush();
+  assert.deepEqual(f.render(hook).location, { issue: 'needs_admin', path: MAC_OK.path });
+  const install = hook.result.install(); f.resolveDownload(); await install;
+  assert.equal(f.counts().downloads, 1);
 });
