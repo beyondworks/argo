@@ -17,7 +17,9 @@ import { tmpdir } from 'node:os';
 import { mkdtemp } from './helpers/tmp.mjs';
 
 const MUTEX = new URL('../src/mutex.mjs', import.meta.url).href;
-const ROUNDS = 60;
+// 회차는 최대 60, 시간은 30초까지 — 평소엔 5~8초에 60회차를 다 돈다. 스위트 두 벌 부하의 Windows에서는 디스크 지연으로 60회차에
+// 56초까지 걸렸다(run 37206459736). 테스트 시간 상한(60초)은 응답 없는 자식(멈춤)만 잡도록 남겨 둔다 — 느린 러너는 회차를 덜 돌고 끝낸다.
+const ROUNDS = 60; const BUDGET_MS = 30_000;
 
 // 경쟁 자식 하나 — 부모의 지시(IPC)를 한 번에 하나씩 처리한다: stage(0번만, 오래된 잠금 깔기)·go(정한 시각에 잠금 시도)·end(결과).
 function racer(dir, idx, signal) {
@@ -64,18 +66,21 @@ test('오래된 잠금을 두 프로세스가 동시에 회수해도 잠금 안�
   const dir = await mkdtemp(join(tmpdir(), 'argo-mutex-race-'));
   mkdirSync(dir, { recursive: true });
   const [A, B] = [racer(dir, 0, t.signal), racer(dir, 1, t.signal)];
-  for (let i = 0; i < ROUNDS; i++) {
+  const until = Date.now() + BUDGET_MS; let rounds = 0;
+  while (rounds < ROUNDS && Date.now() < until) {
+    const i = rounds++;
     await A({ cmd: 'stage' });
     const at = Date.now() + 50; // 조금 앞 시각을 정해 두 자식이 타이머로 기다렸다 같이 출발한다
     const [ra, rb] = await Promise.all([A({ cmd: 'go', i, at }), B({ cmd: 'go', i, at })]);
     if (!ra.ok || !rb.ok) break; // 이미 실패한 테스트다 — 남은 회차마다 대기 상한(10초)을 쓰다 시간 초과로 사유를 잃지 않고 바로 보고한다
   }
+  if (rounds < ROUNDS) t.diagnostic(`러너가 느려 ${BUDGET_MS / 1000}초 안에 ${rounds}회차만 돌았다`);
   const [a, b] = await Promise.all([A({ cmd: 'end' }), B({ cmd: 'end' })]);
   // 실패 사유를 메시지에 남긴다 — 잠금 실패는 "회차 오류코드 기다린시간", 겹침은 "들어간쪽:회차<-표식을 쓴쪽:회차"
-  const why = `잠금 실패 [${[...a.fails, ...b.fails].join(', ')}], 최장 대기 ${Math.max(a.maxWait, b.maxWait)}ms, 오래된 잠금 깐 회차 ${a.staged}`;
+  const why = `잠금 실패 [${[...a.fails, ...b.fails].join(', ')}], 최장 대기 ${Math.max(a.maxWait, b.maxWait)}ms, ${rounds}회차 중 오래된 잠금 깐 회차 ${a.staged}`;
   assert.equal(a.overlaps + b.overlaps, 0, `겹침 ${a.overlaps + b.overlaps}회 [${[...a.marks, ...b.marks].join(', ')}], 표식 기타 오류 ${JSON.stringify({ ...a.other, ...b.other })}, ${why}`);
-  assert.equal(a.entered + b.entered, ROUNDS * 2, `모든 회차에 둘 다 결국 잠금을 얻는다(회수가 막히지 않는다) — ${why}`);
-  assert.ok(a.staged >= ROUNDS / 2, `오래된 잠금을 깐 회차가 너무 적다(${a.staged}) — 회수 경로를 충분히 타지 않았다`);
+  assert.equal(a.entered + b.entered, rounds * 2, `모든 회차에 둘 다 결국 잠금을 얻는다(회수가 막히지 않는다) — ${why}`);
+  assert.ok(a.staged >= rounds / 2, `오래된 잠금을 깐 회차가 너무 적다(${a.staged}/${rounds}) — 회수 경로를 충분히 타지 않았다`);
 });
 
 test('2차 잠금을 늦게 얻은 쪽은 그사이 새로 잡힌 잠금을 지우지 않는다(재 stat) — 순서를 훅으로 고정한 결정적 재현', async () => {
