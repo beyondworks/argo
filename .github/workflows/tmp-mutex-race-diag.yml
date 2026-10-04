@@ -1,6 +1,5 @@
-# 임시 진단 워크플로(브랜치 tmp/mutex-race-diag 전용, 진단이 끝나면 브랜치째 지운다) — 2차:
-# 테스트 스위트 두 벌을 동시에 돌려 디스크 지연을 키운 채, 기존 테스트(diag/old)·고친 테스트(test/)를 각각 20회,
-# 진단 하네스를 기존 설정(staleMs 5초·대기 3초)·새 설정(30초·10초)으로 각각 20회 돌린다. 임시 폴더는 main CI와 같은 C: 기본값.
+# 임시 진단 워크플로(브랜치 tmp/mutex-race-diag 전용, 진단이 끝나면 브랜치째 지운다) — 3차:
+# 고친 테스트(회차 동기화 + 제품 시간 설정)를 테스트 스위트 두 벌 부하에서 반복 실행한다. 2차에서 같은 부하로 기존 테스트는 20회 중 2회 실패.
 name: tmp-mutex-race-diag
 
 on:
@@ -16,11 +15,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: old-test, file: diag/old/test/mutex-reclaim-race.test.mjs, stale: '', timeout: '' }
-          - { name: new-test, file: test/mutex-reclaim-race.test.mjs, stale: '', timeout: '' }
-          - { name: trace-old-params, file: '', stale: '5000', timeout: '3000' }
-          - { name: trace-new-params, file: '', stale: '30000', timeout: '10000' }
-    runs-on: windows-latest
+          - { os: windows-latest, name: win-sync-1 }
+          - { os: windows-latest, name: win-sync-2 }
+          - { os: macos-15, name: mac-sync }
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
@@ -32,20 +30,12 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: node scripts/fetch-busybox.mjs bin
-      - name: race diag
+      - if: runner.os == 'Windows'
+        run: node scripts/fetch-busybox.mjs bin
+      - name: race test loop
         shell: bash
         env:
-          DIAG_TEST_FILE: ${{ matrix.file }}
-          DIAG_STALE_MS: ${{ matrix.stale }}
-          DIAG_TIMEOUT_MS: ${{ matrix.timeout }}
+          DIAG_TEST_FILE: test/mutex-reclaim-race.test.mjs
         run: |
           node -e "const os=require('os'); console.log('node', process.version, 'os', os.release(), 'cpus', os.cpus().length, 'tmpdir', os.tmpdir())"
-          node diag/diag-run.mjs . 20 ${{ matrix.name }} suite 2 60 diag-out
-      - if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: diag2-${{ matrix.name }}
-          path: diag-out
-          if-no-files-found: ignore
-          retention-days: 7
+          node diag/diag-run.mjs . 25 ${{ matrix.name }} suite 2
