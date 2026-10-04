@@ -29,6 +29,7 @@ tauri-plugin-notification = "2"
 
 # macOS OS 알림 — UNUserNotificationCenter(notify_mac.rs). 세 크레이트 모두 이미 잠금 파일에 있던 판(wry·tao 경유)
 [target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2" # 앱 안 업데이트 설치 위치 확인(update_location.rs — access(2))
 objc2 = "0.6"
 block2 = "0.6"
 objc2-foundation = "0.3"

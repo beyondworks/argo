@@ -12,14 +12,17 @@ const { code } = swc.transformSync(readFileSync(filename, 'utf8'), {
   filename, jsc: { target: 'es2022', parser: { syntax: 'ecmascript' } }, module: { type: 'commonjs' },
 });
 const flush = () => new Promise(resolve => setImmediate(resolve));
+const updateLocation = await import('../app/update-location.mjs'); // 훅이 쓰는 실제 판정 모듈(가짜 아님)
+const MAC_OK = { platform: 'macos', path: '/Applications/argo.app', translocated: false, parentErrno: null, bundleErrno: null, sameVolume: true };
 const deferred = () => {
   let resolve, reject;
   const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
   return { promise, resolve, reject };
 };
 
-function fixture({ getVersion = async () => '1.2.3', relaunch = async () => {} } = {}) {
+function fixture({ getVersion = async () => '1.2.3', relaunch = async () => {}, location = async () => MAC_OK } = {}) {
   let active, cursor, checks = 0, downloads = 0, relaunches = 0;
+  const order = []; // 재시작 모듈 불러오기와 내려받기 시작 순서
   let checkImpl;
   let download = deferred();
   const instances = new Set(), intervals = new Set();
@@ -49,18 +52,22 @@ function fixture({ getVersion = async () => '1.2.3', relaunch = async () => {} }
       }
     },
   };
-  const update = { version: '1.2.4', downloadAndInstall: () => { downloads++; return download.promise; } };
+  const update = { version: '1.2.4', downloadAndInstall: () => { downloads++; order.push('download'); return download.promise; } };
   checkImpl = async () => update;
   const imports = {
     react,
     '@tauri-apps/api/app': { getVersion },
     '@tauri-apps/plugin-updater': { check: () => { checks++; return checkImpl(); } },
-    '@tauri-apps/plugin-process': { relaunch: () => { relaunches++; return relaunch(); } },
+    './update-location.mjs': updateLocation,
   };
+  const processModule = { relaunch: () => { relaunches++; return relaunch(); } };
+  Object.defineProperty(imports, '@tauri-apps/plugin-process', { enumerable: true, get() { order.push('process-import'); return processModule; } });
+  // update_location은 @tauri-apps/api/core를 거치지 않고 내부 invoke로 부른다(재시작 조각을 공개본과 같게 유지 — use-app-update.js 참고)
+  const tauriInternals = { invoke: (cmd) => { assert.equal(cmd, 'update_location'); return location(); } };
   const module = { exports: {} };
   const load = new Function('require', 'module', 'exports', 'window', 'navigator', 'process', 'setInterval', 'clearInterval', 'fetch', code);
   load(id => { assert.ok(Object.hasOwn(imports, id), `Unexpected real dependency: ${id}`); return imports[id]; },
-    module, module.exports, { __TAURI_INTERNALS__: {} }, { userAgent: 'fixture Tauri' },
+    module, module.exports, { __TAURI_INTERNALS__: tauriInternals }, { userAgent: 'fixture Tauri' },
     { env: { NEXT_PUBLIC_APP_VERSION: '0.0.1' } },
     callback => { intervals.add(callback); return callback; }, callback => intervals.delete(callback),
     () => { throw new Error('Unexpected real fetch'); });
@@ -77,10 +84,11 @@ function fixture({ getVersion = async () => '1.2.3', relaunch = async () => {} }
     unmount(instance) { for (const cell of instance.slots) cell.cleanup?.(); instances.delete(instance); },
     close() { for (const instance of [...instances]) this.unmount(instance); assert.equal(intervals.size, 0); },
     counts: () => ({ checks, downloads, relaunches }),
+    order: () => [...order],
     setCheck(fn) { checkImpl = fn; },
     nextDownload() { download = deferred(); return download; },
     resolveDownload() { download.resolve(); },
-    rejectDownload() { download.reject(new Error('fixture download failed')); },
+    rejectDownload(message = 'fixture download failed') { download.reject(new Error(message)); },
     update,
   };
 }
@@ -96,6 +104,7 @@ test('actual hook shares installing/ready across instances and prevents duplicat
   await settings.result.install();
   assert.equal(f.render(shell).phase, 'installing');
   assert.equal(f.render(settings).phase, 'installing');
+  await flush(); // 내려받기는 재시작 모듈을 불러온 뒤 시작한다
   assert.equal(f.counts().downloads, 1);
   const checks = f.counts().checks;
   await settings.result.check();
@@ -107,6 +116,18 @@ test('actual hook shares installing/ready across instances and prevents duplicat
   assert.equal(f.counts().relaunches, 1);
   await settings.result.install();
   assert.equal(f.counts().downloads, 1, 'ready also prevents another install');
+});
+
+// 2026-10-04 실제 맥 확인: 본체 화면은 앱 묶음 안 서버가 주므로, 설치로 묶음이 바뀐 뒤에는 옛 빌드의 JS 조각을 더 받을 수 없다.
+// 재시작 모듈을 설치 뒤에 불러오면 조각 이름이 바뀐 버전으로 업데이트할 때 relaunch까지 가지 못한다 → 내려받기 전에 불러 둔다.
+test('relaunch module is loaded before the download starts', async t => {
+  const f = fixture(); t.after(() => f.close());
+  const hook = f.mount(); await flush();
+  const install = hook.result.install(); await flush();
+  assert.deepEqual(f.order(), ['process-import', 'download']);
+  f.resolveDownload(); await install;
+  assert.equal(f.counts().relaunches, 1);
+  assert.deepEqual(f.order(), ['process-import', 'download'], '설치 뒤에는 새로 불러오는 모듈이 없다');
 });
 
 test('late check success or failure cannot overwrite an active shared install', async t => {
@@ -152,7 +173,18 @@ test('download/relaunch errors reach both hook instances; failed download can re
         const shell = f.mount(), settings = f.mount(); await flush();
         const install = settings.result.install();
         if (failsAt === 'download') f.rejectDownload(); else f.resolveDownload();
-        await install;
+        assert.equal(await install, false, '실패하면 false — 뱃지가 이유가 보이는 설정 카드로 보낸다');
+        if (failsAt === 'relaunch') {
+          // 설치는 끝났다 — "설치하지 못했어요"가 아니라 다시 열라는 안내(reason 'relaunch')로 남고 재설치를 막는다
+          for (const hook of [shell, settings]) {
+            const r = f.render(hook);
+            assert.equal(r.phase, 'ready');
+            assert.deepEqual(r.installError, { reason: 'relaunch', raw: 'fixture relaunch failed' });
+          }
+          await shell.result.install();
+          assert.equal(f.counts().downloads, 1);
+          return;
+        }
         assert.equal(f.render(shell).phase, 'error'); assert.equal(f.render(settings).phase, 'error');
         if (failsAt === 'download') {
           const next = f.nextDownload();
@@ -191,4 +223,76 @@ test('unmounted hook unsubscribes and ignores a late native version response', a
     assert.equal(f.render(removed).phase, before);
     f.resolveDownload(); await install;
   } finally { f.close(); }
+});
+
+// 설치 위치(고객 문의 2건, 2026-10-03·10-04) — DMG·다운로드 폴더에서 바로 연 앱은 업데이트를 저장하지 못해 "확인하지 못했어요"만 떴다.
+test('move-required location: no download, every instance sees the reason and the location', async t => {
+  const translocated = { ...MAC_OK, path: '/private/var/folders/x/T/AppTranslocation/1F2E/d/argo.app', translocated: true, bundleErrno: 30, parentErrno: 30, sameVolume: false };
+  const f = fixture({ location: async () => translocated }); t.after(() => f.close());
+  const shell = f.mount(), settings = f.mount(); await flush();
+  assert.deepEqual(f.render(settings).location, { issue: 'translocated', path: translocated.path });
+  await shell.result.install();
+  assert.equal(f.counts().downloads, 0, '옮기기 전에는 내려받지 않는다');
+  for (const hook of [shell, settings]) {
+    const r = f.render(hook);
+    assert.equal(r.phase, 'error');
+    assert.deepEqual(r.installError, { reason: 'translocated', raw: '' });
+  }
+});
+
+test('install failure: reason and original message reach every instance; a check the user asked for clears it', async t => {
+  const f = fixture(); t.after(() => f.close());
+  const shell = f.mount(), settings = f.mount(); await flush();
+  assert.equal(f.render(settings).location, null, '응용 프로그램 폴더면 안내 없음');
+  const install = shell.result.install();
+  f.rejectDownload('failed to move the app: Read-only file system (os error 30)'); await install;
+  for (const hook of [shell, settings]) {
+    const r = f.render(hook);
+    assert.equal(r.phase, 'error');
+    assert.equal(r.installError.reason, 'read_only');
+    assert.match(r.installError.raw, /os error 30/);
+  }
+  f.setCheck(async () => { throw new Error('fixture offline'); });
+  await settings.result.check({ byUser: true });
+  assert.equal(f.render(settings).phase, 'error');
+  assert.equal(f.render(settings).installError, null, '확인 실패는 설치 실패 문구로 보이지 않는다');
+  assert.equal(f.render(shell).installError, null);
+});
+
+// 분리 검수 MEDIUM-1(2026-10-04): 카드가 나중에 열리며 도는 자동 확인, 다른 화면의 1시간 주기 확인이 실패 이유를 지워
+// 뱃지에서 실패하면 이유가 어디에도 안 보이고, 카드는 고객이 본 "확인하지 못했어요"로 돌아갔다.
+test('install failure from the badge survives automatic checks and a settings card opened later', async t => {
+  const f = fixture(); t.after(() => f.close());
+  const shell = f.mount(); await flush();
+  const install = shell.result.install();
+  f.rejectDownload('Failed to move the new app into place');
+  assert.equal(await install, false);
+  const settings = f.mount(); await flush(); // 마운트 때 자동 확인(성공)이 돈다
+  assert.ok(f.counts().checks >= 2);
+  assert.deepEqual(f.render(settings).installError, { reason: 'needs_admin', raw: 'Failed to move the new app into place' });
+  await shell.result.check(); // 다른 화면의 주기 확인(자동)
+  assert.equal(f.render(settings).installError?.reason, 'needs_admin');
+  await settings.result.check({ byUser: true }); // 사용자가 누른 '업데이트 확인'만 지운다
+  assert.equal(f.render(settings).installError, null);
+  assert.equal(f.render(shell).installError, null);
+});
+
+test('old app without the update_location command: no location, install proceeds', async t => {
+  const f = fixture({ location: async () => { throw new Error('command update_location not found'); } }); t.after(() => f.close());
+  const hook = f.mount(); await flush();
+  assert.equal(f.render(hook).location, null);
+  const install = hook.result.install(); f.resolveDownload(); await install;
+  assert.equal(f.counts().downloads, 1);
+  assert.equal(f.render(hook).phase, 'ready');
+});
+
+test('admin-owned location: reported, but install is still attempted (macOS may ask for the admin password)', async t => {
+  const f = fixture({ location: async () => ({ ...MAC_OK, bundleErrno: 13 }) }); t.after(() => f.close());
+  const hook = f.mount(); await flush();
+  assert.deepEqual(f.render(hook).location, { issue: 'needs_admin', path: MAC_OK.path });
+  const install = hook.result.install(); f.rejectDownload('Failed to move the new app into place'); await install;
+  assert.equal(f.counts().downloads, 1);
+  // 암호 창을 취소하면 업데이터는 errno 없이 이 문구만 준다 — 이유가 빠지면 카드에 "설치하지 못했어요"만 남는다
+  assert.equal(f.render(hook).phase, 'error');
+  assert.deepEqual(f.render(hook).installError, { reason: 'needs_admin', raw: 'Failed to move the new app into place' });
 });
