@@ -35,6 +35,8 @@ test('조직에서 내 에이전트 1:1 = 개인 공간의 방(openDm 관문) �
   assert.match(app, /if \(picks\.length === 1\) return openDm\(picks\[0\]\.kind, picks\[0\]\.id\);/, '새 대화 시트의 한 명 고르기도 openDm');
   const open = app.slice(app.indexOf('const openPersonalCrewDm = async'), app.indexOf('const openPersonalDm = async'));
   assert.match(open, /needPersonalConsent\(\(\) => openPersonalCrewDm\(crewId, text\)\)/, '동의를 거쳐도 옮길 글이 남는다');
+  assert.match(open, /if \(!await loadUntilListed\(cid, \{ load: loadPersonal, here: \(\) => activeOrg\.current === PERSONAL \}\)\) return null;/, '목록 읽기가 밀리면 한 번 더 읽고 연다(픽스처 실측: 다른 방이 열렸다 — 행동은 agent-groups.test.mjs)');
+  assert.ok(open.indexOf('loadUntilListed(cid') < open.indexOf('setChId(cid)'), '목록에 들어온 뒤 고른다');
   assert.match(open, /if \(text\) getComposerSession\(JSON\.stringify\(\[SB_URL, uid, PERSONAL, cid\]\), composerTransport\(supabase, \{ orgId: PERSONAL, chId: cid, uid, personal: true \}\)\)\.setText\(text\);/, '그 방 입력창과 같은 세션 키·개인 통로');
 });
 
@@ -50,7 +52,7 @@ test('공간 전환 안내 — 관문이 spaceMoveNotice로 정하고(폰 에이
   assert.match(app, /const tapToast = \(\) => \{ const back = !err && moveNote\?\.text === note \? spaceMoveBack\(moveNote, orgs\) : null; clearToast\(\); if \(back\) runInSpace\(back\.space, \(\) => \{ if \(back\.ch\) setChId\(back\.ch\); setPage\('chat'\); setRail\(false\); \}\); \};/, '그 안내가 떠 있을 때만 돌아간다(다른 안내가 덮었으면 닫기만)');
 });
 
-test('버튼 이름 — 조직 화면의 레일 메뉴·크루 카드·방 밖 멘션만, 판정은 dmGoesPersonal(personalRoomKnown — 이미 가진 행)', () => {
+test('버튼 이름 — 조직 화면의 레일 메뉴·즐겨찾기 줄·크루 카드·방 밖 멘션만, 판정은 dmGoesPersonal(personalRoomKnown — 이미 가진 행)', () => {
   assert.match(app, /const dmGoesPersonal = \(c\) => !isPersonal && personalRoomKnown\(c, myAgents, uid\);/);
   assert.match(app, /\{ icon: 'at', label: t\(dmGoesPersonal\(c\) \? 'ui\.dm\.personal' : 'ui\.dm'\), run: \(\) => \{ dmWithCrew\(c\.id\); setRail\(false\); \} \}/, '레일 메뉴(조직)');
   assert.match(app, /const crewCtx = \(c\) => isPersonal \? \[\{ icon: 'at', label: t\('ui\.dm'\),/, '개인 공간 메뉴는 그대로(공간이 바뀌지 않는다)');
@@ -59,6 +61,8 @@ test('버튼 이름 — 조직 화면의 레일 메뉴·크루 카드·방 밖 �
   assert.match(app, /onOutsideDm=\{dmWithCrew\} outsideDmPersonal=\{dmGoesPersonal\}/);
   assert.match(app, /<Composer broadcast=\{broadcast\} onOutsideDm=\{onOutsideDm\} outsideDmPersonal=\{outsideDmPersonal\}/);
   assert.match(app, /\{t\(outsideDmPersonal\?\.\(c\) \? 'mention\.outside\.dm\.personal' : 'mention\.outside\.dm'\)\}/, '방 밖 멘션');
+  assert.match(app, /label: t\(c\.targetKind === 'crew' && dmGoesPersonal\(crewOf\(c\.targetId\)\) \? 'ui\.dm\.personal' : 'ui\.dm'\), run: \(\) => openDm\(c\.targetKind, c\.targetId\)/, '즐겨찾기 줄 메뉴(재검수 L-c)');
+  assert.match(app, /\(lang === 'en' \? \(x\) => x : koJosa\)\(t\('mention\.outside', \{ name: c\.display_name \}\)\)/, '방 밖 멘션 안내의 은(는)을 이름에 맞춘다(그대로 보였다)');
   assert.match(app, /const myAgentsAsked = useRef\(false\);\n\s*useEffect\(\(\) => \{ if \(myAgentsAsked\.current \|\| myAgents !== null \|\| !uid \|\| !orgId \|\| orgId === PERSONAL \|\| !crews\.some\(\(c\) => c\.owner_user_id === uid\)\) return; myAgentsAsked\.current = true; loadMyAgents\(\)\.catch\(\(\) => \{\}\); \}, \[uid, orgId, crews, myAgents\]\);/, '판정 재료는 세션에 한 번만 읽는다(렌더마다 조회 없음, 실패해도 다시 묻지 않는다)');
 });
 

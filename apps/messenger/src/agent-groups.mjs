@@ -92,6 +92,17 @@ export function personalRoomKnown(crew, rows, uid) {
   return !!twin && isRoomRow(twin, uid);
 }
 
+/** 방금 만든 개인 방이 목록에 들어왔는지 — 들어왔으면(또는 두 번 읽었으면) true, 읽는 동안 공간을 떠났으면 false(App openPersonalCrewDm).
+    목록 읽기(load = loadPersonal)는 더 새 읽기가 시작되면 결과 없이 끝난다. 개인 공간에 들어가며 열린 방의 막대(대기 크루 이름 재조회)·방송·복귀가 그 사이 읽기를 시작하면 그렇고,
+    목록에 없는 방을 고르면 '사라진 채널' 정리가 선택을 지워 마지막 방이 열린다(픽스처 실측 2026-10-04). sendFirstDm처럼 새 방이 없으면 한 번만 더 읽는다 */
+export async function loadUntilListed(cid, { load, here }) {
+  for (let i = 0; i < 2; i++) {
+    const rows = await load(); if (!here()) return false;
+    if (rows?.some((c) => c.id === cid)) return true;
+  }
+  return true;
+}
+
 // 공간 전환 안내(유건 2026-10-04) — 조직 화면에서 내 에이전트 1:1을 눌러 앱이 개인 공간으로 옮겨 간 직후 한 줄. 기존 토스트를 쓰고, 누르면 돌아간다.
 export const MOVE_NOTICE_MS = 6000; // 전경 푸시 카드와 같은 6초 — 읽고 누를 시간(보통 안내 4초보다 길게)
 /** 띄울지 — 조직(from)에서 개인 공간(to)으로 옮겼을 때만 { backTo: 직전 조직, backCh: 그 조직에서 보던 채널 }.

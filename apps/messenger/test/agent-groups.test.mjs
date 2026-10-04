@@ -3,7 +3,7 @@
 // 조직 행에서 빌려 올 때 쓰는 규칙과 같다. 외부 봇의 개인 쌍둥이도 ws_id 'bot' + 조직 봇 행 slug 그대로라 같은 규칙으로 묶인다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { agentKey, groupAgents, rowForSpace, agentRoomTarget, agentStateRow, personalTwinOf, personalRoomFor, personalRoomKnown, agentSections, AGENT_FILTERS, groupIsFav, favChanges, readAgentFav } from '../src/agent-groups.mjs';
+import { agentKey, groupAgents, rowForSpace, agentRoomTarget, agentStateRow, personalTwinOf, personalRoomFor, personalRoomKnown, loadUntilListed, agentSections, AGENT_FILTERS, groupIsFav, favChanges, readAgentFav } from '../src/agent-groups.mjs';
 
 const ME = 'u-me';
 const LEAN = 'org-lean'; const DESIGN = 'org-design';
@@ -265,4 +265,16 @@ test('기기 즐겨찾기 읽기 — 깨진 값·배열 아닌 값은 빈 목록
   assert.deepEqual([...readAgentFav(store('{bad'))], []);
   assert.deepEqual([...readAgentFav(store('{"a":1}'))], []);
   assert.deepEqual([...readAgentFav(null)], []);
+});
+
+// 픽스처 실측(2026-10-04): 방 밖 멘션 → '개인 1:1로 시키기'가 Alice 방을 열고 글도 옮기지 않았다. 개인 공간에 들어가며 열린 방의 막대가 목록을 다시 읽어
+// 새 방을 만든 뒤의 읽기가 결과 없이 끝났는데(loadPersonal의 낡은 요청), 그 목록에 없는 방을 고르자 '사라진 채널' 정리가 지우고 마지막 방이 열렸다.
+test('새 개인 방 목록 읽기 — 다른 읽기에 밀려 결과가 없거나 낡은 목록이면 한 번 더 읽고, 공간을 떠났으면 열지 않는다', async () => {
+  const run = async (results, here = () => true) => { let loads = 0; const ok = await loadUntilListed('new', { load: async () => { loads++; return results.shift(); }, here }); return { ok, loads }; };
+  assert.deepEqual(await run([[{ id: 'a' }, { id: 'new' }]]), { ok: true, loads: 1 }, '한 번에 들어오면 한 번만 읽는다(평소 요청 수 그대로)');
+  assert.deepEqual(await run([undefined, [{ id: 'new' }]]), { ok: true, loads: 2 }, '밀려서 결과가 없으면 다시 읽는다');
+  assert.deepEqual(await run([[{ id: 'a' }], [{ id: 'new' }]]), { ok: true, loads: 2 }, '새 방이 없는 낡은 목록이어도 다시 읽는다');
+  assert.deepEqual(await run([undefined, undefined, [{ id: 'new' }]]), { ok: true, loads: 2 }, '두 번까지만 읽는다(sendFirstDm과 같다) — 그 뒤는 종전대로 연다');
+  let n = 0;
+  assert.deepEqual(await run([undefined, [{ id: 'new' }]], () => ++n > 1), { ok: false, loads: 1 }, '읽는 동안 공간을 떠났으면 열지 않는다');
 });
