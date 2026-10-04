@@ -15,10 +15,11 @@ test('공간 칩·공간 고르기 창이 없다(폰 에이전트 탭·길게 �
   for (const re of [/\.ph-aspaces/, /\.ph-setspaces/, /\.ph-spacesheet/, /\.ph-spacedesc/, /\.ph-setagent/]) assert.doesNotMatch(css, re, `styles.css: ${re}`);
 });
 
-test('폰 에이전트 탭 줄 = agentRoomTarget(개인 행 우선) — 얼굴·상태·누르기가 같은 행', () => {
+test('폰 에이전트 탭 줄 = agentRoomTarget(열 수 있는 개인 행 우선) — 얼굴·누르기가 같은 행, 상태는 agentStateRow(다시 연결 필요를 가리지 않는다)', () => {
   assert.match(app, /const agentOpenRow = \(g\) => agentRoomTarget\(g, \{ uid, space: orgId, personalKey: PERSONAL \}\);/);
   assert.match(app, /const openAgentGroup = \(g\) => openAgent\(agentOpenRow\(g\)\);/);
   assert.match(app, /const def = agentOpenRow\(g\);/);
+  assert.match(app, /const groupState = \(g\) => \(g\.rows\.some\(\(r\) => agentState\(r\) === 'working'\) \? 'working' : agentState\(agentStateRow\(g, \{ uid, space: orgId, personalKey: PERSONAL \}\)\)\);/);
   assert.match(app, /if \(c\.status === 'available'\) \{ runInSpace\(space, \(fn\) => fn\.setSheet\(c\.id\)\); return; \}/, '파견 해제 행은 다시 켜는 카드(종전 판정)');
 });
 
@@ -27,7 +28,7 @@ test('조직에서 내 에이전트 1:1 = 개인 공간의 방(openDm 관문) �
   assert.match(gate, /if \(kind === 'crew' && crewOf\(id\)\?\.owner_user_id === uid\) \{/, '내 크루만(남의 크루는 종전대로 주인과의 1:1)');
   assert.match(gate, /const twin = await personalTwin\(crewOf\(id\)\);[\s\S]{0,80}if \(activeOrg\.current !== here\) return null;[\s\S]{0,40}if \(twin\) \{ runInSpace\(PERSONAL, \(fn\) => fn\.openPersonalCrewDm\(twin\.id, text\)\); return null; \}/);
   assert.ok(gate.indexOf('personalTwin(crewOf(id))') < gate.indexOf("supabase.rpc('msgr_create_channel'"), '조직 1:1을 찾거나 만들기 전에 판정한다');
-  assert.match(app, /return personalTwinOf\(rows\?\.find\(\(r\) => r\.id === c\.id\), rows, uid\);/, '판정은 순수 함수(agent-groups.mjs)');
+  assert.match(app, /const personalTwin = \(c\) => personalRoomFor\(c, \{ uid,\n\s*ownRows: \(slug\) => q\(supabase\.from\('msgr_crews'\)\.select\('id, org_id, owner_user_id, ws_id, slug, status, hosting'\)\.eq\('owner_user_id', uid\)\.eq\('slug', slug\)\.in\('status', \['active', 'available'\]\)\),\n\s*roomCrews: \(\) => q\(supabase\.rpc\('msgr_personal_room_crews'\)\) \}\);/, '판정은 순수 async 함수(agent-groups.mjs personalRoomFor — 행동 테스트), App은 조회만 넣는다(내 행은 그 slug만, 봇 준비 상태는 msgr_personal_room_crews)');
   assert.match(app, /const dmWithCrew = async \(crewId, body = ''\) => \{[\s\S]{0,200}const cid = await openDm\('crew', crewId, draft\);/, '레일 메뉴·크루 카드·방 밖 멘션·전달 알림은 dmWithCrew → openDm');
   assert.match(app, /if \(picks\.length === 1\) return openDm\(picks\[0\]\.kind, picks\[0\]\.id\);/, '새 대화 시트의 한 명 고르기도 openDm');
   const open = app.slice(app.indexOf('const openPersonalCrewDm = async'), app.indexOf('const openPersonalDm = async'));

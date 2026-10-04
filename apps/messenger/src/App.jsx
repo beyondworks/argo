@@ -39,7 +39,7 @@ import { useLongPress, longPressHandlers } from './long-press.js';
 import { groupFlags } from './msg-group.mjs';
 import { t as tm } from './i18n.js';
 import { plainField, approvalPlainFields, orgDocTitle, approvalOneLineSummary, approvalGrade, approvalSummaryKey, approvalPageItems, approvalDecider, phoneApprovalDecider, decidableApprovals, approvalOnlyKey, approvalDenied, approvalCmdMode } from './approval-display.js';
-import { AGENT_FILTERS, AGENT_FAV_KEY, groupAgents, rowForSpace, agentRoomTarget, personalTwinOf, agentSections, groupIsFav, favChanges, readAgentFav } from './agent-groups.mjs'; // 폰 에이전트 탭 — 같은 에이전트 한 줄·상단 메뉴·즐겨찾기(유건 2026-10-02), 1:1은 개인 방 하나(2026-10-03)
+import { AGENT_FILTERS, AGENT_FAV_KEY, groupAgents, rowForSpace, agentRoomTarget, agentStateRow, personalRoomFor, agentSections, groupIsFav, favChanges, readAgentFav } from './agent-groups.mjs'; // 폰 에이전트 탭 — 같은 에이전트 한 줄·상단 메뉴·즐겨찾기(유건 2026-10-02), 1:1은 개인 방 하나(2026-10-03)
 import { toggleId, foldAll, allFolded } from './collapse-set.mjs';
 import { useLang } from '@argo/i18n';
 import { useTheme, THEMES } from '@argo/theme';
@@ -1942,13 +1942,12 @@ function Shell({ session }) {
     const cid = await openDm('crew', crewId, draft); // 개인 공간에서 아직 방이 없으면 초안 화면이 이 글을 받는다(D13)
     if (cid && draft) getComposerSession(JSON.stringify([SB_URL, uid, orgId, cid]), composerTransport(supabase, { orgId, chId: cid, uid })).setText(draft);
   };
-  // 내 에이전트의 개인 공간 행 — 조직 크루 목록에는 회사(ws_id)가 없어, 1:1을 열 때만 내 행 중 같은 slug를 한 번 읽어 판정한다(agent-groups.mjs personalTwinOf.
-  // RLS: 개인 행은 주인만 읽힌다). 주기 호출 없음. 읽기에 실패하면 null — 종전 조직 1:1로 연다.
-  const personalTwin = async (c) => {
-    if (!c?.slug || !uid) return null;
-    const rows = await q(supabase.from('msgr_crews').select('id, org_id, owner_user_id, ws_id, slug, status').eq('owner_user_id', uid).eq('slug', c.slug).in('status', ['active', 'available'])).catch(() => null);
-    return personalTwinOf(rows?.find((r) => r.id === c.id), rows, uid);
-  };
+  // 내 에이전트의 열 수 있는 개인 공간 행 — 판정은 agent-groups.mjs personalRoomFor(주인 확인·조회 주입, 행동 테스트). 조직 크루 목록에는 회사(ws_id)가 없어
+  // 1:1을 열 때만 내 행 중 같은 slug를 한 번 읽고(RLS: 개인 행은 주인만 읽힌다), 외부 봇이면 준비 상태(msgr_personal_room_crews의 ready)를 한 번 더 읽는다.
+  // 주기 호출 없음. 읽기에 실패하거나 봇이 준비 안 됐으면(다시 연결 필요·조직을 나감) null — 종전 조직 1:1로 연다.
+  const personalTwin = (c) => personalRoomFor(c, { uid,
+    ownRows: (slug) => q(supabase.from('msgr_crews').select('id, org_id, owner_user_id, ws_id, slug, status, hosting').eq('owner_user_id', uid).eq('slug', slug).in('status', ['active', 'available'])),
+    roomCrews: () => q(supabase.rpc('msgr_personal_room_crews')) });
   const openDm = async (kind, id, text = '') => {
     if (isPersonal && kind === 'crew') return openPersonalCrewDm(id, text);
     if (isPersonal && kind === 'user') return openPersonalDm(id, text); // 개인 공간에서 사람을 누르면(검색·새 채팅 시트) 개인 1:1 — 조직 DM 생성은 가상 org id로 400이었다
@@ -2586,8 +2585,8 @@ function Shell({ session }) {
   const agentSecs = agentSections(agentShown(agentGroups), { filter: agentFilter, isFav: agentFavOf });
   const agentState = (c) => (twinPaused(c) ? 'relink' : Object.entries(typing).some(([k, at]) => k.endsWith(`:${c.id}`) && Date.now() - at < TYPING_WINDOW_MS) || !!progress && Object.entries(progress).some(([k, v]) => k.endsWith(`:${c.id}`) && Date.now() - (v?.at ?? 0) < 8000) ? 'working' : 'idle');
   const openAgent = (c) => { setTabQ(null); const space = c.org_id ?? PERSONAL; if (c.status === 'available') { runInSpace(space, (fn) => fn.setSheet(c.id)); return; } runInSpace(space, (fn) => (space === PERSONAL ? fn.openPersonalCrewDm(c.id) : fn.dmWithCrew(c.id))); }; // 꺼 둔(파견 해제) 에이전트는 다시 켜는 카드로
-  const agentOpenRow = (g) => agentRoomTarget(g, { uid, space: orgId, personalKey: PERSONAL }); // 줄이 여는 행 — 얼굴·상태도 이 행으로
-  const groupState = (g) => (g.rows.some((r) => agentState(r) === 'working') ? 'working' : agentState(agentOpenRow(g)));
+  const agentOpenRow = (g) => agentRoomTarget(g, { uid, space: orgId, personalKey: PERSONAL }); // 줄이 여는 행(얼굴도 이 행) — 준비 안 된 봇 쌍둥이는 고르지 않는다
+  const groupState = (g) => (g.rows.some((r) => agentState(r) === 'working') ? 'working' : agentState(agentStateRow(g, { uid, space: orgId, personalKey: PERSONAL }))); // 대화할 수 없는 내 쌍둥이가 있으면 '다시 연결 필요'
   const openAgentGroup = (g) => openAgent(agentOpenRow(g));
   const agentItems = (g) => [
     { icon: 'star', label: t(agentFavOf(g) ? 'phone.agents.fav.remove' : 'phone.agents.fav.add'), run: () => { toggleAgentFav(g).catch(() => {}); } },

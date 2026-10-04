@@ -6,6 +6,8 @@
 //     이 세 값이 같은 조직 행에서 빌려 온다(같은 크루로 본다).
 //   · 외부 봇: 조직 봇 행(ws_id 'bot', slug 'bot-…' 무작위)과 그 개인 쌍둥이는 쌍둥이를 만들 때 slug를 그대로 복사한다(20261001140000).
 //   · 셋 중 하나라도 모르면(옛 서버·조회 실패) 그 행은 id로만 — 다른 행과 잘못 합치지 않는 쪽으로 틀린다. 이름으로는 판정하지 않는다.
+import { twinPaused } from './personal-bots.mjs';
+
 export const AGENT_FILTERS = ['all', 'fav', 'mine', 'ext'];
 
 export function agentKey(c) {
@@ -36,20 +38,49 @@ export function rowForSpace(group, space, personalKey) {
 
 // 에이전트 = 한 사람(유건 2026-10-03, P2). 내 에이전트와의 1:1은 개인 공간의 방 하나다 — 공간마다 따로 열지 않는다.
 // 조직 이야기는 다음 단계의 '조직 기억 찾기'로 꺼낸다. 개인 행은 본체 0.1.92부터 모든 에이전트에 생긴다(그 전 본체는 조직 행만 — 종전대로 연다).
-const isPersonalRow = (r, uid) => !!r && r.org_id == null && r.status === 'active' && !!uid && r.owner_user_id === uid;
+const isMinePersonal = (r, uid) => !!r && r.org_id == null && r.status === 'active' && !!uid && r.owner_user_id === uid;
+// 봇 쌍둥이는 서버가 준비됐다고 줄 때만(ready === true — msgr_personal_room_crews가 주인에게만 준다) 1:1 대상이다. 다시 연결 필요('relink')·조직을 나감('left_org')이면
+// 서버 _msgr_bot_twin이 NULL이라 개인 방 글이 봇에 가지 않는다(20261001140000) — 답이 없는 방이 된다. 준비 상태를 모르면(ready 없음) 대상으로 보지 않는다. 본체 크루는 개인 행이면 된다.
+const roomReady = (r) => r.hosting !== 'bot' || r.ready === true;
+const isRoomRow = (r, uid) => isMinePersonal(r, uid) && roomReady(r);
 
-/** 줄을 눌렀을 때 열 행 — 내 에이전트는 개인 공간 행(1:1 방 하나), 개인 행이 없거나 남의 에이전트면 rowForSpace(지금 공간, 없으면 첫 공간) */
+/** 줄을 눌렀을 때 열 행 — 내 에이전트는 개인 공간 행(1:1 방 하나). 개인 행이 없거나 1:1을 열 수 없는 쌍둥이면 rowForSpace(지금 공간, 없으면 첫 공간).
+    그때 열 수 없는 내 쌍둥이는 다른 행이 있으면 후보에서 뺀다 — 지금 공간이 개인이면 rowForSpace가 그 쌍둥이를 다시 고른다. 남의 에이전트는 종전 판정 그대로 */
 export function agentRoomTarget(group, { uid, space, personalKey }) {
-  return group.rows.find((r) => isPersonalRow(r, uid)) ?? rowForSpace(group, space, personalKey);
+  const room = group.rows.find((r) => isRoomRow(r, uid));
+  if (room) return room;
+  const rest = group.rows.filter((r) => !(isMinePersonal(r, uid) && !roomReady(r)));
+  return rowForSpace(rest.length ? { ...group, rows: rest } : group, space, personalKey);
 }
 
-/** 조직 행 → 같은 에이전트(agentKey = 주인·회사·slug)의 내 활성 개인 공간 행, 없으면 null(종전 조직 1:1).
+/** 줄의 상태(대기·답변 준비 중·다시 연결 필요)를 볼 행 — 대화할 수 없는 내 쌍둥이(다시 연결 필요·조직을 나감, personal-bots.mjs twinPaused)가 있으면 그 행.
+    누르면 조직 1:1이 열려도 개인 방을 되살리려면 다시 연결해야 하니 그 안내를 가리지 않는다. 아니면 여는 행(agentRoomTarget) */
+export function agentStateRow(group, opts) {
+  return group.rows.find((r) => isMinePersonal(r, opts.uid) && twinPaused(r)) ?? agentRoomTarget(group, opts);
+}
+
+/** 조직 행 → 같은 에이전트(agentKey = 주인·회사·slug)의 내 활성 개인 공간 행, 없으면 null. 1:1을 열 수 있는지(봇 준비 상태)는 personalRoomFor가 본다.
     남의 크루는 키의 주인이 나와 달라 맞는 행이 없고, 셋 중 하나라도 모르는 행은 키가 id라 다른 행과 맞지 않는다 —
     다른 에이전트의 방을 잘못 여는 쪽이 아니라 종전 쪽으로 틀린다. rows = 내 크루 행 목록(같은 slug만 읽어 와도 된다) */
 export function personalTwinOf(crew, rows, uid) {
   if (crew?.org_id == null) return null; // 조직 행만 — 개인 행 자체·조회에서 못 찾은 행은 바꿀 것이 없다
   const key = agentKey(crew);
-  return (rows ?? []).find((r) => isPersonalRow(r, uid) && agentKey(r) === key) ?? null;
+  return (rows ?? []).find((r) => isMinePersonal(r, uid) && agentKey(r) === key) ?? null;
+}
+
+/** 조직에서 내 에이전트 1:1을 열 때의 관문 판정(App openDm) — 열 개인 행, 아니면 null(종전 조직 1:1).
+    조회는 주입한다(App은 supabase, 테스트는 가짜):
+      ownRows(slug) — 내 크루 행 중 그 slug(id·org_id·owner_user_id·ws_id·slug·status·hosting). 조직 크루 목록에는 회사(ws_id)가 없어 같은 에이전트를 가리려고 읽는다.
+      roomCrews()   — msgr_personal_room_crews 결과. 봇 쌍둥이면 준비 상태(ready)를 여기서만 확인한다(본체 크루면 부르지 않는다).
+    남의 크루·slug를 모르는 행은 조회 없이 null. 조회가 실패하거나 준비 상태를 확인할 수 없어도 null. */
+export async function personalRoomFor(crew, { uid, ownRows, roomCrews }) {
+  if (!crew?.slug || !uid || crew.owner_user_id !== uid) return null;
+  try {
+    const rows = await ownRows(crew.slug);
+    const twin = personalTwinOf(rows?.find((r) => r.id === crew.id), rows, uid);
+    if (!twin || twin.hosting !== 'bot') return twin;
+    return (await roomCrews())?.find((r) => r.id === twin.id)?.ready === true ? twin : null;
+  } catch { return null; }
 }
 
 /** 상단 메뉴별 단락. 전체 = 즐겨찾기 → 내 에이전트 → 외부 에이전트(즐겨찾기는 아래 단락에 다시 넣지 않는다). 빈 단락은 빼고 돌려준다 */
