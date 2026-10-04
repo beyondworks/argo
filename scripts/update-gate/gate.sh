@@ -136,7 +136,7 @@ for i in $(seq 1 120); do
   NOW="$(ver "$APPP")"; PNOW="$(pidnow)"
   note "t=$((i * 5))s disk=$NOW pid=${PNOW:-none}"
   if [ "$APP" = messenger ]; then
-    found Restart 재시작 && note "restart: $(AX click Restart 재시작)"
+    found Restart '다시 시작' && note "restart: $(AX click Restart '다시 시작')" # 메신저 upd.restart(ko '다시 시작')
     if AX dump | grep -qE 'Update failed|업데이트 실패'; then AX dump > "$OUT/ui-error.txt"; result=install-error; break; fi
   fi
   if [ "$NOW" = "$NEWV" ] && [ -n "$PNOW" ] && [ "$PNOW" != "$P0" ]; then result=relaunched; break; fi
