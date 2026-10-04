@@ -50,12 +50,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-15          # Apple Silicon (macos-14는 2026-07-06 deprecation 시작·11-02 종료 — 검수 지적 2026-07-26)
+          # 테스트 브랜치(test/updater-gate-argo099) 전용: 공개 0.1.94 → 이 PR 코드(0.1.99, 발행 안 함) 업데이트 경로를 관문으로 확인하려고 Apple Silicon만 빌드
+          - os: macos-15
             rust_target: aarch64-apple-darwin
-          - os: macos-15-intel    # Intel Mac (v0.1.27 재지원)
-            rust_target: x86_64-apple-darwin
-          - os: windows-latest
-            rust_target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -100,7 +97,7 @@ jobs:
 
       # 릴리스 게이트 — 단위 테스트 실패 시 빌드 전에 차단 (2026-07-27 안정화 프로그램 Phase 0).
       # push/PR은 test.yml이 막지만, 태그 push·수동 실행은 그 게이트를 우회할 수 있어 여기서도 강제한다.
-      - run: npm test
+      # 테스트 브랜치: 단위 테스트는 PR #823 CI가 돌린다
 
       # 신규 기기 스모크 — CI macOS 러너는 claude CLI 미설치·빈 키체인·헤드리스라 신규 맥과 등가 조건.
       # 원클릭(setup-token 대행)이 번들 CLI로 시작돼 인증 URL·코드 프롬프트까지 도달하는지 검증한다.
@@ -115,7 +112,7 @@ jobs:
       # 커버 범위 주의: 이 스모크는 **claude 원클릭**만 본다. codex auth.json 반입(신규 설치 401, 2026-07-26)은
       # 실자격이 필요해 CI로 못 태우므로 test/codex-auth-import.test.mjs가 단위로 잠근다.
       - name: Fresh-device smoke (macOS one-click connect)
-        if: runner.os == 'macOS'
+        if: false  # 테스트 브랜치: 이번 확인과 무관
         shell: bash
         run: node scripts/smoke-fresh-device.mjs
 
