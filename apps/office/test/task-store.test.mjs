@@ -128,3 +128,16 @@ test('직원 목록을 못 받았으면 다음 다시 읽기에서 다시 받는
   await tasks.loadTasks('beta', true);
   assert.deepEqual(tasks.peopleIn('beta').map((p) => p.user_id), ['u1', 'u2']);
 });
+
+// 이유(10/4 4차 검수 L6): 받아 둔 직원 목록이 있는데 다시 받다 실패하면 보던 목록을 그대로 둔다(빈 목록으로 바꾸면 맡길 사람 고르기가 사라진다)
+test('직원 목록을 다시 받다 실패하면 보던 목록을 그대로 둔다', async () => {
+  const { tasks, failPeople } = load();
+  const realNow = Date.now;
+  try {
+    await tasks.loadTasks('acme');
+    failPeople.push('org-1');
+    const base = realNow(); Date.now = () => base + 31_000;
+    await tasks.loadTasks('acme');
+    assert.deepEqual(tasks.peopleIn('acme').map((p) => p.user_id), ['u1', 'u2']);
+  } finally { Date.now = realNow; }
+});

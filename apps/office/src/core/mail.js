@@ -10,7 +10,7 @@ import { update, getState } from './store.js';
 import { outbox } from './sync.js';
 import { VIEWABLE } from './viewable.js';
 import { isDesktop, apiUrl, saveAttachment } from './platform.js';
-import { restore, persist, forget, scopedStorageKey } from './save.js';
+import { restore, persist, forget, scopedStorageKey, getStorageScope } from './save.js';
 import { mergeList, applySync, newArrivals, byDate, replySubject, ATTACH_CAP as CAP } from '../pages/mail-model.js';
 import { t, registerDict } from './i18n.js';
 import { MAIL_DICT } from '../pages/mail-i18n.js';
@@ -99,8 +99,9 @@ async function runSync({ view = 'inbox' } = {}) {
   if (!real() || limitLeft() > 0) return { arrivals: [], skipped: true };
   const accounts = okAccounts();
   if (!accounts.length) return { arrivals: [] };
-  const hist = restore(HIST(), {});
+  const key = HIST(), hist = restore(key, {});
   const res = await api('sync', { accounts: accounts.map((a) => ({ account: a.id, since: hist[a.id] ?? null })) });
+  if (HIST() !== key) return { arrivals: [] }; // 기다리는 사이 로그아웃·계정 전환 — 이 결과는 지금 저장 범위 것이 아니다(10/4 4차 검수 L4)
   const arrivals = [];
   let reset = false;
   for (const r of res.results ?? []) {
@@ -114,7 +115,7 @@ async function runSync({ view = 'inbox' } = {}) {
     if (!first) arrivals.push(...newArrivals(getState().mails, changed));
     update((s) => ({ mails: applySync(s.mails, changed, gone, busy) }));
   }
-  persist(HIST(), hist, 0);
+  persist(key, hist, 0);
   if (reset) await pullMail(view).catch(() => {}); // 변경 기록이 만료됐거나 한꺼번에 많이 바뀌면 보고 있는 목록을 새로 받는다
   return { arrivals, reset };
 }
@@ -231,7 +232,7 @@ export async function deleteDraft(m) {
 /* ── 쓰던 메일(이 기기) — 새로고침·탭 닫기 뒤에 이어 연다. 첨부 파일 자체는 남기지 않는다 ── */
 const SNAP = () => scopedStorageKey('argo-office-mail-compose');
 export const readSnap = () => restore(SNAP(), null);
-export const saveSnap = (snap) => persist(SNAP(), snap, 200);
+export const saveSnap = (snap) => { if (getStorageScope()) persist(SNAP(), snap, 200); }; // 로그아웃 뒤 늦게 끝난 저장은 남기지 않는다(10/4 4차 검수 L4)
 export const clearSnap = () => forget(SNAP());
 /** 마지막으로 본 메일함(이 기기) */
 const VIEW_KEY = 'argo-office-mail-view';
