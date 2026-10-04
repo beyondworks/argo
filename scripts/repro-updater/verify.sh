@@ -94,7 +94,7 @@ case "$A:$V" in
       note "t=$((i * 5))s disk=$NOW pid=${PNOW:-none}"
       [ "$i" -eq 12 ] && shot 02-after-60s
       # the messenger installs, then waits for "Restart"
-      if [ "$A" = msgr ] && found Restart 재시작; then note "ready: $(AX click Restart 재시작)"; fi
+      if [ "$A" = msgr ] && found Restart '다시 시작'; then note "ready: $(AX click Restart '다시 시작')"; fi
       if [ "$A" = msgr ] && dump loop | grep -qE 'Update failed|업데이트 실패'; then result=install-error; break; fi
       if [ "$NOW" != "$V0" ] && [ -n "$PNOW" ] && [ "$PNOW" != "$P0" ]; then result=installed-and-relaunched; break; fi
     done
