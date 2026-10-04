@@ -1395,8 +1395,10 @@ export const _startTypingForTest = startTyping;
 /* ─── push — 코어 이벤트(onNotify)를 채널로. msgr 문맥이 없는 이벤트는 즉시 반환(클라이언트 생성 0). ─── */
 /** 크루 알림을 아르고 메신저로 — 원점 없는 이벤트를 **그 크루와 나의 1:1 방**에 그 크루 이름으로 올린다(src/msgr-notify.mjs, 유건 결정 2026-09-15: 방 선택 없음).
     에이전트 = 한 사람(유건 2026-10-03, P2): 같은 slug의 개인 행(org 없음·활성 — 본체 0.1.92부터 mirrorPersonal이 만든다)이 있으면 개인 공간의 1:1 방
-    하나에만 한 번 올린다(msgr_dm_personal_crew — 메신저 앱이 여는 방과 같다). 개인 행이 없거나(옛 본체) 그 방을 열지 못하면(서버 거절·연결 실패)
-    종전대로 크루가 파견된 조직마다 1:1 방을 찾고(크루의 DM 채널 ∩ 내가 구성원인 채널), 없으면 msgr_create_channel(kind dm)로 만든다 — 알림을 잃지 않게.
+    하나에만 한 번 올린다(msgr_dm_personal_crew — 메신저 앱이 여는 방과 같다). 개인 행이 없으면(옛 본체) 종전대로 크루가 파견된 조직마다 1:1 방을 찾고
+    (크루의 DM 채널 ∩ 내가 구성원인 채널), 없으면 msgr_create_channel(kind dm)로 만든다.
+    개인 방을 확보하지 못하면(서버 거절·연결 실패) 조직 행이 있을 때만 그 조직별 경로로 보낸다 — 방 확보 실패로는 알림을 잃지 않게. 조직 행이 없으면 보내지 못하고 로그만 남긴다.
+    방을 확보한 뒤 글 넣기가 실패하면 다른 방으로 다시 보내지 않는다(던진다 — 종전 조직 경로의 삽입 실패와 같다. 응답만 끊긴 경우 두 방에 중복으로 올라가지 않게).
     같은 이벤트는 client_msg_id(자연 id·시각 축·본문 해시)로 한 번만. */
 export async function msgrNotifyPush(event, _target = null, { session = sessionClient, now = Date.now() } = {}) {
   const { formatMsgrNotify, msgrNotifyCrewSlug } = await import('../msgr-notify.mjs');
@@ -1425,8 +1427,8 @@ export async function msgrNotifyPush(event, _target = null, { session = sessionC
       body, mentions: [], meta: { disposition: 'done', notification: event.type } });
   };
   if (personal) {
-    const room = await personalCrewRoom(c, personal).catch((e) => { console.error(`[argo] 메신저 알림: 개인 1:1 방 확보 실패(${personal.display_name}) — 조직 1:1로 보냄: ${e.message}`); return null; });
-    if (room) return !!(await post(personal, room)); // 중복(같은 이벤트 재배달)이면 null → false. 조직 방에는 올리지 않는다
+    const room = await personalCrewRoom(c, personal).catch((e) => { console.error(`[argo] 메신저 알림: 개인 1:1 방 확보 실패(${personal.display_name}) — ${crews.length ? '조직 1:1로 보냄' : '보낼 조직 1:1도 없어 이번 알림은 보내지 못함'}: ${e.message}`); return null; });
+    if (room) return !!(await post(personal, room)); // 중복(같은 이벤트 재배달)이면 null → false. 글 넣기 실패는 던진다(조직 방으로 다시 보내지 않는다)
   }
   let posted = 0;
   for (const crew of crews) {
@@ -1437,7 +1439,7 @@ export async function msgrNotifyPush(event, _target = null, { session = sessionC
   return posted > 0;
 }
 /** 개인 공간의 크루 1:1 방 id — 메신저 앱 openPersonalCrewDm과 같은 RPC(서버가 주인·개인 행·활성만 받고, 한 크루에 한 방을 찾거나 만들며,
-    보관했으면 다시 꺼낸다 — 조직 경로가 보관 방 대신 새 방을 만드는 것과 같은 결과). 실패는 던진다(호출부가 조직 1:1로 물러난다). */
+    보관했으면 다시 꺼낸다 — 조직 경로가 보관 방 대신 새 방을 만드는 것과 같은 결과). 실패는 던진다(호출부가 조직 행이 있으면 조직 1:1로 물러난다). */
 async function personalCrewRoom(c, crew) {
   const { data, error } = await c.client.rpc('msgr_dm_personal_crew', { crew: crew.id });
   if (error) throw new Error(error.message);

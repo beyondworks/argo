@@ -264,6 +264,26 @@ test('msgrNotifyPush — 개인 1:1 방을 열지 못하면(서버 거절·연�
   }
 });
 
+test('msgrNotifyPush — 개인 1:1 방을 열지 못했는데 조직 행도 없으면 false, 로그도 보내지 못했다고 사실대로(조직 1:1로 보냈다고 하지 않는다)', async () => {
+  const { msgrNotifyPush } = await import('../src/gateway/msgr.mjs');
+  const ws = 'msgr-notify-personal-nowhere'; await notifyWs(ws);
+  const logs = []; const orig = console.error; console.error = (...a) => logs.push(a.join(' '));
+  try {
+    for (const personalRpc of ['error', 'throw']) {
+      logs.length = 0;
+      const f = fakeMsgr({ personal: 'beta', personalRpc, orgs: false });
+      assert.equal(await msgrNotifyPush({ type: 'job', wsId: ws, slug: 'beta', title: 'T', ok: true, reply: 'r' }, { mode: 'dm' }, { session: f.session, now: 0 }), false, personalRpc);
+      assert.equal(f.rows.length, 0);
+      assert.ok(logs.some((l) => /개인 1:1 방 확보 실패/.test(l) && /보내지 못함/.test(l)), `${personalRpc}: ${logs.join(' | ')}`);
+      assert.ok(!logs.some((l) => /조직 1:1로 보냄/.test(l)), `${personalRpc}: 보내지 않았는데 보냈다고 남기지 않는다`);
+    }
+    logs.length = 0;
+    const g = fakeMsgr({ personal: 'beta', personalRpc: 'error' });
+    assert.equal(await msgrNotifyPush({ type: 'job', wsId: ws, slug: 'beta', title: 'T2', ok: true, reply: 'r' }, { mode: 'dm' }, { session: g.session, now: 0 }), true);
+    assert.ok(logs.some((l) => /개인 1:1 방 확보 실패/.test(l) && /조직 1:1로 보냄/.test(l)), '조직 행이 있으면 그 경로로 보낸다고 남긴다');
+  } finally { console.error = orig; }
+});
+
 test('msgrNotifyPush — 조직에 파견되지 않았어도 개인 행이 있으면 개인 1:1로, 다른 에이전트(slug)의 개인 행으로는 보내지 않는다', async () => {
   const { msgrNotifyPush } = await import('../src/gateway/msgr.mjs');
   const ws = 'msgr-notify-personal-only'; await notifyWs(ws);
