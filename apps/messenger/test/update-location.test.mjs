@@ -22,6 +22,10 @@ test('설치 실패 원문 → 이유', () => {
   assert.equal(updateErrorReason('Failed to move the new app into place'), 'needs_admin', '관리자 암호 창 취소(업데이터 2.11.0 문구)');
   assert.equal(updateErrorReason('signature verification failed'), 'signature');
   assert.equal(updateErrorReason('error sending request for url'), 'network');
+  assert.equal(updateErrorReason('request or response body error for url (https://x)'), 'network', '받는 중 끊김');
+  assert.equal(updateErrorReason('`Download request failed with status: 503 Service Unavailable`'), 'network');
+  assert.equal(updateErrorReason('No space left on device (os error 28)'), 'disk_full');
+  assert.equal(updateErrorReason('Invalid input length: 7'), 'signature', 'latest.json 서명 형식 오류');
   assert.equal(updateErrorReason('No such file or directory (os error 2)'), null);
 });
 

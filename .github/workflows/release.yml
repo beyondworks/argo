@@ -151,6 +151,18 @@ jobs:
         # 규칙·테스트: scripts/checkout-link-gate.mjs · test/checkout-link-gate.test.mjs
         run: node scripts/checkout-link-gate.mjs .next/static
 
+      # 재시작 조각 게이트(2026-10-04 실제 맥 확인) — 0.1.89~0.1.94는 앱 안 업데이트로 묶음을 바꾼 뒤에 재시작 모듈 조각을
+      # 이 이름으로 받는다(본체 화면은 묶음 안 서버가 준다). 새 빌드에 이 파일이 없으면 그 버전 사용자는 설치만 되고 재시작에 실패하며
+      # 화면에는 "확인하지 못했어요"가 뜬다. 조각 이름은 같은 조각(6638)에 든 @tauri-apps/plugin-process·api/core를 불러오는
+      # 모양이 바뀌면 달라진다(구조 분해 import 한 줄로도). 실패하면 그 변경을 되돌리거나 공개본의 이 파일을 함께 실어야 한다.
+      # 0.1.95부터는 내려받기 전에 재시작 모듈을 불러 두므로(app/use-app-update.js) 이 게이트는 옛 버전 사용자를 위한 것이다.
+      - name: Gate — relaunch chunk that older versions request after installing (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          test -f .next/static/chunks/6638.053cd696e96c026d.js \
+            || { echo "::error::.next/static/chunks/6638.053cd696e96c026d.js is missing — Argo 0.1.89–0.1.94 could not relaunch after updating to this build"; ls .next/static/chunks | grep -E '^6638\.' || true; exit 1; }
+
       # ── macOS 전용: 서명·공증·스테이플 (Windows는 if로 스킵, 기존 경로 그대로) ──────────────
       # 왜 필요한가: tauri v2가 codesign에 --timestamp를 안 붙여(secure timestamp 누락) 애플 공증이
       #   "not signed with a valid Developer ID / signature does not include a secure timestamp"로 거부한다.

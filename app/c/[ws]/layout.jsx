@@ -191,6 +191,9 @@ function Shell({ children, params }) {
   const { isApp: updIsApp, current: appVersion, versionReady, available: updateVersion, phase: updPhase, install: installUpdate, location: updLocation } = useAppUpdate();
   // 맥에서 응용 프로그램 폴더 밖(DMG·다운로드 폴더·외장 디스크)에서 실행 중이면 설치가 실패한다 — 뱃지는 옮기는 방법이 있는 설정 카드로 보낸다
   const updMoveFirst = !!updLocation && MOVE_REQUIRED.has(updLocation.issue);
+  // 뱃지에서 누른 설치가 실패하면(install()이 false) 이유가 보이는 설정 카드로 보낸다 — 뱃지는 실패해도 '업데이트'로 돌아갈 뿐이었다
+  const openUpdateCard = () => router.push(L(`/c/${ws}/settings?tab=devices`));
+  const onUpdateBadge = async () => { if (await installUpdate() === false) openUpdateCard(); };
 
   // 크루 안읽음 배지 — 서버 chatTs(chats/<slug>.json mtime) vs 로컬 확인 시각(localStorage argo-seen:{ws}).
   // null = 로드 전(오탐 방지). 처음 보는 크루는 현재 상태를 기준선으로 삼아 설치 직후 전 크루 배지가 켜지지 않게 한다.
@@ -558,7 +561,7 @@ function Shell({ children, params }) {
           <div id="argo-topbar-slot" />
           <div className="topbar-spacer" style={{ flex: 1 }} />
           {appVersion && (updateVersion ? (updIsApp ? (
-            <button type="button" onClick={updMoveFirst ? () => router.push(L(`/c/${ws}/settings?tab=devices`)) : installUpdate} disabled={updPhase === 'installing'}
+            <button type="button" onClick={updMoveFirst ? openUpdateCard : onUpdateBadge} disabled={updPhase === 'installing'}
               className="chip mono topbar-upd" title={updMoveFirst ? t('settings.update.where.title') : t('topbar.updateTitle', { v: updateVersion })}
               style={{ flex: 'none', fontSize: 10.5, color: 'var(--primary-strong)', borderColor: 'var(--primary)', cursor: updPhase === 'installing' ? 'default' : 'pointer' }}>
               {updPhase === 'installing' ? <ArgoSpinner size={10} /> : <span className="dot" style={{ background: 'var(--primary)' }} aria-hidden="true" />}
