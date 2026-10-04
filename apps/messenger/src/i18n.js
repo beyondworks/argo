@@ -1081,7 +1081,6 @@ export const DICT = {
   'mention.outside.dm': ['1:1로 시키기', 'Ask in 1:1'],
   'mention.outside.dm.personal': ['개인 1:1로 시키기', 'Ask in personal 1:1'],
   'mention.outside.request': ['이 방에 추가 요청', 'Request to add here'],
-  'mention.outside.requesting': ['요청 중…', 'Requesting…'],
   'mention.outside.denied': ['— 이 에이전트에게는 일을 시킬 수 없어요(주인이 정한 범위)', '— you can’t task this agent (its owner’s setting)'],
   'mention.outside.requested': ['방장에게 추가를 요청했어요', 'asked the host to add it'],
   'mention.outside.joined': ['{name}을(를) 이 방에 넣었어요. 다시 불러 보세요', '{name} is in this room now. Mention it again'],

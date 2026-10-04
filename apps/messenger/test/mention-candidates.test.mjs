@@ -96,7 +96,7 @@ test('withoutCopies·crewOrder: 충돌 사본은 목록에서 빠지고, 남은 
 });
 
 // 검수 #826 LOW-3: Composer의 [이 방에 추가] 결과 판정이 CI 테스트 없이 App.jsx 안에만 있었다 — 순수 함수로 빼서 잠근다.
-test('outsideAddDone·outsideRowView: 넣은 뒤엔 결과 줄만, 요청은 종전 줄 + "요청했어요", 응답 전에는 같은 자리에 꺼진 버튼', async () => {
+test('outsideAddDone·outsideRowView: 넣은 뒤엔 결과 줄만, 요청은 종전 줄 + "요청했어요", 버튼은 닫힐 때까지 같은 크기·자리', async () => {
   const { outsideAddDone, outsideRowView } = await import('../src/mention-candidates.mjs');
   assert.equal(outsideAddDone('joined'), 'joined');
   assert.equal(outsideAddDone('already'), 'already');
@@ -104,12 +104,12 @@ test('outsideAddDone·outsideRowView: 넣은 뒤엔 결과 줄만, 요청은 종
   assert.equal(outsideAddDone(null), 'requested', '모르는 응답은 요청으로 본다(종전과 같다)');
   const mine = { owner_user_id: 'me' };
   const v = (done, o = {}) => outsideRowView({ crew: mine, uid: 'me', done, isDm: false, can: true, ...o });
-  assert.deepEqual(v(undefined), { line: 'mention.outside', denied: false, suffix: null, request: true, requesting: false });
-  assert.deepEqual(v('pending'), { line: 'mention.outside', denied: false, suffix: null, request: true, requesting: true }, '응답 전에는 같은 자리에 꺼진 버튼 — 지우면 [1:1로 시키기]가 밀려와 두 번째 클릭이 1:1을 열었다(재검수 N2)');
-  assert.deepEqual(v('joined'), { line: 'mention.outside.joined', denied: false, suffix: null, request: false, requesting: false });
-  assert.deepEqual(v('already'), { line: 'mention.outside.already', denied: false, suffix: null, request: false, requesting: false });
-  assert.deepEqual(v('requested'), { line: 'mention.outside', denied: false, suffix: 'mention.outside.requested', request: false, requesting: false });
-  assert.equal(v(undefined, { isDm: true }).request, false, '1:1 방에는 [이 방에 추가]가 없다');
-  assert.equal(v(undefined, { crew: { owner_user_id: 'x' } }).request, false, '남의 에이전트는 주인만 데려온다');
+  assert.deepEqual(v(undefined), { line: 'mention.outside', denied: false, suffix: null, request: 'on' });
+  assert.deepEqual(v('pending'), { line: 'mention.outside', denied: false, suffix: null, request: 'busy' }, '응답 전에는 같은 글자로 꺼진 버튼(글자가 짧아지면 폰에서 줄바꿈이 바뀌었다)');
+  assert.deepEqual(v('joined'), { line: 'mention.outside.joined', denied: false, suffix: null, request: 'slot' }, '결과 뒤에도 보이지 않는 같은 크기 자리 — 지우면 [1:1로 시키기]가 밀려와 더블탭 둘째 번이 1:1을 열었다(재검수 N2·NEW-1)');
+  assert.deepEqual(v('already'), { line: 'mention.outside.already', denied: false, suffix: null, request: 'slot' });
+  assert.deepEqual(v('requested'), { line: 'mention.outside', denied: false, suffix: 'mention.outside.requested', request: 'slot' });
+  assert.equal(v(undefined, { isDm: true }).request, null, '1:1 방에는 [이 방에 추가]가 없다');
+  assert.equal(v('joined', { crew: { owner_user_id: 'x' } }).request, null, '남의 에이전트는 주인만 데려온다 — 자리도 만들지 않는다');
   assert.equal(v(undefined, { can: false }).denied, true);
 });

@@ -113,3 +113,22 @@ test('loadOrg: 충돌 사본은 크루 목록·파견 전 목록에서 빠지고
   assert.deepEqual(state.Crews.map((c) => c.id), ['co', 'b', 'real'], '사본 빠짐 + 회사 크루 먼저·이름순');
   assert.deepEqual(state.MyAvailable.map((c) => c.id), ['off'], '파견 전 목록에도 사본이 없다(사본을 파견하던 길)');
 });
+
+// 재검수 #826 NEW-3: 내 에이전트(폰 '에이전트' 탭·설정 '내 에이전트')도 사본을 뺀다 — 실제 loadMyAgents를 돌려 확인한다.
+test('loadMyAgents: 조직 행·개인 행 모두 충돌 사본은 빠지고, 진짜는 남는다', async () => {
+  const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
+  const start = app.indexOf('const loadMyAgents = useCallback(') + 'const loadMyAgents = useCallback('.length;
+  const end = app.indexOf('\n  }, [uid]);', start) + 4;
+  const row = (id, slug, org_id) => ({ id, org_id, owner_user_id: 'me', ws_id: 'ws', slug, display_name: '페퍼', status: 'active' });
+  const own = [row('org-real', 'pepper', 'O'), row('org-copy', 'pepper.conflict-mac-1759000000000', 'O'), row('p-real', 'pepper', null)];
+  const personal = [row('p-real', 'pepper', null), row('p-copy', 'pepper.conflict-mac-1759000000000', null)];
+  const supabase = {
+    from() { return { select() { return this; }, eq() { return this; }, in() { return this; }, then(res, rej) { return Promise.resolve(own).then(res, rej); } }; },
+    rpc(name) { return Promise.resolve(name === 'msgr_personal_room_crews' ? personal : []); },
+  };
+  let mine = null;
+  const deps = { uid: 'me', faceCol: { missingAt: Date.now() }, q: async (x) => await x, supabase, stampFetched, withoutCopies, setAgentPins: () => {}, setMyAgents: (v) => { mine = v; } };
+  const loadMyAgents = new Function(...Object.keys(deps), `return (${app.slice(start, end)});`)(...Object.values(deps));
+  await loadMyAgents();
+  assert.deepEqual(mine.map((c) => c.id).sort(), ['org-real', 'p-real']);
+});

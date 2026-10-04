@@ -1152,11 +1152,12 @@ function Shell({ session }) {
       const friendsList = await q(supabase.rpc('msgr_my_friends')).catch(() => []);
       if (!current()) return;
       // 개인 공간 에이전트(2026-09-30): 내 개인 크루 + 내가 든 개인 방의 크루(친구 것 포함 — 표시용 열만). 옛 서버(함수 없음)면 크루 없이 종전대로.
-      const roomCrews = stampFetched(withoutCopies(await q(supabase.rpc('msgr_personal_room_crews')).catch(() => [])).filter((c) => c.status === 'active'));
+      const roomCrewsAll = stampFetched((await q(supabase.rpc('msgr_personal_room_crews')).catch(() => [])).filter((c) => c.status === 'active'));
+      const roomCrews = withoutCopies(roomCrewsAll); // 고르기·멘션 후보에서만 사본을 뺀다 — 방 이름은 사본이어도 그 이름으로('?'가 됐다, 재검수 #826 NEW-2)
       if (!current()) return;
       const accepted = friendsList.filter((f) => f.status === 'accepted');
       const chs = rows.map((r) => ({ // 그룹 방(친구 여럿, 유건 2026-09-17)은 members가 셋 이상 — 이름은 dmName이 구성원으로 짓는다
-        id: r.channel_id, kind: 'dm', name: r.crew_dm ? `dm:${roomCrews.find((c) => c.id === r.crew_dm)?.display_name || '?'}` : r.is_group && r.name ? r.name : `dm:${accepted.find((f) => f.user_id === r.other_user_id)?.display_name || r.other_user_id?.slice(0, 8) || '?'}`,
+        id: r.channel_id, kind: 'dm', name: r.crew_dm ? `dm:${roomCrewsAll.find((c) => c.id === r.crew_dm)?.display_name || '?'}` : r.is_group && r.name ? r.name : `dm:${accepted.find((f) => f.user_id === r.other_user_id)?.display_name || r.other_user_id?.slice(0, 8) || '?'}`,
         org_id: null, created_by: r.is_group ? (r.created_by ?? uid) : uid, /* 1:1은 종전대로 나(두 사람 모두 관리 — 에이전트 넣기 결재자는 서버 msgr_dm_approver) */ _personal_group: !!r.is_group, _personal_crew: r.crew_dm ?? null, archived_at: null, admin_user_ids: [], crew_memory: true, personal_crews: 'approval', // 개인 방도 내 에이전트를 넣는다(2026-09-30) — 방을 연 사람은 바로, 다른 사람은 요청(서버 msgr_crew_join)
         _personal_other: r.other_user_id, _personal_last_at: r.last_at, _personal_last_body: r.last_body,
       }));
@@ -6685,9 +6686,8 @@ function Composer({ broadcast = null, onCrewJoined = null, outsideDmPersonal = n
       {awayNote && <div className="msgr-replychip msgr-awaychip" role="status"><span className="q">{awayNote.map((c) => t('mention.away', { name: c.display_name })).join(' ')}</span><button type="button" className="msgr-titlebtn" onClick={() => setAwayNote(null)} aria-label={t('ui.close')}><I name="x" size={13} /></button></div>}
       {outside && <div className="msgr-outsidechip" role="status"><div className="rows">{outside.crews.map((c) => { const can = canInstructCrew(c, uid); const view = outsideRowView({ crew: c, uid, done: outside.done[c.id], isDm, can }); return (
         <div key={c.id} className="row"><span className="q">{(lang === 'en' ? (x) => x : koJosa)(t(view.line, { name: c.display_name }))}{view.denied && ` ${t('mention.outside.denied')}`}{view.suffix && ` · ${t(view.suffix)}`}</span>
-          {/* [이 방에 추가 요청]을 [1:1로 시키기] 앞에 둔다 — 넣은 뒤 이 버튼이 사라져도 1:1 버튼이 그 자리로 밀려오지 않는다(재검수 #826 N2: 더블클릭 둘째 번이 1:1을 열었다) */}
-          {view.request && <button type="button" className="btn sm ghost" disabled={view.requesting} onClick={() => requestAdd(c)}>{t(view.requesting ? 'mention.outside.requesting' : 'mention.outside.request')}</button>}
           {can && onOutsideDm && <button type="button" className="btn sm" onClick={() => { const body = outside.body; setOutside(null); onOutsideDm(c.id, body); }}>{t(outsideDmPersonal?.(c) ? 'mention.outside.dm.personal' : 'mention.outside.dm')}</button>}
+          {view.request && <button type="button" className="btn sm ghost" disabled={view.request !== 'on'} aria-busy={view.request === 'busy' || undefined} aria-hidden={view.request === 'slot' || undefined} tabIndex={view.request === 'slot' ? -1 : undefined} style={view.request === 'slot' ? { visibility: 'hidden' } : undefined} onClick={() => requestAdd(c)}>{t('mention.outside.request')}</button>}{/* 한 번 보인 버튼은 닫힐 때까지 같은 크기·자리(outsideRowView 주석) */}
         </div>); })}</div><button type="button" className="msgr-titlebtn" onClick={() => setOutside(null)} aria-label={t('ui.close')}><I name="x" size={13} /></button></div>}
       {replyTo && <div className="msgr-replychip" role="status"><I name="reply" size={13} /><span className="q"><b>{t('composer.replyTo', { name: replyTo.who })}</b> {replyTo.body}</span><button type="button" className="x" onClick={() => { delivery.setReplyTo(null); ta.current?.focus(); }} aria-label={t('composer.replyCancel')} title={t('composer.replyCancel')}><I name="x" size={12} /></button></div>}
       {phone && fileChipsNode}

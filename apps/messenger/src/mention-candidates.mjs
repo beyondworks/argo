@@ -65,11 +65,14 @@ export const crewOrder = (isCompany) => (a, b) => isCompany(b) - isCompany(a) ||
 // [이 방에 추가] 응답 → 안내 줄 상태. joined·already = 방에 있다(결과 줄만 보이고 구성원을 다시 읽는다), 그 밖은 방장에게 요청한 것.
 export const outsideAddDone = (data) => (data === 'joined' || data === 'already' ? data : 'requested');
 // 방 밖 안내 한 줄의 모양 — done: undefined | 'pending'(응답 대기) | 'joined' | 'already' | 'requested'.
-// 들어간 뒤엔 '없어요'를 지운다(0.1.49: "없어요 · 넣었어요"가 한 줄에 같이 보였다). 응답 대기 중엔 버튼을 같은 자리에 꺼진 '요청 중'으로 둔다 —
-// 지우면 [1:1로 시키기]가 그 자리로 밀려와 두 번째 클릭이 1:1을 열었다(재검수 #826 N2).
+// 들어간 뒤엔 '없어요'를 지운다(0.1.49: "없어요 · 넣었어요"가 한 줄에 같이 보였다).
+// request: 'on'(누를 수 있음) | 'busy'(응답 대기 — 같은 글자로 꺼짐) | 'slot'(결과 뒤 — 보이지 않는 같은 크기 자리) | null(처음부터 없음: 남의 에이전트·1:1 방).
+// 한 번 보인 버튼은 안내가 닫힐 때까지 크기·자리를 바꾸지 않는다 — 지우거나 글자가 짧아지면 줄바꿈·정렬이 바뀌어 더블탭 둘째 번이
+// [1:1로 시키기]를 눌렀다(재검수 #826 N2 데스크톱 오른쪽 정렬, 3차 NEW-1 폰 폭 왼쪽 줄바꿈).
 export function outsideRowView({ crew, uid, done, isDm, can }) {
-  if (done === 'joined' || done === 'already') return { line: `mention.outside.${done}`, denied: false, suffix: null, request: false, requesting: false };
-  return { line: 'mention.outside', denied: !can, suffix: done === 'requested' ? 'mention.outside.requested' : null, request: crew?.owner_user_id === uid && !isDm && (!done || done === 'pending'), requesting: done === 'pending' };
+  const request = crew?.owner_user_id === uid && !isDm ? (!done ? 'on' : done === 'pending' ? 'busy' : 'slot') : null;
+  if (done === 'joined' || done === 'already') return { line: `mention.outside.${done}`, denied: false, suffix: null, request };
+  return { line: 'mention.outside', denied: !can, suffix: done === 'requested' ? 'mention.outside.requested' : null, request };
 }
 // 방 밖에서 이 에이전트에게 시킬 수 있나(크루 시트 canMe와 같은 규칙 — 최종 판정은 서버 msgr_instruct_check).
 export const canInstructCrew = (c, uid) => !!c && (c.owner_user_id === uid || c.allow === 'all' || (c.allow === 'list' && (c.allow_users ?? []).includes(uid)));
