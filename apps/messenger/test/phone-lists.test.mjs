@@ -110,7 +110,8 @@ test('배선 — 토스트는 폰에서만, 2.5초 뒤 저절로·누르면 바�
   assert.match(src, /const flash = \(key, vars\) => \{ if \(!isPhoneRef\.current\) return;/, '데스크톱은 토스트를 띄우지 않는다');
   assert.match(src, /flashed\.current = \{ text, ms: FLASH_MS \}/, 'flash 시간은 그 문구와 짝지어 둔다(L-5)');
   assert.match(src, /setTimeout\(clearToast, toastMs\(\{ err, note, flashed: flashed\.current \}\)\)/, '토스트 시간은 toastMs가 정한다(행동은 위 L-5 테스트가 잠근다)');
-  assert.match(src, /onClick=\{clearToast\} role="status"/, '누르면 바로 닫힌다');
+  assert.match(src, /onClick=\{tapToast\} role="status"/, '누르면 바로 닫힌다');
+  assert.match(src, /const tapToast = \(\) => \{ const back = [^;]+; clearToast\(\); if \(back\) runInSpace\(/, '누르면 언제나 먼저 닫고, 공간 전환 안내일 때만 직전 조직으로 돌아간다(2026-10-04 — 자동 닫힘 타이머는 clearToast만)');
   assert.match(src, /flash\(flashKey\('fav', on\)\)/);
   assert.match(src, /flash\(flashKey\('mute', on\)\)/);
 });

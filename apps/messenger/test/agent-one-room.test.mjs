@@ -24,16 +24,42 @@ test('폰 에이전트 탭 줄 = agentRoomTarget(열 수 있는 개인 행 우�
 });
 
 test('조직에서 내 에이전트 1:1 = 개인 공간의 방(openDm 관문) — 글은 그 방 입력창으로, 개인 행이 없으면 종전 경로', () => {
-  const gate = app.slice(app.indexOf('const openDm = async (kind, id, text = \'\') => {'), app.indexOf('const openPersonalCrewDm = async'));
+  const gate = app.slice(app.indexOf('const openDm = async (kind, id, text = \'\', opts = {}) => {'), app.indexOf('const openPersonalCrewDm = async'));
+  assert.ok(gate.length > 500, '관문 구간을 찾았다');
   assert.match(gate, /if \(kind === 'crew' && crewOf\(id\)\?\.owner_user_id === uid\) \{/, '내 크루만(남의 크루는 종전대로 주인과의 1:1)');
-  assert.match(gate, /const twin = await personalTwin\(crewOf\(id\)\);[\s\S]{0,80}if \(activeOrg\.current !== here\) return null;[\s\S]{0,40}if \(twin\) \{ runInSpace\(PERSONAL, \(fn\) => fn\.openPersonalCrewDm\(twin\.id, text\)\); return null; \}/);
-  assert.ok(gate.indexOf('personalTwin(crewOf(id))') < gate.indexOf("supabase.rpc('msgr_create_channel'"), '조직 1:1을 찾거나 만들기 전에 판정한다');
+  assert.match(gate, /const twin = await personalTwin\(crew\);\n\s*if \(activeOrg\.current !== here\) return null;\n\s*if \(twin\) \{/);
+  assert.match(gate, /runInSpace\(PERSONAL, async \(fn\) => \{ const cid = await fn\.openPersonalCrewDm\(twin\.id, text\); if \(cid && move\) fn\.moveNotice\(\{ \.\.\.move, \.\.\.names \}\); \}\);\n\s*return null;/, '개인 방을 열고, 열렸을 때만 공간 전환 안내');
+  assert.ok(gate.indexOf('personalTwin(crew)') < gate.indexOf("supabase.rpc('msgr_create_channel'"), '조직 1:1을 찾거나 만들기 전에 판정한다');
   assert.match(app, /const personalTwin = \(c\) => personalRoomFor\(c, \{ uid,\n\s*ownRows: \(slug\) => q\(supabase\.from\('msgr_crews'\)\.select\('id, org_id, owner_user_id, ws_id, slug, status, hosting'\)\.eq\('owner_user_id', uid\)\.eq\('slug', slug\)\.in\('status', \['active', 'available'\]\)\),\n\s*roomCrews: \(\) => q\(supabase\.rpc\('msgr_personal_room_crews'\)\) \}\);/, '판정은 순수 async 함수(agent-groups.mjs personalRoomFor — 행동 테스트), App은 조회만 넣는다(내 행은 그 slug만, 봇 준비 상태는 msgr_personal_room_crews)');
-  assert.match(app, /const dmWithCrew = async \(crewId, body = ''\) => \{[\s\S]{0,200}const cid = await openDm\('crew', crewId, draft\);/, '레일 메뉴·크루 카드·방 밖 멘션·전달 알림은 dmWithCrew → openDm');
+  assert.match(app, /const dmWithCrew = async \(crewId, body = '', opts = \{\}\) => \{[\s\S]{0,200}const cid = await openDm\('crew', crewId, draft, opts\);/, '레일 메뉴·크루 카드·방 밖 멘션·전달 알림은 dmWithCrew → openDm(출처를 넘긴다)');
   assert.match(app, /if \(picks\.length === 1\) return openDm\(picks\[0\]\.kind, picks\[0\]\.id\);/, '새 대화 시트의 한 명 고르기도 openDm');
   const open = app.slice(app.indexOf('const openPersonalCrewDm = async'), app.indexOf('const openPersonalDm = async'));
   assert.match(open, /needPersonalConsent\(\(\) => openPersonalCrewDm\(crewId, text\)\)/, '동의를 거쳐도 옮길 글이 남는다');
   assert.match(open, /if \(text\) getComposerSession\(JSON\.stringify\(\[SB_URL, uid, PERSONAL, cid\]\), composerTransport\(supabase, \{ orgId: PERSONAL, chId: cid, uid, personal: true \}\)\)\.setText\(text\);/, '그 방 입력창과 같은 세션 키·개인 통로');
+});
+
+// 공간 전환 안내·버튼 이름(유건 2026-10-04) — 판정 행동은 test/space-move-notice.test.mjs·agent-groups.test.mjs가 잠근다. 여기는 배선만.
+test('공간 전환 안내 — 관문이 spaceMoveNotice로 정하고(폰 에이전트 탭은 source agents), 같은 토스트에 6초, 누르면 spaceMoveBack으로 직전 조직', () => {
+  const gate = app.slice(app.indexOf('const openDm = async (kind, id, text = \'\', opts = {}) => {'), app.indexOf('const openPersonalCrewDm = async'));
+  assert.match(gate, /const here = orgId; const hereCh = chId; const crew = crewOf\(id\);/, '옮기기 전의 조직·보던 채널을 기억한다');
+  assert.match(gate, /const move = spaceMoveNotice\(\{ from: here, fromCh: hereCh, to: PERSONAL, source: opts\.source, personalKey: PERSONAL \}\);/);
+  assert.match(app, /fn\.dmWithCrew\(c\.id, '', \{ source: 'agents' \}\)/, '폰 에이전트 탭의 조직 행은 출처 agents(안내 없음)');
+  assert.match(app, /latestOpen\.current = \{ dmWithCrew, openPersonalCrewDm, setSheet, crewOf, note: setNote, orgBlocked, moveNotice: showMoveNotice \};/);
+  assert.match(app, /const showMoveNotice = \(n\) => \{ const text = \(lang === 'en' \? \(x\) => x : koJosa\)\(t\('personal\.moved', \{ name: n\.name, org: n\.org \}\)\); flashed\.current = \{ text, ms: MOVE_NOTICE_MS \};/, '기존 토스트·문구별 시간, ko는 koJosa로 으로/로');
+  assert.match(app, /const clearToast = \(\) => \{ flashed\.current = null; setErr\(''\); setNote\(''\); setMoveNote\(null\); \};/, '닫히면 돌아가기도 잊는다');
+  assert.match(app, /const tapToast = \(\) => \{ const back = !err && moveNote\?\.text === note \? spaceMoveBack\(moveNote, orgs\) : null; clearToast\(\); if \(back\) runInSpace\(back\.space, \(\) => \{ if \(back\.ch\) setChId\(back\.ch\); setPage\('chat'\); setRail\(false\); \}\); \};/, '그 안내가 떠 있을 때만 돌아간다(다른 안내가 덮었으면 닫기만)');
+});
+
+test('버튼 이름 — 조직 화면의 레일 메뉴·크루 카드·방 밖 멘션만, 판정은 dmGoesPersonal(personalRoomKnown — 이미 가진 행)', () => {
+  assert.match(app, /const dmGoesPersonal = \(c\) => !isPersonal && personalRoomKnown\(c, myAgents, uid\);/);
+  assert.match(app, /\{ icon: 'at', label: t\(dmGoesPersonal\(c\) \? 'ui\.dm\.personal' : 'ui\.dm'\), run: \(\) => \{ dmWithCrew\(c\.id\); setRail\(false\); \} \}/, '레일 메뉴(조직)');
+  assert.match(app, /const crewCtx = \(c\) => isPersonal \? \[\{ icon: 'at', label: t\('ui\.dm'\),/, '개인 공간 메뉴는 그대로(공간이 바뀌지 않는다)');
+  assert.match(app, /onDm=\{\(\) => dmWithCrew\(sheet\)\} dmPersonal=\{dmGoesPersonal\(crewOf\(sheet\)\)\}/);
+  assert.match(app, /\{t\(dmPersonal \? 'ui\.dm\.personal' : 'ui\.dm'\)\}<\/button>/, '크루 카드');
+  assert.match(app, /onOutsideDm=\{dmWithCrew\} outsideDmPersonal=\{dmGoesPersonal\}/);
+  assert.match(app, /<Composer broadcast=\{broadcast\} onOutsideDm=\{onOutsideDm\} outsideDmPersonal=\{outsideDmPersonal\}/);
+  assert.match(app, /\{t\(outsideDmPersonal\?\.\(c\) \? 'mention\.outside\.dm\.personal' : 'mention\.outside\.dm'\)\}/, '방 밖 멘션');
+  assert.match(app, /const myAgentsAsked = useRef\(false\);\n\s*useEffect\(\(\) => \{ if \(myAgentsAsked\.current \|\| myAgents !== null \|\| !uid \|\| !orgId \|\| orgId === PERSONAL \|\| !crews\.some\(\(c\) => c\.owner_user_id === uid\)\) return; myAgentsAsked\.current = true; loadMyAgents\(\)\.catch\(\(\) => \{\}\); \}, \[uid, orgId, crews, myAgents\]\);/, '판정 재료는 세션에 한 번만 읽는다(렌더마다 조회 없음, 실패해도 다시 묻지 않는다)');
 });
 
 test('설정 > 내 에이전트 — 공간 글자 없이 줄 하나, 외부 표시는 유지, 누르면 종전대로 지금 공간의 카드', () => {

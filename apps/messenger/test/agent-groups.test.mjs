@@ -3,7 +3,7 @@
 // 조직 행에서 빌려 올 때 쓰는 규칙과 같다. 외부 봇의 개인 쌍둥이도 ws_id 'bot' + 조직 봇 행 slug 그대로라 같은 규칙으로 묶인다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { agentKey, groupAgents, rowForSpace, agentRoomTarget, agentStateRow, personalTwinOf, personalRoomFor, agentSections, AGENT_FILTERS, groupIsFav, favChanges, readAgentFav } from '../src/agent-groups.mjs';
+import { agentKey, groupAgents, rowForSpace, agentRoomTarget, agentStateRow, personalTwinOf, personalRoomFor, personalRoomKnown, agentSections, AGENT_FILTERS, groupIsFav, favChanges, readAgentFav } from '../src/agent-groups.mjs';
 
 const ME = 'u-me';
 const LEAN = 'org-lean'; const DESIGN = 'org-design';
@@ -186,6 +186,26 @@ test('관문 — 외부 봇은 서버가 준비됐다고 줄 때만 개인 쌍�
     ['결과에 없음', [{ id: 'b-other', ready: true }]], ['ready 없음', [{ id: 'b-twin' }]], ['빈 결과', null]]) {
     assert.equal(await personalRoomFor(BOT, { uid: ME, ...lookups(rows, { room }) }), null, label);
   }
+});
+
+// 버튼 이름(유건 2026-10-04) — '개인 1:1 대화'·'개인 1:1로 시키기'는 개인 1:1로 갈 때만. 이미 가진 행(myAgents)만으로 판정하고 조회하지 않는다.
+test('버튼 이름 — 내 에이전트의 1:1이 개인 방으로 가면 true(본체 크루는 개인 행, 외부 봇은 준비된 쌍둥이)', () => {
+  const org = row('c-org', { org_id: LEAN });
+  assert.equal(personalRoomKnown(org, [org, row('c-personal')], ME), true);
+  assert.equal(personalRoomKnown({ id: 'c-org', owner_user_id: ME, slug: 'davinci' }, [org, row('c-personal')], ME), true, '화면의 조직 크루 행에는 회사가 없어도 목록의 내 조직 행으로 가린다');
+  assert.equal(personalRoomKnown(BOT, [BOT, twin({ ready: true })], ME), true);
+});
+
+test('버튼 이름 — 개인 행이 없거나 준비 안 된 쌍둥이·남의 크루·판단할 행이 없으면 false(지금 문구)', () => {
+  const org = row('c-org', { org_id: LEAN });
+  assert.equal(personalRoomKnown(org, [org], ME), false, '개인 행 없음(옛 본체)');
+  for (const extra of [{ ready: false, paused: 'relink' }, { ready: false, paused: 'left_org' }, {}]) assert.equal(personalRoomKnown(BOT, [BOT, twin(extra)], ME), false, JSON.stringify(extra));
+  assert.equal(personalRoomKnown(row('o-org', { org_id: LEAN, owner_user_id: 'u-other' }), [org, row('c-personal')], ME), false, '남의 크루는 내 목록에 없다');
+  assert.equal(personalRoomKnown(org, null, ME), false, '목록을 아직 안 읽음(데스크톱 첫 순간·읽기 실패)');
+  assert.equal(personalRoomKnown(org, [], ME), false);
+  assert.equal(personalRoomKnown(org, [row('c-personal')], ME), false, '목록에 이 크루의 조직 행이 없으면 회사를 몰라 판단하지 않는다');
+  assert.equal(personalRoomKnown(row('c-personal'), [org, row('c-personal')], ME), false, '개인 행 자체(개인 공간 화면 — 공간이 바뀌지 않는다)');
+  assert.equal(personalRoomKnown(org, [org, row('c-personal')], null), false, '로그인 정보 없음');
 });
 
 test('관문 — 조회가 실패하면 null(종전 경로), 남의 크루·slug 모름·로그인 정보 없음은 조회하지 않는다', async () => {

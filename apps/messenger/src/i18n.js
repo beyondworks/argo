@@ -1066,6 +1066,7 @@ export const DICT = {
   'crew.allow.me.yes': ['당신은 1:1 대화에서 이 에이전트에게 일을 시킬 수 있습니다.', 'You can task this agent in a 1:1.'],
   'mention.outside': ['{name}은(는) 이 방에 없어요', '{name} isn’t in this room'],
   'mention.outside.dm': ['1:1로 시키기', 'Ask in 1:1'],
+  'mention.outside.dm.personal': ['개인 1:1로 시키기', 'Ask in personal 1:1'],
   'mention.outside.request': ['이 방에 추가 요청', 'Request to add here'],
   'mention.outside.denied': ['— 이 에이전트에게는 일을 시킬 수 없어요(주인이 정한 범위)', '— you can’t task this agent (its owner’s setting)'],
   'mention.outside.requested': ['방장에게 추가를 요청했어요', 'asked the host to add it'],
@@ -1175,6 +1176,7 @@ export const DICT = {
   'docs.empty.channel': ['채널 문서 없음', 'No channel docs'],
   'err.policyLocked': ['조직 정책으로 잠긴 항목입니다.', 'This item is locked by organization policy.'],
   'ui.dm': ['1:1 대화', 'Direct message'],
+  'ui.dm.personal': ['개인 1:1 대화', 'Personal 1:1'],
   'ctx.crew.card': ['에이전트 카드', 'Agent card'],
   'ctx.fav': ['즐겨찾기에 추가', 'Add to favorites'],
   'rail.fav': ['즐겨찾기', 'Favorites'],
@@ -1738,6 +1740,7 @@ export const DICT = {
   // ── 개인 공간 ──
   'personal': ['개인', 'Personal'],
   'personal.space': ['개인 공간', 'Personal space'],
+  'personal.moved': ['{name} 1:1은 개인 공간에 있습니다 · {org}(으)로 돌아가기', "{name}'s 1:1 lives in your personal space · Back to {org}"],
   'personal.desc': ['친구와의 1:1 대화입니다. 채널·에이전트·멤버는 조직에서 이용하세요.', 'Direct messages with friends. Channels, agents, and members are available in organizations.'],
   'personal.empty': ['아직 친구와의 대화가 없습니다. 친구를 추가하고 대화를 시작하세요.', 'No conversations yet. Add a friend to start a chat.'],
   'personal.noChannels': ['개인 공간에서는 채널을 만들 수 없습니다. 조직으로 이동하세요.', 'Channels are not available here. Switch to an organization.'],

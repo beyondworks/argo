@@ -83,6 +83,28 @@ export async function personalRoomFor(crew, { uid, ownRows, roomCrews }) {
   } catch { return null; }
 }
 
+/** 버튼 이름(유건 2026-10-04) — 조직 화면의 '1:1 대화'·'1:1로 시키기'가 개인 1:1로 가는지, **이미 가진 행만으로** 판정한다(조회하지 않는다).
+    rows = 내 에이전트 목록(App myAgents — 조직 행은 회사(ws_id)가 있고, 개인 행은 msgr_personal_room_crews의 ready가 있다). 관문과 같은 함수(personalTwinOf + 1:1 대상 판정).
+    판단할 수 없으면(목록 없음·이 크루의 내 조직 행 없음·남의 크루·개인 행이 대상 아님) false — 지금 문구 */
+export function personalRoomKnown(crew, rows, uid) {
+  if (!crew?.id || !rows?.length) return false;
+  const twin = personalTwinOf(rows.find((r) => r.id === crew.id), rows, uid);
+  return !!twin && isRoomRow(twin, uid);
+}
+
+// 공간 전환 안내(유건 2026-10-04) — 조직 화면에서 내 에이전트 1:1을 눌러 앱이 개인 공간으로 옮겨 간 직후 한 줄. 기존 토스트를 쓰고, 누르면 돌아간다.
+export const MOVE_NOTICE_MS = 6000; // 전경 푸시 카드와 같은 6초 — 읽고 누를 시간(보통 안내 4초보다 길게)
+/** 띄울지 — 조직(from)에서 개인 공간(to)으로 옮겼을 때만 { backTo: 직전 조직, backCh: 그 조직에서 보던 채널 }.
+    폰 에이전트 탭(모든 공간을 보는 화면, source 'agents')에서 열었거나, 이미 개인 공간이었거나, 조직 경로로 갔으면(개인 행 없음·준비 안 됨) null */
+export function spaceMoveNotice({ from, fromCh = null, to, source = null, personalKey }) {
+  if (source === 'agents' || !from || from === personalKey || to !== personalKey) return null;
+  return { backTo: from, backCh: fromCh ?? null };
+}
+/** 안내를 눌렀을 때 돌아갈 곳 — 직전 조직과 그 채널. 그 사이 그 조직을 나갔으면(조직 목록에 없음) null(돌아가지 않고 닫기만) */
+export function spaceMoveBack(notice, orgs) {
+  return notice?.backTo && (orgs ?? []).some((o) => o.id === notice.backTo) ? { space: notice.backTo, ch: notice.backCh ?? null } : null;
+}
+
 /** 상단 메뉴별 단락. 전체 = 즐겨찾기 → 내 에이전트 → 외부 에이전트(즐겨찾기는 아래 단락에 다시 넣지 않는다). 빈 단락은 빼고 돌려준다 */
 export function agentSections(groups, { filter = 'all', isFav = () => false } = {}) {
   const mine = (g) => !g.ext; const ext = (g) => g.ext;
