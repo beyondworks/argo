@@ -34,6 +34,7 @@ import { chat } from '../chat.mjs';
 import { mirrorRoutines, applyRoutineEdits } from './msgr-routines.mjs'; // 업무 > 자동화 1단계 — Argo 루틴 ↔ msgr_crew_routines 양방향 미러
 import { loadThread, appendTurn, scopedSession } from '../thread.mjs';
 import { relocateOrgJournals, purgeDepartedJournals } from '../memory.mjs';
+import { recallDeparted } from './msgr-recall.mjs'; // 에이전트 기억 회수(유건 결정 2026-10-03)
 import { loadApprovals, setApprovalMeta, approvalPlainText, approvalCommandLabel } from '../approvals.mjs';
 import { approvalRisk } from '../approval-risk.mjs';
 import { resolveWithFollowUp } from '../approval-actions.mjs';
@@ -238,6 +239,12 @@ export function makeDb(client) {
       const { data, error } = await client.rpc('msgr_channel_access', { ids });
       if (error) { if (['PGRST202', '42883'].includes(error.code)) return null; throw new Error(`msgr db: ${error.message}`); }
       return new Map((data ?? []).map((r) => [String(r.id).toLowerCase(), r.ok === true]));
+    },
+    /** 에이전트 기억 회수 판정 — pairs[{slug, id}] → Map(`slug:channelId` → 그 에이전트(ws+slug)의 어느 행이든 그 채널에 있음). 옛 서버(RPC 없음)면 null → 아무것도 지우지 않는다. */
+    async crewPresence(wsId, pairs) {
+      const { data, error } = await client.rpc('msgr_crew_presence', { p_ws: wsId, p_slugs: pairs.map((p) => p.slug), p_ids: pairs.map((p) => p.id) });
+      if (error) { if (['PGRST202', '42883'].includes(error.code)) return null; throw new Error(`msgr db: ${error.message}`); }
+      return new Map((data ?? []).filter((r) => typeof r.present === 'boolean').map((r) => [`${r.slug}:${String(r.id).toLowerCase()}`, r.present])); // present null = 판정 없음(이 계정에 이 회사 에이전트 행이 없음) — 지우지 않는다
     },
     async heartbeat(ids) {
       // HEARTBEAT_WRITE_MS(30초) 넘게 지난 행만 쓴다 — 15초 틱마다 모든 크루 행을 갱신해 msgr_crews가 분당 1,335행씩 다시 써졌다(2026-09-23 DB 점검).
@@ -658,6 +665,20 @@ export async function mapLimited(items, limit, fn) {
   return out;
 }
 
+/** 10분마다(회사별) 퇴장 회수 — 옛 채널 일지(주인 읽기 권한 기준)와 에이전트 기억(에이전트 소속 기준, 유건 결정 2026-10-03). */
+async function periodicRecall(wsId, { db, uid, inventory }) {
+  if (!db.channelAccess || Date.now() - (purgeAt.get(wsId) ?? 0) < PURGE_MS) return;
+  purgeAt.set(wsId, Date.now());
+  await purgeDepartedJournals(wsId, (ids) => db.channelAccess(ids)).then((n) => n && console.log(`[argo] msgr 퇴장한 채널의 PC 기억 ${n}개 회수`)).catch((e) => console.error('[argo] msgr 채널 기억 회수 실패:', e?.message ?? e));
+  if (!db.crewPresence) return;
+  try {
+    // 이 회사의 메신저 에이전트 = 서버 행(상태 무관 — 파견 해제·오프보딩된 것 포함) + 로컬 카드. 회의실 등 에이전트가 아닌 대화 파일은 대상이 아니다
+    const slugs = new Set([...(await db.myCrewRows(uid, wsId)).map((c) => c.slug), ...(inventory ? await inventory(wsId).catch(() => []) : []).map((a) => a.slug)].filter(Boolean));
+    const r = await recallDeparted(wsId, [...slugs], (pairs) => db.crewPresence(wsId, pairs));
+    if (r.channels) console.log(`[argo] msgr 에이전트가 빠진 채널 ${r.channels}개의 기억 회수(줄 ${r.removed} · 전사 ${r.transcripts} · 일지 ${r.journals})`);
+  } catch (e) { console.error('[argo] msgr 에이전트 기억 회수 실패:', e?.message ?? e); }
+}
+
 export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, now = Date.now, nodeOrgId = null, ownerId = null, runnerInfo = nodeRunnerInfo, inventory = listAgentsForInventory, commandsFor = listCommandsForWs, housekeeping = true } = {}) {
   // housekeeping=false = 새 메시지 방송이 깨운 tick(2026-09-23 '입력 중' 5~10초 지연 실측): 미러·하트비트·조직 문서는 15초 주기 tick에만 돈다 — 깨우기는 턴 적재만
   // 회사 소유자 게이트(실사고 2026-09-11): 같은 PC에서 다른 계정으로 로그인하면 기기 세션(uid)이 바뀌는데, 로컬 회사 폴더는 그대로라
@@ -683,7 +704,7 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
   if (housekeeping && !nodeOrgId && orgCrewRows.length) await mirrorRoutines(wsId, { db, crews: orgCrewRows }).catch((e) => console.error('[argo] msgr 루틴 미러 실패:', e.message));
   // 접속 표시: 조직 행 + 방에 든 개인 행. 조직 행이 없는 계정은 개인 행 전부(방 없는 개인 크루는 msgr_personal_room_crews가 같은 크루의 조직 행 시각을 쓴다 — 쓰기 0)
   const idleBeat = orgCrewRows.length ? [] : allCrews.filter((c) => c.org_id == null && !inRooms.has(c.id));
-  if (!crews.length) { if (housekeeping && idleBeat.length) await db.heartbeat(idleBeat.map((c) => c.id)).catch((e) => console.error('[argo] msgr 하트비트 실패:', e.message)); return out; }
+  if (!crews.length) { if (housekeeping && idleBeat.length) await db.heartbeat(idleBeat.map((c) => c.id)).catch((e) => console.error('[argo] msgr 하트비트 실패:', e.message)); if (housekeeping) await periodicRecall(wsId, { db, uid, inventory }); return out; } // 회수는 활성 크루가 0이어도 — 모두 파견 해제된 뒤가 바로 회수할 때다
   if (housekeeping) {
     await db.heartbeat([...crews, ...idleBeat].map((c) => c.id)).catch((e) => console.error('[argo] msgr 하트비트 실패:', e.message));
     await db.workHeartbeat?.(orgCrewRows.map((c) => c.id)).catch((e) => console.warn('[argo] msgr work capability:', e.message)); // 업무 기능은 조직 전용 — 개인 행은 보내지 않는다(분리 검수 M3)
@@ -695,7 +716,7 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
       await syncOrgDocs(wsId, orgId, { db }).catch((e) => console.error('[argo] msgr 조직 문서 미러 실패:', e?.message ?? e));
     }
     await relocateOrgJournals(wsId).catch((e) => console.error('[argo] msgr 채널 일지 이관 실패:', e?.message ?? e));
-    if (db.channelAccess && Date.now() - (purgeAt.get(wsId) ?? 0) >= PURGE_MS && purgeAt.set(wsId, Date.now())) await purgeDepartedJournals(wsId, (ids) => db.channelAccess(ids)).then((n) => n && console.log(`[argo] msgr 퇴장한 채널의 PC 기억 ${n}개 회수`)).catch((e) => console.error('[argo] msgr 채널 기억 회수 실패:', e?.message ?? e));
+    await periodicRecall(wsId, { db, uid, inventory });
   }
   for (const crew of crews) { crewIds.set(`${wsId}:${crew.org_id}:${crew.slug}`, crew.id); crewSlugs.set(`${wsId}:${crew.id}`, crew.slug); } // 조직 축 포함 — 다조직이면 같은 slug가 조직마다 다른 id(검수 3R L-10). crewSlugs = 중단 방송(crew_id)의 역인덱스
   const chCache = new Map(); // 이 틱 안의 채널 행(kind·제외 목록) — 크루마다 다시 읽지 않는다
@@ -1373,7 +1394,11 @@ export const _startTypingForTest = startTyping;
 
 /* ─── push — 코어 이벤트(onNotify)를 채널로. msgr 문맥이 없는 이벤트는 즉시 반환(클라이언트 생성 0). ─── */
 /** 크루 알림을 아르고 메신저로 — 원점 없는 이벤트를 **그 크루와 나의 1:1 방**에 그 크루 이름으로 올린다(src/msgr-notify.mjs, 유건 결정 2026-09-15: 방 선택 없음).
-    크루가 파견된 조직마다 1:1 방을 찾고(크루의 DM 채널 ∩ 내가 구성원인 채널), 없으면 msgr_create_channel(kind dm)로 만든다(메신저 앱과 같은 경로).
+    에이전트 = 한 사람(유건 2026-10-03, P2): 같은 slug의 개인 행(org 없음·활성 — 본체 0.1.92부터 mirrorPersonal이 만든다)이 있으면 개인 공간의 1:1 방
+    하나에만 한 번 올린다(msgr_dm_personal_crew — 메신저 앱이 여는 방과 같다). 개인 행이 없으면(옛 본체) 종전대로 크루가 파견된 조직마다 1:1 방을 찾고
+    (크루의 DM 채널 ∩ 내가 구성원인 채널), 없으면 msgr_create_channel(kind dm)로 만든다.
+    개인 방을 확보하지 못하면(서버 거절·연결 실패) 조직 행이 있을 때만 그 조직별 경로로 보낸다 — 방 확보 실패로는 알림을 잃지 않게. 조직 행이 없으면 보내지 못하고 로그만 남긴다.
+    방을 확보한 뒤 글 넣기가 실패하면 다른 방으로 다시 보내지 않는다(던진다 — 종전 조직 경로의 삽입 실패와 같다. 응답만 끊긴 경우 두 방에 중복으로 올라가지 않게).
     같은 이벤트는 client_msg_id(자연 id·시각 축·본문 해시)로 한 번만. */
 export async function msgrNotifyPush(event, _target = null, { session = sessionClient, now = Date.now() } = {}) {
   const { formatMsgrNotify, msgrNotifyCrewSlug } = await import('../msgr-notify.mjs');
@@ -1384,26 +1409,42 @@ export async function msgrNotifyPush(event, _target = null, { session = sessionC
   if (!c) throw new Error('Messenger notification session unavailable');
   if (company.ownerId !== c.uid) throw new Error('Messenger notification owner mismatch');
   const slug = msgrNotifyCrewSlug(event);
-  const crews = slug ? (await c.db.myCrews(c.uid, event.wsId)).filter((r) => r.slug === slug && r.org_id != null) : []; // 개인 행은 알림 대상이 아니다(조직 1:1 방이 목적지)
-  if (!crews.length) { console.error(`[argo] 메신저 알림: 크루 ${slug ?? '?'}가 파견된 조직이 없음(${event.wsId})`); return false; }
+  const mine = slug ? (await c.db.myCrews(c.uid, event.wsId)).filter((r) => r.slug === slug) : []; // myCrews = 이 회사의 내 활성 행(개인·조직)
+  const personal = mine.find((r) => r.org_id == null) ?? null;
+  const crews = mine.filter((r) => r.org_id != null);
+  if (!personal && !crews.length) { console.error(`[argo] 메신저 알림: 크루 ${slug ?? '?'}의 메신저 행이 없음(${event.wsId})`); return false; }
   const agents = await listAgents(event.wsId).catch(() => []);
   const names = Object.fromEntries(agents.map((a) => [a.slug, a.name || a.slug]));
   const body = formatMsgrNotify(event, company.lang, names).slice(0, MSG_MAX);
   if (!body) return false;
   const natural = event.id ?? event.item?.id ?? event.routine?.id ?? '';
   const when = event.runAt ?? event.phase ?? new Date(Math.floor(now / 600_000) * 600_000).toISOString();
+  const post = (crew, channelId) => {
+    const key = [event.wsId, event.type, slug, channelId, natural, when, body].join('\u0000');
+    const digest = createHash('sha256').update(key).digest('hex').slice(0, 32);
+    return c.db.insertMessage({ channel_id: channelId, author_kind: 'crew', crew_id: crew.id, kind: 'text',
+      reply_to: null, thread_root: null, client_msg_id: `nt:${crew.id}:${digest}`,
+      body, mentions: [], meta: { disposition: 'done', notification: event.type } });
+  };
+  if (personal) {
+    const room = await personalCrewRoom(c, personal).catch((e) => { console.error(`[argo] 메신저 알림: 개인 1:1 방 확보 실패(${personal.display_name}) — ${crews.length ? '조직 1:1로 보냄' : '보낼 조직 1:1도 없어 이번 알림은 보내지 못함'}: ${e.message}`); return null; });
+    if (room) return !!(await post(personal, room)); // 중복(같은 이벤트 재배달)이면 null → false. 글 넣기 실패는 던진다(조직 방으로 다시 보내지 않는다)
+  }
   let posted = 0;
   for (const crew of crews) {
     const channelId = await dmWithOwner(c, crew).catch((e) => { console.error(`[argo] 메신저 알림: 1:1 방 확보 실패(${crew.display_name}): ${e.message}`); return null; });
     if (!channelId) continue;
-    const key = [event.wsId, event.type, slug, channelId, natural, when, body].join('\u0000');
-    const digest = createHash('sha256').update(key).digest('hex').slice(0, 32);
-    const row = await c.db.insertMessage({ channel_id: channelId, author_kind: 'crew', crew_id: crew.id, kind: 'text',
-      reply_to: null, thread_root: null, client_msg_id: `nt:${crew.id}:${digest}`,
-      body, mentions: [], meta: { disposition: 'done', notification: event.type } });
-    if (row) posted++;
+    if (await post(crew, channelId)) posted++;
   }
   return posted > 0;
+}
+/** 개인 공간의 크루 1:1 방 id — 메신저 앱 openPersonalCrewDm과 같은 RPC(서버가 주인·개인 행·활성만 받고, 한 크루에 한 방을 찾거나 만들며,
+    보관했으면 다시 꺼낸다 — 조직 경로가 보관 방 대신 새 방을 만드는 것과 같은 결과). 실패는 던진다(호출부가 조직 행이 있으면 조직 1:1로 물러난다). */
+async function personalCrewRoom(c, crew) {
+  const { data, error } = await c.client.rpc('msgr_dm_personal_crew', { crew: crew.id });
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error('msgr_dm_personal_crew: no room');
+  return data;
 }
 /** 크루와 나의 1:1 방 id — 크루가 든 DM 중 **사람 멤버가 정확히 나 한 명, 크루 멤버가 정확히 그 크루**인 방(메신저 앱 App.jsx의 DM 매처와 같은 규칙).
     DM 모양(msgr_dm_shape)은 사람 2명+크루 1명까지 허용하고, 다른 구성원이 내 크루와 연 DM에는 소유자인 내가 동반 멤버로 들어가므로

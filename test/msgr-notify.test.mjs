@@ -112,26 +112,33 @@ test('시스템 프롬프트 — lean-forge 계약 하나만 ko/en 안전 한계
   }
 });
 
-/** 가짜 메신저 클라이언트 — 멤버십 조회·DM 생성 RPC만 흉내. 크루 beta는 두 조직에 파견(ORG는 1:1 방 있음, ORG2는 없음 → 생성). */
-function fakeMsgr({ archived = false, thirdParty = false } = {}) {
+/** 가짜 메신저 클라이언트 — 멤버십 조회·DM 생성 RPC만 흉내. 크루 beta는 두 조직에 파견(ORG는 1:1 방 있음, ORG2는 없음 → 생성).
+    personal: 그 slug의 개인 행(org 없음)을 더한다 — 개인 1:1 방 RPC(msgr_dm_personal_crew)는 personalRpc대로 'ok'(방 PCH)·'error'(서버 거절)·'throw'(연결 실패).
+    orgs: false면 조직 행 없이 개인 행만. counts: 조직 1:1 경로를 탔는지(crewChannels·멤버십 조회 횟수). */
+function fakeMsgr({ archived = false, thirdParty = false, personal = null, personalRpc = 'ok', orgs = true } = {}) {
   const ORG2 = '33333333-3333-4333-8333-333333333333';
+  const PCH = '55555555-5555-4555-8555-555555555555'; // 개인 공간의 크루 1:1 방(personal_pair crew:<id>)
   const crews = [
-    { id: 'crew-beta', org_id: ORG, slug: 'beta', display_name: '베타' },
-    { id: 'crew-beta-2', org_id: ORG2, slug: 'beta', display_name: '베타' },
-    { id: 'crew-gamma', org_id: ORG, slug: 'gamma', display_name: '감마' },
+    ...(orgs ? [
+      { id: 'crew-beta', org_id: ORG, slug: 'beta', display_name: '베타' },
+      { id: 'crew-beta-2', org_id: ORG2, slug: 'beta', display_name: '베타' },
+      { id: 'crew-gamma', org_id: ORG, slug: 'gamma', display_name: '감마' },
+    ] : []),
+    ...(personal ? [{ id: `crew-${personal}-p`, org_id: null, slug: personal, display_name: '개인 행' }] : []),
   ];
-  const rows = []; const seen = new Set(); const rpc = [];
+  const rows = []; const seen = new Set(); const rpc = []; const counts = { crewChannels: 0, from: 0 };
   const members = { [CH]: [{ member_kind: 'crew', member_id: 'crew-beta' }, { member_kind: 'user', member_id: 'owner-1' }] };
   const channels = { [CH]: { kind: 'dm', archived_at: archived ? '2026-09-01T00:00:00Z' : null } };
   const SHARED = '44444444-4444-4444-8444-444444444444'; // 같은 조직의 다른 구성원 B가 내 크루와 연 DM = {크루, B, 나(소유자 동반)} — 정상 모양이지만 제3자가 읽는다
   if (thirdParty) { members[SHARED] = [{ member_kind: 'crew', member_id: 'crew-beta' }, { member_kind: 'user', member_id: 'user-B' }, { member_kind: 'user', member_id: 'owner-1' }]; channels[SHARED] = { kind: 'dm', archived_at: null }; }
   const db = {
     myCrews: async (uid, w) => (uid === 'owner-1' ? crews : []),
-    crewChannels: async (crewId) => Object.keys(members).filter((id) => channels[id].kind === 'dm' && members[id].some((m) => m.member_kind === 'crew' && m.member_id === crewId)),
+    crewChannels: async (crewId) => { counts.crewChannels++; return Object.keys(members).filter((id) => channels[id].kind === 'dm' && members[id].some((m) => m.member_kind === 'crew' && m.member_id === crewId)); },
     insertMessage: async (row) => { rows.push(row); if (seen.has(row.client_msg_id)) return null; seen.add(row.client_msg_id); return { id: `m${rows.length}` }; },
   };
   const client = {
     from: (table) => {
+      counts.from++;
       assert.equal(table, 'msgr_channel_members');
       const q = { ids: null, kind: null, member: null };
       const chain = {
@@ -141,9 +148,19 @@ function fakeMsgr({ archived = false, thirdParty = false } = {}) {
       };
       return chain;
     },
-    rpc: async (fn, args) => { rpc.push({ fn, args }); const id = `new-${rpc.length}`; channels[id] = { kind: 'dm', archived_at: null }; members[id] = [{ member_kind: 'crew', member_id: args.others[0].id }, { member_kind: 'user', member_id: 'owner-1' }]; return { data: id, error: null }; },
+    rpc: async (fn, args) => {
+      rpc.push({ fn, args });
+      if (fn === 'msgr_dm_personal_crew') { // 서버: 주인·개인 행·활성만, 한 크루 한 방
+        if (personalRpc === 'throw') throw new TypeError('fetch failed');
+        if (personalRpc === 'error' || !crews.some((c) => c.id === args.crew && c.org_id == null)) return { data: null, error: { code: '22023', message: 'msgr_bad_member' } };
+        channels[PCH] = { kind: 'dm', archived_at: null }; members[PCH] = [{ member_kind: 'user', member_id: 'owner-1' }, { member_kind: 'crew', member_id: args.crew }];
+        return { data: PCH, error: null };
+      }
+      assert.equal(fn, 'msgr_create_channel');
+      const id = `new-${rpc.length}`; channels[id] = { kind: 'dm', archived_at: null }; members[id] = [{ member_kind: 'crew', member_id: args.others[0].id }, { member_kind: 'user', member_id: 'owner-1' }]; return { data: id, error: null };
+    },
   };
-  return { session: async () => ({ uid: 'owner-1', db, client }), rows, rpc, ORG2, SHARED };
+  return { session: async () => ({ uid: 'owner-1', db, client }), rows, rpc, counts, ORG2, SHARED, PCH };
 }
 
 test('msgrNotifyPush(배달층) — 크루와 나의 1:1 방으로(있으면 재사용, 없는 조직은 dm 생성), 브리지 꺼짐 false, 크루 부재 false, 같은 이벤트 1회', async () => {
@@ -207,6 +224,79 @@ test('msgrNotifyPush — 제3자가 든 DM({크루, B, 나})은 1:1이 아니다
     assert.ok(rows.every((r) => r.channel_id !== SHARED && r.channel_id !== CH));
     assert.equal(rpc.length, 2);
   }
+});
+
+// 에이전트 = 한 사람(유건 2026-10-03, P2) — 1:1은 개인 공간의 방 하나. 본체 알림도 그 방 하나로(조직마다 따로 올리지 않는다).
+async function notifyWs(ws) {
+  const { createCompany, loadCompany, updateCompany } = await import('../src/workspace.mjs');
+  await createCompany(ws, '개인 방 검수', 'beta', 'owner-1');
+  await updateCompany(ws, { msgr: { ...((await loadCompany(ws)).msgr ?? {}), enabled: true } });
+}
+test('msgrNotifyPush — 개인 행이 있으면 개인 1:1 방 하나에만 한 번(조직 1:1 조회·생성·게시 0), 같은 이벤트는 한 번만', async () => {
+  const { msgrNotifyPush } = await import('../src/gateway/msgr.mjs');
+  const ws = 'msgr-notify-personal'; await notifyWs(ws);
+  const f = fakeMsgr({ personal: 'beta' });
+  const ev = { type: 'job', wsId: ws, slug: 'beta', title: '긴 작업', ok: true, reply: '끝' };
+  assert.equal(await msgrNotifyPush(ev, { mode: 'dm' }, { session: f.session, now: 0 }), true);
+  assert.equal(f.rows.length, 1, '두 조직에 파견돼 있어도 개인 방 한 곳에 한 번');
+  const [r] = f.rows;
+  assert.deepEqual({ channel_id: r.channel_id, crew_id: r.crew_id, author_kind: r.author_kind, kind: r.kind, reply_to: r.reply_to, thread_root: r.thread_root, mentions: r.mentions, meta: r.meta },
+    { channel_id: f.PCH, crew_id: 'crew-beta-p', author_kind: 'crew', kind: 'text', reply_to: null, thread_root: null, mentions: [], meta: { disposition: 'done', notification: 'job' } }, '개인 행 이름으로, 서버 자격 게이트의 nt: 모양 그대로');
+  assert.match(r.client_msg_id, /^nt:crew-beta-p:[0-9a-f]{32}$/, '중복 방지 키 규칙은 그대로(크루 id 접두 + 해시)');
+  assert.match(r.body, /^\[장시간 작업 완료\] 긴 작업\n\n끝$/);
+  assert.deepEqual(f.rpc, [{ fn: 'msgr_dm_personal_crew', args: { crew: 'crew-beta-p' } }], '앱이 여는 방과 같은 RPC·인자, 조직 dm 생성 없음');
+  assert.deepEqual(f.counts, { crewChannels: 0, from: 0 }, '조직 1:1 방을 찾지도 않는다');
+  assert.equal(await msgrNotifyPush(ev, { mode: 'dm' }, { session: f.session, now: 5_000 }), false, '같은 이벤트 재배달 = 같은 방·같은 client_msg_id → 중복 삽입 없음');
+  assert.deepEqual([f.rows[1].channel_id, f.rows[1].client_msg_id], [f.PCH, r.client_msg_id]);
+  assert.equal(f.rpc.filter((x) => x.fn === 'msgr_create_channel').length, 0);
+});
+
+test('msgrNotifyPush — 개인 1:1 방을 열지 못하면(서버 거절·연결 실패) 종전 조직별 1:1로 보내 알림을 잃지 않는다', async () => {
+  const { msgrNotifyPush } = await import('../src/gateway/msgr.mjs');
+  const ws = 'msgr-notify-personal-fallback'; await notifyWs(ws);
+  for (const personalRpc of ['error', 'throw']) {
+    const f = fakeMsgr({ personal: 'beta', personalRpc });
+    assert.equal(await msgrNotifyPush({ type: 'job', wsId: ws, slug: 'beta', title: 'T', ok: true, reply: 'r' }, { mode: 'dm' }, { session: f.session, now: 0 }), true, personalRpc);
+    assert.deepEqual(f.rows.map((x) => x.crew_id), ['crew-beta', 'crew-beta-2'], `${personalRpc}: 조직마다 그 조직의 크루 행으로(종전과 같다)`);
+    assert.equal(f.rows[0].channel_id, CH, `${personalRpc}: ORG는 기존 1:1 방`);
+    assert.ok(f.rows.every((x) => x.channel_id !== f.PCH));
+    assert.deepEqual(f.rpc.map((x) => x.fn), ['msgr_dm_personal_crew', 'msgr_create_channel'], `${personalRpc}: 개인 방 시도 한 번 뒤 조직 경로(ORG2는 생성)`);
+  }
+});
+
+test('msgrNotifyPush — 개인 1:1 방을 열지 못했는데 조직 행도 없으면 false, 로그도 보내지 못했다고 사실대로(조직 1:1로 보냈다고 하지 않는다)', async () => {
+  const { msgrNotifyPush } = await import('../src/gateway/msgr.mjs');
+  const ws = 'msgr-notify-personal-nowhere'; await notifyWs(ws);
+  const logs = []; const orig = console.error; console.error = (...a) => logs.push(a.join(' '));
+  try {
+    for (const personalRpc of ['error', 'throw']) {
+      logs.length = 0;
+      const f = fakeMsgr({ personal: 'beta', personalRpc, orgs: false });
+      assert.equal(await msgrNotifyPush({ type: 'job', wsId: ws, slug: 'beta', title: 'T', ok: true, reply: 'r' }, { mode: 'dm' }, { session: f.session, now: 0 }), false, personalRpc);
+      assert.equal(f.rows.length, 0);
+      assert.ok(logs.some((l) => /개인 1:1 방 확보 실패/.test(l) && /보내지 못함/.test(l)), `${personalRpc}: ${logs.join(' | ')}`);
+      assert.ok(!logs.some((l) => /조직 1:1로 보냄/.test(l)), `${personalRpc}: 보내지 않았는데 보냈다고 남기지 않는다`);
+    }
+    logs.length = 0;
+    const g = fakeMsgr({ personal: 'beta', personalRpc: 'error' });
+    assert.equal(await msgrNotifyPush({ type: 'job', wsId: ws, slug: 'beta', title: 'T2', ok: true, reply: 'r' }, { mode: 'dm' }, { session: g.session, now: 0 }), true);
+    assert.ok(logs.some((l) => /개인 1:1 방 확보 실패/.test(l) && /조직 1:1로 보냄/.test(l)), '조직 행이 있으면 그 경로로 보낸다고 남긴다');
+  } finally { console.error = orig; }
+});
+
+test('msgrNotifyPush — 조직에 파견되지 않았어도 개인 행이 있으면 개인 1:1로, 다른 에이전트(slug)의 개인 행으로는 보내지 않는다', async () => {
+  const { msgrNotifyPush } = await import('../src/gateway/msgr.mjs');
+  const ws = 'msgr-notify-personal-only'; await notifyWs(ws);
+  const solo = fakeMsgr({ personal: 'beta', orgs: false });
+  assert.equal(await msgrNotifyPush({ type: 'job', wsId: ws, slug: 'beta', title: 'T', ok: true, reply: 'r' }, { mode: 'dm' }, { session: solo.session, now: 0 }), true, '조직 0곳 + 개인 행 → 개인 방');
+  assert.deepEqual(solo.rows.map((x) => [x.channel_id, x.crew_id]), [[solo.PCH, 'crew-beta-p']]);
+  const other = fakeMsgr({ personal: 'gamma' });
+  assert.equal(await msgrNotifyPush({ type: 'job', wsId: ws, slug: 'beta', title: 'T', ok: true, reply: 'r' }, { mode: 'dm' }, { session: other.session, now: 0 }), true);
+  assert.deepEqual(other.rows.map((x) => x.crew_id), ['crew-beta', 'crew-beta-2'], '감마의 개인 행은 베타 알림의 목적지가 아니다 → 베타는 종전 조직 경로');
+  assert.equal(other.rpc.filter((x) => x.fn === 'msgr_dm_personal_crew').length, 0);
+  const none = fakeMsgr({ personal: 'gamma', orgs: false });
+  assert.equal(await msgrNotifyPush({ type: 'job', wsId: ws, slug: 'beta', title: 'T', ok: true, reply: 'r' }, { mode: 'dm' }, { session: none.session, now: 0 }), false, '베타의 행이 하나도 없으면 false(다른 방·다른 이름으로 가지 않음)');
+  assert.equal(none.rows.length, 0);
 });
 
 test('notifyChannelState — 체크박스 정본: 연결됨은 실제 배달 조건, 켜짐은 연결됨+전부 음소거 아님(아르고 메신저는 notify mode dm)', async () => {
