@@ -42,6 +42,8 @@ pub fn run() {
     let builder = builder.plugin(tauri_plugin_media_share::init()); // 첨부 저장·공유 — JS는 src/media-io.js만 부른다
     #[cfg(target_os = "ios")]
     let builder = builder.plugin(tauri_plugin_web_auth::init());
+    #[cfg(target_os = "ios")]
+    let builder = builder.plugin(tauri_plugin_ios_webview::init()); // 키보드 위 ↑↓✓ 막대 숨김 + 웹뷰 바탕을 테마 색으로 — JS는 src/webview-bg.js만 부른다
     #[cfg(target_os = "android")]
     let builder = builder.plugin(tauri_plugin_apk_installer::init());
     #[cfg(target_os = "android")]
