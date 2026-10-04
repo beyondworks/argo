@@ -6,6 +6,7 @@ import { Component, createContext, useCallback, useContext, useEffect, useId, us
 import { createPortal } from 'react-dom';
 import { acceptTyping, typingKey, withoutKey, typingIn as typingInState, roomTopicIds, TYPING_WINDOW_MS } from './typing-state.js';
 import { dismissHandlers } from './dismiss.mjs';
+import { attachKeyboardDismiss } from './kb-dismiss.mjs';
 import { turnCopyText, tailTurns } from './turn-copy.mjs';
 import { hasPublicChannel, newChannelKind, stepMarks } from './onboard.mjs';
 import { Graph3D } from './graph3d.jsx';
@@ -5982,6 +5983,8 @@ function Channel({ onCrewFailed = null, onScreen = true, namePrompt = null, onOu
     toBottom();
     return () => { el.removeEventListener('scroll', onScroll); el.removeEventListener('wheel', mark); el.removeEventListener('touchmove', mark); el.removeEventListener('keydown', mark); el.removeEventListener('pointerdown', down); window.removeEventListener('pointerup', up); ro.disconnect(); roBox.disconnect(); };
   }, [chId, keepAnchor]);
+  // 폰: 입력 중 대화 목록을 끌거나 짧게 누르면 키보드를 내린다 — iOS 보조 막대 ✓를 숨긴 뒤 아이폰에는 내리기 키가 없다(유건 실기기 2026-10-04). 데스크톱은 붙이지 않는다.
+  useEffect(() => { const el = feed.current; if (!el?.closest('.msgr-phone')) return; return attachKeyboardDismiss(el); }, [chId]);
   // 채널을 열 때 스크롤 목표(유건 확정 2026-09-29) — 안 읽은 글(구분선 .msgr-newline)이 있고 한 화면에 안 들어가면 구분선을 위쪽 1/3에 두고 바닥 고정(stick)을 끈다.
   // 한 화면에 다 들어가거나 안 읽은 글이 없으면(또는 100개 넘는 안 읽은 글이라 구분선이 아직 로드 안 된 페이지 밖이면, 미완) 지금처럼 맨 아래.
   // useLayoutEffect라 바로 아래 바닥-스크롤 useEffect보다 먼저 커밋 안에서 실행돼 stick.current를 그 뒤 effect가 그대로 따른다.
