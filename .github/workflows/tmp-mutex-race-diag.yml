@@ -1,0 +1,51 @@
+# 임시 진단 워크플로(브랜치 tmp/mutex-race-diag 전용, 진단이 끝나면 브랜치째 지운다) —
+# test/mutex-reclaim-race.test.mjs 첫 테스트가 Windows CI에서 119/120으로 실패하는 이유를 기록하며 반복 실행한다.
+name: tmp-mutex-race-diag
+
+on:
+  push:
+    branches: [tmp/mutex-race-diag]
+
+permissions:
+  contents: read
+
+jobs:
+  diag:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: idle-C, load: none, n: 0, runs: 30, temp: C }
+          - { name: idle-D, load: none, n: 0, runs: 30, temp: D }
+          - { name: disk-C, load: disk, n: 4, runs: 25, temp: C }
+          - { name: suite-C-1, load: suite, n: 0, runs: 25, temp: C }
+          - { name: suite-C-2, load: suite, n: 0, runs: 25, temp: C }
+          - { name: suite-D, load: suite, n: 0, runs: 25, temp: D }
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - if: matrix.load == 'suite'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - if: matrix.load == 'suite'
+        run: npm ci
+      - if: matrix.load == 'suite'
+        run: node scripts/fetch-busybox.mjs bin
+      - name: race diag
+        shell: bash
+        run: |
+          if [ "${{ matrix.temp }}" = "D" ]; then export TEMP="$RUNNER_TEMP" TMP="$RUNNER_TEMP"; fi
+          node -e "const os=require('os'); console.log('node', process.version, 'os', os.release(), 'cpus', os.cpus().length, 'tmpdir', os.tmpdir())"
+          node diag/diag-run.mjs . ${{ matrix.runs }} ${{ matrix.name }} ${{ matrix.load }} ${{ matrix.n }} 60 diag-out
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diag-${{ matrix.name }}
+          path: diag-out
+          retention-days: 7
