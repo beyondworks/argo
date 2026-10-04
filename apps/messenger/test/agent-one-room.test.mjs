@@ -62,7 +62,7 @@ test('버튼 이름 — 조직 화면의 레일 메뉴·즐겨찾기 줄·크루
   assert.match(app, /<Composer broadcast=\{broadcast\} onOutsideDm=\{onOutsideDm\} outsideDmPersonal=\{outsideDmPersonal\}/);
   assert.match(app, /\{t\(outsideDmPersonal\?\.\(c\) \? 'mention\.outside\.dm\.personal' : 'mention\.outside\.dm'\)\}/, '방 밖 멘션');
   assert.match(app, /label: t\(c\.targetKind === 'crew' && dmGoesPersonal\(crewOf\(c\.targetId\)\) \? 'ui\.dm\.personal' : 'ui\.dm'\), run: \(\) => openDm\(c\.targetKind, c\.targetId\)/, '즐겨찾기 줄 메뉴(재검수 L-c)');
-  assert.match(app, /\(lang === 'en' \? \(x\) => x : koJosa\)\(t\('mention\.outside', \{ name: c\.display_name \}\)\)/, '방 밖 멘션 안내의 은(는)을 이름에 맞춘다(그대로 보였다)');
+  assert.match(app, /\(lang === 'en' \? \(x\) => x : koJosa\)\(t\(view\.line, \{ name: c\.display_name \}\)\)/, '방 밖 멘션 안내의 은(는)·을(를)을 이름에 맞춘다(그대로 보였다) — 줄 선택은 outsideRowView(mention-candidates.test.mjs)');
   assert.match(app, /const myAgentsAsked = useRef\(false\);\n\s*useEffect\(\(\) => \{ if \(myAgentsAsked\.current \|\| myAgents !== null \|\| !uid \|\| !orgId \|\| orgId === PERSONAL \|\| !crews\.some\(\(c\) => c\.owner_user_id === uid\)\) return; myAgentsAsked\.current = true; loadMyAgents\(\)\.catch\(\(\) => \{\}\); \}, \[uid, orgId, crews, myAgents\]\);/, '판정 재료는 세션에 한 번만 읽는다(렌더마다 조회 없음, 실패해도 다시 묻지 않는다)');
 });
 

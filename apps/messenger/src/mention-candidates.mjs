@@ -40,20 +40,32 @@ export function mentionsFromBody(body, candidates, picked = [], allCandidates = 
 
 // 방 밖 에이전트 멘션 — 본문의 @이름 중 이 방 후보(사람·크루)에 없는 조직 에이전트(D14). 멘션 후보는 방 안만 유지하고(유건 0.1.29 재확인),
 // 전송 뒤 "이 방에 없어요" 안내를 띄우는 데만 쓴다. 방 안 이름을 먼저 지워 "@페퍼 (VPS)" 안의 "@페퍼"가 방 밖 동명으로 새지 않게(mentionsFromBody와 같은 규칙).
-// 같은 이름이 여럿이면 맞춘 구간이 지워져 앞의 하나만 잡힌다 — 내 것 → 켜진 것 → 충돌 사본(sync.mjs `.conflict-`)이 아닌 것 → 먼저 만든 것 순으로 앞에 둔다
-// (실사고 2026-10-04: 사본 '페퍼'가 앞에 있어 [이 방에 추가]가 사본을 넣었다).
+// 같은 이름이 여럿이면 맞춘 구간이 지워져 앞의 하나만 잡힌다 — 내 것 → 충돌 사본이 아닌 것 → 먼저 만든 것 순으로 앞에 둔다
+// (실사고 2026-10-04: 사본 '페퍼'가 앞에 있어 [이 방에 추가]가 사본을 넣었다). 받는 목록은 켜진(active) 크루뿐이다(App loadOrg·개인 공간).
 export function outsideCrewMentions(body, inRoom = [], orgCrews = [], uid = null) {
   let text = String(body ?? '');
   const blank = (m, lead) => lead + ' '.repeat(m.length - lead.length);
   for (const x of inRoom.filter((x) => x?.name).sort((a, b) => b.name.length - a.name.length)) text = text.replace(mentionRe(x.name, 'g'), blank);
   const inIds = new Set(inRoom.filter((x) => x?.kind === 'crew').map((x) => x.id));
-  const rank = (c) => (c.owner_user_id === uid ? 0 : 4) + (c.status === 'active' ? 0 : 2) + (/\.conflict-/.test(c.slug ?? '') ? 1 : 0);
+  const rank = (c) => (c.owner_user_id === uid ? 0 : 2) + (isCopyCrew(c) ? 1 : 0);
   const out = [];
   for (const c of orgCrews.filter((c) => c?.display_name && !inIds.has(c.id)).sort((a, b) => b.display_name.length - a.display_name.length || rank(a) - rank(b) || String(a.created_at ?? '').localeCompare(String(b.created_at ?? '')))) {
     if (!mentionRe(c.display_name).test(text)) continue;
     out.push(c); text = text.replace(mentionRe(c.display_name, 'g'), blank);
   }
   return out;
+}
+// 동기화 충돌 사본(본체 sync.mjs가 남기는 `<slug>.conflict-<기기>-<ts>` 카드가 옛 앱에서 미러된 크루)인가.
+export const isCopyCrew = (c) => /\.conflict-/.test(c?.slug ?? '');
+// 크루 목록 순서 — 회사 크루 먼저, 이름순, 같은 이름이면 사본을 뒤로. 방 안 @이름은 같은 이름 중 목록 앞의 크루가 받는다(mentionsFromBody는 이름 길이로만 정렬, 검수 #826 MEDIUM-2).
+export const crewOrder = (isCompany) => (a, b) => isCompany(b) - isCompany(a) || a.display_name.localeCompare(b.display_name, 'ko') || isCopyCrew(a) - isCopyCrew(b);
+// [이 방에 추가] 응답 → 안내 줄 상태. joined·already = 방에 있다(결과 줄만 보이고 구성원을 다시 읽는다), 그 밖은 방장에게 요청한 것.
+export const outsideAddDone = (data) => (data === 'joined' || data === 'already' ? data : 'requested');
+// 방 밖 안내 한 줄의 모양 — done: undefined | 'pending'(응답 대기, 버튼 숨김) | 'joined' | 'already' | 'requested'.
+// 들어간 뒤엔 '없어요'를 지운다(0.1.49: "없어요 · 넣었어요"가 한 줄에 같이 보였다).
+export function outsideRowView({ crew, uid, done, isDm, can }) {
+  if (done === 'joined' || done === 'already') return { line: `mention.outside.${done}`, denied: false, suffix: null, request: false };
+  return { line: 'mention.outside', denied: !can, suffix: done === 'requested' ? 'mention.outside.requested' : null, request: crew?.owner_user_id === uid && !isDm && !done };
 }
 // 방 밖에서 이 에이전트에게 시킬 수 있나(크루 시트 canMe와 같은 규칙 — 최종 판정은 서버 msgr_instruct_check).
 export const canInstructCrew = (c, uid) => !!c && (c.owner_user_id === uid || c.allow === 'all' || (c.allow === 'list' && (c.allow_users ?? []).includes(uid)));

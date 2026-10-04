@@ -58,7 +58,7 @@ import { bindPullRefresh, enteredReady } from './pull-refresh.mjs';
 import { haptic } from './haptics.js';
 import { refreshMessageWindow, mergeRefreshedMessages } from './refresh-messages.mjs';
 import { writeScreenSnapshot, consumeScreenSnapshot } from './phone-screen-snapshot.mjs';
-import { mentionCandidates, mentionsFromBody, ALL_RE, outsideCrewMentions, canInstructCrew } from './mention-candidates.mjs';
+import { mentionCandidates, mentionsFromBody, ALL_RE, outsideCrewMentions, canInstructCrew, crewOrder, outsideAddDone, outsideRowView } from './mention-candidates.mjs';
 import { dmMentionCrews, mentionPopupCrews, setDmRecipient, dmDeliveryMentions, dmUnavailableRecipients, relayCaptionKey, relayToLabel, relayToNames, relayNoticeView } from './dm-delivery.mjs';
 import { acceptFiles, withoutFile } from './attach-files.mjs';
 import { MediaAttachments, LinkCard, linkify, onLinkClick } from './media.jsx'; // 첨부 말풍선·크게 보기·링크 카드(2026-10-02)
@@ -175,6 +175,8 @@ const friendlyErr = (msg, t) => /msgr_session_refreshing/.test(msg) ? t('err.ses
 // 크루 작업 중단 전용 오류 매핑(재검수 2026-09-26 L-c) — friendlyErr을 그대로 넓히면 다른 화면의 msgr_not_allowed·미배포 함수
 // 오류 표시까지 바뀐다. requestStop 호출부에서만 쓴다: msgr_not_allowed는 권한 문구로, 마이그레이션 미적용으로 RPC 자체가
 // 없을 때(Could not find the function 등, PostgREST 스키마 캐시 오류)는 Postgres 원문 대신 일반 안내로 가린다(분리 검수 L-4).
+// 에이전트 넣기(msgr_crew_join) 오류 — 방 설정창·레일 파견·방 밖 안내가 같이 쓴다(검수 #826 LOW-5: 방 밖 안내는 서버 코드 원문이 보였다).
+const joinErr = (msg, t) => /msgr_channel_personal_blocked/.test(msg) ? t('err.channelPersonalBlocked') : /msgr_request_recently_rejected/.test(msg) ? t('ch.crew.join.cooldown') : /msgr_forbidden/.test(msg) ? t('err.denied') : /msgr_bad_member/.test(msg) ? t('err.crewUnavailable') : friendlyErr(msg, t);
 const stopErr = (msg, t) => /msgr_not_allowed/.test(msg) ? t('err.denied') : /Could not find the function|schema cache|function .* does not exist|PGRST20[0-9]/i.test(msg) ? t('err.generic') : friendlyErr(msg, t);
 /** 오늘이면 시각만, 아니면 날짜+시각 — 초대 만료(7일 뒤)·노드 마지막 응답·기록처럼 며칠 전후일 수 있는 시각용(시간만 보이면 "오늘 02:31"로 읽힌다 — I-4 실측) */
 const fmtWhen = (iso, lang) => { const d = new Date(iso); const time = fmtTs(iso, lang); if (d.toDateString() === new Date().toDateString()) return time;
@@ -1126,7 +1128,7 @@ function Shell({ session }) {
     setMyAvailable(fetchedCrews.filter((r) => r.status === 'available' && r.owner_user_id === uid).sort((x, y) => x.display_name.localeCompare(y.display_name, 'ko')));
     const crs = fetchedCrews.filter((r) => r.status === 'active');
     const orgRow = orgs.find((o) => o.id === id);
-    crs.sort((a, b) => (crewTier(b, orgRow) === 'company') - (crewTier(a, orgRow) === 'company') || a.display_name.localeCompare(b.display_name, 'ko')); // 순서 고정: 회사 크루 먼저, 이름순(QA: 화면마다 순서가 달랐다)
+    crs.sort(crewOrder((c) => crewTier(c, orgRow) === 'company')); // 순서 고정: 회사 크루 먼저, 이름순(QA: 화면마다 순서가 달랐다), 같은 이름이면 충돌 사본을 뒤로(mention-candidates.mjs)
     // 조직에 들어왔다고 모든 채널이 열리지 않는다(유건 2026-09-16, 슬랙식) — 사이드바는 **참여한 채널**만.
     // 공개 채널은 서버가 열람은 허용하지만(찾아보기·미리보기), 들어가기 전에는 목록에도 알림에도 없다.
     // 참여 목록은 위 Promise.all에서 같이 읽는다 — 따로 await를 더하면 조직 전환 경쟁(늦게 온 A 데이터 무시)이 흐트러진다.
@@ -1219,7 +1221,7 @@ function Shell({ session }) {
     let joined = null;
     if (channelId) {
       const res = await supabase.rpc('msgr_crew_join', { ch: channelId, crew: crew.id });
-      if (res.error) throw new Error(/msgr_channel_personal_blocked/.test(res.error.message) ? t('err.channelPersonalBlocked') : friendlyErr(res.error.message, t));
+      if (res.error) throw new Error(joinErr(res.error.message, t));
       joined = res.data;
     }
     await loadOrg(orgId);
@@ -2837,7 +2839,7 @@ function Shell({ session }) {
               .map(([id, k, list]) => list.length > 0 && <RailFold key={id} id={id} label={t(k)} count={list.length}>{list.map(railRow)}</RailFold>)}
             {myAvailable.map((c) => { // 목록에서 그 자리 파견(유건 지시 2026-09-08) — 채널을 보고 있으면 그 채널까지(DM은 조직만), 아니면 조직만
               const target = channel && (channel.personal_crews ?? 'approval') !== 'blocked' ? channel : null; // 대화방도 그 자리 파견 대상이다(유건 2026-09-16)
-              const go = async () => { if (railBusy) return; setRailBusy(c.id); try { const r = await dispatchCrew(c, target?.id ?? null); setNote(t(r === 'requested' ? 'ch.crew.join.requested' : target ? 'ch.add.mine.done' : 'rail.mine.dispatched', { name: c.display_name })); } catch (e) { setErr(e.message); } finally { setRailBusy(null); } };
+              const go = async () => { if (railBusy) return; setRailBusy(c.id); try { const r = await dispatchCrew(c, target?.id ?? null); if (target && (r === 'joined' || r === 'already')) bumpMembers(); /* 넣은 직후 @이름이 '없어요'로 나가지 않게(검수 #826 LOW-4) */ setNote(t(r === 'requested' ? 'ch.crew.join.requested' : target ? 'ch.add.mine.done' : 'rail.mine.dispatched', { name: c.display_name })); } catch (e) { setErr(e.message); } finally { setRailBusy(null); } };
               return (
                 <div key={c.id} className="msgr-railrow dim">
                   <button type="button" className="item dim" onClick={() => setSheet(c.id)} onContextMenu={(e) => openCtx(e, [{ icon: 'gear', label: t('ctx.crew.card'), run: () => setSheet(c.id) }, { icon: 'plus', label: t('rail.mine.dispatch'), run: go }])} disabled={railBusy === c.id} title={t('rail.mine.off')}><Av name={c.display_name} crew size="xs" crewId={c.id} /><span className="name">{c.display_name}</span><span className="msgr-klabel">{t('rail.mine.offShort')}</span></button>
@@ -3198,7 +3200,7 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
   useEffect(() => { loadJoinReqs(); }, [loadJoinReqs, refreshKey]); // 열려 있는 동안에도 — 알림함에서 같은 채널을 누를 때·그 방의 넣기 요청·안내 글 방송 때(검수 M-3, 주기 재조회는 없앴다 — 기능 점검 D2)
   const joinCrew = async (id) => { // 반환 'joined' | 'requested' | 'already' — 여러 명을 한 번에 넣을 때 한 명씩 부른다(서버 판정은 에이전트마다 다르다)
     const res = await supabase.rpc('msgr_crew_join', { ch: channel.id, crew: id });
-    if (res.error) throw new Error(/msgr_channel_personal_blocked/.test(res.error.message) ? t('err.channelPersonalBlocked') : /msgr_request_recently_rejected/.test(res.error.message) ? t('ch.crew.join.cooldown') : friendlyErr(res.error.message, t));
+    if (res.error) throw new Error(joinErr(res.error.message, t));
     return res.data;
   };
   // 에이전트 일괄 추가(유건 2026-09-17: 칩을 하나씩 누르지 않고 목록에서 여러 명을 골라 한 번에). 파견 전인 내 에이전트는 파견까지 한다.
@@ -3206,16 +3208,16 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
   const addCrews = async (rows) => {
     const picked = rows.filter((r) => crewPicks.has(r.c.id)); if (!picked.length) return;
     if (needConsent?.()) { onClose(); return; } // 개인 공간 — AI 이용 동의 전이면 동의부터(2026-09-30)
-    setBusy(true); let joined = 0; const asked = []; const fails = [];
+    setBusy(true); let joined = 0; const asked = []; const already = []; const fails = [];
     for (const r of picked) { // 순서대로 — 파견은 브리지 미러를 기다리고, 한 명이 실패해도 나머지는 들어간다
-      try { const res = r.dispatch ? await onDispatch(r.c, channel.id) : await joinCrew(r.c.id); if (res === 'requested') asked.push(r.c.display_name); else if (res !== 'already') joined++; }
+      try { const res = r.dispatch ? await onDispatch(r.c, channel.id) : await joinCrew(r.c.id); if (res === 'requested') asked.push(r.c.display_name); else if (res === 'already') already.push(r.c.display_name); else joined++; }
       catch (e) { fails.push(`${r.c.display_name}: ${e.message}`); }
     }
     setBusy(false); setAdd(null); setCrewPicks(new Set());
-    if (joined) await onChanged();
+    if (joined || already.length) await onChanged(); // 이미 있던 에이전트(다른 기기에서 넣음)도 다시 읽어야 추가 후보에서 빠지고 @이름이 닿는다(검수 #826 LOW-4)
     if (asked.length) loadJoinReqs();
     // 한 알림에 모은다 — 오류와 안내를 따로 띄우면 오류가 성공 안내를 덮어 "넣었는지"를 알 수 없었다(검수 MEDIUM-2)
-    const notes = [joined && t('ch.add.crew.added', { n: joined }), asked.length && t('ch.crew.join.requested', { name: asked.join(', ') })].filter(Boolean);
+    const notes = [joined && t('ch.add.crew.added', { n: joined }), already.length && t('ch.crew.join.already', { name: already.join(', ') }), asked.length && t('ch.crew.join.requested', { name: asked.join(', ') })].filter(Boolean);
     if (fails.length) onError([...notes, t('ch.add.crew.failed', { list: fails.join(' · ') })].join(' '));
     else if (notes.length) onNote(notes.join(' '));
   };
@@ -6601,11 +6603,13 @@ function Composer({ broadcast = null, onCrewJoined = null, outsideDmPersonal = n
   const [outside, setOutside] = useState(null);
   useEffect(() => { setOutside(null); }, [chId]);
   const requestAdd = async (c) => {
+    const mark = (done) => setOutside((o) => o && { ...o, done: { ...o.done, [c.id]: done } });
+    mark('pending'); // 응답 전 버튼을 숨긴다 — 두 번 누르면 늦게 온 already가 방금 넣은 줄을 덮었다(검수 #826 LOW-6)
     const r = await supabase.rpc('msgr_crew_join', { ch: chId, crew: c.id });
-    if (r.error) return onError?.(friendlyErr(r.error.message, t));
-    const done = r.data === 'joined' || r.data === 'already' ? r.data : 'requested';
+    if (r.error) { mark(undefined); return onError?.(joinErr(r.error.message, t)); }
+    const done = outsideAddDone(r.data);
     if (done !== 'requested') onCrewJoined?.(); // 방 구성원을 다시 읽는다 — 안 읽으면 다시 불러도 후보에 없어 '없어요'만 반복됐다(0.1.49 실기기 "반응 없음")
-    setOutside((o) => o && { ...o, done: { ...o.done, [c.id]: done } });
+    mark(done);
   };
   // 꺼진 에이전트 안내(D24) — 종전엔 90초 넘게 입력 중·안내·오류 없이 조용했다. 켜지면 부재중 대기분으로 이 글에 답한다(원장 P-R5).
   const [awayNote, setAwayNote] = useState(null);
@@ -6679,11 +6683,10 @@ function Composer({ broadcast = null, onCrewJoined = null, outsideDmPersonal = n
           <button type="button" className="btn" onClick={() => delivery.dismiss()}>{t(card.canRetry ? 'msg.delivery.dismiss' : 'ui.close')}</button></div>}
       </div>}
       {awayNote && <div className="msgr-replychip msgr-awaychip" role="status"><span className="q">{awayNote.map((c) => t('mention.away', { name: c.display_name })).join(' ')}</span><button type="button" className="msgr-titlebtn" onClick={() => setAwayNote(null)} aria-label={t('ui.close')}><I name="x" size={13} /></button></div>}
-      {outside && <div className="msgr-outsidechip" role="status"><div className="rows">{outside.crews.map((c) => { const can = canInstructCrew(c, uid); const done = outside.done[c.id]; return (
-        <div key={c.id} className="row"><span className="q">{done === 'joined' || done === 'already' ? (lang === 'en' ? (x) => x : koJosa)(t(`mention.outside.${done}`, { name: c.display_name })) /* 들어간 뒤엔 '없어요'를 지운다 — "없어요 · 넣었어요"가 한 줄에 같이 보였다 */
-          : <>{(lang === 'en' ? (x) => x : koJosa)(t('mention.outside', { name: c.display_name }))}{!can && ` ${t('mention.outside.denied')}`}{done && ` · ${t(`mention.outside.${done}`)}`}</>}</span>
+      {outside && <div className="msgr-outsidechip" role="status"><div className="rows">{outside.crews.map((c) => { const can = canInstructCrew(c, uid); const view = outsideRowView({ crew: c, uid, done: outside.done[c.id], isDm, can }); return (
+        <div key={c.id} className="row"><span className="q">{(lang === 'en' ? (x) => x : koJosa)(t(view.line, { name: c.display_name }))}{view.denied && ` ${t('mention.outside.denied')}`}{view.suffix && ` · ${t(view.suffix)}`}</span>
           {can && onOutsideDm && <button type="button" className="btn sm" onClick={() => { const body = outside.body; setOutside(null); onOutsideDm(c.id, body); }}>{t(outsideDmPersonal?.(c) ? 'mention.outside.dm.personal' : 'mention.outside.dm')}</button>}
-          {c.owner_user_id === uid && !isDm && !done && <button type="button" className="btn sm ghost" onClick={() => requestAdd(c)}>{t('mention.outside.request')}</button>}
+          {view.request && <button type="button" className="btn sm ghost" onClick={() => requestAdd(c)}>{t('mention.outside.request')}</button>}
         </div>); })}</div><button type="button" className="msgr-titlebtn" onClick={() => setOutside(null)} aria-label={t('ui.close')}><I name="x" size={13} /></button></div>}
       {replyTo && <div className="msgr-replychip" role="status"><I name="reply" size={13} /><span className="q"><b>{t('composer.replyTo', { name: replyTo.who })}</b> {replyTo.body}</span><button type="button" className="x" onClick={() => { delivery.setReplyTo(null); ta.current?.focus(); }} aria-label={t('composer.replyCancel')} title={t('composer.replyCancel')}><I name="x" size={12} /></button></div>}
       {phone && fileChipsNode}
