@@ -79,6 +79,25 @@ test('S3. 배선 — 네이티브 턴이 벤더로 보내는 tools 전량에 req
   } finally { await srv.close(); }
 });
 
+test('S3b. 메신저 1:1 턴의 크루 도구 전량(오피스 회사·문서함·할 일·페이지·거래·메일 포함) — 엄격 xAI 가짜 벤더가 턴을 받아 주고, 중첩 object(거래 품목 줄)까지 required가 있다', async () => {
+  const { makeCrewServer } = await import('../src/chat.mjs');
+  const ws = 'sch3b'; await createCompany(ws, '스키마3b', '사장', 'owner-uid'); const root = paths(ws).root;
+  const dm = { kind: 'msgr', chatType: 'group', channelKind: 'dm', orgId: '11111111-1111-4111-8111-111111111111', channelId: 'dm-1', crewId: 'crew-1', uid: 'owner-uid', wsId: ws, origin: 'owner-uid' };
+  const sink = []; makeCrewServer(ws, 's', 'S', [], 0, [], dm, 'ko', [], '', sink);
+  const office = ['office', 'office_files', 'office_work', 'office_deals', 'office_mail'];
+  assert.deepEqual(office.filter((n) => !sink.some((d) => d.name === n)), [], '메신저 1:1 턴에 오피스 도구 다섯이 실린다');
+  const strict = await startStrictVendor({ vendor: 'xai', reply: (body) => ({ id: 'm1', type: 'message', role: 'assistant', model: body.model, content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } }) });
+  try {
+    let last; for await (const ev of nativeQuery({ wsId: ws, slug: 's', prompt: '안녕', cwd: root, systemPrompt: 'SYS', model: 'grok-4', saveSession: false,
+      env: { ANTHROPIC_BASE_URL: strict.base, ANTHROPIC_AUTH_TOKEN: 'fake-grok-token' }, crewTools: sink, canUseTool: makePermissionGate(ws, 's', root, null, 'ko', []) })) last = ev;
+    assert.equal(last.subtype, 'success', `엄격 벤더가 거절하지 않는다: ${JSON.stringify(last.errors ?? null)}`);
+    const tools = strict.calls[0].body.tools;
+    assert.deepEqual(tools.filter((t) => missing(t.input_schema).length).map((t) => t.name), [], 'required 없는 object 노드를 가진 도구 0');
+    for (const n of office) assert.deepEqual(tools.find((t) => t.name === `mcp__crew__${n}`)?.input_schema.required, ['action'], n);
+    assert.deepEqual(tools.find((t) => t.name === 'mcp__crew__office_deals').input_schema.properties.lines.items.required, ['item', 'unit_price']);
+  } finally { await strict.close(); }
+});
+
 test('S4. 엄격 가짜 벤더 규칙 자체 핀 — 타 경로 404·무인증 401(x-goog-api-key만은 인증 아님)·미지 최상위 필드 400·공식 선택 필드 200·xAI required 규칙(3R N3-LOW-1: 규칙이 사라져도 아무도 모르던 자리)', async () => {
   const strict = await startStrictVendor({ vendor: 'xai' });
   const post = (path, body, headers = { 'x-api-key': 'k' }) => fetch(`${strict.base}${path}`, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) });

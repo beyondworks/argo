@@ -62,6 +62,20 @@ const CONTRACT = {
   office_file_list: { pending: '다음 단계 — 외부 에이전트(봇) 문서함 검색. 봇 토큰으로 조직 문서함을 읽는 범위(손님 방·통장사본 가림)부터 정한다' },
   office_file_get: { pending: '다음 단계 — 외부 에이전트(봇) 문서함 한 건 읽기. 통장사본 글자는 주인 1:1에서만이라 봇 응답 범위를 정해야 한다' },
   office_file_write: { pending: '다음 단계 — 외부 에이전트(봇) 문서함 올리기(자리 → Storage → 등록). 봇은 주인 JWT가 없어 Storage 올리기 경로부터 정한다' },
+  // 오피스 할 일·페이지(에이전트 office_work 도구, 2026-10-04 17차 B-6) — Argo 크루는 주인의 기기 세션으로 부른다(src/gateway/office-work.mjs)
+  office_task_list: { pending: '다음 단계 — 외부 에이전트(봇) 할 일 읽기. 봇 토큰으로 주인이 맡은 일만 읽는 범위(남의 일은 그 사람·관리자만)부터 정한다' },
+  office_task_write: { pending: '다음 단계 — 외부 에이전트(봇) 할 일 쓰기. 크루는 주인이 맡은 일만 바꾸고 source에 크루를 남기는 규칙을 봇 토큰에 맞춘다' },
+  office_task_category_list: { pending: '다음 단계 — 외부 에이전트(봇) 할 일 분류 읽기. 할 일 읽기와 같은 단계에서 연다' },
+  office_org_people: { pending: '다음 단계 — 외부 에이전트(봇) 조직 사람 이름 읽기(할 일 맡은 사람 표시). 할 일 읽기와 같은 단계에서 연다' },
+  office_page_list_access: { pending: '다음 단계 — 외부 에이전트(봇) 페이지 목록. 비공개·초대 페이지를 여럿이 보는 방에 내지 않는 판정을 봇 응답에 맞춘다' },
+  office_pages: { pending: '다음 단계 — 외부 에이전트(봇) 페이지 본문 읽기(RLS office_page_access). 페이지 목록과 같은 단계에서 연다' },
+  office_page_create: { pending: '다음 단계 — 외부 에이전트(봇) 페이지 만들기. 최상위는 관리자만이라 봇 주인의 역할을 넘겨받는 방식이 필요하다' },
+  office_page_save: { pending: '다음 단계 — 외부 에이전트(봇) 페이지 고치기. 버전 충돌 검사와 글자 아닌 블록 보존 규칙을 봇 경로에도 둔다' },
+  // 오피스 거래처·거래(에이전트 office_deals 도구, 17차 B-7) — Argo 크루는 주인의 기기 세션으로 부른다(src/gateway/office-deals.mjs)
+  office_business_read: { pending: '다음 단계 — 외부 에이전트(봇) 거래처·거래 읽기. 계좌·가림 칸을 여럿이 보는 방에 내지 않는 판정을 봇 응답에 맞춘다' },
+  office_business_write: { pending: '다음 단계 — 외부 에이전트(봇) 거래처·거래 쓰기. 서버가 관리자인지 판정하므로 봇 주인의 역할을 넘겨받는 방식이 필요하다' },
+  // 오피스 메일(에이전트 office_mail 도구, 17차 B-8) — 메일 본문은 오피스 서버 함수(api/mail)를 주인 JWT로, 계정 목록만 표에서 읽는다(src/gateway/office-mail.mjs)
+  office_mail_accounts: { pending: '다음 단계 — 외부 에이전트(봇) 메일. 봇은 주인 JWT가 없어 오피스 메일 서버 함수를 부를 경로부터 정하고, 보내기는 봇에도 열지 않는다' },
   // Argo PC 전용
   msgr_create_channel: { argoOnly: '크루 1:1 방은 메신저 앱이 만든다 — 봇 1:1 방도 사람이 앱에서 연다' },
   msgr_crew_requests: { argoOnly: 'Argo PC가 크루를 새로 만드는 영입 요청 — 외부 에이전트는 서버 연결(connect) 절차로 추가한다' },
@@ -72,14 +86,14 @@ const CONTRACT = {
   msgr_notification_finish: { argoOnly: 'Argo 데스크톱 알림 경로' },
 };
 // 다음 단계로 미룬 항목 — 늘리거나 줄일 때 이 목록을 같이 고친다(조용히 늘지 않게).
-const PENDING = ['msgr_crew_memory', 'msgr_execution_heartbeat', 'msgr_org_docs', 'msgr_personal_ai_consent_ok', 'msgr_work_heartbeat', 'office_company_read', 'office_company_write', 'office_event_list', 'office_event_write', 'office_file_get', 'office_file_list', 'office_file_write', 'office_people_read', 'office_perf_eval_list', 'office_perf_eval_write'];
+const PENDING = ['msgr_crew_memory', 'msgr_execution_heartbeat', 'msgr_org_docs', 'msgr_personal_ai_consent_ok', 'msgr_work_heartbeat', 'office_business_read', 'office_business_write', 'office_company_read', 'office_company_write', 'office_event_list', 'office_event_write', 'office_file_get', 'office_file_list', 'office_file_write', 'office_mail_accounts', 'office_org_people', 'office_page_create', 'office_page_list_access', 'office_page_save', 'office_pages', 'office_people_read', 'office_perf_eval_list', 'office_perf_eval_write', 'office_task_category_list', 'office_task_list', 'office_task_write'];
 
 function gatewayCalls() {
   const dir = root('src/gateway');
   const names = new Set();
   for (const f of readdirSync(dir).filter((f) => f.endsWith('.mjs'))) {
     const src = readFileSync(`${dir}/${f}`, 'utf8');
-    for (const m of src.matchAll(/rpc\('([a-z_]+)'|from\('(msgr_[a-z_]+)'\)/g)) names.add(m[1] ?? m[2]);
+    for (const m of src.matchAll(/rpc\('([a-z_]+)'|from\('((?:msgr|office)_[a-z_]+)'\)/g)) names.add(m[1] ?? m[2]); // 표 직접 읽기: 메신저·오피스 표
   }
   return names;
 }

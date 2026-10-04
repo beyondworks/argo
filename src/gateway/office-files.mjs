@@ -11,7 +11,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { basename, extname, isAbsolute, resolve } from 'node:path';
 import { audienceOf, ONLY_DM, mixedRefusal } from './office-audience.mjs';
 
-const DEFAULT_ORIGIN = 'https://argo-office.vercel.app'; // 운영 오피스(9/30 운영 반영)
+export const DEFAULT_ORIGIN = 'https://argo-office.vercel.app'; // 운영 오피스(9/30 운영 반영) — 메일 도구(office-mail.mjs)도 같은 주소를 쓴다
 export const filesDeps = {
   session: async () => (await import('./msgr.mjs')).sessionClient(),
   jwt: async () => (await (await import('../devicesession.mjs')).getFreshDeviceSession())?.access_token ?? null,
