@@ -37,5 +37,6 @@ test('Composer는 이 줄을 OutsideRow로 그리고 버튼 상태를 outsideRow
   const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
   assert.match(app, /<OutsideRow key=\{c\.id\} text=\{/);
   assert.match(app, /request=\{view\.request\} requestLabel=\{t\('mention\.outside\.request'\)\} onRequest=\{\(\) => requestAdd\(c\)\} \/>/);
-  assert.doesNotMatch(app, /className="btn sm ghost"[^>]*requestAdd\(c\)/, '방 밖 안내 버튼을 App.jsx에서 직접 그리지 않는다');
+  assert.equal(app.match(/requestAdd\(c\)/g)?.length, 1, '방 밖 안내의 추가 요청은 OutsideRow 한 곳에서만 부른다 — 손으로 짠 버튼을 더하지 않는다(5차 검수: [^>]*는 => 에서 멈춰 못 잡았다)');
+  assert.match(app, /onDm=\{can && onOutsideDm \? \(\) => \{ const body = outside\.body; setOutside\(null\); onOutsideDm\(c\.id, body\); \} : null\}/, '[1:1로 시키기]는 시킬 수 있을 때(can)만 — 주인이 막은 에이전트에 1:1 길을 열지 않는다');
 });
