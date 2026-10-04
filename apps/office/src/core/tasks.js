@@ -69,6 +69,10 @@ export const taskAction = (space, action, data, patch) => trackWrite(async () =>
 // 자정을 넘겼으면 '오늘'을 다시 계산하게 알린다(LOW 6)
 const shown = new Map(), tried = {}; // 할 일을 보여 주는 곳 수(공간마다), 탭 복귀로 마지막에 읽으려 한 때
 const day = makeDayClock();
+// 개인 공간에 겹친 조직 할 일 다시 읽기 — 그 행을 읽어 둔 곳(views/data.js)이 넣는다. 개인 공간이 떠 있으면 같은 탭 복귀에 같이 부른다
+// (10/4 실제 계정 점검: 다른 기기에서 나에게 맡긴 조직 할 일이 탭 복귀 뒤에도 배지·챙길 것·현황 카드에 안 들어왔다 — 18차 LOW 8)
+let orgRefetch = null;
+export const setOrgRefetch = (fn) => { orgRefetch = fn; };
 onTabReturn(() => {
   if (!document.hidden && day.check()) emit();
   if (getMode() !== 'signedIn') return;
@@ -78,6 +82,7 @@ onTabReturn(() => {
     tried[space] = now;
     loadTasks(space, true, true);
   }
+  if (shown.has('me')) orgRefetch?.(writing > 0);
 });
 const useShown = (space, on = true) => useEffect(() => { if (!on) return undefined; shown.set(space, (shown.get(space) ?? 0) + 1); return () => { const n = shown.get(space) - 1; if (n > 0) shown.set(space, n); else shown.delete(space); }; }, [space, on]);
 

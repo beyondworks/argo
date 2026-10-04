@@ -5,7 +5,8 @@
 // 바뀐 기록(office_task_history)은 할 일 패널을 열 때·고친 뒤에만 읽는다.
 import { useEffect, useMemo, useSyncExternalStore } from 'react';
 import { ME, SPACES, canManage, getMode } from '../core/session.js';
-import { useTasks, loadTasks, taskAction, rpc, orgOf, trackWrite, shareSampleTasks, shareOrgTasks, taskError } from '../core/tasks.js';
+import { useTasks, loadTasks, taskAction, rpc, orgOf, trackWrite, shareSampleTasks, shareOrgTasks, setOrgRefetch, taskError } from '../core/tasks.js';
+import { refetchDue } from '../core/refetch.js';
 import { viewRows, taskOrgKeys } from '../core/task-model.js';
 import { writeEvent, refreshEvents, loadPeople } from '../calendar/api.js';
 import { writableOrgs, idOf } from '../calendar/shared.js';
@@ -22,16 +23,28 @@ const ownOrgRows = () => { if (orgOwner !== ME.id) { orgRows = new Map(); orgOwn
 const listeners = new Set();
 const emit = () => { version++; listeners.forEach((l) => l()); };
 const subscribe = (l) => { listeners.add(l); return () => listeners.delete(l); };
-const loading = new Map();
+const loading = new Map(), readAt = new Map(); // 계정|조직 키 → 진행 중인 읽기, 마지막으로 읽으려 한 때(탭 복귀 1분 간격)
 function loadOrg(space, force = false) {
   const map = ownOrgRows(), owner = ME.id, key = `${owner}|${space}`;
   if (!force && (map.has(space) || loading.has(key))) return loading.get(key);
+  readAt.set(key, Date.now());
+  // 더 새 읽기(쓰기 뒤 다시 읽기 등)가 시작됐으면 늦게 온 이 응답은 버린다 — 막 고친 값을 옛 값으로 덮지 않게
   const p = rpc('office_task_list', { p_org: orgOf(space) })
-    .then((rows) => { if (owner === ME.id) map.set(space, rows ?? []); }, () => { if (owner === ME.id && !map.has(space)) map.set(space, []); })
+    .then((rows) => { if (owner === ME.id && loading.get(key) === p) map.set(space, rows ?? []); }, () => { if (owner === ME.id && !map.has(space)) map.set(space, []); })
     .finally(() => { if (loading.get(key) === p) loading.delete(key); if (owner === ME.id) shareOrgTasks(space, map.get(space)); emit(); }); // 메뉴 배지·챙길 것도 이 행으로 센다(18차 검수 M4 — 새 읽기 없이)
   loading.set(key, p);
   return p;
 }
+// 탭 복귀(core/tasks.js가 개인 공간이 떠 있을 때 부른다): 이미 읽어 둔 조직 할 일을 조직마다 1분에 한 번까지 다시 읽는다. 읽기만, 쓰는 중이면 건너뜀.
+// 부하: 사람 1명 × 속한 조직 수 = 탭 복귀 때 분당 최대 조직 수만큼 office_task_list, 쓰기 0
+setOrgRefetch((writing) => {
+  if (sample()) return;
+  const now = Date.now();
+  for (const k of ownOrgRows().keys()) {
+    const key = `${ME.id}|${k}`;
+    if (refetchDue({ hidden: document.hidden, now, last: readAt.get(key), busy: writing || loading.has(key) })) loadOrg(k, true);
+  }
+});
 
 /** 이 공간 보기에 들어갈 할 일(+ space 키). 개인 공간은 내 할 일 + 속한 조직(손님 제외)에서 나에게 맡겨진 할 일 — 메뉴 배지·챙길 것과 같은 함수(core/task-model.js viewRows) */
 export function useViewTasks(space) {

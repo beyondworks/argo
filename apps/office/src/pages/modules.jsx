@@ -10,8 +10,8 @@ import { useStore, toggleTodo, crewName, crewsIn, approvalsIn } from '../core/st
 import { baseOf, mailMenu, pageMenu, fileMenu, recordMenu } from '../core/commands.js';
 import { SPACES, ME, useSession } from '../core/session.js';
 import { looksLikeAddr } from '../core/hide-all.js';
-import { useTasks } from '../core/tasks.js';
-import { kstDay, groupTasks } from '../core/task-model.js';
+import { useTasks, useTaskRows, useTaskDay } from '../core/tasks.js';
+import { groupTasks } from '../core/task-model.js';
 import { fmtBytes } from '../core/files.js';
 import { pickCards, statsFor, MAX_CARDS } from '../core/stats.js';
 
@@ -141,7 +141,8 @@ function useStatValues(space) {
   const approvals = useStore((s) => s.approvals), work = useStore((s) => s.work), mails = useStore((s) => s.mails);
   const decisions = useStore((s) => s.decisions), pages = useStore((s) => s.pages), done = useStore((s) => s.todosDone);
   const crewList = useStore((s) => s.crews), outputs = useStore((s) => s.outputs);
-  const mode = useSession(), tasks = useTasks(space).rows; // 로그인하면 서버에 저장된 실제 할 일로 센다(성과 기록 1단계)
+  const mode = useSession(); useTasks(space); // 로그인하면 서버에 저장된 실제 할 일로 센다(성과 기록 1단계)
+  const tasks = useTaskRows(space), today = useTaskDay(); // 세는 행·날짜는 메뉴 배지·챙길 것과 같다 — 개인 공간은 조직에서 나에게 맡겨진 일도(18차 검수 M4에서 빠졌던 카드, 10/4 실제 계정 점검)
   return useMemo(() => {
     const base = baseOf(space), ok = (text, icon) => ({ tone: 'ok', text, icon }), warn = (text, icon) => ({ tone: 'warn', text, icon });
     const ap = approvals.filter(approvalsIn(space)), high = ap.filter((a) => a.risk === 'high').length;
@@ -158,14 +159,14 @@ function useStatValues(space) {
       mail: { n: unread, badge: unread ? warn(t('stat.b.unread'), 'mail') : ok(t('stat.b.none'), 'mail'), main: unread ? t('stat.mailCheck') : t('stat.mailDone'), sub: t('stat.mailSub'), to: '/me/mail' },
       crews: { n: working, total: cs.length, badge: asking ? warn(t('stat.b.check'), 'person') : ok(t('stat.b.normal'), 'person'), main: t('stat.crewWorking'), sub: t('stat.crewAsk', { n: asking }) },
       todos: mode === 'signedIn' && tasks ? (() => {
-        const g = groupTasks(tasks, kstDay(), ME.id), open = g.overdue.length + g.today.length + g.week.length + g.later.length + g.none.length;
+        const g = groupTasks(tasks.filter((r) => !r.cancelled_at), today, ME.id), open = g.overdue.length + g.today.length + g.week.length + g.later.length + g.none.length;
         return { n: open, badge: g.overdue.length ? warn(t('stat.b.late'), 'check') : ok(t('stat.b.none'), 'check'), main: t('stat.taskMain', { late: g.overdue.length, today: g.today.length }), sub: t('stat.tasksSub') };
       })() : { n: todos.length - todoDone, badge: todos.length - todoDone ? warn(t('stat.b.open'), 'check') : ok(t('stat.b.none'), 'check'), main: t('stat.todoDone', { done: todoDone, total: todos.length }), sub: t('stat.todosSub') },
       decisions: { n: dec.length, badge: ok(t('stat.b.week'), 'check'), main: t('stat.decided', { a: approved, r: dec.length - approved }), sub: t('stat.weekSub'), to: `${base}/decisions` },
       outputs: { n: out.length, badge: ok(t('stat.b.week'), 'file'), main: fmtBytes(out.reduce((s, f) => s + f.bytes, 0)), sub: t('stat.weekSub'), to: `${base}/outputs` },
       pages: { n: pg.length, badge: ok(t('stat.b.wiki'), 'doc'), main: t('stat.pagesRecent', { n: pgRecent }), sub: t(space === 'me' ? 'stat.pagesMe' : 'stat.pagesOrg') },
     };
-  }, [approvals, work, mails, decisions, pages, done, crewList, outputs, space, mode, tasks]);
+  }, [approvals, work, mails, decisions, pages, done, crewList, outputs, space, mode, tasks, today]);
 }
 
 /** 현황 카드(유건 9/27) — 카드마다 지표를 고른다. 1~5장, 조직 홈은 관리자만 바꾼다(구조는 공유). */
