@@ -58,7 +58,7 @@ import { bindPullRefresh, enteredReady } from './pull-refresh.mjs';
 import { haptic } from './haptics.js';
 import { refreshMessageWindow, mergeRefreshedMessages } from './refresh-messages.mjs';
 import { writeScreenSnapshot, consumeScreenSnapshot } from './phone-screen-snapshot.mjs';
-import { mentionCandidates, mentionsFromBody, ALL_RE, outsideCrewMentions, canInstructCrew, crewOrder, outsideAddDone, outsideRowView } from './mention-candidates.mjs';
+import { mentionCandidates, mentionsFromBody, ALL_RE, outsideCrewMentions, canInstructCrew, crewOrder, withoutCopies, outsideAddDone, outsideRowView } from './mention-candidates.mjs';
 import { dmMentionCrews, mentionPopupCrews, setDmRecipient, dmDeliveryMentions, dmUnavailableRecipients, relayCaptionKey, relayToLabel, relayToNames, relayNoticeView } from './dm-delivery.mjs';
 import { acceptFiles, withoutFile } from './attach-files.mjs';
 import { MediaAttachments, LinkCard, linkify, onLinkClick } from './media.jsx'; // 첨부 말풍선·크게 보기·링크 카드(2026-10-02)
@@ -172,11 +172,11 @@ const markTurnHover = (e) => {
 const dayKey = (iso) => new Date(iso).toDateString();
 /** 서버 거절 원문 → 사람 문구(검수 M-5: RLS·check 제약 원문이 그대로 뜨던 자리들의 공통 매핑). 모르는 오류는 원문 유지(정직). */
 const friendlyErr = (msg, t) => /msgr_session_refreshing/.test(msg) ? t('err.sessionRefreshing') : /msgr_crew_remove_owner_only/.test(msg) ? t('err.crewRemoveOwnerOnly') : /row-level security/.test(msg) ? t('err.denied') : /_check\b|violates check constraint/.test(msg) ? t('err.invalid') : /msgr_seat_limit/.test(msg) ? t('seat.limit') : /msgr_approver_not_member/.test(msg) ? t('set.policy.approverNotMember') : /msgr_org_locked|read-only/.test(msg) ? t('org.locked.short') : /msgr_room_limit/.test(msg) ? t('room.limit') : msg; // 무료 인원 한도(개인 공간 2026-09-30)
+// 에이전트 넣기(msgr_crew_join) 오류 — 방 설정창·레일 파견·방 밖 안내·개인 그룹이 같이 쓴다(검수 #826 LOW-5: 방 밖 안내는 서버 코드 원문이 보였다).
+const joinErr = (msg, t) => /msgr_channel_personal_blocked/.test(msg) ? t('err.channelPersonalBlocked') : /msgr_request_recently_rejected/.test(msg) ? t('ch.crew.join.cooldown') : /msgr_forbidden/.test(msg) ? t('err.denied') : /msgr_bad_member/.test(msg) ? t('err.crewUnavailable') : friendlyErr(msg, t);
 // 크루 작업 중단 전용 오류 매핑(재검수 2026-09-26 L-c) — friendlyErr을 그대로 넓히면 다른 화면의 msgr_not_allowed·미배포 함수
 // 오류 표시까지 바뀐다. requestStop 호출부에서만 쓴다: msgr_not_allowed는 권한 문구로, 마이그레이션 미적용으로 RPC 자체가
 // 없을 때(Could not find the function 등, PostgREST 스키마 캐시 오류)는 Postgres 원문 대신 일반 안내로 가린다(분리 검수 L-4).
-// 에이전트 넣기(msgr_crew_join) 오류 — 방 설정창·레일 파견·방 밖 안내가 같이 쓴다(검수 #826 LOW-5: 방 밖 안내는 서버 코드 원문이 보였다).
-const joinErr = (msg, t) => /msgr_channel_personal_blocked/.test(msg) ? t('err.channelPersonalBlocked') : /msgr_request_recently_rejected/.test(msg) ? t('ch.crew.join.cooldown') : /msgr_forbidden/.test(msg) ? t('err.denied') : /msgr_bad_member/.test(msg) ? t('err.crewUnavailable') : friendlyErr(msg, t);
 const stopErr = (msg, t) => /msgr_not_allowed/.test(msg) ? t('err.denied') : /Could not find the function|schema cache|function .* does not exist|PGRST20[0-9]/i.test(msg) ? t('err.generic') : friendlyErr(msg, t);
 /** 오늘이면 시각만, 아니면 날짜+시각 — 초대 만료(7일 뒤)·노드 마지막 응답·기록처럼 며칠 전후일 수 있는 시각용(시간만 보이면 "오늘 02:31"로 읽힌다 — I-4 실측) */
 const fmtWhen = (iso, lang) => { const d = new Date(iso); const time = fmtTs(iso, lang); if (d.toDateString() === new Date().toDateString()) return time;
@@ -1124,7 +1124,7 @@ function Shell({ session }) {
     if (!current()) return;
     if (joined) joinedRef.current = new Set(joined.map((r) => r.channel_id)); // 늦게 온 옛 요청은 위 current()가 이미 버렸다 — 참여 버튼의 낙관적 추가를 덮지 않는다
     loadedOrg.current = id;
-    const fetchedCrews = stampFetched(allCrews); // 접속 판정 기준 시각(presence-clock.mjs)
+    const fetchedCrews = stampFetched(withoutCopies(allCrews)); // 충돌 사본은 크루 목록에 넣지 않는다(mention-candidates.mjs withoutCopies) // 접속 판정 기준 시각(presence-clock.mjs)
     setMyAvailable(fetchedCrews.filter((r) => r.status === 'available' && r.owner_user_id === uid).sort((x, y) => x.display_name.localeCompare(y.display_name, 'ko')));
     const crs = fetchedCrews.filter((r) => r.status === 'active');
     const orgRow = orgs.find((o) => o.id === id);
@@ -1152,7 +1152,7 @@ function Shell({ session }) {
       const friendsList = await q(supabase.rpc('msgr_my_friends')).catch(() => []);
       if (!current()) return;
       // 개인 공간 에이전트(2026-09-30): 내 개인 크루 + 내가 든 개인 방의 크루(친구 것 포함 — 표시용 열만). 옛 서버(함수 없음)면 크루 없이 종전대로.
-      const roomCrews = stampFetched((await q(supabase.rpc('msgr_personal_room_crews')).catch(() => [])).filter((c) => c.status === 'active'));
+      const roomCrews = stampFetched(withoutCopies(await q(supabase.rpc('msgr_personal_room_crews')).catch(() => [])).filter((c) => c.status === 'active'));
       if (!current()) return;
       const accepted = friendsList.filter((f) => f.status === 'accepted');
       const chs = rows.map((r) => ({ // 그룹 방(친구 여럿, 유건 2026-09-17)은 members가 셋 이상 — 이름은 dmName이 구성원으로 짓는다
@@ -2052,7 +2052,7 @@ function Shell({ session }) {
     if (pins) setAgentPins(new Set(pins.map((p) => `${p.org_id}:${p.target_id}`)));
     if (own === null) return;
     const wsOf = new Map(own.filter((c) => !c.org_id).map((c) => [c.id, c.ws_id]));
-    setMyAgents(stampFetched([...(personal ?? []).filter((c) => c.owner_user_id === uid && c.status === 'active').map((c) => ({ ...c, org_id: null, ws_id: c.ws_id ?? wsOf.get(c.id) ?? null })), ...own.filter((c) => c.org_id)]));
+    setMyAgents(stampFetched([...withoutCopies(personal ?? []).filter((c) => c.owner_user_id === uid && c.status === 'active').map((c) => ({ ...c, org_id: null, ws_id: c.ws_id ?? wsOf.get(c.id) ?? null })), ...withoutCopies(own).filter((c) => c.org_id)]));
   }, [uid]);
   // 에이전트 즐겨찾기 — 조직 행은 기존 에이전트 즐겨찾기(msgr_target_prefs, 데스크톱 레일 별과 같은 행), 개인 행은 이 기기(AGENT_FAV_KEY). 누를 때만 쓴다(같은 값은 다시 쓰지 않는다)
   const [agentPins, setAgentPins] = useState(() => new Set());
@@ -2091,7 +2091,7 @@ function Shell({ session }) {
         const cid = people.length >= 2 ? await q(supabase.rpc('msgr_dm_personal_group', { targets: people, title: people.map(nameOfUser).join(', ').slice(0, 76) }))
           : people.length === 1 ? await q(supabase.rpc('msgr_dm_personal', { target: people[0] })) : await q(supabase.rpc('msgr_dm_personal_crew', { crew: agentIds.shift() }));
         const failed = [];
-        for (const id of agentIds) { const r = await supabase.rpc('msgr_crew_join', { ch: cid, crew: id }); if (r.error) failed.push(`${crewOf(id)?.display_name ?? '?'}: ${friendlyErr(r.error.message, t)}`); }
+        for (const id of agentIds) { const r = await supabase.rpc('msgr_crew_join', { ch: cid, crew: id }); if (r.error) failed.push(`${crewOf(id)?.display_name ?? '?'}: ${joinErr(r.error.message, t)}`); }
         if (failed.length) setErr(failed.join('\n'));
         await loadPersonal(); if (activeOrg.current !== PERSONAL) return null; setChId(cid); setPage('chat'); setRail(false); return cid;
       } catch (e) { setErr(/msgr_group_blocked_pair/.test(e.message) ? t('dm.group.err.blocked') : /msgr_not_friend/.test(e.message) ? t('dm.group.err.notFriend') : e.message); if (activeOrg.current === PERSONAL) setDmGroup(true); return null; }
@@ -6489,7 +6489,7 @@ function Composer({ broadcast = null, onCrewJoined = null, outsideDmPersonal = n
     setRecipientLoad('loading');
     q(supabase.rpc('msgr_dm_candidates', { p_channel: chId })).then((rows) => {
       if (!Array.isArray(rows)) throw new Error('Invalid DM recipient response');
-      if (active) { setDmCandidates(rows); setRecipientLoad('ready'); }
+      if (active) { setDmCandidates(withoutCopies(rows)); setRecipientLoad('ready'); }
     }).catch(() => { if (active) setRecipientLoad('error'); });
     return () => { active = false; };
   }, [isDm, chId, recipientRetry]);
@@ -6685,8 +6685,9 @@ function Composer({ broadcast = null, onCrewJoined = null, outsideDmPersonal = n
       {awayNote && <div className="msgr-replychip msgr-awaychip" role="status"><span className="q">{awayNote.map((c) => t('mention.away', { name: c.display_name })).join(' ')}</span><button type="button" className="msgr-titlebtn" onClick={() => setAwayNote(null)} aria-label={t('ui.close')}><I name="x" size={13} /></button></div>}
       {outside && <div className="msgr-outsidechip" role="status"><div className="rows">{outside.crews.map((c) => { const can = canInstructCrew(c, uid); const view = outsideRowView({ crew: c, uid, done: outside.done[c.id], isDm, can }); return (
         <div key={c.id} className="row"><span className="q">{(lang === 'en' ? (x) => x : koJosa)(t(view.line, { name: c.display_name }))}{view.denied && ` ${t('mention.outside.denied')}`}{view.suffix && ` · ${t(view.suffix)}`}</span>
+          {/* [이 방에 추가 요청]을 [1:1로 시키기] 앞에 둔다 — 넣은 뒤 이 버튼이 사라져도 1:1 버튼이 그 자리로 밀려오지 않는다(재검수 #826 N2: 더블클릭 둘째 번이 1:1을 열었다) */}
+          {view.request && <button type="button" className="btn sm ghost" disabled={view.requesting} onClick={() => requestAdd(c)}>{t(view.requesting ? 'mention.outside.requesting' : 'mention.outside.request')}</button>}
           {can && onOutsideDm && <button type="button" className="btn sm" onClick={() => { const body = outside.body; setOutside(null); onOutsideDm(c.id, body); }}>{t(outsideDmPersonal?.(c) ? 'mention.outside.dm.personal' : 'mention.outside.dm')}</button>}
-          {view.request && <button type="button" className="btn sm ghost" onClick={() => requestAdd(c)}>{t('mention.outside.request')}</button>}
         </div>); })}</div><button type="button" className="msgr-titlebtn" onClick={() => setOutside(null)} aria-label={t('ui.close')}><I name="x" size={13} /></button></div>}
       {replyTo && <div className="msgr-replychip" role="status"><I name="reply" size={13} /><span className="q"><b>{t('composer.replyTo', { name: replyTo.who })}</b> {replyTo.body}</span><button type="button" className="x" onClick={() => { delivery.setReplyTo(null); ta.current?.focus(); }} aria-label={t('composer.replyCancel')} title={t('composer.replyCancel')}><I name="x" size={12} /></button></div>}
       {phone && fileChipsNode}

@@ -76,7 +76,6 @@ test('outsideCrewMentions: 방 밖 조직 에이전트만, 방 안 이름·동�
   const pick = (org) => outsideCrewMentions('@페퍼 봐 줘', room, org, 'me').map((c) => c.id);
   const p = (id, o) => ({ id, display_name: '페퍼', owner_user_id: 'me', status: 'active', slug: 'pepper', created_at: '2026-09-01', ...o });
   assert.deepEqual(pick([p('theirs', { owner_user_id: 'x', created_at: '2026-01-01' }), p('mine')]), ['mine'], '내 것이 먼저');
-  assert.deepEqual(pick([p('copy', { slug: 'pepper.conflict-mac-1759000000000', created_at: '2026-01-01' }), p('real')]), ['real'], '충돌 사본이 아닌 것이 먼저');
   assert.deepEqual(pick([p('new', { created_at: '2026-10-04' }), p('old')]), ['old'], '그다음은 먼저 만든 것');
   assert.equal(canInstructCrew({ owner_user_id: 'me', allow: 'owner' }, 'me'), true, '주인');
   assert.equal(canInstructCrew({ owner_user_id: 'x', allow: 'all' }, 'me'), true, '모두');
@@ -84,19 +83,20 @@ test('outsideCrewMentions: 방 밖 조직 에이전트만, 방 안 이름·동�
   assert.equal(canInstructCrew({ owner_user_id: 'x', allow: 'owner' }, 'me'), false, '주인만');
 });
 
-// 검수 #826 MEDIUM-2: 같은 이름이 방 안에 둘이면 방 안 @이름은 목록 앞의 크루가 받는다 — 목록 순서에서 사본을 진짜 뒤로 둔다.
-test('crewOrder: 회사 크루 먼저, 이름순, 같은 이름이면 충돌 사본을 뒤로 — 방 안 @페퍼는 진짜가 받는다', async () => {
-  const { crewOrder, mentionsFromBody } = await import('../src/mention-candidates.mjs');
+// 재검수 #826 MEDIUM-2: 정렬만으로는 1:1 후보·@ 팝업·파견 전 목록·내 에이전트에 사본이 남았다 — 조회 단계에서 뺀다(withoutCopies).
+test('withoutCopies·crewOrder: 충돌 사본은 목록에서 빠지고, 남은 목록은 회사 크루 먼저·이름순 — @페퍼는 진짜가 받는다', async () => {
+  const { crewOrder, withoutCopies, mentionsFromBody } = await import('../src/mention-candidates.mjs');
   const c = (id, display_name, o = {}) => ({ id, display_name, slug: id, ...o });
   const list = [c('copy', '페퍼', { slug: 'pepper.conflict-mac-1759000000000' }), c('real', '페퍼', { slug: 'pepper' }), c('b', '가나'), c('co', '하늘', { company: true })];
-  const sorted = [...list].sort(crewOrder((x) => !!x.company)).map((x) => x.id);
-  assert.deepEqual(sorted, ['co', 'b', 'real', 'copy']);
-  const cand = [...list].sort(crewOrder((x) => !!x.company)).map((x) => ({ kind: 'crew', id: x.id, name: x.display_name }));
+  const sorted = withoutCopies(list).sort(crewOrder((x) => !!x.company)).map((x) => x.id);
+  assert.deepEqual(sorted, ['co', 'b', 'real'], '사본은 빠지고 회사 크루 먼저·이름순');
+  assert.equal(withoutCopies(null), null, '실패한 조회(null)는 그대로 — 호출부가 null을 판정한다');
+  const cand = withoutCopies(list).sort(crewOrder((x) => !!x.company)).map((x) => ({ kind: 'crew', id: x.id, name: x.display_name }));
   assert.deepEqual(mentionsFromBody('@페퍼 봐 줘', cand), [{ kind: 'crew', id: 'real' }]);
 });
 
 // 검수 #826 LOW-3: Composer의 [이 방에 추가] 결과 판정이 CI 테스트 없이 App.jsx 안에만 있었다 — 순수 함수로 빼서 잠근다.
-test('outsideAddDone·outsideRowView: 넣은 뒤엔 결과 줄만, 요청은 종전 줄 + "요청했어요", 응답 전에는 버튼을 숨긴다', async () => {
+test('outsideAddDone·outsideRowView: 넣은 뒤엔 결과 줄만, 요청은 종전 줄 + "요청했어요", 응답 전에는 같은 자리에 꺼진 버튼', async () => {
   const { outsideAddDone, outsideRowView } = await import('../src/mention-candidates.mjs');
   assert.equal(outsideAddDone('joined'), 'joined');
   assert.equal(outsideAddDone('already'), 'already');
@@ -104,11 +104,11 @@ test('outsideAddDone·outsideRowView: 넣은 뒤엔 결과 줄만, 요청은 종
   assert.equal(outsideAddDone(null), 'requested', '모르는 응답은 요청으로 본다(종전과 같다)');
   const mine = { owner_user_id: 'me' };
   const v = (done, o = {}) => outsideRowView({ crew: mine, uid: 'me', done, isDm: false, can: true, ...o });
-  assert.deepEqual(v(undefined), { line: 'mention.outside', denied: false, suffix: null, request: true });
-  assert.deepEqual(v('pending'), { line: 'mention.outside', denied: false, suffix: null, request: false }, '응답 전에는 버튼을 숨긴다(두 번 누르면 늦은 already가 덮었다)');
-  assert.deepEqual(v('joined'), { line: 'mention.outside.joined', denied: false, suffix: null, request: false });
-  assert.deepEqual(v('already'), { line: 'mention.outside.already', denied: false, suffix: null, request: false });
-  assert.deepEqual(v('requested'), { line: 'mention.outside', denied: false, suffix: 'mention.outside.requested', request: false });
+  assert.deepEqual(v(undefined), { line: 'mention.outside', denied: false, suffix: null, request: true, requesting: false });
+  assert.deepEqual(v('pending'), { line: 'mention.outside', denied: false, suffix: null, request: true, requesting: true }, '응답 전에는 같은 자리에 꺼진 버튼 — 지우면 [1:1로 시키기]가 밀려와 두 번째 클릭이 1:1을 열었다(재검수 N2)');
+  assert.deepEqual(v('joined'), { line: 'mention.outside.joined', denied: false, suffix: null, request: false, requesting: false });
+  assert.deepEqual(v('already'), { line: 'mention.outside.already', denied: false, suffix: null, request: false, requesting: false });
+  assert.deepEqual(v('requested'), { line: 'mention.outside', denied: false, suffix: 'mention.outside.requested', request: false, requesting: false });
   assert.equal(v(undefined, { isDm: true }).request, false, '1:1 방에는 [이 방에 추가]가 없다');
   assert.equal(v(undefined, { crew: { owner_user_id: 'x' } }).request, false, '남의 에이전트는 주인만 데려온다');
   assert.equal(v(undefined, { can: false }).denied, true);

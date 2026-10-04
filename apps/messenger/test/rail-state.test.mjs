@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequestGate, createPreferenceQueue, reorderFavorites } from '../src/rail-state.mjs';
 import { stampFetched } from '../src/presence-clock.mjs';
-import { crewOrder } from '../src/mention-candidates.mjs'; // loadOrg의 크루 목록 순서(같은 이름이면 충돌 사본을 뒤로)
+import { crewOrder, withoutCopies } from '../src/mention-candidates.mjs'; // loadOrg의 크루 목록 순서·충돌 사본 제외
 
 test('old organization response and old same-org refresh cannot apply', () => {
   let org = 'a'; const gate = createRequestGate(() => org);
@@ -48,7 +48,7 @@ test('Shell loadOrg ignores late A data, available crews, and errors after switc
   } };
   const setters = Object.fromEntries(['Channels', 'PreviewChannels', 'Members', 'Crews', 'MyAvailable', 'Ent', 'Policy', 'DmMembers'].map((key) => [`set${key}`, (value) => { state[key] = value; }]));
   const joinedRef = { current: new Set(['A-channel', 'B-channel']) };
-  const deps = { joinedRef, supabase, q: async (query) => await query, uid: 'me', activeOrg, loadedOrg, orgRequests: { current: createRequestGate(() => activeOrg.current) }, orgs: [{ id: 'A' }, { id: 'B' }], crewTier: () => '', readLastCh: () => null, faceCol: { missingAt: 0 }, stampFetched, crewOrder, ...setters, setChId: (f) => { state.chId = f(state.chId); } };
+  const deps = { joinedRef, supabase, q: async (query) => await query, uid: 'me', activeOrg, loadedOrg, orgRequests: { current: createRequestGate(() => activeOrg.current) }, orgs: [{ id: 'A' }, { id: 'B' }], crewTier: () => '', readLastCh: () => null, faceCol: { missingAt: 0 }, stampFetched, crewOrder, withoutCopies, ...setters, setChId: (f) => { state.chId = f(state.chId); } };
   const loadOrg = new Function(...Object.keys(deps), `return (${app.slice(start, end)});`)(...Object.values(deps));
   const settle = (id) => { for (const p of pending.filter((p) => p.id === id)) p.done(p.table === 'msgr_channels' ? [{ id: `${id}-channel`, kind: 'public' }] : p.table === 'msgr_crews' ? [{ id: `${id}-crew`, owner_user_id: 'me', display_name: id, status: 'available' }] : p.table === 'msgr_org_members' ? [{ user_id: `${id}-person` }] : { data: null }); };
   const a = loadOrg('A'); activeOrg.current = 'B'; const b = loadOrg('B');
@@ -76,7 +76,7 @@ test('옛 서버(face 열 없음) 판정은 10분만 기억한다 — 라이브 
         return Promise.resolve({ data: null }).then(res, rej); } }; } };
   const setters = Object.fromEntries(['Channels', 'PreviewChannels', 'Members', 'Crews', 'MyAvailable', 'Ent', 'Policy', 'DmMembers'].map((k) => [`set${k}`, (v) => { state[k] = v; }]));
   const activeOrg = { current: 'A' }; const faceCol = { missingAt: 0 };
-  const deps = { stampFetched, crewOrder, joinedRef: { current: new Set() }, supabase, q: async (x) => await x, uid: 'me', activeOrg, loadedOrg: { current: null }, orgRequests: { current: createRequestGate(() => activeOrg.current) }, orgs: [{ id: 'A' }], crewTier: () => '', readLastCh: () => null, faceCol, ...setters, setChId: () => {} };
+  const deps = { stampFetched, crewOrder, withoutCopies, joinedRef: { current: new Set() }, supabase, q: async (x) => await x, uid: 'me', activeOrg, loadedOrg: { current: null }, orgRequests: { current: createRequestGate(() => activeOrg.current) }, orgs: [{ id: 'A' }], crewTier: () => '', readLastCh: () => null, faceCol, ...setters, setChId: () => {} };
   const loadOrg = new Function(...Object.keys(deps), `return (${app.slice(start, end)});`)(...Object.values(deps));
   await loadOrg('A');
   assert.deepEqual(selects, [true, false], '옛 서버: face로 한 번 실패 → face 없이 다시 읽음'); assert.equal(state.Crews[0].face, null);
@@ -87,4 +87,29 @@ test('옛 서버(face 열 없음) 판정은 10분만 기억한다 — 라이브 
   faceCol.missingAt = 0; otherError = 'function public.msgr_is_member(uuid) does not exist';
   await loadOrg('A').catch(() => {}); // 오류 처리는 loadOrg 몫 — 여기서는 판정 플래그만 본다
   assert.equal(faceCol.missingAt, 0, 'face와 무관한 오류는 옛 서버 판정을 켜지 않는다');
+});
+
+// 재검수 #826: loadOrg가 실제로 사본을 빼고 회사 크루 먼저·이름순으로 놓는다 — 예전엔 App.jsx 정렬식 문자열만 고정했다(msgr-settings-card.test.mjs).
+test('loadOrg: 충돌 사본은 크루 목록·파견 전 목록에서 빠지고, 크루는 회사 크루 먼저·이름순', async () => {
+  const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
+  const start = app.indexOf('const loadOrg = useCallback(') + 'const loadOrg = useCallback('.length;
+  const end = app.indexOf('\n  }, [orgs, uid]);', start) + 4;
+  const state = {};
+  const row = (id, display_name, slug, status = 'active') => ({ id, owner_user_id: 'me', display_name, slug, status });
+  const crews = [row('copy', '페퍼', 'pepper.conflict-mac-1759000000000'), row('real', '페퍼', 'pepper'), row('b', '가나', 'b'), row('co', '하늘', 'co'),
+    row('off', '꺼짐', 'off', 'available'), row('off-copy', '꺼짐', 'off.conflict-mac-1759000000000', 'available')];
+  const supabase = { from(table) {
+    return { select() { return this; }, eq() { return this; }, is() { return this; }, order() { return this; }, in() { return this; }, maybeSingle() { return this; },
+      then(res, rej) {
+        if (table === 'msgr_crews') return Promise.resolve(crews).then(res, rej);
+        if (table === 'msgr_channels') return Promise.resolve([{ id: 'ch', kind: 'public' }]).then(res, rej);
+        if (table === 'msgr_org_members' || table === 'msgr_channel_members') return Promise.resolve([]).then(res, rej);
+        return Promise.resolve({ data: null }).then(res, rej); } }; } };
+  const setters = Object.fromEntries(['Channels', 'PreviewChannels', 'Members', 'Crews', 'MyAvailable', 'Ent', 'Policy', 'DmMembers'].map((k) => [`set${k}`, (v) => { state[k] = v; }]));
+  const activeOrg = { current: 'A' };
+  const deps = { stampFetched, crewOrder, withoutCopies, joinedRef: { current: new Set() }, supabase, q: async (x) => await x, uid: 'me', activeOrg, loadedOrg: { current: null }, orgRequests: { current: createRequestGate(() => activeOrg.current) }, orgs: [{ id: 'A' }], crewTier: (c) => (c.id === 'co' ? 'company' : ''), readLastCh: () => null, faceCol: { missingAt: Date.now() }, ...setters, setChId: () => {}, setOrgId: () => {} };
+  const loadOrg = new Function(...Object.keys(deps), `return (${app.slice(start, end)});`)(...Object.values(deps));
+  await loadOrg('A');
+  assert.deepEqual(state.Crews.map((c) => c.id), ['co', 'b', 'real'], '사본 빠짐 + 회사 크루 먼저·이름순');
+  assert.deepEqual(state.MyAvailable.map((c) => c.id), ['off'], '파견 전 목록에도 사본이 없다(사본을 파견하던 길)');
 });
