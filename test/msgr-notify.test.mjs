@@ -114,8 +114,8 @@ test('시스템 프롬프트 — lean-forge 계약 하나만 ko/en 안전 한계
 
 /** 가짜 메신저 클라이언트 — 멤버십 조회·DM 생성 RPC만 흉내. 크루 beta는 두 조직에 파견(ORG는 1:1 방 있음, ORG2는 없음 → 생성).
     personal: 그 slug의 개인 행(org 없음)을 더한다 — 개인 1:1 방 RPC(msgr_dm_personal_crew)는 personalRpc대로 'ok'(방 PCH)·'error'(서버 거절)·'throw'(연결 실패).
-    orgs: false면 조직 행 없이 개인 행만. counts: 조직 1:1 경로를 탔는지(crewChannels·멤버십 조회 횟수). */
-function fakeMsgr({ archived = false, thirdParty = false, personal = null, personalRpc = 'ok', orgs = true } = {}) {
+    orgs: false면 조직 행 없이 개인 행만. insertFail: 글 넣기가 던진다(23505 아닌 서버 오류·연결 끊김). counts: 조직 1:1 경로를 탔는지(crewChannels·멤버십 조회 횟수). */
+function fakeMsgr({ archived = false, thirdParty = false, personal = null, personalRpc = 'ok', orgs = true, insertFail = false } = {}) {
   const ORG2 = '33333333-3333-4333-8333-333333333333';
   const PCH = '55555555-5555-4555-8555-555555555555'; // 개인 공간의 크루 1:1 방(personal_pair crew:<id>)
   const crews = [
@@ -134,7 +134,7 @@ function fakeMsgr({ archived = false, thirdParty = false, personal = null, perso
   const db = {
     myCrews: async (uid, w) => (uid === 'owner-1' ? crews : []),
     crewChannels: async (crewId) => { counts.crewChannels++; return Object.keys(members).filter((id) => channels[id].kind === 'dm' && members[id].some((m) => m.member_kind === 'crew' && m.member_id === crewId)); },
-    insertMessage: async (row) => { rows.push(row); if (seen.has(row.client_msg_id)) return null; seen.add(row.client_msg_id); return { id: `m${rows.length}` }; },
+    insertMessage: async (row) => { rows.push(row); if (insertFail) throw new Error('insert failed'); if (seen.has(row.client_msg_id)) return null; seen.add(row.client_msg_id); return { id: `m${rows.length}` }; },
   };
   const client = {
     from: (table) => {
@@ -262,6 +262,16 @@ test('msgrNotifyPush — 개인 1:1 방을 열지 못하면(서버 거절·연�
     assert.ok(f.rows.every((x) => x.channel_id !== f.PCH));
     assert.deepEqual(f.rpc.map((x) => x.fn), ['msgr_dm_personal_crew', 'msgr_create_channel'], `${personalRpc}: 개인 방 시도 한 번 뒤 조직 경로(ORG2는 생성)`);
   }
+});
+
+test('msgrNotifyPush — 개인 1:1 방을 확보한 뒤 글 넣기가 실패하면 던지고 조직 방으로 다시 보내지 않는다(응답만 끊긴 경우 두 방에 중복으로 올라가지 않게 — 재검수 #819 L-d)', async () => {
+  const { msgrNotifyPush } = await import('../src/gateway/msgr.mjs');
+  const ws = 'msgr-notify-personal-insert-fail'; await notifyWs(ws);
+  const f = fakeMsgr({ personal: 'beta', insertFail: true });
+  await assert.rejects(msgrNotifyPush({ type: 'job', wsId: ws, slug: 'beta', title: 'T', ok: true, reply: 'r' }, { mode: 'dm' }, { session: f.session, now: 0 }), /insert failed/);
+  assert.deepEqual(f.rows.map((x) => x.channel_id), [f.PCH], '개인 방에 한 번만 시도했다');
+  assert.deepEqual(f.rpc.map((x) => x.fn), ['msgr_dm_personal_crew'], '조직 1:1 방을 만들지 않는다');
+  assert.deepEqual(f.counts, { crewChannels: 0, from: 0 }, '조직 1:1 방을 찾지도 않는다');
 });
 
 test('msgrNotifyPush — 개인 1:1 방을 열지 못했는데 조직 행도 없으면 false, 로그도 보내지 못했다고 사실대로(조직 1:1로 보냈다고 하지 않는다)', async () => {
