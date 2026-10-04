@@ -553,7 +553,9 @@ export async function mirrorInventory(wsId, { db, uid, agents, log = console.err
       if (!r) { inserts.push({ org_id: orgId, owner_user_id: uid, ws_id: wsId, slug: a.slug, display_name: a.name || a.slug, role_text: a.role || null, hosting: 'local', status: 'active', allow: allowDefaults[orgId] ?? 'owner', allow_users: [] }); out.inserted++; continue; }
       if (r.display_name !== (a.name || a.slug) || (r.role_text ?? null) !== (a.role || null)) { await db.updateCrewInfo(r.id, { display_name: a.name || a.slug, role_text: a.role || null }).catch((e) => log('[argo] msgr 인벤토리 갱신 실패:', e.message)); out.updated++; }
     }
-    const gone = [...have.values()].filter((r) => !bySlug.has(r.slug) && r.status === 'available').map((r) => r.id);
+    // 동기화 충돌 사본(`<slug>.conflict-…`, hub.mjs listAgents가 빼는 카드)의 행은 지우지 않는다 — 결재·자동화·실행 기록이 연쇄로 지워진다.
+    // 사본 행 정리는 대상·행 수를 보여 드리고 승인받아 따로 한다(검수 #826 MEDIUM-1).
+    const gone = [...have.values()].filter((r) => !bySlug.has(r.slug) && r.status === 'available' && !/\.conflict-/.test(r.slug ?? '')).map((r) => r.id);
     if (gone.length) { await db.deleteCrews(gone).catch((e) => log('[argo] msgr 인벤토리 회수 실패:', e.message)); out.removed += gone.length; }
   }
   if (inserts.length) await db.upsertAvailable(inserts);
