@@ -19,6 +19,7 @@ test('설치 실패 원문 → 이유', () => {
   assert.equal(updateErrorReason('Read-only file system (os error 30)'), 'read_only');
   assert.equal(updateErrorReason('Cross-device link (os error 18)'), 'other_volume');
   assert.equal(updateErrorReason('Permission denied (os error 13)'), 'needs_admin');
+  assert.equal(updateErrorReason('Failed to move the new app into place'), 'needs_admin', '관리자 암호 창 취소(업데이터 2.11.0 문구)');
   assert.equal(updateErrorReason('signature verification failed'), 'signature');
   assert.equal(updateErrorReason('error sending request for url'), 'network');
   assert.equal(updateErrorReason('No such file or directory (os error 2)'), null);

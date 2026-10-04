@@ -19,12 +19,13 @@ export function updateLocationIssue(facts) {
   return null;
 }
 
-/** 설치 실패 원문 → 이유 키(문구는 화면이 고른다) | null(모르는 오류 — 원문만 보인다) */
+/** 설치 실패 원문 → 이유 키(문구는 화면이 고른다) | null(모르는 오류 — 원문만 보인다)
+    'failed to move the new app into place' = 업데이터 2.10·2.11이 관리자 암호 창을 취소하거나 실패했을 때 돌려주는 유일한 문구(errno 없음). */
 export function updateErrorReason(message) {
   const m = String(message ?? '');
   if (/os error 30\b|read-only file system/i.test(m)) return 'read_only';
   if (/os error 18\b|cross-device link/i.test(m)) return 'other_volume';
-  if (/os error (13|1)\b|permission denied|operation not permitted|not authorized|user cancel+ed/i.test(m)) return 'needs_admin';
+  if (/os error (13|1)\b|permission denied|operation not permitted|not authorized|user cancel+ed|failed to move the new app into place/i.test(m)) return 'needs_admin';
   if (/signature|minisign|public key/i.test(m)) return 'signature';
   if (/error sending request|dns|timed? ?out|network|connection (refused|reset)|offline/i.test(m)) return 'network';
   return null;

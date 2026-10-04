@@ -39,6 +39,8 @@ test('설치 실패 원문 → 이유 — 업데이터·OS 오류 문구 그대�
   assert.equal(updateErrorReason('Permission denied (os error 13)'), 'needs_admin');
   assert.equal(updateErrorReason('Operation not permitted (os error 1)'), 'needs_admin');
   assert.equal(updateErrorReason('User canceled the authentication'), 'needs_admin');
+  // tauri-plugin-updater 2.10.1·2.11.0(맥): 관리자 암호 창을 취소하거나 실패하면 errno 없이 이 문구만 돌려준다(updater.rs install_inner)
+  assert.equal(updateErrorReason('Failed to move the new app into place'), 'needs_admin');
   assert.equal(updateErrorReason('the signature verification failed'), 'signature');
   assert.equal(updateErrorReason('error sending request for url (https://github.com/...)'), 'network');
   assert.equal(updateErrorReason('No such file or directory (os error 2)'), null, '모르는 오류는 원문만 보인다');

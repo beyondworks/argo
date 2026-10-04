@@ -244,6 +244,9 @@ test('admin-owned location: reported, but install is still attempted (macOS may 
   const f = fixture({ location: async () => ({ ...MAC_OK, bundleErrno: 13 }) }); t.after(() => f.close());
   const hook = f.mount(); await flush();
   assert.deepEqual(f.render(hook).location, { issue: 'needs_admin', path: MAC_OK.path });
-  const install = hook.result.install(); f.resolveDownload(); await install;
+  const install = hook.result.install(); f.rejectDownload('Failed to move the new app into place'); await install;
   assert.equal(f.counts().downloads, 1);
+  // 암호 창을 취소하면 업데이터는 errno 없이 이 문구만 준다 — 이유가 빠지면 카드에 "설치하지 못했어요"만 남는다
+  assert.equal(f.render(hook).phase, 'error');
+  assert.deepEqual(f.render(hook).installError, { reason: 'needs_admin', raw: 'Failed to move the new app into place' });
 });
