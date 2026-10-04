@@ -29,12 +29,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # 테스트 브랜치(test/updater-location-verify) 전용: PR #823을 실제 공증 설치본으로 확인하려고 Apple Silicon 하나만 빌드한다(병합 안 함)
           - os: macos-15
             rust_target: aarch64-apple-darwin
-          - os: macos-15-intel
-            rust_target: x86_64-apple-darwin
-          - os: windows-latest
-            rust_target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -75,13 +72,7 @@ jobs:
             node scripts/bump-version.mjs --root apps/messenger --check
           fi
 
-      - name: Messenger regression tests
-        shell: bash
-        run: cd ../.. && node --test test/msgr-*.test.mjs apps/messenger/test/*.test.mjs
-
-      - name: Native external-agent tests (host OS)
-        shell: bash
-        run: cargo test --manifest-path src-tauri/Cargo.toml --lib agents::tests
+      # 테스트 브랜치: 회귀 테스트는 PR #823 CI가 돌린다 — 여기서는 설치본만 만든다.
 
       - name: Build messenger (vite + tauri)
         shell: bash
@@ -219,6 +210,43 @@ jobs:
           path: apps/messenger/installers/*
           if-no-files-found: error
           retention-days: 3
+
+  # 테스트 브랜치 전용 — 0.1.47로 낮춘 고친 설치본을 설치 위치 4가지에 깔고 앱 안 업데이트(공개 최신본 대상)를 실제로 누른다.
+  verify:
+    needs: build
+    name: verify-${{ matrix.variant }}
+    runs-on: macos-15
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: .
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [applications, dmg, external, rootowned]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/repro-updater
+      - uses: actions/download-artifact@v4
+        with:
+          name: argo-messenger-aarch64-apple-darwin
+          path: dist
+      - name: Verify in-app update on a real install
+        env:
+          OUT: ${{ github.workspace }}/out
+        run: |
+          ls -la dist
+          DMG="$(ls dist/*_aarch64.dmg 2>/dev/null | head -1)"; [ -n "$DMG" ] || DMG=dist/argo-messenger-macos-apple-silicon.dmg
+          bash scripts/repro-updater/verify.sh msgr "${{ matrix.variant }}" "$DMG"
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verify-msgr-${{ matrix.variant }}
+          path: out/
+          if-no-files-found: warn
+          retention-days: 7
 
   release:
     needs: [build]

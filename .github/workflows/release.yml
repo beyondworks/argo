@@ -50,12 +50,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-15          # Apple Silicon (macos-14는 2026-07-06 deprecation 시작·11-02 종료 — 검수 지적 2026-07-26)
+          # 테스트 브랜치(test/updater-location-verify) 전용: PR #823을 실제 공증 설치본으로 확인하려고 Apple Silicon 하나만 빌드한다(병합 안 함)
+          - os: macos-15
             rust_target: aarch64-apple-darwin
-          - os: macos-15-intel    # Intel Mac (v0.1.27 재지원)
-            rust_target: x86_64-apple-darwin
-          - os: windows-latest
-            rust_target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -98,9 +95,7 @@ jobs:
       - if: runner.os == 'Windows'
         run: node scripts/fetch-busybox.mjs bin  # 레포 동봉본(vendor/)에서 해시 검증 뒤 복사 — 네트워크 없음
 
-      # 릴리스 게이트 — 단위 테스트 실패 시 빌드 전에 차단 (2026-07-27 안정화 프로그램 Phase 0).
-      # push/PR은 test.yml이 막지만, 태그 push·수동 실행은 그 게이트를 우회할 수 있어 여기서도 강제한다.
-      - run: npm test
+      # 테스트 브랜치: 단위 테스트는 PR #823 CI가 돌린다 — 여기서는 설치본만 만든다.
 
       # 신규 기기 스모크 — CI macOS 러너는 claude CLI 미설치·빈 키체인·헤드리스라 신규 맥과 등가 조건.
       # 원클릭(setup-token 대행)이 번들 CLI로 시작돼 인증 URL·코드 프롬프트까지 도달하는지 검증한다.
@@ -115,7 +110,7 @@ jobs:
       # 커버 범위 주의: 이 스모크는 **claude 원클릭**만 본다. codex auth.json 반입(신규 설치 401, 2026-07-26)은
       # 실자격이 필요해 CI로 못 태우므로 test/codex-auth-import.test.mjs가 단위로 잠근다.
       - name: Fresh-device smoke (macOS one-click connect)
-        if: runner.os == 'macOS'
+        if: false  # 테스트 브랜치: 이번 확인과 무관해 건너뛴다
         shell: bash
         run: node scripts/smoke-fresh-device.mjs
 
@@ -341,6 +336,41 @@ jobs:
           # 발행본은 argo-agent 릴리스에 영구 보관 — CI 아티팩트를 90일 쌓으면 저장 용량(무료 500MB)만
           # 태운다(빌드 1회 ~730MB). 발행 드릴 완료까지만 있으면 되므로 3일.
           retention-days: 3
+
+  # 테스트 브랜치 전용 — 0.1.93으로 낮춘 고친 설치본을 설치 위치 4가지에 깔고 앱 안 업데이트(공개 최신본 대상)를 실제로 누른다.
+  # applications는 설치·재시작까지(정상 경로 회귀 없음), dmg·external은 설치 시도 없이 옮기는 방법, rootowned는 암호 창 취소 뒤 이유 표시.
+  verify:
+    needs: build
+    name: verify-${{ matrix.variant }}
+    runs-on: macos-15
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [applications, dmg, external, rootowned]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/repro-updater
+      - uses: actions/download-artifact@v4
+        with:
+          name: argo-aarch64-apple-darwin
+          path: dist
+      - name: Verify in-app update on a real install
+        env:
+          OUT: ${{ github.workspace }}/out
+        run: |
+          ls -la dist
+          DMG="$(ls dist/argo_*_aarch64.dmg 2>/dev/null | head -1)"; [ -n "$DMG" ] || DMG=dist/argo-macos-apple-silicon.dmg
+          bash scripts/repro-updater/verify.sh argo "${{ matrix.variant }}" "$DMG"
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verify-argo-${{ matrix.variant }}
+          path: out/
+          if-no-files-found: warn
+          retention-days: 7
 
   # 셀프호스트 서버 타르볼(CLI 설치 트랙 — 배포 전략 2026-07-20). 리눅스 러너(과금 배율 ×1 —
   # 데스크톱 맥 잡의 ×10 대비 릴리스 버짓 대폭 절감). Supabase env 없이 빌드 = 로컬 모드(무인증
