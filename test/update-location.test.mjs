@@ -43,6 +43,13 @@ test('설치 실패 원문 → 이유 — 업데이터·OS 오류 문구 그대�
   assert.equal(updateErrorReason('Failed to move the new app into place'), 'needs_admin');
   assert.equal(updateErrorReason('the signature verification failed'), 'signature');
   assert.equal(updateErrorReason('error sending request for url (https://github.com/...)'), 'network');
+  // 분리 검수 LOW-1: 업데이터·reqwest가 실제로 내는 문구(받는 중 끊김·본문 해석 실패·HTTP 실패·디스크 부족·latest.json 서명 형식)
+  assert.equal(updateErrorReason('request or response body error for url (https://objects.githubusercontent.com/x)'), 'network');
+  assert.equal(updateErrorReason('error decoding response body'), 'network');
+  assert.equal(updateErrorReason('`Download request failed with status: 404 Not Found`'), 'network');
+  assert.equal(updateErrorReason('No space left on device (os error 28)'), 'disk_full');
+  assert.equal(updateErrorReason('Invalid symbol 45, offset 3.'), 'signature');
+  assert.equal(updateErrorReason('Invalid padding'), 'signature');
   assert.equal(updateErrorReason('No such file or directory (os error 2)'), null, '모르는 오류는 원문만 보인다');
   assert.equal(updateErrorReason('os error 18x'), null, '숫자 뒤에 글자가 붙으면 다른 오류');
   assert.equal(updateErrorReason(undefined), null);

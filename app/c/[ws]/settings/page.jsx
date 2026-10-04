@@ -1940,17 +1940,18 @@ function UpdateCard() {
           {phase === 'installing' ? t('settings.update.installing') : t('settings.update.install', { v: available })}
         </button>
       ) : (
-        <button type="button" className="btn sm" onClick={check} disabled={busy} style={{ alignSelf: 'flex-start' }}>
+        <button type="button" className="btn sm" onClick={() => check({ byUser: true })} disabled={busy || phase === 'ready'} style={{ alignSelf: 'flex-start' }}>
           {busy ? <Spinner size={12} /> : null}{t('settings.update.check')}
         </button>
       )}
-      {phase === 'ready' && <p style={{ fontSize: 12, color: 'var(--fg-2)' }}>{t('settings.update.restarting')}</p>}
-      {phase === 'error' && (installError ? (
+      {phase === 'ready' && <p style={{ fontSize: 12, color: 'var(--fg-2)' }}>{t(installError?.reason === 'relaunch' ? 'settings.update.relaunchFail' : 'settings.update.restarting')}</p>}
+      {/* 설치 실패 이유는 이 카드의 진행 상태와 상관없이 보인다 — 뱃지에서 실패하고 카드를 나중에 열어도(분리 검수 MEDIUM-1) */}
+      {installError && installError.reason !== 'relaunch' ? (
         <p style={{ fontSize: 12, color: 'var(--danger)', lineHeight: 1.6, margin: 0 }}>
           {t('settings.update.fail')}{installError.reason ? ` ${t(`settings.update.fail.${installError.reason}`)}` : ''}
           {installError.raw && <span className="mono" style={{ display: 'block', fontSize: 11, color: 'var(--fg-3)', overflowWrap: 'anywhere' }}>{installError.raw}</span>}
         </p>
-      ) : <p style={{ fontSize: 12, color: 'var(--danger)' }}>{t('settings.update.error')}</p>)}
+      ) : phase === 'error' ? <p style={{ fontSize: 12, color: 'var(--danger)' }}>{t('settings.update.error')}</p> : null}
     </div>
   );
 }
@@ -1963,7 +1964,8 @@ function UpdateLocationNote({ issue, path }) {
       <b style={{ fontSize: 13 }}>{t(issue === 'needs_admin' ? 'settings.update.where.adminTitle' : 'settings.update.where.title')}</b>
       <span style={{ color: 'var(--fg-2)' }}>{t(`settings.update.where.${issue}`)}</span>
       {issue !== 'needs_admin' && <span style={{ color: 'var(--fg-2)' }}>{t('settings.update.where.steps')}</span>}
-      {path && <span className="mono" style={{ fontSize: 11, color: 'var(--fg-3)', overflowWrap: 'anywhere' }}>{t('settings.update.where.path', { path })}</span>}
+      {/* translocated 경로는 macOS가 만든 임시 위치(/private/var/folders/…/AppTranslocation/…)라 사용자가 알아볼 수 없어 숨긴다 */}
+      {path && issue !== 'translocated' && <span className="mono" style={{ fontSize: 11, color: 'var(--fg-3)', overflowWrap: 'anywhere' }}>{t('settings.update.where.path', { path })}</span>}
     </div>
   );
 }
