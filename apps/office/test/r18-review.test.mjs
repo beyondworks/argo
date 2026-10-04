@@ -128,6 +128,15 @@ test('LOW10: 응답 버리기 판정', () => {
   assert.equal(keepResponse({ owner: 'u1', nowOwner: 'u1', quiet: false, writing: 1 }), true, '보통 읽기는 쓰기 중에도 받는다(쓰기 뒤 다시 읽기가 이것)');
 });
 
+// 이유(10/4 분리 검수 LOW 2): 할 일 두 건을 연달아 고치면 쓰기 뒤 다시 읽기 L1·L2가 겹친다. 어느 쪽이 먼저 도착해도 마지막 화면은 L2(더 늦게 시작한 읽기)여야 한다 —
+// L2가 먼저 적용됐으면 늦게 온 L1은 버리고, L1이 먼저 오면 받은 뒤 L2도 받는다("더 새 읽기가 시작됐다"는 이유로 L1을 버리면 그사이 옛 값이 남는다)
+test('쓰기 두 번 뒤 다시 읽기: 더 늦게 시작한 읽기가 이미 적용됐을 때만 버린다', () => {
+  assert.equal(keepResponse({ owner: 'u1', nowOwner: 'u1', started: 10, appliedStarted: 20 }), false, 'L2(20)가 먼저 적용 → 늦게 온 L1(10) 버림');
+  assert.equal(keepResponse({ owner: 'u1', nowOwner: 'u1', started: 10, appliedStarted: 5 }), true, 'L1이 먼저 도착 → 받는다(L2는 아직)');
+  assert.equal(keepResponse({ owner: 'u1', nowOwner: 'u1', started: 20, appliedStarted: 10 }), true, '그 뒤 L2 도착 → 받는다');
+  assert.equal(keepResponse({ owner: 'u1', nowOwner: 'u1', started: 10, appliedStarted: 10 }), true, '같은 읽기(쓰기 직후 화면 반영 등)는 받는다');
+});
+
 // 이유(검수 LOW 11, DB 위생): 업무 카드가 없는 홈의 '챙길 것'은 열 때마다 거래를 다시 읽지 않는다 — 같은 계정·같은 공간이면 30초 안에 받은 것을 쓴다
 test('LOW11: 거래 읽기 30초 캐시', () => {
   const e = { owner: 'u1', at: 1_000 };

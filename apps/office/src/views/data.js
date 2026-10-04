@@ -1,12 +1,11 @@
 // 여러 보기의 데이터 — 할 일 읽기(공간별)·쓰기 실행·보기 설정 저장. 계산은 model.js(순수), 화면은 Board.jsx.
-// 부하(DB 위생): 읽기는 기존 그대로 — 할 일은 core/tasks.js 저장소(useTasks), 개인 공간에서 겹쳐 볼 조직 할 일은 조직마다 세션에 한 번
-// (office_task_list). 쓰기는 사람이 누를 때만, 여러 건을 한꺼번에 바꾸면 쓰기 N번 뒤 읽기는 공간마다 한 번·일정 창 한 번만. 폴링 없음.
+// 부하(DB 위생): 할 일은 core/tasks.js 저장소(useTasks) 하나 — 개인 공간에서 겹쳐 볼 조직 할 일은 그 조직 목록이 아직 없을 때만 받고(직원 목록 포함, 조직마다 한 번),
+// 그 뒤는 탭 복귀(1분에 한 번)·쓰기 뒤에만 다시 읽는다. 쓰기는 사람이 누를 때만, 여러 건을 한꺼번에 바꾸면 쓰기 N번 뒤 읽기는 공간마다 한 번·일정 창 한 번만. 폴링 없음.
 // 할 일 분류(유건 10/4)는 공간마다 세션에 한 번 읽고(office_task_category_list), 분류를 바꾼 뒤에는 돌려받은 목록을 그대로 쓴다.
 // 바뀐 기록(office_task_history)은 할 일 패널을 열 때·고친 뒤에만 읽는다.
 import { useEffect, useMemo, useSyncExternalStore } from 'react';
 import { ME, SPACES, canManage, getMode } from '../core/session.js';
-import { useTasks, loadTasks, taskAction, rpc, orgOf, trackWrite, shareSampleTasks, shareOrgTasks, setOrgRefetch, taskError } from '../core/tasks.js';
-import { refetchDue } from '../core/refetch.js';
+import { useTasks, useTaskRows, ensureTasks, loadTasks, taskAction, rpc, orgOf, trackWrite, shareSampleTasks, taskError } from '../core/tasks.js';
 import { viewRows, taskOrgKeys } from '../core/task-model.js';
 import { writeEvent, refreshEvents, loadPeople } from '../calendar/api.js';
 import { writableOrgs, idOf } from '../calendar/shared.js';
@@ -17,51 +16,29 @@ const sample = () => getMode() === 'sample';
 // 할 일 쓰기 오류 → 사전 키는 core/tasks.js(taskError) 한 곳에서 정한다 — 한 건 쓰기(taskAction)·여러 건 쓰기·예시 모드가 같은 글자를 보이게(분리 검수 LOW-4)
 
 /* ── 할 일 읽기 ── */
-let orgRows = new Map(), orgOwner = null, version = 0; // 개인 공간에 겹칠 조직 할 일(조직 키 → 행)과 그 행을 읽은 계정
-// 계정이 바뀌면 옛 계정이 읽은 조직 할 일을 버리고 새로 읽는다 — 할 일 화면이 옛 행을 계속 보여 배지와 숫자가 어긋났다(18차 2차 검수 LOW-D)
-const ownOrgRows = () => { if (orgOwner !== ME.id) { orgRows = new Map(); orgOwner = ME.id; } return orgRows; };
+let version = 0;
 const listeners = new Set();
 const emit = () => { version++; listeners.forEach((l) => l()); };
 const subscribe = (l) => { listeners.add(l); return () => listeners.delete(l); };
-const loading = new Map(), readAt = new Map(); // 계정|조직 키 → 진행 중인 읽기, 마지막으로 읽으려 한 때(탭 복귀 1분 간격)
-function loadOrg(space, force = false) {
-  const map = ownOrgRows(), owner = ME.id, key = `${owner}|${space}`;
-  if (!force && (map.has(space) || loading.has(key))) return loading.get(key);
-  readAt.set(key, Date.now());
-  // 더 새 읽기(쓰기 뒤 다시 읽기 등)가 시작됐으면 늦게 온 이 응답은 버린다 — 막 고친 값을 옛 값으로 덮지 않게
-  const p = rpc('office_task_list', { p_org: orgOf(space) })
-    .then((rows) => { if (owner === ME.id && loading.get(key) === p) map.set(space, rows ?? []); }, () => { if (owner === ME.id && !map.has(space)) map.set(space, []); })
-    .finally(() => { if (loading.get(key) === p) loading.delete(key); if (owner === ME.id) shareOrgTasks(space, map.get(space)); emit(); }); // 메뉴 배지·챙길 것도 이 행으로 센다(18차 검수 M4 — 새 읽기 없이)
-  loading.set(key, p);
-  return p;
-}
-// 탭 복귀(core/tasks.js가 개인 공간이 떠 있을 때 부른다): 이미 읽어 둔 조직 할 일을 조직마다 1분에 한 번까지 다시 읽는다. 읽기만, 쓰는 중이면 건너뜀.
-// 부하: 사람 1명 × 속한 조직 수 = 탭 복귀 때 분당 최대 조직 수만큼 office_task_list, 쓰기 0
-setOrgRefetch((writing) => {
-  if (sample()) return;
-  const now = Date.now();
-  for (const k of ownOrgRows().keys()) {
-    const key = `${ME.id}|${k}`;
-    if (refetchDue({ hidden: document.hidden, now, last: readAt.get(key), busy: writing || loading.has(key) })) loadOrg(k, true);
-  }
-});
 
-/** 이 공간 보기에 들어갈 할 일(+ space 키). 개인 공간은 내 할 일 + 속한 조직(손님 제외)에서 나에게 맡겨진 할 일 — 메뉴 배지·챙길 것과 같은 함수(core/task-model.js viewRows) */
+/** 이 공간 보기에 들어갈 할 일(+ space 키). 개인 공간은 내 할 일 + 속한 조직(손님 제외)에서 나에게 맡겨진 할 일 — 메뉴 배지·챙길 것과 같은 저장소·같은 함수(core/tasks.js useTaskRows → task-model.js viewRows).
+ *  조직 할 일은 조직 화면과 같은 저장소(core/tasks.js)에 받는다 — 따로 사본을 두면 조직 화면에서 고친 일이 개인 공간에 옛 값으로 남았다(10/4 분리 검수) */
 export function useViewTasks(space) {
   useSyncExternalStore(subscribe, () => version, () => version);
-  const own = useTasks(space).rows;
+  useTasks(space);
   const orgs = space === 'me' ? taskOrgKeys(SPACES) : [];
-  useEffect(() => { if (!sample()) orgs.forEach((k) => loadOrg(k)); }, [space, orgs.join(), ME.id]);
-  const view = useMemo(() => {
-    if (!sample()) return { rows: viewRows({ space, own: own ?? [], orgRows: ownOrgRows(), orgKeys: orgs, me: ME.id }) };
+  useEffect(() => { if (!sample()) orgs.forEach((k) => ensureTasks(k)); }, [space, orgs.join(), ME.id]);
+  const live = useTaskRows(space);
+  const demo = useMemo(() => {
+    if (!sample()) return null;
     // 예시 할 일에는 분류 이름을 붙여 준다(서버 office_task_list가 붙이는 것과 같은 칸)
-    const live = (key) => SAMPLE_TASKS.filter((x) => x.org === (key === 'me' ? null : key) && !x.cancelled_at).map((x) => ({ ...x, category: SAMPLE_TASK_CATEGORIES[key]?.find((c) => c.id === x.category_id)?.name ?? null }));
-    const mineRows = live(space), byOrg = new Map(orgs.map((k) => [k, live(k)]));
+    const rowsIn = (key) => SAMPLE_TASKS.filter((x) => x.org === (key === 'me' ? null : key) && !x.cancelled_at).map((x) => ({ ...x, category: SAMPLE_TASK_CATEGORIES[key]?.find((c) => c.id === x.category_id)?.name ?? null }));
+    const mineRows = rowsIn(space), byOrg = new Map(orgs.map((k) => [k, rowsIn(k)]));
     return { rows: viewRows({ space, own: mineRows, orgRows: byOrg, orgKeys: orgs, me: ME.id }), mineRows, byOrg };
-  }, [own, space, version, orgs.join(), ME.id]);
-  // 예시 모드: 같은 예시 행을 메뉴 배지·챙길 것(18차)에도 — 배지는 할 일 저장소만 보고 예시 데이터는 이 묶음에 있다. 로그인은 저장소·조직 행 공유(loadOrg)가 이미 같은 데이터
-  useEffect(() => { if (!view.mineRows) return; shareSampleTasks(space, view.mineRows); view.byOrg.forEach((rows, k) => shareOrgTasks(k, rows)); }, [view, space]);
-  return view.rows;
+  }, [space, version, orgs.join(), ME.id]);
+  // 예시 모드: 같은 예시 행을 메뉴 배지·챙길 것(18차)에도 — 배지는 할 일 저장소만 보고 예시 데이터는 이 묶음에 있다
+  useEffect(() => { if (!demo) return; shareSampleTasks(space, demo.mineRows); demo.byOrg.forEach((rows, k) => shareSampleTasks(k, rows)); }, [demo, space]);
+  return demo ? demo.rows : live ?? [];
 }
 
 /** 사람 이름·조직 직원(맡기기 판정) — 조직 공간은 useTasks가 이미 받은 직원 목록, 개인 공간·예시는 조직마다 한 번(loadPeople 캐시) */
@@ -126,7 +103,7 @@ export async function writeCategory(space, action, data) {
   try { cats.set(space, (await rpc('office_task_category_write', { p_org: orgOf(space), p_action: action, p_data: data })) ?? []); }
   catch (e) { throw new Error(taskError(e)); } finally { emit(); }
   if (action === 'category.rename' || action === 'category.delete') { // 분류 관리는 보고 있는 공간의 것이라 그 공간 목록은 이미 받아 둔 상태다
-    await Promise.all([loadTasks(space, true), ownOrgRows().has(space) && loadOrg(space, true)].filter(Boolean));
+    await loadTasks(space, true);
   }
 }
 /** 할 일의 바뀐 기록(최근 300줄, 새것부터) — [{ kind, at, actor, name, from, to }] */
@@ -166,7 +143,7 @@ async function writeAll(writes, view) {
     } catch (e) { failed ??= e.message; }
   }
   if (sample()) emit();
-  else await Promise.all([...[...orgs].map((k) => loadOrg(k, true)), ...[...stores].map((k) => loadTasks(k, true))]);
+  else await Promise.all([...new Set([...orgs, ...stores])].map((k) => loadTasks(k, true)));
   if (events) await refreshEvents();
   return { ok, failed };
 }

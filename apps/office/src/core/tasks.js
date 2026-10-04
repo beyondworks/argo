@@ -1,6 +1,6 @@
 // 할 일(성과 기록 1단계, 유건 9/29) — 서버 office_task_* 함수로만 읽고 쓴다(표를 직접 읽는 길은 없다).
-// 부하: 모듈을 열 때 1~2회 읽기, 사람이 누를 때만 쓰기. 폴링 없음.
-// 다른 기기 변경 반영(18차): 탭(창)으로 돌아올 때만, 화면에 떠 있는 공간의 할 일 목록을 1분에 한 번까지 다시 읽는다(행 목록 하나, 쓰기 0, 쓰는 중이면 건너뜀).
+// 부하: 모듈을 열 때 1~2회 읽기(개인 공간은 속한 조직 목록이 아직 없을 때 조직마다 한 번 더), 사람이 누를 때만 쓰기. 폴링 없음.
+// 다른 기기 변경 반영(18차): 탭(창)으로 돌아올 때만, 화면에 떠 있는 공간(개인 공간이면 받아 둔 조직도)의 할 일 목록을 1분에 한 번까지 다시 읽는다(공간마다 행 목록 하나, 쓰기 0, 쓰는 중이면 건너뜀).
 import { useEffect, useSyncExternalStore } from 'react';
 import { getClient } from './supabase.js';
 import { ME, SPACES, useSession, getMode } from './session.js';
@@ -47,8 +47,8 @@ async function fetchTasks(space, quiet) {
   try {
     const [rows, people] = await Promise.all([rpc('office_task_list', { p_org: org }), quiet ? mine(space)?.people : org ? rpc('office_org_people', { p_org: org }) : []]);
     // 계정이 바뀌었거나(LOW 10), 탭 복귀 읽기 사이 쓰기가 시작됐거나 더 새 읽기가 먼저 끝났으면 이 응답은 옛것이다
-    if (!keepResponse({ owner, nowOwner: ME.id, quiet, writing, started, newerAt: mine(space)?.at ?? 0 })) return;
-    set(space, { rows: rows ?? [], people: people ?? [], loading: false, error: null, at: Date.now() });
+    if (!keepResponse({ owner, nowOwner: ME.id, quiet, writing, started, newerAt: mine(space)?.at ?? 0, appliedStarted: mine(space)?.from ?? 0 })) return;
+    set(space, { rows: rows ?? [], people: people ?? [], loading: false, error: null, at: Date.now(), from: started });
   } catch (e) { if (!quiet && owner === ME.id) set(space, { loading: false, error: taskError(e) }); }
 }
 
@@ -66,23 +66,22 @@ export const taskAction = (space, action, data, patch) => trackWrite(async () =>
 });
 
 // 탭 복귀 다시 읽기 — 할 일을 보여 주는 곳(할 일 화면·카드, 메뉴 배지 — 같은 공간 키라 한 번만)이 있는 공간을, 이미 받아 둔 것만 1분에 한 번까지.
+// 개인 공간이 떠 있으면 지금 속한 조직(손님 제외) 중 받아 둔 곳도 같이 — 개인 공간 숫자에 조직에서 나에게 맡겨진 일이 들어간다
+// (10/4 실제 계정 점검: 다른 기기에서 맡긴 조직 할 일이 탭 복귀 뒤에도 배지·챙길 것·현황 카드에 안 들어왔다 — 18차 LOW 8).
 // 자정을 넘겼으면 '오늘'을 다시 계산하게 알린다(LOW 6)
 const shown = new Map(), tried = {}; // 할 일을 보여 주는 곳 수(공간마다), 탭 복귀로 마지막에 읽으려 한 때
 const day = makeDayClock();
-// 개인 공간에 겹친 조직 할 일 다시 읽기 — 그 행을 읽어 둔 곳(views/data.js)이 넣는다. 개인 공간이 떠 있으면 같은 탭 복귀에 같이 부른다
-// (10/4 실제 계정 점검: 다른 기기에서 나에게 맡긴 조직 할 일이 탭 복귀 뒤에도 배지·챙길 것·현황 카드에 안 들어왔다 — 18차 LOW 8)
-let orgRefetch = null;
-export const setOrgRefetch = (fn) => { orgRefetch = fn; };
 onTabReturn(() => {
   if (!document.hidden && day.check()) emit();
   if (getMode() !== 'signedIn') return;
-  for (const space of shown.keys()) {
+  const spaces = new Set(shown.keys());
+  if (spaces.has('me')) taskOrgKeys(SPACES).forEach((k) => spaces.add(k));
+  for (const space of spaces) {
     const s = mine(space), now = Date.now();
     if (!s?.rows || !refetchDue({ hidden: document.hidden, now, last: Math.max(tried[space] ?? 0, s.at ?? 0), busy: writing > 0 || busy.has(bk(space)) })) continue;
     tried[space] = now;
     loadTasks(space, true, true);
   }
-  if (shown.has('me')) orgRefetch?.(writing > 0);
 });
 const useShown = (space, on = true) => useEffect(() => { if (!on) return undefined; shown.set(space, (shown.get(space) ?? 0) + 1); return () => { const n = shown.get(space) - 1; if (n > 0) shown.set(space, n); else shown.delete(space); }; }, [space, on]);
 
@@ -94,19 +93,24 @@ export function useTasks(space) {
   return snapshot ?? {};
 }
 
+/** 개인 공간에 겹칠 조직 할 일을 받아 둔다 — 아직 없을 때만(그 뒤는 탭 복귀·쓰기 뒤 다시 읽기). 조직 화면과 같은 저장소라
+ *  조직 화면에서 고친 일이 개인 공간 숫자에도 바로 들어간다(10/4 분리 검수: 따로 들고 있던 사본이 옛 값으로 남았다) */
+export const ensureTasks = (space) => { if (!mine(space)?.rows) loadTasks(space); };
+/** 받아 둔 공간의 직원 목록(이름 표시용) — 개인 공간 할 일 목록이 조직에서 맡겨진 일의 맡긴 사람 이름을 찾을 때 */
+export const peopleIn = (space) => mine(space)?.people ?? [];
+
 /* ── 메뉴 배지·챙길 것(18차)이 세는 행 ── 이미 받아 둔 것만 본다(새로 읽지 않는다). 할 일 화면과 같은 함수(task-model.js viewRows)로 묶는다(검수 M4):
-   개인 공간 = 내 할 일 + 할 일 화면이 이미 읽어 둔 조직 할 일 중 나에게 맡겨진 것. 예시 모드는 보기 데이터(views/data.js)가 넣어 준 예시 행 */
-const samples = {}, orgShared = new Map(), rowsCache = new Map();
-let orgVer = 0;
-export const shareSampleTasks = (space, rows) => { if (samples[space] !== rows) { samples[space] = rows; emit(); } };
-/** 할 일 화면이 읽어 둔 조직 할 일(조직 공간 키 → 행) — views/data.js가 읽을 때마다 넣는다 */
-export const shareOrgTasks = (key, rows) => { if (orgShared.get(key)?.rows !== rows) { orgShared.set(key, { rows, owner: ME.id }); orgVer++; emit(); } };
+   개인 공간 = 내 할 일 + 이 저장소에 받아 둔 조직 할 일 중 나에게 맡겨진 것. 예시 모드는 보기 데이터(views/data.js)가 넣어 준 예시 행 */
+const samples = {}, rowsCache = new Map();
+let sampleVer = 0;
+export const shareSampleTasks = (space, rows) => { if (samples[space] !== rows) { samples[space] = rows; sampleVer++; emit(); } };
+const rowsOf = (space) => mine(space)?.rows ?? samples[space];
 function badgeRows(space) {
-  const own = mine(space)?.rows ?? samples[space], c = rowsCache.get(space);
-  if (c && c.own === own && c.orgVer === orgVer && c.me === ME.id && c.spaces === SPACES) return c.rows;
-  const orgRows = new Map([...orgShared].filter(([, v]) => v.owner === ME.id).map(([k, v]) => [k, v.rows]));
-  const rows = viewRows({ space, own, orgRows, orgKeys: space === 'me' ? taskOrgKeys(SPACES) : [], me: ME.id });
-  rowsCache.set(space, { own, orgVer, me: ME.id, spaces: SPACES, rows });
+  const c = rowsCache.get(space);
+  if (c && c.state === state && c.sampleVer === sampleVer && c.me === ME.id && c.spaces === SPACES) return c.rows;
+  const orgKeys = space === 'me' ? taskOrgKeys(SPACES) : [];
+  const rows = viewRows({ space, own: rowsOf(space), orgRows: new Map(orgKeys.map((k) => [k, rowsOf(k)])), orgKeys, me: ME.id });
+  rowsCache.set(space, { state, sampleVer, me: ME.id, spaces: SPACES, rows });
   return rows;
 }
 /** 없으면 undefined(배지 숨김). watch = 탭 복귀 다시 읽기에 이 공간을 넣는다(메뉴 배지 — 할 일 화면과 같은 키, LOW 6) */
