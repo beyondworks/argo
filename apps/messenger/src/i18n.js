@@ -1194,6 +1194,7 @@ export const DICT = {
   'dm.legacy.note': ['이 에이전트와의 1:1은 개인 공간에서 이어집니다', 'Your 1:1 with this agent continues in your personal space'], // 옛 조직 1:1 위 안내 띠(유건 2026-10-05)
   'dm.legacy.go': ['개인 1:1로 이동', 'Go to personal 1:1'],
   'dm.legacy.going': ['여는 중…', 'Opening…'],
+  'crew.look.onlyHere': ['이 공간에만 저장했습니다.', 'Saved for this space only.'], // 여러 행 저장이 거절돼 대표가 아닌 이 행만 저장(분리 검수 2026-10-05 #6)
   'ctx.crew.card': ['에이전트 카드', 'Agent card'],
   'ctx.fav': ['즐겨찾기에 추가', 'Add to favorites'],
   'rail.fav': ['즐겨찾기', 'Favorites'],

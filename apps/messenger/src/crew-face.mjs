@@ -80,8 +80,8 @@ export function agentKey(c) {
 const LIVE = new Set(['active', 'available']);
 const madeAt = (r) => { const t = Date.parse(r.created_at ?? ''); return Number.isFinite(t) ? t : Infinity; };
 const olderFirst = (a, b) => madeAt(a) - madeAt(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
-/** 내 크루 행 → Map(행 id → { seed: 얼굴 씨앗 id, face: 저장값|null, photo: 사진|null, ids: 같은 에이전트의 행 id 전부 }) */
-export function agentLooks(rows) {
+/** 같은 에이전트 묶음 — [{ list: 입력 순서의 행, byAge: 만든 순서, rep: 대표 조직 행|null }]. 키를 모르는 행은 묶지 않는다 */
+function agentGroups(rows) {
   const groups = new Map();
   for (const r of rows ?? []) {
     if (!r?.id) continue;
@@ -90,11 +90,13 @@ export function agentLooks(rows) {
     if (!groups.has(k)) groups.set(k, []);
     if (!groups.get(k).some((x) => x.id === r.id)) groups.get(k).push(r);
   }
+  return [...groups.values()].map((list) => { const byAge = list.slice().sort(olderFirst); return { list, byAge, rep: byAge.find((r) => r.org_id != null && LIVE.has(r.status)) ?? null }; });
+}
+/** 내 크루 행 → Map(행 id → { seed: 얼굴 씨앗 id, face: 저장값|null, photo: 사진|null, ids: 같은 에이전트의 행 id 전부 }) */
+export function agentLooks(rows) {
   const out = new Map();
-  for (const list of groups.values()) {
+  for (const { list, byAge, rep } of agentGroups(rows)) {
     const ids = list.map((r) => r.id);
-    const byAge = list.slice().sort(olderFirst);
-    const rep = byAge.find((r) => r.org_id != null && LIVE.has(r.status)) ?? null;
     if (!rep) { for (const r of list) out.set(r.id, { seed: r.id, face: r.face ?? null, photo: r.avatar_url ?? null, ids }); continue; }
     const face = faceFromStored(rep.face) ? rep.face : (byAge.find((r) => faceFromStored(r.face))?.face ?? null);
     const repPhoto = rep.avatar_url ?? byAge.find((r) => r.avatar_url)?.avatar_url ?? null;
@@ -110,6 +112,22 @@ export function agentLook(id, looks, ownFace = null, ownPhoto = null) {
 export function agentFace(id, looks, ownFace = null) {
   const l = agentLook(id, looks, ownFace);
   return faceOf(l.seed, l.face);
+}
+/** 얼굴·사진 채우기 계획(분리 검수 2026-10-05 #3) — 주인이 아닌 사람은 자기가 보는 행의 저장값·id로 그린다. 얼굴을 저장한 적 없는 에이전트는 사람마다 다른 행 id로 그려 달랐다.
+ *  내 크루 행에서 쓸 것만 고른다 → [{ col, ids, patch }] (agent-groups.mjs fillAgentLooks가 col이 비어 있는 행에만 쓴다)
+ *   · 얼굴: 같은 에이전트 행이 둘 이상이고 저장된 얼굴이 하나도 없으면 → 모든 행에 대표 행 id 씨앗 얼굴(주인 화면 agentFace와 같은 얼굴 — 주인 눈에는 안 바뀐다).
+ *           얼굴 열을 못 읽은 행(옛 서버 — face 키 없음)이 섞이면 고르지 않는다.
+ *   · 사진: 대표 행에 사진이 있고 비어 있는 다른 행이 있으면 → 그 빈 행에 대표 사진. 자기 사진이 있는 행은 그대로.
+ *  대표 조직 행이 없는 에이전트(개인 전용·꺼진 조직 행만)는 지도도 자기 행 기준이라 쓸 것이 없다 */
+export function lookFillPlan(rows) {
+  const out = [];
+  for (const { list, rep } of agentGroups(rows)) {
+    if (!rep || list.length < 2) continue;
+    if (list.every((r) => 'face' in r && r.face == null)) out.push({ col: 'face', ids: list.map((r) => r.id), patch: { face: faceToStore(faceOf(rep.id)) } });
+    const empty = rep.avatar_url ? list.filter((r) => r.id !== rep.id && !r.avatar_url).map((r) => r.id) : [];
+    if (empty.length) out.push({ col: 'avatar_url', ids: empty, patch: { avatar_url: rep.avatar_url } });
+  }
+  return out;
 }
 
 /** 오피스 달력 색 — 얼굴 v2 전(main 2026-10-01)의 10색과 같은 계산을 그대로 둔다(얼굴이 바뀌어도 사람들의 달력 색은 바꾸지 않는다, 검수 #789).

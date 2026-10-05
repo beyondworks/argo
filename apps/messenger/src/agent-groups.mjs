@@ -7,7 +7,7 @@
 //   · 외부 봇: 조직 봇 행(ws_id 'bot', slug 'bot-…' 무작위)과 그 개인 쌍둥이는 쌍둥이를 만들 때 slug를 그대로 복사한다(20261001140000).
 //   · 셋 중 하나라도 모르면(옛 서버·조회 실패) 그 행은 id로만 — 다른 행과 잘못 합치지 않는 쪽으로 틀린다. 이름으로는 판정하지 않는다.
 import { twinPaused } from './personal-bots.mjs';
-import { agentKey } from './crew-face.mjs';
+import { agentKey, lookFillPlan } from './crew-face.mjs';
 export { agentKey }; // 정의는 crew-face.mjs 한 곳 — 얼굴 지도(agentLooks)와 같은 판정이어야 해서(유건 2026-10-05)
 
 export const AGENT_FILTERS = ['all', 'fav', 'mine', 'ext'];
@@ -112,13 +112,48 @@ export function agentDmRedirect(channel, members, { uid, crewOf, myAgents }) {
 
 /** 얼굴·사진 저장 — 같은 에이전트(agentLooks의 ids, 내 행만)를 한 요청으로. 지도를 모르면 누른 행 하나(종전).
     여러 행 저장이 거절되면(어느 조직의 정책 잠금 등 — 한 행이라도 막히면 문장 전체가 실패한다) 누른 행 하나만 다시 저장한다.
-    db = supabase 클라이언트(테스트는 가짜). 반환 { error, ids: 바뀐 행 id } */
+    그 행이 대표 행이 아니면 화면 얼굴(대표 기준 — agentLooks)은 그대로라 onlyHere로 알린다(분리 검수 2026-10-05 #6 — 부르는 쪽이 "이 공간에만 저장했어요").
+    db = supabase 클라이언트(테스트는 가짜). 반환 { error, ids: 바뀐 행 id, onlyHere } */
 export async function saveAgentLook(db, crewId, patch, looks) {
   const ids = looks?.get(crewId)?.ids?.length ? looks.get(crewId).ids : [crewId];
   const run = (list) => db.from('msgr_crews').update(patch).in('id', list).select('id');
-  let r = await run(ids);
-  if (r.error && ids.length > 1) r = await run([crewId]);
-  return { error: r.error ?? null, ids: (r.data ?? []).map((x) => x.id) };
+  let r = await run(ids); let partial = false;
+  if (r.error && ids.length > 1) { r = await run([crewId]); partial = true; }
+  return { error: r.error ?? null, ids: (r.data ?? []).map((x) => x.id), onlyHere: partial && !r.error && looks?.get(crewId)?.seed !== crewId };
+}
+
+/** 얼굴·사진 채우기(분리 검수 2026-10-05 #3) — 얼굴을 한 번도 저장하지 않은 에이전트는 주인이 아닌 사람(조직 동료·개인 방 친구)이 자기가 보는 행 id로 그려
+    같은 방에서도 사람마다 얼굴이 달랐다. 주인 메신저가 로그인 때 이미 읽은 내 크루 행으로 crew-face.mjs lookFillPlan이 고른 것만 쓴다(추가 읽기 0).
+    쓰기마다 그 열이 비어 있는 행만(is null) — 저장한 뒤에는 조건이 거짓이라 다시 쓰지 않고, 다른 기기가 먼저 저장했거나 동시에 해도 같은 값이라 안전하다.
+    실패는 조용히 넘긴다(다음 로그인 때 다시 — App이 세션에 한 번만 부른다, 재시도 루프 없음). 반환 [{ ids: 실제로 바뀐 행, patch }] — App이 내 크루 행에 덮어 둔다.
+    부하: 로그인마다 읽기 0, 쓰기는 에이전트당 얼굴 1번 + 사진 1번(필요할 때만) 평생 — 그 뒤 모든 로그인에서 0 */
+export async function fillAgentLooks(db, rows) {
+  const done = await Promise.all(lookFillPlan(rows).map(async ({ col, ids, patch }) => {
+    try {
+      const r = await db.from('msgr_crews').update(patch).in('id', ids).is(col, null).select('id');
+      return !r.error && r.data?.length ? { ids: r.data.map((x) => x.id), patch } : null;
+    } catch { return null; } // 다음 로그인 때 다시
+  }));
+  return done.filter(Boolean);
+}
+
+/** 내 크루 행 읽기 하나로(분리 검수 2026-10-05 #4) — 얼굴 지도(로그인·복귀)와 내 에이전트 목록(loadMyAgents)이 같은 select(owner = 나)를 따로 불러 로그인 때 2건이었다.
+    read({ epoch, reuse }) → Promise<{ rows, at, epoch }>(at = 그 읽기를 시작한 시각):
+      · 읽는 중이면 누가 불러도 그 약속을 같이 쓴다(요청 0)
+      · reuse면 같은 epoch(App syncEpoch — 복귀·재연결 회차)에 이미 읽은 결과를 쓴다(요청 0) — 로그인 때 버튼 이름 판정 재료(myAgentsAsked)
+      · 그 밖(복귀 새 회차·폰 에이전트 탭에 들어감)은 새로 읽는다. 실패는 기억하지 않는다(다음 부름이 다시 읽는다) */
+export function ownRowsReader(fetch, now = Date.now) {
+  let pending = null; let last = null;
+  return function read({ epoch = 0, reuse = false } = {}) {
+    if (pending) return pending;
+    if (reuse && last && last.epoch === epoch) return Promise.resolve(last);
+    const at = now();
+    const p = new Promise((res) => res(fetch())).then((rows) => { last = { rows, at, epoch }; return last; }); // 바로 부른다(동기로 던져도 거절된 약속으로)
+    pending = p;
+    const clear = () => { if (pending === p) pending = null; };
+    p.then(clear, clear);
+    return p;
+  };
 }
 
 /** 방금 만든 개인 방이 목록에 들어왔는지 — 들어왔으면(또는 두 번 읽었으면) true, 읽는 동안 공간을 떠났으면 false(App openPersonalCrewDm).

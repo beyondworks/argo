@@ -40,7 +40,7 @@ import { useLongPress, longPressHandlers } from './long-press.js';
 import { groupFlags } from './msg-group.mjs';
 import { t as tm } from './i18n.js';
 import { plainField, approvalPlainFields, orgDocTitle, approvalOneLineSummary, approvalGrade, approvalSummaryKey, approvalPageItems, approvalDecider, phoneApprovalDecider, decidableApprovals, approvalOnlyKey, approvalDenied, approvalCmdMode } from './approval-display.js';
-import { AGENT_FILTERS, AGENT_FAV_KEY, groupAgents, rowForSpace, agentRoomTarget, agentStateRow, personalRoomFor, personalRoomKnown, agentDmRedirect, saveAgentLook, loadUntilListed, spaceMoveNotice, spaceMoveBack, MOVE_NOTICE_MS, agentSections, groupIsFav, favChanges, readAgentFav } from './agent-groups.mjs'; // 폰 에이전트 탭 — 같은 에이전트 한 줄·상단 메뉴·즐겨찾기(유건 2026-10-02), 1:1은 개인 방 하나(2026-10-03)
+import { AGENT_FILTERS, AGENT_FAV_KEY, groupAgents, rowForSpace, agentRoomTarget, agentStateRow, personalRoomFor, personalRoomKnown, agentDmRedirect, saveAgentLook, fillAgentLooks, ownRowsReader, loadUntilListed, spaceMoveNotice, spaceMoveBack, MOVE_NOTICE_MS, agentSections, groupIsFav, favChanges, readAgentFav } from './agent-groups.mjs'; // 폰 에이전트 탭 — 같은 에이전트 한 줄·상단 메뉴·즐겨찾기(유건 2026-10-02), 1:1은 개인 방 하나(2026-10-03)
 import { toggleId, foldAll, allFolded } from './collapse-set.mjs';
 import { useLang } from '@argo/i18n';
 import { useTheme, THEMES } from '@argo/theme';
@@ -1395,15 +1395,26 @@ function Shell({ session }) {
   const [approvals, setApprovals] = useState([]);
   const [myAgents, setMyAgents] = useState(null); // 폰 에이전트 탭 — 내 에이전트(모든 공간). 아래 loadMyAgents가 채운다(선언은 얼굴 문맥(avatarCtx)보다 앞)
   // 에이전트 = 한 사람(유건 2026-10-05) — 내 크루 행 전부(개인 공간 + 모든 조직)로 얼굴 지도(crew-face.mjs agentLooks)를 만든다. 같은 에이전트는 공간·화면과 상관없이 같은 얼굴·사진.
-  // 읽기: 로그인 때 1건 + 복귀·재연결(syncEpoch) 때 1건, 폰 에이전트 탭이 읽은 결과도 같이 쓴다. 쓰기 0 — 얼굴·사진 저장은 보낸 값을 그대로 덮어 둔다(다시 읽지 않는다).
-  // { rows, at } — at = 읽은(또는 덮어 둔) 시각. 그보다 나중에 읽은 지금 공간 목록의 행(_at)이 있으면 그 행의 얼굴·사진이 앞선다(다른 기기에서 바꾼 값).
+  // 읽기: 로그인 때 1건 + 복귀·재연결(syncEpoch) 때 1건. 내 에이전트 목록(loadMyAgents)도 같은 읽기를 쓴다(agent-groups.mjs ownRowsReader — 읽는 중이면 같은 약속,
+  // 로그인 때 버튼 이름 판정 재료는 같은 회차 결과를 다시 쓴다: 로그인 때 msgr_crews select 2건 → 1건, 분리 검수 2026-10-05 #4). 폰 에이전트 탭에 들어가면 새로 읽는다.
+  // { rows, at } — at = 읽기를 시작한(또는 덮어 둔) 시각. 그보다 나중에 읽은 지금 공간 목록의 행(_at)이 있으면 그 행의 얼굴·사진이 앞선다(다른 기기에서 바꾼 값).
+  // 더 새 값(저장·채우기로 덮어 둔 것)을 같은 회차의 옛 읽기 결과가 되돌리지 않게, at이 앞서야만 바꾼다(newerOwn).
   const [ownCrews, setOwnCrews] = useState(null);
-  const readOwnCrews = useCallback(async () => {
+  const syncEpochRef = useRef(syncEpoch); syncEpochRef.current = syncEpoch;
+  const readOwnCrews = useMemo(() => ownRowsReader(async () => {
     const cols = 'id, org_id, owner_user_id, ws_id, slug, display_name, role_text, hosting, status, last_seen_at, avatar_url, created_at';
     if (Date.now() - faceCol.missingAt > 600_000) try { return await q(supabase.from('msgr_crews').select(`${cols}, face`).eq('owner_user_id', uid).in('status', ['active', 'available'])); } catch { /* 옛 서버(face 열 없음) */ }
     return q(supabase.from('msgr_crews').select(cols).eq('owner_user_id', uid).in('status', ['active', 'available']));
-  }, [uid]);
-  useEffect(() => { if (!uid) { setOwnCrews(null); return undefined; } let live = true; const at = Date.now(); readOwnCrews().then((rows) => { if (live) setOwnCrews({ rows, at }); }).catch(() => {}); return () => { live = false; }; }, [uid, syncEpoch, readOwnCrews]);
+  }), [uid]);
+  const newerOwn = (own) => (cur) => (cur && cur.at >= own.at ? cur : own);
+  // 얼굴·사진 채우기(분리 검수 2026-10-05 #3) — 로그인 뒤 첫 읽기로 한 번만(agent-groups.mjs fillAgentLooks: 저장한 적 없는 열만, 실패는 다음 로그인 때). 추가 읽기 0,
+  // 쓰기는 에이전트당 얼굴 1번 + 사진 1번(필요할 때만) 평생. 바뀐 행은 보낸 값을 내 크루 행에 덮어 둔다(다시 읽지 않는다)
+  const looksFilled = useRef(false);
+  useEffect(() => { if (!uid) { setOwnCrews(null); return undefined; } let live = true; readOwnCrews({ epoch: syncEpoch }).then((own) => {
+    if (!live) return; setOwnCrews(newerOwn(own));
+    if (looksFilled.current) return; looksFilled.current = true;
+    fillAgentLooks(supabase, own.rows).then((done) => { if (done.length) setOwnCrews((cur) => (cur ? { ...cur, rows: cur.rows.map((x) => done.reduce((r, d) => (d.ids.includes(r.id) ? { ...r, ...d.patch } : r), x)) } : cur)); });
+  }).catch(() => {}); return () => { live = false; }; }, [uid, syncEpoch, readOwnCrews]); // eslint-disable-line react-hooks/exhaustive-deps -- newerOwn은 순수
   const approvalsTimer = useRef(null);
   // 넣기 요청 카드의 이름(기능 점검 D6) — 에이전트 이름: 조직 에이전트는 조직 행, 개인 에이전트는 160000의 대기 에이전트 이름(msgr_personal_room_crews).
   // 방 이름: 채널·이름 붙은 그룹방은 그 이름, 대화방은 나를 뺀 사람 이름(조직 표시명 → 프로필). 요청이 있을 때만 부른다.
@@ -2087,16 +2098,16 @@ function Shell({ session }) {
   // ── 폰 에이전트 탭: 내 에이전트(개인 공간 + 모든 조직) — 탭에 들어갈 때·앱 복귀 때만 읽는다(주기 호출 없음, 한 번에 2건) ──
   // 같은 에이전트 한 줄(유건 2026-10-02 — agent-groups.mjs): 판정에 ws_id·slug가 필요하다. 개인 행 RPC는 ws_id를 주지 않아, 본인 크루 조회(한 건)에서
   // 조직 필터를 빼 내 개인 행도 같이 받아 ws_id만 빌린다(RLS: org_id NULL 행은 주인만 본다). 요청 수는 그대로 2건 — 에이전트 탭에서만 즐겨찾기 1건을 더 읽는다.
-  const loadMyAgents = useCallback(async ({ favs = false } = {}) => {
+  // reuse — 같은 회차(syncEpoch)에 얼굴 지도가 이미 읽은 내 크루 행을 다시 쓴다(로그인 때 버튼 이름 판정 재료 — 요청 0). 폰 에이전트 탭·설정은 새로 읽는다(읽는 중이면 같은 약속)
+  const loadMyAgents = useCallback(async ({ favs = false, reuse = false } = {}) => {
     if (!uid) return;
-    const at = Date.now(); // 내 크루 행은 얼굴 지도와 같은 읽기(readOwnCrews) — 결과를 같이 쓴다(요청을 늘리지 않는다)
-    const [own, personal, pins] = await Promise.all([readOwnCrews().catch(() => null), q(supabase.rpc('msgr_personal_room_crews')).catch(() => []),
+    const [own, personal, pins] = await Promise.all([readOwnCrews({ epoch: syncEpochRef.current, reuse }).catch(() => null), q(supabase.rpc('msgr_personal_room_crews')).catch(() => []),
       favs ? q(supabase.from('msgr_target_prefs').select('org_id, target_id').eq('user_id', uid).eq('target_kind', 'crew').eq('pinned', true)).catch(() => null) : null]);
     if (pins) setAgentPins(new Set(pins.map((p) => `${p.org_id}:${p.target_id}`)));
     if (own === null) return;
-    setOwnCrews({ rows: own, at });
-    const wsOf = new Map(own.filter((c) => !c.org_id).map((c) => [c.id, c.ws_id]));
-    setMyAgents(stampFetched([...withoutCopies(personal ?? []).filter((c) => c.owner_user_id === uid && c.status === 'active').map((c) => ({ ...c, org_id: null, ws_id: c.ws_id ?? wsOf.get(c.id) ?? null })), ...withoutCopies(own).filter((c) => c.org_id)]));
+    setOwnCrews(newerOwn(own));
+    const wsOf = new Map(own.rows.filter((c) => !c.org_id).map((c) => [c.id, c.ws_id]));
+    setMyAgents(stampFetched([...withoutCopies(personal ?? []).filter((c) => c.owner_user_id === uid && c.status === 'active').map((c) => ({ ...c, org_id: null, ws_id: c.ws_id ?? wsOf.get(c.id) ?? null })), ...withoutCopies(own.rows).filter((c) => c.org_id)]));
   }, [uid]); // eslint-disable-line react-hooks/exhaustive-deps -- readOwnCrews는 uid로만 바뀐다
   // 에이전트 즐겨찾기 — 조직 행은 기존 에이전트 즐겨찾기(msgr_target_prefs, 데스크톱 레일 별과 같은 행), 개인 행은 이 기기(AGENT_FAV_KEY). 누를 때만 쓴다(같은 값은 다시 쓰지 않는다)
   const [agentPins, setAgentPins] = useState(() => new Set());
@@ -2114,7 +2125,7 @@ function Shell({ session }) {
   // 버튼 이름(개인 1:1 대화) 판정 재료 — 폰 에이전트 탭을 아직 안 열었거나 데스크톱(myAgents를 읽지 않는다)이면, 조직 화면에 내 에이전트가 보일 때 세션에 한 번만 읽는다
   // (요청 2건, 주기 호출 없음 — 실패해도 다시 묻지 않고 지금 문구). 그 뒤 폰은 종전대로 에이전트 탭에서 새로 읽는다.
   const myAgentsAsked = useRef(false);
-  useEffect(() => { if (myAgentsAsked.current || myAgents !== null || !uid || !orgId || orgId === PERSONAL || !crews.some((c) => c.owner_user_id === uid)) return; myAgentsAsked.current = true; loadMyAgents().catch(() => {}); }, [uid, orgId, crews, myAgents]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (myAgentsAsked.current || myAgents !== null || !uid || !orgId || orgId === PERSONAL || !crews.some((c) => c.owner_user_id === uid)) return; myAgentsAsked.current = true; loadMyAgents({ reuse: true }).catch(() => {}); }, [uid, orgId, crews, myAgents]); // eslint-disable-line react-hooks/exhaustive-deps
   // 다른 공간의 에이전트·대화를 열 때 — 공간을 바꾸고, 그 공간 목록이 도착하면 그때의 최신 함수로 연다(옛 렌더의 함수는 옛 공간 목록을 본다)
   const afterSpace = useRef(null); const latestOpen = useRef({});
   latestOpen.current = { dmWithCrew, openPersonalCrewDm, setSheet, crewOf, note: setNote, orgBlocked, moveNotice: showMoveNotice }; // orgBlocked: 동의 전 조직이면 카드 대신 이유(openAgentCard)
@@ -3148,6 +3159,7 @@ function CrewSheet({ crew, org, uid, me, members, policy, channelId, channelName
   const others = members.filter((m) => m.user_id !== crew.owner_user_id);
   // 얼굴·사진은 같은 에이전트의 내 행 전부에(유건 2026-10-05, Shell saveLook) — 받지 못했으면(다른 부모) 이 행만(종전)
   const writeLook = (patch) => (saveLook ? saveLook(crew.id, patch) : supabase.from('msgr_crews').update(patch).eq('id', crew.id).select('id'));
+  const lookNote = (r) => (r.onlyHere ? 'crew.look.onlyHere' : 'crew.profile.saved'); // 여러 행 저장이 거절돼 대표가 아닌 이 행만 저장했으면 — 화면 얼굴은 대표 기준이라 안 바뀐다(분리 검수 2026-10-05 #6)
   const lookPhoto = agentLook(crew.id, useContext(AvatarCtx).looks, crew.face, crew.avatar_url ?? null).photo ?? null; // 목록·대화와 같은 사진(그 행 → 대표 행)
   return (
     <div className="msgr-sheetwrap">
@@ -3174,9 +3186,9 @@ function CrewSheet({ crew, org, uid, me, members, policy, channelId, channelName
         <p className="note tier">{tier === 'company' ? t('crew.tier.company.note', { org: org?.name ?? '' }) : t('crew.tier.personal.note', { name: nameOfUser(crew.owner_user_id) })}</p>
         {owner && (<section className="msgr-crewprofile">
           <h3>{t('crew.profile')}</h3>
-          <AvatarEdit name={crew.display_name} crew crewId={crew.id} url={lookPhoto} busy={busy} t={t} onUpload={async (f) => { try { setBusy(true); const url = await uploadAvatar(uid, `crew-${crew.id}`, f); const r = await writeLook({ avatar_url: url }); setBusy(false); if (r.error) return onError(r.error.message); onNote(t('crew.profile.saved')); onChanged(); } catch (e) { setBusy(false); onError(e.message); } }} onRemove={async () => { const r = await writeLook({ avatar_url: null }); if (r.error) return onError(r.error.message); onNote(t('crew.profile.saved')); onChanged(); }} />
+          <AvatarEdit name={crew.display_name} crew crewId={crew.id} url={lookPhoto} busy={busy} t={t} onUpload={async (f) => { try { setBusy(true); const url = await uploadAvatar(uid, `crew-${crew.id}`, f); const r = await writeLook({ avatar_url: url }); setBusy(false); if (r.error) return onError(r.error.message); onNote(t(lookNote(r))); onChanged(); } catch (e) { setBusy(false); onError(e.message); } }} onRemove={async () => { const r = await writeLook({ avatar_url: null }); if (r.error) return onError(r.error.message); onNote(t(lookNote(r))); onChanged(); }} />
           <label className="msgr-klabel">{t('crew.face')}</label>
-          <FacePicker crew={crew} busy={busy} t={t} onSave={async (face) => { setBusy(true); const r = await writeLook({ face }); setBusy(false); if (r.error) return onError(r.error.message); onNote(t('crew.profile.saved')); onChanged(); }} />
+          <FacePicker crew={crew} busy={busy} t={t} onSave={async (face) => { setBusy(true); const r = await writeLook({ face }); setBusy(false); if (r.error) return onError(r.error.message); onNote(t(lookNote(r))); onChanged(); }} />
           <label className="msgr-klabel" htmlFor={`role-${crew.id}`}>{t('crew.role')}</label>
           <input id={`role-${crew.id}`} className="msgr-input" maxLength={60} defaultValue={crew.role_text ?? ''} placeholder={t('crew.role.ph')} onBlur={async (e) => { const v = e.target.value.trim() || null; if (v === (crew.role_text ?? null)) return; const r = crew.hosting === 'bot' ? await supabase.rpc('msgr_bot_set_role', { bot_crew: crew.id, new_role_text: v }) : await supabase.from('msgr_crews').update({ role_text: v }).eq('id', crew.id).select('id'); if (r.error) return onError(r.error.message); onNote(t('crew.profile.saved')); onChanged(); }} />
           <label className="msgr-klabel" htmlFor={`bio-${crew.id}`}>{t('crew.bio')}</label>
@@ -4744,7 +4756,7 @@ function PersonalAgentCard({ crewId, uid, onClose, onNote, onError, onChanged, s
     setBusy(false);
     if (r.error) return onError(/msgr_not_allowed/.test(r.error.message) ? t('agentcard.lock.twin') : friendlyErr(r.error.message, t));
     if (!(look ? r.ids : r.data)?.length) return onError(t('agentcard.notOwner'));
-    onNote(t(okKey)); await load(); onChanged?.();
+    onNote(t(look && r.onlyHere ? 'crew.look.onlyHere' : okKey)); await load(); onChanged?.(); // 대표가 아닌 이 행만 저장됐으면 따로 알린다(분리 검수 2026-10-05 #6)
   };
   const locks = personalCardLocks(crew);
   const lockNote = (why) => <span className="ph-lockwhy"><I name="lock" size={12} />{t(why === 'twin' ? 'agentcard.lock.twin' : 'agentcard.lock.argo')}</span>;
