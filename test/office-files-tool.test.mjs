@@ -118,7 +118,7 @@ test('F4(C9). attach: 작업 공간 안 파일만 — 자리(키는 DB가 정함
   assert.match(await run({ action: 'attach', path: 'vault/files/김민수_명함.png' }), /https가 아니라/);
   assert.ok(!calls.some((c) => c.name === 'fetch' && c.init.method === 'PUT'), 'https가 아닌 곳으로는 파일을 보내지 않는다');
   calls = fake({ api: { ...STORE, 'api/storage/commit': () => new Response('{"error":"file_size_mismatch"}', { status: 409 }) } });
-  assert.match(await run({ action: 'attach', path: 'vault/files/김민수_명함.png' }), /오피스 호출 실패: file_size_mismatch/);
+  assert.match(await run({ action: 'attach', path: 'vault/files/김민수_명함.png' }), /오피스 호출 실패: "file_size_mismatch"/);
   assert.ok(!calls.some((c) => c.args?.p_action === 'file.create'), '확인이 실패하면 등록하지 않는다');
 });
 

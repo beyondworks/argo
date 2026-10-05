@@ -12,7 +12,7 @@
 // 부하: 사람이 시킬 때만 부른다(폴링 없음). 목록은 호출 1, 할 일 고치기는 목록 1 + 바뀐 칸마다 쓰기 1(같은 값이면 부르지 않는다), 페이지 고치기는 목록 1 + 읽기 1 + 저장 1.
 // 바깥 글(S1): 할 일 제목·메모·분류·사람 이름, 페이지 제목·본문은 남이 쓴 글이다 — 목록·읽기 결과는 경계 블록으로 감싼다(office-audience.mjs outsideOf).
 import { randomUUID } from 'node:crypto';
-import { officeTurn, ONLY_DM, refusalText, outsideOf, OUTSIDE_RULE } from './office-audience.mjs';
+import { officeTurn, ONLY_DM, refusalText, outsideOf, quoted, OUTSIDE_RULE } from './office-audience.mjs';
 import { jsonText } from '../inbound-marks.mjs';
 
 export const workDeps = {
@@ -245,7 +245,7 @@ export async function workTool(args, { ctx = null, crew = null, crewName = null,
       if (!a.id) return pick('task_set에는 id(tasks가 보여 준 것)가 필요하다.', 'task_set needs an id from tasks.', lang);
       const rows = await tasksNow();
       const t = rows.find((x) => x.id === a.id);
-      if (!t) return pick(`id=${a.id} 할 일이 없다(취소한 일·끝낸 지 30일 지난 일은 보이지 않는다) — tasks로 다시 확인하라.`, `No task id=${a.id} (cancelled tasks and tasks done over 30 days ago are hidden) — check with tasks.`, lang);
+      if (!t) return pick(`id=${quoted(a.id, 80)} 할 일이 없다(취소한 일·끝낸 지 30일 지난 일은 보이지 않는다) — tasks로 다시 확인하라.`, `No task id=${quoted(a.id, 80)} (cancelled tasks and tasks done over 30 days ago are hidden) — check with tasks.`, lang);
       if (t.assignee !== c.uid) return pick('이 할 일은 주인이 맡은 일이 아니라 크루가 바꾸지 않는다 — 맡은 사람이나 관리자가 오피스에서 바꾸면 된다고 한 줄로 알려라.', 'This task is not assigned to the owner, so a crew does not change it — say in one line that the assignee or an admin can change it in Office.', lang);
       if (a.status && ![...STATUS, 'done'].includes(a.status)) return pick('status는 todo·doing·hold·done 중 하나.', 'status must be todo, doing, hold or done.', lang);
       const plan = []; // [{ action, data, label }] — 이 순서대로 하나씩 쓴다
@@ -318,7 +318,7 @@ export async function workTool(args, { ctx = null, crew = null, crewName = null,
       };
       const seeable = (p) => inOrg(p) && (owner || orgWide(p));
       const onlyDm = pick(`이 페이지는 조직 전체가 보는 페이지가 아니라 ${ONLY_DM(lang)} 다룬다.`, `This page is not visible to the whole org, so it is handled ${ONLY_DM(lang)}.`, lang);
-      const missing = (id) => pick(`id=${id} 페이지가 이 조직에 없다 — pages로 확인하라.`, `No page id=${id} in this org — check with pages.`, lang);
+      const missing = (id) => pick(`id=${quoted(id, 80)} 페이지가 이 조직에 없다 — pages로 확인하라.`, `No page id=${quoted(id, 80)} in this org — check with pages.`, lang);
       const access = (p) => ACCESS_NAME[p.access]?.[L(lang)] ?? p.access;
 
       if (a.action === 'pages') {
@@ -377,10 +377,11 @@ export async function workTool(args, { ctx = null, crew = null, crewName = null,
       const doc = row.content?.type === 'doc' ? row.content : { type: 'doc', content: [] };
 
       if (a.action === 'page_read') {
-        const text = docMarkdown(doc, lang); // 길이 상한은 JSON으로 감싸기 전 글자 수로
+        const text = docMarkdown(doc, lang); // 길이 상한은 원문 글자 수(READ_CAP)와 이스케이프 뒤 글자 예산 둘 다(검수 3차 M-A)
+        const top = [`${pick('제목', 'Title', lang)}: ${ox.lineOr(row.title, pick('(제목 없음)', '(untitled)', lang), 500)}`, '---'];
+        const body = text ? ox.body(text, { chars: READ_CAP, max: ox.room(top) }) : null;
         return [`${pick('페이지', 'Page', lang)} id=${p.id} · ${access(p)} · ${pick('버전', 'version', lang)} ${row.version}`,
-          ox.block([`${pick('제목', 'Title', lang)}: ${ox.lineOr(row.title, pick('(제목 없음)', '(untitled)', lang))}`, '---',
-            ...(text ? [ox.text(text.slice(0, READ_CAP)), ...(text.length > READ_CAP ? [pick(`…(앞 ${READ_CAP}자만)`, `…(first ${READ_CAP} chars)`, lang)] : [])] : [pick('(본문 없음)', '(empty)', lang)])], PAGE_TEXT)].join('\n');
+          ox.block([...top, ...(body ? [body.json, ...(body.cut ? [pick(`…(앞 ${body.kept}자만)`, `…(first ${body.kept} chars)`, lang)] : [])] : [pick('(본문 없음)', '(empty)', lang)])], PAGE_TEXT)].join('\n');
       }
 
       const mode = a.mode === 'replace' ? 'replace' : 'append';

@@ -6,7 +6,7 @@
 // 손님·조직 밖 사람이 있을 수 있는 방에서는 회사 기록을 다루지 않는다(office-audience.mjs).
 // 바깥 글(S1): 회사 정보 항목·메모, 직원 이름·직무, 평가 제목·총평은 사람들이 쓴 글이다 — 목록 결과는 경계 블록으로 감싼다(office-audience.mjs outsideOf).
 import { randomUUID } from 'node:crypto';
-import { audienceOf, ONLY_DM, mixedRefusal, outsideOf, OUTSIDE_RULE } from './office-audience.mjs';
+import { audienceOf, ONLY_DM, mixedRefusal, outsideOf, quoted, OUTSIDE_RULE } from './office-audience.mjs';
 
 export const companyDeps = {
   session: async () => (await import('./msgr.mjs')).sessionClient(),
@@ -40,7 +40,7 @@ function rpcError(e, lang) {
   const msg = String(e?.message ?? e ?? '');
   const code = Object.keys(ERRORS).find((c) => msg.includes(c));
   if (code) return pick(`오피스 서버 거절: ${ERRORS[code][0]}.`, `Office server refused: ${ERRORS[code][1]}.`, lang);
-  return pick(`오피스 서버 호출 실패: ${msg.slice(0, 200) || '알 수 없는 오류'}. 사장에게 그대로 알려라.`, `Office call failed: ${msg.slice(0, 200) || 'unknown error'}. Tell the owner as is.`, lang);
+  return pick(`오피스 서버 호출 실패: ${msg ? quoted(msg, 200) : '알 수 없는 오류'}. 사장에게 그대로 알려라.`, `Office call failed: ${msg ? quoted(msg, 200) : 'unknown error'}. Tell the owner as is.`, lang);
 }
 
 const kstDay = (ms) => new Date(ms + 9 * 3600e3).toISOString().slice(0, 10);
@@ -59,7 +59,7 @@ export async function companyTool(args, { ctx = null, crew, lang = 'ko', ownerId
   if (ctx?.kind === 'msgr-rules') return pick('메신저 위임 턴에서는 회사 도구를 쓰지 않는다 — 요청한 동료에게 돌려줘라.', 'The office tool is not available in a delegated messenger turn — hand it back.', lang);
   if (ctx?.kind !== 'msgr' || !ctx.orgId) return pick('회사 정보·직원·평가는 메신저 조직 채널 대화에서만 다룬다(그 조직의 것). 지금 대화에서는 쓸 수 없다고 알려라.', 'Company info, people and evaluations are only available in a messenger org channel (that org). Say it is unavailable here.', lang);
   let c;
-  try { c = await companyDeps.session(); } catch (e) { return pick(`메신저 세션을 불러오지 못했다: ${String(e?.message ?? e).slice(0, 160)}.`, `Could not load the messenger session: ${String(e?.message ?? e).slice(0, 160)}.`, lang); }
+  try { c = await companyDeps.session(); } catch (e) { return pick(`메신저 세션을 불러오지 못했다: ${quoted(e?.message ?? e, 160)}.`, `Could not load the messenger session: ${quoted(e?.message ?? e, 160)}.`, lang); }
   if (!c?.client || !c.uid) return pick('메신저에 로그인돼 있지 않아 오피스를 다룰 수 없다 — 사장에게 Argo 설정에서 메신저(오피스) 계정에 로그인해 달라고 알려라.', 'Not signed in to the messenger, so Office is unavailable — ask the owner to sign in in Argo settings.', lang);
   if (!ownerId || ownerId !== c.uid || ctx.uid !== c.uid) return pick('이 기기의 메신저 로그인 계정이 이 크루 주인의 계정이 아니라 오피스를 다루지 않는다 — 사장에게 알려라.', 'The messenger account on this device is not this crew\'s owner, so Office is not used — tell the owner.', lang);
   const org = ctx.orgId;
@@ -83,7 +83,7 @@ export async function companyTool(args, { ctx = null, crew, lang = 'ko', ownerId
       if (a.id || !label) {
         const d = unwrap(await c.client.rpc('office_company_read', { p_org: org }));
         cur = (d?.items ?? []).find((x) => x.id === a.id) ?? null;
-        if (a.id && !cur) return pick(`id=${a.id} 항목이 없다 — company로 다시 확인하라.`, `No item id=${a.id} — check with company.`, lang);
+        if (a.id && !cur) return pick(`id=${quoted(a.id, 80)} 항목이 없다 — company로 다시 확인하라.`, `No item id=${quoted(a.id, 80)} — check with company.`, lang);
       }
       if (!cur && !label) return pick('company_set에는 label(새 항목) 또는 id(고칠 항목)가 필요하다.', 'company_set needs label (new) or id (update).', lang);
       if (a.category && !CATS.includes(a.category)) return pick(`category는 ${CATS.join('|')} 중 하나.`, `category must be one of ${CATS.join('|')}.`, lang);

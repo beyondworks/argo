@@ -4,7 +4,7 @@
 // 손님 턴 거절은 chat.mjs 처리기(guestNo)가 이 함수보다 먼저 한다.
 // 바깥 글(S1): 일정 제목·장소·주인 이름·조직 이름은 남이 쓴 글일 수 있다(조직 일정) — 목록·결과는 경계 블록으로 감싼다(office-audience.mjs outsideOf).
 import { randomUUID } from 'node:crypto';
-import { outsideOf, OUTSIDE_RULE } from './office-audience.mjs';
+import { outsideOf, quoted, OUTSIDE_RULE } from './office-audience.mjs';
 import { jsonText } from '../inbound-marks.mjs';
 
 const KST = 9 * 3600_000;
@@ -127,7 +127,7 @@ function rpcError(error, lang) {
   const msg = String(error?.message ?? error ?? '');
   const code = Object.keys(ERRORS).find((c) => msg.includes(c));
   if (code) return pick(`일정 서버 거절: ${ERRORS[code][0]}.`, `Calendar server refused: ${ERRORS[code][1]}.`, lang);
-  return pick(`일정 서버 호출 실패: ${msg.slice(0, 200) || '알 수 없는 오류'}. 사장에게 그대로 알려라.`, `Calendar call failed: ${msg.slice(0, 200) || 'unknown error'}. Tell the owner as is.`, lang);
+  return pick(`일정 서버 호출 실패: ${msg ? quoted(msg, 200) : '알 수 없는 오류'}. 사장에게 그대로 알려라.`, `Calendar call failed: ${msg ? quoted(msg, 200) : 'unknown error'}. Tell the owner as is.`, lang);
 }
 // 호출 이름은 글자 그대로 둔다 — 크루 계약 레지스트리(test/crew-contract.test.mjs)가 src/gateway의 rpc('…')를 찾아 분류를 강제한다
 function unwrap({ data, error }) {
@@ -199,7 +199,7 @@ export async function calendarTool(args, { ctx = null, crew, lang = 'ko', ownerI
   const a = args ?? {};
   if (ctx?.kind === 'msgr-rules') return pick('메신저 위임 턴에서는 일정을 다루지 않는다 — 요청한 동료에게 돌려주면 그 동료가 주인의 일정을 다룬다.', 'Calendar is not available in a delegated messenger turn — hand it back to the colleague who asked.', lang);
   let c;
-  try { c = await calendarDeps.session(); } catch (e) { return pick(`메신저 세션을 불러오지 못했다: ${String(e?.message ?? e).slice(0, 160)}. 일정을 다룰 수 없다고 알려라.`, `Could not load the messenger session: ${String(e?.message ?? e).slice(0, 160)}. Say the calendar is unavailable.`, lang); }
+  try { c = await calendarDeps.session(); } catch (e) { return pick(`메신저 세션을 불러오지 못했다: ${quoted(e?.message ?? e, 160)}. 일정을 다룰 수 없다고 알려라.`, `Could not load the messenger session: ${quoted(e?.message ?? e, 160)}. Say the calendar is unavailable.`, lang); }
   if (!c?.client || !c.uid) return pick('메신저에 로그인돼 있지 않아 일정을 다룰 수 없다 — 사장에게 Argo 설정에서 메신저(오피스) 계정에 로그인해 달라고 알려라.', 'Not signed in to the messenger, so the calendar is unavailable — ask the owner to sign in to the messenger (Office) account in Argo settings.', lang);
   if (!ownerId || ownerId !== c.uid || (ctx?.kind === 'msgr' && ctx.uid !== c.uid)) return pick('이 기기의 메신저 로그인 계정이 이 크루 주인의 계정이 아니라 일정을 다루지 않는다 — 사장에게 그 사실을 알려라.', 'The messenger account signed in on this device is not this crew\'s owner, so the calendar is not used — tell the owner.', lang);
   const orgOk = ctx?.kind === 'msgr' && !!ctx.orgId;
@@ -247,7 +247,7 @@ export async function calendarTool(args, { ctx = null, crew, lang = 'ko', ownerI
       if (!Number.isFinite(kstMidnight(a.day))) return pick('day는 YYYY-MM-DD.', 'day must be YYYY-MM-DD.', lang);
       const { events } = await listRange(c, a.day, addDays(a.day, 1));
       const row = events.find((ev) => ev.id === a.id && inTurnScope(ev, ctx));
-      if (!row) return pick(`${a.day}에 id=${a.id} 일정이 없다 — list로 id와 날짜를 다시 확인하라.`, `No event id=${a.id} on ${a.day} — check the id and date with list.`, lang);
+      if (!row) return pick(`${quoted(a.day, 40)}에 id=${quoted(a.id, 80)} 일정이 없다 — list로 id와 날짜를 다시 확인하라.`, `No event id=${quoted(a.id, 80)} on ${quoted(a.day, 40)} — check the id and date with list.`, lang);
       if (row.owner !== c.uid || row.can_edit !== true) {
         // 일정 주인 이름은 읽어 온 남이 쓴 글 — 거절 문장에서도 경계 블록 안에(검수 #fix-cross M2)
         const who = one(row.owner_name);
@@ -257,7 +257,7 @@ export async function calendarTool(args, { ctx = null, crew, lang = 'ko', ownerI
       }
       const recurring = !!parseRrule(row.rrule);
       const occ = recurring ? occurrences(row, kstMidnight(a.day), kstMidnight(addDays(a.day, 1))).find((o) => o.day === a.day) : null;
-      if (recurring && !occ) return pick(`${a.day}은(는) 이 반복 일정의 회차가 아니다.`, `${a.day} is not an occurrence of this repeating event.`, lang);
+      if (recurring && !occ) return pick(`${quoted(a.day, 40)}은(는) 이 반복 일정의 회차가 아니다.`, `${quoted(a.day, 40)} is not an occurrence of this repeating event.`, lang);
       const scope = recurring ? a.scope : 'all';
       if (!scope) return pick('반복 일정이다 — scope를 정해 다시 하라: this(이 회차만) / following(이 회차 및 이후) / all(모든 회차).', 'This event repeats — retry with scope: this / following / all.', lang);
       const firstDay = kstDateOf(Date.parse(row.starts_at));
@@ -267,7 +267,7 @@ export async function calendarTool(args, { ctx = null, crew, lang = 'ko', ownerI
         // 이후 지우기 = next 없는 split — 서버가 UNTIL을 전날로 자르고 그 뒤의 회차 수정 행까지 지운다(save로 UNTIL만 바꾸면 유령 회차가 남는다)
         else if (scope === 'following' && a.day > firstDay) await writeEvent(c, 'split', { id: row.id, day: a.day, crew });
         else await writeEvent(c, 'delete', { id: row.id, crew });
-        const what = scope === 'this' ? pick(`${a.day} 회차만`, `only the ${a.day} occurrence`, lang) : scope === 'following' ? pick(`${a.day} 회차부터 이후`, `from ${a.day} onward`, lang) : pick('전체', 'entirely', lang);
+        const what = scope === 'this' ? pick(`${quoted(a.day, 40)} 회차만`, `only the ${quoted(a.day, 40)} occurrence`, lang) : scope === 'following' ? pick(`${quoted(a.day, 40)} 회차부터 이후`, `from ${quoted(a.day, 40)} onward`, lang) : pick('전체', 'entirely', lang);
         return `${pick(`일정을 ${what} 지웠다. 지운 일정:`, `Deleted the event ${what}. Deleted event:`, lang)}\n${ox.block([ox.lineOr(row.title, pick('(제목 없음)', '(untitled)', lang))], EVENT_TEXT)}`; // 제목은 일정 기록의 글 — 블록 안에(검수 #fix-cross M2)
       }
 

@@ -10,7 +10,7 @@
 import { randomUUID } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { basename, extname, isAbsolute, resolve } from 'node:path';
-import { audienceOf, ONLY_DM, mixedRefusal, outsideOf, OUTSIDE_RULE } from './office-audience.mjs';
+import { audienceOf, ONLY_DM, mixedRefusal, outsideOf, quoted, OUTSIDE_RULE } from './office-audience.mjs';
 
 export const DEFAULT_ORIGIN = 'https://argo-office.vercel.app'; // 운영 오피스(9/30 운영 반영) — 메일 도구(office-mail.mjs)도 같은 주소를 쓴다
 export const filesDeps = {
@@ -66,7 +66,7 @@ const ERRORS = {
 };
 function errText(code, lang, raw = '') {
   if (ERRORS[code]) return pick(`오피스 거절: ${ERRORS[code][0]}.`, `Office refused: ${ERRORS[code][1]}.`, lang);
-  return pick(`오피스 호출 실패: ${String(raw || code || '알 수 없는 오류').slice(0, 200)}. 사장에게 그대로 알려라.`, `Office call failed: ${String(raw || code || 'unknown').slice(0, 200)}. Tell the owner as is.`, lang);
+  return pick(`오피스 호출 실패: ${quoted(raw || code || '알 수 없는 오류', 200)}. 사장에게 그대로 알려라.`, `Office call failed: ${quoted(raw || code || 'unknown', 200)}. Tell the owner as is.`, lang);
 }
 const rpcError = (e, lang) => { const msg = String(e?.message ?? e ?? ''); return errText(Object.keys(ERRORS).find((c) => msg.includes(c)), lang, msg); };
 const kb = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)}MB` : `${Math.max(1, Math.round((n ?? 0) / 1024))}KB`);
@@ -109,7 +109,7 @@ export async function filesTool(args, { ctx = null, lang = 'ko', ownerId = null 
   if (ctx?.kind === 'msgr-rules') return pick('메신저 위임 턴에서는 문서함 도구를 쓰지 않는다 — 요청한 동료에게 돌려줘라.', 'The files tool is not available in a delegated messenger turn — hand it back.', lang);
   if (ctx?.kind !== 'msgr' || !ctx.orgId) return pick('문서함·드라이브는 메신저 조직 채널 대화에서만 다룬다(그 조직의 것). 지금 대화에서는 쓸 수 없다고 알려라.', 'Files and Drive are only available in a messenger org channel (that org). Say it is unavailable here.', lang);
   let c;
-  try { c = await filesDeps.session(); } catch (e) { return pick(`메신저 세션을 불러오지 못했다: ${String(e?.message ?? e).slice(0, 160)}.`, `Could not load the messenger session: ${String(e?.message ?? e).slice(0, 160)}.`, lang); }
+  try { c = await filesDeps.session(); } catch (e) { return pick(`메신저 세션을 불러오지 못했다: ${quoted(e?.message ?? e, 160)}.`, `Could not load the messenger session: ${quoted(e?.message ?? e, 160)}.`, lang); }
   if (!c?.client || !c.uid) return pick('메신저에 로그인돼 있지 않아 오피스를 다룰 수 없다 — 사장에게 Argo 설정에서 메신저(오피스) 계정에 로그인해 달라고 알려라.', 'Not signed in to the messenger, so Office is unavailable — ask the owner to sign in in Argo settings.', lang);
   if (!ownerId || ownerId !== c.uid || ctx.uid !== c.uid) return pick('이 기기의 메신저 로그인 계정이 이 크루 주인의 계정이 아니라 오피스를 다루지 않는다 — 사장에게 알려라.', 'The messenger account on this device is not this crew\'s owner, so Office is not used — tell the owner.', lang);
   const org = ctx.orgId;
@@ -135,12 +135,13 @@ export async function filesTool(args, { ctx = null, lang = 'ko', ownerId = null 
     if (a.action === 'file_read') {
       if (!a.id) return pick('file_read에는 id(files가 보여 준 것)가 필요하다.', 'file_read needs an id from files.', lang);
       const f = unwrap(await c.client.rpc('office_file_get', { p_org: org, p_id: a.id }));
-      const head = `${pick('파일', 'File', lang)} id=${f.id ?? a.id} · ${f.category} · ${pick('글자', 'text', lang)} ${f.ocr_status}${f.customer_id ? ` · customer=${f.customer_id}` : ''}`;
+      const head = `${pick('파일', 'File', lang)} id=${ox.id(f.id ?? a.id)} · ${f.category} · ${pick('글자', 'text', lang)} ${f.ocr_status}${f.customer_id ? ` · customer=${f.customer_id}` : ''}`;
       const named = [`${pick('제목', 'Title', lang)}: ${ox.line(f.title)}`, ...(f.link_url ? [`${pick('링크', 'Link', lang)}: ${ox.line(f.link_url)}`] : [])];
       if (quiet(f)) return `${head}\n${ox.block(named, FILE_TEXT)}\n${pick(`통장사본 글자(계좌번호)는 ${ONLY_DM(lang)} 보여 준다.`, `Bank-book text (account numbers) is shown ${ONLY_DM(lang)}.`, lang)}`;
-      const raw = String(f.full_text || f.summary || ''); // 길이 상한은 JSON으로 감싸기 전 글자 수로
+      const raw = String(f.full_text || f.summary || '');
       if (!raw) return `${head}\n${ox.block(named, FILE_TEXT)}\n${pick('읽힌 글자가 없다(오피스에서 글자 읽기를 다시 해 달라고 할 수 있다).', 'No extracted text yet.', lang)}`;
-      return `${head}\n${ox.block([...named, '---', ox.text(raw.slice(0, READ_CAP)), ...(raw.length > READ_CAP ? [pick(`…(앞 ${READ_CAP}자만)`, `…(first ${READ_CAP} chars)`, lang)] : [])], FILE_TEXT)}`;
+      const body = ox.body(raw, { chars: READ_CAP, max: ox.room([...named, '---']) }); // 원문 글자 수(READ_CAP)와 이스케이프 뒤 글자 예산 둘 다(검수 3차 M-A)
+      return `${head}\n${ox.block([...named, '---', body.json, ...(body.cut ? [pick(`…(앞 ${body.kept}자만)`, `…(first ${body.kept} chars)`, lang)] : [])], FILE_TEXT)}`;
     }
     if (a.action === 'attach') {
       if (!a.path) return pick('attach에는 path(작업 공간 안 파일 경로)가 필요하다.', 'attach needs a path inside the workspace.', lang);

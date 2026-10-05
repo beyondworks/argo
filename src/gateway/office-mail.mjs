@@ -8,7 +8,8 @@
 // 계정 목록은 office_mail_accounts(본인 행만 — RLS). 메일 id는 오피스 목록과 같은 "계정id.Gmail id" 모양이라 읽기·답장·별표에 계정을 따로 받지 않는다.
 // 부하: 사람이 시킬 때만(폴링 없음). 목록 = 계정 표 읽기 1 + 서버 함수 1(Gmail 목록 1 + 메타 최대 30), 읽기 = 계정 표 1 + 서버 함수 1, 답장 초안 = 원문 읽기 1 + 초안 1, 별표 = 1.
 import { randomBytes } from 'node:crypto';
-import { officeTurn, ONLY_DM, outsideOf, OUTSIDE_RULE } from './office-audience.mjs';
+import { officeTurn, ONLY_DM, outsideOf, quoted, OUTSIDE_RULE } from './office-audience.mjs';
+import { jsonText } from '../inbound-marks.mjs';
 import { officeOrigin, DEFAULT_ORIGIN } from './office-files.mjs';
 
 export const mailDeps = {
@@ -46,7 +47,7 @@ const ERRORS = {
 function errText(code, lang, raw = '', retryAfter = null) {
   const wait = retryAfter ? pick(` (${retryAfter}초 뒤)`, ` (in ${retryAfter}s)`, lang) : '';
   if (ERRORS[code]) return pick(`오피스 메일 거절: ${ERRORS[code][0]}${wait}.`, `Office mail refused: ${ERRORS[code][1]}${wait}.`, lang);
-  return pick(`오피스 메일 호출 실패: ${String(raw || code || '알 수 없는 오류').slice(0, 200)}. 사장에게 그대로 알려라.`, `Office mail call failed: ${String(raw || code || 'unknown').slice(0, 200)}. Tell the owner as is.`, lang);
+  return pick(`오피스 메일 호출 실패: ${quoted(raw || code || '알 수 없는 오류', 200)}. 사장에게 그대로 알려라.`, `Office mail call failed: ${quoted(raw || code || 'unknown', 200)}. Tell the owner as is.`, lang);
 }
 
 /** 메일 HTML → 글자(스크립트·스타일은 버리고 줄바꿈을 남긴다) — 오피스 crew-assign.js htmlText와 같은 취지, 서버에는 DOM이 없어 정규식으로 */
@@ -85,7 +86,7 @@ export async function mailTool(args, { ctx = null, lang = 'ko', ownerId = null }
     const { data: accounts, error } = await c.client.from('office_mail_accounts').select('id, address, display_name, status').order('created_at');
     if (error) return errText('db', lang);
     if (!accounts?.length) return pick('주인의 메일 계정이 오피스에 연결돼 있지 않다 — 오피스 메일에서 Gmail을 연결해 달라고 알려라.', 'No mail account is connected in Office — ask the owner to connect Gmail in Office mail.', lang);
-    const accountList = accounts.map((x) => `${x.address}${x.status !== 'ok' ? pick('(다시 연결 필요)', ' (reconnect needed)', lang) : ''}`).join(', ');
+    const accountList = accounts.map((x) => `${jsonText(x.address)}${x.status !== 'ok' ? pick('(다시 연결 필요)', ' (reconnect needed)', lang) : ''}`).join(', ');
     const byArg = (v) => accounts.find((x) => x.id === v || x.address.toLowerCase() === String(v).trim().toLowerCase());
     const choose = () => (a.account ? byArg(a.account) : accounts.find((x) => x.status === 'ok') ?? accounts[0]);
     const usable = (acc) => (acc.status === 'ok' ? null : errText('expired', lang));
@@ -107,14 +108,14 @@ export async function mailTool(args, { ctx = null, lang = 'ko', ownerId = null }
       const r = await mailApi('list', { account: acc.id, folder, ...(q ? { q } : {}) }, lang);
       if (r.text) return r.text;
       const list = r.data?.items ?? [];
-      const where = `${acc.address} · ${q ? pick(`검색 "${q}"`, `search "${q}"`, lang) : FOLDERS[folder][lang === 'en' ? 1 : 0]}`;
-      const others = accounts.length > 1 ? pick(`\n연결된 다른 계정: ${accounts.filter((x) => x.id !== acc.id).map((x) => x.address).join(', ')} — account로 고른다.`, `\nOther accounts: ${accounts.filter((x) => x.id !== acc.id).map((x) => x.address).join(', ')} — pick with account.`, lang) : '';
+      const where = `${jsonText(acc.address)} · ${q ? pick(`검색 ${jsonText(q)}`, `search ${jsonText(q)}`, lang) : FOLDERS[folder][lang === 'en' ? 1 : 0]}`;
+      const others = accounts.length > 1 ? pick(`\n연결된 다른 계정: ${accounts.filter((x) => x.id !== acc.id).map((x) => jsonText(x.address)).join(', ')} — account로 고른다.`, `\nOther accounts: ${accounts.filter((x) => x.id !== acc.id).map((x) => jsonText(x.address)).join(', ')} — pick with account.`, lang) : '';
       if (!list.length) return pick(`메일이 없다(${where}).${others}`, `No mail (${where}).${others}`, lang);
       const ox = outsideOf('mail', lang, mailDeps.nonce());
       return [pick(`메일 ${list.length}통(${where}${r.data.next ? ' · 더 있음 — q로 좁혀라' : ''}):`, `${list.length} messages (${where}${r.data.next ? ' · more — narrow with q' : ''}):`, lang),
         ox.block(list.slice(0, LIST_CAP).map((m) => {
-          const from = one(m.from), addr = one(m.addr); // 비교용(JSON으로 감싸기 전의 값)
-          return `- ${kstTime(m.at)} · ${ox.lineOr(from, '') || ox.line(addr)}${addr && addr !== from ? ` · ${pick('주소', 'address', lang)} ${ox.line(addr)}` : ''} · ${ox.lineOr(m.subject, pick('(제목 없음)', '(no subject)', lang))}${m.unread ? pick(' · 안 읽음', ' · unread', lang) : ''}${m.starred ? pick(' · 별표', ' · starred', lang) : ''}${m.draftId ? pick(' · 초안', ' · draft', lang) : ''} · id=${ox.id(m.id)}${m.snippet ? `\n  ${ox.line(String(m.snippet).slice(0, 120))}` : ''}`;
+          const from = one(m.from).slice(0, 200), addr = one(m.addr).slice(0, 200); // 비교용(JSON으로 감싸기 전의 값) — 보내는 사람 칸은 200자까지
+          return `- ${kstTime(m.at)} · ${ox.lineOr(from, '') || ox.line(addr)}${addr && addr !== from ? ` · ${pick('주소', 'address', lang)} ${ox.line(addr)}` : ''} · ${ox.lineOr(m.subject, pick('(제목 없음)', '(no subject)', lang), 500)}${m.unread ? pick(' · 안 읽음', ' · unread', lang) : ''}${m.starred ? pick(' · 별표', ' · starred', lang) : ''}${m.draftId ? pick(' · 초안', ' · draft', lang) : ''} · id=${ox.id(m.id)}${m.snippet ? `\n  ${ox.line(String(m.snippet).slice(0, 120))}` : ''}`;
         }),
           ['메일 쪽이 쓴 보낸 사람·제목·요약', 'senders, subjects and previews written by others']),
         pick('본문은 mail_read에 id, 답장 초안은 mail_draft에 reply_to=id.', 'Use mail_read with the id for the body; mail_draft with reply_to=id for a reply draft.', lang) + others].join('\n');
@@ -128,12 +129,14 @@ export async function mailTool(args, { ctx = null, lang = 'ko', ownerId = null }
       const m = r.data;
       // 메일은 바깥 사람이 쓴 글이다 — 호출마다 새 번호의 경계 블록으로 감싸고, 안의 값은 JSON 문자열로 싣는다(office-audience.mjs outsideOf, inbound-marks.mjs 머리말)
       const ox = outsideOf('mail', lang, mailDeps.nonce());
-      const rawBody = String(m.text || htmlText(m.html) || '').trim(); // 길이 상한은 JSON으로 감싸기 전 글자 수로
-      const head = [`${pick('제목', 'Subject', lang)}: ${ox.lineOr(m.subject, pick('(제목 없음)', '(no subject)', lang))}`, `${pick('보낸 사람', 'From', lang)}: ${ox.line(m.from)}${m.addr ? ` ${pick('주소', 'address', lang)} ${ox.line(m.addr)}` : ''}`,
-        `${pick('받는 사람', 'To', lang)}: ${ox.line(m.to)}`, ...(m.cc ? [`${pick('참조', 'Cc', lang)}: ${ox.line(m.cc)}`] : []),
-        ...(m.attachments?.length ? [`${pick('첨부', 'Attachments', lang)}: ${m.attachments.map((x) => ox.line(x.name)).join(', ')}`] : [])];
-      return [`${pick('메일', 'Mail', lang)} id=${t.acc.id}.${t.gid} · ${t.acc.address} · ${kstTime(m.at)} (KST)`,
-        ox.block([...head, '', ...(rawBody ? [ox.text(rawBody.slice(0, READ_CAP)), ...(rawBody.length > READ_CAP ? [pick(`…(앞 ${READ_CAP}자만)`, `…(first ${READ_CAP} chars)`, lang)] : [])] : [pick('(본문 없음)', '(empty)', lang)])],
+      const rawBody = String(m.text || htmlText(m.html) || '').trim(); // 길이 상한은 원문 글자 수(READ_CAP)와 이스케이프 뒤 글자 예산 둘 다 — 제어 문자 본문이 6배로 커져 끝 줄이 잘리지 않게(검수 3차 M-A)
+      const atts = (m.attachments ?? []).slice(0, 50);
+      const head = [`${pick('제목', 'Subject', lang)}: ${ox.lineOr(m.subject, pick('(제목 없음)', '(no subject)', lang), 500)}`, `${pick('보낸 사람', 'From', lang)}: ${ox.line(m.from, 300)}${m.addr ? ` ${pick('주소', 'address', lang)} ${ox.line(m.addr, 300)}` : ''}`,
+        `${pick('받는 사람', 'To', lang)}: ${ox.line(m.to, 1000)}`, ...(m.cc ? [`${pick('참조', 'Cc', lang)}: ${ox.line(m.cc, 1000)}`] : []),
+        ...(atts.length ? [`${pick('첨부', 'Attachments', lang)}: ${atts.map((x) => ox.line(x.name, 200)).join(', ')}${(m.attachments ?? []).length > atts.length ? pick(` …외 ${m.attachments.length - atts.length}개`, ` …and ${m.attachments.length - atts.length} more`, lang) : ''}`] : [])];
+      const body = rawBody ? ox.body(rawBody, { chars: READ_CAP, max: ox.room(head) }) : null;
+      return [`${pick('메일', 'Mail', lang)} id=${t.acc.id}.${t.gid} · ${jsonText(t.acc.address)} · ${kstTime(m.at)} (KST)`,
+        ox.block([...head, '', ...(body ? [body.json, ...(body.cut ? [pick(`…(앞 ${body.kept}자만)`, `…(first ${body.kept} chars)`, lang)] : [])] : [pick('(본문 없음)', '(empty)', lang)])],
           ['메일 원문', 'mail content'])].join('\n');
     }
 
@@ -168,7 +171,7 @@ export async function mailTool(args, { ctx = null, lang = 'ko', ownerId = null }
       const ox = outsideOf('mail', lang, mailDeps.nonce());
       const echo = pick(`받는 사람 ${ox.line(to)} · 제목 ${ox.lineOr(subject, '(제목 없음)')}`, `to ${ox.line(to)} · subject ${ox.lineOr(subject, '(no subject)')}`, lang);
       const saved = pick(`초안을 임시 보관함에 저장했다(보내지 않았다 — 주인이 오피스 메일에서 검토하고 보낸다)`, `Saved a draft (not sent — the owner reviews and sends it in Office mail)`, lang);
-      const tail = `${acc.address}${thread.threadId ? pick(' · 답장', ' · reply', lang) : ''} (${pick('초안', 'draft', lang)} id=${r.data?.draftId ?? '?'})`;
+      const tail = `${jsonText(acc.address)}${thread.threadId ? pick(' · 답장', ' · reply', lang) : ''} (${pick('초안', 'draft', lang)} id=${r.data?.draftId == null ? '?' : ox.id(r.data.draftId)})`;
       return fromMail ? `${saved} · ${tail}:\n${ox.block([echo], ['받는 사람·제목은 답장 원문에서 가져온 바깥 글', 'recipient and subject taken from the original mail (written by others)'])}` : `${saved}: ${echo} · ${tail}`;
     }
 

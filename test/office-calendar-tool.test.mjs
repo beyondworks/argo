@@ -159,7 +159,7 @@ test('C7. 세션 없음·주인 아닌 로그인·RPC 오류·위임 턴은 원�
   use(fakeSession([], { error: 'calendar_limit' }));
   assert.match(await run({ action: 'create', title: 'x', start: '2026-10-02' }), /한도\(5,000건\)/);
   use(fakeSession([], { error: 'Could not find the function public.office_event_list' }));
-  assert.match(await run({ action: 'list' }), /일정 서버 호출 실패: Could not find the function/);
+  assert.match(await run({ action: 'list' }), /일정 서버 호출 실패: "Could not find the function/);
   const f = use(fakeSession());
   assert.match(await run({ action: 'list' }, { ctx: { kind: 'msgr-rules', orgSlug: 'o' } }), /위임 턴/);
   assert.equal(f.calls.length, 0);

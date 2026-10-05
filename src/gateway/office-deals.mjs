@@ -12,7 +12,7 @@
 // 부하: 사람이 시킬 때만 부른다(폴링 없음). 목록·고치기 모두 읽기 1(+ 쓰기 1, 새 품목이 있으면 품목마다 쓰기 1).
 // 바깥 글(S1): 거래처 이름·연락처·메모, 거래 건명·품목 이름은 남이 쓴 글이다 — 목록·자세히 결과는 경계 블록으로 감싼다(office-audience.mjs outsideOf).
 import { randomUUID } from 'node:crypto';
-import { officeTurn, ONLY_DM, refusalText, outsideOf, OUTSIDE_RULE } from './office-audience.mjs';
+import { officeTurn, ONLY_DM, refusalText, outsideOf, quoted, OUTSIDE_RULE } from './office-audience.mjs';
 
 export const dealsDeps = {
   session: async () => (await import('./msgr.mjs')).sessionClient(),
@@ -134,7 +134,7 @@ export async function dealsTool(args, { ctx = null, lang = 'ko', ownerId = null 
     if (a.action === 'customers') {
       if (a.id) {
         const cu = customers.find((x) => x.id === a.id);
-        if (!cu) return pick(`id=${a.id} 거래처가 없다 — customers로 확인하라.`, `No customer id=${a.id} — check with customers.`, lang);
+        if (!cu) return pick(`id=${quoted(a.id, 80)} 거래처가 없다 — customers로 확인하라.`, `No customer id=${quoted(a.id, 80)} — check with customers.`, lang);
         const ds = orders.filter((o) => o.customer_id === cu.id).map(deal).sort((x, y) => String(y.o.created_at).localeCompare(String(x.o.created_at))); // 최근 견적순
         const live = ds.filter((x) => x.stage !== 'cancelled');
         const quietNotes = quietCustomer(cu).has('notes');
@@ -184,7 +184,7 @@ export async function dealsTool(args, { ctx = null, lang = 'ko', ownerId = null 
     if (a.action === 'customer_set') {
       if (!a.id) return pick('customer_set에는 id(customers가 보여 준 것)가 필요하다.', 'customer_set needs an id from customers.', lang);
       const cu = customers.find((x) => x.id === a.id);
-      if (!cu) return pick(`id=${a.id} 거래처가 없다 — customers로 확인하라.`, `No customer id=${a.id} — check with customers.`, lang);
+      if (!cu) return pick(`id=${quoted(a.id, 80)} 거래처가 없다 — customers로 확인하라.`, `No customer id=${quoted(a.id, 80)} — check with customers.`, lang);
       const vals = Object.fromEntries([...FIELDS, 'category', 'status'].map((k) => [k, given(k)]).filter(([, v]) => v !== undefined));
       const bad = badField(vals); if (bad) return bad;
       const add = String(a.notes ?? '').trim();
@@ -202,7 +202,7 @@ export async function dealsTool(args, { ctx = null, lang = 'ko', ownerId = null 
     }
 
     if (a.action === 'deals') {
-      if (a.customer_id && !custName.has(a.customer_id)) return pick(`id=${a.customer_id} 거래처가 없다 — customers로 확인하라.`, `No customer id=${a.customer_id}.`, lang);
+      if (a.customer_id && !custName.has(a.customer_id)) return pick(`id=${quoted(a.customer_id, 80)} 거래처가 없다 — customers로 확인하라.`, `No customer id=${quoted(a.customer_id, 80)}.`, lang);
       let list = orders.map(deal);
       if (a.customer_id) list = list.filter((x) => x.o.customer_id === a.customer_id);
       if (a.stage === 'open') list = list.filter((x) => !['paid', 'cancelled'].includes(x.stage));
