@@ -25,10 +25,11 @@ const base = {
   journals: [{ org_id: ORG, title: '2026-09-27', body: '- 09:12 · **루나** → 끝' }],
 };
 
-// 이유: 사이드바 크루 상태 점 — 진행 중인 일의 담당이면 일하는 중, 대기 결재가 있으면 확인 필요, 아니면 대기(예시 데이터와 같은 값).
-test('크루 상태: 담당 중 → work, 대기 결재 → ask, 그 외 idle. 역할은 부서 먼저', () => {
+// 이유: 사이드바 크루 상태 점 — 진행 중인 일의 담당이면 일하는 중, 대기 결재가 있으면 확인 필요, 아니면 대기.
+// 10/5: 접속 시각(크루 행)을 모르면 'rest'('대기' — 예전과 같은 말). 켜져 있으면 idle('대기 중'), 꺼졌으면 off — test/agents-connect.test.mjs CX-06
+test('크루 상태: 담당 중 → work, 대기 결재 → ask, 그 외(접속 모름) rest. 역할은 부서 먼저', () => {
   const b = mapBoard(base, { orgKey: key, decidable: new Set() });
-  assert.deepEqual(b.crews.map((c) => [c.id, c.status, c.role, c.space, c.owner]), [['c1', 'work', '영업', 'bw', 'u1'], ['c2', 'ask', '리서치', 'bw', 'u2'], ['c3', 'idle', '', 'bw', 'u1']]);
+  assert.deepEqual(b.crews.map((c) => [c.id, c.status, c.role, c.space, c.owner]), [['c1', 'work', '영업', 'bw', 'u1'], ['c2', 'ask', '리서치', 'bw', 'u2'], ['c3', 'rest', '', 'bw', 'u1']]);
 });
 
 // 이유(유건 2026-10-05, 에이전트 = 한 사람): 같은 에이전트(주인·회사·slug)는 조직이 달라도 같은 얼굴이어야 한다. 메신저와 같은 기준

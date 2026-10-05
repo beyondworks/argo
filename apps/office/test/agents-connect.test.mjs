@@ -63,7 +63,7 @@ test('CX-06: 꺼짐·켜짐 — 90초, 개인 행은 조직 행 시각을 빌리
   assert.deepEqual(off.crews.map((c) => [c.id, c.status, c.on]), [['c1', 'off', false], ['p1', 'off', false]]);
   assert.equal(crewsIn(off.crews, 'me', ME)[0].status, 'off', '묶은 줄도 꺼짐');
   const unknown = mapBoard({ crews: [listed('c1', O1)] }, { orgKey, decidable: new Set(), at: AT });
-  assert.deepEqual(unknown.crews.map((c) => [c.status, c.on]), [['idle', null]], '크루 행을 못 읽었으면 예전처럼');
+  assert.deepEqual(unknown.crews.map((c) => [c.status, c.on]), [['rest', null]], '크루 행을 못 읽었으면 켜짐·꺼짐을 단정하지 않는다(대기)');
   const busy = mapBoard({ crews: [listed('c1', O1)], agents: [raw('c1', O1, { last_seen_at: ago(500) })], runs: [{ id: 'w', org_id: O1, lead_crew_id: 'c1', status: 'running' }] }, { orgKey, decidable: new Set(), me: ME, at: AT });
   assert.equal(busy.crews[0].status, 'work', '진행 중인 일의 담당이면 일하는 중이 먼저');
 });
@@ -81,4 +81,13 @@ test('OFC-20: 화면용 결재권 판정 = 메신저 approvalDecider(모든 칸)
   const ctx = { me: ME, crews: [{ id: 'c1', owner_user_id: ME }, { id: 'c9', owner_user_id: 'u-kim' }], orgs: [{ id: O1, role: 'member' }] };
   assert.deepEqual([...decidableSet(aps, { ...ctx, policies: [] })], ['a1'], '정책 행이 없으면 기본(관리자)');
   assert.deepEqual([...decidableSet(aps, { ...ctx, policies: null })], ['a1', 'a2'], '정책을 못 읽었으면 버튼을 띄우고 서버가 가른다');
+});
+
+// 이유(분리 검수 MEDIUM): 묶음 대표를 첫 조직 행으로만 골라, 조직 B에서 고정한 에이전트가 내 공간에서 고정 안 됨으로 보였고 대표가 회사 크루 행이면 줄이 통째로 빠졌다
+test('CX-05: 묶음 대표 — 고정한 조직 행, 없으면 회사 크루가 아닌 조직 행', () => {
+  const crews = [listed('c1', O1), listed('c2', O2, { pinned: true, pin_pos: 3 }), listed('d1', O1, { display_name: '울프', company: true }), listed('d2', O2, { display_name: '울프' })];
+  const b = board(crews, [raw('c1', O1), raw('c2', O2), raw('d1', O1, { slug: 'wolff' }), raw('d2', O2, { slug: 'wolff' })]);
+  const me = crewsIn(b.crews, 'me', ME);
+  assert.deepEqual(me.map((c) => [c.name, c.id, c.pinned]).sort(), [['울프', 'd2', false], ['페퍼', 'c2', true]]);
+  assert.deepEqual(groupCrews(me, { me: ME }).groups.map((g) => [g.key, g.crews.map((c) => c.name)]), [['pinned', ['페퍼']], ['mine', ['울프']]]);
 });

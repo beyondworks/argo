@@ -34,7 +34,7 @@ export function globalCommands(space) {
 
 /** 템플릿으로 저장 = 지금 모습의 사본을 템플릿으로(유건 9/27). 조직 템플릿은 관리자만 — 아니면 '내 것'으로 */
 async function saveAsTemplate(page) {
-  if (page.content === undefined) await loadPageContent(page.id);
+  if (page.content === undefined) { try { await loadPageContent(page.id); } catch { showToast(t('load.readFail')); return; } } // 본문 없이 빈 템플릿을 만들지 않는다
   const cur = getState().pages.find((p) => p.id === page.id) ?? page;
   const space = page.space !== 'me' && page.space !== 'shared' && canManage(page.space) ? page.space : 'me';
   createPage(space, null, { title: cur.title, content: cur.content, template: true });

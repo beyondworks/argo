@@ -220,7 +220,7 @@ export default function App() {
     pullPages().catch((e) => console.warn('[office] page pull failed', e?.message));
     pullBoard().catch((e) => console.warn('[office] board pull failed', e?.message));
     import('./core/mail.js').then((m) => m.loadAccounts().then(() => m.pullMail('inbox'))) // 예시 메일을 치우고 연결한 계정의 받은편지함(메일 코드는 첫 화면 밖)
-      .then((r) => update(() => ({ mailError: r?.failed?.some((f) => f.code !== 'expired') ? Date.now() : null })), (e) => { update(() => ({ mailError: Date.now() })); console.warn('[office] mail pull failed', e?.message); }); // 못 받았으면 현황 '안 읽은 메일'이 '모두 확인'이 아니라 '확인 못 함'(OFC-08)
+      .catch((e) => { update(() => ({ mailError: Date.now() })); console.warn('[office] mail pull failed', e?.message); }); // 계정 목록도 못 받았으면 현황 '안 읽은 메일'이 '확인 못 함'(OFC-08). 받은편지함 일부 실패·회복은 core/mail.js가 쓴다
     // 기록판은 실시간 방송 대신 탭으로 돌아오거나 창에 초점이 올 때 다시 읽는다(최대 1분에 한 번 — 읽기만). 같은 브라우저의 메신저 탭에서 결재하고 돌아와도 맞게(CX-10)
     let last = Date.now();
     const onShow = () => { if (!refetchDue({ hidden: document.hidden, now: Date.now(), last })) return; last = Date.now(); pullBoard().catch(() => {}); };
@@ -268,7 +268,7 @@ export default function App() {
   const params = new URLSearchParams(query ?? '');
   const views = {
     business: <Lazy reset={path}>{r.tab === 'library' ? <ModuleLibrary key={r.space} space={r.space} targetId={params.get('target')} /> : <BusinessPage key={r.space} space={r.space} tab={r.tab} openId={params.get('open')} view={params.get('view')} />}</Lazy>,
-    home: <Home space={r.space} />, contracts: <Contracts key={r.space} space={r.space} params={params} />, files: <Files key={r.space} space={r.space} query={query} />, filesConnect: <DriveConnect query={query} />, calendar: <Calendar key={r.space} space={r.space} day={params.get('day')} />, tasks: <Tasks key={r.space} space={r.space} />, mail: <Mail id={r.id} />, mailConnect: <MailConnect query={query} />, page: <PageView id={r.id} space={r.space} />, shared: <Shared />,
+    home: <Home space={r.space} />, contracts: <Contracts key={r.space} space={r.space} params={params} />, files: <Files key={r.space} space={r.space} query={query} />, filesConnect: <DriveConnect query={query} />, calendar: <Calendar key={r.space} space={r.space} day={params.get('day')} />, tasks: <Tasks key={r.space} space={r.space} />, mail: <Mail id={r.id} />, mailConnect: <MailConnect query={query} />, page: <PageView key={r.id} id={r.id} space={r.space} />, shared: <Shared />,
     work: <Work space={r.space} openId={params.get('open')} folder={params.get('folder')} />, agents: <CrewOrg space={r.space} />, approvals: <Approvals space={r.space} openId={params.get('open')} folder={params.get('folder')} />, decisions: <Decisions space={r.space} openId={params.get('open')} folder={params.get('folder')} />,
     outputs: <Outputs space={r.space} openId={params.get('open')} folder={params.get('folder')} />, journal: <Journal space={r.space} folder={params.get('folder')} />, docs: <Docs space={r.space} openId={params.get('open')} />, perf: <Perf space={r.space} tab={params.get('tab')} />, people: <People key={r.space} space={r.space} />, company: <Company key={r.space} space={r.space} />, knowhow: <Assets space={r.space} />, tools: <Tools space={r.space} />, trash: <Trash space={r.space} />, settings: <Settings />,
   };

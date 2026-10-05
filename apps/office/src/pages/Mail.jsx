@@ -32,7 +32,7 @@ const haAddr = (s) => <span className="ha">{s}</span>;
 import {
   loadAccounts, pullMail, syncMail, readMail, finishConnect, mailConfig, refreshMail, hasMore, wantSync, lastSynced, subscribeSync, limitLeft, subscribeLimit, getLimitUntil,
   saveDraft, sendMail, sendDraft, deleteDraft, toggleStar, fileToPart, openAttachment, mailDoc, mailPaper, ATTACH_CAP,
-  readSnap, saveSnap, clearSnap, readView, writeView, seedSample, notifyOn, subscribeNotify,
+  readSnap, saveSnap, clearSnap, readView, writeView, seedSample, notifyOn, subscribeNotify, hardFails,
 } from '../core/mail.js';
 import {
   VIEWS, inView, byDate, replySubject, forwardSubject, replyTo, replyAll, fmtExact, linkify, quoteBlock, forwardBlock, htmlToText, escapeHtml,
@@ -588,7 +588,7 @@ export function Mail({ id }) {
   useEffect(() => {
     if (!real || !accKey) return undefined;
     let live = true; setLoading(true);
-    pullMail(view).then((r) => { if (live) setFailN(r?.failed?.filter((f) => f.code !== 'expired').length ?? 0); }, () => { if (live) setFailN(accounts.filter(ok).length); }).finally(() => live && setLoading(false));
+    pullMail(view).then((r) => { if (live) setFailN(hardFails(r?.failed)); }, () => { if (live) setFailN(accounts.filter(ok).length); }).finally(() => live && setLoading(false));
     return () => { live = false; };
   }, [real, view, accKey, again]);
   // 자동 갱신 — 이 화면이 보이는 동안 30초마다 바뀐 것만(숨긴 탭은 멈춘다, core/mail.js)
@@ -614,7 +614,7 @@ export function Mail({ id }) {
     setRefreshing(true);
     try {
       const before = getState().mails.length;
-      if (search) { await syncMail({ view }).catch(() => {}); await runSearch(search.q); } else await refreshMail(view);
+      if (search) { await syncMail({ view }).catch(() => {}); await runSearch(search.q); } else setFailN(hardFails((await refreshMail(view))?.failed)); // 새로고침이 되면 실패 띠도 맞춘다
       if (!search && getState().mails.length === before && !real) showToast(t('mailx.noNew'));
     }
     catch { showToast(t('mailx.failed')); } finally { setRefreshing(false); }

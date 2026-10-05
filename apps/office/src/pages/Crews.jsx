@@ -100,7 +100,8 @@ const SHOW = 5; // 칸마다 먼저 보이는 건수 — 나머지는 '모두 �
  *  개인 행이 없는 에이전트(옛 본체·남의 에이전트)는 칸을 그리지 않는다(조직 1:1은 메신저에서) */
 function useRecentReplies(c, enabled) {
   const crews = useStore((s) => s.crews);
-  const twin = useMemo(() => (enabled ? crews.find((x) => x.personal && (x.id === c.id || (c.agent != null && x.agent === c.agent)))?.id ?? null : null), [crews, c.id, c.agent, enabled]);
+  const row = useMemo(() => (enabled ? crews.find((x) => x.personal && (x.id === c.id || (c.agent != null && x.agent === c.agent))) ?? null : null), [crews, c.id, c.agent, enabled]);
+  const twin = row?.id ?? null, bot = row?.hosting === 'bot'; // 봇 쌍둥이는 준비됐을 때만 개인 1:1로 맡긴다(crew-assign.js) — 안내는 개인 공간이라고 단정하지 않는다
   const [rows, setRows] = useState(undefined), [again, setAgain] = useState(0);
   useEffect(() => {
     if (!twin || getMode() !== 'signedIn') return undefined;
@@ -116,7 +117,7 @@ function useRecentReplies(c, enabled) {
     })().then((r) => { if (live) setRows(replyLines(r)); }, () => { if (live) setRows('fail'); });
     return () => { live = false; };
   }, [twin, again]);
-  return { twin, rows, retry: () => setAgain((n) => n + 1) };
+  return { twin, bot, rows, retry: () => setAgain((n) => n + 1) };
 }
 
 function CrewBody({ crew: c, space, close }) {
@@ -140,7 +141,7 @@ function CrewBody({ crew: c, space, close }) {
         <button type="button" className="btn primary" onClick={() => setUi({ crew: null, assign: { space: home, crew: c.id, items: [] } })}><Icon name="hand" size={14} />{t('crewd.assign')}</button>
         {c.on === false && <p className="dim small crewd-note"><Icon name="info" size={13} />{t('crew.offNote')}</p>}{/* 꺼진 에이전트(메신저와 같은 90초 기준, CX-06) */}
         {/* 메신저는 특정 대화를 여는 주소를 받지 않는다(로그인 콜백만) — 받는 곳(랜딩)으로 가는 단추를 둔다(CX-02) */}
-        <p className="dim small crewd-note">{t(replies.twin ? 'crewd.replyPersonal' : 'crewd.reply', { crew: c.name })} <button type="button" className="link-btn small" onClick={() => openExternal(FAMILY.messenger)}>{t('msgr.get')}</button></p>
+        <p className="dim small crewd-note">{t(replies.twin && !replies.bot ? 'crewd.replyPersonal' : 'crewd.reply', { crew: c.name })} <button type="button" className="link-btn small" onClick={() => openExternal(FAMILY.messenger)}>{t('msgr.get')}</button></p>
       </> : <p className="dim small crewd-note"><Icon name="info" size={13} />{access === 'off' ? t('crewd.off') : t('crew.viaChannel', { crew: c.name })}</p>}
     </div>
     {replies.twin && getMode() === 'signedIn' && <Sec title={t('crewd.replies')}>

@@ -162,9 +162,10 @@ export function HistorySheet() {
       const { data, error } = await sb.rpc('office_page_restore', { p_id: id, p_version: v });
       if (error) throw error;
       update((s) => ({ pages: s.pages.map((p) => (p.id === id ? { ...p, version: data } : p)) }));
-      await loadPageContent(id, { force: true });
+      const shown = await loadPageContent(id, { force: true }).then(() => true, () => false); // 되돌리기는 서버에서 됐다 — 본문만 못 읽었으면 그렇게 알린다(되돌리지 못했다고 하지 않는다)
       setSel(null); load();
-      if (!undoing) showToast(t('history.restored', { n: v }), { undo: () => restore(prev, true) });
+      if (!shown) showToast(t('load.readFail'));
+      else if (!undoing) showToast(t('history.restored', { n: v }), { undo: () => restore(prev, true) });
     } catch { showToast(t('history.failed')); }
     finally { setBusy(false); }
   };

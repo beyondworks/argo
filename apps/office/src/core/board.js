@@ -73,7 +73,7 @@ export function mapBoard(rows, { orgKey, decidable, looks = null, me = null, at 
   const online = (r) => { if (!r) return null; const s = Math.max(Date.parse(r.last_seen_at ?? '') || 0, r.org_id == null ? orgSeen.get(agentOf(r)) ?? 0 : 0); return s > 0 && at - s < AWAY_MS; };
   const toCrew = (c, extra) => { const on = online(raw.get(c.id)); return {
     id: c.id, name: c.display_name, role: c.department || c.role_text || '', dept: c.department || '', job: c.role_text || '', owner: c.owner_user_id, space: space(c.org_id), org: c.org_id, face: looks?.get(c.id) ? looks.get(c.id).face : (c.face ?? null), faceSeed: looks?.get(c.id)?.seed ?? c.id, // 얼굴 = faceOf(faceSeed, face)
-    status: leading.has(c.id) ? 'work' : asking.has(c.id) ? 'ask' : on === false ? 'off' : 'idle', on, // 꺼져 있음(off)은 접속 시각을 알 때만
+    status: leading.has(c.id) ? 'work' : asking.has(c.id) ? 'ask' : on ? 'idle' : on === false ? 'off' : 'rest', on, // 대기 중(idle) = 켜져 있음, 꺼져 있음(off) = 시각을 알고 90초 넘음, 모름(rest) = 크루 행을 못 읽음 — 모르면서 켜짐이라고 하지 않는다
     agent: looks?.get(c.id)?.seed ?? c.id, copy: isCopy(raw.get(c.id)?.slug), // agent = 같은 에이전트 묶음 키(내 에이전트는 대표 행 id — 얼굴 지도와 같은 묶음)
     // 좌측 목록 정리(9/30): 주인·쓸 수 있는지(메신저와 같은 판정)·내 고정/순서 — office_crew_list가 없을 때(옛 DB)는 모두 쓸 수 있는 것으로
     ownerName: c.owner_name ?? null, company: !!c.company, access: c.access ?? 'ok', pinned: !!c.pinned, pinPos: c.pin_pos ?? null, sortPos: c.sort_pos ?? null, ...extra,

@@ -7,7 +7,8 @@ import { SWATCH, COLOR_GROUPS } from '../src/pages/theme-picks.js';
 
 const css = readFileSync(new URL('../src/themes.css', import.meta.url), 'utf8');
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
-const i18n = readFileSync(new URL('../src/core/i18n.js', import.meta.url), 'utf8');
+// 테마 명령 이름(theme.*)은 ⌘K 사전(ui/palette-i18n.js)으로 옮겼다(10/5, 첫 화면 150KB 상한) — 두 사전을 함께 본다
+const i18n = ['../src/core/i18n.js', '../src/ui/palette-i18n.js'].map((f) => readFileSync(new URL(f, import.meta.url), 'utf8')).join('\n');
 const NEW = ['cream', 'sand', 'peach', 'mist', 'glow', 'sage', 'ocean', 'rose', 'lavender', 'slate', 'ember'];
 const strip = (x) => x.replace(/\/\*[\s\S]*?\*\//g, '');
 // 중첩(@media) 안의 규칙까지 모두 — [{ sel, decl }]

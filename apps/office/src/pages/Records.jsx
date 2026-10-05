@@ -82,10 +82,15 @@ async function freshStatus(ids) {
 }
 const staleToast = (s) => { showToast(t(s.key, { result: t(`status.${s.result}`) })); pullBoard().catch(() => {}); };
 /** 결정 — 카드 버튼과 상세 창이 같은 경로(store.decide → 전송함 approval.decide). 결정한 사람 이름은 그 조직에서 보이는 이름(메신저와 같은 이름, CX-07) */
+const deciding = new Set(); // 상태를 읽는 동안 같은 결재를 또 누르면 무시한다(승인 뒤 바로 거절을 누르면 '거절했습니다'가 뜨던 것)
 const decideAp = async (a, result) => {
-  const s = apStale((await freshStatus([a.id])).get(a.id));
-  if (s) { staleToast(s); return; }
-  decide(a.id, result, nameIn(a.space)); showToast(t('ap.decided', { result: t(`status.${result}`) }));
+  if (deciding.has(a.id)) return;
+  deciding.add(a.id);
+  try {
+    const s = apStale((await freshStatus([a.id])).get(a.id));
+    if (s) { staleToast(s); return; }
+    decide(a.id, result, nameIn(a.space)); showToast(t('ap.decided', { result: t(`status.${result}`) }));
+  } finally { deciding.delete(a.id); }
 };
 
 /** 결재 카드(유건 9/30 #7) — 한 줄 핵심(에이전트가 적은 목적·할 일, 없으면 요청 앞부분) + 바로 승인·거절.

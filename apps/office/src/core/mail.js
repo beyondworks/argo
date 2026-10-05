@@ -85,9 +85,13 @@ export async function pullMail(view, { more = false, q = null } = {}) {
     if (r.reason?.code === 'expired') markExpired(a.id);
   });
   pages.set(key, next);
-  update((s) => ({ mails: mergeList(s.mails, got, { view: q ? null : view, done, busy, append: more || !!q, hasMore: next }) }));
+  // 받은편지함 같은 보기 받기의 결과로 메일 읽기 실패 표시를 새로 쓴다(검색·더 보기는 빼고) — 홈 현황 '안 읽은 메일'이 '모두 확인'으로 속이지 않게, 회복하면 지운다(OFC-08)
+  const err = more || q ? {} : { mailError: hardFails(failed) ? Date.now() : null };
+  update((s) => ({ mails: mergeList(s.mails, got, { view: q ? null : view, done, busy, append: more || !!q, hasMore: next }), ...err }));
   return { ids: got.sort(byDate).map((m) => m.id), failed, more: hasMore(key) };
 }
+/** 사람이 할 일이 따로 있는 실패(만료 = 다시 연결, 요청 제한 = 기다리기)를 뺀 실패 수 */
+export const hardFails = (failed) => (failed ?? []).filter((f) => f.code !== 'expired' && f.code !== 'rate_limited' && !f.retryAfter).length;
 
 /* ── 바뀐 것만 받기(Gmail history) ── */
 const HIST = () => scopedStorageKey('argo-office-mail-history');
@@ -117,6 +121,7 @@ async function runSync({ view = 'inbox' } = {}) {
     update((s) => ({ mails: applySync(s.mails, changed, gone, busy) }));
   }
   persist(key, hist, 0);
+  if (getState().mailError && !(res.results ?? []).some((r) => r.error && r.error !== 'expired' && r.error !== 'rate_limited')) update(() => ({ mailError: null })); // 자동 받기가 다시 되면 실패 표시를 지운다(지울 것이 있을 때만 쓴다)
   if (reset) await pullMail(view).catch(() => {}); // 변경 기록이 만료됐거나 한꺼번에 많이 바뀌면 보고 있는 목록을 새로 받는다
   return { arrivals, reset };
 }

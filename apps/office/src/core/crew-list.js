@@ -21,15 +21,17 @@ export function groupCrews(crews, { me, query = '' } = {}) {
   return { groups: groups.filter((g) => g.crews.length), blocked: shown.filter((c) => !usable(c)).sort(byName) }; // blocked = 꺼진 내 크루
 }
 
-const RANK = { work: 0, ask: 1, idle: 2, off: 3 };
+const RANK = { work: 0, ask: 1, idle: 2, rest: 3, off: 4 };
 /** 내 공간의 에이전트 한 줄씩(유건 2026-10-05 에이전트 = 한 사람, 메신저 에이전트 탭과 같은 묶음) — 같은 묶음 키(agent)의 행을 하나로.
  *  대표 = 조직 행(고정·순서가 사는 행), 없으면 개인 공간 행. ids = 묶인 행 전부, twin = 개인 공간 행(맡기기는 그 1:1로), spaces = 들어 있는 조직 공간 키.
- *  상태는 가장 바쁜 것(일하는 중 → 결재 대기 → 대기 → 꺼짐), 접속은 하나라도 켜져 있으면 켜짐 */
+ *  상태는 가장 바쁜 것(일하는 중 → 결재 대기 → 대기 중 → 모름 → 꺼짐), 접속은 하나라도 켜져 있으면 켜짐 */
 export function oneEach(list) {
   const by = new Map();
   for (const c of list) { const k = c.agent ?? c.id; if (by.has(k)) by.get(k).push(c); else by.set(k, [c]); }
   return [...by.values()].map((g) => {
-    const rep = g.find((c) => !c.personal) ?? g[0];
+    // 대표 = 고정한 조직 행 → 회사 크루가 아닌 조직 행 → 아무 조직 행 → 개인 행(고정·순서는 조직마다 따로라 고정한 행을 앞에, 회사 크루 행이 대표면 줄이 통째로 빠졌다)
+    const orgRows = g.filter((c) => !c.personal);
+    const rep = orgRows.find((c) => c.pinned) ?? orgRows.find((c) => !c.company) ?? orgRows[0] ?? g[0];
     return { ...rep, ids: g.map((c) => c.id), twin: g.find((c) => c.personal)?.id ?? null, spaces: [...new Set(g.map((c) => c.space).filter((s) => s && s !== 'me'))],
       status: g.map((c) => c.status).sort((a, b) => (RANK[a] ?? 2) - (RANK[b] ?? 2))[0], on: g.some((c) => c.on) || (g.some((c) => c.on === false) ? false : null) };
   });

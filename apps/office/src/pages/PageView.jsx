@@ -24,7 +24,7 @@ const Editor = lazy(() => import('./Editor.jsx'));
 
 /** 다른 기기가 먼저 저장했을 때 — 사람이 고른다: 서버 값으로 새로 불러오기 / 내 변경을 사본으로 지키기 */
 function ConflictBanner({ page }) {
-  const reload = async () => { forget(heldKey(page.id)); await outbox.drop(`page:${page.id}`); await loadPageContent(page.id, { force: true }); setUi({ conflict: null }); };
+  const reload = async () => { forget(heldKey(page.id)); await outbox.drop(`page:${page.id}`); try { await loadPageContent(page.id, { force: true }); setUi({ conflict: null }); } catch { showToast(t('load.readFail')); } }; // 못 읽으면 충돌 안내를 남겨 다시 누를 수 있게
   const keepCopy = async () => {
     // 위키 최상위를 못 만드는 사람은 원본 아래에 사본을 둔다
     const mine = restore(heldKey(page.id), null) ?? page;                            // 새로고침 뒤라면 화면은 서버 본문 — 사본은 남겨 둔 내 변경으로
@@ -55,7 +55,7 @@ function TemplatePicker({ page }) {
   const mine = saved.filter((p) => p.space === 'me');
   const apply = (tpl) => savePage(page.id, { title: tpl.title, content: tpl.content, loadedAt: Date.now() }); // loadedAt이 바뀌면 편집기가 새 본문으로 다시 뜬다
   const useSaved = async (tp) => {
-    if (tp.content === undefined) await loadPageContent(tp.id);
+    if (tp.content === undefined) { try { await loadPageContent(tp.id); } catch { showToast(t('load.readFail')); return; } }
     const cur = getState().pages.find((x) => x.id === tp.id);
     if (cur?.content) apply({ title: cur.title, content: cur.content });
   };
