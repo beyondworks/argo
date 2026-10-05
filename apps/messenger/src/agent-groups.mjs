@@ -247,3 +247,6 @@ export function favChanges(group, on, { pinned = new Set(), local = new Set() } 
   for (const r of group.rows) if (!r.org_id) { if (on) next.add(r.id); else next.delete(r.id); }
   return { server, local: next };
 }
+
+/** 에이전트 줄 상태 글자 — 방송이 없고 실행기가 꺼져 있으면(접속 90초 넘음) '쉬는 중'이 아니라 '꺼져 있음'(UXM-14: 점 색만 달랐다). 일하는 중·다시 연결 필요는 그대로 */
+export const agentRowState = (state, online) => (state === 'idle' && !online ? 'away' : state);

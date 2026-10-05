@@ -41,7 +41,7 @@ import { useLongPress, longPressHandlers } from './long-press.js';
 import { groupFlags } from './msg-group.mjs';
 import { t as tm } from './i18n.js';
 import { plainField, approvalPlainFields, orgDocTitle, approvalOneLineSummary, approvalGrade, approvalSummaryKey, approvalPageItems, approvalDecider, phoneApprovalDecider, decidableApprovals, approvalOnlyKey, approvalDenied, approvalCmdMode, decideApproval, singleFlight } from './approval-display.js';
-import { AGENT_FILTERS, AGENT_FAV_KEY, groupAgents, rowForSpace, agentRoomTarget, agentStateRow, personalRoomFor, personalRoomKnown, agentDmRedirect, agentDmRoute, earlierAgentDms, earlierLines, saveAgentLook, fillAgentLooks, ownRowsReader, loadUntilListed, spaceMoveNotice, spaceMoveBack, MOVE_NOTICE_MS, agentSections, groupIsFav, favChanges, readAgentFav } from './agent-groups.mjs'; // 폰 에이전트 탭 — 같은 에이전트 한 줄·상단 메뉴·즐겨찾기(유건 2026-10-02), 1:1은 개인 방 하나(2026-10-03)
+import { agentRowState, AGENT_FILTERS, AGENT_FAV_KEY, groupAgents, rowForSpace, agentRoomTarget, agentStateRow, personalRoomFor, personalRoomKnown, agentDmRedirect, agentDmRoute, earlierAgentDms, earlierLines, saveAgentLook, fillAgentLooks, ownRowsReader, loadUntilListed, spaceMoveNotice, spaceMoveBack, MOVE_NOTICE_MS, agentSections, groupIsFav, favChanges, readAgentFav } from './agent-groups.mjs'; // 폰 에이전트 탭 — 같은 에이전트 한 줄·상단 메뉴·즐겨찾기(유건 2026-10-02), 1:1은 개인 방 하나(2026-10-03)
 import { toggleId, foldAll, allFolded } from './collapse-set.mjs';
 import { useLang } from '@argo/i18n';
 import { useTheme, THEMES } from '@argo/theme';
@@ -2600,7 +2600,7 @@ function Shell({ session }) {
   const openers = crewOpeners({ isPersonal, openSheet: setSheet, openDm: dmWithCrew }); // 개인 공간은 에이전트 시트를 그리지 않는다 — 메시지의 에이전트 버튼 없음, 검색 결과는 1:1로
   const orgJoinForms = (phone = false) => (<>{/* 조직 메뉴의 '초대 코드로 참여'·'조직 만들기' — 데스크톱 조직 창과 폰 채널 탭 조직 메뉴·빈 화면이 같은 폼 */}
               {joinCode === null
-                ? <button type="button" role="menuitem" onClick={() => { setJoinCode(''); setJoinHint(null); setNewOrg(null); }}><span className="msgr-av sm ghost"><I name="at" size={13} /></span><span className="label">{t(phone ? 'phone.org.join' : 'org.join.code')}</span></button>
+                ? <button type="button" role="menuitem" onClick={() => { setJoinCode(''); setJoinHint(null); setNewOrg(null); }}><span className="msgr-av sm ghost"><I name="link" size={13} /></span><span className="label">{t(phone ? 'phone.org.join' : 'org.join.code')}</span></button>
                 : <form className="msgr-inline" onSubmit={(e) => { e.preventDefault(); joinByCode(joinCode); }}>
                     <input className="msgr-input" placeholder={t('org.join.code.ph')} value={joinCode} onChange={(e) => { setJoinCode(e.target.value); setJoinHint(null); }} aria-invalid={!!joinHint} autoFocus />
                     {joinHint && <p className="msgr-inline-err" role="alert">{t(joinHint)}</p>}
@@ -2735,7 +2735,7 @@ function Shell({ session }) {
   const agentItems = (g) => [
     { icon: 'star', label: t(agentFavOf(g) ? 'phone.agents.fav.remove' : 'phone.agents.fav.add'), run: () => { toggleAgentFav(g).catch(() => {}); } },
   ];
-  const agentRow = (g) => { const st = groupState(g); const on = g.rows.some((r) => seenWithin(r, AWAY_MS, Date.now(), crewSeenAt(r))); const lpId = `agent:${g.key}`; const fav = agentFavOf(g); const def = agentOpenRow(g); return (
+  const agentRow = (g) => { const on = g.rows.some((r) => seenWithin(r, AWAY_MS, Date.now(), crewSeenAt(r))); const st = agentRowState(groupState(g), on); /* 꺼진 에이전트는 '쉬는 중' 대신 '꺼져 있음'(UXM-14) */ const lpId = `agent:${g.key}`; const fav = agentFavOf(g); const def = agentOpenRow(g); return (
     <div key={g.key} className={`msgr-railrow ph-arowwrap${ctx?.trigger === lpId ? ' open' : ''}`} onContextMenu={(e) => { if (Date.now() - (lpStates.current[lpId]?.firedAt ?? 0) < 800) { e.preventDefault(); return; } openCtx(e, agentItems(g), lpId); }} {...rowLongPress({ id: lpId }, agentItems(g))}>
       <button type="button" className="item ph-arow" onClick={() => openAgentGroup(g)}>
         <Av name={g.display_name} crew size="kk" crewId={def.id} src={agentLook(def.id, looks, null, def.avatar_url ?? g.avatar_url ?? null).photo ?? null} />
@@ -2794,7 +2794,7 @@ function Shell({ session }) {
             <h2>{t('phone.ch.noOrg.title')}</h2><p>{t('phone.ch.noOrg.body')}</p>
             <div className="ph-noorg-acts">
               <button type="button" className="btn btn-primary" onClick={() => { setOrgMenu(true); setJoinCode(null); setNewOrg(''); }}><I name="plus" size={14} />{t('phone.org.create')}</button>
-              <button type="button" className="btn" onClick={() => { setOrgMenu(true); setNewOrg(null); setJoinCode(''); setJoinHint(null); }}><I name="at" size={14} />{t('phone.org.join')}</button>
+              <button type="button" className="btn" onClick={() => { setOrgMenu(true); setNewOrg(null); setJoinCode(''); setJoinHint(null); }}><I name="link" size={14} />{t('phone.org.join')}</button>
             </div>
           </div>
         ) : !onOrgTab ? <div className="msgr-hint ph-empty" role="status">{t('ui.loading')}</div>
@@ -2900,7 +2900,7 @@ function Shell({ session }) {
           <OrgGateLoading t={t} bare />
         )}
         {!isPersonal && !orgBlocked && <RailSection id={orgId ? 'channels' : 'start'} label={orgId ? t('ch.list') : t('org.start')} right={!orgId ? null : <span className="right">
-          <button type="button" className="btn msgr-chbrowse" onClick={() => browse ? setBrowse(null) : openBrowse()} disabled={!orgId} title={t('ch.browse')} aria-label={t('ch.browse')} aria-expanded={!!browse}><I name="at" size={14} /></button>
+          <button type="button" className="btn msgr-chbrowse" onClick={() => browse ? setBrowse(null) : openBrowse()} disabled={!orgId} title={t('ch.browse')} aria-label={t('ch.browse')} aria-expanded={!!browse}><I name="hash" size={14} /></button>
           <button type="button" className="btn msgr-chnew" onClick={() => newCh ? setNewCh(null) : openNewCh()} disabled={!orgId} title={t('ch.new')} aria-label={t('ch.new')} aria-expanded={!!newCh}><I name={newCh ? 'x' : 'plus'} size={14} /></button>
         </span>}>
           {browse && (<div className="msgr-browse">
@@ -2924,7 +2924,7 @@ function Shell({ session }) {
             {sortedCh.map(chRow)}
           </div>
         ) : isPhone && org && isAdmin && !isPersonal && !previewChannels.length ? <div className="msgr-phsteps"><OrgStepList steps={orgSteps({ t, ...onboard, hasChannel: false, createChannel: openNewCh, invite: orgInvite })} /></div>
-          : org && previewChannels.length ? <div className="msgr-hint">{t('inv.empty.title')} <button type="button" className="btn sm" onClick={() => { setRail(true); openBrowse(); }}><I name="at" size={13} />{t('inv.empty.browse')}</button></div>
+          : org && previewChannels.length ? <div className="msgr-hint">{t('inv.empty.title')} <button type="button" className="btn sm" onClick={() => { setRail(true); openBrowse(); }}><I name="hash" size={13} />{t('inv.empty.browse')}</button></div>
           : isPhone && !orgId ? <div className="msgr-phsteps"><OrgStepList steps={noOrgSteps({ t, createOrg: () => { setOrgMenu(true); setNewOrg(''); }, joinWithCode, joinable, joinDomain, deletedOrgs, restoreOrg })} /></div>
           : <div className="msgr-hint">{orgId ? t('ch.noneYet') : t('org.none')}</div>}{/* 폰 홈에는 빈 조직 안내(본문)가 안 보인다 — 같은 시작 단계를 목록 자리에(D3) */}
                   {isPhone && org && <button type="button" className="item msgr-addrow" onClick={() => setNewCh({ name: '', kind: newChKind })}><I name="plus" size={18} /><span className="name">{t('ch.new')}</span></button>}
@@ -2955,8 +2955,9 @@ function Shell({ session }) {
               </button>))}
           </div>
         </RailSection>)}
-        {(isPersonal ? railVisible.length > 0 : !orgBlocked && org && (myAvailable.length > 0 || railVisible.length > 0)) && (<RailSection id="mine" label={`${t('rail.agents')} · ${railVisible.length}`} right={<span className="right"><span className="msgr-sortwrap msgr-railsort"><button type="button" className={`msgr-sortbtn${sortMenu ? ' on' : ''}`} onClick={() => setSortMenu((v) => !v)} title={t('rail.sort')} aria-label={t('rail.sort')} aria-haspopup="menu" aria-expanded={sortMenu}><I name="sort" size={14} /></button>{sortMenu && <div className="msgr-rowmenu" role="menu" onMouseLeave={() => setSortMenu(false)}>{['name', 'added', 'custom'].map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={railSort === v} onClick={() => { pickSort(v); setSortMenu(false); }}>{railSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`rail.sort.${v}`)}</button>)}</div>}</span>{myAvailable.length > 0 && <span className="msgr-klabel">{myCrews.length}/{myCrews.length + myAvailable.length}</span>}</span>}>
+        {(isPersonal ? railVisible.length > 0 : !orgBlocked && org) && (<RailSection id="mine" label={`${t('rail.agents')} · ${railVisible.length}`} right={<span className="right"><span className="msgr-sortwrap msgr-railsort"><button type="button" className={`msgr-sortbtn${sortMenu ? ' on' : ''}`} onClick={() => setSortMenu((v) => !v)} title={t('rail.sort')} aria-label={t('rail.sort')} aria-haspopup="menu" aria-expanded={sortMenu}><I name="sort" size={14} /></button>{sortMenu && <div className="msgr-rowmenu" role="menu" onMouseLeave={() => setSortMenu(false)}>{['name', 'added', 'custom'].map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={railSort === v} onClick={() => { pickSort(v); setSortMenu(false); }}>{railSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`rail.sort.${v}`)}</button>)}</div>}</span>{myAvailable.length > 0 && <span className="msgr-klabel">{myCrews.length}/{myCrews.length + myAvailable.length}</span>}</span>}>
           <div className="msgr-list mine">
+            {!isPersonal && !myAvailable.length && !railVisible.length && <p className="msgr-rail-empty">{t('phone.agents.none')} <RunnerButton /></p>}{/* 비어도 구역과 연결 단추를 둔다 — 통째로 사라져 에이전트를 붙일 곳이 안 보였다(UXM-08) */}
             {/* 묶음마다 접었다 편다(유건 2026-09-16) — 조직의 다른 에이전트는 한 절에서(유건 제보 2026-09-12: 절이 둘로 중복) */}
             {[['mine.argo', 'rail.agents.mine', railArgo], ['mine.ext', 'rail.src.custom', railExt], ['mine.company', 'rail.agents.company', railCompany]]
               .map(([id, k, list]) => list.length > 0 && <RailFold key={id} id={id} label={t(k)} count={list.length}>{list.map(railRow)}</RailFold>)}
@@ -2991,7 +2992,7 @@ function Shell({ session }) {
           </div>)}
           {org && !orgBlocked && <button type="button" className={`btn ghost bell${page === 'inbox' ? ' on' : ''}`} onClick={() => page === 'inbox' ? setPage('chat') : openInbox()} title={t('inbox.title')} aria-label={t('inbox.title')}><I name="bell" size={15} />{inboxUnread > 0 && <span className="n">{inboxUnread > 99 ? '99+' : inboxUnread}</span>}</button>}
           {org && isPersonal && !orgBlocked && !isPhone && <span className="btn ghost msgr-foot-slot" aria-hidden="true" />}{/* 개인 공간엔 기억이 없다 — 자리는 비워 둬 알림·설정 아이콘이 조직 공간과 같은 x에 있게(공간을 오갈 때 45px씩 움직이지 않는다, LA-22). 폰은 이 줄이 머리 오른쪽 원이라 해당 없음 */}
-          {org && !isPersonal && !orgBlocked && <button type="button" className={`btn ghost${page === 'activity' ? ' on' : ''}`} onClick={() => { setPage((p) => p === 'activity' ? 'chat' : 'activity'); setRail(false); }} title={t('act.title')} aria-label={t('act.title')}><I name="memory" size={15} /></button>}
+          {org && !isPersonal && !orgBlocked && <button type="button" className={`btn ghost${page === 'activity' ? ' on' : ''}`} onClick={() => { setPage((p) => p === 'activity' ? 'chat' : 'activity'); setRail(false); }} title={t('act.title')} aria-label={t('act.title')}><I name="folder" size={15} /></button>}{/* 기억 = 폴더(폰 아래 탭과 같은 뜻 — 반짝이는 에이전트, UXM-10) */}
           <button type="button" className={`btn ghost${page === 'settings' ? ' on' : ''}`} onClick={() => { setPage((p) => p === 'settings' ? 'chat' : 'settings'); setRail(false); }} title={t('ui.settings')} aria-label={t('ui.settings')} aria-pressed={page === 'settings'}><I name="gear" size={15} /></button>
         </div>}
       </aside>
@@ -3565,7 +3566,7 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
           ))}
           {canAddAny && (
             <div className="msgr-addwrap">
-              {add === null && <button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => setAdd('menu')}><I name="plus" size={13} />{t('ch.add')}</button>}
+              {add === null && <button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => setAdd('menu')}><I name="plus" size={13} />{t(canAddPeople || canGuest ? 'ch.add' : 'ch.add.crew')}</button>}{/* 사람을 넣을 수 없으면 실제 메뉴(에이전트 추가)대로 — '관리자에게 말해 주세요' 바로 아래 '초대하기'가 있었다(UXM-27) */}
               {add === 'menu' && (
                 <div className="msgr-addmenu" role="menu">
                   {canAddPeople && <button type="button" role="menuitem" onClick={() => setAdd('user')}><I name="plus" size={14} /><span><b>{t(isDmRoom ? 'dm.widen' : 'ch.add.user')}</b><small>{t(isDmRoom ? 'dm.widen.desc' : 'ch.add.user.desc')}</small></span></button>}
@@ -3937,7 +3938,7 @@ function FriendsCard({ uid, friends, members, onChanged, onDm, onPersonalDm, onN
           {link
             ? <><code className="msgr-code">{link.code.slice(0, 8)}…</code><button type="button" className="btn btn-primary sm" disabled={busy} onClick={copyLink}><I name="copy" size={13} />{t('friends.link.copy')}</button>
                 <button type="button" className="btn sm ghost" disabled={busy} onClick={async () => { await call('msgr_friend_link_revoke', {}, t('friends.link.revoked')); setLink(null); }}>{t('friends.link.revoke')}</button></>
-            : <button type="button" className="btn sm" disabled={busy} onClick={showLink}><I name="at" size={13} />{t('friends.link.make')}</button>}
+            : <button type="button" className="btn sm" disabled={busy} onClick={showLink}><I name="link" size={13} />{t('friends.link.make')}</button>}
         </div>
         <form className="row" onSubmit={(e) => { e.preventDefault(); if (!busy) acceptLink(); }}>
           <input className="msgr-input sm" value={joinLink} disabled={busy} onChange={(e) => setJoinLink(e.target.value)} placeholder={t('friends.link.ph')} aria-label={t('friends.link.ph')} />
@@ -4503,14 +4504,14 @@ function Activity({ org, uid, isAdmin, channels, previewChannels = [], members, 
   return (<>
     <div className="msgr-top">
       <NavButton onMenu={onMenu} />
-      <span className="title"><I name="memory" size={18} />{t('act.title')}</span>
+      <span className="title"><I name="folder" size={18} />{t('act.title')}</span>
       <button type="button" className="btn sm msgr-backchat" style={{ marginLeft: 'auto' }} onClick={onBack}><I name="reply" size={13} />{t('ui.back')}</button>
     </div>
     <div className={`msgr-actsplit${treeOpen ? ' tree-open' : ''}`}>
       {phone && treeOpen && <div className="msgr-treescrim" onClick={() => setTreeOpen(false)} />}
       <aside className="msgr-acttree vault-tree">
         <div className="vault-toolbar">
-          <button type="button" className={`tb${focusTab?.id === 'graph' ? ' on' : ''}`} onClick={() => openTab(GRAPH_TAB)} title={t('act.tab.graph')} aria-label={t('act.tab.graph')}><I name="memory" size={14} /></button>
+          <button type="button" className={`tb${focusTab?.id === 'graph' ? ' on' : ''}`} onClick={() => openTab(GRAPH_TAB)} title={t('act.tab.graph')} aria-label={t('act.tab.graph')}><I name="folder" size={14} /></button>
           <span style={{ flex: 1 }} />
         </div>
         <div className="msgr-acttree-body">
@@ -5016,7 +5017,7 @@ function NotifyRow() {
   if (perm === 'unsupported') return <span className="note">{t('set.notify.unsupported')}</span>;
   if (perm === 'granted') return <span className="note"><I name="check" size={12} /> {t('set.notify.on')}</span>;
   if (perm === 'denied') return <span className="note">{t(isDesktopTauri() ? 'set.notify.deniedApp' : 'set.notify.denied')}</span>;
-  return <button type="button" className="btn sm" onClick={async () => setPerm(await requestNotifyPermission())}><I name="at" size={13} />{t('set.notify.ask')}</button>;
+  return <button type="button" className="btn sm" onClick={async () => setPerm(await requestNotifyPermission())}><I name="bell" size={13} />{t('set.notify.ask')}</button>;
 }
 
 // 부적절 표현 가리기 켜고 끄기(App Store 1.2, 2026-09-26) — 기본 켜짐, localStorage에 기기별로 저장
@@ -5296,7 +5297,7 @@ function OrgCard({ org, orgs = [], uid, invitesTick = 0, members, channels = [],
 
   // ── 부록 N: 외부 에이전트(헤르메스·오픈클로)는 텔레그램·슬랙에 붙듯 **봇**으로 이 메신저에 접속한다. 봇 = 회사 등급 크루 + 토큰(서버 msgr_bots).
   //    토큰 원문은 생성·회전 직후 이 화면에만 있고(setup 상태) 저장·로그하지 않는다. 가용성은 마지막 getUpdates(last_seen_at)뿐 — 종료/재시작 버튼 없음(해제 = 토큰 회수).
-  const [bots, setBots] = useState([]); const [setup, setSetup] = useState(null); const [confirmRevoke, setConfirmRevoke] = useState(null); const [openBot, setOpenBot] = useState(null); const [renamingBot, setRenamingBot] = useState(null); const [renameName, setRenameName] = useState('');
+  const [bots, setBots] = useState([]); const [setup, setSetup] = useState(null); const [confirmRevoke, setConfirmRevoke] = useState(null); const [confirmRotate, setConfirmRotate] = useState(null); /* 토큰 다시 만들기 확인(UXM-04) — 지금 토큰이 바로 끊긴다 */ const [openBot, setOpenBot] = useState(null); const [renamingBot, setRenamingBot] = useState(null); const [renameName, setRenameName] = useState('');
   const loadBots = useCallback(async () => { if (part !== 'agents') return;
     const list = await q(supabase.from('msgr_bots').select('id, crew_id, kind, name, token_hint, created_by, created_at, rotated_at, revoked_at, last_seen_at, external_id').eq('org_id', org.id).order('created_at'));
     // 1-b: 어댑터가 보고한 버전·승인 모드·"모든 예약 작업 보기"(표가 없는 옛 서버면 빈 값 — 카드는 예전처럼)
@@ -5620,7 +5621,8 @@ function OrgCard({ org, orgs = [], uid, invitesTick = 0, members, channels = [],
                   <Av name={b.name} crew size="sm" company crewId={b.crew_id ?? null} /><span className="name">{b.name}</span>
                   <span className="sub"><span className={`msgr-dot${on ? ' mark' : ''}`} /> {botStatus(b)} · {t('org.agents.by', { name: nameOfUser(b.created_by) })}</span>
                 </button>
-                {confirmRevoke !== b.id && <>{renaming ? <span className="confirm-inline"><input className="msgr-input inline" value={renameName} maxLength={80} aria-label={t('org.agents.rename')} onChange={(event) => setRenameName(event.target.value)} /><button type="button" className="btn btn-primary sm" disabled={busy || !renameName.trim()} onClick={() => renameBot(b)}>{t('org.agents.rename.save')}</button><button type="button" className="btn sm ghost text" disabled={busy} onClick={() => { setRenamingBot(null); setRenameName(''); }}>{t('ui.cancel')}</button></span> : <button type="button" className="btn sm ghost text" disabled={busy} onClick={() => { setRenamingBot(b.id); setRenameName(b.name); }}>{t('org.agents.rename')}</button>}<button type="button" className="btn sm ghost text" disabled={busy || renaming} onClick={() => rotateBot(b)}>{t('org.agents.rotate')}</button><button type="button" className="btn sm ghost" disabled={busy || renaming} onClick={() => setConfirmRevoke(b.id)} title={t('org.agents.revoke')} aria-label={t('org.agents.revoke')}><I name="x" size={13} /></button></>}
+                {confirmRevoke !== b.id && confirmRotate !== b.id && <>{renaming ? <span className="confirm-inline"><input className="msgr-input inline" value={renameName} maxLength={80} aria-label={t('org.agents.rename')} onChange={(event) => setRenameName(event.target.value)} /><button type="button" className="btn btn-primary sm" disabled={busy || !renameName.trim()} onClick={() => renameBot(b)}>{t('org.agents.rename.save')}</button><button type="button" className="btn sm ghost text" disabled={busy} onClick={() => { setRenamingBot(null); setRenameName(''); }}>{t('ui.cancel')}</button></span> : <button type="button" className="btn sm ghost text" disabled={busy} onClick={() => { setRenamingBot(b.id); setRenameName(b.name); }}>{t('org.agents.rename')}</button>}<button type="button" className="btn sm ghost text" disabled={busy || renaming} onClick={() => { setConfirmRevoke(null); setConfirmRotate(b.id); }}>{t('org.agents.rotate')}</button><button type="button" className="btn sm ghost" disabled={busy || renaming} onClick={() => { setConfirmRotate(null); setConfirmRevoke(b.id); }} title={t('org.agents.revoke')} aria-label={t('org.agents.revoke')}><I name="x" size={13} /></button></>}
+                {confirmRotate === b.id && <span className="confirm-inline"><span>{t('org.agents.rotate.confirm')}</span><button type="button" className="btn btn-primary sm danger" disabled={busy} onClick={() => { setConfirmRotate(null); rotateBot(b); }}>{t('org.agents.rotate.do')}</button><button type="button" className="btn sm ghost text" onClick={() => setConfirmRotate(null)}>{t('ui.cancel')}</button></span>}
                 {confirmRevoke === b.id && <span className="confirm-inline"><span>{t('org.agents.revoke.confirm')}</span><button type="button" className="btn btn-primary sm danger" disabled={busy} onClick={() => revokeBot(b)}>{t('org.agents.revoke')}</button><button type="button" className="btn sm ghost text" onClick={() => setConfirmRevoke(null)}>{t('ui.cancel')}</button></span>}
               </div>
               {opened && (
@@ -5860,7 +5862,7 @@ function noOrgSteps({ t, createOrg, joinWithCode, joinable = [], joinDomain, del
     ...(deletedOrgs.length ? [['', t('org.step.restore'), t('org.step.restore.sub'), <div key="r" className="msgr-chips">{deletedOrgs.map((o) => <button key={o.id} type="button" className="msgr-chan" onClick={() => restoreOrg(o)}><span>{o.name}</span><span className="msgr-klabel">{t('org.restore.cta', { days: Math.max(0, Math.ceil((Date.parse(o.purge_at) - Date.now()) / 86_400_000)) })}</span></button>)}</div>]] : []), // J-5
     ...(joinable.length ? [['mark', t('org.step.join'), t('org.step.join.sub'), <div key="j" className="msgr-chips">{joinable.map((o) => <button key={o.id} type="button" className="msgr-chan" onClick={() => joinDomain(o)}><span>{o.name}</span><span className="msgr-klabel">{t('org.join.cta')}</span></button>)}</div>]] : []), // J-3: 회사 도메인 계정이면 초대 없이 바로
     [joinable.length ? '' : 'mark', t('org.step.create'), t('org.step.create.sub'), <button key="a" type="button" className="btn btn-primary sm" onClick={createOrg}><I name="plus" size={13} />{t('org.new')}</button>],
-    ['', t('org.step.invite'), t('org.step.invite.sub'), <button key="j" type="button" className="btn sm" onClick={joinWithCode}><I name="at" size={13} />{t('org.join.code')}</button>],
+    ['', t('org.step.invite'), t('org.step.invite.sub'), <button key="j" type="button" className="btn sm" onClick={joinWithCode}><I name="link" size={13} />{t('org.join.code')}</button>],
   ];
 }
 
@@ -5912,7 +5914,7 @@ function EmptyOrg({ org, onMenu, createOrg, createChannel, invite, askAdmin = nu
       {org && !invite ? (<>{/* 빈 상태 안전망(설계서 2-4) — 관리자 아닌 사람이 초대로 들어왔는데 볼 채널이 없을 때 */}
         <h1>{t('inv.empty.title')}</h1>
         <p>{t('inv.empty.desc')}{askAdmin ? ` ${askAdmin}` : ''}</p>
-        <div className="acts">{browse && <button type="button" className="btn btn-primary sm" onClick={browse}><I name="at" size={13} />{t('inv.empty.browse')}</button>}{org.role !== 'guest' && <button type="button" className="btn sm" onClick={createChannel}><I name="hash" size={13} />{t('ch.new')}</button>}</div>
+        <div className="acts">{browse && <button type="button" className="btn btn-primary sm" onClick={browse}><I name="hash" size={13} />{t('inv.empty.browse')}</button>}{org.role !== 'guest' && <button type="button" className="btn sm" onClick={createChannel}><I name="hash" size={13} />{t('ch.new')}</button>}</div>
       </>) : (<>
       <h1>{org ? t('ch.noChannelTitle') : t('org.noneTitle')}</h1>
       <p>{org ? t('ch.noChannelDesc') : t('org.noneDesc')}</p>
@@ -6302,9 +6304,9 @@ function Channel({ movedBar = null, onCrewJoined = null, onCrewFailed = null, on
       </div>
       {away && <div className="msgr-tobottom"><button type="button" className="btn sm" onClick={() => { const el = feed.current; if (!el) return; stick.current = true; el.scrollTop = el.scrollHeight; setAway(false); }} aria-label={t('thread.toBottom')}><I name="caret" size={13} /><span className="lbl">{t('thread.toBottom')}</span></button></div>}
     </div>
-    {workOpen && <WorkPanel key={chId} channel={channel} uid={uid} isAdmin={isAdmin} locked={locked} crews={chCrews} t={t} lang={lang} onClose={() => setWorkOpen(false)} sheet={!phone} />}{/* 데스크톱: 채널 패널과 같은 시트(폭 380 + 24, #600·#603 비킴 규칙 공유 — 유건 2026-09-18) */}
+    {workOpen && <WorkPanel key={chId} channel={channel} roomName={channel.kind === 'dm' ? dmName(channel) : channel.name} uid={uid} isAdmin={isAdmin} locked={locked} crews={chCrews} t={t} lang={lang} onClose={() => setWorkOpen(false)} sheet={!phone} />}{/* 데스크톱: 채널 패널과 같은 시트(폭 380 + 24, #600·#603 비킴 규칙 공유 — 유건 2026-09-18) */}
     {!preview && namePrompt}
-    {isPersonal && !preview && <PersonalRoomBar chId={chId} uid={uid} hasCrews={chCrews.length > 0} event={event} nameOfUser={nameOfUser} crewName={(id) => crews.find((c) => c.id === id)?.display_name ?? null} onChanged={onPersonalChanged} onError={onError} />}
+    {(isPersonal || channel.kind === 'dm') && !preview && <PersonalRoomBar chId={chId} uid={uid} hasCrews={isPersonal && chCrews.length > 0} event={event} nameOfUser={nameOfUser} crewName={(id) => crews.find((c) => c.id === id)?.display_name ?? null} onChanged={onPersonalChanged} onError={onError} />}
     {!preview && (() => { const off = crewAwayNotice({ channel, chCrews, people, uid, now: Date.now(), awayMs: AWAY_MS }); return off && <div className="msgr-joinbar msgr-awaybar" role="status"><span>{(lang === 'en' ? (x) => x : koJosa)(t(off.mine ? 'crew.dm.away.mine' : 'crew.dm.away', { name: off.name }))}</span>{off.mine && <RunnerButton />}</div>; })()}{/* 에이전트 1:1에서 에이전트가 꺼져 있으면 — 보내도 답이 없는 이유(검수 F, 2026-10-01) */}
     {preview
       ? <div className="msgr-joinbar" role="region" aria-label={t('ch.preview.title')}><span>{t('ch.preview.note', { name: channel.name })}</span><button type="button" className="btn btn-primary" onClick={onJoin}><I name="plus" size={14} />{t('ch.browse.join')}</button></div>
@@ -6509,8 +6511,8 @@ function Message({ m, shape = 'bubble', uploadNames = null, uid, lang, t, nameOf
             {mine && m.kind === 'text' && <button type="button" onClick={() => { setDraft(m.body); setEditing(true); setActsOpen(false); }}><I name="gear" size={20} /><span>{t('ui.edit')}</span></button>}
           </div>
           {mine && (confirmDel
-            ? <button type="button" className="row danger" onClick={() => { setConfirmDel(false); setActsOpen(false); onDelete?.(m); }}><I name="x" size={16} />{t('msg.delete.confirm')}</button>
-            : <button type="button" className="row danger" onClick={() => setConfirmDel(true)}><I name="x" size={16} />{t('ui.delete')}</button>)}
+            ? <button type="button" className="row danger" onClick={() => { setConfirmDel(false); setActsOpen(false); onDelete?.(m); }}><I name="trash" size={16} />{t('msg.delete.confirm')}</button>
+            : <button type="button" className="row danger" onClick={() => setConfirmDel(true)}><I name="trash" size={16} />{t('ui.delete')}</button>)}
         </div>
       </div>, document.body,
     ) : !phone && (<>
@@ -6521,9 +6523,9 @@ function Message({ m, shape = 'bubble', uploadNames = null, uid, lang, t, nameOf
           {canReport && <button type="button" onClick={() => { setActsOpen(false); setReporting(true); }}><I name="flag" size={12} />{t('report.action')}</button>}
           {canBlock && <button type="button" onClick={() => { setActsOpen(false); setConfirmBlock(true); }}><I name="block" size={12} />{t('report.block')}</button>}
           {canMuteCrew && <button type="button" onClick={() => { setActsOpen(false); muteCrewAct(); }}><I name="block" size={12} />{t('crew.mute')}</button>}
-          {!ctxMore && <button type="button" onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setPick((v) => (v ? false : { left: r.left, right: r.right, top: r.top, bottom: r.bottom })); }} aria-expanded={!!pick}><I name="star" size={12} />{t('msg.react')}</button>}
+          {!ctxMore && <button type="button" onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setPick((v) => (v ? false : { left: r.left, right: r.right, top: r.top, bottom: r.bottom })); }} aria-expanded={!!pick}><I name="react" size={12} />{t('msg.react')}</button>}
           {mine && m.kind === 'text' && <button type="button" onClick={() => { setActsOpen(false); setDraft(m.body); setEditing(true); }}><I name="gear" size={12} />{t('ui.edit')}</button>}
-          {mine && (confirmDel ? <button type="button" className="danger" onClick={() => { setConfirmDel(false); setActsOpen(false); onDelete?.(m); }}><I name="x" size={12} />{t('msg.delete.confirm')}</button> : <button type="button" onClick={() => setConfirmDel(true)}><I name="x" size={12} />{t('ui.delete')}</button>)}
+          {mine && (confirmDel ? <button type="button" className="danger" onClick={() => { setConfirmDel(false); setActsOpen(false); onDelete?.(m); }}><I name="trash" size={12} />{t('msg.delete.confirm')}</button> : <button type="button" onClick={() => setConfirmDel(true)}><I name="trash" size={12} />{t('ui.delete')}</button>)}
         </div>, document.body)}
     </>)
   );

@@ -2418,3 +2418,7 @@ html { -webkit-tap-highlight-color: transparent; }
 .msgr-crewsheet textarea.msgr-input:not(.inline):not(.sm) { min-height: 64px; resize: vertical; }
 .msgr-crewsheet .msgr-input:not(.inline):not(.sm):focus { box-shadow: 0 0 0 2px var(--msgr-focus); }
 .msgr-phone .msgr-crewsheet .msgr-input:not(.inline):not(.sm) { min-height: 44px; font-size: 13px !important; } /* 글자는 데스크톱과 같은 13px(유건 2026-10-02) — 폰 폭 전역 '입력 16px !important'(iOS 초점 확대 방지)를 이 시트에서만 덮는다. index.html 뷰포트가 maximum-scale=1이라 확대되지 않는다 */
+
+/* 데스크톱 에이전트 구역이 비었을 때(UXM-08) — 구역을 두고 안내 + [실행기 연결] */
+.msgr-side .msgr-rail-empty { margin: 2px 12px 8px; font-size: 12px; line-height: 1.45; color: var(--fg-3); }
+.msgr-side .msgr-rail-empty .btn { margin-top: 6px; }
