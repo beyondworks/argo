@@ -2160,6 +2160,7 @@ ${lang === 'en'
         ? { hookSpecificOutput: { hookEventName: ev, additionalContext: steerNote(sdkInbox.items.splice(0), lang) } } : {})] }]])) },
       disallowedTools: [], // 전권 — 막는 것은 게이트의 금지 구역뿐
       settingSources: [], // 호스트의 CLAUDE.md/스킬 미주입(테넌트 격리)
+      title: 'Argo', // SDK 자동 제목 생성 건너뜀 — 쓰지 않는 제목에 첫 글 전체를 haiku로 한 번 더 보내던 요청(oneshot.mjs 같은 줄 주석)
       ...(resumeId ? { resume: resumeId } : {}),
     },
   });
