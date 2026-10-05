@@ -14,6 +14,9 @@ import { proRowActive, trialBadgeState } from '../../../../src/entitlement.mjs';
 
 // Argo Messenger 받기 — 맥·윈도우 설치파일만 걸던 것을 앱 스토어·Play까지 있는 안내 페이지 한 곳으로(CX-12). 오피스는 웹 주소(CX-13).
 import { MESSENGER_PAGE, OFFICE_URL, msgrConnectionChip, msgrShowRuntime } from './msgr-card.mjs';
+import { saveWithRevert } from './save-revert.mjs'; // 저장 실패면 되돌린다(F9)
+import { syncErrorView } from './sync-error.mjs'; // 동기화 원문 → 사용자 문구(F10)
+import { listView } from '../../../lib/list-view.mjs'; // 조회 실패 ≠ 비어 있음(F12)
 
 const CONTACT = process.env.NEXT_PUBLIC_ARGO_CONTACT || '';
 // 설정 탭 — 각 카드는 정확히 한 탭에만 속한다(test/tabs-layout). 렌더 순서: 작은 카드 → 전폭(.wide) 카드.
@@ -382,13 +385,16 @@ function FullAutoCard({ ws }) {
 function CrewLanguageCard({ ws, sysLang }) {
   const { t } = useLang();
   const [cur, setCur] = useState(sysLang === 'en' ? 'en' : 'ko');
+  const [err, setErr] = useState('');
   useEffect(() => { setCur(sysLang === 'en' ? 'en' : 'ko'); }, [sysLang]);
-  const pick = (code) => {
-    setCur(code);
-    fetch(`/api/companies/${ws}`, {
-      method: 'PUT', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ lang: code }),
-    }).then(() => window.dispatchEvent(new Event('argo:refresh'))).catch(() => {});
+  // 저장 실패면 이전 값으로 되돌리고 안내한다(F9 — 실패해도 화면은 바뀐 값이었다)
+  const pick = async (code) => {
+    if (code === cur) return;
+    setErr('');
+    const ok = await saveWithRevert({ prev: cur, next: code, apply: setCur,
+      save: async (v) => (await fetch(`/api/companies/${ws}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ lang: v }) })).ok });
+    if (ok) window.dispatchEvent(new Event('argo:refresh'));
+    else setErr(t('settings.saveFailReverted'));
   };
   return (
     <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -410,6 +416,7 @@ function CrewLanguageCard({ ws, sysLang }) {
           </button>
         ))}
       </div>
+      {err && <span role="alert" style={{ fontSize: 12, color: 'var(--danger)' }}>{err}</span>}
     </div>
   );
 }
@@ -816,27 +823,39 @@ function TrashCard({ ws }) {
   const [items, setItems] = useState(null);
   const [busy, setBusy] = useState('');            // 처리 중 항목 id
   const [purgeTarget, setPurgeTarget] = useState(null);
+  const [loadFailed, setLoadFailed] = useState(false); // 조회 실패 — '비어 있습니다'로 보이지 않게(F12)
+  const [actionErr, setActionErr] = useState('');     // 복구·영구 삭제 실패 안내(F12 — 무표시였다)
   const load = useCallback(() => {
-    api(`/api/companies/${ws}/trash`).then((d) => setItems(d.items ?? [])).catch(() => setItems([]));
+    setLoadFailed(false);
+    api(`/api/companies/${ws}/trash`).then((d) => setItems(d.items ?? [])).catch(() => { setItems(null); setLoadFailed(true); });
   }, [ws]);
   useEffect(load, [load]);
   async function restore(it) {
-    setBusy(it.id);
+    setBusy(it.id); setActionErr('');
     try { await api(`/api/companies/${ws}/trash`, { id: it.id }); load(); }
-    catch { /* 실패는 다음 시도 */ } finally { setBusy(''); }
+    catch (e) { setActionErr(t('settings.trash.restoreFail', { msg: String(e?.message || '') })); } finally { setBusy(''); }
   }
   async function doPurge() {
     const it = purgeTarget; setPurgeTarget(null);
     if (!it) return;
-    setBusy(it.id);
-    try { await fetch(`/api/companies/${ws}/trash?id=${encodeURIComponent(it.id)}`, { method: 'DELETE' }); load(); }
-    catch { /* */ } finally { setBusy(''); }
+    setBusy(it.id); setActionErr('');
+    try {
+      const r = await fetch(`/api/companies/${ws}/trash?id=${encodeURIComponent(it.id)}`, { method: 'DELETE' });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || '');
+      load();
+    } catch (e) { setActionErr(t('settings.trash.purgeFail', { msg: String(e?.message || '') })); } finally { setBusy(''); }
   }
+  const view = listView(items, loadFailed);
   return (
     <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
       <span className="card-title">{t('settings.trash')}{items?.length ? ` · ${items.length}` : ''}</span>
       <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('settings.trash.desc')}</p>
-      {items === null ? <Skeleton h={40} /> : items.length === 0 ? (
+      {view === 'error' ? (
+        <span role="alert" style={{ fontSize: 12.5, color: 'var(--danger)', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          {t('settings.trash.loadFail')}
+          <button type="button" className="btn sm" onClick={load}>{t('common.retry')}</button>
+        </span>
+      ) : view === 'loading' ? <Skeleton h={40} /> : view === 'empty' ? (
         <span style={{ fontSize: 12.5, color: 'var(--fg-3)' }}>{t('settings.trash.empty')}</span>
       ) : (
         <div style={{ display: 'grid', gap: 6 }}>
@@ -856,6 +875,7 @@ function TrashCard({ ws }) {
           ))}
         </div>
       )}
+      {actionErr && <p role="alert" style={{ margin: 0, fontSize: 12, color: 'var(--danger)' }}>{actionErr}</p>}
       {purgeTarget && (
         <ConfirmModal
           title={t('settings.trash.purgeTitle')}
@@ -1600,7 +1620,10 @@ function SyncCard({ ws }) {
               {billLost ? billLostRow : <UpgradeButtons />}
             </div>
           ) : sync.lastError ? (
-            <span style={{ color: 'var(--danger)', fontSize: 12 }}>{sync.lastError}</span>
+            // 내부 원문(한국어 고정·회사 id) 대신 사용자 문구 + 할 일(F10·UX-A18). 원문은 진단용으로 title에만
+            <span role="alert" title={sync.lastError} style={{ color: 'var(--danger)', fontSize: 12, lineHeight: 1.6 }}>
+              {(() => { const v = syncErrorView(sync.lastError); return v ? t(v.key, v.vars) : ''; })()}
+            </span>
           ) : plan === 'free' ? (
             // 아직 막히진 않았지만(강제 게이트 off 등) free 플랜에 안내 차원으로 노출 — pro면 숨김
             <UpgradeButtons />
@@ -2194,9 +2217,13 @@ function DefaultRunnerPicker({ ws }) {
     }).catch(() => {});
     api(`/api/companies/${ws}`).then((d) => setVal(d.company?.defaultRunner ?? '')).catch(() => {});
   }, [ws]);
+  const [err, setErr] = useState('');
+  // 저장 실패면 이전 값으로 되돌리고 안내한다(F9)
   const save = async (v) => {
-    setVal(v);
-    await fetch(`/api/companies/${ws}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ defaultRunner: v }) }).catch(() => {});
+    setErr('');
+    const ok = await saveWithRevert({ prev: val, next: v, apply: setVal,
+      save: async (x) => (await fetch(`/api/companies/${ws}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ defaultRunner: x }) })).ok });
+    if (!ok) setErr(t('settings.saveFailReverted'));
   };
   if (!runners) return null;
   // 숨김 러너(gemini)는 선택지에서 뺀다 — 현재 기본값이 그것이면 남겨 정직 표기(검수 LOW-4: 낡은 값을 보지도 고치지도 못하던 상태)
@@ -2211,6 +2238,7 @@ function DefaultRunnerPicker({ ws }) {
         <option value="">{t('settings.defaultRunnerAuto')}</option>
         {connected.map((r) => <option key={r.id} value={r.id}>{r.name}{r.hidden ? ` — ${t('runner.retiredShort')}` : ''}</option>)}
       </select>
+      {err && <span role="alert" style={{ fontSize: 12, color: 'var(--danger)' }}>{err}</span>}
     </label>
   );
 }
