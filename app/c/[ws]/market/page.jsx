@@ -151,7 +151,7 @@ function DetailModal({ ws, item, installedIds, onInstalled, onClose, customMcpAl
         <div className="card-head" style={{ flexWrap: 'wrap' }}>
           <span className="card-title">{item.title ?? item.name}</span>
           <span className="rule" />
-          <button className="btn sm" onClick={onClose}>{t('market.close')}</button>
+          <button className="btn sm" onClick={onClose}>{t('common.close')}<span className="kbd-hint"> ESC</span></button>
         </div>
         <div style={{ padding: '0 20px 20px', display: 'grid', gap: 12 }}>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>

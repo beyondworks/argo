@@ -1141,7 +1141,6 @@ const DICT = {
   'deck.learned': [' — 배움', ' — learned'],
   'deck.recorded': [' 기록', ' recorded'],
   'deck.editCrewInfo': ['크루 정보 수정', 'Edit Crew Info'],
-  'deck.closeEsc': ['닫기 ESC', 'Close ESC'],
   'deck.fieldName': ['이름', 'Name'],
   'deck.fieldRole': ['역할', 'Role'],
   'deck.fieldTeamHint': ['팀 — 비우면 무소속', 'Team — leave empty for unassigned'],
@@ -1429,7 +1428,6 @@ const DICT = {
   'chat.newChatConfirm': ['새 대화를 시작할까요? 지금 대화는 보관함에 적재되고(삭제 아님), 회사 기억(vault)도 그대로 남습니다.', 'Start a new chat? The current thread is archived (not deleted), and company memory stays intact.'],
   'chat.cardTitle': ['크루 카드', 'Crew Card'],
   'chat.systemPromptEq': ['= System Prompt', '= System Prompt'],
-  'chat.closeEsc': ['닫기 ESC', 'Close ESC'],
   'chat.save': ['저장', 'Save'],
   'chat.saved': ['저장됨 — 다음 턴부터 반영됩니다.', 'Saved — takes effect from the next turn.'],
   'chat.recentWork': ['최근 자주 한 일', 'Recent work'],
@@ -1782,7 +1780,6 @@ const DICT = {
   'market.installNow': ['즉시 설치', 'Install now'],
   'market.needsKey': ['키 필요', 'Needs key'],
   'market.perWeek': ['↓ {n}/주', '↓ {n}/wk'],
-  'market.close': ['닫기 ESC', 'Close ESC'],
   'market.skillLabel': ['스킬 · 작업 지침서', 'Skill · Task Instructions'],
   'market.mcpLabel': ['MCP · 외부 연결', 'MCP · External Connection'],
   'market.needsKeyDanger': ['API 키 필요', 'API Key Required'],
@@ -1851,7 +1848,6 @@ const DICT = {
   'graph.conversation': ['대화 {n}', 'Conversation {n}'],
   'graph.note': ['노트 {n}', 'Note {n}'],
   'graph.controlsHint': ['드래그 회전 · 휠 줌 · 기억 클릭 = 열기', 'Drag to rotate · Scroll to zoom · Click a memory to open'],
-  'graph.closeEsc': ['닫기 ESC', 'Close ESC'],
   'graph.openInRecords': ['기록 화면에서 열기', 'Open in records'],
 };
 
