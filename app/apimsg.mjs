@@ -68,6 +68,13 @@ export const API_MSG = {
   archive_not_found: { status: 404, ko: '보관한 회사를 찾을 수 없습니다', en: 'Archived company not found' },
   archive_restore_exists: { status: 409, ko: '이미 목록에 같은 회사가 있어 되돌릴 수 없습니다 — 목록에서 그 회사를 열어 보세요', en: 'The same company is already in your list, so it cannot be restored — open it from the list' },
   archive_restore_failed: { status: 500, ko: '회사를 되돌리지 못했습니다 — 잠시 후 다시 시도해 주세요', en: 'Could not restore the company — please try again shortly' },
+  // 보관함(app/api/companies/[ws]/trash, 2차 검수 M3) — 항목이 이미 사라졌거나(복구·삭제가 먼저 일어남) 입력이 없을 때 시스템 원문(경로) 대신 문구
+  trash_item_gone: { status: 404, ko: '이미 복구했거나 지운 대화예요 — 목록을 다시 불러왔어요', en: 'That conversation was already restored or deleted — the list was refreshed' },
+  trash_bad_request: { status: 400, ko: '어떤 대화인지 알 수 없어요', en: 'Could not tell which conversation' },
+  trash_failed: { status: 500, ko: '보관함 작업을 마치지 못했습니다 — 잠시 뒤 다시 시도해 주세요', en: "Couldn't finish that — please try again shortly" },
+  // 첨부 업로드(app/api/companies/[ws]/chat/upload — 한도는 app/lib/upload-limit.mjs 한 곳)
+  upload_too_large: { status: 413, ko: '파일은 하나에 10MB까지 첨부할 수 있어요', en: 'Each file can be up to 10MB' },
+  upload_total_too_large: { status: 413, ko: '한 번에 보낼 수 있는 합계는 20MB까지예요 — 나눠서 첨부해 주세요', en: 'You can send up to 20MB at a time — attach them in smaller groups' },
   company_load_failed: { status: 500, ko: '회사 정보를 불러오지 못했습니다 — 잠시 후 다시 시도해 주세요', en: "Couldn't load the company — please try again shortly" },
 };
 

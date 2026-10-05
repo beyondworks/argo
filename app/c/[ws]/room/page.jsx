@@ -5,6 +5,7 @@ import { use, useCallback, useEffect, useLayoutEffect, useRef, useState } from '
 import { useRouter } from 'next/navigation';
 import { Avatar, Icon, Markdown, ArgoSpinner, Skeleton, Spinner, InputModal, api, imeGuardWith } from '../../../ui';
 import { useLang, stageLabel } from '../../../i18n';
+import { uploadAttachments } from '../../../lib/upload-files.mjs';
 import { failureReason } from '../../../lib/error-text.mjs'; // 실패 이유 — 빈 이유·브라우저 원문 없이(UL5)
 import { dropUpClamp } from '../zoom-math.mjs';
 import { ArtifactChips } from '../artifact-chips';
@@ -22,7 +23,7 @@ const LANE = 'min(768px, 100%)';
 
 export default function Room({ params }) {
   const { ws } = use(params);
-  const { t } = useLang();
+  const { t, lang } = useLang();
   const router = useRouter();
   const [agents, setAgents] = useState([]);
   const [messages, setMessages] = useState(null);
@@ -219,12 +220,8 @@ export default function Room({ params }) {
     if (!files.length || uploading) return;
     setUploading(true); setError('');
     try {
-      const fd = new FormData();
-      files.forEach((f) => fd.append('file', f));
-      const r = await fetch(`/api/companies/${ws}/chat/upload`, { method: 'POST', body: fd });
-      const d = await r.json();
-      if (!r.ok) throw new Error(d.error);
-      setAtt((cur) => [...cur, ...d.files].slice(0, 8));
+      const uploaded = await uploadAttachments(ws, files, lang); // 보내기 전에 10MB·합계 확인 — 한도는 app/lib/upload-limit.mjs 한 곳(2차 M3)
+      setAtt((cur) => [...cur, ...uploaded].slice(0, 8));
     } catch (err) {
       setError(t('chat.attachFailed', { msg: failureReason(err, t) }));
     } finally {

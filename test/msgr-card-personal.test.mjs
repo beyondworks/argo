@@ -60,3 +60,20 @@ test('로그인 전·로드 전은 폴도 영역도 없다', () => {
     assert.equal(view.polling, false); assert.equal(view.showRuntime, false); assert.equal(view.chip, 'notConnected');
   }
 });
+
+// 2차 분리 검수 L6(2026-10-05): 개인 공간 offline에서 '다시 확인'과 '다시 연결'이 나란히 있고, login 상태는 문구가 "로그인한 뒤 다시 연결하세요"인데 단추는 '다시 확인'뿐이었다.
+// → 상태별 단추 하나: offline·company = 다시 연결, login = 로그인, 그 밖 = (폴이 안 돌 때만) 다시 확인, alive = 없음.
+import { runtimeAction } from '../app/c/[ws]/settings/msgr-card.mjs';
+
+test('L6: 상태별 단추 하나 — 문구가 시키는 행동과 단추가 같다', () => {
+  assert.equal(runtimeAction('login', { polling: false }), 'login', '"로그인한 뒤 다시 연결하세요" → 로그인');
+  assert.equal(runtimeAction('login', { polling: true }), 'login');
+  assert.equal(runtimeAction('offline', { polling: false }), 'reconnect', '개인 공간 offline — 다시 연결 하나(다시 확인 없음)');
+  assert.equal(runtimeAction('offline', { polling: true }), 'reconnect');
+  assert.equal(runtimeAction('company', { polling: false }), 'reconnect', '"다시 연결을 시도하세요"');
+  assert.equal(runtimeAction('alive', { polling: false }), null);
+  for (const state of ['waiting', 'reconnecting', 'owner', 'noCrews', undefined]) {
+    assert.equal(runtimeAction(state, { polling: false }), 'recheck', `${state}: 폴이 없으면 다시 확인`);
+    assert.equal(runtimeAction(state, { polling: true }), null, `${state}: 폴이 돌면 단추 없음(자동 확인)`);
+  }
+});

@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { UPLOAD_BODY_LIMIT_BYTES } from './app/lib/upload-limit.mjs';
 const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'));
 
 /** @type {import('next').NextConfig} */
@@ -8,6 +9,8 @@ export default {
   // Agent SDK가 claude CLI를 서브프로세스로 스폰한다 — 번들에 포함하지 않는다.
   serverExternalPackages: ['@anthropic-ai/claude-agent-sdk', '@modelcontextprotocol/sdk'],
   outputFileTracingRoot: import.meta.dirname, // 상위 폴더 lockfile 오인 방지
+  // 미들웨어가 복제하는 요청 본문 한도 — 기본 10MB라 10MB 첨부가 멀티파트 오버헤드로 파싱 실패했다(2차 검수 M3). 첨부 한도(app/lib/upload-limit.mjs)에 맞춘다.
+  experimental: { middlewareClientMaxBodySize: UPLOAD_BODY_LIMIT_BYTES },
   // 네이티브 엔진 Grep 워커(src/engine/grep-worker.mjs)는 번들에 들어가지 않고 런타임에 파일로 로드된다(builtin-tools.grepWorkerPath —
   // webpack이 `new URL(..., import.meta.url)`을 청크 에셋으로 재작성해 프로덕션에서 MODULE_NOT_FOUND가 났던 재검수 NEW-HIGH-2). standalone에
   // 반드시 복사되도록 명시 추적한다(한 라우트에 걸면 산출물 전체에 한 번 복사된다).

@@ -6,16 +6,18 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Spinner, Skeleton, api } from './ui';
 import { useLang } from './i18n';
-import { restoreFailKind, archivedRowState } from './lib/archived-view.mjs';
+import { restoreFailKind, archivedRowState, restoreFailMessage, restoreNote } from './lib/archived-view.mjs';
 
-/** onRestored — 되돌리기에 성공했을 때(홈이 회사 목록을 다시 읽는다). existingIds — 지금 목록에 있는 회사 id들(같은 id가 이미 있으면 되돌리기 대신 열기). */
-export default function ArchivedCompaniesCard({ onRestored, existingIds, onLoaded }) {
+/** onMessage — 결과 안내를 위로 올린다(홈: 카드가 사라지거나 다른 자리로 다시 마운트돼도 안내가 남게 — 2차 L2). 없으면 카드 안에 그린다(설정). onRestored — 되돌리기에 성공했을 때(홈이 회사 목록을 다시 읽는다). existingIds — 지금 목록에 있는 회사 id들(같은 id가 이미 있으면 되돌리기 대신 열기). */
+export default function ArchivedCompaniesCard({ onRestored, existingIds, onLoaded, onMessage }) {
   const { t, lang } = useLang();
   const [items, setItems] = useState(null);
   const [failed, setFailed] = useState(false);
   const [busy, setBusy] = useState('');
   const [blocked, setBlocked] = useState(() => new Set()); // 방금 409(이미 같은 회사가 있음)를 받은 archiveId — 같은 실패를 반복하지 않게 열기로 바꾼다(UL1)
-  const [msg, setMsg] = useState(null); // { ok, text, href? }
+  const [localMsg, setLocalMsg] = useState(null); // { ok, text, href? } — onMessage가 없을 때만 카드 안에 그린다
+  const msg = onMessage ? null : localMsg;
+  const report = (m) => (onMessage ? onMessage(m) : setLocalMsg(m));
   // 부모가 매 렌더 새 함수를 넘겨도 다시 불러오지 않게 최신 콜백만 ref로 들고 load는 고정한다(안 그러면 렌더마다 목록 요청이 반복된다)
   const cb = useRef({ onLoaded, onRestored });
   cb.current = { onLoaded, onRestored };
@@ -26,17 +28,17 @@ export default function ArchivedCompaniesCard({ onRestored, existingIds, onLoade
   useEffect(load, [load]);
   async function restore(it) {
     if (busy) return;
-    setBusy(it.archiveId); setMsg(null);
+    setBusy(it.archiveId); report(null);
     try {
       const r = await api('/api/archived-companies', { archiveId: it.archiveId });
-      setMsg({ ok: true, text: t('settings.archived.restored', { name: it.name }), href: `/c/${r.wsId}` });
+      report(restoreNote(it, r, t));
       cb.current.onRestored?.(r.wsId);
       load();
     } catch (e) {
       if (restoreFailKind(e) === 'exists') {
         setBlocked((cur) => new Set(cur).add(it.archiveId));
-        setMsg({ ok: false, text: String(e?.message || t('settings.archived.exists')), href: `/c/${it.wsId}` });
-      } else setMsg({ ok: false, text: String(e?.message || t('settings.archived.restoreFail')) });
+        report({ ok: false, text: restoreFailMessage(e, t), href: `/c/${it.wsId}` });
+      } else report({ ok: false, text: restoreFailMessage(e, t) }); // 'Failed to fetch' 같은 원문이 아니라 사유 문구(2차 L1)
     } finally { setBusy(''); }
   }
   return (

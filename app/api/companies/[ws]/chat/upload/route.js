@@ -1,10 +1,12 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { paths } from '../../../../../../src/workspace.mjs';
-import { guardCompany } from '../../../../../auth.mjs';
+import { guardCompany, requestLang } from '../../../../../auth.mjs';
+import { apiError } from '../../../../../apimsg.mjs';
+import { uploadSizeProblem } from '../../../../../lib/upload-limit.mjs';
 
 // 첨부 업로드 — vault/files/에 저장한다. vault 안이어야 크루가 Read로 열람할 수 있다(vault 밖 금지 원칙).
-const MAX_FILE = 10 * 1024 * 1024; // 10MB
+// 한도(파일당·합계)는 app/lib/upload-limit.mjs 한 곳 — 화면이 보내기 전에 같은 판정을 하고, next.config의 미들웨어 본문 한도도 거기서 온다(2차 검수 M3)
 const IMAGE_MIME = /^image\/(png|jpeg|webp|gif)$/;
 
 export async function POST(req, { params }) {
@@ -13,11 +15,10 @@ export async function POST(req, { params }) {
     const denied = await guardCompany(ws); if (denied) return denied;
     const form = await req.formData();
     const out = [];
+    const problem = uploadSizeProblem([...form.values()].filter((v) => typeof v !== 'string'));
+    if (problem) return apiError(problem, await requestLang()); // 413 + errorCode(사전, 화면 언어 문구)
     for (const [, v] of form.entries()) {
       if (typeof v === 'string') continue;
-      if (v.size > MAX_FILE) {
-        return Response.json({ error: `"${v.name}" — 파일당 10MB까지 첨부할 수 있습니다` }, { status: 413 });
-      }
       const safe = (v.name || 'file').replace(/[^\w.\-가-힣]/g, '_').slice(-80);
       const rel = `files/${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}-${safe}`;
       await mkdir(join(paths(ws).vault, 'files'), { recursive: true });

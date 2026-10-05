@@ -36,3 +36,12 @@ export function msgrCardView({ st, orgId = '', agents = [] } = {}) {
 export function runtimeWaitingKey(polling) {
   return polling ? 'settings.msgr.runtime.waiting' : 'settings.msgr.runtime.waitingManual';
 }
+
+/** 실행기 상태 영역의 단추 하나(2차 L6) — 문구가 시키는 행동과 단추를 맞춘다. 'login'(로그인 링크) | 'reconnect'(다시 연결) | 'recheck'(다시 확인) | null.
+    offline·company는 문구가 "다시 연결"을 시키므로 다시 연결 하나, login은 로그인, 그 밖은 8초 폴이 안 돌 때만 다시 확인(폴이 돌면 자동 확인이라 단추 없음), alive는 없음. */
+export function runtimeAction(state, { polling }) {
+  if (state === 'alive') return null;
+  if (state === 'login') return 'login';
+  if (state === 'offline' || state === 'company') return 'reconnect';
+  return polling ? null : 'recheck';
+}

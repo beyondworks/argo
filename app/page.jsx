@@ -25,6 +25,7 @@ export default function Home() {
   const [listTry, setListTry] = useState(0);
   const [archivedCount, setArchivedCount] = useState(0); // 보관한 회사 수 — 1개 이상이면 입구를 보인다(목록을 못 받으면 0 = 입구 없음)
   const [archivedOpen, setArchivedOpen] = useState(false);
+  const [archivedMsg, setArchivedMsg] = useState(null); // 되돌리기 결과 안내 — 카드(개수 0이면 사라짐·온보딩↔목록에서 자리가 바뀌어 다시 마운트)가 아니라 홈이 들고 있는다(2차 L2)
   const [pairCode, setPairCode] = useState('');
   const [pairState, setPairState] = useState(''); // '' | 'waiting' | 'done'
   const [pairError, setPairError] = useState('');
@@ -148,6 +149,7 @@ export default function Home() {
         <div style={{ marginTop: 10 }}>
           <ArchivedCompaniesCard existingIds={new Set((companies ?? []).map((c) => c.id))}
             onLoaded={(items) => setArchivedCount(archivedEntryCount(items))}
+            onMessage={setArchivedMsg}
             onRestored={() => setListTry((n) => n + 1)} />
         </div>
       )}
@@ -262,6 +264,11 @@ export default function Home() {
           )}
         </div>
 
+        {archivedMsg && ( // 카드가 사라져도(마지막 보관 회사를 되돌림) 남는다 — 자리는 온보딩·목록 어느 쪽이든 같다
+          <p role={archivedMsg.ok ? 'status' : 'alert'} style={{ margin: '14px 0 0', fontSize: 12.5, color: archivedMsg.ok ? 'var(--fg-2)' : 'var(--danger)' }}>
+            {archivedMsg.text}{archivedMsg.href && <> <Link href={archivedMsg.href} style={{ textDecoration: 'underline', textUnderlineOffset: 3 }}>{t('settings.archived.open')}</Link></>}
+          </p>
+        )}
         {onboarding && archivedEntry}
 
         {/* 첫 화면 순서(UX-A06, 2026-10-05): 회사 이름 입력이 첫 행동이라 위로 — 러너 연결(선택)과 가져오기는 그 아래.

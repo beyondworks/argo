@@ -14,8 +14,9 @@ import LocalAssetImport from '../../../components/LocalAssetImport';
 import { proRowActive, trialBadgeState } from '../../../../src/entitlement.mjs';
 
 // Argo Messenger 받기 — 맥·윈도우 설치파일만 걸던 것을 앱 스토어·Play까지 있는 안내 페이지 한 곳으로(CX-12). 오피스는 웹 주소(CX-13).
-import { MESSENGER_PAGE, OFFICE_URL, msgrCardView, runtimeWaitingKey } from './msgr-card.mjs';
+import { MESSENGER_PAGE, OFFICE_URL, msgrCardView, runtimeWaitingKey, runtimeAction } from './msgr-card.mjs';
 import ArchivedCompaniesCard from '../../../archived-companies'; // 보관한 회사 되돌리기 — 홈에도 같은 카드(UM3)
+import { trashFailKind } from './trash-fail.mjs'; // 보관함 항목이 이미 사라졌는지(2차 M3)
 import { saveWithRevert } from './save-revert.mjs'; // 저장 실패면 되돌린다(F9)
 import { syncErrorView } from './sync-error.mjs'; // 동기화 원문 → 사용자 문구(F10)
 import { listView } from '../../../lib/list-view.mjs'; // 조회 실패 ≠ 비어 있음(F12)
@@ -775,7 +776,11 @@ function TrashCard({ ws }) {
   async function restore(it) {
     setBusy(it.id); setActionErr('');
     try { await api(`/api/companies/${ws}/trash`, { id: it.id }); load(); }
-    catch (e) { setActionErr(t('settings.trash.restoreFail', { msg: failureReason(e, t) })); } finally { setBusy(''); }
+    catch (e) {
+      // 항목이 이미 사라졌으면(다른 곳에서 복구·삭제) 다시 눌러도 같은 결과 — 안내하고 목록을 다시 읽어 그 항목을 뺀다(2차 M3)
+      if (trashFailKind(e) === 'gone') { setActionErr(failureReason(e, t)); load(); }
+      else setActionErr(t('settings.trash.restoreFail', { msg: failureReason(e, t) }));
+    } finally { setBusy(''); }
   }
   async function doPurge() {
     const it = purgeTarget; setPurgeTarget(null);
@@ -783,9 +788,12 @@ function TrashCard({ ws }) {
     setBusy(it.id); setActionErr('');
     try {
       const r = await fetch(`/api/companies/${ws}/trash?id=${encodeURIComponent(it.id)}`, { method: 'DELETE' });
-      if (!r.ok) throw responseError(r, await r.json().catch(() => ({})), lang); // 본문이 없어도 "요청 실패 (500)"처럼 이유가 남는다
+      if (!r.ok) throw responseError(r, await r.json().catch(() => ({})), lang); // 오류 코드·상태를 실어 failureReason이 상태별 문구를 고른다
       load();
-    } catch (e) { setActionErr(t('settings.trash.purgeFail', { msg: failureReason(e, t) })); } finally { setBusy(''); }
+    } catch (e) {
+      if (trashFailKind(e) === 'gone') { setActionErr(failureReason(e, t)); load(); }
+      else setActionErr(t('settings.trash.purgeFail', { msg: failureReason(e, t) }));
+    } finally { setBusy(''); }
   }
   const view = listView(items, loadFailed);
   return (
@@ -946,8 +954,14 @@ function MsgrCard({ ws, agents }) {
               : t(runtimeWaitingKey(view.polling));
   const [rechecking, setRechecking] = useState(false);
   async function recheck() { if (rechecking) return; setRechecking(true); try { await load(); } finally { setRechecking(false); } } // 폴이 없는 때의 수동 확인(UL7)
-  const canRecheck = !view.polling && runtime?.state !== 'alive';
-  const canReconnect = runtime && !['alive', 'login', 'owner', 'noCrews'].includes(runtime.state);
+  const action = runtime ? runtimeAction(runtime.state, { polling: view.polling }) : null; // 상태별 단추 하나(2차 L6)
+  const runtimeButton = action === 'login' ? (
+    <Link className="btn sm" href="/login">{t('home.signIn')}</Link>
+  ) : action === 'reconnect' ? (
+    <button type="button" className="btn sm" disabled={reconnecting} onClick={reconnectBridge}>{reconnecting ? <Spinner size={12} /> : t('settings.msgr.runtime.reconnect')}</button>
+  ) : action === 'recheck' ? (
+    <button type="button" className="btn sm" disabled={rechecking} onClick={recheck}>{rechecking ? <Spinner size={12} /> : t('settings.msgr.runtime.recheck')}</button>
+  ) : null;
 
   return (
     <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -972,12 +986,7 @@ function MsgrCard({ ws, agents }) {
             <span className="microlabel">{t('settings.msgr.runtime.title')}</span>
             <p>{runtimeCopy}</p>
           </div>
-          {canRecheck && <button type="button" className="btn sm" disabled={rechecking} onClick={recheck}>
-            {rechecking ? <Spinner size={12} /> : t('settings.msgr.runtime.recheck')}
-          </button>}
-          {canReconnect && <button type="button" className="btn sm" disabled={reconnecting} onClick={reconnectBridge}>
-            {reconnecting ? <Spinner size={12} /> : t('settings.msgr.runtime.reconnect')}
-          </button>}
+          {runtimeButton}
         </section>
       )}
       {st?.signedIn && !!st.orgs?.length && (<>
@@ -997,12 +1006,7 @@ function MsgrCard({ ws, agents }) {
               <span className="microlabel">{t('settings.msgr.runtime.title')}</span>
               <p>{runtimeCopy}</p>
             </div>
-            {canRecheck && <button type="button" className="btn sm" disabled={rechecking} onClick={recheck}>
-              {rechecking ? <Spinner size={12} /> : t('settings.msgr.runtime.recheck')}
-            </button>}
-            {canReconnect && <button type="button" className="btn sm" disabled={reconnecting} onClick={reconnectBridge}>
-              {reconnecting ? <Spinner size={12} /> : t('settings.msgr.runtime.reconnect')}
-            </button>}
+            {runtimeButton}
           </section>
           <section className="msgr-connection" aria-labelledby="msgr-connection-title">
             <div>
