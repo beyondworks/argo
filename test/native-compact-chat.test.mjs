@@ -60,3 +60,27 @@ test('NCC1. 압축이 일어난 턴 — 스레드에 요약 안내 줄(src notic
   const t2 = await loadThread(ws, 'r');
   assert.equal(t2.messages.filter((m) => m.src?.code === 'summarized').length, 1, '안내 줄이 더 생기지 않는다');
 });
+
+// 검수 changes_needed #1(HIGH) — 최근 20턴만으로 창의 95%를 넘는 대화(기본 창 128,000토큰)에서 5턴 연속: 요약 원샷은 1회 이하, 크루 대화 기록의 안내 줄은 1개.
+// 종전에는 긴급 경로가 턴마다 요약 + 안내 줄 + 스레드 쓰기(동기화 업로드)를 냈다. 한글 1자 = 3바이트 = 1토큰(추정)이라 글자 수 상한(40만 자) 안에서 재현된다.
+test('NCC2. 최근 20턴만으로 95% 초과 — 5턴 연속 요약 1회 이하·안내 줄 1개', async () => {
+  const ws = 'ncc2'; await createCompany(ws, '압축', 'owner', null, 'ko');
+  const p = paths(ws); await mkdir(p.agents, { recursive: true });
+  await writeFile(join(p.agents, 'r.md'), '---\nname: 로라\nrole: 검증\nrunner: openrouter\n---\n검증 크루.\n');
+  await saveRunnerCred(ws, 'openrouter', 'apikey', `sk-or-v1-${'f'.repeat(64)}`);
+  calls.length = 0;
+  const first = await chat(ws, 'r', '첫 지시');
+  await appendTurn(ws, 'r', { userMsg: '첫 지시', reply: first.reply, handover: null, sessionId: first.sessionId });
+  const f = sessionFile(ws, 'r'); const saved = JSON.parse(await readFile(f, 'utf8'));
+  const messages = [];
+  // 지시 1개 ≈ 8,000토큰 — 새 짧은 지시 4개가 최근 20턴에 들어와도(5턴째) 남은 큰 지시 15개 ≈ 120,000 + 도구·지시문으로 계속 95%(121,600)를 넘는다
+  for (let i = 0; i < 25; i++) messages.push({ role: 'user', content: `u${i}| ${'가'.repeat(8000)}` }, { role: 'assistant', content: [{ type: 'text', text: `a${i}` }] });
+  await writeFile(f, JSON.stringify({ ...saved, messages }));
+  calls.length = 0;
+  let sid = first.sessionId;
+  for (let i = 0; i < 5; i++) { const r = await chat(ws, 'r', `이어서 ${i}`, sid); assert.equal(r.reply, '턴 답'); sid = r.sessionId; }
+  const summaries = calls.filter((c) => c.kind === 'summary').length;
+  assert.ok(summaries <= 1, `요약 호출 ${summaries}회(1회 이하)`);
+  const notes = (await loadThread(ws, 'r')).messages.filter((m) => m.src?.code === 'summarized');
+  assert.equal(notes.length, 1, `안내 줄 ${notes.length}개(1개)`);
+});

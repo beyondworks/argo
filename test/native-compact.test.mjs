@@ -121,3 +121,69 @@ test('NC4. 최근 20턴뿐이면(앞부분 없음) 넘어도 요약하지 않는
     assert.equal(srv.calls[0].body.messages.filter(isPrompt).length, 20);
   } finally { await srv.close(); }
 });
+
+// ── 검수 changes_needed #1(HIGH) — 추정이 이미지 base64까지 바이트/3으로 세어 스크린샷 1장 ≈ 60,000토큰이 됐다. 최근 20턴에 2장이면
+// 95% 긴급 경로가 턴마다 요약 원샷 + 안내 줄 + 스레드 쓰기를 냈다. 이미지·문서 블록은 고정값(1,600토큰)으로 세고, 긴급 경로에도 최소 간격을 둔다.
+/** 5턴 연속 실행 — 각 턴의 요약 호출 수·압축 경계 수를 모은다 */
+async function fiveTurns(ws, srv, id, opts) {
+  let resume = id; let boundaries = 0;
+  for (let i = 0; i < 5; i++) {
+    const out = await run(ws, srv.base, resume, opts);
+    assert.equal(out.at(-1).subtype, 'success', `턴 ${i + 1} 성공`);
+    boundaries += out.filter((m) => m.type === 'system' && m.subtype === 'compact_boundary').length;
+    resume = out[0].session_id;
+  }
+  return { summaries: srv.calls.filter((c) => c.kind === 'summary').length, boundaries };
+}
+/** 이전 턴을 직접 깐다 — turns = [{ chars, image }] (image = base64 글자 수, 그 지시에 첨부 이미지 블록으로) */
+async function seedTurns(ws, turns, id = 'native-seed2') {
+  const messages = [];
+  turns.forEach((t, i) => {
+    const text = `u${i}| ${'x'.repeat(t.chars)}`;
+    messages.push({ role: 'user', content: t.image ? [{ type: 'text', text }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'A'.repeat(t.image) } }] : text },
+      { role: 'assistant', content: [{ type: 'text', text: `a${i}` }] });
+  });
+  const f = sessionFile(ws, 'crew'); await mkdir(dirname(f), { recursive: true });
+  await writeFile(f, JSON.stringify({ id, at: Date.now(), messages }));
+  return id;
+}
+
+test('NC5. 최근 20턴에 스크린샷 2장(base64 15만 자씩) — 5턴 연속에서 요약 호출 1회 이하·압축 경계(안내 줄) 1개', async () => {
+  const ws = 'nc5'; await createCompany(ws, '압축', '사장');
+  // 앞부분 12턴 × 1,000토큰(정당한 압축 1회 몫) + 최근 20턴 짧은 지시, 그중 2턴에 스크린샷
+  const turns = [...Array.from({ length: 12 }, () => ({ chars: 3000 })), ...Array.from({ length: 20 }, (_, k) => ({ chars: 300, ...(k === 5 || k === 15 ? { image: 150_000 } : {}) }))];
+  const id = await seedTurns(ws, turns);
+  const srv = await fake();
+  try {
+    const r = await fiveTurns(ws, srv, id, { contextTokens: 20_000 });
+    assert.ok(r.summaries <= 1, `요약 호출 ${r.summaries}회(1회 이하)`);
+    assert.equal(r.boundaries, 1, `압축 경계 ${r.boundaries}개(1개)`);
+    const lastTurn = srv.calls.filter((c) => c.kind === 'turn').at(-1).body;
+    assert.equal(JSON.stringify(lastTurn.messages).match(/"type":"image"/g)?.length, 2, '스크린샷 2장은 그대로 벤더에 간다');
+  } finally { await srv.close(); }
+});
+
+test('NC6. 최근 20턴만으로 창의 95%를 넘는다 — 5턴 연속에서 요약 호출 1회 이하·압축 경계 1개(긴급 경로도 최소 간격·효과 있을 때만)', async () => {
+  const ws = 'nc6'; await createCompany(ws, '압축', '사장');
+  const id = await seedTurns(ws, Array.from({ length: 25 }, () => ({ chars: 5000 }))); // 지시 1개 ≈ 1,667토큰 → 최근 19개만 ≈ 31,700 > 30,000의 95%
+  const srv = await fake();
+  try {
+    const r = await fiveTurns(ws, srv, id, { contextTokens: 30_000 });
+    assert.ok(r.summaries <= 1, `요약 호출 ${r.summaries}회(1회 이하)`);
+    assert.equal(r.boundaries, 1, `압축 경계 ${r.boundaries}개(1개)`);
+  } finally { await srv.close(); }
+});
+
+test('NC7. 추정(순수) — 이미지·문서 블록은 base64 길이와 무관하게 고정값, 도구 결과 안의 이미지도 같다', async () => {
+  const { estimateTokens, IMAGE_TOKENS } = await import('../src/engine/compact.mjs');
+  const img = (n) => ({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'A'.repeat(n) } });
+  const small = estimateTokens([{ role: 'user', content: [{ type: 'text', text: 'hi' }, img(10)] }]);
+  const big = estimateTokens([{ role: 'user', content: [{ type: 'text', text: 'hi' }, img(600_000)] }]);
+  assert.equal(big, small, 'base64 길이는 추정에 들어가지 않는다');
+  assert.ok(big >= IMAGE_TOKENS && big < IMAGE_TOKENS + 100, `이미지 1장 ≈ ${IMAGE_TOKENS}토큰(${big})`);
+  const nested = estimateTokens([{ role: 'user', content: [{ type: 'tool_result', tool_use_id: 't', content: [{ type: 'text', text: 'shot' }, img(400_000)] }] }]);
+  assert.ok(nested < IMAGE_TOKENS + 100, `도구 결과 안 스크린샷도 고정값(${nested})`);
+  const doc = estimateTokens([{ role: 'user', content: [{ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: 'B'.repeat(900_000) } }] }]);
+  assert.ok(doc < IMAGE_TOKENS + 100, `문서 블록도 고정값(${doc})`);
+  assert.equal(estimateTokens('가'.repeat(300)), 300, '글은 종전대로 utf-8 바이트/3');
+});
