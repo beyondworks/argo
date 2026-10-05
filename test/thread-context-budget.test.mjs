@@ -18,7 +18,7 @@ const mkws = async (ws, lang = 'ko') => {
   await writeFile(join(ROOT, ws, 'agents', 'crew-a.md'), '---\nname: 크루A\nrunner: codex\n---\n\n전문가.\n');
   await writeFile(join(ROOT, ws, '.secrets.json'), JSON.stringify({ runners: { codex: { type: 'apikey', value: 'sk-fake-not-a-real-key' } } }));
 };
-// 가짜 codex — 받은 프롬프트를 .fake-prompts에 누적. 요약 원샷(<conversation> 태그)이면 '요약본-XYZ'를, 그 밖은 고정 답을 낸다.
+// 가짜 codex — 받은 프롬프트를 .fake-prompts에 누적. 요약 원샷(<conversation> 태그)이면 '요약본-XYZ'를(회사 폴더에 .fail-summary가 있으면 실패), 그 밖은 고정 답을 낸다.
 const BIN = join(ROOT, 'bin');
 await mkdir(BIN, { recursive: true });
 await writeFile(join(BIN, 'codex'), `#!/bin/sh
@@ -30,7 +30,7 @@ for a in "$@"; do
 done
 [ "$last" = "-" ] && last="$(cat)"
 printf '%s\\n=====\\n' "$last" >> "$PWD/.fake-prompts"
-case "$last" in *"<conversation>"*) ANS="요약본-XYZ 보고서 마감은 금요일" ;; *) ANS="이어서 정리했습니다." ;; esac
+case "$last" in *"<conversation>"*) [ -f "$PWD/.fail-summary" ] && { echo "summary backend down" >&2; exit 1; }; ANS="요약본-XYZ 보고서 마감은 금요일" ;; *) ANS="이어서 정리했습니다." ;; esac
 [ -n "$OUT" ] && printf '%s' "$ANS" > "$OUT"
 exit 0
 `);
@@ -140,6 +140,7 @@ test('TB6. 채널 기억 회수 — 그 채널 범위 요약도 같이 지운다
   applyDeparted(t); // 읽을 때·동기화 병합 때 다시 적용되는 각인 — 재입장 뒤 요약(upto > 각인 ts)은 지우지 않는다
   assert.equal(threadSummary(t, scope)?.text, '재입장 뒤 요약');
 });
+
 test('TB7. 요약 안내 줄(chat.mjs compact_boundary — src notice code summarized)은 다음 턴의 스레드 맥락에 싣지 않는다(다른 세션 안내 줄은 종전대로)', POSIX_ONLY, async () => {
   const WS = 'tb7'; await mkws(WS);
   const notice = { who: 'crew', text: '앞 대화를 요약해 이어 갑니다', ts: T0 + 50_000, src: { kind: 'session', dir: 'notice', code: 'summarized' } };
@@ -153,3 +154,39 @@ test('TB7. 요약 안내 줄(chat.mjs compact_boundary — src notice code summa
   assert.match(ps[0], /상한 안내 원문/, '세션 상한 같은 다른 안내 줄은 종전대로 싣는다');
 });
 
+// 검수 changes_needed #3(MEDIUM) — 요약이 실패하면 아무것도 남기지 않아 다음 턴마다 다시 요약(최대 90초 동기)했다.
+// 실패 시점의 요약 대상 끝을 기억하고, 그 뒤로 새 메시지가 SUMMARY_REFRESH_MIN개 쌓였을 때만 다시 시도한다.
+test('TB8. 요약 실패 기억(순수) — 같은 범위 4턴 연속 실패 요약은 1회만 부르고, 새 메시지 20개가 쌓이면 다시 시도한다', async () => {
+  const all = msgs(300, 400);
+  let calls = 0;
+  const summarize = async () => { calls++; throw new Error('runner down'); };
+  const key = `tb8:${Math.random()}`;
+  for (let i = 0; i < 4; i++) {
+    const r = await buildThreadContext({ msgs: [...all, ...msgs(2 * i, 400, 300)], lineOf, summary: null, summarize, save: async () => {}, memoKey: key });
+    assert.equal(r.summary, null);
+    assert.ok(r.recent.split('\n').length > 6, '최근 대화는 그대로 싣는다');
+  }
+  assert.equal(calls, 1, `4턴에 요약 호출 ${calls}회(1회)`);
+  await buildThreadContext({ msgs: [...all, ...msgs(30, 400, 300)], lineOf, summary: null, summarize, save: async () => {}, memoKey: key });
+  assert.equal(calls, 2, '실패 뒤 새 메시지가 20개 이상 쌓이면 다시 시도');
+  // 성공하면 기억을 지운다 — 다음 실패는 다시 1회
+  let ok = 0;
+  await buildThreadContext({ msgs: [...all, ...msgs(60, 400, 300)], lineOf, summary: null, summarize: async () => { ok++; return '요약'; }, save: async () => {}, memoKey: key });
+  assert.equal(ok, 1, '20개 더 쌓여 성공 호출');
+  // 다른 범위(키)는 서로 막지 않는다
+  let other = 0;
+  await buildThreadContext({ msgs: all, lineOf, summary: null, summarize: async () => { other++; throw new Error('x'); }, save: async () => {}, memoKey: `${key}:other` });
+  assert.equal(other, 1);
+});
+
+test('TB9. CLI 턴(가짜 codex): 요약 원샷이 실패하는 러너에서 4턴 연속 — 요약 호출 1회, 턴은 매번 최근 대화로 이어 간다', POSIX_ONLY, async () => {
+  const WS = 'tb9'; await mkws(WS);
+  await writeFile(join(ROOT, WS, '.fail-summary'), '1');
+  await writeFile(join(ROOT, WS, 'chats', 'crew-a.json'), JSON.stringify({ sessionId: null, messages: msgs(300, 400) }));
+  for (let i = 0; i < 4; i++) { const r = await chat(WS, 'crew-a', `이어서 ${i}`); assert.equal(r.reply, '이어서 정리했습니다.'); }
+  const ps = await prompts(WS);
+  const sums = ps.filter((x) => x.includes('<conversation>')).length;
+  assert.equal(sums, 1, `요약 원샷 ${sums}회(1회)`);
+  assert.equal(ps.length - sums, 4, '턴 4번');
+  for (const x of ps.filter((y) => !y.includes('<conversation>'))) assert.match(x, /m299\|/, '최근 대화는 실린다');
+});

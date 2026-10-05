@@ -498,6 +498,7 @@ async function threadContextFor(wsId, slug, t, { contextScope, lang, name, runne
   const msgs = (t?.messages ?? []).filter((m) => inThreadContext(m, contextScope));
   return buildThreadContext({
     msgs, lang, lineOf: (m) => threadCtxLine(m, lang, name), summary: threadSummary(t, contextScope),
+    memoKey: `${wsId}:${slug}:${scopeKey(contextScope) ?? ''}`, // 요약 실패 기억은 범위별(채널·그룹마다 따로) — 요약 저장 키와 같은 구분
     summarize: (prompt) => runOneShot(wsId, prompt, { pin: runner, model: model || null, lang, readOnly: true, timeoutMs: 90_000 }).then((r) => r.text),
     save: (sum) => setThreadSummary(wsId, slug, contextScope, sum),
   });
