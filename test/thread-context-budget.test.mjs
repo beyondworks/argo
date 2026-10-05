@@ -314,3 +314,17 @@ test('TB14. 스레드 요약 지시문 — 배달 글 속 </conversation>·가�
   }
 });
 
+// 재검수 #5(LOW) — 기기 간 동기화 병합(sync.mjs mergeThread)이 누적 요약(summary·scopedSummaries)을 통째로 한쪽 것으로 덮었다:
+// 다른 기기가 만든 더 최신 요약(upto가 큰 쪽)이나 그 기기에만 있는 채널 요약이 사라져 같은 몫을 다시 요약(비용)했다. 키마다 upto가 큰 쪽을 남긴다.
+test('TB15. 동기화 병합 — summary는 upto가 큰 쪽, scopedSummaries는 채널 키마다 upto가 큰 쪽(어느 쪽이 최근 편집이든)', async () => {
+  const { mergeThread } = await import('../src/sync.mjs');
+  const local = Buffer.from(JSON.stringify({ messages: [], summary: { text: 'L요약', upto: 200, at: 1 }, scopedSummaries: { a: { text: 'La', upto: 5, at: 1 }, b: { text: 'Lb', upto: 9, at: 1 } } }));
+  const remote = Buffer.from(JSON.stringify({ messages: [], summary: { text: 'R요약', upto: 100, at: 2 }, scopedSummaries: { b: { text: 'Rb', upto: 12, at: 2 }, c: { text: 'Rc', upto: 1, at: 2 } } }));
+  for (const prefer of ['remote', 'local']) {
+    const m = JSON.parse(mergeThread(local, remote, prefer).toString());
+    assert.equal(m.summary.text, 'L요약', `${prefer}: 범위 없는 요약은 upto가 큰 쪽`);
+    assert.deepEqual(Object.fromEntries(Object.entries(m.scopedSummaries).map(([k, v]) => [k, v.text])), { a: 'La', b: 'Rb', c: 'Rc' }, `${prefer}: 채널마다 upto가 큰 쪽, 한쪽에만 있는 채널도 남는다`);
+  }
+  const plain = JSON.parse(mergeThread(Buffer.from('{"messages":[]}'), Buffer.from('{"messages":[]}')).toString());
+  assert.equal(plain.summary, undefined); assert.equal(plain.scopedSummaries, undefined, '요약이 없던 스레드 모양은 그대로');
+});
