@@ -23,7 +23,7 @@ import { dropUpClamp } from '../../zoom-math.mjs';
 import { matchSlash } from '../../slash-match.mjs';
 import { useSessionMention, SessionMentionPanel, SessionMsgCard, isSessionCard } from './session-msg.jsx'; // 세션 메시지 — @크루 자동 완성·접힌 카드
 import { parseSessionTarget } from './session-msg-parse.mjs';
-import { mergePolledThread, pollStep } from './thread-poll.mjs'; // 두 폴의 같은 반영 경로(F2·F2+)
+import { mergePolledThread, makePollApplier, startThreadPolls } from './thread-poll.mjs'; // 두 폴의 같은 반영 경로(F2·F2+)·방을 바꾼 뒤 도착한 응답은 버린다(UL3)
 import { isNoRunnerFailure } from './fail-display.mjs'; // '러너 없음' 실패 → 사전 문구 + 설정 링크(UX-A02)
 import { gistLabel } from '../../../../lib/gist-display.mjs'; // 메신저 머리말을 뗀 요약(UX-A08)
 
@@ -474,28 +474,18 @@ export default function CrewChat({ params, embedded = false, onClose }) {
   // 폴 응답 반영 — 3초 준실시간 폴과 2.5초 진행 폴이 **같은 경로**를 쓴다(F2+, 2026-10-05: 진행 폴이 본문을 버리고 mtime만
   // 옮겨 성공한 답이 안 붙던 결함). 병합 규칙(실패 표시 반영·미보존 사본 캐리오버·뜻이 같으면 참조 유지)은 thread-poll.mjs.
   const refetchRef = useRef(false); // 내 턴 중 본문을 버린 적이 있다 — 다음 유휴 폴은 mtime 없이 전체를 받는다
-  const applyPoll = useCallback((r) => {
-    const step = pollStep(r, { busy: busyRef.current }); // 내 턴 중엔 본문을 반영하지 않는다(낙관 사본 보호)
-    setLiveStage(step.status); // 결재 후속·루틴·메신저발 턴도 진행 카드가 보인다
-    if (step.refetch) refetchRef.current = true;
-    if (step.mtime) mtimeRef.current = step.mtime;
-    if (!step.apply) return;
-    refetchRef.current = false;
-    setThread((cur) => mergePolledThread(cur, step.messages));
-    if (r.sessionId) sessionRef.current = r.sessionId;
-    setThreadTitle(r.title ?? null); // 다른 기기에서 바꾼 현재 대화명도 준실시간 반영(검수 LOW)
-    if (Date.now() - delegSavedAt.current > 4000) setDelegLimited(r.delegationLimit !== false); // 다른 기기에서 바꾼 위임 제한도 같은 방식으로
-  }, []);
-  // 다른 창구(텔레그램·슬랙·루틴·결재 후속)에서 붙은 대화를 웹에도 반영 — 채널을 오가도 맥락은 하나다.
-  useEffect(() => {
-    const t = setInterval(() => {
-      if (busy) return; // 내가 보내는 중엔 낙관적 UI를 덮지 않는다
-      api(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}&mtime=${refetchRef.current ? 0 : mtimeRef.current}`)
-        .then(applyPoll)
-        .catch(() => {});
-    }, 3000); // 준실시간 — 동기화(≈8s)로 당겨온 다른 기기의 대화를 더 빨리 표시(기존 8s)
-    return () => clearInterval(t);
-  }, [ws, slug, busy, applyPoll]);
+  const applyPoll = useMemo(() => makePollApplier({
+    isBusy: () => busyRef.current, // 내 턴 중엔 본문을 반영하지 않는다(낙관 사본 보호)
+    setStatus: setLiveStage,
+    setMtime: (m) => { mtimeRef.current = m; },
+    setRefetch: (v) => { refetchRef.current = v; },
+    mergeThread: (msgs) => setThread((cur) => mergePolledThread(cur, msgs)),
+    onApplied: (r) => {
+      if (r.sessionId) sessionRef.current = r.sessionId;
+      setThreadTitle(r.title ?? null); // 다른 기기에서 바꾼 현재 대화명도 준실시간 반영(검수 LOW)
+      if (Date.now() - delegSavedAt.current > 4000) setDelegLimited(r.delegationLimit !== false); // 다른 기기에서 바꾼 위임 제한도 같은 방식으로
+    },
+  }), []);
 
   // 이 크루의 대기 결재 — 대화창에서 바로 승인/거절 (데크 결재함은 백업 창구)
   const [pendings, setPendings] = useState([]);
@@ -546,17 +536,17 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     wasWorking.current = working;
   }, [working, ws]);
 
-  // 진행 단계 고빈도 폴 — 턴이 도는 동안(내 턴 + 시운전·루틴·메신저발) 2.5초 간격.
-  // 서버가 턴 종료 시 상태 파일을 지우므로, status가 null로 돌아오면 스스로 멎는다.
-  useEffect(() => {
-    if (!working) return;
-    const t = setInterval(() => {
-      api(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}&mtime=${mtimeRef.current || 1}`)
-        .then(applyPoll) // 바뀐 본문을 받으면 3초 폴과 똑같이 반영한다 — 버리고 mtime만 옮기면 그 변경을 영영 놓친다(F2+)
-        .catch(() => {});
-    }, 2500);
-    return () => clearInterval(t);
-  }, [working, ws, slug, applyPoll]);
+  // 스레드 폴 두 줄기 — 준실시간 3초(내 턴이 아닐 때) + 진행 단계 2.5초(무언가 도는 중: 내 턴·시운전·루틴·메신저발). 같은 반영기(applyPoll)를 지난다.
+  // 서버가 턴 종료 시 상태 파일을 지우므로 status가 null로 돌아오면 진행 폴은 스스로 멎는다. 방(ws·slug)이 바뀌면 정리에서 stop()이 불려
+  // 그 전에 나간 요청의 응답은 버려진다(UL3 — 새 방에 이전 방 스레드·진행 카드가 섞이던 것). 판정은 ref로 읽어 타이머는 방이 바뀔 때만 다시 만든다.
+  const workingRef = useRef(false);
+  workingRef.current = working;
+  useEffect(() => startThreadPolls({
+    fetchThread: (mtime) => api(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}&mtime=${mtime}`),
+    apply: applyPoll,
+    isBusy: () => busyRef.current, isWorking: () => workingRef.current,
+    getMtime: () => mtimeRef.current, shouldRefetch: () => refetchRef.current,
+  }), [ws, slug, applyPoll]);
 
   /** 파일 추가 — 드롭·붙여넣기·클립 버튼 모두 이 관문을 지난다. 업로드 즉시 vault/files/ 저장. */
   async function addFiles(fileList, { announceEmpty = false } = {}) {

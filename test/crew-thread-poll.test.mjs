@@ -44,3 +44,78 @@ test('F2+: 진행 폴과 준실시간 폴은 같은 반영 경로 — 본문을 
   assert.equal(same.apply, false);
   assert.deepEqual(same.status, { stage: 'thinking' });
 });
+
+// UL3(2026-10-05 분리 검수): applyPoll에 방(slug) 확인이 없어 크루를 바꾸기 직전에 나간 폴 응답이 새 방에 섞일 수 있었다(F2+로 조건이 넓어짐).
+// 그리고 위 테스트는 순수 함수만 봐서, 진행 폴을 옛 방식(본문을 버리고 mtime만 옮김)으로 되돌려도 통과했다(L10).
+// 폴 두 줄기를 시작하는 함수(startThreadPolls)를 행동으로 잠근다: ① 두 폴이 같은 반영기를 지난다 ② 멈춘 뒤(방 전환·언마운트)에 도착한 응답은 버린다.
+import { makePollApplier, startThreadPolls } from '../app/c/[ws]/crew/[slug]/thread-poll.mjs';
+
+function fakeTimers() {
+  const timers = []; let next = 1;
+  return {
+    setInterval: (fn, ms) => { const id = next++; timers.push({ id, fn, ms, on: true }); return id; },
+    clearInterval: (id) => { const t = timers.find((x) => x.id === id); if (t) t.on = false; },
+    tick: (ms) => timers.filter((t) => t.ms === ms && t.on).forEach((t) => t.fn()),
+    live: () => timers.filter((t) => t.on).length,
+  };
+}
+function harness({ busy = false, working = false, mtime = 100, refetch = false } = {}) {
+  const st = { busy, working, mtime, refetch, status: null, thread: [u('지시')], requests: [], resolvers: [] };
+  const timers = fakeTimers();
+  const apply = makePollApplier({
+    isBusy: () => st.busy, setStatus: (s) => { st.status = s; }, setMtime: (m) => { st.mtime = m; }, setRefetch: (v) => { st.refetch = v; },
+    mergeThread: (msgs) => { st.thread = mergePolledThread(st.thread, msgs); },
+  });
+  const stop = startThreadPolls({
+    fetchThread: (m) => new Promise((res) => { st.requests.push(m); st.resolvers.push(res); }),
+    apply, isBusy: () => st.busy, isWorking: () => st.working, getMtime: () => st.mtime, shouldRefetch: () => st.refetch, timers,
+  });
+  return { st, timers, stop };
+}
+const flush = () => new Promise((r) => setImmediate(r));
+
+test('UL3: 두 폴 모두 같은 반영기를 지난다 — 진행 폴(2.5초)이 받은 새 답도 화면에 붙는다(F2+ 연결)', async () => {
+  const h = harness({ working: true }); // 내 턴이 아니라 결재 후속·루틴 턴이 도는 중 — 진행 폴만 돈다
+  h.timers.tick(2500);
+  assert.deepEqual(h.st.requests, [100], '진행 폴은 마지막 mtime으로 묻는다');
+  h.st.resolvers[0]({ mtime: 200, status: { stage: 'thinking' }, messages: [u('지시'), c('완료했습니다')] });
+  await flush();
+  assert.deepEqual(h.st.thread.map((m) => m.text), ['지시', '완료했습니다'], '바뀐 본문을 버리지 않는다');
+  assert.equal(h.st.mtime, 200);
+  assert.deepEqual(h.st.status, { stage: 'thinking' });
+  const idle = harness();
+  idle.timers.tick(3000);
+  idle.st.resolvers[0]({ mtime: 300, messages: [u('지시'), c('3초 폴이 받은 답')] });
+  await flush();
+  assert.deepEqual(idle.st.thread.map((m) => m.text), ['지시', '3초 폴이 받은 답']);
+});
+
+test('UL3: 폴 조건 — 내 턴이면 3초 폴은 쉬고(낙관 사본 보호), 안 도는 중이면 2.5초 폴은 쉰다. 다시 받기 표지는 mtime 0', async () => {
+  const h = harness({ busy: true, working: true });
+  h.timers.tick(3000);
+  assert.deepEqual(h.st.requests, [], '내 턴 중에는 3초 폴을 묻지 않는다');
+  h.timers.tick(2500);
+  assert.deepEqual(h.st.requests, [100]);
+  h.st.resolvers[0]({ mtime: 150, messages: [u('지시'), c('중간')] });
+  await flush();
+  assert.equal(h.st.refetch, true, '내 턴 중 버린 본문 — 다음 유휴 폴이 전체를 다시 받는다');
+  assert.deepEqual(h.st.thread.map((m) => m.text), ['지시'], '낙관 사본은 덮이지 않는다');
+  h.st.busy = false; h.st.working = false;
+  h.timers.tick(2500);
+  assert.equal(h.st.requests.length, 1, '아무것도 안 도는 중이면 진행 폴은 묻지 않는다');
+  h.timers.tick(3000);
+  assert.deepEqual(h.st.requests, [100, 0], '유휴 폴은 refetch 표지가 있으면 mtime 0으로 전체를 받는다');
+});
+
+test('UL3: 멈춘 뒤(크루 전환·화면 이탈)에 도착한 이전 방의 응답은 새 방에 섞이지 않는다', async () => {
+  const h = harness({ working: true });
+  h.timers.tick(2500); h.timers.tick(3000);
+  assert.equal(h.st.requests.length, 2, '두 줄기 모두 요청이 나가 있다');
+  h.stop(); // 크루를 바꾸면 effect 정리가 부른다
+  assert.equal(h.timers.live(), 0, '타이머도 모두 멈춘다');
+  h.st.resolvers[0]({ mtime: 999, status: { stage: 'old-room' }, messages: [u('지시'), c('이전 방의 답')] });
+  h.st.resolvers[1]({ mtime: 999, status: { stage: 'old-room' }, messages: [u('지시'), c('이전 방의 답')] });
+  await flush();
+  assert.deepEqual(h.st.thread.map((m) => m.text), ['지시'], '이전 방 응답이 반영되지 않는다');
+  assert.equal(h.st.mtime, 100); assert.equal(h.st.status, null);
+});

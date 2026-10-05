@@ -30,3 +30,30 @@ export function pollStep(r, { busy = false } = {}) {
   if (busy) return { status, apply: false, mtime: r.mtime || null, refetch: true };
   return { status, apply: true, mtime: r.mtime || null, messages: r.messages ?? [] };
 }
+
+/** 폴 응답 반영기 — 두 폴(3초 준실시간·2.5초 진행)이 같은 것을 쓴다(F2+). 상태 변경은 주입한 setter로만 한다(화면 의존 없음).
+    isBusy = 내가 보낸 턴이 도는 중인가(낙관 사본 보호). setStatus = 진행 카드 · setMtime/setRefetch = 폴링 dedup 표지 · mergeThread = 본문 병합 · onApplied = 본문을 반영한 뒤 부가 반영(세션·제목·위임 제한). */
+export function makePollApplier({ isBusy, setStatus, setMtime, setRefetch, mergeThread, onApplied }) {
+  return (r) => {
+    const step = pollStep(r, { busy: isBusy() });
+    setStatus(step.status); // 결재 후속·루틴·메신저발 턴도 진행 카드가 보인다
+    if (step.refetch) setRefetch(true);
+    if (step.mtime) setMtime(step.mtime);
+    if (!step.apply) return;
+    setRefetch(false);
+    mergeThread(step.messages);
+    onApplied?.(r);
+  };
+}
+
+/** 폴 두 줄기를 한 번에 시작한다 — 반환 stop()은 타이머를 멈추고, **멈춘 뒤 도착한 응답은 버린다**(UL3: 크루를 바꾸기 직전에 나간 요청의 응답이
+    새 방의 스레드·진행 카드·mtime에 섞이던 것). 방(ws·slug)이 바뀌면 호출부가 effect 정리에서 stop()을 부르고 새로 시작한다.
+    idle(idleMs): 내 턴이 아닐 때만 — 다시 받기 표지(shouldRefetch)가 있으면 mtime 0(전체), 없으면 마지막 mtime(바뀐 것만).
+    progress(progressMs): 무언가 도는 중(내 턴·결재 후속·루틴·메신저발)일 때만 — 마지막 mtime(없으면 1). 둘 다 같은 apply를 지난다. */
+export function startThreadPolls({ fetchThread, apply, isBusy, isWorking, getMtime, shouldRefetch, idleMs = 3000, progressMs = 2500, timers = globalThis }) {
+  let alive = true;
+  const run = (mtime) => { fetchThread(mtime).then((r) => { if (alive) apply(r); }).catch(() => {}); };
+  const idle = timers.setInterval(() => { if (isBusy()) return; run(shouldRefetch() ? 0 : getMtime()); }, idleMs);
+  const progress = timers.setInterval(() => { if (!isWorking()) return; run(getMtime() || 1); }, progressMs);
+  return () => { alive = false; timers.clearInterval(idle); timers.clearInterval(progress); };
+}
