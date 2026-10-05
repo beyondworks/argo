@@ -75,7 +75,7 @@ test('F2(O2). files는 그 조직 문서함을 검색(제목·파일명·본문�
   const out = await run({ action: 'files', q: '견적', customer_id: CUST });
   const c = calls.find((x) => x.name === 'office_file_list');
   assert.deepEqual(c.args, { p_org: ORG, p_q: '견적', p_trash: false, p_customer: CUST });
-  assert.match(out, /한빛 견적서\.pdf · quote · .*id=f1/);
+  assert.match(out, /"한빛 견적서\.pdf" · quote · .*id=f1/);
   assert.match(out, /견적 합계/);
   assert.doesNotMatch(out, /123456-78-901234/, '여럿이 보는 채널에서는 통장사본 요약을 싣지 않는다');
 });
@@ -133,8 +133,8 @@ test('F5(V14). 드라이브: 목록·가져오기·새 폴더·보내기는 오�
   const l = calls.find((c) => c.name === 'fetch' && /drive\/list/.test(c.url));
   assert.equal(l.url, 'https://office.example.com/api/drive/list?q=%EC%A0%9C%EC%95%88%EC%84%9C');
   assert.equal(l.init.headers.authorization, 'Bearer jwt-1');
-  assert.match(list, /제안서 .*id=g1/);
-  assert.match(await run({ action: 'drive_import', drive_id: 'g1', customer_id: CUST }), /가져왔다\(id=g1\)[^\n]*\n--- 바깥 글 시작[^\n]*\n제안서\.pdf\n--- 바깥 글 끝 /);
+  assert.match(list, /"제안서" .*id=g1/);
+  assert.match(await run({ action: 'drive_import', drive_id: 'g1', customer_id: CUST }), /가져왔다\(id=g1\)[^\n]*\n--- 바깥 글 시작[^\n]*\n"제안서\.pdf"\n--- 바깥 글 끝 /);
   assert.deepEqual(JSON.parse(calls.find((c) => /drive\/import/.test(c.url ?? '')).init.body), { org: ORG, id: 'g1', customerId: CUST });
   assert.match(await run({ action: 'drive_mkdir', name: '2026 계약' }), /폴더를 만들었다/);
   assert.match(await run({ action: 'drive_export', id: 'f1' }), /보내기 권한/);

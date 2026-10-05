@@ -13,6 +13,7 @@
 // 바깥 글(S1): 할 일 제목·메모·분류·사람 이름, 페이지 제목·본문은 남이 쓴 글이다 — 목록·읽기 결과는 경계 블록으로 감싼다(office-audience.mjs outsideOf).
 import { randomUUID } from 'node:crypto';
 import { officeTurn, ONLY_DM, refusalText, outsideOf, OUTSIDE_RULE } from './office-audience.mjs';
+import { jsonText } from '../inbound-marks.mjs';
 
 export const workDeps = {
   session: async () => (await import('./msgr.mjs')).sessionClient(),
@@ -63,19 +64,19 @@ const ERRORS = {
 /* ── 할 일 ── */
 const stateOf = (t) => (t.done_at ? 'done' : STATUS.includes(t.status) ? t.status : 'todo');
 const lateDays = (t, today) => (!t.done_at && t.due_on && String(t.due_on).slice(0, 10) < today ? dayNo(today) - dayNo(String(t.due_on).slice(0, 10)) : 0);
-/** 할 일 한 줄 — 상태·중요도(보통이 아니면)·분류·시작~기한(지난 날)·맡은 사람(남의 일을 함께 볼 때)·만든 크루·id, 메모 앞부분 */
-export function taskLine(t, { lang = 'ko', today, names = null, ownerUid = null } = {}) {
-  const bits = [`[${STATUS_NAME[stateOf(t)][L(lang)]}] ${one(t.title)}`];
+/** 할 일 한 줄 — 상태·중요도(보통이 아니면)·분류·시작~기한(지난 날)·맡은 사람(남의 일을 함께 볼 때)·만든 크루·id, 메모 앞부분. 사람이 쓴 값(제목·분류·이름·메모)은 esc(기본 JSON 문자열)로 감싼다 */
+export function taskLine(t, { lang = 'ko', today, names = null, ownerUid = null, esc = jsonText } = {}) {
+  const bits = [`[${STATUS_NAME[stateOf(t)][L(lang)]}] ${esc(t.title)}`];
   if (t.priority && t.priority !== 2) bits.push(`${pick('중요도', 'priority', lang)} ${PRIORITY_NAME[t.priority]?.[L(lang)] ?? t.priority}`);
-  if (t.category) bits.push(`${pick('분류', 'category', lang)} ${one(t.category)}`);
+  if (t.category) bits.push(`${pick('분류', 'category', lang)} ${esc(t.category)}`);
   if (t.starts_on) bits.push(`${pick('시작', 'starts', lang)} ${t.starts_on}`);
   if (t.due_on) bits.push(`${pick('기한', 'due', lang)} ${t.due_on}`);
   const late = today ? lateDays(t, today) : 0;
   if (late) bits.push(pick(`기한 지남 ${late}일`, `${late} days overdue`, lang));
-  if (names) bits.push(`${pick('맡은 사람', 'assignee', lang)} ${t.assignee === ownerUid ? pick('주인', 'owner', lang) : one(names.get(t.assignee) ?? t.assignee)}`);
-  if (t.source?.kind === 'crew') bits.push(pick(`크루 ${one(t.source.name || t.source.slug)}가 만듦`, `made by crew ${one(t.source.name || t.source.slug)}`, lang));
+  if (names) bits.push(`${pick('맡은 사람', 'assignee', lang)} ${t.assignee === ownerUid ? pick('주인', 'owner', lang) : esc(names.get(t.assignee) ?? t.assignee)}`);
+  if (t.source?.kind === 'crew') bits.push(pick(`크루 ${esc(t.source.name || t.source.slug)}가 만듦`, `made by crew ${esc(t.source.name || t.source.slug)}`, lang));
   bits.push(`id=${t.id}`);
-  return `- ${bits.join(' · ')}${t.note ? `\n  ${pick('메모', 'note', lang)}: ${one(t.note).slice(0, 160)}` : ''}`;
+  return `- ${bits.join(' · ')}${t.note ? `\n  ${pick('메모', 'note', lang)}: ${esc(String(t.note).slice(0, 160))}` : ''}`;
 }
 /** 분류 이름·id → { id } | { none: true } | null(없음) */
 function findCategory(value, cats) {
@@ -175,14 +176,15 @@ export async function workTool(args, { ctx = null, crew = null, crewName = null,
   if (turn.text) return turn.text;
   const { c, org, owner } = turn;
   const today = kstDay(workDeps.now());
-  const line = (t, extra) => taskLine(t, { lang, today, ...extra });
+  const line = (t, extra) => taskLine(t, { lang, today, esc: ox.line, ...extra });
   const ox = outsideOf('work', lang);
   const TASK_TEXT = ['할 일 제목·메모·분류·사람 이름은 사람들이 쓴 글', 'task titles, notes, categories and names written by people'];
   const PAGE_TEXT = ['페이지 제목·본문은 사람들이 쓴 글', 'page titles and bodies written by people'];
   const tasksNow = async () => unwrap(await c.client.rpc('office_task_list', { p_org: org })) ?? [];
   const categories = async () => unwrap(await c.client.rpc('office_task_category_list', { p_org: org })) ?? [];
-  const noCategory = (cats) => pick(`그 분류가 없다. 이 조직의 분류: ${cats.map((x) => ox.line(x.name)).join(', ') || '(없음)'} — 분류를 새로 만드는 것은 관리자가 오피스에서 한다.`,
-    `No such category. This org has: ${cats.map((x) => ox.line(x.name)).join(', ') || '(none)'} — admins add categories in Office.`, lang);
+  const CAT_TEXT = ['할 일 분류 이름은 사람들이 쓴 글', 'category names written by people'];
+  // 분류 이름은 조직 사람들이 쓴 글 — 거절 문장에서도 경계 블록 안에(검수 #fix-cross 2차 L-5)
+  const noCategory = (cats) => `${pick('그 분류가 없다. 이 조직의 분류(분류를 새로 만드는 것은 관리자가 오피스에서 한다):', 'No such category. This org has (admins add categories in Office):', lang)}\n${cats.length ? ox.block(cats.map((x) => `- ${ox.line(x.name)}`), CAT_TEXT) : pick('(없음)', '(none)', lang)}`;
   try {
     if (a.action === 'tasks') {
       const rows = await tasksNow();
@@ -214,7 +216,7 @@ export async function workTool(args, { ctx = null, crew = null, crewName = null,
       const cats = await categories();
       if (!cats.length) return pick('이 조직에는 할 일 분류가 없다(모두 미분류).', 'This org has no task categories.', lang);
       return [pick(`할 일 분류 ${cats.length}개(이름 · id):`, `${cats.length} task categories (name · id):`, lang),
-        ox.block(cats.map((x) => `- ${one(x.name)}${x.tasks != null ? pick(` · 할 일 ${x.tasks}건`, ` · ${x.tasks} tasks`, lang) : ''} · id=${x.id}`), ['할 일 분류 이름은 사람들이 쓴 글', 'category names written by people'])].join('\n');
+        ox.block(cats.map((x) => `- ${ox.line(x.name)}${x.tasks != null ? pick(` · 할 일 ${x.tasks}건`, ` · ${x.tasks} tasks`, lang) : ''} · id=${x.id}`), ['할 일 분류 이름은 사람들이 쓴 글', 'category names written by people'])].join('\n');
     }
 
     if (a.action === 'task_add') {
@@ -329,7 +331,7 @@ export async function workTool(args, { ctx = null, crew = null, crewName = null,
         const kids = new Map();
         for (const p of list) { const k = set.has(p.parent_id) ? p.parent_id : null; if (!kids.has(k)) kids.set(k, []); kids.get(k).push(p); }
         const out = [];
-        const walk = (k, depth) => { for (const p of (kids.get(k) ?? []).sort((x, y) => (x.position < y.position ? -1 : x.position > y.position ? 1 : 0))) { out.push(`${'  '.repeat(depth)}- ${one(p.title) || pick('(제목 없음)', '(untitled)', lang)} · ${access(p)} · id=${p.id}`); walk(p.id, depth + 1); } };
+        const walk = (k, depth) => { for (const p of (kids.get(k) ?? []).sort((x, y) => (x.position < y.position ? -1 : x.position > y.position ? 1 : 0))) { out.push(`${'  '.repeat(depth)}- ${ox.lineOr(p.title, pick('(제목 없음)', '(untitled)', lang))} · ${access(p)} · id=${p.id}`); walk(p.id, depth + 1); } };
         walk(null, 0);
         const note = hidden && !owner ? pick(` — 조직 전체가 보지 못하는 페이지 ${hidden}개는 ${ONLY_DM(lang)}`, ` — ${hidden} pages not visible to the whole org are shown ${ONLY_DM(lang)}`, lang) : '';
         if (!out.length) return pick(`맞는 페이지가 없다${note}.`, `No pages match${note}.`, lang);
@@ -355,7 +357,7 @@ export async function workTool(args, { ctx = null, crew = null, crewName = null,
         unwrap(await c.client.rpc('office_page_create', { p_id: id, p_org: org, p_parent: parent?.id ?? null, p_position: between(siblings.at(-1) ?? null, null), p_title: title,
           p_content: nodes.length ? { type: 'doc', content: nodes } : {}, p_template: false }));
         // 확인 문장도 도구 결과다(검수 #fix-cross M2) — 상위 페이지 제목은 읽어 온 남의 글이라 블록 안에, 최상위면 내가 준 제목뿐이라 한 줄로
-        if (parent) return `${pick(`페이지를 만들었다(id=${id}) — 제목 · 상위 페이지:`, `Created the page (id=${id}) — title · parent page:`, lang)}\n${ox.block([`${title} · ${one(parent.title) || pick('(제목 없음)', '(untitled)', lang)}`], PAGE_TEXT)}`;
+        if (parent) return `${pick(`페이지를 만들었다(id=${id}) — 제목 · 상위 페이지:`, `Created the page (id=${id}) — title · parent page:`, lang)}\n${ox.block([`${ox.line(title)} · ${ox.lineOr(parent.title, pick('(제목 없음)', '(untitled)', lang))}`], PAGE_TEXT)}`;
         return pick(`페이지를 만들었다: ${ox.line(title)} · 최상위 (id=${id})`, `Created the page: ${ox.line(title)} · top level (id=${id})`, lang);
       }
 
@@ -375,10 +377,10 @@ export async function workTool(args, { ctx = null, crew = null, crewName = null,
       const doc = row.content?.type === 'doc' ? row.content : { type: 'doc', content: [] };
 
       if (a.action === 'page_read') {
-        const text = ox.text(docMarkdown(doc, lang));
+        const text = docMarkdown(doc, lang); // 길이 상한은 JSON으로 감싸기 전 글자 수로
         return [`${pick('페이지', 'Page', lang)} id=${p.id} · ${access(p)} · ${pick('버전', 'version', lang)} ${row.version}`,
-          ox.block([`${pick('제목', 'Title', lang)}: ${ox.line(row.title) || pick('(제목 없음)', '(untitled)', lang)}`, '---',
-            text ? text.slice(0, READ_CAP) + (text.length > READ_CAP ? pick(`\n…(앞 ${READ_CAP}자만)`, `\n…(first ${READ_CAP} chars)`, lang) : '') : pick('(본문 없음)', '(empty)', lang)], PAGE_TEXT)].join('\n');
+          ox.block([`${pick('제목', 'Title', lang)}: ${ox.lineOr(row.title, pick('(제목 없음)', '(untitled)', lang))}`, '---',
+            ...(text ? [ox.text(text.slice(0, READ_CAP)), ...(text.length > READ_CAP ? [pick(`…(앞 ${READ_CAP}자만)`, `…(first ${READ_CAP} chars)`, lang)] : [])] : [pick('(본문 없음)', '(empty)', lang)])], PAGE_TEXT)].join('\n');
       }
 
       const mode = a.mode === 'replace' ? 'replace' : 'append';
@@ -398,7 +400,7 @@ export async function workTool(args, { ctx = null, crew = null, crewName = null,
       const version = unwrap(await c.client.rpc('office_page_save', { p_id: p.id, p_title: title, p_content: next, p_base_version: row.version }));
       const what = [next !== row.content ? (mode === 'replace' ? pick('본문 바꿈', 'body replaced', lang) : pick('끝에 덧붙임', 'appended', lang)) : null, title !== row.title ? pick('제목', 'title', lang) : null].filter(Boolean).join(pick('·', ', ', lang));
       // 제목을 안 줬으면 확인 문장의 제목은 읽어 온 기존 제목(남이 쓴 글) — 블록 안에. 내가 준 제목이면 한 줄로(검수 #fix-cross M2)
-      if (!one(a.title)) return `${pick(`페이지를 고쳤다(${what}) · 버전 ${version} — 제목:`, `Updated the page (${what}) · version ${version} — title:`, lang)}\n${ox.block([one(title) || pick('(제목 없음)', '(untitled)', lang)], PAGE_TEXT)}`;
+      if (!one(a.title)) return `${pick(`페이지를 고쳤다(${what}) · 버전 ${version} — 제목:`, `Updated the page (${what}) · version ${version} — title:`, lang)}\n${ox.block([ox.lineOr(title, pick('(제목 없음)', '(untitled)', lang))], PAGE_TEXT)}`;
       return pick(`페이지를 고쳤다(${what}): ${ox.line(title)} · 버전 ${version}`, `Updated the page (${what}): ${ox.line(title)} · version ${version}`, lang);
     }
 

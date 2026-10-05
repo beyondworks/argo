@@ -94,17 +94,17 @@ test('D2(T1). customers: 보관함 빼고 검색(이름·담당·메일·전화�
   const calls = fake();
   const out = await run({ action: 'customers' });
   assert.equal(calls[0].args.p_org, ORG);
-  assert.match(out, /한빛상사 · 고객 · 활성 · 담당 김민수 · 전화 \(가림 — 주인과의 1:1 대화에서만\) · 메일 kim@hanbit\.kr · 사업자번호 \(가림 — 주인과의 1:1 대화에서만\) · 거래 2건 · id=c111/);
+  assert.match(out, /"한빛상사" · 고객 · 활성 · 담당 "김민수" · 전화 \(가림 — 주인과의 1:1 대화에서만\) · 메일 "kim@hanbit\.kr" · 사업자번호 \(가림 — 주인과의 1:1 대화에서만\) · 거래 2건 · id=c111/);
   assert.doesNotMatch(out, /옛거래처|010-1234|67890/);
-  assert.match(await run({ action: 'customers', archived: true }), /옛거래처 · 고객 · 종료 · 거래 0건 · 보관함/);
+  assert.match(await run({ action: 'customers', archived: true }), /"옛거래처" · 고객 · 종료 · 거래 0건 · 보관함/);
   assert.match(await run({ action: 'customers', q: 'hanbit' }), /한빛상사/);
   assert.match(await run({ action: 'customers', q: '없는곳' }), /없다/);
   const detail = await run({ action: 'customers', id: C1 });
   assert.match(detail, /계좌 \(가림/); assert.doesNotMatch(detail, /국민 111/);
-  assert.match(detail, /메모: 첫 거래/); assert.match(detail, /받은 돈 0원 · 진행 중 4,400,000원/);
-  assert.match(detail, /\[견적\] 웹사이트 리뉴얼[\s\S]*\[계약\] 유지보수 10월[\s\S]*\[취소\] 취소된 건/, '최근 견적순');
+  assert.match(detail, /메모: "첫 거래/); assert.match(detail, /받은 돈 0원 · 진행 중 4,400,000원/);
+  assert.match(detail, /\[견적\] "웹사이트 리뉴얼"[\s\S]*\[계약\] "유지보수 10월"[\s\S]*\[취소\] "취소된 건"/, '최근 견적순');
   const dm = await run({ action: 'customers', id: C1 }, { ctx: DM() });
-  assert.match(dm, /계좌 국민 111-222/); assert.match(dm, /전화 010-1234-5678/); assert.match(dm, /사업자번호 123-45-67890/);
+  assert.match(dm, /계좌 "국민 111-222"/); assert.match(dm, /전화 "010-1234-5678"/); assert.match(dm, /사업자번호 "123-45-67890"/);
 });
 
 test('D2b(2차 LOW-3). 여럿이 보는 방에서는 가린 칸(계좌·사업자번호·가림 표시한 칸)을 검색 대상에서도 뺀다 — 1:1에서는 찾는다', async () => {
@@ -133,7 +133,7 @@ test('D3(T2). customer_add: 새 거래처는 id 없이(서버가 정함), 비슷
   assert.ok(!('id' in w.p_data), 'id를 주면 서버가 고치기로 읽는다');
   assert.deepEqual([w.p_data.name, w.p_data.manager, w.p_data.category, w.p_data.status, w.p_data.notes, w.p_data.phone], ['한빛상사', '박과장', 'supplier', 'active', '명함(2026-10-04)', '']);
   assert.deepEqual(w.p_data.redacted, ['account', 'biz_no'], '2차 MEDIUM-1: 새 거래처는 계좌·사업자번호를 가린 채로(오피스 화면·이관과 같은 기본 가림)');
-  assert.match(out, /추가했다: 한빛상사 · 공급사 \(id=new-customer\)/);
+  assert.match(out, /추가했다: "한빛상사" · 공급사 \(id=new-customer\)/);
 });
 
 test('D4(T3). customer_set: 읽고 합쳐 쓴다 — 준 칸만 바꾸고 빈 값은 무시(빈 칸으로 덮지 않는다), 메모는 덧붙이고, 버전을 함께 보낸다', async () => {
@@ -141,7 +141,7 @@ test('D4(T3). customer_set: 읽고 합쳐 쓴다 — 준 칸만 바꾸고 빈 �
   const out = await run({ action: 'customer_set', id: C1, email: 'new@hanbit.kr', manager: '', ceo: '   ', notes: '출처: 계약서' });
   const w = writes(calls)[0].args.p_data;
   assert.deepEqual(w, { id: C1, version: 3, name: '한빛상사', manager: '김민수', phone: '010-1234-5678', email: 'new@hanbit.kr', ceo: '이대표', biz_no: '123-45-67890', address: '서울', account: '국민 111-222', category: 'customer', status: 'active', notes: '첫 거래\n출처: 계약서' });
-  assert.match(out, /고쳤다\(메일·메모 · id=[^)]+\):\n--- 바깥 글 시작[^\n]*\n한빛상사\n--- 바깥 글 끝 /, '거래처 이름은 읽어 온 남의 글 — 확인 문장에서는 경계 블록 안에(검수 M2)');
+  assert.match(out, /고쳤다\(메일·메모 · id=[^)]+\):\n--- 바깥 글 시작[^\n]*\n"한빛상사"\n--- 바깥 글 끝 /, '거래처 이름은 읽어 온 남의 글 — 확인 문장에서는 경계 블록 안에(검수 M2)');
   assert.match(await run({ action: 'customer_set', id: C1, email: 'kim@hanbit.kr', manager: '' }), /바꿀 것이 없다/);
   assert.match(await run({ action: 'customer_set', id: C1, phone: '010-0000-0000' }), /전화은\(는\) 주인과의 1:1/, '가림 표시한 칸은 1:1에서만 고친다');
   assert.match(await run({ action: 'customer_set', id: C1, account: '신한 9' }), /계좌/);
@@ -155,13 +155,13 @@ test('D4(T3). customer_set: 읽고 합쳐 쓴다 — 준 칸만 바꾸고 빈 �
 test('D5(T5). deals: 단계는 장부에서 계산, 기본은 취소 빼고 최근 견적순, 입금 지연 일수, 가림 표시한 금액은 여럿이 보는 방에 싣지 않는다', async () => {
   fake();
   const out = await run({ action: 'deals' });
-  assert.match(out, /\[견적\] 웹사이트 리뉴얼 · 한빛상사 · 합계 3,300,000원\(공급 3,000,000원·부가세 300,000원\) · 청구 0원 · 입금 0원 · 견적일 2026-09-20 · id=o1/);
-  assert.match(out, /\[계약\] 유지보수 10월 · .* · 입금 예정 2026-09-30\(입금 지연 4일\)/);
-  assert.match(out, /\[계산서 발행\] 제품 촬영 · 넥스트필드 · 금액 \(가림/); assert.doesNotMatch(out, /550,000/);
-  assert.match(out, /\[입금 완료\] 납품 완료 건 .* 입금 예정 2026-08-31 · /, '입금 완료는 지연으로 세지 않는다');
+  assert.match(out, /\[견적\] "웹사이트 리뉴얼" · "한빛상사" · 합계 3,300,000원\(공급 3,000,000원·부가세 300,000원\) · 청구 0원 · 입금 0원 · 견적일 2026-09-20 · id=o1/);
+  assert.match(out, /\[계약\] "유지보수 10월" · .* · 입금 예정 2026-09-30\(입금 지연 4일\)/);
+  assert.match(out, /\[계산서 발행\] "제품 촬영" · "넥스트필드" · 금액 \(가림/); assert.doesNotMatch(out, /550,000/);
+  assert.match(out, /\[입금 완료\] "납품 완료 건" .* 입금 예정 2026-08-31 · /, '입금 완료는 지연으로 세지 않는다');
   assert.doesNotMatch(out, /취소된 건/);
   assert.ok(out.indexOf('id=o1') < out.indexOf('id=o2'), '최근 견적순');
-  assert.match(await run({ action: 'deals' }, { ctx: DM() }), /제품 촬영 .* 청구 550,000원/);
+  assert.match(await run({ action: 'deals' }, { ctx: DM() }), /"제품 촬영" .* 청구 550,000원/);
   assert.match(await run({ action: 'deals', overdue: true }), /^(?![\s\S]*id=o1)[\s\S]*id=o2/);
   assert.match(await run({ action: 'deals', stage: 'open', customer_id: C2 }), /^(?![\s\S]*id=o4)[\s\S]*id=o3/);
   assert.match(await run({ action: 'deals', stage: 'cancelled' }), /취소된 건/);
@@ -170,8 +170,8 @@ test('D5(T5). deals: 단계는 장부에서 계산, 기본은 취소 빼고 최�
 test('D6(T6). deal_add: 같은 거래처(또는 거래처 미지정)에 비슷한 건명이 있으면 쓰지 않고 후보를 보여 준다, 확인하면 품목을 찾아 쓰고 없으면 만든다', async () => {
   let calls = fake();
   const dup = await run({ action: 'deal_add', title: '웹사이트 리뉴얼 2차', customer_id: C1, lines: [{ item: '웹사이트 제작', unit_price: 1000000 }] });
-  assert.match(dup, /비슷한 건명의 거래가 이미 있어 등록하지 않았다[\s\S]*웹사이트 리뉴얼 · 한빛상사/);
-  assert.match(await run({ action: 'deal_add', title: '랜딩페이지 제작', customer_id: C2, lines: [{ item: 'x', unit_price: 1 }] }), /랜딩 페이지 제작 · \(거래처 미지정\)/, '이관의 거래처 미지정 거래도 함께 본다');
+  assert.match(dup, /비슷한 건명의 거래가 이미 있어 등록하지 않았다[\s\S]*"웹사이트 리뉴얼" · "한빛상사"/);
+  assert.match(await run({ action: 'deal_add', title: '랜딩페이지 제작', customer_id: C2, lines: [{ item: 'x', unit_price: 1 }] }), /"랜딩 페이지 제작" · "\(거래처 미지정\)"/, '이관의 거래처 미지정 거래도 함께 본다');
   assert.match(await run({ action: 'deal_add', title: '새 건', customer_id: C3, lines: [{ item: 'x', unit_price: 1 }] }), /보관한 거래처/);
   assert.match(await run({ action: 'deal_add', title: '새 건', customer_id: C1, lines: [{ item: 'x', unit_price: 10.5 }] }), /정수/);
   assert.match(await run({ action: 'deal_add', title: '새 건', customer_id: C1, lines: [] }), /lines/);
@@ -183,7 +183,7 @@ test('D6(T6). deal_add: 같은 거래처(또는 거래처 미지정)에 비슷�
   assert.deepEqual(writes(calls)[0].args.p_data, { name: '사진 촬영', kind: 'service', sku: '', price: 200000 });
   assert.deepEqual(writes(calls)[1].args.p_data, { title: '웹사이트 리뉴얼 2차', customer_id: C1, due_on: '2026-11-10', at: '2026-10-03',
     lines: [{ item_id: 'i1', quantity: 1, unit_price: 1000000, tax_type: 'taxable' }, { item_id: 'new-item', quantity: 3, unit_price: 200000, tax_type: 'exempt' }] });
-  assert.match(out, /견적 단계로 등록했다 — 합계 1,700,000원\(부가세 포함\) · 입금 예정 2026-11-10 \(id=new-order\) · 건명 · 거래처:\n--- 바깥 글 시작[^\n]*\n웹사이트 리뉴얼 2차 · 한빛상사\n--- 바깥 글 끝 [^\n]*\n새 품목을 만들었다: 사진 촬영/);
+  assert.match(out, /견적 단계로 등록했다 — 합계 1,700,000원\(부가세 포함\) · 입금 예정 2026-11-10 \(id=new-order\) · 건명 · 거래처:\n--- 바깥 글 시작[^\n]*\n"웹사이트 리뉴얼 2차" · "한빛상사"\n--- 바깥 글 끝 [^\n]*\n새 품목을 만들었다: "사진 촬영"/);
   calls = fake();
   assert.match(await run({ action: 'deal_add', title: '전혀 다른 일', customer_id: C1, lines: [{ item: 'i1', unit_price: 5 }] }), /등록했다/);
   assert.deepEqual(writes(calls).map((c) => c.args.p_action), ['order.create']);
@@ -214,7 +214,7 @@ test('D7(T7). deal_next: 오피스 단추처럼 한 단계 = 장부 기록 하�
 
 test('D8. deal_due: 입금 예정일 정하기(order.update), 같은 날짜면 쓰지 않고 none은 지우기, 서버 거절은 원인을 한 줄로', async () => {
   let calls = fake();
-  assert.match(await run({ action: 'deal_due', id: 'o1', due_on: '2026-10-31' }), /2026-10-31로 정했다\. 거래 건명:\n--- 바깥 글 시작[^\n]*\n웹사이트 리뉴얼[^\n]*\n--- 바깥 글 끝 /);
+  assert.match(await run({ action: 'deal_due', id: 'o1', due_on: '2026-10-31' }), /2026-10-31로 정했다\. 거래 건명:\n--- 바깥 글 시작[^\n]*\n"웹사이트 리뉴얼[^\n]*\n--- 바깥 글 끝 /);
   assert.deepEqual(writes(calls).at(-1).args.p_data, { id: 'o1', due_on: '2026-10-31' });
   assert.match(await run({ action: 'deal_due', id: 'o2', due_on: '2026-09-30' }), /이미 그/);
   assert.match(await run({ action: 'deal_due', id: 'o2', due_on: 'none' }), /지웠다/);

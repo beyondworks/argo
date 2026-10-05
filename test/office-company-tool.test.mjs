@@ -65,7 +65,7 @@ test('O1. 메신저 조직 채널이 아니거나·위임 턴·주인 아닌 로
 test('O2. company는 그 조직 회사 정보를 id와 함께, company_set은 id로 고치거나 새로 추가(서식 칸·분류 검사)', async () => {
   const calls = fake();
   const out = await run({ action: 'company' });
-  assert.match(out, /상호 = \(주\)A · key=name · id=i1/); assert.equal(calls.find((c) => c.name === 'office_company_read').args.p_org, ORG);
+  assert.match(out, /"상호" = "\(주\)A" · key=name · id=i1/); assert.equal(calls.find((c) => c.name === 'office_company_read').args.p_org, ORG);
   const upd = await run({ action: 'company_set', id: 'i2', value: '신한 2' }, { ctx: DM() });
   assert.match(upd, /고쳤다/);
   const w = calls.find((c) => c.name === 'office_company_write').args.p_data;
@@ -78,14 +78,14 @@ test('O2. company는 그 조직 회사 정보를 id와 함께, company_set은 id
 test('O3. people은 메모를 싣지 않고, 기본은 재직자만', async () => {
   fake();
   const out = await run({ action: 'people' });
-  assert.match(out, /최민지 · 디자이너 · 제작 · Codex · active/); assert.doesNotMatch(out, /연봉 메모/); assert.doesNotMatch(out, /이하은/);
+  assert.match(out, /"최민지" · "디자이너" · "제작" · "Codex" · active/); assert.doesNotMatch(out, /연봉 메모/); assert.doesNotMatch(out, /이하은/);
   assert.match(await run({ action: 'people', status: 'all' }), /이하은/);
 });
 
 test('O4. evals는 지금 판만, eval_add는 정해진 기간 모양·crew 표시로 쓴다', async () => {
   const calls = fake();
   const list = await run({ action: 'evals', scope: 'month' }, { ctx: DM() });
-  assert.match(list, /월간 · 종합 81/); assert.doesNotMatch(list, /옛 판/);
+  assert.match(list, /"월간" · 종합 81/); assert.doesNotMatch(list, /옛 판/);
   assert.match(await run({ action: 'eval_add', scope: 'month', subject_kind: 'person' }, { ctx: DM() }), /subject_user/);
   const ok = await run({ action: 'eval_add', scope: 'week', period_day: '2026-09-10', subject_kind: 'person', subject_user: 'u1', title: '주간', performance: 90 }, { ctx: DM() });
   assert.match(ok, /2026-09-07~2026-09-13/);
@@ -116,7 +116,7 @@ test('MEDIUM 3: 여럿이 보는 채널에서는 평가 점수·총평을 싣지
 test('MEDIUM 3: 계좌·세무·가림 항목 값은 여럿이 보는 채널에 내지 않고, 고치기도 1:1에서만', async () => {
   const calls = fake();
   const pub = await run({ action: 'company' });
-  assert.match(pub, /상호 = \(주\)A/); assert.doesNotMatch(pub, /국민 1/); assert.doesNotMatch(pub, /견적용/); assert.match(pub, /계좌 = \(가림/);
+  assert.match(pub, /"상호" = "\(주\)A"/); assert.doesNotMatch(pub, /국민 1/); assert.doesNotMatch(pub, /견적용/); assert.match(pub, /"계좌" = \(가림/);
   const before = calls.length;
   assert.match(await run({ action: 'company_set', id: 'i2', value: '신한 2' }), /1:1/);
   assert.match(await run({ action: 'company_set', label: '세금계산서 메일', value: 'tax@x', category: 'tax' }), /1:1/);

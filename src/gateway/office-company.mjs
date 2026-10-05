@@ -44,7 +44,6 @@ function rpcError(e, lang) {
 }
 
 const kstDay = (ms) => new Date(ms + 9 * 3600e3).toISOString().slice(0, 10);
-const one = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
 /** 범위·기준 날짜 → 서버가 받는 기간(주 = 월~일, 월 = 1일~말일, 연) */
 export function periodOf(scope, day) {
   const [y, m] = day.split('-').map(Number);
@@ -74,7 +73,7 @@ export async function companyTool(args, { ctx = null, crew, lang = 'ko', ownerId
       const items = d?.items ?? [];
       if (!items.length) return pick('회사 정보가 비어 있다.', 'Company info is empty.', lang);
       return [pick(`회사 정보 ${items.length}개(분류 · 항목 = 값 · 서식 칸 · id):`, `Company info, ${items.length} items (category · item = value · document field · id):`, lang),
-        ox.block(items.slice(0, LIST_CAP).map((x) => { const hide = !owner && sensitiveItem(x); return `- ${CAT_NAME[x.category]?.[lang === 'en' ? 1 : 0] ?? x.category} · ${one(x.label)} = ${hide ? pick(`(가림 — ${ONLY_DM(lang)})`, `(hidden — ${ONLY_DM(lang)})`, lang) : ['seal', 'logo'].includes(x.key) ? pick('(그림)', '(image)', lang) : one(x.value) || '—'}${x.key ? ` · key=${x.key}` : ''}${x.notes && !hide ? ` · ${pick('메모', 'note', lang)} ${one(x.notes)}` : ''} · id=${x.id}`; }),
+        ox.block(items.slice(0, LIST_CAP).map((x) => { const hide = !owner && sensitiveItem(x); return `- ${CAT_NAME[x.category]?.[lang === 'en' ? 1 : 0] ?? x.category} · ${ox.line(x.label)} = ${hide ? pick(`(가림 — ${ONLY_DM(lang)})`, `(hidden — ${ONLY_DM(lang)})`, lang) : ['seal', 'logo'].includes(x.key) ? pick('(그림)', '(image)', lang) : ox.lineOr(x.value, '—')}${x.key ? ` · key=${x.key}` : ''}${x.notes && !hide ? ` · ${pick('메모', 'note', lang)} ${ox.line(x.notes)}` : ''} · id=${x.id}`; }),
           ['회사 정보 항목 이름·값·메모는 사람들이 쓴 글', 'item names, values and notes written by people']),
         pick('같은 항목은 새로 만들지 말고 company_set에 id를 줘서 고쳐라.', 'Do not add duplicates — pass the id to company_set to update.', lang)].join('\n');
     }
@@ -98,17 +97,17 @@ export async function companyTool(args, { ctx = null, crew, lang = 'ko', ownerId
       // 확인 문장도 도구 결과다(검수 #fix-cross M2) — 직인·로고는 그림 데이터(최대 20만 자)라 자리표시로, 값은 짧게 자른다.
       // 기존 항목을 고친 문장의 이름·값은 읽어 온 남의 글이라 경계 블록 안에, 내가 새로 넣은 항목은 한 줄로
       const image = ['seal', 'logo'].includes(data.key);
-      const shown = (v) => (image ? pick('(이미지 데이터)', '(image data)', lang) : one(v).length > ECHO_CAP ? `${one(v).slice(0, ECHO_CAP)}…` : one(v));
-      const itemName = one(r?.item?.label ?? data.label), itemValue = shown(r?.item?.value ?? data.value);
+      const shown = (v) => (image ? pick('(이미지 데이터)', '(image data)', lang) : `${ox.line(String(v ?? '').slice(0, ECHO_CAP))}${String(v ?? '').length > ECHO_CAP ? '…' : ''}`); // 값은 JSON 문자열, 잘랐으면 따옴표 밖에 …
+      const itemName = ox.line(r?.item?.label ?? data.label), itemValue = shown(r?.item?.value ?? data.value);
       if (cur) return `${pick(`회사 정보를 고쳤다(id=${data.id}) — 항목 = 값:`, `Updated company info (id=${data.id}) — item = value:`, lang)}\n${ox.block([`${itemName} = ${itemValue}`], ['회사 정보 항목 이름·값은 사람들이 쓴 글', 'item names and values written by people'])}`;
-      return pick(`회사 정보를 추가했다: ${ox.line(itemName)} = ${ox.line(itemValue)} (id=${data.id})`, `Added company info: ${ox.line(itemName)} = ${ox.line(itemValue)} (id=${data.id})`, lang);
+      return pick(`회사 정보를 추가했다: ${itemName} = ${itemValue} (id=${data.id})`, `Added company info: ${itemName} = ${itemValue} (id=${data.id})`, lang);
     }
     if (a.action === 'people') {
       const d = unwrap(await c.client.rpc('office_people_read', { p_org: org }));
       const list = (d?.people ?? []).filter((p) => a.status === 'all' || p.status === (a.status ?? 'active'));
       if (!list.length) return pick('명부에 사람이 없다.', 'The directory is empty.', lang);
       return [pick(`직원 ${list.length}명(이름 · 직무 · 부서 · 에이전트 · 상태):`, `${list.length} people (name · role · team · agent · status):`, lang),
-        ox.block(list.slice(0, LIST_CAP).map((p) => `- ${one(p.name)} · ${one(p.title) || '—'} · ${one(p.department) || '—'} · ${one(p.agent) || '—'} · ${p.status}${p.account_role ? ` · ${pick('계정', 'account', lang)} ${p.account_role}` : ''}${p.user_id ? ` · user=${p.user_id}` : ''}`),
+        ox.block(list.slice(0, LIST_CAP).map((p) => `- ${ox.line(p.name)} · ${ox.lineOr(p.title, '—')} · ${ox.lineOr(p.department, '—')} · ${ox.lineOr(p.agent, '—')} · ${p.status}${p.account_role ? ` · ${pick('계정', 'account', lang)} ${p.account_role}` : ''}${p.user_id ? ` · user=${p.user_id}` : ''}`),
           ['직원 이름·직무·부서는 사람들이 쓴 글', 'names, roles and teams written by people'])].join('\n'); // 메모는 싣지 않는다
     }
     if (a.action === 'evals') {
@@ -117,9 +116,9 @@ export async function companyTool(args, { ctx = null, crew, lang = 'ko', ownerId
       if (!list.length) return pick('조건에 맞는 평가 레포트가 없다.', 'No evaluation reports match.', lang);
       const EVAL_TEXT = ['평가 대상·제목·작성자·총평은 사람들이 쓴 글', 'evaluation subjects, titles, authors and reviews written by people'];
       if (!owner) return [pick(`평가 레포트 ${list.length}건(지금 판만 — 점수·총평은 ${ONLY_DM(lang)} 보여 준다):`, `${list.length} evaluation reports (current versions — scores and reviews ${ONLY_DM(lang)}):`, lang),
-        ox.block(list.slice(0, 30).map((e) => `- [${e.scope}] ${one(e.subject_name)}(${e.subject_type}) ${e.period_from}~${e.period_to} · ${one(e.title)} · ${pick('작성', 'by', lang)} ${one(e.author_name)} · id=${e.id}`), EVAL_TEXT)].join('\n');
+        ox.block(list.slice(0, 30).map((e) => `- [${e.scope}] ${ox.line(e.subject_name)}(${e.subject_type}) ${e.period_from}~${e.period_to} · ${ox.line(e.title)} · ${pick('작성', 'by', lang)} ${ox.line(e.author_name)} · id=${e.id}`), EVAL_TEXT)].join('\n');
       return [pick(`평가 레포트 ${list.length}건(지금 판만):`, `${list.length} evaluation reports (current versions):`, lang),
-        ox.block(list.slice(0, 30).map((e) => `- [${e.scope}] ${one(e.subject_name)}(${e.subject_type}) ${e.period_from}~${e.period_to} · ${one(e.title)} · ${pick('종합', 'total', lang)} ${e.total ?? '—'} (${SCORES.map((k) => e[k] ?? '—').join('/')}) · ${pick('작성', 'by', lang)} ${one(e.author_name)} · id=${e.id}${e.review ? `\n  ${pick('총평', 'review', lang)}: ${one(e.review).slice(0, 300)}` : ''}`), EVAL_TEXT)].join('\n');
+        ox.block(list.slice(0, 30).map((e) => `- [${e.scope}] ${ox.line(e.subject_name)}(${e.subject_type}) ${e.period_from}~${e.period_to} · ${ox.line(e.title)} · ${pick('종합', 'total', lang)} ${e.total ?? '—'} (${SCORES.map((k) => e[k] ?? '—').join('/')}) · ${pick('작성', 'by', lang)} ${ox.line(e.author_name)} · id=${e.id}${e.review ? `\n  ${pick('총평', 'review', lang)}: ${ox.line(String(e.review).slice(0, 300))}` : ''}`), EVAL_TEXT)].join('\n');
     }
     if (a.action === 'eval_add') {
       if (!owner) return pick(`평가 레포트(점수·총평)는 ${ONLY_DM(lang)} 쓴다 — 여럿이 보는 방에 점수가 올라가지 않게. 주인에게 1:1로 부탁해 달라고 알려라.`, `Evaluations (scores, reviews) are written ${ONLY_DM(lang)} so scores are not posted where others read. Ask the owner to request it in a 1:1.`, lang);

@@ -5,6 +5,7 @@
 // 바깥 글(S1): 일정 제목·장소·주인 이름·조직 이름은 남이 쓴 글일 수 있다(조직 일정) — 목록·결과는 경계 블록으로 감싼다(office-audience.mjs outsideOf).
 import { randomUUID } from 'node:crypto';
 import { outsideOf, OUTSIDE_RULE } from './office-audience.mjs';
+import { jsonText } from '../inbound-marks.mjs';
 
 const KST = 9 * 3600_000;
 const DAY = 86_400_000;
@@ -103,15 +104,15 @@ function repeatText(rrule, lang) {
   const every = rr.interval > 1 ? pick(`(${rr.interval}${rr.freq === 'DAILY' ? '일' : rr.freq === 'WEEKLY' ? '주' : '개월'} 간격)`, ` (every ${rr.interval})`, lang) : '';
   return `${pick('반복', 'repeats', lang)} ${unit}${every}${rr.until ? pick(` ~${rr.until}`, ` until ${rr.until}`, lang) : ''}`;
 }
-/** 한 줄 — KST 날짜·시간, 제목, 캘린더, 반복, 편집 가능 여부, id(+회차 날짜). */
-export function eventLine(ev, occ, { uid, orgs = [], lang = 'ko' } = {}) {
+/** 한 줄 — KST 날짜·시간, 제목, 캘린더, 반복, 편집 가능 여부, id(+회차 날짜). 사람이 쓴 값(제목·장소·조직 이름·주인 이름)은 esc(기본 JSON 문자열)로 감싼다. */
+export function eventLine(ev, occ, { uid, orgs = [], lang = 'ko', esc = jsonText } = {}) {
   const o = occ ?? { start: Date.parse(ev.starts_at), end: Date.parse(ev.ends_at), day: kstDateOf(Date.parse(ev.starts_at)) };
   const org = ev.org_id ? orgs.find((x) => x.id === ev.org_id) : null;
-  const cal = ev.org_id ? `${pick('조직', 'org', lang)} ${one(org?.name ?? ev.org_id)}${ev.visibility === 'private' ? pick('(나만)', ' (only me)', lang) : ''}` : pick('개인', 'personal', lang);
-  const bits = [whenText(o, ev.all_day, lang), one(ev.title), cal];
-  if (ev.location) bits.push(`${pick('장소', 'at', lang)} ${one(ev.location)}`);
+  const cal = ev.org_id ? `${pick('조직', 'org', lang)} ${esc(org?.name ?? ev.org_id)}${ev.visibility === 'private' ? pick('(나만)', ' (only me)', lang) : ''}` : pick('개인', 'personal', lang);
+  const bits = [whenText(o, ev.all_day, lang), esc(ev.title), cal];
+  if (ev.location) bits.push(`${pick('장소', 'at', lang)} ${esc(ev.location)}`);
   if (ev.rrule) bits.push(repeatText(ev.rrule, lang));
-  if (ev.owner !== uid) bits.push(pick(`읽기 전용(주인 ${one(ev.owner_name) || '다른 사람'})`, `read-only (owner ${one(ev.owner_name) || 'someone else'})`, lang));
+  if (ev.owner !== uid) { const who = String(ev.owner_name ?? '').trim() ? esc(ev.owner_name) : null; bits.push(pick(`읽기 전용(주인 ${who ?? '다른 사람'})`, `read-only (owner ${who ?? 'someone else'})`, lang)); }
   bits.push(`id=${ev.id}${ev.rrule ? pick(` 회차=${o.day}`, ` occurrence=${o.day}`, lang) : ''}`);
   return `- ${bits.join(' · ')}`;
 }
@@ -203,8 +204,8 @@ export async function calendarTool(args, { ctx = null, crew, lang = 'ko', ownerI
   if (!ownerId || ownerId !== c.uid || (ctx?.kind === 'msgr' && ctx.uid !== c.uid)) return pick('이 기기의 메신저 로그인 계정이 이 크루 주인의 계정이 아니라 일정을 다루지 않는다 — 사장에게 그 사실을 알려라.', 'The messenger account signed in on this device is not this crew\'s owner, so the calendar is not used — tell the owner.', lang);
   const orgOk = ctx?.kind === 'msgr' && !!ctx.orgId;
   const noOrg = pick('지금 대화는 메신저 조직 채널이 아니라 조직 캘린더를 고를 수 없다 — calendar: "personal"로 다시 하라.', 'This conversation is not in a messenger org channel, so the org calendar cannot be used — retry with calendar: "personal".', lang);
-  const fmt = (ev, occ, orgs) => eventLine(ev, occ, { uid: c.uid, orgs, lang });
   const ox = outsideOf('cal', lang);
+  const fmt = (ev, occ, orgs) => eventLine(ev, occ, { uid: c.uid, orgs, lang, esc: ox.line });
   try {
     if (a.action === 'list') {
       const today = kstDateOf(calendarDeps.now());
@@ -251,7 +252,7 @@ export async function calendarTool(args, { ctx = null, crew, lang = 'ko', ownerI
         // 일정 주인 이름은 읽어 온 남이 쓴 글 — 거절 문장에서도 경계 블록 안에(검수 #fix-cross M2)
         const who = one(row.owner_name);
         return who
-          ? `${pick('이 일정은 다른 사람의 것이라 에이전트가 고치거나 지울 수 없다 — 그 사실을 한 줄로 알려라. 일정 주인:', 'This event belongs to someone else, so an agent cannot change or delete it — say so in one line. Event owner:', lang)}\n${ox.block([who], EVENT_TEXT)}`
+          ? `${pick('이 일정은 다른 사람의 것이라 에이전트가 고치거나 지울 수 없다 — 그 사실을 한 줄로 알려라. 일정 주인:', 'This event belongs to someone else, so an agent cannot change or delete it — say so in one line. Event owner:', lang)}\n${ox.block([ox.line(who)], EVENT_TEXT)}`
           : pick('이 일정은 다른 사람의 것이라 에이전트가 고치거나 지울 수 없다 — 그 사실을 한 줄로 알려라.', 'This event belongs to someone else, so an agent cannot change or delete it — say so in one line.', lang);
       }
       const recurring = !!parseRrule(row.rrule);
@@ -267,7 +268,7 @@ export async function calendarTool(args, { ctx = null, crew, lang = 'ko', ownerI
         else if (scope === 'following' && a.day > firstDay) await writeEvent(c, 'split', { id: row.id, day: a.day, crew });
         else await writeEvent(c, 'delete', { id: row.id, crew });
         const what = scope === 'this' ? pick(`${a.day} 회차만`, `only the ${a.day} occurrence`, lang) : scope === 'following' ? pick(`${a.day} 회차부터 이후`, `from ${a.day} onward`, lang) : pick('전체', 'entirely', lang);
-        return `${pick(`일정을 ${what} 지웠다. 지운 일정:`, `Deleted the event ${what}. Deleted event:`, lang)}\n${ox.block([one(row.title) || pick('(제목 없음)', '(untitled)', lang)], EVENT_TEXT)}`; // 제목은 일정 기록의 글 — 블록 안에(검수 #fix-cross M2)
+        return `${pick(`일정을 ${what} 지웠다. 지운 일정:`, `Deleted the event ${what}. Deleted event:`, lang)}\n${ox.block([ox.lineOr(row.title, pick('(제목 없음)', '(untitled)', lang))], EVENT_TEXT)}`; // 제목은 일정 기록의 글 — 블록 안에(검수 #fix-cross M2)
       }
 
       // update — 바꾼 값만 기존 행 위에 얹는다(명세 save = 전체 필드)
@@ -299,7 +300,7 @@ export async function calendarTool(args, { ctx = null, crew, lang = 'ko', ownerI
         const whole = { ...row, ...fields, rrule: rrule === undefined ? row.rrule : rrule, starts_at: iso(s0), ends_at: iso(s0 + (t.end - t.start)) };
         r = await writeEvent(c, 'save', saveData(whole, crew));
       }
-      return `${pick('일정을 고쳤다', 'Updated the event', lang)}${recurring ? pick(`(${scope === 'this' ? '이 회차만' : scope === 'following' ? '이 회차 및 이후' : '모든 회차'})`, ` (${scope})`, lang) : ''}:\n${ox.block([r?.event ? fmt(r.event, null, []) : `"${fields.title}"`], EVENT_TEXT)}`;
+      return `${pick('일정을 고쳤다', 'Updated the event', lang)}${recurring ? pick(`(${scope === 'this' ? '이 회차만' : scope === 'following' ? '이 회차 및 이후' : '모든 회차'})`, ` (${scope})`, lang) : ''}:\n${ox.block([r?.event ? fmt(r.event, null, []) : ox.line(fields.title)], EVENT_TEXT)}`;
     }
     return pick('action은 list·create·update·delete 중 하나다.', 'action must be list, create, update or delete.', lang);
   } catch (e) {

@@ -112,7 +112,10 @@ export async function mailTool(args, { ctx = null, lang = 'ko', ownerId = null }
       if (!list.length) return pick(`메일이 없다(${where}).${others}`, `No mail (${where}).${others}`, lang);
       const ox = outsideOf('mail', lang, mailDeps.nonce());
       return [pick(`메일 ${list.length}통(${where}${r.data.next ? ' · 더 있음 — q로 좁혀라' : ''}):`, `${list.length} messages (${where}${r.data.next ? ' · more — narrow with q' : ''}):`, lang),
-        ox.block(list.slice(0, LIST_CAP).map((m) => { const from = ox.line(m.from), addr = ox.line(m.addr); return `- ${kstTime(m.at)} · ${from || addr}${addr && addr !== from ? ` <${addr}>` : ''} · ${ox.line(m.subject) || pick('(제목 없음)', '(no subject)', lang)}${m.unread ? pick(' · 안 읽음', ' · unread', lang) : ''}${m.starred ? pick(' · 별표', ' · starred', lang) : ''}${m.draftId ? pick(' · 초안', ' · draft', lang) : ''} · id=${m.id}${m.snippet ? `\n  ${ox.line(m.snippet).slice(0, 120)}` : ''}`; }),
+        ox.block(list.slice(0, LIST_CAP).map((m) => {
+          const from = one(m.from), addr = one(m.addr); // 비교용(JSON으로 감싸기 전의 값)
+          return `- ${kstTime(m.at)} · ${ox.lineOr(from, '') || ox.line(addr)}${addr && addr !== from ? ` · ${pick('주소', 'address', lang)} ${ox.line(addr)}` : ''} · ${ox.lineOr(m.subject, pick('(제목 없음)', '(no subject)', lang))}${m.unread ? pick(' · 안 읽음', ' · unread', lang) : ''}${m.starred ? pick(' · 별표', ' · starred', lang) : ''}${m.draftId ? pick(' · 초안', ' · draft', lang) : ''} · id=${ox.id(m.id)}${m.snippet ? `\n  ${ox.line(String(m.snippet).slice(0, 120))}` : ''}`;
+        }),
           ['메일 쪽이 쓴 보낸 사람·제목·요약', 'senders, subjects and previews written by others']),
         pick('본문은 mail_read에 id, 답장 초안은 mail_draft에 reply_to=id.', 'Use mail_read with the id for the body; mail_draft with reply_to=id for a reply draft.', lang) + others].join('\n');
     }
@@ -123,14 +126,14 @@ export async function mailTool(args, { ctx = null, lang = 'ko', ownerId = null }
       const r = await mailApi('read', { account: t.acc.id, id: t.gid }, lang);
       if (r.text) return r.text;
       const m = r.data;
-      // 메일은 바깥 사람이 쓴 글이다 — 호출마다 새 번호의 경계 블록으로 감싸고, 그 번호가 든 줄은 지우고 표지 흉내는 바꿔 쓴다(office-audience.mjs outsideOf)
+      // 메일은 바깥 사람이 쓴 글이다 — 호출마다 새 번호의 경계 블록으로 감싸고, 안의 값은 JSON 문자열로 싣는다(office-audience.mjs outsideOf, inbound-marks.mjs 머리말)
       const ox = outsideOf('mail', lang, mailDeps.nonce());
-      const body = ox.text(m.text || htmlText(m.html) || '').trim();
-      const head = [`${pick('제목', 'Subject', lang)}: ${ox.line(m.subject) || pick('(제목 없음)', '(no subject)', lang)}`, `${pick('보낸 사람', 'From', lang)}: ${ox.line(m.from)}${m.addr ? ` <${ox.line(m.addr)}>` : ''}`,
+      const rawBody = String(m.text || htmlText(m.html) || '').trim(); // 길이 상한은 JSON으로 감싸기 전 글자 수로
+      const head = [`${pick('제목', 'Subject', lang)}: ${ox.lineOr(m.subject, pick('(제목 없음)', '(no subject)', lang))}`, `${pick('보낸 사람', 'From', lang)}: ${ox.line(m.from)}${m.addr ? ` ${pick('주소', 'address', lang)} ${ox.line(m.addr)}` : ''}`,
         `${pick('받는 사람', 'To', lang)}: ${ox.line(m.to)}`, ...(m.cc ? [`${pick('참조', 'Cc', lang)}: ${ox.line(m.cc)}`] : []),
         ...(m.attachments?.length ? [`${pick('첨부', 'Attachments', lang)}: ${m.attachments.map((x) => ox.line(x.name)).join(', ')}`] : [])];
       return [`${pick('메일', 'Mail', lang)} id=${t.acc.id}.${t.gid} · ${t.acc.address} · ${kstTime(m.at)} (KST)`,
-        ox.block([...head, '', body ? body.slice(0, READ_CAP) + (body.length > READ_CAP ? pick(`\n…(앞 ${READ_CAP}자만)`, `\n…(first ${READ_CAP} chars)`, lang) : '') : pick('(본문 없음)', '(empty)', lang)],
+        ox.block([...head, '', ...(rawBody ? [ox.text(rawBody.slice(0, READ_CAP)), ...(rawBody.length > READ_CAP ? [pick(`…(앞 ${READ_CAP}자만)`, `…(first ${READ_CAP} chars)`, lang)] : [])] : [pick('(본문 없음)', '(empty)', lang)])],
           ['메일 원문', 'mail content'])].join('\n');
     }
 
@@ -163,7 +166,7 @@ export async function mailTool(args, { ctx = null, lang = 'ko', ownerId = null }
       // 확인 문장도 모델이 읽는 도구 결과다(검수 #fix-cross M2) — 답장은 받는 사람·제목을 원문(바깥 글)에서 가져오니 경계 블록 안에, 내가 준 값은 한 줄로 펴서 표지 흉내를 바꿔 쓴다.
       // 서버로 보낸 값(위 draft 호출)은 그대로다 — 여기서 바꾸는 것은 모델에게 되돌리는 글뿐
       const ox = outsideOf('mail', lang, mailDeps.nonce());
-      const echo = pick(`받는 사람 ${ox.line(to)} · 제목 ${ox.line(subject) || '(제목 없음)'}`, `to ${ox.line(to)} · subject ${ox.line(subject) || '(no subject)'}`, lang);
+      const echo = pick(`받는 사람 ${ox.line(to)} · 제목 ${ox.lineOr(subject, '(제목 없음)')}`, `to ${ox.line(to)} · subject ${ox.lineOr(subject, '(no subject)')}`, lang);
       const saved = pick(`초안을 임시 보관함에 저장했다(보내지 않았다 — 주인이 오피스 메일에서 검토하고 보낸다)`, `Saved a draft (not sent — the owner reviews and sends it in Office mail)`, lang);
       const tail = `${acc.address}${thread.threadId ? pick(' · 답장', ' · reply', lang) : ''} (${pick('초안', 'draft', lang)} id=${r.data?.draftId ?? '?'})`;
       return fromMail ? `${saved} · ${tail}:\n${ox.block([echo], ['받는 사람·제목은 답장 원문에서 가져온 바깥 글', 'recipient and subject taken from the original mail (written by others)'])}` : `${saved}: ${echo} · ${tail}`;

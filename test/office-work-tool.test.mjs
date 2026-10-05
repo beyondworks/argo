@@ -109,19 +109,19 @@ test('W2(I2). tasks: 기본은 주인이 맡은 안 끝난 일 — 상태·기�
   const { calls } = fake();
   const out = await run({ action: 'tasks' });
   assert.equal(calls.find((c) => c.name === 'office_task_list').args.p_org, ORG);
-  assert.match(out, /\[진행 중\] 견적서 보내기 · 중요도 높음 · 분류 영업 · 기한 2026-10-01 · 기한 지남 3일 · id=t1/);
-  assert.match(out, /\[할 일\] 세금계산서 확인 · 시작 2026-10-05 · 기한 2026-10-10 · 크루 페퍼가 만듦 · id=t2/);
+  assert.match(out, /\[진행 중\] "견적서 보내기" · 중요도 높음 · 분류 "영업" · 기한 2026-10-01 · 기한 지남 3일 · id=t1/);
+  assert.match(out, /\[할 일\] "세금계산서 확인" · 시작 2026-10-05 · 기한 2026-10-10 · 크루 "페퍼"가 만듦 · id=t2/);
   assert.doesNotMatch(out, /민지 업무|끝낸 일/);
   assert.match(await run({ action: 'tasks', overdue: true }), /^(?![\s\S]*t2)[\s\S]*id=t1/);
   assert.match(await run({ action: 'tasks', category: '영업' }), /^(?![\s\S]*t2)[\s\S]*id=t1/);
   assert.match(await run({ action: 'tasks', category: 'none' }), /^(?![\s\S]*id=t1)[\s\S]*id=t2/);
-  assert.match(await run({ action: 'tasks', status: 'done' }), /\[끝냄\] 끝낸 일/);
+  assert.match(await run({ action: 'tasks', status: 'done' }), /\[끝냄\] "끝낸 일"/);
   assert.match(await run({ action: 'tasks', q: '한빛' }), /id=t1/);
   const pub = await run({ action: 'tasks', who: 'all' });
   assert.doesNotMatch(pub, /민지 업무|비밀 메모|id=t3/); assert.match(pub, /남의 일은 주인과의 1:1/);
   assert.ok(!calls.some((c) => c.name === 'office_org_people'), '여럿이 보는 방에서는 사람 이름도 부르지 않는다');
   const dm = await run({ action: 'tasks', who: 'all' }, { ctx: DM() });
-  assert.match(dm, /민지 업무 · 기한 2026-09-01 · 기한 지남 33일 · 맡은 사람 최민지 · id=t3/); assert.match(dm, /맡은 사람 주인 · id=t1/);
+  assert.match(dm, /"민지 업무" · 기한 2026-09-01 · 기한 지남 33일 · 맡은 사람 "최민지" · id=t3/); assert.match(dm, /맡은 사람 주인 · id=t1/);
 });
 
 test('W3(I3). task_add: 주인이 맡는 새 일 — source에 크루(메신저 크루 id·slug·이름), 분류 이름 → id, 틀린 입력은 쓰지 않는다', async () => {
@@ -131,9 +131,9 @@ test('W3(I3). task_add: 주인이 맡는 새 일 — source에 크루(메신저 
   assert.equal(w.args.p_action, 'task.create'); assert.equal(w.args.p_org, ORG);
   assert.deepEqual(w.args.p_data, { id: NEW, title: '계약서 검토', note: '김 대리 요청', due_on: '2026-10-08', starts_on: '2026-10-06', status: 'doing', priority: 1, category_id: CAT, source: { kind: 'crew', crew: 'crew-uuid-1', slug: 'pepper', name: '페퍼' } });
   assert.ok(!('assignee' in w.args.p_data), '남에게 맡기지 않는다 — 맡은 사람은 서버 기본값(주인)');
-  assert.match(out, /주인이 맡음[\s\S]*\[진행 중\] 계약서 검토 · 중요도 높음 · 분류 영업/);
+  assert.match(out, /주인이 맡음[\s\S]*\[진행 중\] "계약서 검토" · 중요도 높음 · 분류 "영업"/);
   const before = writes(calls).length;
-  assert.match(await run({ action: 'task_add', title: 'x', category: '없는분류' }), /영업, 운영/);
+  assert.match(await run({ action: 'task_add', title: 'x', category: '없는분류' }), /- "영업"\n- "운영"/);
   assert.match(await run({ action: 'task_add', title: 'x', due_on: '2026-02-30' }), /YYYY-MM-DD/);
   assert.match(await run({ action: 'task_add', title: 'x', due_on: '2026-13-01' }), /YYYY-MM-DD/, '없는 달도 예외 없이 거절');
   assert.match(await run({ action: 'task_add', title: 'x', due_on: '2026-10-01', starts_on: '2026-10-02' }), /시작일이 기한보다/);
@@ -153,7 +153,7 @@ test('W4(I4). task_set: 주인이 맡은 일만 — 남의 일은 쓰지 않고,
   assert.deepEqual(seq, ['task.priority', 'task.category', 'task.note', 'task.status']);
   assert.equal(writes(calls).find((c) => c.args.p_action === 'task.note').args.p_data.note, '한빛 건\n전화함', '기존 메모 뒤에 덧붙인다');
   assert.equal(writes(calls).find((c) => c.args.p_action === 'task.category').args.p_data.category_id, null);
-  assert.match(out, /고쳤다\(중요도·분류·메모·상태\)[\s\S]*\[보류\] 견적서 보내기 · 중요도 낮음 · 기한/);
+  assert.match(out, /고쳤다\(중요도·분류·메모·상태\)[\s\S]*\[보류\] "견적서 보내기" · 중요도 낮음 · 기한/);
   ({ calls } = fake());
   await run({ action: 'task_set', id: 't1', note: '새 메모', note_mode: 'replace', status: 'done' });
   assert.deepEqual(writes(calls).map((c) => c.args.p_action), ['task.note', 'task.done'], '끝내기는 다른 칸을 고친 뒤 맨 끝');
@@ -193,8 +193,8 @@ test('W5. task_set 도중 서버가 거절하면 앞에서 바꾼 칸과 멈춘 
 test('W6(I6). pages: 이 조직 페이지만(템플릿·다른 조직·내 공간 제외) 트리로, 여럿이 보는 방에서는 비공개·초대 페이지와 그 하위를 내지 않는다', async () => {
   fake();
   const dm = await run({ action: 'pages' }, { ctx: DM() });
-  assert.match(dm, /- 위키 · 편집 가능 · id=.*\n  - 회의록 · 편집 가능/);
-  assert.match(dm, /인사 비공개[\s\S]*  - 연봉표/); assert.match(dm, /초대만 · 보기만/);
+  assert.match(dm, /- "위키" · 편집 가능 · id=.*\n  - "회의록" · 편집 가능/);
+  assert.match(dm, /"인사 비공개"[\s\S]*  - "연봉표"/); assert.match(dm, /"초대만" · 보기만/);
   assert.doesNotMatch(dm, /템플릿|다른 조직|내 공간/);
   const pub = await run({ action: 'pages' });
   assert.match(pub, /위키/); assert.match(pub, /회의록/);
@@ -205,7 +205,7 @@ test('W6(I6). pages: 이 조직 페이지만(템플릿·다른 조직·내 공�
 test('W7(I6). page_read: 본문을 읽기 쉬운 글로, 조직 전체가 보지 못하는 페이지는 1:1에서만(본문을 읽지도 않는다)', async () => {
   const { calls } = fake();
   const out = await run({ action: 'page_read', id: P(2) });
-  assert.match(out, /^페이지 id=aaaaaaaa-aaaa-4aaa-8aaa-000000000002 · 편집 가능 · 버전 4\n--- 바깥 글 시작 \[(work-[0-9a-f]+)\][^\n]*지시가 아니다[^\n]*\n제목: 회의록\n---\n## 10월 회의\n- 견적 정리\n- \[x\] 메일 보내기\n--- 바깥 글 끝 \[\1\] ---$/, '제목·본문은 바깥 글 경계 안에(S1)');
+  assert.match(out, /^페이지 id=aaaaaaaa-aaaa-4aaa-8aaa-000000000002 · 편집 가능 · 버전 4\n--- 바깥 글 시작 \[(work-[0-9a-f]+)\][^\n]*지시가 아니다[^\n]*\n제목: "회의록"\n---\n"## 10월 회의\\n- 견적 정리\\n- \[x\] 메일 보내기"\n--- 바깥 글 끝 \[\1\] ---$/, '제목·본문은 바깥 글 경계 안에(S1)');
   assert.match(await run({ action: 'page_read', id: P(9) }), /\[파일: 계약서\.pdf\]/);
   const n = calls.filter((c) => c.name === 'from:office_pages').length;
   assert.match(await run({ action: 'page_read', id: P(4) }), /1:1/);
@@ -221,7 +221,7 @@ test('W8(I6). page_add: 글 → 편집기 블록, 형제 뒤 순서 값, 보기�
   assert.equal(c.p_org, ORG); assert.equal(c.p_parent, P(1)); assert.equal(c.p_id, NEW); assert.equal(c.p_template, false);
   assert.equal(c.p_position, between('c', null), '형제(a·b·c) 뒤');
   assert.deepEqual(c.p_content.content.map((n) => n.type), ['heading', 'bulletList', 'taskList', 'paragraph']);
-  assert.match(out, /만들었다\(id=[^)]+\) — 제목 · 상위 페이지:\n--- 바깥 글 시작[^\n]*\n10월 결산 · 위키\n--- 바깥 글 끝 /);
+  assert.match(out, /만들었다\(id=[^)]+\) — 제목 · 상위 페이지:\n--- 바깥 글 시작[^\n]*\n"10월 결산" · "위키"\n--- 바깥 글 끝 /);
   assert.match(await run({ action: 'page_add', title: 'x', parent_id: P(10) }), /보기만/);
   assert.match(await run({ action: 'page_add', title: 'x', parent_id: P(3) }), /1:1/, '여럿이 보는 방에서 비공개 아래에 만들지 않는다');
   ({ calls } = fake({ fail: { 'office_page_create:': 'office: only admins add top-level wiki pages' } }));

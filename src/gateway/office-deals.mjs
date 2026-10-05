@@ -101,6 +101,7 @@ export async function dealsTool(args, { ctx = null, lang = 'ko', ownerId = null 
   // 여럿이 보는 방에서 싣지도 찾지도 않는 칸 — 거래처 계좌·사업자번호(회사 도구의 계좌·세무 칸과 같다)·가림 표시한 칸, 거래의 가림 표시한 건명·금액
   const quietCustomer = (cu) => new Set(owner ? [] : ['account', 'biz_no', ...(cu.redacted ?? [])]);
   const titleOf = (o) => (!owner && (o.redacted ?? []).includes('title') ? hidden : one(o.title));
+  const titleQ = (o) => (titleOf(o) === hidden ? hidden : ox.line(o.title)); // 출력용 — 가림 표시가 아니면 JSON 문자열(건명은 남이 쓴 글)
   const amountQuiet = (o) => !owner && (o.redacted ?? []).includes('amount');
   const ox = outsideOf('deals', lang);
   const DEAL_TEXT = ['거래처 이름·연락처·메모와 거래 건명은 사람들이 쓴 글', 'customer names, contacts, notes and deal titles written by people'];
@@ -109,10 +110,10 @@ export async function dealsTool(args, { ctx = null, lang = 'ko', ownerId = null 
     const d = await read();
     const customers = d.customers ?? [], orders = d.orders ?? [], lines = d.lines ?? [], entries = d.entries ?? [], items = d.items ?? [];
     const custName = new Map(customers.map((x) => [x.id, x.name]));
-    const nameOf = (id) => (custName.has(id) ? one(custName.get(id)) : '?');
+    const nameOf = (id) => (custName.has(id) ? ox.line(custName.get(id)) : '?');
     const deal = (o) => { const m = dealAmounts(o, lines, entries); const stage = dealStage(o, m); const late = o.due_on && !['paid', 'cancelled'].includes(stage) ? Math.max(0, dayNo(today) - dayNo(String(o.due_on).slice(0, 10))) : 0; return { o, m, stage, late }; };
     const dealLine = ({ o, m, stage, late }) => {
-      const bits = [`[${STAGE[stage][L(lang)]}] ${titleOf(o)}`, nameOf(o.customer_id)];
+      const bits = [`[${STAGE[stage][L(lang)]}] ${titleQ(o)}`, nameOf(o.customer_id)];
       if (amountQuiet(o)) bits.push(`${pick('금액', 'amount', lang)} ${hidden}`);
       else bits.push(`${pick('합계', 'total', lang)} ${won(m.total, lang)}(${pick('공급', 'supply', lang)} ${won(m.supply, lang)}·${pick('부가세', 'VAT', lang)} ${won(m.vat, lang)})`, `${pick('청구', 'invoiced', lang)} ${won(m.invoiced, lang)}`, `${pick('입금', 'paid', lang)} ${won(m.paid, lang)}`);
       if (o.due_on) bits.push(`${pick('입금 예정', 'due', lang)} ${String(o.due_on).slice(0, 10)}${late ? pick(`(입금 지연 ${late}일)`, ` (${late} days overdue)`, lang) : ''}`);
@@ -121,9 +122,9 @@ export async function dealsTool(args, { ctx = null, lang = 'ko', ownerId = null 
     };
     const customerLine = (cu, full = false) => {
       const q = quietCustomer(cu);
-      const val = (k) => (q.has(k) && cu[k] ? hidden : one(cu[k]));
+      const val = (k) => (q.has(k) && cu[k] ? hidden : ox.line(cu[k]));
       const n = orders.filter((o) => o.customer_id === cu.id && o.status !== 'cancelled').length;
-      const bits = [one(cu.name), CATEGORY[cu.category]?.[L(lang)] ?? cu.category, CSTATUS[cu.status]?.[L(lang)] ?? cu.status];
+      const bits = [ox.line(cu.name), CATEGORY[cu.category]?.[L(lang)] ?? cu.category, CSTATUS[cu.status]?.[L(lang)] ?? cu.status];
       for (const k of full ? ['manager', 'phone', 'email', 'ceo', 'biz_no', 'address', 'account'] : ['manager', 'phone', 'email', 'biz_no']) if (cu[k]) bits.push(`${FIELD_NAME[k][L(lang)]} ${val(k)}`);
       bits.push(pick(`거래 ${n}건`, `${n} deals`, lang));
       if (cu.archived_at) bits.push(pick('보관함', 'archived', lang));
@@ -138,7 +139,7 @@ export async function dealsTool(args, { ctx = null, lang = 'ko', ownerId = null 
         const live = ds.filter((x) => x.stage !== 'cancelled');
         const quietNotes = quietCustomer(cu).has('notes');
         return ox.block([customerLine(cu, true).replace(/^- /, ''),
-          ...(cu.notes ? [`${pick('메모', 'notes', lang)}: ${quietNotes ? hidden : one(cu.notes).slice(0, 500)}`] : []),
+          ...(cu.notes ? [`${pick('메모', 'notes', lang)}: ${quietNotes ? hidden : ox.text(String(cu.notes).slice(0, 500))}`] : []),
           live.every((x) => !amountQuiet(x.o)) ? pick(`받은 돈 ${won(live.reduce((n, x) => n + x.m.paid, 0), lang)} · 진행 중 ${won(live.filter((x) => x.stage !== 'paid').reduce((n, x) => n + Math.max(0, x.m.total - x.m.paid), 0), lang)}`,
             `Received ${won(live.reduce((n, x) => n + x.m.paid, 0), lang)} · open ${won(live.filter((x) => x.stage !== 'paid').reduce((n, x) => n + Math.max(0, x.m.total - x.m.paid), 0), lang)}`, lang) : '',
           ...(ds.length ? [pick(`거래 ${ds.length}건:`, `${ds.length} deals:`, lang), ...ds.slice(0, 20).map(dealLine)] : [pick('거래 없음', 'No deals', lang)])].filter(Boolean), DEAL_TEXT);
@@ -197,7 +198,7 @@ export async function dealsTool(args, { ctx = null, lang = 'ko', ownerId = null 
       if (!changed.length) return pick('바꿀 것이 없다(이미 그 값이다).', 'Nothing to change (already that value).', lang);
       await write('customer.save', { id: cu.id, version: cu.version, ...next });
       // 확인 문장도 도구 결과다(검수 #fix-cross M2) — 거래처 이름은 읽어 온 남의 글이라 경계 블록 안에
-      return `${pick(`거래처를 고쳤다(${changed.map((k) => FIELD_NAME[k][0]).join('·')} · id=${cu.id}):`, `Updated the customer (${changed.map((k) => FIELD_NAME[k][1]).join(', ')} · id=${cu.id}):`, lang)}\n${ox.block([one(next.name)], DEAL_TEXT)}`;
+      return `${pick(`거래처를 고쳤다(${changed.map((k) => FIELD_NAME[k][0]).join('·')} · id=${cu.id}):`, `Updated the customer (${changed.map((k) => FIELD_NAME[k][1]).join(', ')} · id=${cu.id}):`, lang)}\n${ox.block([ox.line(next.name)], DEAL_TEXT)}`;
     }
 
     if (a.action === 'deals') {
@@ -246,13 +247,13 @@ export async function dealsTool(args, { ctx = null, lang = 'ko', ownerId = null 
       const r = await write('order.create', { title, customer_id: cu.id, lines: rows, ...(due ? { due_on: due } : {}), ...(at ? { at } : {}) });
       const total = rows.reduce((n, x) => n + x.quantity * x.unit_price + vatOf(x.quantity * x.unit_price, x.tax_type), 0);
       // 거래처 이름은 읽어 온 남의 글이라 경계 블록 안에(내가 준 건명도 같이), 새 품목 이름은 내가 준 값이라 한 줄로(검수 #fix-cross M2)
-      return `${pick(`거래를 견적 단계로 등록했다 — 합계 ${won(total, 'ko')}(부가세 포함)${due ? ` · 입금 예정 ${due}` : ''} (id=${r?.id}) · 건명 · 거래처:`, `Added the deal as a quote — total ${won(total, 'en')} incl. VAT${due ? ` · due ${due}` : ''} (id=${r?.id}) · title · customer:`, lang)}\n${ox.block([`${title} · ${one(cu.name)}`], DEAL_TEXT)}${made.length ? pick(`\n새 품목을 만들었다: ${made.map(ox.line).join(', ')}`, `\nNew items: ${made.map(ox.line).join(', ')}`, lang) : ''}`;
+      return `${pick(`거래를 견적 단계로 등록했다 — 합계 ${won(total, 'ko')}(부가세 포함)${due ? ` · 입금 예정 ${due}` : ''} (id=${r?.id}) · 건명 · 거래처:`, `Added the deal as a quote — total ${won(total, 'en')} incl. VAT${due ? ` · due ${due}` : ''} (id=${r?.id}) · title · customer:`, lang)}\n${ox.block([`${ox.line(title)} · ${ox.line(cu.name)}`], DEAL_TEXT)}${made.length ? pick(`\n새 품목을 만들었다: ${made.map(ox.line).join(', ')}`, `\nNew items: ${made.map(ox.line).join(', ')}`, lang) : ''}`;
     }
 
     if (a.action === 'deal_next' || a.action === 'deal_due') {
       const o = orders.find((x) => x.id === a.id);
       if (!a.id || !o) return pick(`${a.action}에는 id(deals가 보여 준 거래 id)가 필요하다.`, `${a.action} needs a deal id from deals.`, lang);
-      const x = deal(o), name = titleOf(o); // 건명은 남이 쓴 글 — 확인 문장은 아래 titled()로 경계 블록 안에(검수 #fix-cross M2)
+      const x = deal(o), name = titleQ(o); // 건명은 남이 쓴 글 — 확인 문장은 아래 titled()로 경계 블록 안에(검수 #fix-cross M2)
       const titled = (head) => `${head}\n${ox.block([name], DEAL_TEXT)}`;
       if (a.action === 'deal_due') {
         const v = String(a.due_on ?? '').trim();
