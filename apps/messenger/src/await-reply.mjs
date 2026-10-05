@@ -24,7 +24,7 @@ export function awaitTargets(m, { uid, isDm, roomCrewIds = [], parentOf = () => 
   return [...new Set(out)].filter((id) => inRoom.has(id));
 }
 
-/** 신호 → 단계. base = 이 기기가 내 글을 처음 본 시각(없으면 서버 created_at), created = 서버 created_at(5분 상한),
+/** 신호 → 단계. base = 이 기기가 내 글을 처음 본 시각(없으면 created_at), created = 서버 created_at(5분 상한),
     sig = { typingAt, progressAt, receivedAt }(받은 기기 시각), away = 접속 90초 넘음. null = 상한 지남.
     신호와 30초 판정은 기기 시계끼리 비교한다 — 서버 시각과 섞으면 기기 시계가 5초 넘게 늦을 때 방송을 전부 버렸다(검수 #send-feedback LOW). */
 export function awaitPhase({ base, created = base, sig = {}, away = false, now }) {
@@ -57,8 +57,19 @@ export function awaitingReplies({ msgs = [], uid, isDm, roomCrewIds = [], signal
     const created = Date.parse(m.created_at);
     if (!Number.isFinite(created)) continue;
     const seen = seenAt(m.id);
+    // 기준 = 이 기기가 처음 본 시각(기기 시계) 하나 — 셸에 두어 방을 다시 열어도 그대로다(통합 재검수 LOW). 서버 created_at과 섞으면 기기 시계가 30초 넘게
+    // 빠를 때 보낸 직후 '조금 오래'가 떴다(검수 L4). 서버 시각은 5분 상한에만, 처음 본 시각이 없을 때(부르는 쪽이 기록하지 않음)만 기준으로 쓴다.
     const phase = awaitPhase({ base: Number.isFinite(seen) ? seen : created, created, sig: signals(crewId) ?? {}, away: !!away(crewId), now });
     if (phase) out.push({ crewId, msgId: m.id, phase, o });
   }
   return out.sort((a, b) => a.msgId - b.msgId || a.o - b.o).map(({ crewId, msgId, phase }) => ({ crewId, msgId, phase }));
+}
+
+/** 처음 본 시각 적기(seen: 글 id → 기기 시각, 셸에 둔다). first = 이 화면의 첫 목록 표지 { max } — 첫 목록에 이미 있던 글은 적지 않고 created_at을 쓴다
+    (방을 열 때 있던 옛 내 글이 '지금 처음 봄'으로 적혀 '조금 오래' 대신 '준비 중'이 30초 보였다, 2차 검수 L-d). 첫 목록 뒤에 들어온 내 글
+    (이 기기가 보냈거나 방송·따라잡기로 받은 글)만 지금 시각으로 — 기기 시계가 서버와 어긋나도 신호와 같은 시계로 비교한다(1차 L4). */
+export function noteSeen(seen, msgs, { uid, now, first }) {
+  if (!msgs) return;
+  if (first.max == null) first.max = msgs.reduce((a, m) => (Number.isFinite(m?.id) ? Math.max(a, m.id) : a), 0);
+  for (const m of msgs) if (m.author_user_id === uid && Number.isFinite(m.id) && m.id > first.max && !seen.has(m.id)) seen.set(m.id, now);
 }

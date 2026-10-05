@@ -65,7 +65,7 @@ test('deliveryCardView: 카드 제목과 오류 줄 — 보내는 중 / 연결 �
   const off = deliveryCardView({ busy: false, job: job({ error: 'TypeError: Failed to fetch', errorKey: 'msg.delivery.offline' }) });
   assert.deepEqual([off.titleKey, off.errorLine], ['msg.delivery.offline', null], '연결 끊김 카드는 제목이 곧 안내 — 오류 줄 없음');
   const att = deliveryCardView({ busy: false, job: job({ messageId: 7, error: 'a.txt: Load failed', errorKey: 'msg.delivery.offline', files: [{ file: { name: 'a.txt' }, done: false }, { file: { name: 'ok.txt' }, done: true }] }) });
-  assert.equal(att.titleKey, 'msg.delivery.attachFailed');
+  assert.equal(att.titleKey, 'msg.delivery.attachOnlyFailed', '첨부만 보낸 글 — "첨부를 올리지 못했습니다"(MSG-06)');
   assert.deepEqual(att.errorLine, { key: 'msg.delivery.offline', raw: null, files: ['a.txt'] }, '실패한 파일 이름을 남긴다');
   const auth = deliveryCardView({ busy: false, job: job({ error: 'JWT', errorKey: 'msg.delivery.authExpired' }) });
   assert.deepEqual([auth.titleKey, auth.errorLine], ['msg.delivery.failed', { key: 'msg.delivery.authExpired', raw: null, files: [] }]);
@@ -114,20 +114,20 @@ test('#795 첨부 순서(글 먼저·전부 실패하면 삭제)와 #793 카드(
     let job = off.snapshot().job;
     assert.deepEqual(discarded, [7], '빈 글을 지웠다');
     assert.equal(job.messageId, null); assert.equal(job.errorKey, 'msg.delivery.offline');
-    assert.deepEqual(deliveryCardView({ busy: false, job }), { titleKey: 'msg.delivery.offline', errorLine: null , canRetry: true });
+    assert.deepEqual(deliveryCardView({ busy: false, job }), { titleKey: 'msg.delivery.offline', errorLine: null , canRetry: true, retryKey: 'msg.delivery.retryUpload', dismissKey: 'msg.delivery.discard' });
     assert.equal(reported.length, 1);
     // 글을 지우지 못하면 글은 남고 → 카드는 '일부 첨부 실패' + 이유 + 실패한 파일 이름
     const keep = createComposerDelivery(mk({ discard: async () => { throw new Error('no'); }, upload: async () => { throw new TypeError('Load failed'); } }));
     keep.setFiles([file('a.txt')]); await keep.send([]);
     job = keep.snapshot().job;
     assert.equal(job.messageId, 7);
-    assert.deepEqual(deliveryCardView({ busy: false, job }), { titleKey: 'msg.delivery.attachFailed', errorLine: { key: 'msg.delivery.offline', raw: null, files: ['a.txt'] } , canRetry: true });
-    // 네트워크가 아닌 실패(서버 거절)는 원문 줄 + 지운 글이므로 '전송 실패' 제목
+    assert.deepEqual(deliveryCardView({ busy: false, job }), { titleKey: 'msg.delivery.attachOnlyFailed', errorLine: { key: 'msg.delivery.offline', raw: null, files: ['a.txt'] } , canRetry: true, retryKey: 'msg.delivery.retryUpload', dismissKey: 'msg.delivery.discard' }); // 첨부만 보낸 글(MSG-06)
+    // 네트워크가 아닌 실패(서버 거절)는 원문 줄 + 지운 글 — 첨부만 보낸 글이라 '첨부를 올리지 못했습니다' 제목(MSG-06)
     const srv = createComposerDelivery(mk({ upload: async () => { throw new Error('new row violates row-level security policy'); } }));
     srv.setFiles([file('c.txt')]); await srv.send([]);
     job = srv.snapshot().job;
     assert.deepEqual([job.messageId, job.errorKey], [null, '']);
-    assert.deepEqual(deliveryCardView({ busy: false, job }), { titleKey: 'msg.delivery.failed', errorLine: { key: null, raw: 'c.txt: new row violates row-level security policy', files: [] } , canRetry: true });
+    assert.deepEqual(deliveryCardView({ busy: false, job }), { titleKey: 'msg.delivery.attachOnlyFailed', errorLine: { key: null, raw: 'c.txt: new row violates row-level security policy', files: [] } , canRetry: true, retryKey: 'msg.delivery.retryUpload', dismissKey: 'msg.delivery.discard' });
   } finally { setDeliveryReporter(null); }
 });
 
@@ -183,7 +183,7 @@ test('App 배선 — 일반: 에이전트 꺼짐 안내·대기 요청 안내·�
 
 test('deliveryCardView: 영구 거절 — 1:1은 "보낼 수 없는 상대입니다", 채널은 "이 방에 보낼 수 없습니다", 둘 다 다시 보내기 없음(기능 점검 D14)', () => {
   const job = { messageId: null, error: 'new row violates row-level security policy', errorKey: 'msg.delivery.rejected', permanent: true, files: [] };
-  assert.deepEqual(deliveryCardView({ busy: false, job, isDm: true }), { titleKey: 'msg.delivery.notSent', errorLine: { key: 'msg.delivery.unreachable', raw: null, files: [] }, canRetry: false }); // 제목이 '다시 시도해 주세요'면 안 된다
+  assert.deepEqual(deliveryCardView({ busy: false, job, isDm: true }), { titleKey: 'msg.delivery.notSent', errorLine: { key: 'msg.delivery.unreachable', raw: null, files: [] }, canRetry: false, retryKey: 'msg.delivery.retry', dismissKey: 'ui.close' }); // 제목이 '다시 시도해 주세요'면 안 된다
   assert.deepEqual(deliveryCardView({ busy: false, job, isDm: false }).errorLine.key, 'msg.delivery.rejected');
   assert.equal(deliveryCardView({ busy: false, job: { ...job, permanent: false, errorKey: '' } }).canRetry, true);
 });

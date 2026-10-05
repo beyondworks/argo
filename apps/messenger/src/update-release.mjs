@@ -52,3 +52,14 @@ export function pickAndroidAsset(assets) {
   if (!Array.isArray(assets)) return null;
   return assets.find((a) => /-android\.apk$/i.test(a.name) || a.contentType === 'application/vnd.android.package-archive') ?? null;
 }
+
+/** Android 업데이트 실패 → 사용자 문구 키와 다음 할 일(2026-10-05 분리 검증 MSG-11). 종전에는 'no-apk-asset'·'missing-sha256'·'github 403' 같은 내부 코드를
+    그대로 보였고, 다시 해도 같은 실패인데 '다시 시도'만 줬다. 원문은 진단 기록에만 남긴다(부르는 쪽 pushDiag).
+    retry = 다시 시도가 뜻이 있다(네트워크), download = 다운로드 페이지에서 직접 받는 길을 보인다. */
+export function mobileUpdateFailure(error) {
+  const raw = String(error ?? '');
+  if (/ALREADY_DOWNLOADING|already in progress/i.test(raw)) return { key: 'upd.mobile.fail.already', raw, retry: false, download: false };
+  if (/HTTP (403|429)\b|rate limit/i.test(raw)) return { key: 'upd.mobile.fail.busy', raw, retry: false, download: true }; // GitHub 비인증 한도
+  if (/no-apk-asset|missing-sha256|SHA256|sha256|HOST_NOT_ALLOWED|host not allowed|only https|BAD_ARGS|HTTP (404|410)\b/i.test(raw)) return { key: 'upd.mobile.fail.asset', raw, retry: false, download: true }; // 다시 해도 같은 실패
+  return { key: 'upd.mobile.fail.network', raw, retry: true, download: true };
+}

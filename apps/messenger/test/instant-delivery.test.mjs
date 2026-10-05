@@ -54,5 +54,6 @@ test('앞으로 온 순간 한 번 따라잡는다 — 보일 때만, 연달아 
 
 test('App.jsx 채널 화면은 앞으로 올 때 글과 결재를 다시 읽는다', () => {
   const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
-  assert.match(app, /useEffect\(\(\) => onForeground\(\(\) => \{ load\(lastId\)\.catch\(\(\) => \{\}\); loadApprovals\(\)\.catch\(\(\) => \{\}\); \}\), \[load, lastId\]\)/);
+  assert.match(app, /useEffect\(\(\) => onForeground\(\(\) => \{ catchUp\(\)\.catch\(\(\) => \{\}\); loadApprovals\(\)\.catch\(\(\) => \{\}\); \}\), \[catchUp\]\)/);
+  assert.match(app, /const catchUp = useMemo\(\(\) => createCatchUp\(\(\) => load\(live\.current\.msgs\?\.at\(-1\)\?\.id \?\? 0\)\), \[load\]\);/, '따라잡기는 마지막 글 뒤부터(한 번에 하나 — 검수 L3)');
 });

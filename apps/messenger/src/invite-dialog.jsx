@@ -3,6 +3,7 @@
 // 권한 표시(총괄 확정 2026-09-18): 조직 관리자 = 멤버·게스트, 채널 자유(비공개 포함). 관리자 아닌 채널 관리자 = 그 채널 게스트만.
 // 서버가 최종 판정한다(정비사 #610: 방장 아닌 비공개 = msgr_invite_channel_forbidden, 멤버의 조직 초대 = RLS 거절).
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { focusEntry } from './focus-entry.mjs';
 import { createPortal } from 'react-dom';
 import { I } from './icons.jsx';
 import { Seg } from './seg.mjs';
@@ -57,7 +58,7 @@ export function InviteDialog({ org, channels, isAdmin, hostOf = new Set(), initi
     }, made ? 200 : 0);
     return () => clearTimeout(timer);
   }, [want]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (!busy && link) copyRef.current?.focus(); }, [busy, !!link]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (!busy && link) focusEntry({ dialog: dialog.current, first: copyRef.current }); }, [busy, !!link]); // 터치는 창 자체로(링 없음 — UXM-17), 화면 낭독기도 창 안으로(UL8) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (!copied) return undefined; const id = setTimeout(() => setCopied(false), 1500); return () => clearTimeout(id); }, [copied]);
 
   const toggle = (c) => {
@@ -84,7 +85,7 @@ export function InviteDialog({ org, channels, isAdmin, hostOf = new Set(), initi
 
   return createPortal(
     <div className={`shell inv-overlay${phone ? ' phone' : ''}`} onKeyDown={keydown} onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <section className="inv-dialog" ref={dialog} role="dialog" aria-modal="true" aria-labelledby="inv-title">
+      <section className="inv-dialog" ref={dialog} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="inv-title">
         {phone && <div className="inv-grab" aria-hidden="true" />}
         <header className="inv-head">
           <div><h2 id="inv-title">{t('inv.title', { org: org.name })}</h2><p className={`inv-sub${names.length ? '' : ' warn'}`}>{sub}</p></div>
@@ -142,15 +143,15 @@ export function InviteDialog({ org, channels, isAdmin, hostOf = new Set(), initi
 // 받는 쪽 미리보기(설계서 2-2) — 붙여 넣은 코드가 어디로 데려가는지 보여 주고 한 번 눌러 들어간다.
 // p = msgr_invite_preview 결과: valid·already_member면 조직·채널·초대한 사람·만료, expired·exhausted·revoked면 org_name만.
 export function InvitePreview({ p, avatar = null, busy = false, err = null, onJoin, onOpen, onClose, fmtWhen, t, phone = false }) {
-  const main = useRef(null);
-  useEffect(() => { main.current?.focus(); }, [p.state]);
+  const main = useRef(null); const box = useRef(null);
+  useEffect(() => { focusEntry({ dialog: box.current, first: main.current }); }, [p.state]); // 터치는 창 자체로(링 없음 — UXM-17), 화면 낭독기도 창 안으로(UL8)
   const ok = p.state === 'valid', already = p.state === 'already_member';
   const status = ok ? (p.inviter_name ? t('inv.p.by', { name: p.inviter_name }) : t('inv.p.valid')) : t(`inv.p.${already ? 'already' : p.state}`);
   const keydown = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose(); } };
   const channels = p.channels ?? [];
   return createPortal(
     <div className={`shell inv-overlay${phone ? ' phone' : ''}`} onKeyDown={keydown} onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <section className="inv-dialog inv-preview" role="dialog" aria-modal="true" aria-labelledby="invp-title">
+      <section className="inv-dialog inv-preview" ref={box} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="invp-title">
         {phone && <div className="inv-grab" aria-hidden="true" />}
         <header className="inv-head">
           <div className="invp-org">{avatar}<div><h2 id="invp-title">{p.org_name}</h2><p className={`inv-sub${ok || already ? '' : ' warn'}`}>{status}</p></div></div>

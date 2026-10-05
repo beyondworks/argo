@@ -115,3 +115,28 @@ export function approvalCmdMode(it) {
   if (approvalExpandDefault(it)) return 'full';
   return approvalPlainFields(it?.payload) ? 'line' : null;
 }
+
+/** 채널 안 결재 카드의 결정(MSG-07). 0행 = RLS가 막았거나(결재권 없음) 이미 결정된 결재(정책은 status='pending'만 갱신) — 다시 읽어 이미 결정됐으면
+    오류 없이 결과만(연타·다른 사람이 먼저 결정), 대기 중일 때만 권한 없음. → { result: 'done'|'already'|'denied'|'error', status?, message? } */
+export async function decideApproval({ update, reread }) {
+  const res = await update();
+  if (res?.error) return { result: 'error', message: res.error.message };
+  if (res?.data?.length) return { result: 'done' };
+  let cur;
+  try { cur = await reread(); } catch (e) { return { result: 'error', message: e?.message || String(e) }; } // 다시 읽기가 실패하면 권한 없음이라고 하지 않는다(검수 L5)
+  return cur?.status && cur.status !== 'pending' ? { result: 'already', status: cur.status } : { result: 'denied' };
+}
+/** 진행 중이면 다시 부르지 않는다(연타 — 두 번째 요청이 0행으로 잘못된 권한 오류를 냈다). 끝나면 다시 부를 수 있다 */
+export function singleFlight(fn) {
+  let busy = false;
+  return async (...a) => { if (busy) return undefined; busy = true; try { return await fn(...a); } finally { busy = false; } };
+}
+
+/** 방 보조 줄의 에이전트 참여 요청(화면 검수 UL1, 2026-10-05) — 내가 결재자면 남이 보낸 대기 요청. 결재자 조회(.error·throw)나 요청 조회가 실패하면
+    failed=true(조용히 '요청 없음'으로 숨기지 않는다 — 다시 확인 단추를 보인다). 함수가 없는 옛 서버(PGRST202)는 종전처럼 없음. */
+export async function readRoomJoinRequests({ uid, approver, pending }) {
+  const a = await Promise.resolve().then(approver).then((x) => x, (error) => ({ error }));
+  if (a?.error) return { reqs: [], failed: !(a.error.code === 'PGRST202' || /Could not find the function/.test(a.error.message ?? '')) };
+  if (a?.data !== uid) return { reqs: [], failed: false };
+  try { return { reqs: ((await pending()) ?? []).filter((r) => r.requested_by !== uid), failed: false }; } catch { return { reqs: [], failed: true }; }
+}

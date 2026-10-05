@@ -36,7 +36,7 @@ test('Android 권한 부족은 별도 화면(permission)으로 — 조용히 실
 });
 
 test('무결성 대조 불가(sha256 없음) 자산은 설치하지 않는다', () => {
-  assert.match(src, /if \(!asset\.sha256\) \{ ref\.current\.phase = 'error'; setSt\(\(s\) => \(\{ \.\.\.s, phase: 'error', error: 'missing-sha256' \}\)\); return; \}/);
+  assert.match(src, /if \(!asset\.sha256\) \{ fail\('missing-sha256'\); return; \}/); // 막대 문구·다음 할 일은 mobileUpdateFailure(back-update-root.test.mjs)
 });
 
 test('iOS는 업데이트 확인·막대를 아예 하지 않는다(App Store가 담당, 2.2 베타 유도 금지)', () => {

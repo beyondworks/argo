@@ -23,7 +23,7 @@ const MUT = {
     ['if (!first || older || !hasMore) return;', 'if (!first || !hasMore) return;'],
   ]],
   M8: ['모바일 재개를 전체 교체로 되돌림(HIGH-2 회귀)', [
-    ['observeMobileResume(() => load(live.current.msgs?.at(-1)?.id ?? 0)', 'observeMobileResume(() => load(0)'],
+    ['createCatchUp(() => load(live.current.msgs?.at(-1)?.id ?? 0))', 'createCatchUp(() => load(0))'],
   ]],
   // 23c67513 은 늦게 오는 높이 변화를 두 갈래로 되맞춘다 — 레이아웃 효과의 atts 의존과 척추 ResizeObserver.
   // 한 갈래만 끊으면 나머지가 덮으므로(M9 로 실증) HIGH-1 회귀를 보려면 둘 다 끊어야 한다(M10).

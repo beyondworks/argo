@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { focusEntry } from './focus-entry.mjs';
 import { createPortal } from 'react-dom';
 import { DangerModal, Markdown } from '@argo/ui';
 import { supabase } from './supabase.js';
@@ -131,7 +132,7 @@ function StateNotice({ rows, error, empty, refresh, t }) {
 }
 
 /** Each panel reads the authenticated cloud directly; the phone never calls a desktop localhost. */
-export function WorkPanel({ channel, uid, isAdmin, locked, crews, t, lang, onClose, sheet = false }) { // sheet: 데스크톱 — 채널 패널과 같은 시트(폭 380, 비킴 규칙 공유). 폰은 전체 화면 오버레이
+export function WorkPanel({ channel, roomName = null, uid, isAdmin, locked, crews, t, lang, onClose, sheet = false }) { // roomName: 화면에 보일 방 이름 — 1:1의 내부 이름 'dm:…' 대신(UXM-06) // sheet: 데스크톱 — 채널 패널과 같은 시트(폭 380, 비킴 규칙 공유). 폰은 전체 화면 오버레이
   const [tab, setTab] = useState('team');
   const [busy, setBusy] = useState(false);
   const [deleting, setDeleting] = useState(null);
@@ -149,7 +150,7 @@ export function WorkPanel({ channel, uid, isAdmin, locked, crews, t, lang, onClo
   useEffect(() => {
     mounted.current = true;
     const previous = document.activeElement;
-    dialog.current?.querySelector('button')?.focus();
+    focusEntry({ dialog: dialog.current, first: dialog.current?.querySelector('button') }); // 터치는 창 자체로(링 없음 — UXM-17), 화면 낭독기도 창 안으로(UL8)
     return () => { mounted.current = false; if (previous?.isConnected) previous.focus(); };
   }, []);
   const act = async (operation, done) => {
@@ -171,26 +172,26 @@ export function WorkPanel({ channel, uid, isAdmin, locked, crews, t, lang, onClo
     else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
   };
   const body = (<>
-      <header className="work-header"><div><h2>{t('work.title')}</h2><p>{channel.name}</p></div><button className="btn sm" disabled={busy} onClick={onClose} aria-label={t('ui.close')}><I name="x" size={16} /></button></header>
+      <header className="work-header"><div><h2>{t('work.title')}</h2><p>{roomName ?? channel.name}</p></div><button className="btn sm" disabled={busy} onClick={onClose} aria-label={t('ui.close')}><I name="x" size={16} /></button></header>
       <div className="work-tabs" role="tablist" aria-label={t('work.title')}>{['team', 'automations'].map((key) => <button key={key} type="button" role="tab" aria-selected={tab === key} aria-controls={`work-view-${key}`} id={`work-tab-${key}`} tabIndex={tab === key ? 0 : -1} disabled={busy} onClick={() => { setTab(key); setError(null); setNotice(''); }} onKeyDown={(event) => { if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) { event.preventDefault(); const next = event.key === 'Home' ? 'team' : event.key === 'End' ? 'automations' : key === 'team' ? 'automations' : 'team'; setTab(next); event.currentTarget.parentElement.querySelector(`#work-tab-${next}`)?.focus(); } }}>{t(`work.tab.${key}`)}</button>)}</div>
       <div className="work-scroll" role="tabpanel" id={`work-view-${tab}`} aria-labelledby={`work-tab-${tab}`}>
         {locked && <p className="work-notice" role="status">{t('org.locked.short')}</p>}
         {error && <p className="work-notice error" role="alert">{errorText(error, t)}</p>}
         {notice && <p className="work-notice" role="status">{notice}</p>}
         {tab === 'team' ? <TeamWork key="team" work={work} channel={channel} crews={eligible.filter((crew) => crew.hosting === 'bot' || (work.capabilities ?? []).some((row) => row.id === crew.id && row.work_protocol >= 1))} uid={uid} isAdmin={isAdmin} disabled={busy || locked} busy={busy} act={act} t={t} lang={lang} />
-          : <Automations key="automations" source={automations} routines={routines} channel={channel} crews={eligible} uid={uid} disabled={busy || locked} busy={busy} act={act} t={t} lang={lang} setDeleting={setDeleting} setNotice={setNotice} />}
+          : <Automations key="automations" source={automations} routines={routines} channel={channel} roomName={roomName ?? channel.name} crews={eligible} uid={uid} disabled={busy || locked} busy={busy} act={act} t={t} lang={lang} setDeleting={setDeleting} setNotice={setNotice} />}
       </div>
   </>);
   const confirm = deleting && <div className="msgr-action-dialog" role="dialog" aria-modal="true" aria-label={t('automation.delete')}><DangerModal title={t('automation.delete')} description={<>{t('automation.delete.note')}{error && <span className="work-notice error" role="alert">{errorText(error, t)}</span>}</>} requireText={deleting.title} confirmLabel={t('automation.delete')} busy={busy} onClose={() => { if (!busy) { setDeleting(null); setError(null); } }} onConfirm={() => act(() => checked(deleting.kind === 'routine' ? supabase.rpc('msgr_crew_routine_edit', { p_routine: deleting.id, p_op: 'delete' }) : supabase.rpc('msgr_automation_delete', { automation: deleting.id })), () => { setDeleting(null); setNotice(t(deleting.kind === 'routine' ? 'routine.delete.requested' : 'automation.deleted')); })} /></div>;
   if (sheet) return (<div className="msgr-sheetwrap">
     <div className="msgr-scrim clear" onClick={() => { if (!busy && !deleting) onClose(); }} />
-    <aside className="msgr-crewsheet msgr-worksheet" ref={dialog} role="dialog" aria-label={t('work.title')} onKeyDown={keydown} inert={deleting ? true : undefined}>
+    <aside className="msgr-crewsheet msgr-worksheet" ref={dialog} tabIndex={-1} role="dialog" aria-label={t('work.title')} onKeyDown={keydown} inert={deleting ? true : undefined}>
 {body}
     </aside>
     {deleting && createPortal(<div className="shell msgr-work-overlay msgr-work-confirm" onKeyDown={keydown}>{confirm}</div>, document.body)}
   </div>);
   return createPortal(<div className="shell msgr-work-overlay" onKeyDown={keydown} onClick={(event) => { if (event.target === event.currentTarget && !busy && !deleting) onClose(); }}>
-    <section className="msgr-work-panel" ref={dialog} role="dialog" aria-modal="true" aria-label={t('work.title')} inert={deleting ? true : undefined}>
+    <section className="msgr-work-panel" ref={dialog} tabIndex={-1} role="dialog" aria-modal="true" aria-label={t('work.title')} inert={deleting ? true : undefined}>
 {body}
     </section>
     {deleting && confirm}
@@ -239,7 +240,7 @@ function TeamWork({ work, channel, crews, uid, isAdmin, disabled, busy, act, t, 
   </>;
 }
 
-function Automations({ source, routines, channel, crews, uid, disabled, busy, act, t, lang, setDeleting, setNotice }) {
+function Automations({ source, routines, channel, roomName, crews, uid, disabled, busy, act, t, lang, setDeleting, setNotice }) {
   const [editing, setEditing] = useState(null);
   const [editingRoutine, setEditingRoutine] = useState(null);
   const [history, setHistory] = useState(null);
@@ -254,7 +255,7 @@ function Automations({ source, routines, channel, crews, uid, disabled, busy, ac
     {source.rows !== null && !source.error && <SchedulerStatus t={t} />}
     <div className="work-section-heading"><h3>{t('work.tab.automations')}</h3><div className="work-actions"><button className="btn sm" onClick={() => { source.refresh(); routines.refresh(); }} disabled={busy}>{t('work.refresh')}</button><button className="btn btn-primary sm" disabled={disabled || !crews.length || !!source.error || source.rows === null} onClick={() => setEditing({})}>{t('automation.new')}</button></div></div>
     {!crews.length && <p className="work-notice">{t('work.noCrew')}</p>}
-    {editing && <AutomationForm key={editing.id ?? 'new'} value={editing} crews={crews} channel={channel} t={t} disabled={disabled} act={act} onClose={() => setEditing(null)} onSaved={() => { if (!editing.id) source.setPage(0); setEditing(null); setNotice(t('automation.saved')); }} />}
+    {editing && <AutomationForm key={editing.id ?? 'new'} value={editing} crews={crews} channel={channel} roomName={roomName} t={t} disabled={disabled} act={act} onClose={() => setEditing(null)} onSaved={() => { if (!editing.id) source.setPage(0); setEditing(null); setNotice(t('automation.saved')); }} />}
     {editingRoutine && <RoutineForm key={editingRoutine.id} value={editingRoutine} t={t} disabled={disabled} act={act} onClose={() => setEditingRoutine(null)} onSaved={() => { setEditingRoutine(null); setNotice(t('automation.saved')); }} />}
     {source.error && <div className="work-notice error" role="alert"><p>{errorText(source.error, t)}</p><button className="btn sm" onClick={source.refresh}>{t('work.retry')}</button></div>}
     {source.rows === null && <p className="work-note" role="status">{t('ui.loading')}</p>}
@@ -367,7 +368,7 @@ function RoutineSchedule({ schedule = {}, t }) {
   return <>{t(`routine.kind.${schedule.type === 'weekly' ? 'weekly' : 'daily'}`)} {schedule.type === 'weekly' ? dows.map((day) => t(`routine.day.${day}`)).join(' · ') : ''} {(schedule.times ?? [schedule.time]).filter(Boolean).join(', ')} · {schedule.tz ?? ''}</>;
 }
 
-function AutomationForm({ value, crews, channel, t, disabled, act, onClose, onSaved }) {
+function AutomationForm({ value, crews, channel, roomName = null, t, disabled, act, onClose, onSaved }) {
   const [title, setTitle] = useState(value.title ?? '');
   const [prompt, setPrompt] = useState(value.prompt ?? '');
   const [crew, setCrew] = useState(value.crew_id ?? '');
@@ -413,7 +414,7 @@ function AutomationForm({ value, crews, channel, t, disabled, act, onClose, onSa
     <p className="work-note">{t('automation.timezone.note')}</p>
     <fieldset className="work-notification-routes"><legend>{t('automation.notifications.title')}</legend>
       <p className="work-note">{t('automation.notifications.note')}</p>
-      <label className="work-notification-route"><input type="checkbox" checked disabled /><span><strong>{t('automation.notifications.messenger')}</strong><small>{channel.name}</small></span></label>
+      <label className="work-notification-route"><input type="checkbox" checked disabled /><span><strong>{t('automation.notifications.messenger')}</strong><small>{roomName ?? channel.name}</small></span></label>
       {routesError ? <div className="work-notice error" role="alert"><p>{missingSchema(routesError) ? t('automation.notifications.upgrade') : errorText(routesError, t)}</p><button type="button" className="btn sm" disabled={disabled} onClick={() => setRouteRevision((old) => old + 1)}>{t('work.retry')}</button></div>
         : routes === null ? <p className="work-note" role="status">{t('ui.loading')}</p>
         : <>{routes.map((route) => <label className="work-notification-route" key={route.id}><input type="checkbox" checked={routeIds.includes(route.id)} disabled={disabled} onChange={(event) => setRouteIds((old) => event.target.checked ? [...old, route.id] : old.filter((id) => id !== route.id))} /><span><strong>{t(`automation.notifications.${route.kind}`)} · {route.label}</strong><small>{route.ws_id}{!route.ready ? ` · ${t('automation.notifications.offline')}` : ''}</small></span></label>)}

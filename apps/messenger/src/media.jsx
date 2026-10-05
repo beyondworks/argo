@@ -5,6 +5,7 @@
 //   링크 카드: 보낼 때 한 번 저장한 meta.link_preview만 그린다(화면을 그릴 때 가져오지 않는다). 글자는 글자로만 넣는다.
 // 순수 판정은 media-actions.mjs·lightbox-gesture.mjs, 네트워크·기기 동작은 media-io.js.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useBackClose } from './use-back-close.js';
 import { createPortal } from 'react-dom';
 import { useLang } from '@argo/i18n';
 import { t as tm } from './i18n.js';
@@ -114,6 +115,7 @@ function FileBubble({ a, tab, t }) {
 
 /** 크게 보기 — 같은 메시지의 사진들. 사진 뷰어는 테마와 상관없이 어두운 바탕(사진 색이 바래지 않게). */
 export function Lightbox({ items, start = 0, onClose, t }) {
+  useBackClose(true, onClose); // Android 뒤로 — 사진 보기부터 닫는다(대화 화면이 닫히던 것, MSG-10)
   const [i, setI] = useState(start);
   const [view, setView] = useState({ z: 1, x: 0, y: 0 });
   const [drag, setDrag] = useState({ dx: 0, dy: 0, on: false });

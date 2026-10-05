@@ -509,7 +509,7 @@ test('J-5 조직 삭제 유예·복구 — 이름 입력 2단계 삭제(네이�
 test('검수 반영(코드) — 삭제 조직 목록 제외, 오류 문구 매핑, 조직 전체 초대는 게스트 제외, 카드 값 개행 세척, 서버 가드', () => {
   const app = read('apps/messenger/src/App.jsx');
   assert.match(app, /rows\.filter\(\(r\) => r\.msgr_orgs && !r\.msgr_orgs\.deleted_at\)/, 'M-3');
-  assert.match(app, /const friendlyErr = \(msg, t\) => \/msgr_session_refreshing\/\.test\(msg\) \? t\('err\.sessionRefreshing'\) : [^\n]*?\/row-level security\/\.test\(msg\) \? t\('err\.denied'\)/, 'M-5 매핑(D50: 세션 갱신 중이 RLS보다 먼저 — 사이에 더 좁은 매핑(D8 msgr_crew_remove_owner_only)은 들어올 수 있다)');
+  assert.match(read('apps/messenger/src/error-toast.mjs'), /export const friendlyErr = \(msg, t\) => \/msgr_session_refreshing\/\.test\(msg\) \? t\('err\.sessionRefreshing'\) : [^\n]*?\/row-level security\/\.test\(msg\) \? t\('err\.denied'\)/, 'M-5 매핑(D50: 세션 갱신 중이 RLS보다 먼저 — 사이에 더 좁은 매핑(D8 msgr_crew_remove_owner_only)은 들어올 수 있다) — friendlyErr는 error-toast.mjs로 옮겼다(UXM-05)');
   assert.ok((app.match(/onError\(friendlyErr\(res\.error\.message, t\)\)/g) || []).length >= 4, 'M-5 적용 4곳 이상');
   assert.match(app, /const adminInvite = \(\) => \(adminLink \? copyLink\(adminLink\) : makeInvite\('admin'\)\);/, 'L-3 초대는 멤버·관리자 두 버튼(관리자 링크는 있으면 복사, 없으면 만든다 — 5차 피드백 2)');
   assert.match(app, /onClick=\{adminInvite\}/);
