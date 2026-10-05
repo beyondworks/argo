@@ -904,6 +904,26 @@ test('파일 실패는 이름과 사유를 남기고, 재시도 대기 중에도
   assert.deepEqual(again.failures, r.failures, '재시도 대기 중에도 마지막 실패 목록이 상태에 남는다');
 });
 
+// 격리 서버 실측(10/5): 로컬 쓰기 실패 사유에 원자 쓰기 임시 파일 이름(.tmp-<파일>-<pid>-<시각>-<순번>)이 들어가 재시도마다 사유가 달라졌고,
+// '목록이 바뀔 때만 한 줄'인 로그가 재시도마다 새 줄을 썼다.
+test('로컬 쓰기 실패 사유는 재시도해도 같다 — 임시 파일 꼬리를 떼어 로그는 한 줄만 남는다', async () => {
+  const wsId = 'fail-stable';
+  const buf = Buffer.from('remote');
+  const { wsRoot } = await setup(wsId, { remoteFiles: { 'vault/blocked.md': meta(buf) }, remoteBlobs: { 'vault/blocked.md': buf } });
+  await mkdir(join(wsRoot, 'vault', 'blocked.md'), { recursive: true }); // 받을 자리에 폴더 → 원자 쓰기의 rename 실패
+  const warn = console.warn, lines = [], realNow = Date.now;
+  console.warn = (line) => { lines.push(String(line)); };
+  try {
+    const r1 = await syncCompany(wsId, OWNER);
+    Date.now = () => realNow() + 31_000; // 첫 재시도 대기(30초)를 지나 실제로 한 번 더 돈다
+    const r2 = await syncCompany(wsId, OWNER);
+    assert.equal(r1.failed, 1); assert.equal(r2.failed, 1);
+    assert.doesNotMatch(r1.failures[0].reason, /\.tmp-blocked\.md-\d/, '사유에 pid·시각 꼬리가 남지 않는다');
+    assert.equal(r2.failures[0].reason, r1.failures[0].reason, '같은 실패는 주기마다 같은 사유');
+  } finally { Date.now = realNow; console.warn = warn; }
+  assert.equal(lines.filter((l) => l.includes(`동기화(${wsId}): 파일 1건 실패`)).length, 1, '같은 실패는 로그 한 줄');
+});
+
 test('빈 항목 기억이 있어도 다른 기기가 객체를 먼저 올린 자리를 덮지 않고, 그 기기의 매니페스트가 오면 충돌 사본으로 수렴한다(분리 검수 MEDIUM-1·2차 HIGH-1)', async () => {
   const wsId = 'dangling-race';
   const v1 = Buffer.from('v1'), ghost = Buffer.from('ghost meta'), z = Buffer.from('Z from device B');

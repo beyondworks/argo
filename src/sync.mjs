@@ -1065,7 +1065,9 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
       // pull(download) 실패는 uploadFailed 태그를 못 받으므로 어느 플랜에서도 관용되지 않는다.
       if (e?.uploadFailed) uploadDenied++;
       if (e?.uploadFailed && opts.freePlan) denied++; else failed++; // 파일 하나 실패는 다음 사이클이 재시도
-      if (!(e?.uploadFailed && opts.freePlan) && failures.length < 5) failures.push({ rel, reason: String(e?.message ?? e).split(root + sep).join('').slice(0, 120) }); // 실패로 센 것만 이름·사유를 남긴다(회사 폴더 경로는 떼어 짧게)
+      // 실패로 센 것만 이름·사유를 남긴다. 회사 폴더 경로와 원자 쓰기 임시 파일의 pid·시각·순번 꼬리(jsonstore writeFileAtomic)는 뗀다 —
+      // 꼬리가 남으면 같은 실패도 주기마다 사유가 달라져 '바뀔 때만 한 줄'인 로그가 재시도마다 새 줄을 쓴다(격리 서버 실측 10/5).
+      if (!(e?.uploadFailed && opts.freePlan) && failures.length < 5) failures.push({ rel, reason: String(e?.message ?? e).split(root + sep).join('').replace(/(\.tmp-[^'"]*)-\d+-[0-9a-z]+-\d+(?=['"])/g, '$1').slice(0, 120) });
     }
   }
 
