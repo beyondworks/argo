@@ -1357,6 +1357,14 @@ export function syncStatus() {
   // 별도 번들에서 사본이 갈라져 항상 null이 되는 함정(위 lease 주석과 동일 클래스).
   return { ...status, on: syncOn(), leader: isCloudLeader(), companies: { ...status.companies } };
 }
+/** 한 회사 화면용 상태 — 회사 가드(guardCompany)는 그 회사만 보므로, 같은 기기의 게스트·다른 계정이 자기 회사 화면을 열어도
+    다른 회사의 실패·빈 항목 파일 경로가 보이지 않게 companies는 그 회사 것만, lastError는 다른 회사 몫(`<그 회사 ID>: …`)이면 뺀다.
+    기기 전체 오류(자격 만료·다른 프로세스 동기화 중 등)는 접두가 없어 그대로 보인다. (분리 검수 LOW-1·보안 검토) */
+export function syncStatusFor(ws) {
+  const s = syncStatus();
+  const others = Object.keys(s.companies).some((id) => id !== ws && s.lastError?.startsWith(`${id}: `));
+  return { ...s, lastError: others ? '' : s.lastError, companies: s.companies[ws] ? { [ws]: s.companies[ws] } : {} };
+}
 
 /** 세션(JWT) 모드면 세션 사용자 id, 서비스 모드(셀프호스트·워커)면 null — 회사 소유자 게이트와 요금제 캐시 키가 같이 쓴다. */
 const currentSessionUid = () => ((loadSyncCreds() && serviceCredsAllowed()) ? null : (loadDeviceSession()?.user?.id ?? null));

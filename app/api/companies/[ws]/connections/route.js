@@ -1,6 +1,6 @@
 import { loadConnections, updateConnection, maskConnections, validateConnection, gatewayStatus, CONNECTION_PATCH_FIELDS } from '../../../../../src/connections.mjs';
 import { ensureGateway } from '../../../../../src/gateway.mjs';
-import { syncStatus, hostedCredsOff } from '../../../../../src/sync.mjs';
+import { syncStatusFor, hostedCredsOff } from '../../../../../src/sync.mjs';
 import { loadCompany } from '../../../../../src/workspace.mjs';
 import { guardCompany } from '../../../../auth.mjs';
 
@@ -13,10 +13,8 @@ export async function GET(_req, { params }) {
   const [all, gateway, company] = await Promise.all([loadConnections(ws), gatewayStatus(ws), loadCompany(ws).catch(() => null)]);
   // credSync: 부재/true = 동기화 포함(서비스 모드 선택권) — SyncCard 토글이 15초 폴로 읽는다.
   // credHosted: 호스티드(Argo 클라우드)면 자격은 항상 강제 제외 — UI가 토글 대신 "이 기기에만"을 보인다.
-  // sync.companies는 이 회사 것만 — 실패·빈 항목 파일 경로가 실리므로, 이 회사 가드만 통과한 요청에 다른 회사 상태를 보이지 않는다(분리 검수 LOW-1).
-  const sync = syncStatus();
-  sync.companies = sync.companies[ws] ? { [ws]: sync.companies[ws] } : {};
-  return Response.json({ connections: maskConnections(all), gateway, sync, credSync: company?.credSync !== false, credHosted: hostedCredsOff() });
+  // sync는 이 회사 몫만(syncStatusFor) — 실패·빈 항목 파일 경로가 실리므로, 이 회사 가드만 통과한 요청에 다른 회사 상태를 보이지 않는다.
+  return Response.json({ connections: maskConnections(all), gateway, sync: syncStatusFor(ws), credSync: company?.credSync !== false, credHosted: hostedCredsOff() });
 }
 
 /** 연결 설정 — { kind: 'telegram'|'slack', token?, enabled?, defaultCrew?, channel?, mutedEvents? }. 빈 token은 기존 유지.

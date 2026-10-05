@@ -18,7 +18,7 @@ process.env.ARGO_ROOT = ROOT;
 process.env.ARGO_SYNC = '1';
 delete process.env.ARGO_SYNC_ALLOW_MASS_DELETE;
 
-const { syncCompany, _setSyncClientForTest, _tombstonesForTest, isDiscoverDue, syncFailedMessage } = await import('../src/sync.mjs');
+const { syncCompany, _setSyncClientForTest, _tombstonesForTest, isDiscoverDue, syncFailedMessage, syncStatusFor } = await import('../src/sync.mjs');
 const { ensureAccountKey, clearAccountKey } = await import('../src/accountkey.mjs');
 const { openSecretCompat, sealSecret } = await import('../src/secretbox.mjs');
 // 회사 데이터 전체 봉투(v2)가 기본 켜짐(2026-09-06) — 실환경처럼 계정 키를 확보해야 동기화가 돈다(미확보 = 전체 불가시 보류).
@@ -951,4 +951,23 @@ test('CDN에 남은 옛 내용으로 원격 변경을 받지 않는다 — 파�
   assert.equal(r.pulled, 1);
   assert.equal(await readFile(join(wsRoot, 'vault', 'z.md'), 'utf8'), 'v2 from other device', '옛 사본을 새 메타로 기록하지 않는다');
   assert.deepEqual(cdn.noNonce, []);
+});
+
+test('한 회사 화면용 상태는 다른 회사의 결과와 그 회사 몫 lastError를 싣지 않는다(분리 검수 LOW-1·보안 검토)', () => {
+  // 회사 가드(guardCompany)는 그 회사만 본다 — 같은 기기의 게스트(주인 없는 회사)나 다른 계정이 자기 회사 화면을 열어도
+  // 이 계정 회사의 실패·빈 항목 파일 경로가 보이면 안 된다. lastError는 기기 전체에 하나라 회사 ID 접두로 가른다.
+  const st = globalThis.__argoSyncStatus; const saved = { lastError: st.lastError, companies: st.companies };
+  try {
+    st.companies = { a: { failed: 1, failures: [{ rel: 'vault/비공개-계획.md', reason: 'x' }], missingRels: ['vault/gone.md'] }, b: { failed: 0 } };
+    st.lastError = 'a: 동기화 파일 1건 실패 (vault/비공개-계획.md: x) — 잠시 후 재시도';
+    const forB = syncStatusFor('b');
+    assert.deepEqual(Object.keys(forB.companies), ['b']);
+    assert.equal(forB.lastError, '', '다른 회사 몫 오류(파일 경로 포함)는 이 회사 화면에 싣지 않는다');
+    const forA = syncStatusFor('a');
+    assert.deepEqual(Object.keys(forA.companies), ['a']);
+    assert.equal(forA.lastError, st.lastError, '자기 회사 오류는 그대로 보인다');
+    assert.deepEqual(syncStatusFor('c').companies, {}, '동기화 기록이 없는 회사는 빈 목록');
+    st.lastError = '동기화 자격 없음/만료 — 재로그인 필요';
+    assert.equal(syncStatusFor('b').lastError, st.lastError, '기기 전체 오류는 어느 회사 화면에나 보인다');
+  } finally { st.lastError = saved.lastError; st.companies = saved.companies; }
 });
