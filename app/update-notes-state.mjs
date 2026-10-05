@@ -9,7 +9,11 @@ export const UPDATE_NOTES = Object.freeze({
   '0.1.93': Object.freeze(['updates.note.cliBundled', 'updates.note.delegationSwitch', 'updates.note.splash']),
   '0.1.94': Object.freeze(['updates.note.sessionMsg', 'updates.note.inboundCard', 'updates.note.fullAutoScope', 'updates.note.autoAttach', 'updates.note.shipSplash']),
   '0.1.95': Object.freeze(['updates.note.updateWhere', 'updates.note.oneRoomAlerts', 'updates.note.channelRecall', 'updates.note.officeTools', 'updates.note.syncCopies']),
-  '0.1.96': Object.freeze(['updates.note.agentRename']),
+  // 근거 커밋 — agentRename: 322616be(T1)·fdc51cde(T5 이름 호칭) / companyRestore: f3610ff1(F14)·f1f41f80(UM3)·396b1bbd
+  // longChat: f0e792b1(B2 네이티브 요약 압축)·c6e8dc6d(B3' CLI·이어받기 예산+누적 요약, 안내 줄) / phoneScreen: 26382ba3(UM1)·eea43dfb(M1)·4ea447ca(UL9)·396b1bbd·e004baa7
+  // errorText: 4b642752(F11)·191046c8(UL6)·f9561ac8(UL5)·ad43f7db(M3)·8796a8dd(F3) / msgrCard: d6ce9ab3(CX-12·CX-13)
+  '0.1.96': Object.freeze(['updates.note.agentRename', 'updates.note.companyRestore', 'updates.note.longChat',
+    'updates.note.phoneScreen', 'updates.note.errorText', 'updates.note.msgrCard']),
 });
 
 export function stableVersion(value) {
