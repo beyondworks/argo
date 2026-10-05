@@ -24,6 +24,8 @@ const dir = paths(WS).agents;
 await mkdir(dir, { recursive: true });
 const seed = async (slug) => writeFile(join(dir, `${slug}.md`), `---\nname: ${slug}\nslug: ${slug}\nrole: r\n---\n\n# ${slug}\n`);
 const fire = (slug) => DELETE(new Request('http://localhost/x', { method: 'DELETE' }), { params: Promise.resolve({ ws: WS, slug }) });
+/** 이벤트 루프를 몇 바퀴 돌려 남은 비동기 꼬리(마이크로태스크)가 끝나게 한다 — 시간이 아니라 바퀴 수라 부하와 무관 */
+const settle = async () => { for (let i = 0; i < 8; i++) await new Promise((r) => setImmediate(r)); };
 const until = async (fn) => { for (let i = 0; i < 100; i++) { if (fn()) return true; await new Promise((r) => setTimeout(r, 10)); } return false; };
 const wire = (db, over = {}) => Object.assign(M.firedDeps, { session: async () => ({ uid: UID, db }), load: async () => ({ ownerId: UID }), seen: new Map([[WS, new Map([['luna', null], ['jun', null]])]]), log: () => {}, ...over });
 
@@ -34,7 +36,8 @@ test('F1. 해고하면 카드는 .archive로 가고, 그 slug의 파견 행 분�
   assert.deepEqual(await res.json(), { ok: true });
   assert.ok(!(await readdir(dir)).includes('luna.md'), '카드는 보관함으로');
   assert.ok(await until(() => asked.length >= 1), '분리 호출이 나간다');
-  await new Promise((r) => setTimeout(r, 30));
+  assert.ok(await until(() => !M.firedDeps.seen.get(WS).has('luna')), '분리 뒤 기준에서 slug가 빠진다(고정 대기가 아니라 조건 대기 — 카드 폴더를 한 번 더 읽는 시간은 부하에 따라 다르다, 4차 L-6)');
+  await settle();
   assert.deepEqual(asked, [[UID, WS, 'luna']], '그 slug만, 한 번');
   assert.deepEqual([...M.firedDeps.seen.get(WS).keys()], ['jun'], '분리한 slug는 기준에서 뺀다 — 다른 크루는 그대로');
 });
@@ -59,7 +62,8 @@ test('F3. 로그인이 없거나 DB가 실패하거나 소유자가 달라도 �
     const res = await fire('fragile');
     assert.equal(res.status, 200, name);
     assert.ok(!(await readdir(dir)).includes('fragile.md'), `${name}: 해고는 그대로 된다`);
-    await new Promise((r) => setTimeout(r, 80));
+    if (wantCalls) assert.ok(await until(() => asked.length >= wantCalls), `${name}: 분리 호출이 나간다`);
+    await settle();
     assert.equal(asked.length, wantCalls, `${name}: 분리 호출 수`);
     assert.deepEqual([...M.firedDeps.seen.get(WS).keys()].sort(), ['fragile', 'jun'], `${name}: 해고한 slug가 기준에 남는다 — 다음 미러 틱이 카드가 사라진 변화로 처리`);
   }
@@ -69,6 +73,6 @@ test('F4. 없는 크루를 해고하면 오류 그대로이고 분리 호출은 
   const asked = []; wire({ async detachActiveCrews(...a) { asked.push(a); return []; } });
   const res = await fire('nobody');
   assert.ok(!res.ok, `실패 응답 ${res.status}`);
-  await new Promise((r) => setTimeout(r, 50));
+  await settle();
   assert.deepEqual(asked, []);
 });

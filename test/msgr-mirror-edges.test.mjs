@@ -367,7 +367,13 @@ test('E19(3차 M-C). 일시 오류(fetch failed·402·5xx·시간 초과)는 백
   for (const [label, err, backoff] of [['fetch failed', new Error('TypeError: fetch failed'), false], ['402', dbError('Payment Required'), false], ['5xx', dbError('upstream connect error', 'PGRST000'), false],
     ['statement timeout', dbError('canceling statement due to statement timeout', '57014'), false], ['code 없는 서버 오류', dbError('internal error'), false],
     ['RLS 42501', dbError('new row violates row-level security policy', '42501'), true], ['제약 위반 23514', dbError('violates check constraint', '23514'), true], ['unique 23505', dbError('duplicate key', '23505'), true],
-    ['msgr_ws_owned_by_other(code 없음)', dbError('msgr_ws_owned_by_other'), true], ['P0001', dbError('raise', 'P0001'), true]]) {
+    ['msgr_ws_owned_by_other(code 없음)', dbError('msgr_ws_owned_by_other'), true], ['P0001', dbError('raise', 'P0001'), true],
+    // 4차 M-1 — 일시 오류만 좁게 나열하고 나머지는 결정적(앱이 마이그레이션보다 먼저 나가면 PGRST204, 이름에 NUL이면 22P05 …)
+    ['PGRST204(열 없음)', dbError('Could not find the column in the schema cache', 'PGRST204'), true], ['PGRST202', dbError('Could not find the function', 'PGRST202'), true], ['22P02', dbError('invalid input syntax', '22P02'), true],
+    ['22P05(NUL)', dbError('unsupported Unicode escape sequence', '22P05'), true], ['42P10', dbError('no unique or exclusion constraint', '42P10'), true], ['42703', dbError('column does not exist', '42703'), true], ['42883', dbError('function does not exist', '42883'), true],
+    ['PGRST000(연결)', dbError('Database client error', 'PGRST000'), false], ['PGRST301(JWT)', dbError('JWT expired', 'PGRST301'), false], ['08006', dbError('connection failure', '08006'), false], ['40001', dbError('could not serialize access', '40001'), false],
+    ['40P01', dbError('deadlock detected', '40P01'), false], ['53300', dbError('too many connections', '53300'), false], ['57014', dbError('canceling statement due to statement timeout', '57014'), false],
+    ['HTTP 502', dbError('Bad Gateway', '502'), false], ['429', dbError('Too Many Requests', '429'), false], ['ECONNRESET', Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }), false]]) {
     const d = insertable(fresh()); const blocked = new Map(); let clock = 1_000_000;
     const okUpsert = d.upsertAvailable; let failOnce = true;
     d.upsertAvailable = async (rows) => { if (failOnce) { failOnce = false; d.calls.push(['upsert-fail']); throw err; } return okUpsert(rows); };
@@ -380,15 +386,21 @@ test('E19(3차 M-C). 일시 오류(fetch failed·402·5xx·시간 초과)는 백
 });
 
 // 실제 makeDb를 메모리 표 위에서 돌리는 가짜 supabase 클라이언트 — 필터를 실제로 적용한다(검수 3차 L-2·L-4)
-function memClient(tables, rpcs = {}) {
+function memClient(tables, rpcs = {}, errors = {}) {
+  const calls = [];
   const make = (name) => {
-    const q = { op: 'select', patch: null, f: [], sel: false,
-      select() { q.sel = true; return q; }, update(p) { q.op = 'update'; q.patch = p; return q; },
+    const q = { op: 'select', patch: null, rows: null, f: [], sel: false,
+      select() { q.sel = true; return q; }, update(p) { q.op = 'update'; q.patch = p; return q; }, insert(r) { q.op = 'insert'; q.rows = [].concat(r); return q; }, upsert(r) { q.op = 'upsert'; q.rows = [].concat(r); return q; },
       eq(k, v) { q.f.push((r) => r[k] === v); return q; }, in(k, vs) { q.f.push((r) => vs.includes(r[k])); return q; },
-      then(ok, no) { const hit = tables[name].filter((r) => q.f.every((x) => x(r))); if (q.op === 'update') hit.forEach((r) => Object.assign(r, q.patch)); return Promise.resolve({ data: q.op === 'update' && !q.sel ? null : hit.map((r) => ({ ...r })), error: null }).then(ok, no); } };
+      then(ok, no) {
+        calls.push(`${name}.${q.op}`);
+        if ((q.op === 'insert' || q.op === 'upsert') && errors[q.op]) return Promise.resolve({ data: null, error: errors[q.op] }).then(ok, no);
+        if (q.op === 'insert' || q.op === 'upsert') { tables[name].push(...q.rows); return Promise.resolve({ data: null, error: null }).then(ok, no); }
+        const hit = tables[name].filter((r) => q.f.every((x) => x(r))); if (q.op === 'update') hit.forEach((r) => Object.assign(r, q.patch));
+        return Promise.resolve({ data: q.op === 'update' && !q.sel ? null : hit.map((r) => ({ ...r })), error: null }).then(ok, no); } };
     return q;
   };
-  return { from: make, rpc: async (n, a) => rpcs[n](a) };
+  return { calls, from: make, rpc: async (n, a) => rpcs[n](a) };
 }
 
 test('E20(3차 L-2). 되돌리기(status=active)는 분리된(detached) 행에만 — 그 사이 사용자가 파견 해제(available)한 행을 덮지 않는다, 직무·이름 갱신은 상태와 무관', async () => {
@@ -440,4 +452,101 @@ test('E21b(3차 L-2). 실제 makeDb로 — 분리와 되돌리기 사이에 사�
   const res = await M.detachFiredCrew(WS, 'x', { session: async () => ({ uid: UID, db: dbm }), load: async () => ({ ownerId: UID }), seen: new Map(), hasCard: async () => n++ > 0, log: () => {} });
   assert.deepEqual(res, { skipped: 'rehired-during' });
   assert.deepEqual(rows.map((r) => [r.id, r.status]), [['x1', 'available'], ['xp', 'active']], '해제한 행은 그대로, 분리된 행만 되살아난다');
+});
+
+// ── 검수 4차(0fed5aef 대상) M-2·L-2·L-5 ──
+const PERSONAL_GATE = dbError('msgr_ws_owned_by_other', '42501');
+const personalWorld = ({ orgs = [], rows = [], failWith = PERSONAL_GATE } = {}) => {
+  const d = db({ orgs, rows, looks: [] });
+  d.insertPersonal = async (r) => { d.calls.push(['insertPersonal', r.map((x) => x.slug)]); if (failWith) throw failWith; d.state.rows.push(...r.map((x, i) => ({ id: `np-${i}`, ...x }))); };
+  if (orgs.length) d.canInsertCrews = async () => true;
+  return d;
+};
+const count = (d, k) => d.calls.filter(([x]) => x === k).length;
+
+test('E23(4차 M-2). 개인 행 insert도 같은 백오프 — 결정적 실패(msgr_ws_owned_by_other 42501)는 10분 동안 개인 insert·얼굴 읽기를 건너뛰고, 조직이 없는 계정은 그 오류를 미러 오류로 올린다', async () => {
+  const d = personalWorld(); const blocked = new Map(), seen = new Map(); let clock = 1_000_000;
+  const tick = () => mirrorInventory(WS, { db: d, uid: UID, agents: [card('luna', null, '루나')], seen, blocked, now: () => clock, log: () => {} });
+  for (let t = 0; t < 40; t++) { await assert.rejects(tick(), /msgr_ws_owned_by_other/, `틱 ${t}: 조직이 없는 계정은 개인 insert 실패를 미러 오류로 올린다(브리지 상태)`); clock += 15_000; }
+  assert.equal(count(d, 'insertPersonal'), 1, '40틱(10분) 동안 실패한 개인 insert는 1번'); assert.equal(count(d, 'crewLooks'), 1, '얼굴 재료 읽기도 1번');
+  clock += 60_000; await assert.rejects(tick(), /msgr_ws_owned_by_other/); assert.equal(count(d, 'insertPersonal'), 2, '10분 뒤 한 번 다시 시도');
+  // 다른 회사는 따로
+  const other = personalWorld({ failWith: null });
+  await mirrorInventory('wsOther', { db: other, uid: UID, agents: [card('jun', null, '준')], seen: new Map(), blocked, now: () => clock, log: () => {} });
+  assert.equal(count(other, 'insertPersonal'), 1, '다른 회사 개인 행은 막히지 않는다');
+});
+
+test('E23b(4차 M-2). 개인 행 일시 오류는 백오프하지 않는다(다음 틱에 다시), 백오프 중에도 이미 있는 개인 행의 이름·직무·해고 갱신은 계속된다, 조직이 있는 계정의 개인 실패는 조직 미러를 막지도 오류로 올리지도 않는다', async () => {
+  const t = personalWorld({ failWith: new Error('TypeError: fetch failed') }); const blockedT = new Map(); let clock = 5_000_000;
+  const tickT = () => mirrorInventory(WS, { db: t, uid: UID, agents: [card('luna', null, '루나')], seen: new Map(), blocked: blockedT, now: () => clock, log: () => {} });
+  await assert.rejects(tickT(), /fetch failed/); clock += 15_000; await assert.rejects(tickT(), /fetch failed/);
+  assert.equal(count(t, 'insertPersonal'), 2, '일시 오류는 다음 틱에 다시');
+  // 백오프 중 갱신 계속
+  const d = personalWorld({ rows: [{ id: 'p1', org_id: null, slug: 'luna', display_name: '옛 이름', role_text: null, status: 'active' }] }); const blocked = new Map(); let c2 = 9_000_000;
+  const tick = (agents) => mirrorInventory(WS, { db: d, uid: UID, agents, seen: new Map(), blocked, now: () => c2, log: () => {} });
+  await assert.rejects(tick([card('luna', null, '루나'), card('jun', null, '준')]), /msgr_ws_owned_by_other/);
+  assert.equal(d.state.rows.find((r) => r.id === 'p1').display_name, '루나', '같은 틱의 이름 갱신은 된다');
+  c2 += 15_000; await assert.rejects(tick([card('luna', null, '루나2'), card('jun', null, '준')]), /msgr_ws_owned_by_other/);
+  assert.equal(d.state.rows.find((r) => r.id === 'p1').display_name, '루나2', '백오프 중에도 이름 갱신은 계속'); assert.equal(count(d, 'insertPersonal'), 1);
+  // 조직이 있는 계정: 개인 실패(옛 서버)는 조직 미러를 막지 않고 오류로 올리지 않는다
+  const o = personalWorld({ orgs: [O1], failWith: dbError('null value in column "org_id" violates not-null constraint', '23502') }); const logs = [];
+  await mirrorInventory(WS, { db: o, uid: UID, agents: [card('luna', null, '루나')], seen: new Map(), blocked: new Map(), now: () => 1, log: (...a) => logs.push(a.join(' ')) });
+  assert.equal(count(o, 'upsertAvailable'), 1, '조직 행은 들어간다'); assert.ok(logs.some((l) => /개인 크루 미러 실패/.test(l)));
+});
+
+test('E25(4차 M-2·L-5). 실제 makeDb가 insert·upsert 오류에 SQLSTATE(code)를 싣는다 — 메시지 정규식에 안 걸리는 P0001도 결정적으로 분류된다(code를 빠뜨리면 일시로 보여 15초마다 되풀이)', async () => {
+  const gate = { code: '42501', message: 'msgr_ws_owned_by_other' };
+  await assert.rejects(M.makeDb(memClient({ msgr_crews: [] }, {}, { insert: gate })).insertPersonal([{ slug: 'a' }]), (e) => e.code === '42501' && /msgr_ws_owned_by_other/.test(e.message));
+  await assert.doesNotReject(M.makeDb(memClient({ msgr_crews: [] }, {}, { insert: { code: '23505', message: 'duplicate' } })).insertPersonal([{ slug: 'a' }]), '경합 중복(23505)은 삼킨다');
+  const quiet = { code: 'P0001', message: 'some_future_trigger' }; // 메시지 정규식에 안 걸리는 결정적 오류
+  const up = await M.makeDb(memClient({ msgr_crews: [] }, {}, { upsert: quiet })).upsertAvailable([{ slug: 'a' }]).then(() => null, (e) => e);
+  assert.equal(up.code, 'P0001'); assert.equal(M.isDeterministicInsertError(up), true, 'code 없이는 일시로 보인다');
+  const ins = await M.makeDb(memClient({ msgr_crews: [] }, {}, { insert: quiet })).insertPersonal([{ slug: 'a' }]).then(() => null, (e) => e);
+  assert.equal(ins.code, 'P0001'); assert.equal(M.isDeterministicInsertError(ins), true);
+  const tr = await M.makeDb(memClient({ msgr_crews: [] }, {}, { upsert: { code: 'PGRST000', message: 'db down' } })).upsertAvailable([{ slug: 'a' }]).then(() => null, (e) => e);
+  assert.equal(M.isDeterministicInsertError(tr), false, '연결 오류는 일시');
+});
+
+test('E24(4차 L-2). 기준(seen)이 없는 첫 틱 전에 재영입 + 되돌리기 실패 — 되살릴 slug를 따로 기록해 첫 틱이 그 slug만 되살린다(다른 크루 직무는 안 건드림), 카드가 다시 사라졌으면 기록을 비운다', async () => {
+  const mk = () => [{ id: 'x1', org_id: O1, slug: 'x', display_name: 'X', role_text: '옛 직무', status: 'active' }, { id: 'xp', org_id: null, slug: 'x', display_name: 'X', role_text: '옛 직무', status: 'active' },
+    { id: 'y1', org_id: O1, slug: 'y', display_name: 'Y', role_text: '메신저에서 고침', status: 'active' }];
+  const run = async ({ gone = false } = {}) => {
+    const d = db({ rows: mk() }); let blip = true;
+    const set = d.updateCrewInfo; d.updateCrewInfo = async (id, patch) => { if (patch.status === 'active' && blip) throw new Error('network blip'); return set(id, patch); };
+    d.detachActiveCrews = async () => { const hit = d.state.rows.filter((r) => r.slug === 'x' && r.status === 'active'); hit.forEach((r) => { r.status = 'detached'; }); return hit.map((r) => r.id); };
+    const seen = new Map(), revive = new Map(); let n = 0;
+    const res = await M.detachFiredCrew(WS, 'x', { session: async () => ({ uid: UID, db: d }), load: async () => ({ ownerId: UID }), seen, revive, hasCard: async () => n++ > 0, log: () => {} });
+    blip = false;
+    const agents = gone ? [card('y', '카드 직무', 'Y')] : [card('x', '새 직무', 'X'), card('y', '카드 직무', 'Y')];
+    for (let i = 0; i < 3; i++) await mirrorInventory(WS, { db: d, uid: UID, agents, seen, revive, log: () => {} });
+    return { d, res, revive };
+  };
+  const a = await run();
+  assert.deepEqual(a.res, { skipped: 'rehired-during' });
+  assert.deepEqual(['x1', 'xp'].map((id) => a.d.state.rows.find((r) => r.id === id).status), ['active', 'active'], '기준 없이도 첫 틱이 되살린다');
+  assert.equal(a.d.state.rows.find((r) => r.id === 'y1').role_text, '메신저에서 고침', '다른 크루의 직무는 건드리지 않는다');
+  assert.equal(a.revive.get(WS)?.size ?? 0, 0, '되살린 뒤 기록을 비운다');
+  const b = await run({ gone: true });
+  assert.deepEqual(['x1', 'xp'].map((id) => b.d.state.rows.find((r) => r.id === id).status), ['detached', 'detached'], '카드가 다시 사라졌으면 되살리지 않는다'); assert.equal(b.revive.get(WS)?.size ?? 0, 0, '카드 없는 slug는 기록에서 뺀다');
+});
+
+test('E24b(4차 L-2). 기준이 없는 첫 틱 전에 해고 분리가 성공하고 그 사이 같은 slug를 다시 영입해도 첫 틱이 되살린다 — 기준이 있으면 기록하지 않는다(다음 틱의 다시 생긴 카드 변화가 처리)', async () => {
+  const mk = () => [{ id: 'x1', org_id: O1, slug: 'x', display_name: 'X', role_text: null, status: 'active' }, { id: 'xp', org_id: null, slug: 'x', display_name: 'X', role_text: null, status: 'active' }];
+  const d = db({ rows: mk() }); d.detachActiveCrews = async () => { const hit = d.state.rows.filter((r) => r.slug === 'x' && r.status === 'active'); hit.forEach((r) => { r.status = 'detached'; }); return hit.map((r) => r.id); };
+  const seen = new Map(), revive = new Map();
+  assert.deepEqual(await M.detachFiredCrew(WS, 'x', { session: async () => ({ uid: UID, db: d }), load: async () => ({ ownerId: UID }), seen, revive, hasCard: async () => false, log: () => {} }), { detached: 2 });
+  assert.deepEqual([...(revive.get(WS) ?? [])], ['x'], '기준이 없으니 되살릴 후보로 기록');
+  await mirrorInventory(WS, { db: d, uid: UID, agents: [card('x', null, 'X')], seen, revive, log: () => {} }); // 그 사이 다시 영입한 카드가 있는 첫 틱
+  assert.deepEqual(d.state.rows.map((r) => r.status), ['active', 'active'], '첫 틱이 되살린다'); assert.equal(revive.size, 0);
+  // 카드가 없는 채 첫 틱 — 분리 그대로, 기록은 비운다
+  const d2 = db({ rows: mk() }); d2.detachActiveCrews = async () => { const hit = d2.state.rows.filter((r) => r.slug === 'x' && r.status === 'active'); hit.forEach((r) => { r.status = 'detached'; }); return hit.map((r) => r.id); };
+  const revive2 = new Map(); const seen2 = new Map();
+  await M.detachFiredCrew(WS, 'x', { session: async () => ({ uid: UID, db: d2 }), load: async () => ({ ownerId: UID }), seen: seen2, revive: revive2, hasCard: async () => false, log: () => {} });
+  await mirrorInventory(WS, { db: d2, uid: UID, agents: [card('y', null, 'Y')], seen: seen2, revive: revive2, log: () => {} });
+  assert.deepEqual(['x1', 'xp'].map((id) => d2.state.rows.find((r) => r.id === id).status), ['detached', 'detached'], '카드가 없으면 되살리지 않는다'); assert.equal(revive2.size, 0, '기록을 비운다');
+  // 기준이 있으면 기록하지 않는다
+  const d3 = db({ rows: mk() }); d3.detachActiveCrews = async () => { const hit = d3.state.rows.filter((r) => r.status === 'active'); hit.forEach((r) => { r.status = 'detached'; }); return hit.map((r) => r.id); };
+  const revive3 = new Map();
+  await M.detachFiredCrew(WS, 'x', { session: async () => ({ uid: UID, db: d3 }), load: async () => ({ ownerId: UID }), seen: new Map([[WS, new Map([['x', null]])]]), revive: revive3, hasCard: async () => false, log: () => {} });
+  assert.equal(revive3.size, 0);
 });
