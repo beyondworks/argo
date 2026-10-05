@@ -8,6 +8,8 @@ import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { register } from 'node:module';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-coload-'));
 delete process.env.NEXT_PUBLIC_SUPABASE_URL; delete process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY; // AUTH off(apimsg 관례)
@@ -50,4 +52,22 @@ test('F13 홈 목록: 조회 실패는 오류 + 다시 시도(끝없는 로딩 �
   assert.equal(homeListView(null, true), 'error');
   assert.equal(homeListView([], true), 'empty', '이미 받은 목록이 있으면 그것을 보여 준다');
   assert.equal(homeListView([{ id: 'a' }], false), 'list');
+});
+
+test('UH1 인증 켜짐(출하 구성): 손상·읽기 실패도 인증 꺼짐과 같이 500 company_load_failed — 가드가 404 "회사를 찾을 수 없습니다"로 덮지 않는다', async () => {
+  // 인증 켜짐은 모듈 로드 시 env로 정해진다 — 같은 프로세스에서 켤 수 없어 자식 프로세스 프로브를 돌린다. 게스트 모드 + 가짜 .invalid 주소(네트워크 없음).
+  const root = await mkdtemp(join(tmpdir(), 'argo-coload-authon-'));
+  const r = spawnSync(process.execPath, [fileURLToPath(new URL('./helpers/company-load-authon-probe.mjs', import.meta.url))], {
+    encoding: 'utf8', timeout: 60_000,
+    env: { ...process.env, ARGO_ROOT: root, ARGO_ENC_VAULT: '0', NEXT_PUBLIC_SUPABASE_URL: 'https://argo-test.invalid', NEXT_PUBLIC_SUPABASE_ANON_KEY: 'test-anon-placeholder' },
+  });
+  assert.equal(r.status, 0, `프로브 실패: ${r.stderr}`);
+  const out = JSON.parse(r.stdout.trim().split('\n').pop());
+  assert.equal(out.authOn, true, '전제: 인증 켜짐 축');
+  assert.deepEqual(out.missing, { status: 404, errorCode: 'company_not_found' }, '진짜 없음(ENOENT)만 404');
+  assert.deepEqual(out.badId, { status: 404, errorCode: 'company_not_found' }, '규칙 밖 id도 없음');
+  assert.deepEqual(out.corrupt, { status: 500, errorCode: 'company_load_failed' }, '손상된 company.json — 회사가 사라진 것처럼 보이면 안 된다(인증 꺼짐과 같은 응답)');
+  assert.deepEqual(out.unreadable, { status: 500, errorCode: 'company_load_failed' }, '읽기 실패(EISDIR·EBUSY·EMFILE 등)도 일시 실패');
+  assert.deepEqual(out.ok, { status: 200, errorCode: null });
+  assert.deepEqual(out.linked, { status: 403, errorCode: 'company_linked' }, '소유권 판정은 그대로');
 });
