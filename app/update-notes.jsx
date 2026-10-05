@@ -40,11 +40,34 @@ export function UpdateNotesCard({ version, items, t, onConfirm, saving = false, 
   </section>;
 }
 
+/** 접힌 안내 — 상단바 안의 작은 칩(layout.jsx #argo-topbar-notes 자리). 화면 위에 떠 있지 않아 아무것도 덮지 않는다.
+    펼친 카드를 스스로 띄우면 데크의 '설정에서 연결하기'를, 상단바 아래 알약도 크루 대화의 방금 보낸 글을 덮었다
+    (UX-A01 검증 2026-10-05 실측). 내용은 사용자가 칩을 눌렀을 때만 펼친다. */
+export function UpdateNotesChip({ version, t, onExpand }) {
+  return <button type="button" className="chip" onClick={onExpand} title={t('updates.title', { version })}
+    style={{ flex: 'none', cursor: 'pointer', fontSize: 10.5, textTransform: 'none', color: 'var(--fg)', borderColor: 'var(--fg-3)' }}>
+    <span className="dot" style={{ background: 'var(--primary)' }} aria-hidden="true" />{t('updates.chip')}
+  </button>;
+}
+
+/** 칩 자리가 없는 화면(상단바 없는 레이아웃)의 대체 — 한 줄 알약. */
+export function UpdateNotesPill({ version, t, onExpand, onClose }) {
+  return <section className="card card-float" role="status" aria-label={t('updates.title', { version })}
+    style={{ position: 'fixed', right: 'max(16px, env(safe-area-inset-right))', top: '64px', zIndex: 90,
+      display: 'flex', alignItems: 'center', gap: 6, padding: '5px 6px 5px 14px', borderRadius: 999,
+      maxWidth: 'calc(100% - 32px)', background: 'var(--card)', boxShadow: 'var(--shadow-float)', color: 'var(--fg)' }}>
+    <span style={{ fontSize: 12.5, fontWeight: 650, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t('updates.title', { version })}</span>
+    <button type="button" className="btn sm" style={{ flexShrink: 0 }} onClick={onExpand}>{t('updates.view')}</button>
+    <button type="button" className="btn sm" style={{ flexShrink: 0 }} onClick={onClose} aria-label={t('common.close')}>×</button>
+  </section>;
+}
+
 export default function UpdateNotes({ current, ready, isApp, blocked = false }) {
   const { t } = useLang();
   const [record, setRecord] = useState(null);
   const [presentation, setPresentation] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [expanded, setExpanded] = useState(false); // 사용자가 '보기'를 누른 때만 펼친다
   const [surface, setSurface] = useState({ hidden: true, editing: false, overlay: false });
   const savingRef = useRef(false);
   const liveKey = useRef('');
@@ -101,8 +124,9 @@ export default function UpdateNotes({ current, ready, isApp, blocked = false }) 
     dismiss();
     if (!presentation?.errorOnly) closeUpdateNotes(current, { isApp }).then((ok) => { if (ok && liveKey.current === key) setRecord({ key, version: current }); });
   };
-  // 카드가 떠 있는데 입력을 시작하면 이번 실행에서는 접는다 — 숨겼다가 blur 때 다시 그리면 클릭을 먹는다(UX-A01).
-  const visible = !!ready && items.length > 0 && !blocked && !surface.hidden && !surface.overlay && presentation?.key === key;
+  // 펼친 카드가 떠 있는데 입력을 시작하면 이번 실행에서는 접는다 — 숨겼다가 blur 때 다시 그리면 클릭을 먹는다(UX-A01).
+  // 상단바 칩은 아무것도 덮지 않으므로 입력과 무관하게 둔다.
+  const visible = expanded && !!ready && items.length > 0 && !blocked && !surface.hidden && !surface.overlay && presentation?.key === key;
   useEffect(() => {
     if (shouldAutoDismissUpdateNotes({ visible, editing: surface.editing, saving })) dismiss();
   }, [visible, surface.editing, saving]); // dismiss는 매 렌더 새 함수지만 key 외 상태를 읽지 않아 deps에서 뺀다
@@ -119,7 +143,15 @@ export default function UpdateNotes({ current, ready, isApp, blocked = false }) 
     } finally { savingRef.current = false; setSaving(false); }
   };
 
-  if (!ready || !items.length || blocked || surface.hidden || surface.editing || surface.overlay || presentation?.key !== key) return null;
+  if (!ready || !items.length || blocked || presentation?.key !== key) return null;
+  // 접힌 상태 — 상단바 칩(덮는 것 없음). 오류만 알릴 때·사용자가 펼쳤을 때만 카드
+  if (!expanded && !presentation.errorOnly && !presentation.error) {
+    const host = document.getElementById('argo-topbar-notes');
+    if (host) return createPortal(<UpdateNotesChip version={current} t={t} onExpand={() => setExpanded(true)} />, host);
+    if (surface.hidden || surface.editing || surface.overlay) return null;
+    return createPortal(<UpdateNotesPill version={current} t={t} onExpand={() => setExpanded(true)} onClose={close} />, document.body);
+  }
+  if (surface.hidden || surface.editing || surface.overlay) return null;
   return createPortal(<UpdateNotesCard version={current} items={presentation.errorOnly ? [] : items} t={t}
     onConfirm={presentation.errorOnly ? undefined : confirm} saving={saving}
     error={presentation.error ? t(presentation.error) : ''} onDismiss={dismiss} onClose={close} />, document.body);

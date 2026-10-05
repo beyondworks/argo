@@ -605,6 +605,8 @@ function Shell({ children, params }) {
               {t('shell.reloadFail')}
             </button>
           )}
+          {/* 이번 업데이트 칩 자리 — UpdateNotes가 접힌 안내를 여기에 그린다(덮는 것 없는 자리, UX-A01) */}
+          <span id="argo-topbar-notes" style={{ display: 'contents' }} />
           <Clock />
           <TasksDock ws={ws} data={tasks} open={dockOpen} setOpen={setDockOpen} />
           {/* 검색은 받는 화면(데크·활동·기억)에서만 — 다른 화면에선 입력해도 반응이 없던 죽은 칸(UX-A03). 무엇을 찾는지 placeholder로 */}

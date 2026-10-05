@@ -259,6 +259,8 @@ const DICT = {
   'updates.title': ['이번 업데이트 · v{version}', "What's new · v{version}"],
   'updates.intro': ['이번 버전에 포함된 변경사항입니다.', 'Here is what changed in this version.'],
   'updates.confirm': ['확인했어요', 'Got it'],
+  'updates.chip': ['새 소식', "What's new"],
+  'updates.view': ['보기', 'View'],
   'updates.later': ['나중에', 'Later'],
   'updates.saving': ['확인 기록 저장 중…', 'Saving…'],
   'updates.saveError': ['확인 기록을 저장하지 못했습니다. 다시 시도하거나 이번 실행에서는 닫을 수 있습니다.', "Couldn't save your acknowledgement. Retry, or dismiss for this session."],
