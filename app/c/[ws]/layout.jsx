@@ -15,6 +15,7 @@ import { useSplitAlive } from './split-alive';
 import { nextCompanyData, brokenCardsOf } from './company-load.mjs';
 import { watchTopbarContent } from './topbar-fit.mjs';
 import { emitSearch } from './search-bus.mjs'; // 상단 검색 → 데크·활동·기억(UL10)
+import { drawerKeyAction, drawerFocusTarget } from './drawer.mjs'; // 폰 폭 서랍 Esc·포커스(UL9)
 import { searchScope } from './search-scope.mjs'; // 검색을 받는 화면에서만 검색 칸(UX-A03)
 import { gistLabel } from '../../lib/gist-display.mjs'; // 메신저 머리말을 뗀 요약(UX-A08)
 
@@ -113,6 +114,20 @@ function Shell({ children, params }) {
   // 폰 폭(≤900px) 사이드바 서랍 — 본문 위에 메뉴가 730px 쌓이던 것(UX-A04). 이동하면 닫힌다
   const [sideOpen, setSideOpen] = useState(false);
   useEffect(() => { setSideOpen(false); }, [pathname]);
+  // 서랍이 열려 있는 동안: 포커스는 서랍 안으로, Esc는 닫고 포커스를 열기 버튼으로 되돌린다(UL9 — 키보드·화면 낭독기 사용자가 서랍 뒤 본문에 머물렀다)
+  const sideRef = useRef(null);
+  const sideToggleRef = useRef(null);
+  useEffect(() => {
+    if (!sideOpen) return;
+    drawerFocusTarget(sideRef.current)?.focus();
+    const onKey = (e) => {
+      if (drawerKeyAction({ key: e.key, open: true, composing: e.isComposing, defaultPrevented: e.defaultPrevented }) !== 'close') return;
+      setSideOpen(false);
+      sideToggleRef.current?.focus();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [sideOpen]);
   const router = useRouter();
   // 좌우 2분할 보조 패널 — 상태는 ?side= 하나. 레이아웃 안의 내부 링크는 전부 withSide를 통과해
   // 주 화면을 옮겨도 패널이 유지된다. 닫기 = side 쿼리 제거.
@@ -380,7 +395,7 @@ function Shell({ children, params }) {
   return (
     <div className="shell">
       {sideOpen && <div className="side-backdrop" onClick={() => setSideOpen(false)} aria-hidden="true" />}
-      <aside className={`side${sideOpen ? ' open' : ''}`} id="argo-side">
+      <aside className={`side${sideOpen ? ' open' : ''}`} id="argo-side" ref={sideRef} tabIndex={-1}>
         <Link href="/" className="nav-item" style={{ gap: 8, marginBottom: 4 }}>
           <span style={{ color: 'var(--fg)', display: 'inline-flex' }}><StarMark size={15} /></span>
           <span className="mono" style={{ fontWeight: 600, fontSize: 13, color: 'var(--fg)', letterSpacing: '0.16em' }}>ARGO</span>
@@ -581,7 +596,7 @@ function Shell({ children, params }) {
       <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
         <header className="topbar" ref={barRef}>
           {/* 폰 폭에서만 보인다(globals.css .side-toggle) — 사이드바 서랍 열기 */}
-          <button type="button" className="btn sm btn-icon side-toggle" onClick={() => setSideOpen((v) => !v)}
+          <button type="button" className="btn sm btn-icon side-toggle" ref={sideToggleRef} onClick={() => setSideOpen((v) => !v)}
             aria-label={t('nav.menu')} aria-expanded={sideOpen} aria-controls="argo-side" style={{ flex: 'none' }}>
             <Icon name="menu" size={15} />
           </button>
