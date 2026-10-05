@@ -213,7 +213,7 @@ function autoOk(wsId, now) {
 export const _autoLogForTest = autoLog;
 
 /* ─── DB 층 — supabase-js 체인은 여기에만. 반환은 평범한 값/예외. ─── */
-const unwrap = ({ data, error }) => { if (error) throw new Error(`msgr db: ${error.message}`); return data; };
+const unwrap = ({ data, error }) => { if (error) throw Object.assign(new Error(`msgr db: ${error.message}`), { code: error.code }); return data; }; // code — 큐 워커가 영구 오류(형식·권한)를 가려 재시도를 멈춘다(queue.mjs isPermanentQueueError)
 export function makeDb(client) {
   return {
     ...executionDb(client),

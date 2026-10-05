@@ -36,8 +36,44 @@ export async function enqueueJob(wsId, key, id, job) { // (export: 회귀 테스
 /** 핸들러가 이 값을 반환하면 "아직 차례가 아니다" — 선점을 풀어 다음 틱에 다시 집는다(로그 없음, 슬롯 점유 없음). 순서 대기(msgr after)용. */
 export const DEFER = Symbol('queue.defer');
 export const DEFER_BACKOFF_MS = 3000; // DEFER 잡의 재검사 간격(순서 대기의 DB 조회 = 잡당 3초에 한 번)
+/* ─── 실패 분류(F1, 2026-10-05) — 영구 오류를 1초마다 끝없이 재시도하던 결함 ───
+   영구 = 다시 해도 같은 결과가 나오는 오류: Postgres SQLSTATE 22(데이터 형식 — uuid 형변환 22P02 등)·23(제약 위반)·
+   42(문법·권한 — RLS 42501·없는 열 42703), PostgREST 요청·스키마 오류(PGRST1xx·PGRST2xx), 명시 표지(e.permanent).
+   일시 = 그 밖 전부(연결 PGRST0xx·JWT PGRST3xx·직렬화·교착·시간 초과·코드 없음) — 지우지 않고 지수 간격으로 재시도한다.
+   영구 오류 잡은 큐 폴더 안 `<이름>.failed`로 남긴다(큐 폴더는 동기화 제외 — sync.mjs isExcluded). 보존 7일·최대 50건. */
+export function isPermanentQueueError(e) {
+  if (!e) return false;
+  if (e.permanent === true) return true;
+  const code = typeof e.code === 'string' ? e.code : '';
+  return /^(22|23|42)[0-9A-Z]{3}$/.test(code) || /^PGRST[12]\d\d$/.test(code);
+}
+export const QUEUE_RETRY_MAX_MS = 5 * 60_000;
+/** n번째 연속 실패 뒤 다음 시도까지 — 1초(다음 틱)부터 두 배씩, 5분 상한. 프로세스 메모리 값이라 재시작하면 처음부터. */
+export function queueRetryDelayMs(failures) {
+  return Math.min(QUEUE_RETRY_MAX_MS, 1000 * 2 ** Math.max(0, Math.min(20, failures - 1)));
+}
+const FAILED_KEEP_MS = 7 * 86_400_000;
+const FAILED_KEEP_MAX = 50;
+async function recordFailedJob(dir, n, fp, e) {
+  const job = await readJsonLenient(fp, null);
+  await writeJsonAtomic(join(dir, `${n}.failed`), { failedAt: new Date().toISOString(), code: e?.code ?? null, error: String(e?.message ?? e).slice(0, 500), job });
+  // 보존 정리 — 실패 기록이 쌓이기만 하지 않게(DB 위생 규칙 4와 같은 원칙의 로컬판). 실패가 날 때만 돈다(새 주기 작업 없음).
+  try {
+    const now = Date.now();
+    const recs = [];
+    for (const f of (await readdir(dir)).filter((x) => x.endsWith('.failed'))) {
+      const mt = (await stat(join(dir, f)).catch(() => null))?.mtimeMs ?? 0;
+      recs.push([f, mt]);
+    }
+    recs.sort((a, b) => b[1] - a[1]);
+    for (const [i, [f, mt]] of recs.entries()) if (i >= FAILED_KEEP_MAX || now - mt > FAILED_KEEP_MS) await unlink(join(dir, f)).catch(() => {});
+  } catch { /* 정리 실패는 다음 실패 때 다시 */ }
+}
+
 export function startQueueWorker(wsId, key, handler, { maxInflight = GW_MAX_INFLIGHT } = {}) {
   let stopped = false;
+  const failures = new Map(); // 잡 이름 → 연속 일시 실패 수(성공·영구 실패·DEFER면 지운다)
+  const retryAt = new Map();  // 잡 이름 → 다음 시도 시각(지수 간격)
   let me = null; // 이 기기 id — 해석 전(null)에는 잡을 집지 않는다(남의 사본 오실행 방지). 실패 시 ''(판정 생략, 전부 실행)
   getDeviceId().then((d) => { me = d; }).catch(() => { me = ''; });
   const busy = new Set();
@@ -64,6 +100,7 @@ export function startQueueWorker(wsId, key, handler, { maxInflight = GW_MAX_INFL
     names = names.filter((n) => n.endsWith('.json') && !n.startsWith('.'))
       .sort((a, b) => ((parseInt(a, 10) || 0) - (parseInt(b, 10) || 0)) || a.localeCompare(b)); // 도착 순서 근사(동값은 사전순 고정)
     names = [...names.filter((n) => !deferUntil.has(n) && !due.has(n)), ...names.filter((n) => due.has(n))]; // 백오프 중인 잡은 제외, 검사 차례는 맨 뒤
+    names = names.filter((n) => !(retryAt.get(n) > tick)); // 일시 실패 뒤 간격이 안 지난 잡은 이번 틱에서 뺀다
     for (const n of names) {
       if (busy.has(n)) continue;
       if (busy.size >= maxInflight) break; // 상한 도달 — 남은 잡은 다음 틱(큐별로 다르다: 장시간 작업은 1)
@@ -99,12 +136,25 @@ export function startQueueWorker(wsId, key, handler, { maxInflight = GW_MAX_INFL
             if (await handler(job, { path: fp }) === DEFER) { deferUntil.set(n, Date.now() + DEFER_BACKOFF_MS); return; } // 차례 아님 — finally가 선점을 풀고 백오프 뒤 다시 집는다. path = 선점 뒤 실제 파일(장시간 잡 tries 마커가 원래 이름에 쓰이던 회귀 방지)
           }
           done = true;
+          failures.delete(n); retryAt.delete(n);
           await withDirLock(`${fp0}.lock`, () => unlink(fp)).catch(() => {}); // 처리 완료분만 제거. 처리 중 크래시면 .claimed가 남아 CLAIM_MAX_AGE_MS 뒤 회수·재처리
         } catch (e) {
           if (e?.aborted) {
             done = true;
+            failures.delete(n); retryAt.delete(n);
             await withDirLock(`${fp0}.lock`, () => unlink(fp)).catch(() => {});
-          } else console.error(`[argo] 큐 처리 실패(${wsId}/${key}/${n}):`, e.message); // 인프라 예외 — 선점을 풀어 다음 틱 재시도
+          } else if (isPermanentQueueError(e)) {
+            // 영구 오류 — 다시 해도 같은 결과. 실패 기록을 남기고 큐에서 뺀다(1초마다 끝없이 재시도하던 결함, F1)
+            done = true;
+            failures.delete(n); retryAt.delete(n);
+            await withDirLock(`${fp0}.lock`, async () => { await recordFailedJob(queueDir(wsId, key), n, fp, e); await unlink(fp); }).catch(() => {});
+            console.error(`[argo] 큐 처리 실패 — 재시도 안 함(${wsId}/${key}/${n}, ${e.code ?? 'permanent'}):`, e.message);
+          } else {
+            // 일시 오류(인프라) — 선점을 풀고 지수 간격 뒤 재시도(첫 재시도는 다음 틱)
+            const k = (failures.get(n) ?? 0) + 1;
+            failures.set(n, k); retryAt.set(n, Date.now() + queueRetryDelayMs(k) - 50);
+            console.error(`[argo] 큐 처리 실패(${wsId}/${key}/${n}, ${k}회째 — ${Math.round(queueRetryDelayMs(k) / 1000)}초 뒤 재시도):`, e?.message ?? e);
+          }
         } finally {
           clearInterval(hb);
           if (!done) await withDirLock(`${fp0}.lock`, () => rename(fp, fp0)).catch(() => {}); // 재시도는 동일 ID 재적재분보다 실행 중 저장한 체크포인트를 우선한다
