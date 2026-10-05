@@ -17,11 +17,31 @@ const ROOT = await mkdtemp(join(tmpdir(), 'argo-emptyrestore-'));
 process.env.ARGO_ROOT = ROOT; // 봉인용 secretbox(→ workspace.mjs) 임포트보다 먼저 — 이 프로세스도 실제 데이터 루트를 보지 않게
 const { useFakeAccountKey } = await import('./helpers/fake-account-key.mjs');
 const { sealSecret } = await import('../src/secretbox.mjs');
+const { syncCompany, _setSyncClientForTest } = await import('../src/sync.mjs');
 
 const OWNER = 'u1';
 const key = (ws, rel) => `companies/${OWNER}/${ws}/${rel}`;
 const meta = (buf) => ({ m: 1000, s: buf.length, h: createHash('sha1').update(buf).digest('hex').slice(0, 16) });
 const EMPTY = Buffer.from(JSON.stringify({ files: {} }));
+
+test('함수 단위(시간 무관) — 봉인된 빈 매니페스트의 복원을 두 번 해도 매니페스트를 쓰지 않는다', async () => {
+  await useFakeAccountKey(1, OWNER);
+  const WS = 'shell-inproc';
+  const M = `${OWNER}/${WS}/__manifest__.json`;
+  const sealed = sealSecret(EMPTY);
+  const store = new Map([[M, sealed]]);
+  const uploads = [];
+  const bucket = {
+    async download(k) { k = k.split('?')[0]; return store.has(k) ? { data: { arrayBuffer: async () => new Uint8Array(store.get(k)).buffer }, error: null } : { data: null, error: { message: 'Object not found', status: 404 } }; },
+    async upload(k, blob) { uploads.push(k); store.set(k, Buffer.from(await blob.arrayBuffer())); return { error: null }; },
+    async remove() { return { error: null }; },
+    async list() { return { data: [], error: null }; },
+  };
+  _setSyncClientForTest({ storage: { from: () => bucket } });
+  for (let i = 0; i < 2; i++) assert.equal((await syncCompany(WS, OWNER, true)).failed, 0, `${i + 1}번째 복원 실패 없음`);
+  assert.deepEqual(uploads, [], '쓰기 0 — 수정 전엔 복원마다 매니페스트를 1회씩 다시 썼다');
+  assert.ok(store.get(M).equals(sealed), '원격 매니페스트 바이트 그대로');
+});
 
 test('빈 원격 회사 — 발견 주기마다 복원돼도 매니페스트를 다시 쓰지 않는다(쓰기 0·발견 1회에 GET 최대 1)', async () => {
   await useFakeAccountKey(1, OWNER); // 가짜 서버의 account_keys(0x01×32)와 같은 키 — 운영처럼 이미 봉인된 매니페스트를 깐다

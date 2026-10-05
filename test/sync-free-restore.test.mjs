@@ -112,7 +112,11 @@ test('관용은 pull 완결일 때만 — pull 실패가 남으면 throw해 복�
 test('관용 미지정(비free 계약)이면 쓰기 거부는 그대로 throw — pro의 실패 가시성 유지', async () => {
   const WS3 = 'ws3';
   await mkdir(join(ROOT, WS3), { recursive: true });
-  const fake = freeStorage({ [`${OWNER}/${WS3}/__manifest__.json`]: Buffer.from(JSON.stringify({ files: {} })) });
+  // 전제: 평문 매니페스트 — 계정 키를 가진 이 기기가 봉인해 다시 써야 해서(manifestNeedsSeal) 쓰기가 일어난다. 복원이라는 이유만으로는
+  // 쓰지 않는다(빈 원격 회사 루프 수정 2026-10-05). 봉인본으로 바꾸면 쓰기 자체가 없어 이 계약을 못 본다 — 그때 isRestore를 조건에 되돌리지 말 것.
+  const plain = Buffer.from(JSON.stringify({ files: {} }));
+  assert.equal(plain.subarray(0, 11).toString(), '{"files":{}', '전제: 봉투(argosecret.) 아님');
+  const fake = freeStorage({ [`${OWNER}/${WS3}/__manifest__.json`]: plain });
   _setSyncClientForTest(fake.client);
   await assert.rejects(() => syncCompany(WS3, OWNER, true), /row-level security/);
   assert.equal(await syncStateExists(WS3), false);
