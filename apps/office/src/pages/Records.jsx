@@ -38,14 +38,17 @@ const assignMany = (list, label) => {
   return list.length > 0 && spaces.size === 1 && { label: t('crew.assign'), icon: 'hand', run: (_, clear) => { setUi({ assign: { space: list[0].space, items: list.map((x) => ({ kind: 'record', id: x.id, label: label(x) })) } }); clear(); } };
 };
 
-/** 기록판 화면의 빈 자리 — 못 읽었으면 '결재를 기다리는 일이 없습니다'가 아니라 '불러오지 못했습니다 · 다시 시도'(OFC-08) */
+/** 기록판 화면의 빈 자리 — 못 읽었으면 '결재를 기다리는 일이 없습니다'라고 하지 않는다(OFC-08, 제목 아래 안내가 다시 시도를 준다) */
 function BoardEmpty({ icon, text }) {
   const failed = useStore((s) => !!s.boardError);
-  return failed ? <LoadFail onRetry={() => pullBoard().catch(() => {})} /> : <div className="empty-state"><Icon name={icon} size={20} /><p>{t(text)}</p></div>;
+  return failed ? null : <div className="empty-state"><Icon name={icon} size={20} /><p>{t(text)}</p></div>;
 }
 
+/** 제목 — 기록판을 못 읽었으면 바로 아래에 '불러오지 못했습니다 · 다시 시도'(보이는 목록은 지난번에 받은 것일 수 있다) */
 function Title({ h, sub }) {
-  return <div className="page-title-row"><div><h1 className="page-h1">{h}</h1>{sub && <p className="dim">{sub}</p>}</div></div>;
+  const failed = useStore((s) => !!s.boardError);
+  return <><div className="page-title-row"><div><h1 className="page-h1">{h}</h1>{sub && <p className="dim">{sub}</p>}</div></div>
+    {failed && <LoadFail small onRetry={() => pullBoard().catch(() => {})} />}</>;
 }
 
 // 폴더 보기 공통(유건 9/30) — 에이전트별 폴더, 날짜 구간, 한 줄 요약. 누르면 지금의 자세히 보기(Sheet)가 열린다.

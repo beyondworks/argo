@@ -13,7 +13,7 @@ import { Home } from './pages/Home.jsx';
 import { useUrl, match, navigate, Link } from './core/router.jsx';
 import { t, useLang, setLang, getLang } from './core/i18n.js';
 import { useSaveStatus, useLegacyRecovery } from './core/save.js';
-import { useStore, reorderPage, createPage, getState, saveNav, saveFav, favOf, toggleFav } from './core/store.js';
+import { useStore, reorderPage, createPage, getState, saveNav, saveFav, favOf, toggleFav, update } from './core/store.js';
 import { VIEWS, favTarget } from './core/nav-model.js';
 import { useUi, setUi } from './core/ui-state.js';
 import { baseOf, pageMenu, itemsFromDrag, mod } from './core/commands.js';
@@ -219,7 +219,8 @@ export default function App() {
     pullLayouts().catch((e) => console.warn('[office] layout pull failed', e?.message));
     pullPages().catch((e) => console.warn('[office] page pull failed', e?.message));
     pullBoard().catch((e) => console.warn('[office] board pull failed', e?.message));
-    import('./core/mail.js').then((m) => m.loadAccounts().then(() => m.pullMail('inbox'))).catch((e) => console.warn('[office] mail pull failed', e?.message)); // 예시 메일을 치우고 연결한 계정의 받은편지함(메일 코드는 첫 화면 밖)
+    import('./core/mail.js').then((m) => m.loadAccounts().then(() => m.pullMail('inbox'))) // 예시 메일을 치우고 연결한 계정의 받은편지함(메일 코드는 첫 화면 밖)
+      .then((r) => update(() => ({ mailError: r?.failed?.some((f) => f.code !== 'expired') ? Date.now() : null })), (e) => { update(() => ({ mailError: Date.now() })); console.warn('[office] mail pull failed', e?.message); }); // 못 받았으면 현황 '안 읽은 메일'이 '모두 확인'이 아니라 '확인 못 함'(OFC-08)
     // 기록판은 실시간 방송 대신 탭으로 돌아오거나 창에 초점이 올 때 다시 읽는다(최대 1분에 한 번 — 읽기만). 같은 브라우저의 메신저 탭에서 결재하고 돌아와도 맞게(CX-10)
     let last = Date.now();
     const onShow = () => { if (!refetchDue({ hidden: document.hidden, now: Date.now(), last })) return; last = Date.now(); pullBoard().catch(() => {}); };

@@ -150,11 +150,11 @@ function useStatValues(space) {
   const crewList = useStore((s) => s.crews), outputs = useStore((s) => s.outputs);
   const mode = useSession(), taskErr = useTasks(space).error; // 로그인하면 서버에 저장된 실제 할 일로 센다(성과 기록 1단계)
   const tasks = useTaskRows(space), today = useTaskDay(); // 세는 행·날짜는 메뉴 배지·챙길 것과 같다 — 개인 공간은 조직에서 나에게 맡겨진 일도(18차 검수 M4에서 빠졌던 카드, 10/4 실제 계정 점검)
-  const boardError = useStore((s) => s.boardError);
+  const boardError = useStore((s) => s.boardError), mailError = useStore((s) => s.mailError);
   return useMemo(() => {
     const base = baseOf(space), ok = (text, icon) => ({ tone: 'ok', text, icon }), warn = (text, icon) => ({ tone: 'warn', text, icon });
     // 읽기 실패 카드(OFC-08) — '없음·정상·모두 확인'이 아니라 '확인 못 함'. 누르면 그 화면(거기서 다시 시도)
-    const fail = (id, icon, sub, to) => ({ n: '—', badge: warn(t('stat.b.fail'), icon), main: t('stat.failMain'), sub, to });
+    const fail = (icon, sub, to) => ({ n: '—', badge: warn(t('stat.b.fail'), icon), main: t('stat.failMain'), sub, to });
     const ap = approvals.filter(approvalsIn(space)), high = ap.filter((a) => a.risk === 'high').length;
     const wk = work.filter(inSpace(space)), blocked = wk.filter((w) => w.status === 'blocked').length;
     const unread = mails.filter((m) => m.folder === 'inbox' && m.unread).length;
@@ -173,15 +173,17 @@ function useStatValues(space) {
       todos: live ? (tasks ? (() => {
         const g = groupTasks(tasks.filter((r) => !r.cancelled_at), today, ME.id), open = g.overdue.length + g.today.length + g.week.length + g.later.length + g.none.length;
         return { n: open, badge: g.overdue.length ? warn(t('stat.b.late'), 'check') : ok(t('stat.b.none'), 'check'), main: t('stat.taskMain', { late: g.overdue.length, today: g.today.length }), sub: t('stat.tasksSub'), to: `${base}/tasks` };
-      })() : taskErr ? fail('todos', 'check', t('stat.tasksSub'), `${base}/tasks`) : { n: '…', badge: { tone: '', text: '…', icon: 'check' }, main: '', sub: t('stat.tasksSub'), to: `${base}/tasks` })
+      })() : taskErr ? fail('check', t('stat.tasksSub'), `${base}/tasks`) : { n: '…', badge: { tone: '', text: '…', icon: 'check' }, main: '', sub: t('stat.tasksSub'), to: `${base}/tasks` })
         : { n: todos.length - todoDone, badge: todos.length - todoDone ? warn(t('stat.b.open'), 'check') : ok(t('stat.b.none'), 'check'), main: t('stat.todoDone', { done: todoDone, total: todos.length }), sub: t('stat.todosSub') },
       decisions: { n: dec.length, badge: ok(t('stat.b.week'), 'check'), main: t('stat.decided', { a: approved, r: dec.length - approved }), sub: t('stat.weekSub'), to: `${base}/decisions` },
       outputs: { n: out.length, badge: ok(t('stat.b.week'), 'file'), main: fmtBytes(out.reduce((s, f) => s + f.bytes, 0)), sub: t('stat.weekSub'), to: `${base}/outputs` },
       pages: { n: pg.length, badge: ok(t('stat.b.wiki'), 'doc'), main: t('stat.pagesRecent', { n: pgRecent }), sub: t(space === 'me' ? 'stat.pagesMe' : 'stat.pagesOrg') },
     };
-    if (live && boardError) for (const [id, icon] of [['approvals', 'stamp'], ['work', 'run'], ['crews', 'person'], ['decisions', 'check'], ['outputs', 'file']]) vals[id] = fail(id, icon, vals[id].sub, vals[id].to);
+    // 실패 카드의 흐린 줄은 고정 말 — 옛 값으로 센 말('결재 기다리는 에이전트 1명')을 남기지 않는다
+    if (live && boardError) for (const [id, icon, sub] of [['approvals', 'stamp', 'stat.approvalsSub'], ['work', 'run', 'stat.workSub'], ['crews', 'person', 'nav.agents'], ['decisions', 'check', 'stat.weekSub'], ['outputs', 'file', 'stat.weekSub']]) vals[id] = fail(icon, t(sub), vals[id].to);
+    if (live && mailError) vals.mail = fail('mail', t('stat.mailSub'), '/me/mail');
     return vals;
-  }, [approvals, work, mails, decisions, pages, done, crewList, outputs, space, mode, tasks, today, taskErr, boardError]);
+  }, [approvals, work, mails, decisions, pages, done, crewList, outputs, space, mode, tasks, today, taskErr, boardError, mailError]);
 }
 
 /** 현황 카드(유건 9/27) — 카드마다 지표를 고른다. 1~5장, 조직 홈은 관리자만 바꾼다(구조는 공유). */

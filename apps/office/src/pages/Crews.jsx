@@ -29,7 +29,7 @@ const STATUS_BADGE = { work: 'ok', ask: 'warn' };
 const EMPTY = [];
 /** 직무 — 예시 데이터는 role 하나뿐(좌측 목록과 같은 규칙) */
 const jobOf = (c) => c.job || (c.dept ? '' : c.role);
-const ownerOf = (c) => (c.company ? t('crew.owner.company') : isMine(c, ME.id) ? nameIn(c.space) : c.ownerName || t('crew.owner.unknown')); // 내 이름은 그 조직에서 보이는 이름(CX-07)
+const ownerOf = (c, space) => (c.company ? t('crew.owner.company') : isMine(c, ME.id) ? nameIn(space) : c.ownerName || t('crew.owner.unknown')); // 내 이름은 보고 있는 공간에서 보이는 이름(CX-07)
 const Status = ({ c }) => <span className={`badge ${STATUS_BADGE[c.status] ?? ''}`}>{t(`crew.status.${c.status}`)}</span>;
 const openCrew = (c, space) => setUi({ crew: { id: c.id, space } });
 
@@ -61,7 +61,7 @@ function AgentCard({ crew: c, space }) {
   const job = jobOf(c), where = whereOf(c);
   return <button type="button" className="agent-card" onClick={() => openCrew(c, space)} {...menuProps(() => crewMenu(c, space))}>
     <Face id={c.id} size={36} />
-    <span className="agent-main"><b>{c.name}</b>{job && <small>{job}</small>}<small>{t('crew.tip.owner', { name: ownerOf(c) })}</small>{where && <small>{where}</small>}</span>
+    <span className="agent-main"><b>{c.name}</b>{job && <small>{job}</small>}<small>{t('crew.tip.owner', { name: ownerOf(c, space) })}</small>{where && <small>{where}</small>}</span>
     <Status c={c} />
   </button>;
 }
@@ -119,7 +119,7 @@ function CrewBody({ crew: c, space, close }) {
     </div>
     <Sec title={t('crewd.info')}>
       <div className="crewd-facts">
-        <Fact k="crewd.f.job">{job}</Fact><Fact k="crewd.f.dept">{c.dept}</Fact><Fact k="crewd.f.owner">{ownerOf(c)}</Fact>
+        <Fact k="crewd.f.job">{job}</Fact><Fact k="crewd.f.dept">{c.dept}</Fact><Fact k="crewd.f.owner">{ownerOf(c, space)}</Fact>
         <Fact k="crewd.f.status"><Status c={c} /></Fact><Fact k="crewd.f.org">{c.space === 'me' ? t('space.me') : c.space && SPACES.find((s) => s.key === c.space)?.name}</Fact>
       </div>
       <p className="dim small crewd-none">{t('crewd.editIn')}</p>
