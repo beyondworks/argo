@@ -297,3 +297,46 @@ test('canary: 할 일 80건(제목 200자·메모·분류 제어 문자)·페이
   const file = await filesTool({ action: 'file_read', id: 'f1' }, { ctx, lang: 'ko', ownerId: ME });
   assert.ok(file.length <= BUDGET_TOTAL, `file_read ${file.length}자`); assert.match(file, /\n…\(앞 \d+자만\)\n--- 바깥 글 끝 \[files-[0-9a-f]+\] ---$/);
 });
+
+// ── 4차 L-1·L-3·L-5 — 메일 목록의 공정한 몫·본문 자리 보장·머리 칸 잘림 표시·머리 칸 상한 잠금 ──
+const MAIL_BASE = () => ({ session: session({ tables: { office_mail_accounts: [{ id: A1, address: 'me@beyond.kr', status: 'ok' }] } }), jwt: async () => 'jwt', origin: () => 'https://office.example.com', nonce: () => 'n0nce' });
+const at = (i) => new Date(Date.parse('2026-10-05T00:00:00Z') - i * 3600e3).toISOString();
+const normalMail = (i) => ({ id: `g${i}`, from: `정상 보낸이${i}`, addr: `p${i}@hanbit.kr`, subject: `정상 메일 ${i} — 견적 관련 문의드립니다`, snippet: '안녕하세요, 지난주 말씀드린 견적 건으로 연락드립니다.', at: at(i + 10) });
+const attackMail = (i) => ({ id: `x${i}`, from: '<'.repeat(200), addr: 'a@evil.example', subject: '<'.repeat(500), snippet: '<'.repeat(120), at: at(i), unread: true });
+
+test('canary: 메일 목록 — 가장 최근 공격 메일 8통(< 6배 확장)이 정상 메일 22통을 가리지 않는다(행마다 글자 상한), 정상 사용에서는 …외 N건이 안 붙는다', async () => {
+  for (const [n, idAttack] of [[8, false], [10, false], [14, false], [8, true]]) {
+    Object.assign(mailDeps, MAIL_BASE(), { fetch: async () => new Response(JSON.stringify({ items: [...Array.from({ length: n }, (_, i) => ({ ...attackMail(i), ...(idAttack ? { id: '<'.repeat(200) } : {}) })), ...Array.from({ length: 30 - n }, (_, i) => normalMail(i))], next: null })) });
+    const out = await mailTool({ action: 'mails' }, { ctx, lang: 'ko', ownerId: ME }), rows = out.split('\n').filter((l) => l.startsWith('- '));
+    assert.equal(rows.filter((r) => r.includes('정상')).length, 30 - n, `공격 ${n}통${idAttack ? '(id도)' : ''}: 정상 메일이 모두 보인다`); assert.ok(out.length <= 45_000, `${out.length}자`);
+    assert.doesNotMatch(out, /…외 \d+건 생략/, '행마다 상한이라 생략이 없다'); assert.equal(out.split('\n').filter((l) => /^--- 바깥 글 끝 \[mail-/.test(l)).length, 1);
+  }
+  Object.assign(mailDeps, MAIL_BASE(), { fetch: async () => new Response(JSON.stringify({ items: Array.from({ length: 30 }, (_, i) => ({ ...normalMail(i), subject: `정상 ${i} ` + '가나다라마바사아자차'.repeat(20), snippet: '카타파하'.repeat(30) })), next: 'n' })) });
+  const normal = await mailTool({ action: 'mails' }, { ctx, lang: 'ko', ownerId: ME });
+  assert.doesNotMatch(normal, /…외 \d+건 생략/); assert.equal(normal.split('\n').filter((l) => l.startsWith('- ')).length, 30); assert.ok(normal.includes('가나다라마바사아자차'.repeat(20)), '정상 긴 제목은 잘리지 않는다');
+});
+
+const readMail = (o) => ({ id: 'x', from: 'a', addr: 'a@b.kr', to: 'me@beyond.kr', subject: 's', at: '2026-10-03T01:00:00Z', text: '본문 첫 줄 — 중요한 요청: 내일까지 견적 회신', ...o });
+test('canary: mail_read — 첨부 50개(이름 200자 <)가 본문을 밀어내지 않고(첨부 줄 상한 + …외 N개), 정상 첨부 50개는 전부 보인다', async () => {
+  Object.assign(mailDeps, MAIL_BASE(), { fetch: async () => new Response(JSON.stringify(readMail({ attachments: Array.from({ length: 50 }, () => ({ name: '<'.repeat(200) })) }))) });
+  let out = await mailTool({ action: 'mail_read', id: `${A1}.g1` }, { ctx, lang: 'ko', ownerId: ME });
+  assert.ok(out.includes('견적 회신'), '본문이 보인다'); assert.doesNotMatch(out, /…외 \d+건 생략/, '블록 예산 생략 없음');
+  const att = out.split('\n').find((l) => l.startsWith('첨부:')); assert.ok(att.length <= 6_500, `첨부 줄 ${att.length}자`); assert.match(att, /…외 \d+개$/);
+  Object.assign(mailDeps, { fetch: async () => new Response(JSON.stringify(readMail({ attachments: Array.from({ length: 50 }, (_, i) => ({ name: `${i}_` + '견적서_최종본_수정'.repeat(6) + '.pdf' })) }))) });
+  out = await mailTool({ action: 'mail_read', id: `${A1}.g1` }, { ctx, lang: 'ko', ownerId: ME });
+  const attLine = out.split('\n').find((l) => l.startsWith('첨부:'));
+  assert.ok(out.includes('견적 회신')); assert.equal(attLine.match(/\.pdf/g).length, 50, '정상 첨부 50개 전부'); assert.doesNotMatch(attLine, /…외 \d+개/);
+});
+
+test('canary: mail_read 머리 칸 상한(제목 600·보낸 사람 300·받는 사람/참조 2000)과 잘림 표시 — 받는 사람 60명이 38명만 보이고 표시가 없던 것(4차 L-3), 상한을 없애면 빨강(L-5)', async () => {
+  const to = Array.from({ length: 80 }, (_, i) => `김직원${i} <staff${i}@beyond.kr>`).join(', ');
+  Object.assign(mailDeps, MAIL_BASE(), { fetch: async () => new Response(JSON.stringify(readMail({ to, cc: to, subject: '제목'.repeat(400), from: '보낸이'.repeat(300), addr: 'z'.repeat(900) }))) });
+  const out = await mailTool({ action: 'mail_read', id: `${A1}.g1` }, { ctx, lang: 'ko', ownerId: ME }), line = (k) => out.split('\n').find((l) => l.startsWith(k));
+  for (const k of ['받는 사람:', '참조:', '제목:', '보낸 사람:']) assert.match(line(k), /…\(앞 \d+자만\)$/, `${k} 잘렸다는 표시(따옴표 밖)`);
+  assert.ok(line('받는 사람:').length <= 2_100 && line('참조:').length <= 2_100, '받는 사람·참조 상한'); assert.ok(line('제목:').length <= 700, '제목 상한'); assert.ok(line('보낸 사람:').length <= 1_000);
+  assert.ok(out.includes('견적 회신'), '본문은 보인다');
+  const short = readMail({ to: '김직원 <a@b.kr>' });
+  Object.assign(mailDeps, { fetch: async () => new Response(JSON.stringify(short)) });
+  const ok = await mailTool({ action: 'mail_read', id: `${A1}.g1` }, { ctx, lang: 'ko', ownerId: ME });
+  assert.doesNotMatch(ok, /…\(앞/, '안 잘리면 표시가 없다');
+});

@@ -9,7 +9,7 @@
 // 부하: 사람이 시킬 때만(폴링 없음). 목록 = 계정 표 읽기 1 + 서버 함수 1(Gmail 목록 1 + 메타 최대 30), 읽기 = 계정 표 1 + 서버 함수 1, 답장 초안 = 원문 읽기 1 + 초안 1, 별표 = 1.
 import { randomBytes } from 'node:crypto';
 import { officeTurn, ONLY_DM, outsideOf, quoted, OUTSIDE_RULE } from './office-audience.mjs';
-import { jsonText } from '../inbound-marks.mjs';
+import { jsonText, cutPrefix } from '../inbound-marks.mjs';
 import { officeOrigin, DEFAULT_ORIGIN } from './office-files.mjs';
 
 export const mailDeps = {
@@ -114,8 +114,9 @@ export async function mailTool(args, { ctx = null, lang = 'ko', ownerId = null }
       const ox = outsideOf('mail', lang, mailDeps.nonce());
       return [pick(`메일 ${list.length}통(${where}${r.data.next ? ' · 더 있음 — q로 좁혀라' : ''}):`, `${list.length} messages (${where}${r.data.next ? ' · more — narrow with q' : ''}):`, lang),
         ox.block(list.slice(0, LIST_CAP).map((m) => {
-          const from = one(m.from).slice(0, 200), addr = one(m.addr).slice(0, 200); // 비교용(JSON으로 감싸기 전의 값) — 보내는 사람 칸은 200자까지
-          return `- ${kstTime(m.at)} · ${ox.lineOr(from, '') || ox.line(addr)}${addr && addr !== from ? ` · ${pick('주소', 'address', lang)} ${ox.line(addr)}` : ''} · ${ox.lineOr(m.subject, pick('(제목 없음)', '(no subject)', lang), 500)}${m.unread ? pick(' · 안 읽음', ' · unread', lang) : ''}${m.starred ? pick(' · 별표', ' · starred', lang) : ''}${m.draftId ? pick(' · 초안', ' · draft', lang) : ''} · id=${ox.id(m.id)}${m.snippet ? `\n  ${ox.line(String(m.snippet).slice(0, 120))}` : ''}`;
+          const from = one(m.from), addr = one(m.addr); // 비교용(JSON으로 감싸기 전의 값)
+          // 한 행의 칸마다 이스케이프 뒤 글자 상한(보낸 이 160·주소 160·제목 320·요약 240·id 200) — 행 하나가 이스케이프로 부풀어 정상 메일을 가리지 않게(검수 4차 L-1). 안 잘리면 표시가 없다
+          return `- ${kstTime(m.at)} · ${ox.lineOr(from, '', 160) || ox.line(addr, 160)}${addr && addr !== from ? ` · ${pick('주소', 'address', lang)} ${ox.line(addr, 160)}` : ''} · ${ox.lineOr(m.subject, pick('(제목 없음)', '(no subject)', lang), 320)}${m.unread ? pick(' · 안 읽음', ' · unread', lang) : ''}${m.starred ? pick(' · 별표', ' · starred', lang) : ''}${m.draftId ? pick(' · 초안', ' · draft', lang) : ''} · id=${ox.id(m.id)}${m.snippet ? `\n  ${ox.line(cutPrefix(m.snippet, 120), 240)}` : ''}`;
         }),
           ['메일 쪽이 쓴 보낸 사람·제목·요약', 'senders, subjects and previews written by others']),
         pick('본문은 mail_read에 id, 답장 초안은 mail_draft에 reply_to=id.', 'Use mail_read with the id for the body; mail_draft with reply_to=id for a reply draft.', lang) + others].join('\n');
@@ -130,10 +131,13 @@ export async function mailTool(args, { ctx = null, lang = 'ko', ownerId = null }
       // 메일은 바깥 사람이 쓴 글이다 — 호출마다 새 번호의 경계 블록으로 감싸고, 안의 값은 JSON 문자열로 싣는다(office-audience.mjs outsideOf, inbound-marks.mjs 머리말)
       const ox = outsideOf('mail', lang, mailDeps.nonce());
       const rawBody = String(m.text || htmlText(m.html) || '').trim(); // 길이 상한은 원문 글자 수(READ_CAP)와 이스케이프 뒤 글자 예산 둘 다 — 제어 문자 본문이 6배로 커져 끝 줄이 잘리지 않게(검수 3차 M-A)
-      const atts = (m.attachments ?? []).slice(0, 50);
-      const head = [`${pick('제목', 'Subject', lang)}: ${ox.lineOr(m.subject, pick('(제목 없음)', '(no subject)', lang), 500)}`, `${pick('보낸 사람', 'From', lang)}: ${ox.line(m.from, 300)}${m.addr ? ` ${pick('주소', 'address', lang)} ${ox.line(m.addr, 300)}` : ''}`,
-        `${pick('받는 사람', 'To', lang)}: ${ox.line(m.to, 1000)}`, ...(m.cc ? [`${pick('참조', 'Cc', lang)}: ${ox.line(m.cc, 1000)}`] : []),
-        ...(atts.length ? [`${pick('첨부', 'Attachments', lang)}: ${atts.map((x) => ox.line(x.name, 200)).join(', ')}${(m.attachments ?? []).length > atts.length ? pick(` …외 ${m.attachments.length - atts.length}개`, ` …and ${m.attachments.length - atts.length} more`, lang) : ''}`] : [])];
+      // 머리 칸마다 이스케이프 뒤 글자 상한을 두고 잘렸으면 따옴표 밖에 …(앞 N자만) — 일부만 보인 받는 사람이 전체처럼 보이지 않게(검수 4차 L-3). 첨부 줄은 합쳐서 6,000자까지 + …외 N개, 본문 자리를 보장한다(L-1)
+      const attachments = m.attachments ?? [], atts = []; let attUsed = 0;
+      for (const x of attachments) { const q = ox.line(x.name, 200); if (atts.length >= 50 || attUsed + q.length + 2 > 6_000) break; atts.push(q); attUsed += q.length + 2; }
+      const nameOrNone = (v, max, fb) => (String(v ?? '').trim() ? ox.cut(v, max) : fb);
+      const head = [`${pick('제목', 'Subject', lang)}: ${nameOrNone(m.subject, 600, pick('(제목 없음)', '(no subject)', lang))}`, `${pick('보낸 사람', 'From', lang)}: ${ox.cut(m.from, 300)}${m.addr ? ` ${pick('주소', 'address', lang)} ${ox.cut(m.addr, 300)}` : ''}`,
+        `${pick('받는 사람', 'To', lang)}: ${ox.cut(m.to, 2000)}`, ...(m.cc ? [`${pick('참조', 'Cc', lang)}: ${ox.cut(m.cc, 2000)}`] : []),
+        ...(atts.length ? [`${pick('첨부', 'Attachments', lang)}: ${atts.join(', ')}${attachments.length > atts.length ? pick(` …외 ${attachments.length - atts.length}개`, ` …and ${attachments.length - atts.length} more`, lang) : ''}`] : [])];
       const body = rawBody ? ox.body(rawBody, { chars: READ_CAP, max: ox.room(head) }) : null;
       return [`${pick('메일', 'Mail', lang)} id=${t.acc.id}.${t.gid} · ${jsonText(t.acc.address)} · ${kstTime(m.at)} (KST)`,
         ox.block([...head, '', ...(body ? [body.json, ...(body.cut ? [pick(`…(앞 ${body.kept}자만)`, `…(first ${body.kept} chars)`, lang)] : [])] : [pick('(본문 없음)', '(empty)', lang)])],

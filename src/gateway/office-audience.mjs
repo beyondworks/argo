@@ -5,7 +5,7 @@
 //   'mixed' — 그 밖(손님·나간 사람·조직 밖 사람이 있거나, 확인하지 못함 — 모르면 좁게)
 // 비용: 도구를 부를 때 조회 1~2건(채널 사람 목록·그 사람들의 역할). 주기 호출 없음.
 import { randomBytes } from 'node:crypto';
-import { outsideBlock, outsideLine, outsideText, outsideBody, jsonText, OUTSIDE_BLOCK_MAX } from '../inbound-marks.mjs';
+import { outsideBlock, outsideLine, outsideText, outsideBody, jsonText, cutPrefix, OUTSIDE_BLOCK_MAX } from '../inbound-marks.mjs';
 
 export async function audienceOf(client, ctx, ownerId) {
   if (ctx?.channelKind === 'public') return ctx?.orgId ? 'org' : 'mixed';
@@ -29,7 +29,7 @@ export async function audienceOf(client, ctx, ownerId) {
 
 const pick = (ko, en, lang) => (lang === 'en' ? en : ko);
 /** 도구가 직접 쓰는 문장에 되울리는 바깥·모델 값(오류 원문·모델이 준 id·날짜) — 앞 n자만 잘라 JSON 문자열 한 줄로(날것 줄·따옴표 밖 글을 만들지 못하게, 검수 3차 L-3) */
-export const quoted = (v, n = 200) => jsonText(String(v ?? '').slice(0, n));
+export const quoted = (v, n = 200) => { const raw = String(v ?? ''), p = cutPrefix(raw, n); return jsonText(p) + (p.length < raw.length ? '…' : ''); }; // 글자 묶음 경계로 자르고 잘렸으면 따옴표 밖에 …
 export const ONLY_DM = (lang) => pick('주인과의 1:1 대화에서만', 'only in a 1:1 chat with the owner', lang);
 export const mixedRefusal = (lang) => pick('이 방에는 손님이나 조직 밖 사람이 있을 수 있어 회사·파일 기록을 다루지 않는다 — 주인과의 1:1이나 조직 채널에서 다시 부탁하라고 알려라.',
   'This room may include guests or people outside the organization, so company and file records are not used here — ask in a 1:1 or an org channel.', lang);
@@ -60,13 +60,15 @@ export async function officeTurn({ ctx, ownerId, lang = 'ko', session, name, per
    쓰기 권한 자체는 서버 함수(RLS·RPC)가 주인 권한 그대로 판정한다 — 이 경계는 그 안에서 "누가 시켰나"를 지킨다. */
 export const outsideDeps = { nonce: () => randomBytes(8).toString('hex') }; // 호출마다 새 번호 — 바깥 글이 미리 알 수 없게(테스트가 바꿔 끼운다)
 /** 이 호출의 바깥 글 다루개. kind = 도구 이름 한 마디(번호 앞).
- *  line(값, 앞 n자만?) = 한 칸을 JSON 문자열로("…" — 값이 없으면(null·undefined) 빈 글자), lineOr(값, 대체) = 값이 비었으면(공백뿐 포함) 대체 글자, text(본문) = 여러 줄 본문을 JSON 문자열 한 줄로,
+ *  line(값, max?) = 한 칸을 JSON 문자열로("…" — 값이 없으면(null·undefined) 빈 글자, max = 이스케이프 뒤 글자 수 상한 — 넘으면 글자 묶음 경계로 자르고 …), cut(값, max) = 같되 잘렸으면 …(앞 N자만), lineOr(값, 대체) = 값이 비었으면(공백뿐 포함) 대체 글자, text(본문) = 여러 줄 본문을 JSON 문자열 한 줄로,
  *  id(값) = 바깥이 정하는 id(Gmail·드라이브) — 보통의 id 글자뿐이면 그대로, 아니면 JSON 문자열,
  *  block(줄들, [ko, en]) = 경계 블록. 안쪽 줄은 도구가 쓴 구조 + line·text로 감싼 값뿐이어야 한다. */
 export function outsideOf(kind, lang = 'ko', nonce = outsideDeps.nonce()) {
   const tag = `${kind}-${nonce}`;
-  const line = (s, n) => outsideLine(n && s != null ? String(s).slice(0, n) : s, tag);
-  return { tag, line, text: (s) => outsideText(s, tag), lineOr: (s, fallback, n) => (String(s ?? '').trim() ? line(s, n) : fallback),
+  const line = (s, max) => outsideLine(s, tag, max); // max = 이스케이프 뒤 글자 수(따옴표 포함) — 넘으면 글자 묶음 경계로 자르고 따옴표 밖에 …
+  return { tag, line, text: (s) => outsideText(s, tag), lineOr: (s, fallback, max) => (String(s ?? '').trim() ? line(s, max) : fallback),
+    // 머리 칸처럼 잘렸다는 사실을 더 분명히 알릴 칸 — 따옴표 밖에 …(앞 N자만)
+    cut: (s, max) => { const raw = String(s ?? '').replaceAll(tag, ''); const r = outsideBody(raw, tag, { max }); return r.json + (r.cut ? `…(${pick('앞', 'first', lang)} ${r.kept}${pick('자만', ' chars', lang)})` : ''); },
     // 긴 본문 — 원문 글자 수(chars)와 이스케이프 뒤 글자 수(max)가 둘 다 예산 안이도록 접두만 → { json, kept, cut }. room(다른 줄들) = 그 블록에서 본문에 남은 이스케이프 뒤 예산
     body: (s, opts) => outsideBody(s, tag, opts), room: (others) => Math.max(1_000, OUTSIDE_BLOCK_MAX - 700 - [].concat(others).join('\n').length),
     id: (v) => (/^[A-Za-z0-9._:-]{1,300}$/.test(String(v ?? '')) ? String(v) : line(v, 200)), // 바깥(메일·드라이브)이 정하는 id — 보통의 id 글자만이면 그대로, 아니면 JSON 문자열로

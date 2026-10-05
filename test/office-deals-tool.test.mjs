@@ -185,6 +185,9 @@ test('D6(T6). deal_add: 같은 거래처(또는 거래처 미지정)에 비슷�
     lines: [{ item_id: 'i1', quantity: 1, unit_price: 1000000, tax_type: 'taxable' }, { item_id: 'new-item', quantity: 3, unit_price: 200000, tax_type: 'exempt' }] });
   assert.match(out, /견적 단계로 등록했다 — 합계 1,700,000원\(부가세 포함\) · 입금 예정 2026-11-10 \(id=new-order\) · 건명 · 거래처:\n--- 바깥 글 시작[^\n]*\n"웹사이트 리뉴얼 2차" · "한빛상사"\n--- 바깥 글 끝 [^\n]*\n새 품목을 만들었다: "사진 촬영"/);
   calls = fake();
+  const three = await run({ action: 'deal_add', title: '완전히 새로운 건', customer_id: C1, lines: [{ item: '새 품목 가', unit_price: 1 }, { item: '새 품목 나', unit_price: 2 }, { item: '새 품목 다', unit_price: 3 }] });
+  assert.match(three, /새 품목을 만들었다: "새 품목 가", "새 품목 나", "새 품목 다"/, '새 품목 이름은 모두 온전히(Array.map이 넘긴 index가 글자 상한으로 읽히던 회귀)');
+  calls = fake();
   assert.match(await run({ action: 'deal_add', title: '전혀 다른 일', customer_id: C1, lines: [{ item: 'i1', unit_price: 5 }] }), /등록했다/);
   assert.deepEqual(writes(calls).map((c) => c.args.p_action), ['order.create']);
 });

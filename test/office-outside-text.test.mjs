@@ -29,6 +29,7 @@ const { filesDeps } = await import('../src/gateway/office-files.mjs');
 const { companyDeps } = await import('../src/gateway/office-company.mjs');
 const audience = await import('../src/gateway/office-audience.mjs');
 const { outsideBlock, outsideLine, outsideText, outsideBody, jsonText, OUTSIDE_BLOCK_MAX } = await import('../src/inbound-marks.mjs');
+const { quoted } = audience;
 
 const ME = 'owner-uid', ORG = '11111111-1111-4111-8111-111111111111', WS = 'outside-text';
 await createCompany(WS, '경계사', 'owner', ME);
@@ -447,4 +448,38 @@ test('O22(3차 M-A). outsideBlock 예산 — 넘으면 뒤 행을 줄이고 블�
   const small = outsideBlock(rows.slice(0, 3), { tag: TAG, what: 'x', lang: 'ko' });
   assert.equal(small.split('\n').length, 5, '예산 안이면 생략 줄이 없다');
   assert.ok(OUTSIDE_BLOCK_MAX <= 40_000 && OUTSIDE_BLOCK_MAX >= 20_000);
+});
+
+// ── 4차 L-4: 자르기는 글자 묶음(grapheme) 경계로 — 대리쌍·ZWJ 이모지·NFD 한글 자소·결합 문자·국기가 반으로 쪼개지지 않는다(원문 글자 수 경로와 이스케이프 뒤 글자 수 경로 모두) ──
+test('O23(4차 L-4). 자르기가 글자 묶음을 쪼개지 않는다 — outsideBody(chars·max 두 경로)·ox.line(n)·quoted(n)', () => {
+  const fam = '👨‍👩‍👧‍👦', famW = jsonText(fam).length - 2, nfd = '가'.normalize('NFD'), eAcute = 'e\u0301', flag = '🇰🇷'; // famW = 이스케이프 뒤 폭(ZWJ 3개가 6자씩)
+  const whole = (r, expect, label) => { assert.equal(JSON.parse(r.json), expect, label); assert.doesNotMatch(r.json, /\\ud[89ab][0-9a-f]{2}"$|\\ud[c-f][0-9a-f]{2}/i, `${label}: 외톨이 대리쌍 이스케이프가 없다`); };
+  // chars 경로(원문 UTF-16 글자 수)
+  whole(outsideBody('a😀😀😀', TAG, { chars: 4 }), 'a😀', 'chars=4 이모지'); assert.equal(outsideBody('a😀😀😀', TAG, { chars: 4 }).kept, 3);
+  whole(outsideBody(fam.repeat(3), TAG, { chars: 15 }), fam, 'chars=15 ZWJ 가족(11칸)'); whole(outsideBody(fam.repeat(3), TAG, { chars: 10 }), '', 'chars=10: 가족 하나(11칸)가 안 들어가면 0');
+  whole(outsideBody(nfd + nfd, TAG, { chars: 3 }), nfd, 'chars=3 NFD 한글'); whole(outsideBody(eAcute + 'x', TAG, { chars: 1 }), '', '결합 문자 묶음은 반으로 안 쪼갠다');
+  whole(outsideBody(flag + flag, TAG, { chars: 5 }), flag, 'chars=5 국기(4칸)'); whole(outsideBody(flag + flag, TAG, { chars: 3 }), '', '국기 반쪽은 없다');
+  // max 경로(이스케이프 뒤 글자 수 — 따옴표 포함)
+  whole(outsideBody(fam.repeat(3), TAG, { max: 2 + famW * 2 - 1 }), fam, 'max ZWJ 가족'); whole(outsideBody(nfd.repeat(3), TAG, { max: 2 + 3 }), nfd, 'max NFD'); whole(outsideBody(flag.repeat(3), TAG, { max: 2 + 7 }), flag, 'max 국기');
+  // 정상 글은 종전과 같다(20000자 접두)
+  assert.equal(outsideBody('가'.repeat(30000), TAG, { chars: 20000, max: 40000 }).json, JSON.stringify('가'.repeat(20000)));
+  // 한 칸(ox.line n)·되울림(quoted n)
+  const ox = audience.outsideOf('t', 'ko', 'abc123');
+  assert.equal(ox.line('가나다', 100), '"가나다"', '안 잘리면 그대로(표시 없음)');
+  const cut = ox.line(fam.repeat(5), 2 + famW * 2 + 3); assert.match(cut, /^"[^"]*"…$/, '잘렸으면 따옴표 밖에 …'); assert.equal(JSON.parse(cut.slice(0, -1)), fam.repeat(2));
+  assert.equal(quoted('a' + flag + 'b', 3), '"a"…', 'quoted도 묶음 경계(국기 반쪽 없음) + 잘림 표시'); assert.equal(quoted('abc', 10), '"abc"'); assert.equal(quoted(null, 10), '""');
+  const lt = ox.line('<'.repeat(200), 120); assert.match(lt, /^"(\\u003c){19}"…$/, '이스케이프 뒤 글자 수 기준으로 잘린다(< 한 글자가 6자)');
+});
+
+test('O24(4차 L-1). outsideBlock 행 몫 — 몫을 크게 넘는 행(이스케이프로 커진 공격 행)은 건너뛰고 정상 행부터 채운다, 모든 행이 크면 앞 행부터(종전)', () => {
+  const big = (i) => `- ${outsideLine(`<${i}`.repeat(1500), TAG)}`, small = (i) => `- ${outsideLine(`정상 행 ${i} — 견적 문의`, TAG)}`;
+  const rows = [...Array.from({ length: 8 }, (_, i) => big(i)), ...Array.from({ length: 22 }, (_, i) => small(i))];
+  const out = outsideBlock(rows, { tag: TAG, what: 'x', lang: 'ko', max: 40_000 }), lines = out.split('\n');
+  assert.ok(out.length <= 40_000); assert.equal(lines.filter((l) => l.includes('정상 행')).length, 22, '정상 행 22개 모두 보인다');
+  assert.equal(lines.filter((l) => l.startsWith('- ') && !l.includes('정상')).length, 0, '큰 행은 건너뛴다'); assert.match(lines.at(-2), /^…외 8건 생략\(글자 수 예산\)/); assert.equal(lines.at(-1), `--- 바깥 글 끝 [${TAG}] ---`);
+  assert.equal(lines.filter((l) => l.includes('정상 행')).map((l) => +/정상 행 (\d+)/.exec(l)[1]).join(), Array.from({ length: 22 }, (_, i) => i).join(), '정상 행의 순서는 그대로');
+  const all = Array.from({ length: 100 }, (_, i) => `- ${outsideLine(`<${i}`.repeat(600), TAG)}`), outAll = outsideBlock(all, { tag: TAG, what: 'x', lang: 'ko', max: 20_000 });
+  assert.ok(outAll.length <= 20_000); assert.ok(outAll.split('\n').filter((l) => l.startsWith('- ')).length >= 3, '모든 행이 크면 앞 행부터 채운다(종전)');
+  const normal = Array.from({ length: 80 }, (_, i) => `- ${outsideLine(`행 ${i} ${'가'.repeat(600)}`, TAG)}`), outN = outsideBlock(normal, { tag: TAG, what: 'x', lang: 'ko', max: 40_000 });
+  assert.ok(outN.split('\n').filter((l) => l.startsWith('- ')).length > 40, '비슷한 크기의 행은 앞 행부터 최대한 채운다(큰 행 규칙은 몫을 크게 넘는 행만)');
 });

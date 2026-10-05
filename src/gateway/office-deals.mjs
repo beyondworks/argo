@@ -247,7 +247,7 @@ export async function dealsTool(args, { ctx = null, lang = 'ko', ownerId = null 
       const r = await write('order.create', { title, customer_id: cu.id, lines: rows, ...(due ? { due_on: due } : {}), ...(at ? { at } : {}) });
       const total = rows.reduce((n, x) => n + x.quantity * x.unit_price + vatOf(x.quantity * x.unit_price, x.tax_type), 0);
       // 거래처 이름은 읽어 온 남의 글이라 경계 블록 안에(내가 준 건명도 같이), 새 품목 이름은 내가 준 값이라 한 줄로(검수 #fix-cross M2)
-      return `${pick(`거래를 견적 단계로 등록했다 — 합계 ${won(total, 'ko')}(부가세 포함)${due ? ` · 입금 예정 ${due}` : ''} (id=${r?.id}) · 건명 · 거래처:`, `Added the deal as a quote — total ${won(total, 'en')} incl. VAT${due ? ` · due ${due}` : ''} (id=${r?.id}) · title · customer:`, lang)}\n${ox.block([`${ox.line(title)} · ${ox.line(cu.name)}`], DEAL_TEXT)}${made.length ? pick(`\n새 품목을 만들었다: ${made.map(ox.line).join(', ')}`, `\nNew items: ${made.map(ox.line).join(', ')}`, lang) : ''}`;
+      return `${pick(`거래를 견적 단계로 등록했다 — 합계 ${won(total, 'ko')}(부가세 포함)${due ? ` · 입금 예정 ${due}` : ''} (id=${r?.id}) · 건명 · 거래처:`, `Added the deal as a quote — total ${won(total, 'en')} incl. VAT${due ? ` · due ${due}` : ''} (id=${r?.id}) · title · customer:`, lang)}\n${ox.block([`${ox.line(title)} · ${ox.line(cu.name)}`], DEAL_TEXT)}${made.length ? pick(`\n새 품목을 만들었다: ${made.map((x) => ox.line(x)).join(', ')}`, `\nNew items: ${made.map((x) => ox.line(x)).join(', ')}`, lang) : ''}`;
     }
 
     if (a.action === 'deal_next' || a.action === 'deal_due') {
