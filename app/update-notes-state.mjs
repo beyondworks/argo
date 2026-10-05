@@ -8,6 +8,7 @@ export const UPDATE_NOTES = Object.freeze({
   '0.1.92': Object.freeze(['updates.note.personalCrews', 'updates.note.crewCalendar', 'updates.note.msgrAutoConnect']),
   '0.1.93': Object.freeze(['updates.note.cliBundled', 'updates.note.delegationSwitch', 'updates.note.splash']),
   '0.1.94': Object.freeze(['updates.note.sessionMsg', 'updates.note.inboundCard', 'updates.note.fullAutoScope', 'updates.note.autoAttach', 'updates.note.shipSplash']),
+  '0.1.95': Object.freeze(['updates.note.updateWhere', 'updates.note.oneRoomAlerts', 'updates.note.channelRecall', 'updates.note.officeTools', 'updates.note.syncCopies']),
 });
 
 export function stableVersion(value) {
