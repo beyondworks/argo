@@ -182,6 +182,19 @@ export function serviceCredsAllowed(env = process.env) {
 
 // cycle 시작마다 호출 — 서비스 모드는 epoch, 세션 모드는 access token으로 캐시 키를 삼아
 // 자격 회전 시에만 클라이언트를 재생성한다. false = 쓸 자격 없음(이번 사이클 스킵).
+/** 세션 클라이언트의 요청 — 사이클 시작에 고른 토큰이 사이클 도중 만료되지 않게, 만료 60초 안쪽이면 요청 직전에 새 세션을 받아
+    Authorization을 바꾼다(평소엔 시각 비교 한 번). 실측 2026-10-05: 상주 사이클이 70초 넘게 걸려 끝부분 요청이 만료 토큰으로 나갔다.
+    getFresh는 getFreshDeviceSession — 회전은 프로세스 간 잠금으로 한 번만 일어나고, 받지 못하면 지금 토큰을 그대로 쓴다. (export: 회귀 테스트용) */
+export const sessionFetch = (sess, getFresh, baseFetch) => {
+  let cur = sess;
+  return async (url, opts = {}) => {
+    if ((cur.expires_at ?? 0) * 1000 - Date.now() <= 60_000) cur = (await getFresh()) ?? cur;
+    const headers = new Headers(opts.headers);
+    headers.set('Authorization', `Bearer ${cur.access_token}`);
+    return baseFetch(url, { ...opts, headers });
+  };
+};
+
 async function ensureClient() {
   const svc = loadSyncCreds();
   if (svc && serviceCredsAllowed()) {
@@ -195,7 +208,7 @@ async function ensureClient() {
   if (sbKey !== k) {
     sb = createClient(sess.url, sess.anonKey, {
       ...CLIENT_OPTS,
-      global: { ...CLIENT_OPTS.global, headers: { Authorization: `Bearer ${sess.access_token}` } },
+      global: { ...CLIENT_OPTS.global, headers: { Authorization: `Bearer ${sess.access_token}` }, fetch: sessionFetch(sess, getFreshDeviceSession, CLIENT_OPTS.global.fetch) },
     });
     sbKey = k;
     resetDiscoverClock();

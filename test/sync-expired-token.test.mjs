@@ -14,10 +14,12 @@ import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mkdtemp } from './helpers/tmp.mjs';
+import { startFakeSupabase } from './helpers/fake-supabase-http.mjs';
+import { seedRoot, runSyncChild } from './helpers/sync-child.mjs';
 
 const ROOT = await mkdtemp(join(tmpdir(), 'argo-expired-'));
 process.env.ARGO_ROOT = ROOT;
-const { syncCompany, _setSyncClientForTest } = await import('../src/sync.mjs');
+const { syncCompany, _setSyncClientForTest, sessionFetch } = await import('../src/sync.mjs');
 const { useFakeAccountKey } = await import('./helpers/fake-account-key.mjs');
 const { sealSecret, openSecretCompat } = await import('../src/secretbox.mjs');
 const restoreKey = await useFakeAccountKey(3, 'o');
@@ -126,3 +128,41 @@ test('인접 핀 — 진짜 객체 없음(Object not found)은 지금처럼 없�
   assert.ok(f.store.has(`${OWNER}/${WS}/__manifest__.json`), '첫 매니페스트를 쓴다');
 });
 
+// 토큰 창 — 사이클 시작에 고른 토큰이 사이클 도중 만료되던 것(운영: 회전 08:58:39Z 뒤 70초 동안 옛 토큰, 만료 08:59:38Z 이후 요청이 거절·오분류).
+const nowSec = () => Math.floor(Date.now() / 1000);
+const recorder = () => { const seen = []; return { seen, fetch: async (url, opts) => { seen.push(new Headers(opts.headers).get('authorization')); return new Response('{}'); } }; };
+
+test('토큰 창 — 만료 60초 안쪽이면 요청 직전에 새 세션 토큰을 싣고, 새 세션은 한 번만 받는다', async () => {
+  const rec = recorder();
+  let calls = 0;
+  const getFresh = async () => { calls++; return { access_token: 'new', expires_at: nowSec() + 3600 }; };
+  const f = sessionFetch({ access_token: 'old', expires_at: nowSec() + 30 }, getFresh, rec.fetch);
+  await f('https://x/storage/v1/object/a', { headers: { Authorization: 'Bearer old' } });
+  await f('https://x/storage/v1/object/b', {});
+  assert.deepEqual(rec.seen, ['Bearer new', 'Bearer new'], '만료가 가까운 옛 토큰을 보내지 않는다');
+  assert.equal(calls, 1, '받은 새 세션을 계속 쓴다(요청마다 회전하지 않는다)');
+});
+
+test('토큰 창 — 여유 있는 토큰은 그대로 쓰고, 새 세션을 못 받으면 지금 토큰을 그대로 쓴다', async () => {
+  const rec = recorder();
+  let calls = 0;
+  const ok = sessionFetch({ access_token: 'fine', expires_at: nowSec() + 600 }, async () => { calls++; return null; }, rec.fetch);
+  await ok('https://x/a', { headers: { Authorization: 'Bearer fine' } });
+  assert.deepEqual(rec.seen, ['Bearer fine']);
+  assert.equal(calls, 0, '평소엔 세션을 다시 읽지 않는다');
+  const dead = sessionFetch({ access_token: 'old', expires_at: nowSec() - 5 }, async () => null, rec.fetch);
+  await dead('https://x/b', {});
+  assert.equal(rec.seen.at(-1), 'Bearer old', '회전 실패 — 요청은 지금 토큰으로 나가고 서버 거절이 보류 경로로 간다');
+});
+
+test('토큰 창 배선 — 실제 supabase-js 클라이언트의 동기화 요청이 모두 세션 토큰을 싣는다(익명 키로 새지 않는다)', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'argo-expired-wire-'));
+  const fake = await startFakeSupabase({ userId: 'u1' });
+  try {
+    seedRoot(root, { url: fake.url, userId: 'u1', wsId: 'co-1234' }); // 기기 세션 access_token 'h.p.s', 만료 1시간 뒤
+    await runSyncChild({ root, env: { ARGO_SYNC_CYCLE_MS: '100' }, waitMs: 2500 });
+    const sync = fake.hits.filter((h) => h.k.includes('/storage/v1/') || h.k.includes('/rest/v1/'));
+    assert.ok(sync.length >= 3, `동기화 요청이 있어야 본다(${sync.length})`);
+    assert.deepEqual([...new Set(sync.map((h) => h.auth))], ['Bearer h.p.s'], '모든 요청이 세션 토큰');
+  } finally { await fake.close(); }
+});
