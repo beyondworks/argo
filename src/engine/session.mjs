@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { paths } from '../workspace.mjs';
 import { readJson, writeJsonAtomic } from '../jsonstore.mjs';
+import { carrySummary, countPrompts } from './compact.mjs';
 
 export const sessionFile = (wsId, slug) => join(paths(wsId).root, '.sessions', 'native', `${slug}.json`);
 
@@ -76,25 +77,30 @@ export function sanitizeTranscript(messages) {
 export async function loadNativeSession(wsId, slug, resumeId = null) {
   const f = sessionFile(wsId, slug);
   const saved = await readJson(f, null).catch(() => null);
-  if (saved && resumeId && saved.id === resumeId && Array.isArray(saved.messages)) return { id: saved.id, messages: sanitizeTranscript(saved.messages), resumed: true, ...(saved.compacted ? { compacted: true } : {}) }; // compacted — 압축 간격 규칙(compact.mjs)
+  if (saved && resumeId && saved.id === resumeId && Array.isArray(saved.messages)) return { id: saved.id, messages: sanitizeTranscript(saved.messages), resumed: true, ...(saved.compacted ? { compacted: true } : {}), ...(Number.isInteger(saved.compactBase) ? { compactBase: saved.compactBase } : {}) }; // compacted·compactBase — 압축 간격 규칙(compact.mjs)
   return { id: `native-${randomUUID()}`, messages: [], resumed: false };
 }
 
 /** 턴 중 저장(K57) — 넘치면 오래된 스크린샷 정리를 전체에 먼저, 그 뒤 마지막 지시 앞(이전 턴)만 예산까지 절단한다.
     현재 턴(마지막 지시~꼬리)은 손대지 않는다 — 전체를 trimMessages로 자르면 큰 도구 결과가 든 현재 턴이 지시 하나로 줄어
     모델이 같은 작업(쓰기·쪽지·제출)을 처음부터 반복했다. 현재 턴 단독으로 상한을 넘으면 넘긴 채 저장한다(알려진 한계).
-    tail은 지시로 시작하므로 head가 비어도 전사는 비지 않고 머리가 지시다 — trimMessages의 마지막 지시 복원은 쓰지 않는다(연속 user 방지). */
+    tail은 지시로 시작하므로 head가 비어도 전사는 비지 않고 머리가 지시다 — trimMessages의 마지막 지시 복원은 쓰지 않는다(연속 user 방지).
+    이 상한은 base64까지 글자로 센다(압축 추정은 이미지를 고정값으로 센다 — compact.mjs TRANSCRIPT_BUDGET_TOKENS 주석). 그래서 스크린샷이 든 세션은
+    압축보다 이 절단이 먼저 와 앞부분이 **요약 없이** 사라질 수 있다. 맨 앞 요약 블록(직전 압축의 결과)만은 잃지 않게 남은 첫 지시 앞에 다시 붙인다(carrySummary,
+    재검수 MEDIUM 재현: 요약 머리가 잘려 저장 뒤 요약 없음). 잘라낸 지시 수만큼 compactBase도 줄여 압축 간격(새로 생긴 지시 수)이 어긋나지 않게 한다. */
 export async function saveNativeSession(wsId, slug, sess) {
   let messages = sess.messages.slice();
   const size = (a) => JSON.stringify(a).length;
   if (size(messages) > SESSION_MAX_CHARS) {
+    const before = messages;
     messages = dropOldImages(messages);
     const cut = Math.max(0, messages.findLastIndex(isPromptMsg));
     const head = messages.slice(0, cut); const tail = messages.slice(cut); const tailSize = size(tail);
     while (head.length && size(head) + tailSize > SESSION_TRIM_TO) head.shift();
     while (head.length && !isPromptMsg(head[0])) head.shift();
-    messages = [...head, ...tail];
+    messages = carrySummary(before, [...head, ...tail]);
+    if (Number.isInteger(sess.compactBase)) sess.compactBase = Math.max(0, sess.compactBase - (countPrompts(before) - countPrompts(messages)));
   }
-  await writeJsonAtomic(sessionFile(wsId, slug), { id: sess.id, at: Date.now(), messages, ...(sess.compacted ? { compacted: true } : {}) });
+  await writeJsonAtomic(sessionFile(wsId, slug), { id: sess.id, at: Date.now(), messages, ...(sess.compacted ? { compacted: true } : {}), ...(Number.isInteger(sess.compactBase) ? { compactBase: sess.compactBase } : {}) });
   sess.messages = messages;
 }

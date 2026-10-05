@@ -2166,6 +2166,8 @@ ${lang === 'en'
       }
       await setTurnStatus(wsId, agentSlug, 'memory', '', undefined, turnSource);
     }
+    // 앞 대화 압축 중(네이티브 compact.mjs·SDK 자동 압축 모두 {subtype:'status', status:'compacting'}) — 화면 단계 '앞 대화 정리 중'. 다음 단계 이벤트가 덮는다
+    if (msg.type === 'system' && msg.subtype === 'status' && msg.status === 'compacting') await setTurnStatus(wsId, agentSlug, 'summarize', '', undefined, turnSource);
     // 앞 대화 압축(네이티브 엔진 compact.mjs, SDK 자동 압축도 같은 모양) — 크루 대화 기록에 안내 줄 하나. 화면 문구는 i18n(chat.session.notice.summarized)이 그린다.
     // 이 턴의 범위를 싣는다(채널 턴이면 그 채널 줄 — 회수·맥락 범위 규칙을 그대로 탄다). 기록 실패는 턴과 무관.
     // noticeOf = 이 실행의 표지(chat 라우트·세션 메시지는 그 지시의 turnId — 재시도 프레임도 같은 제어 객체를 물려받는다) — 지시 바로 뒤·답 앞에 놓인다(thread.mjs appendLine).
