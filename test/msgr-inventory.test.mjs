@@ -43,11 +43,11 @@ test('새 크루는 내가 속한 모든 조직에 기본 파견(active, allow =
   }
 });
 
-test('이미 있는 크루: 이름·역할이 같으면 무변경, 바뀌면 상태와 무관하게 갱신(active도)', async () => {
+test('이미 있는 크루: 이름·역할이 같으면 무변경, 이름이 바뀌면 상태와 무관하게 이름만 갱신(active도) — 직무는 카드 변화로만(test/msgr-mirror-edges.test.mjs, CX-08)', async () => {
   const d = db({ rows: [{ id: 'r1', org_id: O1, slug: 'seoyun', display_name: '서윤', role_text: '마케터', status: 'active' }, { id: 'r2', org_id: O1, slug: 'jun', display_name: '준(옛)', role_text: '데이터 분석', status: 'available' }] });
   const r = await mirrorInventory('ws1', { db: d, uid: UID, agents });
   assert.deepEqual(r, { orgs: 1, inserted: 0, updated: 1, removed: 0 });
-  assert.deepEqual(d.calls.filter(([k]) => k === 'updateCrewInfo'), [['updateCrewInfo', 'r2', { display_name: '준', role_text: '데이터 분석' }]]);
+  assert.deepEqual(d.calls.filter(([k]) => k === 'updateCrewInfo'), [['updateCrewInfo', 'r2', { display_name: '준' }]], '이름만 — 메신저에서 고친 직무를 같이 덮지 않는다');
   assert.ok(!d.calls.some(([k]) => k === 'upsertAvailable'));
 });
 

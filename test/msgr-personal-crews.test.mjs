@@ -44,7 +44,7 @@ test('인벤토리: 조직이 있으면 조직 행과 개인 행을 둘 다, 이
   const r = await M.mirrorInventory(WS, { db: d, uid: UID, agents });
   assert.deepEqual(r, { orgs: 1, inserted: 3, updated: 1, removed: 0 }, '개인 1(jun) + 조직 2 삽입, 개인 이름 1 갱신, 회수 없음');
   assert.deepEqual(d.calls.find(([k]) => k === 'insertPersonal')[1].map((x) => x.slug), ['jun']);
-  assert.deepEqual(d.calls.find(([k]) => k === 'updateCrewInfo').slice(1), ['p1', { display_name: '서윤', role_text: '마케터' }]);
+  assert.deepEqual(d.calls.find(([k]) => k === 'updateCrewInfo').slice(1), ['p1', { display_name: '서윤' }], '이름만 — 직무는 카드 변화로만(CX-08)');
   assert.ok(!d.calls.some(([k]) => k === 'deleteCrews'), '카드가 다른 기기·동기화 덜 된 카드로 개인 행을 지우지 않는다(분리 검수 H2 — 지우면 크루 답 작성자·1:1 방이 끊긴다)');
   assert.equal(d.calls.find(([k]) => k === 'upsertAvailable')[1].length, 2, '조직 행은 종전대로');
 });
@@ -69,13 +69,14 @@ test('인벤토리: 새 개인 행은 대표 조직 행(가장 먼저 만든 행
     { id: 'o-early', org_id: ORG, slug: 'jun', status: 'active', face: { v: 2, shape: 8, color: 9 }, avatar_url: null, created_at: '2026-09-01T00:00:00+00:00' },
   ]; };
   await M.mirrorInventory(WS, { db: d, uid: UID, agents });
-  assert.deepEqual(asked, [[UID, WS, ['jun']]], '넣을 slug만 한 번 읽는다');
+  assert.deepEqual(asked, [[UID, WS, ['seoyun', 'jun']]], '이 틱에 넣을 slug(개인 jun + 조직 행이 없는 seoyun·jun)를 한 번에 읽는다(조직 행도 얼굴을 복사 — 재검수 MEDIUM)');
   const ins = d.calls.find(([k]) => k === 'insertPersonal')[1];
   assert.deepEqual(ins.map((x) => [x.slug, x.face, x.avatar_url]), [['jun', { v: 2, shape: 8, color: 9 }, 'https://x/late.jpg']], '얼굴은 대표 행, 대표 행에 사진이 없으면 다른 조직 행 사진');
 });
 
 test('인벤토리: 넣을 개인 행이 없으면 얼굴을 읽지 않고, 읽기가 실패해도 개인 행은 그대로 넣는다', async () => {
-  const quiet = invDb({ orgs: [ORG], rows: [{ id: 'p1', org_id: null, slug: 'seoyun', display_name: '서윤', role_text: '마케터', status: 'active' }, { id: 'p2', org_id: null, slug: 'jun', display_name: '준', role_text: null, status: 'active' }] });
+  const quiet = invDb({ orgs: [ORG], rows: [{ id: 'p1', org_id: null, slug: 'seoyun', display_name: '서윤', role_text: '마케터', status: 'active' }, { id: 'p2', org_id: null, slug: 'jun', display_name: '준', role_text: null, status: 'active' },
+    { id: 'o1', org_id: ORG, slug: 'seoyun', display_name: '서윤', role_text: '마케터', status: 'active' }, { id: 'o2', org_id: ORG, slug: 'jun', display_name: '준', role_text: null, status: 'active' }] }); // 조직 행도 있어야 유휴 틱(조직 행을 넣는 틱은 얼굴을 읽는다)
   let reads = 0; quiet.crewLooks = async () => { reads++; return []; };
   await M.mirrorInventory(WS, { db: quiet, uid: UID, agents });
   assert.equal(reads, 0, '유휴 틱은 추가 읽기 0');
