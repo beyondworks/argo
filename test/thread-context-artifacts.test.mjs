@@ -90,7 +90,8 @@ test('배선 — 두 맥락 빌더(CLI 경로·SDK 기기 교차 경로)가 thre
   const src = stripComments(await readFile(join(REPO, 'src/chat.mjs'), 'utf8'));
   // 2026-10-05(B3' 토큰 예산): 두 경로가 threadContextFor 한 벌을 지나고, 그 안에서만 threadCtxLine을 부른다(줄 모양·예산·요약이 경로마다 갈리지 않게)
   assert.equal((src.match(/lineOf: \(m\) => threadCtxLine\(m, lang, name\)/g) ?? []).length, 1, 'threadContextFor 안 1곳');
-  const calls = src.match(/await threadContextFor\(wsId, agentSlug, (thread|t), \{ contextScope, lang, name: meta\.name \|\| agentSlug, runner, model: effModel \}\)/g) ?? [];
+  // 2026-10-05(검수 반영): CLI 경로는 argv 러너 한도(limits)·중단 신호 같은 인자를 더 받는다 — 공통 앞부분(같은 줄 모양·범위·러너·모델)까지만 고정한다
+  const calls = src.match(/await threadContextFor\(wsId, agentSlug, (thread|t), \{ contextScope, lang, name: meta\.name \|\| agentSlug, runner, model: effModel[ ,}]/g) ?? [];
   assert.equal(calls.length, 2, 'CLI 경로 + SDK 기기 교차 경로 = 2곳(한 곳이 옛 인라인 식으로 돌아가면 노트가 그 경로에서만 사라진다). 정당한 새 호출부를 추가하거나 인자 형태를 바꾸면 이 숫자·앵커를 함께 갱신할 것 — 핀을 우회하지 말고(검수 LOW-1)');
   // 옛 인라인 식 부활 금지 — 노트 문구는 헬퍼 안에만 산다
   assert.equal((src.match(/첨부, Read로 열람/g) ?? []).length, 1, '첨부 노트 문구는 threadCtxLine 안 1곳');

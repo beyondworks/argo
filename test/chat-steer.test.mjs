@@ -228,7 +228,7 @@ test('CLI 이어 실행 프롬프트: 원 프롬프트 + 방금 답 + 새 메시
 test('CLI 경로: 받아 둔 끼워 넣기를 실행 직후 같은 턴에서 이어 실행하고, 확인 뒤 닫는다', () => {
   const src = readFileSync(join(ROOT, 'src/chat.mjs'), 'utf8');
   const cli = src.slice(src.indexOf('const cliInbox ='), src.indexOf('if (!reply) throw new Error(lang ==='));
-  assert.match(cli, /while \(cliInbox\.items\.length\) \{[\s\S]*const texts = cliInbox\.items\.splice\(0\);[\s\S]*cliSteerPrompt\(runPrompt, doneText, texts, lang\)[\s\S]*\}\n\s*cliInbox\.closed = true;/);
+  assert.match(cli, /while \(cliInbox\.items\.length\) \{[\s\S]*const texts = cliInbox\.items\.splice\(0\);[\s\S]*cliSteerPrompt\(withEarly\(ctx\), doneText, texts, lang\)[\s\S]*\}\n\s*cliInbox\.closed = true;/);
   assert.match(src, /abortReg\.setSteer\(async \(text\) => \{\s*if \(nativeOn \? !\(await q\.steer\(text\)\)/, 'SDK·네이티브 경로도 통로를 단다');
   assert.match(src, /abortReg\?\.detachSteer\(steerAccepted\); closeSdkInput\(\);/, 'SDK 실패 → 받은 끼워 넣기를 그룹에 되돌린다(재시도가 다시 받는다)');
   assert.match(src, /hooks: \[async \(input\) => \(sdkInbox\.items\.length && !input\?\.agent_id/, '서브에이전트 도구 뒤에는 싣지 않는다'); 

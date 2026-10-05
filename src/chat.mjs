@@ -48,7 +48,7 @@ import { registerTurn, withTurnControl, turnAbortedError } from './turn-abort.mj
 import { scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, loadRunnerCred, verifyRunnerCred, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply, isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice, isHiddenRunner, visibleRunnerIds, visibleRunnerNamesLine, onlyHiddenConnectedStatus, unsupportedMethodStatus, unsupportedMethodNotice, isCliTurn, GEMINI_DEFAULT_MODEL, runnerCredType, CODEX_DEFAULT_MODEL, CLI_CHAT_TURN_TIMEOUT_MS } from './runners.mjs';
 import { delegateHead } from './inbound-marks.mjs'; // 위임 머리말 = 1:1 화면 출처 카드와 같은 함수
 import { loadThread, takeSharedNotes, restoreSharedNotes, scopedSession, inContextScope, turnScope, scopeKey, approvalScope, threadSummary, setThreadSummary, appendLine } from './thread.mjs';
-import { buildThreadContext, contextSection } from './thread-context.mjs'; // 스레드 맥락 토큰 예산 + 누적 요약(최근 6개 고정을 대체)
+import { buildThreadContext, contextSection, contextLimits, fitContextSection, isArgvRunner, argvLen, ARGV_PROMPT_LIMIT } from './thread-context.mjs'; // 스레드 맥락 토큰 예산 + 누적 요약(최근 6개 고정을 대체) · argv 러너 길이 맞춤
 import { runOneShot } from './oneshot.mjs';
 import { readInstalledSkills, planSkillInjection, SKILL_INJECT_CAP } from './market.mjs'; // 주입·마켓 표기 공용 규칙(단일 진실)
 import { snapshotArtifacts, diffArtifacts, servableArtifact, capLatest, openTurnLedger, closeTurnLedger, overlappingTurns, attributeArtifacts } from './artifacts.mjs'; // 러너 무관 산출물 수집(제보 2026-07-30)
@@ -494,10 +494,10 @@ export function threadCtxLine(m, lang, name) {
     세션 메시지의 다른 안내 줄(상한·기한·실패)은 크루가 알아야 할 사실이라 종전대로 싣는다. export는 테스트용. */
 export const isSummaryNotice = (m) => m?.src?.kind === 'session' && m.src.dir === 'notice' && m.src.code === 'summarized';
 export const inThreadContext = (m, contextScope) => inContextScope(m, contextScope) && !m.shared && !m.failed && !m.awaiting && !isSummaryNotice(m);
-async function threadContextFor(wsId, slug, t, { contextScope, lang, name, runner, model }) {
+async function threadContextFor(wsId, slug, t, { contextScope, lang, name, runner, model, limits = null }) {
   const msgs = (t?.messages ?? []).filter((m) => inThreadContext(m, contextScope));
   return buildThreadContext({
-    msgs, lang, lineOf: (m) => threadCtxLine(m, lang, name), summary: threadSummary(t, contextScope),
+    msgs, lang, lineOf: (m) => threadCtxLine(m, lang, name), summary: threadSummary(t, contextScope), limits, // limits — argv 러너(agy)는 명령줄 길이 기준(contextLimits)
     memoKey: `${wsId}:${slug}:${scopeKey(contextScope) ?? ''}`, // 요약 실패 기억은 범위별(채널·그룹마다 따로) — 요약 저장 키와 같은 구분
     summarize: (prompt) => runOneShot(wsId, prompt, { pin: runner, model: model || null, lang, readOnly: true, timeoutMs: 90_000 }).then((r) => r.text),
     save: (sum) => setThreadSummary(wsId, slug, contextScope, sum),
@@ -1586,9 +1586,7 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
       // 실패 턴(m.failed — 답변 없는 지시문)은 재구성 맥락에서 뺀다: 러너 미로그인에서 재전송을 반복하면
       // 같은 지시 여러 개가 "사장이 7번 말했는데 나는 무응답"으로 읽힌다(분리 검수 MEDIUM). via 턴은 사장
       // 발화가 아니므로 화자를 '자동 배달'로 정직 표기(room.mjs 어휘에서 '시스템'=크루가 답하지 않는 줄이라 반전 — 재검수 지적)(배달 프리픽스가 실제 발신자를 이미 담는다).
-      // 공유 노트는 sharedBlock으로 이미 주입 — 중복 방지. 채널 턴은 그 채널 기록만. 최근 6개 고정 → 토큰 예산 + 누적 요약(threadContextFor).
-      const ctxParts = await threadContextFor(wsId, agentSlug, thread, { contextScope, lang, name: meta.name || agentSlug, runner, model: effModel });
-      const ctx = contextSection(ctxParts, lang === 'en' ? 'Recent conversation' : '최근 대화', lang);
+      // 공유 노트는 sharedBlock으로 이미 주입 — 중복 방지. 채널 턴은 그 채널 기록만. 최근 6개 고정 → 토큰 예산 + 누적 요약(threadContextFor — 아래 프롬프트 조립 직전).
       const attNote = attachments.length
         ? (lang === 'en'
             ? `\n\n(Files the captain attached — read them directly: ${attachments.map((a) => `vault/${a.rel}`).join(', ')})`
@@ -1644,8 +1642,8 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
       const cliMcpServers = MCP_CLI_RUNNERS.has(runner) ? { ...scoped, argo_browser: browserBridge.server, ...(crewBridge ? { crew: crewBridge.server } : {}) } : null;
       const cliMcp = cliMcpServers ? Object.keys(cliMcpServers).filter((k) => k !== 'crew') : []; // 안내 목록은 외부 MCP만(SDK connectedMcp와 같게 — crew는 도구 안내로 따로 나간다)
       const cliRoster = cliTools ? (mirrorCtx?.kind === 'msgr' ? rosterPrompt(messengerColleagues(mirrorCtx, hop), lang, true) : cliColleagues.length ? rosterPrompt(cliColleagues, lang, false, lim) : hopCapNote) : ''; // SDK 턴과 같은 식
-      // 안내 문장으로 시작 — 카드 frontmatter('---')가 맨 앞이면 CLI 인자 파서가 플래그로 오해한다
-      const prompt = `${lang === 'en' ? 'Below are your persona card and operating rules.' : '다음은 너의 페르소나 카드와 운영 규칙이다.'}
+      // 안내 문장으로 시작 — 카드 frontmatter('---')가 맨 앞이면 CLI 인자 파서가 플래그로 오해한다. ctx = 스레드 맥락 구획(아래에서 정한다)
+      const promptWith = (ctx) => `${lang === 'en' ? 'Below are your persona card and operating rules.' : '다음은 너의 페르소나 카드와 운영 규칙이다.'}
 
 ${systemPromptFor(md, p.root, skills, meta, lang, { hasTools: cliTools, connectors: cliConnectors })}${orgRules}${commonDirectives({ caps: cliCaps, connectedMcp: cliMcp, connectors: cliConnectors, hasTools: cliTools, gated: cliGated, lang, runner, workRoots: cliWorkRoots, pinnedFolder: cliPin, source: turnSource, fullAuto })}${cliRoster}${browserBridge ? browserMcpDirective(lang) : ''}${messengerNote}${fallbackDirective}
 ${ctx ? `\n${ctx}` : ''}
@@ -1654,6 +1652,15 @@ ${sharedBlock || (source === 'session' ? newMsgHead(source, lang) : (lang === 'e
 ${lang === 'en'
         ? '(You are the crew of the persona above. Always reply in English, even if the captain wrote to you in Korean.)'
         : '(너는 위 페르소나의 크루로서 한국어로 답하라.)'}`;
+      // 스레드 맥락 — 예산 안 최근 대화 + 누적 요약. argv 러너(agy — 프롬프트를 명령줄 인자로 받는다)는 Windows 명령줄 32,767자가 상한이라
+      // 나머지 프롬프트를 뺀 자리만큼만 계획하고(요약 원샷 입력도 같은 상한 — contextLimits), 실행 때마다 그 실행의 글 전체에 맞춰 구획을 다시 맞춘다
+      // (끼워 넣기 이어 실행은 앞 답이 붙어 길어진다). stdin 러너(codex exec·gemini)는 종전 토큰 예산 그대로.
+      const argvRunner = isArgvRunner(runner);
+      const ctxHead = lang === 'en' ? 'Recent conversation' : '최근 대화';
+      const roomIn = (outer) => ARGV_PROMPT_LIMIT - argvLen(outer('')); // outer(구획) → 실행 프롬프트 전체
+      const ctxParts = await threadContextFor(wsId, agentSlug, thread, { contextScope, lang, name: meta.name || agentSlug, runner, model: effModel,
+        limits: argvRunner ? contextLimits(runner, roomIn(promptWith) - 1) : null });
+      const promptFor = (outer) => outer(argvRunner ? fitContextSection(ctxParts, ctxHead, lang, roomIn(outer)) : contextSection(ctxParts, ctxHead, lang));
       __turnControl.check();
       const cred = await runnerCredEnv(wsId, runner); // 회사 자격(API키/OAuth) 우선, 없으면 호스트 로그인
       // CLI 턴 상한 — 대화 턴 30분(행 방지, ARGO_CLI_TURN_TIMEOUT_MS로 조정 가능), 잡(장시간 작업 큐) 턴 6시간.
@@ -1674,7 +1681,8 @@ ${lang === 'en'
       let reply;
       // 실행 전(준비 중)에 받은 끼워 넣기는 첫 실행 프롬프트에 바로 싣는다 — 이어 실행으로 미루면 전체를 한 번 더 돈다(총괄 검수 L1)
       const early = cliInbox.items.splice(0);
-      const runPrompt = early.length ? `${prompt}\n\n## ${lang === 'en' ? 'More from the captain (sent while you were getting ready)' : '사장이 이어서 보낸 메시지'}\n${early.join('\n\n')}` : prompt;
+      const withEarly = (ctx) => { const prompt = promptWith(ctx); return early.length ? `${prompt}\n\n## ${lang === 'en' ? 'More from the captain (sent while you were getting ready)' : '사장이 이어서 보낸 메시지'}\n${early.join('\n\n')}` : prompt; };
+      const runPrompt = promptFor(withEarly);
       try {
         __turnControl.check();
         reply = await externalExec({ runner, model: effModel, cwd: p.root, prompt: runPrompt, cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers, onSteerable });
@@ -1706,7 +1714,7 @@ ${lang === 'en'
         const segNotes = seg.directives.length || seg.bad.length ? await runDirectives(wsId, agentSlug, seg.directives, { lang, bad: seg.bad, hop, chain, toolHop, results: [], mirrorCtx, delegationRelaxed: lim.relaxed, delegationTree: tree, counters: turnCounters, fullAuto, origin: notOwnerDirect, turnControl: __turnControl, usedTools: crewBridge?.called ?? null }) : [];
         doneText = [doneText, seg.directives.length || seg.bad.length ? [seg.clean, segNotes.join('\n')].filter(Boolean).join('\n\n') : reply].filter(Boolean).join('\n\n');
         try {
-          reply = await externalExec({ runner, model: usedModel, cwd: p.root, prompt: cliSteerPrompt(runPrompt, doneText, texts, lang), cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers, onSteerable }) ?? '';
+          reply = await externalExec({ runner, model: usedModel, cwd: p.root, prompt: promptFor((ctx) => cliSteerPrompt(withEarly(ctx), doneText, texts, lang)), cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers, onSteerable }) ?? '';
         } catch (e) {
           if (abortReg.wasAborted() || e?.aborted) throw e;
           steerFailed = { texts, reason: String(e?.message || e).slice(0, 400) };

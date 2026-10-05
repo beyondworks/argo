@@ -190,3 +190,70 @@ test('TB9. CLI 턴(가짜 codex): 요약 원샷이 실패하는 러너에서 4�
   assert.equal(ps.length - sums, 4, '턴 4번');
   for (const x of ps.filter((y) => !y.includes('<conversation>'))) assert.match(x, /m299\|/, '최근 대화는 실린다');
 });
+
+// 검수 changes_needed #2(HIGH) — agy(Antigravity) CLI는 프롬프트 전체를 명령줄 인자('-p', prompt)로 받는다(runners.mjs externalExec — codex exec·gemini는
+// 표준 입력, K01). 맥락 예산(24,000토큰)이 커져 Windows CreateProcess 32,767자를 넘으면 spawn ENAMETOOLONG으로 턴 전체가 죽는다. 요약 원샷(입력 상한 60,000토큰)도
+// 같은 러너로 가서 같은 자리에서 죽는다. 이 상한은 3플랫폼 공통 최소라(macOS ARG_MAX ≈1MB·Linux 인자당 128KB) 어느 기기에서든 Windows 기준으로 맞춘다.
+// 가짜 agy — 받은 명령줄 인자 전체를 .agy-calls(JSON 줄)에 남기고, 요약 원샷이면 요약을, 그 밖은 고정 답을 낸다.
+await writeFile(join(BIN, 'agy'), `#!/usr/bin/env node
+const fs = require('fs');
+const a = process.argv.slice(2);
+if (a[0] === '--version') { console.log('agy 0.0.0-fake'); process.exit(0); }
+const p = a[a.indexOf('-p') + 1] ?? '';
+fs.appendFileSync(process.cwd() + '/.agy-calls', JSON.stringify({ exe: process.argv[1], argv: a }) + '\\n');
+console.log(p.includes('<conversation>') ? '요약본-AGY 결정은 금요일 마감' : '에이지 답입니다.');
+`);
+await chmod(join(BIN, 'agy'), 0o755);
+/** Windows 명령줄에서 인자 하나가 차지하는 길이의 상한 — 감싸는 따옴표 2 + 이스케이프될 수 있는 " 와 \\ 마다 1(libuv quote_cmd_arg) */
+const winArgLen = (s) => s.length + 2 + (s.match(/["\\]/g)?.length ?? 0);
+
+test('TB10. Antigravity(argv 러너) — 긴 스레드에서도 요약 원샷·턴 프롬프트 모두 Windows 명령줄 32,767자 안(맥락은 줄여 싣는다)', POSIX_ONLY, async (t) => {
+  const WS = 'tb10'; await mkws(WS);
+  await writeFile(join(ROOT, WS, 'agents', 'crew-g.md'), '---\nname: 크루G\nrunner: antigravity\n---\n\n전문가.\n');
+  await writeFile(join(ROOT, WS, '.secrets.json'), JSON.stringify({ runners: { antigravity: { type: 'host', value: 'host-marker' } } }));
+  await writeFile(join(ROOT, WS, 'chats', 'crew-g.json'), JSON.stringify({ sessionId: null, messages: msgs(300, 400) }));
+  const r = await chat(WS, 'crew-g', '보고서 이어서');
+  assert.equal(r.reply, '에이지 답입니다.');
+  const calls = (await readFile(join(ROOT, WS, '.agy-calls'), 'utf8')).split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  const sum = calls.filter((c) => c.argv[c.argv.indexOf('-p') + 1].includes('<conversation>'));
+  const turns = calls.filter((c) => !c.argv[c.argv.indexOf('-p') + 1].includes('<conversation>'));
+  assert.equal(sum.length, 1, '요약 원샷 1회(같은 agy 러너)');
+  assert.equal(turns.length, 1, '턴 1회');
+  for (const c of calls) {
+    const cmdline = winArgLen(c.exe) + c.argv.reduce((a, x) => a + 1 + winArgLen(x), 0);
+    assert.ok(cmdline <= 32_767, `Windows 명령줄 ${cmdline}자 ≤ 32,767`);
+  }
+  const turn = turns[0].argv[turns[0].argv.indexOf('-p') + 1];
+  assert.match(turn, /요약본-AGY 결정은 금요일 마감/, '요약은 실린다');
+  assert.match(turn, /m299\|/, '가장 최근 대화는 실린다');
+  assert.match(turn, /보고서 이어서/, '새 지시는 그대로');
+  const lines = (turn.match(/m\d+\|/g) ?? []).length;
+  assert.ok(lines > 6, `최근 대화 ${lines}줄(종전 6개보다 많이)`);
+  t.diagnostic(`agy 턴 프롬프트 ${turn.length}자·최근 대화 ${lines}줄, 요약 원샷 ${sum[0].argv[sum[0].argv.indexOf('-p') + 1].length}자`);
+  const s = threadSummary(await loadThread(WS, 'crew-g'), null);
+  assert.equal(s?.text, '요약본-AGY 결정은 금요일 마감', '요약은 스레드에 저장된다');
+  assert.ok((await loadThread(WS, 'crew-g')).messages.some((m) => m.ts === s.upto));
+});
+
+test('TB11. 러너별 한도(순수) — stdin 러너는 토큰 예산 그대로, argv 러너는 자리(room)에 맞춘 글자 예산·요약 상한, 구획 맞춤은 오래된 줄부터 빼고 요약을 자른다', async () => {
+  const { contextLimits, fitContextSection, threadSummaryPrompt, argvChars, ARGV_PROMPT_LIMIT, isArgvRunner } = await import('../src/thread-context.mjs');
+  for (const r of ['codex', 'gemini', 'claude', 'openrouter']) { assert.equal(isArgvRunner(r), false, r); assert.equal(contextLimits(r, 100).budget, CTX_BUDGET_TOKENS, `${r}는 종전 예산`); }
+  assert.equal(isArgvRunner('antigravity'), true);
+  const L = contextLimits('antigravity', 20_000);
+  assert.ok(L.budget + L.summaryCap <= 20_000, '최근 대화 + 요약 몫 ≤ 자리');
+  assert.equal(L.summaryInput, ARGV_PROMPT_LIMIT, '요약 원샷 입력도 명령줄 상한');
+  assert.equal(contextLimits('antigravity', -50).budget, 0, '자리가 없으면 0');
+  // 요약 원샷 지시문 — argv 단위로 상한 안, 가장 최근 줄은 남는다
+  const big = Array.from({ length: 400 }, (_, i) => `사장: m${i}| ${'가'.repeat(300)} "따옴표" \\경로`);
+  const sp = threadSummaryPrompt('이전 요약', big, 'ko', { maxInput: L.summaryInput, measure: argvChars, summaryChars: L.summaryChars });
+  assert.ok(argvChars(sp) + 2 <= ARGV_PROMPT_LIMIT, `요약 지시문 ${argvChars(sp)}`);
+  assert.match(sp, /m399\|/); assert.doesNotMatch(sp, /m0\|/); assert.match(sp, new RegExp(`최대 ${L.summaryChars}자로`));
+  // 구획 맞춤
+  const parts = { lines: Array.from({ length: 50 }, (_, i) => `줄${i} ${'x'.repeat(200)}`), summary: '요'.repeat(3000) };
+  for (const room of [100_000, 8000, 3100, 500, 5]) {
+    const sec = fitContextSection(parts, '최근 대화', 'ko', room);
+    assert.ok(sec === '' || argvChars(sec) + 1 <= room, `room ${room}`);
+    if (room === 8000) { assert.match(sec, /줄49 /, '최근 줄 우선'); assert.doesNotMatch(sec, /줄0 /, '오래된 줄부터 뺀다'); }
+  }
+  assert.equal(fitContextSection(parts, '최근 대화', 'ko', 5), '', '자리가 없으면 빈 구획');
+});
