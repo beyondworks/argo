@@ -98,7 +98,7 @@ test('쪽지 — 실제 쪽지 프롬프트(mailPrompt)에서 보낸 크루·참
   assert.equal(sourceLine(to, ko), '쪽지 · 페퍼에게서');
   assert.equal(plainPreview(to.body).text, '자료 초안 보냈어요');
   const cc = inboundCard({ who: 'user', via: 'crewmail', text: mailPrompt({ kind: 'cc', fromName: 'Pepper', message: 'FYI', hop: 0 }, 'en') });
-  assert.equal(sourceLine(cc, en), 'Crew mail · from Pepper · CC');
+  assert.equal(sourceLine(cc, en), 'Agent mail · from Pepper · CC');
   assert.equal(cc.body, 'FYI');
   const captain = inboundCard({ who: 'user', via: 'crewmail', text: mailPrompt({ kind: 'to', fromRole: 'captain', message: '회의 결론 공유' }, 'ko') });
   assert.equal(sourceLine(captain, ko), '쪽지 · 회의실 공유');

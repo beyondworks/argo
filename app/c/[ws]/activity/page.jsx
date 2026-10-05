@@ -10,6 +10,7 @@ import { useLang, stageLabel } from '../../../i18n';
 import { rerunMode } from './rerun.mjs'; // '다시 실행'은 사장이 직접 시킨 턴만(F5)
 import { subscribeSearch } from '../search-bus.mjs'; // 상단 검색 받기(UL10)
 import { gistLabel } from '../../../lib/gist-display.mjs'; // 메신저 머리말을 뗀 요약(UX-A08)
+import { turnErrorDesc } from './turn-desc.mjs'; // 사용자가 멈춘 턴은 저장된 원문 대신 화면 언어 문구
 
 // 러너 표시명 — 서버 RUNNERS.name 준거(runner-connect RUNNER_NAMES와 같은 값)
 const RUNNER_LABELS = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', antigravity: 'Antigravity', glm: 'GLM', kimi: 'Kimi', openrouter: 'OpenRouter', grok: 'Grok' };
@@ -83,7 +84,7 @@ export default function Activity({ params }) {
         who: (e.source === 'delegate' || e.source === 'crewmail') && e.from ? `${nameOf(e.from)} → ${nameOf(e.slug)}`
           : e.source === 'crewmail' && e.fromRole === 'captain' ? `${t('mail.fromCaptain')} → ${nameOf(e.slug)}` : nameOf(e.slug), // 사장 쪽지(fromRole) — from 문자열로 판정하지 않는다
         avatar: nameOf(e.slug),
-        desc: isError(e) ? e.error : (gistLabel(e.gist, t) || t('activity.instructionDone')),
+        desc: isError(e) ? turnErrorDesc(e, t) : (gistLabel(e.gist, t) || t('activity.instructionDone')),
         chip: isError(e) ? t('activity.error') : (SOURCE[e.source] ?? t('activity.conversation')),
         danger: isError(e),
         href: e.journalRel ? `/c/${ws}/vault?doc=${encodeURIComponent(e.journalRel)}` : null,

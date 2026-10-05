@@ -28,7 +28,10 @@ export const PATTERNS = {
 
 /** 허용 목록 — 파일(ROOT 기준 경로, '/' 구분)과 문자열을 정확히 적고 항목마다 이유를 쓴다. 예:
     { file: 'src/memory.mjs', text: 'notes/사장-프로필.md', why: '기억 파일 경로 유지(계획 8절 질문 2)' } */
-export const ALLOW = [];
+export const ALLOW = [
+  { file: 'app/c/[ws]/crew/[slug]/page.jsx', text: 'msg-crew', why: 'CSS 클래스 이름(className) — 코드 이름은 그대로(계획 7절)' },
+  { file: 'app/c/[ws]/crew/[slug]/page.jsx', text: 'crew-card-modal', why: 'CSS 클래스 이름(className) — 코드 이름은 그대로(계획 7절)' },
+];
 
 const EXCLUDE = new Set(['src/legacy-terms.mjs']); // 옛 표지 목록 — 옛 낱말이 있는 것이 정상
 

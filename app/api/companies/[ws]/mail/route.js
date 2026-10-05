@@ -1,7 +1,8 @@
 // 쪽지함 — 크루 우편함(src/crewmail.mjs)의 화면용 API. GET 목록 / POST 사장 발신 / DELETE 대기 취소 / PATCH 실패함 조작.
 import { listMail, sendCrewMail, cancelMail, requeueDead, deleteDead } from '../../../../../src/crewmail.mjs';
 import { loadCompany } from '../../../../../src/workspace.mjs';
-import { guardCompany } from '../../../../auth.mjs';
+import { guardCompany, requestLang } from '../../../../auth.mjs';
+import { apiError } from '../../../../apimsg.mjs';
 
 export async function GET(_req, { params }) {
   const { ws } = await params;
@@ -19,10 +20,10 @@ export async function POST(req, { params }) {
     const { ws } = await params;
     const denied = await guardCompany(ws); if (denied) return denied;
     const { to, cc = [], message } = await req.json();
-    if (!to || !String(message ?? '').trim()) return Response.json({ error: '수신 크루와 내용이 필요합니다' }, { status: 400 });
+    if (!to || !String(message ?? '').trim()) return apiError('mail_fields_required', await requestLang());
     const { lang = 'ko' } = await loadCompany(ws).catch(() => ({}));
     const id = await sendCrewMail(ws, {
-      from: 'captain', fromName: lang === 'en' ? 'the captain' : '사장', fromRole: 'captain',
+      from: 'captain', fromName: lang === 'en' ? 'the user' : '사용자', fromRole: 'captain', // from·fromRole 값은 코드 값이라 그대로, 표시 이름만 새 낱말(이름 호칭은 T5)
       to: String(to), cc: Array.isArray(cc) ? cc.map(String) : [], message: String(message),
     });
     return Response.json({ id });

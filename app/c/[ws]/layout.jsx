@@ -19,6 +19,7 @@ import { emitSearch } from './search-bus.mjs'; // 상단 검색 → 데크·활�
 import { drawerKeyAction, drawerFocusTarget, drawerTabAction, drawerAttrs, drawerEnds } from './drawer.mjs'; // 폰 폭 서랍 Esc·포커스·Tab 순환·dialog 속성(UL9·2차 L4)
 import { searchScope } from './search-scope.mjs'; // 검색을 받는 화면에서만 검색 칸(UX-A03)
 import { gistLabel } from '../../lib/gist-display.mjs'; // 메신저 머리말을 뗀 요약(UX-A08)
+import { nameplateOwner } from '../../lib/nameplate-owner.mjs'; // 회사 이름 아래 줄 — 명패와 같은 표시(저장 값 'captain'은 '—')
 
 const fmtRun = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
 const fmtDur = (ms) => (ms == null ? '' : ms >= 60000 ? `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s` : `${Math.round(ms / 1000)}s`);
@@ -583,7 +584,7 @@ function Shell({ children, params }) {
             <span style={{ display: 'block', fontSize: 11, color: 'var(--fg-3)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
               {me?.sessionDead
                 ? <Link href="/login" title={me.sessionDeadInfo ? `${t('me.sessionDead.title')}\n${t(`me.sessionDead.kind.${me.sessionDeadInfo.kind}`)} (${t('me.sessionDead.raw')}: ${me.sessionDeadInfo.reason})` : t('me.sessionDead.title')} style={{ color: 'var(--danger)', fontWeight: 700 }}>{t('me.sessionDead')}</Link>
-                : me?.authOn ? (me.user?.email || '') : (data?.company?.owner ?? '')}
+                : me?.authOn ? (me.user?.email || '') : (data?.company ? nameplateOwner(data.company.owner) : '') /* 저장 기본값 'captain'을 그대로 보이지 않는다 — 명패와 같은 표시 함수(M10) */}
             </span>
           </span>
           {me?.authOn && (
