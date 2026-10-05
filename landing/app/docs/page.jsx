@@ -3,12 +3,12 @@
 import DocShell from '@/components/DocShell';
 import { useLang } from '@/lib/i18n';
 
-// 시스템 프롬프트 — "틀(구조)"만 공개. 내부 크루 코드네임·회사 맥락·실제 키·경로는 제외,
-// 예시는 가짜 플레이스홀더(Crew A / Researcher)로.
+// 시스템 프롬프트 — "틀(구조)"만 공개. 내부 에이전트 코드네임·회사 맥락·실제 키·경로는 제외,
+// 예시는 가짜 플레이스홀더(Agent A / Researcher)로.
 const PROMPT_TEMPLATE = `---
 runner: <engine>        # claude · codex · gemini · glm
 model:  <model id>
-name:   Crew A          # display name (placeholder)
+name:   Agent A         # display name (placeholder)
 role:   Researcher      # title (placeholder)
 team:   <team>
 ---
@@ -41,8 +41,8 @@ const GROUPS = [
         h: { ko: '1. Argo란?', en: '1. What is Argo?' },
         body: [
           {
-            ko: 'Argo는 프롬프트 한 줄로 “AI 직원 회사”를 만드는 데스크톱 앱입니다. 역할을 말하면 전문 에이전트(크루)가 채용되고, 폴더 단위 기억을 쌓으며 스스로 협업해 일을 끝냅니다.',
-            en: 'Argo is a desktop app that builds a “company of AI employees” from a single prompt. Describe a role and a specialist agent (crew) is hired; they accumulate folder-scale memory and collaborate to finish the work.',
+            ko: 'Argo는 프롬프트 한 줄로 “AI 직원 회사”를 만드는 데스크톱 앱입니다. 역할을 말하면 전문 에이전트가 채용되고, 폴더 단위 기억을 쌓으며 스스로 협업해 일을 끝냅니다.',
+            en: 'Argo is a desktop app that builds a “company of AI employees” from a single prompt. Describe a role and a specialist agent is hired; they accumulate folder-scale memory and collaborate to finish the work.',
           },
         ],
         insight: {
@@ -55,8 +55,8 @@ const GROUPS = [
         h: { ko: '2. 5분 시작', en: '2. Five-minute start' },
         body: [
           {
-            ko: '① 앱 설치 → ② 회사 생성 → ③ 첫 크루 채용(“시니어 리서처 — 시장조사, 요약”처럼 한 줄) → ④ 첫 대화. 이 네 단계면 바로 일을 시킬 수 있습니다.',
-            en: '(1) Install the app -> (2) create a company -> (3) hire your first crew (one line, e.g. “A senior researcher — market research, summaries”) -> (4) start chatting. Four steps and you are working.',
+            ko: '① 앱 설치 → ② 회사 생성 → ③ 첫 에이전트 채용(“시니어 리서처 — 시장조사, 요약”처럼 한 줄) → ④ 첫 대화. 이 네 단계면 바로 일을 시킬 수 있습니다.',
+            en: '(1) Install the app -> (2) create a company -> (3) hire your first agent (one line, e.g. “A senior researcher — market research, summaries”) -> (4) start chatting. Four steps and you are working.',
           },
         ],
       },
@@ -65,23 +65,23 @@ const GROUPS = [
         h: { ko: '3. 핵심 개념', en: '3. Core concepts' },
         body: [
           {
-            ko: '회사 = 작업 공간. 크루 = AI 직원(각자 역할·카드). 기억(vault) = 폴더 트리로 쌓이는 노트·일지·인덱스. 위임 = 모더레이터가 담당 크루에 일을 넘김. 결재 = 위험·중요 행동은 사용자 승인 후 실행.',
-            en: 'Company = your workspace. Crew = an AI employee (each with a role and card). Memory (vault) = a folder tree of notes, journals, and an index. Delegation = a moderator hands work to the right crew. Approval = risky or important actions run only after you sign off.',
+            ko: '회사 = 작업 공간. 에이전트 = AI 직원(각자 역할·카드). 기억(vault) = 폴더 트리로 쌓이는 노트·일지·인덱스. 위임 = 모더레이터가 담당 에이전트에게 일을 넘김. 결재 = 위험·중요 행동은 사용자 승인 후 실행.',
+            en: 'Company = your workspace. Agent = an AI employee (each with a role and card). Memory (vault) = a folder tree of notes, journals, and an index. Delegation = a moderator hands work to the right agent. Approval = risky or important actions run only after you sign off.',
           },
         ],
       },
     ],
   },
   {
-    g: { ko: 'B. 크루 다루기', en: 'B. Working with crew' },
+    g: { ko: 'B. 에이전트 다루기', en: 'B. Working with agents' },
     sections: [
       {
         id: 'hire',
-        h: { ko: '4. 크루 채용 · 역할 · 카드', en: '4. Hire, role, and card' },
+        h: { ko: '4. 에이전트 채용 · 역할 · 카드', en: '4. Hire, role, and card' },
         body: [
           {
-            ko: '필요한 전문가를 한 문장으로 설명하면 Argo가 페르소나 카드를 작성해 크루로 합류시킵니다. 카드에서 이름·직함·팀·규칙을 언제든 수정할 수 있습니다.',
-            en: 'Describe the expert you need in one sentence; Argo writes a persona card and the crew joins. You can edit the name, title, team, and rules from the card at any time.',
+            ko: '필요한 전문가를 한 문장으로 설명하면 Argo가 페르소나 카드를 작성해 에이전트로 합류시킵니다. 카드에서 이름·직함·팀·규칙을 언제든 수정할 수 있습니다.',
+            en: 'Describe the expert you need in one sentence; Argo writes a persona card and the agent joins. You can edit the name, title, team, and rules from the card at any time.',
           },
         ],
       },
@@ -104,8 +104,8 @@ const GROUPS = [
         h: { ko: '6. 위임과 협업', en: '6. Delegation & collaboration' },
         body: [
           {
-            ko: '모더레이터가 작업을 담당 크루에 위임하고, 다른 크루가 검토합니다. 한 명이 하고 → 다른 명이 검토 → 당신은 승인만 하면 됩니다.',
-            en: 'A moderator delegates work to the right crew, and another reviews it. One does the work, another reviews, and you just approve.',
+            ko: '모더레이터가 작업을 담당 에이전트에게 위임하고, 다른 에이전트가 검토합니다. 한 명이 하고 → 다른 명이 검토 → 당신은 승인만 하면 됩니다.',
+            en: 'A moderator delegates work to the right agent, and another reviews it. One does the work, another reviews, and you just approve.',
           },
         ],
       },
@@ -116,17 +116,17 @@ const GROUPS = [
     sections: [
       {
         id: 'prompt-structure',
-        h: { ko: '7. 크루는 어떤 지침으로 움직이나', en: '7. How crews are instructed' },
+        h: { ko: '7. 에이전트는 어떤 지침으로 움직이나', en: '7. How agents are instructed' },
         body: [
           {
-            ko: '각 크루는 하나의 시스템 프롬프트 카드로 정의됩니다. 여기서는 실제 내부 문구가 아니라 “틀(구조)”만 공개합니다 — ① 신원 ② 정확성 규칙 ③ 운영 규율 ④ 기억 사용법 ⑤ 회사 맥락(자동 주입). 내부 크루 코드네임·회사 맥락·키·경로는 담지 않습니다.',
-            en: 'Each crew is defined by one system-prompt card. Here we publish only the structure, not the actual internal text — (1) identity (2) accuracy rules (3) working rules (4) memory usage (5) company context (auto-injected). Internal crew codenames, company context, keys, and paths are omitted.',
+            ko: '각 에이전트는 하나의 시스템 프롬프트 카드로 정의됩니다. 여기서는 실제 내부 문구가 아니라 “틀(구조)”만 공개합니다 — ① 신원 ② 정확성 규칙 ③ 운영 규율 ④ 기억 사용법 ⑤ 회사 맥락(자동 주입). 내부 에이전트 코드네임·회사 맥락·키·경로는 담지 않습니다.',
+            en: 'Each agent is defined by one system-prompt card. Here we publish only the structure, not the actual internal text — (1) identity (2) accuracy rules (3) working rules (4) memory usage (5) company context (auto-injected). Internal agent codenames, company context, keys, and paths are omitted.',
           },
         ],
         code: PROMPT_TEMPLATE,
         caveat: {
-          ko: '주의 — 위 예시의 이름(Crew A)·직함(Researcher)은 가짜 플레이스홀더입니다. 실제 배합(내부 페르소나·회사 규칙)은 공개하지 않습니다. 요리책에 “육수 → 면 → 고명” 순서는 적되 비밀 레시피는 빼는 것과 같습니다.',
-          en: 'Caveat — The name (Crew A) and title (Researcher) above are placeholders. The real recipe (internal personas, company rules) is not published — like a cookbook that lists “stock -> noodles -> garnish” but withholds the secret blend.',
+          ko: '주의 — 위 예시의 이름(Agent A)·직함(Researcher)은 가짜 플레이스홀더입니다. 실제 배합(내부 페르소나·회사 규칙)은 공개하지 않습니다. 요리책에 “육수 → 면 → 고명” 순서는 적되 비밀 레시피는 빼는 것과 같습니다.',
+          en: 'Caveat — The name (Agent A) and title (Researcher) above are placeholders. The real recipe (internal personas, company rules) is not published — like a cookbook that lists “stock -> noodles -> garnish” but withholds the secret blend.',
         },
       },
       {
@@ -134,13 +134,13 @@ const GROUPS = [
         h: { ko: '8. 내 회사 색 입히기', en: '8. Make it your own' },
         body: [
           {
-            ko: '크루의 지침은 세 가지 방식으로 바꿉니다. ① 프리셋 — 준비된 역할 틀 선택. ② 커스텀 — 카드를 직접 편집. ③ 덧붙이기(append) — 회사 공통 규칙을 모든 크루에 얹기(예: “결과는 항상 결론부터”).',
-            en: 'You shape a crew’s instructions three ways. (1) Preset — pick a ready-made role template. (2) Custom — edit the card directly. (3) Append — layer company-wide rules onto every crew (e.g. “always lead with the conclusion”).',
+            ko: '에이전트의 지침은 세 가지 방식으로 바꿉니다. ① 프리셋 — 준비된 역할 틀 선택. ② 커스텀 — 카드를 직접 편집. ③ 덧붙이기(append) — 회사 공통 규칙을 모든 에이전트에게 얹기(예: “결과는 항상 결론부터”).',
+            en: 'You shape an agent’s instructions three ways. (1) Preset — pick a ready-made role template. (2) Custom — edit the card directly. (3) Append — layer company-wide rules onto every agent (e.g. “always lead with the conclusion”).',
           },
         ],
         insight: {
-          ko: '설계 의도 — 회사 규칙을 크루마다 복붙하지 않고 “덧붙이기”로 한 곳에서 관리하게 한 이유는, 규칙이 바뀌어도 전 직원에게 일관되게 반영되게 하기 위함입니다.',
-          en: 'Design intent — Company rules are managed once via “append” rather than copied into each crew, so a rule change propagates consistently to every employee.',
+          ko: '설계 의도 — 회사 규칙을 에이전트마다 복붙하지 않고 “덧붙이기”로 한 곳에서 관리하게 한 이유는, 규칙이 바뀌어도 전 직원에게 일관되게 반영되게 하기 위함입니다.',
+          en: 'Design intent — Company rules are managed once via “append” rather than copied into each agent, so a rule change propagates consistently to every employee.',
         },
       },
     ],
@@ -182,8 +182,8 @@ const GROUPS = [
         h: { ko: '11. 권한 · 능력과 승인 게이트', en: '11. Capabilities & approval gates' },
         body: [
           {
-            ko: '크루가 쓸 수 있는 능력(파일 접근 · 브라우저 · 셸 실행 등)은 켜고 끌 수 있습니다. 민감한 능력은 실행 전 승인 게이트를 거치게 해, 무엇을 허용/차단할지 당신이 정합니다.',
-            en: 'You can turn each capability a crew may use — file access, browser, shell — on or off. Sensitive ones pass an approval gate before running, so you decide what is allowed or blocked.',
+            ko: '에이전트가 쓸 수 있는 능력(파일 접근 · 브라우저 · 셸 실행 등)은 켜고 끌 수 있습니다. 민감한 능력은 실행 전 승인 게이트를 거치게 해, 무엇을 허용/차단할지 당신이 정합니다.',
+            en: 'You can turn each capability an agent may use — file access, browser, shell — on or off. Sensitive ones pass an approval gate before running, so you decide what is allowed or blocked.',
           },
         ],
       },
@@ -192,8 +192,8 @@ const GROUPS = [
         h: { ko: '12. 위험 행동 처리', en: '12. Handling risky actions' },
         body: [
           {
-            ko: '삭제 · 외부 발송 · 비용 발생 같은 되돌리기 어려운 행동은 “결재 후 실행”이 원칙입니다. 크루는 계획을 먼저 제시하고, 당신의 승인 뒤에만 실제로 실행합니다.',
-            en: 'Hard-to-undo actions — deleting, sending externally, spending — follow an “approve, then act” rule. The crew proposes a plan first and only executes after you sign off.',
+            ko: '삭제 · 외부 발송 · 비용 발생 같은 되돌리기 어려운 행동은 “결재 후 실행”이 원칙입니다. 에이전트는 계획을 먼저 제시하고, 당신의 승인 뒤에만 실제로 실행합니다.',
+            en: 'Hard-to-undo actions — deleting, sending externally, spending — follow an “approve, then act” rule. The agent proposes a plan first and only executes after you sign off.',
           },
         ],
         verified: {
@@ -206,16 +206,16 @@ const GROUPS = [
         h: { ko: '13. 보안', en: '13. Security' },
         body: [
           {
-            ko: '크루는 당신의 컴퓨터에서 당신 계정 권한으로, 셸을 포함한 전권으로 돕니다. 그 위에서 권한 게이트가 절대 열리지 않는 구역을 지킵니다 — 실행 중인 Argo 코드, 러너 자격(~/.codex·~/.claude·~/.gemini·~/.argo), 다른 회사의 워크스페이스, 그리고 회사 금고(연결·MCP·루틴·크루 정의 파일). SDK 러너의 파일·검색·MCP 도구 호출에는 이 판정이 코드로 강제됩니다.',
-            en: 'Crews run on your computer, as your user, with full access including the shell. On top of that, the permission gate holds a hard line that never opens — the running Argo code, runner credentials (~/.codex, ~/.claude, ~/.gemini, ~/.argo), other companies\' workspaces, and the company vault (connections, MCP, routines, crew definitions). For SDK runners this is enforced in code on every file, search and MCP tool call.',
+            ko: '에이전트는 당신의 컴퓨터에서 당신 계정 권한으로, 셸을 포함한 전권으로 돕니다. 그 위에서 권한 게이트가 절대 열리지 않는 구역을 지킵니다 — 실행 중인 Argo 코드, 러너 자격(~/.codex·~/.claude·~/.gemini·~/.argo), 다른 회사의 워크스페이스, 그리고 회사 금고(연결·MCP·루틴·에이전트 정의 파일). SDK 러너의 파일·검색·MCP 도구 호출에는 이 판정이 코드로 강제됩니다.',
+            en: 'Agents run on your computer, as your user, with full access including the shell. On top of that, the permission gate holds a hard line that never opens — the running Argo code, runner credentials (~/.codex, ~/.claude, ~/.gemini, ~/.argo), other companies\' workspaces, and the company vault (connections, MCP, routines, agent definitions). For SDK runners this is enforced in code on every file, search and MCP tool call.',
           },
           {
-            ko: '막지 못하는 것도 그대로 말합니다. 셸 명령은 문자열이라 금지 파일명이 그대로 들어간 시도만 잡고, 변수·상대경로 조합은 통과합니다. Codex·Gemini 같은 외부 CLI 러너는 게이트를 지나지 않습니다. 크루가 읽는 모든 것 — vault 문서, 메신저로 온 메시지, 가져온 웹 페이지 — 이 지시가 될 수 있고, 프롬프트 주입이 성공하면 그 결과는 당신 계정 권한의 로컬 명령 실행입니다. 시스템 프롬프트는 외부 입력을 데이터로 취급하라고 지시하지만, 그것은 계약이지 보장이 아닙니다.',
-            en: 'We also say what it cannot stop. Shell commands are strings, so only naive attempts that spell out a forbidden filename are caught; variables and relative paths get through. External CLI runners such as Codex and Gemini do not pass through the gate at all. Everything a crew reads — vault documents, messenger messages, fetched web pages — can carry instructions, and a successful prompt injection means local command execution as your user. The system prompt tells crews to treat outside input as data; that is a contract, not a guarantee.',
+            ko: '막지 못하는 것도 그대로 말합니다. 셸 명령은 문자열이라 금지 파일명이 그대로 들어간 시도만 잡고, 변수·상대경로 조합은 통과합니다. Codex·Gemini 같은 외부 CLI 러너는 게이트를 지나지 않습니다. 에이전트가 읽는 모든 것 — vault 문서, 메신저로 온 메시지, 가져온 웹 페이지 — 이 지시가 될 수 있고, 프롬프트 주입이 성공하면 그 결과는 당신 계정 권한의 로컬 명령 실행입니다. 시스템 프롬프트는 외부 입력을 데이터로 취급하라고 지시하지만, 그것은 계약이지 보장이 아닙니다.',
+            en: 'We also say what it cannot stop. Shell commands are strings, so only naive attempts that spell out a forbidden filename are caught; variables and relative paths get through. External CLI runners such as Codex and Gemini do not pass through the gate at all. Everything an agent reads — vault documents, messenger messages, fetched web pages — can carry instructions, and a successful prompt injection means local command execution as your user. The system prompt tells agents to treat outside input as data; that is a contract, not a guarantee.',
           },
           {
-            ko: '적대적 모델 출력에 대한 진짜 경계는 프로세스 밖, 즉 OS 격리(컨테이너·샌드박스)뿐입니다. Argo는 아직 크루 실행을 컨테이너에 가두는 옵션을 제공하지 않습니다 — 알려진 제품 갭이고 우선순위 트랙입니다. 그때까지는 신뢰할 수 없는 입력 표면(공개 메일함·불특정 다수 채널·임의 URL 수집)을 크루의 상시 입력으로 두지 말고, 작업 폴더를 필요한 만큼만 등록하고, 연결한 러너 계정에 지출 한도를 걸어 두세요.',
-            en: 'The only real boundary against an adversarial model is outside the process — OS-level isolation (a container or sandbox). Argo does not yet ship an option that confines crew execution to a container; this is a known product gap and a priority track. Until then, do not wire untrusted input surfaces (a public mailbox, open channels, arbitrary URL ingestion) into a crew as a standing input, register only the work folders you need, and set a spending cap on the runner accounts you connect.',
+            ko: '적대적 모델 출력에 대한 진짜 경계는 프로세스 밖, 즉 OS 격리(컨테이너·샌드박스)뿐입니다. Argo는 아직 에이전트 실행을 컨테이너에 가두는 옵션을 제공하지 않습니다 — 알려진 제품 갭이고 우선순위 트랙입니다. 그때까지는 신뢰할 수 없는 입력 표면(공개 메일함·불특정 다수 채널·임의 URL 수집)을 에이전트의 상시 입력으로 두지 말고, 작업 폴더를 필요한 만큼만 등록하고, 연결한 러너 계정에 지출 한도를 걸어 두세요.',
+            en: 'The only real boundary against an adversarial model is outside the process — OS-level isolation (a container or sandbox). Argo does not yet ship an option that confines agent execution to a container; this is a known product gap and a priority track. Until then, do not wire untrusted input surfaces (a public mailbox, open channels, arbitrary URL ingestion) into an agent as a standing input, register only the work folders you need, and set a spending cap on the runner accounts you connect.',
           },
           {
             ko: '비밀은 값이 아니라 이름·위치로만 다룹니다. 러너 자격·봇 토큰·MCP 환경변수는 클라우드로 올라가지 않으며(14-1절), 코드 어디에도 시크릿 평문을 두지 않고 커밋 훅이 벤더별 키 패턴을 잡습니다. 전체 신뢰 모델과 제보 범위는 소스 레포의 SECURITY.md에 있습니다.',
@@ -237,8 +237,8 @@ const GROUPS = [
         h: { ko: '14. 텔레그램 · 슬랙 · MCP · 동기화', en: '14. Telegram, Slack, MCP, sync' },
         body: [
           {
-            ko: '크루를 텔레그램·슬랙 게이트웨이에 연결하면 폰에서도 같은 맥락으로 이어 대화할 수 있습니다. MCP로 외부 도구·서버를 원클릭 연결하고, 로그인하면 웹↔앱 사이 맥락이 동기화됩니다.',
-            en: 'Connect a crew to a Telegram or Slack gateway to continue with the same context on your phone. Add external tools and servers via MCP in one click, and sign in to sync context between web and app.',
+            ko: '에이전트를 텔레그램·슬랙 게이트웨이에 연결하면 폰에서도 같은 맥락으로 이어 대화할 수 있습니다. MCP로 외부 도구·서버를 원클릭 연결하고, 로그인하면 웹↔앱 사이 맥락이 동기화됩니다.',
+            en: 'Connect an agent to a Telegram or Slack gateway to continue with the same context on your phone. Add external tools and servers via MCP in one click, and sign in to sync context between web and app.',
           },
         ],
       },
@@ -258,8 +258,8 @@ const GROUPS = [
             en: 'Credentials are not uploaded — the three credential files (runner login tokens and API keys in .secrets.json, Telegram/Slack bot tokens in connections.json, MCP env vars in mcp.json) are structurally excluded from hosted sync. Newly saved credentials are reachable by no one but you, operator included; new devices simply reconnect runners and bots. A copy left by an older version is withdrawn on the next sync (deferred on the free plan by a cloud-write restriction, and run once you are on Pro/trial).',
           },
           {
-            ko: '회사 데이터(기억·대화·크루)는 봉투 암호화(AES-256-GCM)로 Argo 클라우드에 복제됩니다. 다만 그 봉투를 여는 계정별 열쇠가 같은 클라우드에 있어, 서버 운영자는 기술적으로 회사 데이터를 복호화할 수 있습니다 — 이 데이터에 한해서는 "운영자도 절대 볼 수 없다"고 말하지 않습니다. 사용자만 여는 종단간 암호화는 별도로 진행 중입니다.',
-            en: 'Company data (memory, chats, crew) replicates to Argo cloud with envelope encryption (AES-256-GCM). Its per-account key lives in the same cloud, so the operator can technically decrypt that data — for this category we do not claim "operator-proof". End-to-end encryption that only you can open is in progress separately.',
+            ko: '회사 데이터(기억·대화·에이전트)는 봉투 암호화(AES-256-GCM)로 Argo 클라우드에 복제됩니다. 다만 그 봉투를 여는 계정별 열쇠가 같은 클라우드에 있어, 서버 운영자는 기술적으로 회사 데이터를 복호화할 수 있습니다 — 이 데이터에 한해서는 "운영자도 절대 볼 수 없다"고 말하지 않습니다. 사용자만 여는 종단간 암호화는 별도로 진행 중입니다.',
+            en: 'Company data (memory, chats, agents) replicates to Argo cloud with envelope encryption (AES-256-GCM). Its per-account key lives in the same cloud, so the operator can technically decrypt that data — for this category we do not claim "operator-proof". End-to-end encryption that only you can open is in progress separately.',
           },
           {
             ko: '팀 메신저의 조직·채널·메시지·첨부는 구성원이 함께 보는 데이터라 서버에 평문으로 저장되며(조직 간은 RLS로 분리), 운영자가 기술적으로 읽을 수 있습니다. 원치 않으면 셀프호스트 Supabase를 쓰거나 메신저를 쓰지 않으면 됩니다.',
@@ -271,8 +271,8 @@ const GROUPS = [
           },
         ],
         caveat: {
-          ko: '클라우드 워커(운영자가 프로비저닝해 사용자 대신 크루를 돌리는 인스턴스)는 자격 접근이 전제인 위임 모델이라 위 보장의 범위 밖이며, 별도 설계 중입니다. 플랫폼 차원의 백업·스냅샷 보존 기간 동안의 과거 사본까지는 보장하지 않습니다.',
-          en: 'Cloud workers (operator-provisioned instances that run your crew for you) are a delegation model that presumes credential access, so they fall outside the guarantee above and are designed separately. Past copies within platform-level backup/snapshot retention are not covered.',
+          ko: '클라우드 워커(운영자가 프로비저닝해 사용자 대신 에이전트를 돌리는 인스턴스)는 자격 접근이 전제인 위임 모델이라 위 보장의 범위 밖이며, 별도 설계 중입니다. 플랫폼 차원의 백업·스냅샷 보존 기간 동안의 과거 사본까지는 보장하지 않습니다.',
+          en: 'Cloud workers (operator-provisioned instances that run your agents for you) are a delegation model that presumes credential access, so they fall outside the guarantee above and are designed separately. Past copies within platform-level backup/snapshot retention are not covered.',
         },
       },
     ],
@@ -285,8 +285,8 @@ const GROUPS = [
         h: { ko: '15. API · 도구 레퍼런스', en: '15. API & tool reference' },
         body: [
           {
-            ko: '크루가 쓰는 도구와 명령의 정확한 명세는 레퍼런스에서 “찾아보는 사전”처럼 확인합니다. (상세 표는 제품 릴리스와 함께 확장됩니다.)',
-            en: 'Precise specs for the tools and commands crews use live in the reference — a dictionary you look things up in. (The detailed tables expand alongside product releases.)',
+            ko: '에이전트가 쓰는 도구와 명령의 정확한 명세는 레퍼런스에서 “찾아보는 사전”처럼 확인합니다. (상세 표는 제품 릴리스와 함께 확장됩니다.)',
+            en: 'Precise specs for the tools and commands agents use live in the reference — a dictionary you look things up in. (The detailed tables expand alongside product releases.)',
           },
         ],
       },
