@@ -338,6 +338,24 @@ export async function updateRoutine(wsId, id, patch, { from = null } = {}) {
   return r;
 }
 
+/** 해고한 크루의 루틴을 끈다(지우지 않는다 — 제목·지시·일정은 남겨 다른 크루로 바꿔 다시 켤 수 있게). 켜진 채 남으면 예약마다
+    "없는 크루" 실패 알림이 갔다(F4, 2026-10-05). editedAt — 사람의 행동(해고)에서 나온 변경이라 메신저 대기 편집보다 나중으로 친다.
+    반환: 끈 루틴 수. */
+export async function disableRoutinesForCrew(wsId, slug) {
+  return lockRoutines(wsId, async () => {
+    const routines = await loadRoutines(wsId);
+    const at = new Date().toISOString();
+    let n = 0;
+    for (const r of routines) {
+      if (r.agentSlug !== slug || !r.enabled) continue;
+      r.enabled = false; r.editedAt = at; n += 1;
+      if (r.loop) r.loop = { ...r.loop, stoppedReason: r.loop.stoppedReason ?? 'manual' }; // 루프 정지 사유(수동)와 같은 표시
+    }
+    if (n) await saveRoutines(wsId, routines);
+    return n;
+  });
+}
+
 export async function removeRoutine(wsId, id) {
   return lockRoutines(wsId, async () => {
     const routines = await loadRoutines(wsId);

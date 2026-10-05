@@ -147,10 +147,18 @@ const routineRunning = new Map();
     인접 슬롯은 유실된다(가드 이전엔 겹쳐서라도 돌았다 — 의도된 트레이드, 검수 LOW-4 명시).
     가드는 루틴별 — 다른 루틴의 동시 실행은 막지 않는다.
     (export: 회귀 테스트용 — 틱 콜백은 단위로 태울 수 없다. runFn 주입=테스트 전용) */
+const orphanLogged = new Set(); // `${wsId}/${routineId}` — 크루 없는 루틴 건너뜀 로그는 프로세스당 한 번
 export async function runDueRoutines(wsId, now, { runFn = runRoutine } = {}) {
   for (const r of await loadRoutines(wsId)) {
     if (!isDue(r, now)) continue;
     const key = `${wsId}/${r.id}`;
+    // 크루 카드가 없는 루틴(이 수정 전에 해고된 크루 등)은 실행하지 않는다 — 돌리면 "없는 크루" 실패 알림만 간다(F4).
+    // 끄지는 않는다: 새 기기에서 동기화가 routines.json을 카드보다 먼저 받는 순간에도 이 판정이 돌아, 끄면 그 상태가 다른 기기로 퍼진다.
+    // 끄는 것은 해고(removeAgentCard → disableRoutinesForCrew)라는 사람의 행동에서만 한다. 화면은 '크루 없음'으로 표시한다.
+    if (await readAgentCard(wsId, r.agentSlug).then(() => false, (e) => e?.code === 'NOT_FOUND')) {
+      if (!orphanLogged.has(key)) { orphanLogged.add(key); console.warn(`[argo] 루틴 건너뜀(${key}): 크루 "${r.agentSlug}" 카드가 없습니다`); }
+      continue;
+    }
     const startedAt = routineRunning.get(key);
     if (startedAt != null && now.getTime() - startedAt < ROUTINE_STALE_MS) continue;
     // 실행 직전 lastRun을 원자적으로 선점 — 실패(이미 이 주기에 실행됨)면 스킵해 이중 실행을 막는다

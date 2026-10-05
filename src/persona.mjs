@@ -525,6 +525,9 @@ export async function removeAgentCard(wsId, slug) {
   // 부활한다(분리 검수 지적 2026-07-31). 봇 연결 정리와 같은 계열의 수명 문제다.
   const { setPin } = await import('./workroots.mjs');
   await setPin(wsId, slug, '').catch(() => {});
+  // 그 크루의 루틴은 끈다(지우지 않음) — 켜진 채 남으면 예약마다 실패 알림이 갔다(F4). 실패해도 해고 자체는 끝났다.
+  const { disableRoutinesForCrew } = await import('./routines.mjs');
+  await disableRoutinesForCrew(wsId, slug).catch((e) => console.error(`[argo] 해고 크루 루틴 끄기 실패(${wsId}/${slug}):`, e?.message ?? e));
   await appendEvent(wsId, { type: 'crew', op: 'fire', slug });
 }
 
