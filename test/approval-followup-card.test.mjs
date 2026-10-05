@@ -50,8 +50,8 @@ async function sentMessage(item, approve) {
   return got;
 }
 
-/** 새 기록의 모양 — 꼬리표만 새 것이고 나머지(사실 문장·지시문 꼬리)는 OLD 그대로 */
-const newTag = (s) => s.replace(/^\(사장 결재\) /, '(사용자 결재) ');
+/** 새 기록의 모양 — 꼬리표와 사실 문장 속 '사장에게'(용어 변경 T2a — approval-actions 실행 취소 문장)만 새 낱말이고 나머지는 OLD 그대로 */
+const newTag = (s) => s.replace(/^\(사장 결재\) /, '(사용자 결재) ').replace('사장에게 다시 올려라', '사용자에게 다시 올려라');
 
 test('모델에게 가는 결재 후속 메시지는 꼬리표만 "(사용자 결재)"로 바뀌고 나머지는 바꾸기 전과 한 글자도 다르지 않다(7가지 모양)', async () => {
   for (const c of OLD) assert.equal(await sentMessage(c.item, c.approve), newTag(c.fact) + c.order, c.name);
@@ -60,8 +60,8 @@ test('모델에게 가는 결재 후속 메시지는 꼬리표만 "(사용자 �
 
 test('결재 결과 카드 — 펼친 본문·요약에는 사실 문장만, 크루에게 하는 지시문 꼬리는 없다(새 기록·옛 기록 둘 다)', async () => {
   for (const c of OLD) {
-    const fact = c.fact.replace(/^\((사장|관리자) 결재\) /, '');
-    for (const [label, text] of [['새 기록', await sentMessage(c.item, c.approve)], ['옛 기록', c.fact + c.order]]) {
+    const bodyOf = (f) => f.replace(/^\((사장|사용자|관리자) 결재\) /, '');
+    for (const [label, text, fact] of [['새 기록', await sentMessage(c.item, c.approve), bodyOf(newTag(c.fact))], ['옛 기록', c.fact + c.order, bodyOf(c.fact)]]) {
       const card = inboundCard({ who: 'user', text });
       assert.equal(card?.kind, 'approval', `${c.name} ${label}`);
       assert.equal(card.body, fact, `${c.name} ${label}`);

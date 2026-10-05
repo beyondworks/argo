@@ -116,7 +116,7 @@ export async function scanAgents(wsId, { strict = false } = {}) {
       if (strict) throw e;
       broken.push(n.replace(/\.md$/, ''));
       const k = `${wsId}/${n}`;
-      if (!brokenCardLogged.has(k)) { brokenCardLogged.add(k); console.warn(`[argo] 크루 카드를 읽지 못해 건너뜁니다(${k}): ${e?.code ?? e?.message ?? e}`); }
+      if (!brokenCardLogged.has(k)) { brokenCardLogged.add(k); console.warn(`[argo] 에이전트 카드를 읽지 못해 건너뜁니다(${k}): ${e?.code ?? e?.message ?? e}`); }
       continue;
     }
     const meta = parseFrontmatter(md);

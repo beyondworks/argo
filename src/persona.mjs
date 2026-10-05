@@ -71,8 +71,8 @@ role: <직함 한 줄>
 const slugify = (s) => (s || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '').slice(0, 48);
 // 예약어(slug.mjs) 거절 — 회사 언어로 안내(이 함수의 다른 오류와 같은 계약) + code로 라우트가 400 매핑.
 const reservedSlugError = (name, slug, lang) => Object.assign(new Error(lang === 'en'
-  ? `The crew name "${name}" (${slug}) collides with the meeting room's internal name (room-) — please hire with a different name.`
-  : `크루 이름 "${name}"(${slug})은 회의실 내부 이름(room-)과 겹칩니다 — 다른 이름으로 영입해 주세요.`), { code: 'SLUG_RESERVED' });
+  ? `The agent name "${name}" (${slug}) collides with the meeting room's internal name (room-) — please hire with a different name.`
+  : `에이전트 이름 "${name}"(${slug})은 회의실 내부 이름(room-)과 겹칩니다 — 다른 이름으로 영입해 주세요.`), { code: 'SLUG_RESERVED' });
 
 // 크루 카드 파일 경로 — slug는 URL 경로 파라미터로 들어오므로 조립 직전 검증(경로 탈출 차단).
 /** 새로 만드는 크루의 작명 규칙 — **생성 시점에만** 강제한다(아래 cardPath 주석 참고). */
@@ -88,10 +88,10 @@ const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
     확인한다. `../`·중첩 경로·절대경로는 전부 여기서 걸린다(문자 목록보다 오히려 촘촘하다).
     작명 규칙(SLUG_RE)은 새 크루를 만들 때만 쓴다 — 규칙은 들어오는 문을 지키고, 이미 있는 파일은 다룰 수 있어야 한다. */
 function cardPath(wsId, slug) {
-  if (typeof slug !== 'string' || !slug || slug.includes('\0')) throw Object.assign(new Error('잘못된 크루 slug'), { code: 'BAD_SLUG' });
+  if (typeof slug !== 'string' || !slug || slug.includes('\0')) throw Object.assign(new Error('잘못된 에이전트 slug'), { code: 'BAD_SLUG' });
   const dir = resolve(paths(wsId).agents);
   const file = resolve(dir, `${slug}.md`);
-  if (dirname(file) !== dir) throw Object.assign(new Error('잘못된 크루 slug'), { code: 'BAD_SLUG' });
+  if (dirname(file) !== dir) throw Object.assign(new Error('잘못된 에이전트 slug'), { code: 'BAD_SLUG' });
   return file;
 }
 
@@ -242,7 +242,7 @@ export async function createAgentFromPrompt(wsId, oneLiner, { name, team } = {})
   // 작명 규칙은 **여기(생성 문)**에서만 강제한다 — 우리가 만드는 크루는 항상 규칙을 지키게 하되,
   // 밖에서 들어온 파일까지 규칙으로 막지는 않는다(cardPath 주석 참고). slugify가 언젠가 규칙을
   // 벗어난 값을 내면 카드를 쓰기 전에 여기서 걸린다.
-  if (!SLUG_RE.test(slug)) throw new Error(`크루 slug를 만들지 못했습니다: ${slug}`);
+  if (!SLUG_RE.test(slug)) throw new Error(`에이전트 slug를 만들지 못했습니다: ${slug}`);
   // 예약어(slug.mjs) — 'room-main'은 회의록 chats/room-main.json·회의 턴 마커와 같은 파일 이름이 된다. -n 회피는
   // 접두를 남기므로 base로 판정한다(이름 지정 선판정과 같은 규칙 — frontmatter slug·자동 이름 경로가 여기서 걸린다).
   if (isReservedSlug(base)) throw reservedSlugError(nameFinal, base, lang);
@@ -258,14 +258,14 @@ export async function createAgentFromPrompt(wsId, oneLiner, { name, team } = {})
 export async function createAgentCard(wsId, { name, role = '', prompt, runner = '', model = '' } = {}) {
   const line = (v) => String(v ?? '').replace(/[\r\n]+/g, ' ').trim(); // 검수 H-2: frontmatter 값에 개행이 섞이면 키 주입(runner:·model:)이 된다 — setFrontmatterKey와 같은 세척
   const nameFinal = line(name);
-  if (!nameFinal) throw new Error('크루 이름이 필요합니다');
+  if (!nameFinal) throw new Error('에이전트 이름이 필요합니다');
   const body = String(prompt ?? '').trim();
   if (!body) throw new Error('한 줄 지시가 필요합니다');
   const base = slugify(nameFinal) || 'crew';
   if (isReservedSlug(base)) throw reservedSlugError(nameFinal, base, 'ko');
   let slug = base;
   for (let n = 2; existsSync(join(paths(wsId).agents, `${slug}.md`)) || isTakenSlug(slug); n++) slug = `${base}-${n}`; // captain 같은 이름 표지는 -n으로(slug.mjs TAKEN_SLUGS)
-  if (!SLUG_RE.test(slug)) throw new Error(`크루 slug를 만들지 못했습니다: ${slug}`);
+  if (!SLUG_RE.test(slug)) throw new Error(`에이전트 slug를 만들지 못했습니다: ${slug}`);
   const fm = ['---', `name: ${nameFinal}`, `slug: ${slug}`, `role: ${line(role)}`];
   if (line(runner)) fm.push(`runner: ${line(runner)}`);
   if (line(model)) fm.push(`model: ${line(model)}`);
@@ -284,7 +284,7 @@ export async function saveAgentCard(wsId, slug, md) {
   if (!meta.name) throw new Error('frontmatter에 name이 필요합니다');
   return lockCard(wsId, slug, async () => {
     const file = cardPath(wsId, slug);
-    if (!existsSync(file)) throw codedError('crew_not_found', '존재하지 않는 크루입니다');
+    if (!existsSync(file)) throw codedError('crew_not_found', '존재하지 않는 에이전트입니다');
     // 엔진(runner/model)은 PATCH 경로가 소유한다 — 본문/규칙 저장(PUT)이 통째로 덮어써 엔진 선택을
     // 조용히 원복시키던 문제(패널 stale) 방어: 들어온 md에 엔진 키가 없으면 디스크의 현재 값을 보존한다.
     // (사용자가 raw 편집기에서 직접 엔진 키를 넣었으면 그때만 incoming에 존재 → 그 값 존중)
@@ -346,7 +346,7 @@ export const EFFORT_LEVELS = CLAUDE_EFFORTS;
 export async function updateAgentMeta(wsId, slug, { name, role, team, model, runner, effort, skills, mcp }) {
   return lockCard(wsId, slug, async () => {
     const file = cardPath(wsId, slug);
-    if (!existsSync(file)) throw codedError('crew_not_found', '존재하지 않는 크루입니다');
+    if (!existsSync(file)) throw codedError('crew_not_found', '존재하지 않는 에이전트입니다');
     let md = await readFile(file, 'utf8');
     const before = parseFrontmatter(md);
     if (name !== undefined && name.trim()) {
@@ -392,7 +392,7 @@ export async function updateAgentMeta(wsId, slug, { name, role, team, model, run
 export async function appendAgentRule(wsId, slug, text) {
   return lockCard(wsId, slug, async () => {
     const file = cardPath(wsId, slug);
-    if (!existsSync(file)) throw codedError('crew_not_found', '존재하지 않는 크루입니다');
+    if (!existsSync(file)) throw codedError('crew_not_found', '존재하지 않는 에이전트입니다');
     const md = await readFile(file, 'utf8');
     const rule = String(text).trim();
     if (!rule) return parseFrontmatter(md);
@@ -444,7 +444,7 @@ export async function listAgentSections(wsId, slug) {
 export async function setAgentRules(wsId, slug, rules) {
   return lockCard(wsId, slug, async () => {
     const file = cardPath(wsId, slug);
-    if (!existsSync(file)) throw codedError('crew_not_found', '존재하지 않는 크루입니다');
+    if (!existsSync(file)) throw codedError('crew_not_found', '존재하지 않는 에이전트입니다');
     const list = (Array.isArray(rules) ? rules : []).map((r) => String(r).replace(/\s+/g, ' ').trim()).filter(Boolean);
     const md = await readFile(file, 'utf8');
     const doc = splitCardBody(md);
@@ -467,7 +467,7 @@ export async function setAgentSection(wsId, slug, title, body) {
   if (!name) throw new Error('섹션 제목이 필요합니다');
   return lockCard(wsId, slug, async () => {
     const file = cardPath(wsId, slug);
-    if (!existsSync(file)) throw codedError('crew_not_found', '존재하지 않는 크루입니다');
+    if (!existsSync(file)) throw codedError('crew_not_found', '존재하지 않는 에이전트입니다');
     const text = String(body ?? '').replace(/\r\n/g, '\n').trim();
     const md = await readFile(file, 'utf8');
     const doc = splitCardBody(md);
@@ -500,7 +500,7 @@ export async function renameTeam(wsId, from, to) {
     });
     if (did) changed += 1;
   }
-  if (changed === 0) throw codedError('team_not_found', '해당 팀의 크루가 없습니다');
+  if (changed === 0) throw codedError('team_not_found', '해당 팀의 에이전트가 없습니다');
   await appendEvent(wsId, { type: 'crew', op: 'team', name: `${from} → ${to.trim()}` });
   return { changed };
 }
@@ -513,7 +513,7 @@ export async function removeAgentCard(wsId, slug) {
   // 경합하면 "고친 내용이 사라진 채 해고"나 "이미 해고된 파일에 다시 쓰기"가 날 수 있다.
   // setPin·updateAgentBot은 각자 자기 락 키(workroots·connections)라 여기서 기다려도 교착 없음.
   await lockCard(wsId, slug, async () => {
-    if (!existsSync(file)) throw codedError('crew_not_found', '존재하지 않는 크루입니다');
+    if (!existsSync(file)) throw codedError('crew_not_found', '존재하지 않는 에이전트입니다');
     const archive = join(dir, '.archive');
     await mkdir(archive, { recursive: true });
     await rename(file, join(archive, `${Date.now()}-${slug}.md`));
@@ -528,7 +528,7 @@ export async function removeAgentCard(wsId, slug) {
   await setPin(wsId, slug, '').catch(() => {});
   // 그 크루의 루틴은 끈다(지우지 않음) — 켜진 채 남으면 예약마다 실패 알림이 갔다(F4). 실패해도 해고 자체는 끝났다.
   const { disableRoutinesForCrew } = await import('./routines.mjs');
-  await disableRoutinesForCrew(wsId, slug).catch((e) => console.error(`[argo] 해고 크루 루틴 끄기 실패(${wsId}/${slug}):`, e?.message ?? e));
+  await disableRoutinesForCrew(wsId, slug).catch((e) => console.error(`[argo] 해고 에이전트 루틴 끄기 실패(${wsId}/${slug}):`, e?.message ?? e));
   await appendEvent(wsId, { type: 'crew', op: 'fire', slug });
 }
 
@@ -540,7 +540,7 @@ export async function readAgentCard(wsId, slug) {
     // 없는 크루 — 전체 파일 경로가 API 응답에 새지 않도록 깔끔한 메시지로(경로 노출 방지)
     // NOT_FOUND 코드 표시 — 라우트가 "없음(404)"과 "읽다 실패(500)"를 가려야 한다. 문구로 판정하면
     // 번역·문구 수정에 조용히 깨진다.
-    if (e.code === "ENOENT") throw Object.assign(new Error(`크루를 찾을 수 없습니다: ${slug}`), { code: 'NOT_FOUND' });
+    if (e.code === "ENOENT") throw Object.assign(new Error(`에이전트를 찾을 수 없습니다: ${slug}`), { code: 'NOT_FOUND' });
     throw e;
   }
   return { md, meta: parseFrontmatter(md) };

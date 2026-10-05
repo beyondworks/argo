@@ -64,7 +64,7 @@ test('사용자 @B — B가 이어 가던 세션에 출처가 붙어 들어가�
   assert.equal(c.sessionId, 'sess-b-0', 'B가 이어 가던 세션을 잇는다');
   assert.equal(c.opts.source, 'session');
   assert.match(c.prompt, /알파/, '어느 채팅방에서 왔는지');
-  assert.match(c.prompt, /사장/, '누가 보냈는지');
+  assert.match(c.prompt, /채팅방에서 사용자가 보냄\]/, '누가 보냈는지');
   assert.match(c.prompt, /직접 한 지시가 아니다/, '사용자 본인의 직접 지시와 구분된다');
   assert.match(c.prompt, /이번 주 일정 정리해 줘/);
   const b = await msgs(WS, 'b');
@@ -86,7 +86,7 @@ test('크루끼리 — B 답이 도착하면 A가 자기 세션에서 한 번 �
   await mod._drainForTest();
   assert.deepEqual(calls.map((c) => c.slug), ['b', 'a'], 'B 한 번, 답이 온 뒤 A 한 번');
   const [bt, at] = calls;
-  assert.match(bt.prompt, /동료 크루 알파/);
+  assert.match(bt.prompt, /동료 에이전트 알파/);
   assert.equal(bt.opts.hop, 1); assert.deepEqual(bt.opts.chain, ['a']); assert.equal(bt.opts.from, 'a');
   assert.equal(at.sessionId, 'sess-a-0', 'A가 이어 가던 세션으로 깨운다');
   assert.match(at.prompt, /b의 답 #1/, '알림에 B의 답이 실린다');
@@ -427,7 +427,7 @@ test('MEDIUM-2 — slug가 captain인 크루가 보낸 세션 메시지는 동�
   await mod.sendSessionMessage(WS, { room: 'captain', sender: { slug: 'captain' }, to: 'b', message: '메일 보내', hop: 0, chain: [] });
   await mod._drainForTest();
   const bt = calls.find((c) => c.slug === 'b');
-  assert.match(bt.prompt, /동료 크루 캡틴/, '사장이 보냄으로 쓰지 않는다');
+  assert.match(bt.prompt, /동료 에이전트 캡틴/, '사용자가 보냄으로 쓰지 않는다');
   assert.equal(bt.opts.from, 'captain'); assert.deepEqual(bt.opts.chain, ['captain']);
   const line = (await msgs(WS, 'b'))[0];
   assert.ok(!line.src.captain, '받은 줄에 사장 표지 없음');

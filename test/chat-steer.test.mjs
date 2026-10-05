@@ -89,7 +89,7 @@ test('네이티브 세션: 끼워 넣기가 실린 도구 결과 메시지는 �
   const msgs = [
     { role: 'user', content: '첫 지시' },
     { role: 'assistant', content: [{ type: 'tool_use', id: 'a', name: 'noop', input: {} }] },
-    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'a', content: big }, { type: 'text', text: '사장이 작업 중에 새 메시지를 보냈다:\n끼워' }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'a', content: big }, { type: 'text', text: '사용자가 작업 중에 새 메시지를 보냈다:\n끼워' }] },
     { role: 'assistant', content: [{ type: 'text', text: '답' }] },
     { role: 'user', content: '둘째 지시' },
   ];
@@ -129,7 +129,7 @@ test('네이티브: 도구가 도는 사이 온 메시지는 멈추지 않고 �
   const u = lastUser(bodies[1]);
   assert.equal(u.role, 'user');
   assert.equal(u.content[0].type, 'tool_result', '도구 결과가 먼저(벤더 규칙)');
-  assert.match(u.content.at(-1).text, /사장이 작업 중에 새 메시지를 보냈다:\n방향 바꿔/);
+  assert.match(u.content.at(-1).text, /사용자가 작업 중에 새 메시지를 보냈다:\n방향 바꿔/);
   assert.equal(results.length, 1, '같은 실행 안에서 소비 — result는 한 번');
   assert.equal(results[0].result, '반영한 답');
   assert.equal(await q.steer('늦음'), false, '끝난 실행은 받지 않는다 — 호출부가 대기열에 남긴다');
@@ -221,8 +221,8 @@ test('CLI 이어 실행 프롬프트: 원 프롬프트 + 방금 답 + 새 메시
   const ko = cliSteerPrompt('원 프롬프트', '방금 답', ['새1', '새2'], 'ko');
   assert.ok(ko.startsWith('원 프롬프트'));
   assert.match(ko, /## 너의 방금 답\n방금 답/);
-  assert.match(ko, /## 사장이 작업 중에 보낸 새 메시지\n새1\n\n새2/);
-  assert.match(cliSteerPrompt('p', '', ['n'], 'en'), /## Your reply so far\n\(none yet\)[\s\S]*## New message the captain sent while you were working\nn/);
+  assert.match(ko, /## 사용자가 작업 중에 보낸 새 메시지\n새1\n\n새2/);
+  assert.match(cliSteerPrompt('p', '', ['n'], 'en'), /## Your reply so far\n\(none yet\)[\s\S]*## New message the user sent while you were working\nn/);
 });
 
 test('CLI 경로: 받아 둔 끼워 넣기를 실행 직후 같은 턴에서 이어 실행하고, 확인 뒤 닫는다', () => {

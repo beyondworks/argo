@@ -515,7 +515,7 @@ export async function runRoomTurn(wsId, text, attachments = [], { rounds = 2, co
 }
 async function runRoomTurnInner(wsId, text, attachments, state = {}, mark = async () => {}, { rounds = 2, concurrency = ROOM_CONCURRENCY } = {}) {
   const agents = await listAgents(wsId);
-  if (!agents.length) throw new Error('아직 크루가 없습니다. 데크에서 먼저 영입해 주세요.');
+  if (!agents.length) throw new Error('아직 에이전트가 없습니다. 데크에서 먼저 영입해 주세요.');
   // 회의 작업 폴더 — 턴 시작에 **한 번** 재서(roomFolder) 발언자 전원이 같은 값을 받는다. 사장 발언에 그 값을
   // 각인해(workFolder) 회의록이 "이 회의가 실제로 쓴 폴더"를 적게 한다 — 마치기 시점의 고정 값은 그 회의가 쓴
   // 폴더가 아닐 수 있다(폴더 없이 다 하고 직전에 고정·사라진 폴더 — 분리 검수 MEDIUM-2 실측).
@@ -543,8 +543,8 @@ async function runRoomTurnInner(wsId, text, attachments, state = {}, mark = asyn
   // 못 알아본 멘션은 먼저 알린다 — 조용히 넘기면 사장은 지시가 먹은 줄 안다.
   if (dir.unknown.length) {
     await sys('unknown', en
-      ? `No crew named ${dir.unknown.map((u) => `@${u}`).join(', ')}. Available: ${agents.map((a) => a.slug).join(', ')}`
-      : `@${dir.unknown.join(', @')} 는 크루 명단에 없습니다. 가능한 이름: ${agents.map((a) => a.slug).join(', ')}`);
+      ? `No agent named ${dir.unknown.map((u) => `@${u}`).join(', ')}. Available: ${agents.map((a) => a.slug).join(', ')}`
+      : `@${dir.unknown.join(', @')} 는 에이전트 명단에 없습니다. 가능한 이름: ${agents.map((a) => a.slug).join(', ')}`);
     // 부른 이름을 하나도 못 풀었으면 여기서 멈춘다. "멘션 없으면 첫 크루" 폴백에 걸리면
     // 사장이 지목하지도 않은 크루가 답하고, 오타는 그 답에 묻혀 안 보인다.
     if (!dir.to.length && !dir.relay.length && !dir.cc.length && !dir.allCall && !dir.loop) {
@@ -556,7 +556,7 @@ async function runRoomTurnInner(wsId, text, attachments, state = {}, mark = asyn
   if (dir.loop) {
     const target = dir.relay[0] ?? dir.to[0] ?? (dir.allCall ? agents[0] : null);
     if (!target) {
-      await sys('loop', en ? 'Mention the crew who should run the loop (e.g. loop 30m @slug ...).' : '루프를 돌 크루를 함께 멘션해 주세요 (예: 반복 30분 @슬러그 ...).');
+      await sys('loop', en ? 'Mention the agent who should run the loop (e.g. loop 30m @slug ...).' : '루프를 돌 에이전트를 함께 멘션해 주세요 (예: 반복 30분 @슬러그 ...).');
       return { replies: [], room: await loadRoom(wsId) };
     }
     // 파서와 같은 패턴이어야 한다 — 어긋나면 지시문에 "반복 30분"이 남아 루틴이 자기를 또 등록하려 든다
@@ -587,7 +587,7 @@ async function runRoomTurnInner(wsId, text, attachments, state = {}, mark = asyn
   const speaking = [...dir.to, ...dir.relay]; // 방에서 이미 말하는 크루는 참조 쪽지까지 또 태우지 않는다
   const ccTargets = dir.ccAll ? agents.filter((a) => !speaking.some((x) => x.slug === a.slug)) : dir.cc;
   if (ccTargets.length) {
-    const bossName = en ? 'the captain' : '사장';
+    const bossName = en ? 'the user' : '사용자';
     const capped = ccTargets.slice(0, CC_MAX);
     const dropped = ccTargets.slice(CC_MAX); // 누가 빠졌는지 이름으로 밝힌다 — 숫자만으론 확인할 길이 없다
     const ok = [];
@@ -628,7 +628,7 @@ async function runRoomTurnInner(wsId, text, attachments, state = {}, mark = asyn
     // 풀린 방은 상한(6명)에 닿은 것이라 "이어서 지시하면 계속"을 안내한다(켜짐은 종전 문구 그대로)
     await sys('relay', en
       ? `Relay stops at ${lim.relay} — not included: ${names}${lim.relaxed ? ' — send the next message to continue with them.' : ''}`
-      : `이어받기는 ${lim.relay}명까지 — 제외: ${names}${lim.relaxed ? ' — 이어서 지시하면 제외된 크루부터 계속합니다.' : ''}`);
+      : `이어받기는 ${lim.relay}명까지 — 제외: ${names}${lim.relaxed ? ' — 이어서 지시하면 제외된 에이전트부터 계속합니다.' : ''}`);
   }
   // ── 실행 방식. 릴레이(@A > @B)는 앞사람 답을 출발점으로 삼는 계약이라 순차. 그 외 2명 이상은 **동시 발언**
   // (유건 결정 2026-09-06: 12명 순차가 15~30분 — 동시 호출 비용은 각자 답하나 동시에 답하나 같다). 동시 발언은 앞사람
@@ -665,12 +665,12 @@ async function runRoomTurnInner(wsId, text, attachments, state = {}, mark = asyn
   // 대화를 오염하지 않는다.
   if (staleFolder) {
     await sys('folder', en
-      ? `Work folder not found on this device: ${staleFolder} — proceeding without it (each crew's own default). Unpin it or reconnect the folder.`
+      ? `Work folder not found on this device: ${staleFolder} — proceeding without it (each agent's own default). Unpin it or reconnect the folder.`
       : `작업 폴더를 이 기기에서 찾을 수 없습니다: ${staleFolder} — 폴더 없이 진행합니다(각자 기본 위치). 고정을 풀거나 폴더를 다시 연결해 주세요.`);
   }
   // 트랜스크립트 아래 한 줄 — 뒤 순서·릴레이 크루도 같은 폴더를 본다. 강제는 commonDirectives의 "지금 일할 폴더"가 한다.
   // oneLine — 개행 든 폴더명이 "사장:" 가짜 줄을 만든다(commonDirectives와 같은 접기, 분리 검수 MEDIUM-1 실측).
-  const folderLine = folder ? `\n작업 폴더: ${oneLine(folder)} — 사장이 이 회의에 지정한 폴더다. 파일 작업은 여기서 하고, 동료 크루도 같은 폴더를 본다(위임받은 동료 포함).` : '';
+  const folderLine = folder ? `\n작업 폴더: ${oneLine(folder)} — 사용자가 이 회의에 지정한 폴더다. 파일 작업은 여기서 하고, 동료 에이전트도 같은 폴더를 본다(위임받은 동료 포함).` : '';
   const replies = [];
   // 최신 트랜스크립트 — 순차(릴레이)는 매 발언 직전, 동시 발언은 라운드 시작에 한 번(전원이 같은 대화를 본다).
   // 시스템 안내(참조·루프·오타 멘션)는 사람에게 주는 줄이라 프롬프트에서 뺀다 — 크루가 답할 대상이 아니다.
@@ -693,7 +693,7 @@ async function runRoomTurnInner(wsId, text, attachments, state = {}, mark = asyn
     .join('\n');
   };
   const promptFor = (a, i, transcript, round) => round >= 2
-    ? `지금 회의실에 있다 — 사장과 동료 크루가 함께 보는 방이다. 방금 동료 ${speakers.length - 1}명과 네가 같은 안건에 동시에 답했다.
+    ? `지금 회의실에 있다 — 사용자와 동료 에이전트가 함께 보는 방이다. 방금 동료 ${speakers.length - 1}명과 네가 같은 안건에 동시에 답했다.
 
 ## 회의 대화 (최근 — 마지막에 ${round === 2 ? '1라운드' : `${round - 1}라운드`} 발언들이 있다)
 ${transcript}${folderLine}
@@ -703,14 +703,14 @@ ${transcript}${folderLine}
 - 누구의 어떤 말에 반응하는지 이름을 들어 밝혀라(예: "미나의 둘째 안은 …").
 - 이미 나온 말을 반복하지 마라. 네 전문성으로 새로 보태는 것만, 5줄 이내.
 - 정말 보탤 것이 없으면 "추가 의견 없음" 한 줄만 답하라.`
-    : `지금 회의실에 있다 — 사장과 동료 크루가 함께 보는 방이다.
+    : `지금 회의실에 있다 — 사용자와 동료 에이전트가 함께 보는 방이다.
 
 ## 회의 대화 (최근)
 ${transcript}${folderLine}
 
 ## 지시
-사장의 마지막 발언에 "${a.name}"로서 답하라.
-- **실제 작업을 요청받았으면 이 턴에서 바로 실행하라.** "~하겠다 / 라우팅하겠다 / 착수하겠다" 같은 계획·약속으로 끝내지 마라 — 사장은 답을 지금 기다린다.
+사용자의 마지막 발언에 "${a.name}"로서 답하라.
+- **실제 작업을 요청받았으면 이 턴에서 바로 실행하라.** "~하겠다 / 라우팅하겠다 / 착수하겠다" 같은 계획·약속으로 끝내지 마라 — 사용자는 답을 지금 기다린다.
 - 동료의 전문(검수·리뷰·다른 분야)이 필요하면 **말로만 "맡기겠다"고 하지 말고 delegate 도구(to=동료 slug, task=구체 지시)로 실제로 위임해** 그 동료의 결과를 받아 네 답에 통합하고, 어느 동료 작업인지 밝혀라.
 - 확정 정보가 부족하면 되묻기만 하고 멈추지 말고, 합리적 가정을 명시한 뒤 그 방향으로 **실제 산출물/검토 결과까지 만들어** 답하라.
 - 단순 논의·의견이면 동료가 이미 말한 건 반복 말고 네 전문성으로 간결히 보태라(이 경우엔 5줄 이내).${
@@ -719,7 +719,7 @@ ${transcript}${folderLine}
         : ''
     }${
       isRelay && i > 0
-        ? `\n- **이어받기(릴레이)**: 사장이 "${speakers[i - 1].name} → ${a.name}" 순서를 지정했다. 바로 앞 ${speakers[i - 1].name}의 답을 출발점으로 삼아 네 몫을 이어서 완성하라 — 처음부터 다시 하지 말고, 앞 결과의 무엇을 받아 무엇을 더했는지 밝혀라.`
+        ? `\n- **이어받기(릴레이)**: 사용자가 "${speakers[i - 1].name} → ${a.name}" 순서를 지정했다. 바로 앞 ${speakers[i - 1].name}의 답을 출발점으로 삼아 네 몫을 이어서 완성하라 — 처음부터 다시 하지 말고, 앞 결과의 무엇을 받아 무엇을 더했는지 밝혀라.`
         : ''
     }${
       isRelay && i < speakers.length - 1
@@ -808,7 +808,7 @@ ${transcript}${folderLine}
         if (rest.length) {
           await sys('skipped', en
             ? `Did not get to: ${rest.join(', ')} — mention them again to continue.`
-            : `차례가 오지 않은 크루: ${rest.join(', ')} — 다시 부르면 이어갑니다.`).catch(() => {});
+            : `차례가 오지 않은 에이전트: ${rest.join(', ')} — 다시 부르면 이어갑니다.`).catch(() => {});
         }
         throw e; // 호출 탭의 오류 표시 계약은 그대로
       }

@@ -3,7 +3,7 @@
 // **OLD_* 목록은 지우지 말고 더한다.** 하나라도 빼면 그 문구로 저장된 옛 대화·이벤트·회의 기록(다른 기기에서 동기화된 것 포함)을
 // 못 알아본다 — test/legacy-terms.test.mjs가 옛 값을 글자 그대로 넣어 항목마다 잠근다.
 // 노드 의존 0 — 클라이언트 번들(1:1 화면 카드·명패·러너 판정)에서도 가져다 쓴다. 용어 스캔(test/terms-scan.test.mjs)은 이 파일만 검사에서 뺀다.
-// 계획: artifacts/rc-0195/terminology-plan.md 3절(M1~M6, M10).
+// 계획: artifacts/rc-0195/terminology-plan.md 3절(M1~M6, M10, M11).
 
 const freeze = (a) => Object.freeze([...a]);
 
@@ -46,3 +46,10 @@ export const OLD_CLI_COMMANDS = Object.freeze({ crew: 'agent' });
 
 // ── M10 명패 — company.owner에 사람 이름 대신 들어간 기본값(저장 값은 그대로 두고 표시만 바꾼다) ──
 export const OWNER_PLACEHOLDERS = freeze(['captain']);
+
+// ── M11 옛 기록 속 낱말 — 에이전트 지시문 공통 한 줄(chat.mjs systemPromptFor → SDK·CLI·네이티브 러너 모두). 이미 저장된 대화·요약·회의록·쪽지·
+//    지침 파일(captain-rules.md·사장-프로필.md)은 고치지 않으므로, 모델이 옛 낱말을 다른 사람으로 읽지 않게 한 줄로 알려 준다 ──
+export const LEGACY_RECORD_TERMS_NOTE = Object.freeze({
+  ko: "옛 기록(지난 대화·요약·회의록·쪽지·지침 파일)에 나오는 '사장'·'captain'은 사용자를, '크루'·'crew'는 에이전트를 가리킨다.",
+  en: "In older records (past conversations, summaries, meeting minutes, notes, rule files), '사장' and 'captain' mean the user, and '크루' and 'crew' mean an agent.",
+});

@@ -19,7 +19,7 @@ export function browserMcpWorkerPath({ cwd = process.cwd(), argv1 = process.argv
 export function browserMcpDirective(lang = 'ko') {
   return lang === 'en'
     ? '\nBrowser: use mcp__argo_browser__browser_status/request_login/navigate/snapshot/click/type/press/scroll/back/screenshot/eval. This agent has its own persistent login profile and this work run has a separate tab. For sign-in, navigate to the service then call browser_request_login to reserve the tab for the user and stop this run; continue with a new run after the user signs in on the execution device (mobile remote control unavailable). Connect only accounts needed for the task; never copy personal or another agent\'s browser profile. Ask for approval before external sends or purchases.\n'
-    : '\n브라우저: mcp__argo_browser__browser_status/request_login/navigate/snapshot/click/type/press/scroll/back/screenshot/eval 도구를 사용한다. 크루별 로그인 프로필과 이번 작업의 탭이 분리된다. 로그인이 필요하면 서비스 페이지를 연 뒤 browser_request_login으로 탭을 사용자에게 넘기고 이번 실행을 멈춘다. 실행 기기에서 로그인한 뒤 새 실행으로 이어간다(모바일 원격 제어 미지원). 필요한 계정만 연결하고 개인·다른 크루의 브라우저 프로필을 복사하지 않는다. 외부 발송·구매는 실행 전에 결재를 올린다.\n';
+    : '\n브라우저: mcp__argo_browser__browser_status/request_login/navigate/snapshot/click/type/press/scroll/back/screenshot/eval 도구를 사용한다. 에이전트별 로그인 프로필과 이번 작업의 탭이 분리된다. 로그인이 필요하면 서비스 페이지를 연 뒤 browser_request_login으로 탭을 사용자에게 넘기고 이번 실행을 멈춘다. 실행 기기에서 로그인한 뒤 새 실행으로 이어간다(모바일 원격 제어 미지원). 필요한 계정만 연결하고 개인·다른 에이전트의 브라우저 프로필을 복사하지 않는다. 외부 발송·구매는 실행 전에 결재를 올린다.\n';
 }
 
 const safeBrowserError = (e) => {

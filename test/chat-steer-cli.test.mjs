@@ -49,7 +49,7 @@ test('CLI: 실행 중 받은 메시지로 같은 턴에서 이어 실행하고 �
   };
   const r = await chat(ws, 'alpha', '원래 지시', null, { journal: { off: true } });
   assert.equal(calls.length, 2, '멈추지 않고 한 번 더 실행');
-  assert.match(calls[1].prompt, /원래 지시[\s\S]*## 너의 방금 답\n첫 답[\s\S]*## 사장이 작업 중에 보낸 새 메시지\n방향 바꿔/);
+  assert.match(calls[1].prompt, /원래 지시[\s\S]*## 너의 방금 답\n첫 답[\s\S]*## 사용자가 작업 중에 보낸 새 메시지\n방향 바꿔/);
   assert.equal(calls[1].kind, 'chat');
   assert.equal(r.reply, '첫 답\n\n이어진 답');
   assert.equal(await steerTurn(ws, 'alpha', { text: '늦음' }), false, '끝난 턴 — 호출부가 대기열에 남긴다');
@@ -64,7 +64,7 @@ test('CLI: 크래시로 자동 재시도하면 받은 끼워 넣기가 재시도
   const r = await chat(ws, 'alpha', '원래 지시', null, { journal: { off: true } });
   // 재시도가 통로를 달면 되돌린 메시지를 넘겨받는다 — 실행 전에 받았으니 재시도 첫 실행 프롬프트에 바로 실린다(L1: 이어 실행을 한 번 더 돌지 않는다)
   assert.equal(calls.length, 2, '크래시 → 재시도 1회(메시지 포함)');
-  assert.match(calls[1].prompt, /## 사장이 이어서 보낸 메시지\n크래시 전 끼워 넣기/);
+  assert.match(calls[1].prompt, /## 사용자가 이어서 보낸 메시지\n크래시 전 끼워 넣기/);
   assert.equal(r.reply, '재시도 답');
 });
 
@@ -75,7 +75,7 @@ test('CLI: 실행 전(준비 중)에 받은 끼워 넣기는 첫 실행에 바�
   assert.equal(await steerTurn(ws, 'alpha', { text: '준비 중 끼워 넣기' }), true);
   const r = await turn;
   assert.equal(calls.length, 1);
-  assert.match(calls[0].prompt, /원래 지시[\s\S]*## 사장이 이어서 보낸 메시지\n준비 중 끼워 넣기/);
+  assert.match(calls[0].prompt, /원래 지시[\s\S]*## 사용자가 이어서 보낸 메시지\n준비 중 끼워 넣기/);
   assert.equal(r.reply, '한 번에 답');
 });
 

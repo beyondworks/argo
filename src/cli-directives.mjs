@@ -170,7 +170,7 @@ export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', b
           if (norm(d.to) === norm(fromSlug) || norm(d.to) === norm(fromName)) {
             throw new Error(en ? "you can't send a note to yourself" : '자기 자신에게는 쪽지를 보낼 수 없다');
           }
-          throw new Error(en ? `no crew named "${d.to}"` : `"${d.to}"는 크루 명단에 없습니다`);
+          throw new Error(en ? `no agent named "${d.to}"` : `"${d.to}"는 에이전트 명단에 없습니다`);
         }
         const cc = (Array.isArray(d.cc) ? d.cc : []).map(find).filter(Boolean).map((a) => a.slug);
         const msg = String(d.message ?? '').trim();
@@ -185,7 +185,7 @@ export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', b
         try {
           await sendCrewMail(wsId, { from: fromSlug, fromName, to: to.slug, cc, message: msg, hop: hop + 1, chain: [...chain, fromSlug], relaxed: lim.relaxed, ...(delegationTree ? { tree: delegationTree.id } : {}) });
         } catch (e) {
-          if (e?.code === 'TREE_CAP') throw new Error(en ? `total limit for crew turns from this message reached (${lim.tree}) — report what remains and ask the captain whether to continue` : `이번 지시에서 이어진 크루 턴이 합계 상한(${lim.tree}회)에 닿았다 — 남은 일을 알리고 사장에게 계속할지 물어라`);
+          if (e?.code === 'TREE_CAP') throw new Error(en ? `total limit for agent turns from this message reached (${lim.tree}) — report what remains and ask the user whether to continue` : `이번 지시에서 이어진 에이전트 턴이 합계 상한(${lim.tree}회)에 닿았다 — 남은 일을 알리고 사용자에게 계속할지 물어라`);
           throw e;
         }
         cnt.mail += cost; // 풀림도 배달 턴으로 잇는다 — 안 실으면 배달된 크루가 켜짐으로 돌아가 풀린 단계 상한이 한 번 더 못 간다
@@ -206,8 +206,8 @@ export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', b
           ...((purpose || task || need) ? { plain: { purpose, task, need } } : {}),
         });
         notes.push(en
-          ? `✓ Approval filed (${item.id}) — waiting for the captain. Do NOT perform the action until approved.`
-          : `✓ 결재 올림(${item.id}) — 사장 승인 대기. 승인 전에는 그 행동을 실행하지 마라.`);
+          ? `✓ Approval filed (${item.id}) — waiting for the user. Do NOT perform the action until approved.`
+          : `✓ 결재 올림(${item.id}) — 사용자 승인 대기. 승인 전에는 그 행동을 실행하지 마라.`);
       } else if (action === 'tool') {
         // 커넥터 도구 호출 — SDK 표면(use_connector)과 **같은 코어 함수**로 수렴한다(설계서 §1 단일 실행 경로).
         // 러너가 다르다고 능력이 갈리면 안 된다는 절대 조건이 이 한 줄로 담보된다.
@@ -281,12 +281,12 @@ export function toolFollowUpMessage(results, { lang = 'ko', userMsg = '' } = {})
   const ask = String(userMsg ?? '').replace(/\s+/g, ' ').trim().slice(0, 500);
   return en
     ? `(System) The connector calls you asked for have run. Their real results are below.\n\n${blocks}\n\n`
-      + `${ask ? `The captain's instruction was: ${ask}\n\n` : ''}`
-      + `Answer the captain using these results — never invent or guess what they contain. `
+      + `${ask ? `The user's instruction was: ${ask}\n\n` : ''}`
+      + `Answer the user using these results — never invent or guess what they contain. `
       + `Do NOT emit another ${fence} tool block: the automatic follow-up is one turn per turn, and a second block will be refused.${caution}`
     : `(시스템) 네가 요청한 커넥터 호출이 실행됐다. 실제 결과는 아래와 같다.\n\n${blocks}\n\n`
-      + `${ask ? `사장의 지시는 이것이었다: ${ask}\n\n` : ''}`
-      + `이 결과를 근거로 사장에게 답하라 — 내용을 지어내거나 추측하지 마라. `
+      + `${ask ? `사용자의 지시는 이것이었다: ${ask}\n\n` : ''}`
+      + `이 결과를 근거로 사용자에게 답하라 — 내용을 지어내거나 추측하지 마라. `
       + `${fence} tool 블록을 다시 내지 마라: 자동 후속 턴은 턴당 1회뿐이라 두 번째 블록은 거부된다.${caution}`;
 }
 

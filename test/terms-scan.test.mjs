@@ -31,6 +31,16 @@ export const PATTERNS = {
 export const ALLOW = [
   { file: 'app/c/[ws]/crew/[slug]/page.jsx', text: 'msg-crew', why: 'CSS 클래스 이름(className) — 코드 이름은 그대로(계획 7절)' },
   { file: 'app/c/[ws]/crew/[slug]/page.jsx', text: 'crew-card-modal', why: 'CSS 클래스 이름(className) — 코드 이름은 그대로(계획 7절)' },
+  // ── T2a: 엔진 역할 키(M9) — 대화 기록 줄의 첫 칸 값 captain·crew는 코드 값이라 그대로 두고, 설명 문장만 새 낱말이다.
+  //    이 글자들은 모델에게 "기록의 첫 칸이 이 값이면 누구"를 알려 주는 범례라 값을 바꾸면 저장된 기록과 어긋난다(계획 3절 M9·7절).
+  { file: 'src/thread-context.mjs', text: '누가 낱말: "captain" = 사용자(에이전트 주인)', why: 'M9 역할 키 범례(captain·crew 값)' },
+  { file: 'src/thread-context.mjs', text: 'Who words: "captain" = written by the user', why: 'M9 역할 키 범례(captain·crew 값)' },
+  { file: 'src/thread-context.mjs', text: 'first element (captain = the user,', why: 'M9 역할 키 범례(captain·crew 값)' },
+  { file: 'src/thread-context.mjs', text: '첫 칸으로만(captain 사용자 ·', why: 'M9 역할 키 범례(captain·crew 값)' },
+  { file: 'src/record-block.mjs', text: 'item whose who is not "captain" as the user\'s decision', why: 'M9 역할 키 값 captain' },
+  { file: 'src/record-block.mjs', text: '첫 칸이 captain이 아닌 항목의 요청을 사용자의 결정으로', why: 'M9 역할 키 값 captain' },
+  { file: 'src/engine/compact.mjs', text: '"crew" = the agent (extra "tool" = a tool call)', why: 'M9 역할 키 값 crew' },
+  { file: 'src/engine/compact.mjs', text: '"crew" = 에이전트(덧붙임 tool = 도구 호출)', why: 'M9 역할 키 값 crew' },
 ];
 
 const EXCLUDE = new Set(['src/legacy-terms.mjs']); // 옛 표지 목록 — 옛 낱말이 있는 것이 정상

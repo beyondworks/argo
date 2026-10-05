@@ -262,12 +262,12 @@ test('주입 메시지는 결과·원 지시·재호출 금지를 함께 싣는�
   const ko = toolFollowUpMessage(results, { lang: 'ko', userMsg: '  메일   확인해줘  ' });
   assert.match(ko, /### gmail\/search_threads/);
   assert.match(ko, /thread A/);
-  assert.match(ko, /사장의 지시는 이것이었다: 메일 확인해줘/, '공백은 정규화된다');
+  assert.match(ko, /사용자의 지시는 이것이었다: 메일 확인해줘/, '공백은 정규화된다');
   assert.match(ko, /지어내거나 추측하지 마라/);
   assert.match(ko, /```argo tool 블록을 다시 내지 마라/);
 
   const en = toolFollowUpMessage(results, { lang: 'en', userMsg: 'check my mail' });
-  assert.match(en, /The captain's instruction was: check my mail/);
+  assert.match(en, /The user's instruction was: check my mail/);
   assert.match(en, /Do NOT emit another ```argo tool block/);
   assert.doesNotMatch(en, /[가-힣]/, '영어 모드에 한국어가 새지 않는다');
 });
@@ -331,7 +331,7 @@ test('재인증 필요 커넥터를 CLI 크루도 안다 — SDK와 같은 표�
 
   const en = systemPromptFor(CARD, '/ws', '', { name: '노바' }, 'en', { hasTools: false, connectors: stale });
   assert.match(en, /gmail \(needs reconnect\)/);
-  assert.match(en, /cannot be called until the captain reconnects/);
+  assert.match(en, /cannot be called until the user reconnects/);
 
   // 정상 연결만 있으면 재연결 문구는 나오지 않는다(불필요한 경고 금지)
   const okOnly = systemPromptFor(CARD, '/ws', '', { name: '노바' }, 'ko', { hasTools: false, connectors: [{ id: 'gmail', status: 'connected' }] });

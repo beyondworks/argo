@@ -71,7 +71,7 @@ const inFlight = new Set();
     돌릴 때는 'cc'를 넘긴다 — 수신자가 하나여도 의미는 참조다(회신 의무 없음).
     fromRole: 'captain'이면 동료가 아니라 사장이 보낸 것으로 문구가 갈린다(room.mjs 경유). */
 export async function sendCrewMail(wsId, { from, fromName, fromRole = null, to, cc = [], message, hop = 0, chain = [], kind = 'to', msgr = null, relaxed = false, tree = null }) {
-  if (!to || !String(message ?? '').trim()) throw new Error('수신 크루와 내용이 필요합니다');
+  if (!to || !String(message ?? '').trim()) throw new Error('수신 에이전트와 내용이 필요합니다');
   // 자기 자신에게는 보낼 수 없다 — 배달 턴이 또 쪽지를 내면 hop 상한(왕복 방어)이 무의미해진다.
   // cc는 이미 `s === from`으로 걸러내는데(아래) 주 수신자만 무방비였다. 호출부(cli-directives)에서도
   // 막지만 근본 방어를 저장 관문에 둔다 — 새 호출부가 조용히 같은 구멍을 내지 않게(격리 재현 2026-07-30).
@@ -144,7 +144,7 @@ async function appendLog(wsId, entry) {
     await mkdir(mailRoot(wsId), { recursive: true });
     await appendFile(join(mailRoot(wsId), LOG_FILE), JSON.stringify({ ts: new Date().toISOString(), ...entry }) + '\n');
   } catch (e) {
-    console.warn(`[argo] 크루 우편 배달 기록 실패(${wsId}):`, e.message);
+    console.warn(`[argo] 에이전트 우편 배달 기록 실패(${wsId}):`, e.message);
   }
 }
 
@@ -168,7 +168,7 @@ async function readLog(wsId) {
 const SLUG_RE = /^[^/\\.][^/\\]*$/;          // 구분자 금지, dot 접두 금지(.dead·.log 예약)
 const ID_RE = /^m[a-z0-9]+$/;                 // sendCrewMail이 만드는 id 형태
 const DEAD_RE = /^[^/\\.][^/\\]*-m[a-z0-9]+-(to|cc)\.json$/; // .dead/의 기록 파일명 `<slug>-<id>-<kind>.json`
-function assertSlug(slug) { if (!SLUG_RE.test(String(slug ?? '')) || String(slug).includes('..')) throw new Error('잘못된 크루 slug'); }
+function assertSlug(slug) { if (!SLUG_RE.test(String(slug ?? '')) || String(slug).includes('..')) throw new Error('잘못된 에이전트 slug'); }
 function assertId(id) { if (!ID_RE.test(String(id ?? ''))) throw new Error('잘못된 쪽지 id'); }
 function assertDeadFile(file) { if (!DEAD_RE.test(String(file ?? '')) || String(file).includes('..')) throw new Error('잘못된 실패함 파일명'); }
 
@@ -301,7 +301,7 @@ export async function deliverCrewMail(wsId, runTurn, { limit = MAIL_PER_TICK, co
       msg = JSON.parse(await readFile(claimedPath, 'utf8'));
     } catch (e) {
       // 손상 — 배달 불가. 조용히 지우지 않는다(HIGH-3②): .dead/로 이동 + 로그.
-      console.error(`[argo] 크루 우편 손상(${wsId}/${item.slug}/${item.file}):`, e.message);
+      console.error(`[argo] 에이전트 우편 손상(${wsId}/${item.slug}/${item.file}):`, e.message);
       await moveToDead(wsId, item.slug, item.file, claimedPath, { corrupt: true });
       inFlight.delete(claimedPath);
       continue;
@@ -341,7 +341,7 @@ export async function deliverCrewMail(wsId, runTurn, { limit = MAIL_PER_TICK, co
       // 행동 핀은 없다(4R 검수 LOW-1). 흡수가 하나라도 빠지는 미래 변경에 대비한 자리.
       await deliverOne(wsId, runTurn, b).catch((e) => {
         clearInterval(b.hb); inFlight.delete(b.claimedPath);
-        console.error(`[argo] 크루 우편 정착 경로 예외(${wsId}/${b.item.slug}/${b.msg.id}):`, e.message);
+        console.error(`[argo] 에이전트 우편 정착 경로 예외(${wsId}/${b.item.slug}/${b.msg.id}):`, e.message);
       });
     }
   });
@@ -359,7 +359,7 @@ async function deliverOne(wsId, runTurn, { item, claimedPath, msg, hb, claimBy }
   const owner = await readClaimBy(claimedPath);
   if (owner === null || (owner !== undefined && owner !== claimBy)) {
     clearInterval(hb); inFlight.delete(claimedPath);
-    console.warn(`[argo] 크루 우편 착수 생략(${wsId}/${item.slug}/${msg.id}): claim 신원 ${owner === null ? '소멸(회수·배달됨)' : '불일치(재선점됨)'}`);
+    console.warn(`[argo] 에이전트 우편 착수 생략(${wsId}/${item.slug}/${msg.id}): claim 신원 ${owner === null ? '소멸(회수·배달됨)' : '불일치(재선점됨)'}`);
     return;
   }
   await writeJsonAtomic(claimedPath, { ...msg, claimBy, claimedAt: new Date().toISOString() }).catch(() => {}); // claimBy(선점 신원)는 유지
@@ -376,12 +376,12 @@ async function deliverOne(wsId, runTurn, { item, claimedPath, msg, hb, claimBy }
     const cur = await readClaimBy(claimedPath); // 선점 신원 일치만 내 것 — 존재·시각 폴백 없음(4R 검수 MEDIUM-1). 손상·부재·소멸 전부 흡수(5R LOW-A)
     const mine = cur === claimBy;
     if (!mine) {
-      console.warn(`[argo] 크루 우편 실패 정착 생략(${wsId}/${item.slug}/${msg.id}): claim 신원 ${cur === null ? '소멸(회수·배달됨)' : cur === undefined ? '부재·손상(각인 실패 또는 파일 손상 — 회수 경로가 맡음)' : '불일치(재선점됨)'}`);
+      console.warn(`[argo] 에이전트 우편 실패 정착 생략(${wsId}/${item.slug}/${msg.id}): claim 신원 ${cur === null ? '소멸(회수·배달됨)' : cur === undefined ? '부재·손상(각인 실패 또는 파일 손상 — 회수 경로가 맡음)' : '불일치(재선점됨)'}`);
     } else if (attempts >= MAIL_MAX_ATTEMPTS) {
-      console.error(`[argo] 크루 우편 배달 소진(${wsId}/${item.slug}/${msg.id}):`, e.message);
+      console.error(`[argo] 에이전트 우편 배달 소진(${wsId}/${item.slug}/${msg.id}):`, e.message);
       await moveToDead(wsId, item.slug, item.file, claimedPath, { ...msg, attempts, lastError: error });
     } else {
-      console.warn(`[argo] 크루 우편 배달 실패(${attempts}/${MAIL_MAX_ATTEMPTS}) ${wsId}/${item.slug}/${msg.id}:`, e.message);
+      console.warn(`[argo] 에이전트 우편 배달 실패(${attempts}/${MAIL_MAX_ATTEMPTS}) ${wsId}/${item.slug}/${msg.id}:`, e.message);
       // 재시도 — attempts 올려 .json으로 복귀(다음 틱). 갱신 실패 시에도 복귀는 시도한다
       // (attempts 미증가로 한 회차 더 돌 수 있으나, 소실보다 낫고 상한이 결국 잡는다).
       await writeJsonAtomic(claimedPath, { ...msg, attempts }).catch(() => {}); // claimBy·claimedAt 없이 — 대기분으로 돌아간다
@@ -421,6 +421,6 @@ async function moveToDead(wsId, slug, file, claimedPath, record) {
       await rm(claimedPath, { force: true });
     }
   } catch (e) {
-    console.error(`[argo] 크루 우편 .dead 기록 실패(${wsId}/${slug}/${file}) — 원본 유지, 다음 틱 재시도:`, e.message);
+    console.error(`[argo] 에이전트 우편 .dead 기록 실패(${wsId}/${slug}/${file}) — 원본 유지, 다음 틱 재시도:`, e.message);
   }
 }

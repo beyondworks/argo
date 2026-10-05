@@ -53,7 +53,7 @@ async function crewOn(ws, lang) {
 test('runner: http 크루의 턴은 러너를 해석하기 전에 정직하게 멈춘다(ko)', async () => {
   await crewOn('rt-ko');
   await assert.rejects(chat('rt-ko', 'ext', '안녕'), (e) => {
-    assert.match(e.message, /외부 에이전트\(HTTP\)로 실행하도록 설정돼 있는데, 이 방식은 더 이상 지원하지 않습니다/);
+    assert.match(e.message, /외부 HTTP 연결로 실행하도록 설정돼 있는데, 이 방식은 더 이상 지원하지 않습니다/);
     assert.match(e.message, /봇으로 연결/);
     return true;
   });
@@ -62,7 +62,7 @@ test('runner: http 크루의 턴은 러너를 해석하기 전에 정직하게 �
 test('runner: http 크루의 턴은 러너를 해석하기 전에 정직하게 멈춘다(en)', async () => {
   await crewOn('rt-en', 'en');
   await assert.rejects(chat('rt-en', 'ext', 'hi'), (e) => {
-    assert.match(e.message, /external agent over HTTP, which is no longer supported/);
+    assert.match(e.message, /run over an external HTTP connection, which is no longer supported/);
     assert.match(e.message, /as a bot/);
     return true;
   });
