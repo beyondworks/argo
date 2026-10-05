@@ -69,6 +69,9 @@ const { createCompany, paths } = await import('../src/workspace.mjs');
 const { saveRunnerCred } = await import('../src/runners/creds.mjs');
 const { chat } = await import('../src/chat.mjs');
 const { LEGACY_RECORD_TERMS_NOTE } = await import('../src/legacy-terms.mjs');
+const { userAddressNote } = await import('../src/user-name.mjs');
+// T5(경우 표 B5) — 로그인한 기기(기기 세션에 프로필 이름)라 러너마다 같은 사용자 이름 한 줄을 받는다. url은 닫힌 포트(턴은 Supabase를 부르지 않는다 — test/user-name.test.mjs)
+await writeFile(join(root, '.device-session.json'), JSON.stringify({ url: 'http://127.0.0.1:9', anonKey: 'anon', user: { id: 'u-terms', email: 't@example.invalid', name: '유건', nameAt: Date.now() }, access_token: 'at', refresh_token: 'rt', expires_at: Math.floor(Date.now() / 1000) + 3600 }), { mode: 0o600 });
 
 const KEYS = {
   claude: ['apikey', `sk-ant-api03-${'x'.repeat(80)}`], openrouter: ['apikey', `sk-or-v1-${'f'.repeat(64)}`], glm: ['apikey', `glm-${'a'.repeat(40)}`],
@@ -90,7 +93,7 @@ async function turnWith(runner, lang, { cli = false } = {}) {
 
 /** 옛 낱말 — M11 한 줄(옛 낱말을 일부러 인용)과 기억 파일 경로(유지 — 계획 8절 질문 2)를 뺀 나머지에서 센다 */
 const OLD = /크루|사장|선장|\b(crews?|captain|boss)\b/i;
-const leftovers = (text, lang) => text.split(LEGACY_RECORD_TERMS_NOTE[lang]).join('').replaceAll('사장-프로필.md', '').match(new RegExp(OLD.source, 'gi')) ?? [];
+const leftovers = (text, lang) => text.split(LEGACY_RECORD_TERMS_NOTE[lang]).join('').split(userAddressNote('유건', lang)).join('').replaceAll('사장-프로필.md', '').match(new RegExp(OLD.source, 'gi')) ?? [];
 
 const CASES = [
   ['claude', 'SDK', 'messages'], ['openrouter', '네이티브', 'messages'], ['glm', '네이티브', 'messages'], ['kimi', '네이티브', 'messages'], ['grok', '네이티브', 'messages'],
@@ -105,6 +108,7 @@ for (const lang of ['ko', 'en']) {
       assert.equal(got[0].via, via, `${runner}: 기대한 경로(${via})가 아니다`);
       const sys = got[0].text;
       assert.ok(sys.includes(LEGACY_RECORD_TERMS_NOTE[lang]), `${runner}: M11 한 줄이 없다`);
+      assert.ok(sys.includes(userAddressNote('유건', lang)), `${runner}: 사용자 이름 한 줄(T5)이 없다`);
       assert.match(sys, lang === 'en' ? /The user's instructions/ : /사용자의 지시/, `${runner}: 새 낱말(지시 우선순위 줄)`);
       assert.deepEqual(leftovers(sys, lang), [], `${runner}: 옛 낱말이 남았다`);
     });
@@ -118,6 +122,7 @@ test('B1 codex 네이티브(옵트인) — Responses 와이어 instructions에�
       const got = await turnWith('codex', lang);
       assert.equal(got?.[0]?.via, 'responses', 'codex 네이티브(Responses) 경로를 못 탔다');
       assert.ok(got[0].text.includes(LEGACY_RECORD_TERMS_NOTE[lang]), `${lang}: M11 한 줄이 없다`);
+      assert.ok(got[0].text.includes(userAddressNote('유건', lang)), `${lang}: 사용자 이름 한 줄(T5)이 없다`);
       assert.deepEqual(leftovers(got[0].text, lang), [], `${lang}: 옛 낱말이 남았다`);
     }
   } finally { delete process.env.ARGO_NATIVE_RUNNERS; }

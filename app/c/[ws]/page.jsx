@@ -341,7 +341,7 @@ export default function Deck({ params }) {
                 : ''}
             </p>
           </div>
-          <Nameplate company={data?.company} memoryCount={data?.memoryCount} links={stats?.links} crew={data?.agents?.length} />
+          <Nameplate company={data?.company} userName={data?.userName} memoryCount={data?.memoryCount} links={stats?.links} crew={data?.agents?.length} />
           <TokenPanel usage={data?.usage} />
         </div>
       </div>
@@ -577,7 +577,7 @@ function TokenPanel({ usage }) {
 }
 
 /** 명판 — 선박 제원판. 회사의 스펙을 계기판 명판처럼. */
-function Nameplate({ company, memoryCount, links, crew }) {
+function Nameplate({ company, userName, memoryCount, links, crew }) {
   const { t } = useLang();
   // 엔진 = 실제 연결된 러너 이름 — 'Claude Agent SDK' 하드코딩은 Gemini만 연결한 사용자에게
   // "클로드로 도는 건가" 혼란을 줬다(실사용 신고 2026-07-20). 연결 직후 argo:refresh로 즉시 갱신.
@@ -596,7 +596,7 @@ function Nameplate({ company, memoryCount, links, crew }) {
   if (!company) return <Skeleton h={150} style={{ borderRadius: 18 }} />;
   const rows = [
     [t('deck.nameplate.unit'), company.id],
-    [t('deck.nameplate.captain'), nameplateOwner(company.owner)],
+    [t('deck.nameplate.captain'), nameplateOwner(company.owner, userName)],
     [t('deck.nameplate.commissioned'), String(company.created ?? '').slice(0, 10)],
     [t('deck.nameplate.crew'), `${crew ?? 0}`],
     [t('deck.nameplate.vault'), t('deck.nameplate.vaultVal', { n: memoryCount ?? 0, links: links ?? 0 })],

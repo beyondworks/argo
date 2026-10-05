@@ -116,7 +116,7 @@ test('B4. 컴퓨터 유즈 라이브(macOS·접근성) — 스크린샷 PNG + �
 
 test('B5. 배선 핀 — chat.mjs 네이티브 턴 프롬프트에 도구 안내, native-query가 이미지 결과를 블록으로', async () => {
   const chat = await readFile(join(ROOT, 'src', 'chat.mjs'), 'utf8');
-  assert.match(chat, /systemPrompt: systemPromptFor\(md, p\.root, skills, meta, lang\) \+ sysTail \+ nativeToolsDirective\(lang\),/);
+  assert.match(chat, /systemPrompt: systemPromptFor\(md, p\.root, skills, meta, lang, \{ userName: turnUser \}\) \+ sysTail \+ nativeToolsDirective\(lang\),/);
   const nq = await readFile(join(ROOT, 'src', 'engine', 'native-query.mjs'), 'utf8');
   assert.match(nq, /if \(out && typeof out === 'object' && Buffer\.isBuffer\(out\.image\)\) blocks = await imageToolResult\(out, \{ cwd, model, env \}\);/);
   assert.match(nq, /content: blocks \?\? \(text\.slice\(0, TOOL_RESULT_CAP\) \|\| '\(empty\)'\)/);

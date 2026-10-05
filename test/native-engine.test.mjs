@@ -214,8 +214,8 @@ test('E7. 배선 핀 — chat.mjs가 플래그 러너를 nativeQuery로 갈라 �
   assert.match(src, /const nativeOn = nativeRunnerEnabled\(runner\);\n\s*const crewSink = nativeOn \? \[\] : null;\n\s*const crewServer = makeCrewServer\([^\n]*workFolder, crewSink, journal, fullAuto, lim, tree, turnCounters(?:, [^\n]*)?\);/); // 뒤에 세션 메시지 도구 인자(sessionPeersFor)가 붙을 수 있다 // journal = 팀 메신저 일지 정책(위임 턴 전달), fullAuto = 풀 오토 모드(2026-09-26)
   const branch = src.split('const q = nativeOn ? nativeQuery({')[1]?.split('}) : query({')[0] ?? '';
   assert.ok(branch, 'q 분기가 존재');
-  for (const re of [/systemPrompt: systemPromptFor\(md, p\.root, skills, meta, lang\) \+ sysTail/, /env: sdkEnv, model: sdkModel, crewTools: crewSink, mcpServers: servers \?\? \{\}/, /canUseTool: makePermissionGate\(wsId, agentSlug, p\.root, chain\.length \? chain\[chain\.length - 1\] : (?:null|notOwnerDirect), lang, workRoots, \{ computerUse: computerOn, guest, msgr: gateMsgr \}\)/, /resume: resumeId/, /prompt: promptBlocks \?\? promptText/]) assert.match(branch, re);
-  assert.equal((src.match(/systemPromptFor\(md, p\.root, skills, meta, lang\) \+ sysTail/g) ?? []).length, 2, '두 엔진이 같은 프롬프트 꼬리');
+  for (const re of [/systemPrompt: systemPromptFor\(md, p\.root, skills, meta, lang, \{ userName: turnUser \}\) \+ sysTail/, /env: sdkEnv, model: sdkModel, crewTools: crewSink, mcpServers: servers \?\? \{\}/, /canUseTool: makePermissionGate\(wsId, agentSlug, p\.root, chain\.length \? chain\[chain\.length - 1\] : (?:null|notOwnerDirect), lang, workRoots, \{ computerUse: computerOn, guest, msgr: gateMsgr \}\)/, /resume: resumeId/, /prompt: promptBlocks \?\? promptText/]) assert.match(branch, re);
+  assert.equal((src.match(/systemPromptFor\(md, p\.root, skills, meta, lang, \{ userName: turnUser \}\) \+ sysTail/g) ?? []).length, 2, '두 엔진이 같은 프롬프트 꼬리');
   assert.equal((src.match(/\.\.\.\(sdkModel \? \{ model: sdkModel \} : \{\}\)/g) ?? []).length, 1, 'SDK 경로도 같은 모델 선택식');
   assert.match(src, /abortReg = registerTurn\(wsId, agentSlug, \(\) => q\.interrupt\(\), __turnControl\);/, '두 엔진의 중단 핸들이 동일한 논리 실행 범위를 공유한다');
   // 컴퓨터 유즈는 회사 옵트인(computerUse:true)만 — 네이티브 도구 목록·게이트 양쪽에 같은 값(분리 검수 3R CRITICAL-2)

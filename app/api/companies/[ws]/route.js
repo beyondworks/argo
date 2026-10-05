@@ -11,6 +11,7 @@ import { ensureGateway } from '../../../../src/gateway.mjs';
 import { nudgeSync } from '../../../../src/sync.mjs';
 import { guardCompany, authError, requestLang, csrfDenied } from '../../../auth.mjs';
 import { apiError } from '../../../apimsg.mjs';
+import { userDisplayName } from '../../../../src/user-name.mjs'; // 명패 사용자 줄(M10) — 저장 값이 기본값('captain')이면 이 이름
 
 ensureScheduler(); // 앱 사용이 시작되면 루틴 스케줄러 상주
 ensureGateway(); // 메신저 게이트웨이(텔레그램/슬랙) 상주
@@ -54,6 +55,7 @@ export async function GET(req, { params }) {
     const { deg, ...link } = linkStats(docs); // 1회 계산 — 다이얼·칩·표 열이 같은 셈법을 본다
     return Response.json({
       company, agents, broken,
+      userName: await userDisplayName(ws, { company }).catch(() => null), // 파일만 읽는다(DB 호출 0). 상주·회사 노드는 null
       memories: docs.slice(0, 6).map((d) => ({ ...d, deg: deg.get(d.rel) ?? 0 })), // 표 "연결" 열 = 해석 후 차수
       memoryCount: docs.length,
       stats: docStats(docs, link),

@@ -47,6 +47,19 @@ export const OLD_CLI_COMMANDS = Object.freeze({ crew: 'agent' });
 // ── M10 명패 — company.owner에 사람 이름 대신 들어간 기본값(저장 값은 그대로 두고 표시만 바꾼다) ──
 export const OWNER_PLACEHOLDERS = freeze(['captain']);
 
+// ── 5-3 사용자 호칭 — 에이전트 지시문(systemPromptFor)에 한 줄. '하지 말라'는 호칭을 글자 그대로 담아 여기 둔다.
+//    name·address는 user-name.mjs가 세척한 뒤 JSON 문자열(jsonText)로 만든 값 — 따옴표 안이 전부 데이터라 이름이 지시 줄을 만들 수 없다 ──
+export const USER_ADDRESS_NOTE = Object.freeze({
+  named: Object.freeze({
+    ko: (name, address) => `사용자(이 에이전트의 주인)의 이름은 ${name}이다. 사용자를 부를 때는 ${address}이라고 부르고, '사장님'·'대표님' 같은 호칭은 쓰지 않는다.`,
+    en: (name) => `The user's (your owner's) name is ${name}. Address them by name; do not call them 'boss' or 'captain'.`,
+  }),
+  unnamed: Object.freeze({
+    ko: "사용자를 부를 때 '사장님'·'대표님'·'고객님' 같은 호칭을 쓰지 말고 바로 말한다.",
+    en: "Do not address the user with titles such as 'boss' or 'captain'; speak to them directly.",
+  }),
+});
+
 // ── M11 옛 기록 속 낱말 — 에이전트 지시문 공통 한 줄(chat.mjs systemPromptFor → SDK·CLI·네이티브 러너 모두). 이미 저장된 대화·요약·회의록·쪽지·
 //    지침 파일(captain-rules.md·사장-프로필.md)은 고치지 않으므로, 모델이 옛 낱말을 다른 사람으로 읽지 않게 한 줄로 알려 준다 ──
 export const LEGACY_RECORD_TERMS_NOTE = Object.freeze({
