@@ -66,6 +66,9 @@ export async function DELETE(_req, { params }) {
     const { ws, slug } = await params;
     const denied = await guardCompany(ws); if (denied) return denied;
     await removeAgentCard(ws, slug);
+    // 메신저·오피스의 파견 행도 바로 분리한다(검수 #fix-cross M3a) — 15초 미러는 이 프로세스가 본 카드 변화로만 해고를 알아서, 해고 직후 재시작하거나 미러가 아직 안 돈 틈에는 놓친다.
+    // 응답을 기다리게 하지 않고(네트워크 지연이 해고를 늦추지 않게), 로그인이 없거나 오프라인이면 조용히 건너뛴다 — 그때는 다음 미러 틱이 처리한다.
+    void import('../../../../../../src/gateway/msgr.mjs').then((m) => m.detachFiredCrew(ws, slug)).catch(() => {});
     return Response.json({ ok: true });
   } catch (e) {
     return Response.json({ error: String(e.message || e) }, { status: 400 });

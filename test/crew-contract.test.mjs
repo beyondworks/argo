@@ -81,6 +81,8 @@ const CONTRACT = {
   msgr_dm_personal_crew: { argoOnly: '본체 알림을 개인 공간의 크루 1:1(앱이 여는 방과 같은 방)에 올릴 때 방을 찾거나 연다(에이전트 = 한 사람, 2026-10-03) — 외부 에이전트의 알림은 예약 작업 deliver=argo_msgr와 받은 대화로 보내기(msgr_bot_send)로 간다' },
   msgr_crew_requests: { argoOnly: 'Argo PC가 크루를 새로 만드는 영입 요청 — 외부 에이전트는 서버 연결(connect) 절차로 추가한다' },
   msgr_crew_presence: { argoOnly: 'Argo PC에 남은 크루 대화 기록의 회수 판정(유건 결정 2026-10-03) — 외부 에이전트의 기억은 그 에이전트 쪽 저장소라 Argo가 지울 수 없다(봇 연결 해제·채널 빼기까지만)' },
+  msgr_role: { argoOnly: 'Argo PC 크루 미러가 조직에 행을 넣기 전 확인(msgr_crews_insert 정책과 같은 함수, 2차 검수 M-2) — 외부 에이전트는 서버 연결(connect) 절차로 추가해 이 확인이 필요 없다' },
+  msgr_org_locked: { argoOnly: 'Argo PC 크루 미러가 조직에 행을 넣기 전 확인 — 구독이 연체돼 잠긴 조직은 msgr_crews_insert가 거절한다. 외부 에이전트는 서버 연결 절차로 추가한다' },
   msgr_node_heartbeat: { argoOnly: '상주 노드 심박 — 봇 가용성은 getUpdates의 last_seen_at' },
   msgr_notification_routes_sync: { argoOnly: 'Argo 데스크톱 알림 경로 — 외부 에이전트는 예약 작업 deliver=argo_msgr' },
   msgr_notification_authorize: { argoOnly: 'Argo 데스크톱 알림 경로' },

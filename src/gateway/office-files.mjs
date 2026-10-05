@@ -6,10 +6,11 @@
 // 오피스 서버 함수 api/storage가 DB가 허락한 키로만 서명 주소를 주고(upload-url), 이 기기가 R2에 직접 PUT한 뒤 commit(서버가 크기 확인)한다. R2 접근 키는 이 기기에 두지 않는다.
 // 드라이브: 오피스 서버 함수(api/drive list·import·mkdir·export)를 주인 로그인 JWT로 — 구글 토큰은 서버에만 있다. 오피스 주소 ARGO_OFFICE_ORIGIN(https 또는 루프백).
 // 부하: 사람이 시킬 때만 부른다(폴링 없음). 붙이기는 파일당 RPC 2 + 오피스 서버 함수 2 + R2 PUT 1.
+// 바깥 글(S1): 파일 제목·요약·읽은 글자(남이 보낸 견적서·계약서 OCR), 드라이브 이름은 남이 쓴 글이다 — 목록·읽기 결과는 경계 블록으로 감싼다(office-audience.mjs outsideOf).
 import { randomUUID } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { basename, extname, isAbsolute, resolve } from 'node:path';
-import { audienceOf, ONLY_DM, mixedRefusal } from './office-audience.mjs';
+import { audienceOf, ONLY_DM, mixedRefusal, outsideOf, quoted, OUTSIDE_RULE } from './office-audience.mjs';
 
 export const DEFAULT_ORIGIN = 'https://argo-office.vercel.app'; // 운영 오피스(9/30 운영 반영) — 메일 도구(office-mail.mjs)도 같은 주소를 쓴다
 export const filesDeps = {
@@ -65,7 +66,7 @@ const ERRORS = {
 };
 function errText(code, lang, raw = '') {
   if (ERRORS[code]) return pick(`오피스 거절: ${ERRORS[code][0]}.`, `Office refused: ${ERRORS[code][1]}.`, lang);
-  return pick(`오피스 호출 실패: ${String(raw || code || '알 수 없는 오류').slice(0, 200)}. 사장에게 그대로 알려라.`, `Office call failed: ${String(raw || code || 'unknown').slice(0, 200)}. Tell the owner as is.`, lang);
+  return pick(`오피스 호출 실패: ${quoted(raw || code || '알 수 없는 오류', 200)}. 사장에게 그대로 알려라.`, `Office call failed: ${quoted(raw || code || 'unknown', 200)}. Tell the owner as is.`, lang);
 }
 const rpcError = (e, lang) => { const msg = String(e?.message ?? e ?? ''); return errText(Object.keys(ERRORS).find((c) => msg.includes(c)), lang, msg); };
 const kb = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)}MB` : `${Math.max(1, Math.round((n ?? 0) / 1024))}KB`);
@@ -108,7 +109,7 @@ export async function filesTool(args, { ctx = null, lang = 'ko', ownerId = null 
   if (ctx?.kind === 'msgr-rules') return pick('메신저 위임 턴에서는 문서함 도구를 쓰지 않는다 — 요청한 동료에게 돌려줘라.', 'The files tool is not available in a delegated messenger turn — hand it back.', lang);
   if (ctx?.kind !== 'msgr' || !ctx.orgId) return pick('문서함·드라이브는 메신저 조직 채널 대화에서만 다룬다(그 조직의 것). 지금 대화에서는 쓸 수 없다고 알려라.', 'Files and Drive are only available in a messenger org channel (that org). Say it is unavailable here.', lang);
   let c;
-  try { c = await filesDeps.session(); } catch (e) { return pick(`메신저 세션을 불러오지 못했다: ${String(e?.message ?? e).slice(0, 160)}.`, `Could not load the messenger session: ${String(e?.message ?? e).slice(0, 160)}.`, lang); }
+  try { c = await filesDeps.session(); } catch (e) { return pick(`메신저 세션을 불러오지 못했다: ${quoted(e?.message ?? e, 160)}.`, `Could not load the messenger session: ${quoted(e?.message ?? e, 160)}.`, lang); }
   if (!c?.client || !c.uid) return pick('메신저에 로그인돼 있지 않아 오피스를 다룰 수 없다 — 사장에게 Argo 설정에서 메신저(오피스) 계정에 로그인해 달라고 알려라.', 'Not signed in to the messenger, so Office is unavailable — ask the owner to sign in in Argo settings.', lang);
   if (!ownerId || ownerId !== c.uid || ctx.uid !== c.uid) return pick('이 기기의 메신저 로그인 계정이 이 크루 주인의 계정이 아니라 오피스를 다루지 않는다 — 사장에게 알려라.', 'The messenger account on this device is not this crew\'s owner, so Office is not used — tell the owner.', lang);
   const org = ctx.orgId;
@@ -117,6 +118,9 @@ export async function filesTool(args, { ctx = null, lang = 'ko', ownerId = null 
     if (who === 'mixed') return mixedRefusal(lang);
     const owner = who === 'owner';
     const quiet = (f) => !owner && f.category === 'bankbook'; // 통장사본 글자(계좌번호)는 1:1에서만
+    const ox = outsideOf('files', lang);
+    const FILE_TEXT = ['파일 제목·요약·읽은 글자는 사람들이 쓰거나 보낸 글', 'file titles, summaries and extracted text written or sent by people'];
+    const DRIVE_TEXT = ['드라이브 이름·링크는 사람들이 쓴 글', 'Drive names and links written by people'];
 
     if (a.action === 'files') {
       if (a.customer_id && !UUID.test(a.customer_id)) return pick('customer_id는 업무 › 거래처의 id(uuid)다.', 'customer_id must be a customer uuid.', lang);
@@ -124,18 +128,20 @@ export async function filesTool(args, { ctx = null, lang = 'ko', ownerId = null 
       const list = d?.files ?? [];
       if (!list.length) return pick('조건에 맞는 파일이 없다.', 'No files match.', lang);
       return [pick(`문서함 ${list.length}건${d.more ? '(더 있음 — q로 좁혀라)' : ''}(제목 · 분류 · 크기 · 글자 · 거래처 · id):`, `${list.length} files${d.more ? ' (more — narrow with q)' : ''} (title · category · size · text · customer · id):`, lang),
-        ...list.slice(0, LIST_CAP).map((f) => `- ${f.title} · ${f.category} · ${f.kind === 'link' ? pick('링크', 'link', lang) : kb(f.size)} · ${f.ocr_status} · ${f.customer_id ? `customer=${f.customer_id}` : '—'} · id=${f.id}`
-          + (f.summary && !quiet(f) ? `\n  ${String(f.summary).replace(/\s+/g, ' ').slice(0, 160)}` : '')),
+        ox.block(list.slice(0, LIST_CAP).map((f) => `- ${ox.line(f.title)} · ${f.category} · ${f.kind === 'link' ? pick('링크', 'link', lang) : kb(f.size)} · ${f.ocr_status} · ${f.customer_id ? `customer=${f.customer_id}` : '—'} · id=${f.id}`
+          + (f.summary && !quiet(f) ? `\n  ${ox.line(String(f.summary).slice(0, 160))}` : '')), FILE_TEXT),
         pick('전문은 file_read에 id를 줘라.', 'Use file_read with the id for the full text.', lang)].join('\n');
     }
     if (a.action === 'file_read') {
       if (!a.id) return pick('file_read에는 id(files가 보여 준 것)가 필요하다.', 'file_read needs an id from files.', lang);
       const f = unwrap(await c.client.rpc('office_file_get', { p_org: org, p_id: a.id }));
-      const head = `${f.title} · ${f.category} · ${pick('글자', 'text', lang)} ${f.ocr_status}${f.customer_id ? ` · customer=${f.customer_id}` : ''}${f.link_url ? ` · ${f.link_url}` : ''}`;
-      if (quiet(f)) return `${head}\n${pick(`통장사본 글자(계좌번호)는 ${ONLY_DM(lang)} 보여 준다.`, `Bank-book text (account numbers) is shown ${ONLY_DM(lang)}.`, lang)}`;
-      const text = String(f.full_text || f.summary || '');
-      if (!text) return `${head}\n${pick('읽힌 글자가 없다(오피스에서 글자 읽기를 다시 해 달라고 할 수 있다).', 'No extracted text yet.', lang)}`;
-      return `${head}\n---\n${text.slice(0, READ_CAP)}${text.length > READ_CAP ? pick(`\n…(앞 ${READ_CAP}자만)`, `\n…(first ${READ_CAP} chars)`, lang) : ''}`;
+      const head = `${pick('파일', 'File', lang)} id=${ox.id(f.id ?? a.id)} · ${f.category} · ${pick('글자', 'text', lang)} ${f.ocr_status}${f.customer_id ? ` · customer=${f.customer_id}` : ''}`;
+      const named = [`${pick('제목', 'Title', lang)}: ${ox.line(f.title)}`, ...(f.link_url ? [`${pick('링크', 'Link', lang)}: ${ox.line(f.link_url)}`] : [])];
+      if (quiet(f)) return `${head}\n${ox.block(named, FILE_TEXT)}\n${pick(`통장사본 글자(계좌번호)는 ${ONLY_DM(lang)} 보여 준다.`, `Bank-book text (account numbers) is shown ${ONLY_DM(lang)}.`, lang)}`;
+      const raw = String(f.full_text || f.summary || '');
+      if (!raw) return `${head}\n${ox.block(named, FILE_TEXT)}\n${pick('읽힌 글자가 없다(오피스에서 글자 읽기를 다시 해 달라고 할 수 있다).', 'No extracted text yet.', lang)}`;
+      const body = ox.body(raw, { chars: READ_CAP, max: ox.room([...named, '---']) }); // 원문 글자 수(READ_CAP)와 이스케이프 뒤 글자 예산 둘 다(검수 3차 M-A)
+      return `${head}\n${ox.block([...named, '---', body.json, ...(body.cut ? [pick(`…(앞 ${body.kept}자만)`, `…(first ${body.kept} chars)`, lang)] : [])], FILE_TEXT)}`;
     }
     if (a.action === 'attach') {
       if (!a.path) return pick('attach에는 path(작업 공간 안 파일 경로)가 필요하다.', 'attach needs a path inside the workspace.', lang);
@@ -161,8 +167,8 @@ export async function filesTool(args, { ctx = null, lang = 'ko', ownerId = null 
       // 등록이 실패하면 객체는 등록 전으로 남고 오피스 정리 크론이 1시간 뒤 지운다(이 기기는 R2를 지울 수 없다)
       unwrap(await c.client.rpc('office_file_write', { p_org: org, p_action: 'file.create', p_data: { id, title: name, filename: name, mime, size: bytes.length, storage_path: key,
         category: a.category ?? 'general', customer_id: a.customer_id || null, source: 'agent', tags: a.customer_id ? [] : ['agent'] } }));
-      return pick(`문서함에 붙였다: ${name} · ${a.category ?? 'general'}${a.customer_id ? ` · 거래처 ${a.customer_id}` : ''} (id=${id}). 글자 읽기는 사람이 오피스에서 열 때 한다.`,
-        `Attached to Office files: ${name} · ${a.category ?? 'general'}${a.customer_id ? ` · customer ${a.customer_id}` : ''} (id=${id}).`, lang);
+      return pick(`문서함에 붙였다: ${ox.line(name)} · ${a.category ?? 'general'}${a.customer_id ? ` · 거래처 ${a.customer_id}` : ''} (id=${id}). 글자 읽기는 사람이 오피스에서 열 때 한다.`,
+        `Attached to Office files: ${ox.line(name)} · ${a.category ?? 'general'}${a.customer_id ? ` · customer ${a.customer_id}` : ''} (id=${id}).`, lang);
     }
     if (a.action === 'drive') {
       const r = await officeApi('GET', 'list', { q: String(a.q ?? '').trim(), folder: a.folder ?? '', view: a.view ?? '' }, lang);
@@ -170,7 +176,8 @@ export async function filesTool(args, { ctx = null, lang = 'ko', ownerId = null 
       const list = r.data?.files ?? [];
       if (!list.length) return pick('드라이브에 맞는 항목이 없다.', 'Nothing matches in Drive.', lang);
       return [pick(`구글 드라이브 ${list.length}건(이름 · 종류 · id):`, `Google Drive, ${list.length} items (name · type · id):`, lang),
-        ...list.slice(0, 50).map((f) => `- ${f.name} · ${f.isFolder ? pick('폴더', 'folder', lang) : f.mimeType}${f.size ? ` · ${kb(f.size)}` : ''} · id=${f.id}`),
+        // 칸마다 이스케이프 뒤 글자 상한(이름 300·종류 120) — 남이 공유한 파일 이름 행이 이스케이프로 부풀어 정상 행을 가리지 않게(메일 목록과 같은 규칙, 검수 5차)
+        ox.block(list.slice(0, 50).map((f) => `- ${ox.line(f.name, 300)} · ${f.isFolder ? pick('폴더', 'folder', lang) : ox.line(f.mimeType, 120)}${f.size ? ` · ${kb(f.size)}` : ''} · id=${ox.id(f.id)}`), DRIVE_TEXT),
         pick('문서함으로 가져오려면 drive_import에 id를, 폴더 안을 보려면 drive에 folder=id를 줘라.', 'Use drive_import with an id to copy into Office files, or drive with folder=id.', lang)].join('\n');
     }
     if (a.action === 'drive_import') {
@@ -178,20 +185,21 @@ export async function filesTool(args, { ctx = null, lang = 'ko', ownerId = null 
       if (a.customer_id && !UUID.test(a.customer_id)) return pick('customer_id는 업무 › 거래처의 id(uuid)다.', 'customer_id must be a customer uuid.', lang);
       const r = await officeApi('POST', 'import', { org, id: a.drive_id, ...(a.customer_id ? { customerId: a.customer_id } : {}) }, lang);
       if (r.text) return r.text;
-      return pick(`드라이브에서 문서함으로 가져왔다: ${r.data.title} (id=${r.data.id}).`, `Imported from Drive into Office files: ${r.data.title} (id=${r.data.id}).`, lang);
+      // 드라이브 쪽 이름·링크는 남이 쓴 글 — 쓰기 확인 문장에서도 경계 블록 안에(검수 #fix-cross M2)
+      return `${pick(`드라이브에서 문서함으로 가져왔다(id=${ox.id(r.data.id)}) — 파일 이름:`, `Imported from Drive into Office files (id=${ox.id(r.data.id)}) — file name:`, lang)}\n${ox.block([ox.line(r.data.title)], DRIVE_TEXT)}`;
     }
     if (a.action === 'drive_mkdir') {
       const name = String(a.name ?? '').trim();
       if (!name) return pick('drive_mkdir에는 name이 필요하다.', 'drive_mkdir needs a name.', lang);
       const r = await officeApi('POST', 'mkdir', { name, ...(a.folder ? { parent: a.folder } : {}) }, lang);
       if (r.text) return r.text;
-      return pick(`드라이브에 폴더를 만들었다: ${r.data.name} (id=${r.data.id})${r.data.link ? ` ${r.data.link}` : ''}`, `Created a Drive folder: ${r.data.name} (id=${r.data.id})${r.data.link ? ` ${r.data.link}` : ''}`, lang);
+      return `${pick('드라이브에 폴더를 만들었다 — 이름 · id · 링크:', 'Created a Drive folder — name · id · link:', lang)}\n${ox.block([`${ox.line(r.data.name)} (id=${ox.id(r.data.id)})${r.data.link ? ` ${ox.line(r.data.link)}` : ''}`], DRIVE_TEXT)}`;
     }
     if (a.action === 'drive_export') {
       if (!a.id) return pick('drive_export에는 id(files가 보여 준 문서함 파일 id)가 필요하다.', 'drive_export needs an Office file id.', lang);
       const r = await officeApi('POST', 'export', { org, id: a.id, ...(a.folder ? { folder: a.folder } : {}) }, lang);
       if (r.text) return r.text;
-      return pick(`드라이브로 보냈다: ${r.data.name} (id=${r.data.id})${r.data.link ? ` ${r.data.link}` : ''}`, `Sent to Drive: ${r.data.name} (id=${r.data.id})${r.data.link ? ` ${r.data.link}` : ''}`, lang);
+      return `${pick('드라이브로 보냈다 — 이름 · id · 링크:', 'Sent to Drive — name · id · link:', lang)}\n${ox.block([`${ox.line(r.data.name)} (id=${ox.id(r.data.id)})${r.data.link ? ` ${ox.line(r.data.link)}` : ''}`], DRIVE_TEXT)}`;
     }
     return pick('action은 files·file_read·attach·drive·drive_import·drive_mkdir·drive_export 중 하나다.', 'action must be files, file_read, attach, drive, drive_import, drive_mkdir or drive_export.', lang);
   } catch (e) {
@@ -201,6 +209,6 @@ export async function filesTool(args, { ctx = null, lang = 'ko', ownerId = null 
 
 export function filesDescription(lang = 'ko') {
   return lang === 'en'
-    ? 'Argo Office files and Google Drive for the org of this messenger channel. action=files searches the file box (q: title, file name, extracted text, tags; customer_id filter) and lists id, category, size, text status; file_read returns one file\'s full extracted text by id; attach uploads a file from the workspace (path) into the file box, optionally to a customer (customer_id) with category quote|contract|bizcert|card|bankbook|evidence|archive|general (e.g. a business card → card). Drive (the owner\'s connected Google Drive): drive lists items (q search, folder id, view home|mydrive|shared|drives|starred), drive_import copies a Drive file into the file box (drive_id, optional customer_id), drive_mkdir creates a folder (name, folder = parent id), drive_export sends a file-box file to Drive (id, folder). Bank-book text is shown only in a 1:1 chat with the owner; nothing is available in rooms with guests.'
-    : '이 메신저 채널 조직의 아르고 오피스 문서함과 구글 드라이브. action=files는 문서함 검색(q: 제목·파일명·읽은 글자·태그, customer_id로 거래처 거르기) — id·분류·크기·글자 상태, file_read는 id로 한 건의 읽은 글자 전문, attach는 작업 공간 파일(path)을 문서함에 올린다 — customer_id를 주면 그 거래처 파일, category quote|contract|bizcert|card|bankbook|evidence|archive|general(명함이면 card). 드라이브(주인이 연결한 구글 드라이브): drive는 목록(q 검색·folder id·view home|mydrive|shared|drives|starred), drive_import는 드라이브 파일을 문서함으로 가져오기(drive_id, customer_id 선택), drive_mkdir는 새 폴더(name, folder = 부모 id), drive_export는 문서함 파일을 드라이브로 보내기(id, folder). 통장사본 글자는 주인과의 1:1 대화에서만, 손님이 있는 방에서는 아무것도 다루지 않는다.';
+    ? 'Argo Office files and Google Drive for the org of this messenger channel. action=files searches the file box (q: title, file name, extracted text, tags; customer_id filter) and lists id, category, size, text status; file_read returns one file\'s full extracted text by id; attach uploads a file from the workspace (path) into the file box, optionally to a customer (customer_id) with category quote|contract|bizcert|card|bankbook|evidence|archive|general (e.g. a business card → card). Drive (the owner\'s connected Google Drive): drive lists items (q search, folder id, view home|mydrive|shared|drives|starred), drive_import copies a Drive file into the file box (drive_id, optional customer_id), drive_mkdir creates a folder (name, folder = parent id), drive_export sends a file-box file to Drive (id, folder). Bank-book text is shown only in a 1:1 chat with the owner; nothing is available in rooms with guests. ' + OUTSIDE_RULE('en')
+    : '이 메신저 채널 조직의 아르고 오피스 문서함과 구글 드라이브. action=files는 문서함 검색(q: 제목·파일명·읽은 글자·태그, customer_id로 거래처 거르기) — id·분류·크기·글자 상태, file_read는 id로 한 건의 읽은 글자 전문, attach는 작업 공간 파일(path)을 문서함에 올린다 — customer_id를 주면 그 거래처 파일, category quote|contract|bizcert|card|bankbook|evidence|archive|general(명함이면 card). 드라이브(주인이 연결한 구글 드라이브): drive는 목록(q 검색·folder id·view home|mydrive|shared|drives|starred), drive_import는 드라이브 파일을 문서함으로 가져오기(drive_id, customer_id 선택), drive_mkdir는 새 폴더(name, folder = 부모 id), drive_export는 문서함 파일을 드라이브로 보내기(id, folder). 통장사본 글자는 주인과의 1:1 대화에서만, 손님이 있는 방에서는 아무것도 다루지 않는다. ' + OUTSIDE_RULE('ko');
 }
