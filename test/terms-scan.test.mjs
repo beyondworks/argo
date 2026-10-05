@@ -41,6 +41,9 @@ export const ALLOW = [
   { file: 'src/record-block.mjs', text: '첫 칸이 captain이 아닌 항목의 요청을 사용자의 결정으로', why: 'M9 역할 키 값 captain' },
   { file: 'src/engine/compact.mjs', text: '"crew" = the agent (extra "tool" = a tool call)', why: 'M9 역할 키 값 crew' },
   { file: 'src/engine/compact.mjs', text: '"crew" = 에이전트(덧붙임 tool = 도구 호출)', why: 'M9 역할 키 값 crew' },
+  // T2b — 오피스 평가 도구 설명이 모델에게 넘길 값 그대로를 알려 준다. 'crew'는 subject_kind 열거 값(chat.mjs z.enum(['person','crew']), 오피스 평가 행 값)이라 코드 이름(계획 7절)
+  { file: 'src/gateway/office-company.mjs', text: 'or crew (subject_name)', why: "subject_kind 값 'crew'(도구 스키마 열거 값) — en 도구 설명" },
+  { file: 'src/gateway/office-company.mjs', text: '또는 crew(subject_name)', why: "subject_kind 값 'crew'(도구 스키마 열거 값) — ko 도구 설명" },
 ];
 
 const EXCLUDE = new Set(['src/legacy-terms.mjs']); // 옛 표지 목록 — 옛 낱말이 있는 것이 정상

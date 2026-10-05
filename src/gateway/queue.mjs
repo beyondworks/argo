@@ -302,7 +302,7 @@ export async function enqueueLongJob(wsId, { slug, title, prompt, msgr = null, f
   const origin = msgr ? Object.fromEntries(['orgId', 'channelId', 'crewId', 'threadRoot', 'sourceMsgId', 'uid', 'wsId', 'origin', 'hop'].filter((k) => msgr[k] !== undefined).map((k) => [k, msgr[k]])) : null;
   let pending = 0;
   try { pending = (await readdir(queueDir(wsId, JOBS_QUEUE))).filter((n) => n.endsWith('.json')).length; } catch { /* 큐 없음 = 0 */ }
-  if (pending >= JOBS_MAX_PENDING) throw new Error(`대기 중인 장시간 작업이 이미 ${pending}건입니다 — 끝나기를 기다리거나 사장에게 정리를 요청하라`);
+  if (pending >= JOBS_MAX_PENDING) throw new Error(`대기 중인 장시간 작업이 이미 ${pending}건입니다 — 끝나기를 기다리거나 사용자에게 정리를 요청하라`);
   const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   await enqueueJob(wsId, JOBS_QUEUE, id, { id, slug, title, prompt, createdAt: new Date().toISOString(), tries: 0, ...(origin ? { msgr: origin } : {}), ...(typeof from === 'string' && from ? { from } : {}) });
   return { id, pending: pending + 1 };

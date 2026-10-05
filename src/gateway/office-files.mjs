@@ -55,7 +55,7 @@ function unwrap({ data, error }) {
 }
 const ERRORS = {
   file_forbidden: ['권한이 없다(손님은 조직 문서함을 쓰지 못한다)', 'not allowed'], file_input: ['입력이 올바르지 않다(거래처·폴더는 이 조직 것이어야 한다)', 'invalid input (customer/folder must belong to this org)'],
-  file_not_found: ['그런 파일이 없다 — files로 다시 확인하라', 'no such file — check with files'], file_quota: ['저장 공간이 가득 찼다(조직 풀) — 사장에게 휴지통 정리를 부탁하라', 'storage is full (org pool) — ask the owner to clean up'],
+  file_not_found: ['그런 파일이 없다 — files로 다시 확인하라', 'no such file — check with files'], file_quota: ['저장 공간이 가득 찼다(조직 풀) — 사용자에게 휴지통 정리를 부탁하라', 'storage is full (org pool) — ask the user to clean up'],
   file_limit: ['한도에 걸렸다(열린 올리기 50개·파일 2만 개)', 'limit reached'], file_conflict: ['같은 항목이 이미 있다', 'already exists'],
   not_connected: ['주인의 구글 드라이브가 오피스에 연결돼 있지 않다 — 오피스 문서함 › 구글 드라이브에서 연결해 달라고 알려라', 'the owner has not connected Google Drive in Office'],
   expired: ['드라이브 연결이 만료됐다 — 오피스에서 다시 연결해 달라고 알려라', 'the Drive connection expired — reconnect in Office'],
@@ -66,7 +66,7 @@ const ERRORS = {
 };
 function errText(code, lang, raw = '') {
   if (ERRORS[code]) return pick(`오피스 거절: ${ERRORS[code][0]}.`, `Office refused: ${ERRORS[code][1]}.`, lang);
-  return pick(`오피스 호출 실패: ${quoted(raw || code || '알 수 없는 오류', 200)}. 사장에게 그대로 알려라.`, `Office call failed: ${quoted(raw || code || 'unknown', 200)}. Tell the owner as is.`, lang);
+  return pick(`오피스 호출 실패: ${quoted(raw || code || '알 수 없는 오류', 200)}. 사용자에게 그대로 알려라.`, `Office call failed: ${quoted(raw || code || 'unknown', 200)}. Tell the user as is.`, lang);
 }
 const rpcError = (e, lang) => { const msg = String(e?.message ?? e ?? ''); return errText(Object.keys(ERRORS).find((c) => msg.includes(c)), lang, msg); };
 const kb = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)}MB` : `${Math.max(1, Math.round((n ?? 0) / 1024))}KB`);
@@ -94,9 +94,9 @@ const signedTarget = (u) => { try { const x = new URL(u); return x.protocol === 
 
 async function officeApi(method, op, body, lang) {
   const origin = officeOrigin(filesDeps.origin());
-  if (!origin) return { text: pick('오피스 주소(ARGO_OFFICE_ORIGIN)가 https가 아니라 드라이브를 쓰지 않는다 — 사장에게 알려라.', 'The Office address (ARGO_OFFICE_ORIGIN) is not https, so Drive is not used — tell the owner.', lang) };
+  if (!origin) return { text: pick('오피스 주소(ARGO_OFFICE_ORIGIN)가 https가 아니라 드라이브를 쓰지 않는다 — 사용자에게 알려라.', 'The Office address (ARGO_OFFICE_ORIGIN) is not https, so Drive is not used — tell the user.', lang) };
   const jwt = await filesDeps.jwt().catch(() => null);
-  if (!jwt) return { text: pick('메신저(오피스) 로그인이 없어 드라이브를 쓸 수 없다 — 사장에게 알려라.', 'Not signed in, so Drive is unavailable — tell the owner.', lang) };
+  if (!jwt) return { text: pick('메신저(오피스) 로그인이 없어 드라이브를 쓸 수 없다 — 사용자에게 알려라.', 'Not signed in, so Drive is unavailable — tell the user.', lang) };
   const url = method === 'GET' ? `${origin}/api/drive/${op}?${new URLSearchParams(Object.entries(body).filter(([, v]) => v))}` : `${origin}/api/drive/${op}`;
   const r = await filesDeps.fetch(url, { method, headers: { authorization: `Bearer ${jwt}`, ...(method === 'POST' ? { 'content-type': 'application/json' } : {}) }, ...(method === 'POST' ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(120_000) });
   const d = await r.json().catch(() => ({}));
@@ -110,8 +110,8 @@ export async function filesTool(args, { ctx = null, lang = 'ko', ownerId = null 
   if (ctx?.kind !== 'msgr' || !ctx.orgId) return pick('문서함·드라이브는 메신저 조직 채널 대화에서만 다룬다(그 조직의 것). 지금 대화에서는 쓸 수 없다고 알려라.', 'Files and Drive are only available in a messenger org channel (that org). Say it is unavailable here.', lang);
   let c;
   try { c = await filesDeps.session(); } catch (e) { return pick(`메신저 세션을 불러오지 못했다: ${quoted(e?.message ?? e, 160)}.`, `Could not load the messenger session: ${quoted(e?.message ?? e, 160)}.`, lang); }
-  if (!c?.client || !c.uid) return pick('메신저에 로그인돼 있지 않아 오피스를 다룰 수 없다 — 사장에게 Argo 설정에서 메신저(오피스) 계정에 로그인해 달라고 알려라.', 'Not signed in to the messenger, so Office is unavailable — ask the owner to sign in in Argo settings.', lang);
-  if (!ownerId || ownerId !== c.uid || ctx.uid !== c.uid) return pick('이 기기의 메신저 로그인 계정이 이 크루 주인의 계정이 아니라 오피스를 다루지 않는다 — 사장에게 알려라.', 'The messenger account on this device is not this crew\'s owner, so Office is not used — tell the owner.', lang);
+  if (!c?.client || !c.uid) return pick('메신저에 로그인돼 있지 않아 오피스를 다룰 수 없다 — 사용자에게 Argo 설정에서 메신저(오피스) 계정에 로그인해 달라고 알려라.', 'Not signed in to the messenger, so Office is unavailable — ask the user to sign in in Argo settings.', lang);
+  if (!ownerId || ownerId !== c.uid || ctx.uid !== c.uid) return pick('이 기기의 메신저 로그인 계정이 이 에이전트 주인의 계정이 아니라 오피스를 다루지 않는다 — 사용자에게 알려라.', 'The messenger account on this device is not this agent\'s owner, so Office is not used — tell the user.', lang);
   const org = ctx.orgId;
   try {
     const who = await audienceOf(c.client, ctx, c.uid);
@@ -153,14 +153,14 @@ export async function filesTool(args, { ctx = null, lang = 'ko', ownerId = null 
       if (!st?.isFile()) return pick('그 경로에 파일이 없다.', 'No file at that path.', lang);
       if (st.size > MAX_BYTES) return pick('50MB가 넘어 올리지 않는다.', 'Over 50 MB — not uploaded.', lang);
       const origin = officeOrigin(filesDeps.origin());
-      if (!origin) return pick('오피스 주소(ARGO_OFFICE_ORIGIN)가 https가 아니라 문서함에 올리지 않는다 — 사장에게 알려라.', 'The Office address (ARGO_OFFICE_ORIGIN) is not https, so nothing is uploaded — tell the owner.', lang);
+      if (!origin) return pick('오피스 주소(ARGO_OFFICE_ORIGIN)가 https가 아니라 문서함에 올리지 않는다 — 사용자에게 알려라.', 'The Office address (ARGO_OFFICE_ORIGIN) is not https, so nothing is uploaded — tell the user.', lang);
       const jwt = await filesDeps.jwt().catch(() => null);
-      if (!jwt) return pick('메신저(오피스) 로그인이 없어 문서함에 올릴 수 없다 — 사장에게 알려라.', 'Not signed in, so the file box is unavailable — tell the owner.', lang);
+      if (!jwt) return pick('메신저(오피스) 로그인이 없어 문서함에 올릴 수 없다 — 사용자에게 알려라.', 'Not signed in, so the file box is unavailable — tell the user.', lang);
       const bytes = await readFile(abs), name = safeName(a.title || basename(abs)), mime = MIME[extname(abs).toLowerCase()] ?? 'application/octet-stream';
       const id = filesDeps.newId();
       const { key } = unwrap(await c.client.rpc('office_file_write', { p_org: org, p_action: 'file.reserve', p_data: { id, filename: name, size: bytes.length, mime } })); // 자리(키는 DB가 정함)
       const up = await storageApi('upload-url', { key }, origin, jwt);
-      if (!signedTarget(up.url)) return pick('오피스가 준 올리기 주소가 https가 아니라 올리지 않았다 — 사장에게 알려라.', 'The upload address from Office is not https — not uploaded.', lang);
+      if (!signedTarget(up.url)) return pick('오피스가 준 올리기 주소가 https가 아니라 올리지 않았다 — 사용자에게 알려라.', 'The upload address from Office is not https — not uploaded.', lang);
       const put = await filesDeps.fetch(up.url, { method: 'PUT', headers: up.headers, body: bytes, signal: AbortSignal.timeout(120_000) });
       if (!put.ok) return pick(`저장소에 올리지 못했다(HTTP ${put.status}).`, `Upload failed (HTTP ${put.status}).`, lang);
       await storageApi('commit', { key }, origin, jwt); // 서버가 R2 크기를 확인해 기록

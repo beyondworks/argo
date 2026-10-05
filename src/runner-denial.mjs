@@ -131,8 +131,8 @@ export function denialNote({ cap, path = '', lang = 'ko', outsideHome = false, n
   if (narration && cap === 'fs') {
     const gemCaveat = runner === 'gemini'
       ? (en
-          ? ' Note: on older Gemini CLI builds the work-folder expansion is ignored by the vendor — if it stays blocked after registering, have the crew save into the company folder (or assign the task to a crew on another runner).'
-          : ' 참고: 구버전 Gemini CLI는 벤더 제한으로 작업 폴더 확장이 무시될 수 있습니다 — 등록해도 계속 막히면 결과물을 회사 폴더로 받거나 다른 러너 크루에게 맡겨 주세요.')
+          ? ' Note: on older Gemini CLI builds the work-folder expansion is ignored by the vendor — if it stays blocked after registering, have the agent save into the company folder (or assign the task to an agent on another runner).'
+          : ' 참고: 구버전 Gemini CLI는 벤더 제한으로 작업 폴더 확장이 무시될 수 있습니다 — 등록해도 계속 막히면 결과물을 회사 폴더로 받거나 다른 러너 에이전트에게 맡겨 주세요.')
       : '';
     // 범위 갈래는 codex엔 없다(danger-full-access — 아래 strict 갈래와 같은 이유, K14). OS 안내는 서버가 사용자 OS를
     // 단정하지 않고 macOS·Windows 둘 다 준다(strict 갈래와 같은 관례 — 윈도우 사용자에게 macOS 메뉴만 주던 것).
@@ -140,8 +140,8 @@ export function denialNote({ cap, path = '', lang = 'ko', outsideHome = false, n
       ? ' If the target is outside your home folder or registered work folders, add it under **Settings → Work folders** and retry.'
       : ' 대상이 홈 폴더·지정 작업 폴더 밖이면 **설정 → 작업 폴더**에 등록 후 다시 시도해 주세요.');
     return en
-      ? `\n\n---\n⚠ This looks like a blocked file access (based on the crew's own report).${scope} Otherwise check OS permissions: on macOS, **System Settings → Privacy & Security → Files and Folders**, allow Argo and restart the app; on Windows, check the folder isn't read-only or under controlled folder access.${gemCaveat}`
-      : `\n\n---\n⚠ 파일 접근이 막힌 것으로 보입니다(크루 보고 기반).${scope} 그 밖이면 운영체제 권한을 확인해 주세요 — macOS는 **시스템 설정 → 개인정보 보호 및 보안 → 파일 및 폴더**에서 Argo 허용 후 앱 재시작, 윈도우는 폴더가 읽기 전용인지·제어된 폴더 액세스가 걸려 있는지 확인해 주세요.${gemCaveat}`;
+      ? `\n\n---\n⚠ This looks like a blocked file access (based on the agent's own report).${scope} Otherwise check OS permissions: on macOS, **System Settings → Privacy & Security → Files and Folders**, allow Argo and restart the app; on Windows, check the folder isn't read-only or under controlled folder access.${gemCaveat}`
+      : `\n\n---\n⚠ 파일 접근이 막힌 것으로 보입니다(에이전트 보고 기반).${scope} 그 밖이면 운영체제 권한을 확인해 주세요 — macOS는 **시스템 설정 → 개인정보 보호 및 보안 → 파일 및 폴더**에서 Argo 허용 후 앱 재시작, 윈도우는 폴더가 읽기 전용인지·제어된 폴더 액세스가 걸려 있는지 확인해 주세요.${gemCaveat}`;
   }
 
   if (cap === 'browser') {

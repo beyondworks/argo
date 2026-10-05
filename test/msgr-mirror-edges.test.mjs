@@ -491,7 +491,7 @@ test('E23b(4차 M-2). 개인 행 일시 오류는 백오프하지 않는다(다�
   // 조직이 있는 계정: 개인 실패(옛 서버)는 조직 미러를 막지 않고 오류로 올리지 않는다
   const o = personalWorld({ orgs: [O1], failWith: dbError('null value in column "org_id" violates not-null constraint', '23502') }); const logs = [];
   await mirrorInventory(WS, { db: o, uid: UID, agents: [card('luna', null, '루나')], seen: new Map(), blocked: new Map(), now: () => 1, log: (...a) => logs.push(a.join(' ')) });
-  assert.equal(count(o, 'upsertAvailable'), 1, '조직 행은 들어간다'); assert.ok(logs.some((l) => /개인 크루 미러 실패/.test(l)));
+  assert.equal(count(o, 'upsertAvailable'), 1, '조직 행은 들어간다'); assert.ok(logs.some((l) => /개인 에이전트 미러 실패/.test(l)));
 });
 
 test('E25(4차 M-2·L-5). 실제 makeDb가 insert·upsert 오류에 SQLSTATE(code)를 싣는다 — 메시지 정규식에 안 걸리는 P0001도 결정적으로 분류된다(code를 빠뜨리면 일시로 보여 15초마다 되풀이)', async () => {

@@ -74,7 +74,7 @@ export function taskLine(t, { lang = 'ko', today, names = null, ownerUid = null,
   const late = today ? lateDays(t, today) : 0;
   if (late) bits.push(pick(`기한 지남 ${late}일`, `${late} days overdue`, lang));
   if (names) bits.push(`${pick('맡은 사람', 'assignee', lang)} ${t.assignee === ownerUid ? pick('주인', 'owner', lang) : esc(names.get(t.assignee) ?? t.assignee)}`);
-  if (t.source?.kind === 'crew') bits.push(pick(`크루 ${esc(t.source.name || t.source.slug)}가 만듦`, `made by crew ${esc(t.source.name || t.source.slug)}`, lang));
+  if (t.source?.kind === 'crew') bits.push(pick(`에이전트 ${esc(t.source.name || t.source.slug)}가 만듦`, `made by agent ${esc(t.source.name || t.source.slug)}`, lang));
   bits.push(`id=${t.id}`);
   return `- ${bits.join(' · ')}${t.note ? `\n  ${pick('메모', 'note', lang)}: ${esc(String(t.note).slice(0, 160))}` : ''}`;
 }
@@ -246,7 +246,7 @@ export async function workTool(args, { ctx = null, crew = null, crewName = null,
       const rows = await tasksNow();
       const t = rows.find((x) => x.id === a.id);
       if (!t) return pick(`id=${quoted(a.id, 80)} 할 일이 없다(취소한 일·끝낸 지 30일 지난 일은 보이지 않는다) — tasks로 다시 확인하라.`, `No task id=${quoted(a.id, 80)} (cancelled tasks and tasks done over 30 days ago are hidden) — check with tasks.`, lang);
-      if (t.assignee !== c.uid) return pick('이 할 일은 주인이 맡은 일이 아니라 크루가 바꾸지 않는다 — 맡은 사람이나 관리자가 오피스에서 바꾸면 된다고 한 줄로 알려라.', 'This task is not assigned to the owner, so a crew does not change it — say in one line that the assignee or an admin can change it in Office.', lang);
+      if (t.assignee !== c.uid) return pick('이 할 일은 주인이 맡은 일이 아니라 에이전트가 바꾸지 않는다 — 맡은 사람이나 관리자가 오피스에서 바꾸면 된다고 한 줄로 알려라.', 'This task is not assigned to the owner, so an agent does not change it — say in one line that the assignee or an admin can change it in Office.', lang);
       if (a.status && ![...STATUS, 'done'].includes(a.status)) return pick('status는 todo·doing·hold·done 중 하나.', 'status must be todo, doing, hold or done.', lang);
       const plan = []; // [{ action, data, label }] — 이 순서대로 하나씩 쓴다
       const wasDone = !!t.done_at;

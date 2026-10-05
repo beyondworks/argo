@@ -40,7 +40,7 @@ export function formatMsgrNotify(event, lang = 'ko', names = {}) {
       return en ? `[Long task ${event.ok === false ? 'stopped' : 'done'}] ${one(event.title)}\n\n${body(event.reply)}`
         : `[장시간 작업 ${event.ok === false ? '중단' : '완료'}] ${one(event.title)}\n\n${body(event.reply)}`;
     case 'crewmail':
-      return en ? `[Crew mail] ${name(event.from)} → ${name(event.slug)}\n\n${body(event.reply)}`
+      return en ? `[Agent mail] ${name(event.from)} → ${name(event.slug)}\n\n${body(event.reply)}`
         : `[동료 쪽지] ${name(event.from)} → ${name(event.slug)}\n\n${body(event.reply)}`;
     case 'routine':
       return en ? `[Routine] ${one(event.routine?.title)}${event.ok === false ? ' (failed)' : ''}\n\n${body(event.reply)}`

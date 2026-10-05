@@ -214,9 +214,9 @@ function loopProtocol(r, lang) {
   const last = String(r.lastResult ?? '').trim();
   const budget = r.loop.maxUsd != null ? (lang === 'en' ? ` Loop budget: $${r.loop.spentUsd.toFixed(2)} of $${r.loop.maxUsd} used.` : ` 루프 예산: $${r.loop.maxUsd} 중 $${r.loop.spentUsd.toFixed(2)} 사용.`) : '';
   if (lang === 'en') {
-    return `${loopHead('en')} This is run ${n} of at most ${r.loop.maxRuns} in a repeating loop.${budget}\nPrevious run summary: ${last || '(none — first run)'}\nDo the next step of the work. The VERY LAST line of your answer must be exactly one of:\n\`${loopVerdictLine('continue')}\` — more to do next run\n\`${loopVerdictLine('done', ' <one-line reason>')}\` — the goal is reached, stop the loop\n\`${loopVerdictLine('blocked', ' <the decision you need from the boss>')}\` — you cannot proceed without a human decision`;
+    return `${loopHead('en')} This is run ${n} of at most ${r.loop.maxRuns} in a repeating loop.${budget}\nPrevious run summary: ${last || '(none — first run)'}\nDo the next step of the work. The VERY LAST line of your answer must be exactly one of:\n\`${loopVerdictLine('continue')}\` — more to do next run\n\`${loopVerdictLine('done', ' <one-line reason>')}\` — the goal is reached, stop the loop\n\`${loopVerdictLine('blocked', ' <the decision you need from the user>')}\` — you cannot proceed without a human decision`;
   }
-  return `${loopHead('ko')} 이것은 반복 루프의 ${n}회차 / 최대 ${r.loop.maxRuns}회다.${budget}\n지난 회차 결과 요약: ${last || '(없음 — 첫 회차)'}\n이번 회차 몫의 일을 진행하라. 답변의 **마지막 줄**은 반드시 다음 셋 중 하나로만 끝내라:\n\`${loopVerdictLine('continue')}\` — 다음 회차에 할 일이 남음\n\`${loopVerdictLine('done', ' <한 줄 이유>')}\` — 목표 달성, 루프 종료\n\`${loopVerdictLine('blocked', ' <사장에게 필요한 결정>')}\` — 사람 결정 없이는 진행 불가`;
+  return `${loopHead('ko')} 이것은 반복 루프의 ${n}회차 / 최대 ${r.loop.maxRuns}회다.${budget}\n지난 회차 결과 요약: ${last || '(없음 — 첫 회차)'}\n이번 회차 몫의 일을 진행하라. 답변의 **마지막 줄**은 반드시 다음 셋 중 하나로만 끝내라:\n\`${loopVerdictLine('continue')}\` — 다음 회차에 할 일이 남음\n\`${loopVerdictLine('done', ' <한 줄 이유>')}\` — 목표 달성, 루프 종료\n\`${loopVerdictLine('blocked', ' <사용자에게 필요한 결정>')}\` — 사람 결정 없이는 진행 불가`;
 }
 
 /** 정지 사유 문장 — 알림(emitNotify)에 그대로 실린다. */
@@ -244,7 +244,7 @@ export async function resumeLoop(wsId, id) {
 const hostTz = () => { try { return new Intl.DateTimeFormat().resolvedOptions().timeZone || null; } catch { return null; } };
 
 export async function addRoutine(wsId, { agentSlug, title, prompt, schedule, enabled = true, loop = null, verify = null, msgr = null, notifications, from = null }) { // from = 사장 직접 턴이 아닌 턴(또는 다른 크루에게 건 예약)의 시작점 크루 — 실행 턴이 풀 오토가 아니다
-  if (!agentSlug || !title?.trim() || !prompt?.trim()) throw codedError('routine_fields_required', '크루·제목·지시가 필요합니다');
+  if (!agentSlug || !title?.trim() || !prompt?.trim()) throw codedError('routine_fields_required', '에이전트·제목·지시가 필요합니다');
   if (msgr && msgr.wsId !== wsId) throw new Error('메신저 예약 회사 불일치');
   const destinations = await validateRoutineNotifications(wsId, agentSlug, notifications);
   const sched = normalizeSchedule({ tz: hostTz(), ...schedule });
@@ -291,7 +291,7 @@ export function sanitizeRoutinePatch(patch = {}) {
     out.prompt = patch.prompt.trim();
   }
   if ('agentSlug' in patch) {
-    if (!patch.agentSlug) throw codedError('routine_crew_required', '크루가 필요합니다');
+    if (!patch.agentSlug) throw codedError('routine_crew_required', '에이전트가 필요합니다');
     out.agentSlug = patch.agentSlug;
   }
   if ('schedule' in patch) out.schedule = normalizeSchedule(patch.schedule);
@@ -464,7 +464,7 @@ export async function runRoutine(wsId, id, { chatFn = null, startAt = null, sess
       // 정지 조건 — 먼저 걸린 하나만 사유로 남긴다(판정 > 누락 상한 > 회차 > 예산)
       if (v.verdict === 'done') stop = { reason: 'done', detail: v.reason };
       else if (v.verdict === 'blocked') stop = { reason: 'blocked', detail: v.reason };
-      else if (L.missingVerdicts >= LOOP_MISSING_LIMIT) stop = { reason: 'blocked', detail: lang === 'en' ? `No LOOP verdict in ${LOOP_MISSING_LIMIT} consecutive runs — check the crew's runner/output format` : `${LOOP_MISSING_LIMIT}회 연속 LOOP 판정 누락 — 크루의 러너·출력 형식을 확인해 주세요` };
+      else if (L.missingVerdicts >= LOOP_MISSING_LIMIT) stop = { reason: 'blocked', detail: lang === 'en' ? `No LOOP verdict in ${LOOP_MISSING_LIMIT} consecutive runs — check the agent's runner/output format` : `${LOOP_MISSING_LIMIT}회 연속 LOOP 판정 누락 — 에이전트의 러너·출력 형식을 확인해 주세요` };
       else if (L.runs >= L.maxRuns) stop = { reason: 'maxRuns', detail: '' };
       else if (L.maxUsd != null && L.spentUsd >= L.maxUsd) stop = { reason: 'maxUsd', detail: '' };
       if (stop) { L.stoppedReason = stop.reason; L.stoppedDetail = String(stop.detail ?? '').slice(0, 300); patch.enabled = false; }
@@ -596,8 +596,8 @@ export const PROMPT_DESIGN_SPEC = `prompt는 사용자의 한 줄 요청을 **�
 요청에 없는 사실(고유명사·수치·링크)을 지어내지 않는다 — 모호하면 단계 안에 "~를 먼저 파악"으로 담는다.`;
 
 const DRAFT_PROMPT = (text, roster) => `너는 루틴(반복 업무) 설계자다. 사용자의 요청을 아래 JSON으로만 변환해 출력하라. JSON 외 텍스트·설명 금지.
-스키마: {"title": "짧은 제목", "prompt": "설계된 반복 지시문(아래 설계 규격)", "schedule": {"type": "daily"|"weekly", "times": ["HH:MM", ...], "dows": [0-6 정수 배열 — weekly일 때만, 0=일요일]}, "agentSlug": "아래 크루 목록의 slug — 사용자가 특정 크루를 지목했을 때만, 아니면 null"}
-크루 목록:
+스키마: {"title": "짧은 제목", "prompt": "설계된 반복 지시문(아래 설계 규격)", "schedule": {"type": "daily"|"weekly", "times": ["HH:MM", ...], "dows": [0-6 정수 배열 — weekly일 때만, 0=일요일]}, "agentSlug": "아래 에이전트 목록의 slug — 사용자가 특정 에이전트를 지목했을 때만, 아니면 null"}
+에이전트 목록:
 ${roster || '(없음)'}
 설계 규격:
 ${PROMPT_DESIGN_SPEC}
@@ -609,7 +609,7 @@ ${PROMPT_DESIGN_SPEC}
 사용자 요청: <<<${text}>>>`;
 
 const REFINE_PROMPT = (text, agentLine) => `너는 루틴(반복 업무) 설계자다. 사용자가 직접 적은 반복 지시문을 아래 설계 규격으로 확장해, {"prompt": "확장된 지시문"} JSON으로만 출력하라. JSON 외 텍스트·설명 금지.
-${agentLine ? `실행할 크루: ${agentLine}\n` : ''}설계 규격:
+${agentLine ? `실행할 에이전트: ${agentLine}\n` : ''}설계 규격:
 ${PROMPT_DESIGN_SPEC}
 - 시각·요일 언급은 지시문에서 뺀다(스케줄은 별도 필드가 담당).
 사용자 지시문: <<<${text}>>>`;

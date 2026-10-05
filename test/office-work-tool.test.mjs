@@ -110,7 +110,7 @@ test('W2(I2). tasks: 기본은 주인이 맡은 안 끝난 일 — 상태·기�
   const out = await run({ action: 'tasks' });
   assert.equal(calls.find((c) => c.name === 'office_task_list').args.p_org, ORG);
   assert.match(out, /\[진행 중\] "견적서 보내기" · 중요도 높음 · 분류 "영업" · 기한 2026-10-01 · 기한 지남 3일 · id=t1/);
-  assert.match(out, /\[할 일\] "세금계산서 확인" · 시작 2026-10-05 · 기한 2026-10-10 · 크루 "페퍼"가 만듦 · id=t2/);
+  assert.match(out, /\[할 일\] "세금계산서 확인" · 시작 2026-10-05 · 기한 2026-10-10 · 에이전트 "페퍼"가 만듦 · id=t2/);
   assert.doesNotMatch(out, /민지 업무|끝낸 일/);
   assert.match(await run({ action: 'tasks', overdue: true }), /^(?![\s\S]*t2)[\s\S]*id=t1/);
   assert.match(await run({ action: 'tasks', category: '영업' }), /^(?![\s\S]*t2)[\s\S]*id=t1/);
