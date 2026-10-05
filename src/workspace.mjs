@@ -157,6 +157,8 @@ export async function restoreArchivedCompany(archiveId) {
     if (!existsSync(join(from, 'company.json'))) throw Object.assign(new Error('보관 항목을 찾을 수 없습니다'), { code: 'NOT_FOUND' });
     if (existsSync(to)) throw Object.assign(new Error('같은 이름의 회사가 이미 있습니다'), { code: 'EXISTS' });
     const now = new Date();
+    // 알려진 한계(L3, 2026-10-05 분리 검수 — 조건이 좁고 추론이라 이번에는 고치지 않는다): 되돌리기가 company.json 수정 시각(mtime) 한 값에 의존한다.
+    // 기기 시계가 보관 시각보다 과거이거나 이 utimes가 막힌 파일시스템(읽기 전용·mtime 고정)이면 동기화가 "보관 이후 수정 없음"으로 보고 다시 보관할 수 있다.
     await utimes(join(from, 'company.json'), now, now); // 옮기기 전에 — 동기화가 "보관 이후 수정"으로 보고 tombstone을 철회하게
     await rename(from, to);
     dropDocCache(wsId);
