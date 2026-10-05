@@ -48,6 +48,7 @@ import { useTheme, THEMES } from '@argo/theme';
 import { Markdown, imeGuardWith, ConfirmModal, DangerModal } from '@argo/ui';
 import { EMOJI_GROUPS, bumpEmoji, topEmoji, searchEmoji } from './emoji.js';
 import { Sprite, I, STAR_D } from './icons.jsx';
+import { version as APP_VERSION } from '../package.json'; // 설정에 보이는 앱 버전(UXM-26) — 발행 때 tauri 설정과 같이 올린다
 import { inTauri, isMobilePlatform, isMobileNative, isDesktopTauri, isIos, isAndroid } from './platform.js';
 import { createIconBadge, unreadSignature } from './app-badge.mjs'; // 폰 아이콘 숫자 = 서버 배지(msgr_my_badge)
 import { getMobileAuthSnapshot, subscribeMobileAuth, startMobileSignIn, cancelMobileSignIn, mountMobileAuth } from './mobile-auth-runtime.js';
@@ -2778,14 +2779,14 @@ function Shell({ session }) {
         </>)}
         {rootTab === 'chats' && (<>
           <div className="ph-chiprow">
-            <div className="ph-chips" role="radiogroup" aria-label={t('dm.filter')}>{CHAT_FILTERS.map((k) => <button key={k} type="button" role="radio" aria-checked={dmFilter === k} className={dmFilter === k ? 'active' : ''} onClick={() => pickDmFilter(k)}>{k === 'unread' ? t('phone.chip.unread', { n: chatUnreadTotal(chatsAll, unread, muted) }) : t(`phone.chip.${k}`)}</button>)}</div>
+            <div className="ph-chips" role="radiogroup" aria-label={t('dm.filter')}>{CHAT_FILTERS.map((k) => <button key={k} type="button" role="radio" aria-checked={dmFilter === k} className={dmFilter === k ? 'active' : ''} onClick={() => pickDmFilter(k)}>{k === 'unread' ? (chatUnreadTotal(chatsAll, unread, muted) ? t('phone.chip.unread', { n: chatUnreadTotal(chatsAll, unread, muted) }) : t('phone.chip.unread0')) : t(`phone.chip.${k}`)}</button>)}</div>
             <span className="msgr-sortwrap msgr-dmsort"><button type="button" className={`msgr-sortbtn${dmSortMenu ? ' on' : ''}`} onClick={() => setDmSortMenu((v) => !v)} title={t('dm.sort')} aria-label={t('dm.sort')} aria-haspopup="menu" aria-expanded={dmSortMenu}><I name="sort" size={16} /></button>{dmSortMenu && <div className="msgr-rowmenu" role="menu">{DM_SORTS.map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={dmSort === v} onClick={() => { pickDmSort(v); setDmSortMenu(false); }}>{dmSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`dm.sort.${v}`)}</button>)}</div>}</span>
           </div>
           {(() => { const { favs: chatFavs, rest: chatRest } = splitFavs(chatShown, pinned); return (<>{/* 즐겨찾기한 대화는 맨 위 단락으로 따로(유건 2026-10-02) — 끌기는 단락 안에서만(.msgr-list가 끌기 범위) */}
             {chatFavs.length > 0 && (<><div className="ph-sechead">{t('phone.sec.fav')}</div><div className={`msgr-list ph-rooms ph-favs${dmAnim ? ` anim-list-${dmAnim}` : ''}`}>{chatFavs.map((c) => kRow(c, chatDrop(c)))}</div>{chatRest.length > 0 && <div className="ph-sechead">{t('phone.sec.chats')}</div>}</>)}
             <div className={`msgr-list ph-rooms${dmAnim ? ` anim-list-${dmAnim}` : ''}`}>{chatRest.map((c) => kRow(c, chatDrop(c)))}</div>
           </>); })()}
-          {isPersonal && spaceReady && !chatShown.length && !tabQText.trim() && <div className="msgr-hint ph-empty">{t(chatsAll.length ? `phone.chats.empty.${dmFilter}` : 'phone.chats.empty')}</div>}
+          {isPersonal && spaceReady && !chatShown.length && !tabQText.trim() && <div className="msgr-hint ph-empty">{t(chatsAll.length ? `phone.chats.empty.${dmFilter}` : 'phone.chats.empty')}{!chatsAll.length && <div className="ph-emptyacts"><button type="button" className="btn btn-primary" onClick={() => { setTabQ(null); setDmGroup(true); }}><I name="chatplus" size={15} />{t('dm.new')}</button></div>}</div>}{/* 첫 행동은 단추로(UXM-24) */}
           {(!isPersonal || !spaceReady) && <div className="msgr-hint ph-empty" role="status">{t('ui.loading')}</div>}
           {searchFoot(chatShown.length > 0)}
         </>)}
@@ -2873,7 +2874,7 @@ function Shell({ session }) {
           <button type="button" className={`msgr-org${orgMenu ? ' open' : ''}${isPersonal ? ' personal' : ''}`} onClick={() => setOrgMenu((v) => !v)} aria-haspopup="menu" aria-expanded={orgMenu} title={t('org.switch')}>
             {isPersonal ? <PersonalMark /> : <Av name={org?.name ?? '?'} />}<span className="name">{isPersonal ? t('personal.space') : (org?.name ?? t('org.pick'))}</span><SpaceBadge c={elsewhere} /><I name="caret" size={14} className="caret" />
           </button>
-          <form className="msgr-search" onSubmit={(e) => { e.preventDefault(); runSearch(searchQ); }}><I name="search" size={13} /><input ref={searchRef} value={searchQ} onChange={(e) => setSearchQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); leaveSearch(); e.currentTarget.blur(); } }} placeholder={t('search.ph', { key: shortcutLabel('K') })} aria-label={t('search.title')} />{searchQ && <button type="button" className="clear" onClick={leaveSearch} aria-label={t('ui.close')}><I name="x" size={12} /></button>}</form>
+          <form className="msgr-search" onSubmit={(e) => { e.preventDefault(); runSearch(searchQ); }}><I name="search" size={13} /><input ref={searchRef} value={searchQ} onChange={(e) => setSearchQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); leaveSearch(); e.currentTarget.blur(); } }} placeholder={t('search.ph', { key: shortcutLabel('K') })} aria-label={t('search.title')} />{searchQ.trim() && !searchBusy && searchRes?.q !== searchQ.trim() && <span className="msgr-search-enter" aria-hidden="true">{t('search.enter')}</span>}{searchQ && <button type="button" className="clear" onClick={leaveSearch} aria-label={t('ui.close')}><I name="x" size={12} /></button>}</form>{/* 입력만으로는 반응이 없어 Enter를 몰랐다(UXM-21) — 매 글자 검색은 조회가 늘어 하지 않는다 */}
           {orgMenu && (<>
             <div className="msgr-scrim clear" onClick={() => setOrgMenu(false)} />
             <div className="msgr-menu-pop" role="menu">
@@ -3842,6 +3843,7 @@ function PhoneFriendAdd({ onClose, uid, onChanged, onNote, onError, ...finder })
     return () => { live = false; };
   }, [uid]);
   const make = async () => { setBusy(true); try { const [row] = await q(supabase.rpc('msgr_friend_link_mine')); setLink(row ?? null); } catch (e) { onError(e.message); } finally { setBusy(false); } };
+  const revoke = async () => { setBusy(true); try { await q(supabase.rpc('msgr_friend_link_revoke', {})); setLink(null); onNote(t('friends.link.revoked')); } catch (e) { onError(e.message); } finally { setBusy(false); } }; // 폰에서도 링크를 끊는다(UXM-11) — 실패하면 링크를 그대로 둔다
   const text = link ? t('friends.link.textInstall', { code: link.code }) : '';
   const copy = async () => { try { await navigator.clipboard.writeText(text); onNote(t('friends.link.copied')); } catch { onError(t('friends.link.copyFail')); } };
   const share = async () => { if (!navigator.share) return copy(); try { await navigator.share({ text }); } catch (e) { if (e?.name !== 'AbortError') copy(); } }; // 공유 창을 닫은 것은 오류가 아니다
@@ -3865,7 +3867,7 @@ function PhoneFriendAdd({ onClose, uid, onChanged, onNote, onError, ...finder })
           <p className="ph-fa-sub">{t('friends.add.step.mine.sub')}</p>
           {link ? (<div className="ph-fa-link">
             <code className="msgr-code" aria-label={t('friends.add.code')}>{link.code}</code>
-            <div className="ph-fa-acts"><button type="button" className="btn" disabled={busy} onClick={copy}><I name="copy" size={14} />{t('friends.link.copy')}</button><button type="button" className="btn btn-primary" disabled={busy} onClick={share}><I name="up" size={14} />{t('friends.add.share')}</button></div>
+            <div className="ph-fa-acts"><button type="button" className="btn" disabled={busy} onClick={copy}><I name="copy" size={14} />{t('friends.link.copy')}</button><button type="button" className="btn btn-primary" disabled={busy} onClick={share}><I name="up" size={14} />{t('friends.add.share')}</button><button type="button" className="btn ghost" disabled={busy} onClick={revoke}>{t('friends.link.revoke')}</button></div>
           </div>) : <button type="button" className="btn ph-fa-make" disabled={busy} onClick={make}><I name="plus" size={14} />{t('friends.link.make')}</button>}
           <h3 className="ph-fa-h">{t('friends.add.step.paste')}</h3>
           <form className="ph-fa-paste" onSubmit={(e) => { e.preventDefault(); if (!busy) accept(); }}>
@@ -3885,7 +3887,7 @@ function FriendsCard({ uid, friends, members, onChanged, onDm, onPersonalDm, onN
   useEffect(() => { loadMutedCrews(); }, [uid, mutedCrewIds.size, loadMutedCrews]);
   const [busy, setBusy] = useState(false);
   // ok는 고정 문구이거나, 서버 반환값에 따라 문구를 고르는 함수.
-  const call = async (fn, args, ok) => { setBusy(true); try { const result = await q(supabase.rpc(fn, args)); onNote(typeof ok === 'function' ? ok(result) : ok); await onChanged?.(); } catch (e) { onError(/msgr_friend_closed/.test(e.message) ? t('friends.err.closed') : /msgr_friend_blocked/.test(e.message) ? t('friends.err.blocked') : e.message); } finally { setBusy(false); } };
+  const call = async (fn, args, ok) => { setBusy(true); try { const result = await q(supabase.rpc(fn, args)); onNote(typeof ok === 'function' ? ok(result) : ok); await onChanged?.(); return true; } catch (e) { onError(/msgr_friend_closed/.test(e.message) ? t('friends.err.closed') : /msgr_friend_blocked/.test(e.message) ? t('friends.err.blocked') : e.message); return false; } finally { setBusy(false); } }; // 성공 여부를 돌려준다 — 링크 끊기가 실패해도 링크가 사라진 것처럼 보였다(UXM-11)
   const nameOf = (f) => members.find((m) => m.user_id === f.user_id)?.display_name || f.display_name || f.handle || f.user_id.slice(0, 8); // 같은 조직이면 조직 이름 우선(프로필 미설정 시 이메일 앞부분 대신)
   const received = friends.filter((f) => f.status === 'pending' && f.requested_by !== uid);
   const [removing, setRemoving] = useState(null); // 친구 삭제 확인(S16) — 되돌리려면 다시 요청·수락이 필요하다
@@ -3937,7 +3939,7 @@ function FriendsCard({ uid, friends, members, onChanged, onDm, onPersonalDm, onN
           <span className="msgr-klabel">{t('friends.link.label')}</span>
           {link
             ? <><code className="msgr-code">{link.code.slice(0, 8)}…</code><button type="button" className="btn btn-primary sm" disabled={busy} onClick={copyLink}><I name="copy" size={13} />{t('friends.link.copy')}</button>
-                <button type="button" className="btn sm ghost" disabled={busy} onClick={async () => { await call('msgr_friend_link_revoke', {}, t('friends.link.revoked')); setLink(null); }}>{t('friends.link.revoke')}</button></>
+                <button type="button" className="btn sm ghost" disabled={busy} onClick={async () => { if (await call('msgr_friend_link_revoke', {}, t('friends.link.revoked'))) setLink(null); }}>{t('friends.link.revoke')}</button></>
             : <button type="button" className="btn sm" disabled={busy} onClick={showLink}><I name="link" size={13} />{t('friends.link.make')}</button>}
         </div>
         <form className="row" onSubmit={(e) => { e.preventDefault(); if (!busy) acceptLink(); }}>
@@ -4203,7 +4205,7 @@ function Settings({ session, me, uid, invitesTick = 0, org, orgs = [], isAdmin, 
           <ReportsCard mode={isOps ? 'ops' : 'personal'} org={null} uid={uid} members={[]} nameOfUser={nameOfUser} channels={[]} onNote={onNote} onError={onError} />
         </div>)}
         {sub === 'about' && (<div className="msgr-setbody">
-          <section className="msgr-setcard"><h2>{t('phone.set.about')}</h2><LegalLinks t={t} className="in-card" /></section>
+          <section className="msgr-setcard"><h2>{t('phone.set.about')}</h2><LegalLinks t={t} className="in-card" /><p className="msgr-klabel msgr-version">{t('set.version', { v: APP_VERSION })}</p></section>
           <section className="msgr-setcard msgr-diagcard"><h2>{t('set.diag')}</h2><p>{t('set.diag.desc')}</p><DiagRow /></section>
         </div>)}
     </>));
@@ -4239,6 +4241,7 @@ function Settings({ session, me, uid, invitesTick = 0, org, orgs = [], isAdmin, 
             {org && me && <DisplayNameRow org={org} me={me} onChanged={onChanged} onNote={onNote} onError={onError} />}
             <div className="row"><NotifyRow /><SoundRow /><button type="button" className="btn sm" disabled={signingOut} onClick={signOut}><I name="out" size={13} />{t('auth.signOut')}</button></div>
             <LegalLinks t={t} className="in-card" />
+            <p className="msgr-klabel msgr-version">{t('set.version', { v: APP_VERSION })}</p>{/* 지금 앱 버전(UXM-26) — 문의·업데이트 확인 때 */}
           </section>
           <section className="msgr-setcard">
             <h2>{t('set.profanityFilter')}</h2><p>{t('set.profanityFilter.desc')}</p>
@@ -4657,7 +4660,7 @@ function PhoneMemory({ org, channels = [], previewChannels = [], dmName, nameOfU
       <span className="ph-kbody"><span className="name">{d.title}</span><span className="snip">{query.trim() ? memSnippet(d.body, query) : t('docs.meta', { v: d.version ?? 1, name: nameOfUser(d.updated_by), when: fmtWhen(d.updated_at, lang) })}</span></span>
     </button>);
   return (<>
-    {!g.total && !query.trim() && <div className="msgr-hint ph-empty">{t('mem.none')}</div>}
+    {!g.total && !query.trim() && <div className="msgr-hint ph-empty">{t('phone.mem.none')}</div>}{/* 폰에서는 만들 수 없다 — 기억이 어디서 모이는지 사실대로(UXM-12) */}
     {(() => { const sortCtl = (<span className="msgr-sortwrap ph-memsort">{!query.trim() && foldKeys.length > 0 && <button type="button" className="msgr-sortbtn ph-memfoldall" onClick={() => { setSortMenu(false); setAll(!shutAll); }} aria-label={t(shutAll ? 'phone.mem.unfoldAll' : 'phone.mem.foldAll')} title={t(shutAll ? 'phone.mem.unfoldAll' : 'phone.mem.foldAll')}><I name={shutAll ? 'unfold' : 'fold'} size={18} /></button>}<button type="button" className={`msgr-sortbtn${sortMenu ? ' on' : ''}`} onClick={() => setSortMenu((v) => !v)} aria-label={t('phone.mem.sort')} title={t('phone.mem.sort')} aria-haspopup="menu" aria-expanded={sortMenu}><I name="sort" size={16} /></button>
       {sortMenu && <div className="msgr-rowmenu" role="menu">{['name', 'recent'].map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={sort === v} onClick={() => { onSort?.(v); setSortMenu(false); }}>{sort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`phone.mem.sort.${v}`)}</button>)}</div>}</span>);
       return (<>{g.org.length > 0 && <div className="ph-sechead">{t('phone.mem.org')}{sortCtl}</div>}
@@ -5918,6 +5921,7 @@ function EmptyOrg({ org, onMenu, createOrg, createChannel, invite, askAdmin = nu
       </>) : (<>
       <h1>{org ? t('ch.noChannelTitle') : t('org.noneTitle')}</h1>
       <p>{org ? t('ch.noChannelDesc') : t('org.noneDesc')}</p>
+      {org && browse && <div className="acts"><button type="button" className="btn btn-primary sm" onClick={browse}><I name="hash" size={13} />{t('inv.empty.browse')}</button></div>}{/* 공개 채널이 이미 있으면 둘러보기를 먼저(UXM-29 — 첫 채널 만들기를 앞세웠다) */}
       <OrgStepList steps={steps} />
       </>)}
     </div></div>

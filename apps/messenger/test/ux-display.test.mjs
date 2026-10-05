@@ -14,3 +14,24 @@ test('UXM-15 꺼진 에이전트 안내는 조사를 고른다 — "Fixture Agen
   assert.equal(run('ko'), 'Fixture Agent는 지금 꺼져 있어요 — 다시 켜지면 이 글에 답합니다. 페퍼는 지금 꺼져 있어요 — 다시 켜지면 이 글에 답합니다.');
   assert.match(run('en'), /^Fixture Agent is offline/);
 });
+
+test('UXM-11 데스크톱 친구 링크 끊기가 실패하면 링크를 그대로 둔다 — 실제 FriendsCard call·끊기 단추', async () => {
+  const lines = app.split('\n');
+  const callLine = lines.find((l) => l.includes('const call = async (fn, args, ok) =>') && l.includes('msgr_friend_blocked') && !l.includes('if (res) await find()')); // FriendsCard 것(FriendFinder 것은 검색 결과를 다시 읽는다)
+  const btn = lines.find((l) => l.includes("msgr_friend_link_revoke', {}, t('friends.link.revoked')"));
+  const onClick = btn.slice(btn.indexOf('onClick={async () => {') + 'onClick={'.length, btn.indexOf("}}>{t('friends.link.revoke')}") + 1);
+  const run = async (ok) => {
+    const seen = [];
+    const scope = { setBusy: () => {}, q: async () => { if (!ok) throw new Error('network'); return null; }, supabase: { rpc: () => null }, onNote: (m) => seen.push(['note', m]), onChanged: async () => {}, onError: (m) => seen.push(['error', m]), t: (k) => k, setLink: (v) => seen.push(['link', v]) };
+    const fn = new Function(...Object.keys(scope), `${callLine}\nreturn (${onClick});`)(...Object.values(scope));
+    await fn(); return seen;
+  };
+  assert.deepEqual(await run(false), [['error', 'network']], '실패 — 링크를 지우지 않는다');
+  assert.deepEqual(await run(true), [['note', 'friends.link.revoked'], ['link', null]]);
+});
+
+test('UXM-11 폰 친구 추가 시트에도 링크 끊기가 있다', () => {
+  const sheet = app.slice(app.indexOf('function PhoneFriendAdd('), app.indexOf('\n}\n', app.indexOf('function PhoneFriendAdd(')));
+  assert.match(sheet, /onClick=\{revoke\}>\{t\('friends\.link\.revoke'\)\}/);
+  assert.match(sheet, /const revoke = async \(\) => \{ setBusy\(true\); try \{ await q\(supabase\.rpc\('msgr_friend_link_revoke', \{\}\)\); setLink\(null\);/);
+});

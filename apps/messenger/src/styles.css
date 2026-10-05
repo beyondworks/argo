@@ -2422,3 +2422,9 @@ html { -webkit-tap-highlight-color: transparent; }
 /* 데스크톱 에이전트 구역이 비었을 때(UXM-08) — 구역을 두고 안내 + [실행기 연결] */
 .msgr-side .msgr-rail-empty { margin: 2px 12px 8px; font-size: 12px; line-height: 1.45; color: var(--fg-3); }
 .msgr-side .msgr-rail-empty .btn { margin-top: 6px; }
+/* 데스크톱 검색 — 입력했지만 아직 찾지 않았을 때 Enter 힌트(UXM-21) */
+.msgr-search .msgr-search-enter { flex: none; font-size: 11px; color: var(--fg-3); white-space: nowrap; }
+/* 앱 버전(UXM-26) */
+.msgr-setcard .msgr-version { margin: 8px 0 0; }
+/* 터치 기기의 확인 창 — 머리의 '닫기 ESC'는 키보드 힌트라 숨긴다(UXM-18). 아래 '취소'가 같은 일을 한다. 모달 모양은 본체 app/ui.jsx라 메신저 쪽 규칙으로만 */
+@media (pointer: coarse) { .argo-messenger .card-float > .card-head > .btn.sm { display: none; } }

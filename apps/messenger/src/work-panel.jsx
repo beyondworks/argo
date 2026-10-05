@@ -148,8 +148,9 @@ export function WorkPanel({ channel, roomName = null, uid, isAdmin, locked, crew
   const closeRef = useRef(onClose); closeRef.current = onClose;
   useEffect(() => {
     mounted.current = true;
-    const previous = document.activeElement;
-    dialog.current?.querySelector('button')?.focus();
+    const touch = window.matchMedia?.('(pointer: coarse)').matches; // 터치 기기에서는 첫 단추에 초점 링이 그려지지 않게(UXM-17, CtxMenu와 같은 규칙)
+    const previous = touch ? null : document.activeElement;
+    if (!touch) dialog.current?.querySelector('button')?.focus();
     return () => { mounted.current = false; if (previous?.isConnected) previous.focus(); };
   }, []);
   const act = async (operation, done) => {

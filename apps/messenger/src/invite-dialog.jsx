@@ -57,7 +57,7 @@ export function InviteDialog({ org, channels, isAdmin, hostOf = new Set(), initi
     }, made ? 200 : 0);
     return () => clearTimeout(timer);
   }, [want]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (!busy && link) copyRef.current?.focus(); }, [busy, !!link]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (!busy && link && !window.matchMedia?.('(pointer: coarse)').matches) copyRef.current?.focus(); }, [busy, !!link]); // 터치 기기는 초점을 옮기지 않는다(UXM-17) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (!copied) return undefined; const id = setTimeout(() => setCopied(false), 1500); return () => clearTimeout(id); }, [copied]);
 
   const toggle = (c) => {
@@ -143,7 +143,7 @@ export function InviteDialog({ org, channels, isAdmin, hostOf = new Set(), initi
 // p = msgr_invite_preview 결과: valid·already_member면 조직·채널·초대한 사람·만료, expired·exhausted·revoked면 org_name만.
 export function InvitePreview({ p, avatar = null, busy = false, err = null, onJoin, onOpen, onClose, fmtWhen, t, phone = false }) {
   const main = useRef(null);
-  useEffect(() => { main.current?.focus(); }, [p.state]);
+  useEffect(() => { if (!window.matchMedia?.('(pointer: coarse)').matches) main.current?.focus(); }, [p.state]); // 터치 기기는 초점을 옮기지 않는다(UXM-17)
   const ok = p.state === 'valid', already = p.state === 'already_member';
   const status = ok ? (p.inviter_name ? t('inv.p.by', { name: p.inviter_name }) : t('inv.p.valid')) : t(`inv.p.${already ? 'already' : p.state}`);
   const keydown = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose(); } };
