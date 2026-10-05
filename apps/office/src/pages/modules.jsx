@@ -229,7 +229,9 @@ function Stats({ space, item, canEdit, setCfg }) {
 const Calendar = (props) => <Suspense fallback={wait}><HomeView {...props} mode="calendar" /></Suspense>; // 캘린더 — 보기 9가지·디자인 3가지(views/CalendarWidget.jsx, 유건 10/1)
 const HomeAttention = lazy(() => import('../business/HomeAttention.jsx')); // 챙길 것(18차) — 거래 계산(업무 묶음)을 같이 쓰므로 쓸 때만 받는다
 const Attention = (props) => <Suspense fallback={wait}><HomeAttention {...props} /></Suspense>;
-const renderers = { stats: Stats, attention: Attention, calendar: Calendar, approvals: Approvals, mail: Mail, todos: Todos, pages: Pages, work: Work, outputs: Outputs, journal: Journal, decisions: Decisions };
+const BriefingModule = lazy(() => import('./BriefingModule.jsx')); // 브리핑 1건 — 첫 화면 묶음 밖(150KB 상한)
+function Briefing() { return <Suspense fallback={<div className="mod-empty" role="status">{t('biz.loading')}</div>}><BriefingModule /></Suspense>; }
+const renderers = { briefing: Briefing, stats: Stats, attention: Attention, calendar: Calendar, approvals: Approvals, mail: Mail, todos: Todos, pages: Pages, work: Work, outputs: Outputs, journal: Journal, decisions: Decisions };
 const BusinessHomeCard = lazy(() => import('../business/HomeModules.jsx').then((module) => ({ default: module.BusinessHomeCard })));
 const LazyBusinessHomeProvider = lazy(() => import('../business/HomeModules.jsx').then((module) => ({ default: module.BusinessHomeProvider })));
 export function BusinessHomeProvider(props) {

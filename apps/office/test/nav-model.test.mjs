@@ -52,7 +52,7 @@ test('moveId: a를 b 자리로, 같은 자리·없는 id면 그대로', () => {
 // 이유(9/30 일정 추가): 메뉴 순서를 저장해 둔 사람에게 새 메뉴가 맨 아래로 붙으면 못 찾는다 — 기본 자리(앞 메뉴 바로 뒤)에 들어가야 한다.
 test('메뉴: 저장한 뒤 새로 생긴 메뉴는 기본 순서의 앞 메뉴 바로 뒤에 들어간다, 저장 순서는 그대로', () => {
   const saved = ['home', 'tools', 'business', 'mail', 'approvals', 'shared', 'knowhow'].map((id) => ({ id }));
-  assert.deepEqual(readNav(saved, 'me').shown, ['home', 'calendar', 'tasks', 'tools', 'business', 'contracts', 'files', 'mail', 'approvals', 'shared', 'knowhow'], '견적·계약·문서함(10/2)도 업무 바로 뒤에, 할 일(10/4)은 캘린더 바로 뒤에');
+  assert.deepEqual(readNav(saved, 'me').shown, ['home', 'calendar', 'tasks', 'tools', 'business', 'contracts', 'files', 'mail', 'briefings', 'approvals', 'shared', 'knowhow'], '견적·계약·문서함(10/2)도 업무 바로 뒤에, 할 일(10/4)은 캘린더 바로 뒤에, 브리핑(10/5)은 메일 바로 뒤에');
   assert.deepEqual(readNav([{ id: 'tools' }, { id: 'home' }], 'me').shown.slice(0, 4), ['tools', 'home', 'calendar', 'tasks'], '앞 메뉴를 옮겨 뒀으면 그 뒤를 따라간다');
 });
 

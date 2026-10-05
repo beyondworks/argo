@@ -4,7 +4,8 @@ import { companyTool, companyDescription } from './gateway/office-company.mjs'; 
 import { filesTool, filesDescription } from './gateway/office-files.mjs'; // 에이전트 문서함·드라이브 도구(오피스 문서함 검색·읽기·거래처 첨부·드라이브 — 분리 검수 MEDIUM 4)
 import { workTool, workDescription } from './gateway/office-work.mjs'; // 에이전트 할 일·페이지 도구(오피스 17차 B-6)
 import { dealsTool, dealsDescription } from './gateway/office-deals.mjs'; // 에이전트 거래처·거래 도구(오피스 17차 B-7)
-import { mailTool, mailDescription } from './gateway/office-mail.mjs'; // 에이전트 메일 도구 — 목록·읽기·초안·별표, 보내기 없음(오피스 17차 B-8)
+import { mailTool, mailDescription } from './gateway/office-mail.mjs';
+import { briefingTool, briefingDescription } from './gateway/office-briefing.mjs'; // 에이전트 브리핑 도구(오피스 내 공간 브리핑 — 유건 10/5) // 에이전트 메일 도구 — 목록·읽기·초안·별표, 보내기 없음(오피스 17차 B-8)
 import { createBrowserMcpBridge, browserMcpDirective } from './engine/browser-mcp.mjs';
 // 대화 계층 — 페르소나 카드 + 회사 스킬 + vault 사용법을 시스템 프롬프트로, Agent SDK가 루프·도구를 담당.
 // 도구는 워크스페이스 안 파일 읽기/쓰기/검색만 — 폴더 전체가 잠재 컨텍스트, 링크가 탐색 경로.
@@ -1222,6 +1223,23 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     },
   );
 
+  const officeBriefing = tool(
+    'office_briefing',
+    briefingDescription(lang),
+    {
+      action: z.enum(['brief_add', 'briefs', 'brief_read']),
+      title: z.string().optional(), body: z.string().optional().describe('brief_add: 마크다운 본문(32KB까지)'),
+      kind: z.enum(['daily', 'weekly', 'custom']).optional(), period: z.string().optional().describe('brief_add: 기간 표시(예: 2026-10-05, 이번 주)'),
+      recipient: z.enum(['owner', 'org']).optional().describe('brief_add: owner(기본, 주인) 또는 org(조직 전체 — 관리자만)'),
+      q: z.string().optional().describe('briefs: 제목·본문에서 찾을 글자'), id: z.string().optional().describe('brief_read: briefs가 보여 준 id'),
+    },
+    async (args) => {
+      if (guest) return guestNo(lang === 'en' ? 'Reading or writing the owner\'s briefings' : '주인의 브리핑 읽기·쓰기');
+      const ownerId = (await loadCompany(wsId).catch(() => ({}))).ownerId ?? null;
+      return text(await briefingTool(args, { ctx: mirrorCtx, crew: fromName || fromSlug, lang, ownerId })); // 작성자 = 화면에 보이는 에이전트 이름
+    },
+  );
+
   // 커넥터 표면 — 실행은 코어의 callConnectorTool 단일 경로다(러너 무관, 설계서 §1·§2-2).
   // 여기서 원격 MCP 클라이언트를 새로 만들지 않는다: SDK 턴 안에서 직결하면 토큰 갱신·OAuth 챌린지가
   // 러너 프로세스에서 터져 코어가 개입할 수 없고, CLI 표면과 능력이 갈린다(중립성 위반).
@@ -1242,6 +1260,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     ...(mirrorCtx?.kind === 'msgr' ? [proposeOrgDoc] : []), // 팀 메신저 채널 턴에만 — 조직 문서 제안(G-4). sink(네이티브 엔진)도 같은 배열을 받는다
     calendar, // 주인의 일정 — 항상 등재(세션 없음·손님은 처리기가 한 줄로 알린다)
     ...(mirrorCtx?.kind === 'msgr' && mirrorCtx.orgId ? [office, officeFiles, officeWork, officeDeals] : []), // 오피스 회사 기록·문서함·드라이브·할 일·페이지·거래 — 메신저 조직 채널 턴에만(그 조직). 개인 공간 턴에는 늘 거절할 도구라 싣지 않는다
+    ...(mirrorCtx?.kind === 'msgr' && (mirrorCtx.orgId || mirrorCtx.channelKind === 'dm') ? [officeBriefing] : []), // 오피스 브리핑 — 조직 채널(쓰기) + 1:1(개인 공간 포함, 읽기는 주인 1:1만)
     ...(mirrorCtx?.kind === 'msgr' && mirrorCtx.channelKind === 'dm' ? [officeMail] : []), // 오피스 메일 — 주인 개인 메일함이라 1:1 턴에만(사람이 둘인 1:1은 처리기가 거절)
     ...(handoffColleagues.length ? [delegate, sendToCrew] : []),
     ...(sendSession ? [sendSession] : []),

@@ -100,5 +100,5 @@ test('옛 배치 — 지금 모양으로 줄·열을 만들어 맞추고, 높이
 // ── 쌓이는 모듈은 고정 높이(규칙 7) ──
 // 이유: 항목이 늘어나는 모듈만 등록부에 stack 표시 — 정한 높이가 없으면 고정 높이로 그린다(ModuleGrid 카드 class fixed-h + base.css). 현황·캘린더·업무 카드는 내용대로.
 test('쌓이는 모듈 목록', () => {
-  assert.deepEqual(OFFICE_MODULES.filter((m) => m.stack).map((m) => m.id).sort(), ['approvals', 'decisions', 'journal', 'mail', 'outputs', 'pages', 'todos', 'work']);
+  assert.deepEqual(OFFICE_MODULES.filter((m) => m.stack).map((m) => m.id).sort(), ['approvals', 'briefing', 'decisions', 'journal', 'mail', 'outputs', 'pages', 'todos', 'work']);
 });
