@@ -480,10 +480,12 @@ export function threadCtxLine(m, lang, name) {
     : s && m.who === 'crew' && s.dir === 'reply' ? `${s.fromName ?? s.from}${en ? ' (session message reply)' : ' (세션 메시지 답)'}`
     : s && m.who === 'crew' && s.dir === 'notice' ? (en ? 'Notice' : '알림')
     : m.who === 'user' ? (m.via ? (en ? 'Auto-delivered' : '자동 배달') : (en ? 'Captain' : '사장')) : name;
-  const list = (xs, rel) => xs.map((x) => 'vault/' + rel(x)).join(', ');
+  // 한 줄로 편다 — 본문뿐 아니라 화자 이름·첨부·산출물 경로도(3차 검수 LOW-4: 경로 속 줄바꿈이 '사장: …' 위조 줄을 만들었다). U+0085(NEL)·U+001C~U+001E는 \s에 없어 따로 넣는다
+  const flat = (x) => String(x ?? '').replace(/[\s\u0085\x1c-\x1e]+/g, ' ');
+  const list = (xs, rel) => xs.map((x) => 'vault/' + flat(rel(x))).join(', ');
   const att = m.attachments?.length ? (en ? ` (attached, open with Read: ${list(m.attachments, (a) => a.rel)})` : ` (첨부, Read로 열람: ${list(m.attachments, (a) => a.rel)})`) : '';
   const art = m.artifacts?.length ? (en ? ` (artifacts, open with Read: ${list(m.artifacts, (a) => a)})` : ` (산출물, Read로 열람: ${list(m.artifacts, (a) => a)})`) : '';
-  return `${who}: ${String(m.text).replace(/[\s\u0085]+/g, ' ').slice(0, 500)}${att}${art}`; // U+0085(NEL)은 \s에 없다 — 줄바꿈으로 읽혀 화자 줄을 위조하지 못하게 같이 편다(보안 검토)
+  return `${flat(who)}: ${flat(m.text).slice(0, 500)}${att}${art}`;
 }
 
 /** 스레드 맥락(외부 CLI 경로·SDK/네이티브 기기 교차 경로 공통) — 예산 안 최근 대화 + 예산 밖 누적 요약(thread-context.mjs).
