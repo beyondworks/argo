@@ -220,8 +220,14 @@ export function _setSyncClientForTest(fake) { sb = fake; sbKey = '__test__'; com
 // [규모] 10/4 하루 전 계정의 매니페스트 GET 30,553건 중 29,628건(573.6MB)이 CDN 사본이었다 → 갱신된 기기가 늘수록 이만큼이
 // 원본 요청(초당 약 0.34건 추가)이 된다. 기기 수 × 회사 수 × 전체 동기화 횟수에 선형이며, 유휴 확인(60초 info)이 이 횟수를 묶는다.
 const fresh = () => ({ cacheNonce: randomUUID() });
-/** 원격에 없음(404) — 매니페스트 읽기·blob 실존 검사·파일 받기가 같은 판정을 쓴다. 타임아웃·5xx 같은 확인 불가는 없음이 아니다. */
-const isNotFound = (error) => /not[ _]?found|does not exist|no such|404/i.test(String(error?.message || error)) || error?.status === 404 || error?.statusCode === 404;
+/** 원격에 없음(404) — 매니페스트 읽기·blob 실존 검사·파일 받기가 같은 판정을 쓴다. 타임아웃·5xx 같은 확인 불가는 없음이 아니다.
+    'Bucket not found'도 없음이 아니다: 만료 토큰 요청을 Storage가 익명으로 처리해 비공개 버킷을 못 보고 이렇게 답한다(2026-10-05 운영
+    storage_logs: role anon, NoSuchBucket). 없음으로 읽으면 매니페스트가 빈 원격이 되고 blob 검사가 로컬 파일을 지운다. */
+const isNotFound = (error) => {
+  const msg = String(error?.message || error);
+  if (/bucket not found/i.test(msg)) return false;
+  return /not[ _]?found|does not exist|no such|404/i.test(msg) || error?.status === 404 || error?.statusCode === 404;
+};
 /** 파일 실패 한 줄 — lastError(설정 카드)에 회사와 첫 파일 이름·사유를 싣는다. lastError는 기기 전체에 하나라 다른 회사 카드에도 보이므로
     회사 ID를 앞에 붙인다(다른 per-회사 lastError와 같은 형식). (export: 회귀 테스트용) */
 export const syncFailedMessage = (wsId, r) => {
@@ -925,7 +931,8 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
     if (isUnderFailed(rel, failedDirs)) return false;                        // walk가 못 읽음 → 부재는 unknown
     if (corruptHeal.has(rel)) return false;                                   // 로컬 손상 → self-heal 대상(삭제 아님)
     if (isArchival(rel) && archMoves.has(rel.split('/').pop())) return false; // 진짜 이동(목적지 생성 있음)
-    return side === 'L' ? !!(l && !r && base && !changed(base, l))
+    // 로컬 삭제('다른 기기가 지웠다')는 원격 매니페스트를 실제로 읽은 사이클에서만 — 아래 l && !r 분기와 같은 조건(단일 출처).
+    return side === 'L' ? !!(l && !r && base && !changed(base, l) && manifestExists)
                         : !!(!l && r && base && !changed(base, r));
   };
 
@@ -985,6 +992,9 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
           // blob이 살아 있으면 동시 동기화 중인 기기가 매니페스트를 통째로 덮어써 항목만 유실된 것
           // (실측: 영입 직후 크루 카드가 8초 안에 오삭제) → 지우지 말고 항목을 복원한다(자기치유).
           if (await blobExists(remoteKey(rel))) { remote.files[rel] = base; healed++; }
+          // 원격 매니페스트를 못 본 사이클(없음으로 읽힘)이면 '다른 기기가 지웠다'는 추론이 성립하지 않는다 — 지우지 않고 다시 민다.
+          // 실측 2026-10-05: 만료 토큰 읽기가 없음으로 분류되자 이 분기가 로컬 파일을 지웠고, 다음 정상 사이클이 원격까지 지웠다(재현 테스트).
+          else if (!manifestExists) { await upload(remoteKey(rel), await pushBuf(rel)); remote.files[rel] = l; pushed++; }
           else { await rmLocal(rel, l.h); delete local[rel]; deletedL++; } // 다른 기기가 지움 → 로컬도
         }
         else { await upload(remoteKey(rel), await pushBuf(rel)); remote.files[rel] = l; pushed++; } // 신규/수정 → 밀기
