@@ -2,7 +2,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useLang } from './i18n';
-import { overlayActive, OVERLAY_EVENT, uiWorkActive, UI_WORK_EVENT } from './ui';
+import { Icon, overlayActive, OVERLAY_EVENT, uiWorkActive, UI_WORK_EVENT } from './ui';
 import { acknowledgeUpdateNotesVersion, closeUpdateNotes, isEditingElement, readUpdateNotesVersion,
   shouldAutoDismissUpdateNotes, shouldShowUpdateNotes, updateNotesFor, UPDATE_NOTES_BLUR_SETTLE_MS } from './update-notes-state.mjs';
 
@@ -45,10 +45,10 @@ export function UpdateNotesCard({ version, items, t, onConfirm, saving = false, 
     펼친 카드를 스스로 띄우면 데크의 '설정에서 연결하기'를, 상단바 아래 알약도 크루 대화의 방금 보낸 글을 덮었다
     (UX-A01 검증 2026-10-05 실측). 내용은 사용자가 칩을 눌렀을 때만 펼친다. */
 export function UpdateNotesChip({ version, t, onExpand }) {
-  // topbar-chip·chip-label — 좁은 폭(접기 단계)에서는 라벨을 접고 점만 남긴다(UM1). 이름은 aria-label이 지킨다
-  return <button type="button" className="chip topbar-chip" onClick={onExpand} title={t('updates.title', { version })} aria-label={t('updates.chip')}
+  // 접힌 칩은 아이콘(✦)만 남는다(2차 M2). 이름은 aria-label이 지킨다
+  return <button type="button" className="chip topbar-chip topbar-chip-notes" onClick={onExpand} title={t('updates.title', { version })} aria-label={t('updates.chip')}
     style={{ flex: 'none', cursor: 'pointer', fontSize: 10.5, textTransform: 'none', color: 'var(--fg)', borderColor: 'var(--fg-3)' }}>
-    <span className="dot" style={{ background: 'var(--primary)' }} aria-hidden="true" /><span className="chip-label">{t('updates.chip')}</span>
+    <span className="dot" style={{ background: 'var(--primary)' }} aria-hidden="true" /><span className="chip-icon"><Icon name="memory" size={14} /></span><span className="chip-label">{t('updates.chip')}</span>
   </button>;
 }
 

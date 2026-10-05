@@ -13,9 +13,10 @@ import { SplitPane } from './split-pane';
 import { parseSide, sideParam, withSide } from './split.mjs';
 import { useSplitAlive } from './split-alive';
 import { nextCompanyData, brokenCardsOf } from './company-load.mjs';
-import { watchTopbarContent } from './topbar-fit.mjs';
+import BrokenCardsNote from './broken-cards-note';
+import { watchTopbarContent, fitTopbar, isTopbarOver, TOPBAR_ATTRS } from './topbar-fit.mjs';
 import { emitSearch } from './search-bus.mjs'; // 상단 검색 → 데크·활동·기억(UL10)
-import { drawerKeyAction, drawerFocusTarget } from './drawer.mjs'; // 폰 폭 서랍 Esc·포커스(UL9)
+import { drawerKeyAction, drawerFocusTarget, drawerTabAction, drawerAttrs, drawerEnds } from './drawer.mjs'; // 폰 폭 서랍 Esc·포커스·Tab 순환·dialog 속성(UL9·2차 L4)
 import { searchScope } from './search-scope.mjs'; // 검색을 받는 화면에서만 검색 칸(UX-A03)
 import { gistLabel } from '../../lib/gist-display.mjs'; // 메신저 머리말을 뗀 요약(UX-A08)
 
@@ -114,20 +115,31 @@ function Shell({ children, params }) {
   // 폰 폭(≤900px) 사이드바 서랍 — 본문 위에 메뉴가 730px 쌓이던 것(UX-A04). 이동하면 닫힌다
   const [sideOpen, setSideOpen] = useState(false);
   useEffect(() => { setSideOpen(false); }, [pathname]);
-  // 서랍이 열려 있는 동안: 포커스는 서랍 안으로, Esc는 닫고 포커스를 열기 버튼으로 되돌린다(UL9 — 키보드·화면 낭독기 사용자가 서랍 뒤 본문에 머물렀다)
+  // 서랍이 열려 있는 동안(폰 폭에서만): 포커스는 서랍 안으로, Tab은 서랍 안에서 순환, Esc·배경막 클릭은 닫고 포커스를 열기 버튼으로 되돌린다(UL9·2차 L4 — 키보드·화면 낭독기 사용자가 서랍 뒤 본문·상단바로 나갔다).
+  // 서랍 속성(role="dialog" aria-modal)과 순환은 폰 폭(≤900px)에서 열렸을 때만 — 데스크톱의 고정 사이드바는 대화상자가 아니라 영향 0. 창이 넓어지면 서랍 상태를 접는다.
   const sideRef = useRef(null);
   const sideToggleRef = useRef(null);
+  const [phone, setPhone] = useState(false);
   useEffect(() => {
-    if (!sideOpen) return;
+    const mq = window.matchMedia('(max-width: 900px)');
+    const sync = () => { setPhone(mq.matches); if (!mq.matches) setSideOpen(false); };
+    sync(); mq.addEventListener('change', sync);
+    return () => mq.removeEventListener('change', sync);
+  }, []);
+  const closeDrawer = useCallback(() => { setSideOpen(false); sideToggleRef.current?.focus(); }, []);
+  const drawerOn = sideOpen && phone;
+  useEffect(() => {
+    if (!drawerOn) return;
     drawerFocusTarget(sideRef.current)?.focus();
     const onKey = (e) => {
-      if (drawerKeyAction({ key: e.key, open: true, composing: e.isComposing, defaultPrevented: e.defaultPrevented }) !== 'close') return;
-      setSideOpen(false);
-      sideToggleRef.current?.focus();
+      if (drawerKeyAction({ key: e.key, open: true, composing: e.isComposing, defaultPrevented: e.defaultPrevented }) === 'close') { closeDrawer(); return; }
+      const { first, last } = drawerEnds(sideRef.current);
+      const move = drawerTabAction({ key: e.key, open: true, shiftKey: e.shiftKey, active: document.activeElement, first, last, container: sideRef.current });
+      if (move) { e.preventDefault(); (move === 'first' ? first : last)?.focus(); }
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [sideOpen]);
+  }, [drawerOn, closeDrawer]);
   const router = useRouter();
   // 좌우 2분할 보조 패널 — 상태는 ?side= 하나. 레이아웃 안의 내부 링크는 전부 withSide를 통과해
   // 주 화면을 옮겨도 패널이 유지된다. 닫기 = side 쿼리 제거.
@@ -157,10 +169,10 @@ function Shell({ children, params }) {
   // (globals.css: #argo-topbar-slot에 min-width:0 금지), 그러면 겹침이 **문서 가로 넘침**으로 바뀔 뿐이라
   // (실측: 영어+긴 라벨 유효 952에서 263px) 수용 자체를 폭이 아니라 넘침으로 판정한다.
   //
-  // 절차: ① 가장 넓은 상태로 되돌리고 ② 넘치면 정보 가치가 낮은 축(스페이서·버전·시계)을 접고
-  // ③ 그래도 넘치면 슬롯을 인라인 밴드로 내린다. 매번 ①에서 시작하므로 되돌아갈 수 없는 래칫이
-  // 생기지 않고, 히스테리시스 장치도 필요 없다. 판정 결과는 루트 속성으로 내려 CSS가 실행한다 —
-  // React 상태로 두면 접은 상태를 **동기적으로** 되돌릴 수 없어 ①이 성립하지 않는다.
+  // 절차: 가장 넓은 상태에서 시작해 넘치지 않는 첫 단계까지 한 단계씩 접는다(topbar-fit.mjs TOPBAR_STAGES, 2차 검수 M1):
+  // 시계·버전·스페이서 → 새 소식 칩 라벨 → 오류 칩 라벨(가장 늦게) → 슬롯을 인라인 밴드로(밴드로 내려 자리가 생기면 칩 라벨은 다시 펼친다).
+  // 매번 처음에서 시작하므로 되돌아갈 수 없는 래칫이 생기지 않고, 히스테리시스 장치도 필요 없다. 판정 결과는 루트 속성으로 내려 CSS가 실행한다 —
+  // React 상태로 두면 접은 상태를 **동기적으로** 되돌릴 수 없어 처음에서 시작할 수 없다.
   //
   // 배율 인지: scrollWidth/clientWidth는 배율이 적용된 레이아웃 픽셀이라 유효 폭 환산이 필요 없다.
   // @media(max-width:900px)의 슬롯→밴드 전환은 실 뷰포트 축으로 그대로 둔다(둘은 상보).
@@ -178,12 +190,7 @@ function Shell({ children, params }) {
     }
     const bar = barRef.current;
     if (!bar) return;
-    root.removeAttribute('data-narrow-bar');
-    root.removeAttribute('data-narrow-shell');
-    const over = () => bar.scrollWidth > bar.clientWidth + 1; // +1 = 서브픽셀 반올림 여유
-    if (!over()) return;
-    root.setAttribute('data-narrow-bar', '');
-    if (over()) root.setAttribute('data-narrow-shell', '');
+    fitTopbar(root, () => isTopbarOver(bar)); // isTopbarOver = scrollWidth(+1 여유) + 마지막 자식이 오른쪽 패딩을 침범하는지(L3)
   }, []);
   useEffect(() => {
     fitBar();
@@ -203,8 +210,7 @@ function Shell({ children, params }) {
       ro.disconnect(); stopWatch();
       window.removeEventListener('resize', fitBar); window.removeEventListener('argo:zoom', fitBar);
       // 회사 셸 밖으로 나가면 속성도 걷는다(검수 1R LOW-2)
-      document.documentElement.removeAttribute('data-narrow-bar');
-      document.documentElement.removeAttribute('data-narrow-shell');
+      for (const attr of Object.values(TOPBAR_ATTRS)) document.documentElement.removeAttribute(attr);
     };
   }, [fitBar]);
   // 인증 상태 — 사이드바 하단에 로그인 이메일·로그아웃 노출(로컬 모드면 owner 표기 유지)
@@ -394,8 +400,8 @@ function Shell({ children, params }) {
 
   return (
     <div className="shell">
-      {sideOpen && <div className="side-backdrop" onClick={() => setSideOpen(false)} aria-hidden="true" />}
-      <aside className={`side${sideOpen ? ' open' : ''}`} id="argo-side" ref={sideRef} tabIndex={-1}>
+      {sideOpen && <div className="side-backdrop" onClick={closeDrawer} aria-hidden="true" />}
+      <aside className={`side${sideOpen ? ' open' : ''}`} id="argo-side" ref={sideRef} tabIndex={-1} {...drawerAttrs({ open: sideOpen, phone, label: t('nav.menu') })}>
         <Link href="/" className="nav-item" style={{ gap: 8, marginBottom: 4 }}>
           <span style={{ color: 'var(--fg)', display: 'inline-flex' }}><StarMark size={15} /></span>
           <span className="mono" style={{ fontWeight: 600, fontSize: 13, color: 'var(--fg)', letterSpacing: '0.16em' }}>ARGO</span>
@@ -529,12 +535,7 @@ function Shell({ children, params }) {
           </div>
           );
         })}
-        {brokenCardsOf(data) && (
-          // 못 읽은 크루 카드 — 목록에서 조용히 빠진 크루가 있음을 알린다(L2). 이름은 마우스를 올리면 보인다. 일시 실패(파일 잠김 등)면 다음 갱신에 사라진다.
-          <p role="status" title={brokenCardsOf(data).names.join(', ')} style={{ margin: '4px 12px 8px', fontSize: 11.5, lineHeight: 1.4, color: 'var(--warn)' }}>
-            {t('nav.brokenCards', { n: brokenCardsOf(data).count })}
-          </p>
-        )}
+        {brokenCardsOf(data) && <BrokenCardsNote broken={brokenCardsOf(data)} onRetry={refresh} />} {/* 못 읽은 크루 카드 — 누르면 파일 위치·다시 읽기(L2·2차 L7) */}
         <Link
           href={L(`/c/${ws}`)}
           className="nav-item"
@@ -626,10 +627,10 @@ function Shell({ children, params }) {
             </span>
           ))}
           {loadFailed && data?.company && (
-            // topbar-chip·chip-label — 좁은 폭(접기 단계)에서는 라벨을 접고 점만 남긴다(UM1: 600px en에서 47px 넘침). 이름은 aria-label이 지킨다
-            <button type="button" className="chip topbar-chip" onClick={refresh} title={t('shell.reloadFailHint')} aria-label={t('shell.reloadFail')}
+            // 접힌 칩은 아이콘(↻)만 남는다 — 점만 남으면 뜻도 누를 수 있다는 것도 알 수 없었다(2차 M2). 이름은 aria-label이 지킨다
+            <button type="button" className="chip topbar-chip topbar-chip-error" onClick={refresh} title={t('shell.reloadFailHint')} aria-label={t('shell.reloadFail')}
               style={{ flex: 'none', cursor: 'pointer', color: 'var(--danger)', borderColor: 'currentColor' }}>
-              <span className="dot" aria-hidden="true" /><span className="chip-label">{t('shell.reloadFail')}</span>
+              <span className="dot" aria-hidden="true" /><span className="chip-icon"><Icon name="refresh" size={14} /></span><span className="chip-label">{t('shell.reloadFail')}</span>
             </button>
           )}
           {/* 이번 업데이트 칩 자리 — UpdateNotes가 접힌 안내를 여기에 그린다(덮는 것 없는 자리, UX-A01) */}

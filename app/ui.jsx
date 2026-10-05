@@ -67,6 +67,7 @@ const PATHS = {
   check: 'M20 6 9 17l-5-5',                 // 완료 조건 배지(루틴 목록)
   collapse: 'M7 11l5-5 5 5M7 19l5-5 5 5',   // 모두 접기(옵시디언 툴바)
   menu: 'M3 6h18M3 12h18M3 18h18',          // 폰 폭 사이드바 서랍 열기(UX-A04)
+  refresh: 'M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8M21 3v5h-5', // 새로 고침(상단바 '새로 고침 실패' 칩이 접혔을 때 — 2차 M2)
   pulse: 'M3 12h4l3-8 4 16 3-8h4',          // 활동 — 경쟁 시안(bolt)과 같은 아이콘이던 것(UX-A17)
 };
 
@@ -358,6 +359,7 @@ export async function api(path, opts) {
       // errorCode가 있으면 화면 언어 문구로(F11 — 서버가 한국어로 그렸어도 영어 화면엔 영어), 없으면 원문·상태 문구
       const err = new Error(errorTextFor(data, res.status, lang, AUTH_MSG));
       err.data = data; // 에러 바디의 부가 필드(예: chat의 failed·saved)를 호출부가 읽을 수 있게
+      err.status = res.status; // 상태별 일반 문구(app/lib/error-text.mjs failureReason)가 읽는다
       throw err;
     }
     return data;

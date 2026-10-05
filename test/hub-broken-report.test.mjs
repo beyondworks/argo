@@ -61,3 +61,24 @@ test('화면 판정 — broken이 있을 때만 안내를 만들고, 없거나 0
   assert.deepEqual(brokenCardsOf({ broken: { count: 2, names: ['a', 'b'] } }), { count: 2, names: ['a', 'b'] });
   for (const d of [null, undefined, {}, { broken: null }, { broken: { count: 0, names: [] } }, { broken: { count: 'x' } }, { missing: true }]) assert.equal(brokenCardsOf(d), null, JSON.stringify(d));
 });
+
+// 2차 분리 검수 L7(2026-10-05): '크루 카드 N개를 읽지 못했어요'가 <p>+title이라 키보드·터치로 이름을 볼 수 없고 다음 행동이 없었다 → 누르면 펼쳐지는 안내(카드 파일 위치 agents/<이름>.md, 다시 읽기 단추).
+test('L7: 펼치면 보일 파일 위치 목록 — 이름마다 agents/<이름>.md, 많으면 앞 8개와 나머지 수', async () => {
+  const { brokenCardsOf, brokenCardFiles } = await import('../app/c/[ws]/company-load.mjs');
+  const d = { broken: { count: 2, names: ['bad', 'zeta'] } };
+  assert.deepEqual(brokenCardFiles(brokenCardsOf(d)), { files: ['agents/bad.md', 'agents/zeta.md'], more: 0 });
+  const many = { broken: { count: 11, names: Array.from({ length: 11 }, (_, i) => `c${i}`) } };
+  const r = brokenCardFiles(brokenCardsOf(many));
+  assert.equal(r.files.length, 8); assert.equal(r.more, 3); assert.equal(r.files[0], 'agents/c0.md');
+  assert.deepEqual(brokenCardFiles(null), { files: [], more: 0 });
+  assert.deepEqual(brokenCardFiles({ count: 3, names: [] }), { files: [], more: 3 }, '이름을 못 받았어도 개수는 남는다');
+});
+
+test('L7: 안내는 누르는 단추(aria-expanded)이고 펼친 안에 다시 읽기 단추가 있다 — 사이드바 배선', async () => {
+  const { readFileSync } = await import('node:fs');
+  const layout = readFileSync(new URL('../app/c/[ws]/layout.jsx', import.meta.url), 'utf8');
+  assert.match(layout, /<BrokenCardsNote /, '레이아웃이 안내 컴포넌트를 쓴다');
+  const note = readFileSync(new URL('../app/c/[ws]/broken-cards-note.jsx', import.meta.url), 'utf8');
+  assert.match(note, /aria-expanded=\{open\}/); assert.match(note, /brokenCardFiles\(/); assert.match(note, /nav\.brokenCardsRetry/);
+  assert.doesNotMatch(note, /<p[^>]*title=/, '툴팁(<p title>)에만 의존하지 않는다 — 키보드·터치로 볼 수 없다');
+});

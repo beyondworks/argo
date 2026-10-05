@@ -20,3 +20,10 @@ export function brokenCardsOf(data) {
   if (!b || !Number.isFinite(b.count) || b.count < 1) return null;
   return { count: b.count, names: Array.isArray(b.names) ? b.names : [] };
 }
+
+/** 못 읽은 카드의 파일 위치 목록(2차 L7) — 이름마다 `agents/<이름>.md`(회사 폴더 기준). 앞 8개만 보이고 나머지는 개수로. */
+export function brokenCardFiles(broken, max = 8) {
+  const names = Array.isArray(broken?.names) ? broken.names : [];
+  const shown = names.slice(0, max);
+  return { files: shown.map((n) => `agents/${n}.md`), more: Math.max(0, (broken?.count ?? 0) - shown.length) };
+}
