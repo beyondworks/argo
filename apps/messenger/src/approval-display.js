@@ -122,7 +122,8 @@ export async function decideApproval({ update, reread }) {
   const res = await update();
   if (res?.error) return { result: 'error', message: res.error.message };
   if (res?.data?.length) return { result: 'done' };
-  const cur = await Promise.resolve().then(reread).catch(() => null);
+  let cur;
+  try { cur = await reread(); } catch (e) { return { result: 'error', message: e?.message || String(e) }; } // 다시 읽기가 실패하면 권한 없음이라고 하지 않는다(검수 L5)
   return cur?.status && cur.status !== 'pending' ? { result: 'already', status: cur.status } : { result: 'denied' };
 }
 /** 진행 중이면 다시 부르지 않는다(연타 — 두 번째 요청이 0행으로 잘못된 권한 오류를 냈다). 끝나면 다시 부를 수 있다 */

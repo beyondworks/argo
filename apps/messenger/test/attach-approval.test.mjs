@@ -59,6 +59,16 @@ test('MSG-06 첨부만 보낸 글이 실패하면 카드는 "첨부를 올리지
   assert.equal(d.snapshot().job, null); assert.deepEqual(d.snapshot().files, [], '지운 첨부는 입력창으로 돌아오지 않는다');
 });
 
+// 분리 검수 L6(2026-10-05): 파일은 올라갔는데 첨부 등록만 실패한 빈 글은 '지우기'가 거두지 않았다(조건이 '하나도 안 올라감') — 2분 뒤 숨지만 안 읽음·폰 아이콘 숫자에 1로 남았다.
+test('L6 파일은 올라갔고 첨부 등록만 실패한 빈 글도 지우기가 거둔다 — 등록된 첨부가 0개면', async () => {
+  const discards = [];
+  const d = createComposerDelivery(tr({ upload: async () => {}, attachment: async () => { throw new Error('insert failed'); }, discard: async (job) => { discards.push(job.messageId); } }));
+  d.setFiles([file('a.png')]); await d.send([]);
+  assert.equal(d.snapshot().job.files[0].uploaded, true, '파일은 올라갔다');
+  d.dismiss(); await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(discards, [7], '지우기 = 빈 글을 거둔다');
+});
+
 test('UX 판독 — "재시도 그만두기"가 보내지 못한 글을 지웠다 → 입력창으로 되돌린다(글·못 올린 파일), 쓰던 글은 그 뒤에', async () => {
   const d = createComposerDelivery(tr({ message: async () => { throw new TypeError('Failed to fetch'); } }));
   d.setText('보낼 글'); await d.send([{ kind: 'crew', id: 'p', name: '페퍼' }]);
@@ -80,7 +90,8 @@ test('MSG-07 결정이 0행이면 다시 읽어 이미 결정된 결재는 오�
   const update = async () => ({ data: [], error: null });
   assert.deepEqual(await decideApproval({ update, reread: async () => ({ status: 'approved' }) }), { result: 'already', status: 'approved' });
   assert.deepEqual(await decideApproval({ update, reread: async () => ({ status: 'pending' }) }), { result: 'denied' });
-  assert.deepEqual(await decideApproval({ update, reread: async () => { throw new Error('net'); } }), { result: 'denied' });
+  assert.deepEqual(await decideApproval({ update, reread: async () => { throw new Error('Failed to fetch'); } }), { result: 'error', message: 'Failed to fetch' }, '다시 읽기가 네트워크로 실패하면 권한 없음이 아니라 오류(검수 L5)');
+  assert.deepEqual(await decideApproval({ update, reread: async () => null }), { result: 'denied' }, '다시 읽어도 안 보이는 결재(RLS) = 권한 없음');
   assert.deepEqual(await decideApproval({ update: async () => ({ data: [{ id: 1 }], error: null }), reread: async () => null }), { result: 'done' });
   assert.deepEqual(await decideApproval({ update: async () => ({ data: null, error: { message: 'boom' } }), reread: async () => null }), { result: 'error', message: 'boom' });
 });

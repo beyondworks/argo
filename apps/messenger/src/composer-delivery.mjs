@@ -130,7 +130,8 @@ export function createComposerDelivery(transport, uuid = () => crypto.randomUUID
       const job = state.job;
       if (!job.body && job.files.length) {
         patch({ job: null });
-        if (job.messageId && transport.discard && job.files.every((item) => !item.uploaded)) Promise.resolve().then(() => transport.discard(job)).catch(() => {});
+        // 등록된 첨부가 0개면 거둔다 — 파일은 올라갔는데 첨부 등록만 실패한 빈 글도(검수 L6: 2분 뒤 숨지만 안 읽음·폰 아이콘 숫자에 1로 남았다)
+        if (job.messageId && transport.discard && job.files.every((item) => !item.done)) Promise.resolve().then(() => transport.discard(job)).catch(() => {});
         return;
       }
       const back = { job: null };
