@@ -56,7 +56,11 @@ export const workboard = {
       block('paragraph', { rich_text: rt('참고', { link: 'https://example.test/guide' }) }),
       block('table', { table_width: 2, has_column_header: true }, [block('table_row', { cells: [rt('단계'), rt('기한')] }), block('table_row', { cells: [rt('견적'), rt('1일')] })]),
     ], children: [{ id: 'w-1-1', title: '반론 대응', blocks: [block('quote', { rich_text: rt('비싸다 → 범위부터 다시') }), block('divider', {}), block('code', { rich_text: rt('price = base * 1.1'), language: 'javascript' })], children: [] }] },
-    { id: 'w-2', title: '회의록', blocks: [block('toggle', { rich_text: rt('9월 1주') }, [block('paragraph', { rich_text: rt('결정: 랜딩 개편') })]), block('image', { caption: rt('화이트보드'), type: 'file', file: { url: 'https://files.example.test/expiring.png' } })], children: [] },
+    { id: 'w-2', title: '회의록', blocks: [block('toggle', { rich_text: rt('9월 1주') }, [block('paragraph', { rich_text: rt('결정: 랜딩 개편') })]), block('image', { caption: rt('화이트보드'), type: 'file', file: { url: 'https://files.example.test/expiring.png' } }),
+      // 16차: 2열과 토글 제목 — 오피스 2열·토글 블록으로 옮긴다
+      block('column_list', {}, [block('column', {}, [block('paragraph', { rich_text: rt('잘된 점') })]), block('column', {}, [block('paragraph', { rich_text: rt('아쉬운 점') }), block('to_do', { rich_text: rt('다음 회의 안건'), checked: false })])]),
+      block('heading_2', { rich_text: rt('9월 2주'), is_toggleable: true }, [block('paragraph', { rich_text: rt('결정: 가격표 개편') })]),
+      block('bookmark', { caption: rt('회의 자료'), url: 'https://docs.example.test/deck' })], children: [] },
   ],
 };
 

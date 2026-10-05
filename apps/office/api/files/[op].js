@@ -3,11 +3,15 @@
 // OCR 전에 반드시 ① Supabase로 로그인을 확인하고(가짜 토큰은 401) ② 사람마다 시간당 한도(office_ocr_take, 60회)를 센다(넘으면 429) — 두 경로(바이트·문서함 파일) 모두.
 // env: OFFICE_OCR_URL + OFFICE_OCR_KEY(PaddleOCR 사이드카 — server/ocr.js 규칙) · VITE_SUPABASE_URL · VITE_SUPABASE_ANON_KEY
 //      정리(sweep): OFFICE_SUPABASE_SERVICE_KEY · CRON_SECRET(Vercel 크론이 Authorization: Bearer로 보낸다) · R2_*(server/r2.js r2FromEnv)
+// 공유 링크(15차, 로그인 없음 — 주소는 /f#<토큰>, 조각이라 공개 화면을 열 때도 서버로 가지 않는다): link = 이름·크기 보기, link-get = 5분짜리 내려받기 서명 주소. 서명 페이지(api/esign)와 같은 규칙 —
+//   토큰은 본문(POST)으로만 받아 접근 기록에 남지 않고, 형식이 틀리면 DB에 묻지 않으며, DB에는 토큰의 SHA-256만 묻는다(office_file_link_open, service_role).
+//   열 수 없는 이유(만료·끊김·지운 파일·없는 토큰)는 밖에 가르지 않고 모두 404 gone. 서명은 DB가 돌려준 키 하나로만 — 링크로는 그 파일 하나만 열린다.
+//   요청 제한: 서명 페이지와 같이 따로 두지 않는다(토큰 256비트 — 맞혀 볼 수 없다. 공개 열기는 DB 쓰기 0).
 import { ocrBytes, ocrProvider, OCR_MAX } from '../../server/ocr.js';
 import { clip } from '../../src/files/model.js';
 import { sweepStorage } from '../../server/sweep.js';
 import { r2FromEnv } from '../../server/r2.js';
-import { timingSafeEqual } from 'node:crypto';
+import { timingSafeEqual, createHash } from 'node:crypto';
 
 const env = process.env;
 const fail = (status, code) => Object.assign(new Error(code), { status, code });
@@ -67,6 +71,37 @@ const OPS = {
   },
 };
 
+/* ── 공유 링크(로그인 없음) ── */
+const LINK_TOKEN = /^[A-Za-z0-9_-]{40,64}$/; // src/files/links.js newLinkToken과 같은 모양
+const LINK_TTL = 300; // 내려받기 서명 주소 5분
+async function linkRow(token) {
+  if (typeof token !== 'string' || !LINK_TOKEN.test(token)) throw fail(404, 'gone'); // 형식이 틀린 토큰은 DB에 묻지 않는다
+  if (!env.VITE_SUPABASE_URL || !env.OFFICE_SUPABASE_SERVICE_KEY) throw fail(503, 'not_configured');
+  const key = env.OFFICE_SUPABASE_SERVICE_KEY;
+  const r = await fetch(`${env.VITE_SUPABASE_URL}/rest/v1/rpc/office_file_link_open`, { method: 'POST', headers: { apikey: key, authorization: `Bearer ${key}`, 'content-type': 'application/json' }, body: JSON.stringify({ p_hash: createHash('sha256').update(token).digest('hex') }) });
+  if (!r.ok) throw fail(502, 'db');
+  const t = await r.text();
+  const row = t ? JSON.parse(t) : null;
+  if (!row?.key) throw fail(404, 'gone');
+  return row;
+}
+const PUBLIC = {
+  /** 링크 화면 — 파일 이름·크기·형식·만료(R2 키는 돌려주지 않는다) */
+  async link({ token } = {}) { const row = await linkRow(token); return { name: row.name, size: Number(row.size) || 0, mime: row.mime || '', expiresAt: row.expires_at, org: row.org ?? null }; },
+  /** 내려받기 — 누를 때마다 토큰을 다시 확인하고 5분짜리 서명 주소(내려받기, 원래 이름) */
+  async 'link-get'({ token } = {}) {
+    const row = await linkRow(token);
+    const p = await r2FromEnv(env).presign({ method: 'GET', key: row.key, expires: LINK_TTL, attachment: true, filename: row.name });
+    return { url: p.url, expiresIn: p.expiresIn };
+  },
+};
+async function publicHandle(op, args) {
+  try { return json(await PUBLIC[op](args ?? {})); } catch (e) {
+    if (!e.status) console.error('[office files] link', op, e?.code ?? e?.message);
+    return json({ error: e.code ?? 'server' }, e.status ?? 500); // DB·저장소 원문은 밖에 보내지 않는다
+  }
+}
+
 /** 서버 정리(Vercel 크론 — Authorization: Bearer <CRON_SECRET>). 사람 계정으로는 부를 수 없다 */
 async function sweep(request) {
   try {
@@ -75,7 +110,7 @@ async function sweep(request) {
     const got = Buffer.from(/^Bearer (.+)$/.exec(request.headers.get('authorization') ?? '')?.[1] ?? ''), want = Buffer.from(secret);
     if (got.length !== want.length || !timingSafeEqual(got, want)) throw fail(401, 'unauthorized');
     const out = await sweepStorage({ url: env.VITE_SUPABASE_URL, key: env.OFFICE_SUPABASE_SERVICE_KEY, r2: r2FromEnv(env) });
-    console.log('[office files] sweep', out.objects, 'objects', out.left, 'left', out.rows, 'rows'); // 개수만
+    console.log('[office files] sweep', out.objects, 'objects', out.left, 'left', out.rows, 'rows', out.links, 'links'); // 개수만
     return json(out);
   } catch (e) {
     if (!e.status) console.error('[office files] sweep', e?.code ?? e?.message);
@@ -112,5 +147,9 @@ export async function GET(request) {
   if (op === 'sweep') return sweep(request); // 크론 전용 — 화면에서 부르지 않으므로 CORS를 붙이지 않는다
   return cors(request, op === 'config' ? await handle(request, 'config') : json({ error: 'method' }, 405));
 }
-export async function POST(request) { return cors(request, await handle(request, opOf(request), await request.json().catch(() => ({})))); }
+export async function POST(request) {
+  const op = opOf(request), body = await request.json().catch(() => ({}));
+  if (Object.hasOwn(PUBLIC, op)) return cors(request, await publicHandle(op, body)); // 공유 링크 — 로그인 없이(토큰이 권한)
+  return cors(request, await handle(request, op, body));
+}
 export async function OPTIONS(request) { return cors(request, new Response(null, { status: DESKTOP_ORIGINS.has(request.headers.get('origin')) ? 204 : 403 })); }

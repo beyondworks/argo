@@ -82,7 +82,7 @@ export default function CalendarWidget({ space, item, canEdit, setCfg, menu, onS
 
   const base = baseOf(space);
   const [sheet, setSheet] = useState(null), [ask, setAsk] = useState(null), [settings, setSettings] = useState(false);
-  const openTask = (x) => navigate(`${baseOf(x.space)}?open=${x.id}`);
+  const openTask = (x) => actions.openTask(x.vi ?? x); // 할 일도 그 자리에서 오른쪽 할 일 패널(유건 10/4)
   const open = (o) => (o.kind === 'task' ? openTask(o) : setSheet({ occ: o })); // 그 자리에서 오른쪽 패널(페이지 이동 없음)
   const openItem = (it) => (it.kind === 'task' ? openTask(it) : setSheet({ occ: it.src }));
   const openDay = (d) => navigate(`${base}/calendar?day=${d}`);

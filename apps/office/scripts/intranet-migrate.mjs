@@ -17,7 +17,7 @@ const q = (sql) => JSON.parse(execFileSync('sqlite3', ['-readonly', '-json', DB,
 
 const customers = q('select id, company, manager, phone, email, category, status, notes, address, account from notion_customers');
 const deals = q(`select id, title, customer_id as customerId, status, supply, vat, total, quote_date as quoteDate, contract_date as contractDate,
-  invoice_date as invoiceDate, paid_date as paidDate, notes, created from notion_deals order by coalesce(quote_date, contract_date, invoice_date, paid_date, created), id`);
+  invoice_date as invoiceDate, paid_date as paidDate, due_date as dueDate, notes, created from notion_deals order by coalesce(quote_date, contract_date, invoice_date, paid_date, created), id`);
 const plan = planMigration({ customers, deals });
 const expected = expectedTotals(plan);
 const allDates = plan.deals.flatMap((d) => Object.values(d.dates)).filter(Boolean).sort();
@@ -57,6 +57,8 @@ for (const d of plan.deals) {
     customer_id: customerId.get(d.customerKey), title: d.title, at: d.dates.quote,
     lines: [{ item_id: item, quantity: 1, unit_price: d.supply, tax_type: d.taxType, vat: d.vat }],
   });
+  // 입금예정일(14차)은 만들기와 따로 보낸다 — 이미 이관한 공간을 --resume으로 다시 돌려도 만들기 요청(번호·내용 고정)은 그대로 통과하고 날짜만 채워진다
+  if (d.dueOn) await write(keyOf('deal', d.sourceId, 'due'), 'order.update', { id: orderId, due_on: d.dueOn });
   const gross = d.supply + d.vat;
   if (d.stages.includes('contract')) await write(keyOf('deal', d.sourceId, 'contract'), 'order.confirm', { id: orderId, at: d.dates.contract });
   if (d.stages.includes('invoice') && gross > 0) await write(keyOf('deal', d.sourceId, 'invoice'), 'entry.create', { order_id: orderId, kind: 'invoice', amount: gross, vat: d.vat, note: '', at: d.dates.invoice });
@@ -70,7 +72,7 @@ for (const d of plan.deals) {
 const after = await rpc('office_business_read', { p_org: org });
 const report = await rpc('office_business_report', { p_org: org, p_from: allDates[0], p_to: allDates.at(-1), p_customer: null });
 const got = {
-  customers: after.customers.length, deals: after.orders.length, cancelled: after.orders.filter((o) => o.status === 'cancelled').length,
+  customers: after.customers.length, deals: after.orders.length, cancelled: after.orders.filter((o) => o.status === 'cancelled').length, due: after.orders.filter((o) => o.due_on).length,
   sales: report.metrics.sales, invoiced: report.metrics.invoiced, paid: report.metrics.paid, vat: report.metrics.vat,
 };
 const rows = Object.keys(expected).map((k) => [k, expected[k], got[k], expected[k] === got[k] ? '같음' : '다름']);

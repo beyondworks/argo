@@ -10,7 +10,7 @@ import { useMarketing, marketingError } from './marketing-data.js';
 import { defaultPeriod, validateFilters } from './dashboard-model.js';
 import { campaignCards, effectOf, linkedTotals } from './marketing-model.js';
 import { dealAmounts, dealStage } from './deal-model.js';
-import { Hide } from './Redact.jsx';
+import { Hide, HideIn, Redact } from './Redact.jsx';
 
 // 마케팅 한 화면(유건 9/29 "비전문가도 쓰게"): 기간 요약 → 캠페인 카드 → 목표. 카드를 누르면 광고비 기록과 연결된 거래가 한곳에 보인다.
 const label = (key, vars) => t(`mkt.${key}`, vars);
@@ -129,7 +129,7 @@ export default function Marketing({ space, business }) {
           <p className="mkt-card-meta">{card.channel} · <span className="mono">{card.starts_on} – {card.ends_on}</span></p>
           {report && <><Numbers stats={card.stats} /><Effect stats={card.stats} /></>}
         </article>)}</div>
-        {unlinked && Number(unlinked.orders) > 0 && Number(unlinked.sales) > 0 && <p className="bizui-muted mkt-unlinked">{label('unlinked', { n: count(unlinked.orders), sales: money(unlinked.sales) })}</p>}
+        {unlinked && Number(unlinked.orders) > 0 && Number(unlinked.sales) > 0 && <p className="bizui-muted mkt-unlinked"><HideIn text={label('unlinked', { n: count(unlinked.orders), sales: '\n' })} kind="amount">{money(unlinked.sales)}</HideIn></p>}
       </>}
       {(campaigns.length > 0 || data.goals.length > 0) && <Goals goals={data.goals} results={report?.goals} failed={!!reportError} campaigns={campaigns} blocked={blocked} launch={launch} />}
       {open && <CampaignSheet campaign={open} ready={!!report} data={data} business={business.data} space={space} blocked={blocked} busy={busy} period={filters} launch={launch} unlink={unlink} onClose={() => setOpenId(null)} />}
@@ -147,7 +147,7 @@ function Goals({ goals, results, failed, campaigns, blocked, launch }) {
       return <li key={goal.id}>
         <div className="mkt-goal-head"><strong>{goal.name}</strong><span className="dim small">{campaignName(goal.campaign_id)} · <span className="mono">{goal.starts_on} – {goal.ends_on}</span></span><button type="button" className="btn sm ghost" disabled={blocked} onClick={() => launch('goal', goal)}>{t('bizui.edit')}</button></div>
         <div className="mkt-bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(Math.min(ratio, 1) * 100)} aria-label={goal.name}><span style={{ width: `${Math.min(ratio, 1) * 100}%` }} /></div>
-        <p className="small">{result ? label('goalLine', { metric: label(`goal.${goal.metric}`), actual: goalValue(goal.metric, result.actual), target: goalValue(goal.metric, goal.target), pct: Math.round(ratio * 100) }) : failed ? '—' : t('biz.loading')}</p>
+        <p className="small">{result ? <Redact kind="amount">{label('goalLine', { metric: label(`goal.${goal.metric}`), actual: goalValue(goal.metric, result.actual), target: goalValue(goal.metric, goal.target), pct: Math.round(ratio * 100) })}</Redact> : failed ? '—' : t('biz.loading')}</p>
       </li>;
     })}</ul>}
   </>;

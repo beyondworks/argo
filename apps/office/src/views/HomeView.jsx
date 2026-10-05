@@ -49,7 +49,7 @@ function Card({ space, item, cfg, set, views, from, to, today }) {
     const recent = M.addDays(today, -7);
     return V.mergeItems([], tasks.filter((x) => !x.done_at || M.kstDay(x.done_at) >= recent), { from: '0000-01-01', to: '9999-12-31', undated: true });
   }, [tasks, today]);
-  const openItem = (it) => navigate(`${baseOf(it.space)}?open=${it.id}`);
+  const openItem = (it) => actions.openTask(it); // 할 일을 누르면 그 자리에서 오른쪽 할 일 패널(유건 10/4)
   const actions = useItemActions({ space, ctx, people, categories: [], onOpen: openItem, onNewEvent: () => navigate(`${base}/calendar?new=event`) });
   if (calView) {
     const cal = items.filter((it) => it.day).map((it) => ({ kind: 'task', key: it.key, id: it.id, title: it.title, done: it.done, space: it.space, all_day: true, start: M.kstStart(it.day), end: M.kstStart(M.addDays(it.day, 1)), vi: it })); // 기한 없는 할 일은 먼저 거른다 — 날짜 계산(addDays)이 오류를 내 홈 전체가 멈췄다(유건 10/2)

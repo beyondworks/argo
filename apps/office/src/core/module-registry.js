@@ -4,6 +4,7 @@
 const BUSINESS_ICONS = { customers: 'person', catalog: 'tag', orders: 'deal', inventory: 'box', payments: 'receipt', analytics: 'chart', marketing: 'megaphone', performance: 'target' };
 export const OFFICE_MODULES = [
   { id: 'stats', title: 'mod.stats', icon: 'layout', sizes: ['l', 'full'], defaultSize: 'full', spaces: ['me', 'org'], intro: 'top' },
+  { id: 'attention', title: 'mod.attention', icon: 'pin', sizes: ['s', 'm', 'l', 'full'], defaultSize: 'm', spaces: ['me', 'org'] }, // 챙길 것(18차) — 종 모양 알림함 대신(유건 결정 3)
   { id: 'approvals', title: 'mod.approvals', icon: 'stamp', sizes: ['s', 'm', 'l', 'full'], defaultSize: 'm', spaces: ['me', 'org'], stack: 1, link: '/approvals' },
   { id: 'mail', title: 'mod.mail', icon: 'mail', sizes: ['s', 'm', 'l', 'full'], defaultSize: 'm', spaces: ['me'], stack: 1, link: '/mail' },
   { id: 'calendar', title: 'mod.calendar', icon: 'calendar', sizes: ['s', 'm', 'l', 'full'], defaultSize: 'm', spaces: ['me', 'org'], link: '/calendar', minBody: 200, repeatable: true, anchor: true }, // minBody = 높이를 줄일 때 본문 최소(px) — 달력·그래프가 알아볼 수 있게
@@ -20,6 +21,12 @@ export const OFFICE_MODULES = [
 ];
 
 export const BUSINESS_MODULES = OFFICE_MODULES.filter((module) => module.businessTab);
+// 홈 기본 배치 — 저장된 배치가 없는 공간에만 쓴다(저장된 배치에 새 모듈은 숨긴 채 뒤에 붙는다 — layout.js mergeLayout).
+// 배치를 저장한 적 없는 기존 공간도 이 순서를 그대로 받으므로 기존 순서는 바꾸지 않고 '챙길 것'(18차)만 현황 바로 뒤에 끼운다(검수 LOW 2)
+export const HOME_DEFAULTS = {
+  me: [{ id: 'stats', size: 'full' }, { id: 'attention', size: 'm' }, { id: 'approvals', size: 'm' }, { id: 'mail', size: 'm' }, { id: 'todos', size: 'l' }, { id: 'pages', size: 's' }, { id: 'calendar', size: 'm' }, { id: 'work', size: 'm' }],
+  org: [{ id: 'stats', size: 'full' }, { id: 'attention', size: 'm' }, { id: 'approvals', size: 'm' }, { id: 'work', size: 'm' }, { id: 'outputs', size: 'l' }, { id: 'journal', size: 's' }, { id: 'decisions', size: 'full' }, { id: 'calendar', size: 'm' }, { id: 'todos', size: 'm' }],
+};
 export const CHART_MODULES = ['kpi', 'line', 'bar', 'donut', 'table'].map((id) => ({
   id, title: `biz.chart.${id}`, sizes: ['s', 'm', 'l', 'full'], defaultSize: id === 'table' ? 'full' : ['kpi', 'donut'].includes(id) ? 's' : 'l', icon: 'chart',
   ...({ line: { minBody: 168 }, bar: { minBody: 168 }, donut: { minBody: 176 } })[id], // 그래프 120px + 데이터 표 줄 + 여백

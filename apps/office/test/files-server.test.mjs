@@ -220,7 +220,7 @@ test('api/files sweep(MEDIUM 1): 화면 없이 서버가 정리 — 크론 비�
     assert.equal(calls.length, 0, '비밀이 틀리면 아무것도 부르지 않는다');
     const r = await files.GET(cron('s'.repeat(32)));
     assert.equal(r.status, 200);
-    assert.deepEqual(await r.json(), { objects: 3, left: 0, rows: 3 }, '없는 키 DELETE도 성공(실측 204)');
+    assert.deepEqual(await r.json(), { objects: 3, left: 0, rows: 3, links: 0 }, '없는 키 DELETE도 성공(실측 204)');
     assert.deepEqual([...r2.objects.keys()], ['o-1/files/keep.pdf']);
     assert.deepEqual(forgot.sort(), ['o-1/files/a.pdf', 'o-1/files/gone.pdf', 'u-2/docs/b/c.pdf']);
     assert.ok(calls.every((c) => c.init.headers.authorization === 'Bearer svc-key'));
@@ -232,10 +232,10 @@ test('정리 실행기: R2 삭제가 실패한 키는 행 정리에서 뺀다(de
   let forgot = null;
   const f = async (url, init = {}) => { if (/office_storage_sweep$/.test(url)) return new Response(JSON.stringify({ keys: ['a/ok', 'a/bad'] })); forgot = JSON.parse(init.body).p_keys; return new Response('1'); };
   const r2 = { del: async (k) => { if (k === 'a/bad') throw new Error('boom'); return true; } };
-  assert.deepEqual(await sweepStorage({ url: 'http://sb', key: 'k', r2 }, f), { objects: 1, left: 1, rows: 1 });
+  assert.deepEqual(await sweepStorage({ url: 'http://sb', key: 'k', r2 }, f), { objects: 1, left: 1, rows: 1, links: 0 });
   assert.deepEqual(forgot, ['a/ok']);
   const none = async (url) => { assert.match(url, /office_storage_sweep$/, '지울 것이 없으면 forget을 부르지 않는다'); return new Response('{"keys":[]}'); };
-  assert.deepEqual(await sweepStorage({ url: 'http://sb', key: 'k', r2 }, none), { objects: 0, left: 0, rows: 0 });
+  assert.deepEqual(await sweepStorage({ url: 'http://sb', key: 'k', r2 }, none), { objects: 0, left: 0, rows: 0, links: 0 });
 });
 
 /** 드라이브 가져오기 공통 준비 — 구글 문서 하나, 자리·확인·등록 경로 */

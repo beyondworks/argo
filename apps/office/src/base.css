@@ -229,6 +229,17 @@ html.nav-collapsed .side { visibility: hidden; }
 .top-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 .draft-badge { font-size: 11px; padding: 0 8px; height: 20px; display: inline-flex; align-items: center; border-radius: 6px; background: var(--mark-wash); box-shadow: inset 0 0 0 1px var(--border); color: var(--fg-2); white-space: nowrap; }
 .width-toggle[aria-pressed='true'] { color: var(--fg); background: var(--primary-soft); } /* 전체 너비가 켜져 있음 */
+/* 화면 전체 가리기(18차) — 켜지면 머리글 단추가 '가리는 중' 알약으로 바뀐다(한눈에 보이게). 좁은 화면은 글자 없이 채운 단추만 */
+.hide-all.on { color: var(--danger); } /* 켜짐 = 같은 자리 사선 그은 눈(eyeOff)·붉은색만(유건 10/4) */
+:root[data-shell] .topbar .hide-all.on[aria-pressed='true'] { box-shadow: none; background: none; } /* 셸의 눌림 모양(뉴모피즘 안쪽 그림자 등)도 빼고 색만 */
+/* 메일 제목·요약·본문과 첫 화면 글자(.ha)는 흐리게, 누르고 있는 동안(:active)만 보인다. 금액·연락처 같은 값은 Redact가 입자로 덮는다 */
+:root[data-hide-all] .ha { filter: blur(6px); user-select: none; -webkit-user-select: none; cursor: pointer; transition: filter 120ms ease-out; }
+:root[data-hide-all] .ha:active { filter: none; }
+:root[data-hide-all] svg .ha { filter: none; fill-opacity: 0; } /* 그래프 눈금 금액 — SVG 글자는 흐림 대신 감춘다(SVG 요소의 CSS 흐림은 브라우저마다 다르다). 그래프를 누르고 있으면 보인다 */
+:root[data-hide-all] svg:active .ha { fill-opacity: 1; }
+.ha-box { position: relative; display: flex; flex-direction: column; flex: 1; } /* 메일 본문 틀(iframe)을 감싼다 — 틀 안을 누르면 신호가 틀 문서로 가므로 */
+.ha-cover { position: relative; min-width: 0; min-height: 0; } /* 문서·파일 미리보기(PDF iframe·그림·글)를 감싼다 — 틀 모양은 그대로, 덮개 자리만 */
+:root[data-hide-all] .ha-box::after, :root[data-hide-all] .ha-cover::after { content: ''; position: absolute; inset: 0; } /* 가리는 동안 위에 덮개를 둔다: 누르기를 받고, 보는 동안에도 그대로 있어 손을 떼면 다시 흐려진다 */
 .save-status { font-size: 12px; color: var(--fg-3); display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .presence { display: inline-flex; align-items: center; }
 
@@ -391,6 +402,7 @@ body.module-moving, body.module-moving * { cursor: grabbing !important; user-sel
 .fold-n { flex: none; color: var(--fg-3); font-size: 12px; font-variant-numeric: tabular-nums; }
 .fold-main { min-width: 0; }
 .fold-kinds { margin-bottom: 16px; }
+.fold-tools { display: flex; justify-content: flex-end; margin-bottom: 12px; }
 .fold-none { padding: 24px 0; }
 .fold-sec { margin-bottom: 22px; }
 .fold-h { font-size: 12px; font-weight: 600; color: var(--fg-2); margin: 0 0 6px 2px; }
@@ -580,6 +592,7 @@ body.split-resizing { cursor: col-resize; user-select: none; }
 .sheet { width: min(var(--panel-w, 520px), 100vw); height: 100%; background: var(--float); box-shadow: inset 1px 0 0 var(--border); display: grid; grid-template-rows: auto minmax(0, 1fr) auto; animation: slide-in 260ms var(--ease-drawer); }
 .sheet-body { padding: 18px; overflow: auto; display: grid; gap: 18px; align-content: start; }
 .toast { position: fixed; left: 50%; bottom: max(20px, env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 70; display: flex; align-items: center; gap: 14px; padding: 10px 12px 10px 16px; border-radius: var(--rc); background: var(--primary); color: var(--primary-fg); font-size: 13px; animation: toast-in 220ms var(--ease-out); max-width: calc(100vw - 32px); }
+.ver-bar { bottom: calc(max(20px, env(safe-area-inset-bottom)) + 56px); z-index: 69; animation: none; } /* 새 버전 안내 — 보통 알림 바로 위에 남아 있다 */
 .toast-undo { font-weight: 620; text-decoration: underline; text-underline-offset: 3px; padding: 2px 4px; }
 @keyframes fade { from { opacity: 0; } }
 @keyframes pop { from { opacity: 0; transform: scale(0.97); } }
@@ -637,6 +650,7 @@ input[role='switch']:checked::after { transform: translateX(14px); background: v
 .set-card { background: var(--surface); border-radius: var(--rs); padding: 16px 18px; margin-bottom: 12px; display: grid; gap: 12px; }
 .set-card h2 { font-size: 14px; font-weight: 640; }
 .set-card .seg { justify-self: start; } /* 버튼 크기만큼만(카드 폭으로 늘어나 오른쪽이 비어 보였다) */
+.set-actions { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 /* 테마 — 모드(버튼 셋) · 셸(작은 창 여섯) · 색상(동그란 견본 일곱). 유건 9/30: "테마 더 작게" */
 .theme-rows { display: grid; gap: 12px; }
 .theme-row { display: grid; grid-template-columns: 56px minmax(0, 1fr); align-items: center; gap: 8px 12px; }
@@ -807,6 +821,15 @@ a.stat-card { transition: box-shadow 160ms cubic-bezier(.23, 1, .32, 1); }
 .doc-group .list-row.on { background: var(--secondary); }
 .doc-read { display: grid; gap: 12px; }
 .doc-read .prose { font-size: 13.5px; }
+.doc-read .md.doc-md { font-size: 14px; } /* 공용 문서 본문(16차 — 마크다운 보기) */
+.docs-find { display: flex; align-items: center; gap: 8px; max-width: 360px; margin-top: 14px; padding-left: 10px; border-radius: var(--rc); background: var(--bg); }
+.docs-find .input { flex: 1; padding-left: 0; background: transparent; }
+.docs-none { margin-top: 14px; }
+.doc-group-title { margin: 0; font: inherit; }
+.doc-group-head { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 6px 0 2px; border-radius: var(--rc); color: var(--fg-2); font-size: 12px; font-weight: 600; letter-spacing: 0.02em; }
+.doc-group-head small { font-weight: 500; }
+.doc-group-head:disabled { cursor: default; opacity: 1; }
+@media (hover: hover) { .doc-group-head:not(:disabled):hover { background: var(--wash); color: var(--fg); } }
 
 /* 페이지 부분 가림(유건 9/29) — 글자는 그대로 두고 먼지로 덮는다. 여러 줄에 걸쳐도 줄마다 덮이게 box-decoration-break, 누르고 있는 동안(:active)만 보인다 */
 .redact-text:not(:active) { color: transparent; border-radius: 3px; cursor: pointer; -webkit-box-decoration-break: clone; box-decoration-break: clone;

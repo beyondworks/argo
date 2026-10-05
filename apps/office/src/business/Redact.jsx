@@ -2,6 +2,7 @@
 // 인트라넷의 전체 가림(시머)과 같은 효과를 항목 단위로. 값 자체는 그대로 있고 화면에서만 덮는다.
 // 잠깐 보기는 왼쪽 버튼만 — 우클릭의 누름에 반응하면 가림이 풀리며 칸이 줄어 우클릭 신호가 표 칸으로 빠져 메뉴가 안 떴다(유건 제보 9/29).
 // 키보드: 값에 초점을 두고 메뉴 키(Shift+F10)로 메뉴, 가린 값은 Enter로 잠깐 보기(초점이 떠나면 다시 가림). 버튼 안에 있을 때는 focusable={false}.
+// 화면 전체 가리기(18차, core/hide-all.js)가 켜지면 따로 가리지 않은 값도 같은 모양·같은 손동작으로 가린다(이름·제목은 그대로 — redact-rule.js).
 import { useEffect, useRef, useState } from 'react';
 import { t, registerDict } from '../core/i18n.js';
 import { openMenu } from '../ui/Menu.jsx';
@@ -9,6 +10,8 @@ import './redact.css';
 import { REDACT_DICT } from './redact-i18n.js';
 import { redactHandlers, CELL_REG } from './cell-pick.js';
 import { isHidden, setHidden, useRedactStore } from './redact-store.js';
+import { useHideAll } from '../core/hide-all.js';
+import { isMasked } from './redact-rule.js';
 
 registerDict(REDACT_DICT); // 업무 화면 밖(회사 정보·직원 명부)에서도 쓰므로 쓰는 말은 여기서 등록한다
 
@@ -16,10 +19,14 @@ registerDict(REDACT_DICT); // 업무 화면 밖(회사 정보·직원 명부)에
 let dustP = null, dustM = null;
 const dust = () => (dustP ??= import('../ui/dust.js').then((m) => (dustM = m), (e) => { dustP = null; throw e; }));
 
-/** 값 하나 가림. cellKey = 칸 고르기(12차)로 여러 칸을 한 번에 가릴 때 쓰는 칸 이름(그 화면에서 하나뿐) — batch·item = 같은 쓰기를 한 번에 보낼 때(거래처 표 redact.bulk) */
-export function Redact({ on, onToggle, disabled, focusable = true, cellKey, batch, item, defer, children }) {
+/** 값 하나 가림. cellKey = 칸 고르기(12차)로 여러 칸을 한 번에 가릴 때 쓰는 칸 이름(그 화면에서 하나뿐) — batch·item = 같은 쓰기를 한 번에 보낼 때(거래처 표 redact.bulk).
+ *  kind = 무엇의 값인지(redact-rule.js) — 화면 전체 가리기(18차)가 켜지면 이름·제목(name·title)이 아닌 값은 따로 가리지 않았어도 가린다 */
+export function Redact({ on, onToggle, disabled, focusable = true, cellKey, batch, item, defer, kind, children }) {
   const [peek, setPeek] = useState(false);
-  const el = useRef(null), live = useRef(null), hidden = !!on && !peek;
+  const all = useHideAll();
+  const masked = isMasked({ on, all, kind });
+  const el = useRef(null), live = useRef(null), hidden = masked && !peek;
+  useEffect(() => { if (!masked) setPeek(false); }, [masked]); // 가림이 풀리면 잠깐 보기도 끝 — 다시 가릴 때 열린 채로 남지 않게
   live.current = { on: !!on, onToggle, batch, item };
   // 칸 목록 — 선택 막대·우클릭이 고른 칸 여러 개를 한 번에 가리고 풀 때 이 칸의 저장 방식(onToggle·batch)을 쓴다
   useEffect(() => {
@@ -31,16 +38,22 @@ export function Redact({ on, onToggle, disabled, focusable = true, cellKey, batc
   useEffect(() => { const node = el.current; if (node && (hidden || dustM)) dust().then((m) => m.show(node, hidden), () => {}); }, [hidden]);
   useEffect(() => () => dustM?.drop(el.current), []);
   // defer = 이 값이 든 행을 여러 개 고른 상태(11차) — 우클릭은 목록이 고른 행 전체 메뉴로 받는다. 고른 칸 위(data-cell-on)면 선택 상자가 고른 칸 전체 메뉴를 연다
-  const handlers = redactHandlers({ on, onToggle, disabled, focusable, defer }, setPeek, (event, items) => { if (!event.currentTarget?.hasAttribute?.('data-cell-on')) openMenu(event, items.map((x) => ({ ...x, label: t(x.label) }))); });
-  return <span ref={el} className={`redact${hidden ? ' on' : ''}`} data-sel-cell={cellKey} {...handlers} {...(on ? { title: t('bizui.redactedHint') } : {})}>
+  const handlers = redactHandlers({ on, masked, all, onToggle, disabled, focusable, defer }, setPeek, (event, items) => { if (!event.currentTarget?.hasAttribute?.('data-cell-on')) openMenu(event, items.map((x) => (x.heading ? { heading: t(x.heading) } : { ...x, label: t(x.label) })), { inner: true }); }); // 바깥 카드·줄 메뉴가 있으면 한 메뉴로 합친다(전체 가리기 중이면 안내 한 줄이 합쳐진다)
+  return <span ref={el} className={`redact${hidden ? ' on' : ''}`} data-sel-cell={cellKey} {...handlers} {...(masked ? { title: t('bizui.redactedHint') } : {})}>
     {hidden && <span className="sr-only">{t('bizui.redacted')}</span>}
     <span className="redact-v" aria-hidden={hidden || undefined}>{children}</span>
   </span>;
 }
 
+/** 문구 속 값 하나만 가린다(18차 화면 전체 가리기) — text는 값 자리에 줄바꿈을 넣어 만든 문구(t(key, { v: '\n' })), 나머지 props는 Redact로(보통 kind만 — 전체 가리기에서만 덮인다) */
+export function HideIn({ text, children, ...rest }) {
+  const [before, after = ''] = text.split('\n');
+  return <>{before}<Redact {...rest}>{children}</Redact>{after}</>;
+}
+
 /** 저장 자리가 따로 없는 값(금액·이메일·전화 등)의 가림 — 내 화면 가림(redact-store.js). k = 칸 이름(예: 'item:<id>:price') */
 const hideBatch = (items) => { setHidden(items.filter((x) => x.on).map((x) => x.k), true); setHidden(items.filter((x) => !x.on).map((x) => x.k), false); };
-export function Hide({ k, focusable, children }) {
+export function Hide({ k, focusable, kind, children }) {
   useRedactStore();
-  return <Redact on={isHidden(k)} cellKey={k} focusable={focusable} batch={hideBatch} item={{ k }} onToggle={() => setHidden([k], !isHidden(k))}>{children}</Redact>;
+  return <Redact on={isHidden(k)} cellKey={k} focusable={focusable} kind={kind} batch={hideBatch} item={{ k }} onToggle={() => setHidden([k], !isHidden(k))}>{children}</Redact>;
 }

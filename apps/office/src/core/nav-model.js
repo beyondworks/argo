@@ -3,16 +3,17 @@ import { BUSINESS_MODULES } from './module-registry.js';
 // 좌측 메뉴·업무 탭 순서(유건 9/30: "메뉴가 하드코딩이면 모듈식이 아니다") — 사람마다 저장한다(office_user_layouts nav:me · biztabs:me).
 // 메뉴는 내 공간·조직 공간 목록이 달라도 순서·숨김은 한 목록으로 둔다. 홈은 숨길 수 없고, 설정·휴지통은 아래 고정 칸이라 목록에 없다.
 export const NAV = {
-  me: ['home', 'calendar', 'business', 'contracts', 'files', 'mail', 'approvals', 'shared', 'knowhow', 'tools'],
-  org: ['home', 'calendar', 'business', 'contracts', 'files', 'work', 'approvals', 'decisions', 'outputs', 'journal', 'docs', 'people', 'company', 'perf', 'knowhow', 'tools'],
+  me: ['home', 'calendar', 'tasks', 'business', 'contracts', 'files', 'mail', 'approvals', 'shared', 'knowhow', 'tools'],
+  // 에이전트 조직도(agents, 17차)는 조직 공간에만 — 에이전트 작업 바로 앞. 내 공간은 다른 조직 전용 화면(작업·결정·직원)처럼 메뉴에 없다
+  org: ['home', 'calendar', 'tasks', 'business', 'contracts', 'files', 'agents', 'work', 'approvals', 'decisions', 'outputs', 'journal', 'docs', 'people', 'company', 'perf', 'knowhow', 'tools'],
 };
 export const SECTIONS = ['menu', 'pages', 'crews'];
 // 공간 주소 뒤에 붙는 화면(App.jsx route가 같은 목록을 쓴다) — 메뉴 이름 사전은 nav.<화면>, 아이콘은 NAV_ICON
-export const VIEWS = ['calendar', 'contracts', 'files', 'mail', 'shared', 'work', 'approvals', 'decisions', 'outputs', 'journal', 'docs', 'people', 'company', 'perf', 'knowhow', 'tools', 'trash', 'settings'];
-export const NAV_ICON = { home: 'home', calendar: 'calendar', business: 'chart', contracts: 'sign', files: 'folder', mail: 'mail', work: 'run', approvals: 'stamp', decisions: 'check', outputs: 'file', journal: 'book', docs: 'doc', people: 'person', company: 'building', perf: 'target', shared: 'share', knowhow: 'book', tools: 'box', trash: 'trash', settings: 'gear' };
+export const VIEWS = ['calendar', 'tasks', 'contracts', 'files', 'mail', 'shared', 'agents', 'work', 'approvals', 'decisions', 'outputs', 'journal', 'docs', 'people', 'company', 'perf', 'knowhow', 'tools', 'trash', 'settings'];
+export const NAV_ICON = { home: 'home', calendar: 'calendar', tasks: 'todo', business: 'chart', contracts: 'sign', files: 'folder', mail: 'mail', agents: 'hand', work: 'run', approvals: 'stamp', decisions: 'check', outputs: 'file', journal: 'book', docs: 'doc', people: 'person', company: 'building', perf: 'target', shared: 'share', knowhow: 'book', tools: 'box', trash: 'trash', settings: 'gear' };
 const LOCKED = new Set(['home']);
 // 두 목록을 합친 기본 순서 — 어느 공간에서 걸러 내도 그 공간의 기본 순서가 나온다(테스트가 잠근다)
-const ALL = ['home', 'calendar', 'business', 'contracts', 'files', 'mail', 'work', 'approvals', 'decisions', 'outputs', 'journal', 'docs', 'people', 'company', 'perf', 'shared', 'knowhow', 'tools'];
+const ALL = ['home', 'calendar', 'tasks', 'business', 'contracts', 'files', 'mail', 'agents', 'work', 'approvals', 'decisions', 'outputs', 'journal', 'docs', 'people', 'company', 'perf', 'shared', 'knowhow', 'tools'];
 
 /** a를 b 자리로 옮긴 새 배열 — 같은 자리·없는 id면 그대로 */
 export function moveId(list, a, b) {
@@ -26,12 +27,16 @@ export function moveId(list, a, b) {
 /** 저장값에 있는 순서 먼저(아는 id·처음 한 번만), 나머지는 기본 순서대로 뒤에 */
 const ordered = (defaults, ids) => [...new Set([...ids.filter((id) => defaults.includes(id)), ...defaults])];
 
-/** 메뉴 순서 — 저장값 순서를 지키고, 저장한 뒤에 새로 생긴 메뉴(예: 일정)는 기본 순서에서 바로 앞 메뉴 뒤에 끼운다(맨 아래로 밀리지 않게) */
+/** 두 메뉴가 같은 공간 목록에 함께 나오는가 */
+const together = (a, b) => Object.values(NAV).some((list) => list.includes(a) && list.includes(b));
+/** 메뉴 순서 — 저장값 순서를 지키고, 저장한 뒤에 새로 생긴 메뉴(예: 일정)는 기본 순서에서 바로 앞 메뉴 뒤에 끼운다(맨 아래로 밀리지 않게).
+ *  앞 메뉴는 같은 공간에 함께 나오는 것만 본다 — 조직도 앞의 내 공간 전용 '메일'을 따라가 엉뚱한 자리에 끼던 것(17차 A 검수 LOW-1) */
 function placeNew(defaults, ids) {
   const out = [...new Set(ids.filter((id) => defaults.includes(id)))];
+  if (!out.length) return [...defaults]; // 저장값이 없으면 기본 순서 그대로(하나씩 끼우면 공간 전용 메뉴가 밀린다)
   defaults.forEach((id, i) => {
     if (out.includes(id)) return;
-    const prev = defaults.slice(0, i).reverse().find((p) => out.includes(p));
+    const prev = defaults.slice(0, i).reverse().find((p) => out.includes(p) && together(p, id));
     out.splice(prev ? out.indexOf(prev) + 1 : 0, 0, id);
   });
   return out;

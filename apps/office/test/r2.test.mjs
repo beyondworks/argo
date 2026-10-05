@@ -2,7 +2,7 @@
 // 실제 R2 실측(2026-10-02, scripts/r2-smoke.mjs)과 같은 거절을 확인한다: 다른 크기·다른 형식·두 번째 PUT·만료 주소.
 import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { presignUrl, r2Client, r2FromEnv, checkKey, eachLimited } from '../server/r2.js';
+import { presignUrl, r2Client, r2FromEnv, checkKey, eachLimited, downloadName } from '../server/r2.js';
 import { startFakeR2 } from './helpers/fake-r2.mjs';
 
 // AWS 공식 문서 "Authenticating Requests: Using Query Parameters" 예시(실제 키가 아니라 문서의 예시 값이다)
@@ -29,6 +29,22 @@ test('PUT 서명 주소: 형식·크기·if-none-match를 서명에 넣고(5분)
   const g = await r2.presign({ method: 'GET', key: 'o-1/files/a.pdf' });
   assert.equal(new URL(g.url).searchParams.get('X-Amz-Expires'), '600');
   assert.equal(new URL(g.url).pathname, `/${fake.bucket}/o-1/files/a.pdf`);
+});
+
+// 이유(분리 검수 LOW-7): 받는 파일 이름을 UTF-16 단위로 200에서 자르면 경계에 걸린 이모지가 반만 남아 encodeURIComponent가 URIError — 공유 링크 내려받기가 500으로 끝났다
+// 2차 분리 검수 LOW-5: 확장자까지 잘리면 받은 파일이 열리지 않는다 — 넘으면 확장자를 남기고 앞 이름을 자른다
+test('받는 파일 이름: 200글자를 코드 포인트로 세고, 넘으면 확장자를 남긴 채 앞 이름을 자른다 — 경계의 이모지는 통째로 남거나 통째로 빠진다', async () => {
+  const r2 = r2Client(fake.config);
+  const disp = async (filename) => new URL((await r2.presign({ method: 'GET', key: 'o-1/files/a.pdf', attachment: true, filename })).url).searchParams.get('response-content-disposition');
+  const enc = (s) => `attachment; filename*=UTF-8''${encodeURIComponent(s)}`;
+  assert.equal(await disp(`${'가'.repeat(199)}😀끝.pdf`), enc(`${'가'.repeat(196)}.pdf`), '확장자 .pdf가 남는다');
+  assert.equal(await disp(`${'가'.repeat(195)}😀끝끝.pdf`), enc(`${'가'.repeat(195)}😀.pdf`), '196번째 이모지는 통째로 남는다');
+  assert.equal(await disp(`${'a'.repeat(195)}😀.pdf`), enc(`${'a'.repeat(195)}😀.pdf`), '딱 200글자면 그대로');
+  assert.equal(await disp(`${'a'.repeat(200)}😀.pdf`), enc(`${'a'.repeat(196)}.pdf`), '넘는 이모지는 빠진다');
+  assert.equal(await disp('x'.repeat(250)), enc('x'.repeat(200)), '확장자가 없으면 앞 200글자');
+  assert.equal(await disp(`${'b'.repeat(190)}.${'e'.repeat(20)}`), enc(`${'b'.repeat(190)}.${'e'.repeat(9)}`), '16글자 넘는 꼬리는 확장자로 보지 않는다');
+  assert.equal(await disp('도면 😀 최종.pdf'), enc('도면 😀 최종.pdf'));
+  assert.equal(downloadName(`${'가'.repeat(300)}.hwpx`).length, 200 - 5 + 5);
 });
 
 test('만료·키 검사: 1~3600초만, 앞 슬래시·..·빈 칸·제어 문자·1024바이트 넘는 키는 거절', async () => {

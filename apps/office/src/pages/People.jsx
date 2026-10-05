@@ -14,6 +14,8 @@ import { openMenu } from '../ui/Menu.jsx';
 import { Hide } from '../business/Redact.jsx';
 import { isHidden, setHidden } from '../business/redact-store.js';
 import { redactState } from '../business/cell-pick.js';
+import { redactMenu } from '../business/redact-rule.js';
+import { hideAllOn } from '../core/hide-all.js';
 import { useSelection, selProps } from '../core/selection.js';
 import { COMPANY_DICT } from './company-i18n.js';
 import './perf.css';
@@ -52,7 +54,7 @@ export default function People({ space }) {
       setHidden(changed, on); clear?.();
       showToast(t(on ? 'sel.redacted' : 'sel.unredacted', { n: changed.length }), { undo: () => setHidden(changed, !on) });
     };
-    return [!st.all && { label: t('bizui.redact'), icon: 'eyeOff', run: go(true) }, st.any && { label: t('bizui.unredact'), icon: 'eye', run: go(false) }];
+    return redactMenu([!st.all && { label: t('bizui.redact'), icon: 'eyeOff', run: go(true) }, st.any && { label: t('bizui.unredact'), icon: 'eye', run: go(false) }], hideAllOn(), t); // 전체 가리기 중이면 안내(18차 검수 M1)
   };
   useSelection('people', { value: sel, onChange: setSel, keys: keysAll, actions: (keys, clear) => {
     const ids = keys.filter((k) => rowIds.includes(k));
@@ -78,7 +80,7 @@ export default function People({ space }) {
           <th className="pp-hide-narrow">{t('people.col.agent')}</th><th className="pp-hide-narrow">{t('people.col.joined')}</th><th>{t('people.col.status')}</th></tr></thead>
           <tbody>{list.map((p) => <tr key={rowKey(p)} className={`row-link${p.status === 'left' ? ' left' : ''}`} {...selProps(sel, rowKey(p))} onContextMenu={rowMenu(p)} onClick={(e) => { if (!e.target.closest('input, .redact')) open(p); }}>
             {manager && <td className="pp-check"><input type="checkbox" className="co-row-check" checked={sel.has(rowKey(p))} onChange={() => toggleSel(rowKey(p))} aria-label={t('people.select', { name: p.name })} /></td>}
-            <td><span className="pp-name"><Hide k={`person:${rowKey(p)}:name`}><strong>{p.name}</strong></Hide>
+            <td><span className="pp-name"><Hide k={`person:${rowKey(p)}:name`} kind="name"><strong>{p.name}</strong></Hide>
               {p.account_role && <span className="badge" title={t('people.account')}>{t(`people.role.${p.account_role}`)}</span>}</span>
               {!p.id && <small className="dim">{t('people.accountOnly')}</small>}</td>
             <td>{p.title || <span className="dim">—</span>}</td>

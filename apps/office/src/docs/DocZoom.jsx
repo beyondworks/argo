@@ -140,7 +140,7 @@ export default function DocZoom({ title, html, pages = 1, pdf, onDownload, onClo
           onScroll={onScroll} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}>
           <div className="doc-zoom-pages" style={{ width: PAGE_W * zv }}>
             {pdf && !pdfPages ? <div className="doc-zoom-sheet boot" aria-busy="true" style={{ width: PAGE_W * zv, height: PAGE_H * zv }} />
-              : sheets.map((s, i) => <div key={i} className="doc-zoom-sheet" style={{ width: PAGE_W * zv, height: s.h * zv }}>
+              : sheets.map((s, i) => <div key={i} className="doc-zoom-sheet ha ha-cover" style={{ width: PAGE_W * zv, height: s.h * zv }}>
                 {s.src ? <img src={s.src} alt={t('docs.zoom.page', { n: i + 1, total: count })} draggable={false} />
                   : <iframe title={t('docs.zoom.page', { n: i + 1, total: count })} srcDoc={html} sandbox="allow-same-origin" tabIndex={-1} style={{ width: PAGE_W, height: PAGE_H * pages, transform: `scale(${zv}) translateY(${-i * PAGE_H}px)` }} />}
               </div>)}

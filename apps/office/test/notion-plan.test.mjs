@@ -6,6 +6,7 @@ import { getSchema } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import { TaskList } from '@tiptap/extension-task-list';
 import { TaskItem } from '@tiptap/extension-task-item';
+import { LINK, PAGE_BLOCKS } from '../src/pages/page-blocks.js';
 import * as F from '../scripts/fixtures/notion-sample.mjs';
 import { planAll, normalizeEntry, isEvent, planEvent, planTask, blocksToDoc, stableId } from '../scripts/notion-plan.mjs';
 
@@ -46,6 +47,26 @@ test('일정·할 일 가르기: 시각이나 장소가 있으면 일정(종일�
   assert.equal(ev.source, 'notion'); assert.equal(ev.source_id, 'c-1');
 });
 
+// 이유(유건 10/4 할 일 속성): 상태·카테고리(Parent Task)·우선순위를 메모 글자가 아니라 할 일 칸으로 옮긴다. 원래 Notion 메모는 note에 그대로,
+// 오피스에 칸이 없는 것(담당 에이전트·자동화·출처)만 메모 첫 줄에 남긴다. 예정일~마감일은 시작일·기한.
+test('할 일 칸 이관: 상태·우선순위·분류 이름·시작일, 메모는 원래 Notion 메모 그대로', () => {
+  const { plan, summary } = run();
+  const by = (title) => plan.tasks.find((t) => t.title === title);
+  const landing = by('랜딩 문구 수정'), proposal = by('제안서 초안'), ideas = by('아이디어 모음'), tax = by('세금계산서 확인');
+  assert.deepEqual([landing.status, landing.priority, landing.category, landing.starts_on, landing.due_on], ['todo', 1, '개발', null, '2026-09-03'], 'Completed는 끝낸 날짜로, 상태 칸은 할 일');
+  assert.ok(landing.done_at);
+  assert.equal(landing.note, '[노션에서 옮김] 담당: claude_code', '칸이 없는 담당 에이전트만 남는다');
+  assert.deepEqual([proposal.status, proposal.priority, proposal.category, proposal.starts_on, proposal.due_on], ['doing', 2, '제안서', '2026-09-20', '2026-09-25'], 'In Progress → 진행 중, Category 선택값, 예정일~마감일');
+  assert.equal(proposal.note, '1차 초안까지', '원래 Notion 메모 그대로');
+  assert.deepEqual([ideas.status, ideas.category, ideas.due_on], ['hold', null, null], 'Pending → 보류');
+  assert.equal(tax.note, '', '메모·남길 칸이 없으면 빈 메모');
+  for (const t of plan.tasks) assert.doesNotMatch(t.note, /상태:|카테고리:|우선순위:/, '상태·카테고리·우선순위는 메모 글자로 넣지 않는다');
+  assert.equal(summary.target.taskCategories, 2);
+  const e = normalizeEntry({ id: 'x', properties: { Date: { date: { start: '2026-09-10' } }, Status: { status: { name: 'Not Started' } }, 우선순위: { select: { name: 'Low' } } } });
+  assert.deepEqual([planTask(e, 'o', NOW).status, planTask(e, 'o', NOW).priority], ['todo', 3]);
+  assert.equal(planTask(normalizeEntry({ id: 'y', properties: { Status: { status: { name: '모르는 값' } } } }), 'o', NOW).status, 'todo');
+});
+
 test('회사 정보: 분류 이름 → 오피스 분류, 서식 칸 key는 처음 나온 항목만(두 번째 전화는 자유 항목)', () => {
   const c = run().plan.company;
   const by = (l) => c.find((x) => x.label === l);
@@ -60,18 +81,45 @@ test('평가 레포트: 범위·대상 유형·기간 글·점수 반올림, 에
   assert.deepEqual([y.subject_kind, y.subject_type, y.from, y.author_name, y.created_at], ['crew', 'agent', '2025-01-01', '효원', '2026-09-14T12:30:00.000Z']);
 });
 
-test('워크보드: 트리 구조 유지, 본문은 오피스 편집기 스키마에 맞는 문서(링크는 주소 글자로, 표·그림은 글자로 세어 보고)', () => {
+// 16차(유건 10/4): 예전에는 토글을 굵은 문단, 콜아웃을 인용, 표를 '|'로 이은 글줄, 2열을 풀어 놓은 블록, 링크를 '글 (주소)' 글자로 바꿨다.
+// 이제 오피스 편집기에 같은 블록이 있으니 그대로 옮긴다 — 검사는 편집기와 같은 스키마(src/pages/page-blocks.js)로 한다.
+test('워크보드: 트리 구조 유지, 본문은 오피스 편집기 스키마에 맞는 문서(토글·콜아웃·표·2열·링크는 같은 블록으로, 그림만 글자로 세어 보고)', () => {
   const { plan, summary } = run();
   const [root, playbook, child, minutes] = plan.pages;
   assert.equal(root.parent, null); assert.equal(playbook.parent, root.id); assert.equal(child.parent, playbook.id); assert.equal(minutes.parent, root.id);
   assert.ok(playbook.position < minutes.position, '형제 순서 유지');
-  const schema = getSchema([StarterKit.configure({ link: false }), TaskList, TaskItem.configure({ nested: true })]);
+  const schema = getSchema([StarterKit.configure({ link: LINK }), TaskList, TaskItem.configure({ nested: true }), ...PAGE_BLOCKS]);
   for (const p of plan.pages) schema.nodeFromJSON(p.content).check(); // 오피스 편집기가 그대로 연다
+  const nodes = playbook.content.content, find = (type, list = nodes) => list.find((n) => n.type === type);
   const text = JSON.stringify(playbook.content);
-  assert.match(text, /참고 \(https:\/\/example\.test\/guide\)/);
+  assert.doesNotMatch(text, /\(https:\/\/example\.test\/guide\)/, '주소를 글자로 덧붙이지 않는다');
+  assert.deepEqual(find('paragraph', nodes.filter((n) => JSON.stringify(n).includes('참고'))).content[0], { type: 'text', text: '참고', marks: [{ type: 'link', attrs: { href: 'https://example.test/guide' } }] });
   assert.match(text, /"taskItem","attrs":\{"checked":true\}/);
-  assert.deepEqual(summary.textOnlyBlocks, { table: 1, image: 1 });
+  assert.deepEqual(find('callout'), { type: 'callout', attrs: { icon: 'info' }, content: [{ type: 'paragraph', content: [{ type: 'text', text: '가격표는 회사 정보 화면' }] }] }, '콜아웃은 콜아웃으로(💡 → 안내 아이콘), 이모지 글자는 넣지 않는다');
+  const table = find('table');
+  assert.deepEqual(table.content.map((r) => r.content.map((c) => c.type)), [['tableHeader', 'tableHeader'], ['tableCell', 'tableCell']], '첫 줄 머리 행');
+  assert.equal(table.content[1].content[1].content[0].content[0].text, '1일');
+  const m = minutes.content.content;
+  assert.deepEqual(m[0], { type: 'toggle', attrs: { open: false }, content: [{ type: 'paragraph', content: [{ type: 'text', text: '9월 1주' }] }, { type: 'paragraph', content: [{ type: 'text', text: '결정: 랜딩 개편' }] }] }, '토글은 접힌 토글로(굵은 문단 아님)');
+  const cols = find('columns', m);
+  assert.deepEqual(cols.content.map((c) => c.content.map((n) => n.type)), [['paragraph'], ['paragraph', 'taskList']], '2열은 칸마다 블록 그대로');
+  assert.deepEqual(m.find((n) => n.type === 'toggle' && n.content[0].type === 'heading').content.map((n) => n.type), ['heading', 'paragraph'], '노션 토글 제목 → 제목이 첫 줄인 토글');
+  assert.deepEqual(m.at(-1).content.map((n) => [n.text, n.marks?.[0]?.attrs?.href ?? null]), [['회의 자료 ', null], ['https://docs.example.test/deck', 'https://docs.example.test/deck']], '북마크 주소는 링크로');
+  assert.deepEqual(summary.textOnlyBlocks, { image: 1 }, '표는 이제 글자로 옮기지 않는다');
   assert.deepEqual(blocksToDoc([{ type: 'synced_block', synced_block: {}, children: [{ type: 'paragraph', paragraph: { rich_text: [{ plain_text: '안' }] } }] }]).map((n) => n.type), ['paragraph'], '모르는 블록은 안의 글자를 살린다');
+});
+
+test('이관 블록 변환: 칸 하나뿐인 2열은 블록만, 노션 안쪽 주소는 링크가 아니라 글자, 첫 칸 머리(has_row_header), 짧은 줄은 빈 칸으로 채운다', () => {
+  const rt = (s, link) => [{ plain_text: s, href: link ?? null, annotations: {} }];
+  const one = blocksToDoc([{ type: 'column_list', column_list: {}, children: [{ type: 'column', column: {}, children: [{ type: 'paragraph', paragraph: { rich_text: rt('혼자') } }] }] }]);
+  assert.deepEqual(one.map((n) => n.type), ['paragraph']);
+  const [p] = blocksToDoc([{ type: 'paragraph', paragraph: { rich_text: rt('다른 페이지', '/0a1b2c3d') } }]);
+  assert.deepEqual(p.content, [{ type: 'text', text: '다른 페이지' }], '노션 안쪽 주소·javascript: 같은 주소는 링크로 만들지 않는다');
+  assert.equal(blocksToDoc([{ type: 'paragraph', paragraph: { rich_text: rt('x', 'javascript:alert(1)') } }])[0].content[0].marks, undefined);
+  const [t2] = blocksToDoc([{ type: 'table', table: { table_width: 3, has_column_header: false, has_row_header: true }, children: [{ type: 'table_row', table_row: { cells: [rt('이름'), rt('값')] } }] }]);
+  assert.deepEqual(t2.content[0].content.map((c) => c.type), ['tableHeader', 'tableCell', 'tableCell'], '첫 칸 머리, 모자란 칸은 빈 칸');
+  const schema = getSchema([StarterKit.configure({ link: LINK }), TaskList, TaskItem.configure({ nested: true }), ...PAGE_BLOCKS]);
+  schema.nodeFromJSON({ type: 'doc', content: [t2] }).check();
 });
 
 test('실행기 시험 실행(--fixture): 네트워크·토큰 없이 계획 건수만 내고 쓰지 않는다', () => {

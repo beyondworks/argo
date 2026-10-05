@@ -9,5 +9,5 @@ const url = process.env.OFFICE_SUPABASE_URL || process.env.VITE_SUPABASE_URL, ke
 if (!url || !key) { console.error('VITE_SUPABASE_URL(또는 OFFICE_SUPABASE_URL)·OFFICE_SUPABASE_SERVICE_KEY 가 필요합니다(값은 출력하지 않음)'); process.exit(2); }
 try {
   const out = await sweepStorage({ url, key, r2: r2FromEnv(process.env) });
-  console.log(`정리: 객체 ${out.objects}개(못 지움 ${out.left}개) · 행 ${out.rows}개`);
+  console.log(`정리: 객체 ${out.objects}개(못 지움 ${out.left}개) · 행 ${out.rows}개 · 만료·끊은 공유 링크 ${out.links}개`);
 } catch (e) { console.error('정리 실패:', e.code ?? e.message); process.exit(1); }

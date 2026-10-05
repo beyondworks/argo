@@ -29,7 +29,7 @@ export function Palette({ open, onClose, space }) {
     const pg = pages.filter((p) => !p.template && (p.space === space || space === 'me') && hit(p.title || t('page.untitled'))).slice(0, 6)
       .map((p) => ({ id: p.id, label: p.title || t('page.untitled'), icon: p.restricted ? 'lock' : 'doc', group: 'pages', run: () => navigate(`${baseOf(p.space)}/p/${p.id}`) }));
     const ml = space === 'me' && needle ? mails.filter((m) => hit(m.subject) || hit(m.from)).slice(0, 4)
-      .map((m) => ({ id: m.id, label: m.subject, hint: m.from, icon: 'mail', group: 'mail', run: () => navigate(`/me/mail/${m.id}`) })) : [];
+      .map((m) => ({ id: m.id, label: m.subject, hint: m.from, icon: 'mail', group: 'mail', mask: true, run: () => navigate(`/me/mail/${m.id}`) })) : []; // mask: 전체 가리기 중 흐림(유건 10/4)
     return [...pg, ...ml, ...cmds];
   }, [open, q, space, pages, mails, more]);
 
@@ -56,7 +56,7 @@ export function Palette({ open, onClose, space }) {
             last = r.group;
             return [head, <button key={`${r.group}-${r.id}`} id={`pal-${i}`} type="button" role="option" aria-selected={i === idx} className={`palette-row${i === idx ? ' on' : ''}`}
               onPointerMove={() => setIdx(i)} onClick={() => run(r)}>
-              <Icon name={r.icon} size={14} /><span className="palette-label">{r.label}</span>{r.hint && <span className="palette-hint">{r.hint}</span>}{r.shortcut && <kbd>{r.shortcut}</kbd>}
+              <Icon name={r.icon} size={14} /><span className={`palette-label${r.mask ? ' ha' : ''}`}>{r.label}</span>{r.hint && <span className={`palette-hint${r.mask ? ' ha' : ''}`}>{r.hint}</span>}{r.shortcut && <kbd>{r.shortcut}</kbd>}
             </button>];
           })}
         </div>

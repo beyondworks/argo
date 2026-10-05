@@ -5,12 +5,14 @@ import { registerDict, t, useLang } from '../core/i18n.js';
 import { SELECT_DICT } from './select-i18n.js';
 import { CELLS } from '../core/selection.js';
 import { cellActions, setCells } from './marquee.js';
+import { useHideAll } from '../core/hide-all.js';
 import './selection.css';
 
 registerDict(SELECT_DICT);
 
 export default function SelectionBar({ id, scope }) {
   useLang();
+  useHideAll(); // 전체 가리기를 켜고 끄면 동작 목록을 다시 만든다(가리기 중에는 쓰기 대신 안내, 2차 검수 LOW-A)
   const cells = id === '__cells'; // 칸 선택(12차) — 개수는 칸 수, 동작은 가리기·가림 해제
   if (!cells && !scope) return null;
   const keys = cells ? [...CELLS.keys] : [...scope.get()], clear = () => (cells ? setCells(new Set()) : scope.set(new Set()));
@@ -20,7 +22,7 @@ export default function SelectionBar({ id, scope }) {
   // vw-selbar = 셸(리퀴드·뉴모피즘)이 떠 있는 막대에 주는 모양(themes.css)을 그대로 받는다
   return <div className="sel-bar vw-selbar" role="toolbar" aria-label={label}>
     <strong>{label}</strong>
-    {acts.map((a) => <button key={a.label} type="button" className={`btn sm${a.danger ? ' danger-text' : ''}`} disabled={a.disabled} onClick={(e) => a.run(keys, clear, e)}>{a.icon && <Icon name={a.icon} size={13} />}{a.label}</button>)}
+    {acts.map((a) => a.heading ? <span key={a.heading} className="dim small">{a.heading}</span> : <button key={a.label} type="button" className={`btn sm${a.danger ? ' danger-text' : ''}`} disabled={a.disabled} onClick={(e) => a.run(keys, clear, e)}>{a.icon && <Icon name={a.icon} size={13} />}{a.label}</button>)}
     <button type="button" className="icon-btn sm" aria-label={t('sel.clear')} title={t('sel.clear')} onClick={clear}><Icon name="x" size={14} /></button>
   </div>;
 }

@@ -1,6 +1,7 @@
 // 크루에게 맡기기 — 보낼 글 모양(유건 9/29 확정). 외부 자료는 지시와 분리하고, 본문은 8천 자·메시지 상한 안에서만 싣는다.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { composeAssign as compose, docText, excerpt, EXCERPT_MAX, BODY_BUDGET, SOURCES } from '../src/core/crew-assign.js';
 
 import { t, setLang } from '../src/core/i18n.js';
@@ -162,4 +163,46 @@ test('고르면 "@이름 "으로 바꾸고 커서는 그 뒤 — 뒤에 이미 �
   const text = '결과를 @오 넘겨', caret = 6;
   assert.deepEqual(putMention(text, mentionAt(text, caret), caret, '오길비'), { text: '결과를 @오길비 넘겨', caret: 9 });
   assert.deepEqual(putMention('@', { start: 0, q: '' }, 1, '울프'), { text: '@울프 ', caret: 4 });
+});
+
+// 이유(보안, 17차): meta.source는 게이트웨이가 그 턴의 풀 오토를 끄는 표지다 — 루트 src/gateway/msgr-handoff.mjs isOfficeSource가
+// office_로 시작하는 값만 오피스 글로 본다. 새 항목 종류를 더하며 이 접두사를 빠뜨리면 메일·거래처 같은 외부 자료가 풀 오토 턴으로 들어간다
+test('모든 SOURCES 값은 office_로 시작한다 — 새 종류(거래·거래처·일정·견적/계약·회사 정보)도', () => {
+  for (const [kind, source] of Object.entries(SOURCES)) assert.ok(source.startsWith('office_'), `${kind} → ${source}`);
+  for (const kind of ['deal', 'customer', 'event', 'doc', 'company']) assert.ok(SOURCES[kind], `${kind} 출처가 있어야 한다`);
+});
+
+test('항목 종류마다 표지 이름(ko·en)과 맡기기 창 칩 아이콘이 있다 — 빠지면 "[crew.msg.kind.deal]"이 크루에게 가고 칩이 빈 칸이 된다', async () => {
+  const { CREW_ASSIGN_DICT } = await import('../src/core/crew-assign-i18n.js');
+  const { readFileSync } = await import('node:fs');
+  const sheet = readFileSync(new URL('../src/ui/Dialogs.jsx', import.meta.url), 'utf8');
+  const chip = /\{ (mail: 'mail'[^}]*) \}\[i\.kind\]/.exec(sheet)?.[1] ?? '';
+  for (const kind of Object.keys(SOURCES)) {
+    const pair = CREW_ASSIGN_DICT[`crew.msg.kind.${kind}`];
+    assert.ok(pair?.[0] && pair?.[1], `crew.msg.kind.${kind}`);
+    assert.match(chip, new RegExp(`\\b${kind}: '\\w+'`), `칩 아이콘 ${kind}`);
+  }
+});
+
+test('거래를 맡기면 [거래] 머리 아래 화면이 뽑은 글자가 붙고 meta.source는 office_deal', () => {
+  const { body, meta } = composeAssign({ instruction: '정리해 줘', items: [{ kind: 'deal', id: 'o1', label: '10월 납품', text: '거래처: 한빛' }] });
+  assert.match(body, /\[거래\] 10월 납품\n거래처: 한빛\n--- 외부 자료 끝 ---$/);
+  assert.deepEqual(meta, { source: 'office_deal', office_ref: { kind: 'deal', id: 'o1' } });
+});
+
+// 이유(유건 10/4 결정): 가린 값도 맡기기 글에 들어간다(가림은 화면용) — 사용자가 알 수 있게 맡기기 창에 한 줄. 가릴 수 있는 값이 있는 항목이거나 전체 가리기 중일 때만
+test('맡기기 창 "가린 값도 함께 보냅니다" 안내: 가릴 값이 있는 종류(거래·거래처·회사 정보·견적)거나 전체 가리기 중일 때', async () => {
+  const { maskedNote } = await import('../src/core/crew-assign.js');
+  for (const kind of ['deal', 'customer', 'company', 'doc']) assert.equal(maskedNote([{ kind }], false), true, kind);
+  for (const kind of ['page', 'record', 'event', 'file', 'mail']) assert.equal(maskedNote([{ kind }], false), false, kind);
+  assert.equal(maskedNote([{ kind: 'mail' }], true), true, '전체 가리기 중이면 메일 제목·본문도 가려져 있었다');
+  assert.equal(maskedNote([], true), false, '보낼 항목이 없으면 안내도 없다');
+});
+
+// 이유(유건 10/4 결정): ⌘K 검색 결과의 메일 제목·보낸 사람도 전체 가리기 중에는 흐린다(회의 중 검색창을 열 때)
+test('검색창 메일 결과는 가림 표시(ha)', () => {
+  const src = readFileSync(new URL('../src/ui/Palette.jsx', import.meta.url), 'utf8');
+  assert.match(src, /group: 'mail'[^\n]*mask: true/);
+  assert.match(src, /palette-label\$\{r\.mask \? ' ha' : ''\}/);
+  assert.match(src, /palette-hint\$\{r\.mask \? ' ha' : ''\}/);
 });

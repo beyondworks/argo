@@ -5,7 +5,7 @@ import * as SAMPLE from '../data/sample.js';
 import { configured, getClient, devPasswordLogin } from './supabase.js';
 import { isDesktop } from './platform.js';
 import { restore, persist, setStorageScope } from './save.js';
-import { isSameUserEcho } from './auth-events.js';
+import { isSameUserEcho, switchNeedsReload } from './auth-events.js';
 
 export let SPACES = SAMPLE.SPACES;
 export let ME = SAMPLE.ME;
@@ -19,7 +19,7 @@ export const useSession = () => useSyncExternalStore((l) => { listeners.add(l); 
 export const canManage = (key) => { const s = SPACES.find((x) => x.key === key); return s?.kind === 'me' || s?.role === 'owner' || s?.role === 'admin'; };
 
 const CACHE = 'argo-office-session';
-let applying = 0, spacesAt = 0;
+let applying = 0, spacesAt = 0, pageUid = null; // pageUid: 이 페이지에서 처음 데이터를 읽은 계정(auth-events.js switchNeedsReload)
 
 /** 내가 속한 조직(퇴사·삭제 제외) → 공간. 조직 키는 주소에 쓰는 slug, 서버 키는 id */
 async function loadSpaces(sb, me) {
@@ -32,8 +32,12 @@ async function loadSpaces(sb, me) {
 }
 
 async function apply(sb, session) {
-  const request = ++applying;
   const uid = session?.user.id ?? null;
+  // 다른 계정 — 앞 계정 데이터가 남은 메모리를 버린다. 다시 불러오기 직전까지 끝나는 앞 계정 화면의 늦은 읽기가 앞 계정 초안에 새 계정 목록을 쓰지 않게
+  // 저장 범위를 비우고(store.update가 거절) 화면을 내린 뒤 다시 불러온다(10/4 4차 검수 L1)
+  if (switchNeedsReload(pageUid, uid)) { setStorageScope(null); mode = 'loading'; emit(); location.reload(); return; }
+  if (uid) pageUid ??= uid;
+  const request = ++applying;
   mode = 'loading'; setStorageScope(uid); emit();
   const [{ activateDraftScope }, { activateSyncScope }] = await Promise.all([import('./store.js'), import('./sync.js')]);
   if (request !== applying) return;
@@ -65,12 +69,14 @@ export async function initSession() {
   const { data } = await sb.auth.getSession();
   await apply(sb, data.session);
   sb.auth.onAuthStateChange((event, session) => {
-    if (event === 'INITIAL_SESSION' || event === 'TOKEN_REFRESHED') return;
+    // 무시하는 두 사건에도 다른 계정이 실려 오면(페이지를 여는 사이 다른 탭이 로그인) 다시 불러오기로 넘긴다(10/4 4차 검수 L2)
+    if (event === 'INITIAL_SESSION' || event === 'TOKEN_REFRESHED') { if (switchNeedsReload(pageUid, session?.user?.id ?? null)) apply(sb, session); return; }
     if (!isSameUserEcho(event, session, { signedIn: mode === 'signedIn', uid: ME.id })) { apply(sb, session); return; }
     // 탭 복귀: 앱은 그대로 두고 조직 목록만 1분에 한 번 확인 — 초대·퇴사로 바뀌었을 때만 다시 적용한다(분리 검수 M6)
     if (Date.now() - spacesAt < 60_000) return;
     spacesAt = Date.now();
-    loadSpaces(sb, ME).then((spaces) => { if (JSON.stringify(spaces) !== JSON.stringify(SPACES)) apply(sb, session); }).catch(() => {});
+    // 확인하는 사이 로그아웃·계정 전환이 지나갔으면 붙잡아 둔 옛 세션으로 되살리지 않는다(10/4 4차 검수 L3)
+    loadSpaces(sb, ME).then((spaces) => { if (mode === 'signedIn' && ME.id === session?.user?.id && JSON.stringify(spaces) !== JSON.stringify(SPACES)) apply(sb, session); }).catch(() => {});
   });
 }
 

@@ -9,6 +9,8 @@ import { SCOPES, CELLS, emit, activeScope, startKind, blockOf } from '../core/se
 import { openMenu } from './Menu.jsx';
 import { showToast } from './Overlay.jsx';
 import { CELL_REG, cellPlan } from '../business/cell-pick.js';
+import { redactMenu } from '../business/redact-rule.js';
+import { hideAllOn } from '../core/hide-all.js';
 import { SELECT_DICT } from './select-i18n.js';
 import { hits, combine, sameSet, rectOf, pickRoot, clampRect, rangeKeys, dragMode } from './marquee-model.js';
 import './selection.css';
@@ -224,7 +226,8 @@ export function cellActions(keys, clear) {
     clear?.();
     showToast(t(on ? 'sel.redacted' : 'sel.unredacted', { n: changed.length }), { undo: () => apply(changed, !on).catch(() => {}) });
   };
-  return [hidden < list.length && { label: t('bizui.redact'), icon: 'eyeOff', run: go(true) }, hidden > 0 && { label: t('bizui.unredact'), icon: 'eye', run: go(false) }];
+  // 전체 가리기 중에는 쓰기 대신 안내 한 줄(18차 검수 M1 — 조직 공용 칸이 화면 변화 없이 바뀌지 않게)
+  return redactMenu([hidden < list.length && { label: t('bizui.redact'), icon: 'eyeOff', run: go(true) }, hidden > 0 && { label: t('bizui.unredact'), icon: 'eye', run: go(false) }], hideAllOn(), t);
 }
 
 // Esc = 선택 해제(창·메뉴가 떠 있거나 입력 중이면 그쪽 차례). 끄는 중 Esc는 위 esc가 먼저 받는다(취소)

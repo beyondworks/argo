@@ -1,6 +1,6 @@
 // 모듈 등록부 — 홈 격자에 놓이는 것은 전부 여기 한 줄씩. 직무별 템플릿(2차)·크루가 만드는 모듈(3차)도 여기에 항목을 더하는 것으로 끝난다.
 import { lazy, Suspense, useMemo } from 'react';
-import { OFFICE_MODULES } from '../core/module-registry.js';
+import { OFFICE_MODULES, HOME_DEFAULTS } from '../core/module-registry.js';
 import { Face } from '../ui/Face.jsx';
 import { Icon } from '../ui/Icon.jsx';
 import { menuProps, openMenu } from '../ui/Menu.jsx';
@@ -9,8 +9,9 @@ import { t, ago } from '../core/i18n.js';
 import { useStore, toggleTodo, crewName, crewsIn, approvalsIn } from '../core/store.js';
 import { baseOf, mailMenu, pageMenu, fileMenu, recordMenu } from '../core/commands.js';
 import { SPACES, ME, useSession } from '../core/session.js';
-import { useTasks } from '../core/tasks.js';
-import { kstDay, groupTasks } from '../core/task-model.js';
+import { looksLikeAddr } from '../core/hide-all.js';
+import { useTasks, useTaskRows, useTaskDay } from '../core/tasks.js';
+import { groupTasks } from '../core/task-model.js';
 import { fmtBytes } from '../core/files.js';
 import { pickCards, statsFor, MAX_CARDS } from '../core/stats.js';
 
@@ -53,7 +54,7 @@ function Mail() {
   return rows.map((m) => (
     <Link key={m.id} to={`/me/mail/${m.id}`} className="mod-row" {...menuProps(() => mailMenu(m))}>
       <span className="dot mark" />
-      <span className="mod-main"><span className="clamp">{m.subject}</span><small>{m.from} · {ago(m.at)}</small></span>
+      <span className="mod-main"><span className="clamp ha">{m.subject}</span><small>{looksLikeAddr(m.from) ? <span className="ha">{m.from}</span> : m.from} · {ago(m.at)}</small></span>
     </Link>
   ));
 }
@@ -76,7 +77,7 @@ function SampleTodos() {
   return rows.map((r) => (
     <label key={r.key} className={`mod-row todo${done[r.key] ? ' done' : ''}`}>
       <input type="checkbox" checked={!!done[r.key]} onChange={() => toggleTodo(r.key)} />
-      <span className="mod-main"><span className="clamp">{r.text}</span><small>{[crewName(r.crew), r.from].filter(Boolean).join(' · ')}</small></span>
+      <span className="mod-main"><span className="clamp">{r.text}</span><small>{crewName(r.crew)}{crewName(r.crew) && r.from && ' · '}{r.from && <span className="ha">{r.from}</span>}</small></span>
     </label>
   ));
 }
@@ -140,7 +141,8 @@ function useStatValues(space) {
   const approvals = useStore((s) => s.approvals), work = useStore((s) => s.work), mails = useStore((s) => s.mails);
   const decisions = useStore((s) => s.decisions), pages = useStore((s) => s.pages), done = useStore((s) => s.todosDone);
   const crewList = useStore((s) => s.crews), outputs = useStore((s) => s.outputs);
-  const mode = useSession(), tasks = useTasks(space).rows; // 로그인하면 서버에 저장된 실제 할 일로 센다(성과 기록 1단계)
+  const mode = useSession(); useTasks(space); // 로그인하면 서버에 저장된 실제 할 일로 센다(성과 기록 1단계)
+  const tasks = useTaskRows(space), today = useTaskDay(); // 세는 행·날짜는 메뉴 배지·챙길 것과 같다 — 개인 공간은 조직에서 나에게 맡겨진 일도(18차 검수 M4에서 빠졌던 카드, 10/4 실제 계정 점검)
   return useMemo(() => {
     const base = baseOf(space), ok = (text, icon) => ({ tone: 'ok', text, icon }), warn = (text, icon) => ({ tone: 'warn', text, icon });
     const ap = approvals.filter(approvalsIn(space)), high = ap.filter((a) => a.risk === 'high').length;
@@ -157,14 +159,14 @@ function useStatValues(space) {
       mail: { n: unread, badge: unread ? warn(t('stat.b.unread'), 'mail') : ok(t('stat.b.none'), 'mail'), main: unread ? t('stat.mailCheck') : t('stat.mailDone'), sub: t('stat.mailSub'), to: '/me/mail' },
       crews: { n: working, total: cs.length, badge: asking ? warn(t('stat.b.check'), 'person') : ok(t('stat.b.normal'), 'person'), main: t('stat.crewWorking'), sub: t('stat.crewAsk', { n: asking }) },
       todos: mode === 'signedIn' && tasks ? (() => {
-        const g = groupTasks(tasks, kstDay(), ME.id), open = g.overdue.length + g.today.length + g.week.length + g.later.length + g.none.length;
+        const g = groupTasks(tasks.filter((r) => !r.cancelled_at), today, ME.id), open = g.overdue.length + g.today.length + g.week.length + g.later.length + g.none.length;
         return { n: open, badge: g.overdue.length ? warn(t('stat.b.late'), 'check') : ok(t('stat.b.none'), 'check'), main: t('stat.taskMain', { late: g.overdue.length, today: g.today.length }), sub: t('stat.tasksSub') };
       })() : { n: todos.length - todoDone, badge: todos.length - todoDone ? warn(t('stat.b.open'), 'check') : ok(t('stat.b.none'), 'check'), main: t('stat.todoDone', { done: todoDone, total: todos.length }), sub: t('stat.todosSub') },
       decisions: { n: dec.length, badge: ok(t('stat.b.week'), 'check'), main: t('stat.decided', { a: approved, r: dec.length - approved }), sub: t('stat.weekSub'), to: `${base}/decisions` },
       outputs: { n: out.length, badge: ok(t('stat.b.week'), 'file'), main: fmtBytes(out.reduce((s, f) => s + f.bytes, 0)), sub: t('stat.weekSub'), to: `${base}/outputs` },
       pages: { n: pg.length, badge: ok(t('stat.b.wiki'), 'doc'), main: t('stat.pagesRecent', { n: pgRecent }), sub: t(space === 'me' ? 'stat.pagesMe' : 'stat.pagesOrg') },
     };
-  }, [approvals, work, mails, decisions, pages, done, crewList, outputs, space, mode, tasks]);
+  }, [approvals, work, mails, decisions, pages, done, crewList, outputs, space, mode, tasks, today]);
 }
 
 /** 현황 카드(유건 9/27) — 카드마다 지표를 고른다. 1~5장, 조직 홈은 관리자만 바꾼다(구조는 공유). */
@@ -202,7 +204,9 @@ function Stats({ space, item, canEdit, setCfg }) {
 
 // sizes: s=1/3, m=1/2, l=2/3, full=전체. spaces: 이 모듈을 쓸 수 있는 공간 종류.
 const Calendar = (props) => <Suspense fallback={wait}><HomeView {...props} mode="calendar" /></Suspense>; // 캘린더 — 보기 9가지·디자인 3가지(views/CalendarWidget.jsx, 유건 10/1)
-const renderers = { stats: Stats, calendar: Calendar, approvals: Approvals, mail: Mail, todos: Todos, pages: Pages, work: Work, outputs: Outputs, journal: Journal, decisions: Decisions };
+const HomeAttention = lazy(() => import('../business/HomeAttention.jsx')); // 챙길 것(18차) — 거래 계산(업무 묶음)을 같이 쓰므로 쓸 때만 받는다
+const Attention = (props) => <Suspense fallback={wait}><HomeAttention {...props} /></Suspense>;
+const renderers = { stats: Stats, attention: Attention, calendar: Calendar, approvals: Approvals, mail: Mail, todos: Todos, pages: Pages, work: Work, outputs: Outputs, journal: Journal, decisions: Decisions };
 const BusinessHomeCard = lazy(() => import('../business/HomeModules.jsx').then((module) => ({ default: module.BusinessHomeCard })));
 const LazyBusinessHomeProvider = lazy(() => import('../business/HomeModules.jsx').then((module) => ({ default: module.BusinessHomeProvider })));
 export function BusinessHomeProvider(props) {
@@ -212,7 +216,4 @@ export const MODULES = OFFICE_MODULES.map((module) => ({ ...module, render: rend
   return <Suspense fallback={<div className="mod-empty" role="status">{t('biz.loading')}</div>}><BusinessHomeCard {...props} tab={module.businessTab} /></Suspense>;
 } }));
 
-export const DEFAULTS = {
-  me: [{ id: 'stats', size: 'full' }, { id: 'approvals', size: 'm' }, { id: 'mail', size: 'm' }, { id: 'todos', size: 'l' }, { id: 'pages', size: 's' }, { id: 'calendar', size: 'm' }, { id: 'work', size: 'm' }],
-  org: [{ id: 'stats', size: 'full' }, { id: 'approvals', size: 'm' }, { id: 'work', size: 'm' }, { id: 'outputs', size: 'l' }, { id: 'journal', size: 's' }, { id: 'decisions', size: 'full' }, { id: 'calendar', size: 'm' }, { id: 'todos', size: 'm' }],
-};
+export const DEFAULTS = HOME_DEFAULTS; // 기본 배치의 정본은 core/module-registry.js(테스트가 순서를 잠근다)

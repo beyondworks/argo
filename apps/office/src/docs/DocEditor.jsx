@@ -205,7 +205,7 @@ export function DocEditor({ space, kind, initial, business, onDone, onCancel }) 
         <Field label={t(kind === 'contract' ? 'docs.f.contractTitle' : 'docs.f.title')}><input className="input" value={doc.title} onChange={(e) => set('title', e.target.value)} placeholder={t(kind === 'contract' ? 'docs.ph.contractTitle' : 'docs.ph.title')} maxLength={200} /></Field>
         <Field label={`${t(kind === 'contract' ? 'docs.f.customerA' : 'docs.f.customer')} *`}>
           <input className="input" list={`docs-customers-${kind}`} value={doc.customer} onChange={(e) => pickCustomer(e.target.value)} placeholder={t(kind === 'contract' ? 'docs.ph.customerA' : 'docs.ph.customer')} maxLength={200} required aria-required="true" />
-          <datalist id={`docs-customers-${kind}`}>{customers.map((c) => <option key={c.id} value={c.name} />)}</datalist>
+          <datalist id={`docs-customers-${kind}`}>{customers.filter((c) => !c.archived_at).map((c) => <option key={c.id} value={c.name} />)}</datalist>
           {doc.customerId ? <span className="dim small"><Icon name="check" size={11} /> {t('docs.linkedCustomer')}</span> : doc.customer && customers.length > 0 && <span className="dim small">{t('docs.newCustomer')}</span>}
         </Field>
         {kind === 'contract' && <Field label={t('docs.f.serviceSummary')} wide><input className="input" value={doc.serviceSummary} onChange={(e) => set('serviceSummary', e.target.value)} placeholder={t('docs.ph.serviceSummary')} maxLength={300} /></Field>}

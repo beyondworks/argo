@@ -12,6 +12,7 @@ import { CATEGORIES, kindOf, ocrable, folderPath, parseTags } from './model.js';
 import { getFile, fileBlob, updateFile, trashFiles, restoreFiles, downloadFile, ocrFile, ocrPending, fileError, useFiles } from './api.js';
 import { FIcon } from './FIcon.jsx';
 import { catLabel, day, kindKey, ocrBadge, withQuery } from './FilesPage.jsx';
+import { ShareLinks } from './ShareLinks.jsx'; // 공유 링크(15차 — 메일 큰 첨부·직접 공유)
 
 const DocZoom = lazy(() => import('../docs/DocZoom.jsx')); // PDF 크게 보기 — 견적·계약 미리보기와 같은 창
 
@@ -66,14 +67,14 @@ export default function Preview({ space, id, customers, folders, onClose }) {
         <div className="files-view">
           {f.kind === 'link' ? <div className="files-view-empty"><FIcon name="drive" size={22} /><p>{t('files.linkNote')}</p><a className="btn" href={f.link_url} target="_blank" rel="noreferrer noopener">{t('files.openDrive')}</a></div>
             : err ? <div className="files-view-empty"><p>{t(err)}</p></div>
-              : kind === 'image' ? (url ? <img src={url} alt={f.title} /> : <div className="skeleton-lines"><span /><span /></div>)
-                : kind === 'pdf' ? (url ? <iframe src={`${url}#toolbar=0&navpanes=0&view=FitH`} title={f.title} /> : <div className="skeleton-lines"><span /><span /></div>)
-                  : text != null ? <pre className="files-text">{text}</pre>
+              : kind === 'image' ? (url ? <div className="ha ha-cover"><img src={url} alt={f.title} /></div> : <div className="skeleton-lines"><span /><span /></div>)
+                : kind === 'pdf' ? (url ? <div className="ha ha-cover"><iframe src={`${url}#toolbar=0&navpanes=0&view=FitH`} title={f.title} /></div> : <div className="skeleton-lines"><span /><span /></div>)
+                  : text != null ? <pre className="files-text ha">{text}</pre>
                     : <div className="files-view-empty"><FIcon name={kind} size={22} /><p>{t('files.noPreview')}</p></div>}
         </div>
         <div className="files-extract">
           <p className="label">{t('files.textHead')}</p>
-          {f.full_text || f.summary ? <pre className="files-text mono">{f.full_text || f.summary}</pre> : <p className="dim small files-noText">{ocrPending(f.id) || f.ocr_status === 'pending' ? t('files.ocrStarted') : t('files.noText')}</p>}
+          {f.full_text || f.summary ? <pre className="files-text mono ha">{f.full_text || f.summary}</pre> : <p className="dim small files-noText">{ocrPending(f.id) || f.ocr_status === 'pending' ? t('files.ocrStarted') : t('files.noText')}</p>}
         </div>
       </div>
       {!f.deleted_at && form && <form className="files-edit" onSubmit={(e) => e.preventDefault()}>
@@ -91,6 +92,7 @@ export default function Preview({ space, id, customers, folders, onClose }) {
           <input className="input" value={form.tags} onChange={(e) => setForm({ ...form, tags: e.target.value })} onBlur={() => { const next = parseTags(form.tags); if (next.join('\u0000') !== (f.tags ?? []).join('\u0000')) save({ tags: next }); }} /></label>
         {!configured && <p className="dim small">{t('files.sampleNote')}</p>}
       </form>}
+      {f.kind === 'file' && !f.deleted_at && <ShareLinks space={space} file={f} />}
     </div>}
   </Sheet>
     {zoom && pdf && <Suspense fallback={null}><DocZoom title={f.title} pdf={pdf} onClose={() => setZoom(false)} onDownload={() => downloadFile(space, f).catch(() => showToast(t('files.previewFail')))} /></Suspense>}</>;

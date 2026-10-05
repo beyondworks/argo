@@ -1,5 +1,7 @@
 // 인트라넷·Notion 원본의 한글 이름 → 오피스 값(트랙 C). 화면 문자열이 아니라 원본 글을 알아보는 표라 사전 파일에 둔다.
 // 회사 정보 항목 이름(공백·괄호·대소문자 무시하고 전체가 같을 때) → 서식 칸 key
+// 회사 정보 항목 이름에 이 낱말이 들어 있으면 계좌로 보고 크루에게 보내는 글에 값을 싣지 않는다(core/crew-items.js, 17차 A 검수 MEDIUM-2)
+export const ACCOUNT_LABEL_WORDS = ['계좌', '예금주', 'account', 'iban'];
 export const COMPANY_KEY_LABELS = {
   name: ['상호', '상호명', '회사명', '회사이름', '법인명', '상호(법인명)', 'company', 'companyname', 'name'],
   reg_name: ['등록명', '등록상호', '사업자등록상호', 'registeredname'],

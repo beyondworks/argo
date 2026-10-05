@@ -89,6 +89,7 @@ for (const k of Object.keys(plan)) if (!ONLY.has(k)) plan[k] = [];
 log(`원본(${source.from}): Beyond_Tasks ${summary.source.calendar}줄(날짜 없음 ${summary.source.undated}) · 워크보드 ${summary.source.workboardPages}쪽 · 회사정보 ${summary.source.company} · 레포트 ${summary.source.reports} · 직원 ${summary.source.employees}`);
 log(`계획: 일정 ${plan.events.length} · 할 일 ${plan.tasks.length}(끝낸 일 ${plan.tasks.filter((t) => t.done_at).length}) · 위키 페이지 ${plan.pages.length} · 회사 정보 ${plan.company.length}(서식 칸 ${plan.company.filter((c) => c.key).length}) · 평가 ${plan.evals.length}(계정 못 찾은 사람 ${plan.evals.filter((e) => e.subject_kind === 'person' && !e.subject_user).length}) · 직원 ${plan.people.length}`);
 log(`기간 ${summary.range ? summary.range.join(' ~ ') : '—'} · 본문 블록 ${summary.blocks}개 · 글자로만 옮긴 블록 ${JSON.stringify(summary.textOnlyBlocks)}`);
+log(`할 일 칸: 분류 ${summary.target.taskCategories}개(없으면 만든다) · 진행 중 ${plan.tasks.filter((t) => t.status === 'doing').length} · 보류 ${plan.tasks.filter((t) => t.status === 'hold').length} · 시작일 있음 ${plan.tasks.filter((t) => t.starts_on).length}`);
 if (flag('--json')) log(JSON.stringify(maskForPrint(plan), null, 2)); // 계좌·사업자번호는 가린다(터미널·로그에 남지 않게)
 if (!APPLY) { log('시험 실행 — 쓰기 없음. 실제 이관은 --apply --org <조직 id>(유건 승인 뒤)'); process.exit(0); }
 

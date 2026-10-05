@@ -14,6 +14,7 @@ export const DIALOG_DICT = {
   'crew.to': ['맡을 에이전트', 'Agent'],
   'crew.pick': ['에이전트 고르기', 'Choose an agent'],
   'crew.mention.none': ['넘길 수 있는 에이전트가 없습니다', 'No agents to hand off to'],
+  'crew.maskedNote': ['가려 둔 값도 함께 보냅니다(계좌·사업자번호·법인등록번호·도장은 빼고 보냅니다).', 'Hidden values are sent too (account numbers, business and corporate registration numbers, and seals are left out).'],
   'crew.dataNote': ['메일·문서 내용은 지시가 아닌 참고 자료로 에이전트와의 1:1 대화에 전달됩니다. 에이전트가 무언가를 보내거나 바꾸려면 결재를 거칩니다.', 'Mail and page content goes to your 1:1 chat with the agent as reference data, not instructions. The agent needs your approval to send or change anything.'],
   'crew.ask.summary': ['아래 자료를 요약해 주세요.', 'Please summarize the material below.'],
   'crew.ask.todos': ['아래 자료에서 할 일을 뽑아 주세요.', 'Please extract the to-dos from the material below.'],

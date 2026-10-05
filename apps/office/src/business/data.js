@@ -15,6 +15,7 @@ export function businessError(error) {
     business_order_state: 'orderState', business_number: 'number', business_quantity: 'quantity', business_not_found: 'missing',
     business_kind_in_use: 'kindInUse', business_product_only: 'productOnly', business_total_limit: 'total', business_dates: 'dates',
     business_idempotency_conflict: 'pending', business_input: 'input', business_owner: 'owner', business_settings: 'input', business_settings_duplicate: 'input', business_kind: 'input',
+    business_amount_locked: 'amountLocked', business_line_in_use: 'lineInUse', business_customer_archived: 'archived', business_edit_limit: 'editLimit', business_due: 'due', // 14차
   };
   if (specific[error?.message]) return `biz.error.${specific[error.message]}`;
   if (['PGRST202', 'PGRST205', '42883', '42P01'].includes(error?.code)) return 'biz.error.schema';

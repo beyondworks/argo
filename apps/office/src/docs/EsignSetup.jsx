@@ -9,6 +9,7 @@ import { backend } from './backend.js';
 import { autoFields } from './detect.js';
 import { PARTY, DEFAULT_SIZE, checkSend, sha256Hex, isEmail } from './esign-model.js';
 import { mailAccounts, requestSignatures } from './esign-flow.js';
+import { Redact } from '../business/Redact.jsx';
 
 const KINDS = ['signature', 'text', 'date'];
 const KIND_ICON = { signature: 'draft', text: 'doc', date: 'calendar' };
@@ -150,7 +151,7 @@ export function EsignSetup({ space, esignId, company, onBack, onSent }) {
     <h1 className="page-h1">{title}</h1><p className="dim">{sub}</p></div></header>;
   if (sent) return <div className="esign-sent">
     {head(t('esign.sent.title'), t(sample ? 'esign.sent.sample' : sent.links.every((l) => l.delivery === 'sent') ? 'esign.sent.mailed' : 'esign.sent.linkOnly'))}
-    <ul className="docs-signer-list">{sent.links.map((l) => <li key={l.email}><span className="badge">{PARTY[l.ord] ?? l.ord + 1}</span><span><strong>{l.name}</strong> <span className="dim small">{l.email}</span></span><span className="spacer" />
+    <ul className="docs-signer-list">{sent.links.map((l) => <li key={l.email}><span className="badge">{PARTY[l.ord] ?? l.ord + 1}</span><span><strong>{l.name}</strong> <span className="dim small"><Redact kind="contact">{l.email}</Redact></span></span><span className="spacer" />
       <span className={`badge ${l.delivery === 'failed' ? 'danger' : l.delivery === 'skipped' ? 'warn' : 'ok'}`}>{t(`esign.delivery.${l.delivery}`)}</span>
       <button type="button" className="btn sm ghost" onClick={() => navigator.clipboard?.writeText(l.link).then(() => showToast(t('esign.copied')), () => {})}><Icon name="copy" size={12} />{t('esign.copyLink')}</button>
       {sample && <a className="btn sm" href={l.link} target="_blank" rel="noreferrer">{t('esign.openLink')}</a>}

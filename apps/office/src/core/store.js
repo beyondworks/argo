@@ -9,6 +9,7 @@ import { between } from './position.js';
 import { SPACES, ME } from './session.js';
 import { writeNav, readNav, readFav, writeFav, routeInfo } from './nav-model.js';
 import { usable, isMine } from './crew-list.js';
+import { renameDoc } from '../pages/page-title.js';
 
 const KEY = 'argo-office-draft-v1';
 const fresh = () => ({ pages: S.PAGES.map((p, i) => ({ ...p, position: p.position ?? String.fromCharCode(97 + Math.floor(i / 10)) + (i % 10 + 1) })), mails: S.MAILS, mailAccounts: [], approvals: S.APPROVALS, decisions: S.DECISIONS, work: S.WORK, crews: S.CREWS, outputs: S.OUTPUTS, journal: S.JOURNAL, docs: [], layouts: {}, trash: [], todosDone: {}, pagesReady: true, crewsReady: true });
@@ -76,8 +77,12 @@ export function duplicatePage(id) {
   const map = new Map(ids.map((x) => [x, uid()]));
   const src = s.pages.find((q) => q.id === id);
   const next = s.pages.filter((q) => q.space === src.space && (q.parent ?? null) === (src.parent ?? null) && (q.position ?? '') > (src.position ?? '')).sort(byPos)[0];
-  const copies = ids.map((x) => { const p = s.pages.find((q) => q.id === x); return { ...p, id: map.get(x), parent: x === id ? p.parent : map.get(p.parent), restricted: false, template: false, version: 1, fresh: true,
-    position: x === id ? between(src.position ?? null, next?.position ?? null) : p.position, title: x === id ? t('page.copyTitle', { title: p.title || t('page.untitled') }) : p.title, updated: nowIso() }; });
+  const copies = ids.map((x) => {
+    const p = s.pages.find((q) => q.id === x), title = x === id ? t('page.copyTitle', { title: p.title || t('page.untitled') }) : p.title;
+    // 원본의 제목 줄이 이름과 이어져 있으면 사본 첫 줄도 사본 이름으로 — 사본에서도 첫 줄을 고치면 이름이 따라간다(16차 검수 LOW 4)
+    return { ...p, id: map.get(x), parent: x === id ? p.parent : map.get(p.parent), restricted: false, template: false, version: 1, fresh: true,
+      position: x === id ? between(src.position ?? null, next?.position ?? null) : p.position, title, content: x === id ? renameDoc(p.content, p.title, title) : p.content, updated: nowIso() };
+  });
   update((st) => ({ pages: [...st.pages, ...copies] }), copies.map((c) => [`page-create:${c.id}`, { type: 'page.create', id: c.id }]));
   return map.get(id);
 }

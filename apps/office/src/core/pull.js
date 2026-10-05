@@ -48,8 +48,9 @@ export async function pullPages() {
   update(() => ({ pages, trash, pagesReady: true }));
 }
 
-/** 페이지 본문을 불러온다. force면 이 기기의 아직 안 보낸 저장을 버리고 서버 값으로(충돌 뒤 "새로 불러오기") */
-export async function loadPageContent(id, { force = false } = {}) {
+/** 페이지 본문을 불러온다. force면 이 기기의 아직 안 보낸 저장을 버리고 서버 값으로(충돌 뒤 "새로 불러오기").
+ *  skip()은 응답을 적용하기 직전에 다시 묻는다 — 탭 복귀 다시 읽기는 읽는 사이에 친 글자(편집기 입력 대기)·충돌을 넘겨 준다(16차 검수 M1) */
+export async function loadPageContent(id, { force = false, skip } = {}) {
   const owner = getStorageScope();
   const sb = await getClient();
   if (!sb || owner !== ME.id || getStorageScope() !== owner) return;
@@ -61,7 +62,7 @@ export async function loadPageContent(id, { force = false } = {}) {
   if (getStorageScope() !== owner) return;
   if (rights.error) throw rights.error;
   if (error || !data) return;
-  if (!force && (busy || outbox.has(`page:${id}`))) return;
+  if (!force && (busy || outbox.has(`page:${id}`) || skip?.())) return;
   update((s) => ({ pages: s.pages.map((p) => (p.id === id ? { ...p, title: data.title, content: data.content, version: data.version, owner: data.owner_user_id, orgId: data.org_id, access: rights.data, updated: data.updated_at, loadedAt: Date.now() } : p)) }));
   return data;
 }

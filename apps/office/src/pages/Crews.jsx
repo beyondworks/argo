@@ -1,0 +1,141 @@
+// 에이전트 조직도와 에이전트 상세(17차 A-1·2·3·4, PARITY-agents O1·D1·D8·S5). 둘 다 지연 청크 — 첫 화면에는 여는 단추(좌측 크루·즐겨찾기·크루 메뉴)만 있다.
+// 기록판 데이터(board.js mapBoard)와 할 일 상태만 읽는다. 고치기는 메신저에서(오피스는 기록을 읽어 보여 주는 앱), 실행(맡기기)은 기존 맡기기 창 그대로.
+import { useEffect, useMemo, useState } from 'react';
+import { Icon } from '../ui/Icon.jsx';
+import { Face } from '../ui/Face.jsx';
+import { Sheet } from '../ui/Panel.jsx';
+import { menuProps } from '../ui/Menu.jsx';
+import { t, ago, useLang, registerDict } from '../core/i18n.js';
+import { useStore, crewsIn } from '../core/store.js';
+import { useUi, setUi } from '../core/ui-state.js';
+import { ME, SPACES, getMode } from '../core/session.js';
+import { baseOf, crewMenu } from '../core/commands.js';
+import { navigate } from '../core/router.jsx';
+import { isMine } from '../core/crew-list.js';
+import { groupByDept, crewWork, crewRecords, crewAccess } from '../core/crew-model.js';
+import { useTasks } from '../core/tasks.js';
+import { fmtBytes } from '../core/files.js';
+import { CREWS_DICT } from './crews-i18n.js';
+import './crews.css';
+
+registerDict(CREWS_DICT);
+
+const STATUS_BADGE = { work: 'ok', ask: 'warn' };
+const EMPTY = [];
+/** 직무 — 예시 데이터는 role 하나뿐(좌측 목록과 같은 규칙) */
+const jobOf = (c) => c.job || (c.dept ? '' : c.role);
+const ownerOf = (c) => (c.company ? t('crew.owner.company') : isMine(c, ME.id) ? ME.name : c.ownerName || t('crew.owner.unknown'));
+const Status = ({ c }) => <span className={`badge ${STATUS_BADGE[c.status] ?? ''}`}>{t(`crew.status.${c.status}`)}</span>;
+const openCrew = (c, space) => setUi({ crew: { id: c.id, space } });
+
+/** 에이전트 조직도(O1) — 이 공간의 에이전트를 부서별 카드로. 조직 공간은 조직 전체(남의 크루·회사 크루 포함), 내 공간은 내 에이전트만(crewsIn과 같은 규칙) */
+export default function CrewOrg({ space }) {
+  useLang();
+  const all = useStore((s) => s.crews);
+  const crews = useMemo(() => crewsIn(all, space, ME.id), [all, space]);
+  const groups = useMemo(() => groupByDept(crews), [crews]);
+  const depts = groups.filter((g) => g.dept).length;
+  return <div className="page-wrap wide">
+    <div className="page-title-row"><div><h1 className="page-h1">{t('nav.agents')}</h1>
+      <p className="dim">{[t(space === 'me' ? 'agents.meSub' : 'agents.sub'), crews.length > 0 && t('agents.count', { n: crews.length, d: depts })].filter(Boolean).join(' · ')}</p></div></div>
+    {!crews.length ? <div className="empty-state"><Icon name="hand" size={20} /><p>{t('agents.empty')}</p></div>
+      : groups.map((g) => <section key={g.dept || '-'} className="agents-dept" aria-label={g.dept || t('agents.noDept')}>
+        <h2 className="agents-h">{g.dept || t('agents.noDept')} <span className="dim">· {g.crews.length}</span></h2>
+        <div className="agents-grid">{g.crews.map((c) => <AgentCard key={c.id} crew={c} space={space} />)}</div>
+      </section>)}
+  </div>;
+}
+
+/** 카드 — 누르면 오른쪽 상세, 우클릭(터치는 길게 누르기)은 좌측 목록과 같은 크루 메뉴 */
+function AgentCard({ crew: c, space }) {
+  const job = jobOf(c);
+  return <button type="button" className="agent-card" onClick={() => openCrew(c, space)} {...menuProps(() => crewMenu(c, space))}>
+    <Face id={c.id} size={36} />
+    <span className="agent-main"><b>{c.name}</b>{job && <small>{job}</small>}<small>{t('crew.tip.owner', { name: ownerOf(c) })}</small></span>
+    <Status c={c} />
+  </button>;
+}
+
+/** 에이전트 상세(D1) — 오른쪽 패널. 주소가 아니라 화면 상태(ui.crew = { id, space })로 연다 — 어느 화면 위에서든 열리고, 닫으면 보던 화면 그대로 */
+export function CrewSheet() {
+  useLang();
+  const { crew: open } = useUi();
+  const c = useStore((s) => s.crews.find((x) => x.id === open?.id));
+  if (!open) return null;
+  const close = () => setUi({ crew: null });
+  return <Sheet open onClose={close} title={c?.name ?? t('crewd.title')}>
+    {c ? <CrewBody crew={c} space={open.space} close={close} /> : <p className="dim">{t('crewd.gone')}</p>}
+  </Sheet>;
+}
+
+/** 이 크루가 만든 할 일을 찾을 할 일 목록 — 로그인은 크루가 사는 조직의 할 일(이미 있는 읽기 office_task_list, 30초 안에 받은 것은 다시 받지 않는다),
+ *  예시 모드는 예시 할 일(그때만 받는다) */
+function useCrewTasks(c) {
+  const live = useTasks(c.space).rows;
+  const [sample, setSample] = useState(null);
+  useEffect(() => { if (getMode() === 'sample') import('../data/calendar-sample.js').then((m) => setSample(m.SAMPLE_TASKS)).catch(() => {}); }, []);
+  return sample ?? live ?? EMPTY;
+}
+
+const Fact = ({ k, children }) => (children ? <div className="fact"><span className="dim">{t(k)}</span><span>{children}</span></div> : null);
+const None = ({ k }) => <p className="dim small crewd-none">{t(k)}</p>;
+function Sec({ title, n, more, children }) {
+  return <section className="crewd-sec"><h3 className="crewd-h">{title}{n > 0 && <span className="dim">{n}</span>}{more}</h3>{children}</section>;
+}
+const SHOW = 5; // 칸마다 먼저 보이는 건수 — 나머지는 '모두 보기'(그 화면의 이 에이전트 폴더)
+
+function CrewBody({ crew: c, space, close }) {
+  const work = useStore((s) => s.work), approvals = useStore((s) => s.approvals), decisions = useStore((s) => s.decisions);
+  const outputs = useStore((s) => s.outputs), journal = useStore((s) => s.journal);
+  const tasks = useCrewTasks(c);
+  const mine = useMemo(() => crewWork(c.id, { work, tasks }), [c.id, work, tasks]);
+  const rec = useMemo(() => crewRecords(c.id, { approvals, decisions, outputs, journal }, SHOW), [c.id, approvals, decisions, outputs, journal]);
+  const access = crewAccess(c, ME.id, getMode());
+  const home = c.space ?? space; // 크루가 사는 조직(예시 크루는 공간이 없어 지금 공간)
+  const go = (path) => { close(); navigate(path); };
+  const all = (view) => <button type="button" className="link-btn" onClick={() => go(`${baseOf(home)}/${view}?folder=${encodeURIComponent(c.id)}`)}>{t('crewd.more')}</button>;
+  const at = (x) => baseOf(x.space ?? home);
+  const taskAt = (x) => baseOf('org' in x ? x.org ?? 'me' : home); // 예시 할 일은 org(공간 키)를 갖고, 서버 할 일은 이 조직 것
+  const job = jobOf(c);
+  return <div className="crewd">
+    <div className="ap-who"><Face id={c.id} size={40} /><div><b>{c.name}</b>{job && <small className="dim">{job}</small>}</div><Status c={c} /></div>
+    <div className="crewd-act">
+      {access === 'direct' ? <>
+        <button type="button" className="btn primary" onClick={() => setUi({ crew: null, assign: { space: home, crew: c.id, items: [] } })}><Icon name="hand" size={14} />{t('crewd.assign')}</button>
+        <p className="dim small crewd-note">{t('crewd.reply', { crew: c.name })}</p>{/* 메신저에 특정 대화를 여는 주소 규칙이 없어 링크 대신 안내(맡기기 뒤 알림도 같은 말) */}
+      </> : <p className="dim small crewd-note"><Icon name="info" size={13} />{access === 'off' ? t('crewd.off') : t('crew.viaChannel', { crew: c.name })}</p>}
+    </div>
+    <Sec title={t('crewd.info')}>
+      <div className="crewd-facts">
+        <Fact k="crewd.f.job">{job}</Fact><Fact k="crewd.f.dept">{c.dept}</Fact><Fact k="crewd.f.owner">{ownerOf(c)}</Fact>
+        <Fact k="crewd.f.status"><Status c={c} /></Fact><Fact k="crewd.f.org">{c.space && SPACES.find((s) => s.key === c.space)?.name}</Fact>
+      </div>
+      <p className="dim small crewd-none">{t('crewd.editIn')}</p>
+    </Sec>
+    <Sec title={t('crewd.work')} n={mine.runs.length + mine.tasks.length} more={mine.runs.length > 0 && all('work')}>
+      {!mine.runs.length && !mine.tasks.length ? <None k="crewd.workNone" /> : <>
+        {mine.runs.map((w) => <button key={w.id} type="button" className="rec-row" onClick={() => go(`${at(w)}/work?open=${w.id}`)}>
+          <Icon name="run" size={14} className="dim" /><span className="rec-text">{w.goal}</span><span className={`badge ${w.status === 'blocked' ? 'warn' : 'ok'}`}>{t(`status.${w.status}`)}</span><small className="rec-when">{ago(w.started)}</small></button>)}
+        {mine.tasks.length > 0 && <p className="crewd-sub">{t('crewd.tasks')}</p>}
+        {mine.tasks.map((x) => <button key={x.id} type="button" className="rec-row" onClick={() => go(`${taskAt(x)}/tasks?open=${x.id}`)}>
+          <Icon name="todo" size={14} className="dim" /><span className="rec-text">{x.title}</span>{x.due_on && <small className="rec-when">{t('crewd.due', { d: x.due_on })}</small>}</button>)}
+      </>}
+    </Sec>
+    <Sec title={t('crewd.journal')} more={rec.journal.length > 0 && all('journal')}>
+      {rec.journal.length ? rec.journal.map((e, i) => <button key={`${e.day}|${e.time}|${i}`} type="button" className="rec-row" onClick={() => go(`${at(e)}/journal?folder=${encodeURIComponent(c.id)}`)}>
+        <span className="rec-text">{e.text}</span><small className="rec-when">{`${e.day.slice(5)} ${e.time}`}</small></button>) : <None k="crewd.journalNone" />}
+    </Sec>
+    <Sec title={t('crewd.approvals')} n={rec.approvals.length} more={rec.approvals.length > SHOW && all('approvals')}>
+      {rec.approvals.length ? rec.approvals.slice(0, SHOW).map((a) => <button key={a.id} type="button" className="rec-row" onClick={() => go(`${at(a)}/approvals?open=${a.id}`)}>
+        <Icon name="stamp" size={14} className="dim" /><span className="rec-text">{a.head || a.plain}</span>{a.risk === 'high' && <span className="badge warn">{t('risk.high')}</span>}<small className="rec-when">{ago(a.at)}</small></button>) : <None k="crewd.approvalsNone" />}
+    </Sec>
+    <Sec title={t('crewd.decisions')} more={rec.decisions.length > 0 && all('decisions')}>
+      {rec.decisions.length ? rec.decisions.map((d) => <button key={d.id} type="button" className="rec-row" onClick={() => go(`${at(d)}/decisions?open=${d.id}`)}>
+        <Icon name="check" size={14} className="dim" /><span className="rec-text">{d.plain}</span><span className={`badge ${d.result === 'approved' ? 'ok' : 'danger'}`}>{t(`status.${d.result}`)}</span><small className="rec-when">{ago(d.at)}</small></button>) : <None k="crewd.decisionsNone" />}
+    </Sec>
+    <Sec title={t('crewd.outputs')} more={rec.outputs.length > 0 && all('outputs')}>
+      {rec.outputs.length ? rec.outputs.map((f) => <button key={f.id} type="button" className="rec-row" onClick={() => go(`${at(f)}/outputs?open=${f.id}`)}>
+        <Icon name="file" size={14} className="dim" /><span className="rec-text">{f.name}</span><small className="rec-when"><span className="mono">{fmtBytes(f.bytes)}</span> · {ago(f.at)}</small></button>) : <None k="crewd.outputsNone" />}
+    </Sec>
+  </div>;
+}

@@ -7,11 +7,15 @@ import { CATEGORIES, COMPANY_KEYS, KEY_CATEGORY, DOC_KEYS, IMAGE_KEYS, isImage, 
 import { navigate } from '../core/router.jsx';
 import { baseOf } from '../core/commands.js';
 import { Modal, showToast } from '../ui/Overlay.jsx';
-import { openMenu } from '../ui/Menu.jsx';
+import { openMenu, menuProps } from '../ui/Menu.jsx';
 import { Icon } from '../ui/Icon.jsx';
 import { Redact } from '../business/Redact.jsx';
 import { redactState } from '../business/cell-pick.js';
+import { redactMenu } from '../business/redact-rule.js';
+import { hideAllOn } from '../core/hide-all.js';
 import { useSelection, selProps } from '../core/selection.js';
+import { setUi } from '../core/ui-state.js';
+import { companyText } from '../core/crew-items.js';
 import { COMPANY_DICT } from './company-i18n.js';
 import './perf.css';
 import './company.css';
@@ -78,10 +82,18 @@ export default function Company({ space }) {
       clear?.();
       showToast(t(on ? 'sel.redacted' : 'sel.unredacted', { n: pairs.length }), { undo: () => apply(pairs.map(([x]) => [{ ...x, redacted: !on }, !on])) });
     };
-    return [!st.all && list.length > 0 && { label: t('bizui.redact'), icon: 'eyeOff', run: go(true) }, st.any && { label: t('bizui.unredact'), icon: 'eye', run: go(false) }];
+    return redactMenu([!st.all && list.length > 0 && { label: t('bizui.redact'), icon: 'eyeOff', run: go(true) }, st.any && { label: t('bizui.unredact'), icon: 'eye', run: go(false) }], hideAllOn(), t); // 전체 가리기 중이면 안내(18차 검수 M1)
   };
-  useSelection('company', { value: sel, onChange: setSel, keys: allIds, actions: (keys, clear) => [...redactMany(keys, clear), manager && { label: t('company.deleteSel'), icon: 'trash', danger: true, run: () => setConfirm({ ids: keys }) }] });
-  const rowMenu = (x) => (e) => { if (sel.size > 1 && sel.has(x.id)) { const acts = redactMany([...sel]).filter(Boolean); if (acts.length) openMenu(e, acts); } }; // 고른 항목 위 우클릭 = 고른 것 전체
+  // 에이전트에게 맡기기(17차 A-5) — 고른 항목을 "이름: 값" 글자로. 계좌·사업자번호·법인등록번호·도장/로고는 값을 싣지 않는다(core/crew-items.js). 멤버도 된다(가린 값도 글자에는 들어간다 — 가림은 화면용)
+  const assignItem = (ids, clear) => ({ label: t('crew.assign'), icon: 'hand', run: () => {
+    const list = items.filter((x) => ids.includes(x.id));
+    setUi({ assign: { space, items: [{ kind: 'company', id: ids.join(','), label: list.length === 1 ? list[0].label : t('company.crewItems', { n: list.length }), text: companyText(list, t) }] } });
+    clear?.();
+  } });
+  useSelection('company', { value: sel, onChange: setSel, keys: allIds, actions: (keys, clear) => [...redactMany(keys, clear), keys.length > 0 && assignItem(keys, clear), manager && { label: t('company.deleteSel'), icon: 'trash', danger: true, run: () => setConfirm({ ids: keys }) }] });
+  // 고른 항목 위 우클릭 = 고른 것 전체, 고르지 않은 한 줄 우클릭 = 그 항목 맡기기(값 칸은 가리기 메뉴가 먼저 받는다)
+  // 우클릭·터치 길게 누르기·메뉴 키 모두(공용 menuProps) — 폰에서 멤버가 회사 정보를 맡길 길이 없었다(17차 A 검수 LOW-6). 끌어서 고른 칸 위는 menuProps가 전역 칸 메뉴에 맡긴다
+  const rowItems = (x) => (sel.size > 1 && sel.has(x.id) ? [...redactMany([...sel]), assignItem([...sel], () => setSel(new Set()))].filter(Boolean) : [assignItem([x.id])]);
 
   return <div className="page-wrap wide perf company">
     <Head right={manager && <button type="button" className="btn primary sm" onClick={() => openNew()}><Icon name="plus" size={13} />{t('company.add')}</button>} />
@@ -96,12 +108,12 @@ export default function Company({ space }) {
       {!groups.length ? <div className="empty-state"><Icon name="building" size={20} /><p>{t('company.empty')}</p><p className="dim small">{t(manager ? 'company.emptyManager' : 'company.emptyMember')}</p></div>
         : <div className="co-groups" data-sel-scope="company">{groups.map((g) => <section key={g.category} className={`module co-group cat-${g.category}`} aria-label={t(`company.cat.${g.category}`)}>
           <header className="module-head"><span className={`co-cat cat-${g.category}`}>{t(`company.cat.${g.category}`)}</span><span className="dim small">{t('company.count', { n: g.items.length })}</span></header>
-          <ul className="co-rows">{g.items.map((x, i) => <li key={x.id} className="co-row" {...selProps(sel, x.id)} onContextMenu={rowMenu(x)}>
+          <ul className="co-rows">{g.items.map((x, i) => <li key={x.id} className="co-row" {...selProps(sel, x.id)} {...menuProps(() => rowItems(x))}>
             {manager && <input type="checkbox" className="co-row-check" checked={sel.has(x.id)} onChange={() => toggleSel(x.id)} aria-label={t('company.select', { name: x.label })} />}
             <div className="co-row-main">
               {manager ? <button type="button" className="co-label link-btn" onClick={() => openEdit(x)}>{x.label}</button> : <strong className="co-label">{x.label}</strong>}
-              {x.value && (IMAGE_KEYS.includes(x.key) && isImage(x.value) ? <img className="co-img" src={x.value} alt={x.label} /> : <Redact on={hidden(x)} cellKey={`company:${x.id}`} defer={sel.size > 1 && sel.has(x.id)} onToggle={() => toggleRedact(x)}><span className="co-value">{x.value}</span></Redact>)}
-              {x.notes && <small className="co-notes dim">{x.notes}</small>}
+              {x.value && (IMAGE_KEYS.includes(x.key) && isImage(x.value) ? <img className="co-img" src={x.value} alt={x.label} /> : <Redact on={hidden(x)} kind={nameKind(x.key)} cellKey={`company:${x.id}`} defer={sel.size > 1 && sel.has(x.id)} onToggle={() => toggleRedact(x)}><span className="co-value">{x.value}</span></Redact>)}
+              {x.notes && <small className="co-notes dim"><Redact kind="memo">{x.notes}</Redact></small>}
             </div>
             {x.key && <button type="button" className="badge co-key" aria-haspopup="menu" title={`${t('company.f.key')}: ${t(`company.key.${x.key}`)}`} onClick={(e) => openMenu(e, [
               { heading: t('company.keyHead', { key: t(`company.key.${x.key}`) }) },
@@ -111,6 +123,7 @@ export default function Company({ space }) {
             {x.source === 'notion' && <span className="badge dim" title={t('company.fromNotion')}>N</span>}
             {manager && <button type="button" className="icon-btn co-more" aria-label={t('company.more')} onClick={(e) => openMenu(e, [
               { label: t('company.edit'), icon: 'draft', run: () => openEdit(x) },
+              assignItem([x.id]),
               ...(i > 0 ? [{ label: t('company.up'), icon: 'chevron', run: () => move(x, -1) }] : []),
               ...(i < g.items.length - 1 ? [{ label: t('company.down'), icon: 'chevron', run: () => move(x, 1) }] : []),
               { sep: true }, { label: t('company.delete'), icon: 'trash', danger: true, run: () => setConfirm({ ids: [x.id], name: x.label }) },
@@ -138,6 +151,9 @@ function Head({ right }) {
   return <div className="page-title-row"><div><h1 className="page-h1">{t('company.title')}</h1><p className="dim">{t('company.subtitle')}</p></div>{right}</div>;
 }
 
+// 화면 전체 가리기(18차)에서도 그대로 보이는 값 — 회사 이름(상호·등록 상호). 나머지(사업자번호·계좌·연락처·주소 등)는 가린다
+const nameKind = (key) => (key === 'name' || key === 'reg_name' ? 'name' : undefined);
+
 /** 서식에 들어가는 값 — 견적서·계약서 공급자 칸. 빈 칸은 관리자가 바로 채운다 */
 function DocsCard({ profile, items, manager, hidden, onFill }) {
   const value = { name: profile.name, ceo: profile.ceo, biz_no: profile.bizNo, address: profile.address, open_date: profile.openDate, biz_type: profile.bizType, biz_item: profile.bizItem, manager: profile.manager, phone: profile.phone, email: profile.email };
@@ -148,7 +164,7 @@ function DocsCard({ profile, items, manager, hidden, onFill }) {
     <p className="dim small co-docs-hint">{t('company.docsHint')}</p>
     <dl className="co-docs-grid">{DOC_KEYS.map((k) => { const it = itemOf(k); return <div key={k} className={`co-doc${value[k] ? '' : ' empty'}`}>
       <dt>{t(`company.key.${k}`)}</dt>
-      <dd>{value[k] ? (it ? <Redact on={hidden(it)} focusable={false}><span>{value[k]}</span></Redact> : value[k]) : manager ? <button type="button" className="link-btn" onClick={() => onFill(k)}><Icon name="plus" size={12} />{t('company.fill')}</button> : <span className="dim">—</span>}</dd>
+      <dd>{value[k] ? <Redact on={!!it && hidden(it)} kind={nameKind(k)} focusable={false}><span>{value[k]}</span></Redact> : manager ? <button type="button" className="link-btn" onClick={() => onFill(k)}><Icon name="plus" size={12} />{t('company.fill')}</button> : <span className="dim">—</span>}</dd>
     </div>; })}
       <div className="co-doc"><dt>{t('company.cat.bank')}</dt><dd>{profile.accounts.length ? profile.accounts.map((a) => a.label).join(' · ') : <span className="dim">—</span>}</dd></div>
       <div className="co-doc"><dt>{t('company.images')}</dt><dd className="co-doc-imgs">{IMAGE_KEYS.map((k) => profile[k] ? <img key={k} className="co-img" src={profile[k]} alt={t(`company.key.${k}`)} title={t(`company.key.${k}`)} />

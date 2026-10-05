@@ -14,11 +14,13 @@ import { baseOf } from '../core/commands.js';
 import { flushNow, outbox } from '../core/sync.js';
 import { loadPageContent } from '../core/pull.js';
 import { readMail } from '../core/mail.js';
-import { composeAssign, composeSet, composeTools, htmlText, docText, mentionAt, mentionCands, putMention } from '../core/crew-assign.js';
+import { composeAssign, composeSet, composeTools, htmlText, docText, mentionAt, mentionCands, putMention, maskedNote } from '../core/crew-assign.js';
+import { hideAllOn } from '../core/hide-all.js';
 import { rpc } from '../core/tasks.js';
 import { DocView } from './DocView.jsx';
 import { publicWebUrl } from '../core/platform.js';
 import { DIALOG_DICT } from './dialogs-i18n.js';
+import { Hide } from '../business/Redact.jsx';
 
 registerDict(DIALOG_DICT);
 
@@ -97,7 +99,7 @@ export function ShareDialog() {
       {can && (tab === 'share' ? <div className="share">
         <div className="invite"><input className="input" value={email} placeholder={t('share.invitePh')} onChange={(e) => setEmail(e.target.value)} {...imeGuardWith((e) => { if (e.key === 'Enter') invite(); })} /><button type="button" className="btn primary" disabled={busy || !email.trim()} onClick={invite}>{t('share.invite')}</button></div>
         <div className="people">
-          <div className="person"><span className="avatar">{ME.name[0]}</span><span className="person-main"><b>{ME.name} ({t('share.you')})</b><small>{ME.email}</small></span><span className="dim small">{t('share.role.full')}</span></div>
+          <div className="person"><span className="avatar">{ME.name[0]}</span><span className="person-main"><b>{ME.name} ({t('share.you')})</b><small><Hide k="mail:me">{ME.email}</Hide></small></span><span className="dim small">{t('share.role.full')}</span></div>
           {st.people.filter((p) => p.user_id !== ME.id).map((p) => <div key={p.user_id} className="person"><span className="avatar">{(p.name || '?')[0]}</span><span className="person-main"><b>{p.name}</b></span>{roleSelect(p.role, (r) => setRole(p.user_id, r))}</div>)}
         </div>
         <div className="field-block">
@@ -242,6 +244,7 @@ export function AssignSheet() {
     setBusy(true);
     try {
       // 자료를 글자로 — 메일은 본문(이 탭에만 있는 것), 페이지는 본문, 파일·기록은 이름만. 못 불러오면 보내지 않는다(빈 자료로 맡기지 않게)
+      // 거래·거래처·일정·견적/계약·회사 정보(17차)는 메뉴를 누른 화면이 이미 글자(text)를 뽑아 넘겼다 — 그대로 싣는다
       const items = await Promise.all(a.items.map(async (i) => {
         if (i.kind === 'mail') {
           const m = getState().mails.find((x) => x.id === i.id);
@@ -271,7 +274,7 @@ export function AssignSheet() {
     <Sheet open onClose={close} title={fixed ? t('crew.assignTo', { crew: main.name }) : t('crew.assign')}
       footer={<><button type="button" className="btn" onClick={close}>{t('cancel')}</button><button type="button" className="btn primary" disabled={busy || !crew || (task === 'custom' && !text.trim() && !label)} onClick={go}><Icon name="hand" size={14} />{t('crew.go')}</button></>}>
       {main && <div className="ap-who assign-who"><Face id={main.id} size={32} /><div><b>{main.name}</b>{(main.job || main.role) && <small className="dim">{main.job || main.role}</small>}</div></div>}{/* 맡을 에이전트 얼굴(유건 9/30) */}
-      {a.items.length > 0 && <div className="assign-items">{a.items.map((i) => <span key={`${i.kind}-${i.id}`} className="chip"><Icon name={{ mail: 'mail', page: 'doc', file: 'file', record: 'run' }[i.kind]} size={12} />{i.label}</span>)}</div>}
+      {a.items.length > 0 && <div className="assign-items">{a.items.map((i) => <span key={`${i.kind}-${i.id}`} className="chip"><Icon name={{ mail: 'mail', page: 'doc', file: 'file', record: 'run', deal: 'deal', customer: 'person', event: 'calendar', doc: 'sign', company: 'building' }[i.kind]} size={12} />{i.label}</span>)}</div>}
       {!fixed && <label className="field-block"><span className="label">{t('crew.to')}</span>
         {crews.length ? <select className="input" value={crew ?? ''} onChange={(e) => { setCrew(e.target.value || null); setAt(null); }}><option value="" disabled>{t('crew.pick')}</option>{crews.map((c) => <option key={c.id} value={c.id}>{c.name}{c.role ? ` · ${c.role}` : ''}</option>)}</select>
           : <p className="dim small">{t('crew.fail.no_crew')}</p>}</label>}
@@ -290,6 +293,7 @@ export function AssignSheet() {
       </div>
       {sets.length > 0 && <label className="field-block"><span className="label">{t('crew.set.pick')}</span>
         <select className="input" value={setId} onChange={(e) => setSetId(e.target.value)}><option value="">{t('crew.set.none')}</option>{sets.map((x) => <option key={x.id} value={x.id}>{x.title}</option>)}</select></label>}
+      {maskedNote(a.items, hideAllOn()) && <p className="data-note"><Icon name="eyeOff" size={12} />{t('crew.maskedNote')}</p>}
       <p className="data-note"><Icon name="lock" size={12} />{t('crew.dataNote')}</p>
     </Sheet>
   );

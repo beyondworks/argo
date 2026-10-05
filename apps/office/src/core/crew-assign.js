@@ -8,7 +8,9 @@ import { CREW_ASSIGN_DICT } from './crew-assign-i18n.js';
 registerDict(CREW_ASSIGN_DICT); // 표지 문구(crew.msg.*)는 이 파일과 함께 지연 로드된다(첫 화면 150KB 상한)
 
 export const EXCERPT_MAX = 8000;
-export const SOURCES = { mail: 'office_mail', page: 'office_page', file: 'office_file', record: 'office_record' };
+// 값은 모두 office_로 시작해야 한다 — 게이트웨이가 office_* 전체를 오피스 글로 보고 그 턴의 풀 오토를 끈다(루트 src/gateway/msgr-handoff.mjs isOfficeSource). 테스트가 잠근다
+// 17차: 거래·거래처·일정·견적/계약·회사 정보도 맡긴다(글자는 core/crew-items.js가 그 화면에서 뽑아 text로 넘긴다)
+export const SOURCES = { mail: 'office_mail', page: 'office_page', file: 'office_file', record: 'office_record', deal: 'office_deal', customer: 'office_customer', event: 'office_event', doc: 'office_doc', company: 'office_company' };
 
 /** 메일 HTML → 글자. 스크립트·스타일은 버리고 줄바꿈을 남긴다. parse는 테스트에서 바꿔 끼운다 */
 export function htmlText(html, parse = (h) => new DOMParser().parseFromString(h, 'text/html')) {
@@ -33,6 +35,10 @@ export const excerpt = (text, max = EXCERPT_MAX) => {
   const s = String(text ?? '').trim();
   return s.length > max ? `${s.slice(0, max)}…` : s;
 };
+
+/** 맡기기 창의 "가린 값도 함께 보냅니다" 안내를 보일지 — 가릴 수 있는 값이 든 종류(거래·거래처·회사 정보·견적)거나 전체 가리기 중일 때(유건 10/4 결정: 가림은 화면용, 글에는 들어간다) */
+const MASKABLE = ['deal', 'customer', 'company', 'doc'];
+export const maskedNote = (items, hideAll) => items.length > 0 && (hideAll || items.some((i) => MASKABLE.includes(i.kind)));
 
 /** 크루에게 보낼 글과 meta. items: [{ kind, id, label, from?, text? }] — text는 이미 글자로 바꾼 본문(없으면 이름만).
     t는 문구 사전(crew.msg.*) — 오피스 화면 언어로 표지를 쓴다 */

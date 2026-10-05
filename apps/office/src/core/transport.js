@@ -9,6 +9,8 @@ import { showToast } from '../ui/Overlay.jsx';
 import { t } from './i18n.js';
 import { persist, heldKey, getStorageScope, scopedStorageKey } from './save.js';
 import { apiUrl } from './platform.js';
+// 저장이 닿은 페이지를 같은 브라우저의 다른 창에 바로 알린다(16차)
+import { announce } from './page-live.js';
 
 const hold = (row) => row && persist(heldKey(row.id), { title: row.title ?? '', content: row.content }, 0);
 
@@ -17,7 +19,10 @@ const findPage = (id) => getState().pages.find((p) => p.id === id) ?? getState()
 const patchPage = (id, patch) => update((s) => ({ pages: s.pages.map((p) => (p.id === id ? { ...p, ...patch } : p)) }));
 async function send(op) {
   const mode = getMode();
-  if (mode === 'sample' && op.payload.ownerUid === 'sample') return;
+  if (mode === 'sample' && op.payload.ownerUid === 'sample') {                     // 예시 데이터는 서버가 없다 — 다른 창에만 알린다(판이 늘지 않으니 고친 시각으로 맞춘다)
+    if (op.payload.type === 'page.save') announce(getState().pages.find((x) => x.id === op.payload.id), { sample: true });
+    return;
+  }
   if (mode !== 'signedIn') throw Object.assign(new Error('session not ready'), { transient: true }); // 로그인 확인 전 — 목록을 버리지 않고 나중에
   const p = op.payload;
   const owner = p.ownerUid;
@@ -68,7 +73,7 @@ async function send(op) {
       if (!row || row.content === undefined) return;                                 // 본문을 아직 안 받은 페이지는 보낼 것이 없다
       if (getUi().conflict === row.id) { hold(row); return; }                        // 충돌은 사람이 고른다(새로 불러오기·사본) — 그 전엔 거절될 저장을 보내지 않고 이 기기에 남긴다
       const version = await rpc('office_page_save', { p_id: row.id, p_title: row.title ?? '', p_content: row.content, p_base_version: row.version ?? 1 });
-      if (version !== row.version) patchPage(row.id, { version });
+      if (version !== row.version) { patchPage(row.id, { version }); announce({ ...row, version }); } // 서버가 받은 그 제목·본문과 새 판 번호(같은 내용이면 판이 그대로라 알리지 않는다)
       return;
     }
     case 'page.move': {
@@ -93,7 +98,16 @@ async function send(op) {
       assertOwner();
       const response = await fetch(apiUrl('/api/mail/modify'), { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ account: m.account, id: m.gid, add: [...(m.unread ? ['UNREAD'] : []), ...(inbox === 'add' ? ['INBOX'] : [])], remove: [...(m.unread ? [] : ['UNREAD']), ...(inbox === 'remove' ? ['INBOX'] : [])] }) });
       assertOwner();
-      if (!response.ok) { const failure = await response.json().catch(() => ({})); throw Object.assign(new Error('mail'), { code: failure.error, transient: response.status >= 500 }); }
+      if (!response.ok) { const failure = await response.json().catch(() => ({})); throw Object.assign(new Error('mail'), { code: failure.error, transient: response.status >= 500 || response.status === 429 }); } // 429: 서버가 15차부터 요청 제한을 502가 아니라 429로 돌려준다 — 예전처럼 다시 보낸다
+      return;
+    }
+    case 'mail.star': {                                                            // 별표(15차) — 읽음·보관(mail.flag)과 따로 보낸다: 지금 값만 STARRED 하나를 넣거나 뺀다(여러 번 보내도 같다)
+      const m = getState().mails.find((x) => x.id === p.id);
+      if (!m?.account) return;
+      assertOwner();
+      const response = await fetch(apiUrl('/api/mail/modify'), { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ account: m.account, id: m.gid, [m.starred ? 'add' : 'remove']: ['STARRED'] }) });
+      assertOwner();
+      if (!response.ok) { const failure = await response.json().catch(() => ({})); throw Object.assign(new Error('mail'), { code: failure.error, transient: response.status >= 500 || response.status === 429 }); }
       return;
     }
     case 'crew.assign': {                                                          // 크루에게 맡기기 — 메신저 앱과 같은 방(내 크루와의 1:1)에 같은 표로 쓴다(core/crew-assign.js deliverToCrew)
@@ -126,7 +140,7 @@ function rejected(op, err) {
   if (err?.conflict && op.payload.type === 'page.save') { hold(getState().pages.find((x) => x.id === op.payload.id)); setUi({ conflict: op.payload.id }); return; }
   if (op.payload.type === 'approval.decide') { showToast(t('ap.noRight')); import('./pull.js').then((m) => m.pullBoard()).catch(() => {}); return; }
   if (op.payload.type === 'crew.assign') { showToast(t(`crew.fail.${err?.assign ?? 'generic'}`)); return; }
-  if (op.payload.type === 'mail.flag') { showToast(t(err?.code === 'expired' ? 'mailc.expired' : 'sync.rejected')); import('./mail.js').then((m) => m.loadAccounts()).catch(() => {}); return; }
+  if (op.payload.type === 'mail.flag' || op.payload.type === 'mail.star') { showToast(t(err?.code === 'expired' ? 'mailc.expired' : 'sync.rejected')); import('./mail.js').then((m) => m.loadAccounts()).catch(() => {}); return; }
   showToast(t('sync.rejected'));
   import('./pull.js').then((m) => m.pullPages()).catch(() => {});                  // 서버 상태로 되돌린다
 }
