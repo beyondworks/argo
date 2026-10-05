@@ -2507,6 +2507,9 @@ html[data-os='win'] .table th { letter-spacing: 0.06em; }
 :root[data-narrow-error] .topbar-chip-error::after { content: ''; position: absolute; inset: -7px; }
 /* 가장 좁은 폭(360)에서 칩 둘이 32×32 아이콘이 되면 제목 하한(56px)이 검색 알약 하한(96px)과 함께 12px를 넘겼다 — 마지막 접기 단계에서는 제목 하한도 줄인다(글자는 …로 줄어든다) */
 :root[data-narrow-error] .topbar-title { min-width: 40px; }
+/* 그래도 360 폭(세로 스크롤바 8px)에서 칩 둘이 다 뜨면 검색칸이 오른쪽 패딩을 4px 침범했다(4차 검수, ko·en 같음 — 이 단계에선 글자가 없다).
+   마지막 단계에서는 상단바 간격도 12→8px로 줄인다: 항목 6개(메뉴·제목·칩 둘·작업·검색)의 간격 5개에서 20px — 예산 계산은 test/topbar-fit.test.mjs */
+:root[data-narrow-error] .topbar { gap: 8px; }
 /* 플로어(96px)는 base .search-pill이 전 구간 보장한다(3R HIGH-1 — 여기 두면 순환이라 base로 승격).
    접기 단계는 접은 폭을 검색으로 보내는 flex 전환만 담당한다. */
 :root[data-narrow-bar] .search-pill { flex: 1; width: auto; }

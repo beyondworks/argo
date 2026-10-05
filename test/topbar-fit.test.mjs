@@ -141,3 +141,24 @@ test('L3: 숨은 자식(display none)·크기 0·display: contents 칩 자리는
   const scaledOk = fakeBar({ scale: 1.25, offsetWidth: 400, clientWidth: 400, scrollWidth: 400, paddingRight: 20, children: [{ left: 300, width: 175 }] });
   assert.equal(isTopbarOver(scaledOk, style), false);
 });
+
+// 4차 분리 검수(2026-10-05): 360 폭 데크에서 칩 둘(새 소식·새로 고침 실패)이 다 뜨면 가장 접힌 단계에서도 검색칸이 오른쪽 패딩을 4px 침범했다(ko·en).
+// 가장 접힌 단계에는 글자가 없어(칩은 아이콘, 제목은 …, 검색은 하한) 폭이 CSS 숫자로만 정해진다 — globals.css의 그 숫자로 360 폭 예산을 계산한다.
+// 이 모델은 수정 전 숫자로 정확히 4px 넘침을 내서(브라우저 실측과 같다) 실제 배치와 맞는다는 것을 확인했다. 실제 넘침 0은 브라우저 측정으로 확인한다.
+import { readFileSync } from 'node:fs';
+test('360 폭·칩 둘 — 가장 접힌 단계의 고정 폭 합이 상단바 안쪽 폭(스크롤바·좌우 패딩 뺀 값)을 넘지 않는다', () => {
+  const css = readFileSync(new URL('../app/globals.css', import.meta.url), 'utf8');
+  const num = (re, what, src = css) => { const m = re.exec(src); assert.ok(m, `globals.css에서 ${what}를 찾지 못했다 — 규칙이 옮겨졌으면 이 예산도 같이 고친다`); return Number(m[1]); };
+  const phoneAt = css.indexOf('@media (max-width: 560px)'); assert.ok(phoneAt > 0, '폰 폭(≤560) 블록');
+  const padding = num(/\.topbar \{ padding: 0 (\d+)px; \}/, '폰 폭 상단바 좌우 패딩', css.slice(phoneAt));
+  const scrollbar = num(/^::-webkit-scrollbar \{ width: (\d+)px;/m, '스크롤바 폭');
+  const gap = num(/:root\[data-narrow-error\] \.topbar \{ gap: (\d+)px; \}/, '마지막 단계 상단바 간격');
+  const title = num(/:root\[data-narrow-error\] \.topbar-title \{ min-width: (\d+)px; \}/, '마지막 단계 제목 하한');
+  const chip = num(/:root\[data-narrow-error\] \.topbar-chip-error \{ width: (\d+)px;/, '접힌 칩 폭');
+  const iconBtn = num(/\.btn\.btn-icon \{ width: (\d+)px;/, '아이콘 버튼 폭');
+  const search = num(/\.search-pill \{[^}]*?min-width: (\d+)px;/, '검색칸 하한');
+  // 상단바 항목(데크, 폰 폭 ≤900에선 슬롯이 숨는다): 메뉴 버튼·제목·오류 칩·새 소식 칩·작업 버튼·검색칸 = 6개, 간격 5개
+  const need = iconBtn + title + chip + chip + iconBtn + search + gap * 5;
+  const inner = 360 - scrollbar - padding * 2;
+  assert.ok(need <= inner, `필요 ${need}px > 안쪽 폭 ${inner}px — 검색칸이 오른쪽 패딩을 ${need - inner}px 침범한다`);
+});

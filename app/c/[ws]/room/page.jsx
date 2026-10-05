@@ -220,7 +220,7 @@ export default function Room({ params }) {
     if (!files.length || uploading) return;
     setUploading(true); setError('');
     try {
-      const uploaded = await uploadAttachments(ws, files, lang); // 보내기 전에 10MB·합계 확인 — 한도는 app/lib/upload-limit.mjs 한 곳(2차 M3)
+      const uploaded = await uploadAttachments(ws, files, lang); // 보내기 전에 파일마다 10MB 확인, 파일마다 요청 하나 — 한도는 app/lib/upload-limit.mjs 한 곳(2차 M3·4차)
       setAtt((cur) => [...cur, ...uploaded].slice(0, 8));
     } catch (err) {
       setError(t('chat.attachFailed', { msg: failureReason(err, t) }));
