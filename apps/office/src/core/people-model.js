@@ -38,3 +38,10 @@ export function selectable(list, sel) {
   const keys = list.map(rowKeyOf), ids = list.filter((p) => p.id).map((p) => p.id);
   return { keys, ids, picked: keys.filter((k) => sel.has(k)), deletable: ids.filter((id) => sel.has(id)), all: keys.length > 0 && keys.every((k) => sel.has(k)) };
 }
+
+/** 여러 명 지우기(OFC-14) — 하나씩 지우다 실패하면 거기서 멈추고 { done: 지운 수, error }. 실패가 '지웠습니다'로 덮이지 않게 화면이 둘을 나눠 알린다 */
+export async function removeEach(ids, remove) {
+  let done = 0;
+  for (const id of ids) { try { await remove(id); done++; } catch (error) { return { done, error }; } }
+  return { done, error: null };
+}

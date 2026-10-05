@@ -33,6 +33,8 @@ export function Palette({ open, onClose, space }) {
     return [...pg, ...ml, ...cmds];
   }, [open, q, space, pages, mails, more]);
 
+  // 화살표로 고른 줄이 목록 밖으로 나가면 따라 스크롤(OFC-12) — 초점은 입력칸에 있어(aria-activedescendant) 브라우저가 저절로 옮기지 않는다
+  useEffect(() => { if (open) document.getElementById(`pal-${idx}`)?.scrollIntoView({ block: 'nearest' }); }, [idx, open]);
   if (!open) return null;
   const run = (r) => { onClose(); r?.run(); };
   const onKey = (e) => {

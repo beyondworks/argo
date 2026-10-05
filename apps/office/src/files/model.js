@@ -7,7 +7,10 @@ import { RULES, BODY, PHONE, EMAIL } from './rules.js';
 export const CATEGORIES = ['quote', 'contract', 'bizcert', 'card', 'bankbook', 'evidence', 'archive', 'general'];
 /** 거래처 첨부 종류(인트라넷 customers/page.tsx:80 사업자등록증·통장사본·계약서·기타 + 명함) */
 export const CUSTOMER_TYPES = ['bizcert', 'bankbook', 'contract', 'card', 'general'];
-export const MAX_BYTES = 50 * 1024 * 1024; // 오피스 파일 상한(core/files.js MAX_FILE, 버킷 file_size_limit과 같다)
+export const MAX_BYTES = 50 * 1024 * 1024; // 오피스 파일 상한(core/files.js MAX_FILE, 버킷 file_size_limit과 같다) — 서버의 고정 상한(드라이브 가져오기도 쓴다)
+// 지금 쓸 수 있는 파일 하나 한도 = 서버 Free 한도(office_storage_limits file_max_bytes 25MB) — 지금은 모두 Free(office_seat_plan). 25~50MB가 화면 검사를 지나 서버에서 거절되던 것을 맞춘다.
+// 요금제 연결(Pro 50MB) 때 서버가 주는 한도로 바꾼다
+export const FILE_MAX = 25 * 1024 * 1024;
 export const TRASH_DAYS = 30;              // 휴지통 보존(페이지 휴지통과 같은 값 — 유건 승인 2026-09-26)
 export const SUMMARY_MAX = 1900, TEXT_MAX = 100_000;
 /** 쓴 용량 / 한도(LOW-B) — 목록이 주는 usage(판정과 같은 함수)를 그대로. 한도의 80%부터 안내 한 줄. 요금제 이름·가격은 넣지 않는다(결제 연결 때) */
@@ -40,7 +43,7 @@ const ALLOWED = ['image/', 'text/', 'application/pdf', 'application/msword', 'ap
 /** 올릴 수 있는가 — 크기 상한, 형식 허용 목록(모르는 형식 application/octet-stream·빈 값은 확장자로 다시 본다 — 인트라넷과 같다) */
 export function uploadCheck(file) {
   if (!file || !file.name) return 'input';
-  if (file.size > MAX_BYTES) return 'tooBig';
+  if (file.size > FILE_MAX) return 'tooBig';
   if (file.size === 0) return 'empty';
   const mime = (file.type || '').toLowerCase();
   if (!mime || mime === 'application/octet-stream') return null;

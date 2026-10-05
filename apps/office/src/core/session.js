@@ -15,6 +15,11 @@ const emit = () => listeners.forEach((l) => l());
 export const getMode = () => mode;
 export const useSession = () => useSyncExternalStore((l) => { listeners.add(l); return () => listeners.delete(l); }, () => mode, () => mode);
 
+/** 그 공간에서 보이는 내 이름(CX-07) — 메신저와 같은 원천: 조직은 그 조직의 내 표시 이름(msgr_org_members), 없거나 내 공간이면 프로필 이름(ME.name) */
+export const nameIn = (space) => SPACES.find((s) => s.key === space)?.me || ME.name;
+/** 사람 이름 규칙 — 서버 msgr_person_label·메신저 self-member.mjs와 같다: 프로필 표시 이름 → 이메일 앞부분 */
+export const personLabel = (profileName, email) => String(profileName ?? '').trim() || String(email ?? '').split('@')[0];
+
 /** 공간 구조(조직 위키 최상위·조직 홈)를 바꿀 수 있는가 — 서버 msgr_is_admin과 같은 기준. 'shared'는 남의 공간이라 false */
 export const canManage = (key) => { const s = SPACES.find((x) => x.key === key); return s?.kind === 'me' || s?.role === 'owner' || s?.role === 'admin'; };
 
@@ -23,10 +28,10 @@ let applying = 0, spacesAt = 0, pageUid = null; // pageUid: 이 페이지에서 
 
 /** 내가 속한 조직(퇴사·삭제 제외) → 공간. 조직 키는 주소에 쓰는 slug, 서버 키는 id */
 async function loadSpaces(sb, me) {
-  const { data, error } = await sb.from('msgr_org_members').select('role, org:msgr_orgs(id, name, slug, deleted_at)').eq('user_id', me.id).is('removed_at', null);
+  const { data, error } = await sb.from('msgr_org_members').select('role, display_name, org:msgr_orgs(id, name, slug, deleted_at)').eq('user_id', me.id).is('removed_at', null);
   if (error) throw error;
   const orgs = (data ?? []).filter((r) => r.org && !r.org.deleted_at)
-    .map((r) => ({ key: r.org.slug, id: r.org.id, kind: 'org', name: r.org.name, role: r.role, mark: (r.org.name || '?').slice(0, 1).toUpperCase() }))
+    .map((r) => ({ key: r.org.slug, id: r.org.id, kind: 'org', name: r.org.name, role: r.role, mark: (r.org.name || '?').slice(0, 1).toUpperCase(), me: String(r.display_name ?? '').trim() || null })) // me = 이 조직에서 보이는 내 이름
     .sort((a, b) => a.name.localeCompare(b.name) || a.key.localeCompare(b.key)); // 이름이 같아도 순서가 매번 같게(탭 복귀 비교가 흔들리지 않게)
   return [{ key: 'me', kind: 'me', name: me.name, role: 'owner' }, ...orgs];
 }
@@ -46,14 +51,18 @@ async function apply(sb, session) {
   if (request !== applying) return;
   if (!session) { mode = 'signedOut'; ME = SAMPLE.ME; SPACES = SAMPLE.SPACES; emit(); return; }
   const u = session.user;
-  ME = { id: u.id, name: u.user_metadata?.full_name || u.user_metadata?.name || (u.email ?? '').split('@')[0], email: u.email ?? '' };
   const cached = restore(CACHE, null);
+  // 내 이름(CX-07) — 메신저 프로필 이름 → 이메일 앞부분(메신저·서버와 같은 규칙). 프로필을 못 읽으면 지난번 이름, 그것도 없으면 로그인 정보의 이름
+  ME = { id: u.id, name: (cached?.uid === u.id && cached.name) || u.user_metadata?.full_name || u.user_metadata?.name || personLabel(null, u.email), email: u.email ?? '' };
   SPACES = cached?.uid === u.id ? cached.spaces : [{ key: 'me', kind: 'me', name: ME.name, role: 'owner' }];
+  const profile = Promise.resolve().then(() => sb.from('msgr_profiles').select('display_name').eq('user_id', u.id).maybeSingle()) // 로그인 때 한 번(탭 복귀에는 읽지 않는다)
+    .then((r) => (r.error ? undefined : personLabel(r.data?.display_name, u.email)), () => undefined); // 못 읽어도 로그인은 그대로
   try {
-    const spaces = await loadSpaces(sb, ME);
+    const [spaces, name] = await Promise.all([loadSpaces(sb, ME), profile]);
     if (request !== applying) return;
+    if (name) { ME = { ...ME, name }; spaces[0] = { ...spaces[0], name }; }
     SPACES = spaces; spacesAt = Date.now();
-    persist(CACHE, { uid: u.id, spaces: SPACES });
+    persist(CACHE, { uid: u.id, spaces: SPACES, name: ME.name });
   } catch (e) { console.warn('[office] spaces load failed', e?.message); }
   if (request === applying) { mode = 'signedIn'; emit(); }
 }

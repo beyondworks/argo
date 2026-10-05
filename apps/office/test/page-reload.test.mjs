@@ -18,7 +18,7 @@ function fixture() {
   const row = { title: '노트', content: { type: 'doc', content: [{ type: 'heading' }] }, version: 2, updated_at: 'now', owner_user_id: 'alice', org_id: null };
   const query = { select() { return this; }, eq() { return this; }, maybeSingle: async () => ({ data: row, error: null }) };
   const pull = load('pull.js', { getStorageScope: () => 'alice', ME: { id: 'alice' }, SPACES: [], getClient: async () => ({ from: () => query, rpc: async () => ({ data: 'edit' }) }),
-    getState: () => state, update: (fn) => Object.assign(state, fn(state)), outbox: { has: () => false }, mergePages() {}, mapBoard() {} });
+    getState: () => state, update: (fn) => Object.assign(state, fn(state)), outbox: { has: () => false }, mergePages() {}, mapBoard() {}, getUi: () => ({}), setUi() {} }); // 없는 페이지 표시(ui.missingPage)는 본문 읽기가 켜고 끈다
   return { state, pull };
 }
 

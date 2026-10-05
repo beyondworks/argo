@@ -162,7 +162,7 @@ export function useItemActions({ space, ctx, people, onOpen, onNewEvent, categor
 }
 
 function DateAsk({ items, onClose, onSave }) {
-  const [day, setDay] = useState(items[0]?.day ?? new Date().toISOString().slice(0, 10)), [busy, setBusy] = useState(false);
+  const [day, setDay] = useState(() => V.askDay(items)), [busy, setBusy] = useState(false); // 한국 날짜(OFC-16)
   const formId = useId();
   const submit = async (e) => { e.preventDefault(); if (!day || busy) return; setBusy(true); await onSave(day); setBusy(false); };
   return <Modal open width={380} title={t('views.dateTitle', { n: items.length })} onClose={onClose} footer={<>
@@ -253,7 +253,9 @@ export function ItemsView({ id, items, cfg, setCfg, views, label, today, ctx, pe
   const dash = <span className="dim">—</span>;
 
   let body;
-  if (!shown.length) body = <p className="vw-empty">{t('views.empty')}</p>;
+  // 거르기 때문에 0건이면 바로 풀 수 있게(OFC-15) — 할 일 화면은 종류 칸을 쓰지 않는다(kind 'task' 고정)
+  const nf = filterCount(cfg.filter, !tasks);
+  if (!shown.length) body = <div className="vw-empty"><p>{t('views.empty')}</p>{nf > 0 && items.length > 0 && <button type="button" className="btn sm" onClick={() => setCfg({ filter: { who: 'all', category: 'all', period: 'all', status: 'all', priority: 'all', ...(tasks ? {} : { kind: 'all' }) } })}>{t('views.filterReset')}</button>}</div>;
   else if (cfg.view === 'kanban') body = <Kanban id={id} items={shown} cfg={cfg} ctx={ctx} compact={compact} itemProps={itemProps} lead={lead} meta={meta} face={face} badges={badges} actions={actions} lab={lab} cats={cats} />;
   else if (cfg.view === 'card') body = <div className="vw-cards">{shown.slice(0, limit).map((it) => <article key={it.key} className={`vw-card${it.done ? ' done' : ''}`} tabIndex={0} {...itemProps(it)}>
     <div className="vw-card-top">{lead(it)}<span className="vw-title">{it.title}</span>{face(it)}</div>

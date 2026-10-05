@@ -8,6 +8,7 @@ import { Modal, showToast } from '../ui/Overlay.jsx';
 import { Peek } from '../ui/Peek.jsx';
 import { CustomerCard, ItemCard, assignCustomers } from './Cards.jsx';
 import { Icon } from '../ui/Icon.jsx';
+import { LoadFail } from '../ui/LoadFail.jsx';
 import { InfoTip } from '../ui/InfoTip.jsx';
 import { openMenu, menuProps, mergeHandlers } from '../ui/Menu.jsx';
 import { useBusiness, businessError } from './data.js';
@@ -222,7 +223,9 @@ export default function BusinessPage({ space, tab: requested = null, openId, vie
         {tabState.hidden.length > 0 && <button type="button" className="biz-tab-more" aria-haspopup="menu" onClick={showHidden}><Icon name="chevron" size={12} />{t('bizui.tabHiddenN', { n: tabState.hidden.length })}</button>}</nav>
       {tabAction && <div className="biz-tab-actions">{tabAction}</div>}
     </div>
-    {((!data && error) || (formError && !dialog && !openId)) && <p className="bizui-error" role="alert">{t(!data && error ? error : formError)}</p>}
+    {/* 처음 읽기 실패 — 읽기에 '입력값을 확인하세요'(쓰기 문구)가 아니라 읽기 문구와 다시 시도(OFC-08). 권한·설정처럼 사유가 있으면 그 사유 */}
+    {!data && error && !loading && <LoadFail text={t(error === 'biz.error.request' ? 'load.readFail' : error)} onRetry={refresh} />}
+    {formError && !dialog && !openId && <p className="bizui-error" role="alert">{t(formError)}</p>}
     {uncertain && <div className="bizui-error" role="alert"><span>{label('pending')}</span><button className="btn sm" disabled={busy} onClick={() => { setFormError(null); business.retryPending().catch(() => {}); }}>{label('retry')}</button></div>}
     {loading && !data && <p role="status">{t('biz.loading')}</p>}
     {data && <>

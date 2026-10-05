@@ -7,6 +7,7 @@ import { MAIL_DICT } from './mail-i18n.js';
 import { useStore } from '../core/store.js';
 import { ME, useSession } from '../core/session.js';
 import { Hide } from '../business/Redact.jsx';
+import { LoadFail } from '../ui/LoadFail.jsx';
 import { loadAccounts, connectGoogle, disconnectAccount, mailConfig, adminNote, notifyOn, setNotifyOn, subscribeNotify } from '../core/mail.js';
 
 registerDict(MAIL_DICT);
@@ -63,14 +64,14 @@ export function MailAccountsSettings() {
   useLang();
   const real = useSession() === 'signedIn';
   const accounts = useStore((s) => s.mailAccounts) ?? [];
-  const [ready, setReady] = useState(false), [cfg, setCfg] = useState(undefined), [bye, setBye] = useState(null);
+  const [ready, setReady] = useState(false), [cfg, setCfg] = useState(undefined), [bye, setBye] = useState(null), [again, setAgain] = useState(0);
   useEffect(() => {
     if (!real) return;
     let live = true;
     loadAccounts().catch(() => {}).finally(() => live && setReady(true));
     mailConfig().then((c) => live && setCfg(c));
     return () => { live = false; };
-  }, [real]);
+  }, [real, again]);
   if (!real) return <>
     <div className="person"><span className="dot ok" /><span className="person-main"><b><Hide k="mail:me">{ME.email}</Hide></b><small>{t('mailc.sampleAccount')}</small></span></div>
     <p className="dim small">{t('mailc.sampleNote')}</p>
@@ -84,7 +85,7 @@ export function MailAccountsSettings() {
       {!okAccount(a) && <button type="button" className="btn sm primary" onClick={() => reconnect(a)}>{t('mailc.reconnect')}</button>}
       <button type="button" className="btn sm ghost" onClick={() => setBye(a)}>{t('mailc.disconnect')}</button>
     </div>)}
-    {cfg !== undefined && (cfg?.google
+    {cfg?.failed ? <LoadFail small onRetry={() => { setCfg(undefined); setAgain((n) => n + 1); }} /> : cfg !== undefined && (cfg?.google
       ? <div className="set-actions"><button type="button" className="btn sm" onClick={() => reconnect()}><Icon name="plus" size={13} />{t(accounts.length ? 'mailc.add' : 'mailc.google')}</button>
         <button type="button" className="link-btn small" onClick={copyAdminNote}>{t('mailc.blockedQ')} {t('mailc.copyAdmin')}</button></div>
       : <p className="dim small">{t('mailc.notConfigured')}</p>)}

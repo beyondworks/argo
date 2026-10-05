@@ -15,16 +15,17 @@ import { getClient } from '../core/supabase.js';
 import { isDesktop, saveAttachment } from '../core/platform.js';
 import { setUi } from '../core/ui-state.js';
 import { navigate } from '../core/router.jsx';
-import { loadDocBody } from '../core/pull.js';
-import { mdToDoc } from '../core/board.js';
+import { loadDocBody, pullBoard } from '../core/pull.js';
+import { mdToDoc, apStale } from '../core/board.js';
 import { folderKey, isoDay, byDate, journalDigest, fileGroup, canQuickDecide, HUMAN } from '../core/folders.js';
 import { FolderView, DateSections, useFolder, folderName, FolderIcon, openItem, closeItem, pickFolder, when, countText } from '../ui/FolderView.jsx';
 import { kstDay } from '../core/task-model.js';
 import { DocView } from '../ui/DocView.jsx';
+import { LoadFail } from '../ui/LoadFail.jsx';
 import { Markdown } from '../ui/Markdown.jsx';
 import { stripFrontMatter } from '../core/markdown.js';
 import { restore, persist } from '../core/save.js';
-import { SPACES, ME, getMode } from '../core/session.js';
+import { SPACES, getMode, nameIn } from '../core/session.js';
 import { useSelection, selProps } from '../core/selection.js';
 
 registerDict(RECORDS_DICT);
@@ -37,8 +38,17 @@ const assignMany = (list, label) => {
   return list.length > 0 && spaces.size === 1 && { label: t('crew.assign'), icon: 'hand', run: (_, clear) => { setUi({ assign: { space: list[0].space, items: list.map((x) => ({ kind: 'record', id: x.id, label: label(x) })) } }); clear(); } };
 };
 
+/** 기록판 화면의 빈 자리 — 못 읽었으면 '결재를 기다리는 일이 없습니다'라고 하지 않는다(OFC-08, 제목 아래 안내가 다시 시도를 준다) */
+function BoardEmpty({ icon, text }) {
+  const failed = useStore((s) => !!s.boardError);
+  return failed ? null : <div className="empty-state"><Icon name={icon} size={20} /><p>{t(text)}</p></div>;
+}
+
+/** 제목 — 기록판을 못 읽었으면 바로 아래에 '불러오지 못했습니다 · 다시 시도'(보이는 목록은 지난번에 받은 것일 수 있다) */
 function Title({ h, sub }) {
-  return <div className="page-title-row"><div><h1 className="page-h1">{h}</h1>{sub && <p className="dim">{sub}</p>}</div></div>;
+  const failed = useStore((s) => !!s.boardError);
+  return <><div className="page-title-row"><div><h1 className="page-h1">{h}</h1>{sub && <p className="dim">{sub}</p>}</div></div>
+    {failed && <LoadFail small onRetry={() => pullBoard().catch(() => {})} />}</>;
 }
 
 // 폴더 보기 공통(유건 9/30) — 에이전트별 폴더, 날짜 구간, 한 줄 요약. 누르면 지금의 자세히 보기(Sheet)가 열린다.
@@ -60,8 +70,28 @@ function RecRow({ x, all, bucket, active, badges, extra, sel }) {
 
 /** 위험도 배지 — 결재가 보이는 모든 곳이 같은 문구(risk.*)와 색(가장 높은 등급만 warn) */
 const Risk = ({ risk }) => <span className={`badge ${risk === 'high' ? 'warn' : ''}`}>{t(`risk.${risk}`)}</span>;
-/** 결정 — 카드 버튼과 상세 창이 같은 경로(store.decide → 전송함 approval.decide) */
-const decideAp = (a, result) => { decide(a.id, result, ME.name); showToast(t('ap.decided', { result: t(`status.${result}`) })); };
+/** 결정 전 최신 상태(CX-10) — 메신저 등 다른 곳에서 이미 정한 결재를 '승인했습니다' 뒤 '권한 없음'으로 보이지 않게, 누를 때만 한 번 읽는다(여러 개는 한 번에).
+ *  못 읽으면(망 오류·예시) 막지 않고 종전대로 보낸다 — 최종 판정은 서버(RLS), 0행이면 전송함이 같은 판정(apStale)으로 안내한다 */
+async function freshStatus(ids) {
+  const pending = new Map(ids.map((id) => [id, 'pending']));
+  if (getMode() !== 'signedIn' || !ids.length) return pending;
+  try {
+    const { data, error } = await (await getClient()).from('msgr_crew_approvals').select('id, status').in('id', ids);
+    return error ? pending : new Map(ids.map((id) => [id, data.find((r) => r.id === id)?.status ?? 'gone']));
+  } catch { return pending; }
+}
+const staleToast = (s) => { showToast(t(s.key, { result: t(`status.${s.result}`) })); pullBoard().catch(() => {}); };
+/** 결정 — 카드 버튼과 상세 창이 같은 경로(store.decide → 전송함 approval.decide). 결정한 사람 이름은 그 조직에서 보이는 이름(메신저와 같은 이름, CX-07) */
+const deciding = new Set(); // 상태를 읽는 동안 같은 결재를 또 누르면 무시한다(승인 뒤 바로 거절을 누르면 '거절했습니다'가 뜨던 것)
+const decideAp = async (a, result) => {
+  if (deciding.has(a.id)) return;
+  deciding.add(a.id);
+  try {
+    const s = apStale((await freshStatus([a.id])).get(a.id));
+    if (s) { staleToast(s); return; }
+    decide(a.id, result, nameIn(a.space)); showToast(t('ap.decided', { result: t(`status.${result}`) }));
+  } finally { deciding.delete(a.id); }
+};
 
 /** 결재 카드(유건 9/30 #7) — 한 줄 핵심(에이전트가 적은 목적·할 일, 없으면 요청 앞부분) + 바로 승인·거절.
  *  위험도가 가장 높은 것은 버튼 대신 '열어서 확인'(상세 창에서 명령까지 보고 결정). 결정 권한이 없으면 버튼이 없다 */
@@ -87,22 +117,24 @@ export function Approvals({ space, openId, folder }) {
   const rows = useMemo(() => list.filter(approvalsIn(space)), [list, space]);
   const { folders, current, visible } = useFolder(rows, crewKey, atMs, folder);
   const cur = rows.find((a) => a.id === openId);
-  const act = (result) => { decideAp(cur, result); closeItem(); };
+  const act = (result) => { closeItem(); decideAp(cur, result); };
   // 여러 개 승인·거절(11차) — 카드의 바로 승인·거절과 같은 경로. 위험도가 가장 높은 것은 카드처럼 열어서 확인해야 해 건너뛰고 알린다
   const [sel] = useSelection('approvals', { keys: visible.map((a) => a.id), actions: (keys) => {
     const mine = rows.filter((a) => keys.includes(a.id) && a.canDecide !== false), quick = mine.filter(canQuickDecide);
-    const many = (result) => (_, clear) => {
-      quick.forEach((a) => decide(a.id, result, ME.name));
-      const skip = mine.length - quick.length;
-      showToast([quick.length && t('sel.decided', { n: quick.length, result: t(`status.${result}`) }), skip && t('sel.skipped', { n: skip })].filter(Boolean).join(' · '));
+    const many = (result) => async (_, clear) => {
       clear();
+      const st = await freshStatus(quick.map((a) => a.id)), open = quick.filter((a) => st.get(a.id) === 'pending'); // 이미 다른 곳에서 정한 것은 건너뛴다(CX-10)
+      open.forEach((a) => decide(a.id, result, nameIn(a.space)));
+      const skip = mine.length - quick.length, gone = quick.length - open.length;
+      showToast([open.length && t('sel.decided', { n: open.length, result: t(`status.${result}`) }), skip && t('sel.skipped', { n: skip }), gone && t('ap.alreadyN', { n: gone })].filter(Boolean).join(' · '));
+      if (gone) pullBoard().catch(() => {});
     };
     return [quick.length > 0 && { label: t('ap.reject'), run: many('rejected') }, quick.length > 0 && { label: t('ap.approve'), icon: 'check', run: many('approved') }, assignMany(rows.filter((a) => keys.includes(a.id)), (a) => a.plain)];
   } });
   return (
     <div className="page-wrap wide">
       <Title h={t('nav.approvals')} />
-      {rows.length === 0 ? <div className="empty-state"><Icon name="stamp" size={20} /><p>{t('ap.empty')}</p></div> : (
+      {rows.length === 0 ? <BoardEmpty icon="stamp" text="ap.empty" /> : (
         <FolderView folders={folders} current={current} total={rows.length} human="fold.people">
           <div data-sel-scope="approvals"><DateSections groups={byDate(visible, byDay, kstDay())} render={(g) => g.items.map((a) => (
             <ApRow key={a.id} a={a} all={current === 'all'} bucket={g.key} active={a.id === openId} sel={sel} extra={space === 'me' ? spaceName(a.space) : ''} />))} /></div>
@@ -155,7 +187,7 @@ export function Work({ space, openId, folder }) {
   return (
     <div className="page-wrap wide">
       <Title h={t('nav.work')} />
-      {rows.length === 0 ? <div className="empty-state"><Icon name="run" size={20} /><p>{t('fold.empty')}</p></div> : (
+      {rows.length === 0 ? <BoardEmpty icon="run" text="fold.empty" /> : (
         <FolderView folders={folders} current={current} total={rows.length} human="fold.people" toolbar={tools}>
           <Table scope="work" sel={sel} cols={['col.goal', 'col.lead', 'col.status', 'col.progress', 'col.channel', 'col.started']} rows={visible} rowProps={(w) => menuProps(() => recordMenu(w, w.goal))}
             render={(w) => <>
@@ -186,7 +218,7 @@ export function Decisions({ space, openId, folder }) {
   return (
     <div className="page-wrap wide">
       <Title h={t('nav.decisions')} />
-      {rows.length === 0 ? <div className="empty-state"><Icon name="check" size={20} /><p>{t('fold.empty')}</p></div> : (
+      {rows.length === 0 ? <BoardEmpty icon="check" text="fold.empty" /> : (
         <FolderView folders={folders} current={current} total={rows.length} human="fold.people">
           <div data-sel-scope="decisions"><DateSections groups={byDate(visible, byDay, kstDay())} render={(g) => g.items.map((d) => (
             <RecRow key={d.id} x={d} all={current === 'all'} bucket={g.key} active={d.id === openId} sel={sel} extra={space === 'me' ? spaceName(d.space) : ''}
@@ -282,7 +314,7 @@ export function Outputs({ space, openId, folder }) {
   return (
     <div className="page-wrap wide">
       <Title h={t('nav.outputs')} />
-      {inSp.length === 0 ? <div className="empty-state"><Icon name="file" size={20} /><p>{t('fold.empty')}</p></div> : (
+      {inSp.length === 0 ? <BoardEmpty icon="file" text="fold.empty" /> : (
         <FolderView folders={folders} current={current} total={rows.length} human="fold.human" toolbar={kinds}>
           {visible.length === 0 ? <p className="dim fold-none">{t('fold.none')}</p>
             : <div data-sel-scope="outputs"><DateSections groups={byDate(visible, byDay, kstDay())} render={(g) => g.items.map((f) => <FileRow key={f.id} f={f} all={current === 'all'} bucket={g.key} sel={sel} group={group} />)} /></div>}
@@ -337,7 +369,7 @@ export function Journal({ space, folder }) {
   return (
     <div className="page-wrap wide">
       <Title h={t('nav.journal')} />
-      {entries.length === 0 ? <div className="empty-state"><Icon name="book" size={20} /><p>{t('fold.empty')}</p></div>
+      {entries.length === 0 ? <BoardEmpty icon="book" text="fold.empty" />
         : <FolderView folders={folders} current={current} total={entries.length} human="fold.people">{body}</FolderView>}
     </div>
   );
@@ -374,7 +406,7 @@ export function Docs({ space, openId }) {
   return (
     <div className="page-wrap" data-sel-scope="crew-docs">
       <Title h={t('nav.docs')} sub={t('docs.sub')} />
-      {rows.length === 0 ? <div className="empty-state"><Icon name="book" size={20} /><p>{t('docs.empty')}</p></div>
+      {rows.length === 0 ? <BoardEmpty icon="book" text="docs.sharedEmpty" />
         : <div className="docs-find"><Icon name="search" size={14} className="dim" /><input className="input" type="search" value={q} placeholder={t('docs.search')} aria-label={t('docs.search')}
           onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape' && q) { e.stopPropagation(); setQ(''); } }} /></div>}
       {term && rows.length > 0 && !shown.length && <p className="dim docs-none">{t('docs.noMatch')}</p>}
@@ -395,7 +427,7 @@ export function Docs({ space, openId }) {
       <Sheet open={!!cur} onClose={close} title={cur?.title ?? ''}>
         {cur && <div className="doc-read">
           <p className="dim small mono">{cur.path}</p>
-          {body === undefined ? <div className="skeleton-lines"><span /><span /></div> : body ? <Markdown text={stripFrontMatter(body)} className="doc-md" /> : <p className="dim">{t('docs.empty')}</p>}
+          {body === undefined ? <div className="skeleton-lines"><span /><span /></div> : body ? <Markdown text={stripFrontMatter(body)} className="doc-md" /> : <p className="dim">{t('docs.bodyEmpty')}</p>}
           <p className="dim small">{t('docs.readOnly')}</p>
         </div>}
       </Sheet>

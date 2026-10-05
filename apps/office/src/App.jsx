@@ -24,6 +24,7 @@ import { PEOPLE } from './data/sample.js';
 import { SPACES, ME, useSession, canManage } from './core/session.js';
 import { pullLayouts, pullPages, pullBoard } from './core/pull.js';
 import { flushNow } from './core/sync.js';
+import { refetchDue } from './core/refetch.js';
 import { Login } from './pages/Login.jsx';
 import { reloadOnce } from './core/chunk-reload.js';
 import { SelectionHost } from './core/selection.js'; // 여러 개 고르기(11차) — 감지 코드만 첫 화면, 선택 상자·막대는 쓸 때 받는다
@@ -80,7 +81,16 @@ class Boundary extends Component {
     return this.props.quiet ? null : <div className="empty-state" role="alert"><p>{t('load.fail')}</p><button type="button" className="btn" onClick={() => location.reload()}>{t('load.retry')}</button></div>;
   }
 }
-const Lazy = ({ fallback = <div className="boot" aria-busy="true" />, quiet, reset, children }) => <Boundary quiet={quiet} reset={reset}><Suspense fallback={fallback}>{children}</Suspense></Boundary>;
+/** 앱을 여는 동안(OFC-07) — 빈 바탕 대신 앱 표시와 진행 표시, 8초가 지나도 그대로면 '연결이 느립니다 · 다시 시도'(새로고침). screen = 화면 조각을 받는 동안(본문 자리) */
+function Boot({ screen = false }) {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => { const id = setTimeout(() => setSlow(true), 8000); return () => clearTimeout(id); }, []);
+  return <div className={screen ? 'boot screen' : 'boot'} role="status" aria-busy="true" aria-label={t('login.loading')}>
+    {!screen && <span className="space-mark login-mark">A</span>}<span className="boot-spin" />
+    {slow && <p className="dim small">{t('boot.slow')} <button type="button" className="link-btn" onClick={() => location.reload()}>{t('desktop.retry')}</button></p>}
+  </div>;
+}
+const Lazy = ({ fallback = <Boot screen />, quiet, reset, children }) => <Boundary quiet={quiet} reset={reset}><Suspense fallback={fallback}>{children}</Suspense></Boundary>;
 
 function route(path) {
   let m;
@@ -90,7 +100,7 @@ function route(path) {
   const me = path === '/me' || path.startsWith('/me/');
   const org = !me && match('/o/:org', path.split('/').slice(0, 3).join('/'));
   const space = me ? 'me' : org && SPACES.some((s) => s.key === org.org) ? org.org : null;
-  if (!space) return { redirect: '/me' };
+  if (!space) return { redirect: '/me', lost: !!org }; // lost = 없는 조직 주소 — 왜 옮겼는지 알린다(UX-O05)
   const rest = path.slice(baseOf(space).length) || '/';
   if (rest === '/') return { space, view: 'home' };
   if (rest === '/business') return { space, view: 'business', tab: null }; // 탭 없이 오면 업무 화면이 보이는 첫 탭을 고른다(분석을 숨긴 사람)
@@ -99,7 +109,7 @@ function route(path) {
   if (space === 'me' && rest === '/files/connect') return { space, view: 'filesConnect' };             // 구글 드라이브 권한 승인 뒤
   if (space === 'me' && rest === '/mail/connect') return { space, view: 'mailConnect' };             // Google 권한 승인 뒤 돌아오는 자리
   if (space === 'me' && (m = match('/mail/:id', rest))) return { space, view: 'mail', id: m.id };
-  return VIEWS.includes(rest.slice(1)) ? { space, view: rest.slice(1) } : { redirect: baseOf(space) };
+  return VIEWS.includes(rest.slice(1)) ? { space, view: rest.slice(1) } : { redirect: baseOf(space), lost: true };
 }
 
 function SaveStatus() {
@@ -140,10 +150,11 @@ function HideAllToggle() {
   return <button type="button" className={`icon-btn hide-all${on ? ' on' : ''}`} aria-pressed={on} aria-label={label} title={`${on ? t('hideAll.state') : label} (${mod === '⌘' ? '⌘⇧H' : 'Ctrl+Shift+H'})`} onClick={() => toggleHideAll()}><Icon name={on ? 'eyeOff' : 'eye'} /></button>;
 }
 
-function Header({ r, page, path }) {
+function Header({ r, page, path, missing }) {
   const mode = useSession();
   const sp = SPACES.find((s) => s.key === r.space);
-  const crumb = r.view === 'page' ? (page?.title || t('page.untitled')) : r.view === 'business' && r.tab === 'library' ? t('library.title') : t(`nav.${r.view === 'mailConnect' ? 'mail' : r.view === 'filesConnect' ? 'files' : r.view}`);
+  const gone = r.view === 'page' && mode !== 'loading' && (!page || missing === page.id); // 없는 페이지(목록에 있어도 서버에 없으면 — PageView가 ui.missingPage로 알린다) — '제목 없음·저장됨·별'을 보이지 않는다(UX-O05)
+  const crumb = r.view === 'page' ? (gone ? '' : page?.title || t('page.untitled')) : r.view === 'business' && r.tab === 'library' ? t('library.title') : t(`nav.${r.view === 'mailConnect' ? 'mail' : r.view === 'filesConnect' ? 'files' : r.view}`);
   return (
     <header className="topbar">
       <button type="button" className="icon-btn nav-toggle" aria-label={t('nav.open')} onClick={() => setUi({ navOpen: true })}><Icon name="menu" /></button>
@@ -151,11 +162,11 @@ function Header({ r, page, path }) {
       <nav className="crumbs" aria-label="breadcrumb"><Link to={baseOf(r.space)}>{sp.kind === 'me' ? t('space.me') : sp.name}</Link><Icon name="chevron" size={12} className="dim" /><span className="crumb-cur">{crumb}</span></nav>
       <div className="top-right">
         {mode === 'sample' && <span className="draft-badge">{t('draft.badge')}</span>}
-        <SaveStatus />
+        {!gone && <SaveStatus />}
         <HideAllToggle />
-        <FavToggle path={path} page={page} />
+        {!gone && <FavToggle path={path} page={page} />}
         {!['settings', 'trash', 'mail', 'mailConnect'].includes(r.view) && r.tab !== 'library' && <WidthToggle />}
-        {r.view === 'page' && page && <>
+        {r.view === 'page' && page && !gone && <>
           {mode === 'sample' && <span className="presence" title={t('page.viewing', { n: 2 })}><span className="avatar sm">{ME.name[0]}</span><span className="avatar sm alt">{PEOPLE[0].name[0]}</span></span>}
           <button type="button" className="btn sm" onClick={() => setUi({ share: page.id })}><Icon name="share" size={14} />{t('page.share')}</button>
           <button type="button" className="icon-btn" aria-label={t('more')} onClick={(e) => openMenu(e, [...pageMenu(page), { sep: true }, { label: t('page.history'), icon: 'history', run: () => setUi({ history: page.id }) }], { anchor: e.currentTarget })}><Icon name="dots" /></button>
@@ -201,19 +212,19 @@ export default function App() {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
-  useEffect(() => { if (r.redirect && mode !== 'loading') navigate(r.redirect, { replace: true }); }, [r.redirect, mode]);
+  useEffect(() => { if (r.redirect && mode !== 'loading') { if (r.lost && mode === 'signedIn') showToast(t('nav.moved')); navigate(r.redirect, { replace: true }); } }, [r.redirect, mode]);
   useEffect(() => {
     if (mode !== 'signedIn') return;
     flushNow(); // 로그인 확인 전에 미뤄 둔 변경을 바로 보낸다
     pullLayouts().catch((e) => console.warn('[office] layout pull failed', e?.message));
     pullPages().catch((e) => console.warn('[office] page pull failed', e?.message));
     pullBoard().catch((e) => console.warn('[office] board pull failed', e?.message));
-    import('./core/mail.js').then((m) => m.loadAccounts().then(() => m.pullMail('inbox'))).catch((e) => console.warn('[office] mail pull failed', e?.message)); // 예시 메일을 치우고 연결한 계정의 받은편지함(메일 코드는 첫 화면 밖)
-    // 기록판은 실시간 방송 대신 탭으로 돌아올 때 다시 읽는다(최대 1분에 한 번 — 읽기만)
+    import('./core/mail.js').then((m) => m.pullInbox()).catch((e) => console.warn('[office] mail pull failed', e?.message)); // 예시 메일을 치우고 연결한 계정의 받은편지함(메일 코드는 첫 화면 밖). 실패 표시는 core/mail.js가 쓴다(OFC-08)
+    // 기록판은 실시간 방송 대신 탭으로 돌아오거나 창에 초점이 올 때 다시 읽는다(최대 1분에 한 번 — 읽기만). 같은 브라우저의 메신저 탭에서 결재하고 돌아와도 맞게(CX-10)
     let last = Date.now();
-    const onShow = () => { if (document.hidden || Date.now() - last < 60_000) return; last = Date.now(); pullBoard().catch(() => {}); };
-    document.addEventListener('visibilitychange', onShow);
-    return () => document.removeEventListener('visibilitychange', onShow);
+    const onShow = () => { if (!refetchDue({ hidden: document.hidden, now: Date.now(), last })) return; last = Date.now(); pullBoard().catch(() => {}); };
+    document.addEventListener('visibilitychange', onShow); addEventListener('focus', onShow);
+    return () => { document.removeEventListener('visibilitychange', onShow); removeEventListener('focus', onShow); };
   }, [mode]);
   useEffect(() => { setUi({ navOpen: false }); }, [path]);
   useEffect(() => {
@@ -233,9 +244,9 @@ export default function App() {
   }, [r.space]);
 
   if (r.view === 'public') return <><Lazy fallback={<div className="public" aria-busy="true" />}><PublicPage id={r.id} /></Lazy><ToastHost /></>;
-  if (r.view === 'sign') return <><Lazy fallback={<div className="boot" aria-busy="true" />}><SignPage token={r.token} /></Lazy><ToastHost /></>;
-  if (r.view === 'fileLink') return <><Lazy fallback={<div className="boot" aria-busy="true" />}><FileLink /></Lazy><ToastHost /></>;
-  if (mode === 'loading') return <div className="boot" aria-busy="true" />;
+  if (r.view === 'sign') return <><Lazy fallback={<Boot />}><SignPage token={r.token} /></Lazy><ToastHost /></>;
+  if (r.view === 'fileLink') return <><Lazy fallback={<Boot />}><FileLink /></Lazy><ToastHost /></>;
+  if (mode === 'loading') return <Boot />;
   if (mode === 'signedOut') return <Login />;
   if (r.redirect) return null;
 
@@ -256,7 +267,7 @@ export default function App() {
   const params = new URLSearchParams(query ?? '');
   const views = {
     business: <Lazy reset={path}>{r.tab === 'library' ? <ModuleLibrary key={r.space} space={r.space} targetId={params.get('target')} /> : <BusinessPage key={r.space} space={r.space} tab={r.tab} openId={params.get('open')} view={params.get('view')} />}</Lazy>,
-    home: <Home space={r.space} />, contracts: <Contracts key={r.space} space={r.space} params={params} />, files: <Files key={r.space} space={r.space} query={query} />, filesConnect: <DriveConnect query={query} />, calendar: <Calendar key={r.space} space={r.space} day={params.get('day')} />, tasks: <Tasks key={r.space} space={r.space} />, mail: <Mail id={r.id} />, mailConnect: <MailConnect query={query} />, page: <PageView id={r.id} />, shared: <Shared />,
+    home: <Home space={r.space} />, contracts: <Contracts key={r.space} space={r.space} params={params} />, files: <Files key={r.space} space={r.space} query={query} />, filesConnect: <DriveConnect query={query} />, calendar: <Calendar key={r.space} space={r.space} day={params.get('day')} />, tasks: <Tasks key={r.space} space={r.space} />, mail: <Mail id={r.id} />, mailConnect: <MailConnect query={query} />, page: <PageView key={r.id} id={r.id} space={r.space} />, shared: <Shared />,
     work: <Work space={r.space} openId={params.get('open')} folder={params.get('folder')} />, agents: <CrewOrg space={r.space} />, approvals: <Approvals space={r.space} openId={params.get('open')} folder={params.get('folder')} />, decisions: <Decisions space={r.space} openId={params.get('open')} folder={params.get('folder')} />,
     outputs: <Outputs space={r.space} openId={params.get('open')} folder={params.get('folder')} />, journal: <Journal space={r.space} folder={params.get('folder')} />, docs: <Docs space={r.space} openId={params.get('open')} />, perf: <Perf space={r.space} tab={params.get('tab')} />, people: <People key={r.space} space={r.space} />, company: <Company key={r.space} space={r.space} />, knowhow: <Assets space={r.space} />, tools: <Tools space={r.space} />, trash: <Trash space={r.space} />, settings: <Settings />,
   };
@@ -266,7 +277,7 @@ export default function App() {
         <Sidebar space={r.space} path={path} />
         <div className="nav-scrim" onClick={() => setUi({ navOpen: false })} />
         <main className="main">
-          <Header r={r} page={page} path={path} />
+          <Header r={r} page={page} path={path} missing={ui.missingPage} />
           <div className={`content view-${r.view}`}><LegacyRecoveryNotice /><Lazy reset={path}>{views[r.view]}</Lazy></div>
         </main>
       </div>

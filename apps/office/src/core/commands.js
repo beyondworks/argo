@@ -21,6 +21,8 @@ export function globalCommands(space) {
     canManage(space) && { id: 'newPage', label: t('cmd.newPage'), icon: 'plus', shortcut: `${mod}⌥N`, run: () => navigate(`${base}/p/${createPage(space)}`) },
     { id: 'home', label: t('cmd.goHome'), icon: 'home', run: () => navigate(base) },
     space === 'me' ? { id: 'mail', label: t('cmd.goMail'), icon: 'mail', run: () => navigate('/me/mail') } : { id: 'approvals', label: t('cmd.goApprovals'), icon: 'stamp', run: () => navigate(`${base}/approvals`) },
+    // 새 메일 — 좁은 폭에서도 갈 길(OFC-01). 보낼 수 있는 계정이 있을 때만(메일 화면의 단추와 같은 조건)
+    space === 'me' && (getMode() === 'sample' || getState().mailAccounts.some((a) => a.status === 'ok')) && { id: 'newMail', label: t('cmd.newMail'), icon: 'draft', run: () => { navigate('/me/mail'); setUi({ compose: { mode: 'new' } }); } },
     { id: 'sidebar', label: t('cmd.toggleSidebar'), icon: 'sidebar', shortcut: `${mod}\\`, run: () => document.documentElement.classList.toggle('nav-collapsed') },
     { id: 'width', label: t(isFullWidth() ? 'width.center' : 'width.full'), icon: 'width', run: toggleWidth },
     { id: 'lang', label: t('cmd.toggleLang'), icon: 'globe', shortcut: `${mod}/`, run: () => setLang(getLang() === 'ko' ? 'en' : 'ko') },
@@ -32,7 +34,7 @@ export function globalCommands(space) {
 
 /** 템플릿으로 저장 = 지금 모습의 사본을 템플릿으로(유건 9/27). 조직 템플릿은 관리자만 — 아니면 '내 것'으로 */
 async function saveAsTemplate(page) {
-  if (page.content === undefined) await loadPageContent(page.id);
+  if (page.content === undefined) { try { await loadPageContent(page.id); } catch { showToast(t('load.readFail')); return; } } // 본문 없이 빈 템플릿을 만들지 않는다
   const cur = getState().pages.find((p) => p.id === page.id) ?? page;
   const space = page.space !== 'me' && page.space !== 'shared' && canManage(page.space) ? page.space : 'me';
   createPage(space, null, { title: cur.title, content: cur.content, template: true });

@@ -273,6 +273,7 @@ export function createSampleBusinessClient({ storage, space, now = () => Date.no
       saveSample(storage, space, st);
       emit({ data: st, busy: false, error: null });
       globalThis.dispatchEvent?.(new Event('office:biz-refresh'));
+      globalThis.dispatchEvent?.(new CustomEvent('office:biz-written', { detail: action })); // 예시 모드도 같은 사건(core/biz-events.js, OFC-10)
       return result;
     } catch (error) { emit({ busy: false }); throw error; }
   };

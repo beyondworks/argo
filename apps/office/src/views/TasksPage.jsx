@@ -11,7 +11,8 @@ import { baseOf } from '../core/commands.js';
 import { openMenu } from '../ui/Menu.jsx';
 import { Icon } from '../ui/Icon.jsx';
 import * as V from './model.js';
-import { useViewTasks, usePeople, makeCtx, readCfg, writeCfg, useTaskCategories, categoriesOf } from './data.js';
+import { useViewTasks, usePeople, makeCtx, readCfg, writeCfg, useTaskCategories, categoriesOf, useTaskLoad } from './data.js';
+import { LoadFail } from '../ui/LoadFail.jsx';
 import { ItemsView, useItemActions, filterMenu, filterCount, Dropdown } from './Board.jsx';
 import TaskCategories from './TaskCategories.jsx';
 import { kstDay } from '../core/task-model.js';
@@ -28,8 +29,11 @@ const KANBAN_GROUPS = ['status', 'category', 'who', 'date'];
 export default function TasksPage({ space }) {
   useLang();
   const today = kstDay();
-  const [cfg, setCfgState] = useState(() => V.normalizeCfg(readCfg(`tasks:${space}`), BASE, VIEWS));
-  const setCfg = (patch) => setCfgState((c) => { const next = V.normalizeCfg({ ...c, ...patch, filter: { ...c.filter, ...patch.filter, kind: 'task' } }, BASE, VIEWS); writeCfg(`tasks:${space}`, next); return next; });
+  const [saved, setSaved] = useState(() => V.normalizeCfg(readCfg(`tasks:${space}`), BASE, VIEWS));
+  const [temp, setTemp] = useState(null); // ?due 거르기 — 이 창에서만, 저장하지 않는다(OFC-15)
+  const cfg = useMemo(() => V.shownCfg(saved, temp, BASE, VIEWS), [saved, temp]);
+  const setCfg = (patch) => { const r = V.patchCfg(saved, temp, patch, { base: BASE, views: VIEWS, fixed: { kind: 'task' } }); setSaved(r.saved); setTemp(r.temp); writeCfg(`tasks:${space}`, r.saved); };
+  const load = useTaskLoad(space);
   const [cats, setCats] = useState(false);
   const tasks = useViewTasks(space), people = usePeople(space);
   const spaces = useMemo(() => [space, ...new Set(tasks.map((x) => x.space))], [space, tasks]);
@@ -52,14 +56,14 @@ export default function TasksPage({ space }) {
   useEffect(() => { if (wantNew) { actions.newTask(); strip('new'); } }, [wantNew]);
   useEffect(() => { if (!wantOpen) return; const it = items.find((x) => x.id === wantOpen); if (it) { actions.openTask(it); strip('open'); } }, [wantOpen, items]);
   // 홈 '챙길 것'·메뉴 배지와 같은 할 일만(내가 맡은·안 끝낸·그 기한) — 이 창에서만 거르고 저장하지 않는다(사람이 거르기를 바꾸면 그때 저장된다)
-  useEffect(() => { if (!V.dueFilter({}, wantDue, ME.id)) return; setCfgState((c) => V.normalizeCfg({ ...c, filter: V.dueFilter(c.filter, wantDue, ME.id) }, BASE, VIEWS)); strip('due'); }, [wantDue]);
+  useEffect(() => { const f = V.dueFilter(saved.filter, wantDue, ME.id); if (!f) return; setTemp(f); strip('due'); }, [wantDue]);
 
   const open = items.filter((x) => !x.done).length, done = items.length - open;
   const nf = filterCount(cfg.filter, false);
   const fmenu = (e) => openMenu(e, filterMenu(cfg, setCfg, { whoKeys, categories: catNames, people, kinds: false, tasks: true }), { anchor: e.currentTarget });
   const opts = (list, key) => list.map((v) => ({ value: v, label: t(`${key}.${v}`) }));
   return <div className="page-wrap wide tk">
-    <header className="page-title-row"><div><h1 className="page-h1">{t('tasks.title')}</h1><p className="dim" role="status">{t('tasks.count', { open, done })}</p></div></header>
+    <header className="page-title-row"><div><h1 className="page-h1">{t('tasks.title')}</h1><p className="dim" role="status">{load.waiting ? t('biz.loading') : load.failed && !items.length ? '' : t('tasks.count', { open, done })}</p></div></header>
     <div className="tk-bar">
       <span className="tk-tools">
         {cfg.view === 'list' && <Dropdown label={t('views.group')} value={cfg.listGroup} options={V.LIST_GROUPS.map((g) => ({ value: g, label: g === 'none' ? t('views.lg.none') : t(`views.g.${g}`) }))} onChange={(g) => setCfg({ listGroup: g })} />}
@@ -72,7 +76,9 @@ export default function TasksPage({ space }) {
         <button type="button" className="btn sm primary" onClick={() => actions.newTask()}><Icon name="plus" size={13} />{t('views.newTask')}</button>
       </span>
     </div>
-    <ItemsView id={`tasks:${space}`} items={items} cfg={cfg} setCfg={setCfg} views={VIEWS} today={today} ctx={ctx} people={people} actions={actions} onOpen={(it) => actions.openTask(it)} tasks cats={catNames} />
+    {load.failed && <LoadFail text={t(load.failed)} onRetry={load.retry} />}{/* 읽기 실패 — '할 일 없음'으로 보이지 않게(OFC-04). 받아 둔 조직 할 일은 아래에 그대로 */}
+    {load.waiting ? <p className="vw-empty" role="status">{t('biz.loading')}</p>
+      : !(load.failed && !items.length) && <ItemsView id={`tasks:${space}`} items={items} cfg={cfg} setCfg={setCfg} views={VIEWS} today={today} ctx={ctx} people={people} actions={actions} onOpen={(it) => actions.openTask(it)} tasks cats={catNames} />}
     {actions.dialogs}
     {cats && <TaskCategories space={space} onClose={() => setCats(false)} />}
   </div>;

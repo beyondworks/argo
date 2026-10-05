@@ -5,7 +5,8 @@
 import { lazy, Suspense, useEffect, useId, useState } from 'react';
 import { t, getLang, registerDict, useLang } from '../core/i18n.js';
 import { ME, SPACES, canManage } from '../core/session.js';
-import { useTasks, useTaskRows, ensureTasks, peopleIn, taskAction, orgOf } from '../core/tasks.js';
+import { useTasks, useTaskRows, ensureTasks, peopleIn, taskAction, orgOf, loadTasks } from '../core/tasks.js';
+import { LoadFail } from '../ui/LoadFail.jsx';
 import { kstDay, groupTasks, dueInfo, taskOrgKeys } from '../core/task-model.js';
 import { Modal, showToast } from '../ui/Overlay.jsx';
 import { openMenu, menuProps } from '../ui/Menu.jsx';
@@ -54,7 +55,8 @@ export default function TaskList({ space }) {
     !row.done_at && { label: t('task.cancel'), icon: 'x', danger: true, run: () => setEdit({ kind: 'cancel', row }) },
   ] : [])].filter(Boolean);
 
-  if (!rows) return <div className="mod-empty" role="status">{error ? t(error) : loading ? '…' : ''}</div>;
+  // 읽기 실패 — 사유(권한·로그인)나 '불러오지 못했습니다'와 다시 시도(OFC-08: 예전에는 읽기 실패가 '저장하지 못했습니다'로 보였다)
+  if (!rows) return error ? <LoadFail small text={t(error)} onRetry={() => loadTasks(space, true)} /> : <div className="mod-empty" role="status">{loading ? '…' : ''}</div>;
   const g = groupTasks(rows, today, ME.id);
   const renderRow = (row) => {
     const info = dueInfo(row.due_on, today);
