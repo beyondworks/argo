@@ -8,7 +8,7 @@ import { menuProps } from '../ui/Menu.jsx';
 import { t, ago, useLang, registerDict } from '../core/i18n.js';
 import { useStore } from '../core/store.js';
 import { useUi, setUi } from '../core/ui-state.js';
-import { ME, SPACES, getMode } from '../core/session.js';
+import { ME, SPACES, getMode, nameIn } from '../core/session.js';
 import { baseOf, crewMenu } from '../core/commands.js';
 import { navigate } from '../core/router.jsx';
 import { isMine, crewsIn } from '../core/crew-list.js';
@@ -27,7 +27,7 @@ const STATUS_BADGE = { work: 'ok', ask: 'warn' };
 const EMPTY = [];
 /** 직무 — 예시 데이터는 role 하나뿐(좌측 목록과 같은 규칙) */
 const jobOf = (c) => c.job || (c.dept ? '' : c.role);
-const ownerOf = (c) => (c.company ? t('crew.owner.company') : isMine(c, ME.id) ? ME.name : c.ownerName || t('crew.owner.unknown'));
+const ownerOf = (c) => (c.company ? t('crew.owner.company') : isMine(c, ME.id) ? nameIn(c.space) : c.ownerName || t('crew.owner.unknown')); // 내 이름은 그 조직에서 보이는 이름(CX-07)
 const Status = ({ c }) => <span className={`badge ${STATUS_BADGE[c.status] ?? ''}`}>{t(`crew.status.${c.status}`)}</span>;
 const openCrew = (c, space) => setUi({ crew: { id: c.id, space } });
 

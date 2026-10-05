@@ -12,6 +12,7 @@ import { apiUrl, openExternal } from './platform.js';
 import { FAMILY } from './family.js';
 // 저장이 닿은 페이지를 같은 브라우저의 다른 창에 바로 알린다(16차)
 import { announce } from './page-live.js';
+import { apStale } from './board.js';
 
 const hold = (row) => row && persist(heldKey(row.id), { title: row.title ?? '', content: row.content }, 0);
 
@@ -140,7 +141,13 @@ function rejected(op, err) {
     return;
   }
   if (err?.conflict && op.payload.type === 'page.save') { hold(getState().pages.find((x) => x.id === op.payload.id)); setUi({ conflict: op.payload.id }); return; }
-  if (op.payload.type === 'approval.decide') { showToast(t('ap.noRight')); import('./pull.js').then((m) => m.pullBoard()).catch(() => {}); return; }
+  // 0행 = 결재권 없음 또는 그 사이 다른 곳(메신저)에서 이미 정함 — 지금 상태를 한 번 읽어 맞는 안내를 고른다(CX-10, 결정할 때만 1건)
+  if (op.payload.type === 'approval.decide') {
+    getClient().then((sb) => sb.from('msgr_crew_approvals').select('status').eq('id', op.payload.id).maybeSingle())
+      .then((r) => { const s = r.error ? null : apStale(r.data?.status); showToast(s ? t(s.key, { result: t(`status.${s.result}`) }) : t('ap.noRight')); }, () => showToast(t('ap.noRight')))
+      .finally(() => import('./pull.js').then((m) => m.pullBoard()).catch(() => {}));
+    return;
+  }
   if (op.payload.type === 'crew.assign') { showToast(t(`crew.fail.${err?.assign ?? 'generic'}`)); return; }
   if (op.payload.type === 'mail.flag' || op.payload.type === 'mail.star') { showToast(t(err?.code === 'expired' ? 'mailc.expired' : 'sync.rejected')); import('./mail.js').then((m) => m.loadAccounts()).catch(() => {}); return; }
   showToast(t('sync.rejected'));

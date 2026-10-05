@@ -92,6 +92,7 @@ const DICT = {
   'status.running': ['진행 중', 'Running'], 'status.blocked': ['멈춤', 'Blocked'], 'status.approved': ['승인', 'Approved'], 'status.rejected': ['거절', 'Rejected'],
   'risk.high': ['꼭 확인', 'Review closely'], // 위험도 문구(유건 9/30 #7) — 결재가 보이는 모든 곳이 이 셋만 쓴다
   'ap.noRight': ['이 결재를 결정할 권한이 없습니다', 'You cannot decide this approval'], // 결재함 문구는 folder-i18n.js(기록 화면과 함께 지연 로드)
+  'ap.already': ['이미 다른 곳에서 {result}된 결재입니다. 목록을 새로 불러왔습니다', 'Already decided elsewhere ({result}). The list was refreshed'], 'ap.gone': ['이 결재를 찾을 수 없습니다. 목록을 새로 불러왔습니다', 'This approval is gone. The list was refreshed'],
   'col.name': ['이름', 'Name'], 'col.size': ['크기', 'Size'], 'col.date': ['날짜', 'Date'], 'col.item': ['내용', 'Item'], 'col.crew': ['에이전트', 'Agent'],
   'mail.inbox': ['받은편지함', 'Inbox'], 'mail.drafts': ['임시 보관함', 'Drafts'], 'mail.sent': ['보낸편지함', 'Sent'], 'mail.archive': ['보관함', 'Archive'],
   'mail.reply': ['답장', 'Reply'], 'mail.forward': ['전달', 'Forward'], 'mail.archiveIt': ['보관', 'Archive'],
@@ -157,7 +158,7 @@ const DICT = {
   'color.sage': ['세이지', 'Sage'], 'color.ocean': ['오션', 'Ocean'], 'color.rose': ['로즈', 'Rose'], 'color.lavender': ['라벤더', 'Lavender'], 'color.slate': ['슬레이트', 'Slate'], 'color.ember': ['엠버', 'Ember'], 'cmd.shell': ['앱 셸: {name}', 'App shell: {name}'],
   'file.download': ['다운로드', 'Download'],
   'journal.count': ['{n}건', '{n} entries'], 'file.sendCrew': ['에이전트에게 보내기', 'Send to agent'], 'record.openMsgr': ['메신저에서 열기', 'Open in Messenger'],
-  'login.title': ['Argo Office에 로그인', 'Sign in to Argo Office'], 'login.sub': ['아르고 메신저와 같은 계정으로 로그인합니다', 'Use the same account as Argo Messenger'],
+  'login.title': ['Argo Office에 로그인', 'Sign in to Argo Office'], 'login.sub': ['아르고 패밀리(아르고·메신저·오피스)와 같은 계정으로 로그인합니다. 처음이면 이 단계에서 계정이 만들어집니다.', 'Use your Argo family account (Argo · Messenger · Office). First time? Your account is created here.'],
   'login.google': ['Google로 계속', 'Continue with Google'], 'login.apple': ['Apple로 계속', 'Continue with Apple'], 'login.github': ['GitHub로 계속', 'Continue with GitHub'],
   'login.dev': ['개발용 로그인(로컬 스택)', 'Dev sign-in (local stack)'], 'login.email': ['이메일', 'Email'], 'login.password': ['비밀번호', 'Password'],
   'login.submit': ['로그인', 'Sign in'], 'login.failed': ['로그인하지 못했습니다', 'Could not sign in'], 'login.loading': ['불러오는 중…', 'Loading…'],

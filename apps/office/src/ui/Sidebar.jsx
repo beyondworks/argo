@@ -15,7 +15,7 @@ import { baseOf, pageMenu, crewMenu, mod } from '../core/commands.js';
 import { dragHasFiles, filesFromTransfer } from '../core/files.js';
 import { groupCrews, isMine, crewsIn } from '../core/crew-list.js';
 import { showToast } from './Overlay.jsx';
-import { SPACES, ME, canManage, getMode } from '../core/session.js';
+import { SPACES, ME, canManage, getMode, nameIn } from '../core/session.js';
 import { openExternal } from '../core/platform.js';
 import { FAMILY } from '../core/family.js';
 import { restore, persist, scopedStorageKey } from '../core/save.js';
@@ -133,7 +133,7 @@ function CrewRow({ crew, space, group, order, mode, movable }) {
   const job = crew.job || (crew.dept ? '' : crew.role); // 예시 데이터는 role 하나뿐
   // 같은 에이전트를 한 줄로 묶은 내 공간(crew-list.js oneEach) — 조직이 둘 이상이면 어느 조직에 있는지 작게(CX-05)
   const where = SPACES.filter((x) => x.kind === 'org').length > 1 ? (crew.spaces ?? []).map((k) => SPACES.find((x) => x.key === k)?.name).filter(Boolean).join(', ') : '';
-  const tip = [job ? t('crew.tip.job', { job }) : t('crew.tip.noJob'), crew.dept && t('crew.tip.dept', { dept: crew.dept }), t('crew.tip.owner', { name: isMine(crew, ME.id) ? ME.name : owner }), where, t(`crew.status.${crew.status}`)].filter(Boolean).join('\n');
+  const tip = [job ? t('crew.tip.job', { job }) : t('crew.tip.noJob'), crew.dept && t('crew.tip.dept', { dept: crew.dept }), t('crew.tip.owner', { name: isMine(crew, ME.id) ? nameIn(crew.space) : owner }), where, t(`crew.status.${crew.status}`)].filter(Boolean).join('\n');
   // 터치는 길게 누르기 = 메뉴(트리와 같은 규칙). 키보드는 끌기를 시작하지 않는다 — Enter·Space는 누르기와 같이 상세 열기(검수 MEDIUM-1), 순서는 마우스로
   const { onTouchStart, onKeyDown, ...dragListeners } = sort.listeners ?? {};
   const { role, tabIndex, ...sortAttrs } = sort.attributes ?? {}; // 줄 자체는 초점을 받지 않는다(안쪽 버튼 하나만)

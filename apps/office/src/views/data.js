@@ -4,7 +4,7 @@
 // 할 일 분류(유건 10/4)는 공간마다 세션에 한 번 읽고(office_task_category_list), 분류를 바꾼 뒤에는 돌려받은 목록을 그대로 쓴다.
 // 바뀐 기록(office_task_history)은 할 일 패널을 열 때·고친 뒤에만 읽는다.
 import { useEffect, useMemo, useSyncExternalStore } from 'react';
-import { ME, SPACES, canManage, getMode } from '../core/session.js';
+import { ME, SPACES, canManage, getMode, nameIn } from '../core/session.js';
 import { useTasks, useTaskRows, ensureTasks, rowsIn, loadTasks, taskAction, rpc, orgOf, trackWrite, shareSampleTasks, taskError } from '../core/tasks.js';
 import { viewRows, taskOrgKeys } from '../core/task-model.js';
 import { writeEvent, refreshEvents, loadPeople } from '../calendar/api.js';
@@ -62,7 +62,7 @@ export function usePeople(space) {
   return useMemo(() => {
     ownData();
     if (!sample() && space !== 'me' && people) peopleOf.set(space, people);
-    const names = new Map([[ME.id, ME.name]]);
+    const names = new Map([[ME.id, nameIn(space)]]); // 내 이름은 그 공간에서 보이는 이름(메신저와 같은 원천, CX-07)
     for (const list of peopleOf.values()) for (const p of list) if (!names.has(p.user_id)) names.set(p.user_id, p.name);
     return {
       me: ME.id,

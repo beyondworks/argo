@@ -24,6 +24,7 @@ import { PEOPLE } from './data/sample.js';
 import { SPACES, ME, useSession, canManage } from './core/session.js';
 import { pullLayouts, pullPages, pullBoard } from './core/pull.js';
 import { flushNow } from './core/sync.js';
+import { refetchDue } from './core/refetch.js';
 import { Login } from './pages/Login.jsx';
 import { reloadOnce } from './core/chunk-reload.js';
 import { SelectionHost } from './core/selection.js'; // 여러 개 고르기(11차) — 감지 코드만 첫 화면, 선택 상자·막대는 쓸 때 받는다
@@ -209,11 +210,11 @@ export default function App() {
     pullPages().catch((e) => console.warn('[office] page pull failed', e?.message));
     pullBoard().catch((e) => console.warn('[office] board pull failed', e?.message));
     import('./core/mail.js').then((m) => m.loadAccounts().then(() => m.pullMail('inbox'))).catch((e) => console.warn('[office] mail pull failed', e?.message)); // 예시 메일을 치우고 연결한 계정의 받은편지함(메일 코드는 첫 화면 밖)
-    // 기록판은 실시간 방송 대신 탭으로 돌아올 때 다시 읽는다(최대 1분에 한 번 — 읽기만)
+    // 기록판은 실시간 방송 대신 탭으로 돌아오거나 창에 초점이 올 때 다시 읽는다(최대 1분에 한 번 — 읽기만). 같은 브라우저의 메신저 탭에서 결재하고 돌아와도 맞게(CX-10)
     let last = Date.now();
-    const onShow = () => { if (document.hidden || Date.now() - last < 60_000) return; last = Date.now(); pullBoard().catch(() => {}); };
-    document.addEventListener('visibilitychange', onShow);
-    return () => document.removeEventListener('visibilitychange', onShow);
+    const onShow = () => { if (!refetchDue({ hidden: document.hidden, now: Date.now(), last })) return; last = Date.now(); pullBoard().catch(() => {}); };
+    document.addEventListener('visibilitychange', onShow); addEventListener('focus', onShow);
+    return () => { document.removeEventListener('visibilitychange', onShow); removeEventListener('focus', onShow); };
   }, [mode]);
   useEffect(() => { setUi({ navOpen: false }); }, [path]);
   useEffect(() => {

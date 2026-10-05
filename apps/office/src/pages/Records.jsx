@@ -15,8 +15,8 @@ import { getClient } from '../core/supabase.js';
 import { isDesktop, saveAttachment } from '../core/platform.js';
 import { setUi } from '../core/ui-state.js';
 import { navigate } from '../core/router.jsx';
-import { loadDocBody } from '../core/pull.js';
-import { mdToDoc } from '../core/board.js';
+import { loadDocBody, pullBoard } from '../core/pull.js';
+import { mdToDoc, apStale } from '../core/board.js';
 import { folderKey, isoDay, byDate, journalDigest, fileGroup, canQuickDecide, HUMAN } from '../core/folders.js';
 import { FolderView, DateSections, useFolder, folderName, FolderIcon, openItem, closeItem, pickFolder, when, countText } from '../ui/FolderView.jsx';
 import { kstDay } from '../core/task-model.js';
@@ -24,7 +24,7 @@ import { DocView } from '../ui/DocView.jsx';
 import { Markdown } from '../ui/Markdown.jsx';
 import { stripFrontMatter } from '../core/markdown.js';
 import { restore, persist } from '../core/save.js';
-import { SPACES, ME, getMode } from '../core/session.js';
+import { SPACES, getMode, nameIn } from '../core/session.js';
 import { useSelection, selProps } from '../core/selection.js';
 
 registerDict(RECORDS_DICT);
@@ -60,8 +60,23 @@ function RecRow({ x, all, bucket, active, badges, extra, sel }) {
 
 /** 위험도 배지 — 결재가 보이는 모든 곳이 같은 문구(risk.*)와 색(가장 높은 등급만 warn) */
 const Risk = ({ risk }) => <span className={`badge ${risk === 'high' ? 'warn' : ''}`}>{t(`risk.${risk}`)}</span>;
-/** 결정 — 카드 버튼과 상세 창이 같은 경로(store.decide → 전송함 approval.decide) */
-const decideAp = (a, result) => { decide(a.id, result, ME.name); showToast(t('ap.decided', { result: t(`status.${result}`) })); };
+/** 결정 전 최신 상태(CX-10) — 메신저 등 다른 곳에서 이미 정한 결재를 '승인했습니다' 뒤 '권한 없음'으로 보이지 않게, 누를 때만 한 번 읽는다(여러 개는 한 번에).
+ *  못 읽으면(망 오류·예시) 막지 않고 종전대로 보낸다 — 최종 판정은 서버(RLS), 0행이면 전송함이 같은 판정(apStale)으로 안내한다 */
+async function freshStatus(ids) {
+  const pending = new Map(ids.map((id) => [id, 'pending']));
+  if (getMode() !== 'signedIn' || !ids.length) return pending;
+  try {
+    const { data, error } = await (await getClient()).from('msgr_crew_approvals').select('id, status').in('id', ids);
+    return error ? pending : new Map(ids.map((id) => [id, data.find((r) => r.id === id)?.status ?? 'gone']));
+  } catch { return pending; }
+}
+const staleToast = (s) => { showToast(t(s.key, { result: t(`status.${s.result}`) })); pullBoard().catch(() => {}); };
+/** 결정 — 카드 버튼과 상세 창이 같은 경로(store.decide → 전송함 approval.decide). 결정한 사람 이름은 그 조직에서 보이는 이름(메신저와 같은 이름, CX-07) */
+const decideAp = async (a, result) => {
+  const s = apStale((await freshStatus([a.id])).get(a.id));
+  if (s) { staleToast(s); return; }
+  decide(a.id, result, nameIn(a.space)); showToast(t('ap.decided', { result: t(`status.${result}`) }));
+};
 
 /** 결재 카드(유건 9/30 #7) — 한 줄 핵심(에이전트가 적은 목적·할 일, 없으면 요청 앞부분) + 바로 승인·거절.
  *  위험도가 가장 높은 것은 버튼 대신 '열어서 확인'(상세 창에서 명령까지 보고 결정). 결정 권한이 없으면 버튼이 없다 */
@@ -87,15 +102,17 @@ export function Approvals({ space, openId, folder }) {
   const rows = useMemo(() => list.filter(approvalsIn(space)), [list, space]);
   const { folders, current, visible } = useFolder(rows, crewKey, atMs, folder);
   const cur = rows.find((a) => a.id === openId);
-  const act = (result) => { decideAp(cur, result); closeItem(); };
+  const act = (result) => { closeItem(); decideAp(cur, result); };
   // 여러 개 승인·거절(11차) — 카드의 바로 승인·거절과 같은 경로. 위험도가 가장 높은 것은 카드처럼 열어서 확인해야 해 건너뛰고 알린다
   const [sel] = useSelection('approvals', { keys: visible.map((a) => a.id), actions: (keys) => {
     const mine = rows.filter((a) => keys.includes(a.id) && a.canDecide !== false), quick = mine.filter(canQuickDecide);
-    const many = (result) => (_, clear) => {
-      quick.forEach((a) => decide(a.id, result, ME.name));
-      const skip = mine.length - quick.length;
-      showToast([quick.length && t('sel.decided', { n: quick.length, result: t(`status.${result}`) }), skip && t('sel.skipped', { n: skip })].filter(Boolean).join(' · '));
+    const many = (result) => async (_, clear) => {
       clear();
+      const st = await freshStatus(quick.map((a) => a.id)), open = quick.filter((a) => st.get(a.id) === 'pending'); // 이미 다른 곳에서 정한 것은 건너뛴다(CX-10)
+      open.forEach((a) => decide(a.id, result, nameIn(a.space)));
+      const skip = mine.length - quick.length, gone = quick.length - open.length;
+      showToast([open.length && t('sel.decided', { n: open.length, result: t(`status.${result}`) }), skip && t('sel.skipped', { n: skip }), gone && t('ap.alreadyN', { n: gone })].filter(Boolean).join(' · '));
+      if (gone) pullBoard().catch(() => {});
     };
     return [quick.length > 0 && { label: t('ap.reject'), run: many('rejected') }, quick.length > 0 && { label: t('ap.approve'), icon: 'check', run: many('approved') }, assignMany(rows.filter((a) => keys.includes(a.id)), (a) => a.plain)];
   } });

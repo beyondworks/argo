@@ -52,6 +52,10 @@ export function decidableSet(approvals, { me, crews, orgs, policies }) {
   return new Set(approvals.filter((a) => canDecideAp(a, { me, role: role.get(a.org_id), owner: owner.has(a.crew_id) ? owner.get(a.crew_id) : undefined, policy: pol ? pol.get(a.org_id) ?? null : undefined })).map((a) => a.id));
 }
 
+/** 결정하려는 결재의 지금 상태(CX-10) → 안내. pending이면 null(그대로 결정), 이미 정해졌으면 { key: 'ap.already', result }, 행이 없으면(지워짐·권한 밖) { key: 'ap.gone' }.
+ *  메신저에서 이미 정한 결재를 오피스에서 누르면 '승인했습니다' 뒤 '권한 없음'이 뜨던 것을 결정 전·거절 뒤 같은 판정으로 바로잡는다 */
+export const apStale = (status) => (status === 'pending' ? null : status === 'approved' || status === 'rejected' ? { key: 'ap.already', result: status } : { key: 'ap.gone' });
+
 /** rows: { crews, runs, approvals, decisions, files, channels, journals, docs, agents }, orgKey: org_id → 공간 키, decidable: 결재권 있는 결재 id 집합,
  *  looks: 내 크루 행으로 만든 얼굴 지도(메신저 crew-face.mjs agentLooks — 같은 에이전트는 조직이 달라도 같은 얼굴, 유건 2026-10-05). 없으면 자기 행 그대로.
  *  agents: msgr_crews 행(내 조직의 크루 + 내 개인 공간 크루) — 사본 표시(slug)·접속(last_seen_at)·개인 공간 에이전트(org_id NULL, 주인 = me). 없으면(읽기 실패·예시) 그 정보 없이.
