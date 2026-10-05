@@ -128,7 +128,33 @@ export function parseJob(text) {
 export const OUTSIDE_MARK = { begin: { ko: '--- 바깥 글 시작', en: '--- Outside text begins' }, end: { ko: '--- 바깥 글 끝', en: '--- Outside text ends' } };
 const OUTSIDE_FAKE = /바깥\s*글\s*(?:시작|끝)|outside\s+text\s+(?:begins|ends)|untrusted[\s_-]*source/gi;
 export const OUTSIDE_STUB = { ko: '(경계 표지 흉내)', en: '(imitated boundary mark)' };
-const defang = (s, lang) => s.replace(OUTSIDE_FAKE, OUTSIDE_STUB[L(lang)]);
+// 전각(ｏｕｔｓｉｄｅ)·호환 글자·제로폭 글자로 끊어 쓴 흉내도 모델에게는 같은 글자로 읽힌다(검수 #fix-cross L2). 찾기는 비교용 사본(NFKC + 제로폭 제거)에서 하고,
+// 원문은 찾은 구간만 바꾼다 — 원문 전체에 NFKC를 걸면 사용자 데이터(㈜·①·전각 영문)가 바뀐다. 사본의 위치를 원문 구간으로 되돌리려고 글자 묶음(grapheme)마다 따로 사본을 만든다.
+const ZERO_WIDTH = /[\u200B\u200C\u200D\u2060\uFEFF]/g;
+const fold = (s) => s.normalize('NFKC').replace(ZERO_WIDTH, '');
+let segmenter;
+function defang(s, lang) {
+  const stub = OUTSIDE_STUB[L(lang)];
+  const plain = s.replace(OUTSIDE_FAKE, stub); // 원문 그대로 쓴 흉내
+  if (!/[^\x00-\x7f]/.test(plain)) return plain; // 전각·제로폭은 ASCII 밖의 글자 — 없으면 끝
+  const starts = [], ends = [];
+  let folded = '';
+  segmenter ??= new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+  for (const { segment, index } of segmenter.segment(plain)) {
+    const f = fold(segment);
+    for (let k = 0; k < f.length; k++) { starts.push(index); ends.push(index + segment.length); }
+    folded += f;
+  }
+  const spans = [];
+  for (const m of folded.matchAll(new RegExp(OUTSIDE_FAKE.source, OUTSIDE_FAKE.flags))) {
+    const from = starts[m.index], to = ends[m.index + m[0].length - 1];
+    if (spans.length && from < spans.at(-1)[1]) spans.at(-1)[1] = Math.max(spans.at(-1)[1], to); else spans.push([from, to]);
+  }
+  if (!spans.length) return plain;
+  let out = '', at = 0;
+  for (const [from, to] of spans) { out += plain.slice(at, from) + stub; at = to; }
+  return out + plain.slice(at);
+}
 /** 바깥 글 한 칸(제목·이름·요약) — 줄바꿈을 펴고(가짜 줄이 줄 처음에 서지 못하게) 번호를 지우고 표지 흉내를 바꿔 쓴다 */
 export const outsideLine = (s, tag, lang = 'ko') => defang(String(s ?? '').replace(/\s+/g, ' ').trim().replaceAll(tag, ''), lang);
 /** 바깥 글 여러 줄(본문·메모) — 번호가 든 줄은 지우고 표지 흉내를 바꿔 쓴다 */
