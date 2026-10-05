@@ -7,7 +7,11 @@
 // 재렌더 계약). error 필드의 사람 문구는 유지 — 기존 소비자(프론트 setError·구버전 앱·로그)의
 // 계약 그대로이고, 쿠키 없는 요청(구버전 클라이언트·curl·게이트웨이)은 오늘과 동일하게 ko를 받는다.
 
-export const AUTH_ON = !!(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+// process는 Node·Next(서버·엣지·클라이언트 폴리필)에만 있다. 메신저(vite)가 ui.jsx → AUTH_MSG를 쓰려고 이 파일을 열면
+// 브라우저에 process가 없어 모듈 평가가 ReferenceError로 멈추고 '앱을 불러오지 못했습니다'가 됐다(rc-0195 회귀).
+// typeof는 없는 이름에도 오류 없이 'undefined'다. process.env.NEXT_PUBLIC_* 는 Next가 빌드 때 치환하는 리터럴이라 모양을 바꾸지 않는다.
+const HAS_PROCESS = typeof process !== 'undefined';
+export const AUTH_ON = HAS_PROCESS && !!(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
 
 // code: { status, ko, en } — 가드가 내리는 사용자향 오류의 전부. 새 코드는 두 언어 모두 등록(다국어 상시 규칙).
 export const AUTH_MSG = { // export — 화면 api()가 errorCode로 화면 언어 문구를 고른다(apimsg.mjs errorTextFor, F11)
@@ -52,7 +56,7 @@ export function csrfDenied(req) {
 // 테넌트 바인딩 — 클라우드 워커는 인스턴스 1대 = 계정 1개(microVM 격리 설계).
 // ARGO_TENANT_OWNER(Supabase user id)가 설정되면 그 계정 외 요청을 전부 거부한다.
 // 로컬/공용 모드(미설정)는 무영향. 인증 off면 의미 없으므로 함께 무시한다.
-export const TENANT = process.env.ARGO_TENANT_OWNER?.trim() || null; // currentUser(auth.mjs)의 기기·게스트 폴백 게이트도 사용
+export const TENANT = (HAS_PROCESS && process.env.ARGO_TENANT_OWNER?.trim()) || null; // currentUser(auth.mjs)의 기기·게스트 폴백 게이트도 사용
 export function tenantDenied(user, lang) {
   if (!TENANT || !AUTH_ON || !user) return null;
   if (user.id !== TENANT) return authError('tenant_only', lang);

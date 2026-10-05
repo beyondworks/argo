@@ -2389,15 +2389,20 @@ main.content:has(.vault-split) .vault-split { height: calc(100vh / var(--z, 1) -
 .side-toggle, .side-backdrop { display: none; }
 @media (max-width: 900px) {
   .shell { grid-template-columns: 1fr; }
+  .side { position: static; height: auto; }
   /* 사이드바는 상단바 메뉴 버튼으로 여는 서랍 — 본문 위에 약 730px 쌓여 화면을 열 때마다 메뉴만 보이던 것(UX-A04).
-     닫힌 서랍은 visibility로 포커스·읽기 순서에서도 빠진다(닫힐 때는 미끄러진 뒤에 숨김) */
-  .side {
+     닫힌 서랍은 visibility로 포커스·읽기 순서에서도 빠진다(닫힐 때는 미끄러진 뒤에 숨김).
+     ⚠ 본체 사이드바만. 메신저도 이 파일을 그대로 가져오고 레일이 class="side msgr-side"라, 범위 없이 .side에 걸면
+     폰 홈의 탭 내용·폰 레일·900px 아래 데스크톱 창 레일이 화면 밖으로 밀려 숨는다(rc-0195 회귀). 메신저 레일은 자기
+     서랍(styles.css .msgr-shell.rail-open)이 있고 위의 static 한 줄까지만 받는다. :where()는 명시도 0이라 본체 쪽 우선순위는
+     종전 .side·.side.open과 같다(테마별 .side 배경 규칙이 그대로 이긴다). 테스트: apps/messenger/test/side-drawer-scope.test.mjs */
+  .side:where(:not(.msgr-side)) {
     position: fixed; inset: 0 auto 0 0; z-index: 70; width: min(300px, 86vw);
     height: calc(100vh / var(--z, 1)); background: var(--bg); box-shadow: var(--shadow-float);
     transform: translateX(-105%); visibility: hidden;
     transition: transform 180ms cubic-bezier(0.23, 1, 0.32, 1), visibility 0s linear 180ms;
   }
-  .side.open { transform: none; visibility: visible; transition: transform 180ms cubic-bezier(0.23, 1, 0.32, 1); }
+  .side.open:where(:not(.msgr-side)) { transform: none; visibility: visible; transition: transform 180ms cubic-bezier(0.23, 1, 0.32, 1); }
   .side-backdrop { display: block; position: fixed; inset: 0; z-index: 69; background: var(--overlay); }
   .side-toggle { display: inline-flex; }
   .content { padding: 16px 14px 70px; }
