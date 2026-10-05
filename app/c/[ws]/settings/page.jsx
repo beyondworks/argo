@@ -12,13 +12,8 @@ import { MOVE_REQUIRED } from '../../../update-location.mjs';
 import LocalAssetImport from '../../../components/LocalAssetImport';
 import { proRowActive, trialBadgeState } from '../../../../src/entitlement.mjs';
 
-// Argo Messenger(팀 메신저) 설치파일 — 릴리스 repo의 고정 파일명(release-messenger.yml Collect 스텝이 매 릴리스 갱신).
-const MSGR_RELEASES = 'https://github.com/beyondworks/argo-messenger/releases/latest';
-const MSGR_DL = {
-  silicon: `${MSGR_RELEASES}/download/argo-messenger-macos-apple-silicon.dmg`,
-  intel: `${MSGR_RELEASES}/download/argo-messenger-macos-intel.dmg`,
-  win: `${MSGR_RELEASES}/download/argo-messenger-windows-setup.exe`,
-};
+// Argo Messenger 받기 — 맥·윈도우 설치파일만 걸던 것을 앱 스토어·Play까지 있는 안내 페이지 한 곳으로(CX-12). 오피스는 웹 주소(CX-13).
+import { MESSENGER_PAGE, OFFICE_URL, msgrConnectionChip, msgrShowRuntime } from './msgr-card.mjs';
 
 const CONTACT = process.env.NEXT_PUBLIC_ARGO_CONTACT || '';
 // 설정 탭 — 각 카드는 정확히 한 탭에만 속한다(test/tabs-layout). 렌더 순서: 작은 카드 → 전폭(.wide) 카드.
@@ -887,6 +882,9 @@ function MsgrCard({ ws, agents }) {
   const regOf = (slug) => st?.crews?.find((r) => r.org_id === orgId && r.slug === slug && r.status === 'active');
   const rowOf = (slug) => st?.crews?.find((r) => r.org_id === orgId && r.slug === slug); // 행이 없으면 해제가 아니라 메신저에 올라간 적 없음(유건 제보 2026-09-17: 한 번도 안 올라간 크루가 '파견 해제됨'으로 보였다)
   const regCount = agents.filter((a) => regOf(a.slug)).length;
+  const personalCount = st?.personalCount ?? 0; // 개인 공간(조직 없음)에 연결된 크루 수 — 조직이 없어도 연결 상태를 보인다(CX-12)
+  const chip = msgrConnectionChip({ regCount, personalCount });
+  const showRuntime = msgrShowRuntime({ signedIn: st?.signedIn, agentCount: agents.length });
   const missing = agents.filter((a) => !regOf(a.slug));
   const org = st?.orgs?.find((o) => o.id === orgId);
   const policyLine = org?.policy ? t('settings.msgr.policy.summary', { allow: t(`settings.msgr.allow.${org.policy.allow_default}`) + (org.policy.allow_locked ? t('settings.msgr.policy.locked') : ''), approver: t(`settings.msgr.policy.approver.${org.policy.approval_high_by ?? 'admin'}`), memory: (org.policy.crew_memory_default === false ? t('settings.msgr.policy.memory.off') : t('settings.msgr.policy.memory.on')) + (org.policy.crew_memory_locked ? t('settings.msgr.policy.locked') : '') }) : '';
@@ -931,21 +929,30 @@ function MsgrCard({ ws, agents }) {
     <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
         <span className="card-title" style={{ minWidth: 0 }}>{t('settings.msgr.title')}</span>
-        {st?.signedIn && <span className="chip" title={t('settings.msgr.connection.statusHelp', { n: regCount })}>
-          <span className="dot" style={{ background: regCount ? 'var(--ok)' : 'var(--border)' }} />{t(regCount ? 'settings.msgr.connection.connected' : 'settings.msgr.connection.notConnected')}
+        {st?.signedIn && <span className="chip" title={t(chip === 'personal' ? 'settings.msgr.connection.personalHelp' : 'settings.msgr.connection.statusHelp', { n: chip === 'personal' ? personalCount : regCount })}>
+          <span className="dot" style={{ background: chip === 'notConnected' ? 'var(--border)' : 'var(--ok)' }} />{t(chip === 'connected' ? 'settings.msgr.connection.connected' : chip === 'personal' ? 'settings.msgr.connection.personal' : 'settings.msgr.connection.notConnected')}
         </span>}
       </div>
       <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.7 }}>{t('settings.msgr.downloadHelp')}</p>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-        <a className="btn sm" href={MSGR_DL.silicon} target="_blank" rel="noopener noreferrer">{t('settings.msgr.silicon')}</a>
-        <a className="btn sm" href={MSGR_DL.intel} target="_blank" rel="noopener noreferrer">{t('settings.msgr.intel')}</a>
-        <a className="btn sm" href={MSGR_DL.win} target="_blank" rel="noopener noreferrer">{t('settings.msgr.win')}</a>
-        <a className="btn sm" href={MSGR_RELEASES} target="_blank" rel="noopener noreferrer">{t('settings.msgr.all')}</a>
+        <a className="btn sm" href={MESSENGER_PAGE} target="_blank" rel="noopener noreferrer">{t('settings.msgr.get')}</a>
       </div>
       <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.7 }}>{t('settings.msgr.help')}</p>
       {st === null && <Skeleton h={44} />}
       {st && !st.signedIn && <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: 0 }}>{t('settings.msgr.notSignedIn')}</p>}
-      {st?.signedIn && !st.orgs?.length && <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: 0 }}>{t('settings.msgr.noOrg')}</p>}
+      {st?.signedIn && !st.orgs?.length && <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: 0 }}>{personalCount ? t('settings.msgr.personalOnly', { n: personalCount }) : t('settings.msgr.noOrg')}</p>}
+      {/* 실행기 연결 상태 — 개인 공간도 이 기기의 실행기가 답한다. 조직이 없어도 보인다(CX-12: 조직 블록 안에만 있어 숨었다) */}
+      {showRuntime && !st.orgs?.length && (
+        <section className={`msgr-runtime${runtime?.state === 'alive' ? ' on' : ''}`} aria-live="polite">
+          <div>
+            <span className="microlabel">{t('settings.msgr.runtime.title')}</span>
+            <p>{runtimeCopy}</p>
+          </div>
+          {canReconnect && <button type="button" className="btn sm" disabled={reconnecting} onClick={reconnectBridge}>
+            {reconnecting ? <Spinner size={12} /> : t('settings.msgr.runtime.reconnect')}
+          </button>}
+        </section>
+      )}
       {st?.signedIn && !!st.orgs?.length && (<>
         <div className="msgr-orgbar">
           <label>
@@ -1009,6 +1016,11 @@ function MsgrCard({ ws, agents }) {
         </details>
       </>)}
       {err && <p style={{ fontSize: 11.5, color: 'var(--danger)', margin: 0 }}>{err}</p>}
+      {/* 아르고 오피스 — 본체 어디에도 오피스로 가는 길이 없었다(CX-13). 웹 주소라 다른 앱 설치를 전제하지 않는다 */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', borderTop: '1px solid var(--border-soft)', paddingTop: 12 }}>
+        <span style={{ fontSize: 12, color: 'var(--fg-2)', flex: '1 1 220px', minWidth: 0, lineHeight: 1.6 }}>{t('settings.office.desc')}</span>
+        <a className="btn sm" href={OFFICE_URL} target="_blank" rel="noopener noreferrer" style={{ flex: 'none' }}>{t('settings.office.open')} ↗</a>
+      </div>
     </div>
   );
 }
