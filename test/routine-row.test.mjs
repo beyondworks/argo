@@ -50,3 +50,25 @@ test('실패 분류 — routine_not_found(404)만 "이미 지워짐", 코드 없
   assert.equal(routineFailKind(new TypeError('fetch failed')), 'failed');
   assert.equal(routineFailKind(null), 'failed');
 });
+
+// 2차 분리 검수 L5(2026-10-05): 꺼진 '크루 없음' 루틴에도 켜진 것과 같은 툴팁("실행하지 않고 건너뜁니다")이 붙었고, '멈춤 · 크루 없음' 알약을 누르면 '꺼짐'으로 바뀐 뒤 비활성이라 다시 못 켰다.
+// → 크루 없는 루틴은 알약을 누를 수 없게(이유 툴팁) 하고, 툴팁은 켜짐/꺼짐별로.
+import { routinePillView } from '../app/c/[ws]/routines/routine-row.mjs';
+
+test('L5: 크루 없는 루틴의 알약 — 켜져 있든 꺼져 있든 누를 수 없고, 이유 툴팁이 켜짐/꺼짐별로 다르다', () => {
+  const on = routinePillView({ enabled: true }, { crewGone: true, expired: false, pending: false });
+  const off = routinePillView({ enabled: false }, { crewGone: true, expired: false, pending: false });
+  assert.equal(on.disabled, true); assert.equal(off.disabled, true, '꺼진 것도 눌러 켤 수 없다(켜 봐야 건너뛴다)');
+  assert.equal(on.titleKey, 'routines.crewMissingHint'); assert.equal(off.titleKey, 'routines.crewMissingOffHint');
+  assert.notEqual(on.titleKey, off.titleKey);
+  assert.equal(on.clickable, false); assert.equal(off.clickable, false);
+});
+
+test('L5: 크루가 있는 루틴은 종전 그대로 — 누를 수 있고(진행 중엔 비활성), 만료·루프 정지 툴팁', () => {
+  const v = (r, o = {}) => routinePillView(r, { crewGone: false, expired: false, pending: false, ...o });
+  assert.deepEqual([v({ enabled: true }).disabled, v({ enabled: true }).titleKey], [false, null]);
+  assert.equal(v({ enabled: true }, { pending: true }).disabled, true, '저장 중에는 누를 수 없다');
+  assert.equal(v({ enabled: true }, { expired: true }).titleKey, 'routines.expiredHint');
+  assert.equal(v({ enabled: false, loop: { stoppedReason: 'maxRuns' } }).titleKey, 'routines.loop.resume');
+  assert.equal(v({ enabled: false }).titleKey, null);
+});

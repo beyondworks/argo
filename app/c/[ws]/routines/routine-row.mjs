@@ -32,3 +32,11 @@ export function activeRoutineCount(routines, agents, isExpired) {
 export function routineFailKind(err) {
   return err?.errorCode === 'routine_not_found' ? 'gone' : 'failed';
 }
+
+/** 상태 알약의 동작·툴팁(2차 L5, 2026-10-05) — 크루가 없는 루틴은 켜져 있든 꺼져 있든 누를 수 없다(켜도 스케줄러가 건너뛴다. 눌러서 '꺼짐'이 된 뒤 다시 못 켜던 것).
+    툴팁은 켜짐/꺼짐별로 다르다. titleKey = i18n 키 또는 null. clickable = 누르면 켜기/끄기가 되는가. */
+export function routinePillView(routine, { crewGone, expired, pending }) {
+  if (crewGone) return { disabled: true, clickable: false, titleKey: routine?.enabled ? 'routines.crewMissingHint' : 'routines.crewMissingOffHint' };
+  const titleKey = expired ? 'routines.expiredHint' : (!routine?.enabled && routine?.loop?.stoppedReason ? 'routines.loop.resume' : null);
+  return { disabled: !!pending, clickable: !pending, titleKey };
+}

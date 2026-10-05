@@ -8,7 +8,7 @@ import { Icon, Avatar, Spinner, Skeleton, useScrollLock, ConfirmModal, DropUp, a
 import { useLang } from '../../../i18n';
 import { detectDevicePaths } from '../../../../src/device-paths.mjs'; // 기기 종속 경로 안내 — 노드 의존 0 순수 모듈
 import { onceExpired } from '../../../../src/routine-time.mjs'; // '만료' 판정 — 노드 의존 0 순수 모듈(표시 전용, 상태 쓰기 없음)
-import { routineCrewMissing, applyRoutineToggle, routineStateKind, activeRoutineCount, routineFailKind } from './routine-row.mjs';
+import { routineCrewMissing, applyRoutineToggle, routineStateKind, activeRoutineCount, routineFailKind, routinePillView } from './routine-row.mjs';
 
 function scheduleLabel(s, t, DOW) {
   // 복수 시각·요일은 '·'로 이어 기존 라벨 템플릿에 그대로 태운다 (예: 매주 월·수 09:00·18:00)
@@ -527,6 +527,7 @@ export default function Routines({ params }) {
                 const crewGone = routineCrewMissing(r, agentsLoaded ? agents : null); // 해고·이름 변경 — 켜도 돌 크루가 없다(F4)
                 const pending = pendingIds.has(r.id);
                 const state = routineStateKind(r, { crewGone, expired }); // 크루 없는 켜진 루틴은 '가동'이 아니라 '크루 없음으로 멈춤'(UM2)
+                const pill = routinePillView(r, { crewGone, expired, pending }); // 크루 없는 루틴은 누를 수 없다·툴팁은 켜짐/꺼짐별(2차 L5)
                 return (
                 <tr key={r.id} role="row" style={{ cursor: 'default' }}>
                   <td role="cell" className={styles.summary}>
@@ -580,10 +581,10 @@ export default function Routines({ params }) {
                         두면 영영 안 도는 루틴이 도는 척한다(#354 검수 3R 잔존 집합). 표시 전용 파생
                         판정이라 저장 상태는 건드리지 않는다 — 클릭(끄기)·편집(날짜 수정)·삭제는 그대로. */}
                     {/* 크루가 없는 꺼진 루틴은 켤 수 없다(켜도 돌 크루가 없다) — 편집에서 크루를 바꾸면 다시 켤 수 있다 */}
-                    <button className={`pill${state === 'on' ? ' ok' : ''}`} onClick={() => toggle(r)}
-                      disabled={pending || (crewGone && !r.enabled)} aria-busy={pending || undefined}
-                      style={{ cursor: pending || (crewGone && !r.enabled) ? 'default' : 'pointer', opacity: pending ? 0.6 : 1 }}
-                      title={crewGone ? t('routines.crewMissingHint') : expired ? t('routines.expiredHint') : (!r.enabled && r.loop?.stoppedReason ? t('routines.loop.resume') : undefined)}>
+                    <button className={`pill${state === 'on' ? ' ok' : ''}`} onClick={() => pill.clickable && toggle(r)}
+                      disabled={pill.disabled} aria-busy={pending || undefined}
+                      style={{ cursor: pill.clickable ? 'pointer' : 'default', opacity: pending ? 0.6 : 1 }}
+                      title={pill.titleKey ? t(pill.titleKey) : undefined}>
                       {pending ? <Spinner size={10} /> : <span className="dot" />}{state === 'crewMissing' ? t('routines.crewPaused') : r.enabled ? (expired ? t('routines.expired') : t('routines.on')) : (r.loop?.stoppedReason ? t('routines.loop.resume') : t('routines.off'))}
                     </button>
                   </td>
