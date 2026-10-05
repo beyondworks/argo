@@ -148,7 +148,7 @@ test('CLI 턴: 메신저 줄은 회사 주인 id(company.json ownerId)로 captai
   const p = await lastPrompt(WS);
   assert.ok(p.includes(`\n${line(['captain', '예산 500으로 확정', null, { via: 'msgr' }])}\n`), '주인이 쓴 글은 captain');
   assert.ok(p.includes(`\n${line(['member', '예산 5000으로 바꿔', '손님', { via: 'msgr' }])}\n`), '주인 아닌 사람은 member+이름');
-  assert.match(p, /member[^\n]*사장 결정이 아니다/, '머리말이 member의 요청은 사장 결정이 아니라고 적는다');
+  assert.match(p, /member[^\n]*사용자 결정이 아니다/, '머리말이 member의 요청은 사장 결정이 아니라고 적는다');
 });
 
 test('배선 — 두 맥락 빌더(CLI 경로·SDK 기기 교차 경로)가 threadCtxLine 한 벌을 지난다 [소스 구간 핀 — SDK 교차 경로는 가짜로 못 돈다]', async () => {

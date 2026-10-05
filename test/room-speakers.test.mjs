@@ -102,7 +102,7 @@ test('릴레이에서 발언자 실패로 루프가 끊기면 차례가 오지 �
     const msgs = (await loadRoom('rs-fail')).messages;
     assert.deepEqual(msgs.map((m) => m.who), ['user', 'system', 'beast', 'system', 'system']);
     assert.deepEqual(msgs.slice(-2).map((m) => m.kind), ['error', 'skipped'], '실패 안내 다음에 남은 발언자 안내');
-    assert.equal(msgs.at(-1).text, '차례가 오지 않은 크루: 에드나 — 다시 부르면 이어갑니다.', '뒷사람만(실패자·이미 말한 사람 제외)');
+    assert.equal(msgs.at(-1).text, '차례가 오지 않은 에이전트: 에드나 — 다시 부르면 이어갑니다.', '뒷사람만(실패자·이미 말한 사람 제외)');
     await seed('rs-fail-en', { lang: 'en' });
     await assert.rejects(runRoomTurn('rs-fail-en', '@beast > @shuri > @edna go'));
     assert.equal((await loadRoom('rs-fail-en')).messages.at(-1).text, 'Did not get to: 에드나 — mention them again to continue.');

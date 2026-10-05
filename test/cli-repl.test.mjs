@@ -119,7 +119,7 @@ test('대화 화면 — 머리·바로 대화, Ctrl+C·Ctrl+D로 안 나가고, 
   assert.match(out.boot, /v\d+\.\d+\.\d+ · CLI/, '버전');
   assert.match(out.boot, /대화 상대: 노바/, '크루가 한 명이면 바로 그 크루와 대화');
   assert.match(out.help, /\/quit, exit/);
-  assert.match(out['crew-list'], /대화할 크루를 고르세요[\s\S]*1\. 노바/, '/crew만 치면 크루 목록(실측: 지금 크루만 다시 보였다)');
+  assert.match(out['crew-list'], /대화할 에이전트를 고르세요[\s\S]*1\. 노바/, '/crew만 치면 크루 목록(실측: 지금 크루만 다시 보였다)');
   assert.match(out['agent-list'], /1\. 노바/, '/agent만 쳐도 같은 목록(새 이름)');
   assert.match(out['agent-pick'], /대화 상대: 노바/, '/agent 목록에서 고르면 대화 상대가 바뀐다');
   assert.match(out['ctrlc-empty'], /나가려면 \/quit 또는 exit/, '빈 줄 Ctrl+C — 안내만');

@@ -42,8 +42,8 @@ Rules:
 - First list every topic that appears in the journals, then write exactly one note per topic (a missed topic = lost memory). Do not merge different topics into one note, and do not split one topic across two notes.
 - Each topic note is the single source of truth for its topic. If a topic matches an existing note title, reuse that exact title to update it (don't spawn new titles).
 - Updating a note REPLACES its body entirely — output a complete body that keeps and integrates the still-valid conclusions from the "existing note excerpts" below (omission = memory loss). When new journals contradict an old decision, prefer the new one and keep a one-line trace like "(was: …)".
-- Note content should center on conclusions, decisions, numbers, and rules that "the next crew handling this topic can use right away." No conversation quotes or process narration.
-- signal gate: keep only content that passes "does this record help future crew work better?" If it doesn't pass, drop it.
+- Note content should center on conclusions, decisions, numbers, and rules that "the next agent handling this topic can use right away." No conversation quotes or process narration.
+- signal gate: keep only content that passes "does this record help future agent work better?" If it doesn't pass, drop it.
 - If the journals hold nothing worth distilling, return an empty array.
 - Output ONLY JSON (no code fences, no explanation): {"notes":[{"title":"...","content":"markdown body"}]}
 
@@ -60,8 +60,8 @@ ${journals}` : `당신은 회사 기억의 사서다. 아래 일지(대화 원�
 - 먼저 일지에 등장한 주제를 전부 나열한 뒤, 주제마다 노트를 정확히 1개씩 써라(주제 누락 = 기억 유실). 서로 다른 주제를 한 노트에 합치지 말고, 같은 주제를 두 노트로 쪼개지 마라.
 - 주제 노트는 주제당 1개가 단일 진실이다. 기존 노트 제목과 같은 주제면 그 제목을 그대로 써서 갱신하라(새 제목 남발 금지).
 - 노트 갱신은 본문 전체 교체다 — 아래 "기존 노트 발췌"의 여전히 유효한 결론을 유지·통합한 완전한 본문을 출력하라(누락 = 기억 유실). 새 일지가 이전 결정과 모순되면 새 결정을 우선하고 "(변경 전: …)" 한 줄로 흔적을 남겨라.
-- 노트 내용은 "다음에 이 주제를 다룰 크루가 바로 쓸 수 있는" 결론·결정·수치·규칙 중심으로. 대화 인용·과정 서술 금지.
-- signal gate: "이 기록이 미래의 크루를 더 잘 일하게 하는가?"를 통과하는 내용만 남겨라. 통과 못 하면 버린다.
+- 노트 내용은 "다음에 이 주제를 다룰 에이전트가 바로 쓸 수 있는" 결론·결정·수치·규칙 중심으로. 대화 인용·과정 서술 금지.
+- signal gate: "이 기록이 미래의 에이전트를 더 잘 일하게 하는가?"를 통과하는 내용만 남겨라. 통과 못 하면 버린다.
 - 일지에 정제할 가치가 있는 내용이 없으면 빈 배열을 반환하라.
 - 정확히 JSON만 출력(코드펜스·설명 금지): {"notes":[{"title":"...","content":"마크다운 본문"}]}
 

@@ -61,7 +61,7 @@ async function applyPayload(wsId, item, { session } = {}) {
     // 결재 파일을 직접 고칠 수 있으므로, 사장이 `create_event`를 보고 승인했는데 `delete_event`가
     // 실행될 수 있었다(분리 검수 지적 2026-08-01). 어긋나면 실행하지 않는다.
     if (item.action !== `${serverId} · ${tool}`) {
-      return `실행 취소 — 결재 내용(${item.action})과 실행 대상(${serverId} · ${tool})이 다르다. 사장에게 다시 올려라.`;
+      return `실행 취소 — 결재 내용(${item.action})과 실행 대상(${serverId} · ${tool})이 다르다. 사용자에게 다시 올려라.`;
     }
     // 2026-09-27 N5(유건 결정) — 메신저 결재는 실행 직전 조직 자격을 다시 본다. 메신저와 무관한 결재(item.msgr 없음)는 그대로 실행.
     if (item.msgr?.orgId) {

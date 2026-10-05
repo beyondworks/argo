@@ -73,7 +73,7 @@ test('SDK: 도구가 도는 사이 넣은 메시지는 멈추지 않고 도구 �
   const r = await chat(ws, 'mid', '[MID] 작업해', null, { journal: { off: true } });
   assert.equal(bodies.MID.length, 2, '추가 실행 없이 한 번에');
   assert.match(bodies.MID[1], /tool_result/);
-  assert.match(bodies.MID[1], /사장이 작업 중에 새 메시지를 보냈다:\\n중간 끼워 넣기/, '도구 결과 뒤 요청에 실렸다');
+  assert.match(bodies.MID[1], /사용자가 작업 중에 새 메시지를 보냈다:\\n중간 끼워 넣기/, '도구 결과 뒤 요청에 실렸다');
   assert.equal(r.reply, '반영한 답');
   assert.equal(await steerTurn(ws, 'mid', { text: '늦음' }), false, '끝난 턴은 받지 않는다');
 });

@@ -123,12 +123,12 @@ export function renderForSummary(messages, maxTokens, lang = 'ko', { summaryAt0 
 export function summaryPrompt(transcript, lang = 'ko', { tag } = {}) {
   const en = lang === 'en';
   const who = en
-    ? 'Who words: "user" = a user-role message (the captain\'s instruction or a message delivered to the crew — the transcript does not record which, so do not record it as the captain\'s decision); "crew" = the crew (extra "tool" = a tool call); "tool" / "error" = a tool result / a failed tool result; "summary" = the earlier summary.'
-    : '누가 낱말: "user" = 사용자 역할의 글(사장 지시이거나 크루에게 배달된 글 — 전사에 어느 쪽인지 기록이 없으니 사장의 결정으로 확정하지 마라), "crew" = 크루(덧붙임 tool = 도구 호출), "tool"·"error" = 도구 결과·실패한 도구 결과, "summary" = 이전 요약.';
+    ? 'Who words: "user" = a user-role message (the user\'s instruction or a message delivered to the agent — the transcript does not record which, so do not record it as the user\'s decision); "crew" = the agent (extra "tool" = a tool call); "tool" / "error" = a tool result / a failed tool result; "summary" = the earlier summary.'
+    : '누가 낱말: "user" = 사용자 역할의 글(사용자 지시이거나 에이전트에게 배달된 글 — 전사에 어느 쪽인지 기록이 없으니 사용자의 결정으로 확정하지 마라), "crew" = 에이전트(덧붙임 tool = 도구 호출), "tool"·"error" = 도구 결과·실패한 도구 결과, "summary" = 이전 요약.';
   const block = recordBlock(String(transcript ?? '').split('\n').filter(Boolean), { ...(tag ? { tag } : {}), lang });
   return en
-    ? `Below is the earlier part of a long conversation between a crew member (AI agent) and the captain. Summarize it so the crew can keep working without the original: decisions made, work in progress or promised, file paths, names, numbers and preferences the captain stated. If it begins with an earlier summary, fold that in. ${recordRules('en', who)} Write at most ${COMPACT_SUMMARY_TOKENS} tokens and output only the summary.\n\n<conversation>\n${block}\n</conversation>`
-    : `아래는 크루(AI 에이전트)와 사장의 긴 대화 중 앞부분이다. 원문 없이도 크루가 이어서 일할 수 있게 요약하라: 정한 것, 진행 중이거나 약속한 일, 나온 파일 경로·이름·숫자, 사장이 밝힌 선호. 앞에 이전 요약이 있으면 그 내용도 합쳐라. ${recordRules('ko', who)} 최대 ${COMPACT_SUMMARY_TOKENS}토큰으로, 요약문만 출력하라.\n\n<conversation>\n${block}\n</conversation>`;
+    ? `Below is the earlier part of a long conversation between an AI agent and the user. Summarize it so the agent can keep working without the original: decisions made, work in progress or promised, file paths, names, numbers and preferences the user stated. If it begins with an earlier summary, fold that in. ${recordRules('en', who)} Write at most ${COMPACT_SUMMARY_TOKENS} tokens and output only the summary.\n\n<conversation>\n${block}\n</conversation>`
+    : `아래는 에이전트와 사용자의 긴 대화 중 앞부분이다. 원문 없이도 에이전트가 이어서 일할 수 있게 요약하라: 정한 것, 진행 중이거나 약속한 일, 나온 파일 경로·이름·숫자, 사용자가 밝힌 선호. 앞에 이전 요약이 있으면 그 내용도 합쳐라. ${recordRules('ko', who)} 최대 ${COMPACT_SUMMARY_TOKENS}토큰으로, 요약문만 출력하라.\n\n<conversation>\n${block}\n</conversation>`;
 }
 
 /** 압축 계획(순수) — { skip:true, preTokens } 또는 { skip:false, head, tail, preTokens, window, size }. native-query가 요약 전에 상태 이벤트를 내려고 먼저 부른다. */

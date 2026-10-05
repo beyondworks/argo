@@ -156,7 +156,7 @@ export async function runDueRoutines(wsId, now, { runFn = runRoutine } = {}) {
     // 끄지는 않는다: 새 기기에서 동기화가 routines.json을 카드보다 먼저 받는 순간에도 이 판정이 돌아, 끄면 그 상태가 다른 기기로 퍼진다.
     // 끄는 것은 해고(removeAgentCard → disableRoutinesForCrew)라는 사람의 행동에서만 한다. 화면은 '크루 없음'으로 표시한다.
     if (await readAgentCard(wsId, r.agentSlug).then(() => false, (e) => e?.code === 'NOT_FOUND')) {
-      if (!orphanLogged.has(key)) { orphanLogged.add(key); console.warn(`[argo] 루틴 건너뜀(${key}): 크루 "${r.agentSlug}" 카드가 없습니다`); }
+      if (!orphanLogged.has(key)) { orphanLogged.add(key); console.warn(`[argo] 루틴 건너뜀(${key}): 에이전트 "${r.agentSlug}" 카드가 없습니다`); }
       continue;
     }
     const startedAt = routineRunning.get(key);
@@ -238,7 +238,7 @@ export async function crewmailTurn(cid, slug, msg, opts) {
   const t = await chat(cid, slug, prompt, null, { from: opts.from, hop: opts.hop, chain: opts.chain, source: 'crewmail', ...(mirrorCtx ? { mirrorCtx, journal: msgrJournal(msg.msgr.orgId, msg.msgr.channelId, msg.msgr.memoryOff) } : await briefingCtx(cid, 'crewmail', slug).then((c) => (c ? { mirrorCtx: c } : {}))), ...(relaxed ? { delegationRelaxed: true, delegationTree: tree } : {}) }); // 위임 제한을 푼 대화방에서 시작된 쪽지의 배달 턴은 같은 상한을 이어 받는다(메신저발 제외) // 메신저 밖 쪽지: 배달 브리핑이 공유 목적지로 나가면 그 범위 맥락만 // 메신저발 쪽지의 배달 턴 = 그 채널의 규칙·기억 정책(검수 M-3)
   // 스레드 기록 실패는 무증상으로 삼키지 않는다(분리 검수 MEDIUM — 비용은 나갔는데 화면에 없음)
   await appendTurn(cid, slug, { userMsg: prompt, reply: t.reply, handover: t.handover, sessionId: null, via: 'crewmail', artifacts: t.artifacts, contextScope: t.contextScope })
-    .catch((e) => console.error(`[argo] 크루 우편 스레드 기록 실패(${cid}/${slug}):`, e.message));
+    .catch((e) => console.error(`[argo] 에이전트 우편 스레드 기록 실패(${cid}/${slug}):`, e.message));
   // 배달 알림 — pushEvent의 crewmail 분기(텔레그램 문안)와 짝(재검 N1 보류 해소). 슬랙은
   // 타입 게이트로 좁혀져 이 이벤트에 반응하지 않는다(과거 event.routine TypeError 경로).
   emitNotify({ type: 'crewmail', wsId: cid, slug, from: msg.from, fromName: msg.fromName, kind: msg.kind, reply: t.reply, id: msg.id, message: msg.message, msgr: msg.msgr ?? null });
@@ -285,7 +285,7 @@ export function ensureScheduler() {
           if (!mailDelivering.has(cid)) {
             mailDelivering.add(cid);
             deliverCrewMail(cid, (slug, msg, opts) => crewmailTurn(cid, slug, msg, opts))
-              .catch((e) => console.error(`[argo] 크루 우편 배달 오류(${cid}):`, e.message))
+              .catch((e) => console.error(`[argo] 에이전트 우편 배달 오류(${cid}):`, e.message))
               .finally(() => mailDelivering.delete(cid));
           }
           // 러너 주기 건강 검진(P1-2 후속) — fire-and-forget. 자체 스로틀(30분·과금 러너 6시간)이
