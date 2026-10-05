@@ -18,7 +18,7 @@ process.env.ARGO_ROOT = ROOT;
 process.env.ARGO_SYNC = '1';
 delete process.env.ARGO_SYNC_ALLOW_MASS_DELETE;
 
-const { syncCompany, _setSyncClientForTest, _tombstonesForTest, isDiscoverDue } = await import('../src/sync.mjs');
+const { syncCompany, _setSyncClientForTest, _tombstonesForTest, isDiscoverDue, syncFailedMessage, syncStatusFor } = await import('../src/sync.mjs');
 const { ensureAccountKey, clearAccountKey } = await import('../src/accountkey.mjs');
 const { openSecretCompat, sealSecret } = await import('../src/secretbox.mjs');
 // 회사 데이터 전체 봉투(v2)가 기본 켜짐(2026-09-06) — 실환경처럼 계정 키를 확보해야 동기화가 돈다(미확보 = 전체 불가시 보류).
@@ -794,4 +794,221 @@ test('목록 조회 주기 판정: 첫 사이클은 항상, 그다음은 간격�
   assert.equal(isDiscoverDue(1_000_000, 0, T), true, '0도 기록 없음으로 본다');
   assert.equal(isDiscoverDue(1_000_000, 1_000_000 - T + 1, T), false, '간격 미달이면 건너뛴다 — 이게 부하 절감의 전부다');
   assert.equal(isDiscoverDue(1_000_000, 1_000_000 - T, T), true, '간격을 정확히 채우면 조회한다');
+});
+
+/* ─── CDN 옛 사본 · 객체 없는 매니페스트 항목 (라이브 실측 2026-09-26~10-05, lean-ax-wqou "동기화 파일 4건 실패") ───
+   Supabase Storage는 인증 다운로드도 CDN에 캐시한다(cf_cache_status=HIT). 09-26 03:05:20Z에 html을 지우고 그 항목을 뺀 매니페스트를
+   올렸는데 10초 뒤 다음 주기의 GET이 HIT로 이전 판을 받았다 → html이 '원격 신규'로 보여 받으려다 Object not found → 실패가 있으면
+   매니페스트를 다시 올리는 규칙이 그 항목을 운영 매니페스트에 영구히 되살렸다. 그 뒤 이 항목이 없는 모든 기기가 매 주기 같은 4건에서 실패했다. */
+/** CDN 모사 — cacheNonce 없는 다운로드는 처음 받은 사본을 계속 돌려준다(덮어쓴 직후의 HIT). noNonce = 캐시를 건너뛰지 않은 키. */
+function withCdn(fake) {
+  const bucket = fake.storage.from(), origin = bucket.download.bind(bucket);
+  const cache = new Map(), noNonce = [];
+  bucket.download = async (key, opts) => {
+    if (opts?.cacheNonce != null) return origin(key);
+    noNonce.push(key);
+    if (!cache.has(key)) { const r = await origin(key); if (r.error) return r; cache.set(key, r); }
+    return cache.get(key);
+  };
+  return { noNonce };
+}
+
+test('CDN이 옛 매니페스트를 돌려줘도 방금 지운 파일이 매니페스트에 되살아나지 않는다(09-26 재현)', async () => {
+  const wsId = 'cdn-resurrect';
+  const x = Buffer.from('<html>intermediate</html>'), k = Buffer.from('keep v1');
+  const { wsRoot, fake } = await setup(wsId, {
+    localFiles: { 'vault/x.html': x, 'vault/keep.md': k },
+    state: { 'vault/x.html': meta(x), 'vault/keep.md': meta(k) },
+    remoteFiles: { 'vault/x.html': meta(x), 'vault/keep.md': meta(k) },
+    remoteBlobs: { 'vault/x.html': x, 'vault/keep.md': k },
+  });
+  const cdn = withCdn(fake);
+  await syncCompany(wsId, OWNER);                                  // 매니페스트가 CDN에 실린다
+  await rm(join(wsRoot, 'vault', 'x.html'));                        // PDF를 만든 뒤 중간 파일을 지운다
+  assert.equal((await syncCompany(wsId, OWNER)).deletedR, 1, '객체를 지우고 항목을 뺀 매니페스트를 올린다');
+  await writeFile(join(wsRoot, 'vault', 'keep.md'), 'keep v2');     // 크루가 계속 일한다 → 다음 주기도 전체 동기화
+  const r = await syncCompany(wsId, OWNER);
+  assert.equal(r.failed, 0, '지운 파일을 원격 신규로 읽어 받으려다 실패하지 않는다');
+  const files = cloudJson(fake._store.get(`${OWNER}/${wsId}/__manifest__.json`)).files;
+  assert.equal('vault/x.html' in files, false, '지운 항목이 운영 매니페스트에 되살아나지 않는다');
+  assert.deepEqual(cdn.noNonce, [], '동기화가 읽는 객체는 전부 CDN 사본을 건너뛴다(cacheNonce)');
+});
+
+test('객체 없는 매니페스트 항목은 실패가 아니라 건너뜀 — 항목은 남기고, 확인한 항목은 1시간 동안 다시 받지 않는다', async () => {
+  const wsId = 'dangling';
+  const k = Buffer.from('keep'), gone = 'vault/journal/2026-09-03-pepper.md';
+  const { fake } = await setup(wsId, {
+    localFiles: { 'vault/keep.md': k }, state: { 'vault/keep.md': meta(k) },
+    remoteFiles: { 'vault/keep.md': meta(k), [gone]: meta(Buffer.from('archived elsewhere')) },
+    remoteBlobs: { 'vault/keep.md': k },
+  });
+  const bucket = fake.storage.from(), download = bucket.download.bind(bucket), upload = bucket.upload.bind(bucket);
+  let gets = 0, writes = 0;
+  bucket.download = async (key, opts) => { if (key.endsWith(gone)) gets++; return download(key, opts); };
+  bucket.upload = async (...a) => { writes++; return upload(...a); };
+  const realNow = Date.now; let now = realNow(); Date.now = () => now;
+  try {
+    const r = await syncCompany(wsId, OWNER);
+    assert.equal(r.failed, 0, '받을 내용이 없는 항목은 실패가 아니다 — 재시도 대기·lastError로 회사 전체를 묶지 않는다');
+    assert.equal(r.missing, 1);
+    assert.deepEqual(r.missingRels, [gone]);
+    assert.ok(gone in cloudJson(fake._store.get(`${OWNER}/${wsId}/__manifest__.json`)).files,
+      '항목은 지우지 않는다 — 그 파일을 가진 기기가 "다른 기기가 지웠다"로 읽어 로컬 사본을 지우게 된다(09-15 정리가 매니페스트를 남긴 이유)');
+    writes = 0; now += 61_000;                                      // 유휴 확인을 넘겨 다음 전체 주기
+    const r2 = await syncCompany(wsId, OWNER);
+    assert.equal(r2.failed, 0); assert.equal(r2.missing, 1);
+    assert.equal(gets, 1, '같은 빈 항목을 매 주기 다시 받으러 가지 않는다');
+    assert.equal(writes, 0, '빈 항목 때문에 매니페스트를 다시 쓰지 않는다');
+    now += 60 * 60_000 + 1;                                         // 1시간 뒤에는 다시 확인(다른 기기가 객체를 되살렸을 수 있다)
+    await syncCompany(wsId, OWNER);
+    assert.equal(gets, 2);
+  } finally { Date.now = realNow; }
+});
+
+test('객체 없는 항목을 가진 기기: 받을 게 없으면 로컬을 그대로 두고 편집본도 밀지 않는다 — 항목이 내 base 그대로일 때만 밀어 복구(분리 검수 2차 HIGH-1)', async () => {
+  const wsId = 'dangling-holder';
+  const v1 = Buffer.from('v1'), ghost = Buffer.from('ghost meta');
+  const { wsRoot, fake } = await setup(wsId, {
+    localFiles: { 'vault/same.md': v1, 'vault/edited.md': Buffer.from('my edit'), 'vault/kept.md': v1, 'vault/repair.md': Buffer.from('fixed') },
+    state: { 'vault/same.md': meta(v1), 'vault/edited.md': meta(v1), 'vault/kept.md': meta(v1), 'vault/repair.md': meta(v1) },
+    // same·edited: 항목이 내 base보다 새로운데 객체가 없다(다른 기기가 올린 판이 유실). kept·repair: 항목이 내 base 그대로, 객체만 없다.
+    remoteFiles: { 'vault/same.md': meta(ghost, 2000), 'vault/edited.md': meta(ghost, 2000), 'vault/kept.md': meta(v1), 'vault/repair.md': meta(v1) },
+  });
+  const r = await syncCompany(wsId, OWNER);
+  assert.equal(r.failed, 0);
+  assert.equal(r.deletedL, 0, '객체가 없어도 로컬 사본을 지우지 않는다');
+  assert.equal(r.missing, 2);
+  assert.equal(await readFile(join(wsRoot, 'vault', 'same.md'), 'utf8'), 'v1', '받을 게 없으면 로컬을 덮지 않는다');
+  assert.equal(await readFile(join(wsRoot, 'vault', 'edited.md'), 'utf8'), 'my edit', '편집본은 로컬에 그대로 남는다');
+  assert.equal(fake._store.has(`${OWNER}/${wsId}/vault/edited.md`), false,
+    '항목이 내 base보다 새롭다 = 더 새 판을 가진 기기가 있을 수 있다 — 내 편집본으로 덮으면 그 기기가 받아서 자기 최신본을 잃는다');
+  assert.equal(await readFile(join(wsRoot, 'vault', 'kept.md'), 'utf8'), 'v1', '변경 없는 보유 기기는 종전대로 손대지 않는다');
+  assert.equal(r.pushed, 1);
+  assert.equal(openSecretCompat(fake._store.get(`${OWNER}/${wsId}/vault/repair.md`)).toString(), 'fixed',
+    '항목이 내 base 그대로면 기록된 새 판이 없다 — 종전 "로컬만 변경 → 밀기"가 객체를 되살린다');
+});
+
+test('파일 실패는 이름과 사유를 남기고, 재시도 대기 중에도 그대로 보인다', async () => {
+  const wsId = 'fail-visible';
+  const buf = Buffer.from('remote');
+  const { fake } = await setup(wsId, { remoteFiles: { 'vault/a.md': meta(buf) }, remoteBlobs: { 'vault/a.md': buf } });
+  const bucket = fake.storage.from(), download = bucket.download.bind(bucket);
+  bucket.download = async (key, opts) => (key.endsWith('a.md') ? { error: { status: 403, message: 'permission denied' } } : download(key, opts));
+  const r = await syncCompany(wsId, OWNER);
+  assert.equal(r.failed, 1);
+  assert.deepEqual(r.failures, [{ rel: 'vault/a.md', reason: 'permission denied' }]);
+  assert.equal(syncFailedMessage(wsId, r), 'fail-visible: 동기화 파일 1건 실패 (vault/a.md: permission denied) — 잠시 후 재시도');
+  assert.equal(syncFailedMessage(wsId, { failed: 4, failures: r.failures }), 'fail-visible: 동기화 파일 4건 실패 (vault/a.md: permission denied 외 3건) — 잠시 후 재시도');
+  const again = await syncCompany(wsId, OWNER);
+  assert.equal(again.skipped, 'retry-backoff');
+  assert.deepEqual(again.failures, r.failures, '재시도 대기 중에도 마지막 실패 목록이 상태에 남는다');
+});
+
+// 격리 서버 실측(10/5): 로컬 쓰기 실패 사유에 원자 쓰기 임시 파일 이름(.tmp-<파일>-<pid>-<시각>-<순번>)이 들어가 재시도마다 사유가 달라졌고,
+// '목록이 바뀔 때만 한 줄'인 로그가 재시도마다 새 줄을 썼다.
+test('로컬 쓰기 실패 사유는 재시도해도 같다 — 임시 파일 꼬리를 떼어 로그는 한 줄만 남는다', async () => {
+  const wsId = 'fail-stable';
+  const buf = Buffer.from('remote');
+  const { wsRoot } = await setup(wsId, { remoteFiles: { 'vault/blocked.md': meta(buf) }, remoteBlobs: { 'vault/blocked.md': buf } });
+  await mkdir(join(wsRoot, 'vault', 'blocked.md'), { recursive: true }); // 받을 자리에 폴더 → 원자 쓰기의 rename 실패
+  const warn = console.warn, lines = [], realNow = Date.now;
+  console.warn = (line) => { lines.push(String(line)); };
+  try {
+    const r1 = await syncCompany(wsId, OWNER);
+    Date.now = () => realNow() + 31_000; // 첫 재시도 대기(30초)를 지나 실제로 한 번 더 돈다
+    const r2 = await syncCompany(wsId, OWNER);
+    assert.equal(r1.failed, 1); assert.equal(r2.failed, 1);
+    assert.doesNotMatch(r1.failures[0].reason, /\.tmp-blocked\.md-\d/, '사유에 pid·시각 꼬리가 남지 않는다');
+    assert.equal(r2.failures[0].reason, r1.failures[0].reason, '같은 실패는 주기마다 같은 사유');
+  } finally { Date.now = realNow; console.warn = warn; }
+  assert.equal(lines.filter((l) => l.includes(`동기화(${wsId}): 파일 1건 실패`)).length, 1, '같은 실패는 로그 한 줄');
+});
+
+test('빈 항목 기억이 있어도 다른 기기가 객체를 먼저 올린 자리를 덮지 않고, 그 기기의 매니페스트가 오면 충돌 사본으로 수렴한다(분리 검수 MEDIUM-1·2차 HIGH-1)', async () => {
+  const wsId = 'dangling-race';
+  const v1 = Buffer.from('v1'), ghost = Buffer.from('ghost meta'), z = Buffer.from('Z from device B');
+  const { wsRoot, fake } = await setup(wsId, {
+    localFiles: { 'vault/n.md': v1 }, state: { 'vault/n.md': meta(v1) },
+    remoteFiles: { 'vault/n.md': meta(ghost, 2000) },                 // 객체 없는 항목(메타만 다름)
+  });
+  const realNow = Date.now; let now = realNow(); Date.now = () => now;
+  try {
+    assert.equal((await syncCompany(wsId, OWNER)).missing, 1);         // 1주기: 빈 항목으로 기억
+    fake._store.set(`${OWNER}/${wsId}/vault/n.md`, z);                  // 기기 B가 객체를 먼저 올림(매니페스트는 아직)
+    await writeFile(join(wsRoot, 'vault', 'n.md'), 'v2 my edit');      // 이 기기도 같은 파일을 고침
+    const r = await syncCompany(wsId, OWNER);
+    assert.equal(r.pushed, 0, '객체 없음으로 본 자리는 어느 분기에서도 밀지 않는다');
+    assert.equal(openSecretCompat(fake._store.get(`${OWNER}/${wsId}/vault/n.md`)).toString(), 'Z from device B', '기기 B의 객체를 덮지 않는다');
+    assert.equal(await readFile(join(wsRoot, 'vault', 'n.md'), 'utf8'), 'v2 my edit', '이 기기 편집본은 로컬에 그대로');
+    const mk = `${OWNER}/${wsId}/__manifest__.json`, man = cloudJson(fake._store.get(mk));
+    man.files['vault/n.md'] = meta(z, 3000); fake._store.set(mk, Buffer.from(JSON.stringify(man))); // 기기 B의 매니페스트 도착
+    now += 61_000;                                                      // 유휴 확인을 넘겨 다음 전체 주기
+    const r2 = await syncCompany(wsId, OWNER);
+    assert.equal(r2.conflicts, 1, '메타가 바뀌면 기억과 상관없이 바로 받아 종전 충돌 처리로');
+    assert.equal(await readFile(join(wsRoot, 'vault', 'n.md'), 'utf8'), 'Z from device B');
+    const copy = (await readdir(join(wsRoot, 'vault'))).find((n) => n.startsWith('n.conflict-'));
+    assert.ok(copy, '이 기기 편집본은 충돌 사본으로 남는다');
+    assert.equal(await readFile(join(wsRoot, 'vault', copy), 'utf8'), 'v2 my edit');
+  } finally { Date.now = realNow; }
+});
+
+test('CDN에 남은 옛 객체(200)로 다른 기기의 삭제를 되돌리지 않는다 — blob 실존 검사도 원본을 본다(분리 검수 MEDIUM-2)', async () => {
+  const wsId = 'cdn-heal';
+  const y = Buffer.from('deleted on another device'), k = Buffer.from('keep');
+  const { wsRoot, fake } = await setup(wsId, {
+    localFiles: { 'vault/y.md': y, 'vault/keep.md': k },
+    state: { 'vault/y.md': meta(y), 'vault/keep.md': meta(k) },
+    remoteFiles: { 'vault/keep.md': meta(k) },                        // 다른 기기가 y를 지우고 항목을 뺐다
+    remoteBlobs: { 'vault/y.md': y, 'vault/keep.md': k },
+  });
+  const cdn = withCdn(fake);
+  await fake.storage.from().download(`${OWNER}/${wsId}/vault/y.md`); // 예전에 누가 받아 CDN에 실린 사본
+  fake._store.delete(`${OWNER}/${wsId}/vault/y.md`);                 // 그 뒤 객체가 지워졌다
+  cdn.noNonce.length = 0;
+  const r = await syncCompany(wsId, OWNER);
+  assert.equal(r.healed, 0, 'CDN의 옛 200을 "항목만 유실"로 읽어 되살리지 않는다');
+  assert.equal(r.deletedL, 1, '다른 기기의 삭제가 이 기기에도 전파된다');
+  assert.equal(existsSync(join(wsRoot, 'vault', 'y.md')), false);
+  assert.equal('vault/y.md' in cloudJson(fake._store.get(`${OWNER}/${wsId}/__manifest__.json`)).files, false);
+  assert.deepEqual(cdn.noNonce, []);
+});
+
+test('CDN에 남은 옛 내용으로 원격 변경을 받지 않는다 — 파일 받기도 원본을 본다(분리 검수 MEDIUM-2)', async () => {
+  const wsId = 'cdn-pull';
+  const v1 = Buffer.from('v1'), v2 = Buffer.from('v2 from other device');
+  const { wsRoot, fake } = await setup(wsId, {
+    localFiles: { 'vault/z.md': v1 }, state: { 'vault/z.md': meta(v1) },
+    remoteFiles: { 'vault/z.md': meta(v2, 2000) }, remoteBlobs: { 'vault/z.md': v1 },
+  });
+  const cdn = withCdn(fake);
+  await fake.storage.from().download(`${OWNER}/${wsId}/vault/z.md`); // v1 사본이 CDN에 실림
+  fake._store.set(`${OWNER}/${wsId}/vault/z.md`, v2);                // 다른 기기가 v2로 덮음
+  cdn.noNonce.length = 0;
+  const r = await syncCompany(wsId, OWNER);
+  assert.equal(r.pulled, 1);
+  assert.equal(await readFile(join(wsRoot, 'vault', 'z.md'), 'utf8'), 'v2 from other device', '옛 사본을 새 메타로 기록하지 않는다');
+  assert.deepEqual(cdn.noNonce, []);
+});
+
+test('한 회사 화면용 상태: 다른 회사 결과는 빼고 오류는 자기 회사 몫을 보인다 — 여러 회사가 함께 실패해도 각자 카드에 남는다(분리 검수 LOW-1·2차 MEDIUM-1·보안 검토)', () => {
+  // 회사 가드(guardCompany)는 그 회사만 본다 — 같은 기기의 게스트(주인 없는 회사)나 다른 계정이 자기 회사 화면을 열어도
+  // 이 계정 회사의 실패·빈 항목 파일 경로가 보이면 안 된다. lastError는 기기 전체에 하나라 회사 오류는 회사 상태(error)에 따로 둔다.
+  const st = globalThis.__argoSyncStatus; const saved = { lastError: st.lastError, companies: st.companies };
+  try {
+    st.companies = {
+      a: { failed: 1, failures: [{ rel: 'vault/비공개-계획.md', reason: 'x' }], error: 'a: 동기화 파일 1건 실패 (vault/비공개-계획.md: x) — 잠시 후 재시도' },
+      b: { skipped: 'retry-backoff', error: 'b: 동기화 파일 1건 실패 (vault/b.md: y) — 잠시 후 재시도' },
+      c: { failed: 0 },
+    };
+    st.lastError = st.companies.b.error;                               // 기기 전체에 하나 — 루프에서 마지막으로 실패한 회사
+    assert.equal(syncStatusFor('a').lastError, st.companies.a.error, '마지막이 아닌 실패 회사 카드에도 자기 오류가 보인다');
+    assert.equal(syncStatusFor('b').lastError, st.companies.b.error, '재시도 대기 중인 회사도 자기 오류가 보인다');
+    assert.equal(syncStatusFor('c').lastError, '', '성공한 회사 화면에는 다른 회사 몫 오류(파일 경로 포함)를 싣지 않는다');
+    assert.deepEqual(Object.keys(syncStatusFor('a').companies), ['a']);
+    assert.deepEqual(syncStatusFor('guest-local').companies, {}, '동기화 기록이 없는 회사는 빈 목록');
+    assert.equal(syncStatusFor('guest-local').lastError, '');
+    st.lastError = '동기화 자격 없음/만료 — 재로그인 필요';              // 기기 전체 오류(회사 접두 없음)
+    assert.equal(syncStatusFor('a').lastError, st.lastError, '기기 전체 오류가 먼저 보인다');
+    assert.equal(syncStatusFor('c').lastError, st.lastError);
+  } finally { st.lastError = saved.lastError; st.companies = saved.companies; }
 });

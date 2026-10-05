@@ -99,14 +99,29 @@ test('관용은 pull 완결일 때만 — pull 실패가 남으면 throw해 복�
   const WS2 = 'ws2';
   await mkdir(join(ROOT, WS2), { recursive: true });
   const note = Buffer.from('x');
-  // 매니페스트는 파일을 선언하는데 blob이 없다 → pull 실패(failed>0) → 관용 불가
-  const manifest = Buffer.from(JSON.stringify({ files: { 'vault/notes/missing.md': meta(note) } }));
-  const fake = freeStorage({ [`${OWNER}/${WS2}/__manifest__.json`]: manifest });
+  // 매니페스트가 선언한 파일을 받다가 네트워크 실패 → pull 실패(failed>0) → 관용 불가.
+  // (객체가 아예 없는 항목은 받을 내용이 없어 실패가 아니다 — 2026-10-05부터 missing으로 건너뛴다. 아래 테스트)
+  const manifest = Buffer.from(JSON.stringify({ files: { 'vault/notes/flaky.md': meta(note) } }));
+  const fake = freeStorage({ [`${OWNER}/${WS2}/__manifest__.json`]: manifest, [`${OWNER}/${WS2}/vault/notes/flaky.md`]: note });
+  const bucket = fake.client.storage.from(), download = bucket.download.bind(bucket);
+  bucket.download = async (key, opts) => (key.includes('flaky.md') ? { data: null, error: { message: 'fetch failed', status: 500 } } : download(key, opts));
   _setSyncClientForTest(fake.client);
   const r = await syncCompany(WS2, OWNER, true, { freePlan: true }).catch((e) => ({ threw: String(e.message) }));
   // 파일 실패는 루프 안 catch(failed++)로 삼켜지고 매니페스트 업로드에서 throw — 어느 쪽이든 state 미기록이 계약
   if (!r.threw) assert.ok((r.failed ?? 0) > 0, 'pull 실패가 집계된다');
   assert.equal(await syncStateExists(WS2), false, 'state 미기록 = 다음 사이클 재시도(복원 미완)');
+});
+
+test('객체 없는 항목은 pull 실패가 아니다 — 그 항목 때문에 free 복원이 영영 미완으로 남지 않는다', async () => {
+  const WS2b = 'ws2b';
+  await mkdir(join(ROOT, WS2b), { recursive: true });
+  const manifest = Buffer.from(JSON.stringify({ files: { 'vault/notes/missing.md': meta(Buffer.from('x')) } }));
+  const fake = freeStorage({ [`${OWNER}/${WS2b}/__manifest__.json`]: manifest });
+  _setSyncClientForTest(fake.client);
+  const r = await syncCompany(WS2b, OWNER, true, { freePlan: true });
+  assert.equal(r.failed, 0);
+  assert.equal(r.missing, 1);
+  assert.equal(await syncStateExists(WS2b), true, '받을 수 있는 것은 다 받았다 = 복원 완결');
 });
 
 test('관용 미지정(비free 계약)이면 쓰기 거부는 그대로 throw — pro의 실패 가시성 유지', async () => {
