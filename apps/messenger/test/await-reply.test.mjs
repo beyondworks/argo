@@ -91,3 +91,13 @@ test('기기 시계가 서버보다 10초 늦어도, 글을 본 뒤에 온 방�
   const b = awaitingReplies({ msgs: [mine(10)], uid: ME, isDm: true, roomCrewIds: [PEPPER], signals: () => ({ typingAt: seen - 20_000 }), away: () => false, now: seen + 3000, seenAt: () => seen });
   assert.equal(b[0].phase, 'preparing', '글을 보기 전(지난 턴)의 방송은 여전히 버린다');
 });
+
+// 통합 재검수 LOW(회귀, 2026-10-05): 방을 다시 열면 '처음 본 시각'이 새로 찍혀(Channel key={chId} 재생성) '조금 오래'가 '준비 중'으로 돌아갔다.
+// 기준은 처음 본 시각과 서버 created_at 중 이른 쪽 — 다시 연 경우(seen > created)에도 30초 판정이 이어진다.
+test('방을 다시 열어도(처음 본 시각이 다시 찍혀도) 조금 오래는 준비 중으로 돌아가지 않는다', () => {
+  const reopenAt = T0 + 40_000; // 글을 보낸 뒤 40초, 다른 방에 갔다가 다시 열었다
+  const a = awaitingReplies({ msgs: [mine(10)], uid: ME, isDm: true, roomCrewIds: [PEPPER], signals: none, away: () => false, now: reopenAt + 500, seenAt: () => reopenAt });
+  assert.equal(a[0].phase, 'slow');
+  const b = awaitingReplies({ msgs: [mine(10)], uid: ME, isDm: true, roomCrewIds: [PEPPER], signals: () => ({ typingAt: T0 + 3000 }), away: () => false, now: reopenAt + 500, seenAt: () => reopenAt });
+  assert.equal(b[0].phase, 'slow', '다시 열기 전에 받은 방송(30초 넘게 무신호)도 기준에서 버려지지 않고 조금 오래로 이어진다');
+});

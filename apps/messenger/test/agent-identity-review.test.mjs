@@ -21,8 +21,20 @@ test('#3 lookFillPlan: 같은 에이전트 행이 둘 이상이고 저장된 얼
   assert.deepEqual(F.faceFromStored(plan[0].patch.face), F.agentFace('p-1', looks), '저장할 얼굴 = 지금 주인이 보는 얼굴');
 });
 
-test('#3 lookFillPlan: 저장된 얼굴이 하나라도 있으면·행이 하나뿐이면·얼굴 열을 못 읽었으면(옛 서버)·대표 조직 행이 없으면 얼굴은 안 쓴다', () => {
-  assert.deepEqual(F.lookFillPlan([row('p-1'), row('o-1', { org_id: LEAN, face: { v: 2, shape: 1, color: 2 } })]), []);
+// 통합 재검수 MEDIUM(2026-10-05): '전부 얼굴 없음' 그룹만 채워, 한 번 채운 뒤 새 조직에 파견된 행(얼굴 없음)은 영영 안 채웠다 — 그 행을 보는 조직 사람에게만 다른 얼굴.
+test('#3 lookFillPlan: 얼굴이 저장된 그룹에 얼굴 없는 행이 새로 생기면(새 조직 파견) 그 행만 그룹 얼굴로 채운다', () => {
+  const saved = { v: 2, shape: 1, color: 2 };
+  const rows = [row('p-1', { face: saved, created_at: '2026-09-01T00:00:00+00:00' }), row('o-1', { org_id: LEAN, face: saved, created_at: '2026-09-05T00:00:00+00:00' }), row('o-new', { org_id: DESIGN, created_at: '2026-10-05T00:00:00+00:00' })];
+  const plan = F.lookFillPlan(rows);
+  assert.deepEqual(plan, [{ col: 'face', ids: ['o-new'], patch: { face: F.faceToStore(F.faceFromStored(saved)) } }]);
+  assert.deepEqual(F.faceFromStored(plan[0].patch.face), F.agentFace('o-new', F.agentLooks(rows)), '채울 얼굴 = 주인이 그 행에서 이미 보는 얼굴');
+  const legacy = { shape: 2, color: 3, eyes: 1 }; // 옛 형태로 저장된 대표 얼굴 — 같은 모양을 v2로 저장한다
+  const legacyRows = [row('o-1', { org_id: LEAN, face: legacy }), row('p-1')];
+  assert.deepEqual(F.lookFillPlan(legacyRows), [{ col: 'face', ids: ['p-1'], patch: { face: F.faceToStore(F.faceFromStored(legacy)) } }]);
+});
+
+test('#3 lookFillPlan: 모두 저장돼 있으면·행이 하나뿐이면·얼굴 열을 못 읽었으면(옛 서버)·대표 조직 행이 없으면 얼굴은 안 쓴다', () => {
+  assert.deepEqual(F.lookFillPlan([row('p-1', { face: { v: 2, shape: 1, color: 2 } }), row('o-1', { org_id: LEAN, face: { v: 2, shape: 1, color: 2 } })]), []);
   assert.deepEqual(F.lookFillPlan([row('o-1', { org_id: LEAN })]), [], '행 하나 — 모두 같은 씨앗');
   const noCol = [row('p-1'), row('o-1', { org_id: LEAN })].map(({ face, ...r }) => r);
   assert.deepEqual(F.lookFillPlan(noCol), [], 'face 키가 없는 행(옛 서버) — 모르는 값을 덮지 않는다');
@@ -139,4 +151,17 @@ test('#6 saveAgentLook: 대표 행을 눌렀거나 한 요청으로 다 저장�
   assert.equal((await G.saveAgentLook(saveDb({ failBulk: true }).db, 'o-1', { face: ORANGE }, looks)).onlyHere, false, '대표 행만 저장 — 화면 얼굴은 바뀐다');
   assert.equal((await G.saveAgentLook(saveDb().db, 'p-1', { face: ORANGE }, looks)).onlyHere, false);
   assert.equal((await G.saveAgentLook(saveDb().db, 'solo', { face: ORANGE }, null)).onlyHere, false, '지도를 모르면(행 하나) 해당 없음');
+});
+
+// 통합 재검수 LOW(2026-10-05): 읽는 중이면 epoch와 상관없이 그 약속을 돌려줘, 복귀(새 회차)의 읽기가 앞 회차 읽기에 묻혀 나가지 않았다.
+test('#4 ownRowsReader: 앞 회차를 읽는 중에 새 회차(복귀)가 부르면 새로 읽는다 — 같은 회차·reuse는 그 약속을 같이 쓴다', async () => {
+  const c = counter(); const read = G.ownRowsReader(c.fetch);
+  const a = read({ epoch: 0 });
+  const same = read({ epoch: 0 }); const reuse = read({ epoch: 1, reuse: true });
+  assert.equal(c.n, 1, '같은 회차·reuse는 읽는 중 약속을 같이 쓴다');
+  const b = read({ epoch: 1 });
+  assert.equal(c.n, 2, '복귀 회차는 따로 읽는다');
+  await c.settle(); const [ra, rs, rr, rb] = await Promise.all([a, same, reuse, b]);
+  assert.equal(ra, rs); assert.equal(ra, rr); assert.equal(rb.epoch, 1);
+  const d = read({ epoch: 1, reuse: true }); assert.equal(await d, rb, '마지막 결과는 새 회차 것(앞 회차 응답이 늦게 와도 덮지 않는다)');
 });

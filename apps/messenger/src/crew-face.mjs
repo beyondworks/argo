@@ -115,15 +115,20 @@ export function agentFace(id, looks, ownFace = null) {
 }
 /** 얼굴·사진 채우기 계획(분리 검수 2026-10-05 #3) — 주인이 아닌 사람은 자기가 보는 행의 저장값·id로 그린다. 얼굴을 저장한 적 없는 에이전트는 사람마다 다른 행 id로 그려 달랐다.
  *  내 크루 행에서 쓸 것만 고른다 → [{ col, ids, patch }] (agent-groups.mjs fillAgentLooks가 col이 비어 있는 행에만 쓴다)
- *   · 얼굴: 같은 에이전트 행이 둘 이상이고 저장된 얼굴이 하나도 없으면 → 모든 행에 대표 행 id 씨앗 얼굴(주인 화면 agentFace와 같은 얼굴 — 주인 눈에는 안 바뀐다).
- *           얼굴 열을 못 읽은 행(옛 서버 — face 키 없음)이 섞이면 고르지 않는다.
+ *   · 얼굴: 같은 에이전트 행이 둘 이상이고 얼굴이 비어 있는 행이 있으면 → 그 빈 행에 그룹 얼굴(agentLooks가 고른 저장값, 없으면 대표 행 id 씨앗 — 주인 화면 agentFace와
+ *           같은 얼굴이라 주인 눈에는 안 바뀐다). 한 번 채운 뒤 새 조직에 파견된 행(얼굴 없음)도 채운다(통합 재검수 MEDIUM — '전부 빈 그룹'만 채우던 것).
+ *           얼굴 열을 못 읽은 행(옛 서버 — face 키 없음)이 섞이면 고르지 않는다. 쓰기는 빈 행에만(is null — 행마다 평생 1회).
  *   · 사진: 대표 행에 사진이 있고 비어 있는 다른 행이 있으면 → 그 빈 행에 대표 사진. 자기 사진이 있는 행은 그대로.
  *  대표 조직 행이 없는 에이전트(개인 전용·꺼진 조직 행만)는 지도도 자기 행 기준이라 쓸 것이 없다 */
 export function lookFillPlan(rows) {
   const out = [];
-  for (const { list, rep } of agentGroups(rows)) {
+  for (const { list, byAge, rep } of agentGroups(rows)) {
     if (!rep || list.length < 2) continue;
-    if (list.every((r) => 'face' in r && r.face == null)) out.push({ col: 'face', ids: list.map((r) => r.id), patch: { face: faceToStore(faceOf(rep.id)) } });
+    const blank = list.filter((r) => r.face == null).map((r) => r.id);
+    if (blank.length && list.every((r) => 'face' in r)) {
+      const stored = faceFromStored(rep.face) ? rep.face : (byAge.find((r) => faceFromStored(r.face))?.face ?? null); // agentLooks와 같은 고름
+      out.push({ col: 'face', ids: blank, patch: { face: faceToStore(faceOf(rep.id, stored)) } });
+    }
     const empty = rep.avatar_url ? list.filter((r) => r.id !== rep.id && !r.avatar_url).map((r) => r.id) : [];
     if (empty.length) out.push({ col: 'avatar_url', ids: empty, patch: { avatar_url: rep.avatar_url } });
   }

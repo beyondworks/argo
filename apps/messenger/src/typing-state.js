@@ -11,13 +11,37 @@ export function acceptTyping(settled, payload, now = Date.now()) {
   return at === undefined || now - at >= SETTLE_IGNORE_MS;
 }
 
-/** 방의 크루별 마지막 글 id를 이전과 비교 — 방송이 아닌 경로(재연결·복귀·새로고침으로 다시 읽음)로 들어온 크루 글도 그 크루의 '입력 중'을 내리게.
-    prev = null(처음 읽음)이면 기록만 하고 changed는 비운다. */
-export function crewPostsChanged(prev, msgs = []) {
-  const next = {};
-  for (const m of msgs) if (m?.author_kind === 'crew' && m.crew_id && m.id != null) next[m.crew_id] = m.id; // 목록은 글 순서 — 마지막 것이 최신
-  if (!prev) return { next, changed: [] };
-  return { next, changed: Object.keys(next).filter((k) => next[k] !== prev[k]) };
+/** 크루별 마지막 글 기록을 방(채널)별로 셸에 둔다 — 대화 화면(Channel key={chId})은 방을 바꾸면 새로 만들어져 기록이 사라졌고, 방 밖에서 답 방송이
+    유실되면 다시 연 방에서 그 답이 목록에 있어도 '입력 중'이 최대 20초 남았다(통합 재검수 MEDIUM, 2026-10-05).
+    read(방, 글 목록, 크루 → 그 크루를 겨냥한 내 마지막 글 id) → 입력 중을 내릴 크루. 이 세션에서 처음 여는 방은 '그 크루의 마지막 글 > 그 크루를 겨냥한 내 마지막 글'이면
+    (답이 이미 왔다) 내리고, 다시 연 방은 직전 기록과 비교한다. heard(방, 크루, 글 id) = 방 밖에서 받은 크루 글 방송(셸이 이미 내렸다 — 기준만 올린다). */
+export function createCrewPostsMemory() {
+  const byChannel = new Map();
+  return {
+    read(chId, msgs = [], askedOf = () => 0) {
+      const prev = byChannel.get(chId) ?? null;
+      const next = { ...(prev ?? {}) };
+      for (const m of msgs) if (m?.author_kind === 'crew' && m.crew_id && Number.isFinite(m.id)) next[m.crew_id] = Math.max(next[m.crew_id] ?? 0, m.id);
+      byChannel.set(chId, next);
+      return Object.keys(next).filter((k) => (prev ? next[k] !== prev[k] : next[k] > askedOf(k)));
+    },
+    heard(chId, crewId, id) { const rec = byChannel.get(chId); if (rec && crewId && Number.isFinite(id)) rec[crewId] = Math.max(rec[crewId] ?? 0, id); },
+    clear() { byChannel.clear(); },
+  };
+}
+/** 크루 → 그 크루를 겨냥한 내 마지막 글 id. 멘션(참조 cc 제외)·크루 글에 단 답글, 1:1 방이면 내 글 전부(방의 크루가 답한다 — 서버 targetsCrew와 같은 방향).
+    애매하면 '겨냥했다'로 본다 — 지금 답하는 중인 크루의 입력 중을 잘못 내리지 않게. */
+export function lastAskedIds(msgs = [], { uid, isDm = false } = {}) {
+  const asked = {}; let lastMine = 0;
+  const byId = new Map(msgs.map((m) => [m.id, m]));
+  for (const m of msgs) {
+    if (m?.author_kind !== 'user' || m.author_user_id !== uid || !Number.isFinite(m.id)) continue;
+    lastMine = Math.max(lastMine, m.id);
+    for (const x of Array.isArray(m.mentions) ? m.mentions : []) if (x?.kind === 'crew' && x.role !== 'cc') asked[x.id] = Math.max(asked[x.id] ?? 0, m.id);
+    const p = m.reply_to ? byId.get(m.reply_to) : null;
+    if (p?.author_kind === 'crew' && p.crew_id) asked[p.crew_id] = Math.max(asked[p.crew_id] ?? 0, m.id);
+  }
+  return (crewId) => Math.max(asked[crewId] ?? 0, isDm ? lastMine : 0);
 }
 
 /** 크루 답글 도착 — 그 키를 표시 목록에서 뺀 새 객체(같으면 원본) */

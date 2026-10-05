@@ -180,18 +180,18 @@ export async function fillAgentLooks(db, rows) {
 
 /** 내 크루 행 읽기 하나로(분리 검수 2026-10-05 #4) — 얼굴 지도(로그인·복귀)와 내 에이전트 목록(loadMyAgents)이 같은 select(owner = 나)를 따로 불러 로그인 때 2건이었다.
     read({ epoch, reuse }) → Promise<{ rows, at, epoch }>(at = 그 읽기를 시작한 시각):
-      · 읽는 중이면 누가 불러도 그 약속을 같이 쓴다(요청 0)
+      · 같은 회차를 읽는 중이면(또는 reuse면) 그 약속을 같이 쓴다(요청 0) — 다른 회차(복귀)는 읽는 중이어도 새로 읽는다(통합 재검수 LOW: 앞 회차 읽기에 묻혀 복귀 읽기가 안 나갔다)
       · reuse면 같은 epoch(App syncEpoch — 복귀·재연결 회차)에 이미 읽은 결과를 쓴다(요청 0) — 로그인 때 버튼 이름 판정 재료(myAgentsAsked)
-      · 그 밖(복귀 새 회차·폰 에이전트 탭에 들어감)은 새로 읽는다. 실패는 기억하지 않는다(다음 부름이 다시 읽는다) */
+      · 그 밖(복귀 새 회차·폰 에이전트 탭에 들어감)은 새로 읽는다. 실패는 기억하지 않는다(다음 부름이 다시 읽는다). 늦게 온 앞선 읽기는 마지막 결과를 덮지 않는다 */
 export function ownRowsReader(fetch, now = Date.now) {
   let pending = null; let last = null;
   return function read({ epoch = 0, reuse = false } = {}) {
-    if (pending) return pending;
+    if (pending && (reuse || pending.epoch === epoch)) return pending.p;
     if (reuse && last && last.epoch === epoch) return Promise.resolve(last);
     const at = now();
-    const p = new Promise((res) => res(fetch())).then((rows) => { last = { rows, at, epoch }; return last; }); // 바로 부른다(동기로 던져도 거절된 약속으로)
-    pending = p;
-    const clear = () => { if (pending === p) pending = null; };
+    const p = new Promise((res) => res(fetch())).then((rows) => { const got = { rows, at, epoch }; if (!last || last.at <= at) last = got; return got; }); // 바로 부른다(동기로 던져도 거절된 약속으로)
+    pending = { p, epoch };
+    const clear = () => { if (pending?.p === p) pending = null; };
     p.then(clear, clear);
     return p;
   };
