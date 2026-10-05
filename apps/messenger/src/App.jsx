@@ -4729,8 +4729,8 @@ function PhoneApprovals({ items, uid, orgs, crewName, spaceName, onBack, onMenu,
         <div className="ph-apacts">
           <button type="button" className="ph-apmorebtn" aria-expanded={shown} aria-controls={`apd-${it.id}`} onClick={() => toggle(it.key)}>{t(shown ? 'phone.ap.less' : 'phone.ap.more')}<I name="caret" size={16} className={shown ? 'up' : ''} /></button>
           {can ? (<>
+            <button type="button" className="btn btn-primary" disabled={!!busy} onClick={() => decide(it, true)}><I name="check" size={15} />{t('ap.approve')}</button>{/* 승인이 왼쪽 — 채널 결재 카드·참여 요청·친구 요청과 같은 순서(UXM-01) */}
             <button type="button" className="btn" disabled={!!busy} onClick={() => decide(it, false)}><I name="x" size={15} />{t('ap.reject')}</button>
-            <button type="button" className="btn btn-primary" disabled={!!busy} onClick={() => decide(it, true)}><I name="check" size={15} />{t('ap.approve')}</button>
           </>) : <span className="ph-apnote" role="note">{t(approvalOnlyKey(dec))}</span>}
         </div>
       </article>);
@@ -5881,7 +5881,7 @@ function AiConsentGate({ t, onMenu, onError, onDecline, bare = false, personal =
         <button type="button" className="btn btn-primary sm" disabled={busy} onClick={agree}><I name="check" size={13} />{t('consent.ai.confirm')}</button>
         <button type="button" className="btn sm ghost" disabled={busy} onClick={decline}>{t(personal ? 'consent.ai.personal.decline' : 'consent.ai.decline')}</button>
       </div>
-      <p><button type="button" className="linkbtn" onClick={() => openExternal(LEGAL.privacy)}>{t('legal.privacy')}</button></p>
+      <p className="msgr-legal in-card"><button type="button" className="linkbtn" onClick={() => openExternal(LEGAL.privacy)}>{t('legal.privacy')}</button></p>{/* 밑줄 링크 모양(UXM-19) */}
     </div></div>
   </>);
 }
@@ -6543,7 +6543,7 @@ function Message({ m, shape = 'bubble', uploadNames = null, uid, lang, t, nameOf
       {attRow}
       {linkCard}
       {chips}
-      <div className="meta">{edited}<span className={m.pending ? 'sent pending' : 'sent'} title={m.pending ? t('msg.sending') : undefined} aria-label={m.pending ? t('msg.sending') : undefined}><I name="check" size={12} /></span><span className="mono">{fmtTs(m.created_at, lang)}</span></div>
+      <div className="meta">{edited}<span className={m.pending ? 'sent pending' : 'sent'} title={m.pending ? t('msg.sending') : undefined} aria-label={m.pending ? t('msg.sending') : undefined}><I name={m.pending ? 'clock' : 'check'} size={12} /></span><span className="mono">{fmtTs(m.created_at, lang)}</span></div>
       {turnActs}
       {acts}
       {picker}
@@ -6874,7 +6874,7 @@ function Composer({ broadcast = null, onCrewJoined = null, outsideDmPersonal = n
         {!busy && <div className="delivery-actions">{card.canRetry && <button type="button" className="btn" disabled={locked || retryBlocked} onClick={async () => { if (!locked && !retryBlocked && await delivery.retry()) onSent(delivery.snapshot().lastDeliveredId); }}>{t(card.retryKey)}</button>}
           <button type="button" className="btn" onClick={() => { delivery.dismiss(); requestAnimationFrame(() => autosize(ta.current)); }}>{t(card.dismissKey)}</button></div>}
       </div>}
-      {awayNote && <div className="msgr-replychip msgr-awaychip" role="status"><span className="q">{awayNote.map((c) => t('mention.away', { name: c.display_name })).join(' ')}</span><button type="button" className="msgr-titlebtn" onClick={() => setAwayNote(null)} aria-label={t('ui.close')}><I name="x" size={13} /></button></div>}
+      {awayNote && <div className="msgr-replychip msgr-awaychip" role="status"><span className="q">{awayNote.map((c) => (lang === 'en' ? (x) => x : koJosa)(t('mention.away', { name: c.display_name }))).join(' ')}</span><button type="button" className="msgr-titlebtn" onClick={() => setAwayNote(null)} aria-label={t('ui.close')}><I name="x" size={13} /></button></div>}
       {outside && <div className="msgr-outsidechip" role="status"><div className="rows">{outside.crews.map((c) => { const can = canInstructCrew(c, uid); const view = outsideRowView({ crew: c, uid, done: outside.done[c.id], isDm, can }); return (
         <OutsideRow key={c.id} text={<>{(lang === 'en' ? (x) => x : koJosa)(t(view.line, { name: c.display_name }))}{view.denied && ` ${t('mention.outside.denied')}`}{view.suffix && ` · ${t(view.suffix)}`}</>}
           dm={t(outsideDmPersonal?.(c) ? 'mention.outside.dm.personal' : 'mention.outside.dm')} onDm={can && onOutsideDm ? () => { const body = outside.body; setOutside(null); onOutsideDm(c.id, body); } : null}

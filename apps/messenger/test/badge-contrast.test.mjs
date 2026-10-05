@@ -93,3 +93,20 @@ test('조직 전환 버튼·폰 제목 옆 뱃지는 목록 뱃지와 같은 잉
     assert.equal(winner(fx[ctx].chain, 'color'), 'var(--bg)', ctx);
   }
 });
+
+// UX 판독 UXM-02(2026-10-05): 결재 슬립의 '꼭 확인' 배지가 카드에서 가장 흐렸다 — .msgr-klabel의 --fg-3 글자색이 띠 글자색을 덮고 opacity .9까지.
+// 위험 배지는 띠 글자색을 그대로 쓰고(inherit) 불투명 — 대기(노란 띠 --mark)·확정(--primary 띠) 모두 6개 테마에서 4.5:1 이상.
+test('결재 슬립 위험 배지 — 띠 글자색 그대로·불투명, 6개 테마 × 대기·확정 띠에서 4.5:1 이상', () => {
+  const badge = ['tag:span', 'msgr-klabel', 'risk'];
+  for (const state of ['pending', 'approved']) {
+    const slip = [['tag:div'], ['tag:div', 'msgr-slip', state, 'high'], ['tag:div', 'band']];
+    assert.equal(winner([...slip, badge], 'color'), 'inherit', `${state}: 배지 글자색은 띠를 따른다`);
+    assert.ok([null, '1'].includes(winner([...slip, badge], 'opacity')), `${state}: 흐리게 하지 않는다`);
+    const bg = varName(winner(slip, 'background')); const fg = varName(winner(slip, 'color'));
+    for (const theme of THEMES) {
+      const tk = fx['desk-org'].themes[theme].tokens;
+      const r = ratio(tk[fg], tk[bg]);
+      assert.ok(r >= 4.5, `${state}/${theme}: ${fg} on ${bg} = ${r.toFixed(2)}`);
+    }
+  }
+});
