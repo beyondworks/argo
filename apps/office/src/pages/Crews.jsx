@@ -124,8 +124,11 @@ function CrewBody({ crew: c, space, close }) {
   const work = useStore((s) => s.work), approvals = useStore((s) => s.approvals), decisions = useStore((s) => s.decisions);
   const outputs = useStore((s) => s.outputs), journal = useStore((s) => s.journal);
   const tasks = useCrewTasks(c);
-  const mine = useMemo(() => crewWork(c.id, { work, tasks }), [c.id, work, tasks]);
-  const rec = useMemo(() => crewRecords(c.id, { approvals, decisions, outputs, journal }, SHOW), [c.id, approvals, decisions, outputs, journal]);
+  // 내 에이전트는 같은 에이전트의 행(조직마다·개인 공간) 기록을 한곳에 — 개인 방 산출물·다른 조직의 결재도 보인다(분리 검수 LOW)
+  const rowsAll = useStore((s) => s.crews);
+  const ids = useMemo(() => (c.owner === ME.id && c.agent != null ? rowsAll.filter((x) => x.owner === ME.id && x.agent === c.agent).map((x) => x.id) : [c.id]), [rowsAll, c.id, c.agent, c.owner]);
+  const mine = useMemo(() => crewWork(ids, { work, tasks }), [ids, work, tasks]);
+  const rec = useMemo(() => crewRecords(ids, { approvals, decisions, outputs, journal }, SHOW), [ids, approvals, decisions, outputs, journal]);
   const access = crewAccess(c, ME.id, getMode());
   const replies = useRecentReplies(c, access === 'direct');
   const home = c.space ?? space; // 크루가 사는 조직(예시 크루는 공간이 없어 지금 공간)

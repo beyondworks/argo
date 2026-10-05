@@ -19,17 +19,21 @@ export const crewMadeBy = (task) => (task?.source?.kind === 'crew' && typeof tas
 
 /** 크루가 맡은 일 — 이끄는 진행 중인 일(멈춘 일 먼저, 그 안은 최근 시작순)과 그 크루가 만든 열린 할 일(기한 가까운 순).
  *  할 일 담당자는 사람만 받으므로(서버 office_tasks 담당자 검사) 담당자가 아니라 '만든 크루'로 묶는다 */
+/** crewId = 크루 id 하나 또는 같은 에이전트의 행 id 목록(내 공간에서 묶은 줄 — 조직 행·개인 행 기록을 한곳에) */
+const idOf = (crewId) => (Array.isArray(crewId) ? (id) => crewId.includes(id) : (id) => id === crewId);
 export function crewWork(crewId, { work = [], tasks = [] }) {
-  const runs = work.filter((w) => w.lead === crewId).sort((a, b) => (b.status === 'blocked') - (a.status === 'blocked') || ms(b.started) - ms(a.started));
-  const open = tasks.filter((x) => crewMadeBy(x) === crewId && !x.done_at && !x.cancelled_at)
+  const is = idOf(crewId);
+  const runs = work.filter((w) => is(w.lead)).sort((a, b) => (b.status === 'blocked') - (a.status === 'blocked') || ms(b.started) - ms(a.started));
+  const open = tasks.filter((x) => is(crewMadeBy(x)) && !x.done_at && !x.cancelled_at)
     .sort((a, b) => (a.due_on ?? '9999').localeCompare(b.due_on ?? '9999') || ms(b.created_at) - ms(a.created_at));
   return { runs, tasks: open };
 }
 
 /** 크루 상세에 모을 기록 — 결재 대기 전부, 최근 결정·산출물·일지는 limit건(최근순). 일지는 날짜·시각(한국 시각 글자)순 */
 export function crewRecords(crewId, { approvals = [], decisions = [], outputs = [], journal = [] }, limit = 5) {
-  const recent = (list, at) => list.filter((x) => x.crew === crewId).sort((a, b) => ms(at(b)) - ms(at(a)));
-  const days = journal.flatMap((d) => d.entries.filter((e) => e.crew === crewId).map((e) => ({ ...e, day: d.date, space: d.space })));
+  const is = idOf(crewId);
+  const recent = (list, at) => list.filter((x) => is(x.crew)).sort((a, b) => ms(at(b)) - ms(at(a)));
+  const days = journal.flatMap((d) => d.entries.filter((e) => is(e.crew)).map((e) => ({ ...e, day: d.date, space: d.space })));
   return {
     approvals: recent(approvals, (x) => x.at),
     decisions: recent(decisions, (x) => x.at).slice(0, limit),

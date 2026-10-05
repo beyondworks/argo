@@ -74,3 +74,13 @@ test('맡기기 자리: 예시 모드는 모두 1:1, 로그인은 쓸 수 있는
   assert.equal(crewAccess({ id: 'x', owner: 'other', access: 'ok' }, 'me', 'signedIn'), 'channel');
   assert.equal(crewAccess({ id: 'x', owner: 'me', company: true, access: 'ok' }, 'me', 'signedIn'), 'channel', '회사 크루는 주인이 나여도 1:1이 아니다(좌측 목록·맡기기 창과 같은 규칙)');
 });
+
+// 이유(분리 검수 LOW, 10/5): 내 공간에서 같은 에이전트를 한 줄로 묶은 뒤 상세가 대표 행 기록만 보여 개인 방 산출물·다른 조직 결재가 빠졌다 — 행 id 목록으로도 모은다
+test('묶인 에이전트: 크루 id 목록으로 맡은 일·기록을 한곳에', async () => {
+  const { crewWork: w, crewRecords: r } = await import('../src/core/crew-model.js');
+  const work = [{ id: 'w1', lead: 'c1', status: 'running', started: 't1' }, { id: 'w2', lead: 'c2', status: 'running', started: 't2' }, { id: 'w3', lead: 'x', status: 'running', started: 't3' }];
+  assert.deepEqual(w(['c1', 'p1', 'c2'], { work }).runs.map((x) => x.id).sort(), ['w1', 'w2']);
+  const outputs = [{ id: 'f1', crew: 'p1', at: '2026-10-05T01:00:00Z' }, { id: 'f2', crew: 'c1', at: '2026-10-04T01:00:00Z' }, { id: 'f3', crew: 'x', at: '2026-10-05T02:00:00Z' }];
+  assert.deepEqual(r(['c1', 'p1'], { outputs }).outputs.map((x) => x.id), ['f1', 'f2']);
+  assert.deepEqual(r('c1', { outputs }).outputs.map((x) => x.id), ['f2'], '하나만 주면 예전처럼');
+});
