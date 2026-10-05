@@ -11,7 +11,7 @@
 //   INTRANET_DB(직원 표, 기본 ~/lean-projects/AI-Native/data/board.db — 없으면 직원은 건너뜀),
 //   NOTION_CALENDAR_DS · NOTION_PARENT_DS · NOTION_COMPANY_DS · NOTION_REPORTS_DS · NOTION_WORKBOARD_ROOT(기본 = 인트라넷 lib/integrations/notion.ts의 값)
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { planAll, maskForPrint } from './notion-plan.mjs';
@@ -91,6 +91,33 @@ log(`계획: 일정 ${plan.events.length} · 할 일 ${plan.tasks.length}(끝낸
 log(`기간 ${summary.range ? summary.range.join(' ~ ') : '—'} · 본문 블록 ${summary.blocks}개 · 글자로만 옮긴 블록 ${JSON.stringify(summary.textOnlyBlocks)}`);
 log(`할 일 칸: 분류 ${summary.target.taskCategories}개(없으면 만든다) · 진행 중 ${plan.tasks.filter((t) => t.status === 'doing').length} · 보류 ${plan.tasks.filter((t) => t.status === 'hold').length} · 시작일 있음 ${plan.tasks.filter((t) => t.starts_on).length}`);
 if (flag('--json')) log(JSON.stringify(maskForPrint(plan), null, 2)); // 계좌·사업자번호는 가린다(터미널·로그에 남지 않게)
+// --sql <파일> --actor <계정 id>: 로그인 없이(유건 계정은 비밀번호가 없다 — Google·GitHub 로그인만) 같은 함수를 같은 순서로 부르는 한 트랜잭션 SQL을 쓴다.
+// 실행 계정의 JWT 문맥(auth.uid())으로 부르므로 앱과 같은 검사(관리자·조직 경계·상한)를 거친다. 하나라도 거절되면 아무것도 들어가지 않는다.
+// 평가(evals)는 service_role 전용 함수라 이 방식에 넣지 않는다 — --only로 빼고 쓴다. 적용(승인 뒤): psql -v ON_ERROR_STOP=1 -f <파일>
+if (opt('--sql')) {
+  const actor = opt('--actor');
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  if (!UUID.test(ORG ?? '') || !UUID.test(actor ?? '')) { console.error('--sql 에는 --org <조직 id>와 --actor <실행 계정 id>가 필요합니다'); process.exit(2); }
+  if (plan.evals.length) { console.error('평가는 service_role 전용이라 --sql로 옮기지 않습니다 — --only에서 evals를 빼 주세요'); process.exit(2); }
+  const lit = (v) => (v == null ? 'null' : `'${String(v).replaceAll("'", "''")}'`);
+  const js = (d) => `${lit(JSON.stringify(d))}::jsonb`;
+  const sql = ['\\set ON_ERROR_STOP on', 'begin;', 'set local role authenticated;',
+    `select set_config('request.jwt.claims', ${lit(JSON.stringify({ sub: actor, role: 'authenticated' }))}, true) is not null;`,
+    ...plan.company.map((c) => `select public.office_company_write(${lit(ORG)}::uuid, 'item.save', ${js(c)}) is not null;`),
+    ...plan.people.map((x) => `select public.office_people_write(${lit(ORG)}::uuid, 'person.save', ${js(x)}) is not null;`),
+    ...plan.events.map((e) => `select public.office_event_write('save', ${js(e)}) is not null;`),
+    ...plan.tasks.map((t) => `select public.office_task_import(${lit(ORG)}::uuid, ${js(t)}) is not null;`),
+    ...plan.pages.map((x) => `select public.office_page_create(${lit(x.id)}::uuid, ${lit(ORG)}::uuid, ${lit(x.parent)}::uuid, ${lit(x.position)}, ${lit(x.title)}, ${js(x.content)}, false) is not null;`),
+    'reset role;', // 대조는 표를 직접 읽는다 — 계획한 id가 실제로 들어갔는가
+    `select 'company', count(*) from public.office_company_items where id = any(${lit(`{${plan.company.map((x) => x.id).join(',')}}`)}::uuid[]);`,
+    `select 'events', count(*) from public.office_events where id = any(${lit(`{${plan.events.map((x) => x.id).join(',')}}`)}::uuid[]);`,
+    `select 'tasks', count(*) from public.office_tasks where id = any(${lit(`{${plan.tasks.map((x) => x.id).join(',')}}`)}::uuid[]);`,
+    `select 'pages', count(*) from public.office_pages where id = any(${lit(`{${plan.pages.map((x) => x.id).join(',')}}`)}::uuid[]);`,
+    'commit;', ''].join('\n');
+  writeFileSync(opt('--sql'), sql, { mode: 0o600 });
+  log(`SQL을 썼습니다: ${opt('--sql')} — 회사 정보 ${plan.company.length} · 직원 ${plan.people.length} · 일정 ${plan.events.length} · 할 일 ${plan.tasks.length} · 페이지 ${plan.pages.length}(적용은 승인 뒤 psql -f)`);
+  process.exit(0);
+}
 if (!APPLY) { log('시험 실행 — 쓰기 없음. 실제 이관은 --apply --org <조직 id>(유건 승인 뒤)'); process.exit(0); }
 
 /* ── 이관 실행(--apply) ── */
