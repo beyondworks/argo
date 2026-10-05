@@ -31,6 +31,8 @@ export const API_MSG = {
   msgr_crew_not_found: { status: 404, ko: '크루가 없습니다', en: 'Crew not found' },
   msgr_upstream: { status: 502, ko: '조직 서버 응답 오류 — 잠시 후 다시 시도해 주세요', en: 'Organization server error — please try again shortly' },
   // 회사 정보(app/api/companies/[ws] GET) — 없음(404 company_not_found)과 구분되는 읽기 실패(F3, 2026-10-05)
+  // 기억 문서 편집 충돌(app/api/companies/[ws]/vault PUT, F6) — 화면은 errorCode로 "새로 불러오기/내 것으로 덮기"를 고르게 한다
+  vault_conflict: { status: 409, ko: '편집하는 동안 다른 곳에서 이 문서가 바뀌었습니다', en: 'This document changed elsewhere while you were editing' },
   company_load_failed: { status: 500, ko: '회사 정보를 불러오지 못했습니다 — 잠시 후 다시 시도해 주세요', en: "Couldn't load the company — please try again shortly" },
 };
 

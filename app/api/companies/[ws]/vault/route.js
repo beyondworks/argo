@@ -1,11 +1,17 @@
 import { relative, join, resolve, basename, sep } from 'node:path';
-import { writeFile, rename, mkdir } from 'node:fs/promises';
+import { readFile, rename, mkdir } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { writeFileAtomic } from '../../../../../src/jsonstore.mjs';
 import { listDocs, listProjectDocs, readDoc } from '../../../../../src/hub.mjs';
 import { saveNote, updateIndex } from '../../../../../src/memory.mjs';
 import { paths } from '../../../../../src/workspace.mjs';
 import { EXPORTS } from '../../../../../src/office-export.mjs';
 import { appendEvent } from '../../../../../src/events.mjs';
-import { guardCompany } from '../../../../auth.mjs';
+import { guardCompany, requestLang } from '../../../../auth.mjs';
+import { apiError } from '../../../../apimsg.mjs';
+
+/** 문서 버전 — 내용 해시(16자). mtime은 동기화 수신·링크 덧붙임(writeKeepingMtime)이 되돌려 놓아 변경 판정에 못 쓴다. */
+const docVersion = (text) => createHash('sha256').update(text).digest('hex').slice(0, 16);
 
 /** notes/ 안의 안전한 절대 경로만 통과 — 기억 통제(편집/삭제)는 주제 노트에만 허용된다. */
 function noteFile(ws, rel) {
@@ -43,7 +49,8 @@ export async function GET(req, { params }) {
             },
           });
         }
-        return Response.json({ rel, content: await readDoc(ws, rel) });
+        const content = await readDoc(ws, rel);
+        return Response.json({ rel, content, version: docVersion(content) }); // 편집 저장이 이 버전을 돌려보낸다(F6 충돌 판정)
       } catch (e) {
         // 깨진 위키링크(삭제·이동된 문서) — raw ENOENT는 서버 절대 경로를 UI에 노출한다(SaaS 레이아웃 유출)
         if (e?.code === 'ENOENT') return Response.json({ error: `문서를 찾을 수 없습니다: ${rel}` }, { status: 404 });
@@ -83,12 +90,25 @@ export async function PUT(req, { params }) {
   try {
     const { ws } = await params;
     const denied = await guardCompany(ws); if (denied) return denied;
-    const { rel, content } = await req.json();
+    const { rel, content, baseVersion, force } = await req.json();
     if (!rel || !content?.trim()) return Response.json({ error: 'rel·content가 필요합니다' }, { status: 400 });
-    await writeFile(noteFile(ws, rel), content.endsWith('\n') ? content : `${content}\n`);
+    const file = noteFile(ws, rel);
+    // 충돌 판정(F6, 2026-10-05) — 열 때의 버전(baseVersion)과 지금 내용이 다르면 덮지 않고 409. 편집하는 동안 크루·다른 기기
+    // (동기화)가 바꾼 내용이 통째 덮어쓰기로 조용히 사라졌다. force = 사용자가 "내 것으로 덮기"를 고른 저장.
+    // baseVersion 없는 요청(옛 화면)은 종전처럼 저장한다. 판정과 쓰기 사이 창은 남는다(파일 잠금 없는 크루 쓰기와 같은 계층).
+    if (typeof baseVersion === 'string' && force !== true) {
+      const now = await readFile(file, 'utf8').catch((e) => (e?.code === 'ENOENT' ? null : Promise.reject(e)));
+      if (now !== null && docVersion(now) !== baseVersion) {
+        const res = apiError('vault_conflict', await requestLang());
+        const body = await res.json();
+        return Response.json({ ...body, version: docVersion(now) }, { status: res.status });
+      }
+    }
+    const text = content.endsWith('\n') ? content : `${content}\n`;
+    await writeFileAtomic(file, text); // 임시 파일 + rename — 쓰다 끊겨도 반쪽 노트가 남지 않는다
     await updateIndex(ws);
     await appendEvent(ws, { type: 'memory', ok: true, notes: [basename(rel, '.md')], op: 'edit' });
-    return Response.json({ ok: true });
+    return Response.json({ ok: true, version: docVersion(text) });
   } catch (e) {
     return Response.json({ error: String(e.message || e) }, { status: 400 });
   }

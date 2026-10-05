@@ -14,6 +14,7 @@ import { sideParam, withSide } from '../split.mjs';
 import { useSplitAlive } from '../split-alive';
 import styles from './responsive.module.css';
 import { dispZoom } from '../zoom-math.mjs'; // 표시 배율 — 커서(뷰포트 px)→CSS px 환산(#334)
+import { vaultSaveOutcome, stripFrontmatter } from './vault-doc.mjs'; // 편집 충돌 판정(F6)·읽기 화면 frontmatter 제거(UX-A11)
 
 const GRAPH_TAB = { id: 'graph', kind: 'graph', root: null };
 const MAX_TABS = 10;
@@ -339,37 +340,47 @@ function ComposeView({ ws, t, onSaved, onCancel }) {
 /** 문서 탭 — 로드·뷰어·편집·삭제·다운로드·백링크가 한 탭 안에 독립적으로 산다(창 2개에서 서로 다른 문서 가능). */
 function DocView({ ws, rel, docs, projects, t, onOpen, onGraph, onChanged, onDeleted }) {
   const [content, setContent] = useState('');
+  const [version, setVersion] = useState(null); // 열 때 받은 문서 버전 — 저장이 돌려보내 충돌을 판정한다(F6)
+  const [conflict, setConflict] = useState(false); // 편집 중 다른 곳에서 바뀌었다 — 새로 불러오기/내 것으로 덮기
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const [mutating, setMutating] = useState(false);
   const [actionMsg, setActionMsg] = useState('');
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
   useEffect(() => {
     let live = true;
     setLoading(true);
     api(`/api/companies/${ws}/vault?rel=${encodeURIComponent(rel)}`)
-      .then((d) => { if (live) setContent(d.content); })
-      .catch((e) => { if (live) setContent(t('vault.docUnavailable', { msg: e.message })); })
+      .then((d) => { if (live) { setContent(d.content); setVersion(d.version ?? null); } })
+      .catch((e) => { if (live) { setContent(t('vault.docUnavailable', { msg: e.message })); setVersion(null); } })
       .finally(() => { if (live) setLoading(false); });
     return () => { live = false; };
-  }, [ws, rel]);
+  }, [ws, rel, reloadKey]);
   const doc = (docs ?? []).find((d) => d.rel === rel);
   const stem = rel.replace(/\.md$/, '');
   const base = stem.split('/').pop();
   const backlinks = (docs ?? []).filter((d) => d.rel !== rel && (d.links ?? []).some((l) => l === stem || l === base || l === doc?.title));
   const dlName = rel.split('/').pop();
   const openWiki = (name) => onOpen(resolveWikiRel(name, docs, projects));
-  async function saveEdit() {
+  // 저장 — 열 때 버전(baseVersion)을 보내 서버가 충돌을 판정한다(F6). force = "내 것으로 덮기"를 고른 저장.
+  async function saveEdit(force = false) {
     if (mutating) return;
-    setMutating(true);
+    setMutating(true); setActionMsg('');
     try {
-      await fetch(`/api/companies/${ws}/vault`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ rel, content: draft }) })
-        .then(async (r) => { if (!r.ok) throw new Error((await r.json()).error); });
-      setContent(draft); setEditing(false); onChanged?.();
+      const r = await fetch(`/api/companies/${ws}/vault`, { method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ rel, content: draft, ...(version ? { baseVersion: version } : {}), ...(force ? { force: true } : {}) }) });
+      const body = await r.json().catch(() => ({}));
+      const outcome = vaultSaveOutcome(r.status, body);
+      if (outcome === 'conflict') { setConflict(true); return; } // 편집 내용(draft)은 그대로 둔다 — 사용자가 고른다
+      if (outcome === 'error') throw new Error(body.error || t('vault.saveFail'));
+      setContent(draft); setVersion(body.version ?? null); setEditing(false); setConflict(false); onChanged?.();
       window.dispatchEvent(new Event('argo:refresh'));
     } catch (e) { setActionMsg(String(e.message)); } finally { setMutating(false); }
   }
+  // 새로 불러오기 — 내 편집을 버리고 다른 곳에서 바뀐 최신 내용을 연다
+  function reloadLatest() { setConflict(false); setEditing(false); setDraft(''); setReloadKey((n) => n + 1); }
   async function removeNote() {
     setMutating(true);
     try {
@@ -416,14 +427,23 @@ function DocView({ ws, rel, docs, projects, t, onOpen, onGraph, onChanged, onDel
             <textarea value={draft} onChange={(e) => setDraft(e.target.value)}
               style={{ width: '100%', minHeight: 380, resize: 'vertical', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 12, padding: '12px 14px', outline: 'none', fontSize: 12.5, lineHeight: 1.7, fontFamily: 'var(--mono, monospace)' }} />
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <button className="btn btn-primary sm" onClick={saveEdit} disabled={mutating || !draft.trim()}>{mutating ? <Spinner size={12} /> : t('vault.save')}</button>
-              <button className="btn sm" onClick={() => setEditing(false)} disabled={mutating}>{t('vault.cancel')}</button>
+              <button className="btn btn-primary sm" onClick={() => saveEdit(false)} disabled={mutating || !draft.trim() || conflict}>{mutating ? <Spinner size={12} /> : t('vault.save')}</button>
+              <button className="btn sm" onClick={() => { setEditing(false); setConflict(false); }} disabled={mutating}>{t('vault.cancel')}</button>
               <span className="metric-sub2">{t('vault.saveHint')}</span>
             </div>
+            {conflict && (
+              <div role="alert" className="card" style={{ padding: '12px 14px', display: 'grid', gap: 8, borderColor: 'var(--warn)' }}>
+                <span style={{ fontSize: 12.5 }}>{t('vault.conflict')}</span>
+                <span style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <button type="button" className="btn sm" onClick={reloadLatest} disabled={mutating}>{t('vault.conflictReload')}</button>
+                  <button type="button" className="btn sm" onClick={() => saveEdit(true)} disabled={mutating} style={{ color: 'var(--danger)', borderColor: 'var(--danger)' }}>{t('vault.conflictOverwrite')}</button>
+                </span>
+              </div>
+            )}
           </div>
         ) : (
           <>
-            <Markdown text={content} onWikiLink={openWiki} wsId={ws} />
+            <Markdown text={stripFrontmatter(content)} onWikiLink={openWiki} wsId={ws} />
             {backlinks.length > 0 && (
               <div className="vault-reader-bar" style={{ marginTop: 28, paddingTop: 14, borderTop: '1px dashed var(--border-soft)' }}>
                 <span className="microlabel" style={{ display: 'block', marginBottom: 8 }}>{t('vault.backlinks', { n: backlinks.length })}</span>
