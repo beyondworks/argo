@@ -39,10 +39,11 @@ test('클라이언트: progress 방송 → ExecCard는 "답변 준비 중" 한 �
   assert.match(app, /const mine = \(fn\) => on\(\(e\) => \{ if \(here\(o\.id\)\) fn\(e\); \}\);/, 'mine()은 on() 안에서 보는 조직만');
   assert.match(app, /const onProgressEvent = \(\{ payload \}\) => \{ if \(acceptTyping\(settledRef\.current, payload\)\) setProgress\(/, 'progress 처리기 = 답글 직후 늦은 방송 거름 + setProgress(2026-09-23 유령 표시)');
   assert.match(app, /const working = Object\.entries\(progress\)\.filter\(\(\[k, p\]\) => k\.startsWith\(`\$\{chId\}:`\) && Date\.now\(\) - p\.at < 8000 && typing\[k\]/, '실행 카드 대상 = progress+typing 살아 있는 크루');
-  assert.match(app, /\{working\.map\(\(\[c, p\]\) => <ExecCard key=\{`exec-\$\{c\.id\}`\} crew=\{c\} t=\{t\} canStop=\{canStop\(c, p\)\} stopping=\{!!stopping\[`\$\{c\.id\}:\$\{p\.source_msg_id\}`\]\} stopRequested=\{!!stopRequested\[`\$\{c\.id\}:\$\{p\.source_msg_id\}`\]\} onStop=\{\(\) => requestStop\(c\.id, p\.source_msg_id\)\} \/>\)\}\n\s*\{typingBubbleGrouped/, '중단 버튼 3단 상태 배선(2026-09-26) — 실행 카드 바로 뒤에 입력 중 말풍선');
-  assert.match(app, /const typingBubbleShown = typingCrews\.filter\(\(c\) => !workingIds\.has\(c\.id\)\);/, '점 세 개는 카드 없는 크루만(2026-09-29 입력 중 묶음으로 변수화)');
+  // 2026-10-05 보낸 뒤 대기 표시: 대기 카드가 있는 크루의 실행 카드는 대기 카드 안에서 그린다(같은 크루를 두 번 그리지 않는다) → 실행 카드는 대기 없는 크루만.
+  assert.match(app, /\{working\.filter\(\(\[c\]\) => !awaitIds\.has\(c\.id\)\)\.map\(\(\[c, p\]\) => <ExecCard key=\{`exec-\$\{c\.id\}`\} crew=\{c\} t=\{t\} canStop=\{canStop\(c, p\)\} stopping=\{!!stopping\[`\$\{c\.id\}:\$\{p\.source_msg_id\}`\]\} stopRequested=\{!!stopRequested\[`\$\{c\.id\}:\$\{p\.source_msg_id\}`\]\} onStop=\{\(\) => requestStop\(c\.id, p\.source_msg_id\)\} \/>\)\}\n\s*\{typingBubbleGrouped/, '중단 버튼 3단 상태 배선(2026-09-26) — 실행 카드 바로 뒤에 입력 중 말풍선');
+  assert.match(app, /const typingBubbleShown = typingCrews\.filter\(\(c\) => !workingIds\.has\(c\.id\) && !awaitIds\.has\(c\.id\)\);/, '점 세 개는 실행 카드·대기 카드 없는 크루만(2026-09-29 입력 중 묶음으로 변수화, 2026-10-05 대기 카드)');
   const card = app.slice(app.indexOf('function ExecCard('), app.indexOf('/** 결재 슬립'));
-  assert.match(card, /\{t\('exec\.preparing'\)\}/, '"답변 준비 중"');
+  assert.match(card, /\{stateLabel \?\? t\('exec\.preparing'\)\}/, '"답변 준비 중" — 보낸 뒤 대기 표시(2026-10-05)는 단계 문구(stateLabel)로 바꿔 쓴다');
   for (const gone of ['exec.thought', 'exec.partial', 'StepList', '<details', 'p.thought', 'p.partial', 'p.steps']) assert.ok(!card.includes(gone), `실행 카드에 ${gone} 없음`);
   assert.match(card, /canStop && <button type="button" className=\{`btn sm ghost msgr-stop-btn\$\{stopRequested \? ' requested' : ''\}`\} disabled=\{stopping \|\| stopRequested\}/, '시킨 사람·크루 주인에게만 보이는 중단 버튼(서버 msgr_request_stop이 권한을 다시 검사) — 중단 중/요청됨이면 비활성, 요청됨은 대비용 클래스(UI LOW)');
   assert.match(read('apps/messenger/src/styles.css'), /\.msgr-exec > \.summary \.msgr-stop-btn\.requested \{ opacity: 1 !important; color: var\(--fg\); background: var\(--card-2\); border-color: var\(--border\); font-weight: 600; \}/, '"중단 요청됨"은 최고 대비 텍스트로 고정(재검수 UI LOW)');

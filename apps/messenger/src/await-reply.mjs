@@ -17,15 +17,18 @@ export function awaitTargets(m, { uid, isDm, roomCrewIds = [], parentOf = () => 
   const crews = (Array.isArray(m.mentions) ? m.mentions : []).filter((x) => x?.kind === 'crew');
   const to = crews.filter((x) => x.role == null || x.role === 'to').map((x) => x.id);
   const out = [...to];
-  if (!to.length && isDm) out.push(...roomCrewIds);
+  const cc = new Set(crews.filter((x) => x.role === 'cc').map((x) => x.id)); // 1:1 방이어도 참조(cc) 크루는 답하지 않는다(서버 targetsCrew)
+  if (!to.length && isDm) out.push(...roomCrewIds.filter((id) => !cc.has(id)));
   if (!isDm && m.reply_to) { const p = parentOf(m.reply_to); if (p?.author_kind === 'crew' && p.crew_id) out.push(p.crew_id); }
   const inRoom = new Set(roomCrewIds);
   return [...new Set(out)].filter((id) => inRoom.has(id));
 }
 
-/** 신호 → 단계. base = 내 글 시각, sig = { typingAt, progressAt, receivedAt }(받은 기기 시각), away = 접속 90초 넘음. null = 상한 지남. */
-export function awaitPhase({ base, sig = {}, away = false, now }) {
-  if (now - base > AWAIT_MAX_MS) return null;
+/** 신호 → 단계. base = 이 기기가 내 글을 처음 본 시각(없으면 서버 created_at), created = 서버 created_at(5분 상한),
+    sig = { typingAt, progressAt, receivedAt }(받은 기기 시각), away = 접속 90초 넘음. null = 상한 지남.
+    신호와 30초 판정은 기기 시계끼리 비교한다 — 서버 시각과 섞으면 기기 시계가 5초 넘게 늦을 때 방송을 전부 버렸다(검수 #send-feedback LOW). */
+export function awaitPhase({ base, created = base, sig = {}, away = false, now }) {
+  if (now - Math.min(created, base) > AWAIT_MAX_MS) return null;
   const fresh = (t) => (Number.isFinite(t) && t >= base - AWAIT_SKEW_MS ? t : null);
   const answered = [fresh(sig.typingAt), fresh(sig.progressAt)].filter((t) => t != null);
   const received = fresh(sig.receivedAt);
@@ -38,7 +41,7 @@ export function awaitPhase({ base, sig = {}, away = false, now }) {
 }
 
 /** 방의 대기 표시 목록 — 크루마다 하나(그 크루를 겨냥한 내 마지막 글). 순서 = 글 순서 → 멘션 순서. */
-export function awaitingReplies({ msgs = [], uid, isDm, roomCrewIds = [], signals = () => ({}), away = () => false, now = Date.now() }) {
+export function awaitingReplies({ msgs = [], uid, isDm, roomCrewIds = [], signals = () => ({}), away = () => false, now = Date.now(), seenAt = () => undefined }) {
   const byId = new Map(msgs.map((m) => [m.id, m]));
   const lastCrewPost = new Map(); // 크루 → 그 크루가 이 방에 올린 마지막 글 id
   for (const m of msgs) if (m.author_kind === 'crew' && m.crew_id && Number.isFinite(m.id)) lastCrewPost.set(m.crew_id, Math.max(lastCrewPost.get(m.crew_id) ?? 0, m.id));
@@ -51,9 +54,10 @@ export function awaitingReplies({ msgs = [], uid, isDm, roomCrewIds = [], signal
   const out = [];
   for (const [crewId, { m, order: o }] of latest) {
     if ((lastCrewPost.get(crewId) ?? 0) > m.id) continue; // 내 글 뒤에 그 크루가 글을 올렸다 — 답이 왔다
-    const base = Date.parse(m.created_at);
-    if (!Number.isFinite(base)) continue;
-    const phase = awaitPhase({ base, sig: signals(crewId) ?? {}, away: !!away(crewId), now });
+    const created = Date.parse(m.created_at);
+    if (!Number.isFinite(created)) continue;
+    const seen = seenAt(m.id);
+    const phase = awaitPhase({ base: Number.isFinite(seen) ? seen : created, created, sig: signals(crewId) ?? {}, away: !!away(crewId), now });
     if (phase) out.push({ crewId, msgId: m.id, phase, o });
   }
   return out.sort((a, b) => a.msgId - b.msgId || a.o - b.o).map(({ crewId, msgId, phase }) => ({ crewId, msgId, phase }));

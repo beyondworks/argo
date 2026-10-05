@@ -4,7 +4,7 @@
 // 1차 범위(MESSENGER-DESIGN.md P1): 로그인 · 조직/초대 · 공개/비공개 채널 · 메시지 · @멘션 · 첨부 · 결재 · 크루 부재중 · 타이핑.
 import { Component, createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
-import { acceptTyping, typingKey, withoutKey, typingIn as typingInState, roomTopicIds, TYPING_WINDOW_MS } from './typing-state.js';
+import { acceptTyping, typingKey, withoutKey, typingIn as typingInState, roomTopicIds, TYPING_WINDOW_MS, crewPostsChanged } from './typing-state.js';
 import { awaitingReplies } from './await-reply.mjs';
 import { dismissHandlers } from './dismiss.mjs';
 import { attachKeyboardDismiss } from './kb-dismiss.mjs';
@@ -2912,7 +2912,7 @@ function Shell({ session }) {
         ) : dmDraft && isPersonal && page === 'chat' ? (
           <DmDraft key={dmDraft.userId} userId={dmDraft.userId} name={nameOfUser(dmDraft.userId)} initialText={dmDraft.text} onSend={(body) => sendFirstDm(dmDraft.userId, body)} onMenu={openNav} />
         ) : isPhone && page !== 'chat' ? null /* 폰 목록·설정 뒤에 숨은 대화방을 그리지 않는다 — 공간을 바꿀 때마다 보이지 않는 방의 글·첨부·반응을 읽던 것(기능 점검 D3) */ : channel ? (
-          <Channel key={chId} onCrewJoined={bumpMembers} onCrewFailed={noteCrewFailed} onPersonalChanged={async () => { await loadPersonal().catch(() => {}); await loadChMembers(chId).catch(() => {}); }} onScreen={channelOnScreen({ isPhone, page })} namePrompt={org && !isPersonal && me && !orgLocked ? <NamePrompt key={orgId} org={org} me={me} email={session.user.email} onChanged={() => loadOrg(orgId).catch(() => {})} onNote={setNote} onError={setErr} /> : null} onOutsideDm={dmWithCrew} outsideDmPersonal={dmGoesPersonal} startCard={org && !isPersonal && org.role !== 'guest' && channel.kind !== 'dm' ? <OnboardCard key={orgId} orgId={orgId} t={t} steps={orgSteps({ t, ...onboard, hasChannel: true, invite: isAdmin ? orgInvite : null })} /> : null} jumpTo={jump?.ch === chId ? jump.mid : null} jumpStart={!!jump?.start} onJumped={() => setJump(null)} channel={channel} preview={!!previewing} onJoin={() => joinChannel(channel)} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} mentionPeople={mentionPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} typingStart={typingStartRef.current} progress={progress} received={received} onRead={markRead} muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} onToggleMemory={() => toggleMemory(channel)} broadcast={(ev, payload) => (roomTopic ? roomSubs.current.get(chId) : rt.current)?.send({ type: 'broadcast', event: ev, payload }).catch?.(() => {})} onError={setErr} onNote={setNote} onMenu={openNav} onCrew={openers.channel} onTitle={() => setChSheet(true)} onCrewAdd={() => { setChSheetAdd('crew'); setChSheet(true); }} mentionReq={mentionReq} onMentionDone={() => setMentionReq(null)} dmName={dmName} channels={channels} onOpenRelay={openRelay} isPersonal={isPersonal} />
+          <Channel key={chId} onCrewJoined={bumpMembers} onCrewFailed={noteCrewFailed} onPersonalChanged={async () => { await loadPersonal().catch(() => {}); await loadChMembers(chId).catch(() => {}); }} onScreen={channelOnScreen({ isPhone, page })} namePrompt={org && !isPersonal && me && !orgLocked ? <NamePrompt key={orgId} org={org} me={me} email={session.user.email} onChanged={() => loadOrg(orgId).catch(() => {})} onNote={setNote} onError={setErr} /> : null} onOutsideDm={dmWithCrew} outsideDmPersonal={dmGoesPersonal} startCard={org && !isPersonal && org.role !== 'guest' && channel.kind !== 'dm' ? <OnboardCard key={orgId} orgId={orgId} t={t} steps={orgSteps({ t, ...onboard, hasChannel: true, invite: isAdmin ? orgInvite : null })} /> : null} jumpTo={jump?.ch === chId ? jump.mid : null} jumpStart={!!jump?.start} onJumped={() => setJump(null)} channel={channel} preview={!!previewing} onJoin={() => joinChannel(channel)} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} mentionPeople={mentionPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} typingStart={typingStartRef.current} progress={progress} received={received} onRead={markRead} muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} onToggleMemory={() => toggleMemory(channel)} broadcast={(ev, payload) => (roomTopic ? roomSubs.current.get(chId) : rt.current)?.send({ type: 'broadcast', event: ev, payload }).catch?.(() => {})} onError={setErr} onNote={setNote} onMenu={openNav} onCrew={openers.channel} onTitle={() => setChSheet(true)} onCrewAdd={() => { setChSheetAdd('crew'); setChSheet(true); }} mentionReq={mentionReq} onMentionDone={() => setMentionReq(null)} dmName={dmName} channels={channels} onOpenRelay={openRelay} isPersonal={isPersonal} onCrewPosted={(crewId) => settleCrew({ channel_id: chId, crew_id: crewId })} />
         ) : isPersonal ? (
           <><div className="msgr-top"><NavButton onMenu={openNav} /><span className="title">{t('personal')}</span><span className="topic">{t('personal.space')}</span></div><div className="msgr-thread" style={{ display: 'flex' }}><div className="msgr-empty"><p>{t('personal.empty')}</p><button type="button" className="btn btn-primary sm" onClick={() => setFriendAdd(true)}><I name="plus" size={13} />{t('friends.add')}</button></div></div></>
         ) : (
@@ -5827,7 +5827,7 @@ function PersonalRoomBar({ chId, uid, hasCrews, event, nameOfUser, crewName = ()
   </>);
 }
 
-function Channel({ onCrewJoined = null, onCrewFailed = null, onScreen = true, namePrompt = null, onOutsideDm = null, outsideDmPersonal = null, onPersonalChanged = null, startCard = null, jumpTo = null, jumpStart = false, onJumped, channel, preview = false, onJoin, orgId, org, uid, isAdmin, locked = false, policy, members, crews, people = [], mentionPeople = null, chCrews = [], nameOfUser, crewOf, event, typing, typingStart = {}, progress = {}, received = {}, onRead, muted = false, onToggleMute, onToggleMemory, broadcast, onError, onNote = () => {}, onMenu, onCrew, onTitle, onCrewAdd, mentionReq, onMentionDone, dmName, channels = [], onOpenRelay, isPersonal = false }) {
+function Channel({ onCrewJoined = null, onCrewFailed = null, onScreen = true, namePrompt = null, onOutsideDm = null, outsideDmPersonal = null, onPersonalChanged = null, startCard = null, jumpTo = null, jumpStart = false, onJumped, channel, preview = false, onJoin, orgId, org, uid, isAdmin, locked = false, policy, members, crews, people = [], mentionPeople = null, chCrews = [], nameOfUser, crewOf, event, typing, typingStart = {}, progress = {}, received = {}, onRead, muted = false, onToggleMute, onToggleMemory, broadcast, onError, onNote = () => {}, onMenu, onCrew, onTitle, onCrewAdd, mentionReq, onMentionDone, dmName, channels = [], onOpenRelay, isPersonal = false, onCrewPosted = () => {} }) {
   const { t, lang } = useT();
   const phone = useIsPhone(); // 폰 머리 부제(멤버·에이전트 수) — 데스크톱은 그리지 않는다
   const topRef = useRef(null);
@@ -5843,6 +5843,10 @@ function Channel({ onCrewJoined = null, onCrewFailed = null, onScreen = true, na
     return () => { ro.disconnect(); main.style.removeProperty('--msgr-top-h'); main.style.removeProperty('--msgr-dock-h'); };
   }, [preview]); // 미리보기(가입 막대) ↔ 입력창이 바뀌면 받침을 다시 잡는다
   const [msgs, setMsgs] = useState(null); const [aps, setAps] = useState({}); const [atts, setAtts] = useState({});
+  // 그 크루의 새 글이 어느 경로로든(방송·재연결·복귀·새로고침) 들어오면 '입력 중'을 내린다 — 방송으로 온 답만 내리던 탓에 다시 읽은 답 뒤에 말풍선이 20초 남았다(검수 #send-feedback MEDIUM)
+  const crewPostsRef = useRef(null);
+  useEffect(() => { if (!msgs) return; const { next, changed } = crewPostsChanged(crewPostsRef.current, msgs); crewPostsRef.current = next; for (const c of changed) onCrewPosted(c); }, [msgs]); // eslint-disable-line react-hooks/exhaustive-deps
+  const seenAtRef = useRef(new Map()); // 내 글을 이 기기가 처음 본 시각 — 대기 표시의 신호 비교를 기기 시계끼리 하려고(검수 #send-feedback LOW)
   const [pending, setPending] = useState([]); // 보냈지만 서버 행이 아직 안 온 내 글(낙관적 렌더)
   const [activeMid, setActiveMid] = useState(null); // 로빙 tabindex의 현재 행(없으면 마지막 글) — 목록 전체가 Tab 한 칸(검수 K8)
   const [replyReq, setReplyReq] = useState(null); // hover [답글] → 컴포저에 답글 대상(D17)
@@ -6047,9 +6051,10 @@ function Channel({ onCrewJoined = null, onCrewFailed = null, onScreen = true, na
   const working = Object.entries(progress).filter(([k, p]) => k.startsWith(`${chId}:`) && Date.now() - p.at < 8000 && typing[k] && Date.now() - typing[k] < TYPING_WINDOW_MS).map(([k, p]) => [crewOf(k.split(':')[1]), p]).filter(([c]) => c);
   // 보낸 뒤 대기 표시(2026-10-05) — 크루를 겨냥한 내 글이 저장되면 그 즉시 '전달됨 · 준비 중', 그 크루가 내 글 뒤에 글을 올릴 때까지(상한 5분).
   // 방송이 오면 '답변 중'(실행 카드면 중단 버튼과 함께), 끊겨도 남고, 30초 무신호면 '조금 오래', 기기가 꺼져 있으면 꺼짐 안내. 화면 계산뿐(요청·저장 0).
+  for (const m of msgs ?? []) if (m.author_user_id === uid && Number.isFinite(m.id) && !seenAtRef.current.has(m.id)) seenAtRef.current.set(m.id, Date.now());
   const awaiting = awaitingReplies({ msgs: msgs ?? [], uid, isDm: channel.kind === 'dm', roomCrewIds: chCrews.map((c) => c.id),
     signals: (crewId) => { const k = `${chId}:${crewId}`; return { typingAt: typing[k], progressAt: progress[k]?.at, receivedAt: received[k] }; },
-    away: (crewId) => crewAway(crewOf(crewId)), now: Date.now() }).map((a) => ({ ...a, crew: crewOf(a.crewId) })).filter((a) => a.crew);
+    away: (crewId) => crewAway(crewOf(crewId)), now: Date.now(), seenAt: (id) => seenAtRef.current.get(id) }).map((a) => ({ ...a, crew: crewOf(a.crewId) })).filter((a) => a.crew);
   const awaitIds = new Set(awaiting.map((a) => a.crewId));
   const [, setAwaitTick] = useState(0); // 대기 표시가 있는 동안만 5초마다 다시 그린다(30초·5분 단계 전환) — 요청 없음
   useEffect(() => { if (!awaiting.length) return undefined; const iv = setInterval(() => setAwaitTick((x) => x + 1), 5000); return () => clearInterval(iv); }, [awaiting.length > 0]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -6600,11 +6605,12 @@ function Composer({ broadcast = null, onCrewJoined = null, outsideDmPersonal = n
   };
   const send = async () => {
     if (locked || busy || deliveryBlocked || rolePick) return; // 명령(/to·/cc)만 있는 글은 보내지 않는다 — 폰은 전송 버튼이 유일한 경로(검수 M-1)
-    // 직접 친 "@이름"이 이 방에 같은 이름 둘 이상(대소문자 무시)이고 목록에서 고르지 않았으면 누구를 부르는지 모른다 — 아무도 고르지 않고 보내지 않는다(2026-10-05)
-    const twins = ambiguousMentions(text.trim(), byName.filter((x) => !(x.kind === 'user' && x.id === uid)), mentions);
-    if (twins.length) { setAmbiguous(twins); haptic('medium'); return; }
     // 실패 카드가 있으면 Enter가 그 글부터 다시 보낸다 — 순서를 지키고, 새 글은 성공한 뒤에 이어 보낸다(D50: 실패 카드가 전송을 통째로 막았다)
     if (job) { if (retryBlocked || !await delivery.retry()) return; onSent(delivery.snapshot().lastDeliveredId); if (!text.trim() && !files.length) return; }
+    // 직접 친 "@이름"이 이 방에 같은 이름 둘 이상(대소문자 무시)이고 목록에서 고르지 않았으면 누구를 부르는지 모른다 — 아무도 고르지 않고 보내지 않는다(2026-10-05).
+    // 재전송 뒤에 본다 — 앞에 두면 모호하지 않은 실패 글의 재전송까지 막혔다(검수 #send-feedback LOW)
+    const twins = ambiguousMentions(text.trim(), byName.filter((x) => !(x.kind === 'user' && x.id === uid)), mentions);
+    if (twins.length) { setAmbiguous(twins); haptic('medium'); return; }
     const inline = mentionsFromBody(text.trim(), byName, mentions, allByName);
     const awayNow = inline.filter((x) => x.kind === 'crew').map((x) => crews.find((c) => c.id === x.id)).filter((c) => c && crewAway(c)); // 꺼진 에이전트를 부른 글 — 보낸 뒤 알린다(D24)
     const outsideNow = outsideCrewMentions(text.trim(), [...byName, ...allByName], crews, uid); const sentBody = text.trim(); // 방 밖 에이전트 @이름 — 글은 평문으로 가고, 보낸 뒤 이유와 다음 행동을 알린다(D14)

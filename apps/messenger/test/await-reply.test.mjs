@@ -76,3 +76,18 @@ test('같은 크루에 여러 번 보내면 마지막 글 하나만, 여러 크�
   const after = run({ msgs: [...msgs, crewMsg(13, EDNA)], isDm: false, roomCrewIds: [PEPPER, EDNA] });
   assert.deepEqual(after.map((x) => x.crewId), [PEPPER], '답한 크루만 내린다');
 });
+
+// 분리 검수 #send-feedback LOW(2026-10-05): 1:1 방에서 참조(cc)로만 단 크루는 서버 targetsCrew(cc면 false)처럼 기다리지 않는다.
+test('1:1 방: 멘션이 참조(cc)뿐이면 그 cc 크루는 대상이 아니고, 나머지 방 크루만 기다린다', () => {
+  const msgs = [mine(10, { mentions: [{ kind: 'crew', id: EDNA, role: 'cc' }] })];
+  assert.deepEqual(run({ msgs, roomCrewIds: [PEPPER, EDNA] }).map((a) => a.crewId), [PEPPER]);
+});
+
+// 분리 검수 #send-feedback LOW(2026-10-05): 기기 시계가 서버보다 늦어도 방송을 버리지 않는다 — 신호 비교의 기준은 내 기기가 그 글을 처음 본 시각.
+test('기기 시계가 서버보다 10초 늦어도, 글을 본 뒤에 온 방송은 답변 중으로 친다', () => {
+  const lag = 10_000, seen = T0 - lag; // 서버 created_at = T0, 이 기기 시각으로 글을 처음 본 때 = T0 - 10초
+  const a = awaitingReplies({ msgs: [mine(10)], uid: ME, isDm: true, roomCrewIds: [PEPPER], signals: () => ({ typingAt: seen + 2000 }), away: () => false, now: seen + 3000, seenAt: () => seen });
+  assert.equal(a[0].phase, 'answering');
+  const b = awaitingReplies({ msgs: [mine(10)], uid: ME, isDm: true, roomCrewIds: [PEPPER], signals: () => ({ typingAt: seen - 20_000 }), away: () => false, now: seen + 3000, seenAt: () => seen });
+  assert.equal(b[0].phase, 'preparing', '글을 보기 전(지난 턴)의 방송은 여전히 버린다');
+});
