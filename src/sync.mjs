@@ -222,10 +222,11 @@ export function _setSyncClientForTest(fake) { sb = fake; sbKey = '__test__'; com
 const fresh = () => ({ cacheNonce: randomUUID() });
 /** 원격에 없음(404) — 매니페스트 읽기·blob 실존 검사·파일 받기가 같은 판정을 쓴다. 타임아웃·5xx 같은 확인 불가는 없음이 아니다. */
 const isNotFound = (error) => /not[ _]?found|does not exist|no such|404/i.test(String(error?.message || error)) || error?.status === 404 || error?.statusCode === 404;
-/** 파일 실패 한 줄 — lastError(설정 카드)에 첫 파일 이름과 사유를 싣는다. (export: 회귀 테스트용) */
-export const syncFailedMessage = (r) => {
+/** 파일 실패 한 줄 — lastError(설정 카드)에 회사와 첫 파일 이름·사유를 싣는다. lastError는 기기 전체에 하나라 다른 회사 카드에도 보이므로
+    회사 ID를 앞에 붙인다(다른 per-회사 lastError와 같은 형식). (export: 회귀 테스트용) */
+export const syncFailedMessage = (wsId, r) => {
   const f = r.failures?.[0];
-  return `동기화 파일 ${r.failed}건 실패${f ? ` (${f.rel}: ${f.reason}${r.failed > 1 ? ` 외 ${r.failed - 1}건` : ''})` : ''} — 잠시 후 재시도`;
+  return `${wsId}: 동기화 파일 ${r.failed}건 실패${f ? ` (${f.rel}: ${f.reason}${r.failed > 1 ? ` 외 ${r.failed - 1}건` : ''})` : ''} — 잠시 후 재시도`;
 };
 const noteOnce = (k, line) => {
   if (!line) { noticeLog.delete(k); return; }
@@ -794,15 +795,17 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
   // 엄격 openSecret 유지(무결성 검증 유지, 검수 LOW-5). rel별로 개봉기를 가른다.
   // 읽기는 스위치와 무관하게 항상 봉투 개봉 가능 — 2단계 롤아웃의 핵심(다른 기기가 먼저 sealing을 켜도 안전).
   // 태생부터 봉투인 크레덴셜 2종만 엄격(깨진 평문 수용 금지), 그 외는 관용 개봉(기존 평문 그대로 통과 → 전환 무중단).
-  const pullBuf = async (rel) => {
-    // 최근 객체 없음으로 확인한 항목(같은 원격 메타)은 다시 받으러 가지 않는다 — 메타가 바뀌면(누가 다시 올림) 바로 다시 받는다
+  const pullBuf = async (rel, { recheck = false } = {}) => {
+    // 최근 객체 없음으로 확인한 항목(같은 원격 메타)은 다시 받으러 가지 않는다 — 메타가 바뀌면(누가 다시 올림) 바로 다시 받는다.
+    // recheck: 결과로 원격을 덮어쓰는 자리(충돌)는 기억을 믿지 않는다 — 다른 기기가 객체를 먼저 올리고 매니페스트는 아직일 수 있다(분리 검수 MEDIUM-1).
     const seenKey = `${owner}/${wsId}/${rel}`, r0 = remote.files[rel], sig = r0?.h ?? `${r0?.m}:${r0?.s}`;
     const seen = missingSeen.get(seenKey);
-    if (seen?.sig === sig && Date.now() < seen.until) throw Object.assign(new Error('Object not found(최근 확인)'), { notFound: true });
+    if (!recheck && seen?.sig === sig && Date.now() < seen.until) throw Object.assign(new Error('Object not found(최근 확인)'), { notFound: true });
     const b = await download(remoteKey(rel)).catch((e) => {
       if (e.notFound) missingSeen.set(seenKey, { sig, until: Date.now() + MISSING_RECHECK_MS });
       throw e;
     });
+    missingSeen.delete(seenKey); // 받았으면 더는 빈 항목이 아니다
     // 회수 마커 — 다른 기기가 credSync를 껐다. throw → per-file catch가 failed로 보류하고, 이 기기도
     // 곧 company.json 동기화로 토글을 받아 불가시가 된다(로컬 자격은 그동안 그대로).
     // 안전성 자체는 마커 형식(무효 봉투 — openSecret이 어차피 throw)이 담보하므로 이 가드는 현재
@@ -1006,7 +1009,7 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
         remote.files[rel] = l; continue;
       }
       const localBuf = await readFile(relFull(rel));
-      const remoteBuf = await pullBuf(rel).catch((e) => { if (e?.notFound) return null; throw e; });
+      const remoteBuf = await pullBuf(rel, { recheck: true }).catch((e) => { if (e?.notFound) return null; throw e; });
       if (!remoteBuf) { // 원격엔 항목만 있고 객체가 없다 — 이 편집본이 유일한 내용이라 밀어서 객체를 되살린다(받을 게 없으니 충돌도 아니다)
         await upload(remoteKey(rel), sealFor(rel, localBuf)); remote.files[rel] = l; pushed++; continue;
       }
@@ -1577,7 +1580,7 @@ async function cycle() {
       // 다음 사이클이 회사째 재시도한다(무변경 재푸시 비용 < 영구 평문 잔존).
       if (reseal && (r.failed ?? 0) === 0) await clearReseal(wsId).catch(() => {});
       status.companies[wsId] = { ts: Date.now(), ...r };
-      if (r.failed > 0) { status.lastError = syncFailedMessage(r); companyFailed++; }
+      if (r.failed > 0) { status.lastError = syncFailedMessage(wsId, r); companyFailed++; }
       // 키 미확보 보류는 "성공"이 아니다 — 무증상이면 셀프호스트의 account_keys 미적용 같은 영구 무동작이 정상으로 보인다(#436 검수 HIGH-2)
       if (r.held) { status.lastError = `${wsId}: 계정 키 미확보 — 파일 ${r.held}개 동기화 보류(재시도 중)${accountKeyError() ? ` — ${accountKeyError()}` : ''}`; companyFailed++; }
     } catch (e) {

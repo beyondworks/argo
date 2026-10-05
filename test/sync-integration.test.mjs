@@ -892,9 +892,63 @@ test('파일 실패는 이름과 사유를 남기고, 재시도 대기 중에도
   const r = await syncCompany(wsId, OWNER);
   assert.equal(r.failed, 1);
   assert.deepEqual(r.failures, [{ rel: 'vault/a.md', reason: 'permission denied' }]);
-  assert.equal(syncFailedMessage(r), '동기화 파일 1건 실패 (vault/a.md: permission denied) — 잠시 후 재시도');
-  assert.equal(syncFailedMessage({ failed: 4, failures: r.failures }), '동기화 파일 4건 실패 (vault/a.md: permission denied 외 3건) — 잠시 후 재시도');
+  assert.equal(syncFailedMessage(wsId, r), 'fail-visible: 동기화 파일 1건 실패 (vault/a.md: permission denied) — 잠시 후 재시도');
+  assert.equal(syncFailedMessage(wsId, { failed: 4, failures: r.failures }), 'fail-visible: 동기화 파일 4건 실패 (vault/a.md: permission denied 외 3건) — 잠시 후 재시도');
   const again = await syncCompany(wsId, OWNER);
   assert.equal(again.skipped, 'retry-backoff');
   assert.deepEqual(again.failures, r.failures, '재시도 대기 중에도 마지막 실패 목록이 상태에 남는다');
+});
+
+test('빈 항목 기억이 있어도 충돌에서는 실제로 다시 확인한다 — 다른 기기가 그새 올린 객체를 덮지 않는다(분리 검수 MEDIUM-1)', async () => {
+  const wsId = 'dangling-race';
+  const v1 = Buffer.from('v1'), ghost = Buffer.from('ghost meta');
+  const { wsRoot, fake } = await setup(wsId, {
+    localFiles: { 'vault/n.md': v1 }, state: { 'vault/n.md': meta(v1) },
+    remoteFiles: { 'vault/n.md': meta(ghost, 2000) },               // 객체 없는 항목(메타만 다름)
+  });
+  assert.equal((await syncCompany(wsId, OWNER)).missing, 1);        // 1주기: 빈 항목으로 기억
+  fake._store.set(`${OWNER}/${wsId}/vault/n.md`, Buffer.from('Z from device B')); // 기기 B가 객체를 먼저 올림(매니페스트는 아직)
+  await writeFile(join(wsRoot, 'vault', 'n.md'), 'v2 my edit');     // 이 기기도 같은 파일을 고침
+  const r = await syncCompany(wsId, OWNER);
+  assert.equal(openSecretCompat(fake._store.get(`${OWNER}/${wsId}/vault/n.md`)).toString(), 'Z from device B', '기기 B의 객체를 덮지 않는다');
+  assert.equal(r.conflicts, 1, '양쪽 편집은 종전 충돌 처리로 — 사본을 남긴다');
+  assert.ok((await readdir(join(wsRoot, 'vault'))).some((n) => n.startsWith('n.conflict-')), '이 기기 편집본은 충돌 사본으로 남는다');
+});
+
+test('CDN에 남은 옛 객체(200)로 다른 기기의 삭제를 되돌리지 않는다 — blob 실존 검사도 원본을 본다(분리 검수 MEDIUM-2)', async () => {
+  const wsId = 'cdn-heal';
+  const y = Buffer.from('deleted on another device'), k = Buffer.from('keep');
+  const { wsRoot, fake } = await setup(wsId, {
+    localFiles: { 'vault/y.md': y, 'vault/keep.md': k },
+    state: { 'vault/y.md': meta(y), 'vault/keep.md': meta(k) },
+    remoteFiles: { 'vault/keep.md': meta(k) },                        // 다른 기기가 y를 지우고 항목을 뺐다
+    remoteBlobs: { 'vault/y.md': y, 'vault/keep.md': k },
+  });
+  const cdn = withCdn(fake);
+  await fake.storage.from().download(`${OWNER}/${wsId}/vault/y.md`); // 예전에 누가 받아 CDN에 실린 사본
+  fake._store.delete(`${OWNER}/${wsId}/vault/y.md`);                 // 그 뒤 객체가 지워졌다
+  cdn.noNonce.length = 0;
+  const r = await syncCompany(wsId, OWNER);
+  assert.equal(r.healed, 0, 'CDN의 옛 200을 "항목만 유실"로 읽어 되살리지 않는다');
+  assert.equal(r.deletedL, 1, '다른 기기의 삭제가 이 기기에도 전파된다');
+  assert.equal(existsSync(join(wsRoot, 'vault', 'y.md')), false);
+  assert.equal('vault/y.md' in cloudJson(fake._store.get(`${OWNER}/${wsId}/__manifest__.json`)).files, false);
+  assert.deepEqual(cdn.noNonce, []);
+});
+
+test('CDN에 남은 옛 내용으로 원격 변경을 받지 않는다 — 파일 받기도 원본을 본다(분리 검수 MEDIUM-2)', async () => {
+  const wsId = 'cdn-pull';
+  const v1 = Buffer.from('v1'), v2 = Buffer.from('v2 from other device');
+  const { wsRoot, fake } = await setup(wsId, {
+    localFiles: { 'vault/z.md': v1 }, state: { 'vault/z.md': meta(v1) },
+    remoteFiles: { 'vault/z.md': meta(v2, 2000) }, remoteBlobs: { 'vault/z.md': v1 },
+  });
+  const cdn = withCdn(fake);
+  await fake.storage.from().download(`${OWNER}/${wsId}/vault/z.md`); // v1 사본이 CDN에 실림
+  fake._store.set(`${OWNER}/${wsId}/vault/z.md`, v2);                // 다른 기기가 v2로 덮음
+  cdn.noNonce.length = 0;
+  const r = await syncCompany(wsId, OWNER);
+  assert.equal(r.pulled, 1);
+  assert.equal(await readFile(join(wsRoot, 'vault', 'z.md'), 'utf8'), 'v2 from other device', '옛 사본을 새 메타로 기록하지 않는다');
+  assert.deepEqual(cdn.noNonce, []);
 });
