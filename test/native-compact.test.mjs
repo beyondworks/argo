@@ -187,3 +187,32 @@ test('NC7. 추정(순수) — 이미지·문서 블록은 base64 길이와 무�
   assert.ok(doc < IMAGE_TOKENS + 100, `문서 블록도 고정값(${doc})`);
   assert.equal(estimateTokens('가'.repeat(300)), 300, '글은 종전대로 utf-8 바이트/3');
 });
+
+// 모델별 창(검수 #7) — 카탈로그에 공식 창(예: 1M)을 넣으면 75% 기준(750,000토큰)이 세션 글자 상한(SESSION_MAX_CHARS 40만 자 — 넘치면 앞부분을 요약 없이
+// 버린다, session.mjs)보다 늦게 와 요약이 영영 안 일어난다(B2가 막으려던 '요약 없이 버려짐'의 재발). 압축 기준 창은 모델 창과 전사 예산(128,000토큰) 중 작은 쪽이다.
+test('NC8. 창이 1M인 모델도 전사 예산(128,000토큰)의 75%에서 요약한다 — 글자 상한의 무요약 절단보다 먼저', async () => {
+  const ws = 'nc8'; await createCompany(ws, '압축', '사장');
+  const id = await seed(ws, 110); // 지시 110개 × 3,000자 ≈ 110,000토큰(> 96,000) · 전사 ≈ 33만 자(< 40만 자 — 글자 상한 전)
+  const srv = await fake();
+  try {
+    const out = await run(ws, srv.base, id, { contextTokens: 1_000_000 });
+    assert.equal(out.at(-1).subtype, 'success');
+    assert.deepEqual(srv.calls.map((c) => c.kind), ['summary', 'turn'], '1M 창이어도 전사 예산 기준으로 요약 1회');
+    assert.match(textOf(srv.calls[1].body.messages[0]), /SUMMARY-TOKEN/);
+  } finally { await srv.close(); }
+});
+
+test('NC9. 모델별 창(카탈로그 ctx) — 공식 문서로 확인한 값만, 확인 못 한 모델은 128,000 기본값', async () => {
+  const { contextWindowFor } = await import('../src/runners/catalog-remote.mjs');
+  const cases = [
+    ['claude', 'claude-opus-5-5', 1_000_000], ['claude', 'claude-sonnet-5-5[1m]', 1_000_000], ['claude', 'claude-fable-5-1', 1_000_000], ['claude', 'claude-haiku-4-5-20251001', 200_000],
+    ['gemini', 'gemini-2.5-pro', 1_048_576], ['gemini', 'gemini-3.7-flash', 1_048_576],
+    ['kimi', 'kimi-k3', 1_048_576], ['kimi', 'kimi-k2.6', 262_144],
+    ['grok', 'grok-4.6', 500_000], ['grok', 'grok-4.3', 1_000_000],
+    ['glm', 'glm-5.3', 1_000_000], ['glm', 'glm-5.1', 200_000], ['glm', 'glm-4.5-air', 128_000],
+    ['openrouter', 'anthropic/claude-haiku-4.5', 200_000], ['openrouter', 'moonshotai/kimi-k3', 250_000], ['openrouter', 'z-ai/glm-5.3', 262_144],
+    ['codex', 'gpt-5.6-sol', 128_000], // 확인 안 함 — 기본값
+    ['openrouter', 'no/such-model', 128_000],
+  ];
+  for (const [r, m, want] of cases) assert.equal(contextWindowFor(r, m, null), want, `${r} ${m}`);
+});

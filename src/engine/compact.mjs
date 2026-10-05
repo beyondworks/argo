@@ -8,6 +8,10 @@
 // ≈60,000토큰이 되어 최근 20턴에 2장만 있어도 긴급 경로가 턴마다 돌았다(분리 검수 HIGH — 벤더는 이미지를 줄여 받아 장당 수천 토큰 이하).
 
 export const DEFAULT_CONTEXT_TOKENS = 128_000; // 카탈로그에 창 값이 없는 모델 — 보수적으로
+// 전사 예산 — 압축 기준 창은 min(모델 창, 이 값)이다. 모델 창(카탈로그 ctx, 1M 등)만 쓰면 75%(750,000토큰)가 세션 글자 상한
+// (session.mjs SESSION_MAX_CHARS 40만 자 — 넘치면 앞부분을 요약 없이 버린다)보다 늦게 와 요약이 영영 일어나지 않고, 매 턴 다시 보내는 입력도
+// 수십만 토큰으로 커진다. 이 값의 75%(96,000토큰 ≈ 영문 29만 자·한글 9.6만 자)는 글자 상한보다 항상 먼저 온다. 1M 창을 실제로 쓰려면 글자 상한과 함께 올려야 한다.
+export const TRANSCRIPT_BUDGET_TOKENS = 128_000;
 export const COMPACT_AT = 0.75;
 export const COMPACT_EMERGENCY_AT = 0.95;
 export const COMPACT_KEEP_TURNS = 20;
@@ -76,7 +80,8 @@ const carriesSummary = (m) => Array.isArray(m?.content) && m.content.some((b) =>
 
 /** 필요하면 전사를 압축한다(sess.messages 교체). 반환 { compacted, trimmed, preTokens }.
     summarize(prompt) → 요약 글(같은 러너 원샷). 실패·빈 답이면 앞부분을 예산까지 잘라낸다. 중단(aborted)은 그대로 던진다. */
-export async function compactTranscript(sess, { system = '', tools = [], window = DEFAULT_CONTEXT_TOKENS, summarize, lang = 'ko' }) {
+export async function compactTranscript(sess, { system = '', tools = [], window: modelWindow = DEFAULT_CONTEXT_TOKENS, summarize, lang = 'ko' }) {
+  const window = Math.min(modelWindow, TRANSCRIPT_BUDGET_TOKENS); // 위 TRANSCRIPT_BUDGET_TOKENS 주석
   const fixed = estimateTokens(system) + estimateTokens(tools);
   const size = (msgs) => fixed + estimateTokens(msgs);
   const preTokens = size(sess.messages);

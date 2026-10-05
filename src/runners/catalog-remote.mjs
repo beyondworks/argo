@@ -61,7 +61,8 @@ export function applyOverlay(runnerId, models, overlay) {
   return out;
 }
 export const effectiveModels = (runnerId, overlay = mem.overlay) => applyOverlay(runnerId, RUNNERS[runnerId]?.models ?? [], overlay);
-/** 모델 컨텍스트 창(토큰) — 카탈로그(코드·원격 오버레이 add)의 ctx 값, 없으면 보수적 기본값(네이티브 압축 기준 — engine/compact.mjs). */
+/** 모델 컨텍스트 창(토큰) — 코드 카탈로그(catalog.mjs)의 ctx 값, 없으면 보수적 기본값(네이티브 압축 기준 — engine/compact.mjs).
+    원격 오버레이 add 항목은 ctx를 싣지 않는다(validateOverlay가 id·label·gated·free만 받는다) — 오버레이로 들어온 모델은 기본값. */
 export function contextWindowFor(runnerId, modelId, overlay = mem.overlay) {
   const n = Number(effectiveModels(runnerId, overlay).find((m) => m.id === modelId)?.ctx);
   return Number.isFinite(n) && n >= 8000 ? n : DEFAULT_CONTEXT_TOKENS;
