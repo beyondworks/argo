@@ -8,14 +8,14 @@
 // 시크릿(connections.json·.secrets.json): 서비스 키가 있으면 봉투 암호화(secretbox)로 동기화 —
 // 스토리지엔 암호문만 놓이고, 기기마다 재입력할 필요가 없다. 키 없는 환경은 기존대로 제외.
 // 그 외 제외(동기화 금지): .gateway*·.gw-offset*(폴러 상태), *.status.json(턴 일시 상태),
-// *.lock, .sync-state.json, .sync-unconfirmed.jsonl, .device-id, .index.sqlite*(기억 인덱스 캐시 — 정본에서 재구축).
+// *.lock, .sync-state.json, .device-id, .index.sqlite*(기억 인덱스 캐시 — 정본에서 재구축).
 //
 // C-2 최소형: 오너별 _device-lease.json 클라우드 리스 — 두 기기가 동시에 켜져도
 // 폴러·루틴 실행 주체는 한 기기만(게이트웨이·스케줄러가 isCloudLeader를 함께 본다).
 //
 // v1 한계(문서화): 서비스 키 기반(자가 호스팅 전제 — 패키징 앱은 사용자 JWT+RLS로 전환 예정),
 // 충돌은 LWW(더 최근 mtime 승) — md 양쪽 보존은 후속.
-import { mkdir, readFile, writeFile, appendFile, readdir, stat, rm, utimes } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, readdir, stat, rm, utimes } from 'node:fs/promises';
 import { readFileSync, unlinkSync } from 'node:fs';
 import { collidesWithRoom } from './slug.mjs';
 import { join, dirname, basename, sep } from 'node:path';
@@ -136,8 +136,7 @@ export const EXCLUDE = (rel) => { // (export: 회귀 테스트용)
   if (
     base.startsWith('.gateway') || base.startsWith('.gw-offset') ||
     base.startsWith('.gw-queue') ||
-    base === '.sync-state.json' || base === '.sync-unconfirmed.jsonl' || // 동기화 base·'매니페스트 없음' 기간에 밀려고 한 파일 기록(loadUnconfirmed) — 기기 고유
-    base === '.device-id' || base === '.sync-credentials.json' || base === '.server-presence.json' ||
+    base === '.sync-state.json' || base === '.device-id' || base === '.sync-credentials.json' || base === '.server-presence.json' ||
     base === '.device-session.json' || base === '.DS_Store' ||
     base === '.workroots.json' || // 외부 작업 폴더 — 기기 고유 경로라 타 기기로 넘기면 무의미하거나 의도 안 한 접근 허용이 된다
     base === '.connector-secrets.json' || // 커넥터 OAuth 토큰 — 기기·회사 스코프(다른 기기는 재연결, workroots와 같은 원칙 — mcp-oauth-design §2-1)
@@ -606,23 +605,6 @@ export async function syncStateExists(wsId) {
   try { return !!(await readJsonLenient(stateFile(wsId), null)); } catch { return false; }
 }
 const loadState = (wsId) => readJsonLenient(stateFile(wsId), { files: {} });
-/** '매니페스트 없음' 기간에 이 기기가 밀려고 한 파일 기록 — 회사 루트 .sync-unconfirmed.jsonl, 한 줄에 rel 하나(재검수 HIGH-1·MEDIUM-2).
-    state는 사이클 끝에만 써진다. 첫 동기화가 매니페스트를 쓰기 전에 끊기면(매니페스트 PUT 실패·앱 종료·잠자기·큰 회사의 토큰 만료)
-    원격에는 이 기기가 올린 blob만 남고, 그 사이 로컬 파일이 바뀌면 내용 비교로도 이 기기의 것인지 알 수 없다(영구 보류).
-    그래서 업로드 **전에** 여기 적고, 다음 '매니페스트 없음' 확인은 적힌 파일을 건너뛴다. 적힌 파일의 blob은 없거나 이 기기가 쓴 것이다 —
-    처음 적힐 때 그 사이클의 확인을 통과했고, 같은 판의 다른 기기는 같은 확인 때문에 이 기기의 blob을 덮지 않는다. (확인이 없는 옛 판 기기는
-    덮을 수 있지만 그 기기는 곧 매니페스트를 쓰고, 이 기기는 매니페스트를 본 사이클에서 이 기록을 지우고 평소 3-way 비교로 돌아간다.)
-    보존: 매니페스트를 정상으로 읽은 사이클에서 지운다. 같은 rel은 다시 적지 않아 크기는 로컬 파일 수를 넘지 않는다. */
-const unconfirmedFile = (wsId) => join(paths(wsId).root, '.sync-unconfirmed.jsonl');
-async function loadUnconfirmed(wsId) {
-  const rels = new Set();
-  let text = '';
-  try { text = await readFile(unconfirmedFile(wsId), 'utf8'); } catch { return rels; } // 없음·못 읽음 = 빈 기록 — 확인을 더 할 뿐(안전 쪽)
-  for (const line of text.split('\n')) {
-    try { const rel = JSON.parse(line); if (typeof rel === 'string') rels.add(rel); } catch { /* 빈 줄·잘린 마지막 줄 */ }
-  }
-  return rels;
-}
 
 async function download(key) {
   const { data, error } = await client().storage.from(BUCKET).download(key);
@@ -738,9 +720,6 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
       catch (e) { throw new Error(`매니페스트 파싱 실패 — 삭제 보류: ${String(e.message).slice(0, 80)}`); }
     }
   }
-  // 매니페스트를 읽었다 = '매니페스트 없음' 기간이 끝났다 — 그 기간의 기록을 지운다(loadUnconfirmed 주석). 지우지 못해도 동기화는 계속한다.
-  if (manifestExists) await rm(unconfirmedFile(wsId), { force: true }).catch(() => {});
-  const unconfirmed = manifestExists ? null : await loadUnconfirmed(wsId);
   const originalFiles = JSON.stringify(remote.files);
   // 원격 매니페스트 키 위생(P1-7) — 변조된 키(경로 탈출 `../..`)를 FS 반영 전에 걸러낸다. 걸러진 키는 이 사이클 무시.
   if (remote.files && typeof remote.files === 'object') {
@@ -792,7 +771,8 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
   // 엄격 openSecret 유지(무결성 검증 유지, 검수 LOW-5). rel별로 개봉기를 가른다.
   // 읽기는 스위치와 무관하게 항상 봉투 개봉 가능 — 2단계 롤아웃의 핵심(다른 기기가 먼저 sealing을 켜도 안전).
   // 태생부터 봉투인 크레덴셜 2종만 엄격(깨진 평문 수용 금지), 그 외는 관용 개봉(기존 평문 그대로 통과 → 전환 무중단).
-  const openRemote = (rel, b) => {
+  const pullBuf = async (rel) => {
+    const b = await download(remoteKey(rel));
     // 회수 마커 — 다른 기기가 credSync를 껐다. throw → per-file catch가 failed로 보류하고, 이 기기도
     // 곧 company.json 동기화로 토글을 받아 불가시가 된다(로컬 자격은 그동안 그대로).
     // 안전성 자체는 마커 형식(무효 봉투 — openSecret이 어차피 throw)이 담보하므로 이 가드는 현재
@@ -800,16 +780,11 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
     if (isSecretRel(rel) && isCredWithdrawn(b)) throw new Error('자격 동기화 꺼짐(다른 기기에서 회수) — pull 보류');
     return (rel === 'connections.json' || rel === '.secrets.json') ? openSecret(b) : openSecretCompat(b);
   };
-  const pullBuf = async (rel) => openRemote(rel, await download(remoteKey(rel)));
   /** 업로드 직전 봉투 — 모든 업로드 경로가 이걸 거쳐야 평문이 새지 않는다(병합 분기 포함). */
   // E2EE 활성(이 기기가 DEK 보유) = 동기 대상 **전량**을 v3로 봉인 — 별도 스위치가 없다:
   // DEK 보유가 곧 스위치(디스크 사실에서 파생 원칙). 미보유 기기는 v2/평문 기존 동작 그대로(단계 0 불변).
   const sealFor = (rel, buf) => (dek() ? sealSecretV3(buf) : isEncRel(rel) ? sealSecret(buf) : buf);
-  // '매니페스트 없음' 사이클은 업로드 **전에** 밀려고 한 파일을 기록한다(loadUnconfirmed 주석). 적지 못하면 throw → 이 파일은 이번에 안 민다.
-  const pushBuf = async (rel) => {
-    if (unconfirmed && !unconfirmed.has(rel)) { await appendFile(unconfirmedFile(wsId), `${JSON.stringify(rel)}\n`); unconfirmed.add(rel); }
-    return sealFor(rel, await readFile(relFull(rel)));
-  };
+  const pushBuf = async (rel) => sealFor(rel, await readFile(relFull(rel)));
   // A remote download can outlive a local import. Recheck the snapshot under the same
   // lock used by market/import writers before replacing or deleting the MCP file.
   const withMcpSnapshot = (rel, fn) => withDirLock(`${relFull(rel)}.lock`, async () => {
@@ -869,41 +844,9 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
   };
   const changed = (a, b) => !a || !b || (a.h ?? `${a.m}:${a.s}`) !== (b.h ?? `${b.m}:${b.s}`);
 
-  // 매니페스트 '없음' 확인 — 파일 루프·브레이크·어떤 쓰기보다 먼저(업로드가 판정보다 먼저 나가면 안 된다).
-  // Storage 읽기 정책은 오너 접두사 하나라(20260912010000_storage_companies_policy_sargable.sql) 같은 토큰으로 blob이 보이면 매니페스트의
-  // 'Object not found'는 진짜 없음이다. 그래도 아래 루프는 로컬 파일을 전부 다시 밀므로, 원격에 남은 blob이 다른 기기의 내용이면 덮는다.
-  // 그래서 이 사이클이 밀 파일(로컬) 중 기록(loadUnconfirmed)에 없는 것의 blob을 받아 열어 보고, 이 기기가 모르는 내용이면 사이클 전체를 보류한다.
-  // 비교 기준 = '다른 기기의 변경을 덮어쓰지 않는다'. blob이 로컬과 같으면 같은 바이트를 다시 쓰는 것이고, 마지막 동기화 기록(state)과 같으면
-  // 그 뒤로 아무도 그 파일을 바꾸지 않았다는 뜻이라 로컬 변경을 미는 평소 동작과 같다 — 둘 중 하나와 같으면 통과. 둘 다 아니거나 열 수 없으면
-  // 이 기기가 모르는 쓰기다(분리 검수 F1·F2-3). 첫 동기화(state 없음)는 로컬 해시만 기준이다.
-  // 호출량: '매니페스트 없음' 사이클에서만, 기록에 없는 로컬 파일 수만큼 GET(없으면 404, 있으면 본문 — 추가 요청 없이 받은 본문으로 비교).
-  // 업로드가 계속 거절되는 기기도 둘째 사이클부터는 전부 기록에 있어 0건이다(재검수 MEDIUM-2). 8개씩 나눠 보내고 첫 불일치·확인 불가에서 멈춘다.
-  if (!manifestExists) {
-    const probe = Object.keys(local).filter((rel) => !unconfirmed.has(rel) && !isRoomCardRel(rel) && !isLocalImportRel(rel) && !isDevArtifactRel(rel)
-      && !(noSecrets && isSecretRel(rel)) && !(isEncRel(rel) && !cryptoOn()));
-    let next = 0, foreign = null, stop = false;
-    const worker = async () => {
-      while (!stop && next < probe.length) {
-        const rel = probe[next++];
-        try {
-          const { data, error } = await client().storage.from(BUCKET).download(remoteKey(rel));
-          if (error) {
-            if (isNotFound(error)) continue; // 진짜 없음 — 밀어도 덮을 것이 없다
-            throw new Error(`blob 확인 실패 — 동기화 보류(다음 사이클 재시도): ${String(error.message || error).slice(0, 80)}`);
-          }
-          const buf = Buffer.from(await data.arrayBuffer()); // 본문을 못 받음 = 확인 불가(아래 catch)
-          let h = null;
-          try { h = hashBuf(openRemote(rel, buf)); } catch { /* 열 수 없음(봉투 세대·키 불일치·회수 마커) = 내용을 모름 → 불일치 */ }
-          if (h === null || (h !== local[rel].h && h !== state[rel]?.h)) { foreign = rel; stop = true; }
-        } catch (e) { stop = true; throw e; } // 확인 불가 — 보류
-      }
-    };
-    await Promise.all(Array.from({ length: Math.min(8, probe.length) }, worker));
-    if (foreign) throw new Error(`매니페스트 없음과 모순(이 기기가 모르는 내용의 원격 blob: ${foreign.slice(0, 60)}) — 동기화 보류(다음 사이클 재시도)`);
-  }
   // 로컬 삭제 직전 매니페스트 재확인 — 매니페스트를 정상으로 읽은 사이클에서도 blob 확인의 '없음'이 잘못 분류됐을 수 있다.
   // 삭제 후보가 처음 나올 때 한 번만(사이클당 GET 1건, 후보가 없으면 0건) 매니페스트 키를 다시 읽어 성공할 때만 '없음'을 믿는다.
-  // 실패·없음이면 사이클 전체를 보류한다(holdCycle — 파일 단위 실패로 두면 그 항목이 기록에서 빠진다). (분리 검수 F2-2)
+  // 오류든 '없음'이든 읽지 못하면 사이클 전체를 보류한다(holdCycle — 파일 단위 실패로 두면 그 항목이 state에서 빠진다). (분리 검수 F2-2)
   let manifestRecheck = null;
   const confirmManifest = () => (manifestRecheck ??= (async () => {
     const { error } = await client().storage.from(BUCKET).download(manifestKey);
@@ -959,7 +902,6 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
     if (corruptHeal.has(rel)) return false;                                   // 로컬 손상 → self-heal 대상(삭제 아님)
     if (isArchival(rel) && archMoves.has(rel.split('/').pop())) return false; // 진짜 이동(목적지 생성 있음)
     // 로컬 삭제('다른 기기가 지웠다')는 원격 매니페스트를 실제로 읽은 사이클에서만 — 아래 l && !r 분기와 같은 조건(단일 출처).
-    // 매니페스트가 없는 사이클은 위 확인을 통과한 경우(원격 blob이 없거나 이 기기가 아는 내용)에만 여기까지 온다.
     return side === 'L' ? !!(l && !r && base && !changed(base, l) && manifestExists)
                         : !!(!l && r && base && !changed(base, r));
   };
@@ -1019,11 +961,11 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
           // 매니페스트 lost-update 방어 — 진짜 삭제(다른 기기의 삭제 전파)는 blob도 함께 지워져 있다.
           // blob이 살아 있으면 동시 동기화 중인 기기가 매니페스트를 통째로 덮어써 항목만 유실된 것
           // (실측: 영입 직후 크루 카드가 8초 안에 오삭제) → 지우지 말고 항목을 복원한다(자기치유).
-          // 원격 매니페스트가 없는 사이클은 위 확인을 통과했다 = 원격 blob이 없거나 이 기기가 아는 내용이다(정리된 원격·끊긴 첫 동기화) —
-          // '다른 기기가 지웠다'는 추론이 성립하지 않으므로 지우지 않고 다시 민다(blob을 다시 묻지 않는다).
-          // 실측 2026-10-05: 만료 토큰 읽기가 없음으로 분류되자 이 분기가 로컬 파일을 지웠고, 다음 정상 사이클이 원격까지 지웠다(재현 테스트).
-          if (!manifestExists) { await upload(remoteKey(rel), await pushBuf(rel)); remote.files[rel] = l; pushed++; }
-          else if (await blobExists(remoteKey(rel))) { remote.files[rel] = base; healed++; }
+          // 원격 매니페스트가 없는 사이클(정리된 원격·끊긴 첫 동기화)에서 blob까지 없으면 '다른 기기가 지웠다'는 추론이 성립하지 않는다 —
+          // 지우지 않고 다시 민다. 실측 2026-10-05: 만료 토큰 읽기가 없음으로 분류되자 이 분기가 로컬 파일을 지웠고, 다음 정상 사이클이
+          // 원격까지 지웠다(재현 테스트). 매니페스트를 읽은 사이클은 지우기 직전 매니페스트를 한 번 더 읽어 확인한다(confirmManifest).
+          if (await blobExists(remoteKey(rel))) { remote.files[rel] = base; healed++; }
+          else if (!manifestExists) { await upload(remoteKey(rel), await pushBuf(rel)); remote.files[rel] = l; pushed++; }
           else { await confirmManifest(); await rmLocal(rel, l.h); delete local[rel]; deletedL++; } // 다른 기기가 지움 → 로컬도(매니페스트 재확인 뒤)
         }
         else { await upload(remoteKey(rel), await pushBuf(rel)); remote.files[rel] = l; pushed++; } // 신규/수정 → 밀기
@@ -1114,7 +1056,9 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
   // steady-state to 1,440 manifests/day/device/company; 100 × 420KB ≈ 60.5GB/day.
   // This is a bound, not a scalable replacement for a revision/conditional index.
   // No write means no lost-update window requiring a second GET. Resealing must write.
-  if (!manifestExists || manifestNeedsSeal || isRestore || opts.freePlan || opts.reseal || failed || originalFiles !== JSON.stringify(remote.files)) {
+  // 단, 매니페스트가 없는 원격을 복원하는 기기(로컬 회사 없음)는 쓰지 않는다 — 이 기기가 모르는 파일이 빠진 매니페스트가 생기면
+  // 다시 밀다 끊긴 다른 기기가 그것을 '다른 기기가 지웠다'로 읽어 못 민 파일을 지운다(3차 검수 2번, 빈 {files:{}} 재현).
+  if (!(isRestore && !manifestExists) && (!manifestExists || manifestNeedsSeal || isRestore || opts.freePlan || opts.reseal || failed || originalFiles !== JSON.stringify(remote.files))) {
   const uploadFiles = { ...remote.files };
   {
     // 재읽기는 두 단계로 갈라 관용의 범위를 정확히 한다(분리 검수 HIGH-1):
