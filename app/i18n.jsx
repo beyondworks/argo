@@ -1245,6 +1245,7 @@ const DICT = {
   'chat.stage.tool': ['도구 사용 중', 'Using a tool'],
   'chat.stage.work': ['작업 중', 'Working'],
   'chat.stage.think': ['생각을 정리하는 중', 'Thinking'],
+  'chat.stage.summarize': ['앞 대화 정리 중', 'Tidying earlier conversation'],
   'chat.stage.runner': ['{name} 러너 실행 중', 'Running on {name}'],
   'chat.stage.awaiting_approval': ['사장 결재 대기 중 — 결재함·메신저에서 승인하면 이어집니다', 'Waiting for your approval — approve in the inbox or messenger to continue'],
   'chat.turnFailed': ['턴 실패: {msg} — 입력을 복원했습니다. 다시 보내보세요.', 'Turn failed: {msg} — your input was restored. Try sending again.'],
@@ -1354,6 +1355,7 @@ const DICT = {
   'chat.session.notice.restart': ['서버가 다시 시작되어 {name}의 답을 받지 못했습니다', 'The server restarted before {name} replied, so no reply will come'],
   'chat.session.notice.failed': ['{name}의 답을 받지 못했습니다(실행 실패)', 'Could not get a reply from {name} (the run failed)'],
   'chat.session.notice.capReached': ['세션 메시지 사슬이 상한({cap}단계)에 닿아 이 뒤로는 크루끼리 더 주고받지 않습니다', 'This chain of session messages reached its limit ({cap} steps) — crews will not message each other further'],
+  'chat.session.notice.summarized': ['앞 대화를 요약해 이어 갑니다', 'Earlier conversation was summarized to continue'],
   'chat.session.notice.budget': ['이번 지시에서 이어진 크루 턴이 합계 상한에 닿아 {name}에게 보내지 않았습니다', 'Crew turns from this instruction hit the total limit, so nothing was sent to {name}'],
   'chat.session.err.AMBIGUOUS': ['"{name}" 이름의 크루가 여럿입니다 — 목록에서 골라 주세요', 'More than one crew is named "{name}" — pick one from the list'],
   'chat.session.err.TREE_CAP': ['이번 지시에서 이어진 크루 턴이 합계 상한에 닿아 보내지 않았습니다', 'Crew turns from this instruction hit the total limit, so it was not sent'],
@@ -1898,7 +1900,7 @@ export function fmtMsgTime(lang, ts) {
 
 // 진행 단계 코드 → 사람이 읽는 라벨. 알려진 코드만 번역하고, 미지/레거시 문자열(옛 상태 파일의
 // 한국어 라벨 등)은 원문 그대로 반환해 무회귀. runner 코드는 detail(러너명)을 이름으로 보간한다.
-const STAGE_CODES = new Set(['boot', 'memory', 'write', 'shell', 'web', 'delegate', 'approval', 'tool', 'work', 'think', 'runner', 'awaiting_approval']);
+const STAGE_CODES = new Set(['boot', 'memory', 'write', 'shell', 'web', 'delegate', 'approval', 'tool', 'work', 'think', 'runner', 'awaiting_approval', 'summarize']);
 export function stageLabel(t, stage, detail = '') {
   if (!stage) return '';
   if (!STAGE_CODES.has(stage)) return stage; // 레거시/미지 — 원문 표시

@@ -21,7 +21,7 @@ import { codexModelEffort } from './model-effort.mjs';
 import { defaultClaudeEffort } from './runners/catalog.mjs';
 import { classifyRunnerError, subscriptionBlockedNotice } from './runners/error-class.mjs'; // 실패 코드 표(불변식 C)
 import { markRunnerAuthFail, HEALTH_BILLED_RUNNERS } from './runner-health.mjs'; // 다음 턴 차단(불변식 A)
-import { effectiveModels, normalizeModelId, loadRemoteCatalog, openrouterFallbackModel } from './runners/catalog-remote.mjs';
+import { effectiveModels, normalizeModelId, loadRemoteCatalog, openrouterFallbackModel, contextWindowFor } from './runners/catalog-remote.mjs';
 import { addRoutine, loadRoutines, updateRoutine, removeRoutine } from './routines.mjs'; // schedule_task·list_routines·cancel_routine — 크루가 '나중에 하기'를 걸고, 되돌리는 수단
 import { saveHandover } from './memory.mjs';
 import { loadMcp, safeMcpServersForRuntime } from './market.mjs';
@@ -47,7 +47,10 @@ import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './t
 import { registerTurn, withTurnControl, turnAbortedError } from './turn-abort.mjs';
 import { scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, loadRunnerCred, verifyRunnerCred, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply, isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice, isHiddenRunner, visibleRunnerIds, visibleRunnerNamesLine, onlyHiddenConnectedStatus, unsupportedMethodStatus, unsupportedMethodNotice, isCliTurn, GEMINI_DEFAULT_MODEL, runnerCredType, CODEX_DEFAULT_MODEL, CLI_CHAT_TURN_TIMEOUT_MS } from './runners.mjs';
 import { delegateHead } from './inbound-marks.mjs'; // 위임 머리말 = 1:1 화면 출처 카드와 같은 함수
-import { loadThread, takeSharedNotes, restoreSharedNotes, scopedSession, inContextScope, turnScope, scopeKey, approvalScope } from './thread.mjs';
+import { loadThread, takeSharedNotes, restoreSharedNotes, scopedSession, inContextScope, turnScope, scopeKey, approvalScope, threadSummary, setThreadSummary, appendLine } from './thread.mjs';
+import { buildThreadContext, contextSection, contextLimits, fitContextSection, isArgvRunner, argvLen, ARGV_PROMPT_LIMIT } from './thread-context.mjs';
+import { item } from './record-block.mjs'; import { msgrAuthorBody } from './inbound-marks.mjs'; // 메신저 줄은 글쓴이 본문만 항목에(5차 검수 MEDIUM-1) // 스레드 맥락 한 줄 = 항목 하나(구조로 화자를 가른다) // 스레드 맥락 토큰 예산 + 누적 요약(최근 6개 고정을 대체) · argv 러너 길이 맞춤
+import { runOneShot } from './oneshot.mjs';
 import { readInstalledSkills, planSkillInjection, SKILL_INJECT_CAP } from './market.mjs'; // 주입·마켓 표기 공용 규칙(단일 진실)
 import { snapshotArtifacts, diffArtifacts, servableArtifact, capLatest, openTurnLedger, closeTurnLedger, overlappingTurns, attributeArtifacts } from './artifacts.mjs'; // 러너 무관 산출물 수집(제보 2026-07-30)
 
@@ -465,23 +468,71 @@ const connectorNames = (connectors, en) => connectors
   .map((c) => `${c.id}${c.status === 'reauth' ? (en ? ' (needs reconnect)' : '(재연결 필요)') : ''}`).join(', ');
 
 /** use_connector 도구 설명의 상한 — 이 문자열은 매 턴 컨텍스트에 실린다(설계서 §2-2 "상한 두고 절단"). */
-/** 스레드 맥락 한 줄 — 외부 CLI 경로(세션을 스레드 맥락으로 잇는다)와 SDK 기기 교차 경로가 **같은 함수**를 쓴다
-    (러너 중립성 — 두 곳에 같은 식이 복제돼 있던 것을 한 벌로). 화자: 사장 / 자동 배달(via 턴) / 크루 이름.
-    본문은 500자에서 잘리지만 첨부·산출물 노트는 그 **바깥**에 붙는다 — 잘려도 경로는 산다.
-    산출물 노트(2026-09-02, 회의실 트랜스크립트 room.mjs와 같은 형식·vault/ 접두): 크루가 앞 턴에 만든 파일을
-    "아까 그 파일"로 이어가려면 답변 텍스트가 아니라 경로로 받아야 한다(분리 검수 LOW-2). export는 테스트용. */
-export function threadCtxLine(m, lang, name) {
-  const en = lang === 'en';
-  // 세션 메시지 줄(session-msg.mjs) — 사장이 다른 크루에게 보낸 줄·그 크루가 돌려준 답·안내를 이 크루 자신의 말로 읽지 않게 화자를 따로 적는다
+/** 스레드 맥락 한 줄 — 외부 CLI 경로(세션을 스레드 맥락으로 잇는다)와 SDK 기기 교차 경로가 **같은 함수**를 쓴다(러너 중립성).
+    줄 하나 = 항목 하나 [누가, 원문, 보낸 곳?, 덧붙임?](record-block.mjs item — 본문·경로 속 줄 끝·제어·서식 문자는 이스케이프돼 내용이 새 줄·화자 줄을 만들 수 없다).
+    누가는 스레드 줄의 표지(who·via·src·actor)와 회사 주인 id(ownerId)로만 정한다 — 본문을 보지 않는다:
+      captain(사장이 쓴 글 — 세션 메시지면 덧붙임 to) / member(메신저에서 주인이 아닌 사람이 직접 쓴 글, 보낸 곳 = 이름) /
+      delivered(via 턴·다른 크루의 세션 메시지 답·메신저 크루 넘김, 보낸 곳·덧붙임 via) / notice(세션 안내) / crew(이 크루).
+    메신저 줄(actor)은 게이트웨이가 남긴 relay 표지가 false일 때만 사람 글로 본다 — 크루 넘김 줄의 actor.uid는 사슬을 시작한 사람(origin)이라 주인 id와
+    같아도 사장 글이 아니다. 표지가 없는 옛 줄은 가릴 수 없어 delivered로 둔다(fail-closed — 사장 결정으로 올리지 않는다).
+    메신저 줄(via 'msgr')의 기록은 모델에 넣은 프롬프트 전체(머리말·다른 사람의 최근 채널 대화·답글 원글·이름: 본문)라 글쓴이 본문만 꺼내 싣는다(msgrAuthorBody —
+    화면 출처 카드와 같은 파서). 꺼내지 못하면 다른 사람 글이 섞였을 수 있어 사람 글(captain·member)로 올리지 않는다(delivered).
+    본문은 500자에서 자르고(원문 그대로), 첨부·산출물 경로는 덧붙임 files·made라 잘려도 산다. lang·name은 호출 모양 호환. export는 테스트용. */
+export function threadCtxLine(m, lang, name, { ownerId = null } = {}) { // eslint-disable-line no-unused-vars
   const s = m.src?.kind === 'session' ? m.src : null;
-  const who = s?.dir === 'out' ? `${en ? 'Captain' : '사장'} → ${s.toName ?? s.to}${en ? ' (session message)' : ' (세션 메시지)'}`
-    : s && m.who === 'crew' && s.dir === 'reply' ? `${s.fromName ?? s.from}${en ? ' (session message reply)' : ' (세션 메시지 답)'}`
-    : s && m.who === 'crew' && s.dir === 'notice' ? (en ? 'Notice' : '알림')
-    : m.who === 'user' ? (m.via ? (en ? 'Auto-delivered' : '자동 배달') : (en ? 'Captain' : '사장')) : name;
-  const list = (xs, rel) => xs.map((x) => 'vault/' + rel(x)).join(', ');
-  const att = m.attachments?.length ? (en ? ` (attached, open with Read: ${list(m.attachments, (a) => a.rel)})` : ` (첨부, Read로 열람: ${list(m.attachments, (a) => a.rel)})`) : '';
-  const art = m.artifacts?.length ? (en ? ` (artifacts, open with Read: ${list(m.artifacts, (a) => a)})` : ` (산출물, Read로 열람: ${list(m.artifacts, (a) => a)})`) : '';
-  return `${who}: ${String(m.text).replace(/\s+/g, ' ').slice(0, 500)}${att}${art}`;
+  const sender = s?.fromName ?? s?.from ?? null;
+  const a = m.actor && typeof m.actor === 'object' ? m.actor : null;
+  const raw = String(m.text ?? '');
+  const body = m.who === 'user' && m.via === 'msgr' ? msgrAuthorBody(raw, String(a?.name ?? '').split(' ← ')[0]) : raw; // 넘긴 턴의 actor = '넘긴 크루 ← 사람', 본문 줄 앞 이름은 넘긴 크루
+  const extra = {};
+  let who; let from = null;
+  if (s?.dir === 'out') { who = 'captain'; extra.to = s.toName ?? s.to ?? null; extra.via = 'session'; }
+  else if (s && m.who === 'crew' && s.dir === 'reply') { who = 'delivered'; from = sender; extra.via = 'session_reply'; }
+  else if (s && m.who === 'crew' && s.dir === 'notice') who = 'notice';
+  else if (m.who === 'user' && a) {
+    from = a.name ?? null; if (m.via) extra.via = String(m.via);
+    who = a.relay === false && body !== null ? (ownerId && a.uid === ownerId ? 'captain' : 'member') : 'delivered';
+    if (who === 'captain') from = null;
+  } else if (m.who === 'user') { if (m.via) { who = 'delivered'; from = sender; extra.via = String(m.via); } else who = 'captain'; }
+  else who = 'crew';
+  if (m.attachments?.length) extra.files = m.attachments.map((x) => `vault/${x?.rel ?? ''}`);
+  if (m.artifacts?.length) extra.made = m.artifacts.map((x) => `vault/${x ?? ''}`);
+  return item(who, (body ?? raw).slice(0, 500), from, extra);
+}
+
+/** 스레드 맥락(외부 CLI 경로·SDK/네이티브 기기 교차 경로 공통) — 예산 안 최근 대화 + 예산 밖 누적 요약(thread-context.mjs).
+    요약은 그 크루의 **같은 러너** 원샷(pin — 다른 러너로 넘어가지 않는다, 도구 없이)으로 만들고 스레드에 저장한다.
+    거르는 규칙(범위·공유 노트·실패·대기 줄 제외)은 종전 .slice(-6) 경로와 같다. 반환 { recent, summary }. */
+/** 맥락에 실을 줄(순수) — 같은 범위만, 공유 노트(sharedBlock으로 따로 주입)·실패 턴·답을 기다리는 지금 그 글(두 번 들어가면 안 된다)은 뺀다.
+    요약 안내 줄(아래 compact_boundary — src notice code 'summarized')도 뺀다: 화면용 표지라 크루에게는 '알림: 앞 대화를 요약해…'라는 잡음일 뿐이다(분리 검수 LOW).
+    세션 메시지의 다른 안내 줄(상한·기한·실패)은 크루가 알아야 할 사실이라 종전대로 싣는다. export는 테스트용. */
+export const isSummaryNotice = (m) => m?.src?.kind === 'session' && m.src.dir === 'notice' && m.src.code === 'summarized';
+export const inThreadContext = (m, contextScope) => inContextScope(m, contextScope) && !m.shared && !m.failed && !m.awaiting && !isSummaryNotice(m);
+/*  signal = 턴 중단 신호(정지하면 요약 원샷도 바로 끊긴다 — 중단은 던진다), status(on) = 요약하는 동안의 상태 표시(on=true '앞 대화 정리 중', false 되돌림).
+    요약 원샷의 사용량·비용은 사용량 원장에 요약 행(kind 'summary')으로 바로 남긴다 — 월 지출 한도(monthCost)·크루 인건비가 그 행을 센다(분리 검수 MEDIUM:
+    종전 .then(r => r.text)가 API 키 러너의 요약 비용을 버렸다). 턴이 실패·중단돼도 이미 쓴 요약 비용은 남는다. 반환에 costUsd(요약 금액, 없으면 null)를 싣는다. */
+async function threadContextFor(wsId, slug, t, { contextScope, lang, name, runner, model, limits = null, signal = null, status = null }) {
+  const msgs = (t?.messages ?? []).filter((m) => inThreadContext(m, contextScope));
+  let costUsd = null;
+  // 회사 주인 id — 메신저 줄의 사람 글을 사장(captain)과 다른 사람(member)으로 가른다(threadCtxLine). 모르면 null(사람 글은 member로 — 사장으로 올리지 않는다)
+  const ownerId = (await loadCompany(wsId).catch(() => ({}))).ownerId ?? null;
+  const parts = await buildThreadContext({
+    msgs, lang, lineOf: (m) => threadCtxLine(m, lang, name, { ownerId }), summary: threadSummary(t, contextScope), limits, // limits — argv 러너(agy)는 명령줄 길이 기준(contextLimits)
+    memoKey: `${wsId}:${slug}:${scopeKey(contextScope) ?? ''}`, // 요약 실패 기억은 범위별(채널·그룹마다 따로) — 요약 저장 키와 같은 구분
+    summarize: async (prompt) => {
+      await status?.(true);
+      const t0 = Date.now();
+      try {
+        const r = await runOneShot(wsId, prompt, { pin: runner, model: model || null, lang, readOnly: true, timeoutMs: 90_000, signal });
+        costUsd = Number.isFinite(r.costUsd) ? r.costUsd : null;
+        await appendUsage(wsId, { kind: 'summary', slug, runner: r.runner, model: model || null, usage: r.usage ?? {}, costUsd, ms: Date.now() - t0,
+          billed: await isBilledRunner(wsId, r.runner).catch(() => undefined) });
+        return r.text;
+      } finally { await status?.(false); }
+    },
+    save: (sum) => setThreadSummary(wsId, slug, contextScope, sum),
+  });
+  return { ...parts, costUsd };
 }
 
 export const CONNECTOR_DESC_CAP = 1200;
@@ -1562,13 +1613,11 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
     let crewBridge = null;
     try {
       ledgerEntry = openTurnLedger(wsId, agentSlug, { startedAt: ledgerStartedAt, frame: __turnControl ?? null }); // frame — 재시도 재귀만 같은 control(turn-abort)
-      const { messages } = dmTurn ? { messages: [] } : await loadThread(wsId, agentSlug);
+      const thread = dmTurn ? { messages: [] } : await loadThread(wsId, agentSlug);
       // 실패 턴(m.failed — 답변 없는 지시문)은 재구성 맥락에서 뺀다: 러너 미로그인에서 재전송을 반복하면
-      // 같은 지시 6개가 "사장이 7번 말했는데 나는 무응답"으로 읽힌다(분리 검수 MEDIUM). via 턴은 사장
+      // 같은 지시 여러 개가 "사장이 7번 말했는데 나는 무응답"으로 읽힌다(분리 검수 MEDIUM). via 턴은 사장
       // 발화가 아니므로 화자를 '자동 배달'로 정직 표기(room.mjs 어휘에서 '시스템'=크루가 답하지 않는 줄이라 반전 — 재검수 지적)(배달 프리픽스가 실제 발신자를 이미 담는다).
-      const ctx = (messages ?? []).filter((m) => inContextScope(m, contextScope) && !m.shared && !m.failed && !m.awaiting).slice(-6) // 공유 노트는 sharedBlock으로 이미 주입 — 중복 방지. 채널 턴은 그 채널 기록만
-        .map((m) => threadCtxLine(m, lang, meta.name || agentSlug))
-        .join('\n');
+      // 공유 노트는 sharedBlock으로 이미 주입 — 중복 방지. 채널 턴은 그 채널 기록만. 최근 6개 고정 → 토큰 예산 + 누적 요약(threadContextFor — 아래 프롬프트 조립 직전).
       const attNote = attachments.length
         ? (lang === 'en'
             ? `\n\n(Files the captain attached — read them directly: ${attachments.map((a) => `vault/${a.rel}`).join(', ')})`
@@ -1624,16 +1673,26 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
       const cliMcpServers = MCP_CLI_RUNNERS.has(runner) ? { ...scoped, argo_browser: browserBridge.server, ...(crewBridge ? { crew: crewBridge.server } : {}) } : null;
       const cliMcp = cliMcpServers ? Object.keys(cliMcpServers).filter((k) => k !== 'crew') : []; // 안내 목록은 외부 MCP만(SDK connectedMcp와 같게 — crew는 도구 안내로 따로 나간다)
       const cliRoster = cliTools ? (mirrorCtx?.kind === 'msgr' ? rosterPrompt(messengerColleagues(mirrorCtx, hop), lang, true) : cliColleagues.length ? rosterPrompt(cliColleagues, lang, false, lim) : hopCapNote) : ''; // SDK 턴과 같은 식
-      // 안내 문장으로 시작 — 카드 frontmatter('---')가 맨 앞이면 CLI 인자 파서가 플래그로 오해한다
-      const prompt = `${lang === 'en' ? 'Below are your persona card and operating rules.' : '다음은 너의 페르소나 카드와 운영 규칙이다.'}
+      // 안내 문장으로 시작 — 카드 frontmatter('---')가 맨 앞이면 CLI 인자 파서가 플래그로 오해한다. ctx = 스레드 맥락 구획(아래에서 정한다)
+      const promptWith = (ctx) => `${lang === 'en' ? 'Below are your persona card and operating rules.' : '다음은 너의 페르소나 카드와 운영 규칙이다.'}
 
 ${systemPromptFor(md, p.root, skills, meta, lang, { hasTools: cliTools, connectors: cliConnectors })}${orgRules}${commonDirectives({ caps: cliCaps, connectedMcp: cliMcp, connectors: cliConnectors, hasTools: cliTools, gated: cliGated, lang, runner, workRoots: cliWorkRoots, pinnedFolder: cliPin, source: turnSource, fullAuto })}${cliRoster}${browserBridge ? browserMcpDirective(lang) : ''}${messengerNote}${fallbackDirective}
-${ctx ? `\n## ${lang === 'en' ? 'Recent conversation' : '최근 대화'}\n${ctx}\n` : ''}
+${ctx ? `\n${ctx}` : ''}
 ${sharedBlock || (source === 'session' ? newMsgHead(source, lang) : (lang === 'en' ? "## Captain's new instruction\n" : '## 사장의 새 지시\n'))}${userMsg}${attNote}
 
 ${lang === 'en'
         ? '(You are the crew of the persona above. Always reply in English, even if the captain wrote to you in Korean.)'
         : '(너는 위 페르소나의 크루로서 한국어로 답하라.)'}`;
+      // 스레드 맥락 — 예산 안 최근 대화 + 누적 요약. argv 러너(agy — 프롬프트를 명령줄 인자로 받는다)는 Windows 명령줄 32,767자가 상한이라
+      // 나머지 프롬프트를 뺀 자리만큼만 계획하고(요약 원샷 입력도 같은 상한 — contextLimits), 실행 때마다 그 실행의 글 전체에 맞춰 구획을 다시 맞춘다
+      // (끼워 넣기 이어 실행은 앞 답이 붙어 길어진다). stdin 러너(codex exec·gemini)는 종전 토큰 예산 그대로.
+      const argvRunner = isArgvRunner(runner);
+      const ctxHead = lang === 'en' ? 'Recent conversation' : '최근 대화';
+      const roomIn = (outer) => ARGV_PROMPT_LIMIT - argvLen(outer('')); // outer(구획) → 실행 프롬프트 전체
+      const ctxParts = await threadContextFor(wsId, agentSlug, thread, { contextScope, lang, name: meta.name || agentSlug, runner, model: effModel,
+        limits: argvRunner ? contextLimits(runner, roomIn(promptWith) - 1) : null, signal: ac.signal,
+        status: (on) => setTurnStatus(wsId, agentSlug, on ? 'summarize' : 'runner', on ? '' : RUNNERS[runner].name, undefined, turnSource) });
+      const promptFor = (outer) => outer(argvRunner ? fitContextSection(ctxParts, ctxHead, lang, roomIn(outer)) : contextSection(ctxParts, ctxHead, lang));
       __turnControl.check();
       const cred = await runnerCredEnv(wsId, runner); // 회사 자격(API키/OAuth) 우선, 없으면 호스트 로그인
       // CLI 턴 상한 — 대화 턴 30분(행 방지, ARGO_CLI_TURN_TIMEOUT_MS로 조정 가능), 잡(장시간 작업 큐) 턴 6시간.
@@ -1654,7 +1713,8 @@ ${lang === 'en'
       let reply;
       // 실행 전(준비 중)에 받은 끼워 넣기는 첫 실행 프롬프트에 바로 싣는다 — 이어 실행으로 미루면 전체를 한 번 더 돈다(총괄 검수 L1)
       const early = cliInbox.items.splice(0);
-      const runPrompt = early.length ? `${prompt}\n\n## ${lang === 'en' ? 'More from the captain (sent while you were getting ready)' : '사장이 이어서 보낸 메시지'}\n${early.join('\n\n')}` : prompt;
+      const withEarly = (ctx) => { const prompt = promptWith(ctx); return early.length ? `${prompt}\n\n## ${lang === 'en' ? 'More from the captain (sent while you were getting ready)' : '사장이 이어서 보낸 메시지'}\n${early.join('\n\n')}` : prompt; };
+      const runPrompt = promptFor(withEarly);
       try {
         __turnControl.check();
         reply = await externalExec({ runner, model: effModel, cwd: p.root, prompt: runPrompt, cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers, onSteerable });
@@ -1686,7 +1746,7 @@ ${lang === 'en'
         const segNotes = seg.directives.length || seg.bad.length ? await runDirectives(wsId, agentSlug, seg.directives, { lang, bad: seg.bad, hop, chain, toolHop, results: [], mirrorCtx, delegationRelaxed: lim.relaxed, delegationTree: tree, counters: turnCounters, fullAuto, origin: notOwnerDirect, turnControl: __turnControl, usedTools: crewBridge?.called ?? null }) : [];
         doneText = [doneText, seg.directives.length || seg.bad.length ? [seg.clean, segNotes.join('\n')].filter(Boolean).join('\n\n') : reply].filter(Boolean).join('\n\n');
         try {
-          reply = await externalExec({ runner, model: usedModel, cwd: p.root, prompt: cliSteerPrompt(runPrompt, doneText, texts, lang), cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers, onSteerable }) ?? '';
+          reply = await externalExec({ runner, model: usedModel, cwd: p.root, prompt: promptFor((ctx) => cliSteerPrompt(withEarly(ctx), doneText, texts, lang)), cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers, onSteerable }) ?? '';
         } catch (e) {
           if (abortReg.wasAborted() || e?.aborted) throw e;
           steerFailed = { texts, reason: String(e?.message || e).slice(0, 400) };
@@ -1908,6 +1968,7 @@ ${lang === 'en'
   // resume을 시도하되 실패하면 catch에서 새 세션으로 1회 재시도한다(__freshRetry).
   let resumeId = __freshRetry ? null : sessionId;
   let crossCtx = '';
+  let ctxCostUsd = null; // 다른 기기 이어받기 맥락의 요약 원샷 금액 — 이 턴의 청구 금액(루프 루틴 예산)에 더한다(원장에는 요약 행으로 따로 남았다)
   if (!dmTurn && (sessionId || __freshRetry)) {
     const t = await loadThread(wsId, agentSlug).catch(() => ({ messages: [] }));
     const me = await getDeviceId().catch(() => null);
@@ -1915,12 +1976,21 @@ ${lang === 'en'
     const foreign = !!device && !!me && device !== me;
     if (foreign) resumeId = null;
     if ((foreign || __freshRetry) && (t.messages ?? []).length) {
-      const ctx = t.messages.filter((m) => inContextScope(m, contextScope) && !m.shared && !m.failed && !m.awaiting).slice(-6) // 실패 턴·화자·범위 규칙은 CLI 경로와 동일(위 주석)
-        .map((m) => threadCtxLine(m, lang, meta.name || agentSlug))
-        .join('\n');
-      if (ctx) crossCtx = lang === 'en'
-        ? `## Recent conversation (continued from another device — a new session opens here)\n${ctx}\n\n${newMsgHead(source, 'en')}`
-        : `## 최근 대화 (다른 기기에서 이어짐 — 이 기기에서 새 세션으로 계속)\n${ctx}\n\n${newMsgHead(source, 'ko')}`;
+      // 실패 턴·화자·범위 규칙과 예산·요약은 CLI 경로와 같은 함수(threadContextFor)
+      // 요약 원샷도 정지 버튼이 끊게 — 이 구간은 아래 실행 등록(abortReg) 전이라 같은 실행 그룹(__turnControl)으로 잠깐 등록한다.
+      // 상태는 요약하는 동안만 '앞 대화 정리 중', 끝나면 지운다(아래 'boot'가 이어 받는다 — 중단으로 끝나도 남지 않는다).
+      const sumAc = new AbortController();
+      const sumReg = registerTurn(wsId, agentSlug, () => sumAc.abort(), __turnControl);
+      let parts;
+      try {
+        parts = await threadContextFor(wsId, agentSlug, t, { contextScope, lang, name: meta.name || agentSlug, runner, model: effModel, signal: sumAc.signal,
+          status: (on) => (on ? setTurnStatus(wsId, agentSlug, 'summarize', '', undefined, turnSource) : clearTurnStatus(wsId, agentSlug)) });
+      } finally { sumReg.release(); }
+      __turnControl.check();
+      ctxCostUsd = parts.costUsd;
+      const ctx = contextSection(parts,
+        lang === 'en' ? 'Recent conversation (continued from another device — a new session opens here)' : '최근 대화 (다른 기기에서 이어짐 — 이 기기에서 새 세션으로 계속)', lang);
+      if (ctx) crossCtx = `${ctx}\n${newMsgHead(source, lang)}`;
     }
   }
 
@@ -2038,7 +2108,7 @@ ${lang === 'en'
     env: sdkEnv, model: sdkModel, crewTools: crewSink, mcpServers: servers ?? {}, computer: computerOn,
     ...(runner === 'codex' && codexModelEffort(meta.effort, sdkModel) ? { effort: codexModelEffort(meta.effort, sdkModel) } : {}), // Responses reasoning.effort uses the same model contract as CLI.
     canUseTool: makePermissionGate(wsId, agentSlug, p.root, chain.length ? chain[chain.length - 1] : notOwnerDirect, lang, workRoots, { computerUse: computerOn, guest, msgr: gateMsgr }),
-    resume: resumeId, lang,
+    resume: resumeId, lang, contextTokens: contextWindowFor(runner, sdkModel), // 토큰 예산 — 창의 75%를 넘으면 앞부분 요약(engine/compact.mjs)
   }) : query({
     prompt: promptInput,
     options: {
@@ -2111,6 +2181,15 @@ ${lang === 'en'
         }
       }
       await setTurnStatus(wsId, agentSlug, 'memory', '', undefined, turnSource);
+    }
+    // 앞 대화 압축 중(네이티브 compact.mjs·SDK 자동 압축 모두 {subtype:'status', status:'compacting'}) — 화면 단계 '앞 대화 정리 중'. 다음 단계 이벤트가 덮는다
+    if (msg.type === 'system' && msg.subtype === 'status' && msg.status === 'compacting') await setTurnStatus(wsId, agentSlug, 'summarize', '', undefined, turnSource);
+    // 앞 대화 압축(네이티브 엔진 compact.mjs, SDK 자동 압축도 같은 모양) — 크루 대화 기록에 안내 줄 하나. 화면 문구는 i18n(chat.session.notice.summarized)이 그린다.
+    // 이 턴의 범위를 싣는다(채널 턴이면 그 채널 줄 — 회수·맥락 범위 규칙을 그대로 탄다). 기록 실패는 턴과 무관.
+    // noticeOf = 이 실행의 표지(chat 라우트·세션 메시지는 그 지시의 turnId — 재시도 프레임도 같은 제어 객체를 물려받는다) — 지시 바로 뒤·답 앞에 놓인다(thread.mjs appendLine).
+    if (msg.type === 'system' && msg.subtype === 'compact_boundary' && !dmTurn) {
+      await appendLine(wsId, agentSlug, { who: 'crew', text: lang === 'en' ? 'Earlier conversation was summarized to continue' : '앞 대화를 요약해 이어 갑니다',
+        src: { kind: 'session', dir: 'notice', code: 'summarized' }, ...(contextScope ? { contextScope } : {}), ...(__turnControl?.tag ? { noticeOf: __turnControl.tag } : {}) }).catch(() => {});
     }
     // 구독 사용 한도 — SDK가 claude.ai 구독(OAuth) 턴에만 싣는다. 계정 단위 저장, 실패는 턴과 무관(K91)
     if (msg.type === 'rate_limit_event' && runner === 'claude') await recordClaudeLimits(sdkEnv, msg.rate_limit_info).catch(() => {});
@@ -2366,6 +2445,8 @@ ${lang === 'en'
   // diff와 합집합 — 도구 관측(즉시성)과 파일시스템 diff(Bash·MCP 포함 완전성)를 합친다. 필터는
   // servableArtifact 하나로 통일(칩=서빙 일치 — 탐색 G8), 상한·정렬은 artDiff와 같은 규칙.
   for (const r of await artDiff(reply)) artifacts.add(r);
+  // 맥락 요약 원샷 금액(다른 기기 이어받기) — 청구 턴이면 이 턴 금액에 더한다(루프 루틴 예산 routines.mjs spentUsd). openrouter는 금액 미기록 규칙 그대로(위 result 처리와 같다)
+  if (Number.isFinite(ctxCostUsd) && runner !== 'openrouter' && await isBilledRunner(wsId, runner)) costUsd = (Number.isFinite(costUsd) ? costUsd : 0) + ctxCostUsd;
   // trace — 메신저 답글에 붙는 궤적(사고 과정·도구 단계·경과·실사용 모델). 다른 소비자(gateway·room·routine)는 무시해도 무해한 추가 필드.
   const trace = { steps, thought: String(thought ?? '').slice(-1500), ms: Date.now() - t0, model: actualModel || null, costUsd };
   return { reply, sessionId: sessionless ? null : sid, ...(contextScope ? { contextScope } : {}), ...(steerFailed ? { steerFailed } : {}), handover, costUsd, trace, artifacts: capLatest(artAfter, [...artifacts].filter(servableArtifact)), ...fellBackInfo, ...modelFallbackInfo }; // 합집합도 최신 우선 12(알파벳 컷이 최신을 떨구던 것 — 검수 LOW-2)

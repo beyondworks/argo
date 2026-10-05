@@ -1,7 +1,14 @@
 // 러너 카탈로그 — RUNNERS·RUNNER_AUTH·모델 상수·순수 판정 유틸(pickRunner 등).
 // (runners.mjs 관심사 분리 2026-07-28 — 의존 0: 다른 모듈을 임포트하지 않는다)
 
-/** 러너별 모델 카탈로그 — id '' = 그 러너의 기본 모델. 라벨은 고유명사라 언어 공통. */
+/** 러너별 모델 카탈로그 — id '' = 그 러너의 기본 모델. 라벨은 고유명사라 언어 공통.
+    ctx = 모델 컨텍스트 창(토큰) — 네이티브 엔진 압축 기준(catalog-remote contextWindowFor → engine/compact.mjs, 실제 기준은 min(ctx, 전사 예산 128,000)).
+    공식 문서·벤더 공개 목록에서 직접 확인한 값만 넣고 항목마다 출처 URL·확인 날짜를 단다(2026-10-05 분리 검수 #7). 확인 못 한 모델은 넣지 않는다(기본 128,000).
+    규칙: 문서가 '1M'·'500k'·'200K'처럼 반올림 표기면 그 수(1,000,000 등)로 — 실제 값이 더 커도 압축이 조금 일찍 올 뿐 넘치지 않는다.
+    OpenRouter는 제공사(엔드포인트)마다 창이 달라 그 모델 엔드포인트 목록의 최솟값(어느 제공사로 가도 넘치지 않게).
+    Claude의 [1m] 변형은 Claude Code --model 접미 규약일 뿐 같은 모델 ID라 그 모델의 문서 값과 같다.
+    지금 들어 있는 ctx 45개는 모두 128,000 이상이다(최솟값 glm-4.5-air 128,000 — 2026-10-05 확인). 압축 기준이 min(ctx, 128,000)이라 **현재는 어느 모델의
+    동작도 바뀌지 않는다** — 이 값은 전사 예산(compact.mjs TRANSCRIPT_BUDGET_TOKENS)을 글자 상한과 함께 올리거나 창이 128,000보다 작은 모델이 들어올 때 쓰인다. */
 import { nativeRunnerEnabled } from '../engine/native-flags.mjs';
 
 export const RUNNERS = {
@@ -13,27 +20,27 @@ export const RUNNERS = {
       // Fable 5.1(2026-09-01) — 1M 컨텍스트가 기본이자 최대라 [1m] 변형 없음. **Agent SDK ≥0.3.251 필수**
       // (번들 CLI 2.1.251+ — 그 아래는 "does not support this model" 400으로 턴이 죽는다. 실측: CLI 2.1.141
       // 거부 / SDK 0.3.258 실턴 통과 2026-09-01). package.json의 SDK 하한이 곧 이 항목의 전제다.
-      { id: 'claude-fable-5-1', label: 'Fable 5.1' },
-      { id: 'claude-fable-5', label: 'Fable 5' },
+      { id: 'claude-fable-5-1', label: 'Fable 5.1', ctx: 1_000_000 }, // ctx 출처 https://platform.claude.com/docs/en/about-claude/models/overview (확인 2026-10-05)
+      { id: 'claude-fable-5', label: 'Fable 5', ctx: 1_000_000 }, // ctx 출처 https://platform.claude.com/docs/en/models/fable-5/overview (확인 2026-10-05)
       // Opus 5.5(2026-09-23 유건 요청) — **Agent SDK ≥0.3.280 필수**(번들 CLI 2.1.280+; 0.3.258은 400 "2.1.280 or newer is required" 실측).
       // 실턴 통과 2026-09-23(SDK 0.3.280, 두 변형 모두). effort 기본이 medium이라 크루 미지정이면 high(defaultClaudeEffort).
-      { id: 'claude-opus-5-5', label: 'Opus 5.5' },
-      { id: 'claude-opus-5-5[1m]', label: 'Opus 5.5 (1M)' },
-      { id: 'claude-opus-5', label: 'Opus 5' }, // 실턴 통과 2026-07-25 (runOneShot 'ok' — 카탈로그 규칙: 실행 경로 검증 후에만 추가)
+      { id: 'claude-opus-5-5', label: 'Opus 5.5', ctx: 1_000_000 }, // ctx 출처 https://platform.claude.com/docs/en/about-claude/models/overview (확인 2026-10-05)
+      { id: 'claude-opus-5-5[1m]', label: 'Opus 5.5 (1M)', ctx: 1_000_000 }, // ctx 출처 https://platform.claude.com/docs/en/about-claude/models/overview (확인 2026-10-05)
+      { id: 'claude-opus-5', label: 'Opus 5', ctx: 1_000_000 }, // 실턴 통과 2026-07-25 (runOneShot 'ok' — 카탈로그 규칙: 실행 경로 검증 후에만 추가) · ctx 출처 https://platform.claude.com/docs/en/models/opus-5/overview (확인 2026-10-05)
       // [1m] = 1M 컨텍스트 변형(Claude Code CLI --model 접미 규약). 실턴 통과 2026-08-06
       // (SDK 경로 wolff 크루 실챗 왕복 — 두 변형 모두 정상 응답, 4.8[1m]은 모델 자기보고까지 확인).
-      { id: 'claude-opus-5[1m]', label: 'Opus 5 (1M)' },
-      { id: 'claude-opus-4-8', label: 'Opus 4.8' },
-      { id: 'claude-opus-4-8[1m]', label: 'Opus 4.8 (1M)' },
+      { id: 'claude-opus-5[1m]', label: 'Opus 5 (1M)', ctx: 1_000_000 }, // ctx 출처 https://platform.claude.com/docs/en/models/opus-5/overview (확인 2026-10-05)
+      { id: 'claude-opus-4-8', label: 'Opus 4.8', ctx: 1_000_000 }, // ctx 출처 https://platform.claude.com/docs/en/models/opus-4-8/overview (확인 2026-10-05)
+      { id: 'claude-opus-4-8[1m]', label: 'Opus 4.8 (1M)', ctx: 1_000_000 }, // ctx 출처 https://platform.claude.com/docs/en/models/opus-4-8/overview (확인 2026-10-05)
       // Opus 4.7·4.6 — 이전 세대 Opus(활성). id는 claude-api 모델 카탈로그 정본 표기 그대로(날짜 접미 금지).
-      { id: 'claude-opus-4-7', label: 'Opus 4.7' },
-      { id: 'claude-opus-4-6', label: 'Opus 4.6' },
-      { id: 'claude-opus-4-6[1m]', label: 'Opus 4.6 (1M)' },
+      { id: 'claude-opus-4-7', label: 'Opus 4.7', ctx: 1_000_000 }, // ctx 출처 https://platform.claude.com/docs/en/models/opus-4-7/overview (확인 2026-10-05)
+      { id: 'claude-opus-4-6', label: 'Opus 4.6', ctx: 1_000_000 }, // ctx 출처 https://platform.claude.com/docs/en/models/opus-4-6/overview (확인 2026-10-05)
+      { id: 'claude-opus-4-6[1m]', label: 'Opus 4.6 (1M)', ctx: 1_000_000 }, // ctx 출처 https://platform.claude.com/docs/en/models/opus-4-6/overview (확인 2026-10-05)
       // Sonnet 5.5(2026-09-30 유건 요청) — 실턴 통과 2026-09-30(SDK 0.3.280, 5.5·5.5[1m] 모두 응답 model=claude-sonnet-5-5). effort 기본은 끼워 넣지 않는다.
-      { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5' },
-      { id: 'claude-sonnet-5-5[1m]', label: 'Sonnet 5.5 (1M)' },
-      { id: 'claude-sonnet-5', label: 'Sonnet 5' },
-      { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5' },
+      { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', ctx: 1_000_000 }, // ctx 출처 https://platform.claude.com/docs/en/about-claude/models/overview (확인 2026-10-05)
+      { id: 'claude-sonnet-5-5[1m]', label: 'Sonnet 5.5 (1M)', ctx: 1_000_000 }, // ctx 출처 https://platform.claude.com/docs/en/about-claude/models/overview (확인 2026-10-05)
+      { id: 'claude-sonnet-5', label: 'Sonnet 5', ctx: 1_000_000 }, // ctx 출처 https://platform.claude.com/docs/en/models/sonnet-5/overview (확인 2026-10-05)
+      { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5', ctx: 200_000 }, // ctx 출처 https://platform.claude.com/docs/en/about-claude/models/overview (확인 2026-10-05)
     ],
   },
   codex: {
@@ -74,14 +81,14 @@ export const RUNNERS = {
       // gated:true(모델 메뉴 배지 표시) + 채팅 런타임 강등 가드(chat.mjs GATED_MODEL_ERR_RE —
       // 기본 모델 1회 자동 재시도) 전제로 허용한다. 첫 항목은 무권한 계정도 도는 모델일 것
       // (러너 전환 시 models[0]이 기본 선택되므로 게이트 모델을 앞에 두면 무료 계정이 이유 없이 죽는다).
-      { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
-      { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
-      { id: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro Preview', gated: true },
-      { id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash', gated: true },
+      { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', ctx: 1_048_576 }, // ctx 출처 https://ai.google.dev/gemini-api/docs/models/gemini-2.5-pro (확인 2026-10-05)
+      { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', ctx: 1_048_576 }, // ctx 출처 https://ai.google.dev/gemini-api/docs/models/gemini-2.5-flash (확인 2026-10-05)
+      { id: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro Preview', gated: true, ctx: 1_048_576 }, // ctx 출처 https://ai.google.dev/gemini-api/docs/models/gemini-3.1-pro-preview (확인 2026-10-05)
+      { id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash', gated: true, ctx: 1_048_576 }, // ctx 출처 https://ai.google.dev/gemini-api/docs/models/gemini-3.5-flash (확인 2026-10-05)
       // 3.6·3.7 Flash — ai.google.dev 모델 문서(2026-09-01 확인) stable. 같은 3.x 계정 게이트라 gated
       // (이 기기 계정은 라이선스 차단이라 실턴 미검증 — 게이트 모델의 런타임 강등 가드가 안전망).
-      { id: 'gemini-3.6-flash', label: 'Gemini 3.6 Flash', gated: true },
-      { id: 'gemini-3.7-flash', label: 'Gemini 3.7 Flash', gated: true },
+      { id: 'gemini-3.6-flash', label: 'Gemini 3.6 Flash', gated: true, ctx: 1_048_576 }, // ctx 출처 https://ai.google.dev/gemini-api/docs/models/gemini-3.6-flash (확인 2026-10-05)
+      { id: 'gemini-3.7-flash', label: 'Gemini 3.7 Flash', gated: true, ctx: 1_048_576 }, // ctx 출처 https://ai.google.dev/gemini-api/docs/models/gemini-3.7-flash (확인 2026-10-05)
     ],
   },
   antigravity: {
@@ -110,9 +117,9 @@ export const RUNNERS = {
     name: 'Kimi', kind: 'sdk-compat',
     models: [
       // platform.kimi.ai 모델 문서(2026-07 확인) — K3가 플래그십(1M 컨텍스트), K2.7-code는 코딩 특화
-      { id: 'kimi-k3', label: 'Kimi K3' },
-      { id: 'kimi-k2.7-code', label: 'Kimi K2.7 Code' },
-      { id: 'kimi-k2.6', label: 'Kimi K2.6' },
+      { id: 'kimi-k3', label: 'Kimi K3', ctx: 1_048_576 }, // ctx 출처 https://platform.kimi.ai/docs/pricing/chat (확인 2026-10-05)
+      { id: 'kimi-k2.7-code', label: 'Kimi K2.7 Code', ctx: 262_144 }, // ctx 출처 https://platform.kimi.ai/docs/pricing/chat (확인 2026-10-05)
+      { id: 'kimi-k2.6', label: 'Kimi K2.6', ctx: 262_144 }, // ctx 출처 https://platform.kimi.ai/docs/pricing/chat (확인 2026-10-05)
     ],
   },
   openrouter: {
@@ -137,21 +144,21 @@ export const RUNNERS = {
       //    발행 뒤 무료 모델이 죽으면 원격 오버레이로 먼저 막는다 — **retire + add(대체 모델) + alias(죽은 id→대체) 3종 세트**. retire만 하면 온보딩
       //    상수는 그대로 벤더로 나간다(oneshot은 alias 목적지가 카탈로그에 없으면 첫 무료 모델로 폴백). 코드 카탈로그·상수는 다음 발행에.
       //    scripts/gen-model-catalog.mjs의 LEGACY에도 같은 retire/alias를 적어야 발행이 핫픽스를 덮어쓰지 않는다(분리 검수 H-1).
-      { id: 'nvidia/nemotron-3.5-lightning:free', label: 'Nemotron 3.5 Lightning (Free)', free: true },
-      { id: 'nvidia/nemotron-3-super-120b-a12b:free', label: 'Nemotron 3 Super 120B', free: true },
+      { id: 'nvidia/nemotron-3.5-lightning:free', label: 'Nemotron 3.5 Lightning (Free)', free: true, ctx: 1_000_000 }, // ctx 출처 https://openrouter.ai/api/v1/models/nvidia/nemotron-3.5-lightning:free/endpoints (확인 2026-10-05)
+      { id: 'nvidia/nemotron-3-super-120b-a12b:free', label: 'Nemotron 3 Super 120B', free: true, ctx: 262_144 }, // ctx 출처 https://openrouter.ai/api/v1/models/nvidia/nemotron-3-super-120b-a12b:free/endpoints (확인 2026-10-05)
       // ── 유료 — 잔액이 있는 사용자가 명시 선택(품질·속도 우위)
-      { id: 'anthropic/claude-haiku-4.5', label: 'Claude Haiku 4.5' },
-      { id: 'openai/gpt-5.5', label: 'GPT-5.5' },
+      { id: 'anthropic/claude-haiku-4.5', label: 'Claude Haiku 4.5', ctx: 200_000 }, // ctx 출처 https://openrouter.ai/api/v1/models/anthropic/claude-haiku-4.5/endpoints (확인 2026-10-05)
+      { id: 'openai/gpt-5.5', label: 'GPT-5.5', ctx: 1_050_000 }, // ctx 출처 https://openrouter.ai/api/v1/models/openai/gpt-5.5/endpoints (확인 2026-10-05)
       // 2026-09-01 스모크 3/3 통과 추가분(grok-4.6·glm-5.3·gemini-3.7-flash). anthropic/claude-fable-5.1은
       // 같은 스모크에서 402(계정 잔액 — 모델 결함 아님)라 규칙대로 미등재: 잔액 충전 후 스모크 통과 시 추가.
-      { id: 'google/gemini-3.7-flash', label: 'Gemini 3.7 Flash' },
-      { id: 'x-ai/grok-4.6', label: 'Grok 4.6' },
-      { id: 'x-ai/grok-4.5', label: 'Grok 4.5' },
-      { id: 'minimax/minimax-m3', label: 'MiniMax M3' },
-      { id: 'qwen/qwen3.7-max', label: 'Qwen3.7 Max' },
-      { id: 'moonshotai/kimi-k3', label: 'Kimi K3 (OpenRouter)' }, // 직접 연결(kimi 러너)이 더 저렴 — 단일 키 사용자용
-      { id: 'z-ai/glm-5.3', label: 'GLM-5.3 (OpenRouter)' },       // 동일 — 직접 연결(glm 러너) 우선 권장
-      { id: 'z-ai/glm-5.2', label: 'GLM-5.2 (OpenRouter)' },
+      { id: 'google/gemini-3.7-flash', label: 'Gemini 3.7 Flash', ctx: 1_048_576 }, // ctx 출처 https://openrouter.ai/api/v1/models/google/gemini-3.7-flash/endpoints (확인 2026-10-05)
+      { id: 'x-ai/grok-4.6', label: 'Grok 4.6', ctx: 500_000 }, // ctx 출처 https://openrouter.ai/api/v1/models/x-ai/grok-4.6/endpoints (확인 2026-10-05)
+      { id: 'x-ai/grok-4.5', label: 'Grok 4.5', ctx: 500_000 }, // ctx 출처 https://openrouter.ai/api/v1/models/x-ai/grok-4.5/endpoints (확인 2026-10-05)
+      { id: 'minimax/minimax-m3', label: 'MiniMax M3', ctx: 262_144 }, // ctx 출처 https://openrouter.ai/api/v1/models/minimax/minimax-m3/endpoints (확인 2026-10-05)
+      { id: 'qwen/qwen3.7-max', label: 'Qwen3.7 Max', ctx: 1_000_000 }, // ctx 출처 https://openrouter.ai/api/v1/models/qwen/qwen3.7-max/endpoints (확인 2026-10-05)
+      { id: 'moonshotai/kimi-k3', label: 'Kimi K3 (OpenRouter)', ctx: 250_000 }, // 직접 연결(kimi 러너)이 더 저렴 — 단일 키 사용자용 · ctx 출처 https://openrouter.ai/api/v1/models/moonshotai/kimi-k3/endpoints (확인 2026-10-05)
+      { id: 'z-ai/glm-5.3', label: 'GLM-5.3 (OpenRouter)', ctx: 262_144 },       // 동일 — 직접 연결(glm 러너) 우선 권장 · ctx 출처 https://openrouter.ai/api/v1/models/z-ai/glm-5.3/endpoints (확인 2026-10-05)
+      { id: 'z-ai/glm-5.2', label: 'GLM-5.2 (OpenRouter)', ctx: 262_144 }, // ctx 출처 https://openrouter.ai/api/v1/models/z-ai/glm-5.2/endpoints (확인 2026-10-05)
     ],
   },
   grok: {
@@ -170,9 +177,9 @@ export const RUNNERS = {
       // grok-4.6 — docs.x.ai(2026-09-01) 권장 모델(500k). 존재 실측 확정(같은 차등 프로브: fake key +
       //   grok-4.6 → "Incorrect API key" / grok-4.7·grok-5 → "Model not found") + OpenRouter x-ai/grok-4.6
       //   tool_use 왕복 통과. 직접 연결 실키 왕복은 이 기기 저장 자격 만료로 미실시 — 4.5와 같은 상태.
-      { id: 'grok-4.6', label: 'Grok 4.6' },
-      { id: 'grok-4.5', label: 'Grok 4.5' },
-      { id: 'grok-4.3', label: 'Grok 4.3' },
+      { id: 'grok-4.6', label: 'Grok 4.6', ctx: 500_000 }, // ctx 출처 https://docs.x.ai/docs/models (확인 2026-10-05)
+      { id: 'grok-4.5', label: 'Grok 4.5', ctx: 500_000 }, // ctx 출처 https://docs.x.ai/docs/models (확인 2026-10-05)
+      { id: 'grok-4.3', label: 'Grok 4.3', ctx: 1_000_000 }, // ctx 출처 https://docs.x.ai/docs/models (확인 2026-10-05)
     ],
   },
   glm: {
@@ -180,13 +187,13 @@ export const RUNNERS = {
     models: [
       // docs.z.ai(2026-09-01 확인) — 5.3이 최신 표준·5.3-flash가 경량. OpenRouter 경유 z-ai/glm-5.3
       // tool_use 왕복 통과로 동일 모델 실증(직접 연결 자격은 이 기기에 없음).
-      { id: 'glm-5.3', label: 'GLM-5.3' },
-      { id: 'glm-5.3-flash', label: 'GLM-5.3 Flash' },
+      { id: 'glm-5.3', label: 'GLM-5.3', ctx: 1_000_000 }, // ctx 출처 https://docs.z.ai/guides/llm/glm-5.3 (확인 2026-10-05)
+      { id: 'glm-5.3-flash', label: 'GLM-5.3 Flash', ctx: 1_000_000 }, // ctx 출처 https://docs.z.ai/guides/llm/glm-5.3-flash (확인 2026-10-05)
       // 5.2(2026-06-13 출시) — 이전 플래그십(1M 컨텍스트)
-      { id: 'glm-5.2', label: 'GLM-5.2' },
-      { id: 'glm-5.1', label: 'GLM-5.1' },
-      { id: 'glm-4.6', label: 'GLM-4.6' },
-      { id: 'glm-4.5-air', label: 'GLM-4.5 Air' },
+      { id: 'glm-5.2', label: 'GLM-5.2', ctx: 1_000_000 }, // ctx 출처 https://docs.z.ai/guides/llm/glm-5.2 (확인 2026-10-05)
+      { id: 'glm-5.1', label: 'GLM-5.1', ctx: 200_000 }, // ctx 출처 https://docs.z.ai/guides/llm/glm-5.1 (확인 2026-10-05)
+      { id: 'glm-4.6', label: 'GLM-4.6', ctx: 200_000 }, // ctx 출처 https://docs.z.ai/guides/llm/glm-4.6 (확인 2026-10-05)
+      { id: 'glm-4.5-air', label: 'GLM-4.5 Air', ctx: 128_000 }, // ctx 출처 https://docs.z.ai/guides/llm/glm-4.5 (확인 2026-10-05)
     ],
   },
 };

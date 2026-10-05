@@ -611,6 +611,11 @@ export function mergeThread(localBuf, remoteBuf, prefer = 'remote') {
   // sessionDevice는 sessionId를 제공한 쪽과 짝으로 — 어긋나면 남의 기기 세션을 내 것으로 오판한다
   merged.sessionDevice = (primary.sessionId != null ? primary.sessionDevice : other.sessionDevice) ?? null;
   if (L.scopedSessions || R.scopedSessions) merged.scopedSessions = { ...other.scopedSessions, ...primary.scopedSessions }; // 메신저 채널 세션은 채널 단위로 합친다(세션·기기 짝은 항목 안에 함께 있다)
+  // 누적 요약(thread-context.mjs {text, upto}) — 통째로 한쪽 것을 쓰면 다른 기기의 더 최신 요약·그 기기에만 있는 채널 요약이 사라져 같은 몫을 다시 요약한다(재검수 LOW).
+  // 키마다 upto(요약이 덮는 마지막 메시지 ts)가 큰 쪽, 같으면 최근 편집 쪽. 회수된 채널의 요약은 아래 applyDeparted가 지운다.
+  const newerSum = (p, o) => (!p ? o : !o ? p : (Number(o.upto) || 0) > (Number(p.upto) || 0) ? o : p);
+  const sum = newerSum(primary.summary, other.summary); if (sum) merged.summary = sum; else delete merged.summary;
+  if (L.scopedSummaries || R.scopedSummaries) merged.scopedSummaries = Object.fromEntries([...new Set([...Object.keys(other.scopedSummaries ?? {}), ...Object.keys(primary.scopedSummaries ?? {})])].map((k) => [k, newerSum(primary.scopedSummaries?.[k], other.scopedSummaries?.[k])]));
   // 채널 기억 회수 각인(departed.mjs) — 채널마다 늦은 시각으로 합치고 병합 결과에 다시 적용한다. 다른 기기가 아직 든 옛 채널 줄·세션이 합집합으로 되살아나지 않게.
   const departed = mergeDeparted(L.departed, R.departed);
   if (departed) { merged.departed = departed; applyDeparted(merged); } else delete merged.departed;

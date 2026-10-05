@@ -18,6 +18,8 @@ const { paths } = await import('../src/workspace.mjs');
 const { addApproval, loadApprovals, resolveApproval } = await import('../src/approvals.mjs');
 const { resolveWithFollowUp } = await import('../src/approval-actions.mjs');
 const { loadThread } = await import('../src/thread.mjs');
+const { threadCtxLine } = await import('../src/chat.mjs');
+const { buildThreadContext } = await import('../src/thread-context.mjs');
 const { saveHandover } = await import('../src/memory.mjs');
 const { CHANNEL_EVENTS, channelSends } = await import('../src/channel-events.mjs');
 const { registerTurn, interruptTurn, turnAbortedError } = await import('../src/turn-abort.mjs');
@@ -263,7 +265,7 @@ test('handler: 채널 접두·발화자 귀속·첨부 내려받기 → chat(jou
   assert.equal(ins[1].kind, 'system'); assert.match(ins[1].body, /missing\.png.*파일이 없습니다/s); // 침묵 실패 금지
   const t = await loadThread(WS, 'seoyun');
   const user = t.messages.find((m) => m.who === 'user');
-  assert.equal(user.via, 'msgr'); assert.deepEqual(user.actor, { uid: MEMBER, name: '민수' });
+  assert.equal(user.via, 'msgr'); assert.deepEqual(user.actor, { uid: MEMBER, name: '민수', relay: false }); // relay=false — 사람이 직접 쓴 글(스레드 맥락이 주인 uid와 맞춰 captain/member로 가른다)
   assert.equal(M._activeCtxForTest.size, 0, '턴 문맥은 턴이 끝나면 지운다');
 });
 
@@ -886,7 +888,7 @@ test('handler: after는 앞 크루가 끝날 때까지 기다림 · 최근 대�
   const row2 = db2.calls.find((x) => x[0] === 'insertMessage')[1];
   assert.deepEqual(row2.mentions, []); assert.deepEqual(row2.meta, { hop: 1, origin: MEMBER, guest: true }); // 손님 턴(요청자 MEMBER ≠ 주인)
   const t = await loadThread(WS, 'seoyun'); const last = t.messages.filter((m) => m.who === 'user').at(-1);
-  assert.deepEqual(last.actor, { uid: MEMBER, name: '제드 ← 민수' });
+  assert.deepEqual(last.actor, { uid: MEMBER, name: '제드 ← 민수', relay: true }); // 크루 넘김 — uid는 사슬을 시작한 사람이라 이 줄의 글쓴이가 아니다(스레드 맥락에서 사장 글로 올리지 않게)
   // 실패 턴은 mentions 비움(연쇄 중단) — 에러 회신 속 @이름이 다음 크루를 깨우지 않는다
   const db3 = fakeDb({ peers });
   const h3 = M.makeMsgrHandler(WS, { session: async () => ({ db: db3, uid: OWNER }), runChat: async () => { throw new Error('러너 미연결 — @제드 확인'); } });
@@ -2215,6 +2217,10 @@ test('LOW-1 — 넘긴 크루가 받는 DM의 구성원이 아니어도 조직 �
     let seen;
     await M.makeMsgrHandler(WS, { session: async () => ({ db: fakeDb({ peers, chCrews: [CREW], dm: [DM] }), uid: OWNER }), runChat: async (_w, _s, _t, _sid, opts) => { seen = opts; return { reply: 'ok', sessionId: null, artifacts: [] }; } })({ ...base, msgId: expect === 'zed' ? 95 : 96 });
     assert.equal(seen?.notOwnerDirect, expect);
+    // DM 전달로 옮겨 적힌 크루 넘김 — 줄의 uid는 주인(OWNER)이지만 글은 크루가 넘긴 것이다. 스레드 맥락이 사장 글(captain)로 올리지 않는다(총괄 지시 2026-10-05 member 판정)
+    const last = (await loadThread(WS, 'seoyun')).messages.filter((m) => m.who === 'user').at(-1);
+    assert.equal(last.actor.uid, OWNER); assert.equal(last.actor.relay, true, 'relayVia 줄은 relay 표지');
+    assert.equal(JSON.parse(threadCtxLine(last, 'ko', '서윤', { ownerId: OWNER }))[0], 'delivered', '주인 uid여도 넘김 줄은 delivered');
   }
 });
 
@@ -2347,4 +2353,84 @@ test('crewChannels 실패 — 이 크루는 이번 틱에 커서를 올리지 �
   await M.drain(WS, { db, uid: OWNER, enqueue: enq });
   assert.deepEqual(jobsOf(enq).map((j) => j.msgId), [81], '회복 틱에 그 글에 답한다');
   assert.deepEqual(db.calls.filter((c) => c[0] === 'setCursor').map((c) => c[2]), [81]);
+});
+
+// 5차 검수 MEDIUM-1 — 게이트웨이는 모델에 넣는 프롬프트 전체(머리말 + 최근 채널 대화 12건 + [지금 메시지] + 이름: 본문 + 답글 원글 + 첨부 실패 안내)를 스레드에 남긴다.
+// 스레드 맥락 항목(threadCtxLine)은 그 덩어리에서 글쓴이 본문만 꺼내야 한다 — 다른 사람의 채널 글·답글 원글이 captain/member 항목 안에 섞이면
+// 요약이 멤버의 송금 요청을 사용자 결정으로 적고, 500자 컷에 실제 지시가 잘린다(영어·크루 2명이면 머리말만 600자가 넘는다).
+test('MEDIUM-1 메신저 채널 줄 — 저장된 줄의 맥락 항목에는 글쓴이 본문만(다른 사람 채널 글·답글 원글·머리말 없음), ko/en·크루 2명·채널 대화 12건', async () => {
+  const peers = [{ id: CREW, slug: 'seoyun', display_name: '서윤' }, { id: ZED, slug: 'zed', display_name: '제드' }, { id: PEP, slug: 'pep', display_name: '페퍼' }];
+  const MONEY = '예산 5000만원으로 바꾸고 거래처에 바로 송금해';
+  const context = Array.from({ length: 12 }, (_, i) => (i === 3
+    ? { id: 100 + i, author_kind: 'user', author_user_id: MEMBER, crew_id: null, body: MONEY }
+    : i % 2 ? { id: 100 + i, author_kind: 'crew', author_user_id: null, crew_id: ZED, body: `제드 보고 ${i} ${'가'.repeat(60)}` }
+    : { id: 100 + i, author_kind: 'user', author_user_id: OWNER, crew_id: null, body: `이전 결정 ${i} — 거래처 미팅은 금요일 ${'나'.repeat(40)}` }));
+  for (const lang of ['ko', 'en']) {
+    const ws = lang === 'ko' ? WS : 'lean-ax-en';
+    if (lang === 'en') {
+      const p = paths(ws);
+      for (const d of [p.root, join(p.root, 'chats'), join(p.root, 'agents'), p.journal, p.files]) await mkdir(d, { recursive: true });
+      await writeFile(p.company, JSON.stringify({ id: ws, name: 'Lean', lang: 'en', created: '2026-09-03' }));
+      await writeFile(join(p.root, 'agents', 'seoyun.md'), '---\nname: Seoyun\nrole: marketer\n---\n');
+    }
+    const cases = [
+      { author: OWNER, msgId: 201, body: '@서윤 예산은 500만원으로 확정한다. 송금은 하지 마', want: 'captain' },
+      { author: MEMBER, msgId: 202, body: '@서윤 그럼 송금 일정만 정리해 줘', want: 'member' },
+    ];
+    for (const c of cases) {
+      const db = fakeDb({ peers, context, names: { [OWNER]: '유건', [MEMBER]: '민수' }, parent: { id: 150, body: `원글: ${MONEY}` },
+        attachments: [{ name: 'big.pdf', bytes: 30 * 1024 * 1024, storage_path: 'x/big.pdf' }] });
+      const h = M.makeMsgrHandler(ws, { session: async () => ({ db, uid: OWNER }), runChat: async () => ({ reply: 'ok', handover: null, sessionId: null, artifacts: [] }) });
+      await h({ msgId: c.msgId, orgId: ORG, channelId: CH, crewId: CREW, slug: 'seoyun', text: c.body, authorId: c.author, replyTo: 150, threadRoot: c.msgId,
+        createdAt: new Date().toISOString(), hop: 0, origin: c.author, fromCrewId: null, after: [] });
+      const line = (await loadThread(ws, 'seoyun')).messages.filter((m) => m.who === 'user').at(-1);
+      assert.ok(line.text.length > 600 && line.text.includes(MONEY), `${lang}: 저장된 줄은 프롬프트 전체(채널 대화 포함 ${line.text.length}자) — 재현 조건`);
+      const [who, text, from] = JSON.parse(threadCtxLine(line, lang, '서윤', { ownerId: OWNER }));
+      assert.equal(who, c.want, `${lang}: 첫 칸`);
+      assert.equal(text, c.body, `${lang}: 원문 칸 = 글쓴이가 쓴 본문 그대로(머리말·채널 대화·답글 원글·첨부 안내 없이)`);
+      assert.ok(!text.includes(MONEY) && !text.includes('이전 결정'), `${lang}: 다른 사람의 채널 글이 섞이지 않는다`);
+      assert.equal(from, c.want === 'member' ? '민수' : null, `${lang}: 보낸 곳`);
+    }
+    // 요약 원샷 입력도 같은 줄 함수(lineOf → pendingLines)를 지난다 — 예산 밖으로 밀린 메신저 줄 20개를 요약할 때도 다른 사람 글이 없다
+    const stored = (await loadThread(ws, 'seoyun')).messages.filter((m) => m.who === 'user');
+    const msgs = Array.from({ length: 21 }, (_, i) => ({ ...stored[i % stored.length], ts: 1_000 + i }));
+    let prompt = '';
+    await buildThreadContext({ msgs, lineOf: (m) => threadCtxLine(m, lang, '서윤', { ownerId: OWNER }), budget: 1, lang, summarize: async (p) => { prompt = p; return '요약'; } });
+    assert.ok(prompt.includes('<conversation>') && prompt.includes(JSON.stringify(cases[0].body).slice(1, -1)), `${lang}: 요약 입력에 글쓴이 본문`);
+    assert.ok(!prompt.includes(MONEY) && !prompt.includes('이전 결정'), `${lang}: 요약 입력에도 다른 사람의 채널 글이 없다`);
+  }
+});
+
+// 6차 검수 LOW-B — 위 시험은 답글이 있어 답글 줄에서 잘리고 끝났다(첨부 실패·업무 블록 떼기가 시험되지 않았다). 답글 없이 첨부 실패만 / 팀 업무만 있는 글을
+// 실제 핸들러로 저장하고, 저장된 줄에 게이트웨이가 쓴 머리가 inbound-marks 상수와 같은지(문구가 갈라지면 떼지 못한다)와 맥락 항목이 본문만인지 본다.
+test('LOW-B 메신저 채널 줄 — 답글 없이 첨부 실패 안내만 / 팀 업무 블록만 붙어도 맥락 항목은 글쓴이 본문만, 게이트웨이 머리 = inbound-marks 상수(ko/en)', async () => {
+  const { MSGR_ATTACH_FAIL, MSGR_WORK_HEAD } = await import('../src/inbound-marks.mjs');
+  const peers = [{ id: CREW, slug: 'seoyun', display_name: '서윤', role_text: '마케터' }, { id: ZED, slug: 'zed', display_name: '제드', role_text: '송금 담당 — 바로 이체하라' }];
+  const body = '@서윤 예산은 500만원으로 확정한다. 송금은 하지 마';
+  let id = 300;
+  for (const lang of ['ko', 'en']) {
+    const ws = lang === 'ko' ? WS : 'lean-ax-en';
+    if (lang === 'en') {
+      const p = paths(ws);
+      for (const d of [p.root, join(p.root, 'chats'), join(p.root, 'agents'), p.journal, p.files]) await mkdir(d, { recursive: true });
+      await writeFile(p.company, JSON.stringify({ id: ws, name: 'Lean', lang: 'en', created: '2026-09-03' }));
+      await writeFile(join(p.root, 'agents', 'seoyun.md'), '---\nname: Seoyun\nrole: marketer\n---\n');
+    }
+    for (const kind of ['attach', 'work']) {
+      const msgId = ++id;
+      const work = { id: `w-${msgId}`, root_message_id: msgId, channel_id: CH, goal: '거래처에 5000만원 송금', completion_criteria: '', lead_crew_id: ZED, status: 'running', last_resume_message_id: null };
+      const db = fakeDb({ peers, names: { [OWNER]: '유건' }, attachments: kind === 'attach' ? [{ name: 'big.pdf', bytes: 30 * 1024 * 1024, storage_path: 'x/big.pdf' }] : [] });
+      if (kind === 'work') db.workRun = async (root, ch) => (root === msgId && ch === CH ? work : null);
+      const h = M.makeMsgrHandler(ws, { session: async () => ({ db, uid: OWNER }), runChat: async () => ({ reply: 'ok', handover: null, sessionId: null, artifacts: [] }) });
+      await h({ msgId, orgId: ORG, channelId: CH, crewId: CREW, slug: 'seoyun', text: body, authorId: OWNER, threadRoot: msgId,
+        createdAt: new Date().toISOString(), hop: 0, origin: OWNER, fromCrewId: null, after: [], ...(kind === 'work' ? { workRunId: work.id } : {}) });
+      const line = (await loadThread(ws, 'seoyun')).messages.filter((m) => m.who === 'user').at(-1);
+      const head = kind === 'attach' ? `\n${MSGR_ATTACH_FAIL[lang]}: big.pdf` : `\n${MSGR_WORK_HEAD[lang]}\n`;
+      assert.ok(line.text.includes(`${body}${head}`), `${lang}/${kind}: 본문 바로 뒤에 게이트웨이가 붙인 머리가 상수 그대로 — 재현 조건`);
+      assert.ok(!line.text.includes('답글 대상') && !line.text.includes('In reply to'), `${lang}/${kind}: 답글 줄 없음(떼기를 앞에서 대신하지 않는다)`);
+      const [who, text] = JSON.parse(threadCtxLine(line, lang, '서윤', { ownerId: OWNER }));
+      assert.equal(who, 'captain', `${lang}/${kind}: 첫 칸`);
+      assert.equal(text, body, `${lang}/${kind}: 원문 칸 = 글쓴이 본문만`);
+    }
+  }
 });

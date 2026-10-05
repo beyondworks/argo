@@ -19,7 +19,11 @@ export async function runOneShot(wsId, prompt, opts = {}) {
   // 아래 AbortController가 같은 값을 쓴다. 러너에 따라 상한이 갈리면 같은 작업이 codex로 뽑히면
   // 잘리고 claude로 뽑히면 안 잘린다 — 이 파일의 존재 이유(러너 독립)와 정면 충돌한다.
   // 오래 걸리는 배치(기억 정리)는 호출자가 명시로 늘린다.
-  const { lang = 'ko', model = null, maxTurns = 1, timeoutMs = 120_000, readOnly = false, sdk = null, onText = null, only = null, __query = query, __exclude = null, __crashRetry = false, __failures = [] } = opts;
+  const { lang = 'ko', model = null, maxTurns = 1, timeoutMs = 120_000, readOnly = false, sdk = null, onText = null, only = null, pin = null, signal = null, __query = query, __exclude = null, __crashRetry = false, __failures = [] } = opts;
+  // signal — 호출자(크루 턴)의 중단 신호. 사장이 정지하면 원샷도 바로 끊고 {aborted:true}로 던진다 — 시간 초과 문구·크래시 재시도·러너 교체로 바꾸지 않는다
+  // (턴 안의 대화 요약이 정지를 무시하고 최대 90초를 더 돌던 자리 — 분리 검수 MEDIUM, chat.mjs threadContextFor).
+  const abortedErr = (cause) => Object.assign(new Error('중단됨'), { aborted: true, ...(cause ? { cause } : {}) });
+  if (signal?.aborted) throw abortedErr();
   // sdk — Claude SDK 경로에만 적용하는 속도·격리 설정(오피스 번역: 도구 목록 비우기·짧은 지시문·생각 끄기·계정 원격 MCP 차단). 권한 훅·자격·작업 폴더는 덮지 못하게 허용 목록으로만
   const sdkTune = Object.fromEntries(Object.entries(sdk ?? {}).filter(([k]) => ['tools', 'systemPrompt', 'thinking', 'effort', 'strictMcpConfig', 'mcpServers'].includes(k)));
   // __failures는 재귀에 **명시 전달**(아래 두 recursion) — opts를 직접 오염시키면 호출자가 재사용하는
@@ -27,7 +31,8 @@ export async function runOneShot(wsId, prompt, opts = {}) {
   // 해석 실패(.secrets.json 손상 등)는 미가용으로 — 조용한 호스트 스캐빈징 금지(검수 MEDIUM, chat.mjs와 동일)
   // want=null(무선호) — 이 경로는 러너 독립이 명세라 claude 선호를 가장하지 않는다(선택 순서는 동일)
   // only { runner, types } — 러너와 자격 방식을 고정한다(오피스 번역: 주인의 Claude 구독만, API 키·다른 러너로 넘어가지 않는다). 아래 자가치유도 건너뛴다
-  const resolved = only
+  // pin — 이 러너로만(크루 턴이 이미 고른 러너·자격 그대로, 다른 러너로 넘어가지 않는다 — 대화 요약은 그 크루의 같은 러너로: thread-context.mjs)
+  const resolved = pin ? { runner: pin, available: true } : only
     ? { runner: only.runner, available: only.types.includes(await runnerCredType(wsId, only.runner).catch(() => null)) }
     : await resolveRunner(wsId, null, { exclude: __exclude })
       .catch(() => ({ runner: 'claude', available: false, fellBack: false, credButNoCli: [] }));
@@ -53,6 +58,8 @@ export async function runOneShot(wsId, prompt, opts = {}) {
   const runner = resolved.runner;
   let hangGuard = null;            // SDK 경로 hang 상한 타이머 — 아래 finally에서 항상 해제
   const ac = new AbortController(); // catch에서도 봐야 한다(중단 원인을 정직한 문구로 바꾸기 위해)
+  const onOuterAbort = () => ac.abort();
+  signal?.addEventListener('abort', onOuterAbort, { once: true }); // 호출자 중단 → 세 실행 경로(CLI·네이티브·SDK) 공통 ac
   try {
     if (isCliTurn(runner, await runnerCredType(wsId, runner))) { // gemini API 키는 네이티브(아래 nativeOneShot)
       const cred = await runnerCredEnv(wsId, runner); // 회사 자격 우선, 없으면 호스트 로그인
@@ -62,7 +69,7 @@ export async function runOneShot(wsId, prompt, opts = {}) {
       // readOnly면 caps를 넘겨도 externalExec가 무력화하지만, 계약을 명시적으로 — 순수 생성 턴은
       // 도구가 필요 없다(신뢰 불가 원문 요약이 전권으로 돌지 않게, 검수 HIGH-1). 기본은 전권 유지.
       const caps = readOnly ? { fs: false, browser: false, shell: false, bypass: false } : await loadCapabilities();
-      const text = (await externalExec({ runner, cwd: paths(wsId).root, prompt, cred, caps, timeoutMs, readOnly })).trim();
+      const text = (await externalExec({ runner, cwd: paths(wsId).root, prompt, cred, caps, timeoutMs, readOnly, signal: ac.signal })).trim();
       if (!text) throw new Error('empty-reply');
       return { runner, text, usage: {}, costUsd: null }; // 외부 CLI — 토큰 사용량 비노출(채팅 경로와 동일)
     }
@@ -148,6 +155,7 @@ export async function runOneShot(wsId, prompt, opts = {}) {
     }
     return { runner, text: text.trim(), usage, costUsd: runner === 'openrouter' ? null : costUsd };
   } catch (err) {
+    if (signal?.aborted) throw abortedErr(err); // 호출자 중단이 먼저 — 아래 시간 초과 문구·크래시 재시도·러너 교체를 타지 않는다
     // 중단 원인 정정 — abort는 루프 안에서 throw하고 SDK 메시지가 "process aborted by user"다.
     // 그대로 두면 아무도 정지를 안 눌렀는데 "사용자가 중단"으로 읽히고, 자가치유 로그·최종 안내
     // 어디에도 "상한에 걸렸다"는 흔적이 없다 — 이 PR이 없애려던 무증상성이 문구로 남는다(검수 M-1).
@@ -190,7 +198,7 @@ export async function runOneShot(wsId, prompt, opts = {}) {
     // "한 벤더가 죽으면 회사가 선다"는 러너 중립성 원칙 위반이다.)
     // want=null — 선호를 두지 않는다(이전 'claude'는 같은 파일 상단 주석과 모순된 표류였다).
     // (__crashRetry는 ...opts로 이월된다 — 크래시 재시도는 이 체인 전체에서 1회다.)
-    if (!only) {
+    if (!only && !pin) {
       const tried = excludeWith(__exclude, runner);
       const alt = await resolveRunner(wsId, null, { exclude: tried }).catch(() => null);
       if (alt?.available && !tried.includes(alt.runner)) {
@@ -227,6 +235,7 @@ export async function runOneShot(wsId, prompt, opts = {}) {
     throw Object.assign(new Error(formatOneShotFailure(__failures, runner, e, lang)), { cause: e });
   } finally {
     if (hangGuard) clearTimeout(hangGuard); // 성공·실패·자가치유 어느 경로로 빠져나가도 타이머를 남기지 않는다
+    signal?.removeEventListener('abort', onOuterAbort);
   }
 }
 

@@ -27,7 +27,7 @@ import { createAgentCard } from '../persona.mjs'; // I-5: 회사 노드가 요�
 import { paths, loadCompany, updateCompany } from '../workspace.mjs';
 import { enqueueJob, DEFER } from './queue.mjs';
 import { pick } from './protocol.mjs';
-import { msgrHead, MSGR_NOW, msgrContextHead, msgrReplyLine } from '../inbound-marks.mjs';
+import { msgrHead, MSGR_NOW, msgrContextHead, msgrReplyLine, MSGR_ATTACH_FAIL } from '../inbound-marks.mjs';
 import { stripLoopVerdict } from '../loop-verdict.mjs'; // 루프 회차 채널 글에서 판정 표지만 뺀다(판정은 replyForChecks 원문) // 머리말 = 1:1 화면 출처 카드(채널 이름·본문 판정)와 같은 함수
 import { beatGateway } from './persist.mjs';
 import { chat } from '../chat.mjs';
@@ -1276,7 +1276,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
         await mkdir(join(paths(wsId).vault, 'files', 'msgr'), { recursive: true });
         await writeFile(join(paths(wsId).vault, rel), buf);
         attachments.push({ rel, name: safeName(a.name), mime: a.mime ?? '', isImage: isImagePath(rel) });
-      } catch (e) { text += `\n${pick('(첨부 수신 실패', '(Attachment failed', lang)}: ${safeName(a.name)} — ${String(e.message).slice(0, 80)})`; }
+      } catch (e) { text += `\n${pick(MSGR_ATTACH_FAIL.ko, MSGR_ATTACH_FAIL.en, lang)}: ${safeName(a.name)} — ${String(e.message).slice(0, 80)})`; } // 머리는 inbound-marks(스레드 맥락이 본문에서 뗀다)
     }
     text += workPrompt(work, peers, job.crewId, lang);
     const orgRow = envelope?.org ?? (job.orgId ? await db.org(job.orgId) : null); // 개인 방은 조직이 없다 — org(null)은 uuid 오류로 잡을 영구 재시도시켰다(2026-10-01 라이브). G-3 규칙 주입 키(미러 폴더 = org slug)·채널 이름(채널 범위 규칙)
@@ -1333,7 +1333,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
       replyMeta = rendered.msgrReply.meta;
       await appendTurn(wsId, job.slug, { userMsg: text, reply, handover: turn.handover, sessionId: turn.sessionId, attachments, artifacts: turn.artifacts,
         contextScope: ch.kind === 'dm' ? { kind: 'msgr-dm', channelId: job.channelId, threadRoot: job.threadRoot } : { kind: 'msgr', channelId: job.channelId, threadRoot: job.threadRoot },
-        via: 'msgr', actor: { uid: job.authorId, name: job.fromCrewId ? `${authorName} ← ${humanName}` : authorName } }); // actor = 사람 발화자(who:'user' 고정으로는 구분 불가하던 갭)
+        via: 'msgr', actor: { uid: job.authorId, name: job.fromCrewId ? `${authorName} ← ${humanName}` : authorName, relay: !!(job.fromCrewId || job.relayVia) } }); // actor = 사람 발화자(who:'user' 고정으로는 구분 불가하던 갭). relay = 크루가 넘긴 줄(authorId는 사슬을 시작한 사람이라 이 줄의 글쓴이가 아니다 — 스레드 맥락이 사장 글로 올리지 않게, chat.mjs threadCtxLine)
       // 메신저에는 사고 과정·도구 단계를 싣지 않는다(유건 결정 2026-09-24 — "답변 준비 중"만). 궤적은 주인 쪽 활동 로그가 정본.
     } catch (e) {
       stageLog(job, 'turn-end', now());

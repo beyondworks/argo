@@ -12,6 +12,8 @@ import { join } from 'node:path';
 import { connectMcpServers } from './mcp-client.mjs';
 import { loadNativeSession, saveNativeSession, IMAGE_MAX_B64 } from './session.mjs';
 import { appendEvent } from '../events.mjs';
+import { cacheEligible, withCacheControl } from './prompt-cache.mjs';
+import { compactPlan, compactTranscript, DEFAULT_CONTEXT_TOKENS } from './compact.mjs';
 import { randomUUID } from 'node:crypto';
 
 export const NATIVE_DEFAULT_MAX_TOKENS = 8192; // SDK 기본 32000이 OpenRouter 선불 잔액 402를 부르던 것 완화(실측 2026-09-05)
@@ -136,10 +138,25 @@ async function* run(opts, ac, isInterrupted, inbox = { items: [], closed: false 
   const specs = tools.map((t) => ({ name: t.name, description: t.description, input_schema: ensureRequired(t.input_schema) })); // 벤더로 나가는 스키마의 단일 관문
   const usage = {};
   let steps = 0;
+  const cache = cacheEligible({ wire, base, model }); // 프롬프트 캐시 표지 — 받는다고 확인된 엔드포인트만(prompt-cache.mjs). 표지는 보내는 사본에만 단다
   try {
     yield { type: 'system', subtype: 'init', session_id: sess.id, model, tools: specs.map((s) => s.name),
       mcp_servers: [{ name: 'crew', status: 'connected' }, ...mcp.statuses] };
     sess.messages.push({ role: 'user', content: Array.isArray(prompt) ? prompt : String(prompt) });
+    // 토큰 예산 — 창의 75%를 넘으면 최근 20턴 앞부분을 같은 러너 원샷으로 요약한다(compact.mjs). 요약 호출 토큰도 이 턴 사용량에 합산.
+    const ctxWindow = Number(opts.contextTokens) > 0 ? Number(opts.contextTokens) : DEFAULT_CONTEXT_TOKENS;
+    const plan = compactPlan(sess, { system: systemPrompt, tools: specs, window: ctxWindow });
+    // 요약하는 동안 '앞 대화 정리 중' — SDK 자동 압축과 같은 모양의 상태 이벤트 1회(chat.mjs가 상태 단계 summarize로 옮긴다)
+    if (!plan.skip) yield { type: 'system', subtype: 'status', status: 'compacting', session_id: sess.id };
+    const packed = await compactTranscript(sess, { plan, lang,
+      summarize: async (p) => {
+        let r;
+        // 요약이 실패해도 벤더가 이미 쓴 토큰(e.usage — Gemini MAX_TOKENS·차단 응답 등)은 이 턴 사용량에 합산한다(재검수 LOW)
+        try { r = await nativeOneShot({ env, model, prompt: p, signal: ac.signal, lang, fetchImpl, effort }); } catch (e) { if (e?.usage && !e?.aborted) sumUsage(usage, e.usage); throw e; }
+        sumUsage(usage, r.usage); return r.text;
+      } });
+    if (isInterrupted()) throw Object.assign(new Error('aborted'), { aborted: true });
+    if (packed.compacted) yield { type: 'system', subtype: 'compact_boundary', session_id: sess.id, compact_metadata: { trigger: 'auto', pre_tokens: packed.preTokens } }; // SDK 자동 압축과 같은 모양 — chat.mjs가 스레드에 안내 줄을 남긴다
     for (;;) {
       if (isInterrupted()) throw Object.assign(new Error('aborted'), { aborted: true });
       steps += 1;
@@ -149,8 +166,8 @@ async function* run(opts, ac, isInterrupted, inbox = { items: [], closed: false 
       }
       let res;
       try {
-        res = await callMessages({ wire, base, headers, effort, signal: ac.signal, fetchImpl,
-          body: { model, max_tokens, system: systemPrompt, messages: sess.messages, ...(specs.length ? { tools: specs } : {}) } });
+        const body = { model, max_tokens, system: systemPrompt, messages: sess.messages, ...(specs.length ? { tools: specs } : {}) };
+        res = await callMessages({ wire, base, headers, effort, signal: ac.signal, fetchImpl, body: cache ? withCacheControl(body) : body });
       } catch (e) {
         // 이미 토큰을 쓴 뒤의 실패는 SDK처럼 usage를 실은 실패 result로 낸다(분리 검수 MEDIUM-1: 던지기만 하면 appendUsage 미도달,
         // 예산·대시보드 과소 집계). 원문은 errors[]에 — chat.mjs가 `턴 실패: … — <원문>`으로 감싸도 401/402 정규식이 문다.
