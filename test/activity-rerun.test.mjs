@@ -10,7 +10,11 @@ test('메신저 턴은 다시 실행을 숨기고 메신저에서 다시 보내�
 });
 
 test('사장이 직접 시킨 턴만 그 자리에서 다시 실행한다 — 다른 크루가 건 턴은 숨긴다', () => {
-  for (const source of ['deck', undefined, 'routine', 'trial', 'room']) assert.equal(rerunMode(turn({ source })), 'rerun', String(source));
+  for (const source of ['deck', 'routine', 'trial', 'room']) assert.equal(rerunMode(turn({ source })), 'rerun', String(source));
+  assert.equal(rerunMode(turn({})), 'none', 'source가 없는 이벤트는 출처를 증명할 수 없다 — 사장 직접 턴으로 다시 돌리지 않는다(보안 검토)');
+  assert.equal(rerunMode(turn({ source: null })), 'none');
+  assert.equal(rerunMode(turn({ source: 'deck', from: 'shuri' })), 'none', 'from이 있으면 deck이라도 숨긴다');
+  assert.equal(rerunMode(turn({ source: 'catalog' })), 'none', '목록에 없는 출처는 숨긴다');
   assert.equal(rerunMode(turn({ source: 'crewmail', fromRole: 'captain' })), 'rerun', '사장 쪽지');
   assert.equal(rerunMode(turn({ source: 'delegate', from: 'shuri' })), 'none');
   assert.equal(rerunMode(turn({ source: 'crewmail', from: 'shuri' })), 'none');
