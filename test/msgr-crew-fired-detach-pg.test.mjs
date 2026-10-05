@@ -80,3 +80,27 @@ test('다른 멤버는 남의 크루 상태를 바꾸지 못한다(멤버 세션
   assert.equal(r.status, 0, r.stderr); assert.equal(last(r.stdout ?? ''), '', '오류 없이 0행(RLS)');
   assert.equal(status(), 'active');
 });
+
+// 검수 #fix-cross M3a·L1 — 해고 라우트가 쓰는 갱신(주인·회사·slug로 active 행 전부 분리, db.detachActiveCrews)과
+// 새 행 얼굴 재료 읽기(db.crewLooks — 조직 행과 개인 행)가 실제 RLS를 통과하는지 본다.
+test('해고 라우트의 일괄 분리 — 주인 세션이 slug로 조직·개인 active 행을 한 번에 detached로(이미 분리된 행은 건드리지 않음), 다른 slug·다른 멤버 행은 그대로', { skip }, () => {
+  const personal = last(asUser(U.host, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name, hosting, status, allow, face, avatar_url) values (null, '${U.host}', 'lean', 'luna', '루나', 'local', 'active', 'owner', '{"v":2,"shape":3,"color":4}'::jsonb, 'https://x/p.jpg') returning id`));
+  const other = last(asUser(U.host, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name, hosting, status, allow) values ('${ORG}', '${U.host}', 'lean', 'jun', '준', 'local', 'active', 'all') returning id`));
+  const mateRow = last(asUser(U.mate, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name, hosting, status, allow) values ('${ORG}', '${U.mate}', 'lean', 'luna', '루나', 'local', 'active', 'all') returning id`));
+  assert.equal(status(), 'active');
+  const q = (slug) => `update public.msgr_crews set status = 'detached' where owner_user_id = '${U.host}' and ws_id = 'lean' and slug = '${slug}' and status = 'active' returning id`;
+  const ids = asUser(U.host, q('luna')).split('\n').filter((l) => /^[0-9a-f-]{36}$/.test(l)).sort();
+  assert.deepEqual(ids, [MINE, personal].sort(), '조직 행과 개인 행 둘 다');
+  assert.deepEqual([status(), sql(`select status from public.msgr_crews where id = '${personal}'`)], ['detached', 'detached']);
+  assert.equal(sql(`select status from public.msgr_crews where id = '${other}'`), 'active', '다른 slug는 그대로');
+  assert.equal(sql(`select status from public.msgr_crews where id = '${mateRow}'`), 'active', '다른 멤버의 같은 slug 행은 그대로(주인 조건)');
+  assert.equal(asUser(U.host, q('luna')).split('\n').filter((l) => /^[0-9a-f-]{36}$/.test(l)).length, 0, '두 번째 호출은 0행 — 이미 분리된 행은 다시 쓰지 않는다');
+  assert.deepEqual(kept(), ['1', '1'], '채널 참여·글은 남는다');
+  // 되살리기(다시 영입) — 미러가 쓰는 갱신
+  asUser(U.host, `update public.msgr_crews set status = 'active' where id in ('${MINE}', '${personal}')`);
+});
+
+test('새 행 얼굴 재료 읽기 — 주인 세션은 자기 조직 행과 개인 행을 한 번에 읽는다(개인 행 얼굴·사진 포함)', { skip }, () => {
+  const rows = asUser(U.host, `select org_id is null, status, face is not null, avatar_url from public.msgr_crews where owner_user_id = '${U.host}' and ws_id = 'lean' and slug in ('luna') and status in ('active','available') order by org_id nulls last`).split('\n').filter((l) => l.includes('|'));
+  assert.deepEqual(rows, ['f|active|f|', 't|active|t|https://x/p.jpg'], '조직 행(얼굴 없음)과 개인 행(얼굴·사진 있음)이 같이 읽힌다');
+});

@@ -56,8 +56,10 @@ test('카드에서 사라진(해고) 크루: available 행만 삭제, active·de
     { id: 'a', org_id: O1, slug: 'gone1', display_name: 'x', role_text: null, status: 'available' },
     { id: 'b', org_id: O1, slug: 'gone2', display_name: 'y', role_text: null, status: 'active' },
     { id: 'c', org_id: O1, slug: 'gone3', display_name: 'z', role_text: null, status: 'detached' },
+    { id: 'k', org_id: O1, slug: 'keep', display_name: 'keep', role_text: null, status: 'active' },
   ] });
-  const r = await mirrorInventory('ws1', { db: d, uid: UID, agents: [] });
+  // 카드가 하나라도 있는 틱의 회수 — 빈 카드 목록(폴더 읽기 실패)에서는 지우지 않는다(검수 #fix-cross L4, test/msgr-mirror-edges.test.mjs E11)
+  const r = await mirrorInventory('ws1', { db: d, uid: UID, agents: [{ slug: 'keep', name: 'keep', role: null }] });
   assert.deepEqual(r, { orgs: 1, inserted: 0, updated: 0, removed: 1 });
   assert.deepEqual(d.calls.find(([k]) => k === 'deleteCrews')[1], ['a']);
 });

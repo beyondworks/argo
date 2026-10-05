@@ -161,3 +161,94 @@ test('E9(CX-14). drain 심박 — 카드가 없는 행(해고됐는데 아직 ac
   assert.deepEqual(beat(d3), ['c-jun', 'c-gone'], '목록을 못 읽으면 종전대로');
   assert.match(r.mirrorError ?? '', /ENOENT/, '카드 목록 읽기 실패도 드레인을 죽이지 않고 미러 오류로 드러낸다');
 });
+
+// ── 검수 #fix-cross M3·L4 ──
+const M = await import('../src/gateway/msgr.mjs');
+const RLS = 'msgr db: new row violates row-level security policy (guest org)';
+
+test('E10(검수 M3b). 한 조직의 파견 insert가 계속 실패해도(손님 역할·잠긴 조직) 틱은 끝까지 가서 기준을 잡고, 직무 변경·해고가 쓰인다 — 다른 조직 insert도 막히지 않는다', async () => {
+  const d = db({ orgs: [O1, O2], rows: [
+    { id: 'r1', org_id: O1, slug: 'luna', display_name: '루나', role_text: '마케터', status: 'active' }, { id: 'r2', org_id: O1, slug: 'jun', display_name: '준', role_text: '분석', status: 'active' },
+    { id: 'p1', org_id: null, slug: 'luna', display_name: '루나', role_text: '마케터', status: 'active' }, { id: 'p2', org_id: null, slug: 'jun', display_name: '준', role_text: '분석', status: 'active' }] });
+  const okUpsert = d.upsertAvailable; let guestFails = true;
+  d.upsertAvailable = async (rows) => { if (guestFails && rows.some((r) => r.org_id === O2)) { d.calls.push(['upsert-fail', rows.map((r) => r.org_id)]); throw new Error(RLS); } return okUpsert(rows); };
+  const seen = new Map(); const logs = [];
+  const tick = (agents) => mirrorInventory(WS, { db: d, uid: UID, agents, seen, log: (...a) => logs.push(a.join(' ')) });
+  const row = (id) => d.state.rows.find((r) => r.id === id);
+  // 틱 1 — 손님 조직 insert가 던져도 기준은 잡힌다. 오류는 그대로 드러난다(브리지가 미러 오류로 표시 — msgr_ws_owned_by_other 등이 이 길로 온다)
+  await assert.rejects(tick([card('luna', '마케터', '루나'), card('jun', '분석', '준')]), /row-level security/);
+  assert.ok(seen.has(WS), '던진 틱도 기준을 옮긴다(안 그러면 이 조직이 풀릴 때까지 아래 변화가 영영 안 쓰인다)');
+  // 틱 2 — 카드 직무 변경이 쓰인다
+  await assert.rejects(tick([card('luna', '브랜드 매니저', '루나'), card('jun', '분석', '준')]), /row-level security/);
+  assert.deepEqual([row('r1').role_text, row('p1').role_text], ['브랜드 매니저', '브랜드 매니저'], '카드 직무 변경은 insert 실패와 상관없이 쓰인다');
+  // 틱 3 — 해고(jun 카드 사라짐)가 쓰인다, 행은 지우지 않는다
+  await assert.rejects(tick([card('luna', '브랜드 매니저', '루나')]), /row-level security/);
+  assert.deepEqual([row('r2').status, row('p2').status], ['detached', 'detached'], '해고는 insert 실패와 상관없이 쓰인다');
+  assert.ok(!d.calls.some(([k]) => k === 'deleteCrews'));
+  // 틱 4 — 새 카드: 멀쩡한 조직(O1)의 insert는 손님 조직 때문에 막히지 않는다(묶음이 실패하면 조직별로 다시 넣는다)
+  d.calls.length = 0;
+  await assert.rejects(tick([card('luna', '브랜드 매니저', '루나'), card('newbie', null, '새내기')]), /row-level security/);
+  assert.ok(d.state.rows.some((r) => r.org_id === O1 && r.slug === 'newbie'), 'O1 새 행은 들어간다');
+  assert.deepEqual(d.calls.filter(([k]) => k === 'upsert-fail').map(([, orgs]) => [...new Set(orgs)].sort()), [[O1, O2].sort(), [O2]], '묶음이 실패하면 조직마다 다시 넣는다 — 실패한 것은 손님 조직뿐');
+  // 틱 5 — 막힘이 풀리면 정상, 이미 쓴 변화는 다시 쓰지 않는다
+  guestFails = false; d.calls.length = 0;
+  await tick([card('luna', '브랜드 매니저', '루나'), card('newbie', null, '새내기')]);
+  assert.deepEqual(writes(d).filter(([k]) => k === 'updateCrewInfo'), [], '이미 쓴 직무·해고는 다시 쓰지 않는다');
+  assert.ok(d.state.rows.some((r) => r.org_id === O2 && r.slug === 'luna'), '풀린 조직 행이 들어간다');
+  await tick([card('luna', '브랜드 매니저', '루나'), card('newbie', null, '새내기')]);
+  const idle = d.calls.length; d.calls.length = 0;
+  await tick([card('luna', '브랜드 매니저', '루나'), card('newbie', null, '새내기')]);
+  assert.deepEqual(writes(d), [], '유휴 틱 쓰기 0');
+  assert.ok(idle >= 0);
+});
+
+test('E11(검수 L4). 카드 목록이 비어 있으면(폴더 읽기 실패) 해제(available) 행을 지우지 않는다 — 결재·자동화·실행 기록이 연쇄로 지워진다. 카드가 있으면 종전대로', async () => {
+  const rows = [{ id: 'r1', org_id: O1, slug: 'recalled', display_name: 'x', role_text: null, status: 'available' }, { id: 'r2', org_id: O1, slug: 'live', display_name: 'y', role_text: null, status: 'active' }];
+  const empty = db({ rows });
+  await mirrorInventory(WS, { db: empty, uid: UID, agents: [], seen: new Map() });
+  assert.deepEqual(writes(empty), [], '빈 목록 — 아무것도 쓰지 않는다(삭제 포함)');
+  assert.equal(empty.state.rows.length, 2);
+  const normal = db({ rows });
+  await mirrorInventory(WS, { db: normal, uid: UID, agents: [card('live', null, 'y')], seen: new Map() });
+  assert.deepEqual(writes(normal).filter(([k]) => k === 'deleteCrews'), [['deleteCrews', ['r1']]], '카드가 있는 틱의 회수는 종전대로(카드 없는 해제 행만)');
+});
+
+test('E12(검수 M3a). 해고 라우트가 부르는 detachFiredCrew — 그 slug의 파견 행(조직·개인)을 한 번에 분리하고 기준에서 slug를 빼서, 곧바로 다시 영입해도 미러가 되살린다', async () => {
+  const d = db({ orgs: [O1], rows: [{ id: 'a1', org_id: O1, slug: 'luna', display_name: '루나', role_text: null, status: 'active' }, { id: 'ap', org_id: null, slug: 'luna', display_name: '루나', role_text: null, status: 'active' },
+    { id: 'b1', org_id: O1, slug: 'jun', display_name: '준', role_text: null, status: 'active' }, { id: 'bp', org_id: null, slug: 'jun', display_name: '준', role_text: null, status: 'active' }] });
+  const asked = [];
+  d.detachActiveCrews = async (uid, ws, slug) => { asked.push([uid, ws, slug]); const hit = d.state.rows.filter((r) => r.slug === slug && r.status === 'active'); hit.forEach((r) => { r.status = 'detached'; }); return hit.map((r) => r.id); };
+  const seen = new Map();
+  await mirrorInventory(WS, { db: d, uid: UID, agents: [card('luna', null, '루나'), card('jun', null, '준')], seen });
+  const r = await M.detachFiredCrew(WS, 'luna', { session: async () => ({ uid: UID, db: d }), load: async () => ({ ownerId: UID }), seen });
+  assert.deepEqual(asked, [[UID, WS, 'luna']], '한 번 — 그 slug만');
+  assert.deepEqual(r, { detached: 2 });
+  assert.deepEqual(d.state.rows.map((x) => [x.id, x.status]).sort(), [['a1', 'detached'], ['ap', 'detached'], ['b1', 'active'], ['bp', 'active']]);
+  assert.ok(!seen.get(WS).has('luna') && seen.get(WS).has('jun'), '분리한 slug는 기준에서 뺀다');
+  d.calls.length = 0;
+  await mirrorInventory(WS, { db: d, uid: UID, agents: [card('jun', null, '준')], seen });
+  assert.deepEqual(writes(d), [], '다음 미러 틱은 같은 해고를 다시 쓰지 않는다');
+  await mirrorInventory(WS, { db: d, uid: UID, agents: [card('jun', null, '준'), card('luna', '새 직무', '루나')], seen });
+  assert.deepEqual(writes(d).map(([, id, p]) => [id, p]).sort(), [['a1', { role_text: '새 직무', status: 'active' }], ['ap', { role_text: '새 직무', status: 'active' }]], '다시 영입하면 되살린다');
+});
+
+test('E13(검수 M3a). detachFiredCrew — 메신저 로그인이 없거나 소유자가 아니거나 DB가 실패하면 던지지 않고 건너뛴다, 기준은 그대로 둬서 다음 미러 틱이 처리한다', async () => {
+  const mk = () => db({ orgs: [O1], rows: [{ id: 'a1', org_id: O1, slug: 'luna', display_name: '루나', role_text: null, status: 'active' }] });
+  const d = mk(); const asked = []; d.detachActiveCrews = async (...a) => { asked.push(a); return []; };
+  const seen = new Map([[WS, new Map([['luna', null]])]]);
+  assert.deepEqual(await M.detachFiredCrew(WS, 'luna', { session: async () => null, load: async () => ({ ownerId: UID }), seen }), { skipped: 'session' });
+  assert.deepEqual(await M.detachFiredCrew(WS, 'luna', { session: async () => { throw new Error('offline'); }, load: async () => ({ ownerId: UID }), seen }), { skipped: 'session' });
+  assert.deepEqual(await M.detachFiredCrew(WS, 'luna', { session: async () => ({ uid: UID, db: d }), load: async () => ({ ownerId: 'someone-else' }), seen }), { skipped: 'owner' });
+  assert.deepEqual(await M.detachFiredCrew(WS, 'luna', { session: async () => ({ uid: UID, db: d }), load: async () => { throw new Error('ENOENT'); }, seen }), { skipped: 'company' });
+  assert.deepEqual(await M.detachFiredCrew(WS, 'luna', { session: async () => ({ uid: UID, db: d }), load: async () => ({ ownerId: UID, msgr: { nodeOrgId: O1 } }), seen }), { skipped: 'node' }, '회사 노드(서비스 계정)는 미러하지 않는 회사');
+  assert.deepEqual(asked, [], 'DB를 부르지 않는다');
+  const logs = [];
+  d.detachActiveCrews = async () => { throw new Error('boom'); };
+  assert.deepEqual(await M.detachFiredCrew(WS, 'luna', { session: async () => ({ uid: UID, db: d }), load: async () => ({ ownerId: UID }), seen, log: (...a) => logs.push(a.join(' ')) }), { failed: 'boom' });
+  assert.ok(logs.length === 1);
+  assert.ok(seen.get(WS).has('luna'), '건너뛰거나 실패하면 기준을 그대로 둔다 — 다음 미러 틱이 카드가 사라진 변화로 분리한다');
+  await mirrorInventory(WS, { db: d, uid: UID, agents: [card('jun', null, '준')], seen });
+  assert.equal(d.state.rows[0].status, 'detached', '다음 미러 틱이 처리');
+  const bare = mk();
+  assert.deepEqual(await M.detachFiredCrew(WS, 'luna', { session: async () => ({ uid: UID, db: bare }), load: async () => ({ ownerId: UID }), seen: new Map() }), { skipped: 'session' }, '옛 어댑터(분리 함수 없음)');
+});
