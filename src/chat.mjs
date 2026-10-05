@@ -1405,7 +1405,9 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
   const skills = await loadSkills(wsId, SKILL_INJECT_CAP, lang, skillScope);
   // 활동 기록의 발신자 — 쪽지 배달 턴인데 from이 없으면 사장 쪽지다(scheduler가 fromRole 'captain' 쪽지만 from 없이 돌린다). 화면은 fromRole로 "사장 → 크루"를 그린다.
   // 스킬 주입 뒤에 둔다(그 앞에는 출처 분기를 두지 않는다 — room-slash-commander 핀). 예산 차단 턴(이보다 앞에서 끝남)은 종전 기록 그대로
-  const evFrom = from ? { from } : source === 'crewmail' ? { fromRole: 'captain' } : {};
+  // notOwnerDirect(누가 걸었는지)는 from과 별도 키로 적는다 — 크루 예약 도구로 만든 데스크톱 루틴·장시간 작업은 from 없이 source만 'routine'·'job'이라, 안 적으면 활동 화면 '다시 실행'(rerun.mjs)이
+  // 사장 직접 턴으로 보내 풀 오토 판정(`!from && !notOwnerDirect`)을 통과했다(M1). from은 활동 행의 "A → B" 표시·위임 판정에 따로 쓰이므로 섞지 않는다.
+  const evFrom = { ...(from ? { from } : source === 'crewmail' ? { fromRole: 'captain' } : {}), ...(notOwnerDirect ? { notOwnerDirect } : {}) };
   // 풀 오토 판정(위 설명 주석) — 스킬 주입 뒤에 계산한다: loadSkills 앞에는 출처(source) 분기를 두지 않는다(room-slash-commander 핀). 그 사이 쓰는 곳은 없다.
   // 풀 오토는 사장이 직접 시킨 크루가 자기 일로 하는 턴에만(유건 결정 2026-10-03 "위임도 막기"). 빠지는 턴:
   //   from이 있는 턴 — 위임받은 동료 턴·쪽지 배달 턴·크루가 보낸 세션 메시지의 받는 턴·깨움 턴

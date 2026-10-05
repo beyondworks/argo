@@ -14,7 +14,7 @@ export function rerunMode(e) {
   const src = e.source;
   if (!src) return 'none';
   if (src === 'messenger') return 'messenger';
-  if (e.from) return 'none'; // 다른 크루가 건 턴(위임·쪽지·세션 메시지) — 사장 직접 턴으로 승격하지 않는다
+  if (e.from || e.notOwnerDirect) return 'none'; // 다른 크루가 건 턴(위임·쪽지·세션 메시지·크루 예약 루틴·크루가 건 장시간 작업) — 사장 직접 턴으로 승격하지 않는다. notOwnerDirect = chat.mjs evFrom이 from과 별도로 적는 '누가 걸었는지'(M1)
   if (src === 'crewmail') return e.fromRole === 'captain' ? 'rerun' : 'none'; // 사장이 보낸 쪽지만
   return OWNER_SOURCES.has(src) ? 'rerun' : 'none';
 }
