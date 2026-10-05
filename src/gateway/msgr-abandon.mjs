@@ -17,21 +17,37 @@ import { NOTICE_NO_SESSION } from './queue.mjs';
 // 다시 보내도 같은 결과인 쓰기 실패 — 권한(RLS 42501)·제약(23xxx)·msgr_not_allowed. msgr.mjs permanentWrite와 같은 규칙(그 함수는 파일 밖으로 내보내지 않는다).
 const permanentWrite = (e) => e?.code === '42501' || String(e?.code ?? '').startsWith('23') || /msgr_not_allowed/.test(String(e?.message ?? ''));
 
+/* 실패 로그는 같은 기록·같은 이유면 한 번만(4차 검수 F3) — 세션이 없는 동안 미전송 기록마다 재전송 때마다(시작 때·성공 처리 뒤 60초마다) 한 줄씩 쌓였다
+   (실측: 기록 3건·130초에 12줄 → 수정 뒤 3줄). 상태가 바뀔 때만 다시 쓴다: 이유가 달라지면(세션 없음 → DB 오류) 새로 쓰고, 보내지면 지워서 다음 실패를 다시 쓴다.
+   키 = 회사·안내 종류(jobfail·jobwait)·크루·잡 — 멱등 키(client_msg_id)와 같은 단위. 프로세스 메모리라 앱을 다시 켜면 한 번 더 쓴다. */
+const loggedReason = new Map();
+const LOGGED_MAX = 1000; // .failed는 회사·큐당 50건이 상한이라 넉넉하다 — 넘으면 비운다(최악은 한 줄 더 쓰는 것)
+function logOnce(key, reason, ...line) {
+  if (loggedReason.get(key) === reason) return;
+  if (loggedReason.size >= LOGGED_MAX) loggedReason.clear();
+  loggedReason.set(key, reason);
+  console.error(...line);
+}
+
 /** 안내 글 하나를 채널에 넣는다 — 위 반환 규칙. */
 async function postNotice(wsId, session, job, info, prefix, body) {
   const { channelId, crewId, msgId } = job ?? {};
   if (!channelId || !crewId || msgId == null) return true; // 보낼 곳을 알 수 없는 손상 잡 — 다시 보낼 이유가 없다
+  const jobId = String(info.name ?? msgId).replace(/\.json$/, '');
+  const clientMsgId = `${prefix}:${crewId}:${jobId}`;
+  const logKey = `${wsId}\u0000${clientMsgId}`;
+  const where = `${wsId}/${job.slug}/${msgId}`;
   try {
     const c = await session();
-    if (!c?.db) { console.error(`[argo] 큐 안내를 넣을 수 없어 건너뜁니다(${wsId}/${job.slug}/${msgId}): 기기 세션 없음`); return NOTICE_NO_SESSION; }
-    const jobId = String(info.name ?? msgId).replace(/\.json$/, '');
+    if (!c?.db) { logOnce(logKey, 'no-session', `[argo] 큐 안내를 넣을 수 없어 건너뜁니다(${where}): 기기 세션 없음`); return NOTICE_NO_SESSION; }
     await c.db.insertMessage({
       channel_id: channelId, author_kind: 'crew', crew_id: crewId, kind: 'system', reply_to: msgId, thread_root: job.threadRoot ?? msgId,
-      client_msg_id: `${prefix}:${crewId}:${jobId}`, body,
+      client_msg_id: clientMsgId, body,
     });
+    loggedReason.delete(logKey);
     return true;
   } catch (x) {
-    console.error(`[argo] 큐 안내를 넣을 수 없어 건너뜁니다(${wsId}/${job.slug}/${msgId}):`, x?.message ?? x);
+    logOnce(logKey, `error:${x?.code ?? ''}:${x?.message ?? x}`, `[argo] 큐 안내를 넣을 수 없어 건너뜁니다(${where}):`, x?.message ?? x);
     return permanentWrite(x);
   }
 }

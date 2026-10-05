@@ -240,3 +240,43 @@ test('3차 F3: 기기 세션이 없어 DB 호출을 못 한 채 앱을 여러 �
   assert.equal(rows[0].client_msg_id, 'jobfail:crew-1:100-seoyun');
   assert.equal(JSON.parse(await readFile(file, 'utf8')).noticePending, false);
 });
+
+// 4차 검수 F3(2026-10-05): 세션이 없을 때 미전송 기록마다 재전송 때마다(시작 때·성공 처리 뒤 60초마다) console.error가 한 줄씩 쌓였다(기록 3건·130초에 12줄).
+// 같은 기록·같은 이유는 한 번만, 상태가 바뀔 때만(이유가 달라짐·보내진 뒤 다시 실패) 다시 쓴다.
+test('4차 F3: 같은 미전송 기록을 몇 번 다시 보내도 같은 이유의 실패 로그는 한 줄 — 이유가 바뀌거나 보내진 뒤 다시 실패하면 다시 쓴다', async (t) => {
+  const WS = 'qab-l'; await setup(WS);
+  const spy = t.mock.method(console, 'error', () => {});
+  const lines = (msgId) => spy.mock.calls.filter((c) => String(c.arguments[0]).includes(`/${msgId})`)).length;
+  let mode = 'none'; const rows = [];
+  const db = { insertMessage: async (row) => { if (mode === 'down') throw err('PGRST000', 'msgr db: connection refused'); rows.push(row); return { id: 1 }; } };
+  const session = async () => (mode === 'none' ? null : { db, uid: 'u1' });
+  const notify = makeMsgrAbandonNotifier(WS, { session });
+  const stall = makeMsgrStallNotifier(WS, { session });
+  const again = (msgId) => notify(job(msgId), err('22P02'), { name: `${msgId}-s.json`, reason: 'permanent', retry: true });
+  for (let i = 0; i < 12; i++) { assert.equal(await again(700), Q.NOTICE_NO_SESSION); await again(701); }
+  assert.equal(lines(700), 1, '같은 기록·같은 이유(세션 없음)는 한 줄');
+  assert.equal(lines(701), 1, '기록마다 따로 한 줄');
+  await stall(job(700), err('PGRST202'), { name: '700-s.json', stalledMs: 1 }); await stall(job(700), err('PGRST202'), { name: '700-s.json', stalledMs: 2 });
+  assert.equal(lines(700), 2, '같은 잡이라도 지연 안내(jobwait)는 다른 기록 — 그것도 한 줄');
+  mode = 'down';
+  for (let i = 0; i < 5; i++) assert.equal(await again(700), false);
+  assert.equal(lines(700), 3, '이유가 바뀌면(세션 없음 → 연결 오류) 한 줄 더, 그 뒤 같은 이유는 다시 쓰지 않는다');
+  mode = 'ok';
+  assert.equal(await again(700), true); assert.equal(rows.length, 1);
+  assert.equal(lines(700), 3, '보내진 것은 로그가 없다');
+  mode = 'down'; await again(700); await again(700); // 보내지기 전과 같은 이유(연결 오류)
+  assert.equal(lines(700), 4, '보내진 뒤 다시 실패하면 같은 이유라도 한 번 다시 쓴다(상태가 바뀌었다)');
+});
+
+test('4차 F3: 실제 큐 워커 — 세션 없이 미전송 기록 3건을 두고 워커를 여러 번 다시 켜도 기록마다 로그 한 줄', async (t) => {
+  const WS = 'qab-m'; await setup(WS);
+  const dir = Q.queueDir(WS, 'msgr'); await mkdir(dir, { recursive: true });
+  for (const i of [0, 1, 2]) await writeFile(join(dir, `80${i}-s.json.failed`), JSON.stringify({ failedAt: new Date().toISOString(), code: '22P02', reason: 'permanent', error: 'x', job: job(800 + i), noticePending: true, noticeTries: 0 }));
+  const spy = t.mock.method(console, 'error', () => {});
+  let sessionCalls = 0;
+  const notify = makeMsgrAbandonNotifier(WS, { session: async () => { sessionCalls++; return null; } });
+  for (let k = 0; k < 4; k++) { const stop = Q.startQueueWorker(WS, 'msgr', async () => {}, { onAbandon: notify }); await until(() => sessionCalls >= 3 * (k + 1), 5000); stop(); }
+  assert.equal(sessionCalls, 12, '시작 때마다 기록 3건을 다시 보내 봤다');
+  const ours = spy.mock.calls.filter((c) => /큐 안내를 넣을 수 없어/.test(String(c.arguments[0])));
+  assert.equal(ours.length, 3, `기록마다 한 줄 — 실제 ${ours.length}줄`);
+});
