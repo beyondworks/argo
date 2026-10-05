@@ -110,3 +110,26 @@ test('결재 슬립 위험 배지 — 띠 글자색 그대로·불투명, 6개 �
     }
   }
 });
+
+// 화면 검수 UL5(2026-10-05): 만료(흐린 비활성 띠 --card-2 위 --fg-3)·대기(wait) 띠의 위험 배지·문구 대비가 3.02~4.38:1이었다 — 대기·만료도 4.5:1 이상.
+test('결재 슬립 띠 문구 — 대기(wait)·만료 띠도 6개 테마에서 4.5:1 이상(위험 배지는 띠 글자색을 따른다)', () => {
+  const badge = ['tag:span', 'msgr-klabel', 'risk'];
+  const bad = [];
+  for (const cls of [['pending', 'wait'], ['expired']]) {
+    const slip = [['tag:div'], ['tag:div', 'msgr-slip', ...cls, 'high'], ['tag:div', 'band']];
+    assert.equal(winner([...slip, badge], 'color'), 'inherit', `${cls.join('.')}: 배지 글자색은 띠를 따른다`);
+    const bg = varName(winner(slip, 'background')); const fg = varName(winner(slip, 'color'));
+    for (const theme of THEMES) { const tk = fx['desk-org'].themes[theme].tokens; if (!tk[fg] || !tk[bg]) { bad.push(`${cls.join('.')}/${theme}: ${fg} on ${bg} — 잰 값 없음(흐린 토큰은 픽스처에 없다)`); continue; } const r = ratio(tk[fg], tk[bg]); if (r < 4.5) bad.push(`${cls.join('.')}/${theme}: ${fg} on ${bg} = ${r.toFixed(2)}`); }
+  }
+  assert.deepEqual(bad, []);
+});
+
+test('UL5 만료 결재 본문 문구도 흐린 토큰(--fg-3)을 쓰지 않는다 — 카드 바탕에서 4.5:1 이상', () => {
+  const bad = [];
+  for (const part of ['action', 'plain-line']) {
+    const chain = [['tag:div'], ['tag:div', 'msgr-slip', 'expired'], ['tag:div', 'body'], ['tag:div', part]];
+    const fg = varName(winner(chain, 'color'));
+    for (const theme of THEMES) { const tk = fx['desk-org'].themes[theme].tokens; if (!tk[fg]) { bad.push(`${part}/${theme}: ${fg} 잰 값 없음`); continue; } const r = ratio(tk[fg], tk['--card']); if (r < 4.5) bad.push(`${part}/${theme}: ${r.toFixed(2)}`); }
+  }
+  assert.deepEqual(bad, []);
+});

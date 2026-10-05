@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { AuthApiError, AuthRetryableFetchError } from '@supabase/supabase-js';
-import { createSessionRecovery } from '../src/session-recovery.mjs';
+import { createSessionRecovery, waitingView } from '../src/session-recovery.mjs';
 
 const SESSION = { user: { id: 'review-user' }, access_token: 'fresh' };
 const OLD_SESSION = { user: { id: 'old-user' }, access_token: 'stale' };
@@ -383,4 +383,32 @@ test('new auth event wins over a delayed initial read from the previous identity
   // Then the newer auth event remains authoritative.
   assert.deepEqual(f.applied, [NEW_SESSION]);
   f.recovery.stop();
+});
+
+// 화면 검수 UM4(2026-10-05): 로그아웃 정리가 실패한 뒤(?signout=fail) [지금 다시 연결]은 정리 대기로 들어가며 오류 문구만 지웠다 — 진행 표시는 계속 돌고
+// '연결되면 자동으로 이어집니다'가 남았다. 정리(로그아웃)가 끝나지 않은 동안은 실패를 지우지 않는다 — 화면은 그 실패로 '로그아웃을 마치지 못함' 상태를 그린다.
+test('UM4 로그아웃 정리가 실패한 뒤 다시 연결·초점·온라인을 해도 실패가 남는다 — 정리가 끝나면(SIGNED_OUT) 지운다', async () => {
+  const failure = new TypeError('Failed to fetch'); let attempt = 0;
+  const f = fixture([{ data: { session: null }, error: new AuthRetryableFetchError('offline', 503) }],
+    { cleanupState: { begin() {}, complete() {}, read: () => 'pending', matches: () => false }, signOut: async () => { attempt += 1; if (attempt === 2) queueMicrotask(() => f.recovery.onAuthStateChange('SIGNED_OUT', null)); return { error: attempt === 1 ? failure : null }; } });
+  await f.recovery.start();
+  await f.recovery.restartSignIn();
+  assert.equal(f.failures.at(-1), failure);
+  await f.recovery.retryNow(); f.listeners.get('online')?.(); f.listeners.get('focus')?.(); await new Promise((r) => setTimeout(r, 0));
+  assert.equal(f.failures.at(-1), failure, '정리 대기로 다시 들어가도 실패를 지우지 않는다');
+  await f.recovery.restartSignIn(); await new Promise((r) => setTimeout(r, 0));
+  assert.equal(f.failures.at(-1), null, '정리가 끝나면 지운다');
+  assert.equal(f.waiting.at(-1), false);
+  f.recovery.stop();
+});
+
+test('UM4 연결 대기 화면 — 로그아웃을 마치지 못한 동안은 다시 연결을 숨기고 로그아웃이 주 단추, 진행 표시는 로그아웃 중에만', () => {
+  const normal = waitingView({ error: '' });
+  assert.deepEqual([normal.title, normal.spin, normal.reconnect, normal.primary], ['auth.connectionWaiting', true, true, 'reconnect']);
+  const stuck = waitingView({ error: 'auth.signInAgainFailed' });
+  assert.deepEqual([stuck.title, stuck.spin, stuck.reconnect, stuck.primary, stuck.desc], ['auth.signOutStuck', false, false, 'signout', 'auth.signInAgainFailed']);
+  assert.equal(waitingView({ error: 'auth.signInAgainFailed', busy: true }).spin, true, '로그아웃을 다시 하는 동안');
+  assert.equal(waitingView({ error: '', retrying: true }).status, 'auth.reconnecting', '다시 연결을 누르면 연결하는 중');
+  const check = waitingView({ error: 'auth.sessionCheckFailed' });
+  assert.deepEqual([check.reconnect, check.error], [true, 'auth.sessionCheckFailed'], '세션 확인 실패는 종전처럼(다시 연결 + 오류 문구)');
 });

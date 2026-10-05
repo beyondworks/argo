@@ -40,7 +40,7 @@ import { MobileUpdateBar } from './mobile-update.jsx';
 import { useLongPress, longPressHandlers } from './long-press.js';
 import { groupFlags } from './msg-group.mjs';
 import { t as tm } from './i18n.js';
-import { plainField, approvalPlainFields, orgDocTitle, approvalOneLineSummary, approvalGrade, approvalSummaryKey, approvalPageItems, approvalDecider, phoneApprovalDecider, decidableApprovals, approvalOnlyKey, approvalDenied, approvalCmdMode, decideApproval, singleFlight } from './approval-display.js';
+import { plainField, approvalPlainFields, orgDocTitle, approvalOneLineSummary, approvalGrade, approvalSummaryKey, approvalPageItems, approvalDecider, phoneApprovalDecider, decidableApprovals, approvalOnlyKey, approvalDenied, approvalCmdMode, decideApproval, readRoomJoinRequests, singleFlight } from './approval-display.js';
 import { agentRowState, AGENT_FILTERS, AGENT_FAV_KEY, groupAgents, rowForSpace, agentRoomTarget, agentStateRow, personalRoomFor, personalRoomKnown, agentDmRedirect, agentDmRoute, earlierAgentDms, earlierLines, saveAgentLook, fillAgentLooks, ownRowsReader, loadUntilListed, spaceMoveNotice, spaceMoveBack, MOVE_NOTICE_MS, agentSections, groupIsFav, favChanges, readAgentFav } from './agent-groups.mjs'; // 폰 에이전트 탭 — 같은 에이전트 한 줄·상단 메뉴·즐겨찾기(유건 2026-10-02), 1:1은 개인 방 하나(2026-10-03)
 import { toggleId, foldAll, allFolded } from './collapse-set.mjs';
 import { useLang } from '@argo/i18n';
@@ -100,7 +100,7 @@ import { docSlug, insertWithFreePath, isPathTaken } from './doc-path.mjs';
 import { authErrorText } from './auth-errors.mjs';
 import { sessionTransition } from './session-notice.mjs';
 import { createNativeSessionApplier, mountNativeRealtime, mountNativeNotificationTaps, updateNativeRealtimeContext } from './native-realtime.mjs';
-import { createSessionRecovery } from './session-recovery.mjs';
+import { createSessionRecovery, waitingView } from './session-recovery.mjs';
 import { createNavInbox, decideNav } from './notif-nav.mjs';
 import { authCleanupState, authStorageKey, hasStoredAuthSession } from './auth-storage.mjs';
 import { createRealtimeScope } from './realtime-scope.mjs';
@@ -458,15 +458,21 @@ export default function App() {
 }
 
 function ConnectionWaiting({ t, onRetry, onSignIn, error, busy }) {
-  // 연결 대기(UXM-07) — 진행 표시를 두고, 주 단추는 '지금 다시 연결'(저장된 로그인 그대로). 저장된 로그인을 지우는 다시 로그인은 낮춘 단추로 — 안내 문구('저장된 로그인은 그대로')와 반대 결과였다
+  // 연결 대기(UXM-07) — 진행 표시를 두고, 주 단추는 '지금 다시 연결'(저장된 로그인 그대로). 저장된 로그인을 지우는 다시 로그인은 낮춘 단추로 — 안내 문구('저장된 로그인은 그대로')와 반대 결과였다.
+  // 로그아웃 정리가 실패해 멈춘 동안은 다시 연결을 숨기고 로그아웃이 주 단추(화면 검수 UM4 — waitingView). 다시 연결은 바로 실패해도 1초는 '연결하는 중…'(눌렀는데 아무 변화가 없었다)
   const [retrying, setRetrying] = useState(false);
-  const retry = async () => { if (retrying) return; setRetrying(true); try { await onRetry?.(); } finally { setRetrying(false); } };
+  const retry = async () => { if (retrying) return; setRetrying(true); try { await Promise.all([Promise.resolve().then(() => onRetry?.()).catch(() => {}), new Promise((r) => setTimeout(r, 1000))]); } finally { setRetrying(false); } };
+  const v = waitingView({ error, retrying, busy });
+  const signOutBtn = <button type="button" className={`btn ${v.primary === 'signout' ? 'btn-primary' : 'ghost'}`} onClick={onSignIn} disabled={busy}>{busy ? t('ui.loading') : t('auth.signOutAndIn')}</button>;
   return <div className="msgr-auth"><div className="msgr-card"><div className="band"><svg width="14" height="14" viewBox="0 0 16 16"><path d={STAR_D} /></svg>ARGO<span className="tag">{t('auth.tag')}</span></div><div className="body">
-    <h1 role="status" style={{ display: 'flex', alignItems: 'center', gap: 10 }}><span className="msgr-spin" aria-hidden="true" />{t('auth.connectionWaiting')}</h1>
-    <p>{t('auth.connectionWaiting.desc')}</p>
-    {error && <p role="alert" style={{ color: 'var(--danger)' }}>{t(error)}</p>}
-    <button type="button" className="btn btn-primary" onClick={retry} disabled={retrying || busy} aria-busy={retrying || undefined}>{t(retrying ? 'auth.reconnecting' : 'auth.reconnect')}</button>
-    <button type="button" className="btn ghost" onClick={onSignIn} disabled={busy}>{busy ? t('ui.loading') : t('auth.signOutAndIn')}</button>
+    <h1 style={{ display: 'flex', alignItems: 'center', gap: 10 }}>{v.spin && <span className="msgr-spin" aria-hidden="true" />}{t(v.title)}</h1>
+    <span className="msgr-sr" role="status">{t(v.status)}</span>{/* 상태 알림은 제목과 따로 — h1에 role=status를 주면 제목 역할이 덮였다(UM4) */}
+    <p>{t(v.desc)}</p>
+    {v.error && <p role="alert" style={{ color: 'var(--danger)' }}>{t(v.error)}</p>}
+    {v.primary === 'signout' ? signOutBtn : <>
+      <button type="button" className="btn btn-primary" onClick={retry} disabled={retrying || busy} aria-busy={retrying || undefined}>{t(retrying ? 'auth.reconnecting' : 'auth.reconnect')}</button>
+      {signOutBtn}
+    </>}
   </div></div></div>;
 }
 
@@ -796,7 +802,8 @@ function Shell({ session }) {
   const [ent, setEnt] = useState(null); const [policy, setPolicy] = useState(null);
   const orgLocked = ent?.ls_status === 'past_due' || ent?.ls_status === 'unpaid'; // J-2: 결제 문제 = 읽기 전용(서버 msgr_org_locked가 최종) // msgr_org_entitlements(plan·seats) — 좌석 표시·한도 안내
   const [dmMembers, setDmMembers] = useState({}); // dm 채널 id → 멤버 행(레일 라벨용: 나 아닌 참가자)
-  const [err, setErr] = useState(''); const [note, setNote] = useState('');
+  const [err, setErr] = useState(''); const [note, setNoteState] = useState('');
+  const setNote = useCallback((v) => { if (v) setErr(''); setNoteState(v); }, []); // 성공 안내가 오면 같은 자리의 앞 오류 토스트를 지운다 — 끊기 실패 뒤 다시 해 성공해도 앞 오류가 8초 남아 안내를 가렸다(화면 검수 UL9)
   useEffect(() => { if (err && toastError(err, { t }) !== err) pushDiag('toast', String(err).slice(0, 300)); }, [err]); // eslint-disable-line react-hooks/exhaustive-deps -- 토스트가 원문 대신 문구를 보이면 원문은 진단 기록(설정 → 진단)에
   const [pushCard, setPushCard] = useState(null); // 전경 푸시 카드(폰) — 다른 채널 메시지만, 탭하면 그 채널로(유건 2026-09-12)
   // "이 채널 열기" 요청(알림 탭·전경 카드·초대) — 대기함(navInbox)은 셸 밖에 있어 셸이 다시 마운트돼도 남는다. 다음 한 걸음은 decideNav가 정하고
@@ -1712,6 +1719,7 @@ function Shell({ session }) {
   };
   const me = selfMember({ members, uid, isPersonal, personalName: resolvedNames[uid] || personalSelfName(otherNames, uid), email: session.user.email }); // 개인 공간은 구성원 목록(친구만)에 내가 없다 — 한 곳에서 내 이름을 정한다(검수 F: 레일·설정은 이메일·'—')
   const isAdmin = !isPersonal && org && ['owner', 'admin'].includes(org.role); // 개인 공간의 가상 조직(role owner)은 관리자가 아니다 — 초대 링크 등이 __personal__로 서버에 가던 것(2026-09-16)
+  const canNewCh = !isPersonal && !!org && org.role !== 'guest' && !orgLocked; // 새 채널 — 서버 msgr_create_channel은 owner·admin·member만, 잠긴 조직은 msgr_forbidden. 못 하는 행동은 보이지 않게(화면 검수 UM1)
   // F2-5 로컬 알림 — 앱이 숨겨졌거나 다른 채널을 보고 있을 때만. 본문은 싣지 않는다(방송 payload에도 본문이 없다 — RLS 통과 조회가 정본).
   const mineRef = useRef(new Set()); // 내가 쓴 글 id — 크루 답글(reply_to) 알림 판정용. 알림함 조회와 내 글의 realtime 방송이 채운다
   const notifyRef = useRef({ channels, members, crews, chId, uid, isAdmin, page, muted, quiet, blocked: blockedIds, mutedCrewIds });
@@ -2724,7 +2732,7 @@ function Shell({ session }) {
   const chPlusPop = chPlus && (<>
     <div className="msgr-scrim clear ph-scrim" onClick={() => setChPlus(false)} role="presentation" />
     <div className="msgr-menu-pop ph-pop ph-pluspop" role="menu" aria-label={t('phone.ch.add')}>
-      <button type="button" role="menuitem" onClick={() => { setChPlus(false); setBrowse(null); openNewCh(); }}><span className="msgr-av sm ghost"><I name="plus" size={13} /></span><span className="label">{t('phone.ch.new')}</span></button>
+      {canNewCh && <button type="button" role="menuitem" onClick={() => { setChPlus(false); setBrowse(null); openNewCh(); }}><span className="msgr-av sm ghost"><I name="plus" size={13} /></span><span className="label">{t('phone.ch.new')}</span></button>}
       <button type="button" role="menuitem" onClick={() => { setChPlus(false); setNewCh(null); openBrowse(); }}><span className="msgr-av sm ghost"><I name="hash" size={13} /></span><span className="label">{t('ch.browse')}</span></button>
     </div>
   </>);
@@ -2910,7 +2918,7 @@ function Shell({ session }) {
         )}
         {!isPersonal && !orgBlocked && <RailSection id={orgId ? 'channels' : 'start'} label={orgId ? t('ch.list') : t('org.start')} right={!orgId ? null : <span className="right">
           <button type="button" className="btn msgr-chbrowse" onClick={() => browse ? setBrowse(null) : openBrowse()} disabled={!orgId} title={t('ch.browse')} aria-label={t('ch.browse')} aria-expanded={!!browse}><I name="hash" size={14} /></button>
-          <button type="button" className="btn msgr-chnew" onClick={() => newCh ? setNewCh(null) : openNewCh()} disabled={!orgId} title={t('ch.new')} aria-label={t('ch.new')} aria-expanded={!!newCh}><I name={newCh ? 'x' : 'plus'} size={14} /></button>
+          {canNewCh && <button type="button" className="btn msgr-chnew" onClick={() => newCh ? setNewCh(null) : openNewCh()} disabled={!orgId} title={t('ch.new')} aria-label={t('ch.new')} aria-expanded={!!newCh}><I name={newCh ? 'x' : 'plus'} size={14} /></button>}
         </span>}>
           {browse && (<div className="msgr-browse">
             {browse.length === 0
@@ -2964,7 +2972,7 @@ function Shell({ session }) {
               </button>))}
           </div>
         </RailSection>)}
-        {(isPersonal ? railVisible.length > 0 : !orgBlocked && org) && (<RailSection id="mine" label={`${t('rail.agents')} · ${railVisible.length}`} right={<span className="right"><span className="msgr-sortwrap msgr-railsort"><button type="button" className={`msgr-sortbtn${sortMenu ? ' on' : ''}`} onClick={() => setSortMenu((v) => !v)} title={t('rail.sort')} aria-label={t('rail.sort')} aria-haspopup="menu" aria-expanded={sortMenu}><I name="sort" size={14} /></button>{sortMenu && <div className="msgr-rowmenu" role="menu" onMouseLeave={() => setSortMenu(false)}>{['name', 'added', 'custom'].map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={railSort === v} onClick={() => { pickSort(v); setSortMenu(false); }}>{railSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`rail.sort.${v}`)}</button>)}</div>}</span>{myAvailable.length > 0 && <span className="msgr-klabel">{myCrews.length}/{myCrews.length + myAvailable.length}</span>}</span>}>
+        {(isPersonal ? railVisible.length > 0 : !orgBlocked && org) && (<RailSection id="mine" label={`${t('rail.agents')} · ${railVisible.length}`} right={<span className="right">{railVisible.length > 0 && <span className="msgr-sortwrap msgr-railsort"><button type="button" className={`msgr-sortbtn${sortMenu ? ' on' : ''}`} onClick={() => setSortMenu((v) => !v)} title={t('rail.sort')} aria-label={t('rail.sort')} aria-haspopup="menu" aria-expanded={sortMenu}><I name="sort" size={14} /></button>{sortMenu && <div className="msgr-rowmenu" role="menu" onMouseLeave={() => setSortMenu(false)}>{['name', 'added', 'custom'].map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={railSort === v} onClick={() => { pickSort(v); setSortMenu(false); }}>{railSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`rail.sort.${v}`)}</button>)}</div>}</span>}{myAvailable.length > 0 && <span className="msgr-klabel">{myCrews.length}/{myCrews.length + myAvailable.length}</span>}</span>}>
           <div className="msgr-list mine">
             {!isPersonal && !myAvailable.length && !railVisible.length && <p className="msgr-rail-empty">{t('phone.agents.none')} <RunnerButton /></p>}{/* 비어도 구역과 연결 단추를 둔다 — 통째로 사라져 에이전트를 붙일 곳이 안 보였다(UXM-08) */}
             {/* 묶음마다 접었다 편다(유건 2026-09-16) — 조직의 다른 에이전트는 한 절에서(유건 제보 2026-09-12: 절이 둘로 중복) */}
@@ -4522,7 +4530,7 @@ function Activity({ org, uid, isAdmin, channels, previewChannels = [], members, 
       {phone && treeOpen && <div className="msgr-treescrim" onClick={() => setTreeOpen(false)} />}
       <aside className="msgr-acttree vault-tree">
         <div className="vault-toolbar">
-          <button type="button" className={`tb${focusTab?.id === 'graph' ? ' on' : ''}`} onClick={() => openTab(GRAPH_TAB)} title={t('act.tab.graph')} aria-label={t('act.tab.graph')}><I name="folder" size={14} /></button>
+          <button type="button" className={`tb label${focusTab?.id === 'graph' ? ' on' : ''}`} onClick={() => openTab(GRAPH_TAB)}>{t('act.tab.graph')}</button>{/* 그래프 그림이 아이콘 세트에 없어 이름을 글자로 — 폴더 그림이 '그래프'와 어긋났다(화면 검수 UL7) */}
           <span style={{ flex: 1 }} />
         </div>
         <div className="msgr-acttree-body">
@@ -5945,22 +5953,22 @@ function PersonalMark({ sm = false }) { return <span className={`msgr-av persona
 function PersonalRoomBar({ chId, uid, hasCrews, event, nameOfUser, crewName = () => null, onChanged, onError }) {
   const { t, lang } = useT();
   const { aiConsented, aiConsentKnown, setAiConsent } = useContext(SafetyCtx);
-  const [reqs, setReqs] = useState([]); const [busy, setBusy] = useState(false);
+  const [reqs, setReqs] = useState([]); const [busy, setBusy] = useState(false); const [reqFailed, setReqFailed] = useState(false); const [reqTry, setReqTry] = useState(0); // 요청을 확인하지 못함 — 조용히 숨기지 않고 [다시 확인](화면 검수 UL1)
   const reqSignal = event && event.channel_id === chId && (event.kind === 'crew_join' || event.kind === 'approval' || (event.kind === 'message' && event.msgKind === 'system')) ? event.at : 0; // 이 방의 넣기 요청·결재·안내 글 방송에만 다시 읽는다(방송마다 2건 조회하던 것, 기능 점검 D2)
   const nameAsked = useRef(new Set()); // 이름을 다시 읽어 본 요청 id — 옛 서버(대기 크루 이름을 안 주는 정의)에서 방송마다 다시 읽지 않게 요청당 한 번
   useEffect(() => { let live = true; (async () => {
-    const approver = (await supabase.rpc('msgr_dm_approver', { ch: chId }))?.data;
-    if (approver !== uid) { if (live) setReqs([]); return; }
-    const rows = await q(supabase.from('msgr_channel_crew_requests').select('id, crew_id, requested_by').eq('channel_id', chId).eq('status', 'pending')).catch(() => []);
+    const { reqs: mine, failed } = await readRoomJoinRequests({ uid, approver: () => supabase.rpc('msgr_dm_approver', { ch: chId }),
+      pending: () => q(supabase.from('msgr_channel_crew_requests').select('id, crew_id, requested_by').eq('channel_id', chId).eq('status', 'pending')) });
     if (!live) return;
-    const mine = (rows ?? []).filter((r) => r.requested_by !== uid); setReqs(mine);
+    setReqs(mine); setReqFailed(failed);
     // 방금 온 요청의 에이전트가 목록에 없으면 한 번 다시 읽는다 — 서버(20261001160000)가 대기 크루 이름을 방 구성원에게 준다. 주기 재조회(30초)를 기다리면 그동안 이름 없이 보였다
     const fresh = mine.filter((r) => !crewName(r.crew_id) && !nameAsked.current.has(r.id));
     if (fresh.length) { fresh.forEach((r) => nameAsked.current.add(r.id)); onChanged?.(); }
-  })().catch(() => {}); return () => { live = false; }; }, [chId, uid, reqSignal]); // eslint-disable-line react-hooks/exhaustive-deps
+  })().catch(() => {}); return () => { live = false; }; }, [chId, uid, reqSignal, reqTry]); // eslint-disable-line react-hooks/exhaustive-deps
   const decide = async (r, ok) => { setBusy(true); try { await q(supabase.rpc('msgr_crew_join_decide', { req: r.id, approve: ok })); setReqs((xs) => xs.filter((x) => x.id !== r.id)); onChanged?.(); } catch (e) { onError?.(friendlyErr(e.message, t)); } finally { setBusy(false); } };
   const agree = async () => { setBusy(true); try { await setAiConsent(true); } catch { onError?.(t('consent.ai.failed')); } finally { setBusy(false); } };
   return (<>
+    {reqFailed && <div className="msgr-joinbar" role="status"><span>{t('personal.crewReq.failed')}</span><button type="button" className="btn sm" onClick={() => setReqTry((x) => x + 1)}>{t('personal.crewReq.retry')}</button></div>}
     {reqs.map((r) => <div key={r.id} className="msgr-joinbar" role="region"><span>{(() => { const crew = crewName(r.crew_id); const who = nameOfUser(r.requested_by); return crew ? (lang === 'en' ? (x) => x : koJosa)(t('personal.crewReq.named', { name: who, crew })) : t('personal.crewReq', { name: who }); })()}</span>{/* 에이전트 이름을 알면 이름까지(친구의 에이전트는 같은 방에 든 적이 있을 때만 이름을 읽을 수 있다 — 서버가 크루 행을 주인에게만 연다) */}
       <span className="msgr-joinbar-acts"><button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => decide(r, true)}>{t('ch.crew.join.approve')}</button><button type="button" className="btn sm" disabled={busy} onClick={() => decide(r, false)}>{t('ch.crew.join.reject')}</button></span></div>)}
     {hasCrews && aiConsentKnown && !aiConsented && <div className="msgr-joinbar" role="region"><span>{t('consent.ai.personal.room')}</span><button type="button" className="btn btn-primary sm" disabled={busy} onClick={agree}>{t('consent.ai.confirm')}</button></div>}

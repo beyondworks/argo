@@ -196,6 +196,8 @@ export const DICT = {
   'consent.ai.personal.declineNote': ['거부해도 친구와의 대화는 그대로 쓸 수 있습니다. 나중에 여기서나 설정에서 다시 동의할 수 있습니다.', 'If you decline, you can keep chatting with friends as before. You can agree later here or in settings.'],
   'consent.ai.personal.decline': ['지금은 안 함', 'Not now'],
   'consent.ai.personal.room': ['이 방의 에이전트는 AI 이용에 동의한 사람의 글만 읽습니다. 동의하면 내 글도 에이전트에게 전달됩니다.', 'Agents in this chat only read messages from people who agreed to AI use. Agree to let agents read yours too.'],
+  'personal.crewReq.failed': ['에이전트 참여 요청을 확인하지 못했습니다.', 'Couldn’t check agent join requests.'],
+  'personal.crewReq.retry': ['다시 확인', 'Check again'],
   'personal.crewReq': ['{name}님이 자기 에이전트를 이 방에 넣으려고 합니다. 허락하면 그 에이전트가 이 방의 대화를 읽고 답할 수 있습니다.', '{name} wants to add their agent to this chat. If you approve, that agent can read and answer in this chat.'],
   'personal.crewReq.named': ['{name}님이 자기 에이전트 {crew}을(를) 이 방에 넣으려고 합니다. 허락하면 {crew}이(가) 이 방의 대화를 읽고 답할 수 있습니다.', '{name} wants to add their agent {crew} to this chat. If you approve, {crew} can read and answer in this chat.'],
   'personal.sheet.settings': ['대화방 설정', 'Chat settings'],
@@ -228,6 +230,7 @@ export const DICT = {
   'auth.sessionExpired': ['로그인이 끝났습니다. 오래 쓰지 않았거나 다른 곳에서 로그아웃되어 다시 로그인이 필요합니다.', 'You were signed out — the sign-in expired or you signed out elsewhere. Please sign in again.'],
   'auth.connectionWaiting': ['연결을 기다리는 중', 'Waiting for connection'],
   'auth.connectionWaiting.desc': ['저장된 로그인은 그대로 두었습니다. 연결되면 자동으로 이어집니다.', 'Your saved sign-in is still here. This will continue automatically when the connection returns.'],
+  'auth.signOutStuck': ['로그아웃을 마치지 못했습니다', 'Couldn’t finish signing out'],
   'auth.reconnect': ['지금 다시 연결', 'Reconnect now'],
   'auth.reconnecting': ['연결하는 중…', 'Connecting…'],
   'auth.signOutAndIn': ['로그아웃하고 다시 로그인', 'Sign out and sign in again'],
@@ -1466,7 +1469,7 @@ export const DICT = {
   'phone.agents.none': ['아직 연결된 에이전트가 없어요.', 'No agents connected yet.'],
   'phone.agent.working': ['일하는 중', 'Working'],
   'phone.agent.idle': ['쉬는 중', 'Idle'],
-  'phone.agent.relink': ['다시 연결 필요', 'Reconnect needed'],
+  'phone.agent.relink': ['연결 끊김', 'Unlinked'], // 상태 말 — 데스크톱 줄 배지(rail.relink)와 같게(화면 검수 UL6)
   'phone.agent.away': ['꺼져 있음', 'Offline'],
   'phone.friends.meSub': ['내 프로필', 'My profile'],
   'phone.friends.requests': ['받은 친구 요청 {n}', 'Friend requests {n}'],
@@ -1667,7 +1670,7 @@ export const DICT = {
   'rail.src.hermes': ['헤르메스', 'Hermes'],
   'rail.src.openclaw': ['오픈클로', 'OpenClaw'],
   'rail.src.custom': ['외부', 'External'],
-  'rail.relink': ['다시 연결 필요', 'Reconnect'], // 영어 줄 배지가 'Reconnect n…'로 잘렸다(UXM-25와 같은 자리) — 자세한 이유는 title(rail.relink.title)
+  'rail.relink': ['연결 끊김', 'Unlinked'], // 상태 배지라 상태 말로(화면 검수 UL6 — 'Reconnect'는 동사라 단추처럼 읽혔다. 'Disconnected'는 길어 줄의 이름을 'Herm…'으로 잘랐다). 'Reconnect needed'는 줄에서 잘렸다(UXM-25 자리) — 자세한 이유·할 일은 title(rail.relink.title)
   'rail.relink.title': ['개인 공간에서 답하지 않습니다 — 조직에서 연결 명령을 다시 실행하거나 토큰을 새로 받으세요', 'Not answering in your personal space — run the connect command again or get a new token in the organization'],
   'rail.twin.org': ['{org}에 연결한 외부 에이전트', 'External agent connected to {org}'],
   'rail.leftorg': ['조직 나감', 'Left org'], // 줄 배지 — 40% 폭에서 '조직을 나가 사…'로 잘렸다(UXM-25). 자세한 이유는 title(rail.leftorg.title)
@@ -1757,6 +1760,9 @@ export const DICT = {
   'err.invalid': ['입력값 형식이 올바르지 않습니다.', 'Invalid input format.'],
   'err.generic': ['처리하지 못했습니다. 잠시 뒤 다시 시도하세요.', 'Something went wrong. Please try again shortly.'],
   'err.raw': ['처리하지 못했습니다. 잠시 뒤 다시 시도해 주세요. 계속되면 설정 → 진단에서 기록을 확인해 주세요.', 'Something went wrong. Please try again shortly. If it keeps happening, check Settings → Diagnostics.'],
+  'err.limit': ['한도를 넘어 처리할 수 없습니다. 크기나 개수를 줄이거나 정리한 뒤 해 주세요.', 'This goes over a limit. Make it smaller, use fewer items, or clear some space first.'],
+  'err.timeout': ['서버 응답이 늦어 처리하지 못했습니다. 잠시 뒤 다시 시도해 주세요.', 'The server took too long to respond. Please try again shortly.'],
+  'err.code': ['이 요청은 처리할 수 없습니다. 계속되면 설정 → 진단에서 기록을 확인해 주세요.', 'This request can’t be completed. If it keeps happening, check Settings → Diagnostics.'],
   'err.offline': ['연결이 끊겨 처리하지 못했습니다. 인터넷 연결을 확인한 뒤 다시 시도해 주세요.', 'Couldn’t reach the server. Check your connection and try again.'],
   'ch.crew.new.noNode': ['회사 에이전트 서버를 먼저 연결하세요 (설정 → 에이전트와 서버)', 'Connect a company agent server first (Settings → Agents & server)'],
   'ch.crew.new.pending': ['만드는 중…', 'Creating…'],

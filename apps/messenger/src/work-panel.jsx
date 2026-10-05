@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { focusEntry } from './focus-entry.mjs';
 import { createPortal } from 'react-dom';
 import { DangerModal, Markdown } from '@argo/ui';
 import { supabase } from './supabase.js';
@@ -148,9 +149,8 @@ export function WorkPanel({ channel, roomName = null, uid, isAdmin, locked, crew
   const closeRef = useRef(onClose); closeRef.current = onClose;
   useEffect(() => {
     mounted.current = true;
-    const touch = window.matchMedia?.('(pointer: coarse)').matches; // 터치 기기에서는 첫 단추에 초점 링이 그려지지 않게(UXM-17, CtxMenu와 같은 규칙)
-    const previous = touch ? null : document.activeElement;
-    if (!touch) dialog.current?.querySelector('button')?.focus();
+    const previous = document.activeElement;
+    focusEntry({ dialog: dialog.current, first: dialog.current?.querySelector('button') }); // 터치는 창 자체로(링 없음 — UXM-17), 화면 낭독기도 창 안으로(UL8)
     return () => { mounted.current = false; if (previous?.isConnected) previous.focus(); };
   }, []);
   const act = async (operation, done) => {
@@ -185,13 +185,13 @@ export function WorkPanel({ channel, roomName = null, uid, isAdmin, locked, crew
   const confirm = deleting && <div className="msgr-action-dialog" role="dialog" aria-modal="true" aria-label={t('automation.delete')}><DangerModal title={t('automation.delete')} description={<>{t('automation.delete.note')}{error && <span className="work-notice error" role="alert">{errorText(error, t)}</span>}</>} requireText={deleting.title} confirmLabel={t('automation.delete')} busy={busy} onClose={() => { if (!busy) { setDeleting(null); setError(null); } }} onConfirm={() => act(() => checked(deleting.kind === 'routine' ? supabase.rpc('msgr_crew_routine_edit', { p_routine: deleting.id, p_op: 'delete' }) : supabase.rpc('msgr_automation_delete', { automation: deleting.id })), () => { setDeleting(null); setNotice(t(deleting.kind === 'routine' ? 'routine.delete.requested' : 'automation.deleted')); })} /></div>;
   if (sheet) return (<div className="msgr-sheetwrap">
     <div className="msgr-scrim clear" onClick={() => { if (!busy && !deleting) onClose(); }} />
-    <aside className="msgr-crewsheet msgr-worksheet" ref={dialog} role="dialog" aria-label={t('work.title')} onKeyDown={keydown} inert={deleting ? true : undefined}>
+    <aside className="msgr-crewsheet msgr-worksheet" ref={dialog} tabIndex={-1} role="dialog" aria-label={t('work.title')} onKeyDown={keydown} inert={deleting ? true : undefined}>
 {body}
     </aside>
     {deleting && createPortal(<div className="shell msgr-work-overlay msgr-work-confirm" onKeyDown={keydown}>{confirm}</div>, document.body)}
   </div>);
   return createPortal(<div className="shell msgr-work-overlay" onKeyDown={keydown} onClick={(event) => { if (event.target === event.currentTarget && !busy && !deleting) onClose(); }}>
-    <section className="msgr-work-panel" ref={dialog} role="dialog" aria-modal="true" aria-label={t('work.title')} inert={deleting ? true : undefined}>
+    <section className="msgr-work-panel" ref={dialog} tabIndex={-1} role="dialog" aria-modal="true" aria-label={t('work.title')} inert={deleting ? true : undefined}>
 {body}
     </section>
     {deleting && confirm}

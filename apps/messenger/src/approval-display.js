@@ -131,3 +131,12 @@ export function singleFlight(fn) {
   let busy = false;
   return async (...a) => { if (busy) return undefined; busy = true; try { return await fn(...a); } finally { busy = false; } };
 }
+
+/** 방 보조 줄의 에이전트 참여 요청(화면 검수 UL1, 2026-10-05) — 내가 결재자면 남이 보낸 대기 요청. 결재자 조회(.error·throw)나 요청 조회가 실패하면
+    failed=true(조용히 '요청 없음'으로 숨기지 않는다 — 다시 확인 단추를 보인다). 함수가 없는 옛 서버(PGRST202)는 종전처럼 없음. */
+export async function readRoomJoinRequests({ uid, approver, pending }) {
+  const a = await Promise.resolve().then(approver).then((x) => x, (error) => ({ error }));
+  if (a?.error) return { reqs: [], failed: !(a.error.code === 'PGRST202' || /Could not find the function/.test(a.error.message ?? '')) };
+  if (a?.data !== uid) return { reqs: [], failed: false };
+  try { return { reqs: ((await pending()) ?? []).filter((r) => r.requested_by !== uid), failed: false }; } catch { return { reqs: [], failed: true }; }
+}

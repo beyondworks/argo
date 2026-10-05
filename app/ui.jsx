@@ -407,7 +407,7 @@ export function DangerModal({ title, description, requireText, phraseKey = 'dang
         <div className="card-head">
           <span className="card-title" style={{ color: 'var(--danger)' }}>{title}</span>
           <span className="rule" />
-          <button type="button" className="btn sm" onClick={onClose}>{t('common.close')} ESC</button>
+          <button type="button" className="btn sm" onClick={onClose}><span>{t('common.close')}<span className="kbd-hint"> ESC</span></span></button>
         </div>
         <div style={{ padding: '0 20px 18px', display: 'grid', gap: 12 }}>
           <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.65 }}>{description}</p>
@@ -450,7 +450,7 @@ export function ConfirmModal({ title, description, confirmLabel, tone = 'danger'
         <div className="card-head">
           <span className="card-title" style={danger ? { color: 'var(--danger)' } : undefined}>{title}</span>
           <span className="rule" />
-          <button type="button" className="btn sm" onClick={onClose}>{t('common.close')} ESC</button>
+          <button type="button" className="btn sm" onClick={onClose}><span>{t('common.close')}<span className="kbd-hint"> ESC</span></span></button>
         </div>
         <div style={{ padding: '0 20px 18px', display: 'grid', gap: 14 }}>
           <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.65 }}>{description}</p>
@@ -486,7 +486,7 @@ export function InputModal({ title, label, defaultValue = '', placeholder, confi
         <div className="card-head">
           <span className="card-title">{title}</span>
           <span className="rule" />
-          <button type="button" className="btn sm" onClick={onClose}>{t('common.close')} ESC</button>
+          <button type="button" className="btn sm" onClick={onClose}><span>{t('common.close')}<span className="kbd-hint"> ESC</span></span></button>
         </div>
         <div style={{ padding: '0 20px 18px', display: 'grid', gap: 12 }}>
           <label style={{ display: 'grid', gap: 5 }}>
@@ -683,7 +683,7 @@ export function FeedbackModal({ onClose }) {
         <div className="card-head">
           <span className="card-title">{t('feedback.title')}</span>
           <span className="rule" />
-          <button type="button" className="btn sm" onClick={onClose}>{t('common.close')} ESC</button>
+          <button type="button" className="btn sm" onClick={onClose}><span>{t('common.close')}<span className="kbd-hint"> ESC</span></span></button>
         </div>
         <div style={{ padding: '0 20px 18px', display: 'grid', gap: 12 }}>
           {state === 'sent' ? (

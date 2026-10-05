@@ -13,7 +13,7 @@ for (const lang of ['ko', 'en']) {
     assert.equal(toastError('Load failed', { t }), t('err.offline'));
     assert.equal(toastError('new row violates row-level security policy for table "msgr_channels"', { t }), t('err.denied'));
     assert.equal(toastError('msgr_room_limit', { t }), t('room.limit'));
-    for (const raw of ['duplicate key value violates unique constraint "msgr_channels_org_id_name_key"', "TypeError: Cannot read properties of undefined (reading 'id')", 'msgr_not_allowed', 'JWT expired', 'PGRST116: JSON object requested, multiple (or no) rows returned', 'Edge Function returned a non-2xx status code'])
+    for (const raw of ['duplicate key value violates unique constraint "msgr_channels_org_id_name_key"', "TypeError: Cannot read properties of undefined (reading 'id')", 'JWT expired', 'PGRST116: JSON object requested, multiple (or no) rows returned', 'Edge Function returned a non-2xx status code'])
       assert.equal(toastError(raw, { t }), t('err.raw'), raw);
     assert.notEqual(t('err.raw'), 'err.raw'); assert.notEqual(t('err.offline'), 'err.offline');
   });
@@ -25,4 +25,60 @@ test('UXM-05 이미 번역해 넘긴 사전 문구(ko·en 전부)는 기계 원�
   assert.deepEqual(bad, []);
   assert.equal(toastError(tm('err.denied', 'en'), { t: (k, v) => tm(k, 'en', v) }), tm('err.denied', 'en'));
   assert.equal(toastError('설정을 저장하지 못했습니다.', { t: (k, v) => tm(k, 'ko', v) }), '설정을 저장하지 못했습니다.');
+});
+
+// 화면 검수 UM1(2026-10-05): 서버 코드 154종 중 8종만 문구로 바뀌고 나머지는 '잠시 뒤 다시 시도' — 권한·한도는 다시 해도 같은 거절이라 틀린 안내였다.
+// 여러 줄 오류는 번역된 앞줄까지, '실패: msgr_bot_exists'는 앞말까지 사라졌다. 남은 영어 원문(용량·시간 초과)도 거른다.
+import { readFileSync, readdirSync } from 'node:fs';
+const codes = [...new Set(readdirSync(new URL('../../../supabase/migrations/', import.meta.url)).filter((f) => f.endsWith('.sql'))
+  .flatMap((f) => [...readFileSync(new URL(`../../../supabase/migrations/${f}`, import.meta.url), 'utf8').matchAll(/raise exception '(msgr_[a-z0-9_]+)/g)].map((m) => m[1])))];
+for (const lang of ['ko', 'en']) {
+  const t = (k, v) => tm(k, lang, v);
+  test(`UM1 권한 계열은 권한 없음, 한도 계열은 한도 문구, 그 밖 서버 코드는 다시 시도 없는 안내 — ${lang}`, () => {
+    for (const raw of ['msgr_forbidden', 'msgr_not_allowed', 'msgr_owner_only', 'msgr_admin_only', 'msgr_routine_forbidden', 'msgr_channel_admins_owner_only', 'permission denied for table msgr_channels', 'msgr_bot_unauthorized'])
+      assert.equal(toastError(raw, { t }), t('err.denied'), raw);
+    for (const raw of ['msgr_group_too_big', 'msgr_dm_full', 'msgr_hide_limit', 'msgr_routine_too_many', 'msgr_bot_file_too_large', 'msgr_bot_too_many_files', 'msgr_channel_limit', 'Payload too large', 'The object exceeded the maximum allowed size'])
+      assert.equal(toastError(raw, { t }), t('err.limit'), raw);
+    for (const raw of ['canceling statement due to statement timeout', 'AbortError: signal is aborted without reason', 'AbortError'])
+      assert.equal(toastError(raw, { t }), t('err.timeout'), raw);
+    assert.equal(toastError('msgr_bot_exists', { t }), t('err.code'));
+    assert.doesNotMatch(t('err.code'), lang === 'ko' ? /다시 시도/ : /try again/i, '같은 거절이 반복되는 요청에 다시 시도를 권하지 않는다');
+    assert.doesNotMatch(t('err.denied') + t('err.limit'), lang === 'ko' ? /잠시 뒤/ : /shortly/i);
+  });
+  test(`UM1 서버 코드 전부(마이그레이션 ${codes.length}종)가 원문으로 보이지 않고 '잠시 뒤 다시 시도'(err.raw)로도 가지 않는다 — ${lang}`, () => {
+    assert.ok(codes.length > 100);
+    const leaked = codes.filter((c) => { const v = toastError(c, { t }); return /msgr_/.test(v) || v === t('err.raw'); });
+    assert.deepEqual(leaked, []);
+  });
+  test(`UM1 여러 줄 오류는 줄마다 거르고, 사람 말 앞줄·앞말(이름: )은 남긴다 — ${lang}`, () => {
+    const first = lang === 'ko' ? 'My Agent: 이 에이전트는 지금 넣을 수 없습니다.' : 'My Agent: This agent can’t be added right now.';
+    assert.equal(toastError(`${first}\nOther Agent: msgr_crew_not_visible`, { t }), `${first}\nOther Agent: ${t('err.code')}`);
+    assert.equal(toastError('실패: msgr_bot_exists', { t }), `실패: ${t('err.code')}`);
+    assert.equal(toastError('Error: msgr_forbidden', { t }), t('err.denied'), '기계 머리말(Error:)은 남기지 않는다');
+    assert.equal(toastError('a.png: Payload too large\nb.png: Payload too large', { t }), `a.png: ${t('err.limit')}\nb.png: ${t('err.limit')}`);
+    assert.equal(toastError('msgr_forbidden\nmsgr_forbidden', { t }), t('err.denied'), '같은 줄은 한 번');
+  });
+}
+
+test('UM1 사전 문구(ko·en, 변수 채움)는 어떤 갈래에도 걸리지 않고 그대로 보인다 — "Attachment upload failed"가 연결 끊김으로, "read-only" 안내가 짧은 잠김 문구로 바뀌던 것', () => {
+  const bad = [];
+  for (const [k, pair] of Object.entries(DICT)) for (const [i, lang] of [[0, 'ko'], [1, 'en']]) {
+    const v = String(pair[i]).replace(/\{(\w+)\}/g, '7');
+    for (const line of v.split('\n')) if (line.trim() && toastError(line, { t: (x, vv) => tm(x, lang, vv) }) !== line) bad.push(`${k}(${lang})`);
+  }
+  assert.deepEqual(bad, []);
+});
+
+// 화면 검수 UM1(2026-10-05): 폰에서 게스트에게도 보이던 '새 채널'(서버 msgr_create_channel은 owner·admin·member만, 잠긴 조직 제외 → msgr_forbidden).
+// 못 하는 행동은 아예 보이지 않게 — 폰 + 메뉴와 데스크톱 + 단추 모두 같은 판정(canNewCh)을 쓴다.
+test('UM1 새 채널은 게스트·잠긴 조직·개인 공간에서 보이지 않는다(폰 메뉴·데스크톱 단추 모두)', () => {
+  const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
+  const line = app.match(/const canNewCh = ([^;]+);/); assert.ok(line, 'canNewCh 판정이 없다');
+  const can = (org, { isPersonal = false, orgLocked = false } = {}) => new Function('org', 'isPersonal', 'orgLocked', `return (${line[1]});`)(org, isPersonal, orgLocked);
+  assert.deepEqual(['owner', 'admin', 'member', 'guest'].map((role) => can({ role })), [true, true, true, false]);
+  assert.equal(can({ role: 'member' }, { orgLocked: true }), false, '잠긴 조직');
+  assert.equal(can({ role: 'owner' }, { isPersonal: true }), false, '개인 공간');
+  assert.equal(can(null), false);
+  assert.match(app, /\{canNewCh && <button type="button" role="menuitem" onClick=\{\(\) => \{ setChPlus\(false\); setBrowse\(null\); openNewCh\(\); \}\}>/, '폰 + 메뉴');
+  assert.match(app, /\{canNewCh && <button type="button" className="btn msgr-chnew"/, '데스크톱 + 단추');
 });

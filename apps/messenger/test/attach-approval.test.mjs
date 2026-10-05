@@ -103,3 +103,15 @@ test('MSG-07 결정 중에는 다시 눌러도 요청이 한 번만 나간다 �
   release(); await a;
   decide('approved'); assert.equal(n, 2);
 });
+
+// 화면 검수 UL1(2026-10-05): 방 보조 줄의 결재자 조회(msgr_dm_approver)가 실패하면 .error를 안 보고 조용히 '요청 없음'이 됐다 — 참여 요청 막대가 흔적 없이 안 보였다.
+test('UL1 참여 요청 읽기 — 결재자 조회·요청 조회가 실패하면 failed(조용히 숨기지 않는다), 함수가 없는 옛 서버는 종전처럼 없음', async () => {
+  const { readRoomJoinRequests } = await import('../src/approval-display.js');
+  const pending = async () => [{ id: 1, requested_by: 'u-bob' }, { id: 2, requested_by: 'u-me' }];
+  assert.deepEqual(await readRoomJoinRequests({ uid: 'u-me', approver: async () => ({ data: 'u-me' }), pending }), { reqs: [{ id: 1, requested_by: 'u-bob' }], failed: false });
+  assert.deepEqual(await readRoomJoinRequests({ uid: 'u-me', approver: async () => ({ data: 'u-other' }), pending }), { reqs: [], failed: false }, '결재자가 아니면 없음');
+  assert.deepEqual(await readRoomJoinRequests({ uid: 'u-me', approver: async () => ({ data: null, error: { message: 'canceling statement due to statement timeout' } }), pending }), { reqs: [], failed: true });
+  assert.deepEqual(await readRoomJoinRequests({ uid: 'u-me', approver: async () => { throw new TypeError('Failed to fetch'); }, pending }), { reqs: [], failed: true });
+  assert.deepEqual(await readRoomJoinRequests({ uid: 'u-me', approver: async () => ({ data: 'u-me' }), pending: async () => { throw new Error('Failed to fetch'); } }), { reqs: [], failed: true }, '요청 조회 실패');
+  assert.deepEqual(await readRoomJoinRequests({ uid: 'u-me', approver: async () => ({ data: null, error: { code: 'PGRST202', message: 'Could not find the function public.msgr_dm_approver' } }), pending }), { reqs: [], failed: false }, '옛 서버');
+});
