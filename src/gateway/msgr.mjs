@@ -526,7 +526,7 @@ export async function nodeRunnerInfo(wsId, { status = null, catalog = null, now 
   return info;
 }
 
-async function listAgentsForInventory(wsId) { const { listAgents } = await import('../hub.mjs'); return (await listAgents(wsId)).map((a) => ({ slug: a.slug, name: a.name, role: a.role })); }
+async function listAgentsForInventory(wsId) { const { listAgents } = await import('../hub.mjs'); return (await listAgents(wsId, { strict: true })).map((a) => ({ slug: a.slug, name: a.name, role: a.role })); } // strict — 못 읽은 카드를 사라진 크루로 보고 행을 지우지 않게(F7)
 
 /** 크루 인벤토리 미러 — 로그인한 소유자의 회사 크루(이름·역할·slug만)를 내가 속한 모든 조직에 **기본 파견(active)**으로 올린다
     (유건 지시 2026-09-08: "연결하면 내 크루 전부가 목록에 세팅, 허용 범위·해제는 메신저에서"). allow = 조직 기본 허용 범위(정책), 없으면 'owner'.

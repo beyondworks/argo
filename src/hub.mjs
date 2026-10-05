@@ -94,14 +94,26 @@ export async function listCompanyIds() {
   return out;
 }
 
-export async function listAgents(wsId) {
+const brokenCardLogged = new Set(); // `${wsId}/${파일}` — 깨진 카드 경고는 프로세스당 한 번(10초 폴마다 같은 줄이 쌓이지 않게)
+
+/** opts.strict — 카드 하나라도 못 읽으면 던진다(종전 동작). 메신저 인벤토리 미러 전용: 못 읽은 카드를 "없는 크루"로 보고
+    그 크루의 메신저 행을 지우면 안 된다. 그 밖(홈 목록·게이트웨이·화면)은 깨진 카드만 건너뛴다 — 카드 하나 때문에 회사 전체가
+    목록에서 사라지고 그 회사의 큐 드레인까지 멈추던 결함(F7, 2026-10-05). */
+export async function listAgents(wsId, { strict = false } = {}) {
   const p = paths(wsId);
   let names = [];
   try { names = await readdir(p.agents); } catch { return []; }
   const out = [];
   // 동기화 충돌 사본(`<slug>.conflict-<기기>-<ts>.md`, sync.mjs)은 크루가 아니다 — 목록·메신저 미러에 같은 이름 크루가 하나 더 생겼다(2026-10-04).
   for (const n of names.filter((f) => f.endsWith('.md') && !/\.conflict-.*\.md$/.test(f)).sort()) {
-    const md = await readFile(join(p.agents, n), 'utf8');
+    let md;
+    try { md = await readFile(join(p.agents, n), 'utf8'); }
+    catch (e) {
+      if (strict) throw e;
+      const k = `${wsId}/${n}`;
+      if (!brokenCardLogged.has(k)) { brokenCardLogged.add(k); console.warn(`[argo] 크루 카드를 읽지 못해 건너뜁니다(${k}): ${e?.code ?? e?.message ?? e}`); }
+      continue;
+    }
     const meta = parseFrontmatter(md);
     out.push({
       slug: n.replace(/\.md$/, ''),
