@@ -28,6 +28,15 @@ export function shouldShowUpdateNotes({ current, bundleVersion, ready, loaded, a
     && (!stableVersion(ackVersion) || cmpVersion(current, ackVersion) > 0));
 }
 
+/** 안내 카드가 떠 있는 동안 사용자가 입력을 시작하면 이번 실행에서는 접는다 — 숨겼다가 입력을 마치고(blur) 다시
+    그리면 보내기 버튼으로 가는 클릭 사이에 카드가 끼어들어 클릭을 먹었다(UX-A01, 2026-10-05). 저장 중에는 접지 않는다. */
+export function shouldAutoDismissUpdateNotes({ visible = false, editing = false, saving = false } = {}) {
+  return !!(visible && editing && !saving);
+}
+
+/** 입력창을 떠난 뒤 카드를 그리기까지 기다리는 시간 — 입력창 → 버튼으로 포커스가 옮겨지는 그 클릭 도중에 카드가 생기지 않게. */
+export const UPDATE_NOTES_BLUR_SETTLE_MS = 1500;
+
 export function isEditingElement(element) {
   return !!element && (/^(INPUT|TEXTAREA)$/i.test(element.tagName ?? '')
     || element.isContentEditable === true);
@@ -57,4 +66,10 @@ export async function acknowledgeUpdateNotesVersion(version, { isApp, invoke = n
     const previous = target.getItem(UPDATE_NOTES_STORAGE_KEY);
     if (!stableVersion(previous) || cmpVersion(version, previous) > 0) target.setItem(UPDATE_NOTES_STORAGE_KEY, version);
   }
+}
+
+/** 닫기(×) — 같은 버전에서는 다시 띄우지 않도록 확인 기록을 남긴다(UX-A01: 닫아도 다음 실행에 또 떴다).
+    기록이 실패하면 false — 호출부는 이번 실행에서만 접는다(실패를 확인 성공으로 꾸미지 않는다). */
+export async function closeUpdateNotes(version, { ack = acknowledgeUpdateNotesVersion, ...options } = {}) {
+  try { await ack(version, options); return true; } catch { return false; }
 }

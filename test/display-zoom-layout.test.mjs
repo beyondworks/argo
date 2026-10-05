@@ -813,3 +813,22 @@ test('Dial 바늘 핀 — translate(사용자 좌표계) 그룹 안에서 로컬
   assert.ok(iT < iO && iO < iL && iL < iEnd, 'Dial 바늘 순서 — translate 그룹 › 회전 그룹(원점 0 0) › 바늘 line 이 중첩돼 있어야 한다');
   assert.ok(/transition:\s*'transform 1s/.test(body.slice(iT, iEnd)), 'Dial 바늘 스윕 전환(transform 1s)이 회전 그룹에 남아 있어야 한다(키 순서 무관 — 분리 검수 L-2)');
 });
+
+// UX-A01(2026-10-05): 오른쪽 아래 고정이던 패널이 크루 대화 보내기·데크 크루 영입·설정 '해제' 버튼을 덮었다.
+// 불변식: 패널은 상단바(56px) 아래에서 시작하고, 바닥은 하단 입력줄 구역(뷰포트 바닥 180px) 위에서 끝난다 — 배율·폭 무관.
+test('업데이트 패널은 상단바 아래에 붙고 하단 입력줄·버튼 구역(바닥 180px)을 덮지 않는다', () => {
+  const source = sources.get('app/update-notes.jsx');
+  const card = source.split('<div className="card-head"')[0];
+  assert.doesNotMatch(card, /\bbottom:\s*'/, '바닥 고정 금지 — 입력줄 구역을 덮는다');
+  const top = card.match(/\btop:\s*'([^']+)'/)?.[1];
+  const height = decls.find((d) => d.file === 'app/update-notes.jsx' && d.prop === 'maxHeight');
+  assert.ok(top && height, '실제 패널의 위치·높이 선언을 검사한다');
+  for (const [viewportWidth, viewportHeight] of [[390, 844], [768, 1024], [1280, 800], [1440, 900]]) {
+    for (const z of [1, 1.25]) {
+      const t0 = evalSize(top, { z, viewportWidth, viewportHeight }) * z;
+      const h = evalSize(height.expr, { z, viewportWidth, viewportHeight }) * z;
+      assert.ok(t0 >= 56 * z, `${viewportWidth}×${viewportHeight}·배율 ${z}: 상단바(${56 * z}px)를 덮는다(top ${t0})`);
+      assert.ok(t0 + h <= viewportHeight - 180 * z + 1e-6, `${viewportWidth}×${viewportHeight}·배율 ${z}: 바닥 ${t0 + h}px가 입력줄 구역을 덮는다`);
+    }
+  }
+});

@@ -108,3 +108,23 @@ test('package.json 버전에 업데이트 안내 항목이 있고, 모든 안내
   const STR = String.raw`(?:'(?:[^'\\]|\\.)+'|"(?:[^"\\]|\\.)+")`; // 작은따옴표(\' 포함)·큰따옴표 문자열 둘 다
   for (const k of Object.values(UPDATE_NOTES).flat()) assert.match(src, new RegExp(String.raw`'${k.replaceAll('.', '\\.')}': \[${STR}, ${STR}\]`), k);
 });
+
+// UX-A01(2026-10-05): 카드가 입력 중엔 숨었다가 blur 때 다시 그려져 보내기 클릭을 먹었고, 닫아도 다음 실행에 다시 떴다.
+test('떠 있는 카드는 입력을 시작하면 이번 실행에서 접는다(다시 튀어나오지 않게) — 저장 중·안 보일 때는 접지 않는다', async () => {
+  const { shouldAutoDismissUpdateNotes, UPDATE_NOTES_BLUR_SETTLE_MS } = await import('../app/update-notes-state.mjs');
+  assert.equal(shouldAutoDismissUpdateNotes({ visible: true, editing: true }), true);
+  assert.equal(shouldAutoDismissUpdateNotes({ visible: true, editing: false }), false);
+  assert.equal(shouldAutoDismissUpdateNotes({ visible: false, editing: true }), false, '아직 안 뜬 카드는 접을 대상이 아니다');
+  assert.equal(shouldAutoDismissUpdateNotes({ visible: true, editing: true, saving: true }), false);
+  assert.ok(UPDATE_NOTES_BLUR_SETTLE_MS >= 1000, '입력창 → 버튼 클릭 한 번(포커스 이동~클릭 완료) 동안은 카드를 그리지 않는다');
+});
+
+test('닫기(×)는 같은 버전 확인 기록을 남겨 다시 띄우지 않는다 — 기록 실패면 false(이번 실행에서만 접는다)', async () => {
+  const { closeUpdateNotes } = await import('../app/update-notes-state.mjs');
+  const storage = store();
+  assert.equal(await closeUpdateNotes('0.1.95', { isApp: false, storage }), true);
+  const ack = await readUpdateNotesVersion({ isApp: false, storage });
+  assert.equal(shouldShowUpdateNotes({ current: '0.1.95', bundleVersion: '0.1.95', ready: true, loaded: true, ackVersion: ack }), false,
+    '닫은 버전은 새 실행(세션 기억 없음)에서도 다시 뜨지 않는다');
+  assert.equal(await closeUpdateNotes('0.1.95', { isApp: true, invoke: async () => { throw new Error('native down'); } }), false);
+});
