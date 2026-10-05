@@ -13,7 +13,7 @@ import { readNav, routeInfo, favTarget, routeLabelKey, routeIcon, favKey, NAV_IC
 import { setUi } from '../core/ui-state.js';
 import { baseOf, pageMenu, crewMenu, mod } from '../core/commands.js';
 import { dragHasFiles, filesFromTransfer } from '../core/files.js';
-import { groupCrews, isMine, crewsIn } from '../core/crew-list.js';
+import { groupCrews, isMine, crewsIn, byOrg } from '../core/crew-list.js';
 import { showToast } from './Overlay.jsx';
 import { SPACES, ME, canManage, getMode, nameIn } from '../core/session.js';
 import { openExternal } from '../core/platform.js';
@@ -133,7 +133,8 @@ function CrewRow({ crew, space, group, order, mode, movable }) {
   const job = crew.job || (crew.dept ? '' : crew.role); // 예시 데이터는 role 하나뿐
   // 같은 에이전트를 한 줄로 묶은 내 공간(crew-list.js oneEach) — 조직이 둘 이상이면 어느 조직에 있는지 작게(CX-05)
   const where = SPACES.filter((x) => x.kind === 'org').length > 1 ? (crew.spaces ?? []).map((k) => SPACES.find((x) => x.key === k)?.name).filter(Boolean).join(', ') : '';
-  const tip = [job ? t('crew.tip.job', { job }) : t('crew.tip.noJob'), crew.dept && t('crew.tip.dept', { dept: crew.dept }), t('crew.tip.owner', { name: isMine(crew, ME.id) ? nameIn(space) : owner }), where, t(`crew.status.${crew.status}`)].filter(Boolean).join('\n');
+  const st = useStore((s) => (s.boardError ? 'rest' : crew.status)); // 기록판을 못 읽는 동안 접속은 '확인 못 함'(2차 검수 L8)
+  const tip = [job ? t('crew.tip.job', { job }) : t('crew.tip.noJob'), crew.dept && t('crew.tip.dept', { dept: crew.dept }), t('crew.tip.owner', { name: isMine(crew, ME.id) ? nameIn(space) : owner }), where, t(`crew.status.${st}`)].filter(Boolean).join('\n');
   // 터치는 길게 누르기 = 메뉴(트리와 같은 규칙). 키보드는 끌기를 시작하지 않는다 — Enter·Space는 누르기와 같이 상세 열기(검수 MEDIUM-1), 순서는 마우스로
   const { onTouchStart, onKeyDown, ...dragListeners } = sort.listeners ?? {};
   const { role, tabIndex, ...sortAttrs } = sort.attributes ?? {}; // 줄 자체는 초점을 받지 않는다(안쪽 버튼 하나만)
@@ -148,7 +149,7 @@ function CrewRow({ crew, space, group, order, mode, movable }) {
       <button ref={setNodeRef} type="button" className="crew-btn" onClick={open} title={isOver || fileOver ? t('crew.drop', { crew: crew.name }) : tip}>
         <Face id={crew.id} size={18} />
         <span className="nav-label"><span className="crew-name">{crew.name}</span><small>{isMine(crew, ME.id) ? [crew.role, where].filter(Boolean).join(' · ') : owner}</small></span>{/* 오피스에는 내 크루만 — 작은 글씨는 부서(없으면 직무) */}
-        <span className={`dot ${crew.status}`} aria-label={t(`crew.status.${crew.status}`)} />
+        <span className={`dot ${st}`} aria-label={t(`crew.status.${st}`)} />
       </button>
     </div>
   );
@@ -172,12 +173,13 @@ function CrewSection({ space, crews, handle }) {
     {query != null && <input className="crew-search" autoFocus value={query} placeholder={t('crew.search')} aria-label={t('crew.search')} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape') setQuery(null); }} />}
     <div className="crews">
       {groups.map((g) => {
-        const mode = g.key === 'pinned' ? 'pin' : 'sort', order = g.crews.map((c) => c.id), label = t(`crew.group.${g.key}`);
+        const mode = g.key === 'pinned' ? 'pin' : 'sort', label = t(`crew.group.${g.key}`);
         return <div key={g.key} className="crew-group" role="group" aria-label={label}>
           <button type="button" className="crew-group-head" aria-expanded={!fold[g.key] || !!query} onClick={() => toggle(g.key)}><span>{label}</span><Icon name={fold[g.key] && !query ? 'chevron' : 'caret'} size={12} /><small>{g.crews.length}</small></button>
-          {(!fold[g.key] || query) && <SortableContext items={order.map((id) => `crewsort:${id}`)} strategy={verticalListSortingStrategy}>
-            {g.crews.map((c) => <CrewRow key={c.id} crew={c} space={space} group={`${space}|${g.key}`} order={order} mode={mode} movable={g.movable} />)}
-          </SortableContext>}
+          {/* 순서는 조직마다 따로 저장된다 — 같은 조직 덩어리(byOrg)마다 끌기 영역을 나눠, 다른 조직 자리에는 놓기 표시도 저장도 없다. 개인 공간 행은 저장할 곳이 없어 끌지 않는다 */}
+          {(!fold[g.key] || query) && byOrg(g.crews).map((run) => { const order = run.crews.map((c) => c.id); return <SortableContext key={run.org ?? '-'} items={order.map((id) => `crewsort:${id}`)} strategy={verticalListSortingStrategy}>
+            {run.crews.map((c) => <CrewRow key={c.id} crew={c} space={space} group={`${space}|${g.key}|${run.org}`} order={order} mode={mode} movable={g.movable && (!!run.org || getMode() !== 'signedIn')} />)}
+          </SortableContext>; })}
         </div>;
       })}
       {/* 검색 결과가 없을 때만 '맞는 에이전트 없음'. 아직 하나도 없으면 다음에 할 일(실행기 = Argo 앱 받기, 패밀리 원칙 6 — OFC-18) */}

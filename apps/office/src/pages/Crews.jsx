@@ -12,7 +12,7 @@ import { ME, SPACES, getMode, nameIn } from '../core/session.js';
 import { baseOf, crewMenu } from '../core/commands.js';
 import { navigate } from '../core/router.jsx';
 import { isMine, crewsIn } from '../core/crew-list.js';
-import { groupByDept, crewWork, crewRecords, crewAccess, replyLines } from '../core/crew-model.js';
+import { groupByDept, crewWork, crewRecords, crewAccess, replyLines, detailIds } from '../core/crew-model.js';
 import { getClient } from '../core/supabase.js';
 import { useTasks } from '../core/tasks.js';
 import { fmtBytes } from '../core/files.js';
@@ -31,7 +31,8 @@ const EMPTY = [];
 /** 직무 — 예시 데이터는 role 하나뿐(좌측 목록과 같은 규칙) */
 const jobOf = (c) => c.job || (c.dept ? '' : c.role);
 const ownerOf = (c, space) => (c.company ? t('crew.owner.company') : isMine(c, ME.id) ? nameIn(space) : c.ownerName || t('crew.owner.unknown')); // 내 이름은 보고 있는 공간에서 보이는 이름(CX-07)
-const Status = ({ c }) => <span className={`badge ${STATUS_BADGE[c.status] ?? ''}`}>{t(`crew.status.${c.status}`)}</span>;
+// 기록판을 못 읽는 동안 접속은 '확인 못 함' — 지난번 받은 '대기 중'·'꺼져 있음'을 그대로 보이지 않는다(2차 검수 L8)
+const Status = ({ c }) => { const st = useStore((s) => (s.boardError ? 'rest' : c.status)); return <span className={`badge ${STATUS_BADGE[st] ?? ''}`}>{t(`crew.status.${st}`)}</span>; };
 const openCrew = (c, space) => setUi({ crew: { id: c.id, space } });
 
 /** 에이전트 조직도(O1) — 이 공간의 에이전트를 부서별 카드로. 조직 공간은 조직 전체(남의 크루·회사 크루 포함), 내 공간은 내 에이전트만(crewsIn과 같은 규칙) */
@@ -45,6 +46,7 @@ export default function CrewOrg({ space }) {
   return <div className="page-wrap wide">
     <div className="page-title-row"><div><h1 className="page-h1">{t('nav.agents')}</h1>
       <p className="dim">{[t(space === 'me' ? 'agents.meSub' : 'agents.sub'), crews.length > 0 && t('agents.count', { n: crews.length, d: depts })].filter(Boolean).join(' · ')}</p></div></div>
+    {failed && crews.length > 0 && <LoadFail small onRetry={() => pullBoard().catch(() => {})} />}{/* 지난번 받은 목록 위에 다시 시도 */}
     {!crews.length && failed ? <LoadFail onRetry={() => pullBoard().catch(() => {})} />
       : !crews.length ? <div className="empty-state"><Icon name="hand" size={20} /><p>{t('agents.empty')}</p>{/* 다음에 할 일 = 실행기(Argo 앱) 받기 — 에이전트는 메신저가 아니라 실행기가 올린다(패밀리 원칙 6, CX-01·OFC-18) */}
       <button type="button" className="btn sm" onClick={() => openExternal(FAMILY.download)}><Icon name="download" size={13} />{t('crew.getApp')}</button></div>
@@ -124,9 +126,9 @@ function CrewBody({ crew: c, space, close }) {
   const work = useStore((s) => s.work), approvals = useStore((s) => s.approvals), decisions = useStore((s) => s.decisions);
   const outputs = useStore((s) => s.outputs), journal = useStore((s) => s.journal);
   const tasks = useCrewTasks(c);
-  // 내 에이전트는 같은 에이전트의 행(조직마다·개인 공간) 기록을 한곳에 — 개인 방 산출물·다른 조직의 결재도 보인다(분리 검수 LOW)
+  // 내 공간에서는 같은 에이전트의 행(조직마다·개인 공간) 기록을 한곳에 — 개인 방 산출물·다른 조직의 결재도 보인다. 조직 공간은 그 조직 행만
   const rowsAll = useStore((s) => s.crews);
-  const ids = useMemo(() => (c.owner === ME.id && c.agent != null ? rowsAll.filter((x) => x.owner === ME.id && x.agent === c.agent).map((x) => x.id) : [c.id]), [rowsAll, c.id, c.agent, c.owner]);
+  const ids = useMemo(() => detailIds(c, rowsAll, space, ME.id), [rowsAll, c, space]);
   const mine = useMemo(() => crewWork(ids, { work, tasks }), [ids, work, tasks]);
   const rec = useMemo(() => crewRecords(ids, { approvals, decisions, outputs, journal }, SHOW), [ids, approvals, decisions, outputs, journal]);
   const access = crewAccess(c, ME.id, getMode());

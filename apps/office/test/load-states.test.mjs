@@ -10,8 +10,9 @@ import { mapBoard } from '../src/core/board.js';
 import * as V from '../src/views/model.js';
 import * as FM from '../src/files/model.js';
 
+// 얼굴 지도 모듈(@msgr/crew-face)은 Vite 별칭이라 노드에서 못 연다 — 빈 지도로 바꿔 실행한다(크루 행 읽기 성공·실패만 본다)
 const run = (file, deps) => {
-  const source = readFileSync(new URL(`../src/${file}`, import.meta.url), 'utf8').replace(/^import .*;$/gm, '');
+  const source = readFileSync(new URL(`../src/${file}`, import.meta.url), 'utf8').replace(/^import .*;$/gm, '').replace("import('@msgr/crew-face')", 'Promise.resolve({ agentLooks: () => new Map() })');
   const module = { exports: {} };
   new Function(...Object.keys(deps), 'module', 'exports', transformSync(source, { loader: 'js', format: 'cjs' }).code)(...Object.values(deps), module, module.exports);
   return module.exports;
@@ -25,7 +26,7 @@ const fakeSb = (answer) => {
 };
 const pullWith = (answer, state = { pages: [{ id: 'p', title: 't' }] }) => run('core/pull.js', {
   getStorageScope: () => 'alice', ME: { id: 'alice' }, SPACES: [{ key: 'acme', id: 'o1', kind: 'org', role: 'member' }], getClient: async () => fakeSb(answer),
-  getState: () => state, update: (fn) => Object.assign(state, fn(state)), outbox: { has: () => false }, mergePages() {}, mapBoard, decidableSet: () => new Set(),
+  getState: () => state, update: (fn) => Object.assign(state, fn(state)), outbox: { has: () => false }, mergePages() {}, mapBoard, decidableSet: () => new Set(), getUi: () => ({}), setUi() {},
 });
 
 // 이유(OFC-06): 본문 읽기 실패·없는 페이지가 조용히 끝나 회색 자리(스켈레톤)만 계속 보였다 — 실패는 실패로 던지고, 없음은 null로 나눈다
@@ -119,7 +120,7 @@ test('파일 한도: 지금 쓸 수 있는 한도(서버 Free 25MB)로 먼저 �
 test('OFC-08: 조직 없는 계정 — 크루 행을 못 읽으면 기록판 실패로 남긴다', async () => {
   const state = {};
   const pull = run('core/pull.js', { getStorageScope: () => 'alice', ME: { id: 'alice' }, SPACES: [{ key: 'me', kind: 'me' }], getClient: async () => fakeSb(() => ({ data: null, error: { message: 'down' } })),
-    getState: () => state, update: (fn) => Object.assign(state, fn(state)), outbox: { has: () => false }, mergePages() {}, mapBoard, decidableSet: () => new Set() });
+    getState: () => state, update: (fn) => Object.assign(state, fn(state)), outbox: { has: () => false }, mergePages() {}, mapBoard, decidableSet: () => new Set(), getUi: () => ({}), setUi() {} });
   await assert.rejects(pull.pullBoard());
   assert.ok(state.boardError > 0);
 });

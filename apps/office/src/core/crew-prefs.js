@@ -30,11 +30,13 @@ export async function moveCrew(order, movedId, targetId, mode) {
   }));
 }
 
-/** 고정 켜기/끄기 — 켜면 맨 뒤 */
+/** 고정 켜기/끄기 — 켜면 맨 뒤. 내 공간의 묶인 줄(같은 에이전트 = 한 사람)은 조직 행 전부에 같은 값 — 한 행만 바꾸면 두 조직 고정이 안 풀리고
+ *  다시 고정할 때 저장 조직이 바뀌었다(2차 검수 M3·L1). 서버 함수가 조직마다 한 행씩이라 행마다 저장. 개인 공간 행은 고정을 저장할 곳이 없다 */
 export function pinCrew(crew, on) {
+  const ids = crew.ids ?? [crew.id], rows = getState().crews.filter((c) => ids.includes(c.id) && (c.org || getMode() !== 'signedIn'));
   const last = Math.max(-1, ...getState().crews.filter((c) => c.pinned && c.pinPos != null).map((c) => c.pinPos));
-  patch((c) => (c.id === crew.id ? { ...c, pinned: on, pinPos: on ? last + 1 : null } : null));
-  return save(crew.org, 'pin', [crew.id], on);
+  patch((c) => (rows.includes(c) ? { ...c, pinned: on, pinPos: on ? last + 1 : null } : null));
+  return Promise.all(rows.map((c) => save(c.org, 'pin', [c.id], on)));
 }
 
 export const canPin = (crew) => (crew.access ?? 'ok') === 'ok' && (!!crew.org || getMode() !== 'signedIn') && !!ME;

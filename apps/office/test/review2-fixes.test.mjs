@@ -74,7 +74,8 @@ test('머리줄: 서버에 없는 페이지는 제목·저장됨·별을 보이�
 test('화면 사전: 같은 키를 서로 다른 문구로 두 번 정의하지 않는다(기본 사전 포함)', async () => {
   const root = fileURLToPath(new URL('../src', import.meta.url));
   const files = [];
-  const walk = (d) => { for (const f of readdirSync(d)) { const p = join(d, f); if (statSync(p).isDirectory()) walk(p); else if (/-i18n\.js$/.test(p)) files.push(p); } };
+  // 사전 = *_DICT를 내보내는 모든 파일(2차 검수 L9: -i18n.js만 보면 business/i18n.js의 BUSINESS_DICT 등이 빠졌다)
+  const walk = (d) => { for (const f of readdirSync(d)) { const p = join(d, f); if (statSync(p).isDirectory()) walk(p); else if (/\.m?jsx?$/.test(p) && /export const [A-Z_]+_DICT\b/.test(readFileSync(p, 'utf8'))) files.push(p); } };
   walk(root);
   const seen = new Map(), clash = [];
   for (const f of files) {

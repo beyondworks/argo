@@ -62,16 +62,16 @@ export function composeTools(tools, t) {
   return `[${t('crew.tools.head')}]\n${tools.map((x) => `- ${x.title}${x.url ? ` (${x.url})` : ''}${String(x.guide ?? '').trim() ? `: ${excerpt(String(x.guide).replace(/\s+/g, ' ').trim(), 600)}` : ''}`).join('\n')}`;
 }
 
-// 플러그인 배정(spec.crews)과 내 공간의 묶인 줄(crew-list.js oneEach — ids = 같은 에이전트의 행 전부). 묶이지 않은 줄은 그 id 하나
-const rowIds = (c) => c.ids ?? [c.id];
-/** 이 줄에 배정돼 있나 — 묶인 행 어느 id로 배정했어도(대표가 아닌 행으로 예전에 배정한 것 포함) */
-export const toolCrewOn = (list, c) => rowIds(c).some((id) => list.includes(id));
-/** 체크 켜고 끄기 — 끄면 묶인 행 id를 모두 빼고, 켜면 대표 id 하나 */
-export const toggleToolCrew = (list, c) => (toolCrewOn(list, c) ? list.filter((id) => !rowIds(c).includes(id)) : [...list, c.id]);
-/** 저장 전 — 같은 에이전트(묶음)는 처음 id 하나만. 목록에 없는 id(꺼진 크루 등)는 지우지 않는다 */
-export function oncePerAgent(list, crews) {
+// 플러그인 배정(spec.crews)은 같은 에이전트(= 한 사람)의 행 전부로 판정한다 — 내 공간 줄은 ids, 조직 공간 줄은 묶음 키로 찾는다(agentIds, 2차 검수 L3).
+// all = 가게의 크루 행 전부
+/** 이 줄에 배정돼 있나 — 같은 에이전트의 어느 행으로 배정했어도(대표가 아닌 행·다른 조직 행으로 예전에 배정한 것 포함) */
+export const toolCrewOn = (list, c, all = []) => agentIds(c, all).some((id) => list.includes(id));
+/** 체크 켜고 끄기 — 끄면 같은 에이전트의 행 id를 모두 빼고, 켜면 이 줄 id 하나 */
+export const toggleToolCrew = (list, c, all = []) => (toolCrewOn(list, c, all) ? list.filter((id) => !agentIds(c, all).includes(id)) : [...list, c.id]);
+/** 저장 전 — 같은 에이전트는 처음 id 하나만. 목록(crews)에 없는 에이전트의 id(꺼진 크루 등)는 지우지 않는다 */
+export function oncePerAgent(list, crews, all = []) {
   const seen = new Set();
-  return list.filter((id) => { const c = crews.find((x) => rowIds(x).includes(id)); if (!c) return true; if (seen.has(c.id)) return false; seen.add(c.id); return true; });
+  return list.filter((id) => { const c = crews.find((x) => agentIds(x, all).includes(id)); if (!c) return true; if (seen.has(c.id)) return false; seen.add(c.id); return true; });
 }
 /** 같은 에이전트의 행 id(고른 행 먼저) — 내 공간의 묶인 줄은 ids, 조직 공간에서 고른 행은 같은 묶음 키(agent)의 행(사본·꺼진 행 빼고) */
 export function agentIds(c, crews) {
@@ -79,7 +79,7 @@ export function agentIds(c, crews) {
   return [c.id, ...ids.filter((id) => id !== c.id)];
 }
 /** 맡길 때 배정된 플러그인 — 서버 crew.tools는 크루 id 하나만 보므로 같은 에이전트의 행마다 물어 합친다(같은 플러그인은 한 번). 못 읽은 행은 건너뛴다.
- *  부하: 보낼 때만, 그 에이전트의 행 수(보통 1~3)만큼 읽기 */
+ *  부하: 보낼 때만, 그 에이전트의 행 수(보통 1~3)만큼 호출 — 맞는 플러그인이 있으면 서버가 그 플러그인의 전달 횟수(uses)를 올린다(쓰기, 표시에만 쓰는 값) */
 export async function crewTools(ids, ask) {
   const all = (await Promise.all(ids.map((id) => ask(id).catch(() => [])))).flat();
   return all.filter((x, i) => all.findIndex((y) => y.id === x.id) === i);

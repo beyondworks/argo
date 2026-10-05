@@ -70,8 +70,8 @@ export const hasMore = (key) => Object.values(pages.get(key) ?? {}).some(Boolean
 /** 목록 받기 — view: 메일함(보기), more: 다음 쪽, q: 검색어(모든 메일에서, 계정마다 받아 합친다). 돌려주는 값 { ids(받은 메일), failed, more } */
 export async function pullMail(view, { more = false, q = null } = {}) {
   if (!real()) return sampleList(view, q);
-  const accounts = okAccounts();
-  if (!accounts.length) return { ids: [], failed: [], more: false };
+  const accounts = okAccounts(), inbox = view === 'inbox' && !more && !q;
+  if (!accounts.length) { if (inbox && getState().mailError !== null) update(() => ({ mailError: null })); return { ids: [], failed: [], more: false }; } // 연결한 계정이 없으면 기다릴 것도 없다(확인 전에 머물지 않게)
   const key = q ? `q:${q}` : view;
   const tokens = more ? pages.get(key) ?? {} : {};
   const targets = more ? accounts.filter((a) => tokens[a.id]) : accounts;
@@ -85,11 +85,14 @@ export async function pullMail(view, { more = false, q = null } = {}) {
     if (r.reason?.code === 'expired') markExpired(a.id);
   });
   pages.set(key, next);
-  // 받은편지함 같은 보기 받기의 결과로 메일 읽기 실패 표시를 새로 쓴다(검색·더 보기는 빼고) — 홈 현황 '안 읽은 메일'이 '모두 확인'으로 속이지 않게, 회복하면 지운다(OFC-08)
-  const err = more || q ? {} : { mailError: hardFails(failed) ? Date.now() : null };
+  // 메일 읽기 실패 표시(홈 '안 읽은 메일' 카드·모듈)는 받은편지함 목록 받기 결과로만 쓰고 지운다(2차 검수 M1 — 다른 메일함·sync 성공이 지우면 '모두 확인'으로 속였다).
+  // 요청 제한(429)도 실패다 — 못 받았으니 '확인 못 함'(L7). 만료는 계정이 '다시 연결'로 따로 보인다. mailError: undefined 확인 전 · null 받음 · 시각 실패
+  const err = inbox ? { mailError: failed.some((f) => f.code !== 'expired') ? Date.now() : null } : {};
   update((s) => ({ mails: mergeList(s.mails, got, { view: q ? null : view, done, busy, append: more || !!q, hasMore: next }), ...err }));
   return { ids: got.sort(byDate).map((m) => m.id), failed, more: hasMore(key) };
 }
+/** 받은편지함 받기(앱을 열 때·홈 '다시 시도') — 계정 목록부터 못 받아도 실패 표시 */
+export const pullInbox = () => loadAccounts().then(() => pullMail('inbox')).catch((e) => { update(() => ({ mailError: Date.now() })); throw e; });
 /** 사람이 할 일이 따로 있는 실패(만료 = 다시 연결, 요청 제한 = 기다리기)를 뺀 실패 수 */
 export const hardFails = (failed) => (failed ?? []).filter((f) => f.code !== 'expired' && f.code !== 'rate_limited' && !f.retryAfter).length;
 
@@ -121,7 +124,6 @@ async function runSync({ view = 'inbox' } = {}) {
     update((s) => ({ mails: applySync(s.mails, changed, gone, busy) }));
   }
   persist(key, hist, 0);
-  if (getState().mailError && !(res.results ?? []).some((r) => r.error && r.error !== 'expired' && r.error !== 'rate_limited')) update(() => ({ mailError: null })); // 자동 받기가 다시 되면 실패 표시를 지운다(지울 것이 있을 때만 쓴다)
   if (reset) await pullMail(view).catch(() => {}); // 변경 기록이 만료됐거나 한꺼번에 많이 바뀌면 보고 있는 목록을 새로 받는다
   return { arrivals, reset };
 }

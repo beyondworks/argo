@@ -6,6 +6,7 @@ import { outbox } from './sync.js';
 import { mergePages } from './layout.js';
 import { mapBoard, decidableSet } from './board.js';
 import { getStorageScope } from './save.js';
+import { getUi, setUi } from './ui-state.js';
 
 export async function pullLayouts({ recoverKey = null } = {}) {
   const owner = getStorageScope();
@@ -62,9 +63,10 @@ export async function loadPageContent(id, { force = false, skip } = {}) {
   if (getStorageScope() !== owner) return;
   if (rights.error) throw rights.error;
   if (error) throw error; // 읽기 실패는 실패로 — 예전에는 조용히 끝나 페이지가 회색 자리(스켈레톤)만 보였다(OFC-06)
-  if (!data) return null; // 없는 페이지(지워졌거나 볼 수 없다) — 화면은 '찾을 수 없음'
+  if (!data) { setUi({ missingPage: id }); return null; } // 없는 페이지(지워졌거나 볼 수 없다) — 화면은 '찾을 수 없음', 머리줄도 숨긴다(App Header)
   if (!force && (busy || outbox.has(`page:${id}`) || skip?.())) return;
   update((s) => ({ pages: s.pages.map((p) => (p.id === id ? { ...p, title: data.title, content: data.content, version: data.version, owner: data.owner_user_id, orgId: data.org_id, access: rights.data, updated: data.updated_at, loadedAt: Date.now() } : p)) }));
+  if (getUi().missingPage === id) setUi({ missingPage: null }); // 다시 생긴 페이지 — 어느 경로로 읽었든 머리줄을 되돌린다(2차 검수 L5)
   return data;
 }
 
@@ -86,7 +88,7 @@ async function readBoard() {
   const at = Date.now();
   // 크루 행 한 번 읽기 — 내 조직들의 크루 + 내 개인 공간 크루(org_id NULL은 주인만 읽힌다, RLS msgr_crews_select).
   // 쓰는 곳: 같은 에이전트 = 같은 얼굴(유건 2026-10-05, 내 행만으로 메신저와 같은 지도), 개인 공간 에이전트(9/30 #779), 사본 거르기(slug), 접속 표시(last_seen_at 90초).
-  // 실패해도 기록판은 그린다(자기 행 얼굴·개인 에이전트 없음). 얼굴 모듈은 첫 화면 묶음 밖이라(Face.jsx와 같은 조각) 나중에 받는다.
+  // 못 읽으면 기록판 읽기 실패(다시 시도). 얼굴 모듈은 첫 화면 묶음 밖이라(Face.jsx와 같은 조각) 나중에 받는다.
   const agentsQ = sb.from('msgr_crews').select('id, org_id, owner_user_id, ws_id, slug, status, face, created_at, display_name, role_text, department, hosting, last_seen_at').in('status', ['active', 'available']);
   const agentsP = Promise.all([ids.length ? agentsQ.or(`owner_user_id.eq.${ME.id},org_id.in.(${ids.join(',')})`) : agentsQ.eq('owner_user_id', ME.id), import('@msgr/crew-face')])
     .then(([r, m]) => (r.error ? null : { rows: r.data ?? [], looks: m.agentLooks((r.data ?? []).filter((x) => x.owner_user_id === ME.id)) })).catch(() => null);
@@ -105,7 +107,7 @@ async function readBoard() {
     sb.from('msgr_org_docs').select('id, org_id, channel_id, path, title, updated_at').in('org_id', ids).not('path', 'like', 'journal/%').order('path').limit(300), // 본문은 열 때만
   ]) : [];
   const [got, personalFiles] = await Promise.all([agentsP, personalFilesP]);
-  if (!ids.length && !got) throw new Error('board: crews read failed'); // 조직이 없으면 크루 행 읽기가 기록판 전부다 — 못 읽었으면 '에이전트 없음'이 아니라 읽기 실패
+  if (!got) throw new Error('board: crews read failed'); // 크루 행은 같은 에이전트 묶음·개인 에이전트·접속의 원천 — 못 읽었으면 '에이전트 없음'·'대기'로 지어내지 않고 읽기 실패(2차 검수 L8)
   const bad = res.find((r) => r.error);
   if (bad) throw bad.error;
   const [crews, runs, approvals, decisions, files, channels, journals, docs] = ids.length ? res.map((r) => r.data ?? []) : [];

@@ -51,6 +51,9 @@ export function crewAccess(crew, me, mode) {
 }
 
 /** 맡긴 일의 최근 답(에이전트 상세 '최근 대화') — 메신저 1:1 글 → 한 줄씩. who: 'crew'(에이전트) | 'me'(사람), 본문은 한 줄로 240자까지, 새 글이 위 */
+/** 에이전트 상세가 기록을 모으는 행 — 내 공간은 같은 에이전트의 행 전부(조직마다·개인 공간), 조직 공간은 그 조직 행만(다른 조직 기록이 조직 표시 없이 섞이지 않게, 2차 검수 L6) */
+export const detailIds = (c, crews, space, me) => (space === 'me' && c.owner === me && c.agent != null ? crews.filter((x) => x.owner === me && x.agent === c.agent).map((x) => x.id) : [c.id]);
+
 export function replyLines(rows) {
   return (rows ?? []).filter((m) => String(m.body ?? '').trim()).map((m) => {
     const text = String(m.body).replace(/\s+/g, ' ').trim();

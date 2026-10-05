@@ -9,7 +9,7 @@ import { navigate, Link } from '../core/router.jsx';
 import { LoadFail } from '../ui/LoadFail.jsx';
 import { baseOf } from '../core/commands.js';
 import { menuProps } from '../ui/Menu.jsx';
-import { useUi, setUi, getUi } from '../core/ui-state.js';
+import { useUi, setUi } from '../core/ui-state.js';
 import { loadPageContent } from '../core/pull.js';
 import { outbox } from '../core/sync.js';
 import { canManage, getMode } from '../core/session.js';
@@ -22,9 +22,18 @@ registerDict(PAGEVIEW_DICT);
 
 const Editor = lazy(() => import('./Editor.jsx'));
 
+/** 충돌 '새로 불러오기' — 서버 본문을 먼저 받고, 받은 뒤에만 이 기기의 보관본·보낼 목록을 지운다(먼저 지우면 읽기 실패 뒤 새로고침에 내 변경이 없어졌다 — 2차 검수 L10).
+ *  충돌 안내가 떠 있는 동안 그 페이지 저장은 보내지 않고 보관만 한다(transport.js) — 받는 사이 옛 변경이 나가지 않는다 */
+async function reloadServer(id) {
+  await loadPageContent(id, { force: true });
+  forget(heldKey(id));
+  await outbox.drop(`page:${id}`);
+  setUi({ conflict: null });
+}
+
 /** 다른 기기가 먼저 저장했을 때 — 사람이 고른다: 서버 값으로 새로 불러오기 / 내 변경을 사본으로 지키기 */
 function ConflictBanner({ page }) {
-  const reload = async () => { forget(heldKey(page.id)); await outbox.drop(`page:${page.id}`); try { await loadPageContent(page.id, { force: true }); setUi({ conflict: null }); } catch { showToast(t('load.readFail')); } }; // 못 읽으면 충돌 안내를 남겨 다시 누를 수 있게
+  const reload = () => reloadServer(page.id).catch(() => showToast(t('load.readFail'))); // 못 읽으면 충돌 안내·보관본을 남겨 다시 누를 수 있게
   const keepCopy = async () => {
     // 위키 최상위를 못 만드는 사람은 원본 아래에 사본을 둔다
     const mine = restore(heldKey(page.id), null) ?? page;                            // 새로고침 뒤라면 화면은 서버 본문 — 사본은 남겨 둔 내 변경으로
@@ -93,7 +102,7 @@ export function PageView({ id, space }) {
   useEffect(() => {
     if (!needsBody && !needsAccess) return undefined;
     let live = true; setLoad(null);
-    loadPageContent(id).then((d) => { if (live && d === null) { setLoad('missing'); setUi({ missingPage: id }); } else if (d && getUi().missingPage === id) setUi({ missingPage: null }); }, () => { if (live) setLoad('error'); }); // 머리줄도 없는 페이지로(App Header), 되살아나면 되돌린다
+    loadPageContent(id).then((d) => { if (live && d === null) setLoad('missing'); }, () => { if (live) setLoad('error'); }); // 머리줄 표시(ui.missingPage)는 loadPageContent가 켜고 끈다
     return () => { live = false; };
   }, [id, needsBody, needsAccess, again]);
   useEffect(() => { if (restore(heldKey(id), null)) setUi({ conflict: id }); }, [id]); // 고르지 않은 충돌이 남아 있으면 다시 묻는다

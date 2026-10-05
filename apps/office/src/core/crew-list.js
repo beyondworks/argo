@@ -2,7 +2,9 @@
 // 쓸 수 있는지(access)는 서버가 메신저와 같은 판정으로 준다(값이 없으면 = 예시 데이터·옛 DB, 쓸 수 있는 것으로).
 // 고정·순서는 메신저 '내 에이전트' 레일과 같은 행(msgr_target_prefs) — 번호가 메신저와 맞는 '고정'·'내 크루' 묶음만 끌어 옮긴다.
 const byName = (a, b) => a.name.localeCompare(b.name, 'ko');
-const byPos = (key) => (a, b) => (a[key] ?? Infinity) - (b[key] ?? Infinity) || byName(a, b);
+// 고정·순서 번호는 조직마다 따로(서버 office_crew_prefs) — 묶음 안에서 조직별로 모으고(개인 공간 행은 끝) 조직 안은 번호 순
+const orgKey = (c) => c.org ?? '\uffff';
+const byPos = (key) => (a, b) => orgKey(a).localeCompare(orgKey(b)) || (a[key] ?? Infinity) - (b[key] ?? Infinity) || byName(a, b);
 export const usable = (c) => (c.access ?? 'ok') === 'ok';
 export const isMine = (c, me) => !c.company && (!c.owner || c.owner === me); // 주인 없음 = 예시 데이터(내 공간)
 
@@ -29,9 +31,9 @@ export function oneEach(list) {
   const by = new Map();
   for (const c of list) { const k = c.agent ?? c.id; if (by.has(k)) by.get(k).push(c); else by.set(k, [c]); }
   return [...by.values()].map((g) => {
-    // 대표 = 고정한 조직 행 → 회사 크루가 아닌 조직 행 → 아무 조직 행 → 개인 행(고정·순서는 조직마다 따로라 고정한 행을 앞에, 회사 크루 행이 대표면 줄이 통째로 빠졌다)
+    // 대표 = 고정한(회사 크루 아닌) 조직 행 → 회사 크루가 아닌 조직 행 → 아무 조직 행 → 개인 행(회사 크루 행이 대표면 내 목록에서 줄이 통째로 빠졌다 — 2차 검수 L2)
     const orgRows = g.filter((c) => !c.personal);
-    const rep = orgRows.find((c) => c.pinned) ?? orgRows.find((c) => !c.company) ?? orgRows[0] ?? g[0];
+    const rep = orgRows.find((c) => c.pinned && !c.company) ?? orgRows.find((c) => !c.company) ?? orgRows[0] ?? g[0];
     return { ...rep, ids: g.map((c) => c.id), twin: g.find((c) => c.personal)?.id ?? null, spaces: [...new Set(g.map((c) => c.space).filter((s) => s && s !== 'me'))],
       status: g.map((c) => c.status).sort((a, b) => (RANK[a] ?? 2) - (RANK[b] ?? 2))[0], on: g.some((c) => c.on) || (g.some((c) => c.on === false) ? false : null) };
   });
@@ -43,6 +45,13 @@ export const crewsIn = (crews, space, me) => {
   const here = crews.filter((c) => !c.copy && (c.access ?? 'ok') !== 'inactive' && (space === 'me' ? !c.owner || c.owner === me : !c.space || c.space === space));
   return space === 'me' ? oneEach(here) : here;
 };
+
+/** 묶음 안 줄을 조직별 덩어리로(groupCrews 순서 그대로) — 끌어 순서 바꾸기는 같은 조직 덩어리 안에서만(서버 순서가 조직마다 따로) */
+export function byOrg(list) {
+  const out = [];
+  for (const c of list) { const last = out.at(-1), org = c.org ?? null; if (last?.org === org) last.crews.push(c); else out.push({ org, crews: [c] }); }
+  return out;
+}
 
 /** 끌어 옮긴 뒤의 id 순서 — moved를 target 자리로. 바뀌지 않으면 null */
 export function moveIds(ids, movedId, targetId) {

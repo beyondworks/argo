@@ -26,7 +26,7 @@ const base = {
 };
 
 // 이유: 사이드바 크루 상태 점 — 진행 중인 일의 담당이면 일하는 중, 대기 결재가 있으면 확인 필요, 아니면 대기.
-// 10/5: 접속 시각(크루 행)을 모르면 'rest'('대기' — 예전과 같은 말). 켜져 있으면 idle('대기 중'), 꺼졌으면 off — test/agents-connect.test.mjs CX-06
+// 10/5: 접속 시각(크루 행)을 모르면 'rest'('확인 못 함' — 2차 검수 L8). 켜져 있으면 idle('대기 중'), 꺼졌으면 off — test/agents-connect.test.mjs CX-06
 test('크루 상태: 담당 중 → work, 대기 결재 → ask, 그 외(접속 모름) rest. 역할은 부서 먼저', () => {
   const b = mapBoard(base, { orgKey: key, decidable: new Set() });
   assert.deepEqual(b.crews.map((c) => [c.id, c.status, c.role, c.space, c.owner]), [['c1', 'work', '영업', 'bw', 'u1'], ['c2', 'ask', '리서치', 'bw', 'u2'], ['c3', 'rest', '', 'bw', 'u1']]);

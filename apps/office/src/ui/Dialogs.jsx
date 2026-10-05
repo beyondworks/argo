@@ -194,7 +194,7 @@ const TASKS = ['summary', 'todos', 'reply', 'custom'];
 export function AssignSheet() {
   useLang();
   const { assign: a } = useUi();
-  const [crew, setCrew] = useState(null);
+  const [crew, setCrew] = useState(() => a?.crew ?? null); // 처음 그릴 때부터 고른 에이전트(효과는 다음 장면에서 돈다)
   const [task, setTask] = useState('summary');
   const [text, setText] = useState('');
   const [at, setAt] = useState(null), [hi, setHi] = useState(0); // '@' 후보 목록이 열린 자리({ start, q, caret })와 강조한 줄
@@ -224,8 +224,10 @@ export function AssignSheet() {
   const main = crews.find((x) => x.id === crew || x.ids?.includes(crew)), fixed = !!a.crew && !!main && (main.id === a.crew || !!main.ids?.includes(a.crew));
   // '@' 멘션 — 글에 "@이름"만 넣고, 넘김은 주 에이전트가 메신저 @넘김으로 한다(협업 태그 없음)
   const target = main ? assignTarget(main, allCrews, SPACES) : null; // 내 에이전트는 개인 1:1(메신저 에이전트 탭과 같은 방, CX-03), 없으면 조직 1:1
-  const one = live && !!target?.personalId; // 개인 1:1로 가는 글은 넘길 곳이 없다(그 방의 크루는 주 에이전트뿐) — '@' 안내도 빼고 이유를 말한다
-  const cands = at && main ? mentionCands(allCrews, main, at.q, live ? target : null).slice(0, 8) : [];
+  // 개인 1:1로 가는 글은 넘길 곳이 없다(그 방의 크루는 주 에이전트뿐) — '@' 안내도 빼고 이유를 말한다. 봇 쌍둥이는 서버가 준비됐을 때만 개인 1:1이라
+  // 열 때는 모른다 — 조직 1:1일 수 있어 종전 후보·안내 그대로(2차 검수 L4)
+  const one = live && !!target?.personalId && !target.personalBot;
+  const cands = at && main ? mentionCands(allCrews, main, at.q, one ? target : null).slice(0, 8) : [];
   const ph = `crew.${task === 'custom' ? 'customPh' : 'morePh'}${one ? 'One' : ''}`;
   const sync = (el) => {
     const m = mentionAt(el.value, el.selectionStart);

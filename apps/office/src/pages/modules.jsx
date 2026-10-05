@@ -55,15 +55,17 @@ function Work({ space }) {
 }
 
 function Mail() {
-  const list = useStore((s) => s.mails);
+  const list = useStore((s) => s.mails), err = useStore((s) => s.mailError), live = useSession() === 'signedIn';
   const rows = useMemo(() => list.filter((m) => m.folder === 'inbox' && m.unread), [list]);
-  if (!rows.length) return <Empty />;
-  return rows.map((m) => (
+  // 받은편지함을 못 받았으면 '비어 있습니다'가 아니라 다시 시도(2차 검수 M2) — 지난번 받아 둔 메일이 있으면 그 위에. 아직 안 받았으면 기다림
+  const fail = live && err ? <LoadFail small onRetry={() => import('../core/mail.js').then((m) => m.pullInbox()).catch(() => {})} /> : null;
+  if (!rows.length) return fail ?? (live && err === undefined ? wait : <Empty />);
+  return <>{fail}{rows.map((m) => (
     <Link key={m.id} to={`/me/mail/${m.id}`} className="mod-row" {...menuProps(() => mailMenu(m))}>
       <span className="dot mark" />
       <span className="mod-main"><span className="clamp ha">{m.subject}</span><small>{looksLikeAddr(m.from) ? <span className="ha">{m.from}</span> : m.from} · {ago(m.at)}</small></span>
     </Link>
-  ));
+  ))}</>;
 }
 
 // 로그인하면 서버에 저장되는 실제 할 일(성과 기록 1단계), 예시 화면은 메일에서 뽑은 할 일. 카드 ⋯ 메뉴에서 여러 보기로 바꿀 수 있다(views/HomeView.jsx)
@@ -154,7 +156,7 @@ function useStatValues(space) {
   return useMemo(() => {
     const base = baseOf(space), ok = (text, icon) => ({ tone: 'ok', text, icon }), warn = (text, icon) => ({ tone: 'warn', text, icon });
     // 읽기 실패 카드(OFC-08) — '없음·정상·모두 확인'이 아니라 '확인 못 함'. 누르면 그 화면(거기서 다시 시도)
-    const fail = (icon, sub, to) => ({ n: '—', badge: warn(t('stat.b.fail'), icon), main: t('stat.failMain'), sub, to });
+    const fail = (icon, sub, to) => ({ n: '—', badge: warn(t('stat.b.fail'), icon), main: t('stat.failMain'), sub, to }), waiting = (icon, sub, to) => ({ n: '…', badge: { tone: '', text: '…', icon }, main: '', sub, to });
     const ap = approvals.filter(approvalsIn(space)), high = ap.filter((a) => a.risk === 'high').length;
     const wk = work.filter(inSpace(space)), blocked = wk.filter((w) => w.status === 'blocked').length;
     const unread = mails.filter((m) => m.folder === 'inbox' && m.unread).length;
@@ -173,7 +175,7 @@ function useStatValues(space) {
       todos: live ? (tasks ? (() => {
         const g = groupTasks(tasks.filter((r) => !r.cancelled_at), today, ME.id), open = g.overdue.length + g.today.length + g.week.length + g.later.length + g.none.length;
         return { n: open, badge: g.overdue.length ? warn(t('stat.b.late'), 'check') : ok(t('stat.b.none'), 'check'), main: t('stat.taskMain', { late: g.overdue.length, today: g.today.length }), sub: t('stat.tasksSub'), to: `${base}/tasks` };
-      })() : taskErr ? fail('check', t('stat.tasksSub'), `${base}/tasks`) : { n: '…', badge: { tone: '', text: '…', icon: 'check' }, main: '', sub: t('stat.tasksSub'), to: `${base}/tasks` })
+      })() : (taskErr ? fail : waiting)('check', t('stat.tasksSub'), `${base}/tasks`))
         : { n: todos.length - todoDone, badge: todos.length - todoDone ? warn(t('stat.b.open'), 'check') : ok(t('stat.b.none'), 'check'), main: t('stat.todoDone', { done: todoDone, total: todos.length }), sub: t('stat.todosSub') },
       decisions: { n: dec.length, badge: ok(t('stat.b.week'), 'check'), main: t('stat.decided', { a: approved, r: dec.length - approved }), sub: t('stat.weekSub'), to: `${base}/decisions` },
       outputs: { n: out.length, badge: ok(t('stat.b.week'), 'file'), main: fmtBytes(out.reduce((s, f) => s + f.bytes, 0)), sub: t('stat.weekSub'), to: `${base}/outputs` },
@@ -181,7 +183,7 @@ function useStatValues(space) {
     };
     // 실패 카드의 흐린 줄은 고정 말 — 옛 값으로 센 말('결재 기다리는 에이전트 1명')을 남기지 않는다
     if (live && boardError) for (const [id, icon, sub] of [['approvals', 'stamp', 'stat.approvalsSub'], ['work', 'run', 'stat.workSub'], ['crews', 'person', 'nav.agents'], ['decisions', 'check', 'stat.weekSub'], ['outputs', 'file', 'stat.weekSub']]) vals[id] = fail(icon, t(sub), vals[id].to);
-    if (live && mailError) vals.mail = fail('mail', t('stat.mailSub'), '/me/mail');
+    if (live && mailError !== null) vals.mail = (mailError ? fail : waiting)('mail', t('stat.mailSub'), '/me/mail'); // 받은편지함을 받기 전에는 '모두 확인'이 아니다(2차 검수 M1)
     return vals;
   }, [approvals, work, mails, decisions, pages, done, crewList, outputs, space, mode, tasks, today, taskErr, boardError, mailError]);
 }

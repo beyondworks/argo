@@ -57,16 +57,16 @@ export default function Tools({ space }) {
         </li>)}</ul>}
     </section>
     <p className="dim small">{t('tool.hint')}</p>
-    {edit && <Editor edit={edit} setEdit={setEdit} crews={crews.filter((c) => edit.scope === 'org' || c.owner === ME.id)} readOnly={!!edit.id && !canEdit(edit)} write={write} />}
+    {edit && <Editor edit={edit} setEdit={setEdit} all={allCrews} crews={crews.filter((c) => edit.scope === 'org' || c.owner === ME.id)} readOnly={!!edit.id && !canEdit(edit)} write={write} />}
   </div>;
 }
 
-function Editor({ edit, setEdit, crews, readOnly, write }) {
+function Editor({ edit, setEdit, crews, all, readOnly, write }) {
   const formId = useId();
   const spec = edit.spec, set = (patch) => setEdit({ ...edit, ...patch }), setSpec = (patch) => set({ spec: { ...spec, ...patch } });
   const save = async (e) => {
     e.preventDefault();
-    const payload = { title: edit.title.trim(), body: edit.body, spec: { tool_kind: spec.tool_kind, url: spec.url.trim() || null, enabled: spec.enabled, crews: oncePerAgent(spec.crews, crews) } }; // 같은 에이전트(내 공간의 묶인 줄)는 한 번만
+    const payload = { title: edit.title.trim(), body: edit.body, spec: { tool_kind: spec.tool_kind, url: spec.url.trim() || null, enabled: spec.enabled, crews: oncePerAgent(spec.crews, crews, all) } }; // 같은 에이전트는 한 번만(어느 공간에서 고쳐도)
     try {
       if (edit.id) await write('asset.update', { id: edit.id, version: edit.version, ...payload });
       else await write('asset.create', { id: crypto.randomUUID(), kind: 'tool', scope: edit.scope, ...payload });
@@ -87,7 +87,7 @@ function Editor({ edit, setEdit, crews, readOnly, write }) {
       <label className="check-row"><input type="checkbox" checked={!!spec.enabled} disabled={readOnly} onChange={(e) => setSpec({ enabled: e.target.checked })} />{t('tool.enabledLong')}</label>
       <fieldset className="field-block"><legend className="label">{t('tool.assign')}</legend>
         {!crews.length ? <p className="dim small">{t('tool.noCrews')}</p> : <div className="deal-owner-list">{crews.map((c) => <label key={c.id} className="check-row">
-          <input type="checkbox" disabled={readOnly} checked={toolCrewOn(spec.crews, c)} onChange={() => setSpec({ crews: toggleToolCrew(spec.crews, c) })} />{c.name}</label>)}</div>}
+          <input type="checkbox" disabled={readOnly} checked={toolCrewOn(spec.crews, c, all)} onChange={() => setSpec({ crews: toggleToolCrew(spec.crews, c, all) })} />{c.name}</label>)}</div>}
         <p className="dim small">{t('tool.assignHint')}</p></fieldset>
     </form>
   </Modal>;
