@@ -15,6 +15,7 @@ import { CC_MAX, sendCrewMail } from './crewmail.mjs';
 import { resetStamp, resumeStamp } from './reset-stamp.mjs';
 import { loadPins, activePin } from './workroots.mjs';
 import { monthCost } from './billing.mjs'; // 반응 라운드 착수 전 예산 게이트(검수 MEDIUM-1)
+import { ROOM_USER_SPEAKER as USER } from './legacy-terms.mjs'; // 회의 화자 표지 '사용자' — 1:1 카드(via-summary)가 이 줄을 읽는다(옛 기록의 화자는 legacy-terms가 같이 읽는다)
 import { DELEGATION_LIMITS, limitsFor, isRelaxedStored, resetDelegationLimit, newTree } from './delegation-limits.mjs'; // 위임 제한 표 — 이어받기 인원·반응 라운드 상한(켜짐 3명·2라운드, 풀림 6명·4라운드)
 
 const file = (wsId) => join(paths(wsId).chats, 'room-main.json');
@@ -185,9 +186,9 @@ async function endMeetingLocked(wsId) {
   const used = [...new Set(room.messages.filter((m) => m.who === 'user' && m.workFolder).map((m) => oneLine(m.workFolder)))];
   const md = `# ${day} 회의록 — ${topic}
 
-참석: 사장${attendees.length ? `, ${attendees.join(', ')}` : ''}${used.length ? `\n작업 폴더: ${used.join(', ')}` : ''}
+참석: ${USER}${attendees.length ? `, ${attendees.join(', ')}` : ''}${used.length ? `\n작업 폴더: ${used.join(', ')}` : ''}
 
-${room.messages.map((m) => `**${m.who === 'user' ? '사장' : nameOf(m.who)}**: ${String(m.text).trim()}${m.attachments?.length ? `\n> 첨부: ${m.attachments.map((a) => 'vault/' + a.rel).join(', ')}` : ''}${m.artifacts?.length ? `\n> 산출물: ${m.artifacts.map((a) => 'vault/' + a).join(', ')}` : ''}`).join('\n\n')}
+${room.messages.map((m) => `**${m.who === 'user' ? USER : nameOf(m.who)}**: ${String(m.text).trim()}${m.attachments?.length ? `\n> 첨부: ${m.attachments.map((a) => 'vault/' + a.rel).join(', ')}` : ''}${m.artifacts?.length ? `\n> 산출물: ${m.artifacts.map((a) => 'vault/' + a).join(', ')}` : ''}`).join('\n\n')}
 `;
   // 같은 분 안에 두 번 마치면(다시 열기→마치기, 짧은 회의 연속) HHMM 이름이 같아 앞 회의록이 **덮였다**(격리 실측
   // 2026-09-02: DELETE 2회가 같은 journal/…-1953.md를 반환, 파일엔 뒤 회의만). 회의록은 vault/journal 일지 = 회사 기억이라
@@ -688,7 +689,7 @@ async function runRoomTurnInner(wsId, text, attachments, state = {}, mark = asyn
     // 이어진다(검수 M1: 이게 없으면 1턴 첨부를 2턴 크루가 못 찾는다 — 랜덤 접두 파일명이라 탐색 불가).
     // 산출물 노트 — 앞 크루가 이 회의에서 만든 파일 경로. 없으면 릴레이(@A > @B)의 B가 A의 답변 텍스트에만 의존해
     // 경로를 받는다(분리 검수 LOW-2). 첨부 노트·회의록 `> 산출물:` 줄과 같은 vault/ 접두 규약.
-    .map((m) => `${m.who === 'user' ? '사장' : nameOf(m.who)}: ${String(m.text).replace(/\s+/g, ' ').slice(0, 400)}${m.attachments?.length ? ` (첨부, Read로 열람: ${m.attachments.map((a) => 'vault/' + a.rel).join(', ')})` : ''}${m.artifacts?.length ? ` (산출물, Read로 열람: ${m.artifacts.map((a) => 'vault/' + a).join(', ')})` : ''}`)
+    .map((m) => `${m.who === 'user' ? USER : nameOf(m.who)}: ${String(m.text).replace(/\s+/g, ' ').slice(0, 400)}${m.attachments?.length ? ` (첨부, Read로 열람: ${m.attachments.map((a) => 'vault/' + a.rel).join(', ')})` : ''}${m.artifacts?.length ? ` (산출물, Read로 열람: ${m.artifacts.map((a) => 'vault/' + a).join(', ')})` : ''}`)
     .join('\n');
   };
   const promptFor = (a, i, transcript, round) => round >= 2

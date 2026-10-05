@@ -553,7 +553,7 @@ async function interactive() {
     checkAppUpdated();
     if (p.kind === 'command') {
       if (p.name === 'help') { console.log(''); for (const [k, d] of T.help) console.log(`  ${k}${' '.repeat(Math.max(1, 15 - termWidth(k)))}${dim(d)}`); console.log(''); }
-      else if (p.name === 'crew') { const c = await pickCrew(ws, p.arg, { ask: !p.arg }); if (c) { crew = c; sid = (await loadThread(ws, crew.slug)).sessionId ?? null; } showCrew(); }
+      else if (p.name === 'agent') { const c = await pickCrew(ws, p.arg, { ask: !p.arg }); if (c) { crew = c; sid = (await loadThread(ws, crew.slug)).sessionId ?? null; } showCrew(); } // 옛 /crew도 parseInput이 'agent'로 읽는다(legacy-terms OLD_CLI_COMMANDS)
       else if (p.name === 'new') { if (crew) { await resetThread(ws, crew.slug); sid = null; console.log(`  ${dim(T.newDone)}\n`); } }
       else if (p.name === 'hire') await hireCrew(ws);
       else if (p.name === 'ai') await runnersMenu(ws);

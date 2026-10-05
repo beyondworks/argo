@@ -4,6 +4,8 @@
 // 머리말 문구가 바뀌어도 둘이 어긋나지 않게 한다. 문구를 바꾸면 이미 저장된 기록은 옛 형식으로 남으므로, 그때는 파서에
 // 옛 형식을 지우지 말고 더한다. 노드 의존 0 — 클라이언트 번들에서도 가져다 쓴다.
 
+import { OLD_APPROVAL_TAGS, OLD_MAIL_SHARED_HEADS } from './legacy-terms.mjs'; // 옛 표지(용어 변경 전 기록) — 지우지 말고 더한다
+
 const L = (lang) => (lang === 'en' ? 'en' : 'ko');
 const HOLE = '\u0000'; // 머리말 안 이름 자리 — 같은 생성 함수로 앞·뒤 고정 문자열을 얻어 파싱에 쓴다
 
@@ -109,11 +111,11 @@ export function parseMsgr(text, authorName = '') {
 
 // ── 쪽지(crewmail) — crewmail.mjs mailPrompt ──
 export const MAIL_CC = { ko: ' (참조 — 알아두라고 보낸 사본이다. 회신 의무는 없다)', en: ' (CC — for your awareness; no reply expected)' };
-/** 쪽지 머리말. captain = 사장이 회의실에서 참조로 돌린 것 */
+/** 쪽지 머리말. captain = 사용자가 회의실에서 참조로 돌린 것(옛 머리말은 legacy-terms OLD_MAIL_SHARED_HEADS — parseMail이 같이 읽는다) */
 export function mailHead(lang, { fromName = '', cc = false, captain = false } = {}) {
   const l = L(lang);
   const note = cc ? MAIL_CC[l] : '';
-  if (captain) return l === 'en' ? `(From the captain — shared from the meeting room${note}) ` : `(사장이 회의실에서 공유${note}) `;
+  if (captain) return l === 'en' ? `(From the user — shared from the meeting room${note}) ` : `(사용자가 회의실에서 공유${note}) `;
   return l === 'en' ? `(Message from colleague ${fromName}${note}) ` : `(동료 ${fromName}의 쪽지${note}) `;
 }
 /** 회신 가능한 쪽지 끝에 붙는 안내 줄 */
@@ -124,8 +126,10 @@ export const mailReplyHint = (lang, fromName) => (L(lang) === 'en'
 export function parseMail(text) {
   for (const lang of ['ko', 'en']) {
     for (const cc of [true, false]) {
-      const cap = mailHead(lang, { cc, captain: true });
-      if (text.startsWith(cap)) return { captain: true, cc, fromName: '', body: text.slice(cap.length) };
+      const note = cc ? MAIL_CC[lang] : '';
+      for (const cap of [mailHead(lang, { cc, captain: true }), ...OLD_MAIL_SHARED_HEADS[lang].map((head) => head(note))]) {
+        if (text.startsWith(cap)) return { captain: true, cc, fromName: '', body: text.slice(cap.length) };
+      }
       const h = matchHead(text, (n) => mailHead(lang, { fromName: n, cc }));
       if (!h) continue;
       const hint = mailReplyHint(lang, h.value);
@@ -226,7 +230,7 @@ export function outsideBlock(lines, { tag, what, lang = 'ko', max = OUTSIDE_BLOC
 
 // ── 결재 결과 — approval-actions.mjs 후속 턴. 이 기록만 via가 없어 머리말로 판정한다 ──
 // 메시지 = 머리말 + 사실 문장(사용자에게 보여 줄 것) + 크루에게 하는 지시문 꼬리(화면에서는 뗀다, 분리 검수 L5).
-export const APPROVAL_TAG = { owner: '(사장 결재)', admin: '(관리자 결재)' };
+export const APPROVAL_TAG = { owner: '(사용자 결재)', admin: '(관리자 결재)' }; // 옛 꼬리표는 legacy-terms OLD_APPROVAL_TAGS — parseApproval이 같이 읽는다
 export const APPROVAL_ORDER = {
   applied: '\n결과를 사용자에게 한두 줄로 보고하라. 다시 실행하려 하지 마라(이미 처리됨).', // 서버가 payload를 적용함(profile·hire·mcp·connector)
   docApplied: ' 사용자에게 한두 줄로 보고하라. 문서를 다시 쓰거나 제안하지 마라(이미 반영됨).',
@@ -241,8 +245,9 @@ export const approvalMsg = (by, fact, order) => `${APPROVAL_TAG[by]} ${fact}${AP
 /** → { by, body } — body는 사실 문장(지시문 꼬리를 뗀다). 꼬리를 못 알아보면 머리말 뒤 문장 그대로 */
 export function parseApproval(text) {
   for (const by of ['owner', 'admin']) {
-    if (!text.startsWith(`${APPROVAL_TAG[by]} `)) continue;
-    const rest = text.slice(APPROVAL_TAG[by].length + 1);
+    const tag = [APPROVAL_TAG[by], ...OLD_APPROVAL_TAGS[by]].find((t) => text.startsWith(`${t} `));
+    if (!tag) continue;
+    const rest = text.slice(tag.length + 1);
     const order = Object.values(APPROVAL_ORDER).find((o) => rest.endsWith(o));
     return { by, body: order ? rest.slice(0, -order.length) : rest };
   }

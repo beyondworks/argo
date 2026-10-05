@@ -1,5 +1,7 @@
 // argo 대화 화면 조각 — 순수 함수만(테스트가 그대로 부른다). 색은 graphite 흑백: 굵게(1)·흐리게(2)만 쓰고 색상 코드는 쓰지 않는다.
 // 심볼은 app/icon.svg의 돛·네 갈래 별 도형을 반블록 문자로 래스터화한 것(손그림 아님 — 비율이 원본과 같다).
+import { OLD_CLI_COMMANDS } from '../legacy-terms.mjs'; // 옛 명령 이름(/crew) → 새 이름(/agent) — 옛 이름도 계속 받는다
+
 const SYMBOL = [
   '       ▄████▄',
   '     ▄████████▄',
@@ -20,7 +22,7 @@ const WORD = [
 ];
 const SMALL = ['  ▄██▄', ' ▀▀▄▄▀▀', '   ▀▀'];
 
-export const COMMANDS = ['help', 'crew', 'new', 'hire', 'ai', 'serve', 'browser', 'status', 'quit', 'exit'];
+export const COMMANDS = ['help', 'agent', 'new', 'hire', 'ai', 'serve', 'browser', 'status', 'quit', 'exit'];
 const ESC = /\x1b\[[0-9;]*m/g;
 export const visibleWidth = (s) => [...String(s).replace(ESC, '')].length;
 export const style = (color) => ({ bold: (s) => (color ? `\x1b[1m${s}\x1b[22m` : s), dim: (s) => (color ? `\x1b[2m${s}\x1b[22m` : s) });
@@ -42,7 +44,8 @@ export function parseInput(line) {
   if (s.startsWith('/')) {
     const [head, ...rest] = s.slice(1).split(/\s+/);
     if (head.includes('/')) return { kind: 'message', text: s }; // 경로(/Users/…)는 크루에게 보내는 말
-    const name = head.toLowerCase();
+    const typed = head.toLowerCase();
+    const name = Object.hasOwn(OLD_CLI_COMMANDS, typed) ? OLD_CLI_COMMANDS[typed] : typed; // 옛 이름은 새 이름으로 읽는다
     return COMMANDS.includes(name) ? { kind: 'command', name, arg: rest.join(' ') } : { kind: 'unknown', name: head };
   }
   return { kind: 'message', text: s };

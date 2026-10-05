@@ -89,7 +89,7 @@ test('회의록 참석자에 system이 섞이지 않는다 — 안내 줄이 2�
   const r = await endMeeting('rs-minutes');
   assert.equal(r.archived, true);
   const md = await readFile(join(paths('rs-minutes').journal, r.journal.replace(/^journal\//, '')), 'utf8');
-  assert.match(md, /^참석: 사장, 비스트, 울프, 슈리, 에드나$/m, "참석자는 사람·크루만 — 'system'은 참석자가 아니다");
+  assert.match(md, /^참석: 사용자, 비스트, 울프, 슈리, 에드나$/m, "참석자는 사람·크루만 — 'system'은 참석자가 아니다");
   assert.match(md, /\*\*system\*\*: 4명 동시 발언 — /, '본문에는 종전 규약대로 남는다(무엇이 지시됐는지의 기록)');
 });
 

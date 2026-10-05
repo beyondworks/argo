@@ -26,6 +26,7 @@ const CONTACT = process.env.NEXT_PUBLIC_ARGO_CONTACT || '';
 const SETTINGS_TABS = ['general', 'ai', 'connections', 'devices', 'danger'];
 import { checkoutUrl } from './checkout-link.mjs';
 import { gistLabel } from '../../../lib/gist-display.mjs'; // 메신저 머리말을 뗀 요약(UX-A08)
+import { nameplateOwner } from '../../../lib/nameplate-owner.mjs'; // 명패 사용자 줄 — 기본값 'captain'을 그대로 보이지 않는다(M10)
 const LS_MONTHLY = process.env.NEXT_PUBLIC_LS_CHECKOUT_MONTHLY || '';
 const LS_YEARLY = process.env.NEXT_PUBLIC_LS_CHECKOUT_YEARLY || '';
 
@@ -106,7 +107,7 @@ function Settings({ params }) {
   const c = data?.company;
   const rows = c && [
     [t('deck.nameplate.unit'), c.id],
-    [t('deck.nameplate.captain'), c.owner],
+    [t('deck.nameplate.captain'), nameplateOwner(c.owner)],
     [t('deck.nameplate.commissioned'), String(c.created ?? '').slice(0, 10)],
     [t('deck.nameplate.crew'), `${data.agents?.length ?? 0}`],
     [t('deck.nameplate.vault'), t('settings.nameplate.vaultVal', { n: data.memoryCount ?? 0, links: data.stats?.links ?? 0 })],

@@ -13,6 +13,7 @@ import { failureReason } from '../../lib/error-text.mjs'; // 실패 이유 — �
 import { approvalExpandDefault, approvalOwnerMayDecide } from '../../lib/approval-display.mjs';
 import styles from './deck.module.css';
 import { gistLabel } from '../../lib/gist-display.mjs'; // 메신저 머리말을 뗀 요약(UX-A08)
+import { nameplateOwner } from '../../lib/nameplate-owner.mjs'; // 명패 사용자 줄 — 기본값 'captain'을 그대로 보이지 않는다(M10)
 
 export default function Deck({ params }) {
   const { ws } = use(params);
@@ -595,7 +596,7 @@ function Nameplate({ company, memoryCount, links, crew }) {
   if (!company) return <Skeleton h={150} style={{ borderRadius: 18 }} />;
   const rows = [
     [t('deck.nameplate.unit'), company.id],
-    [t('deck.nameplate.captain'), company.owner],
+    [t('deck.nameplate.captain'), nameplateOwner(company.owner)],
     [t('deck.nameplate.commissioned'), String(company.created ?? '').slice(0, 10)],
     [t('deck.nameplate.crew'), `${crew ?? 0}`],
     [t('deck.nameplate.vault'), t('deck.nameplate.vaultVal', { n: memoryCount ?? 0, links: links ?? 0 })],

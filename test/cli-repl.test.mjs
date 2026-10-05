@@ -93,6 +93,8 @@ test('대화 화면 — 머리·바로 대화, Ctrl+C·Ctrl+D로 안 나가고, 
     { label: 'help', keys: '/help\r', until: '입력 중이면 지우기' },
     { label: 'crew-list', keys: '/crew\r', until: '번호' },
     { label: 'crew-pick', keys: '1\r', until: '대화 상대' },
+    { label: 'agent-list', keys: '/agent\r', until: '번호' }, // 새 이름 /agent — 옛 /crew(위)와 같은 동작(legacy-terms OLD_CLI_COMMANDS)
+    { label: 'agent-pick', keys: '1\r', until: '대화 상대' },
     { label: 'ctrlc-empty', keys: '\x03' },
     { label: 'ctrlc-typing', keys: 'abc\x03' },
     { label: 'ctrld', keys: '\x04' },
@@ -118,6 +120,8 @@ test('대화 화면 — 머리·바로 대화, Ctrl+C·Ctrl+D로 안 나가고, 
   assert.match(out.boot, /대화 상대: 노바/, '크루가 한 명이면 바로 그 크루와 대화');
   assert.match(out.help, /\/quit, exit/);
   assert.match(out['crew-list'], /대화할 크루를 고르세요[\s\S]*1\. 노바/, '/crew만 치면 크루 목록(실측: 지금 크루만 다시 보였다)');
+  assert.match(out['agent-list'], /1\. 노바/, '/agent만 쳐도 같은 목록(새 이름)');
+  assert.match(out['agent-pick'], /대화 상대: 노바/, '/agent 목록에서 고르면 대화 상대가 바뀐다');
   assert.match(out['ctrlc-empty'], /나가려면 \/quit 또는 exit/, '빈 줄 Ctrl+C — 안내만');
   assert.doesNotMatch(out['ctrlc-typing'] + out.ctrld, /나가려면|Aborted/, '입력 중 Ctrl+C·Ctrl+D — 나가지도 오류도 없다');
   assert.match(out.chat, /노바[\s\S]*크루 답입니다/, '크루 답');

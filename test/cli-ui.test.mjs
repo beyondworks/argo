@@ -12,7 +12,9 @@ test('나가기 — /quit·/exit·exit·quit(대소문자·앞뒤 공백 무관)
 });
 
 test('명령·메시지·빈 줄 구분', () => {
-  assert.deepEqual(parseInput('/crew pepper'), { kind: 'command', name: 'crew', arg: 'pepper' });
+  assert.deepEqual(parseInput('/agent pepper'), { kind: 'command', name: 'agent', arg: 'pepper' });
+  assert.deepEqual(parseInput('/crew pepper'), { kind: 'command', name: 'agent', arg: 'pepper' }, '옛 명령 /crew는 /agent로 읽는다(legacy-terms)');
+  assert.deepEqual(parseInput('/Agent'), { kind: 'command', name: 'agent', arg: '' });
   assert.deepEqual(parseInput('/help'), { kind: 'command', name: 'help', arg: '' });
   assert.deepEqual(parseInput('/없는명령'), { kind: 'unknown', name: '없는명령' });
   assert.deepEqual(parseInput('이번 주 게시물 써줘'), { kind: 'message', text: '이번 주 게시물 써줘' });

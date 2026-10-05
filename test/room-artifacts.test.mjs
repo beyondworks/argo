@@ -188,5 +188,5 @@ test('첨부와 산출물이 같은 발언에 있으면 노트가 첨부 → 산
   assert.match(p, /크루B: 정리했습니다\. 가{392} \(첨부, Read로 열람: vault\/files\/a1_스케치\.png\) \(산출물, Read로 열람: vault\/projects\/20260902_회의\/요약\.md, vault\/files\/표\.csv\)\n/,
     '본문은 400자에서 잘리고 그 뒤에 첨부 노트 → 산출물 노트가 잘리지 않고 붙는다, 복수 경로는 쉼표 나열, 줄 끝');
   assert.doesNotMatch(p, /가{393}/, '본문 잘림(400) 유지 — 노트를 넣으며 잘림을 풀지 않았다');
-  assert.match(p, /사장: @crew-b 정리해줘 \(첨부, Read로 열람: vault\/files\/a1_스케치\.png\)\n/, '사장 줄의 첨부 노트는 그대로(회귀 없음)');
+  assert.match(p, /\n사용자: @crew-b 정리해줘 \(첨부, Read로 열람: vault\/files\/a1_스케치\.png\)\n/, '사용자 줄(화자 표지 — legacy-terms ROOM_USER_SPEAKER)의 첨부 노트는 그대로(회귀 없음)');
 });
