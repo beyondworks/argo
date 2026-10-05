@@ -73,7 +73,8 @@ import { memberRows, memberPerms, MEMBER_CHIPS } from './phone-members.mjs';
 import { Seg } from './seg.mjs'; // 세그먼트 토글 하나(5차 피드백 3)
 import { searchView } from './search-view.mjs';
 import { deliveryCardView } from './delivery-card.mjs';
-import { messageShape } from './attach-only.mjs'; // 첨부만 보낸 글 — 올리는 중 자리표시·거둔 글 숨김(MSG-06)
+import { messageShape } from './attach-only.mjs';
+import { appBackStack, rootBackAction } from './back-stack.mjs'; import { useBackClose } from './use-back-close.js'; // Android 뒤로 — 열린 시트·팝업부터 닫기(MSG-10) // 첨부만 보낸 글 — 올리는 중 자리표시·거둔 글 숨김(MSG-06)
 import { watchOnline } from './connection.mjs';
 import { selfMember, personalSelfName } from './self-member.mjs';
 import { crewRowMenuKeys, crewOpeners, creatorTagVisible } from './crew-row-menu.mjs';
@@ -953,7 +954,11 @@ function Shell({ session }) {
     if (!isMobileNative) return undefined;
     let disposed = false; let listener = null;
     const onNativeBack = () => {
+      if (appBackStack.closeTop()) return; // 열린 시트·팝업부터(MSG-10 — 시트를 연 채 뒤로를 누르면 앱이 꺼지거나 아래 화면이 닫혔다)
       if ((history.state?.depth ?? 0) > 0) { goBack(); return; }
+      const b = backRoot.current; const act = rootBackAction({ page: b.page, home: b.isPhone ? 'chats' : b.page, lastAt: b.warnedAt, now: Date.now() });
+      if (act === 'home') { b.toHome(); return; } // 다른 아래 탭이면 홈(채팅) 탭으로
+      if (act === 'warn') { b.warnedAt = Date.now(); b.note(); return; } // 한 번 더 누르면 닫는다고 알린다(입력하던 내용이 실수로 사라지지 않게)
       import('@tauri-apps/api/core').then(({ invoke }) => invoke('plugin:app|exit')).catch(() => {});
     };
     import('@tauri-apps/api/app').then(({ onBackButtonPress }) => onBackButtonPress(onNativeBack)).then((next) => {
@@ -961,6 +966,7 @@ function Shell({ session }) {
     }).catch(() => {});
     return () => { disposed = true; listener?.unregister(); };
   }, [goBack]);
+  const backRoot = useRef({ warnedAt: 0 }); Object.assign(backRoot.current, { page, isPhone, toHome: () => pickRoot('chats'), note: () => setNote(t('back.exitHint')) }); // Android 뒤로가 지금 화면·탭 이동·안내를 보게(리스너는 한 번만 단다)
   const openNav = () => { if (isPhone) goBack(); else setRail(true); }; // 폰: 뒤로(그 전 화면) / 데스크톱: 레일 서랍
   const backFromPage = () => { if (isPhone) goBack(); else setPage('chat'); }; // 설정·검색·알림함·기억 화면의 뒤로
   const ROOT_ORDER = PHONE_TABS; // 아래 탭 순서 — 전환 애니메이션 방향의 기준
@@ -1989,6 +1995,7 @@ function Shell({ session }) {
   const [invitesTick, setInvitesTick] = useState(0); // 초대 창이 링크를 만들거나 버렸으면 닫을 때 1 올라간다 — 설정 > 멤버의 초대 목록이 이 값이 바뀔 때만 다시 읽는다(UX 점검 D)
   const inviteSync = useRef(null); if (!inviteSync.current) inviteSync.current = inviteListSync(() => setInvitesTick((n) => n + 1));
   const [inviteFor, setInviteFor] = useState(null); // 초대 창(설계서 2-1) — { channelIds, role }. 채널 패널·조직 메뉴·빈 상태가 같은 창을 연다
+  useBackClose(!!dmPeek, () => setDmPeek(null)); useBackClose(friendAdd, () => setFriendAdd(false)); useBackClose(runnerOpen, () => setRunnerOpen(false)); useBackClose(orgMenu, () => setOrgMenu(false)); useBackClose(chSheet, () => setChSheet(false)); useBackClose(!!sheet, () => setSheet(null)); useBackClose(!!personalCard, () => setPersonalCard(null)); useBackClose(!!grpSheet, () => setGrpSheet(null)); useBackClose(!!inviteFor, () => setInviteFor(null)); useBackClose(chPlus, () => setChPlus(false)); useBackClose(dmGroup, () => setDmGroup(false)); // Android 뒤로가 닫는 시트·팝업(MSG-10)
   const inviteChannels = useMemo(() => [...channels, ...previewChannels].filter((c) => c.kind !== 'dm'), [channels, previewChannels]);
   const hostChannels = useMemo(() => new Set(inviteChannels.filter((c) => c.created_by === uid || (c.admin_user_ids ?? []).includes(uid)).map((c) => c.id)), [inviteChannels, uid]); // 서버 msgr_is_channel_host와 같은 규칙(관리자는 창이 따로 취급)
   const orgInvite = () => { const pub = inviteChannels.filter((c) => c.kind === 'public').map((c) => c.id); setInviteFor({ channelIds: pub.length ? pub : chId ? [chId] : [], role: 'member' }); }; // 공개 채널 전부, 없으면 지금 보는 채널
@@ -6357,6 +6364,7 @@ function Message({ m, shape = 'bubble', uploadNames = null, uid, lang, t, nameOf
   reacts = reacts.filter((r) => r.user_id === uid || !safety.blocked.has(r.user_id)); // 차단한 사람의 반응은 수·이름 모두 뺀다
   const [reporting, setReporting] = useState(false); const [reportReason, setReportReason] = useState(''); const [safetyBusy, setSafetyBusy] = useState(false);
   const [confirmBlock, setConfirmBlock] = useState(false);
+  useBackClose(actsOpen, () => setActsOpen(false)); useBackClose(!!pick, () => setPick(false)); // Android 뒤로 — 동작 시트·반응 고르기부터 닫는다(MSG-10)
   const [confirmMute, setConfirmMute] = useState(false); // 폰: 에이전트 숨기기 확인 창(숨기면 무엇이 바뀌는지 한 줄, 유건 2026-10-02). 데스크톱은 그대로 바로 숨긴다
   const openedAt = useRef(0); // 길게 눌러 연 시트는 손을 떼는 순간의 클릭이 바로 배경에 떨어져 닫혔다(에뮬레이션 실측 2026-09-29) — 열린 직후 잠깐은 배경 누름을 무시
   const hold = useLongPress(() => { if (!m.pending) { openedAt.current = Date.now(); setActsOpen(true); } });
@@ -6689,7 +6697,8 @@ function Composer({ broadcast = null, onCrewJoined = null, outsideDmPersonal = n
     const usable = (limitsPersonal(channel) ? crews.filter((c) => crewTier(c, org) === 'company') : crews).filter((c) => !(channel?.excluded_crew_ids ?? []).includes(c.id)); // 내보낸 크루는 후보에서 뺀다 // I-3: 이 채널이 회사 크루만이면 개인 크루는 멘션 후보에서 뺀다(안 될 버튼 노출 금지 — 최종 판정은 서버)
     return mentionCandidates({ q: needle, crews: mentionPopupCrews({ isDm, roomCrews, usable }), members: scopePeople ?? members, uid, exclude, all: !isDm || allByName.some((c) => c.kind === 'crew' || c.id !== uid) }).map((c) => (c.kind === 'all' ? { ...c, sub: t('mention.all') } : { ...c, away: c.kind === 'crew' && crewAway(crews.find((k) => k.id === c.id)), disabled: isDm && c.kind === 'crew' && !(scopeCrews ?? []).some((p) => p.id === c.id) && dmCandidates.find((p) => p.id === c.id)?.delivery_ready !== true })); // 사람 먼저·나 제외·상한 없음(팝업 스크롤). 맨 위 @all. 후보는 이 채널의 참여 구성만(사설 채널 밖 크루가 걸리던 실사고 2026-09-11)
   }, [pop, crews, members, uid, channel?.personal_crews, org, scopeCrews, scopePeople, text, byName, allByName, isDm, mentionCrews, dmCandidates, t]);
-  const autosize = (el) => { if (!el) return; el.style.height = 'auto'; el.style.height = `${Math.min(el.scrollHeight, 200)}px`; };
+  const autosize = (el) => { if (!el) return; el.style.height = 'auto'; const h = Math.min(el.scrollHeight, 200); el.style.height = h ? `${h}px` : ''; }; // 높이를 못 재는 때(숨은 입력창)는 0px로 굳히지 않는다
+  useLayoutEffect(() => { autosize(ta.current); }, [chId]); // 열릴 때 — 방을 옮겨 오거나 새로고침으로 되살린 여러 줄 초안이 2줄 높이로 잘려 보였다(MSG-09)
   // '/' 커맨더(유건 지시 2026-09-14) — 채널 크루가 미러한 본체 명령(별칭·스킬, msgr_crews.commands). 팝업이 열리는 순간 최신 목록을
   // 한 번 다시 읽는다(본체에서 스킬·별칭이 바뀜 → 게이트웨이 폴이 행 갱신 → 여기). 실행은 본체 몫이고 여기서는 지시문을 입력창에 넣는다.
   const slashCrews = scopeCrews ?? crews;
