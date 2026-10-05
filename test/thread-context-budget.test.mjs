@@ -140,3 +140,16 @@ test('TB6. 채널 기억 회수 — 그 채널 범위 요약도 같이 지운다
   applyDeparted(t); // 읽을 때·동기화 병합 때 다시 적용되는 각인 — 재입장 뒤 요약(upto > 각인 ts)은 지우지 않는다
   assert.equal(threadSummary(t, scope)?.text, '재입장 뒤 요약');
 });
+test('TB7. 요약 안내 줄(chat.mjs compact_boundary — src notice code summarized)은 다음 턴의 스레드 맥락에 싣지 않는다(다른 세션 안내 줄은 종전대로)', POSIX_ONLY, async () => {
+  const WS = 'tb7'; await mkws(WS);
+  const notice = { who: 'crew', text: '앞 대화를 요약해 이어 갑니다', ts: T0 + 50_000, src: { kind: 'session', dir: 'notice', code: 'summarized' } };
+  const capNote = { who: 'crew', text: '상한 안내 원문', ts: T0 + 60_000, src: { kind: 'session', dir: 'notice', code: 'cap', cap: 3 } };
+  await writeFile(join(ROOT, WS, 'chats', 'crew-a.json'), JSON.stringify({ sessionId: null, messages: [...msgs(4), notice, capNote] }));
+  await chat(WS, 'crew-a', '이어서');
+  const ps = await prompts(WS);
+  assert.equal(ps.length, 1);
+  assert.match(ps[0], /m3\|/, '대화 줄은 싣는다');
+  assert.doesNotMatch(ps[0], /앞 대화를 요약해 이어 갑니다/, '요약 안내 줄은 맥락이 아니다');
+  assert.match(ps[0], /상한 안내 원문/, '세션 상한 같은 다른 안내 줄은 종전대로 싣는다');
+});
+

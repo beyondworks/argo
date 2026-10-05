@@ -120,12 +120,22 @@ export async function beginTurn(wsId, slug, { userMsg, attachments, via, context
   return turnId;
 }
 
-/** 턴 없이 한 줄을 더한다 — 세션 메시지의 보낸 줄·돌아온 답 카드·안내(session-msg.mjs). 줄 모양은 호출부가 정한다(ts는 없으면 지금). */
+/** 턴 없이 한 줄을 더한다 — 세션 메시지의 보낸 줄·돌아온 답 카드·안내(session-msg.mjs). 줄 모양은 호출부가 정한다(ts는 없으면 지금).
+    noticeOf = 진행 중인 턴(turnId)에 딸린 안내(예: 앞 대화 요약 안내, chat.mjs) — 그 지시(와 끼워 넣기·앞 안내) 바로 뒤에 둔다.
+    appendTurn이 같은 표지를 보고 답을 그 뒤에 넣으므로 순서가 지시 → 안내 → 답으로 고정된다. 그 턴 줄이 없으면(메신저 표지 등) 끝에. */
 export async function appendLine(wsId, slug, line) {
   return lockThread(wsId, slug, async () => {
     const t = await loadThread(wsId, slug);
     const m = { ts: Date.now(), ...line };
-    t.messages.push(m);
+    const at = m.noticeOf ? t.messages.findIndex((x) => x.turnId === m.noticeOf) : -1;
+    if (at >= 0) {
+      let end = at;
+      t.messages.forEach((x, i) => { if (i > at && (x.steerOf === m.noticeOf || x.noticeOf === m.noticeOf)) end = i; });
+      t.messages.splice(end + 1, 0, m);
+    } else {
+      delete m.noticeOf;
+      t.messages.push(m);
+    }
     await writeJsonAtomic(file(wsId, slug), t);
     return m;
   });
@@ -153,6 +163,7 @@ async function appendTurnLocked(wsId, slug, { turnId, userMsg, reply, handover, 
       // 이 턴에 끼워 넣은 사장 메시지(addSteer) — 같은 결과로 마무리하고, 답은 그 뒤에 넣는다(질문들 → 답 순서)
       let end = at;
       t.messages.forEach((x, i) => {
+        if (x.noticeOf === turnId) { end = Math.max(end, i); return; } // 이 턴의 안내 줄(appendLine noticeOf) — 답은 그 뒤에
         if (x.steerOf !== turnId) return;
         end = Math.max(end, i); delete x.awaiting;
         if (failed) Object.assign(x, { failed, ...(failedCode ? { failedCode } : {}), ...(failedOrigin ? { failedOrigin } : {}), ...(aborted ? { aborted: true } : {}) });

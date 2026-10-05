@@ -84,3 +84,26 @@ test('NCC2. 최근 20턴만으로 95% 초과 — 5턴 연속 요약 1회 이하�
   const notes = (await loadThread(ws, 'r')).messages.filter((m) => m.src?.code === 'summarized');
   assert.equal(notes.length, 1, `안내 줄 ${notes.length}개(1개)`);
 });
+
+// 검수 changes_needed #6(LOW) — 요약 안내 줄은 화면용 표지다. 순서는 그 지시와 답 사이(답 앞)로 고정한다(turnId = chat 라우트의 abortTag).
+test('NCC3. 압축 안내 줄은 그 턴의 지시 바로 뒤·답 앞에 놓인다(라우트 흐름: beginTurn → chat(abortTag) → appendTurn)', async () => {
+  const { beginTurn } = await import('../src/thread.mjs');
+  const ws = 'ncc3'; await createCompany(ws, '압축', 'owner', null, 'ko');
+  const p = paths(ws); await mkdir(p.agents, { recursive: true });
+  await writeFile(join(p.agents, 'r.md'), '---\nname: 로라\nrole: 검증\nrunner: openrouter\n---\n검증 크루.\n');
+  await saveRunnerCred(ws, 'openrouter', 'apikey', `sk-or-v1-${'f'.repeat(64)}`);
+  const first = await chat(ws, 'r', '첫 지시');
+  await appendTurn(ws, 'r', { userMsg: '첫 지시', reply: first.reply, handover: null, sessionId: first.sessionId });
+  const f = sessionFile(ws, 'r'); const saved = JSON.parse(await readFile(f, 'utf8'));
+  const messages = [];
+  for (let i = 0; i < 100; i++) messages.push({ role: 'user', content: `u${i}| ${'x'.repeat(3000)}` }, { role: 'assistant', content: [{ type: 'text', text: `a${i}` }] });
+  await writeFile(f, JSON.stringify({ ...saved, messages }));
+  calls.length = 0;
+  const turnId = await beginTurn(ws, 'r', { userMsg: '이어서 정리' });
+  const r = await chat(ws, 'r', '이어서 정리', first.sessionId, { abortTag: turnId });
+  await appendTurn(ws, 'r', { turnId, userMsg: '이어서 정리', reply: r.reply, handover: null, sessionId: r.sessionId });
+  assert.deepEqual(calls.map((c) => c.kind), ['summary', 'turn'], '압축이 일어난 턴');
+  const ms = (await loadThread(ws, 'r')).messages;
+  const at = ms.findIndex((m) => m.turnId === turnId);
+  assert.deepEqual(ms.slice(at).map((m) => (m.src?.code === 'summarized' ? 'notice' : m.who)), ['user', 'notice', 'crew'], '지시 → 안내 → 답');
+});

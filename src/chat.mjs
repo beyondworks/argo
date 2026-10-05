@@ -489,8 +489,11 @@ export function threadCtxLine(m, lang, name) {
 /** 스레드 맥락(외부 CLI 경로·SDK/네이티브 기기 교차 경로 공통) — 예산 안 최근 대화 + 예산 밖 누적 요약(thread-context.mjs).
     요약은 그 크루의 **같은 러너** 원샷(pin — 다른 러너로 넘어가지 않는다, 도구 없이)으로 만들고 스레드에 저장한다.
     거르는 규칙(범위·공유 노트·실패·대기 줄 제외)은 종전 .slice(-6) 경로와 같다. 반환 { recent, summary }. */
-/** 맥락에 실을 줄(순수) — 같은 범위만, 공유 노트(sharedBlock으로 따로 주입)·실패 턴·답을 기다리는 지금 그 글(두 번 들어가면 안 된다)은 뺀다. export는 테스트용. */
-export const inThreadContext = (m, contextScope) => inContextScope(m, contextScope) && !m.shared && !m.failed && !m.awaiting;
+/** 맥락에 실을 줄(순수) — 같은 범위만, 공유 노트(sharedBlock으로 따로 주입)·실패 턴·답을 기다리는 지금 그 글(두 번 들어가면 안 된다)은 뺀다.
+    요약 안내 줄(아래 compact_boundary — src notice code 'summarized')도 뺀다: 화면용 표지라 크루에게는 '알림: 앞 대화를 요약해…'라는 잡음일 뿐이다(분리 검수 LOW).
+    세션 메시지의 다른 안내 줄(상한·기한·실패)은 크루가 알아야 할 사실이라 종전대로 싣는다. export는 테스트용. */
+export const isSummaryNotice = (m) => m?.src?.kind === 'session' && m.src.dir === 'notice' && m.src.code === 'summarized';
+export const inThreadContext = (m, contextScope) => inContextScope(m, contextScope) && !m.shared && !m.failed && !m.awaiting && !isSummaryNotice(m);
 async function threadContextFor(wsId, slug, t, { contextScope, lang, name, runner, model }) {
   const msgs = (t?.messages ?? []).filter((m) => inThreadContext(m, contextScope));
   return buildThreadContext({
@@ -2128,9 +2131,10 @@ ${lang === 'en'
     }
     // 앞 대화 압축(네이티브 엔진 compact.mjs, SDK 자동 압축도 같은 모양) — 크루 대화 기록에 안내 줄 하나. 화면 문구는 i18n(chat.session.notice.summarized)이 그린다.
     // 이 턴의 범위를 싣는다(채널 턴이면 그 채널 줄 — 회수·맥락 범위 규칙을 그대로 탄다). 기록 실패는 턴과 무관.
+    // noticeOf = 이 실행의 표지(chat 라우트·세션 메시지는 그 지시의 turnId — 재시도 프레임도 같은 제어 객체를 물려받는다) — 지시 바로 뒤·답 앞에 놓인다(thread.mjs appendLine).
     if (msg.type === 'system' && msg.subtype === 'compact_boundary' && !dmTurn) {
       await appendLine(wsId, agentSlug, { who: 'crew', text: lang === 'en' ? 'Earlier conversation was summarized to continue' : '앞 대화를 요약해 이어 갑니다',
-        src: { kind: 'session', dir: 'notice', code: 'summarized' }, ...(contextScope ? { contextScope } : {}) }).catch(() => {});
+        src: { kind: 'session', dir: 'notice', code: 'summarized' }, ...(contextScope ? { contextScope } : {}), ...(__turnControl?.tag ? { noticeOf: __turnControl.tag } : {}) }).catch(() => {});
     }
     // 구독 사용 한도 — SDK가 claude.ai 구독(OAuth) 턴에만 싣는다. 계정 단위 저장, 실패는 턴과 무관(K91)
     if (msg.type === 'rate_limit_event' && runner === 'claude') await recordClaudeLimits(sdkEnv, msg.rate_limit_info).catch(() => {});
