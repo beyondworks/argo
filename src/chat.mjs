@@ -49,7 +49,7 @@ import { scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, authExclu
 import { delegateHead } from './inbound-marks.mjs'; // 위임 머리말 = 1:1 화면 출처 카드와 같은 함수
 import { loadThread, takeSharedNotes, restoreSharedNotes, scopedSession, inContextScope, turnScope, scopeKey, approvalScope, threadSummary, setThreadSummary, appendLine } from './thread.mjs';
 import { buildThreadContext, contextSection, contextLimits, fitContextSection, isArgvRunner, argvLen, ARGV_PROMPT_LIMIT } from './thread-context.mjs';
-import { item } from './record-block.mjs'; // 스레드 맥락 한 줄 = 항목 하나(구조로 화자를 가른다) // 스레드 맥락 토큰 예산 + 누적 요약(최근 6개 고정을 대체) · argv 러너 길이 맞춤
+import { item } from './record-block.mjs'; import { msgrAuthorBody } from './inbound-marks.mjs'; // 메신저 줄은 글쓴이 본문만 항목에(5차 검수 MEDIUM-1) // 스레드 맥락 한 줄 = 항목 하나(구조로 화자를 가른다) // 스레드 맥락 토큰 예산 + 누적 요약(최근 6개 고정을 대체) · argv 러너 길이 맞춤
 import { runOneShot } from './oneshot.mjs';
 import { readInstalledSkills, planSkillInjection, SKILL_INJECT_CAP } from './market.mjs'; // 주입·마켓 표기 공용 규칙(단일 진실)
 import { snapshotArtifacts, diffArtifacts, servableArtifact, capLatest, openTurnLedger, closeTurnLedger, overlappingTurns, attributeArtifacts } from './artifacts.mjs'; // 러너 무관 산출물 수집(제보 2026-07-30)
@@ -475,11 +475,15 @@ const connectorNames = (connectors, en) => connectors
       delivered(via 턴·다른 크루의 세션 메시지 답·메신저 크루 넘김, 보낸 곳·덧붙임 via) / notice(세션 안내) / crew(이 크루).
     메신저 줄(actor)은 게이트웨이가 남긴 relay 표지가 false일 때만 사람 글로 본다 — 크루 넘김 줄의 actor.uid는 사슬을 시작한 사람(origin)이라 주인 id와
     같아도 사장 글이 아니다. 표지가 없는 옛 줄은 가릴 수 없어 delivered로 둔다(fail-closed — 사장 결정으로 올리지 않는다).
+    메신저 줄(via 'msgr')의 기록은 모델에 넣은 프롬프트 전체(머리말·다른 사람의 최근 채널 대화·답글 원글·이름: 본문)라 글쓴이 본문만 꺼내 싣는다(msgrAuthorBody —
+    화면 출처 카드와 같은 파서). 꺼내지 못하면 다른 사람 글이 섞였을 수 있어 사람 글(captain·member)로 올리지 않는다(delivered).
     본문은 500자에서 자르고(원문 그대로), 첨부·산출물 경로는 덧붙임 files·made라 잘려도 산다. lang·name은 호출 모양 호환. export는 테스트용. */
 export function threadCtxLine(m, lang, name, { ownerId = null } = {}) { // eslint-disable-line no-unused-vars
   const s = m.src?.kind === 'session' ? m.src : null;
   const sender = s?.fromName ?? s?.from ?? null;
   const a = m.actor && typeof m.actor === 'object' ? m.actor : null;
+  const raw = String(m.text ?? '');
+  const body = m.who === 'user' && m.via === 'msgr' ? msgrAuthorBody(raw, String(a?.name ?? '').split(' ← ')[0]) : raw; // 넘긴 턴의 actor = '넘긴 크루 ← 사람', 본문 줄 앞 이름은 넘긴 크루
   const extra = {};
   let who; let from = null;
   if (s?.dir === 'out') { who = 'captain'; extra.to = s.toName ?? s.to ?? null; extra.via = 'session'; }
@@ -487,13 +491,13 @@ export function threadCtxLine(m, lang, name, { ownerId = null } = {}) { // eslin
   else if (s && m.who === 'crew' && s.dir === 'notice') who = 'notice';
   else if (m.who === 'user' && a) {
     from = a.name ?? null; if (m.via) extra.via = String(m.via);
-    who = a.relay === false ? (ownerId && a.uid === ownerId ? 'captain' : 'member') : 'delivered';
+    who = a.relay === false && body !== null ? (ownerId && a.uid === ownerId ? 'captain' : 'member') : 'delivered';
     if (who === 'captain') from = null;
   } else if (m.who === 'user') { if (m.via) { who = 'delivered'; from = sender; extra.via = String(m.via); } else who = 'captain'; }
   else who = 'crew';
   if (m.attachments?.length) extra.files = m.attachments.map((x) => `vault/${x?.rel ?? ''}`);
   if (m.artifacts?.length) extra.made = m.artifacts.map((x) => `vault/${x ?? ''}`);
-  return item(who, String(m.text ?? '').slice(0, 500), from, extra);
+  return item(who, (body ?? raw).slice(0, 500), from, extra);
 }
 
 /** 스레드 맥락(외부 CLI 경로·SDK/네이티브 기기 교차 경로 공통) — 예산 안 최근 대화 + 예산 밖 누적 요약(thread-context.mjs).

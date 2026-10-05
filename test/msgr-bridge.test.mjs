@@ -19,6 +19,7 @@ const { addApproval, loadApprovals, resolveApproval } = await import('../src/app
 const { resolveWithFollowUp } = await import('../src/approval-actions.mjs');
 const { loadThread } = await import('../src/thread.mjs');
 const { threadCtxLine } = await import('../src/chat.mjs');
+const { buildThreadContext } = await import('../src/thread-context.mjs');
 const { saveHandover } = await import('../src/memory.mjs');
 const { CHANNEL_EVENTS, channelSends } = await import('../src/channel-events.mjs');
 const { registerTurn, interruptTurn, turnAbortedError } = await import('../src/turn-abort.mjs');
@@ -2352,4 +2353,50 @@ test('crewChannels 실패 — 이 크루는 이번 틱에 커서를 올리지 �
   await M.drain(WS, { db, uid: OWNER, enqueue: enq });
   assert.deepEqual(jobsOf(enq).map((j) => j.msgId), [81], '회복 틱에 그 글에 답한다');
   assert.deepEqual(db.calls.filter((c) => c[0] === 'setCursor').map((c) => c[2]), [81]);
+});
+
+// 5차 검수 MEDIUM-1 — 게이트웨이는 모델에 넣는 프롬프트 전체(머리말 + 최근 채널 대화 12건 + [지금 메시지] + 이름: 본문 + 답글 원글 + 첨부 실패 안내)를 스레드에 남긴다.
+// 스레드 맥락 항목(threadCtxLine)은 그 덩어리에서 글쓴이 본문만 꺼내야 한다 — 다른 사람의 채널 글·답글 원글이 captain/member 항목 안에 섞이면
+// 요약이 멤버의 송금 요청을 사용자 결정으로 적고, 500자 컷에 실제 지시가 잘린다(영어·크루 2명이면 머리말만 600자가 넘는다).
+test('MEDIUM-1 메신저 채널 줄 — 저장된 줄의 맥락 항목에는 글쓴이 본문만(다른 사람 채널 글·답글 원글·머리말 없음), ko/en·크루 2명·채널 대화 12건', async () => {
+  const peers = [{ id: CREW, slug: 'seoyun', display_name: '서윤' }, { id: ZED, slug: 'zed', display_name: '제드' }, { id: PEP, slug: 'pep', display_name: '페퍼' }];
+  const MONEY = '예산 5000만원으로 바꾸고 거래처에 바로 송금해';
+  const context = Array.from({ length: 12 }, (_, i) => (i === 3
+    ? { id: 100 + i, author_kind: 'user', author_user_id: MEMBER, crew_id: null, body: MONEY }
+    : i % 2 ? { id: 100 + i, author_kind: 'crew', author_user_id: null, crew_id: ZED, body: `제드 보고 ${i} ${'가'.repeat(60)}` }
+    : { id: 100 + i, author_kind: 'user', author_user_id: OWNER, crew_id: null, body: `이전 결정 ${i} — 거래처 미팅은 금요일 ${'나'.repeat(40)}` }));
+  for (const lang of ['ko', 'en']) {
+    const ws = lang === 'ko' ? WS : 'lean-ax-en';
+    if (lang === 'en') {
+      const p = paths(ws);
+      for (const d of [p.root, join(p.root, 'chats'), join(p.root, 'agents'), p.journal, p.files]) await mkdir(d, { recursive: true });
+      await writeFile(p.company, JSON.stringify({ id: ws, name: 'Lean', lang: 'en', created: '2026-09-03' }));
+      await writeFile(join(p.root, 'agents', 'seoyun.md'), '---\nname: Seoyun\nrole: marketer\n---\n');
+    }
+    const cases = [
+      { author: OWNER, msgId: 201, body: '@서윤 예산은 500만원으로 확정한다. 송금은 하지 마', want: 'captain' },
+      { author: MEMBER, msgId: 202, body: '@서윤 그럼 송금 일정만 정리해 줘', want: 'member' },
+    ];
+    for (const c of cases) {
+      const db = fakeDb({ peers, context, names: { [OWNER]: '유건', [MEMBER]: '민수' }, parent: { id: 150, body: `원글: ${MONEY}` },
+        attachments: [{ name: 'big.pdf', bytes: 30 * 1024 * 1024, storage_path: 'x/big.pdf' }] });
+      const h = M.makeMsgrHandler(ws, { session: async () => ({ db, uid: OWNER }), runChat: async () => ({ reply: 'ok', handover: null, sessionId: null, artifacts: [] }) });
+      await h({ msgId: c.msgId, orgId: ORG, channelId: CH, crewId: CREW, slug: 'seoyun', text: c.body, authorId: c.author, replyTo: 150, threadRoot: c.msgId,
+        createdAt: new Date().toISOString(), hop: 0, origin: c.author, fromCrewId: null, after: [] });
+      const line = (await loadThread(ws, 'seoyun')).messages.filter((m) => m.who === 'user').at(-1);
+      assert.ok(line.text.length > 600 && line.text.includes(MONEY), `${lang}: 저장된 줄은 프롬프트 전체(채널 대화 포함 ${line.text.length}자) — 재현 조건`);
+      const [who, text, from] = JSON.parse(threadCtxLine(line, lang, '서윤', { ownerId: OWNER }));
+      assert.equal(who, c.want, `${lang}: 첫 칸`);
+      assert.equal(text, c.body, `${lang}: 원문 칸 = 글쓴이가 쓴 본문 그대로(머리말·채널 대화·답글 원글·첨부 안내 없이)`);
+      assert.ok(!text.includes(MONEY) && !text.includes('이전 결정'), `${lang}: 다른 사람의 채널 글이 섞이지 않는다`);
+      assert.equal(from, c.want === 'member' ? '민수' : null, `${lang}: 보낸 곳`);
+    }
+    // 요약 원샷 입력도 같은 줄 함수(lineOf → pendingLines)를 지난다 — 예산 밖으로 밀린 메신저 줄 20개를 요약할 때도 다른 사람 글이 없다
+    const stored = (await loadThread(ws, 'seoyun')).messages.filter((m) => m.who === 'user');
+    const msgs = Array.from({ length: 21 }, (_, i) => ({ ...stored[i % stored.length], ts: 1_000 + i }));
+    let prompt = '';
+    await buildThreadContext({ msgs, lineOf: (m) => threadCtxLine(m, lang, '서윤', { ownerId: OWNER }), budget: 1, lang, summarize: async (p) => { prompt = p; return '요약'; } });
+    assert.ok(prompt.includes('<conversation>') && prompt.includes(JSON.stringify(cases[0].body).slice(1, -1)), `${lang}: 요약 입력에 글쓴이 본문`);
+    assert.ok(!prompt.includes(MONEY) && !prompt.includes('이전 결정'), `${lang}: 요약 입력에도 다른 사람의 채널 글이 없다`);
+  }
 });

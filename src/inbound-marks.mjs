@@ -44,6 +44,21 @@ export const msgrContextHead = (n, lang = 'ko') => (L(lang) === 'en'
 /** 답글이면 본문 끝에 붙는 원글 줄 */
 export const msgrReplyLine = (parent, lang = 'ko') => (L(lang) === 'en' ? `\n(In reply to: ${parent})` : `\n(답글 대상: ${parent})`);
 
+/** 본문 뒤에 게이트웨이가 덧붙이는 줄의 머리 — 첨부를 못 받은 안내(gateway/msgr.mjs)·팀 업무 블록(gateway/msgr-work.mjs workPrompt) */
+export const MSGR_ATTACH_FAIL = { ko: '(첨부 수신 실패', en: '(Attachment failed' };
+export const MSGR_WORK_HEAD = { ko: '[팀 업무 — 고정된 원래 요청]', en: '[Team work — durable original request]' };
+
+/** 메신저 기록에서 글쓴이가 쓴 본문만(스레드 맥락 항목용 — chat.mjs threadCtxLine). 머리말·참고 채널 대화(parseMsgr)에 더해
+    본문 뒤의 답글 원글 줄·첨부 실패 안내·팀 업무 블록도 뗀다 — 다른 사람의 글이 글쓴이 항목에 섞이지 않게(5차 검수 MEDIUM-1).
+    덧붙는 줄은 본문 다음에만 오므로 가장 앞선 머리에서 자른다(본문 안에 같은 머리를 적었으면 글쓴이 글이 짧아질 뿐이다). 머리말을 못 알아보면 null. */
+export function msgrAuthorBody(text, authorName = '') {
+  const p = parseMsgr(text, authorName);
+  if (!p) return null;
+  const cuts = ['ko', 'en'].flatMap((l) => [msgrReplyLine(HOLE, l).split(HOLE)[0], `\n${MSGR_ATTACH_FAIL[l]}`, `\n${MSGR_WORK_HEAD[l]}`])
+    .map((h) => p.body.indexOf(h)).filter((i) => i >= 0);
+  return cuts.length ? p.body.slice(0, Math.min(...cuts)) : p.body;
+}
+
 /** 메신저 기록을 나눈다 → { channel, body, context:[{name,text}], replyTo }. authorName = 본문 줄 앞 발화자 이름(넘긴 턴이면 넘긴 크루) */
 export function parseMsgr(text, authorName = '') {
   for (const lang of ['ko', 'en']) {
