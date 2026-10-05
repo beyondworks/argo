@@ -1,22 +1,675 @@
-// CX-12·CX-13(2026-10-05 연결성 검수): 설정 메신저 카드가 개인 공간 이전 기준이라 조직이 없으면 '연결 필요'·'조직을 만드세요'만
-// 보이고 실행기 연결 상태를 숨겼다. 본체 어디에도 오피스로 가는 길이 없었다.
+// 팀 메신저 크루 등록 카드(F1-1) — 배선·라벨·기본값 핀. 화면 동작은 Aside 실측(로컬 스택)로.
+//  · 카드가 설정의 "연결" 섹션에 실제로 렌더된다(연결 탭 맨 위) — 컴포넌트만 있고 안 꽂히면 화면에 없다
+//  · 라우트 기본 허용 범위 'owner'(부록 H: 정책 테이블 전까지 가장 좁게) + GET이 조직별 멤버(지정 멤버 선택지)를 준다
+//  · 카드가 쓰는 i18n 키가 ko/en 둘 다 있다(다국어 상시 규칙)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { msgrConnectionChip, msgrShowRuntime, OFFICE_URL, MESSENGER_PAGE } from '../app/c/[ws]/settings/msgr-card.mjs';
+import { parse } from 'espree';
+import { readFileSync } from 'node:fs';
+import { stripComments } from './helpers/strip-comments.mjs';
+import { nudgeMsgrBridge } from '../src/gateway.mjs';
+import { approvalDecider } from '../apps/messenger/src/approval-display.js';
 
-test('조직이 없어도 개인 공간에 연결된 크루가 있으면 "개인 공간 연결됨" — 연결 필요로 보이지 않는다', () => {
-  assert.equal(msgrConnectionChip({ regCount: 0, personalCount: 3 }), 'personal');
-  assert.equal(msgrConnectionChip({ regCount: 2, personalCount: 3 }), 'connected');
-  assert.equal(msgrConnectionChip({ regCount: 0, personalCount: 0 }), 'notConnected');
+const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
+const page = stripComments(read('app/c/[ws]/settings/page.jsx'));
+const route = stripComments(read('app/api/companies/[ws]/msgr/route.js'));
+const i18n = read('app/i18n.jsx');
+const app = stripComments(read('apps/messenger/src/App.jsx'));
+const sessionRecovery = stripComments(read('apps/messenger/src/session-recovery.mjs'));
+const msgrI18n = read('apps/messenger/src/i18n.js');
+
+test('MsgrCard가 연결 섹션에 꽂혀 있다 — 연결 탭 맨 위', () => {
+  const slack = page.indexOf('kind="slack"');
+  const card = page.indexOf('<MsgrCard ws={ws} agents={data?.agents ?? []} />');
+  const conn = page.indexOf('<ConnectorsCard ws={ws} />');
+  assert.ok(slack > 0 && card > 0 && conn > 0, '세 카드가 모두 있어야 한다');
+  assert.ok(card < page.indexOf('kind="telegram"') && card < slack && card < conn, 'MsgrCard는 연결 탭 맨 위에 있어야 한다');
+  assert.match(page, /function MsgrCard\(\{ ws, agents \}\)/, '컴포넌트 시그니처');
 });
 
-test('실행기 연결 상태는 조직 여부와 상관없이 보인다(로그인 + 크루 있음)', () => {
-  assert.equal(msgrShowRuntime({ signedIn: true, agentCount: 2 }), true);
-  assert.equal(msgrShowRuntime({ signedIn: true, agentCount: 0 }), false);
-  assert.equal(msgrShowRuntime({ signedIn: false, agentCount: 2 }), false);
+test('라우트: 기본 allow는 owner, GET은 조직별 members를 싣는다', () => {
+  assert.match(route, /allow = 'owner'/, "POST 기본 허용 범위가 'owner'가 아니다 — 정책 테이블 전까지는 가장 좁게(부록 H)");
+  assert.doesNotMatch(route, /allow = 'all'/, "'all' 기본값이 남아 있다");
+  assert.match(route, /o\.members = /, 'GET 조직 목록에 members가 없다 — 카드의 지정 멤버 선택지가 빈다');
+  assert.match(route, /\.neq\(|m\.user_id !== c\.uid/, '멤버 목록에서 본인을 빼야 한다');
 });
 
-test('진입 링크는 https 고정 주소 — 오피스(웹)·메신저 받기 안내 한 곳', () => {
-  assert.equal(new URL(OFFICE_URL).protocol, 'https:');
-  assert.equal(new URL(MESSENGER_PAGE).protocol, 'https:');
+test('카드가 쓰는 i18n 키는 전부 ko/en 쌍으로 있다', () => {
+  const src = page.slice(page.indexOf('function MsgrCard('), page.indexOf('function ConnectorsCard('));
+  const keys = new Set([...src.matchAll(/t\('([A-Za-z0-9._-]+)'\)/g)].map((m) => m[1])); // 대소문자 — noCrews·notSignedIn 같은 키를 놓치던 수집기(검수 LOW-1)
+  for (const v of ['all', 'list', 'owner']) keys.add(`settings.msgr.allow.${v}`);
+  for (const r of ['owner', 'admin', 'member', 'guest']) keys.add(`role.${r}`);
+  assert.ok(keys.size >= 14, `키 수집이 너무 적다(${keys.size})`);
+  for (const k of keys) assert.match(i18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} 라벨이 ko·en 둘 다 있어야 한다`);
+});
+
+// ── 메신저 앱 구간 불변식(검수 2R MEDIUM-1: 수정이 핀 없이 들어갔다) ──
+test('채널 시트 닫기 효과의 의존성은 [chId]뿐 — tick이 섞이면 15초마다 시트가 닫힌다(HIGH-1 재발 방지)', () => {
+  const app = stripComments(read('apps/messenger/src/App.jsx'));
+  assert.match(app, /useEffect\(\(\) => \{ setChSheet\(sheetAfterNav\.current\); sheetAfterNav\.current = false; \}, \[chId\]\);/, '닫기 효과가 [chId] 단독 의존이 아니다(알림함의 참여 요청은 이동 뒤 한 번만 연다 — 2026-09-16)');
+  const reload = /useEffect\(\(\) => \{ if \(!chMembersWanted\) return; loadChMembers\(chId\)[^\n]*\}, \[chId, loadChMembers, syncEpoch, membersEpoch, chMembersWanted\]\);/.exec(app); // tick은 빠졌다(기능 점검 D2) — 시트 닫기가 섞이지 않는지만 본다
+  assert.ok(reload && !/setChSheet/.test(reload[0]), '멤버 재조회 효과 안에 setChSheet가 있다 — tick마다 시트가 닫힌다');
+});
+
+// ── H-0 조직 정책: 잠긴 허용 범위는 카드·시트에서 선택 불가 + 정책 안내, 정책 카드는 관리자만 저장 ──
+test('H-0: 라우트가 조직별 policy를 싣고, 카드는 첫 연결만 시작하며 범위·해제는 메신저에서 관리한다', () => {
+  assert.match(route, /from\('msgr_org_policies'\)\.select\('org_id, allow_default, allow_locked, crew_memory_default, crew_memory_locked, approval_high_by'\)/, '라우트가 정책을 조회하지 않는다');
+  assert.match(route, /o\.policy = /, '조직에 policy가 붙지 않는다');
+  const src = page.slice(page.indexOf('function MsgrCard('), page.indexOf('function ConnectorsCard('));
+  assert.match(src, /async function activateOrg\(\)/, '첫 연결을 시작하는 명시적 동작이 없다');
+  assert.match(src, /const missing = agents\.filter\(\(a\) => !regOf\(a\.slug\)\)/, '이미 연결된 크루까지 다시 연결하려 한다');
+  assert.match(src, /api\(`\/api\/companies\/\$\{ws\}\/msgr`, \{ orgId, activate: true, slugs: missing\.map\(\(agent\) => agent\.slug\) \}\)/, '첫 연결이 전용 활성화 요청을 쓰지 않는다');
+  assert.match(route, /if \(activate\) \{[\s\S]*?prior\?\.status === 'active'\) continue/, '활성화 요청이 이미 활성인 크루를 건너뛰지 않는다');
+  assert.match(route, /\.update\(\{ \.\.\.base, status: 'active' \}\)/, '되살린 크루가 기존 허용 범위를 보존하지 않는다');
+  assert.match(route, /\.insert\(row\)/, '없는 크루만 새 기본 허용 범위로 만들지 않는다');
+  assert.doesNotMatch(src, /register\(|unregister\(|role="radio"|method: 'DELETE'/, '아르고 카드에 해제·허용 범위 조작이 남아 있다');
+  assert.match(src, /window\.dispatchEvent\(new Event\('argo:refresh'\)\)/, '연결 뒤 알림 카드가 상태를 갱신하지 않는다');
+  assert.match(src, /\{reg \? `\$\{t\('settings\.msgr\.registered'\)\} · \$\{t\(`settings\.msgr\.allow\.\$\{reg\.allow\}`\)\}` : off\}/, '행은 파견 상태·허용 범위를 읽기 전용으로 보인다');
+  assert.match(src, /const off = t\(rowOf\(a\.slug\) \? 'settings\.msgr\.notRegistered' : 'settings\.msgr\.notInMessenger'\)/, "행이 없으면 '파견 해제됨'이 아니라 '메신저에 아직 없음'(유건 제보 2026-09-17)");
+  assert.match(src, /t\('settings\.msgr\.manage'\)/, '메신저에서 관리한다는 안내가 없다');
+  assert.match(i18n, /'settings\.msgr\.allow\.locked': \['[^']+', '[^']+'\]/, 'settings.msgr.allow.locked ko/en');
+});
+
+test('연결 상태는 선택한 조직 기준으로 명시되고, 전체 크루 목록은 이름·역할·상태를 함께 보인다', () => {
+  const src = page.slice(page.indexOf('function MsgrCard('), page.indexOf('function ConnectorsCard('));
+  assert.match(src, /settings\.msgr\.connection\.title/, '조직 연결 상태의 명확한 제목이 없다');
+  assert.match(src, /settings\.msgr\.connection\.channelNote/, '조직 연결 수와 채널 참여를 구분하는 안내가 없다');
+  assert.match(src, /settings\.msgr\.roster\.title/, '전체 크루 목록의 제목이 없다');
+  assert.match(src, /agents\.map\(\(a\) => \{ const reg = regOf\(a\.slug\);/, '예외만이 아니라 전체 크루를 보여 주지 않는다');
+  assert.match(src, /<span className="name">\{a\.name\}<\/span><span className="role">\{a\.role\}<\/span>/, '이름과 역할이 한 행 안에 함께 없다');
+  for (const k of ['settings.msgr.connection.title', 'settings.msgr.connection.empty', 'settings.msgr.connection.partial', 'settings.msgr.connection.channelNote', 'settings.msgr.connection.activate', 'settings.msgr.connection.addMissing', 'settings.msgr.connection.connected', 'settings.msgr.connection.notConnected', 'settings.msgr.connection.statusHelp', 'settings.msgr.roster.title', 'settings.msgr.roster.help', 'settings.msgr.err.activate']) {
+    assert.match(i18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
+  }
+});
+
+test('메신저 응답 상태는 안전한 사유를 보이고, 끊겼을 때만 브리지를 다시 깨운다', () => {
+  const src = page.slice(page.indexOf('function MsgrCard('), page.indexOf('function ConnectorsCard('));
+  assert.match(route, /msgrGatewayStatus\(ws\)/, 'GET이 브리지 심박을 읽지 않는다');
+  assert.match(route, /function runtimeState\(gateway\)/, '원인을 안전한 상태로 분류하지 않는다');
+  assert.match(route, /if \(reconnect\) \{[\s\S]*?nudgeGateway\(ws\)/, '재연결 요청이 게이트웨이를 깨우지 않는다');
+  assert.match(src, /async function reconnectBridge\(\)/, '카드에 재연결 동작이 없다');
+  assert.match(src, /settings\.msgr\.runtime\.title/, '응답 상태 제목이 없다');
+  assert.match(src, /settings\.msgr\.runtime\.reconnect/, '재연결 버튼이 없다');
+  for (const k of ['settings.msgr.err.reconnect', 'settings.msgr.runtime.title', 'settings.msgr.runtime.alive', 'settings.msgr.runtime.waiting', 'settings.msgr.runtime.offline', 'settings.msgr.runtime.login', 'settings.msgr.runtime.owner', 'settings.msgr.runtime.company', 'settings.msgr.runtime.noCrews', 'settings.msgr.runtime.reconnecting', 'settings.msgr.runtime.reconnect']) {
+    assert.match(i18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
+  }
+});
+
+test('재연결 nudge는 선택한 회사의 메신저 브리지만 깨운다', () => {
+  let first = 0; let second = 0;
+  const running = new Map([
+    ['first:msgr', { stop: { nudge: () => { first++; } } }],
+    ['second:msgr', { stop: { nudge: () => { second++; } } }],
+  ]);
+  nudgeMsgrBridge(running, 'first');
+  assert.equal(first, 1);
+  assert.equal(second, 0);
+});
+
+test('H-0: 메신저 앱 — loadOrg가 정책을 읽고, 크루 시트·채널 시트는 잠금에 비활성, 정책 카드는 관리자만 저장·비관리자는 안내', () => {
+  assert.match(app, /from\('msgr_org_policies'\)\.select\('allow_default, allow_locked, crew_memory_default, crew_memory_locked, approval_high_by, approver_user_ids, crew_create, crew_runner, crew_model, guest_seats'\)/, '조직 정책 조회가 없다');
+  assert.match(app, /setEnt\(e\); setPolicy\(pol\);/, '정책이 상태에 실리지 않는다');
+  const crew = app.slice(app.indexOf('function CrewSheet('), app.indexOf('function ChannelSheet('));
+  assert.match(crew, /const locked = !!policy\?\.allow_locked;/, '크루 시트 잠금 판정');
+  assert.match(crew, /<Seg label=\{t\('crew\.allow'\)\} value=\{allow\} onPick=\{pickAllow\} disabled=\{!owner \|\| busy \|\| locked\}/, '허용 범위 세그먼트가 잠금에 비활성화되지 않는다(공통 Seg, 5차 피드백 3)');
+  assert.match(crew, /locked \? <p className="note">\{t\('crew\.allow\.locked'\)\}<\/p>/, '잠금 안내가 없다');
+  assert.match(crew, /\/msgr_policy_locked\/\.test\(res\.error\.message\) \? t\('err\.policyLocked'\)/, '서버 거절이 정직한 문구로 안 바뀐다');
+  const ch = app.slice(app.indexOf('function ChannelSheet('), app.indexOf('function Settings('));
+  assert.match(ch, /const memLocked = !!policy\?\.crew_memory_locked;/, '채널 시트 잠금 판정');
+  assert.match(ch, /checked=\{channel\.crew_memory !== false\} disabled=\{!canEdit \|\| busy \|\| memLocked\}/, '기억 스위치가 잠금에 비활성화되지 않는다');
+  assert.match(ch, /memLocked && <p className="note">\{t\('ch\.memory\.locked'\)\}<\/p>/, '기억 잠금 안내가 없다');
+  assert.match(ch, /\/msgr_policy_locked\/\.test\(res\.error\.message\) \? t\('err\.policyLocked'\)/, '채널 서버 거절 문구');
+  const pc = app.slice(app.indexOf('function PolicyCard('), app.indexOf('function EmptyOrg('));
+  assert.match(pc, /from\('msgr_org_policies'\)\.update\(\{ allow_default: draft\.allow_default, allow_locked: draft\.allow_locked, crew_memory_default: draft\.crew_memory_default, crew_memory_locked: draft\.crew_memory_locked, approval_high_by: draft\.approval_high_by, approver_user_ids: draft\.approver_user_ids \?\? \[\], crew_create: draft\.crew_create \?\? 'channel_admin', crew_runner: draft\.crew_runner\?\.trim\(\) \|\| null, crew_model: draft\.crew_model\?\.trim\(\) \|\| null, guest_seats: !!draft\.guest_seats \}\)\.eq\('org_id', org\.id\)\.select\('org_id'\)/, '정책 저장 문장');
+  assert.match(pc, /if \(!res\.data\?\.length\) return onError\(t\('set\.policy\.adminOnly'\)\);/, 'RLS 0행(비관리자)을 안내로 바꾸지 않는다');
+  assert.match(pc, /const ro = !isAdmin \|\| busy;/, '비관리자 읽기 전용');
+  assert.match(pc, /\{isAdmin \? <div className="row"><button[^\n]*onClick=\{save\}/, '저장 버튼이 관리자에게만 있지 않다');
+  assert.match(pc, /: <p className="note">\{t\('set\.policy\.adminOnly'\)\}<\/p>\}/, '비관리자 안내가 없다');
+  assert.match(pc, /\{t\('set\.policy\.limit'\)\}/, '개인 PC 크루 한계 정직 표기가 없다');
+  const settings = app.slice(app.indexOf('function Settings('), app.indexOf('function PolicyCard('));
+  assert.match(settings, /\{policy && <PolicyCard org=\{org\} isAdmin=\{isAdmin\} policy=\{policy\}/, '설정 페이지(크루와 서버 탭)에 정책 카드가 없다');
+  for (const k of ['set.policy', 'set.policy.desc', 'set.policy.allow', 'set.policy.memory', 'set.policy.lock', 'set.policy.limit', 'set.policy.saved', 'set.policy.adminOnly', 'crew.allow.locked', 'ch.memory.locked', 'err.policyLocked']) {
+    assert.match(msgrI18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
+  }
+});
+
+test('메신저 로그아웃은 이 기기(scope local)만 — 전역이면 같은 계정의 아르고 기기 세션 리프레시 토큰까지 폐기된다(2026-09-03 실측: 격리 아르고가 revoked로 죽음)', () => {
+  // D56 moves the actual SDK lifecycle into the recovery owner. App must only
+  // delegate to that owner; searching App alone would falsely report no scope.
+  assert.doesNotMatch(app, /auth\.signOut\(\)/, '범위 없는 signOut()이 남아 있다');
+  assert.match(app, /recoveryRef\.current\.restartSignIn\(\)/, '일반 로그아웃이 D56 recovery 소유자를 거치지 않는다');
+  assert.doesNotMatch(sessionRecovery, /auth\.signOut\(\)/, '범위 없는 signOut()이 남아 있다');
+  const scopes = [...sessionRecovery.matchAll(/auth\.signOut\(([^)]*)\)/g)].map((match) => match[1].trim());
+  assert.deepEqual(new Set(scopes), new Set(["{ scope: 'local' }"]), '모든 로그아웃 수명주기는 이 기기 local 범위여야 한다');
+  assert.equal((app.match(/useContext\(SignOutContext\)/g) ?? []).length, 2, '레일·설정 모두 토큰 해제 포함 공용 로그아웃을 사용');
+});
+
+test('H-1: 결재 슬립은 위험 등급·정책으로 확정권을 나누고(고위험=관리자 기본), 정책 카드에 고위험 결재권 행, 브리지가 risk를 싣는다', () => {
+  assert.match(app, /select\('id, crew_id, approval_id, action, reason, status, decided_by, decided_at, message_id, risk, kind, payload'\)/, '결재 조회에 risk·kind·payload가 없다');
+  const slip = app.slice(app.indexOf('function Slip('), app.indexOf('function Attachment('));
+  // 분리 검수 M-1: high 판정은 approvalExpandDefault(ap)로 옮겼다 — approvalRisk 결과("ap.risk")를
+  // "명령 보기 기본 펼침"으로 바꾸는 표시 규칙 하나뿐이고(../src/approval-display.js), 여전히 새 위험
+  // 판정을 만들지 않는다. 그 함수의 행동은 apps/messenger/test/approval-display.test.mjs가 잠근다.
+  // 2026-10-02 분리 검수 M-2: 확정권 판정을 폰 결재 페이지와 같은 함수(approvalDecider)로 옮겼다 — 슬립이 그 함수를 부르는지와 함수의 실제 동작을 본다.
+  assert.match(slip, /const \{ can, byAdmin, mode, high \} = approvalDecider\(\{ ap, uid, crewOwnerId: crew \? crew\.owner_user_id : undefined, isAdmin, policy \}\);/, '슬립 확정권은 공유 판정 함수로');
+  assert.match(app, /import \{ [^}]*approvalPlainFields, orgDocTitle, approvalOneLineSummary[^}]*approvalDecider[^}]*\} from '\.\/approval-display\.js';/, '결정 로직을 JSX 없는 파일로 분리 — node --test가 실제로 import해 검증할 수 있게(분리 검수 M-2·M-4)');
+  const can = (ap, o) => approvalDecider({ ap, uid: 'me', crewOwnerId: o.owner, isAdmin: o.admin, policy: o.policy ?? null });
+  assert.equal(can({ risk: 'high' }, { owner: 'me' }).mode, 'admin', '정책 기본값은 admin이어야 한다');
+  assert.equal(can({ risk: 'high' }, { owner: 'me' }).can, false, '고위험 + 기본 정책 = 소유자라도 관리자가 아니면 확정 못 함');
+  assert.equal(can({ risk: 'high' }, { owner: 'x', admin: true }).can, true, '고위험 = 관리자');
+  assert.equal(can({ risk: 'low' }, { owner: 'me' }).can, true, '일반 = 소유자');
+  assert.equal(can({ risk: 'low' }, { owner: 'x', admin: true }).can, false, '일반 = 소유자만');
+  assert.match(slip, /\{ap\.status === 'pending' && can && \(<>/, '버튼은 확정권자에게만');
+  assert.match(slip, /\{ap\.status === 'pending' && !can && <span className="note">\{byAdmin \? \(mode === 'approvers' \? t\('ap\.approverNote'\) : t\('ap\.adminNote'\)\) : t\('ap\.ownerNote'\)\}<\/span>\}/, '비권자 안내가 등급별이 아니다');
+  assert.match(slip, /\{high && <span className="msgr-klabel risk">\{t\('ap\.level\.must'\)\}<\/span>\}/, '고위험 배지가 없다(표시 문구는 \'꼭 확인\' — 2026-10-02, 서버 등급 값 high는 그대로)');
+  assert.match(app, /onError\(t\(ap\.risk === 'high' \? 'ap\.approverOnly' : 'ap\.ownerOnly'\)\)/, 'RLS 0행 문구가 등급별이 아니다');
+  const pc = app.slice(app.indexOf('function PolicyCard('), app.indexOf('function EmptyOrg('));
+  assert.match(pc, /approval_high_by: draft\.approval_high_by, approver_user_ids: draft\.approver_user_ids \?\? \[\], crew_create: draft\.crew_create \?\? 'channel_admin', crew_runner: draft\.crew_runner\?\.trim\(\) \|\| null, crew_model: draft\.crew_model\?\.trim\(\) \|\| null, guest_seats: !!draft\.guest_seats \}\)/, '정책 저장에 approval_high_by·approver_user_ids가 없다');
+  assert.match(pc, /value=\{draft\.approval_high_by \?\? 'admin'\} onPick=\{\(v\) => set\(\{ approval_high_by: v \}\)\} disabled=\{ro\} options=\{\['admin', 'approvers', 'owner'\]/, '고위험 결재권 세그먼트');
+  const bridge = stripComments(read('src/gateway/msgr.mjs'));
+  assert.match(bridge, /const risk = approvalRisk\(it\);/, '브리지 위험 판정');
+  assert.match(bridge, /approval_id: it\.id, action: it\.action, reason: it\.reason \?\? null, risk,\n\s*\.\.\.\(it\.kind === 'org_doc' \? \{ kind: 'org_doc', payload: it\.payload \?\? null \} : \(it\.plain \? \{ payload: \{ plain: it\.plain \} \} : \{\}\)\) \};/, '미러 행에 risk·(org_doc이면 kind·payload, plain이면 payload.plain)가 없다');
+  assert.match(bridge, /ap = await c\.db\.insertApproval\(approval\)/, '일반 결재가 위험 판정 payload를 사용해야 한다');
+  assert.match(bridge, /createThreadApproval\(event\.wsId, ctx\.crewId, ctx\.sourceMsgId \?\? ctx\.threadRoot, ctx\.channelId, approval, body\)/, '위임 결재도 같은 위험 판정 payload를 사용해야 한다');
+  const sql = read('supabase/migrations/20260903120000_msgr.sql');
+  assert.match(sql, /'approval_id', 'action', 'created_at', 'risk'\);/, 'risk가 잠긴 컬럼이 아니다(등급 하향 가능)');
+  assert.match(sql, /and decided_by = \(select auth\.uid\(\)\) and public\.msgr_can_decide\(id\)\)\);/, '확정 with check가 msgr_can_decide를 안 본다');
+  for (const k of ['ap.level.must', 'ap.wait.admin', 'ap.adminNote', 'ap.approverOnly', 'set.policy.approval', 'set.policy.approval.admin', 'set.policy.approval.owner', 'set.policy.approval.desc']) {
+    assert.match(msgrI18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
+  }
+});
+
+test('I-1/H-3: 크루 등급은 서비스 계정 소유 + resident만 회사 크루(서버 msgr_crew_tier와 같은 규칙), 레일 카드·시트에 등급 배지·소유 표기·한계 문장', () => {
+  assert.match(app, /export const crewTier = \(crew, org\) => \(org\?\.service_user_id && crew\?\.owner_user_id === org\.service_user_id && crew\?\.hosting === 'resident'\) \? 'company' : 'personal';/, '등급 규칙이 서버 함수와 다르다(봇도 개인 — 20260924180000)');
+  assert.match(app, /msgr_orgs\(id, name, slug, owner_user_id, service_user_id, node_seen_at, pending_owner_user_id, successor_user_id, auto_join_domain, auto_join_role, deleted_at, node_info\)/, '조직 조회에 service_user_id가 없다'); // I-4·J-2가 열 추가
+  assert.match(app, /<Av name=\{c\.display_name\} crew size="sm" company=\{company\} crewId=\{c\.id\} \/><span className="name">\{c\.display_name\}<\/span>/, '구성 행 아바타에 회사 배지가 없다(이미지는 crewId로)');
+  assert.match(app, /\{company \? t\('crew\.tier\.company\.sub'/, '구성 행 부제가 등급별이 아니다');
+  const crewSheet = app.slice(app.indexOf('function CrewSheet('), app.indexOf('function ChannelSheet('));
+  assert.match(crewSheet, /const tier = crewTier\(crew, org\);/, '시트 등급 판정');
+  assert.match(crewSheet, /<span className=\{`msgr-tier \$\{tier\}`\}>\{tier === 'company' \? t\('crew\.tier\.company'\) : t\('crew\.tier\.personal'\)\}<\/span>/, '등급 배지');
+  assert.match(crewSheet, /<p className="note tier">\{tier === 'company' \? t\('crew\.tier\.company\.note', \{ org: org\?\.name \?\? '' \}\) : t\('crew\.tier\.personal\.note', \{ name: nameOfUser\(crew\.owner_user_id\) \}\)\}<\/p>/, '한계 문장이 없다(부록 K ③)');
+  const sql = read('supabase/migrations/20260903120000_msgr.sql');
+  assert.match(read('supabase/migrations/20260908120000_msgr_bots.sql'), /c\.hosting = 'bot' or \(o\.service_user_id is not null and c\.owner_user_id = o\.service_user_id and c\.hosting = 'resident'\) then 'company' else 'personal'/, '서버 판정 규칙(봇 마이그레이션이 정본)');
+  assert.match(sql, /raise exception 'msgr_service_not_member'/, '서비스 계정 멤버 검사');
+  for (const k of ['crew.tier', 'crew.tier.company', 'crew.tier.personal', 'crew.tier.company.owner', 'crew.tier.company.sub', 'crew.tier.personal.sub', 'crew.tier.company.note', 'crew.tier.personal.note']) {
+    assert.match(msgrI18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
+  }
+});
+
+test('I-2: 아르고 설정 카드가 조직 정책 요약(허용 범위·고위험 결재권·크루 기억·잠금)과 "파견 = 개인 크루" 한계 문장을 보이고, 라우트가 정책 3항목을 더 싣는다', () => {
+  assert.match(route, /select\('org_id, allow_default, allow_locked, crew_memory_default, crew_memory_locked, approval_high_by'\)/, '라우트 정책 조회');
+  const src = page.slice(page.indexOf('function MsgrCard('), page.indexOf('function ConnectorsCard('));
+  assert.match(src, /const policyLine = org\?\.policy \? t\('settings\.msgr\.policy\.summary'/, '정책 요약 블록');
+  assert.match(src, /\{policyLine && <p>\{policyLine\}<\/p>\}/, '정책 요약이 화면에 실리지 않는다');
+  assert.match(src, /t\('settings\.msgr\.policy\.summary', \{ allow: [^\n]*approver: t\(`settings\.msgr\.policy\.approver\.\$\{org\.policy\.approval_high_by \?\? 'admin'\}`\)[^\n]*memory: /, '요약 문장에 세 항목이 없다');
+  assert.match(src, /\{t\('settings\.msgr\.tierNote'\)\}/, '파견 = 개인 크루 한계 문장이 없다');
+  for (const k of ['settings.msgr.policy', 'settings.msgr.policy.summary', 'settings.msgr.policy.locked', 'settings.msgr.policy.approver.admin', 'settings.msgr.policy.approver.owner', 'settings.msgr.policy.memory.on', 'settings.msgr.policy.memory.off', 'settings.msgr.tierNote']) {
+    assert.match(i18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
+  }
+});
+
+test('I-3: 채널 개인 크루 정책 — 조회·시트 세그먼트(dm 제외)·차단 안내·멤버 추가 거절 문구·멘션 후보 필터, 브리지는 사유 RPC(채널 포함)로 묻고 채널 사유를 안내, 서버 게이트 3종', () => {
+  assert.match(app, /select\('id, kind, name, topic, crew_memory, personal_crews, created_by, admin_user_ids, excluded_user_ids, excluded_crew_ids'\)/, '채널 조회에 personal_crews가 없다');
+  const ch = app.slice(app.indexOf('function ChannelSheet('), app.indexOf('function Settings('));
+  assert.match(ch, /\{channel\.kind !== 'dm' && \(<>\s*<div className="row wrap">\s*<span className="msgr-klabel">\{t\('ch\.personal'\)\}/, '개인 크루 정책은 채널 설정 안(dm 제외)');
+  assert.match(ch, /<Seg label=\{t\('ch\.personal'\)\} value=\{channel\.personal_crews \?\? 'approval'\} onPick=\{\(v\) => upd\(\{ personal_crews: v \}, t\('ch\.personal\.saved'\)\)\} disabled=\{!canEdit \|\| busy\} options=\{\['allowed', 'approval', 'blocked', \.\.\.\(channel\.personal_crews === 'read_only' \? \['read_only'\] : \[\]\)\]/, '세그먼트');
+  assert.match(ch, /\/msgr_channel_personal_blocked\/\.test\(res\.error\.message\) \? t\('err\.channelPersonalBlocked'\)/, '멤버 추가 거절 문구');
+  assert.match(ch, /const addableCrews = crews\.filter\(\(c\) => !crewIds\.has\(c\.id\) && !pendingCrews\.has\(c\.id\) && \(\(channel\.personal_crews \?\? 'approval'\) !== 'blocked' \|\| crewTier\(c, org\) === 'company'\)/, '차단 채널의 추가 후보에 개인 크루가 남는다(안 될 버튼) · 승인 대기 중인 에이전트는 후보에서 뺀다');
+  assert.match(ch, /&& \(isDmRoom \? c\.owner_user_id === uid : \(c\.owner_user_id === uid \|\| \(!!org\?\.service_user_id && c\.owner_user_id === org\.service_user_id\)\)\) && crewAddable\(c\)\);/, '후보(+ 개인 공간에서 답하지 못하는 봇 쌍둥이 제외, 2026-10-01): 채팅=내 에이전트만(들어온 에이전트는 참여자 누구나 부르므로 넣는 것은 주인만 — 2026-09-18, 서버 msgr_crew_join이 같은 규칙), 그 밖=방장이어도 내 에이전트와 조직 서비스 계정의 회사 에이전트만(유건 2026-09-17 — 남이 연결한 봇 포함 제외). 행동은 apps/messenger/test/dminvite.browser.mjs host-adds-and-approves');
+  const comp = app.slice(app.indexOf('function Composer('));
+  assert.match(comp, /const usable = \(limitsPersonal\(channel\) \? crews\.filter\(\(c\) => crewTier\(c, org\) === 'company'\) : crews\)\.filter\(\(c\) => !\(channel\?\.excluded_crew_ids \?\? \[\]\)\.includes\(c\.id\)\)/, '멘션 후보 필터'); assert.match(app, /export const limitsPersonal = \(channel\) => channel\?\.personal_crews === 'read_only';/, '개인 에이전트 지시를 막는 정책 = 보기만뿐 — 못 데려옴은 새로 들어오는 것만 막고 이미 있는 에이전트는 일한다(유건 2026-09-16, 서버 msgr_instruct_check와 같다)');
+  assert.match(comp, /mentionCandidates\(\{ q: needle, crews: mentionPopupCrews\(\{ isDm, roomCrews, usable \}\), members: scopePeople \?\? members, uid, exclude, all: !isDm \|\| allByName\.some\(\(c\) => c\.kind === 'crew' \|\| c\.id !== uid\) \}\)/, '후보가 usable을 안 쓴다(사람 먼저·나 제외·본문 중복 제외·@all은 mention-candidates.mjs, 2026-09-12). DM 팝업은 방 안 에이전트만 — 행동은 apps/messenger/test/dm-delivery.test.mjs mentionPopupCrews');
+  const bridge = stripComments(read('src/gateway/msgr.mjs'));
+  assert.match(bridge, /let why = envelope \? 'ok' : await db\.instructCheck\(crew\.id, origin, m\.channel_id\)\.catch\(/, '브리지가 채널을 넣어 사유 RPC를 묻지 않는다');
+  assert.match(bridge, /if \(why !== 'ok'\) \{/, '허용 판정 분기');
+  assert.match(bridge, /body: denyBody\(why, crew, lang\),/, '거절 안내가 denyBody 문구 표를 거치지 않는다');
+  assert.match(bridge, /if \(why === 'channel_policy'\) return pick\(`이 채널은 회사 크루만 일할 수 있습니다\(채널 정책\)/, '채널 사유 안내'); // 문구가 실제로 나가는지는 행동으로 — test/msgr-bridge.test.mjs '봉투 거부 사유 네 갈래'
+  const sql = read('supabase/migrations/20260903120000_msgr.sql');
+  assert.match(sql, /when channel is not null and ch\.personal_crews <> 'allowed'\n\s*and not \(o\.service_user_id is not null and c\.owner_user_id = o\.service_user_id and c\.hosting = 'resident'\) then 'channel_policy'/, '서버 채널 정책 판정');
+  assert.match(sql, /if not public\.msgr_can_instruct\(new\.crew_id, src\.author_user_id, new\.channel_id\) then/, '답글 게이트가 채널을 안 본다');
+  assert.match(sql, /raise exception 'msgr_channel_personal_blocked'/, '멤버 게이트');
+  assert.match(read('supabase/migrations/20260917090000_msgr_crew_join_approval.sql'), /create or replace function public\.msgr_channel_policy_sweep\(\)[\s\S]*?begin\n\s*if new\.personal_crews is distinct from old\.personal_crews then\n\s*perform public\.msgr_audit/, 'blocked 전환은 감사만 — 행을 지우지 않는다(2026-09-16, 되돌리면 돌아온다)');
+  for (const k of ['ch.personal', 'ch.personal.desc', 'ch.personal.allowed', 'ch.personal.read_only', 'ch.personal.blocked', 'ch.personal.saved', 'ch.personal.blocked.note', 'err.channelPersonalBlocked']) {
+    assert.match(msgrI18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
+  }
+});
+
+test('G-1: 조직 문서 — 풋터 버튼·페이지 분기, 목록은 org 단위 조회, 편집권 힌트(전사=관리자·채널=멤버)와 RLS 0행 문구, 생성 경로는 폴더/슬러그.md, 서버 편집권 함수·버전 트리거·감사', () => {
+  assert.doesNotMatch(app, /page === 'docs'|function Docs\(/, '별도 문서 페이지 없음 — 조직 문서(=조직의 기억)는 기억 페이지 한 곳(유건 지적 2026-09-04: 보이는 건 활동이 아니라 기억이어야)');
+  const docs = app.slice(app.indexOf('function MemDoc('), app.indexOf('function Activity('));
+  const actv = app.slice(app.indexOf('function Activity('), app.indexOf('/* ─── 조직 문서(G-1)'));
+  // 2026-09-16: 일지(journal/)는 별도 조회 — 한 창(400)에 섞으면 오래된 일지가 규칙집·프로젝트를 밀어낸다(검수 #551 HIGH-2)
+  assert.match(actv, /from\('msgr_org_docs'\)\.select\('id, channel_id, path, title, body, version, updated_by, updated_at'\)\.eq\('org_id', org\.id\)\.not\('path', 'like', 'journal\/%'\)\.order\('path'\)\.limit\(400\)/, '비일지 목록 조회(본문 포함 — 문서 탭·[[링크]] 그래프)');
+  assert.match(actv, /from\('msgr_org_docs'\)[^\n]*\.like\('path', 'journal\/%'\)\.order\('updated_at', \{ ascending: false \}\)\.limit\(30\)/, '일지는 최신 30건 별도 조회');
+  assert.match(actv, /const canNew = sel === 'org' \? isAdmin : !!ch;/, '새 기억은 전사=관리자·채널=멤버, 사람·크루 탭엔 없음');
+  assert.match(actv, /<details className="msgr-actfold">/, '활동 기록은 접힌 보조 정보(주 내용은 기억)');
+  assert.match(docs, /const canEdit = \(d\) => \(d\.channel_name \? false : d\.channel_id \? true : isAdmin\);/, '편집권 힌트(장 열람 문서는 읽기만 — channel_name은 msgr_chief_docs가 붙인다)');
+  assert.match(docs, /if \(!res\.data\?\.length\) return onError\(t\('docs\.noEdit'\)\);/, 'RLS 0행 문구');
+  // 경로 규칙(폴더/슬러그.md·충돌 시 -2 접미·서버 제약 준수)은 apps/messenger/test/doc-path.test.mjs 행동 테스트가 잠근다(D13) — 여기는 연결과 작성자만
+  assert.match(docs, /insertWithFreePath\(creating\.folder, title, \(path\) => supabase\.from\('msgr_org_docs'\)\.insert\(\{ org_id: org\.id, channel_id: channelId \?\? null, path, title, body: '', created_by: uid, updated_by: uid \}\)/, '생성 경로(충돌 접미)·작성자');
+  assert.match(app, /import \{ docSlug, insertWithFreePath, isPathTaken \} from '\.\/doc-path\.mjs';/, '슬러그 함수(doc-path.mjs 정본)');
+  const sql = read('supabase/migrations/20260903120000_msgr.sql');
+  assert.match(sql, /select case when ch is null then public\.msgr_is_admin\(org\)\n\s*else public\.msgr_can_write_channel\(ch\) and exists/, '서버 편집권');
+  assert.match(sql, /new\.version := old\.version \+ 1; new\.updated_at := now\(\);/, '버전 트리거');
+  assert.match(sql, /'doc\.' \|\| lower\(tg_op\), 'doc', r\.id::text/, '문서 감사');
+  assert.match(sql, /path ~ '\^\(rules\|glossary\|projects\)\//, '폴더 3종 경로 제약');
+  for (const k of ['docs.title', 'docs.scope', 'docs.scope.org', 'docs.scope.channel', 'docs.folder', 'docs.folder.rules', 'docs.folder.glossary', 'docs.folder.projects', 'docs.new', 'docs.new.title', 'docs.new.placeholder', 'docs.create', 'docs.created', 'docs.dup', 'docs.edit', 'docs.saved', 'docs.noEdit', 'docs.adminOnly', 'docs.meta', 'docs.pick', 'docs.blank', 'docs.empty.all', 'docs.empty.org', 'docs.empty.channel', 'ui.cancel']) {
+    assert.match(msgrI18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
+  }
+});
+
+test('QA(2026-09-04): 네이티브 prompt/confirm/alert 0 — 새 채널·새 조직은 인라인 폼, 보관은 2단계 확인, 첨부 오류는 토스트; 인용 말줄임 span; 크루 순서 고정; 개발용 로그인은 DEV에서만', () => {
+  assert.doesNotMatch(app, /\b(prompt|confirm|alert)\(/, '네이티브 대화상자가 남아 있다(사용성·룩 불일치)');
+  assert.match(app, /<form className="msgr-inline" onSubmit=\{\(e\) => \{ e\.preventDefault\(\); createChannel\(\); \}\}>/, '새 채널 인라인 폼');
+  assert.match(app, /<form className="msgr-inline" onSubmit=\{\(e\) => \{ e\.preventDefault\(\); createOrg\(newOrg\); \}\}>/, '새 조직 인라인 폼');
+  assert.match(app, /const \[confirmArchive, setConfirmArchive\] = useState\(false\);/, '보관 2단계 상태');
+  assert.match(app, /: <div className="confirm"><p>\{t\('ch\.archive\.confirm'\)\}<\/p>/, '보관 확인 문구');
+  { const media = read('apps/messenger/src/media.jsx'); // 2026-10-02 첨부 말풍선 — 첨부 오류는 말풍선(받지 못함 · 다시 시도)·크게 보기 안내로 보인다(조용히 삼키지 않는다)
+    assert.match(media, /catch \{ setSt\(\{ phase: 'fail', p: null, path: null \}\); \}/, '파일 받기 실패 → 실패 상태');
+    assert.match(media, /st\.phase === 'fail' \? t\('file\.failed'\)/, '실패 문구(다시 시도)');
+    assert.match(media, /setNote\(\{ text: t\(kind === 'save' \? 'media\.saveFail'/, '크게 보기 저장·공유 실패 안내'); }
+  assert.match(app, /<span className="q">\{parentBlockedUser \? t\('msg\.blockedUser'\) : parentMutedCrew \? t\('msg\.mutedCrew'\) : <>\{parent\.author_kind === 'user'/, '인용 말줄임 span(차단한 사람·숨긴 크루의 글이면 가림 문구, 2026-09-26)');
+  // 크루 순서 고정(회사 크루 먼저·이름순)은 정렬식 문자열 대신 실제 loadOrg를 돌려 확인한다 — apps/messenger/test/rail-state.test.mjs 'loadOrg: 충돌 사본은…'(재검수 #826 N1)
+  assert.match(app, /\{\(import\.meta\.env\.DEV \|\| import\.meta\.env\.VITE_DEV_LOGIN === '1'\) && \(<>/, '개발용 로그인은 DEV 또는 검수용 번들 플래그(VITE_DEV_LOGIN=1)에서만 — 발행 빌드 env엔 이 플래그가 없다');
+  const css = read('apps/messenger/src/styles.css');
+  assert.match(css, /^\.msgr-quote \.q \{ min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; \}/m, '인용 말줄임 CSS');
+  assert.match(css, /^\.switchrow \{ display: inline-flex; align-items: center; gap: 8px;/m, '체크박스 행 간격');
+  assert.match(css, /^\.msgr-scrim \{ display: none; \}/m, '데스크톱에서 레일 스크림이 그리드 칸을 차지한다(레일 밀림)');
+  assert.match(css, /\n  \.msgr-scrim \{ display: block; position: fixed;/, '폰 폭 스크림 표시');
+  for (const k of ['ch.new.kind', 'ch.new.public', 'ch.new.private', 'ui.create', 'auth.devOnly']) assert.match(msgrI18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
+});
+
+test('채널 중심 레일(유건 지시 2026-09-04): 레일엔 채널·1:1 목록만(크루 카드·멤버 스택 없음), 상단 참여 버튼이 시트를 열고, 시트의 참여 구성은 사람=참여한 사람(공개 포함) · 크루=초대된 에이전트(공개 포함), 조직 초대는 조직 메뉴', () => {
+  assert.doesNotMatch(app, /msgr-crewcard|msgr-stack/, '레일에 크루 카드·멤버 스택이 남아 있다');
+  assert.match(app, /const chItemsOf = \(c\) => \{ const canManage[\s\S]{0,2000}const chRow = \(c\) => \{ const items = chItemsOf\(c\);/, '채널 세로 목록(행 메뉴 포함) — 행 렌더는 chRow(즐겨찾기 절·그룹에서도 같은 행, 2026-09-12)'); assert.match(app, /\{sortedCh\.map\(chRow\)\}/, '채널은 한 목록 — 채널 그룹은 뺐다(유건 2026-09-16, 라이브 사용 0명)');
+  assert.match(app, /const chPeople = !channel \? \[\] : isPersonal \? \(dmMembers\[channel\.id\] \?\? \[\]\)[^\n]*? : members\.filter\(\(m\) => chMembers\.some\(\(x\) => x\.member_kind === 'user' && x\.member_id === m\.user_id\) && !\(channel\.kind === 'public' && \(channel\.excluded_user_ids \?\? \[\]\)\.includes\(m\.user_id\)\)\);/, '사람 구성 = 참여한 사람(공개 채널도 — #555 이후, 유건 제보 2026-09-16)'); assert.match(app, /const mentionPeople = channel\?\.kind === 'public' \? members\.filter/, '멘션 후보는 공개 채널이면 조직원 전원(멘션하면 채널 밖 사람에게도 알림)');
+  assert.match(app, /const chCrews = !channel \? \[\] : usableCrews\.filter\(\(c\) => chMembers\.some\(\(x\) => x\.member_kind === 'crew' && x\.member_id === c\.id\) && !\(channel\.excluded_crew_ids \?\? \[\]\)\.includes\(c\.id\)\);/, '크루 구성 = 초대된 에이전트(공개 채널도 — 2026-09-16, 종전에는 파견된 에이전트 전원)');
+  assert.match(app, /<button type="button" className="members" onClick=\{onTitle\} title=\{t\('ch\.composition'\)\}/, '상단 참여 버튼');
+  assert.match(app, /onCrew=\{\(id\) => \{ setChSheet\(false\); setSheet\(id\); \}\} onDm=\{\(id\) => openDm\('user', id\)\}/, '구성에서 크루 시트·1:1 연결');
+  assert.match(app, /\{isAdmin && <button type="button" role="menuitem" onClick=\{\(\) => \{ setOrgMenu\(false\); orgInvite\(\); \}\}>/, '초대가 조직 메뉴에 없다(0.1.30: 초대 창을 연다)');
+  const ch = app.slice(app.indexOf('function ChannelSheet('), app.indexOf('function Settings('));
+  assert.match(ch, /<div className="sec-head"><h3>\{t\(isDmRoom \? 'dm\.who' : 'ch\.who'\)\}<\/h3>/, '구성 섹션이 첫 절 — 1:1·그룹 대화에서는 "이 대화방"으로 부른다(2026-09-16)');
+  assert.ok(ch.indexOf("'ch.who'") > 0 && ch.indexOf("'ch.who'") < ch.indexOf("'ch.settings'"), '구성이 채널 설정보다 앞(설정 제목은 개인 공간이면 대화방 설정 키로 갈린다 — 두 키 모두 구성 뒤)'); assert.ok(ch.indexOf("'ch.who'") < ch.indexOf("'personal.sheet.settings'"), '개인 공간 설정 제목도 구성보다 뒤');
+  assert.match(ch, /canKick && \{ icon: 'x', label: t\('ch\.remove'\), danger: true, disabled: busy, run: \(\) => kickUser\(m\) \}/, '비공개 채널 사람 내보내기(행 … 메뉴) — 살아 있는 초대가 있으면 먼저 알린다(invite-flow.browser.mjs)'); assert.match(ch, /\{rowMenu && <CtxMenu at=\{rowMenu\.at\} items=\{rowMenu\.items\} onClose=\{\(\) => setRowMenu\(null\)\} \/>\}/, '행 메뉴는 시트 밖(화면 기준)에 띄운다 — 시트 스크롤 영역 안에서 잘렸다(유건 제보 2026-09-16)');
+  for (const k of ['ch.composition', 'ch.composition.count', 'ch.composition.scoped', 'ch.people', 'ch.crews', 'ch.crews.none', 'ch.crews.none.scoped', 'ch.open.crew', 'ui.me', 'rail.hint']) assert.match(msgrI18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
+});
+
+test('스크롤 QA(2026-09-04): 스레드는 바닥 고정 ref + ResizeObserver(렌더 뒤 높이 변화 추적)·위로 올려두면 유지, 채널 전환 시 바닥부터; 레일은 railbody만 스크롤(풋터 고정)', () => {
+  const ch = app.slice(app.indexOf('function Channel('), app.indexOf('function Message('));
+  assert.match(ch, /const stick = useRef\(true\);/, '바닥 고정 ref');
+  assert.match(ch, /useEffect\(\(\) => \{ stick\.current = true; \}, \[chId\]\);/, '채널 전환 시 바닥부터');
+  assert.match(ch, /const gap = el\.scrollHeight - el\.scrollTop - el\.clientHeight; if \(gap < 40\) stick\.current = true; else if \(dragging \|\| Date\.now\(\) - userAt < 600\) stick\.current = false;/, '바닥 근접 40px는 고정, 해제는 사용자 의도(휠·터치·키·드래그)가 있을 때만 — 프로그램 스크롤 경합으로 고정이 풀리던 결함(2026-09-09)');
+  assert.match(ch, /const ro = new ResizeObserver\(\(\) => \{ keepAnchor\(\); toBottom\(\); \}\);/, '높이 변화 추적 — 스크롤백 앵커 되맞춤이 먼저, 바닥 고정이면 toBottom이 이긴다(#531)');
+  assert.match(ch, /useEffect\(\(\) => \{ const el = feed\.current; if \(el && stick\.current\) el\.scrollTop = el\.scrollHeight; \}, \[msgs\?\.length\]\);/, '새 메시지는 고정 중일 때만 바닥');
+  assert.doesNotMatch(ch, /feed\.current\?\.scrollTo\(\{ top: feed\.current\.scrollHeight \}\)/, '무조건 바닥 스크롤이 남아 있다(위로 올린 사용자를 끌어내린다)');
+  assert.match(app, /<div className=(?:"msgr-railbody"|\{`msgr-railbody[^\n]*?`\})(?: ref=\{\w+\.setRef\})?(?: \{\.\.\.\w+Swipe\})?>(?:<PullIndicator [^>]*\/>)?<div className="msgr-railinner">[\s\S]{0,3000}?<RailSection id=\{orgId \? 'channels' : 'start'\} label=\{orgId \? t\('ch\.list'\) : t\('org\.start'\)\}/, '레일 본문 스크롤 영역 안의 내용 래퍼(2026-09-14 railinner: 폰에서 min-height 100%+1px로 짧은 목록도 iOS 바운스) → 채널 절');
+  const css = read('apps/messenger/src/styles.css');
+  assert.match(css, /^\.msgr-side \{[^\n]*overflow: hidden; \}/m, '레일 자체 스크롤 금지(풋터 고정)');
+  assert.match(css, /^\.msgr-railbody \{ flex: 1; min-height: 0; overflow-y: auto;/m, '레일 본문만 스크롤');
+  assert.match(css, /^\.msgr-railinner \{ display: flex; flex-direction: column; gap: 4px; \}/m, '레일 내용 래퍼가 세로 flex(스크롤러는 railbody)');
+  assert.match(css, /^  \.msgr-phone\.phone-home \.msgr-railinner \{ gap: 0; min-height: calc\(100% \+ 1px\); \}/m, '폰: 래퍼가 늘 1px 넘쳐 가장자리 바운스(유건 제보 2026-09-14)');
+  assert.doesNotMatch(css, /-webkit-overflow-scrolling: touch;/, '구형 iOS 스크롤 속성 금지 — 동적 목록 스크롤 정지의 원인(2026-09-14)');
+  assert.match(css, /^\.msgr-sheetwrap \.msgr-crewsheet \{ z-index: 66; \}/m, '시트가 투명 스크림(z 65) 아래면 시트 위 휠이 스레드를 굴린다');
+});
+
+test('F2 조직 운영: 표시명 편집(본인 정책·가드), 관리자 조직 카드(이름·역할·제거 2단계·초대 만들기/취소·감사), 로컬 알림(멘션·관리자 결재, 자기 글 제외, 다른 채널/숨김일 때만), 오프보딩 트리거', () => {
+  const dn = app.slice(app.indexOf('const saveMyOrgName = '), app.indexOf('function NotifyRow(')); // 저장 쿼리는 첫 진입 이름 카드(D5)와 같이 쓰는 saveMyOrgName에
+  assert.match(dn, /function DisplayNameRow\([\s\S]*?await saveMyOrgName\(org, me, name, t\)/, '설정 이름 칸이 같은 저장을 쓴다');
+  assert.match(dn, /from\('msgr_org_members'\)\.update\(\{ display_name: name\.trim\(\) \|\| null \}\)\.eq\('org_id', org\.id\)\.eq\('user_id', me\.user_id\)\.select\('user_id'\)/, '본인 표시명 갱신');
+  const oc = app.slice(app.indexOf('function OrgCard('), app.indexOf('function PolicyCard('));
+  assert.match(oc, /from\('msgr_orgs'\)\.update\(\{ name: name\.trim\(\) \}\)\.eq\('id', org\.id\)\.select\('id'\)/, '조직 이름');
+  assert.match(oc, /const canEdit = !isMe && !isSvc && m\.role !== 'owner';/, '본인·소유자·서버 계정 행은 편집 불가');
+  assert.match(oc, /\{canEdit && confirmRemove === m\.user_id && <span className="confirm-inline">/, '제거 2단계');
+  assert.match(oc, /update\(\{ removed_at: new Date\(\)\.toISOString\(\) \}\)/, '제거 = removed_at(삭제 아님, 발언 유지)');
+  assert.match(oc, /const makeInvite = async \(role = 'member'\) => \{[\s\S]*?insert\(\{ org_id: org\.id, role, created_by: uid \}\)/, '초대 만들기(역할 인자)');
+  assert.match(oc, /await revokeInvite\(supabase, inv\.id\)/, '초대 취소(소프트 취소 RPC, 옛 서버는 delete — invite-flow.test.mjs)');
+  assert.match(oc, /from\('msgr_audit_log'\)\.select\([^)]*\)\.eq\('org_id', org\.id\)\.order\('at', \{ ascending: false \}\)\.limit\(50\)/, '감사 50건');
+  assert.match(app, /const notifyMention = \(payload\) => \{[\s\S]*?if \(!payload \|\| payload\.author_user_id === r\.uid\) return;[\s\S]*?m\?\.kind === 'user' && m\.id === r\.uid/, '멘션 알림: 자기 글 제외·나를 부른 것만');
+  assert.match(app, /const shouldNotify = \(channelId\) => \{ const r = notifyRef\.current; if \(r\.muted\.has\(channelId\) \|\| inQuiet\(r\.quiet\)\) return false; return !document\.hasFocus\(\) \|\| r\.page !== 'chat' \|\| r\.chId !== channelId; \};/, '보고 있는 채널·음소거 채널·조용한 시간엔 알리지 않는다(P0 2026-09-09)');
+  assert.match(app, /if \(!payload \|\| payload\.status !== 'pending' \|\| !r\.isAdmin \|\| !shouldNotify\(payload\.channel_id\)\) return;/, '결재 알림은 관리자·대기 중만');
+  assert.match(read('apps/messenger/src/notify.js'), /Notification\.permission !== 'granted'\) return \{ ok: false/, '권한 없으면 조용히(브라우저 경로 — notify.js)');
+  assert.match(app, /const osNotify = \(title, body, tag, channelId\) => \{ sendNotify\(title, body, tag, channelId\); \};/, 'OS 알림은 notify.js 한 곳(Tauri 플러그인·브라우저 분기)이며 클릭 이동용 채널을 함께 넘긴다');
+  assert.match(app, /\{tab === 'org' && org && !gated && \(isAdmin\s*\? <OrgCard part="org"/, '조직 카드는 관리자만(조직 탭) — 동의 게이트 중엔 예외(App Store 5.1.2 재검수 M-5, 2026-09-27)');
+  assert.match(app, /\{tab === 'members' && org && !gated && \(isAdmin\s*\? <OrgCard part="members"/, '멤버 탭은 관리자 편집·멤버 읽기 — 동의 게이트 중엔 예외(M-5)');
+  const sql = read('supabase/migrations/20260903120000_msgr.sql');
+  assert.match(sql, /create policy msgr_members_update_self on public\.msgr_org_members for update to authenticated\n\s*using \(user_id = \(select auth\.uid\(\)\) and removed_at is null\)/, '본인 갱신 정책');
+  assert.match(sql, /raise exception 'msgr_member_self_only_name'/, '본인은 역할·제거 표시 변경 불가');
+  assert.match(sql, /update public\.msgr_crews set status = 'detached' where org_id = new\.org_id and owner_user_id = new\.user_id and status = 'active';/, '오프보딩 → 크루 detach');
+  assert.match(sql, /'author_user_id', new\.author_user_id, 'crew_id', new\.crew_id/, '방송 payload에 author_user_id');
+  for (const k of ['set.name', 'set.name.placeholder', 'set.name.saved', 'set.name.noEdit', 'set.notify.ask', 'set.notify.on', 'set.notify.denied', 'set.notify.deniedApp', 'set.notify.unsupported', 'set.org', 'set.org.desc', 'org.name.saved', 'org.noEdit', 'org.member.role', 'org.member.roleSaved', 'org.member.noEdit', 'org.member.remove', 'org.member.remove.confirm', 'org.member.removed', 'org.invites', 'org.invites.desc', 'org.invite.role', 'org.invite.make', 'org.invite.copy', 'org.invite.copied', 'org.invite.revoke', 'org.invite.revoked', 'org.invite.expires', 'org.audit', 'org.audit.load', 'org.audit.reload', 'org.audit.empty', 'org.audit.system', 'notify.mention', 'notify.approval']) {
+    assert.match(msgrI18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
+  }
+});
+
+test('J-1 역할: 채널 관리자(admin_user_ids — 편집권·지정 토글·태그, 지정은 관리자·생성자만)와 지정 결재권자(approvers 정책·피커·슬립 확정권), 서버 함수·가드', () => {
+  assert.match(app, /select\('id, kind, name, topic, crew_memory, personal_crews, created_by, admin_user_ids, excluded_user_ids, excluded_crew_ids'\)/, '채널 조회에 admin_user_ids');
+  assert.match(app, /select\('allow_default, allow_locked, crew_memory_default, crew_memory_locked, approval_high_by, approver_user_ids, crew_create, crew_runner, crew_model, guest_seats'\)/, '정책 조회에 approver_user_ids');
+  const ch = app.slice(app.indexOf('function ChannelSheet('), app.indexOf('function Settings('));
+  assert.match(ch, /const canEdit = isAdmin \|\| channel\.created_by === uid \|\| chAdmins\.includes\(uid\);/, '채널 관리자 편집권');
+  assert.match(ch, /const canAssignAdmins = \(isAdmin \|\| channel\.created_by === uid\) && channel\.kind !== 'dm';/, '지정은 조직 관리자·생성자만');
+  const slip = app.slice(app.indexOf('function Slip('), app.indexOf('function Attachment('));
+  assert.equal(approvalDecider({ ap: { risk: 'high' }, uid: 'me', crewOwnerId: 'x', isAdmin: false, policy: { approval_high_by: 'approvers', approver_user_ids: ['me'] } }).can, true, '슬립 확정권에 지정 결재권자');
+  assert.match(slip, /approvalDecider\(/, '슬립은 공유 판정 함수를 쓴다');
+  const pc = app.slice(app.indexOf('function PolicyCard('), app.indexOf('function EmptyOrg('));
+  assert.match(pc, /\['admin', 'approvers', 'owner'\]\.map/, '정책 세그먼트 3옵션');
+  assert.match(pc, /approver_user_ids: draft\.approver_user_ids \?\? \[\], crew_create: draft\.crew_create \?\? 'channel_admin', crew_runner: draft\.crew_runner\?\.trim\(\) \|\| null, crew_model: draft\.crew_model\?\.trim\(\) \|\| null, guest_seats: !!draft\.guest_seats \}\)/, '결재권자 저장');
+  assert.match(pc, /members\.filter\(\(m\) => m\.role !== 'owner' && m\.role !== 'guest' && m\.user_id !== org\.service_user_id\)\.map/, '결재권자 후보에서 게스트·서버 계정 제외');
+  const sql = read('supabase/migrations/20260903120000_msgr.sql');
+  assert.match(sql, /c\.created_by = auth\.uid\(\) or auth\.uid\(\) = any \(c\.admin_user_ids\) or \(c\.kind <> 'dm' and coalesce\(public\.msgr_is_admin\(c\.org_id\), false\)\)/, '채널 관리 판정');
+  assert.match(sql, /raise exception 'msgr_channel_admins_owner_only'/, '관리자 자기 증식 방지');
+  assert.match(sql, /when coalesce\(p\.approval_high_by, 'admin'\) = 'approvers' then coalesce\(public\.msgr_is_admin\(a\.org_id\), false\) or auth\.uid\(\) = any \(coalesce\(p\.approver_user_ids, '\{\}'::uuid\[\]\)\)/, '지정 결재권자 판정');
+  for (const k of ['ch.admin', 'ch.admin.creator', 'ch.admin.set', 'ch.admin.unset', 'ch.admin.saved', 'set.policy.approval.approvers', 'set.policy.approvers', 'set.policy.approvers.desc', 'ap.approverNote']) assert.match(msgrI18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
+});
+
+test('I-4 회사 노드 — 조직 행에 하트비트, 노드용 초대는 member·for_node, 노드 코드는 사람 초대 목록 제외, 다시 만들면 이전 코드 취소', () => {
+  const app = read('apps/messenger/src/App.jsx');
+  const oc = app.slice(app.indexOf('function OrgCard('), app.indexOf('function PolicyCard('));
+  assert.match(app, /msgr_orgs\(id, name, slug, owner_user_id, service_user_id, node_seen_at, pending_owner_user_id, successor_user_id, auto_join_domain, auto_join_role, deleted_at, node_info\)/, '조직 행에 node_seen_at');
+  assert.match(oc, /insert\(\{ org_id: org\.id, role: 'member', for_node: true, created_by: uid \}\)/, '노드용 초대 = member + for_node');
+  assert.match(oc, /const open = shownInvites\(invites\); const nodeInvite = live\.find\(\(i\) => i\.for_node\) \?\? null;/, '노드 코드는 사람 초대 목록에서 제외(shownInvites가 for_node를 뺀다 — apps/messenger/test/invite-flow.test.mjs)');
+  assert.match(oc, /const nodeAlive = !!org\.service_user_id && nodeSeen > 0 && Date\.now\(\) - nodeSeen < AWAY_MS;/, '연결됨 판정 = 서비스 계정 있음 ∧ 90초 이내 하트비트');
+  assert.match(oc, /<code>\{nodeCmd\}<\/code>/, '명령 블록');
+  assert.ok(!/fmtTs\(/.test(oc) && /fmtWhen\(nodeInvite\.expires_at, lang\)/.test(oc) && /fmtWhen\(org\.node_seen_at, lang\)/.test(oc), '조직 카드 시각은 날짜 포함형(fmtWhen) — 7일 뒤 만료·며칠 전 응답을 시간만으로 보이지 않게');
+  assert.match(oc, /if \(nodeInvite\) \{ const d = await supabase\.from\('msgr_invites'\)\.delete\(\)\.eq\('id', nodeInvite\.id\);/, '다시 만들기 = 이전 노드 코드 취소 후 발급');
+  const dict = read('apps/messenger/src/i18n.js');
+  for (const k of ['org.node', 'org.node.none', 'org.node.never', 'org.node.on', 'org.node.off', 'org.node.make', 'org.node.remake', 'org.node.cmd', 'org.node.hint']) assert.ok(dict.includes(`'${k}':`), `i18n ${k}`);
+});
+
+test('I-5 회사 크루 만들기 — 정책 crew_create 세그먼트·저장, 채널 시트 권한 행렬·요청 insert 모양·노드 없음 안내, i18n', () => {
+  const app = read('apps/messenger/src/App.jsx');
+  assert.match(app, /approver_user_ids, crew_create, crew_runner, crew_model, guest_seats'\)\.eq\('org_id', id\)/, '정책 조회에 crew_create');
+  const pc = app.slice(app.indexOf('function PolicyCard('), app.indexOf('function EmptyOrg('));
+  assert.match(pc, /crew_create: draft\.crew_create \?\? 'channel_admin', crew_runner: draft\.crew_runner\?\.trim\(\) \|\| null, crew_model: draft\.crew_model\?\.trim\(\) \|\| null, guest_seats: !!draft\.guest_seats \}\)\.eq\('org_id', org\.id\)/, '정책 저장에 crew_create');
+  assert.match(pc, /value=\{draft\.crew_create \?\? 'channel_admin'\} onPick=\{\(v\) => set\(\{ crew_create: v \}\)\} disabled=\{ro\} options=\{\['admin', 'channel_admin', 'member'\]/, '3옵션 세그먼트');
+  const cs = app.slice(app.indexOf('function ChannelSheet('), app.indexOf('function Settings('));
+  assert.match(cs, /const canCreateCrew = channel\.kind !== 'dm' && nodeOn && myRole !== 'guest' && \(isAdmin \|\| crewCreate === 'member' \|\| \(crewCreate === 'channel_admin' && canEdit\)\);/, '권한 행렬(서버 msgr_can_create_crew와 같은 규칙, 게스트 제외)');
+  assert.match(cs, /const nodeOn = nodeSet && !!org\?\.node_seen_at && Date\.now\(\) - Date\.parse\(org\.node_seen_at\) < AWAY_MS;/, '검수 M-4: 살아 있는 노드만');
+  assert.match(cs, /insert\(\{ org_id: org\.id, channel_id: newCrew\.orgWide \? null : channel\.id, name: newCrew\.name\.trim\(\), role_text: newCrew\.role\.trim\(\), prompt: newCrew\.prompt\.trim\(\), created_by: uid \}\)/, '요청 행 모양');
+  assert.match(cs, /const showNewCrewItem = channel\.kind !== 'dm' && \(canCreateCrew \|\| \(isAdmin && !nodeOn\)\);/, '회사 크루 항목은 관리자에겐 서버 상태와 함께(비활성+이유)');
+  assert.match(cs, /disabled=\{!canCreateCrew\} onClick=\{\(\) => \{ setAdd\('newcrew'\);/, '못 만들면 항목 비활성');
+  assert.match(cs, /\{isAdmin && <label className="switchrow"><input type="checkbox" checked=\{newCrew\.orgWide\}/, '조직 전체 범위는 관리자만');
+  assert.match(pc, /placeholder=\{t\('set\.policy\.crewEngine\.model'\)\} value=\{draft\.crew_model \?\? ''\} maxLength=\{120\} disabled=\{ro\}/, 'I-5b 기본 엔진 입력(관리자만)');
+  const dict = read('apps/messenger/src/i18n.js');
+  for (const k of ['set.policy.crewCreate', 'set.policy.crewCreate.admin', 'set.policy.crewCreate.channel_admin', 'set.policy.crewCreate.member', 'ch.crew.new', 'ch.crew.new.noNode', 'ch.crew.new.pending', 'ch.crew.new.failed', 'ch.crew.new.done', 'ch.crew.new.orgWide']) assert.ok(dict.includes(`'${k}':`), `i18n ${k}`);
+});
+
+test('J-2 소유권 제안→수락·승계·읽기 전용 — 제안·승계 대상은 관리자 칩, 당사자에게 수락/거절, 잠금은 배너+보내기 비활성, 서버 함수·가드', () => {
+  const app = read('apps/messenger/src/App.jsx');
+  const oc = app.slice(app.indexOf('function OrgCard('), app.indexOf('function PolicyCard('));
+  assert.match(oc, /const admins = members\.filter\(\(m\) => m\.role === 'admin' && m\.user_id !== org\.service_user_id\);/, '대상은 관리자만(서버 계정 제외)');
+  assert.match(oc, /const iAmNominee = org\.pending_owner_user_id === uid;/, '당사자 판정');
+  assert.match(oc, /t\('org\.transfer\.offered', \{ name: nameOfUser\(org\.owner_user_id\) \}\)/, '제안자 이름은 조직 행의 owner_user_id(실측: 미조회면 ?)');
+  assert.match(oc, /onClick=\{\(\) => patchOrg\(\{ owner_user_id: uid \}, t\('org\.transfer\.accepted'\)\)\}/, '수락 = 자기로 owner 갱신(서버 트리거가 검증)');
+  assert.match(oc, /patchOrg\(\{ pending_owner_user_id: transfer \}, t\('org\.transfer\.sent'/, '제안(확인 문장 뒤 넘기기)');
+  assert.ok(!/successor_user_id/.test(oc), '승계 관리자 지정 UI는 자동 승계가 생기기 전까지 숨김(유건 UX 지시 2026-09-04)');
+  assert.match(app, /const orgLocked = ent\?\.ls_status === 'past_due' \|\| ent\?\.ls_status === 'unpaid';/, '잠금 판정(서버 msgr_org_locked와 같은 규칙)');
+  assert.match(app, /\{orgLocked && <div className="msgr-notice locked">/, '잠금 배너');
+  const ast = parse(app, { ecmaVersion: 'latest', sourceType: 'module', ecmaFeatures: { jsx: true } });
+  const composer = ast.body.find((node) => node.type === 'FunctionDeclaration' && node.id.name === 'Composer');
+  const nodes = [];
+  const walk = (node) => { if (!node || typeof node !== 'object') return; if (node.type) nodes.push(node); for (const value of Object.values(node)) { if (Array.isArray(value)) value.forEach(walk); else if (value && typeof value === 'object') walk(value); } };
+  walk(composer);
+  const button = nodes.find((node) => node.type === 'JSXOpeningElement' && node.name.name === 'button' && node.attributes.some((attr) => attr.name?.name === 'className' && attr.value?.value === 'send'));
+  const disabled = button.attributes.find((attr) => attr.name?.name === 'disabled').value.expression;
+  const send = nodes.find((node) => node.type === 'VariableDeclarator' && node.id.name === 'send');
+  const guard = send.init.body.body[0];
+  assert.equal(guard.type, 'IfStatement');
+  assert.equal(guard.consequent.type, 'ReturnStatement', '키보드·폼 전송의 첫 행동은 잠금 시 즉시 반환');
+  // D50(2026-09-19): 실패 카드(job)는 더 이상 전송을 막지 않는다 — Enter·전송 버튼이 그 글부터 다시 보내고(retryBlocked면 막힘) 성공하면 새 글을 잇는다.
+  const evaluate = (expr) => new Function('busy', 'job', 'locked', 'deliveryBlocked', 'text', 'files', 'rolePick', 'retryBlocked', `return (${expr});`); // rolePick = 1:1 /to·/cc 명령 모드(명령만 있는 글은 전송 금지 — PR #526)
+  const disabledSource = app.slice(disabled.start, disabled.end);
+  const guardSource = app.slice(guard.test.start, guard.test.end);
+  // 2026-09-27: App Store 5.1.2가 "전송할 때마다 확인"에서 "로그인 뒤 1회 필수 동의"로 바뀌며 send()의 동의 가드를 없앴다
+  // (검수 반영) — 재시도 로직은 다시 send()의 두 번째 문장이다.
+  const retryStep = send.init.body.body[1];
+  assert.equal(app.slice(retryStep.start, retryStep.end).replace(/\s+/g, ' '), 'if (job) { if (retryBlocked || !await delivery.retry()) return; onSent(delivery.snapshot().lastDeliveredId); if (!text.trim() && !files.length) return; }', '실패 카드가 있으면 그 글부터 다시 보내고, 실패하면 새 글을 보내지 않는다');
+  const check = (buttonSource, handlerSource) => {
+    const buttonDisabled = evaluate(buttonSource), handlerBlocked = evaluate(handlerSource);
+    for (let bits = 0; bits < 32; bits++) {
+      const [busy, pending, locked, deliveryBlocked, retryBlocked] = [0, 1, 2, 3, 4].map((bit) => !!(bits & (1 << bit)));
+      const job = pending ? { clientId: 'pending' } : null;
+      for (const [text, files] of [['', []], ['  ', []], ['hello', []], ['', [{ name: 'file.txt' }]]]) {
+        const args = [busy, job, locked, deliveryBlocked, text, files, null, retryBlocked];
+        const hard = busy || locked || deliveryBlocked;
+        assert.equal(!!buttonDisabled(...args), hard || (job ? retryBlocked : (!text.trim() && !files.length)), `send button flags=${bits}`);
+        assert.equal(!!handlerBlocked(...args), hard, `keyboard/form guard flags=${bits}`);
+        const cmd = [busy, job, locked, deliveryBlocked, '/cc', [], { role: 'cc', q: '', list: [] }, retryBlocked]; // 명령 모드는 나머지 플래그와 무관하게 차단
+        assert.equal(!!buttonDisabled(...cmd), true, `send button rolePick flags=${bits}`);
+        assert.equal(!!handlerBlocked(...cmd), true, `keyboard/form guard rolePick flags=${bits}`);
+      }
+    }
+  };
+  check(disabledSource, guardSource);
+  for (const flag of ['busy', 'job', 'locked', 'deliveryBlocked', 'rolePick', 'retryBlocked']) {
+    const identifier = new RegExp(`\\b${flag}\\b`, 'g');
+    assert.throws(() => check(disabledSource.replace(identifier, 'false'), guardSource), /send button/, `removing button ${flag} must fail`);
+    if (flag !== 'job' && flag !== 'retryBlocked') assert.throws(() => check(disabledSource, guardSource.replace(identifier, 'false')), /keyboard\/form guard/, `removing handler ${flag} must fail`);
+  }
+  assert.match(app, /select\('plan, seats, ls_status, trial_ends_at, paid_until'\)/, '자격 조회에 ls_status·무료 기간·결제 기간(2026-09-26)');
+  const sql = read('supabase/migrations/20260903120000_msgr.sql');
+  assert.match(sql, /coalesce\(old\.pending_owner_user_id = me, false\)\) then/, '수락 판정 NULL 방어');
+  assert.match(sql, /raise exception 'msgr_transfer_needs_accept'/, '직접 이전 거절');
+  assert.match(sql, /and not public\.msgr_org_locked\(c\.org_id\)/, '잠금이면 채널 쓰기 불가');
+  const dict = read('apps/messenger/src/i18n.js');
+  for (const k of ['org.owner', 'org.successor', 'org.transfer', 'org.transfer.pending', 'org.transfer.offered', 'org.transfer.accept', 'org.transfer.decline', 'org.locked', 'org.locked.admin', 'org.locked.short']) assert.ok(dict.includes(`'${k}':`), `i18n ${k}`);
+});
+
+test('J-3 도메인 자동 가입 — 소유자 도메인 행·저장 모양·오류 문구 분기, 메뉴·빈 화면의 가입 후보는 RPC 결과, 서버 가드·RPC', () => {
+  const app = read('apps/messenger/src/App.jsx');
+  const oc = app.slice(app.indexOf('function OrgCard('), app.indexOf('function PolicyCard('));
+  assert.match(oc, /patchOrg\(\{ auto_join_domain: domainOn \? null : myDomain, auto_join_role: 'member' \}/, '토글 = 내 이메일 도메인 켜고 끄기(입력 없음)');
+  assert.match(oc, /msgr_domain_public.*org\.domain\.public.*msgr_domain_not_owners.*org\.domain\.notOwners/, '서버 거절 사유 → 문구');
+  assert.match(app, /setJoinable\(await q\(supabase\.rpc\('msgr_joinable_orgs'\)\)\.catch\(\(\) => \[\]\)\);/, '가입 후보는 서버 RPC');
+  assert.match(app, /await q\(supabase\.rpc\('msgr_join_by_domain', \{ org: o\.id \}\)\)/, '가입은 RPC로만');
+  assert.match(app, /\{joinable\.map\(\(o\) => <button key=\{`j-\$\{o\.id\}`\} type="button" role="menuitem" className="join"/, '메뉴 후보');
+  assert.match(app, /joinable\.length \? \[\['mark', t\('org\.step\.join'\)/, '조직 없음 화면 첫 단계');
+  const sql = read('supabase/migrations/20260903120000_msgr.sql');
+  assert.match(sql, /raise exception 'msgr_domain_not_owners'/, '소유자 도메인 검증');
+  assert.match(sql, /raise exception 'msgr_domain_public'/, '공개 도메인 거절');
+  assert.match(sql, /and not exists \(select 1 from public\.msgr_org_members m where m\.org_id = o\.id and m\.user_id = auth\.uid\(\) and m\.removed_at is null\)/, '후보는 미가입자만');
+  assert.ok(!/'example\.test'/.test(sql), '로컬 시드 도메인은 공개 목록에 없다');
+  const dict = read('apps/messenger/src/i18n.js');
+  for (const k of ['org.domain', 'org.domain.ph', 'org.domain.desc', 'org.domain.on', 'org.domain.public', 'org.domain.notOwners', 'org.join.cta', 'org.step.join']) assert.ok(dict.includes(`'${k}':`), `i18n ${k}`);
+});
+
+test('J-4 게스트 — 비공개 채널 시트의 게스트 링크(기간 세그먼트·채널 한정 insert), 멤버 목록 만료 표기, 정책 guest_seats, 서버 판정·좌석·수락', () => {
+  const app = read('apps/messenger/src/App.jsx');
+  const cs = app.slice(app.indexOf('function ChannelSheet('), app.indexOf('function Settings('));
+  // 0.1.30: 게스트 링크도 초대 창 하나로(insert 모양은 invite-flow.test.mjs inviteRow가 잠근다 — 채널 하나·1회·guest_days)
+  assert.match(cs, /const canGuest = channel\.kind === 'private' && canEdit;/, '게스트 링크는 비공개 채널 관리자만');
+  assert.match(cs, /onClick=\{\(\) => \{ setAdd\(null\); onInviteHere\?\.\('guest'\); \}\}/, '추가 메뉴의 게스트 항목은 게스트 초대 창을 연다');
+  const oc = app.slice(app.indexOf('function OrgCard('), app.indexOf('function PolicyCard('));
+  assert.match(oc, /t\('org\.guest\.until', \{ when: fmtWhen\(m\.expires_at, lang\) \}\)/, '만료 표기');
+  assert.match(app, /select\('user_id, role, display_name, expires_at'\)/, '멤버 조회에 expires_at');
+  const sql = read('supabase/migrations/20260903120000_msgr.sql');
+  assert.match(sql, /and \(m\.expires_at is null or m\.expires_at > now\(\)\)\n\$\$;/, 'msgr_role이 만료를 본다');
+  assert.match(sql, /if new\.role = 'guest' and not gseats then return new; end if;/, '게스트 좌석 미차지(정책 off)');
+  assert.match(sql, /check \(channel_id is null or role = 'guest'\)/, '채널 한정 초대 = 게스트');
+  const dict = read('apps/messenger/src/i18n.js');
+  for (const k of ['inv.here.guest', 'inv.channel.guest', 'inv.guest.days', 'org.guest.until', 'org.guest.expired', 'set.policy.guests', 'set.policy.guests.seats']) assert.ok(dict.includes(`'${k}':`), `i18n ${k}`);
+});
+
+test('J-5 조직 삭제 유예·복구 — 이름 입력 2단계 삭제(네이티브 confirm 없음), 복구는 RPC, 삭제 예정 목록은 메뉴·빈 화면, 서버 트리거·RPC·purge 권한', () => {
+  const app = read('apps/messenger/src/App.jsx');
+  const oc = app.slice(app.indexOf('function OrgCard('), app.indexOf('function PolicyCard('));
+  assert.match(oc, /disabled=\{busy \|\| delName\.trim\(\) !== org\.name\} onClick=\{deleteOrg\}/, '이름이 정확히 같아야 삭제 버튼 활성');
+  assert.match(oc, /update\(\{ deleted_at: new Date\(\)\.toISOString\(\) \}\)\.eq\('id', org\.id\)/, '삭제 = deleted_at 표시(서버 트리거가 소유자 판정)');
+  assert.ok(!/window\.confirm|window\.prompt|confirm\(/.test(oc), '네이티브 대화상자 없음');
+  assert.match(app, /await q\(supabase\.rpc\('msgr_restore_org', \{ org: o\.id \}\)\)/, '복구는 RPC');
+  assert.match(app, /setDeletedOrgs\(await q\(supabase\.rpc\('msgr_my_deleted_orgs'\)\)\.catch\(\(\) => \[\]\)\);/, '삭제 예정 목록은 RPC');
+  assert.match(app, /deletedOrgs\.length \? \[\['', t\('org\.step\.restore'\)/, '빈 화면 복구 단계');
+  const sql = read('supabase/migrations/20260903120000_msgr.sql');
+  assert.match(sql, /if me is not null and new\.deleted_at is distinct from old\.deleted_at and old\.owner_user_id <> me then raise exception 'msgr_owner_only'; end if;/, '삭제·복구는 소유자 계정 기준');
+  assert.match(sql, /if o\.deleted_at < now\(\) - interval '30 days' then raise exception 'msgr_restore_expired'; end if;/, '30일 유예');
+  assert.match(sql, /revoke execute on function public\.msgr_purge_orgs\(\) from anon, authenticated;/, 'purge는 service_role만');
+  const dict = read('apps/messenger/src/i18n.js');
+  for (const k of ['org.delete', 'org.delete.typeName', 'org.delete.confirm', 'org.delete.desc', 'org.restore.cta', 'org.restore.expired', 'org.step.restore']) assert.ok(dict.includes(`'${k}':`), `i18n ${k}`);
+});
+
+test('검수 반영(코드) — 삭제 조직 목록 제외, 오류 문구 매핑, 조직 전체 초대는 게스트 제외, 카드 값 개행 세척, 서버 가드', () => {
+  const app = read('apps/messenger/src/App.jsx');
+  assert.match(app, /rows\.filter\(\(r\) => r\.msgr_orgs && !r\.msgr_orgs\.deleted_at\)/, 'M-3');
+  assert.match(app, /const friendlyErr = \(msg, t\) => \/msgr_session_refreshing\/\.test\(msg\) \? t\('err\.sessionRefreshing'\) : [^\n]*?\/row-level security\/\.test\(msg\) \? t\('err\.denied'\)/, 'M-5 매핑(D50: 세션 갱신 중이 RLS보다 먼저 — 사이에 더 좁은 매핑(D8 msgr_crew_remove_owner_only)은 들어올 수 있다)');
+  assert.ok((app.match(/onError\(friendlyErr\(res\.error\.message, t\)\)/g) || []).length >= 4, 'M-5 적용 4곳 이상');
+  assert.match(app, /const adminInvite = \(\) => \(adminLink \? copyLink\(adminLink\) : makeInvite\('admin'\)\);/, 'L-3 초대는 멤버·관리자 두 버튼(관리자 링크는 있으면 복사, 없으면 만든다 — 5차 피드백 2)');
+  assert.match(app, /onClick=\{adminInvite\}/);
+  assert.ok(!/makeInvite\('guest'\)/.test(app), 'L-3 조직 전체 게스트 초대 없음');
+  assert.ok(!/&& false\)\}/.test(app), 'L-5 죽은 조건 제거');
+  const persona = read('src/persona.mjs');
+  assert.match(persona, /const line = \(v\) => String\(v \?\? ''\)\.replace\(\/\[\\r\\n\]\+\/g, ' '\)\.trim\(\);/, 'H-2 세척');
+  const sql = read('supabase/migrations/20260903120000_msgr.sql');
+  assert.match(sql, /revoke execute on function public\.msgr_email_domain\(uuid\) from anon, authenticated;/, 'H-1');
+  assert.match(sql, /or new\.expires_at is distinct from old\.expires_at\) then/, 'C-1');
+  assert.match(sql, /raise exception 'msgr_removed_rejoin'/, 'H-4');
+  assert.match(sql, /coalesce\(current_setting\('msgr\.node_accept', true\), ''\) <> '1' then raise exception 'msgr_owner_only'/, 'H-6');
+  assert.match(sql, /msgr_lock_cols\('org_id', 'channel_id', 'name', 'role_text', 'prompt', 'created_by', 'created_at'\)/, 'CRITICAL-1 잠금');
+  assert.match(sql, /and public\.msgr_channel_member_ok\(channel_id, member_kind, member_id\)\)/, 'HIGH-1');
+  const dict = read('apps/messenger/src/i18n.js');
+  for (const k of ['ch.crew.new.nodeOff', 'ch.crew.new.pendingOff', 'err.denied', 'err.invalid']) assert.ok(dict.includes(`'${k}':`), `i18n ${k}`);
+});
+
+test('UX 3/3 회사 크루 AI 드롭다운 — 서버 목록(node_info)이 있으면 select, 없으면 텍스트, 러너 바꾸면 모델 초기화, 서버 RPC 2인자', () => {
+  const app = read('apps/messenger/src/App.jsx');
+  const pc = app.slice(app.indexOf('function PolicyCard('), app.indexOf('function EmptyOrg('));
+  assert.match(pc, /const nodeRunners = Array\.isArray\(org\?\.node_info\?\.runners\) \? org\.node_info\.runners : \[\];/, '목록은 조직 행의 node_info');
+  assert.match(pc, /onChange=\{\(e\) => set\(\{ crew_runner: e\.target\.value \|\| null, crew_model: null \}\)\}/, '러너 바꾸면 모델 초기화');
+  assert.match(pc, /\{nodeRunners\.length \? \(<>[\s\S]*?<select[\s\S]*?<\/>\) : \(<>[\s\S]*?<input className="msgr-input inline" placeholder=\{t\('set\.policy\.crewEngine\.runner'\)\}/, '목록 없으면 텍스트 입력');
+  const sql = read('supabase/migrations/20260903120000_msgr.sql');
+  assert.match(sql, /create or replace function public\.msgr_node_heartbeat\(org uuid, info jsonb default null\)/, 'RPC 2인자');
+  assert.match(sql, /node_info = coalesce\(info, node_info\)/, '정보 없는 하트비트는 목록 유지');
+  const bridge = read('src/gateway/msgr.mjs');
+  assert.match(bridge, /await db\.nodeHeartbeat\(nodeOrgId, info\)\.catch\(/, '하트비트에 러너 목록(정보 조회는 3초 타임아웃 — 검수 M-5)');
+  assert.match(bridge, /Promise\.race\(\[runnerInfo\(wsId\)\.catch\(\(\) => null\), new Promise\(\(r\) => \{ timer = setTimeout\(r, 3000, null\);/, 'CLI 감지가 멈춰도 생존 신호는 나간다');
+});
+
+test('레일 행 메뉴(유건 지적 2026-09-04) — 채널 설정·나가기(내 크루 있으면 차단)·보관(관리 권한만), 1:1 나가기, 게스트 행 세그먼트 오른쪽, 게스트 링크 라벨', () => {
+  const app = read('apps/messenger/src/App.jsx');
+  // 규칙 14(2026-09-18): 종전 "내 크루가 있으면 차단"을 "내 크루도 같이 나간다"로 바꿨다. 서버 트리거
+  // (20260918130000)가 최종 강제이고, 앱은 그 마이그레이션이 없는 서버를 위해 먼저 이 방에서 뺀 뒤 나간다.
+  // 빼는 함수가 없는 서버에서만 옛 차단으로 돌아간다(그래야 크루가 주인 없이 죽은 채 남지 않는다).
+  assert.match(app, /const leaveChannel = async \(c\) => \{[\s\S]*?for \(const s of stuck\) \{\s*const r = await supabase\.rpc\('msgr_crew_leave_channel', \{ ch: c\.id, crew: s\.member_id \}\);\s*if \(r\.error\) throw new Error\(missingSchema\(r\.error\) \? t\('ch\.leave\.blocked'\) : [^\n]*\n\s*\}[\s\S]*?\.delete\(\)\.eq\('channel_id', c\.id\)\.eq\('member_kind', 'user'\)\.eq\('member_id', uid\)/, '나가기 = 내 크루를 이 방에서 먼저 빼고 내 멤버 행 삭제(빼는 함수가 없는 서버면 차단)');
+  assert.match(app, /canManage && \{ icon: 'archive', label: t\('ch\.archive'\), run: \(\) => confirmVia\('archive'\)/, '보관은 관리 권한만, 2단계(아이콘만 x → archive로 바뀌었다 — 권한 조건·2단계 확인은 그대로)');
+  // D16(2026-09-19): 공개 채널도 참여제(20260916190000 — 찾아보기로 스스로 들어간다)라 참여한 사람은 나갈 수 있어야 한다.
+  // 종전 핀 "나가기는 비공개 채널만(공개는 전원 자동)"은 9/16 이전 설계(조직원 전원 자동 참여)를 고정하고 있었다.
+  assert.match(app, /\n\s*\{ icon: 'out', label: t\('ch\.leave'\), run: \(\) => confirmVia\('leave'\) \}, \/\/ 공개 채널도 나간다/, '나가기는 채널 종류와 무관(공개는 찾아보기로 다시 참여)');
+  assert.doesNotMatch(app, /c\.kind === 'private' && \{ icon: 'out', label: t\('ch\.leave'\)/, '비공개 한정 조건이 되살아나지 않는다');
+  assert.match(app, /railActionKey === 'ch\.leave' && railAction\.channel\.kind === 'public' \? 'ch\.leave\.confirm\.note\.public'/, '공개 채널 확인 문구는 찾아보기 재참여 안내');
+  const oc = app.slice(app.indexOf('function OrgCard('), app.indexOf('function PolicyCard('));
+  assert.ok(oc.indexOf("t('org.guest.until'") < oc.indexOf('<Seg className="right"'), '게스트 만료 문구는 세그먼트보다 앞(세그먼트 오른쪽 고정)');
+  const dict = read('apps/messenger/src/i18n.js');
+  for (const k of ['org.invite.kind.guest', 'ch.leave', 'ch.leave.blocked', 'ch.archive.confirm.short', 'ch.leave.confirm.note', 'ch.leave.confirm.note.public', 'ch.archive.confirm.note', 'dm.leave.confirm.note', 'dm.leave', 'ch.menu.settings']) assert.ok(dict.includes(`'${k}':`), `i18n ${k}`);
+});
+
+test('활동 페이지(유건 지시 2026-09-04) — 트리(조직→채널→크루·문서/사람/크루/전사 문서)+아르고 기억 그래프(별칭)+문장 목록, 감사 19종 문장 사전, 한국어 조사, 설정의 기록 탭 제거', () => {
+  const app = read('apps/messenger/src/App.jsx');
+  assert.match(app, /import \{ Graph3D \} from '\.\/graph3d\.jsx';/, '활동 그래프는 3D 컴포넌트(구성은 아르고 코어 재사용)');
+  assert.match(app, /page === 'activity' && isPersonal \? \(/, '활동 페이지 — 개인 공간은 조직 활동 대신 안내'); // 2026-09-27: 앞에 AI 동의 게이트 분기가 더 붙어 여는 토큰이 '{'가 아니라 ')'다
+  assert.match(app, /\) : page === 'activity' && org \? \(\n\s*<Activity /, '활동 페이지 분기(조직)');
+  assert.match(app, /<Graph3D key="all" docs=\{gdocs\} hint=\{t\(phone \? 'act\.graph\.hint\.phone' : 'act\.graph\.hint'\)\} labels=\{\{ zoomIn: t\('act\.graph\.zoomIn'\)/, '그래프 탭: 3D 기억 그래프 + 줌 버튼 라벨(폰은 휠·더블클릭 없는 안내문)');
+  assert.doesNotMatch(app, /msgr-actlocal|<Graph3D key=\{sel\}/, '대상 탭엔 작은 그래프를 넣지 않는다 — 그래프는 그래프 탭 전담(유건 지시 2026-09-04)');
+  assert.doesNotMatch(app, /Graph2D/, '메신저 활동 페이지는 2D 그래프를 쓰지 않는다');
+  const g3 = read('apps/messenger/src/graph3d.jsx');
+  assert.match(g3, /import \{ buildGraph2D, stem \} from '@argo\/graph2d-core';/, '3D 그래프 구성은 아르고 코어 재사용(사본 금지)');
+  assert.match(g3, /agents = NO_AGENTS/, '기본 인자는 모듈 상수(렌더마다 새 배열 = 그래프 재구축, 검수 H-1)');
+  assert.match(g3, /const clampD = \(d\) => Math\.max\(far \* 1\.15,/, '줌 하한은 현재 중심 기준 반경(집중 뒤 카메라 뒤 노드 — 검수 H-2)');
+  assert.match(app, /const gdocs = useMemo\(\(\) => gbuilt, \[gkey\]\);/, '그래프 입력은 내용 키로 안정화(30초 재적재마다 재구축 금지)');
+  assert.match(app, /supabase\.rpc\('msgr_create_channel', \{ org: orgId, kind: priv \? 'private' : 'public', name: name\.trim\(\) \}\)/, '채널 생성은 RPC(생성+첫 멤버 한 번 — 생성 직후 열람 예외 폐지)');
+  assert.match(app, /supabase\.rpc\('msgr_create_channel', \{ org: orgId, kind: 'dm', name: `dm:\$\{name\}`, others \}\)/, '1:1도 RPC');
+  assert.doesNotMatch(app, /from\('msgr_channels'\)\.insert\(/, '채널 직접 insert 없음');
+  assert.match(app, /if \(!stuck\) throw new Error\(t\('ch\.leave\.checkFailed'\)\);/, '나가기 크루 가드는 조회 실패 시 중단(fail-closed)');
+  assert.match(app, /const chRel = \(c\) => `channels\/\$\{c\.id\}`;/, '채널 키는 id(이름은 유일하지 않다)');
+  assert.match(g3, /prefers-reduced-motion: reduce/, '자동 회전은 동작 축소 설정을 존중');
+  assert.match(g3, /rgbOf\(st, '--graph-rgb', null\)/, '3D 그래프도 --graph-rgb 우선(getComputedStyle은 한 번)');
+  assert.match(g3, /canvas\.addEventListener\('wheel', onWheel, \{ passive: false \}\)/, '휠 줌은 페이지 스크롤을 막는다');
+  const panes = read('apps/messenger/src/panes.mjs');
+  assert.match(panes, /export function openTab\(panes, focus, tab, \{ split = false \} = \{\}\) \{/, '창·탭 전이는 순수 모듈(행동 테스트 test/msgr-panes.test.mjs가 잠근다)');
+  assert.match(app, /const openTab = \(tab, opts\) => setSt\(\(s\) => Panes\.openTab\(s\.panes, s\.focus, tab, opts\)\);/, 'Activity는 전이를 위임하고 상태 하나(setSt)만 쓴다 — 업데이터 안 다른 setState 없음');
+  assert.doesNotMatch(app.slice(app.indexOf('function Activity(')), /setPanes\(|setFocusPane\] = useState/, '옛 이중 상태 없음');
+  assert.match(app, /className="vault-tab-x" onClick=\{\(e\) => \{ e\.stopPropagation\(\); closeTab\(pane\.id, tb\.id\); \}\}/, '탭 닫기(창 단위)');
+  assert.match(app, /^function ActRow\(\{ c, id, label, sub, tip = undefined, depth = 0, kids = null, icon = null \}\) \{/m, '트리 행은 모듈 수준 컴포넌트(안에서 정의하면 클릭마다 리마운트)');
+  assert.doesNotMatch(app.slice(app.indexOf('function Activity(')), /const Row = \(/, 'Activity 안에 행 컴포넌트를 정의하지 않는다');
+  assert.match(app, /const chKey = channels\.map\(\(c\) => c\.id\)\.join\(','\);\n\s*const load = useCallback\(/, '재조회는 채널 id 목록 키(배열 정체 아님) + 저장 뒤 재사용');
+  assert.match(app, /onAuxClick=\{\(e\) => \{ if \(e\.button === 1\) \{ e\.preventDefault\(\); closeTab\(pane\.id, tb\.id\); \} \}\}/, '가운데 클릭 닫기(창 단위)');
+  assert.match(app, /const closeAll = \(paneId\) => setSt\(\(s\) => Panes\.closeAll\(s\.panes, s\.focus, paneId\)\);/, '모두 닫기(창 단위, 순수 전이)');
+  assert.match(app, /onSelectDoc=\{\(rel\) => openEntity\(relOfDoc\(rel\), \{ split: true \}\)\}/, '그래프 노드 클릭 = 옆 창에 열기(아르고 기억 페이지와 같은 모양)');
+  assert.match(panes, /export const MAX_PANES = 2;/, '창은 둘까지');
+  const g2 = read('app/c/[ws]/graph2d.jsx');
+  assert.doesNotMatch(g2, /nodeShape|--graph-rgb/, '아르고 본체 기억 그래프는 손대지 않는다(검수 M-3·M-4: 소비자 0인 분기·linen 포인트색 변경 되돌림)');
+  assert.doesNotMatch(read('apps/messenger/vite.config.js'), /@argo\/graph2d'/, '메신저는 본체 2D 렌더러를 쓰지 않는다(별칭 제거)');
+  const css = read('apps/messenger/src/styles.css');
+  assert.match(css, /:root\[data-theme='linen'\], :root\[data-theme='linen-light'\] \{ --graph-rgb: 38, 36, 31; --graph-paper-rgb: 233, 230, 223; \}/, '메신저 linen — 노드는 흑백(잉크), 판은 --bg와 같은 베이지');
+  assert.match(css, /\.msgr-actsplit \{[^}]*background: var\(--bg\);/, '기억 페이지 판은 상단 바와 같은 베이지 한 판');
+  assert.match(css, /\.msgr-acttree \{[^}]*background: var\(--bg\);/, '트리도 같은 판');
+  const g3b = read('apps/messenger/src/graph3d.jsx');
+  assert.match(g3b, /ACC = g \|\| \(m && chroma\(m\) && m\)/, '3D도 명시 --graph-rgb는 채도 검사 면제');
+  assert.match(g3b, /PAPER = rgbOf\(st, '--graph-paper-rgb', null\) \|\| rgbOf\(st, '--paper-rgb', PAPER\);/, '그래프 판 색은 --graph-paper-rgb 우선(판과 같은 색이라야 노드 테두리 링이 맞는다)');
+  assert.match(g3b, /api\.current = \{ \/\/ 줌 버튼/, '줌 버튼 API — 휠·트랙패드 없이도 확대·축소');
+  assert.match(g3b, /const dr = RED \? 0 : 1\.5;/, '노드 부유는 동작 축소 설정에서 멈춘다');
+  assert.match(g3b, /glow\[i\] \+= \(want\(i\) - glow\[i\]\) \* 0\.16;/, '호버 강조는 이징(툭 끊기지 않게)');
+  assert.doesNotMatch(g3b, /기하학적 지평/, '지평선 장식 제거(미니멀)');
+  assert.ok(!/\['audit', 'set\.tab\.audit'\]/.test(app), '설정의 기록 탭 제거');
+  assert.match(read('apps/messenger/src/activity-sentence.mjs'), /return lang === 'en' \? out : koJosa\(out\);/, '한국어 조사 처리 — 활동 문장은 순수 함수 모듈(test/activity-sentence.test.mjs가 행동을 잠근다, 점검 A·B #5)');
+  const dict = read('apps/messenger/src/i18n.js');
+  const sql = read('supabase/migrations/20260903120000_msgr.sql');
+  const actions = new Set([...sql.matchAll(/msgr_audit\([^,]*, '([a-z_.]+)'/g)].map((m) => m[1]));
+  for (const a of actions) if (!a.endsWith('.')) assert.ok(dict.includes(`'act.${a}':`), `문장 사전 act.${a}`); // 'approval.'·'doc.'은 서버가 상태·연산을 이어 붙이는 접두 — 아래 완성형으로 확인
+  for (const a of ['approval.approved', 'approval.rejected', 'doc.insert', 'doc.update', 'doc.delete', 'channel.admins.none']) assert.ok(dict.includes(`'act.${a}':`), `문장 사전 act.${a}`);
+  const vite = read('apps/messenger/vite.config.js');
+});
+
+test('i18n 전수 스윕 — App.jsx·graph3d.jsx의 정적 t(\'키\')는 전부 사전에 ko/en 쌍으로 있다(검수 M-7: 손 목록만 보던 검사기)', () => {
+  const dict = new Map(); for (const m of msgrI18n.matchAll(/^\s*'([^']+)': \[('[^']*'|"[^"]*"), ('[^']*'|"[^"]*")\]/gm)) dict.set(m[1], true);
+  const used = new Set(); for (const src of [app, read('apps/messenger/src/graph3d.jsx')]) for (const m of src.matchAll(/\bt\('([a-z0-9.]+)'/g)) used.add(m[1]);
+  const missing = [...used].filter((k) => !dict.has(k));
+  assert.deepEqual(missing, [], `사전에 없는 키: ${missing.join(', ')}`);
+  assert.ok(used.size > 150, `스윕이 실제로 키를 모았다(${used.size})`);
+});
+
+test('컴포저 첨부: 드래그앤드롭 수용·칩마다 취소 단추·선택창과 같은 수용 규칙(유건 제보 2026-09-11 밤)', () => {
+  const comp = read('apps/messenger/src/App.jsx');
+  assert.match(comp, /onDrop=\{\(e\) => \{ e\.preventDefault\(\); setDragging\(false\); if \(!busy\) addFiles\(e\.dataTransfer\?\.files\); \}\}/, '드롭 → addFiles(2026-10-02부터 개인 공간도 — 저장 경로 p/<방>/<글>/<파일>)');
+  assert.match(comp, /onDragOver=\{\(e\) => \{ if \(e\.dataTransfer\?\.types\?\.includes\('Files'\)\) \{ e\.preventDefault\(\); setDragging\(true\); \}/, '파일 드래그만 강조(텍스트 드래그는 무시)');
+  assert.match(comp, /onChange=\{\(e\) => \{ addFiles\(e\.target\.files\); e\.target\.value = ''; \}\}/, '선택창도 같은 addFiles');
+  assert.match(comp, /setFiles\(\(cur\) => acceptFiles\(cur, incoming, ATTACH_MAX\)\.files\)/, '누적·중복 제거·상한은 acceptFiles 한 곳');
+  assert.match(comp, /uploading !== f\.name && <button type="button" className="x"[\s\S]{0,140}?onClick=\{\(\) => setFiles\(\(cur\) => withoutFile\(cur, f\)\)\}/, '칩 취소 단추(업로드 중엔 없음)');
+  assert.match(read('apps/messenger/src/styles.css'), /\.msgr-composer\.drop \{/, '드롭 강조 CSS');
+});
+
+test('알림함: 기본은 읽지 않은 것만(지난 알림 토글) · 에이전트 답글은 내 글의 최종 답글만(중간 넘김·시스템 제외) — 유건 2026-09-11 밤', () => {
+  const app = read('apps/messenger/src/App.jsx');
+  assert.match(app, /const \[unreadOnly, setUnreadOnly\] = useState\(true\);/, '기본 읽지 않은 것만');
+  // 내가 결정할 대기 참여 요청(joinReq)은 읽음과 무관하게 남는다 — 결재자가 바뀐 뒤 넘겨받은 요청이 '이미 본 시각'에 가려지지 않게(20260918170000)
+  assert.match(app, /const shown = items\.filter\(\(it\) => \(kind === 'all' \|\| it\.kind === kind\) && \(!unreadOnly \|\| isNew\(it\) \|\| pendingMine\(it\)\)\);/, '토글이 목록을 거른다(대기 참여 요청은 남김)');
+  assert.match(app, /const pendingMine = \(it\) => !!it\.joinReq;/, '남기는 것은 결정할 참여 요청뿐');
+  assert.match(app, /\.eq\('author_kind', 'crew'\)\.eq\('kind', 'text'\)\.in\('reply_to', myIds\)/, '시스템 안내 제외');
+  assert.match(app, /\.filter\(\(m\) => !\(Array\.isArray\(m\.mentions\) && m\.mentions\.some\(\(x\) => x\?\.kind === 'crew'\)\)\)/, '다른 크루로 넘기는 중간 답글 제외');
+  const i18n = read('apps/messenger/src/i18n.js');
+  for (const k of ['inbox.unreadOnly', 'inbox.showRead', 'inbox.allRead']) assert.match(i18n, new RegExp(`'${k.replace('.', '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
+});
+
+test('사이드바: 열린 채널이 안 읽음이어도 이름이 보인다(활성 배경 위 글자색 규칙이 unread 규칙에 덮이지 않게) — 유건 제보 2026-09-11 밤', () => {
+  const css = read('apps/messenger/src/styles.css');
+  const unread = css.indexOf('.msgr-list .item.unread .name { color: var(--fg);'); const fix = css.indexOf('.msgr-list .item.active.unread .name { color: var(--primary-fg); }');
+  assert.ok(unread > 0 && fix > unread, 'active.unread 규칙이 unread 규칙 뒤에(같은 특이도면 뒤가 이긴다)');
+});
+
+test('컴포저: 클립보드 이미지 붙여넣기 → 같은 addFiles 수용 규칙, 이름 없는 캡처는 paste-시각(유건 2026-09-11 밤)', () => {
+  const comp = read('apps/messenger/src/App.jsx');
+  assert.match(comp, /onPaste=\{\(e\) => \{ const pasted = \[\.\.\.\(e\.clipboardData\?\.files \?\? \[\]\)\]; if \(!pasted\.length \|\| busy\) return;[^\n]*addFiles\(/, '붙여넣기 → addFiles(2026-10-02부터 개인 공간도)');
+  assert.match(comp, /new File\(\[f\], `paste-\$\{new Date\(\)\.toISOString\(\)/, '이름 없는 캡처 이름');
+});
+
+test('점검 2026-09-12 소형 결함 4건: 읽음은 초점 있을 때만 · 사람 DM·답글도 알림 · 독 배지 음소거 제외 · 이미지 첨부 인라인', () => {
+  const app = read('apps/messenger/src/App.jsx');
+  assert.match(app, /if \(document\.visibilityState !== 'hidden' && document\.hasFocus\(\)\) onRead\?\.\(chId, lastId\);/, '초점 판정');
+  assert.match(app, /window\.addEventListener\('focus', mark\);/, '초점 복귀 시 읽음');
+  assert.match(app, /if \(!payload \|\| payload\.kind !== 'text' \|\| \(payload\.author_user_id && payload\.author_user_id === r\.uid\)\) return;/, '사람 발신도 알림(내 글 제외)');
+  assert.match(app, /legacyBadge\.current = badgeTotal\(\{ current: unread, currentKey: [^,]+, muted, totals: spaceTotals \}\);\n\s+useEffect\(\(\) => \{ if \(!iconBadge\) setBadge\(legacyBadge\.current\); \}/, '독 배지 음소거 제외 — 모든 공간 합(badgeTotal, 음소거 제외 행동은 apps/messenger/test/cross-space.test.mjs)');
+  // 이미지 첨부 인라인 — 2026-10-02부터 media.jsx(사람·에이전트 같은 부품). 행동은 apps/messenger/test/media-viewer.test.mjs·ux3.browser.mjs
+  const media = read('apps/messenger/src/media.jsx');
+  assert.match(app, /const attRow = atts\.length > 0 && <MediaAttachments atts=\{atts\}/, '메시지 첨부 줄은 MediaAttachments 하나');
+  assert.match(media, /<button type="button" className=\{`msgr-thumb[^`]*`\} tabIndex=\{tab\} aria-label=\{t\('media\.view', \{ name: a\.name \}\)\} onClick=\{onOpen\}>/, '이미지 인라인 — 누르면(키보드 포함, K10) 그 자리에서 크게 보기');
+  assert.match(media, /const \{ images, files \} = useMemo\(\(\) => splitAttachments\(atts, failed\)/, '못 그린 그림은 파일 말풍선으로(D21) — 칩 중복 없음');
+  assert.match(media, /tapTimer\.current = setTimeout\(\(\) => \{ if \(mouse && !onPhoto\) onClose\(\);/, '바탕을 누르면 닫힌다');
+  assert.match(media, /if \(k === 'Escape'\) onClose\(\);/, 'Esc로도 닫힌다');
 });
