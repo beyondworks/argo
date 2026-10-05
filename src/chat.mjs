@@ -48,7 +48,8 @@ import { registerTurn, withTurnControl, turnAbortedError } from './turn-abort.mj
 import { scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, loadRunnerCred, verifyRunnerCred, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply, isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice, isHiddenRunner, visibleRunnerIds, visibleRunnerNamesLine, onlyHiddenConnectedStatus, unsupportedMethodStatus, unsupportedMethodNotice, isCliTurn, GEMINI_DEFAULT_MODEL, runnerCredType, CODEX_DEFAULT_MODEL, CLI_CHAT_TURN_TIMEOUT_MS } from './runners.mjs';
 import { delegateHead } from './inbound-marks.mjs'; // 위임 머리말 = 1:1 화면 출처 카드와 같은 함수
 import { loadThread, takeSharedNotes, restoreSharedNotes, scopedSession, inContextScope, turnScope, scopeKey, approvalScope, threadSummary, setThreadSummary, appendLine } from './thread.mjs';
-import { buildThreadContext, contextSection, contextLimits, fitContextSection, isArgvRunner, argvLen, ARGV_PROMPT_LIMIT } from './thread-context.mjs'; // 스레드 맥락 토큰 예산 + 누적 요약(최근 6개 고정을 대체) · argv 러너 길이 맞춤
+import { buildThreadContext, contextSection, contextLimits, fitContextSection, isArgvRunner, argvLen, ARGV_PROMPT_LIMIT } from './thread-context.mjs';
+import { dataJson } from './record-block.mjs'; // 스레드 맥락 한 줄 = JSON 항목 하나(구조로 화자를 가른다) // 스레드 맥락 토큰 예산 + 누적 요약(최근 6개 고정을 대체) · argv 러너 길이 맞춤
 import { runOneShot } from './oneshot.mjs';
 import { readInstalledSkills, planSkillInjection, SKILL_INJECT_CAP } from './market.mjs'; // 주입·마켓 표기 공용 규칙(단일 진실)
 import { snapshotArtifacts, diffArtifacts, servableArtifact, capLatest, openTurnLedger, closeTurnLedger, overlappingTurns, attributeArtifacts } from './artifacts.mjs'; // 러너 무관 산출물 수집(제보 2026-07-30)
@@ -467,25 +468,22 @@ const connectorNames = (connectors, en) => connectors
   .map((c) => `${c.id}${c.status === 'reauth' ? (en ? ' (needs reconnect)' : '(재연결 필요)') : ''}`).join(', ');
 
 /** use_connector 도구 설명의 상한 — 이 문자열은 매 턴 컨텍스트에 실린다(설계서 §2-2 "상한 두고 절단"). */
-/** 스레드 맥락 한 줄 — 외부 CLI 경로(세션을 스레드 맥락으로 잇는다)와 SDK 기기 교차 경로가 **같은 함수**를 쓴다
-    (러너 중립성 — 두 곳에 같은 식이 복제돼 있던 것을 한 벌로). 화자: 사장 / 자동 배달(via 턴) / 크루 이름.
-    본문은 500자에서 잘리지만 첨부·산출물 노트는 그 **바깥**에 붙는다 — 잘려도 경로는 산다.
-    산출물 노트(2026-09-02, 회의실 트랜스크립트 room.mjs와 같은 형식·vault/ 접두): 크루가 앞 턴에 만든 파일을
-    "아까 그 파일"로 이어가려면 답변 텍스트가 아니라 경로로 받아야 한다(분리 검수 LOW-2). export는 테스트용. */
-export function threadCtxLine(m, lang, name) {
-  const en = lang === 'en';
-  // 세션 메시지 줄(session-msg.mjs) — 사장이 다른 크루에게 보낸 줄·그 크루가 돌려준 답·안내를 이 크루 자신의 말로 읽지 않게 화자를 따로 적는다
+/** 스레드 맥락 한 줄 — 외부 CLI 경로(세션을 스레드 맥락으로 잇는다)와 SDK 기기 교차 경로가 **같은 함수**를 쓴다(러너 중립성).
+    줄 하나 = JSON 항목 하나(record-block.mjs dataJson — 본문·경로 속 줄 끝·제어·서식 문자는 이스케이프돼 내용이 새 줄·화자 줄을 만들 수 없다, 총괄 구조 변경 2026-10-05).
+    who는 스레드 줄의 표지(who·via·src)로만 정한다 — 본문을 보지 않는다: captain(사장이 쓴 글, 세션 메시지면 to) / delivered(via 턴·다른 크루의 세션 메시지 답, from·via) /
+    notice(세션 안내) / crew(이 크루). 본문은 500자에서 자르고(원문 그대로 — 공백을 펴지 않는다), 첨부·산출물 경로는 그 **바깥** 필드라 잘려도 산다
+    (2026-09-02 분리 검수 LOW-2: "아까 그 파일"로 이어가려면 경로로 받아야 한다). lang·name은 호출 모양 호환(항목은 언어와 무관). export는 테스트용. */
+export function threadCtxLine(m, lang, name) { // eslint-disable-line no-unused-vars
   const s = m.src?.kind === 'session' ? m.src : null;
-  const who = s?.dir === 'out' ? `${en ? 'Captain' : '사장'} → ${s.toName ?? s.to}${en ? ' (session message)' : ' (세션 메시지)'}`
-    : s && m.who === 'crew' && s.dir === 'reply' ? `${s.fromName ?? s.from}${en ? ' (session message reply)' : ' (세션 메시지 답)'}`
-    : s && m.who === 'crew' && s.dir === 'notice' ? (en ? 'Notice' : '알림')
-    : m.who === 'user' ? (m.via ? (en ? 'Auto-delivered' : '자동 배달') : (en ? 'Captain' : '사장')) : name;
-  // 한 줄로 편다 — 본문뿐 아니라 화자 이름·첨부·산출물 경로도(3차 검수 LOW-4: 경로 속 줄바꿈이 '사장: …' 위조 줄을 만들었다). U+0085(NEL)·U+001C~U+001E는 \s에 없어 따로 넣는다
-  const flat = (x) => String(x ?? '').replace(/[\s\u0085\x1c-\x1e]+/g, ' ');
-  const list = (xs, rel) => xs.map((x) => 'vault/' + flat(rel(x))).join(', ');
-  const att = m.attachments?.length ? (en ? ` (attached, open with Read: ${list(m.attachments, (a) => a.rel)})` : ` (첨부, Read로 열람: ${list(m.attachments, (a) => a.rel)})`) : '';
-  const art = m.artifacts?.length ? (en ? ` (artifacts, open with Read: ${list(m.artifacts, (a) => a)})` : ` (산출물, Read로 열람: ${list(m.artifacts, (a) => a)})`) : '';
-  return `${flat(who)}: ${flat(m.text).slice(0, 500)}${att}${art}`;
+  const sender = s?.fromName ?? s?.from ?? null;
+  const who = s?.dir === 'out' ? { who: 'captain', to: s.toName ?? s.to ?? null, via: 'session' }
+    : s && m.who === 'crew' && s.dir === 'reply' ? { who: 'delivered', from: sender, via: 'session_reply' }
+    : s && m.who === 'crew' && s.dir === 'notice' ? { who: 'notice' }
+    : m.who === 'user' ? (m.via ? { who: 'delivered', via: String(m.via), ...(sender ? { from: sender } : {}) } : { who: 'captain', ...(m.actor?.name ? { from: m.actor.name } : {}) })
+    : { who: 'crew' };
+  const attachments = (m.attachments ?? []).map((a) => `vault/${a?.rel ?? ''}`);
+  const artifacts = (m.artifacts ?? []).map((a) => `vault/${a ?? ''}`);
+  return dataJson({ ...who, text: String(m.text ?? '').slice(0, 500), ...(attachments.length ? { attachments } : {}), ...(artifacts.length ? { artifacts } : {}) });
 }
 
 /** 스레드 맥락(외부 CLI 경로·SDK/네이티브 기기 교차 경로 공통) — 예산 안 최근 대화 + 예산 밖 누적 요약(thread-context.mjs).

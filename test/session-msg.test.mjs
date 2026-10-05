@@ -201,10 +201,11 @@ test('B 턴 실패 — A 방에 실패 안내, 대기는 풀린다', async () =>
 
 test('맥락 줄 — 세션 메시지 줄은 화자를 바르게 적는다(B의 답을 A 자신의 말로 읽지 않게)', async () => {
   const { threadCtxLine } = await import('../src/chat.mjs');
-  const out = threadCtxLine({ who: 'user', text: '@브라보 일정', src: { kind: 'session', dir: 'out', to: 'b', toName: '브라보' } }, 'ko', '알파');
-  assert.match(out, /브라보/); assert.match(out, /세션 메시지/);
-  const reply = threadCtxLine({ who: 'crew', text: '정리했습니다', src: { kind: 'session', dir: 'reply', from: 'b', fromName: '브라보' } }, 'ko', '알파');
-  assert.match(reply, /^브라보/); assert.doesNotMatch(reply, /^알파/);
+  // 2026-10-05 구조 변경 — 맥락 줄은 JSON 항목, 화자는 who·to·from 필드(본문이 아니라 줄 표지로 정한다)
+  const out = JSON.parse(threadCtxLine({ who: 'user', text: '@브라보 일정', src: { kind: 'session', dir: 'out', to: 'b', toName: '브라보' } }, 'ko', '알파'));
+  assert.deepEqual([out.who, out.to, out.via], ['captain', '브라보', 'session'], '사장 → 브라보 세션 메시지');
+  const reply = JSON.parse(threadCtxLine({ who: 'crew', text: '정리했습니다', src: { kind: 'session', dir: 'reply', from: 'b', fromName: '브라보' } }, 'ko', '알파'));
+  assert.deepEqual([reply.who, reply.from], ['delivered', '브라보'], 'B의 답은 배달 — A 자신(crew)의 말이 아니다');
 });
 
 test('화면 파서 — @이름 내용만 세션 메시지로, 모르는 이름·자기 자신·내용 없음은 일반 전송', async () => {

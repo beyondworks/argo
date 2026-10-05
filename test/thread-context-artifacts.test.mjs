@@ -54,36 +54,37 @@ const POSIX_ONLY = { skip: process.platform === 'win32' ? 'POSIX 셸 하네스 �
 const ARTS = ['projects/20260902_보고/보고서.md', 'files/표.csv'];
 const lastPrompt = async (ws) => (await readFile(join(ROOT, ws, '.fake-prompts'), 'utf8')).split('\n=====\n').filter(Boolean).at(-1);
 
-test('threadCtxLine: 화자·본문 500자 컷·첨부→산출물 노트 순서(컷 바깥)·ko/en·없으면 노트 없음', () => {
-  const long = '정리했습니다. ' + '가'.repeat(600); // 8자 + 600 → 컷 후 8자 + 가×492
+test('threadCtxLine: 항목 JSON 한 줄 — 화자(who)·본문 500자 컷(원문 그대로)·첨부→산출물 경로 필드(컷 바깥)·언어 무관·없으면 필드 없음', () => {
+  const long = '정리했습니다. ' + '가'.repeat(600); // 8자 + 600 → 컷 후 500자
   const m = { who: 'crew', text: long, attachments: [{ rel: 'files/a1_스케치.png', name: '스케치.png' }], artifacts: ARTS };
-  assert.equal(threadCtxLine(m, 'ko', '크루A'),
-    `크루A: 정리했습니다. ${'가'.repeat(492)} (첨부, Read로 열람: vault/files/a1_스케치.png) (산출물, Read로 열람: vault/projects/20260902_보고/보고서.md, vault/files/표.csv)`);
-  assert.equal(threadCtxLine(m, 'en', 'CrewA'),
-    `CrewA: 정리했습니다. ${'가'.repeat(492)} (attached, open with Read: vault/files/a1_스케치.png) (artifacts, open with Read: vault/projects/20260902_보고/보고서.md, vault/files/표.csv)`);
-  // 기존 계약 유지(회귀 없음) — 화자 3종·노트 없음
-  assert.equal(threadCtxLine({ who: 'user', text: '보고서  만들어줘' }, 'ko', '크루A'), '사장: 보고서 만들어줘');
-  assert.equal(threadCtxLine({ who: 'user', text: 'do it', via: 'mail' }, 'en', 'CrewA'), 'Auto-delivered: do it');
-  assert.equal(threadCtxLine({ who: 'crew', text: '넵', artifacts: [] }, 'ko', '크루A'), '크루A: 넵', '빈 배열이면 노트 없음');
+  const want = { who: 'crew', text: long.slice(0, 500), attachments: ['vault/files/a1_스케치.png'], artifacts: ['vault/projects/20260902_보고/보고서.md', 'vault/files/표.csv'] };
+  assert.deepEqual(JSON.parse(threadCtxLine(m, 'ko', '크루A')), want);
+  assert.equal(threadCtxLine(m, 'en', 'CrewA'), threadCtxLine(m, 'ko', '크루A'), '항목은 언어와 무관(머리말이 언어를 맡는다)');
+  assert.deepEqual(JSON.parse(threadCtxLine({ who: 'user', text: '보고서  만들어줘' }, 'ko', '크루A')), { who: 'captain', text: '보고서  만들어줘' }, '사장 — 원문 그대로(공백을 펴지 않는다)');
+  assert.deepEqual(JSON.parse(threadCtxLine({ who: 'user', text: 'do it', via: 'mail' }, 'en', 'CrewA')), { who: 'delivered', via: 'mail', text: 'do it' }, '자동 배달');
+  assert.deepEqual(JSON.parse(threadCtxLine({ who: 'crew', text: '넵', artifacts: [] }, 'ko', '크루A')), { who: 'crew', text: '넵' }, '빈 배열이면 필드 없음');
 });
 
-test('CLI 턴(ko): 스레드에 남은 앞 턴 산출물이 다음 턴 프롬프트의 최근 대화에 경로 노트로 실린다', POSIX_ONLY, async () => {
+const line = (o) => JSON.stringify(o);
+test('CLI 턴(ko): 스레드에 남은 앞 턴 산출물이 다음 턴 프롬프트의 최근 대화에 경로 필드로 실린다', POSIX_ONLY, async () => {
   const WS = 'ctx-ko'; await mkws(WS, 'ko');
   await appendTurn(WS, 'crew-a', { userMsg: '보고서 만들어줘', reply: '만들었습니다', handover: null, sessionId: null, artifacts: ARTS });
   const r = await chat(WS, 'crew-a', '아까 그 파일 이어서 다듬어줘');
   assert.match(String(r.reply), /이어서 정리했습니다/);
   const p = await lastPrompt(WS);
-  assert.match(p, /\n사장: 보고서 만들어줘\n크루A: 만들었습니다 \(산출물, Read로 열람: vault\/projects\/20260902_보고\/보고서\.md, vault\/files\/표\.csv\)\n/,
-    '최근 대화 블록의 크루 줄 끝에 산출물 노트(vault/ 접두, 쉼표 나열)');
+  assert.ok(p.includes(`\n${line({ who: 'captain', text: '보고서 만들어줘' })}\n${line({ who: 'crew', text: '만들었습니다', artifacts: ['vault/projects/20260902_보고/보고서.md', 'vault/files/표.csv'] })}\n`),
+    '최근 대화 블록의 크루 항목에 산출물 경로(vault/ 접두)');
+  assert.match(p, /## 최근 대화 \(줄마다 JSON 한 항목[^\n]*Read로 열람\)/, '읽는 법(화자는 who·경로는 Read로)은 한국어 머리말');
 });
 
-test('CLI 턴(en): 같은 노트가 영어 규약(attached/artifacts, open with Read)으로 실린다', POSIX_ONLY, async () => {
+test('CLI 턴(en): 같은 항목, 영어 머리말(open with Read)', POSIX_ONLY, async () => {
   const WS = 'ctx-en'; await mkws(WS, 'en');
   await appendTurn(WS, 'crew-a', { userMsg: 'make the report', reply: 'done', handover: null, sessionId: null, artifacts: [ARTS[0]] });
   await chat(WS, 'crew-a', 'polish that file');
   const p = await lastPrompt(WS);
-  assert.match(p, /\nCaptain: make the report\n크루A: done \(artifacts, open with Read: vault\/projects\/20260902_보고\/보고서\.md\)\n/, 'en 라벨·en 노트');
-  assert.doesNotMatch(p, /산출물, Read로 열람/, 'en 회사에 한국어 노트가 섞이지 않는다');
+  assert.ok(p.includes(`\n${line({ who: 'captain', text: 'make the report' })}\n${line({ who: 'crew', text: 'done', artifacts: ['vault/projects/20260902_보고/보고서.md'] })}\n`), 'en 항목');
+  assert.match(p, /## Recent conversation \(one JSON item per line[^\n]*open them with Read\)/, 'en 머리말');
+  assert.doesNotMatch(p, /줄마다 JSON 한 항목|Read로 열람/, 'en 회사에 한국어 머리말이 섞이지 않는다');
 });
 
 test('배선 — 두 맥락 빌더(CLI 경로·SDK 기기 교차 경로)가 threadCtxLine 한 벌을 지난다 [소스 구간 핀 — SDK 교차 경로는 가짜로 못 돈다]', async () => {
@@ -93,9 +94,9 @@ test('배선 — 두 맥락 빌더(CLI 경로·SDK 기기 교차 경로)가 thre
   // 2026-10-05(검수 반영): CLI 경로는 argv 러너 한도(limits)·중단 신호 같은 인자를 더 받는다 — 공통 앞부분(같은 줄 모양·범위·러너·모델)까지만 고정한다
   const calls = src.match(/await threadContextFor\(wsId, agentSlug, (thread|t), \{ contextScope, lang, name: meta\.name \|\| agentSlug, runner, model: effModel[ ,}]/g) ?? [];
   assert.equal(calls.length, 2, 'CLI 경로 + SDK 기기 교차 경로 = 2곳(한 곳이 옛 인라인 식으로 돌아가면 노트가 그 경로에서만 사라진다). 정당한 새 호출부를 추가하거나 인자 형태를 바꾸면 이 숫자·앵커를 함께 갱신할 것 — 핀을 우회하지 말고(검수 LOW-1)');
-  // 옛 인라인 식 부활 금지 — 노트 문구는 헬퍼 안에만 산다
-  assert.equal((src.match(/첨부, Read로 열람/g) ?? []).length, 1, '첨부 노트 문구는 threadCtxLine 안 1곳');
-  assert.equal((src.match(/산출물, Read로 열람/g) ?? []).length, 1, '산출물 노트 문구는 threadCtxLine 안 1곳');
+  // 옛 인라인 식 부활 금지 — 맥락 줄은 threadCtxLine 한 곳에서만 JSON 항목으로 만든다(2026-10-05 구조 변경 — 노트 문구 대신 경로 필드)
+  assert.equal((src.match(/export function threadCtxLine\(/g) ?? []).length, 1, 'threadCtxLine 정의 1곳');
+  assert.equal((src.match(/return dataJson\(\{ \.\.\.who, text:/g) ?? []).length, 1, '맥락 줄은 dataJson 항목 1곳');
   // 두 호출부가 각각 어느 구간에 있는지 — CLI(isCliRunner 블록)·SDK(crossCtx 블록)
   const cli = src.indexOf('if (cliTurn) {'); const sdk = src.indexOf('let crossCtx = '); // CLI 블록 앵커 = isCliTurn 결과(2026-09-06)
   assert.ok(cli > 0 && sdk > cli, '두 블록 앵커');
