@@ -8,6 +8,7 @@ import styles from './responsive.module.css';
 import { Avatar, Skeleton, Spinner, api, timeAgo } from '../../../ui';
 import { useLang, stageLabel } from '../../../i18n';
 import { rerunMode } from './rerun.mjs'; // '다시 실행'은 사장이 직접 시킨 턴만(F5)
+import { subscribeSearch } from '../search-bus.mjs'; // 상단 검색 받기(UL10)
 import { gistLabel } from '../../../lib/gist-display.mjs'; // 메신저 머리말을 뗀 요약(UX-A08)
 
 // 러너 표시명 — 서버 RUNNERS.name 준거(runner-connect RUNNER_NAMES와 같은 값)
@@ -50,11 +51,10 @@ export default function Activity({ params }) {
   }
   useEffect(load, [ws]);
   useEffect(() => {
-    const h = (e) => setQ(String(e.detail || '').toLowerCase());
-    window.addEventListener('argo:search', h);
+    const unsubscribe = subscribeSearch(window, setQ);
     window.addEventListener('argo:refresh', load);
     const t = setInterval(load, 20000);
-    return () => { window.removeEventListener('argo:search', h); window.removeEventListener('argo:refresh', load); clearInterval(t); };
+    return () => { unsubscribe(); window.removeEventListener('argo:refresh', load); clearInterval(t); };
   }, [ws]);
 
   const nameOf = (slug) => agents.find((a) => a.slug === slug)?.name ?? (slug || t('activity.company'));

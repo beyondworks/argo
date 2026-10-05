@@ -14,6 +14,7 @@ import { parseSide, sideParam, withSide } from './split.mjs';
 import { useSplitAlive } from './split-alive';
 import { nextCompanyData, brokenCardsOf } from './company-load.mjs';
 import { watchTopbarContent } from './topbar-fit.mjs';
+import { emitSearch } from './search-bus.mjs'; // 상단 검색 → 데크·활동·기억(UL10)
 import { searchScope } from './search-scope.mjs'; // 검색을 받는 화면에서만 검색 칸(UX-A03)
 import { gistLabel } from '../../lib/gist-display.mjs'; // 메신저 머리말을 뗀 요약(UX-A08)
 
@@ -331,7 +332,7 @@ function Shell({ children, params }) {
 
   // 헤더 검색 → 페이지가 구독해 목록을 필터링한다.
   useEffect(() => {
-    window.dispatchEvent(new CustomEvent('argo:search', { detail: q }));
+    emitSearch(window, q);
   }, [q]);
   useEffect(() => { setQ(''); }, [pathname]);
 

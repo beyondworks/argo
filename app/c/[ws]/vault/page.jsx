@@ -8,6 +8,7 @@ import { Suspense, use, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createPortal } from 'react-dom';
 import { Icon, Markdown, Spinner, Skeleton, DangerModal, api, imeGuard, timeAgo, tsFromRel, resolveWikiRel, artifactDownload } from '../../../ui';
+import { subscribeSearch } from '../search-bus.mjs'; // 상단 검색 받기(UL10)
 import { Graph2D } from '../graph2d'; // 2D 옵시디언식 — 3D 별자리(graphview)는 데크 위젯 전용
 import { useLang } from '../../../i18n';
 import { sideParam, withSide } from '../split.mjs';
@@ -135,9 +136,7 @@ function Vault({ params }) {
   }, [ws]);
 
   useEffect(() => {
-    const h = (e) => setQ(String(e.detail || '').toLowerCase());
-    window.addEventListener('argo:search', h);
-    return () => window.removeEventListener('argo:search', h);
+    return subscribeSearch(window, setQ);
   }, []);
 
   const [consolidating, setConsolidating] = useState(false);
