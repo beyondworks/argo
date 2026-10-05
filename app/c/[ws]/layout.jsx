@@ -11,6 +11,7 @@ import UpdateNotes from '../../update-notes';
 import { SplitPane } from './split-pane';
 import { parseSide, sideParam, withSide } from './split.mjs';
 import { useSplitAlive } from './split-alive';
+import { nextCompanyData } from './company-load.mjs';
 
 const fmtRun = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
 const fmtDur = (ms) => (ms == null ? '' : ms >= 60000 ? `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s` : `${Math.round(ms / 1000)}s`);
@@ -219,17 +220,25 @@ function Shell({ children, params }) {
     }
   }, [data, seen, pathname, ws, seenKey]);
 
+  // 조회 실패 — 진짜 없음(404 company_not_found)만 '찾을 수 없음' 화면, 그 밖(순단·401·500)은 보던 화면을 유지하고
+  // 상단바에 '다시 시도'를 띄운다(F3, 2026-10-05: 한 번의 실패로 화면 전체가 '회사를 찾을 수 없습니다'가 됐다).
+  const [loadFailed, setLoadFailed] = useState(false);
   const refresh = useCallback(() => {
-    api(`/api/companies/${ws}?light=1`).then(setData).catch(() => setData({ missing: true }));
+    api(`/api/companies/${ws}?light=1`)
+      .then((d) => { setData(d); setLoadFailed(false); })
+      .catch((e) => { setData((prev) => nextCompanyData(prev, e)); setLoadFailed(true); });
   }, [ws]);
   // 팀 이름 변경 — 데크 크루 목록(삭제)에서 옮겨왔다. 그룹 헤더 호버 ✎ → 인앱 InputModal(window.prompt는 Tauri 무동작)
   const [renameTeam, setRenameTeam] = useState(null);
+  const [shellNote, setShellNote] = useState(''); // 셸 조작 실패 안내(팀 이름 변경 등) — 상단바 아래 한 줄
   const doRenameTeam = useCallback(async (to) => {
     const from = renameTeam; setRenameTeam(null);
     if (!to?.trim() || to.trim() === from) return;
-    await fetch(`/api/companies/${ws}/agents`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ from, to: to.trim() }) }).catch(() => {});
+    // 결과 확인 — 실패를 성공처럼 닫던 결함(검증 추가 항목, 2026-10-05). 실패면 이유를 한 줄로 알린다.
+    const r = await fetch(`/api/companies/${ws}/agents`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ from, to: to.trim() }) }).catch(() => null);
+    if (!r?.ok) setShellNote((await r?.json().catch(() => ({})))?.error || t('deck.renameTeamFail'));
     refresh();
-  }, [renameTeam, ws, refresh]);
+  }, [renameTeam, ws, refresh, t]);
 
   // 크루 고정/해제 — company.json.crewPinned 갱신 후 재조회. 비파괴·즉시(확인 불필요).
   const togglePin = useCallback(async (slug) => {
@@ -579,6 +588,12 @@ function Shell({ children, params }) {
               v{appVersion}
             </span>
           ))}
+          {loadFailed && data?.company && (
+            <button type="button" className="chip" onClick={refresh} title={t('shell.reloadFailHint')}
+              style={{ flex: 'none', cursor: 'pointer', color: 'var(--danger)', borderColor: 'currentColor' }}>
+              {t('shell.reloadFail')}
+            </button>
+          )}
           <Clock />
           <TasksDock ws={ws} data={tasks} open={dockOpen} setOpen={setDockOpen} />
           <label className="search-pill">
@@ -592,13 +607,28 @@ function Shell({ children, params }) {
 
         <div className="content-row">
         <main ref={contentRef} className="content" style={{ width: '100%' }}>
+          {shellNote && (
+            <p role="alert" style={{ margin: '0 0 12px', fontSize: 12.5, color: 'var(--danger)', display: 'flex', gap: 8, alignItems: 'center' }}>
+              {shellNote}
+              <button type="button" className="btn sm" onClick={() => setShellNote('')} aria-label={t('common.close')}>×</button>
+            </p>
+          )}
           {data?.missing ? (
             <div className="empty" style={{ marginTop: 40 }}>
               {t('shell.notFound')} <Link href="/" style={{ color: 'var(--primary-strong)', fontWeight: 700 }}>{t('shell.backHome')}</Link>
             </div>
+          ) : data?.loadError ? (
+            // 처음부터 못 받았다 — 없음이 아니라 일시 실패다. 다시 시도와 홈 길을 함께 준다(F3).
+            <div className="empty" style={{ marginTop: 40, display: 'grid', gap: 12, justifyItems: 'center' }}>
+              <span>{t('shell.loadFail')}</span>
+              <span style={{ display: 'flex', gap: 8 }}>
+                <button type="button" className="btn btn-primary sm" onClick={refresh}>{t('common.retry')}</button>
+                <Link href="/" className="btn sm" style={{ textDecoration: 'none' }}>{t('shell.backHome')}</Link>
+              </span>
+            </div>
           ) : children}
         </main>
-        {side && !data?.missing && (
+        {side && !data?.missing && !data?.loadError && (
           <SplitPane ws={ws} side={side} sideStr={sideStr} onClose={closeSide}
             title={side.type === 'crew' ? (agents.find((a) => a.slug === side.key)?.name ?? side.key) : side.key.split('/').pop().replace(/\.md$/, '')}
             subtitle={side.type === 'crew' ? (agents.find((a) => a.slug === side.key)?.role || '') : ''} />
@@ -611,7 +641,7 @@ function Shell({ children, params }) {
       )}
       {fbOpen && <FeedbackModal onClose={() => setFbOpen(false)} />}
       <UpdateNotes current={appVersion} ready={versionReady} isApp={updIsApp}
-        blocked={!data || data.missing || !tasks || !!tasks.running?.length || dockOpen || fbOpen || renameTeam != null || ['checking', 'installing', 'ready'].includes(updPhase)} />
+        blocked={!data || data.missing || data.loadError || !tasks || !!tasks.running?.length || dockOpen || fbOpen || renameTeam != null || ['checking', 'installing', 'ready'].includes(updPhase)} />
     </div>
   );
 }

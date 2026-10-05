@@ -52,6 +52,8 @@ const EXPECT = {
   msgr_bad_request: { status: 400, ko: '조직 id·크루·허용 범위(all|list|owner)를 확인해 주세요', en: 'Check the organization id, crew, and allow scope (all|list|owner)' },
   msgr_crew_not_found: { status: 404, ko: '크루가 없습니다', en: 'Crew not found' },
   msgr_upstream: { status: 502, ko: '조직 서버 응답 오류 — 잠시 후 다시 시도해 주세요', en: 'Organization server error — please try again shortly' },
+  // 회사 정보 읽기 실패(F3, 2026-10-05) — 없음(404 company_not_found)과 갈라 화면이 '찾을 수 없음'으로 바뀌지 않게
+  company_load_failed: { status: 500, ko: '회사 정보를 불러오지 못했습니다 — 잠시 후 다시 시도해 주세요', en: "Couldn't load the company — please try again shortly" },
 };
 
 test('apiError — ko 문구는 기존 프로덕션 문자열 그대로 + 상태코드 + errorCode 동봉', async () => {

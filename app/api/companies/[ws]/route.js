@@ -10,6 +10,7 @@ import { ensureScheduler } from '../../../../src/scheduler.mjs';
 import { ensureGateway } from '../../../../src/gateway.mjs';
 import { nudgeSync } from '../../../../src/sync.mjs';
 import { guardCompany, authError, requestLang, csrfDenied } from '../../../auth.mjs';
+import { apiError } from '../../../apimsg.mjs';
 
 ensureScheduler(); // 앱 사용이 시작되면 루틴 스케줄러 상주
 ensureGateway(); // 메신저 게이트웨이(텔레그램/슬랙) 상주
@@ -58,9 +59,13 @@ export async function GET(req, { params }) {
       stats: docStats(docs, link),
       usage, delegations, limits,
     });
-  } catch {
-    // AUTH off(로컬 모드)에선 guardCompany가 회사 존재를 안 보므로 부재 404는 이 catch가 담당한다
-    return authError('company_not_found', await requestLang());
+  } catch (e) {
+    // AUTH off(로컬 모드)에선 guardCompany가 회사 존재를 안 보므로 부재 404는 이 catch가 담당한다.
+    // 단 **없음**(company.json ENOENT·규칙 밖 id)만 404 — 손상·권한·일시 읽기 실패까지 404로 돌려주면 화면이
+    // '회사를 찾을 수 없습니다'로 바뀌어 회사가 사라진 것처럼 보였다(F3, 2026-10-05). 그 밖은 500(다시 시도 대상).
+    if (e?.code === 'ENOENT' || /잘못된 워크스페이스 id|워크스페이스 경계/.test(String(e?.message))) return authError('company_not_found', await requestLang());
+    console.error('[argo] 회사 정보 읽기 실패:', e?.code ?? '', String(e?.message ?? e).slice(0, 200));
+    return apiError('company_load_failed', await requestLang());
   }
 }
 
