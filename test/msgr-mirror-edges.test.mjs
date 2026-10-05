@@ -257,6 +257,7 @@ test('E13(검수 M3a). detachFiredCrew — 메신저 로그인이 없거나 소�
 // ── 검수 2차(23dd8163 대상) M-2·L-1 ──
 const guestWorld = ({ canInsert = async () => false, orgs = ['g1', 'g2', 'g3'], extra = {} } = {}) => {
   const d = db({ orgs, rows: [{ id: 'p1', org_id: null, slug: 'luna', display_name: '루나', role_text: null, status: 'active' }], looks: [] });
+  const allow = d.orgAllowDefaults; d.orgAllowDefaults = async (ids) => { d.calls.push(['orgAllowDefaults', ids]); return allow(ids); };
   d.canInsertCrews = async (orgId) => { d.calls.push(['canInsertCrews', orgId]); return canInsert(orgId); };
   d.upsertAvailable = async (rows) => { d.calls.push(['upsertAvailable', [...new Set(rows.map((r) => r.org_id))]]); throw new Error(RLS); };
   Object.assign(d, extra);
@@ -267,7 +268,7 @@ test('E14(2차 M-2). 손님으로만 든 조직은 insert를 시도하지 않는
   const d = guestWorld();
   const seen = new Map(), blocked = new Map(); let clock = 1_000_000;
   const tick = () => mirrorInventory(WS, { db: d, uid: UID, agents: [card('luna', null, '루나')], seen, blocked, now: () => clock, log: () => {} });
-  for (let t = 1; t <= 3; t++) { d.calls.length = 0; clock += 15_000; await tick(); assert.deepEqual(d.calls.filter(([k]) => k === 'upsertAvailable' || k === 'crewLooks'), [], `틱 ${t}: 실패 쓰기·얼굴 읽기 0`); }
+  for (let t = 1; t <= 3; t++) { d.calls.length = 0; clock += 15_000; await tick(); assert.deepEqual(d.calls.filter(([k]) => ['upsertAvailable', 'crewLooks', 'orgAllowDefaults'].includes(k)), [], `틱 ${t}: 실패 쓰기·얼굴 읽기·정책 읽기 0`); }
   assert.equal(d.calls.filter(([k]) => k === 'canInsertCrews').length, 0, '틱 2·3은 사전 확인도 안 한다(10분 안)');
   d.calls.length = 0; clock += 11 * 60_000; await tick();
   assert.deepEqual(d.calls.filter(([k]) => k === 'canInsertCrews').map(([, o]) => o), ['g1', 'g2', 'g3'], '10분이 지나면 한 번 다시 묻는다(역할이 바뀌었을 수 있다)');
@@ -327,4 +328,14 @@ test('E16(2차 L-1). 해고 라우트 분리와 같은 slug 재영입 경쟁 —
   const d3 = db({ rows: mkRows() }); const asked3 = []; d3.detachActiveCrews = async (...a) => { asked3.push(a); return []; };
   assert.deepEqual(await M.detachFiredCrew(WS, 'x', { session: async () => ({ uid: UID, db: d3 }), load: async () => ({ ownerId: UID }), seen: new Map(), hasCard: async () => { throw new Error('ENOENT'); }, log: () => {} }), { skipped: 'cards' });
   assert.deepEqual(asked3, []);
+});
+
+test('E17(2차 M-2). 넣을 행이 없는 유휴 틱은 허용 범위 기본값(msgr_org_policies)도 읽지 않는다 — 넣을 행이 생긴 틱에만, 넣을 수 있는 조직 것만', async () => {
+  const d = db({ orgs: [O1, O2], rows: [{ id: 'r1', org_id: O1, slug: 'luna', display_name: '루나', role_text: null, status: 'active' }, { id: 'p1', org_id: null, slug: 'luna', display_name: '루나', role_text: null, status: 'active' }, { id: 'r2', org_id: O2, slug: 'luna', display_name: '루나', role_text: null, status: 'active' }], looks: [] });
+  const asked = []; const allow = d.orgAllowDefaults; d.orgAllowDefaults = async (ids) => { asked.push(ids); return allow(ids); };
+  const seen = new Map(), blocked = new Map();
+  for (let t = 0; t < 3; t++) await mirrorInventory(WS, { db: d, uid: UID, agents: [card('luna', null, '루나')], seen, blocked, now: () => 1 });
+  assert.deepEqual(asked, [], '유휴 틱 정책 읽기 0');
+  await mirrorInventory(WS, { db: d, uid: UID, agents: [card('luna', null, '루나'), card('newbie', null, '새내기')], seen, blocked, now: () => 1 });
+  assert.deepEqual(asked, [[O1, O2]], '새 에이전트가 생긴 틱에만 한 번');
 });

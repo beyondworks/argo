@@ -586,7 +586,8 @@ export async function mirrorInventory(wsId, { db, uid, agents, log = console.err
   // 개인 미러 실패(옛 서버 — org_id NOT NULL 등)가 조직 미러를 막지 않게 따로 잡는다(분리 검수 M1: 앱이 마이그레이션보다 먼저 나가면 조직 사용자 회귀)
   const personal = db.insertPersonal ? await mirrorPersonal(wsId, { db, uid, agents, rows, log, edges, looksOf }).catch((e) => { log('[argo] msgr 개인 크루 미러 실패 — 조직 미러는 계속:', e?.message ?? e); return { inserted: 0, updated: 0, removed: 0 }; }) : { inserted: 0, updated: 0, removed: 0 };
   if (!orgIds.length) return done({ orgs: 0, ...personal });
-  const allowDefaults = await db.orgAllowDefaults(orgIds).catch((e) => { log('[argo] msgr 조직 정책 조회 실패 — 허용 범위 owner로 파견:', e.message); return {}; });
+  // 허용 범위 기본값은 새 행을 넣을 조직에만 읽는다 — 넣을 것이 없는 유휴 틱은 읽기 0(DB 위생, 검수 2차 M-2)
+  const allowDefaults = insertable.size ? await db.orgAllowDefaults([...insertable]).catch((e) => { log('[argo] msgr 조직 정책 조회 실패 — 허용 범위 owner로 파견:', e.message); return {}; }) : {};
   const bySlug = new Map(agents.map((a) => [a.slug, a]));
   const out = { orgs: orgIds.length, inserted: personal.inserted, updated: personal.updated, removed: personal.removed };
   const inserts = [];
