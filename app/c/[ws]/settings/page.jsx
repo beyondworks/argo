@@ -236,7 +236,7 @@ function Settings({ params }) {
           <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: '6px 0 0' }}>
             {t('settings.archive.pathPrefix')}
             <span className="mono" style={{ fontSize: 11 }}> workspaces/.archive/</span>
-            {t('settings.archive.pathSuffix')}
+            {t('settings.archive.pathSuffix')} {t('settings.archive.restoreHint')}
           </p>
         </div>
         <button className="btn sm" style={{ color: 'var(--danger)', borderColor: 'var(--danger)', flex: 'none' }} onClick={() => setArchiveOpen(true)}>

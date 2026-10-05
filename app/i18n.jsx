@@ -976,6 +976,7 @@ const DICT = {
   'settings.nameplate.vaultVal': ['{n}건 기록 · {links}건 연결', '{n} records · {links} links'],
   'settings.archive.pathPrefix': ["목록에서 사라지지만 데이터(에이전트·기억·루틴)는 바로 지워지지 않고", "Removed from the list, but data (agents, memory, routines) is not erased right away — it's kept in"],
   'settings.archive.pathSuffix': ['에 보존됩니다.', '.'],
+  'settings.archive.restoreHint': ["홈 화면이나 아래 '삭제한 회사'에서 되돌릴 수 있습니다.", "You can restore it from the Home screen or 'Deleted companies' below."],
   'settings.conn.suffix': [' 연결', ''],
   'settings.conn.on': ['가동', 'On'],
   'settings.conn.onStandby': ['대기', 'Standby'],

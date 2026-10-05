@@ -4,19 +4,24 @@ import { createPortal } from 'react-dom';
 import { useLang } from './i18n';
 import { Icon, overlayActive, OVERLAY_EVENT, uiWorkActive, UI_WORK_EVENT } from './ui';
 import { acknowledgeUpdateNotesVersion, closeUpdateNotes, isEditingElement, readUpdateNotesVersion,
-  shouldAutoDismissUpdateNotes, shouldShowUpdateNotes, updateNotesFor, UPDATE_NOTES_BLUR_SETTLE_MS } from './update-notes-state.mjs';
+  shouldAutoDismissUpdateNotes, shouldShowUpdateNotes, updateNotesCardPlacement, updateNotesFor, UPDATE_NOTES_BLUR_SETTLE_MS,
+  UPDATE_NOTES_INLINE_STYLE, UPDATE_NOTES_SLOT_ID } from './update-notes-state.mjs';
 
 // Later/error dismissals survive company navigation, but not a new app/browser session.
 const dismissedVersions = new Set();
 const bundleVersion = process.env.NEXT_PUBLIC_APP_VERSION || '';
 
-// 자리: 상단바(56px) 바로 아래 오른쪽. 오른쪽 아래 고정이던 때는 크루 대화 보내기·데크 크루 영입·설정 '해제' 버튼을
+// 자리: 회사 화면은 본문 맨 위 자리에 흐름대로(inline — 아래 내용을 밀어낸다, 덮지 않는다. T6 발견: 떠 있는 카드가 데크 '설정에서 연결하기'를 덮었다).
+// 자리가 없을 때만 떠 있는 카드 — 상단바(56px) 바로 아래 오른쪽. 오른쪽 아래 고정이던 때는 크루 대화 보내기·데크 크루 영입·설정 '해제' 버튼을
 // 덮었다(UX-A01, 2026-10-05). 높이는 하단 입력줄 구역(바닥 180px)을 남기도록 줄인다(test/display-zoom-layout 잠금).
-export function UpdateNotesCard({ version, items, t, onConfirm, saving = false, error = '', onDismiss, onClose = onDismiss }) {
+export function UpdateNotesCard({ version, items, t, onConfirm, saving = false, error = '', onDismiss, onClose = onDismiss, inline = false }) {
   const titleId = useId();
-  return <section className="card card-float" role="dialog" aria-modal="false" aria-labelledby={titleId}
+  const ref = useRef(null);
+  // 칩은 늘 보이는 상단바에 있다 — 스크롤을 내린 데크에서 펼쳐도 본문 맨 위 카드가 보이게 한다(scrollMarginTop 72 = 붙박이 상단바 56 + 여백, 상단바 밑에 숨지 않게)
+  useEffect(() => { if (inline) ref.current?.scrollIntoView?.({ block: 'nearest' }); }, [inline]);
+  return <section ref={ref} className={inline ? 'card' : 'card card-float'} role="dialog" aria-modal="false" aria-labelledby={titleId} data-update-notes={inline ? 'inline' : 'float'}
     onKeyDown={(event) => { if (event.key === 'Escape' && !saving) { event.stopPropagation(); onDismiss(); } }}
-    style={{ position: 'fixed', right: 'max(16px, env(safe-area-inset-right))', top: '68px',
+    style={inline ? UPDATE_NOTES_INLINE_STYLE : { position: 'fixed', right: 'max(16px, env(safe-area-inset-right))', top: '68px',
       width: 'min(420px, calc(90vw / var(--z, 1)))', maxWidth: 'calc(100% - max(16px, env(safe-area-inset-right)) - 16px)',
       maxHeight: 'max(120px, min(380px, calc(100vh / var(--z, 1) - 248px)))', display: 'flex', flexDirection: 'column', overflow: 'hidden', overflowWrap: 'anywhere', zIndex: 90,
       background: 'var(--card)', boxShadow: 'var(--shadow-float)', color: 'var(--fg)' }}>
@@ -154,7 +159,8 @@ export default function UpdateNotes({ current, ready, isApp, blocked = false }) 
     return createPortal(<UpdateNotesPill version={current} t={t} onExpand={() => setExpanded(true)} onClose={close} />, document.body);
   }
   if (surface.hidden || surface.editing || surface.overlay) return null;
-  return createPortal(<UpdateNotesCard version={current} items={presentation.errorOnly ? [] : items} t={t}
+  const place = updateNotesCardPlacement(document.getElementById(UPDATE_NOTES_SLOT_ID));
+  return createPortal(<UpdateNotesCard version={current} items={presentation.errorOnly ? [] : items} t={t} inline={place.inline}
     onConfirm={presentation.errorOnly ? undefined : confirm} saving={saving}
-    error={presentation.error ? t(presentation.error) : ''} onDismiss={dismiss} onClose={close} />, document.body);
+    error={presentation.error ? t(presentation.error) : ''} onDismiss={dismiss} onClose={close} />, place.host ?? document.body);
 }

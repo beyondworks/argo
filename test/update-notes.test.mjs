@@ -128,3 +128,31 @@ test('닫기(×)는 같은 버전 확인 기록을 남겨 다시 띄우지 않�
     '닫은 버전은 새 실행(세션 기억 없음)에서도 다시 뜨지 않는다');
   assert.equal(await closeUpdateNotes('0.1.95', { isApp: true, invoke: async () => { throw new Error('native down'); } }), false);
 });
+
+// T6 발견(2026-10-05): 칩을 눌러 펼친 카드가 상단바 아래 오른쪽에 떠서 데크 '설정에서 연결하기'를 덮었다(390·1280 × ko/en × 라이트/다크 8조합).
+// 0.1.95는 카드가 저절로 떠서 오른쪽 아래(또는 폰 화면 절반)를 덮었다. → 회사 화면은 본문 맨 위 자리에 흐름대로 놓아 아래 내용을 밀어낸다.
+test('펼친 카드 자리 — 본문 자리가 있으면 그 안에 흐름대로(덮는 위치 지정 없음), 없을 때만 떠 있는 카드', async () => {
+  const { updateNotesCardPlacement, UPDATE_NOTES_INLINE_STYLE, UPDATE_NOTES_SLOT_ID } = await import('../app/update-notes-state.mjs');
+  const slot = { id: UPDATE_NOTES_SLOT_ID };
+  assert.deepEqual(updateNotesCardPlacement(slot), { inline: true, host: slot });
+  assert.deepEqual(updateNotesCardPlacement(null), { inline: false, host: null });
+  for (const prop of ['position', 'top', 'right', 'bottom', 'left', 'inset', 'zIndex', 'transform', 'float', 'marginTop']) {
+    assert.ok(!Object.hasOwn(UPDATE_NOTES_INLINE_STYLE, prop), `흐름 카드에 ${prop} — 다른 요소 위에 겹칠 수 있다`);
+  }
+  assert.equal(UPDATE_NOTES_INLINE_STYLE.width, '100%');
+  assert.ok(UPDATE_NOTES_INLINE_STYLE.scrollMarginTop >= 56, '스크롤을 내린 화면에서 펼치면 카드를 끌어올리는데, 붙박이 상단바(56px) 밑에 숨으면 안 된다');
+});
+
+test('배선 — 회사 화면 본문 맨 앞에 빈 자리, 펼친 카드는 그 자리를 찾아 inline으로 그린다', async () => {
+  const { UPDATE_NOTES_SLOT_ID } = await import('../app/update-notes-state.mjs');
+  const { readFileSync } = await import('node:fs');
+  const layout = readFileSync(new URL('../app/c/[ws]/layout.jsx', import.meta.url), 'utf8');
+  const main = layout.match(/<main ref=\{contentRef\} className="content"[^>]*>([\s\S]*?)<\/main>/)?.[1] ?? '';
+  const firstEl = main.replace(/\{\/\*[\s\S]*?\*\/\}/g, '').trim();
+  assert.ok(firstEl.startsWith(`<div id="${UPDATE_NOTES_SLOT_ID}" />`), '본문 첫 요소가 빈 안내 자리여야 한다(내용 앞 — 카드가 위에서 아래를 밀어낸다)');
+  const notes = readFileSync(new URL('../app/update-notes.jsx', import.meta.url), 'utf8');
+  assert.match(notes, /const place = updateNotesCardPlacement\(document\.getElementById\(UPDATE_NOTES_SLOT_ID\)\);/);
+  assert.match(notes, /<UpdateNotesCard [^>]*inline=\{place\.inline\}/);
+  assert.match(notes, /, place\.host \?\? document\.body\);/);
+  assert.match(notes, /style=\{inline \? UPDATE_NOTES_INLINE_STYLE : \{ position: 'fixed'/, '흐름 카드는 고정 위치 스타일을 쓰지 않는다');
+});

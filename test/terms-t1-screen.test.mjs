@@ -49,3 +49,14 @@ test('0.1.96 업데이트 안내에 용어 변경 항목, 0.1.95 항목은 그�
   assert.ok(!UPDATE_NOTES['0.1.95'].includes('updates.note.agentRename'), '0.1.95는 핫픽스로 따로 발행 — 손대지 않는다');
   assert.ok(entry('updates.note.agentRename'), 'ko·en 사전 항목');
 });
+
+// T6 발견(2026-10-05): 설정 위험 구역의 회사 삭제 카드 설명에 되돌리기 안내가 없었다(확인 창에만 있음, 0.1.95도 같음).
+test('회사 삭제 카드 설명 — 되돌리기 안내(ko·en)가 카드 설명 안에 나온다', () => {
+  const [ko, en] = entry('settings.archive.restoreHint') ?? [];
+  assert.ok(ko && en, 'settings.archive.restoreHint ko·en');
+  assert.match(ko, /되돌릴 수 있습니다/); assert.match(ko, /삭제한 회사/);
+  assert.match(en, /restore/); assert.match(en, /Deleted companies/); assert.doesNotMatch(en, /[가-힣]/);
+  const page = readFileSync(new URL('../app/c/[ws]/settings/page.jsx', import.meta.url), 'utf8');
+  const desc = page.match(/\{t\('settings\.archive\.pathPrefix'\)\}[\s\S]*?<\/p>/)?.[0] ?? '';
+  assert.match(desc, /\{t\('settings\.archive\.restoreHint'\)\}/, '삭제 카드 설명 문단 안에 되돌리기 안내');
+});

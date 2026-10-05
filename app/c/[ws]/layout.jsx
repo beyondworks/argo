@@ -652,6 +652,8 @@ function Shell({ children, params }) {
 
         <div className="content-row">
         <main ref={contentRef} className="content" style={{ width: '100%' }}>
+          {/* 이번 업데이트 펼친 카드 자리 — 비어 있으면 높이 0. 카드는 여기서 아래 내용을 밀어낼 뿐 버튼을 덮지 않는다(update-notes.jsx) */}
+          <div id="argo-update-notes-slot" />
           {shellNote && (
             <p role="alert" style={{ margin: '0 0 12px', fontSize: 12.5, color: 'var(--danger)', display: 'flex', gap: 8, alignItems: 'center' }}>
               {shellNote}

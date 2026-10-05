@@ -2199,12 +2199,12 @@ body.split-resizing { cursor: col-resize; user-select: none; }
 /* The main shell measures content width without containment, so fixed dialogs retain
    their viewport anchor. A narrow split or zoomed view must not hide the session rail. */
 .chat-body { height: 100%; }
+/* 좁은 본문(폰·옆 패널·배율)에서도 레일+본문을 한 화면 높이(.chat-cols 기본 높이) 안에 담는다 — 본문은 레일을 뺀 나머지(1fr)를
+   .chat-body height 100%로 채운다. 예전에는 그리드를 auto로 풀고 본문만 화면 높이로 고정해, 레일 높이(+간격)만큼 입력창이
+   첫 화면 아래로 밀렸다(T6 실측 390×844: 입력창 top 859, 0.1.95도 같음). 레일은 아래 26vh 상한이라 본문 몫이 남는다.
+   잠금: test/topbar-phone-policy.test.mjs '좁은 본문 — 입력창이 첫 화면 안'. */
 .content[data-narrow-content] > .chat-cols {
-  height: auto;
   grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr);
-}
-.content[data-narrow-content] > .chat-cols > .chat-body {
-  height: calc(100vh / var(--z, 1) - 100px);
 }
 .content[data-narrow-content] > .chat-cols > .side-rail {
   position: static; width: auto; max-height: calc(26vh / var(--z, 1)); overflow-y: auto;

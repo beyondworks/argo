@@ -42,6 +42,18 @@ export function shouldAutoDismissUpdateNotes({ visible = false, editing = false,
   return !!(visible && editing && !saving);
 }
 
+/** 펼친 카드 자리 — 회사 화면은 본문 맨 위에 자리(layout.jsx #argo-update-notes-slot)가 있어 카드를 그 안에 흐름대로 놓는다.
+    아래 내용을 밀어낼 뿐 어떤 버튼도 덮지 않는다(T6 발견 2026-10-05: 상단바 아래 떠 있던 카드가 데크 '설정에서 연결하기'를 덮었다).
+    자리가 없는 화면에서만 떠 있는 카드로 남는다. */
+export const UPDATE_NOTES_SLOT_ID = 'argo-update-notes-slot';
+export const UPDATE_NOTES_INLINE_STYLE = Object.freeze({
+  width: '100%', margin: '0 0 16px', scrollMarginTop: 72, display: 'flex', flexDirection: 'column', overflowWrap: 'anywhere',
+  background: 'var(--card)', color: 'var(--fg)',
+});
+export function updateNotesCardPlacement(slot) {
+  return slot ? { inline: true, host: slot } : { inline: false, host: null };
+}
+
 /** 입력창을 떠난 뒤 카드를 그리기까지 기다리는 시간 — 입력창 → 버튼으로 포커스가 옮겨지는 그 클릭 도중에 카드가 생기지 않게. */
 export const UPDATE_NOTES_BLUR_SETTLE_MS = 1500;
 

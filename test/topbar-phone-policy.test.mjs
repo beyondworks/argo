@@ -262,8 +262,6 @@ test('본문 내부 열 잠금 — 크루·경쟁 채팅 컬럼의 무템플릿 
   assert.match(crew, /className="chat-body"\s+style=\{\{ width: '100%', display: 'grid', gridTemplateColumns: 'minmax\(0, 1fr\)', gridTemplateRows: 'auto 1fr auto'/,
     '크루 채팅 컬럼 열 잠금이 없다 — 컴포저 min-content(실측 212px)가 암묵 열을 부풀려 360px에서 문서 가로 넘침 100px이 재발한다');
   assert.equal(effective('.chat-body', 'height', 901), '100%', '넓은 화면의 본문 높이는 CSS로 이관한 100%를 유지한다');
-  assert.equal(effective('.content[data-narrow-content] > .chat-cols > .chat-body', 'height', 901),
-    'calc(100vh / var(--z, 1) - 100px)', '좁은 유효폭에서도 본문 높이는 표시 배율로 보정한다');
   assert.match(compete, /gridTemplateColumns: 'minmax\(0, 1fr\)', gridTemplateRows: 'auto 1fr auto', gap: 12/,
     '경쟁 본문 컬럼 열 잠금이 없다 — 같은 계열 넘침(실측 100px)이 재발한다');
 });
@@ -282,4 +280,49 @@ test('크루 채팅 컬럼 배치 불변식 — 밴드1·스레드2·컴포저3 
     '읽기 전용 카드(viewing)에 gridRow: 3이 없다 — 아카이브 열람 분기에서 카드가 자동배치로 떠오른다');
   assert.match(crew, /<div style=\{\{ gridRow: 3, width: '100%', maxWidth: LANE, margin: '0 auto', paddingTop: 12/,
     '컴포저 스택에 gridRow: 3이 없다 — 주 분기에서 컴포저 상단 부양이 재발한다(재검수 실측: auto 복귀 시 rows 96px/704px/0px·top 82)');
+});
+
+// T6 발견(2026-10-05): 390×844에서 에이전트 대화 입력창이 첫 화면 아래(top 859)에 있었다 — 0.1.95도 같음.
+// 원인: 좁은 본문(data-narrow-content, 폰 전부)에서 .chat-cols를 height:auto로 풀고 본문만 화면 높이(100vh−100)로 고정해,
+// 레일(최대 26vh)+간격만큼 입력창(본문 맨 아래)이 화면 밖으로 밀렸다.
+// 잠그는 행동: 캐스케이드 승자 값으로 좁은 본문의 세로 배치를 계산해, 레일이 상한까지 자라도 본문 바닥(입력창 바닥)이
+// 뷰포트 안이고 본문 몫이 입력창(96)+밴드가 들어갈 만큼 남는지. 실제 렌더 값은 격리 서버 측정 캡처(t6-fixes)가 확인한다.
+const NARROW = '.content[data-narrow-content] > .chat-cols';
+const calcPx = (v, { H, z }) => {
+  if (v == null) return null;
+  const expr = String(v).trim().replace(/^calc\((.*)\)$/, '$1')
+    .replace(/var\(--z,\s*1\)/g, String(z)).replace(/(\d+(?:\.\d+)?)vh/g, (_, n) => String((Number(n) * H) / 100)).replace(/px/g, '');
+  if (!/^[\d\s.+\-*/()]+$/.test(expr)) return null;
+  return Function(`return (${expr})`)();
+};
+function narrowChatFit(W, H, z = 1) {
+  const pick = (sel, base, prop) => effective(sel, prop, W) ?? effective(base, prop, W); // 결합 셀렉터가 특이도로 이긴다
+  const colsH = pick(NARROW, '.chat-cols', 'height');
+  const bodyH = pick(`${NARROW} > .chat-body`, '.chat-body', 'height');
+  const rows = pick(NARROW, '.chat-cols', 'grid-template-rows');
+  const rail = calcPx(effective(`${NARROW} > .side-rail`, 'max-height', W), { H, z });
+  const gap = pxOf(effective('.chat-cols', 'gap', W));
+  const top = pxOf(effective('.topbar', 'height', W)) + pxOf(String(effective('.content', 'padding', W)).split(/\s+/)[0]);
+  let bodyTop; let bodyBottom;
+  if (colsH === 'auto') { // 그리드가 내용만큼 — 레일 아래에 본문 고정 높이
+    bodyTop = top + rail + gap; bodyBottom = bodyTop + calcPx(bodyH, { H, z });
+  } else if (bodyH === '100%' && /^auto\s+minmax\(0,\s*1fr\)$/.test(rows)) { // 고정 높이 그리드의 나머지 행을 채운다
+    bodyTop = top + rail + gap; bodyBottom = top + calcPx(colsH, { H, z });
+  } else {
+    bodyTop = top + rail + gap; bodyBottom = bodyTop + calcPx(bodyH, { H, z });
+  }
+  return { bodyBottom: bodyBottom * z, bodyShare: (bodyBottom - bodyTop) * z, colsH, bodyH, rail };
+}
+
+test('좁은 본문 — 레일이 상한까지 자라도 입력창(본문 바닥)이 첫 화면 안, 본문 몫은 입력창+밴드 이상', () => {
+  for (const [W, H] of [[360, 640], [375, 667], [390, 844], [430, 932]]) {
+    for (const z of [1, 1.25]) {
+      const fit = narrowChatFit(W, H, z);
+      assert.ok(Number.isFinite(fit.bodyBottom), `${W}×${H}·배율 ${z}: 세로 배치를 계산하지 못했다 ${JSON.stringify(fit)}`);
+      assert.ok(fit.bodyBottom <= H + 1e-6,
+        `${W}×${H}·배율 ${z}: 입력창 바닥 ${fit.bodyBottom.toFixed(0)}px > 뷰포트 ${H}px — 첫 화면에서 입력창이 안 보인다(그리드 auto + 본문 화면 높이 고정이 되돌아왔다) ${JSON.stringify(fit)}`);
+      assert.ok(fit.bodyShare >= 200 * z,
+        `${W}×${H}·배율 ${z}: 본문 몫 ${fit.bodyShare.toFixed(0)}px — 밴드·입력창(96)을 빼면 대화가 거의 안 보인다(레일 상한을 키웠는지 확인)`);
+    }
+  }
 });
