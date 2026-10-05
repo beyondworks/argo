@@ -1295,7 +1295,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
       replyMeta = rendered.msgrReply.meta;
       await appendTurn(wsId, job.slug, { userMsg: text, reply, handover: turn.handover, sessionId: turn.sessionId, attachments, artifacts: turn.artifacts,
         contextScope: ch.kind === 'dm' ? { kind: 'msgr-dm', channelId: job.channelId, threadRoot: job.threadRoot } : { kind: 'msgr', channelId: job.channelId, threadRoot: job.threadRoot },
-        via: 'msgr', actor: { uid: job.authorId, name: job.fromCrewId ? `${authorName} ← ${humanName}` : authorName } }); // actor = 사람 발화자(who:'user' 고정으로는 구분 불가하던 갭)
+        via: 'msgr', actor: { uid: job.authorId, name: job.fromCrewId ? `${authorName} ← ${humanName}` : authorName, relay: !!(job.fromCrewId || job.relayVia) } }); // actor = 사람 발화자(who:'user' 고정으로는 구분 불가하던 갭). relay = 크루가 넘긴 줄(authorId는 사슬을 시작한 사람이라 이 줄의 글쓴이가 아니다 — 스레드 맥락이 사장 글로 올리지 않게, chat.mjs threadCtxLine)
       // 메신저에는 사고 과정·도구 단계를 싣지 않는다(유건 결정 2026-09-24 — "답변 준비 중"만). 궤적은 주인 쪽 활동 로그가 정본.
     } catch (e) {
       if (e?.aborted) { // 사람이 누른 중단(msgr_request_stop 또는 주인의 데스크톱 정지 버튼) — turn-abort.mjs가 던지는 모양. 그때까지의 부분 답은 버리고 누가 멈췄는지만 남긴다.

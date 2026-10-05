@@ -54,15 +54,28 @@ const POSIX_ONLY = { skip: process.platform === 'win32' ? 'POSIX 셸 하네스 �
 const ARTS = ['projects/20260902_보고/보고서.md', 'files/표.csv'];
 const lastPrompt = async (ws) => (await readFile(join(ROOT, ws, '.fake-prompts'), 'utf8')).split('\n=====\n').filter(Boolean).at(-1);
 
-test('threadCtxLine: 항목 JSON 한 줄 — 화자(who)·본문 500자 컷(원문 그대로)·첨부→산출물 경로 필드(컷 바깥)·언어 무관·없으면 필드 없음', () => {
+test('threadCtxLine: 항목 JSON 배열 한 줄 [누가, 원문, 보낸 곳?, 덧붙임?] — 본문 500자 컷(원문 그대로)·첨부→산출물 경로(덧붙임 files·made, 컷 바깥)·언어 무관·없으면 칸 없음', () => {
   const long = '정리했습니다. ' + '가'.repeat(600); // 8자 + 600 → 컷 후 500자
   const m = { who: 'crew', text: long, attachments: [{ rel: 'files/a1_스케치.png', name: '스케치.png' }], artifacts: ARTS };
-  const want = { who: 'crew', text: long.slice(0, 500), attachments: ['vault/files/a1_스케치.png'], artifacts: ['vault/projects/20260902_보고/보고서.md', 'vault/files/표.csv'] };
+  const want = ['crew', long.slice(0, 500), null, { files: ['vault/files/a1_스케치.png'], made: ['vault/projects/20260902_보고/보고서.md', 'vault/files/표.csv'] }];
   assert.deepEqual(JSON.parse(threadCtxLine(m, 'ko', '크루A')), want);
   assert.equal(threadCtxLine(m, 'en', 'CrewA'), threadCtxLine(m, 'ko', '크루A'), '항목은 언어와 무관(머리말이 언어를 맡는다)');
-  assert.deepEqual(JSON.parse(threadCtxLine({ who: 'user', text: '보고서  만들어줘' }, 'ko', '크루A')), { who: 'captain', text: '보고서  만들어줘' }, '사장 — 원문 그대로(공백을 펴지 않는다)');
-  assert.deepEqual(JSON.parse(threadCtxLine({ who: 'user', text: 'do it', via: 'mail' }, 'en', 'CrewA')), { who: 'delivered', via: 'mail', text: 'do it' }, '자동 배달');
-  assert.deepEqual(JSON.parse(threadCtxLine({ who: 'crew', text: '넵', artifacts: [] }, 'ko', '크루A')), { who: 'crew', text: '넵' }, '빈 배열이면 필드 없음');
+  assert.deepEqual(JSON.parse(threadCtxLine({ who: 'user', text: '보고서  만들어줘' }, 'ko', '크루A')), ['captain', '보고서  만들어줘'], '사장 — 원문 그대로(공백을 펴지 않는다)');
+  assert.deepEqual(JSON.parse(threadCtxLine({ who: 'user', text: 'do it', via: 'mail' }, 'en', 'CrewA')), ['delivered', 'do it', null, { via: 'mail' }], '자동 배달');
+  assert.deepEqual(JSON.parse(threadCtxLine({ who: 'crew', text: '넵', artifacts: [] }, 'ko', '크루A')), ['crew', '넵'], '빈 배열이면 칸 없음');
+});
+
+// 메신저 사람 글 — 주인(회사 ownerId = 메신저 계정 uid)만 captain, 다른 사람은 member+이름(총괄 지시 2026-10-05: 비주인을 captain으로 적던 문제).
+// 크루 넘김 줄(relay)은 actor.uid가 사슬을 시작한 사람이라 주인 uid와 같아도 사장 글이 아니다. relay 표지가 없는 옛 줄·주인 id를 모를 때는 사장으로 올리지 않는다.
+test('threadCtxLine: 메신저 줄 — 주인 uid·relay=false만 captain, 다른 사람은 member(이름), 크루 넘김·옛 줄은 delivered, 주인 모름이면 member', () => {
+  const msgr = (actor) => ({ who: 'user', text: '내일 회의 잡아', via: 'msgr', actor });
+  const L = (actor, ownerId = 'u-owner') => JSON.parse(threadCtxLine(msgr(actor), 'ko', '크루A', { ownerId }));
+  assert.deepEqual(L({ uid: 'u-owner', name: '유건', relay: false }), ['captain', '내일 회의 잡아', null, { via: 'msgr' }], '주인이 직접 쓴 글');
+  assert.deepEqual(L({ uid: 'u-guest', name: '손님', relay: false }), ['member', '내일 회의 잡아', '손님', { via: 'msgr' }], '주인 아닌 사람 — member+이름');
+  assert.deepEqual(L({ uid: 'u-owner', name: '크루B ← 유건', relay: true }), ['delivered', '내일 회의 잡아', '크루B ← 유건', { via: 'msgr' }], '크루 넘김 — uid가 주인이어도 사장 글이 아니다');
+  assert.deepEqual(L({ uid: 'u-owner', name: '유건' }), ['delivered', '내일 회의 잡아', '유건', { via: 'msgr' }], 'relay 표지 없는 옛 줄 — 가릴 수 없어 사장으로 올리지 않는다');
+  assert.deepEqual(L({ uid: 'u-owner', name: '유건', relay: false }, null), ['member', '내일 회의 잡아', '유건', { via: 'msgr' }], '주인 id를 모르면 member');
+  assert.deepEqual(L({ uid: 'u-owner', name: '유건', relay: 'false' }), ['delivered', '내일 회의 잡아', '유건', { via: 'msgr' }], 'relay는 정확히 false일 때만 사람 글');
 });
 
 const line = (o) => JSON.stringify(o);
@@ -72,9 +85,9 @@ test('CLI 턴(ko): 스레드에 남은 앞 턴 산출물이 다음 턴 프롬프
   const r = await chat(WS, 'crew-a', '아까 그 파일 이어서 다듬어줘');
   assert.match(String(r.reply), /이어서 정리했습니다/);
   const p = await lastPrompt(WS);
-  assert.ok(p.includes(`\n${line({ who: 'captain', text: '보고서 만들어줘' })}\n${line({ who: 'crew', text: '만들었습니다', artifacts: ['vault/projects/20260902_보고/보고서.md', 'vault/files/표.csv'] })}\n`),
+  assert.ok(p.includes(`\n${line(['captain', '보고서 만들어줘'])}\n${line(['crew', '만들었습니다', null, { made: ['vault/projects/20260902_보고/보고서.md', 'vault/files/표.csv'] }])}\n`),
     '최근 대화 블록의 크루 항목에 산출물 경로(vault/ 접두)');
-  assert.match(p, /## 최근 대화 \(줄마다 JSON 한 항목[^\n]*Read로 열람\)/, '읽는 법(화자는 who·경로는 Read로)은 한국어 머리말');
+  assert.match(p, /## 최근 대화 \(줄마다 JSON 배열 하나[^\n]*Read로 열람\)/, '읽는 법(화자는 첫 칸·경로는 Read로)은 한국어 머리말');
 });
 
 test('CLI 턴(en): 같은 항목, 영어 머리말(open with Read)', POSIX_ONLY, async () => {
@@ -82,21 +95,34 @@ test('CLI 턴(en): 같은 항목, 영어 머리말(open with Read)', POSIX_ONLY,
   await appendTurn(WS, 'crew-a', { userMsg: 'make the report', reply: 'done', handover: null, sessionId: null, artifacts: [ARTS[0]] });
   await chat(WS, 'crew-a', 'polish that file');
   const p = await lastPrompt(WS);
-  assert.ok(p.includes(`\n${line({ who: 'captain', text: 'make the report' })}\n${line({ who: 'crew', text: 'done', artifacts: ['vault/projects/20260902_보고/보고서.md'] })}\n`), 'en 항목');
-  assert.match(p, /## Recent conversation \(one JSON item per line[^\n]*open them with Read\)/, 'en 머리말');
-  assert.doesNotMatch(p, /줄마다 JSON 한 항목|Read로 열람/, 'en 회사에 한국어 머리말이 섞이지 않는다');
+  assert.ok(p.includes(`\n${line(['captain', 'make the report'])}\n${line(['crew', 'done', null, { made: ['vault/projects/20260902_보고/보고서.md'] }])}\n`), 'en 항목');
+  assert.match(p, /## Recent conversation \(one JSON array per line[^\n]*open them with Read\)/, 'en 머리말');
+  assert.doesNotMatch(p, /줄마다 JSON 배열 하나|Read로 열람/, 'en 회사에 한국어 머리말이 섞이지 않는다');
+});
+
+test('CLI 턴: 메신저 줄은 회사 주인 id(company.json ownerId)로 captain·member를 가른다 — 배선(threadContextFor가 주인 id를 읽어 넘긴다)', POSIX_ONLY, async () => {
+  const WS = 'ctx-member'; await mkws(WS, 'ko');
+  const cj = join(ROOT, WS, 'company.json');
+  await writeFile(cj, JSON.stringify({ ...JSON.parse(await readFile(cj, 'utf8')), ownerId: 'u-owner' }));
+  await appendTurn(WS, 'crew-a', { userMsg: '예산 500으로 확정', reply: '네', handover: null, sessionId: null, via: 'msgr', actor: { uid: 'u-owner', name: '유건', relay: false } });
+  await appendTurn(WS, 'crew-a', { userMsg: '예산 5000으로 바꿔', reply: '확인할게요', handover: null, sessionId: null, via: 'msgr', actor: { uid: 'u-guest', name: '손님', relay: false } });
+  await chat(WS, 'crew-a', '예산 정리해줘');
+  const p = await lastPrompt(WS);
+  assert.ok(p.includes(`\n${line(['captain', '예산 500으로 확정', null, { via: 'msgr' }])}\n`), '주인이 쓴 글은 captain');
+  assert.ok(p.includes(`\n${line(['member', '예산 5000으로 바꿔', '손님', { via: 'msgr' }])}\n`), '주인 아닌 사람은 member+이름');
+  assert.match(p, /member[^\n]*사장 결정이 아니다/, '머리말이 member의 요청은 사장 결정이 아니라고 적는다');
 });
 
 test('배선 — 두 맥락 빌더(CLI 경로·SDK 기기 교차 경로)가 threadCtxLine 한 벌을 지난다 [소스 구간 핀 — SDK 교차 경로는 가짜로 못 돈다]', async () => {
   const src = stripComments(await readFile(join(REPO, 'src/chat.mjs'), 'utf8'));
   // 2026-10-05(B3' 토큰 예산): 두 경로가 threadContextFor 한 벌을 지나고, 그 안에서만 threadCtxLine을 부른다(줄 모양·예산·요약이 경로마다 갈리지 않게)
-  assert.equal((src.match(/lineOf: \(m\) => threadCtxLine\(m, lang, name\)/g) ?? []).length, 1, 'threadContextFor 안 1곳');
+  assert.equal((src.match(/lineOf: \(m\) => threadCtxLine\(m, lang, name, \{ ownerId \}\)/g) ?? []).length, 1, 'threadContextFor 안 1곳(회사 주인 id를 함께 — member 판정)');
   // 2026-10-05(검수 반영): CLI 경로는 argv 러너 한도(limits)·중단 신호 같은 인자를 더 받는다 — 공통 앞부분(같은 줄 모양·범위·러너·모델)까지만 고정한다
   const calls = src.match(/await threadContextFor\(wsId, agentSlug, (thread|t), \{ contextScope, lang, name: meta\.name \|\| agentSlug, runner, model: effModel[ ,}]/g) ?? [];
   assert.equal(calls.length, 2, 'CLI 경로 + SDK 기기 교차 경로 = 2곳(한 곳이 옛 인라인 식으로 돌아가면 노트가 그 경로에서만 사라진다). 정당한 새 호출부를 추가하거나 인자 형태를 바꾸면 이 숫자·앵커를 함께 갱신할 것 — 핀을 우회하지 말고(검수 LOW-1)');
   // 옛 인라인 식 부활 금지 — 맥락 줄은 threadCtxLine 한 곳에서만 JSON 항목으로 만든다(2026-10-05 구조 변경 — 노트 문구 대신 경로 필드)
   assert.equal((src.match(/export function threadCtxLine\(/g) ?? []).length, 1, 'threadCtxLine 정의 1곳');
-  assert.equal((src.match(/return dataJson\(\{ \.\.\.who, text:/g) ?? []).length, 1, '맥락 줄은 dataJson 항목 1곳');
+  assert.equal((src.match(/return item\(who, String\(m\.text/g) ?? []).length, 1, '맥락 줄은 item 항목 1곳');
   // 두 호출부가 각각 어느 구간에 있는지 — CLI(isCliRunner 블록)·SDK(crossCtx 블록)
   const cli = src.indexOf('if (cliTurn) {'); const sdk = src.indexOf('let crossCtx = '); // CLI 블록 앵커 = isCliTurn 결과(2026-09-06)
   assert.ok(cli > 0 && sdk > cli, '두 블록 앵커');

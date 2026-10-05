@@ -49,7 +49,7 @@ import { scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, authExclu
 import { delegateHead } from './inbound-marks.mjs'; // 위임 머리말 = 1:1 화면 출처 카드와 같은 함수
 import { loadThread, takeSharedNotes, restoreSharedNotes, scopedSession, inContextScope, turnScope, scopeKey, approvalScope, threadSummary, setThreadSummary, appendLine } from './thread.mjs';
 import { buildThreadContext, contextSection, contextLimits, fitContextSection, isArgvRunner, argvLen, ARGV_PROMPT_LIMIT } from './thread-context.mjs';
-import { dataJson } from './record-block.mjs'; // 스레드 맥락 한 줄 = JSON 항목 하나(구조로 화자를 가른다) // 스레드 맥락 토큰 예산 + 누적 요약(최근 6개 고정을 대체) · argv 러너 길이 맞춤
+import { item } from './record-block.mjs'; // 스레드 맥락 한 줄 = 항목 하나(구조로 화자를 가른다) // 스레드 맥락 토큰 예산 + 누적 요약(최근 6개 고정을 대체) · argv 러너 길이 맞춤
 import { runOneShot } from './oneshot.mjs';
 import { readInstalledSkills, planSkillInjection, SKILL_INJECT_CAP } from './market.mjs'; // 주입·마켓 표기 공용 규칙(단일 진실)
 import { snapshotArtifacts, diffArtifacts, servableArtifact, capLatest, openTurnLedger, closeTurnLedger, overlappingTurns, attributeArtifacts } from './artifacts.mjs'; // 러너 무관 산출물 수집(제보 2026-07-30)
@@ -469,21 +469,31 @@ const connectorNames = (connectors, en) => connectors
 
 /** use_connector 도구 설명의 상한 — 이 문자열은 매 턴 컨텍스트에 실린다(설계서 §2-2 "상한 두고 절단"). */
 /** 스레드 맥락 한 줄 — 외부 CLI 경로(세션을 스레드 맥락으로 잇는다)와 SDK 기기 교차 경로가 **같은 함수**를 쓴다(러너 중립성).
-    줄 하나 = JSON 항목 하나(record-block.mjs dataJson — 본문·경로 속 줄 끝·제어·서식 문자는 이스케이프돼 내용이 새 줄·화자 줄을 만들 수 없다, 총괄 구조 변경 2026-10-05).
-    who는 스레드 줄의 표지(who·via·src)로만 정한다 — 본문을 보지 않는다: captain(사장이 쓴 글, 세션 메시지면 to) / delivered(via 턴·다른 크루의 세션 메시지 답, from·via) /
-    notice(세션 안내) / crew(이 크루). 본문은 500자에서 자르고(원문 그대로 — 공백을 펴지 않는다), 첨부·산출물 경로는 그 **바깥** 필드라 잘려도 산다
-    (2026-09-02 분리 검수 LOW-2: "아까 그 파일"로 이어가려면 경로로 받아야 한다). lang·name은 호출 모양 호환(항목은 언어와 무관). export는 테스트용. */
-export function threadCtxLine(m, lang, name) { // eslint-disable-line no-unused-vars
+    줄 하나 = 항목 하나 [누가, 원문, 보낸 곳?, 덧붙임?](record-block.mjs item — 본문·경로 속 줄 끝·제어·서식 문자는 이스케이프돼 내용이 새 줄·화자 줄을 만들 수 없다).
+    누가는 스레드 줄의 표지(who·via·src·actor)와 회사 주인 id(ownerId)로만 정한다 — 본문을 보지 않는다:
+      captain(사장이 쓴 글 — 세션 메시지면 덧붙임 to) / member(메신저에서 주인이 아닌 사람이 직접 쓴 글, 보낸 곳 = 이름) /
+      delivered(via 턴·다른 크루의 세션 메시지 답·메신저 크루 넘김, 보낸 곳·덧붙임 via) / notice(세션 안내) / crew(이 크루).
+    메신저 줄(actor)은 게이트웨이가 남긴 relay 표지가 false일 때만 사람 글로 본다 — 크루 넘김 줄의 actor.uid는 사슬을 시작한 사람(origin)이라 주인 id와
+    같아도 사장 글이 아니다. 표지가 없는 옛 줄은 가릴 수 없어 delivered로 둔다(fail-closed — 사장 결정으로 올리지 않는다).
+    본문은 500자에서 자르고(원문 그대로), 첨부·산출물 경로는 덧붙임 files·made라 잘려도 산다. lang·name은 호출 모양 호환. export는 테스트용. */
+export function threadCtxLine(m, lang, name, { ownerId = null } = {}) { // eslint-disable-line no-unused-vars
   const s = m.src?.kind === 'session' ? m.src : null;
   const sender = s?.fromName ?? s?.from ?? null;
-  const who = s?.dir === 'out' ? { who: 'captain', to: s.toName ?? s.to ?? null, via: 'session' }
-    : s && m.who === 'crew' && s.dir === 'reply' ? { who: 'delivered', from: sender, via: 'session_reply' }
-    : s && m.who === 'crew' && s.dir === 'notice' ? { who: 'notice' }
-    : m.who === 'user' ? (m.via ? { who: 'delivered', via: String(m.via), ...(sender ? { from: sender } : {}) } : { who: 'captain', ...(m.actor?.name ? { from: m.actor.name } : {}) })
-    : { who: 'crew' };
-  const attachments = (m.attachments ?? []).map((a) => `vault/${a?.rel ?? ''}`);
-  const artifacts = (m.artifacts ?? []).map((a) => `vault/${a ?? ''}`);
-  return dataJson({ ...who, text: String(m.text ?? '').slice(0, 500), ...(attachments.length ? { attachments } : {}), ...(artifacts.length ? { artifacts } : {}) });
+  const a = m.actor && typeof m.actor === 'object' ? m.actor : null;
+  const extra = {};
+  let who; let from = null;
+  if (s?.dir === 'out') { who = 'captain'; extra.to = s.toName ?? s.to ?? null; extra.via = 'session'; }
+  else if (s && m.who === 'crew' && s.dir === 'reply') { who = 'delivered'; from = sender; extra.via = 'session_reply'; }
+  else if (s && m.who === 'crew' && s.dir === 'notice') who = 'notice';
+  else if (m.who === 'user' && a) {
+    from = a.name ?? null; if (m.via) extra.via = String(m.via);
+    who = a.relay === false ? (ownerId && a.uid === ownerId ? 'captain' : 'member') : 'delivered';
+    if (who === 'captain') from = null;
+  } else if (m.who === 'user') { if (m.via) { who = 'delivered'; from = sender; extra.via = String(m.via); } else who = 'captain'; }
+  else who = 'crew';
+  if (m.attachments?.length) extra.files = m.attachments.map((x) => `vault/${x?.rel ?? ''}`);
+  if (m.artifacts?.length) extra.made = m.artifacts.map((x) => `vault/${x ?? ''}`);
+  return item(who, String(m.text ?? '').slice(0, 500), from, extra);
 }
 
 /** 스레드 맥락(외부 CLI 경로·SDK/네이티브 기기 교차 경로 공통) — 예산 안 최근 대화 + 예산 밖 누적 요약(thread-context.mjs).
@@ -500,8 +510,10 @@ export const inThreadContext = (m, contextScope) => inContextScope(m, contextSco
 async function threadContextFor(wsId, slug, t, { contextScope, lang, name, runner, model, limits = null, signal = null, status = null }) {
   const msgs = (t?.messages ?? []).filter((m) => inThreadContext(m, contextScope));
   let costUsd = null;
+  // 회사 주인 id — 메신저 줄의 사람 글을 사장(captain)과 다른 사람(member)으로 가른다(threadCtxLine). 모르면 null(사람 글은 member로 — 사장으로 올리지 않는다)
+  const ownerId = (await loadCompany(wsId).catch(() => ({}))).ownerId ?? null;
   const parts = await buildThreadContext({
-    msgs, lang, lineOf: (m) => threadCtxLine(m, lang, name), summary: threadSummary(t, contextScope), limits, // limits — argv 러너(agy)는 명령줄 길이 기준(contextLimits)
+    msgs, lang, lineOf: (m) => threadCtxLine(m, lang, name, { ownerId }), summary: threadSummary(t, contextScope), limits, // limits — argv 러너(agy)는 명령줄 길이 기준(contextLimits)
     memoKey: `${wsId}:${slug}:${scopeKey(contextScope) ?? ''}`, // 요약 실패 기억은 범위별(채널·그룹마다 따로) — 요약 저장 키와 같은 구분
     summarize: async (prompt) => {
       await status?.(true);

@@ -18,6 +18,7 @@ const { paths } = await import('../src/workspace.mjs');
 const { addApproval, loadApprovals, resolveApproval } = await import('../src/approvals.mjs');
 const { resolveWithFollowUp } = await import('../src/approval-actions.mjs');
 const { loadThread } = await import('../src/thread.mjs');
+const { threadCtxLine } = await import('../src/chat.mjs');
 const { saveHandover } = await import('../src/memory.mjs');
 const { CHANNEL_EVENTS, channelSends } = await import('../src/channel-events.mjs');
 const { registerTurn, interruptTurn, turnAbortedError } = await import('../src/turn-abort.mjs');
@@ -263,7 +264,7 @@ test('handler: 채널 접두·발화자 귀속·첨부 내려받기 → chat(jou
   assert.equal(ins[1].kind, 'system'); assert.match(ins[1].body, /missing\.png.*파일이 없습니다/s); // 침묵 실패 금지
   const t = await loadThread(WS, 'seoyun');
   const user = t.messages.find((m) => m.who === 'user');
-  assert.equal(user.via, 'msgr'); assert.deepEqual(user.actor, { uid: MEMBER, name: '민수' });
+  assert.equal(user.via, 'msgr'); assert.deepEqual(user.actor, { uid: MEMBER, name: '민수', relay: false }); // relay=false — 사람이 직접 쓴 글(스레드 맥락이 주인 uid와 맞춰 captain/member로 가른다)
   assert.equal(M._activeCtxForTest.size, 0, '턴 문맥은 턴이 끝나면 지운다');
 });
 
@@ -886,7 +887,7 @@ test('handler: after는 앞 크루가 끝날 때까지 기다림 · 최근 대�
   const row2 = db2.calls.find((x) => x[0] === 'insertMessage')[1];
   assert.deepEqual(row2.mentions, []); assert.deepEqual(row2.meta, { hop: 1, origin: MEMBER, guest: true }); // 손님 턴(요청자 MEMBER ≠ 주인)
   const t = await loadThread(WS, 'seoyun'); const last = t.messages.filter((m) => m.who === 'user').at(-1);
-  assert.deepEqual(last.actor, { uid: MEMBER, name: '제드 ← 민수' });
+  assert.deepEqual(last.actor, { uid: MEMBER, name: '제드 ← 민수', relay: true }); // 크루 넘김 — uid는 사슬을 시작한 사람이라 이 줄의 글쓴이가 아니다(스레드 맥락에서 사장 글로 올리지 않게)
   // 실패 턴은 mentions 비움(연쇄 중단) — 에러 회신 속 @이름이 다음 크루를 깨우지 않는다
   const db3 = fakeDb({ peers });
   const h3 = M.makeMsgrHandler(WS, { session: async () => ({ db: db3, uid: OWNER }), runChat: async () => { throw new Error('러너 미연결 — @제드 확인'); } });
@@ -2215,6 +2216,10 @@ test('LOW-1 — 넘긴 크루가 받는 DM의 구성원이 아니어도 조직 �
     let seen;
     await M.makeMsgrHandler(WS, { session: async () => ({ db: fakeDb({ peers, chCrews: [CREW], dm: [DM] }), uid: OWNER }), runChat: async (_w, _s, _t, _sid, opts) => { seen = opts; return { reply: 'ok', sessionId: null, artifacts: [] }; } })({ ...base, msgId: expect === 'zed' ? 95 : 96 });
     assert.equal(seen?.notOwnerDirect, expect);
+    // DM 전달로 옮겨 적힌 크루 넘김 — 줄의 uid는 주인(OWNER)이지만 글은 크루가 넘긴 것이다. 스레드 맥락이 사장 글(captain)로 올리지 않는다(총괄 지시 2026-10-05 member 판정)
+    const last = (await loadThread(WS, 'seoyun')).messages.filter((m) => m.who === 'user').at(-1);
+    assert.equal(last.actor.uid, OWNER); assert.equal(last.actor.relay, true, 'relayVia 줄은 relay 표지');
+    assert.equal(JSON.parse(threadCtxLine(last, 'ko', '서윤', { ownerId: OWNER }))[0], 'delivered', '주인 uid여도 넘김 줄은 delivered');
   }
 });
 
