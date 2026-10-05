@@ -238,6 +238,7 @@ function Settings({ params }) {
         {archiveErr && <p role="alert" style={{ flexBasis: '100%', fontSize: 12, color: 'var(--danger)', margin: 0 }}>{archiveErr}</p>}
       </div>
       </div>
+      <div className="cardrow"><ArchivedCompaniesCard ws={ws} /></div>
       </div>
       )}
 
@@ -744,6 +745,66 @@ function ImportCard({ ws }) {
             </p>
           )}
         </div>
+      )}
+    </div>
+  );
+}
+
+/** 보관한 회사 — 목록과 되돌리기(F14). 되돌리면 원래 자리로 돌아와 홈 목록에 다시 보인다. 보관 마커(tombstone)는 동기화가 철회한다
+    (src/workspace.mjs restoreArchivedCompany 주석). 다른 기기에서도 보관한 상태면 그 기기에서도 되돌려야 해 안내에 적는다. */
+function ArchivedCompaniesCard({ ws }) {
+  const { t, lang } = useLang();
+  const [items, setItems] = useState(null);
+  const [failed, setFailed] = useState(false);
+  const [busy, setBusy] = useState('');
+  const [msg, setMsg] = useState(null); // { ok, text, href? }
+  const load = useCallback(() => {
+    setFailed(false);
+    api('/api/archived-companies').then((d) => setItems(d.items ?? [])).catch(() => { setItems(null); setFailed(true); });
+  }, []);
+  useEffect(load, [load]);
+  async function restore(it) {
+    if (busy) return;
+    setBusy(it.archiveId); setMsg(null);
+    try {
+      const r = await api('/api/archived-companies', { archiveId: it.archiveId });
+      setMsg({ ok: true, text: t('settings.archived.restored', { name: it.name }), href: `/c/${r.wsId}` });
+      load();
+    } catch (e) {
+      setMsg({ ok: false, text: String(e?.message || t('settings.archived.restoreFail')) });
+    } finally { setBusy(''); }
+  }
+  void ws;
+  return (
+    <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <span className="card-title">{t('settings.archived.title')}{items?.length ? ` · ${items.length}` : ''}</span>
+      <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('settings.archived.desc')}</p>
+      {failed ? (
+        <span role="alert" style={{ fontSize: 12.5, color: 'var(--danger)', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          {t('settings.archived.loadFail')}
+          <button type="button" className="btn sm" onClick={load}>{t('common.retry')}</button>
+        </span>
+      ) : items === null ? <Skeleton h={40} /> : items.length === 0 ? (
+        <span style={{ fontSize: 12.5, color: 'var(--fg-3)' }}>{t('settings.archived.empty')}</span>
+      ) : (
+        <div style={{ display: 'grid', gap: 6 }}>
+          {items.map((it) => (
+            <div key={it.archiveId} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', border: '1px solid var(--border-soft)', borderRadius: 10, minWidth: 0 }}>
+              <span style={{ minWidth: 0, flex: 1 }}>
+                <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.name}</span>
+                <span className="nav-sub">{t('settings.archived.when', { date: new Date(it.archivedAt).toLocaleString(lang === 'ko' ? 'ko-KR' : 'en-US') })}</span>
+              </span>
+              <button type="button" className="btn sm" style={{ flex: 'none' }} disabled={!!busy} onClick={() => restore(it)}>
+                {busy === it.archiveId ? <Spinner size={11} /> : t('settings.archived.restore')}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      {msg && (
+        <p role={msg.ok ? 'status' : 'alert'} style={{ margin: 0, fontSize: 12, color: msg.ok ? 'var(--fg-2)' : 'var(--danger)' }}>
+          {msg.text}{msg.href && <> <Link href={msg.href} style={{ textDecoration: 'underline', textUnderlineOffset: 3 }}>{t('settings.archived.open')}</Link></>}
+        </p>
       )}
     </div>
   );
