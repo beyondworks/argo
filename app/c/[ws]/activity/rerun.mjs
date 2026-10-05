@@ -16,5 +16,8 @@ export function rerunMode(e) {
   if (src === 'messenger') return 'messenger';
   if (e.from || e.notOwnerDirect) return 'none'; // 다른 크루가 건 턴(위임·쪽지·세션 메시지·크루 예약 루틴·크루가 건 장시간 작업) — 사장 직접 턴으로 승격하지 않는다. notOwnerDirect = chat.mjs evFrom이 from과 별도로 적는 '누가 걸었는지'(M1)
   if (src === 'crewmail') return e.fromRole === 'captain' ? 'rerun' : 'none'; // 사장이 보낸 쪽지만
+  // routine·deck은 사장 직접 턴 표지(ownerDirect, chat.mjs evFrom)가 있을 때만 — 이전에는 표지가 없어 크루가 건 루틴·결재 후속 턴의 옛 이벤트도 버튼이 보였다(2차 검수 LOW-2).
+  // 표지가 생기기 전에 기록된 사장 본인의 옛 이벤트도 숨는다(안전한 쪽) — 새로 실행한 턴부터 다시 보인다.
+  if (src === 'routine' || src === 'deck') return e.ownerDirect === true ? 'rerun' : 'none';
   return OWNER_SOURCES.has(src) ? 'rerun' : 'none';
 }

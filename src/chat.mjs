@@ -1407,7 +1407,9 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
   // 스킬 주입 뒤에 둔다(그 앞에는 출처 분기를 두지 않는다 — room-slash-commander 핀). 예산 차단 턴(이보다 앞에서 끝남)은 종전 기록 그대로
   // notOwnerDirect(누가 걸었는지)는 from과 별도 키로 적는다 — 크루 예약 도구로 만든 데스크톱 루틴·장시간 작업은 from 없이 source만 'routine'·'job'이라, 안 적으면 활동 화면 '다시 실행'(rerun.mjs)이
   // 사장 직접 턴으로 보내 풀 오토 판정(`!from && !notOwnerDirect`)을 통과했다(M1). from은 활동 행의 "A → B" 표시·위임 판정에 따로 쓰이므로 섞지 않는다.
-  const evFrom = { ...(from ? { from } : source === 'crewmail' ? { fromRole: 'captain' } : {}), ...(notOwnerDirect ? { notOwnerDirect } : {}) };
+  // ownerDirect = 사장이 직접 시킨 턴이라는 적극 표지(!from && !notOwnerDirect — 풀 오토 판정과 같은 조건). '다시 실행'은 routine·deck 출처에서 이 표지가 있을 때만 보인다 —
+  // notOwnerDirect를 기록하기 전(10/5 이전)의 크루 루틴·결재 후속 턴 이벤트는 출처 필드가 아무것도 없어, 표지 없음 = 사장 직접 턴임을 증명할 수 없음으로 읽는다(2차 검수 LOW-2).
+  const evFrom = { ...(from ? { from } : source === 'crewmail' ? { fromRole: 'captain' } : {}), ...(notOwnerDirect ? { notOwnerDirect } : {}), ...(!from && !notOwnerDirect ? { ownerDirect: true } : {}) };
   // 풀 오토 판정(위 설명 주석) — 스킬 주입 뒤에 계산한다: loadSkills 앞에는 출처(source) 분기를 두지 않는다(room-slash-commander 핀). 그 사이 쓰는 곳은 없다.
   // 풀 오토는 사장이 직접 시킨 크루가 자기 일로 하는 턴에만(유건 결정 2026-10-03 "위임도 막기"). 빠지는 턴:
   //   from이 있는 턴 — 위임받은 동료 턴·쪽지 배달 턴·크루가 보낸 세션 메시지의 받는 턴·깨움 턴

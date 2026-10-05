@@ -51,6 +51,7 @@ test('다른 크루(b)가 예약 도구로 건 루틴의 턴 이벤트는 notOwn
   assert.ok(ev.msg, '재실행 원천(msg)이 있는 이벤트여야 이 테스트가 의미 있다 — msg가 없으면 rerunMode는 원래 none');
   assert.equal(ev.notOwnerDirect, 'b', '누가 걸었는지가 별도 키로 남는다');
   assert.equal(ev.from, undefined, 'from과 섞지 않는다 — 활동 행의 "A → B" 표시와 위임 판정이 그대로다');
+  assert.equal('ownerDirect' in ev, false, '크루가 건 턴에는 사장 직접 턴 표지가 없다(2차 검수 LOW-2)');
   assert.equal(rerunMode(ev), 'none', '사장 직접 턴이 아니므로 다시 실행 버튼을 숨긴다');
 });
 
@@ -60,7 +61,22 @@ test('대조군 — 사장이 만든 루틴(출처 없음)은 표지 없이 기�
   const ev = await turnEvent('MARK-FROM-OWNER');
   assert.ok(ev?.msg);
   assert.equal('notOwnerDirect' in ev, false);
+  assert.equal(ev.ownerDirect, true, '사장이 건 턴은 사장 직접 턴 표지를 적극 기록한다 — rerunMode가 이 표지로만 다시 실행을 보인다(2차 검수 LOW-2)');
   assert.equal(rerunMode(ev), 'rerun');
+  const { ownerDirect: _drop, ...legacy } = ev; // 표지가 생기기 전에 기록된 옛 이벤트
+  assert.equal(rerunMode(legacy), 'none', '옛 이벤트는 사장 직접 턴임을 증명할 수 없어 숨긴다');
+});
+
+test('결재 후속 턴(source 기본 deck + notOwnerDirect)은 표지가 없고, 사장 1:1 턴은 표지가 있다 — 실제 chat() 이벤트(2차 검수 LOW-2)', async () => {
+  await chat(ws, 'a', 'MARK-DECK-OWNER 안녕', null, {}); // 데크 1:1 — 사장 직접 턴
+  await chat(ws, 'a', 'MARK-DECK-APPROVAL 후속', null, { notOwnerDirect: 'b' }); // approval-actions.mjs:130이 크루가 올린 결재의 후속으로 부르는 모양
+  const find = async (m) => (await readEvents(ws)).find((e) => e.type === 'turn' && String(e.msg ?? '').includes(m));
+  const owner = await find('MARK-DECK-OWNER'); const approval = await find('MARK-DECK-APPROVAL');
+  assert.ok(owner?.msg && approval?.msg, '두 이벤트가 재실행 원천(msg)을 가진다');
+  assert.equal(owner.source, 'deck'); assert.equal(approval.source, 'deck');
+  assert.equal(owner.ownerDirect, true); assert.equal(rerunMode(owner), 'rerun');
+  assert.equal('ownerDirect' in approval, false); assert.equal(approval.notOwnerDirect, 'b');
+  assert.equal(rerunMode(approval), 'none');
 });
 
 test('rerunMode — notOwnerDirect가 있으면 어떤 출처든 none(메신저는 그대로 안내)', () => {
@@ -68,5 +84,5 @@ test('rerunMode — notOwnerDirect가 있으면 어떤 출처든 none(메신저�
   for (const source of ['deck', 'routine', 'trial', 'room']) assert.equal(rerunMode(t({ source, notOwnerDirect: 'b' })), 'none', source);
   assert.equal(rerunMode(t({ source: 'crewmail', fromRole: 'captain', notOwnerDirect: 'b' })), 'none');
   assert.equal(rerunMode(t({ source: 'messenger', notOwnerDirect: 'b' })), 'messenger', '메신저 턴은 메신저에서 다시 보내라는 안내가 먼저다');
-  assert.equal(rerunMode(t({ source: 'routine' })), 'rerun');
+  assert.equal(rerunMode(t({ source: 'routine', ownerDirect: true })), 'rerun');
 });
