@@ -12,6 +12,7 @@ import { SplitPane } from './split-pane';
 import { parseSide, sideParam, withSide } from './split.mjs';
 import { useSplitAlive } from './split-alive';
 import { nextCompanyData } from './company-load.mjs';
+import { searchScope } from './search-scope.mjs'; // 검색을 받는 화면에서만 검색 칸(UX-A03)
 import { gistLabel } from '../../lib/gist-display.mjs'; // 메신저 머리말을 뗀 요약(UX-A08)
 
 const fmtRun = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
@@ -106,6 +107,9 @@ function Shell({ children, params }) {
   const { ws } = use(params);
   const { t, lang } = useLang(); // lang은 상단바 재판정 deps — fitBar 참조
   const pathname = usePathname();
+  // 폰 폭(≤900px) 사이드바 서랍 — 본문 위에 메뉴가 730px 쌓이던 것(UX-A04). 이동하면 닫힌다
+  const [sideOpen, setSideOpen] = useState(false);
+  useEffect(() => { setSideOpen(false); }, [pathname]);
   const router = useRouter();
   // 좌우 2분할 보조 패널 — 상태는 ?side= 하나. 레이아웃 안의 내부 링크는 전부 withSide를 통과해
   // 주 화면을 옮겨도 패널이 유지된다. 닫기 = side 쿼리 제거.
@@ -370,7 +374,8 @@ function Shell({ children, params }) {
 
   return (
     <div className="shell">
-      <aside className="side">
+      {sideOpen && <div className="side-backdrop" onClick={() => setSideOpen(false)} aria-hidden="true" />}
+      <aside className={`side${sideOpen ? ' open' : ''}`} id="argo-side">
         <Link href="/" className="nav-item" style={{ gap: 8, marginBottom: 4 }}>
           <span style={{ color: 'var(--fg)', display: 'inline-flex' }}><StarMark size={15} /></span>
           <span className="mono" style={{ fontWeight: 600, fontSize: 13, color: 'var(--fg)', letterSpacing: '0.16em' }}>ARGO</span>
@@ -393,7 +398,7 @@ function Shell({ children, params }) {
           <Icon name="clock" size={16} /> {t('nav.routines')}
         </Link>
         <Link href={L(`/c/${ws}/activity`)} onClick={navClick(`/c/${ws}/activity`)} className={`nav-item${pathname.endsWith('/activity') ? ' active' : ''}`}>
-          <Icon name="bolt" size={16} /> {t('nav.activity')}
+          <Icon name="pulse" size={16} /> {t('nav.activity')}
         </Link>
         <Link href={L(`/c/${ws}/mail`)} onClick={navClick(`/c/${ws}/mail`)} className={`nav-item${pathname.endsWith('/mail') ? ' active' : ''}`}>
           <Icon name="mail" size={16} /> {t('nav.mail')}
@@ -564,6 +569,11 @@ function Shell({ children, params }) {
 
       <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
         <header className="topbar" ref={barRef}>
+          {/* 폰 폭에서만 보인다(globals.css .side-toggle) — 사이드바 서랍 열기 */}
+          <button type="button" className="btn sm btn-icon side-toggle" onClick={() => setSideOpen((v) => !v)}
+            aria-label={t('nav.menu')} aria-expanded={sideOpen} aria-controls="argo-side" style={{ flex: 'none' }}>
+            <Icon name="menu" size={15} />
+          </button>
           <span className="topbar-title" title={title}>{title}</span>
           {/* 페이지별 컨트롤 슬롯 — 크루 채팅이 세션 상태·카드·새 대화를 포털로 꽂는다(스티키 헤더 대체).
               display 포함 전부 CSS(globals #argo-topbar-slot) — 인라인 display가 있으면 좁은 셸(≤900px)의
@@ -597,13 +607,16 @@ function Shell({ children, params }) {
           )}
           <Clock />
           <TasksDock ws={ws} data={tasks} open={dockOpen} setOpen={setDockOpen} />
+          {/* 검색은 받는 화면(데크·활동·기억)에서만 — 다른 화면에선 입력해도 반응이 없던 죽은 칸(UX-A03). 무엇을 찾는지 placeholder로 */}
+          {searchScope(pathname, ws) && (
           <label className="search-pill">
             <Icon name="search" size={14} />
-            <input suppressHydrationWarning placeholder={t('common.search')} value={q} onChange={(e) => setQ(e.target.value)} />
+            <input suppressHydrationWarning placeholder={t(`search.${searchScope(pathname, ws)}`)} aria-label={t(`search.${searchScope(pathname, ws)}`)} value={q} onChange={(e) => setQ(e.target.value)} />
             {q && (
               <button onClick={() => setQ('')} style={{ color: 'var(--fg-3)', fontSize: 12, fontWeight: 700 }} aria-label={t('common.clear')}>✕</button>
             )}
           </label>
+          )}
         </header>
 
         <div className="content-row">

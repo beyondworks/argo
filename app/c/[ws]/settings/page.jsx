@@ -1985,10 +1985,15 @@ function UpgradeButtons() {
 // 앱 업데이트 — Tauri 데스크톱 안에서만 노출. 버튼 하나로 확인 → 다운로드·설치 → 재시작.
 // 서명 검증·다운로드는 Rust(updater 플러그인)가 수행, 매니페스트는 argo-agent 릴리스의 latest.json.
 function UpdateCard() {
-  const { t } = useLang();
+  const { t, lang } = useLang();
   // 상단 뱃지와 동일한 단일 출처(use-app-update) — 네이티브 설치 버전 + Tauri 업데이터.
   const { isApp, current, available, checked, phase, check, install, installError, location } = useAppUpdate();
   const busy = phase === 'checking' || phase === 'installing';
+  // 사용자가 누른 확인이 끝난 시각 — 이미 최신이면 누르기 전후 문구가 같아 눌렸는지 알 수 없었다(UX-A19)
+  const [userCheckedAt, setUserCheckedAt] = useState(null);
+  const userCheck = async () => { await check({ byUser: true }); setUserCheckedAt(Date.now()); };
+  const checkedNote = !available && checked && userCheckedAt && phase !== 'error'
+    ? ` · ${t('settings.update.checkedAt', { time: new Date(userCheckedAt).toLocaleTimeString(lang === 'ko' ? 'ko-KR' : 'en-US', { hour: '2-digit', minute: '2-digit' }) })}` : '';
   const moveRequired = !!location && MOVE_REQUIRED.has(location.issue); // 옮기기 전에는 설치가 실패한다 — 설치 버튼 대신 최신 설치 파일
   // 웹(상주·셀프호스트) — 자가 설치는 없지만 새 버전 존재를 알리고 갱신 방법을 안내한다
   // (실사용 요청 2026-07-27). 데스크톱과 같은 카드 자리·같은 훅(단일 출처).
@@ -1999,13 +2004,13 @@ function UpdateCard() {
         <p style={{ fontSize: 12.5, color: 'var(--fg-2)' }}>
           {t('settings.update.current', { v: current || '—' })}
           {available ? ` · ${t('settings.update.found', { v: available })}` : ''}
-          {!available && checked ? ` · ${t('settings.update.none')}` : ''}
+          {!available && checked ? ` · ${t('settings.update.none')}` : ''}{checkedNote}
         </p>
         {available && (
           <p style={{ fontSize: 12, color: 'var(--fg-2)', lineHeight: 1.7, margin: 0 }}>{t('settings.update.webHow')}</p>
         )}
         <div style={{ display: 'flex', gap: 8 }}>
-          <button type="button" className="btn sm" onClick={check} disabled={busy}>
+          <button type="button" className="btn sm" onClick={userCheck} disabled={busy}>
             {busy ? <Spinner size={12} /> : null}{t('settings.update.check')}
           </button>
           {available && (
@@ -2024,7 +2029,7 @@ function UpdateCard() {
       <p style={{ fontSize: 12.5, color: 'var(--fg-2)' }}>
         {t('settings.update.current', { v: current || '—' })}
         {available ? ` · ${t('settings.update.found', { v: available })}` : ''}
-        {!available && checked ? ` · ${t('settings.update.none')}` : ''}
+        {!available && checked ? ` · ${t('settings.update.none')}` : ''}{checkedNote}
       </p>
       {location && <UpdateLocationNote issue={location.issue} path={location.path} />}
       {available && moveRequired ? (
@@ -2037,7 +2042,7 @@ function UpdateCard() {
           {phase === 'installing' ? t('settings.update.installing') : t('settings.update.install', { v: available })}
         </button>
       ) : (
-        <button type="button" className="btn sm" onClick={() => check({ byUser: true })} disabled={busy || phase === 'ready'} style={{ alignSelf: 'flex-start' }}>
+        <button type="button" className="btn sm" onClick={userCheck} disabled={busy || phase === 'ready'} style={{ alignSelf: 'flex-start' }}>
           {busy ? <Spinner size={12} /> : null}{t('settings.update.check')}
         </button>
       )}

@@ -1,6 +1,6 @@
 'use client';
 // 공용 클라이언트 조각들 — 화면 전체가 같이 쓴다.
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { resolveTab } from './tabs-state.mjs';
 import { marked } from 'marked';
 import { labelTableCells } from './md-table.mjs';
@@ -66,6 +66,8 @@ const PATHS = {
   sort: 'M3 6h18M6 12h12M10 18h4',          // 탐색기 정렬(옵시디언 툴바)
   check: 'M20 6 9 17l-5-5',                 // 완료 조건 배지(루틴 목록)
   collapse: 'M7 11l5-5 5 5M7 19l5-5 5 5',   // 모두 접기(옵시디언 툴바)
+  menu: 'M3 6h18M3 12h18M3 18h18',          // 폰 폭 사이드바 서랍 열기(UX-A04)
+  pulse: 'M3 12h4l3-8 4 16 3-8h4',          // 활동 — 경쟁 시안(bolt)과 같은 아이콘이던 것(UX-A17)
 };
 
 export function Icon({ name, size = 16, strokeWidth = 1.8, ...rest }) {
@@ -403,13 +405,14 @@ export function DangerModal({ title, description, requireText, phraseKey = 'dang
   }, [onClose]);
 
   const field = { height: 34, padding: '0 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 13, width: '100%' };
+  const titleId = useId(); // 화면 읽기 프로그램이 모달과 제목을 안다(UX-A13)
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 120, background: 'var(--overlay)', display: 'grid', placeItems: 'center', padding: 24 }} onClick={onClose}>
-      <div className="card card-float fade-up" style={{ width: 'min(420px, 100%)', borderColor: 'var(--danger)' }} onClick={(e) => e.stopPropagation()}>
+      <div className="card card-float fade-up" role="dialog" aria-modal="true" aria-labelledby={titleId} style={{ width: 'min(420px, 100%)', borderColor: 'var(--danger)' }} onClick={(e) => e.stopPropagation()}>
         <div className="card-head">
-          <span className="card-title" style={{ color: 'var(--danger)' }}>{title}</span>
+          <span id={titleId} className="card-title" style={{ color: 'var(--danger)' }}>{title}</span>
           <span className="rule" />
-          <button type="button" className="btn sm" onClick={onClose}>{t('common.close')} ESC</button>
+          <button type="button" className="btn sm" onClick={onClose}>{t('common.close')}<span className="kbd-hint"> ESC</span></button>
         </div>
         <div style={{ padding: '0 20px 18px', display: 'grid', gap: 12 }}>
           <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.65 }}>{description}</p>
@@ -446,13 +449,14 @@ export function ConfirmModal({ title, description, confirmLabel, tone = 'danger'
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
   const danger = tone === 'danger';
+  const titleId = useId();
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 120, background: 'var(--overlay)', display: 'grid', placeItems: 'center', padding: 24 }} onClick={onClose}>
-      <div className="card card-float fade-up" style={{ width: 'min(400px, 100%)', ...(danger ? { borderColor: 'var(--danger)' } : {}) }} onClick={(e) => e.stopPropagation()}>
+      <div className="card card-float fade-up" role="dialog" aria-modal="true" aria-labelledby={titleId} style={{ width: 'min(400px, 100%)', ...(danger ? { borderColor: 'var(--danger)' } : {}) }} onClick={(e) => e.stopPropagation()}>
         <div className="card-head">
-          <span className="card-title" style={danger ? { color: 'var(--danger)' } : undefined}>{title}</span>
+          <span id={titleId} className="card-title" style={danger ? { color: 'var(--danger)' } : undefined}>{title}</span>
           <span className="rule" />
-          <button type="button" className="btn sm" onClick={onClose}>{t('common.close')} ESC</button>
+          <button type="button" className="btn sm" onClick={onClose}>{t('common.close')}<span className="kbd-hint"> ESC</span></button>
         </div>
         <div style={{ padding: '0 20px 18px', display: 'grid', gap: 14 }}>
           <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.65 }}>{description}</p>
@@ -482,13 +486,14 @@ export function InputModal({ title, label, defaultValue = '', placeholder, confi
   }, [onClose]);
   const submit = () => { const v = val.trim(); if (v && !busy) onConfirm(v); };
   const field = { height: 34, padding: '0 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 13, width: '100%' };
+  const titleId = useId();
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 120, background: 'var(--overlay)', display: 'grid', placeItems: 'center', padding: 24 }} onClick={onClose}>
-      <div className="card card-float fade-up" style={{ width: 'min(400px, 100%)' }} onClick={(e) => e.stopPropagation()}>
+      <div className="card card-float fade-up" role="dialog" aria-modal="true" aria-labelledby={titleId} style={{ width: 'min(400px, 100%)' }} onClick={(e) => e.stopPropagation()}>
         <div className="card-head">
-          <span className="card-title">{title}</span>
+          <span id={titleId} className="card-title">{title}</span>
           <span className="rule" />
-          <button type="button" className="btn sm" onClick={onClose}>{t('common.close')} ESC</button>
+          <button type="button" className="btn sm" onClick={onClose}>{t('common.close')}<span className="kbd-hint"> ESC</span></button>
         </div>
         <div style={{ padding: '0 20px 18px', display: 'grid', gap: 12 }}>
           <label style={{ display: 'grid', gap: 5 }}>

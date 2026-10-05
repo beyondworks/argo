@@ -238,6 +238,19 @@ export default function Deck({ params }) {
           {data && agents.length === 0 && (
             <p style={{ color: 'var(--fg-2)', fontSize: 13, padding: '0 4px' }}>{q ? t('deck.noCrewMatch') : t('deck.noCrewYet')}</p>
           )}
+          {/* 검색 결과 — 데크엔 크루 목록이 없어 맞는 크루가 있어도 아무것도 안 보였다(UX-A03). 맞는 크루를 바로 열 수 있게 */}
+          {data && q && agents.length > 0 && (
+            <div className="card" style={{ padding: '12px 14px', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 6 }}>
+              <span className="microlabel">{t('deck.searchCrew', { n: agents.length })}</span>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {agents.slice(0, 12).map((a) => (
+                  <Link key={a.slug} href={`/c/${ws}/crew/${a.slug}`} className="chip" style={{ textDecoration: 'none', textTransform: 'none', gap: 6 }}>
+                    <Avatar name={a.name} sm />{a.name}{a.role ? ` · ${a.role}` : ''}
+                  </Link>
+                ))}
+              </div>
+            </div>
+          )}
 
           <MorningBrief ws={ws} agents={data?.agents ?? []} />
           <ApprovalsCard ws={ws} agents={data?.agents ?? []} />

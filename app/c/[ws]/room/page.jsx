@@ -519,7 +519,8 @@ export default function Room({ params }) {
                 </div>
               ) : m.who === 'user' ? (
                 <div key={i} style={{ justifySelf: 'end', maxWidth: '78%' }}>
-                  <div className="bubble-user" style={{ background: 'var(--primary)', color: 'var(--primary-fg)', borderRadius: 14, padding: '9px 13px', fontSize: 13.5, whiteSpace: 'pre-wrap' }}>
+                  {/* msg-user — 크루 대화 말풍선과 같은 테마 규칙(graphite는 회색). 인라인 검정 배경이 테마를 덮어 화면마다 색이 달랐다(UX-A15) */}
+                  <div className="bubble-user msg-user" style={{ maxWidth: '100%', borderRadius: 14, padding: '9px 13px', fontSize: 13.5, whiteSpace: 'pre-wrap' }}>
                     {m.attachments?.length > 0 && (
                       <span style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: m.text ? 8 : 0 }}>
                         {m.attachments.map((a, j) => a.isImage ? (
