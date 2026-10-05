@@ -1798,7 +1798,9 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
 .msgr-joinbar .btn { flex: none; }
 .msgr-shell:not(.msgr-phone) .msgr-main > .msgr-joinbar { width: auto; margin: 0 var(--col-r) var(--msg-gap-sys) var(--col-l); transition: margin 180ms cubic-bezier(.23,1,.32,1); } /* 입력창과 같은 열(LA-23) */
 @media (prefers-reduced-motion: reduce) { .msgr-shell:not(.msgr-phone) .msgr-main > .msgr-joinbar { transition: none; } }
-.msgr-shell .msgr-main > .msgr-joinbar.msgr-movedbar { margin-top: 12px; } /* 옛 조직 1:1 안내 띠 — 입력창 위가 아니라 방 위(상단 바 바로 아래), 같은 띠 모양(유건 2026-10-05) */
+.msgr-shell .msgr-main > .msgr-joinbar.msgr-movedbar { margin-top: 12px; }
+.msgr-phone .msgr-main > .msgr-top ~ .msgr-joinbar.msgr-movedbar { margin-top: calc(var(--msgr-top-h, var(--ph-top-h)) + 8px); } /* 폰 머리는 내용 위에 떠 있다(absolute) — 띠는 머리 아래에서 시작하고, 대화는 띠 아래에서 */
+.msgr-phone .msgr-main > .msgr-top ~ .msgr-movedbar ~ .msgr-thread { padding-top: 4px; scroll-padding-top: 4px; } /* 옛 조직 1:1 안내 띠 — 입력창 위가 아니라 방 위(상단 바 바로 아래), 같은 띠 모양(유건 2026-10-05) */
 
 /* 보낸 직후, 서버 행이 도착하기 전의 내 글. 자리를 먼저 잡아 두고 옅게 보인다. */
 .msgr-mine .meta .sent { display: inline-flex; color: var(--fg-3); transition: opacity 180ms ease; }

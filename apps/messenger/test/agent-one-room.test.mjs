@@ -84,6 +84,7 @@ test('옛 조직 1:1 — 모든 입구가 openAgentDmInstead를 먼저 지나고
   assert.match(app, /if \(!it\?\.joinReq && openAgentDmInstead\(id\)\) return;/, '알림함');
   assert.match(app, /if \(act\.do === 'open'\) \{ diag\('open'\); navInbox\.done\(navReq\); if \(openAgentDmInstead\(navReq\.channelId\)\) return;/, '알림 탭·푸시·전경 카드');
   assert.match(app, /setDmPeek\(null\); if \(openAgentDmInstead\(c\.id\)\) return;/, '폰 미리보기');
+  assert.match(app, /const openRoom = \(c\) => \{ setTabQ\(null\); if \(openAgentDmInstead\(c\.id\)\) return;/, '폰 채팅 탭 줄');
   assert.match(app, /const openAgentDmInstead = \(channelId\) => \{[\s\S]{0,300}agentDmRedirect\(channels\.find\(\(c\) => c\.id === channelId\), dmMembers\[channelId\], \{ uid, crewOf, myAgents \}\)[\s\S]{0,300}personalTwin\(go\.crew\)\.then/, '서버에 개인 행을 한 번 묻고 옮긴다');
   assert.match(app, /movedBar=\{legacyDm\?\.known \? <LegacyDmBar/, '알고 있을 때만 안내 띠');
 });

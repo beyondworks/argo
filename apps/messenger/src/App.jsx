@@ -2566,7 +2566,7 @@ function Shell({ session }) {
   const maskOf = (c) => { const r = rowOf(c); const lm = lastMsg[c.id]; return maskedPreview({ preview: r.preview, userId: r.userId ?? lm?.userId, crewId: r.crewId ?? lm?.crewId }, { blocked: blockedIds, muted: mutedCrewIds }); };
   const bodyHit = (c) => !!tabHits && tabHits.space === orgId && tabHits.q === tabBodyQ && tabHits.ids.has(c.id); // 서버 본문 찾기에서 맞은 방(D9) — 검색어·공간이 바뀌면 옛 결과는 쓰지 않는다
   const previewForSearch = (c) => { const m = maskOf(c); return m.masked === 'blocked' ? t('msg.blockedUser') : m.text; }; // 목록 검색도 가린 글자로(D7)
-  const openRoom = (c) => { setTabQ(null); setChId(c.id); setRail(false); setPage('chat'); };
+  const openRoom = (c) => { setTabQ(null); if (openAgentDmInstead(c.id)) return; setChId(c.id); setRail(false); setPage('chat'); }; // 폰 채팅·채널 탭 줄 — 내 에이전트의 옛 조직 1:1이면 개인 1:1로(유건 2026-10-05)
   const roomAvatar = (c, tr) => {
     if (c.kind !== 'dm') return <span className={`ph-chav${c.kind === 'private' ? ' lock' : ''}`} aria-hidden="true"><I name={c.kind === 'private' ? 'lock' : 'hash'} size={20} /></span>;
     const ms = dmMembers[c.id] ?? [];
