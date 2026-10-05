@@ -105,7 +105,7 @@ export default function UpdateNotes({ current, ready, isApp, blocked = false }) 
   const visible = !!ready && items.length > 0 && !blocked && !surface.hidden && !surface.overlay && presentation?.key === key;
   useEffect(() => {
     if (shouldAutoDismissUpdateNotes({ visible, editing: surface.editing, saving })) dismiss();
-  }, [visible, surface.editing, saving]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [visible, surface.editing, saving]); // dismiss는 매 렌더 새 함수지만 key 외 상태를 읽지 않아 deps에서 뺀다
   const confirm = async () => {
     if (savingRef.current) return;
     savingRef.current = true; setSaving(true);
