@@ -5,6 +5,7 @@
 import { Component, createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { acceptTyping, typingKey, withoutKey, typingIn as typingInState, roomTopicIds, TYPING_WINDOW_MS } from './typing-state.js';
+import { awaitingReplies } from './await-reply.mjs';
 import { dismissHandlers } from './dismiss.mjs';
 import { attachKeyboardDismiss } from './kb-dismiss.mjs';
 import { turnCopyText, tailTurns } from './turn-copy.mjs';
@@ -58,7 +59,7 @@ import { bindPullRefresh, enteredReady } from './pull-refresh.mjs';
 import { haptic } from './haptics.js';
 import { refreshMessageWindow, mergeRefreshedMessages } from './refresh-messages.mjs';
 import { writeScreenSnapshot, consumeScreenSnapshot } from './phone-screen-snapshot.mjs';
-import { mentionCandidates, mentionsFromBody, ALL_RE, outsideCrewMentions, canInstructCrew, crewOrder, withoutCopies, outsideAddDone, outsideRowView } from './mention-candidates.mjs';
+import { mentionCandidates, mentionsFromBody, ambiguousMentions, ALL_RE, outsideCrewMentions, canInstructCrew, crewOrder, withoutCopies, outsideAddDone, outsideRowView } from './mention-candidates.mjs';
 import { OutsideRow } from './outside-row.mjs';
 import { dmMentionCrews, mentionPopupCrews, setDmRecipient, dmDeliveryMentions, dmUnavailableRecipients, relayCaptionKey, relayToLabel, relayToNames, relayNoticeView } from './dm-delivery.mjs';
 import { acceptFiles, withoutFile } from './attach-files.mjs';
@@ -1351,7 +1352,7 @@ function Shell({ session }) {
   // event.kind는 '무슨 방송인가'(message·approval·reaction·edit)다. 서버 payload에도 kind가 있는데
   // 그건 '글 종류'(text·system)다. 전개를 뒤에 두면 후자가 전자를 덮어 방송이 통째로 버려진다 —
   // 그래서 구분자는 항상 전개 **뒤**에 놓고, 글 종류는 msgKind로 따로 싣는다.
-  const [event, setEvent] = useState(null); const [typing, setTyping] = useState({}); const [progress, setProgress] = useState({}); // progress = 실행 카드(단계·도구·사고 과정) 스냅샷, 키 channel:crew
+  const [event, setEvent] = useState(null); const [typing, setTyping] = useState({}); const [progress, setProgress] = useState({}); const [received, setReceived] = useState({}); // received = 크루 기기가 내 글을 받았다는 신호(키 channel:crew → 받은 시각) — 보낸 뒤 대기 표시(await-reply.mjs)만 쓴다 // progress = 실행 카드(단계·도구·사고 과정) 스냅샷, 키 channel:crew
   const settledRef = useRef({}); // 키 → 크루 답글 도착 시각 — 답글 직후 늦게 온 방송이 표시를 되살리지 않게(typing-state.js)
   const typingStartRef = useRef({}); // 키 → "지금 이어지는 입력"을 처음 시작한 시각(typing-summary.mjs 정렬 기준) — 6초 창이 끊기면 다음은 새 시작(유건 확정 2026-09-29)
   const crewActive = (crewId) => { if (!crewId) return; setCrews((rows) => markSeen(rows, crewId)); setMyAgents((rows) => (rows ? markSeen(rows, crewId) : rows)); }; // 에이전트가 방금 무언가를 보냈다 — 요청 없이 '방금 봄'으로
@@ -1359,13 +1360,14 @@ function Shell({ session }) {
     if (!acceptTyping(settledRef.current, payload)) return;
     crewActive(payload?.crew_id);
     const k = typingKey(payload); const now = Date.now();
+    if (payload?.phase === 'received') { setReceived((m) => ({ ...m, [k]: now })); return; } // 게이트웨이가 잡을 받자마자 보내는 신호(2026-10-05) — 입력 중 말풍선은 아니다(거절·대기로 끝나는 잡이 유령 표시를 남기지 않게)
     setTyping((m) => {
       if (m[k] === undefined || now - m[k] >= TYPING_WINDOW_MS) typingStartRef.current[k] = now; // 직전 방송이 창 밖이면(끊겼다 재개) 새 시작
       return { ...m, [k]: now };
     });
   };
   const onProgressEvent = ({ payload }) => { if (acceptTyping(settledRef.current, payload)) setProgress((m) => ({ ...m, [typingKey(payload)]: { ...payload, at: Date.now() } })); crewActive(payload?.crew_id); }; // 진행 방송 = 그 에이전트가 켜져 있다(요청 없이 '방금 봄')
-  const settleCrew = (payload) => { const k = typingKey(payload); settledRef.current[k] = Date.now(); setTyping((m) => withoutKey(m, k)); setProgress((m) => withoutKey(m, k)); delete typingStartRef.current[k]; };
+  const settleCrew = (payload) => { const k = typingKey(payload); settledRef.current[k] = Date.now(); setTyping((m) => withoutKey(m, k)); setProgress((m) => withoutKey(m, k)); setReceived((m) => withoutKey(m, k)); delete typingStartRef.current[k]; };
   // (조직 구독은 아래 '내가 속한 조직 전체 + u:' 효과 하나로 합쳤다 — 기능 점검 D3)
   // ── 열린 방의 채널 토픽 dm:<채널> 구독 — 개인 방과 조직의 비공개 방(DM·비공개 채널) ──
   // 비공개 방의 typing·progress는 조직 토픽이 아니라 이 토픽으로 온다(20260918190000 — 조직 토픽은 조직 전원이 들어 방의 존재·크루 활동이 샜다).
@@ -1377,7 +1379,7 @@ function Shell({ session }) {
   const roomSubs = useRef(new Map()); // 방 id → 구독 채널
   const roomSpaces = useRef(new Map()); // 방 id → 그 방이 속한 공간(조직 id·PERSONAL) — 공간을 오가도 구독을 유지하고 방송을 그 공간으로 보낸다(D3)
   const [roomReset, setRoomReset] = useState(0); // removeAllChannels 뒤 방 구독을 다시 맞추는 신호(데스크톱엔 resumeEpoch가 없다)
-  const typingIn = (id) => typingInState(typing, id); // 채널 화면의 typingCrews와 같은 6초 창
+  const typingIn = (id) => typingInState(typing, id); // 채널 화면의 typingCrews와 같은 창(TYPING_WINDOW_MS)
   const anyTyping = Object.values(typing).some((at) => Date.now() - at < TYPING_WINDOW_MS); // 끝난 표시가 남은 동안만 2초 주기 재그리기
   useEffect(() => { if (!anyTyping) return; const iv = setInterval(() => setTick((x) => x + 1), 2000); return () => clearInterval(iv); }, [anyTyping]); // 신호가 끊긴 표시는 2초 안에 내린다
   // ── 다른 공간(보고 있지 않은 조직·개인 공간)의 새 글 — 안 읽음 합계·알림(유건 실측 2026-09-18 "교차되는 메시지 확인 안 됨") ──
@@ -2910,7 +2912,7 @@ function Shell({ session }) {
         ) : dmDraft && isPersonal && page === 'chat' ? (
           <DmDraft key={dmDraft.userId} userId={dmDraft.userId} name={nameOfUser(dmDraft.userId)} initialText={dmDraft.text} onSend={(body) => sendFirstDm(dmDraft.userId, body)} onMenu={openNav} />
         ) : isPhone && page !== 'chat' ? null /* 폰 목록·설정 뒤에 숨은 대화방을 그리지 않는다 — 공간을 바꿀 때마다 보이지 않는 방의 글·첨부·반응을 읽던 것(기능 점검 D3) */ : channel ? (
-          <Channel key={chId} onCrewJoined={bumpMembers} onCrewFailed={noteCrewFailed} onPersonalChanged={async () => { await loadPersonal().catch(() => {}); await loadChMembers(chId).catch(() => {}); }} onScreen={channelOnScreen({ isPhone, page })} namePrompt={org && !isPersonal && me && !orgLocked ? <NamePrompt key={orgId} org={org} me={me} email={session.user.email} onChanged={() => loadOrg(orgId).catch(() => {})} onNote={setNote} onError={setErr} /> : null} onOutsideDm={dmWithCrew} outsideDmPersonal={dmGoesPersonal} startCard={org && !isPersonal && org.role !== 'guest' && channel.kind !== 'dm' ? <OnboardCard key={orgId} orgId={orgId} t={t} steps={orgSteps({ t, ...onboard, hasChannel: true, invite: isAdmin ? orgInvite : null })} /> : null} jumpTo={jump?.ch === chId ? jump.mid : null} jumpStart={!!jump?.start} onJumped={() => setJump(null)} channel={channel} preview={!!previewing} onJoin={() => joinChannel(channel)} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} mentionPeople={mentionPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} typingStart={typingStartRef.current} progress={progress} onRead={markRead} muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} onToggleMemory={() => toggleMemory(channel)} broadcast={(ev, payload) => (roomTopic ? roomSubs.current.get(chId) : rt.current)?.send({ type: 'broadcast', event: ev, payload }).catch?.(() => {})} onError={setErr} onNote={setNote} onMenu={openNav} onCrew={openers.channel} onTitle={() => setChSheet(true)} onCrewAdd={() => { setChSheetAdd('crew'); setChSheet(true); }} mentionReq={mentionReq} onMentionDone={() => setMentionReq(null)} dmName={dmName} channels={channels} onOpenRelay={openRelay} isPersonal={isPersonal} />
+          <Channel key={chId} onCrewJoined={bumpMembers} onCrewFailed={noteCrewFailed} onPersonalChanged={async () => { await loadPersonal().catch(() => {}); await loadChMembers(chId).catch(() => {}); }} onScreen={channelOnScreen({ isPhone, page })} namePrompt={org && !isPersonal && me && !orgLocked ? <NamePrompt key={orgId} org={org} me={me} email={session.user.email} onChanged={() => loadOrg(orgId).catch(() => {})} onNote={setNote} onError={setErr} /> : null} onOutsideDm={dmWithCrew} outsideDmPersonal={dmGoesPersonal} startCard={org && !isPersonal && org.role !== 'guest' && channel.kind !== 'dm' ? <OnboardCard key={orgId} orgId={orgId} t={t} steps={orgSteps({ t, ...onboard, hasChannel: true, invite: isAdmin ? orgInvite : null })} /> : null} jumpTo={jump?.ch === chId ? jump.mid : null} jumpStart={!!jump?.start} onJumped={() => setJump(null)} channel={channel} preview={!!previewing} onJoin={() => joinChannel(channel)} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} mentionPeople={mentionPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} typingStart={typingStartRef.current} progress={progress} received={received} onRead={markRead} muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} onToggleMemory={() => toggleMemory(channel)} broadcast={(ev, payload) => (roomTopic ? roomSubs.current.get(chId) : rt.current)?.send({ type: 'broadcast', event: ev, payload }).catch?.(() => {})} onError={setErr} onNote={setNote} onMenu={openNav} onCrew={openers.channel} onTitle={() => setChSheet(true)} onCrewAdd={() => { setChSheetAdd('crew'); setChSheet(true); }} mentionReq={mentionReq} onMentionDone={() => setMentionReq(null)} dmName={dmName} channels={channels} onOpenRelay={openRelay} isPersonal={isPersonal} />
         ) : isPersonal ? (
           <><div className="msgr-top"><NavButton onMenu={openNav} /><span className="title">{t('personal')}</span><span className="topic">{t('personal.space')}</span></div><div className="msgr-thread" style={{ display: 'flex' }}><div className="msgr-empty"><p>{t('personal.empty')}</p><button type="button" className="btn btn-primary sm" onClick={() => setFriendAdd(true)}><I name="plus" size={13} />{t('friends.add')}</button></div></div></>
         ) : (
@@ -5825,7 +5827,7 @@ function PersonalRoomBar({ chId, uid, hasCrews, event, nameOfUser, crewName = ()
   </>);
 }
 
-function Channel({ onCrewJoined = null, onCrewFailed = null, onScreen = true, namePrompt = null, onOutsideDm = null, outsideDmPersonal = null, onPersonalChanged = null, startCard = null, jumpTo = null, jumpStart = false, onJumped, channel, preview = false, onJoin, orgId, org, uid, isAdmin, locked = false, policy, members, crews, people = [], mentionPeople = null, chCrews = [], nameOfUser, crewOf, event, typing, typingStart = {}, progress = {}, onRead, muted = false, onToggleMute, onToggleMemory, broadcast, onError, onNote = () => {}, onMenu, onCrew, onTitle, onCrewAdd, mentionReq, onMentionDone, dmName, channels = [], onOpenRelay, isPersonal = false }) {
+function Channel({ onCrewJoined = null, onCrewFailed = null, onScreen = true, namePrompt = null, onOutsideDm = null, outsideDmPersonal = null, onPersonalChanged = null, startCard = null, jumpTo = null, jumpStart = false, onJumped, channel, preview = false, onJoin, orgId, org, uid, isAdmin, locked = false, policy, members, crews, people = [], mentionPeople = null, chCrews = [], nameOfUser, crewOf, event, typing, typingStart = {}, progress = {}, received = {}, onRead, muted = false, onToggleMute, onToggleMemory, broadcast, onError, onNote = () => {}, onMenu, onCrew, onTitle, onCrewAdd, mentionReq, onMentionDone, dmName, channels = [], onOpenRelay, isPersonal = false }) {
   const { t, lang } = useT();
   const phone = useIsPhone(); // 폰 머리 부제(멤버·에이전트 수) — 데스크톱은 그리지 않는다
   const topRef = useRef(null);
@@ -6037,15 +6039,23 @@ function Channel({ onCrewJoined = null, onCrewFailed = null, onScreen = true, na
     } catch (e) { onError(stopErr(e.message, t)); }
     finally { setStopping((s) => { const n = { ...s }; delete n[key]; return n; }); }
   };
-  const typingCrews = Object.entries(typing).filter(([k, at]) => k.startsWith(`${chId}:`) && Date.now() - at < 6000).map(([k]) => crewOf(k.split(':')[1])).filter(Boolean);
+  const typingCrews = Object.entries(typing).filter(([k, at]) => k.startsWith(`${chId}:`) && Date.now() - at < TYPING_WINDOW_MS).map(([k]) => crewOf(k.split(':')[1])).filter(Boolean);
   // 요약용 — 이름·시작 시각만 뽑아 typing-summary.mjs 순수 함수에 넘긴다(가장 먼저 입력을 시작한 크루 + 나머지 인원, 유건 확정 2026-09-29)
   const typingForSummary = typingCrews.map((c) => ({ id: c.id, name: c.display_name, startedAt: typingStart[`${chId}:${c.id}`] ?? 0 }));
   const typingLabel = typingLabelParams(typingSummary(typingForSummary));
   // 실행 카드 — progress 방송(1.5초 주기)이 있는 크루는 점 세 개 대신 단계·도구·사고 과정 카드. 8초 무갱신이면 만료(브리지 심박 30초는 typing이 덮는다).
-  const working = Object.entries(progress).filter(([k, p]) => k.startsWith(`${chId}:`) && Date.now() - p.at < 8000 && typing[k] && Date.now() - typing[k] < 6000).map(([k, p]) => [crewOf(k.split(':')[1]), p]).filter(([c]) => c);
+  const working = Object.entries(progress).filter(([k, p]) => k.startsWith(`${chId}:`) && Date.now() - p.at < 8000 && typing[k] && Date.now() - typing[k] < TYPING_WINDOW_MS).map(([k, p]) => [crewOf(k.split(':')[1]), p]).filter(([c]) => c);
+  // 보낸 뒤 대기 표시(2026-10-05) — 크루를 겨냥한 내 글이 저장되면 그 즉시 '전달됨 · 준비 중', 그 크루가 내 글 뒤에 글을 올릴 때까지(상한 5분).
+  // 방송이 오면 '답변 중'(실행 카드면 중단 버튼과 함께), 끊겨도 남고, 30초 무신호면 '조금 오래', 기기가 꺼져 있으면 꺼짐 안내. 화면 계산뿐(요청·저장 0).
+  const awaiting = awaitingReplies({ msgs: msgs ?? [], uid, isDm: channel.kind === 'dm', roomCrewIds: chCrews.map((c) => c.id),
+    signals: (crewId) => { const k = `${chId}:${crewId}`; return { typingAt: typing[k], progressAt: progress[k]?.at, receivedAt: received[k] }; },
+    away: (crewId) => crewAway(crewOf(crewId)), now: Date.now() }).map((a) => ({ ...a, crew: crewOf(a.crewId) })).filter((a) => a.crew);
+  const awaitIds = new Set(awaiting.map((a) => a.crewId));
+  const [, setAwaitTick] = useState(0); // 대기 표시가 있는 동안만 5초마다 다시 그린다(30초·5분 단계 전환) — 요청 없음
+  useEffect(() => { if (!awaiting.length) return undefined; const iv = setInterval(() => setAwaitTick((x) => x + 1), 5000); return () => clearInterval(iv); }, [awaiting.length > 0]); // eslint-disable-line react-hooks/exhaustive-deps
   const workingIds = new Set(working.map(([c]) => c.id));
   // 스레드 안 '입력 중' 말풍선 — 3명까지는 크루별로 각자, 4명부터는 얼굴을 겹친 말풍선 하나로 묶는다(유건 확정 2026-09-29)
-  const typingBubbleShown = typingCrews.filter((c) => !workingIds.has(c.id));
+  const typingBubbleShown = typingCrews.filter((c) => !workingIds.has(c.id) && !awaitIds.has(c.id)); // 대기 표시가 있는 크루는 그 줄이 '답변 중'을 맡는다(같은 크루가 두 번 보이지 않게)
   const typingBubbleWithStart = typingBubbleShown.map((c) => ({ id: c.id, name: c.display_name, startedAt: typingStart[`${chId}:${c.id}`] ?? 0, crew: c }));
   const typingBubbleGrouped = shouldGroupTypingBubbles(typingBubbleShown.length);
   const typingBubbleGroupFaces = typingBubbleGrouped ? typingBubbleFaces(typingBubbleWithStart) : [];
@@ -6115,7 +6125,10 @@ function Channel({ onCrewJoined = null, onCrewFailed = null, onScreen = true, na
           ? <div className="msgr-older"><button type="button" className="btn sm ghost" onClick={loadOlder} disabled={older} aria-busy={older || undefined}>{t(older ? 'thread.loading' : 'thread.older')}</button></div>
           : <div className="msgr-older start"><span className="msgr-klabel">{t('thread.start')}</span></div>)}
         {rows}
-        {working.map(([c, p]) => <ExecCard key={`exec-${c.id}`} crew={c} t={t} canStop={canStop(c, p)} stopping={!!stopping[`${c.id}:${p.source_msg_id}`]} stopRequested={!!stopRequested[`${c.id}:${p.source_msg_id}`]} onStop={() => requestStop(c.id, p.source_msg_id)} />)}
+        {awaiting.map((a) => { const p = working.find(([c]) => c.id === a.crewId)?.[1]; const c = a.crew; // 실행 카드가 있으면 그 자리에서 중단 버튼과 함께(같은 크루를 두 번 그리지 않는다)
+          return <ExecCard key={`exec-${c.id}`} crew={c} t={t} wait label={a.phase === 'preparing' ? t('await.preparing', { name: c.display_name }) : t(`await.${a.phase}`)} long={a.phase === 'slow' || a.phase === 'offline'}
+            canStop={!!p && canStop(c, p)} stopping={!!p && !!stopping[`${c.id}:${p.source_msg_id}`]} stopRequested={!!p && !!stopRequested[`${c.id}:${p.source_msg_id}`]} onStop={() => p && requestStop(c.id, p.source_msg_id)} />; })}
+        {working.filter(([c]) => !awaitIds.has(c.id)).map(([c, p]) => <ExecCard key={`exec-${c.id}`} crew={c} t={t} canStop={canStop(c, p)} stopping={!!stopping[`${c.id}:${p.source_msg_id}`]} stopRequested={!!stopRequested[`${c.id}:${p.source_msg_id}`]} onStop={() => requestStop(c.id, p.source_msg_id)} />)}
         {typingBubbleGrouped
           ? <div className="msgr-row msgr-typing-group"><span className="msgr-facestack">{typingBubbleGroupFaces.map((f) => <Av key={f.id} name={f.name} crew crewId={f.id} size="xs" />)}</span><div className="msgr-typing"><i /><i /><i /><span className="lb">{typingBubbleGroupLabel && t(typingBubbleGroupLabel.key, typingBubbleGroupLabel.vars)}</span></div></div>
           : typingBubbleShown.map((c) => <div key={`typing-${c.id}`} className="msgr-row"><Av name={c.display_name} crew crewId={c.id} /><div><div className="who">{c.display_name}<span className="role">{c.role_text}</span></div><div className="msgr-typing"><i /><i /><i /><span className="lb">{t('msg.typing', { name: c.display_name })}</span></div></div></div>)}
@@ -6400,14 +6413,15 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
 /** 실행 표시 — 크루가 일하는 동안 "답변 준비 중" 한 줄만(유건 결정 2026-09-24: 메신저에는 사고 과정·도구 단계·작성 중 본문을 보이지 않는다).
     canStop이면 그 옆에 중단 버튼(유건 확정 2026-09-26) — 시킨 사람 또는 크루 주인에게만, 서버가 권한을 다시 검사한다.
     상태 3단: 평소(중단) → 누르는 동안(중단 중…, disabled) → 서버가 받아준 뒤(중단 요청됨, disabled — 이 카드가 사라질 때까지 고정, 분리 검수 L-3). */
-function ExecCard({ crew, t, canStop = false, stopping = false, stopRequested = false, onStop }) {
+function ExecCard({ crew, t, canStop = false, stopping = false, stopRequested = false, onStop, wait = false, label: stateLabel = null, long = false }) {
   const label = stopRequested ? t('exec.stopRequested') : stopping ? t('exec.stopping') : t('exec.stop');
+  // wait = 보낸 뒤 대기 표시(await-reply.mjs) — 점 대신 회전 표시, 단계 문구는 화면 낭독기에 알린다. long = 긴 안내(조금 오래·꺼짐)는 줄바꿈 허용(폰 폭)
   return (
-    <div className="msgr-row">
+    <div className={`msgr-row${wait ? " msgr-await-row" : ""}`}>
       <Av name={crew.display_name} crew crewId={crew.id} />
       <div style={{ minWidth: 0 }}>
         <div className="who">{crew.display_name}<span className="role">{crew.role_text}</span></div>
-        <div className="msgr-exec"><div className="summary"><span className="msgr-dot mark pulse" /><span className="st">{t('exec.preparing')}</span>
+        <div className={`msgr-exec${wait ? ' wait' : ''}`} {...(wait ? { role: 'status', 'aria-live': 'polite' } : {})}><div className="summary">{wait ? <span className="msgr-spin" aria-hidden="true" /> : <span className="msgr-dot mark pulse" />}<span className={`st${long ? ' long' : ''}`}>{stateLabel ?? t('exec.preparing')}</span>
           {canStop && <button type="button" className={`btn sm ghost msgr-stop-btn${stopRequested ? ' requested' : ''}`} disabled={stopping || stopRequested} onClick={onStop} aria-label={label}>{label}</button>}
         </div></div>
       </div>
@@ -6586,6 +6600,9 @@ function Composer({ broadcast = null, onCrewJoined = null, outsideDmPersonal = n
   };
   const send = async () => {
     if (locked || busy || deliveryBlocked || rolePick) return; // 명령(/to·/cc)만 있는 글은 보내지 않는다 — 폰은 전송 버튼이 유일한 경로(검수 M-1)
+    // 직접 친 "@이름"이 이 방에 같은 이름 둘 이상(대소문자 무시)이고 목록에서 고르지 않았으면 누구를 부르는지 모른다 — 아무도 고르지 않고 보내지 않는다(2026-10-05)
+    const twins = ambiguousMentions(text.trim(), byName.filter((x) => !(x.kind === 'user' && x.id === uid)), mentions);
+    if (twins.length) { setAmbiguous(twins); haptic('medium'); return; }
     // 실패 카드가 있으면 Enter가 그 글부터 다시 보낸다 — 순서를 지키고, 새 글은 성공한 뒤에 이어 보낸다(D50: 실패 카드가 전송을 통째로 막았다)
     if (job) { if (retryBlocked || !await delivery.retry()) return; onSent(delivery.snapshot().lastDeliveredId); if (!text.trim() && !files.length) return; }
     const inline = mentionsFromBody(text.trim(), byName, mentions, allByName);
@@ -6616,6 +6633,8 @@ function Composer({ broadcast = null, onCrewJoined = null, outsideDmPersonal = n
   // 꺼진 에이전트 안내(D24) — 종전엔 90초 넘게 입력 중·안내·오류 없이 조용했다. 켜지면 부재중 대기분으로 이 글에 답한다(원장 P-R5).
   const [awayNote, setAwayNote] = useState(null);
   useEffect(() => { setAwayNote(null); }, [chId]);
+  const [ambiguous, setAmbiguous] = useState(null); // 같은 이름이 여럿인 직접 입력 @이름 — 글자를 고치면(목록에서 고르면) 사라진다
+  useEffect(() => { setAmbiguous(null); }, [text, chId]);
   const onKey = (e) => {
     if (rolePick) { // /to·/cc 목록 — @멘션 팝업과 같은 키. Escape는 명령을 지운다
       const list = rolePick.list;
@@ -6689,6 +6708,7 @@ function Composer({ broadcast = null, onCrewJoined = null, outsideDmPersonal = n
         <OutsideRow key={c.id} text={<>{(lang === 'en' ? (x) => x : koJosa)(t(view.line, { name: c.display_name }))}{view.denied && ` ${t('mention.outside.denied')}`}{view.suffix && ` · ${t(view.suffix)}`}</>}
           dm={t(outsideDmPersonal?.(c) ? 'mention.outside.dm.personal' : 'mention.outside.dm')} onDm={can && onOutsideDm ? () => { const body = outside.body; setOutside(null); onOutsideDm(c.id, body); } : null}
           request={view.request} requestLabel={t('mention.outside.request')} onRequest={() => requestAdd(c)} />); })}</div><button type="button" className="msgr-titlebtn" onClick={() => setOutside(null)} aria-label={t('ui.close')}><I name="x" size={13} /></button></div>}
+      {ambiguous && <p className="msgr-dm-delivery-warning msgr-mention-twins" role="alert">{t('mention.ambiguous', { name: ambiguous.join(', ') })}</p>}
       {replyTo && <div className="msgr-replychip" role="status"><I name="reply" size={13} /><span className="q"><b>{t('composer.replyTo', { name: replyTo.who })}</b> {replyTo.body}</span><button type="button" className="x" onClick={() => { delivery.setReplyTo(null); ta.current?.focus(); }} aria-label={t('composer.replyCancel')} title={t('composer.replyCancel')}><I name="x" size={12} /></button></div>}
       {phone && fileChipsNode}
       <form className={`msgr-composer${dragging ? ' drop' : ''}`} onSubmit={(e) => { e.preventDefault(); send(); }}

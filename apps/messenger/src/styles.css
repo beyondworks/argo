@@ -1010,6 +1010,9 @@
 .msgr-exec > .summary { display: flex; align-items: center; gap: 8px; padding: 9px 12px; color: var(--fg-2); min-width: 0; }
 .msgr-exec > .summary .st { color: var(--fg); font-weight: 600; white-space: nowrap; }
 .msgr-exec > .summary .msgr-stop-btn { margin-left: auto; flex: none; }
+/* 보낸 뒤 대기 표시(2026-10-05) — 회전 표시는 글자 높이에 맞춘 작은 원, 긴 안내(조금 오래·기기 꺼짐)는 폰 폭에서 잘리지 않게 줄바꿈 */
+.msgr-exec.wait > .summary .msgr-spin { width: 12px; height: 12px; border-width: 1.5px; flex: none; color: var(--fg-3); }
+.msgr-exec.wait > .summary .st.long { white-space: normal; font-weight: 500; min-width: 0; line-height: 1.45; }
 /* "중단 요청됨"은 완료 확인 문구라 일반 disabled 흐림(opacity)만으로는 라이트·다크 모두에서 대비가 낮았다(재검수 2026-09-26 UI LOW).
    최고 대비 텍스트(--fg)와 카드 배경(--card-2)으로 고정 — 테마별 opacity 값에 기대지 않는다. */
 .msgr-exec > .summary .msgr-stop-btn.requested { opacity: 1 !important; color: var(--fg); background: var(--card-2); border-color: var(--border); font-weight: 600; }

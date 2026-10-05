@@ -17,7 +17,8 @@ export function withoutKey(map, key) {
   return rest;
 }
 
-export const TYPING_WINDOW_MS = 6000;
+// 20초(2026-10-05, 6초에서 넓힘) — 턴 실행 중 서버 4초 주기 방송이 몇 번 늦거나 빠져도 '답변 중'이 깜빡이며 사라지지 않게. 답이 오면 settleCrew가 그 자리에서 내린다.
+export const TYPING_WINDOW_MS = 20_000;
 /** 그 방에서 TYPING_WINDOW_MS 안에 typing이 온 크루가 있나 — 목록의 '답변 중' 표시 */
 export const typingIn = (typing, channelId, now = Date.now()) => Object.entries(typing).some(([k, at]) => k.startsWith(`${channelId}:`) && now - at < TYPING_WINDOW_MS);
 

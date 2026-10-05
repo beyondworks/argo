@@ -465,6 +465,11 @@ export const DICT = {
   'profile.quiet.desc': ['조용한 시간에는 멘션·결재 OS 알림을 보내지 않습니다.', 'During quiet hours no OS notifications are sent for mentions or approvals.'],
   // 실행 카드 — '답변 준비 중' 한 줄(유건 결정 2026-09-24)
   'exec.preparing': ['답변 준비 중', 'Preparing a reply'],
+  // 보낸 뒤 대기 표시(await-reply.mjs, 2026-10-05) — 크루를 겨냥한 내 글 아래, 그 크루가 글을 올릴 때까지
+  'await.preparing': ['전달됨 · {name} 준비 중', 'Delivered · {name} is getting ready'],
+  'await.answering': ['답변 중', 'Replying'],
+  'await.slow': ['조금 오래 걸리고 있어요', 'This is taking a little longer'],
+  'await.offline': ['에이전트 기기가 꺼져 있어 기다리는 중이에요 — 기기가 켜지면 답해요', 'The agent’s device is off — it will reply once the device is back on'],
   'exec.stop': ['중단', 'Stop'],
   'exec.stopping': ['중단 중…', 'Stopping…'],
   'exec.stopRequested': ['중단 요청됨', 'Stop requested'],
@@ -1078,6 +1083,7 @@ export const DICT = {
   'crew.allow.readonly': ['이 에이전트의 소유자({name})만 바꿀 수 있습니다.', 'Only the owner ({name}) can change this.'],
   'crew.allow.me.yes': ['당신은 1:1 대화에서 이 에이전트에게 일을 시킬 수 있습니다.', 'You can task this agent in a 1:1.'],
   'mention.outside': ['{name}은(는) 이 방에 없어요', '{name} isn’t in this room'],
+  'mention.ambiguous': ['같은 이름이 여러 명이에요 — 목록에서 골라 주세요 (@{name})', 'More than one member is named @{name} — pick one from the list'],
   'mention.outside.dm': ['1:1로 시키기', 'Ask in 1:1'],
   'mention.outside.dm.personal': ['개인 1:1로 시키기', 'Ask in personal 1:1'],
   'mention.outside.request': ['이 방에 추가 요청', 'Request to add here'],
