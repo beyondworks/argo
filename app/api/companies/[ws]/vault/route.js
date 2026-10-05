@@ -8,7 +8,8 @@ import { paths } from '../../../../../src/workspace.mjs';
 import { EXPORTS } from '../../../../../src/office-export.mjs';
 import { appendEvent } from '../../../../../src/events.mjs';
 import { guardCompany, requestLang } from '../../../../auth.mjs';
-import { apiError } from '../../../../apimsg.mjs';
+import { apiError, apiErrorFrom } from '../../../../apimsg.mjs';
+import { codedError } from '../../../../../src/coded-error.mjs';
 
 /** 문서 버전 — 내용 해시(16자). mtime은 동기화 수신·링크 덧붙임(writeKeepingMtime)이 되돌려 놓아 변경 판정에 못 쓴다. */
 const docVersion = (text) => createHash('sha256').update(text).digest('hex').slice(0, 16);
@@ -18,7 +19,7 @@ function noteFile(ws, rel) {
   const p = paths(ws);
   const file = resolve(p.vault, rel);
   // sep 사용 — Windows resolve()는 백슬래시라 '/' 하드코딩이면 정상 노트도 오차단
-  if (!file.startsWith(resolve(p.notes) + sep) || !file.endsWith('.md')) throw new Error('주제 노트만 수정할 수 있습니다');
+  if (!file.startsWith(resolve(p.notes) + sep) || !file.endsWith('.md')) throw codedError('vault_note_only', '주제 노트만 수정할 수 있습니다');
   return file;
 }
 
@@ -53,7 +54,7 @@ export async function GET(req, { params }) {
         return Response.json({ rel, content, version: docVersion(content) }); // 편집 저장이 이 버전을 돌려보낸다(F6 충돌 판정)
       } catch (e) {
         // 깨진 위키링크(삭제·이동된 문서) — raw ENOENT는 서버 절대 경로를 UI에 노출한다(SaaS 레이아웃 유출)
-        if (e?.code === 'ENOENT') return Response.json({ error: `문서를 찾을 수 없습니다: ${rel}` }, { status: 404 });
+        if (e?.code === 'ENOENT') return apiError('vault_doc_not_found', await requestLang()); // 화면 언어 문구(F11) — 서버 경로는 싣지 않는다
         throw e;
       }
     }
@@ -91,7 +92,7 @@ export async function PUT(req, { params }) {
     const { ws } = await params;
     const denied = await guardCompany(ws); if (denied) return denied;
     const { rel, content, baseVersion, force } = await req.json();
-    if (!rel || !content?.trim()) return Response.json({ error: 'rel·content가 필요합니다' }, { status: 400 });
+    if (!rel || !content?.trim()) return apiError('vault_bad_request', await requestLang());
     const file = noteFile(ws, rel);
     // 충돌 판정(F6, 2026-10-05) — 열 때의 버전(baseVersion)과 지금 내용이 다르면 덮지 않고 409. 편집하는 동안 크루·다른 기기
     // (동기화)가 바꾼 내용이 통째 덮어쓰기로 조용히 사라졌다. force = 사용자가 "내 것으로 덮기"를 고른 저장.
@@ -110,7 +111,7 @@ export async function PUT(req, { params }) {
     await appendEvent(ws, { type: 'memory', ok: true, notes: [basename(rel, '.md')], op: 'edit' });
     return Response.json({ ok: true, version: docVersion(text) });
   } catch (e) {
-    return Response.json({ error: String(e.message || e) }, { status: 400 });
+    return apiErrorFrom(e, await requestLang(), 400); // 주제 노트 아님 등 코드 달린 오류는 화면 언어 문구(F11)
   }
 }
 
@@ -128,13 +129,13 @@ export async function DELETE(req, { params }) {
     } catch (e) {
       // 이미 삭제·이동된 노트 — raw ENOENT는 서버 절대 경로를 UI에 노출한다(GET과 같은 가림).
       // rename만 좁게 감싼다: 이동 성공 후 후속(updateIndex 등) 실패가 "문서 없음 404"로 오보되지 않게.
-      if (e?.code === 'ENOENT') return Response.json({ error: `문서를 찾을 수 없습니다: ${rel}` }, { status: 404 });
+      if (e?.code === 'ENOENT') return apiError('vault_doc_not_found', await requestLang());
       throw e;
     }
     await updateIndex(ws);
     await appendEvent(ws, { type: 'memory', ok: true, notes: [basename(file, '.md')], op: 'delete' });
     return Response.json({ ok: true });
   } catch (e) {
-    return Response.json({ error: String(e.message || e) }, { status: 400 });
+    return apiErrorFrom(e, await requestLang(), 400);
   }
 }

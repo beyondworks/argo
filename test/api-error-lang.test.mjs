@@ -53,6 +53,24 @@ const EXPECT = {
   msgr_crew_not_found: { status: 404, ko: '크루가 없습니다', en: 'Crew not found' },
   msgr_upstream: { status: 502, ko: '조직 서버 응답 오류 — 잠시 후 다시 시도해 주세요', en: 'Organization server error — please try again shortly' },
   // 회사 정보 읽기 실패(F3, 2026-10-05) — 없음(404 company_not_found)과 갈라 화면이 '찾을 수 없음'으로 바뀌지 않게
+  // 엔진 오류 코드(F11) — ko는 엔진이 던지던 문장 그대로
+  crew_not_found: { status: 404, ko: '존재하지 않는 크루입니다', en: 'This crew does not exist' },
+  team_not_found: { status: 404, ko: '해당 팀의 크루가 없습니다', en: 'No crew is in that team' },
+  approval_not_found: { status: 404, ko: '존재하지 않는 결재입니다', en: 'This approval does not exist' },
+  approval_already_resolved: { status: 409, ko: '이미 처리된 결재입니다', en: 'This approval was already handled' },
+  approval_org_policy: { status: 403, ko: '조직 정책: 이 결재는 팀 메신저에서 조직 관리자(결재권자)만 확정할 수 있습니다', en: 'Organization policy: only an org admin (approver) can decide this, in the team messenger' },
+  routine_not_found: { status: 404, ko: '루틴을 찾을 수 없습니다', en: 'Routine not found' },
+  routine_fields_required: { status: 400, ko: '크루·제목·지시가 필요합니다', en: 'A crew, title and instruction are required' },
+  routine_title_required: { status: 400, ko: '제목이 필요합니다', en: 'A title is required' },
+  routine_prompt_required: { status: 400, ko: '지시가 필요합니다', en: 'An instruction is required' },
+  routine_crew_required: { status: 400, ko: '크루가 필요합니다', en: 'A crew is required' },
+  company_name_required: { status: 400, ko: '이름이 필요합니다', en: 'A name is required' },
+  company_budget_invalid: { status: 400, ko: '예산은 0 이상의 숫자', en: 'Budget must be a number of 0 or more' },
+  company_lang_invalid: { status: 400, ko: '언어는 ko 또는 en이어야 합니다', en: 'Language must be ko or en' },
+  vault_bad_request: { status: 400, ko: 'rel·content가 필요합니다', en: 'rel and content are required' },
+  vault_note_only: { status: 400, ko: '주제 노트만 수정할 수 있습니다', en: 'Only topic notes can be edited' },
+  vault_doc_not_found: { status: 404, ko: '문서를 찾을 수 없습니다', en: 'Document not found' },
+  crew_card_not_found: { status: 404, ko: '크루를 찾을 수 없습니다', en: 'Crew not found' },
   vault_conflict: { status: 409, ko: '편집하는 동안 다른 곳에서 이 문서가 바뀌었습니다', en: 'This document changed elsewhere while you were editing' },
   archive_not_found: { status: 404, ko: '보관한 회사를 찾을 수 없습니다', en: 'Archived company not found' },
   archive_restore_exists: { status: 409, ko: '같은 이름의 회사가 이미 있어 되돌릴 수 없습니다', en: 'A company with the same name already exists, so it cannot be restored' },
@@ -169,4 +187,33 @@ test('companies GET — 프리셋 표시 언어: ?lang 1순위, 부재 시 argo-
   assert.ok(!hasKo(await getPresets('?lang=en')), '?lang=en = 영어(기존 행동 유지)');
   assert.ok(hasKo(await getPresets('?lang=ko', { cookie: 'argo-lang=en' })), '?lang=ko가 쿠키 en보다 우선(화면 UI 언어 1순위)');
   assert.ok(hasKo(await getPresets('?lang=de', { cookie: 'argo-lang=ko' })), '무효 ?lang은 버리고 쿠키(ko)로');
+});
+
+// F11(2026-10-05): 엔진·라우트 오류가 한국어 고정이라 영어 화면에도 한국어가 나왔다 — 코드로 화면 언어 문구를 고른다.
+test('F11: 엔진이 던지는 오류에 errorCode가 붙고(문장은 그대로), 라우트는 그 코드로 표시 언어 문구를 내린다', async () => {
+  const { apiErrorFrom, errorTextFor } = await import('../app/apimsg.mjs');
+  const { createCompany } = await import('../src/workspace.mjs');
+  const { resolveApproval, addApproval } = await import('../src/approvals.mjs');
+  const { updateRoutine } = await import('../src/routines.mjs');
+  const { removeAgentCard } = await import('../src/persona.mjs');
+  await createCompany('co-f11', 'F11 회사', 'captain');
+  const caught = async (p) => { try { await p; } catch (e) { return e; } return null; };
+  const e1 = await caught(resolveApproval('co-f11', 'nope', true));
+  assert.equal(e1.errorCode, 'approval_not_found'); assert.equal(e1.message, '존재하지 않는 결재입니다', '문장은 그대로(기존 소비자 회귀 0)');
+  const a = await addApproval('co-f11', { slug: 'p', action: 'x' });
+  await resolveApproval('co-f11', a.id, true);
+  assert.equal((await caught(resolveApproval('co-f11', a.id, true))).errorCode, 'approval_already_resolved');
+  assert.equal((await caught(updateRoutine('co-f11', 'nope', { enabled: true }))).errorCode, 'routine_not_found');
+  assert.equal((await caught(updateRoutine('co-f11', 'nope', { title: ' ' }))).errorCode, 'routine_title_required');
+  assert.equal((await caught(removeAgentCard('co-f11', 'ghost'))).errorCode, 'crew_not_found');
+  const en = await apiErrorFrom(e1, 'en').json();
+  assert.deepEqual(en, { error: 'This approval does not exist', errorCode: 'approval_not_found' });
+  const plain = apiErrorFrom(new Error('원문 그대로'), 'en', 500);
+  assert.equal(plain.status, 500); assert.equal((await plain.json()).error, '원문 그대로', '코드 없는 오류는 종전처럼');
+  // 화면: 서버가 한국어로 그렸어도 errorCode가 있으면 화면 언어 문구
+  assert.equal(errorTextFor({ error: '존재하지 않는 결재입니다', errorCode: 'approval_not_found' }, 404, 'en'), 'This approval does not exist');
+  assert.equal(errorTextFor({ error: 'Company not found', errorCode: 'company_not_found' }, 404, 'ko', { company_not_found: { ko: '회사를 찾을 수 없습니다', en: 'Company not found' } }), '회사를 찾을 수 없습니다', '가드 사전도 쓴다');
+  assert.equal(errorTextFor({ error: '원문' }, 400, 'en'), '원문');
+  assert.equal(errorTextFor({}, 502, 'en'), 'Request failed (502)');
+  assert.equal(errorTextFor({}, 502, 'ko'), '요청 실패 (502)');
 });

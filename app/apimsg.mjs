@@ -31,6 +31,25 @@ export const API_MSG = {
   msgr_crew_not_found: { status: 404, ko: '크루가 없습니다', en: 'Crew not found' },
   msgr_upstream: { status: 502, ko: '조직 서버 응답 오류 — 잠시 후 다시 시도해 주세요', en: 'Organization server error — please try again shortly' },
   // 회사 정보(app/api/companies/[ws] GET) — 없음(404 company_not_found)과 구분되는 읽기 실패(F3, 2026-10-05)
+  // 엔진 오류 코드(src/coded-error.mjs codedError, F11 2026-10-05) — ko는 엔진이 던지던 문장 그대로(회귀 0)
+  crew_not_found: { status: 404, ko: '존재하지 않는 크루입니다', en: 'This crew does not exist' },
+  team_not_found: { status: 404, ko: '해당 팀의 크루가 없습니다', en: 'No crew is in that team' },
+  approval_not_found: { status: 404, ko: '존재하지 않는 결재입니다', en: 'This approval does not exist' },
+  approval_already_resolved: { status: 409, ko: '이미 처리된 결재입니다', en: 'This approval was already handled' },
+  approval_org_policy: { status: 403, ko: '조직 정책: 이 결재는 팀 메신저에서 조직 관리자(결재권자)만 확정할 수 있습니다', en: 'Organization policy: only an org admin (approver) can decide this, in the team messenger' },
+  routine_not_found: { status: 404, ko: '루틴을 찾을 수 없습니다', en: 'Routine not found' },
+  routine_fields_required: { status: 400, ko: '크루·제목·지시가 필요합니다', en: 'A crew, title and instruction are required' },
+  routine_title_required: { status: 400, ko: '제목이 필요합니다', en: 'A title is required' },
+  routine_prompt_required: { status: 400, ko: '지시가 필요합니다', en: 'An instruction is required' },
+  routine_crew_required: { status: 400, ko: '크루가 필요합니다', en: 'A crew is required' },
+  // 라우트 입력 검증(회사 설정·기억·크루 카드) — ko는 라우트가 내리던 문장 그대로
+  company_name_required: { status: 400, ko: '이름이 필요합니다', en: 'A name is required' },
+  company_budget_invalid: { status: 400, ko: '예산은 0 이상의 숫자', en: 'Budget must be a number of 0 or more' },
+  company_lang_invalid: { status: 400, ko: '언어는 ko 또는 en이어야 합니다', en: 'Language must be ko or en' },
+  vault_bad_request: { status: 400, ko: 'rel·content가 필요합니다', en: 'rel and content are required' },
+  vault_note_only: { status: 400, ko: '주제 노트만 수정할 수 있습니다', en: 'Only topic notes can be edited' },
+  vault_doc_not_found: { status: 404, ko: '문서를 찾을 수 없습니다', en: 'Document not found' },
+  crew_card_not_found: { status: 404, ko: '크루를 찾을 수 없습니다', en: 'Crew not found' },
   // 기억 문서 편집 충돌(app/api/companies/[ws]/vault PUT, F6) — 화면은 errorCode로 "새로 불러오기/내 것으로 덮기"를 고르게 한다
   vault_conflict: { status: 409, ko: '편집하는 동안 다른 곳에서 이 문서가 바뀌었습니다', en: 'This document changed elsewhere while you were editing' },
   // 보관한 회사 되돌리기(app/api/archived-companies, F14)
@@ -46,4 +65,20 @@ export function apiError(code, lang) {
   const m = API_MSG[code];
   if (!m) throw new Error(`apiError: 미등록 코드 ${code}`);
   return Response.json({ error: lang === 'en' ? m.en : m.ko, errorCode: code }, { status: m.status });
+}
+
+/** 엔진·라우트 예외 → 응답. e.errorCode가 사전에 있으면 표시 언어 문구 + errorCode(apiError), 없으면 종전처럼 원문(fallbackStatus).
+    (F11 — 엔진 오류가 한국어 고정이라 영어 화면에도 한국어가 나왔다) */
+export function apiErrorFrom(e, lang, fallbackStatus = 400) {
+  if (e?.errorCode && API_MSG[e.errorCode]) return apiError(e.errorCode, lang);
+  return Response.json({ error: String(e?.message || e) }, { status: fallbackStatus });
+}
+
+/** 화면 쪽 오류 문구 — 응답 본문에 errorCode가 있고 사전(API_MSG + 가드 사전)에 있으면 **화면 언어**(lang) 문구를 쓴다. 서버가
+    쿠키 없이 ko로 그렸어도 화면 언어를 따른다. 없으면 error 원문, 그것도 없으면 상태 숫자 문구. app/ui.jsx api()가 쓴다. */
+export function errorTextFor(data, status, lang, extra = {}) {
+  const m = data?.errorCode ? (API_MSG[data.errorCode] ?? extra[data.errorCode]) : null;
+  if (m) return lang === 'en' ? m.en : m.ko;
+  if (data?.error) return String(data.error);
+  return lang === 'en' ? `Request failed (${status})` : `요청 실패 (${status})`;
 }

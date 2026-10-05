@@ -98,7 +98,7 @@ export async function PUT(req, { params }) {
         .slice(0, 50);
     }
     if (name !== undefined) {
-      if (!name.trim()) return Response.json({ error: '이름이 필요합니다' }, { status: 400 });
+      if (!name.trim()) return apiError('company_name_required', await requestLang());
       patch.name = name.trim();
     }
     if (crewPinned !== undefined) {
@@ -112,7 +112,7 @@ export async function PUT(req, { params }) {
       patch.crewOrder = [...new Set(crewOrder.filter((s) => typeof s === 'string' && /^[a-z0-9-]{1,64}$/.test(s)))].slice(0, 200);
     }
     if (lang !== undefined) {
-      if (lang !== 'ko' && lang !== 'en') return Response.json({ error: '언어는 ko 또는 en이어야 합니다' }, { status: 400 });
+      if (lang !== 'ko' && lang !== 'en') return apiError('company_lang_invalid', await requestLang());
       patch.lang = lang; // 시스템(크루 생성) 언어 — 크루 답변·기억이 이 언어를 따른다
     }
     if (computerUse !== undefined) patch.computerUse = computerUse === true; // 컴퓨터 유즈 옵트인 — 불리언만(문자열 'true' 등은 꺼짐으로)
@@ -121,7 +121,7 @@ export async function PUT(req, { params }) {
     if (fullAuto !== undefined) patch.fullAuto = fullAuto === true;
     if (budgetUsd !== undefined) {
       const n = Number(budgetUsd);
-      if (!Number.isFinite(n) || n < 0) return Response.json({ error: '예산은 0 이상의 숫자' }, { status: 400 });
+      if (!Number.isFinite(n) || n < 0) return apiError('company_budget_invalid', await requestLang());
       patch.budgetUsd = n;
     }
     // ponytail: 회사 기본 러너(K1, 유건 지시 2026-08-08). 빈 문자열 = 해제(기존 순서 폴백).

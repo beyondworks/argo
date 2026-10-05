@@ -1,6 +1,7 @@
 import { createAgentFromPrompt, renameTeam } from '../../../../../src/persona.mjs';
 import { listAgents } from '../../../../../src/hub.mjs';
-import { guardCompany } from '../../../../auth.mjs';
+import { guardCompany, requestLang } from '../../../../auth.mjs';
+import { apiErrorFrom } from '../../../../apimsg.mjs';
 
 /** 팀 이름 일괄 변경. */
 export async function PATCH(req, { params }) {
@@ -12,7 +13,7 @@ export async function PATCH(req, { params }) {
     const r = await renameTeam(ws, from, to);
     return Response.json(r);
   } catch (e) {
-    return Response.json({ error: String(e.message || e) }, { status: 400 });
+    return apiErrorFrom(e, await requestLang(), 400); // 팀 없음 등 코드 달린 엔진 오류(F11)
   }
 }
 

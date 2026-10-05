@@ -14,6 +14,7 @@ import { LOOP_VERDICT_RE, parseLoopVerdict, loopVerdictLine, stripLoopVerdict } 
 // 시각 판정(순수)은 routine-time.mjs가 원천 — 목록 화면(클라이언트)이 '만료' 표시에 같은 판정을
 // 쓰기 위한 분리. 기존 소비자를 위해 그대로 재수출한다(임포트 경로 하위호환).
 import { normalizeTz, zonedParts, onceSpent, CATCHUP_MS } from './routine-time.mjs';
+import { codedError } from './coded-error.mjs'; // 화면 문구 코드(F11)
 export { normalizeTz, zonedParts, onceSpent, onceExpired } from './routine-time.mjs';
 
 const lockKey = (wsId) => `routines:${wsId}`;
@@ -243,7 +244,7 @@ export async function resumeLoop(wsId, id) {
 const hostTz = () => { try { return new Intl.DateTimeFormat().resolvedOptions().timeZone || null; } catch { return null; } };
 
 export async function addRoutine(wsId, { agentSlug, title, prompt, schedule, enabled = true, loop = null, verify = null, msgr = null, notifications, from = null }) { // from = 사장 직접 턴이 아닌 턴(또는 다른 크루에게 건 예약)의 시작점 크루 — 실행 턴이 풀 오토가 아니다
-  if (!agentSlug || !title?.trim() || !prompt?.trim()) throw new Error('크루·제목·지시가 필요합니다');
+  if (!agentSlug || !title?.trim() || !prompt?.trim()) throw codedError('routine_fields_required', '크루·제목·지시가 필요합니다');
   if (msgr && msgr.wsId !== wsId) throw new Error('메신저 예약 회사 불일치');
   const destinations = await validateRoutineNotifications(wsId, agentSlug, notifications);
   const sched = normalizeSchedule({ tz: hostTz(), ...schedule });
@@ -282,15 +283,15 @@ export async function addRoutine(wsId, { agentSlug, title, prompt, schedule, ena
 export function sanitizeRoutinePatch(patch = {}) {
   const out = {};
   if ('title' in patch) {
-    if (!patch.title?.trim()) throw new Error('제목이 필요합니다');
+    if (!patch.title?.trim()) throw codedError('routine_title_required', '제목이 필요합니다');
     out.title = patch.title.trim();
   }
   if ('prompt' in patch) {
-    if (!patch.prompt?.trim()) throw new Error('지시가 필요합니다');
+    if (!patch.prompt?.trim()) throw codedError('routine_prompt_required', '지시가 필요합니다');
     out.prompt = patch.prompt.trim();
   }
   if ('agentSlug' in patch) {
-    if (!patch.agentSlug) throw new Error('크루가 필요합니다');
+    if (!patch.agentSlug) throw codedError('routine_crew_required', '크루가 필요합니다');
     out.agentSlug = patch.agentSlug;
   }
   if ('schedule' in patch) out.schedule = normalizeSchedule(patch.schedule);
@@ -307,7 +308,7 @@ export async function updateRoutine(wsId, id, patch, { from = null } = {}) {
   const clean = sanitizeRoutinePatch(patch);
   if ('notifications' in clean || 'agentSlug' in clean) {
     const before = (await loadRoutines(wsId)).find((r) => r.id === id);
-    if (!before) throw new Error('루틴을 찾을 수 없습니다');
+    if (!before) throw codedError('routine_not_found', '루틴을 찾을 수 없습니다');
     if ('notifications' in clean && clean.notifications === undefined) throw new Error('Invalid routine notification channels');
     const next = 'notifications' in clean ? clean.notifications : before.notifications;
     const changed = JSON.stringify(next) !== JSON.stringify(before.notifications)
@@ -334,7 +335,7 @@ export async function updateRoutine(wsId, id, patch, { from = null } = {}) {
     }
     return out;
   });
-  if (!r) throw new Error('루틴을 찾을 수 없습니다');
+  if (!r) throw codedError('routine_not_found', '루틴을 찾을 수 없습니다');
   return r;
 }
 
@@ -370,7 +371,7 @@ export async function runRoutine(wsId, id, { chatFn = null, startAt = null, sess
   // startAt = 테스트 전용(시작 시각 주입) — "시작이 예약 시각을 가로지르는 실행"은 실제 분 경계를
   // 기다리지 않고는 재현할 수 없다(catch의 once 끄기 판정 시계가 이 각인을 쓴다).
   const r0 = await patchRoutine(wsId, id, { lastRun: (startAt ?? new Date()).toISOString() });
-  if (!r0) throw new Error('루틴을 찾을 수 없습니다');
+  if (!r0) throw codedError('routine_not_found', '루틴을 찾을 수 없습니다');
   // Edits apply to the next execution: never send an in-flight result to a newly chosen recipient.
   const resultRoutine = (current) => ({ ...(current ?? r0), title: r0.title, agentSlug: r0.agentSlug,
     lastRun: r0.lastRun, notifications: r0.notifications, msgr: r0.msgr });

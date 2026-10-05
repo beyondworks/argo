@@ -13,6 +13,7 @@ import { CLAUDE_EFFORTS, normalizeCrewEffort } from './model-effort.mjs';
 import { appendEvent } from './events.mjs';
 import { runOneShot } from './oneshot.mjs'; // 러너 독립 — Claude 없이 Codex/Gemini/GLM만 연결해도 영입 가능
 import { isReservedSlug, isTakenSlug } from './slug.mjs'; // 회의실 내부 이름(room-*)과의 파일 충돌 차단 — 예약어 원천
+import { codedError } from './coded-error.mjs'; // 화면 문구 코드(F11)
 
 // 카드 = 시스템 프롬프트. lang='en'이면 이름·직함·본문을 영어로 생성하되, 세 섹션 헤더(## 전문성/일하는 방식/톤)는
 // 한국어 고정 토큰으로 유지한다 — 백엔드·프론트 여러 파서(persona.mjs:appendAgentRule, hub.mjs, crew page)가 이
@@ -283,7 +284,7 @@ export async function saveAgentCard(wsId, slug, md) {
   if (!meta.name) throw new Error('frontmatter에 name이 필요합니다');
   return lockCard(wsId, slug, async () => {
     const file = cardPath(wsId, slug);
-    if (!existsSync(file)) throw new Error('존재하지 않는 크루입니다');
+    if (!existsSync(file)) throw codedError('crew_not_found', '존재하지 않는 크루입니다');
     // 엔진(runner/model)은 PATCH 경로가 소유한다 — 본문/규칙 저장(PUT)이 통째로 덮어써 엔진 선택을
     // 조용히 원복시키던 문제(패널 stale) 방어: 들어온 md에 엔진 키가 없으면 디스크의 현재 값을 보존한다.
     // (사용자가 raw 편집기에서 직접 엔진 키를 넣었으면 그때만 incoming에 존재 → 그 값 존중)
@@ -345,7 +346,7 @@ export const EFFORT_LEVELS = CLAUDE_EFFORTS;
 export async function updateAgentMeta(wsId, slug, { name, role, team, model, runner, effort, skills, mcp }) {
   return lockCard(wsId, slug, async () => {
     const file = cardPath(wsId, slug);
-    if (!existsSync(file)) throw new Error('존재하지 않는 크루입니다');
+    if (!existsSync(file)) throw codedError('crew_not_found', '존재하지 않는 크루입니다');
     let md = await readFile(file, 'utf8');
     const before = parseFrontmatter(md);
     if (name !== undefined && name.trim()) {
@@ -391,7 +392,7 @@ export async function updateAgentMeta(wsId, slug, { name, role, team, model, run
 export async function appendAgentRule(wsId, slug, text) {
   return lockCard(wsId, slug, async () => {
     const file = cardPath(wsId, slug);
-    if (!existsSync(file)) throw new Error('존재하지 않는 크루입니다');
+    if (!existsSync(file)) throw codedError('crew_not_found', '존재하지 않는 크루입니다');
     const md = await readFile(file, 'utf8');
     const rule = String(text).trim();
     if (!rule) return parseFrontmatter(md);
@@ -443,7 +444,7 @@ export async function listAgentSections(wsId, slug) {
 export async function setAgentRules(wsId, slug, rules) {
   return lockCard(wsId, slug, async () => {
     const file = cardPath(wsId, slug);
-    if (!existsSync(file)) throw new Error('존재하지 않는 크루입니다');
+    if (!existsSync(file)) throw codedError('crew_not_found', '존재하지 않는 크루입니다');
     const list = (Array.isArray(rules) ? rules : []).map((r) => String(r).replace(/\s+/g, ' ').trim()).filter(Boolean);
     const md = await readFile(file, 'utf8');
     const doc = splitCardBody(md);
@@ -466,7 +467,7 @@ export async function setAgentSection(wsId, slug, title, body) {
   if (!name) throw new Error('섹션 제목이 필요합니다');
   return lockCard(wsId, slug, async () => {
     const file = cardPath(wsId, slug);
-    if (!existsSync(file)) throw new Error('존재하지 않는 크루입니다');
+    if (!existsSync(file)) throw codedError('crew_not_found', '존재하지 않는 크루입니다');
     const text = String(body ?? '').replace(/\r\n/g, '\n').trim();
     const md = await readFile(file, 'utf8');
     const doc = splitCardBody(md);
@@ -499,7 +500,7 @@ export async function renameTeam(wsId, from, to) {
     });
     if (did) changed += 1;
   }
-  if (changed === 0) throw new Error('해당 팀의 크루가 없습니다');
+  if (changed === 0) throw codedError('team_not_found', '해당 팀의 크루가 없습니다');
   await appendEvent(wsId, { type: 'crew', op: 'team', name: `${from} → ${to.trim()}` });
   return { changed };
 }
@@ -512,7 +513,7 @@ export async function removeAgentCard(wsId, slug) {
   // 경합하면 "고친 내용이 사라진 채 해고"나 "이미 해고된 파일에 다시 쓰기"가 날 수 있다.
   // setPin·updateAgentBot은 각자 자기 락 키(workroots·connections)라 여기서 기다려도 교착 없음.
   await lockCard(wsId, slug, async () => {
-    if (!existsSync(file)) throw new Error('존재하지 않는 크루입니다');
+    if (!existsSync(file)) throw codedError('crew_not_found', '존재하지 않는 크루입니다');
     const archive = join(dir, '.archive');
     await mkdir(archive, { recursive: true });
     await rename(file, join(archive, `${Date.now()}-${slug}.md`));

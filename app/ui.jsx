@@ -7,6 +7,8 @@ import { labelTableCells } from './md-table.mjs';
 import { useLang } from './i18n';
 import { rewriteVaultHref } from '../src/vault-links.mjs'; // 산출물 링크 재작성(순수 — 테스트는 src 쪽)
 import { dropUpClamp } from './c/[ws]/zoom-math.mjs'; // 표시 배율(#334) 좌표 환산 계열 — DropUp 패널 클램프
+import { errorTextFor } from './apimsg.mjs'; // errorCode → 화면 언어 문구(F11)
+import { AUTH_MSG } from './authmsg.mjs';
 
 // SSR에는 layout effect가 없다(서버 렌더 경고) — 클라이언트에서만 "그리기 전" 실행이 필요한
 // 팝오버 클램프용 별칭. 서버에서는 useEffect로 동작이 같다(열림은 클라이언트 상호작용에서만 발생).
@@ -351,8 +353,8 @@ export async function api(path, opts) {
     if (!res.ok) {
       // api()는 훅 밖(컴포넌트 외부)에서도 호출되므로 localStorage를 직접 읽는다.
       const lang = (typeof window !== 'undefined' && localStorage.getItem('argo-lang')) || 'ko';
-      const fallback = lang === 'en' ? `Request failed (${res.status})` : `요청 실패 (${res.status})`;
-      const err = new Error(data.error || fallback);
+      // errorCode가 있으면 화면 언어 문구로(F11 — 서버가 한국어로 그렸어도 영어 화면엔 영어), 없으면 원문·상태 문구
+      const err = new Error(errorTextFor(data, res.status, lang, AUTH_MSG));
       err.data = data; // 에러 바디의 부가 필드(예: chat의 failed·saved)를 호출부가 읽을 수 있게
       throw err;
     }
