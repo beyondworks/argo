@@ -126,34 +126,46 @@ export function parseJob(text) {
 // ① 끝 표지에 호출마다 새 번호(tag)를 단다 — 바깥 글이 끝 표지를 미리 써 둘 수 없다. ② 안쪽 글의 표지 흉내(시작·끝 문구, UNTRUSTED_SOURCE)는
 // 바꿔 쓰고, 그 번호가 든 줄은 지운다 — 가짜 '끝' 표지로 블록 밖에 나온 척하지 못하게. 번호(tag)는 부르는 쪽이 만든다(이 파일은 노드 의존 0).
 export const OUTSIDE_MARK = { begin: { ko: '--- 바깥 글 시작', en: '--- Outside text begins' }, end: { ko: '--- 바깥 글 끝', en: '--- Outside text ends' } };
-const OUTSIDE_FAKE = /바깥\s*글\s*(?:시작|끝)|outside\s+text\s+(?:begins|ends)|untrusted[\s_-]*source/gi;
+// 표지 흉내 판정(S1 → 검수 #fix-cross L2 → 총괄 보안 검토 02b4916a). 모델은 전각·소문자 섞기·표시 없는 글자·구분 기호로 끊은 'outside text ends'도 같은 문구로 읽는다.
+// 그래서 탐지는 원문이 아니라 비교용 사본에서 한다: 코드 포인트마다 NFKD(전각·호환 글자·결합 글자 분해) → 표시 없는 글자(\p{Mn}·\p{Me}·\p{Cf} — 소프트 하이픈·제로폭·방향 제어·
+// 이체 선택자·태그 문자 등, 한글 채움 글자 U+115F·U+1160·U+3164·U+FFA0) 제거 → 소문자. 코드 포인트마다 접으므로 글자 묶음·경계를 넘는 정규화와 결과가 같다(표시를 다 지우니 결합 순서가 무관).
+// 낱말 사이는 공백·문장부호·기호·밑줄(`outside_text_ends`·`바깥·글·끝`). 한글 낱말은 분해형(NFKD)으로 적어 완성형·NFD 입력을 모두 잡는다.
+// 한계: 비슷한 모양 글자(키릴 'о' 등)는 열린 목록이라 다루지 않고, 낱말 '안'에 낀 기호('out·side')도 모른다 — 진짜 방어는 호출마다 새 번호(끝 표지)이고 이 치환은 보조 장치다.
+const SEP = '[\\s\\p{P}\\p{S}]*';
+const nfkd = (w) => w.normalize('NFKD');
+const OUTSIDE_FAKE = new RegExp(`${nfkd('바깥')}${SEP}${nfkd('글')}${SEP}(?:${nfkd('시작')}|${nfkd('끝')})|outside${SEP}text${SEP}(?:begins|ends)|untrusted${SEP}source`, 'giu');
 export const OUTSIDE_STUB = { ko: '(경계 표지 흉내)', en: '(imitated boundary mark)' };
-// 전각(ｏｕｔｓｉｄｅ)·호환 글자·제로폭 글자로 끊어 쓴 흉내도 모델에게는 같은 글자로 읽힌다(검수 #fix-cross L2). 찾기는 비교용 사본(NFKC + 제로폭 제거)에서 하고,
-// 원문은 찾은 구간만 바꾼다 — 원문 전체에 NFKC를 걸면 사용자 데이터(㈜·①·전각 영문)가 바뀐다. 사본의 위치를 원문 구간으로 되돌리려고 글자 묶음(grapheme)마다 따로 사본을 만든다.
-const ZERO_WIDTH = /[\u200B\u200C\u200D\u2060\uFEFF]/g;
-const fold = (s) => s.normalize('NFKC').replace(ZERO_WIDTH, '');
-let segmenter;
+const INVISIBLE = /[\p{Mn}\p{Me}\p{Cf}\u115F\u1160\u3164\uFFA0]/gu;
+const foldMemo = new Map();
+/** 코드 포인트 하나의 비교용 모양 — 같은 글자가 되풀이되니 기억해 둔다 */
+function foldChar(ch) {
+  let f = foldMemo.get(ch);
+  if (f === undefined) {
+    f = ch.normalize('NFKD').replace(INVISIBLE, '').toLowerCase();
+    if (foldMemo.size < 8192) foldMemo.set(ch, f);
+  }
+  return f;
+}
+/** 흉내 구간만 stub으로 — 원문은 찾은 구간 밖은 한 글자도 바꾸지 않는다(원문 전체에 NFKD/NFKC를 걸면 ㈜·①·전각 영문 같은 사용자 데이터가 바뀐다) */
 function defang(s, lang) {
   const stub = OUTSIDE_STUB[L(lang)];
-  const plain = s.replace(OUTSIDE_FAKE, stub); // 원문 그대로 쓴 흉내
-  if (!/[^\x00-\x7f]/.test(plain)) return plain; // 전각·제로폭은 ASCII 밖의 글자 — 없으면 끝
+  if (!/[^\x00-\x7f]/.test(s)) return s.replace(OUTSIDE_FAKE, stub); // ASCII뿐이면 접을 것이 없다(대소문자는 정규식 i)
+  const chars = [...s];
+  const folded = chars.map(foldChar).join('');
+  const hits = [...folded.matchAll(OUTSIDE_FAKE)];
+  if (!hits.length) return s; // 흉내가 없으면 같은 문자열 그대로
+  // 사본 위치 → 원문 UTF-16 위치(흉내가 있을 때만 만든다)
   const starts = [], ends = [];
-  let folded = '';
-  segmenter ??= new Intl.Segmenter(undefined, { granularity: 'grapheme' });
-  for (const { segment, index } of segmenter.segment(plain)) {
-    const f = fold(segment);
-    for (let k = 0; k < f.length; k++) { starts.push(index); ends.push(index + segment.length); }
-    folded += f;
-  }
+  let at = 0;
+  for (const ch of chars) { const n = foldChar(ch).length; for (let k = 0; k < n; k++) { starts.push(at); ends.push(at + ch.length); } at += ch.length; }
   const spans = [];
-  for (const m of folded.matchAll(new RegExp(OUTSIDE_FAKE.source, OUTSIDE_FAKE.flags))) {
+  for (const m of hits) {
     const from = starts[m.index], to = ends[m.index + m[0].length - 1];
     if (spans.length && from < spans.at(-1)[1]) spans.at(-1)[1] = Math.max(spans.at(-1)[1], to); else spans.push([from, to]);
   }
-  if (!spans.length) return plain;
-  let out = '', at = 0;
-  for (const [from, to] of spans) { out += plain.slice(at, from) + stub; at = to; }
-  return out + plain.slice(at);
+  let out = '', pos = 0;
+  for (const [from, to] of spans) { out += s.slice(pos, from) + stub; pos = to; }
+  return out + s.slice(pos);
 }
 /** 바깥 글 한 칸(제목·이름·요약) — 줄바꿈을 펴고(가짜 줄이 줄 처음에 서지 못하게) 번호를 지우고 표지 흉내를 바꿔 쓴다 */
 export const outsideLine = (s, tag, lang = 'ko') => defang(String(s ?? '').replace(/\s+/g, ' ').trim().replaceAll(tag, ''), lang);
