@@ -19,6 +19,7 @@ test("tick은 네트워크 효과의 의존 배열에 없다 — 화면 계산(�
 test('setInterval은 허용 목록뿐 — 새 주기 호출은 이유와 함께 여기에 올린다', () => {
   const allowed = [
     [/setInterval\(\(\) => setTick\(\(x\) => x \+ 1\), 2000\)/, '입력 중 표시 내리기(화면만, 입력 중일 때만)'],
+    [/setInterval\(\(\) => setAwaitTick\(\(x\) => x \+ 1\), 5000\)/, '보낸 뒤 대기 표시 단계 전환(화면만, 대기 표시가 있을 때만 — 2026-10-05)'],
     [/setInterval\(\(\) => setTick\(\(x\) => x \+ 1\), 15_000\)/, '시각 표시 다시 그리기(화면만 — 네트워크 효과는 tick에 묶지 않는다)'],
     [/if \(!onScreen \|\| !rtDown\) return undefined; const iv = setInterval\(/, '보이는 방에서 실시간이 끊겼다고 알려진 동안만 보정 조회'],
     [/if \(!onScreen\) return undefined; const iv = setInterval\(\(\) => \{ const \{ msgs: ms, atts: at \} = live\.current; const miss/, '빈 첨부·반응이 있을 때만 메우기(없으면 요청 0)'],

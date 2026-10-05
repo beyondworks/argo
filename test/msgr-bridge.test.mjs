@@ -159,7 +159,7 @@ test('drain: 멘션·DM만 적재, 크루 글·미대상 무시, 거절·만료�
   const { list, ...counts } = r; assert.deepEqual(counts, { crews: 1, queued: 2, denied: 1, stale: 1 }); assert.equal(list.length, 1, '폴러 구독용 크루 목록 동봉(중복 조회 제거)');
   assert.deepEqual(jobsOf(enq).map((j) => j.msgId), [11, 14]);
   assert.deepEqual(enq.calls.map((c) => [c[1], c[2]]), [['msgr', '11-00-seoyun'], ['msgr', '14-00-seoyun']], '큐 키·파일명 = <msgId>-<멘션 순번>-<slug>');
-  assert.deepEqual(jobsOf(enq)[0], { msgId: 11, orgId: ORG, channelId: CH, crewId: CREW, slug: 'seoyun', text: 'm11', authorId: MEMBER, replyTo: null, threadRoot: 11, createdAt: jobsOf(enq)[0].createdAt, hop: 0, origin: MEMBER, rootAuthor: null, fromCrewId: null, after: [] });
+  assert.deepEqual(jobsOf(enq)[0], { msgId: 11, orgId: ORG, channelId: CH, crewId: CREW, slug: 'seoyun', text: 'm11', channelKind: 'public', authorId: MEMBER, replyTo: null, threadRoot: 11, createdAt: jobsOf(enq)[0].createdAt, hop: 0, origin: MEMBER, rootAuthor: null, fromCrewId: null, after: [] }); // channelKind — 받음 방송 토픽(2026-10-05)
   const sys = db.calls.filter((c) => c[0] === 'insertMessage').map((c) => c[1]);
   assert.deepEqual(sys.map((s) => [s.kind, s.client_msg_id, s.reply_to]), [['system', `deny:${CREW}:15`, 15], ['system', `stale:${CREW}:16`, 16]]);
   assert.match(sys[0].body, /허용된 멤버만/);

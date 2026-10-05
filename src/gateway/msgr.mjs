@@ -887,7 +887,7 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
         if (envelope ? envelope.peers.some((p) => p.id === id) : await db.instructCheck(id, origin, m.channel_id) === 'ok') after.push(id);
       }
       await enqueue(wsId, MSGR_KEY, `${m.id}-${String(order).padStart(2, '0')}-${crew.slug}`, {
-        msgId: m.id, orgId: crew.org_id, channelId: m.channel_id, crewId: crew.id, slug: crew.slug, text: m.body,
+        msgId: m.id, orgId: crew.org_id, channelId: m.channel_id, crewId: crew.id, slug: crew.slug, text: m.body, channelKind: ch?.kind ?? null, // 방 종류 — 핸들러가 DB 왕복 전에 받음 방송의 토픽을 고른다(2026-10-05)
         authorId: origin, replyTo: m.reply_to, threadRoot: m.thread_root ?? m.id, createdAt: m.created_at,
         // 풀 오토 판정: 크루 넘김 표지(fromCrewId — 같은 채널 크루 글, relayVia — DM 전달 트리거가 옮겨 적은 크루 넘김)가 없으면 사장이 시킨 턴이다.
         // 사장 글의 순차 멘션(@A > @B)의 다음 크루 턴도 사장 글에서 바로 생겨 표지가 없다(유건 결정 2026-10-03). 표지가 있으면 handoffFrom으로 풀 오토 아님.
@@ -1118,11 +1118,24 @@ async function noteJobDenied(wsId, job, { db, uid, lang }) {
   await db.insertMessage({ channel_id: job.channelId, author_kind: 'crew', crew_id: job.crewId, kind: 'system', reply_to: job.msgId,
     thread_root: job.threadRoot ?? job.msgId, client_msg_id: `deny:${job.crewId}:${job.msgId}`, body: denyBody(why === 'ok' ? null : why, crew, lang) });
 }
+const receivedSent = new Set(); // 받음 방송을 이미 보낸 잡(크루:글) — 프로세스 안에서 잡당 한 번
 export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat, now = Date.now, linkPreview = replyLinkPreview } = {}) {
   // 크루 답 속 파일 → 첨부(공통 deliverReplyFiles). plan = planReplyFiles 결과(게시 전에 만들어 잡에 보존 — job.msgrAttach).
   const deliverAttachments = (db, job, row, plan, lang) => deliverReplyFiles(wsId, db, { orgId: job.orgId, channelId: job.channelId, channelKind: job.channelKind ?? null, crewId: job.crewId,
     threadRoot: job.threadRoot ?? job.msgId, failKey: `attfail:${job.crewId}:${job.msgId}` }, row, plan, lang);
-  const run = async (job, executionMeta = {}) => {
+  const run = async (job, executionMeta = {}, ctl = {}) => {
+    stageLog(job, 'start', now());
+    // 받음 방송 — 잡을 받자마자(세션·DB 왕복 전) 그 방 토픽으로 한 번. phase:'received'는 새 앱이 '전달됨 · 준비 중' 신호로만 쓰고 입력 중 말풍선은 띄우지 않는다
+    // (거절·대기로 끝나는 잡이 유령 입력 중을 남기지 않게). 옛 큐 잡(channelKind 없음)은 방 종류를 몰라 건너뛴다 — 비공개 방 활동이 조직 토픽으로 새지 않게.
+    // 토픽 해제는 래퍼의 finally(ctl.early.close) — 턴까지 가면 startTyping이 같은 토픽을 이어 쓰고 게시 뒤에 닫는다.
+    const once = `${job.crewId}:${job.msgId}`; // 순서 대기(DEFER)는 3초마다 다시 집힌다 — 받음 방송은 잡당 첫 시도에만(방 채널을 매번 열고 닫지 않게)
+    const first = !receivedSent.has(once);
+    if (first) { receivedSent.add(once); if (receivedSent.size > 500) receivedSent.delete(receivedSent.values().next().value); } // ponytail: 프로세스 메모리 500건 상한(가장 오래된 것부터)
+    const early = ctl.early = first && job.channelKind ? roomTopic(wsId, job.orgId, job.channelId, { full: job.channelKind === 'public' }) : null;
+    if (early) {
+      try { early.ch.send({ type: 'broadcast', event: 'typing', payload: { channel_id: job.channelId, crew_id: job.crewId, phase: 'received' } })?.catch?.(() => {}); } catch { /* 무해 */ }
+      stageLog(job, 'broadcast', now());
+    }
     const c = await session();
     if (!c) { throw new Error('기기 세션 없음 — 다음 틱 재시도'); } // 인프라 예외 = 파일 유지·재시도(queue.mjs 계약)
     const { db, uid } = c;
@@ -1275,15 +1288,17 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     // onStopRequested: 방송(u:<owner>의 'stop_request')을 놓친 기기의 폴백 — 30초 심박마다 stop_requested_at을 확인한다.
     const stopHeartbeat = executionHeartbeat(wsId, db, job, { onStopRequested: () => { interruptTurn(wsId, job.slug, { source: 'messenger', tag: job.msgId }).catch((e) => console.error(`[argo] msgr 심박 중단 처리 실패(${wsId}/${job.slug}/${job.msgId}):`, e.message)); } });
     activeCtx.set(ctxKey, ctx);
-    const stopTyping = startTyping(wsId, job.orgId, job.channelId, job.crewId, job.slug, { full: ch.kind === 'public', sourceMsgId: job.msgId }); // 공개 채널은 조직 토픽, 비공개 방은 그 방 토픽(조직 토픽은 조직 전원이 듣는다 — 검수 C-1). 방송 내용은 어디서나 채널·크루·시작 시각·원본 메시지 id뿐
+    const stopTyping = startTyping(wsId, job.orgId, job.channelId, job.crewId, job.slug, { full: ch.kind === 'public', sourceMsgId: job.msgId, topic: early?.full === (ch.kind === 'public') ? early : null }); if (!early) stageLog(job, 'broadcast', now()); // 받음 방송에 쓴 방 토픽을 그대로 잇는다(방 채널을 두 번 열지 않는다). 공개 채널은 조직 토픽, 비공개 방은 그 방 토픽(조직 토픽은 조직 전원이 듣는다 — 검수 C-1). 방송 내용은 어디서나 채널·크루·시작 시각·원본 메시지 id뿐
     let reply; let failed = false; let aborted = false; let replyMentions = []; let replyMeta = {};
     try {
       // DM은 뿌리마다 새로 허가한 문맥만, 채널은 그 채널 세션만 잇는다(전역 세션 = 주인의 데스크톱 대화). 기억 안 남김 채널은 세션도 없이
       const sessionId = ch.kind === 'dm' || ch.crew_memory === false ? null : scopedSession(await loadThread(wsId, job.slug), job.channelId).sessionId;
+      stageLog(job, 'turn-start', now());
       const turn = await runChat(wsId, job.slug, text, sessionId, {
         source: 'messenger', attachments, mirrorCtx: ctx, abortTag: job.msgId, ...(job.fromCrewId || job.relayVia ? { notOwnerDirect: handoffLabel(orgPeers, job.fromCrewId ?? job.relayVia, job.fromCrewId ? null : job.relayViaName) } : {}), // 크루가 넘긴 턴(DM 전달 포함) — 풀 오토만 끈다(넘긴 크루를 잇는다) // abortTag — 중단은 이 원본 메시지의 실행만(검수 2026-09-26 M-1: 같은 크루의 텔레그램·결재 후속 턴도 source:'messenger'다)
         journal: msgrJournal(job.orgId, job.channelId, ch.crew_memory === false), // 채널 설정: 기억 안 남김 / 채널 태그 파일(회수 단위)
       });
+      stageLog(job, 'turn-end', now());
       reply = String(turn.reply ?? '');
       if (waited > AWAY_NOTE_MS) {
         const min = Math.max(1, Math.round(waited / 60_000));
@@ -1298,6 +1313,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
         via: 'msgr', actor: { uid: job.authorId, name: job.fromCrewId ? `${authorName} ← ${humanName}` : authorName } }); // actor = 사람 발화자(who:'user' 고정으로는 구분 불가하던 갭)
       // 메신저에는 사고 과정·도구 단계를 싣지 않는다(유건 결정 2026-09-24 — "답변 준비 중"만). 궤적은 주인 쪽 활동 로그가 정본.
     } catch (e) {
+      stageLog(job, 'turn-end', now());
       if (e?.aborted) { // 사람이 누른 중단(msgr_request_stop 또는 주인의 데스크톱 정지 버튼) — turn-abort.mjs가 던지는 모양. 그때까지의 부분 답은 버리고 누가 멈췄는지만 남긴다.
         aborted = true;
         let stopName = null; // 모르면 이름 없이(L-5) — msgr_executions에 기록이 없는 경우(데스크톱 정지 버튼은 RPC를 거치지 않는다)도 여기로 떨어진다
@@ -1315,14 +1331,14 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
         reply = roomTurnFailure(lang);
       }
     } finally {
-      stopTyping();
-      stopHeartbeat();
+      stopHeartbeat(); // 입력 중 방송(stopTyping)은 게시가 끝난 뒤에 멈춘다 — 링크 미리보기·게시 동안 표시가 끊기지 않게(2026-10-05 '표시가 사라지고 30초 뒤 답')
       if (activeCtx.get(ctxKey) === ctx) activeCtx.delete(ctxKey); // CAS — 같은 크루의 동시 턴이 남긴 문맥은 건드리지 않는다
     }
     // 결과를 큐 파일에 먼저 보존하고 DB 답글+실행 완료를 원자적으로 게시한다. 실패 재시도는 위 checkpoint 갈래만 타며 유료 턴을 다시 돌리지 않는다.
-    let row = null;
+    let row = null; let plan = null;
+    try {
     // 답 속 로컬 파일 — 게시 전에 경계 판정·본문 정리(경로 제거). 계획은 잡에 실어 아래 체크포인트(finishMessengerExecution)가 잡 파일에 같이 저장한다.
-    const plan = failed || aborted ? null : await planOrRaw(wsId, reply, lang);
+    plan = failed || aborted ? null : await planOrRaw(wsId, reply, lang);
     if (plan) { job.msgrAttach = plan; job.channelKind = ch.kind ?? null; } // 방 종류 — DM이면 첨부 재사용 안 함(N-2). 잡 파일에 같이 저장돼 게시 재시도에도 쓰인다
     const replyRow = {
       channel_id: job.channelId, author_kind: 'crew', crew_id: job.crewId, kind: 'text', reply_to: job.msgId, thread_root: job.threadRoot ?? job.msgId, // 명시 — 트리거는 null일 때 reply_to(크루 글)로 채워 스레드가 끊긴다(검수 2R C-2)
@@ -1340,6 +1356,8 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
       console.error(`[argo] msgr 답글 insert 실패(${wsId}/${job.slug}/${job.msgId}) — 재시도:`, e.message);
       row = await finishMessengerExecution(wsId, db, job, { ...replyRow, meta: metaBase }, executionMeta);
     }
+    stageLog(job, 'posted', now());
+    } finally { stopTyping(); } // 첨부(별도 글)는 답 뒤에 따로 오른다 — 그 동안 입력 중을 다시 보내면 답 뒤에 표시가 되살아난다
     if (!row || failed || aborted) return; // 중복(다른 기기가 먼저 답함)·실패·중단 — 첨부 없음
     await deliverAttachments(db, job, row, plan, lang);
   };
@@ -1350,21 +1368,40 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
       return DEFER;
     }
     busyCrew.add(k);
-    try { return await withLock(`msgr-turn:${k}`, () => run(job, meta)); } finally { busyCrew.delete(k); }
+    stageLog(job, 'picked', now());
+    const ctl = { early: null };
+    try { return await withLock(`msgr-turn:${k}`, () => run(job, meta, ctl)); } finally { busyCrew.delete(k); ctl.early?.close(); }
   };
 }
 
-function startTyping(wsId, orgId, channelId, crewId, slug = null, { full = false, sourceMsgId = null } = {}) {
+/** 단계 로그 — stdout 한 줄(DB 쓰기 없음). ISO 시각 · 글 id 앞 8자 · 원글 created_at 기준 경과 ms · 크루. 보낸 뒤 어디서 시간이 걸렸는지 운영 로그로 가른다(2026-10-05). */
+export function stageLog(job, stage, at = Date.now()) {
+  const born = Date.parse(job?.createdAt ?? '');
+  console.log(`[argo] msgr 단계 ${stage} ${new Date(at).toISOString()} ${String(job?.msgId ?? '').slice(0, 8)} +${Number.isFinite(born) ? Math.max(0, at - born) : 0}ms ${job?.slug ?? ''}`);
+}
+
+/** 방송 토픽 — 공개 채널은 조직 토픽, 비공개 방(DM·비공개 채널·개인 방)은 그 방 토픽 dm:<방>(20260918190000). 조직 토픽은 조직 전원이 들어 비공개 방의 존재·크루 활동이 샜다.
+    dm:의 발신·수신 정책은 그 방을 읽을 수 있는 사람(msgr_can_read_channel). 방 채널을 못 열면 조직 토픽으로 되돌아가지 않고 null(누출보다 표시 누락).
+    close는 여러 번 불러도 한 번만 해제한다(받음 방송과 턴 입력 중이 같은 토픽을 나눠 쓴다). */
+function roomTopic(wsId, orgId, channelId, { full = false } = {}) {
   const orgCh = rtChannels.get(orgId ? `${wsId}:${orgId}` : `${wsId}:u`); // 개인 방(org 없음)은 u: 구독의 클라이언트를 빌려 dm:<채널>로만 보낸다(2026-09-30)
-  if (!orgCh || (!orgId && full)) return () => {};
-  // 비공개 방(DM·비공개 채널 — full=false)은 그 방의 채널 토픽 dm:<채널>로 보낸다(20260918190000). 조직 토픽은 조직 전원이 들어 비공개 방의 존재·크루 활동이 샜다.
-  // dm:의 발신·수신 정책은 그 방을 읽을 수 있는 사람(msgr_can_read_channel). 채널을 못 열면 조직 토픽으로 되돌아가지 않고 보내지 않는다(누출보다 표시 누락).
+  if (!orgCh || (!orgId && full)) return null;
   let own = null;
   if (!full) {
     try { own = orgCh.__client?.channel(`dm:${channelId}`, { config: { private: true } }) ?? null; own?.subscribe?.(); } catch { own = null; }
-    if (!own) return () => {};
+    if (!own) return null;
   }
-  const ch = own ?? orgCh;
+  let closed = false;
+  return { ch: own ?? orgCh, full, close: () => {
+    if (closed) return; closed = true;
+    if (own) { try { const r = orgCh.__client?.removeChannel ? orgCh.__client.removeChannel(own) : own.unsubscribe?.(); r?.catch?.(() => {}); } catch { /* 무해 */ } }
+  } };
+}
+
+function startTyping(wsId, orgId, channelId, crewId, slug = null, { full = false, sourceMsgId = null, topic = null } = {}) {
+  const room = topic ?? roomTopic(wsId, orgId, channelId, { full }); // 토픽 규칙은 roomTopic 한 곳(공개 = 조직 토픽, 비공개 = dm:<방>, 못 열면 보내지 않음)
+  if (!room) return () => {};
+  const ch = room.ch;
   const send = () => ch.send({ type: 'broadcast', event: 'typing', payload: { channel_id: channelId, crew_id: crewId } }).catch?.(() => {});
   try { send(); } catch { /* 무해 */ }
   const iv = setInterval(() => { try { send(); } catch { /* 무해 */ } }, TYPING_MS);
@@ -1389,7 +1426,7 @@ function startTyping(wsId, orgId, channelId, crewId, slug = null, { full = false
   pv?.unref?.();
   return () => {
     stopped = true; clearInterval(iv); if (pv) clearInterval(pv);
-    if (own) { try { const r = orgCh.__client?.removeChannel ? orgCh.__client.removeChannel(own) : own.unsubscribe?.(); r?.catch?.(() => {}); } catch { /* 무해 */ } }
+    room.close();
   };
 }
 export const _startTypingForTest = startTyping;

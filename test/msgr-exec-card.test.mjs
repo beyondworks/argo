@@ -28,7 +28,7 @@ test('서버: chat.mjs가 steps를 상태 파일에 싣고 trace를 반환(데�
   assert.match(bridge, /if \(now - lastSentAt < PROGRESS_MIN_GAP_MS\) return;/, '4초 안 지났으면 보내지 않는다');
   assert.match(bridge, /const payload = \{ channel_id: channelId, crew_id: crewId, startedAt: s\.startedAt, source_msg_id: sourceMsgId \};.*\n\s*lastSentAt = now;\n\s*await ch\.send\(\{ type: 'broadcast', event: 'progress', payload \}\)/, '4초 지나면 무조건 다시 방송(값이 그대로여도)');
   assert.match(bridge, /if \(stopped \|\| !s \|\| s\.source !== 'messenger'\) return;/, '상태 파일 source 게이트(검수 M-6)');
-  assert.match(bridge, /startTyping\(wsId, job\.orgId, job\.channelId, job\.crewId, job\.slug, \{ full: ch\.kind === 'public', sourceMsgId: job\.msgId \}\)/, 'slug·원본 메시지 id 전달(id는 크루 작업 중단 버튼의 대상) + 본문·사고 방송은 공개 채널만(검수 C-1)');
+  assert.match(bridge, /startTyping\(wsId, job\.orgId, job\.channelId, job\.crewId, job\.slug, \{ full: ch\.kind === 'public', sourceMsgId: job\.msgId(, topic: [^}]*)? \}\)/, 'slug·원본 메시지 id 전달(id는 크루 작업 중단 버튼의 대상) + 본문·사고 방송은 공개 채널만(검수 C-1)');
   assert.doesNotMatch(bridge, /turnTrace = ch\.kind === 'public'/, '메신저 답글에는 궤적을 저장하지 않는다(유건 결정 2026-09-24)');
   assert.match(read('supabase/migrations/20260909003000_msgr_message_meta.sql'), /add column if not exists meta jsonb not null default '\{\}'::jsonb/, 'meta 열');
 });
@@ -39,10 +39,11 @@ test('클라이언트: progress 방송 → ExecCard는 "답변 준비 중" 한 �
   assert.match(app, /const mine = \(fn\) => on\(\(e\) => \{ if \(here\(o\.id\)\) fn\(e\); \}\);/, 'mine()은 on() 안에서 보는 조직만');
   assert.match(app, /const onProgressEvent = \(\{ payload \}\) => \{ if \(acceptTyping\(settledRef\.current, payload\)\) setProgress\(/, 'progress 처리기 = 답글 직후 늦은 방송 거름 + setProgress(2026-09-23 유령 표시)');
   assert.match(app, /const working = Object\.entries\(progress\)\.filter\(\(\[k, p\]\) => k\.startsWith\(`\$\{chId\}:`\) && Date\.now\(\) - p\.at < 8000 && typing\[k\]/, '실행 카드 대상 = progress+typing 살아 있는 크루');
-  assert.match(app, /\{working\.map\(\(\[c, p\]\) => <ExecCard key=\{`exec-\$\{c\.id\}`\} crew=\{c\} t=\{t\} canStop=\{canStop\(c, p\)\} stopping=\{!!stopping\[`\$\{c\.id\}:\$\{p\.source_msg_id\}`\]\} stopRequested=\{!!stopRequested\[`\$\{c\.id\}:\$\{p\.source_msg_id\}`\]\} onStop=\{\(\) => requestStop\(c\.id, p\.source_msg_id\)\} \/>\)\}\n\s*\{typingBubbleGrouped/, '중단 버튼 3단 상태 배선(2026-09-26) — 실행 카드 바로 뒤에 입력 중 말풍선');
-  assert.match(app, /const typingBubbleShown = typingCrews\.filter\(\(c\) => !workingIds\.has\(c\.id\)\);/, '점 세 개는 카드 없는 크루만(2026-09-29 입력 중 묶음으로 변수화)');
+  // 2026-10-05 보낸 뒤 대기 표시: 대기 카드가 있는 크루의 실행 카드는 대기 카드 안에서 그린다(같은 크루를 두 번 그리지 않는다) → 실행 카드는 대기 없는 크루만.
+  assert.match(app, /\{working\.filter\(\(\[c\]\) => !awaitIds\.has\(c\.id\)\)\.map\(\(\[c, p\]\) => <ExecCard key=\{`exec-\$\{c\.id\}`\} crew=\{c\} t=\{t\} canStop=\{canStop\(c, p\)\} stopping=\{!!stopping\[`\$\{c\.id\}:\$\{p\.source_msg_id\}`\]\} stopRequested=\{!!stopRequested\[`\$\{c\.id\}:\$\{p\.source_msg_id\}`\]\} onStop=\{\(\) => requestStop\(c\.id, p\.source_msg_id\)\} \/>\)\}\n\s*\{typingBubbleGrouped/, '중단 버튼 3단 상태 배선(2026-09-26) — 실행 카드 바로 뒤에 입력 중 말풍선');
+  assert.match(app, /const typingBubbleShown = typingCrews\.filter\(\(c\) => !workingIds\.has\(c\.id\) && !awaitIds\.has\(c\.id\)\);/, '점 세 개는 실행 카드·대기 카드 없는 크루만(2026-09-29 입력 중 묶음으로 변수화, 2026-10-05 대기 카드)');
   const card = app.slice(app.indexOf('function ExecCard('), app.indexOf('/** 결재 슬립'));
-  assert.match(card, /\{t\('exec\.preparing'\)\}/, '"답변 준비 중"');
+  assert.match(card, /\{stateLabel \?\? t\('exec\.preparing'\)\}/, '"답변 준비 중" — 보낸 뒤 대기 표시(2026-10-05)는 단계 문구(stateLabel)로 바꿔 쓴다');
   for (const gone of ['exec.thought', 'exec.partial', 'StepList', '<details', 'p.thought', 'p.partial', 'p.steps']) assert.ok(!card.includes(gone), `실행 카드에 ${gone} 없음`);
   assert.match(card, /canStop && <button type="button" className=\{`btn sm ghost msgr-stop-btn\$\{stopRequested \? ' requested' : ''\}`\} disabled=\{stopping \|\| stopRequested\}/, '시킨 사람·크루 주인에게만 보이는 중단 버튼(서버 msgr_request_stop이 권한을 다시 검사) — 중단 중/요청됨이면 비활성, 요청됨은 대비용 클래스(UI LOW)');
   assert.match(read('apps/messenger/src/styles.css'), /\.msgr-exec > \.summary \.msgr-stop-btn\.requested \{ opacity: 1 !important; color: var\(--fg\); background: var\(--card-2\); border-color: var\(--border\); font-weight: 600; \}/, '"중단 요청됨"은 최고 대비 텍스트로 고정(재검수 UI LOW)');

@@ -18,7 +18,10 @@ export const ALL_RE = /(^|\s)@all(?=$|[\s,.!?:;])/i;
 // (실사고 2026-09-11: 사설 채널 밖 페퍼가 답함). picked = 팝업에서 고른 것(같은 규칙으로 본문에 아직 있는지 확인).
 // candidates = 이 채널에서 부를 수 있는 사람·크루만.
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const mentionRe = (name, flags = '') => new RegExp(`(^|\\s)@${esc(name)}(?=$|[\\s,.!?:;])`, `i${flags}`); // 대소문자 무시(@edna = Edna)
+// 이름 뒤에 붙은 호칭·조사(님·씨 + 아·야·은·는·이·가·을·를·에게·한테)는 이름의 일부가 아니다 — "@페퍼님", "@페퍼에게"도 페퍼(2026-10-05).
+// 조사 뒤에도 경계(끝·공백·문장부호)가 와야 한다 — "@페퍼이다"는 아니다. 앞은 줄 처음이나 공백뿐이라 이메일(a@b.com)은 걸리지 않는다.
+const JOSA = '(?:님|씨)?(?:에게|한테|아|야|은|는|이|가|을|를)?';
+const mentionRe = (name, flags = '') => new RegExp(`(^|\\s)@${esc(name)}${JOSA}(?=$|[\\s,.!?:;])`, `i${flags}`); // 대소문자 무시(@edna = Edna)
 export function mentionsFromBody(body, candidates, picked = [], allCandidates = candidates) {
   if (ALL_RE.test(body)) { // @all = 이 채널의 모든 사람·크루(후보 순서 = 사람 먼저·크루 순 — 릴레이 표기일 때만 서버가 이 순서로 크루 차례를 정한다)
     const seenAll = new Set();
@@ -36,6 +39,23 @@ export function mentionsFromBody(body, candidates, picked = [], allCandidates = 
   // 본문 등장 순서 — 릴레이(`@A > @B`, 2026-09-26부터 순서는 릴레이에서만)일 때 서버(msgr_bot_updates)가 이 배열 순서로 크루 차례를 정한다. 이름 길이 순으로 내보내면 "@Edna @Ogilvy"가
   // [Ogilvy, Edna]로 저장돼 뒷사람이 먼저 답한다(라이브 실측 2026-09-12 #175).
   return out.sort((a, b) => a.at - b.at).map(({ kind, id }) => ({ kind, id }));
+}
+
+// 같은 이름(대소문자 무시)이 이 방 후보에 둘 이상인데 목록에서 고르지 않고 직접 친 "@이름" — 누구를 부르는지 모르니 보내기 전에 멈춘다(2026-10-05).
+// 긴 이름부터 맞추고 맞춘 구간은 지운다(mentionsFromBody와 같은 규칙) — "@페퍼 (VPS)"가 짧은 동명이인 '페퍼'로 따져지지 않게. @all은 모두라 모호하지 않다.
+export function ambiguousMentions(body, candidates, picked = []) {
+  if (ALL_RE.test(body)) return [];
+  const groups = new Map();
+  for (const x of candidates) { if (!x?.name) continue; const k = x.name.toLowerCase(); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(x); }
+  const pickedKeys = new Set(picked.map((x) => `${x.kind}:${x.id}`));
+  let text = String(body ?? ''); const out = [];
+  for (const [, g] of [...groups].sort((a, b) => b[0].length - a[0].length)) {
+    const re = mentionRe(g[0].name); if (!re.test(text)) continue;
+    const ids = new Set(g.map((x) => `${x.kind}:${x.id}`));
+    if (ids.size > 1 && !g.some((x) => pickedKeys.has(`${x.kind}:${x.id}`))) out.push(g[0].name);
+    text = text.replace(mentionRe(g[0].name, 'g'), (m, lead) => lead + ' '.repeat(m.length - lead.length));
+  }
+  return out;
 }
 
 // 방 밖 에이전트 멘션 — 본문의 @이름 중 이 방 후보(사람·크루)에 없는 조직 에이전트(D14). 멘션 후보는 방 안만 유지하고(유건 0.1.29 재확인),
