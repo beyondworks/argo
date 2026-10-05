@@ -1367,6 +1367,9 @@ export function syncStatusFor(ws) {
   const companyScoped = Object.keys(s.companies).some((id) => s.lastError?.startsWith(`${id}: `));
   return { ...s, lastError: (!companyScoped && s.lastError) || mine?.error || '', companies: mine ? { [ws]: mine } : {} };
 }
+/** 회사 몫 오류는 반드시 이 함수로 — lastError(기기 전체 하나)와 그 회사 결과(error)에 같이 두고 회사를 등록한다. 등록이 빠지면
+    syncStatusFor가 `<회사 ID>: ` 접두를 회사 몫으로 못 알아봐 다른 회사·게스트 화면에 보인다(분리 검수 2·3차 LOW). */
+const setCompanyError = (wsId, msg) => { status.lastError = msg; (status.companies[wsId] ??= { ts: Date.now() }).error = msg; };
 
 /** 세션(JWT) 모드면 세션 사용자 id, 서비스 모드(셀프호스트·워커)면 null — 회사 소유자 게이트와 요금제 캐시 키가 같이 쓴다. */
 const currentSessionUid = () => ((loadSyncCreds() && serviceCredsAllowed()) ? null : (loadDeviceSession()?.user?.id ?? null));
@@ -1594,15 +1597,15 @@ async function cycle() {
       if (reseal && (r.failed ?? 0) === 0) await clearReseal(wsId).catch(() => {});
       status.companies[wsId] = { ts: Date.now(), ...r };
       // 회사 오류는 lastError(기기 전체 하나 — 여러 회사가 실패하면 마지막 것만 남는다)와 회사 결과(error) 양쪽에 둔다 — 회사 화면은 자기 것을 본다(분리 검수 2차 MEDIUM-1)
-      if (r.failed > 0) { status.lastError = status.companies[wsId].error = syncFailedMessage(wsId, r); companyFailed++; }
+      if (r.failed > 0) { setCompanyError(wsId, syncFailedMessage(wsId, r)); companyFailed++; }
       // 키 미확보 보류는 "성공"이 아니다 — 무증상이면 셀프호스트의 account_keys 미적용 같은 영구 무동작이 정상으로 보인다(#436 검수 HIGH-2)
-      if (r.held) { status.lastError = status.companies[wsId].error = `${wsId}: 계정 키 미확보 — 파일 ${r.held}개 동기화 보류(재시도 중)${accountKeyError() ? ` — ${accountKeyError()}` : ''}`; companyFailed++; }
+      if (r.held) { setCompanyError(wsId, `${wsId}: 계정 키 미확보 — 파일 ${r.held}개 동기화 보류(재시도 중)${accountKeyError() ? ` — ${accountKeyError()}` : ''}`); companyFailed++; }
     } catch (e) {
       // 매니페스트 업로드 거절은 여기로 온다(pro·미확인 경로는 관용 없이 throw) — 파일 거절과 같이 요금제 캐시를 버린다
       if (!freePlan && e?.uploadFailed) invalidatePlanCache();
-      status.lastError = `${wsId}: ${String(e.message).slice(0, 120)}`;
-      // 첫 주기에 throw해도 회사로 등록한다 — 등록이 없으면 syncStatusFor가 이 접두를 회사 몫으로 못 알아봐 다른 회사·게스트 화면에 보인다(2차 LOW-1)
-      status.companies[wsId] = { ...status.companies[wsId], ts: Date.now(), error: status.lastError };
+      // 이번 시도의 결과가 없으니 새 항목으로 — 이전 주기의 failures·↑↓를 이어받으면 지금 오류와 무관한 옛 파일 이름이 같이 보인다(3차 LOW-1)
+      status.companies[wsId] = { ts: Date.now() };
+      setCompanyError(wsId, `${wsId}: ${String(e.message).slice(0, 120)}`); // 첫 주기에 throw해도 회사로 등록된다(2차 LOW-1)
       console.error(`[argo] 동기화 실패(${wsId}):`, e.message);
       companyFailed++;
     }
