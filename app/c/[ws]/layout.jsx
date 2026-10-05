@@ -121,10 +121,10 @@ function Shell({ children, params }) {
   const sideToggleRef = useRef(null);
   const [phone, setPhone] = useState(false);
   useEffect(() => {
-    const mq = window.matchMedia('(max-width: 900px)');
-    const sync = () => { setPhone(mq.matches); if (!mq.matches) setSideOpen(false); };
-    sync(); mq.addEventListener('change', sync);
-    return () => mq.removeEventListener('change', sync);
+    // 폰 폭 판정은 CSS가 한다 — 열기 버튼(.side-toggle)이 보이는 폭 = 서랍 폭(globals.css @media). JS에 폭 숫자를 복제하지 않는다(matchMedia 판정은 split-alive 훅 한 곳 — room-side-panel 스위프).
+    const sync = () => { const on = !!sideToggleRef.current && getComputedStyle(sideToggleRef.current).display !== 'none'; setPhone(on); if (!on) setSideOpen(false); };
+    sync(); window.addEventListener('resize', sync);
+    return () => window.removeEventListener('resize', sync);
   }, []);
   const closeDrawer = useCallback(() => { setSideOpen(false); sideToggleRef.current?.focus(); }, []);
   const drawerOn = sideOpen && phone;
