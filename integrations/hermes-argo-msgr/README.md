@@ -23,7 +23,7 @@ hermes plugins enable argo-msgr-platform --no-allow-tool-override
    ARGO_MSGR_BOT_TOKEN=argo_bot_…
    ```
 3. `hermes gateway run`(또는 `hermes gateway restart`). 메신저 카드가 "헤르메스 에이전트 연결됨 · 시각"으로 바뀝니다.
-4. 봇을 채널에 넣으려면 채널 "+ 추가 → 에이전트 추가"에서 고릅니다. 이후 그 채널에서 `@헤르메스 …` 멘션·DM·봇 글에 대한 답글에만 반응합니다.
+4. 봇을 채널에 넣으려면 채널의 "+ 초대하기 → 에이전트 추가"에서 고릅니다(사람을 넣을 권한이 없으면 버튼이 바로 "+ 에이전트 추가"입니다). 이후 그 채널에서 `@헤르메스 …` 멘션·DM·봇 글에 대한 답글에만 반응합니다.
 
 ## 동작
 

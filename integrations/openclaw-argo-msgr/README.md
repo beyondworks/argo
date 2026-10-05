@@ -26,7 +26,7 @@ cp -R integrations/openclaw-argo-msgr ~/.openclaw/extensions/openclaw-argo-msgr
    ```
    env만 쓸 때는 `ARGO_MSGR_URL` / `ARGO_MSGR_BOT_TOKEN` (기본 계정에 적용).
 3. `openclaw gateway` 재시작 → 로그에 `Argo Messenger: connected as 오픈클로 (openclaw) in org …`, 메신저 카드가 "오픈클로 에이전트 연결됨 · 시각".
-4. 봇을 채널에 넣으려면 채널 "+ 추가 → 에이전트 추가". 이후 `@오픈클로 …` 멘션·DM·봇 글에 대한 답글에만 반응합니다.
+4. 봇을 채널에 넣으려면 채널의 "+ 초대하기 → 에이전트 추가"에서 고릅니다(사람을 넣을 권한이 없으면 버튼이 바로 "+ 에이전트 추가"입니다). 이후 `@오픈클로 …` 멘션·DM·봇 글에 대한 답글에만 반응합니다.
 
 ## 동작
 
