@@ -1036,7 +1036,9 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
   // steady-state to 1,440 manifests/day/device/company; 100 × 420KB ≈ 60.5GB/day.
   // This is a bound, not a scalable replacement for a revision/conditional index.
   // No write means no lost-update window requiring a second GET. Resealing must write.
-  if (!manifestExists || manifestNeedsSeal || isRestore || opts.freePlan || opts.reseal || failed || originalFiles !== JSON.stringify(remote.files)) {
+  // 복원(isRestore)도 예외가 아니다 — 받기만 한 복원은 원격 목록을 바꾸지 않는다. 복원이면 무조건 쓰던 때, 파일 없는 빈 원격 회사(company.json이 없어
+  // 로컬 회사가 되지 못하고 발견 주기마다 다시 복원된다)가 기기마다 5분에 한 번 매니페스트를 다시 썼다(2026-10-05 lean-company-kqav 실측: 시간당 GET 24·POST 12).
+  if (!manifestExists || manifestNeedsSeal || opts.freePlan || opts.reseal || failed || originalFiles !== JSON.stringify(remote.files)) {
   const uploadFiles = { ...remote.files };
   {
     // 재읽기는 두 단계로 갈라 관용의 범위를 정확히 한다(분리 검수 HIGH-1):

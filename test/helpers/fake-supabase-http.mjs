@@ -4,7 +4,7 @@
 // 실제 GoTrue는 간격(10초) 밖 재사용을 세션 가족 폐기로 처리한다(devicesession.mjs 2026-09-03 실사고).
 import { createServer } from 'node:http';
 
-export async function startFakeSupabase({ plan = 'pro', userId = 'u1', rejectUploads = false, refreshDelayMs = 0 } = {}) {
+export async function startFakeSupabase({ plan = 'pro', userId = 'u1', rejectUploads = false, refreshDelayMs = 0, syncIndex = null } = {}) {
   const hits = [];
   const store = new Map();
   const usedRefresh = new Set();
@@ -36,6 +36,8 @@ export async function startFakeSupabase({ plan = 'pro', userId = 'u1', rejectUpl
           });
         }
         if (path.endsWith('/rpc/my_plan')) return json(200, { plan });
+        // 동기화 색인(argo_sync_index) — syncIndex를 주면 세션 사용자 소유로 회사·tombstone 목록을 돌려준다. 안 주면 아래 일반 rpc처럼 null(종전 list 폴백).
+        if (syncIndex && path.endsWith('/rpc/argo_sync_index')) return json(200, { owner: userId, companies: syncIndex.companies ?? [], tombstones: syncIndex.tombstones ?? [] });
         if (path.endsWith('/account_keys')) return json(200, [{ key_b64: Buffer.alloc(32, 1).toString('base64') }]);
         if (path.startsWith('/rest/v1/rpc/')) return json(200, null);
         if (path.startsWith('/rest/v1/')) return json(200, []);
