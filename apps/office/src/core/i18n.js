@@ -99,14 +99,8 @@ const DICT = {
   'mail.markRead': ['읽음으로 표시', 'Mark as read'], 'mail.markUnread': ['안 읽음으로 표시', 'Mark as unread'],
   'mail.archived': ['보관했습니다', 'Archived'],
   'mailc.expired': ['연결이 만료됐습니다 — 다시 연결해 주세요', 'Connection expired — please reconnect'],
-  'mailc.adminNote': ['Argo Office가 회사 Google Workspace 메일에 연결할 수 있도록 신뢰 앱으로 등록해 주세요.\n\n관리 콘솔 → 보안 → 액세스 및 데이터 제어 → API 제어 → 타사 앱 액세스 관리 → 새 앱 구성 → OAuth 앱 이름 또는 클라이언트 ID로 검색\n\n클라이언트 ID: {client}\n요청 권한:\n{scopes}\n\n메일은 본인이 연결한 계정만 읽고, 에이전트는 초안까지만 씁니다. 발송은 사람이 직접 누를 때만 합니다.',
-    'Please allow Argo Office as a trusted app so it can connect to our Google Workspace mail.\n\nAdmin console → Security → Access and data control → API controls → Manage Third-Party App Access → Configure new app → search by OAuth app name or client ID\n\nClient ID: {client}\nRequested scopes:\n{scopes}\n\nIt reads only the accounts each person connects; agents write drafts only, and mail is sent only when a person presses Send.'],
   'mailc.err.access_denied': ['승인을 취소했습니다. 회사 계정이라 막혔다면 관리자 안내문을 보내 주세요.', 'Approval was cancelled. If your company blocked it, send the note to your admin.'],
-  'mailc.err.admin_policy_enforced': ['회사 관리자가 외부 앱 연결을 막았습니다. 안내문을 복사해 관리자에게 보내 주세요.', 'Your company admin blocks third-party apps. Copy the note and send it to your admin.'],
-  'mailc.err.scopes': ['필요한 권한이 빠졌습니다. 승인 화면의 항목을 모두 켜고 다시 연결해 주세요.', 'Some permissions were left off. Turn on every item on the approval screen and reconnect.'],
   'mailc.err.state': ['연결 시간이 지났습니다. 다시 시도해 주세요.', 'The connection timed out. Please try again.'],
-  'mailc.err.not_configured': ['서버에 Google 연결 설정이 아직 없습니다', 'Google connection is not configured on the server yet'],
-  'mailc.err.other': ['연결하지 못했습니다. 잠시 뒤 다시 시도해 주세요.', 'Could not connect. Please try again shortly.'],
   'mail.connect': ['메일 계정 연결', 'Connect mail account'],
   'crew.assign': ['에이전트에게 맡기기', 'Hand off to agent'], 'crew.assignTo': ['{crew}에게 맡기기', 'Hand off to {crew}'], 'crew.dm': ['DM 열기', 'Open DM'],
   'nav.tools': ['플러그인', 'Plugins'],
@@ -130,7 +124,6 @@ const DICT = {
   'page.trashed': ['휴지통으로 옮겼습니다', 'Moved to trash'], 'page.duplicated': ['복제했습니다', 'Duplicated'], 'page.linkCopied': ['링크를 복사했습니다', 'Link copied'],
   'page.history': ['버전 기록', 'Version history'],
   'page.viewing': ['{n}명이 보는 중', '{n} viewing'], 'page.templateSaved': ['조직 템플릿으로 저장했습니다', 'Saved as an org template'], 'page.templateSavedMine': ['내 템플릿으로 저장했습니다', 'Saved to my templates'],
-  'page.tooBig': ['50MB까지 올릴 수 있습니다', 'Files must be 50MB or smaller'],
   'share.failed': ['공유 설정을 저장하지 못했습니다', 'Could not save sharing'],
   'share.restrict': ['이 페이지 비공개', 'Restrict this page'],
   'cmd.newPage': ['새 페이지 만들기', 'Create a page'], 'cmd.goHome': ['홈으로', 'Go home'], 'cmd.goMail': ['메일 열기', 'Open mail'], 'cmd.goApprovals': ['결재함 열기', 'Open approvals'],
@@ -168,6 +161,9 @@ const DICT = {
   'page.conflictReload': ['새로 불러오기', 'Reload'],
   'draft.badge': ['화면 초안 · 예시 데이터', 'Screen draft · sample data'],
   'load.fail': ['화면을 불러오지 못했습니다. 새 버전이 있을 수 있어요.', 'Couldn’t load this screen. A new version may be available.'], 'load.retry': ['다시 불러오기', 'Reload'],
+  // 읽기 실패·느린 연결(OFC-07·08) — 실패를 '비어 있음·정상'으로 보이지 않게
+  'load.readFail': ['불러오지 못했습니다. 연결을 확인한 뒤 다시 시도해 주세요.', "Couldn't load. Check your connection and try again."], 'boot.slow': ['연결이 느립니다. 조금 더 기다리거나 다시 시도해 주세요.', 'The connection is slow. Wait a little longer or try again.'],
+  'nav.moved': ['찾을 수 없는 주소라 홈으로 옮겼습니다', "That address wasn't found, so you're back home"], 'stat.b.fail': ['확인 못 함', "Couldn't check"], 'stat.failMain': ['불러오지 못했습니다', "Couldn't load"],
   'time.now': ['방금', 'just now'], 'time.min': ['{n}분 전', '{n}m ago'], 'time.hour': ['{n}시간 전', '{n}h ago'], 'time.day': ['{n}일 전', '{n}d ago'],
 };
 

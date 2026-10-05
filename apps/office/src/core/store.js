@@ -21,7 +21,7 @@ const listeners = new Set();
 export function activateDraftScope(uid) {
   draftScope = uid;
   setLegacyRecovery({ draft: restore(KEY, null) !== null });
-  state = { ...(uid === 'sample' ? fresh() : empty()), ...(uid ? restore(scopedStorageKey(KEY, uid), {}) : {}) };
+  state = { ...(uid === 'sample' ? fresh() : empty()), ...(uid ? restore(scopedStorageKey(KEY, uid), {}) : {}), boardError: null }; // 지난번 읽기 실패 표시는 이어 오지 않는다(이번에 다시 읽는다)
   listeners.forEach((listener) => listener());
 }
 

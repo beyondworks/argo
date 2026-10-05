@@ -8,6 +8,7 @@ import { useSession } from '../core/session.js';
 import { Modal, showToast } from '../ui/Overlay.jsx';
 import { openMenu } from '../ui/Menu.jsx';
 import { Icon } from '../ui/Icon.jsx';
+import { LoadFail } from '../ui/LoadFail.jsx';
 import { fmtBytes, dragHasFiles, filesFromTransfer } from '../core/files.js';
 import { FILES_DICT } from './files-i18n.js';
 import { usageInfo, fmtSize, CATEGORIES, pageMenuIds, kindOf, countBy, filterFiles, folderPath, childFolders, canMoveFolder, uploadSummary, daysLeft, missingBizcert } from './model.js';
@@ -84,8 +85,17 @@ export default function FilesPage({ space, query }) {
     const why = res.find((r) => r !== true);
     showToast(t(s.key, s.vars) + (why && arr.length === 1 ? ` — ${t(FILES_DICT[`files.reason.${why}`] ? `files.reason.${why}` : `files.err.${why}`)}` : ''));
   };
-  const act = async (fn, okKey, vars) => { try { await fn(); if (okKey) showToast(t(okKey, vars)); } catch (e) { showToast(t(e.message?.startsWith('files.') ? e.message : fileError(e))); } };
-  const trash = (rows) => act(() => trashFiles(space, rows.map((f) => f.id)), null).then(() => { setSel(new Set()); showToast(t('files.trashed', { n: rows.length }), { undo: () => act(() => restoreFiles(space, rows.map((f) => f.id)), 'files.restored', { n: rows.length }) }); });
+  // 반환: 성공했는가(OFC-05) — 실패 알림을 성공 알림이 덮지 않게, 창은 실패하면 열어 둔다(적은 이름을 잃지 않게)
+  const act = async (fn, okKey, vars) => {
+    try { await fn(); if (okKey) showToast(t(okKey, vars)); return true; }
+    catch (e) {
+      const key = e.message?.startsWith('files.') ? e.message : fileError(e);
+      // 휴지통에 든 파일 때문에 폴더를 못 지울 때 — 화면엔 '비어 있음'이라 할 일을 몰랐다(OFC-13): 휴지통으로 가는 단추
+      showToast(t(key), key === 'files.err.notEmpty' ? { action: { label: t('files.seeTrash'), run: () => go({ tab: 'trash', folder: null }) } } : undefined);
+      return false;
+    }
+  };
+  const trash = (rows) => act(() => trashFiles(space, rows.map((f) => f.id)), null).then((ok) => { if (!ok) return; setSel(new Set()); showToast(t('files.trashed', { n: rows.length }), { undo: () => act(() => restoreFiles(space, rows.map((f) => f.id)), 'files.restored', { n: rows.length }) }); });
   const download = (rows) => rows.filter((f) => f.kind === 'file').reduce((pr, f) => pr.then(() => downloadFile(space, f).catch(() => showToast(t('files.previewFail')))), Promise.resolve());
   const setCategory = (rows, c) => act(() => Promise.all(rows.map((f) => updateFile(space, f.id, { category: c }))), 'files.saved');
   const catMenu = (e, rows) => openMenu(e, CATEGORIES.map((c) => ({ label: catLabel(c), checked: rows.every((f) => f.category === c), run: () => setCategory(rows, c) })), { anchor: e.currentTarget });
@@ -172,8 +182,10 @@ export default function FilesPage({ space, query }) {
       {subs.length > 0 && <div className="files-folders">{subs.map((fo) => <div key={fo.id} className="files-folder">
         <button type="button" className="files-folder-main" onClick={() => go({ folder: fo.id })} onContextMenu={(e) => folderMenu(e, fo)}><Icon name="folder" size={18} /><span>{fo.name}</span></button>
         <button type="button" className="icon-btn" aria-label={t('more')} onClick={(e) => folderMenu(e, fo)}><Icon name="dots" size={14} /></button></div>)}</div>}
-      {data.error && <p className="bizui-error" role="alert">{t(data.error)}</p>}
-      {!data.files && data.loading ? <p className="dim" role="status">{t('files.loading')}</p>
+      {data.error && data.files && <p className="bizui-error" role="alert">{t(data.error)}</p>}
+      {/* 목록을 못 읽었으면 '아직 올린 파일이 없습니다'와 함께 보이지 않게 — 읽기 문구와 다시 시도(OFC-08) */}
+      {!data.files && data.error && !data.loading ? <LoadFail text={t(data.error === 'files.err.request' ? 'load.readFail' : data.error)} onRetry={refresh} />
+        : !data.files && data.loading ? <p className="dim" role="status">{t('files.loading')}</p>
         : shown.length === 0 && subs.length === 0 ? <div className="empty-state"><Icon name="folder" size={20} /><p>{searching || cat || custFilter ? t('files.noResult') : folder ? t('files.emptyFolder') : t('files.empty')}</p></div>
           : shown.length > 0 && <div className="table-wrap files-table-wrap" data-sel-scope="files"><table className="table files-table">
             <thead><tr>
@@ -215,7 +227,7 @@ function FolderDialogs({ space, dialog, setDialog, folders, folder, act }) {
   const close = () => setDialog(null);
   if (dialog.kind === 'newFolder' || dialog.kind === 'renameFolder') {
     const submit = (e) => { e.preventDefault(); const name = dialog.name.trim(); if (!name) return;
-      act(() => (dialog.kind === 'newFolder' ? createFolder(space, name, folder) : renameFolder(space, dialog.folder.id, name)), dialog.kind === 'newFolder' ? 'files.folderCreated' : 'files.saved', { name }).then(close); };
+      act(() => (dialog.kind === 'newFolder' ? createFolder(space, name, folder) : renameFolder(space, dialog.folder.id, name)), dialog.kind === 'newFolder' ? 'files.folderCreated' : 'files.saved', { name }).then((ok) => ok && close()); };
     return <Modal open title={t(dialog.kind === 'newFolder' ? 'files.newFolder' : 'files.rename')} onClose={close}
       footer={<><button type="button" className="btn" onClick={close}>{t('files.cancel')}</button><button type="submit" form="files-folder-form" className="btn primary" disabled={!dialog.name.trim()}>{t(dialog.kind === 'newFolder' ? 'files.create' : 'files.save')}</button></>}>
       <form id="files-folder-form" onSubmit={submit}><label className="field-block"><span className="label">{t('files.folderName')}</span>
@@ -229,7 +241,7 @@ function FolderDialogs({ space, dialog, setDialog, folders, folder, act }) {
       const to = target || null;
       if (dialog.folder) await moveFolder(space, dialog.folder.id, to);
       else for (const f of dialog.files) await updateFile(space, f.id, { folder_id: to });
-    }, 'files.saved').then(close);
+    }, 'files.saved').then((ok) => ok && close()); // 실패하면 창을 열어 둔다(OFC-05)
     return <Modal open title={t(dialog.folder ? 'files.folderMove' : 'files.move')} onClose={close}
       footer={<><button type="button" className="btn" onClick={close}>{t('files.cancel')}</button><button type="button" className="btn primary" onClick={run}>{t('files.save')}</button></>}>
       <label className="field-block"><span className="label">{t('files.moveTo')}</span>

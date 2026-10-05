@@ -21,6 +21,7 @@ import { folderKey, isoDay, byDate, journalDigest, fileGroup, canQuickDecide, HU
 import { FolderView, DateSections, useFolder, folderName, FolderIcon, openItem, closeItem, pickFolder, when, countText } from '../ui/FolderView.jsx';
 import { kstDay } from '../core/task-model.js';
 import { DocView } from '../ui/DocView.jsx';
+import { LoadFail } from '../ui/LoadFail.jsx';
 import { Markdown } from '../ui/Markdown.jsx';
 import { stripFrontMatter } from '../core/markdown.js';
 import { restore, persist } from '../core/save.js';
@@ -36,6 +37,12 @@ const assignMany = (list, label) => {
   const spaces = new Set(list.map((x) => x.space));
   return list.length > 0 && spaces.size === 1 && { label: t('crew.assign'), icon: 'hand', run: (_, clear) => { setUi({ assign: { space: list[0].space, items: list.map((x) => ({ kind: 'record', id: x.id, label: label(x) })) } }); clear(); } };
 };
+
+/** 기록판 화면의 빈 자리 — 못 읽었으면 '결재를 기다리는 일이 없습니다'가 아니라 '불러오지 못했습니다 · 다시 시도'(OFC-08) */
+function BoardEmpty({ icon, text }) {
+  const failed = useStore((s) => !!s.boardError);
+  return failed ? <LoadFail onRetry={() => pullBoard().catch(() => {})} /> : <div className="empty-state"><Icon name={icon} size={20} /><p>{t(text)}</p></div>;
+}
 
 function Title({ h, sub }) {
   return <div className="page-title-row"><div><h1 className="page-h1">{h}</h1>{sub && <p className="dim">{sub}</p>}</div></div>;
@@ -119,7 +126,7 @@ export function Approvals({ space, openId, folder }) {
   return (
     <div className="page-wrap wide">
       <Title h={t('nav.approvals')} />
-      {rows.length === 0 ? <div className="empty-state"><Icon name="stamp" size={20} /><p>{t('ap.empty')}</p></div> : (
+      {rows.length === 0 ? <BoardEmpty icon="stamp" text="ap.empty" /> : (
         <FolderView folders={folders} current={current} total={rows.length} human="fold.people">
           <div data-sel-scope="approvals"><DateSections groups={byDate(visible, byDay, kstDay())} render={(g) => g.items.map((a) => (
             <ApRow key={a.id} a={a} all={current === 'all'} bucket={g.key} active={a.id === openId} sel={sel} extra={space === 'me' ? spaceName(a.space) : ''} />))} /></div>
@@ -172,7 +179,7 @@ export function Work({ space, openId, folder }) {
   return (
     <div className="page-wrap wide">
       <Title h={t('nav.work')} />
-      {rows.length === 0 ? <div className="empty-state"><Icon name="run" size={20} /><p>{t('fold.empty')}</p></div> : (
+      {rows.length === 0 ? <BoardEmpty icon="run" text="fold.empty" /> : (
         <FolderView folders={folders} current={current} total={rows.length} human="fold.people" toolbar={tools}>
           <Table scope="work" sel={sel} cols={['col.goal', 'col.lead', 'col.status', 'col.progress', 'col.channel', 'col.started']} rows={visible} rowProps={(w) => menuProps(() => recordMenu(w, w.goal))}
             render={(w) => <>
@@ -203,7 +210,7 @@ export function Decisions({ space, openId, folder }) {
   return (
     <div className="page-wrap wide">
       <Title h={t('nav.decisions')} />
-      {rows.length === 0 ? <div className="empty-state"><Icon name="check" size={20} /><p>{t('fold.empty')}</p></div> : (
+      {rows.length === 0 ? <BoardEmpty icon="check" text="fold.empty" /> : (
         <FolderView folders={folders} current={current} total={rows.length} human="fold.people">
           <div data-sel-scope="decisions"><DateSections groups={byDate(visible, byDay, kstDay())} render={(g) => g.items.map((d) => (
             <RecRow key={d.id} x={d} all={current === 'all'} bucket={g.key} active={d.id === openId} sel={sel} extra={space === 'me' ? spaceName(d.space) : ''}
@@ -299,7 +306,7 @@ export function Outputs({ space, openId, folder }) {
   return (
     <div className="page-wrap wide">
       <Title h={t('nav.outputs')} />
-      {inSp.length === 0 ? <div className="empty-state"><Icon name="file" size={20} /><p>{t('fold.empty')}</p></div> : (
+      {inSp.length === 0 ? <BoardEmpty icon="file" text="fold.empty" /> : (
         <FolderView folders={folders} current={current} total={rows.length} human="fold.human" toolbar={kinds}>
           {visible.length === 0 ? <p className="dim fold-none">{t('fold.none')}</p>
             : <div data-sel-scope="outputs"><DateSections groups={byDate(visible, byDay, kstDay())} render={(g) => g.items.map((f) => <FileRow key={f.id} f={f} all={current === 'all'} bucket={g.key} sel={sel} group={group} />)} /></div>}
@@ -354,7 +361,7 @@ export function Journal({ space, folder }) {
   return (
     <div className="page-wrap wide">
       <Title h={t('nav.journal')} />
-      {entries.length === 0 ? <div className="empty-state"><Icon name="book" size={20} /><p>{t('fold.empty')}</p></div>
+      {entries.length === 0 ? <BoardEmpty icon="book" text="fold.empty" />
         : <FolderView folders={folders} current={current} total={entries.length} human="fold.people">{body}</FolderView>}
     </div>
   );
@@ -391,7 +398,7 @@ export function Docs({ space, openId }) {
   return (
     <div className="page-wrap" data-sel-scope="crew-docs">
       <Title h={t('nav.docs')} sub={t('docs.sub')} />
-      {rows.length === 0 ? <div className="empty-state"><Icon name="book" size={20} /><p>{t('docs.empty')}</p></div>
+      {rows.length === 0 ? <BoardEmpty icon="book" text="docs.empty" />
         : <div className="docs-find"><Icon name="search" size={14} className="dim" /><input className="input" type="search" value={q} placeholder={t('docs.search')} aria-label={t('docs.search')}
           onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape' && q) { e.stopPropagation(); setQ(''); } }} /></div>}
       {term && rows.length > 0 && !shown.length && <p className="dim docs-none">{t('docs.noMatch')}</p>}

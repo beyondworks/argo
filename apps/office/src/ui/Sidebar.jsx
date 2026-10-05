@@ -159,7 +159,7 @@ const FOLD_KEY = 'argo-office-crew-fold';
 /** 좌측 크루 목록(유건 9/30 #6): 고정 → 내 에이전트 두 묶음(고정한 크루는 내 에이전트에서 빠진다). 쓸 수 없는(꺼진) 크루는 보이지 않는다(#9).
  *  고정·순서는 메신저 레일과 같은 저장소(계정), 접힘·검색은 이 기기에서만. 주인별·부서별·일하는 중만 필터는 뺐다 */
 function CrewSection({ space, crews, handle }) {
-  const ready = useStore((s) => s.crewsReady);
+  const ready = useStore((s) => s.crewsReady && !s.boardError); // 못 읽었으면 '아직 없음'이라고 하지 않는다
   const [fold, setFold] = useState(() => restore(FOLD_KEY, {}));
   const [query, setQuery] = useState(null); // null = 검색칸 닫힘
   const { groups } = useMemo(() => groupCrews(crews, { me: ME.id, query: query ?? '' }), [crews, query]);

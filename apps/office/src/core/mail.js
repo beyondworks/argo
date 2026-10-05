@@ -46,7 +46,8 @@ export async function api(op, body, { method = body ? 'POST' : 'GET', query } = 
 }
 
 let config = null;
-export const mailConfig = () => (config ??= api('config').catch(() => { config = null; return { google: null }; }));
+// 못 읽으면 failed — '서버에 Google 연결 설정이 없다'와 나눈다(OFC-08: 읽기 실패가 설정 없음으로 보였다). 실패는 기억하지 않아 다음에 다시 읽는다
+export const mailConfig = () => (config ??= api('config').catch(() => { config = null; return { google: null, failed: true }; }));
 const real = () => getMode() === 'signedIn';
 const okAccounts = () => (getState().mailAccounts ?? []).filter((a) => a.status === 'ok');
 const busy = (id) => outbox.has(`mail:${id}`) || outbox.has(`star:${id}`);

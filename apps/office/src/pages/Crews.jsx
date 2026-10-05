@@ -19,6 +19,8 @@ import { CREWS_DICT } from './crews-i18n.js';
 import { CREW_ASSIGN_DICT } from '../core/crew-assign-i18n.js';
 import { openExternal } from '../core/platform.js';
 import { FAMILY } from '../core/family.js';
+import { LoadFail } from '../ui/LoadFail.jsx';
+import { pullBoard } from '../core/pull.js';
 import './crews.css';
 
 registerDict(CREWS_DICT); registerDict(CREW_ASSIGN_DICT); // 메신저 앱 받기·꺼짐 안내는 맡기기 창과 같은 문구
@@ -36,12 +38,14 @@ export default function CrewOrg({ space }) {
   useLang();
   const all = useStore((s) => s.crews);
   const crews = useMemo(() => crewsIn(all, space, ME.id), [all, space]);
+  const failed = useStore((s) => !!s.boardError); // 못 읽었으면 '에이전트 없음'이 아니라 다시 시도(OFC-08)
   const groups = useMemo(() => groupByDept(crews), [crews]);
   const depts = groups.filter((g) => g.dept).length;
   return <div className="page-wrap wide">
     <div className="page-title-row"><div><h1 className="page-h1">{t('nav.agents')}</h1>
       <p className="dim">{[t(space === 'me' ? 'agents.meSub' : 'agents.sub'), crews.length > 0 && t('agents.count', { n: crews.length, d: depts })].filter(Boolean).join(' · ')}</p></div></div>
-    {!crews.length ? <div className="empty-state"><Icon name="hand" size={20} /><p>{t('agents.empty')}</p>{/* 다음에 할 일 = 실행기(Argo 앱) 받기 — 에이전트는 메신저가 아니라 실행기가 올린다(패밀리 원칙 6, CX-01·OFC-18) */}
+    {!crews.length && failed ? <LoadFail onRetry={() => pullBoard().catch(() => {})} />
+      : !crews.length ? <div className="empty-state"><Icon name="hand" size={20} /><p>{t('agents.empty')}</p>{/* 다음에 할 일 = 실행기(Argo 앱) 받기 — 에이전트는 메신저가 아니라 실행기가 올린다(패밀리 원칙 6, CX-01·OFC-18) */}
       <button type="button" className="btn sm" onClick={() => openExternal(FAMILY.download)}><Icon name="download" size={13} />{t('crew.getApp')}</button></div>
       : groups.map((g) => <section key={g.dept || '-'} className="agents-dept" aria-label={g.dept || t('agents.noDept')}>
         <h2 className="agents-h">{g.dept || t('agents.noDept')} <span className="dim">· {g.crews.length}</span></h2>

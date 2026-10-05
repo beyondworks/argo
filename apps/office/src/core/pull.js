@@ -61,7 +61,8 @@ export async function loadPageContent(id, { force = false, skip } = {}) {
   ]);
   if (getStorageScope() !== owner) return;
   if (rights.error) throw rights.error;
-  if (error || !data) return;
+  if (error) throw error; // 읽기 실패는 실패로 — 예전에는 조용히 끝나 페이지가 회색 자리(스켈레톤)만 보였다(OFC-06)
+  if (!data) return null; // 없는 페이지(지워졌거나 볼 수 없다) — 화면은 '찾을 수 없음'
   if (!force && (busy || outbox.has(`page:${id}`) || skip?.())) return;
   update((s) => ({ pages: s.pages.map((p) => (p.id === id ? { ...p, title: data.title, content: data.content, version: data.version, owner: data.owner_user_id, orgId: data.org_id, access: rights.data, updated: data.updated_at, loadedAt: Date.now() } : p)) }));
   return data;
@@ -71,7 +72,11 @@ export async function loadPageContent(id, { force = false, skip } = {}) {
  *  결재 버튼은 메신저와 같은 판정(board.js canDecideAp = 메신저 approval-display.js approvalDecider, 최종은 서버 RLS)으로 — 결재마다 msgr_can_decide를 부르던 것을
  *  조직 결재 정책 한 번 읽기로 바꿨다(OFC-20: 대기 결재 N건이면 요청 N건 → 1건, 대기 결재가 없으면 0건).
  *  부하: 시작·탭 복귀(60초 간격)마다 크루 1 + 개인 산출물 1 + (조직이 있으면) 목록 8 + 결재 정책 0~1 + 결정한 사람 이름 0~1. 주기 읽기 없음 */
-export async function pullBoard() {
+export function pullBoard() {
+  // 실패는 기록판 오류로 남긴다(OFC-08) — 홈 현황·결재함 등이 '없음·정상'이 아니라 '불러오지 못함 · 다시 시도'를 보인다. 성공하면 지운다(readBoard)
+  return readBoard().catch((e) => { if (getStorageScope() === ME.id) update(() => ({ boardError: Date.now() })); throw e; });
+}
+async function readBoard() {
   const owner = getStorageScope();
   const sb = await getClient();
   if (!sb || owner !== ME.id || getStorageScope() !== owner) return;

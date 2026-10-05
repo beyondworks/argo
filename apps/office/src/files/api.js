@@ -2,6 +2,7 @@
 // 예시 모드: 이 브라우저 IndexedDB(sample.js). 부하: 문서함을 열거나 검색어가 바뀔 때 목록 1회 읽기, 사람이 누를 때만 쓰기, 글자 읽기 결과는 파일당 1회 쓰기.
 // 휴지통 30일·남은 객체 정리는 서버 크론만 한다(로그인 모드 — 화면은 정리하지 않는다).
 // 같은 목록 키(공간·휴지통·검색·거래처)는 한 번만 읽어 화면 메모리에 두고, 쓰기 뒤에는 보고 있는 목록만 다시 읽는다. 폴링 없음.
+import { onCustomersChanged } from '../core/biz-events.js';
 import { useEffect, useSyncExternalStore } from 'react';
 import { configured, getClient } from '../core/supabase.js';
 import { rpc, orgOf } from '../core/tasks.js';
@@ -107,6 +108,7 @@ export async function downloadFile(space, f) {
 
 /* ── 거래처 목록(필터·연결용) ── */
 let customers = new Map();
+onCustomersChanged(() => customers.clear()); // 업무에서 거래처를 만들거나 고쳤다 — 다음에 열 때 다시 읽는다(OFC-10)
 export async function loadCustomers(space) {
   if (!customers.has(space)) customers.set(space, (configured
     ? rpc('office_business_read', { p_org: orgOf(space) }).then((d) => (d?.customers ?? []).map((c) => ({ id: c.id, name: c.name, biz_no: c.biz_no ?? '', status: c.status ?? 'active' })))

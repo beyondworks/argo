@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useSyncExternalStore } from 'react';
 import { ME, SPACES, canManage, getMode, nameIn } from '../core/session.js';
 import { useTasks, useTaskRows, ensureTasks, rowsIn, loadTasks, taskAction, rpc, orgOf, trackWrite, shareSampleTasks, taskError } from '../core/tasks.js';
-import { viewRows, taskOrgKeys } from '../core/task-model.js';
+import { viewRows, taskOrgKeys, taskLoad } from '../core/task-model.js';
 import { writeEvent, refreshEvents, loadPeople } from '../calendar/api.js';
 import { writableOrgs, idOf } from '../calendar/shared.js';
 import { SAMPLE_TASKS, SAMPLE_TASK_CATEGORIES, sampleTaskWrite, sampleCategoryWrite, sampleTaskHistory } from '../data/calendar-sample.js';
@@ -40,6 +40,13 @@ export function useViewTasks(space) {
   useEffect(() => { if (!demo) return; shareSampleTasks(space, demo.mineRows); demo.byOrg.forEach((rows, k) => shareSampleTasks(k, rows)); }, [demo, space]);
   // 내 할 일을 못 읽었어도 받아 둔 조직 할 일은 보인다(10/4 재검수 — 합치기 전과 같게). 받는 중이면 빈 목록
   return demo ? demo.rows : live ?? (st.error && orgs.length ? viewRows({ space, own: [], orgRows: new Map(orgs.map((k) => [k, rowsIn(k)])), orgKeys: orgs, me: ME.id }) : []);
+}
+
+/** 할 일 화면의 읽기 상태(OFC-04) — 처음 읽는 중(waiting)·내 할 일 읽기 실패(failed: 사전 키)·다시 시도. 예시 모드는 늘 준비됨.
+ *  예전에는 읽는 중·실패에도 '열린 일 0 · 보여 줄 항목이 없습니다'만 보여 할 일이 사라진 줄 알았다 */
+export function useTaskLoad(space) {
+  const st = useTasks(space);
+  return taskLoad(sample() ? { rows: [] } : st, () => loadTasks(space, true));
 }
 
 // 분류·직원 캐시는 읽은 계정 것만 — 새로고침 없이 계정이 바뀌면(로그아웃 뒤 다른 계정 로그인 등) 비운다(10/4 재검수: 옛 계정의 개인 분류가 보였다)

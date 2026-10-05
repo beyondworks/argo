@@ -1,5 +1,12 @@
 // 메일 화면 사전 — 그 화면과 함께 지연 로드된다(첫 화면 150KB 상한, 7차 bundle.md ①). 원래 core/i18n.js에 있던 값을 그대로 옮겼다
 export const MAIL_DICT = {
+  // 메일 연결 안내(관리자 안내문·연결 오류) — 메일 화면·메일 계정 설정에서만 쓴다(첫 화면 150KB 상한, 10/5 core/i18n.js에서 옮김)
+  'mailc.adminNote': ['Argo Office가 회사 Google Workspace 메일에 연결할 수 있도록 신뢰 앱으로 등록해 주세요.\n\n관리 콘솔 → 보안 → 액세스 및 데이터 제어 → API 제어 → 타사 앱 액세스 관리 → 새 앱 구성 → OAuth 앱 이름 또는 클라이언트 ID로 검색\n\n클라이언트 ID: {client}\n요청 권한:\n{scopes}\n\n메일은 본인이 연결한 계정만 읽고, 에이전트는 초안까지만 씁니다. 발송은 사람이 직접 누를 때만 합니다.',
+    'Please allow Argo Office as a trusted app so it can connect to our Google Workspace mail.\n\nAdmin console → Security → Access and data control → API controls → Manage Third-Party App Access → Configure new app → search by OAuth app name or client ID\n\nClient ID: {client}\nRequested scopes:\n{scopes}\n\nIt reads only the accounts each person connects; agents write drafts only, and mail is sent only when a person presses Send.'],
+  'mailc.err.admin_policy_enforced': ['회사 관리자가 외부 앱 연결을 막았습니다. 안내문을 복사해 관리자에게 보내 주세요.', 'Your company admin blocks third-party apps. Copy the note and send it to your admin.'],
+  'mailc.err.scopes': ['필요한 권한이 빠졌습니다. 승인 화면의 항목을 모두 켜고 다시 연결해 주세요.', 'Some permissions were left off. Turn on every item on the approval screen and reconnect.'],
+  'mailc.err.not_configured': ['서버에 Google 연결 설정이 아직 없습니다', 'Google connection is not configured on the server yet'],
+  'mailc.err.other': ['연결하지 못했습니다. 잠시 뒤 다시 시도해 주세요.', 'Could not connect. Please try again shortly.'],
   'desktop.mailWaiting': ['브라우저에서 메일 연결을 승인해 주세요.', 'Approve the mail connection in your browser.'], 'mod.resize': ['끌어서 크기 바꾸기', 'Drag to resize'],
   'mail.compose': ['새 메일', 'New mail'], 'mail.select': ['메일을 고르세요', 'Select a message'], 'mail.empty': ['메일이 없습니다', 'No messages'],
   'mail.note': ['{crew}의 정리', 'Notes from {crew}'], 'mail.to': ['받는 사람', 'To'], 'mail.subject': ['제목', 'Subject'], 'mail.send': ['보내기', 'Send'],
@@ -12,7 +19,7 @@ export const MAIL_DICT = {
   'tr.partial': ['일부 문단은 번역하지 못해 원문으로 두었습니다', 'Some paragraphs could not be translated and were left as is'],
   'mailc.title': ['메일 계정을 연결하세요', 'Connect a mail account'],
   'mailc.sub': ['Gmail·Google Workspace(회사 도메인) 계정을 Google 로그인과 권한 승인으로 연결합니다', 'Connect Gmail or Google Workspace (company domain) with Google sign-in and one approval'],
-  'mailc.google': ['Google로 연결', 'Connect with Google'], 'mailc.add': ['계정 추가', 'Add account'], 'mailc.all': ['모든 계정', 'All accounts'],
+  'mailc.google': ['Google로 연결', 'Connect with Google'], 'mailc.add': ['계정 추가', 'Add account'], 'mailc.all': ['모든 계정', 'All accounts'], 'mailx.someFail': ['메일 계정 {n}개에서 메일을 받지 못했습니다', "Couldn't get mail from {n} account(s)"],
   'mailc.reconnect': ['다시 연결', 'Reconnect'], 'mailc.work': ['회사', 'Work'], 'mailc.disconnect': ['연결 해제', 'Disconnect'],
   'mailc.disconnectTitle': ['{addr} 연결을 해제할까요?', 'Disconnect {addr}?'],
   'mailc.disconnectBody': ['Google 쪽 권한도 함께 철회합니다. 메일은 Gmail에 그대로 남고, 에이전트 메모는 다시 연결하면 다시 보입니다.', 'Google access is revoked too. Your mail stays in Gmail, and agent notes come back when you reconnect.'],

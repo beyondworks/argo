@@ -6,6 +6,7 @@ import { rpc, orgOf } from '../core/tasks.js';
 import { ME } from '../core/session.js';
 import { useStore } from '../core/store.js';
 import { crewsIn } from '../core/crew-list.js';
+import { LoadFail } from '../ui/LoadFail.jsx';
 import { loadAccounts } from '../core/mail.js';
 import { Link } from '../core/router.jsx';
 import { Modal, showToast } from '../ui/Overlay.jsx';
@@ -14,17 +15,18 @@ import { TOOL_DICT } from './tools-i18n.js';
 import './perf.css';
 
 registerDict(TOOL_DICT);
-const ERR = { asset_forbidden: 'permission', asset_version: 'version', asset_input: 'input', asset_limit: 'limit' };
+const ERR = { asset_forbidden: 'permission', asset_version: 'version', asset_input: 'input', asset_limit: 'limit', task_signin: 'signin' };
 const errKey = (e) => `tool.error.${ERR[e?.message] ?? 'failed'}`;
 const KINDS = ['service', 'mcp', 'plugin', 'account', 'other'];
 
 export default function Tools({ space }) {
   useLang();
   const org = orgOf(space);
-  const [data, setData] = useState(null), [edit, setEdit] = useState(null), [tab, setTab] = useState(org ? 'company' : 'mine');
+  const [data, setData] = useState(null), [edit, setEdit] = useState(null), [tab, setTab] = useState(org ? 'company' : 'mine'), [error, setError] = useState(null);
   const accounts = useStore((s) => s.mailAccounts), allCrews = useStore((s) => s.crews);
   const crews = crewsIn(allCrews, space, ME.id);
-  const load = useCallback(() => rpc('office_asset_list', { p_org: org }).then(setData).catch((e) => showToast(t(errKey(e)))), [org]);
+  // 목록을 못 읽으면 '…'에 멈추지 않고 오류와 다시 시도(UX-O01). 쓰기 뒤 다시 읽기가 실패하면 보던 목록 위에 알림만
+  const load = useCallback(() => rpc('office_asset_list', { p_org: org }).then((d) => { setData(d); setError(null); }).catch((e) => { setError(errKey(e)); showToast(t(errKey(e))); }), [org]);
   useEffect(() => { setData(null); load(); loadAccounts().catch(() => {}); }, [load]);
   const write = async (action, payload) => { try { await rpc('office_asset_write', { p_org: org, p_action: action, p_data: payload }); await load(); } catch (e) { showToast(t(errKey(e))); throw e; } };
   const manager = data?.role === 'manager' || !org;
@@ -43,7 +45,8 @@ export default function Tools({ space }) {
     </section>
     {org && <div className="perf-bar"><div className="seg" role="tablist">{['company', 'mine'].map((k) => <button key={k} type="button" role="tab" aria-selected={tab === k} className={`seg-btn${tab === k ? ' on' : ''}`} onClick={() => setTab(k)}>{t(`tool.tab.${k}`)}</button>)}</div></div>}
     <section className="module"><header className="module-head"><Icon name="box" size={15} /><h3>{t(`tool.tab.${tab}`)}</h3></header>
-      {!data ? <p className="dim small" role="status">…</p> : !list.length ? <p className="mod-empty">{t('tool.empty')}</p>
+      {!data && error ? <LoadFail small text={t(error === 'tool.error.failed' ? 'load.readFail' : error)} onRetry={() => { setError(null); load(); }} />
+        : !data ? <p className="dim small" role="status">…</p> : !list.length ? <p className="mod-empty">{t('tool.empty')}</p>
         : <ul className="perf-days">{list.map((a) => <li key={a.id} className={`perf-item${a.spec.enabled ? '' : ' tool-off'}`}>
           <label className="tool-switch" title={t(a.spec.enabled ? 'tool.on' : 'tool.off')}><input type="checkbox" checked={!!a.spec.enabled} disabled={!canEdit(a)} onChange={() => toggle(a)} aria-label={t('tool.enabled')} /></label>
           <span className="badge">{t(`tool.kind.${a.spec.tool_kind}`)}</span>

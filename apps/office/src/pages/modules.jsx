@@ -14,18 +14,24 @@ import { looksLikeAddr } from '../core/hide-all.js';
 import { useTasks, useTaskRows, useTaskDay } from '../core/tasks.js';
 import { groupTasks } from '../core/task-model.js';
 import { fmtBytes } from '../core/files.js';
+import { LoadFail } from '../ui/LoadFail.jsx';
+import { pullBoard } from '../core/pull.js';
 import { pickCards, statsFor, MAX_CARDS } from '../core/stats.js';
 
 export { crewName };
 const inSpace = (space) => (x) => space === 'me' || x.space === space;
 const spaceName = (key) => SPACES.find((s) => s.key === key)?.name ?? '';
 
-function Empty() { return <div className="mod-empty">{t('mod.empty')}</div>; }
+/** 빈 모듈 — 기록판을 못 읽었으면 '비어 있습니다'가 아니라 '불러오지 못했습니다 · 다시 시도'(OFC-08). board = 기록판에서 오는 모듈 */
+function Empty({ board = false }) {
+  const failed = useStore((s) => board && !!s.boardError);
+  return failed ? <LoadFail small onRetry={() => pullBoard().catch(() => {})} /> : <div className="mod-empty">{t('mod.empty')}</div>;
+}
 
 function Approvals({ space }) {
   const list = useStore((s) => s.approvals);
   const rows = useMemo(() => list.filter(approvalsIn(space)), [list, space]);
-  if (!rows.length) return <Empty />;
+  if (!rows.length) return <Empty board />;
   return rows.slice(0, 4).map((a) => (
     <Link key={a.id} to={`${baseOf(space)}/approvals?open=${a.id}`} className="mod-row" {...menuProps(() => recordMenu(a, a.plain))}>
       <Face id={a.crew} size={18} />
@@ -38,7 +44,7 @@ function Approvals({ space }) {
 function Work({ space }) {
   const list = useStore((s) => s.work);
   const rows = useMemo(() => list.filter(inSpace(space)), [list, space]);
-  if (!rows.length) return <Empty />;
+  if (!rows.length) return <Empty board />;
   return rows.slice(0, 5).map((w) => (
     <Link key={w.id} to={`${baseOf(space)}/work?open=${w.id}`} className="mod-row" {...menuProps(() => recordMenu(w, w.goal))}>
       <span className={`dot ${w.status === 'blocked' ? 'ask' : 'work'}`} />
@@ -99,7 +105,7 @@ function Pages({ space }) {
 function Outputs({ space }) {
   const all = useStore((s) => s.outputs);
   const rows = useMemo(() => all.filter(inSpace(space)), [all, space]);
-  if (!rows.length) return <Empty />;
+  if (!rows.length) return <Empty board />;
   return rows.slice(0, 5).map((f) => (
     <Link key={f.id} to={`${baseOf(space)}/outputs?open=${f.id}`} className="mod-row" {...menuProps(() => fileMenu(f))}>
       <Icon name="file" size={14} className="dim" />
@@ -113,7 +119,7 @@ function Outputs({ space }) {
 function Journal({ space }) {
   const days = useStore((s) => s.journal);
   const day = days.find(inSpace(space));
-  if (!day) return <Empty />;
+  if (!day) return <Empty board />;
   return <>
     <div className="mod-date mono">{day.date}</div>
     {day.entries.slice(-5).reverse().map((e, i) => (
@@ -125,7 +131,7 @@ function Journal({ space }) {
 function Decisions({ space }) {
   const list = useStore((s) => s.decisions);
   const rows = useMemo(() => list.filter(inSpace(space)).slice(0, 5), [list, space]);
-  if (!rows.length) return <Empty />;
+  if (!rows.length) return <Empty board />;
   return rows.map((d) => (
     <Link key={d.id} to={`${baseOf(space)}/decisions?open=${d.id}`} className="mod-row">
       <span className={`badge ${d.result === 'approved' ? 'ok' : 'danger'}`}>{t(`status.${d.result}`)}</span>
@@ -142,10 +148,13 @@ function useStatValues(space) {
   const approvals = useStore((s) => s.approvals), work = useStore((s) => s.work), mails = useStore((s) => s.mails);
   const decisions = useStore((s) => s.decisions), pages = useStore((s) => s.pages), done = useStore((s) => s.todosDone);
   const crewList = useStore((s) => s.crews), outputs = useStore((s) => s.outputs);
-  const mode = useSession(); useTasks(space); // 로그인하면 서버에 저장된 실제 할 일로 센다(성과 기록 1단계)
+  const mode = useSession(), taskErr = useTasks(space).error; // 로그인하면 서버에 저장된 실제 할 일로 센다(성과 기록 1단계)
   const tasks = useTaskRows(space), today = useTaskDay(); // 세는 행·날짜는 메뉴 배지·챙길 것과 같다 — 개인 공간은 조직에서 나에게 맡겨진 일도(18차 검수 M4에서 빠졌던 카드, 10/4 실제 계정 점검)
+  const boardError = useStore((s) => s.boardError);
   return useMemo(() => {
     const base = baseOf(space), ok = (text, icon) => ({ tone: 'ok', text, icon }), warn = (text, icon) => ({ tone: 'warn', text, icon });
+    // 읽기 실패 카드(OFC-08) — '없음·정상·모두 확인'이 아니라 '확인 못 함'. 누르면 그 화면(거기서 다시 시도)
+    const fail = (id, icon, sub, to) => ({ n: '—', badge: warn(t('stat.b.fail'), icon), main: t('stat.failMain'), sub, to });
     const ap = approvals.filter(approvalsIn(space)), high = ap.filter((a) => a.risk === 'high').length;
     const wk = work.filter(inSpace(space)), blocked = wk.filter((w) => w.status === 'blocked').length;
     const unread = mails.filter((m) => m.folder === 'inbox' && m.unread).length;
@@ -154,20 +163,25 @@ function useStatValues(space) {
     const dec = decisions.filter(inSpace(space)).filter((d) => recent(d.at)), approved = dec.filter((d) => d.result === 'approved').length;
     const out = outputs.filter(inSpace(space)).filter((f) => recent(f.at));
     const pg = pages.filter((p) => !p.template && p.space === space), pgRecent = pg.filter((p) => p.updated && recent(p.updated)).length;
-    return {
+    const live = mode === 'signedIn';
+    const vals = {
       approvals: { n: ap.length, badge: ap.length ? warn(t('stat.b.waiting'), 'stamp') : ok(t('stat.b.none'), 'stamp'), main: high ? t('stat.highRisk', { n: high }) : t('stat.noHighRisk'), sub: t('stat.approvalsSub'), to: `${base}/approvals` },
       work: { n: wk.length, badge: blocked ? warn(t('stat.b.blocked'), 'run') : ok(t('stat.b.normal'), 'run'), main: t('stat.blocked', { n: blocked }), sub: t('stat.workSub'), to: `${base}/work` },
       mail: { n: unread, badge: unread ? warn(t('stat.b.unread'), 'mail') : ok(t('stat.b.none'), 'mail'), main: unread ? t('stat.mailCheck') : t('stat.mailDone'), sub: t('stat.mailSub'), to: '/me/mail' },
-      crews: { n: working, total: cs.length, badge: asking ? warn(t('stat.b.check'), 'person') : ok(t('stat.b.normal'), 'person'), main: t('stat.crewWorking'), sub: t('stat.crewAsk', { n: asking }) },
-      todos: mode === 'signedIn' && tasks ? (() => {
+      crews: { n: working, total: cs.length, badge: asking ? warn(t('stat.b.check'), 'person') : ok(t('stat.b.normal'), 'person'), main: t('stat.crewWorking'), sub: t('stat.crewAsk', { n: asking }), to: `${base}/agents` },
+      // 로그인하면 실제 할 일 — 받기 전에는 예시 문구('메일에서 뽑음')가 아니라 '…', 못 읽었으면 '확인 못 함'(OFC-09). 누르면 할 일 화면
+      todos: live ? (tasks ? (() => {
         const g = groupTasks(tasks.filter((r) => !r.cancelled_at), today, ME.id), open = g.overdue.length + g.today.length + g.week.length + g.later.length + g.none.length;
-        return { n: open, badge: g.overdue.length ? warn(t('stat.b.late'), 'check') : ok(t('stat.b.none'), 'check'), main: t('stat.taskMain', { late: g.overdue.length, today: g.today.length }), sub: t('stat.tasksSub') };
-      })() : { n: todos.length - todoDone, badge: todos.length - todoDone ? warn(t('stat.b.open'), 'check') : ok(t('stat.b.none'), 'check'), main: t('stat.todoDone', { done: todoDone, total: todos.length }), sub: t('stat.todosSub') },
+        return { n: open, badge: g.overdue.length ? warn(t('stat.b.late'), 'check') : ok(t('stat.b.none'), 'check'), main: t('stat.taskMain', { late: g.overdue.length, today: g.today.length }), sub: t('stat.tasksSub'), to: `${base}/tasks` };
+      })() : taskErr ? fail('todos', 'check', t('stat.tasksSub'), `${base}/tasks`) : { n: '…', badge: { tone: '', text: '…', icon: 'check' }, main: '', sub: t('stat.tasksSub'), to: `${base}/tasks` })
+        : { n: todos.length - todoDone, badge: todos.length - todoDone ? warn(t('stat.b.open'), 'check') : ok(t('stat.b.none'), 'check'), main: t('stat.todoDone', { done: todoDone, total: todos.length }), sub: t('stat.todosSub') },
       decisions: { n: dec.length, badge: ok(t('stat.b.week'), 'check'), main: t('stat.decided', { a: approved, r: dec.length - approved }), sub: t('stat.weekSub'), to: `${base}/decisions` },
       outputs: { n: out.length, badge: ok(t('stat.b.week'), 'file'), main: fmtBytes(out.reduce((s, f) => s + f.bytes, 0)), sub: t('stat.weekSub'), to: `${base}/outputs` },
       pages: { n: pg.length, badge: ok(t('stat.b.wiki'), 'doc'), main: t('stat.pagesRecent', { n: pgRecent }), sub: t(space === 'me' ? 'stat.pagesMe' : 'stat.pagesOrg') },
     };
-  }, [approvals, work, mails, decisions, pages, done, crewList, outputs, space, mode, tasks, today]);
+    if (live && boardError) for (const [id, icon] of [['approvals', 'stamp'], ['work', 'run'], ['crews', 'person'], ['decisions', 'check'], ['outputs', 'file']]) vals[id] = fail(id, icon, vals[id].sub, vals[id].to);
+    return vals;
+  }, [approvals, work, mails, decisions, pages, done, crewList, outputs, space, mode, tasks, today, taskErr, boardError]);
 }
 
 /** 현황 카드(유건 9/27) — 카드마다 지표를 고른다. 1~5장, 조직 홈은 관리자만 바꾼다(구조는 공유). */

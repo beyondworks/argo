@@ -5,7 +5,8 @@ import { showToast } from '../ui/Overlay.jsx';
 import { t, ago, useLang, getLang, registerDict } from '../core/i18n.js';
 import { PAGEVIEW_DICT } from './pageview-i18n.js';
 import { useStore, createPage, savePage, trashPage, getState } from '../core/store.js';
-import { navigate } from '../core/router.jsx';
+import { navigate, Link } from '../core/router.jsx';
+import { LoadFail } from '../ui/LoadFail.jsx';
 import { baseOf } from '../core/commands.js';
 import { menuProps } from '../ui/Menu.jsx';
 import { useUi, setUi } from '../core/ui-state.js';
@@ -60,7 +61,7 @@ function TemplatePicker({ page }) {
   };
   const menuFor = (tp) => (tp.space === 'me' || canManage(tp.space) ? [
     { label: t('tpl.edit'), icon: 'doc', run: () => navigate(`${baseOf(tp.space)}/p/${tp.id}`) },
-    { label: t('page.trash'), icon: 'trash', danger: true, run: () => trashPage(tp.id) },
+    { label: t('page.trash'), icon: 'trash', danger: true, run: () => showToast(t('page.trashed'), { undo: trashPage(tp.id) }) }, // 다른 휴지통 보내기(commands.js)와 같이 알림·되돌리기(OFC-19)
   ] : [{ heading: t('tpl.readOnly') }]);
   const group = (label, items) => items.length > 0 && <div className="tpl-group"><span className="label">{label}</span><div className="tpl-grid">{items}</div></div>;
   return (
@@ -77,7 +78,7 @@ function TemplatePicker({ page }) {
 }
 
 
-export function PageView({ id }) {
+export function PageView({ id, space }) {
   useLang();
   const page = useStore((s) => s.pages.find((p) => p.id === id));
   const [over, setOver] = useState(false);
@@ -87,7 +88,14 @@ export function PageView({ id }) {
   const needsBody = page && page.content === undefined;
   const needsAccess = page && page.access === undefined && getMode() !== 'sample';
   const canEdit = page?.access === 'edit' || page?.access === 'full' || (getMode() === 'sample' && page?.space !== 'shared');
-  useEffect(() => { if (needsBody || needsAccess) loadPageContent(id); }, [id, needsBody, needsAccess]); // 목록에는 본문이 없다 — 열 때 불러온다
+  // 목록에는 본문이 없다 — 열 때 불러온다. 못 읽으면 회색 자리 대신 '불러오지 못했습니다 · 다시 시도', 서버에 없으면 '찾을 수 없음'(OFC-06)
+  const [load, setLoad] = useState(null), [again, setAgain] = useState(0); // load: null | 'missing' | 'error'
+  useEffect(() => {
+    if (!needsBody && !needsAccess) return undefined;
+    let live = true; setLoad(null);
+    loadPageContent(id).then((d) => { if (live && d === null) setLoad('missing'); }, () => { if (live) setLoad('error'); });
+    return () => { live = false; };
+  }, [id, needsBody, needsAccess, again]);
   useEffect(() => { if (restore(heldKey(id), null)) setUi({ conflict: id }); }, [id]); // 고르지 않은 충돌이 남아 있으면 다시 묻는다
   // 열어 둔 페이지 최신화(16차): 탭·창으로 돌아올 때 판 번호만 읽어 비교하고, 바뀌었으면 본문을 다시 읽는다. 같은 페이지는 10초에 한 번까지,
   // 안 저장한 편집이 있으면 건너뛴다(그 저장이 충돌 안내로 이어진다). 주기 폴링은 없다. 같은 브라우저의 다른 창은 core/page-live.js가 바로 맞춘다
@@ -107,7 +115,8 @@ export function PageView({ id }) {
     addEventListener('focus', check);
     return () => { document.removeEventListener('visibilitychange', check); removeEventListener('focus', check); };
   }, [id]);
-  if (!page) return <div className="page-wrap"><div className="empty-state"><Icon name="doc" size={20} /><p>{t('page.missing')}</p></div></div>;
+  // 없는 페이지 — 돌아갈 곳을 함께(UX-O05). 머리줄의 제목·저장됨·별은 App이 숨긴다
+  if (!page || load === 'missing') return <div className="page-wrap"><div className="empty-state"><Icon name="doc" size={20} /><p>{t('page.missing')}</p><Link to={baseOf(space ?? 'me')} className="btn sm">{t('cmd.goHome')}</Link></div></div>;
   // 끌어 놓은 파일 → 문서함에 저장(용량·형식 검사는 문서함과 같다) → 놓은 자리에 '/파일' 블록. 예전에는 진행 막대만 흉내 냈다(10/4 PARITY-ALL)
   const drop = async (e) => {
     e.preventDefault(); setOver(false);
@@ -158,7 +167,8 @@ export function PageView({ id }) {
       {page.template && <p className="restricted-note"><Icon name="template" size={12} />{t('tpl.editing')}</p>}
       {page.restricted && <p className="restricted-note"><Icon name="lock" size={12} />{t('page.restrictedNote')}</p>}
       {conflict === page.id && <ConflictBanner page={page} />}
-      {needsBody ? <div className="prose skeleton-lines"><span /><span /><span /></div>
+      {needsBody && load === 'error' ? <LoadFail onRetry={() => setAgain((n) => n + 1)} />
+        : needsBody ? <div className="prose skeleton-lines"><span /><span /><span /></div>
         : <Suspense fallback={<div className="prose skeleton-lines"><span /><span /><span /></div>}><Editor key={`${page.id}:${page.loadedAt ?? 0}`} page={page} canEdit={canEdit} hostRef={editorRef} /></Suspense>}
       {canEdit && !needsBody && !page.template && isBlank(page.content) && <TemplatePicker page={page} />}
       {files.length > 0 && <div className="attachments">

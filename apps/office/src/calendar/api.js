@@ -4,6 +4,7 @@
 // 읽은 창은 화면 메모리에 두고 다시 쓰며(같은 창을 다시 받지 않음), 쓰기 뒤에만 비우고 지금 창을 한 번 다시 읽는다.
 // 예시 모드(서버 설정 없음)는 아래 예시 일정을 화면 메모리에서 읽고 쓴다(새로고침하면 처음으로).
 // 다른 기기 변경 반영(18차): 탭(창)으로 돌아올 때만, 떠 있는 창을 1분에 한 번까지 한 번에 다시 읽는다(창을 덮는 한 범위로 읽기 1회, 쓰기 0, 쓰는 중이면 건너뜀).
+import { onCustomersChanged } from '../core/biz-events.js';
 import { useEffect, useMemo, useSyncExternalStore } from 'react';
 import { configured } from '../core/supabase.js';
 import { rpc } from '../core/tasks.js';
@@ -118,6 +119,7 @@ export async function refreshEvents() {
 
 /* ── 조직 사람·거래처(상세 창을 열 때만, 화면 메모리에 한 번) ── */
 const once = new Map();
+onCustomersChanged(() => { for (const k of [...once.keys()]) if (k.startsWith('cust:')) once.delete(k); }); // 거래처가 바뀌면 거래처 목록만 비운다(OFC-10)
 const remember = (key, fn) => { ownCache(); if (!once.has(key)) once.set(key, fn().catch((e) => { once.delete(key); throw e; })); return once.get(key); };
 export const loadPeople = (org) => remember(`people:${org}`, async () => (configured ? (await rpc('office_org_people', { p_org: org })) ?? [] : SAMPLE_PEOPLE[org] ?? []));
 /** 일정 scope('o:'+조직 또는 'u:'+나)의 거래처 — 업무 데이터 읽기(office_business_read)의 거래처 목록을 쓴다 */

@@ -9,6 +9,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, useS
 import { desktopMailPending, cancelDesktopMail } from '../core/desktop-auth.js';
 import { useDraggable } from '@dnd-kit/core';
 import { Icon } from '../ui/Icon.jsx';
+import { LoadFail } from '../ui/LoadFail.jsx';
 import { Face } from '../ui/Face.jsx';
 import { openMenu, menuProps, mergeHandlers } from '../ui/Menu.jsx';
 import { Modal, showToast } from '../ui/Overlay.jsx';
@@ -478,14 +479,14 @@ function ComposeWindow({ spec, real }) {
 
 /** 계정이 없을 때 — Google로 연결(로그인 → 권한 승인), 회사 계정이 막혔을 때의 안내문 */
 function ConnectPanel() {
-  const [cfg, setCfg] = useState(undefined);
-  useEffect(() => { let live = true; mailConfig().then((c) => live && setCfg(c)); return () => { live = false; }; }, []);
+  const [cfg, setCfg] = useState(undefined), [again, setAgain] = useState(0);
+  useEffect(() => { let live = true; mailConfig().then((c) => live && setCfg(c)); return () => { live = false; }; }, [again]);
   return (
     <div className="empty-state mail-connect">
       <Icon name="mail" size={22} />
       <h3>{t('mailc.title')}</h3>
       <p className="dim small">{t('mailc.sub')}</p>
-      {cfg !== undefined && (cfg?.google
+      {cfg?.failed ? <LoadFail small onRetry={() => { setCfg(undefined); setAgain((n) => n + 1); }} /> : cfg !== undefined && (cfg?.google
         ? <button type="button" className="btn primary" onClick={() => reconnect()}>{t('mailc.google')}</button>
         : <p className="dim small">{t('mailc.notConfigured')}</p>)}
       {cfg?.google && <button type="button" className="link-btn small" onClick={copyAdminNote}>{t('mailc.blockedQ')} {t('mailc.copyAdmin')}</button>}
@@ -578,6 +579,7 @@ export function Mail({ id }) {
   const toggleCal = () => setCal((v) => { try { localStorage.setItem('argo-office-mail-cal-open', v ? '0' : '1'); } catch { /* 저장소 없음 */ } return !v; });
   const [listW, setListW] = useWidth('argo-office-mail-list', 360, 280, 560);
   const [ready, setReady] = useState(!real);
+  const [failN, setFailN] = useState(0), [again, setAgain] = useState(0); // 메일을 못 받은 계정 수(만료 빼고) — 조용히 넘기지 않고 알린다(OFC-08)
   const left = useLimit();
   useSyncExternalStore(subscribeSync, lastSynced, () => 0);
   const searchRef = useRef(null);
@@ -586,9 +588,9 @@ export function Mail({ id }) {
   useEffect(() => {
     if (!real || !accKey) return undefined;
     let live = true; setLoading(true);
-    pullMail(view).catch(() => {}).finally(() => live && setLoading(false));
+    pullMail(view).then((r) => { if (live) setFailN(r?.failed?.filter((f) => f.code !== 'expired').length ?? 0); }, () => { if (live) setFailN(accounts.filter(ok).length); }).finally(() => live && setLoading(false));
     return () => { live = false; };
-  }, [real, view, accKey]);
+  }, [real, view, accKey, again]);
   // 자동 갱신 — 이 화면이 보이는 동안 30초마다 바뀐 것만(숨긴 탭은 멈춘다, core/mail.js)
   useEffect(() => wantSync('mail', { ms: SYNC_MAIL_MS, view }), [view]);
 
@@ -684,13 +686,17 @@ export function Mail({ id }) {
             aria-label={left > 0 ? t('mailx.wait', { n: left }) : t('mailx.refresh')} title={left > 0 ? t('mailx.wait', { n: left }) : checked ? `${t('mailx.refresh')} · ${t('mailx.checked', { when: ago(new Date(checked).toISOString()) })}` : t('mailx.refresh')}>
             {left > 0 ? <span className="mono small">{t('mailx.sec', { n: left })}</span> : <Icon name="refresh" size={15} />}</button>
           <button type="button" className={`icon-btn mail-cal-tool${cal ? ' on' : ''}`} aria-pressed={cal} aria-label={t('mailx.calendar')} title={t('mailx.calendar')} onClick={toggleCal}><Icon name="calendar" size={15} /></button>
+          {/* 좁은 폭(1100px 이하)에서는 왼쪽 메일함 칸이 숨어 '새 메일'이 사라졌다(OFC-01) — 같은 동작을 도구 줄에 */}
+          <button type="button" className="icon-btn mail-new-narrow" disabled={real && !accounts.some(ok)} aria-label={t('mail.compose')} title={t('mail.compose')} onClick={() => setUi({ compose: { mode: 'new' } })}><Icon name="draft" size={15} /></button>
         </div>
         {connecting && <div className="mail-banner" role="status">{t('desktop.mailWaiting')}<button className="btn sm" type="button" onClick={cancelDesktopMail}>{t('desktop.cancel')}</button></div>}
         {expired.length > 0 && <div className="mail-banner"><span className="dot ask" />{t('mailc.expired')}<button type="button" className="btn sm" onClick={() => reconnect(expired[0])}>{t('mailc.reconnect')}</button></div>}
         {left > 0 && <div className="mail-banner" role="status">{t('mailx.wait', { n: left })}</div>}
+        {failN > 0 && rows.length > 0 && <div className="mail-banner" role="alert"><span className="dot ask" />{t('mailx.someFail', { n: failN })}<button type="button" className="btn sm" onClick={() => setAgain((n) => n + 1)}>{t('desktop.retry')}</button></div>}
         {search && <div className="mail-search-state" role="status">{search.busy ? t('mailx.searching') : t('mailx.results', { n: rows.length })}{search.some && !search.busy && <span className="dim"> · {t('mailx.searchSome')}</span>}</div>}
         {noAccounts ? <ConnectPanel />
           : rows.length ? rows.map((m) => <MailRow key={m.id} m={m} active={m.id === id} sel={sel} group={group} tag={multi && pick === 'all' ? domain(accounts.find((a) => a.id === m.account)?.address) : null} />)
+            : failN > 0 && !search && !loading ? <LoadFail onRetry={() => setAgain((n) => n + 1)} />
             : <div className="empty-state"><p>{search ? (search.busy ? t('mailx.searching') : t('mailx.noResults')) : t(loading || (real && !ready) ? 'mailc.loading' : 'mail.empty')}</p></div>}
         {canMore && rows.length > 0 && <div className="mail-more"><button type="button" className="btn sm" disabled={moreBusy} onClick={more}>{moreBusy ? t('mailx.loadingMore') : t('mailx.more')}</button></div>}
       </section>

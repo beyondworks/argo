@@ -727,7 +727,11 @@ input[role='switch']:checked::after { transform: translateX(14px); background: v
 .keys dt { min-width: 84px; } .keys dd { margin: 0; color: var(--fg-2); }
 
 /* ── 로그인 ── */
-.boot { min-height: 100dvh; background: var(--bg); }
+.boot { min-height: 100dvh; background: var(--bg); display: grid; place-content: center; justify-items: center; gap: 14px; padding: 24px; text-align: center; }
+.boot.screen { min-height: 40vh; background: none; }
+.boot-spin { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--border); border-top-color: var(--fg-2); animation: boot-spin .9s linear infinite; }
+@keyframes boot-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .boot-spin { animation-duration: 2.4s; } }
 .login { min-height: 100dvh; display: grid; place-items: center; padding: 24px 16px; background: var(--bg); }
 .login-card { width: min(380px, 100%); display: grid; gap: 10px; padding: 28px 24px; border-radius: var(--rs); background: var(--surface); }
 .login-card h1 { font-size: 20px; font-weight: 680; letter-spacing: -0.02em; }

@@ -34,7 +34,7 @@ export const FILES_DICT = {
   'files.daysLeft': ['{n}일 남음', '{n} days left'], 'files.trashEmpty': ['휴지통이 비어 있습니다.', 'Trash is empty.'],
   'files.uploaded1': ['"{name}"을(를) 올렸습니다', 'Uploaded "{name}"'], 'files.uploadedN': ['{n}개 파일을 올렸습니다', 'Uploaded {n} files'],
   'files.uploadedMixed': ['{ok}개 올림 · {failed}개 실패', '{ok} uploaded · {failed} failed'],
-  'files.reason.tooBig': ['50MB가 넘습니다', 'Over 50 MB'], 'files.reason.type': ['올릴 수 없는 형식입니다', 'File type not allowed'], 'files.reason.empty': ['빈 파일입니다', 'Empty file'],
+  'files.reason.tooBig': ['25MB가 넘습니다', 'Over 25 MB'], 'files.reason.type': ['올릴 수 없는 형식입니다', 'File type not allowed'], 'files.reason.empty': ['빈 파일입니다', 'Empty file'],
   'files.open': ['열기', 'Open'], 'files.rename': ['이름 바꾸기', 'Rename'], 'files.ocrRun': ['글자 다시 읽기', 'Read text again'], 'files.ocrStarted': ['글자를 읽고 있습니다…', 'Reading the text…'],
   'files.ocrDone': ['글자를 읽었습니다', 'Text read'], 'files.ocrFailed': ['글자를 읽지 못했습니다', 'Could not read the text'],
   'files.toDrive': ['드라이브로 보내기', 'Send to Drive'], 'files.sentDrive': ['드라이브에 올렸습니다', 'Saved to Drive'], 'files.openDrive': ['드라이브에서 열기', 'Open in Drive'],
@@ -79,7 +79,7 @@ export const FILES_DICT = {
   // 오류
   'files.err.permission': ['권한이 없습니다.', 'You don’t have permission.'], 'files.err.input': ['입력을 확인해 주세요.', 'Please check the input.'],
   'files.err.missing': ['파일을 찾을 수 없습니다.', 'File not found.'], 'files.err.conflict': ['같은 항목이 이미 있습니다.', 'That item already exists.'],
-  'files.err.limit': ['더 넣을 수 없습니다(한도).', 'Limit reached.'], 'files.err.quota': ['저장 공간이 가득 찼습니다. 휴지통을 비우거나 파일을 정리해 주세요. 이미 올린 파일은 그대로 볼 수 있습니다.', 'Storage is full. Empty the trash or remove files. Files already uploaded stay available.'], 'files.err.notEmpty': ['폴더가 비어 있지 않습니다. 안의 파일을 먼저 옮기세요.', 'The folder isn’t empty. Move its files first.'],
+  'files.err.limit': ['더 넣을 수 없습니다(한도).', 'Limit reached.'], 'files.err.quota': ['저장 공간이 가득 찼습니다. 휴지통을 비우거나 파일을 정리해 주세요. 이미 올린 파일은 그대로 볼 수 있습니다.', 'Storage is full. Empty the trash or remove files. Files already uploaded stay available.'], 'files.err.notEmpty': ['폴더 안(휴지통 포함)에 파일이 있습니다. 휴지통에서 되살려 옮기거나 비운 뒤 지우세요.', 'The folder still has files (including in the trash). Restore and move them, or empty the trash, then delete it.'], 'files.seeTrash': ['휴지통 보기', 'Open trash'],
   'files.err.signin': ['다시 로그인해 주세요.', 'Please sign in again.'], 'files.err.request': ['요청을 처리하지 못했습니다. 잠시 뒤 다시 해 주세요.', 'Something went wrong. Try again shortly.'],
   'files.err.storage': ['저장소에 올리지 못했습니다.', 'Could not save to storage.'], 'files.err.daily': ['오늘 올릴 수 있는 양을 다 썼습니다. 내일 다시 해 주세요.', 'You’ve reached today’s upload limit. Try again tomorrow.'],
   'files.err.paused': ['파일 올리기가 잠시 멈춰 있습니다. 잠시 뒤 다시 해 주세요.', 'Uploads are paused for now. Try again shortly.'],
