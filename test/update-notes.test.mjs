@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { UPDATE_NOTES_STORAGE_KEY, stableVersion, updateNotesFor, shouldShowUpdateNotes, isEditingElement,
+import { UPDATE_NOTES, UPDATE_NOTES_STORAGE_KEY, stableVersion, updateNotesFor, shouldShowUpdateNotes, isEditingElement,
   readUpdateNotesVersion, acknowledgeUpdateNotesVersion } from '../app/update-notes-state.mjs';
 
 const eligible = { current: '0.1.89', bundleVersion: '0.1.89', ready: true, loaded: true };
@@ -96,4 +96,15 @@ test('0.1.90 업데이트 안내 항목이 있고 i18n 사전에 ko·en 둘 다 
   assert.deepEqual([...keys], ['updates.note.steer', 'updates.note.firstSend']);
   const src = (await import('node:fs')).readFileSync(new URL('../app/i18n.jsx', import.meta.url), 'utf8');
   for (const k of keys) assert.match(src, new RegExp(`'${k.replace('.', '\\.')}': \\['[^']+', '[^']+'\\]`), k);
+});
+
+// 범프에 안내 항목이 빠지면 업데이트한 사용자에게 안내가 조용히 안 뜬다 — 0.1.90·0.1.95 두 번 빠뜨렸다(2026-09-29·10-05, 0.1.95는 빌드를 다시 했다).
+// 그래서 버전 파일(package.json)과 안내 항목을 같이 잠근다: 범프 PR이 항목 없이 올라오면 이 테스트가 실패한다.
+test('package.json 버전에 업데이트 안내 항목이 있고, 모든 안내 항목이 i18n 사전에 ko·en으로 있다', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.ok(updateNotesFor(version, version).length > 0, `UPDATE_NOTES['${version}'] 없음 — 범프 PR에 이 버전 안내 항목과 i18n 문구를 같이 넣는다`);
+  const src = readFileSync(new URL('../app/i18n.jsx', import.meta.url), 'utf8');
+  const STR = String.raw`(?:'(?:[^'\\]|\\.)+'|"(?:[^"\\]|\\.)+")`; // 작은따옴표(\' 포함)·큰따옴표 문자열 둘 다
+  for (const k of Object.values(UPDATE_NOTES).flat()) assert.match(src, new RegExp(String.raw`'${k.replaceAll('.', '\\.')}': \[${STR}, ${STR}\]`), k);
 });
