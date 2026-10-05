@@ -3,6 +3,7 @@ import { resolveApproval } from './approvals.mjs';
 import { chat } from './chat.mjs';
 import { loadThread, appendTurn, turnScope, scopeKey, scopedSession } from './thread.mjs';
 import { approvalMsg } from './inbound-marks.mjs'; // 후속 턴 머리말 = 1:1 화면이 결재 결과 카드로 판정하는 표지(이 기록만 via가 없다)
+import { loadCompany } from './workspace.mjs'; // 회사 주인 id — 메신저 결재를 확정한 사람이 주인인지(후속 줄 머리말·actor)
 import { emitNotify } from './notify.mjs'; // 후속 턴 결과를 원 채널(메신저)로 — 카드 약속('이어서 보고합니다') 이행
 
 /** 상태 변경 + 후속 처리. kind:'tool'은 대기 중인 턴이 스스로 재개하므로 후속 턴이 없다.
@@ -91,6 +92,13 @@ async function applyPayload(wsId, item, { session } = {}) {
 }
 
 async function followUp(wsId, item, approve, { runChat = chat, session } = {}) {
+  // 메신저에서 확정한 사람(resolvedBy — syncApprovals가 msgr 결재 행의 decided_by로 남긴다). 주인이 아니면(조직 관리자 — 고위험 기본 정책) 후속 줄의
+  // 머리말을 '(관리자 결재)'로, 확정한 사람을 actor로 남긴다 — 스레드 맥락·요약이 관리자 결정을 사용자 결정(captain)으로 적지 않게(5차 검수 LOW-3).
+  // 메신저 밖 창구(웹·텔레그램·슬랙)는 주인만 확정하므로 종전대로. 주인 id를 모르면 주인이 아닌 것으로 본다(threadCtxLine과 같은 기준)
+  const byUid = item.resolvedBy?.via === 'msgr' && item.resolvedBy.uid ? String(item.resolvedBy.uid) : null;
+  const ownerId = byUid ? (await loadCompany(wsId).catch(() => ({}))).ownerId ?? null : null;
+  const by = byUid && byUid !== ownerId ? 'admin' : 'owner';
+  const actor = byUid ? { actor: { uid: byUid, relay: false } } : {};
   let msg;
   if ((item.kind === 'profile' || item.kind === 'hire' || item.kind === 'mcp' || item.kind === 'connector') && approve) {
     // 서버가 payload를 먼저 적용하고, 결과를 크루가 사용자에게 보고한다(크루 재실행 금지 — 이중 적용 방지)
@@ -100,7 +108,7 @@ async function followUp(wsId, item, approve, { runChat = chat, session } = {}) {
     } catch (e) {
       outcome = `적용 실패: ${String(e.message || e).slice(0, 160)}`;
     }
-    msg = approvalMsg('owner', `"${item.action}" 이(가) 승인되었고 시스템이 처리했다 — ${outcome}`, 'applied');
+    msg = approvalMsg(by, `"${item.action}" 이(가) 승인되었고 시스템이 처리했다 — ${outcome}`, 'applied');
   } else if (item.kind === 'org_doc') {
     // G-4: 서버(msgr_apply_org_doc)가 승인자의 권한으로 이미 반영했다 — 크루는 다시 쓰지 않는다
     msg = approve
@@ -109,11 +117,11 @@ async function followUp(wsId, item, approve, { runChat = chat, session } = {}) {
   } else {
     msg = item.kind === 'capability'
       ? (approve
-        ? approvalMsg('owner', `"${item.action}" 이(가) 승인되어 능력이 켜졌다.`, 'capOn')
-        : approvalMsg('owner', `"${item.action}" 이(가) 거절되었다.`, 'capOff'))
+        ? approvalMsg(by, `"${item.action}" 이(가) 승인되어 능력이 켜졌다.`, 'capOn')
+        : approvalMsg(by, `"${item.action}" 이(가) 거절되었다.`, 'capOff'))
       : approve
-      ? approvalMsg('owner', `요청한 "${item.action}" 이(가) 승인되었다.`, 'approved')
-      : approvalMsg('owner', `요청한 "${item.action}" 이(가) 거절되었다.`, 'rejected');
+      ? approvalMsg(by, `요청한 "${item.action}" 이(가) 승인되었다.`, 'approved')
+      : approvalMsg(by, `요청한 "${item.action}" 이(가) 거절되었다.`, 'rejected');
   }
   const t = await loadThread(wsId, item.slug);
   // 텔레그램 결재의 후속 답은 카드가 실린 방(item.tg.chatId)으로 나간다(gateway approval_followup). 그 방이 그룹이면 그 그룹 범위 세션을 잇는다 —
@@ -128,7 +136,7 @@ async function followUp(wsId, item, approve, { runChat = chat, session } = {}) {
     const r = item.msgr
       ? await (await import('./gateway/msgr.mjs')).runMessengerContinuation(wsId, item.slug, item.msgr, msg, t.sessionId, { runChat, session, ownerApproved: approve === true, ...(item.from ? { notOwnerDirect: item.from } : {}) })
       : await runChat(wsId, item.slug, msg, tgScope ? scopedSession(t, scopeKey(tgScope)).sessionId : t.sessionId, { ...(item.tg?.chatId ? { source: 'messenger' } : {}), ...(followCtx ? { mirrorCtx: followCtx } : {}), ...(item.from ? { notOwnerDirect: item.from } : {}) /* 사장 직접 턴이 아닌 턴(위임·쪽지·세션 메시지)에서 올린 결재의 후속 — 풀 오토만 끈다(출처·프롬프트는 그대로, LOW-5). 이 턴에서 다시 올린 결재도 같은 표지 */ });
-    await appendTurn(wsId, item.slug, { userMsg: msg, reply: r.reply, handover: r.handover, sessionId: r.sessionId, artifacts: r.artifacts, contextScope: r.contextScope });
+    await appendTurn(wsId, item.slug, { userMsg: msg, reply: r.reply, handover: r.handover, sessionId: r.sessionId, artifacts: r.artifacts, contextScope: r.contextScope, ...actor });
     // 결재가 메신저에서 왔으면(item.tg) 후속 보고도 그 방으로 — 이 방송이 없어서 카드가
     // "이어서 보고합니다"라고 약속하고 영원히 무소식이었다(실사용 제보 2026-07-30). 파일 첨부는
     // sendTgReply의 경로 규약이 그대로 작동하므로 "승인 = 실제 발송"이 여기서 성립한다.
@@ -141,7 +149,7 @@ async function followUp(wsId, item, approve, { runChat = chat, session } = {}) {
       ? `${msg}\n\n(자동 보고 실패 — 하지만 위 처리는 완료되었습니다: ${String(e.message || e).slice(0, 120)})`
       : `${msg}\n\n(후속 실행 실패: ${String(e.message || e).slice(0, 160)})`;
     // A failed reauthorization may not return channel kind. Keep any Messenger failure audit scoped.
-    await appendTurn(wsId, item.slug, { userMsg: msg, reply: note, handover: null, sessionId: item.msgr || tgScope ? null : t.sessionId, ...(item.msgr ? { contextScope: { kind: 'msgr', channelId: item.msgr.channelId, threadRoot: item.msgr.threadRoot } } : tgScope ? { contextScope: tgScope } : {}) }).catch(() => {});
+    await appendTurn(wsId, item.slug, { userMsg: msg, reply: note, handover: null, sessionId: item.msgr || tgScope ? null : t.sessionId, ...actor, ...(item.msgr ? { contextScope: { kind: 'msgr', channelId: item.msgr.channelId, threadRoot: item.msgr.threadRoot } } : tgScope ? { contextScope: tgScope } : {}) }).catch(() => {});
     emitNotify({ type: 'approval_followup', wsId, item, reply: note }); // 실패도 무소식보다 통보가 낫다
     throw e;
   }
