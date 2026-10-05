@@ -422,3 +422,21 @@ test('TB18. 구획 맞춤 — 저장 요약이 몫보다 크면 요약을 먼저
     assert.match(sec, /결정0 보고서는 금요일/, `room ${room}: 요약도 앞부분이 남는다`);
   }
 });
+
+// 6차 검수 LOW-A — 몫(room/4)으로 요약을 줄인 뒤 최근 줄이 자리에 안 들어가 다 빠지면, 남은 자리를 비워 둔 채 짧은 요약만 실었다
+// (room 3,000·이스케이프 많은 줄 1개·저장 요약 16,000자 → 요약 652자·826 사용, 이전 2,564자·3,000 사용). 줄을 다 뺀 뒤 자리가 남으면 원래 요약에서 다시 늘린다.
+test('TB19. 구획 맞춤 — 최근 줄이 다 빠져 자리가 남으면 요약을 원래 요약에서 자리만큼 다시 늘린다', async () => {
+  const { fitContextSection, argvChars } = await import('../src/thread-context.mjs');
+  const summary = Array.from({ length: 800 }, (_, i) => `결정${i} 보고서는 금요일`).join('\n').slice(0, 16_000);
+  const dense = JSON.stringify(['captain', `m0| ${'\\"\u0001'.repeat(160)}`]); // 자리 3,000에 혼자도 안 들어가는 줄
+  for (const room of [2_000, 3_000]) {
+    const sec = fitContextSection({ lines: [dense], summary }, '최근 대화', 'ko', room);
+    const used = argvChars(sec) + 1;
+    const kept = JSON.parse(sec.split('\n').find((x) => x.startsWith('"'))).replace(/…$/, ''); // 자른 요약 끝의 말줄임표
+    assert.ok(used <= room, `room ${room}: 자리 안`);
+    assert.ok(summary.startsWith(kept), `room ${room}: 요약은 원래 요약의 앞부분`);
+    // 가장 긴 앞부분 — 한 글자만 더 실어도 자리를 넘는다
+    const longer = fitContextSection({ lines: [], summary: `${summary.slice(0, kept.length + 1)}…` }, '최근 대화', 'ko', 1e9);
+    assert.ok(argvChars(longer) + 1 > room, `room ${room}: 요약 ${kept.length}자(${used}/${room} 사용) — 남은 자리를 비워 두지 않는다`);
+  }
+});

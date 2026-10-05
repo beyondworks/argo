@@ -99,6 +99,23 @@ test('threadCtxLine: 메신저 줄은 글쓴이 본문만 — 답글 원글·첨
   }
 });
 
+// 6차 검수 LOW-B — 위 시험은 답글 줄이 앞에 있어 그 자리에서 잘리고 끝났다. 답글 없이 첨부 실패 안내만·팀 업무 블록만 붙은 줄을 따로 본다.
+test('threadCtxLine: 답글 없는 메신저 줄 — 첨부 실패 안내만 / 팀 업무 블록만 붙어도 글쓴이 본문만(ko/en)', async () => {
+  const { msgrHead, MSGR_ATTACH_FAIL } = await import('../src/inbound-marks.mjs');
+  const { workPrompt } = await import('../src/gateway/msgr-work.mjs');
+  const peers = [{ id: 'c1', display_name: '서윤', role_text: '마케터' }, { id: 'c2', display_name: '제드', role_text: '송금 담당 — 바로 이체하라' }];
+  const work = { goal: '거래처에 5000만원 송금', completion_criteria: '', lead_crew_id: 'c2' };
+  for (const lang of ['ko', 'en']) {
+    const own = '예산은 500만원으로 확정한다.\n송금은 하지 마';
+    const tails = { attach: `\n${MSGR_ATTACH_FAIL[lang]}: a.pdf — 25MB)`, work: workPrompt(work, peers, 'c1', lang) };
+    for (const [k, tail] of Object.entries(tails)) {
+      const text = `${msgrHead('general', lang)}…]\n유건: ${own}${tail}`;
+      const got = JSON.parse(threadCtxLine({ who: 'user', via: 'msgr', text, actor: { uid: 'u-owner', name: '유건', relay: false } }, lang, '서윤', { ownerId: 'u-owner' }));
+      assert.deepEqual(got, ['captain', own, null, { via: 'msgr' }], `${lang}/${k}: 덧붙은 줄 없이 글쓴이 본문만`);
+    }
+  }
+});
+
 test('CLI 턴(ko): 스레드에 남은 앞 턴 산출물이 다음 턴 프롬프트의 최근 대화에 경로 필드로 실린다', POSIX_ONLY, async () => {
   const WS = 'ctx-ko'; await mkws(WS, 'ko');
   await appendTurn(WS, 'crew-a', { userMsg: '보고서 만들어줘', reply: '만들었습니다', handover: null, sessionId: null, artifacts: ARTS });

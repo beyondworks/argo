@@ -599,3 +599,22 @@ test('approval follow-up: 메신저에서 확정한 사람이 주인이 아니�
     assert.equal(JSON.parse(threadCtxLine(m, 'ko', '알파', { ownerId: 'owner' }))[0], 'captain');
   } finally { f.stop(); }
 });
+
+// 6차 검수 LOW-B(M21) — 후속 턴이 실패해 남기는 '(후속 실행 실패: …)' 줄도 확정한 사람을 actor로 싣는다. 빠지면 관리자 확정이 실패 줄에서 captain으로 실린다.
+test('approval follow-up: 후속 실행이 실패해도 실패 줄에 확정한 사람(actor)이 남는다 — 관리자 확정은 member, 주인 확정은 captain', async () => {
+  const f = await setup({ requester: 'owner' });
+  const { updateCompany } = await import('../src/workspace.mjs');
+  const { loadThread } = await import('../src/thread.mjs');
+  const { threadCtxLine } = await import('../src/chat.mjs');
+  await updateCompany(f.ws, { ownerId: 'owner' });
+  const runChat = async () => { throw new Error('모델 장애'); };
+  try {
+    for (const [by, who] of [['admin-uid', 'member'], ['owner', 'captain']]) {
+      await assert.rejects(approvals._followUpForTest(f.ws, { id: `ap-fail-${by}`, slug: 'alpha', kind: 'action', action: '거래처 송금', msgr: f.origin, resolvedBy: { uid: by, via: 'msgr', at: '2026-10-05T00:00:00Z' } }, true, { runChat, session: f.session }), /모델 장애/);
+      const turn = (await loadThread(f.ws, 'alpha')).messages.slice(-2);
+      assert.match(turn[1]?.text ?? '', /후속 실행 실패: 모델 장애/, `${by}: 실패 줄이 남는다 — 재현 조건`);
+      assert.deepEqual(turn[0].actor, { uid: by, relay: false }, `${by}: 실패 줄에도 확정한 사람`);
+      assert.equal(JSON.parse(threadCtxLine(turn[0], 'ko', '알파', { ownerId: 'owner' }))[0], who, `${by}: 맥락 항목 ${who}`);
+    }
+  } finally { f.stop(); }
+});

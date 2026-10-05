@@ -172,7 +172,7 @@ export function contextSection({ recent, summary }, head, lang = 'ko') {
 }
 
 /** argv 러너용 구획(순수) — 구획(앞에 붙는 줄바꿈 포함)이 room(argvChars 단위) 안에 들게 맞춘다: 몫(1/4)보다 큰 요약을 먼저 줄이고,
-    가장 오래된 최근 줄부터 빼고, 그래도 넘치면 요약 끝을 자른다. 들어갈 자리가 없으면 ''. 요약을 다시 부르지 않으므로 끼워 넣기 이어 실행처럼 프롬프트가 길어진 자리에서도 쓴다. */
+    가장 오래된 최근 줄부터 빼고(빼고 나서 자리가 남으면 요약을 다시 늘린다), 그래도 넘치면 요약 끝을 자른다. 들어갈 자리가 없으면 ''. 요약을 다시 부르지 않으므로 끼워 넣기 이어 실행처럼 프롬프트가 길어진 자리에서도 쓴다. */
 export function fitContextSection(parts, head, lang, room, measure = argvChars) {
   const lines = (parts.lines ?? (parts.recent ? String(parts.recent).split('\n') : [])).slice();
   const make = (sum) => contextSection({ recent: lines.join('\n'), summary: sum }, head, lang);
@@ -191,6 +191,12 @@ export function fitContextSection(parts, head, lang, room, measure = argvChars) 
     sec = make(summary);
   }
   while (over(sec) > 0 && lines.length) { lines.shift(); sec = make(summary); }
+  // 몫으로 줄인 요약은 최근 줄에 자리를 내주려던 것이다 — 줄을 빼고 나서 자리가 남으면 원래 요약에서 그 자리만큼 다시 늘린다
+  // (6차 검수 LOW-A: room 3,000·혼자도 안 들어가는 줄 1개 → 줄 0개에 요약 652자·826만 사용)
+  if (over(sec) < 0 && parts.summary && summary !== parts.summary) {
+    summary = cutToFit(parts.summary, (p) => over(make(p)) <= 0) || summary;
+    sec = make(summary);
+  }
   // 그래도 넘치면 요약을 자리에 들어가는 가장 긴 앞부분으로 — 실제 구획(머리말·JSON 이스케이프 포함)을 재며 이진 탐색한다. 자리가 아예 없을 때만 빈 구획(3차 검수 MEDIUM-2·4차 LOW-1)
   if (over(sec) > 0 && summary) { summary = cutToFit(summary, (p) => over(make(p)) <= 0) || null; sec = make(summary); }
   return over(sec) > 0 ? '' : sec;
