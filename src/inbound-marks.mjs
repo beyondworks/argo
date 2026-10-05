@@ -141,7 +141,8 @@ function graphemes(s) {
 }
 /** raw의 접두 — 원문 글자 수(chars, UTF-16)와 이스케이프 뒤 글자 수(max, 따옴표 포함) 두 예산 안에서 **글자 묶음 경계**까지만(검수 4차 L-4). 통째로 들어가면 raw 그대로 */
 function prefixWithin(raw, chars, max) {
-  if (raw.length <= chars && jsonText(raw).length <= max) return raw;
+  // 이스케이프 뒤 길이는 원문 + 2(따옴표) 이상이다 — 그것만으로 예산을 넘으면 전체 이스케이프(1MB 값이면 수십 초, 동기)를 건너뛰고 자르기로 간다(검수 5차, 출력은 같다)
+  if (raw.length <= chars && raw.length + 2 <= max && jsonText(raw).length <= max) return raw;
   const head = raw.slice(0, Math.min(chars, max) + 64); // 예산 근처의 묶음만 나눈다(아주 긴 글 전체를 나누지 않는다)
   let used = 2, kept = 0; // 양쪽 따옴표
   for (const g of graphemes(head)) { if (kept + g.length > chars) break; const w = jsonText(g).length - 2; if (used + w > max) break; used += w; kept += g.length; }

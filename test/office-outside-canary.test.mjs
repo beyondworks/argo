@@ -340,3 +340,33 @@ test('canary: mail_read 머리 칸 상한(제목 600·보낸 사람 300·받는 
   const ok = await mailTool({ action: 'mail_read', id: `${A1}.g1` }, { ctx, lang: 'ko', ownerId: ME });
   assert.doesNotMatch(ok, /…\(앞/, '안 잘리면 표시가 없다');
 });
+
+test('canary(5차): 첨부 개수 상한 50 — 짧은 이름 첨부 300개는 글자 합계(6,000) 전에 50개에서 멈추고 …외 250개', async () => {
+  Object.assign(mailDeps, MAIL_BASE(), { fetch: async () => new Response(JSON.stringify(readMail({ attachments: Array.from({ length: 300 }, (_, i) => ({ name: `a${i}.pdf` })) }))) });
+  const out = await mailTool({ action: 'mail_read', id: `${A1}.g1` }, { ctx, lang: 'ko', ownerId: ME }), att = out.split('\n').find((l) => l.startsWith('첨부:'));
+  assert.equal(att.match(/\.pdf/g).length, 50, '첨부 50개만'); assert.match(att, /…외 250개$/); assert.ok(out.includes('견적 회신'), '본문이 보인다');
+});
+
+test("canary(5차): 메일 목록 칸 상한 — 보낸 이·주소 160, 요약 240('<'×5,000 카나리) — 행이 부풀지 않고 정상 메일이 보인다", async () => {
+  const huge = '<'.repeat(5_000);
+  for (const fromEmpty of [false, true]) {
+    Object.assign(mailDeps, MAIL_BASE(), { fetch: async () => new Response(JSON.stringify({ items: [{ id: 'x0', from: fromEmpty ? '' : huge, addr: `${huge}@evil.example`, subject: '공격', snippet: huge, at: at(0) }, ...Array.from({ length: 29 }, (_, i) => normalMail(i))], next: null })) });
+    const out = await mailTool({ action: 'mails' }, { ctx, lang: 'ko', ownerId: ME }), lines = out.split('\n'), i = lines.findIndex((l) => l.startsWith('- ') && l.includes('공격'));
+    assert.ok(i >= 0, '공격 메일 행이 있다'); assert.equal(lines.filter((l) => l.startsWith('- ') && l.includes('정상')).length, 29, '정상 메일 29통이 모두 보인다');
+    const segs = lines[i].match(/"(?:\\u003c)+[^"]*"…?/g) ?? [];
+    assert.equal(segs.length, 2, `보낸 이(${fromEmpty ? '없으면 주소로 대신' : '그대로'})·주소 칸`); for (const s of segs) assert.ok(s.length <= 161, `보낸 이·주소 칸 ${s.length}자 ≤ 160+…`);
+    assert.ok(lines[i + 1].startsWith('  "') && lines[i + 1].length <= 2 + 241, `요약 줄 ${lines[i + 1].length}자 ≤ 240+…`);
+  }
+});
+
+test("canary(5차): 드라이브 목록 칸 상한(이름 300·종류 120) — 앞 27건 이름 '<'×240(남이 공유한 파일)이 정상 23건을 가리지 않는다", async () => {
+  for (const [k, natk] of [[240, 27], [250, 25], [200, 32]]) {
+    const files = [...Array.from({ length: natk }, (_, i) => ({ name: '<'.repeat(k) + i, mimeType: '<'.repeat(k) })), ...Array.from({ length: 50 - natk }, (_, i) => ({ name: `정상 파일 ${i}.pdf`, mimeType: 'application/pdf' }))];
+    Object.assign(filesDeps, { session: session({}), jwt: async () => 'jwt', origin: () => 'https://office.example.com',
+      fetch: async () => new Response(JSON.stringify({ files: files.map((f, i) => ({ id: `d${i}`, size: 1000, isFolder: false, ...f })) })) });
+    const out = await filesTool({ action: 'drive' }, { ctx, lang: 'ko', ownerId: ME }), lines = out.split('\n');
+    assert.equal(lines.filter((l) => l.includes('정상 파일')).length, 50 - natk, `공격 ${natk}건 × '<'${k}: 정상 ${50 - natk}건이 모두 보인다`);
+    assert.doesNotMatch(out, /…외 \d+건 생략/); assert.equal(lines.filter((l) => /^--- 바깥 글 끝 \[files-/.test(l)).length, 1);
+    for (const l of lines.filter((x) => x.startsWith('- ') && x.includes('\\u003c'))) { const [name, type] = l.match(/"(?:\\u003c)+[^"]*"…?/g); assert.ok(name.length <= 301 && type.length <= 121, `이름 ${name.length}·종류 ${type.length}자`); }
+  }
+});

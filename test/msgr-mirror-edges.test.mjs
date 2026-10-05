@@ -550,3 +550,24 @@ test('E24b(4차 L-2). 기준이 없는 첫 틱 전에 해고 분리가 성공하
   await M.detachFiredCrew(WS, 'x', { session: async () => ({ uid: UID, db: d3 }), load: async () => ({ ownerId: UID }), seen: new Map([[WS, new Map([['x', null]])]]), revive: revive3, hasCard: async () => false, log: () => {} });
   assert.equal(revive3.size, 0);
 });
+
+test('E24c(5차). 틱 도중 되살릴 기록에 더해진 slug는 그 틱의 done()이 지우지 않는다 — 다음 틱이 되살린다(기록에 a가 있는 채 틱 시작 → 대기 중 b 해고·재영입·되돌리기 실패)', async () => {
+  const d = db({ rows: [{ id: 'a1', org_id: O1, slug: 'a', display_name: 'A', role_text: null, status: 'detached' }, { id: 'b1', org_id: O1, slug: 'b', display_name: 'B', role_text: null, status: 'active' },
+    { id: 'bp', org_id: null, slug: 'b', display_name: 'B', role_text: null, status: 'active' }] });
+  let blip = true;
+  const set = d.updateCrewInfo; d.updateCrewInfo = async (id, patch) => { if (patch.status === 'active' && blip && id.startsWith('b')) throw new Error('network blip'); return set(id, patch); };
+  d.detachActiveCrews = async (uid, ws, slug) => { const hit = d.state.rows.filter((r) => r.slug === slug && r.status === 'active'); hit.forEach((r) => { r.status = 'detached'; }); return hit.map((r) => r.id); };
+  let release; const gate = new Promise((r) => { release = r; }); const orgs = d.myOrgIds; let held = true;
+  d.myOrgIds = async (...x) => { if (held) { held = false; await gate; } return orgs(...x); };
+  const seen = new Map(), revive = new Map([[WS, new Set(['a'])]]), agents = [card('a', null, 'A'), card('b', null, 'B')];
+  const tick1 = mirrorInventory(WS, { db: d, uid: UID, agents, seen, revive, log: () => {} }); // 기록에 a가 있는 채 시작 → myOrgIds에서 대기
+  let n = 0;
+  const res = await M.detachFiredCrew(WS, 'b', { session: async () => ({ uid: UID, db: d }), load: async () => ({ ownerId: UID }), seen, revive, hasCard: async () => n++ > 0, log: () => {} });
+  assert.deepEqual(res, { skipped: 'rehired-during' }); assert.deepEqual([...revive.get(WS)].sort(), ['a', 'b'], '대기 중 b가 기록에 더해졌다');
+  release(); await tick1;
+  assert.equal(d.state.rows.find((r) => r.id === 'a1').status, 'active', '틱 시작 때 기록에 있던 a는 되살렸다');
+  assert.deepEqual([...(revive.get(WS) ?? [])], ['b'], '틱 도중 더해진 b는 지우지 않는다');
+  blip = false;
+  await mirrorInventory(WS, { db: d, uid: UID, agents, seen, revive, log: () => {} });
+  assert.deepEqual(['b1', 'bp'].map((id) => d.state.rows.find((r) => r.id === id).status), ['active', 'active'], '다음 틱이 b를 되살린다'); assert.equal(revive.size, 0, '되살린 뒤 기록을 비운다');
+});

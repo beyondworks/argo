@@ -176,7 +176,8 @@ export async function filesTool(args, { ctx = null, lang = 'ko', ownerId = null 
       const list = r.data?.files ?? [];
       if (!list.length) return pick('드라이브에 맞는 항목이 없다.', 'Nothing matches in Drive.', lang);
       return [pick(`구글 드라이브 ${list.length}건(이름 · 종류 · id):`, `Google Drive, ${list.length} items (name · type · id):`, lang),
-        ox.block(list.slice(0, 50).map((f) => `- ${ox.line(f.name)} · ${f.isFolder ? pick('폴더', 'folder', lang) : ox.line(f.mimeType)}${f.size ? ` · ${kb(f.size)}` : ''} · id=${ox.id(f.id)}`), DRIVE_TEXT),
+        // 칸마다 이스케이프 뒤 글자 상한(이름 300·종류 120) — 남이 공유한 파일 이름 행이 이스케이프로 부풀어 정상 행을 가리지 않게(메일 목록과 같은 규칙, 검수 5차)
+        ox.block(list.slice(0, 50).map((f) => `- ${ox.line(f.name, 300)} · ${f.isFolder ? pick('폴더', 'folder', lang) : ox.line(f.mimeType, 120)}${f.size ? ` · ${kb(f.size)}` : ''} · id=${ox.id(f.id)}`), DRIVE_TEXT),
         pick('문서함으로 가져오려면 drive_import에 id를, 폴더 안을 보려면 drive에 folder=id를 줘라.', 'Use drive_import with an id to copy into Office files, or drive with folder=id.', lang)].join('\n');
     }
     if (a.action === 'drive_import') {

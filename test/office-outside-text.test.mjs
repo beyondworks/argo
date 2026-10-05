@@ -483,3 +483,16 @@ test('O24(4차 L-1). outsideBlock 행 몫 — 몫을 크게 넘는 행(이스케
   const normal = Array.from({ length: 80 }, (_, i) => `- ${outsideLine(`행 ${i} ${'가'.repeat(600)}`, TAG)}`), outN = outsideBlock(normal, { tag: TAG, what: 'x', lang: 'ko', max: 40_000 });
   assert.ok(outN.split('\n').filter((l) => l.startsWith('- ')).length > 40, '비슷한 크기의 행은 앞 행부터 최대한 채운다(큰 행 규칙은 몫을 크게 넘는 행만)');
 });
+
+test('O25(5차). outsideBlock 몫의 두 경계 — 53행 이상이면 ROW_MIN(1,500자)까지의 행은 큰 행으로 보지 않고, 53행 미만이면 몫의 2배까지가 정상 행이다(예산을 넘는 목록에서 순서 그대로 앞 행부터)', () => {
+  const row = (i, len) => { const s = `- ${outsideLine(`행 ${i} `, TAG)}`; return s + 'x'.repeat(len - s.length); };
+  const firstRows = (out) => out.split('\n').filter((l) => l.startsWith('- ')).map((l) => +/행 (\d+)/.exec(l)[1]);
+  // 80행(몫 ≈ 490자 × 2 < 1,500): 1,200자 행 40개 뒤에 짧은 행 40개 — 1,200자 행은 ROW_MIN 안이라 공격 행이 아니다 → 앞 행부터(짧은 행이 앞질러 보이면 ROW_MIN이 빠진 것)
+  const r80 = [...Array.from({ length: 40 }, (_, i) => row(i, 1_200)), ...Array.from({ length: 40 }, (_, i) => row(40 + i, 60))];
+  const k80 = firstRows(outsideBlock(r80, { tag: TAG, what: 'x', lang: 'ko', max: 40_000 }));
+  assert.ok(r80.reduce((n, r) => n + r.length + 1, 0) > 40_000, '예산을 넘는 목록'); assert.equal(k80[0], 0, '80행: 1,200자 행이 먼저(순서 그대로)'); assert.deepEqual(k80, k80.map((_, i) => i), '80행: 앞에서부터 연속');
+  // 20행(몫 ≈ 1,980자, 2배 ≈ 3,960자): 2,500자 행 18개 뒤에 짧은 행 2개 — 2,500자 행은 몫의 2배 안이라 정상 → 앞 행부터(몫 1배로 줄이면 짧은 행 2개만 보인다)
+  const r20 = [...Array.from({ length: 18 }, (_, i) => row(i, 2_500)), ...Array.from({ length: 2 }, (_, i) => row(18 + i, 60))];
+  const k20 = firstRows(outsideBlock(r20, { tag: TAG, what: 'x', lang: 'ko', max: 40_000 }));
+  assert.ok(r20.reduce((n, r) => n + r.length + 1, 0) > 40_000, '예산을 넘는 목록'); assert.equal(k20[0], 0, '20행: 2,500자 행이 먼저'); assert.ok(k20.length >= 14, `20행: 2,500자 행이 예산만큼 보인다(${k20.length})`);
+});

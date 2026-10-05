@@ -563,7 +563,7 @@ async function listAgentsForInventory(wsId) { const { listAgents } = await impor
 const INSERT_BLOCK_MS = 10 * 60_000;
 const insertBlocked = new Map();
 const DETERMINISTIC_MSG = /msgr_ws_owned_by_other|row-level security|violates (?:check|not-null|foreign key|unique) constraint/i;
-/** 다시 해도 같은 결과일 오류인가 — 일시 오류(코드 없음·연결·JWT·직렬화·교착·자원·시간 초과·5xx·402·408·429)만 좁게 나열하고 나머지는 결정적(src/pg-error-class.mjs, 검수 4차 M-1).
+/** 다시 해도 같은 결과일 오류인가 — 일시 오류(코드 없음·연결·JWT·직렬화·교착·자원·잠금·시간 초과·관리자 종료·5xx·402·408·429)만 좁게 나열하고 나머지는 결정적(src/pg-error-class.mjs, 검수 4차 M-1).
     SQLSTATE가 없는 경로(공용 unwrap)의 msgr 오류는 메시지로 결정적을 가린다 */
 export const isDeterministicInsertError = (e) => DETERMINISTIC_MSG.test(String(e?.message ?? '')) || isDeterministicDbError(e);
 /** 넣을 행이 있는 조직(orgIds) 중 지금 insert할 수 있는 조직 → { ok: Set, carried: 백오프 중인 실패의 저장된 오류들 }. 사전 확인(db.canInsertCrews)이 없는 어댑터는 종전대로 전부, 확인 실패는 종전대로 시도 */
@@ -593,12 +593,13 @@ async function insertableOrgs(db, uid, wsId, orgIds, { blocked, now, log }) {
 export async function mirrorInventory(wsId, { db, uid, agents, log = console.error, seen = cardSeen, blocked = insertBlocked, now = Date.now, revive = pendingRevive } = {}) {
   const edges = cardEdges(seen.get(wsId), agents);
   // 되살릴 slug(검수 4차 L-2) — 해고 직후 재영입 경쟁에서 되돌리기가 실패했는데 기준(seen)이 아직 없어 '다시 생긴 카드' 변화가 안 잡히는 slug는 카드가 있으면 그 slug만 되살린다
-  const reviveSet = revive.get(wsId);
-  if (reviveSet) for (const slug of reviveSet) if (edges.now.has(slug)) edges.back.add(slug);
+  // 틱 시작 때의 사본 — 틱 도중(myOrgIds 등을 기다리는 사이) 해고 라우트가 더한 slug는 이 틱이 처리하지 않았으니 done()이 지우지 않고 다음 틱에 넘긴다(검수 5차)
+  const reviveSet = revive.get(wsId), reviveTick = reviveSet ? [...reviveSet] : [];
+  for (const slug of reviveTick) if (edges.now.has(slug)) edges.back.add(slug);
   const done = (out) => {
     if (agents.length) {
       seen.set(wsId, nextSeen(edges));
-      if (reviveSet) { for (const slug of [...reviveSet]) if (!edges.failed.has(slug)) reviveSet.delete(slug); if (!reviveSet.size) revive.delete(wsId); } // 쓰기가 실패한 slug만 남긴다 — 카드가 다시 없으면 되살릴 일도 없다
+      if (reviveSet) { for (const slug of reviveTick) if (!edges.failed.has(slug)) reviveSet.delete(slug); if (!reviveSet.size && revive.get(wsId) === reviveSet) revive.delete(wsId); } // 쓰기가 실패한 slug만 남긴다 — 카드가 다시 없으면 되살릴 일도 없다
     }
     return out;
   }; // 끝까지 간 틱만 기준을 옮긴다(던지면 다음 틱이 같은 변화를 다시 본다)
