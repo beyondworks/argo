@@ -46,7 +46,7 @@ before(() => {
     -- "revoke ... from anon, authenticated" 줄이 실제로 효과가 있는지 아래 권한 테스트가 가려낸다(없으면 지워도 초록).
     alter default privileges in schema public grant execute on functions to anon, authenticated, service_role;
     -- created_at: is_pro(trial_14d·ends_at)의 language sql 본문이 CREATE 시점에 파싱된다 — 없으면 적용 자체가 실패
-    -- email·email_confirmed_at: ls_user_by_email(20261003231000)이 같은 이유로 필요하다(Supabase auth.users와 같은 이름·타입)
+    -- email·email_confirmed_at: ls_user_by_email(20261005130000)이 같은 이유로 필요하다(Supabase auth.users와 같은 이름·타입)
     create table if not exists auth.users (id uuid primary key, created_at timestamptz not null default now(), email text, email_confirmed_at timestamptz);
     create or replace function auth.uid() returns uuid language sql stable as 'select null::uuid';
     -- msgr 스키마 스텁(20260929110000의 entitled_pro_for가 join) — 900줄짜리 20260903120000_msgr.sql 전체를
@@ -63,7 +63,7 @@ before(() => {
   psql(['-f', mig('20260728150000_ls_reconcile_cooldown.sql')]);
   psql(['-f', mig('20260730050000_is_pro_ends_at.sql')]);
   psql(['-f', mig('20260929110000_plan_no_trial.sql')]);
-  psql(['-f', mig('20261003231000_ls_user_by_email.sql')]);
+  psql(['-f', mig('20261005130000_ls_user_by_email.sql')]);
   psql(['-c', `insert into auth.users (id) values ('${UID}') on conflict do nothing`]);
   // T를 trial_end_for의 CREATE 문 텍스트에서 역추출 — 이 테스트가 만든 값이 아니라 마이그레이션이
   // 실제로 굳힌 리터럴이라는 근거(재현: 코드가 아니라 DB에 실제로 박힌 값을 본다).
@@ -267,7 +267,7 @@ test('my_plan 권한: authenticated인데 sub가 없으면 남의 uid를 조회�
   } finally { sql(`delete from public.entitlements where user_id = '${UID}'`); }
 });
 
-// ── 레몬스퀴지 웹훅 이메일 연결(20261003231000, 2026-10-03) ──
+// ── 레몬스퀴지 웹훅 이메일 연결(20261005130000, 2026-10-03) ──
 // 랜딩 결제 링크에는 custom user_id가 없다. 운영 수신자(ls-webhook)가 400으로 끝나 실결제 2건이 Pro에 연결되지 않았던 사고의 수정.
 // 이 블록 전용 계정 — 위 UID와 겹치지 않는다. 구독 번호는 'LS-'로 시작한다(after()가 이 값으로 정리한다).
 const ACC = {
