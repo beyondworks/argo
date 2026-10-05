@@ -403,3 +403,22 @@ test('TB17. 요약 지시문 최종 맞춤 — 긴 한 줄 때문에 넘치면 �
     assert.ok(p.includes('x'.repeat(1000)), `${lang}: 마지막 줄도 남는다`);
   }
 });
+
+// 5차 검수 LOW-2 — argv 러너(agy)에 몫보다 큰 요약이 저장돼 있으면(다른 러너·넓은 자리에서 저장한 16,000자) 구획 맞춤이 최근 줄을 먼저 전부 버리고
+// 오래된 요약만 남겼다(room 12,000: 계획한 43줄 → 0줄). 요약을 먼저 자기 몫(자리의 1/4 — contextLimits와 같은 나눔) 안으로 줄이고 최근 줄을 지킨다.
+test('TB18. 구획 맞춤 — 저장 요약이 몫보다 크면 요약을 먼저 줄이고 계획한 최근 줄은 남긴다(room 12,000·20,000, 요약 16,000자)', async () => {
+  const { contextLimits, buildThreadContext, fitContextSection, argvChars } = await import('../src/thread-context.mjs');
+  const all = Array.from({ length: 120 }, (_, i) => ({ who: i % 2 ? 'crew' : 'user', text: `m${i}| ${'가'.repeat(200)}`, ts: T0 + i * 1000 }));
+  const lineOf = (m) => JSON.stringify([m.who === 'user' ? 'captain' : 'crew', m.text]);
+  const stored = { text: Array.from({ length: 800 }, (_, i) => `결정${i} 보고서는 금요일`).join('\n').slice(0, 16_000), upto: all[100].ts };
+  for (const room of [12_000, 20_000]) {
+    const parts = await buildThreadContext({ msgs: all, lineOf, summary: stored, limits: contextLimits('antigravity', room) });
+    assert.ok(parts.lines.length > 10, `room ${room}: 계획한 최근 줄 ${parts.lines.length}`);
+    const sec = fitContextSection(parts, '최근 대화', 'ko', room);
+    const kept = (sec.match(/m\d+\|/g) ?? []).length;
+    assert.ok(argvChars(sec) + 1 <= room, `room ${room}: 자리 안`);
+    assert.ok(kept >= parts.lines.length - 1, `room ${room}: 계획한 최근 줄 ${parts.lines.length}개 중 ${kept}개가 남는다`);
+    assert.match(sec, /m119\|/, `room ${room}: 가장 최근 줄`);
+    assert.match(sec, /결정0 보고서는 금요일/, `room ${room}: 요약도 앞부분이 남는다`);
+  }
+});

@@ -72,11 +72,13 @@ export function planContext(msgs, lineOf, { budget = CTX_BUDGET_TOKENS, summary 
 /** 앞부분을 남기고 fits를 지키는 가장 긴 원문(순수) — 글자 묶음(grapheme) 경계에서 이진 탐색해 끝에 '…'. 대리 쌍(이모지)·NFD 한글 자모 묶음을 가르지 않는다.
     fits(str) → 들어가는가(길이에 대해 단조여야 한다 — 앞부분이 길수록 길다). 하나도 안 들어가면 ''. (4차 검수 LOW-1: 글자 단위로 넘친 만큼만 잘라 이스케이프 몫을
     못 맞추던 것 — 빈 구획·자리 절반만 쓰기·외톨이 대리 문자) */
-const SEG = new Intl.Segmenter('und', { granularity: 'grapheme' });
+// ponytail: Intl.Segmenter가 없는 Node 빌드(--without-intl)에서는 코드 포인트 경계로 — 대리 쌍은 지키고 결합 문자만 갈릴 수 있다. 모듈을 싣는 순간 죽지 않게
+const SEG = typeof Intl === 'object' && typeof Intl.Segmenter === 'function' ? new Intl.Segmenter('und', { granularity: 'grapheme' }) : null;
 function cutToFit(str, fits) {
   if (fits(str)) return str;
   const ends = [0];
-  for (const { index, segment } of SEG.segment(str)) ends.push(index + segment.length);
+  if (SEG) for (const { index, segment } of SEG.segment(str)) ends.push(index + segment.length);
+  else for (const ch of str) ends.push(ends.at(-1) + ch.length);
   let lo = 0; let hi = ends.length - 1;
   while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (fits(`${str.slice(0, ends[mid])}…`)) lo = mid; else hi = mid - 1; }
   return lo > 0 ? `${str.slice(0, ends[lo])}…` : '';
@@ -169,16 +171,27 @@ export function contextSection({ recent, summary }, head, lang = 'ko') {
   return `${sum}${items.length ? `## ${head} (${guide})\n${items.join('\n')}\n` : ''}`;
 }
 
-/** argv 러너용 구획(순수) — 구획(앞에 붙는 줄바꿈 포함)이 room(argvChars 단위) 안에 들게 맞춘다: 가장 오래된 최근 줄부터 빼고,
-    그래도 넘치면 요약 끝을 자른다. 들어갈 자리가 없으면 ''. 요약을 다시 부르지 않으므로 끼워 넣기 이어 실행처럼 프롬프트가 길어진 자리에서도 쓴다. */
+/** argv 러너용 구획(순수) — 구획(앞에 붙는 줄바꿈 포함)이 room(argvChars 단위) 안에 들게 맞춘다: 몫(1/4)보다 큰 요약을 먼저 줄이고,
+    가장 오래된 최근 줄부터 빼고, 그래도 넘치면 요약 끝을 자른다. 들어갈 자리가 없으면 ''. 요약을 다시 부르지 않으므로 끼워 넣기 이어 실행처럼 프롬프트가 길어진 자리에서도 쓴다. */
 export function fitContextSection(parts, head, lang, room, measure = argvChars) {
   const lines = (parts.lines ?? (parts.recent ? String(parts.recent).split('\n') : [])).slice();
   const make = (sum) => contextSection({ recent: lines.join('\n'), summary: sum }, head, lang);
   const over = (x) => (x ? measure(x) + 1 - room : 0);
+  const size = (p) => measure(dataJson(p));
   let summary = parts.summary || null;
   let sec = make(summary);
+  // 넘치면 요약부터 — 최근 줄을 다 남기고 요약이 들어가는 가장 긴 앞부분이 요약 몫(자리의 1/4, contextLimits와 같은 나눔) 이상이면 그것으로 끝낸다.
+  // 아니면 요약을 몫 안으로 줄인 뒤 오래된 줄을 뺀다. 다른 러너·넓은 자리에서 저장한 요약이 몫보다 크면 최근 줄을 먼저 다 빼던 순서가
+  // 계획한 최근 대화를 지우고 오래된 요약만 남겼다(5차 검수 LOW-2: room 12,000·저장 요약 16,000자 → 최근 줄 0)
+  if (over(sec) > 0 && summary) {
+    const share = Math.min(SUMMARY_TEXT_CAP, Math.floor(room / 4));
+    const all = cutToFit(summary, (p) => over(make(p)) <= 0);
+    if (all && size(all) >= Math.min(share, size(summary))) summary = all;
+    else if (size(summary) > share) summary = cutToFit(summary, (p) => size(p) <= share) || null;
+    sec = make(summary);
+  }
   while (over(sec) > 0 && lines.length) { lines.shift(); sec = make(summary); }
-  // 요약은 자리에 들어가는 가장 긴 앞부분으로 — 실제 구획(머리말·JSON 이스케이프 포함)을 재며 이진 탐색한다. 자리가 아예 없을 때만 빈 구획(3차 검수 MEDIUM-2·4차 LOW-1)
+  // 그래도 넘치면 요약을 자리에 들어가는 가장 긴 앞부분으로 — 실제 구획(머리말·JSON 이스케이프 포함)을 재며 이진 탐색한다. 자리가 아예 없을 때만 빈 구획(3차 검수 MEDIUM-2·4차 LOW-1)
   if (over(sec) > 0 && summary) { summary = cutToFit(summary, (p) => over(make(p)) <= 0) || null; sec = make(summary); }
   return over(sec) > 0 ? '' : sec;
 }
