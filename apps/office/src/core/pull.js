@@ -78,6 +78,10 @@ export async function pullBoard() {
   if (!orgs.length) { update(() => empty); return; }
   const ids = orgs.map((o) => o.id);
   const since = new Date(Date.now() - 30 * 864e5).toISOString();
+  // 같은 에이전트 = 같은 얼굴(유건 2026-10-05) — 내 크루 행(모든 조직·개인 공간)으로 메신저와 같은 얼굴 지도를 만든다. 기록판을 읽을 때 한 번(시작·탭 복귀 60초 간격), 쓰기 0.
+  // 실패해도 기록판은 그린다(자기 행 얼굴). 얼굴 모듈은 첫 화면 묶음 밖이라(Face.jsx와 같은 조각) 여기서도 나중에 받는다.
+  const looksP = Promise.all([sb.from('msgr_crews').select('id, org_id, owner_user_id, ws_id, slug, status, face, created_at').eq('owner_user_id', ME.id).in('status', ['active', 'available']), import('@msgr/crew-face')])
+    .then(([r, m]) => (r.error ? null : m.agentLooks(r.data ?? []))).catch(() => null);
   const res = await Promise.all([
     // 크루는 주인·쓸 수 있는지·내 고정/순서까지 한 번에(9/30). 함수가 없는 옛 DB면 예전처럼 표에서 읽는다
     sb.rpc('office_crew_list', { p_orgs: ids }).then((r) => (r.error?.code === 'PGRST202' ? sb.from('msgr_crews').select('id, org_id, owner_user_id, display_name, department, role_text, face').in('org_id', ids) : r)),
@@ -89,6 +93,7 @@ export async function pullBoard() {
     sb.from('msgr_org_docs').select('org_id, title, body').in('org_id', ids).like('path', 'journal/%').order('updated_at', { ascending: false }).limit(30),
     sb.from('msgr_org_docs').select('id, org_id, channel_id, path, title, updated_at').in('org_id', ids).not('path', 'like', 'journal/%').order('path').limit(300), // 본문은 열 때만
   ]);
+  const looks = await looksP;
   const bad = res.find((r) => r.error);
   if (bad) throw bad.error;
   const [crews, runs, approvals, decisions, files, channels, journals, docs] = res.map((r) => r.data ?? []);
@@ -98,7 +103,7 @@ export async function pullBoard() {
     deciders.length ? sb.from('msgr_org_members').select('org_id, user_id, display_name').in('org_id', ids).in('user_id', deciders).then((r) => r.data ?? []) : [],
   ]);
   if (getStorageScope() !== owner) return;
-  update(() => ({ ...mapBoard({ crews, runs, approvals, decisions, files, channels, journals, docs, members }, { orgKey: new Map(orgs.map((o) => [o.id, o.key])), decidable: new Set(can.filter(Boolean)) }), crewsReady: true }));
+  update(() => ({ ...mapBoard({ crews, runs, approvals, decisions, files, channels, journals, docs, members }, { orgKey: new Map(orgs.map((o) => [o.id, o.key])), decidable: new Set(can.filter(Boolean)), looks }), crewsReady: true }));
 }
 
 /** 공용 문서 본문 — 목록에는 싣지 않고 열 때만 읽는다(문서당 최대 64KB) */

@@ -32,15 +32,16 @@ const str = (v) => (typeof v === 'string' && v.trim() ? v.trim() : null); // pay
 /** 결재 한 줄 핵심(유건 9/30 #7) — 에이전트가 적은 목적(purpose)·할 일(task), 없으면 null(화면은 요청 원문 앞부분) */
 export const approvalHead = (plain) => str(plain?.purpose) || str(plain?.task);
 
-/** rows: { crews, runs, approvals, decisions, files, channels, journals, docs }, orgKey: org_id → 공간 키, decidable: 결재권 있는 결재 id 집합 */
-export function mapBoard(rows, { orgKey, decidable }) {
+/** rows: { crews, runs, approvals, decisions, files, channels, journals, docs }, orgKey: org_id → 공간 키, decidable: 결재권 있는 결재 id 집합,
+ *  looks: 내 크루 행으로 만든 얼굴 지도(메신저 crew-face.mjs agentLooks — 같은 에이전트는 조직이 달라도 같은 얼굴, 유건 2026-10-05). 없으면 자기 행 그대로 */
+export function mapBoard(rows, { orgKey, decidable, looks = null }) {
   const space = (org) => orgKey.get(org) ?? null;
   const ch = new Map((rows.channels ?? []).map((c) => [c.id, c.kind === 'dm' ? 'DM' : c.name]));
   const who = new Map((rows.members ?? []).map((m) => [`${m.org_id}|${m.user_id}`, m.display_name || '']));
   const leading = new Set((rows.runs ?? []).filter((r) => r.status === 'running').map((r) => r.lead_crew_id));
   const asking = new Set((rows.approvals ?? []).map((a) => a.crew_id));
   const crews = (rows.crews ?? []).map((c) => ({
-    id: c.id, name: c.display_name, role: c.department || c.role_text || '', dept: c.department || '', job: c.role_text || '', owner: c.owner_user_id, space: space(c.org_id), org: c.org_id, face: c.face ?? null,
+    id: c.id, name: c.display_name, role: c.department || c.role_text || '', dept: c.department || '', job: c.role_text || '', owner: c.owner_user_id, space: space(c.org_id), org: c.org_id, face: looks?.get(c.id) ? looks.get(c.id).face : (c.face ?? null), faceSeed: looks?.get(c.id)?.seed ?? c.id, // 얼굴 = faceOf(faceSeed, face)
     status: leading.has(c.id) ? 'work' : asking.has(c.id) ? 'ask' : 'idle',
     // 좌측 목록 정리(9/30): 주인·쓸 수 있는지(메신저와 같은 판정)·내 고정/순서 — office_crew_list가 없을 때(옛 DB)는 모두 쓸 수 있는 것으로
     ownerName: c.owner_name ?? null, company: !!c.company, access: c.access ?? 'ok', pinned: !!c.pinned, pinPos: c.pin_pos ?? null, sortPos: c.sort_pos ?? null,

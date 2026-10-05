@@ -31,6 +31,21 @@ test('크루 상태: 담당 중 → work, 대기 결재 → ask, 그 외 idle. �
   assert.deepEqual(b.crews.map((c) => [c.id, c.status, c.role, c.space, c.owner]), [['c1', 'work', '영업', 'bw', 'u1'], ['c2', 'ask', '리서치', 'bw', 'u2'], ['c3', 'idle', '', 'bw', 'u1']]);
 });
 
+// 이유(유건 2026-10-05, 에이전트 = 한 사람): 같은 에이전트(주인·회사·slug)는 조직이 달라도 같은 얼굴이어야 한다. 메신저와 같은 기준
+// (crew-face.mjs agentLooks — 대표 조직 행의 저장 얼굴, 없으면 대표 행 id 씨앗)을 pull.js가 내 크루 행으로 만들어 넘긴다. 지도에 없는 크루(남의 크루)는 그대로.
+test('크루 얼굴: 내 에이전트는 대표 행 기준(faceSeed·face), 남의 크루는 자기 행 그대로', async () => {
+  const { agentLooks } = await import('../../messenger/src/crew-face.mjs');
+  const own = [
+    { id: 'c1', org_id: ORG, owner_user_id: 'u1', ws_id: 'w', slug: 'luna', status: 'active', face: null, created_at: '2026-09-10T00:00:00+00:00' },
+    { id: 'c0', org_id: 'o2', owner_user_id: 'u1', ws_id: 'w', slug: 'luna', status: 'active', face: { v: 2, shape: 8, color: 9 }, created_at: '2026-09-01T00:00:00+00:00' },
+  ];
+  const b = mapBoard(base, { orgKey: key, decidable: new Set(), looks: agentLooks(own) });
+  const c1 = b.crews.find((c) => c.id === 'c1'); const c2 = b.crews.find((c) => c.id === 'c2');
+  assert.deepEqual([c1.faceSeed, c1.face], ['c0', { v: 2, shape: 8, color: 9 }]);
+  assert.deepEqual([c2.faceSeed, c2.face], ['c2', null]);
+  assert.equal(mapBoard(base, { orgKey: key, decidable: new Set() }).crews[0].faceSeed, 'c1', '지도가 없으면(예시·옛 경로) 자기 id');
+});
+
 // 이유: 결재 버튼은 서버가 결재권이 있다고 한 것만(msgr_can_decide). 쉬운 문장이 비면 동작 이름으로.
 test('결재·결정·산출물·일지: 공간 키, 결재권, 문장 대체, 채널 이름, 일지 크루 id', () => {
   const b = mapBoard(base, { orgKey: key, decidable: new Set(['a1']) });
