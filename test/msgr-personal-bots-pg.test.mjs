@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { readFileSync, readdirSync } from 'node:fs';
 import { psqlSpawn } from './helpers/pg.mjs';
+import { NOTICE } from './helpers/msgr-terms.mjs';
 const DB = process.env.ARGO_PG_TEST_URL;
 const skip = !DB && 'ARGO_PG_TEST_URL 미설정 — bash scripts/billing-pg-drill.sh test/msgr-personal-bots-pg.test.mjs';
 const mig = (f) => fileURLToPath(new URL(`../supabase/migrations/${f}`, import.meta.url));
@@ -448,6 +449,7 @@ test('개인 방 AI 동의는 명시적 동의만: 동의 전엔 안내 한 번�
   post(U.c, cch, '또 해줘');
   assert.equal(ups(cb.token, 0, 10).length, 0);
   assert.equal(sql(`select count(*) from public.msgr_messages where client_msg_id='aiconsent:${ctw}:${cch}'`), '1', '안내 한 번');
+  assert.equal(sql(`select body from public.msgr_messages where client_msg_id='aiconsent:${ctw}:${cch}'`), `${NOTICE.consent.ko} / ${NOTICE.consent.en}`, '안내 문구는 새 낱말(용어 T3, 20261006100000)');
   asUser(U.c, `select public.msgr_set_ai_consent(true)`);
   const got = ups(cb.token, 0, 10);
   assert.equal(got[0]?.update_id, Number(P), '동의하면 보류된 글부터');

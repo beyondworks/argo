@@ -73,7 +73,7 @@ await scenario(1280, 'new-conversation-button', async (p) => {
   await p.locator('[aria-label="새 채팅"]').first().click();
   await p.waitForTimeout(400);
   const sheet = await p.locator('.msgr-sheetwrap, .msgr-crewsheet').first().innerText();
-  assert.ok(/사람|크루|고르/.test(sheet), `상대를 고르는 화면이 열린다 (실제: ${sheet.slice(0, 120)})`);
+  assert.ok(/사람|에이전트|고르/.test(sheet), `상대를 고르는 화면이 열린다 (실제: ${sheet.slice(0, 120)})`);
 });
 
 // 5. 폰 DM 탭 — 정렬과 '새 대화'가 나란히 눌린다(겹치거나 밀리지 않게)
