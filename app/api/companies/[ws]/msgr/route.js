@@ -8,6 +8,7 @@ import { listAgents } from '../../../../../src/hub.mjs';
 import { loadCompany, updateCompany } from '../../../../../src/workspace.mjs';
 import { msgrGatewayStatus } from '../../../../../src/connections.mjs';
 import { nudgeGateway } from '../../../../../src/gateway.mjs';
+import { splitCardRows } from './card-rows.mjs'; // 행 나누기 — 카드 판정과 같은 모양을 테스트가 잠근다(UL10)
 
 const ALLOW = new Set(['all', 'list', 'owner']);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -37,8 +38,7 @@ async function myCardRows(c, ws) {
     .select(REG_COLS)
     .eq('owner_user_id', c.uid).eq('ws_id', ws);
   if (error) throw new Error(error.message);
-  const rows = data ?? [];
-  return { crews: rows.filter((r) => r.org_id != null), personalCount: rows.filter((r) => r.org_id == null && r.status === 'active').length };
+  return splitCardRows(data);
 }
 async function myOrgs(c) {
   const { data, error } = await c.client.from('msgr_org_members').select('org_id, role, msgr_orgs(id, name, slug)').eq('user_id', c.uid).is('removed_at', null); // 본인 행만(멤버 select 정책은 조직 전원 행을 준다 — 검수 MEDIUM-2)

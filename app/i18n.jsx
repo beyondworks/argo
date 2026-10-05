@@ -920,6 +920,8 @@ const DICT = {
   'settings.msgr.runtime.title': ['메신저 응답 상태', 'Messenger response status'],
   'settings.msgr.runtime.alive': ['정상 응답 중 · {s}초 전에 확인', 'Responding normally · checked {s}s ago'],
   'settings.msgr.runtime.waiting': ['아직 첫 응답을 기다리는 중입니다. 잠시 뒤 자동으로 다시 확인합니다.', 'Waiting for the first response. It will check again automatically shortly.'],
+  'settings.msgr.runtime.waitingManual': ['아직 첫 응답을 기다리는 중입니다. 잠시 뒤 \'다시 확인\'을 눌러 보세요.', "Waiting for the first response. Press 'Check again' in a moment."],
+  'settings.msgr.runtime.recheck': ['다시 확인', 'Check again'],
   'settings.msgr.runtime.offline': ['메신저 응답을 확인하지 못했습니다. 자동 복구를 시도하고 있습니다.', 'Messenger is not responding. Automatic recovery is being attempted.'],
   'settings.msgr.runtime.login': ['이 기기의 Argo 로그인이 필요합니다. 로그인한 뒤 다시 연결하세요.', 'This device needs an Argo login. Sign in, then reconnect.'],
   'settings.msgr.runtime.owner': ['이 회사를 만든 Argo 계정으로 로그인해야 메신저가 응답합니다.', 'Sign in with the Argo account that created this company to receive Messenger responses.'],

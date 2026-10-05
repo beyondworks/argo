@@ -20,3 +20,43 @@ test('진입 링크는 https 고정 주소 — 오피스(웹)·메신저 받기 
   assert.equal(new URL(OFFICE_URL).protocol, 'https:');
   assert.equal(new URL(MESSENGER_PAGE).protocol, 'https:');
 });
+
+// UL10·UL7(2026-10-05 분리 검수): 위 테스트는 순수 함수 입력만 만들어 넣었다 — 서버가 실제로 내리는 응답(personalCount 필드)을 카드가 읽는 연결은 안 잠겼다.
+// 라우트가 행을 나누는 함수(splitCardRows)의 출력을 그대로 카드 판정(msgrCardView)에 넣어 이름·모양이 어긋나면 빨강이 되게 한다.
+// UL7: 개인 공간만 쓰는 사용자는 8초 실행기 폴이 안 돌았는데 문구는 "잠시 뒤 자동으로 다시 확인합니다"였다 — 폴 조건과 문구가 같은 판정(polling)을 쓴다.
+import { splitCardRows } from '../app/api/companies/[ws]/msgr/card-rows.mjs';
+import { msgrCardView, runtimeWaitingKey } from '../app/c/[ws]/settings/msgr-card.mjs';
+
+const row = (extra) => ({ id: 'r', org_id: 'o1', slug: 'a', status: 'active', ...extra });
+
+test('라우트가 행을 나눈다 — 조직 행은 crews, 개인 공간 행(org NULL)은 활성인 것만 personalCount', () => {
+  const r = splitCardRows([row({ id: '1' }), row({ id: '2', org_id: null, slug: 'b' }), row({ id: '3', org_id: null, slug: 'c', status: 'detached' }), row({ id: '4', org_id: null, slug: 'd' })]);
+  assert.deepEqual(r.crews.map((x) => x.id), ['1'], '개인 행은 연결·해제 판정 대상(crews)에서 뺀다');
+  assert.equal(r.personalCount, 2, '활성 개인 행만 센다(detached 제외)');
+  assert.deepEqual(splitCardRows(null), { crews: [], personalCount: 0 });
+});
+
+test('서버 응답 → 카드 판정 — 개인 공간만 있는 사용자: 칩 personal·실행기 영역 보임·자동 확인(폴) 없음', () => {
+  const response = { signedIn: true, orgs: [], ...splitCardRows([row({ org_id: null, slug: 'a' }), row({ id: '2', org_id: null, slug: 'b' })]), runtime: { state: 'waiting' } };
+  const view = msgrCardView({ st: response, orgId: '', agents: [{ slug: 'a' }, { slug: 'b' }] });
+  assert.equal(view.chip, 'personal');
+  assert.equal(view.personalCount, 2); assert.equal(view.regCount, 0);
+  assert.equal(view.showRuntime, true);
+  assert.equal(view.polling, false, '조직 크루가 없으니 8초 폴이 안 돈다 — 문구가 자동 확인을 약속하면 안 된다(UL7)');
+  assert.equal(runtimeWaitingKey(view.polling), 'settings.msgr.runtime.waitingManual');
+});
+
+test('서버 응답 → 카드 판정 — 조직에 등록한 크루가 있으면 연결됨·폴이 돌고 자동 확인 문구', () => {
+  const response = { signedIn: true, orgs: [{ id: 'o1', name: '조직', role: 'owner' }], ...splitCardRows([row({ slug: 'a' }), row({ id: '2', slug: 'b', status: 'available' })]), runtime: { state: 'alive', lastTs: 1 } };
+  const view = msgrCardView({ st: response, orgId: 'o1', agents: [{ slug: 'a' }, { slug: 'b' }] });
+  assert.equal(view.chip, 'connected'); assert.equal(view.regCount, 1, '활성 등록만 센다');
+  assert.equal(view.polling, true);
+  assert.equal(runtimeWaitingKey(view.polling), 'settings.msgr.runtime.waiting');
+});
+
+test('로그인 전·로드 전은 폴도 영역도 없다', () => {
+  for (const st of [null, { signedIn: false, orgs: [], crews: [] }]) {
+    const view = msgrCardView({ st, orgId: '', agents: [{ slug: 'a' }] });
+    assert.equal(view.polling, false); assert.equal(view.showRuntime, false); assert.equal(view.chip, 'notConnected');
+  }
+});

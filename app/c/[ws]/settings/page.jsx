@@ -14,7 +14,7 @@ import LocalAssetImport from '../../../components/LocalAssetImport';
 import { proRowActive, trialBadgeState } from '../../../../src/entitlement.mjs';
 
 // Argo Messenger 받기 — 맥·윈도우 설치파일만 걸던 것을 앱 스토어·Play까지 있는 안내 페이지 한 곳으로(CX-12). 오피스는 웹 주소(CX-13).
-import { MESSENGER_PAGE, OFFICE_URL, msgrConnectionChip, msgrShowRuntime } from './msgr-card.mjs';
+import { MESSENGER_PAGE, OFFICE_URL, msgrCardView, runtimeWaitingKey } from './msgr-card.mjs';
 import ArchivedCompaniesCard from '../../../archived-companies'; // 보관한 회사 되돌리기 — 홈에도 같은 카드(UM3)
 import { saveWithRevert } from './save-revert.mjs'; // 저장 실패면 되돌린다(F9)
 import { syncErrorView } from './sync-error.mjs'; // 동기화 원문 → 사용자 문구(F10)
@@ -897,17 +897,15 @@ function MsgrCard({ ws, agents }) {
     .then((d) => { setSt(d); setOrgId((cur) => cur && d.orgs?.some((o) => o.id === cur) ? cur : (d.orgs?.[0]?.id ?? '')); })
     .catch(() => { setSt({ signedIn: false, orgs: [], crews: [] }); setErr(t('settings.msgr.err.load')); }), [ws, t]);
   useEffect(() => { load(); }, [load]);
+  const view = msgrCardView({ st, orgId, agents }); // 서버 응답 → 카드 판정 한 곳(msgr-card.mjs) — 폴 조건과 문구가 같은 판정을 쓴다(UL7)
   useEffect(() => {
-    if (!st?.signedIn || !st.crews?.some((crew) => crew.status === 'active')) return;
+    if (!view.polling) return; // 개인 공간만 쓰는 사용자는 폴이 안 돈다 — 문구도 '다시 확인' 단추로 안내(폴을 늘리지 않는다: DB·서버 부하)
     const timer = setInterval(load, 8000);
     return () => clearInterval(timer);
-  }, [st?.signedIn, st?.crews, load]);
+  }, [view.polling, load]);
   const regOf = (slug) => st?.crews?.find((r) => r.org_id === orgId && r.slug === slug && r.status === 'active');
   const rowOf = (slug) => st?.crews?.find((r) => r.org_id === orgId && r.slug === slug); // 행이 없으면 해제가 아니라 메신저에 올라간 적 없음(유건 제보 2026-09-17: 한 번도 안 올라간 크루가 '파견 해제됨'으로 보였다)
-  const regCount = agents.filter((a) => regOf(a.slug)).length;
-  const personalCount = st?.personalCount ?? 0; // 개인 공간(조직 없음)에 연결된 크루 수 — 조직이 없어도 연결 상태를 보인다(CX-12)
-  const chip = msgrConnectionChip({ regCount, personalCount });
-  const showRuntime = msgrShowRuntime({ signedIn: st?.signedIn, agentCount: agents.length });
+  const { regCount, personalCount, chip, showRuntime } = view; // personalCount = 개인 공간(조직 없음)에 연결된 크루 수 — 조직이 없어도 연결 상태를 보인다(CX-12)
   const missing = agents.filter((a) => !regOf(a.slug));
   const org = st?.orgs?.find((o) => o.id === orgId);
   const policyLine = org?.policy ? t('settings.msgr.policy.summary', { allow: t(`settings.msgr.allow.${org.policy.allow_default}`) + (org.policy.allow_locked ? t('settings.msgr.policy.locked') : ''), approver: t(`settings.msgr.policy.approver.${org.policy.approval_high_by ?? 'admin'}`), memory: (org.policy.crew_memory_default === false ? t('settings.msgr.policy.memory.off') : t('settings.msgr.policy.memory.on')) + (org.policy.crew_memory_locked ? t('settings.msgr.policy.locked') : '') }) : '';
@@ -945,7 +943,10 @@ function MsgrCard({ ws, agents }) {
           : runtime?.state === 'noCrews' ? t('settings.msgr.runtime.noCrews')
             : runtime?.state === 'reconnecting' ? t('settings.msgr.runtime.reconnecting')
             : runtime?.state === 'offline' ? t('settings.msgr.runtime.offline')
-              : t('settings.msgr.runtime.waiting');
+              : t(runtimeWaitingKey(view.polling));
+  const [rechecking, setRechecking] = useState(false);
+  async function recheck() { if (rechecking) return; setRechecking(true); try { await load(); } finally { setRechecking(false); } } // 폴이 없는 때의 수동 확인(UL7)
+  const canRecheck = !view.polling && runtime?.state !== 'alive';
   const canReconnect = runtime && !['alive', 'login', 'owner', 'noCrews'].includes(runtime.state);
 
   return (
@@ -971,6 +972,9 @@ function MsgrCard({ ws, agents }) {
             <span className="microlabel">{t('settings.msgr.runtime.title')}</span>
             <p>{runtimeCopy}</p>
           </div>
+          {canRecheck && <button type="button" className="btn sm" disabled={rechecking} onClick={recheck}>
+            {rechecking ? <Spinner size={12} /> : t('settings.msgr.runtime.recheck')}
+          </button>}
           {canReconnect && <button type="button" className="btn sm" disabled={reconnecting} onClick={reconnectBridge}>
             {reconnecting ? <Spinner size={12} /> : t('settings.msgr.runtime.reconnect')}
           </button>}
@@ -993,6 +997,9 @@ function MsgrCard({ ws, agents }) {
               <span className="microlabel">{t('settings.msgr.runtime.title')}</span>
               <p>{runtimeCopy}</p>
             </div>
+            {canRecheck && <button type="button" className="btn sm" disabled={rechecking} onClick={recheck}>
+              {rechecking ? <Spinner size={12} /> : t('settings.msgr.runtime.recheck')}
+            </button>}
             {canReconnect && <button type="button" className="btn sm" disabled={reconnecting} onClick={reconnectBridge}>
               {reconnecting ? <Spinner size={12} /> : t('settings.msgr.runtime.reconnect')}
             </button>}
