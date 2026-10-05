@@ -67,6 +67,51 @@ export function faceOf(id, override = null) {
   return faceFromStored(override) ?? { shape: hash(`${id}|shape`) % FACE_SHAPES.length, color: hash(`${id}|color`) % FACE_COLORS.length };
 }
 
+/* ───────── 에이전트 = 한 사람(유건 2026-10-05) — 같은 에이전트는 공간·화면과 상관없이 같은 얼굴·사진 ─────────
+ * 크루 행은 공간마다 따로다(조직마다 한 행 + 개인 공간 행). 저장 얼굴이 없으면 행 id로 얼굴을 정하니 같은 에이전트가 공간마다 달라 보였다.
+ * 같은 에이전트 = 주인(owner_user_id) + 회사(ws_id) + slug — agent-groups.mjs agentKey가 이 함수다. 셋 중 하나라도 모르면 그 행 id만(합치지 않는 쪽으로 틀린다).
+ * 대표 행 = 그 에이전트의 살아 있는(active·available) 조직 행 중 created_at, 같으면 id가 가장 앞선 것 — 본체 미러(src/gateway/msgr.mjs repLooks)도 같은 규칙.
+ *   얼굴 = 대표 행 저장값 → 없으면 가장 먼저 만든 행 중 저장값이 있는 행(주인이 고른 얼굴을 버리지 않는다) → 없으면 대표 행 id 씨앗.
+ *   사진 = 그 행 사진 → 없으면 대표 행 사진 → 없으면 같은 에이전트의 다른 행 사진.
+ * 조직 행이 없는 에이전트(개인 전용)는 종전대로 자기 행 기준. 지도(looks)는 내 크루 행으로만 만든다 — 남의 에이전트는 그 행 그대로. */
+export function agentKey(c) {
+  return c?.owner_user_id && c.ws_id && c.slug ? `${c.owner_user_id}|${c.ws_id}|${c.slug}` : `id:${c?.id}`;
+}
+const LIVE = new Set(['active', 'available']);
+const madeAt = (r) => { const t = Date.parse(r.created_at ?? ''); return Number.isFinite(t) ? t : Infinity; };
+const olderFirst = (a, b) => madeAt(a) - madeAt(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+/** 내 크루 행 → Map(행 id → { seed: 얼굴 씨앗 id, face: 저장값|null, photo: 사진|null, ids: 같은 에이전트의 행 id 전부 }) */
+export function agentLooks(rows) {
+  const groups = new Map();
+  for (const r of rows ?? []) {
+    if (!r?.id) continue;
+    const k = agentKey(r);
+    if (k.startsWith('id:')) continue;
+    if (!groups.has(k)) groups.set(k, []);
+    if (!groups.get(k).some((x) => x.id === r.id)) groups.get(k).push(r);
+  }
+  const out = new Map();
+  for (const list of groups.values()) {
+    const ids = list.map((r) => r.id);
+    const byAge = list.slice().sort(olderFirst);
+    const rep = byAge.find((r) => r.org_id != null && LIVE.has(r.status)) ?? null;
+    if (!rep) { for (const r of list) out.set(r.id, { seed: r.id, face: r.face ?? null, photo: r.avatar_url ?? null, ids }); continue; }
+    const face = faceFromStored(rep.face) ? rep.face : (byAge.find((r) => faceFromStored(r.face))?.face ?? null);
+    const repPhoto = rep.avatar_url ?? byAge.find((r) => r.avatar_url)?.avatar_url ?? null;
+    for (const r of list) out.set(r.id, { seed: rep.id, face, photo: r.avatar_url ?? repPhoto, ids });
+  }
+  return out;
+}
+/** 행 하나의 겉모습 — 지도에 있으면 그 기준, 없으면(남의 에이전트·지도 전) 그 행 id·저장값 */
+export function agentLook(id, looks, ownFace = null, ownPhoto = null) {
+  return looks?.get(id) ?? { seed: id, face: ownFace, photo: ownPhoto, ids: [id] };
+}
+/** 그릴 얼굴 {shape, color} — 얼굴을 그리는 곳은 모두 이 함수를 지난다(다시 갈라지지 않게) */
+export function agentFace(id, looks, ownFace = null) {
+  const l = agentLook(id, looks, ownFace);
+  return faceOf(l.seed, l.face);
+}
+
 /** 오피스 달력 색 — 얼굴 v2 전(main 2026-10-01)의 10색과 같은 계산을 그대로 둔다(얼굴이 바뀌어도 사람들의 달력 색은 바꾸지 않는다, 검수 #789).
  *  에이전트 색 번호 = 옛 형태로 저장된 색, 아니면 id 해시 % 10(옛 faceOf와 같은 값). v2로 다시 고른 크루도 해시 색이다 */
 export const CALENDAR_COLORS = ['#0E9A55', '#F4A3C4', '#F45A1B', '#F6C443', '#0B6FB8', '#46C7F4', '#7B5CFA', '#14C4CC', '#FFA412', '#FF5E9C'];

@@ -7,12 +7,10 @@
 //   · 외부 봇: 조직 봇 행(ws_id 'bot', slug 'bot-…' 무작위)과 그 개인 쌍둥이는 쌍둥이를 만들 때 slug를 그대로 복사한다(20261001140000).
 //   · 셋 중 하나라도 모르면(옛 서버·조회 실패) 그 행은 id로만 — 다른 행과 잘못 합치지 않는 쪽으로 틀린다. 이름으로는 판정하지 않는다.
 import { twinPaused } from './personal-bots.mjs';
+import { agentKey } from './crew-face.mjs';
+export { agentKey }; // 정의는 crew-face.mjs 한 곳 — 얼굴 지도(agentLooks)와 같은 판정이어야 해서(유건 2026-10-05)
 
 export const AGENT_FILTERS = ['all', 'fav', 'mine', 'ext'];
-
-export function agentKey(c) {
-  return c?.owner_user_id && c.ws_id && c.slug ? `${c.owner_user_id}|${c.ws_id}|${c.slug}` : `id:${c?.id}`;
-}
 
 /** 행 목록 → 묶음 목록(이름순). 묶음 안의 행은 개인 공간 먼저, 그 다음 orgOrder(조직 목록) 순서. 대표 이름·사진은 첫 행 */
 export function groupAgents(rows, { orgOrder = [] } = {}) {
@@ -90,6 +88,37 @@ export function personalRoomKnown(crew, rows, uid) {
   if (!crew?.id || !rows?.length) return false;
   const twin = personalTwinOf(rows.find((r) => r.id === crew.id), rows, uid);
   return !!twin && isRoomRow(twin, uid);
+}
+
+// 옛 조직 1:1(유건 2026-10-05) — #819 이후 새 입구는 개인 1:1로 가지만, 그 전에 만든 조직 1:1이 대화 목록·알림함·알림 탭으로 다시 열려
+// 기기마다 다른 방을 봤다. 그런 방을 열려고 하면 개인 1:1로 돌린다. 옛 방은 지우지 않는다(목록에 남고, 열리면 위에 안내 띠).
+/** 내 에이전트와의 조직 1:1이면 그 크루 행 — 사람은 나 하나, 에이전트는 내 에이전트 하나인 조직 DM. 아니면 null
+    (남의 에이전트 방은 주인과 나 둘이라 해당 없음, 사람 1:1·그룹 방·개인 방·구성원을 아직 모르는 방도 null — 종전대로 연다) */
+export function legacyAgentDm(channel, members, { uid, crewOf }) {
+  if (!channel || channel.kind !== 'dm' || channel.org_id == null || !uid || !Array.isArray(members)) return null;
+  const users = members.filter((m) => m.member_kind === 'user'); const crewsIn = members.filter((m) => m.member_kind === 'crew');
+  if (users.length !== 1 || users[0].member_id !== uid || crewsIn.length !== 1) return null;
+  const crew = crewOf(crewsIn[0].member_id);
+  return crew && crew.owner_user_id === uid ? crew : null;
+}
+/** 그 방 대신 개인 1:1로 갈지 — { crew, known: true }(개인 1:1이 있다고 안다: personalRoomKnown) / { crew, known: false }(내 에이전트 목록을 아직 모른다 —
+    열면서 서버에 한 번 묻는다) / null(종전대로 그 방: 내 에이전트 방이 아니거나, 목록을 알고 개인 1:1 대상이 없다) */
+export function agentDmRedirect(channel, members, { uid, crewOf, myAgents }) {
+  const crew = legacyAgentDm(channel, members, { uid, crewOf });
+  if (!crew) return null;
+  if (myAgents == null) return { crew, known: false };
+  return personalRoomKnown(crew, myAgents, uid) ? { crew, known: true } : null;
+}
+
+/** 얼굴·사진 저장 — 같은 에이전트(agentLooks의 ids, 내 행만)를 한 요청으로. 지도를 모르면 누른 행 하나(종전).
+    여러 행 저장이 거절되면(어느 조직의 정책 잠금 등 — 한 행이라도 막히면 문장 전체가 실패한다) 누른 행 하나만 다시 저장한다.
+    db = supabase 클라이언트(테스트는 가짜). 반환 { error, ids: 바뀐 행 id } */
+export async function saveAgentLook(db, crewId, patch, looks) {
+  const ids = looks?.get(crewId)?.ids?.length ? looks.get(crewId).ids : [crewId];
+  const run = (list) => db.from('msgr_crews').update(patch).in('id', list).select('id');
+  let r = await run(ids);
+  if (r.error && ids.length > 1) r = await run([crewId]);
+  return { error: r.error ?? null, ids: (r.data ?? []).map((x) => x.id) };
 }
 
 /** 방금 만든 개인 방이 목록에 들어왔는지 — 들어왔으면(또는 두 번 읽었으면) true, 읽는 동안 공간을 떠났으면 false(App openPersonalCrewDm).

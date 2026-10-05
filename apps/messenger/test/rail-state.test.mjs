@@ -127,7 +127,8 @@ test('loadMyAgents: 조직 행·개인 행 모두 충돌 사본은 빠지고, �
     rpc(name) { return Promise.resolve(name === 'msgr_personal_room_crews' ? personal : []); },
   };
   let mine = null;
-  const deps = { uid: 'me', faceCol: { missingAt: Date.now() }, q: async (x) => await x, supabase, stampFetched, withoutCopies, setAgentPins: () => {}, setMyAgents: (v) => { mine = v; } };
+  const deps = { uid: 'me', faceCol: { missingAt: Date.now() }, q: async (x) => await x, supabase, stampFetched, withoutCopies, setAgentPins: () => {}, setMyAgents: (v) => { mine = v; },
+    readOwnCrews: async () => own, setOwnCrews: () => {} }; // 내 크루 행 읽기는 얼굴 지도와 같이 쓴다(유건 2026-10-05) — 같은 행을 돌려준다
   const loadMyAgents = new Function(...Object.keys(deps), `return (${app.slice(start, end)});`)(...Object.values(deps));
   await loadMyAgents();
   assert.deepEqual(mine.map((c) => c.id).sort(), ['org-real', 'p-real']);
