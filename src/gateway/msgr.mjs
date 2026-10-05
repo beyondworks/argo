@@ -277,7 +277,11 @@ export function makeDb(client) {
       if (!['owner', 'admin', 'member'].includes(role)) return false;
       return unwrap(await client.rpc('msgr_org_locked', { org: orgId })) !== true;
     },
-    async upsertAvailable(rows) { if (rows.length) unwrap(await client.from('msgr_crews').upsert(rows, { onConflict: 'org_id,owner_user_id,ws_id,slug' })); },
+    async upsertAvailable(rows) {
+      if (!rows.length) return;
+      const { error } = await client.from('msgr_crews').upsert(rows, { onConflict: 'org_id,owner_user_id,ws_id,slug' });
+      if (error) throw Object.assign(new Error(`msgr db: ${error.message}`), { code: error.code }); // 결정적 오류(RLS·제약)와 일시 오류를 가르려면 SQLSTATE가 필요하다(isDeterministicInsertError)
+    },
     /** 개인 크루 행(org NULL) — 부분 유니크 인덱스라 upsert onConflict를 쓸 수 없다. 미러가 빠진 slug만 넘기고, 다른 프로세스와의 경합 중복(23505)은 삼킨다. */
     async insertPersonal(rows) {
       for (const row of rows) { const { error } = await client.from('msgr_crews').insert(row); if (error && error.code !== '23505') throw new Error(`msgr db: ${error.message}`); }
@@ -295,7 +299,12 @@ export function makeDb(client) {
       const rows = unwrap(await client.from('msgr_org_policies').select('org_id, allow_default').in('org_id', orgIds)) ?? [];
       return Object.fromEntries(rows.map((r) => [r.org_id, r.allow_default]));
     },
-    async updateCrewInfo(id, patch) { unwrap(await client.from('msgr_crews').update(patch).eq('id', id)); },
+    /** 행 한 개 갱신 — status를 active로 되돌리는 갱신은 분리된(detached) 행에만 건다: 그 사이 사용자가 파견 해제(available)한 행을 되돌리기·미러가 덮지 않게(검수 3차 L-2). 다른 칸은 상태와 무관. */
+    async updateCrewInfo(id, patch) {
+      let q = client.from('msgr_crews').update(patch).eq('id', id);
+      if (patch.status === 'active') q = q.eq('status', 'detached');
+      unwrap(await q);
+    },
     /** '/' 커맨더 목록 — 이 회사(ws)의 내 크루 행 전부에 같은 목록(회사 단위 별칭·스킬). */
     async setCommands(uid, wsId, commands) { unwrap(await client.from('msgr_crews').update({ commands }).eq('owner_user_id', uid).eq('ws_id', wsId)); },
     async deleteCrews(ids) { if (ids.length) unwrap(await client.from('msgr_crews').delete().in('id', ids)); },
@@ -544,21 +553,30 @@ export async function nodeRunnerInfo(wsId, { status = null, catalog = null, now 
 
 async function listAgentsForInventory(wsId) { const { listAgents } = await import('../hub.mjs'); return (await listAgents(wsId)).map((a) => ({ slug: a.slug, name: a.name, role: a.role })); }
 
-/** 조직 행 insert 백오프(검수 2차 M-2) — `${uid}:${orgId}` → { until, error }. 손님·잠긴 조직(사전 확인 거절)은 error null, 사전 확인으로 못 거른 실패는 그 오류.
+/** 조직 행 insert 백오프(검수 2차 M-2, 3차 M-B·M-C) — 두 종류를 한 표에 키 접두로 나눈다:
+    · `role:${uid}:${orgId}` — 손님·잠긴 조직(사전 확인 거절, error null). 조직 단위 판정이라 어느 회사에서 물어도 같다.
+    · `fail:${uid}:${wsId}:${orgId}` — 사전 확인으로 못 거른 **결정적** 실패(RLS 42501·제약 위반 23xxx·P0001·msgr_ws_owned_by_other). msgr_crews_ws_owner_gate 같은 회사 단위 거절이
+      같은 계정·조직의 다른 정상 회사 파견을 막지 않게 회사까지 키에 넣는다. 일시 오류(fetch failed·402·5xx·시간 초과)는 백오프하지 않고 다음 틱에 다시 시도한다.
     부하: 손님 상태에서 틱마다 실패 쓰기 1+K(K = 손님 조직 수)이던 것이 10분에 사전 확인 K건(읽기)로 — 실패 쓰기 0. 세션 uid가 키에 있어 로그인 계정을 바꾸면 바로 다시 시도한다. */
 const INSERT_BLOCK_MS = 10 * 60_000;
 const insertBlocked = new Map();
-/** 넣을 행이 있는 조직(orgIds) 중 지금 insert할 수 있는 조직 → { ok: Set, carried: 백오프 중인 조직의 저장된 오류들 }. 사전 확인(db.canInsertCrews)이 없는 어댑터는 종전대로 전부, 확인 실패는 종전대로 시도 */
-async function insertableOrgs(db, uid, orgIds, { blocked, now, log }) {
+const DETERMINISTIC_CODE = /^(23\d{3}|42501|P0001)$/;
+const DETERMINISTIC_MSG = /msgr_ws_owned_by_other|row-level security|violates (?:check|not-null|foreign key|unique) constraint/i;
+/** 다시 해도 같은 결과일 오류인가 — 오류 객체의 SQLSTATE(code)를 읽고, code가 없는 경로(공용 unwrap)는 메시지로 가른다. fetch 실패·시간 초과·5xx·402는 일시 오류 */
+export const isDeterministicInsertError = (e) => DETERMINISTIC_CODE.test(String(e?.code ?? '')) || DETERMINISTIC_MSG.test(String(e?.message ?? ''));
+/** 넣을 행이 있는 조직(orgIds) 중 지금 insert할 수 있는 조직 → { ok: Set, carried: 백오프 중인 실패의 저장된 오류들 }. 사전 확인(db.canInsertCrews)이 없는 어댑터는 종전대로 전부, 확인 실패는 종전대로 시도 */
+async function insertableOrgs(db, uid, wsId, orgIds, { blocked, now, log }) {
   const ok = new Set(), carried = [];
   for (const orgId of orgIds) {
-    const key = `${uid}:${orgId}`, hold = blocked.get(key);
-    if (hold && now() < hold.until) { if (hold.error) carried.push(hold.error); continue; }
+    const roleKey = `role:${uid}:${orgId}`, failKey = `fail:${uid}:${wsId}:${orgId}`;
+    const guest = blocked.get(roleKey), failed = blocked.get(failKey);
+    if (guest && now() < guest.until) continue;
+    if (failed && now() < failed.until) { carried.push(failed.error); continue; }
     if (db.canInsertCrews) {
       const can = await db.canInsertCrews(orgId).catch((e) => { log('[argo] msgr 조직 파견 가능 여부 확인 실패 — 종전대로 시도합니다:', e?.message ?? e); return true; });
-      if (!can) { blocked.set(key, { until: now() + INSERT_BLOCK_MS, error: null }); continue; }
+      if (!can) { blocked.set(roleKey, { until: now() + INSERT_BLOCK_MS, error: null }); continue; }
     }
-    blocked.delete(key); ok.add(orgId);
+    blocked.delete(roleKey); blocked.delete(failKey); ok.add(orgId);
   }
   return { ok, carried };
 }
@@ -579,7 +597,7 @@ export async function mirrorInventory(wsId, { db, uid, agents, log = console.err
   // 이 틱에 넣을 slug(개인 행·조직 행 어디든 빠진 것) — 얼굴 재료는 이 slug들만, 처음 필요할 때 한 번에 읽는다
   const missing = (orgId) => (a) => !rows.some((r) => (r.org_id ?? null) === orgId && r.slug === a.slug);
   // 조직 행은 넣을 수 있는 조직에만(검수 2차 M-2) — 손님·잠긴 조직은 묻기만 하고 얼굴 재료 읽기·insert는 하지 않는다. 넣을 행이 없으면 묻지도 않는다
-  const { ok: insertable, carried } = await insertableOrgs(db, uid, orgIds.filter((o) => agents.some(missing(o))), { blocked, now, log });
+  const { ok: insertable, carried } = await insertableOrgs(db, uid, wsId, orgIds.filter((o) => agents.some(missing(o))), { blocked, now, log });
   const want = agents.filter((a) => (db.insertPersonal && missing(null)(a)) || [...insertable].some((o) => missing(o)(a))).map((a) => a.slug);
   const looksOf = lookReader(db, uid, wsId, log, want);
   // 개인 공간(2026-09-30 유건): 조직과 상관없이 내 크루가 개인 공간에 보인다 — 개인 행(org NULL, 허용 owner). 조직이 없는 계정도.
@@ -619,9 +637,9 @@ export async function mirrorInventory(wsId, { db, uid, agents, log = console.err
       else for (const orgId of orgs) await db.upsertAvailable(inserts.filter((r) => r.org_id === orgId)).catch((err) => failed.set(orgId, err));
     }
   }
-  // 사전 확인으로 못 거른 실패(msgr_ws_owned_by_other 등)는 10분 동안 그 조직 insert를 다시 하지 않는다 — 같은 실패 쓰기를 15초마다 되풀이하지 않게(DB 위생).
+  // 사전 확인으로 못 거른 결정적 실패(msgr_ws_owned_by_other 등)는 10분 동안 그 회사·조직 insert를 다시 하지 않는다 — 같은 실패 쓰기를 15초마다 되풀이하지 않게(DB 위생).
   // 오류 표시는 유지한다: 백오프 중인 틱도 저장한 오류를 끝에 다시 던져 브리지가 미러 오류로 계속 드러낸다
-  for (const [orgId, e] of failed) blocked.set(`${uid}:${orgId}`, { until: now() + INSERT_BLOCK_MS, error: e });
+  for (const [orgId, e] of failed) if (isDeterministicInsertError(e)) blocked.set(`fail:${uid}:${wsId}:${orgId}`, { until: now() + INSERT_BLOCK_MS, error: e }); // 일시 오류는 백오프 없이 다음 틱에 다시
   const failures = [...carried, ...failed.values()];
   const result = done(out);
   if (failures.length) { for (const e of failures.slice(1)) log('[argo] msgr 조직 크루 파견 실패:', e?.message ?? e); throw failures[0]; }
@@ -706,7 +724,9 @@ export async function detachFiredCrew(wsId, slug, opts = {}) {
   try {
     const ids = await c.db.detachActiveCrews(c.uid, wsId, slug);
     if (ids.length && await hasCard(wsId, slug).catch(() => false)) {
-      await Promise.all(ids.map((id) => c.db.updateCrewInfo(id, { status: 'active' }).catch((e) => log('[argo] msgr 다시 영입한 크루 되돌리기 실패 — 다음 미러 틱이 처리합니다:', e?.message ?? e))));
+      const failedRevert = (await Promise.all(ids.map((id) => c.db.updateCrewInfo(id, { status: 'active' }).then(() => false, (e) => { log('[argo] msgr 다시 영입한 크루 되돌리기 실패 — 다음 미러 틱이 되살립니다:', e?.message ?? e); return true; })))).some(Boolean);
+      // 되돌리기가 실패하면 기준에서 slug를 뺀다 — 기준에 있으면 '다시 생긴 카드' 변화가 없어 분리된 채 영영 안 살아난다. 빠지면 다음 틱이 카드를 새로 본 것으로 detached 행만 active로 되돌린다(검수 3차 L-1)
+      if (failedRevert) seen.get(wsId)?.delete(slug);
       return { skipped: 'rehired-during' };
     }
     seen.get(wsId)?.delete(slug);

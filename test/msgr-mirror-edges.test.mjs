@@ -339,3 +339,105 @@ test('E17(2차 M-2). 넣을 행이 없는 유휴 틱은 허용 범위 기본값(
   await mirrorInventory(WS, { db: d, uid: UID, agents: [card('luna', null, '루나'), card('newbie', null, '새내기')], seen, blocked, now: () => 1 });
   assert.deepEqual(asked, [[O1, O2]], '새 에이전트가 생긴 틱에만 한 번');
 });
+
+// ── 검수 3차(6b28a587 대상) M-B·M-C·L-1·L-2·L-4 ──
+const fresh = () => db({ orgs: [O1], rows: [], looks: [] });
+const insertable = (d) => { d.canInsertCrews = async () => true; return d; };
+const dbError = (message, code) => Object.assign(new Error(`msgr db: ${message}`), code ? { code } : {});
+
+test('E18(3차 M-B). 실패 백오프는 회사 단위 — 회사 A의 msgr_ws_owned_by_other가 같은 계정·조직의 정상 회사 B 파견을 막지 않는다(손님·잠김 판정은 조직 단위로 따로)', async () => {
+  const d = insertable(fresh()); const blocked = new Map(); let clock = 1_000_000;
+  const okUpsert = d.upsertAvailable; d.upsertAvailable = async (rows) => { if (rows.some((r) => r.ws_id === 'wsA')) { d.calls.push(['upsert-fail', 'wsA']); throw dbError('msgr_ws_owned_by_other'); } return okUpsert(rows); };
+  const run = (ws, agents) => mirrorInventory(ws, { db: d, uid: UID, agents, seen: new Map(), blocked, now: () => clock, log: () => {} });
+  await assert.rejects(run('wsA', [card('a1')]), /msgr_ws_owned_by_other/);
+  clock += 15_000;
+  await run('wsB', [card('b1')]);
+  assert.ok(d.state.rows.some((r) => r.ws_id === 'wsB' && r.slug === 'b1' && r.org_id === O1), '정상 회사 B는 파견된다');
+  d.calls.length = 0; clock += 15_000;
+  await assert.rejects(run('wsA', [card('a1')]), /msgr_ws_owned_by_other/, '회사 A는 백오프 중 — 오류 표시는 유지');
+  assert.deepEqual(d.calls.filter(([k]) => k === 'upsert-fail'), [], '회사 A 실패 쓰기는 되풀이하지 않는다');
+  // 손님·잠김은 조직 단위 — 다른 회사에서도 한 번 판정한 결과를 쓴다
+  const g = guestWorld({ orgs: ['g1'] }); const blockedG = new Map();
+  await mirrorInventory('wsA', { db: g, uid: UID, agents: [card('luna', null, '루나')], seen: new Map(), blocked: blockedG, now: () => clock, log: () => {} });
+  await mirrorInventory('wsB', { db: g, uid: UID, agents: [card('luna', null, '루나')], seen: new Map(), blocked: blockedG, now: () => clock, log: () => {} });
+  assert.deepEqual(g.calls.filter(([k]) => k === 'canInsertCrews'), [['canInsertCrews', 'g1']], '손님 판정은 회사와 상관없이 조직당 한 번');
+});
+
+test('E19(3차 M-C). 일시 오류(fetch failed·402·5xx·시간 초과)는 백오프하지 않는다 — 다음 틱에 다시 시도, 결정적 오류(RLS 42501·제약 위반 23xxx·msgr_ws_owned_by_other)만 10분', async () => {
+  for (const [label, err, backoff] of [['fetch failed', new Error('TypeError: fetch failed'), false], ['402', dbError('Payment Required'), false], ['5xx', dbError('upstream connect error', 'PGRST000'), false],
+    ['statement timeout', dbError('canceling statement due to statement timeout', '57014'), false], ['code 없는 서버 오류', dbError('internal error'), false],
+    ['RLS 42501', dbError('new row violates row-level security policy', '42501'), true], ['제약 위반 23514', dbError('violates check constraint', '23514'), true], ['unique 23505', dbError('duplicate key', '23505'), true],
+    ['msgr_ws_owned_by_other(code 없음)', dbError('msgr_ws_owned_by_other'), true], ['P0001', dbError('raise', 'P0001'), true]]) {
+    const d = insertable(fresh()); const blocked = new Map(); let clock = 1_000_000;
+    const okUpsert = d.upsertAvailable; let failOnce = true;
+    d.upsertAvailable = async (rows) => { if (failOnce) { failOnce = false; d.calls.push(['upsert-fail']); throw err; } return okUpsert(rows); };
+    const tick = () => mirrorInventory(WS, { db: d, uid: UID, agents: [card('luna', null, '루나')], seen: new Map(), blocked, now: () => clock, log: () => {} });
+    await assert.rejects(tick(), (e) => e === err, `${label}: 첫 틱은 오류가 드러난다`);
+    clock += 15_000;
+    if (backoff) { await assert.rejects(tick(), (e) => e === err, `${label}: 백오프 중에도 오류 표시`); assert.equal(d.state.rows.filter((r) => r.org_id).length, 0, `${label}: 10분 동안 다시 하지 않는다`); }
+    else { await tick(); assert.equal(d.state.rows.filter((r) => r.org_id).length, 1, `${label}: 다음 틱에 바로 파견(오류 표시도 사라진다)`); }
+  }
+});
+
+// 실제 makeDb를 메모리 표 위에서 돌리는 가짜 supabase 클라이언트 — 필터를 실제로 적용한다(검수 3차 L-2·L-4)
+function memClient(tables, rpcs = {}) {
+  const make = (name) => {
+    const q = { op: 'select', patch: null, f: [], sel: false,
+      select() { q.sel = true; return q; }, update(p) { q.op = 'update'; q.patch = p; return q; },
+      eq(k, v) { q.f.push((r) => r[k] === v); return q; }, in(k, vs) { q.f.push((r) => vs.includes(r[k])); return q; },
+      then(ok, no) { const hit = tables[name].filter((r) => q.f.every((x) => x(r))); if (q.op === 'update') hit.forEach((r) => Object.assign(r, q.patch)); return Promise.resolve({ data: q.op === 'update' && !q.sel ? null : hit.map((r) => ({ ...r })), error: null }).then(ok, no); } };
+    return q;
+  };
+  return { from: make, rpc: async (n, a) => rpcs[n](a) };
+}
+
+test('E20(3차 L-2). 되돌리기(status=active)는 분리된(detached) 행에만 — 그 사이 사용자가 파견 해제(available)한 행을 덮지 않는다, 직무·이름 갱신은 상태와 무관', async () => {
+  const rows = [{ id: 'x1', status: 'detached', role_text: 'a' }, { id: 'x2', status: 'available', role_text: 'a' }, { id: 'x3', status: 'active', role_text: 'a' }];
+  const dbm = M.makeDb(memClient({ msgr_crews: rows }));
+  for (const id of ['x1', 'x2', 'x3']) await dbm.updateCrewInfo(id, { status: 'active' });
+  assert.deepEqual(rows.map((r) => r.status), ['active', 'available', 'active'], 'detached만 active로 — available(해제)은 그대로');
+  await dbm.updateCrewInfo('x2', { role_text: 'b' }); await dbm.updateCrewInfo('x1', { display_name: 'N' });
+  assert.deepEqual([rows[1].role_text, rows[0].display_name], ['b', 'N'], '다른 칸 갱신은 상태와 무관');
+  await dbm.updateCrewInfo('x1', { status: 'detached' });
+  assert.equal(rows[0].status, 'detached', '분리(detached)는 그대로 쓸 수 있다');
+});
+
+test('E21(3차 L-1·L-2). 분리하는 사이 다시 영입 + 되돌리기 실패 — 기준에서 slug를 빼 다음 틱이 되살리고, 그 사이 사용자가 해제(available)한 행은 덮지 않는다', async () => {
+  const mk = () => [{ id: 'x1', org_id: O1, slug: 'x', display_name: 'X', role_text: null, status: 'active' }, { id: 'xp', org_id: null, slug: 'x', display_name: 'X', role_text: null, status: 'active' }];
+  const run = async ({ failRevert, userReleases }) => {
+    const d = db({ rows: mk() }); let blip = failRevert;
+    const setStatus = d.updateCrewInfo; d.updateCrewInfo = async (id, patch) => { if (patch.status === 'active' && blip) throw new Error('network blip'); return setStatus(id, patch); };
+    d.detachActiveCrews = async () => { const hit = d.state.rows.filter((r) => r.slug === 'x' && r.status === 'active'); hit.forEach((r) => { r.status = 'detached'; }); if (userReleases) d.state.rows.find((r) => r.id === 'x1').status = 'available'; return hit.map((r) => r.id); };
+    const seen = new Map([[WS, new Map([['x', null], ['y', null]])]]); let n = 0; const logs = [];
+    const res = await M.detachFiredCrew(WS, 'x', { session: async () => ({ uid: UID, db: d }), load: async () => ({ ownerId: UID }), seen, hasCard: async () => n++ > 0, log: (...a) => logs.push(a.join(' ')) });
+    return { d, seen, res, logs, heal: async () => { blip = false; for (let i = 0; i < 3; i++) await mirrorInventory(WS, { db: d, uid: UID, agents: [card('x', null, 'X'), card('y', null, 'Y')], seen }); } };
+  };
+  const a = await run({ failRevert: true, userReleases: false });
+  assert.deepEqual(a.res, { skipped: 'rehired-during' }); assert.ok(!a.seen.get(WS).has('x'), '되돌리기가 실패하면 기준에서 slug를 뺀다 — 다음 틱이 다시 생긴 카드로 본다'); assert.ok(a.logs.length >= 1);
+  assert.deepEqual(['x1', 'xp'].map((id) => a.d.state.rows.find((r) => r.id === id).status), ['detached', 'detached'], '실패한 직후는 분리된 채');
+  await a.heal();
+  assert.deepEqual(['x1', 'xp'].map((id) => a.d.state.rows.find((r) => r.id === id).status), ['active', 'active'], '다음 미러 틱이 되살린다');
+  const b = await run({ failRevert: false, userReleases: true });
+  assert.deepEqual(b.res, { skipped: 'rehired-during' }); assert.ok(b.seen.get(WS).has('x'), '되돌리기가 성공하면 기준은 그대로');
+});
+
+test('E22(3차 L-4). makeDb().canInsertCrews — 역할(owner·admin·member)과 잠금을 실제로 검사한다: 손님·역할 없음·잠긴 조직은 false, 함수 오류는 던진다', async () => {
+  const roles = { own: 'owner', adm: 'admin', mem: 'member', gst: 'guest', none: null }, locked = new Set(['lck']);
+  const rpcs = { msgr_role: async ({ org }) => ({ data: org === 'lck' ? 'owner' : roles[org] ?? null, error: null }), msgr_org_locked: async ({ org }) => ({ data: locked.has(org), error: null }) };
+  const dbm = M.makeDb(memClient({}, rpcs));
+  for (const [org, want] of [['own', true], ['adm', true], ['mem', true], ['gst', false], ['none', false], ['lck', false]]) assert.equal(await dbm.canInsertCrews(org), want, org);
+  const broken = M.makeDb(memClient({}, { msgr_role: async () => ({ data: null, error: { message: 'rpc down', code: '57014' } }), msgr_org_locked: async () => ({ data: false, error: null }) }));
+  await assert.rejects(broken.canInsertCrews('own'), /rpc down/);
+  const lockErr = M.makeDb(memClient({}, { msgr_role: async () => ({ data: 'owner', error: null }), msgr_org_locked: async () => ({ data: null, error: { message: 'lock rpc down' } }) }));
+  await assert.rejects(lockErr.canInsertCrews('own'), /lock rpc down/);
+});
+
+test('E21b(3차 L-2). 실제 makeDb로 — 분리와 되돌리기 사이에 사용자가 파견 해제(available)한 행은 되돌리기가 덮지 않고, 그대로 분리된 다른 행만 active로 돌아온다', async () => {
+  const rows = [{ id: 'x1', org_id: O1, owner_user_id: UID, ws_id: WS, slug: 'x', display_name: 'X', role_text: null, status: 'active' }, { id: 'xp', org_id: null, owner_user_id: UID, ws_id: WS, slug: 'x', display_name: 'X', role_text: null, status: 'active' }];
+  const dbm = M.makeDb(memClient({ msgr_crews: rows }));
+  const detach = dbm.detachActiveCrews; dbm.detachActiveCrews = async (...a) => { const ids = await detach(...a); rows.find((r) => r.id === 'x1').status = 'available'; return ids; }; // 분리 직후 사용자가 조직 행을 파견 해제
+  let n = 0;
+  const res = await M.detachFiredCrew(WS, 'x', { session: async () => ({ uid: UID, db: dbm }), load: async () => ({ ownerId: UID }), seen: new Map(), hasCard: async () => n++ > 0, log: () => {} });
+  assert.deepEqual(res, { skipped: 'rehired-during' });
+  assert.deepEqual(rows.map((r) => [r.id, r.status]), [['x1', 'available'], ['xp', 'active']], '해제한 행은 그대로, 분리된 행만 되살아난다');
+});
