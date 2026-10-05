@@ -1667,7 +1667,7 @@ export const DICT = {
   'rail.src.hermes': ['헤르메스', 'Hermes'],
   'rail.src.openclaw': ['오픈클로', 'OpenClaw'],
   'rail.src.custom': ['외부', 'External'],
-  'rail.relink': ['다시 연결 필요', 'Reconnect needed'],
+  'rail.relink': ['다시 연결 필요', 'Reconnect'], // 영어 줄 배지가 'Reconnect n…'로 잘렸다(UXM-25와 같은 자리) — 자세한 이유는 title(rail.relink.title)
   'rail.relink.title': ['개인 공간에서 답하지 않습니다 — 조직에서 연결 명령을 다시 실행하거나 토큰을 새로 받으세요', 'Not answering in your personal space — run the connect command again or get a new token in the organization'],
   'rail.twin.org': ['{org}에 연결한 외부 에이전트', 'External agent connected to {org}'],
   'rail.leftorg': ['조직 나감', 'Left org'], // 줄 배지 — 40% 폭에서 '조직을 나가 사…'로 잘렸다(UXM-25). 자세한 이유는 title(rail.leftorg.title)
