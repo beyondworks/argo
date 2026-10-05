@@ -107,7 +107,7 @@ test('App.jsx 배선: 소속 조직 전부의 org: 토픽과 u:<나> 토픽을 �
   const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
   assert.match(app, /supabase\.channel\(`u:\$\{uid\}`/, 'u:<나> 구독');
   assert.match(app, /for \(const o of orgs\) \{\s*const ch = supabase\.channel\(`org:\$\{o\.id\}`/, '소속 조직 전부의 org: 구독(보는 조직 포함 — 기능 점검 D3: 한 번 걸어 유지)');
-  assert.match(app, /\}, \[uid, orgIdsKey, session\.access_token, resumeEpoch, roomReset\]\);[^\n]*탭·고른 조직은 아니다/, '구독은 탭·고른 조직(orgId)이 바뀌어도 다시 걸지 않는다');
+  assert.match(app, /const orgSubKey = orgSubscriptionKey\(\{ uid, orgIdsKey, resumeEpoch, roomReset \}\);[\s\S]*?\}, \[orgSubKey, hasToken\]\);[^\n]*탭·고른 조직·토큰 갱신은 아니다/, '구독은 탭·고른 조직(orgId)·토큰 갱신에 다시 걸지 않는다(키 판정은 realtime-link.test.mjs)');
   // 알림 전 읽힘 확인 — 알릴 상황(shouldNotify)일 때만 조회. D55부터 건너뛴 이유를 진단에 남긴다(notifySkip → 'viewing'은 shouldNotify 거짓)
   assert.match(app, /const notifySkip = \(payload\) => \{[^\n]*return shouldNotify\(payload\.channel_id\) \? '' : 'viewing'; \};/);
   const body = app.slice(app.indexOf('const notifyReadable = (payload, space) => {'), app.indexOf('const notifyApproval'));
@@ -165,4 +165,17 @@ test('u: 구독: 소켓이 끊겨 난 오류(서버 응답 없음)는 채널을 
   connected = true;
   made[0].cb('CHANNEL_ERROR', new Error('Unauthorized', { cause: { reason: 'Unauthorized' } }));
   assert.deepEqual([removed, timers.map((x) => x.ms)], [[0], [60_000]], '연결된 상태의 가입 거절(평범한 {reason} 객체)은 여전히 걷고 1분 뒤');
+});
+
+// 조직이 없는 사용자는 재연결 신호가 전혀 없었다(목록 다시 읽기는 org: 구독 상태에서만, 2026-10-05 분리 검증) — u: 상태도 앱에 알린다.
+test('u: 구독 상태를 앱에 알린다(onStatus) — 지금 붙어 있는 채널 것만, 걷어 낸 옛 채널의 CLOSED는 알리지 않는다', () => {
+  const made = []; const seen = []; const timers = [];
+  const sb = { realtime: { isConnected: () => true }, removeChannel: () => Promise.resolve('ok') };
+  const make = () => { const c = { n: made.length, subscribe(cb) { c.cb = cb; return c; } }; made.push(c); return c; };
+  joinWithBackoff(sb, make, { timer: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clear: () => {}, onStatus: (st) => seen.push(st) });
+  made[0].cb('SUBSCRIBED'); made[0].cb('TIMED_OUT'); made[0].cb('SUBSCRIBED');
+  made[0].cb('CHANNEL_ERROR', new Error('Unauthorized', { cause: { reason: 'Unauthorized' } })); // 가입 거절 → 걷고 1분 뒤
+  made[0].cb('CLOSED'); // 걷힌 옛 채널
+  timers.at(-1).fn(); made[1].cb('SUBSCRIBED');
+  assert.deepEqual(seen, ['SUBSCRIBED', 'TIMED_OUT', 'SUBSCRIBED', 'CHANNEL_ERROR', 'SUBSCRIBED']);
 });

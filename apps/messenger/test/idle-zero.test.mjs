@@ -44,7 +44,7 @@ test('읽음 커서는 마지막으로 쓴 값보다 클 때만 쓴다(초점·�
 });
 
 test('구독은 내가 속한 조직 전체 + u:를 한 번 — 탭·고른 조직이 바뀌어도 다시 걸지 않는다(D3), 방 토픽도 공간을 오가며 유지', () => {
-  assert.match(app, /\}, \[uid, orgIdsKey, session\.access_token, resumeEpoch, roomReset\]\);/);
+  assert.match(app, /\}, \[orgSubKey, hasToken\]\);/); // 키 = orgSubscriptionKey(uid·조직 집합·복귀·전체 해제 — realtime-link.test.mjs)
   assert.doesNotMatch(app, /\}, \[orgId, session\.access_token, resumeEpoch\]\);/, '지금 조직만 구독하던 효과는 없다');
   assert.match(app, /\(ready && spaces\.get\(id\) === space && !want\.has\(id\)\)/, '방 토픽은 지금 공간에서 빠진 방만 뗀다');
   assert.match(app, /\) : isPhone && page !== 'chat' \? null/, '폰 목록 뒤에 숨은 대화방을 그리지 않는다');

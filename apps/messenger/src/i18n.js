@@ -622,6 +622,7 @@ export const DICT = {
   'thread.loading': ['이전 메시지를 불러오는 중…', 'Loading earlier messages…'],
   'thread.start': ['대화의 시작입니다', 'Beginning of the conversation'],
   'thread.toBottom': ['맨 아래로', 'Jump to latest'],
+  'thread.jumped': ['못 본 글이 많아 최신 글로 옮겼습니다. 위로 올리면 이전 글이 이어집니다.', 'You missed a lot of messages, so we jumped to the latest. Scroll up to see earlier ones.'],
   'ui.menu': ['메뉴', 'Menu'],
   'ui.settings': ['설정', 'Settings'],
   'ui.back': ['대화로 돌아가기', 'Back to chat'],
