@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 import { useLang } from './i18n';
 import { Icon, overlayActive, OVERLAY_EVENT, uiWorkActive, UI_WORK_EVENT } from './ui';
 import { acknowledgeUpdateNotesVersion, closeUpdateNotes, isEditingElement, readUpdateNotesVersion,
-  shouldAutoDismissUpdateNotes, shouldShowUpdateNotes, updateNotesCardPlacement, updateNotesFor, UPDATE_NOTES_BLUR_SETTLE_MS,
+  shouldAutoDismissUpdateNotes, shouldShowUpdateNotes, updateNotesCardPlacement, updateNotesFor, updateNotesView, UPDATE_NOTES_BLUR_SETTLE_MS,
   UPDATE_NOTES_INLINE_STYLE, UPDATE_NOTES_SLOT_ID } from './update-notes-state.mjs';
 
 // Later/error dismissals survive company navigation, but not a new app/browser session.
@@ -151,14 +151,12 @@ export default function UpdateNotes({ current, ready, isApp, blocked = false }) 
   };
 
   if (!ready || !items.length || blocked || presentation?.key !== key) return null;
-  // 접힌 상태 — 상단바 칩(덮는 것 없음). 오류만 알릴 때·사용자가 펼쳤을 때만 카드
-  if (!expanded && !presentation.errorOnly && !presentation.error) {
-    const host = document.getElementById('argo-topbar-notes');
-    if (host) return createPortal(<UpdateNotesChip version={current} t={t} onExpand={() => setExpanded(true)} />, host);
-    if (surface.hidden || surface.editing || surface.overlay) return null;
-    return createPortal(<UpdateNotesPill version={current} t={t} onExpand={() => setExpanded(true)} onClose={close} />, document.body);
-  }
-  if (surface.hidden || surface.editing || surface.overlay) return null;
+  // 접힌 상태 — 상단바 칩(덮는 것 없음, 입력 중에도 보임). 자리가 없으면 알약. 오류만 알릴 때·사용자가 펼쳤을 때만 카드
+  const host = document.getElementById('argo-topbar-notes');
+  const view = updateNotesView({ hasChipHost: !!host, expanded, errorOnly: !!presentation.errorOnly, error: presentation.error, ...surface });
+  if (view === 'chip') return createPortal(<UpdateNotesChip version={current} t={t} onExpand={() => setExpanded(true)} />, host);
+  if (view === 'pill') return createPortal(<UpdateNotesPill version={current} t={t} onExpand={() => setExpanded(true)} onClose={close} />, document.body);
+  if (view !== 'card') return null;
   const place = updateNotesCardPlacement(document.getElementById(UPDATE_NOTES_SLOT_ID));
   return createPortal(<UpdateNotesCard version={current} items={presentation.errorOnly ? [] : items} t={t} inline={place.inline}
     onConfirm={presentation.errorOnly ? undefined : confirm} saving={saving}

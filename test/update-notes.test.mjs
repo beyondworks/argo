@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { UPDATE_NOTES, UPDATE_NOTES_STORAGE_KEY, stableVersion, updateNotesFor, shouldShowUpdateNotes, isEditingElement,
-  readUpdateNotesVersion, acknowledgeUpdateNotesVersion } from '../app/update-notes-state.mjs';
+  readUpdateNotesVersion, acknowledgeUpdateNotesVersion, updateNotesView } from '../app/update-notes-state.mjs';
 
 const eligible = { current: '0.1.89', bundleVersion: '0.1.89', ready: true, loaded: true };
 const store = (initial = null) => {
@@ -33,8 +34,8 @@ test('first visit and skipped versions show current notes; acknowledged or downg
   assert.equal(shouldShowUpdateNotes({ ...eligible, current: '0.1.9999', bundleVersion: '0.1.9999' }), false);
 });
 
-test('busy, hidden, editing, overlay and session dismissal defer display without acknowledgement', () => {
-  for (const flag of ['blocked', 'hidden', 'editing', 'overlay', 'dismissed']) {
+test('busy, hidden, overlay and session dismissal defer display without acknowledgement', () => {
+  for (const flag of ['blocked', 'hidden', 'overlay', 'dismissed']) {
     assert.equal(shouldShowUpdateNotes({ ...eligible, [flag]: true }), false, flag);
   }
   for (const flag of ['ready', 'loaded']) assert.equal(shouldShowUpdateNotes({ ...eligible, [flag]: false }), false, flag);
@@ -155,4 +156,32 @@ test('배선 — 회사 화면 본문 맨 앞에 빈 자리, 펼친 카드는 �
   assert.match(notes, /<UpdateNotesCard [^>]*inline=\{place\.inline\}/);
   assert.match(notes, /, place\.host \?\? document\.body\);/);
   assert.match(notes, /style=\{inline \? UPDATE_NOTES_INLINE_STYLE : \{ position: 'fixed'/, '흐름 카드는 고정 위치 스타일을 쓰지 않는다');
+});
+
+// 0.1.96 rc 실측: 대화 화면을 주소로 열거나 새로 고치면 입력창이 바로 포커스를 받아(editing) 안내가 꺼내지지 않았고,
+// 상단바 '새 소식' 칩이 입력창을 떠날 때까지 안 나왔다. 업데이트 뒤 앱이 대화 화면으로 다시 열리면 안내를 못 본다.
+test('typing in the chat input does not hold back the collapsed top-bar chip', () => {
+  assert.equal(shouldShowUpdateNotes({ ...eligible, editing: true }), true);
+  assert.equal(updateNotesView({ hasChipHost: true, editing: true }), 'chip');
+  assert.equal(updateNotesView({ hasChipHost: true, editing: true, overlay: true, hidden: true }), 'chip', 'chip covers nothing');
+  assert.equal(updateNotesView({ hasChipHost: true }), 'chip');
+});
+
+test('floating pill and expanded card still wait while typing, behind overlays and in hidden tabs', () => {
+  for (const flag of ['editing', 'overlay', 'hidden']) {
+    assert.equal(updateNotesView({ hasChipHost: false, [flag]: true }), null, 'pill ' + flag);
+    assert.equal(updateNotesView({ hasChipHost: true, expanded: true, [flag]: true }), null, 'card ' + flag);
+    assert.equal(updateNotesView({ hasChipHost: true, error: 'updates.saveError', [flag]: true }), null, 'error card ' + flag);
+  }
+  assert.equal(updateNotesView({ hasChipHost: false }), 'pill');
+  assert.equal(updateNotesView({ hasChipHost: true, expanded: true }), 'card');
+  assert.equal(updateNotesView({ hasChipHost: true, errorOnly: true, error: 'updates.readError' }), 'card');
+  assert.equal(updateNotesView({ hasChipHost: false, error: 'updates.saveError' }), 'card');
+});
+
+test('UpdateNotes renders through updateNotesView and its show gate receives the live surface', () => {
+  const src = readFileSync(new URL('../app/update-notes.jsx', import.meta.url), 'utf8');
+  assert.match(src, /const view = updateNotesView\(\{ hasChipHost: !!host, expanded,[^}]*\.\.\.surface \}\)/);
+  assert.match(src, /if \(view === 'chip'\) return createPortal\(<UpdateNotesChip/);
+  assert.doesNotMatch(src, /surface\.editing \|\|/, 'render path must not gate on editing outside updateNotesView');
 });

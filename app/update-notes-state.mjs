@@ -26,11 +26,24 @@ export function updateNotesFor(current, bundleVersion) {
   return Object.hasOwn(UPDATE_NOTES, current) ? UPDATE_NOTES[current] : [];
 }
 
+/** 이번 실행에 안내를 꺼낼지(접힌 칩으로 시작). 입력 중(editing)은 조건이 아니다 — 칩은 상단바 안에 있어 아무것도 덮지 않는다.
+    대화 화면은 열자마자 입력창에 포커스를 주므로, 입력 중에 미루면 업데이트 뒤 대화 화면으로 다시 열린 앱에서 칩이 입력창을
+    떠날 때까지 안 나왔다(0.1.96 rc 실측). 덮을 수 있는 알약·펼친 카드는 updateNotesView가 입력 중에 미룬다. */
 export function shouldShowUpdateNotes({ current, bundleVersion, ready, loaded, ackVersion = null,
-  dismissed = false, blocked = false, hidden = false, editing = false, overlay = false }) {
-  return !!(ready && loaded && !dismissed && !blocked && !hidden && !editing && !overlay
+  dismissed = false, blocked = false, hidden = false, overlay = false }) {
+  return !!(ready && loaded && !dismissed && !blocked && !hidden && !overlay
     && updateNotesFor(current, bundleVersion).length
     && (!stableVersion(ackVersion) || cmpVersion(current, ackVersion) > 0));
+}
+
+/** 꺼낸 안내를 지금 어떤 모양으로 그릴지 — 'chip'(상단바 자리 있음, 접힘) · 'pill'(자리 없음, 접힘) · 'card'(펼침·오류) · null.
+    칩만 입력 중에도 보인다. 알약·카드는 떠 있어 입력창·보내기 버튼을 덮을 수 있어 입력·오버레이·숨김 중에는 그리지 않는다. */
+export function updateNotesView({ hasChipHost = false, expanded = false, errorOnly = false, error = '',
+  hidden = false, editing = false, overlay = false } = {}) {
+  const collapsed = !expanded && !errorOnly && !error;
+  if (collapsed && hasChipHost) return 'chip';
+  if (hidden || editing || overlay) return null;
+  return collapsed ? 'pill' : 'card';
 }
 
 /** 이번 업데이트 안내(칩)를 띄우지 않는 때 — 회사 정보를 아직 못 받았거나(받는 중·없음·불러오기 실패), 작업 독·피드백·팀 이름 입력창이 열려 있거나,
