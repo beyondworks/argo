@@ -38,26 +38,34 @@ export const DEFER = Symbol('queue.defer');
 export const DEFER_BACKOFF_MS = 3000; // DEFER 잡의 재검사 간격(순서 대기의 DB 조회 = 잡당 3초에 한 번)
 /* ─── 실패 분류(F1, 2026-10-05) — 영구 오류를 1초마다 끝없이 재시도하던 결함 ───
    영구 = 다시 해도 같은 결과가 나오는 오류: Postgres SQLSTATE 22(데이터 형식 — uuid 형변환 22P02 등)·23(제약 위반)·
-   42(문법·권한 — RLS 42501·없는 열 42703), PostgREST 요청·스키마 오류(PGRST1xx·PGRST2xx), 명시 표지(e.permanent).
+   42(문법·권한 — RLS 42501), PostgREST 요청 오류(PGRST1xx·PGRST2xx), 명시 표지(e.permanent).
    일시 = 그 밖 전부(연결 PGRST0xx·JWT PGRST3xx·직렬화·교착·시간 초과·코드 없음) — 지우지 않고 지수 간격으로 재시도한다.
+   스키마 어긋남(H1, 2026-10-05) = PGRST202·204·205(함수·열·표 없음)·42883·42703·42P01 — 앱이 라이브 마이그레이션보다 먼저 나간 동안의 오류라
+   마이그레이션이 적용되면 같은 잡이 성공한다. 저장소의 다른 곳(msgr.mjs·msgr-routines.mjs·msgr-work.mjs)도 이 코드를 '옛 서버'로 본다.
+   그래서 영구가 아니라 일시처럼 기다리되(5분 상한 간격), 무한 대기가 되지 않게 잡 나이가 SCHEMA_SKEW_MAX_AGE_MS를 넘으면 버린다(onAbandon 안내).
    영구 오류 잡은 큐 폴더 안 `<이름>.failed`로 남긴다(큐 폴더는 동기화 제외 — sync.mjs isExcluded). 보존 7일·최대 50건. */
+const SCHEMA_SKEW_CODES = new Set(['PGRST202', 'PGRST204', 'PGRST205', '42883', '42703', '42P01']);
+export const SCHEMA_SKEW_MAX_AGE_MS = 24 * 3_600_000; // 메신저 STALE_MS(24시간 넘게 기다린 지시는 실행하지 않고 다시 지시를 안내)와 같은 기준
+export function isSchemaSkewError(e) {
+  return !!e && e.permanent !== true && SCHEMA_SKEW_CODES.has(e.code);
+}
 export function isPermanentQueueError(e) {
   if (!e) return false;
   if (e.permanent === true) return true;
+  if (isSchemaSkewError(e)) return false;
   const code = typeof e.code === 'string' ? e.code : '';
   return /^(22|23|42)[0-9A-Z]{3}$/.test(code) || /^PGRST[12]\d\d$/.test(code);
 }
 export const QUEUE_RETRY_MAX_MS = 5 * 60_000;
-/** n번째 연속 실패 뒤 다음 시도까지 — 1초(다음 틱)부터 두 배씩, 5분 상한. 프로세스 메모리 값이라 재시작하면 처음부터. */
-export function queueRetryDelayMs(failures) {
-  return Math.min(QUEUE_RETRY_MAX_MS, 1000 * 2 ** Math.max(0, Math.min(20, failures - 1)));
+/** n번째 연속 실패 뒤 다음 시도까지 — 1초(다음 틱)부터 두 배씩, 5분 상한. 프로세스 메모리 값이라 재시작하면 처음부터. baseMs는 테스트가 줄이거나 늘린다. */
+export function queueRetryDelayMs(failures, baseMs = 1000) {
+  return Math.min(QUEUE_RETRY_MAX_MS, baseMs * 2 ** Math.max(0, Math.min(20, failures - 1)));
 }
+export const RECOVERY_RESET_MIN_MS = 60_000; // 복구 신호로 대기 중인 잡의 간격을 푸는 최소 주기(워커당) — 계속 실패하는 잡이 성공하는 잡 옆에서 매 틱 재시도되지 않게
 const FAILED_KEEP_MS = 7 * 86_400_000;
 const FAILED_KEEP_MAX = 50;
-async function recordFailedJob(dir, n, fp, e) {
-  const job = await readJsonLenient(fp, null);
-  await writeJsonAtomic(join(dir, `${n}.failed`), { failedAt: new Date().toISOString(), code: e?.code ?? null, error: String(e?.message ?? e).slice(0, 500), job });
-  // 보존 정리 — 실패 기록이 쌓이기만 하지 않게(DB 위생 규칙 4와 같은 원칙의 로컬판). 실패가 날 때만 돈다(새 주기 작업 없음).
+/** `.failed` 보존 정리 — 실패 기록이 쌓이기만 하지 않게(DB 위생 규칙 4와 같은 원칙의 로컬판). 실패가 날 때와 워커가 시작할 때 돈다(새 주기 작업 없음). */
+async function pruneFailedJobs(dir) {
   try {
     const now = Date.now();
     const recs = [];
@@ -67,13 +75,42 @@ async function recordFailedJob(dir, n, fp, e) {
     }
     recs.sort((a, b) => b[1] - a[1]);
     for (const [i, [f, mt]] of recs.entries()) if (i >= FAILED_KEEP_MAX || now - mt > FAILED_KEEP_MS) await unlink(join(dir, f)).catch(() => {});
-  } catch { /* 정리 실패는 다음 실패 때 다시 */ }
+  } catch { /* 정리 실패는 다음 실패·다음 시작 때 다시 */ }
+}
+async function recordFailedJob(dir, n, fp, e, reason) {
+  const job = await readJsonLenient(fp, null);
+  await writeJsonAtomic(join(dir, `${n}.failed`), { failedAt: new Date().toISOString(), code: e?.code ?? null, reason, error: String(e?.message ?? e).slice(0, 500), job });
+  await pruneFailedJobs(dir);
+}
+const ABANDON_NOTICE_TIMEOUT_MS = 15_000;
+/** 버린 잡의 안내(onAbandon) — 던지거나 멈춰도 큐는 계속 돈다(안내 실패 = 로그만). 슬롯은 시간 상한까지만 점유한다. */
+async function notifyAbandon(onAbandon, job, e, info, where) {
+  if (typeof onAbandon !== 'function' || !job) return;
+  let timer;
+  try {
+    await Promise.race([onAbandon(job, e, info), new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('안내 시간 초과')), ABANDON_NOTICE_TIMEOUT_MS); timer.unref?.(); })]);
+  } catch (x) {
+    console.error(`[argo] 큐 실패 안내를 남기지 못했습니다(${where}/${info.name}):`, x?.message ?? x);
+  } finally { clearTimeout(timer); }
 }
 
-export function startQueueWorker(wsId, key, handler, { maxInflight = GW_MAX_INFLIGHT } = {}) {
+/** 옵션 — maxInflight: 동시 처리 상한. onAbandon(job, e, { name, reason }): 큐가 잡을 버릴 때(영구 오류 'permanent'·스키마 어긋남 나이 상한 'schema-age') 불리는
+    안내 훅(예: 메신저 채널에 실패 안내). 던져도 큐는 멈추지 않는다. retryBaseMs: 일시 오류 재시도 첫 간격(기본 1초 — 테스트가 바꾼다). */
+export function startQueueWorker(wsId, key, handler, { maxInflight = GW_MAX_INFLIGHT, onAbandon = null, retryBaseMs = 1000 } = {}) {
   let stopped = false;
   const failures = new Map(); // 잡 이름 → 연속 일시 실패 수(성공·영구 실패·DEFER면 지운다)
   const retryAt = new Map();  // 잡 이름 → 다음 시도 시각(지수 간격)
+  const firstFail = new Map(); // 잡 이름 → 첫 일시 실패 시각 — createdAt 없는 잡의 스키마 어긋남 나이 대용(프로세스 메모리)
+  const forget = (n) => { failures.delete(n); retryAt.delete(n); firstFail.delete(n); };
+  let lastRecoveryAt = 0;
+  /** 핸들러가 던지지 않고 돌아왔다 = 연결이 살아 있다 → 간격을 기다리던 잡들을 다음 틱에 다시 시도시킨다(장애가 8분을 넘으면 간격이 5분 상한이라 복구 뒤 최대 5분 늦던 것, L5).
+      실패 횟수는 그대로 둔다(계속 실패하는 잡의 간격은 다시 1초부터 시작하지 않는다)·워커당 RECOVERY_RESET_MIN_MS에 한 번(DB 위생). */
+  const noteRecovered = () => {
+    if (!retryAt.size) return;
+    const t = Date.now(); if (t - lastRecoveryAt < RECOVERY_RESET_MIN_MS) return;
+    lastRecoveryAt = t; retryAt.clear();
+  };
+  pruneFailedJobs(queueDir(wsId, key)); // 시작 때 한 번 — 실패가 더 없어도 7일·50건 상한이 지켜진다(L4). 내부에서 오류를 삼킨다
   let me = null; // 이 기기 id — 해석 전(null)에는 잡을 집지 않는다(남의 사본 오실행 방지). 실패 시 ''(판정 생략, 전부 실행)
   getDeviceId().then((d) => { me = d; }).catch(() => { me = ''; });
   const busy = new Set();
@@ -123,9 +160,10 @@ export function startQueueWorker(wsId, key, handler, { maxInflight = GW_MAX_INFL
         if (!st0) { busy.delete(n); return; } // 다른 워커의 선점은 그대로, 재적재된 .json은 성공 뒤 처리
 
         let done = false;
+        let job = null; // catch의 스키마 어긋남 나이 판정·안내 훅이 쓴다
         const hb = setInterval(() => { const t = new Date(); utimes(fp, t, t).catch(() => {}); }, 60_000); hb.unref?.(); // 선점 심박 — 살아 있는 긴 턴(30분 넘는 사고 과정·장시간 잡)이 CLAIM_MAX_AGE_MS 회수에 걸리지 않게
         try {
-          const job = await readJsonLenient(fp, null); // 손상 잡은 null → 처리 스킵 후 삭제(무한 재시도 방지)
+          job = await readJsonLenient(fp, null); // 손상 잡은 null → 처리 스킵 후 삭제(무한 재시도 방지)
           if (job?.dev && me && job.dev !== me) {
             // 다른 기기가 적재한 잡의 사본(과거 큐가 동기화되던 시절의 잔재) — 원 기기가 실행하므로 정리만
             console.log(`[argo] 큐 정리(${wsId}/${key}/${n}): 다른 기기(${String(job.dev).slice(0, 8)})의 잡 사본 — 실행 없이 제거`);
@@ -133,27 +171,32 @@ export function startQueueWorker(wsId, key, handler, { maxInflight = GW_MAX_INFL
             // dev 태그 없는 구형식 잡이 너무 오래됨 — 어느 기기 것인지 알 수 없어 좀비 실행 대신 폐기(로그로 관측)
             console.log(`[argo] 큐 정리(${wsId}/${key}/${n}): ${Math.round(LEGACY_JOB_MAX_AGE_MS / 3_600_000)}시간 넘은 구형식 잡 — 실행 없이 제거`);
           } else if (job) {
-            if (await handler(job, { path: fp }) === DEFER) { deferUntil.set(n, Date.now() + DEFER_BACKOFF_MS); return; } // 차례 아님 — finally가 선점을 풀고 백오프 뒤 다시 집는다. path = 선점 뒤 실제 파일(장시간 잡 tries 마커가 원래 이름에 쓰이던 회귀 방지)
+            if (await handler(job, { path: fp }) === DEFER) { forget(n); noteRecovered(); deferUntil.set(n, Date.now() + DEFER_BACKOFF_MS); return; } // 차례 아님 — finally가 선점을 풀고 백오프 뒤 다시 집는다. path = 선점 뒤 실제 파일(장시간 잡 tries 마커가 원래 이름에 쓰이던 회귀 방지)
+            noteRecovered(); // 핸들러가 던지지 않고 돌아왔다 — 연결 신호(DEFER도 위에서 같이 낸다)
           }
           done = true;
-          failures.delete(n); retryAt.delete(n);
+          forget(n);
           await withDirLock(`${fp0}.lock`, () => unlink(fp)).catch(() => {}); // 처리 완료분만 제거. 처리 중 크래시면 .claimed가 남아 CLAIM_MAX_AGE_MS 뒤 회수·재처리
         } catch (e) {
+          const skewAge = isSchemaSkewError(e) ? Date.now() - (Date.parse(job?.createdAt) || firstFail.get(n) || Date.now()) : 0; // 스키마 어긋남은 일시처럼 기다리되 잡 나이 상한을 넘기면 버린다
           if (e?.aborted) {
             done = true;
-            failures.delete(n); retryAt.delete(n);
+            forget(n);
             await withDirLock(`${fp0}.lock`, () => unlink(fp)).catch(() => {});
-          } else if (isPermanentQueueError(e)) {
-            // 영구 오류 — 다시 해도 같은 결과. 실패 기록을 남기고 큐에서 뺀다(1초마다 끝없이 재시도하던 결함, F1)
+          } else if (isPermanentQueueError(e) || skewAge > SCHEMA_SKEW_MAX_AGE_MS) {
+            // 영구 오류 — 다시 해도 같은 결과(또는 스키마 어긋남이 상한을 넘김). 실패 기록을 남기고 큐에서 뺀 뒤 안내 훅을 부른다(1초마다 끝없이 재시도하던 결함 F1, 흔적 없이 사라지던 결함 H1)
+            const reason = isPermanentQueueError(e) ? 'permanent' : 'schema-age';
             done = true;
-            failures.delete(n); retryAt.delete(n);
-            await withDirLock(`${fp0}.lock`, async () => { await recordFailedJob(queueDir(wsId, key), n, fp, e); await unlink(fp); }).catch(() => {});
-            console.error(`[argo] 큐 처리 실패 — 재시도 안 함(${wsId}/${key}/${n}, ${e.code ?? 'permanent'}):`, e.message);
+            forget(n);
+            await withDirLock(`${fp0}.lock`, async () => { await recordFailedJob(queueDir(wsId, key), n, fp, e, reason); await unlink(fp); }).catch(() => {});
+            console.error(`[argo] 큐 처리 실패 — 재시도 안 함(${wsId}/${key}/${n}, ${e.code ?? 'permanent'}${reason === 'schema-age' ? ', 스키마 어긋남 24시간 초과' : ''}):`, e.message);
+            await notifyAbandon(onAbandon, job, e, { name: n, reason }, `${wsId}/${key}`);
           } else {
-            // 일시 오류(인프라) — 선점을 풀고 지수 간격 뒤 재시도(첫 재시도는 다음 틱)
+            // 일시 오류(인프라·스키마 어긋남) — 선점을 풀고 지수 간격 뒤 재시도(첫 재시도는 다음 틱)
             const k = (failures.get(n) ?? 0) + 1;
-            failures.set(n, k); retryAt.set(n, Date.now() + queueRetryDelayMs(k) - 50);
-            console.error(`[argo] 큐 처리 실패(${wsId}/${key}/${n}, ${k}회째 — ${Math.round(queueRetryDelayMs(k) / 1000)}초 뒤 재시도):`, e?.message ?? e);
+            failures.set(n, k); retryAt.set(n, Date.now() + queueRetryDelayMs(k, retryBaseMs) - 50);
+            if (!firstFail.has(n)) firstFail.set(n, Date.now());
+            console.error(`[argo] 큐 처리 실패(${wsId}/${key}/${n}, ${k}회째 — ${Math.round(queueRetryDelayMs(k, retryBaseMs) / 1000)}초 뒤 재시도):`, e?.message ?? e);
           }
         } finally {
           clearInterval(hb);

@@ -51,11 +51,13 @@ test('일시 오류(코드 없음·네트워크)는 지우지 않고 지수 간�
   assert.equal(names.filter((n) => n.endsWith('.failed')).length, 0);
 });
 
-test('영구 오류 판정 표 — DB 데이터·제약·권한·문법 계열과 PostgREST 요청 오류만 영구, 연결·JWT·코드 없음은 일시', () => {
-  for (const code of ['22P02', '22001', '23502', '23503', '23514', '42501', '42703', '42P01', 'PGRST100', 'PGRST116', 'PGRST204']) {
+test('영구 오류 판정 표 — DB 데이터·제약·권한·문법 계열과 PostgREST 요청 오류만 영구, 연결·JWT·스키마 없음·코드 없음은 일시', () => {
+  for (const code of ['22P02', '22001', '23502', '23503', '23514', '42501', '42601', 'PGRST100', 'PGRST116']) {
     assert.equal(Q.isPermanentQueueError(Object.assign(new Error('x'), { code })), true, code);
   }
-  for (const code of [undefined, '', 'PGRST000', 'PGRST001', 'PGRST301', 'PGRST303', '40001', '40P01', '57014', '53300', '08006', 'ECONNRESET', 'ETIMEDOUT']) {
+  // 스키마·함수·열·표 없음 = 앱이 라이브 마이그레이션보다 먼저 나간 동안의 어긋남(H1, 2026-10-05). 저장소 다른 곳은 같은 코드를 '옛 서버'로 본다 —
+  // 마이그레이션이 적용되면 같은 잡이 성공하므로 영구로 못박지 않는다(잡 나이 24시간 상한은 queue-schema-skew.test.mjs).
+  for (const code of [undefined, '', 'PGRST000', 'PGRST001', 'PGRST202', 'PGRST204', 'PGRST205', '42883', '42703', '42P01', 'PGRST301', 'PGRST303', '40001', '40P01', '57014', '53300', '08006', 'ECONNRESET', 'ETIMEDOUT']) {
     assert.equal(Q.isPermanentQueueError(Object.assign(new Error('x'), { code })), false, String(code));
   }
   assert.equal(Q.isPermanentQueueError(Object.assign(new Error('x'), { permanent: true })), true, '명시 표지');
