@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createLinkWatch, orgSubscriptionKey, roomSignal } from '../src/realtime-link.mjs';
-import { readMissed } from '../src/refresh-messages.mjs';
+import { readMissed, createCatchUp } from '../src/refresh-messages.mjs';
 
 const fakeTimers = () => {
   const q = []; let id = 0;
@@ -80,4 +80,28 @@ test('MSG-02 평소(쪽이 덜 찬 경우)는 요청 한 번 — 글 방송마�
   let calls = 0;
   const r = await readMissed({ afterId: 5, pageSize: 100, maxPages: 5, fetchPage: async () => { calls++; return [{ id: 6 }]; } });
   assert.deepEqual([calls, r.rows.length, r.more], [1, 1, false]);
+});
+
+// 분리 검수 L3(2026-10-05): 정확히 500개(5쪽 × 100) 밀렸으면 다 읽고도 more=true라 500개를 버리고 최신으로 옮겼다 — 마지막 쪽은 하나 더 물어 남은 글을 판정한다.
+test('L3 정확히 상한만큼(500개) 밀렸으면 다 읽고 more=false — 하나라도 더 있으면 more=true', async () => {
+  for (const [missing, more] of [[500, false], [501, true]]) {
+    const server = Array.from({ length: 10 + missing }, (_, i) => ({ id: i + 1 }));
+    const r = await readMissed({ afterId: 10, pageSize: 100, maxPages: 5, fetchPage: async (cursor, limit) => server.filter((m) => m.id > cursor).slice(0, limit) });
+    assert.deepEqual([r.more, more ? null : r.rows.length], [more, more ? null : 500], `${missing}개 밀림`);
+  }
+});
+
+// 분리 검수 L3(2026-10-05): 글 방송마다 따라잡기(load(lastId))를 부르는데 진행 중 확인이 없어 겹쳤다 — 500개 넘게 밀리면 '최신으로 옮겼다' 안내가 겹친 수만큼 떴다.
+test('L3 따라잡기는 한 번에 하나 — 도는 중에 온 요청은 끝난 뒤 한 번으로 모은다', async () => {
+  let runs = 0; let release; const gates = [];
+  const go = createCatchUp(() => { runs++; return new Promise((r) => { gates.push(r); }); });
+  const p1 = go(); go(); go(); // 방송 세 건이 겹쳐 왔다
+  assert.equal(runs, 1, '도는 중에는 새로 시작하지 않는다');
+  gates[0](); await new Promise((r) => setTimeout(r, 0));
+  assert.equal(runs, 2, '끝난 뒤 한 번 더(그 사이 온 글을 놓치지 않게)');
+  gates[1](); await p1;
+  assert.equal(runs, 2, '두 번 더가 아니라 한 번');
+  go(); assert.equal(runs, 3, '끝난 뒤 새 요청은 바로 돈다'); gates[2]();
+  release = createCatchUp(async () => { throw new Error('net'); });
+  await assert.rejects(release(), /net/); await assert.rejects(release(), /net/, '실패 뒤에도 다음 요청은 돈다');
 });

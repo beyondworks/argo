@@ -70,7 +70,8 @@ export async function readableForNotify(sb, payload, orgId) {
 
 /** 거절될 수 있는 구독(서버 적용 전의 u:<나>) — 오류로 끝나면 그 채널을 걷고 min부터 두 배씩(최대 max) 기다렸다 다시 붙는다.
     붙으면 간격을 처음으로 되돌린다. realtime-js의 자체 재시도(수 초 간격)가 거절을 끝없이 되풀이해 Realtime 로그를 채우던 것을 막는다.
-    돌려준 함수로 멈춘다(예약된 재시도와 채널을 모두 걷는다). */
+    돌려준 함수로 멈춘다(예약된 재시도와 채널을 모두 걷는다). 그 함수의 retry()는 거절 뒤 기다리는 중이면 바로 다시 붙는다 — 토큰이 갱신됐을 때
+    (만료 토큰 거절이 60초~10분 대기로 이어지던 것, 검수 M2). 붙어 있거나 붙는 중이면 아무것도 안 한다. */
 export function joinWithBackoff(sb, make, { min = 60_000, max = 600_000, timer = setTimeout, clear = clearTimeout, onStatus = null } = {}) {
   let stopped = false; let ch = null; let t = null; let delay = min;
   const drop = (c) => { Promise.resolve(sb.removeChannel(c)).catch(() => {}); };
@@ -92,5 +93,7 @@ export function joinWithBackoff(sb, make, { min = 60_000, max = 600_000, timer =
     });
   };
   join();
-  return () => { stopped = true; clear(t); if (ch) drop(ch); ch = null; };
+  const stop = () => { stopped = true; clear(t); if (ch) drop(ch); ch = null; };
+  stop.retry = () => { if (stopped || ch) return; clear(t); t = null; join(); };
+  return stop;
 }

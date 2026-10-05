@@ -19,9 +19,11 @@ export async function refreshMessageWindow({ firstId, throughId, pageSize, fetch
 export async function readMissed({ afterId, pageSize, maxPages = 5, fetchPage }) {
   const rows = []; let cursor = afterId;
   for (let page = 0; page < maxPages; page++) {
-    const got = await fetchPage(cursor, pageSize);
+    const last = page === maxPages - 1; // 마지막 쪽은 하나 더 물어 남은 글이 있는지 본다 — 정확히 상한만큼 밀렸을 때 다 읽고도 버리던 것(검수 L3)
+    const got = await fetchPage(cursor, last ? pageSize + 1 : pageSize);
+    if (last && got.length > pageSize) return { rows: [...rows, ...got.slice(0, pageSize)], more: true };
     rows.push(...got);
-    if (got.length < pageSize) return { rows, more: false };
+    if (got.length < pageSize || last) return { rows, more: false };
     const next = got.at(-1).id;
     if (BigInt(next) <= BigInt(cursor)) throw new Error('Catch-up cursor did not advance');
     cursor = next;
@@ -32,4 +34,15 @@ export async function readMissed({ afterId, pageSize, maxPages = 5, fetchPage })
 export function mergeRefreshedMessages(current, fresh, firstId, throughId) {
   const first = BigInt(firstId ?? 0); const last = BigInt(throughId ?? 0);
   return [...current.filter(m => BigInt(m.id) < first), ...fresh, ...current.filter(m => BigInt(m.id) > last)];
+}
+
+/** 따라잡기를 한 번에 하나로(검수 L3 — 글 방송마다 부르는 조회가 겹쳐 같은 글을 여러 번 읽고, 500개 넘게 밀리면 '최신으로 옮겼다' 안내가 겹친 수만큼 떴다).
+    도는 중에 온 요청은 끝난 뒤 한 번으로 모은다(그 사이 온 글을 놓치지 않게). 돌려준 함수는 지금 도는 따라잡기의 약속을 돌려준다. */
+export function createCatchUp(run) {
+  let busy = null; let again = false;
+  return function catchUp() {
+    if (busy) { again = true; return busy; }
+    busy = (async () => { try { do { again = false; await run(); } while (again); } finally { busy = null; } })();
+    return busy;
+  };
 }

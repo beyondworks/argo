@@ -55,7 +55,7 @@ test('클라이언트: progress 방송 → ExecCard는 "답변 준비 중" 한 �
 
 test('P0: 안 읽음 RPC → 레일 배지(멘션은 mark·음소거는 dim)·굵은 이름·새 메시지 구분선(열 때 커서 고정)·보는 채널은 커서 갱신 · 편집/삭제는 본인 hover 액션 · 반응 칩·피커 · 음소거 메뉴·헤더 표시 · 조용한 시간은 알림 게이트', () => {
   assert.match(app, /supabase\.rpc\('msgr_unread', \{ org: orgId === PERSONAL \? null : orgId \}\)/, '안 읽음 RPC(개인 공간은 org=null)');
-  assert.match(app, /if \(unreadWorthy\(payload, \{ uid, listIds: listIdsRef\.current, previewIds: previewIdsRef\.current, asked: roomAsked\.current \}\)\) unreadSoon\.request\(\);/, '새 메시지 방송이면 재집계(1.5초 창에 한 번 — 판정은 apps/messenger/test/read-sync.test.mjs, MSG-08)');
+  assert.match(app, /if \(unreadWorthy\(payload, \{ uid, listIds: listIdsRef\.current, previewIds: previewIdsRef\.current, asked: roomAsked\.current, openId: activeChannel\.current \}\)\) unreadSoon\.request\(\);/, '새 메시지 방송이면 재집계(1.5초 창에 한 번 — 판정은 apps/messenger/test/read-sync.test.mjs, MSG-08)');
   assert.match(app, /<span className=\{`msgr-badge\$\{unread\[c\.id\]\.mention \? ' mark' : ''\}\$\{muted\.has\(c\.id\) \? ' dim' : ''\}`\}>\{unread\[c\.id\]\.n\}<\/span>/, '채널 배지');
   assert.match(app, /const isNewAt = \(m\) => divider > 0 && m\.id > divider && !\(m\.author_kind === 'user' && m\.author_user_id === uid\);/, '구분선은 남의 첫 새 글 앞(2026-09-29 연속 묶음이 같은 자리에서 끊도록 함수화)');
   assert.match(app, /if \(divider > 0 && !newLine && isNewAt\(m\)\)/, '구분선은 한 번만');

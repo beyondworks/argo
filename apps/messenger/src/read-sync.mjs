@@ -19,21 +19,24 @@ export function createReadCursor({ now = Date.now } = {}) {
         fail() { end(); }, // 저장 확인 전 상태로 — 다음 초점·가시성·새 글 때 다시 쓴다(이벤트가 있을 때만이라 호출이 폭주하지 않는다)
       };
     },
-    // 서버 숫자는 물은 시점의 스냅샷이다. 물은 뒤(또는 묻는 동안) 이 기기가 읽음으로 저장한 방은 0으로 둔다 — 저장 전에 센 n=1이 늦게 도착해
-    // 이미 읽은 열린 방에 배지를 다시 덮던 경합. 저장에 실패한 방은 서버 숫자를 그대로 둔다(실패를 감추지 않는다).
-    unreadFrom(rows, since) {
+    // 서버 숫자는 물은 시점의 스냅샷이다. 물은 뒤(또는 묻는 동안) 이 기기가 읽음으로 저장한 열린 방(openId)은 0으로 둔다 — 저장 전에 센 n=1이 늦게 도착해
+    // 이미 읽은 열린 방에 배지를 다시 덮던 경합. 열린 방만 — 다른 방은 저장한 위치 뒤 새 글까지 감췄다(검수 L2). 저장에 실패한 방은 서버 숫자 그대로(실패를 감추지 않는다).
+    unreadFrom(rows, since, openId = null) {
       const out = {};
-      for (const r of rows ?? []) out[r.channel_id] = flying.has(r.channel_id) || (savedAt.get(r.channel_id) ?? -Infinity) >= since ? { n: 0, mention: 0 } : { n: r.n, mention: r.mention };
+      for (const r of rows ?? []) out[r.channel_id] = r.channel_id === openId && (flying.has(r.channel_id) || (savedAt.get(r.channel_id) ?? -Infinity) >= since) ? { n: 0, mention: 0 } : { n: r.n, mention: r.mention };
       return out;
     },
   };
 }
 
-/** 이 글이 보는 공간의 안 읽음 숫자를 다시 셀 일인가(MSG-08) — 내 글, 참여하지 않은 공개 채널(미리보기·이미 물어 내 방이 아닌 것으로 확인한 방) 글은 아니다.
+/** 이 글이 보는 공간의 안 읽음 숫자를 다시 셀 일인가(MSG-08) — 이 기기에서 열어 둔 방(openId)의 내 글, 참여하지 않은 공개 채널(미리보기·이미 물어
+    내 방이 아닌 것으로 확인한 방) 글은 아니다. 다른 방의 내 글은 센다 — 다른 기기(폰)에서 쓴 글이고 그 기기가 읽음을 올렸다(msgr_reads에는 방송이 없어
+    이 재집계가 다른 기기의 읽음을 아는 유일한 길, 검수 L1). 방송에는 client_msg_id가 없어 열린 방으로 가른다.
+    ponytail: 이 기기가 열린 방 밖으로 보낸 글(넘기기 등)도 한 번 더 센다 — 묶기 창(1.5초) 안이라 요청은 늘지 않거나 1건.
     처음 보는 방의 첫 글은 센다(새 1:1·비공개 방 — 목록에 들어오는 중일 수 있다). 부르는 쪽은 그 방을 목록에 넣기 전에 판정한다. */
-export function unreadWorthy(payload, { uid, listIds = new Set(), previewIds = new Set(), asked = new Set() } = {}) {
+export function unreadWorthy(payload, { uid, listIds = new Set(), previewIds = new Set(), asked = new Set(), openId = null } = {}) {
   const cid = payload?.channel_id;
-  if (!cid || (payload.author_user_id && payload.author_user_id === uid)) return false;
+  if (!cid || (payload.author_user_id && payload.author_user_id === uid && cid === openId)) return false;
   if (listIds.has(cid)) return true;
   return !previewIds.has(cid) && !asked.has(cid);
 }

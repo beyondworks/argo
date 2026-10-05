@@ -4,7 +4,7 @@
 // 1차 범위(MESSENGER-DESIGN.md P1): 로그인 · 조직/초대 · 공개/비공개 채널 · 메시지 · @멘션 · 첨부 · 결재 · 크루 부재중 · 타이핑.
 import { Component, createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
-import { acceptTyping, typingKey, withoutKey, typingIn as typingInState, roomTopicIds, TYPING_WINDOW_MS, createCrewPostsMemory, lastAskedIds } from './typing-state.js';
+import { acceptTyping, typingKey, withoutKey, typingIn as typingInState, roomTopicIds, TYPING_WINDOW_MS, createCrewPostsMemory } from './typing-state.js';
 import { awaitingReplies } from './await-reply.mjs';
 import { dismissHandlers } from './dismiss.mjs';
 import { attachKeyboardDismiss } from './kb-dismiss.mjs';
@@ -58,7 +58,7 @@ import { bindRowSwipe, bindSwipeReply } from './row-swipe.js';
 import { PHONE_TABS, isPhoneRoot, spaceForTab, pickChannelOrg, startTab, tabBadges, badgeText, roomTraits, chatVisible, chatUnreadTotal, roomRow, sortRooms, tabSearch, CHAT_FILTERS, memoryGroups, memSnippet, agentCardAction, orgCardStep, personalCardLocks, orgMenuItems, savedOrgAfter, withoutHidden, hiddenGroups, settingsOrgRows, orgScreen, joinReqKey, maskedPreview, tabBodyQuery, emptyPersonalDm, personalDmWith } from './phone-shell.mjs'; // 폰 셸 v2(친구·채팅·채널·에이전트·기억, 유건 확정 2026-10-01) — 판단은 이 모듈 한 곳
 import { bindPullRefresh, enteredReady } from './pull-refresh.mjs';
 import { haptic } from './haptics.js';
-import { refreshMessageWindow, mergeRefreshedMessages, readMissed } from './refresh-messages.mjs';
+import { refreshMessageWindow, mergeRefreshedMessages, readMissed, createCatchUp } from './refresh-messages.mjs';
 import { createLinkWatch, orgSubscriptionKey, roomSignal } from './realtime-link.mjs';
 import { createReadCursor, unreadWorthy, createCoalescer } from './read-sync.mjs'; // 읽음 커서 다시 쓰기·안 읽음 숫자 묶음(MSG-05·08) // 끊김 → 다시 붙음 짝(rt_down·rt_up)·목록 다시 읽기 판정
 import { writeScreenSnapshot, consumeScreenSnapshot } from './phone-screen-snapshot.mjs';
@@ -1205,13 +1205,18 @@ function Shell({ session }) {
   useEffect(() => { if (restoredSpace.current?.space === orgId) return; if (isPersonal) loadPersonal().catch((e) => setErr(e.message)); else loadOrg(orgId).catch((e) => setErr(e.message)); }, [orgId, isPersonal, loadOrg, loadPersonal]); // 저장 목록으로 연 공간은 다시 읽지 않는다(D3)
   // 목록에 없는 방의 글(새 1:1·그룹·비공개 채널의 첫 글, D4) — 그 방 하나만 불러와 목록에 넣는다. 개인 공간은 목록 RPC가 한 번에 주므로 그 목록을 다시 읽는다.
   // 같은 방은 한 번만 묻는다(공개 채널·보관 채널처럼 넣지 않는 방이 방송마다 조회를 부르지 않게). 복귀·재연결 때 비운다.
-  const roomAsked = useRef(new Set());
+  // 물어봤음(roomAsked)은 조회가 끝난 뒤에 적는다 — 조회가 실패한 새 방의 다음 글이 다시 묻고 안 읽음 재집계에도 들어가게(검수 L7). 묻는 중(roomAsking)은 겹쳐 묻지 않게
+  const roomAsked = useRef(new Set()); const roomAsking = useRef(new Set());
   const addRoom = useRef(async () => {});
   addRoom.current = async (cid) => {
-    if (roomAsked.current.has(cid)) return; roomAsked.current.add(cid);
+    if (roomAsked.current.has(cid) || roomAsking.current.has(cid)) return;
     const space = activeOrg.current;
-    if (space === PERSONAL) { await loadPersonal().catch(() => {}); return; }
-    const row = await q(supabase.from('msgr_channels').select('id, kind, name, topic, crew_memory, personal_crews, created_by, admin_user_ids, excluded_user_ids, excluded_crew_ids, org_id, archived_at').eq('id', cid).maybeSingle()).catch(() => null);
+    roomAsking.current.add(cid); let row;
+    try {
+      if (space === PERSONAL) { await loadPersonal(); roomAsked.current.add(cid); return; }
+      row = await q(supabase.from('msgr_channels').select('id, kind, name, topic, crew_memory, personal_crews, created_by, admin_user_ids, excluded_user_ids, excluded_crew_ids, org_id, archived_at').eq('id', cid).maybeSingle());
+      roomAsked.current.add(cid);
+    } catch { return; } finally { roomAsking.current.delete(cid); }
     if (!row || row.archived_at || row.org_id !== space || row.kind === 'public' || activeOrg.current !== space) return; // 공개 채널은 참여 전엔 목록에 없다
     const mem = row.kind === 'dm' ? await q(supabase.from('msgr_channel_members').select('channel_id, member_kind, member_id, added_at').eq('channel_id', cid)).catch(() => []) : null;
     if (activeOrg.current !== space) return;
@@ -1257,7 +1262,7 @@ function Shell({ session }) {
   const [dmSortPos, setDmSortPos] = useState(() => ({})); // DM 탭 '직접 배치' 순서(msgr_channel_prefs.sort_pos, 유건 확정 2026-09-29) — 즐겨찾기 pin_pos와 별개
   // 안 읽음 — org=null이면 개인 공간(조직 밖 1:1)을 센다(검수 L-1)
   const readCursor = useMemo(() => createReadCursor(), [uid]); // 이 기기의 읽음 커서 저장(read-sync.mjs) — 실패한 위치는 다음 기회에 다시 쓴다(MSG-05)
-  const loadUnread = useCallback(async () => { if (!orgId || orgId !== activeOrg.current) return; const current = unreadRequests.current.begin(orgId); const since = Date.now(); const rows = await q(supabase.rpc('msgr_unread', { org: orgId === PERSONAL ? null : orgId })).catch(() => null); if (rows && current()) { setUnread(readCursor.unreadFrom(rows, since)); setUnreadSpace(orgId); } }, [orgId, readCursor]); // 물은 뒤 이 기기가 읽음으로 저장한 방은 0(열린 방 배지 경합)
+  const loadUnread = useCallback(async () => { if (!orgId || orgId !== activeOrg.current) return; const current = unreadRequests.current.begin(orgId); const since = Date.now(); const rows = await q(supabase.rpc('msgr_unread', { org: orgId === PERSONAL ? null : orgId })).catch(() => null); if (rows && current()) { setUnread(readCursor.unreadFrom(rows, since, activeChannel.current)); setUnreadSpace(orgId); } }, [orgId, readCursor]); // 물은 뒤 이 기기가 읽음으로 저장한 방은 0(열린 방 배지 경합)
   // 새 글 방송 → 안 읽음 다시 세기는 1.5초 창에 한 번(MSG-08 — 글마다 RPC 1건이던 것). 기기 N대 × 분당 글 M건이 분당 N×M건 → 기기당 분당 최대 40건, 몰아 온 글은 1건.
   // 내 글·참여하지 않은 공개 채널 글은 세지 않는다(unreadWorthy). 공간을 바꾸면 예약을 버린다(새 공간은 위 효과가 센다)
   const loadUnreadRef = useRef(loadUnread); loadUnreadRef.current = loadUnread;
@@ -1376,6 +1381,7 @@ function Shell({ session }) {
   // 그래서 구분자는 항상 전개 **뒤**에 놓고, 글 종류는 msgKind로 따로 싣는다.
   const [event, setEvent] = useState(null); const [typing, setTyping] = useState({}); const [progress, setProgress] = useState({}); const [received, setReceived] = useState({}); // received = 크루 기기가 내 글을 받았다는 신호(키 channel:crew → 받은 시각) — 보낸 뒤 대기 표시(await-reply.mjs)만 쓴다 // progress = 실행 카드(단계·도구·사고 과정) 스냅샷, 키 channel:crew
   const settledRef = useRef({}); // 키 → 크루 답글 도착 시각 — 답글 직후 늦게 온 방송이 표시를 되살리지 않게(typing-state.js)
+  const seenMine = useMemo(() => new Map(), [uid]); // 내 글을 이 기기가 처음 본 시각(기기 시계) — 셸에 두어 방을 다시 열어도 '조금 오래' 판정이 이어진다(검수 L4·통합 재검수 LOW). 이 세션의 내 글 수만큼
   const crewPosts = useMemo(() => createCrewPostsMemory(), [uid]); // 방별 크루 마지막 글 — 방을 다시 열어도 남아 떠나 있는 동안 온 답으로 입력 중을 내린다(통합 재검수 MEDIUM)
   const typingStartRef = useRef({}); // 키 → "지금 이어지는 입력"을 처음 시작한 시각(typing-summary.mjs 정렬 기준) — 6초 창이 끊기면 다음은 새 시작(유건 확정 2026-09-29)
   const crewActive = (crewId) => { if (!crewId) return; setCrews((rows) => markSeen(rows, crewId)); setMyAgents((rows) => (rows ? markSeen(rows, crewId) : rows)); }; // 에이전트가 방금 무언가를 보냈다 — 요청 없이 '방금 봄'으로
@@ -1508,7 +1514,8 @@ function Shell({ session }) {
   const linkRef = useRef({ uid: null, watch: null, subUid: null });
   const linkWatch = () => { const l = linkRef.current; if (l.uid !== uid || !l.watch) { l.watch?.dispose(); l.watch = createLinkWatch({ onSync: bumpSync }); l.uid = uid; l.subUid = null; } return l.watch; };
   useEffect(() => () => linkRef.current.watch?.dispose(), []);
-  const tokenRef = useRef(session.access_token); tokenRef.current = session.access_token; // 처음 걸 때 넘기는 토큰 — 갱신은 supabase-js가 붙은 채널에 넘긴다
+  const uRetryRef = useRef(null); // u: 구독의 거절 대기 깨우기(joinWithBackoff retry) — 토큰이 갱신되면 바로 다시 붙는다(검수 M2: 만료 토큰 거절 뒤 60초~10분 비었다)
+  useEffect(() => { uRetryRef.current?.(); }, [session.access_token]);
   const hasToken = !!session.access_token;
   const orgSubKey = orgSubscriptionKey({ uid, orgIdsKey, resumeEpoch, roomReset }); // 토큰은 빼고(MSG-01) — 갱신마다 떼고 다시 걸던 것
   useEffect(() => {
@@ -1518,7 +1525,7 @@ function Shell({ session }) {
     linkRef.current.subUid = uid;
     const subs = new Map(); let stopU = () => {};
     const cleanup = realtimeScope.run(async (isDisposed, registerDispose) => {
-      await supabase.realtime.setAuth(tokenRef.current);
+      await supabase.realtime.setAuth(); // 인자 없이 — 콜백(getSession)이 갱신된 토큰을 준다. 값을 넘기면 갱신 전 토큰이 가입 값으로 박혔다(검수 M2)
       if (isDisposed()) return;
       const here = (space) => (space == null ? activeOrg.current === PERSONAL : space === activeOrg.current);
       const on = (fn) => (e) => { if (!isDisposed()) fn(e); };
@@ -1560,6 +1567,7 @@ function Shell({ session }) {
         .on('broadcast', { event: 'friend' }, on(() => bumpFriends())) // 친구 요청·수락·삭제·차단(서버 20261002110000 — 종류와 상대 id만) — 받았을 때만 친구 목록을 다시 읽는다(D5)
         .on('broadcast', { event: 'crew_join' }, on(({ payload }) => { approvalsSoon.current(); inboxSoon.current(); if (payload?.channel_id && payload.channel_id === activeChannel.current) { bumpMembers(); setEvent(broadcastEvent('crew_join', payload)); } })), // 에이전트 넣기 요청 생성·처리(D6, 서버 20261002115000)
         { onStatus: status(`u:${uid}`, null, false) }); // 조직이 없는 사용자는 u:가 유일한 재연결 신호 — 끊겼다 붙으면 목록을 다시 읽는다(2026-10-05)
+      uRetryRef.current = stopU.retry;
       return remove;
     });
     return () => { rt.current = null; cleanup(); }; // 송신 참조는 비동기 제거를 기다리지 않고 비운다(분리 검수 P2)
@@ -1755,7 +1763,7 @@ function Shell({ session }) {
   handleMessageRef.current = (payload) => {
     if (!seenOnce(seenMsgRef.current, payload?.id)) return;
     const cid = payload?.channel_id;
-    if (unreadWorthy(payload, { uid, listIds: listIdsRef.current, previewIds: previewIdsRef.current, asked: roomAsked.current })) unreadSoon.request(); // 방 넣기(addRoom) 전에 판정 — 처음 보는 방의 첫 글은 센다
+    if (unreadWorthy(payload, { uid, listIds: listIdsRef.current, previewIds: previewIdsRef.current, asked: roomAsked.current, openId: activeChannel.current })) unreadSoon.request(); // 방 넣기(addRoom) 전에 판정 — 처음 보는 방의 첫 글은 센다
     if (cid && loadedOrg.current === activeOrg.current && !listIdsRef.current.has(cid) && !previewIdsRef.current.has(cid)) addRoom.current(cid); // 목록에 없는 방의 첫 글 — 그 방만 불러와 넣는다(30초 목록 재조회를 기다리지 않게, D4)
     if (cid && cid === activeChannel.current && payload.kind === 'system') bumpMembers(); // 들어오기·나가기·에이전트 넣기 안내 글 — 열린 방 구성원만 다시 읽는다
     if (!isPhoneRef.current && payload.author_user_id !== uid && ((Array.isArray(payload.mentions) && payload.mentions.some((m) => m?.kind === 'user' && m.id === uid)) || dmIdsRef.current.has(cid) || (payload.author_kind === 'crew' && payload.reply_to))) inboxSoon.current(); // 알림함에 들어갈 글만(데스크톱 벨)
@@ -1898,7 +1906,7 @@ function Shell({ session }) {
   useEffect(() => {
     let live = true; // 정리가 setAuth보다 먼저 끝나면(빠르게 옮길 때) 채널을 만들지 않는다 — 고아 dm: 구독이 쌓였다(검수 #607 실측)
     (async () => {
-      await supabase.realtime.setAuth(tokenRef.current);
+      await supabase.realtime.setAuth(); // 인자 없이 — 콜백(getSession)이 갱신된 토큰을 준다. 값을 넘기면 갱신 전 토큰이 가입 값으로 박혔다(검수 M2)
       if (!live) return;
       const subs = roomSubs.current; const watch = linkWatch();
       const again = new Set(); // 떼고 다시 거는 방 — 첫 SUBSCRIBED에서 거는 사이 놓친 글을 한 번 따라잡는다(열린 개인 방만 알린다 — roomSignal)
@@ -3033,7 +3041,7 @@ function Shell({ session }) {
         ) : dmDraft && isPersonal && page === 'chat' ? (
           <DmDraft key={dmDraft.userId} userId={dmDraft.userId} name={nameOfUser(dmDraft.userId)} initialText={dmDraft.text} onSend={(body) => sendFirstDm(dmDraft.userId, body)} onMenu={openNav} />
         ) : isPhone && page !== 'chat' ? null /* 폰 목록·설정 뒤에 숨은 대화방을 그리지 않는다 — 공간을 바꿀 때마다 보이지 않는 방의 글·첨부·반응을 읽던 것(기능 점검 D3) */ : channel ? (
-          <Channel key={chId} movedBar={legacyDm?.known ? <LegacyDmBar key={legacyDm.crew.id} onGo={() => dmWithCrew(legacyDm.crew.id)} t={t} /> : earlierCrew ? <EarlierDmBar key={earlierCrew} find={() => findEarlier(earlierCrew)} ready={!!ownCrews} orgs={orgs} onOpen={openEarlier} t={t} /> : null} onCrewJoined={bumpMembers} onCrewFailed={noteCrewFailed} onPersonalChanged={async () => { await loadPersonal().catch(() => {}); await loadChMembers(chId).catch(() => {}); }} onScreen={channelOnScreen({ isPhone, page })} namePrompt={org && !isPersonal && me && !orgLocked ? <NamePrompt key={orgId} org={org} me={me} email={session.user.email} onChanged={() => loadOrg(orgId).catch(() => {})} onNote={setNote} onError={setErr} /> : null} onOutsideDm={dmWithCrew} outsideDmPersonal={dmGoesPersonal} startCard={org && !isPersonal && org.role !== 'guest' && channel.kind !== 'dm' ? <OnboardCard key={orgId} orgId={orgId} t={t} steps={orgSteps({ t, ...onboard, hasChannel: true, invite: isAdmin ? orgInvite : null })} /> : null} jumpTo={jump?.ch === chId ? jump.mid : null} jumpStart={!!jump?.start} onJumped={() => setJump(null)} channel={channel} preview={!!previewing} onJoin={() => joinChannel(channel)} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} mentionPeople={mentionPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} typingStart={typingStartRef.current} progress={progress} received={received} onRead={markRead} muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} onToggleMemory={() => toggleMemory(channel)} broadcast={(ev, payload) => (roomTopic ? roomSubs.current.get(chId) : rt.current)?.send({ type: 'broadcast', event: ev, payload }).catch?.(() => {})} onError={setErr} onNote={setNote} onMenu={openNav} onCrew={openers.channel} onTitle={() => setChSheet(true)} onCrewAdd={() => { setChSheetAdd('crew'); setChSheet(true); }} mentionReq={mentionReq} onMentionDone={() => setMentionReq(null)} dmName={dmName} channels={channels} onOpenRelay={openRelay} isPersonal={isPersonal} crewPosts={crewPosts} onCrewPosted={(crewId) => settleCrew({ channel_id: chId, crew_id: crewId })} />
+          <Channel key={chId} movedBar={legacyDm?.known ? <LegacyDmBar key={legacyDm.crew.id} onGo={() => dmWithCrew(legacyDm.crew.id)} t={t} /> : earlierCrew ? <EarlierDmBar key={earlierCrew} find={() => findEarlier(earlierCrew)} ready={!!ownCrews} orgs={orgs} onOpen={openEarlier} t={t} /> : null} onCrewJoined={bumpMembers} onCrewFailed={noteCrewFailed} onPersonalChanged={async () => { await loadPersonal().catch(() => {}); await loadChMembers(chId).catch(() => {}); }} onScreen={channelOnScreen({ isPhone, page })} namePrompt={org && !isPersonal && me && !orgLocked ? <NamePrompt key={orgId} org={org} me={me} email={session.user.email} onChanged={() => loadOrg(orgId).catch(() => {})} onNote={setNote} onError={setErr} /> : null} onOutsideDm={dmWithCrew} outsideDmPersonal={dmGoesPersonal} startCard={org && !isPersonal && org.role !== 'guest' && channel.kind !== 'dm' ? <OnboardCard key={orgId} orgId={orgId} t={t} steps={orgSteps({ t, ...onboard, hasChannel: true, invite: isAdmin ? orgInvite : null })} /> : null} jumpTo={jump?.ch === chId ? jump.mid : null} jumpStart={!!jump?.start} onJumped={() => setJump(null)} channel={channel} preview={!!previewing} onJoin={() => joinChannel(channel)} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} mentionPeople={mentionPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} typingStart={typingStartRef.current} progress={progress} received={received} onRead={markRead} muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} onToggleMemory={() => toggleMemory(channel)} broadcast={(ev, payload) => (roomTopic ? roomSubs.current.get(chId) : rt.current)?.send({ type: 'broadcast', event: ev, payload }).catch?.(() => {})} onError={setErr} onNote={setNote} onMenu={openNav} onCrew={openers.channel} onTitle={() => setChSheet(true)} onCrewAdd={() => { setChSheetAdd('crew'); setChSheet(true); }} mentionReq={mentionReq} onMentionDone={() => setMentionReq(null)} dmName={dmName} channels={channels} onOpenRelay={openRelay} isPersonal={isPersonal} crewPosts={crewPosts} seenAt={seenMine} onCrewPosted={(crewId) => settleCrew({ channel_id: chId, crew_id: crewId })} />
         ) : isPersonal ? (
           <><div className="msgr-top"><NavButton onMenu={openNav} /><span className="title">{t('personal')}</span><span className="topic">{t('personal.space')}</span></div><div className="msgr-thread" style={{ display: 'flex' }}><div className="msgr-empty"><p>{t('personal.empty')}</p><button type="button" className="btn btn-primary sm" onClick={() => setFriendAdd(true)}><I name="plus" size={13} />{t('friends.add')}</button></div></div></>
         ) : (
@@ -5976,7 +5984,7 @@ function EarlierDmBar({ find, ready, orgs, onOpen, t }) {
   return <nav className="msgr-joinbar msgr-movedbar msgr-earlier" aria-label={t('dm.earlier.label')}>{lines.map((l) => (
     <button key={l.channelId} type="button" className="msgr-earlier-line" onClick={() => onOpen(l)}><I name="clock" size={14} /><span>{t('dm.earlier', { org: l.org, n: l.n })}</span><I name="next" size={14} className="go" /></button>))}</nav>;
 }
-function Channel({ movedBar = null, onCrewJoined = null, onCrewFailed = null, onScreen = true, namePrompt = null, onOutsideDm = null, outsideDmPersonal = null, onPersonalChanged = null, startCard = null, jumpTo = null, jumpStart = false, onJumped, channel, preview = false, onJoin, orgId, org, uid, isAdmin, locked = false, policy, members, crews, people = [], mentionPeople = null, chCrews = [], nameOfUser, crewOf, event, typing, typingStart = {}, progress = {}, received = {}, onRead, muted = false, onToggleMute, onToggleMemory, broadcast, onError, onNote = () => {}, onMenu, onCrew, onTitle, onCrewAdd, mentionReq, onMentionDone, dmName, channels = [], onOpenRelay, isPersonal = false, onCrewPosted = () => {}, crewPosts = null }) {
+function Channel({ movedBar = null, onCrewJoined = null, onCrewFailed = null, onScreen = true, namePrompt = null, onOutsideDm = null, outsideDmPersonal = null, onPersonalChanged = null, startCard = null, jumpTo = null, jumpStart = false, onJumped, channel, preview = false, onJoin, orgId, org, uid, isAdmin, locked = false, policy, members, crews, people = [], mentionPeople = null, chCrews = [], nameOfUser, crewOf, event, typing, typingStart = {}, progress = {}, received = {}, onRead, muted = false, onToggleMute, onToggleMemory, broadcast, onError, onNote = () => {}, onMenu, onCrew, onTitle, onCrewAdd, mentionReq, onMentionDone, dmName, channels = [], onOpenRelay, isPersonal = false, onCrewPosted = () => {}, crewPosts = null, seenAt = null }) {
   const { t, lang } = useT();
   const phone = useIsPhone(); // 폰 머리 부제(멤버·에이전트 수) — 데스크톱은 그리지 않는다
   const topRef = useRef(null);
@@ -5994,8 +6002,8 @@ function Channel({ movedBar = null, onCrewJoined = null, onCrewFailed = null, on
   const [msgs, setMsgs] = useState(null); const [aps, setAps] = useState({}); const [atts, setAtts] = useState({});
   // 그 크루의 새 글이 어느 경로로든(방송·재연결·복귀·새로고침) 들어오면 '입력 중'을 내린다 — 방송으로 온 답만 내리던 탓에 다시 읽은 답 뒤에 말풍선이 20초 남았다(검수 #send-feedback MEDIUM)
   const ownPosts = useMemo(() => createCrewPostsMemory(), []); const postsMem = crewPosts ?? ownPosts; // 셸 기록(방을 다시 열어도 남는다) — 없으면 이 화면 것
-  useEffect(() => { if (!msgs) return; for (const c of postsMem.read(chId, msgs, lastAskedIds(msgs, { uid, isDm: channel.kind === 'dm' }))) onCrewPosted(c); }, [msgs]); // eslint-disable-line react-hooks/exhaustive-deps
-  const seenAtRef = useRef(new Map()); // 내 글을 이 기기가 처음 본 시각 — 대기 표시의 신호 비교를 기기 시계끼리 하려고(검수 #send-feedback LOW)
+  useEffect(() => { if (!msgs) return; for (const c of postsMem.read(chId, msgs)) onCrewPosted(c); }, [msgs]); // eslint-disable-line react-hooks/exhaustive-deps
+  const seenAtRef = useRef(seenAt ?? new Map()); // 셸 기록(seenAt — 방을 다시 열어도 남는다), 없으면 이 화면 것. 내 글을 이 기기가 처음 본 시각 — 대기 표시의 신호 비교를 기기 시계끼리 하려고(검수 #send-feedback LOW)
   const [pending, setPending] = useState([]); // 보냈지만 서버 행이 아직 안 온 내 글(낙관적 렌더)
   const [uploads, setUploads] = useState({}); // client_msg_id → 이 기기가 올리는 중인 파일 이름(첨부만 보낸 글의 자리표시, MSG-06)
   const [activeMid, setActiveMid] = useState(null); // 로빙 tabindex의 현재 행(없으면 마지막 글) — 목록 전체가 Tab 한 칸(검수 K8)
@@ -6082,6 +6090,7 @@ function Channel({ movedBar = null, onCrewJoined = null, onCrewFailed = null, on
     if (!afterId && !preserve) setHasMore(rows.length >= PAGE);
     await hydrate(list.map((m) => m.id));
   }, [chId, hydrate]);
+  const catchUp = useMemo(() => createCatchUp(() => load(live.current.msgs?.at(-1)?.id ?? 0)), [load]); // 놓친 글 따라잡기는 한 번에 하나 — 겹친 요청은 끝난 뒤 한 번(검수 L3: 방송마다 겹쳐 '최신으로 옮겼다'가 여러 번)
   // 결재 카드는 메시지 도착 경로에서 분리한다. 전에는 글 한 건이 올 때마다 채널의 결재 전량을
   // 다시 읽었다(방송 1건 = 결재 조회 1회). 이제 채널을 열 때와 approval 방송이 올 때만 읽는다.
   const loadApprovals = useCallback(async () => {
@@ -6092,8 +6101,8 @@ function Channel({ movedBar = null, onCrewJoined = null, onCrewFailed = null, on
   useEffect(() => { loadApprovals().catch(() => {}); }, [loadApprovals]); // 채널을 열 때 한 번 — 이후는 approval 방송이 갱신한다
   useEffect(() => {
     if (!isMobilePlatform) return;
-    return observeMobileResume(() => load(live.current.msgs?.at(-1)?.id ?? 0).catch((e) => onError(e.message))); // 증분 — 첫 페이지로 통째 교체하면 스크롤백 기록이 사라진다(검수 #531 HIGH-2)
-  }, [load]); // eslint-disable-line react-hooks/exhaustive-deps
+    return observeMobileResume(() => catchUp().catch((e) => onError(e.message))); // 증분 — 첫 페이지로 통째 교체하면 스크롤백 기록이 사라진다(검수 #531 HIGH-2)
+  }, [catchUp]); // eslint-disable-line react-hooks/exhaustive-deps
   const [reacts, setReacts] = useState({}); const [divider, setDivider] = useState(0); // 반응(메시지별)·새 메시지 구분선(열 때의 읽음 커서)
   const reloadReacts = useCallback(async (id) => { const rx = await q(supabase.from('msgr_reactions').select('message_id, user_id, emoji').eq('message_id', id)); setReacts((cur) => ({ ...cur, [id]: rx })); }, []);
   const reloadAtts = useCallback(async (id) => { const a = await q(supabase.from('msgr_attachments').select('id, message_id, storage_path, name, mime, bytes').eq('message_id', id)); setAtts((cur) => ({ ...cur, [id]: a })); }, []);
@@ -6109,14 +6118,14 @@ function Channel({ movedBar = null, onCrewJoined = null, onCrewFailed = null, on
     // payload에 덮여 있던 동안 한 번도 닿지 않았다(글은 10초 폴백 폴에서야 그려졌다).
     if (event.kind === 'message' && event.channel_id === chId) {
       rtSeen.current = Date.now();
-      if (!(live.current.msgs ?? []).some((m) => m.id === event.id)) load(lastId).catch(() => {});
+      if (!(live.current.msgs ?? []).some((m) => m.id === event.id)) catchUp().catch(() => {});
       // 결재 카드 글은 approval 방송과 짝으로 온다. 그 방송 하나를 놓치면 채널을 다시 열 때까지 카드가
       // 비어 있게 된다(크루는 결정을 기다리며 멈추고 사람은 요청을 모른다). 카드 글을 봤으면 결재도 읽는다.
       if (event.msgKind === 'approval_card') loadApprovals().catch(() => {});
     }
     if (event.kind === 'rt_down') { rtSeen.current = 0; setRtDown(true); } // 알려진 끊김 — 보정 조회를 켠다
-    if (event.kind === 'rt_up') { setRtDown(false); load(lastId).catch(() => {}); loadApprovals().catch(() => {}); } // 다시 붙었다 — 끊긴 동안 놓친 글을 한 번 따라잡고 보정 조회를 끈다
-    if (event.kind === 'approval' && event.channel_id === chId) { rtSeen.current = Date.now(); loadApprovals().catch(() => {}); load(lastId).catch(() => {}); }
+    if (event.kind === 'rt_up') { setRtDown(false); catchUp().catch(() => {}); loadApprovals().catch(() => {}); } // 다시 붙었다 — 끊긴 동안 놓친 글을 한 번 따라잡고 보정 조회를 끈다
+    if (event.kind === 'approval' && event.channel_id === chId) { rtSeen.current = Date.now(); loadApprovals().catch(() => {}); catchUp().catch(() => {}); }
     if (event.kind === 'reaction' && event.channel_id === chId && event.message_id) reloadReacts(event.message_id).catch(() => {});
     if (event.kind === 'edit' && event.channel_id === chId && event.message_id) reloadMsg(event.message_id).catch(() => {});
     // 첨부는 글보다 0.2~3.6초 늦게 등록된다(운영 실측 2026-09-30). 글 방송 때 읽은 빈 첨부가 그대로 남아 채널을 다시 열어야 보이던 결함 — 서버가 첨부마다 보내는 attach로 다시 읽는다.
@@ -6178,10 +6187,10 @@ function Channel({ movedBar = null, onCrewJoined = null, onCrewFailed = null, on
   useEffect(() => { const el = feed.current; if (el && stick.current) el.scrollTop = el.scrollHeight; }, [msgs?.length]);
   useEffect(() => { if (!lastId || !onScreen) return; const mark = () => { if (document.visibilityState !== 'hidden' && document.hasFocus()) onRead?.(chId, lastId); }; mark(); document.addEventListener('visibilitychange', mark); window.addEventListener('focus', mark); return () => { document.removeEventListener('visibilitychange', mark); window.removeEventListener('focus', mark); }; }, [chId, lastId, onScreen]); // eslint-disable-line react-hooks/exhaustive-deps -- 폰 목록 뒤에 숨은 대화는 읽음이 아니다(onScreen). 창이 보여도 초점이 다른 앱에 있으면 읽음으로 치지 않는다(자리 비운 사이 온 글이 조용히 읽음이 되던 결함, 2026-09-12 점검)
   // 앞으로 온 순간 따라잡기 — 가려진 창에서 밀린 글을 다음 폴·밀린 방송 처리까지 기다리지 않고 한 번에(유건 제보 2026-09-18 "앞으로 오면 하나씩 뜬다")
-  useEffect(() => onForeground(() => { load(lastId).catch(() => {}); loadApprovals().catch(() => {}); }), [load, lastId]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => onForeground(() => { catchUp().catch(() => {}); loadApprovals().catch(() => {}); }), [catchUp]); // eslint-disable-line react-hooks/exhaustive-deps
   // 보정 조회(10s)는 화면에 보이는 방에서 실시간이 끊겼다고 알려진 동안만 돈다(기능 점검 D2 — 숨겨 둔 방·조용한 방에서 10초마다 글·결재를 읽던 것).
   // 방송이 살아 있으면 새 글은 방송이, 놓친 글은 앞으로 올 때(onForeground)·다시 붙을 때(rt_up)가 따라잡는다.
-  useEffect(() => { if (!onScreen || !rtDown) return undefined; const iv = setInterval(() => { load(lastId).catch(() => {}); loadApprovals().catch(() => {}); }, 10_000); return () => clearInterval(iv); }, [onScreen, rtDown, load, lastId]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (!onScreen || !rtDown) return undefined; const iv = setInterval(() => { catchUp().catch(() => {}); loadApprovals().catch(() => {}); }, 10_000); return () => clearInterval(iv); }, [onScreen, rtDown, catchUp, lastId]); // eslint-disable-line react-hooks/exhaustive-deps
   // 첨부·반응이 빈 묶음 메우기 — 빈 것이 있을 때만 조회한다(없으면 요청 0, 검수 #531 M-1)
   useEffect(() => { if (!onScreen) return undefined; const iv = setInterval(() => { const { msgs: ms, atts: at } = live.current; const miss = (ms ?? []).filter((m) => !(m.id in at)).map((m) => m.id); if (miss.length) hydrate(miss).catch(() => {}); }, 10_000); return () => clearInterval(iv); }, [onScreen, hydrate]);
   // 결재 결정(MSG-07) — 0행이면 다시 읽어 이미 결정된 결재는 오류 없이 결과만(연타·다른 사람이 먼저), 대기 중일 때만 권한 없음(최종 판정은 서버 msgr_can_decide).
@@ -6191,7 +6200,7 @@ function Channel({ movedBar = null, onCrewJoined = null, onCrewFailed = null, on
       reread: () => q(supabase.from('msgr_crew_approvals').select('status').eq('id', ap.id).maybeSingle()) });
     if (r.result === 'error') onError(friendlyErr(r.message, t));
     else if (r.result === 'denied') onError(t(ap.risk === 'high' ? 'ap.approverOnly' : 'ap.ownerOnly'));
-    await loadApprovals().catch(() => {}); load(lastId).catch(() => {});
+    await loadApprovals().catch(() => {}); catchUp().catch(() => {});
   };
   // 크루 작업 중단(유건 확정 2026-09-26) — 서버(msgr_request_stop)가 권한을 다시 검사한다. 여기 canStop은 화면 노출만 — 숨김이 권한의 전부가 아니다.
   // RPC가 true면 그 카드가 사라질 때까지 버튼을 "중단 요청됨"으로 고정하고(분리 검수 L-3), false(이미 끝난 실행)면 짧게 안내한다.
@@ -6316,7 +6325,7 @@ function Channel({ movedBar = null, onCrewJoined = null, onCrewFailed = null, on
       ? <div className="msgr-joinbar" role="region" aria-label={t('ch.preview.title')}><span>{t('ch.preview.note', { name: channel.name })}</span><button type="button" className="btn btn-primary" onClick={onJoin}><I name="plus" size={14} />{t('ch.browse.join')}</button></div>
       : <Composer broadcast={broadcast} onOutsideDm={onOutsideDm} outsideDmPersonal={outsideDmPersonal} onCrewJoined={onCrewJoined} isPersonal={isPersonal} chId={chId} orgId={orgId} org={org} uid={uid} members={members} crews={crews} channel={channel} scopePeople={mentionPeople ?? people} scopeCrews={chCrews} locked={locked} sbw={sbw} typingLabel={typingLabel} mentionReq={mentionReq} onMentionDone={onMentionDone} replyReq={replyReq} onReplyDone={() => setReplyReq(null)} onPending={(x) => { stick.current = true; setPending((cur) => [...cur, x]); if (x.files?.length) setUploads((m) => ({ ...m, [x.clientId]: x.files })); }} onPendingSettled={(clientId, ok) => { if (!ok) setPending((cur) => cur.filter((x) => x.clientId !== clientId)); setUploads((m) => withoutKey(m, clientId)); }} onDiscarded={(id) => reloadMsg(id).catch(() => {})} onSent={async (id) => {
       try {
-        await load(lastId);
+        await catchUp();
         // Realtime may already have loaded the body before an attachment finished (or was retried).
         const attached = await q(supabase.from('msgr_attachments').select('id, message_id, storage_path, name, mime, bytes').eq('message_id', id));
         setAtts((current) => ({ ...current, [id]: attached }));

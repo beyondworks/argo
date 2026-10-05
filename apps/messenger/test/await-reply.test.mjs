@@ -93,11 +93,21 @@ test('기기 시계가 서버보다 10초 늦어도, 글을 본 뒤에 온 방�
 });
 
 // 통합 재검수 LOW(회귀, 2026-10-05): 방을 다시 열면 '처음 본 시각'이 새로 찍혀(Channel key={chId} 재생성) '조금 오래'가 '준비 중'으로 돌아갔다.
-// 기준은 처음 본 시각과 서버 created_at 중 이른 쪽 — 다시 연 경우(seen > created)에도 30초 판정이 이어진다.
-test('방을 다시 열어도(처음 본 시각이 다시 찍혀도) 조금 오래는 준비 중으로 돌아가지 않는다', () => {
-  const reopenAt = T0 + 40_000; // 글을 보낸 뒤 40초, 다른 방에 갔다가 다시 열었다
-  const a = awaitingReplies({ msgs: [mine(10)], uid: ME, isDm: true, roomCrewIds: [PEPPER], signals: none, away: () => false, now: reopenAt + 500, seenAt: () => reopenAt });
+// 처음 본 시각은 셸에 둔다(방을 다시 열어도 그대로) — 판정 기준은 그 시각 하나다(배선은 send-feedback-wiring.test.mjs).
+test('방을 다시 열어도(처음 본 시각은 셸에 남는다) 조금 오래는 준비 중으로 돌아가지 않는다', () => {
+  const reopenAt = T0 + 40_000; // 글을 보낸 뒤 40초, 다른 방에 갔다가 다시 열었다 — 처음 본 시각은 T0 그대로
+  const a = awaitingReplies({ msgs: [mine(10)], uid: ME, isDm: true, roomCrewIds: [PEPPER], signals: none, away: () => false, now: reopenAt + 500, seenAt: () => T0 });
   assert.equal(a[0].phase, 'slow');
-  const b = awaitingReplies({ msgs: [mine(10)], uid: ME, isDm: true, roomCrewIds: [PEPPER], signals: () => ({ typingAt: T0 + 3000 }), away: () => false, now: reopenAt + 500, seenAt: () => reopenAt });
+  const b = awaitingReplies({ msgs: [mine(10)], uid: ME, isDm: true, roomCrewIds: [PEPPER], signals: () => ({ typingAt: T0 + 3000 }), away: () => false, now: reopenAt + 500, seenAt: () => T0 });
   assert.equal(b[0].phase, 'slow', '다시 열기 전에 받은 방송(30초 넘게 무신호)도 기준에서 버려지지 않고 조금 오래로 이어진다');
+});
+
+// 분리 검수 L4(2026-10-05): 기준을 '처음 본 시각과 서버 created_at 중 이른 쪽'으로 섞자, 기기 시계가 서버보다 30초 넘게 빠르면 보낸 직후 '조금 오래'가 떴다
+// (기기 +40초: 0.5초 뒤 slow). 처음 본 시각(기기 시계)이 있으면 그것만 쓰고, 서버 시각은 5분 상한에만 쓴다.
+test('기기 시계가 서버보다 40초 빨라도 보낸 직후는 준비 중 — 서버 시각은 5분 상한에만', () => {
+  const ahead = 40_000, seen = T0 + ahead; // 서버 created_at = T0, 이 기기 시각으로 처음 본 때 = T0 + 40초
+  const a = awaitingReplies({ msgs: [mine(10)], uid: ME, isDm: true, roomCrewIds: [PEPPER], signals: none, away: () => false, now: seen + 500, seenAt: () => seen });
+  assert.equal(a[0].phase, 'preparing');
+  const late = awaitingReplies({ msgs: [mine(10)], uid: ME, isDm: true, roomCrewIds: [PEPPER], signals: none, away: () => false, now: T0 + 5 * 60_000 + 1, seenAt: () => T0 + 5 * 60_000 - 10 });
+  assert.deepEqual(late, [], '서버 시각으로 5분이 지나면 처음 본 시각과 상관없이 내린다');
 });

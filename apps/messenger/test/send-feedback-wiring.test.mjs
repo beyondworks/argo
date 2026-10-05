@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { awaitingReplies } from '../src/await-reply.mjs';
-import { createCrewPostsMemory, lastAskedIds, typingKey, withoutKey } from '../src/typing-state.js';
+import { createCrewPostsMemory, typingKey, withoutKey } from '../src/typing-state.js';
 
 const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
 const between = (from, to, at = 0) => { const s = app.indexOf(from, at); assert.ok(s >= 0, `찾지 못함: ${from}`); const e = app.indexOf(to, s + from.length); assert.ok(e > s, `끝을 찾지 못함: ${to}`); return app.slice(s, e + to.length); };
@@ -38,7 +38,7 @@ function shell(chId) {
 const postsLine = between('useEffect(() => { if (!msgs) return; for (const c of postsMem.read(', '}, [msgs]);');
 function channel({ props, chId, isDm = true, uid = 'u-me' }) {
   const ownPosts = createCrewPostsMemory(); const postsMem = props.crewPosts ?? ownPosts; // Channel: crewPosts ?? ownPosts
-  return (msgs) => { const useEffect = (fn) => fn(); new Function('useEffect', 'msgs', 'postsMem', 'chId', 'lastAskedIds', 'uid', 'channel', 'onCrewPosted', postsLine)(useEffect, msgs, postsMem, chId, lastAskedIds, uid, { kind: isDm ? 'dm' : 'public' }, props.onCrewPosted); };
+  return (msgs) => { const useEffect = (fn) => fn(); new Function('useEffect', 'msgs', 'postsMem', 'chId', 'uid', 'channel', 'onCrewPosted', postsLine)(useEffect, msgs, postsMem, chId, uid, { kind: isDm ? 'dm' : 'public' }, props.onCrewPosted); };
 }
 const ME = 'u-me', P = 'c-p', CH = 'dm-1';
 const mine = (id, created) => ({ id, author_kind: 'user', author_user_id: ME, crew_id: null, kind: 'text', body: 'hi', mentions: [], reply_to: null, created_at: new Date(created).toISOString(), deleted_at: null });
@@ -61,6 +61,22 @@ test('방을 다시 열어도 셸 기억(crewPosts 속성)을 써서, 떠나 있
   s.st.typing[`${CH}:${P}`] = Date.now(); // 그 크루가 곧바로 다음 일을 시작했다
   channel({ props: s.props(), chId: CH })([mine(10, Date.now()), crew(11)]); // 다시 연다(Channel 재생성)
   assert.ok(s.st.typing[`${CH}:${P}`], '새 턴의 입력 중은 남는다');
+});
+
+test('crewPosts 속성 — 다시 연 방에서 떠나 있는 동안 온 답(방송 유실)으로 입력 중을 내린다', () => {
+  const s = shell(CH);
+  channel({ props: s.props(), chId: CH })([mine(10, Date.now())]); // 처음 열기
+  s.st.typing[`${CH}:${P}`] = Date.now(); // 다른 방에 있는 동안 입력 중 방송은 받았고, 답(11) 방송은 유실됐다
+  channel({ props: s.props(), chId: CH })([mine(10, Date.now()), crew(11)]); // 다시 연다(Channel 재생성)
+  assert.equal(s.st.typing[`${CH}:${P}`], undefined, '셸 기억과 비교해 답을 알아보고 내린다');
+});
+
+test('처음 여는 단체 방에서 다른 사람이 부른 크루 — 입력 중·실행 카드·받음 표시가 남는다(검수 M1 재현, 실제 효과 줄)', () => {
+  const G = 'ch-team'; const s = shell(G); const k = `${G}:${P}`; const T = Date.now();
+  s.st.typing[k] = T; s.st.progress[k] = { at: T }; s.st.received[k] = T;
+  channel({ props: s.props(), chId: G, isDm: false })([crew(10), { id: 20, author_kind: 'user', author_user_id: 'u-bob', kind: 'text', body: '@페퍼', mentions: [{ kind: 'crew', id: P }] }]);
+  assert.ok(s.st.typing[k] && s.st.progress[k] && s.st.received[k], '밥의 지시(20)에 답하는 중인 페퍼의 표시가 그대로');
+  assert.equal(s.st.settled[k], undefined, '6초 방송 무시도 걸리지 않는다');
 });
 
 // Channel의 실제 처음 본 시각 기록 + 대기 표시 계산 두 줄
@@ -100,4 +116,17 @@ test('실패한 글이 있고 새 글에 같은 이름이 둘이면 — 재전�
   const send = new Function(...Object.keys(scope), `${sendSrc}; return send;`)(...Object.values(scope));
   await send();
   assert.deepEqual(seen, ['retry', 'sent:77', 'ambiguous:Kim'], '재전송 → 보냄 알림 → 동명이인 안내, 새 글은 보내지 않는다');
+});
+
+// 분리 검수 L4(2026-10-05): 처음 본 시각을 셸(seenAt 속성)에 둔다 — 방을 다시 열어도(Channel 재생성) 그 시각이 남아 기준을 서버 시각과 섞지 않는다.
+const seenRefLine = between('  const seenAtRef = useRef(', ');');
+test('seenAt 속성 — 방을 다시 열어도 처음 본 시각이 남아 조금 오래가 준비 중으로 돌아가지 않고, 기기 시계가 빨라도 보낸 직후는 준비 중', () => {
+  const seenMine = new Map(); const s = shell(CH);
+  const seenAt = evalIn(attr('seenAt'), { seenMine }) ?? null;
+  const open = () => new Function('useRef', 'seenAt', `${seenRefLine} return seenAtRef;`)((x) => ({ current: x }), seenAt); // Channel이 새로 만들어질 때마다
+  const serverT = Date.parse('2026-10-05T03:00:00Z'); const deviceT = serverT + 40_000; // 기기 시계가 40초 빠르다
+  const first = awaitingIn({ props: { ...s.props(), seenAtRef: open() }, msgs: [mine(10, serverT)], now: deviceT + 500 });
+  assert.equal(first[0].phase, 'preparing', '보낸 직후');
+  const again = awaitingIn({ props: { ...s.props(), seenAtRef: open() }, msgs: [mine(10, serverT)], now: deviceT + 40_500 }); // 다른 방에 갔다가 40초 뒤 다시 열었다
+  assert.equal(again[0].phase, 'slow', '처음 본 시각이 셸에 남아 30초 판정이 이어진다');
 });

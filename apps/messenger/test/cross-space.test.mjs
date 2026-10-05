@@ -179,3 +179,33 @@ test('u: 구독 상태를 앱에 알린다(onStatus) — 지금 붙어 있는 �
   timers.at(-1).fn(); made[1].cb('SUBSCRIBED');
   assert.deepEqual(seen, ['SUBSCRIBED', 'TIMED_OUT', 'SUBSCRIBED', 'CHANNEL_ERROR', 'SUBSCRIBED']);
 });
+
+// 분리 검수 M2(2026-10-05, 1bab588b): 만료 토큰으로 거절된 u:가 토큰 갱신 뒤에도 최소 60초 비었다 — 구독 효과가 토큰 갱신에 다시 돌지 않게 바뀐 뒤(MSG-01)
+// 거절 대기(60초~10분)를 깨울 길이 없었다. 갱신되면 retry()로 기다리던 재시도를 바로 실행한다(붙어 있거나 붙는 중이면 아무것도 안 한다).
+test('u: 구독: 거절 뒤 기다리는 중에 retry()를 부르면 예약을 걷고 바로 다시 붙는다 — 붙어 있으면 아무것도 안 한다', () => {
+  const made = []; const timers = [];
+  const sb = { realtime: { isConnected: () => true }, removeChannel: () => Promise.resolve('ok') };
+  const make = () => { const c = { n: made.length, subscribe(cb) { c.cb = cb; return c; } }; made.push(c); return c; };
+  const stop = joinWithBackoff(sb, make, { timer: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clear: (id) => { if (id) timers[id - 1].cleared = true; } });
+  stop.retry(); assert.equal(made.length, 1, '붙는 중에는 새 채널을 만들지 않는다');
+  made[0].cb('CHANNEL_ERROR', new Error('expired', { cause: { reason: 'InvalidJWTToken: Token has expired 3 seconds ago' } }));
+  assert.deepEqual([made.length, timers.length], [1, 1], '거절 — 1분 뒤로 예약');
+  stop.retry(); // 토큰이 갱신됐다
+  assert.equal(made.length, 2, '바로 다시 붙는다(60초를 기다리지 않는다)');
+  assert.equal(timers[0].cleared, true, '기다리던 예약은 걷는다(두 번 붙지 않게)');
+  made[1].cb('SUBSCRIBED'); stop.retry();
+  assert.equal(made.length, 2, '붙어 있으면 아무것도 안 한다');
+  stop(); stop.retry(); assert.equal(made.length, 2, '멈춘 뒤에는 다시 붙지 않는다');
+});
+
+test('실시간 인증은 콜백(세션)에서 새로 읽는다 — 구독 효과가 토큰 값을 넘기면 갱신 전 토큰이 다시 박힌다(검수 M2)', async () => {
+  const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
+  const calls = app.match(/realtime\.setAuth\([^)]*\)/g) ?? [];
+  assert.ok(calls.length >= 2, 'setAuth 호출을 찾지 못함');
+  assert.deepEqual([...new Set(calls)], ['realtime.setAuth()'], '토큰 값을 넘기지 않는다');
+  // 왜 인자가 없어야 하나 — 실제 realtime-js: 콜백이 있어도 setAuth(토큰)은 그 토큰을 채널 가입 값으로 쓴다
+  const { RealtimeClient } = await import('@supabase/realtime-js');
+  const rt = new RealtimeClient('ws://127.0.0.1:9/realtime/v1', { params: { apikey: 'anon' }, accessToken: async () => 'fresh' });
+  await rt.setAuth('stale'); assert.equal(rt.accessTokenValue, 'stale');
+  await rt.setAuth(); assert.equal(rt.accessTokenValue, 'fresh');
+});
