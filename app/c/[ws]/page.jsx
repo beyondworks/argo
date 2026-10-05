@@ -10,6 +10,7 @@ import { anyRunnerUsable, runnerNeedsReconnect, usableRunnerNames, onlyHiddenCon
 import { useLang } from '../../i18n';
 import { approvalExpandDefault } from '../../lib/approval-display.mjs';
 import styles from './deck.module.css';
+import { gistLabel } from '../../lib/gist-display.mjs'; // 메신저 머리말을 뗀 요약(UX-A08)
 
 export default function Deck({ params }) {
   const { ws } = use(params);
@@ -470,7 +471,7 @@ function MorningBrief({ ws, agents }) {
         <div key={i} style={{ fontSize: 12, color: 'var(--fg-2)', display: 'flex', gap: 8, alignItems: 'center', minWidth: 0 }}>
           <span className="mono" style={{ fontSize: 10.5, color: 'var(--fg-3)', flex: 'none', width: 56 }}>{timeAgo(new Date(e.ts).getTime(), lang)}</span>
           <span style={{ fontWeight: 600, flex: 'none' }}>{nameOf(e.slug)}</span>
-          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.gist}</span>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{gistLabel(e.gist, t)}</span>
         </div>
       ))}
     </div>

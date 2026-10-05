@@ -1546,6 +1546,8 @@ const DICT = {
   'activity.noSteps': ['기록된 단계가 없습니다 (도구 없이 답한 턴).', 'No steps recorded (answered without tools).'],
   'activity.instruction': ['지시', 'Instruction'],
   'activity.rerun': ['다시 실행', 'Re-run'],
+  'activity.rerunMessenger': ['메신저로 받은 지시는 여기서 다시 실행하지 않습니다 — 메신저에서 다시 보내 주세요.', 'Instructions received through the messenger are not re-run here — please send it again from the messenger.'],
+  'activity.msgrGist': ['팀 메신저 #{channel}에서 받은 지시', 'Instruction from team messenger #{channel}'],
   'activity.rerunStarted': ['다시 실행 시작 — 크루 채팅에서 진행이 보입니다.', 'Re-run started — progress shows in the crew chat.'],
   'activity.today': ['오늘', 'Today'],
   'activity.turnsProcessed': ['처리한 턴', 'Turns Processed'],

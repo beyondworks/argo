@@ -12,6 +12,7 @@ import { SplitPane } from './split-pane';
 import { parseSide, sideParam, withSide } from './split.mjs';
 import { useSplitAlive } from './split-alive';
 import { nextCompanyData } from './company-load.mjs';
+import { gistLabel } from '../../lib/gist-display.mjs'; // 메신저 머리말을 뗀 요약(UX-A08)
 
 const fmtRun = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
 const fmtDur = (ms) => (ms == null ? '' : ms >= 60000 ? `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s` : `${Math.round(ms / 1000)}s`);
@@ -77,7 +78,7 @@ function TasksDock({ ws, data, open, setOpen }) {
               <Link key={i} className="task-row" href={e.slug ? `/c/${ws}/crew/${e.slug}` : `/c/${ws}/activity`} onClick={() => setOpen(false)}>
                 <span style={{ width: 6, height: 6, borderRadius: 999, flex: 'none', background: e.ok ? 'var(--ok)' : 'var(--danger)' }} aria-hidden="true" />
                 <span className="t-main">
-                  <span className="t-title">{e.gist || t(`tasks.type.${e.type}`)}</span>
+                  <span className="t-title">{gistLabel(e.gist, t) || t(`tasks.type.${e.type}`)}</span>
                   <span className="t-sub">
                     {[e.gist ? t(`tasks.type.${e.type}`) : '', e.slug ?? '', e.ok ? '' : t('tasks.failed')].filter(Boolean).join(' · ')}
                   </span>

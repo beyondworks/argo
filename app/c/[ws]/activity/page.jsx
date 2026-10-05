@@ -7,6 +7,8 @@ import Link from 'next/link';
 import styles from './responsive.module.css';
 import { Avatar, Skeleton, Spinner, api, timeAgo } from '../../../ui';
 import { useLang, stageLabel } from '../../../i18n';
+import { rerunMode } from './rerun.mjs'; // '다시 실행'은 사장이 직접 시킨 턴만(F5)
+import { gistLabel } from '../../../lib/gist-display.mjs'; // 메신저 머리말을 뗀 요약(UX-A08)
 
 // 러너 표시명 — 서버 RUNNERS.name 준거(runner-connect RUNNER_NAMES와 같은 값)
 const RUNNER_LABELS = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', antigravity: 'Antigravity', glm: 'GLM', kimi: 'Kimi', openrouter: 'OpenRouter', grok: 'Grok' };
@@ -81,7 +83,7 @@ export default function Activity({ params }) {
         who: (e.source === 'delegate' || e.source === 'crewmail') && e.from ? `${nameOf(e.from)} → ${nameOf(e.slug)}`
           : e.source === 'crewmail' && e.fromRole === 'captain' ? `${t('mail.fromCaptain')} → ${nameOf(e.slug)}` : nameOf(e.slug), // 사장 쪽지(fromRole) — from 문자열로 판정하지 않는다
         avatar: nameOf(e.slug),
-        desc: isError(e) ? e.error : (e.gist || t('activity.instructionDone')),
+        desc: isError(e) ? e.error : (gistLabel(e.gist, t) || t('activity.instructionDone')),
         chip: isError(e) ? t('activity.error') : (SOURCE[e.source] ?? t('activity.conversation')),
         danger: isError(e),
         href: e.journalRel ? `/c/${ws}/vault?doc=${encodeURIComponent(e.journalRel)}` : null,
@@ -237,7 +239,11 @@ export default function Activity({ params }) {
                         <p style={{ margin: '3px 0 0', color: 'var(--fg-3)' }}>{t('activity.noSteps')}</p>
                       )}
                     </div>
-                    {e.msg && e.source !== 'delegate' && (
+                    {rerunMode(e) === 'messenger' && (
+                      // 메신저(손님 포함) 턴은 여기서 다시 돌리지 않는다 — 사장 직접 턴으로 승격되고 답도 메신저가 아니라 1:1에 붙는다(F5)
+                      <p style={{ margin: 0, fontSize: 11.5, color: 'var(--fg-2)' }}>{t('activity.rerunMessenger')}</p>
+                    )}
+                    {rerunMode(e) === 'rerun' && (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                         <button className="btn sm" disabled={rerunning >= 0} onClick={() => rerun(i, e)}>
                           {rerunning === i ? <Spinner size={11} /> : t('activity.rerun')}

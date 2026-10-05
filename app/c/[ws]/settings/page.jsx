@@ -24,6 +24,7 @@ const CONTACT = process.env.NEXT_PUBLIC_ARGO_CONTACT || '';
 // 설정 탭 — 각 카드는 정확히 한 탭에만 속한다(test/tabs-layout). 렌더 순서: 작은 카드 → 전폭(.wide) 카드.
 const SETTINGS_TABS = ['general', 'ai', 'connections', 'devices', 'danger'];
 import { checkoutUrl } from './checkout-link.mjs';
+import { gistLabel } from '../../../lib/gist-display.mjs'; // 메신저 머리말을 뗀 요약(UX-A08)
 const LS_MONTHLY = process.env.NEXT_PUBLIC_LS_CHECKOUT_MONTHLY || '';
 const LS_YEARLY = process.env.NEXT_PUBLIC_LS_CHECKOUT_YEARLY || '';
 
@@ -786,7 +787,7 @@ function TrashCard({ ws }) {
           {items.map((it) => (
             <div key={it.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', border: '1px solid var(--border-soft)', borderRadius: 10, minWidth: 0 }}>
               <span style={{ minWidth: 0, flex: 1 }}>
-                <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.title || it.gist || t('chat.sessions.untitled')}</span>
+                <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.title || gistLabel(it.gist, t) || t('chat.sessions.untitled')}</span>
                 <span className="nav-sub">{it.crew} · {new Date(it.ts).toLocaleDateString('sv-SE')} · {t('chat.sessions.msgs', { n: it.count })}</span>
               </span>
               <button type="button" className="btn sm" style={{ flex: 'none' }} disabled={busy === it.id} onClick={() => restore(it)}>

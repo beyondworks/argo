@@ -24,6 +24,7 @@ import { matchSlash } from '../../slash-match.mjs';
 import { useSessionMention, SessionMentionPanel, SessionMsgCard, isSessionCard } from './session-msg.jsx'; // 세션 메시지 — @크루 자동 완성·접힌 카드
 import { parseSessionTarget } from './session-msg-parse.mjs';
 import { mergePolledThread, pollStep } from './thread-poll.mjs'; // 두 폴의 같은 반영 경로(F2·F2+)
+import { gistLabel } from '../../../../lib/gist-display.mjs'; // 메신저 머리말을 뗀 요약(UX-A08)
 
 // 러너 표시명(폴백 안내용) — runner-connect의 RUNNER_NAMES와 동일 값(서버 RUNNERS.name 준거)
 const RUNNER_LABELS = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', antigravity: 'Antigravity', glm: 'GLM', kimi: 'Kimi', openrouter: 'OpenRouter', grok: 'Grok' };
@@ -874,7 +875,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
                 <span style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12.5, fontWeight: 600 }}>
                   {/* 고정 표식 — 상시 노출(hover 아니어도) so 어느 대화가 고정됐는지 한눈에 */}
                   {s.pinned && <Icon name="pin" size={11} style={{ flex: 'none', color: pinColor }} />}
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.title || s.gist || t('chat.sessions.untitled')}</span>
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.title || gistLabel(s.gist, t) || t('chat.sessions.untitled')}</span>
                 </span>
                 <span className="nav-sub">{new Date(s.ts).toLocaleDateString('sv-SE')} · {t('chat.sessions.msgs', { n: s.count })}</span>
               </span>
@@ -1440,7 +1441,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
                   {rec.map((e, i) => (
                     <Link key={e.ts ?? i} className="task-row" href={`/c/${ws}/activity`}>
                       <span style={{ width: 6, height: 6, borderRadius: 999, flex: 'none', background: e.ok ? 'var(--ok)' : 'var(--danger)' }} aria-hidden="true" />
-                      <span className="t-main"><span className="t-title">{e.gist || t(`tasks.type.${e.type}`)}</span></span>
+                      <span className="t-main"><span className="t-title">{gistLabel(e.gist, t) || t(`tasks.type.${e.type}`)}</span></span>
                     </Link>
                   ))}
                 </>
@@ -2048,7 +2049,7 @@ function CardPanel({ ws, slug, agent, agentName, runners, autoRunnerId, sel, onR
                 {profile.recent.slice(0, 5).map((r, i) => (
                   <div key={i} style={{ fontSize: 12, color: 'var(--fg-2)', display: 'flex', gap: 7, alignItems: 'center', minWidth: 0 }}>
                     <span style={{ width: 5, height: 5, borderRadius: 999, flex: 'none', background: r.ok ? 'var(--ok)' : 'var(--danger)' }} />
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.gist}</span>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{gistLabel(r.gist, t)}</span>
                   </div>
                 ))}
               </div>
