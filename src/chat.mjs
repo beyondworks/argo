@@ -46,7 +46,7 @@ import { detectRunnerDenial, detectDenialNarration, denialNote } from './runner-
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
 import { registerTurn, withTurnControl, turnAbortedError } from './turn-abort.mjs';
 import { scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, loadRunnerCred, verifyRunnerCred, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply, isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice, isHiddenRunner, visibleRunnerIds, visibleRunnerNamesLine, onlyHiddenConnectedStatus, unsupportedMethodStatus, unsupportedMethodNotice, isCliTurn, GEMINI_DEFAULT_MODEL, runnerCredType, CODEX_DEFAULT_MODEL, CLI_CHAT_TURN_TIMEOUT_MS } from './runners.mjs';
-import { USER_ABORT_ERROR } from './legacy-terms.mjs'; // 중단 이벤트 문자열 — 읽는 쪽(runner-usable·failure-digest)은 옛 문자열도 본다
+import { USER_ABORT_ERROR, LEGACY_RECORD_TERMS_NOTE } from './legacy-terms.mjs'; // 중단 이벤트 문자열 — 읽는 쪽(runner-usable·failure-digest)은 옛 문자열도 본다
 import { delegateHead } from './inbound-marks.mjs'; // 위임 머리말 = 1:1 화면 출처 카드와 같은 함수
 import { loadThread, takeSharedNotes, restoreSharedNotes, scopedSession, inContextScope, turnScope, scopeKey, approvalScope, threadSummary, setThreadSummary, appendLine } from './thread.mjs';
 import { buildThreadContext, contextSection, contextLimits, fitContextSection, isArgvRunner, argvLen, ARGV_PROMPT_LIMIT } from './thread-context.mjs';
@@ -244,6 +244,7 @@ ${skills ? `\n## Company skills — auto-injected every turn; apply them to matc
 - Your company memory is the entire ${wsRoot}/vault folder. When starting new work, read vault/_index.md first, then follow the relevant [[links]] and read only the documents you need.
 - For "what was ~ again?" questions about the past, search _index.md → topic notes → journals, and answer with the source file names.
 - When answering from past context, briefly mention which record it came from.
+- ${LEGACY_RECORD_TERMS_NOTE.en}
 - Save reusable knowledge gained while working to vault/notes/ as md (file name: topic-slug.md).
 - When you newly learn the user's preferences, settled decisions, or no-gos, record each as a one-line bullet in vault/notes/사장-프로필.md under the matching section — "## 취향" (preferences), "## 결정" (decisions), "## 금지" (no-gos); keep these exact Korean file/section names, they are a fixed data convention. No duplicates of existing entries, no guessing — only what the user said directly.
 - Unless a granted capability says otherwise, never read or write files outside the vault.
@@ -319,6 +320,7 @@ ${skills ? `\n## 회사 스킬 — 매 턴 자동 주입된다. 해당 유형 �
   관련 [[링크]]를 따라 필요한 문서만 읽어 맥락을 확보하라.
 - "예전에 ~뭐였지?" 류 과거 질문은 _index.md → 주제 노트 → 일지 순으로 찾아, 근거 파일명과 함께 답하라.
 - 과거 맥락을 근거로 답할 때는 어느 기록에서 왔는지 파일명을 짧게 언급하라.
+- ${LEGACY_RECORD_TERMS_NOTE.ko}
 - 작업 중 얻은 재사용 가치가 있는 지식은 vault/notes/에 md로 남겨라(파일명: 주제-슬러그.md).
 - 사용자의 취향·확정된 결정·금지사항을 새로 알게 되면 vault/notes/사장-프로필.md 의 "## 취향 / ## 결정 / ## 금지" 섹션에 불릿 한 줄로 기록·갱신하라. 이미 있는 내용과 중복 금지, 추측 금지 — 사용자가 직접 말한 것만.
 - 허용된 능력이 달리 정하지 않는 한, vault 밖의 파일은 읽지도 쓰지도 마라.
