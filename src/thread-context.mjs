@@ -26,6 +26,7 @@ export const ARGV_CMDLINE_MAX = 32_767;
 export const ARGV_RESERVE = 4_096; // 실행 파일 경로와 나머지 인자(--model·--add-dir 반경·--mode·--sandbox·--print-timeout)·구분 공백의 몫
 export const ARGV_PROMPT_LIMIT = ARGV_CMDLINE_MAX - ARGV_RESERVE; // 프롬프트 인자 하나(argvLen)의 상한
 const SECTION_HEAD_ALLOW = 200; // 구획 머리말(## 앞 대화 요약… / ## 최근 대화)과 빈 줄
+const MIN_SUMMARY_CHARS = 500; // 요약 몫이 이보다 작으면 요약 원샷을 부르지 않는다 — 실을 자리가 없는 요약에 턴마다 돈을 쓰지 않게(나머지 프롬프트가 상한에 가까운 argv 러너 턴)
 /** Windows 명령줄에서 글이 차지하는 길이(순수, 상한 쪽 근사) — UTF-16 단위 + 이스케이프될 수 있는 " 와 \ 마다 1(libuv quote_cmd_arg). */
 export const argvChars = (s) => { const t = String(s ?? ''); let n = t.length; for (let i = 0; i < t.length; i++) { const c = t.charCodeAt(i); if (c === 34 || c === 92) n += 1; } return n; };
 /** 인자 하나로 실렸을 때의 길이 — 감싸는 따옴표 2 포함. */
@@ -91,7 +92,7 @@ export async function buildThreadContext({ msgs, lineOf, summary = null, summari
   const failed = memoKey ? failMemo.get(memoKey) : null;
   // 실패 뒤 새로 쌓인 몫 — 요약 대상(pending) 가운데 실패 시점의 끝보다 새 메시지. 이것이 SUMMARY_REFRESH_MIN개가 되기 전에는 다시 부르지 않는다
   const retryable = !failed || plan.pending.filter((m) => m.ts > failed.upto).length >= SUMMARY_REFRESH_MIN;
-  if (plan.needRefresh && summarize && retryable) {
+  if (plan.needRefresh && summarize && retryable && L.summaryCap >= MIN_SUMMARY_CHARS) {
     try {
       const prompt = threadSummaryPrompt(plan.summary, plan.pendingLines, lang, { maxInput: L.summaryInput, measure: L.measure, summaryChars: L.summaryChars });
       const out = String(await summarize(prompt) ?? '').trim();

@@ -281,3 +281,14 @@ test('TB12. CLI 턴(가짜 codex): 요약하는 동안 상태는 summarize, 정�
   await new Promise((r) => setTimeout(r, 200));
   assert.equal(await readFile(statusFile, 'utf8').catch(() => null), null, '상태 파일은 정리된다');
 });
+
+test('TB13. argv 러너에 남은 자리가 거의 없으면(나머지 프롬프트가 상한에 가깝다) 요약 원샷을 부르지 않는다 — 빈 요약을 저장하며 턴마다 돈만 쓰지 않게', async () => {
+  const { contextLimits } = await import('../src/thread-context.mjs');
+  let calls = 0; let saved = null;
+  for (const room of [0, 300, 1200]) {
+    const r = await buildThreadContext({ msgs: msgs(300, 400), lineOf, summary: null, limits: contextLimits('antigravity', room), summarize: async () => { calls++; return '요약'; }, save: async (s) => { saved = s; }, memoKey: `tb13:${room}` });
+    assert.equal(r.summary, null, `room ${room}`);
+  }
+  assert.equal(calls, 0, `요약 호출 ${calls}회(0회)`);
+  assert.equal(saved, null);
+});
