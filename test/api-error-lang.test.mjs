@@ -46,24 +46,24 @@ const EXPECT = {
   e2ee_revoke_self: { status: 400, ko: '이 기기 자신은 제거할 수 없습니다', en: 'This device cannot remove itself' },
   e2ee_unknown_action: { status: 400, ko: '알 수 없는 action', en: 'Unknown action' },
   // 회의실 게이트(#395) — 세 라우트(새 회의·전환·마치기)가 같은 코드로 응답. 문구는 #393 DELETE 핀(/진행 중|still speaking/)을 잇는다
-  room_busy: { status: 409, ko: '발언이 진행 중입니다 — 끝난 뒤 다시 시도해 주세요.', en: 'A crew is still speaking — try again after it finishes.' },
+  room_busy: { status: 409, ko: '발언이 진행 중입니다 — 끝난 뒤 다시 시도해 주세요.', en: 'An agent is still speaking — try again after it finishes.' },
   // 팀 메신저 크루 등록(app/api/companies/[ws]/msgr) — S2 검수 MEDIUM-5(하드코딩 문구·PG 원문 노출 제거)
   msgr_notify_bad_request: { status: 400, ko: '알림 설정 요청이 올바르지 않습니다 — 켜기/끄기 값만 받습니다', en: 'Bad notification setting request — only an on/off value is accepted' },
-  msgr_bad_request: { status: 400, ko: '조직 id·크루·허용 범위(all|list|owner)를 확인해 주세요', en: 'Check the organization id, crew, and allow scope (all|list|owner)' },
-  msgr_crew_not_found: { status: 404, ko: '크루가 없습니다', en: 'Crew not found' },
+  msgr_bad_request: { status: 400, ko: '조직 id·에이전트·허용 범위(all|list|owner)를 확인해 주세요', en: 'Check the organization id, agent, and allow scope (all|list|owner)' },
+  msgr_crew_not_found: { status: 404, ko: '에이전트가 없습니다', en: 'Agent not found' },
   msgr_upstream: { status: 502, ko: '조직 서버 응답 오류 — 잠시 후 다시 시도해 주세요', en: 'Organization server error — please try again shortly' },
   // 회사 정보 읽기 실패(F3, 2026-10-05) — 없음(404 company_not_found)과 갈라 화면이 '찾을 수 없음'으로 바뀌지 않게
   // 엔진 오류 코드(F11) — ko는 엔진이 던지던 문장 그대로
-  crew_not_found: { status: 404, ko: '존재하지 않는 크루입니다', en: 'This crew does not exist' },
-  team_not_found: { status: 404, ko: '해당 팀의 크루가 없습니다', en: 'No crew is in that team' },
+  crew_not_found: { status: 404, ko: '존재하지 않는 에이전트입니다', en: 'This agent does not exist' },
+  team_not_found: { status: 404, ko: '해당 팀의 에이전트가 없습니다', en: 'No agents are in that team' },
   approval_not_found: { status: 404, ko: '존재하지 않는 결재입니다', en: 'This approval does not exist' },
   approval_already_resolved: { status: 409, ko: '이미 처리된 결재입니다', en: 'This approval was already handled' },
   approval_org_policy: { status: 403, ko: '조직 정책: 이 결재는 팀 메신저에서 조직 관리자(결재권자)만 확정할 수 있습니다', en: 'Organization policy: only an org admin (approver) can decide this, in the team messenger' },
   routine_not_found: { status: 404, ko: '루틴을 찾을 수 없습니다', en: 'Routine not found' },
-  routine_fields_required: { status: 400, ko: '크루·제목·지시가 필요합니다', en: 'A crew, title and instruction are required' },
+  routine_fields_required: { status: 400, ko: '에이전트·제목·지시가 필요합니다', en: 'An agent, title and instruction are required' },
   routine_title_required: { status: 400, ko: '제목이 필요합니다', en: 'A title is required' },
   routine_prompt_required: { status: 400, ko: '지시가 필요합니다', en: 'An instruction is required' },
-  routine_crew_required: { status: 400, ko: '크루가 필요합니다', en: 'A crew is required' },
+  routine_crew_required: { status: 400, ko: '에이전트가 필요합니다', en: 'An agent is required' },
   routine_once_date_required: { status: 400, ko: '1회 예약은 날짜(YYYY-MM-DD)가 필요합니다', en: 'A one-time schedule needs a date (YYYY-MM-DD)' },
   routine_time_format: { status: 400, ko: '예약 시각은 HH:MM 형식', en: 'Schedule times must be in HH:MM format' },
   routine_interval_range: { status: 400, ko: '반복 간격은 10~1440분', en: 'The repeat interval must be 10 to 1440 minutes' },
@@ -73,16 +73,18 @@ const EXPECT = {
   routine_verify_path_relative: { status: 400, ko: '완료 조건 경로는 회사 기억 안 상대경로만', en: 'Completion-check paths must be relative paths inside the company memory' },
   routine_verify_path_traversal: { status: 400, ko: '완료 조건 경로에 상위 탈출(..) 금지', en: 'Completion-check paths cannot go up a folder (..)' },
   routine_verify_files_max: { status: 400, ko: '완료 조건 파일은 5개까지', en: 'At most 5 completion-check files' },
-  crew_slug_reserved: { status: 400, ko: '크루 이름이 회의실 내부 이름(room-)과 겹칩니다 — 다른 이름으로 영입해 주세요', en: "That crew name collides with the meeting room's internal name (room-) — please hire with a different name" },
+  crew_slug_reserved: { status: 400, ko: '에이전트 이름이 회의실 내부 이름(room-)과 겹칩니다 — 다른 이름으로 영입해 주세요', en: "That agent name collides with the meeting room's internal name (room-) — please hire with a different name" },
   company_name_required: { status: 400, ko: '이름이 필요합니다', en: 'A name is required' },
   company_budget_invalid: { status: 400, ko: '예산은 0 이상의 숫자', en: 'Budget must be a number of 0 or more' },
   company_lang_invalid: { status: 400, ko: '언어는 ko 또는 en이어야 합니다', en: 'Language must be ko or en' },
   vault_bad_request: { status: 400, ko: 'rel·content가 필요합니다', en: 'rel and content are required' },
   vault_note_only: { status: 400, ko: '주제 노트만 수정할 수 있습니다', en: 'Only topic notes can be edited' },
   vault_doc_not_found: { status: 404, ko: '문서를 찾을 수 없습니다', en: 'Document not found' },
-  crew_card_not_found: { status: 404, ko: '크루를 찾을 수 없습니다', en: 'Crew not found' },
+  crew_card_not_found: { status: 404, ko: '에이전트를 찾을 수 없습니다', en: 'Agent not found' },
+  crew_card_read_failed: { status: 500, ko: '에이전트 카드를 읽지 못했습니다', en: "Couldn't read the agent card" },
+  mail_fields_required: { status: 400, ko: '수신 에이전트와 내용이 필요합니다', en: 'A recipient agent and a message are required' },
   vault_conflict: { status: 409, ko: '편집하는 동안 다른 곳에서 이 문서가 바뀌었습니다', en: 'This document changed elsewhere while you were editing' },
-  archive_not_found: { status: 404, ko: '보관한 회사를 찾을 수 없습니다', en: 'Archived company not found' },
+  archive_not_found: { status: 404, ko: '삭제한 회사를 찾을 수 없습니다', en: 'Deleted company not found' },
   archive_restore_exists: { status: 409, ko: '이미 목록에 같은 회사가 있어 되돌릴 수 없습니다 — 목록에서 그 회사를 열어 보세요', en: 'The same company is already in your list, so it cannot be restored — open it from the list' },
   archive_restore_failed: { status: 500, ko: '회사를 되돌리지 못했습니다 — 잠시 후 다시 시도해 주세요', en: 'Could not restore the company — please try again shortly' },
   // 보관함(app/api/companies/[ws]/trash, 2차 검수 M3) — 항목이 이미 사라졌거나(복구·삭제가 먼저 일어남) 입력이 없을 때 시스템 원문(경로) 대신 문구
@@ -232,4 +234,38 @@ test('F11: 엔진이 던지는 오류에 errorCode가 붙고(문장은 그대로
   assert.equal(errorTextFor({ error: '원문' }, 400, 'en'), '원문');
   assert.equal(errorTextFor({}, 502, 'en'), 'Request failed (502)');
   assert.equal(errorTextFor({}, 502, 'ko'), '요청 실패 (502)');
+});
+
+// 용어 변경 T1(2026-10-05): 한국어만 있던 라우트 문구 3곳을 사전 코드로 옮겼다 — 화면은 errorCode로 화면 언어 문구를 고르고,
+// 카드 읽기 500은 사유를 지우지 않도록 errorCode 없이 표시 언어 문구 + 실제 사유를 내린다.
+test('T1: 쪽지·위임 스위치·카드 읽기 실패 문구 — 사전 코드로 내리고(ko 기본), 화면은 en으로 다시 그린다', async () => {
+  const { errorTextFor } = await import('../app/apimsg.mjs');
+  const { createCompany, paths } = await import('../src/workspace.mjs');
+  const { mkdir } = await import('node:fs/promises');
+  await createCompany('co-t1', 'T1 회사', 'captain');
+  const params = Promise.resolve({ ws: 'co-t1' });
+  const req = (body) => new Request('http://localhost/x', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+
+  const mail = await import('../app/api/companies/[ws]/mail/route.js');
+  const r1 = await mail.POST(req({ to: '', message: '' }), { params });
+  assert.equal(r1.status, 400);
+  const b1 = await r1.json();
+  assert.deepEqual(b1, { error: '수신 에이전트와 내용이 필요합니다', errorCode: 'mail_fields_required' }, '요청 스코프 밖(쿠키 없음) = ko');
+  assert.equal(errorTextFor(b1, 400, 'en'), 'A recipient agent and a message are required');
+
+  const deleg = await import('../app/api/companies/[ws]/chat/delegation/route.js');
+  const r2 = await deleg.POST(req({ slug: 'ghost', limit: true }), { params });
+  assert.equal(r2.status, 404);
+  const b2 = await r2.json();
+  assert.deepEqual(b2, { error: '에이전트를 찾을 수 없습니다', errorCode: 'crew_card_not_found' });
+  assert.equal(errorTextFor(b2, 404, 'en'), 'Agent not found');
+
+  // 카드 파일 자리에 폴더 — 읽기는 실패하지만 없음(NOT_FOUND)이 아니다 → 500 + 실제 사유
+  await mkdir(join(paths('co-t1').agents, 'broken.md'), { recursive: true });
+  const card = await import('../app/api/companies/[ws]/agents/[slug]/route.js');
+  const r3 = await card.GET(new Request('http://localhost/x'), { params: Promise.resolve({ ws: 'co-t1', slug: 'broken' }) });
+  assert.equal(r3.status, 500);
+  const b3 = await r3.json();
+  assert.match(b3.error, /^에이전트 카드를 읽지 못했습니다: \S/, '사유를 붙인다');
+  assert.equal(b3.errorCode, undefined, 'errorCode를 실으면 화면이 사유를 버린다');
 });

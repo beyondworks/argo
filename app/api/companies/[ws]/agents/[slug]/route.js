@@ -1,6 +1,6 @@
 import { readAgentCard, saveAgentCard, removeAgentCard, updateAgentMeta, setAgentRules, setAgentSection } from '../../../../../../src/persona.mjs';
 import { guardCompany, requestLang } from '../../../../../auth.mjs';
-import { apiError, apiErrorFrom } from '../../../../../apimsg.mjs';
+import { API_MSG, apiError, apiErrorFrom } from '../../../../../apimsg.mjs';
 
 /** 카드 열람 — 카드가 곧 시스템 프롬프트(투명성) + 최근 업무·적용 스킬(크루 프로필). */
 export async function GET(_req, { params }) {
@@ -28,7 +28,8 @@ export async function GET(_req, { params }) {
     // (실사용 신고 2026-08-02의 진단이 늦어진 이유). 없음은 404, 그 외는 500 + 실제 사유.
     if (e?.code === 'NOT_FOUND') return apiError('crew_card_not_found', await requestLang()); // 화면 언어 문구 + errorCode(F11)
     if (e?.code === 'BAD_SLUG') return Response.json({ error: String(e.message) }, { status: 400 }); // 경로 이탈 등 — 서버 잘못이 아니다
-    return Response.json({ error: `크루 카드를 읽지 못했습니다: ${String(e?.message || e)}` }, { status: 500 });
+    const m = API_MSG.crew_card_read_failed; // 화면 언어 문구 + 실제 사유(errorCode를 싣지 않는다 — 실으면 화면이 사유를 버리고 사전 문구만 보인다)
+    return Response.json({ error: `${(await requestLang()) === 'en' ? m.en : m.ko}: ${String(e?.message || e)}` }, { status: m.status });
   }
 }
 
