@@ -1,8 +1,8 @@
 // 용어 스캔 — 사용자에게 보이는 글자에 옛 낱말('크루'·'사장'·'선장', crew·captain·boss)과 조사 오류가 남았는지 센다.
-// 계획: artifacts/rc-0195/terminology-plan.md 2-4절(패턴)·6-4절(검사 대상). 지금(T0)은 **남은 개수만 출력하고 실패시키지 않는다**.
-// 마지막 단위(T6)에서 ENFORCE를 true로 바꿔 0건을 강제한다(허용 목록 밖 0건).
+// 계획: artifacts/rc-0195/terminology-plan.md 2-4절(패턴)·6-4절(검사 대상). T6부터 **0건 강제** — 허용 목록 밖 옛 낱말이 하나라도 있으면 빨강이다.
+// 새 화면 글자에 옛 낱말을 다시 넣지 말 것. 꼭 필요한 코드 값이면 ALLOW에 파일·문자열·이유를 정확히 적는다.
 // 주석은 보지 않는다(acorn으로 문자열·템플릿·JSX 글자만 꺼낸다). src/legacy-terms.mjs(옛 표지 목록)는 검사에서 뺀다.
-// acorn·acorn-jsx는 루트 node_modules에 있다(Next 의존). T6에서 devDependencies로 선언한다(계획 6-4).
+// acorn·acorn-jsx는 루트 devDependencies로 선언했다(계획 6-4).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import * as acorn from 'acorn';
 import jsx from 'acorn-jsx';
 
-const ENFORCE = false; // T6에서 true — 그때부터 남은 개수가 0이 아니면 빨강
+const ENFORCE = true; // T6부터 0건 강제
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const JSX_PARSER = acorn.Parser.extend(jsx());
 
@@ -147,7 +147,7 @@ test('스캐너 자체 — 문자열·템플릿·JSX 글자는 잡고, 주석·�
   assert.equal(unitOf('src/chat.mjs'), 'T2a 지시문·엔진');
 });
 
-test('용어 스캔 — 남은 옛 낱말 개수(단위별). T0에서는 출력만 하고, T6에서 0건 강제', () => {
+test('용어 스캔 — 허용 목록 밖 옛 낱말 0건(단위별 개수 출력)', () => {
   const { code, docs } = targets();
   const hits = [];
   for (const p of code) {
