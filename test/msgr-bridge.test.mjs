@@ -618,9 +618,9 @@ test('G-3 규칙 주입 핀: chat()은 mirrorCtx.orgSlug로 규칙을 읽어 SDK
   const { readFileSync } = await import('node:fs');
   const chatSrc = readFileSync(new URL('../src/chat.mjs', import.meta.url), 'utf8');
   assert.match(chatSrc, /const orgRules = mirrorCtx\?\.orgMemory \? orgMemoryPrompt\(mirrorCtx\.orgMemory, \{ org: mirrorCtx\.orgSlug \?\? '', channelName: mirrorCtx\.channelName \?\? ''[^\n]*\n\s*: mirrorCtx\?\.orgSlug \? await loadOrgRules\(wsId, mirrorCtx\.orgSlug, \{ channelName: mirrorCtx\.channelName \?\? ''/, '규칙 로드 — 서버 기억 우선, 옛 서버면 미러');
-  assert.match(chatSrc, /\$\{systemPromptFor\(md, p\.root, skills, meta, lang, \{ hasTools: cliTools, connectors: cliConnectors \}\)\}\$\{orgRules\}/, 'CLI 프롬프트 주입'); // K94: 도구 여부는 크루 다리 유무
+  assert.match(chatSrc, /\$\{systemPromptFor\(md, p\.root, skills, meta, lang, \{ hasTools: cliTools, connectors: cliConnectors, userName: turnUser \}\)\}\$\{orgRules\}/, 'CLI 프롬프트 주입'); // K94: 도구 여부는 크루 다리 유무
   assert.match(chatSrc, /const sysTail = orgRules[^\n]*\n\s*\+ \(mirrorCtx\?\.kind === 'msgr' \? rosterPrompt/, 'SDK·네이티브 공용 프롬프트 꼬리(sysTail) 머리에 규칙집 — 두 엔진이 같은 값');
-  assert.match(chatSrc, /systemPrompt: systemPromptFor\(md, p\.root, skills, meta, lang\) \+ sysTail/, 'SDK 프롬프트가 꼬리를 붙인다');
+  assert.match(chatSrc, /systemPrompt: systemPromptFor\(md, p\.root, skills, meta, lang, \{ userName: turnUser \}\) \+ sysTail/, 'SDK 프롬프트가 꼬리를 붙인다');
   assert.match(chatSrc, /const rulesCtx = \(mirrorCtx\?\.kind === 'msgr' \|\| mirrorCtx\?\.kind === 'msgr-rules' \|\| mirrorCtx\?\.orgSlug\) \? \{ kind: 'msgr-rules', orgSlug: mirrorCtx\.orgSlug, channelName: mirrorCtx\.channelName \?\? ''[^\n]*\} : null;[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*const childCtx = rulesCtx \?\? [^\n]*\n\s*const r = await chat\(wsId, target\.slug, delegated, null, \{[^}]*\bmirrorCtx: childCtx \}\);/, '위임 턴 규칙 이어짐(미러·결재 각인은 kind msgr만)');
 });
 
@@ -2441,4 +2441,24 @@ test('LOW-B 메신저 채널 줄 — 답글 없이 첨부 실패 안내만 / 팀
       assert.equal(text, body, `${lang}/${kind}: 원문 칸 = 글쓴이 본문만`);
     }
   }
+});
+
+// 용어 변경 T5(경우 표 B5) — 에이전트가 사용자를 이름으로 부르기. 메신저는 이미 읽은 사람 이름을 주인이 직접 말한 턴의 맥락(ownerName)에만 싣는다.
+// 손님·에이전트 넘김·오피스 맡김 턴, 이름이 없는 사람('멤버' 대체값)은 싣지 않는다 — 남의 이름을 사용자 이름으로 부르지 않는다(chat.mjs turnUserName이 이 값만 본다).
+test('T5 handler: 주인이 직접 말한 턴만 맥락에 주인 이름, 손님·넘김·오피스·이름 없음은 싣지 않는다', async () => {
+  const run = async (job, { names = {}, noName = false } = {}) => {
+    let got = null;
+    const db = fakeDb({ names, peers: [crew(), crew({ id: ZED, slug: 'zed', display_name: '제드' })] });
+    if (noName) db.memberName = async () => null;
+    await M.makeMsgrHandler(WS, { session: async () => ({ db, uid: OWNER }), runChat: async (_w, _s, _t, _sid, opts) => { got = opts.mirrorCtx; return { reply: '답', sessionId: null, artifacts: [] }; } })(job);
+    assert.ok(got, `턴이 돌지 않았다: ${JSON.stringify(job)}`);
+    return got;
+  };
+  const base = { orgId: ORG, channelId: CH, crewId: CREW, slug: 'seoyun', text: '정리해줘', createdAt: new Date().toISOString() };
+  const names = { [OWNER]: ' 유건\n', [MEMBER]: '민수' };
+  assert.equal((await run({ ...base, msgId: 601, threadRoot: 601, authorId: OWNER }, { names })).ownerName, '유건', '주인 턴 — 세척한 이름');
+  assert.equal((await run({ ...base, msgId: 602, threadRoot: 602, authorId: MEMBER }, { names })).ownerName, undefined, '손님 턴');
+  assert.equal((await run({ ...base, msgId: 603, threadRoot: 603, authorId: OWNER, office: true }, { names })).ownerName, undefined, '오피스에서 맡긴 턴');
+  assert.equal((await run({ ...base, msgId: 604, threadRoot: 600, authorId: OWNER, origin: OWNER, fromCrewId: ZED, rootAuthor: OWNER, hop: 1 }, { names })).ownerName, undefined, '에이전트가 넘긴 턴');
+  assert.equal((await run({ ...base, msgId: 605, threadRoot: 605, authorId: OWNER }, { noName: true })).ownerName, undefined, "이름 없음 — '멤버' 대체값을 이름으로 싣지 않는다");
 });

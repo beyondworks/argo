@@ -1434,7 +1434,8 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     const orgPeers = envelope?.peers ?? await db.orgCrews(job.orgId);
     const peers = await workPeers(db, work, envelope ? orgPeers : orgPeers.filter((p) => crewInScope(ch, p.id, chMembers.has(p.id))), ch.id, uid); // 넘김 후보·멘션은 이 채널의 참여 구성만(채널 밖 크루가 답하던 실사고 2026-09-11)
     const crewName = (id) => orgPeers.find((p) => p.id === id)?.display_name ?? pick('에이전트', 'agent', lang); // 표시 이름은 조직 전체에서(내보낸 크루의 지난 발화도 이름으로)
-    const humanName = clean((await db.memberName(job.orgId, job.fromCrewId ? (job.rootAuthor ?? job.authorId) : job.authorId).catch(() => null)) ?? pick('멤버', 'member', lang), 40); // 넘긴 턴의 '지시를 이어'는 뿌리 사람(표시용) — 권한 주체(authorId)는 발신 크루 소유자
+    const rawHumanName = await db.memberName(job.orgId, job.fromCrewId ? (job.rootAuthor ?? job.authorId) : job.authorId).catch(() => null);
+    const humanName = clean(rawHumanName ?? pick('멤버', 'member', lang), 40); // 넘긴 턴의 '지시를 이어'는 뿌리 사람(표시용) — 권한 주체(authorId)는 발신 크루 소유자
     const authorName = job.fromCrewId ? clean(crewName(job.fromCrewId), 40) : humanName;
     const chName = clean(ch.name, 40);
     const others = peers.filter((p) => p.id !== job.crewId).map((p) => `@${clean(p.display_name, 40)}`);
@@ -1489,7 +1490,10 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     text += workPrompt(work, peers, job.crewId, lang);
     const orgRow = envelope?.org ?? (job.orgId ? await db.org(job.orgId) : null); // 개인 방은 조직이 없다 — org(null)은 uuid 오류로 잡을 영구 재시도시켰다(2026-10-01 라이브). G-3 규칙 주입 키(미러 폴더 = org slug)·채널 이름(채널 범위 규칙)
     // delegated — 죽은 경로(restoreMessengerContext의 ctx.delegated 주석 참고, msgr_dm_relay 도입 뒤 서버가 더 이상 true를 주지 않는다)
-    const ctx = { chatType: 'group', ...authority, channelKind: ch.kind, delegated: envelope?.delegated === true, orgId: job.orgId, channelId: job.channelId, crewId: job.crewId, threadRoot: job.threadRoot, sourceMsgId: job.msgId, wsId, hop: job.hop ?? 0, orgSlug: orgRow?.slug ?? null, channelName: ch?.name ?? '', handoffs: [], peers, ...(work ? { work } : {}) };
+    // ownerName — 주인이 직접 말한 턴에만 그 사람의 이름(용어 변경 T5: 에이전트가 사용자를 이름으로 부른다). 이미 읽은 값이라 추가 조회 0.
+    // 손님·넘김(DM 전달 포함)·오피스 턴은 싣지 않는다 — 지금 말한 사람이 사용자가 아니거나 사용자가 직접 시킨 일이 아니다. 이름이 없으면('멤버' 대체값) 싣지 않는다.
+    const ownerName = !guest && !job.fromCrewId && !job.relayVia && job.office !== true && typeof rawHumanName === 'string' && rawHumanName.trim() ? clean(rawHumanName, 40) : null;
+    const ctx = { chatType: 'group', ...authority, channelKind: ch.kind, delegated: envelope?.delegated === true, orgId: job.orgId, channelId: job.channelId, crewId: job.crewId, threadRoot: job.threadRoot, sourceMsgId: job.msgId, wsId, hop: job.hop ?? 0, orgSlug: orgRow?.slug ?? null, channelName: ch?.name ?? '', handoffs: [], peers, ...(work ? { work } : {}), ...(ownerName ? { ownerName } : {}) };
     const orgMemory = await crewMemoryCached(db, job.crewId, job.channelId); if (orgMemory !== undefined) ctx.orgMemory = orgMemory; // 서버 기억(전사+이 채널, 유건 결정 2026-09-24)
     const execution = await beginMessengerExecution(wsId, db, job, executionMeta);
     if (execution.kind === 'completed') return;

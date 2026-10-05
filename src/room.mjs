@@ -4,6 +4,7 @@ import { mkdir, readFile, writeFile, readdir, rm, access } from 'node:fs/promise
 import { join } from 'node:path';
 import { runLimited } from './run-limited.mjs';
 import { paths, loadCompany } from './workspace.mjs';
+import { userDisplayName } from './user-name.mjs'; // 회의실 참조 쪽지의 보낸 사람 이름(T5) — 화자 표지(USER)는 '사용자' 고정
 import { listAgents } from './hub.mjs';
 import { chat } from './chat.mjs';
 import { setTurnStatus, clearTurnStatus, getTurnStatus } from './turn-status.mjs';
@@ -587,7 +588,7 @@ async function runRoomTurnInner(wsId, text, attachments, state = {}, mark = asyn
   const speaking = [...dir.to, ...dir.relay]; // 방에서 이미 말하는 크루는 참조 쪽지까지 또 태우지 않는다
   const ccTargets = dir.ccAll ? agents.filter((a) => !speaking.some((x) => x.slug === a.slug)) : dir.cc;
   if (ccTargets.length) {
-    const bossName = en ? 'the user' : '사용자';
+    const bossName = (await userDisplayName(wsId).catch(() => null)) ?? (en ? 'the user' : '사용자'); // 쪽지 보낸 사람 칸만 이름 — 회의 대화·회의록의 화자는 '사용자' 고정(M1)
     const capped = ccTargets.slice(0, CC_MAX);
     const dropped = ccTargets.slice(CC_MAX); // 누가 빠졌는지 이름으로 밝힌다 — 숫자만으론 확인할 길이 없다
     const ok = [];

@@ -34,6 +34,7 @@ import { crewBusy, whenCrewIdle } from './turn-abort.mjs';
 import { readJsonLenient, writeJsonAtomic } from './jsonstore.mjs';
 import { withLock } from './mutex.mjs';
 import { DELEGATION_LIMITS, newTree, getTree, spendTree } from './delegation-limits.mjs';
+import { userDisplayName } from './user-name.mjs'; // 사용자가 보낸 세션 메시지의 보낸 사람 이름(T5)
 
 /** 사슬 단계 상한 — 사장 → A(0) → B(1) → … 한 사슬에서 세션 메시지로 이어지는 단계. 위임 제한 스위치를 따른다(유건 2026-10-03):
     사슬을 **시작한 대화방**이 켜짐이면 2단계, 풀림이면 4단계. 값은 사슬에 실려(rec.relaxed → chat opts sessionChain → 도구) 끝까지 가고,
@@ -227,6 +228,8 @@ export async function sendSessionMessage(ws, { room, sender, to, message, hop = 
   const captain = sender === 'captain';
   if (!captain && sender?.slug !== roomCrew.slug) throw fail('SENDER', '에이전트는 자기 채팅방에서만 보낼 수 있습니다');
   const lang = await companyLang(ws);
+  // 사용자가 보냈으면 보낸 사람 칸은 사용자 이름(없으면 '사용자'). 아래 중복 확인과 등록 사이에 await를 넣지 않으려고 여기서 미리 읽는다
+  const captainName = captain ? ((await userDisplayName(ws).catch(() => null)) ?? (lang === 'en' ? 'User' : '사용자')) : null;
   const h = Math.max(0, Math.floor(Number(hop) || 0));
   const chainRelaxed = captain ? !(await getDelegationLimit(ws, roomCrew.slug)) : relaxed === true; // 읽기 실패는 켜짐(getDelegationLimit fail-closed)
   const cap = sessionHopCap(chainRelaxed);
@@ -253,7 +256,7 @@ export async function sendSessionMessage(ws, { room, sender, to, message, hop = 
     id: `sm${now.toString(36)}${Math.random().toString(36).slice(2, 6)}`, ws,
     room: roomCrew.slug, roomName: roomCrew.name,
     captain, // 사장이 화면의 @ 전송(세션 메시지 API 라우트)으로 보냈다 — 사장 판정은 이 칸만 본다
-    from: captain ? null : roomCrew.slug, fromName: captain ? (lang === 'en' ? 'User' : '사용자') : roomCrew.name,
+    from: captain ? null : roomCrew.slug, fromName: captain ? captainName : roomCrew.name,
     to: target.slug, toName: target.name, message: text, hop: h, chain: Array.isArray(chain) ? chain.map(String) : [], relaxed: chainRelaxed, tree: budget.id,
     owner: S.owner, pid: process.pid, createdAt: now, deadline: now + ttl(), turnId: null, expired: false,
   };

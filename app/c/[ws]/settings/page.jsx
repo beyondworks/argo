@@ -107,7 +107,7 @@ function Settings({ params }) {
   const c = data?.company;
   const rows = c && [
     [t('deck.nameplate.unit'), c.id],
-    [t('deck.nameplate.captain'), nameplateOwner(c.owner)],
+    [t('deck.nameplate.captain'), nameplateOwner(c.owner, data?.userName)],
     [t('deck.nameplate.commissioned'), String(c.created ?? '').slice(0, 10)],
     [t('deck.nameplate.crew'), `${data.agents?.length ?? 0}`],
     [t('deck.nameplate.vault'), t('settings.nameplate.vaultVal', { n: data.memoryCount ?? 0, links: data.stats?.links ?? 0 })],
