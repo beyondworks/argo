@@ -35,7 +35,7 @@ async function setup(ws, { local = {}, state = {}, remote = {}, hook = async () 
     async download(key) {
       await hook(key);
       const data = store.get(key);
-      return data ? { data: { arrayBuffer: async () => Uint8Array.from(data).buffer } } : { error: { message: 'not found', status: 404 } };
+      return data ? { data: { arrayBuffer: async () => Uint8Array.from(data).buffer } } : { error: { message: 'Object not found', status: 400, statusCode: '404' } };
     },
     async upload(key, blob) { store.set(key, Buffer.from(await blob.arrayBuffer())); return {}; },
     async remove(keys) { for (const key of keys) store.delete(key); return {}; },

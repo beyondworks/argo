@@ -206,6 +206,12 @@ const client = () => sb; // ensureClient() 성공 뒤에만 호출된다 (cycle/
 // 테스트 전용 — fake storage를 주입해 syncCompany를 실 Supabase 없이 실행 검증한다.
 // 프로덕션 경로는 절대 호출하지 않는다(ensureClient가 실 클라이언트를 세팅). (export: 통합 테스트용)
 export function _setSyncClientForTest(fake) { sb = fake; sbKey = '__test__'; companyRetry.clear(); companyIdle.clear(); }
+/** 원격에 없음 — 매니페스트 읽기와 blob 실존 검사가 같은 판정을 쓴다. 진짜 없음은 storage-api의 'Object not found' 하나뿐이다
+    (이 레포 download 경로 기준. storage-js 2.110.2는 statusCode를 문자열 '404'로 주므로 숫자 비교는 쓰지 않는다).
+    그 밖의 404 모양은 모두 확인 불가(보류)다 — 'Bucket not found'(만료 토큰을 Storage가 익명으로 처리, 2026-10-05 운영 storage_logs:
+    role anon, NoSuchBucket), 'Not Found'(JSON 없는 404의 statusText), 'no Route matched'(게이트웨이 404), 'The resource was not found',
+    ENOENT 'no such file'. 없음으로 잘못 읽으면 매니페스트가 빈 원격이 되고 blob 검사가 로컬 파일을 지운다(분리 검수 LOW-1). */
+const isNotFound = (error) => /\bobject not found\b/i.test(String(error?.message || error));
 
 // 스토리지 키 — 한글·특수문자 세그먼트는 base64url로(스토리지가 %·비ASCII 키를 거부, 실측).
 // 매니페스트에 논리 경로를 담고 키는 항상 이 함수로 파생하므로 역디코딩은 불필요하다.
@@ -700,8 +706,7 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
     const { data, error } = await client().storage.from(BUCKET).download(manifestKey);
     if (error) {
       const msg = String(error.message || error);
-      const notFound = /not[ _]?found|does not exist|no such|404/i.test(msg) || error.status === 404 || error.statusCode === 404;
-      if (!notFound) throw new Error(`매니페스트 읽기 실패 — 삭제 보류(다음 사이클 재시도): ${msg.slice(0, 80)}`);
+      if (!isNotFound(error)) throw new Error(`매니페스트 읽기 실패 — 삭제 보류(다음 사이클 재시도): ${msg.slice(0, 80)}`);
       // notFound = 원격 진짜 없음(최초 푸시). 이때 base(.sync-state)도 비어 삭제 분기가 안 타므로 안전.
     } else {
       manifestExists = true;
@@ -746,12 +751,12 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
   // blob 실존 검사 — 매니페스트 항목 부재가 "삭제"인지 "동시 쓰기로 항목만 유실"인지 가르는 판별자.
   // 404만 "없음"이다. 타임아웃·5xx 등 확인 불가는 throw → per-file catch가 이번 사이클 보류(failed++).
   // "확인 불가 = 없음"으로 떨어뜨리면 네트워크 열화 시 이 방어가 역으로 오삭제를 만든다(검수 CRITICAL).
-  // 판정 규칙은 위 매니페스트 읽기의 notFound 구분과 동일하게 유지한다.
+  // 판정 규칙은 위 매니페스트 읽기와 같은 isNotFound를 쓴다(단일 출처).
   const blobExists = async (key) => {
     const { error } = await client().storage.from(BUCKET).download(key);
     if (!error) return true;
     const msg = String(error.message || error);
-    if (/not[ _]?found|does not exist|no such|404/i.test(msg) || error.status === 404 || error.statusCode === 404) return false;
+    if (isNotFound(error)) return false;
     throw new Error(`blob 확인 실패 — 삭제 보류(다음 사이클 재시도): ${msg.slice(0, 80)}`);
   };
 
@@ -839,6 +844,15 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
   };
   const changed = (a, b) => !a || !b || (a.h ?? `${a.m}:${a.s}`) !== (b.h ?? `${b.m}:${b.s}`);
 
+  // 로컬 삭제 직전 매니페스트 재확인 — 매니페스트를 정상으로 읽은 사이클에서도 blob 확인의 '없음'이 잘못 분류됐을 수 있다.
+  // 삭제 후보가 처음 나올 때 한 번만(사이클당 GET 1건, 후보가 없으면 0건) 매니페스트 키를 다시 읽어 성공할 때만 '없음'을 믿는다.
+  // 오류든 '없음'이든 읽지 못하면 사이클 전체를 보류한다(holdCycle — 파일 단위 실패로 두면 그 항목이 state에서 빠진다). (분리 검수 F2-2)
+  let manifestRecheck = null;
+  const confirmManifest = () => (manifestRecheck ??= (async () => {
+    const { error } = await client().storage.from(BUCKET).download(manifestKey);
+    if (error) throw Object.assign(new Error(`로컬 삭제 전 매니페스트 재확인 실패 — 동기화 보류: ${String(error.message || error).slice(0, 80)}`), { holdCycle: true });
+  })());
+
   // credSync off 회수 — 클라우드에 남은 자격 암호문의 **활성 사본**을 마커로 덮고(플랫폼 백업·스냅샷의
   // 과거 사본 보존까지는 보장 못 함 — docs/privacy-sync.md에 같은 한계를 고지) 매니페스트에서
   // 내린다. **remove 금지**: blob 부재는 토글 미반영 기기(구버전 포함)의 `l && !r` 분기에서 "다른 기기가
@@ -906,6 +920,24 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
     }
   }
 
+  // 매니페스트가 없는 사이클의 '다른 기기가 지웠다' 후보(기록 있음·무변경·원격 항목 없음) — 매니페스트가 없으면 그 추론이 성립하지 않는다
+  // (정리된 원격·끊긴 첫 동기화). blob이 있으면 아래 루프가 main처럼 항목을 되살린다(치유). blob까지 없으면 지우지도 다시 밀지도 않고
+  // 사이클 전체를 보류한다 — 다시 밀면 옛 사본 기기가 먼저 들어와 최신 기기의 편집·파일을 덮거나 지운다(최종 검수 HIGH, 기기 2대 재현).
+  // 보류 판정은 어떤 업로드보다 먼저다. 확인 결과는 루프가 다시 쓴다(blob GET은 main처럼 후보당 최대 1건). 확인 오류는 main처럼 그 파일만 실패.
+  const blobProbe = new Map();
+  if (!manifestExists) {
+    for (const rel of allRels) {
+      if ((noSecrets && isSecretRel(rel)) || isDevArtifactRel(rel) || (isEncRel(rel) && !cryptoOn())) continue; // 아래 루프와 같은 불가시
+      const l = local[rel], base = state[rel];
+      if (!(l && !remote.files[rel] && base && !changed(base, l))) continue;
+      const probe = blobExists(remoteKey(rel));
+      blobProbe.set(rel, probe);
+      if ((await probe.catch(() => true)) === false) {
+        throw new Error('클라우드 사본이 비어 있어 이 회사 동기화를 멈췄습니다 — 이 기기 파일은 지우지도 다시 올리지도 않습니다');
+      }
+    }
+  }
+
   for (const rel of allRels) {
     // credSync off — 자격 3종은 push/pull/삭제 전파 전부 불가시. 회수(마커 upsert)는 위 단계가 전담하고,
     // 여기서 real-delete로 흐르면 blob remove가 나가 미반영 기기의 로컬 자격 오삭제로 이어진다(가드 필수).
@@ -946,8 +978,10 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
           // 매니페스트 lost-update 방어 — 진짜 삭제(다른 기기의 삭제 전파)는 blob도 함께 지워져 있다.
           // blob이 살아 있으면 동시 동기화 중인 기기가 매니페스트를 통째로 덮어써 항목만 유실된 것
           // (실측: 영입 직후 크루 카드가 8초 안에 오삭제) → 지우지 말고 항목을 복원한다(자기치유).
-          if (await blobExists(remoteKey(rel))) { remote.files[rel] = base; healed++; }
-          else { await rmLocal(rel, l.h); delete local[rel]; deletedL++; } // 다른 기기가 지움 → 로컬도
+          // 매니페스트 없는 사이클의 blob 없음은 위 사전 확인이 이미 보류했다. 지우기 직전 매니페스트를 한 번 더 읽어 확인한다(confirmManifest —
+          // 매니페스트가 없으면 여기서도 보류). 실측 2026-10-05: 만료 토큰 읽기가 없음으로 분류되자 이 분기가 로컬 파일을 지웠다(재현 테스트).
+          if (await (blobProbe.get(rel) ?? blobExists(remoteKey(rel)))) { remote.files[rel] = base; healed++; }
+          else { await confirmManifest(); await rmLocal(rel, l.h); delete local[rel]; deletedL++; } // 다른 기기가 지움 → 로컬도(매니페스트 재확인 뒤)
         }
         else { await upload(remoteKey(rel), await pushBuf(rel)); remote.files[rel] = l; pushed++; } // 신규/수정 → 밀기
         continue;
@@ -1004,6 +1038,7 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
         conflicts++;
       }
     } catch (e) {
+      if (e?.holdCycle) throw e; // 삭제 근거를 확인 못 함 — 이 사이클 전체 보류(매니페스트·state 쓰기 없음)
       if (e?.deferred) { deferred++; continue; } // 로컬이 사이클 도중 바뀜 — 실패가 아니라 미룸(base 그대로라 다음 사이클이 양쪽 변경으로 병합·재판정)
       // free의 **쓰기 실패는 실패가 아니라 이 플랜의 정상 결과**다(클라우드 쓰기 자체가 금지) — 분리 집계한다.
       // 뭉뚱그리면(전부 failed) 한 번도 성공 동기화한 적 없는 free 회사(체험 만료 후 첫 동기화·state
@@ -1036,7 +1071,9 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
   // steady-state to 1,440 manifests/day/device/company; 100 × 420KB ≈ 60.5GB/day.
   // This is a bound, not a scalable replacement for a revision/conditional index.
   // No write means no lost-update window requiring a second GET. Resealing must write.
-  if (!manifestExists || manifestNeedsSeal || isRestore || opts.freePlan || opts.reseal || failed || originalFiles !== JSON.stringify(remote.files)) {
+  // 단, 매니페스트가 없는 원격을 받을 것 없이 복원한 기기(쓸 항목 0)는 빈 매니페스트를 쓰지 않는다 — 빈 {files:{}}가 생기면 다른 기기가
+  // '매니페스트 있음 + 항목 없음 + blob 없음'을 '다른 기기가 지웠다'로 읽어 못 민 파일을 지운다(3차 검수 2번 재현). 올린 파일이 있으면 main처럼 쓴다.
+  if (!(isRestore && !manifestExists && Object.keys(remote.files).length === 0) && (!manifestExists || manifestNeedsSeal || isRestore || opts.freePlan || opts.reseal || failed || originalFiles !== JSON.stringify(remote.files))) {
   const uploadFiles = { ...remote.files };
   {
     // 재읽기는 두 단계로 갈라 관용의 범위를 정확히 한다(분리 검수 HIGH-1):

@@ -16,7 +16,7 @@ export async function startFakeSupabase({ plan = 'pro', userId = 'u1', rejectUpl
     req.on('end', async () => {
       const body = Buffer.concat(chunks);
       const path = new URL(req.url, 'http://fake').pathname;
-      hits.push({ t: Date.now(), k: `${req.method} ${path}` });
+      hits.push({ t: Date.now(), k: `${req.method} ${path}`, auth: req.headers.authorization ?? null });
       const json = (status, obj) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)); };
       try {
         if (path === '/auth/v1/user') return json(200, { id: userId, email: `${userId}@example.test`, aud: 'authenticated', role: 'authenticated' });
