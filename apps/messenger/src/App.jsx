@@ -40,7 +40,7 @@ import { MobileUpdateBar } from './mobile-update.jsx';
 import { useLongPress, longPressHandlers } from './long-press.js';
 import { groupFlags } from './msg-group.mjs';
 import { t as tm } from './i18n.js';
-import { plainField, approvalPlainFields, orgDocTitle, approvalOneLineSummary, approvalGrade, approvalSummaryKey, approvalPageItems, approvalDecider, phoneApprovalDecider, decidableApprovals, approvalOnlyKey, approvalDenied, approvalCmdMode } from './approval-display.js';
+import { plainField, approvalPlainFields, orgDocTitle, approvalOneLineSummary, approvalGrade, approvalSummaryKey, approvalPageItems, approvalDecider, phoneApprovalDecider, decidableApprovals, approvalOnlyKey, approvalDenied, approvalCmdMode, decideApproval, singleFlight } from './approval-display.js';
 import { AGENT_FILTERS, AGENT_FAV_KEY, groupAgents, rowForSpace, agentRoomTarget, agentStateRow, personalRoomFor, personalRoomKnown, agentDmRedirect, agentDmRoute, earlierAgentDms, earlierLines, saveAgentLook, fillAgentLooks, ownRowsReader, loadUntilListed, spaceMoveNotice, spaceMoveBack, MOVE_NOTICE_MS, agentSections, groupIsFav, favChanges, readAgentFav } from './agent-groups.mjs'; // 폰 에이전트 탭 — 같은 에이전트 한 줄·상단 메뉴·즐겨찾기(유건 2026-10-02), 1:1은 개인 방 하나(2026-10-03)
 import { toggleId, foldAll, allFolded } from './collapse-set.mjs';
 import { useLang } from '@argo/i18n';
@@ -73,6 +73,7 @@ import { memberRows, memberPerms, MEMBER_CHIPS } from './phone-members.mjs';
 import { Seg } from './seg.mjs'; // 세그먼트 토글 하나(5차 피드백 3)
 import { searchView } from './search-view.mjs';
 import { deliveryCardView } from './delivery-card.mjs';
+import { messageShape } from './attach-only.mjs'; // 첨부만 보낸 글 — 올리는 중 자리표시·거둔 글 숨김(MSG-06)
 import { watchOnline } from './connection.mjs';
 import { selfMember, personalSelfName } from './self-member.mjs';
 import { crewRowMenuKeys, crewOpeners, creatorTagVisible } from './crew-row-menu.mjs';
@@ -5978,6 +5979,7 @@ function Channel({ movedBar = null, onCrewJoined = null, onCrewFailed = null, on
   useEffect(() => { if (!msgs) return; for (const c of postsMem.read(chId, msgs, lastAskedIds(msgs, { uid, isDm: channel.kind === 'dm' }))) onCrewPosted(c); }, [msgs]); // eslint-disable-line react-hooks/exhaustive-deps
   const seenAtRef = useRef(new Map()); // 내 글을 이 기기가 처음 본 시각 — 대기 표시의 신호 비교를 기기 시계끼리 하려고(검수 #send-feedback LOW)
   const [pending, setPending] = useState([]); // 보냈지만 서버 행이 아직 안 온 내 글(낙관적 렌더)
+  const [uploads, setUploads] = useState({}); // client_msg_id → 이 기기가 올리는 중인 파일 이름(첨부만 보낸 글의 자리표시, MSG-06)
   const [activeMid, setActiveMid] = useState(null); // 로빙 tabindex의 현재 행(없으면 마지막 글) — 목록 전체가 Tab 한 칸(검수 K8)
   const [replyReq, setReplyReq] = useState(null); // hover [답글] → 컴포저에 답글 대상(D17)
   const [tab, setTab] = useState('all');
@@ -6164,11 +6166,14 @@ function Channel({ movedBar = null, onCrewJoined = null, onCrewFailed = null, on
   useEffect(() => { if (!onScreen || !rtDown) return undefined; const iv = setInterval(() => { load(lastId).catch(() => {}); loadApprovals().catch(() => {}); }, 10_000); return () => clearInterval(iv); }, [onScreen, rtDown, load, lastId]); // eslint-disable-line react-hooks/exhaustive-deps
   // 첨부·반응이 빈 묶음 메우기 — 빈 것이 있을 때만 조회한다(없으면 요청 0, 검수 #531 M-1)
   useEffect(() => { if (!onScreen) return undefined; const iv = setInterval(() => { const { msgs: ms, atts: at } = live.current; const miss = (ms ?? []).filter((m) => !(m.id in at)).map((m) => m.id); if (miss.length) hydrate(miss).catch(() => {}); }, 10_000); return () => clearInterval(iv); }, [onScreen, hydrate]);
+  // 결재 결정(MSG-07) — 0행이면 다시 읽어 이미 결정된 결재는 오류 없이 결과만(연타·다른 사람이 먼저), 대기 중일 때만 권한 없음(최종 판정은 서버 msgr_can_decide).
+  // 끝나면 결재를 바로 다시 읽는다 — approval 방송을 놓쳐도(끊긴 것을 모를 때) 카드가 '대기'와 눌리는 단추로 남지 않게. 진행 중 단추 끄기는 Slip이 한다
   const decide = async (ap, status) => {
-    const res = await supabase.from('msgr_crew_approvals').update({ status, decided_by: uid, decided_at: new Date().toISOString() }).eq('id', ap.id).select('id');
-    if (res.error) return onError(res.error.message);
-    if (!res.data?.length) return onError(t(ap.risk === 'high' ? 'ap.approverOnly' : 'ap.ownerOnly')); // RLS 0행 = 결재권 없음(최종 판정은 서버 msgr_can_decide)
-    load(lastId).catch(() => {});
+    const r = await decideApproval({ update: () => supabase.from('msgr_crew_approvals').update({ status, decided_by: uid, decided_at: new Date().toISOString() }).eq('id', ap.id).select('id'),
+      reread: () => q(supabase.from('msgr_crew_approvals').select('status').eq('id', ap.id).maybeSingle()) });
+    if (r.result === 'error') onError(friendlyErr(r.message, t));
+    else if (r.result === 'denied') onError(t(ap.risk === 'high' ? 'ap.approverOnly' : 'ap.ownerOnly'));
+    await loadApprovals().catch(() => {}); load(lastId).catch(() => {});
   };
   // 크루 작업 중단(유건 확정 2026-09-26) — 서버(msgr_request_stop)가 권한을 다시 검사한다. 여기 canStop은 화면 노출만 — 숨김이 권한의 전부가 아니다.
   // RPC가 true면 그 카드가 사라질 때까지 버튼을 "중단 요청됨"으로 고정하고(분리 검수 L-3), false(이미 끝난 실행)면 짧게 안내한다.
@@ -6213,7 +6218,10 @@ function Channel({ movedBar = null, onCrewJoined = null, onCrewFailed = null, on
   }); // 매 렌더 확인 — working은 progress/typing에서 매번 새 배열이라 값(키 집합)으로만 비교, setState는 얕은 동일성이면 리렌더를 만들지 않는다
   const apOf = (m) => m.kind === 'approval_card' ? aps[(m.mentions ?? []).find((x) => x.kind === 'approval')?.id] : null;
   const isMention = (m) => (m.mentions ?? []).some((x) => x.kind === 'user' && x.id === uid);
-  const all = msgs ?? []; const byId = new Map(all.map((m) => [m.id, m])); // 답글 부모 조회 — 기록이 쌓여도 선형(검수 #531 M-2)
+  // 글 모양(attach-only.mjs) — 첨부만 보낸 글은 첨부가 붙기 전 '올리는 중' 자리표시, 업로드가 전부 실패해 거둔 글·오래된 빈 글은 그리지 않는다(MSG-06)
+  const shapeNow = Date.now();
+  const shapeOf = (m) => messageShape(m, { attCount: m.id in atts ? atts[m.id].length : null, uploading: !!uploads[m.client_msg_id], now: shapeNow });
+  const all = (msgs ?? []).filter((m) => shapeOf(m) !== 'hidden'); const byId = new Map((msgs ?? []).map((m) => [m.id, m])); // 답글 부모 조회 — 기록이 쌓여도 선형(검수 #531 M-2)
   // 중단 버튼 노출 — 그 턴을 시킨 사람(원본 메시지 작성자, 크루 넘김이면 넘긴 크루의 주인 + 스레드 뿌리의 최초 지시자 — 총괄 결정 L-6)
   // 또는 지금 일하는 크루의 주인만(유건 확정 2026-09-26). 원본 메시지가 아직 이 목록에 없으면(스크롤백 밖) 숨긴다 —
   // 화면 판단은 보수적으로, 최종 판정은 서버(msgr_request_stop)가 한다.
@@ -6242,7 +6250,7 @@ function Channel({ movedBar = null, onCrewJoined = null, onCrewFailed = null, on
     if (divider > 0 && !newLine && isNewAt(m)) { newLine = true; rows.push(<div key="newline" className="msgr-newline"><span>{t('msg.new')}</span></div>); }
     const k = dayKey(m.created_at);
     if (k !== day) { day = k; const [d, w] = fmtDay(m.created_at, lang); const today = k === new Date().toDateString(); rows.push(<div key={`d${k}`} className="msgr-tnode"><span className={`msgr-dot${today ? ' mark' : ''}`} /><span className="msgr-klabel"><b>{d}</b> {w}</span></div>); }
-    rows.push(<Message key={m.client_msg_id || m.id} rowTab={m.id === tabMid ? 0 : -1} onRowFocus={setActiveMid} m={m} uid={uid} lang={lang} t={t} nameOfUser={nameOfUser} crewOf={crewOf} isAdmin={isAdmin} policy={policy} ap={apOf(m)} atts={atts[m.id] ?? []} decide={decide} parent={m.reply_to ? byId.get(m.reply_to) ?? null : null} onCrew={onCrew} onError={onError} reacts={reacts[m.id] ?? []} onReact={toggleReact} onEdit={editMsg} onDelete={deleteMsg} onReply={(x) => setReplyReq({ id: x.id, who: x.author_kind === 'user' ? nameOfUser(x.author_user_id) : crewOf(x.crew_id)?.display_name ?? '', body: (x.body ?? '').replace(/\s+/g, ' ').slice(0, 120) })} channels={channels} onOpenRelay={onOpenRelay} dmName={dmName} isPersonal={isPersonal} cont={flags[i].cont} tail={flags[i].tail} turn={turns[i]} inDm={phone && channel.kind === 'dm'} />);
+    rows.push(<Message key={m.client_msg_id || m.id} shape={shapeOf(m)} uploadNames={uploads[m.client_msg_id] ?? null} rowTab={m.id === tabMid ? 0 : -1} onRowFocus={setActiveMid} m={m} uid={uid} lang={lang} t={t} nameOfUser={nameOfUser} crewOf={crewOf} isAdmin={isAdmin} policy={policy} ap={apOf(m)} atts={atts[m.id] ?? []} decide={decide} parent={m.reply_to ? byId.get(m.reply_to) ?? null : null} onCrew={onCrew} onError={onError} reacts={reacts[m.id] ?? []} onReact={toggleReact} onEdit={editMsg} onDelete={deleteMsg} onReply={(x) => setReplyReq({ id: x.id, who: x.author_kind === 'user' ? nameOfUser(x.author_user_id) : crewOf(x.crew_id)?.display_name ?? '', body: (x.body ?? '').replace(/\s+/g, ' ').slice(0, 120) })} channels={channels} onOpenRelay={onOpenRelay} dmName={dmName} isPersonal={isPersonal} cont={flags[i].cont} tail={flags[i].tail} turn={turns[i]} inDm={phone && channel.kind === 'dm'} />);
   }
   const tabs = [['all', null, 0], ['mention', 'at', counts.mention], ['approval', 'check', counts.approval], ['crew', 'star', counts.crew]];
   return (<>
@@ -6288,7 +6296,7 @@ function Channel({ movedBar = null, onCrewJoined = null, onCrewFailed = null, on
     {!preview && (() => { const off = crewAwayNotice({ channel, chCrews, people, uid, now: Date.now(), awayMs: AWAY_MS }); return off && <div className="msgr-joinbar msgr-awaybar" role="status"><span>{(lang === 'en' ? (x) => x : koJosa)(t(off.mine ? 'crew.dm.away.mine' : 'crew.dm.away', { name: off.name }))}</span>{off.mine && <RunnerButton />}</div>; })()}{/* 에이전트 1:1에서 에이전트가 꺼져 있으면 — 보내도 답이 없는 이유(검수 F, 2026-10-01) */}
     {preview
       ? <div className="msgr-joinbar" role="region" aria-label={t('ch.preview.title')}><span>{t('ch.preview.note', { name: channel.name })}</span><button type="button" className="btn btn-primary" onClick={onJoin}><I name="plus" size={14} />{t('ch.browse.join')}</button></div>
-      : <Composer broadcast={broadcast} onOutsideDm={onOutsideDm} outsideDmPersonal={outsideDmPersonal} onCrewJoined={onCrewJoined} isPersonal={isPersonal} chId={chId} orgId={orgId} org={org} uid={uid} members={members} crews={crews} channel={channel} scopePeople={mentionPeople ?? people} scopeCrews={chCrews} locked={locked} sbw={sbw} typingLabel={typingLabel} mentionReq={mentionReq} onMentionDone={onMentionDone} replyReq={replyReq} onReplyDone={() => setReplyReq(null)} onPending={(x) => { stick.current = true; setPending((cur) => [...cur, x]); }} onPendingSettled={(clientId, ok) => { if (!ok) setPending((cur) => cur.filter((x) => x.clientId !== clientId)); }} onSent={async (id) => {
+      : <Composer broadcast={broadcast} onOutsideDm={onOutsideDm} outsideDmPersonal={outsideDmPersonal} onCrewJoined={onCrewJoined} isPersonal={isPersonal} chId={chId} orgId={orgId} org={org} uid={uid} members={members} crews={crews} channel={channel} scopePeople={mentionPeople ?? people} scopeCrews={chCrews} locked={locked} sbw={sbw} typingLabel={typingLabel} mentionReq={mentionReq} onMentionDone={onMentionDone} replyReq={replyReq} onReplyDone={() => setReplyReq(null)} onPending={(x) => { stick.current = true; setPending((cur) => [...cur, x]); if (x.files?.length) setUploads((m) => ({ ...m, [x.clientId]: x.files })); }} onPendingSettled={(clientId, ok) => { if (!ok) setPending((cur) => cur.filter((x) => x.clientId !== clientId)); setUploads((m) => withoutKey(m, clientId)); }} onDiscarded={(id) => reloadMsg(id).catch(() => {})} onSent={async (id) => {
       try {
         await load(lastId);
         // Realtime may already have loaded the body before an attachment finished (or was retried).
@@ -6339,7 +6347,7 @@ function FilteredBody({ text, on, t, children }) {
   if (on && !reveal && containsProfanity(text)) return <button type="button" className="msgr-hidden-msg" onClick={() => setReveal(true)}>{t('msg.profanity.hidden')}</button>;
   return children;
 }
-function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, atts, decide, parent, onCrew, onError, reacts = [], onReact, onEdit, onDelete, onReply, channels = [], onOpenRelay, dmName, rowTab = -1, onRowFocus, isPersonal = false , cont = false, tail = true, inDm = false, turn = null}) {
+function Message({ m, shape = 'bubble', uploadNames = null, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, atts, decide, parent, onCrew, onError, reacts = [], onReact, onEdit, onDelete, onReply, channels = [], onOpenRelay, dmName, rowTab = -1, onRowFocus, isPersonal = false , cont = false, tail = true, inDm = false, turn = null}) {
   const [copied, setCopied] = useState(false);
   const [pick, setPick] = useState(false); const [editing, setEditing] = useState(false); const [draft, setDraft] = useState(''); const [confirmDel, setConfirmDel] = useState(false);
   const [ctxAt, setCtxAt] = useState(null); // 데스크톱 우클릭: 동작 줄을 커서 자리에 고정(유건 지시 2026-09-12)
@@ -6407,7 +6415,8 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
   const handoffNote = !m.deleted_at && Number.isInteger(m.meta?.handoff_dropped) && m.meta.handoff_dropped > 0 && // 크루 소유자가 자기 크루 글 meta를 직접 쓸 수 있다 — 양의 정수만(검수 LOW-6)
     <div className="msgr-message-recipients">{t(m.meta.handoff_reason === 'hop' ? 'msg.handoffDropped.hop' : 'msg.handoffDropped.mentions', { n: m.meta.handoff_dropped })}</div>;
   // 첨부만 보낸 내 글 — 본문·인용·수신 표시가 모두 없으면 빈 말풍선을 그리지 않는다(첨부 줄만). 빈 검은 알약이 이미지 위에 떴다(D21)
-  const bareAttach = !m.deleted_at && m.kind !== 'system' && !(body ?? '').trim() && !m.reply_to && !relay && !(deliveryRecipients?.length > 0) && atts.length > 0;
+  const bareAttach = shape === 'files'; // 판정은 attach-only.mjs messageShape(본문·인용·전달·수신 표시가 없고 첨부가 붙은 글)
+  const uploadingPill = shape === 'uploading' && <div className="msgr-uploading" role="status"><span className="msgr-spin sm" aria-hidden="true" />{uploadNames?.length ? t('att.placeholder.names', { names: uploadNames.join(', ') }) : t('att.placeholder')}</div>; // 올리는 동안 빈 말풍선 대신(MSG-06)
   const relayChannel = relay && channels.find((c) => c.id === relay.channel_id); // 원래 방 — 내가 항상 그 방 멤버라 목록에 있으면 표시 이름을 안다
   const relayCapKey = relay && relayCaptionKey(relay, relayChannel && dmName?.(relayChannel));
   const relayCapText = relay && t(relayCapKey.key, relayCapKey.vars);
@@ -6458,7 +6467,7 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
   const quote = parent && <div className="msgr-quote"><I name="reply" size={13} /><span className="q">{parentBlockedUser ? t('msg.blockedUser') : parentMutedCrew ? t('msg.mutedCrew') : <>{parent.author_kind === 'user' ? nameOfUser(parent.author_user_id) : crewOf(parent.crew_id)?.display_name}: {plainPreview(parent.body, 300)}</>}</span></div>; // 긴 원문은 한 줄 말줄임(QA: 카드 밖으로 잘림)
   const attRow = atts.length > 0 && <MediaAttachments atts={atts} onError={onError} rowTab={rowTab} mine={mine} />; // 사람·에이전트 첨부 같은 말풍선(사진 묶음·파일)
   const linkCard = !m.deleted_at && m.kind !== 'system' && <LinkCard m={m} tab={rowTab === 0 ? undefined : -1} />; // 보낼 때 한 번 저장한 미리보기만 그린다
-  const bareOther = !m.deleted_at && m.kind !== 'system' && !(shown ?? '').trim() && !quote && !relay && !(deliveryRecipients?.length > 0) && !handoffNote && !awayNote && atts.length > 0; // 상대·에이전트가 파일만 보낸 글 — 빈 말풍선 대신 첨부 줄만(내 글의 bareAttach와 같은 규칙)
+  const bareOther = shape === 'files'; // 상대·에이전트가 파일만 보낸 글 — 빈 말풍선 대신 첨부 줄만(내 글과 같은 판정, attach-only.mjs)
   // 턴 끝 동작 줄(유건 2026-10-02) — 턴(같은 사람이 이어 보낸 묶음)의 마지막 글 아래에 복사·답글·반응·더보기 아이콘 한 줄, 폰·데스크톱 같고 늘 보인다.
   // 이 줄은 턴의 마지막 글(turn을 받은 이 Message)이 그린다 — 복사는 턴 전체, 답글·반응·더보기는 이 글(m). 턴 중간 글은 우클릭(데스크톱)·길게 누르기(폰).
   // 더보기: 데스크톱은 나머지 동작 메뉴(신고·차단·숨기기·편집·삭제), 폰은 길게 누르기와 같은 시트. 보내는 중인 글은 자리는 두고 누를 수만 없게(서버 행으로 바뀔 때 아이콘이 밀리지 않게)
@@ -6522,7 +6531,7 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
   if (!mine && !ap && m.author_kind === 'crew' && safety.mutedCrewIds.has(m.crew_id)) return <div className="msgr-sys" ref={rowRef} data-mid={m.id} tabIndex={rowTab} onFocus={(e) => { if (e.target === e.currentTarget) onRowFocus?.(m.id); }} onKeyDown={(e) => { if (e.key !== 'Enter' && e.key !== 'ContextMenu') rowKey(e); }}>{t('msg.mutedCrew')}</div>; // 숨긴 크루·봇의 글(App Store 1.2, 2026-09-26) — 본문·첨부·반응을 그리지 않는다. 결재 카드(ap)는 예외(검수 L5 — 숨겨도 나에게 온 결재는 항상 보여야 한다)
   if (mine) return ( // 내 글 — 척추 반대편 차콜 버블(20/6/20/20)
     <div className={`msgr-mine${cont ? ' cont' : ''}${tail ? '' : ' notail'}`} ref={rowRef} tabIndex={m.pending ? undefined : rowTab} onFocus={(e) => { if (e.target === e.currentTarget) onRowFocus?.(m.id); }} onKeyDown={rowKey} data-mid={m.id} data-acts={actsOpen ? 'open' : undefined} {...hold} onContextMenu={(e) => { if (phone || m.pending || ap || m.deleted_at || editing || e.target.closest?.('a, input, textarea')) return; e.preventDefault(); setCtxMore(false); setCtxAt({ x: e.clientX, y: e.clientY }); setActsOpen(true); }}>
-      {editing ? editor : bareAttach ? null : <div className="bubble" onClick={onLinkClick}>{quote}{relayCap}{deliveryLabels}{m.deleted_at ? <i>{t('msg.deleted')}</i> : m.kind === 'system' ? sysBody : relay ? <Markdown text={shown} /> : <Body text={body} />}</div>}
+      {editing ? editor : bareAttach ? null : uploadingPill || <div className="bubble" onClick={onLinkClick}>{quote}{relayCap}{deliveryLabels}{m.deleted_at ? <i>{t('msg.deleted')}</i> : m.kind === 'system' ? sysBody : relay ? <Markdown text={shown} /> : <Body text={body} />}</div>}
       {attRow}
       {linkCard}
       {chips}
@@ -6543,6 +6552,7 @@ function Message({ m, uid, lang, t, nameOfUser, crewOf, isAdmin, policy, ap, att
           : ap ? <Slip ap={ap} uid={uid} lang={lang} t={t} crew={crew} nameOfUser={nameOfUser} decide={decide} isAdmin={isAdmin} policy={policy} />
           : m.kind === 'system' ? sysBody
           : bareOther ? null
+          : uploadingPill ? uploadingPill
           : isCrew ? <div className="msgr-sheet" onClick={onLinkClick}>{quote}{relayCap}{deliveryLabels}{handoffNote}{awayNote && <div className="msgr-away">{awayNote}</div>}<FilteredBody text={shown} on={safety.profanityFilterOn} t={t}><Markdown text={shown} /></FilteredBody></div>
           : <div className="text" onClick={onLinkClick}>{quote}{relayCap}{deliveryLabels}<FilteredBody text={relay ? shown : body} on={safety.profanityFilterOn} t={t}>{relay ? <Markdown text={shown} /> : <Body text={body} />}</FilteredBody></div>}
         {attRow}
@@ -6578,6 +6588,10 @@ function ExecCard({ crew, t, canStop = false, stopping = false, stopRequested = 
 
 /** 결재 슬립 — 머리띠(요청=옐로 / 확정=차콜 / 만료=회색) + 본문 + 도장 실. 보는 사람이 소유자면 버튼, 아니면 대기 표시. */
 function Slip({ ap, uid, lang, t, crew, nameOfUser, decide, isAdmin, policy }) {
+  // 누르는 즉시 두 단추를 끄고 진행 표시(MSG-07 — 서버 왕복 동안 변화가 없어 한 번 더 누르면 이미 처리된 결재에 권한 오류가 떴다). 끝나면 카드가 결과로 바뀐다
+  const live = useRef(null); live.current = { decide, ap };
+  const [busy, setBusy] = useState(null);
+  const run = useMemo(() => singleFlight(async (status) => { setBusy(status); try { await live.current.decide(live.current.ap, status); } finally { setBusy(null); } }), []);
   // 결재권 판정은 화면용 — 최종은 RLS(msgr_can_decide, decide의 0행 처리). 크루가 목록에 없으면(비활성 등) 소유자 미상으로 보고 버튼을 띄운다(검수 M1).
   // H-1: 고위험은 정책의 결재권자(기본 관리자). J-1: 'approvers'면 지정 결재권자도. 판정은 폰 결재 페이지와 같은 함수(approval-display.js approvalDecider)
   const { can, byAdmin, mode, high } = approvalDecider({ ap, uid, crewOwnerId: crew ? crew.owner_user_id : undefined, isAdmin, policy });
@@ -6621,8 +6635,8 @@ function Slip({ ap, uid, lang, t, crew, nameOfUser, decide, isAdmin, policy }) {
         )}
         <div className="row2">
           {ap.status === 'pending' && can && (<>
-            <button type="button" className="btn btn-primary sm" onClick={() => decide(ap, 'approved')}><I name="check" size={13} />{t('ap.approve')}</button>
-            <button type="button" className="btn sm" onClick={() => decide(ap, 'rejected')}><I name="x" size={13} />{t('ap.reject')}</button>
+            <button type="button" className="btn btn-primary sm" disabled={!!busy} aria-busy={busy === 'approved' || undefined} onClick={() => run('approved')}>{busy === 'approved' ? <span className="msgr-spin sm" aria-hidden="true" /> : <I name="check" size={13} />}{t(busy === 'approved' ? 'ap.deciding' : 'ap.approve')}</button>
+            <button type="button" className="btn sm" disabled={!!busy} aria-busy={busy === 'rejected' || undefined} onClick={() => run('rejected')}>{busy === 'rejected' ? <span className="msgr-spin sm" aria-hidden="true" /> : <I name="x" size={13} />}{t(busy === 'rejected' ? 'ap.deciding' : 'ap.reject')}</button>
           </>)}
           {ap.status === 'pending' && !can && <span className="note">{byAdmin ? (mode === 'approvers' ? t('ap.approverNote') : t('ap.adminNote')) : t('ap.ownerNote')}</span>}
           {ap.status === 'approved' && <span className="msgr-seal ok"><I name="check" />{nameOfUser(ap.decided_by)} · {when}</span>}
@@ -6634,11 +6648,11 @@ function Slip({ ap, uid, lang, t, crew, nameOfUser, decide, isAdmin, policy }) {
   );
 }
 /* ─── 2단 다크 독: 입력 줄 + 도구 줄(첨부·멘션 │ 기억 상태) + 옐로 원형 전송. @멘션 팝업(사람·크루), Enter 전송(IME 조합 제외) ─── */
-function Composer({ broadcast = null, onCrewJoined = null, outsideDmPersonal = null, chId, orgId, org, uid, members, crews, channel, scopePeople = null, scopeCrews = null, locked = false, sbw = 0, typingLabel = null, mentionReq, onMentionDone, replyReq = null, onReplyDone, onSent, onPending, onPendingSettled, onError, isPersonal = false, onOutsideDm = null }) {
+function Composer({ broadcast = null, onCrewJoined = null, outsideDmPersonal = null, chId, orgId, org, uid, members, crews, channel, scopePeople = null, scopeCrews = null, locked = false, sbw = 0, typingLabel = null, mentionReq, onMentionDone, replyReq = null, onReplyDone, onSent, onPending, onPendingSettled, onDiscarded = null, onError, isPersonal = false, onOutsideDm = null }) {
   const { t, lang } = useT();
   const phone = useIsPhone(); // 폰은 짧은 안내문(슬랙)
-  const broadcastRef = useRef(broadcast); broadcastRef.current = broadcast;
-  const delivery = useMemo(() => bindComposerSession(JSON.stringify([SB_URL, uid, orgId, chId]), composerTransport(supabase, { orgId, chId, uid, personal: isPersonal, onDiscard: (id) => broadcastRef.current?.('edit', { channel_id: chId, message_id: id }) })), [uid, orgId, chId]);
+  const broadcastRef = useRef(broadcast); broadcastRef.current = broadcast; const discardedRef = useRef(onDiscarded); discardedRef.current = onDiscarded;
+  const delivery = useMemo(() => bindComposerSession(JSON.stringify([SB_URL, uid, orgId, chId]), composerTransport(supabase, { orgId, chId, uid, personal: isPersonal, onDiscard: (id) => { broadcastRef.current?.('edit', { channel_id: chId, message_id: id }); discardedRef.current?.(id); } })), [uid, orgId, chId]); // 거둔 글 — 남에게는 edit 방송, 내 화면은 그 글을 다시 읽는다(방송은 나에게 오지 않는다, MSG-06)
   const { text, busy, files, mentions, recipients, uploading, job, replyTo } = useSyncExternalStore(delivery.subscribe, delivery.snapshot);
   useEffect(() => { if (!replyReq) return; delivery.setReplyTo(replyReq); onReplyDone?.(); ta.current?.focus(); }, [replyReq]); // eslint-disable-line react-hooks/exhaustive-deps
   const { setText, setFiles, setMentions, setRecipients } = delivery;
@@ -6760,7 +6774,7 @@ function Composer({ broadcast = null, onCrewJoined = null, outsideDmPersonal = n
     const result = delivery.send(dmDeliveryMentions(inline, recipients)); // 참조 칩은 방 종류와 무관하게 role cc로 합쳐진다
     // delivery.send는 왕복을 기다리기 전에 job을 먼저 세운다 — 그 clientId로 화면에 먼저 올린다.
     const posted = delivery.snapshot().job; // 이름을 job으로 두면 이 함수 첫 줄 가드의 바깥 job이 TDZ에 걸린다
-    if (posted) onPending?.({ clientId: posted.clientId, body: posted.body, replyTo: posted.replyTo, at: new Date().toISOString() });
+    if (posted) onPending?.({ clientId: posted.clientId, body: posted.body, replyTo: posted.replyTo, at: new Date().toISOString(), files: posted.files.map((item) => item.file.name) }); // 파일 이름 — 올리는 동안 대화에 자리표시(MSG-06)
     setPop(null); if (ta.current) ta.current.style.height = 'auto';
     const ok = await result;
     if (posted) onPendingSettled?.(posted.clientId, ok); // 실패하면 자리를 비우고 실패 카드가 재시도를 맡는다
@@ -6848,8 +6862,8 @@ function Composer({ broadcast = null, onCrewJoined = null, outsideDmPersonal = n
         <p className="delivery-preview">{job.body || job.files.map((item) => item.file.name).join(', ')}</p>
         {uploading && <p>{t('att.uploading')} · {uploading}</p>}
         {card.errorLine && <p className="delivery-error">{card.errorLine.key ? t(card.errorLine.key) : friendlyErr(card.errorLine.raw, t)}{card.errorLine.files.length > 0 && ` · ${card.errorLine.files.join(', ')}`}</p>}
-        {!busy && <div className="delivery-actions">{card.canRetry && <button type="button" className="btn" disabled={locked || retryBlocked} onClick={async () => { if (!locked && !retryBlocked && await delivery.retry()) onSent(delivery.snapshot().lastDeliveredId); }}>{t('msg.delivery.retry')}</button>}
-          <button type="button" className="btn" onClick={() => delivery.dismiss()}>{t(card.canRetry ? 'msg.delivery.dismiss' : 'ui.close')}</button></div>}
+        {!busy && <div className="delivery-actions">{card.canRetry && <button type="button" className="btn" disabled={locked || retryBlocked} onClick={async () => { if (!locked && !retryBlocked && await delivery.retry()) onSent(delivery.snapshot().lastDeliveredId); }}>{t(card.retryKey)}</button>}
+          <button type="button" className="btn" onClick={() => { delivery.dismiss(); requestAnimationFrame(() => autosize(ta.current)); }}>{t(card.dismissKey)}</button></div>}
       </div>}
       {awayNote && <div className="msgr-replychip msgr-awaychip" role="status"><span className="q">{awayNote.map((c) => t('mention.away', { name: c.display_name })).join(' ')}</span><button type="button" className="msgr-titlebtn" onClick={() => setAwayNote(null)} aria-label={t('ui.close')}><I name="x" size={13} /></button></div>}
       {outside && <div className="msgr-outsidechip" role="status"><div className="rows">{outside.crews.map((c) => { const can = canInstructCrew(c, uid); const view = outsideRowView({ crew: c, uid, done: outside.done[c.id], isDm, can }); return (

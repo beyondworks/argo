@@ -123,7 +123,25 @@ export function createComposerDelivery(transport, uuid = () => crypto.randomUUID
       return deliver(job);
     },
     retry() { return state.job ? deliver(state.job) : Promise.resolve(false); },
-    dismiss() { if (!state.busy) patch({ job: null }); },
+    // 그만두기(MSG-06·UX 판독): 첨부만 보낸 글은 '지우기' — 남은 빈 글이 있으면 다시 거둔다(최선). 그 밖에는 보내지 못한 것을 입력창으로 되돌린다:
+    // 올라가지 않은 글(본문·멘션)은 지금 쓰던 글 앞에, 못 올린 파일은 첨부 칩으로. 이미 올라간 글은 다시 넣지 않는다. 답글 대상(id만 남음)은 되돌리지 않는다
+    dismiss() {
+      if (state.busy || !state.job) return;
+      const job = state.job;
+      if (!job.body && job.files.length) {
+        patch({ job: null });
+        if (job.messageId && transport.discard && job.files.every((item) => !item.uploaded)) Promise.resolve().then(() => transport.discard(job)).catch(() => {});
+        return;
+      }
+      const back = { job: null };
+      if (!job.messageId && job.body) {
+        back.text = state.text.trim() ? `${job.body}\n${state.text}` : job.body;
+        back.mentions = [...(job.mentions ?? []), ...state.mentions].filter((m, i, all) => all.findIndex((x) => x.kind === m.kind && x.id === m.id) === i);
+      }
+      const failed = job.files.filter((item) => !item.done).map((item) => item.file);
+      if (failed.length) back.files = [...failed, ...state.files.filter((f) => !failed.includes(f))];
+      patch(back);
+    },
     useTransport(next) { transport = next; }, // 같은 방 키(같은 서버·사용자·공간·방)라 경로 규칙은 같고, 진행 중 전송도 다음 요청부터 새 통로를 쓴다
     dispose() { disposed = true; listeners.clear(); state = { text: '', mentions: [], recipients: [], files: [], replyTo: null, job: null, busy: false, uploading: '' }; },
   };
@@ -171,8 +189,10 @@ export function composerTransport(client, { orgId, chId, uid, personal = false, 
       throw new Error(result.error.message);
     },
     // 첨부만 보낸 글이 전부 실패했을 때 그 빈 글을 지운다 — 직접 지우기 정책은 없고(DELETE 정책 없음) 작성자의 삭제 표시(deleted_at)만 허용된다. 앱의 삭제와 같은 갱신
+    // 지운 시각을 고친 시각에도 같이 남긴다 — 받는 쪽이 '사용자가 지운 글(삭제 표시)'과 '올리다 실패해 거둔 글(보이지 않음)'을 가른다(attach-only.mjs isDiscardedUpload)
     async discard(job) {
-      const result = await client.from('msgr_messages').update({ body: '', deleted_at: new Date().toISOString() }).eq('id', job.messageId).eq('author_user_id', uid).select('id');
+      const at = new Date().toISOString();
+      const result = await client.from('msgr_messages').update({ body: '', deleted_at: at, edited_at: at }).eq('id', job.messageId).eq('author_user_id', uid).select('id');
       let failure = result.error ? new Error(result.error.message) : !result.data?.length ? new Error('discard: no row') : null; // RLS가 0행으로 거절한 경우도 실패
       if (failure) {
         // 응답이 유실됐을 수 있다(서버엔 적용, 앱은 실패로 봄) — 그대로 실패로 두면 재시도가 지운 글에 첨부를 붙여 파일이 안 보인다. 한 번 다시 읽어 이미 지워졌으면 성공으로 본다

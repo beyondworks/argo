@@ -115,3 +115,18 @@ export function approvalCmdMode(it) {
   if (approvalExpandDefault(it)) return 'full';
   return approvalPlainFields(it?.payload) ? 'line' : null;
 }
+
+/** 채널 안 결재 카드의 결정(MSG-07). 0행 = RLS가 막았거나(결재권 없음) 이미 결정된 결재(정책은 status='pending'만 갱신) — 다시 읽어 이미 결정됐으면
+    오류 없이 결과만(연타·다른 사람이 먼저 결정), 대기 중일 때만 권한 없음. → { result: 'done'|'already'|'denied'|'error', status?, message? } */
+export async function decideApproval({ update, reread }) {
+  const res = await update();
+  if (res?.error) return { result: 'error', message: res.error.message };
+  if (res?.data?.length) return { result: 'done' };
+  const cur = await Promise.resolve().then(reread).catch(() => null);
+  return cur?.status && cur.status !== 'pending' ? { result: 'already', status: cur.status } : { result: 'denied' };
+}
+/** 진행 중이면 다시 부르지 않는다(연타 — 두 번째 요청이 0행으로 잘못된 권한 오류를 냈다). 끝나면 다시 부를 수 있다 */
+export function singleFlight(fn) {
+  let busy = false;
+  return async (...a) => { if (busy) return undefined; busy = true; try { return await fn(...a); } finally { busy = false; } };
+}

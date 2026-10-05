@@ -256,6 +256,11 @@
 .msgr-fileb:focus-visible { outline: 2px solid var(--msgr-focus); outline-offset: 2px; }
 .msgr-spin { display: inline-block; width: 16px; height: 16px; border-radius: 50%; border: 2px solid currentColor; border-right-color: transparent; animation: msgrSpin .8s linear infinite; opacity: .8; box-sizing: border-box; }
 .msgr-spin.lg { width: 30px; height: 30px; border-width: 3px; color: #fff; }
+.msgr-spin.sm { width: 12px; height: 12px; border-width: 2px; flex: none; }
+/* 첨부만 보낸 글이 올라가는 동안(MSG-06) — 빈 말풍선 대신 점선 자리표시. 내 글은 오른쪽(.msgr-mine 정렬을 따른다) */
+.msgr-uploading { display: inline-flex; align-items: center; gap: 8px; width: fit-content; max-width: 100%; padding: 8px 12px; border-radius: 14px; border: 1px dashed var(--border); color: var(--fg-2); font-size: 13px; line-height: 1.35; overflow-wrap: anywhere; }
+.msgr-mine > .msgr-uploading { align-self: flex-end; margin-left: auto; }
+.btn .msgr-spin.sm { margin-right: 4px; }
 .msgr-link { color: inherit; text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 2px; overflow-wrap: anywhere; word-break: break-all; }
 .msgr-linkcard { display: flex; flex-direction: column; width: min(320px, 100%); margin: 0; padding: 0; border: 1px solid var(--border-soft); border-radius: 14px; background: var(--card); color: var(--fg); font: inherit; text-align: left; overflow: hidden; cursor: pointer; box-sizing: border-box; }
 .msgr-linkcard .lc-img { display: block; aspect-ratio: 1.91 / 1; background: var(--card-2); overflow: hidden; }
