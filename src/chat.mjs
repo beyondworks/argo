@@ -483,7 +483,7 @@ export function threadCtxLine(m, lang, name) {
   const list = (xs, rel) => xs.map((x) => 'vault/' + rel(x)).join(', ');
   const att = m.attachments?.length ? (en ? ` (attached, open with Read: ${list(m.attachments, (a) => a.rel)})` : ` (첨부, Read로 열람: ${list(m.attachments, (a) => a.rel)})`) : '';
   const art = m.artifacts?.length ? (en ? ` (artifacts, open with Read: ${list(m.artifacts, (a) => a)})` : ` (산출물, Read로 열람: ${list(m.artifacts, (a) => a)})`) : '';
-  return `${who}: ${String(m.text).replace(/\s+/g, ' ').slice(0, 500)}${att}${art}`;
+  return `${who}: ${String(m.text).replace(/[\s\u0085]+/g, ' ').slice(0, 500)}${att}${art}`; // U+0085(NEL)은 \s에 없다 — 줄바꿈으로 읽혀 화자 줄을 위조하지 못하게 같이 편다(보안 검토)
 }
 
 /** 스레드 맥락(외부 CLI 경로·SDK/네이티브 기기 교차 경로 공통) — 예산 안 최근 대화 + 예산 밖 누적 요약(thread-context.mjs).
