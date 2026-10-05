@@ -386,7 +386,7 @@ test('O19. 정상 사용자 글은 바이트 그대로 — ㈜·①·전각 영�
 
 test('O20. 무작위 변형 400벌 — 흉내 글자 사이에 섞은 표시 없는 글자·구분 기호·대소문자·전각이 어떻게 섞여도 독립 탐지기(통째 접기)에 안 걸린다, 원문 바깥 글은 그대로', () => {
   const tag = 'mail-0123456789abcdef';
-  let seed = 20261005; const rnd = (n) => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
+  let a = 20261005; const rnd = (n) => { a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) % n; }; // mulberry32 — 선형 합동 생성기는 부동소수 정밀도·낮은 비트 주기 때문에 같은 값만 되풀이했다(변이를 못 잡는 무작위 시험이 되었다)
   const JUNK = [cp(0xAD), cp(0x200B), cp(0x200C), cp(0x200D), cp(0x2060), cp(0xFEFF), cp(0x180E), cp(0x2062), cp(0x202E), cp(0x2069), cp(0xFE0F), cp(0xE0041), cp(0x301), cp(0x34F), cp(0x3164), cp(0x1160)];
   const GAPS = [' ', '_', '-', '·', '.', ',', '　', ' ', '\t', '__', ' - ', '/'];
   const full = (c) => (/[a-z]/.test(c) ? cp(c.codePointAt(0) - 0x61 + 0xFF41) : c);
