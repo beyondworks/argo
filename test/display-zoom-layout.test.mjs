@@ -832,3 +832,21 @@ test('업데이트 패널은 상단바 아래에 붙고 하단 입력줄·버튼
     }
   }
 });
+
+// UM1(2026-10-05 분리 검수): '새 소식'·'새로 고침 실패' 칩이 좁은 폭에서 상단바를 넘쳤다(561 en 21px·360 en 20px·600 en 새로 고침 실패 47px).
+// 넘침 0 자체는 폭별 실측(360·390·561·600 × ko/en, 칩 둘 다 켜기)으로 확인했고, 여기서는 그 방어가 끊기지 않게 세 고리를 핀으로 잠근다 —
+// ① 칩이 접는 단계(data-narrow-bar)에서 라벨을 접는 CSS ② 두 칩이 그 클래스·라벨 span을 실제로 단다 ③ 칩이 생기거나 사라질 때 재측정하는 배선과 턴 때문에 사라지지 않는 안내 차단 판정.
+test('상단바 칩 접기 — 접는 단계에서 칩 라벨이 숨고, 두 칩이 그 클래스를 달고, 재측정·차단 판정이 배선돼 있다', () => {
+  const css = sources.get('app/globals.css');
+  assert.match(css, /:root\[data-narrow-bar\]\s+\.topbar-chip\s+\.chip-label\s*\{\s*display:\s*none;?\s*\}/, '접는 단계에서 칩 라벨을 접는 규칙 — 지우면 좁은 폭에서 칩이 바를 넘친다');
+  for (const f of ['app/update-notes.jsx', 'app/c/[ws]/layout.jsx']) {
+    const src = sources.get(f);
+    assert.match(src, /className="chip topbar-chip"/, `${f}: 칩에 topbar-chip`);
+    assert.match(src, /<span className="chip-label">/, `${f}: 라벨은 chip-label span 안`);
+    assert.match(src, /aria-label=\{t\('(updates\.chip|shell\.reloadFail)'\)\}/, `${f}: 라벨이 접혀도 접근 가능한 이름이 남는다`);
+  }
+  const layout = sources.get('app/c/[ws]/layout.jsx');
+  assert.match(layout, /watchTopbarContent\(barRef\.current, fitBar\)/, '칩이 생기고 사라질 때 fitBar 재측정(바 크기가 안 변해 ResizeObserver가 안 돈다)');
+  assert.match(layout, /blocked=\{updateNotesBlocked\(/, '안내 차단 판정은 순수 함수(실행 중 턴은 조건이 아니다)');
+  assert.doesNotMatch(layout, /tasks\.running\?\.length[^\n]*renameTeam/, 'blocked 식에 실행 중 턴을 다시 넣지 않는다 — 턴마다 칩이 사라졌다 생긴다');
+});

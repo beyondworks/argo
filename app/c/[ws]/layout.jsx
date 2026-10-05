@@ -8,10 +8,12 @@ import { useLang, stageLabel } from '../../i18n';
 import { useAppUpdate } from '../../use-app-update';
 import { MOVE_REQUIRED } from '../../update-location.mjs';
 import UpdateNotes from '../../update-notes';
+import { updateNotesBlocked } from '../../update-notes-state.mjs';
 import { SplitPane } from './split-pane';
 import { parseSide, sideParam, withSide } from './split.mjs';
 import { useSplitAlive } from './split-alive';
 import { nextCompanyData, brokenCardsOf } from './company-load.mjs';
+import { watchTopbarContent } from './topbar-fit.mjs';
 import { searchScope } from './search-scope.mjs'; // 검색을 받는 화면에서만 검색 칸(UX-A03)
 import { gistLabel } from '../../lib/gist-display.mjs'; // 메신저 머리말을 뗀 요약(UX-A08)
 
@@ -177,10 +179,12 @@ function Shell({ children, params }) {
     if (contentRef.current) ro.observe(contentRef.current);
     const slot = document.getElementById('argo-topbar-slot');
     if (slot) ro.observe(slot);
+    // 칩('새 소식'·'새로 고침 실패')·배지가 생기거나 사라지면 바 크기는 그대로라 위 관찰기가 안 돈다 — 자식 변화를 따로 본다(UM1)
+    const stopWatch = watchTopbarContent(barRef.current, fitBar);
     window.addEventListener('resize', fitBar);
     window.addEventListener('argo:zoom', fitBar);
     return () => {
-      ro.disconnect();
+      ro.disconnect(); stopWatch();
       window.removeEventListener('resize', fitBar); window.removeEventListener('argo:zoom', fitBar);
       // 회사 셸 밖으로 나가면 속성도 걷는다(검수 1R LOW-2)
       document.documentElement.removeAttribute('data-narrow-bar');
@@ -606,9 +610,10 @@ function Shell({ children, params }) {
             </span>
           ))}
           {loadFailed && data?.company && (
-            <button type="button" className="chip" onClick={refresh} title={t('shell.reloadFailHint')}
+            // topbar-chip·chip-label — 좁은 폭(접기 단계)에서는 라벨을 접고 점만 남긴다(UM1: 600px en에서 47px 넘침). 이름은 aria-label이 지킨다
+            <button type="button" className="chip topbar-chip" onClick={refresh} title={t('shell.reloadFailHint')} aria-label={t('shell.reloadFail')}
               style={{ flex: 'none', cursor: 'pointer', color: 'var(--danger)', borderColor: 'currentColor' }}>
-              {t('shell.reloadFail')}
+              <span className="dot" aria-hidden="true" /><span className="chip-label">{t('shell.reloadFail')}</span>
             </button>
           )}
           {/* 이번 업데이트 칩 자리 — UpdateNotes가 접힌 안내를 여기에 그린다(덮는 것 없는 자리, UX-A01) */}
@@ -663,7 +668,7 @@ function Shell({ children, params }) {
       )}
       {fbOpen && <FeedbackModal onClose={() => setFbOpen(false)} />}
       <UpdateNotes current={appVersion} ready={versionReady} isApp={updIsApp}
-        blocked={!data || data.missing || data.loadError || !tasks || !!tasks.running?.length || dockOpen || fbOpen || renameTeam != null || ['checking', 'installing', 'ready'].includes(updPhase)} />
+        blocked={updateNotesBlocked({ data, tasks, dockOpen, fbOpen, renameTeam, updPhase })} />
     </div>
   );
 }

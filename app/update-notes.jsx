@@ -18,24 +18,25 @@ export function UpdateNotesCard({ version, items, t, onConfirm, saving = false, 
     onKeyDown={(event) => { if (event.key === 'Escape' && !saving) { event.stopPropagation(); onDismiss(); } }}
     style={{ position: 'fixed', right: 'max(16px, env(safe-area-inset-right))', top: '68px',
       width: 'min(420px, calc(90vw / var(--z, 1)))', maxWidth: 'calc(100% - max(16px, env(safe-area-inset-right)) - 16px)',
-      maxHeight: 'max(120px, min(380px, calc(100vh / var(--z, 1) - 248px)))', overflowY: 'auto', overflowWrap: 'anywhere', zIndex: 90,
+      maxHeight: 'max(120px, min(380px, calc(100vh / var(--z, 1) - 248px)))', display: 'flex', flexDirection: 'column', overflow: 'hidden', overflowWrap: 'anywhere', zIndex: 90,
       background: 'var(--card)', boxShadow: 'var(--shadow-float)', color: 'var(--fg)' }}>
     <div className="card-head" style={{ gap: 8, alignItems: 'flex-start' }}>
       <h2 id={titleId} className="card-title" style={{ margin: 0, minWidth: 0, flex: 1, display: 'block', overflowWrap: 'anywhere' }}>{t('updates.title', { version })}</h2>
       <button type="button" className="btn sm" style={{ flexShrink: 0 }} disabled={saving} onClick={onClose} aria-label={t('common.close')}>×</button>
     </div>
-    <div style={{ padding: '0 20px 18px', fontSize: 13, lineHeight: 1.6 }}>
+    {/* 내용만 스크롤한다 — 버튼 줄은 카드 하단에 고정(UL2: 1280×800에서 380px 제한에 '나중에·확인했어요'가 스크롤 아래로 숨었다) */}
+    <div style={{ padding: '0 20px', fontSize: 13, lineHeight: 1.6, overflowY: 'auto', minHeight: 0, flex: '1 1 auto' }}>
       {items.length > 0 && <><p style={{ marginTop: 0, color: 'var(--fg-2)' }}>{t('updates.intro')}</p>
         <ul style={{ paddingLeft: 20, margin: '0 0 16px', display: 'grid', gap: 8 }}>
           {items.map((key) => <li key={key}>{t(key)}</li>)}
         </ul></>}
       {error && <p role="alert" style={{ color: 'var(--danger)' }}>{error}</p>}
-      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-        <button type="button" className="btn sm" disabled={saving} onClick={onDismiss}>{t('updates.later')}</button>
-        {onConfirm && <button type="button" className="btn btn-primary sm" disabled={saving} onClick={onConfirm}>
-          {t(saving ? 'updates.saving' : 'updates.confirm')}
-        </button>}
-      </div>
+    </div>
+    <div style={{ padding: '10px 20px 18px', display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap', flex: 'none' }}>
+      <button type="button" className="btn sm" disabled={saving} onClick={onDismiss}>{t('updates.later')}</button>
+      {onConfirm && <button type="button" className="btn btn-primary sm" disabled={saving} onClick={onConfirm}>
+        {t(saving ? 'updates.saving' : 'updates.confirm')}
+      </button>}
     </div>
   </section>;
 }
@@ -44,9 +45,10 @@ export function UpdateNotesCard({ version, items, t, onConfirm, saving = false, 
     펼친 카드를 스스로 띄우면 데크의 '설정에서 연결하기'를, 상단바 아래 알약도 크루 대화의 방금 보낸 글을 덮었다
     (UX-A01 검증 2026-10-05 실측). 내용은 사용자가 칩을 눌렀을 때만 펼친다. */
 export function UpdateNotesChip({ version, t, onExpand }) {
-  return <button type="button" className="chip" onClick={onExpand} title={t('updates.title', { version })}
+  // topbar-chip·chip-label — 좁은 폭(접기 단계)에서는 라벨을 접고 점만 남긴다(UM1). 이름은 aria-label이 지킨다
+  return <button type="button" className="chip topbar-chip" onClick={onExpand} title={t('updates.title', { version })} aria-label={t('updates.chip')}
     style={{ flex: 'none', cursor: 'pointer', fontSize: 10.5, textTransform: 'none', color: 'var(--fg)', borderColor: 'var(--fg-3)' }}>
-    <span className="dot" style={{ background: 'var(--primary)' }} aria-hidden="true" />{t('updates.chip')}
+    <span className="dot" style={{ background: 'var(--primary)' }} aria-hidden="true" /><span className="chip-label">{t('updates.chip')}</span>
   </button>;
 }
 

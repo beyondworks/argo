@@ -28,6 +28,13 @@ export function shouldShowUpdateNotes({ current, bundleVersion, ready, loaded, a
     && (!stableVersion(ackVersion) || cmpVersion(current, ackVersion) > 0));
 }
 
+/** 이번 업데이트 안내(칩)를 띄우지 않는 때 — 회사 정보를 아직 못 받았거나(받는 중·없음·불러오기 실패), 작업 독·피드백·팀 이름 입력창이 열려 있거나,
+    앱 업데이트 확인·설치 중일 때. 실행 중인 턴은 조건이 아니다(UM1): 칩은 아무것도 덮지 않는 상단바 안의 작은 알약인데 턴마다 사라졌다 생기면
+    그때마다 상단바 폭이 바뀌어 다른 칩과 검색칸이 흔들렸다. */
+export function updateNotesBlocked({ data, tasks, dockOpen, fbOpen, renameTeam, updPhase }) {
+  return !data || !!data.missing || !!data.loadError || !tasks || !!dockOpen || !!fbOpen || renameTeam != null || ['checking', 'installing', 'ready'].includes(updPhase);
+}
+
 /** 안내 카드가 떠 있는 동안 사용자가 입력을 시작하면 이번 실행에서는 접는다 — 숨겼다가 입력을 마치고(blur) 다시
     그리면 보내기 버튼으로 가는 클릭 사이에 카드가 끼어들어 클릭을 먹었다(UX-A01, 2026-10-05). 저장 중에는 접지 않는다. */
 export function shouldAutoDismissUpdateNotes({ visible = false, editing = false, saving = false } = {}) {

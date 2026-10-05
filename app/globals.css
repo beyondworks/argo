@@ -2492,6 +2492,9 @@ html[data-os='win'] .table th { letter-spacing: 0.06em; }
 :root[data-narrow-bar] .topbar-clock,
 :root[data-narrow-bar] .topbar-ver,
 :root[data-narrow-bar] .topbar-upd { display: none; }
+/* 상단바 칩('새 소식'·'새로 고침 실패')은 알림이라 통째로 숨기지 않고 라벨만 접어 점으로 남긴다(UM1) — 이름은 aria-label·title이 지킨다 */
+:root[data-narrow-bar] .topbar-chip .chip-label { display: none; }
+:root[data-narrow-bar] .topbar-chip { padding: 2px 9px; }
 /* 플로어(96px)는 base .search-pill이 전 구간 보장한다(3R HIGH-1 — 여기 두면 순환이라 base로 승격).
    접기 단계는 접은 폭을 검색으로 보내는 flex 전환만 담당한다. */
 :root[data-narrow-bar] .search-pill { flex: 1; width: auto; }
