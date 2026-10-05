@@ -174,19 +174,6 @@ export function serviceCredsAllowed(env = process.env) {
   return !authOn || isWorker;
 }
 
-/** 세션 클라이언트의 요청 — 사이클 시작에 고른 토큰이 사이클 도중 만료되지 않게, 만료 60초 안쪽이면 요청 직전에 새 세션을 받아
-    Authorization을 바꾼다(평소엔 시각 비교 한 번). 실측 2026-10-05: 상주 사이클이 70초 넘게 걸려 끝부분 요청이 만료 토큰으로 나갔다.
-    getFresh는 getFreshDeviceSession — 회전은 프로세스 간 잠금으로 한 번만 일어나고, 받지 못하면 지금 토큰을 그대로 쓴다. (export: 회귀 테스트용) */
-export const sessionFetch = (sess, getFresh, baseFetch) => {
-  let cur = sess;
-  return async (url, opts = {}) => {
-    if ((cur.expires_at ?? 0) * 1000 - Date.now() <= 60_000) cur = (await getFresh()) ?? cur;
-    const headers = new Headers(opts.headers);
-    headers.set('Authorization', `Bearer ${cur.access_token}`);
-    return baseFetch(url, { ...opts, headers });
-  };
-};
-
 // cycle 시작마다 호출 — 서비스 모드는 epoch, 세션 모드는 access token으로 캐시 키를 삼아
 // 자격 회전 시에만 클라이언트를 재생성한다. false = 쓸 자격 없음(이번 사이클 스킵).
 async function ensureClient() {
@@ -202,7 +189,7 @@ async function ensureClient() {
   if (sbKey !== k) {
     sb = createClient(sess.url, sess.anonKey, {
       ...CLIENT_OPTS,
-      global: { ...CLIENT_OPTS.global, headers: { Authorization: `Bearer ${sess.access_token}` }, fetch: sessionFetch(sess, getFreshDeviceSession, CLIENT_OPTS.global.fetch) },
+      global: { ...CLIENT_OPTS.global, headers: { Authorization: `Bearer ${sess.access_token}` } },
     });
     sbKey = k;
     resetDiscoverClock();
@@ -219,14 +206,12 @@ const client = () => sb; // ensureClient() 성공 뒤에만 호출된다 (cycle/
 // 테스트 전용 — fake storage를 주입해 syncCompany를 실 Supabase 없이 실행 검증한다.
 // 프로덕션 경로는 절대 호출하지 않는다(ensureClient가 실 클라이언트를 세팅). (export: 통합 테스트용)
 export function _setSyncClientForTest(fake) { sb = fake; sbKey = '__test__'; companyRetry.clear(); companyIdle.clear(); }
-/** 원격에 없음(404) — 매니페스트 읽기와 blob 실존 검사가 같은 판정을 쓴다. 타임아웃·5xx 같은 확인 불가는 없음이 아니다.
-    'Bucket not found'도 없음이 아니다: 만료 토큰 요청을 Storage가 익명으로 처리해 비공개 버킷을 못 보고 이렇게 답한다(2026-10-05 운영
-    storage_logs: role anon, NoSuchBucket). 없음으로 읽으면 매니페스트가 빈 원격이 되고 blob 검사가 로컬 파일을 지운다. */
-const isNotFound = (error) => {
-  const msg = String(error?.message || error);
-  if (/bucket not found/i.test(msg)) return false;
-  return /not[ _]?found|does not exist|no such|404/i.test(msg) || error?.status === 404 || error?.statusCode === 404;
-};
+/** 원격에 없음 — 매니페스트 읽기와 blob 실존 검사가 같은 판정을 쓴다. 진짜 없음은 storage-api의 'Object not found' 하나뿐이다
+    (이 레포 download 경로 기준. storage-js 2.110.2는 statusCode를 문자열 '404'로 주므로 숫자 비교는 쓰지 않는다).
+    그 밖의 404 모양은 모두 확인 불가(보류)다 — 'Bucket not found'(만료 토큰을 Storage가 익명으로 처리, 2026-10-05 운영 storage_logs:
+    role anon, NoSuchBucket), 'Not Found'(JSON 없는 404의 statusText), 'no Route matched'(게이트웨이 404), 'The resource was not found',
+    ENOENT 'no such file'. 없음으로 잘못 읽으면 매니페스트가 빈 원격이 되고 blob 검사가 로컬 파일을 지운다(분리 검수 LOW-1). */
+const isNotFound = (error) => /\bobject not found\b/i.test(String(error?.message || error));
 
 // 스토리지 키 — 한글·특수문자 세그먼트는 base64url로(스토리지가 %·비ASCII 키를 거부, 실측).
 // 매니페스트에 논리 경로를 담고 키는 항상 이 함수로 파생하므로 역디코딩은 불필요하다.
@@ -859,6 +844,37 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
   };
   const changed = (a, b) => !a || !b || (a.h ?? `${a.m}:${a.s}`) !== (b.h ?? `${b.m}:${b.s}`);
 
+  // 매니페스트 '없음'과 기록의 모순 확인 — 파일 루프·브레이크·어떤 쓰기보다 먼저(업로드가 판정보다 먼저 나가면 안 된다).
+  // 'Object not found'는 권한(RLS)으로 안 보이는 객체에도 나오므로 '없음' 판정만으로는 믿을 수 없다 — 매니페스트가 없다면서
+  // 이 기기가 기록한 파일(state, 첫 사이클이면 로컬 파일)의 blob이 원격에 있으면 '없음'을 믿지 않고 사이클 전체를 보류한다.
+  // 기록된 blob이 하나도 없을 때(새 회사·정리된 원격)만 아래 루프가 다시 민다. 이 확인이 없으면 큰 회사의 대량 삭제 브레이크가
+  // 풀려 다른 기기가 지운 파일이 되살아나고 다른 기기의 편집이 덮인다(분리 검수 F1·F2-3).
+  // 호출량: '매니페스트 없음' 사이클에서만 생긴다(평소 사이클 0건). 첫 blob이 보이면 바로 멈추고, 전부 없을 때만 기록 수만큼 GET(404)이다.
+  // 8개씩 나눠 보내 큰 회사에서도 사이클이 동기화 잠금 기준 시간을 넘기지 않게 한다.
+  if (!manifestExists) {
+    const seen = Object.keys(state).length ? Object.keys(state) : Object.keys(local);
+    const probe = seen.filter((rel) => !isRoomCardRel(rel) && !isLocalImportRel(rel) && !isDevArtifactRel(rel)
+      && !(noSecrets && isSecretRel(rel)) && !(isEncRel(rel) && !cryptoOn()));
+    let next = 0, found = null, stop = false;
+    const worker = async () => {
+      while (!stop && next < probe.length) {
+        const rel = probe[next++];
+        try { if (await blobExists(remoteKey(rel))) { found = rel; stop = true; } }
+        catch (e) { stop = true; throw e; } // 확인 불가 — 보류(blobExists 오류 문구 그대로)
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(8, probe.length) }, worker));
+    if (found) throw new Error(`매니페스트 없음과 모순(기록된 파일의 원격 blob이 있음: ${found.slice(0, 60)}) — 동기화 보류(다음 사이클 재시도)`);
+  }
+  // 로컬 삭제 직전 매니페스트 재확인 — 매니페스트를 정상으로 읽은 사이클에서도 blob 확인의 '없음'이 잘못 분류됐을 수 있다.
+  // 삭제 후보가 처음 나올 때 한 번만(사이클당 GET 1건, 후보가 없으면 0건) 매니페스트 키를 다시 읽어 성공할 때만 '없음'을 믿는다.
+  // 실패·없음이면 사이클 전체를 보류한다(holdCycle — 파일 단위 실패로 두면 그 항목이 기록에서 빠진다). (분리 검수 F2-2)
+  let manifestRecheck = null;
+  const confirmManifest = () => (manifestRecheck ??= (async () => {
+    const { error } = await client().storage.from(BUCKET).download(manifestKey);
+    if (error) throw Object.assign(new Error(`로컬 삭제 전 매니페스트 재확인 실패 — 동기화 보류: ${String(error.message || error).slice(0, 80)}`), { holdCycle: true });
+  })());
+
   // credSync off 회수 — 클라우드에 남은 자격 암호문의 **활성 사본**을 마커로 덮고(플랫폼 백업·스냅샷의
   // 과거 사본 보존까지는 보장 못 함 — docs/privacy-sync.md에 같은 한계를 고지) 매니페스트에서
   // 내린다. **remove 금지**: blob 부재는 토글 미반영 기기(구버전 포함)의 `l && !r` 분기에서 "다른 기기가
@@ -908,6 +924,7 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
     if (corruptHeal.has(rel)) return false;                                   // 로컬 손상 → self-heal 대상(삭제 아님)
     if (isArchival(rel) && archMoves.has(rel.split('/').pop())) return false; // 진짜 이동(목적지 생성 있음)
     // 로컬 삭제('다른 기기가 지웠다')는 원격 매니페스트를 실제로 읽은 사이클에서만 — 아래 l && !r 분기와 같은 조건(단일 출처).
+    // 매니페스트가 없는 사이클은 위 모순 확인을 통과한 경우(기록된 blob이 원격에 하나도 없음)에만 여기까지 온다.
     return side === 'L' ? !!(l && !r && base && !changed(base, l) && manifestExists)
                         : !!(!l && r && base && !changed(base, r));
   };
@@ -967,11 +984,12 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
           // 매니페스트 lost-update 방어 — 진짜 삭제(다른 기기의 삭제 전파)는 blob도 함께 지워져 있다.
           // blob이 살아 있으면 동시 동기화 중인 기기가 매니페스트를 통째로 덮어써 항목만 유실된 것
           // (실측: 영입 직후 크루 카드가 8초 안에 오삭제) → 지우지 말고 항목을 복원한다(자기치유).
-          if (await blobExists(remoteKey(rel))) { remote.files[rel] = base; healed++; }
-          // 원격 매니페스트를 못 본 사이클(없음으로 읽힘)이면 '다른 기기가 지웠다'는 추론이 성립하지 않는다 — 지우지 않고 다시 민다.
+          // 원격 매니페스트가 없는 사이클은 위 모순 확인을 통과했다 = 기록된 blob이 원격에 하나도 없다(정리된 원격) —
+          // '다른 기기가 지웠다'는 추론이 성립하지 않으므로 지우지 않고 다시 민다(blob을 다시 묻지 않는다).
           // 실측 2026-10-05: 만료 토큰 읽기가 없음으로 분류되자 이 분기가 로컬 파일을 지웠고, 다음 정상 사이클이 원격까지 지웠다(재현 테스트).
-          else if (!manifestExists) { await upload(remoteKey(rel), await pushBuf(rel)); remote.files[rel] = l; pushed++; }
-          else { await rmLocal(rel, l.h); delete local[rel]; deletedL++; } // 다른 기기가 지움 → 로컬도
+          if (!manifestExists) { await upload(remoteKey(rel), await pushBuf(rel)); remote.files[rel] = l; pushed++; }
+          else if (await blobExists(remoteKey(rel))) { remote.files[rel] = base; healed++; }
+          else { await confirmManifest(); await rmLocal(rel, l.h); delete local[rel]; deletedL++; } // 다른 기기가 지움 → 로컬도(매니페스트 재확인 뒤)
         }
         else { await upload(remoteKey(rel), await pushBuf(rel)); remote.files[rel] = l; pushed++; } // 신규/수정 → 밀기
         continue;
@@ -1028,6 +1046,7 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
         conflicts++;
       }
     } catch (e) {
+      if (e?.holdCycle) throw e; // 삭제 근거를 확인 못 함 — 이 사이클 전체 보류(매니페스트·state 쓰기 없음)
       if (e?.deferred) { deferred++; continue; } // 로컬이 사이클 도중 바뀜 — 실패가 아니라 미룸(base 그대로라 다음 사이클이 양쪽 변경으로 병합·재판정)
       // free의 **쓰기 실패는 실패가 아니라 이 플랜의 정상 결과**다(클라우드 쓰기 자체가 금지) — 분리 집계한다.
       // 뭉뚱그리면(전부 failed) 한 번도 성공 동기화한 적 없는 free 회사(체험 만료 후 첫 동기화·state
