@@ -267,7 +267,7 @@ const DICT = {
   'faq.q5': ['무료 체험과 결제는 어떻게 되나요?', 'How do the free trial and billing work?'],
   'faq.a5': ['가입하면 14일 무료 체험이 시작됩니다. 이후 Pro는 월 $12 또는 연 $120(2개월 무료)이고, 앱 설정이나 이 페이지에서 결제할 수 있습니다. 무료로도 로컬 기능(에이전트·기억·루틴·메신저 연결)은 계속 쓸 수 있습니다.', 'Signing up starts a 14-day free trial. Pro is $12/mo or $120/yr (2 months free), payable in the app Settings or on this page. The free tier keeps local features — agents, memory, routines, messenger links.'],
   'faq.q6': ['텔레그램·슬랙으로도 일을 시킬 수 있나요?', 'Can I delegate work via Telegram or Slack?'],
-  'faq.a6': ['됩니다. 설정에서 봇 토큰을 연결하면 메신저에서 지시를 보내고 결과·파일을 받을 수 있습니다. 에이전트가 결재(승인)가 필요한 일은 메신저로 승인 요청이 옵니다.', 'Yes. Connect a bot token in Settings, then send instructions and receive results and files in your messenger. When an agent needs an approval, the request reaches you there too.'],
+  'faq.a6': ['됩니다. 설정에서 봇 토큰을 연결하면 메신저에서 지시를 보내고 결과·파일을 받을 수 있습니다. 에이전트가 하는 일에 결재(승인)가 필요하면 메신저로 승인 요청이 옵니다.', 'Yes. Connect a bot token in Settings, then send instructions and receive results and files in your messenger. When something an agent does needs your approval, the request reaches you there too.'],
   'faq.q7': ['원하는 러너가 목록에 없어요 / 권한을 더 세밀하게 조정하고 싶어요.', 'My runner is not in the list / I want finer-grained permissions.'],
   'faq.a7': ['Claude·Codex·Gemini·GLM·Kimi·Grok·OpenRouter 러너를 기본 지원하며, OpenRouter를 통하면 그 밖의 대부분 모델도 연결할 수 있습니다. 목록에 없는 러너나 더 세밀한 권한 규칙이 필요하면 아래 문의로 알려 주세요 — 요청이 모이는 순서대로 반영합니다.', 'Claude, Codex, Gemini, GLM, Kimi, Grok and OpenRouter are supported out of the box, and OpenRouter covers most other models. If you need a runner not on the list or finer permission rules, tell us via the contact form below — we add them in order of demand.'],
 

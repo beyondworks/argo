@@ -65,7 +65,7 @@ const GROUPS = [
         h: { ko: '3. 핵심 개념', en: '3. Core concepts' },
         body: [
           {
-            ko: '회사 = 작업 공간. 에이전트 = AI 직원(각자 역할·카드). 기억(vault) = 폴더 트리로 쌓이는 노트·일지·인덱스. 위임 = 모더레이터가 담당 에이전트에 일을 넘김. 결재 = 위험·중요 행동은 사용자 승인 후 실행.',
+            ko: '회사 = 작업 공간. 에이전트 = AI 직원(각자 역할·카드). 기억(vault) = 폴더 트리로 쌓이는 노트·일지·인덱스. 위임 = 모더레이터가 담당 에이전트에게 일을 넘김. 결재 = 위험·중요 행동은 사용자 승인 후 실행.',
             en: 'Company = your workspace. Agent = an AI employee (each with a role and card). Memory (vault) = a folder tree of notes, journals, and an index. Delegation = a moderator hands work to the right agent. Approval = risky or important actions run only after you sign off.',
           },
         ],
@@ -104,7 +104,7 @@ const GROUPS = [
         h: { ko: '6. 위임과 협업', en: '6. Delegation & collaboration' },
         body: [
           {
-            ko: '모더레이터가 작업을 담당 에이전트에 위임하고, 다른 에이전트가 검토합니다. 한 명이 하고 → 다른 명이 검토 → 당신은 승인만 하면 됩니다.',
+            ko: '모더레이터가 작업을 담당 에이전트에게 위임하고, 다른 에이전트가 검토합니다. 한 명이 하고 → 다른 명이 검토 → 당신은 승인만 하면 됩니다.',
             en: 'A moderator delegates work to the right agent, and another reviews it. One does the work, another reviews, and you just approve.',
           },
         ],
@@ -134,7 +134,7 @@ const GROUPS = [
         h: { ko: '8. 내 회사 색 입히기', en: '8. Make it your own' },
         body: [
           {
-            ko: '에이전트의 지침은 세 가지 방식으로 바꿉니다. ① 프리셋 — 준비된 역할 틀 선택. ② 커스텀 — 카드를 직접 편집. ③ 덧붙이기(append) — 회사 공통 규칙을 모든 에이전트에 얹기(예: “결과는 항상 결론부터”).',
+            ko: '에이전트의 지침은 세 가지 방식으로 바꿉니다. ① 프리셋 — 준비된 역할 틀 선택. ② 커스텀 — 카드를 직접 편집. ③ 덧붙이기(append) — 회사 공통 규칙을 모든 에이전트에게 얹기(예: “결과는 항상 결론부터”).',
             en: 'You shape an agent’s instructions three ways. (1) Preset — pick a ready-made role template. (2) Custom — edit the card directly. (3) Append — layer company-wide rules onto every agent (e.g. “always lead with the conclusion”).',
           },
         ],
