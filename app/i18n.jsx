@@ -1245,6 +1245,7 @@ const DICT = {
   'chat.stage.tool': ['도구 사용 중', 'Using a tool'],
   'chat.stage.work': ['작업 중', 'Working'],
   'chat.stage.think': ['생각을 정리하는 중', 'Thinking'],
+  'chat.stage.summarize': ['앞 대화 정리 중', 'Tidying earlier conversation'],
   'chat.stage.runner': ['{name} 러너 실행 중', 'Running on {name}'],
   'chat.stage.awaiting_approval': ['사장 결재 대기 중 — 결재함·메신저에서 승인하면 이어집니다', 'Waiting for your approval — approve in the inbox or messenger to continue'],
   'chat.turnFailed': ['턴 실패: {msg} — 입력을 복원했습니다. 다시 보내보세요.', 'Turn failed: {msg} — your input was restored. Try sending again.'],
@@ -1899,7 +1900,7 @@ export function fmtMsgTime(lang, ts) {
 
 // 진행 단계 코드 → 사람이 읽는 라벨. 알려진 코드만 번역하고, 미지/레거시 문자열(옛 상태 파일의
 // 한국어 라벨 등)은 원문 그대로 반환해 무회귀. runner 코드는 detail(러너명)을 이름으로 보간한다.
-const STAGE_CODES = new Set(['boot', 'memory', 'write', 'shell', 'web', 'delegate', 'approval', 'tool', 'work', 'think', 'runner', 'awaiting_approval']);
+const STAGE_CODES = new Set(['boot', 'memory', 'write', 'shell', 'web', 'delegate', 'approval', 'tool', 'work', 'think', 'runner', 'awaiting_approval', 'summarize']);
 export function stageLabel(t, stage, detail = '') {
   if (!stage) return '';
   if (!STAGE_CODES.has(stage)) return stage; // 레거시/미지 — 원문 표시

@@ -30,7 +30,7 @@ for a in "$@"; do
 done
 [ "$last" = "-" ] && last="$(cat)"
 printf '%s\\n=====\\n' "$last" >> "$PWD/.fake-prompts"
-case "$last" in *"<conversation>"*) [ -f "$PWD/.fail-summary" ] && { echo "summary backend down" >&2; exit 1; }; ANS="요약본-XYZ 보고서 마감은 금요일" ;; *) ANS="이어서 정리했습니다." ;; esac
+case "$last" in *"<conversation>"*) [ -f "$PWD/.fail-summary" ] && { echo "summary backend down" >&2; exit 1; }; [ -f "$PWD/.slow-summary" ] && sleep 20; ANS="요약본-XYZ 보고서 마감은 금요일" ;; *) ANS="이어서 정리했습니다." ;; esac
 [ -n "$OUT" ] && printf '%s' "$ANS" > "$OUT"
 exit 0
 `);
@@ -256,4 +256,28 @@ test('TB11. 러너별 한도(순수) — stdin 러너는 토큰 예산 그대로
     if (room === 8000) { assert.match(sec, /줄49 /, '최근 줄 우선'); assert.doesNotMatch(sec, /줄0 /, '오래된 줄부터 뺀다'); }
   }
   assert.equal(fitContextSection(parts, '최근 대화', 'ko', 5), '', '자리가 없으면 빈 구획');
+});
+
+// 검수 changes_needed #4(MEDIUM) — 요약 원샷에 턴 중단 신호를 넘기고, 요약하는 동안 '앞 대화 정리 중' 상태를 보인다.
+// 종전에는 정지를 눌러도 요약(최대 90초)이 끝날 때까지 턴이 멈추지 않았고, 화면은 그 사이 러너 실행 중으로만 보였다.
+test('TB12. CLI 턴(가짜 codex): 요약하는 동안 상태는 summarize, 정지하면 요약 원샷이 바로 끊기고 턴은 중단으로 끝난다', POSIX_ONLY, async () => {
+  const { interruptTurn } = await import('../src/turn-abort.mjs');
+  const WS = 'tb12'; await mkws(WS);
+  await writeFile(join(ROOT, WS, '.slow-summary'), '1'); // 가짜 요약이 20초 걸린다
+  await writeFile(join(ROOT, WS, 'chats', 'crew-a.json'), JSON.stringify({ sessionId: null, messages: msgs(300, 400) }));
+  const turn = chat(WS, 'crew-a', '보고서 이어서');
+  turn.catch(() => {});
+  const statusFile = join(ROOT, WS, 'chats', 'crew-a.status.json');
+  let stage = null;
+  for (let i = 0; i < 100 && stage !== 'summarize'; i++) { await new Promise((r) => setTimeout(r, 100)); stage = JSON.parse(await readFile(statusFile, 'utf8').catch(() => '{}')).stage ?? null; }
+  assert.equal(stage, 'summarize', '요약 중 상태(화면: 앞 대화 정리 중)');
+  const t0 = Date.now();
+  assert.equal(await interruptTurn(WS, 'crew-a'), true);
+  await assert.rejects(turn, (e) => e?.aborted === true, '턴은 중단으로 끝난다');
+  assert.ok(Date.now() - t0 < 8000, `정지 뒤 ${Date.now() - t0}ms 안에 끝난다(요약 20초를 기다리지 않는다)`);
+  const ps = await prompts(WS);
+  assert.equal(ps.filter((x) => !x.includes('<conversation>')).length, 0, '중단 뒤 턴 실행은 시작하지 않는다');
+  assert.equal(threadSummary(await loadThread(WS, 'crew-a'), null), null, '끊긴 요약은 저장하지 않는다');
+  await new Promise((r) => setTimeout(r, 200));
+  assert.equal(await readFile(statusFile, 'utf8').catch(() => null), null, '상태 파일은 정리된다');
 });

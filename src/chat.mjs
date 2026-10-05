@@ -494,14 +494,29 @@ export function threadCtxLine(m, lang, name) {
     세션 메시지의 다른 안내 줄(상한·기한·실패)은 크루가 알아야 할 사실이라 종전대로 싣는다. export는 테스트용. */
 export const isSummaryNotice = (m) => m?.src?.kind === 'session' && m.src.dir === 'notice' && m.src.code === 'summarized';
 export const inThreadContext = (m, contextScope) => inContextScope(m, contextScope) && !m.shared && !m.failed && !m.awaiting && !isSummaryNotice(m);
-async function threadContextFor(wsId, slug, t, { contextScope, lang, name, runner, model, limits = null }) {
+/*  signal = 턴 중단 신호(정지하면 요약 원샷도 바로 끊긴다 — 중단은 던진다), status(on) = 요약하는 동안의 상태 표시(on=true '앞 대화 정리 중', false 되돌림).
+    요약 원샷의 사용량·비용은 사용량 원장에 요약 행(kind 'summary')으로 바로 남긴다 — 월 지출 한도(monthCost)·크루 인건비가 그 행을 센다(분리 검수 MEDIUM:
+    종전 .then(r => r.text)가 API 키 러너의 요약 비용을 버렸다). 턴이 실패·중단돼도 이미 쓴 요약 비용은 남는다. 반환에 costUsd(요약 금액, 없으면 null)를 싣는다. */
+async function threadContextFor(wsId, slug, t, { contextScope, lang, name, runner, model, limits = null, signal = null, status = null }) {
   const msgs = (t?.messages ?? []).filter((m) => inThreadContext(m, contextScope));
-  return buildThreadContext({
+  let costUsd = null;
+  const parts = await buildThreadContext({
     msgs, lang, lineOf: (m) => threadCtxLine(m, lang, name), summary: threadSummary(t, contextScope), limits, // limits — argv 러너(agy)는 명령줄 길이 기준(contextLimits)
     memoKey: `${wsId}:${slug}:${scopeKey(contextScope) ?? ''}`, // 요약 실패 기억은 범위별(채널·그룹마다 따로) — 요약 저장 키와 같은 구분
-    summarize: (prompt) => runOneShot(wsId, prompt, { pin: runner, model: model || null, lang, readOnly: true, timeoutMs: 90_000 }).then((r) => r.text),
+    summarize: async (prompt) => {
+      await status?.(true);
+      const t0 = Date.now();
+      try {
+        const r = await runOneShot(wsId, prompt, { pin: runner, model: model || null, lang, readOnly: true, timeoutMs: 90_000, signal });
+        costUsd = Number.isFinite(r.costUsd) ? r.costUsd : null;
+        await appendUsage(wsId, { kind: 'summary', slug, runner: r.runner, model: model || null, usage: r.usage ?? {}, costUsd, ms: Date.now() - t0,
+          billed: await isBilledRunner(wsId, r.runner).catch(() => undefined) });
+        return r.text;
+      } finally { await status?.(false); }
+    },
     save: (sum) => setThreadSummary(wsId, slug, contextScope, sum),
   });
+  return { ...parts, costUsd };
 }
 
 export const CONNECTOR_DESC_CAP = 1200;
@@ -1659,7 +1674,8 @@ ${lang === 'en'
       const ctxHead = lang === 'en' ? 'Recent conversation' : '최근 대화';
       const roomIn = (outer) => ARGV_PROMPT_LIMIT - argvLen(outer('')); // outer(구획) → 실행 프롬프트 전체
       const ctxParts = await threadContextFor(wsId, agentSlug, thread, { contextScope, lang, name: meta.name || agentSlug, runner, model: effModel,
-        limits: argvRunner ? contextLimits(runner, roomIn(promptWith) - 1) : null });
+        limits: argvRunner ? contextLimits(runner, roomIn(promptWith) - 1) : null, signal: ac.signal,
+        status: (on) => setTurnStatus(wsId, agentSlug, on ? 'summarize' : 'runner', on ? '' : RUNNERS[runner].name, undefined, turnSource) });
       const promptFor = (outer) => outer(argvRunner ? fitContextSection(ctxParts, ctxHead, lang, roomIn(outer)) : contextSection(ctxParts, ctxHead, lang));
       __turnControl.check();
       const cred = await runnerCredEnv(wsId, runner); // 회사 자격(API키/OAuth) 우선, 없으면 호스트 로그인
@@ -1936,6 +1952,7 @@ ${lang === 'en'
   // resume을 시도하되 실패하면 catch에서 새 세션으로 1회 재시도한다(__freshRetry).
   let resumeId = __freshRetry ? null : sessionId;
   let crossCtx = '';
+  let ctxCostUsd = null; // 다른 기기 이어받기 맥락의 요약 원샷 금액 — 이 턴의 청구 금액(루프 루틴 예산)에 더한다(원장에는 요약 행으로 따로 남았다)
   if (!dmTurn && (sessionId || __freshRetry)) {
     const t = await loadThread(wsId, agentSlug).catch(() => ({ messages: [] }));
     const me = await getDeviceId().catch(() => null);
@@ -1944,7 +1961,18 @@ ${lang === 'en'
     if (foreign) resumeId = null;
     if ((foreign || __freshRetry) && (t.messages ?? []).length) {
       // 실패 턴·화자·범위 규칙과 예산·요약은 CLI 경로와 같은 함수(threadContextFor)
-      const ctx = contextSection(await threadContextFor(wsId, agentSlug, t, { contextScope, lang, name: meta.name || agentSlug, runner, model: effModel }),
+      // 요약 원샷도 정지 버튼이 끊게 — 이 구간은 아래 실행 등록(abortReg) 전이라 같은 실행 그룹(__turnControl)으로 잠깐 등록한다.
+      // 상태는 요약하는 동안만 '앞 대화 정리 중', 끝나면 지운다(아래 'boot'가 이어 받는다 — 중단으로 끝나도 남지 않는다).
+      const sumAc = new AbortController();
+      const sumReg = registerTurn(wsId, agentSlug, () => sumAc.abort(), __turnControl);
+      let parts;
+      try {
+        parts = await threadContextFor(wsId, agentSlug, t, { contextScope, lang, name: meta.name || agentSlug, runner, model: effModel, signal: sumAc.signal,
+          status: (on) => (on ? setTurnStatus(wsId, agentSlug, 'summarize', '', undefined, turnSource) : clearTurnStatus(wsId, agentSlug)) });
+      } finally { sumReg.release(); }
+      __turnControl.check();
+      ctxCostUsd = parts.costUsd;
+      const ctx = contextSection(parts,
         lang === 'en' ? 'Recent conversation (continued from another device — a new session opens here)' : '최근 대화 (다른 기기에서 이어짐 — 이 기기에서 새 세션으로 계속)', lang);
       if (ctx) crossCtx = `${ctx}\n${newMsgHead(source, lang)}`;
     }
@@ -2399,6 +2427,8 @@ ${lang === 'en'
   // diff와 합집합 — 도구 관측(즉시성)과 파일시스템 diff(Bash·MCP 포함 완전성)를 합친다. 필터는
   // servableArtifact 하나로 통일(칩=서빙 일치 — 탐색 G8), 상한·정렬은 artDiff와 같은 규칙.
   for (const r of await artDiff(reply)) artifacts.add(r);
+  // 맥락 요약 원샷 금액(다른 기기 이어받기) — 청구 턴이면 이 턴 금액에 더한다(루프 루틴 예산 routines.mjs spentUsd). openrouter는 금액 미기록 규칙 그대로(위 result 처리와 같다)
+  if (Number.isFinite(ctxCostUsd) && runner !== 'openrouter' && await isBilledRunner(wsId, runner)) costUsd = (Number.isFinite(costUsd) ? costUsd : 0) + ctxCostUsd;
   // trace — 메신저 답글에 붙는 궤적(사고 과정·도구 단계·경과·실사용 모델). 다른 소비자(gateway·room·routine)는 무시해도 무해한 추가 필드.
   const trace = { steps, thought: String(thought ?? '').slice(-1500), ms: Date.now() - t0, model: actualModel || null, costUsd };
   return { reply, sessionId: sessionless ? null : sid, ...(contextScope ? { contextScope } : {}), ...(steerFailed ? { steerFailed } : {}), handover, costUsd, trace, artifacts: capLatest(artAfter, [...artifacts].filter(servableArtifact)), ...fellBackInfo, ...modelFallbackInfo }; // 합집합도 최신 우선 12(알파벳 컷이 최신을 떨구던 것 — 검수 LOW-2)
