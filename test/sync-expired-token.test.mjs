@@ -37,10 +37,11 @@ const OBJECT_NOT_FOUND = { message: 'Object not found', status: 400, statusCode:
 function storage(initial) {
   const store = new Map(Object.entries(initial));
   const state = { mode: 'ok' };
-  const log = { uploads: [], removed: [] };
+  const log = { uploads: [], removed: [], gets: 0 };
   const bucket = {
     async download(k) {
       k = k.split('?')[0];
+      log.gets++;
       if (state.mode === 'expired') return { data: null, error: BUCKET_NOT_FOUND };
       const forced = state.downloadError?.(k);
       if (forced) return { data: null, error: forced };
@@ -49,6 +50,8 @@ function storage(initial) {
     async upload(k, blob) {
       log.uploads.push(k);
       if (state.mode === 'expired') return { error: JWT_EXPIRED };
+      const forced = state.uploadError?.(k);
+      if (forced) return { error: forced };
       store.set(k, Buffer.from(await blob.arrayBuffer())); return { error: null };
     },
     async remove(keys) {
@@ -181,24 +184,38 @@ test('F4-a 매니페스트는 정상, 그 뒤 blob 확인만 만료(Bucket not f
   for (const i of [5, 6]) assert.equal(await readFile(join(dir, `n${i}.md`), 'utf8'), `# 원본 ${i}\n`, `n${i} 보존`);
 });
 
-test('F4-b 큰 회사(14개)에서 매니페스트만 없음으로 읽힘 + blob 있음 — 사이클 보류: 업로드 0(매니페스트 쓰기 0)·삭제 0', async () => {
+// F4-b(재검수 HIGH-1로 계약 수정) — Storage 읽기 정책은 오너 접두사 하나라(20260912010000_storage_companies_policy_sargable.sql)
+// 같은 토큰으로 blob이 보이면 매니페스트의 'Object not found'는 진짜 없음이다. 그래서 blob이 '있다'는 것만으로는 보류하지 않고,
+// blob 내용이 이 기기가 아는 것(기록·로컬)과 다를 때만 보류한다 — 다시 밀면 다른 기기의 변경을 덮기 때문이다.
+test('F4-b 큰 회사(14개)에서 매니페스트 없음 + 기록과 다른 내용의 blob 하나 — 사이클 보류: 업로드 0(매니페스트 쓰기 0)·삭제 0', async () => {
   const WS = 'co-misread';
-  // 다른 기기가 n12·n13을 지웠고(blob 없음) 이 기기는 n0~n2를 고쳤다 — 수정 파일 업로드도 판정보다 먼저 나가면 안 된다
-  const { store, count } = await seedCompany(WS, 14, { blobs: (i) => i < 12, edited: (i) => i < 3 });
+  // 다른 기기가 n12·n13을 지웠고(blob 없음) n5를 고쳤다(blob 내용이 기록과 다름). 이 기기는 n0~n2를 고쳤다
+  const { store, count } = await seedCompany(WS, 14, { blobs: (i) => i < 12, edited: (i) => i < 3, manifest: false });
+  store[`${OWNER}/${WS}/vault/notes/n5.md`] = Buffer.from('# 다른 기기에서 고침 5\n');
   const f = storage(store);
   _setSyncClientForTest(f.client);
-  for (const err of [OBJECT_NOT_FOUND]) { // 'Object not found'인데 실제로는 있음(다른 계정 토큰의 RLS 등) — '없음' 판정에 남은 오분류
-    f.state.downloadError = (k) => (isManifest(k) ? err : null);
-    _setSyncClientForTest(f.client);
-    await assert.rejects(() => syncCompany(WS, OWNER, false), /매니페스트 없음과 모순/);
-    assert.deepEqual(f.log.uploads, [], '아무것도 올리지 않는다(지운 파일 부활 0, 매니페스트 덮어쓰기 0)');
-    assert.deepEqual(f.log.removed, []);
-    assert.equal(await count(), 14, '로컬 삭제 0');
-    assert.ok(!f.store.has(`${OWNER}/${WS}/vault/notes/n12.md`), '지운 파일이 원격에 되살아나지 않는다');
-  }
+  await assert.rejects(() => syncCompany(WS, OWNER, false), /매니페스트 없음과 모순/);
+  assert.deepEqual(f.log.uploads, [], '아무것도 올리지 않는다(다른 기기 변경 덮어쓰기 0, 매니페스트 덮어쓰기 0)');
+  assert.deepEqual(f.log.removed, []);
+  assert.equal(await count(), 14, '로컬 삭제 0');
+  assert.equal(f.store.get(`${OWNER}/${WS}/vault/notes/n5.md`).toString(), '# 다른 기기에서 고침 5\n', '다른 기기의 내용이 그대로');
 });
 
-test('F2-3 첫 사이클(기록 없음)에서 매니페스트를 없음으로 읽었는데 로컬 파일의 blob이 있으면 보류 — 다른 기기 변경을 덮지 않는다', async () => {
+test('F4-b 인접 — 매니페스트 없음 + blob이 모두 기록(state) 내용 — 이 기기가 알던 내용이므로 다시 민다(삭제 0, 매니페스트 다시 씀)', async () => {
+  const WS = 'co-known-blobs';
+  const { store, count } = await seedCompany(WS, 14, { blobs: (i) => i < 12, edited: (i) => i < 3, manifest: false });
+  store[`${OWNER}/${WS}/vault/notes/n4.md`] = sealSecret(Buffer.from('# 원본 4\n')); // 봉투도 열어서 비교한다
+  const f = storage(store);
+  _setSyncClientForTest(f.client);
+  const r = await syncCompany(WS, OWNER, false);
+  assert.equal(r.deletedL, 0);
+  assert.equal(r.pushed, 14, '모두 다시 민다');
+  assert.equal(await count(), 14);
+  assert.equal(openSecretCompat(f.store.get(`${OWNER}/${WS}/vault/notes/n0.md`)).toString(), '# 이 기기에서 고침 0\n', '이 기기의 수정이 올라간다');
+  assert.ok(f.store.has(`${OWNER}/${WS}/__manifest__.json`));
+});
+
+test('F2-3 첫 사이클(기록 없음)에서 매니페스트 없음 + 로컬과 다른 내용의 blob(이 기기가 올린 기록도 없음) — 보류, 다른 기기 변경을 덮지 않는다', async () => {
   const WS = 'co-first';
   const { store, count } = await seedCompany(WS, 4, { withState: false, edited: (i) => i === 0 });
   const f = storage(store);
@@ -267,5 +284,129 @@ for (const [name, err] of Object.entries(NOT_ABSENT)) {
     assert.equal(r.deletedL, 0);
     assert.equal(await b.count(), 10, 'blob 확인 불가가 로컬 파일을 지우지 않는다');
     assert.deepEqual(fb.log.removed, []);
+  });
+}
+
+// ── 재검수 HIGH-1·MEDIUM-2·LOW-3 ──
+// HIGH-1: state는 사이클 끝에만 써진다. 첫 동기화가 매니페스트를 쓰기 전에 끊기면(매니페스트 PUT 실패·앱 종료·잠자기·토큰 만료)
+// 이 기기가 방금 올린 blob만 남는다 — 이것을 '다른 기기의 내용'으로 보고 보류하면 그 회사는 이 기기에서 영구히 멈춘다(main은 다음 사이클에 복구).
+const NET_FAIL = { message: 'fetch failed', name: 'StorageUnknownError' };
+const RLS_DENIED = { message: 'new row violates row-level security policy', status: 400, statusCode: '403' };
+async function seedFresh(WS, n) { // 기록(state) 없는 회사 — 첫 동기화 전
+  const dir = join(ROOT, WS, 'vault', 'notes');
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(ROOT, WS, 'company.json'), JSON.stringify({ id: WS, ownerId: OWNER }));
+  for (let i = 0; i < n; i++) await writeFile(join(dir, `n${i}.md`), `# ${i}\n`);
+  return { dir, count: async () => (await readdir(dir)).filter((x) => x.endsWith('.md')).length };
+}
+const blobKeys = (f, WS) => [...f.store.keys()].filter((k) => k.startsWith(`${OWNER}/${WS}/`) && !isManifest(k));
+const remoteText = (f, WS, rel) => openSecretCompat(f.store.get(`${OWNER}/${WS}/${rel}`)).toString();
+
+test('HIGH-1 첫 사이클이 blob을 다 올린 뒤 매니페스트 쓰기 실패 — 다음 사이클이 모두 다시 밀고 매니페스트를 쓴다(영구 보류 아님)', async () => {
+  const WS = 'first-mfail';
+  const { count } = await seedFresh(WS, 20);
+  const f = storage({});
+  f.state.uploadError = (k) => (isManifest(k) ? NET_FAIL : null);
+  _setSyncClientForTest(f.client);
+  await assert.rejects(() => syncCompany(WS, OWNER, false));
+  assert.equal(blobKeys(f, WS).length, 21, '파일 blob은 올라갔다');
+  assert.ok(!f.store.has(`${OWNER}/${WS}/__manifest__.json`), '매니페스트는 없다');
+  f.state.uploadError = null;
+  for (let c = 0; c < 2; c++) { // 다음 사이클 — 재시도 대기는 비운다(저장소 내용은 그대로)
+    _setSyncClientForTest(f.client);
+    const r = await syncCompany(WS, OWNER, false);
+    if (c === 0) { assert.equal(r.pushed, 21, '모두 다시 민다'); assert.equal(r.failed, 0); assert.equal(r.deletedL, 0); }
+  }
+  assert.ok(f.store.has(`${OWNER}/${WS}/__manifest__.json`), '매니페스트를 쓴다');
+  assert.equal(await count(), 20);
+});
+
+test('HIGH-1 업로드 도중 끊김(blob 7개만) 뒤 이 기기에서 파일을 고쳐도 — 다음 사이클이 복구한다(이 기기가 올린 기록)', async () => {
+  const WS = 'first-cut-edit';
+  const { dir, count } = await seedFresh(WS, 20);
+  const f = storage({});
+  let ok = 0;
+  f.state.uploadError = (k) => (isManifest(k) || ++ok > 7 ? NET_FAIL : null); // 7개 올라간 뒤 끊김
+  _setSyncClientForTest(f.client);
+  await assert.rejects(() => syncCompany(WS, OWNER, false));
+  assert.equal(blobKeys(f, WS).length, 7);
+  for (let i = 0; i < 20; i++) await writeFile(join(dir, `n${i}.md`), `# 고침 ${i}\n`); // 다음 사이클 전에 모두 고침 — 올라간 blob과 로컬이 다르다
+  f.state.uploadError = null;
+  _setSyncClientForTest(f.client);
+  const r = await syncCompany(WS, OWNER, false);
+  assert.equal(r.pushed, 21); assert.equal(r.failed, 0); assert.equal(r.deletedL, 0);
+  assert.ok(f.store.has(`${OWNER}/${WS}/__manifest__.json`));
+  for (let i = 0; i < 20; i++) assert.equal(remoteText(f, WS, `vault/notes/n${i}.md`), `# 고침 ${i}\n`);
+  assert.equal(await count(), 20);
+});
+
+test('HIGH-1 기록 없이 남은 blob(이전 실행·이전 판이 올림)이 로컬과 같은 내용 — 다음 사이클이 복구한다', async () => {
+  const WS = 'first-preseed';
+  await seedFresh(WS, 20);
+  const pre = {};
+  for (let i = 0; i < 7; i++) pre[`${OWNER}/${WS}/vault/notes/n${i}.md`] = i === 3 ? sealSecret(Buffer.from(`# ${i}\n`)) : Buffer.from(`# ${i}\n`);
+  const f = storage(pre);
+  _setSyncClientForTest(f.client);
+  const r = await syncCompany(WS, OWNER, false);
+  assert.equal(r.pushed, 21); assert.equal(r.failed, 0);
+  assert.ok(f.store.has(`${OWNER}/${WS}/__manifest__.json`));
+});
+
+test('HIGH-1 인접 — 열 수 없는 봉투 blob은 내용이 같은지 모르므로 보류(업로드 0)', async () => {
+  const WS = 'first-unopenable';
+  await seedFresh(WS, 6);
+  const f = storage({ [`${OWNER}/${WS}/vault/notes/n2.md`]: Buffer.from('argosecret.v2:깨진봉투') });
+  _setSyncClientForTest(f.client);
+  await assert.rejects(() => syncCompany(WS, OWNER, false), /매니페스트 없음과 모순/);
+  assert.deepEqual(f.log.uploads, []);
+});
+
+test('HIGH-1 인접 — 이 기기가 올린 기록은 매니페스트를 다시 본 뒤 지워진다: 나중에 매니페스트가 또 없어지면 처음부터 확인해 다른 기기 내용을 덮지 않는다', async () => {
+  const WS = 'journal-reset';
+  await seedFresh(WS, 10);
+  const f = storage({});
+  f.state.uploadError = (k) => (isManifest(k) ? NET_FAIL : null);
+  _setSyncClientForTest(f.client);
+  await assert.rejects(() => syncCompany(WS, OWNER, false)); // 끊김 — 기록이 남는다
+  f.state.uploadError = null;
+  for (let c = 0; c < 2; c++) { _setSyncClientForTest(f.client); await syncCompany(WS, OWNER, false); } // 복구 + 매니페스트를 본 사이클
+  // 그 뒤 매니페스트가 사라지고(정리 도중 등) n3 blob은 다른 기기의 내용이다
+  f.store.delete(`${OWNER}/${WS}/__manifest__.json`);
+  f.store.set(`${OWNER}/${WS}/vault/notes/n3.md`, Buffer.from('# 다른 기기 3\n'));
+  const before = f.log.uploads.length;
+  _setSyncClientForTest(f.client);
+  await assert.rejects(() => syncCompany(WS, OWNER, false), /매니페스트 없음과 모순/);
+  assert.equal(f.log.uploads.length, before, '업로드 0');
+  assert.equal(f.store.get(`${OWNER}/${WS}/vault/notes/n3.md`).toString(), '# 다른 기기 3\n');
+});
+
+test('MEDIUM-2 매니페스트 없음 + 업로드가 계속 거절되는 기기 — 둘째 사이클부터 GET이 main 수준(매니페스트 2건)', async () => {
+  const WS = 'deny-cost';
+  await seedFresh(WS, 20);
+  const f = storage({});
+  f.state.uploadError = () => RLS_DENIED;
+  _setSyncClientForTest(f.client);
+  let g = f.log.gets;
+  await assert.rejects(() => syncCompany(WS, OWNER, false));
+  assert.ok(f.log.gets - g >= 21, `첫 사이클은 로컬 파일 전부를 확인한다(${f.log.gets - g})`);
+  for (let c = 0; c < 3; c++) {
+    _setSyncClientForTest(f.client);
+    g = f.log.gets;
+    await assert.rejects(() => syncCompany(WS, OWNER, false));
+    assert.ok(f.log.gets - g <= 2, `사이클 ${c + 2}: GET ${f.log.gets - g}건 — 매니페스트 읽기·재읽기만`);
+  }
+  assert.equal(blobKeys(f, WS).length, 0, '거절이라 아무것도 안 올라갔다');
+});
+
+// LOW-3 — 확인 GET의 오류 처리(catch에서 멈추고 다시 던짐)를 잠근다. 오류를 삼키면 확인 못 한 파일을 '없음'처럼 지나쳐 다시 민다.
+for (const [name, err] of [['e500', { message: 'Internal Server Error', status: 500, statusCode: '500' }], ['bucket', BUCKET_NOT_FOUND]]) {
+  test(`LOW-3 매니페스트 없음 확인 중 blob GET이 확인 불가(${name}) — 사이클 보류, 업로드 0`, async () => {
+    const WS = `probe-err-${name}`;
+    await seedFresh(WS, 12);
+    const f = storage({});
+    f.state.downloadError = (k) => (k.endsWith('/n4.md') ? err : null); // 매니페스트는 진짜 없음(Object not found)
+    _setSyncClientForTest(f.client);
+    await assert.rejects(() => syncCompany(WS, OWNER, false), /blob 확인 실패/);
+    assert.deepEqual(f.log.uploads, []);
   });
 }

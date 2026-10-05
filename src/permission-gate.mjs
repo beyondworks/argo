@@ -237,6 +237,8 @@ const HARD_HOME_PATHS = [
      · .device-id              동기화 리스·세션 소유 판정의 기기 신원 — 위조는 소유 오판
      · .sync-state.json        동기화 base(마지막 매니페스트) — 위조하면 삭제 전파가 오판된다
                                (sync.mjs: base가 덮이면 "삭제 오판"). 데이터 유실 방향이다.
+     · .sync-unconfirmed.jsonl '매니페스트 없음' 기간에 이 기기가 밀려고 한 파일 기록 — 크루가 적어 넣으면
+                               그 파일은 원격 확인을 건너뛰어 다른 기기의 내용을 덮을 수 있다(sync.mjs loadUnconfirmed).
      · .tombstones             보관 묘비 — 회사 보관/삭제 신호를 심을 수 있다
      · .sync-process.lock      동기화 프로세스 락 — 위조로 이중 기동 유도
      · .scaffold.json / .index.sqlite / .import.status.json  파생·캐시·상태라 특권 이득은 없지만,
@@ -254,6 +256,7 @@ const WS_DOT_FILES = new Set([
   // 회사 루트 직속(<ws>/.x)
   '.secrets.json', '.connector-secrets.json', // 자격(#213)
   '.workroots.json', '.scaffold.json', '.sync-state.json', '.index.sqlite', '.import.status.json',
+  '.sync-unconfirmed.jsonl', // '매니페스트 없음' 기간의 업로드 기록(sync.mjs loadUnconfirmed) — 크루가 적으면 원격 확인을 건너뛰어 다른 기기 내용을 덮는다
   '.failure-digest.json', // 실패 서명 다이제스트 상태(보고 시각) — 크루가 고치면 반복 실패 경보를 영구 침묵시킬 수 있다(#446 검수 D1)
   '.runner-health.json', // 주기 검진 상태(P1-2 후속) — 크루가 고치면 죽은 자격이 초록으로 위장되거나 과금 스로틀이 풀린다
   '.runner-limits.json', // 구독 잔여 한도(K91, WS_ROOT 직속·계정 지문 키) — 크루가 고치면 입력줄 게이지가 거짓 한도를 보인다
