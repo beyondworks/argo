@@ -14,10 +14,13 @@ const { makeCrewServer } = await import('../src/chat.mjs');
 const { crewToolSpecs, ensureRequired } = await import('../src/engine/native-query.mjs');
 const { companyTool, companyDeps, periodOf } = await import('../src/gateway/office-company.mjs');
 const { createCompany } = await import('../src/workspace.mjs');
+const { outsideDeps } = await import('../src/gateway/office-audience.mjs');
 
 const ME = 'owner-uid', ORG = 'org-1';
-const real = { ...companyDeps };
-after(() => Object.assign(companyDeps, real));
+const real = { ...companyDeps }, realOutside = { ...outsideDeps };
+after(() => { Object.assign(companyDeps, real); Object.assign(outsideDeps, realOutside); });
+// 바깥 글 경계 번호는 호출마다 무작위 16진이라 '80'·'81'이 섞이면 "점수(81·80) 없음" 단언이 약 20% 확률로 번호에 걸렸다(검수 #fix-cross M1) — 숫자 없는 고정값으로 끼운다
+outsideDeps.nonce = () => 'abcdefabcdefabcd';
 const msgrCtx = (extra = {}) => ({ kind: 'msgr', chatType: 'group', channelKind: 'public', orgId: ORG, channelId: 'ch-1', crewId: 'crew-1', uid: ME, wsId: 'w', origin: ME, ...extra });
 const items = [{ id: 'i1', category: 'basic', label: '상호', value: '(주)A', key: 'name', notes: '', position: 0, redacted: false }, { id: 'i2', category: 'bank', label: '계좌', value: '국민 1', key: null, notes: '견적용', position: 0, redacted: true }];
 // 채널 참여자(사람)·조직 역할 — 대화를 누가 보는지 판정(MEDIUM 3). members: 채널 사람 id, roles: { id: 역할 }
