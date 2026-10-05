@@ -62,6 +62,8 @@ export function queueRetryDelayMs(failures, baseMs = 1000) {
   return Math.min(QUEUE_RETRY_MAX_MS, baseMs * 2 ** Math.max(0, Math.min(20, failures - 1)));
 }
 export const RECOVERY_RESET_MIN_MS = 60_000; // 복구 신호로 대기 중인 잡의 간격을 푸는 최소 주기(워커당) — 계속 실패하는 잡이 성공하는 잡 옆에서 매 틱 재시도되지 않게
+export const SCHEMA_SKEW_NOTICE_AFTER_MS = 10 * 60_000; // 스키마 어긋남으로 이만큼 막힌 잡은 보낸 사람에게 "늦어지고 있다"고 한 번 알린다(onStalled) — 24시간 상한까지 아무 표시도 없던 것(2차 검수 LOW-3)
+export const NOTICE_RETRY_MAX = 5; // 안내 미전송 기록 하나당 다시 보내는 시도 상한 — 계속 실패하는 안내가 영원히 호출을 만들지 않게(DB 위생)
 const FAILED_KEEP_MS = 7 * 86_400_000;
 const FAILED_KEEP_MAX = 50;
 /** `.failed` 보존 정리 — 실패 기록이 쌓이기만 하지 않게(DB 위생 규칙 4와 같은 원칙의 로컬판). 실패가 날 때와 워커가 시작할 때 돈다(새 주기 작업 없음). */
@@ -77,40 +79,89 @@ async function pruneFailedJobs(dir) {
     for (const [i, [f, mt]] of recs.entries()) if (i >= FAILED_KEEP_MAX || now - mt > FAILED_KEEP_MS) await unlink(join(dir, f)).catch(() => {});
   } catch { /* 정리 실패는 다음 실패·다음 시작 때 다시 */ }
 }
-async function recordFailedJob(dir, n, fp, e, reason) {
+async function recordFailedJob(dir, n, fp, e, reason, noticePending) {
   const job = await readJsonLenient(fp, null);
-  await writeJsonAtomic(join(dir, `${n}.failed`), { failedAt: new Date().toISOString(), code: e?.code ?? null, reason, error: String(e?.message ?? e).slice(0, 500), job });
+  // noticePending = 안내 훅이 있어 아직 못 보냈다(보낸 뒤 꺼진다) — 기록을 먼저 쓰므로 안내 전에 죽어도 다음 시작 때 다시 보낸다(LOW-4)
+  await writeJsonAtomic(join(dir, `${n}.failed`), { failedAt: new Date().toISOString(), code: e?.code ?? null, reason, error: String(e?.message ?? e).slice(0, 500), job, noticePending: !!noticePending, noticeTries: 0 });
   await pruneFailedJobs(dir);
 }
-const ABANDON_NOTICE_TIMEOUT_MS = 15_000;
-/** 버린 잡의 안내(onAbandon) — 던지거나 멈춰도 큐는 계속 돈다(안내 실패 = 로그만). 슬롯은 시간 상한까지만 점유한다. */
-async function notifyAbandon(onAbandon, job, e, info, where) {
-  if (typeof onAbandon !== 'function' || !job) return;
+/** 안내 결과를 .failed에 반영 — 보냈으면 표지를 끄고, 못 보냈으면 시도 수를 올린다(NOTICE_RETRY_MAX에 닿으면 포기 표지). */
+async function settleNotice(dir, n, delivered) {
+  const fp = join(dir, `${n}.failed`);
+  const r = await readJsonLenient(fp, null);
+  if (!r) return;
+  const tries = (r.noticeTries ?? 0) + (delivered ? 0 : 1);
+  const gaveUp = !delivered && tries >= NOTICE_RETRY_MAX;
+  await writeJsonAtomic(fp, { ...r, noticePending: !delivered && !gaveUp, noticeTries: tries, ...(delivered ? { noticeSentAt: new Date().toISOString() } : {}), ...(gaveUp ? { noticeGaveUp: true } : {}) }).catch(() => {});
+}
+/** 안내 미전송(.failed의 noticePending) 기록을 다시 보낸다 — 워커 시작 때와 다음 성공 처리 때(60초에 한 번). 안내 키가 멱등이라 이미 들어간 것은 DB가 걸러 중복이 없다.
+    반환 = 아직 미전송으로 남은 기록 수(0이면 더 볼 것이 없다). */
+async function retryPendingNotices(dir, onAbandon, where) {
+  let files = [];
+  try { files = (await readdir(dir)).filter((f) => f.endsWith('.failed')); } catch { return 0; }
+  let left = 0;
+  for (const f of files) {
+    const r = await readJsonLenient(join(dir, f), null);
+    if (!r?.noticePending || !r.job) continue;
+    if ((r.noticeTries ?? 0) >= NOTICE_RETRY_MAX) continue;
+    const n = f.slice(0, -'.failed'.length);
+    const e = Object.assign(new Error(r.error ?? ''), r.code ? { code: r.code } : {});
+    const delivered = await callHook(onAbandon, r.job, e, { name: n, reason: r.reason ?? 'permanent', retry: true }, where);
+    await settleNotice(dir, n, delivered);
+    if (!delivered) left += 1;
+  }
+  return left;
+}
+const NOTICE_HOOK_TIMEOUT_MS = 15_000;
+/** 안내 훅(onAbandon·onStalled) 호출 — 던지거나 멈춰도 큐는 계속 돈다(실패 = 로그만, 슬롯은 시간 상한까지만 점유). 반환 true = 보냈다(또는 보낼 것이 없다), false = 못 보냈다(던짐·시간 초과·훅이 false 반환). */
+async function callHook(hook, job, e, info, where) {
+  if (typeof hook !== 'function' || !job) return true;
   let timer;
   try {
-    await Promise.race([onAbandon(job, e, info), new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('안내 시간 초과')), ABANDON_NOTICE_TIMEOUT_MS); timer.unref?.(); })]);
+    const r = await Promise.race([hook(job, e, info), new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('안내 시간 초과')), NOTICE_HOOK_TIMEOUT_MS); timer.unref?.(); })]);
+    return r !== false;
   } catch (x) {
-    console.error(`[argo] 큐 실패 안내를 남기지 못했습니다(${where}/${info.name}):`, x?.message ?? x);
+    console.error(`[argo] 큐 안내를 남기지 못했습니다(${where}/${info.name}):`, x?.message ?? x);
+    return false;
   } finally { clearTimeout(timer); }
 }
 
-/** 옵션 — maxInflight: 동시 처리 상한. onAbandon(job, e, { name, reason }): 큐가 잡을 버릴 때(영구 오류 'permanent'·스키마 어긋남 나이 상한 'schema-age') 불리는
-    안내 훅(예: 메신저 채널에 실패 안내). 던져도 큐는 멈추지 않는다. retryBaseMs: 일시 오류 재시도 첫 간격(기본 1초 — 테스트가 바꾼다). */
-export function startQueueWorker(wsId, key, handler, { maxInflight = GW_MAX_INFLIGHT, onAbandon = null, retryBaseMs = 1000 } = {}) {
+/** 옵션 — maxInflight: 동시 처리 상한. onAbandon(job, e, { name, reason, retry? }): 큐가 잡을 버릴 때(영구 오류 'permanent'·스키마 어긋남 나이 상한 'schema-age') 불리는
+    안내 훅(예: 메신저 채널에 실패 안내). 던져도 큐는 멈추지 않는다. false를 돌려주면(또는 던지면) 안내 미전송으로 .failed에 남겨 워커 시작 때·다음 성공 처리 때 다시 부른다(retry: true).
+    onStalled(job, e, { name, stalledMs }): 스키마 어긋남으로 stalledAfterMs(기본 10분) 넘게 막힌 잡에 대해 — 보낸 사람에게 "늦어지고 있다"고 알리는 훅. 잡은 큐에 그대로 남는다.
+    retryBaseMs: 일시 오류 재시도 첫 간격(기본 1초). 둘 다 테스트가 바꾼다. */
+export function startQueueWorker(wsId, key, handler, { maxInflight = GW_MAX_INFLIGHT, onAbandon = null, onStalled = null, retryBaseMs = 1000, stalledAfterMs = SCHEMA_SKEW_NOTICE_AFTER_MS } = {}) {
   let stopped = false;
-  const failures = new Map(); // 잡 이름 → 연속 일시 실패 수(성공·영구 실패·DEFER면 지운다)
+  const dirQ = queueDir(wsId, key);
+  const where = `${wsId}/${key}`;
+  const failures = new Map(); // 잡 이름 → 연속 일시 실패 수(성공·영구 실패면 지운다. DEFER는 지우지 않는다 — 아래 DEFER 경로 주석)
   const retryAt = new Map();  // 잡 이름 → 다음 시도 시각(지수 간격)
-  const firstFail = new Map(); // 잡 이름 → 첫 일시 실패 시각 — createdAt 없는 잡의 스키마 어긋남 나이 대용(프로세스 메모리)
-  const forget = (n) => { failures.delete(n); retryAt.delete(n); firstFail.delete(n); };
+  const firstFail = new Map(); // 잡 이름 → 첫 일시 실패 시각 — 스키마 어긋남 나이(createdAt 없는 잡)·10분 지연 안내의 기준(프로세스 메모리)
+  const skewBlocked = new Set(); // 마지막 오류가 스키마 어긋남인 잡 — 마이그레이션을 기다리는 것이지 연결이 막힌 것이 아니라 복구 신호로 풀지 않는다
+  const stalledNotified = new Set(); // 10분 지연 안내를 보낸 잡(프로세스당 한 번 — 재시작하면 한 번 더 불리지만 안내 키가 멱등이라 채널엔 한 줄)
+  const forget = (n) => { failures.delete(n); retryAt.delete(n); firstFail.delete(n); skewBlocked.delete(n); stalledNotified.delete(n); };
   let lastRecoveryAt = 0;
-  /** 핸들러가 던지지 않고 돌아왔다 = 연결이 살아 있다 → 간격을 기다리던 잡들을 다음 틱에 다시 시도시킨다(장애가 8분을 넘으면 간격이 5분 상한이라 복구 뒤 최대 5분 늦던 것, L5).
-      실패 횟수는 그대로 둔다(계속 실패하는 잡의 간격은 다시 1초부터 시작하지 않는다)·워커당 RECOVERY_RESET_MIN_MS에 한 번(DB 위생). */
+  /** 핸들러가 DEFER 아닌 정상 반환을 했다 = 연결이 살아 있다 → 간격을 기다리던 잡들을 다음 틱에 다시 시도시킨다(장애가 8분을 넘으면 간격이 5분 상한이라 복구 뒤 최대 5분 늦던 것, L5).
+      DEFER는 신호가 아니다 — msgr.mjs busyCrew DEFER는 DB 왕복 없이 돌아온다(2차 검수 MEDIUM-1: DEFER 하나로 5분 간격이 60초마다 풀렸다).
+      마지막 오류가 스키마 어긋남인 잡도 풀지 않는다(위 skewBlocked). 실패 횟수는 그대로 둔다(계속 실패하는 잡의 간격은 다시 1초부터 시작하지 않는다)·워커당 RECOVERY_RESET_MIN_MS에 한 번(DB 위생). */
   const noteRecovered = () => {
-    if (!retryAt.size) return;
+    const free = [...retryAt.keys()].filter((n) => !skewBlocked.has(n));
+    if (!free.length) return;
     const t = Date.now(); if (t - lastRecoveryAt < RECOVERY_RESET_MIN_MS) return;
-    lastRecoveryAt = t; retryAt.clear();
+    lastRecoveryAt = t; for (const n of free) retryAt.delete(n);
   };
-  pruneFailedJobs(queueDir(wsId, key)); // 시작 때 한 번 — 실패가 더 없어도 7일·50건 상한이 지켜진다(L4). 내부에서 오류를 삼킨다
+  // 안내 미전송(.failed noticePending) 재전송 — 시작 때 한 번, 그 뒤엔 정상 처리 뒤 60초에 한 번(세션이 늦게 생기는 경우). 보낼 것이 없으면 디스크를 다시 읽지 않는다.
+  let noticesLeft = false; let noticeRetrying = false; let lastNoticeRetryAt = 0;
+  const retryNotices = async () => {
+    if (!onAbandon || noticeRetrying || stopped) return;
+    noticeRetrying = true;
+    try { noticesLeft = (await retryPendingNotices(dirQ, onAbandon, where)) > 0; } finally { noticeRetrying = false; }
+  };
+  const noteHandled = () => { // 핸들러 정상 반환(DEFER 제외) — 복구 신호 + 안내 재전송 기회
+    noteRecovered();
+    if (noticesLeft && Date.now() - lastNoticeRetryAt >= RECOVERY_RESET_MIN_MS) { lastNoticeRetryAt = Date.now(); retryNotices().catch(() => {}); }
+  };
+  pruneFailedJobs(dirQ).then(() => { noticesLeft = !!onAbandon; return retryNotices(); }).catch(() => {}); // 시작 때 한 번 — 실패가 더 없어도 7일·50건 상한이 지켜진다(L4)·미전송 안내를 다시 보낸다(LOW-4). 내부에서 오류를 삼킨다
   let me = null; // 이 기기 id — 해석 전(null)에는 잡을 집지 않는다(남의 사본 오실행 방지). 실패 시 ''(판정 생략, 전부 실행)
   getDeviceId().then((d) => { me = d; }).catch(() => { me = ''; });
   const busy = new Set();
@@ -171,8 +222,10 @@ export function startQueueWorker(wsId, key, handler, { maxInflight = GW_MAX_INFL
             // dev 태그 없는 구형식 잡이 너무 오래됨 — 어느 기기 것인지 알 수 없어 좀비 실행 대신 폐기(로그로 관측)
             console.log(`[argo] 큐 정리(${wsId}/${key}/${n}): ${Math.round(LEGACY_JOB_MAX_AGE_MS / 3_600_000)}시간 넘은 구형식 잡 — 실행 없이 제거`);
           } else if (job) {
-            if (await handler(job, { path: fp }) === DEFER) { forget(n); noteRecovered(); deferUntil.set(n, Date.now() + DEFER_BACKOFF_MS); return; } // 차례 아님 — finally가 선점을 풀고 백오프 뒤 다시 집는다. path = 선점 뒤 실제 파일(장시간 잡 tries 마커가 원래 이름에 쓰이던 회귀 방지)
-            noteRecovered(); // 핸들러가 던지지 않고 돌아왔다 — 연결 신호(DEFER도 위에서 같이 낸다)
+            // DEFER = 차례 아님 — finally가 선점을 풀고 백오프 뒤 다시 집는다. 이 잡의 실패 횟수·간격·복구 신호는 건드리지 않는다: DEFER는 DB 확인 없이 돌아올 수 있다(msgr.mjs busyCrew) —
+            // 같은 크루의 막힌 잡끼리 서로 DEFER시키며 횟수를 지워 간격이 1초부터 다시 시작했다(2차 검수 MEDIUM-1, 잡 3개 180초 46회). path = 선점 뒤 실제 파일(장시간 잡 tries 마커가 원래 이름에 쓰이던 회귀 방지)
+            if (await handler(job, { path: fp }) === DEFER) { deferUntil.set(n, Date.now() + DEFER_BACKOFF_MS); return; }
+            noteHandled(); // 핸들러가 던지지 않고 DEFER도 아니게 돌아왔다 — 연결이 살아 있다는 신호
           }
           done = true;
           forget(n);
@@ -188,15 +241,27 @@ export function startQueueWorker(wsId, key, handler, { maxInflight = GW_MAX_INFL
             const reason = isPermanentQueueError(e) ? 'permanent' : 'schema-age';
             done = true;
             forget(n);
-            await withDirLock(`${fp0}.lock`, async () => { await recordFailedJob(queueDir(wsId, key), n, fp, e, reason); await unlink(fp); }).catch(() => {});
-            console.error(`[argo] 큐 처리 실패 — 재시도 안 함(${wsId}/${key}/${n}, ${e.code ?? 'permanent'}${reason === 'schema-age' ? ', 스키마 어긋남 24시간 초과' : ''}):`, e.message);
-            await notifyAbandon(onAbandon, job, e, { name: n, reason }, `${wsId}/${key}`);
+            await withDirLock(`${fp0}.lock`, async () => { await recordFailedJob(dirQ, n, fp, e, reason, typeof onAbandon === 'function' && !!job); await unlink(fp); }).catch(() => {});
+            console.error(`[argo] 큐 처리 실패 — 재시도 안 함(${where}/${n}, ${e.code ?? 'permanent'}${reason === 'schema-age' ? ', 스키마 어긋남 24시간 초과' : ''}):`, e.message);
+            if (typeof onAbandon === 'function' && job) {
+              const delivered = await callHook(onAbandon, job, e, { name: n, reason }, where);
+              await settleNotice(dirQ, n, delivered); // 못 보냈으면 미전송 표지가 남아 시작 때·다음 성공 때 다시 보낸다(LOW-4)
+              if (!delivered) noticesLeft = true;
+            }
           } else {
             // 일시 오류(인프라·스키마 어긋남) — 선점을 풀고 지수 간격 뒤 재시도(첫 재시도는 다음 틱)
             const k = (failures.get(n) ?? 0) + 1;
             failures.set(n, k); retryAt.set(n, Date.now() + queueRetryDelayMs(k, retryBaseMs) - 50);
             if (!firstFail.has(n)) firstFail.set(n, Date.now());
-            console.error(`[argo] 큐 처리 실패(${wsId}/${key}/${n}, ${k}회째 — ${Math.round(queueRetryDelayMs(k, retryBaseMs) / 1000)}초 뒤 재시도):`, e?.message ?? e);
+            console.error(`[argo] 큐 처리 실패(${where}/${n}, ${k}회째 — ${Math.round(queueRetryDelayMs(k, retryBaseMs) / 1000)}초 뒤 재시도):`, e?.message ?? e);
+            if (isSchemaSkewError(e)) {
+              skewBlocked.add(n);
+              // 스키마 어긋남으로 오래 막힌 잡 — 보낸 사람에게 "늦어지고 있다"고 한 번 알린다(LOW-3). 못 보냈으면 다음 실패(≤5분 뒤)에 다시 시도한다
+              const stalledMs = Date.now() - (firstFail.get(n) ?? Date.now());
+              if (onStalled && job && !stalledNotified.has(n) && stalledMs >= stalledAfterMs) {
+                if (await callHook(onStalled, job, e, { name: n, stalledMs }, where)) stalledNotified.add(n);
+              }
+            } else skewBlocked.delete(n);
           }
         } finally {
           clearInterval(hb);

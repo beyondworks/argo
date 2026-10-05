@@ -4,9 +4,11 @@
 //   ② 안내 쓰기가 실패해도(던져도) 큐는 멈추지 않는다 — 다음 잡도 처리된다
 //   ③ 일시 오류·스키마 없음(PGRST202)은 버리지 않으므로 안내도 없다(재현: 검수자 msgr-job-skew.mjs)
 //   ④ gateway.mjs가 메신저 큐 워커에만 이 알림을 연결한다(연결이 빠지면 안내가 조용히 사라진다)
+//   ⑤ (2차 검수 LOW-3·4) 영구 오류 안내는 "다시 보내도 같은 결과일 수 있음"을 말하고, 24시간 상한 폐기는 "다시 보내 주세요" — 안내가 일시 실패하면 .failed에 미전송 표지를 남겨 다시 보낸다.
+//      스키마 어긋남으로 10분 넘게 막히면 "업데이트 적용 중이라 늦어진다" 안내를 멱등 키 jobwait:<크루>:<잡 id>로 한 번 남긴다(kind system — targetsCrew가 걸러 되먹임 없음)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, writeFile, readdir } from 'node:fs/promises';
+import { mkdir, writeFile, readdir, readFile } from 'node:fs/promises';
 import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -17,7 +19,7 @@ const { paths } = await import('../src/workspace.mjs');
 const { readEvents } = await import('../src/events.mjs');
 const M = await import('../src/gateway/msgr.mjs');
 const Q = await import('../src/gateway/queue.mjs');
-const { makeMsgrAbandonNotifier } = await import('../src/gateway/msgr-abandon.mjs');
+const { makeMsgrAbandonNotifier, makeMsgrStallNotifier } = await import('../src/gateway/msgr-abandon.mjs');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function until(pred, ms = 12_000) { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (await pred()) return true; await sleep(100); } return false; }
 const err = (code, message = `msgr db: x (${code})`) => Object.assign(new Error(message), { code });
@@ -63,7 +65,7 @@ test('영구 오류(22P02)로 버린 메신저 잡 — 그 채널에 실패 안�
   assert.equal(row.reply_to, 100, '보낸 글에 이어서 보인다');
   assert.equal(row.thread_root, 77);
   assert.equal(row.client_msg_id, 'jobfail:crew-1:100-seoyun', '멱등 키 = 잡 id 기반 — 같은 잡이 두 번 버려져도 DB 유니크가 한 줄로 만든다');
-  assert.equal(row.body, '이 글은 처리하지 못했어요. 다시 보내 주세요.');
+  assert.equal(row.body, '이 글은 처리하지 못했어요. 다시 보내 보고, 같은 문제가 계속되면 Argo 앱의 피드백으로 알려 주세요.', '영구 오류 — 다시 보내도 같은 결과일 수 있음을 반영(LOW-4)');
   assert.ok((await queued(WS)).some((n) => n.endsWith('.failed')), '실패 기록(.failed)도 남는다');
   const ev = (await readEvents(WS)).find((e) => e.type === 'turn' && e.ok === false && e.slug === 'seoyun');
   assert.ok(ev, '활동 기록에 오류 한 줄');
@@ -80,7 +82,7 @@ test('영어 회사는 영어 안내', async () => {
   const stop = start(WS, db);
   assert.ok(await until(async () => calls.rows.length >= 1));
   stop();
-  assert.equal(calls.rows[0].body, 'This message could not be processed. Please send it again.');
+  assert.equal(calls.rows[0].body, 'This message could not be processed. Try sending it again; if it keeps happening, report it via Feedback in the Argo app.');
   assert.match((await readEvents(WS)).find((e) => e.ok === false).error, /could not be processed/);
 });
 
@@ -89,7 +91,9 @@ test('안내 쓰기가 실패해도(던져도) 큐는 멈추지 않는다 — �
   const { db, calls } = fakeDb(() => { throw err('22P02'); }, { failInsert: () => true });
   for (const id of [102, 103, 104]) await Q.enqueueJob(WS, 'msgr', `${id}-seoyun`, job(id));
   const stop = start(WS, db);
-  assert.ok(await until(async () => (await queued(WS)).filter((n) => n.endsWith('.failed')).length === 3), '세 잡 모두 큐에서 빠진다');
+  // .failed가 먼저 쓰이고 안내는 그 뒤 — 안내 시도 수(rows)와 활동 기록까지 기다린 뒤 검사한다(2차 검수 LOW-1)
+  assert.ok(await until(async () => calls.rows.length === 3 && (await readEvents(WS)).filter((e) => e.type === 'turn' && e.ok === false).length === 3
+    && (await queued(WS)).filter((n) => n.endsWith('.failed')).length === 3), '세 잡 모두 큐에서 빠진다');
   stop();
   assert.equal(calls.rows.length, 3, '잡마다 안내를 시도했다');
   assert.equal((await readEvents(WS)).filter((e) => e.type === 'turn' && e.ok === false).length, 3, '안내가 실패해도 활동 기록은 남는다');
@@ -132,8 +136,80 @@ test('gateway.mjs는 메신저 큐 워커에만 이 알림을 연결한다 — �
   assert.equal(typeof G.queueWorkerOptions, 'function', '워커 옵션을 만드는 함수가 내보내져 연결을 검증할 수 있다');
   const msgr = G.queueWorkerOptions('ws-x', M.MSGR_KEY);
   assert.equal(typeof msgr.onAbandon, 'function', '메신저 큐: 안내 알림 연결');
+  assert.equal(typeof msgr.onStalled, 'function', '메신저 큐: 스키마 어긋남 지연 안내 연결(2차 검수 LOW-3)');
   assert.equal(msgr.maxInflight, Q.MSGR_MAX_INFLIGHT, '기존 동시 턴 상한은 그대로');
   const jobs = G.queueWorkerOptions('ws-x', Q.JOBS_QUEUE);
   assert.deepEqual(jobs, { maxInflight: Q.JOBS_MAX_INFLIGHT });
   assert.deepEqual(G.queueWorkerOptions('ws-x', 'telegram'), {});
+});
+
+test('안내 본문 — 영구 오류와 24시간 상한 폐기(schema-age)는 다른 문장, 영어도 같은 구분', async () => {
+  const WS = 'qab-g'; await setup(WS); await setup('qab-g-en', 'en');
+  const { db, calls } = fakeDb(() => null);
+  const ko = makeMsgrAbandonNotifier(WS, { session: async () => ({ db, uid: 'u1' }) });
+  const en = makeMsgrAbandonNotifier('qab-g-en', { session: async () => ({ db, uid: 'u1' }) });
+  await ko(job(500), err('22P02'), { name: '500-s.json', reason: 'permanent' });
+  await ko(job(501), err('PGRST202'), { name: '501-s.json', reason: 'schema-age' });
+  await en(job(502), err('22P02'), { name: '502-s.json', reason: 'permanent' });
+  await en(job(503), err('PGRST202'), { name: '503-s.json', reason: 'schema-age' });
+  assert.deepEqual(calls.rows.map((r) => r.body), [
+    '이 글은 처리하지 못했어요. 다시 보내 보고, 같은 문제가 계속되면 Argo 앱의 피드백으로 알려 주세요.',
+    '이 글은 처리하지 못했어요. 다시 보내 주세요.',
+    'This message could not be processed. Try sending it again; if it keeps happening, report it via Feedback in the Argo app.',
+    'This message could not be processed. Please send it again.',
+  ]);
+});
+
+test('LOW-4: 알림 함수의 반환 — 보냈거나 보낼 곳이 없거나 영구 거부(권한)면 true, 일시 실패·세션 없음이면 false(다시 보낼 대상)', async () => {
+  const WS = 'qab-h'; await setup(WS);
+  const mkNotify = (db) => makeMsgrAbandonNotifier(WS, { session: async () => (db ? { db, uid: 'u1' } : null) });
+  const okDb = fakeDb(() => null).db;
+  assert.equal(await mkNotify(okDb)(job(600), err('22P02'), { name: '600-s.json', reason: 'permanent' }), true);
+  assert.equal(await mkNotify(okDb)({ slug: 's', msgId: 1 }, err('22P02'), { name: 'x', reason: 'permanent' }), true, '보낼 곳이 없는 손상 잡 — 다시 보낼 이유가 없다');
+  const transient = { insertMessage: async () => { throw err('PGRST000', 'msgr db: connection refused'); } };
+  assert.equal(await mkNotify(transient)(job(601), err('22P02'), { name: '601-s.json', reason: 'permanent' }), false);
+  const denied = { insertMessage: async () => { throw err('42501', 'msgr db: RLS'); } };
+  assert.equal(await mkNotify(denied)(job(602), err('22P02'), { name: '602-s.json', reason: 'permanent' }), true, '권한이 없으면 다시 보내도 같다 — 영구 거부는 재시도 대상이 아니다');
+  assert.equal(await mkNotify(null)(job(603), err('22P02'), { name: '603-s.json', reason: 'permanent' }), false, '기기 세션이 아직 없을 수 있다 — 다시 보낼 대상');
+});
+
+test('LOW-4: 안내가 일시 실패해도 .failed에 미전송 표지가 남고, 워커를 다시 시작하면 같은 멱등 키로 다시 들어간다', async () => {
+  const WS = 'qab-i'; await setup(WS);
+  let flaky = true; const rows = [];
+  const db = { crewContext: async () => { throw err('22P02'); }, insertMessage: async (row) => { if (flaky) throw err('PGRST000', 'msgr db: connection refused'); rows.push(row); return { id: 9 }; } };
+  await Q.enqueueJob(WS, 'msgr', '100-seoyun', job(100));
+  const stop1 = start(WS, db);
+  assert.ok(await until(async () => (await queued(WS)).some((n) => n.endsWith('.failed'))));
+  await sleep(500); stop1();
+  const rec1 = JSON.parse(await readFile(join(Q.queueDir(WS, 'msgr'), '100-seoyun.json.failed'), 'utf8'));
+  assert.equal(rec1.noticePending, true, '안내를 못 보냈다 — 표지');
+  assert.deepEqual(rows, []);
+  flaky = false; // 연결 복구 + 앱 재시작
+  const stop2 = start(WS, db);
+  assert.ok(await until(async () => rows.length === 1), '시작 때 다시 보낸다');
+  stop2();
+  assert.equal(rows[0].client_msg_id, 'jobfail:crew-1:100-seoyun', '같은 멱등 키 — DB 유니크가 중복을 거른다');
+  assert.equal(rows[0].body, '이 글은 처리하지 못했어요. 다시 보내 보고, 같은 문제가 계속되면 Argo 앱의 피드백으로 알려 주세요.');
+});
+
+test('LOW-3: 스키마 어긋남으로 오래 막힌 잡은 "업데이트 적용 중" 안내가 한 번 들어간다(jobwait 키, system) — 잡은 큐에 남아 계속 재시도', async () => {
+  const WS = 'qab-j'; await setup(WS); await setup('qab-j-en', 'en');
+  for (const [ws, lang] of [[WS, 'ko'], ['qab-j-en', 'en']]) {
+    const { db, calls } = fakeDb(() => { throw err('PGRST202', 'msgr db: Could not find the function public.msgr_crew_context'); });
+    await Q.enqueueJob(ws, 'msgr', '100-seoyun', job(100));
+    const session = async () => ({ db, uid: 'u1' });
+    const stop = Q.startQueueWorker(ws, 'msgr', M.makeMsgrHandler(ws, { session }), { stalledAfterMs: 1500, onStalled: makeMsgrStallNotifier(ws, { session }) });
+    assert.ok(await until(async () => calls.rows.length >= 1, 20_000), `${lang}: 안내가 들어간다`);
+    assert.ok(await until(() => calls.crewContext >= 4, 20_000));
+    stop();
+    assert.equal(calls.rows.length, 1, `${lang}: 한 번만`);
+    const row = calls.rows[0];
+    assert.equal(row.client_msg_id, 'jobwait:crew-1:100-seoyun');
+    assert.equal(row.kind, 'system', 'system 글 — targetsCrew가 걸러 크루 턴을 다시 만들지 않는다');
+    assert.equal(row.channel_id, 'ch-1'); assert.equal(row.reply_to, 100); assert.equal(row.crew_id, 'crew-1');
+    assert.equal(row.body, lang === 'ko' ? '업데이트를 적용하는 중이라 답이 늦어지고 있어요. 자동으로 다시 시도합니다.' : 'An update is being applied, so the reply is delayed. It will retry automatically.');
+    assert.equal(M.targetsCrew({ ...row, author_kind: 'crew', mentions: [], meta: {} }, { id: 'crew-1' }, new Set(['ch-1'])), false, '되먹임 없음 — 이 안내는 어떤 크루도 겨냥하지 않는다');
+    assert.ok((await queued(ws)).some((n) => n.startsWith('100-seoyun.json') && !n.endsWith('.failed')), '잡은 큐에 남아 마이그레이션을 기다린다');
+    assert.equal((await readEvents(ws)).length, 0, '버린 것이 아니므로 활동 기록 오류 줄은 없다');
+  }
 });

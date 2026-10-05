@@ -93,7 +93,8 @@ test('진짜 영구 오류로 버릴 때도 onAbandon이 한 번 불린다 — �
   const handler = async (job) => { throw err('22P02', `invalid input syntax for type uuid (${job.text})`); };
   const onAbandon = async (job, e, info) => { order.push([job.text, info.reason]); if (job.text === 'b') throw new Error('안내 쓰기 실패'); };
   const stop = startQueueWorker(WS, 'msgr', handler, { onAbandon });
-  assert.ok(await until(async () => (await files(WS)).filter((n) => n.endsWith('.failed')).length === 3), '안내가 던져도 세 잡 모두 처리된다');
+  // 큐는 .failed를 먼저 쓰고 안내 훅을 부른다 — .failed 개수만 보고 안내 횟수를 검사하면 마지막 안내가 끝나기 전에 검사한다(2차 검수 LOW-1). 안내 호출 수도 기다린다
+  assert.ok(await until(async () => order.length === 3 && (await files(WS)).filter((n) => n.endsWith('.failed')).length === 3), '안내가 던져도 세 잡 모두 처리된다');
   stop();
   assert.deepEqual(order.map((o) => o[0]).sort(), ['a', 'b', 'c']);
   assert.ok(order.every((o) => o[1] === 'permanent'));

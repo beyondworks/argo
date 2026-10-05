@@ -1,8 +1,6 @@
 // L4·L5(2026-10-05 분리 검수):
 // L4-a `.failed` 보존 정리가 '다음 실패 때만' 돌아, 실패가 더 없으면 7일·50건 상한이 영영 안 지켜졌다 → 워커 시작 때 한 번 돈다.
-// L4-b DEFER 경로가 주석("성공·영구 실패·DEFER면 지운다")과 달리 실패 횟수를 지우지 않았다 → 지운다.
-//      근거: DEFER는 핸들러가 던지지 않고 차례 판정까지 간 정상 반환이다 — 연속 실패가 끊겼다. 안 지우면 오래전 실패 횟수가
-//      남아 DEFER를 몇 번 거친 잡의 다음 일시 오류가 곧바로 긴 간격(두 배씩 누적)으로 늦어진다.
+// L4-b DEFER 경로의 실패 횟수 — 1차는 "DEFER면 지운다"로 맞췄으나 2차 검수 MEDIUM-1로 되돌렸다(지우지 않는다). 근거는 아래 테스트 주석.
 // L5   재시도 간격 5분 상한 때문에, 8분 넘는 장애 뒤 복구돼도 대기 중인 잡이 최대 5분 더 늦었다 → 다른 잡이 하나 성공하면
 //      대기 중인 잡의 간격 타이머를 풀어 다음 틱에 다시 시도한다(실패 횟수는 유지, 워커당 60초에 한 번만 — 계속 실패하는 잡이 성공하는 잡 옆에서 매 틱 재시도되지 않게).
 import { test } from 'node:test';
@@ -38,7 +36,9 @@ test('워커 시작 때 .failed 보존 정리가 한 번 돈다 — 7일 넘은 
   assert.ok(left.includes('1052-n.failed') && !left.includes('1000-n.failed'), '가장 최신 것이 남고 가장 오래된 것이 정리된다');
 });
 
-test('DEFER는 연속 실패 횟수를 지운다 — 실패→DEFER→실패의 둘째 실패는 1회째(첫 간격)다', async () => {
+test('DEFER는 연속 실패 횟수를 지우지 않는다 — 실패→DEFER→실패의 둘째 실패는 2회째(간격이 이어서 늘어난다)', async () => {
+  // 2차 분리 검수 MEDIUM-1(2026-10-05): 1차 L4는 DEFER가 횟수를 지우게 했으나, msgr.mjs busyCrew DEFER는 DB 왕복 없이 돌아온다 —
+  // 같은 크루의 막힌 잡끼리 서로 DEFER시키며 횟수를 지워 간격이 1초부터 다시 시작했다(잡 3개 180초 46회). DEFER는 연속 실패를 끊은 증거가 아니다.
   const WS = 'qhk-b';
   await mkdir(join(process.env.ARGO_ROOT, WS), { recursive: true });
   await enqueueJob(WS, 'msgr', '10-a', { text: 'x' });
@@ -54,7 +54,7 @@ test('DEFER는 연속 실패 횟수를 지운다 — 실패→DEFER→실패의 
   assert.equal(calls, 3);
   assert.equal(logs.length, 2, logs.join('\n'));
   assert.match(logs[0], /1회째/);
-  assert.match(logs[1], /1회째/, 'DEFER가 횟수를 지웠으니 다시 1회째 — 안 지우면 2회째로 이어진다');
+  assert.match(logs[1], /2회째/, 'DEFER가 횟수를 지우지 않으니 이어서 2회째 — 지우면 1회째로 돌아가 간격이 1초부터 다시 시작한다');
 });
 
 test('다른 잡 하나가 성공하면 대기 중인 잡의 재시도 간격이 풀려 다음 틱에 다시 시도한다 — 복구 신호(L5)', async () => {

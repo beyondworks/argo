@@ -34,7 +34,7 @@ const channelSendsKinds = (kind) => CHANNEL_EVENTS[kind] ?? [];
 import { MSGR_KEY, makeMsgrHandler, startMsgrBridge, msgrPush, msgrNotifyPush, msgrEventOrigin, runMessengerContinuation, autoEnableMsgr } from './gateway/msgr.mjs'; // 팀 메신저 — 새 채널 종류(접합 4지점: qkeys·핸들러·폴러·push)
 import { normalizeMsgrNotify, msgrNotifyWants } from './msgr-notify.mjs'; // 회사 단위 알림 목적지(원점 없는 이벤트)
 import { deliverMessengerNotifications } from './gateway/msgr-notifications.mjs';
-import { makeMsgrAbandonNotifier } from './gateway/msgr-abandon.mjs'; // 큐가 버린 메신저 잡의 실패 안내(H1) — msgr.mjs 밖에 둬 다른 변경과 겹치지 않는다
+import { makeMsgrAbandonNotifier, makeMsgrStallNotifier } from './gateway/msgr-abandon.mjs'; // 큐가 버린 메신저 잡의 실패 안내(H1) — msgr.mjs 밖에 둬 다른 변경과 겹치지 않는다
 
 // facade — 기존 임포터(chat.mjs 동적 import·테스트)가 gateway.mjs에서 그대로 가져간다(무수정 계약).
 export { queueDir, enqueueJob, startQueueWorker, JOBS_QUEUE, JOBS_MAX_INFLIGHT, JOBS_MAX_PENDING, enqueueLongJob } from './gateway/queue.mjs';
@@ -1126,10 +1126,10 @@ function installTelegramGatewayCfg(cfgMap, id, cfg) {
 }
 export const _installTelegramGatewayCfgForTest = installTelegramGatewayCfg;
 
-/** 큐 워커 옵션 — 큐 종류별. 장시간 작업은 동시 1(한 회사의 긴 작업이 메신저 응답 슬롯을 다 먹지 않게 큐를 분리), 메신저는 회의실 폭 + 버린 잡 실패 안내(onAbandon, H1). (export: 연결 회귀 테스트용) */
+/** 큐 워커 옵션 — 큐 종류별. 장시간 작업은 동시 1(한 회사의 긴 작업이 메신저 응답 슬롯을 다 먹지 않게 큐를 분리), 메신저는 회의실 폭 + 버린 잡 실패 안내(onAbandon, H1)·스키마 어긋남 지연 안내(onStalled). (export: 연결 회귀 테스트용) */
 export function queueWorkerOptions(wsId, qkey) {
   if (qkey === JOBS_QUEUE) return { maxInflight: JOBS_MAX_INFLIGHT };
-  if (qkey === MSGR_KEY) return { maxInflight: MSGR_MAX_INFLIGHT, onAbandon: makeMsgrAbandonNotifier(wsId) };
+  if (qkey === MSGR_KEY) return { maxInflight: MSGR_MAX_INFLIGHT, onAbandon: makeMsgrAbandonNotifier(wsId), onStalled: makeMsgrStallNotifier(wsId) };
   return {};
 }
 
