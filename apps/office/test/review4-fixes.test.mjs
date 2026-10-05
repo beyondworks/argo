@@ -252,7 +252,10 @@ test('R3-L8·m12·m13: 내 공간 고정 목록 — 조직 이름 순 덩어리,
   const one = side([row('x', 'O1', { pinned: true, agent: 'X' }), row('y', 'O1', { pinned: true, agent: 'Y' })]);
   assert.doesNotMatch(one.html, /crew-org/, '조직이 하나면 머리줄 없음');
   const solo = side([row('x', 'O1', { pinned: true, agent: 'X' }), row('p', null, { agent: 'D', personal: true, pinned: true, pinPos: 9 })]);
-  assert.doesNotMatch(solo.html, /crew-org/, '조직 하나 + 개인 전용은 머리줄 없음(조직 덩어리가 둘 이상일 때만)');
+  assert.equal((solo.html.match(/crew-org/g) || []).length, 1, '조직 하나 + 개인 전용: 조직 머리줄은 없고 개인 공간 머리줄만 하나');
+  assert.ok(solo.html.includes('crew.group.personal') && !solo.html.includes('비욘드'), '그 머리줄 이름은 개인 공간');
+  const only = side([row('p', null, { agent: 'D', personal: true, pinned: true, pinPos: 9 })]);
+  assert.doesNotMatch(only.html, /crew-org/, '조직 0개 + 개인만은 머리줄 없음(전부 개인이라 구분 불필요)');
 });
 
 // 맡기기 거절 사유 문구를 맡기기 조각 사전(CREW_ASSIGN_DICT)으로 옮겼다(첫 화면 상한) — 전송함은 그 조각을 받은 뒤 알린다(키 그대로 보이지 않게)
