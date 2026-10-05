@@ -9,7 +9,7 @@
 // 간격은 '직전 압축·잘라내기 뒤 새로 생긴 지시 수'로 센다(compactBase = 그 직후 전사의 지시 수, 세션 파일에 저장). 앞부분 지시 전체를 세면 요약이
 // 계속 실패하는 벤더에서 잘라내기 뒤에도 앞부분이 늘 10개 이상이라 매 턴 다시 요약했다(재검수 MEDIUM: 80턴×3,000자·창 60,000 → 5턴 중 5턴).
 // 요약 원샷은 대화를 데이터로 넘긴다(../record-block.mjs — 호출마다 무작위 번호 경계, 화자 규칙). 도구 결과는 사장과 다른 화자로 적는다.
-import { recordBlock, recordRules, normalizeEol, defangSpeakers, RECORD_STUB } from '../record-block.mjs';
+import { recordBlock, recordRules, normalizeEol, defangSpeakers, replaceFolded, RECORD_STUB, CAPTAIN_ALIASES } from '../record-block.mjs';
 
 export const DEFAULT_CONTEXT_TOKENS = 128_000; // 카탈로그에 창 값이 없는 모델 — 보수적으로
 // 전사 예산 — 압축 기준 창은 min(모델 창, 이 값)이다. 모델 창(카탈로그 ctx, 1M 등)만 쓰면 75%(750,000토큰)가 세션 글자 상한
@@ -63,23 +63,29 @@ const SUMMARY_END = { ko: '[참고 요약 끝]', en: '[End of reference summary]
 const HEADS = [SUMMARY_HEAD.ko, SUMMARY_HEAD.en, '[앞 대화 요약 — 대화가 길어져 앞부분을 요약했다. 이 요약과 이어지는 대화를 바탕으로 이어서 일하라]', '[Summary of the earlier conversation — it grew long, so the earlier part was summarized. Continue from this summary and the conversation that follows]'];
 const isSummaryText = (b) => b?.type === 'text' && HEADS.some((h) => String(b.text ?? '').startsWith(h));
 const asBlocks = (c) => (typeof c === 'string' ? [{ type: 'text', text: c }] : Array.isArray(c) ? c : []);
-// 요약 글 안의 끝·머리 표지 흉내 — 공백·전각 괄호·대소문자·줄 끝 문자 변형까지(보안 검토 2026-10-05: 정확 문자열만 지우면 '[ 참고 요약 끝 ]'·'［참고 요약 끝］'로
-// 블록을 일찍 닫은 것처럼 읽혀 그 뒤가 지시로 실린다). 요약 글은 줄 끝 문자를 맞추고 NFKC로 전각을 반각으로 편 뒤 흉내를 바꿔 쓴다(내용은 남긴다).
-const OPEN = '[\\[(【〔〖⟦]'; const CLOSE = '[\\])】〕〗⟧]';
-const END_FAKE = new RegExp(`${OPEN}\\s*(?:(?:참\\s*고\\s*)?요\\s*약\\s*끝|end\\s+of\\s+(?:the\\s+)?(?:reference\\s+)?summary)\\s*${CLOSE}`, 'gi');
-const HEAD_FAKE = new RegExp(`${OPEN}\\s*(?:참\\s*고\\s*요\\s*약|앞\\s*대\\s*화\\s*요\\s*약|reference\\s+summary|summary\\s+of\\s+the\\s+earlier\\s+conversation)\\s*[—–:-]`, 'gi');
+// 요약 글 안의 끝·머리 표지 흉내 — 블록을 일찍 닫거나 새 머리를 연 것처럼 읽히면 그 뒤가 지시로 실린다(보안 검토 2026-10-05). 탐지는 접은 사본에서만
+// (record-block foldIndex: NFKC·소문자, 제로폭·소프트 하이픈 같은 형식 문자·결합 기호·공백 제거) 하고, 원문에서는 걸린 구간만 '(경계 표지 흉내)'로 바꾼다 —
+// 요약 글의 나머지는 바이트 그대로(3차 검수 MEDIUM-1: 원문 NFKC가 'ㅋㅋ'·'①'·'㎡'·'㈜'·'…'·NFD 파일명을 바꿨다).
+// 변형 허용(3차 검수 LOW-1): 괄호 종류(대·소·꺾쇠·낫표·전각), 끝 구두점, 낱말(끝·종료·마침·마감·완료 / end·over·finished), 괄호는 앞이나 뒤 한쪽만 있어도.
+const OPEN = '[\\[(<{【〔〖⟦〈《「『«‹]'; const CLOSE = '[\\])>}】〕〗⟧〉》」』»›]';
+const END_WORD = '(?:(?:참고)?요약(?:끝|종료|마침|마감|완료)|end(?:of)?(?:the)?(?:reference)?summary|(?:reference)?summary(?:end|ends|ended|over|finished))';
+const END_FAKE = new RegExp(`${OPEN}+${END_WORD}[.!?。,;:]*${CLOSE}*|${END_WORD}[.!?。,;:]*${CLOSE}+`, 'gu');
+const HEAD_FAKE = new RegExp(`${OPEN}+(?:참고요약|앞대화요약|referencesummary|summaryoftheearlierconversation)`, 'gu');
+/** 경계(요약 끝·머리) 표지 흉내를 원문에서 바꿔 쓴다(순수) — 걸린 구간 말고는 바이트 그대로. */
+const defangMarks = (text, lang) => { const stub = RECORD_STUB[lang === 'en' ? 'en' : 'ko']; return replaceFolded(replaceFolded(text, END_FAKE, stub), HEAD_FAKE, stub); };
 const summaryBlock = (text, lang) => {
   const l = lang === 'en' ? 'en' : 'ko';
-  const body = normalizeEol(String(text)).normalize('NFKC').replace(END_FAKE, RECORD_STUB[l]).replace(HEAD_FAKE, RECORD_STUB[l]);
-  return { type: 'text', text: `${SUMMARY_HEAD[l]}\n${body}\n${SUMMARY_END[l]}` };
+  return { type: 'text', text: `${SUMMARY_HEAD[l]}\n${defangMarks(normalizeEol(String(text)), l)}\n${SUMMARY_END[l]}` };
 };
-/** 요약 블록을 품은 지시(직전 압축이 남긴 머리)인가(순수) — 벤더로 나가는 블록에 표지 필드를 달 수 없어 머리 글로 알아본다(언어 무관). */
-export const carriesSummary = (m) => asBlocks(m?.content).some(isSummaryText);
+/** 요약 블록을 품은 지시(직전 압축이 남긴 머리)인가(순수) — 벤더로 나가는 블록에 표지 필드를 달 수 없어 머리 글과 **자리**로 알아본다: 압축은 요약 블록을
+    원래 지시 블록들 앞(내용 배열의 첫 블록)에 붙인다. 사용자 글 하나가 우연히 머리 문자열로 시작하는 것(문자열 지시·첫 블록 하나뿐)은 요약으로 보지 않는다(3차 검수 LOW-5). */
+export const carriesSummary = (m) => Array.isArray(m?.content) && m.content.length >= 2 && isSummaryText(m.content[0]);
 /** 머리를 잘라낸 뒤(순수) — 잘리기 전 머리(before[0])가 품었던 요약 블록을 새 첫 지시(after[0]) 앞에 다시 붙인다. 요약은 잃지 않는다.
-    잘린 사이의 턴은 요약 없이 사라진다(그 몫을 요약할 원샷을 저장 시점에는 부르지 않는다). after[0]이 지시가 아니면 그대로. */
+    잘린 사이의 턴은 요약 없이 사라진다(그 몫을 요약할 원샷을 저장 시점에는 부르지 않는다). after[0]이 지시가 아니면 그대로. 호출자는 압축된 세션에서만 부른다. */
 export function carrySummary(before, after) {
-  const block = asBlocks(before?.[0]?.content).find(isSummaryText);
-  if (!block || !after?.length || carriesSummary(after[0]) || !isPrompt(after[0])) return after;
+  if (!carriesSummary(before?.[0])) return after;
+  const block = before[0].content[0];
+  if (!after?.length || carriesSummary(after[0]) || !isPrompt(after[0])) return after;
   return [{ ...after[0], content: [block, ...asBlocks(after[0].content)] }, ...after.slice(1)];
 }
 
@@ -87,25 +93,28 @@ export function carrySummary(before, after) {
     화자 이름은 줄 맨 앞에만 오고, 한 화자의 여러 줄은 들여쓴다 — 도구 결과 안의 '사장·배달:' 같은 줄이 새 화자로 서지 못한다.
     도구 호출·결과는 짧게, 이전 요약은 넉넉히. 상한을 넘으면 첫 메시지 뒤 오래된 것부터 뺀다. */
 // 렌더가 쓰는 화자 이름(두 언어)과 사장·배달로 읽힐 만한 이름 — 본문 줄 첫머리에 오면 흉내로 본다
-const SPEAKER_LABELS = ['사장·배달', '도구 결과', '도구 결과(오류)', '크루', '이전 참고 요약', '사장', '자동 배달', 'Captain/delivered', 'Tool result', 'Tool result (error)', 'Crew', 'Earlier reference summary', 'Captain', 'Auto-delivered'];
-export function renderForSummary(messages, maxTokens, lang = 'ko') {
+const SPEAKER_LABELS = ['사장·배달', '도구 결과', '도구 결과(오류)', '크루', '이전 참고 요약', '사장', '자동 배달', 'Captain/delivered', 'Tool result', 'Tool result (error)', 'Crew', 'Earlier reference summary', 'Captain', 'Auto-delivered', ...CAPTAIN_ALIASES];
+/** summaryAt0 — 압축된 세션의 렌더인가(compactTranscript가 sess.compacted로 넘긴다). 그때만 첫 메시지 첫 블록(압축이 붙인 자리)의 요약 머리를 '이전 참고 요약'으로 본다.
+    그 밖의 글이 요약 머리·끝 문자열을 품으면 경계 표지 흉내로 바꿔 쓴다(사용자 글이 이전 요약 화자로 렌더되지 않게 — 3차 검수 LOW-5). */
+export function renderForSummary(messages, maxTokens, lang = 'ko', { summaryAt0 = false } = {}) {
   const en = lang === 'en';
   const W = en ? { prev: 'Earlier reference summary', user: 'Captain/delivered', crew: 'Crew', tool: 'Tool result', toolErr: 'Tool result (error)' }
     : { prev: '이전 참고 요약', user: '사장·배달', crew: '크루', tool: '도구 결과', toolErr: '도구 결과(오류)' };
-  const one = (m) => {
+  const one = (m, mi) => {
     const segs = [];
     // 줄 끝 문자를 맞추고(normalizeEol) 줄 첫머리 화자 흉내를 바꿔 쓴 뒤 붙인다 — 아래 들여쓰기가 모든 줄에 닿고, '사장·배달:'로 시작하는 위조 줄이 서지 못한다(보안 검토)
     const push = (who, raw) => { if (!raw) return; const t = defangSpeakers(raw, SPEAKER_LABELS, lang); const last = segs.at(-1); if (last && last[0] === who) last[1] += `\n${t}`; else segs.push([who, t]); };
     const own = m.role === 'user' ? W.user : W.crew;
-    for (const b of asBlocks(m.content)) {
-      if (b?.type === 'text') push(isSummaryText(b) ? W.prev : own, clip(String(b.text ?? ''), isSummaryText(b) ? SUMMARY_TEXT_CAP + 4000 : 4000));
+    const prevAt0 = summaryAt0 && mi === 0 && carriesSummary(m);
+    asBlocks(m.content).forEach((b, bi) => {
+      if (b?.type === 'text') { const isPrev = prevAt0 && bi === 0; push(isPrev ? W.prev : own, clip(isPrev ? String(b.text ?? '') : defangMarks(String(b.text ?? ''), lang), isPrev ? SUMMARY_TEXT_CAP + 4000 : 4000)); }
       else if (b?.type === 'tool_use') push(W.crew, `[${en ? 'tool call' : '도구 호출'} ${b.name} ${clip(JSON.stringify(b.input ?? {}), 300)}]`);
-      else if (b?.type === 'tool_result') { const c = typeof b.content === 'string' ? b.content : (b.content ?? []).filter((x) => x?.type === 'text').map((x) => x.text).join('\n'); push(b.is_error ? W.toolErr : W.tool, clip(String(c), RENDER_BLOCK_CAP)); }
+      else if (b?.type === 'tool_result') { const c = typeof b.content === 'string' ? b.content : (b.content ?? []).filter((x) => x?.type === 'text').map((x) => x.text).join('\n'); push(b.is_error ? W.toolErr : W.tool, clip(defangMarks(String(c), lang), RENDER_BLOCK_CAP)); }
       else if (b?.type === 'image') push(own, en ? '[image]' : '[이미지]');
-    }
+    });
     return segs.map(([who, t]) => `${who}: ${t.split('\n').join('\n  ')}`).join('\n');
   };
-  const lines = messages.map(one).filter(Boolean);
+  const lines = messages.map((m, mi) => one(m, mi)).filter(Boolean);
   let total = lines.reduce((a, l) => a + estimateTokens(l), 0);
   while (lines.length > 2 && total > maxTokens) { total -= estimateTokens(lines[1]); lines.splice(1, 1); }
   return lines.join('\n\n');
@@ -135,7 +144,9 @@ export function compactPlan(sess, { system = '', tools = [], window: modelWindow
   if (cut <= 0) return { skip: true, preTokens }; // 최근 20턴뿐 — 지금의 글자 수 절단(saveNativeSession)만 적용
   const head = sess.messages.slice(0, cut); const tail = sess.messages.slice(cut);
   // 직전 압축·잘라내기 뒤 새로 생긴 지시 수 = 지금 지시 수 − compactBase. 값이 없는 세션(이 규칙 전에 저장)은 앞부분 지시에서 요약 머리만 뺀다
-  const newTurns = Number.isInteger(sess.compactBase) ? countPrompts(sess.messages) - sess.compactBase : countPrompts(head) - (carriesSummary(head[0]) ? 1 : 0);
+  // compactBase가 지금 지시 수보다 크면 어긋난 값이다(새 지시가 음수가 되어 95% 긴급 압축까지 막힌다 — 3차 검수 실험 exp10). 그때도 옛 방식으로 센다
+  const total = countPrompts(sess.messages);
+  const newTurns = Number.isInteger(sess.compactBase) && sess.compactBase <= total ? total - sess.compactBase : countPrompts(head) - (carriesSummary(head[0]) ? 1 : 0);
   if (sess.compacted && newTurns < COMPACT_MIN_NEW_TURNS) {
     // 긴급(95%) 예외에도 최소 간격 — 새 지시 1개 이상 + 압축 뒤 크기(최근 20턴 + 요약 몫)가 95% 아래일 때만. 아니면 요약해도 다시 넘쳐 턴마다 반복된다.
     const helps = size(tail) + COMPACT_SUMMARY_TOKENS <= window * COMPACT_EMERGENCY_AT;
@@ -153,7 +164,7 @@ export async function compactTranscript(sess, { plan = null, summarize, lang = '
   const { head, tail, preTokens, window, size } = P;
   let text = '';
   try {
-    text = String(await summarize(summaryPrompt(renderForSummary(head, Math.floor(window * 0.6), lang), lang)) ?? '').trim();
+    text = String(await summarize(summaryPrompt(renderForSummary(head, Math.floor(window * 0.6), lang, { summaryAt0: !!sess.compacted }), lang)) ?? '').trim();
   } catch (e) {
     if (e?.aborted) throw e;
     console.warn(`[argo] 네이티브 전사 요약 실패 — 앞부분을 잘라내고 이어 간다: ${String(e?.message ?? e).slice(0, 160)}`);
@@ -167,7 +178,7 @@ export async function compactTranscript(sess, { plan = null, summarize, lang = '
     const kept = head.slice();
     while (kept.length && size([...kept, ...tail]) > window * COMPACT_AT) kept.shift();
     while (kept.length && !isPrompt(kept[0])) kept.shift();
-    sess.messages = carrySummary(before, [...kept, ...tail]);
+    sess.messages = sess.compacted ? carrySummary(before, [...kept, ...tail]) : [...kept, ...tail]; // 압축된 적 없는 세션에는 옮길 요약이 없다(머리를 흉내 낸 사용자 글을 요약으로 옮기지 않게)
   }
   sess.compacted = true; // 잘라낸 세션도 같은 간격 규칙 — 요약이 계속 실패하는 벤더에 턴마다 다시 묻지 않게
   sess.compactBase = countPrompts(sess.messages);

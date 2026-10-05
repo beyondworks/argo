@@ -98,7 +98,7 @@ export async function saveNativeSession(wsId, slug, sess) {
     const head = messages.slice(0, cut); const tail = messages.slice(cut); const tailSize = size(tail);
     while (head.length && size(head) + tailSize > SESSION_TRIM_TO) head.shift();
     while (head.length && !isPromptMsg(head[0])) head.shift();
-    messages = carrySummary(before, [...head, ...tail]);
+    messages = sess.compacted ? carrySummary(before, [...head, ...tail]) : [...head, ...tail]; // 요약 블록은 압축된 세션에만 있다
     if (Number.isInteger(sess.compactBase)) sess.compactBase = Math.max(0, sess.compactBase - (countPrompts(before) - countPrompts(messages)));
   }
   await writeJsonAtomic(sessionFile(wsId, slug), { id: sess.id, at: Date.now(), messages, ...(sess.compacted ? { compacted: true } : {}), ...(Number.isInteger(sess.compactBase) ? { compactBase: sess.compactBase } : {}) });
