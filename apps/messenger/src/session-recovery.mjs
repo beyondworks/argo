@@ -121,8 +121,8 @@ export function createSessionRecovery({ auth, hasStoredSession, applySession, se
     restartSignIn() {
       if (cleanupFlight) return cleanupFlight;
       cleanupFlight = (async () => {
-        ++generation; signoutFailed = false;
-        clearRetry(); setFailure(null); setWaiting(true);
+        ++generation;
+        clearRetry(); if (!signoutFailed) setFailure(null); setWaiting(true); // 앞서 실패했으면 다시 하는 동안에도 실패를 두어 멈춤 화면을 유지한다 — 지우면 일반 '연결 대기'로 돌아갔다(2차 검수 L-c). 성공(SIGNED_OUT)이 finish에서 지운다
         cleanupPhase = 'pending';
         let markerPersisted = false;
         try {

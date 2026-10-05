@@ -5,11 +5,11 @@
 import { Component, createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { acceptTyping, typingKey, withoutKey, typingIn as typingInState, roomTopicIds, TYPING_WINDOW_MS, createCrewPostsMemory } from './typing-state.js';
-import { awaitingReplies } from './await-reply.mjs';
+import { awaitingReplies, noteSeen } from './await-reply.mjs';
 import { dismissHandlers } from './dismiss.mjs';
 import { attachKeyboardDismiss } from './kb-dismiss.mjs';
 import { turnCopyText, tailTurns } from './turn-copy.mjs';
-import { hasPublicChannel, newChannelKind, stepMarks } from './onboard.mjs';
+import { hasPublicChannel, newChannelKind, stepMarks, newChannelOffer } from './onboard.mjs';
 import { Graph3D } from './graph3d.jsx';
 import { WorkPanel, missingSchema } from './work-panel.jsx';
 import * as Panes from './panes.mjs'; import { GRAPH_TAB, MAX_PANES } from './panes.mjs'; // 창·탭 전이(순수) // 활동 그래프 3D(옵시디언식 구·궤도 회전) — 구성은 @argo/graph2d-core 재사용
@@ -804,7 +804,7 @@ function Shell({ session }) {
   const [dmMembers, setDmMembers] = useState({}); // dm 채널 id → 멤버 행(레일 라벨용: 나 아닌 참가자)
   const [err, setErr] = useState(''); const [note, setNoteState] = useState('');
   const setNote = useCallback((v) => { if (v) setErr(''); setNoteState(v); }, []); // 성공 안내가 오면 같은 자리의 앞 오류 토스트를 지운다 — 끊기 실패 뒤 다시 해 성공해도 앞 오류가 8초 남아 안내를 가렸다(화면 검수 UL9)
-  useEffect(() => { if (err && toastError(err, { t }) !== err) pushDiag('toast', String(err).slice(0, 300)); }, [err]); // eslint-disable-line react-hooks/exhaustive-deps -- 토스트가 원문 대신 문구를 보이면 원문은 진단 기록(설정 → 진단)에
+  useEffect(() => { if (err && toastError(err, { t, phone: isPhone }) !== err) pushDiag('toast', String(err).slice(0, 300)); }, [err]); // eslint-disable-line react-hooks/exhaustive-deps -- 토스트가 원문 대신 문구를 보이면 원문은 진단 기록(설정 → 진단)에
   const [pushCard, setPushCard] = useState(null); // 전경 푸시 카드(폰) — 다른 채널 메시지만, 탭하면 그 채널로(유건 2026-09-12)
   // "이 채널 열기" 요청(알림 탭·전경 카드·초대) — 대기함(navInbox)은 셸 밖에 있어 셸이 다시 마운트돼도 남는다. 다음 한 걸음은 decideNav가 정하고
   // 여기서는 그 걸음만 실행한다: 열기 / 공간 전환 / 채널 조회 / 같은 공간 목록 한 번 다시 읽기 / 버리기. 콜드 스타트 때 chId만 세우면 channel이 없어
@@ -1719,7 +1719,7 @@ function Shell({ session }) {
   };
   const me = selfMember({ members, uid, isPersonal, personalName: resolvedNames[uid] || personalSelfName(otherNames, uid), email: session.user.email }); // 개인 공간은 구성원 목록(친구만)에 내가 없다 — 한 곳에서 내 이름을 정한다(검수 F: 레일·설정은 이메일·'—')
   const isAdmin = !isPersonal && org && ['owner', 'admin'].includes(org.role); // 개인 공간의 가상 조직(role owner)은 관리자가 아니다 — 초대 링크 등이 __personal__로 서버에 가던 것(2026-09-16)
-  const canNewCh = !isPersonal && !!org && org.role !== 'guest' && !orgLocked; // 새 채널 — 서버 msgr_create_channel은 owner·admin·member만, 잠긴 조직은 msgr_forbidden. 못 하는 행동은 보이지 않게(화면 검수 UM1)
+  const chOffer = newChannelOffer({ role: org?.role, locked: orgLocked, personal: isPersonal }); const canNewCh = chOffer.can; // 새 채널 — 서버 msgr_create_channel은 owner·admin·member만, 잠긴 조직은 msgr_forbidden. 못 하는 행동은 보이지 않게(화면 검수 UM1), 이유는 안내 문구로(2차 검수 L-b)
   // F2-5 로컬 알림 — 앱이 숨겨졌거나 다른 채널을 보고 있을 때만. 본문은 싣지 않는다(방송 payload에도 본문이 없다 — RLS 통과 조회가 정본).
   const mineRef = useRef(new Set()); // 내가 쓴 글 id — 크루 답글(reply_to) 알림 판정용. 알림함 조회와 내 글의 realtime 방송이 채운다
   const notifyRef = useRef({ channels, members, crews, chId, uid, isAdmin, page, muted, quiet, blocked: blockedIds, mutedCrewIds });
@@ -2838,8 +2838,8 @@ function Shell({ session }) {
           </div>)}
           <div className="ph-sechead">{chMenuGroup ? chMenuGroup.name : t('phone.sec.channels')}</div>
           <div className="msgr-list ph-rooms">{chChannelsShown.map((c) => kRow(c, { onDrop: pinned.has(c.id) ? reorderFav : reorderChannels }))}</div>
-          {!chChannels.length && !tabQText.trim() && (isAdmin && !previewChannels.length ? <div className="msgr-phsteps"><OrgStepList steps={orgSteps({ t, ...onboard, hasChannel: false, createChannel: openNewCh, invite: orgInvite })} /></div>
-            : <div className="msgr-hint ph-empty">{t(previewChannels.length ? 'inv.empty.title' : 'ch.noneYet')} {previewChannels.length > 0 && <button type="button" className="btn sm" onClick={openBrowse}><I name="hash" size={13} />{t('inv.empty.browse')}</button>}</div>)}
+          {!chChannels.length && !tabQText.trim() && (isAdmin && !previewChannels.length ? <div className="msgr-phsteps"><OrgStepList steps={orgSteps({ t, ...onboard, hasChannel: false, createChannel: chOffer.can ? openNewCh : null, newWhy: chOffer.why, invite: orgInvite })} /></div>
+            : <div className="msgr-hint ph-empty">{t(previewChannels.length ? 'inv.empty.title' : chOffer.can ? 'ch.noneYet' : chOffer.why ?? 'ch.noneYet.short')} {previewChannels.length > 0 && <button type="button" className="btn sm" onClick={openBrowse}><I name="hash" size={13} />{t('inv.empty.browse')}</button>}</div>)}
           {chChannels.length > 0 && !chMenuList.length && !tabQText.trim() && <div className="msgr-hint ph-empty">{t(chMenuKey === 'fav' ? 'grp.fav.empty' : chMenuGroup ? 'grp.empty' : 'grp.channels.allGrouped')}</div>}
           {!chMenuGroup && (chTalksMenu.length > 0 || (chMenuKey === 'channels' && !tabQText.trim())) && <div className="ph-sechead">{t('phone.sec.talks')}<button type="button" className="ph-secbtn" onClick={() => { setTabQ(null); setDmGroup(true); }}><I name="chatplus" size={15} />{t('dm.new')}</button></div>}
           <div className="msgr-list ph-rooms">{chTalksShown.map((c) => kRow(c, { onDrop: pinned.has(c.id) ? reorderFav : (id, before, visible) => reorderChannelPos(chTalks.filter((x) => !pinned.has(x.id)), id, before, visible) }))}</div>
@@ -2940,10 +2940,10 @@ function Shell({ session }) {
           <div className="msgr-list">
             {sortedCh.map(chRow)}
           </div>
-        ) : isPhone && org && isAdmin && !isPersonal && !previewChannels.length ? <div className="msgr-phsteps"><OrgStepList steps={orgSteps({ t, ...onboard, hasChannel: false, createChannel: openNewCh, invite: orgInvite })} /></div>
+        ) : isPhone && org && isAdmin && !isPersonal && !previewChannels.length ? <div className="msgr-phsteps"><OrgStepList steps={orgSteps({ t, ...onboard, hasChannel: false, createChannel: chOffer.can ? openNewCh : null, newWhy: chOffer.why, invite: orgInvite })} /></div>
           : org && previewChannels.length ? <div className="msgr-hint">{t('inv.empty.title')} <button type="button" className="btn sm" onClick={() => { setRail(true); openBrowse(); }}><I name="hash" size={13} />{t('inv.empty.browse')}</button></div>
           : isPhone && !orgId ? <div className="msgr-phsteps"><OrgStepList steps={noOrgSteps({ t, createOrg: () => { setOrgMenu(true); setNewOrg(''); }, joinWithCode, joinable, joinDomain, deletedOrgs, restoreOrg })} /></div>
-          : <div className="msgr-hint">{orgId ? t('ch.noneYet') : t('org.none')}</div>}{/* 폰 홈에는 빈 조직 안내(본문)가 안 보인다 — 같은 시작 단계를 목록 자리에(D3) */}
+          : <div className="msgr-hint">{orgId ? t(chOffer.can ? 'ch.noneYet' : chOffer.why ?? 'ch.noneYet.short') : t('org.none')}</div>}{/* 폰 홈에는 빈 조직 안내(본문)가 안 보인다 — 같은 시작 단계를 목록 자리에(D3) */}
                   {isPhone && org && <button type="button" className="item msgr-addrow" onClick={() => setNewCh({ name: '', kind: newChKind })}><I name="plus" size={18} /><span className="name">{t('ch.new')}</span></button>}
                   {isPhone && org && previewChannels.length > 0 && <button type="button" className="item msgr-addrow msgr-chbrowse" onClick={() => browse ? setBrowse(null) : openBrowse()} aria-expanded={!!browse}><I name="hash" size={18} /><span className="name">{t('ch.browse.row')}</span></button>}{/* 폰은 구역 머리의 둘러보기 단추가 숨는다(.right display:none) — 참여할 수 있는 공개 채널이 있으면 새 채널 옆 행으로(점검 A·B #2) */}
 </RailSection>}
@@ -3022,7 +3022,7 @@ function Shell({ session }) {
         {orgLocked && <div className="msgr-notice locked"><span>{t(isAdmin ? 'org.locked.admin' : 'org.locked')}</span></div>}
         {pushCard && createPortal(<button type="button" className="msgr-pushcard" onClick={() => { if (pushCard.channel_id) requestNav(pushCard.channel_id, 'card'); setPushCard(null); }}><span className="t">{pushCard.title}</span><span className="b">{pushCard.body}</span></button>, document.body)}
         {(err || note) && createPortal( /* 토스트 — 상단 바는 레이아웃을 밀었다(유건 2026-09-09). 자동 소멸(안내 4초·오류 8초), 클릭하면 즉시 */
-          <button type="button" ref={toastRef} className={`msgr-toast${err ? ' err' : ''}`} onClick={tapToast} role="status" aria-live="polite">{err ? (/msgr_session_refreshing/.test(err) || err === t('err.sessionRefreshing') ? t('err.sessionRefreshing') : `${t('ui.error')}: ${toastError(err, { t })}`) : note}</button>,
+          <button type="button" ref={toastRef} className={`msgr-toast${err ? ' err' : ''}`} onClick={tapToast} role="status" aria-live="polite">{err ? (/msgr_session_refreshing/.test(err) || err === t('err.sessionRefreshing') ? t('err.sessionRefreshing') : `${t('ui.error')}: ${toastError(err, { t, phone: isPhone })}`) : note}</button>,
           document.body,
         )}
         <PageBoundary key={`${page}:${chId ?? ''}`} title={t('ui.pageError')} retry={t('ui.pageError.retry')} onReset={() => setPage('chat')}>
@@ -3053,7 +3053,7 @@ function Shell({ session }) {
         ) : isPersonal ? (
           <><div className="msgr-top"><NavButton onMenu={openNav} /><span className="title">{t('personal')}</span><span className="topic">{t('personal.space')}</span></div><div className="msgr-thread" style={{ display: 'flex' }}><div className="msgr-empty"><p>{t('personal.empty')}</p><button type="button" className="btn btn-primary sm" onClick={() => setFriendAdd(true)}><I name="plus" size={13} />{t('friends.add')}</button></div></div></>
         ) : (
-          <EmptyOrg org={org} onMenu={openNav} createOrg={() => { setOrgMenu(true); setNewOrg(''); }} createChannel={openNewCh} invite={isAdmin ? orgInvite : null} askAdmin={askAdmin} browse={previewChannels.length ? () => { setRail(true); openBrowse(); } : null} joinable={joinable} joinDomain={joinDomain} deletedOrgs={deletedOrgs} restoreOrg={restoreOrg} joinWithCode={joinWithCode} onboard={onboard} />
+          <EmptyOrg org={org} onMenu={openNav} createOrg={() => { setOrgMenu(true); setNewOrg(''); }} createChannel={chOffer.can ? openNewCh : null} newWhy={chOffer.why} invite={isAdmin ? orgInvite : null} askAdmin={askAdmin} browse={previewChannels.length ? () => { setRail(true); openBrowse(); } : null} joinable={joinable} joinDomain={joinDomain} deletedOrgs={deletedOrgs} restoreOrg={restoreOrg} joinWithCode={joinWithCode} onboard={onboard} />
         )}
         </PageBoundary>
       </main>
@@ -3687,6 +3687,7 @@ function writeInboxSeen(v) { try { localStorage.setItem(INBOX_SEEN_KEY, JSON.str
 // 앱 안 계정 삭제(App Store 5.1.1(v)) — 깃헙식 확인(단어 입력) 뒤 서버 함수 msgr_delete_me 한 번. 소유 조직에 다른 멤버가 있으면
 // 서버가 조직명을 돌려주며 거부 → 소유권 이전 안내. 성공하면 세션은 이미 서버에서 무효라 로컬 로그아웃만 한다.
 function AccountDeleteCard({ session, onDeleted }) {
+  const isPhone = useIsPhone(); // 진단 경로 안내(2차 검수 L-h)
   const { t } = useT();
   const [open, setOpen] = useState(false); const [busy, setBusy] = useState(false); const [blocked, setBlocked] = useState('');
   const confirmWord = t('acct.delete.word');
@@ -3698,7 +3699,7 @@ function AccountDeleteCard({ session, onDeleted }) {
       const m = /msgr_owner_transfer_required: (.*)$/m.exec(error.message || '');
       if (m) { setBlocked(t('acct.delete.transferFirst', { orgs: m[1].trim() })); return; }
       pushDiag('error', 'account delete failed', error.message); // 설정 › 진단 목록에 남긴다(console.error는 수집되지 않는다 — 3R M2R-4). 화면엔 내부 이름을 내보내지 않는다(2R M-3)
-      setBlocked(t('acct.delete.failed')); return;
+      setBlocked(t('acct.delete.failed', { path: t(isPhone ? 'diag.path.phone' : 'diag.path.desktop') })); return;
     }
     setOpen(false); onDeleted?.();
   };
@@ -4906,7 +4907,7 @@ function MemoryChannelsCard({ channels = [], uid, isAdmin, locked, onToggle }) {
       {locked && <p className="note ph-locknote"><I name="lock" size={13} /> {t('phone.set.chMemory.locked')}</p>}
       <div className="ph-memtoggles">{list.map((c) => { const can = !locked && (isAdmin || c.created_by === uid || (c.admin_user_ids ?? []).includes(uid)); return (
         <label key={c.id} className={`switchrow ph-memtoggle${can ? '' : ' ro'}`}><input type="checkbox" checked={c.crew_memory !== false} disabled={!can || busy === c.id} onChange={async () => { setBusy(c.id); try { await onToggle?.(c); } finally { setBusy(null); } }} /><span className="name"><I name={c.kind === 'private' ? 'lock' : 'hash'} size={13} />{c.name}</span>{!can && <span className="msgr-klabel">{locked ? t('phone.set.chMemory.lockedShort') : t('phone.set.chMemory.hostOnly')}</span>}</label>); })}</div>
-      {!list.length && <p className="empty">{t('ch.noneYet')}</p>}
+      {!list.length && <p className="empty">{t('ch.noneYet.short')}</p>}{/* 설정 화면에는 + 가 없다 — '+ 로 만드세요'를 빼고 사실만(2차 검수 L-b) */}
     </section>
   );
 }
@@ -5847,12 +5848,12 @@ function PolicyCard({ org, isAdmin, policy, members = [], onChanged, onNote, onE
 }
 
 // 조직 시작 단계(빈 조직 안내와 첫 채널 뒤 남은 단계가 같은 목록을 쓴다 — D3). 표지: 'mark' 지금 할 일 · 'done' 끝남 · '' 아직
-function orgSteps({ t, hasChannel, hasPublic, invited, hasCrew, isAdmin, adminName, createChannel, invite, openAgents, openRunner }) {
+function orgSteps({ t, hasChannel, hasPublic, invited, hasCrew, isAdmin, adminName, createChannel, newWhy = null, invite, openAgents, openRunner }) {
   const m = stepMarks({ hasChannel, isAdmin, invited, hasCrew });
   // [실행기 연결] — 'Argo 앱 받기'를 직접 걸던 자리(2026-10-02 아르고 패밀리 구조). 앱 받기 링크는 시트 안에 있고 iOS에서는 숨긴다(총괄 지시 2026-09-26, 3.1.1/3.1.3).
   const agentActs = <span key="c" className="acts">{openRunner && <button type="button" className={`btn sm${m.agent === 'mark' ? ' btn-primary' : ''}`} onClick={openRunner}><I name="node" size={13} />{t('runner.title')}</button>}{isAdmin && openAgents && <button type="button" className="btn sm" onClick={openAgents}><I name="star" size={13} />{t('ch.step3.bot')}</button>}</span>;
   return [
-    [m.channel, t('ch.step1'), t(hasPublic ? 'ch.step1.subPrivate' : 'ch.step1.sub'), hasChannel ? null : <button key="a" type="button" className="btn btn-primary sm" onClick={createChannel}><I name="hash" size={13} />{t('ch.new')}</button>],
+    [m.channel, t('ch.step1'), t(!hasChannel && !createChannel && newWhy ? newWhy : hasPublic ? 'ch.step1.subPrivate' : 'ch.step1.sub'), hasChannel || !createChannel ? null : <button key="a" type="button" className="btn btn-primary sm" onClick={createChannel}><I name="hash" size={13} />{t('ch.new')}</button>], // 만들 수 없으면 단추 대신 이유(2차 검수 L-b)
     ...(isAdmin ? [[m.invite, t('ch.step2'), t('ch.step2.sub'), invite && !invited ? <button key="b" type="button" className={`btn sm${m.invite === 'mark' ? ' btn-primary' : ''}`} onClick={invite}><I name="copy" size={13} />{t('inv.org')}</button> : null]] : []),
     [m.agent, t('ch.step3'), isAdmin ? t('ch.step3.sub') : adminName ? t('ch.step3.member', { name: adminName }) : t('ch.step3.memberAny'), hasCrew ? null : agentActs],
   ];
@@ -5923,9 +5924,9 @@ function OrgGateLoading({ t, onMenu, bare = false }) {
   </>);
 }
 
-function EmptyOrg({ org, onMenu, createOrg, createChannel, invite, askAdmin = null, browse = null, joinable = [], joinDomain, deletedOrgs = [], restoreOrg, joinWithCode, onboard }) {
+function EmptyOrg({ org, onMenu, createOrg, createChannel, newWhy = null, invite, askAdmin = null, browse = null, joinable = [], joinDomain, deletedOrgs = [], restoreOrg, joinWithCode, onboard }) {
   const { t } = useT();
-  const steps = org ? orgSteps({ t, ...onboard, hasChannel: false, isAdmin: true, createChannel, invite }) : noOrgSteps({ t, createOrg, joinWithCode, joinable, joinDomain, deletedOrgs, restoreOrg });
+  const steps = org ? orgSteps({ t, ...onboard, hasChannel: false, isAdmin: true, createChannel, newWhy, invite }) : noOrgSteps({ t, createOrg, joinWithCode, joinable, joinDomain, deletedOrgs, restoreOrg });
   return (<>
     <div className="msgr-top"><NavButton onMenu={onMenu} /><span className="title">{org?.name ?? t('app.title')}</span><span className="topic">{org ? t(browse ? 'ch.notJoined.short' : 'ch.noneYet.short') : t('org.none')}</span></div>
     <div className="msgr-thread" style={{ display: 'flex' }}><div className="msgr-empty">
@@ -5933,7 +5934,7 @@ function EmptyOrg({ org, onMenu, createOrg, createChannel, invite, askAdmin = nu
       {org && !invite ? (<>{/* 빈 상태 안전망(설계서 2-4) — 관리자 아닌 사람이 초대로 들어왔는데 볼 채널이 없을 때 */}
         <h1>{t('inv.empty.title')}</h1>
         <p>{t('inv.empty.desc')}{askAdmin ? ` ${askAdmin}` : ''}</p>
-        <div className="acts">{browse && <button type="button" className="btn btn-primary sm" onClick={browse}><I name="hash" size={13} />{t('inv.empty.browse')}</button>}{org.role !== 'guest' && <button type="button" className="btn sm" onClick={createChannel}><I name="hash" size={13} />{t('ch.new')}</button>}</div>
+        <div className="acts">{browse && <button type="button" className="btn btn-primary sm" onClick={browse}><I name="hash" size={13} />{t('inv.empty.browse')}</button>}{createChannel && <button type="button" className="btn sm" onClick={createChannel}><I name="hash" size={13} />{t('ch.new')}</button>}</div>{!createChannel && newWhy && <p className="msgr-hint">{t(newWhy)}</p>}
       </>) : (<>
       <h1>{org ? t('ch.noChannelTitle') : t('org.noneTitle')}</h1>
       <p>{org ? t('ch.noChannelDesc') : t('org.noneDesc')}</p>
@@ -6011,6 +6012,7 @@ function Channel({ movedBar = null, onCrewJoined = null, onCrewFailed = null, on
   // 그 크루의 새 글이 어느 경로로든(방송·재연결·복귀·새로고침) 들어오면 '입력 중'을 내린다 — 방송으로 온 답만 내리던 탓에 다시 읽은 답 뒤에 말풍선이 20초 남았다(검수 #send-feedback MEDIUM)
   const ownPosts = useMemo(() => createCrewPostsMemory(), []); const postsMem = crewPosts ?? ownPosts; // 셸 기록(방을 다시 열어도 남는다) — 없으면 이 화면 것
   useEffect(() => { if (!msgs) return; for (const c of postsMem.read(chId, msgs)) onCrewPosted(c); }, [msgs]); // eslint-disable-line react-hooks/exhaustive-deps
+  const firstLoad = useRef({ max: null }); // 이 화면의 첫 목록 표지(noteSeen)
   const seenAtRef = useRef(seenAt ?? new Map()); // 셸 기록(seenAt — 방을 다시 열어도 남는다), 없으면 이 화면 것. 내 글을 이 기기가 처음 본 시각 — 대기 표시의 신호 비교를 기기 시계끼리 하려고(검수 #send-feedback LOW)
   const [pending, setPending] = useState([]); // 보냈지만 서버 행이 아직 안 온 내 글(낙관적 렌더)
   const [uploads, setUploads] = useState({}); // client_msg_id → 이 기기가 올리는 중인 파일 이름(첨부만 보낸 글의 자리표시, MSG-06)
@@ -6232,7 +6234,7 @@ function Channel({ movedBar = null, onCrewJoined = null, onCrewFailed = null, on
   const working = Object.entries(progress).filter(([k, p]) => k.startsWith(`${chId}:`) && Date.now() - p.at < 8000 && typing[k] && Date.now() - typing[k] < TYPING_WINDOW_MS).map(([k, p]) => [crewOf(k.split(':')[1]), p]).filter(([c]) => c);
   // 보낸 뒤 대기 표시(2026-10-05) — 크루를 겨냥한 내 글이 저장되면 그 즉시 '전달됨 · 준비 중', 그 크루가 내 글 뒤에 글을 올릴 때까지(상한 5분).
   // 방송이 오면 '답변 중'(실행 카드면 중단 버튼과 함께), 끊겨도 남고, 30초 무신호면 '조금 오래', 기기가 꺼져 있으면 꺼짐 안내. 화면 계산뿐(요청·저장 0).
-  for (const m of msgs ?? []) if (m.author_user_id === uid && Number.isFinite(m.id) && !seenAtRef.current.has(m.id)) seenAtRef.current.set(m.id, Date.now());
+  noteSeen(seenAtRef.current, msgs, { uid, now: Date.now(), first: firstLoad.current }); // 첫 목록에 있던 글은 created_at 기준(2차 검수 L-d)
   const awaiting = awaitingReplies({ msgs: msgs ?? [], uid, isDm: channel.kind === 'dm', roomCrewIds: chCrews.map((c) => c.id),
     signals: (crewId) => { const k = `${chId}:${crewId}`; return { typingAt: typing[k], progressAt: progress[k]?.at, receivedAt: received[k] }; },
     away: (crewId) => crewAway(crewOf(crewId)), now: Date.now(), seenAt: (id) => seenAtRef.current.get(id) }).map((a) => ({ ...a, crew: crewOf(a.crewId) })).filter((a) => a.crew);

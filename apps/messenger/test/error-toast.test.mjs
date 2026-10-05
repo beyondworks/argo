@@ -7,7 +7,7 @@ import { toastError, MACHINE_ERROR } from '../src/error-toast.mjs';
 import { DICT, t as tm } from '../src/i18n.js';
 
 for (const lang of ['ko', 'en']) {
-  const t = (k, v) => tm(k, lang, v);
+  const t = (k, v) => tm(k, lang, { path: tm('diag.path.desktop', lang), ...v }); // 기댓값의 진단 경로(데스크톱 기본) — 경로 자체는 L-h 테스트
   test(`UXM-05 원문은 사용자 문구로 — ${lang}`, () => {
     assert.equal(toastError('TypeError: Failed to fetch', { t }), t('err.offline'));
     assert.equal(toastError('Load failed', { t }), t('err.offline'));
@@ -33,7 +33,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 const codes = [...new Set(readdirSync(new URL('../../../supabase/migrations/', import.meta.url)).filter((f) => f.endsWith('.sql'))
   .flatMap((f) => [...readFileSync(new URL(`../../../supabase/migrations/${f}`, import.meta.url), 'utf8').matchAll(/raise exception '(msgr_[a-z0-9_]+)/g)].map((m) => m[1])))];
 for (const lang of ['ko', 'en']) {
-  const t = (k, v) => tm(k, lang, v);
+  const t = (k, v) => tm(k, lang, { path: tm('diag.path.desktop', lang), ...v }); // 기댓값의 진단 경로(데스크톱 기본) — 경로 자체는 L-h 테스트
   test(`UM1 권한 계열은 권한 없음, 한도 계열은 한도 문구, 그 밖 서버 코드는 다시 시도 없는 안내 — ${lang}`, () => {
     for (const raw of ['msgr_forbidden', 'msgr_not_allowed', 'msgr_owner_only', 'msgr_admin_only', 'msgr_routine_forbidden', 'msgr_channel_admins_owner_only', 'permission denied for table msgr_channels', 'msgr_bot_unauthorized'])
       assert.equal(toastError(raw, { t }), t('err.denied'), raw);
@@ -71,14 +71,36 @@ test('UM1 사전 문구(ko·en, 변수 채움)는 어떤 갈래에도 걸리지 
 
 // 화면 검수 UM1(2026-10-05): 폰에서 게스트에게도 보이던 '새 채널'(서버 msgr_create_channel은 owner·admin·member만, 잠긴 조직 제외 → msgr_forbidden).
 // 못 하는 행동은 아예 보이지 않게 — 폰 + 메뉴와 데스크톱 + 단추 모두 같은 판정(canNewCh)을 쓴다.
-test('UM1 새 채널은 게스트·잠긴 조직·개인 공간에서 보이지 않는다(폰 메뉴·데스크톱 단추 모두)', () => {
+test('UM1 새 채널은 게스트·잠긴 조직·개인 공간에서 보이지 않는다(폰 메뉴·데스크톱 단추 모두)', async () => {
   const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
-  const line = app.match(/const canNewCh = ([^;]+);/); assert.ok(line, 'canNewCh 판정이 없다');
-  const can = (org, { isPersonal = false, orgLocked = false } = {}) => new Function('org', 'isPersonal', 'orgLocked', `return (${line[1]});`)(org, isPersonal, orgLocked);
+  const line = app.match(/const chOffer = (newChannelOffer\([^;]+\)); const canNewCh = chOffer\.can;/); assert.ok(line, 'canNewCh 판정이 없다');
+  const { newChannelOffer } = await import('../src/onboard.mjs');
+  const can = (org, { isPersonal = false, orgLocked = false } = {}) => new Function('newChannelOffer', 'org', 'isPersonal', 'orgLocked', `return (${line[1]}).can;`)(newChannelOffer, org, isPersonal, orgLocked);
   assert.deepEqual(['owner', 'admin', 'member', 'guest'].map((role) => can({ role })), [true, true, true, false]);
   assert.equal(can({ role: 'member' }, { orgLocked: true }), false, '잠긴 조직');
   assert.equal(can({ role: 'owner' }, { isPersonal: true }), false, '개인 공간');
   assert.equal(can(null), false);
   assert.match(app, /\{canNewCh && <button type="button" role="menuitem" onClick=\{\(\) => \{ setChPlus\(false\); setBrowse\(null\); openNewCh\(\); \}\}>/, '폰 + 메뉴');
   assert.match(app, /\{canNewCh && <button type="button" className="btn msgr-chnew"/, '데스크톱 + 단추');
+});
+
+// 2차 검수 L-h(2026-10-05): 안내의 '설정 → 진단'은 없는 경로였다 — 폰은 설정 → 정보·약관 → 진단, 데스크톱은 설정 → 내 계정 → 진단(App.jsx 진단 카드 위치).
+test('L-h 진단 안내는 실제 경로로 — 폰·데스크톱, ko·en (토스트·최상위 오류 화면·계정 삭제 실패)', async () => {
+  const { rootErrorView } = await import('../src/root-error.mjs');
+  const { readFileSync } = await import('node:fs');
+  const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
+  const tabOf = (k) => tm(k, 'ko');
+  assert.match(app, /sub === 'about' && \([^\n]*\n[^\n]*\n\s*<section className="msgr-setcard msgr-diagcard"><h2>\{t\('set\.diag'\)\}/, '폰: 정보·약관 화면에 진단 카드');
+  assert.match(app.slice(app.indexOf("{tab === 'me' && (<>"), app.indexOf("{tab === 'me' && (<>") + 4000), /msgr-diagcard/, '데스크톱: 내 계정 탭에 진단 카드');
+  for (const lang of ['ko', 'en']) {
+    const t = (k, v) => tm(k, lang, { path: tm('diag.path.desktop', lang), ...v }); // 기댓값의 진단 경로(데스크톱 기본) — 경로 자체는 L-h 테스트
+    const phone = toastError('TypeError: x is not a function', { t, phone: true }); const desk = toastError('TypeError: x is not a function', { t });
+    assert.ok(phone.includes(`${tm('ui.settings', lang)} → ${tm('phone.set.about', lang)} → ${tm('set.diag', lang)}`), `${lang} 폰: ${phone}`);
+    assert.ok(desk.includes(`${tm('ui.settings', lang)} → ${tm('set.tab.me', lang)} → ${tm('set.diag', lang)}`), `${lang} 데스크톱: ${desk}`);
+    assert.ok(toastError('msgr_bot_exists', { t, phone: true }).includes(tm('phone.set.about', lang)));
+    assert.ok(rootErrorView({ lang, phone: true }).hint.includes(tm('phone.set.about', lang)), 'root phone');
+    assert.ok(rootErrorView({ lang }).hint.includes(tm('set.tab.me', lang)), 'root desktop');
+    for (const k of ['err.raw', 'err.code', 'root.error.hint', 'acct.delete.failed']) assert.doesNotMatch(tm(k, lang), /설정 [→›] 진단|Settings [→›] Diagnostics/, `${k} ${lang}`);
+  }
+  void tabOf;
 });

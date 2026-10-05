@@ -412,3 +412,34 @@ test('UM4 연결 대기 화면 — 로그아웃을 마치지 못한 동안은 �
   const check = waitingView({ error: 'auth.sessionCheckFailed' });
   assert.deepEqual([check.reconnect, check.error], [true, 'auth.sessionCheckFailed'], '세션 확인 실패는 종전처럼(다시 연결 + 오류 문구)');
 });
+
+// 2차 검수 L-c(2026-10-05): 로그아웃 정리 실패 뒤 [로그아웃하고 다시 로그인]을 다시 누르면 시작 때 실패를 지워 1.5초 동안 일반 '연결 대기' 화면
+// (제목·진행 표시·꺼진 '지금 다시 연결')으로 돌아갔다. 멈춤 화면을 유지하고 그 단추만 진행 표시 — 실제 흐름(실패 → 다시 하는 중 → 실패 → 성공)으로 본다.
+test('L-c 로그아웃 정리를 다시 하는 동안에도 멈춤 화면 — 다시 실패하면 그대로, 성공하면 로그인 화면으로', async () => {
+  let error = ''; let busy = false; const shown = [];
+  const outcomes = [new TypeError('Failed to fetch'), 'slow-fail', 'ok'];
+  let gate = null; let f;
+  const auth = { getSession: async () => ({ data: { session: null }, error: new AuthRetryableFetchError('offline', 503) }), signOut: async () => {
+    const o = outcomes.shift();
+    if (o === 'slow-fail') { await new Promise((r) => { gate = r; }); return { error: new TypeError('Failed to fetch') }; }
+    if (o === 'ok') { queueMicrotask(() => f.onAuthStateChange('SIGNED_OUT', null)); return { error: null }; }
+    return { error: o };
+  } };
+  const view = () => waitingView({ error, busy });
+  f = createSessionRecovery({ auth, hasStoredSession: () => true, applySession: () => {}, setWaiting: () => {}, cleanupState: { begin() {}, complete() {}, read: () => false, matches: () => false },
+    setFailure: (e, phase) => { error = e ? (phase === 'signout' ? 'auth.signInAgainFailed' : 'auth.sessionCheckFailed') : ''; shown.push(view().title); },
+    addEventListener() {}, removeEventListener() {}, addVisibilityListener() {}, removeVisibilityListener() {}, setTimer: () => 0, clearTimer() {} });
+  await f.start();
+  const restart = async () => { busy = true; try { return await f.restartSignIn(); } finally { busy = false; } }; // App.jsx restartSignIn과 같은 busy(signingOut)
+  await restart();
+  assert.equal(view().title, 'auth.signOutStuck', '첫 실패');
+  shown.length = 0;
+  const second = restart(); await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual([view().title, view().spin, view().reconnect], ['auth.signOutStuck', true, false], '다시 하는 동안 — 멈춤 화면 그대로, 단추만 진행');
+  assert.ok(!shown.includes('auth.connectionWaiting'), `일반 대기 화면이 끼지 않는다: ${shown.join(',')}`);
+  gate(); await second;
+  assert.deepEqual([view().title, view().spin], ['auth.signOutStuck', false], '다시 실패');
+  await restart(); await new Promise((r) => setTimeout(r, 0));
+  assert.equal(error, '', '성공하면 실패를 지운다');
+  f.stop();
+});

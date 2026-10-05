@@ -5,6 +5,7 @@ import { Component } from 'react';
 import { createDiagStore } from './diag-store.mjs';
 import { readLang } from './i18n.js';
 import { rootErrorView, prefersDark } from './root-error.mjs';
+import { PHONE_QUERY } from './use-phone.js';
 
 const store = createDiagStore(() => globalThis.localStorage);
 export function readDiag() { return store.read(); }
@@ -25,7 +26,7 @@ export class RootBoundary extends Component {
     const msg = String(this.state.err?.message || this.state.err);
     // 언어·테마 Provider 밖 — 저장된 언어(argo-lang)와 <html data-theme>·OS 다크를 직접 읽는다(MSG-12: 한국어·검은 글자 고정이라 다크 바탕에서 안 보였다)
     let dark = false; try { dark = prefersDark({ theme: document.documentElement.dataset.theme ?? '', systemDark: matchMedia('(prefers-color-scheme: dark)').matches }); } catch { /* 판정 못 하면 라이트 */ }
-    const v = rootErrorView({ lang: readLang(), dark });
+    const v = rootErrorView({ lang: readLang(), dark, phone: !!globalThis.matchMedia?.(PHONE_QUERY).matches }); // 진단 경로가 폰 셸·데스크톱에서 다르다(2차 검수 L-h)
     return (
       <div role="alert" style={{ minHeight: '100vh', boxSizing: 'border-box', padding: 'max(24px, env(safe-area-inset-top)) 20px 20px', fontFamily: 'system-ui, sans-serif', color: v.fg, background: v.bg }}>
         <p style={{ fontWeight: 700, fontSize: 16, margin: '0 0 6px' }}>{v.title}</p>

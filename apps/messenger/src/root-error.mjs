@@ -10,8 +10,8 @@ export function prefersDark({ theme = '', systemDark = false } = {}) {
   if (/-light$/.test(theme)) return false;
   return ['', 'argo', 'linen', 'graphite'].includes(theme) ? !!systemDark : false;
 }
-export function rootErrorView({ lang = 'ko', dark = false } = {}) {
+export function rootErrorView({ lang = 'ko', dark = false, phone = false } = {}) {
   const c = dark ? DARK : LIGHT;
-  return { title: t('root.error.title', lang), hint: t('root.error.hint', lang), reload: t('root.error.reload', lang),
+  return { title: t('root.error.title', lang), hint: t('root.error.hint', lang, { path: t(phone ? 'diag.path.phone' : 'diag.path.desktop', lang) }), reload: t('root.error.reload', lang),
     fg: `var(--fg, ${c.fg})`, fg2: `var(--fg-2, ${c.fg2})`, bg: `var(--bg, ${c.bg})`, btnBg: `var(--card, ${c.card})`, border: `var(--border, ${c.border})` };
 }

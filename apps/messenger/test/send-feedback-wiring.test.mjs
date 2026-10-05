@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { awaitingReplies } from '../src/await-reply.mjs';
+import { awaitingReplies, noteSeen } from '../src/await-reply.mjs';
 import { createCrewPostsMemory, typingKey, withoutKey } from '../src/typing-state.js';
 
 const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
@@ -80,11 +80,11 @@ test('처음 여는 단체 방에서 다른 사람이 부른 크루 — 입력 �
 });
 
 // Channel의 실제 처음 본 시각 기록 + 대기 표시 계산 두 줄
-const awaitSrc = between('  for (const m of msgs ?? []) if (m.author_user_id === uid && Number.isFinite(m.id) && !seenAtRef.current.has(m.id))', '.filter((a) => a.crew);');
+const awaitSrc = between('  noteSeen(seenAtRef.current, msgs,', '.filter((a) => a.crew);');
 function awaitingIn({ props, msgs, typing = {}, away = false, now }) {
   const realNow = Date.now; Date.now = () => now;
   try {
-    const scope = { msgs, uid: ME, channel: { kind: 'dm' }, chCrews: [{ id: P }], chId: CH, typing, progress: {}, received: props.received, crewAway: () => away, crewOf: (id) => ({ id }), seenAtRef: props.seenAtRef, awaitingReplies };
+    const scope = { msgs, uid: ME, channel: { kind: 'dm' }, chCrews: [{ id: P }], chId: CH, typing, progress: {}, received: props.received, crewAway: () => away, crewOf: (id) => ({ id }), seenAtRef: props.seenAtRef, firstLoad: props.firstLoad ?? { current: { max: 0 } }, awaitingReplies, noteSeen }; // firstLoad 기본 = 빈 방에서 연 화면(그 뒤 글은 모두 새로 들어온 글)
     return new Function(...Object.keys(scope), `${awaitSrc}; return awaiting;`)(...Object.values(scope));
   } finally { Date.now = realNow; }
 }
@@ -129,4 +129,15 @@ test('seenAt 속성 — 방을 다시 열어도 처음 본 시각이 남아 조�
   assert.equal(first[0].phase, 'preparing', '보낸 직후');
   const again = awaitingIn({ props: { ...s.props(), seenAtRef: open() }, msgs: [mine(10, serverT)], now: deviceT + 40_500 }); // 다른 방에 갔다가 40초 뒤 다시 열었다
   assert.equal(again[0].phase, 'slow', '처음 본 시각이 셸에 남아 30초 판정이 이어진다');
+});
+
+// 2차 검수 L-d(2026-10-05): 첫 목록에 이미 있던 옛 내 글(다른 기기에서 2분 전)은 처음 본 시각을 적지 않는다 — 실제 Channel 줄(noteSeen + 대기 표시)로.
+test('첫 목록에 있던 옛 내 글은 조금 오래(created_at 기준), 그 뒤 보낸 글은 기기 시계가 빨라도 준비 중', () => {
+  const s = shell(CH); const serverT = Date.parse('2026-10-05T03:00:00Z'); const seenAtRef = { current: new Map() }; const firstLoad = { current: { max: null } };
+  const old = { ...mine(10, serverT - 120_000) };
+  const a = awaitingIn({ props: { ...s.props(), seenAtRef, firstLoad }, msgs: [old], now: serverT }); // 방을 연 첫 렌더 — 이미 있던 글
+  assert.equal(a[0].phase, 'slow');
+  const deviceT = serverT + 40_000; // 기기 시계 +40초, 이제 새 글을 보냈다
+  const b = awaitingIn({ props: { ...s.props(), seenAtRef, firstLoad }, msgs: [old, mine(11, serverT)], now: deviceT + 500 });
+  assert.equal(b.find((x) => x.msgId === 11).phase, 'preparing');
 });

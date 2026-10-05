@@ -105,3 +105,22 @@ test('L3 따라잡기는 한 번에 하나 — 도는 중에 온 요청은 끝�
   release = createCatchUp(async () => { throw new Error('net'); });
   await assert.rejects(release(), /net/); await assert.rejects(release(), /net/, '실패 뒤에도 다음 요청은 돈다');
 });
+
+// 2차 검수 L-a(2026-10-05): 1회차가 실패하면 do…while이 예외로 빠져, 도는 중에 겹쳐 온 2회차(그 사이 온 글)를 버렸다 — 실시간이 살아 있어 10초 보정도 꺼져 있으니
+// 그 글이 다음 신호까지 안 보였다. 회차마다 실패를 받고, 겹친 요청이 있었으면 한 번 더 돈다. 끝에 남은 실패는 던진다. 회차 상한으로 끝없이 돌지 않는다.
+test('L-a 따라잡기 1회차가 실패해도 겹쳐 온 요청은 한 번 더 돈다 — 마지막 회차의 실패만 던진다', async () => {
+  let runs = 0; const gates = [];
+  const go = createCatchUp(() => { runs++; return new Promise((ok, no) => gates.push({ ok, no })); });
+  const p = go(); go(); // 1회차가 도는 중에 방송 2가 왔다
+  gates[0].no(new Error('Failed to fetch')); await new Promise((r) => setTimeout(r, 0));
+  assert.equal(runs, 2, '겹친 요청이 실행됐다');
+  gates[1].ok(); await p; // 2회차가 성공하면 전체는 성공
+  const q = go(); gates[2].no(new Error('A')); await assert.rejects(q, /A/, '겹친 요청이 없으면 실패를 그대로 던진다');
+});
+
+test('L-a 매 회차 실패하면서 요청이 계속 겹쳐도 회차 상한에서 멈추고 마지막 실패를 던진다', async () => {
+  let runs = 0; let go;
+  go = createCatchUp(async () => { runs++; await null; go(); throw new Error(`fail ${runs}`); }); // 회차마다(조회 중에) 새 요청이 겹친다
+  await assert.rejects(go(), /fail 3/);
+  assert.equal(runs, 3, '상한 3회');
+});

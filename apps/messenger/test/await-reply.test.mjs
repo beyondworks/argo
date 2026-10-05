@@ -111,3 +111,22 @@ test('기기 시계가 서버보다 40초 빨라도 보낸 직후는 준비 중 
   const late = awaitingReplies({ msgs: [mine(10)], uid: ME, isDm: true, roomCrewIds: [PEPPER], signals: none, away: () => false, now: T0 + 5 * 60_000 + 1, seenAt: () => T0 + 5 * 60_000 - 10 });
   assert.deepEqual(late, [], '서버 시각으로 5분이 지나면 처음 본 시각과 상관없이 내린다');
 });
+
+// 2차 검수 L-d(2026-10-05): 방을 열 때 이미 있던 옛 내 글(다른 기기에서 2분 전)도 '처음 본 시각=지금'으로 적혀 '조금 오래' 대신 '준비 중'이 30초 보였다.
+// 처음 본 시각은 이 화면의 첫 목록 뒤에 들어온 내 글(이 기기가 보냈거나 방송으로 받은 글)에만 적는다. 첫 목록에 있던 글은 created_at 기준.
+test('L-d 첫 목록에 이미 있던 옛 내 글은 created_at 기준(조금 오래), 그 뒤 들어온 글은 기기 시계(기기 +40초여도 준비 중)', async () => {
+  const { noteSeen } = await import('../src/await-reply.mjs');
+  const seen = new Map(); const first = { max: null };
+  const old = mine(10, { created_at: new Date(T0 - 120_000).toISOString() }); // 다른 기기에서 2분 전
+  noteSeen(seen, null, { uid: ME, now: T0, first }); assert.equal(first.max, null, '목록을 읽기 전');
+  noteSeen(seen, [old], { uid: ME, now: T0, first });
+  assert.equal(seen.has(10), false, '첫 목록의 글은 적지 않는다');
+  const a = awaitingReplies({ msgs: [old], uid: ME, isDm: true, roomCrewIds: [PEPPER], signals: none, away: () => false, now: T0, seenAt: (id) => seen.get(id) });
+  assert.equal(a[0].phase, 'slow');
+  const deviceNow = T0 + 40_000; // 기기 시계가 서버보다 40초 빠르다
+  const fresh = mine(11, { created_at: new Date(T0).toISOString() });
+  noteSeen(seen, [old, fresh], { uid: ME, now: deviceNow, first });
+  assert.equal(seen.get(11), deviceNow, '첫 목록 뒤에 들어온 내 글');
+  const b = awaitingReplies({ msgs: [old, fresh], uid: ME, isDm: true, roomCrewIds: [PEPPER], signals: none, away: () => false, now: deviceNow + 500, seenAt: (id) => seen.get(id) });
+  assert.equal(b.find((x) => x.msgId === 11).phase, 'preparing', '1차 L4 — 기기 시계 +40초여도 보낸 직후는 준비 중');
+});

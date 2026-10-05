@@ -51,9 +51,10 @@ function filterLine(line, t) {
 
 /** 토스트에 보일 문구 — 줄마다(여러 크루·파일 결과가 줄로 온다): 연결 끊김 → 연결 안내, 아는 서버 코드 → 그 문구, 권한 → 권한 없음, 한도 → 한도 문구,
     시간 초과 → 다시 시도 안내, 그 밖 서버 코드 → 다시 시도 없는 진단 안내, 기계 원문 → '처리하지 못했습니다 … 진단'(원문은 부르는 쪽이 진단 기록에),
-    그 밖(이미 번역한 문구)은 그대로. 같은 줄은 한 번. */
-export function toastError(raw, { t }) {
+    그 밖(이미 번역한 문구)은 그대로. 같은 줄은 한 번. phone = 폰 셸(설정 화면 구조가 달라 진단 경로가 다르다). */
+export function toastError(raw, { t: tt, phone = false }) {
   const msg = String(raw ?? '');
   if (!msg) return '';
+  const path = tt(phone ? 'diag.path.phone' : 'diag.path.desktop'); const t = (k, v) => tt(k, { path, ...v }); // 진단 안내는 실제 자리로(2차 검수 L-h — 폰 셸·데스크톱 설정이 다르다)
   return [...new Set(msg.split('\n').filter((l) => l.trim()).map((l) => filterLine(l, t)))].join('\n');
 }

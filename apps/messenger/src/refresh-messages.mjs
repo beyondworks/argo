@@ -37,12 +37,23 @@ export function mergeRefreshedMessages(current, fresh, firstId, throughId) {
 }
 
 /** 따라잡기를 한 번에 하나로(검수 L3 — 글 방송마다 부르는 조회가 겹쳐 같은 글을 여러 번 읽고, 500개 넘게 밀리면 '최신으로 옮겼다' 안내가 겹친 수만큼 떴다).
-    도는 중에 온 요청은 끝난 뒤 한 번으로 모은다(그 사이 온 글을 놓치지 않게). 돌려준 함수는 지금 도는 따라잡기의 약속을 돌려준다. */
-export function createCatchUp(run) {
+    도는 중에 온 요청은 끝난 뒤 한 번으로 모은다(그 사이 온 글을 놓치지 않게). 돌려준 함수는 지금 도는 따라잡기의 약속을 돌려준다.
+    회차가 실패해도 겹친 요청이 있었으면 한 번 더 돈다 — 1회차 실패가 2회차를 버려 방송 2의 글이 다음 신호까지 안 보였다(2차 검수 L-a). 끝에 남은 실패는 던지고,
+    실패한 회차가 maxFailures에 이르면 겹친 요청이 있어도 멈춘다(끝없이 다시 묻지 않게). */
+export function createCatchUp(run, { maxFailures = 3 } = {}) {
   let busy = null; let again = false;
   return function catchUp() {
     if (busy) { again = true; return busy; }
-    busy = (async () => { try { do { again = false; await run(); } while (again); } finally { busy = null; } })();
+    busy = (async () => {
+      try {
+        let error = null; let failures = 0;
+        do {
+          again = false;
+          try { await run(); error = null; } catch (e) { error = e; failures++; }
+        } while (again && failures < maxFailures);
+        if (error) throw error;
+      } finally { busy = null; }
+    })();
     return busy;
   };
 }

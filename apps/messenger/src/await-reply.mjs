@@ -64,3 +64,12 @@ export function awaitingReplies({ msgs = [], uid, isDm, roomCrewIds = [], signal
   }
   return out.sort((a, b) => a.msgId - b.msgId || a.o - b.o).map(({ crewId, msgId, phase }) => ({ crewId, msgId, phase }));
 }
+
+/** 처음 본 시각 적기(seen: 글 id → 기기 시각, 셸에 둔다). first = 이 화면의 첫 목록 표지 { max } — 첫 목록에 이미 있던 글은 적지 않고 created_at을 쓴다
+    (방을 열 때 있던 옛 내 글이 '지금 처음 봄'으로 적혀 '조금 오래' 대신 '준비 중'이 30초 보였다, 2차 검수 L-d). 첫 목록 뒤에 들어온 내 글
+    (이 기기가 보냈거나 방송·따라잡기로 받은 글)만 지금 시각으로 — 기기 시계가 서버와 어긋나도 신호와 같은 시계로 비교한다(1차 L4). */
+export function noteSeen(seen, msgs, { uid, now, first }) {
+  if (!msgs) return;
+  if (first.max == null) first.max = msgs.reduce((a, m) => (Number.isFinite(m?.id) ? Math.max(a, m.id) : a), 0);
+  for (const m of msgs) if (m.author_user_id === uid && Number.isFinite(m.id) && m.id > first.max && !seen.has(m.id)) seen.set(m.id, now);
+}
