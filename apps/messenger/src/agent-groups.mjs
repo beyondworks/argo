@@ -110,6 +110,47 @@ export function agentDmRedirect(channel, members, { uid, crewOf, myAgents }) {
   return personalRoomKnown(crew, myAgents, uid) ? { crew, known: true } : null;
 }
 
+/** 입구별로 옛 방을 열지(분리 검수 2026-10-05 #1) — 무조건 개인 1:1로 돌리면 옛 방에 온 글(안 읽은 글·알림이 가리키는 글)을 볼 길이 없었다.
+    'legacy' = 옛 방을 연다(방 위 안내 띠가 개인 1:1로 안내한다): 그 방에 안 읽은 글이 있거나, 입구가 그 방의 글을 가리킨다
+      (알림함 'inbox'·OS 알림 'mac'·푸시 'push'·전경 카드 'card'·미리보기 'peek' — 보던 글을 열려고 누른 것). 모르는 입구도 글을 숨기지 않는 쪽.
+    'personal' = 개인 1:1로: 안 읽은 글이 없고 방 자체를 여는 입구('list' — 대화 목록 줄: 데스크톱 레일·폰 채팅 탭). 크루 카드·멘션은 openDm이 따로 돌린다 */
+export const ROOM_ENTRANCES = new Set(['list']);
+export function agentDmRoute({ channel, unread, from }) {
+  if ((unread?.[channel?.id]?.n ?? 0) > 0) return 'legacy';
+  return ROOM_ENTRANCES.has(from) ? 'personal' : 'legacy';
+}
+
+/** 내 에이전트 개인 1:1 위 '이전 대화 보기'(분리 검수 2026-10-05 #2 — 유건 계정 실측: 페퍼 조직 1:1 글 282개, 개인 1:1 3개) — 그 에이전트의 옛 조직 1:1과 글 수.
+    옛 조직 1:1 = 그 에이전트의 조직 행 하나와 나만 있는 그 조직의 DM(legacyAgentDm과 같은 판정). 조직마다 한 줄(방이 둘이면 글이 많은 쪽), 글 0개·보관한 방은 뺀다.
+    crewId = 개인 1:1의 내 개인 행, rows = 내 크루 행(App ownCrews — 로그인 때 이미 읽은 것). 조회는 주입한다(App은 supabase, 테스트는 가짜):
+      crewDms(조직 행 id들) → [{ channel_id, member_id, msgr_channels: { org_id, kind, archived_at } }]  — 그 행들이 든 채널 1건
+      members(채널 id들)    → [{ channel_id, member_kind, member_id }]                                  — 1:1인지 구성원 1건
+      count(채널 id)        → 글 수(삭제 제외, head count)                                              — 옛 방마다 1건(보통 1~2)
+    방을 열 때만 부른다(App이 세션에 에이전트당 한 번 — 주기 조회 없음). 조직 행이 없거나 남의 행이면 조회 0. 실패하면 빈 목록(띠를 그리지 않는다) */
+export async function earlierAgentDms(crewId, { uid, rows, crewDms, members, count }) {
+  const mine = rows?.find((r) => r.id === crewId);
+  if (!mine || mine.org_id != null || !uid || mine.owner_user_id !== uid) return [];
+  const key = agentKey(mine);
+  const orgRows = key.startsWith('id:') ? [] : rows.filter((r) => r.org_id != null && agentKey(r) === key);
+  if (!orgRows.length) return [];
+  try {
+    const rowOf = new Map(orgRows.map((r) => [r.id, r]));
+    const dms = ((await crewDms(orgRows.map((r) => r.id))) ?? []).filter((x) => x.msgr_channels?.kind === 'dm' && !x.msgr_channels.archived_at && x.msgr_channels.org_id === rowOf.get(x.member_id)?.org_id);
+    if (!dms.length) return [];
+    const ms = (await members([...new Set(dms.map((x) => x.channel_id))])) ?? [];
+    const solo = dms.filter((x) => legacyAgentDm({ id: x.channel_id, kind: 'dm', org_id: x.msgr_channels.org_id }, ms.filter((m) => m.channel_id === x.channel_id), { uid, crewOf: (id) => rowOf.get(id) ?? null })?.id === x.member_id);
+    const counted = await Promise.all(solo.map(async (x) => ({ channelId: x.channel_id, orgId: x.msgr_channels.org_id, n: Number(await count(x.channel_id)) || 0 })));
+    const best = new Map();
+    for (const r of counted) if (r.n > 0 && r.n > (best.get(r.orgId)?.n ?? 0)) best.set(r.orgId, r);
+    return [...best.values()];
+  } catch { return []; }
+}
+/** 그릴 줄 — 조직 목록 순서, 내가 나간 조직(목록에 없음 — 그 방은 이제 못 연다)은 빼고 조직 이름을 붙인다 */
+export function earlierLines(list, orgs) {
+  const order = new Map((orgs ?? []).map((o, i) => [o.id, i]));
+  return (list ?? []).filter((x) => order.has(x.orgId)).sort((a, b) => order.get(a.orgId) - order.get(b.orgId)).map((x) => ({ ...x, org: orgs[order.get(x.orgId)].name ?? '' }));
+}
+
 /** 얼굴·사진 저장 — 같은 에이전트(agentLooks의 ids, 내 행만)를 한 요청으로. 지도를 모르면 누른 행 하나(종전).
     여러 행 저장이 거절되면(어느 조직의 정책 잠금 등 — 한 행이라도 막히면 문장 전체가 실패한다) 누른 행 하나만 다시 저장한다.
     그 행이 대표 행이 아니면 화면 얼굴(대표 기준 — agentLooks)은 그대로라 onlyHere로 알린다(분리 검수 2026-10-05 #6 — 부르는 쪽이 "이 공간에만 저장했어요").

@@ -77,14 +77,15 @@ test('파견 해제 확인 문구 — 조직 채널 기억이 10분 안에 PC에
   assert.match(i18n, /'crew\.recall\.confirm': \['모든 채널에서 빠지고 지시를 받지 않습니다\. 이 조직 채널에서 나눈 대화 기억은 10분 안에 PC에서 지워지고, 다시 파견해도 돌아오지 않습니다\.', "Leaves every channel and stops taking instructions\. Its memory of this organization's channels is erased from your PC within 10 minutes and does not come back if you dispatch it again\."\],/);
 });
 
-// 옛 조직 1:1(유건 2026-10-05) — 판정 행동은 test/agent-identity.test.mjs(legacyAgentDm·agentDmRedirect)가 잠근다. 여기는 입구 배선만:
-// 대화 목록 줄·알림함·알림 탭(OS 알림·푸시·전경 카드가 모두 지나는 navInbox 'open')·미리보기가 같은 함수를 먼저 지나고, 열린 옛 방에는 안내 띠.
-test('옛 조직 1:1 — 모든 입구가 openAgentDmInstead를 먼저 지나고, 열린 옛 방에는 안내 띠', () => {
-  assert.match(app, /onClick=\{\(\) => \{ if \(openAgentDmInstead\(c\.id\)\) \{ setRail\(false\); return; \} setChId\(c\.id\);/, '대화 목록 줄');
-  assert.match(app, /if \(!it\?\.joinReq && openAgentDmInstead\(id\)\) return;/, '알림함');
-  assert.match(app, /if \(act\.do === 'open'\) \{ diag\('open'\); navInbox\.done\(navReq\); if \(openAgentDmInstead\(navReq\.channelId\)\) return;/, '알림 탭·푸시·전경 카드');
-  assert.match(app, /setDmPeek\(null\); if \(openAgentDmInstead\(c\.id\)\) return;/, '폰 미리보기');
-  assert.match(app, /const openRoom = \(c\) => \{ setTabQ\(null\); if \(openAgentDmInstead\(c\.id\)\) return;/, '폰 채팅 탭 줄');
-  assert.match(app, /const openAgentDmInstead = \(channelId\) => \{[\s\S]{0,300}agentDmRedirect\(channels\.find\(\(c\) => c\.id === channelId\), dmMembers\[channelId\], \{ uid, crewOf, myAgents \}\)[\s\S]{0,300}personalTwin\(go\.crew\)\.then/, '서버에 개인 행을 한 번 묻고 옮긴다');
-  assert.match(app, /movedBar=\{legacyDm\?\.known \? <LegacyDmBar/, '알고 있을 때만 안내 띠');
+// 옛 조직 1:1(유건 2026-10-05) — 판정 행동은 test/agent-identity.test.mjs(legacyAgentDm·agentDmRedirect)·agent-identity-route.test.mjs(agentDmRoute)가,
+// 실제 openAgentDmInstead의 동작(안 읽은 글·입구·연타)은 agent-identity-app.test.mjs가 잠근다. 여기는 입구 배선만(어느 입구가 어떤 출처를 넘기나 — 소스 핀, 동작 증거 아님):
+// 대화 목록 줄·폰 채팅 탭 줄은 'list'(안 읽은 글이 없을 때만 개인 1:1로), 알림함 'inbox'·알림 탭(navInbox 출처 push·mac·card)·미리보기 'peek'은 옛 방을 연다.
+test('옛 조직 1:1 — 모든 입구가 출처와 함께 openAgentDmInstead를 먼저 지나고, 열린 옛 방에는 안내 띠, 개인 1:1에는 이전 대화 띠', () => {
+  assert.match(app, /aria-busy=\{redirectingId === c\.id \|\| undefined\} onClick=\{\(\) => \{ if \(openAgentDmInstead\(c\.id, 'list'\)\) \{ setRail\(false\); return; \} setChId\(c\.id\);/, '대화 목록 줄');
+  assert.match(app, /if \(!it\?\.joinReq && openAgentDmInstead\(id, 'inbox'\)\) return;/, '알림함');
+  assert.match(app, /if \(act\.do === 'open'\) \{ diag\('open'\); navInbox\.done\(navReq\); if \(openAgentDmInstead\(navReq\.channelId, navReq\.source\)\) return;/, '알림 탭·푸시·전경 카드');
+  assert.match(app, /setDmPeek\(null\); if \(openAgentDmInstead\(c\.id, 'peek'\)\) return;/, '폰 미리보기');
+  assert.match(app, /const openRoom = \(c\) => \{ setTabQ\(null\); if \(openAgentDmInstead\(c\.id, 'list'\)\) return;/, '폰 채팅 탭 줄');
+  assert.match(app, /className=\{`item ph-kitem\$\{r\.unreadN && !r\.muted \? ' unread' : ''\}`\} aria-busy=\{redirectingId === c\.id \|\| undefined\} onClick=\{\(\) => openRoom\(c\)\}/, '폰 줄 돌리는 중 표시');
+  assert.match(app, /movedBar=\{legacyDm\?\.known \? <LegacyDmBar [\s\S]{0,120}? t=\{t\} \/> : earlierCrew \? <EarlierDmBar key=\{earlierCrew\}/, '알고 있을 때만 안내 띠, 내 에이전트 개인 1:1에는 이전 대화 띠');
 });

@@ -1,9 +1,12 @@
 // Browser-only fixture: no credentials or production client imported.
 // 에이전트 = 한 사람(유건 2026-10-05) 화면 확인용 — personal-space 픽스처에 같은 에이전트(페퍼)의 조직 행(주황 얼굴 저장)·개인 행(저장값 없음)과
 // #819 전에 만든 옛 조직 1:1 방(나 + 조직 행 페퍼)을 더했다. 띄우기: npx vite --config test/agent-identity.config.mjs (AI_TEST_PORT, 기본 5288)
+// 옛 방에는 글 3개(검수 #2: 개인 1:1 위 '이전 대화 보기'), localStorage aiFixtureLegacyUnread='1'이면 그중 2개가 안 읽은 글(검수 #1: 안 읽은 글이 있으면 옛 방을 연다)
 export const configured = true, customServer = false, SB_URL = 'http://fixture.invalid', SB_ANON = 'fixture';
 const uid = 'user-me', org = 'org-fixture', now = new Date().toISOString();
+const legacyUnread = localStorage.getItem('aiFixtureLegacyUnread') === '1';
 const noFace = localStorage.getItem('aiFixtureNoFace') === '1'; // 검수 #3: 페퍼가 얼굴을 저장한 적 없을 때 — 로그인 뒤 대표 행 얼굴을 한 번 저장하는지(window.__psFixture.calls의 msgr_crews update)
+const legacyMsg = (id, body, crew = false) => ({ id, channel_id: 'org-pepper-dm', org_id: org, author_kind: crew ? 'crew' : 'user', author_user_id: crew ? null : uid, crew_id: crew ? 'crew-pepper-org' : null, kind: 'text', body, mentions: [], reply_to: null, thread_root: null, created_at: `2026-09-2${id}T09:00:00+00:00`, edited_at: null, deleted_at: null, meta: null, client_msg_id: null });
 const channel = (id, kind, name, orgId = org) => ({ id, org_id: orgId, kind, name, created_by: uid, archived_at: null, admin_user_ids: [], crew_memory: true, personal_crews: orgId ? 'allowed' : 'blocked' });
 const state = window.__psFixture = { calls: [], failNext: null, aiConsent: localStorage.getItem('psFixtureAiConsent') === 'none' ? null : undefined, tables: { // aiConsent: 시나리오가 동의 전 상태를 볼 때 'none'
   msgr_org_members: [{ user_id: uid, org_id: org, role: 'owner', display_name: 'Fixture Owner', removed_at: null, msgr_orgs: { id: org, name: 'Fixture Organization', slug: 'fixture', owner_user_id: uid } },
@@ -18,7 +21,7 @@ const state = window.__psFixture = { calls: [], failNext: null, aiConsent: local
     { channel_id: 'org-dm', member_kind: 'user', member_id: 'user-colleague' },
     { channel_id: 'org-pepper-dm', member_kind: 'user', member_id: uid }, { channel_id: 'org-pepper-dm', member_kind: 'crew', member_id: 'crew-pepper-org' }, // 옛 조직 1:1
   ],
-  msgr_messages: [],
+  msgr_messages: [legacyMsg(1, '지난주 보고서 정리해 줘'), legacyMsg(2, '정리했습니다 — 요약은 아래에', true), legacyMsg(3, '오늘 회의 안건도 올려 두었습니다', true)],
   msgr_channel_crew_requests: [{ id: 'req-alice', channel_id: 'pdm-alice', crew_id: 'pcrew-alice2', requested_by: 'user-alice', status: 'pending' }], // 친구가 자기 에이전트를 1:1에 넣겠다고 요청(승인자 = 방을 연 나)
   msgr_target_prefs: [], msgr_channel_prefs: [],
   // Friends fixture
@@ -55,14 +58,16 @@ function result(call, action) {
 }
 
 function query(table) {
-  let op = 'select', values, cols = '*', one = false;
+  let op = 'select', values, cols = '*', one = false, countOpt = null;
   const filters = [], eqs = []; // eqs: 호출 기록에 남기는 등호 조건(가상 조직 id가 서버로 새는지 검사)
   const api = {
-    select(c = '*') { cols = c; return api; }, eq(k, v) { eqs.push([k, v]); filters.push(r => r[k] === v); return api; }, neq(k, v) { filters.push(r => r[k] !== v); return api; }, is(k, v) { filters.push(r => (r[k] ?? null) === v); return api; },
+    select(c = '*', opts = null) { cols = c; countOpt = opts; return api; }, eq(k, v) { eqs.push([k, v]); filters.push(r => r[k] === v); return api; }, neq(k, v) { filters.push(r => r[k] !== v); return api; }, is(k, v) { filters.push(r => (r[k] ?? null) === v); return api; },
     in(k, vs) { filters.push(r => vs.includes(r[k])); return api; }, gt(k, v) { filters.push(r => r[k] > v); return api; }, lt(k, v) { filters.push(r => r[k] < v); return api; },
     order() { return api; }, limit() { return api; }, contains() { return api; }, or() { return api; }, ilike() { return api; }, maybeSingle() { one = true; return api; }, single() { one = true; return api; },
     upsert(v) { op = 'upsert'; values = v; return api; }, update(v) { op = 'update'; values = v; return api; }, delete() { op = 'delete'; return api; }, insert(v) { op = 'insert'; values = v; return api; },
     then(resolve, reject) {
+      const slow = state.slow?.[`${table}:${op}`]; // 화면 확인용 지연(window.__psFixture.slow = { 'msgr_crews:select': 1500 }) — 돌리는 동안 연타(검수 #5)
+      if (slow) { const ms = slow; state.slow[`${table}:${op}`] = 0; return new Promise((r) => setTimeout(r, ms)).then(() => api.then(resolve, reject)); }
       return Promise.resolve(result({ table, op, values, eqs }, () => {
         const all = table === 'msgr_channel_members' && op === 'select' // 개인 방 구성원(사람·크루)도 같은 표로 보인다 — 서버와 같게
           ? [...(state.tables.msgr_channel_members ?? []), ...(state.tables.msgr_personal_members ?? []), ...state.tables.msgr_personal_list.flatMap((r) => [
@@ -80,7 +85,7 @@ function query(table) {
         else if (op === 'delete') state.tables[table] = all.filter(r => !rows.includes(r));
         if (table === 'msgr_channel_members' && cols.includes('msgr_channels')) rows = rows.map(r => ({ ...r, msgr_channels: [...(state.tables.msgr_channels || []), ...(state.tables.msgr_personal_channels || [])].find(c => c.id === r.channel_id) }));
         return structuredClone(one ? rows[0] ?? null : rows);
-      })).then(resolve, reject);
+      })).then((r) => (countOpt?.count && !r.error ? { data: countOpt.head ? null : r.data, count: r.data.length, error: null } : r)).then(resolve, reject); // select('id', { count, head }) — 서버처럼 개수만
     },
   };
   return api;
@@ -141,7 +146,7 @@ export const supabase = {
       return 'joined';
     }
     if (name === 'msgr_crew_join_decide') { const r = state.tables.msgr_channel_crew_requests.find((x) => x.id === args.req); if (!r) throw new Error('msgr_request_closed'); r.status = args.approve ? 'approved' : 'rejected'; return r.status; }
-    if (name === 'msgr_unread') return [];
+    if (name === 'msgr_unread') return legacyUnread && args?.org === org ? [{ channel_id: 'org-pepper-dm', n: 2, mention: 0 }] : [];
     if (name === 'msgr_joinable_orgs') return [];
     if (name === 'msgr_my_deleted_orgs') return [];
     if (name === 'msgr_find_user') return [{ user_id: 'user-newbie', display_name: 'New Person', handle: 'newbie', relation: 'none' }]; // 친구 추가 팝업(2026-09-30)
