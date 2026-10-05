@@ -8,9 +8,17 @@ import { useLang, stageLabel } from '../../i18n';
 import { useAppUpdate } from '../../use-app-update';
 import { MOVE_REQUIRED } from '../../update-location.mjs';
 import UpdateNotes from '../../update-notes';
+import { updateNotesBlocked } from '../../update-notes-state.mjs';
 import { SplitPane } from './split-pane';
 import { parseSide, sideParam, withSide } from './split.mjs';
 import { useSplitAlive } from './split-alive';
+import { nextCompanyData, brokenCardsOf } from './company-load.mjs';
+import BrokenCardsNote from './broken-cards-note';
+import { watchTopbarContent, fitTopbar, isTopbarOver, TOPBAR_ATTRS } from './topbar-fit.mjs';
+import { emitSearch } from './search-bus.mjs'; // 상단 검색 → 데크·활동·기억(UL10)
+import { drawerKeyAction, drawerFocusTarget, drawerTabAction, drawerAttrs, drawerEnds } from './drawer.mjs'; // 폰 폭 서랍 Esc·포커스·Tab 순환·dialog 속성(UL9·2차 L4)
+import { searchScope } from './search-scope.mjs'; // 검색을 받는 화면에서만 검색 칸(UX-A03)
+import { gistLabel } from '../../lib/gist-display.mjs'; // 메신저 머리말을 뗀 요약(UX-A08)
 
 const fmtRun = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
 const fmtDur = (ms) => (ms == null ? '' : ms >= 60000 ? `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s` : `${Math.round(ms / 1000)}s`);
@@ -76,7 +84,7 @@ function TasksDock({ ws, data, open, setOpen }) {
               <Link key={i} className="task-row" href={e.slug ? `/c/${ws}/crew/${e.slug}` : `/c/${ws}/activity`} onClick={() => setOpen(false)}>
                 <span style={{ width: 6, height: 6, borderRadius: 999, flex: 'none', background: e.ok ? 'var(--ok)' : 'var(--danger)' }} aria-hidden="true" />
                 <span className="t-main">
-                  <span className="t-title">{e.gist || t(`tasks.type.${e.type}`)}</span>
+                  <span className="t-title">{gistLabel(e.gist, t) || t(`tasks.type.${e.type}`)}</span>
                   <span className="t-sub">
                     {[e.gist ? t(`tasks.type.${e.type}`) : '', e.slug ?? '', e.ok ? '' : t('tasks.failed')].filter(Boolean).join(' · ')}
                   </span>
@@ -104,6 +112,34 @@ function Shell({ children, params }) {
   const { ws } = use(params);
   const { t, lang } = useLang(); // lang은 상단바 재판정 deps — fitBar 참조
   const pathname = usePathname();
+  // 폰 폭(≤900px) 사이드바 서랍 — 본문 위에 메뉴가 730px 쌓이던 것(UX-A04). 이동하면 닫힌다
+  const [sideOpen, setSideOpen] = useState(false);
+  useEffect(() => { setSideOpen(false); }, [pathname]);
+  // 서랍이 열려 있는 동안(폰 폭에서만): 포커스는 서랍 안으로, Tab은 서랍 안에서 순환, Esc·배경막 클릭은 닫고 포커스를 열기 버튼으로 되돌린다(UL9·2차 L4 — 키보드·화면 낭독기 사용자가 서랍 뒤 본문·상단바로 나갔다).
+  // 서랍 속성(role="dialog" aria-modal)과 순환은 폰 폭(≤900px)에서 열렸을 때만 — 데스크톱의 고정 사이드바는 대화상자가 아니라 영향 0. 창이 넓어지면 서랍 상태를 접는다.
+  const sideRef = useRef(null);
+  const sideToggleRef = useRef(null);
+  const [phone, setPhone] = useState(false);
+  useEffect(() => {
+    // 폰 폭 판정은 CSS가 한다 — 열기 버튼(.side-toggle)이 보이는 폭 = 서랍 폭(globals.css @media). JS에 폭 숫자를 복제하지 않는다(matchMedia 판정은 split-alive 훅 한 곳 — room-side-panel 스위프).
+    const sync = () => { const on = !!sideToggleRef.current && getComputedStyle(sideToggleRef.current).display !== 'none'; setPhone(on); if (!on) setSideOpen(false); };
+    sync(); window.addEventListener('resize', sync);
+    return () => window.removeEventListener('resize', sync);
+  }, []);
+  const closeDrawer = useCallback(() => { setSideOpen(false); sideToggleRef.current?.focus(); }, []);
+  const drawerOn = sideOpen && phone;
+  useEffect(() => {
+    if (!drawerOn) return;
+    drawerFocusTarget(sideRef.current)?.focus();
+    const onKey = (e) => {
+      if (drawerKeyAction({ key: e.key, open: true, composing: e.isComposing, defaultPrevented: e.defaultPrevented }) === 'close') { closeDrawer(); return; }
+      const { first, last } = drawerEnds(sideRef.current);
+      const move = drawerTabAction({ key: e.key, open: true, shiftKey: e.shiftKey, active: document.activeElement, first, last, container: sideRef.current });
+      if (move) { e.preventDefault(); (move === 'first' ? first : last)?.focus(); }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [drawerOn, closeDrawer]);
   const router = useRouter();
   // 좌우 2분할 보조 패널 — 상태는 ?side= 하나. 레이아웃 안의 내부 링크는 전부 withSide를 통과해
   // 주 화면을 옮겨도 패널이 유지된다. 닫기 = side 쿼리 제거.
@@ -133,10 +169,10 @@ function Shell({ children, params }) {
   // (globals.css: #argo-topbar-slot에 min-width:0 금지), 그러면 겹침이 **문서 가로 넘침**으로 바뀔 뿐이라
   // (실측: 영어+긴 라벨 유효 952에서 263px) 수용 자체를 폭이 아니라 넘침으로 판정한다.
   //
-  // 절차: ① 가장 넓은 상태로 되돌리고 ② 넘치면 정보 가치가 낮은 축(스페이서·버전·시계)을 접고
-  // ③ 그래도 넘치면 슬롯을 인라인 밴드로 내린다. 매번 ①에서 시작하므로 되돌아갈 수 없는 래칫이
-  // 생기지 않고, 히스테리시스 장치도 필요 없다. 판정 결과는 루트 속성으로 내려 CSS가 실행한다 —
-  // React 상태로 두면 접은 상태를 **동기적으로** 되돌릴 수 없어 ①이 성립하지 않는다.
+  // 절차: 가장 넓은 상태에서 시작해 넘치지 않는 첫 단계까지 한 단계씩 접는다(topbar-fit.mjs TOPBAR_STAGES, 2차 검수 M1):
+  // 시계·버전·스페이서 → 새 소식 칩 라벨 → 오류 칩 라벨(가장 늦게) → 슬롯을 인라인 밴드로(밴드로 내려 자리가 생기면 칩 라벨은 다시 펼친다).
+  // 매번 처음에서 시작하므로 되돌아갈 수 없는 래칫이 생기지 않고, 히스테리시스 장치도 필요 없다. 판정 결과는 루트 속성으로 내려 CSS가 실행한다 —
+  // React 상태로 두면 접은 상태를 **동기적으로** 되돌릴 수 없어 처음에서 시작할 수 없다.
   //
   // 배율 인지: scrollWidth/clientWidth는 배율이 적용된 레이아웃 픽셀이라 유효 폭 환산이 필요 없다.
   // @media(max-width:900px)의 슬롯→밴드 전환은 실 뷰포트 축으로 그대로 둔다(둘은 상보).
@@ -154,12 +190,7 @@ function Shell({ children, params }) {
     }
     const bar = barRef.current;
     if (!bar) return;
-    root.removeAttribute('data-narrow-bar');
-    root.removeAttribute('data-narrow-shell');
-    const over = () => bar.scrollWidth > bar.clientWidth + 1; // +1 = 서브픽셀 반올림 여유
-    if (!over()) return;
-    root.setAttribute('data-narrow-bar', '');
-    if (over()) root.setAttribute('data-narrow-shell', '');
+    fitTopbar(root, () => isTopbarOver(bar)); // isTopbarOver = scrollWidth(+1 여유) + 마지막 자식이 오른쪽 패딩을 침범하는지(L3)
   }, []);
   useEffect(() => {
     fitBar();
@@ -171,14 +202,15 @@ function Shell({ children, params }) {
     if (contentRef.current) ro.observe(contentRef.current);
     const slot = document.getElementById('argo-topbar-slot');
     if (slot) ro.observe(slot);
+    // 칩('새 소식'·'새로 고침 실패')·배지가 생기거나 사라지면 바 크기는 그대로라 위 관찰기가 안 돈다 — 자식 변화를 따로 본다(UM1)
+    const stopWatch = watchTopbarContent(barRef.current, fitBar);
     window.addEventListener('resize', fitBar);
     window.addEventListener('argo:zoom', fitBar);
     return () => {
-      ro.disconnect();
+      ro.disconnect(); stopWatch();
       window.removeEventListener('resize', fitBar); window.removeEventListener('argo:zoom', fitBar);
       // 회사 셸 밖으로 나가면 속성도 걷는다(검수 1R LOW-2)
-      document.documentElement.removeAttribute('data-narrow-bar');
-      document.documentElement.removeAttribute('data-narrow-shell');
+      for (const attr of Object.values(TOPBAR_ATTRS)) document.documentElement.removeAttribute(attr);
     };
   }, [fitBar]);
   // 인증 상태 — 사이드바 하단에 로그인 이메일·로그아웃 노출(로컬 모드면 owner 표기 유지)
@@ -219,17 +251,25 @@ function Shell({ children, params }) {
     }
   }, [data, seen, pathname, ws, seenKey]);
 
+  // 조회 실패 — 진짜 없음(404 company_not_found)만 '찾을 수 없음' 화면, 그 밖(순단·401·500)은 보던 화면을 유지하고
+  // 상단바에 '다시 시도'를 띄운다(F3, 2026-10-05: 한 번의 실패로 화면 전체가 '회사를 찾을 수 없습니다'가 됐다).
+  const [loadFailed, setLoadFailed] = useState(false);
   const refresh = useCallback(() => {
-    api(`/api/companies/${ws}?light=1`).then(setData).catch(() => setData({ missing: true }));
+    api(`/api/companies/${ws}?light=1`)
+      .then((d) => { setData(d); setLoadFailed(false); })
+      .catch((e) => { setData((prev) => nextCompanyData(prev, e)); setLoadFailed(true); });
   }, [ws]);
   // 팀 이름 변경 — 데크 크루 목록(삭제)에서 옮겨왔다. 그룹 헤더 호버 ✎ → 인앱 InputModal(window.prompt는 Tauri 무동작)
   const [renameTeam, setRenameTeam] = useState(null);
+  const [shellNote, setShellNote] = useState(''); // 셸 조작 실패 안내(팀 이름 변경 등) — 상단바 아래 한 줄
   const doRenameTeam = useCallback(async (to) => {
     const from = renameTeam; setRenameTeam(null);
     if (!to?.trim() || to.trim() === from) return;
-    await fetch(`/api/companies/${ws}/agents`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ from, to: to.trim() }) }).catch(() => {});
+    // 결과 확인 — 실패를 성공처럼 닫던 결함(검증 추가 항목, 2026-10-05). 실패면 이유를 한 줄로 알린다.
+    const r = await fetch(`/api/companies/${ws}/agents`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ from, to: to.trim() }) }).catch(() => null);
+    if (!r?.ok) setShellNote((await r?.json().catch(() => ({})))?.error || t('deck.renameTeamFail'));
     refresh();
-  }, [renameTeam, ws, refresh]);
+  }, [renameTeam, ws, refresh, t]);
 
   // 크루 고정/해제 — company.json.crewPinned 갱신 후 재조회. 비파괴·즉시(확인 불필요).
   const togglePin = useCallback(async (slug) => {
@@ -313,7 +353,7 @@ function Shell({ children, params }) {
 
   // 헤더 검색 → 페이지가 구독해 목록을 필터링한다.
   useEffect(() => {
-    window.dispatchEvent(new CustomEvent('argo:search', { detail: q }));
+    emitSearch(window, q);
   }, [q]);
   useEffect(() => { setQ(''); }, [pathname]);
 
@@ -360,7 +400,8 @@ function Shell({ children, params }) {
 
   return (
     <div className="shell">
-      <aside className="side">
+      {sideOpen && <div className="side-backdrop" onClick={closeDrawer} aria-hidden="true" />}
+      <aside className={`side${sideOpen ? ' open' : ''}`} id="argo-side" ref={sideRef} tabIndex={-1} {...drawerAttrs({ open: sideOpen, phone, label: t('nav.menu') })}>
         <Link href="/" className="nav-item" style={{ gap: 8, marginBottom: 4 }}>
           <span style={{ color: 'var(--fg)', display: 'inline-flex' }}><StarMark size={15} /></span>
           <span className="mono" style={{ fontWeight: 600, fontSize: 13, color: 'var(--fg)', letterSpacing: '0.16em' }}>ARGO</span>
@@ -383,7 +424,7 @@ function Shell({ children, params }) {
           <Icon name="clock" size={16} /> {t('nav.routines')}
         </Link>
         <Link href={L(`/c/${ws}/activity`)} onClick={navClick(`/c/${ws}/activity`)} className={`nav-item${pathname.endsWith('/activity') ? ' active' : ''}`}>
-          <Icon name="bolt" size={16} /> {t('nav.activity')}
+          <Icon name="pulse" size={16} /> {t('nav.activity')}
         </Link>
         <Link href={L(`/c/${ws}/mail`)} onClick={navClick(`/c/${ws}/mail`)} className={`nav-item${pathname.endsWith('/mail') ? ' active' : ''}`}>
           <Icon name="mail" size={16} /> {t('nav.mail')}
@@ -494,6 +535,7 @@ function Shell({ children, params }) {
           </div>
           );
         })}
+        {brokenCardsOf(data) && <BrokenCardsNote broken={brokenCardsOf(data)} onRetry={refresh} />} {/* 못 읽은 크루 카드 — 누르면 파일 위치·다시 읽기(L2·2차 L7) */}
         <Link
           href={L(`/c/${ws}`)}
           className="nav-item"
@@ -554,6 +596,11 @@ function Shell({ children, params }) {
 
       <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
         <header className="topbar" ref={barRef}>
+          {/* 폰 폭에서만 보인다(globals.css .side-toggle) — 사이드바 서랍 열기 */}
+          <button type="button" className="btn sm btn-icon side-toggle" ref={sideToggleRef} onClick={() => setSideOpen((v) => !v)}
+            aria-label={t('nav.menu')} aria-expanded={sideOpen} aria-controls="argo-side" style={{ flex: 'none' }}>
+            <Icon name="menu" size={15} />
+          </button>
           <span className="topbar-title" title={title}>{title}</span>
           {/* 페이지별 컨트롤 슬롯 — 크루 채팅이 세션 상태·카드·새 대화를 포털로 꽂는다(스티키 헤더 대체).
               display 포함 전부 CSS(globals #argo-topbar-slot) — 인라인 display가 있으면 좁은 셸(≤900px)의
@@ -579,26 +626,53 @@ function Shell({ children, params }) {
               v{appVersion}
             </span>
           ))}
+          {loadFailed && data?.company && (
+            // 접힌 칩은 아이콘(↻)만 남는다 — 점만 남으면 뜻도 누를 수 있다는 것도 알 수 없었다(2차 M2). 이름은 aria-label이 지킨다
+            <button type="button" className="chip topbar-chip topbar-chip-error" onClick={refresh} title={t('shell.reloadFailHint')} aria-label={t('shell.reloadFail')}
+              style={{ flex: 'none', cursor: 'pointer', color: 'var(--danger)', borderColor: 'currentColor' }}>
+              <span className="dot" aria-hidden="true" /><span className="chip-icon"><Icon name="refresh" size={14} /></span><span className="chip-label">{t('shell.reloadFail')}</span>
+            </button>
+          )}
+          {/* 이번 업데이트 칩 자리 — UpdateNotes가 접힌 안내를 여기에 그린다(덮는 것 없는 자리, UX-A01) */}
+          <span id="argo-topbar-notes" style={{ display: 'contents' }} />
           <Clock />
           <TasksDock ws={ws} data={tasks} open={dockOpen} setOpen={setDockOpen} />
+          {/* 검색은 받는 화면(데크·활동·기억)에서만 — 다른 화면에선 입력해도 반응이 없던 죽은 칸(UX-A03). 무엇을 찾는지 placeholder로 */}
+          {searchScope(pathname, ws) && (
           <label className="search-pill">
             <Icon name="search" size={14} />
-            <input suppressHydrationWarning placeholder={t('common.search')} value={q} onChange={(e) => setQ(e.target.value)} />
+            <input suppressHydrationWarning placeholder={t(`search.${searchScope(pathname, ws)}`)} aria-label={t(`search.${searchScope(pathname, ws)}`)} value={q} onChange={(e) => setQ(e.target.value)} />
             {q && (
               <button onClick={() => setQ('')} style={{ color: 'var(--fg-3)', fontSize: 12, fontWeight: 700 }} aria-label={t('common.clear')}>✕</button>
             )}
           </label>
+          )}
         </header>
 
         <div className="content-row">
         <main ref={contentRef} className="content" style={{ width: '100%' }}>
+          {shellNote && (
+            <p role="alert" style={{ margin: '0 0 12px', fontSize: 12.5, color: 'var(--danger)', display: 'flex', gap: 8, alignItems: 'center' }}>
+              {shellNote}
+              <button type="button" className="btn sm" onClick={() => setShellNote('')} aria-label={t('common.close')}>×</button>
+            </p>
+          )}
           {data?.missing ? (
             <div className="empty" style={{ marginTop: 40 }}>
               {t('shell.notFound')} <Link href="/" style={{ color: 'var(--primary-strong)', fontWeight: 700 }}>{t('shell.backHome')}</Link>
             </div>
+          ) : data?.loadError ? (
+            // 처음부터 못 받았다 — 없음이 아니라 일시 실패다. 다시 시도와 홈 길을 함께 준다(F3).
+            <div className="empty" style={{ marginTop: 40, display: 'grid', gap: 12, justifyItems: 'center' }}>
+              <span>{t('shell.loadFail')}</span>
+              <span style={{ display: 'flex', gap: 8 }}>
+                <button type="button" className="btn btn-primary sm" onClick={refresh}>{t('common.retry')}</button>
+                <Link href="/" className="btn sm" style={{ textDecoration: 'none' }}>{t('shell.backHome')}</Link>
+              </span>
+            </div>
           ) : children}
         </main>
-        {side && !data?.missing && (
+        {side && !data?.missing && !data?.loadError && (
           <SplitPane ws={ws} side={side} sideStr={sideStr} onClose={closeSide}
             title={side.type === 'crew' ? (agents.find((a) => a.slug === side.key)?.name ?? side.key) : side.key.split('/').pop().replace(/\.md$/, '')}
             subtitle={side.type === 'crew' ? (agents.find((a) => a.slug === side.key)?.role || '') : ''} />
@@ -611,7 +685,7 @@ function Shell({ children, params }) {
       )}
       {fbOpen && <FeedbackModal onClose={() => setFbOpen(false)} />}
       <UpdateNotes current={appVersion} ready={versionReady} isApp={updIsApp}
-        blocked={!data || data.missing || !tasks || !!tasks.running?.length || dockOpen || fbOpen || renameTeam != null || ['checking', 'installing', 'ready'].includes(updPhase)} />
+        blocked={updateNotesBlocked({ data, tasks, dockOpen, fbOpen, renameTeam, updPhase })} />
     </div>
   );
 }

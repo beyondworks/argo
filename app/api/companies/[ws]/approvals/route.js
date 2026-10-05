@@ -2,7 +2,8 @@ import { loadApprovals } from '../../../../../src/approvals.mjs';
 import { resolveWithFollowUp } from '../../../../../src/approval-actions.mjs';
 import { approvalRisk } from '../../../../../src/approval-risk.mjs';
 import { listAgents } from '../../../../../src/hub.mjs';
-import { guardCompany, csrfDenied } from '../../../../auth.mjs';
+import { guardCompany, csrfDenied, requestLang } from '../../../../auth.mjs';
+import { apiErrorFrom } from '../../../../apimsg.mjs';
 
 export async function GET(_req, { params }) {
   const { ws } = await params;
@@ -33,6 +34,6 @@ export async function POST(req, { params }) {
     const item = await resolveWithFollowUp(ws, id, !!approve);
     return Response.json({ item });
   } catch (e) {
-    return Response.json({ error: String(e.message || e) }, { status: 400 });
+    return apiErrorFrom(e, await requestLang(), 400); // 엔진 오류 코드(없음·이미 처리·조직 정책) → 화면 언어 문구(F11)
   }
 }

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Tabs, useRememberedTab, Icon, Avatar, Spinner, Skeleton, DangerModal, ConfirmModal, api, imeGuard, isTauriApp, artifactDownload, openBillingPortal, openFolderDialog, isFolderDialogBroken, FOLDER_DIALOG_EVENT } from '../../../ui';
 import { useLang, adjustZoom } from '../../../i18n';
+import { failureReason, responseError } from '../../../lib/error-text.mjs'; // 실패 이유 — 빈 이유·브라우저 원문 없이(UL5)
 import { useTheme, THEMES } from '../../../theme';
 import { AiConnectionCard, fieldStyle, usableRunnerNames } from '../../../runner-connect';
 import { useAppUpdate } from '../../../use-app-update';
@@ -12,18 +13,19 @@ import { MOVE_REQUIRED } from '../../../update-location.mjs';
 import LocalAssetImport from '../../../components/LocalAssetImport';
 import { proRowActive, trialBadgeState } from '../../../../src/entitlement.mjs';
 
-// Argo Messenger(팀 메신저) 설치파일 — 릴리스 repo의 고정 파일명(release-messenger.yml Collect 스텝이 매 릴리스 갱신).
-const MSGR_RELEASES = 'https://github.com/beyondworks/argo-messenger/releases/latest';
-const MSGR_DL = {
-  silicon: `${MSGR_RELEASES}/download/argo-messenger-macos-apple-silicon.dmg`,
-  intel: `${MSGR_RELEASES}/download/argo-messenger-macos-intel.dmg`,
-  win: `${MSGR_RELEASES}/download/argo-messenger-windows-setup.exe`,
-};
+// Argo Messenger 받기 — 맥·윈도우 설치파일만 걸던 것을 앱 스토어·Play까지 있는 안내 페이지 한 곳으로(CX-12). 오피스는 웹 주소(CX-13).
+import { MESSENGER_PAGE, OFFICE_URL, msgrCardView, runtimeWaitingKey, runtimeAction } from './msgr-card.mjs';
+import ArchivedCompaniesCard from '../../../archived-companies'; // 보관한 회사 되돌리기 — 홈에도 같은 카드(UM3)
+import { trashFailKind } from './trash-fail.mjs'; // 보관함 항목이 이미 사라졌는지(2차 M3)
+import { saveWithRevert } from './save-revert.mjs'; // 저장 실패면 되돌린다(F9)
+import { syncErrorView } from './sync-error.mjs'; // 동기화 원문 → 사용자 문구(F10)
+import { listView } from '../../../lib/list-view.mjs'; // 조회 실패 ≠ 비어 있음(F12)
 
 const CONTACT = process.env.NEXT_PUBLIC_ARGO_CONTACT || '';
 // 설정 탭 — 각 카드는 정확히 한 탭에만 속한다(test/tabs-layout). 렌더 순서: 작은 카드 → 전폭(.wide) 카드.
 const SETTINGS_TABS = ['general', 'ai', 'connections', 'devices', 'danger'];
 import { checkoutUrl } from './checkout-link.mjs';
+import { gistLabel } from '../../../lib/gist-display.mjs'; // 메신저 머리말을 뗀 요약(UX-A08)
 const LS_MONTHLY = process.env.NEXT_PUBLIC_LS_CHECKOUT_MONTHLY || '';
 const LS_YEARLY = process.env.NEXT_PUBLIC_LS_CHECKOUT_YEARLY || '';
 
@@ -242,6 +244,7 @@ function Settings({ params }) {
         {archiveErr && <p role="alert" style={{ flexBasis: '100%', fontSize: 12, color: 'var(--danger)', margin: 0 }}>{archiveErr}</p>}
       </div>
       </div>
+      <div className="cardrow"><ArchivedCompaniesCard /></div>
       </div>
       )}
 
@@ -385,13 +388,16 @@ function FullAutoCard({ ws }) {
 function CrewLanguageCard({ ws, sysLang }) {
   const { t } = useLang();
   const [cur, setCur] = useState(sysLang === 'en' ? 'en' : 'ko');
+  const [err, setErr] = useState('');
   useEffect(() => { setCur(sysLang === 'en' ? 'en' : 'ko'); }, [sysLang]);
-  const pick = (code) => {
-    setCur(code);
-    fetch(`/api/companies/${ws}`, {
-      method: 'PUT', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ lang: code }),
-    }).then(() => window.dispatchEvent(new Event('argo:refresh'))).catch(() => {});
+  // 저장 실패면 이전 값으로 되돌리고 안내한다(F9 — 실패해도 화면은 바뀐 값이었다)
+  const pick = async (code) => {
+    if (code === cur) return;
+    setErr('');
+    const ok = await saveWithRevert({ prev: cur, next: code, apply: setCur,
+      save: async (v) => (await fetch(`/api/companies/${ws}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ lang: v }) })).ok });
+    if (ok) window.dispatchEvent(new Event('argo:refresh'));
+    else setErr(t('settings.saveFailReverted'));
   };
   return (
     <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -413,6 +419,7 @@ function CrewLanguageCard({ ws, sysLang }) {
           </button>
         ))}
       </div>
+      {err && <span role="alert" style={{ fontSize: 12, color: 'var(--danger)' }}>{err}</span>}
     </div>
   );
 }
@@ -755,38 +762,57 @@ function ImportCard({ ws }) {
 
 /** 보관함 — 삭제된 대화(회사 전체)를 모아 복구·영구삭제. 삭제=chats/.trash/로 이동(비파괴). */
 function TrashCard({ ws }) {
-  const { t } = useLang();
+  const { t, lang } = useLang();
   const [items, setItems] = useState(null);
   const [busy, setBusy] = useState('');            // 처리 중 항목 id
   const [purgeTarget, setPurgeTarget] = useState(null);
+  const [loadFailed, setLoadFailed] = useState(false); // 조회 실패 — '비어 있습니다'로 보이지 않게(F12)
+  const [actionErr, setActionErr] = useState('');     // 복구·영구 삭제 실패 안내(F12 — 무표시였다)
   const load = useCallback(() => {
-    api(`/api/companies/${ws}/trash`).then((d) => setItems(d.items ?? [])).catch(() => setItems([]));
+    setLoadFailed(false);
+    api(`/api/companies/${ws}/trash`).then((d) => setItems(d.items ?? [])).catch(() => { setItems(null); setLoadFailed(true); });
   }, [ws]);
   useEffect(load, [load]);
   async function restore(it) {
-    setBusy(it.id);
+    setBusy(it.id); setActionErr('');
     try { await api(`/api/companies/${ws}/trash`, { id: it.id }); load(); }
-    catch { /* 실패는 다음 시도 */ } finally { setBusy(''); }
+    catch (e) {
+      // 항목이 이미 사라졌으면(다른 곳에서 복구·삭제) 다시 눌러도 같은 결과 — 안내하고 목록을 다시 읽어 그 항목을 뺀다(2차 M3)
+      if (trashFailKind(e) === 'gone') { setActionErr(failureReason(e, t)); load(); }
+      else setActionErr(t('settings.trash.restoreFail', { msg: failureReason(e, t) }));
+    } finally { setBusy(''); }
   }
   async function doPurge() {
     const it = purgeTarget; setPurgeTarget(null);
     if (!it) return;
-    setBusy(it.id);
-    try { await fetch(`/api/companies/${ws}/trash?id=${encodeURIComponent(it.id)}`, { method: 'DELETE' }); load(); }
-    catch { /* */ } finally { setBusy(''); }
+    setBusy(it.id); setActionErr('');
+    try {
+      const r = await fetch(`/api/companies/${ws}/trash?id=${encodeURIComponent(it.id)}`, { method: 'DELETE' });
+      if (!r.ok) throw responseError(r, await r.json().catch(() => ({})), lang); // 오류 코드·상태를 실어 failureReason이 상태별 문구를 고른다
+      load();
+    } catch (e) {
+      if (trashFailKind(e) === 'gone') { setActionErr(failureReason(e, t)); load(); }
+      else setActionErr(t('settings.trash.purgeFail', { msg: failureReason(e, t) }));
+    } finally { setBusy(''); }
   }
+  const view = listView(items, loadFailed);
   return (
     <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
       <span className="card-title">{t('settings.trash')}{items?.length ? ` · ${items.length}` : ''}</span>
       <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('settings.trash.desc')}</p>
-      {items === null ? <Skeleton h={40} /> : items.length === 0 ? (
+      {view === 'error' ? (
+        <span role="alert" style={{ fontSize: 12.5, color: 'var(--danger)', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          {t('settings.trash.loadFail')}
+          <button type="button" className="btn sm" onClick={load}>{t('common.retry')}</button>
+        </span>
+      ) : view === 'loading' ? <Skeleton h={40} /> : view === 'empty' ? (
         <span style={{ fontSize: 12.5, color: 'var(--fg-3)' }}>{t('settings.trash.empty')}</span>
       ) : (
         <div style={{ display: 'grid', gap: 6 }}>
           {items.map((it) => (
             <div key={it.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', border: '1px solid var(--border-soft)', borderRadius: 10, minWidth: 0 }}>
               <span style={{ minWidth: 0, flex: 1 }}>
-                <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.title || it.gist || t('chat.sessions.untitled')}</span>
+                <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.title || gistLabel(it.gist, t) || t('chat.sessions.untitled')}</span>
                 <span className="nav-sub">{it.crew} · {new Date(it.ts).toLocaleDateString('sv-SE')} · {t('chat.sessions.msgs', { n: it.count })}</span>
               </span>
               <button type="button" className="btn sm" style={{ flex: 'none' }} disabled={busy === it.id} onClick={() => restore(it)}>
@@ -799,6 +825,7 @@ function TrashCard({ ws }) {
           ))}
         </div>
       )}
+      {actionErr && <p role="alert" style={{ margin: 0, fontSize: 12, color: 'var(--danger)' }}>{actionErr}</p>}
       {purgeTarget && (
         <ConfirmModal
           title={t('settings.trash.purgeTitle')}
@@ -878,14 +905,15 @@ function MsgrCard({ ws, agents }) {
     .then((d) => { setSt(d); setOrgId((cur) => cur && d.orgs?.some((o) => o.id === cur) ? cur : (d.orgs?.[0]?.id ?? '')); })
     .catch(() => { setSt({ signedIn: false, orgs: [], crews: [] }); setErr(t('settings.msgr.err.load')); }), [ws, t]);
   useEffect(() => { load(); }, [load]);
+  const view = msgrCardView({ st, orgId, agents }); // 서버 응답 → 카드 판정 한 곳(msgr-card.mjs) — 폴 조건과 문구가 같은 판정을 쓴다(UL7)
   useEffect(() => {
-    if (!st?.signedIn || !st.crews?.some((crew) => crew.status === 'active')) return;
+    if (!view.polling) return; // 개인 공간만 쓰는 사용자는 폴이 안 돈다 — 문구도 '다시 확인' 단추로 안내(폴을 늘리지 않는다: DB·서버 부하)
     const timer = setInterval(load, 8000);
     return () => clearInterval(timer);
-  }, [st?.signedIn, st?.crews, load]);
+  }, [view.polling, load]);
   const regOf = (slug) => st?.crews?.find((r) => r.org_id === orgId && r.slug === slug && r.status === 'active');
   const rowOf = (slug) => st?.crews?.find((r) => r.org_id === orgId && r.slug === slug); // 행이 없으면 해제가 아니라 메신저에 올라간 적 없음(유건 제보 2026-09-17: 한 번도 안 올라간 크루가 '파견 해제됨'으로 보였다)
-  const regCount = agents.filter((a) => regOf(a.slug)).length;
+  const { regCount, personalCount, chip, showRuntime } = view; // personalCount = 개인 공간(조직 없음)에 연결된 크루 수 — 조직이 없어도 연결 상태를 보인다(CX-12)
   const missing = agents.filter((a) => !regOf(a.slug));
   const org = st?.orgs?.find((o) => o.id === orgId);
   const policyLine = org?.policy ? t('settings.msgr.policy.summary', { allow: t(`settings.msgr.allow.${org.policy.allow_default}`) + (org.policy.allow_locked ? t('settings.msgr.policy.locked') : ''), approver: t(`settings.msgr.policy.approver.${org.policy.approval_high_by ?? 'admin'}`), memory: (org.policy.crew_memory_default === false ? t('settings.msgr.policy.memory.off') : t('settings.msgr.policy.memory.on')) + (org.policy.crew_memory_locked ? t('settings.msgr.policy.locked') : '') }) : '';
@@ -923,28 +951,44 @@ function MsgrCard({ ws, agents }) {
           : runtime?.state === 'noCrews' ? t('settings.msgr.runtime.noCrews')
             : runtime?.state === 'reconnecting' ? t('settings.msgr.runtime.reconnecting')
             : runtime?.state === 'offline' ? t('settings.msgr.runtime.offline')
-              : t('settings.msgr.runtime.waiting');
-  const canReconnect = runtime && !['alive', 'login', 'owner', 'noCrews'].includes(runtime.state);
+              : t(runtimeWaitingKey(view.polling));
+  const [rechecking, setRechecking] = useState(false);
+  async function recheck() { if (rechecking) return; setRechecking(true); try { await load(); } finally { setRechecking(false); } } // 폴이 없는 때의 수동 확인(UL7)
+  const action = runtime ? runtimeAction(runtime.state, { polling: view.polling }) : null; // 상태별 단추 하나(2차 L6)
+  const runtimeButton = action === 'login' ? (
+    <Link className="btn sm" href="/login">{t('home.signIn')}</Link>
+  ) : action === 'reconnect' ? (
+    <button type="button" className="btn sm" disabled={reconnecting} onClick={reconnectBridge}>{reconnecting ? <Spinner size={12} /> : t('settings.msgr.runtime.reconnect')}</button>
+  ) : action === 'recheck' ? (
+    <button type="button" className="btn sm" disabled={rechecking} onClick={recheck}>{rechecking ? <Spinner size={12} /> : t('settings.msgr.runtime.recheck')}</button>
+  ) : null;
 
   return (
     <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
         <span className="card-title" style={{ minWidth: 0 }}>{t('settings.msgr.title')}</span>
-        {st?.signedIn && <span className="chip" title={t('settings.msgr.connection.statusHelp', { n: regCount })}>
-          <span className="dot" style={{ background: regCount ? 'var(--ok)' : 'var(--border)' }} />{t(regCount ? 'settings.msgr.connection.connected' : 'settings.msgr.connection.notConnected')}
+        {st?.signedIn && <span className="chip" title={t(chip === 'personal' ? 'settings.msgr.connection.personalHelp' : 'settings.msgr.connection.statusHelp', { n: chip === 'personal' ? personalCount : regCount })}>
+          <span className="dot" style={{ background: chip === 'notConnected' ? 'var(--border)' : 'var(--ok)' }} />{t(chip === 'connected' ? 'settings.msgr.connection.connected' : chip === 'personal' ? 'settings.msgr.connection.personal' : 'settings.msgr.connection.notConnected')}
         </span>}
       </div>
       <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.7 }}>{t('settings.msgr.downloadHelp')}</p>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-        <a className="btn sm" href={MSGR_DL.silicon} target="_blank" rel="noopener noreferrer">{t('settings.msgr.silicon')}</a>
-        <a className="btn sm" href={MSGR_DL.intel} target="_blank" rel="noopener noreferrer">{t('settings.msgr.intel')}</a>
-        <a className="btn sm" href={MSGR_DL.win} target="_blank" rel="noopener noreferrer">{t('settings.msgr.win')}</a>
-        <a className="btn sm" href={MSGR_RELEASES} target="_blank" rel="noopener noreferrer">{t('settings.msgr.all')}</a>
+        <a className="btn sm" href={MESSENGER_PAGE} target="_blank" rel="noopener noreferrer">{t('settings.msgr.get')}</a>
       </div>
       <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.7 }}>{t('settings.msgr.help')}</p>
       {st === null && <Skeleton h={44} />}
       {st && !st.signedIn && <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: 0 }}>{t('settings.msgr.notSignedIn')}</p>}
-      {st?.signedIn && !st.orgs?.length && <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: 0 }}>{t('settings.msgr.noOrg')}</p>}
+      {st?.signedIn && !st.orgs?.length && <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: 0 }}>{personalCount ? t('settings.msgr.personalOnly', { n: personalCount }) : t('settings.msgr.noOrg')}</p>}
+      {/* 실행기 연결 상태 — 개인 공간도 이 기기의 실행기가 답한다. 조직이 없어도 보인다(CX-12: 조직 블록 안에만 있어 숨었다) */}
+      {showRuntime && !st.orgs?.length && (
+        <section className={`msgr-runtime${runtime?.state === 'alive' ? ' on' : ''}`} aria-live="polite">
+          <div>
+            <span className="microlabel">{t('settings.msgr.runtime.title')}</span>
+            <p>{runtimeCopy}</p>
+          </div>
+          {runtimeButton}
+        </section>
+      )}
       {st?.signedIn && !!st.orgs?.length && (<>
         <div className="msgr-orgbar">
           <label>
@@ -962,9 +1006,7 @@ function MsgrCard({ ws, agents }) {
               <span className="microlabel">{t('settings.msgr.runtime.title')}</span>
               <p>{runtimeCopy}</p>
             </div>
-            {canReconnect && <button type="button" className="btn sm" disabled={reconnecting} onClick={reconnectBridge}>
-              {reconnecting ? <Spinner size={12} /> : t('settings.msgr.runtime.reconnect')}
-            </button>}
+            {runtimeButton}
           </section>
           <section className="msgr-connection" aria-labelledby="msgr-connection-title">
             <div>
@@ -1008,6 +1050,11 @@ function MsgrCard({ ws, agents }) {
         </details>
       </>)}
       {err && <p style={{ fontSize: 11.5, color: 'var(--danger)', margin: 0 }}>{err}</p>}
+      {/* 아르고 오피스 — 본체 어디에도 오피스로 가는 길이 없었다(CX-13). 웹 주소라 다른 앱 설치를 전제하지 않는다 */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', borderTop: '1px solid var(--border-soft)', paddingTop: 12 }}>
+        <span style={{ fontSize: 12, color: 'var(--fg-2)', flex: '1 1 220px', minWidth: 0, lineHeight: 1.6 }}>{t('settings.office.desc')}</span>
+        <a className="btn sm" href={OFFICE_URL} target="_blank" rel="noopener noreferrer" style={{ flex: 'none' }}>{t('settings.office.open')} ↗</a>
+      </div>
     </div>
   );
 }
@@ -1526,7 +1573,10 @@ function SyncCard({ ws }) {
               {billLost ? billLostRow : <UpgradeButtons />}
             </div>
           ) : sync.lastError ? (
-            <span style={{ color: 'var(--danger)', fontSize: 12 }}>{sync.lastError}</span>
+            // 내부 원문(한국어 고정·회사 id) 대신 사용자 문구 + 할 일(F10·UX-A18). 원문은 진단용으로 title에만
+            <span role="alert" title={sync.lastError} style={{ color: 'var(--danger)', fontSize: 12, lineHeight: 1.6 }}>
+              {(() => { const v = syncErrorView(sync.lastError); return v ? t(v.key, v.vars) : ''; })()}
+            </span>
           ) : plan === 'free' ? (
             // 아직 막히진 않았지만(강제 게이트 off 등) free 플랜에 안내 차원으로 노출 — pro면 숨김
             <UpgradeButtons />
@@ -1888,10 +1938,15 @@ function UpgradeButtons() {
 // 앱 업데이트 — Tauri 데스크톱 안에서만 노출. 버튼 하나로 확인 → 다운로드·설치 → 재시작.
 // 서명 검증·다운로드는 Rust(updater 플러그인)가 수행, 매니페스트는 argo-agent 릴리스의 latest.json.
 function UpdateCard() {
-  const { t } = useLang();
+  const { t, lang } = useLang();
   // 상단 뱃지와 동일한 단일 출처(use-app-update) — 네이티브 설치 버전 + Tauri 업데이터.
   const { isApp, current, available, checked, phase, check, install, installError, location } = useAppUpdate();
   const busy = phase === 'checking' || phase === 'installing';
+  // 사용자가 누른 확인이 끝난 시각 — 이미 최신이면 누르기 전후 문구가 같아 눌렸는지 알 수 없었다(UX-A19)
+  const [userCheckedAt, setUserCheckedAt] = useState(null);
+  const userCheck = async () => { await check({ byUser: true }); setUserCheckedAt(Date.now()); };
+  const checkedNote = !available && checked && userCheckedAt && phase !== 'error'
+    ? ` · ${t('settings.update.checkedAt', { time: new Date(userCheckedAt).toLocaleTimeString(lang === 'ko' ? 'ko-KR' : 'en-US', { hour: '2-digit', minute: '2-digit' }) })}` : '';
   const moveRequired = !!location && MOVE_REQUIRED.has(location.issue); // 옮기기 전에는 설치가 실패한다 — 설치 버튼 대신 최신 설치 파일
   // 웹(상주·셀프호스트) — 자가 설치는 없지만 새 버전 존재를 알리고 갱신 방법을 안내한다
   // (실사용 요청 2026-07-27). 데스크톱과 같은 카드 자리·같은 훅(단일 출처).
@@ -1902,13 +1957,13 @@ function UpdateCard() {
         <p style={{ fontSize: 12.5, color: 'var(--fg-2)' }}>
           {t('settings.update.current', { v: current || '—' })}
           {available ? ` · ${t('settings.update.found', { v: available })}` : ''}
-          {!available && checked ? ` · ${t('settings.update.none')}` : ''}
+          {!available && checked ? ` · ${t('settings.update.none')}` : ''}{checkedNote}
         </p>
         {available && (
           <p style={{ fontSize: 12, color: 'var(--fg-2)', lineHeight: 1.7, margin: 0 }}>{t('settings.update.webHow')}</p>
         )}
         <div style={{ display: 'flex', gap: 8 }}>
-          <button type="button" className="btn sm" onClick={check} disabled={busy}>
+          <button type="button" className="btn sm" onClick={userCheck} disabled={busy}>
             {busy ? <Spinner size={12} /> : null}{t('settings.update.check')}
           </button>
           {available && (
@@ -1927,7 +1982,7 @@ function UpdateCard() {
       <p style={{ fontSize: 12.5, color: 'var(--fg-2)' }}>
         {t('settings.update.current', { v: current || '—' })}
         {available ? ` · ${t('settings.update.found', { v: available })}` : ''}
-        {!available && checked ? ` · ${t('settings.update.none')}` : ''}
+        {!available && checked ? ` · ${t('settings.update.none')}` : ''}{checkedNote}
       </p>
       {location && <UpdateLocationNote issue={location.issue} path={location.path} />}
       {available && moveRequired ? (
@@ -1940,7 +1995,7 @@ function UpdateCard() {
           {phase === 'installing' ? t('settings.update.installing') : t('settings.update.install', { v: available })}
         </button>
       ) : (
-        <button type="button" className="btn sm" onClick={() => check({ byUser: true })} disabled={busy || phase === 'ready'} style={{ alignSelf: 'flex-start' }}>
+        <button type="button" className="btn sm" onClick={userCheck} disabled={busy || phase === 'ready'} style={{ alignSelf: 'flex-start' }}>
           {busy ? <Spinner size={12} /> : null}{t('settings.update.check')}
         </button>
       )}
@@ -2120,9 +2175,13 @@ function DefaultRunnerPicker({ ws }) {
     }).catch(() => {});
     api(`/api/companies/${ws}`).then((d) => setVal(d.company?.defaultRunner ?? '')).catch(() => {});
   }, [ws]);
+  const [err, setErr] = useState('');
+  // 저장 실패면 이전 값으로 되돌리고 안내한다(F9)
   const save = async (v) => {
-    setVal(v);
-    await fetch(`/api/companies/${ws}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ defaultRunner: v }) }).catch(() => {});
+    setErr('');
+    const ok = await saveWithRevert({ prev: val, next: v, apply: setVal,
+      save: async (x) => (await fetch(`/api/companies/${ws}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ defaultRunner: x }) })).ok });
+    if (!ok) setErr(t('settings.saveFailReverted'));
   };
   if (!runners) return null;
   // 숨김 러너(gemini)는 선택지에서 뺀다 — 현재 기본값이 그것이면 남겨 정직 표기(검수 LOW-4: 낡은 값을 보지도 고치지도 못하던 상태)
@@ -2137,6 +2196,7 @@ function DefaultRunnerPicker({ ws }) {
         <option value="">{t('settings.defaultRunnerAuto')}</option>
         {connected.map((r) => <option key={r.id} value={r.id}>{r.name}{r.hidden ? ` — ${t('runner.retiredShort')}` : ''}</option>)}
       </select>
+      {err && <span role="alert" style={{ fontSize: 12, color: 'var(--danger)' }}>{err}</span>}
     </label>
   );
 }

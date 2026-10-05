@@ -37,6 +37,12 @@ export function fullAutoAllowed(ctx) {
   return !isGuestCtx(ctx) && ctx?.office !== true && !ctx?.handoffFrom;
 }
 
+/** 주인이 직접 시킨 턴인가(3차 검수 F2) — 풀 오토 판정과 활동 기록의 ownerDirect 표지(chat.mjs)가 이 한 함수만 본다.
+    from(위임받은 동료 턴)·notOwnerDirect(크루가 건 예약·장시간 작업·결재 후속)가 없고, 메신저 맥락이면 손님·오피스·크루 넘김이 아닌 턴. 메신저 밖 턴(mirrorCtx 없음·방·텔레그램)은 맥락 판정이 통과한다. */
+export function ownerDirectTurn({ from = null, notOwnerDirect = null, mirrorCtx = null } = {}) {
+  return !from && !notOwnerDirect && fullAutoAllowed(mirrorCtx);
+}
+
 /** 손님 턴 판정 — 이 메신저 턴을 크루 주인이 아닌 사람이 시켰는가(규칙 7·9: 주인의 몸은 주인만, 주인의 개인 기억은 공유한 것만).
     origin = 권한 주체(사람 글이면 작성자, 크루 넘김이면 **넘긴 크루의 주인** — msgr.mjs drain), rootAuthor = 넘김 스레드의 뿌리 사람.
     그래서 origin만 보면 "손님 B → A의 크루 X → A의 크루 Y" 넘김에서 Y가 주인 턴이 된다 — 뿌리도 함께 본다.

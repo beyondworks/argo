@@ -6,10 +6,13 @@ import { useRouter } from 'next/navigation';
 import { Avatar, Icon, Bars, Dial, Num, Spinner, Skeleton, useScrollLock, InputModal, api, imeGuard, timeAgo, tsFromRel } from '../../ui';
 import { Graph2D } from './graph2d'; // 데크 별자리도 기억 페이지와 같은 2D 그래프(유건 지시 2026-08-21: 옛 3D 잔존 지적)
 import { keepSide } from './split.mjs'; // 주 화면 이동은 현재 ?side=(옆에 열기 패널)를 유지 — 생 router.push는 패널을 닫는다
+import { subscribeSearch } from './search-bus.mjs'; // 상단 검색 받기(UL10)
 import { anyRunnerUsable, runnerNeedsReconnect, usableRunnerNames, onlyHiddenConnected } from '../../runner-connect';
 import { useLang } from '../../i18n';
-import { approvalExpandDefault } from '../../lib/approval-display.mjs';
+import { failureReason } from '../../lib/error-text.mjs'; // 실패 이유 — 빈 이유·브라우저 원문 없이(UL5)
+import { approvalExpandDefault, approvalOwnerMayDecide } from '../../lib/approval-display.mjs';
 import styles from './deck.module.css';
+import { gistLabel } from '../../lib/gist-display.mjs'; // 메신저 머리말을 뗀 요약(UX-A08)
 
 export default function Deck({ params }) {
   const { ws } = use(params);
@@ -37,11 +40,10 @@ export default function Deck({ params }) {
   useEffect(load, [ws]);
 
   useEffect(() => {
-    const h = (e) => setQ(String(e.detail || '').toLowerCase());
-    window.addEventListener('argo:search', h);
+    const unsubscribe = subscribeSearch(window, setQ);
     window.addEventListener('argo:refresh', load);
     return () => {
-      window.removeEventListener('argo:search', h);
+      unsubscribe();
       window.removeEventListener('argo:refresh', load);
     };
   }, [ws]);
@@ -114,6 +116,27 @@ export default function Deck({ params }) {
       <div className="deck-grid">
         {/* ── 본 계기 열 — 지표 4장·크루 영입이 맨 위(유건 2026-08-23), 그 아래 아침 조회·결재함·최근 기억 ── */}
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 14, minWidth: 0 }}>
+          {/* 검색 결과 — 데크엔 크루 목록이 없어 맞는 크루가 있어도 아무것도 안 보였다(UX-A03). 맞는 크루를 바로 열 수 있게.
+              맨 위에 둔다(UL8): 지표 4장·크루 영입 아래(1100×700에서 top 523)에 있으면 입력해도 첫 화면에 아무 반응이 안 보였다. 링크는 keepSide를 지나 옆 패널이 닫히지 않는다 */}
+          {data && q && agents.length === 0 && (
+            <p role="status" className="card fade-up" style={{ margin: 0, padding: '12px 14px', color: 'var(--fg-2)', fontSize: 13 }}>{t('deck.noCrewMatch')}</p>
+          )}
+          {data && q && agents.length > 0 && (
+            <div className="card fade-up" role="region" aria-label={t('deck.searchCrew', { n: agents.length })} style={{ padding: '12px 14px', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 6 }}>
+              <span className="microlabel">{t('deck.searchCrew', { n: agents.length })}</span>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {agents.slice(0, 12).map((a) => {
+                  const href = `/c/${ws}/crew/${a.slug}`;
+                  return (
+                    <Link key={a.slug} href={href} className="chip" style={{ textDecoration: 'none', textTransform: 'none', gap: 6 }}
+                      onClick={(e) => { if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return; e.preventDefault(); router.push(keepSide(href, window.location.search)); }}>
+                      <Avatar name={a.name} sm />{a.name}{a.role ? ` · ${a.role}` : ''}
+                    </Link>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(180px, 100%), 1fr))', gap: 12 }}>
             {stats ? (
               <>
@@ -234,10 +257,9 @@ export default function Deck({ params }) {
           {error && <p style={{ fontSize: 13, color: 'var(--danger)', padding: '0 4px' }}>{error}</p>}
 
           {/* 크루 목록은 사이드바가 단일 진실(영입 즉시 거기 생긴다) — 데크엔 빈 상태 안내만 남긴다 */}
-          {data && agents.length === 0 && (
-            <p style={{ color: 'var(--fg-2)', fontSize: 13, padding: '0 4px' }}>{q ? t('deck.noCrewMatch') : t('deck.noCrewYet')}</p>
+          {data && agents.length === 0 && !q && (
+            <p style={{ color: 'var(--fg-2)', fontSize: 13, padding: '0 4px' }}>{t('deck.noCrewYet')}</p>
           )}
-
           <MorningBrief ws={ws} agents={data?.agents ?? []} />
           <ApprovalsCard ws={ws} agents={data?.agents ?? []} />
 
@@ -365,6 +387,7 @@ function ApprovalsCard({ ws, agents }) {
   const { t } = useLang();
   const [items, setItems] = useState(null);
   const [busy, setBusy] = useState('');
+  const [failMsg, setFailMsg] = useState(''); // 승인·거절 실패 안내(F8: 실패해도 아무 말이 없었다)
 
   function load() {
     api(`/api/companies/${ws}/approvals`).then((d) => setItems(d.approvals)).catch(() => setItems([]));
@@ -381,12 +404,15 @@ function ApprovalsCard({ ws, agents }) {
   const nameOf = (slug) => agents.find((a) => a.slug === slug)?.name ?? slug;
 
   async function resolve(id, approve) {
-    setBusy(id);
+    setBusy(id); setFailMsg('');
     try {
       await api(`/api/companies/${ws}/approvals`, { id, approve });
-      load();
+    } catch (e) {
+      // 실패 안내 + 다시 읽기 — 이미 다른 창구에서 처리됐으면 목록에서 빠지고, 아니면 버튼이 그대로 남아 다시 누를 수 있다
+      setFailMsg(t('deck.approvalFail', { msg: failureReason(e, t) }));
     } finally {
       setBusy('');
+      load();
     }
   }
 
@@ -417,15 +443,19 @@ function ApprovalsCard({ ws, agents }) {
             {/* 고위험 표지는 제목 글자 뒤가 아니라 버튼 바로 왼쪽 고정 칸 — 제목이 두 줄로 넘으면 표지가 버튼보다 위로 떠
                 열이 어긋났다(제보 2026-09-27 "결재함에 버튼 열 왜 안 맞아"). */}
             {approvalExpandDefault(a) && <span className="chip danger" style={{ flex: 'none' }}>{t('chat.approval.highBadge')}</span>}
-            {busy === a.id ? <Spinner /> : (
+            {busy === a.id ? <Spinner /> : !approvalOwnerMayDecide(a) ? (
+              // 조직 관리자가 정하는 고위험 결재 — 여기서 누르면 서버가 항상 거절한다(F8). 버튼 대신 누가 정하는지를 알린다
+              <span className="chip" title={t('deck.approvalAdminOnlyHint')} style={{ flex: 'none', textTransform: 'none' }}>{t('deck.approvalAdminOnly')}</span>
+            ) : (
               <div style={{ display: 'flex', gap: 6, flex: 'none' }}>
-                <button className="btn sm btn-primary" onClick={() => resolve(a.id, true)}>{t('deck.approve')}</button>
-                <button className="btn sm" onClick={() => resolve(a.id, false)}>{t('deck.reject')}</button>
+                <button className="btn sm btn-primary" disabled={!!busy} onClick={() => resolve(a.id, true)}>{t('deck.approve')}</button>
+                <button className="btn sm" disabled={!!busy} onClick={() => resolve(a.id, false)}>{t('deck.reject')}</button>
               </div>
             )}
           </div>
         ))}
       </div>
+      {failMsg && <p role="alert" style={{ margin: '10px 0 0', fontSize: 12, color: 'var(--danger)' }}>{failMsg}</p>}
     </div>
   );
 }
@@ -470,7 +500,7 @@ function MorningBrief({ ws, agents }) {
         <div key={i} style={{ fontSize: 12, color: 'var(--fg-2)', display: 'flex', gap: 8, alignItems: 'center', minWidth: 0 }}>
           <span className="mono" style={{ fontSize: 10.5, color: 'var(--fg-3)', flex: 'none', width: 56 }}>{timeAgo(new Date(e.ts).getTime(), lang)}</span>
           <span style={{ fontWeight: 600, flex: 'none' }}>{nameOf(e.slug)}</span>
-          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.gist}</span>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{gistLabel(e.gist, t)}</span>
         </div>
       ))}
     </div>

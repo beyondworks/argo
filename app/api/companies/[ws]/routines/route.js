@@ -1,5 +1,6 @@
 import { loadRoutines, addRoutine, updateRoutine, removeRoutine } from '../../../../../src/routines.mjs';
-import { guardCompany } from '../../../../auth.mjs';
+import { guardCompany, requestLang } from '../../../../auth.mjs';
+import { apiErrorFrom } from '../../../../apimsg.mjs';
 
 export async function GET(_req, { params }) {
   const { ws } = await params;
@@ -20,7 +21,7 @@ export async function POST(req, { params }) {
     const routine = await addRoutine(ws, body);
     return Response.json({ routine });
   } catch (e) {
-    return Response.json({ error: String(e.message || e) }, { status: 400 });
+    return apiErrorFrom(e, await requestLang(), 400); // 코드 달린 엔진 오류는 화면 언어 문구(F11)
   }
 }
 
@@ -32,7 +33,7 @@ export async function PUT(req, { params }) {
     const routine = await updateRoutine(ws, id, patch);
     return Response.json({ routine });
   } catch (e) {
-    return Response.json({ error: String(e.message || e) }, { status: 400 });
+    return apiErrorFrom(e, await requestLang(), 400); // 코드 달린 엔진 오류는 화면 언어 문구(F11)
   }
 }
 

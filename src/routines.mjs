@@ -14,6 +14,7 @@ import { LOOP_VERDICT_RE, parseLoopVerdict, loopVerdictLine, stripLoopVerdict } 
 // 시각 판정(순수)은 routine-time.mjs가 원천 — 목록 화면(클라이언트)이 '만료' 표시에 같은 판정을
 // 쓰기 위한 분리. 기존 소비자를 위해 그대로 재수출한다(임포트 경로 하위호환).
 import { normalizeTz, zonedParts, onceSpent, CATCHUP_MS } from './routine-time.mjs';
+import { codedError } from './coded-error.mjs'; // 화면 문구 코드(F11)
 export { normalizeTz, zonedParts, onceSpent, onceExpired } from './routine-time.mjs';
 
 const lockKey = (wsId) => `routines:${wsId}`;
@@ -76,9 +77,9 @@ export function normalizeSchedule(schedule = {}) {
   // once = 특정 날짜에 1회(예약 발송). 실행되면 자동으로 꺼진다(runRoutine) — 반복 예약과 구분.
   if (schedule.type === 'once') {
     const date = String(schedule.date ?? '').trim();
-    if (!DATE_RE.test(date)) throw new Error('1회 예약은 날짜(YYYY-MM-DD)가 필요합니다');
+    if (!DATE_RE.test(date)) throw codedError('routine_once_date_required', '1회 예약은 날짜(YYYY-MM-DD)가 필요합니다');
     const t = String(schedule.time ?? (Array.isArray(schedule.times) ? schedule.times[0] : '')).trim();
-    if (!TIME_RE.test(t)) throw new Error('예약 시각은 HH:MM 형식');
+    if (!TIME_RE.test(t)) throw codedError('routine_time_format', '예약 시각은 HH:MM 형식');
     return withTz({ type: 'once', date, time: t, times: [t] });
   }
   // interval = N분마다 반복(크루 Start-loop — 실사용 요청 2026-07-27 "루프 잡"). 하한 10분:
@@ -87,18 +88,18 @@ export function normalizeSchedule(schedule = {}) {
   // 건너뛰어 발화하지 않는다(깨지지 않고 조용히 대기 — 이 기기들은 업데이트 후 발화 시작).
   if (schedule.type === 'interval') {
     const every = Math.floor(Number(schedule.everyMinutes));
-    if (!Number.isInteger(every) || every < 10 || every > 1440) throw new Error('반복 간격은 10~1440분');
+    if (!Number.isInteger(every) || every < 10 || every > 1440) throw codedError('routine_interval_range', '반복 간격은 10~1440분');
     return { type: 'interval', everyMinutes: every };
   }
   const type = schedule.type === 'weekly' ? 'weekly' : 'daily';
   const rawTimes = Array.isArray(schedule.times) && schedule.times.length ? schedule.times : [schedule.time];
   // 잘못된 항목은 통째로 거절 — 일부만 조용히 수용하면 사용자가 지정한 시각이 소리 없이 빠진다
-  if (!rawTimes.every((t) => TIME_RE.test(t || ''))) throw new Error('예약 시각은 HH:MM 형식');
+  if (!rawTimes.every((t) => TIME_RE.test(t || ''))) throw codedError('routine_time_format', '예약 시각은 HH:MM 형식');
   const times = [...new Set(rawTimes)].sort();
-  if (times.length > 8) throw new Error('예약 시각은 하루 8개까지');
+  if (times.length > 8) throw codedError('routine_times_max', '예약 시각은 하루 8개까지');
   const rawDows = Array.isArray(schedule.dows) && schedule.dows.length ? schedule.dows : [schedule.dow ?? 1];
   const dows = [...new Set(rawDows.map(Number))].sort((a, b) => a - b);
-  if (type === 'weekly' && !dows.every((d) => Number.isInteger(d) && d >= 0 && d <= 6)) throw new Error('요일은 일(0)~토(6) 범위');
+  if (type === 'weekly' && !dows.every((d) => Number.isInteger(d) && d >= 0 && d <= 6)) throw codedError('routine_dow_range', '요일은 일(0)~토(6) 범위');
   // 단수 필드(time/dow)는 첫 값으로 함께 유지 — 이 파일을 읽는 구버전(다른 기기 동기화)이 깨지지 않는다
   return withTz({ type, time: times[0], times, dow: dows[0], ...(type === 'weekly' ? { dows } : {}) });
 }
@@ -152,13 +153,13 @@ export function normalizeVerify(verify) {
   for (const f of rawFiles) {
     const rel = String(f ?? '').trim().replace(/\\/g, '/').replace(/^\.\//, '');
     if (!rel) continue;
-    if (rel.length > 200) throw new Error('완료 조건 파일 경로는 200자 이내');
-    if (rel.startsWith('/') || /^[A-Za-z]:/.test(rel) || rel.includes('\0')) throw new Error('완료 조건 경로는 회사 기억 안 상대경로만');
-    if (rel.split('/').includes('..')) throw new Error('완료 조건 경로에 상위 탈출(..) 금지');
+    if (rel.length > 200) throw codedError('routine_verify_path_len', '완료 조건 파일 경로는 200자 이내');
+    if (rel.startsWith('/') || /^[A-Za-z]:/.test(rel) || rel.includes('\0')) throw codedError('routine_verify_path_relative', '완료 조건 경로는 회사 기억 안 상대경로만');
+    if (rel.split('/').includes('..')) throw codedError('routine_verify_path_traversal', '완료 조건 경로에 상위 탈출(..) 금지');
     if (!files.includes(rel)) files.push(rel);
   }
   if (!files.length) return null; // 파일 조건이 핵심 — 문구만으로는 조건이 성립하지 않는다
-  if (files.length > VERIFY_MAX_FILES) throw new Error(`완료 조건 파일은 ${VERIFY_MAX_FILES}개까지`);
+  if (files.length > VERIFY_MAX_FILES) throw codedError('routine_verify_files_max', `완료 조건 파일은 ${VERIFY_MAX_FILES}개까지`);
   const contains = String(verify.contains ?? '').trim().slice(0, 200) || null;
   let retries = Math.floor(Number(verify.retries ?? 2));
   if (!Number.isFinite(retries)) retries = 2;
@@ -243,7 +244,7 @@ export async function resumeLoop(wsId, id) {
 const hostTz = () => { try { return new Intl.DateTimeFormat().resolvedOptions().timeZone || null; } catch { return null; } };
 
 export async function addRoutine(wsId, { agentSlug, title, prompt, schedule, enabled = true, loop = null, verify = null, msgr = null, notifications, from = null }) { // from = 사장 직접 턴이 아닌 턴(또는 다른 크루에게 건 예약)의 시작점 크루 — 실행 턴이 풀 오토가 아니다
-  if (!agentSlug || !title?.trim() || !prompt?.trim()) throw new Error('크루·제목·지시가 필요합니다');
+  if (!agentSlug || !title?.trim() || !prompt?.trim()) throw codedError('routine_fields_required', '크루·제목·지시가 필요합니다');
   if (msgr && msgr.wsId !== wsId) throw new Error('메신저 예약 회사 불일치');
   const destinations = await validateRoutineNotifications(wsId, agentSlug, notifications);
   const sched = normalizeSchedule({ tz: hostTz(), ...schedule });
@@ -282,15 +283,15 @@ export async function addRoutine(wsId, { agentSlug, title, prompt, schedule, ena
 export function sanitizeRoutinePatch(patch = {}) {
   const out = {};
   if ('title' in patch) {
-    if (!patch.title?.trim()) throw new Error('제목이 필요합니다');
+    if (!patch.title?.trim()) throw codedError('routine_title_required', '제목이 필요합니다');
     out.title = patch.title.trim();
   }
   if ('prompt' in patch) {
-    if (!patch.prompt?.trim()) throw new Error('지시가 필요합니다');
+    if (!patch.prompt?.trim()) throw codedError('routine_prompt_required', '지시가 필요합니다');
     out.prompt = patch.prompt.trim();
   }
   if ('agentSlug' in patch) {
-    if (!patch.agentSlug) throw new Error('크루가 필요합니다');
+    if (!patch.agentSlug) throw codedError('routine_crew_required', '크루가 필요합니다');
     out.agentSlug = patch.agentSlug;
   }
   if ('schedule' in patch) out.schedule = normalizeSchedule(patch.schedule);
@@ -307,7 +308,7 @@ export async function updateRoutine(wsId, id, patch, { from = null } = {}) {
   const clean = sanitizeRoutinePatch(patch);
   if ('notifications' in clean || 'agentSlug' in clean) {
     const before = (await loadRoutines(wsId)).find((r) => r.id === id);
-    if (!before) throw new Error('루틴을 찾을 수 없습니다');
+    if (!before) throw codedError('routine_not_found', '루틴을 찾을 수 없습니다');
     if ('notifications' in clean && clean.notifications === undefined) throw new Error('Invalid routine notification channels');
     const next = 'notifications' in clean ? clean.notifications : before.notifications;
     const changed = JSON.stringify(next) !== JSON.stringify(before.notifications)
@@ -334,8 +335,26 @@ export async function updateRoutine(wsId, id, patch, { from = null } = {}) {
     }
     return out;
   });
-  if (!r) throw new Error('루틴을 찾을 수 없습니다');
+  if (!r) throw codedError('routine_not_found', '루틴을 찾을 수 없습니다');
   return r;
+}
+
+/** 해고한 크루의 루틴을 끈다(지우지 않는다 — 제목·지시·일정은 남겨 다른 크루로 바꿔 다시 켤 수 있게). 켜진 채 남으면 예약마다
+    "없는 크루" 실패 알림이 갔다(F4, 2026-10-05). editedAt — 사람의 행동(해고)에서 나온 변경이라 메신저 대기 편집보다 나중으로 친다.
+    반환: 끈 루틴 수. */
+export async function disableRoutinesForCrew(wsId, slug) {
+  return lockRoutines(wsId, async () => {
+    const routines = await loadRoutines(wsId);
+    const at = new Date().toISOString();
+    let n = 0;
+    for (const r of routines) {
+      if (r.agentSlug !== slug || !r.enabled) continue;
+      r.enabled = false; r.editedAt = at; n += 1;
+      if (r.loop) r.loop = { ...r.loop, stoppedReason: r.loop.stoppedReason ?? 'manual' }; // 루프 정지 사유(수동)와 같은 표시
+    }
+    if (n) await saveRoutines(wsId, routines);
+    return n;
+  });
 }
 
 export async function removeRoutine(wsId, id) {
@@ -352,7 +371,7 @@ export async function runRoutine(wsId, id, { chatFn = null, startAt = null, sess
   // startAt = 테스트 전용(시작 시각 주입) — "시작이 예약 시각을 가로지르는 실행"은 실제 분 경계를
   // 기다리지 않고는 재현할 수 없다(catch의 once 끄기 판정 시계가 이 각인을 쓴다).
   const r0 = await patchRoutine(wsId, id, { lastRun: (startAt ?? new Date()).toISOString() });
-  if (!r0) throw new Error('루틴을 찾을 수 없습니다');
+  if (!r0) throw codedError('routine_not_found', '루틴을 찾을 수 없습니다');
   // Edits apply to the next execution: never send an in-flight result to a newly chosen recipient.
   const resultRoutine = (current) => ({ ...(current ?? r0), title: r0.title, agentSlug: r0.agentSlug,
     lastRun: r0.lastRun, notifications: r0.notifications, msgr: r0.msgr });

@@ -1,4 +1,4 @@
-import { stageMessengerHandoff, messengerOrigin, messengerHandoffHint, parseMessengerDisposition, isGuestCtx, fullAutoAllowed } from './gateway/msgr-handoff.mjs';
+import { stageMessengerHandoff, messengerOrigin, messengerHandoffHint, parseMessengerDisposition, isGuestCtx, ownerDirectTurn } from './gateway/msgr-handoff.mjs';
 import { calendarTool, calendarDescription } from './gateway/office-calendar.mjs'; // 에이전트 일정 도구(주인의 오피스 일정 — 명세 2026-09-30 규칙 9·10)
 import { companyTool, companyDescription } from './gateway/office-company.mjs'; // 에이전트 회사 도구(오피스 회사 정보·직원·평가 — 트랙 C 2026-10-02)
 import { filesTool, filesDescription } from './gateway/office-files.mjs'; // 에이전트 문서함·드라이브 도구(오피스 문서함 검색·읽기·거래처 첨부·드라이브 — 분리 검수 MEDIUM 4)
@@ -1456,14 +1456,19 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
   const skills = await loadSkills(wsId, SKILL_INJECT_CAP, lang, skillScope);
   // 활동 기록의 발신자 — 쪽지 배달 턴인데 from이 없으면 사장 쪽지다(scheduler가 fromRole 'captain' 쪽지만 from 없이 돌린다). 화면은 fromRole로 "사장 → 크루"를 그린다.
   // 스킬 주입 뒤에 둔다(그 앞에는 출처 분기를 두지 않는다 — room-slash-commander 핀). 예산 차단 턴(이보다 앞에서 끝남)은 종전 기록 그대로
-  const evFrom = from ? { from } : source === 'crewmail' ? { fromRole: 'captain' } : {};
+  // notOwnerDirect(누가 걸었는지)는 from과 별도 키로 적는다 — 크루 예약 도구로 만든 데스크톱 루틴·장시간 작업은 from 없이 source만 'routine'·'job'이라, 안 적으면 활동 화면 '다시 실행'(rerun.mjs)이
+  // 사장 직접 턴으로 보내 풀 오토 판정(`!from && !notOwnerDirect`)을 통과했다(M1). from은 활동 행의 "A → B" 표시·위임 판정에 따로 쓰이므로 섞지 않는다.
+  // ownerDirect = 사장이 직접 시킨 턴이라는 적극 표지(ownerDirectTurn — 풀 오토 판정과 같은 함수: 손님·오피스·크루 넘김 메신저 턴에는 붙지 않는다, 3차 F2). '다시 실행'은 routine·deck 출처에서 이 표지가 있을 때만 보인다 —
+  // notOwnerDirect를 기록하기 전(10/5 이전)의 크루 루틴·결재 후속 턴 이벤트는 출처 필드가 아무것도 없어, 표지 없음 = 사장 직접 턴임을 증명할 수 없음으로 읽는다(2차 검수 LOW-2).
+  const ownerDirect = ownerDirectTurn({ from, notOwnerDirect, mirrorCtx });
+  const evFrom = { ...(from ? { from } : source === 'crewmail' ? { fromRole: 'captain' } : {}), ...(notOwnerDirect ? { notOwnerDirect } : {}), ...(ownerDirect ? { ownerDirect: true } : {}) };
   // 풀 오토 판정(위 설명 주석) — 스킬 주입 뒤에 계산한다: loadSkills 앞에는 출처(source) 분기를 두지 않는다(room-slash-commander 핀). 그 사이 쓰는 곳은 없다.
   // 풀 오토는 사장이 직접 시킨 크루가 자기 일로 하는 턴에만(유건 결정 2026-10-03 "위임도 막기"). 빠지는 턴:
   //   from이 있는 턴 — 위임받은 동료 턴·쪽지 배달 턴·크루가 보낸 세션 메시지의 받는 턴·깨움 턴
   //   notOwnerDirect가 있는 턴 — 그런 턴에서 시작된 장시간 작업·루틴·결재 후속, 메신저에서 크루가 넘긴 턴. from과 달리 출처(turnSource)·프롬프트·공유 노트를
   //   바꾸지 않고 풀 오토만 끄는 표지다(통합본 재검수 LOW-5). 이 값은 커넥터 쓰기 게이트까지 그대로 넘어간다(callConnectorTool fullAuto).
   // 사장이 보낸 쪽지의 배달 턴은 scheduler가 from 없이 돌린다(fromRole 표지) — 사장 판정을 from 문자열로 하지 않는다(최종 재검수 MEDIUM-1)
-  const fullAuto = companyFullAuto === true && fullAutoAllowed(mirrorCtx) && !from && !notOwnerDirect; // 손님·오피스에서 맡긴 턴 제외(msgr-handoff fullAutoAllowed 한 곳)
+  const fullAuto = companyFullAuto === true && ownerDirect; // 손님·오피스에서 맡긴 턴 제외(msgr-handoff ownerDirectTurn 한 곳 — 활동 기록의 ownerDirect 표지와 같다)
   // 러너 결정 + 폴백 — 크루의 러너가 이 기기·회사에서 미가용이면 가용한 러너로 대신 실행한다.
   // (예: 기본 claude 크루인데 Codex만 연결한 사용자 — 어떤 러너든 연결만 돼 있으면 크루는 응답해야 한다)
   // want=null(무선호) — 카드에 러너 미지정이면 회사의 연결 러너를 대체 고지 없이 쓴다(claude 하드코딩 제거).

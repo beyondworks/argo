@@ -214,7 +214,7 @@ function autoOk(wsId, now) {
 export const _autoLogForTest = autoLog;
 
 /* ─── DB 층 — supabase-js 체인은 여기에만. 반환은 평범한 값/예외. ─── */
-const unwrap = ({ data, error }) => { if (error) throw new Error(`msgr db: ${error.message}`); return data; };
+const unwrap = ({ data, error }) => { if (error) throw Object.assign(new Error(`msgr db: ${error.message}`), { code: error.code }); return data; }; // code — 큐 워커가 영구 오류(형식·권한)를 가려 재시도를 멈춘다(queue.mjs isPermanentQueueError)
 export function makeDb(client) {
   return {
     ...executionDb(client),
@@ -552,7 +552,7 @@ export async function nodeRunnerInfo(wsId, { status = null, catalog = null, now 
   return info;
 }
 
-async function listAgentsForInventory(wsId) { const { listAgents } = await import('../hub.mjs'); return (await listAgents(wsId)).map((a) => ({ slug: a.slug, name: a.name, role: a.role })); }
+async function listAgentsForInventory(wsId) { const { listAgents } = await import('../hub.mjs'); return (await listAgents(wsId, { strict: true })).map((a) => ({ slug: a.slug, name: a.name, role: a.role })); } // strict — 못 읽은 카드를 사라진 크루로 보고 행을 지우지 않게(F7)
 
 /** 조직 행 insert 백오프(검수 2차 M-2, 3차 M-B·M-C) — 두 종류를 한 표에 키 접두로 나눈다:
     · `role:${uid}:${orgId}` — 손님·잠긴 조직(사전 확인 거절, error null). 조직 단위 판정이라 어느 회사에서 물어도 같다.

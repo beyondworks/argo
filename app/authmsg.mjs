@@ -10,7 +10,7 @@
 export const AUTH_ON = !!(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
 
 // code: { status, ko, en } — 가드가 내리는 사용자향 오류의 전부. 새 코드는 두 언어 모두 등록(다국어 상시 규칙).
-const MSG = {
+export const AUTH_MSG = { // export — 화면 api()가 errorCode로 화면 언어 문구를 고른다(apimsg.mjs errorTextFor, F11)
   auth_required: { status: 401, ko: '로그인이 필요합니다', en: 'Sign in to continue' },
   cross_origin: { status: 403, ko: '교차 출처 요청은 허용되지 않습니다', en: 'Cross-origin requests are not allowed' },
   tenant_only: { status: 403, ko: '이 서버는 다른 계정 전용입니다', en: 'This server is dedicated to another account' },
@@ -22,7 +22,7 @@ const MSG = {
 /** 가드 공통 오류 응답. lang은 ko|en(그 외 값·미지정은 ko). 미등록 코드는 throw —
     오타가 조용히 빈 문구로 새는 대신 fail-loud(deny 경로라 fail-closed, 배선 테스트가 선제로 잡는다). */
 export function authError(code, lang) {
-  const m = MSG[code];
+  const m = AUTH_MSG[code];
   if (!m) throw new Error(`authError: 미등록 코드 ${code}`);
   return Response.json({ error: lang === 'en' ? m.en : m.ko, errorCode: code }, { status: m.status });
 }

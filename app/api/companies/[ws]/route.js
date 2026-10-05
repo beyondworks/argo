@@ -1,7 +1,7 @@
 import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { loadCompany, updateCompany, archiveCompany, paths } from '../../../../src/workspace.mjs';
-import { listAgents, listDocs } from '../../../../src/hub.mjs';
+import { scanAgents, listDocs } from '../../../../src/hub.mjs';
 import { linkStats } from '../../../c/[ws]/graph2d-core.mjs'; // 연결 지표는 기억 그래프와 같은 셈법
 import { readDelegations } from '../../../../src/usage.mjs';
 import { readUsageSummary } from '../../../../src/billing.mjs'; // 금액 집계는 billing 게이트로만
@@ -10,6 +10,7 @@ import { ensureScheduler } from '../../../../src/scheduler.mjs';
 import { ensureGateway } from '../../../../src/gateway.mjs';
 import { nudgeSync } from '../../../../src/sync.mjs';
 import { guardCompany, authError, requestLang, csrfDenied } from '../../../auth.mjs';
+import { apiError } from '../../../apimsg.mjs';
 
 ensureScheduler(); // 앱 사용이 시작되면 루틴 스케줄러 상주
 ensureGateway(); // 메신저 게이트웨이(텔레그램/슬랙) 상주
@@ -39,8 +40,8 @@ export async function GET(req, { params }) {
     // ?light=1 — 회사·크루만(사이드바 30초 폴·크루 대화창 진입용). 기억 1만 건 listDocs(첫 로드 ≈0.5~1초, 이후 캐시 수십 ms)·집계는 데크만 쓴다.
     // 잔여 한도(limits)는 light에도 싣는다 — 크루 대화창 입력줄 게이지가 쓴다(K92). 자격 파일 + 작은 JSON 하나라 가볍다.
     const light = new URL(req.url).searchParams.get('light') === '1';
-    const [company, agents, docs, usage, delegations, limits] = await Promise.all([
-      loadCompany(ws), listAgents(ws),
+    const [company, { agents, broken }, docs, usage, delegations, limits] = await Promise.all([
+      loadCompany(ws), scanAgents(ws),
       light ? [] : listDocs(ws), light ? null : readUsageSummary(ws), light ? [] : readDelegations(ws), readRunnerLimits(ws).catch(() => []),
     ]);
     // 크루별 마지막 대화 시각 — chats/<slug>.json mtime(스레드 영속화의 단일 파일). 사이드바 안읽음 배지 판정용.
@@ -49,18 +50,22 @@ export async function GET(req, { params }) {
     await Promise.all(agents.map(async (a) => {
       try { a.chatTs = (await stat(join(chatsDir, `${a.slug}.json`))).mtimeMs; } catch { /* 대화 없음 */ }
     }));
-    if (light) return Response.json({ company, agents, limits, light: true });
+    if (light) return Response.json({ company, agents, broken, limits, light: true }); // broken = 못 읽은 크루 카드 { count, names }(L2)
     const { deg, ...link } = linkStats(docs); // 1회 계산 — 다이얼·칩·표 열이 같은 셈법을 본다
     return Response.json({
-      company, agents,
+      company, agents, broken,
       memories: docs.slice(0, 6).map((d) => ({ ...d, deg: deg.get(d.rel) ?? 0 })), // 표 "연결" 열 = 해석 후 차수
       memoryCount: docs.length,
       stats: docStats(docs, link),
       usage, delegations, limits,
     });
-  } catch {
-    // AUTH off(로컬 모드)에선 guardCompany가 회사 존재를 안 보므로 부재 404는 이 catch가 담당한다
-    return authError('company_not_found', await requestLang());
+  } catch (e) {
+    // AUTH off(로컬 모드)에선 guardCompany가 회사 존재를 안 보므로 부재 404는 이 catch가 담당한다.
+    // 단 **없음**(company.json ENOENT·규칙 밖 id)만 404 — 손상·권한·일시 읽기 실패까지 404로 돌려주면 화면이
+    // '회사를 찾을 수 없습니다'로 바뀌어 회사가 사라진 것처럼 보였다(F3, 2026-10-05). 그 밖은 500(다시 시도 대상).
+    if (e?.code === 'ENOENT' || /잘못된 워크스페이스 id|워크스페이스 경계/.test(String(e?.message))) return authError('company_not_found', await requestLang());
+    console.error('[argo] 회사 정보 읽기 실패:', e?.code ?? '', String(e?.message ?? e).slice(0, 200));
+    return apiError('company_load_failed', await requestLang());
   }
 }
 
@@ -93,7 +98,7 @@ export async function PUT(req, { params }) {
         .slice(0, 50);
     }
     if (name !== undefined) {
-      if (!name.trim()) return Response.json({ error: '이름이 필요합니다' }, { status: 400 });
+      if (!name.trim()) return apiError('company_name_required', await requestLang());
       patch.name = name.trim();
     }
     if (crewPinned !== undefined) {
@@ -107,7 +112,7 @@ export async function PUT(req, { params }) {
       patch.crewOrder = [...new Set(crewOrder.filter((s) => typeof s === 'string' && /^[a-z0-9-]{1,64}$/.test(s)))].slice(0, 200);
     }
     if (lang !== undefined) {
-      if (lang !== 'ko' && lang !== 'en') return Response.json({ error: '언어는 ko 또는 en이어야 합니다' }, { status: 400 });
+      if (lang !== 'ko' && lang !== 'en') return apiError('company_lang_invalid', await requestLang());
       patch.lang = lang; // 시스템(크루 생성) 언어 — 크루 답변·기억이 이 언어를 따른다
     }
     if (computerUse !== undefined) patch.computerUse = computerUse === true; // 컴퓨터 유즈 옵트인 — 불리언만(문자열 'true' 등은 꺼짐으로)
@@ -116,7 +121,7 @@ export async function PUT(req, { params }) {
     if (fullAuto !== undefined) patch.fullAuto = fullAuto === true;
     if (budgetUsd !== undefined) {
       const n = Number(budgetUsd);
-      if (!Number.isFinite(n) || n < 0) return Response.json({ error: '예산은 0 이상의 숫자' }, { status: 400 });
+      if (!Number.isFinite(n) || n < 0) return apiError('company_budget_invalid', await requestLang());
       patch.budgetUsd = n;
     }
     // ponytail: 회사 기본 러너(K1, 유건 지시 2026-08-08). 빈 문자열 = 해제(기존 순서 폴백).

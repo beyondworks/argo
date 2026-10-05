@@ -1,5 +1,6 @@
 import { readAgentCard, saveAgentCard, removeAgentCard, updateAgentMeta, setAgentRules, setAgentSection } from '../../../../../../src/persona.mjs';
-import { guardCompany } from '../../../../../auth.mjs';
+import { guardCompany, requestLang } from '../../../../../auth.mjs';
+import { apiError, apiErrorFrom } from '../../../../../apimsg.mjs';
 
 /** 카드 열람 — 카드가 곧 시스템 프롬프트(투명성) + 최근 업무·적용 스킬(크루 프로필). */
 export async function GET(_req, { params }) {
@@ -25,7 +26,7 @@ export async function GET(_req, { params }) {
     // 원인을 가려서 돌려준다. 예전엔 catch가 통째로 삼켜서, 카드는 멀쩡한데 이벤트·스킬 읽기가
     // 실패해도 화면엔 "크루를 찾을 수 없습니다"가 떴다 — 사용자도 우리도 진짜 원인을 못 봤다
     // (실사용 신고 2026-08-02의 진단이 늦어진 이유). 없음은 404, 그 외는 500 + 실제 사유.
-    if (e?.code === 'NOT_FOUND') return Response.json({ error: '크루를 찾을 수 없습니다' }, { status: 404 });
+    if (e?.code === 'NOT_FOUND') return apiError('crew_card_not_found', await requestLang()); // 화면 언어 문구 + errorCode(F11)
     if (e?.code === 'BAD_SLUG') return Response.json({ error: String(e.message) }, { status: 400 }); // 경로 이탈 등 — 서버 잘못이 아니다
     return Response.json({ error: `크루 카드를 읽지 못했습니다: ${String(e?.message || e)}` }, { status: 500 });
   }
@@ -40,7 +41,7 @@ export async function PUT(req, { params }) {
     const agent = await saveAgentCard(ws, slug, md);
     return Response.json({ agent });
   } catch (e) {
-    return Response.json({ error: String(e.message || e) }, { status: 400 });
+    return apiErrorFrom(e, await requestLang(), 400); // 코드 달린 엔진 오류(없는 크루 등)는 화면 언어 문구(F11), 그 밖은 종전 원문
   }
 }
 
@@ -56,7 +57,7 @@ export async function PATCH(req, { params }) {
     const meta = await updateAgentMeta(ws, slug, { name, role, team, model, runner, effort, skills, mcp });
     return Response.json({ meta });
   } catch (e) {
-    return Response.json({ error: String(e.message || e) }, { status: 400 });
+    return apiErrorFrom(e, await requestLang(), 400); // 코드 달린 엔진 오류(없는 크루 등)는 화면 언어 문구(F11), 그 밖은 종전 원문
   }
 }
 
@@ -71,6 +72,6 @@ export async function DELETE(_req, { params }) {
     void import('../../../../../../src/gateway/msgr.mjs').then((m) => m.detachFiredCrew(ws, slug)).catch(() => {});
     return Response.json({ ok: true });
   } catch (e) {
-    return Response.json({ error: String(e.message || e) }, { status: 400 });
+    return apiErrorFrom(e, await requestLang(), 400); // 코드 달린 엔진 오류(없는 크루 등)는 화면 언어 문구(F11), 그 밖은 종전 원문
   }
 }
