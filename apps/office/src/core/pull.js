@@ -105,6 +105,7 @@ async function readBoard() {
     sb.from('msgr_org_docs').select('id, org_id, channel_id, path, title, updated_at').in('org_id', ids).not('path', 'like', 'journal/%').order('path').limit(300), // 본문은 열 때만
   ]) : [];
   const [got, personalFiles] = await Promise.all([agentsP, personalFilesP]);
+  if (!ids.length && !got) throw new Error('board: crews read failed'); // 조직이 없으면 크루 행 읽기가 기록판 전부다 — 못 읽었으면 '에이전트 없음'이 아니라 읽기 실패
   const bad = res.find((r) => r.error);
   if (bad) throw bad.error;
   const [crews, runs, approvals, decisions, files, channels, journals, docs] = ids.length ? res.map((r) => r.data ?? []) : [];

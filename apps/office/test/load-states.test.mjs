@@ -114,3 +114,12 @@ test('파일 한도: 지금 쓸 수 있는 한도(서버 Free 25MB)로 먼저 �
   assert.equal(FM.uploadCheck({ name: 'a.pdf', size: 30 * 1024 * 1024, type: 'application/pdf' }), 'tooBig');
   assert.equal(FM.uploadCheck({ name: 'a.pdf', size: 25 * 1024 * 1024, type: 'application/pdf' }), null);
 });
+
+// 이유(화면 확인 10/5): 조직이 없는 계정은 크루 행 읽기가 기록판의 전부인데, 그 읽기가 실패해도 성공으로 처리돼 '아직 에이전트가 없습니다'가 보였다
+test('OFC-08: 조직 없는 계정 — 크루 행을 못 읽으면 기록판 실패로 남긴다', async () => {
+  const state = {};
+  const pull = run('core/pull.js', { getStorageScope: () => 'alice', ME: { id: 'alice' }, SPACES: [{ key: 'me', kind: 'me' }], getClient: async () => fakeSb(() => ({ data: null, error: { message: 'down' } })),
+    getState: () => state, update: (fn) => Object.assign(state, fn(state)), outbox: { has: () => false }, mergePages() {}, mapBoard, decidableSet: () => new Set() });
+  await assert.rejects(pull.pullBoard());
+  assert.ok(state.boardError > 0);
+});

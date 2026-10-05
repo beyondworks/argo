@@ -12,7 +12,8 @@ import { ME, SPACES, getMode, nameIn } from '../core/session.js';
 import { baseOf, crewMenu } from '../core/commands.js';
 import { navigate } from '../core/router.jsx';
 import { isMine, crewsIn } from '../core/crew-list.js';
-import { groupByDept, crewWork, crewRecords, crewAccess } from '../core/crew-model.js';
+import { groupByDept, crewWork, crewRecords, crewAccess, replyLines } from '../core/crew-model.js';
+import { getClient } from '../core/supabase.js';
 import { useTasks } from '../core/tasks.js';
 import { fmtBytes } from '../core/files.js';
 import { CREWS_DICT } from './crews-i18n.js';
@@ -94,6 +95,30 @@ function Sec({ title, n, more, children }) {
 }
 const SHOW = 5; // 칸마다 먼저 보이는 건수 — 나머지는 '모두 보기'(그 화면의 이 에이전트 폴더)
 
+/** 맡긴 일의 최근 답 — 오피스 안에서 답을 볼 곳(10/5 연결성). 내 에이전트의 개인 1:1(메신저 에이전트 탭과 같은 방, 오피스 맡기기도 여기로 보낸다)에서
+ *  최근 글 5개를 상세를 열 때 한 번 읽는다. 부하: 상세를 열 때만 읽기 2(방 찾기 1 + 글 1), 쓰기 0 — 방이 없으면 만들지 않는다. 주기 읽기 없음.
+ *  개인 행이 없는 에이전트(옛 본체·남의 에이전트)는 칸을 그리지 않는다(조직 1:1은 메신저에서) */
+function useRecentReplies(c, enabled) {
+  const crews = useStore((s) => s.crews);
+  const twin = useMemo(() => (enabled ? crews.find((x) => x.personal && (x.id === c.id || (c.agent != null && x.agent === c.agent)))?.id ?? null : null), [crews, c.id, c.agent, enabled]);
+  const [rows, setRows] = useState(undefined), [again, setAgain] = useState(0);
+  useEffect(() => {
+    if (!twin || getMode() !== 'signedIn') return undefined;
+    let live = true; setRows(undefined);
+    (async () => {
+      const sb = await getClient();
+      const ch = await sb.from('msgr_channels').select('id').eq('personal_pair', `crew:${twin}`).maybeSingle();
+      if (ch.error) throw ch.error;
+      if (!ch.data) return [];
+      const m = await sb.from('msgr_messages').select('id, author_kind, body, created_at').eq('channel_id', ch.data.id).is('deleted_at', null).order('id', { ascending: false }).limit(SHOW);
+      if (m.error) throw m.error;
+      return m.data ?? [];
+    })().then((r) => { if (live) setRows(replyLines(r)); }, () => { if (live) setRows('fail'); });
+    return () => { live = false; };
+  }, [twin, again]);
+  return { twin, rows, retry: () => setAgain((n) => n + 1) };
+}
+
 function CrewBody({ crew: c, space, close }) {
   const work = useStore((s) => s.work), approvals = useStore((s) => s.approvals), decisions = useStore((s) => s.decisions);
   const outputs = useStore((s) => s.outputs), journal = useStore((s) => s.journal);
@@ -101,6 +126,7 @@ function CrewBody({ crew: c, space, close }) {
   const mine = useMemo(() => crewWork(c.id, { work, tasks }), [c.id, work, tasks]);
   const rec = useMemo(() => crewRecords(c.id, { approvals, decisions, outputs, journal }, SHOW), [c.id, approvals, decisions, outputs, journal]);
   const access = crewAccess(c, ME.id, getMode());
+  const replies = useRecentReplies(c, access === 'direct');
   const home = c.space ?? space; // 크루가 사는 조직(예시 크루는 공간이 없어 지금 공간)
   const go = (path) => { close(); navigate(path); };
   const all = (view) => <button type="button" className="link-btn" onClick={() => go(`${baseOf(home)}/${view}?folder=${encodeURIComponent(c.id)}`)}>{t('crewd.more')}</button>;
@@ -114,9 +140,15 @@ function CrewBody({ crew: c, space, close }) {
         <button type="button" className="btn primary" onClick={() => setUi({ crew: null, assign: { space: home, crew: c.id, items: [] } })}><Icon name="hand" size={14} />{t('crewd.assign')}</button>
         {c.on === false && <p className="dim small crewd-note"><Icon name="info" size={13} />{t('crew.offNote')}</p>}{/* 꺼진 에이전트(메신저와 같은 90초 기준, CX-06) */}
         {/* 메신저는 특정 대화를 여는 주소를 받지 않는다(로그인 콜백만) — 받는 곳(랜딩)으로 가는 단추를 둔다(CX-02) */}
-        <p className="dim small crewd-note">{t('crewd.reply', { crew: c.name })} <button type="button" className="link-btn small" onClick={() => openExternal(FAMILY.messenger)}>{t('msgr.get')}</button></p>
+        <p className="dim small crewd-note">{t(replies.twin ? 'crewd.replyPersonal' : 'crewd.reply', { crew: c.name })} <button type="button" className="link-btn small" onClick={() => openExternal(FAMILY.messenger)}>{t('msgr.get')}</button></p>
       </> : <p className="dim small crewd-note"><Icon name="info" size={13} />{access === 'off' ? t('crewd.off') : t('crew.viaChannel', { crew: c.name })}</p>}
     </div>
+    {replies.twin && getMode() === 'signedIn' && <Sec title={t('crewd.replies')}>
+      {replies.rows === undefined ? <p className="dim small" role="status">{t('biz.loading')}</p>
+        : replies.rows === 'fail' ? <LoadFail small onRetry={replies.retry} />
+          : !replies.rows.length ? <None k="crewd.repliesNone" />
+            : replies.rows.map((m) => <div key={m.id} className="rec-row crewd-reply"><Icon name={m.who === 'crew' ? 'hand' : 'person'} size={14} className="dim" /><span className="rec-text">{m.text}</span><small className="rec-when">{ago(m.at)}</small></div>)}
+    </Sec>}
     <Sec title={t('crewd.info')}>
       <div className="crewd-facts">
         <Fact k="crewd.f.job">{job}</Fact><Fact k="crewd.f.dept">{c.dept}</Fact><Fact k="crewd.f.owner">{ownerOf(c, space)}</Fact>

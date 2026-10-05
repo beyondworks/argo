@@ -45,3 +45,11 @@ export function crewAccess(crew, me, mode) {
   if (!isMine(crew, me)) return 'channel';
   return usable(crew) ? 'direct' : 'off';
 }
+
+/** 맡긴 일의 최근 답(에이전트 상세 '최근 대화') — 메신저 1:1 글 → 한 줄씩. who: 'crew'(에이전트) | 'me'(사람), 본문은 한 줄로 240자까지, 새 글이 위 */
+export function replyLines(rows) {
+  return (rows ?? []).filter((m) => String(m.body ?? '').trim()).map((m) => {
+    const text = String(m.body).replace(/\s+/g, ' ').trim();
+    return { id: m.id, who: m.author_kind === 'crew' ? 'crew' : 'me', text: text.length > 240 ? `${text.slice(0, 240)}…` : text, at: m.created_at };
+  });
+}

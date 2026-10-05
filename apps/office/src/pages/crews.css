@@ -22,3 +22,5 @@
 .crewd-facts { display: grid; gap: 8px; padding: 12px 14px; border-radius: var(--rs); background: var(--surface); }
 .crewd-sub { font-size: 12px; font-weight: 600; color: var(--fg-2); margin: 6px 0 0 2px; }
 .crewd-none { margin: 0 0 0 2px; }
+.crewd-reply { cursor: default; align-items: flex-start; } /* 최근 대화 — 누르는 줄이 아니다. 두 줄까지 */
+.crewd-reply .rec-text { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }

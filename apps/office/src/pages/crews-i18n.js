@@ -9,6 +9,7 @@ export const CREWS_DICT = {
   'crewd.gone': ['이 에이전트를 찾을 수 없습니다. 지워졌거나 조직에서 빠졌을 수 있습니다.', "This agent can't be found. It may have been removed."],
   'crewd.assign': ['일 맡기기', 'Hand off work'],
   'crewd.reply': ['맡긴 일의 답은 메신저의 {crew} 1:1 대화로 옵니다.', 'Replies come in your Messenger 1:1 chat with {crew}.'],
+  'crewd.replyPersonal': ['맡긴 일의 답은 메신저 개인 공간의 {crew} 1:1 대화로 옵니다. 최근 대화는 아래에서도 볼 수 있어요.', 'Replies come in your Messenger personal 1:1 chat with {crew}. You can also see the latest below.'],
   'crewd.off': ['지금은 이 에이전트에게 일을 맡길 수 없습니다. 꺼져 있거나 맡길 권한이 없습니다. 메신저에서 확인해 주세요.', "You can't hand work to this agent right now. It's off or you don't have permission. Check in Messenger."],
   'crewd.editIn': ['에이전트 정보는 오피스에서 고치지 않고 메신저에서 고칩니다.', 'Agent details are changed in Messenger, not in Office.'],
   'crewd.info': ['정보', 'Details'],
@@ -20,4 +21,5 @@ export const CREWS_DICT = {
   'crewd.decisions': ['최근 결정', 'Recent decisions'], 'crewd.decisionsNone': ['최근 30일 동안 결정한 일이 없습니다', 'No decisions in the last 30 days'],
   'crewd.outputs': ['산출물', 'Outputs'], 'crewd.outputsNone': ['아직 만든 파일이 없습니다', 'No files yet'],
   'crewd.more': ['모두 보기', 'See all'],
+  'crewd.replies': ['최근 대화', 'Recent conversation'], 'crewd.repliesNone': ['아직 주고받은 글이 없습니다', 'No messages yet'],
 };

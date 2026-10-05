@@ -59,3 +59,12 @@ test('CX-03: 맡길 곳 고르기 — 묶인 줄·조직 행·개인 행', () =>
   assert.deepEqual(assignTarget({ id: 'x', space: 'acme', agent: 'x' }, [orgRow, twin], spaces), { orgId: ORG, crewId: 'x', personalId: null, personalBot: false }, '다른 에이전트의 개인 행은 고르지 않는다');
   assert.equal(assignTarget(orgRow, [orgRow, { ...twin, hosting: 'bot' }], spaces).personalBot, true);
 });
+
+// 이유(맡긴 일의 답을 오피스 안에서 볼 곳 없음): 맡기면 답은 메신저에만 왔다 — 에이전트 상세에 그 1:1의 최근 글을 한 줄씩(읽기만)
+test('맡긴 일의 답: 메신저 1:1 글 → 한 줄씩(에이전트·나, 공백 정리, 240자, 빈 글 빼기)', async () => {
+  const M = await import('../src/core/crew-model.js');
+  assert.ok(M.replyLines, 'replyLines가 있어야 한다');
+  const long = '가'.repeat(300);
+  assert.deepEqual(M.replyLines([{ id: 3, author_kind: 'crew', body: '정리했습니다.\n\n- 할 일 3개', created_at: 't3' }, { id: 2, author_kind: 'user', body: '  ', created_at: 't2' }, { id: 1, author_kind: 'user', body: long, created_at: 't1' }]),
+    [{ id: 3, who: 'crew', text: '정리했습니다. - 할 일 3개', at: 't3' }, { id: 1, who: 'me', text: `${'가'.repeat(240)}…`, at: 't1' }]);
+});
