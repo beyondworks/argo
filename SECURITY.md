@@ -4,7 +4,7 @@
 안심시키는 문장보다 "어디까지 막고 어디부터 못 막는지"를 먼저 쓴다 — 이 제품은 자율 AI 에이전트에게
 사용자 컴퓨터의 셸을 맡기는 구조이고, 그 성질에서 오는 한계는 코드로 지울 수 없기 때문이다.
 
-**English summary** — Argo is a local-first, single-tenant personal agent that runs AI agents with shell
+**English summary** — Argo is a local-first, single-tenant app that runs AI agents with shell
 access on the operator's own machine. Inside the agent process there is **no security boundary against an
 adversarial model**: the permission gate (`src/permission-gate.mjs`) blocks specific credential and
 control paths, but shell is Turing-complete and a string filter is structurally incomplete. Any content
