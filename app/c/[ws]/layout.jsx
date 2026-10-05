@@ -11,7 +11,7 @@ import UpdateNotes from '../../update-notes';
 import { SplitPane } from './split-pane';
 import { parseSide, sideParam, withSide } from './split.mjs';
 import { useSplitAlive } from './split-alive';
-import { nextCompanyData } from './company-load.mjs';
+import { nextCompanyData, brokenCardsOf } from './company-load.mjs';
 import { searchScope } from './search-scope.mjs'; // 검색을 받는 화면에서만 검색 칸(UX-A03)
 import { gistLabel } from '../../lib/gist-display.mjs'; // 메신저 머리말을 뗀 요약(UX-A08)
 
@@ -509,6 +509,12 @@ function Shell({ children, params }) {
           </div>
           );
         })}
+        {brokenCardsOf(data) && (
+          // 못 읽은 크루 카드 — 목록에서 조용히 빠진 크루가 있음을 알린다(L2). 이름은 마우스를 올리면 보인다. 일시 실패(파일 잠김 등)면 다음 갱신에 사라진다.
+          <p role="status" title={brokenCardsOf(data).names.join(', ')} style={{ margin: '4px 12px 8px', fontSize: 11.5, lineHeight: 1.4, color: 'var(--warn)' }}>
+            {t('nav.brokenCards', { n: brokenCardsOf(data).count })}
+          </p>
+        )}
         <Link
           href={L(`/c/${ws}`)}
           className="nav-item"

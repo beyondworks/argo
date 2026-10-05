@@ -353,6 +353,7 @@ const DICT = {
   'activity.source.room': ['회의실', 'room'],
   'nav.crewCount': ['크루 {n}', 'Crew {n}'],
   'nav.pinned': ['고정', 'Pinned'],
+  'nav.brokenCards': ['크루 카드 {n}개를 읽지 못했어요', "Couldn't read {n} crew card(s)"],
   'nav.pin': ['고정', 'Pin'],
   'nav.unread': ['새 메시지', 'New messages'],
   'nav.dragOrder': ['드래그로 순서 변경', 'Drag to reorder'],

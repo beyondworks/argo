@@ -1,7 +1,7 @@
 import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { loadCompany, updateCompany, archiveCompany, paths } from '../../../../src/workspace.mjs';
-import { listAgents, listDocs } from '../../../../src/hub.mjs';
+import { scanAgents, listDocs } from '../../../../src/hub.mjs';
 import { linkStats } from '../../../c/[ws]/graph2d-core.mjs'; // 연결 지표는 기억 그래프와 같은 셈법
 import { readDelegations } from '../../../../src/usage.mjs';
 import { readUsageSummary } from '../../../../src/billing.mjs'; // 금액 집계는 billing 게이트로만
@@ -40,8 +40,8 @@ export async function GET(req, { params }) {
     // ?light=1 — 회사·크루만(사이드바 30초 폴·크루 대화창 진입용). 기억 1만 건 listDocs(첫 로드 ≈0.5~1초, 이후 캐시 수십 ms)·집계는 데크만 쓴다.
     // 잔여 한도(limits)는 light에도 싣는다 — 크루 대화창 입력줄 게이지가 쓴다(K92). 자격 파일 + 작은 JSON 하나라 가볍다.
     const light = new URL(req.url).searchParams.get('light') === '1';
-    const [company, agents, docs, usage, delegations, limits] = await Promise.all([
-      loadCompany(ws), listAgents(ws),
+    const [company, { agents, broken }, docs, usage, delegations, limits] = await Promise.all([
+      loadCompany(ws), scanAgents(ws),
       light ? [] : listDocs(ws), light ? null : readUsageSummary(ws), light ? [] : readDelegations(ws), readRunnerLimits(ws).catch(() => []),
     ]);
     // 크루별 마지막 대화 시각 — chats/<slug>.json mtime(스레드 영속화의 단일 파일). 사이드바 안읽음 배지 판정용.
@@ -50,10 +50,10 @@ export async function GET(req, { params }) {
     await Promise.all(agents.map(async (a) => {
       try { a.chatTs = (await stat(join(chatsDir, `${a.slug}.json`))).mtimeMs; } catch { /* 대화 없음 */ }
     }));
-    if (light) return Response.json({ company, agents, limits, light: true });
+    if (light) return Response.json({ company, agents, broken, limits, light: true }); // broken = 못 읽은 크루 카드 { count, names }(L2)
     const { deg, ...link } = linkStats(docs); // 1회 계산 — 다이얼·칩·표 열이 같은 셈법을 본다
     return Response.json({
-      company, agents,
+      company, agents, broken,
       memories: docs.slice(0, 6).map((d) => ({ ...d, deg: deg.get(d.rel) ?? 0 })), // 표 "연결" 열 = 해석 후 차수
       memoryCount: docs.length,
       stats: docStats(docs, link),

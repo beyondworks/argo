@@ -13,3 +13,10 @@ export function nextCompanyData(prev, err) {
   if (prev?.company) return prev;
   return { loadError: true };
 }
+
+/** 못 읽은 크루 카드 안내 재료(L2, 2026-10-05) — 회사 응답의 broken({ count, names })이 있고 1개 이상일 때만, 아니면 null(안내 없음). */
+export function brokenCardsOf(data) {
+  const b = data?.broken;
+  if (!b || !Number.isFinite(b.count) || b.count < 1) return null;
+  return { count: b.count, names: Array.isArray(b.names) ? b.names : [] };
+}

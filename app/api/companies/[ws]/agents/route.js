@@ -1,5 +1,5 @@
 import { createAgentFromPrompt, renameTeam } from '../../../../../src/persona.mjs';
-import { listAgents } from '../../../../../src/hub.mjs';
+import { scanAgents } from '../../../../../src/hub.mjs';
 import { guardCompany, requestLang } from '../../../../auth.mjs';
 import { apiErrorFrom } from '../../../../apimsg.mjs';
 
@@ -22,7 +22,8 @@ export const maxDuration = 120; // 페르소나 카드 생성은 모델 1턴 —
 export async function GET(_req, { params }) {
   const { ws } = await params;
   const denied = await guardCompany(ws); if (denied) return denied;
-  return Response.json({ agents: await listAgents(ws) });
+  const { agents, broken } = await scanAgents(ws);
+  return Response.json({ agents, broken }); // broken = 못 읽은 크루 카드 { count, names } — 화면이 "카드 N개를 읽지 못했어요"를 보인다(L2)
 }
 
 export async function POST(req, { params }) {
