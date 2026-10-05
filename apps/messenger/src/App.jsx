@@ -58,7 +58,8 @@ import { PHONE_TABS, isPhoneRoot, spaceForTab, pickChannelOrg, startTab, tabBadg
 import { bindPullRefresh, enteredReady } from './pull-refresh.mjs';
 import { haptic } from './haptics.js';
 import { refreshMessageWindow, mergeRefreshedMessages, readMissed } from './refresh-messages.mjs';
-import { createLinkWatch, orgSubscriptionKey, roomSignal } from './realtime-link.mjs'; // 끊김 → 다시 붙음 짝(rt_down·rt_up)·목록 다시 읽기 판정
+import { createLinkWatch, orgSubscriptionKey, roomSignal } from './realtime-link.mjs';
+import { createReadCursor, unreadWorthy, createCoalescer } from './read-sync.mjs'; // 읽음 커서 다시 쓰기·안 읽음 숫자 묶음(MSG-05·08) // 끊김 → 다시 붙음 짝(rt_down·rt_up)·목록 다시 읽기 판정
 import { writeScreenSnapshot, consumeScreenSnapshot } from './phone-screen-snapshot.mjs';
 import { mentionCandidates, mentionsFromBody, ambiguousMentions, ALL_RE, outsideCrewMentions, canInstructCrew, crewOrder, withoutCopies, outsideAddDone, outsideRowView } from './mention-candidates.mjs';
 import { OutsideRow } from './outside-row.mjs';
@@ -1242,7 +1243,13 @@ function Shell({ session }) {
   const [unreadSpace, setUnreadSpace] = useState(null); // unread가 어느 공간의 셈인가 — 공간을 막 바꿔 아직 못 읽었으면 탭 뱃지는 서버 합계로(phone-shell.mjs tabBadges)
   const [dmSortPos, setDmSortPos] = useState(() => ({})); // DM 탭 '직접 배치' 순서(msgr_channel_prefs.sort_pos, 유건 확정 2026-09-29) — 즐겨찾기 pin_pos와 별개
   // 안 읽음 — org=null이면 개인 공간(조직 밖 1:1)을 센다(검수 L-1)
-  const loadUnread = useCallback(async () => { if (!orgId || orgId !== activeOrg.current) return; const current = unreadRequests.current.begin(orgId); const rows = await q(supabase.rpc('msgr_unread', { org: orgId === PERSONAL ? null : orgId })).catch(() => null); if (rows && current()) { setUnread(Object.fromEntries(rows.map((r) => [r.channel_id, { n: r.n, mention: r.mention }]))); setUnreadSpace(orgId); } }, [orgId]);
+  const readCursor = useMemo(() => createReadCursor(), [uid]); // 이 기기의 읽음 커서 저장(read-sync.mjs) — 실패한 위치는 다음 기회에 다시 쓴다(MSG-05)
+  const loadUnread = useCallback(async () => { if (!orgId || orgId !== activeOrg.current) return; const current = unreadRequests.current.begin(orgId); const since = Date.now(); const rows = await q(supabase.rpc('msgr_unread', { org: orgId === PERSONAL ? null : orgId })).catch(() => null); if (rows && current()) { setUnread(readCursor.unreadFrom(rows, since)); setUnreadSpace(orgId); } }, [orgId, readCursor]); // 물은 뒤 이 기기가 읽음으로 저장한 방은 0(열린 방 배지 경합)
+  // 새 글 방송 → 안 읽음 다시 세기는 1.5초 창에 한 번(MSG-08 — 글마다 RPC 1건이던 것). 기기 N대 × 분당 글 M건이 분당 N×M건 → 기기당 분당 최대 40건, 몰아 온 글은 1건.
+  // 내 글·참여하지 않은 공개 채널 글은 세지 않는다(unreadWorthy). 공간을 바꾸면 예약을 버린다(새 공간은 위 효과가 센다)
+  const loadUnreadRef = useRef(loadUnread); loadUnreadRef.current = loadUnread;
+  const unreadSoon = useMemo(() => createCoalescer(() => { loadUnreadRef.current().catch(() => {}); }), []);
+  useEffect(() => () => unreadSoon.cancel(), [orgId, unreadSoon]);
   useEffect(() => { const r = restoredSpace.current; if (r?.space === orgId && r.sync === syncEpoch) return; loadUnread(); }, [loadUnread, syncEpoch]); // eslint-disable-line react-hooks/exhaustive-deps -- 새 글 방송은 아래 event 효과가 다시 센다. 저장본으로 연 공간은 건너뛴다(D3)
   useEffect(() => { if (!uid) return; let live = true; const revision = prefQueue.current.revision; q(supabase.from('msgr_channel_prefs').select('channel_id, muted, pinned, pin_pos, sort_pos').eq('user_id', uid)).then((rows) => { if (!live || prefQueue.current.busy || revision !== prefQueue.current.revision) return; setMuted(new Set(rows.filter((r) => r.muted).map((r) => r.channel_id))); setPinned(new Set(rows.filter((r) => r.pinned).map((r) => r.channel_id))); setPinPos(new Map(rows.filter((r) => r.pin_pos != null).map((r) => [r.channel_id, r.pin_pos]))); setDmSortPos(Object.fromEntries(rows.filter((r) => r.sort_pos != null).map((r) => [r.channel_id, r.sort_pos]))); }).catch(() => {}); q(supabase.from('msgr_profiles').select('quiet_from, quiet_to').eq('user_id', uid).maybeSingle()).then((p) => { if (live) setQuiet(p && p.quiet_from != null && p.quiet_to != null ? { from: p.quiet_from, to: p.quiet_to } : null); }).catch(() => {}); return () => { live = false; }; }, [uid, prefsEpoch, syncEpoch]);
   const savePrefs = async (patches) => {
@@ -1349,8 +1356,8 @@ function Shell({ session }) {
     } catch (e) { groupErr(e); }
   };
   const toggleMemory = async (c) => { const r = await supabase.from('msgr_channels').update({ crew_memory: c.crew_memory === false }).eq('id', c.id).select('id'); if (r.error) return setErr(friendlyErr(r.error.message, t)); if (!r.data?.length) return setErr(t('err.denied')); setNote(t(c.crew_memory === false ? 'ch.memory.nowOn' : 'ch.memory.nowOff')); loadOrg(orgId).catch(() => {}); }; // 권한 최종 판정은 RLS(msgr_can_manage_channel)·정책 트리거
-  const readMark = useRef({}); // 채널 → 이 기기에서 마지막으로 쓴 읽음 커서 — 같은 값을 다시 쓰지 않는다(기능 점검 D2: 초점·가시성 바뀔 때마다 upsert)
-  const markRead = useCallback(async (channelId, lastId) => { setUnread((u) => (u[channelId]?.n ? { ...u, [channelId]: { n: 0, mention: 0 } } : u)); if (!channelId || !lastId || (readMark.current[channelId] ?? 0) >= lastId) return; readMark.current[channelId] = lastId; try { await q(supabase.from('msgr_reads').upsert({ channel_id: channelId, user_id: uid, last_read_id: lastId, updated_at: new Date().toISOString() })); } catch { /* 커서 저장 실패는 다음 조회에서 다시 */ } iconBadge?.request(); }, [uid, iconBadge]); // 폰 아이콘은 커서가 저장된 뒤 서버 숫자로
+  // 읽음 커서 저장 — 같은 값을 다시 쓰지 않고(기능 점검 D2: 초점·가시성 바뀔 때마다 upsert), 실패한 위치는 다음 초점·가시성·새 글 때 다시 쓴다(MSG-05). 폰 아이콘은 저장된 뒤 서버 숫자로
+  const markRead = useCallback(async (channelId, lastId) => { setUnread((u) => (u[channelId]?.n ? { ...u, [channelId]: { n: 0, mention: 0 } } : u)); const w = readCursor.begin(channelId, lastId); if (!w) return; try { await q(supabase.from('msgr_reads').upsert({ channel_id: channelId, user_id: uid, last_read_id: lastId, updated_at: new Date().toISOString() })); } catch { w.fail(); return; } w.ok(); iconBadge?.request(); }, [uid, iconBadge, readCursor]);
   // event.kind는 '무슨 방송인가'(message·approval·reaction·edit)다. 서버 payload에도 kind가 있는데
   // 그건 '글 종류'(text·system)다. 전개를 뒤에 두면 후자가 전자를 덮어 방송이 통째로 버려진다 —
   // 그래서 구분자는 항상 전개 **뒤**에 놓고, 글 종류는 msgKind로 따로 싣는다.
@@ -1546,7 +1553,6 @@ function Shell({ session }) {
   }, [orgSubKey, hasToken]); // eslint-disable-line react-hooks/exhaustive-deps — 조직 목록(집합)·모바일 복귀·전체 해제 뒤에만 다시 건다(탭·고른 조직·토큰 갱신은 아니다 — orgSubscriptionKey)
   useEffect(() => { rt.current = subsRef.current.get(orgId) ?? null; }, [orgId]);
   useEffect(() => { const iv = setInterval(() => setTick((x) => x + 1), 15_000); return () => clearInterval(iv); }, []);
-  useEffect(() => { if (event?.kind === 'message') loadUnread(); }, [event]); // eslint-disable-line react-hooks/exhaustive-deps
   const dmIdsKey = useMemo(() => channels.filter((c) => c.kind === 'dm').map((c) => c.id).sort().join(','), [channels]); // DM 집합(개수가 아니라 집합 — 하나 끝나고 하나 생겨도 재조회)
   useEffect(() => { dmIdsRef.current = new Set(dmIdsKey ? dmIdsKey.split(',') : []); }, [dmIdsKey]); // 방송 필터용(렌더 중 ref 대입 대신 효과에서)
   useEffect(() => { // DM 최근순 재료 — 채널당 마지막 메시지 시각(RPC msgr_dm_latest, 채널당 1행·id 인덱스). 폰 DM 탭 정렬에만. 재연결·조직 전환 때도 다시.
@@ -1736,6 +1742,7 @@ function Shell({ session }) {
   handleMessageRef.current = (payload) => {
     if (!seenOnce(seenMsgRef.current, payload?.id)) return;
     const cid = payload?.channel_id;
+    if (unreadWorthy(payload, { uid, listIds: listIdsRef.current, previewIds: previewIdsRef.current, asked: roomAsked.current })) unreadSoon.request(); // 방 넣기(addRoom) 전에 판정 — 처음 보는 방의 첫 글은 센다
     if (cid && loadedOrg.current === activeOrg.current && !listIdsRef.current.has(cid) && !previewIdsRef.current.has(cid)) addRoom.current(cid); // 목록에 없는 방의 첫 글 — 그 방만 불러와 넣는다(30초 목록 재조회를 기다리지 않게, D4)
     if (cid && cid === activeChannel.current && payload.kind === 'system') bumpMembers(); // 들어오기·나가기·에이전트 넣기 안내 글 — 열린 방 구성원만 다시 읽는다
     if (!isPhoneRef.current && payload.author_user_id !== uid && ((Array.isArray(payload.mentions) && payload.mentions.some((m) => m?.kind === 'user' && m.id === uid)) || dmIdsRef.current.has(cid) || (payload.author_kind === 'crew' && payload.reply_to))) inboxSoon.current(); // 알림함에 들어갈 글만(데스크톱 벨)

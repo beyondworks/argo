@@ -39,8 +39,8 @@ test('setInterval은 허용 목록뿐 — 새 주기 호출은 이유와 함께 
   }
 });
 
-test('읽음 커서는 마지막으로 쓴 값보다 클 때만 쓴다(초점·가시성이 바뀔 때마다 upsert하던 것)', () => {
-  assert.match(app, /if \(!channelId \|\| !lastId \|\| \(readMark\.current\[channelId\] \?\? 0\) >= lastId\) return; readMark\.current\[channelId\] = lastId;/);
+test('읽음 커서는 마지막으로 쓴(저장 중·저장 확인) 값보다 클 때만 쓴다(초점·가시성이 바뀔 때마다 upsert하던 것) — 판정은 read-sync.test.mjs', () => {
+  assert.match(app, /const w = readCursor\.begin\(channelId, lastId\); if \(!w\) return;/);
 });
 
 test('구독은 내가 속한 조직 전체 + u:를 한 번 — 탭·고른 조직이 바뀌어도 다시 걸지 않는다(D3), 방 토픽도 공간을 오가며 유지', () => {
