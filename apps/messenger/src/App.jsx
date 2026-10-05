@@ -16,7 +16,7 @@ import * as Panes from './panes.mjs'; import { GRAPH_TAB, MAX_PANES } from './pa
 import { supabase, configured, q } from './supabase.js';
 import { customServer, SB_URL, SB_ANON } from './supabase.js';
 import { readProfile, writeProfile, clearProfile, normalizeUrl, hostOf } from './server-profile.mjs';
-import { handoff, fetchProviderSettings, providerShown, noProviders } from './oauth-handoff.mjs';
+import { handoff, fetchProviderSettings, providerShown, noProviders, providerErrorKey } from './oauth-handoff.mjs';
 import { parseInviteCode, inviteShareText, inviteLink, friendShareText, checkJoinInput, canSubmitJoin } from './invite.mjs';
 import { inviteListSync } from './invite-list-sync.mjs';
 import { findReusableBot, canReconnect, botDefaultNames } from './bot-reuse.mjs';
@@ -73,6 +73,7 @@ import { memberRows, memberPerms, MEMBER_CHIPS } from './phone-members.mjs';
 import { Seg } from './seg.mjs'; // 세그먼트 토글 하나(5차 피드백 3)
 import { searchView } from './search-view.mjs';
 import { deliveryCardView } from './delivery-card.mjs';
+import { friendlyErr, toastError } from './error-toast.mjs'; // 아는 서버 코드 → 문구, 토스트는 원문을 거른다(UXM-05)
 import { messageShape } from './attach-only.mjs';
 import { appBackStack, rootBackAction } from './back-stack.mjs'; import { useBackClose } from './use-back-close.js'; // Android 뒤로 — 열린 시트·팝업부터 닫기(MSG-10) // 첨부만 보낸 글 — 올리는 중 자리표시·거둔 글 숨김(MSG-06)
 import { watchOnline } from './connection.mjs';
@@ -177,7 +178,6 @@ const markTurnHover = (e) => {
 };
 const dayKey = (iso) => new Date(iso).toDateString();
 /** 서버 거절 원문 → 사람 문구(검수 M-5: RLS·check 제약 원문이 그대로 뜨던 자리들의 공통 매핑). 모르는 오류는 원문 유지(정직). */
-const friendlyErr = (msg, t) => /msgr_session_refreshing/.test(msg) ? t('err.sessionRefreshing') : /msgr_crew_remove_owner_only/.test(msg) ? t('err.crewRemoveOwnerOnly') : /row-level security/.test(msg) ? t('err.denied') : /_check\b|violates check constraint/.test(msg) ? t('err.invalid') : /msgr_seat_limit/.test(msg) ? t('seat.limit') : /msgr_approver_not_member/.test(msg) ? t('set.policy.approverNotMember') : /msgr_org_locked|read-only/.test(msg) ? t('org.locked.short') : /msgr_room_limit/.test(msg) ? t('room.limit') : msg; // 무료 인원 한도(개인 공간 2026-09-30)
 // 에이전트 넣기(msgr_crew_join) 오류 — 방 설정창·레일 파견·방 밖 안내·개인 그룹이 같이 쓴다(검수 #826 LOW-5: 방 밖 안내는 서버 코드 원문이 보였다).
 const joinErr = (msg, t) => /msgr_channel_personal_blocked/.test(msg) ? t('err.channelPersonalBlocked') : /msgr_request_recently_rejected/.test(msg) ? t('ch.crew.join.cooldown') : /msgr_forbidden/.test(msg) ? t('err.denied') : /msgr_bad_member/.test(msg) ? t('err.crewUnavailable') : friendlyErr(msg, t);
 // 크루 작업 중단 전용 오류 매핑(재검수 2026-09-26 L-c) — friendlyErr을 그대로 넓히면 다른 화면의 msgr_not_allowed·미배포 함수
@@ -448,7 +448,7 @@ export default function App() {
   useEffect(() => { if (!configured || sessionWaiting || session === null) markAppReady(); }, [configured, sessionWaiting, session]);
   let body;
   if (!configured) body = <div className="msgr-auth"><div className="msgr-card"><div className="body"><p style={{ color: 'var(--danger)' }}>{t('auth.notConfigured')}</p><ServerRow t={t} open /></div></div></div>;
-  else if (sessionWaiting) body = <ConnectionWaiting t={t} onSignIn={restartSignIn} error={sessionRecoveryError} busy={signingOut} />;
+  else if (sessionWaiting) body = <ConnectionWaiting t={t} onRetry={() => recoveryRef.current?.retryNow()} onSignIn={restartSignIn} error={sessionRecoveryError} busy={signingOut} />;
   else if (session === undefined) body = <div className="msgr-auth"><span className="msgr-klabel">{t('ui.loading')}</span></div>;
   else if (!session) body = <Auth logoutNotice={logoutNotice} />;
   else body = <Shell key={session.user.id} session={session} />;
@@ -456,12 +456,16 @@ export default function App() {
   return <SignOutContext.Provider value={{ signOut, signingOut, accountDeleted }}><Sprite /><UpdateBar t={t} /><MobileUpdateBar t={t} />{session && logoutNotice && <button type="button" className="msgr-toast err" role="alert" onClick={() => setLogoutNotice('')}>{t(logoutNotice)}</button>}{body}</SignOutContext.Provider>;
 }
 
-function ConnectionWaiting({ t, onSignIn, error, busy }) {
-  return <div className="msgr-auth"><div className="msgr-card"><div className="band"><I name="hash" size={14} />ARGO<span className="tag">MESSENGER</span></div><div className="body">
-    <h1>{t('auth.connectionWaiting')}</h1>
+function ConnectionWaiting({ t, onRetry, onSignIn, error, busy }) {
+  // 연결 대기(UXM-07) — 진행 표시를 두고, 주 단추는 '지금 다시 연결'(저장된 로그인 그대로). 저장된 로그인을 지우는 다시 로그인은 낮춘 단추로 — 안내 문구('저장된 로그인은 그대로')와 반대 결과였다
+  const [retrying, setRetrying] = useState(false);
+  const retry = async () => { if (retrying) return; setRetrying(true); try { await onRetry?.(); } finally { setRetrying(false); } };
+  return <div className="msgr-auth"><div className="msgr-card"><div className="band"><svg width="14" height="14" viewBox="0 0 16 16"><path d={STAR_D} /></svg>ARGO<span className="tag">{t('auth.tag')}</span></div><div className="body">
+    <h1 role="status" style={{ display: 'flex', alignItems: 'center', gap: 10 }}><span className="msgr-spin" aria-hidden="true" />{t('auth.connectionWaiting')}</h1>
     <p>{t('auth.connectionWaiting.desc')}</p>
     {error && <p role="alert" style={{ color: 'var(--danger)' }}>{t(error)}</p>}
-    <button type="button" className="btn btn-primary" onClick={onSignIn} disabled={busy}>{busy ? t('ui.loading') : t('auth.signInAgain')}</button>
+    <button type="button" className="btn btn-primary" onClick={retry} disabled={retrying || busy} aria-busy={retrying || undefined}>{t(retrying ? 'auth.reconnecting' : 'auth.reconnect')}</button>
+    <button type="button" className="btn ghost" onClick={onSignIn} disabled={busy}>{busy ? t('ui.loading') : t('auth.signOutAndIn')}</button>
   </div></div></div>;
 }
 
@@ -711,7 +715,7 @@ function Auth({ logoutNotice = '' }) {
         ) : (<>
           {providerState.loading && <p role="status">{t('auth.providers.loading')}</p>}
           {providerState.error && <div role="alert">
-            <p>{t(`auth.providers.${providerState.error}`)}</p>
+            <p>{t(providerErrorKey(providerState.error, { custom: customServer }))}</p>
             <button type="button" className="btn sm ghost" disabled={busy} onClick={retryProviders}>{t('auth.providers.retry')}</button>
           </div>}
           {show('apple') && <button type="button" className="btn btn-apple" disabled={busy || pending} onClick={() => viaBrowser('apple')}><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M16.37 12.7c.02 2.5 2.2 3.33 2.22 3.34-.02.06-.35 1.2-1.15 2.37-.69 1.01-1.41 2.02-2.54 2.04-1.11.02-1.47-.66-2.74-.66s-1.67.64-2.72.68c-1.09.04-1.92-1.1-2.62-2.1C5.4 16.3 4.3 12.55 5.77 10.02c.73-1.25 2.03-2.05 3.44-2.07 1.07-.02 2.08.72 2.74.72.65 0 1.88-.89 3.17-.76.54.02 2.06.22 3.03 1.65-.08.05-1.81 1.06-1.78 3.14M14.3 6.5c.58-.7.97-1.68.86-2.65-.83.03-1.84.55-2.44 1.25-.54.62-1.01 1.61-.88 2.56.93.07 1.88-.47 2.46-1.16"/></svg>{t('auth.apple')}</button>}
@@ -792,6 +796,7 @@ function Shell({ session }) {
   const orgLocked = ent?.ls_status === 'past_due' || ent?.ls_status === 'unpaid'; // J-2: 결제 문제 = 읽기 전용(서버 msgr_org_locked가 최종) // msgr_org_entitlements(plan·seats) — 좌석 표시·한도 안내
   const [dmMembers, setDmMembers] = useState({}); // dm 채널 id → 멤버 행(레일 라벨용: 나 아닌 참가자)
   const [err, setErr] = useState(''); const [note, setNote] = useState('');
+  useEffect(() => { if (err && toastError(err, { t }) !== err) pushDiag('toast', String(err).slice(0, 300)); }, [err]); // eslint-disable-line react-hooks/exhaustive-deps -- 토스트가 원문 대신 문구를 보이면 원문은 진단 기록(설정 → 진단)에
   const [pushCard, setPushCard] = useState(null); // 전경 푸시 카드(폰) — 다른 채널 메시지만, 탭하면 그 채널로(유건 2026-09-12)
   // "이 채널 열기" 요청(알림 탭·전경 카드·초대) — 대기함(navInbox)은 셸 밖에 있어 셸이 다시 마운트돼도 남는다. 다음 한 걸음은 decideNav가 정하고
   // 여기서는 그 걸음만 실행한다: 열기 / 공간 전환 / 채널 조회 / 같은 공간 목록 한 번 다시 읽기 / 버리기. 콜드 스타트 때 chId만 세우면 channel이 없어
@@ -2999,7 +3004,7 @@ function Shell({ session }) {
         {orgLocked && <div className="msgr-notice locked"><span>{t(isAdmin ? 'org.locked.admin' : 'org.locked')}</span></div>}
         {pushCard && createPortal(<button type="button" className="msgr-pushcard" onClick={() => { if (pushCard.channel_id) requestNav(pushCard.channel_id, 'card'); setPushCard(null); }}><span className="t">{pushCard.title}</span><span className="b">{pushCard.body}</span></button>, document.body)}
         {(err || note) && createPortal( /* 토스트 — 상단 바는 레이아웃을 밀었다(유건 2026-09-09). 자동 소멸(안내 4초·오류 8초), 클릭하면 즉시 */
-          <button type="button" ref={toastRef} className={`msgr-toast${err ? ' err' : ''}`} onClick={tapToast} role="status" aria-live="polite">{err ? (/msgr_session_refreshing/.test(err) || err === t('err.sessionRefreshing') ? t('err.sessionRefreshing') : `${t('ui.error')}: ${err}`) : note}</button>,
+          <button type="button" ref={toastRef} className={`msgr-toast${err ? ' err' : ''}`} onClick={tapToast} role="status" aria-live="polite">{err ? (/msgr_session_refreshing/.test(err) || err === t('err.sessionRefreshing') ? t('err.sessionRefreshing') : `${t('ui.error')}: ${toastError(err, { t })}`) : note}</button>,
           document.body,
         )}
         <PageBoundary key={`${page}:${chId ?? ''}`} title={t('ui.pageError')} retry={t('ui.pageError.retry')} onReset={() => setPage('chat')}>
