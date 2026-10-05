@@ -32,20 +32,52 @@ const str = (v) => (typeof v === 'string' && v.trim() ? v.trim() : null); // pay
 /** 결재 한 줄 핵심(유건 9/30 #7) — 에이전트가 적은 목적(purpose)·할 일(task), 없으면 null(화면은 요청 원문 앞부분) */
 export const approvalHead = (plain) => str(plain?.purpose) || str(plain?.task);
 
-/** rows: { crews, runs, approvals, decisions, files, channels, journals, docs }, orgKey: org_id → 공간 키, decidable: 결재권 있는 결재 id 집합,
- *  looks: 내 크루 행으로 만든 얼굴 지도(메신저 crew-face.mjs agentLooks — 같은 에이전트는 조직이 달라도 같은 얼굴, 유건 2026-10-05). 없으면 자기 행 그대로 */
-export function mapBoard(rows, { orgKey, decidable, looks = null }) {
+export const AWAY_MS = 90_000; // 접속 판정 — 메신저와 같은 90초(apps/messenger App.jsx AWAY_MS), 받아 온 때 기준(presence-clock.mjs)
+const isCopy = (slug) => /\.conflict-/.test(slug ?? ''); // 동기화 충돌 사본 — 메신저 mention-candidates.mjs isCopyCrew와 같은 판정
+const agentOf = (r) => (r?.owner_user_id && r.ws_id && r.slug ? `${r.owner_user_id}|${r.ws_id}|${r.slug}` : null); // 같은 에이전트(crew-face.mjs agentKey와 같은 세 값)
+
+/** 결재 버튼을 보일지(화면용) — 메신저 approval-display.js approvalDecider와 같은 판정, 최종은 서버(RLS msgr_approvals_decide = msgr_can_decide).
+ *  꼭 확인(high)은 정책의 결재권자(기본 관리자, 'owner'면 크루 주인, 'approvers'면 관리자와 지정 결재권자 — 손님 제외), 그 밖은 크루 주인.
+ *  크루 주인을 모르면(목록에 없음) 버튼을 띄우고, 정책을 못 읽었으면(policy undefined) 서버에 맡긴다(true) */
+export function canDecideAp(ap, { me, role, owner, policy }) {
+  if (policy === undefined) return true;
+  const mode = policy?.approval_high_by ?? 'admin';
+  if (ap.risk !== 'high' || mode === 'owner') return owner === undefined || owner === me;
+  return role === 'owner' || role === 'admin' || (mode === 'approvers' && role !== 'guest' && (policy?.approver_user_ids ?? []).includes(me));
+}
+/** 결재 id 집합 — 조직 정책은 한 번 읽어 넘긴다(policies null = 읽기 실패 → 서버에 맡긴다) */
+export function decidableSet(approvals, { me, crews, orgs, policies }) {
+  const owner = new Map(crews.map((c) => [c.id, c.owner_user_id])), role = new Map(orgs.map((o) => [o.id, o.role]));
+  const pol = policies && new Map(policies.map((p) => [p.org_id, p]));
+  return new Set(approvals.filter((a) => canDecideAp(a, { me, role: role.get(a.org_id), owner: owner.has(a.crew_id) ? owner.get(a.crew_id) : undefined, policy: pol ? pol.get(a.org_id) ?? null : undefined })).map((a) => a.id));
+}
+
+/** rows: { crews, runs, approvals, decisions, files, channels, journals, docs, agents }, orgKey: org_id → 공간 키, decidable: 결재권 있는 결재 id 집합,
+ *  looks: 내 크루 행으로 만든 얼굴 지도(메신저 crew-face.mjs agentLooks — 같은 에이전트는 조직이 달라도 같은 얼굴, 유건 2026-10-05). 없으면 자기 행 그대로.
+ *  agents: msgr_crews 행(내 조직의 크루 + 내 개인 공간 크루) — 사본 표시(slug)·접속(last_seen_at)·개인 공간 에이전트(org_id NULL, 주인 = me). 없으면(읽기 실패·예시) 그 정보 없이.
+ *  at: 받아 온 시각 — 접속은 이 시각 기준으로 판정해 다음에 다시 읽을 때까지 그대로 둔다(메신저 presence-clock.mjs와 같은 규칙) */
+export function mapBoard(rows, { orgKey, decidable, looks = null, me = null, at = Date.now() }) {
   const space = (org) => orgKey.get(org) ?? null;
   const ch = new Map((rows.channels ?? []).map((c) => [c.id, c.kind === 'dm' ? 'DM' : c.name]));
   const who = new Map((rows.members ?? []).map((m) => [`${m.org_id}|${m.user_id}`, m.display_name || '']));
   const leading = new Set((rows.runs ?? []).filter((r) => r.status === 'running').map((r) => r.lead_crew_id));
   const asking = new Set((rows.approvals ?? []).map((a) => a.crew_id));
-  const crews = (rows.crews ?? []).map((c) => ({
+  const raw = new Map((rows.agents ?? []).map((r) => [r.id, r]));
+  // 개인 행은 심박을 쓰지 않는다 — 같은 에이전트 조직 행의 가장 늦은 시각을 빌린다(서버 msgr_personal_room_crews와 같은 규칙)
+  const orgSeen = new Map();
+  for (const r of rows.agents ?? []) { const k = agentOf(r), s = Date.parse(r.last_seen_at ?? ''); if (k && r.org_id != null && s > (orgSeen.get(k) ?? 0)) orgSeen.set(k, s); }
+  const online = (r) => { if (!r) return null; const s = Math.max(Date.parse(r.last_seen_at ?? '') || 0, r.org_id == null ? orgSeen.get(agentOf(r)) ?? 0 : 0); return s > 0 && at - s < AWAY_MS; };
+  const toCrew = (c, extra) => { const on = online(raw.get(c.id)); return {
     id: c.id, name: c.display_name, role: c.department || c.role_text || '', dept: c.department || '', job: c.role_text || '', owner: c.owner_user_id, space: space(c.org_id), org: c.org_id, face: looks?.get(c.id) ? looks.get(c.id).face : (c.face ?? null), faceSeed: looks?.get(c.id)?.seed ?? c.id, // 얼굴 = faceOf(faceSeed, face)
-    status: leading.has(c.id) ? 'work' : asking.has(c.id) ? 'ask' : 'idle',
+    status: leading.has(c.id) ? 'work' : asking.has(c.id) ? 'ask' : on === false ? 'off' : 'idle', on, // 꺼져 있음(off)은 접속 시각을 알 때만
+    agent: looks?.get(c.id)?.seed ?? c.id, copy: isCopy(raw.get(c.id)?.slug), // agent = 같은 에이전트 묶음 키(내 에이전트는 대표 행 id — 얼굴 지도와 같은 묶음)
     // 좌측 목록 정리(9/30): 주인·쓸 수 있는지(메신저와 같은 판정)·내 고정/순서 — office_crew_list가 없을 때(옛 DB)는 모두 쓸 수 있는 것으로
-    ownerName: c.owner_name ?? null, company: !!c.company, access: c.access ?? 'ok', pinned: !!c.pinned, pinPos: c.pin_pos ?? null, sortPos: c.sort_pos ?? null,
-  }));
+    ownerName: c.owner_name ?? null, company: !!c.company, access: c.access ?? 'ok', pinned: !!c.pinned, pinPos: c.pin_pos ?? null, sortPos: c.sort_pos ?? null, ...extra,
+  }; };
+  // 개인 공간 에이전트(9/30 #779) — 주인만 읽는 행(org_id NULL). 내 공간에만 둔다(space 'me' — 조직 목록에는 섞이지 않는다). 쓸 수 있는지는 서버 msgr_instruct_check와 같이 '켜져 있고 내 것'
+  const personal = (rows.agents ?? []).filter((r) => r.org_id == null && me && r.owner_user_id === me && r.status === 'active' && !isCopy(r.slug))
+    .map((r) => toCrew(r, { space: 'me', org: null, personal: true, hosting: r.hosting ?? 'local' }));
+  const crews = [...(rows.crews ?? []).map((c) => toCrew(c)), ...personal];
   const byName = (org, name) => (rows.crews ?? []).find((c) => c.org_id === org && c.display_name === name)?.id ?? null;
   const days = new Map();
   for (const d of rows.journals ?? []) {

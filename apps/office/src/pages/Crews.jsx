@@ -6,19 +6,22 @@ import { Face } from '../ui/Face.jsx';
 import { Sheet } from '../ui/Panel.jsx';
 import { menuProps } from '../ui/Menu.jsx';
 import { t, ago, useLang, registerDict } from '../core/i18n.js';
-import { useStore, crewsIn } from '../core/store.js';
+import { useStore } from '../core/store.js';
 import { useUi, setUi } from '../core/ui-state.js';
 import { ME, SPACES, getMode } from '../core/session.js';
 import { baseOf, crewMenu } from '../core/commands.js';
 import { navigate } from '../core/router.jsx';
-import { isMine } from '../core/crew-list.js';
+import { isMine, crewsIn } from '../core/crew-list.js';
 import { groupByDept, crewWork, crewRecords, crewAccess } from '../core/crew-model.js';
 import { useTasks } from '../core/tasks.js';
 import { fmtBytes } from '../core/files.js';
 import { CREWS_DICT } from './crews-i18n.js';
+import { CREW_ASSIGN_DICT } from '../core/crew-assign-i18n.js';
+import { openExternal } from '../core/platform.js';
+import { FAMILY } from '../core/family.js';
 import './crews.css';
 
-registerDict(CREWS_DICT);
+registerDict(CREWS_DICT); registerDict(CREW_ASSIGN_DICT); // 메신저 앱 받기·꺼짐 안내는 맡기기 창과 같은 문구
 
 const STATUS_BADGE = { work: 'ok', ask: 'warn' };
 const EMPTY = [];
@@ -38,7 +41,8 @@ export default function CrewOrg({ space }) {
   return <div className="page-wrap wide">
     <div className="page-title-row"><div><h1 className="page-h1">{t('nav.agents')}</h1>
       <p className="dim">{[t(space === 'me' ? 'agents.meSub' : 'agents.sub'), crews.length > 0 && t('agents.count', { n: crews.length, d: depts })].filter(Boolean).join(' · ')}</p></div></div>
-    {!crews.length ? <div className="empty-state"><Icon name="hand" size={20} /><p>{t('agents.empty')}</p></div>
+    {!crews.length ? <div className="empty-state"><Icon name="hand" size={20} /><p>{t('agents.empty')}</p>{/* 다음에 할 일 = 실행기(Argo 앱) 받기 — 에이전트는 메신저가 아니라 실행기가 올린다(패밀리 원칙 6, CX-01·OFC-18) */}
+      <button type="button" className="btn sm" onClick={() => openExternal(FAMILY.download)}><Icon name="download" size={13} />{t('crew.getApp')}</button></div>
       : groups.map((g) => <section key={g.dept || '-'} className="agents-dept" aria-label={g.dept || t('agents.noDept')}>
         <h2 className="agents-h">{g.dept || t('agents.noDept')} <span className="dim">· {g.crews.length}</span></h2>
         <div className="agents-grid">{g.crews.map((c) => <AgentCard key={c.id} crew={c} space={space} />)}</div>
@@ -47,11 +51,13 @@ export default function CrewOrg({ space }) {
 }
 
 /** 카드 — 누르면 오른쪽 상세, 우클릭(터치는 길게 누르기)은 좌측 목록과 같은 크루 메뉴 */
+/** 내 공간에서 한 줄로 묶인 에이전트가 들어 있는 조직 이름(CX-05) — 조직이 둘 이상일 때만 */
+const whereOf = (c) => (SPACES.filter((x) => x.kind === 'org').length > 1 ? (c.spaces ?? []).map((k) => SPACES.find((x) => x.key === k)?.name).filter(Boolean).join(', ') : '');
 function AgentCard({ crew: c, space }) {
-  const job = jobOf(c);
+  const job = jobOf(c), where = whereOf(c);
   return <button type="button" className="agent-card" onClick={() => openCrew(c, space)} {...menuProps(() => crewMenu(c, space))}>
     <Face id={c.id} size={36} />
-    <span className="agent-main"><b>{c.name}</b>{job && <small>{job}</small>}<small>{t('crew.tip.owner', { name: ownerOf(c) })}</small></span>
+    <span className="agent-main"><b>{c.name}</b>{job && <small>{job}</small>}<small>{t('crew.tip.owner', { name: ownerOf(c) })}</small>{where && <small>{where}</small>}</span>
     <Status c={c} />
   </button>;
 }
@@ -102,13 +108,15 @@ function CrewBody({ crew: c, space, close }) {
     <div className="crewd-act">
       {access === 'direct' ? <>
         <button type="button" className="btn primary" onClick={() => setUi({ crew: null, assign: { space: home, crew: c.id, items: [] } })}><Icon name="hand" size={14} />{t('crewd.assign')}</button>
-        <p className="dim small crewd-note">{t('crewd.reply', { crew: c.name })}</p>{/* 메신저에 특정 대화를 여는 주소 규칙이 없어 링크 대신 안내(맡기기 뒤 알림도 같은 말) */}
+        {c.on === false && <p className="dim small crewd-note"><Icon name="info" size={13} />{t('crew.offNote')}</p>}{/* 꺼진 에이전트(메신저와 같은 90초 기준, CX-06) */}
+        {/* 메신저는 특정 대화를 여는 주소를 받지 않는다(로그인 콜백만) — 받는 곳(랜딩)으로 가는 단추를 둔다(CX-02) */}
+        <p className="dim small crewd-note">{t('crewd.reply', { crew: c.name })} <button type="button" className="link-btn small" onClick={() => openExternal(FAMILY.messenger)}>{t('msgr.get')}</button></p>
       </> : <p className="dim small crewd-note"><Icon name="info" size={13} />{access === 'off' ? t('crewd.off') : t('crew.viaChannel', { crew: c.name })}</p>}
     </div>
     <Sec title={t('crewd.info')}>
       <div className="crewd-facts">
         <Fact k="crewd.f.job">{job}</Fact><Fact k="crewd.f.dept">{c.dept}</Fact><Fact k="crewd.f.owner">{ownerOf(c)}</Fact>
-        <Fact k="crewd.f.status"><Status c={c} /></Fact><Fact k="crewd.f.org">{c.space && SPACES.find((s) => s.key === c.space)?.name}</Fact>
+        <Fact k="crewd.f.status"><Status c={c} /></Fact><Fact k="crewd.f.org">{c.space === 'me' ? t('space.me') : c.space && SPACES.find((s) => s.key === c.space)?.name}</Fact>
       </div>
       <p className="dim small crewd-none">{t('crewd.editIn')}</p>
     </Sec>

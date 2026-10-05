@@ -8,14 +8,16 @@ import { Face } from './Face.jsx';
 import { openMenu, menuProps, mergeHandlers } from './Menu.jsx';
 import { Link, navigate } from '../core/router.jsx';
 import { t, useLang } from '../core/i18n.js';
-import { crewsIn, approvalsIn, useStore, childrenOf, createPage, saveNav, favOf, saveFav, isFav, toggleFav } from '../core/store.js';
+import { approvalsIn, useStore, childrenOf, createPage, saveNav, favOf, saveFav, isFav, toggleFav } from '../core/store.js';
 import { readNav, routeInfo, favTarget, routeLabelKey, routeIcon, favKey, NAV_ICON } from '../core/nav-model.js';
 import { setUi } from '../core/ui-state.js';
 import { baseOf, pageMenu, crewMenu, mod } from '../core/commands.js';
 import { dragHasFiles, filesFromTransfer } from '../core/files.js';
-import { groupCrews, isMine } from '../core/crew-list.js';
+import { groupCrews, isMine, crewsIn } from '../core/crew-list.js';
 import { showToast } from './Overlay.jsx';
 import { SPACES, ME, canManage, getMode } from '../core/session.js';
+import { openExternal } from '../core/platform.js';
+import { FAMILY } from '../core/family.js';
 import { restore, persist, scopedStorageKey } from '../core/save.js';
 import { useTaskRows, useTaskDay } from '../core/tasks.js';
 import { dueCounts } from '../core/task-model.js';
@@ -129,7 +131,9 @@ function CrewRow({ crew, space, group, order, mode, movable }) {
   const can = direct && active && ACCEPTS.includes(active.data.current?.kind);
   const owner = crew.company ? t('crew.owner.company') : isMine(crew, ME.id) ? t('crew.owner.me') : crew.ownerName || t('crew.owner.unknown');
   const job = crew.job || (crew.dept ? '' : crew.role); // 예시 데이터는 role 하나뿐
-  const tip = [job ? t('crew.tip.job', { job }) : t('crew.tip.noJob'), crew.dept && t('crew.tip.dept', { dept: crew.dept }), t('crew.tip.owner', { name: isMine(crew, ME.id) ? ME.name : owner })].filter(Boolean).join('\n');
+  // 같은 에이전트를 한 줄로 묶은 내 공간(crew-list.js oneEach) — 조직이 둘 이상이면 어느 조직에 있는지 작게(CX-05)
+  const where = SPACES.filter((x) => x.kind === 'org').length > 1 ? (crew.spaces ?? []).map((k) => SPACES.find((x) => x.key === k)?.name).filter(Boolean).join(', ') : '';
+  const tip = [job ? t('crew.tip.job', { job }) : t('crew.tip.noJob'), crew.dept && t('crew.tip.dept', { dept: crew.dept }), t('crew.tip.owner', { name: isMine(crew, ME.id) ? ME.name : owner }), where, t(`crew.status.${crew.status}`)].filter(Boolean).join('\n');
   // 터치는 길게 누르기 = 메뉴(트리와 같은 규칙). 키보드는 끌기를 시작하지 않는다 — Enter·Space는 누르기와 같이 상세 열기(검수 MEDIUM-1), 순서는 마우스로
   const { onTouchStart, onKeyDown, ...dragListeners } = sort.listeners ?? {};
   const { role, tabIndex, ...sortAttrs } = sort.attributes ?? {}; // 줄 자체는 초점을 받지 않는다(안쪽 버튼 하나만)
@@ -143,7 +147,7 @@ function CrewRow({ crew, space, group, order, mode, movable }) {
       onDrop={(e) => { e.preventDefault(); setFileOver(false); const files = filesFromTransfer(e.dataTransfer); if (direct && files.length) setUi({ assign: { space, crew: crew.id, items: files.map((f, i) => ({ kind: 'file', id: `drop-${i}`, label: f.name })) } }); }}>
       <button ref={setNodeRef} type="button" className="crew-btn" onClick={open} title={isOver || fileOver ? t('crew.drop', { crew: crew.name }) : tip}>
         <Face id={crew.id} size={18} />
-        <span className="nav-label"><span className="crew-name">{crew.name}</span><small>{isMine(crew, ME.id) ? crew.role : owner}</small></span>{/* 오피스에는 내 크루만 — 작은 글씨는 부서(없으면 직무) */}
+        <span className="nav-label"><span className="crew-name">{crew.name}</span><small>{isMine(crew, ME.id) ? [crew.role, where].filter(Boolean).join(' · ') : owner}</small></span>{/* 오피스에는 내 크루만 — 작은 글씨는 부서(없으면 직무) */}
         <span className={`dot ${crew.status}`} aria-label={t(`crew.status.${crew.status}`)} />
       </button>
     </div>
@@ -155,6 +159,7 @@ const FOLD_KEY = 'argo-office-crew-fold';
 /** 좌측 크루 목록(유건 9/30 #6): 고정 → 내 에이전트 두 묶음(고정한 크루는 내 에이전트에서 빠진다). 쓸 수 없는(꺼진) 크루는 보이지 않는다(#9).
  *  고정·순서는 메신저 레일과 같은 저장소(계정), 접힘·검색은 이 기기에서만. 주인별·부서별·일하는 중만 필터는 뺐다 */
 function CrewSection({ space, crews, handle }) {
+  const ready = useStore((s) => s.crewsReady);
   const [fold, setFold] = useState(() => restore(FOLD_KEY, {}));
   const [query, setQuery] = useState(null); // null = 검색칸 닫힘
   const { groups } = useMemo(() => groupCrews(crews, { me: ME.id, query: query ?? '' }), [crews, query]);
@@ -175,7 +180,9 @@ function CrewSection({ space, crews, handle }) {
           </SortableContext>}
         </div>;
       })}
-      {!groups.length && <p className="crew-empty">{t('crew.none')}</p>}
+      {/* 검색 결과가 없을 때만 '맞는 에이전트 없음'. 아직 하나도 없으면 다음에 할 일(실행기 = Argo 앱 받기, 패밀리 원칙 6 — OFC-18) */}
+      {!groups.length && ready && (query ? <p className="crew-empty">{t('crew.none')}</p>
+        : <p className="crew-empty">{t('crew.noneYet')} <button type="button" className="link-btn small" onClick={() => openExternal(FAMILY.download)}>{t('crew.getApp')}</button></p>)}
     </div>
   </>;
 }

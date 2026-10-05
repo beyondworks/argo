@@ -4,7 +4,7 @@ import { SPACES, ME } from './session.js';
 import { update, getState } from './store.js';
 import { outbox } from './sync.js';
 import { mergePages } from './layout.js';
-import { mapBoard } from './board.js';
+import { mapBoard, decidableSet } from './board.js';
 import { getStorageScope } from './save.js';
 
 export async function pullLayouts({ recoverKey = null } = {}) {
@@ -67,22 +67,28 @@ export async function loadPageContent(id, { force = false, skip } = {}) {
   return data;
 }
 
-/** 기록판 — 내 조직들의 메신저 기록(크루·진행 중인 일·대기 결재·최근 결정·산출물·일지)을 읽는다. 읽기만(DB 쓰기 0).
- *  결재 버튼은 서버가 결재권이 있다고 한 것만(msgr_can_decide — 메신저 앱과 같은 판정). */
+/** 기록판 — 내 조직들의 메신저 기록(크루·진행 중인 일·대기 결재·최근 결정·산출물·일지)과 내 개인 공간 에이전트·산출물을 읽는다. 읽기만(DB 쓰기 0).
+ *  결재 버튼은 메신저와 같은 판정(board.js canDecideAp = 메신저 approval-display.js approvalDecider, 최종은 서버 RLS)으로 — 결재마다 msgr_can_decide를 부르던 것을
+ *  조직 결재 정책 한 번 읽기로 바꿨다(OFC-20: 대기 결재 N건이면 요청 N건 → 1건, 대기 결재가 없으면 0건).
+ *  부하: 시작·탭 복귀(60초 간격)마다 크루 1 + 개인 산출물 1 + (조직이 있으면) 목록 8 + 결재 정책 0~1 + 결정한 사람 이름 0~1. 주기 읽기 없음 */
 export async function pullBoard() {
   const owner = getStorageScope();
   const sb = await getClient();
   if (!sb || owner !== ME.id || getStorageScope() !== owner) return;
   const orgs = SPACES.filter((s) => s.kind === 'org');
-  const empty = { crews: [], work: [], approvals: [], decisions: [], outputs: [], journal: [], docs: [], crewsReady: true };
-  if (!orgs.length) { update(() => empty); return; }
   const ids = orgs.map((o) => o.id);
   const since = new Date(Date.now() - 30 * 864e5).toISOString();
-  // 같은 에이전트 = 같은 얼굴(유건 2026-10-05) — 내 크루 행(모든 조직·개인 공간)으로 메신저와 같은 얼굴 지도를 만든다. 기록판을 읽을 때 한 번(시작·탭 복귀 60초 간격), 쓰기 0.
-  // 실패해도 기록판은 그린다(자기 행 얼굴). 얼굴 모듈은 첫 화면 묶음 밖이라(Face.jsx와 같은 조각) 여기서도 나중에 받는다.
-  const looksP = Promise.all([sb.from('msgr_crews').select('id, org_id, owner_user_id, ws_id, slug, status, face, created_at').eq('owner_user_id', ME.id).in('status', ['active', 'available']), import('@msgr/crew-face')])
-    .then(([r, m]) => (r.error ? null : m.agentLooks(r.data ?? []))).catch(() => null);
-  const res = await Promise.all([
+  const at = Date.now();
+  // 크루 행 한 번 읽기 — 내 조직들의 크루 + 내 개인 공간 크루(org_id NULL은 주인만 읽힌다, RLS msgr_crews_select).
+  // 쓰는 곳: 같은 에이전트 = 같은 얼굴(유건 2026-10-05, 내 행만으로 메신저와 같은 지도), 개인 공간 에이전트(9/30 #779), 사본 거르기(slug), 접속 표시(last_seen_at 90초).
+  // 실패해도 기록판은 그린다(자기 행 얼굴·개인 에이전트 없음). 얼굴 모듈은 첫 화면 묶음 밖이라(Face.jsx와 같은 조각) 나중에 받는다.
+  const agentsQ = sb.from('msgr_crews').select('id, org_id, owner_user_id, ws_id, slug, status, face, created_at, display_name, role_text, department, hosting, last_seen_at').in('status', ['active', 'available']);
+  const agentsP = Promise.all([ids.length ? agentsQ.or(`owner_user_id.eq.${ME.id},org_id.in.(${ids.join(',')})`) : agentsQ.eq('owner_user_id', ME.id), import('@msgr/crew-face')])
+    .then(([r, m]) => (r.error ? null : { rows: r.data ?? [], looks: m.agentLooks((r.data ?? []).filter((x) => x.owner_user_id === ME.id)) })).catch(() => null);
+  // 개인 방 첨부(10/2 #개인 첨부, org_id NULL) — 에이전트가 보낸 것만 산출물로(친구 1:1의 사람 파일은 산출물이 아니다). 읽기 정책은 그 방을 읽을 수 있는 사람
+  const personalFilesP = sb.from('msgr_attachments').select('id, org_id, name, bytes, mime, storage_path, created_at, msg:msgr_messages!inner(channel_id, crew_id)').is('org_id', null).not('msg.crew_id', 'is', null).order('created_at', { ascending: false }).limit(50)
+    .then((r) => (r.error ? [] : r.data ?? []), () => []);
+  const res = ids.length ? await Promise.all([
     // 크루는 주인·쓸 수 있는지·내 고정/순서까지 한 번에(9/30). 함수가 없는 옛 DB면 예전처럼 표에서 읽는다
     sb.rpc('office_crew_list', { p_orgs: ids }).then((r) => (r.error?.code === 'PGRST202' ? sb.from('msgr_crews').select('id, org_id, owner_user_id, display_name, department, role_text, face').in('org_id', ids) : r)),
     sb.from('msgr_work_runs').select('id, org_id, channel_id, goal, completion_criteria, lead_crew_id, status, created_at').in('org_id', ids).in('status', ['running', 'blocked']).order('created_at', { ascending: false }).limit(100),
@@ -92,18 +98,19 @@ export async function pullBoard() {
     sb.from('msgr_channels').select('id, name, kind').in('org_id', ids),
     sb.from('msgr_org_docs').select('org_id, title, body').in('org_id', ids).like('path', 'journal/%').order('updated_at', { ascending: false }).limit(30),
     sb.from('msgr_org_docs').select('id, org_id, channel_id, path, title, updated_at').in('org_id', ids).not('path', 'like', 'journal/%').order('path').limit(300), // 본문은 열 때만
-  ]);
-  const looks = await looksP;
+  ]) : [];
+  const [got, personalFiles] = await Promise.all([agentsP, personalFilesP]);
   const bad = res.find((r) => r.error);
   if (bad) throw bad.error;
-  const [crews, runs, approvals, decisions, files, channels, journals, docs] = res.map((r) => r.data ?? []);
-  const deciders = [...new Set(decisions.map((d) => d.decided_by).filter(Boolean))]; // 결정한 사람 이름 — 결정이 있을 때만 한 번 더 읽는다
-  const [can, members] = await Promise.all([
-    Promise.all(approvals.map((a) => sb.rpc('msgr_can_decide', { ap: a.id }).then((r) => (r.data ? a.id : null)))),
+  const [crews, runs, approvals, decisions, files, channels, journals, docs] = ids.length ? res.map((r) => r.data ?? []) : [];
+  const deciders = [...new Set((decisions ?? []).map((d) => d.decided_by).filter(Boolean))]; // 결정한 사람 이름 — 결정이 있을 때만 한 번 더 읽는다
+  const [policies, members] = await Promise.all([
+    approvals?.length ? sb.from('msgr_org_policies').select('org_id, approval_high_by, approver_user_ids').in('org_id', [...new Set(approvals.map((a) => a.org_id))]).then((r) => (r.error ? null : r.data ?? []), () => null) : [],
     deciders.length ? sb.from('msgr_org_members').select('org_id, user_id, display_name').in('org_id', ids).in('user_id', deciders).then((r) => r.data ?? []) : [],
   ]);
   if (getStorageScope() !== owner) return;
-  update(() => ({ ...mapBoard({ crews, runs, approvals, decisions, files, channels, journals, docs, members }, { orgKey: new Map(orgs.map((o) => [o.id, o.key])), decidable: new Set(can.filter(Boolean)), looks }), crewsReady: true }));
+  const decidable = decidableSet(approvals ?? [], { me: ME.id, crews: crews ?? [], orgs, policies });
+  update(() => ({ ...mapBoard({ crews, runs, approvals, decisions, files: [...(files ?? []), ...personalFiles], channels, journals, docs, members, agents: got?.rows ?? [] }, { orgKey: new Map(orgs.map((o) => [o.id, o.key])), decidable, looks: got?.looks ?? null, me: ME.id, at }), crewsReady: true, boardError: null }));
 }
 
 /** 공용 문서 본문 — 목록에는 싣지 않고 열 때만 읽는다(문서당 최대 64KB) */

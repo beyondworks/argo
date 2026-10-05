@@ -21,6 +21,27 @@ export function groupCrews(crews, { me, query = '' } = {}) {
   return { groups: groups.filter((g) => g.crews.length), blocked: shown.filter((c) => !usable(c)).sort(byName) }; // blocked = 꺼진 내 크루
 }
 
+const RANK = { work: 0, ask: 1, idle: 2, off: 3 };
+/** 내 공간의 에이전트 한 줄씩(유건 2026-10-05 에이전트 = 한 사람, 메신저 에이전트 탭과 같은 묶음) — 같은 묶음 키(agent)의 행을 하나로.
+ *  대표 = 조직 행(고정·순서가 사는 행), 없으면 개인 공간 행. ids = 묶인 행 전부, twin = 개인 공간 행(맡기기는 그 1:1로), spaces = 들어 있는 조직 공간 키.
+ *  상태는 가장 바쁜 것(일하는 중 → 결재 대기 → 대기 → 꺼짐), 접속은 하나라도 켜져 있으면 켜짐 */
+export function oneEach(list) {
+  const by = new Map();
+  for (const c of list) { const k = c.agent ?? c.id; if (by.has(k)) by.get(k).push(c); else by.set(k, [c]); }
+  return [...by.values()].map((g) => {
+    const rep = g.find((c) => !c.personal) ?? g[0];
+    return { ...rep, ids: g.map((c) => c.id), twin: g.find((c) => c.personal)?.id ?? null, spaces: [...new Set(g.map((c) => c.space).filter((s) => s && s !== 'me'))],
+      status: g.map((c) => c.status).sort((a, b) => (RANK[a] ?? 2) - (RANK[b] ?? 2))[0], on: g.some((c) => c.on) || (g.some((c) => c.on === false) ? false : null) };
+  });
+}
+
+/** 공간의 크루 — 내 공간은 내 에이전트를 한 줄씩(여러 조직·개인 공간 행을 묶는다, oneEach), 조직은 그 조직 크루(개인 공간 행은 빠진다).
+ *  꺼진(파견 해제·분리) 크루와 동기화 충돌 사본은 싣지 않는다 — 메신저 목록과 같은 수(10/5). 예시 크루(공간·주인 없음)는 어디서나 */
+export const crewsIn = (crews, space, me) => {
+  const here = crews.filter((c) => !c.copy && (c.access ?? 'ok') !== 'inactive' && (space === 'me' ? !c.owner || c.owner === me : !c.space || c.space === space));
+  return space === 'me' ? oneEach(here) : here;
+};
+
 /** 끌어 옮긴 뒤의 id 순서 — moved를 target 자리로. 바뀌지 않으면 null */
 export function moveIds(ids, movedId, targetId) {
   const from = ids.indexOf(movedId), to = ids.indexOf(targetId);

@@ -48,8 +48,6 @@ const nowIso = () => new Date().toISOString();
 // 저장은 보내는 순간의 최신 제목·본문과 서버가 아는 버전으로 간다(core/transport.js) — 글자마다 불려도 마지막 값 하나.
 const byPos = (a, b) => ((a.position ?? '') < (b.position ?? '') ? -1 : (a.position ?? '') > (b.position ?? '') ? 1 : 0);
 export const crewName = (id) => state.crews.find((c) => c.id === id)?.name ?? '';
-/** 공간의 크루 — 내 공간은 내 크루(모든 조직), 조직은 그 조직 크루. 예시 크루(공간·주인 없음)는 어디서나 */
-export const crewsIn = (crews, space, me) => crews.filter((c) => (space === 'me' ? !c.owner || c.owner === me : !c.space || c.space === space));
 /** 결재 — 내 공간은 내가 결정할 수 있는 것만(모든 조직), 조직 공간은 그 조직 전부 */
 export const approvalsIn = (space) => (a) => (space === 'me' || a.space === space) && (space !== 'me' || a.canDecide !== false);
 export const childrenOf = (pages, space, parent) => pages.filter((p) => !p.template && p.space === space && (p.parent ?? null) === (parent ?? null)).sort(byPos); // 템플릿은 트리에 안 섞는다
@@ -159,8 +157,8 @@ export function assign({ space, crew, goal }) {
   const row = { id: uid(), space, goal, lead: crew, status: 'running', started: nowIso(), steps: '0/…', channel: 'DM' };
   update((s) => ({ work: [row, ...s.work] }));
 }
-export function sendToCrew({ orgId, crewId, crewName, body, meta }) {
+export function sendToCrew({ orgId, crewId, personalId = null, personalBot = false, crewName, body, meta }) { // personalId: 내 에이전트의 개인 1:1(crew-assign.js assignTarget)
   const clientId = uid();
-  update(() => ({}), [[`assign:${clientId}`, { type: 'crew.assign', orgId, crewId, crewName, body, meta, clientId }]]);
+  update(() => ({}), [[`assign:${clientId}`, { type: 'crew.assign', orgId, crewId, personalId, personalBot, crewName, body, meta, clientId }]]);
 }
 export const resetDraft = () => { state = getStorageScope() === 'sample' ? fresh() : empty(); listeners.forEach((l) => l()); persist(scopedStorageKey(KEY), state, 0); };

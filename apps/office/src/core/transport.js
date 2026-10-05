@@ -8,7 +8,8 @@ import { setUi, getUi } from './ui-state.js';
 import { showToast } from '../ui/Overlay.jsx';
 import { t } from './i18n.js';
 import { persist, heldKey, getStorageScope, scopedStorageKey } from './save.js';
-import { apiUrl } from './platform.js';
+import { apiUrl, openExternal } from './platform.js';
+import { FAMILY } from './family.js';
 // 저장이 닿은 페이지를 같은 브라우저의 다른 창에 바로 알린다(16차)
 import { announce } from './page-live.js';
 
@@ -112,14 +113,15 @@ async function send(op) {
     }
     case 'crew.assign': {                                                          // 크루에게 맡기기 — 메신저 앱과 같은 방(내 크루와의 1:1)에 같은 표로 쓴다(core/crew-assign.js deliverToCrew)
       const run = async (q) => { const r = await q.setHeader('Authorization', `Bearer ${token}`); assertOwner(); if (r.error) throw classify(r.error); return r.data ?? []; };
-      const { deliverToCrew } = await import('./crew-assign.js'); // 보낼 때만 불러온다(첫 화면 JS 150KB 상한)
-      await deliverToCrew({
+      const { deliverToCrew } = await import('./crew-assign.js'); // 보낼 때만 불러온다(첫 화면 JS 150KB 상한) — 알림 문구(crew.sentPersonal·msgr.get)도 이 조각의 사전
+      const sent = await deliverToCrew({
         rpc,
         myChannels: () => run(sb.from('msgr_channel_members').select('channel_id, msgr_channels!inner(id, kind, org_id, archived_at)').eq('member_kind', 'user').eq('member_id', owner)),
         members: (ids) => run(sb.from('msgr_channel_members').select('channel_id, member_kind, member_id').in('channel_id', ids)),
         insert: (row) => run(sb.from('msgr_messages').insert(row)),
-      }, { owner, orgId: p.orgId, crewId: p.crewId, crewName: p.crewName, body: p.body, meta: p.meta, clientId: p.clientId });
-      showToast(t('crew.sent', { crew: p.crewName ?? '' }));
+      }, { owner, orgId: p.orgId, crewId: p.crewId, personalId: p.personalId ?? null, personalBot: !!p.personalBot, crewName: p.crewName, body: p.body, meta: p.meta, clientId: p.clientId });
+      // 답이 오는 곳(메신저)으로 가는 단추 — 메신저는 특정 대화를 여는 주소를 받지 않아 받는 곳(랜딩)으로(CX-02)
+      showToast(t(sent === 'personal' ? 'crew.sentPersonal' : 'crew.sent', { crew: p.crewName ?? '' }), { action: { label: t('msgr.get'), run: () => openExternal(FAMILY.messenger) } });
       return;
     }
     default: return;

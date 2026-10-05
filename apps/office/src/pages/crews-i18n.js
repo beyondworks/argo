@@ -4,7 +4,7 @@ export const CREWS_DICT = {
   'agents.meSub': ['내 에이전트를 부서별로 봅니다. 조직 전체는 조직 공간에서 봅니다.', 'Your agents by department. See the whole organization in its space.'],
   'agents.count': ['에이전트 {n}명 · 부서 {d}개', '{n} agents · {d} departments'],
   'agents.noDept': ['부서 없음', 'No department'],
-  'agents.empty': ['아직 에이전트가 없습니다. 메신저에서 에이전트를 만들면 여기에 보입니다.', 'No agents yet. Agents made in Messenger show up here.'],
+  'agents.empty': ['아직 에이전트가 없습니다. 에이전트가 일하려면 실행기가 하나 필요해요. Argo 앱을 받으면 함께 설치되고, 같은 계정으로 로그인하면 여기에 보여요.', "No agents yet. Agents need a runner to work. Getting the Argo app installs one; sign in with the same account and they show up here."],
   'crewd.title': ['에이전트', 'Agent'],
   'crewd.gone': ['이 에이전트를 찾을 수 없습니다. 지워졌거나 조직에서 빠졌을 수 있습니다.', "This agent can't be found. It may have been removed."],
   'crewd.assign': ['일 맡기기', 'Hand off work'],
