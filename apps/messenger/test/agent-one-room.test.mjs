@@ -28,7 +28,8 @@ test('조직에서 내 에이전트 1:1 = 개인 공간의 방(openDm 관문) �
   assert.ok(gate.length > 500, '관문 구간을 찾았다');
   assert.match(gate, /if \(kind === 'crew' && crewOf\(id\)\?\.owner_user_id === uid\) \{/, '내 크루만(남의 크루는 종전대로 주인과의 1:1)');
   assert.match(gate, /const twin = await personalTwin\(crew\);\n\s*if \(activeOrg\.current !== here\) return null;\n\s*if \(twin\) \{/);
-  assert.match(gate, /runInSpace\(PERSONAL, async \(fn\) => \{ const cid = await fn\.openPersonalCrewDm\(twin\.id, text\); if \(cid && move\) fn\.moveNotice\(\{ \.\.\.move, \.\.\.names \}\); \}\);\n\s*return null;/, '개인 방을 열고, 열렸을 때만 공간 전환 안내');
+  assert.match(gate, /if \(twin\) \{ toPersonalTwin\(crew, twin, \{ text, source: opts\.source, here, hereCh \}\); return null; \}/, '개인 방으로 옮기고 조직 1:1은 찾지 않는다');
+  assert.match(app, /const toPersonalTwin = \(crew, twin, \{ text = '', source = null, here, hereCh \}\) => \{[\s\S]{0,400}runInSpace\(PERSONAL, async \(fn\) => \{ const cid = await fn\.openPersonalCrewDm\(twin\.id, text\); if \(cid && move\) fn\.moveNotice\(\{ \.\.\.move, \.\.\.names \}\); \}\);/, '개인 방을 열고, 열렸을 때만 공간 전환 안내(옛 조직 1:1 돌리기와 같은 함수)');
   assert.ok(gate.indexOf('personalTwin(crew)') < gate.indexOf("supabase.rpc('msgr_create_channel'"), '조직 1:1을 찾거나 만들기 전에 판정한다');
   assert.match(app, /const personalTwin = \(c\) => personalRoomFor\(c, \{ uid,\n\s*ownRows: \(slug\) => q\(supabase\.from\('msgr_crews'\)\.select\('id, org_id, owner_user_id, ws_id, slug, status, hosting'\)\.eq\('owner_user_id', uid\)\.eq\('slug', slug\)\.in\('status', \['active', 'available'\]\)\),\n\s*roomCrews: \(\) => q\(supabase\.rpc\('msgr_personal_room_crews'\)\) \}\);/, '판정은 순수 async 함수(agent-groups.mjs personalRoomFor — 행동 테스트), App은 조회만 넣는다(내 행은 그 slug만, 봇 준비 상태는 msgr_personal_room_crews)');
   assert.match(app, /const dmWithCrew = async \(crewId, body = '', opts = \{\}\) => \{[\s\S]{0,200}const cid = await openDm\('crew', crewId, draft, opts\);/, '레일 메뉴·크루 카드·방 밖 멘션·전달 알림은 dmWithCrew → openDm(출처를 넘긴다)');
@@ -44,7 +45,8 @@ test('조직에서 내 에이전트 1:1 = 개인 공간의 방(openDm 관문) �
 test('공간 전환 안내 — 관문이 spaceMoveNotice로 정하고(폰 에이전트 탭은 source agents), 같은 토스트에 6초, 누르면 spaceMoveBack으로 직전 조직', () => {
   const gate = app.slice(app.indexOf('const openDm = async (kind, id, text = \'\', opts = {}) => {'), app.indexOf('const openPersonalCrewDm = async'));
   assert.match(gate, /const here = orgId; const hereCh = chId; const crew = crewOf\(id\);/, '옮기기 전의 조직·보던 채널을 기억한다');
-  assert.match(gate, /const move = spaceMoveNotice\(\{ from: here, fromCh: hereCh, to: PERSONAL, source: opts\.source, personalKey: PERSONAL \}\);/);
+  assert.match(app, /const move = spaceMoveNotice\(\{ from: here, fromCh: hereCh, to: PERSONAL, source, personalKey: PERSONAL \}\);/);
+  assert.match(gate, /toPersonalTwin\(crew, twin, \{ text, source: opts\.source, here, hereCh \}\)/, '출처(폰 에이전트 탭 agents)를 넘긴다');
   assert.match(app, /fn\.dmWithCrew\(c\.id, '', \{ source: 'agents' \}\)/, '폰 에이전트 탭의 조직 행은 출처 agents(안내 없음)');
   assert.match(app, /latestOpen\.current = \{ dmWithCrew, openPersonalCrewDm, setSheet, crewOf, note: setNote, orgBlocked, moveNotice: showMoveNotice \};/);
   assert.match(app, /const showMoveNotice = \(n\) => \{ const text = \(lang === 'en' \? \(x\) => x : koJosa\)\(t\('personal\.moved', \{ name: n\.name, org: n\.org \}\)\); flashed\.current = \{ text, ms: MOVE_NOTICE_MS \};/, '기존 토스트·문구별 시간, ko는 koJosa로 으로/로');
@@ -63,7 +65,7 @@ test('버튼 이름 — 조직 화면의 레일 메뉴·즐겨찾기 줄·크루
   assert.match(app, /\{t\(outsideDmPersonal\?\.\(c\) \? 'mention\.outside\.dm\.personal' : 'mention\.outside\.dm'\)\}/, '방 밖 멘션');
   assert.match(app, /label: t\(c\.targetKind === 'crew' && dmGoesPersonal\(crewOf\(c\.targetId\)\) \? 'ui\.dm\.personal' : 'ui\.dm'\), run: \(\) => openDm\(c\.targetKind, c\.targetId\)/, '즐겨찾기 줄 메뉴(재검수 L-c)');
   assert.match(app, /\(lang === 'en' \? \(x\) => x : koJosa\)\(t\(view\.line, \{ name: c\.display_name \}\)\)/, '방 밖 멘션 안내의 은(는)·을(를)을 이름에 맞춘다(그대로 보였다) — 줄 선택은 outsideRowView(mention-candidates.test.mjs)');
-  assert.match(app, /const myAgentsAsked = useRef\(false\);\n\s*useEffect\(\(\) => \{ if \(myAgentsAsked\.current \|\| myAgents !== null \|\| !uid \|\| !orgId \|\| orgId === PERSONAL \|\| !crews\.some\(\(c\) => c\.owner_user_id === uid\)\) return; myAgentsAsked\.current = true; loadMyAgents\(\)\.catch\(\(\) => \{\}\); \}, \[uid, orgId, crews, myAgents\]\);/, '판정 재료는 세션에 한 번만 읽는다(렌더마다 조회 없음, 실패해도 다시 묻지 않는다)');
+  assert.match(app, /const myAgentsAsked = useRef\(false\);\n\s*useEffect\(\(\) => \{ if \(myAgentsAsked\.current \|\| myAgents !== null \|\| !uid \|\| !orgId \|\| orgId === PERSONAL \|\| !crews\.some\(\(c\) => c\.owner_user_id === uid\)\) return; myAgentsAsked\.current = true; loadMyAgents\(\{ reuse: true \}\)\.catch\(\(\) => \{\}\); \}, \[uid, orgId, crews, myAgents\]\);/, '판정 재료는 세션에 한 번만 읽는다(렌더마다 조회 없음, 실패해도 다시 묻지 않는다) — 얼굴 지도가 같은 회차에 읽은 행을 다시 쓴다(분리 검수 #4, 행동은 rail-state.test.mjs)');
 });
 
 test('설정 > 내 에이전트 — 공간 글자 없이 줄 하나, 외부 표시는 유지, 누르면 종전대로 지금 공간의 카드', () => {
@@ -73,4 +75,17 @@ test('설정 > 내 에이전트 — 공간 글자 없이 줄 하나, 외부 표�
 
 test('파견 해제 확인 문구 — 조직 채널 기억이 10분 안에 PC에서 지워지고 다시 파견해도 돌아오지 않는다(P1 #816)', () => {
   assert.match(i18n, /'crew\.recall\.confirm': \['모든 채널에서 빠지고 지시를 받지 않습니다\. 이 조직 채널에서 나눈 대화 기억은 10분 안에 PC에서 지워지고, 다시 파견해도 돌아오지 않습니다\.', "Leaves every channel and stops taking instructions\. Its memory of this organization's channels is erased from your PC within 10 minutes and does not come back if you dispatch it again\."\],/);
+});
+
+// 옛 조직 1:1(유건 2026-10-05) — 판정 행동은 test/agent-identity.test.mjs(legacyAgentDm·agentDmRedirect)·agent-identity-route.test.mjs(agentDmRoute)가,
+// 실제 openAgentDmInstead의 동작(안 읽은 글·입구·연타)은 agent-identity-app.test.mjs가 잠근다. 여기는 입구 배선만(어느 입구가 어떤 출처를 넘기나 — 소스 핀, 동작 증거 아님):
+// 대화 목록 줄·폰 채팅 탭 줄은 'list'(안 읽은 글이 없을 때만 개인 1:1로), 알림함 'inbox'·알림 탭(navInbox 출처 push·mac·card)·미리보기 'peek'은 옛 방을 연다.
+test('옛 조직 1:1 — 모든 입구가 출처와 함께 openAgentDmInstead를 먼저 지나고, 열린 옛 방에는 안내 띠, 개인 1:1에는 이전 대화 띠', () => {
+  assert.match(app, /aria-busy=\{redirectingId === c\.id \|\| undefined\} onClick=\{\(\) => \{ if \(openAgentDmInstead\(c\.id, 'list'\)\) \{ setRail\(false\); return; \} setChId\(c\.id\);/, '대화 목록 줄');
+  assert.match(app, /if \(!it\?\.joinReq && openAgentDmInstead\(id, 'inbox'\)\) return;/, '알림함');
+  assert.match(app, /if \(act\.do === 'open'\) \{ diag\('open'\); navInbox\.done\(navReq\); if \(openAgentDmInstead\(navReq\.channelId, navReq\.source\)\) return;/, '알림 탭·푸시·전경 카드');
+  assert.match(app, /setDmPeek\(null\); if \(openAgentDmInstead\(c\.id, 'peek'\)\) return;/, '폰 미리보기');
+  assert.match(app, /const openRoom = \(c\) => \{ setTabQ\(null\); if \(openAgentDmInstead\(c\.id, 'list'\)\) return;/, '폰 채팅 탭 줄');
+  assert.match(app, /className=\{`item ph-kitem\$\{r\.unreadN && !r\.muted \? ' unread' : ''\}`\} aria-busy=\{redirectingId === c\.id \|\| undefined\} onClick=\{\(\) => openRoom\(c\)\}/, '폰 줄 돌리는 중 표시');
+  assert.match(app, /movedBar=\{legacyDm\?\.known \? <LegacyDmBar [\s\S]{0,120}? t=\{t\} \/> : earlierCrew \? <EarlierDmBar key=\{earlierCrew\}/, '알고 있을 때만 안내 띠, 내 에이전트 개인 1:1에는 이전 대화 띠');
 });

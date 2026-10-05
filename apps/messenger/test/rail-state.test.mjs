@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { createRequestGate, createPreferenceQueue, reorderFavorites } from '../src/rail-state.mjs';
 import { stampFetched } from '../src/presence-clock.mjs';
 import { crewOrder, withoutCopies } from '../src/mention-candidates.mjs'; // loadOrg의 크루 목록 순서·충돌 사본 제외
+import { ownRowsReader } from '../src/agent-groups.mjs'; // 내 크루 행 읽기 하나로(분리 검수 2026-10-05 #4)
 
 test('old organization response and old same-org refresh cannot apply', () => {
   let org = 'a'; const gate = createRequestGate(() => org);
@@ -126,9 +127,17 @@ test('loadMyAgents: 조직 행·개인 행 모두 충돌 사본은 빠지고, �
     from() { return { select() { return this; }, eq() { return this; }, in() { return this; }, then(res, rej) { return Promise.resolve(own).then(res, rej); } }; },
     rpc(name) { return Promise.resolve(name === 'msgr_personal_room_crews' ? personal : []); },
   };
-  let mine = null;
-  const deps = { uid: 'me', faceCol: { missingAt: Date.now() }, q: async (x) => await x, supabase, stampFetched, withoutCopies, setAgentPins: () => {}, setMyAgents: (v) => { mine = v; } };
+  let mine = null; let reads = 0; let ownState = null;
+  const deps = { uid: 'me', faceCol: { missingAt: Date.now() }, q: async (x) => await x, supabase, stampFetched, withoutCopies, setAgentPins: () => {}, setMyAgents: (v) => { mine = v; },
+    readOwnCrews: ownRowsReader(async () => { reads += 1; return own; }), syncEpochRef: { current: 0 }, // 내 크루 행 읽기는 얼굴 지도와 같이 쓴다(유건 2026-10-05) — 실제 읽기 함수
+    newerOwn: (o) => (cur) => (cur && cur.at >= o.at ? cur : o), setOwnCrews: (f) => { ownState = typeof f === 'function' ? f(ownState) : f; } };
   const loadMyAgents = new Function(...Object.keys(deps), `return (${app.slice(start, end)});`)(...Object.values(deps));
   await loadMyAgents();
   assert.deepEqual(mine.map((c) => c.id).sort(), ['org-real', 'p-real']);
+  assert.equal(ownState.rows, own, '얼굴 지도용 내 크루 행도 같은 읽기 결과');
+  // 로그인 때 버튼 이름 판정 재료(reuse)는 같은 회차에 이미 읽은 행을 다시 쓴다 — 요청이 늘지 않는다(분리 검수 #4). 폰 에이전트 탭(reuse 없음)은 새로 읽는다
+  await loadMyAgents({ reuse: true });
+  assert.equal(reads, 1);
+  await loadMyAgents({ favs: true });
+  assert.equal(reads, 2);
 });

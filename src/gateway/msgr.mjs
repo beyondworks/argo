@@ -265,6 +265,10 @@ export function makeDb(client) {
     async myCrewRows(uid, wsId) {
       return unwrap(await client.from('msgr_crews').select('id, org_id, slug, display_name, role_text, status').eq('owner_user_id', uid).eq('ws_id', wsId)) ?? [];
     },
+    /** 새 개인 행에 복사할 얼굴·사진 재료 — 이 회사(ws)·이 slug들의 내 살아 있는 조직 행. 개인 행을 넣는 틱에만 한 번 부른다(myCrewRows 열은 늘리지 않는다). */
+    async crewLooks(uid, wsId, slugs) {
+      return unwrap(await client.from('msgr_crews').select('id, org_id, slug, status, face, avatar_url, created_at').eq('owner_user_id', uid).eq('ws_id', wsId).in('slug', slugs).not('org_id', 'is', null).in('status', ['active', 'available'])) ?? [];
+    },
     async upsertAvailable(rows) { if (rows.length) unwrap(await client.from('msgr_crews').upsert(rows, { onConflict: 'org_id,owner_user_id,ws_id,slug' })); },
     /** 개인 크루 행(org NULL) — 부분 유니크 인덱스라 upsert onConflict를 쓸 수 없다. 미러가 빠진 slug만 넘기고, 다른 프로세스와의 경합 중복(23505)은 삼킨다. */
     async insertPersonal(rows) {
@@ -574,7 +578,26 @@ async function mirrorPersonal(wsId, { db, uid, agents, rows, log }) {
     if (!r) { inserts.push({ org_id: null, owner_user_id: uid, ws_id: wsId, slug: a.slug, display_name: a.name || a.slug, role_text: a.role || null, hosting: 'local', status: 'active', allow: 'owner', allow_users: [] }); out.inserted++; continue; }
     if (r.display_name !== (a.name || a.slug) || (r.role_text ?? null) !== (a.role || null)) { await db.updateCrewInfo(r.id, { display_name: a.name || a.slug, role_text: a.role || null }).catch((e) => log('[argo] msgr 개인 크루 갱신 실패:', e.message)); out.updated++; }
   }
+  if (inserts.length && db.crewLooks) { // 에이전트 = 한 사람(유건 2026-10-05): 새 개인 행은 대표 조직 행의 얼굴·사진으로 — 넣을 때 한 번만 읽는다
+    const looks = repLooks(await db.crewLooks(uid, wsId, inserts.map((r) => r.slug)).catch((e) => { log('[argo] msgr 개인 크루 얼굴 조회 실패 — 얼굴 없이 넣는다:', e?.message ?? e); return []; }));
+    for (const row of inserts) { const l = looks.get(row.slug); if (l?.face) row.face = l.face; if (l?.avatar_url) row.avatar_url = l.avatar_url; }
+  }
   if (inserts.length) await db.insertPersonal(inserts);
+  return out;
+}
+
+/** slug → 대표 조직 행의 { face, avatar_url } — 메신저 apps/messenger/src/crew-face.mjs agentLooks와 같은 규칙(같은 회사·주인 안에서 slug별):
+    대표 = created_at, 같으면 id가 가장 앞선 살아 있는 조직 행. 얼굴 = 대표 행 저장값, 없으면 가장 먼저 만든 행 중 저장값이 있는 행.
+    사진 = 대표 행 사진, 없으면 다른 조직 행 사진. 저장값의 모양은 DB check(msgr_crews_face_shape)가 이미 지킨다. 테스트: test/msgr-personal-crews.test.mjs */
+export function repLooks(rows) {
+  const at = (r) => { const t = Date.parse(r.created_at ?? ''); return Number.isFinite(t) ? t : Infinity; };
+  const bySlug = new Map();
+  for (const r of rows ?? []) { if (!r?.slug || r.org_id == null || !['active', 'available'].includes(r.status)) continue; if (!bySlug.has(r.slug)) bySlug.set(r.slug, []); bySlug.get(r.slug).push(r); }
+  const out = new Map();
+  for (const [slug, list] of bySlug) {
+    const byAge = list.slice().sort((a, b) => at(a) - at(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    out.set(slug, { face: byAge.find((r) => r.face)?.face ?? null, avatar_url: byAge.find((r) => r.avatar_url)?.avatar_url ?? null });
+  }
   return out;
 }
 

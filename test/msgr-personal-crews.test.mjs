@@ -59,6 +59,46 @@ test('인벤토리: 개인 미러가 실패해도(옛 서버) 조직 미러는 �
   assert.ok(logs.some((l) => /개인 크루 미러 실패/.test(l)));
 });
 
+// 에이전트 = 한 사람(유건 2026-10-05): 같은 에이전트의 개인 행은 조직 행과 같은 얼굴·사진이어야 한다. 새 개인 행을 넣을 때만
+// 대표 조직 행(가장 먼저 만든 살아 있는 조직 행)의 face·avatar_url을 한 번 읽어 복사한다 — 넣을 것이 없는 틱은 읽지 않는다(주기 읽기 열 그대로).
+test('인벤토리: 새 개인 행은 대표 조직 행(가장 먼저 만든 행)의 얼굴·사진을 복사해서 넣는다', async () => {
+  const d = invDb({ orgs: [ORG], rows: [{ id: 'p1', org_id: null, slug: 'seoyun', display_name: '서윤', role_text: '마케터', status: 'active' }] });
+  const asked = [];
+  d.crewLooks = async (uid, ws, slugs) => { asked.push([uid, ws, slugs]); return [
+    { id: 'o-late', org_id: 'org-b', slug: 'jun', status: 'active', face: { v: 2, shape: 1, color: 1 }, avatar_url: 'https://x/late.jpg', created_at: '2026-09-20T00:00:00+00:00' },
+    { id: 'o-early', org_id: ORG, slug: 'jun', status: 'active', face: { v: 2, shape: 8, color: 9 }, avatar_url: null, created_at: '2026-09-01T00:00:00+00:00' },
+  ]; };
+  await M.mirrorInventory(WS, { db: d, uid: UID, agents });
+  assert.deepEqual(asked, [[UID, WS, ['jun']]], '넣을 slug만 한 번 읽는다');
+  const ins = d.calls.find(([k]) => k === 'insertPersonal')[1];
+  assert.deepEqual(ins.map((x) => [x.slug, x.face, x.avatar_url]), [['jun', { v: 2, shape: 8, color: 9 }, 'https://x/late.jpg']], '얼굴은 대표 행, 대표 행에 사진이 없으면 다른 조직 행 사진');
+});
+
+test('인벤토리: 넣을 개인 행이 없으면 얼굴을 읽지 않고, 읽기가 실패해도 개인 행은 그대로 넣는다', async () => {
+  const quiet = invDb({ orgs: [ORG], rows: [{ id: 'p1', org_id: null, slug: 'seoyun', display_name: '서윤', role_text: '마케터', status: 'active' }, { id: 'p2', org_id: null, slug: 'jun', display_name: '준', role_text: null, status: 'active' }] });
+  let reads = 0; quiet.crewLooks = async () => { reads++; return []; };
+  await M.mirrorInventory(WS, { db: quiet, uid: UID, agents });
+  assert.equal(reads, 0, '유휴 틱은 추가 읽기 0');
+  const broken = invDb({ orgs: [] });
+  broken.crewLooks = async () => { throw new Error('boom'); };
+  await M.mirrorInventory(WS, { db: broken, uid: UID, agents, log: () => {} });
+  const ins = broken.calls.find(([k]) => k === 'insertPersonal')[1];
+  assert.deepEqual(ins.map((x) => [x.slug, x.face ?? null]), [['seoyun', null], ['jun', null]]);
+});
+
+test('대표 행 규칙은 메신저 얼굴 지도(crew-face.mjs agentLooks)와 같다 — 무작위 행 300벌로 대조', async () => {
+  const { agentLooks } = await import('../apps/messenger/src/crew-face.mjs');
+  let seed = 7; const rnd = (n) => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
+  const faces = [null, null, { v: 2, shape: 1, color: 2 }, { v: 2, shape: 8, color: 9 }];
+  for (let k = 0; k < 300; k++) {
+    const rows = Array.from({ length: 1 + rnd(5) }, (_, i) => ({ id: `r${rnd(9)}${i}`, owner_user_id: UID, ws_id: WS, slug: 'jun', org_id: `org${rnd(3)}`, // 개인 행은 넣을 때만 생긴다(그 회사·slug의 개인 행은 하나 — msgr_crews_personal_uniq)
+      status: ['active', 'available', 'active'][rnd(3)], face: faces[rnd(4)], avatar_url: rnd(3) ? null : `https://x/${rnd(5)}.jpg`, created_at: `2026-09-0${1 + rnd(3)}T00:00:00+00:00` }));
+    const body = M.repLooks(rows).get('jun');
+    const msgr = agentLooks([...rows, { id: 'pNEW', owner_user_id: UID, ws_id: WS, slug: 'jun', org_id: null, status: 'active', face: null, avatar_url: null, created_at: '2026-10-05T00:00:00+00:00' }]).get('pNEW');
+    assert.deepEqual([body.face, body.avatar_url], [msgr.face, msgr.photo], `행 ${JSON.stringify(rows)}`);
+  }
+});
+
 // makeDb의 supabase 체인 조건을 기록하는 가짜 클라이언트
 function chainClient(result = { data: [], error: null }) {
   const log = [];

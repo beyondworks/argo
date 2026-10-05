@@ -11,7 +11,7 @@ const app = readFileSync(new URL('App.jsx', dir), 'utf8');
 
 test("tick은 네트워크 효과의 의존 배열에 없다 — 화면 계산(얼굴 상태 useMemo)만 쓴다", () => {
   const deps = [...app.matchAll(/\}, \[([^\]]*)\]\)/g)].filter((m) => /\btick\b/.test(m[1])).map((m) => m[1].trim());
-  assert.deepEqual(deps, ['avatars, crews, myAvailable, myAgents, typing, inbox, approvals, doneAt, surprisedAt, erroredAt, tick'], deps.join(' | '));
+  assert.deepEqual(deps, ['avatars, crews, myAvailable, myAgents, looks, typing, inbox, approvals, doneAt, surprisedAt, erroredAt, tick'], deps.join(' | '));
   assert.doesNotMatch(app, /tick % 2/, '30초 목록 다시 읽기 없음');
   assert.doesNotMatch(app, /\$\{tick\}|=\{tick\}/, 'tick을 자식에게 다시 읽기 신호로 넘기지 않는다(방 설정 시트가 15초마다 넣기 요청을 읽던 것)');
 });
