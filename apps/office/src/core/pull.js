@@ -90,8 +90,9 @@ async function readBoard() {
   // 쓰는 곳: 같은 에이전트 = 같은 얼굴(유건 2026-10-05, 내 행만으로 메신저와 같은 지도), 개인 공간 에이전트(9/30 #779), 사본 거르기(slug), 접속 표시(last_seen_at 90초).
   // 못 읽으면 기록판 읽기 실패(다시 시도). 얼굴 모듈은 첫 화면 묶음 밖이라(Face.jsx와 같은 조각) 나중에 받는다.
   const agentsQ = sb.from('msgr_crews').select('id, org_id, owner_user_id, ws_id, slug, status, face, created_at, display_name, role_text, department, hosting, last_seen_at').in('status', ['active', 'available']);
-  const agentsP = Promise.all([ids.length ? agentsQ.or(`owner_user_id.eq.${ME.id},org_id.in.(${ids.join(',')})`) : agentsQ.eq('owner_user_id', ME.id), import('@msgr/crew-face')])
-    .then(([r, m]) => (r.error ? null : { rows: r.data ?? [], looks: m.agentLooks((r.data ?? []).filter((x) => x.owner_user_id === ME.id)) })).catch(() => null);
+  // 얼굴 모듈 조각을 못 받는 것은 기록판 실패가 아니다 — 얼굴 지도 없이(같은 에이전트 묶음은 board.js가 행으로) 그린다(R3-L3). 실패는 크루 행 읽기 실패뿐
+  const agentsP = Promise.all([ids.length ? agentsQ.or(`owner_user_id.eq.${ME.id},org_id.in.(${ids.join(',')})`) : agentsQ.eq('owner_user_id', ME.id), import('@msgr/crew-face').catch(() => null)])
+    .then(([r, m]) => (r.error ? null : { rows: r.data ?? [], looks: m?.agentLooks((r.data ?? []).filter((x) => x.owner_user_id === ME.id)) ?? null })).catch(() => null);
   // 개인 방 첨부(10/2 #개인 첨부, org_id NULL) — 에이전트가 보낸 것만 산출물로(친구 1:1의 사람 파일은 산출물이 아니다). 읽기 정책은 그 방을 읽을 수 있는 사람
   const personalFilesP = sb.from('msgr_attachments').select('id, org_id, name, bytes, mime, storage_path, created_at, msg:msgr_messages!inner(channel_id, crew_id)').is('org_id', null).not('msg.crew_id', 'is', null).order('created_at', { ascending: false }).limit(50)
     .then((r) => (r.error ? [] : r.data ?? []), () => []);

@@ -11,8 +11,13 @@ const patch = (fn) => update((s) => ({ crews: s.crews.map((c) => fn(c) ?? c) }))
 
 async function save(orgId, action, ids, on = null) {
   if (getMode() !== 'signedIn' || !orgId) return; // 예시 모드는 화면에서만
-  try { await rpc('office_crew_prefs', { p_org: orgId, p_action: action, p_ids: ids, p_on: on }); }
-  catch (e) { pullBoard().catch(() => {}); throw e; }
+  await rpc('office_crew_prefs', { p_org: orgId, p_action: action, p_ids: ids, p_on: on });
+}
+/** 조직마다 저장을 다 기다린 뒤, 하나라도 실패했으면 서버에서 한 번만 다시 읽고 실패를 알린다 — 실패한 저장마다 바로 다시 읽으면
+ *  아직 끝나지 않은 다른 조직 저장보다 먼저 읽어 화면이 서버와 갈렸다(R3-L2) */
+async function saveAll(jobs) {
+  const bad = (await Promise.allSettled(jobs)).find((r) => r.status === 'rejected');
+  if (bad) { pullBoard().catch(() => {}); throw bad.reason; }
 }
 
 /** 한 묶음(order: 화면 순서의 크루 id) 안에서 끌어 놓기. mode 'pin' = 고정 묶음. 내 공간은 여러 조직 크루가 섞이므로 조직마다 따로 */
@@ -23,7 +28,7 @@ export async function moveCrew(order, movedId, targetId, mode) {
   const slots = mode === 'pin' ? reslot(crews, next) : null;
   patch((c) => { const i = next.indexOf(c.id); return i < 0 ? null : mode === 'pin' ? { ...c, pinPos: slots.get(c.id) } : { ...c, sortPos: i }; });
   const orgs = [...new Set(next.map((id) => orgOf.get(id)))];
-  await Promise.all(orgs.map((org) => {
+  await saveAll(orgs.map((org) => {
     const ids = next.filter((id) => orgOf.get(id) === org);
     if (mode !== 'pin') patch((c) => (ids.includes(c.id) ? { ...c, sortPos: ids.indexOf(c.id) } : null)); // 서버와 같은 번호(조직 안 순서)
     return save(org, mode === 'pin' ? 'pin_order' : 'sort', ids);
@@ -36,7 +41,7 @@ export function pinCrew(crew, on) {
   const ids = crew.ids ?? [crew.id], rows = getState().crews.filter((c) => ids.includes(c.id) && (c.org || getMode() !== 'signedIn'));
   const last = Math.max(-1, ...getState().crews.filter((c) => c.pinned && c.pinPos != null).map((c) => c.pinPos));
   patch((c) => (rows.includes(c) ? { ...c, pinned: on, pinPos: on ? last + 1 : null } : null));
-  return Promise.all(rows.map((c) => save(c.org, 'pin', [c.id], on)));
+  return saveAll(rows.map((c) => save(c.org, 'pin', [c.id], on)));
 }
 
 export const canPin = (crew) => (crew.access ?? 'ok') === 'ok' && (!!crew.org || getMode() !== 'signedIn') && !!ME;

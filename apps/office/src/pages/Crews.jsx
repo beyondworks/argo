@@ -124,7 +124,7 @@ function useRecentReplies(c, enabled) {
 
 function CrewBody({ crew: c, space, close }) {
   const work = useStore((s) => s.work), approvals = useStore((s) => s.approvals), decisions = useStore((s) => s.decisions);
-  const outputs = useStore((s) => s.outputs), journal = useStore((s) => s.journal);
+  const outputs = useStore((s) => s.outputs), journal = useStore((s) => s.journal), failed = useStore((s) => !!s.boardError);
   const tasks = useCrewTasks(c);
   // 내 공간에서는 같은 에이전트의 행(조직마다·개인 공간) 기록을 한곳에 — 개인 방 산출물·다른 조직의 결재도 보인다. 조직 공간은 그 조직 행만
   const rowsAll = useStore((s) => s.crews);
@@ -144,7 +144,7 @@ function CrewBody({ crew: c, space, close }) {
     <div className="crewd-act">
       {access === 'direct' ? <>
         <button type="button" className="btn primary" onClick={() => setUi({ crew: null, assign: { space: home, crew: c.id, items: [] } })}><Icon name="hand" size={14} />{t('crewd.assign')}</button>
-        {c.on === false && <p className="dim small crewd-note"><Icon name="info" size={13} />{t('crew.offNote')}</p>}{/* 꺼진 에이전트(메신저와 같은 90초 기준, CX-06) */}
+        {c.on === false && !failed && <p className="dim small crewd-note"><Icon name="info" size={13} />{t('crew.offNote')}</p>}{/* 꺼진 에이전트(메신저와 같은 90초 기준, CX-06). 기록판을 못 읽는 동안은 지난 값으로 말하지 않는다(R3-L1) */}
         {/* 메신저는 특정 대화를 여는 주소를 받지 않는다(로그인 콜백만) — 받는 곳(랜딩)으로 가는 단추를 둔다(CX-02) */}
         <p className="dim small crewd-note">{t(replies.twin && !replies.bot ? 'crewd.replyPersonal' : 'crewd.reply', { crew: c.name })} <button type="button" className="link-btn small" onClick={() => openExternal(FAMILY.messenger)}>{t('msgr.get')}</button></p>
       </> : <p className="dim small crewd-note"><Icon name="info" size={13} />{access === 'off' ? t('crewd.off') : t('crew.viaChannel', { crew: c.name })}</p>}

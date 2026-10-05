@@ -208,6 +208,7 @@ html.nav-collapsed .side { visibility: hidden; }
 .crew-btn .crew-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .crew-btn .nav-label small { flex: none; max-width: 48%; overflow: hidden; text-overflow: ellipsis; } /* 이름이 길어도 주인은 보이게 */
 .crew-empty { margin: 4px 9px; color: var(--side-fg-3); font-size: 12px; }
+.crew-org { display: block; margin: 4px 9px 1px; color: var(--side-fg-3); font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } /* 내 공간 고정·내 크루 목록의 조직 덩어리 머리(순서는 조직 안에서만 바뀐다) */
 .crew-row { border-radius: var(--rs); transition: background-color 120ms ease, box-shadow 120ms ease; }
 .crew-btn { display: flex; align-items: center; gap: 9px; width: 100%; height: 34px; padding: 0 9px; border-radius: var(--rs); color: var(--side-fg-2); text-align: left; }
 .shell.is-dragging .crew-row.drop-ok { box-shadow: inset 0 0 0 1px var(--side-line); }

@@ -148,7 +148,7 @@ function rejected(op, err) {
       .finally(() => import('./pull.js').then((m) => m.pullBoard()).catch(() => {}));
     return;
   }
-  if (op.payload.type === 'crew.assign') { showToast(t(`crew.fail.${err?.assign ?? 'generic'}`)); return; }
+  if (op.payload.type === 'crew.assign') { import('./crew-assign.js').catch(() => {}).then(() => showToast(t(`crew.fail.${err?.assign ?? 'generic'}`))); return; } // 거절 사유 문구는 맡기기 조각의 사전
   if (op.payload.type === 'mail.flag' || op.payload.type === 'mail.star') { showToast(t(err?.code === 'expired' ? 'mailc.expired' : 'sync.rejected')); import('./mail.js').then((m) => m.loadAccounts()).catch(() => {}); return; }
   showToast(t('sync.rejected'));
   import('./pull.js').then((m) => m.pullPages()).catch(() => {});                  // 서버 상태로 되돌린다

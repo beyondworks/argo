@@ -32,7 +32,7 @@ const haAddr = (s) => <span className="ha">{s}</span>;
 import {
   loadAccounts, pullMail, syncMail, readMail, finishConnect, mailConfig, refreshMail, hasMore, wantSync, lastSynced, subscribeSync, limitLeft, subscribeLimit, getLimitUntil,
   saveDraft, sendMail, sendDraft, deleteDraft, toggleStar, fileToPart, openAttachment, mailDoc, mailPaper, ATTACH_CAP,
-  readSnap, saveSnap, clearSnap, readView, writeView, seedSample, notifyOn, subscribeNotify, hardFails,
+  readSnap, saveSnap, clearSnap, readView, writeView, firstView, seedSample, notifyOn, subscribeNotify, hardFails,
 } from '../core/mail.js';
 import {
   VIEWS, inView, byDate, replySubject, forwardSubject, replyTo, replyAll, fmtExact, linkify, quoteBlock, forwardBlock, htmlToText, escapeHtml,
@@ -570,7 +570,7 @@ export function Mail({ id }) {
   const mode = useSession(), real = mode === 'signedIn';
   const mails = useStore((s) => s.mails);
   const accounts = useStore((s) => s.mailAccounts) ?? [];
-  const [view, setViewState] = useState(() => (VIEWS.includes(readView()) ? readView() : 'inbox'));
+  const [view, setViewState] = useState(() => firstView(VIEWS)); // 홈 '확인 못 함' 카드는 받은편지함으로 연다(?view=inbox, R3-L5)
   const setView = (v) => { setViewState(v); writeView(v); };
   const [pick, setPick] = useState('all');
   const [loading, setLoading] = useState(false), [moreBusy, setMoreBusy] = useState(false), [refreshing, setRefreshing] = useState(false);
@@ -580,6 +580,8 @@ export function Mail({ id }) {
   const [listW, setListW] = useWidth('argo-office-mail-list', 360, 280, 560);
   const [ready, setReady] = useState(!real);
   const [failN, setFailN] = useState(0), [again, setAgain] = useState(0); // 메일을 못 받은 계정 수(만료 빼고) — 조용히 넘기지 않고 알린다(OFC-08)
+  const inboxOk = useStore((s) => s.mailError === null);
+  useEffect(() => { if (view === 'inbox' && inboxOk) setFailN(0); }, [view, inboxOk]); // 자동 갱신이 받은편지함을 다시 받아 회복하면 실패 띠도 내린다(R3-L5)
   const left = useLimit();
   useSyncExternalStore(subscribeSync, lastSynced, () => 0);
   const searchRef = useRef(null);

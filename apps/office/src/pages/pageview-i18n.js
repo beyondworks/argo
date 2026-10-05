@@ -9,5 +9,7 @@ export const PAGEVIEW_DICT = {
   'page.notPlaced': ['문서함에 저장했지만 페이지에 넣지 못했습니다 — 문서함에서 찾을 수 있습니다', 'Saved to Files but couldn’t add it to this page — find it in Files'],
   'page.restrictedNote': ['관리자와 지정한 사람만 볼 수 있습니다', 'Only admins and invited people can see this'],
   'page.conflictHint': ['새로 불러오면 내 변경은 사라집니다. 내 변경을 지키려면 사본으로 저장하세요.', 'Reloading discards your changes. Save them as a copy to keep them.'],
+  'page.conflictGone': ['그사이 서버에서 지워졌거나 볼 수 없게 된 페이지입니다. 내 변경은 이 기기에 남아 있습니다 — 내 공간에 사본으로 저장하거나 버리세요.', 'This page was deleted on the server or you can no longer see it. Your changes are still on this device — save them as a copy in My space or discard them.'],
+  'page.conflictDrop': ['내 변경 버리기', 'Discard my changes'],
   'page.conflictCopy': ['내 변경을 사본으로 저장', 'Save my changes as a copy'], 'page.copySaved': ['사본으로 저장했습니다', 'Saved as a copy'],
 };

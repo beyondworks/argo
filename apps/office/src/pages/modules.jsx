@@ -57,8 +57,10 @@ function Work({ space }) {
 function Mail() {
   const list = useStore((s) => s.mails), err = useStore((s) => s.mailError), live = useSession() === 'signedIn';
   const rows = useMemo(() => list.filter((m) => m.folder === 'inbox' && m.unread), [list]);
-  // 받은편지함을 못 받았으면 '비어 있습니다'가 아니라 다시 시도(2차 검수 M2) — 지난번 받아 둔 메일이 있으면 그 위에. 아직 안 받았으면 기다림
-  const fail = live && err ? <LoadFail small onRetry={() => import('../core/mail.js').then((m) => m.pullInbox()).catch(() => {})} /> : null;
+  // 받은편지함을 못 받았으면 '비어 있습니다'가 아니라 다시 시도(2차 검수 M2) — 지난번 받아 둔 메일이 있으면 그 위에. 아직 안 받았으면 기다림.
+  // 계정 연결이 만료됐으면 다시 시도가 아니라 다시 연결(R3-L6, 사전은 메일 조각 — 이 값은 메일 코드가 쓴 뒤에만 생긴다)
+  const fail = !live || !err ? null : err === 'expired' ? <div className="mod-empty">{t('mailc.statusExpired')} <Link to="/me/mail">{t('mailc.reconnect')}</Link></div>
+    : <LoadFail small onRetry={() => import('../core/mail.js').then((m) => m.pullInbox()).catch(() => {})} />;
   if (!rows.length) return fail ?? (live && err === undefined ? wait : <Empty />);
   return <>{fail}{rows.map((m) => (
     <Link key={m.id} to={`/me/mail/${m.id}`} className="mod-row" {...menuProps(() => mailMenu(m))}>
@@ -183,7 +185,9 @@ function useStatValues(space) {
     };
     // 실패 카드의 흐린 줄은 고정 말 — 옛 값으로 센 말('결재 기다리는 에이전트 1명')을 남기지 않는다
     if (live && boardError) for (const [id, icon, sub] of [['approvals', 'stamp', 'stat.approvalsSub'], ['work', 'run', 'stat.workSub'], ['crews', 'person', 'nav.agents'], ['decisions', 'check', 'stat.weekSub'], ['outputs', 'file', 'stat.weekSub']]) vals[id] = fail(icon, t(sub), vals[id].to);
-    if (live && mailError !== null) vals.mail = (mailError ? fail : waiting)('mail', t('stat.mailSub'), '/me/mail'); // 받은편지함을 받기 전에는 '모두 확인'이 아니다(2차 검수 M1)
+    // 받은편지함을 받기 전에는 '모두 확인'이 아니다(2차 검수 M1). 실패 카드는 받은편지함으로 연다(R3-L5), 만료는 다시 연결(R3-L6)
+    if (live && mailError === 'expired') vals.mail = { ...vals.mail, n: '—', badge: warn(t('mailc.reconnect'), 'mail'), main: t('mailc.statusExpired') }; // 받지 못한 수를 옛 값으로 세지 않는다
+    else if (live && mailError !== null) vals.mail = (mailError ? fail : waiting)('mail', t('stat.mailSub'), '/me/mail?view=inbox');
     return vals;
   }, [approvals, work, mails, decisions, pages, done, crewList, outputs, space, mode, tasks, today, taskErr, boardError, mailError]);
 }

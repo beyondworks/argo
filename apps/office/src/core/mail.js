@@ -51,6 +51,7 @@ export const mailConfig = () => (config ??= api('config').catch(() => { config =
 const real = () => getMode() === 'signedIn';
 const okAccounts = () => (getState().mailAccounts ?? []).filter((a) => a.status === 'ok');
 const busy = (id) => outbox.has(`mail:${id}`) || outbox.has(`star:${id}`);
+const needsLink = () => ((getState().mailAccounts ?? []).some((a) => a.status !== 'ok') ? 'expired' : null); // 다시 연결해야 하는 계정이 있나
 const markExpired = (id) => update((s) => ({ mailAccounts: s.mailAccounts.map((a) => (a.id === id ? { ...a, status: 'expired' } : a)) }));
 
 /** 연결한 계정 목록 — 없어진 계정의 캐시 메일은 치운다(예시 메일 포함) */
@@ -71,7 +72,7 @@ export const hasMore = (key) => Object.values(pages.get(key) ?? {}).some(Boolean
 export async function pullMail(view, { more = false, q = null } = {}) {
   if (!real()) return sampleList(view, q);
   const accounts = okAccounts(), inbox = view === 'inbox' && !more && !q;
-  if (!accounts.length) { if (inbox && getState().mailError !== null) update(() => ({ mailError: null })); return { ids: [], failed: [], more: false }; } // 연결한 계정이 없으면 기다릴 것도 없다(확인 전에 머물지 않게)
+  if (!accounts.length) { if (inbox && getState().mailError !== needsLink()) update(() => ({ mailError: needsLink() })); return { ids: [], failed: [], more: false }; } // 계정이 없으면 기다릴 것도 없고(확인 전에 머물지 않게), 만료뿐이면 다시 연결
   const key = q ? `q:${q}` : view;
   const tokens = more ? pages.get(key) ?? {} : {};
   const targets = more ? accounts.filter((a) => tokens[a.id]) : accounts;
@@ -86,8 +87,9 @@ export async function pullMail(view, { more = false, q = null } = {}) {
   });
   pages.set(key, next);
   // 메일 읽기 실패 표시(홈 '안 읽은 메일' 카드·모듈)는 받은편지함 목록 받기 결과로만 쓰고 지운다(2차 검수 M1 — 다른 메일함·sync 성공이 지우면 '모두 확인'으로 속였다).
-  // 요청 제한(429)도 실패다 — 못 받았으니 '확인 못 함'(L7). 만료는 계정이 '다시 연결'로 따로 보인다. mailError: undefined 확인 전 · null 받음 · 시각 실패
-  const err = inbox ? { mailError: failed.some((f) => f.code !== 'expired') ? Date.now() : null } : {};
+  // 요청 제한(429)도 실패다 — 못 받았으니 '확인 못 함'(L7). 만료된 계정이 있으면 '다시 연결'(R3-L6 — 받지 못한 받은편지함을 '모두 확인'으로 보이지 않게).
+  // mailError: undefined 확인 전 · null 받음 · 'expired' 다시 연결 · 시각 실패
+  const err = inbox ? { mailError: failed.some((f) => f.code !== 'expired') ? Date.now() : needsLink() } : {};
   update((s) => ({ mails: mergeList(s.mails, got, { view: q ? null : view, done, busy, append: more || !!q, hasMore: next }), ...err }));
   return { ids: got.sort(byDate).map((m) => m.id), failed, more: hasMore(key) };
 }
@@ -125,6 +127,8 @@ async function runSync({ view = 'inbox' } = {}) {
   }
   persist(key, hist, 0);
   if (reset) await pullMail(view).catch(() => {}); // 변경 기록이 만료됐거나 한꺼번에 많이 바뀌면 보고 있는 목록을 새로 받는다
+  // 받은편지함 받기가 실패한 채면 자동 갱신이 될 때 받은편지함을 다시 받아 회복한다(R3-L5) — 실패 중일 때만이라 정상일 때 더 받는 것은 없다
+  if (typeof getState().mailError === 'number' && !limitLeft() && !(reset && view === 'inbox')) await pullMail('inbox').catch(() => {});
   return { arrivals, reset };
 }
 
@@ -244,6 +248,12 @@ export const saveSnap = (snap) => { if (getStorageScope()) persist(SNAP(), snap,
 export const clearSnap = () => forget(SNAP());
 /** 마지막으로 본 메일함(이 기기) */
 const VIEW_KEY = 'argo-office-mail-view';
+/** 메일 화면을 열 때의 메일함 — 주소의 ?view=(홈 '확인 못 함' 카드 = 받은편지함) → 마지막에 본 것 → 받은편지함 */
+export function firstView(views) {
+  const asked = new URLSearchParams(globalThis.location?.search ?? '').get('view');
+  if (views.includes(asked)) { writeView(asked); return asked; } // 연 메일함을 기억해 둔다(작성 창이 지금 메일함을 readView로 본다)
+  return [readView()].find((v) => views.includes(v)) ?? 'inbox';
+}
 export const readView = () => { try { return localStorage.getItem(VIEW_KEY) || 'inbox'; } catch { return 'inbox'; } };
 export const writeView = (v) => { try { localStorage.setItem(VIEW_KEY, v); } catch { /* 저장소 없음 */ } };
 

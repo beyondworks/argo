@@ -214,7 +214,7 @@ export function AssignSheet() {
     return () => { live = false; };
   }, [a, orgOfSheet]);
   const label = useMemo(() => a?.items?.map((i) => i.label).filter(Boolean).join(', ') ?? '', [a]);
-  const allCrews = useStore((s) => s.crews);
+  const allCrews = useStore((s) => s.crews), failed = useStore((s) => !!s.boardError);
   const live = getMode() === 'signedIn';
   // 1:1 방은 내 크루와만 열린다(msgr_create_channel·메신저와 같은 규칙) — 로그인 상태에서는 내 크루만 보인다
   const crews = crewsIn(allCrews, a?.space ?? 'me', ME.id).filter((c) => !live || (c.owner === ME.id && !c.company && (c.access ?? 'ok') === 'ok')); // 꺼진 크루·권한 없는 크루는 빼고(사이드바와 같은 규칙)
@@ -299,7 +299,7 @@ export function AssignSheet() {
     <Sheet open onClose={close} title={fixed ? t('crew.assignTo', { crew: main.name }) : t('crew.assign')}
       footer={<><button type="button" className="btn" onClick={close}>{t('cancel')}</button><button type="button" className="btn primary" disabled={busy || !main || (live && consent === undefined) || (task === 'custom' && !text.trim() && !label)} onClick={go}><Icon name="hand" size={14} />{t('crew.go')}</button></>}>
       {main && <div className="ap-who assign-who"><Face id={main.id} size={32} /><div><b>{main.name}</b>{(main.job || main.role) && <small className="dim">{main.job || main.role}</small>}</div></div>}{/* 맡을 에이전트 얼굴(유건 9/30) */}
-      {main?.on === false && <p className="data-note"><Icon name="info" size={12} />{t('crew.offNote')}</p>}{/* 꺼진 에이전트 — 메신저와 같은 90초 기준(CX-06) */}
+      {main?.on === false && !failed && <p className="data-note"><Icon name="info" size={12} />{t('crew.offNote')}</p>}{/* 꺼진 에이전트 — 메신저와 같은 90초 기준(CX-06). 기록판을 못 읽는 동안은 말하지 않는다(R3-L1) */}
       {a.items.length > 0 && <div className="assign-items">{a.items.map((i) => <span key={`${i.kind}-${i.id}`} className="chip"><Icon name={{ mail: 'mail', page: 'doc', file: 'file', record: 'run', deal: 'deal', customer: 'person', event: 'calendar', doc: 'sign', company: 'building' }[i.kind]} size={12} />{i.label}</span>)}</div>}
       {!fixed && <label className="field-block"><span className="label">{t('crew.to')}</span>
         {crews.length ? <select className="input" value={main?.id ?? crew ?? ''} onChange={(e) => { setCrew(e.target.value || null); setAt(null); }}><option value="" disabled>{t('crew.pick')}</option>{crews.map((c) => <option key={c.id} value={c.id}>{c.name}{c.role ? ` · ${c.role}` : ''}</option>)}</select>

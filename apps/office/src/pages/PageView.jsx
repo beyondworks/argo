@@ -25,26 +25,35 @@ const Editor = lazy(() => import('./Editor.jsx'));
 /** 충돌 '새로 불러오기' — 서버 본문을 먼저 받고, 받은 뒤에만 이 기기의 보관본·보낼 목록을 지운다(먼저 지우면 읽기 실패 뒤 새로고침에 내 변경이 없어졌다 — 2차 검수 L10).
  *  충돌 안내가 떠 있는 동안 그 페이지 저장은 보내지 않고 보관만 한다(transport.js) — 받는 사이 옛 변경이 나가지 않는다 */
 async function reloadServer(id) {
-  await loadPageContent(id, { force: true });
+  // 서버에 없으면(지워졌거나 볼 수 없게 됨) 받은 본문이 없다 — 내 변경을 지우지 않고 알린다(R3-L4)
+  if ((await loadPageContent(id, { force: true })) === null) throw Object.assign(new Error('page_gone'), { missing: true });
+  await dropMine(id);
+}
+/** 이 기기의 보관본·보낼 목록을 지우고 충돌 안내를 닫는다 */
+async function dropMine(id) {
   forget(heldKey(id));
   await outbox.drop(`page:${id}`);
   setUi({ conflict: null });
 }
+/** 사본 자리 — 서버에 없는 페이지 아래에는 만들 수 없어 내 공간 맨 위, 아니면 위키 최상위를 못 만드는 사람은 원본 아래 */
+const copyPlace = (page, gone) => (gone ? ['me', null] : [page.space, page.parent ?? (canManage(page.space) ? null : page.id)]);
 
-/** 다른 기기가 먼저 저장했을 때 — 사람이 고른다: 서버 값으로 새로 불러오기 / 내 변경을 사본으로 지키기 */
+/** 다른 기기가 먼저 저장했을 때 — 사람이 고른다: 서버 값으로 새로 불러오기 / 내 변경을 사본으로 지키기. 그사이 서버에서 없어졌으면 사본 또는 버리기 */
 function ConflictBanner({ page }) {
-  const reload = () => reloadServer(page.id).catch(() => showToast(t('load.readFail'))); // 못 읽으면 충돌 안내·보관본을 남겨 다시 누를 수 있게
+  const [gone, setGone] = useState(false);
+  const reload = () => reloadServer(page.id).catch((e) => (e?.missing ? setGone(true) : showToast(t('load.readFail')))); // 못 읽으면 충돌 안내·보관본을 남겨 다시 누를 수 있게
   const keepCopy = async () => {
-    // 위키 최상위를 못 만드는 사람은 원본 아래에 사본을 둔다
     const mine = restore(heldKey(page.id), null) ?? page;                            // 새로고침 뒤라면 화면은 서버 본문 — 사본은 남겨 둔 내 변경으로
-    createPage(page.space, page.parent ?? (canManage(page.space) ? null : page.id), { title: t('page.copyTitle', { title: mine.title || t('page.untitled') }), content: mine.content });
-    await reload();
+    const id = createPage(...copyPlace(page, gone), { title: t('page.copyTitle', { title: mine.title || t('page.untitled') }), content: mine.content });
+    if (gone) { await dropMine(page.id); navigate(`${baseOf('me')}/p/${id}`); } else await reload();
     showToast(t('page.copySaved'));
   };
   return (
     <div className="conflict" role="alert">
-      <div><b>{t('page.conflict')}</b><p className="dim small">{t('page.conflictHint')}</p></div>
-      <div className="row-actions"><button type="button" className="btn" onClick={keepCopy}>{t('page.conflictCopy')}</button><button type="button" className="btn primary" onClick={reload}>{t('page.conflictReload')}</button></div>
+      <div><b>{t(gone ? 'page.missing' : 'page.conflict')}</b><p className="dim small">{t(gone ? 'page.conflictGone' : 'page.conflictHint')}</p></div>
+      <div className="row-actions"><button type="button" className="btn" onClick={keepCopy}>{t('page.conflictCopy')}</button>
+        {gone ? <button type="button" className="btn primary" onClick={() => dropMine(page.id).then(() => navigate(baseOf(page.space)))}>{t('page.conflictDrop')}</button>
+          : <button type="button" className="btn primary" onClick={reload}>{t('page.conflictReload')}</button>}</div>
     </div>
   );
 }

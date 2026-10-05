@@ -57,11 +57,12 @@ export default function Tools({ space }) {
         </li>)}</ul>}
     </section>
     <p className="dim small">{t('tool.hint')}</p>
-    {edit && <Editor edit={edit} setEdit={setEdit} all={allCrews} crews={crews.filter((c) => edit.scope === 'org' || c.owner === ME.id)} readOnly={!!edit.id && !canEdit(edit)} write={write} />}
+    {edit && <Editor edit={edit} setEdit={setEdit} crews={crews.filter((c) => edit.scope === 'org' || c.owner === ME.id)} readOnly={!!edit.id && !canEdit(edit)} write={write} />}
   </div>;
 }
 
-function Editor({ edit, setEdit, crews, all, readOnly, write }) {
+function Editor({ edit, setEdit, crews, readOnly, write }) {
+  const all = useStore((s) => s.crews); // 같은 에이전트 판정은 가게의 크루 행 전부로(어느 공간에서 열어도, 2차 검수 L3)
   const formId = useId();
   const spec = edit.spec, set = (patch) => setEdit({ ...edit, ...patch }), setSpec = (patch) => set({ spec: { ...spec, ...patch } });
   const save = async (e) => {

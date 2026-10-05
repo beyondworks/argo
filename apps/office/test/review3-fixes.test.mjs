@@ -232,7 +232,7 @@ test('L6: 상세 기록 행 — 내 공간은 같은 에이전트 행 전부, �
 test('L10: 새로 불러오기 — 읽기 실패면 보관본·보낼 목록을 그대로, 성공하면 지우고 충돌 안내를 닫는다', async () => {
   const log = [];
   let fail = true;
-  const { reloadServer } = pick('pages/PageView.jsx', ['reloadServer'], { loadPageContent: async () => { log.push('load'); if (fail) throw new Error('down'); }, forget: (k) => log.push(`forget ${k}`),
+  const { reloadServer } = pick('pages/PageView.jsx', ['reloadServer', 'dropMine'], { loadPageContent: async () => { log.push('load'); if (fail) throw new Error('down'); }, forget: (k) => log.push(`forget ${k}`),
     heldKey: (id) => `held:${id}`, outbox: { drop: async (k) => log.push(`drop ${k}`) }, setUi: (p) => log.push(`ui ${JSON.stringify(p)}`) });
   assert.ok(reloadServer, 'reloadServer가 있어야 한다');
   await assert.rejects(reloadServer('p1'));
