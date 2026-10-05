@@ -25,7 +25,8 @@ const delFail=(u,id)=>callFail(u,'office_briefing_write',`null,'briefing.delete'
 const list=(u,a='')=>call(u,'office_briefing_list',a||'null');
 const ids=(u,a)=>list(u,a).map(b=>b.id);
 const get=(u,id)=>call(u,'office_briefing_get',quote(id));
-const imp=(u,d,o=ORG)=>call(u,'office_briefing_import',`${quote(o)},${j({id:randomUUID(),title:'옛 브리핑',body:'본문',kind:'daily',period:'2026-09-01',author_name:'pepper',recipient:U.owner,created_at:'2026-09-01T03:00:00Z',source:{kind:'intranet',id:'1'},...d})}`);
+const svc=(fn,args)=>JSON.parse(last(sql(`set timezone to 'UTC'; set role service_role; select ${fn}(${args})`)));
+const imp=(u,d,o=ORG)=>svc('office_briefing_import',`${quote(o)},${quote(u)},${j({id:randomUUID(),title:'옛 브리핑',body:'본문',kind:'daily',period:'2026-09-01',author_name:'pepper',recipient:U.owner,created_at:'2026-09-01T03:00:00Z',source:{kind:'intranet',id:'1'},...d})}`);
 
 before(()=>{
  if(!DB)return;
@@ -131,8 +132,11 @@ test('목록은 최신순·커서로 끊어 읽고, 제목·본문으로 찾는�
  assert.equal(typeof list(u,`null,null,null,1,true`)[0].body,'string');
 });
 
-test('이관: 관리자만, 원본 시각·작성자 유지, 같은 원본은 한 번만, 받는 사람은 구성원', {skip}, ()=>{
- assert.match(callFail(U.member,'office_briefing_import',`${quote(ORG)},${j({id:randomUUID(),title:'x',recipient:U.member,created_at:'2026-09-01T00:00:00Z',source:{kind:'intranet',id:'z'}})}`),/briefing_forbidden/);
+// 보안 검토: 이관 함수는 하루 상한·날짜 검사를 거치지 않으므로 로그인 계정(관리자 포함)에는 열지 않는다 — service_role(이관 스크립트)만, 실행자는 그 조직 관리자
+test('이관: service_role만, 실행자는 관리자, 원본 시각·작성자 유지, 같은 원본은 한 번만, 받는 사람은 구성원', {skip}, ()=>{
+ const d=j({id:randomUUID(),title:'x',recipient:U.member,created_at:'2026-09-01T00:00:00Z',source:{kind:'intranet',id:'z'}});
+ assert.match(callFail(U.owner,'office_briefing_import',`${quote(ORG)},${quote(U.owner)},${d}`),/permission denied/);
+ assert.throws(()=>svc('office_briefing_import',`${quote(ORG)},${quote(U.member)},${d}`),/briefing_forbidden/);
  const a=imp(U.owner,{source:{kind:'intranet',id:'b-1'}});
  const again=imp(U.owner,{source:{kind:'intranet',id:'b-1'}});
  assert.equal(a.id,again.id);

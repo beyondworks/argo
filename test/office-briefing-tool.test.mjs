@@ -46,7 +46,7 @@ test('쓰기: recipient=org는 조직 전체로, 개인 공간 대화에서는 �
   assert.match(await briefingTool({ action: 'brief_add', title: '주간', recipient: 'org' }, { ctx: ctx(), crew: '페퍼', ownerId: ME }), /조직 구성원 모두의/);
   assert.equal(calls.at(-1).args.p_data.recipient, 'org');
   const before = calls.length;
-  assert.match(await briefingTool({ action: 'brief_add', title: '주간', recipient: 'org' }, { ctx: ctx({ orgId: null }), crew: '페퍼', ownerId: ME }), /조직 채널이나 조직 안 1:1에서만/);
+  assert.match(await briefingTool({ action: 'brief_add', title: '주간', recipient: 'org' }, { ctx: ctx({ orgId: null }), crew: '페퍼', ownerId: ME }), /조직 안의 1:1에서만/);
   assert.equal(calls.length, before, '서버를 부르지 않는다');
 });
 
@@ -56,8 +56,9 @@ test('쓰기: 본문 32KB를 넘으면 서버를 부르지 않고 줄이라고 �
   assert.equal(calls.filter((c) => c.name === 'office_briefing_write').length, 0);
 });
 
-// 유건: 개인 브리핑을 보고 조직 업무를 한다 — 남이 보는 채널에 주인 브리핑을 올리지 않는다
-test('읽기: 주인 혼자 보는 1:1에서만, 여럿이 보는 조직 채널에서는 거절', async () => {
+// 유건: 개인 브리핑을 보고 조직 업무를 한다 — 남이 보는 채널에 주인 브리핑을 올리지 않는다.
+// 보안 검토: 쓰기도 1:1에서만 — 채널에서 다른 구성원이 주인(관리자) 권한으로 조직 전체 브리핑을 돌리지 못하게
+test('읽기·쓰기: 주인 혼자 보는 1:1에서만, 여럿이 보는 조직 채널에서는 거절', async () => {
   let calls = fake();
   const list = await briefingTool({ action: 'briefs' }, { ctx: ctx(), ownerId: ME, lang: 'ko' });
   assert.match(list, /오전 브리프 · Lean-AX · 페퍼 .* id=b1/);
@@ -65,6 +66,7 @@ test('읽기: 주인 혼자 보는 1:1에서만, 여럿이 보는 조직 채널�
   calls = fake();
   const out = await briefingTool({ action: 'briefs' }, { ctx: ctx({ channelKind: 'public', channelId: 'pub-1' }), ownerId: ME });
   assert.match(out, /주인과의 1:1 대화에서만/);
+  assert.match(await briefingTool({ action: 'brief_add', title: '전체 공지', recipient: 'org' }, { ctx: ctx({ channelKind: 'public', channelId: 'pub-1' }), ownerId: ME }), /주인과의 1:1 대화에서만/);
   assert.equal(calls.filter((c) => c.name.startsWith('office_briefing')).length, 0);
 });
 

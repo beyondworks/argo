@@ -137,14 +137,18 @@ begin
   return public.office_briefing_json(b, false);
 end $$;
 
--- 이관 전용(인트라넷 briefings): 조직 관리자가 부르고, 원본 작성 시각·작성자 이름을 지킨다. 받는 사람은 그 조직 구성원.
--- 같은 원본(source.id)은 조직마다 한 번만 — 다시 돌려도 두 번 들어가지 않는다. 상한(하루 50건)은 이관에는 적용하지 않는다(옛 글).
-create or replace function public.office_briefing_import(p_org uuid, p_data jsonb) returns jsonb
+-- 이관 전용(인트라넷 briefings): service_role만 부른다(이관 스크립트) — 실행자(p_actor)는 그 조직 관리자여야 하고, 원본 작성 시각·작성자 이름을 지킨다.
+-- 하루 상한(받는 사람당 50건)을 거치지 않고 지난 날짜로 넣는 길이라 로그인 계정에는 열지 않는다(보안 검토: 관리자가 상한을 피해 구성원에게 대량으로 넣을 수 있었다).
+-- 받는 사람은 그 조직 구성원. 같은 원본(source.id)은 조직마다 한 번만 — 다시 돌려도 두 번 들어가지 않는다.
+create or replace function public.office_briefing_import(p_org uuid, p_actor uuid, p_data jsonb) returns jsonb
 language plpgsql security definer set search_path = public, pg_temp as $$
-declare who uuid := auth.uid(); b public.office_briefings%rowtype; bid uuid; target uuid; v_created timestamptz;
+declare who uuid := p_actor; b public.office_briefings%rowtype; bid uuid; target uuid; v_created timestamptz;
   v_title text; v_body text; v_kind text; v_period text; v_aname text; sid text;
 begin
-  if p_org is null or public.office_perf_role(p_org) is distinct from 'manager' then raise exception 'briefing_forbidden' using errcode = '42501'; end if;
+  if p_org is null or who is null or not exists (select 1 from public.msgr_org_members m join public.msgr_orgs o on o.id = m.org_id
+      where m.org_id = p_org and m.user_id = who and m.removed_at is null and m.role in ('owner', 'admin') and o.deleted_at is null) then
+    raise exception 'briefing_forbidden' using errcode = '42501';
+  end if;
   if jsonb_typeof(p_data) is distinct from 'object' or octet_length(p_data::text) > 140000
      or jsonb_typeof(p_data->'source') is distinct from 'object' or p_data->'source'->>'kind' is distinct from 'intranet' then raise exception 'briefing_input'; end if;
   sid := p_data->'source'->>'id';
@@ -167,6 +171,8 @@ end $$;
 revoke all on function public.office_briefing_member(uuid, uuid), public.office_briefing_visible(public.office_briefings, uuid),
   public.office_briefing_json(public.office_briefings, boolean) from public, anon, authenticated;
 revoke all on function public.office_briefing_list(timestamptz, uuid, text, integer, boolean), public.office_briefing_get(uuid),
-  public.office_briefing_write(uuid, text, jsonb), public.office_briefing_import(uuid, jsonb) from public, anon;
+  public.office_briefing_write(uuid, text, jsonb) from public, anon;
 grant execute on function public.office_briefing_list(timestamptz, uuid, text, integer, boolean), public.office_briefing_get(uuid),
-  public.office_briefing_write(uuid, text, jsonb), public.office_briefing_import(uuid, jsonb) to authenticated;
+  public.office_briefing_write(uuid, text, jsonb) to authenticated;
+revoke all on function public.office_briefing_import(uuid, uuid, jsonb) from public, anon, authenticated;
+grant execute on function public.office_briefing_import(uuid, uuid, jsonb) to service_role; -- 이관 스크립트만
