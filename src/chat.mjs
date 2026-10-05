@@ -21,7 +21,7 @@ import { codexModelEffort } from './model-effort.mjs';
 import { defaultClaudeEffort } from './runners/catalog.mjs';
 import { classifyRunnerError, subscriptionBlockedNotice } from './runners/error-class.mjs'; // 실패 코드 표(불변식 C)
 import { markRunnerAuthFail, HEALTH_BILLED_RUNNERS } from './runner-health.mjs'; // 다음 턴 차단(불변식 A)
-import { effectiveModels, normalizeModelId, loadRemoteCatalog, openrouterFallbackModel } from './runners/catalog-remote.mjs';
+import { effectiveModels, normalizeModelId, loadRemoteCatalog, openrouterFallbackModel, contextWindowFor } from './runners/catalog-remote.mjs';
 import { addRoutine, loadRoutines, updateRoutine, removeRoutine } from './routines.mjs'; // schedule_task·list_routines·cancel_routine — 크루가 '나중에 하기'를 걸고, 되돌리는 수단
 import { saveHandover } from './memory.mjs';
 import { loadMcp, safeMcpServersForRuntime } from './market.mjs';
@@ -47,7 +47,9 @@ import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './t
 import { registerTurn, withTurnControl, turnAbortedError } from './turn-abort.mjs';
 import { scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, loadRunnerCred, verifyRunnerCred, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply, isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice, isHiddenRunner, visibleRunnerIds, visibleRunnerNamesLine, onlyHiddenConnectedStatus, unsupportedMethodStatus, unsupportedMethodNotice, isCliTurn, GEMINI_DEFAULT_MODEL, runnerCredType, CODEX_DEFAULT_MODEL, CLI_CHAT_TURN_TIMEOUT_MS } from './runners.mjs';
 import { delegateHead } from './inbound-marks.mjs'; // 위임 머리말 = 1:1 화면 출처 카드와 같은 함수
-import { loadThread, takeSharedNotes, restoreSharedNotes, scopedSession, inContextScope, turnScope, scopeKey, approvalScope } from './thread.mjs';
+import { loadThread, takeSharedNotes, restoreSharedNotes, scopedSession, inContextScope, turnScope, scopeKey, approvalScope, threadSummary, setThreadSummary, appendLine } from './thread.mjs';
+import { buildThreadContext, contextSection } from './thread-context.mjs'; // 스레드 맥락 토큰 예산 + 누적 요약(최근 6개 고정을 대체)
+import { runOneShot } from './oneshot.mjs';
 import { readInstalledSkills, planSkillInjection, SKILL_INJECT_CAP } from './market.mjs'; // 주입·마켓 표기 공용 규칙(단일 진실)
 import { snapshotArtifacts, diffArtifacts, servableArtifact, capLatest, openTurnLedger, closeTurnLedger, overlappingTurns, attributeArtifacts } from './artifacts.mjs'; // 러너 무관 산출물 수집(제보 2026-07-30)
 
@@ -482,6 +484,20 @@ export function threadCtxLine(m, lang, name) {
   const att = m.attachments?.length ? (en ? ` (attached, open with Read: ${list(m.attachments, (a) => a.rel)})` : ` (첨부, Read로 열람: ${list(m.attachments, (a) => a.rel)})`) : '';
   const art = m.artifacts?.length ? (en ? ` (artifacts, open with Read: ${list(m.artifacts, (a) => a)})` : ` (산출물, Read로 열람: ${list(m.artifacts, (a) => a)})`) : '';
   return `${who}: ${String(m.text).replace(/\s+/g, ' ').slice(0, 500)}${att}${art}`;
+}
+
+/** 스레드 맥락(외부 CLI 경로·SDK/네이티브 기기 교차 경로 공통) — 예산 안 최근 대화 + 예산 밖 누적 요약(thread-context.mjs).
+    요약은 그 크루의 **같은 러너** 원샷(pin — 다른 러너로 넘어가지 않는다, 도구 없이)으로 만들고 스레드에 저장한다.
+    거르는 규칙(범위·공유 노트·실패·대기 줄 제외)은 종전 .slice(-6) 경로와 같다. 반환 { recent, summary }. */
+/** 맥락에 실을 줄(순수) — 같은 범위만, 공유 노트(sharedBlock으로 따로 주입)·실패 턴·답을 기다리는 지금 그 글(두 번 들어가면 안 된다)은 뺀다. export는 테스트용. */
+export const inThreadContext = (m, contextScope) => inContextScope(m, contextScope) && !m.shared && !m.failed && !m.awaiting;
+async function threadContextFor(wsId, slug, t, { contextScope, lang, name, runner, model }) {
+  const msgs = (t?.messages ?? []).filter((m) => inThreadContext(m, contextScope));
+  return buildThreadContext({
+    msgs, lang, lineOf: (m) => threadCtxLine(m, lang, name), summary: threadSummary(t, contextScope),
+    summarize: (prompt) => runOneShot(wsId, prompt, { pin: runner, model: model || null, lang, readOnly: true, timeoutMs: 90_000 }).then((r) => r.text),
+    save: (sum) => setThreadSummary(wsId, slug, contextScope, sum),
+  });
 }
 
 export const CONNECTOR_DESC_CAP = 1200;
@@ -1562,13 +1578,13 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
     let crewBridge = null;
     try {
       ledgerEntry = openTurnLedger(wsId, agentSlug, { startedAt: ledgerStartedAt, frame: __turnControl ?? null }); // frame — 재시도 재귀만 같은 control(turn-abort)
-      const { messages } = dmTurn ? { messages: [] } : await loadThread(wsId, agentSlug);
+      const thread = dmTurn ? { messages: [] } : await loadThread(wsId, agentSlug);
       // 실패 턴(m.failed — 답변 없는 지시문)은 재구성 맥락에서 뺀다: 러너 미로그인에서 재전송을 반복하면
-      // 같은 지시 6개가 "사장이 7번 말했는데 나는 무응답"으로 읽힌다(분리 검수 MEDIUM). via 턴은 사장
+      // 같은 지시 여러 개가 "사장이 7번 말했는데 나는 무응답"으로 읽힌다(분리 검수 MEDIUM). via 턴은 사장
       // 발화가 아니므로 화자를 '자동 배달'로 정직 표기(room.mjs 어휘에서 '시스템'=크루가 답하지 않는 줄이라 반전 — 재검수 지적)(배달 프리픽스가 실제 발신자를 이미 담는다).
-      const ctx = (messages ?? []).filter((m) => inContextScope(m, contextScope) && !m.shared && !m.failed && !m.awaiting).slice(-6) // 공유 노트는 sharedBlock으로 이미 주입 — 중복 방지. 채널 턴은 그 채널 기록만
-        .map((m) => threadCtxLine(m, lang, meta.name || agentSlug))
-        .join('\n');
+      // 공유 노트는 sharedBlock으로 이미 주입 — 중복 방지. 채널 턴은 그 채널 기록만. 최근 6개 고정 → 토큰 예산 + 누적 요약(threadContextFor).
+      const ctxParts = await threadContextFor(wsId, agentSlug, thread, { contextScope, lang, name: meta.name || agentSlug, runner, model: effModel });
+      const ctx = contextSection(ctxParts, lang === 'en' ? 'Recent conversation' : '최근 대화', lang);
       const attNote = attachments.length
         ? (lang === 'en'
             ? `\n\n(Files the captain attached — read them directly: ${attachments.map((a) => `vault/${a.rel}`).join(', ')})`
@@ -1628,7 +1644,7 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
       const prompt = `${lang === 'en' ? 'Below are your persona card and operating rules.' : '다음은 너의 페르소나 카드와 운영 규칙이다.'}
 
 ${systemPromptFor(md, p.root, skills, meta, lang, { hasTools: cliTools, connectors: cliConnectors })}${orgRules}${commonDirectives({ caps: cliCaps, connectedMcp: cliMcp, connectors: cliConnectors, hasTools: cliTools, gated: cliGated, lang, runner, workRoots: cliWorkRoots, pinnedFolder: cliPin, source: turnSource, fullAuto })}${cliRoster}${browserBridge ? browserMcpDirective(lang) : ''}${messengerNote}${fallbackDirective}
-${ctx ? `\n## ${lang === 'en' ? 'Recent conversation' : '최근 대화'}\n${ctx}\n` : ''}
+${ctx ? `\n${ctx}` : ''}
 ${sharedBlock || (source === 'session' ? newMsgHead(source, lang) : (lang === 'en' ? "## Captain's new instruction\n" : '## 사장의 새 지시\n'))}${userMsg}${attNote}
 
 ${lang === 'en'
@@ -1915,12 +1931,10 @@ ${lang === 'en'
     const foreign = !!device && !!me && device !== me;
     if (foreign) resumeId = null;
     if ((foreign || __freshRetry) && (t.messages ?? []).length) {
-      const ctx = t.messages.filter((m) => inContextScope(m, contextScope) && !m.shared && !m.failed && !m.awaiting).slice(-6) // 실패 턴·화자·범위 규칙은 CLI 경로와 동일(위 주석)
-        .map((m) => threadCtxLine(m, lang, meta.name || agentSlug))
-        .join('\n');
-      if (ctx) crossCtx = lang === 'en'
-        ? `## Recent conversation (continued from another device — a new session opens here)\n${ctx}\n\n${newMsgHead(source, 'en')}`
-        : `## 최근 대화 (다른 기기에서 이어짐 — 이 기기에서 새 세션으로 계속)\n${ctx}\n\n${newMsgHead(source, 'ko')}`;
+      // 실패 턴·화자·범위 규칙과 예산·요약은 CLI 경로와 같은 함수(threadContextFor)
+      const ctx = contextSection(await threadContextFor(wsId, agentSlug, t, { contextScope, lang, name: meta.name || agentSlug, runner, model: effModel }),
+        lang === 'en' ? 'Recent conversation (continued from another device — a new session opens here)' : '최근 대화 (다른 기기에서 이어짐 — 이 기기에서 새 세션으로 계속)', lang);
+      if (ctx) crossCtx = `${ctx}\n${newMsgHead(source, lang)}`;
     }
   }
 
@@ -2038,7 +2052,7 @@ ${lang === 'en'
     env: sdkEnv, model: sdkModel, crewTools: crewSink, mcpServers: servers ?? {}, computer: computerOn,
     ...(runner === 'codex' && codexModelEffort(meta.effort, sdkModel) ? { effort: codexModelEffort(meta.effort, sdkModel) } : {}), // Responses reasoning.effort uses the same model contract as CLI.
     canUseTool: makePermissionGate(wsId, agentSlug, p.root, chain.length ? chain[chain.length - 1] : notOwnerDirect, lang, workRoots, { computerUse: computerOn, guest, msgr: gateMsgr }),
-    resume: resumeId, lang,
+    resume: resumeId, lang, contextTokens: contextWindowFor(runner, sdkModel), // 토큰 예산 — 창의 75%를 넘으면 앞부분 요약(engine/compact.mjs)
   }) : query({
     prompt: promptInput,
     options: {
@@ -2111,6 +2125,12 @@ ${lang === 'en'
         }
       }
       await setTurnStatus(wsId, agentSlug, 'memory', '', undefined, turnSource);
+    }
+    // 앞 대화 압축(네이티브 엔진 compact.mjs, SDK 자동 압축도 같은 모양) — 크루 대화 기록에 안내 줄 하나. 화면 문구는 i18n(chat.session.notice.summarized)이 그린다.
+    // 이 턴의 범위를 싣는다(채널 턴이면 그 채널 줄 — 회수·맥락 범위 규칙을 그대로 탄다). 기록 실패는 턴과 무관.
+    if (msg.type === 'system' && msg.subtype === 'compact_boundary' && !dmTurn) {
+      await appendLine(wsId, agentSlug, { who: 'crew', text: lang === 'en' ? 'Earlier conversation was summarized to continue' : '앞 대화를 요약해 이어 갑니다',
+        src: { kind: 'session', dir: 'notice', code: 'summarized' }, ...(contextScope ? { contextScope } : {}) }).catch(() => {});
     }
     // 구독 사용 한도 — SDK가 claude.ai 구독(OAuth) 턴에만 싣는다. 계정 단위 저장, 실패는 턴과 무관(K91)
     if (msg.type === 'rate_limit_event' && runner === 'claude') await recordClaudeLimits(sdkEnv, msg.rate_limit_info).catch(() => {});

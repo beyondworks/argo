@@ -88,7 +88,9 @@ test('CLI 턴(en): 같은 노트가 영어 규약(attached/artifacts, open with 
 
 test('배선 — 두 맥락 빌더(CLI 경로·SDK 기기 교차 경로)가 threadCtxLine 한 벌을 지난다 [소스 구간 핀 — SDK 교차 경로는 가짜로 못 돈다]', async () => {
   const src = stripComments(await readFile(join(REPO, 'src/chat.mjs'), 'utf8'));
-  const calls = src.match(/\.map\(\(m\) => threadCtxLine\(m, lang, meta\.name \|\| agentSlug\)\)/g) ?? [];
+  // 2026-10-05(B3' 토큰 예산): 두 경로가 threadContextFor 한 벌을 지나고, 그 안에서만 threadCtxLine을 부른다(줄 모양·예산·요약이 경로마다 갈리지 않게)
+  assert.equal((src.match(/lineOf: \(m\) => threadCtxLine\(m, lang, name\)/g) ?? []).length, 1, 'threadContextFor 안 1곳');
+  const calls = src.match(/await threadContextFor\(wsId, agentSlug, (thread|t), \{ contextScope, lang, name: meta\.name \|\| agentSlug, runner, model: effModel \}\)/g) ?? [];
   assert.equal(calls.length, 2, 'CLI 경로 + SDK 기기 교차 경로 = 2곳(한 곳이 옛 인라인 식으로 돌아가면 노트가 그 경로에서만 사라진다). 정당한 새 호출부를 추가하거나 인자 형태를 바꾸면 이 숫자·앵커를 함께 갱신할 것 — 핀을 우회하지 말고(검수 LOW-1)');
   // 옛 인라인 식 부활 금지 — 노트 문구는 헬퍼 안에만 산다
   assert.equal((src.match(/첨부, Read로 열람/g) ?? []).length, 1, '첨부 노트 문구는 threadCtxLine 안 1곳');
@@ -96,6 +98,6 @@ test('배선 — 두 맥락 빌더(CLI 경로·SDK 기기 교차 경로)가 thre
   // 두 호출부가 각각 어느 구간에 있는지 — CLI(isCliRunner 블록)·SDK(crossCtx 블록)
   const cli = src.indexOf('if (cliTurn) {'); const sdk = src.indexOf('let crossCtx = '); // CLI 블록 앵커 = isCliTurn 결과(2026-09-06)
   assert.ok(cli > 0 && sdk > cli, '두 블록 앵커');
-  assert.ok(src.indexOf('threadCtxLine(m, lang', cli) < sdk, 'CLI 블록 안에 호출 1');
-  assert.ok(src.indexOf('threadCtxLine(m, lang', sdk) > sdk, 'crossCtx 블록 안에 호출 2');
+  assert.ok(src.indexOf('await threadContextFor(', cli) < sdk, 'CLI 블록 안에 호출 1');
+  assert.ok(src.indexOf('await threadContextFor(', sdk) > sdk, 'crossCtx 블록 안에 호출 2');
 });

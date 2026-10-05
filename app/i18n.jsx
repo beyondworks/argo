@@ -1354,6 +1354,7 @@ const DICT = {
   'chat.session.notice.restart': ['서버가 다시 시작되어 {name}의 답을 받지 못했습니다', 'The server restarted before {name} replied, so no reply will come'],
   'chat.session.notice.failed': ['{name}의 답을 받지 못했습니다(실행 실패)', 'Could not get a reply from {name} (the run failed)'],
   'chat.session.notice.capReached': ['세션 메시지 사슬이 상한({cap}단계)에 닿아 이 뒤로는 크루끼리 더 주고받지 않습니다', 'This chain of session messages reached its limit ({cap} steps) — crews will not message each other further'],
+  'chat.session.notice.summarized': ['앞 대화를 요약해 이어 갑니다', 'Earlier conversation was summarized to continue'],
   'chat.session.notice.budget': ['이번 지시에서 이어진 크루 턴이 합계 상한에 닿아 {name}에게 보내지 않았습니다', 'Crew turns from this instruction hit the total limit, so nothing was sent to {name}'],
   'chat.session.err.AMBIGUOUS': ['"{name}" 이름의 크루가 여럿입니다 — 목록에서 골라 주세요', 'More than one crew is named "{name}" — pick one from the list'],
   'chat.session.err.TREE_CAP': ['이번 지시에서 이어진 크루 턴이 합계 상한에 닿아 보내지 않았습니다', 'Crew turns from this instruction hit the total limit, so it was not sent'],

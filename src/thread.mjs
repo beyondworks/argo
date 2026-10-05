@@ -53,6 +53,9 @@ export const scopeKey = (s) => (s?.kind === 'msgr' && s.channelId ? s.channelId 
 export const scopedSession = (t, key) => t?.scopedSessions?.[key] ?? { sessionId: null, sessionDevice: null };
 /** 프롬프트에 붙일 스레드 줄 — 범위 턴은 같은 범위 기록만, 그 밖의 턴은 범위 없는 기록만(채널·그룹·DM 기록이 데스크톱 대화에 섞이지 않게). */
 export const inContextScope = (m, scope) => { const k = scopeKey(scope); return scope ? !!k && scopeKey(m.contextScope) === k : !m.contextScope; }; // 키 없는 범위(여러 공유 목적지 {kind:'shared'})는 아무것도 붙이지 않는다
+/** 스레드 맥락 누적 요약(thread-context.mjs) — 범위 없는 대화는 summary, 키 있는 범위(채널·그룹)는 scopedSummaries[key]. 범위끼리 섞이지 않게 세션과 같은 키를 쓴다.
+    {text, upto} — upto는 요약이 덮는 마지막 메시지 ts(앵커). 앵커가 스레드에 없으면 쓰는 쪽(planContext)이 무효로 본다. 없으면 null. */
+export const threadSummary = (t, scope) => { const s = scope ? (scopeKey(scope) ? t?.scopedSummaries?.[scopeKey(scope)] : null) : t?.summary; return s && typeof s.text === 'string' ? s : null; };
 /** 결재 항목에 실을 범위 — 메신저가 아닌 범위 턴(텔레그램 그룹·슬랙 채널·자동 턴 목적지)에서 올린 결재의 후속이 그 범위로 돈다(approval-actions followUp). 메신저는 msgr 각인이 맡는다. */
 export const approvalScope = (ctx) => { const s = ctx?.kind === 'msgr' ? null : turnScope(ctx); return s ? { scope: s } : {}; };
 
@@ -79,6 +82,20 @@ export async function loadThread(wsId, slug) {
     if (s) return { ...t, messages: s.items, salvagedFrom: s.from };
   }
   return t;
+}
+
+/** 누적 요약 저장 — 앵커 메시지가 아직 스레드에 있을 때만(그 사이 새 대화·회수로 사라졌으면 쓰지 않는다). 키 없는 범위는 저장하지 않는다. */
+export async function setThreadSummary(wsId, slug, scope, summary) {
+  const key = scope ? scopeKey(scope) : null;
+  if (scope && !key) return false;
+  return lockThread(wsId, slug, async () => {
+    const t = await loadThread(wsId, slug);
+    if (!t.messages.some((m) => m.ts === summary?.upto)) return false;
+    const val = { text: String(summary.text), upto: summary.upto, at: Date.now() };
+    if (key) t.scopedSummaries = { ...t.scopedSummaries, [key]: val }; else t.summary = val;
+    await writeJsonAtomic(file(wsId, slug), t);
+    return true;
+  });
 }
 
 /** 턴 시작 — 사장의 지시를 **답변을 기다리기 전에** 저장한다.

@@ -17,6 +17,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { RUNNERS, OPENROUTER_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL } from './catalog.mjs';
 import { writeJsonAtomic } from '../jsonstore.mjs';
+import { DEFAULT_CONTEXT_TOKENS } from '../engine/compact.mjs';
 
 export const SCHEMA = 1;
 export const CATALOG_TTL_MS = 20 * 60_000; // Hermes DEFAULT_TTL_MINUTES = 20과 같은 값
@@ -60,6 +61,11 @@ export function applyOverlay(runnerId, models, overlay) {
   return out;
 }
 export const effectiveModels = (runnerId, overlay = mem.overlay) => applyOverlay(runnerId, RUNNERS[runnerId]?.models ?? [], overlay);
+/** 모델 컨텍스트 창(토큰) — 카탈로그(코드·원격 오버레이 add)의 ctx 값, 없으면 보수적 기본값(네이티브 압축 기준 — engine/compact.mjs). */
+export function contextWindowFor(runnerId, modelId, overlay = mem.overlay) {
+  const n = Number(effectiveModels(runnerId, overlay).find((m) => m.id === modelId)?.ctx);
+  return Number.isFinite(n) && n >= 8000 ? n : DEFAULT_CONTEXT_TOKENS;
+}
 /** 옛 id → 현행 id(순수). 매핑이 없으면 그대로. 체인은 1단만(a→b→c는 명시적으로 a→c로 쓰게 — 순환 방지). */
 export function normalizeModelId(runnerId, id, overlay = mem.overlay) {
   const s = typeof id === 'string' ? id.trim() : '';
