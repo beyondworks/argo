@@ -34,6 +34,10 @@
 /* 표 */
 .bizui-table-wrap { margin: 0; }
 .bizui-table { min-width: 540px; }
+/* 폰에서 전화·이메일이 글자 단위로 꺾이던 것(OFC-11) — 본문의 overflow-wrap:anywhere가 칸의 최소 폭을 한 글자로 줄였다. 업무 표 칸은 단어 단위로만 꺾고(최소 폭에 영향 없는 break-word),
+   숫자 칸(전화·사업자번호·날짜)은 한 줄로. 표는 이미 가로로 밀리는 감싸개(.table-wrap) 안이라 밀린 칸은 옆으로 넘겨 본다 */
+.bizui-table td, .bizui-table th { overflow-wrap: break-word; }
+.bizui-table td.mono, .bizui-table td.num { white-space: nowrap; }
 .bizui-table td:first-child { min-width: 130px; }
 .table td.act, .table th.act { width: 1%; text-align: right; white-space: nowrap; }
 .bizui-link { text-align: left; font-weight: 550; }

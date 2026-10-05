@@ -162,7 +162,7 @@ export function useItemActions({ space, ctx, people, onOpen, onNewEvent, categor
 }
 
 function DateAsk({ items, onClose, onSave }) {
-  const [day, setDay] = useState(items[0]?.day ?? new Date().toISOString().slice(0, 10)), [busy, setBusy] = useState(false);
+  const [day, setDay] = useState(() => V.askDay(items)), [busy, setBusy] = useState(false); // 한국 날짜(OFC-16)
   const formId = useId();
   const submit = async (e) => { e.preventDefault(); if (!day || busy) return; setBusy(true); await onSave(day); setBusy(false); };
   return <Modal open width={380} title={t('views.dateTitle', { n: items.length })} onClose={onClose} footer={<>

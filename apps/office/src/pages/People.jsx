@@ -4,7 +4,7 @@
 import { useId, useMemo, useState } from 'react';
 import { t, getLang, registerDict, useLang } from '../core/i18n.js';
 import { usePeople, peopleWrite } from '../core/company.js';
-import { AGENT_PRESETS, agentLabel, filterPeople, counts, personPayload, linkable, selectable } from '../core/people-model.js';
+import { AGENT_PRESETS, agentLabel, filterPeople, counts, personPayload, linkable, selectable, removeEach } from '../core/people-model.js';
 import { kstDay } from '../core/task-model.js';
 import { useStore } from '../core/store.js';
 import { crewsIn } from '../core/crew-list.js';
@@ -39,9 +39,11 @@ export default function People({ space }) {
   const open = (p) => setEdit({ ...p, id: p.id ?? crypto.randomUUID(), isNew: !p.id, notes: p.notes ?? '', title: p.title ?? '', department: p.department ?? '', email: p.email ?? '', phone: p.phone ?? '', agent: p.agent ?? '', name: p.id ? p.name : p.name ?? '' });
   const save = async (payload) => { try { await peopleWrite(space, 'person.save', payload); setEdit(null); await reload(); showToast(t('people.saved')); } catch (e) { showToast(t(e.message)); } };
   const del = async () => {
-    try { for (const id of confirm.ids) await peopleWrite(space, 'person.delete', { id }); } catch (e) { showToast(t(e.message)); }
+    const r = await removeEach(confirm.ids, (id) => peopleWrite(space, 'person.delete', { id }));
     const k = confirm.ids.length; setConfirm(null); setSel(new Set()); await reload();
-    showToast(k > 1 ? t('people.deletedN', { n: k }) : t('people.removed'));
+    // 실패가 있으면 성공 알림으로 덮지 않는다(OFC-14) — 지운 수와 사유를 한 줄에
+    if (r.error) showToast(r.done ? `${t('people.deletedN', { n: r.done })} · ${t(r.error.message)}` : t(r.error.message));
+    else showToast(k > 1 ? t('people.deletedN', { n: k }) : t('people.removed'));
   };
   // 고를 수 있는 줄 = 화면의 모든 줄(계정만 있는 직원 포함) — 체크박스·회색 표시·개수가 한 상태다(12차 제보: 회색 4·체크 3·막대 4가 달랐다). 지우기는 명부에 있는 직원만
   const { keys: keysAll, ids: rowIds, deletable: selIds, all } = selectable(list, sel);

@@ -342,3 +342,6 @@ export function planMany(items, plan) {
 }
 /** 계획 결과의 쓰기 목록(없으면 빈 목록) */
 export const writesOf = (plan) => (plan?.write ? [].concat(plan.write) : []);
+
+/** '날짜 바꾸기' 창의 처음 날짜(OFC-16) — 고른 첫 항목의 날짜, 없으면 오늘(한국 날짜). UTC로 잡으면 한국 오전 9시 전에는 어제가 들어가 바로 '기한 지남'이 됐다 */
+export const askDay = (items, now = Date.now()) => items[0]?.day ?? M.kstDay(now);

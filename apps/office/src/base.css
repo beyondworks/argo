@@ -173,6 +173,7 @@ html.nav-collapsed .side { visibility: hidden; }
 .search-btn { display: flex; align-items: center; gap: 8px; height: var(--ctl); padding: 0 10px; border-radius: var(--rs); background: var(--side-hover); color: var(--side-fg-2); text-align: left; }
 .search-btn span { flex: 1; }
 .search-btn kbd { color: var(--side-fg-3); box-shadow: inset 0 0 0 1px var(--side-line); }
+@media (hover: none) { .search-btn kbd { display: none; } } /* 손가락 기기에는 누를 수 없는 ⌘K 표시를 두지 않는다(UX-O07) */
 .side-scroll { flex: 1; overflow-x: hidden; overflow-y: auto; padding: 4px 0 20px 8px; overscroll-behavior: contain; scrollbar-gutter: stable; -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 20px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 20px), transparent); } /* 모듈 보관함 구분선 위는 은은하게 사라진다(유건 10/2) — 끝까지 내리면 마지막 줄이 페이드 위로 */ /* 가로 스크롤 금지(9/30) — 긴 이름은 줄임표 */
 /* 오른쪽 여백 = 스크롤 막대 자리(8px)를 늘 비워 둔다 — 막대가 생겨도 없어도 메뉴 줄 오른쪽 끝이 같다(유건 10/1 밤 6차). 막대가 겹쳐 뜨는 터치 기기는 여백 8px */
 .side-scroll::-webkit-scrollbar { width: 8px; } .side-scroll::-webkit-scrollbar-thumb { border-width: 2px; }
@@ -303,6 +304,8 @@ html.full-width .content:not(.view-settings, .view-trash) .page-wrap:not(.module
 .mod-row.todo.done .clamp { text-decoration: line-through; color: var(--fg-3); }
 .mod-date { font-size: 11.5px; color: var(--fg-3); padding: 4px 8px; }
 .mod-empty { color: var(--fg-3); padding: 18px 8px; text-align: center; font-size: 12.5px; }
+.mod-empty a, .empty-state a:not(.btn) { color: var(--fg); text-decoration: underline; text-underline-offset: 2px; text-decoration-color: var(--border); } /* 문장 속 링크가 글자와 같아 보이던 것(UX-O04) */
+.load-fail p { margin: 0 0 8px; } .load-fail { color: var(--fg-2); }
 .module-body > .table-wrap, .module-body details > .table-wrap { background: transparent; box-shadow: none; border-radius: 0; }
 .module-body .table th:first-child, .module-body .table td:first-child { padding-left: 8px; }
 .module-body .table th:last-child, .module-body .table td:last-child { padding-right: 8px; }
@@ -416,7 +419,10 @@ body.module-moving, body.module-moving * { cursor: grabbing !important; user-sel
 .ap-row { padding: 0 10px 0 0; cursor: default; }
 .ap-open { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; min-height: 44px; padding: 8px 4px 8px 14px; text-align: left; color: inherit; border-radius: inherit; }
 .ap-quick { display: flex; gap: 6px; flex: none; }
-@media (max-width: 560px) { .ap-row { flex-wrap: wrap; padding: 0; } .ap-open { flex-basis: 100%; padding-right: 14px; } .ap-quick { margin-left: auto; padding: 0 10px 10px; } }
+@media (max-width: 560px) { .ap-row { flex-wrap: wrap; padding: 0; } .ap-open { flex-basis: 100%; padding-right: 14px; } .ap-quick { margin-left: auto; padding: 0 10px 10px; }
+  /* 폰 결재 — 제목을 두 줄까지 보이고, 승인·거절 단추는 누르기 쉬운 높이(UX-O06: 10자에서 잘린 채 승인 단추가 붙어 있었다) */
+  .ap-open { flex-wrap: wrap; row-gap: 2px; } .ap-open .rec-text { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; flex-basis: 100%; }
+  .ap-quick .btn { min-height: 36px; padding: 0 14px; } }
 .rec-row .face, .rec-row .badge, .rec-row > .icon, .rec-row > .ico { flex: none; }
 .rec-text { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .rec-who { flex: none; max-width: 30%; overflow: hidden; color: var(--fg-2); font-size: 12.5px; }
@@ -755,6 +761,9 @@ input[role='switch']:checked::after { transform: translateX(14px); background: v
   .shell, html.nav-collapsed .shell { grid-template-columns: minmax(0, 1fr); }
   .side, html.nav-collapsed .side { visibility: visible; position: fixed; z-index: 40; inset: 0 auto 0 0; width: min(300px, 86vw); transform: translateX(-100%); transition: transform 260ms var(--ease-drawer); padding-top: env(safe-area-inset-top); }
   .shell.nav-open .side { transform: none; }
+  /* 폰 서랍(UX-O07) — 아래 고정 칸(모듈 보관함·휴지통·설정)이 '에이전트' 목록을 가렸다. 서랍 전체를 한 번에 내리고 고정 칸은 목록 끝에 이어 붙인다 */
+  .side { overflow-y: auto; overscroll-behavior: contain; }
+  .side-scroll { flex: none; overflow: visible; -webkit-mask-image: none; mask-image: none; }
   .shell.nav-open .nav-scrim { display: block; position: fixed; inset: 0; z-index: 39; background: var(--overlay); }
   .nav-toggle { display: inline-grid; } .collapse-toggle, .width-toggle, .draft-badge, .crumbs a, .crumbs .dim { display: none; }
   .topbar { padding-top: env(safe-area-inset-top); height: calc(var(--top-h) + env(safe-area-inset-top)); }
@@ -782,8 +791,8 @@ input[role='switch']:checked::after { transform: translateX(14px); background: v
 .stat-card { display: grid; gap: 4px; align-content: start; min-width: 0; padding: 14px 16px; border-radius: var(--rs); background: var(--lift); color: inherit; text-decoration: none; }
 a.stat-card { transition: box-shadow 160ms cubic-bezier(.23, 1, .32, 1); }
 @media (hover: hover) { a.stat-card:hover { background-image: linear-gradient(var(--wash), var(--wash)); } }
-.stat-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
-.stat-label { font-size: 12.5px; color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stat-top { display: flex; flex-wrap: wrap; row-gap: 4px; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; } /* 제목이 모자라면 배지가 아랫줄로(UX-O02: 1280 폭에서 '에이전트 …'로 잘렸다) */
+.stat-label { font-size: 12.5px; color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; max-width: 100%; }
 .stat-num { font-size: 28px; font-weight: 600; line-height: 1.15; letter-spacing: -0.01em; margin-top: 6px; }
 .stat-num small { font-size: 15px; font-weight: 560; color: var(--fg-3); }
 .stat-main { font-size: 13px; font-weight: 600; margin-top: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
