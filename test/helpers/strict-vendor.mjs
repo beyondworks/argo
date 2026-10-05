@@ -32,18 +32,55 @@ export const VENDOR_RULES = {
   ],
 };
 
+/** Anthropic 와이어가 아닌 벤더 — 경로·인증 헤더·응답 모양이 다르다. 본문 규칙은 캐시 표지 거절(B1 표지는 Anthropic Messages 와이어 전용)과
+    각 벤더의 최소 필수 필드다. Gemini(generateContent)는 모르는 필드를 'Unknown name' 400으로, OpenAI Responses는 'Unknown parameter' 400으로 거절한다고
+    가정한다(엄격 쪽 가정 — 실벤더 확인 아님, 이 서버의 목적은 엔진이 그 와이어에 표지를 싣지 않는다는 것을 잠그는 것). */
+const OTHER_WIRES = {
+  gemini: {
+    path: /^\/models\/[^/]+:generateContent$/, auth: (h) => !!h['x-goog-api-key'],
+    rules: [
+      (body) => (cacheMarks(body).length ? 'Invalid JSON payload received. Unknown name "cache_control": Cannot find field.' : null),
+      (body) => (!Array.isArray(body.contents) || !body.contents.length ? 'contents is not specified' : null),
+    ],
+    ok: (body, n) => ({ status: 200, type: 'application/json', body: JSON.stringify({ candidates: [{ content: { role: 'model', parts: [{ text: 'ok' }] }, finishReason: 'STOP' }], usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1 }, responseId: `g${n}` }) }),
+    bad: (msg) => JSON.stringify({ error: { code: 400, message: msg, status: 'INVALID_ARGUMENT' } }),
+  },
+  responses: {
+    path: /^\/responses$/, auth: (h) => !!h.authorization,
+    rules: [
+      (body) => (cacheMarks(body).length ? "Unknown parameter: 'cache_control'." : null),
+      (body) => (!body.model ? "Missing required parameter: 'model'." : null),
+    ],
+    ok: (body, n) => {
+      const ev = { type: 'response.completed', response: { id: `resp_${n}`, model: body.model, status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: 'ok' }] }], usage: { input_tokens: 1, output_tokens: 1 } } };
+      return { status: 200, type: 'text/event-stream', body: `event: ${ev.type}\ndata: ${JSON.stringify(ev)}\n\n` };
+    },
+    bad: (msg) => JSON.stringify({ error: { message: msg, type: 'invalid_request_error', param: null, code: 'unknown_parameter' } }),
+  },
+};
+
 /** Messages API 최상위 필드(공식 레퍼런스) — 이 밖은 벤더가 거절할 수 있는 필드로 본다. */
 const ANTHROPIC_TOP = new Set(['model', 'max_tokens', 'messages', 'system', 'tools', 'tool_choice', 'metadata', 'stop_sequences', 'stream', 'temperature', 'top_p', 'top_k', 'thinking', 'service_tier']);
 
-/** 엄격 가짜 벤더를 띄운다 — vendor 규칙 전부 통과하면 reply(body)로 응답(기본: 텍스트 'ok'), 위반하면 400 + Anthropic 오류 모양. 경로는 /v1/messages만(404), 인증 헤더(x-api-key 또는 authorization) 없으면 401. */
+/** 엄격 가짜 벤더를 띄운다 — vendor 규칙 전부 통과하면 reply(body)로 응답(기본: 텍스트 'ok'), 위반하면 400 + Anthropic 오류 모양. 경로는 /v1/messages만(404), 인증 헤더(x-api-key 또는 authorization) 없으면 401.
+    vendor 'gemini'·'responses'는 그 와이어의 경로·인증·응답 모양(위 OTHER_WIRES)으로 받는다. */
 export async function startStrictVendor({ vendor = 'xai', reply = null } = {}) {
   const rules = [...(VENDOR_RULES[vendor] ?? []), ...(vendor !== 'anthropic' ? VENDOR_RULES.anthropic : [])];
   const calls = [];
+  const other = OTHER_WIRES[vendor];
   const srv = createServer((req, res) => {
     let d = ''; req.on('data', (c) => { d += c; });
     req.on('end', () => {
       let body = {}; try { body = JSON.parse(d || '{}'); } catch { /* 빈 본문 */ }
       calls.push({ url: req.url, headers: req.headers, body });
+      if (other) { // Gemini·Responses 와이어 — vendor: 'gemini' | 'responses'
+        const send = (status, type, text) => { res.writeHead(status, { 'content-type': type }); res.end(text); };
+        if (!other.path.test(req.url)) return send(404, 'application/json', other.bad(`Not Found: ${req.url}`));
+        if (!other.auth(req.headers)) return send(401, 'application/json', other.bad('missing credential'));
+        for (const rule of other.rules) { const bad = rule(body); if (bad) return send(400, 'application/json', other.bad(bad)); }
+        const out = other.ok(body, calls.length);
+        return send(out.status, out.type, out.body);
+      }
       // 경로·인증 헤더도 본다(1R LOW-4 잔여): 실벤더는 /v1/messages 밖은 404, 키 없는 요청은 401
       if (req.url !== '/v1/messages') { res.writeHead(404, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ type: 'error', error: { type: 'not_found_error', message: `Not Found: ${req.url}` } })); }
       if (!req.headers['x-api-key'] && !req.headers.authorization) { res.writeHead(401, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ type: 'error', error: { type: 'authentication_error', message: 'missing api key' } })); }

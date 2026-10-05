@@ -106,3 +106,42 @@ test('PC5. 구독 토큰 거절은 그대로 — 캐시 대상 엔드포인트�
       (e) => e.code === 'native_oauth_unsupported');
   } finally { delete process.env.ARGO_CLAUDE_BASE_URL; }
 });
+
+// 검수 changes_needed #5(LOW) — Gemini(generateContent)·OpenAI Responses 와이어에도 표지가 0곳인지 엄격 가짜 서버로 잠근다(ARGO_WIRE — runnerCredEnv가 찍는 기존 방식).
+// 같은 주소를 ARGO_CLAUDE_BASE_URL로도 잡아 둔다 — 판정이 주소만 보고 와이어를 놓치면 표지가 실려 엄격 서버가 400을 낸다.
+test('PC6. Gemini·Responses 와이어 — 두 턴(앞 지시가 있는 전사) 모두 cache_control 0곳, 엄격 서버 통과', async () => {
+  for (const [vendor, model, wireEnv] of [
+    ['gemini', 'gemini-2.5-pro', (base) => ({ ARGO_WIRE: 'gemini', GEMINI_API_KEY: 'gk-fake-1234567890', GEMINI_BASE_URL: base })],
+    ['responses', 'gpt-5.6-sol', (base) => ({ ARGO_WIRE: 'responses', RESPONSES_BASE_URL: base, RESPONSES_TOKEN: 'rt-fake-1234567890' })],
+  ]) {
+    const ws = `pc6-${vendor}`; await createCompany(ws, '캐시', '사장');
+    const strict = await startStrictVendor({ vendor });
+    process.env.ARGO_CLAUDE_BASE_URL = strict.base;
+    try {
+      const run = (prompt, resume) => collect(nativeQuery({ wsId: ws, slug: 'crew', prompt, cwd: paths(ws).root, systemPrompt: '페르소나 SYS', env: wireEnv(strict.base), model, resume, browser: false }));
+      const out1 = await run('첫 지시');
+      assert.equal(out1.at(-1).subtype, 'success', `${vendor}: 엄격 서버 통과(첫 턴)`);
+      const out2 = await run('둘째 지시', out1[0].session_id);
+      assert.equal(out2.at(-1).subtype, 'success', `${vendor}: 엄격 서버 통과(둘째 턴)`);
+      assert.equal(strict.calls.length, 2, `${vendor}: 그 와이어 경로로 2번`);
+      for (const c of strict.calls) assert.equal(marks(c.body).length, 0, `${vendor}: 표지 없음(${c.url})`);
+      // 판정 층도 따로 — 와이어 변환기(toGeminiRequest·toResponsesRequest)가 새 객체를 만들어 표지를 옮기지 않으므로 본문 단언만으로는 판정 회귀가 안 보인다
+      const { cacheEligible } = await import('../src/engine/prompt-cache.mjs');
+      assert.equal(cacheEligible({ wire: vendor, base: strict.base, model }), false, `${vendor}: 주소가 Anthropic 기준과 같아도 와이어가 다르면 표지를 싣지 않는다`);
+      assert.ok(JSON.stringify(strict.calls[1].body).includes('첫 지시'), `${vendor}: 둘째 요청에 앞 지시(표지가 붙을 자리)가 있다`);
+    } finally { delete process.env.ARGO_CLAUDE_BASE_URL; await strict.close(); }
+  }
+});
+
+test('PC7. 엄격 서버 자체 핀 — gemini·responses 규칙은 cache_control을 400으로 거절한다', async () => {
+  const gem = await startStrictVendor({ vendor: 'gemini' });
+  const rsp = await startStrictVendor({ vendor: 'responses' });
+  try {
+    const g = (body) => fetch(`${gem.base}/models/gemini-2.5-pro:generateContent`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': 'k' }, body: JSON.stringify(body) });
+    const r = (body) => fetch(`${rsp.base}/responses`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer k' }, body: JSON.stringify(body) });
+    assert.equal((await g({ contents: [{ role: 'user', parts: [{ text: 'x', cache_control: { type: 'ephemeral' } }] }] })).status, 400);
+    assert.equal((await g({ contents: [{ role: 'user', parts: [{ text: 'x' }] }] })).status, 200);
+    assert.equal((await r({ model: 'm', input: [{ role: 'user', content: [{ type: 'input_text', text: 'x', cache_control: { type: 'ephemeral' } }] }] })).status, 400);
+    assert.equal((await r({ model: 'm', input: [{ role: 'user', content: [{ type: 'input_text', text: 'x' }] }] })).status, 200);
+  } finally { await gem.close(); await rsp.close(); }
+});
