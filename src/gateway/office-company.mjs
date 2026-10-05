@@ -40,7 +40,7 @@ function rpcError(e, lang) {
   const msg = String(e?.message ?? e ?? '');
   const code = Object.keys(ERRORS).find((c) => msg.includes(c));
   if (code) return pick(`오피스 서버 거절: ${ERRORS[code][0]}.`, `Office server refused: ${ERRORS[code][1]}.`, lang);
-  return pick(`오피스 서버 호출 실패: ${msg ? quoted(msg, 200) : '알 수 없는 오류'}. 사장에게 그대로 알려라.`, `Office call failed: ${msg ? quoted(msg, 200) : 'unknown error'}. Tell the owner as is.`, lang);
+  return pick(`오피스 서버 호출 실패: ${msg ? quoted(msg, 200) : '알 수 없는 오류'}. 사용자에게 그대로 알려라.`, `Office call failed: ${msg ? quoted(msg, 200) : 'unknown error'}. Tell the user as is.`, lang);
 }
 
 const kstDay = (ms) => new Date(ms + 9 * 3600e3).toISOString().slice(0, 10);
@@ -60,8 +60,8 @@ export async function companyTool(args, { ctx = null, crew, lang = 'ko', ownerId
   if (ctx?.kind !== 'msgr' || !ctx.orgId) return pick('회사 정보·직원·평가는 메신저 조직 채널 대화에서만 다룬다(그 조직의 것). 지금 대화에서는 쓸 수 없다고 알려라.', 'Company info, people and evaluations are only available in a messenger org channel (that org). Say it is unavailable here.', lang);
   let c;
   try { c = await companyDeps.session(); } catch (e) { return pick(`메신저 세션을 불러오지 못했다: ${quoted(e?.message ?? e, 160)}.`, `Could not load the messenger session: ${quoted(e?.message ?? e, 160)}.`, lang); }
-  if (!c?.client || !c.uid) return pick('메신저에 로그인돼 있지 않아 오피스를 다룰 수 없다 — 사장에게 Argo 설정에서 메신저(오피스) 계정에 로그인해 달라고 알려라.', 'Not signed in to the messenger, so Office is unavailable — ask the owner to sign in in Argo settings.', lang);
-  if (!ownerId || ownerId !== c.uid || ctx.uid !== c.uid) return pick('이 기기의 메신저 로그인 계정이 이 크루 주인의 계정이 아니라 오피스를 다루지 않는다 — 사장에게 알려라.', 'The messenger account on this device is not this crew\'s owner, so Office is not used — tell the owner.', lang);
+  if (!c?.client || !c.uid) return pick('메신저에 로그인돼 있지 않아 오피스를 다룰 수 없다 — 사용자에게 Argo 설정에서 메신저(오피스) 계정에 로그인해 달라고 알려라.', 'Not signed in to the messenger, so Office is unavailable — ask the user to sign in in Argo settings.', lang);
+  if (!ownerId || ownerId !== c.uid || ctx.uid !== c.uid) return pick('이 기기의 메신저 로그인 계정이 이 에이전트 주인의 계정이 아니라 오피스를 다루지 않는다 — 사용자에게 알려라.', 'The messenger account on this device is not this agent\'s owner, so Office is not used — tell the user.', lang);
   const org = ctx.orgId;
   try {
     const who = await audienceOf(c.client, ctx, c.uid);
@@ -128,7 +128,7 @@ export async function companyTool(args, { ctx = null, crew, lang = 'ko', ownerId
       if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return pick('period_day는 YYYY-MM-DD(그 기간 안의 아무 날).', 'period_day must be YYYY-MM-DD (any day in the period).', lang);
       const kind = a.subject_kind === 'crew' ? 'crew' : 'person';
       if (kind === 'person' && !a.subject_user) return pick('사람 평가에는 subject_user(people이 보여 준 user=…)가 필요하다. 계정 없는 사람은 평가할 수 없다.', 'A person evaluation needs subject_user (the user=… shown by people).', lang);
-      if (kind === 'crew' && !String(a.subject_name ?? '').trim()) return pick('크루 평가에는 subject_name(크루 이름)이 필요하다.', 'A crew evaluation needs subject_name.', lang);
+      if (kind === 'crew' && !String(a.subject_name ?? '').trim()) return pick('에이전트 평가에는 subject_name(에이전트 이름)이 필요하다.', 'An agent evaluation needs subject_name.', lang);
       const p = periodOf(scope, day);
       const data = { id: companyDeps.newId(), subject_kind: kind, subject_user: kind === 'person' ? a.subject_user : null, subject_name: a.subject_name ?? null, subject_type: a.subject_type === 'ceo' ? 'ceo' : 'staff',
         scope, from: p.from, to: p.to, title: String(a.title ?? '').trim(), ...Object.fromEntries(SCORES.map((k) => [k, a[k] ?? null])), total: a.total ?? null,

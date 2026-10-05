@@ -127,7 +127,7 @@ function rpcError(error, lang) {
   const msg = String(error?.message ?? error ?? '');
   const code = Object.keys(ERRORS).find((c) => msg.includes(c));
   if (code) return pick(`일정 서버 거절: ${ERRORS[code][0]}.`, `Calendar server refused: ${ERRORS[code][1]}.`, lang);
-  return pick(`일정 서버 호출 실패: ${msg ? quoted(msg, 200) : '알 수 없는 오류'}. 사장에게 그대로 알려라.`, `Calendar call failed: ${msg ? quoted(msg, 200) : 'unknown error'}. Tell the owner as is.`, lang);
+  return pick(`일정 서버 호출 실패: ${msg ? quoted(msg, 200) : '알 수 없는 오류'}. 사용자에게 그대로 알려라.`, `Calendar call failed: ${msg ? quoted(msg, 200) : 'unknown error'}. Tell the user as is.`, lang);
 }
 // 호출 이름은 글자 그대로 둔다 — 크루 계약 레지스트리(test/crew-contract.test.mjs)가 src/gateway의 rpc('…')를 찾아 분류를 강제한다
 function unwrap({ data, error }) {
@@ -200,8 +200,8 @@ export async function calendarTool(args, { ctx = null, crew, lang = 'ko', ownerI
   if (ctx?.kind === 'msgr-rules') return pick('메신저 위임 턴에서는 일정을 다루지 않는다 — 요청한 동료에게 돌려주면 그 동료가 주인의 일정을 다룬다.', 'Calendar is not available in a delegated messenger turn — hand it back to the colleague who asked.', lang);
   let c;
   try { c = await calendarDeps.session(); } catch (e) { return pick(`메신저 세션을 불러오지 못했다: ${quoted(e?.message ?? e, 160)}. 일정을 다룰 수 없다고 알려라.`, `Could not load the messenger session: ${quoted(e?.message ?? e, 160)}. Say the calendar is unavailable.`, lang); }
-  if (!c?.client || !c.uid) return pick('메신저에 로그인돼 있지 않아 일정을 다룰 수 없다 — 사장에게 Argo 설정에서 메신저(오피스) 계정에 로그인해 달라고 알려라.', 'Not signed in to the messenger, so the calendar is unavailable — ask the owner to sign in to the messenger (Office) account in Argo settings.', lang);
-  if (!ownerId || ownerId !== c.uid || (ctx?.kind === 'msgr' && ctx.uid !== c.uid)) return pick('이 기기의 메신저 로그인 계정이 이 크루 주인의 계정이 아니라 일정을 다루지 않는다 — 사장에게 그 사실을 알려라.', 'The messenger account signed in on this device is not this crew\'s owner, so the calendar is not used — tell the owner.', lang);
+  if (!c?.client || !c.uid) return pick('메신저에 로그인돼 있지 않아 일정을 다룰 수 없다 — 사용자에게 Argo 설정에서 메신저(오피스) 계정에 로그인해 달라고 알려라.', 'Not signed in to the messenger, so the calendar is unavailable — ask the user to sign in to the messenger (Office) account in Argo settings.', lang);
+  if (!ownerId || ownerId !== c.uid || (ctx?.kind === 'msgr' && ctx.uid !== c.uid)) return pick('이 기기의 메신저 로그인 계정이 이 에이전트 주인의 계정이 아니라 일정을 다루지 않는다 — 사용자에게 그 사실을 알려라.', 'The messenger account signed in on this device is not this agent\'s owner, so the calendar is not used — tell the user.', lang);
   const orgOk = ctx?.kind === 'msgr' && !!ctx.orgId;
   const noOrg = pick('지금 대화는 메신저 조직 채널이 아니라 조직 캘린더를 고를 수 없다 — calendar: "personal"로 다시 하라.', 'This conversation is not in a messenger org channel, so the org calendar cannot be used — retry with calendar: "personal".', lang);
   const ox = outsideOf('cal', lang);
@@ -311,5 +311,5 @@ export async function calendarTool(args, { ctx = null, crew, lang = 'ko', ownerI
 export function calendarDescription(lang = 'ko') {
   return lang === 'en'
     ? 'The owner\'s calendar (Argo Office events). action=list shows events for from~to (YYYY-MM-DD Korea dates, up to 62 days; default two weeks from today) — the owner\'s personal events and the org events the owner can see, with id and date. action=create makes an event; update/delete change one (pass id and day = the date list showed; for repeating events also scope: this | following | all). calendar: "personal" (default) or "org" (only in a messenger org channel — that org); visibility for org events: org (everyone, default) or private. start/end: YYYY-MM-DD (all-day, end = last day inclusive), YYYY-MM-DDTHH:MM (Korea time) or ISO with a time zone; end may be HH:MM. repeat: none|daily|weekly|monthly with repeat_interval and repeat_until (YYYY-MM-DD, inclusive). You can only change or delete the owner\'s own events; other people\'s events are read-only. This is not for scheduling your own future work — use schedule_task for that. ' + OUTSIDE_RULE('en')
-    : '주인의 일정(아르고 오피스 달력)을 보고 만들고 고치고 지운다. action=list는 from~to(YYYY-MM-DD 한국 날짜, 최대 62일, 비우면 오늘부터 2주)의 일정을 id·날짜와 함께 보여 준다 — 주인의 개인 일정과 주인이 볼 수 있는 조직 일정. action=create는 새 일정, update·delete는 기존 일정(id와 day=list가 보여 준 그 줄의 날짜, 반복 일정이면 scope: this 이 회차만 | following 이 회차 및 이후 | all 모든 회차). calendar: "personal"(기본) 또는 "org"(메신저 조직 채널 대화에서만 — 그 조직), 조직 일정의 visibility: org(조직 전체, 기본) 또는 private(나만). start/end: YYYY-MM-DD(종일, end는 끝날 포함), YYYY-MM-DDTHH:MM(한국 시간) 또는 시간대 포함 ISO, end는 HH:MM만 줘도 된다. repeat: none|daily|weekly|monthly, repeat_interval(간격), repeat_until(YYYY-MM-DD, 포함). 고치고 지울 수 있는 것은 주인 소유 일정뿐이고, 남이 주인인 일정은 읽기만 한다. 크루 자신의 나중 할 일 예약은 이 도구가 아니라 schedule_task다. ' + OUTSIDE_RULE('ko');
+    : '주인의 일정(아르고 오피스 달력)을 보고 만들고 고치고 지운다. action=list는 from~to(YYYY-MM-DD 한국 날짜, 최대 62일, 비우면 오늘부터 2주)의 일정을 id·날짜와 함께 보여 준다 — 주인의 개인 일정과 주인이 볼 수 있는 조직 일정. action=create는 새 일정, update·delete는 기존 일정(id와 day=list가 보여 준 그 줄의 날짜, 반복 일정이면 scope: this 이 회차만 | following 이 회차 및 이후 | all 모든 회차). calendar: "personal"(기본) 또는 "org"(메신저 조직 채널 대화에서만 — 그 조직), 조직 일정의 visibility: org(조직 전체, 기본) 또는 private(나만). start/end: YYYY-MM-DD(종일, end는 끝날 포함), YYYY-MM-DDTHH:MM(한국 시간) 또는 시간대 포함 ISO, end는 HH:MM만 줘도 된다. repeat: none|daily|weekly|monthly, repeat_interval(간격), repeat_until(YYYY-MM-DD, 포함). 고치고 지울 수 있는 것은 주인 소유 일정뿐이고, 남이 주인인 일정은 읽기만 한다. 에이전트 자신의 나중 할 일 예약은 이 도구가 아니라 schedule_task다. ' + OUTSIDE_RULE('ko');
 }

@@ -28,7 +28,11 @@ export const PATTERNS = {
 
 /** 허용 목록 — 파일(ROOT 기준 경로, '/' 구분)과 문자열을 정확히 적고 항목마다 이유를 쓴다. 예:
     { file: 'src/memory.mjs', text: 'notes/사장-프로필.md', why: '기억 파일 경로 유지(계획 8절 질문 2)' } */
-export const ALLOW = [];
+export const ALLOW = [
+  // T2b — 오피스 평가 도구 설명이 모델에게 넘길 값 그대로를 알려 준다. 'crew'는 subject_kind 열거 값(chat.mjs z.enum(['person','crew']), 오피스 평가 행 값)이라 코드 이름(계획 7절)
+  { file: 'src/gateway/office-company.mjs', text: 'or crew (subject_name)', why: "subject_kind 값 'crew'(도구 스키마 열거 값) — en 도구 설명" },
+  { file: 'src/gateway/office-company.mjs', text: '또는 crew(subject_name)', why: "subject_kind 값 'crew'(도구 스키마 열거 값) — ko 도구 설명" },
+];
 
 const EXCLUDE = new Set(['src/legacy-terms.mjs']); // 옛 표지 목록 — 옛 낱말이 있는 것이 정상
 

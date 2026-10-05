@@ -22,7 +22,7 @@ export function formatOrgRules(docs, { org = '', channelName = '', lang = 'ko', 
   if (!orgDocs.length && !chDocs.length) return '';
   const head = lang === 'en'
     ? `\n\n## Organization rules (team messenger "${org}" — binding. Priority: company-wide > channel > your persona; safety and tone rules above win, work-method rules below add detail)\n`
-    : `\n\n## 조직 규칙 (팀 메신저 조직 "${org}"의 정본 — 반드시 따른다. 우선순위: 전사 > 채널 > 크루 페르소나. 안전·표현 규칙은 위가 이기고, 업무 방식은 아래가 구체화한다)\n`;
+    : `\n\n## 조직 규칙 (팀 메신저 조직 "${org}"의 정본 — 반드시 따른다. 우선순위: 전사 > 채널 > 에이전트 페르소나. 안전·표현 규칙은 위가 이기고, 업무 방식은 아래가 구체화한다)\n`;
   const sec = (label, d) => `\n### ${label}: ${d.title || '(untitled)'}\n${d.body}\n`;
   let out = head;
   for (const d of orgDocs) out += sec(lang === 'en' ? 'Company-wide' : '전사', d);

@@ -56,7 +56,7 @@ test('인벤토리: 개인 미러가 실패해도(옛 서버) 조직 미러는 �
   const r = await M.mirrorInventory(WS, { blocked: new Map(), db: d, uid: UID, agents, log: (...a) => logs.push(a.join(' ')) });
   assert.equal(d.calls.find(([k]) => k === 'upsertAvailable')[1].length, 2, '조직 행 삽입은 된다(분리 검수 M1)');
   assert.equal(r.orgs, 1);
-  assert.ok(logs.some((l) => /개인 크루 미러 실패/.test(l)));
+  assert.ok(logs.some((l) => /개인 에이전트 미러 실패/.test(l)));
 });
 
 // 에이전트 = 한 사람(유건 2026-10-05): 같은 에이전트의 개인 행은 조직 행과 같은 얼굴·사진이어야 한다. 새 개인 행을 넣을 때만

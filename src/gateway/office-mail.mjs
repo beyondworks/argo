@@ -37,7 +37,7 @@ const ERRORS = {
   no_account: ['그 메일 계정이 없다(연결이 끊겼을 수 있다)', 'that mail account is not connected'],
   rate_limited: ['Gmail 요청 한도에 걸렸다 — 잠시 뒤 다시 하라', 'Gmail rate limit — try again shortly'],
   not_configured: ['오피스의 구글 연결이 설정돼 있지 않다', 'Google is not configured in Office'],
-  signed_out: ['오피스 로그인이 만료됐다 — 사장에게 Argo에서 다시 로그인해 달라고 알려라', 'the Office sign-in expired — ask the owner to sign in again in Argo'],
+  signed_out: ['오피스 로그인이 만료됐다 — 사용자에게 Argo에서 다시 로그인해 달라고 알려라', 'the Office sign-in expired — ask the user to sign in again in Argo'],
   input: ['입력이 올바르지 않다', 'invalid input'],
   gmail: ['Gmail이 거절했다(메일이 없거나 형식이 맞지 않다)', 'Gmail refused (missing message or bad format)'],
   too_big: ['첨부가 너무 크다', 'attachments are too big'],
@@ -47,7 +47,7 @@ const ERRORS = {
 function errText(code, lang, raw = '', retryAfter = null) {
   const wait = retryAfter ? pick(` (${retryAfter}초 뒤)`, ` (in ${retryAfter}s)`, lang) : '';
   if (ERRORS[code]) return pick(`오피스 메일 거절: ${ERRORS[code][0]}${wait}.`, `Office mail refused: ${ERRORS[code][1]}${wait}.`, lang);
-  return pick(`오피스 메일 호출 실패: ${quoted(raw || code || '알 수 없는 오류', 200)}. 사장에게 그대로 알려라.`, `Office mail call failed: ${quoted(raw || code || 'unknown', 200)}. Tell the owner as is.`, lang);
+  return pick(`오피스 메일 호출 실패: ${quoted(raw || code || '알 수 없는 오류', 200)}. 사용자에게 그대로 알려라.`, `Office mail call failed: ${quoted(raw || code || 'unknown', 200)}. Tell the user as is.`, lang);
 }
 
 /** 메일 HTML → 글자(스크립트·스타일은 버리고 줄바꿈을 남긴다) — 오피스 crew-assign.js htmlText와 같은 취지, 서버에는 DOM이 없어 정규식으로 */
@@ -66,9 +66,9 @@ async function mailApi(op, body, lang) {
   const method = MAIL_CALLS[op];
   if (!method) throw new Error(`mail op not allowed: ${op}`);
   const origin = officeOrigin(mailDeps.origin());
-  if (!origin) return { text: pick('오피스 주소(ARGO_OFFICE_ORIGIN)가 https가 아니라 메일을 쓰지 않는다 — 사장에게 알려라.', 'The Office address (ARGO_OFFICE_ORIGIN) is not https, so mail is not used — tell the owner.', lang) };
+  if (!origin) return { text: pick('오피스 주소(ARGO_OFFICE_ORIGIN)가 https가 아니라 메일을 쓰지 않는다 — 사용자에게 알려라.', 'The Office address (ARGO_OFFICE_ORIGIN) is not https, so mail is not used — tell the user.', lang) };
   const jwt = await mailDeps.jwt().catch(() => null);
-  if (!jwt) return { text: pick('메신저(오피스) 로그인이 없어 메일을 쓸 수 없다 — 사장에게 알려라.', 'Not signed in, so mail is unavailable — tell the owner.', lang) };
+  if (!jwt) return { text: pick('메신저(오피스) 로그인이 없어 메일을 쓸 수 없다 — 사용자에게 알려라.', 'Not signed in, so mail is unavailable — tell the user.', lang) };
   const url = method === 'GET' ? `${origin}/api/mail/${op}?${new URLSearchParams(Object.entries(body).filter(([, v]) => v != null && v !== ''))}` : `${origin}/api/mail/${op}`;
   const r = await mailDeps.fetch(url, { method, headers: { authorization: `Bearer ${jwt}`, ...(method === 'POST' ? { 'content-type': 'application/json' } : {}) }, ...(method === 'POST' ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(60_000) });
   const d = await r.json().catch(() => ({}));
@@ -188,7 +188,7 @@ export async function mailTool(args, { ctx = null, lang = 'ko', ownerId = null }
       return on ? pick('별표를 달았다.', 'Starred.', lang) : pick('별표를 뗐다.', 'Unstarred.', lang);
     }
 
-    return pick('action은 mails·mail_read·mail_draft·mail_star 중 하나다(보내기는 없다 — 크루는 초안까지).', 'action must be mails, mail_read, mail_draft or mail_star (no sending — crews stop at drafts).', lang);
+    return pick('action은 mails·mail_read·mail_draft·mail_star 중 하나다(보내기는 없다 — 에이전트는 초안까지).', 'action must be mails, mail_read, mail_draft or mail_star (no sending — agents stop at drafts).', lang);
   } catch (e) {
     return errText(null, lang, String(e?.message ?? e));
   }
