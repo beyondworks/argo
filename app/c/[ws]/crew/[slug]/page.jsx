@@ -23,6 +23,7 @@ import { dropUpClamp } from '../../zoom-math.mjs';
 import { matchSlash } from '../../slash-match.mjs';
 import { useSessionMention, SessionMentionPanel, SessionMsgCard, isSessionCard } from './session-msg.jsx'; // 세션 메시지 — @크루 자동 완성·접힌 카드
 import { parseSessionTarget } from './session-msg-parse.mjs';
+import { mergePolledThread, pollStep } from './thread-poll.mjs'; // 두 폴의 같은 반영 경로(F2·F2+)
 
 // 러너 표시명(폴백 안내용) — runner-connect의 RUNNER_NAMES와 동일 값(서버 RUNNERS.name 준거)
 const RUNNER_LABELS = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', antigravity: 'Antigravity', glm: 'GLM', kimi: 'Kimi', openrouter: 'OpenRouter', grok: 'Grok' };
@@ -304,7 +305,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
       const res = await fetch(`/api/companies/${ws}/chat/sessions`, {
         method: 'PATCH', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ slug, id: s.id ?? null, title }),
-      }).then((r) => r.json());
+      }).then(async (r) => { const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || t('chat.sessions.saveFail')); return d; });
       if (!s.id) setThreadTitle(res?.title ?? null); // 현재 대화 — 라벨 즉시 반영
       else loadSessions();
     } catch (e) { setError(String(e.message)); }
@@ -314,7 +315,8 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     const s = trashSess; setTrashSess(null);
     if (!s) return;
     try {
-      await fetch(`/api/companies/${ws}/chat/sessions?slug=${encodeURIComponent(slug)}&id=${encodeURIComponent(s.id)}`, { method: 'DELETE' });
+      const r = await fetch(`/api/companies/${ws}/chat/sessions?slug=${encodeURIComponent(slug)}&id=${encodeURIComponent(s.id)}`, { method: 'DELETE' });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || t('chat.sessions.deleteFail')); // 실패를 성공처럼 넘기지 않는다
       if (viewing === s.id) openSession(null); // 열람 중이던 대화를 지웠으면 현재 대화로
       loadSessions();
     } catch (e) { setError(String(e.message)); }
@@ -322,10 +324,11 @@ export default function CrewChat({ params, embedded = false, onClose }) {
   // 세션 고정/해제 — 보관 세션에 pinned 기록. 고정 세션은 레일 상단에 최근순으로 묶인다(비파괴·즉시, 확인 불필요).
   async function doTogglePin(s) {
     try {
-      await fetch(`/api/companies/${ws}/chat/sessions`, {
+      const r = await fetch(`/api/companies/${ws}/chat/sessions`, {
         method: 'PATCH', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ slug, id: s.id, pinned: !s.pinned }),
       });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || t('chat.sessions.saveFail'));
       loadSessions();
     } catch (e) { setError(String(e.message)); }
   }
@@ -461,34 +464,31 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     return () => ro.disconnect();
   }, [recalcSpacer]);
 
+  // 폴 응답 반영 — 3초 준실시간 폴과 2.5초 진행 폴이 **같은 경로**를 쓴다(F2+, 2026-10-05: 진행 폴이 본문을 버리고 mtime만
+  // 옮겨 성공한 답이 안 붙던 결함). 병합 규칙(실패 표시 반영·미보존 사본 캐리오버·뜻이 같으면 참조 유지)은 thread-poll.mjs.
+  const refetchRef = useRef(false); // 내 턴 중 본문을 버린 적이 있다 — 다음 유휴 폴은 mtime 없이 전체를 받는다
+  const applyPoll = useCallback((r) => {
+    const step = pollStep(r, { busy: busyRef.current }); // 내 턴 중엔 본문을 반영하지 않는다(낙관 사본 보호)
+    setLiveStage(step.status); // 결재 후속·루틴·메신저발 턴도 진행 카드가 보인다
+    if (step.refetch) refetchRef.current = true;
+    if (step.mtime) mtimeRef.current = step.mtime;
+    if (!step.apply) return;
+    refetchRef.current = false;
+    setThread((cur) => mergePolledThread(cur, step.messages));
+    if (r.sessionId) sessionRef.current = r.sessionId;
+    setThreadTitle(r.title ?? null); // 다른 기기에서 바꾼 현재 대화명도 준실시간 반영(검수 LOW)
+    if (Date.now() - delegSavedAt.current > 4000) setDelegLimited(r.delegationLimit !== false); // 다른 기기에서 바꾼 위임 제한도 같은 방식으로
+  }, []);
   // 다른 창구(텔레그램·슬랙·루틴·결재 후속)에서 붙은 대화를 웹에도 반영 — 채널을 오가도 맥락은 하나다.
   useEffect(() => {
     const t = setInterval(() => {
       if (busy) return; // 내가 보내는 중엔 낙관적 UI를 덮지 않는다
-      api(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}&mtime=${mtimeRef.current}`)
-        .then((r) => {
-          // 변경 없음 — 서버가 본문을 생략했다(폴링 dedup). 진행 상태만 갱신.
-          if (r.unchanged) { setLiveStage(r.status ?? null); return; }
-          if (r.mtime) mtimeRef.current = r.mtime;
-          const msgs = r.messages ?? [];
-          setThread((cur) => {
-            if (cur === null) return cur;
-            if (msgs.length <= cur.length) return cur;
-            // 실패 사본 캐리오버는 **서버 미보존분(unsaved)만** — 서버가 보존한 실패 턴(route.js
-            // failed)은 msgs에 이미 있어, 전부 캐리오버하면 폴링마다 복제가 누적된다(분리 검수 HIGH,
-            // 리듀서 시뮬레이션 확증). "서버엔 없는 사본" 전제는 실패 턴 보존으로 무효가 됐다.
-            const unsent = cur.filter((m) => m.failed && m.unsaved);
-            return unsent.length ? [...msgs, ...unsent] : msgs;
-          });
-          if (r.sessionId) sessionRef.current = r.sessionId;
-          setLiveStage(r.status ?? null); // 결재 후속·루틴·메신저발 턴도 진행 카드가 보인다
-          setThreadTitle(r.title ?? null); // 다른 기기에서 바꾼 현재 대화명도 준실시간 반영(검수 LOW)
-          if (Date.now() - delegSavedAt.current > 4000) setDelegLimited(r.delegationLimit !== false); // 다른 기기에서 바꾼 위임 제한도 같은 방식으로
-        })
+      api(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}&mtime=${refetchRef.current ? 0 : mtimeRef.current}`)
+        .then(applyPoll)
         .catch(() => {});
     }, 3000); // 준실시간 — 동기화(≈8s)로 당겨온 다른 기기의 대화를 더 빨리 표시(기존 8s)
     return () => clearInterval(t);
-  }, [ws, slug, busy]);
+  }, [ws, slug, busy, applyPoll]);
 
   // 이 크루의 대기 결재 — 대화창에서 바로 승인/거절 (데크 결재함은 백업 창구)
   const [pendings, setPendings] = useState([]);
@@ -545,11 +545,11 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     if (!working) return;
     const t = setInterval(() => {
       api(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}&mtime=${mtimeRef.current || 1}`)
-        .then((r) => { if (r.mtime) mtimeRef.current = r.mtime; setLiveStage(r.status ?? null); })
+        .then(applyPoll) // 바뀐 본문을 받으면 3초 폴과 똑같이 반영한다 — 버리고 mtime만 옮기면 그 변경을 영영 놓친다(F2+)
         .catch(() => {});
     }, 2500);
     return () => clearInterval(t);
-  }, [working, ws, slug]);
+  }, [working, ws, slug, applyPoll]);
 
   /** 파일 추가 — 드롭·붙여넣기·클립 버튼 모두 이 관문을 지난다. 업로드 즉시 vault/files/ 저장. */
   async function addFiles(fileList, { announceEmpty = false } = {}) {
@@ -761,7 +761,9 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     if (busy) return;
     // 현재 대화는 서버(resetThread)가 .archive로 적재한 뒤 비우므로 비파괴 — 확인창 없이 바로 새 대화.
     // window.confirm은 Tauri 데스크톱 웹뷰에서 막혀 무동작(버튼이 안 열리던 원인) → 제거. 파괴적 액션만 DangerModal.
-    await fetch(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}`, { method: 'DELETE' });
+    // 결과 확인 — 실패한 DELETE를 성공처럼 비우면 다음 폴이 옛 대화를 되살렸다(검증 추가 항목, 2026-10-05). 실패면 화면을 그대로 두고 안내한다.
+    const ok = await fetch(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}`, { method: 'DELETE' }).then((r) => r.ok, () => false);
+    if (!ok) { setError(t('chat.newChatFail')); return; }
     setThread([]); sessionRef.current = null; setError(''); setThreadTitle(null); setDelegLimited(true); // 새 대화 = 위임 제한 켜짐(서버 resetThread와 같은 규칙)
     setViewing(null); setArchMsgs(null); resetAnnot(); pinMidRef.current = null; spacerHRef.current = 0;
     loadSessions(); // 방금 넘긴 대화가 좌측 레일에 적재된다
