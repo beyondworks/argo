@@ -17,7 +17,7 @@ const fakes = [];
 after(async () => { for (const f of fakes) await f.close(); });
 const meta = (b) => ({ m: 1_790_000_000_000, s: b.length, h: createHash('sha1').update(b).digest('hex').slice(0, 16) });
 
-test('여러 회사가 함께 실패해도 각 회사 화면에는 자기 오류만 — 재시도 대기 중에도 유지, 첫 주기 throw도 남의 화면에 안 샌다', { timeout: 60_000 }, async () => {
+test('여러 회사가 함께 실패해도 각 회사 화면에는 자기 오류만 — 재시도 대기 중에도 유지, 첫 주기 throw도 남의 화면에 안 샌다', { timeout: 90_000 }, async () => {
   const fake = await startFakeSupabase({ plan: 'pro' }); fakes.push(fake);
   const root = await mkdtemp(join(tmpdir(), 'argo-company-error-'));
   seedRoot(root, { url: fake.url, wsId: 'co-1234' });
@@ -36,7 +36,11 @@ test('여러 회사가 함께 실패해도 각 회사 화면에는 자기 오류
 globalThis.__argoRunnerProbe = { ts: Date.now(), ok: true };
 const sync = await import(${JSON.stringify(srcUrl('sync.mjs'))});
 sync.ensureSync();
-await new Promise((r) => setTimeout(r, 3000)); // 첫 주기(셋 다 실패) 뒤 재시도 대기 주기를 몇 번 지난다
+// 고정 시간 대신 첫 주기(셋 다 실패) 뒤 재시도 대기 주기까지 기다린다 — 윈도우는 폴더 자리로의 rename을 renameRetry가 3초 넘게 재시도해
+// 실패 회사 둘이 기록되기까지 6초를 넘긴다(CI 실측: 3초 고정 대기에서 빈 lastError로 실패).
+const cs = () => sync.syncStatus().companies;
+const ready = () => cs()['co-1234']?.skipped === 'retry-backoff' && ['co-1234', 'co-5678', 'co-9999'].every((ws) => cs()[ws]?.error);
+for (const t0 = Date.now(); !ready() && Date.now() - t0 < 40_000;) await new Promise((r) => setTimeout(r, 200));
 const pick = (ws) => { const s = sync.syncStatusFor(ws); return { lastError: s.lastError, keys: Object.keys(s.companies), skipped: s.companies[ws]?.skipped ?? null }; };
 process.stdout.write('\\n@@' + JSON.stringify({ raw: sync.syncStatus().lastError, a: pick('co-1234'), b: pick('co-5678'), x: pick('co-9999'), none: pick('co-none') }) + '\\n');
 process.exit(0);`;
@@ -44,7 +48,7 @@ process.exit(0);`;
     const p = spawn(process.execPath, ['--input-type=module', '-e', script], { env: childEnv(root, { ARGO_SYNC_CYCLE_MS: '500' }), stdio: ['ignore', 'pipe', 'pipe'] });
     let o = '', e = '';
     p.stdout.on('data', (c) => { o += c; }); p.stderr.on('data', (c) => { e += c; });
-    const t = setTimeout(() => { p.kill('SIGKILL'); reject(new Error(`timeout\n${e.slice(-1500)}`)); }, 30_000);
+    const t = setTimeout(() => { p.kill('SIGKILL'); reject(new Error(`timeout\n${e.slice(-1500)}`)); }, 70_000);
     p.on('exit', () => { clearTimeout(t); const line = o.split('\n').find((l) => l.startsWith('@@')); line ? resolve(JSON.parse(line.slice(2))) : reject(new Error(`no status\n${o.slice(-1500)}\n${e.slice(-1500)}`)); });
   });
 
