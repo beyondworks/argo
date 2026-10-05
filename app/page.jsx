@@ -8,6 +8,8 @@ import { AiConnectionCard, ACCOUNT_WS, anyRunnerUsable, runnerNeedsReconnect } f
 import { useLang } from './i18n';
 import { LocalAssetOffer } from './components/LocalAssetImport';
 import { homeListView } from './home-list.mjs';
+import ArchivedCompaniesCard from './archived-companies'; // 보관한 회사 되돌리기 — 회사가 하나뿐이면 설정이 사라지므로 홈에도 입구(UM3)
+import { archivedEntryCount } from './lib/archived-view.mjs';
 
 export default function Home() {
   const { t, lang } = useLang();
@@ -21,6 +23,8 @@ export default function Home() {
   const [error, setError] = useState('');
   const [listFailed, setListFailed] = useState(false); // 회사 목록 조회 실패 — 끝없는 해골 대신 오류 + 다시 시도(F13)
   const [listTry, setListTry] = useState(0);
+  const [archivedCount, setArchivedCount] = useState(0); // 보관한 회사 수 — 1개 이상이면 입구를 보인다(목록을 못 받으면 0 = 입구 없음)
+  const [archivedOpen, setArchivedOpen] = useState(false);
   const [pairCode, setPairCode] = useState('');
   const [pairState, setPairState] = useState(''); // '' | 'waiting' | 'done'
   const [pairError, setPairError] = useState('');
@@ -48,6 +52,7 @@ export default function Home() {
     setListFailed(false);
     api(`/api/companies?lang=${lang}`).then((d) => { if (!alive) return; setCompanies(d.companies); setPresets(d.presets ?? []); }).catch(() => { if (alive) setListFailed(true); });
     api('/api/me').then((d) => { if (!alive) return; setMe(d); setAuthOn(!!d.authOn); }).catch(() => {});
+    api('/api/archived-companies').then((d) => { if (alive) setArchivedCount(archivedEntryCount(d.items)); }).catch(() => { if (alive) setArchivedCount(0); });
     return () => { alive = false; };
   }, [lang, listTry]);
 
@@ -131,6 +136,23 @@ export default function Home() {
       }, 2000);
     } catch (err) { setPairError(String(err.message)); }
   }
+
+  // 보관한 회사 — 목록에서 사라진 회사를 되돌린다. 하나뿐인 회사를 보관하면 그 회사의 설정도 함께 사라지므로 홈에 입구를 둔다(UM3).
+  // 온보딩(회사 0개)에서는 "내 회사" 구역이 러너 카드 아래 첫 화면 밖이라, 회사 이름 입력 바로 아래에 둔다.
+  const archivedEntry = archivedCount > 0 && (
+    <div style={{ marginTop: 14 }}>
+      <button type="button" className="btn sm" onClick={() => setArchivedOpen((v) => !v)} aria-expanded={archivedOpen}>
+        {t('home.archived.entry', { n: archivedCount })}
+      </button>
+      {archivedOpen && (
+        <div style={{ marginTop: 10 }}>
+          <ArchivedCompaniesCard existingIds={new Set((companies ?? []).map((c) => c.id))}
+            onLoaded={(items) => setArchivedCount(archivedEntryCount(items))}
+            onRestored={() => setListTry((n) => n + 1)} />
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <div>
@@ -240,6 +262,8 @@ export default function Home() {
           )}
         </div>
 
+        {onboarding && archivedEntry}
+
         {/* 첫 화면 순서(UX-A06, 2026-10-05): 회사 이름 입력이 첫 행동이라 위로 — 러너 연결(선택)과 가져오기는 그 아래.
             종전엔 러너 카드·가져오기 카드가 먼저 나와 1280×800에서도 입력이 첫 화면 밖(y≈1077)이었다. */}
         {onboarding && (
@@ -296,6 +320,7 @@ export default function Home() {
               ))}
             </div>
           )}
+          {!onboarding && archivedEntry}
         </section>
 
         {/* M-1 페어링 — 다른 기기의 회사를 연결 코드로 가져온다 (회사가 이미 있어도 추가 연결 가능) */}

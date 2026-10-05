@@ -73,7 +73,7 @@ const EXPECT = {
   crew_card_not_found: { status: 404, ko: '크루를 찾을 수 없습니다', en: 'Crew not found' },
   vault_conflict: { status: 409, ko: '편집하는 동안 다른 곳에서 이 문서가 바뀌었습니다', en: 'This document changed elsewhere while you were editing' },
   archive_not_found: { status: 404, ko: '보관한 회사를 찾을 수 없습니다', en: 'Archived company not found' },
-  archive_restore_exists: { status: 409, ko: '같은 이름의 회사가 이미 있어 되돌릴 수 없습니다', en: 'A company with the same name already exists, so it cannot be restored' },
+  archive_restore_exists: { status: 409, ko: '이미 목록에 같은 회사가 있어 되돌릴 수 없습니다 — 목록에서 그 회사를 열어 보세요', en: 'The same company is already in your list, so it cannot be restored — open it from the list' },
   archive_restore_failed: { status: 500, ko: '회사를 되돌리지 못했습니다 — 잠시 후 다시 시도해 주세요', en: 'Could not restore the company — please try again shortly' },
   company_load_failed: { status: 500, ko: '회사 정보를 불러오지 못했습니다 — 잠시 후 다시 시도해 주세요', en: "Couldn't load the company — please try again shortly" },
 };
