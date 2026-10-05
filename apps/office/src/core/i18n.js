@@ -58,7 +58,7 @@ const DICT = {
   'nav.sec.menu': ['메뉴', 'Menu'], 'nav.sec.pages': ['페이지', 'Pages'], 'nav.sec.crews': ['에이전트', 'Agents'], 'nav.secUp': ['칸을 위로', 'Move section up'], 'nav.secDown': ['칸을 아래로', 'Move section down'],
   'nav.pages': ['페이지', 'Pages'], 'nav.wiki': ['조직 위키', 'Wiki'], 'nav.crews': ['에이전트', 'Agents'],
   // 좌측 크루 목록 정리(9/30)
-  'crew.group.pinned': ['고정', 'Pinned'], 'crew.group.mine': ['내 에이전트', 'My agents'],
+  'crew.group.pinned': ['고정', 'Pinned'], 'crew.group.mine': ['내 에이전트', 'My agents'], 'crew.group.personal': ['개인 공간', 'Personal space'],
   'fav.title': ['즐겨찾기', 'Favorites'], 'fav.add': ['즐겨찾기에 추가', 'Add to favorites'], 'fav.remove': ['즐겨찾기에서 빼기', 'Remove from favorites'], 'fav.empty': ['☆를 누르거나 우클릭해 추가', 'Click ☆ or right-click to add'],
   'crew.owner.me': ['내 에이전트', 'Mine'], 'crew.owner.company': ['회사', 'Company'], 'crew.owner.unknown': ['이름 없음', 'Unnamed'],
   'crew.tip.job': ['직무: {job}', 'Role: {job}'], 'crew.tip.dept': ['부서: {dept}', 'Department: {dept}'], 'crew.tip.owner': ['주인: {name}', 'Owner: {name}'], 'crew.tip.noJob': ['직무가 적혀 있지 않습니다', 'No role set'],

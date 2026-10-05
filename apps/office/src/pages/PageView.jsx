@@ -1,7 +1,7 @@
 // 페이지 — 블록 편집(지연 로드), 파일 끌어다 놓기(문서함에 저장하고 놓은 자리에 '/파일' 블록), 공유·비공개·버전·우클릭. 저장 버튼 없음.
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { Icon } from '../ui/Icon.jsx';
-import { showToast } from '../ui/Overlay.jsx';
+import { showToast, Modal } from '../ui/Overlay.jsx';
 import { t, ago, useLang, getLang, registerDict } from '../core/i18n.js';
 import { PAGEVIEW_DICT } from './pageview-i18n.js';
 import { useStore, createPage, savePage, trashPage, getState } from '../core/store.js';
@@ -40,7 +40,7 @@ const copyPlace = (page, gone) => (gone ? ['me', null] : [page.space, page.paren
 
 /** 다른 기기가 먼저 저장했을 때 — 사람이 고른다: 서버 값으로 새로 불러오기 / 내 변경을 사본으로 지키기. 그사이 서버에서 없어졌으면 사본 또는 버리기 */
 function ConflictBanner({ page }) {
-  const [gone, setGone] = useState(false);
+  const [gone, setGone] = useState(false), [ask, setAsk] = useState(false); // ask: 버리기 확인 창
   const reload = () => reloadServer(page.id).catch((e) => (e?.missing ? setGone(true) : showToast(t('load.readFail')))); // 못 읽으면 충돌 안내·보관본을 남겨 다시 누를 수 있게
   const keepCopy = async () => {
     const mine = restore(heldKey(page.id), null) ?? page;                            // 새로고침 뒤라면 화면은 서버 본문 — 사본은 남겨 둔 내 변경으로
@@ -51,9 +51,19 @@ function ConflictBanner({ page }) {
   return (
     <div className="conflict" role="alert">
       <div><b>{t(gone ? 'page.missing' : 'page.conflict')}</b><p className="dim small">{t(gone ? 'page.conflictGone' : 'page.conflictHint')}</p></div>
-      <div className="row-actions"><button type="button" className="btn" onClick={keepCopy}>{t('page.conflictCopy')}</button>
-        {gone ? <button type="button" className="btn primary" onClick={() => dropMine(page.id).then(() => navigate(baseOf(page.space)))}>{t('page.conflictDrop')}</button>
-          : <button type="button" className="btn primary" onClick={reload}>{t('page.conflictReload')}</button>}</div>
+      <div className="row-actions">
+        {gone ? <>
+          <button type="button" className="btn primary" onClick={keepCopy}>{t('page.conflictCopy')}</button>
+          <button type="button" className="btn" onClick={() => setAsk(true)}>{t('page.conflictDrop')}</button>
+        </> : <>
+          <button type="button" className="btn" onClick={keepCopy}>{t('page.conflictCopy')}</button>
+          <button type="button" className="btn primary" onClick={reload}>{t('page.conflictReload')}</button>
+        </>}</div>
+      {ask && <Modal open title={t('page.dropTitle')} onClose={() => setAsk(false)} footer={<>
+        <button type="button" className="btn" onClick={() => setAsk(false)}>{t('page.dropCancel')}</button>
+        <button type="button" className="btn danger" onClick={() => dropMine(page.id).then(() => navigate(baseOf(page.space)))}>{t('page.conflictDrop')}</button></>}>
+        <p>{t('page.dropBody')}</p>
+      </Modal>}
     </div>
   );
 }

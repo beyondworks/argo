@@ -239,9 +239,10 @@ function side(crews, space = 'me') {
 // 이유(R3-L8): 내 공간 고정 목록이 보이지 않는 조직 경계로 나뉘었고, 덩어리 순서는 조직 uuid 순이었다
 test('R3-L8·m12·m13: 내 공간 고정 목록 — 조직 이름 순 덩어리, 덩어리마다 조직 이름, 같은 조직끼리만 끌기, 개인 공간 행은 끌지 않음', () => {
   const crews = [row('b', 'O2', { name: '울프', agent: 'B', pinned: true, pinPos: 0 }), row('a', 'O1', { name: '오길비', agent: 'A', pinned: true, pinPos: 5 }),
-    row('c', 'O1', { name: '페퍼', agent: 'C', pinned: true, pinPos: 1 }), row('p', null, { name: '솔로', agent: 'D', personal: true })];
+    row('c', 'O1', { name: '페퍼', agent: 'C', pinned: true, pinPos: 1 }), row('p', null, { name: '솔로', agent: 'D', personal: true, pinned: true, pinPos: 9 })];
   const { html, rows } = side(crews);
   assert.deepEqual(rows.map((r) => r.id), ['b', 'c', 'a', 'p'], '가나(O2) → 다라(O1), 조직 안은 고정 순서, 개인 공간은 끝');
+  assert.ok(html.indexOf('다라') < html.indexOf('crew.group.personal'), '개인 공간 덩어리는 끝 — 이름은 개인 공간(내 공간 아님)');
   assert.ok(html.indexOf('가나') < html.indexOf('다라') && html.indexOf('가나') > -1, '덩어리마다 조직 이름');
   const g = Object.fromEntries(rows.map((r) => [r.id, r.group]));
   assert.equal(g.c, g.a, '같은 조직 = 같은 끌기 영역');
@@ -250,6 +251,8 @@ test('R3-L8·m12·m13: 내 공간 고정 목록 — 조직 이름 순 덩어리,
   assert.equal(rows.find((r) => r.id === 'c').movable, true);
   const one = side([row('x', 'O1', { pinned: true, agent: 'X' }), row('y', 'O1', { pinned: true, agent: 'Y' })]);
   assert.doesNotMatch(one.html, /crew-org/, '조직이 하나면 머리줄 없음');
+  const solo = side([row('x', 'O1', { pinned: true, agent: 'X' }), row('p', null, { agent: 'D', personal: true, pinned: true, pinPos: 9 })]);
+  assert.doesNotMatch(solo.html, /crew-org/, '조직 하나 + 개인 전용은 머리줄 없음(조직 덩어리가 둘 이상일 때만)');
 });
 
 // 맡기기 거절 사유 문구를 맡기기 조각 사전(CREW_ASSIGN_DICT)으로 옮겼다(첫 화면 상한) — 전송함은 그 조각을 받은 뒤 알린다(키 그대로 보이지 않게)

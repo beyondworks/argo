@@ -178,9 +178,9 @@ function CrewSection({ space, crews, handle }) {
         return <div key={g.key} className="crew-group" role="group" aria-label={label}>
           <button type="button" className="crew-group-head" aria-expanded={!fold[g.key] || !!query} onClick={() => toggle(g.key)}><span>{label}</span><Icon name={fold[g.key] && !query ? 'chevron' : 'caret'} size={12} /><small>{g.crews.length}</small></button>
           {/* 순서는 조직마다 따로 저장된다 — 같은 조직 덩어리(byOrg)마다 끌기 영역을 나눠, 다른 조직 자리에는 놓기 표시도 저장도 없다. 개인 공간 행은 저장할 곳이 없어 끌지 않는다.
-              덩어리가 둘 이상이면 조직 이름을 머리에(경계가 보이게), 덩어리 순서는 조직 이름 순(SPACES), 개인 공간은 끝(R3-L8) */}
+              조직 덩어리가 둘 이상일 때만 이름을 머리에(조직 하나 + 개인 전용은 머리줄 없음, 개인 덩어리 이름은 '개인 공간')(경계가 보이게), 덩어리 순서는 조직 이름 순(SPACES), 개인 공간은 끝(R3-L8) */}
           {(!fold[g.key] || query) && byOrg(g.crews).sort((x, y) => rank(x.org) - rank(y.org)).map((run, i, runs) => { const order = run.crews.map((c) => c.id); return <div key={run.org ?? '-'} role="none">
-            {runs.length > 1 && <small className="crew-org">{run.org ? SPACES.find((x) => x.id === run.org)?.name : t('space.me')}</small>}
+            {runs.filter((r) => r.org).length > 1 && <small className="crew-org">{run.org ? SPACES.find((x) => x.id === run.org)?.name : t('crew.group.personal')}</small>}
             <SortableContext items={order.map((id) => `crewsort:${id}`)} strategy={verticalListSortingStrategy}>
             {run.crews.map((c) => <CrewRow key={c.id} crew={c} space={space} group={`${space}|${g.key}|${run.org}`} order={order} mode={mode} movable={g.movable && (!!run.org || getMode() !== 'signedIn')} />)}
           </SortableContext></div>; })}
