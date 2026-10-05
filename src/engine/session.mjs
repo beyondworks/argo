@@ -76,7 +76,7 @@ export function sanitizeTranscript(messages) {
 export async function loadNativeSession(wsId, slug, resumeId = null) {
   const f = sessionFile(wsId, slug);
   const saved = await readJson(f, null).catch(() => null);
-  if (saved && resumeId && saved.id === resumeId && Array.isArray(saved.messages)) return { id: saved.id, messages: sanitizeTranscript(saved.messages), resumed: true };
+  if (saved && resumeId && saved.id === resumeId && Array.isArray(saved.messages)) return { id: saved.id, messages: sanitizeTranscript(saved.messages), resumed: true, ...(saved.compacted ? { compacted: true } : {}) }; // compacted — 압축 간격 규칙(compact.mjs)
   return { id: `native-${randomUUID()}`, messages: [], resumed: false };
 }
 
@@ -95,6 +95,6 @@ export async function saveNativeSession(wsId, slug, sess) {
     while (head.length && !isPromptMsg(head[0])) head.shift();
     messages = [...head, ...tail];
   }
-  await writeJsonAtomic(sessionFile(wsId, slug), { id: sess.id, at: Date.now(), messages });
+  await writeJsonAtomic(sessionFile(wsId, slug), { id: sess.id, at: Date.now(), messages, ...(sess.compacted ? { compacted: true } : {}) });
   sess.messages = messages;
 }
