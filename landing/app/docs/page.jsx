@@ -3,8 +3,8 @@
 import DocShell from '@/components/DocShell';
 import { useLang } from '@/lib/i18n';
 
-// 시스템 프롬프트 — "틀(구조)"만 공개. 내부 크루 코드네임·회사 맥락·실제 키·경로는 제외,
-// 예시는 가짜 플레이스홀더(Crew A / Researcher)로.
+// 시스템 프롬프트 — "틀(구조)"만 공개. 내부 에이전트 코드네임·회사 맥락·실제 키·경로는 제외,
+// 예시는 가짜 플레이스홀더(Agent A / Researcher)로.
 const PROMPT_TEMPLATE = `---
 runner: <engine>        # claude · codex · gemini · glm
 model:  <model id>

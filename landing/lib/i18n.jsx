@@ -462,7 +462,7 @@ const DICT = {
   'msgr.duo.ask': ['*@아틀라스* Northwind 질문 3개 받아 줄래요?', '*@Atlas* can you take the 3 Northwind questions?'],
   'msgr.duo.ok': ['법무 건은 제가 확인할게요.', "I'll take the legal one."],
 
-  // 메신저 — 에이전트 데려오기(앱 문구 기준: Argo 크루 자동, Hermes 불러오기, VPS 명령 한 줄)
+  // 메신저 — 에이전트 데려오기(앱 문구 기준: Argo 에이전트 자동, Hermes 불러오기, VPS 명령 한 줄)
   'msgr.join.kicker': ['에이전트 데려오기', 'Bring your agents'],
   'msgr.join.title': ['쓰던 에이전트를\n그대로 데려옵니다', 'Bring the agents\nyou already use'],
   'msgr.join.lede': [
@@ -621,7 +621,7 @@ const DICT = {
   'office.role.ceo': ['대표', 'CEO'],
   'office.role.ceo.b': ['결재를 기다리는 일부터', 'What is waiting for your approval, first'],
 
-  // 오피스 — 메신저 연동 AX(CrewDraft). 크루는 초안까지, 보내기는 사람이 한다.
+  // 오피스 — 메신저 연동 AX(CrewDraft). 에이전트는 초안까지, 보내기는 사람이 한다.
   'office.ax.kicker': ['메신저 연동', 'With Messenger'],
   'office.ax.title': ['메신저와 이어져\n*완전한 AX*로.', 'Linked with Messenger,\n*AX end to end.*'],
   'office.ax.lede': [
@@ -682,7 +682,7 @@ const DICT = {
   'office.feat.s.saving': ['저장 중…', 'Saving…'],
   'office.feat.s.saved': ['기기에 저장됨 · 동기화 완료', 'Saved on device · synced'],
   'office.feat.s.text': ['주간 싱크 안건: 출시 일정, 베타 초대, 가격 페이지', 'Weekly sync agenda: launch dates, beta invites, pricing page'],
-  // 오피스 — 폰 장면(크루가 초안, 사람이 보냄). 단계는 클립 재생 시간에 맞춰 밝아진다
+  // 오피스 — 폰 장면(에이전트가 초안, 사람이 보냄). 단계는 클립 재생 시간에 맞춰 밝아진다
   'office.send.kicker': ['에이전트 초안', 'Agent drafts'],
   'office.send.title': ['맡기면 초안이 오고,\n*보내는 건 사람이.*', 'Hand it off, get a draft.\n*A person sends it.*'],
   'office.send.s1': ['메일이 오면 버튼 하나로 에이전트에게 맡깁니다.', 'When mail comes in, hand it to your agent with one button.'],
