@@ -64,6 +64,9 @@ export function queueRetryDelayMs(failures, baseMs = 1000) {
 export const RECOVERY_RESET_MIN_MS = 60_000; // 복구 신호로 대기 중인 잡의 간격을 푸는 최소 주기(워커당) — 계속 실패하는 잡이 성공하는 잡 옆에서 매 틱 재시도되지 않게
 export const SCHEMA_SKEW_NOTICE_AFTER_MS = 10 * 60_000; // 스키마 어긋남으로 이만큼 막힌 잡은 보낸 사람에게 "늦어지고 있다"고 한 번 알린다(onStalled) — 24시간 상한까지 아무 표시도 없던 것(2차 검수 LOW-3)
 export const NOTICE_RETRY_MAX = 5; // 안내 미전송 기록 하나당 다시 보내는 시도 상한 — 계속 실패하는 안내가 영원히 호출을 만들지 않게(DB 위생)
+/** 안내 훅이 돌려주는 세 번째 값(3차 검수 F3) — 기기 세션이 없어 DB 호출 자체를 하지 못했다. 호출이 0건이라 시도 상한(DB 위생)에 셀 이유가 없다:
+    세션 없이 앱을 여러 번 켜는 동안 상한이 소진돼 세션이 생긴 뒤에도 안내가 영영 안 나가던 것을 막는다. 미전송 표지·시도 수는 그대로 둔다(파일도 다시 쓰지 않는다). */
+export const NOTICE_NO_SESSION = 'no-session';
 const FAILED_KEEP_MS = 7 * 86_400_000;
 const FAILED_KEEP_MAX = 50;
 /** `.failed` 보존 정리 — 실패 기록이 쌓이기만 하지 않게(DB 위생 규칙 4와 같은 원칙의 로컬판). 실패가 날 때와 워커가 시작할 때 돈다(새 주기 작업 없음). */
@@ -85,8 +88,10 @@ async function recordFailedJob(dir, n, fp, e, reason, noticePending) {
   await writeJsonAtomic(join(dir, `${n}.failed`), { failedAt: new Date().toISOString(), code: e?.code ?? null, reason, error: String(e?.message ?? e).slice(0, 500), job, noticePending: !!noticePending, noticeTries: 0 });
   await pruneFailedJobs(dir);
 }
-/** 안내 결과를 .failed에 반영 — 보냈으면 표지를 끄고, 못 보냈으면 시도 수를 올린다(NOTICE_RETRY_MAX에 닿으면 포기 표지). */
-async function settleNotice(dir, n, delivered) {
+/** 안내 결과를 .failed에 반영 — 보냈으면(true) 표지를 끄고, 못 보냈으면(false) 시도 수를 올린다(NOTICE_RETRY_MAX에 닿으면 포기 표지). 세션 없음(NOTICE_NO_SESSION)은 아무것도 바꾸지 않는다. */
+async function settleNotice(dir, n, outcome) {
+  if (outcome === NOTICE_NO_SESSION) return;
+  const delivered = outcome === true;
   const fp = join(dir, `${n}.failed`);
   const r = await readJsonLenient(fp, null);
   if (!r) return;
@@ -106,20 +111,20 @@ async function retryPendingNotices(dir, onAbandon, where) {
     if ((r.noticeTries ?? 0) >= NOTICE_RETRY_MAX) continue;
     const n = f.slice(0, -'.failed'.length);
     const e = Object.assign(new Error(r.error ?? ''), r.code ? { code: r.code } : {});
-    const delivered = await callHook(onAbandon, r.job, e, { name: n, reason: r.reason ?? 'permanent', retry: true }, where);
-    await settleNotice(dir, n, delivered);
-    if (!delivered) left += 1;
+    const outcome = await callHook(onAbandon, r.job, e, { name: n, reason: r.reason ?? 'permanent', retry: true }, where);
+    await settleNotice(dir, n, outcome);
+    if (outcome !== true) left += 1;
   }
   return left;
 }
 const NOTICE_HOOK_TIMEOUT_MS = 15_000;
-/** 안내 훅(onAbandon·onStalled) 호출 — 던지거나 멈춰도 큐는 계속 돈다(실패 = 로그만, 슬롯은 시간 상한까지만 점유). 반환 true = 보냈다(또는 보낼 것이 없다), false = 못 보냈다(던짐·시간 초과·훅이 false 반환). */
+/** 안내 훅(onAbandon·onStalled) 호출 — 던지거나 멈춰도 큐는 계속 돈다(실패 = 로그만, 슬롯은 시간 상한까지만 점유). 반환 true = 보냈다(또는 보낼 것이 없다), false = 못 보냈다(던짐·시간 초과·훅이 false 반환), NOTICE_NO_SESSION = 세션이 없어 호출하지 못했다(훅이 그 값을 돌려줌). */
 async function callHook(hook, job, e, info, where) {
   if (typeof hook !== 'function' || !job) return true;
   let timer;
   try {
     const r = await Promise.race([hook(job, e, info), new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('안내 시간 초과')), NOTICE_HOOK_TIMEOUT_MS); timer.unref?.(); })]);
-    return r !== false;
+    return r === NOTICE_NO_SESSION ? NOTICE_NO_SESSION : r !== false;
   } catch (x) {
     console.error(`[argo] 큐 안내를 남기지 못했습니다(${where}/${info.name}):`, x?.message ?? x);
     return false;
@@ -244,9 +249,9 @@ export function startQueueWorker(wsId, key, handler, { maxInflight = GW_MAX_INFL
             await withDirLock(`${fp0}.lock`, async () => { await recordFailedJob(dirQ, n, fp, e, reason, typeof onAbandon === 'function' && !!job); await unlink(fp); }).catch(() => {});
             console.error(`[argo] 큐 처리 실패 — 재시도 안 함(${where}/${n}, ${e.code ?? 'permanent'}${reason === 'schema-age' ? ', 스키마 어긋남 24시간 초과' : ''}):`, e.message);
             if (typeof onAbandon === 'function' && job) {
-              const delivered = await callHook(onAbandon, job, e, { name: n, reason }, where);
-              await settleNotice(dirQ, n, delivered); // 못 보냈으면 미전송 표지가 남아 시작 때·다음 성공 때 다시 보낸다(LOW-4)
-              if (!delivered) noticesLeft = true;
+              const outcome = await callHook(onAbandon, job, e, { name: n, reason }, where);
+              await settleNotice(dirQ, n, outcome); // 못 보냈으면 미전송 표지가 남아 시작 때·다음 성공 때 다시 보낸다(LOW-4)
+              if (outcome !== true) noticesLeft = true;
             }
           } else {
             // 일시 오류(인프라·스키마 어긋남) — 선점을 풀고 지수 간격 뒤 재시도(첫 재시도는 다음 틱)
@@ -259,7 +264,7 @@ export function startQueueWorker(wsId, key, handler, { maxInflight = GW_MAX_INFL
               // 스키마 어긋남으로 오래 막힌 잡 — 보낸 사람에게 "늦어지고 있다"고 한 번 알린다(LOW-3). 못 보냈으면 다음 실패(≤5분 뒤)에 다시 시도한다
               const stalledMs = Date.now() - (firstFail.get(n) ?? Date.now());
               if (onStalled && job && !stalledNotified.has(n) && stalledMs >= stalledAfterMs) {
-                if (await callHook(onStalled, job, e, { name: n, stalledMs }, where)) stalledNotified.add(n);
+                if ((await callHook(onStalled, job, e, { name: n, stalledMs }, where)) === true) stalledNotified.add(n);
               }
             } else skewBlocked.delete(n);
           }

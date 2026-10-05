@@ -86,3 +86,22 @@ test('rerunMode — notOwnerDirect가 있으면 어떤 출처든 none(메신저�
   assert.equal(rerunMode(t({ source: 'messenger', notOwnerDirect: 'b' })), 'messenger', '메신저 턴은 메신저에서 다시 보내라는 안내가 먼저다');
   assert.equal(rerunMode(t({ source: 'routine', ownerDirect: true })), 'rerun');
 });
+
+// 3차 검수 F2(2026-10-05): ownerDirect 표지 조건이 `!from && !notOwnerDirect`뿐이라 풀 오토를 거르는 손님·오피스·크루 넘김 메신저 턴에도 '사장 직접 턴'이 기록됐다.
+// 풀 오토 판정과 표지는 msgr-handoff ownerDirectTurn 한 함수만 본다 — 실제 chat() 이벤트로 잠근다.
+test('메신저 손님·오피스·크루 넘김 턴에는 사장 직접 턴 표지가 없고, 주인 본인의 메신저 턴·메신저 밖 턴에는 있다 — 실제 chat() 이벤트(3차 F2)', async () => {
+  const msgr = (extra) => ({ source: 'messenger', journal: { off: true }, mirrorCtx: { kind: 'msgr', channelKind: 'dm', channelId: 'ch-f2', threadRoot: 't-f2', uid: 'owner', origin: 'owner', peers: [], ...extra } });
+  await chat(ws, 'a', 'MARK-F2-GUEST 안녕', null, msgr({ origin: 'guest-b' })); // 크루 주인이 아닌 사람이 시킴 = 손님
+  await chat(ws, 'a', 'MARK-F2-OFFICE 안녕', null, msgr({ office: true })); // 오피스에서 맡긴 턴
+  await chat(ws, 'a', 'MARK-F2-HANDOFF 안녕', null, msgr({ handoffFrom: 'b' })); // 크루가 스스로 넘긴 턴
+  await chat(ws, 'a', 'MARK-F2-OWNER 안녕', null, msgr({})); // 주인 본인
+  const find = async (m) => (await readEvents(ws)).find((e) => e.type === 'turn' && String(e.msg ?? '').includes(m));
+  for (const m of ['MARK-F2-GUEST', 'MARK-F2-OFFICE', 'MARK-F2-HANDOFF']) {
+    const ev = await find(m);
+    assert.ok(ev, `${m} 턴 이벤트가 기록됐다`);
+    assert.equal('ownerDirect' in ev, false, `${m}: 풀 오토를 거르는 턴은 사장 직접 턴 표지가 없다`);
+  }
+  const owner = await find('MARK-F2-OWNER');
+  assert.equal(owner?.ownerDirect, true, '주인 본인의 메신저 턴은 표지가 있다(풀 오토 판정과 같은 조건)');
+  assert.equal(rerunMode(owner), 'messenger', '메신저 출처는 rerunMode가 먼저 걸러 다시 실행 버튼이 안 생긴다(기존 동작 그대로)');
+});
