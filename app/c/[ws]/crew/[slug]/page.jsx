@@ -13,6 +13,7 @@ import { useRouter } from 'next/navigation';
 import { Tabs, useRememberedTab, Avatar, Icon, Markdown, ArgoSpinner, Spinner, Skeleton, DangerModal, ConfirmModal, InputModal, useScrollLock, api, imeGuard } from '../../../../ui';
 import { PICK_ORDER } from '../../../../runner-connect';
 import { useLang, stageLabel, fmtMsgTime } from '../../../../i18n';
+import { failureReason } from '../../../../lib/error-text.mjs'; // 실패 이유 — 빈 이유·브라우저 원문 없이(UL5)
 import { CrewEditModal } from '../../crew-edit';
 import { ArtifactChips } from '../../artifact-chips';
 import { useWorkFolder, WorkFolderPopover, WorkFolderRow, WorkFolderButton } from '../../work-folder';
@@ -563,7 +564,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
       if (!r.ok) throw new Error(d.error);
       setAtt((cur) => [...cur, ...d.files].slice(0, 8));
     } catch (err) {
-      setError(t('chat.attachFailed', { msg: String(err.message) }));
+      setError(t('chat.attachFailed', { msg: failureReason(err, t) }));
     } finally {
       setUploading(false);
     }
@@ -751,7 +752,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     const prev = delegLimited;
     setDelegLimited(next); delegSavedAt.current = Date.now();
     try { await api(`/api/companies/${ws}/chat/delegation`, { slug, limit: next }); }
-    catch (e) { setDelegLimited(prev); setError(t('deleg.fail', { msg: String(e.message) })); }
+    catch (e) { setDelegLimited(prev); setError(t('deleg.fail', { msg: failureReason(e, t) })); }
   }
 
   async function newChat() {

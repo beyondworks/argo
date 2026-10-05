@@ -5,6 +5,7 @@ import { use, useCallback, useEffect, useLayoutEffect, useRef, useState } from '
 import { useRouter } from 'next/navigation';
 import { Avatar, Icon, Markdown, ArgoSpinner, Skeleton, Spinner, InputModal, api, imeGuardWith } from '../../../ui';
 import { useLang, stageLabel } from '../../../i18n';
+import { failureReason } from '../../../lib/error-text.mjs'; // 실패 이유 — 빈 이유·브라우저 원문 없이(UL5)
 import { dropUpClamp } from '../zoom-math.mjs';
 import { ArtifactChips } from '../artifact-chips';
 import { matchSlash, SLASH_TOKEN_RE } from '../slash-match.mjs';
@@ -225,7 +226,7 @@ export default function Room({ params }) {
       if (!r.ok) throw new Error(d.error);
       setAtt((cur) => [...cur, ...d.files].slice(0, 8));
     } catch (err) {
-      setError(t('chat.attachFailed', { msg: String(err.message) }));
+      setError(t('chat.attachFailed', { msg: failureReason(err, t) }));
     } finally {
       setUploading(false);
     }
@@ -277,7 +278,7 @@ export default function Room({ params }) {
     const prev = delegLimited;
     setDelegLimited(next); delegSavedAt.current = Date.now();
     try { await api(`/api/companies/${ws}/room/delegation`, { limit: next }); }
-    catch (e) { setDelegLimited(prev); setError(t('deleg.fail', { msg: String(e.message) })); }
+    catch (e) { setDelegLimited(prev); setError(t('deleg.fail', { msg: failureReason(e, t) })); }
   }
 
   async function endMeeting() {

@@ -8,6 +8,7 @@ import { Graph2D } from './graph2d'; // 데크 별자리도 기억 페이지와 
 import { keepSide } from './split.mjs'; // 주 화면 이동은 현재 ?side=(옆에 열기 패널)를 유지 — 생 router.push는 패널을 닫는다
 import { anyRunnerUsable, runnerNeedsReconnect, usableRunnerNames, onlyHiddenConnected } from '../../runner-connect';
 import { useLang } from '../../i18n';
+import { failureReason } from '../../lib/error-text.mjs'; // 실패 이유 — 빈 이유·브라우저 원문 없이(UL5)
 import { approvalExpandDefault, approvalOwnerMayDecide } from '../../lib/approval-display.mjs';
 import styles from './deck.module.css';
 import { gistLabel } from '../../lib/gist-display.mjs'; // 메신저 머리말을 뗀 요약(UX-A08)
@@ -401,7 +402,7 @@ function ApprovalsCard({ ws, agents }) {
       await api(`/api/companies/${ws}/approvals`, { id, approve });
     } catch (e) {
       // 실패 안내 + 다시 읽기 — 이미 다른 창구에서 처리됐으면 목록에서 빠지고, 아니면 버튼이 그대로 남아 다시 누를 수 있다
-      setFailMsg(t('deck.approvalFail', { msg: String(e?.message || '') }));
+      setFailMsg(t('deck.approvalFail', { msg: failureReason(e, t) }));
     } finally {
       setBusy('');
       load();

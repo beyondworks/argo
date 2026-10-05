@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Tabs, useRememberedTab, Icon, Avatar, Spinner, Skeleton, DangerModal, ConfirmModal, api, imeGuard, isTauriApp, artifactDownload, openBillingPortal, openFolderDialog, isFolderDialogBroken, FOLDER_DIALOG_EVENT } from '../../../ui';
 import { useLang, adjustZoom } from '../../../i18n';
+import { failureReason, responseError } from '../../../lib/error-text.mjs'; // 실패 이유 — 빈 이유·브라우저 원문 없이(UL5)
 import { useTheme, THEMES } from '../../../theme';
 import { AiConnectionCard, fieldStyle, usableRunnerNames } from '../../../runner-connect';
 import { useAppUpdate } from '../../../use-app-update';
@@ -760,7 +761,7 @@ function ImportCard({ ws }) {
 
 /** 보관함 — 삭제된 대화(회사 전체)를 모아 복구·영구삭제. 삭제=chats/.trash/로 이동(비파괴). */
 function TrashCard({ ws }) {
-  const { t } = useLang();
+  const { t, lang } = useLang();
   const [items, setItems] = useState(null);
   const [busy, setBusy] = useState('');            // 처리 중 항목 id
   const [purgeTarget, setPurgeTarget] = useState(null);
@@ -774,7 +775,7 @@ function TrashCard({ ws }) {
   async function restore(it) {
     setBusy(it.id); setActionErr('');
     try { await api(`/api/companies/${ws}/trash`, { id: it.id }); load(); }
-    catch (e) { setActionErr(t('settings.trash.restoreFail', { msg: String(e?.message || '') })); } finally { setBusy(''); }
+    catch (e) { setActionErr(t('settings.trash.restoreFail', { msg: failureReason(e, t) })); } finally { setBusy(''); }
   }
   async function doPurge() {
     const it = purgeTarget; setPurgeTarget(null);
@@ -782,9 +783,9 @@ function TrashCard({ ws }) {
     setBusy(it.id); setActionErr('');
     try {
       const r = await fetch(`/api/companies/${ws}/trash?id=${encodeURIComponent(it.id)}`, { method: 'DELETE' });
-      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || '');
+      if (!r.ok) throw responseError(r, await r.json().catch(() => ({})), lang); // 본문이 없어도 "요청 실패 (500)"처럼 이유가 남는다
       load();
-    } catch (e) { setActionErr(t('settings.trash.purgeFail', { msg: String(e?.message || '') })); } finally { setBusy(''); }
+    } catch (e) { setActionErr(t('settings.trash.purgeFail', { msg: failureReason(e, t) })); } finally { setBusy(''); }
   }
   const view = listView(items, loadFailed);
   return (

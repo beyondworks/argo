@@ -141,6 +141,8 @@ const DICT = {
   'common.cancel': ['취소', 'Cancel'],
   'common.close': ['닫기', 'Close'],
   'common.retry': ['다시 시도', 'Try again'],
+  'common.reason.network': ['네트워크 연결을 확인해 주세요', 'Check your network connection'],
+  'common.reason.unknown': ['잠시 뒤 다시 시도해 주세요', 'Please try again shortly'],
   'common.delete': ['삭제', 'Delete'],
   'common.confirm': ['확인', 'Confirm'],
   'common.edit': ['편집', 'Edit'],
