@@ -901,8 +901,7 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
     if (isUnderFailed(rel, failedDirs)) return false;                        // walk가 못 읽음 → 부재는 unknown
     if (corruptHeal.has(rel)) return false;                                   // 로컬 손상 → self-heal 대상(삭제 아님)
     if (isArchival(rel) && archMoves.has(rel.split('/').pop())) return false; // 진짜 이동(목적지 생성 있음)
-    // 로컬 삭제('다른 기기가 지웠다')는 원격 매니페스트를 실제로 읽은 사이클에서만 — 아래 l && !r 분기와 같은 조건(단일 출처).
-    return side === 'L' ? !!(l && !r && base && !changed(base, l) && manifestExists)
+    return side === 'L' ? !!(l && !r && base && !changed(base, l))
                         : !!(!l && r && base && !changed(base, r));
   };
 
@@ -918,6 +917,24 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
     }
     if (process.env.ARGO_SYNC_ALLOW_MASS_DELETE !== '1' && (massDeleteBrake(delL, baseCount) || massDeleteBrake(delR, baseCount))) {
       throw new Error(`대량 삭제 감지(로컬 ${delL}·원격 ${delR} / base ${baseCount}) — 동기화 보류. 의도면 ARGO_SYNC_ALLOW_MASS_DELETE=1`);
+    }
+  }
+
+  // 매니페스트가 없는 사이클의 '다른 기기가 지웠다' 후보(기록 있음·무변경·원격 항목 없음) — 매니페스트가 없으면 그 추론이 성립하지 않는다
+  // (정리된 원격·끊긴 첫 동기화). blob이 있으면 아래 루프가 main처럼 항목을 되살린다(치유). blob까지 없으면 지우지도 다시 밀지도 않고
+  // 사이클 전체를 보류한다 — 다시 밀면 옛 사본 기기가 먼저 들어와 최신 기기의 편집·파일을 덮거나 지운다(최종 검수 HIGH, 기기 2대 재현).
+  // 보류 판정은 어떤 업로드보다 먼저다. 확인 결과는 루프가 다시 쓴다(blob GET은 main처럼 후보당 최대 1건). 확인 오류는 main처럼 그 파일만 실패.
+  const blobProbe = new Map();
+  if (!manifestExists) {
+    for (const rel of allRels) {
+      if ((noSecrets && isSecretRel(rel)) || isDevArtifactRel(rel) || (isEncRel(rel) && !cryptoOn())) continue; // 아래 루프와 같은 불가시
+      const l = local[rel], base = state[rel];
+      if (!(l && !remote.files[rel] && base && !changed(base, l))) continue;
+      const probe = blobExists(remoteKey(rel));
+      blobProbe.set(rel, probe);
+      if ((await probe.catch(() => true)) === false) {
+        throw new Error('클라우드 사본이 비어 있어 이 회사 동기화를 멈췄습니다 — 이 기기 파일은 지우지도 다시 올리지도 않습니다');
+      }
     }
   }
 
@@ -961,11 +978,9 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
           // 매니페스트 lost-update 방어 — 진짜 삭제(다른 기기의 삭제 전파)는 blob도 함께 지워져 있다.
           // blob이 살아 있으면 동시 동기화 중인 기기가 매니페스트를 통째로 덮어써 항목만 유실된 것
           // (실측: 영입 직후 크루 카드가 8초 안에 오삭제) → 지우지 말고 항목을 복원한다(자기치유).
-          // 원격 매니페스트가 없는 사이클(정리된 원격·끊긴 첫 동기화)에서 blob까지 없으면 '다른 기기가 지웠다'는 추론이 성립하지 않는다 —
-          // 지우지 않고 다시 민다. 실측 2026-10-05: 만료 토큰 읽기가 없음으로 분류되자 이 분기가 로컬 파일을 지웠고, 다음 정상 사이클이
-          // 원격까지 지웠다(재현 테스트). 매니페스트를 읽은 사이클은 지우기 직전 매니페스트를 한 번 더 읽어 확인한다(confirmManifest).
-          if (await blobExists(remoteKey(rel))) { remote.files[rel] = base; healed++; }
-          else if (!manifestExists) { await upload(remoteKey(rel), await pushBuf(rel)); remote.files[rel] = l; pushed++; }
+          // 매니페스트 없는 사이클의 blob 없음은 위 사전 확인이 이미 보류했다. 지우기 직전 매니페스트를 한 번 더 읽어 확인한다(confirmManifest —
+          // 매니페스트가 없으면 여기서도 보류). 실측 2026-10-05: 만료 토큰 읽기가 없음으로 분류되자 이 분기가 로컬 파일을 지웠다(재현 테스트).
+          if (await (blobProbe.get(rel) ?? blobExists(remoteKey(rel)))) { remote.files[rel] = base; healed++; }
           else { await confirmManifest(); await rmLocal(rel, l.h); delete local[rel]; deletedL++; } // 다른 기기가 지움 → 로컬도(매니페스트 재확인 뒤)
         }
         else { await upload(remoteKey(rel), await pushBuf(rel)); remote.files[rel] = l; pushed++; } // 신규/수정 → 밀기
@@ -1056,9 +1071,9 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
   // steady-state to 1,440 manifests/day/device/company; 100 × 420KB ≈ 60.5GB/day.
   // This is a bound, not a scalable replacement for a revision/conditional index.
   // No write means no lost-update window requiring a second GET. Resealing must write.
-  // 단, 매니페스트가 없는 원격을 복원하는 기기(로컬 회사 없음)는 쓰지 않는다 — 이 기기가 모르는 파일이 빠진 매니페스트가 생기면
-  // 다시 밀다 끊긴 다른 기기가 그것을 '다른 기기가 지웠다'로 읽어 못 민 파일을 지운다(3차 검수 2번, 빈 {files:{}} 재현).
-  if (!(isRestore && !manifestExists) && (!manifestExists || manifestNeedsSeal || isRestore || opts.freePlan || opts.reseal || failed || originalFiles !== JSON.stringify(remote.files))) {
+  // 단, 매니페스트가 없는 원격을 받을 것 없이 복원한 기기(쓸 항목 0)는 빈 매니페스트를 쓰지 않는다 — 빈 {files:{}}가 생기면 다른 기기가
+  // '매니페스트 있음 + 항목 없음 + blob 없음'을 '다른 기기가 지웠다'로 읽어 못 민 파일을 지운다(3차 검수 2번 재현). 올린 파일이 있으면 main처럼 쓴다.
+  if (!(isRestore && !manifestExists && Object.keys(remote.files).length === 0) && (!manifestExists || manifestNeedsSeal || isRestore || opts.freePlan || opts.reseal || failed || originalFiles !== JSON.stringify(remote.files))) {
   const uploadFiles = { ...remote.files };
   {
     // 재읽기는 두 단계로 갈라 관용의 범위를 정확히 한다(분리 검수 HIGH-1):

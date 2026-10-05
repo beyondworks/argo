@@ -100,11 +100,11 @@ test('만료 토큰 복원 — 빈 원격 회사로 읽어 매니페스트를 �
   assert.deepEqual(f.log.uploads, [], '쓰기 시도 0 — 운영에서는 GET·GET·POST가 나갔다');
 });
 
-test('정리된 원격(매니페스트·blob 모두 없음) — 기록이 있는 로컬 파일을 지우지 않고 모두 다시 민다(큰 회사)', async () => {
+test('정리된 원격(매니페스트·blob 모두 없음) 큰 회사 — main처럼 대량 삭제 브레이크로 보류: 삭제 0, 쓰기 0, GET 1', async () => {
   const WS = 'co-wiped';
   const dir = join(ROOT, WS, 'vault', 'notes');
   await mkdir(dir, { recursive: true });
-  const base = {}, N = 14; // 대량 삭제 브레이크(max(8, 절반)) 위 — 큰 회사도 브레이크가 아니라 다시 밀기로 끝난다
+  const base = {}, N = 14; // 무변경 11개 — 대량 삭제 브레이크(max(8, 절반)) 위
   for (let i = 0; i < N; i++) {
     const orig = Buffer.from(`# 원본 ${i}\n`);
     base[`vault/notes/n${i}.md`] = meta(orig);
@@ -113,12 +113,10 @@ test('정리된 원격(매니페스트·blob 모두 없음) — 기록이 있는
   await writeFile(join(ROOT, WS, '.sync-state.json'), JSON.stringify({ files: base, ts: 1 }));
   const f = storage({}); // 매니페스트도 객체도 없다(Object not found) — 원격이 비었다
   _setSyncClientForTest(f.client);
-  const r = await syncCompany(WS, OWNER, false);
-  assert.equal(r.deletedL, 0, '로컬 삭제 0');
-  assert.equal((await readdir(dir)).filter((n) => n.endsWith('.md')).length, N);
-  assert.equal(r.pushed, N, '모두 다시 민다');
-  const manifest = JSON.parse(openSecretCompat(f.store.get(`${OWNER}/${WS}/__manifest__.json`)).toString());
-  assert.equal(Object.keys(manifest.files).length, N, '원격 매니페스트가 다시 채워진다');
+  await assert.rejects(() => syncCompany(WS, OWNER, false), /대량 삭제 감지/);
+  assert.equal((await readdir(dir)).filter((n) => n.endsWith('.md')).length, N, '로컬 삭제 0');
+  assert.deepEqual(f.log.uploads, [], '다시 밀지 않는다');
+  assert.equal(f.log.gets, 1, '매니페스트 읽기 1건(main과 같음)');
 });
 
 test('인접 핀 — 진짜 객체 없음(Object not found)은 지금처럼 없음이다: 새 회사는 첫 매니페스트를 쓴다', async () => {
@@ -195,28 +193,41 @@ test('F4-a 매니페스트는 정상, 그 뒤 blob 확인만 만료(Bucket not f
   for (const i of [5, 6]) assert.equal(await readFile(join(dir, `n${i}.md`), 'utf8'), `# 원본 ${i}\n`, `n${i} 보존`);
 });
 
-// F4-b(3차 검수 뒤 권고안 A) — 매니페스트가 없는 사이클은 main처럼 판정한다: 기록(state)이 있고 이 기기가 안 고친 파일은
-// blob이 있으면 항목만 되살리고(치유 — blob을 덮지 않는다), blob이 없으면 다시 민다. 지우지는 않는다('다른 기기가 지웠다'는
-// 매니페스트를 읽어야 성립한다). 이 기기가 고친 파일·기록 없는 파일은 main처럼 민다.
-test('F4-b 큰 회사(14개)에서 매니페스트 없음 — blob이 남은 무변경 파일은 치유(다른 기기 내용을 덮지 않음), blob 없는 파일은 다시 밈, 삭제 0', async () => {
+// F4-b(최종 검수 뒤 결정) — 매니페스트가 없는 사이클은 '다른 기기가 지웠다'를 추론하지 않는다. 기록(state)이 있고 이 기기가 안 고친 파일은
+// blob이 있으면 main처럼 항목만 되살리고(치유 — blob을 덮지 않는다), blob이 하나라도 없으면 지우지도 다시 밀지도 않고 사이클 전체를 보류한다.
+// 보류는 어떤 업로드보다 먼저다. 후보가 브레이크 아래인 회사(이 기기가 많이 고침)로 사전 확인 경로를 직접 본다.
+test('F4-b 매니페스트 없음 + 무변경 파일 blob이 모두 있음 — main처럼 치유(다른 기기 내용을 덮지 않음), 고친 파일만 밈, 삭제 0, blob GET 후보당 1건', async () => {
   const WS = 'co-misread';
-  // 다른 기기가 n12·n13을 지웠고(blob 없음) n5를 고쳤다(blob 내용이 기록과 다름). n4 blob은 봉투. 이 기기는 n0~n2를 고쳤다
-  const { store, count } = await seedCompany(WS, 14, { blobs: (i) => i < 12, edited: (i) => i < 3, manifest: false });
-  store[`${OWNER}/${WS}/vault/notes/n5.md`] = Buffer.from('# 다른 기기에서 고침 5\n');
-  store[`${OWNER}/${WS}/vault/notes/n4.md`] = sealSecret(Buffer.from('# 원본 4\n'));
+  // 이 기기는 n0~n7을 고쳤다(무변경 후보 n8~n13 = 6개, 브레이크 아래). 다른 기기가 n9를 고쳤다(blob 내용이 기록과 다름). n10 blob은 봉투
+  const { store, count } = await seedCompany(WS, 14, { edited: (i) => i < 8, manifest: false });
+  store[`${OWNER}/${WS}/vault/notes/n9.md`] = Buffer.from('# 다른 기기에서 고침 9\n');
+  store[`${OWNER}/${WS}/vault/notes/n10.md`] = sealSecret(Buffer.from('# 원본 10\n'));
   const f = storage(store);
   _setSyncClientForTest(f.client);
   const r = await syncCompany(WS, OWNER, false);
   assert.equal(r.deletedL, 0, '로컬 삭제 0');
   assert.equal(await count(), 14);
-  assert.equal(r.healed, 9, 'blob이 남은 무변경 파일(n3~n11)은 항목만 되살린다');
-  assert.equal(r.pushed, 5, '고친 파일(n0~n2)과 blob이 없는 파일(n12·n13)만 민다');
-  const pushedRels = f.log.uploads.filter((k) => !isManifest(k)).map((k) => k.split('/').pop()).sort();
-  assert.deepEqual(pushedRels, ['n0.md', 'n1.md', 'n12.md', 'n13.md', 'n2.md']);
-  assert.equal(f.store.get(`${OWNER}/${WS}/vault/notes/n5.md`).toString(), '# 다른 기기에서 고침 5\n', '다른 기기의 내용을 덮지 않는다');
+  assert.equal(r.healed, 6, 'blob이 남은 무변경 파일(n8~n13)은 항목만 되살린다');
+  assert.equal(r.pushed, 8, '고친 파일(n0~n7)만 민다');
+  assert.equal(f.store.get(`${OWNER}/${WS}/vault/notes/n9.md`).toString(), '# 다른 기기에서 고침 9\n', '다른 기기의 내용을 덮지 않는다');
   assert.equal(remoteText(f, WS, 'vault/notes/n0.md'), '# 이 기기에서 고침 0\n', '이 기기의 수정이 올라간다');
+  assert.equal(f.log.gets, 1 + 6 + 1, 'GET = 매니페스트 읽기 + 후보 blob 6(사전 확인 결과를 루프가 다시 씀) + 재읽기 — main과 같다');
   const manifest = JSON.parse(openSecretCompat(f.store.get(`${OWNER}/${WS}/__manifest__.json`)).toString());
   assert.equal(Object.keys(manifest.files).length, 14, '매니페스트가 다시 채워진다');
+});
+
+test('F4-c 매니페스트 없음 + 무변경 파일 하나라도 blob 없음 — 지우지도 다시 밀지도 않고 사이클 보류(업로드 전), 다음 사이클도 같다', async () => {
+  const WS = 'co-misread-gap';
+  const { dir, store, count } = await seedCompany(WS, 14, { edited: (i) => i < 8, blobs: (i) => i !== 12, manifest: false });
+  const f = storage(store);
+  for (let c = 0; c < 2; c++) {
+    _setSyncClientForTest(f.client);
+    await assert.rejects(() => syncCompany(WS, OWNER, false), /클라우드 사본이 비어 있어 이 회사 동기화를 멈췄습니다/);
+  }
+  assert.deepEqual(f.log.uploads, [], '고친 파일도 올리지 않는다(보류가 업로드보다 먼저)');
+  assert.deepEqual(f.log.removed, []);
+  assert.equal(await count(), 14, '로컬 삭제 0');
+  assert.equal(await readFile(join(dir, 'n0.md'), 'utf8'), '# 이 기기에서 고침 0\n');
 });
 
 // F2-2 — 재확인은 '매니페스트를 다시 읽어 성공'일 때만 통과다. 재확인에서 매니페스트가 '없음'(Object not found)이면 그 사이 매니페스트가
@@ -357,37 +368,112 @@ test('옛 판이 남긴 끊긴 첫 동기화(blob만 남고 매니페스트·sta
   assert.equal(remoteText(f, WS, 'company.json'), renamed);
 });
 
-// 3차 검수 2번(emptyman2) — 매니페스트 없는 원격에서 받을 것 없이 복원한 기기가 빈 매니페스트({files:{}})를 쓰면, 다시 밀다 끊긴 기기의
-// 다음 사이클이 '매니페스트 있음 + 항목 없음 + blob 없음'을 '다른 기기가 지웠다'로 읽어 못 민 파일을 지운다. 복원 기기는 쓰지 않는다.
-test('매니페스트 없는 원격을 복원한 기기는 빈 매니페스트를 쓰지 않는다 — 다시 밀다 끊긴 기기가 못 민 파일을 지우지 않는다', async () => {
+// 3차 검수 2번(emptyman2) — 매니페스트 없는 원격에서 받을 것 없이 복원한 기기가 빈 매니페스트({files:{}})를 쓰면, 기록이 있는 기기의 다음 사이클이
+// '매니페스트 있음 + 항목 없음 + blob 없음'을 '다른 기기가 지웠다'로 읽어 파일을 지운다. 복원 기기는 쓸 항목이 0이면 쓰지 않는다(main은 썼다).
+test('emptyman2 매니페스트 없는 원격을 받을 것 없이 복원한 기기는 빈 매니페스트를 쓰지 않는다 — 기록이 있는 기기의 삭제 0', async () => {
   const WS = 'co-restore-empty';
   // 정리된 원격(매니페스트·blob 없음). 이 기기(A)는 기록 12개 중 n0~n7을 정리 기간에 고쳤다 — 무변경 4개는 대량 삭제 브레이크 아래
   const { count } = await seedCompany(WS, 12, { blobs: () => false, manifest: false, edited: (i) => i < 8 });
   const f = storage({});
-  let ok = 0;
-  f.state.uploadError = (k) => (isManifest(k) || ++ok > 1 ? NET_FAIL : null); // A가 다시 밀다 1개 올리고 끊김
   _setSyncClientForTest(f.client);
-  await assert.rejects(() => syncCompany(WS, OWNER, false));
-  assert.equal(blobKeys(f, WS).length, 1);
-  f.state.uploadError = null;
+  await assert.rejects(() => syncCompany(WS, OWNER, false), /클라우드 사본이 비어/); // A는 보류(업로드 0)
+  assert.deepEqual(f.log.uploads, []);
   // 회사가 없는 다른 기기(C)가 색인으로 발견해 복원 — 같은 ARGO_ROOT라 A의 회사 폴더를 잠시 옮겨 C의 빈 로컬을 만든다
   const away = join(ROOT, `${WS}.away`);
   await rename(join(ROOT, WS), away);
-  const before = f.log.uploads.length;
   _setSyncClientForTest(f.client);
+  const g = f.log.gets;
   const rc = await syncCompany(WS, OWNER, true);
   assert.equal(rc.pulled, 0, '받을 것 없음');
-  assert.equal(f.log.uploads.length, before, '복원 기기의 쓰기 0');
+  assert.deepEqual(f.log.uploads, [], '복원 기기의 쓰기 0');
+  assert.equal(f.log.gets - g, 1, '매니페스트 읽기 1건뿐(재읽기도 생략)');
   assert.ok(!f.store.has(`${OWNER}/${WS}/__manifest__.json`), '빈 매니페스트를 쓰지 않는다');
   await rm(join(ROOT, WS), { recursive: true, force: true });
   await rename(away, join(ROOT, WS));
   _setSyncClientForTest(f.client);
-  const r = await syncCompany(WS, OWNER, false); // A의 다음 사이클
-  assert.equal(r.deletedL, 0, '못 민 파일을 지우지 않는다');
+  await assert.rejects(() => syncCompany(WS, OWNER, false), /클라우드 사본이 비어/); // A의 다음 사이클 — 여전히 보류, 삭제 0
   assert.equal(await count(), 12);
-  assert.equal(blobKeys(f, WS).length, 12, '못 민 파일을 다시 민다');
-  const manifest = JSON.parse(openSecretCompat(f.store.get(`${OWNER}/${WS}/__manifest__.json`)).toString());
-  assert.equal(Object.keys(manifest.files).length, 12);
+});
+
+test('복원 기기 + 로컬 파일 + 매니페스트 없음 — 올린 파일이 있으면 main처럼 매니페스트를 쓰고, 다음 발견 주기에 blob GET을 반복하지 않는다', async () => {
+  const WS = 'co-restore-local';
+  const dir = join(ROOT, WS, 'vault', 'notes');
+  await mkdir(dir, { recursive: true });
+  for (let i = 0; i < 20; i++) await writeFile(join(dir, `n${i}.md`), `# ${i}\n`); // company.json 없음 = 색인 발견 복원 경로, 기록 없음
+  const f = storage({});
+  _setSyncClientForTest(f.client);
+  const r1 = await syncCompany(WS, OWNER, true);
+  assert.equal(r1.pushed, 20);
+  assert.ok(f.store.has(`${OWNER}/${WS}/__manifest__.json`), '매니페스트를 쓴다');
+  for (let c = 0; c < 2; c++) {
+    _setSyncClientForTest(f.client);
+    const g = f.log.gets;
+    const r = await syncCompany(WS, OWNER, true);
+    assert.equal(r.healed + r.pushed + r.deletedL, 0);
+    assert.ok(f.log.gets - g <= 2, `발견 주기 ${c + 2}: GET ${f.log.gets - g}건 — 매니페스트 읽기·재읽기만(main과 같음)`);
+  }
+});
+
+// 최종 검수 HIGH — 클라우드 사본이 통째로 정리된 뒤 기기 2대. 늦게 동기화한 기기 B(옛 사본)가 먼저 들어와도 최신 기기 A의 편집·파일이 남는다.
+// 브레이크 위(무변경이 대부분)는 main처럼 대량 삭제 감지로, 브레이크 아래(이 기기가 많이 고침)는 사전 확인으로 둘 다 보류한다.
+for (const [name, bEdited] of [['브레이크 위', 0], ['브레이크 아래', 4]]) {
+  test(`wipe2 정리된 원격 + 기기 2대, 옛 사본 기기가 먼저(${name}) — 두 기기 모두 보류, A의 편집·A만 가진 파일 손실 0`, async () => {
+    const WS = `co-wipe2-${bEdited}`;
+    const N = 5, E = 2;
+    const devA = join(ROOT, `${WS}.A`), devB = join(ROOT, `${WS}.B`);
+    const seed = async (files, edits = {}) => { // 기록 = files(마지막 동기화 때 내용), 로컬 = files + edits
+      const dir = join(ROOT, WS, 'vault', 'notes');
+      await mkdir(dir, { recursive: true });
+      const base = {};
+      for (const [rel, b] of Object.entries(files)) { base[rel] = meta(Buffer.from(b)); await writeFile(join(ROOT, WS, rel), edits[rel] ?? b); }
+      await writeFile(join(ROOT, WS, '.sync-state.json'), JSON.stringify({ files: base, ts: 1 }));
+    };
+    const A = {}, B = {};
+    for (let i = 0; i < N; i++) {
+      B[`vault/notes/n${i}.md`] = `# n${i} v0\n`;
+      A[`vault/notes/n${i}.md`] = i < E ? `# n${i} vA\n` : `# n${i} v0\n`;
+    }
+    A['vault/notes/x0.md'] = '# x0 A만 가진 파일\n';
+    const bEdits = Object.fromEntries([...Array(bEdited).keys()].map((i) => [`vault/notes/n${i}.md`, `# n${i} B가 고침\n`]));
+    await seed(A); await rename(join(ROOT, WS), devA);
+    await seed(B, bEdits); await rename(join(ROOT, WS), devB);
+    const f = storage({}); // 정리된 원격
+    const as = async (dev, fn) => { await rename(dev, join(ROOT, WS)); try { return await fn(); } finally { await rename(join(ROOT, WS), dev); } };
+    const hold = bEdited ? /클라우드 사본이 비어/ : /대량 삭제 감지/;
+    for (const dev of [devB, devA, devA, devB]) {
+      _setSyncClientForTest(f.client);
+      await as(dev, () => assert.rejects(() => syncCompany(WS, OWNER, false), dev === devB ? hold : /대량 삭제 감지|클라우드 사본이 비어/));
+    }
+    assert.deepEqual(f.log.uploads, [], '옛 사본으로 매니페스트를 새로 쓰지 않는다');
+    for (let i = 0; i < E; i++) assert.equal(await readFile(join(devA, 'vault/notes', `n${i}.md`), 'utf8'), `# n${i} vA\n`, `A의 편집 n${i} 남음`);
+    assert.equal(await readFile(join(devA, 'vault/notes/x0.md'), 'utf8'), '# x0 A만 가진 파일\n', 'A만 가진 파일 남음');
+    assert.equal((await readdir(join(devB, 'vault/notes'))).length, N, 'B 삭제 0');
+  });
+}
+
+test('빈 원격 + 기록 1개(브레이크 미적용) — main은 로컬을 지웠지만 이제 보류: 삭제 0, 쓰기 0, GET 2', async () => {
+  const WS = 'co-wiped-one';
+  const { count } = await seedCompany(WS, 1, { blobs: () => false, manifest: false });
+  const f = storage({});
+  _setSyncClientForTest(f.client);
+  await assert.rejects(() => syncCompany(WS, OWNER, false), /클라우드 사본이 비어/);
+  assert.equal(await count(), 1, '로컬 삭제 0');
+  assert.deepEqual(f.log.uploads, []);
+  assert.equal(f.log.gets, 2, '매니페스트 읽기 + blob 확인 1건');
+});
+
+test('빈 원격 + 업로드 거절 반복 + 기록 20개 — 사이클마다 GET 1·PUT 0(main과 같음, 재시도마다 2N 요청 아님)', async () => {
+  const WS = 'deny-wiped';
+  await seedCompany(WS, 20, { blobs: () => false, manifest: false });
+  const f = storage({});
+  f.state.uploadError = () => RLS_DENIED;
+  for (let c = 0; c < 3; c++) {
+    _setSyncClientForTest(f.client);
+    const g = f.log.gets, u = f.log.uploads.length;
+    await assert.rejects(() => syncCompany(WS, OWNER, false));
+    assert.equal(f.log.gets - g, 1, `사이클 ${c + 1}: GET 1`);
+    assert.equal(f.log.uploads.length - u, 0, `사이클 ${c + 1}: 업로드 시도 0`);
+  }
 });
 
 // MEDIUM-2 — 매니페스트 없는 사이클이 요청을 늘리지 않는다: 업로드가 계속 거절되는 첫 동기화 기기도 main처럼 매니페스트 읽기·재읽기 2건.
@@ -405,24 +491,58 @@ test('MEDIUM-2 매니페스트 없음 + 업로드가 계속 거절되는 첫 동
   assert.equal(blobKeys(f, WS).length, 0, '거절이라 아무것도 안 올라갔다');
 });
 
-// LOW-3 — 매니페스트 없는 사이클의 무변경 파일은 blob 확인 결과로 치유·다시 밀기를 가른다. 확인이 안 되면(오류) 그 파일만 실패로 두고
-// 지우지도 밀지도 않는다. 그 파일은 이번 매니페스트·state에서 빠져 다음 사이클에 신규로 다시 민다(유실 없음).
+// LOW-3 — 매니페스트 없는 사이클의 무변경 파일 blob 확인이 오류면 main처럼 그 파일만 실패로 두고 지우지도 밀지도 않는다(보류 판정은 '없음'일 때만).
+// 그 파일은 이번 매니페스트에서 빠지고, 다음 사이클이 다시 올린다(유실 없음).
 for (const [name, err] of [['e500', { message: 'Internal Server Error', status: 500, statusCode: '500' }], ['bucket', BUCKET_NOT_FOUND]]) {
-  test(`LOW-3 매니페스트 없음 + 무변경 파일의 blob 확인 불가(${name}) — 그 파일은 지우지도 밀지도 않고, 다음 사이클이 다시 민다`, async () => {
+  test(`LOW-3 매니페스트 없음 + 무변경 파일의 blob 확인 불가(${name}) — 그 파일은 실패로 두고 지우지도 밀지도 않으며, 다음 사이클이 다시 올린다`, async () => {
     const WS = `probe-err-${name}`;
-    const { count } = await seedCompany(WS, 12, { blobs: () => false, manifest: false });
-    const f = storage({});
-    f.state.downloadError = (k) => (k.endsWith('/n4.md') ? err : null); // 매니페스트는 진짜 없음(Object not found)
+    const { count, store } = await seedCompany(WS, 12, { edited: (i) => i < 8, manifest: false }); // 무변경 후보 n8~n11, blob 있음
+    const f = storage(store);
+    f.state.downloadError = (k) => (k.endsWith('/n9.md') ? err : null); // 매니페스트는 진짜 없음(Object not found)
     _setSyncClientForTest(f.client);
     const r = await syncCompany(WS, OWNER, false);
-    assert.equal(r.failed, 1); assert.equal(r.deletedL, 0);
-    assert.ok(!f.log.uploads.some((k) => k.endsWith('/n4.md')), '확인 못 한 파일은 밀지 않는다');
+    assert.equal(r.failed, 1); assert.equal(r.deletedL, 0); assert.equal(r.healed, 3);
+    assert.ok(!f.log.uploads.some((k) => k.endsWith('/n9.md')), '확인 못 한 파일은 밀지 않는다');
     assert.equal(await count(), 12);
     f.state.downloadError = null;
     _setSyncClientForTest(f.client);
     const r2 = await syncCompany(WS, OWNER, false);
-    assert.equal(r2.deletedL, 0);
-    assert.ok(f.store.has(`${OWNER}/${WS}/vault/notes/n4.md`), '다음 사이클이 다시 민다');
+    assert.equal(r2.deletedL, 0); assert.equal(r2.healed + r2.pushed, 1, '다음 사이클이 n9를 원격 매니페스트에 다시 올린다(main과 같은 파일 단위 실패 경로)');
+    const manifest = JSON.parse(openSecretCompat(f.store.get(`${OWNER}/${WS}/__manifest__.json`)).toString());
+    assert.ok('vault/notes/n9.md' in manifest.files);
     assert.equal(await count(), 12);
   });
 }
+
+// 사전 확인은 루프와 같은 파일만 본다 — 계정 키가 없는 사이클의 암호화 대상은 main처럼 불가시 보류(held)이고, blob이 없다고 사이클을 멈추지 않는다.
+test('사전 확인 대상 = 루프와 같음 — 키 없는 기기 + 매니페스트 없음 + blob 없는 노트는 main처럼 held, 사이클 보류 아님', async () => {
+  const WS = 'nokey-wiped';
+  const { clearAccountKey } = await import('../src/accountkey.mjs');
+  const { count } = await seedCompany(WS, 5, { blobs: () => false, manifest: false });
+  const f = storage({});
+  clearAccountKey();
+  try {
+    _setSyncClientForTest(f.client);
+    const r = await syncCompany(WS, OWNER, false);
+    assert.equal(r.held, 5, '노트는 불가시 보류');
+    assert.equal(r.deletedL, 0);
+    assert.ok(!f.log.uploads.some((k) => k.includes('/vault/notes/')), '노트를 올리지 않는다');
+    assert.equal(await count(), 5);
+  } finally { await useFakeAccountKey(3, 'o'); }
+});
+
+test('사전 확인 대상 = 루프와 같음 — 자격 동기화 끔(noSecrets) + 매니페스트 없음 + blob 없는 .secrets.json은 main처럼 건너뜀, 사이클 보류 아님', async () => {
+  const WS = 'nosecrets-wiped';
+  await seedCompany(WS, 3, { blobs: () => false, manifest: false, edited: () => true });
+  const sec = Buffer.from(JSON.stringify({ k: 'local-only' }));
+  await writeFile(join(ROOT, WS, '.secrets.json'), sec);
+  const st = JSON.parse(await readFile(join(ROOT, WS, '.sync-state.json'), 'utf8'));
+  st.files['.secrets.json'] = meta(sec);
+  await writeFile(join(ROOT, WS, '.sync-state.json'), JSON.stringify(st));
+  const f = storage({});
+  _setSyncClientForTest(f.client);
+  const r = await syncCompany(WS, OWNER, false, { noSecrets: true });
+  assert.equal(r.pushed, 3, '고친 노트는 main처럼 민다');
+  assert.ok(!f.log.uploads.some((k) => k.endsWith('/.secrets.json')), '자격 파일은 건너뜀');
+  assert.equal(await readFile(join(ROOT, WS, '.secrets.json'), 'utf8'), sec.toString(), '로컬 자격 파일 그대로');
+});
