@@ -196,7 +196,8 @@ export async function dealsTool(args, { ctx = null, lang = 'ko', ownerId = null 
       const changed = [...FIELDS, 'category', 'status', 'notes'].filter((k) => next[k] !== (cu[k] ?? ''));
       if (!changed.length) return pick('바꿀 것이 없다(이미 그 값이다).', 'Nothing to change (already that value).', lang);
       await write('customer.save', { id: cu.id, version: cu.version, ...next });
-      return pick(`거래처를 고쳤다(${changed.map((k) => FIELD_NAME[k][0]).join('·')}): ${ox.line(next.name)} (id=${cu.id})`, `Updated the customer (${changed.map((k) => FIELD_NAME[k][1]).join(', ')}): ${ox.line(next.name)} (id=${cu.id})`, lang);
+      // 확인 문장도 도구 결과다(검수 #fix-cross M2) — 거래처 이름은 읽어 온 남의 글이라 경계 블록 안에
+      return `${pick(`거래처를 고쳤다(${changed.map((k) => FIELD_NAME[k][0]).join('·')} · id=${cu.id}):`, `Updated the customer (${changed.map((k) => FIELD_NAME[k][1]).join(', ')} · id=${cu.id}):`, lang)}\n${ox.block([one(next.name)], DEAL_TEXT)}`;
     }
 
     if (a.action === 'deals') {
@@ -244,21 +245,22 @@ export async function dealsTool(args, { ctx = null, lang = 'ko', ownerId = null 
       }
       const r = await write('order.create', { title, customer_id: cu.id, lines: rows, ...(due ? { due_on: due } : {}), ...(at ? { at } : {}) });
       const total = rows.reduce((n, x) => n + x.quantity * x.unit_price + vatOf(x.quantity * x.unit_price, x.tax_type), 0);
-      return pick(`거래를 견적 단계로 등록했다: ${ox.line(title)} · ${ox.line(cu.name)} · 합계 ${won(total, 'ko')}(부가세 포함)${due ? ` · 입금 예정 ${due}` : ''} (id=${r?.id})${made.length ? `\n새 품목을 만들었다: ${made.map(ox.line).join(', ')}` : ''}`,
-        `Added the deal as a quote: ${ox.line(title)} · ${ox.line(cu.name)} · total ${won(total, 'en')} incl. VAT${due ? ` · due ${due}` : ''} (id=${r?.id})${made.length ? `\nNew items: ${made.map(ox.line).join(', ')}` : ''}`, lang);
+      // 거래처 이름은 읽어 온 남의 글이라 경계 블록 안에(내가 준 건명도 같이), 새 품목 이름은 내가 준 값이라 한 줄로(검수 #fix-cross M2)
+      return `${pick(`거래를 견적 단계로 등록했다 — 합계 ${won(total, 'ko')}(부가세 포함)${due ? ` · 입금 예정 ${due}` : ''} (id=${r?.id}) · 건명 · 거래처:`, `Added the deal as a quote — total ${won(total, 'en')} incl. VAT${due ? ` · due ${due}` : ''} (id=${r?.id}) · title · customer:`, lang)}\n${ox.block([`${title} · ${one(cu.name)}`], DEAL_TEXT)}${made.length ? pick(`\n새 품목을 만들었다: ${made.map(ox.line).join(', ')}`, `\nNew items: ${made.map(ox.line).join(', ')}`, lang) : ''}`;
     }
 
     if (a.action === 'deal_next' || a.action === 'deal_due') {
       const o = orders.find((x) => x.id === a.id);
       if (!a.id || !o) return pick(`${a.action}에는 id(deals가 보여 준 거래 id)가 필요하다.`, `${a.action} needs a deal id from deals.`, lang);
-      const x = deal(o), name = ox.line(titleOf(o));
+      const x = deal(o), name = titleOf(o); // 건명은 남이 쓴 글 — 확인 문장은 아래 titled()로 경계 블록 안에(검수 #fix-cross M2)
+      const titled = (head) => `${head}\n${ox.block([name], DEAL_TEXT)}`;
       if (a.action === 'deal_due') {
         const v = String(a.due_on ?? '').trim();
         const due = v.toLowerCase() === 'none' ? null : v;
         if (due !== null && !isDate(due)) return pick('deal_due의 due_on은 YYYY-MM-DD(지우려면 none).', 'deal_due needs due_on as YYYY-MM-DD (none to clear).', lang);
         if ((o.due_on ? String(o.due_on).slice(0, 10) : null) === due) return pick('이미 그 입금 예정일이다.', 'Already that due date.', lang);
         await write('order.update', { id: o.id, due_on: due });
-        return due ? pick(`입금 예정일을 ${due}로 정했다: ${name}`, `Set the payment due date to ${due}: ${name}`, lang) : pick(`입금 예정일을 지웠다: ${name}`, `Cleared the payment due date: ${name}`, lang);
+        return titled(due ? pick(`입금 예정일을 ${due}로 정했다. 거래 건명:`, `Set the payment due date to ${due}. Deal title:`, lang) : pick('입금 예정일을 지웠다. 거래 건명:', 'Cleared the payment due date. Deal title:', lang));
       }
       const to = a.to;
       if (!['contract', 'invoice', 'paid', 'cancel'].includes(to)) return pick('deal_next에는 to(contract 계약 · invoice 계산서 발행 · paid 입금 기록 · cancel 취소)가 필요하다.', 'deal_next needs to: contract, invoice, paid or cancel.', lang);
@@ -294,7 +296,7 @@ export async function dealsTool(args, { ctx = null, lang = 'ko', ownerId = null 
         await write('order.cancel', { id: o.id, ...when, note });
         did = pick('취소했다(청구가 있었으면 서버가 청구 취소를 남긴다)', 'cancelled it (any invoice is credited by the server)', lang);
       }
-      return pick(`거래 "${name}"을(를) ${did}.`, `Deal "${name}": ${did}.`, lang);
+      return titled(pick(`${did}. 거래 건명:`, `${did[0].toUpperCase()}${did.slice(1)}. Deal title:`, lang));
     }
 
     return pick('action은 customers·customer_add·customer_set·deals·deal_add·deal_next·deal_due 중 하나다.', 'action must be customers, customer_add, customer_set, deals, deal_add, deal_next or deal_due.', lang);

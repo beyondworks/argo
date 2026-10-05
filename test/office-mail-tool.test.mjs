@@ -107,7 +107,7 @@ test('M4(A3). mail_draft: 언제나 새 초안(초안 id를 주지 않는다), �
   const d = fetches(calls).find((c) => /draft/.test(c.url));
   assert.equal(d.url, 'https://office.example.com/api/mail/draft'); assert.equal(d.init.method, 'POST');
   assert.deepEqual(JSON.parse(d.init.body), { account: A1, to: 'kim@hanbit.kr', subject: 'Re: 견적 문의', text: '견적서 첨부드립니다.', threadId: 'th1', inReplyTo: '<m100@hanbit.kr>', references: '<m099@hanbit.kr> <m100@hanbit.kr>' });
-  assert.match(out, /임시 보관함에 저장했다\(보내지 않았다[\s\S]*받는 사람 kim@hanbit\.kr · 제목 Re: 견적 문의 · me@beyond\.kr · 답장 \(초안 id=d-1\)/);
+  assert.match(out, /임시 보관함에 저장했다\(보내지 않았다[^\n]* · me@beyond\.kr · 답장 \(초안 id=d-1\):\n--- 바깥 글 시작[^\n]*\n받는 사람 kim@hanbit\.kr · 제목 Re: 견적 문의\n--- 바깥 글 끝 /, '답장의 받는 사람·제목은 원문에서 가져온 바깥 글 — 확인 문장에서는 경계 블록 안에(검수 M2)');
   calls = fake({ api: { 'api/mail/read': () => new Response(JSON.stringify({ ...ORIGINAL, from: '김유건', addr: 'me@beyond.kr', to: 'kim@hanbit.kr', subject: 'Re: 견적 문의' })) } });
   await run({ action: 'mail_draft', reply_to: `${A1}.g100`, text: '추가로 말씀드립니다.' });
   assert.deepEqual([JSON.parse(fetches(calls).at(-1).init.body).to, JSON.parse(fetches(calls).at(-1).init.body).subject], ['kim@hanbit.kr', 'Re: 견적 문의'], '주인이 보낸 메일에 이어 쓰면 원래 받는 사람에게, Re:는 겹치지 않게');

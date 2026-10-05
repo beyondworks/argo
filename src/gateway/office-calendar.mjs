@@ -247,7 +247,13 @@ export async function calendarTool(args, { ctx = null, crew, lang = 'ko', ownerI
       const { events } = await listRange(c, a.day, addDays(a.day, 1));
       const row = events.find((ev) => ev.id === a.id && inTurnScope(ev, ctx));
       if (!row) return pick(`${a.day}에 id=${a.id} 일정이 없다 — list로 id와 날짜를 다시 확인하라.`, `No event id=${a.id} on ${a.day} — check the id and date with list.`, lang);
-      if (row.owner !== c.uid || row.can_edit !== true) return pick(`이 일정은 주인(${ox.line(row.owner_name) || '다른 사람'})의 것이라 에이전트가 고치거나 지울 수 없다 — 그 사실을 한 줄로 알려라.`, `This event belongs to ${ox.line(row.owner_name) || 'someone else'}, so an agent cannot change or delete it — say so in one line.`, lang);
+      if (row.owner !== c.uid || row.can_edit !== true) {
+        // 일정 주인 이름은 읽어 온 남이 쓴 글 — 거절 문장에서도 경계 블록 안에(검수 #fix-cross M2)
+        const who = one(row.owner_name);
+        return who
+          ? `${pick('이 일정은 다른 사람의 것이라 에이전트가 고치거나 지울 수 없다 — 그 사실을 한 줄로 알려라. 일정 주인:', 'This event belongs to someone else, so an agent cannot change or delete it — say so in one line. Event owner:', lang)}\n${ox.block([who], EVENT_TEXT)}`
+          : pick('이 일정은 다른 사람의 것이라 에이전트가 고치거나 지울 수 없다 — 그 사실을 한 줄로 알려라.', 'This event belongs to someone else, so an agent cannot change or delete it — say so in one line.', lang);
+      }
       const recurring = !!parseRrule(row.rrule);
       const occ = recurring ? occurrences(row, kstMidnight(a.day), kstMidnight(addDays(a.day, 1))).find((o) => o.day === a.day) : null;
       if (recurring && !occ) return pick(`${a.day}은(는) 이 반복 일정의 회차가 아니다.`, `${a.day} is not an occurrence of this repeating event.`, lang);
@@ -261,7 +267,7 @@ export async function calendarTool(args, { ctx = null, crew, lang = 'ko', ownerI
         else if (scope === 'following' && a.day > firstDay) await writeEvent(c, 'split', { id: row.id, day: a.day, crew });
         else await writeEvent(c, 'delete', { id: row.id, crew });
         const what = scope === 'this' ? pick(`${a.day} 회차만`, `only the ${a.day} occurrence`, lang) : scope === 'following' ? pick(`${a.day} 회차부터 이후`, `from ${a.day} onward`, lang) : pick('전체', 'entirely', lang);
-        return pick(`일정 "${ox.line(row.title)}"을(를) ${what} 지웠다.`, `Deleted "${ox.line(row.title)}" ${what}.`, lang);
+        return `${pick(`일정을 ${what} 지웠다. 지운 일정:`, `Deleted the event ${what}. Deleted event:`, lang)}\n${ox.block([one(row.title) || pick('(제목 없음)', '(untitled)', lang)], EVENT_TEXT)}`; // 제목은 일정 기록의 글 — 블록 안에(검수 #fix-cross M2)
       }
 
       // update — 바꾼 값만 기존 행 위에 얹는다(명세 save = 전체 필드)

@@ -141,7 +141,7 @@ test('D4(T3). customer_set: 읽고 합쳐 쓴다 — 준 칸만 바꾸고 빈 �
   const out = await run({ action: 'customer_set', id: C1, email: 'new@hanbit.kr', manager: '', ceo: '   ', notes: '출처: 계약서' });
   const w = writes(calls)[0].args.p_data;
   assert.deepEqual(w, { id: C1, version: 3, name: '한빛상사', manager: '김민수', phone: '010-1234-5678', email: 'new@hanbit.kr', ceo: '이대표', biz_no: '123-45-67890', address: '서울', account: '국민 111-222', category: 'customer', status: 'active', notes: '첫 거래\n출처: 계약서' });
-  assert.match(out, /고쳤다\(메일·메모\): 한빛상사/);
+  assert.match(out, /고쳤다\(메일·메모 · id=[^)]+\):\n--- 바깥 글 시작[^\n]*\n한빛상사\n--- 바깥 글 끝 /, '거래처 이름은 읽어 온 남의 글 — 확인 문장에서는 경계 블록 안에(검수 M2)');
   assert.match(await run({ action: 'customer_set', id: C1, email: 'kim@hanbit.kr', manager: '' }), /바꿀 것이 없다/);
   assert.match(await run({ action: 'customer_set', id: C1, phone: '010-0000-0000' }), /전화은\(는\) 주인과의 1:1/, '가림 표시한 칸은 1:1에서만 고친다');
   assert.match(await run({ action: 'customer_set', id: C1, account: '신한 9' }), /계좌/);
@@ -183,7 +183,7 @@ test('D6(T6). deal_add: 같은 거래처(또는 거래처 미지정)에 비슷�
   assert.deepEqual(writes(calls)[0].args.p_data, { name: '사진 촬영', kind: 'service', sku: '', price: 200000 });
   assert.deepEqual(writes(calls)[1].args.p_data, { title: '웹사이트 리뉴얼 2차', customer_id: C1, due_on: '2026-11-10', at: '2026-10-03',
     lines: [{ item_id: 'i1', quantity: 1, unit_price: 1000000, tax_type: 'taxable' }, { item_id: 'new-item', quantity: 3, unit_price: 200000, tax_type: 'exempt' }] });
-  assert.match(out, /견적 단계로 등록했다: 웹사이트 리뉴얼 2차 · 한빛상사 · 합계 1,700,000원\(부가세 포함\) · 입금 예정 2026-11-10 \(id=new-order\)\n새 품목을 만들었다: 사진 촬영/);
+  assert.match(out, /견적 단계로 등록했다 — 합계 1,700,000원\(부가세 포함\) · 입금 예정 2026-11-10 \(id=new-order\) · 건명 · 거래처:\n--- 바깥 글 시작[^\n]*\n웹사이트 리뉴얼 2차 · 한빛상사\n--- 바깥 글 끝 [^\n]*\n새 품목을 만들었다: 사진 촬영/);
   calls = fake();
   assert.match(await run({ action: 'deal_add', title: '전혀 다른 일', customer_id: C1, lines: [{ item: 'i1', unit_price: 5 }] }), /등록했다/);
   assert.deepEqual(writes(calls).map((c) => c.args.p_action), ['order.create']);
@@ -214,7 +214,7 @@ test('D7(T7). deal_next: 오피스 단추처럼 한 단계 = 장부 기록 하�
 
 test('D8. deal_due: 입금 예정일 정하기(order.update), 같은 날짜면 쓰지 않고 none은 지우기, 서버 거절은 원인을 한 줄로', async () => {
   let calls = fake();
-  assert.match(await run({ action: 'deal_due', id: 'o1', due_on: '2026-10-31' }), /2026-10-31로 정했다: 웹사이트 리뉴얼/);
+  assert.match(await run({ action: 'deal_due', id: 'o1', due_on: '2026-10-31' }), /2026-10-31로 정했다\. 거래 건명:\n--- 바깥 글 시작[^\n]*\n웹사이트 리뉴얼[^\n]*\n--- 바깥 글 끝 /);
   assert.deepEqual(writes(calls).at(-1).args.p_data, { id: 'o1', due_on: '2026-10-31' });
   assert.match(await run({ action: 'deal_due', id: 'o2', due_on: '2026-09-30' }), /이미 그/);
   assert.match(await run({ action: 'deal_due', id: 'o2', due_on: 'none' }), /지웠다/);

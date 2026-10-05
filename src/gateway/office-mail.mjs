@@ -138,7 +138,7 @@ export async function mailTool(args, { ctx = null, lang = 'ko', ownerId = null }
       const text = String(a.text ?? '');
       if (!text.trim()) return pick('mail_draft에는 text(본문)가 필요하다.', 'mail_draft needs text (the body).', lang);
       if (text.length > 50_000) return pick('본문은 50,000자까지.', 'The body is limited to 50,000 chars.', lang);
-      let acc, thread = {}, to = one(a.to), subject = one(a.subject);
+      let acc, thread = {}, to = one(a.to), subject = one(a.subject), fromMail = false; // fromMail = 받는 사람·제목을 답장 원문(바깥 글)에서 가져왔다
       if (a.reply_to) {
         const t = target(a.reply_to);
         if (t.text) return t.text;
@@ -147,8 +147,8 @@ export async function mailTool(args, { ctx = null, lang = 'ko', ownerId = null }
         const m = r.data;
         acc = t.acc;
         thread = { threadId: m.threadId, ...(m.messageId ? { inReplyTo: m.messageId, references: [m.references, m.messageId].filter(Boolean).join(' ') } : {}) }; // 같은 스레드의 답장으로 잇는다
-        if (!to) to = (m.addr && m.addr.toLowerCase() !== acc.address.toLowerCase() ? m.addr : m.to) || ''; // 주인이 보낸 메일에 이어 쓰면 원래 받는 사람에게
-        if (!subject) subject = /^re:/i.test(m.subject ?? '') ? m.subject : `Re: ${m.subject ?? ''}`.trim();
+        if (!to) { to = (m.addr && m.addr.toLowerCase() !== acc.address.toLowerCase() ? m.addr : m.to) || ''; fromMail = true; } // 주인이 보낸 메일에 이어 쓰면 원래 받는 사람에게
+        if (!subject) { subject = /^re:/i.test(m.subject ?? '') ? m.subject : `Re: ${m.subject ?? ''}`.trim(); fromMail = true; }
       } else {
         acc = choose();
         if (!acc) return pick(`그 계정이 없다. 연결된 계정: ${accountList}`, `No such account. Connected: ${accountList}`, lang);
@@ -160,8 +160,13 @@ export async function mailTool(args, { ctx = null, lang = 'ko', ownerId = null }
       if (subject.length > 300) return pick('제목은 300자까지.', 'The subject is limited to 300 chars.', lang);
       const r = await mailApi('draft', { account: acc.id, to, ...(cc ? { cc } : {}), subject, text, ...thread }, lang); // draftId를 주지 않는다 = 언제나 새 초안
       if (r.text) return r.text;
-      return pick(`초안을 임시 보관함에 저장했다(보내지 않았다 — 주인이 오피스 메일에서 검토하고 보낸다): 받는 사람 ${to} · 제목 ${subject || '(제목 없음)'} · ${acc.address}${thread.threadId ? ' · 답장' : ''} (초안 id=${r.data?.draftId ?? '?'})`,
-        `Saved a draft (not sent — the owner reviews and sends it in Office mail): to ${to} · subject ${subject || '(no subject)'} · ${acc.address}${thread.threadId ? ' · reply' : ''} (draft id=${r.data?.draftId ?? '?'})`, lang);
+      // 확인 문장도 모델이 읽는 도구 결과다(검수 #fix-cross M2) — 답장은 받는 사람·제목을 원문(바깥 글)에서 가져오니 경계 블록 안에, 내가 준 값은 한 줄로 펴서 표지 흉내를 바꿔 쓴다.
+      // 서버로 보낸 값(위 draft 호출)은 그대로다 — 여기서 바꾸는 것은 모델에게 되돌리는 글뿐
+      const ox = outsideOf('mail', lang, mailDeps.nonce());
+      const echo = pick(`받는 사람 ${ox.line(to)} · 제목 ${ox.line(subject) || '(제목 없음)'}`, `to ${ox.line(to)} · subject ${ox.line(subject) || '(no subject)'}`, lang);
+      const saved = pick(`초안을 임시 보관함에 저장했다(보내지 않았다 — 주인이 오피스 메일에서 검토하고 보낸다)`, `Saved a draft (not sent — the owner reviews and sends it in Office mail)`, lang);
+      const tail = `${acc.address}${thread.threadId ? pick(' · 답장', ' · reply', lang) : ''} (${pick('초안', 'draft', lang)} id=${r.data?.draftId ?? '?'})`;
+      return fromMail ? `${saved} · ${tail}:\n${ox.block([echo], ['받는 사람·제목은 답장 원문에서 가져온 바깥 글', 'recipient and subject taken from the original mail (written by others)'])}` : `${saved}: ${echo} · ${tail}`;
     }
 
     if (a.action === 'mail_star') {

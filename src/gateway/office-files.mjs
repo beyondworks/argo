@@ -120,6 +120,8 @@ export async function filesTool(args, { ctx = null, lang = 'ko', ownerId = null 
     const quiet = (f) => !owner && f.category === 'bankbook'; // 통장사본 글자(계좌번호)는 1:1에서만
     const ox = outsideOf('files', lang);
     const FILE_TEXT = ['파일 제목·요약·읽은 글자는 사람들이 쓰거나 보낸 글', 'file titles, summaries and extracted text written or sent by people'];
+    const DRIVE_TEXT = ['드라이브 이름·링크는 사람들이 쓴 글', 'Drive names and links written by people'];
+    const one = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
 
     if (a.action === 'files') {
       if (a.customer_id && !UUID.test(a.customer_id)) return pick('customer_id는 업무 › 거래처의 id(uuid)다.', 'customer_id must be a customer uuid.', lang);
@@ -174,7 +176,7 @@ export async function filesTool(args, { ctx = null, lang = 'ko', ownerId = null 
       const list = r.data?.files ?? [];
       if (!list.length) return pick('드라이브에 맞는 항목이 없다.', 'Nothing matches in Drive.', lang);
       return [pick(`구글 드라이브 ${list.length}건(이름 · 종류 · id):`, `Google Drive, ${list.length} items (name · type · id):`, lang),
-        ox.block(list.slice(0, 50).map((f) => `- ${ox.line(f.name)} · ${f.isFolder ? pick('폴더', 'folder', lang) : ox.line(f.mimeType)}${f.size ? ` · ${kb(f.size)}` : ''} · id=${f.id}`), ['드라이브 이름은 사람들이 쓴 글', 'Drive names written by people']),
+        ox.block(list.slice(0, 50).map((f) => `- ${ox.line(f.name)} · ${f.isFolder ? pick('폴더', 'folder', lang) : ox.line(f.mimeType)}${f.size ? ` · ${kb(f.size)}` : ''} · id=${f.id}`), DRIVE_TEXT),
         pick('문서함으로 가져오려면 drive_import에 id를, 폴더 안을 보려면 drive에 folder=id를 줘라.', 'Use drive_import with an id to copy into Office files, or drive with folder=id.', lang)].join('\n');
     }
     if (a.action === 'drive_import') {
@@ -182,20 +184,21 @@ export async function filesTool(args, { ctx = null, lang = 'ko', ownerId = null 
       if (a.customer_id && !UUID.test(a.customer_id)) return pick('customer_id는 업무 › 거래처의 id(uuid)다.', 'customer_id must be a customer uuid.', lang);
       const r = await officeApi('POST', 'import', { org, id: a.drive_id, ...(a.customer_id ? { customerId: a.customer_id } : {}) }, lang);
       if (r.text) return r.text;
-      return pick(`드라이브에서 문서함으로 가져왔다: ${ox.line(r.data.title)} (id=${r.data.id}).`, `Imported from Drive into Office files: ${ox.line(r.data.title)} (id=${r.data.id}).`, lang);
+      // 드라이브 쪽 이름·링크는 남이 쓴 글 — 쓰기 확인 문장에서도 경계 블록 안에(검수 #fix-cross M2)
+      return `${pick(`드라이브에서 문서함으로 가져왔다(id=${r.data.id}) — 파일 이름:`, `Imported from Drive into Office files (id=${r.data.id}) — file name:`, lang)}\n${ox.block([one(r.data.title)], DRIVE_TEXT)}`;
     }
     if (a.action === 'drive_mkdir') {
       const name = String(a.name ?? '').trim();
       if (!name) return pick('drive_mkdir에는 name이 필요하다.', 'drive_mkdir needs a name.', lang);
       const r = await officeApi('POST', 'mkdir', { name, ...(a.folder ? { parent: a.folder } : {}) }, lang);
       if (r.text) return r.text;
-      return pick(`드라이브에 폴더를 만들었다: ${ox.line(r.data.name)} (id=${r.data.id})${r.data.link ? ` ${ox.line(r.data.link)}` : ''}`, `Created a Drive folder: ${ox.line(r.data.name)} (id=${r.data.id})${r.data.link ? ` ${ox.line(r.data.link)}` : ''}`, lang);
+      return `${pick('드라이브에 폴더를 만들었다 — 이름 · id · 링크:', 'Created a Drive folder — name · id · link:', lang)}\n${ox.block([`${one(r.data.name)} (id=${r.data.id})${r.data.link ? ` ${one(r.data.link)}` : ''}`], DRIVE_TEXT)}`;
     }
     if (a.action === 'drive_export') {
       if (!a.id) return pick('drive_export에는 id(files가 보여 준 문서함 파일 id)가 필요하다.', 'drive_export needs an Office file id.', lang);
       const r = await officeApi('POST', 'export', { org, id: a.id, ...(a.folder ? { folder: a.folder } : {}) }, lang);
       if (r.text) return r.text;
-      return pick(`드라이브로 보냈다: ${ox.line(r.data.name)} (id=${r.data.id})${r.data.link ? ` ${ox.line(r.data.link)}` : ''}`, `Sent to Drive: ${ox.line(r.data.name)} (id=${r.data.id})${r.data.link ? ` ${ox.line(r.data.link)}` : ''}`, lang);
+      return `${pick('드라이브로 보냈다 — 이름 · id · 링크:', 'Sent to Drive — name · id · link:', lang)}\n${ox.block([`${one(r.data.name)} (id=${r.data.id})${r.data.link ? ` ${one(r.data.link)}` : ''}`], DRIVE_TEXT)}`;
     }
     return pick('action은 files·file_read·attach·drive·drive_import·drive_mkdir·drive_export 중 하나다.', 'action must be files, file_read, attach, drive, drive_import, drive_mkdir or drive_export.', lang);
   } catch (e) {

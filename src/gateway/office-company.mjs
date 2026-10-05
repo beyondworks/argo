@@ -21,7 +21,7 @@ const SCORES = ['performance', 'quality', 'productivity', 'expertise', 'collabor
 const SENSITIVE_CATS = new Set(['bank', 'tax']);
 const sensitiveItem = (x) => SENSITIVE_CATS.has(x?.category) || x?.redacted === true;
 const KEYS = ['name', 'reg_name', 'ceo', 'biz_no', 'corp_no', 'open_date', 'address', 'biz_type', 'biz_item', 'manager', 'phone', 'fax', 'email', 'tax_email', 'website'];
-export const LIST_CAP = 60;
+export const LIST_CAP = 60, ECHO_CAP = 300; // ECHO_CAP = 쓰기 확인 문장에 되돌리는 값의 최대 글자(직인·로고는 20만 자까지 들어간다)
 
 // 호출 이름은 글자 그대로 둔다 — 크루 계약 레지스트리(test/crew-contract.test.mjs)가 src/gateway의 rpc('…')를 찾아 분류를 강제한다
 function unwrap({ data, error }) {
@@ -95,7 +95,13 @@ export async function companyTool(args, { ctx = null, crew, lang = 'ko', ownerId
       const data = { id: cur?.id ?? companyDeps.newId(), label: label || cur.label, value: a.value ?? cur?.value ?? '', notes: a.notes ?? cur?.notes ?? '',
         category: a.category ?? cur?.category ?? 'other', key: a.key ?? cur?.key ?? null, ...(cur ? { position: cur.position, redacted: cur.redacted } : {}) };
       const r = unwrap(await c.client.rpc('office_company_write', { p_org: org, p_action: 'item.save', p_data: data }));
-      return pick(`회사 정보를 ${cur ? '고쳤다' : '추가했다'}: ${ox.line(r?.item?.label ?? data.label)} = ${ox.line(r?.item?.value ?? data.value)} (id=${data.id})`, `${cur ? 'Updated' : 'Added'} company info: ${ox.line(r?.item?.label ?? data.label)} = ${ox.line(r?.item?.value ?? data.value)} (id=${data.id})`, lang);
+      // 확인 문장도 도구 결과다(검수 #fix-cross M2) — 직인·로고는 그림 데이터(최대 20만 자)라 자리표시로, 값은 짧게 자른다.
+      // 기존 항목을 고친 문장의 이름·값은 읽어 온 남의 글이라 경계 블록 안에, 내가 새로 넣은 항목은 한 줄로
+      const image = ['seal', 'logo'].includes(data.key);
+      const shown = (v) => (image ? pick('(이미지 데이터)', '(image data)', lang) : one(v).length > ECHO_CAP ? `${one(v).slice(0, ECHO_CAP)}…` : one(v));
+      const itemName = one(r?.item?.label ?? data.label), itemValue = shown(r?.item?.value ?? data.value);
+      if (cur) return `${pick(`회사 정보를 고쳤다(id=${data.id}) — 항목 = 값:`, `Updated company info (id=${data.id}) — item = value:`, lang)}\n${ox.block([`${itemName} = ${itemValue}`], ['회사 정보 항목 이름·값은 사람들이 쓴 글', 'item names and values written by people'])}`;
+      return pick(`회사 정보를 추가했다: ${ox.line(itemName)} = ${ox.line(itemValue)} (id=${data.id})`, `Added company info: ${ox.line(itemName)} = ${ox.line(itemValue)} (id=${data.id})`, lang);
     }
     if (a.action === 'people') {
       const d = unwrap(await c.client.rpc('office_people_read', { p_org: org }));

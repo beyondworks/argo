@@ -107,7 +107,7 @@ test('C5. 남의 일정 update·delete는 쓰기 RPC 없이 한 줄 거절(관�
   const theirs = ev({ id: 't1', org_id: ORG, visibility: 'org', owner: OTHER, owner_name: '박팀장', can_edit: true });
   for (const args of [{ action: 'update', id: 't1', day: '2026-10-02', title: '바꿈' }, { action: 'delete', id: 't1', day: '2026-10-02' }]) {
     const f = use(fakeSession([theirs]));
-    assert.match(await run(args, { ctx: msgrCtx() }), /박팀장.*고치거나 지울 수 없다/);
+    assert.match(await run(args, { ctx: msgrCtx() }), /고치거나 지울 수 없다[^\n]*일정 주인:\n--- 바깥 글 시작[^\n]*\n박팀장\n--- 바깥 글 끝 /, '일정 주인 이름은 읽어 온 남의 글 — 거절 문장에서도 경계 블록 안에(검수 M2)');
     assert.deepEqual(f.calls.map((c) => c.name), ['office_event_list'], `${args.action}: 조회만, 쓰기 없음`);
   }
   const f = use(fakeSession([ev({ can_edit: false })]));

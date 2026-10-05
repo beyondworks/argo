@@ -221,7 +221,7 @@ test('W8(I6). page_add: 글 → 편집기 블록, 형제 뒤 순서 값, 보기�
   assert.equal(c.p_org, ORG); assert.equal(c.p_parent, P(1)); assert.equal(c.p_id, NEW); assert.equal(c.p_template, false);
   assert.equal(c.p_position, between('c', null), '형제(a·b·c) 뒤');
   assert.deepEqual(c.p_content.content.map((n) => n.type), ['heading', 'bulletList', 'taskList', 'paragraph']);
-  assert.match(out, /만들었다: 10월 결산 · 상위 위키/);
+  assert.match(out, /만들었다\(id=[^)]+\) — 제목 · 상위 페이지:\n--- 바깥 글 시작[^\n]*\n10월 결산 · 위키\n--- 바깥 글 끝 /);
   assert.match(await run({ action: 'page_add', title: 'x', parent_id: P(10) }), /보기만/);
   assert.match(await run({ action: 'page_add', title: 'x', parent_id: P(3) }), /1:1/, '여럿이 보는 방에서 비공개 아래에 만들지 않는다');
   ({ calls } = fake({ fail: { 'office_page_create:': 'office: only admins add top-level wiki pages' } }));

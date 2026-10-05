@@ -354,7 +354,9 @@ export async function workTool(args, { ctx = null, crew = null, crewName = null,
         const id = workDeps.newId();
         unwrap(await c.client.rpc('office_page_create', { p_id: id, p_org: org, p_parent: parent?.id ?? null, p_position: between(siblings.at(-1) ?? null, null), p_title: title,
           p_content: nodes.length ? { type: 'doc', content: nodes } : {}, p_template: false }));
-        return pick(`페이지를 만들었다: ${ox.line(title)} · ${parent ? `상위 ${ox.line(parent.title)}` : '최상위'} (id=${id})`, `Created the page: ${ox.line(title)} · ${parent ? `under ${ox.line(parent.title)}` : 'top level'} (id=${id})`, lang);
+        // 확인 문장도 도구 결과다(검수 #fix-cross M2) — 상위 페이지 제목은 읽어 온 남의 글이라 블록 안에, 최상위면 내가 준 제목뿐이라 한 줄로
+        if (parent) return `${pick(`페이지를 만들었다(id=${id}) — 제목 · 상위 페이지:`, `Created the page (id=${id}) — title · parent page:`, lang)}\n${ox.block([`${title} · ${one(parent.title) || pick('(제목 없음)', '(untitled)', lang)}`], PAGE_TEXT)}`;
+        return pick(`페이지를 만들었다: ${ox.line(title)} · 최상위 (id=${id})`, `Created the page: ${ox.line(title)} · top level (id=${id})`, lang);
       }
 
       // page_read · page_edit — 한 페이지
@@ -395,6 +397,8 @@ export async function workTool(args, { ctx = null, crew = null, crewName = null,
       if (title === row.title && next === row.content) return pick('바꿀 것이 없다.', 'Nothing to change.', lang);
       const version = unwrap(await c.client.rpc('office_page_save', { p_id: p.id, p_title: title, p_content: next, p_base_version: row.version }));
       const what = [next !== row.content ? (mode === 'replace' ? pick('본문 바꿈', 'body replaced', lang) : pick('끝에 덧붙임', 'appended', lang)) : null, title !== row.title ? pick('제목', 'title', lang) : null].filter(Boolean).join(pick('·', ', ', lang));
+      // 제목을 안 줬으면 확인 문장의 제목은 읽어 온 기존 제목(남이 쓴 글) — 블록 안에. 내가 준 제목이면 한 줄로(검수 #fix-cross M2)
+      if (!one(a.title)) return `${pick(`페이지를 고쳤다(${what}) · 버전 ${version} — 제목:`, `Updated the page (${what}) · version ${version} — title:`, lang)}\n${ox.block([one(title) || pick('(제목 없음)', '(untitled)', lang)], PAGE_TEXT)}`;
       return pick(`페이지를 고쳤다(${what}): ${ox.line(title)} · 버전 ${version}`, `Updated the page (${what}): ${ox.line(title)} · version ${version}`, lang);
     }
 
