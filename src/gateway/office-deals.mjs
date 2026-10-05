@@ -10,8 +10,9 @@
 // · 여럿이 보는 방에서는 거래처 계좌·사업자번호와 가림 표시한 칸(거래처 연락처 등·거래 건명·금액)을 싣지도 찾지도 않고, 그 칸 넣기·고치기도 주인과의 1:1에서만.
 // · 새 거래처는 계좌·사업자번호를 가린 채로 만든다(오피스 화면·이관과 같은 기본 가림).
 // 부하: 사람이 시킬 때만 부른다(폴링 없음). 목록·고치기 모두 읽기 1(+ 쓰기 1, 새 품목이 있으면 품목마다 쓰기 1).
+// 바깥 글(S1): 거래처 이름·연락처·메모, 거래 건명·품목 이름은 남이 쓴 글이다 — 목록·자세히 결과는 경계 블록으로 감싼다(office-audience.mjs outsideOf).
 import { randomUUID } from 'node:crypto';
-import { officeTurn, ONLY_DM, refusalText } from './office-audience.mjs';
+import { officeTurn, ONLY_DM, refusalText, outsideOf, OUTSIDE_RULE } from './office-audience.mjs';
 
 export const dealsDeps = {
   session: async () => (await import('./msgr.mjs')).sessionClient(),
@@ -99,16 +100,19 @@ export async function dealsTool(args, { ctx = null, lang = 'ko', ownerId = null 
   const onlyDm = (what) => pick(`${what}은(는) ${ONLY_DM(lang)} 다룬다 — 여럿이 보는 방에 값을 올리지 않게. 주인에게 1:1로 부탁해 달라고 알려라.`, `${what} is handled ${ONLY_DM(lang)} so values are not posted where others read. Ask the owner to request it in a 1:1.`, lang);
   // 여럿이 보는 방에서 싣지도 찾지도 않는 칸 — 거래처 계좌·사업자번호(회사 도구의 계좌·세무 칸과 같다)·가림 표시한 칸, 거래의 가림 표시한 건명·금액
   const quietCustomer = (cu) => new Set(owner ? [] : ['account', 'biz_no', ...(cu.redacted ?? [])]);
-  const titleOf = (o) => (!owner && (o.redacted ?? []).includes('title') ? hidden : o.title);
+  const titleOf = (o) => (!owner && (o.redacted ?? []).includes('title') ? hidden : one(o.title));
   const amountQuiet = (o) => !owner && (o.redacted ?? []).includes('amount');
+  const ox = outsideOf('deals', lang);
+  const DEAL_TEXT = ['거래처 이름·연락처·메모와 거래 건명은 사람들이 쓴 글', 'customer names, contacts, notes and deal titles written by people'];
 
   try {
     const d = await read();
     const customers = d.customers ?? [], orders = d.orders ?? [], lines = d.lines ?? [], entries = d.entries ?? [], items = d.items ?? [];
     const custName = new Map(customers.map((x) => [x.id, x.name]));
+    const nameOf = (id) => (custName.has(id) ? one(custName.get(id)) : '?');
     const deal = (o) => { const m = dealAmounts(o, lines, entries); const stage = dealStage(o, m); const late = o.due_on && !['paid', 'cancelled'].includes(stage) ? Math.max(0, dayNo(today) - dayNo(String(o.due_on).slice(0, 10))) : 0; return { o, m, stage, late }; };
     const dealLine = ({ o, m, stage, late }) => {
-      const bits = [`[${STAGE[stage][L(lang)]}] ${titleOf(o)}`, custName.get(o.customer_id) ?? '?'];
+      const bits = [`[${STAGE[stage][L(lang)]}] ${titleOf(o)}`, nameOf(o.customer_id)];
       if (amountQuiet(o)) bits.push(`${pick('금액', 'amount', lang)} ${hidden}`);
       else bits.push(`${pick('합계', 'total', lang)} ${won(m.total, lang)}(${pick('공급', 'supply', lang)} ${won(m.supply, lang)}·${pick('부가세', 'VAT', lang)} ${won(m.vat, lang)})`, `${pick('청구', 'invoiced', lang)} ${won(m.invoiced, lang)}`, `${pick('입금', 'paid', lang)} ${won(m.paid, lang)}`);
       if (o.due_on) bits.push(`${pick('입금 예정', 'due', lang)} ${String(o.due_on).slice(0, 10)}${late ? pick(`(입금 지연 ${late}일)`, ` (${late} days overdue)`, lang) : ''}`);
@@ -117,9 +121,9 @@ export async function dealsTool(args, { ctx = null, lang = 'ko', ownerId = null 
     };
     const customerLine = (cu, full = false) => {
       const q = quietCustomer(cu);
-      const val = (k) => (q.has(k) && cu[k] ? hidden : cu[k]);
+      const val = (k) => (q.has(k) && cu[k] ? hidden : one(cu[k]));
       const n = orders.filter((o) => o.customer_id === cu.id && o.status !== 'cancelled').length;
-      const bits = [cu.name, CATEGORY[cu.category]?.[L(lang)] ?? cu.category, CSTATUS[cu.status]?.[L(lang)] ?? cu.status];
+      const bits = [one(cu.name), CATEGORY[cu.category]?.[L(lang)] ?? cu.category, CSTATUS[cu.status]?.[L(lang)] ?? cu.status];
       for (const k of full ? ['manager', 'phone', 'email', 'ceo', 'biz_no', 'address', 'account'] : ['manager', 'phone', 'email', 'biz_no']) if (cu[k]) bits.push(`${FIELD_NAME[k][L(lang)]} ${val(k)}`);
       bits.push(pick(`거래 ${n}건`, `${n} deals`, lang));
       if (cu.archived_at) bits.push(pick('보관함', 'archived', lang));
@@ -133,11 +137,11 @@ export async function dealsTool(args, { ctx = null, lang = 'ko', ownerId = null 
         const ds = orders.filter((o) => o.customer_id === cu.id).map(deal).sort((x, y) => String(y.o.created_at).localeCompare(String(x.o.created_at))); // 최근 견적순
         const live = ds.filter((x) => x.stage !== 'cancelled');
         const quietNotes = quietCustomer(cu).has('notes');
-        return [customerLine(cu, true).replace(/^- /, ''),
+        return ox.block([customerLine(cu, true).replace(/^- /, ''),
           ...(cu.notes ? [`${pick('메모', 'notes', lang)}: ${quietNotes ? hidden : one(cu.notes).slice(0, 500)}`] : []),
           live.every((x) => !amountQuiet(x.o)) ? pick(`받은 돈 ${won(live.reduce((n, x) => n + x.m.paid, 0), lang)} · 진행 중 ${won(live.filter((x) => x.stage !== 'paid').reduce((n, x) => n + Math.max(0, x.m.total - x.m.paid), 0), lang)}`,
             `Received ${won(live.reduce((n, x) => n + x.m.paid, 0), lang)} · open ${won(live.filter((x) => x.stage !== 'paid').reduce((n, x) => n + Math.max(0, x.m.total - x.m.paid), 0), lang)}`, lang) : '',
-          ...(ds.length ? [pick(`거래 ${ds.length}건:`, `${ds.length} deals:`, lang), ...ds.slice(0, 20).map(dealLine)] : [pick('거래 없음', 'No deals', lang)])].filter(Boolean).join('\n');
+          ...(ds.length ? [pick(`거래 ${ds.length}건:`, `${ds.length} deals:`, lang), ...ds.slice(0, 20).map(dealLine)] : [pick('거래 없음', 'No deals', lang)])].filter(Boolean), DEAL_TEXT);
       }
       let list = customers.filter((x) => (a.archived ? x.archived_at : !x.archived_at));
       const q = one(a.q).toLowerCase();
@@ -145,7 +149,7 @@ export async function dealsTool(args, { ctx = null, lang = 'ko', ownerId = null 
       if (q) list = list.filter((x) => { const quiet = quietCustomer(x), open = (k) => (quiet.has(k) ? '' : x[k] ?? ''); const hay = ['name', 'manager', 'email', 'phone', 'ceo', 'biz_no'].map(open).join('\n').toLowerCase(); return hay.includes(q) || (digits(q).length >= 3 && digits(`${open('phone')}${open('biz_no')}`).includes(digits(q))); });
       if (!list.length) return pick('조건에 맞는 거래처가 없다.', 'No customers match.', lang);
       return [pick(`거래처 ${list.length}곳${a.archived ? '(보관함)' : ''}(이름 · 분류 · 상태 · 연락처 · 거래 수 · id):`, `${list.length} customers${a.archived ? ' (archived)' : ''} (name · category · status · contacts · deals · id):`, lang),
-        ...list.slice(0, LIST_CAP).map((x) => customerLine(x)),
+        ox.block(list.slice(0, LIST_CAP).map((x) => customerLine(x)), DEAL_TEXT),
         ...(list.length > LIST_CAP ? [pick(`…외 ${list.length - LIST_CAP}곳 — q로 좁혀라.`, `…and ${list.length - LIST_CAP} more — narrow with q.`, lang)] : []),
         pick('자세히는 customers에 id, 고치기는 customer_set.', 'Pass id to customers for details; customer_set to edit.', lang)].join('\n');
     }
@@ -170,10 +174,10 @@ export async function dealsTool(args, { ctx = null, lang = 'ko', ownerId = null 
       const notes = String(a.notes ?? '').trim();
       if (notes.length > 10000) return pick('메모는 10000자까지.', 'Notes are limited to 10000 chars.', lang);
       const dup = customers.filter((x) => norm(x.name) === norm(name) || (digits(vals.biz_no).length >= 10 && digits(x.biz_no) === digits(vals.biz_no)));
-      if (dup.length && !a.confirm_duplicate) return [pick('비슷한 거래처가 이미 있다 — 같은 곳이면 customer_set으로 고치고, 다른 곳이 확실하면 confirm_duplicate=true로 다시 하라:', 'A similar customer already exists — use customer_set if it is the same; if it is surely different, retry with confirm_duplicate=true:', lang), ...dup.slice(0, 5).map((x) => customerLine(x))].join('\n');
+      if (dup.length && !a.confirm_duplicate) return [pick('비슷한 거래처가 이미 있다 — 같은 곳이면 customer_set으로 고치고, 다른 곳이 확실하면 confirm_duplicate=true로 다시 하라:', 'A similar customer already exists — use customer_set if it is the same; if it is surely different, retry with confirm_duplicate=true:', lang), ox.block(dup.slice(0, 5).map((x) => customerLine(x)), DEAL_TEXT)].join('\n');
       const data = { name, email: vals.email ?? '', notes, ceo: vals.ceo ?? '', biz_no: vals.biz_no ?? '', manager: vals.manager ?? '', phone: vals.phone ?? '', address: vals.address ?? '', account: vals.account ?? '', category: vals.category ?? 'customer', status: vals.status ?? 'active', redacted: [...NEW_CUSTOMER_REDACT] }; // id를 주지 않는다 = 새로 만들기(서버가 id를 정한다), 계좌·사업자번호는 가린 채로
       const r = await write('customer.save', data);
-      return pick(`거래처를 추가했다: ${name} · ${CATEGORY[data.category][0]} (id=${r?.id})`, `Added the customer: ${name} · ${CATEGORY[data.category][1]} (id=${r?.id})`, lang);
+      return pick(`거래처를 추가했다: ${ox.line(name)} · ${CATEGORY[data.category][0]} (id=${r?.id})`, `Added the customer: ${ox.line(name)} · ${CATEGORY[data.category][1]} (id=${r?.id})`, lang);
     }
 
     if (a.action === 'customer_set') {
@@ -192,7 +196,7 @@ export async function dealsTool(args, { ctx = null, lang = 'ko', ownerId = null 
       const changed = [...FIELDS, 'category', 'status', 'notes'].filter((k) => next[k] !== (cu[k] ?? ''));
       if (!changed.length) return pick('바꿀 것이 없다(이미 그 값이다).', 'Nothing to change (already that value).', lang);
       await write('customer.save', { id: cu.id, version: cu.version, ...next });
-      return pick(`거래처를 고쳤다(${changed.map((k) => FIELD_NAME[k][0]).join('·')}): ${next.name} (id=${cu.id})`, `Updated the customer (${changed.map((k) => FIELD_NAME[k][1]).join(', ')}): ${next.name} (id=${cu.id})`, lang);
+      return pick(`거래처를 고쳤다(${changed.map((k) => FIELD_NAME[k][0]).join('·')}): ${ox.line(next.name)} (id=${cu.id})`, `Updated the customer (${changed.map((k) => FIELD_NAME[k][1]).join(', ')}): ${ox.line(next.name)} (id=${cu.id})`, lang);
     }
 
     if (a.action === 'deals') {
@@ -204,10 +208,10 @@ export async function dealsTool(args, { ctx = null, lang = 'ko', ownerId = null 
       else list = list.filter((x) => x.stage !== 'cancelled');
       if (a.overdue) list = list.filter((x) => x.late > 0);
       const q = one(a.q).toLowerCase();
-      if (q) list = list.filter((x) => String(x.o.title).toLowerCase().includes(q) && titleOf(x.o) === x.o.title);
+      if (q) list = list.filter((x) => String(x.o.title).toLowerCase().includes(q) && titleOf(x.o) !== hidden); // 가린 건명은 검색어로 떠보지 못하게
       if (!list.length) return pick('조건에 맞는 거래가 없다.', 'No deals match.', lang);
       list.sort((x, y) => String(y.o.created_at).localeCompare(String(x.o.created_at)));
-      return [pick(`거래 ${list.length}건(최근 견적순, 금액은 부가세 포함):`, `${list.length} deals (newest first, amounts incl. VAT):`, lang), ...list.slice(0, LIST_CAP).map(dealLine),
+      return [pick(`거래 ${list.length}건(최근 견적순, 금액은 부가세 포함):`, `${list.length} deals (newest first, amounts incl. VAT):`, lang), ox.block(list.slice(0, LIST_CAP).map(dealLine), DEAL_TEXT),
         ...(list.length > LIST_CAP ? [pick(`…외 ${list.length - LIST_CAP}건 — customer_id·stage·q로 좁혀라.`, `…and ${list.length - LIST_CAP} more — narrow with customer_id, stage or q.`, lang)] : []),
         pick('단계 넘기기는 deal_next, 입금 예정일은 deal_due에 id.', 'Use deal_next to move a stage and deal_due for the payment due date.', lang)].join('\n');
     }
@@ -229,7 +233,7 @@ export async function dealsTool(args, { ctx = null, lang = 'ko', ownerId = null 
       // 중복 확인 — 거래처별로만 보지 않는다: 이관의 '(거래처 미지정)' 거래도 함께 본다(인트라넷 이중 계상 사고 2026-08-13)
       const dup = orders.filter((o) => o.status !== 'cancelled' && (o.customer_id === cu.id || custName.get(o.customer_id) === UNASSIGNED) && similar(o.title, title));
       if (dup.length && !a.confirm_duplicate) return [pick('같은 거래처(또는 거래처 미지정)에 비슷한 건명의 거래가 이미 있어 등록하지 않았다 — 같은 건이면 그 거래를 쓰고, 다른 건이 확실하면 confirm_duplicate=true로 다시 하라:', 'A deal with a similar title already exists for this customer (or the unassigned customer), so nothing was added — use that deal if it is the same; if it is surely different, retry with confirm_duplicate=true:', lang),
-        ...dup.slice(0, 5).map((o) => dealLine(deal(o)))].join('\n');
+        ox.block(dup.slice(0, 5).map((o) => dealLine(deal(o))), DEAL_TEXT)].join('\n');
       // 품목: id 또는 이름(대소문자·공백 무시)이 같은 품목, 없으면 서비스 품목으로 새로 만든다(오피스 문서 만들기와 같은 방식)
       const made = [], rows = [];
       for (const l of ls) {
@@ -240,14 +244,14 @@ export async function dealsTool(args, { ctx = null, lang = 'ko', ownerId = null 
       }
       const r = await write('order.create', { title, customer_id: cu.id, lines: rows, ...(due ? { due_on: due } : {}), ...(at ? { at } : {}) });
       const total = rows.reduce((n, x) => n + x.quantity * x.unit_price + vatOf(x.quantity * x.unit_price, x.tax_type), 0);
-      return pick(`거래를 견적 단계로 등록했다: ${title} · ${cu.name} · 합계 ${won(total, 'ko')}(부가세 포함)${due ? ` · 입금 예정 ${due}` : ''} (id=${r?.id})${made.length ? `\n새 품목을 만들었다: ${made.join(', ')}` : ''}`,
-        `Added the deal as a quote: ${title} · ${cu.name} · total ${won(total, 'en')} incl. VAT${due ? ` · due ${due}` : ''} (id=${r?.id})${made.length ? `\nNew items: ${made.join(', ')}` : ''}`, lang);
+      return pick(`거래를 견적 단계로 등록했다: ${ox.line(title)} · ${ox.line(cu.name)} · 합계 ${won(total, 'ko')}(부가세 포함)${due ? ` · 입금 예정 ${due}` : ''} (id=${r?.id})${made.length ? `\n새 품목을 만들었다: ${made.map(ox.line).join(', ')}` : ''}`,
+        `Added the deal as a quote: ${ox.line(title)} · ${ox.line(cu.name)} · total ${won(total, 'en')} incl. VAT${due ? ` · due ${due}` : ''} (id=${r?.id})${made.length ? `\nNew items: ${made.map(ox.line).join(', ')}` : ''}`, lang);
     }
 
     if (a.action === 'deal_next' || a.action === 'deal_due') {
       const o = orders.find((x) => x.id === a.id);
       if (!a.id || !o) return pick(`${a.action}에는 id(deals가 보여 준 거래 id)가 필요하다.`, `${a.action} needs a deal id from deals.`, lang);
-      const x = deal(o), name = titleOf(o);
+      const x = deal(o), name = ox.line(titleOf(o));
       if (a.action === 'deal_due') {
         const v = String(a.due_on ?? '').trim();
         const due = v.toLowerCase() === 'none' ? null : v;
@@ -301,6 +305,6 @@ export async function dealsTool(args, { ctx = null, lang = 'ko', ownerId = null 
 
 export function dealsDescription(lang = 'ko') {
   return lang === 'en'
-    ? 'Argo Office customers and deals of the org of this messenger channel. action=customers lists customers with id (q searches name, contact, email, phone, CEO, business no.; archived=true shows the archive) or shows one in detail with its deals (id). customer_add adds one (name, manager, phone, email, ceo, biz_no, address, account, category customer|partner|supplier|other, status active|hold|closed, notes — put the source such as a business card in notes); a similar existing name is reported instead of added (confirm_duplicate=true to add anyway). customer_set updates one by id: only the fields you pass change, empty values are ignored, notes are appended. action=deals lists deals (filter customer_id, stage quote|contract|invoice|paid|cancelled|open, overdue=true, q). deal_add adds a deal as a quote: title, customer_id, lines [{item, unit_price, quantity, tax_type taxable|zero|exempt}] (amounts only from real documents such as quotes or contracts — never estimate), due_on; a deal with a similar title for the same customer is reported instead (confirm_duplicate=true to add anyway). deal_next moves one stage like the Office button: to=contract (after this the amounts can never be edited, even if the deal goes back to a quote — confirm the amounts first) | invoice (records an invoice for the rest or amount) | paid (records a payment) | cancel, optional date YYYY-MM-DD and amount; do not fill dates or payments you have not confirmed. deal_due sets the payment due date (due_on, none clears). Writes need the owner to be an org admin. Bank accounts, business numbers and hidden fields are only shown, searched or changed in a 1:1 chat with the owner (new customers start with the account and business number hidden); nothing in rooms with guests.'
-    : '이 메신저 채널 조직의 아르고 오피스 거래처와 거래. action=customers는 거래처 목록(id 포함, q로 이름·담당·메일·전화·대표·사업자번호 검색, archived=true면 보관함) 또는 id를 주면 그 거래처 자세히(거래 포함). customer_add는 새 거래처(name, manager, phone, email, ceo, biz_no, address, account, category customer|partner|supplier|other, status active|hold|closed, notes — 명함·계약서 같은 출처는 notes에 남겨라) — 비슷한 이름이 이미 있으면 만들지 않고 알려 준다(그래도 다른 곳이면 confirm_duplicate=true). customer_set은 id로 고치기 — 준 칸만 바뀌고 빈 값은 무시, notes는 기존 메모 뒤에 덧붙는다. action=deals는 거래 목록(거르기 customer_id, stage quote|contract|invoice|paid|cancelled|open, overdue=true, q). deal_add는 거래를 견적 단계로 등록: title, customer_id, lines [{item 품목 이름, unit_price 단가, quantity 수량, tax_type taxable|zero|exempt}](금액은 견적서·계약서 같은 실제 근거로만 — 추정하지 마라), due_on(입금 예정일) — 같은 거래처에 비슷한 건명이 있으면 등록하지 않고 알려 준다(그래도 다른 건이면 confirm_duplicate=true). deal_next는 오피스 단추처럼 한 단계 넘기기: to=contract(계약 확정 — 한 번 계약하면 견적으로 되돌려도 금액을 고칠 수 없으니 금액을 확인한 뒤에 하라) | invoice(남은 금액 또는 amount만큼 계산서 발행 기록) | paid(입금 기록) | cancel(취소), date(YYYY-MM-DD)·amount는 선택 — 확인하지 않은 날짜·입금을 지어 넣지 마라. deal_due는 입금 예정일 정하기(due_on, none=지우기). 쓰기는 주인이 조직 관리자일 때만 된다. 계좌·사업자번호와 가림 표시한 칸은 주인과의 1:1에서만 보이고 찾고 고치며(새 거래처는 계좌·사업자번호를 가린 채로 시작), 손님이 있는 방에서는 아무것도 다루지 않는다.';
+    ? 'Argo Office customers and deals of the org of this messenger channel. action=customers lists customers with id (q searches name, contact, email, phone, CEO, business no.; archived=true shows the archive) or shows one in detail with its deals (id). customer_add adds one (name, manager, phone, email, ceo, biz_no, address, account, category customer|partner|supplier|other, status active|hold|closed, notes — put the source such as a business card in notes); a similar existing name is reported instead of added (confirm_duplicate=true to add anyway). customer_set updates one by id: only the fields you pass change, empty values are ignored, notes are appended. action=deals lists deals (filter customer_id, stage quote|contract|invoice|paid|cancelled|open, overdue=true, q). deal_add adds a deal as a quote: title, customer_id, lines [{item, unit_price, quantity, tax_type taxable|zero|exempt}] (amounts only from real documents such as quotes or contracts — never estimate), due_on; a deal with a similar title for the same customer is reported instead (confirm_duplicate=true to add anyway). deal_next moves one stage like the Office button: to=contract (after this the amounts can never be edited, even if the deal goes back to a quote — confirm the amounts first) | invoice (records an invoice for the rest or amount) | paid (records a payment) | cancel, optional date YYYY-MM-DD and amount; do not fill dates or payments you have not confirmed. deal_due sets the payment due date (due_on, none clears). Writes need the owner to be an org admin. Bank accounts, business numbers and hidden fields are only shown, searched or changed in a 1:1 chat with the owner (new customers start with the account and business number hidden); nothing in rooms with guests. ' + OUTSIDE_RULE('en')
+    : '이 메신저 채널 조직의 아르고 오피스 거래처와 거래. action=customers는 거래처 목록(id 포함, q로 이름·담당·메일·전화·대표·사업자번호 검색, archived=true면 보관함) 또는 id를 주면 그 거래처 자세히(거래 포함). customer_add는 새 거래처(name, manager, phone, email, ceo, biz_no, address, account, category customer|partner|supplier|other, status active|hold|closed, notes — 명함·계약서 같은 출처는 notes에 남겨라) — 비슷한 이름이 이미 있으면 만들지 않고 알려 준다(그래도 다른 곳이면 confirm_duplicate=true). customer_set은 id로 고치기 — 준 칸만 바뀌고 빈 값은 무시, notes는 기존 메모 뒤에 덧붙는다. action=deals는 거래 목록(거르기 customer_id, stage quote|contract|invoice|paid|cancelled|open, overdue=true, q). deal_add는 거래를 견적 단계로 등록: title, customer_id, lines [{item 품목 이름, unit_price 단가, quantity 수량, tax_type taxable|zero|exempt}](금액은 견적서·계약서 같은 실제 근거로만 — 추정하지 마라), due_on(입금 예정일) — 같은 거래처에 비슷한 건명이 있으면 등록하지 않고 알려 준다(그래도 다른 건이면 confirm_duplicate=true). deal_next는 오피스 단추처럼 한 단계 넘기기: to=contract(계약 확정 — 한 번 계약하면 견적으로 되돌려도 금액을 고칠 수 없으니 금액을 확인한 뒤에 하라) | invoice(남은 금액 또는 amount만큼 계산서 발행 기록) | paid(입금 기록) | cancel(취소), date(YYYY-MM-DD)·amount는 선택 — 확인하지 않은 날짜·입금을 지어 넣지 마라. deal_due는 입금 예정일 정하기(due_on, none=지우기). 쓰기는 주인이 조직 관리자일 때만 된다. 계좌·사업자번호와 가림 표시한 칸은 주인과의 1:1에서만 보이고 찾고 고치며(새 거래처는 계좌·사업자번호를 가린 채로 시작), 손님이 있는 방에서는 아무것도 다루지 않는다. ' + OUTSIDE_RULE('ko');
 }

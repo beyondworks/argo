@@ -2,7 +2,9 @@
 // 다룰 수 있는 것은 **주인의 일정**뿐: 개인 일정과 조직에 있는 주인 소유 일정. 남이 주인인 일정은 목록에서 읽기만 한다.
 // 서버(office_event_write)도 p_data.crew가 있으면 주인만 고치게 막지만, 도구가 먼저 거절해 헛호출을 만들지 않는다.
 // 손님 턴 거절은 chat.mjs 처리기(guestNo)가 이 함수보다 먼저 한다.
+// 바깥 글(S1): 일정 제목·장소·주인 이름·조직 이름은 남이 쓴 글일 수 있다(조직 일정) — 목록·결과는 경계 블록으로 감싼다(office-audience.mjs outsideOf).
 import { randomUUID } from 'node:crypto';
+import { outsideOf, OUTSIDE_RULE } from './office-audience.mjs';
 
 const KST = 9 * 3600_000;
 const DAY = 86_400_000;
@@ -17,6 +19,8 @@ export const calendarDeps = {
 };
 
 const pick = (ko, en, lang) => (lang === 'en' ? en : ko);
+const one = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
+const EVENT_TEXT = ['일정 제목·장소·이름은 사람들이 쓴 글', 'event titles, places and names written by people'];
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const LOCAL_RE = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})(:\d{2}(\.\d+)?)?$/;
 const TZ_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})$/i;
@@ -103,11 +107,11 @@ function repeatText(rrule, lang) {
 export function eventLine(ev, occ, { uid, orgs = [], lang = 'ko' } = {}) {
   const o = occ ?? { start: Date.parse(ev.starts_at), end: Date.parse(ev.ends_at), day: kstDateOf(Date.parse(ev.starts_at)) };
   const org = ev.org_id ? orgs.find((x) => x.id === ev.org_id) : null;
-  const cal = ev.org_id ? `${pick('조직', 'org', lang)} ${org?.name ?? ev.org_id}${ev.visibility === 'private' ? pick('(나만)', ' (only me)', lang) : ''}` : pick('개인', 'personal', lang);
-  const bits = [whenText(o, ev.all_day, lang), ev.title, cal];
-  if (ev.location) bits.push(`${pick('장소', 'at', lang)} ${ev.location}`);
+  const cal = ev.org_id ? `${pick('조직', 'org', lang)} ${one(org?.name ?? ev.org_id)}${ev.visibility === 'private' ? pick('(나만)', ' (only me)', lang) : ''}` : pick('개인', 'personal', lang);
+  const bits = [whenText(o, ev.all_day, lang), one(ev.title), cal];
+  if (ev.location) bits.push(`${pick('장소', 'at', lang)} ${one(ev.location)}`);
   if (ev.rrule) bits.push(repeatText(ev.rrule, lang));
-  if (ev.owner !== uid) bits.push(pick(`읽기 전용(주인 ${ev.owner_name ?? '다른 사람'})`, `read-only (owner ${ev.owner_name ?? 'someone else'})`, lang));
+  if (ev.owner !== uid) bits.push(pick(`읽기 전용(주인 ${one(ev.owner_name) || '다른 사람'})`, `read-only (owner ${one(ev.owner_name) || 'someone else'})`, lang));
   bits.push(`id=${ev.id}${ev.rrule ? pick(` 회차=${o.day}`, ` occurrence=${o.day}`, lang) : ''}`);
   return `- ${bits.join(' · ')}`;
 }
@@ -200,6 +204,7 @@ export async function calendarTool(args, { ctx = null, crew, lang = 'ko', ownerI
   const orgOk = ctx?.kind === 'msgr' && !!ctx.orgId;
   const noOrg = pick('지금 대화는 메신저 조직 채널이 아니라 조직 캘린더를 고를 수 없다 — calendar: "personal"로 다시 하라.', 'This conversation is not in a messenger org channel, so the org calendar cannot be used — retry with calendar: "personal".', lang);
   const fmt = (ev, occ, orgs) => eventLine(ev, occ, { uid: c.uid, orgs, lang });
+  const ox = outsideOf('cal', lang);
   try {
     if (a.action === 'list') {
       const today = kstDateOf(calendarDeps.now());
@@ -215,9 +220,8 @@ export async function calendarTool(args, { ctx = null, crew, lang = 'ko', ownerI
         .flatMap((ev) => occurrences(ev, fromMs, toMs).map((occ) => ({ ev, occ }))).sort((x, y) => x.occ.start - y.occ.start);
       const head = pick(`일정 ${from}~${to}(한국 시간) — ${rows.length}건`, `Events ${from}~${to} (Korea time) — ${rows.length}`, lang);
       if (!rows.length) return `${head}. ${pick('이 기간에 일정이 없다.', 'Nothing in this range.', lang)}`;
-      const lines = rows.slice(0, LINE_CAP).map((r) => fmt(r.ev, r.occ, orgs));
-      if (rows.length > LINE_CAP) lines.push(pick(`…외 ${rows.length - LINE_CAP}건 — 범위를 좁혀 다시 보라.`, `…and ${rows.length - LINE_CAP} more — narrow the range.`, lang));
-      return `${head}\n${lines.join('\n')}\n${pick('고치거나 지울 때는 id와 그 줄의 날짜(반복이면 회차)를 day로 준다. 읽기 전용 일정은 고칠 수 없다.', 'To change or delete, pass the id and that line\'s date (occurrence for repeats) as day. Read-only events cannot be changed.', lang)}`;
+      const more = rows.length > LINE_CAP ? `\n${pick(`…외 ${rows.length - LINE_CAP}건 — 범위를 좁혀 다시 보라.`, `…and ${rows.length - LINE_CAP} more — narrow the range.`, lang)}` : '';
+      return `${head}\n${ox.block(rows.slice(0, LINE_CAP).map((r) => fmt(r.ev, r.occ, orgs)), EVENT_TEXT)}${more}\n${pick('고치거나 지울 때는 id와 그 줄의 날짜(반복이면 회차)를 day로 준다. 읽기 전용 일정은 고칠 수 없다.', 'To change or delete, pass the id and that line\'s date (occurrence for repeats) as day. Read-only events cannot be changed.', lang)}`;
     }
 
     if (a.action === 'create') {
@@ -234,7 +238,7 @@ export async function calendarTool(args, { ctx = null, crew, lang = 'ko', ownerI
       const row = { id: calendarDeps.newId(), org_id: cal === 'org' ? ctx.orgId : null, visibility: a.visibility ?? 'org', title, note: a.note, location: a.location, category: a.category,
         all_day: t.allDay, starts_at: new Date(t.start).toISOString(), ends_at: new Date(t.end).toISOString(), rrule: rrule ?? null };
       const r = await writeEvent(c, 'save', saveData(row, crew));
-      return `${pick('일정을 만들었다', 'Created the event', lang)}: ${fmt(r?.event ?? row, null, [])}`;
+      return `${pick('일정을 만들었다', 'Created the event', lang)}:\n${ox.block([fmt(r?.event ?? row, null, [])], EVENT_TEXT)}`;
     }
 
     if (a.action === 'update' || a.action === 'delete') {
@@ -243,7 +247,7 @@ export async function calendarTool(args, { ctx = null, crew, lang = 'ko', ownerI
       const { events } = await listRange(c, a.day, addDays(a.day, 1));
       const row = events.find((ev) => ev.id === a.id && inTurnScope(ev, ctx));
       if (!row) return pick(`${a.day}에 id=${a.id} 일정이 없다 — list로 id와 날짜를 다시 확인하라.`, `No event id=${a.id} on ${a.day} — check the id and date with list.`, lang);
-      if (row.owner !== c.uid || row.can_edit !== true) return pick(`이 일정은 주인(${row.owner_name ?? '다른 사람'})의 것이라 에이전트가 고치거나 지울 수 없다 — 그 사실을 한 줄로 알려라.`, `This event belongs to ${row.owner_name ?? 'someone else'}, so an agent cannot change or delete it — say so in one line.`, lang);
+      if (row.owner !== c.uid || row.can_edit !== true) return pick(`이 일정은 주인(${ox.line(row.owner_name) || '다른 사람'})의 것이라 에이전트가 고치거나 지울 수 없다 — 그 사실을 한 줄로 알려라.`, `This event belongs to ${ox.line(row.owner_name) || 'someone else'}, so an agent cannot change or delete it — say so in one line.`, lang);
       const recurring = !!parseRrule(row.rrule);
       const occ = recurring ? occurrences(row, kstMidnight(a.day), kstMidnight(addDays(a.day, 1))).find((o) => o.day === a.day) : null;
       if (recurring && !occ) return pick(`${a.day}은(는) 이 반복 일정의 회차가 아니다.`, `${a.day} is not an occurrence of this repeating event.`, lang);
@@ -257,7 +261,7 @@ export async function calendarTool(args, { ctx = null, crew, lang = 'ko', ownerI
         else if (scope === 'following' && a.day > firstDay) await writeEvent(c, 'split', { id: row.id, day: a.day, crew });
         else await writeEvent(c, 'delete', { id: row.id, crew });
         const what = scope === 'this' ? pick(`${a.day} 회차만`, `only the ${a.day} occurrence`, lang) : scope === 'following' ? pick(`${a.day} 회차부터 이후`, `from ${a.day} onward`, lang) : pick('전체', 'entirely', lang);
-        return pick(`일정 "${row.title}"을(를) ${what} 지웠다.`, `Deleted "${row.title}" ${what}.`, lang);
+        return pick(`일정 "${ox.line(row.title)}"을(를) ${what} 지웠다.`, `Deleted "${ox.line(row.title)}" ${what}.`, lang);
       }
 
       // update — 바꾼 값만 기존 행 위에 얹는다(명세 save = 전체 필드)
@@ -289,7 +293,7 @@ export async function calendarTool(args, { ctx = null, crew, lang = 'ko', ownerI
         const whole = { ...row, ...fields, rrule: rrule === undefined ? row.rrule : rrule, starts_at: iso(s0), ends_at: iso(s0 + (t.end - t.start)) };
         r = await writeEvent(c, 'save', saveData(whole, crew));
       }
-      return `${pick('일정을 고쳤다', 'Updated the event', lang)}${recurring ? pick(`(${scope === 'this' ? '이 회차만' : scope === 'following' ? '이 회차 및 이후' : '모든 회차'})`, ` (${scope})`, lang) : ''}: ${r?.event ? fmt(r.event, null, []) : `"${fields.title}"`}`;
+      return `${pick('일정을 고쳤다', 'Updated the event', lang)}${recurring ? pick(`(${scope === 'this' ? '이 회차만' : scope === 'following' ? '이 회차 및 이후' : '모든 회차'})`, ` (${scope})`, lang) : ''}:\n${ox.block([r?.event ? fmt(r.event, null, []) : `"${fields.title}"`], EVENT_TEXT)}`;
     }
     return pick('action은 list·create·update·delete 중 하나다.', 'action must be list, create, update or delete.', lang);
   } catch (e) {
@@ -299,6 +303,6 @@ export async function calendarTool(args, { ctx = null, crew, lang = 'ko', ownerI
 
 export function calendarDescription(lang = 'ko') {
   return lang === 'en'
-    ? 'The owner\'s calendar (Argo Office events). action=list shows events for from~to (YYYY-MM-DD Korea dates, up to 62 days; default two weeks from today) — the owner\'s personal events and the org events the owner can see, with id and date. action=create makes an event; update/delete change one (pass id and day = the date list showed; for repeating events also scope: this | following | all). calendar: "personal" (default) or "org" (only in a messenger org channel — that org); visibility for org events: org (everyone, default) or private. start/end: YYYY-MM-DD (all-day, end = last day inclusive), YYYY-MM-DDTHH:MM (Korea time) or ISO with a time zone; end may be HH:MM. repeat: none|daily|weekly|monthly with repeat_interval and repeat_until (YYYY-MM-DD, inclusive). You can only change or delete the owner\'s own events; other people\'s events are read-only. This is not for scheduling your own future work — use schedule_task for that.'
-    : '주인의 일정(아르고 오피스 달력)을 보고 만들고 고치고 지운다. action=list는 from~to(YYYY-MM-DD 한국 날짜, 최대 62일, 비우면 오늘부터 2주)의 일정을 id·날짜와 함께 보여 준다 — 주인의 개인 일정과 주인이 볼 수 있는 조직 일정. action=create는 새 일정, update·delete는 기존 일정(id와 day=list가 보여 준 그 줄의 날짜, 반복 일정이면 scope: this 이 회차만 | following 이 회차 및 이후 | all 모든 회차). calendar: "personal"(기본) 또는 "org"(메신저 조직 채널 대화에서만 — 그 조직), 조직 일정의 visibility: org(조직 전체, 기본) 또는 private(나만). start/end: YYYY-MM-DD(종일, end는 끝날 포함), YYYY-MM-DDTHH:MM(한국 시간) 또는 시간대 포함 ISO, end는 HH:MM만 줘도 된다. repeat: none|daily|weekly|monthly, repeat_interval(간격), repeat_until(YYYY-MM-DD, 포함). 고치고 지울 수 있는 것은 주인 소유 일정뿐이고, 남이 주인인 일정은 읽기만 한다. 크루 자신의 나중 할 일 예약은 이 도구가 아니라 schedule_task다.';
+    ? 'The owner\'s calendar (Argo Office events). action=list shows events for from~to (YYYY-MM-DD Korea dates, up to 62 days; default two weeks from today) — the owner\'s personal events and the org events the owner can see, with id and date. action=create makes an event; update/delete change one (pass id and day = the date list showed; for repeating events also scope: this | following | all). calendar: "personal" (default) or "org" (only in a messenger org channel — that org); visibility for org events: org (everyone, default) or private. start/end: YYYY-MM-DD (all-day, end = last day inclusive), YYYY-MM-DDTHH:MM (Korea time) or ISO with a time zone; end may be HH:MM. repeat: none|daily|weekly|monthly with repeat_interval and repeat_until (YYYY-MM-DD, inclusive). You can only change or delete the owner\'s own events; other people\'s events are read-only. This is not for scheduling your own future work — use schedule_task for that. ' + OUTSIDE_RULE('en')
+    : '주인의 일정(아르고 오피스 달력)을 보고 만들고 고치고 지운다. action=list는 from~to(YYYY-MM-DD 한국 날짜, 최대 62일, 비우면 오늘부터 2주)의 일정을 id·날짜와 함께 보여 준다 — 주인의 개인 일정과 주인이 볼 수 있는 조직 일정. action=create는 새 일정, update·delete는 기존 일정(id와 day=list가 보여 준 그 줄의 날짜, 반복 일정이면 scope: this 이 회차만 | following 이 회차 및 이후 | all 모든 회차). calendar: "personal"(기본) 또는 "org"(메신저 조직 채널 대화에서만 — 그 조직), 조직 일정의 visibility: org(조직 전체, 기본) 또는 private(나만). start/end: YYYY-MM-DD(종일, end는 끝날 포함), YYYY-MM-DDTHH:MM(한국 시간) 또는 시간대 포함 ISO, end는 HH:MM만 줘도 된다. repeat: none|daily|weekly|monthly, repeat_interval(간격), repeat_until(YYYY-MM-DD, 포함). 고치고 지울 수 있는 것은 주인 소유 일정뿐이고, 남이 주인인 일정은 읽기만 한다. 크루 자신의 나중 할 일 예약은 이 도구가 아니라 schedule_task다. ' + OUTSIDE_RULE('ko');
 }

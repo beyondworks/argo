@@ -10,8 +10,9 @@
 //   여럿이 보는 방에서는 조직 전체가 보는 페이지(일반 접근이 조직 보기·편집이고 자신·조상이 비공개가 아님)만 — 나머지는 주인과의 1:1에서만.
 //   본문 바꾸기(replace)는 글자 블록만 있는 페이지에서만 — 파일·모듈·비공개 블록이 든 페이지는 덧붙이기만 한다(글자로 다시 쓰면 그 블록이 사라진다).
 // 부하: 사람이 시킬 때만 부른다(폴링 없음). 목록은 호출 1, 할 일 고치기는 목록 1 + 바뀐 칸마다 쓰기 1(같은 값이면 부르지 않는다), 페이지 고치기는 목록 1 + 읽기 1 + 저장 1.
+// 바깥 글(S1): 할 일 제목·메모·분류·사람 이름, 페이지 제목·본문은 남이 쓴 글이다 — 목록·읽기 결과는 경계 블록으로 감싼다(office-audience.mjs outsideOf).
 import { randomUUID } from 'node:crypto';
-import { officeTurn, ONLY_DM, refusalText } from './office-audience.mjs';
+import { officeTurn, ONLY_DM, refusalText, outsideOf, OUTSIDE_RULE } from './office-audience.mjs';
 
 export const workDeps = {
   session: async () => (await import('./msgr.mjs')).sessionClient(),
@@ -64,15 +65,15 @@ const stateOf = (t) => (t.done_at ? 'done' : STATUS.includes(t.status) ? t.statu
 const lateDays = (t, today) => (!t.done_at && t.due_on && String(t.due_on).slice(0, 10) < today ? dayNo(today) - dayNo(String(t.due_on).slice(0, 10)) : 0);
 /** 할 일 한 줄 — 상태·중요도(보통이 아니면)·분류·시작~기한(지난 날)·맡은 사람(남의 일을 함께 볼 때)·만든 크루·id, 메모 앞부분 */
 export function taskLine(t, { lang = 'ko', today, names = null, ownerUid = null } = {}) {
-  const bits = [`[${STATUS_NAME[stateOf(t)][L(lang)]}] ${t.title}`];
+  const bits = [`[${STATUS_NAME[stateOf(t)][L(lang)]}] ${one(t.title)}`];
   if (t.priority && t.priority !== 2) bits.push(`${pick('중요도', 'priority', lang)} ${PRIORITY_NAME[t.priority]?.[L(lang)] ?? t.priority}`);
-  if (t.category) bits.push(`${pick('분류', 'category', lang)} ${t.category}`);
+  if (t.category) bits.push(`${pick('분류', 'category', lang)} ${one(t.category)}`);
   if (t.starts_on) bits.push(`${pick('시작', 'starts', lang)} ${t.starts_on}`);
   if (t.due_on) bits.push(`${pick('기한', 'due', lang)} ${t.due_on}`);
   const late = today ? lateDays(t, today) : 0;
   if (late) bits.push(pick(`기한 지남 ${late}일`, `${late} days overdue`, lang));
-  if (names) bits.push(`${pick('맡은 사람', 'assignee', lang)} ${t.assignee === ownerUid ? pick('주인', 'owner', lang) : names.get(t.assignee) ?? t.assignee}`);
-  if (t.source?.kind === 'crew') bits.push(pick(`크루 ${t.source.name || t.source.slug || ''}가 만듦`, `made by crew ${t.source.name || t.source.slug || ''}`, lang));
+  if (names) bits.push(`${pick('맡은 사람', 'assignee', lang)} ${t.assignee === ownerUid ? pick('주인', 'owner', lang) : one(names.get(t.assignee) ?? t.assignee)}`);
+  if (t.source?.kind === 'crew') bits.push(pick(`크루 ${one(t.source.name || t.source.slug)}가 만듦`, `made by crew ${one(t.source.name || t.source.slug)}`, lang));
   bits.push(`id=${t.id}`);
   return `- ${bits.join(' · ')}${t.note ? `\n  ${pick('메모', 'note', lang)}: ${one(t.note).slice(0, 160)}` : ''}`;
 }
@@ -175,10 +176,13 @@ export async function workTool(args, { ctx = null, crew = null, crewName = null,
   const { c, org, owner } = turn;
   const today = kstDay(workDeps.now());
   const line = (t, extra) => taskLine(t, { lang, today, ...extra });
+  const ox = outsideOf('work', lang);
+  const TASK_TEXT = ['할 일 제목·메모·분류·사람 이름은 사람들이 쓴 글', 'task titles, notes, categories and names written by people'];
+  const PAGE_TEXT = ['페이지 제목·본문은 사람들이 쓴 글', 'page titles and bodies written by people'];
   const tasksNow = async () => unwrap(await c.client.rpc('office_task_list', { p_org: org })) ?? [];
   const categories = async () => unwrap(await c.client.rpc('office_task_category_list', { p_org: org })) ?? [];
-  const noCategory = (cats) => pick(`그 분류가 없다. 이 조직의 분류: ${cats.map((x) => x.name).join(', ') || '(없음)'} — 분류를 새로 만드는 것은 관리자가 오피스에서 한다.`,
-    `No such category. This org has: ${cats.map((x) => x.name).join(', ') || '(none)'} — admins add categories in Office.`, lang);
+  const noCategory = (cats) => pick(`그 분류가 없다. 이 조직의 분류: ${cats.map((x) => ox.line(x.name)).join(', ') || '(없음)'} — 분류를 새로 만드는 것은 관리자가 오피스에서 한다.`,
+    `No such category. This org has: ${cats.map((x) => ox.line(x.name)).join(', ') || '(none)'} — admins add categories in Office.`, lang);
   try {
     if (a.action === 'tasks') {
       const rows = await tasksNow();
@@ -201,7 +205,7 @@ export async function workTool(args, { ctx = null, crew = null, crewName = null,
       const hiddenNote = a.who === 'all' && !owner ? pick(` — 남의 일은 ${ONLY_DM(lang)} 보여 준다`, ` — other people's tasks are shown ${ONLY_DM(lang)}`, lang) : '';
       if (!list.length) return pick(`조건에 맞는 할 일이 없다(${scope}${hiddenNote}).`, `No tasks match (${scope}${hiddenNote}).`, lang);
       return [pick(`할 일 ${list.length}건(${scope}${hiddenNote}):`, `${list.length} tasks (${scope}${hiddenNote}):`, lang),
-        ...list.slice(0, TASK_CAP).map((t) => line(t, { names, ownerUid: c.uid })),
+        ox.block(list.slice(0, TASK_CAP).map((t) => line(t, { names, ownerUid: c.uid })), TASK_TEXT),
         ...(list.length > TASK_CAP ? [pick(`…외 ${list.length - TASK_CAP}건 — status·category·q로 좁혀라.`, `…and ${list.length - TASK_CAP} more — narrow with status, category or q.`, lang)] : []),
         pick('바꿀 때는 task_set에 id를 준다(끝내기는 status=done).', 'To change one, pass its id to task_set (finish with status=done).', lang)].join('\n');
     }
@@ -210,7 +214,7 @@ export async function workTool(args, { ctx = null, crew = null, crewName = null,
       const cats = await categories();
       if (!cats.length) return pick('이 조직에는 할 일 분류가 없다(모두 미분류).', 'This org has no task categories.', lang);
       return [pick(`할 일 분류 ${cats.length}개(이름 · id):`, `${cats.length} task categories (name · id):`, lang),
-        ...cats.map((x) => `- ${x.name}${x.tasks != null ? pick(` · 할 일 ${x.tasks}건`, ` · ${x.tasks} tasks`, lang) : ''} · id=${x.id}`)].join('\n');
+        ox.block(cats.map((x) => `- ${one(x.name)}${x.tasks != null ? pick(` · 할 일 ${x.tasks}건`, ` · ${x.tasks} tasks`, lang) : ''} · id=${x.id}`), ['할 일 분류 이름은 사람들이 쓴 글', 'category names written by people'])].join('\n');
     }
 
     if (a.action === 'task_add') {
@@ -232,7 +236,7 @@ export async function workTool(args, { ctx = null, crew = null, crewName = null,
       const source = Object.fromEntries(Object.entries({ kind: 'crew', crew: ctx.crewId ?? null, slug: crew, name: crewName }).filter(([, v]) => v)); // 오피스 화면이 크루별로 묶는다
       const data = { id: workDeps.newId(), title, note, due_on: due ?? null, starts_on: start ?? null, status: a.status ?? 'todo', priority: PRIORITY[a.priority] ?? 2, category_id: categoryId, source };
       const r = unwrap(await c.client.rpc('office_task_write', { p_org: org, p_action: 'task.create', p_data: data })); // 맡은 사람은 비운다 = 주인(서버 기본값)
-      return `${pick('할 일을 만들었다(주인이 맡음)', 'Created the task (assigned to the owner)', lang)}:\n${line({ ...data, ...r, category: categoryName })}`;
+      return `${pick('할 일을 만들었다(주인이 맡음)', 'Created the task (assigned to the owner)', lang)}:\n${ox.block([line({ ...data, ...r, category: categoryName })], TASK_TEXT)}`;
     }
 
     if (a.action === 'task_set') {
@@ -291,7 +295,7 @@ export async function workTool(args, { ctx = null, crew = null, crewName = null,
         did.push(step.label);
       }
       const shown = { ...t, ...cur, category: categoryName === undefined ? t.category : categoryName }; // 쓰기 결과 행에는 분류 이름이 없다
-      return `${pick(`할 일을 고쳤다(${did.join('·')})`, `Updated the task (${did.join(', ')})`, lang)}:\n${line(shown)}`;
+      return `${pick(`할 일을 고쳤다(${did.join('·')})`, `Updated the task (${did.join(', ')})`, lang)}:\n${ox.block([line(shown)], TASK_TEXT)}`;
     }
 
     if (['pages', 'page_read', 'page_add', 'page_edit'].includes(a.action)) {
@@ -325,11 +329,11 @@ export async function workTool(args, { ctx = null, crew = null, crewName = null,
         const kids = new Map();
         for (const p of list) { const k = set.has(p.parent_id) ? p.parent_id : null; if (!kids.has(k)) kids.set(k, []); kids.get(k).push(p); }
         const out = [];
-        const walk = (k, depth) => { for (const p of (kids.get(k) ?? []).sort((x, y) => (x.position < y.position ? -1 : x.position > y.position ? 1 : 0))) { out.push(`${'  '.repeat(depth)}- ${p.title || pick('(제목 없음)', '(untitled)', lang)} · ${access(p)} · id=${p.id}`); walk(p.id, depth + 1); } };
+        const walk = (k, depth) => { for (const p of (kids.get(k) ?? []).sort((x, y) => (x.position < y.position ? -1 : x.position > y.position ? 1 : 0))) { out.push(`${'  '.repeat(depth)}- ${one(p.title) || pick('(제목 없음)', '(untitled)', lang)} · ${access(p)} · id=${p.id}`); walk(p.id, depth + 1); } };
         walk(null, 0);
         const note = hidden && !owner ? pick(` — 조직 전체가 보지 못하는 페이지 ${hidden}개는 ${ONLY_DM(lang)}`, ` — ${hidden} pages not visible to the whole org are shown ${ONLY_DM(lang)}`, lang) : '';
         if (!out.length) return pick(`맞는 페이지가 없다${note}.`, `No pages match${note}.`, lang);
-        return [pick(`이 조직 페이지 ${out.length}개(들여쓰기 = 하위 페이지${note}):`, `${out.length} org pages (indent = sub-page${note}):`, lang), ...out.slice(0, PAGE_CAP),
+        return [pick(`이 조직 페이지 ${out.length}개(들여쓰기 = 하위 페이지${note}):`, `${out.length} org pages (indent = sub-page${note}):`, lang), ox.block(out.slice(0, PAGE_CAP), PAGE_TEXT),
           ...(out.length > PAGE_CAP ? [pick(`…외 ${out.length - PAGE_CAP}개 — q로 좁혀라.`, `…and ${out.length - PAGE_CAP} more — narrow with q.`, lang)] : []),
           pick('본문은 page_read에 id를 줘라.', 'Use page_read with the id for the body.', lang)].join('\n');
       }
@@ -350,7 +354,7 @@ export async function workTool(args, { ctx = null, crew = null, crewName = null,
         const id = workDeps.newId();
         unwrap(await c.client.rpc('office_page_create', { p_id: id, p_org: org, p_parent: parent?.id ?? null, p_position: between(siblings.at(-1) ?? null, null), p_title: title,
           p_content: nodes.length ? { type: 'doc', content: nodes } : {}, p_template: false }));
-        return pick(`페이지를 만들었다: ${title} · ${parent ? `상위 ${parent.title}` : '최상위'} (id=${id})`, `Created the page: ${title} · ${parent ? `under ${parent.title}` : 'top level'} (id=${id})`, lang);
+        return pick(`페이지를 만들었다: ${ox.line(title)} · ${parent ? `상위 ${ox.line(parent.title)}` : '최상위'} (id=${id})`, `Created the page: ${ox.line(title)} · ${parent ? `under ${ox.line(parent.title)}` : 'top level'} (id=${id})`, lang);
       }
 
       // page_read · page_edit — 한 페이지
@@ -369,8 +373,10 @@ export async function workTool(args, { ctx = null, crew = null, crewName = null,
       const doc = row.content?.type === 'doc' ? row.content : { type: 'doc', content: [] };
 
       if (a.action === 'page_read') {
-        const text = docMarkdown(doc, lang);
-        return `${row.title || pick('(제목 없음)', '(untitled)', lang)} · ${access(p)} · ${pick('버전', 'version', lang)} ${row.version}\n---\n${text ? text.slice(0, READ_CAP) + (text.length > READ_CAP ? pick(`\n…(앞 ${READ_CAP}자만)`, `\n…(first ${READ_CAP} chars)`, lang) : '') : pick('(본문 없음)', '(empty)', lang)}`;
+        const text = ox.text(docMarkdown(doc, lang));
+        return [`${pick('페이지', 'Page', lang)} id=${p.id} · ${access(p)} · ${pick('버전', 'version', lang)} ${row.version}`,
+          ox.block([`${pick('제목', 'Title', lang)}: ${ox.line(row.title) || pick('(제목 없음)', '(untitled)', lang)}`, '---',
+            text ? text.slice(0, READ_CAP) + (text.length > READ_CAP ? pick(`\n…(앞 ${READ_CAP}자만)`, `\n…(first ${READ_CAP} chars)`, lang) : '') : pick('(본문 없음)', '(empty)', lang)], PAGE_TEXT)].join('\n');
       }
 
       const mode = a.mode === 'replace' ? 'replace' : 'append';
@@ -389,7 +395,7 @@ export async function workTool(args, { ctx = null, crew = null, crewName = null,
       if (title === row.title && next === row.content) return pick('바꿀 것이 없다.', 'Nothing to change.', lang);
       const version = unwrap(await c.client.rpc('office_page_save', { p_id: p.id, p_title: title, p_content: next, p_base_version: row.version }));
       const what = [next !== row.content ? (mode === 'replace' ? pick('본문 바꿈', 'body replaced', lang) : pick('끝에 덧붙임', 'appended', lang)) : null, title !== row.title ? pick('제목', 'title', lang) : null].filter(Boolean).join(pick('·', ', ', lang));
-      return pick(`페이지를 고쳤다(${what}): ${title} · 버전 ${version}`, `Updated the page (${what}): ${title} · version ${version}`, lang);
+      return pick(`페이지를 고쳤다(${what}): ${ox.line(title)} · 버전 ${version}`, `Updated the page (${what}): ${ox.line(title)} · version ${version}`, lang);
     }
 
     return pick('action은 tasks·task_add·task_set·categories·pages·page_read·page_add·page_edit 중 하나다.', 'action must be tasks, task_add, task_set, categories, pages, page_read, page_add or page_edit.', lang);
@@ -400,6 +406,6 @@ export async function workTool(args, { ctx = null, crew = null, crewName = null,
 
 export function workDescription(lang = 'ko') {
   return lang === 'en'
-    ? 'Argo Office tasks (to-dos) and pages (wiki) of the org of this messenger channel. action=tasks lists tasks with id — default: open tasks assigned to the owner; who=all shows everything the owner can see (1:1 only); filter status todo|doing|hold|done, overdue=true, category (name or id, none = uncategorized), q. task_add creates a task assigned to the owner: title, due_on, starts_on (YYYY-MM-DD), status todo|doing|hold, priority high|normal|low, category, note. task_set changes one task by id — only tasks assigned to the owner: status (done = finish, todo/doing/hold on a finished task reopens it), title, priority, category, starts_on/due_on (none clears), note (appended to the memo; note_mode=replace overwrites). categories lists task categories. pages lists the org pages (tree, id, view/edit); page_read returns a page body as text; page_add creates a page (title, parent_id — top level needs an admin, text); page_edit appends text to a page (mode=append, default) or replaces the body (mode=replace, only pages with plain text blocks), or renames it (title). Text format: # heading, - bullet, 1. numbered, - [ ] checkbox, > quote, --- divider, other lines are paragraphs. In rooms with other people only the owner\'s own tasks and pages visible to the whole org are used; nothing in rooms with guests.'
-    : '이 메신저 채널 조직의 아르고 오피스 할 일과 페이지(위키). action=tasks는 할 일 목록(id 포함) — 기본은 주인이 맡은 안 끝난 일, who=all은 주인이 볼 수 있는 모든 일(1:1에서만), 거르기 status todo|doing|hold|done·overdue=true(기한 지남)·category(이름 또는 id, none=미분류)·q. task_add는 주인이 맡는 새 할 일: title, due_on·starts_on(YYYY-MM-DD), status todo|doing|hold, priority high|normal|low, category, note. task_set은 id로 한 건 고치기 — 주인이 맡은 일만: status(done=끝내기, 끝낸 일에 todo·doing·hold를 주면 다시 연다), title, priority, category, starts_on·due_on(none=지우기), note(기존 메모 뒤에 덧붙인다, note_mode=replace면 통째로 바꾼다). categories는 할 일 분류 목록. pages는 조직 페이지 목록(트리·id·보기/편집), page_read는 본문을 글로, page_add는 새 페이지(title, parent_id — 최상위는 관리자만, text), page_edit는 본문 끝에 덧붙이기(mode=append, 기본) 또는 본문 바꾸기(mode=replace — 글자 블록만 있는 페이지만)·제목 바꾸기(title). 글 서식: # 제목, - 목록, 1. 번호, - [ ] 체크, > 인용, --- 구분선, 나머지 줄은 문단. 다른 사람이 있는 방에서는 주인이 맡은 일과 조직 전체가 보는 페이지만 다루고, 손님이 있는 방에서는 아무것도 다루지 않는다.';
+    ? 'Argo Office tasks (to-dos) and pages (wiki) of the org of this messenger channel. action=tasks lists tasks with id — default: open tasks assigned to the owner; who=all shows everything the owner can see (1:1 only); filter status todo|doing|hold|done, overdue=true, category (name or id, none = uncategorized), q. task_add creates a task assigned to the owner: title, due_on, starts_on (YYYY-MM-DD), status todo|doing|hold, priority high|normal|low, category, note. task_set changes one task by id — only tasks assigned to the owner: status (done = finish, todo/doing/hold on a finished task reopens it), title, priority, category, starts_on/due_on (none clears), note (appended to the memo; note_mode=replace overwrites). categories lists task categories. pages lists the org pages (tree, id, view/edit); page_read returns a page body as text; page_add creates a page (title, parent_id — top level needs an admin, text); page_edit appends text to a page (mode=append, default) or replaces the body (mode=replace, only pages with plain text blocks), or renames it (title). Text format: # heading, - bullet, 1. numbered, - [ ] checkbox, > quote, --- divider, other lines are paragraphs. In rooms with other people only the owner\'s own tasks and pages visible to the whole org are used; nothing in rooms with guests. ' + OUTSIDE_RULE('en')
+    : '이 메신저 채널 조직의 아르고 오피스 할 일과 페이지(위키). action=tasks는 할 일 목록(id 포함) — 기본은 주인이 맡은 안 끝난 일, who=all은 주인이 볼 수 있는 모든 일(1:1에서만), 거르기 status todo|doing|hold|done·overdue=true(기한 지남)·category(이름 또는 id, none=미분류)·q. task_add는 주인이 맡는 새 할 일: title, due_on·starts_on(YYYY-MM-DD), status todo|doing|hold, priority high|normal|low, category, note. task_set은 id로 한 건 고치기 — 주인이 맡은 일만: status(done=끝내기, 끝낸 일에 todo·doing·hold를 주면 다시 연다), title, priority, category, starts_on·due_on(none=지우기), note(기존 메모 뒤에 덧붙인다, note_mode=replace면 통째로 바꾼다). categories는 할 일 분류 목록. pages는 조직 페이지 목록(트리·id·보기/편집), page_read는 본문을 글로, page_add는 새 페이지(title, parent_id — 최상위는 관리자만, text), page_edit는 본문 끝에 덧붙이기(mode=append, 기본) 또는 본문 바꾸기(mode=replace — 글자 블록만 있는 페이지만)·제목 바꾸기(title). 글 서식: # 제목, - 목록, 1. 번호, - [ ] 체크, > 인용, --- 구분선, 나머지 줄은 문단. 다른 사람이 있는 방에서는 주인이 맡은 일과 조직 전체가 보는 페이지만 다루고, 손님이 있는 방에서는 아무것도 다루지 않는다. ' + OUTSIDE_RULE('ko');
 }

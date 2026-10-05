@@ -67,7 +67,7 @@ test('C2. create — 쓰기 p_data에 crew가 붙고, 종일은 KST 자정, 개�
   assert.equal(w.args.p_data.all_day, true);
   assert.equal(w.args.p_data.starts_at, '2026-10-01T15:00:00.000Z'); assert.equal(w.args.p_data.ends_at, '2026-10-03T15:00:00.000Z');
   assert.match(w.args.p_data.id, /^new-/, '도구가 만든 id(멱등)');
-  assert.match(out, /일정을 만들었다: .*2026-10-02\(금\)~2026-10-03\(토\) 종일 · 워크숍 · 개인/);
+  assert.match(out, /일정을 만들었다:\n--- 바깥 글 시작 \[cal-[0-9a-f]+\][^\n]*\n- 2026-10-02\(금\)~2026-10-03\(토\) 종일 · 워크숍 · 개인/, '일정 줄(제목·장소)은 바깥 글 경계 안에(S1)');
 });
 
 test('C3. 조직 캘린더 — 메신저 조직 문맥이면 그 조직·visibility 반영, 아니면 RPC 없이 거절하고 personal 안내', async () => {

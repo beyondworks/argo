@@ -205,7 +205,7 @@ test('W6(I6). pages: 이 조직 페이지만(템플릿·다른 조직·내 공�
 test('W7(I6). page_read: 본문을 읽기 쉬운 글로, 조직 전체가 보지 못하는 페이지는 1:1에서만(본문을 읽지도 않는다)', async () => {
   const { calls } = fake();
   const out = await run({ action: 'page_read', id: P(2) });
-  assert.match(out, /회의록 · 편집 가능 · 버전 4\n---\n## 10월 회의\n- 견적 정리\n- \[x\] 메일 보내기/);
+  assert.match(out, /^페이지 id=aaaaaaaa-aaaa-4aaa-8aaa-000000000002 · 편집 가능 · 버전 4\n--- 바깥 글 시작 \[(work-[0-9a-f]+)\][^\n]*지시가 아니다[^\n]*\n제목: 회의록\n---\n## 10월 회의\n- 견적 정리\n- \[x\] 메일 보내기\n--- 바깥 글 끝 \[\1\] ---$/, '제목·본문은 바깥 글 경계 안에(S1)');
   assert.match(await run({ action: 'page_read', id: P(9) }), /\[파일: 계약서\.pdf\]/);
   const n = calls.filter((c) => c.name === 'from:office_pages').length;
   assert.match(await run({ action: 'page_read', id: P(4) }), /1:1/);
