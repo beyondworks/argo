@@ -270,6 +270,13 @@ export function makeDb(client) {
     async crewLooks(uid, wsId, slugs) {
       return unwrap(await client.from('msgr_crews').select('id, org_id, slug, status, face, avatar_url, created_at').eq('owner_user_id', uid).eq('ws_id', wsId).in('slug', slugs).in('status', ['active', 'available'])) ?? [];
     },
+    /** 이 조직에 내 크루 행을 넣을 수 있나 — msgr_crews_insert 정책과 같은 판정(내 역할 owner·admin·member + 잠기지 않은 조직)을 그 함수 그대로 부른다.
+        손님으로만 든 조직·잠긴(구독 연체) 조직은 insert가 RLS에 막혀 매 틱 실패 쓰기가 되던 것을 미리 거른다(검수 2차 M-2). 조직이 있고 넣을 행이 있을 때만 호출(mirrorInventory insertableOrgs). */
+    async canInsertCrews(orgId) {
+      const role = unwrap(await client.rpc('msgr_role', { org: orgId }));
+      if (!['owner', 'admin', 'member'].includes(role)) return false;
+      return unwrap(await client.rpc('msgr_org_locked', { org: orgId })) !== true;
+    },
     async upsertAvailable(rows) { if (rows.length) unwrap(await client.from('msgr_crews').upsert(rows, { onConflict: 'org_id,owner_user_id,ws_id,slug' })); },
     /** 개인 크루 행(org NULL) — 부분 유니크 인덱스라 upsert onConflict를 쓸 수 없다. 미러가 빠진 slug만 넘기고, 다른 프로세스와의 경합 중복(23505)은 삼킨다. */
     async insertPersonal(rows) {
@@ -537,6 +544,25 @@ export async function nodeRunnerInfo(wsId, { status = null, catalog = null, now 
 
 async function listAgentsForInventory(wsId) { const { listAgents } = await import('../hub.mjs'); return (await listAgents(wsId)).map((a) => ({ slug: a.slug, name: a.name, role: a.role })); }
 
+/** 조직 행 insert 백오프(검수 2차 M-2) — `${uid}:${orgId}` → { until, error }. 손님·잠긴 조직(사전 확인 거절)은 error null, 사전 확인으로 못 거른 실패는 그 오류.
+    부하: 손님 상태에서 틱마다 실패 쓰기 1+K(K = 손님 조직 수)이던 것이 10분에 사전 확인 K건(읽기)로 — 실패 쓰기 0. 세션 uid가 키에 있어 로그인 계정을 바꾸면 바로 다시 시도한다. */
+const INSERT_BLOCK_MS = 10 * 60_000;
+const insertBlocked = new Map();
+/** 넣을 행이 있는 조직(orgIds) 중 지금 insert할 수 있는 조직 → { ok: Set, carried: 백오프 중인 조직의 저장된 오류들 }. 사전 확인(db.canInsertCrews)이 없는 어댑터는 종전대로 전부, 확인 실패는 종전대로 시도 */
+async function insertableOrgs(db, uid, orgIds, { blocked, now, log }) {
+  const ok = new Set(), carried = [];
+  for (const orgId of orgIds) {
+    const key = `${uid}:${orgId}`, hold = blocked.get(key);
+    if (hold && now() < hold.until) { if (hold.error) carried.push(hold.error); continue; }
+    if (db.canInsertCrews) {
+      const can = await db.canInsertCrews(orgId).catch((e) => { log('[argo] msgr 조직 파견 가능 여부 확인 실패 — 종전대로 시도합니다:', e?.message ?? e); return true; });
+      if (!can) { blocked.set(key, { until: now() + INSERT_BLOCK_MS, error: null }); continue; }
+    }
+    blocked.delete(key); ok.add(orgId);
+  }
+  return { ok, carried };
+}
+
 /** 크루 인벤토리 미러 — 로그인한 소유자의 회사 크루(이름·역할·slug만)를 내가 속한 모든 조직에 **기본 파견(active)**으로 올린다
     (유건 지시 2026-09-08: "연결하면 내 크루 전부가 목록에 세팅, 허용 범위·해제는 메신저에서"). allow = 조직 기본 허용 범위(정책), 없으면 'owner'.
     'available'은 이제 "소유자가 메신저에서 파견 해제한 상태"다 — 미러는 그 행을 다시 올리지 않는다(diff는 새 slug만 insert). 키·모델·기억은 절대 싣지 않는다.
@@ -544,7 +570,7 @@ async function listAgentsForInventory(wsId) { const { listAgents } = await impor
     카드가 사라진 크루의 available(해제) 행은 삭제(종전), active 행은 해고를 본 틱에 detached로 한 번(행·글·기억은 남긴다).
     회사 노드(서비스 계정)는 미러하지 않는다 — 회사 크루는 조직이 만든다(I-5).
     seen = 회사별 카드 관찰 기록(테스트가 바꿔 끼운다). */
-export async function mirrorInventory(wsId, { db, uid, agents, log = console.error, seen = cardSeen } = {}) {
+export async function mirrorInventory(wsId, { db, uid, agents, log = console.error, seen = cardSeen, blocked = insertBlocked, now = Date.now } = {}) {
   const edges = cardEdges(seen.get(wsId), agents);
   const done = (out) => { if (agents.length) seen.set(wsId, nextSeen(edges)); return out; }; // 끝까지 간 틱만 기준을 옮긴다(던지면 다음 틱이 같은 변화를 다시 본다)
   const orgIds = await db.myOrgIds(uid);
@@ -552,7 +578,9 @@ export async function mirrorInventory(wsId, { db, uid, agents, log = console.err
   const rows = await db.myCrewRows(uid, wsId);
   // 이 틱에 넣을 slug(개인 행·조직 행 어디든 빠진 것) — 얼굴 재료는 이 slug들만, 처음 필요할 때 한 번에 읽는다
   const missing = (orgId) => (a) => !rows.some((r) => (r.org_id ?? null) === orgId && r.slug === a.slug);
-  const want = agents.filter((a) => (db.insertPersonal && missing(null)(a)) || orgIds.some((o) => missing(o)(a))).map((a) => a.slug);
+  // 조직 행은 넣을 수 있는 조직에만(검수 2차 M-2) — 손님·잠긴 조직은 묻기만 하고 얼굴 재료 읽기·insert는 하지 않는다. 넣을 행이 없으면 묻지도 않는다
+  const { ok: insertable, carried } = await insertableOrgs(db, uid, orgIds.filter((o) => agents.some(missing(o))), { blocked, now, log });
+  const want = agents.filter((a) => (db.insertPersonal && missing(null)(a)) || [...insertable].some((o) => missing(o)(a))).map((a) => a.slug);
   const looksOf = lookReader(db, uid, wsId, log, want);
   // 개인 공간(2026-09-30 유건): 조직과 상관없이 내 크루가 개인 공간에 보인다 — 개인 행(org NULL, 허용 owner). 조직이 없는 계정도.
   // 개인 미러 실패(옛 서버 — org_id NOT NULL 등)가 조직 미러를 막지 않게 따로 잡는다(분리 검수 M1: 앱이 마이그레이션보다 먼저 나가면 조직 사용자 회귀)
@@ -566,7 +594,7 @@ export async function mirrorInventory(wsId, { db, uid, agents, log = console.err
     const have = new Map(rows.filter((r) => r.org_id === orgId).map((r) => [r.slug, r]));
     for (const a of agents) {
       const r = have.get(a.slug);
-      if (!r) { inserts.push({ org_id: orgId, owner_user_id: uid, ws_id: wsId, slug: a.slug, display_name: a.name || a.slug, role_text: a.role || null, hosting: 'local', status: 'active', allow: allowDefaults[orgId] ?? 'owner', allow_users: [] }); out.inserted++; continue; }
+      if (!r) { if (!insertable.has(orgId)) continue; inserts.push({ org_id: orgId, owner_user_id: uid, ws_id: wsId, slug: a.slug, display_name: a.name || a.slug, role_text: a.role || null, hosting: 'local', status: 'active', allow: allowDefaults[orgId] ?? 'owner', allow_users: [] }); out.inserted++; continue; }
       if (await applyPatch(db, r, rowPatch(r, a, edges), edges, log, '인벤토리 갱신')) out.updated++;
     }
     for (const r of have.values()) if (!bySlug.has(r.slug) && await applyPatch(db, r, firedPatch(r, edges), edges, log, '해고한 크루 분리')) out.updated++;
@@ -581,15 +609,19 @@ export async function mirrorInventory(wsId, { db, uid, agents, log = console.err
   // 파견 insert 실패가 틱을 멈추지 않게(검수 #fix-cross M3b): 손님 역할 조직·잠긴 조직은 msgr_crews_insert가 거절하는데(owner·admin·member만 허용), 던진 틱은 done()이 안 불려
   // 기준(cardSeen)이 영영 안 생겨 직무 변경·해고가 쓰이지 않았다. 묶음(원자적)이 실패하고 조직이 둘 이상이면 조직마다 다시 넣어 멀쩡한 조직의 새 에이전트 파견이 손님 조직에 막히지 않게 한다.
   // 틱은 끝까지 가서 기준을 옮기고, 첫 실패는 그대로 던져 브리지가 미러 오류로 드러내게 한다(msgr_ws_owned_by_other 등). 부하: 성공 틱은 종전 1회, 실패 틱만 조직 수만큼 더(새 행이 없으면 0).
-  const failures = [];
+  const failed = new Map(); // orgId → 첫 오류
   if (inserts.length) {
     try { await db.upsertAvailable(inserts); }
     catch (e) {
       const orgs = [...new Set(inserts.map((r) => r.org_id))];
-      if (orgs.length < 2) failures.push(e);
-      else for (const orgId of orgs) await db.upsertAvailable(inserts.filter((r) => r.org_id === orgId)).catch((err) => failures.push(err));
+      if (orgs.length < 2) failed.set(orgs[0], e);
+      else for (const orgId of orgs) await db.upsertAvailable(inserts.filter((r) => r.org_id === orgId)).catch((err) => failed.set(orgId, err));
     }
   }
+  // 사전 확인으로 못 거른 실패(msgr_ws_owned_by_other 등)는 10분 동안 그 조직 insert를 다시 하지 않는다 — 같은 실패 쓰기를 15초마다 되풀이하지 않게(DB 위생).
+  // 오류 표시는 유지한다: 백오프 중인 틱도 저장한 오류를 끝에 다시 던져 브리지가 미러 오류로 계속 드러낸다
+  for (const [orgId, e] of failed) blocked.set(`${uid}:${orgId}`, { until: now() + INSERT_BLOCK_MS, error: e });
+  const failures = [...carried, ...failed.values()];
   const result = done(out);
   if (failures.length) { for (const e of failures.slice(1)) log('[argo] msgr 조직 크루 파견 실패:', e?.message ?? e); throw failures[0]; }
   return result;
@@ -620,6 +652,8 @@ async function mirrorPersonal(wsId, { db, uid, agents, rows, log, edges = cardEd
      지시·답글·심박(myCrews)이 멈추고, 행·글·채널 참여·기억은 남는다(지우지 않는다). 카드가 다시 생기면(복구·다시 영입) detached 행을 active로.
    · 처음 보는 회사(재시작)는 기준만 잡고, 빈 카드 목록(폴더 읽기 실패)은 관찰로 치지 않는다 — 동기화가 덜 된 기기가 다른 기기의 새 크루를 분리하고
      그 기기가 다시 살리는 15초 뒤집기(쓰기 폭주)를 만들지 않는다. 이름은 메신저에서 못 고치므로(본체에서 정한다) 종전대로 다르면 맞춘다.
+   한계(검수 2차 L-6): 마지막 크루를 해고해 카드가 0개가 되면 빈 목록은 관찰이 아니라 미러가 그 틱에 분리하지 못한다 — 해고 라우트의 직접 분리(detachFiredCrew)가 먼저 처리하고,
+   못 한 경우(오프라인 등)는 기준이 남아 있다가 카드가 다시 생기는 첫 틱에 '카드가 사라진 변화'로 정리된다.
    부하: 변화가 있는 틱에만 바뀐 행마다 쓰기 1(해고 = 그 크루의 조직 수 + 개인 1). 유휴 틱 쓰기 0. 기록은 회사당 카드 수만큼의 메모리. ─── */
 const cardSeen = (globalThis.__argoMsgrCardSeen ??= new Map()); // wsId → Map(slug → 카드 직무). globalThis — Next가 이 모듈을 라우트·상주 번들로 따로 복제해도 하나를 본다(해고 라우트가 분리한 slug를 기준에서 빼려면 같은 표여야 한다)
 function cardEdges(prev, agents) {
@@ -654,9 +688,10 @@ async function applyPatch(db, r, patch, edges, log, what) {
 /** 해고 라우트(DELETE /api/companies/[ws]/agents/[slug])가 카드를 .archive로 옮긴 직후 부른다(검수 #fix-cross M3a) — 미러가 카드 변화를 못 보는 경우(해고 직후 앱 재시작·미러가 아직 안 돈 틈)에도
     그 slug의 파견 행(조직·개인)을 detached로 한 번 쓴다(행·글·기억은 남긴다). 메신저 로그인이 없거나 오프라인이면 조용히 건너뛰고 기준을 그대로 두어 다음 미러 틱이 카드가 사라진 변화로 처리한다.
     성공하면 기준에서 slug를 뺀다 — 미러가 같은 해고를 다시 쓰지 않고, 곧바로 다시 영입해도 '다시 생긴 카드'로 되살린다. 던지지 않는다. 부하: 해고 한 번에 조회·쓰기 1(주기 호출 없음). */
-export const firedDeps = { session: () => sessionClient(), load: (wsId) => loadCompany(wsId), seen: cardSeen, log: console.error };
+export const firedDeps = { session: () => sessionClient(), load: (wsId) => loadCompany(wsId), seen: cardSeen, log: console.error,
+  hasCard: async (wsId, slug) => (await listAgentsForInventory(wsId)).some((a) => a.slug === slug) }; // 지금 이 slug의 카드가 있나(미러가 보는 목록과 같다)
 export async function detachFiredCrew(wsId, slug, opts = {}) {
-  const { session, load, seen, log } = { ...firedDeps, ...opts };
+  const { session, load, seen, log, hasCard } = { ...firedDeps, ...opts };
   let c;
   try { c = await session(); } catch { return { skipped: 'session' }; }
   if (!c?.uid || !c.db?.detachActiveCrews) return { skipped: 'session' };
@@ -664,8 +699,15 @@ export async function detachFiredCrew(wsId, slug, opts = {}) {
   try { company = await load(wsId); } catch { return { skipped: 'company' }; }
   if (company?.ownerId !== c.uid) return { skipped: 'owner' }; // 브리지 틱과 같은 회사 소유자 게이트 — 남의 계정으로 이 회사 행을 건드리지 않는다
   if (company.msgr?.nodeOrgId) return { skipped: 'node' }; // 회사 노드(서비스 계정)는 미러하지 않는 회사
+  // 해고 직후 같은 slug를 다시 영입하는 경쟁(검수 2차 L-1): 분리 직전에 카드가 이미 있으면 분리하지 않고, 분리하는 사이에 다시 생겼으면 되돌린다 —
+  // 그러지 않으면 기준(seen)엔 slug가 있고 카드도 있는데 행만 분리된 채 '다시 생긴 카드' 변화가 없어 영영 되살아나지 않는다. 카드 목록을 못 읽으면 분리하지 않는다(다음 미러 틱이 처리)
+  try { if (await hasCard(wsId, slug)) return { skipped: 'rehired' }; } catch { return { skipped: 'cards' }; }
   try {
     const ids = await c.db.detachActiveCrews(c.uid, wsId, slug);
+    if (ids.length && await hasCard(wsId, slug).catch(() => false)) {
+      await Promise.all(ids.map((id) => c.db.updateCrewInfo(id, { status: 'active' }).catch((e) => log('[argo] msgr 다시 영입한 크루 되돌리기 실패 — 다음 미러 틱이 처리합니다:', e?.message ?? e))));
+      return { skipped: 'rehired-during' };
+    }
     seen.get(wsId)?.delete(slug);
     return { detached: ids.length };
   } catch (e) {

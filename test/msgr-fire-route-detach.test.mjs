@@ -49,22 +49,26 @@ test('F2. 응답은 분리 호출을 기다리지 않는다 — 호출이 영영
   assert.ok(!(await readdir(dir)).includes('stuck.md'));
 });
 
-test('F3. 로그인이 없거나 DB가 실패하거나 소유자가 달라도 해고는 그대로 되고, 기준은 남아 다음 미러 틱이 처리한다', async () => {
-  for (const [name, over, db] of [['세션 없음', { session: async () => null }, {}], ['세션 오류', { session: async () => { throw new Error('offline'); } }, {}],
-    ['DB 실패', {}, { async detachActiveCrews() { throw new Error('boom'); } }], ['다른 소유자', { load: async () => ({ ownerId: 'someone-else' }) }, { async detachActiveCrews() { throw new Error('호출되면 안 된다'); } }]]) {
+test('F3. 로그인이 없거나 DB가 실패하거나 소유자가 달라도 해고는 그대로 되고, 해고한 slug는 기준에 남아 다음 미러 틱이 처리한다(검수 2차 L-4a)', async () => {
+  for (const [name, over, failing, wantCalls] of [['세션 없음', { session: async () => null }, false, 0], ['세션 오류', { session: async () => { throw new Error('offline'); } }, false, 0],
+    ['DB 실패', {}, true, 1], ['다른 소유자', { load: async () => ({ ownerId: 'someone-else' }) }, false, 0], ['회사 노드', { load: async () => ({ ownerId: UID, msgr: { nodeOrgId: 'org-x' } }) }, false, 0]]) {
     await seed('fragile');
-    wire(db, over);
+    const asked = [];
+    // 기준에 넣는 것은 해고하는 slug(fragile) — 분리가 안 됐는데 기준에서 빠지면(분리 전 삭제) 미러가 해고를 영영 못 본다
+    wire({ async detachActiveCrews(...a) { asked.push(a); if (failing) throw new Error('boom'); return ['a1']; } }, { ...over, seen: new Map([[WS, new Map([['fragile', null], ['jun', null]])]]) });
     const res = await fire('fragile');
     assert.equal(res.status, 200, name);
-    await new Promise((r) => setTimeout(r, 50));
-    assert.ok(M.firedDeps.seen.get(WS).has('luna'), `${name}: 기준을 그대로 둔다 — 다음 미러 틱이 카드가 사라진 변화로 처리`);
+    assert.ok(!(await readdir(dir)).includes('fragile.md'), `${name}: 해고는 그대로 된다`);
+    await new Promise((r) => setTimeout(r, 80));
+    assert.equal(asked.length, wantCalls, `${name}: 분리 호출 수`);
+    assert.deepEqual([...M.firedDeps.seen.get(WS).keys()].sort(), ['fragile', 'jun'], `${name}: 해고한 slug가 기준에 남는다 — 다음 미러 틱이 카드가 사라진 변화로 처리`);
   }
 });
 
-test('F4. 없는 크루를 해고하면 오류 그대로이고 분리 호출은 나가지 않는다', async () => {
+test('F4. 없는 크루를 해고하면 오류 그대로이고 분리 호출은 나가지 않는다 — 상태 코드는 구현마다 달라도(400·404) 실패다', async () => {
   const asked = []; wire({ async detachActiveCrews(...a) { asked.push(a); return []; } });
   const res = await fire('nobody');
-  assert.equal(res.status, 400);
+  assert.ok(!res.ok, `실패 응답 ${res.status}`);
   await new Promise((r) => setTimeout(r, 50));
   assert.deepEqual(asked, []);
 });

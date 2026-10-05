@@ -173,7 +173,8 @@ test('E10(검수 M3b). 한 조직의 파견 insert가 계속 실패해도(손님
   const okUpsert = d.upsertAvailable; let guestFails = true;
   d.upsertAvailable = async (rows) => { if (guestFails && rows.some((r) => r.org_id === O2)) { d.calls.push(['upsert-fail', rows.map((r) => r.org_id)]); throw new Error(RLS); } return okUpsert(rows); };
   const seen = new Map(); const logs = [];
-  const tick = (agents) => mirrorInventory(WS, { db: d, uid: UID, agents, seen, log: (...a) => logs.push(a.join(' ')) });
+  let clock = 0; const blocked = new Map(); // 실패 뒤 백오프(M-2)는 따로 시험한다(E15) — 여기서는 틱마다 창을 넘겨 '계속 실패하는 조직'을 그대로 본다
+  const tick = (agents) => mirrorInventory(WS, { db: d, uid: UID, agents, seen, log: (...a) => logs.push(a.join(' ')), blocked, now: () => (clock += 11 * 60_000) });
   const row = (id) => d.state.rows.find((r) => r.id === id);
   // 틱 1 — 손님 조직 insert가 던져도 기준은 잡힌다. 오류는 그대로 드러난다(브리지가 미러 오류로 표시 — msgr_ws_owned_by_other 등이 이 길로 온다)
   await assert.rejects(tick([card('luna', '마케터', '루나'), card('jun', '분석', '준')]), /row-level security/);
@@ -220,7 +221,7 @@ test('E12(검수 M3a). 해고 라우트가 부르는 detachFiredCrew — 그 slu
   d.detachActiveCrews = async (uid, ws, slug) => { asked.push([uid, ws, slug]); const hit = d.state.rows.filter((r) => r.slug === slug && r.status === 'active'); hit.forEach((r) => { r.status = 'detached'; }); return hit.map((r) => r.id); };
   const seen = new Map();
   await mirrorInventory(WS, { db: d, uid: UID, agents: [card('luna', null, '루나'), card('jun', null, '준')], seen });
-  const r = await M.detachFiredCrew(WS, 'luna', { session: async () => ({ uid: UID, db: d }), load: async () => ({ ownerId: UID }), seen });
+  const r = await M.detachFiredCrew(WS, 'luna', { session: async () => ({ uid: UID, db: d }), load: async () => ({ ownerId: UID }), seen, hasCard: async () => false });
   assert.deepEqual(asked, [[UID, WS, 'luna']], '한 번 — 그 slug만');
   assert.deepEqual(r, { detached: 2 });
   assert.deepEqual(d.state.rows.map((x) => [x.id, x.status]).sort(), [['a1', 'detached'], ['ap', 'detached'], ['b1', 'active'], ['bp', 'active']]);
@@ -244,11 +245,86 @@ test('E13(검수 M3a). detachFiredCrew — 메신저 로그인이 없거나 소�
   assert.deepEqual(asked, [], 'DB를 부르지 않는다');
   const logs = [];
   d.detachActiveCrews = async () => { throw new Error('boom'); };
-  assert.deepEqual(await M.detachFiredCrew(WS, 'luna', { session: async () => ({ uid: UID, db: d }), load: async () => ({ ownerId: UID }), seen, log: (...a) => logs.push(a.join(' ')) }), { failed: 'boom' });
+  assert.deepEqual(await M.detachFiredCrew(WS, 'luna', { session: async () => ({ uid: UID, db: d }), load: async () => ({ ownerId: UID }), seen, hasCard: async () => false, log: (...a) => logs.push(a.join(' ')) }), { failed: 'boom' });
   assert.ok(logs.length === 1);
   assert.ok(seen.get(WS).has('luna'), '건너뛰거나 실패하면 기준을 그대로 둔다 — 다음 미러 틱이 카드가 사라진 변화로 분리한다');
   await mirrorInventory(WS, { db: d, uid: UID, agents: [card('jun', null, '준')], seen });
   assert.equal(d.state.rows[0].status, 'detached', '다음 미러 틱이 처리');
   const bare = mk();
   assert.deepEqual(await M.detachFiredCrew(WS, 'luna', { session: async () => ({ uid: UID, db: bare }), load: async () => ({ ownerId: UID }), seen: new Map() }), { skipped: 'session' }, '옛 어댑터(분리 함수 없음)');
+});
+
+// ── 검수 2차(23dd8163 대상) M-2·L-1 ──
+const guestWorld = ({ canInsert = async () => false, orgs = ['g1', 'g2', 'g3'], extra = {} } = {}) => {
+  const d = db({ orgs, rows: [{ id: 'p1', org_id: null, slug: 'luna', display_name: '루나', role_text: null, status: 'active' }], looks: [] });
+  d.canInsertCrews = async (orgId) => { d.calls.push(['canInsertCrews', orgId]); return canInsert(orgId); };
+  d.upsertAvailable = async (rows) => { d.calls.push(['upsertAvailable', [...new Set(rows.map((r) => r.org_id))]]); throw new Error(RLS); };
+  Object.assign(d, extra);
+  return d;
+};
+
+test('E14(2차 M-2). 손님으로만 든 조직은 insert를 시도하지 않는다 — 유휴·게스트 상태에서 실패 쓰기 0, 사전 확인은 10분에 한 번, 얼굴 재료도 읽지 않는다', async () => {
+  const d = guestWorld();
+  const seen = new Map(), blocked = new Map(); let clock = 1_000_000;
+  const tick = () => mirrorInventory(WS, { db: d, uid: UID, agents: [card('luna', null, '루나')], seen, blocked, now: () => clock, log: () => {} });
+  for (let t = 1; t <= 3; t++) { d.calls.length = 0; clock += 15_000; await tick(); assert.deepEqual(d.calls.filter(([k]) => k === 'upsertAvailable' || k === 'crewLooks'), [], `틱 ${t}: 실패 쓰기·얼굴 읽기 0`); }
+  assert.equal(d.calls.filter(([k]) => k === 'canInsertCrews').length, 0, '틱 2·3은 사전 확인도 안 한다(10분 안)');
+  d.calls.length = 0; clock += 11 * 60_000; await tick();
+  assert.deepEqual(d.calls.filter(([k]) => k === 'canInsertCrews').map(([, o]) => o), ['g1', 'g2', 'g3'], '10분이 지나면 한 번 다시 묻는다(역할이 바뀌었을 수 있다)');
+  assert.deepEqual(d.calls.filter(([k]) => k === 'upsertAvailable'), []);
+});
+
+test('E14b(2차 M-2). 사전 확인이 통과한 조직(owner·admin·member, 잠기지 않음)만 넣는다 — 손님·잠긴 조직이 섞여도 다른 조직 파견은 된다, 판정 실패는 종전대로 시도', async () => {
+  const d = db({ orgs: ['member-org', 'guest-org', 'locked-org', 'unknown-org'], rows: [], looks: [] });
+  const ask = [];
+  d.canInsertCrews = async (o) => { ask.push(o); if (o === 'unknown-org') throw new Error('rpc down'); return o === 'member-org'; };
+  const logs = [];
+  await mirrorInventory(WS, { db: d, uid: UID, agents: [card('luna', null, '루나')], seen: new Map(), blocked: new Map(), now: () => 1, log: (...a) => logs.push(a.join(' ')) });
+  assert.deepEqual(ask, ['member-org', 'guest-org', 'locked-org', 'unknown-org']);
+  const up = d.calls.filter(([k]) => k === 'upsertAvailable')[0][1];
+  assert.deepEqual(up.map((r) => r.org_id).sort(), ['member-org', 'unknown-org'], '통과한 조직 + 판정 실패(종전대로 시도)');
+  assert.deepEqual(d.calls.find(([k]) => k === 'crewLooks')[1], ['luna'], '넣을 조직이 있으니 얼굴 재료는 한 번');
+  assert.ok(logs.some((l) => /종전대로 시도/.test(l)));
+});
+
+test('E15(2차 M-2). 사전 확인으로 못 거른 실패(예: msgr_ws_owned_by_other)도 10분 동안 되풀이하지 않는다 — 호출은 줄이고 오류 표시는 유지한다', async () => {
+  const d = db({ orgs: ['o1'], rows: [], looks: [] });
+  d.canInsertCrews = async () => true;
+  let upserts = 0; d.upsertAvailable = async () => { upserts++; throw new Error('msgr_ws_owned_by_other'); };
+  const seen = new Map(), blocked = new Map(); let clock = 5_000_000;
+  const tick = () => mirrorInventory(WS, { db: d, uid: UID, agents: [card('luna', null, '루나')], seen, blocked, now: () => clock, log: () => {} });
+  await assert.rejects(tick(), /msgr_ws_owned_by_other/); assert.equal(upserts, 1);
+  for (let t = 0; t < 3; t++) { clock += 15_000; await assert.rejects(tick(), /msgr_ws_owned_by_other/, '백오프 중에도 오류는 계속 드러난다(브리지 상태 유지)'); }
+  assert.equal(upserts, 1, '15초 틱 세 번 — 실패한 쓰기를 다시 하지 않는다');
+  clock += 11 * 60_000; await assert.rejects(tick(), /msgr_ws_owned_by_other/); assert.equal(upserts, 2, '10분 뒤 한 번 다시 시도');
+  const other = db({ orgs: ['o1'], rows: [], looks: [] }); other.canInsertCrews = async () => true;
+  await mirrorInventory(WS, { db: other, uid: 'another-account', agents: [card('luna', null, '루나')], seen: new Map(), blocked, now: () => clock, log: () => {} });
+  assert.equal(other.calls.filter(([k]) => k === 'upsertAvailable').length, 1, '다른 계정(세션 uid)은 따로 — 로그인을 바꾸면 바로 다시 시도');
+});
+
+test('E16(2차 L-1). 해고 라우트 분리와 같은 slug 재영입 경쟁 — 분리 직전에 카드가 다시 생겼으면 분리하지 않고, 분리하는 사이에 다시 생겼으면 되돌린다(행이 분리된 채 카드만 있는 상태가 안 남는다)', async () => {
+  const mkRows = () => [{ id: 'x1', org_id: O1, slug: 'x', display_name: 'X', role_text: null, status: 'active' }, { id: 'xp', org_id: null, slug: 'x', display_name: 'X', role_text: null, status: 'active' }, { id: 'y1', org_id: O1, slug: 'y', display_name: 'Y', role_text: null, status: 'active' }];
+  // ① 분리 직전에 이미 카드가 있다 → 분리 호출 없음
+  const d1 = db({ rows: mkRows() }); const asked1 = []; d1.detachActiveCrews = async (...a) => { asked1.push(a); return []; };
+  const seen1 = new Map([[WS, new Map([['x', null], ['y', null]])]]);
+  assert.deepEqual(await M.detachFiredCrew(WS, 'x', { session: async () => ({ uid: UID, db: d1 }), load: async () => ({ ownerId: UID }), seen: seen1, hasCard: async () => true, log: () => {} }), { skipped: 'rehired' });
+  assert.deepEqual(asked1, []); assert.ok(seen1.get(WS).has('x'), '기준도 그대로');
+  // ② 분리 UPDATE가 도는 사이에 다시 영입 → 분리 뒤 확인에서 되돌린다
+  const d2 = db({ rows: mkRows() }); let release; const gate = new Promise((r) => { release = r; });
+  d2.detachActiveCrews = async (uid, ws, slug) => { await gate; const hit = d2.state.rows.filter((r) => r.slug === slug && r.status === 'active'); hit.forEach((r) => { r.status = 'detached'; }); return hit.map((r) => r.id); };
+  const seen2 = new Map([[WS, new Map([['x', null], ['y', null]])]]);
+  let cardBack = false;
+  const detach = M.detachFiredCrew(WS, 'x', { session: async () => ({ uid: UID, db: d2 }), load: async () => ({ ownerId: UID }), seen: seen2, hasCard: async () => cardBack, log: () => {} });
+  await new Promise((r) => setTimeout(r, 5));
+  cardBack = true; // 해고 직후 같은 slug를 다시 영입(분리 UPDATE는 아직 도는 중)
+  release();
+  assert.deepEqual(await detach, { skipped: 'rehired-during' });
+  assert.deepEqual(d2.state.rows.map((r) => [r.id, r.status]).sort(), [['x1', 'active'], ['xp', 'active'], ['y1', 'active']], '되돌렸다 — 카드가 있는데 행만 분리된 채 남지 않는다');
+  assert.ok(seen2.get(WS).has('x'), '기준에 x가 남아 미러가 변화 없음으로 본다');
+  for (let i = 0; i < 3; i++) await mirrorInventory(WS, { db: d2, uid: UID, agents: [card('x', null, 'X'), card('y', null, 'Y')], seen: seen2 });
+  assert.deepEqual(['x1', 'xp', 'y1'].map((id) => d2.state.rows.find((r) => r.id === id).status), ['active', 'active', 'active'], '이후 틱도 그대로');
+  // ③ 카드 목록을 못 읽으면(확인 불가) 분리하지 않는다 — 다음 미러 틱이 처리
+  const d3 = db({ rows: mkRows() }); const asked3 = []; d3.detachActiveCrews = async (...a) => { asked3.push(a); return []; };
+  assert.deepEqual(await M.detachFiredCrew(WS, 'x', { session: async () => ({ uid: UID, db: d3 }), load: async () => ({ ownerId: UID }), seen: new Map(), hasCard: async () => { throw new Error('ENOENT'); }, log: () => {} }), { skipped: 'cards' });
+  assert.deepEqual(asked3, []);
 });

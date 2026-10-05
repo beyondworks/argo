@@ -104,3 +104,22 @@ test('새 행 얼굴 재료 읽기 — 주인 세션은 자기 조직 행과 개
   const rows = asUser(U.host, `select org_id is null, status, face is not null, avatar_url from public.msgr_crews where owner_user_id = '${U.host}' and ws_id = 'lean' and slug in ('luna') and status in ('active','available') order by org_id nulls last`).split('\n').filter((l) => l.includes('|'));
   assert.deepEqual(rows, ['f|active|f|', 't|active|t|https://x/p.jpg'], '조직 행(얼굴 없음)과 개인 행(얼굴·사진 있음)이 같이 읽힌다');
 });
+
+// 검수 2차 M-2 — 미러가 insert 전에 묻는 두 함수(db.canInsertCrews = msgr_role + msgr_org_locked)가 msgr_crews_insert 정책과 같은 답을 주는지 본다:
+// 소유자·멤버는 넣을 수 있고, 손님은 정책이 막으며(역할 'guest'), 구독이 연체돼 잠긴 조직은 소유자도 못 넣는다. 두 함수는 authenticated가 부를 수 있다.
+test('insert 사전 확인 — msgr_role·msgr_org_locked가 msgr_crews_insert 정책과 같은 답: 소유자·멤버 가능, 손님·잠긴 조직 불가', { skip }, () => {
+  const G = '33333333-3333-4333-8333-333333333333';
+  sql(`insert into auth.users (id, created_at, email) values ('${G}', now() - interval '30 days', 'guest@example.test') on conflict do nothing`);
+  sql(`insert into public.msgr_org_members (org_id, user_id, role, display_name) values ('${ORG}', '${G}', 'guest', 'guest') on conflict (org_id, user_id) do update set role = 'guest', removed_at = null`);
+  const ins = (uid, slug) => asUserRaw(uid, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name, hosting, status, allow) values ('${ORG}', '${uid}', 'lean-pre', '${slug}', 'x', 'local', 'active', 'owner') returning id`);
+  assert.equal(last(asUser(U.host, `select public.msgr_role('${ORG}')`)), 'owner'); assert.equal(last(asUser(U.mate, `select public.msgr_role('${ORG}')`)), 'member'); assert.equal(last(asUser(G, `select public.msgr_role('${ORG}')`)), 'guest');
+  assert.equal(last(asUser(U.mate, `select public.msgr_org_locked('${ORG}')`)), 'f');
+  assert.equal(ins(U.host, 'a1').status, 0, '소유자 insert 통과'); assert.equal(ins(U.mate, 'a2').status, 0, '멤버 insert 통과');
+  const guest = ins(G, 'a3'); assert.notEqual(guest.status, 0, '손님 insert는 RLS가 거절'); assert.match(`${guest.stderr}`, /row-level security/);
+  sql(`update public.msgr_org_entitlements set ls_status = 'past_due' where org_id = '${ORG}'`);
+  assert.equal(last(asUser(U.host, `select public.msgr_org_locked('${ORG}')`)), 't', '연체 = 잠김');
+  const locked = ins(U.host, 'a4'); assert.notEqual(locked.status, 0, '잠긴 조직은 소유자도 insert 불가'); assert.match(`${locked.stderr}`, /row-level security/);
+  sql(`update public.msgr_org_entitlements set ls_status = null where org_id = '${ORG}'`);
+  assert.equal(last(asUser(U.host, `select public.msgr_org_locked('${ORG}')`)), 'f');
+  sql(`delete from public.msgr_crews where ws_id = 'lean-pre'`);
+});
