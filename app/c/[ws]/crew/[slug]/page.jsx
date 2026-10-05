@@ -2,7 +2,7 @@
 // 크루 채팅 — 스레드 영속(새로고침해도 이어짐), 카드 열람·편집·해고, 실패 시 재시도.
 import { isStopCommand } from '../../../../../src/stop-command.mjs';
 import { effortLevels, normalizeCrewEffort } from '../../../../../src/model-effort.mjs';
-import { approvalExpandDefault } from '../../../../lib/approval-display.mjs';
+import { approvalExpandDefault, approvalOwnerMayDecide } from '../../../../lib/approval-display.mjs';
 import { splitEnvelope } from './envelope.mjs';
 import { inboundKind, crewReplyText } from './inbound-card.mjs';
 import { InboundCard } from './inbound-card.jsx';
@@ -1158,6 +1158,10 @@ export default function CrewChat({ params, embedded = false, onClose }) {
                   {p.reason && <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: '4px 0 0', lineHeight: 1.55 }}>{p.reason}</p>}
                 </>
               )}
+              {!approvalOwnerMayDecide(p) ? (
+                // 조직 관리자가 정하는 고위험 결재 — 데크 카드와 같은 판정(F8). 여기서 누르면 서버가 항상 거절했다
+                <p style={{ margin: '11px 0 0', fontSize: 12, color: 'var(--fg-2)' }}>{t('deck.approvalAdminOnlyHint')}</p>
+              ) : (
               <div style={{ display: 'flex', gap: 8, marginTop: 11 }}>
                 <button className="btn btn-primary sm" disabled={!!resolving} onClick={() => resolvePending(p.id, true)}>
                   {resolving === p.id ? <Spinner size={12} /> : (p.kind === 'capability' ? t('chat.approval.yes') : t('common.approve'))}
@@ -1166,6 +1170,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
                   {p.kind === 'capability' ? t('chat.approval.no') : t('common.reject')}
                 </button>
               </div>
+              )}
             </div>
           </div>
         ); })}

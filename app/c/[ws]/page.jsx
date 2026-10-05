@@ -8,7 +8,7 @@ import { Graph2D } from './graph2d'; // 데크 별자리도 기억 페이지와 
 import { keepSide } from './split.mjs'; // 주 화면 이동은 현재 ?side=(옆에 열기 패널)를 유지 — 생 router.push는 패널을 닫는다
 import { anyRunnerUsable, runnerNeedsReconnect, usableRunnerNames, onlyHiddenConnected } from '../../runner-connect';
 import { useLang } from '../../i18n';
-import { approvalExpandDefault } from '../../lib/approval-display.mjs';
+import { approvalExpandDefault, approvalOwnerMayDecide } from '../../lib/approval-display.mjs';
 import styles from './deck.module.css';
 import { gistLabel } from '../../lib/gist-display.mjs'; // 메신저 머리말을 뗀 요약(UX-A08)
 
@@ -366,6 +366,7 @@ function ApprovalsCard({ ws, agents }) {
   const { t } = useLang();
   const [items, setItems] = useState(null);
   const [busy, setBusy] = useState('');
+  const [failMsg, setFailMsg] = useState(''); // 승인·거절 실패 안내(F8: 실패해도 아무 말이 없었다)
 
   function load() {
     api(`/api/companies/${ws}/approvals`).then((d) => setItems(d.approvals)).catch(() => setItems([]));
@@ -382,12 +383,15 @@ function ApprovalsCard({ ws, agents }) {
   const nameOf = (slug) => agents.find((a) => a.slug === slug)?.name ?? slug;
 
   async function resolve(id, approve) {
-    setBusy(id);
+    setBusy(id); setFailMsg('');
     try {
       await api(`/api/companies/${ws}/approvals`, { id, approve });
-      load();
+    } catch (e) {
+      // 실패 안내 + 다시 읽기 — 이미 다른 창구에서 처리됐으면 목록에서 빠지고, 아니면 버튼이 그대로 남아 다시 누를 수 있다
+      setFailMsg(t('deck.approvalFail', { msg: String(e?.message || '') }));
     } finally {
       setBusy('');
+      load();
     }
   }
 
@@ -418,15 +422,19 @@ function ApprovalsCard({ ws, agents }) {
             {/* 고위험 표지는 제목 글자 뒤가 아니라 버튼 바로 왼쪽 고정 칸 — 제목이 두 줄로 넘으면 표지가 버튼보다 위로 떠
                 열이 어긋났다(제보 2026-09-27 "결재함에 버튼 열 왜 안 맞아"). */}
             {approvalExpandDefault(a) && <span className="chip danger" style={{ flex: 'none' }}>{t('chat.approval.highBadge')}</span>}
-            {busy === a.id ? <Spinner /> : (
+            {busy === a.id ? <Spinner /> : !approvalOwnerMayDecide(a) ? (
+              // 조직 관리자가 정하는 고위험 결재 — 여기서 누르면 서버가 항상 거절한다(F8). 버튼 대신 누가 정하는지를 알린다
+              <span className="chip" title={t('deck.approvalAdminOnlyHint')} style={{ flex: 'none', textTransform: 'none' }}>{t('deck.approvalAdminOnly')}</span>
+            ) : (
               <div style={{ display: 'flex', gap: 6, flex: 'none' }}>
-                <button className="btn sm btn-primary" onClick={() => resolve(a.id, true)}>{t('deck.approve')}</button>
-                <button className="btn sm" onClick={() => resolve(a.id, false)}>{t('deck.reject')}</button>
+                <button className="btn sm btn-primary" disabled={!!busy} onClick={() => resolve(a.id, true)}>{t('deck.approve')}</button>
+                <button className="btn sm" disabled={!!busy} onClick={() => resolve(a.id, false)}>{t('deck.reject')}</button>
               </div>
             )}
           </div>
         ))}
       </div>
+      {failMsg && <p role="alert" style={{ margin: '10px 0 0', fontSize: 12, color: 'var(--danger)' }}>{failMsg}</p>}
     </div>
   );
 }
