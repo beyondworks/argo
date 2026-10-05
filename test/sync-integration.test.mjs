@@ -865,22 +865,27 @@ test('객체 없는 매니페스트 항목은 실패가 아니라 건너뜀 — 
   } finally { Date.now = realNow; }
 });
 
-test('객체 없는 항목을 가진 기기: 그대로면 로컬 보존, 고쳤으면 밀어서 객체를 되살린다', async () => {
+test('객체 없는 항목을 가진 기기: 받을 게 없으면 로컬을 그대로 두고 편집본도 밀지 않는다 — 항목이 내 base 그대로일 때만 밀어 복구(분리 검수 2차 HIGH-1)', async () => {
   const wsId = 'dangling-holder';
   const v1 = Buffer.from('v1'), ghost = Buffer.from('ghost meta');
   const { wsRoot, fake } = await setup(wsId, {
-    localFiles: { 'vault/same.md': v1, 'vault/edited.md': Buffer.from('my edit'), 'vault/kept.md': v1 },
-    state: { 'vault/same.md': meta(v1), 'vault/edited.md': meta(v1), 'vault/kept.md': meta(v1) },
-    remoteFiles: { 'vault/same.md': meta(ghost, 2000), 'vault/edited.md': meta(ghost, 2000), 'vault/kept.md': meta(v1) },
+    localFiles: { 'vault/same.md': v1, 'vault/edited.md': Buffer.from('my edit'), 'vault/kept.md': v1, 'vault/repair.md': Buffer.from('fixed') },
+    state: { 'vault/same.md': meta(v1), 'vault/edited.md': meta(v1), 'vault/kept.md': meta(v1), 'vault/repair.md': meta(v1) },
+    // same·edited: 항목이 내 base보다 새로운데 객체가 없다(다른 기기가 올린 판이 유실). kept·repair: 항목이 내 base 그대로, 객체만 없다.
+    remoteFiles: { 'vault/same.md': meta(ghost, 2000), 'vault/edited.md': meta(ghost, 2000), 'vault/kept.md': meta(v1), 'vault/repair.md': meta(v1) },
   });
   const r = await syncCompany(wsId, OWNER);
   assert.equal(r.failed, 0);
   assert.equal(r.deletedL, 0, '객체가 없어도 로컬 사본을 지우지 않는다');
+  assert.equal(r.missing, 2);
   assert.equal(await readFile(join(wsRoot, 'vault', 'same.md'), 'utf8'), 'v1', '받을 게 없으면 로컬을 덮지 않는다');
+  assert.equal(await readFile(join(wsRoot, 'vault', 'edited.md'), 'utf8'), 'my edit', '편집본은 로컬에 그대로 남는다');
+  assert.equal(fake._store.has(`${OWNER}/${wsId}/vault/edited.md`), false,
+    '항목이 내 base보다 새롭다 = 더 새 판을 가진 기기가 있을 수 있다 — 내 편집본으로 덮으면 그 기기가 받아서 자기 최신본을 잃는다');
   assert.equal(await readFile(join(wsRoot, 'vault', 'kept.md'), 'utf8'), 'v1', '변경 없는 보유 기기는 종전대로 손대지 않는다');
   assert.equal(r.pushed, 1);
-  assert.equal(openSecretCompat(fake._store.get(`${OWNER}/${wsId}/vault/edited.md`)).toString(), 'my edit',
-    '편집본이 유일한 내용 — 밀어서 객체를 되살린다(받을 게 없으니 충돌도 아니다)');
+  assert.equal(openSecretCompat(fake._store.get(`${OWNER}/${wsId}/vault/repair.md`)).toString(), 'fixed',
+    '항목이 내 base 그대로면 기록된 새 판이 없다 — 종전 "로컬만 변경 → 밀기"가 객체를 되살린다');
 });
 
 test('파일 실패는 이름과 사유를 남기고, 재시도 대기 중에도 그대로 보인다', async () => {
@@ -899,20 +904,32 @@ test('파일 실패는 이름과 사유를 남기고, 재시도 대기 중에도
   assert.deepEqual(again.failures, r.failures, '재시도 대기 중에도 마지막 실패 목록이 상태에 남는다');
 });
 
-test('빈 항목 기억이 있어도 충돌에서는 실제로 다시 확인한다 — 다른 기기가 그새 올린 객체를 덮지 않는다(분리 검수 MEDIUM-1)', async () => {
+test('빈 항목 기억이 있어도 다른 기기가 객체를 먼저 올린 자리를 덮지 않고, 그 기기의 매니페스트가 오면 충돌 사본으로 수렴한다(분리 검수 MEDIUM-1·2차 HIGH-1)', async () => {
   const wsId = 'dangling-race';
-  const v1 = Buffer.from('v1'), ghost = Buffer.from('ghost meta');
+  const v1 = Buffer.from('v1'), ghost = Buffer.from('ghost meta'), z = Buffer.from('Z from device B');
   const { wsRoot, fake } = await setup(wsId, {
     localFiles: { 'vault/n.md': v1 }, state: { 'vault/n.md': meta(v1) },
-    remoteFiles: { 'vault/n.md': meta(ghost, 2000) },               // 객체 없는 항목(메타만 다름)
+    remoteFiles: { 'vault/n.md': meta(ghost, 2000) },                 // 객체 없는 항목(메타만 다름)
   });
-  assert.equal((await syncCompany(wsId, OWNER)).missing, 1);        // 1주기: 빈 항목으로 기억
-  fake._store.set(`${OWNER}/${wsId}/vault/n.md`, Buffer.from('Z from device B')); // 기기 B가 객체를 먼저 올림(매니페스트는 아직)
-  await writeFile(join(wsRoot, 'vault', 'n.md'), 'v2 my edit');     // 이 기기도 같은 파일을 고침
-  const r = await syncCompany(wsId, OWNER);
-  assert.equal(openSecretCompat(fake._store.get(`${OWNER}/${wsId}/vault/n.md`)).toString(), 'Z from device B', '기기 B의 객체를 덮지 않는다');
-  assert.equal(r.conflicts, 1, '양쪽 편집은 종전 충돌 처리로 — 사본을 남긴다');
-  assert.ok((await readdir(join(wsRoot, 'vault'))).some((n) => n.startsWith('n.conflict-')), '이 기기 편집본은 충돌 사본으로 남는다');
+  const realNow = Date.now; let now = realNow(); Date.now = () => now;
+  try {
+    assert.equal((await syncCompany(wsId, OWNER)).missing, 1);         // 1주기: 빈 항목으로 기억
+    fake._store.set(`${OWNER}/${wsId}/vault/n.md`, z);                  // 기기 B가 객체를 먼저 올림(매니페스트는 아직)
+    await writeFile(join(wsRoot, 'vault', 'n.md'), 'v2 my edit');      // 이 기기도 같은 파일을 고침
+    const r = await syncCompany(wsId, OWNER);
+    assert.equal(r.pushed, 0, '객체 없음으로 본 자리는 어느 분기에서도 밀지 않는다');
+    assert.equal(openSecretCompat(fake._store.get(`${OWNER}/${wsId}/vault/n.md`)).toString(), 'Z from device B', '기기 B의 객체를 덮지 않는다');
+    assert.equal(await readFile(join(wsRoot, 'vault', 'n.md'), 'utf8'), 'v2 my edit', '이 기기 편집본은 로컬에 그대로');
+    const mk = `${OWNER}/${wsId}/__manifest__.json`, man = cloudJson(fake._store.get(mk));
+    man.files['vault/n.md'] = meta(z, 3000); fake._store.set(mk, Buffer.from(JSON.stringify(man))); // 기기 B의 매니페스트 도착
+    now += 61_000;                                                      // 유휴 확인을 넘겨 다음 전체 주기
+    const r2 = await syncCompany(wsId, OWNER);
+    assert.equal(r2.conflicts, 1, '메타가 바뀌면 기억과 상관없이 바로 받아 종전 충돌 처리로');
+    assert.equal(await readFile(join(wsRoot, 'vault', 'n.md'), 'utf8'), 'Z from device B');
+    const copy = (await readdir(join(wsRoot, 'vault'))).find((n) => n.startsWith('n.conflict-'));
+    assert.ok(copy, '이 기기 편집본은 충돌 사본으로 남는다');
+    assert.equal(await readFile(join(wsRoot, 'vault', copy), 'utf8'), 'v2 my edit');
+  } finally { Date.now = realNow; }
 });
 
 test('CDN에 남은 옛 객체(200)로 다른 기기의 삭제를 되돌리지 않는다 — blob 실존 검사도 원본을 본다(분리 검수 MEDIUM-2)', async () => {
@@ -953,21 +970,25 @@ test('CDN에 남은 옛 내용으로 원격 변경을 받지 않는다 — 파�
   assert.deepEqual(cdn.noNonce, []);
 });
 
-test('한 회사 화면용 상태는 다른 회사의 결과와 그 회사 몫 lastError를 싣지 않는다(분리 검수 LOW-1·보안 검토)', () => {
+test('한 회사 화면용 상태: 다른 회사 결과는 빼고 오류는 자기 회사 몫을 보인다 — 여러 회사가 함께 실패해도 각자 카드에 남는다(분리 검수 LOW-1·2차 MEDIUM-1·보안 검토)', () => {
   // 회사 가드(guardCompany)는 그 회사만 본다 — 같은 기기의 게스트(주인 없는 회사)나 다른 계정이 자기 회사 화면을 열어도
-  // 이 계정 회사의 실패·빈 항목 파일 경로가 보이면 안 된다. lastError는 기기 전체에 하나라 회사 ID 접두로 가른다.
+  // 이 계정 회사의 실패·빈 항목 파일 경로가 보이면 안 된다. lastError는 기기 전체에 하나라 회사 오류는 회사 상태(error)에 따로 둔다.
   const st = globalThis.__argoSyncStatus; const saved = { lastError: st.lastError, companies: st.companies };
   try {
-    st.companies = { a: { failed: 1, failures: [{ rel: 'vault/비공개-계획.md', reason: 'x' }], missingRels: ['vault/gone.md'] }, b: { failed: 0 } };
-    st.lastError = 'a: 동기화 파일 1건 실패 (vault/비공개-계획.md: x) — 잠시 후 재시도';
-    const forB = syncStatusFor('b');
-    assert.deepEqual(Object.keys(forB.companies), ['b']);
-    assert.equal(forB.lastError, '', '다른 회사 몫 오류(파일 경로 포함)는 이 회사 화면에 싣지 않는다');
-    const forA = syncStatusFor('a');
-    assert.deepEqual(Object.keys(forA.companies), ['a']);
-    assert.equal(forA.lastError, st.lastError, '자기 회사 오류는 그대로 보인다');
-    assert.deepEqual(syncStatusFor('c').companies, {}, '동기화 기록이 없는 회사는 빈 목록');
-    st.lastError = '동기화 자격 없음/만료 — 재로그인 필요';
-    assert.equal(syncStatusFor('b').lastError, st.lastError, '기기 전체 오류는 어느 회사 화면에나 보인다');
+    st.companies = {
+      a: { failed: 1, failures: [{ rel: 'vault/비공개-계획.md', reason: 'x' }], error: 'a: 동기화 파일 1건 실패 (vault/비공개-계획.md: x) — 잠시 후 재시도' },
+      b: { skipped: 'retry-backoff', error: 'b: 동기화 파일 1건 실패 (vault/b.md: y) — 잠시 후 재시도' },
+      c: { failed: 0 },
+    };
+    st.lastError = st.companies.b.error;                               // 기기 전체에 하나 — 루프에서 마지막으로 실패한 회사
+    assert.equal(syncStatusFor('a').lastError, st.companies.a.error, '마지막이 아닌 실패 회사 카드에도 자기 오류가 보인다');
+    assert.equal(syncStatusFor('b').lastError, st.companies.b.error, '재시도 대기 중인 회사도 자기 오류가 보인다');
+    assert.equal(syncStatusFor('c').lastError, '', '성공한 회사 화면에는 다른 회사 몫 오류(파일 경로 포함)를 싣지 않는다');
+    assert.deepEqual(Object.keys(syncStatusFor('a').companies), ['a']);
+    assert.deepEqual(syncStatusFor('guest-local').companies, {}, '동기화 기록이 없는 회사는 빈 목록');
+    assert.equal(syncStatusFor('guest-local').lastError, '');
+    st.lastError = '동기화 자격 없음/만료 — 재로그인 필요';              // 기기 전체 오류(회사 접두 없음)
+    assert.equal(syncStatusFor('a').lastError, st.lastError, '기기 전체 오류가 먼저 보인다');
+    assert.equal(syncStatusFor('c').lastError, st.lastError);
   } finally { st.lastError = saved.lastError; st.companies = saved.companies; }
 });
