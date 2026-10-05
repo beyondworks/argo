@@ -406,7 +406,7 @@ export function Docs({ space, openId }) {
   return (
     <div className="page-wrap" data-sel-scope="crew-docs">
       <Title h={t('nav.docs')} sub={t('docs.sub')} />
-      {rows.length === 0 ? <BoardEmpty icon="book" text="docs.empty" />
+      {rows.length === 0 ? <BoardEmpty icon="book" text="docs.sharedEmpty" />
         : <div className="docs-find"><Icon name="search" size={14} className="dim" /><input className="input" type="search" value={q} placeholder={t('docs.search')} aria-label={t('docs.search')}
           onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape' && q) { e.stopPropagation(); setQ(''); } }} /></div>}
       {term && rows.length > 0 && !shown.length && <p className="dim docs-none">{t('docs.noMatch')}</p>}
@@ -427,7 +427,7 @@ export function Docs({ space, openId }) {
       <Sheet open={!!cur} onClose={close} title={cur?.title ?? ''}>
         {cur && <div className="doc-read">
           <p className="dim small mono">{cur.path}</p>
-          {body === undefined ? <div className="skeleton-lines"><span /><span /></div> : body ? <Markdown text={stripFrontMatter(body)} className="doc-md" /> : <p className="dim">{t('docs.empty')}</p>}
+          {body === undefined ? <div className="skeleton-lines"><span /><span /></div> : body ? <Markdown text={stripFrontMatter(body)} className="doc-md" /> : <p className="dim">{t('docs.bodyEmpty')}</p>}
           <p className="dim small">{t('docs.readOnly')}</p>
         </div>}
       </Sheet>

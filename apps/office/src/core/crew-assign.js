@@ -62,6 +62,29 @@ export function composeTools(tools, t) {
   return `[${t('crew.tools.head')}]\n${tools.map((x) => `- ${x.title}${x.url ? ` (${x.url})` : ''}${String(x.guide ?? '').trim() ? `: ${excerpt(String(x.guide).replace(/\s+/g, ' ').trim(), 600)}` : ''}`).join('\n')}`;
 }
 
+// 플러그인 배정(spec.crews)과 내 공간의 묶인 줄(crew-list.js oneEach — ids = 같은 에이전트의 행 전부). 묶이지 않은 줄은 그 id 하나
+const rowIds = (c) => c.ids ?? [c.id];
+/** 이 줄에 배정돼 있나 — 묶인 행 어느 id로 배정했어도(대표가 아닌 행으로 예전에 배정한 것 포함) */
+export const toolCrewOn = (list, c) => rowIds(c).some((id) => list.includes(id));
+/** 체크 켜고 끄기 — 끄면 묶인 행 id를 모두 빼고, 켜면 대표 id 하나 */
+export const toggleToolCrew = (list, c) => (toolCrewOn(list, c) ? list.filter((id) => !rowIds(c).includes(id)) : [...list, c.id]);
+/** 저장 전 — 같은 에이전트(묶음)는 처음 id 하나만. 목록에 없는 id(꺼진 크루 등)는 지우지 않는다 */
+export function oncePerAgent(list, crews) {
+  const seen = new Set();
+  return list.filter((id) => { const c = crews.find((x) => rowIds(x).includes(id)); if (!c) return true; if (seen.has(c.id)) return false; seen.add(c.id); return true; });
+}
+/** 같은 에이전트의 행 id(고른 행 먼저) — 내 공간의 묶인 줄은 ids, 조직 공간에서 고른 행은 같은 묶음 키(agent)의 행(사본·꺼진 행 빼고) */
+export function agentIds(c, crews) {
+  const ids = c.ids ?? (c.agent != null ? crews.filter((x) => x.agent === c.agent && !x.copy && (x.access ?? 'ok') !== 'inactive').map((x) => x.id) : []);
+  return [c.id, ...ids.filter((id) => id !== c.id)];
+}
+/** 맡길 때 배정된 플러그인 — 서버 crew.tools는 크루 id 하나만 보므로 같은 에이전트의 행마다 물어 합친다(같은 플러그인은 한 번). 못 읽은 행은 건너뛴다.
+ *  부하: 보낼 때만, 그 에이전트의 행 수(보통 1~3)만큼 읽기 */
+export async function crewTools(ids, ask) {
+  const all = (await Promise.all(ids.map((id) => ask(id).catch(() => [])))).flat();
+  return all.filter((x, i) => all.findIndex((y) => y.id === x.id) === i);
+}
+
 /** 업무 세트(4단계) → 맡기는 글에 붙일 문단. used = office_asset_write 'asset.use' 결과. 노하우 본문은 max를 노하우 수로 나눠 자른다 */
 export function composeSet(used, t, max = 6000) {
   if (!used) return '';
@@ -82,9 +105,10 @@ export function mentionAt(text, caret) {
   const m = /(^|\s)@([^\s@]*)$/.exec(text.slice(0, caret));
   return m ? { start: caret - m[2].length - 1, q: m[2] } : null;
 }
-/** 넘길 수 있는 에이전트 — 주 에이전트와 같은 조직, 내가 시킬 수 있는(메신저 peers와 같은 판정), 주 에이전트 빼고 */
-export const mentionCands = (crews, main, q = '') => crews.filter((c) => c.id !== main.id && (c.space ?? null) === (main.space ?? null)
-  && (c.access ?? 'ok') === 'ok' && c.name.toLowerCase().includes(q.toLowerCase()));
+/** 넘길 수 있는 에이전트 — 주 에이전트와 같은 조직, 내가 시킬 수 있는(메신저 peers와 같은 판정), 주 에이전트·동기화 충돌 사본 빼고.
+ *  target(assignTarget)이 개인 1:1이면 없다 — 개인 방의 동료는 그 방에 든 크루뿐이라(서버 msgr_crew_context peers, 게이트웨이 stageMessengerHandoff) 1:1에서는 넘길 곳이 없다 */
+export const mentionCands = (crews, main, q = '', target = null) => (target?.personalId ? [] : crews.filter((c) => c.id !== main.id && !c.copy && (c.space ?? null) === (main.space ?? null)
+  && (c.access ?? 'ok') === 'ok' && c.name.toLowerCase().includes(q.toLowerCase())));
 /** "@q"를 "@이름 "으로 바꾼다 — 뒤에 이미 공백이 있으면 그 공백을 쓴다 */
 export function putMention(text, at, caret, name) {
   const rest = text.slice(caret), ins = `@${name}${/^\s/.test(rest) ? '' : ' '}`;

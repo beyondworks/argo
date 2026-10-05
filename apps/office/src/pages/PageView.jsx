@@ -9,7 +9,7 @@ import { navigate, Link } from '../core/router.jsx';
 import { LoadFail } from '../ui/LoadFail.jsx';
 import { baseOf } from '../core/commands.js';
 import { menuProps } from '../ui/Menu.jsx';
-import { useUi, setUi } from '../core/ui-state.js';
+import { useUi, setUi, getUi } from '../core/ui-state.js';
 import { loadPageContent } from '../core/pull.js';
 import { outbox } from '../core/sync.js';
 import { canManage, getMode } from '../core/session.js';
@@ -93,7 +93,7 @@ export function PageView({ id, space }) {
   useEffect(() => {
     if (!needsBody && !needsAccess) return undefined;
     let live = true; setLoad(null);
-    loadPageContent(id).then((d) => { if (live && d === null) setLoad('missing'); }, () => { if (live) setLoad('error'); });
+    loadPageContent(id).then((d) => { if (live && d === null) { setLoad('missing'); setUi({ missingPage: id }); } else if (d && getUi().missingPage === id) setUi({ missingPage: null }); }, () => { if (live) setLoad('error'); }); // 머리줄도 없는 페이지로(App Header), 되살아나면 되돌린다
     return () => { live = false; };
   }, [id, needsBody, needsAccess, again]);
   useEffect(() => { if (restore(heldKey(id), null)) setUi({ conflict: id }); }, [id]); // 고르지 않은 충돌이 남아 있으면 다시 묻는다

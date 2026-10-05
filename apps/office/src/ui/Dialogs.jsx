@@ -15,7 +15,7 @@ import { baseOf } from '../core/commands.js';
 import { flushNow, outbox } from '../core/sync.js';
 import { loadPageContent } from '../core/pull.js';
 import { readMail } from '../core/mail.js';
-import { composeAssign, composeSet, composeTools, htmlText, docText, mentionAt, mentionCands, putMention, maskedNote, assignTarget } from '../core/crew-assign.js';
+import { composeAssign, composeSet, composeTools, htmlText, docText, mentionAt, mentionCands, putMention, maskedNote, assignTarget, crewTools, agentIds } from '../core/crew-assign.js';
 import { openExternal } from '../core/platform.js';
 import { FAMILY } from '../core/family.js';
 import { hideAllOn } from '../core/hide-all.js';
@@ -223,7 +223,10 @@ export function AssignSheet() {
   // 좌측에서 고른 에이전트면 그 한 명만(유건 9/30) — 메일·페이지 메뉴에서 열었으면 고르기 칸. 내 공간은 같은 에이전트를 한 줄로 묶었다(묶인 행 id 어느 것으로 열어도 그 줄)
   const main = crews.find((x) => x.id === crew || x.ids?.includes(crew)), fixed = !!a.crew && !!main && (main.id === a.crew || !!main.ids?.includes(a.crew));
   // '@' 멘션 — 글에 "@이름"만 넣고, 넘김은 주 에이전트가 메신저 @넘김으로 한다(협업 태그 없음)
-  const cands = at && main ? mentionCands(allCrews, main, at.q).slice(0, 8) : [];
+  const target = main ? assignTarget(main, allCrews, SPACES) : null; // 내 에이전트는 개인 1:1(메신저 에이전트 탭과 같은 방, CX-03), 없으면 조직 1:1
+  const one = live && !!target?.personalId; // 개인 1:1로 가는 글은 넘길 곳이 없다(그 방의 크루는 주 에이전트뿐) — '@' 안내도 빼고 이유를 말한다
+  const cands = at && main ? mentionCands(allCrews, main, at.q, live ? target : null).slice(0, 8) : [];
+  const ph = `crew.${task === 'custom' ? 'customPh' : 'morePh'}${one ? 'One' : ''}`;
   const sync = (el) => {
     const m = mentionAt(el.value, el.selectionStart);
     if (!m) shut.current = -1;
@@ -249,7 +252,6 @@ export function AssignSheet() {
       assign({ space: c.space ?? a.space, crew, goal: task === 'custom' ? (text || label) : [`${t(`crew.task.${task}`)} · ${label}`, text.trim()].filter(Boolean).join(' — ') });
       close(); showToast(t('crew.handed', { crew: c.name })); return;
     }
-    const target = assignTarget(c, allCrews, SPACES); // 내 에이전트는 개인 1:1(메신저 에이전트 탭과 같은 방, CX-03), 없으면 조직 1:1
     if (!target.orgId && !target.personalId) { showToast(t('crew.fail.not_allowed')); return; }
     setBusy(true);
     try {
@@ -272,7 +274,8 @@ export function AssignSheet() {
       const asked = task === 'custom' ? text.trim() || label : [t(`crew.ask.${task}`), text.trim()].filter(Boolean).join('\n\n'); // 미리 정한 일에도 덧붙인 말(@넘김 포함)을 싣는다
       const used = setId ? await rpc('office_asset_write', { p_org: orgOfSheet, p_action: 'asset.use', p_data: { id: setId } }) : null; // 세트는 목록을 읽은 공간에서
       // 이 크루에게 배정·켜진 도구(5단계) — 세트가 이미 실은 도구는 빼고. 크루가 사는 조직(없으면 내 것만)
-      const mine = await rpc('office_asset_write', { p_org: target.orgId, p_action: 'crew.tools', p_data: { id: crypto.randomUUID(), crew_id: c.id } }).then((r) => r.tools).catch(() => []);
+      // 같은 에이전트의 행마다 물어 합친다(내 공간 묶음의 대표가 아닌 행으로 배정한 플러그인도 싣는다 — 서버 crew.tools는 크루 id 하나만 본다)
+      const mine = await crewTools(agentIds(c, allCrews), (id) => rpc('office_asset_write', { p_org: target.orgId, p_action: 'crew.tools', p_data: { id: crypto.randomUUID(), crew_id: id } }).then((r) => r.tools ?? []));
       const extra = mine.filter((x) => !used?.tool_list?.some((y) => y.id === x.id));
       const instruction = [asked, used && composeSet(used, t), composeTools(extra, t)].filter(Boolean).join('\n\n');
       sendToCrew({ ...target, crewName: c.name, ...composeAssign({ instruction, items, t }) });
@@ -302,14 +305,14 @@ export function AssignSheet() {
       <div className="field-block"><span className="label">{t('crew.what')}</span>
         {a.items.length > 0 && <div className="seg">{TASKS.filter((k) => hasMail || k !== 'reply').map((k) => <button key={k} type="button" className={`seg-btn${task === k ? ' on' : ''}`} aria-pressed={task === k} onClick={() => setTask(k)}>{t(`crew.task.${k}`)}</button>)}</div>}
         <div className="mention-wrap">
-          <textarea ref={box} data-autofocus className="input area" rows={4} value={text} placeholder={t(task === 'custom' ? 'crew.customPh' : 'crew.morePh')} aria-label={t(task === 'custom' ? 'crew.customPh' : 'crew.morePh')}
+          <textarea ref={box} data-autofocus className="input area" rows={4} value={text} placeholder={t(ph)} aria-label={t(ph)}
             aria-autocomplete="list" aria-controls={cands.length ? 'assign-mention' : undefined} aria-activedescendant={cands.length ? `assign-mention-${Math.min(hi, cands.length - 1)}` : undefined}
             onChange={(e) => { setText(e.target.value); setHi(0); sync(e.target); }} onSelect={(e) => sync(e.target)} onBlur={() => setAt(null)} {...imeGuardWith(onKey)} />
           {cands.length > 0 && <div id="assign-mention" role="listbox" className="mention-list">{cands.map((c, i) => (
             <div key={c.id} id={`assign-mention-${i}`} role="option" aria-selected={i === Math.min(hi, cands.length - 1)} className={`mention-opt${i === Math.min(hi, cands.length - 1) ? ' on' : ''}`}
               onMouseDown={(e) => { e.preventDefault(); pick(c); }} onMouseEnter={() => setHi(i)}>
               <Face id={c.id} size={20} /><b>{c.name}</b><small>{c.owner === ME.id || !c.owner ? c.role : c.ownerName ?? ''}</small></div>))}</div>}
-          {at && main && !at.q && !cands.length && <p className="dim small">{t('crew.mention.none')}</p>}
+          {at && main && !at.q && !cands.length && <p className="dim small">{t(one ? 'crew.mention.one' : 'crew.mention.none')}</p>}
         </div>
       </div>
       {sets.length > 0 && <label className="field-block"><span className="label">{t('crew.set.pick')}</span>

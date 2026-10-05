@@ -150,10 +150,10 @@ function HideAllToggle() {
   return <button type="button" className={`icon-btn hide-all${on ? ' on' : ''}`} aria-pressed={on} aria-label={label} title={`${on ? t('hideAll.state') : label} (${mod === '⌘' ? '⌘⇧H' : 'Ctrl+Shift+H'})`} onClick={() => toggleHideAll()}><Icon name={on ? 'eyeOff' : 'eye'} /></button>;
 }
 
-function Header({ r, page, path }) {
+function Header({ r, page, path, missing }) {
   const mode = useSession();
   const sp = SPACES.find((s) => s.key === r.space);
-  const gone = r.view === 'page' && !page && mode !== 'loading'; // 없는 페이지 — '제목 없음·저장됨·별'을 보이지 않는다(UX-O05)
+  const gone = r.view === 'page' && mode !== 'loading' && (!page || missing === page.id); // 없는 페이지(목록에 있어도 서버에 없으면 — PageView가 ui.missingPage로 알린다) — '제목 없음·저장됨·별'을 보이지 않는다(UX-O05)
   const crumb = r.view === 'page' ? (gone ? '' : page?.title || t('page.untitled')) : r.view === 'business' && r.tab === 'library' ? t('library.title') : t(`nav.${r.view === 'mailConnect' ? 'mail' : r.view === 'filesConnect' ? 'files' : r.view}`);
   return (
     <header className="topbar">
@@ -166,7 +166,7 @@ function Header({ r, page, path }) {
         <HideAllToggle />
         {!gone && <FavToggle path={path} page={page} />}
         {!['settings', 'trash', 'mail', 'mailConnect'].includes(r.view) && r.tab !== 'library' && <WidthToggle />}
-        {r.view === 'page' && page && <>
+        {r.view === 'page' && page && !gone && <>
           {mode === 'sample' && <span className="presence" title={t('page.viewing', { n: 2 })}><span className="avatar sm">{ME.name[0]}</span><span className="avatar sm alt">{PEOPLE[0].name[0]}</span></span>}
           <button type="button" className="btn sm" onClick={() => setUi({ share: page.id })}><Icon name="share" size={14} />{t('page.share')}</button>
           <button type="button" className="icon-btn" aria-label={t('more')} onClick={(e) => openMenu(e, [...pageMenu(page), { sep: true }, { label: t('page.history'), icon: 'history', run: () => setUi({ history: page.id }) }], { anchor: e.currentTarget })}><Icon name="dots" /></button>
@@ -278,7 +278,7 @@ export default function App() {
         <Sidebar space={r.space} path={path} />
         <div className="nav-scrim" onClick={() => setUi({ navOpen: false })} />
         <main className="main">
-          <Header r={r} page={page} path={path} />
+          <Header r={r} page={page} path={path} missing={ui.missingPage} />
           <div className={`content view-${r.view}`}><LegacyRecoveryNotice /><Lazy reset={path}>{views[r.view]}</Lazy></div>
         </main>
       </div>
