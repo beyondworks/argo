@@ -11,7 +11,7 @@ import { AiConnectionCard, fieldStyle, usableRunnerNames } from '../../../runner
 import { useAppUpdate } from '../../../use-app-update';
 import { MOVE_REQUIRED } from '../../../update-location.mjs';
 import LocalAssetImport from '../../../components/LocalAssetImport';
-import { proRowActive, trialBadgeState } from '../../../../src/entitlement.mjs';
+import { accountPlan, trialBadgeState } from '../../../../src/entitlement.mjs';
 
 // Argo Messenger 받기 — 맥·윈도우 설치파일만 걸던 것을 앱 스토어·Play까지 있는 안내 페이지 한 곳으로(CX-12). 오피스는 웹 주소(CX-13).
 import { MESSENGER_PAGE, OFFICE_URL, msgrCardView, runtimeWaitingKey, runtimeAction } from './msgr-card.mjs';
@@ -1489,15 +1489,15 @@ function SyncCard({ ws }) {
   // 체험 D-day — 동기화를 켠 적 없는 체험자(최대 코호트)도 보여야 해서 sync가 아닌 bill에서 계산.
   // 판정은 trialBadgeState(entitlement.mjs) 단일 원천 — 만료 하한 누락으로 만료자에게 'D-0' 영구
   // 표시되던 회귀(분리 검수 H1)가 그 함수의 테스트로 잠겨 있다.
-  const { active: trialActive, imminent: trialImminent, daysLeft: trialDaysLeft } = trialBadgeState(bill?.trialEndsAt, bill?.plan);
   // 표시·결제 분기는 **로그인 계정** 기준이다. sync.plan은 이 기기의 동기화 주체(기기 연동 계정)의
   // 것이라, 한 컴퓨터를 여러 사람이 쓰면 남의 플랜이 보인다(실측 2026-08-05: 무료 계정으로 로그인해도
   // 기기 주인이 Pro면 Pro 배지가 뜨고 업그레이드 버튼이 숨겨졌다 — 낼 방법이 사라진다).
-  // bill은 /api/me/billing = currentUser() 경유라 계정별이다. 판정은 서버 is_pro와 같은 공유 술어로.
+  // bill은 /api/me/billing = currentUser() 경유라 계정별이다. 판정은 서버 my_plan()의 plan
+  // (bill.effectivePlan)이 먼저다 — 동기화 엔진과 같은 판정. 원시 행(plan·endsAt)만 보면 운영자 부여
+  // Pro(granted)·조직 좌석이 Free로 보였다(실측 2026-10-06). 그 값이 없을 때만 원시 행 판정(accountPlan 폴백).
   // 로컬·게스트(bill=null)만 기기값으로 폴백한다 — 그 모드엔 계정이 없다.
-  const acctPlan = bill
-    ? (proRowActive({ plan: bill.plan, ends_at: bill.endsAt }) ? 'pro' : trialActive ? 'trial' : 'free')
-    : null;
+  const acctPlan = accountPlan(bill);
+  const { active: trialActive, imminent: trialImminent, daysLeft: trialDaysLeft } = trialBadgeState(bill?.trialEndsAt, acctPlan === 'pro' ? 'pro' : bill?.plan); // 서버가 Pro로 판정하면 체험 배지 없음 — 그 밖엔 예전과 같다
   // 폴백은 **계정이 없는 모드에서만**. 조회 실패(billLost)에 기기값을 끼워 넣으면 공용 PC에서 남의
   // 플랜이 그대로 표시·판정에 쓰인다(2026-08-05 실사고와 같은 계열이 null 경로로 살아 있었다).
   const plan = acctPlan ?? (billLost ? null : sync?.plan ?? null);
@@ -1598,7 +1598,7 @@ function SyncCard({ ws }) {
             // 남은 기간은 ends_at이 있을 때만 보여주고(미설정이면 문구만), 결제는 항상 열어 둔다.
             <div style={{ display: 'grid', gap: 6, marginTop: 4 }}>
               <span style={{ fontSize: 12, color: 'var(--fg-2)' }}>
-                {bill?.endsAt
+                {bill?.endsAt && Date.parse(bill.endsAt) > Date.now()
                   ? t('billing.grantedUntil', { date: new Date(bill.endsAt).toLocaleDateString(lang === 'ko' ? 'ko-KR' : 'en-US') })
                   : t('billing.grantedPro')}
               </span>
@@ -1663,7 +1663,7 @@ function SyncCard({ ws }) {
             // (규칙: 변경한 코드가 도는 문맥을 먼저 세고 각각 확인, CLAUDE.md 2026-08-19)
             <div style={{ display: 'grid', gap: 6 }}>
               <span style={{ fontSize: 12, color: 'var(--fg-2)' }}>
-                {bill?.endsAt
+                {bill?.endsAt && Date.parse(bill.endsAt) > Date.now()
                   ? t('billing.grantedUntil', { date: new Date(bill.endsAt).toLocaleDateString(lang === 'ko' ? 'ko-KR' : 'en-US') })
                   : t('billing.grantedPro')}
               </span>
