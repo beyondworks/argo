@@ -21,6 +21,7 @@ const U = {
   e: '55555555-5555-4555-8555-555555555555', // member — 남이 넣는 대상
   g: '66666666-6666-4666-8666-666666666666', // guest — 비공개 채널 하나에 초대됨
   x: '77777777-7777-4777-8777-777777777777', // 다른 조직 사람(이 조직 밖)
+  h: '88888888-8888-4888-8888-888888888888', // 아직 조직 밖 — 게스트 초대를 받아 들어온다
 };
 function psqlRaw(args) { return psqlSpawn(DB, args); }
 function psql(args) { const r = psqlRaw(args); if (r.status !== 0) throw new Error(`psql 실패: ${r.stderr || r.stdout}`); return r.stdout; }
@@ -82,6 +83,7 @@ function seed(tag) {
   asUser(U.b, `select public.msgr_join_channel('${s.PUB}')`);
   // c가 만들고 b를 넣은 비공개 채널 → c가 나간다
   s.PRIV_C = last(asUser(U.c, `select public.msgr_create_channel('${ORG}', 'private', 'c-${tag}', '[{"kind":"user","id":"${U.b}"}]'::jsonb)`));
+  s.INV_C = last(asUser(U.c, `insert into public.msgr_invites (org_id, role, created_by, channel_id) values ('${ORG}', 'guest', '${U.c}', '${s.PRIV_C}') returning code`)); // 나가기 전에 만든 초대
   asUser(U.c, `delete from public.msgr_channel_members where channel_id = '${s.PRIV_C}' and member_kind = 'user' and member_id = '${U.c}'`);
   // a가 만들고 d를 채널 관리자로 둔 비공개 채널 → d가 나간다
   s.PRIV_D = last(asUser(U.a, `select public.msgr_create_channel('${ORG}', 'private', 'd-${tag}', '[{"kind":"user","id":"${U.d}"}]'::jsonb)`));
@@ -93,6 +95,7 @@ function seed(tag) {
   // 게스트가 초대받은 비공개 채널
   s.PRIV_G = last(asUser(U.a, `select public.msgr_create_channel('${ORG}', 'private', 'g-${tag}')`));
   asUser(U.a, `insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${s.PRIV_G}', 'user', '${U.g}', '${U.a}')`);
+  s.INV_G = last(asUser(U.a, `insert into public.msgr_invites (org_id, role, created_by, channel_id) values ('${ORG}', 'guest', '${U.a}', '${s.PRIV_G}') returning code`)); // 참여 중인 방장의 초대
   return s;
 }
 const memberRow = (ch, uid) => sql(`select count(*) from public.msgr_channel_members where channel_id = '${ch}' and member_kind = 'user' and member_id = '${uid}'`);
@@ -116,6 +119,10 @@ function observe(tag) {
   o.memberJoin = ok(asUserRaw(U.c, `select public.msgr_join_channel('${s.PUB2}')`)) && memberRow(s.PUB2, U.c) === '1';
   o.guestPrivRead = canRead(U.g, s.PRIV_G);
   o.guestPrivWrite = ok(insertMsg(U.g, s.PRIV_G));
+  o.adminAddsGuestToPub = ok(addRaw(U.a, s.PUB2, U.g)) && memberRow(s.PUB2, U.g) === '1'; // 1-b: 방장·조직 관리자가 게스트를 공개 채널 참여 행으로(게스트가 아직 없는 PUB2)
+  if (o.adminAddsGuestToPub) sql(`delete from public.msgr_channel_members where channel_id = '${s.PUB2}' and member_kind = 'user' and member_id = '${U.g}'`);
+  o.adminAddsMemberToPub = ok(addRaw(U.a, s.PUB, U.e)) && memberRow(s.PUB, U.e) === '1'; // 정상: 멤버는 넣는다
+  o.guestInvitePublicRefused = !ok(asUserRaw(U.a, `insert into public.msgr_invites (org_id, role, created_by, channel_id) values ('${ORG}', 'guest', '${U.a}', '${s.PUB2}')`)); // 게스트 초대는 공개 채널을 못 담는다(전후 동일)
   o.guestJoinPrivRefused = /msgr_public_only/.test(asUserRaw(U.g, `select public.msgr_join_channel('${s.PRIV_G}')`).stderr);
 
   // 2) 나간 생성자·채널 관리자
@@ -123,6 +130,11 @@ function observe(tag) {
   o.leftCreatorHost = last(asUser(U.c, `select public.msgr_is_channel_host('${s.PRIV_C}')`)) === 't';
   o.leftCreatorReaddsOther = ok(addRaw(U.c, s.PRIV_C, U.e));
   o.leftCreatorReaddsSelf = ok(addRaw(U.c, s.PRIV_C, U.c));
+  asUser(U.c, `select public.msgr_accept_invite('${s.INV_C}')`); // 2-b: 나간 생성자가 나가기 전 초대로 자기를 다시 넣는다
+  o.leftCreatorInviteRejoins = memberRow(s.PRIV_C, U.c) === '1';
+  if (o.leftCreatorInviteRejoins) sql(`delete from public.msgr_channel_members where channel_id = '${s.PRIV_C}' and member_kind = 'user' and member_id = '${U.c}'`);
+  asUser(U.h, `select public.msgr_accept_invite('${s.INV_G}')`); // 정상: 참여 중인 방장의 게스트 초대로 새 사람이 들어온다
+  o.hostInviteJoins = memberRow(s.PRIV_G, U.h) === '1';
   o.leftAdminManage = last(asUser(U.d, `select public.msgr_can_manage_channel('${s.PRIV_D}')`)) === 't';
   o.leftAdminHost = last(asUser(U.d, `select public.msgr_is_channel_host('${s.PRIV_D}')`)) === 't';
   o.leftAdminReaddsSelf = ok(addRaw(U.d, s.PRIV_D, U.d));
@@ -147,6 +159,14 @@ function observe(tag) {
   o.userText = ok(insertMsg(U.b, s.PUB));
   o.userTextExplicit = ok(insertMsg(U.b, s.PUB, ', kind', `, 'text'`));
   o.userOtherMeta = ok(insertMsg(U.b, s.PUB, ', meta', `, '{"office":true,"task":"t1"}'::jsonb`));
+  const mine = last(asUser(U.b, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, body, client_msg_id) values ('${s.PUB}', 'user', '${U.b}', '고칠 글', gen_random_uuid()::text) returning id`));
+  o.updRelay = asUserRaw(U.b, `update public.msgr_messages set meta = coalesce(meta, '{}'::jsonb) || '{"relay":{"via_name":"가짜"}}'::jsonb where id = ${mine} returning id`);
+  o.updRelayOk = ok(o.updRelay) && last(o.updRelay.stdout) === mine;
+  o.updRelayTo = ok(asUserRaw(U.b, `update public.msgr_messages set meta = coalesce(meta, '{}'::jsonb) || '{"relay_to":["x"]}'::jsonb where id = ${mine}`)) && sql(`select meta ? 'relay_to' from public.msgr_messages where id = ${mine}`) === 't';
+  o.updKindRefused = /msgr_immutable_kind/.test(asUserRaw(U.b, `update public.msgr_messages set kind = 'system' where id = ${mine}`).stderr); // 전후 동일 — 이미 잠김
+  o.updBody = ok(asUserRaw(U.b, `update public.msgr_messages set body = '고친 글', edited_at = now() where id = ${mine}`)) && sql(`select body from public.msgr_messages where id = ${mine}`) === '고친 글';
+  o.updOtherMeta = ok(asUserRaw(U.b, `update public.msgr_messages set meta = coalesce(meta, '{}'::jsonb) || '{"office":true}'::jsonb where id = ${mine}`));
+  o.updDelete = ok(asUserRaw(U.b, `update public.msgr_messages set body = '', deleted_at = now() where id = ${mine}`));
   // 신고: 수정 전에 이미 들어간 사람 명의 system 글(위조)은 신고 가능해야 하고, 서버 안내(author_kind='system')는 계속 제외
   const forged = sql(`insert into public.msgr_messages (channel_id, author_kind, author_user_id, kind, body, client_msg_id) values ('${s.PUB}', 'user', '${U.b}', 'system', '위조 안내', gen_random_uuid()::text) returning id`).split('\n').pop();
   const serverSys = sql(`insert into public.msgr_messages (channel_id, author_kind, kind, body, client_msg_id) values ('${s.PUB}', 'system', 'system', '입장', gen_random_uuid()::text) returning id`).split('\n').pop();
@@ -177,14 +197,17 @@ test('수정 전: 네 결함이 재현된다(빨강) — 정상 경로는 동작
   assert.equal(o.guestBrowseSeesPub, true, '1 재현: 게스트 찾아보기에 공개 채널');
   assert.equal(o.guestJoin && o.guestRowInPub, true, '1 재현: 게스트가 공개 채널에 참여');
   assert.equal(o.guestWritesPub && o.guestReadsPub, true, '1 재현: 참여한 게스트가 공개 채널을 읽고 쓴다');
+  assert.equal(o.adminAddsGuestToPub, true, '1-b 재현: 방장·조직 관리자가 게스트를 공개 채널 참여 행으로 넣는다');
   // 2
   assert.equal(o.leftCreatorManage && o.leftCreatorHost, true, '2 재현: 나간 생성자가 관리자·방장');
   assert.equal(o.leftCreatorReaddsOther && o.leftCreatorReaddsSelf, true, '2 재현: 나간 생성자가 남·자기를 다시 넣는다');
   assert.equal(o.leftAdminManage && o.leftAdminHost && o.leftAdminReaddsSelf, true, '2 재현: 나간 채널 관리자가 다시 들어온다');
+  assert.equal(o.leftCreatorInviteRejoins, true, '2-b 재현: 나간 생성자가 나가기 전 초대로 다시 들어온다');
   // 3
   assert.equal(o.userSystemOk && o.userApproval, true, '3 재현: 사람이 system·approval_card 글을 넣는다');
   assert.equal(o.userRelayTo && o.userRelay && o.userRelayChain, true, '3 재현: 사람이 전달 표지를 넣는다');
   assert.equal(o.reportForged, false, '3 재현: 사람 명의 system 글은 신고되지 않는다');
+  assert.equal(o.updRelayOk && o.updRelayTo, true, '3-b 재현: 작성자가 고치기로 전달 표지를 붙인다');
   // 4
   assert.equal(o.pushOutsider && o.pushGuestOutside && o.pushMemberOutside, true, '4 재현: 비공개 채널 멘션 푸시가 채널 밖·조직 밖으로');
   assert.equal(o.pushPubGuest && o.pushPubOutsider, true, '4 재현: 공개 채널 멘션 푸시가 게스트·조직 밖으로');
@@ -203,7 +226,8 @@ test('1. 게스트는 공개 채널을 찾아보거나 들어가지 못한다 �
   assert.equal(o.guestRowInPub, false, '참여 행이 생기지 않는다');
   assert.equal(o.guestWritesPub, false, '공개 채널에 못 쓴다');
   assert.equal(o.guestReadsPub, false, '공개 채널을 못 읽는다');
-  for (const k of ['memberBrowseSeesPub2', 'memberJoin', 'guestPrivRead', 'guestPrivWrite', 'guestJoinPrivRefused']) {
+  assert.equal(o.adminAddsGuestToPub, false, '1-b: 방장·조직 관리자도 게스트를 공개 채널 참여 행으로 넣지 못한다');
+  for (const k of ['memberBrowseSeesPub2', 'memberJoin', 'guestPrivRead', 'guestPrivWrite', 'guestJoinPrivRefused', 'adminAddsMemberToPub', 'guestInvitePublicRefused']) {
     assert.equal(o[k], true, `정상 경로 ${k} (수정 뒤)`); assert.equal(PRE.o[k], true, `정상 경로 ${k} (수정 전)`);
   }
 });
@@ -217,8 +241,9 @@ test('2. 나간 생성자·채널 관리자는 관리·재입장을 못 한다 �
   assert.equal(o.leftAdminManage, false, '나간 채널 관리자 msgr_can_manage_channel');
   assert.equal(o.leftAdminHost, false, '나간 채널 관리자 msgr_is_channel_host');
   assert.equal(o.leftAdminReaddsSelf, false, '나간 채널 관리자가 자기를 넣지 못한다');
+  assert.equal(o.leftCreatorInviteRejoins, false, '2-b: 나간 생성자의 옛 초대는 그 비공개 채널을 건너뛴다');
   assert.equal(memberRow(POST.s.PRIV_C, U.c), '0'); assert.equal(memberRow(POST.s.PRIV_C, U.e), '0'); assert.equal(memberRow(POST.s.PRIV_D, U.d), '0');
-  for (const k of ['creatorAdds', 'creatorHost', 'chanAdminManage', 'chanAdminHost', 'chanAdminAdds', 'orgAdminManagesUnjoined', 'orgAdminHostUnjoined']) {
+  for (const k of ['hostInviteJoins', 'creatorAdds', 'creatorHost', 'chanAdminManage', 'chanAdminHost', 'chanAdminAdds', 'orgAdminManagesUnjoined', 'orgAdminHostUnjoined']) {
     assert.equal(o[k], true, `정상 경로 ${k} (수정 뒤)`); assert.equal(PRE.o[k], true, `정상 경로 ${k} (수정 전)`);
   }
   assert.equal(o.plainMemberManage, false, '생성자·관리자 아닌 참여자는 전후 모두 관리 못 함'); assert.equal(PRE.o.plainMemberManage, false);
@@ -231,7 +256,9 @@ test('3. 사람은 text 글만, 전달 표지 없이 쓴다 — 사람 명의 sy
   assert.equal(o.userRelayTo, false, 'meta.relay_to 거절');
   assert.equal(o.userRelay, false, 'meta.relay 거절');
   assert.equal(o.userRelayChain, false, 'meta.relay_chain_id 거절');
-  for (const k of ['userText', 'userTextExplicit', 'userOtherMeta', 'reportServerSysRefused', 'reportOwnForgedRefused']) {
+  assert.match(o.updRelay.stderr, /msgr_relay_immutable/, '3-b: 고치기로 meta.relay를 붙이지 못한다');
+  assert.equal(o.updRelayTo, false, '3-b: 고치기로 meta.relay_to를 붙이지 못한다');
+  for (const k of ['userText', 'userTextExplicit', 'userOtherMeta', 'reportServerSysRefused', 'reportOwnForgedRefused', 'updKindRefused', 'updBody', 'updOtherMeta', 'updDelete']) {
     assert.equal(o[k], true, `정상 경로 ${k} (수정 뒤)`); assert.equal(PRE.o[k], true, `정상 경로 ${k} (수정 전)`);
   }
   assert.equal(o.reportForged, true, '사람 명의 system 글은 신고된다');
@@ -271,7 +298,7 @@ test('4. 푸시는 그 채널을 읽을 수 있는 사람에게만 — 참여자
   }
 });
 
-test('4. 수신자 판정 = 그 사람으로 msgr_can_read_channel(채널 4종 × 사용자 7명, 모두 멘션)', { skip }, () => {
+test('4. 수신자 판정 = 그 사람으로 msgr_can_read_channel(채널 4종 × 사용자 8명, 모두 멘션)', { skip }, () => {
   // 두 판정(푸시 함수의 인라인 조건, msgr_can_read_channel)이 갈라지면 여기서 빨강이 된다.
   const s = POST.s;
   // 개인 1:1(조직 없음)도 넣는다 — a·x 친구
