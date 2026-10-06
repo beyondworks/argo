@@ -805,7 +805,13 @@ export function repLooks(rows) {
 /** '/' 커맨더 후보(유건 지시 2026-09-14) — 본체 크루 채팅의 커맨더와 같은 재료: 회사 별칭(company.json.aliases) + 설치 스킬(skills/).
     이름·제목·별칭 본문만. 본체 내장 명령(새 대화·카드·이동)은 본체 화면 조작이라 싣지 않는다. */
 export function crewCommands({ aliases = [], skills = [] } = {}) {
-  const str = (v, n) => String(v ?? '').trim().slice(0, n);
+  // 서버(jsonb)가 받지 않는 글자는 여기서 정리한다 — 하나라도 섞이면 회사 목록 전체가 거절된다(2026-10-06 PG 실측):
+  // NUL(\u0000 → 22P05), 짝 잃은 서로게이트(이모지 중간을 자르면 생긴다 → 22P02). 자른 끝의 반쪽은 버리고, 남은 반쪽은 U+FFFD로.
+  const str = (v, n) => {
+    let s = String(v ?? '').replace(/\u0000/g, '').trim().slice(0, n);
+    if (/[\ud800-\udbff]$/.test(s)) s = s.slice(0, -1);
+    return s.toWellFormed?.() ?? s;
+  };
   return [
     ...(Array.isArray(aliases) ? aliases : []).filter((a) => str(a?.cmd, 40) && str(a?.text, 2000)).map((a) => ({ kind: 'alias', cmd: str(a.cmd, 40), text: str(a.text, 2000) })),
     ...(Array.isArray(skills) ? skills : []).filter((s) => str(s?.id, 80)).map((s) => ({ kind: 'skill', id: str(s.id, 80), title: str(s.title, 80) || str(s.id, 80) })),
@@ -815,16 +821,49 @@ async function listCommandsForWs(wsId) {
   const [{ aliases = [] }, { listInstalledSkills }] = await Promise.all([loadCompany(wsId).catch(() => ({})), import('../market.mjs')]);
   return crewCommands({ aliases, skills: await listInstalledSkills(wsId).catch(() => []) });
 }
+/** 서버 제약 msgr_crews_commands_check(pg_column_size(commands) <= 65536)에 걸리지 않게 목록을 줄인다.
+    제약은 압축 전 jsonb 크기로 판정하고, jsonb는 JSON 문자열보다 항목당 12.6~14.1바이트 크다(PG 실측 2026-10-06: 스킬·별칭 모양).
+    그래서 항목마다 JSON 바이트 + 16을 세고, 상한 60,000으로 제약보다 5KB 넘게 여유를 둔다. 문자열 이스케이프(\n·")는 jsonb에서 더 작아진다.
+    순서가 우선순위다(별칭 먼저, 그다음 스킬 — 본체 커맨더와 같은 순서). 남은 자리에 안 들어가는 항목은 통째로 빼고 다음 항목을 본다:
+    별칭 본문은 메신저가 입력창에 그대로 넣는 지시문이라 잘라서 싣지 않는다(잘린 지시가 실행되면 안 된다).
+    실사고 2026-10-05: 상한을 넘은 회사 하나가 23514로 1시간 226번 실패했고 그 회사 '/' 목록은 비어 있었다. */
+export const COMMANDS_BUDGET = 60000;
+const COMMAND_ITEM_OVERHEAD = 16;
+export function commandsSize(list) { return 2 + 16 + list.reduce((n, it) => n + Buffer.byteLength(JSON.stringify(it)) + 1 + COMMAND_ITEM_OVERHEAD, 0); }
+export function fitCommands(list, budget = COMMANDS_BUDGET) {
+  const items = Array.isArray(list) ? list : [];
+  const kept = []; let used = commandsSize([]);
+  for (const it of items) {
+    const cost = Buffer.byteLength(JSON.stringify(it)) + 1 + COMMAND_ITEM_OVERHEAD;
+    if (used + cost > budget) continue;
+    used += cost; kept.push(it);
+  }
+  return { commands: kept, dropped: items.length - kept.length };
+}
 const commandsPushed = new Map(); // wsId → 마지막으로 올린 JSON. 같은 내용이면 폴마다 update를 치지 않는다(재기동 뒤 첫 폴은 한 번 쓴다)
-/** 크루 행의 commands를 회사 목록과 맞춘다 — 바뀐 폴에만 update. 본체에서 스킬·별칭이 바뀌면 다음 폴(15초)에 메신저에 반영된다. */
+const commandsRejected = new Map(); // wsId → 서버가 영구 오류로 거절한 JSON. 같은 내용이면 다시 보내지 않는다(내용이 바뀌거나 재시작하면 다시 시도)
+// 같은 목록을 다시 보내도 결과가 같은 실패: 권한·무결성(permanentWrite), 데이터 형식(22xxx), 옛 서버(commands 열 없음: PGRST204·42703).
+// 네트워크·5xx·시간 초과는 여기에 들지 않는다 — 다음 폴(15초)에 다시 시도한다.
+const permanentCommandsWrite = (e) => permanentWrite(e) || /^22/.test(String(e?.code ?? '')) || ['PGRST204', '42703'].includes(e?.code);
+/** 크루 행의 commands를 회사 목록과 맞춘다 — 바뀐 폴에만 update. 본체에서 스킬·별칭이 바뀌면 다음 폴(15초)에 메신저에 반영된다.
+    상한을 넘는 목록은 fitCommands로 줄여서 올린다(빈 목록으로 남지 않게). 영구 오류는 그 내용을 기억해 같은 내용이면 다시 쓰지 않고 한 번만 남긴다. */
 export async function mirrorCommands(wsId, { db, uid, commands }) {
-  const json = JSON.stringify(commands);
-  if (commandsPushed.get(wsId) === json) return false;
-  await db.setCommands(uid, wsId, commands);
-  commandsPushed.set(wsId, json);
+  const { commands: fit, dropped } = fitCommands(commands);
+  const json = JSON.stringify(fit);
+  if (commandsPushed.get(wsId) === json || commandsRejected.get(wsId) === json) return false;
+  try {
+    await db.setCommands(uid, wsId, fit);
+  } catch (e) {
+    if (!permanentCommandsWrite(e)) throw e;
+    commandsRejected.set(wsId, json);
+    console.error(`[argo] msgr 커맨더 목록을 서버가 거절했습니다 — 내용이 바뀔 때까지 다시 보내지 않습니다(${wsId}, ${fit.length}개, ${e?.code ?? '?'}):`, e?.message ?? e);
+    return false;
+  }
+  commandsPushed.set(wsId, json); commandsRejected.delete(wsId);
+  if (dropped) console.warn(`[argo] msgr 커맨더 목록이 커서 ${dropped}개를 빼고 ${fit.length}개를 올렸습니다(${wsId})`);
   return true;
 }
-export const _resetCommandsForTest = () => commandsPushed.clear();
+export const _resetCommandsForTest = () => { commandsPushed.clear(); commandsRejected.clear(); };
 
 /** 같은 입력으로 다시 넣어도 결과가 같은 실패 — 권한(RLS)과 무결성 제약. 재시도가 풀어 주지 않는다.
     보관 채널처럼 읽기는 되고 쓰기는 막히는 자리가 실재한다(msgr_crew_inbox는 읽기로만 거른다):
