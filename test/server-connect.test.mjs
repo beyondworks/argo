@@ -356,6 +356,7 @@ assert not m.yaml_sets('approvals:\n  timeout: 60\nmode: smart\n', 'approvals', 
 assert not m.yaml_sets('auxiliary:\n  approvals:\n    mode: smart\n', 'approvals', 'mode'), '중첩된 같은 이름은 아니다'
 assert not m.yaml_sets('approvals:\n  gateway:\n    mode: strict\n  timeout: 60\n', 'approvals', 'mode'), 'approvals 아래 더 깊은 mode는 아니다(검수 LOW)'
 assert not m.yaml_sets('', 'approvals', 'mode')
+assert m.yaml_sets('\ufeffapprovals:\n  mode: smart\n', 'approvals', 'mode'), 'BOM으로 시작하는 파일'
 calls = []
 m.run = lambda cli, args, env=None: calls.append(args) or (True, '')
 d = tempfile.mkdtemp()
@@ -370,6 +371,9 @@ n = len(calls)
 assert m.default_ask_exec_openclaw('openclaw') == 'kept' and len(calls) == n + 1, '명시한 full은 덮어쓰지 않는다'
 m.run = lambda cli, args, env=None: (False, 'boom')
 assert m.default_manual_approvals_hermes('hermes', tempfile.mkdtemp(), {}) == 'failed', '설정 실패는 연결을 막지 않고 보고만'
+m.run = lambda cli, args, env=None: calls.append(args) or ((False, 'timed out') if args[:2] == ['config', 'get'] else (True, ''))
+n = len(calls)
+assert m.default_ask_exec_openclaw('openclaw') == 'failed' and len(calls) == n + 1, '조회 실패(시간 초과)를 값 없음으로 보고 덮지 않는다'
 `;
   const { spawnSync } = await import('node:child_process');
   const r = spawnSync('python3', ['-c', py, new URL('../integrations/server-connect/connect.py', import.meta.url).pathname], { encoding: 'utf8' });

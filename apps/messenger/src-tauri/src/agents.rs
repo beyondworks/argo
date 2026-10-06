@@ -308,6 +308,53 @@ fn openclaw_enable_plugin(run: &mut impl FnMut(&[&str]) -> (bool, String), steps
     steps.push(step("enable", true, out)); true
 }
 
+/// 원본 YAML에 top.sub가 명시돼 있는가(기본값과 구분) — server-connect/connect.py `yaml_sets`와 같은 규칙.
+/// 블록(`top:` 바로 아래 한 단계 들여쓴 `sub:`)과 한 줄(`top: {sub: …}`)만 본다. 다른 최상위 키·더 깊은 같은 이름은 아니다.
+fn yaml_sets(text: &str, top: &str, sub: &str) -> bool {
+    let key_at = |s: &str| s.strip_prefix(sub).is_some_and(|r| r.trim_start().starts_with(':'));
+    // 파이썬 splitlines처럼 CR만·NEL 줄끝도 나눈다(CRLF 사이에 생기는 빈 줄은 아래에서 건너뛴다). BOM은 YAML이 무시한다.
+    let lines: Vec<&str> = text.trim_start_matches('\u{feff}').split(['\n', '\r', '\u{85}']).collect();
+    for (i, line) in lines.iter().enumerate() {
+        let Some(rest) = line.strip_prefix(top).map(str::trim_start).and_then(|r| r.strip_prefix(':')).map(str::trim_start) else { continue };
+        if let Some(inner) = rest.strip_prefix('{') {
+            let inner = inner.split('}').next().unwrap_or("");
+            if inner.match_indices(sub).any(|(j, _)| !inner[..j].chars().next_back().is_some_and(|c| c.is_alphanumeric() || c == '_') && key_at(&inner[j..])) { return true; }
+            continue;
+        }
+        if !(rest.is_empty() || rest.starts_with('#')) { continue; }
+        let mut indent = None; // 바로 아래 한 단계만(approvals.gateway.mode 같은 더 깊은 mode는 아니다)
+        for nxt in &lines[i + 1..] {
+            let body = nxt.trim_start();
+            if body.is_empty() || body.starts_with('#') { continue; }
+            if !nxt.starts_with(char::is_whitespace) { break; }
+            let lead = nxt.len() - body.len();
+            if lead == *indent.get_or_insert(lead) && key_at(body) { return true; }
+        }
+    }
+    false
+}
+
+/// 1-b(2026-09-29 유건 결정, connect.py와 같은 규칙): 연결할 때 위험 명령은 사람에게 묻는 manual이 기본값. 이미 명시한 값(smart 등)은 덮어쓰지 않는다 —
+/// 그때는 메신저 에이전트 카드가 실제 모드를 보여 준다. Hermes 기본값 smart는 보조 AI가 괜찮다고 보면 결재 카드 없이 실행한다.
+fn hermes_default_manual(home: &Path, mut run: impl FnMut(&[&str]) -> (bool, String)) -> &'static str {
+    let text = fs::read_to_string(home.join("config.yaml")).unwrap_or_default();
+    if yaml_sets(&text, "approvals", "mode") { return "kept"; }
+    if run(&["config", "set", "approvals.mode", "manual"]).0 { "manual" } else { "failed" }
+}
+
+/// OpenClaw 기본값 full은 사람 승인 없이 모든 명령을 실행한다(결재 카드가 한 번도 뜨지 않는다). 명시한 값이 없을 때만 ask로(connect.py와 같은 규칙).
+fn openclaw_default_ask(run: &mut impl FnMut(&[&str]) -> (bool, String)) -> &'static str {
+    let (ok, out) = run(&["config", "get", "tools.exec.mode"]);
+    // 값이 없다고 확신할 때만 쓴다 — 시간 초과·권한 오류를 "없음"으로 읽으면 사용자가 적은 값을 덮는다(openclaw_bindings와 같은 문구 판정).
+    if !ok && !["Config path not found", "Config path is valid but unset"].iter().any(|m| out.contains(m)) { return "failed"; }
+    let val = if ok { out.trim().trim_matches('"').to_ascii_lowercase() } else { String::new() };
+    if !val.is_empty() && !["undefined", "null", "none"].contains(&val.as_str()) { return "kept"; }
+    if run(&["config", "set", "tools.exec.mode", "ask"]).0 { "ask" } else { "failed" }
+}
+
+/// 승인 모드 단계 — 설정에 실패해도 연결은 계속한다(단계만 ✗로 보인다).
+fn approvals_step(mode: &str) -> serde_json::Value { step("approvals", mode != "failed", mode) }
+
 fn openclaw_connect(mut run: impl FnMut(&[&str]) -> (bool, String), install: impl FnOnce() -> Result<usize, String>, url: &str, agents: &[AgentSetup]) -> (bool, &'static str, Vec<serde_json::Value>) {
     let (v_ok, v_out) = run(&["--version"]);
     if let Some(have) = openclaw_version_problem(v_ok, &v_out) {
@@ -336,11 +383,31 @@ fn openclaw_connect(mut run: impl FnMut(&[&str]) -> (bool, String), install: imp
         all_ok &= ok;
         results.push(serde_json::json!({ "id": a.id, "ok": ok, "steps": steps }));
     }
+    let approvals = all_ok.then(|| approvals_step(openclaw_default_ask(&mut run)));
     let (g_ok, g_out) = if all_ok { run(&["gateway", "restart"]) } else { (false, "Configuration failed; gateway unchanged".into()) };
     let (g_ok, g_out) = if g_ok || !all_ok { (g_ok, g_out) } else { let (i_ok, i_out) = run(&["gateway", "install"]); if i_ok { run(&["gateway", "start"]) } else { (false, format!("{g_out}\n{i_out}")) } };
     all_ok &= g_ok;
-    for r in results.iter_mut() { if !g_ok { r["ok"] = false.into(); } if let Some(arr) = r.get_mut("steps").and_then(|s| s.as_array_mut()) { arr.push(step("gateway", g_ok, g_out.clone())); } }
+    for r in results.iter_mut() { if !g_ok { r["ok"] = false.into(); } if let Some(arr) = r.get_mut("steps").and_then(|s| s.as_array_mut()) { arr.extend(approvals.clone()); arr.push(step("gateway", g_ok, g_out.clone())); } }
     (all_ok, if all_ok { "" } else { "gateway" }, results)
+}
+
+/// 헤르메스 프로필 하나 연결: 플러그인 → .env → 활성화 → 승인 모드 기본값 → 게이트웨이. `run`은 그 프로필의 HERMES_HOME으로 CLI를 실행한다.
+fn hermes_connect_one(hh: &Path, mut run: impl FnMut(&[&str]) -> (bool, String), install: impl FnOnce() -> Result<usize, String>, url: &str, token: &str) -> (bool, Vec<serde_json::Value>) {
+    let mut steps = Vec::new();
+    let ok = (|| -> bool {
+        match install() { Ok(n) => steps.push(step("plugin", true, format!("{n} files"))), Err(e) => { steps.push(step("plugin", false, e)); return false; } }
+        match write_env(&hh.join(".env"), &[("ARGO_MSGR_URL", url), ("ARGO_MSGR_BOT_TOKEN", token)]) { Ok(()) => steps.push(step("env", true, hh.join(".env").display().to_string())), Err(e) => { steps.push(step("env", false, e)); return false; } }
+        let (e_ok, e_out) = run(&["plugins", "enable", "argo-msgr-platform", "--no-allow-tool-override"]);
+        steps.push(step("enable", e_ok, e_out)); if !e_ok { return false; }
+        steps.push(approvals_step(hermes_default_manual(hh, &mut run)));
+        let (_, st) = run(&["gateway", "status"]);
+        let (g_ok, g_out) = if hermes_gateway_running(&st) { run(&["gateway", "restart"]) } else {
+            let (i_ok, i_out) = run(&["gateway", "install"]);
+            if i_ok { run(&["gateway", "start"]) } else { (false, i_out) }
+        };
+        steps.push(step("gateway", g_ok, g_out)); g_ok
+    })();
+    (ok, steps)
 }
 
 fn hermes_profile_path(cli: &Path, name: &str, h: &Path) -> PathBuf {
@@ -402,20 +469,8 @@ pub fn agent_connect(app: tauri::AppHandle, kind: String, url: String, agents: V
     if kind == "hermes" {
         for a in &agents {
             let hh = if a.home.is_empty() { h.join(".hermes") } else { PathBuf::from(&a.home) };
-            let mut steps = Vec::new();
-            let ok = (|| -> bool {
-                match copy_dir(&res_dir.join("agents/hermes-argo-msgr"), &hh.join("plugins/argo-msgr")) { Ok(n) => steps.push(step("plugin", true, format!("{n} files"))), Err(e) => { steps.push(step("plugin", false, e)); return false; } }
-                match write_env(&hh.join(".env"), &[("ARGO_MSGR_URL", url.as_str()), ("ARGO_MSGR_BOT_TOKEN", a.token.as_str())]) { Ok(()) => steps.push(step("env", true, hh.join(".env").display().to_string())), Err(e) => { steps.push(step("env", false, e)); return false; } }
-                let env = [("HERMES_HOME", hh.display().to_string())];
-                let (e_ok, e_out) = run_env(&cli, &["plugins", "enable", "argo-msgr-platform", "--no-allow-tool-override"], &env);
-                steps.push(step("enable", e_ok, e_out)); if !e_ok { return false; }
-                let (_, st) = run_env(&cli, &["gateway", "status"], &env);
-                let (g_ok, g_out) = if hermes_gateway_running(&st) { run_env(&cli, &["gateway", "restart"], &env) } else {
-                    let (i_ok, i_out) = run_env(&cli, &["gateway", "install"], &env);
-                    if i_ok { run_env(&cli, &["gateway", "start"], &env) } else { (false, i_out) }
-                };
-                steps.push(step("gateway", g_ok, g_out)); g_ok
-            })();
+            let env = [("HERMES_HOME", hh.display().to_string())];
+            let (ok, steps) = hermes_connect_one(&hh, |args| run_env(&cli, args, &env), || copy_dir(&res_dir.join("agents/hermes-argo-msgr"), &hh.join("plugins/argo-msgr")), &url, &a.token);
             all_ok &= ok;
             results.push(serde_json::json!({ "id": a.id, "ok": ok, "steps": steps }));
         }
@@ -430,7 +485,7 @@ pub fn agent_connect(app: tauri::AppHandle, kind: String, url: String, agents: V
 #[cfg(test)]
 mod tests {
     use super::{upsert_env, parse_hermes_profiles, parse_openclaw_agents, merge_binding, batch_command_line, installation_id, redact, hermes_gateway_running};
-    use super::{openclaw_agents, openclaw_bindings, openclaw_connect, openclaw_version_problem, AgentSetup};
+    use super::{openclaw_agents, openclaw_bindings, openclaw_connect, openclaw_version_problem, AgentSetup, yaml_sets, hermes_default_manual, hermes_connect_one};
     #[cfg(target_os = "macos")]
     #[test]
     fn agent_commands_preserve_environment_and_suppress_node_title() {
@@ -525,9 +580,9 @@ mod tests {
     const OC_LOADED: &str = r#"{"plugin":{"id":"openclaw-argo-msgr","status":"loaded","error":null},"diagnostics":[]}"#;
     const OC_LOAD_FAILED: &str = r#"{"plugin":{"id":"openclaw-argo-msgr","status":"error","error":"Error [ERR_PACKAGE_PATH_NOT_EXPORTED]: Package subpath './plugin-sdk' is not defined by \"exports\""},"diagnostics":[{"level":"error","message":"plugin failed during load"}]}"#;
 
-    struct FakeOpenclaw { version: String, agents_json: Option<String>, inspect: String, calls: Vec<String>, refreshed: bool, bindings: Option<String> }
+    struct FakeOpenclaw { version: String, agents_json: Option<String>, inspect: String, calls: Vec<String>, refreshed: bool, bindings: Option<String>, exec_mode: Option<String> }
     impl FakeOpenclaw {
-        fn new() -> Self { FakeOpenclaw { version: "OpenClaw 2026.9.6 (eb377ac)".into(), agents_json: Some(OC_AGENTS_JSON.into()), inspect: OC_LOADED.into(), calls: Vec::new(), refreshed: false, bindings: None } }
+        fn new() -> Self { FakeOpenclaw { version: "OpenClaw 2026.9.6 (eb377ac)".into(), agents_json: Some(OC_AGENTS_JSON.into()), inspect: OC_LOADED.into(), calls: Vec::new(), refreshed: false, bindings: None, exec_mode: None } }
         fn call(&mut self, args: &[&str]) -> (bool, String) {
             self.calls.push(args.join(" "));
             match args {
@@ -536,6 +591,9 @@ mod tests {
                 ["agents", "list"] => (true, OC_AGENTS_TEXT.into()),
                 ["config", "get", "bindings", "--json"] => match &self.bindings { Some(b) => (true, b.clone()), None => (false, OC_UNSET.into()) },
                 ["config", "set", "bindings", v] => { self.bindings = Some(v.to_string()); (true, String::new()) },
+                // 실측(openclaw@2026.9.6): 값이 없으면 rc=1 + "Config path is valid but unset: tools.exec.mode…", 있으면 rc=0 + JSON 문자열
+                ["config", "get", "tools.exec.mode"] => match &self.exec_mode { Some(m) => (true, format!("\"{m}\"\n")), None => (false, OC_UNSET.replace("bindings", "tools.exec.mode")) },
+                ["config", "set", "tools.exec.mode", v] => { self.exec_mode = Some(v.to_string()); (true, String::new()) },
                 ["config", "set", ..] => (true, String::new()),
                 ["plugins", "registry", "--refresh"] => { self.refreshed = true; (true, String::new()) },
                 // 게이트웨이가 돌고 있으면 enable은 게이트웨이의 저장된 플러그인 목록으로 판정한다 — 목록을 다시 만들기 전에는 방금 복사한 폴더를 모른다
@@ -549,6 +607,77 @@ mod tests {
     fn oc_agent(id: &str) -> AgentSetup { AgentSetup { id: id.into(), token: format!("argo_bot_{}", "a".repeat(48)), home: String::new() } }
     fn step_details(results: &[serde_json::Value]) -> String { results.iter().flat_map(|r| r["steps"].as_array().cloned().unwrap_or_default()).map(|s| s["detail"].as_str().unwrap_or("").to_string()).collect::<Vec<_>>().join("\n") }
 
+    // 1-b(2026-09-29 유건 결정): 앱 안 로컬 연결도 VPS 연결(connect.py)과 같이 — 명시한 값이 없을 때만 Hermes manual·OpenClaw ask, 있으면 그대로.
+    // 빠져 있으면 Hermes smart·OpenClaw full로 남아 결재 카드 없이 위험 명령이 실행된다.
+    #[test]
+    fn yaml_sets_matches_connect_py_rules() {
+        assert!(yaml_sets("approvals:\n  mode: smart\n", "approvals", "mode"));
+        assert!(yaml_sets("approvals: {mode: off, timeout: 60}\n", "approvals", "mode"));
+        assert!(yaml_sets("model: x\napprovals:\n  # 주석\n\n  timeout: 60\n  mode: manual\nother: 1\n", "approvals", "mode"));
+        assert!(!yaml_sets("approvals:\n  timeout: 60\nmode: smart\n", "approvals", "mode"), "다른 최상위 키의 mode는 아니다");
+        assert!(!yaml_sets("auxiliary:\n  approvals:\n    mode: smart\n", "approvals", "mode"), "중첩된 같은 이름은 아니다");
+        assert!(!yaml_sets("approvals:\n  gateway:\n    mode: strict\n  timeout: 60\n", "approvals", "mode"), "더 깊은 mode는 아니다");
+        assert!(!yaml_sets("approvals: {timeout: 60, submode: x}\n", "approvals", "mode"), "한 줄 형식에서 다른 키 끝의 mode는 아니다");
+        assert!(!yaml_sets("approvalsx:\n  mode: smart\n", "approvals", "mode"));
+        assert!(!yaml_sets("", "approvals", "mode"));
+        assert!(yaml_sets("approvals:\r  mode: smart\r", "approvals", "mode"), "CR만 쓰는 줄끝");
+        assert!(yaml_sets("approvals:\r\n  mode: smart\r\n", "approvals", "mode"), "CRLF");
+        assert!(yaml_sets("approvals:\u{85}  mode: smart\u{85}", "approvals", "mode"), "NEL");
+        assert!(yaml_sets("\u{feff}approvals:\n  mode: smart\n", "approvals", "mode"), "BOM으로 시작하는 파일(Windows 편집기)");
+    }
+    #[test]
+    fn hermes_connect_defaults_to_manual_only_when_unset() {
+        let dir = std::env::temp_dir().join(format!("argo-hermes-approvals-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut calls = Vec::new();
+        assert_eq!(hermes_default_manual(&dir, |a| { calls.push(a.join(" ")); (true, String::new()) }), "manual");
+        assert_eq!(calls, vec!["config set approvals.mode manual"]);
+        std::fs::write(dir.join("config.yaml"), "approvals:\n  mode: smart\n").unwrap();
+        assert_eq!(hermes_default_manual(&dir, |_| panic!("명시한 smart는 덮어쓰지 않는다")), "kept");
+        std::fs::write(dir.join("config.yaml"), "model: x\n").unwrap();
+        assert_eq!(hermes_default_manual(&dir, |_| (false, "boom".into())), "failed", "설정 실패는 보고만");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    #[test]
+    fn hermes_connect_sets_manual_before_gateway_restart() {
+        let dir = std::env::temp_dir().join(format!("argo-hermes-connect-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut calls: Vec<String> = Vec::new();
+        let (ok, steps) = hermes_connect_one(&dir, |a| { calls.push(a.join(" ")); (true, if a == ["gateway", "status"] { "Gateway is running".into() } else { String::new() }) }, || Ok(3), "https://x", &format!("argo_bot_{}", "a".repeat(48)));
+        assert!(ok, "{calls:?}");
+        let set = calls.iter().position(|c| c == "config set approvals.mode manual").expect("manual로 설정");
+        assert!(set < calls.iter().position(|c| c == "gateway restart").unwrap(), "게이트웨이 재시작 전에 설정해야 새 값이 적용된다");
+        assert!(steps.iter().any(|s| s["name"] == "approvals" && s["ok"] == true && s["detail"] == "manual"), "{steps:?}");
+        let mut calls2: Vec<String> = Vec::new();
+        let (ok, _) = hermes_connect_one(&dir, |a| { calls2.push(a.join(" ")); (a[0] != "plugins", String::new()) }, || Ok(3), "https://x", "t");
+        assert!(!ok && !calls2.iter().any(|c| c.contains("approvals")), "활성화가 실패하면 설정을 건드리지 않는다");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    #[test]
+    fn openclaw_connect_sets_ask_before_gateway_restart_unless_authored() {
+        let mut fake = FakeOpenclaw::new();
+        let (ok, _, results) = openclaw_connect(|a| fake.call(a), || Ok(3), "https://x/functions/v1/msgr-bot", &[oc_agent("main"), oc_agent("support")]);
+        assert!(ok, "{}", fake.calls.join("\n"));
+        assert_eq!(fake.exec_mode.as_deref(), Some("ask"));
+        let set = fake.calls.iter().position(|c| c == "config set tools.exec.mode ask").expect("ask로 설정");
+        assert!(set < fake.calls.iter().position(|c| c == "gateway restart").unwrap(), "게이트웨이 재시작 전에 설정해야 새 값이 적용된다");
+        assert_eq!(fake.calls.iter().filter(|c| c.starts_with("config set tools.exec.mode")).count(), 1, "전역 설정이라 한 번만");
+        for r in &results { assert!(r["steps"].as_array().unwrap().iter().any(|s| s["name"] == "approvals" && s["ok"] == true && s["detail"] == "ask"), "{r}"); }
+
+        let mut authored = FakeOpenclaw::new(); authored.exec_mode = Some("full".into());
+        let (ok, _, results) = openclaw_connect(|a| authored.call(a), || Ok(3), "https://x", &[oc_agent("main")]);
+        assert!(ok); assert_eq!(authored.exec_mode.as_deref(), Some("full"), "명시한 full은 덮어쓰지 않는다");
+        assert!(results[0]["steps"].as_array().unwrap().iter().any(|s| s["name"] == "approvals" && s["detail"] == "kept"));
+
+        let mut slow = FakeOpenclaw::new(); slow.exec_mode = Some("full".into());
+        let mut calls = Vec::new();
+        assert_eq!(super::openclaw_default_ask(&mut |a: &[&str]| { calls.push(a.join(" ")); if a[1] == "get" { (false, "timed out".to_string()) } else { slow.call(a) } }), "failed");
+        assert!(!calls.iter().any(|c| c.starts_with("config set")), "조회 실패(시간 초과)를 '값 없음'으로 보고 full을 덮지 않는다");
+
+        let mut broken = FakeOpenclaw::new(); broken.inspect = OC_LOAD_FAILED.into();
+        let _ = openclaw_connect(|a| broken.call(a), || Ok(3), "https://x", &[oc_agent("main")]);
+        assert!(!broken.calls.iter().any(|c| c.contains("tools.exec.mode")), "연결이 실패하면 설정을 건드리지 않는다");
+    }
     #[test]
     fn openclaw_first_install_without_bindings_connects() {
         // 최신 CLI는 바인딩이 없을 때 rc=1 + {"ok":false,"error":{"message":"Config path is valid but unset: bindings…"}}, 예전 CLI는 "Config path not found: bindings"
