@@ -3,7 +3,7 @@
 // 임시 git 저장소(가짜 origin)에서 스크립트를 돌려 거부 사유와 통과를 본다. 접속 정보 파일은 만들지 않는다 — 통과하면 그 단계에서 멈춘다.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, copyFileSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, copyFileSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -87,3 +87,21 @@ test('확장자를 붙여도 같은 파일로 본다(재검수 L3)', { skip }, (
 });
 
 function readScript(dir) { return execFileSync('cat', [join(dir, 'scripts/msgr-live-apply.sh')]).toString(); }
+
+// 2026-10-06(#846 검수): 마이그레이션 적용에 잠금 대기 제한을 건다 — 종전에는 PGOPTIONS를 덮어써 사용자가 lock_timeout을 줘도 먹히지 않았다.
+// 가짜 psql(PATH 앞)이 받은 PGOPTIONS를 기록한다. 접속 정보는 가짜 값(.env.local)이고 네트워크에 나가지 않는다.
+test('적용은 lock_timeout(기본 5초·ARGO_APPLY_LOCK_TIMEOUT)과 경고 수준을 걸고, 사용자가 준 PGOPTIONS를 덮지 않는다', { skip }, () => {
+  const f = fixture();
+  try {
+    const bin = join(f.root, 'bin'); mkdirSync(bin);
+    const log = join(f.root, 'psql.log');
+    writeFileSync(join(bin, 'psql'), `#!/bin/sh\ncase "$*" in *" -f "*) printf '%s\\n' "$PGOPTIONS" >> ${JSON.stringify(log)} ;; *"count(*)"*) echo 0 ;; esac\nexit 0\n`, { mode: 0o755 });
+    writeFileSync(join(f.work, '.env.local'), 'NEXT_PUBLIC_SUPABASE_URL=https://fixtureref.supabase.co\nSUPABASE_DB_PASSWORD=fixture\n');
+    const run = (env) => spawnSync('bash', ['scripts/msgr-live-apply.sh', '20990101000000_merged'], { cwd: f.work, encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, ...env } });
+    let r = run({ PGOPTIONS: '' }); assert.equal(r.status, 0, r.stdout + r.stderr);
+    r = run({ PGOPTIONS: '-c statement_timeout=60s', ARGO_APPLY_LOCK_TIMEOUT: '2s' }); assert.equal(r.status, 0, r.stdout + r.stderr);
+    const lines = readFileSync(log, 'utf8').trim().split('\n');
+    assert.match(lines[0], /-c client_min_messages=warning -c lock_timeout=5s$/);
+    assert.match(lines[1], /^-c statement_timeout=60s -c client_min_messages=warning -c lock_timeout=2s$/, '사용자 PGOPTIONS를 앞에 두고 이어 붙인다');
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
