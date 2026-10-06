@@ -147,11 +147,13 @@ test('대기열 — B가 다른 턴을 실행 중이면 끝날 때까지 기다�
 });
 
 test('기한 — 답이 기한 안에 오지 않으면 기다림을 끝내고 A 방에 안내를 남긴다', async () => {
-  mod._setTtlForTest(300);
+  // 기한 2초: 300ms였을 때 느린 Windows 러너에서 B 턴이 기한 뒤에 시작돼 다른 갈래로 빠졌다(#838 CI, 0 !== 1)
+  const TTL = 2000; mod._setTtlForTest(TTL);
   gate = deferred();
+  const sentAt = Date.now();
   await mod.sendSessionMessage(WS, { room: 'a', sender: { slug: 'a' }, to: 'b', message: '오래 걸리는 일', hop: 0, chain: [] });
   // 이 경우는 "B 턴이 도는 중에 기한이 지남"이다 — B 턴이 시작된 것을 먼저 본다(시작 전에 기한이 지나면 B는 아예 돌지 않는 다른 갈래)
-  for (let i = 0; i < 100 && !calls.length; i += 1) await new Promise((r) => setTimeout(r, 5));
+  while (!calls.length && Date.now() - sentAt < TTL - 200) await new Promise((r) => setTimeout(r, 5));
   assert.equal(calls.length, 1, 'B 턴이 기한 전에 시작됐다');
   // 기한 타이머 뒤 안내가 기록될 때까지 기다린다(테스트 쪽 대기 — 제품 경로는 타이머 1개)
   let notice = null;
