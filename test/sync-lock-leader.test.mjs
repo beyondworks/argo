@@ -70,7 +70,7 @@ test('관찰 전용 동기화 락 주인(대화 화면 — 실행 리스 없음)
   assert.equal(JSON.parse(fake.store.get(LEASE_KEY).toString()).preferred, true);
 });
 
-test('관찰 전용 락 주인 + 실행 가능 프로세스 둘 → 클라우드 리더는 게이트웨이 리스를 가진 하나뿐, 리스 쓰기도 한 프로세스만', { timeout: 60_000 }, async () => {
+test('관찰 전용 락 주인 + 실행 가능 프로세스 둘 → 클라우드 리더는 실행 리스를 가진 프로세스뿐, 리스 쓰기도 보유자만', { timeout: 60_000 }, async () => {
   const { fake, root } = await setup();
   const chat = child({ root, env: { ...FAST, ARGO_NO_LEADER: '1' }, leases: [], name: 'chat' });
   await sleep(2500);
@@ -81,9 +81,14 @@ test('관찰 전용 락 주인 + 실행 가능 프로세스 둘 → 클라우드
   await sleep(8000);
   const { max, end } = scan([chat, B, C], t0, Date.now() - 300);
   assert.equal(max, 1); assert.equal(end, 1);
-  const cloudCount = [B, C].filter((k) => k.last().cloud).length;
-  assert.equal(cloudCount, 1, '비주인 둘이 다 리더가 되면 리스를 두 배로 쓴다(1차 수정의 결함)');
-  assert.ok(fake.count(LEASE_PUT) - puts0 <= 1, `8초 동안 리스 쓰기 ${fake.count(LEASE_PUT) - puts0}회 — 보유자는 30초마다만 쓴다`);
+  // 실행 리스는 게이트웨이·스케줄러 두 개라 동시에 뜬 B·C가 하나씩 나눠 쥘 수 있다(10/6 로컬 12회 중 1회, CI macOS에서 2 !== 1로 실패).
+  // 그때는 둘 다 자기 데몬만 도는 리더라 허용된 상태다(sync.mjs arbitrateLease 주석: 이중 실행 아님, 리스 쓰기만 그동안 두 배).
+  // 막는 것은 실행 리스가 하나도 없는 프로세스가 리더가 되는 것(1차 수정의 결함)과 같은 데몬을 둘이 쥐는 것이다.
+  const states = [B, C].map((k) => k.last());
+  const leaders = states.filter((s) => s.cloud);
+  assert.ok(leaders.length >= 1 && leaders.every((s) => s.proc || s.sched), `실행 리스 없는 프로세스가 리더(리스를 두 배로 쓴다 — 1차 수정의 결함): ${JSON.stringify(states)}`);
+  assert.equal(states.filter((s) => s.sched).length, 1, `스케줄러 리스는 정확히 하나: ${JSON.stringify(states)}`);
+  assert.ok(fake.count(LEASE_PUT) - puts0 <= leaders.length, `8초 동안 리스 쓰기 ${fake.count(LEASE_PUT) - puts0}회(리더 ${leaders.length}) — 보유자는 30초마다만 쓴다`);
 });
 
 test('동기화 락을 쥐었지만 실행 리스가 없는 프로세스는 클라우드 리더가 되지 않고, 실행 리스 주인이 맡는다', { timeout: 60_000 }, async () => {
