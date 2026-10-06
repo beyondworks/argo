@@ -44,7 +44,9 @@ const head = (f, n = 512) => { // 파일 앞 n바이트 — 표식 확인용(전
 };
 const lstat = (f) => { try { return lstatSync(f); } catch { return null; } };
 
-/** 한 경로의 argo 분류 — ours(우리 표식) | argo-dev(Argo 저장소를 npm link한 것) | foreign */
+// 설치 명령(install.sh 맥 갈래)으로 넣은 단독 argo의 표식 — 앱이 설치되면 앱의 argo로 바꾼다(2026-10-06 결정: CLI가 둘이면 데이터 폴더가 갈린다)
+const STANDALONE_MARK = 'argo-cli-shim v1 argo-selfhost';
+/** 한 경로의 argo 분류 — ours(우리 표식) | standalone(설치 명령으로 넣은 단독 argo) | argo-dev(Argo 저장소를 npm link한 것) | foreign */
 function classify(file) {
   const st = lstat(file); if (!st) return null;
   if (st.isSymbolicLink()) {
@@ -56,7 +58,8 @@ function classify(file) {
     return { kind: 'foreign', symlink: true };
   }
   if (!st.isFile()) return { kind: 'foreign', symlink: false };
-  return { kind: head(file).includes(SHIM_MARK) ? 'ours' : 'foreign', symlink: false };
+  const h = head(file);
+  return { kind: h.includes(SHIM_MARK) ? 'ours' : h.includes(STANDALONE_MARK) ? 'standalone' : 'foreign', symlink: false };
 }
 
 /** 이 컴퓨터의 argo 목록 — 고정 후보 경로와 사이드카 PATH의 폴더에서 `argo` 파일만(셸 미실행). 같은 파일은 한 번만. */
@@ -153,13 +156,16 @@ function register(c, state, finish) {
   const shim = shimFile(c);
   const want = shimText({ node: c.execPath, cli: cliPath(c) });
   const all = findArgos(c);
-  const others = all.filter((a) => a.kind !== 'ours').map(({ path, kind }) => ({ path, kind }));
   const mine = classify(shim);
+  const atShim = (p) => { try { return realpathSync(p) === realpathSync(shim); } catch { return p === shim; } };
+  // 그 자리의 단독 argo는 바꿀 대상이라 '다른 argo'로 세지 않는다. 단독 프로그램 폴더·데이터(~/.argo)는 지우지 않는다(argo uninstall 몫).
+  const others = all.filter((a) => a.kind !== 'ours' && !(a.kind === 'standalone' && !mine?.symlink && atShim(a.path))).map(({ path, kind }) => ({ path, kind }));
   if (mine?.kind === 'ours' && !mine.symlink) {
     let cur = ''; try { cur = readFileSync(shim, 'utf8'); } catch { /* 읽기 실패 — 다시 쓴다 */ }
     if (cur !== want) writeShim(shim, want); // 앱을 옮겼거나 업데이트로 shim 형식이 바뀜 — 우리 표식이 있는 파일만
     return finish('installed', { others, shim });
   }
+  if (mine?.kind === 'standalone' && !mine.symlink && !others.length) { writeShim(shim, want); return finish('installed', { others: [], shim, replacedStandalone: true }); }
   if (mine || others.length) return finish('conflict', { others, shim });
   writeShim(shim, want);
   return finish('installed', { others: [], shim });

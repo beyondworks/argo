@@ -99,6 +99,25 @@ test('남의 ~/.local/bin/argo는 덮어쓰지 않고 conflict로 남긴다(검�
   assert.equal(readState(w).others[0].kind, 'foreign');
 });
 
+// 경우 표 P1(2026-10-06): 설치 명령(install.sh 맥 갈래)으로 넣은 단독 argo가 그 자리에 있으면 앱의 argo로 바꾼다 — CLI가 둘이면 데이터 폴더가 갈린다.
+test('설치 명령으로 넣은 단독 argo(argo-selfhost 표식)는 앱 shim으로 바꾸고, 그 자리 밖의 단독 argo나 남의 argo가 있으면 종전대로 conflict', async () => {
+  const w = await world();
+  foreignScript(w.shim, '#!/bin/sh\n# argo-cli-shim v1 argo-selfhost — install.sh\nexec /x/node /x/argo.mjs "$@"\n');
+  const r = await ensureCliInstalled(w.common);
+  assert.equal(r.status, 'installed'); assert.equal(r.replacedStandalone, true);
+  assert.match(readFileSync(w.shim, 'utf8'), new RegExp(SHIM_MARK));
+  assert.deepEqual(readState(w).others, []);
+  const w2 = await world();
+  foreignScript(w2.shim, '#!/bin/sh\n# argo-cli-shim v1 argo-selfhost — install.sh\n');
+  foreignScript(join(w2.base, 'fake-brew', 'argo'));
+  const r2 = await ensureCliInstalled(w2.common);
+  assert.equal(r2.status, 'conflict', '남의 argo가 따로 있으면 바꾸지 않는다'); assert.match(readFileSync(w2.shim, 'utf8'), /argo-selfhost/);
+  const w3 = await world();
+  foreignScript(join(w3.base, 'fake-brew', 'argo'), '#!/bin/sh\n# argo-cli-shim v1 argo-selfhost — elsewhere\n');
+  const r3 = await ensureCliInstalled(w3.common);
+  assert.equal(r3.status, 'conflict', '다른 자리의 단독 argo는 가리지 않는다'); assert.equal(readState(w3).others[0].kind, 'standalone');
+});
+
 test('다른 고정 후보 경로나 PATH 폴더에 남의 argo가 있으면 우리 shim을 만들지 않는다(가리지 않음)', async () => {
   for (const where of ['candidate', 'path']) {
     const w = await world();
