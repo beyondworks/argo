@@ -10,7 +10,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawnSync, spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { buildInstallPs1 } from '../scripts/build-install-ps1.mjs';
 import { packCli } from '../scripts/stage-cli-dist.mjs';
 
@@ -42,7 +42,11 @@ async function fixture(t, { badSum = false, app = false, foreign = false } = {})
   await copyFile(process.execPath, join(pkg, 'node.exe'));
   await writeFile(join(pkg, 'package.json'), JSON.stringify({ name: 'argo', version: '2.0.0' }));
   // status가 stderr에 경고를 써도(손상된 기기 세션 등) 종료 코드 0이면 설치는 성공해야 한다(검수 #843 M2)
-  await writeFile(join(pkg, 'bin/argo.mjs'), `if(process.argv[2]==='status'){console.error('[argo] warning');process.exit(process.env.ARGO_CLI_APP==='0'?0:2)}console.log('args:'+process.argv.slice(2).join(' '))`);
+  const uninstallUrl = pathToFileURL(join(ROOT, 'src/cli/uninstall.mjs')).href; // argo uninstall 분기는 bin/argo.mjs와 같게(실제 제거 모듈)
+  await writeFile(join(pkg, 'bin/argo.mjs'), `import { dirname } from 'node:path'; import { fileURLToPath } from 'node:url';
+if(process.argv[2]==='status'){console.error('[argo] warning');process.exit(process.env.ARGO_CLI_APP==='0'?0:2)}
+if(process.argv[2]==='uninstall'){const m=await import(${JSON.stringify(uninstallUrl)});const r=m.uninstallStandalone({appDir:dirname(dirname(fileURLToPath(import.meta.url)))});if(!r.ok)process.exit(1);if(r.pending&&process.env.ARGO_CLI_SHIM==='cmd')process.exit(m.WIN_UNINSTALL_EXIT);process.exit(0)}
+console.log('args:'+process.argv.slice(2).join(' '))`);
   const zip = join(root, 'argo-cli-2.0.0-windows-x64.zip');
   packCli(join(root, 'pkg'), zip, true); // 발행 빌드와 같은 함수 — 시스템 tar.exe·zip 머리·Expand-Archive 확인(검수 #843 HIGH-1)
   const sum = createHash('sha256').update(await readFile(zip)).digest('hex');
@@ -82,14 +86,10 @@ test('W1·W4 새 설치 → 해시 확인·실행 확인·argo.cmd·PATH 한 번
   assert.deepEqual({ kind: rec.kind, shim: rec.shim, pathEntry: rec.pathEntry }, { kind: 'standalone', shim: f.shim, pathEntry: f.bin });
   assert.equal((await f.run()).status, 0, '다시 실행(업데이트)');
   assert.equal(f.pathValue(), `${f.bin}|ExpandString`, 'PATH 중복 없음');
-  // U2 — 실제 제거 스크립트(src/cli/uninstall.mjs)를 이 설치에 대고 실행: 종료 뒤 폴더·shim·PATH 항목이 지워진다
-  const { uninstallStandalone } = await import('../src/cli/uninstall.mjs');
-  // 실제 사용자와 같은 분리 실행. 지워지지 않으면 같은 인자로 동기 실행해 원인(종료 코드·오류 출력)을 보인다
-  let args = null;
-  const u = uninstallStandalone({ appDir: f.app, home: f.profile, platform: 'win32', pid: 999999, spawnImpl: (cmd, a, o) => { args = [cmd, a]; return spawn(cmd, a, o); } });
-  assert.equal(u.pending, true);
-  for (let i = 0; i < 90 && existsSync(f.app); i++) await new Promise((res) => setTimeout(res, 500));
-  if (existsSync(f.app)) { const d = spawnSync(args[0], args[1], { encoding: 'utf8', timeout: 120_000 }); assert.fail(`분리 실행으로 지워지지 않음 — 동기 재실행: ${d.status}\n${d.stdout}\n${d.stderr}`); }
+  // U2 — 사용자와 같이 설치된 argo.cmd로 argo uninstall: node가 끝난 뒤 argo.cmd가 제거 스크립트를 실행한다
+  const tempDir = join(f.root, 'Temp'); await mkdir(tempDir, { recursive: true });
+  const un = spawnSync('cmd.exe', ['/d', '/c', f.shim, 'uninstall'], { env: { ...f.env, TEMP: tempDir, TMP: tempDir }, encoding: 'utf8', timeout: 120_000 });
+  assert.equal(un.status, 0, `${un.stdout}\n${un.stderr}`);
   assert.ok(!existsSync(f.app) && !existsSync(f.shim), '프로그램 폴더·argo.cmd 삭제');
   assert.equal(f.pathValue(), '|ExpandString', '우리 PATH 항목만 지운다');
 });

@@ -100,7 +100,8 @@ const T = {
     uninstallNot: '이 argo는 설치 명령으로 설치한 것이 아니라 지우지 않습니다 — 앱에 든 argo는 앱 설정 → 기기·데이터에서, 앱은 앱 제거로 지웁니다.',
     uninstallService: (f) => `상주가 등록돼 있습니다(${f}) — 먼저 argo service uninstall을 실행하세요.`,
     uninstalled: (l) => `argo를 제거했습니다: ${l.join(', ')}\n데이터(회사·대화·로그인)는 ${cliHome()}에 남아 있습니다 — 필요 없으면 직접 지우세요.`,
-    uninstallPending: (l) => `이 창이 끝나면 argo를 제거합니다: ${l.join(', ')}\n데이터(회사·대화·로그인)는 ${cliHome()}에 남아 있습니다 — 필요 없으면 직접 지우세요.`,
+    uninstallPending: (l) => `argo를 제거합니다: ${l.join(', ')}\n데이터(회사·대화·로그인)는 ${cliHome()}에 남아 있습니다 — 필요 없으면 직접 지우세요.`,
+    uninstallManual: (f) => `argo가 실행 중이라 이 명령 안에서는 지울 수 없습니다. 이 창에서 다음을 실행하면 제거됩니다:\n  powershell -NoProfile -ExecutionPolicy Bypass -File "${f}"`,
     usage: '사용법: argo [run|chat <에이전트> [지시]|login|status|browser|service install|service uninstall|service status|uninstall]  (uninstall = 설치 명령으로 넣은 argo 제거, 데이터는 남김)',
     status: (s) => `계정: ${s.email || '(로그인 안 됨)'}\n데이터: ${s.root}\n회사: ${s.companies}\n기기: ${s.device}`,
   },
@@ -145,7 +146,8 @@ const T = {
     uninstallNot: "This argo wasn't installed with the install command, so it isn't removed — remove the app's argo in app settings → Devices & data, or uninstall the app.",
     uninstallService: (f) => `A background service is registered (${f}) — run argo service uninstall first.`,
     uninstalled: (l) => `Removed argo: ${l.join(', ')}\nYour data (companies, chats, sign-in) stays in ${cliHome()} — delete it yourself if you don't need it.`,
-    uninstallPending: (l) => `argo will be removed when this window's command ends: ${l.join(', ')}\nYour data (companies, chats, sign-in) stays in ${cliHome()} — delete it yourself if you don't need it.`,
+    uninstallPending: (l) => `Removing argo: ${l.join(', ')}\nYour data (companies, chats, sign-in) stays in ${cliHome()} — delete it yourself if you don't need it.`,
+    uninstallManual: (f) => `argo is running, so it can't remove itself from inside this command. Run this in this window to remove it:\n  powershell -NoProfile -ExecutionPolicy Bypass -File "${f}"`,
     usage: 'Usage: argo [run|chat <agent> [message]|login|status|browser|service install|service uninstall|service status|uninstall]  (uninstall = remove an argo installed with the install command; data is kept)',
     status: (s) => `Account: ${s.email || '(not signed in)'}\nData: ${s.root}\nCompanies: ${s.companies}\nDevice: ${s.device}`,
   },
@@ -595,10 +597,13 @@ try {
   else if (cmd === 'browser') { await browserMenu({ interactive: !!rl }); process.exit(0); }
   else if (cmd === 'service') { service(rest[0] ?? 'status'); process.exit(0); }
   else if (cmd === 'uninstall') { // 단독 설치(install.sh·install.ps1)가 만든 것만 지운다 — 데이터는 남긴다(src/cli/uninstall.mjs)
-    const { uninstallStandalone } = await import('../src/cli/uninstall.mjs');
+    const { uninstallStandalone, WIN_UNINSTALL_EXIT } = await import('../src/cli/uninstall.mjs');
     const r = uninstallStandalone({ appDir: REPO });
     if (!r.ok) { console.error(r.reason === 'service' ? T.uninstallService(r.file) : T.uninstallNot); process.exit(1); }
-    console.log(r.pending ? T.uninstallPending(r.removed) : T.uninstalled(r.removed)); process.exit(0);
+    if (!r.pending) { console.log(T.uninstalled(r.removed)); process.exit(0); }
+    // 윈도우: argo.cmd가 이 종료 코드를 보고 node가 끝난 뒤 제거 스크립트를 실행한다. argo.cmd 없이 직접 실행했으면 명령을 안내한다.
+    if (process.env.ARGO_CLI_SHIM === 'cmd') { console.log(T.uninstallPending(r.removed)); process.exit(WIN_UNINSTALL_EXIT); }
+    console.log(T.uninstallManual(r.script)); process.exit(0);
   }
   else if (cmd === 'chat') {
     process.env.ARGO_NO_LEADER = '1';

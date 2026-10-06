@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { uninstallStandalone, STANDALONE_MARK } from '../src/cli/uninstall.mjs';
+import { uninstallStandalone, winUninstallScript, STANDALONE_MARK, WIN_UNINSTALL_SCRIPT } from '../src/cli/uninstall.mjs';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 async function fixture(t, { record = true, shimMark = true, service = null } = {}) {
@@ -48,21 +48,24 @@ test('U4 상주가 등록돼 있으면(systemd·launchd) 지우지 않고 그 �
   }
 });
 
-test('U2 윈도우 — 실행 중인 node.exe가 폴더 안이라 종료 뒤 지우는 스크립트를 띄운다(PATH 항목·shim 전달)', async (t) => {
+test('U2 윈도우 — node.exe가 폴더 안이라 지울 값을 박은 제거 스크립트(UTF-8 BOM)를 쓰고 argo.cmd가 종료 뒤 실행하게 넘긴다', async (t) => {
   const f = await fixture(t);
+  const appDir = 'C:\\Users\\김 o\'k\\AppData\\Local\\argo-cli\\app';
   await writeFile(join(f.appDir, '.argo-install.json'), JSON.stringify({ kind: 'standalone', platform: 'windows-x64', shim: f.shim, pathEntry: 'C:\\U\\argo-cli\\bin', envKey: 'HKCU:\\Environment' }));
-  const calls = [];
-  const r = uninstallStandalone({ appDir: f.appDir, home: f.home, platform: 'win32', pid: 4242, tmp: f.root, spawnImpl: (cmd, args, opts) => { calls.push({ cmd, args, opts }); return { unref() {} }; } });
-  assert.equal(r.pending, true); assert.ok(existsSync(f.appDir), '이 프로세스가 끝나기 전에는 지우지 않는다');
-  assert.equal(calls[0].cmd, 'powershell.exe');
-  assert.deepEqual(calls[0].args.slice(-10), ['-ParentPid', '4242', '-AppDir', f.appDir, '-Shim', f.shim, '-PathEntry', 'C:\\U\\argo-cli\\bin', '-EnvKey', 'HKCU:\\Environment'], '이름 있는 인자 — 빈 값이 위치를 밀지 않게');
-  assert.ok(calls[0].opts.detached && calls[0].opts.windowsHide);
-  const script = await readFile(join(f.root, 'argo-uninstall-4242.ps1'), 'utf8');
-  assert.ok(!/[^\x00-\x7f]/.test(script), 'PowerShell 5.1이 ANSI로 읽어도 깨지지 않게 ASCII만');
+  const r = uninstallStandalone({ appDir: f.appDir, home: f.home, platform: 'win32', tmp: f.root });
+  assert.equal(r.pending, true); assert.equal(r.script, join(f.root, WIN_UNINSTALL_SCRIPT));
+  assert.ok(existsSync(f.appDir), '이 프로세스가 끝나기 전에는 지우지 않는다');
+  const script = await readFile(r.script, 'utf8');
+  assert.ok(script.startsWith('\ufeff'), 'PowerShell 5.1이 UTF-8로 읽게 BOM');
+  assert.match(script, /^\ufeff\$AppDir = '.*'\n\$Shim = '.*'\n\$PathEntry = 'C:\\U\\argo-cli\\bin'\n\$EnvKey = 'HKCU:\\Environment'\n/);
+  assert.ok(!/[^\x00-\x7f]/.test(script.split('\n').slice(4).join('\n')), '박은 값 아래 본문은 ASCII');
   assert.match(script, /-Type ExpandString/, 'PATH 형식(REG_EXPAND_SZ)을 지킨다');
   assert.match(script, /Test-Path -LiteralPath \(Join-Path \$AppDir '\.argo-install\.json'\)\)\) \{ return \}/, '설치 기록이 없는 폴더는 지우지 않는다');
   assert.match(script, /\$Shim\.EndsWith\('\\argo\.cmd'\).*argo-cli-shim v1 argo-selfhost/, 'shim은 표식 있는 argo.cmd만');
   assert.match(script, /\$EnvKey -match '\^HKCU:\\\\\(\.\+\\\\\)\?Environment\$'/, '레지스트리는 HKCU의 …Environment 키만');
+  const q = winUninstallScript({ appDir, shim: null, pathEntry: null, envKey: null });
+  assert.ok(q.includes("$AppDir = 'C:\\Users\\김 o''k\\AppData\\Local\\argo-cli\\app'"), '작은따옴표는 두 번 — 한글 경로는 그대로');
+  assert.ok(winUninstallScript({ appDir: 'C:\\a\u2019b' }).includes("'C:\\a\u2019\u2019b'"), '유니코드 작은따옴표도 PowerShell은 따옴표로 읽는다');
 });
 
 test('argo uninstall 명령 — 저장소 CLI에서는 거절(종료 1), 단독 설치 트리에서는 제거', async (t) => {
