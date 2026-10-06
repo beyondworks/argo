@@ -10,14 +10,14 @@
 <plist version="1.0">
 <dict>
   <key>NSDesktopFolderUsageDescription</key>
-  <string>Argo's AI crew works with files in the Desktop folder you assign. 지정한 데스크톱 폴더에서 크루(AI 직원)가 일하기 위해 필요합니다.</string>
+  <string>Argo's AI agents work with files in the Desktop folder you assign. 지정한 데스크톱 폴더에서 에이전트(AI 직원)가 일하기 위해 필요합니다.</string>
   <key>NSDocumentsFolderUsageDescription</key>
-  <string>Argo's AI crew works with files in the Documents folder you assign. 지정한 문서 폴더에서 크루(AI 직원)가 일하기 위해 필요합니다.</string>
+  <string>Argo's AI agents work with files in the Documents folder you assign. 지정한 문서 폴더에서 에이전트(AI 직원)가 일하기 위해 필요합니다.</string>
   <key>NSDownloadsFolderUsageDescription</key>
-  <string>Argo's AI crew works with files in the Downloads folder you assign. 지정한 다운로드 폴더에서 크루(AI 직원)가 일하기 위해 필요합니다.</string>
+  <string>Argo's AI agents work with files in the Downloads folder you assign. 지정한 다운로드 폴더에서 에이전트(AI 직원)가 일하기 위해 필요합니다.</string>
   <key>NSRemovableVolumesUsageDescription</key>
-  <string>Argo's AI crew works with files on external drives you assign. 지정한 외장 디스크(SSD·USB)에서 크루(AI 직원)가 일하기 위해 필요합니다.</string>
+  <string>Argo's AI agents work with files on external drives you assign. 지정한 외장 디스크(SSD·USB)에서 에이전트(AI 직원)가 일하기 위해 필요합니다.</string>
   <key>NSNetworkVolumesUsageDescription</key>
-  <string>Argo's AI crew works with files on network drives you assign. 지정한 네트워크 드라이브(NAS)에서 크루(AI 직원)가 일하기 위해 필요합니다.</string>
+  <string>Argo's AI agents work with files on network drives you assign. 지정한 네트워크 드라이브(NAS)에서 에이전트(AI 직원)가 일하기 위해 필요합니다.</string>
 </dict>
 </plist>

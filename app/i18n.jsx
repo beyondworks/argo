@@ -834,7 +834,7 @@ const DICT = {
   'billing.plan.free': ['Free', 'Free'],
   'billing.plan.pro': ['Pro', 'Pro'],
   'billing.plan.trial': ['무료 체험 중', 'Free trial'],
-  'billing.paywall': ['2주 무료 체험이 끝났습니다 — 멀티기기 동기화는 Pro 플랜입니다. 지금 회사는 안전하게 보존되고 있고, 업그레이드하면 즉시 이어집니다.', 'Your 2-week free trial has ended — multi-device sync is a Pro feature. Your company is safely preserved and resumes the moment you upgrade.'],
+  'billing.paywall': ['멀티기기 동기화는 Pro 플랜입니다. 지금 회사는 안전하게 보존되고 있고, 업그레이드하면 즉시 이어집니다.', 'Multi-device sync is a Pro feature. Your company is safely preserved and resumes the moment you upgrade.'], // 체험 폐지(9/29 #753) — 체험 문구 제거
   // 가격은 LS 상품과 반드시 같아야 한다 — 표시가와 결제액이 다르면 신뢰가 깨진다(2026-08-05 $16→$12 인하 반영)
   // 체험 중(임박 전) — 재촉하지 않으면서 결제 경로만 열어 둔다. "끝났습니다"류 문구 금지(거짓이 된다).
   'billing.trialUpgradeHint': ['무료 체험 중입니다 — 미리 업그레이드하면 체험이 끝나도 끊기지 않습니다.', "You're on the free trial — upgrade now and nothing pauses when it ends."],
@@ -1045,7 +1045,7 @@ const DICT = {
   'login.pairConfirmBody': ['Argo 앱에서 로그인을 시작한 게 맞을 때만 승인하세요. 앱에서 시작하지 않았다면 이 창을 닫으세요 — 승인하면 이 브라우저의 로그인이 앱으로 넘어갑니다.', 'Approve only if you started this sign-in from the Argo app. If you did not, close this window — approving hands this browser\'s sign-in to the app.'],
   'login.pairApprove': ['이 기기 로그인', 'Log in this device'],
   'login.pairErrTitle': ['연결 실패', 'Connection failed'],
-  'login.pairErrBody': ['앱에서 다시 시도해 주세요. 문제가 계속되면 이메일 코드 로그인을 사용하세요.', 'Please try again from the app. If it persists, use email code sign-in.'],
+  'login.pairErrBody': ['앱에서 다시 시도해 주세요. 문제가 계속되면 이 창에서 Google 또는 GitHub로 다시 로그인하세요.', 'Please try again from the app. If it persists, sign in again with Google or GitHub in this window.'], // 이메일 코드 로그인은 없어졌다
   'login.localMode': ['로컬 모드로 실행 중입니다 — 로그인 없이 이 컴퓨터의 회사를 사용합니다.', 'Running in local mode — use companies on this computer without signing in.'],
   'login.goHome': ['홈으로', 'Go home'],
   'login.signOut': ['로그아웃', 'Sign out'],
