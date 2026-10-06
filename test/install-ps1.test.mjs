@@ -17,7 +17,8 @@ const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const shipped = readFileSync(join(ROOT, 'scripts/install.ps1'), 'utf8');
 
 test('배포본 install.ps1은 원본에서 만든 그대로다 — 다르면 node scripts/build-install-ps1.mjs', () => {
-  assert.equal(shipped, buildInstallPs1(readFileSync(join(ROOT, 'scripts/install.src.ps1'), 'utf8')));
+  const lf = (t) => t.replace(/\r\n/g, '\n'); // 윈도우 체크아웃(autocrlf)도 같은 내용으로 본다
+  assert.equal(lf(shipped), lf(buildInstallPs1(readFileSync(join(ROOT, 'scripts/install.src.ps1'), 'utf8'))));
 });
 test('배포본은 ASCII만 — 한글은 \\u 이스케이프로, 원본의 한글 문구가 그대로 되살아난다', () => {
   assert.ok(!/[^\x00-\x7f]/.test(shipped));

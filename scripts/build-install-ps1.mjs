@@ -14,8 +14,8 @@ export function buildInstallPs1(src) {
     .filter((l) => !l.trimStart().startsWith('#'))
     .map((l) => l.replace(/\s+#\s[^'"]*$/, (c) => (/[^\x00-\x7f]/.test(c) ? '' : c))) // 끝에 붙은 한글 주석은 뺀다
     .map((l) => l.replace(/[^\x00-\x7f]+(?: +[^\x00-\x7f]+)*/g, esc)) // 띄어쓰기로 이어진 한글은 한 묶음으로
-    .join('\r\n');
-  return `# Argo argo CLI installer for Windows (generated from scripts/install.src.ps1 by scripts/build-install-ps1.mjs - do not edit)\r\n# Usage (PowerShell): irm https://github.com/beyondworks/argo-agent/releases/latest/download/install.ps1 | iex\r\n${body}`;
+    .join('\n'); // LF — 저장소가 줄끝을 LF로 맞춘다(PowerShell은 LF도 읽는다)
+  return `# Argo argo CLI installer for Windows (generated from scripts/install.src.ps1 by scripts/build-install-ps1.mjs - do not edit)\n# Usage (PowerShell): irm https://github.com/beyondworks/argo-agent/releases/latest/download/install.ps1 | iex\n${body}`;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
