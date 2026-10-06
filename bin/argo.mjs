@@ -293,6 +293,7 @@ async function turn(ws, crew, message, sessionId) {
   const { chat } = await import('../src/chat.mjs');
   const { beginTurn, appendTurn } = await import('../src/thread.mjs');
   const { getTurnStatus } = await import('../src/turn-status.mjs');
+  const { turnAbortedError } = await import('../src/turn-abort.mjs');
   const { paths } = await import('../src/workspace.mjs');
   // 앱 폴더를 같이 쓴다 — 앱이 같은 크루의 턴을 진행 중이면(신선한 상태 파일) 같은 sessionId를 동시에 이어 쓰지 않도록 시작하지 않는다(검토 M-b ③, 시작 때 한 번 확인)
   if (appShared && await getTurnStatus(ws, crew.slug).catch(() => null)) throw Object.assign(new Error(T.appBusy(crew.name)), { appBusy: true });
@@ -323,7 +324,7 @@ async function turn(ws, crew, message, sessionId) {
   }, 800);
   draw('');
   try {
-    if (current.stopping) throw Object.assign(new Error(T.interrupted), { aborted: true }); // 기록하는 사이에 신호가 왔다 — 턴을 시작하지 않고 중단으로 마무리
+    if (current.stopping) throw turnAbortedError(); // 기록하는 사이에 신호·Ctrl+C가 왔다 — 턴을 시작하지 않고 중단으로 마무리(일반 Ctrl+C 중단과 같은 기록, 검수 #842 LOW-2)
     const t = await chat(ws, crew.slug, message, sessionId, { ...(turnId ? { abortTag: turnId } : {}), sessionChain: { blocked: true } }); // 세션 메시지는 싣지 않는다 — 이 프로세스는 턴 뒤 곧 끝나 답을 받을 수 없다(보낸 기다림이 고아가 된다)
     const handover = t.handover ? { rel: relative(paths(ws).vault, t.handover.file), linked: t.handover.linked } : null;
     await appendTurn(ws, crew.slug, { turnId, userMsg: message, reply: t.reply, handover, sessionId: t.sessionId, steerFailed: t.steerFailed, artifacts: t.artifacts, fellBack: t.fellBack, modelFallback: t.modelFallback });
