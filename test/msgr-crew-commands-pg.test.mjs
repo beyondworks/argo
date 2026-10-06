@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { readFileSync, readdirSync } from 'node:fs';
 import { psqlSpawn } from './helpers/pg.mjs';
+import { crewCommands, fitCommands } from '../src/gateway/msgr.mjs';
 
 const DB = process.env.ARGO_PG_TEST_URL;
 const skip = !DB && 'ARGO_PG_TEST_URL 미설정 — npm run test:pg로 실행';
@@ -93,4 +94,24 @@ test('commands — 비소유자 갱신은 0행(RLS), 배열이 아니면 거절'
   assert.equal(last(asUser(U.member, `update public.msgr_crews set commands = '[]' where id = '${CREW}' returning 1`)), '', '남의 크루는 갱신 불가');
   assert.equal(last(asUser(U.owner, `select jsonb_array_length(commands) from public.msgr_crews where id = '${CREW}'`)), '2');
   fails(asUserRaw(U.owner, `update public.msgr_crews set commands = '{"kind":"x"}' where id = '${CREW}'`), /msgr_crews_commands_check/, '객체는 거절');
+});
+
+// 크기 상한(2026-10-06 — 운영에서 23514로 1시간 226번 실패한 모양): 게이트웨이가 줄인 목록은 실제 제약을 통과하고, 줄이기 전 목록은 거절된다.
+// 제약은 압축 전 jsonb 크기로 판정하므로 SQL 리터럴로 새로 넣는다(운영의 PostgREST update와 같은 경로).
+test('commands — fitCommands로 줄인 목록은 제약을 통과, 줄이기 전 큰 목록은 23514', { skip }, () => {
+  const ko = (n) => '가나다라마바사아자차'.repeat(Math.ceil(n / 10)).slice(0, n);
+  const shapes = {
+    '긴 한글 별칭': crewCommands({ aliases: Array.from({ length: 15 }, (_, i) => ({ cmd: `별칭${i}`, text: ko(2000) })) }),
+    '한글 제목 스킬 많음': crewCommands({ skills: Array.from({ length: 400 }, (_, i) => ({ id: `skill-${i}`, title: ko(80) })) }),
+    '아주 작은 스킬 아주 많음': crewCommands({ skills: Array.from({ length: 6000 }, () => ({ id: 'a', title: 'a' })) }),
+    '별칭+스킬 섞임': crewCommands({ aliases: Array.from({ length: 12 }, (_, i) => ({ cmd: `a${i}`, text: ko(2000) })), skills: Array.from({ length: 300 }, (_, i) => ({ id: `s-${i}`, title: ko(80) })) }),
+    '이모지 경계·NUL': crewCommands({ aliases: [{ cmd: 'nul', text: 'a\u0000b' }], skills: [{ id: 'emoji', title: '가'.repeat(79) + '😀' }] }),
+  };
+  for (const [label, list] of Object.entries(shapes)) {
+    const { commands, dropped } = fitCommands(list);
+    const lit = (v) => `$J$${JSON.stringify(v)}$J$`;
+    assert.equal(last(asUser(U.owner, `update public.msgr_crews set commands = ${lit(commands)}::jsonb where id = '${CREW}' returning jsonb_array_length(commands)`)), String(commands.length), `${label}: 줄인 목록 통과`);
+    if (dropped) fails(asUserRaw(U.owner, `update public.msgr_crews set commands = ${lit(list)}::jsonb where id = '${CREW}'`), /msgr_crews_commands_check/, `${label}: 줄이기 전은 거절(재현)`);
+  }
+  asUser(U.owner, `update public.msgr_crews set commands = '[{"kind":"alias","cmd":"보고","text":"업무 보고"},{"kind":"skill","id":"daily","title":"일일 보고"}]' where id = '${CREW}'`); // 뒤 테스트가 보는 값 복원
 });

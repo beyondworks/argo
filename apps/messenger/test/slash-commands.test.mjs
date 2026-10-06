@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { slashCandidates, slashInsert } from '../src/slash-commands.mjs';
+import { crewCommands, fitCommands } from '../../../src/gateway/msgr.mjs'; // 본체 게이트웨이가 msgr_crews.commands에 올리는 모양 그대로
 
 const pepper = { id: 'p', display_name: '페퍼', commands: [{ kind: 'alias', cmd: '보고', text: '오늘 업무 보고서를 써' }, { kind: 'skill', id: 'daily-report', title: '일일 보고' }] };
 const alfred = { id: 'a', display_name: '알프레드', commands: pepper.commands }; // 같은 회사 → 같은 목록
@@ -23,6 +24,20 @@ test('빈 질의는 전부, 접두는 대소문자 무시로 별칭 cmd·스킬 
   assert.deepEqual(slashCandidates('/일일', [pepper], opt).map((r) => r.cmd), ['daily-report'], '제목으로도');
   assert.equal(slashCandidates('/', [pepper], opt)[1].insert, '"일일 보고" 스킬을 사용해서 ');
   assert.equal(slashCandidates('/', [pepper], opt)[0].insert, '오늘 업무 보고서를 써');
+});
+
+test('크기 상한으로 줄인 목록(게이트웨이 fitCommands) — 남은 항목이 순서대로 다 뜨고 별칭 지시문은 온전하다', () => {
+  const ko = (n) => '가나다라마바사아자차'.repeat(Math.ceil(n / 10)).slice(0, n);
+  const full = crewCommands({ aliases: Array.from({ length: 15 }, (_, i) => ({ cmd: `별칭${i}`, text: `${i}번 ` + ko(1990) })), skills: Array.from({ length: 400 }, (_, i) => ({ id: `skill-${i}`, title: ko(80) })) });
+  const { commands, dropped } = fitCommands(full);
+  assert.ok(dropped > 0 && commands.length > 0, '줄었지만 비지 않았다');
+  const crew = { id: 'p', display_name: '페퍼', commands };
+  const all = slashCandidates('/', [crew], opt);
+  assert.equal(all.length, commands.length, '남은 항목은 하나도 안 빠지고 후보가 된다');
+  assert.deepEqual(all.map((r) => r.cmd), commands.map((c) => c.kind === 'alias' ? c.cmd : c.id), '순서 그대로(별칭 먼저)');
+  assert.equal(all[0].insert, full[0].text, '별칭 지시문은 자르지 않고 그대로 넣는다');
+  const lastSkill = commands.filter((c) => c.kind === 'skill').at(-1);
+  assert.deepEqual(slashCandidates(`/${lastSkill.id}`, [crew], opt).map((r) => r.cmd), [lastSkill.id], '남은 마지막 스킬도 검색된다');
 });
 
 test('손상 데이터 관용 — commands 비배열·항목 누락은 건너뛴다', () => {
