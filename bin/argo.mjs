@@ -373,7 +373,7 @@ async function chatLoop(ws, crew, first) {
     if (!msg) msg = await ask('› ');
     if (!msg || parseInput(msg).kind === 'quit') return;
     try { const t = await turn(ws, crew, msg, sid); sid = t.sessionId ?? sid; }
-    catch (e) { console.error(e?.aborted ? T.stopped : T.failed(String(e?.message || e).slice(0, 400))); if (first && e?.appBusy) process.exitCode = 1; }
+    catch (e) { console.error(e?.aborted ? T.stopped : T.failed(String(e?.message || e).slice(0, 400))); if (first && !process.exitCode) process.exitCode = 1; } // 한 번 실행의 실패는 1 — 스크립트가 알 수 있게. 신호로 정해진 종료 코드(130 등)는 그대로
     if (first) return;
     msg = '';
   }
@@ -599,6 +599,7 @@ try {
     if (appShared && cfg.mode !== 'account') setMode('account');
     process.exit(0);
   }
+  else if (cmd === '--version' || cmd === '-v' || cmd === 'version') { console.log(`argo ${readAppVersion(REPO) ?? '?'}`); process.exit(0); }
   else if (cmd === 'status') { await status(); process.exit(0); }
   else if (cmd === 'browser') { await browserMenu({ interactive: !!rl }); process.exit(0); }
   else if (cmd === 'service') { service(rest[0] ?? 'status'); process.exit(0); }
