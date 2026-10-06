@@ -55,9 +55,11 @@ test('보유자의 갱신 쓰기·확인 읽기가 한 번 실패해도 리더 �
 });
 
 test('살아 있는 남의 리스는 여전히 존중한다(일시 오류 처리로 남의 리스를 빼앗지 않는다)', async () => {
-  const lease = daemonLease('gateway', { ttl: TTL, beat: BEAT });
+  // 다른 리스 이름(다른 파일)으로 — 앞 테스트의 gateway 리스는 멈출 방법이 없어 계속 같은 프로세스 소유자로 기록을 덮고,
+  // 이 리스가 그 기록을 자기 것으로 읽어 리더가 되는 일이 느린 러너에서 생겼다(Windows CI 10/6, true !== false)
+  const lease = daemonLease('scheduler', { ttl: TTL, beat: BEAT });
   await lease.ready;
-  const other = () => realWrite(join(root, '.gateway.lock'), JSON.stringify({ owner: 'other-1', ts: Date.now() }));
+  const other = () => realWrite(join(root, '.scheduler.lock'), JSON.stringify({ owner: 'other-1', ts: Date.now() }));
   await other();
   for (let i = 0; i < 6; i++) { await sleep(BEAT / 2); await other(); }
   assert.equal(lease.isLeader(), false);
