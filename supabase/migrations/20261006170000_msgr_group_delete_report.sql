@@ -43,6 +43,14 @@ alter policy msgr_channel_members_delete on public.msgr_channel_members
   using ((member_kind = 'user' and (member_id = (select auth.uid()) or public.msgr_can_delete_channel(channel_id)))
       or (member_kind = 'crew' and public.msgr_crew_removable(channel_id, member_id)));
 
+-- 1-c. 같은 결과의 옆 길 — 참여 행 고치기(update). 같은 표의 update 정책도 관리 판정이라, 조직 그룹 대화의 일반 참여자가 남의 행의
+--   member_id를 방 밖 사람으로 바꿔 그 사람을 빼낼 수 있었다(1-b와 같은 결과 — 빠진 사람은 대화를 못 본다). using·with check 모두 삭제 판정으로.
+--   앱의 참여 행 upsert(ChannelSheet 사람 추가·공개 채널 되돌리기)는 채널(dm 아님)에서만 쓰여 판정이 같다. 대화방의 에이전트 추가는 msgr_crew_join(정의자).
+-- 정책 출처: 20260918150000_msgr_crew_room_members.sql(마지막) — 판정 함수 이름만 바꾼다.
+alter policy msgr_channel_members_update on public.msgr_channel_members
+  using (public.msgr_can_delete_channel(channel_id))
+  with check (public.msgr_can_delete_channel(channel_id) and public.msgr_channel_member_ok(channel_id, member_kind, member_id) and added_by = (select auth.uid()));
+
 -- ── 2. 신고 제외는 진짜 시스템 글(author_kind='system')만 ────────────────────────────────────
 -- 원인: #846의 조건 (kind = 'system' and author_kind <> 'user')가 에이전트(author_kind='crew') 명의 system 글도 신고 대상에서 뺐다.
 --   사람이 자기 에이전트 명의로 "관리자 공지: 재로그인 링크" 같은 안내 글을 써도 신고할 수 없었다.

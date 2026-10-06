@@ -79,6 +79,7 @@ const people = (list) => `'${JSON.stringify(list.map((id) => ({ kind: 'user', id
 // 조직 대화 — msgr_create_channel(앱 createGroupDm과 같은 경로). 만든 사람은 자동으로 참여한다
 const orgDm = (creator, others, extra = []) => last(asUser(creator, `select public.msgr_create_channel('${ORG}', 'dm', 'dm:t', '${JSON.stringify([...others.map((id) => ({ kind: 'user', id })), ...extra])}'::jsonb)`));
 const channel = (creator, kind, others = []) => last(asUser(creator, `select public.msgr_create_channel('${ORG}', '${kind}', '${kind}-' || gen_random_uuid()::text, ${people(others)})`));
+const memberRowOf = (ch, uid) => sql(`select count(*) from public.msgr_channel_members where channel_id = '${ch}' and member_kind = 'user' and member_id = '${uid}'`);
 const exists = (ch) => sql(`select count(*) from public.msgr_channels where id = '${ch}'`) === '1';
 const msgCount = (ch) => Number(sql(`select count(*) from public.msgr_messages where channel_id = '${ch}'`));
 const post = (uid, ch) => asUser(uid, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, body, client_msg_id) values ('${ch}', 'user', '${uid}', '기록', gen_random_uuid()::text)`);
@@ -131,6 +132,11 @@ function observeDelete() {
     o.grpBypassByKick = del(U.c, ch);
   }
   { const ch = grp(); o.grpCreatorKicksOther = kick(U.b, ch, U.d); }
+  // 옆 길 — 참여 행 고치기(update): 남의 행을 방 밖 사람(k)으로 바꿔 빼내기
+  const swap = (actor, ch, from, to) => { const r = asUserRaw(actor, `with u as (update public.msgr_channel_members set member_id = '${to}', added_by = '${actor}' where channel_id = '${ch}' and member_kind = 'user' and member_id = '${from}' returning 1) select count(*) from u`); return r.status === 0 && last(r.stdout) === '1'; };
+  { const ch = grp(); o.grpMemberSwapsOther = swap(U.c, ch, U.d, U.k); o.grpMemberSwapRemovedD = memberRowOf(ch, U.d) === '0'; }
+  { const ch = grp(); o.grpCreatorSwapsOther = swap(U.b, ch, U.d, U.k); }
+  { const ch = channel(U.b, 'private', [U.c, U.d]); o.privCreatorSwaps = swap(U.b, ch, U.d, U.k); o.privMemberSwaps = swap(U.c, ch, U.d, U.k); }
   { const ch = grp(); o.grpOwnerKicksOther = kick(U.a, ch, U.d); }
   { const ch = grp(); o.grpSelfRowLeave = kick(U.d, ch, U.d); } // 자기 행 지우기(나가기)는 누구나
   { const ch = orgDm(U.b, [U.c]); o.dmKickOther = kick(U.c, ch, U.b); } // 1:1 — 종전대로(지우는 것과 같은 권한)
@@ -227,12 +233,13 @@ test('수정 전(#846까지): 그룹 대화를 참여자 누구나 지우고 글
   assert.equal(d.grpMemberKicksOther, true, '재현(우회 길): 일반 참여자가 남의 참여 행을 지운다');
   assert.equal(d.grpBypassByKick, true, '재현(우회 길): 남을 다 빼고 사람 둘만 남겨 방을 지운다');
   assert.equal(d.grpDemotedAdminDel, true, '수정 전: 강등된 관리자도 참여자라 지운다');
+  assert.equal(d.grpMemberSwapsOther && d.grpMemberSwapRemovedD, true, '재현(옆 길): 일반 참여자가 남의 참여 행을 방 밖 사람으로 바꿔 빼낸다');
   assert.equal(r.crewSystem, false, '재현: 에이전트 명의 system 글은 신고되지 않는다');
   assert.match(r.crewSystemErr, /msgr_report_no_message/);
   assert.equal(r.ownCrewSystem, false, '재현: 주인도 신고 불가(같은 제외)');
   // 정상 경로(전후 같아야 하는 칸)
-  for (const k of ['grpCreatorDel', 'grpOwnerInRoomDel', 'grpAdminInRoomDel', 'grpMemberLeave', 'grpMemberLeaveKeepsRoom', 'grpMemberRename', 'grpMemberArchive', 'shrunkToTwoMemberDel', 'dmOtherDel', 'dmCreatorDel', 'dmWithAgentOtherDel', 'pubCreatorDel', 'pubOrgAdminOutsideDel', 'privCreatorDel', 'privChAdminDel', 'personalPairOtherDel', 'personalGroupCreatorDel', 'grpCreatorKicksOther', 'grpOwnerKicksOther', 'grpSelfRowLeave', 'dmKickOther', 'privCreatorKicks']) assert.equal(d[k], true, `수정 전 정상: ${k}`);
-  for (const k of ['grpAdminOutsideDel', 'grpLeftCreatorDel', 'pubMemberDel', 'privMemberDel', 'privOrgAdminOutsideDel', 'personalGroupMemberDel', 'privMemberKicks', 'grpExpiredAdminDel']) assert.equal(d[k], false, `수정 전 거절: ${k}`);
+  for (const k of ['grpCreatorDel', 'grpOwnerInRoomDel', 'grpAdminInRoomDel', 'grpMemberLeave', 'grpMemberLeaveKeepsRoom', 'grpMemberRename', 'grpMemberArchive', 'shrunkToTwoMemberDel', 'dmOtherDel', 'dmCreatorDel', 'dmWithAgentOtherDel', 'pubCreatorDel', 'pubOrgAdminOutsideDel', 'privCreatorDel', 'privChAdminDel', 'personalPairOtherDel', 'personalGroupCreatorDel', 'grpCreatorKicksOther', 'grpOwnerKicksOther', 'grpSelfRowLeave', 'dmKickOther', 'privCreatorKicks', 'grpCreatorSwapsOther', 'privCreatorSwaps']) assert.equal(d[k], true, `수정 전 정상: ${k}`);
+  for (const k of ['grpAdminOutsideDel', 'grpLeftCreatorDel', 'pubMemberDel', 'privMemberDel', 'privOrgAdminOutsideDel', 'personalGroupMemberDel', 'privMemberKicks', 'grpExpiredAdminDel', 'privMemberSwaps']) assert.equal(d[k], false, `수정 전 거절: ${k}`);
   for (const k of ['userText', 'crewText', 'crewApproval', 'userSystem']) assert.equal(r[k], true, `수정 전 신고 가능: ${k} ${r[`${k}Err`]}`);
   assert.equal(r.realSystem, false);
   for (const kind of ['public', 'private']) assert.deepEqual(RELAY_KEYS.filter((k) => k in PRE.x[kind]), RELAY_KEYS, `재현(#846 재검수): ${kind} 채널 에이전트 답에 전달 표지가 저장된다`);
@@ -260,16 +267,20 @@ test('결정 1. 조직 그룹 대화 삭제는 만든 사람(참여 중)·조직
   assert.equal(d.grpExpiredAdminDel, false, '기한이 지난 관리자');
 });
 
-test('결정 1-b. 우회 길 — 일반 참여자는 남을 빼지 못해 "사람 둘로 줄이고 지우기"가 막힌다, 판정 열은 바꿀 수 없다', { skip }, () => {
+test('결정 1-b·1-c. 우회·옆 길 — 일반 참여자는 남을 빼거나 바꾸지 못해 "사람 둘로 줄이고 지우기"가 막힌다, 판정 열은 바꿀 수 없다', { skip }, () => {
   const d = POST.d;
   assert.equal(d.grpMemberKicksOther, false, '일반 참여자가 남의 참여 행을 지우지 못한다');
   assert.equal(d.grpBypassByKick, false, '남을 빼고 지우는 길');
-  for (const k of ['grpCreatorKicksOther', 'grpOwnerKicksOther', 'grpSelfRowLeave', 'dmKickOther', 'privCreatorKicks', 'privMemberKicks']) assert.equal(d[k], PRE.d[k], `전후 같음: ${k}`);
+  assert.equal(d.grpMemberSwapsOther, false, '옆 길(update): 남의 참여 행을 바꿔 빼내지 못한다');
+  for (const k of ['grpCreatorKicksOther', 'grpOwnerKicksOther', 'grpSelfRowLeave', 'dmKickOther', 'privCreatorKicks', 'privMemberKicks', 'grpCreatorSwapsOther', 'privCreatorSwaps', 'privMemberSwaps']) assert.equal(d[k], PRE.d[k], `전후 같음: ${k}`);
   for (const o of [PRE.d, POST.d]) {
     assert.match(o.grpForgeCreator, /immutable|msgr_/, `created_by 변경 거절: ${o.grpForgeCreator}`);
     assert.match(o.grpForgeKind, /immutable|msgr_/, `kind 변경 거절: ${o.grpForgeKind}`);
   }
   assert.match(sql(`select qual from pg_policies where schemaname = 'public' and tablename = 'msgr_channel_members' and policyname = 'msgr_channel_members_delete'`), /msgr_can_delete_channel\(channel_id\)/);
+  const upd = sql(`select qual || ' | ' || with_check from pg_policies where schemaname = 'public' and tablename = 'msgr_channel_members' and policyname = 'msgr_channel_members_update'`);
+  assert.equal((upd.match(/msgr_can_delete_channel\(channel_id\)/g) ?? []).length, 2, `update 정책 using·with check: ${upd}`);
+  assert.doesNotMatch(upd, /msgr_can_manage_channel/);
 });
 
 test('결정 1. 나가기·이름 바꾸기·보관은 그대로, 1:1·사람 둘 + 에이전트·줄어든 그룹·채널·개인 공간 삭제 규칙도 그대로', { skip }, () => {
