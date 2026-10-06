@@ -221,9 +221,49 @@ function observeExecutionMeta() {
 }
 const RELAY_KEYS = ['relay', 'relay_to', 'relay_capped', 'relay_cycle', 'relay_chain_id'];
 
+// 결정 3 — 채널에서 남이 내보낸 사람은 제외 목록에 올라 재사용 초대로 다시 들어오지 못한다(공개 채널과 같게). 스스로 나간 사람은 다시 들어온다
+function observeKick() {
+  const o = {};
+  const excluded = (ch, uid) => sql(`select (('${uid}')::uuid = any (excluded_user_ids))::text from public.msgr_channels where id = '${ch}'`) === 'true';
+  const readable = (uid, ch) => last(asUser(uid, `select public.msgr_can_read_channel('${ch}')`)) === 't';
+  const delRow = (actor, ch, uid) => asUser(actor, `delete from public.msgr_channel_members where channel_id = '${ch}' and member_kind = 'user' and member_id = '${uid}'`);
+  const addRow = (actor, ch, uid) => asUser(actor, `insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${ch}', 'user', '${uid}', '${actor}')`);
+  const unexclude = (actor, ch, uid) => asUser(actor, `update public.msgr_channels set excluded_user_ids = array_remove(excluded_user_ids, '${uid}'::uuid) where id = '${ch}'`);
+  const reusable = (chs) => last(asUser(U.a, `insert into public.msgr_invites (org_id, role, created_by, channel_ids, max_uses) values ('${ORG}', 'member', '${U.a}', array[${chs.map((x) => `'${x}'`).join(',')}]::uuid[], null) returning code`));
+  const accept = (uid, code) => asUser(uid, `select public.msgr_accept_invite('${code}')`);
+  { // 비공개: 방장 b가 c를 내보냄(앱 removeMember와 같은 참여 행 삭제) → 조직 owner의 재사용 초대 수락
+    const ch = channel(U.b, 'private', [U.c, U.d]);
+    delRow(U.b, ch, U.c); o.privKickExcluded = excluded(ch, U.c);
+    accept(U.c, reusable([ch])); o.privKickedRejoinsByInvite = memberRowOf(ch, U.c) === '1';
+  }
+  { // 비공개: 스스로 나감 → 제외 아님, 재사용 초대로 다시 들어온다
+    const ch = channel(U.b, 'private', [U.c, U.d]);
+    delRow(U.d, ch, U.d); o.privLeaveExcluded = excluded(ch, U.d);
+    accept(U.d, reusable([ch])); o.privLeaverRejoinsByInvite = memberRowOf(ch, U.d) === '1';
+  }
+  // 되돌리기·참여 행만 다시 넣기 — 공개 채널(앱 excludeMember: 제외 목록 + 행 삭제)과 비공개 채널을 같은 순서로
+  for (const kind of ['public', 'private']) {
+    const kick = (ch) => { if (kind === 'public') asUser(U.b, `update public.msgr_channels set excluded_user_ids = array_append(excluded_user_ids, '${U.c}'::uuid) where id = '${ch}'`); delRow(U.b, ch, U.c); };
+    const mk = () => { const ch = channel(U.b, kind, kind === 'private' ? [U.c] : []); if (kind === 'public') asUser(U.c, `select public.msgr_join_channel('${ch}')`); return ch; };
+    { const ch = mk(); kick(ch); addRow(U.b, ch, U.c); unexclude(U.b, ch, U.c); // 앱 restoreMember
+      o[`${kind}Restore`] = [excluded(ch, U.c), readable(U.c, ch), (accept(U.c, reusable([ch])), memberRowOf(ch, U.c))].join('|'); }
+    { const ch = mk(); kick(ch); addRow(U.b, ch, U.c); // 참여 행만 다시 넣기 — 제외는 남는다
+      o[`${kind}ReaddRowOnly`] = [excluded(ch, U.c), readable(U.c, ch)].join('|'); }
+    { const ch = mk(); kick(ch); o[`${kind}KickedReads`] = readable(U.c, ch); }
+  }
+  { // 조직에서 내보냄(offboard) — 참여 행은 지워지지만 제외 목록에는 오르지 않는다(공개 채널과 같음)
+    const ch = channel(U.b, 'private', [U.g]);
+    asUser(U.a, `update public.msgr_org_members set removed_at = now() where org_id = '${ORG}' and user_id = '${U.g}'`);
+    o.offboardRowGone = memberRowOf(ch, U.g) === '0'; o.offboardExcluded = excluded(ch, U.g);
+    sql(`update public.msgr_org_members set removed_at = null where org_id = '${ORG}' and user_id = '${U.g}'`); // 다음 칸을 위해 되돌림(슈퍼유저)
+  }
+  { const ch = orgDm(U.b, [U.c]); delRow(U.c, ch, U.b); o.dmKickExcluded = sql(`select cardinality(excluded_user_ids) from public.msgr_channels where id = '${ch}'`) !== '0'; }
+  return o;
+}
+
 let PRE, POST;
 test('수정 전(#846까지): 그룹 대화를 참여자 누구나 지우고 글이 함께 사라진다, 에이전트 system 글은 신고되지 않는다', { skip }, () => {
-  PRE = { d: observeDelete(), r: observeReport(), x: observeExecutionMeta() };
+  PRE = { d: observeDelete(), r: observeReport(), x: observeExecutionMeta(), k: observeKick() };
   const { d, r } = PRE;
   assert.equal(d.grpMemberDel, true, '재현: 일반 참여자가 그룹 대화를 지운다');
   assert.equal(d.grpMemberDelLostMsgs, true, '재현: 모두의 글이 cascade로 사라진다');
@@ -242,13 +282,17 @@ test('수정 전(#846까지): 그룹 대화를 참여자 누구나 지우고 글
   for (const k of ['grpAdminOutsideDel', 'grpLeftCreatorDel', 'pubMemberDel', 'privMemberDel', 'privOrgAdminOutsideDel', 'personalGroupMemberDel', 'privMemberKicks', 'grpExpiredAdminDel', 'privMemberSwaps']) assert.equal(d[k], false, `수정 전 거절: ${k}`);
   for (const k of ['userText', 'crewText', 'crewApproval', 'userSystem']) assert.equal(r[k], true, `수정 전 신고 가능: ${k} ${r[`${k}Err`]}`);
   assert.equal(r.realSystem, false);
+  const k = PRE.k;
+  assert.equal(k.privKickExcluded, false, '재현(결정 3): 비공개 채널에서 내보낸 사람이 제외 목록에 오르지 않는다');
+  assert.equal(k.privKickedRejoinsByInvite, true, '재현(결정 3): 재사용 초대로 그 비공개 채널에 다시 들어온다');
+  assert.equal(k.privLeaverRejoinsByInvite, true, '수정 전: 스스로 나간 사람은 재사용 초대로 다시 들어온다');
   for (const kind of ['public', 'private']) assert.deepEqual(RELAY_KEYS.filter((k) => k in PRE.x[kind]), RELAY_KEYS, `재현(#846 재검수): ${kind} 채널 에이전트 답에 전달 표지가 저장된다`);
 });
 
 test('새 마이그레이션 적용(그 뒤 파일이 있으면 순서대로 함께)', { skip }, () => {
   const dir = fileURLToPath(new URL('../supabase/migrations/', import.meta.url));
   for (const f of readdirSync(dir).filter((x) => /^\d+_msgr.*\.sql$/.test(x) && x >= FIX).sort()) applyMig(f);
-  POST = { d: observeDelete(), r: observeReport(), x: observeExecutionMeta() };
+  POST = { d: observeDelete(), r: observeReport(), x: observeExecutionMeta(), k: observeKick() };
 });
 
 test('결정 1. 조직 그룹 대화 삭제는 만든 사람(참여 중)·조직 관리자(참여 중)만 — 일반·게스트·채널 관리자·나간 만든 사람은 못 지운다', { skip }, () => {
@@ -324,4 +368,22 @@ test('3. 에이전트 답 저장(msgr_execution_finish)은 전달 표지를 빼�
   }
   assert.equal(sql(`select prosecdef::text || '|' || array_to_string(proconfig, ',') from pg_proc where proname = 'msgr_execution_finish'`), 'true|search_path=public, pg_temp');
   assert.equal(sql(`select has_function_privilege('anon', 'public.msgr_execution_finish(text, uuid, bigint, uuid, uuid, jsonb)', 'execute')::text || has_function_privilege('authenticated', 'public.msgr_execution_finish(text, uuid, bigint, uuid, uuid, jsonb)', 'execute')::text`), 'falsetrue');
+});
+
+test('결정 3. 채널에서 남이 내보낸 사람은 제외 목록에 올라 재사용 초대가 그 채널을 건너뛴다 — 스스로 나간 사람·조직 탈퇴·대화방은 아니다, 되돌리기는 공개 채널과 같다', { skip }, () => {
+  const k = POST.k;
+  assert.equal(k.privKickExcluded, true, '비공개 채널 내보내기 → 제외 목록');
+  assert.equal(k.privKickedRejoinsByInvite, false, '재사용 초대 수락해도 그 비공개 채널은 건너뜀');
+  assert.equal(k.privLeaveExcluded, false, '스스로 나가기는 제외 아님');
+  assert.equal(k.privLeaverRejoinsByInvite, true, '스스로 나간 사람은 재사용 초대로 다시 들어온다');
+  assert.equal(k.offboardRowGone, true); assert.equal(k.offboardExcluded, false, '조직에서 내보낸 것은 채널 제외가 아니다');
+  assert.equal(k.dmKickExcluded, false, '대화방(dm)은 제외 목록을 쓰지 않는다');
+  // 공개 채널과 같은 결과
+  assert.equal(k.publicRestore, 'false|true|1', '공개: 되돌리기 → 제외 풀림·읽기·초대 정상');
+  assert.equal(k.privateRestore, k.publicRestore, '비공개 되돌리기 = 공개');
+  assert.equal(k.privateReaddRowOnly, k.publicReaddRowOnly, `참여 행만 다시 넣기: 공개 ${k.publicReaddRowOnly} / 비공개 ${k.privateReaddRowOnly}`);
+  assert.equal(k.publicKickedReads, false); assert.equal(k.privateKickedReads, false, '내보낸 뒤 못 읽는다');
+  for (const key of ['publicRestore', 'publicReaddRowOnly', 'publicKickedReads', 'offboardRowGone', 'offboardExcluded', 'dmKickExcluded', 'privLeaveExcluded', 'privLeaverRejoinsByInvite']) assert.equal(k[key], PRE.k[key], `전후 같음: ${key}`);
+  assert.equal(sql(`select prosecdef::text || '|' || array_to_string(proconfig, ',') from pg_proc where proname = 'msgr_channel_kick_excludes'`), 'true|search_path=public, pg_temp');
+  assert.equal(sql(`select has_function_privilege('authenticated', 'public.msgr_channel_kick_excludes()', 'execute')::text`), 'false');
 });

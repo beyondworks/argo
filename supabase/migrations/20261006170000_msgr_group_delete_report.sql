@@ -51,6 +51,33 @@ alter policy msgr_channel_members_update on public.msgr_channel_members
   using (public.msgr_can_delete_channel(channel_id))
   with check (public.msgr_can_delete_channel(channel_id) and public.msgr_channel_member_ok(channel_id, member_kind, member_id) and added_by = (select auth.uid()));
 
+-- ── 1-d. 결정 3(유건 승인 2026-10-06): 채널에서 남이 내보낸 사람은 제외 목록(excluded_user_ids)에 오른다 ──────────────
+-- 원인: 앱은 공개 채널 내보내기만 제외 목록 + 참여 행 삭제(excludeMember)로 하고, 비공개 채널은 참여 행만 지웠다(removeMember).
+--   그래서 비공개 채널에서 내보낸 사람이 재사용 초대(공개+비공개 채널 포함)를 수락하면 msgr_invite_channel_ok(#846의 제외 조건)를 통과해 다시 들어왔다.
+-- 처방: 서버가 보장한다 — 참여 행 delete 뒤 트리거가 "로그인한 다른 사람이 지운 사람 행"이면 제외 목록에 더한다(공개·비공개 채널).
+--   공개 채널은 앱이 이미 같은 일을 한다(이미 목록에 있으면 그대로). 참여 행을 남이 지우는 길은 정책 msgr_channel_members_delete 하나(1-b)라
+--   앱 경로·직접 API가 모두 여기를 지난다.
+--   제외하지 않는 경우(데이터 조건으로만 가른다 — pg_trigger_depth·GUC는 위조할 수 있다, msgr_channel_admins_guard 주석):
+--     · 자기 행(나가기 — 스스로 나간 사람은 초대로 다시 들어온다)  · auth.uid() 없음(서비스 경로)
+--     · 채널 행이 이미 없음(채널 삭제 연쇄 — update가 0행)  · 빠진 사람이 그 조직의 활성 멤버가 아님(조직에서 내보낸 offboard — 공개 채널과 같다)
+--     · 1:1·그룹 대화(dm)는 제외 목록을 쓰지 않는다
+--   되돌리기는 공개 채널과 같다: 방 관리자가 참여 행을 다시 넣고 제외 목록에서 뺀다(앱 restoreMember). 참여 행만 다시 넣으면 제외는 남는다(공개 채널과 같음).
+--   제외 목록 갱신은 기존 트리거 msgr_crews_follow_owner_excluded를 불러 그 사람의 에이전트도 빠진다(공개 채널 내보내기와 같음).
+-- 부하: 남이 지운 사람 행마다 채널 1행 update 1회(이미 목록에 있으면 0행). 나가기·연쇄·offboard는 조회 1회로 끝난다.
+create or replace function public.msgr_channel_kick_excludes() returns trigger
+  language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  if auth.uid() is null or old.member_id = auth.uid() then return null; end if;
+  update public.msgr_channels c set excluded_user_ids = array_append(c.excluded_user_ids, old.member_id)
+   where c.id = old.channel_id and c.kind in ('public', 'private') and not (old.member_id = any (c.excluded_user_ids))
+     and exists (select 1 from public.msgr_org_members m where m.org_id = c.org_id and m.user_id = old.member_id and m.removed_at is null);
+  return null;
+end $$;
+revoke all on function public.msgr_channel_kick_excludes() from public, anon, authenticated;
+drop trigger if exists msgr_channel_kick_excludes on public.msgr_channel_members;
+create trigger msgr_channel_kick_excludes after delete on public.msgr_channel_members
+  for each row when (old.member_kind = 'user') execute function public.msgr_channel_kick_excludes();
+
 -- ── 2. 신고 제외는 진짜 시스템 글(author_kind='system')만 ────────────────────────────────────
 -- 원인: #846의 조건 (kind = 'system' and author_kind <> 'user')가 에이전트(author_kind='crew') 명의 system 글도 신고 대상에서 뺐다.
 --   사람이 자기 에이전트 명의로 "관리자 공지: 재로그인 링크" 같은 안내 글을 써도 신고할 수 없었다.
