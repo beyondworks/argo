@@ -14,6 +14,8 @@ const Q = await import('../src/gateway/queue.mjs');
 const { enqueueJob, startQueueWorker, queueDir } = Q;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function until(pred, ms = 12_000) { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (await pred()) return true; await sleep(100); } return false; }
+// 기록 파일이 바뀔 때까지 기다린다 — 고정 대기(300·500ms)는 느린 Windows 러너에서 쓰기가 늦으면 실패했다(10/6). 읽는 순간 쓰는 중이면 다시 본다.
+const settled = (pred, ms = 6000) => until(async () => { try { return await pred(); } catch { return false; } }, ms);
 const err = (code, message = `x (${code})`) => Object.assign(new Error(message), { code });
 const mk = async (WS) => { await mkdir(queueDir(WS, 'msgr'), { recursive: true }); };
 const rec = async (WS, name) => JSON.parse(await readFile(join(queueDir(WS, 'msgr'), name), 'utf8'));
@@ -50,7 +52,10 @@ test('LOW-3: onStalled가 던져도 큐는 계속 돌고 잡은 큐에 남는다
   await quiet(() => until(() => calls >= 5, 30_000));
   stop();
   assert.ok(calls >= 5); assert.equal(hook, 2, '첫 시도는 던졌고 다음 실패에서 한 번 더 — 보낸 뒤에는 부르지 않는다');
-  assert.equal((await readdir(queueDir(WS, 'msgr'))).filter((n) => n.startsWith('103-skew.json')).length, 1);
+  // 멈춘 직후에는 진행 중이던 잡 파일 정리가 끝나지 않았을 수 있다(Windows CI: 2개로 보임) — 정리가 끝난 뒤 하나인지 본다
+  const skew = async () => (await readdir(queueDir(WS, 'msgr'))).filter((n) => n.startsWith('103-skew.json')).length;
+  await settled(async () => (await skew()) === 1);
+  assert.equal(await skew(), 1);
 });
 
 test('LOW-4: 안내가 실패하면(false 반환·던짐) .failed에 noticePending 표지가 남고, 성공하면 남지 않는다', async () => {
@@ -59,7 +64,8 @@ test('LOW-4: 안내가 실패하면(false 반환·던짐) .failed에 noticePendi
   const seen = [];
   const stop = startQueueWorker(WS, 'msgr', async () => { throw err('22P02'); }, { onAbandon: async (job) => { seen.push(job.text); if (job.text === 'false') return false; if (job.text === 'throw') throw new Error('연결 끊김'); } });
   await quiet(() => until(async () => seen.length === 3 && (await readdir(queueDir(WS, 'msgr'))).filter((n) => n.endsWith('.failed')).length === 3));
-  await sleep(300); stop();
+  assert.ok(await settled(async () => (await rec(WS, '200-ok.json.failed')).noticePending === false && (await rec(WS, '201-false.json.failed')).noticeTries === 1 && (await rec(WS, '202-throw.json.failed')).noticePending === true));
+  stop();
   assert.equal((await rec(WS, '200-ok.json.failed')).noticePending, false, '보냈으니 미전송 표지 없음');
   assert.equal((await rec(WS, '201-false.json.failed')).noticePending, true);
   assert.equal((await rec(WS, '202-throw.json.failed')).noticePending, true);
@@ -78,7 +84,8 @@ test('LOW-4: 워커를 다시 시작하면 안내 미전송 기록을 다시 보
   const calls = [];
   const stop = startQueueWorker(WS, 'msgr', async () => {}, { onAbandon: async (j, e, info) => { calls.push({ name: info.name, reason: info.reason, retry: info.retry, code: e.code, msgId: j.msgId }); if (info.name === '301-q.json') return false; } });
   assert.ok(await until(() => calls.length >= 2, 6000));
-  await sleep(500); stop();
+  assert.ok(await settled(async () => (await rec(WS, '300-p.json.failed')).noticePending === false && (await rec(WS, '301-q.json.failed')).noticeTries === 2));
+  await sleep(300); stop(); // 상한 초과분·보낸 것까지 부르지 않는지 볼 여유
   assert.deepEqual(calls.map((c) => c.name).sort(), ['300-p.json', '301-q.json'], '미전송 표지가 있고 상한 안인 기록만 — 보낸 것·상한 초과분은 건드리지 않는다');
   assert.deepEqual(calls[0], { name: calls[0].name, reason: 'permanent', retry: true, code: '22P02', msgId: 7 });
   assert.equal((await rec(WS, '300-p.json.failed')).noticePending, false, '재전송이 성공했으니 표지가 꺼진다');

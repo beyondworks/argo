@@ -236,7 +236,9 @@ test('3차 F3: 기기 세션이 없어 DB 호출을 못 한 채 앱을 여러 �
   assert.deepEqual(rows, []);
   const stop = run(async () => ({ db, uid: 'u1' })); // 세션이 생겼다
   assert.ok(await until(() => rows.length === 1), '세션이 생긴 뒤 시작 때 안내가 나간다');
-  await sleep(300); stop();
+  // 안내 뒤 기록 파일 갱신을 고정 300ms로 기다리면 느린 Windows 러너에서 아직 true였다(10/6 CI) — 갱신될 때까지 기다린다
+  await until(async () => { try { return JSON.parse(await readFile(file, 'utf8')).noticePending === false; } catch { return false; } });
+  stop();
   assert.equal(rows[0].client_msg_id, 'jobfail:crew-1:100-seoyun');
   assert.equal(JSON.parse(await readFile(file, 'utf8')).noticePending, false);
 });
