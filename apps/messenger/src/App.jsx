@@ -28,7 +28,7 @@ import { createInvite, previewInvite, acceptInvite, revokeInvite, discardInvite,
 import { InviteDialog, InvitePreview } from './invite-dialog.jsx';
 import { sortDms, DM_SORTS, sortByCustomOrder } from './dm-sort.mjs';
 import { pickStartSpace, needsPersonalProbe } from './start-space.mjs';
-import { hasChannelRows, searchChannelsByName } from './channel-browse.mjs';
+import { addableToChannel, hasChannelRows, searchChannelsByName } from './channel-browse.mjs';
 import { resolvePeopleNames, nameForUser, needsNameLookup } from './person-names.mjs';
 import { activitySentence } from './activity-sentence.mjs';
 import { dmEmptyKey, roomTabEmptyKey } from './empty-state.mjs';
@@ -3456,7 +3456,7 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
   const crewIds = new Set(chMembers.filter((m) => m.member_kind === 'crew').map((m) => m.member_id));
   const safety = useContext(SafetyCtx); const { hiddenUserIds } = safety;
   const [hideCrew, setHideCrew] = useState(null); // 남의 에이전트 숨기기 확인 창(D8)
-  const addableUsers = withoutHidden(members.filter((m) => !userIds.has(m.user_id) && m.user_id !== org?.service_user_id && !(channel.kind === 'public' && excludedUsers.includes(m.user_id))), isPersonal ? hiddenUserIds : null); // 내보낸 사람은 후보가 아니다(넣어도 읽기가 막힌다) // 회사 크루 서버(기계 계정)는 사람 후보가 아니다(실측: 첫 칩이 '회사 노드')
+  const addableUsers = withoutHidden(members.filter((m) => !userIds.has(m.user_id) && m.user_id !== org?.service_user_id && addableToChannel(channel, m, excludedUsers)), isPersonal ? hiddenUserIds : null); // 공개 채널은 내보낸 사람·게스트가 후보가 아니다(서버가 거절한다) // 회사 크루 서버(기계 계정)는 사람 후보가 아니다(실측: 첫 칩이 '회사 노드')
   // 누가 무엇을 데려오나 — 추가 후보는 방장이어도 **내 에이전트와 회사 에이전트만**(유건 2026-09-17: 친구·동료 에이전트까지 전부 보여 목록이 두 배로 늘었다).
   // 남의 에이전트는 그 주인이 데려오고(참여자면 방장 승인), 방장은 요청을 허락한다. 방장도 남의 개인 에이전트를 바로 넣지 못한다(서버 msgr_crew_join·msgr_channel_member_ok가 막는다, 2026-09-18). /
   // 채팅: 내 에이전트만 — 들어온 에이전트는 참여자 누구나 부르므로, 넣는 것은 주인만 한다(2026-09-18). 못 데려옴 채널은 회사 에이전트만.

@@ -16,3 +16,10 @@ export const searchChannelsByName = (channels, previewChannels, needle) => {
   const lc = String(needle).toLowerCase();
   return channelSearchPool(channels, previewChannels).filter((c) => (c.name || '').toLowerCase().includes(lc));
 };
+
+// 공개 채널에 사람으로 참여할 수 있는 조직 역할 — 서버 msgr_can_read_channel·msgr_channel_member_ok(20261006160000)와 같은 목록. 게스트는 초대받은 비공개 채널만.
+const PUBLIC_ROLES = ['owner', 'admin', 'member'];
+
+/** 채널 설정의 '사람 추가' 후보인가 — 공개 채널은 제외 목록에 든 사람과 게스트를 빼고(서버가 거절한다), 비공개·개인 방은 그대로. */
+export const addableToChannel = (channel, member, excludedUsers = []) =>
+  channel?.kind !== 'public' || (!excludedUsers.includes(member.user_id) && PUBLIC_ROLES.includes(member.role));
