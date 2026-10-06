@@ -130,6 +130,8 @@
   Push $2
   Push $3
   Push $4
+  Push $R2
+  Push $R3
   Push $R4
   Push $R5
   Push $R6
@@ -149,9 +151,23 @@
     FileClose $0
     ; 2) 다른 argo — `where argo`에서 우리 폴더가 아닌 줄이 하나라도 있으면 findstr이 0으로 끝난다. 경로는 환경변수로 넘긴다(공백·특수문자 보간 금지, 끝의 \\ 는 findstr이 따옴표 이스케이프로 읽으므로 뺀다).
     StrCpy $R8 "ok"
+    ; 설치 명령(install.ps1)으로 넣은 단독 argo — 표식이 있으면 충돌로 보지 않고 아래에서 그 PATH 항목을 뺀다(앱의 argo로 바꾼다, 2026-10-06 결정:
+    ; CLI가 둘이면 데이터 폴더가 갈린다). 단독 프로그램 폴더·데이터는 지우지 않는다(argo uninstall 몫). $R3 = 그 bin 폴더(없으면 "").
+    StrCpy $R3 ""
+    StrCpy $R2 ""
+    nsExec::Exec 'cmd /d /c "findstr /m /c:$\"argo-cli-shim v1 argo-selfhost$\" $\"%LOCALAPPDATA%\argo-cli\bin\argo.cmd$\" >nul 2>nul"'
+    Pop $2
+    ${If} $2 == 0
+      ReadEnvStr $R7 "LOCALAPPDATA"
+      StrCpy $R3 "$R7\argo-cli\bin"
+    ${EndIf}
     System::Call 'kernel32::SetEnvironmentVariableW(w "ARGO_NSIS_CLI_DIR", w "$INSTDIR\cli") i .r1'
+    System::Call 'kernel32::SetEnvironmentVariableW(w "ARGO_NSIS_SA_DIR", w "$R3") i .r0'
+    ${If} $R3 == ""
+      System::Call 'kernel32::SetEnvironmentVariableW(w "ARGO_NSIS_SA_DIR", w "$INSTDIR\cli") i .r0' ; 단독 argo가 없으면 같은 우리 폴더를 한 번 더(빈 /c:는 모든 줄과 맞는다)
+    ${EndIf}
     ${If} $1 != 0
-      nsExec::Exec 'cmd /d /c "where argo 2>nul | findstr /v /i /c:$\"%ARGO_NSIS_CLI_DIR%$\" >nul"'
+      nsExec::Exec 'cmd /d /c "where argo 2>nul | findstr /v /i /c:$\"%ARGO_NSIS_CLI_DIR%$\" /c:$\"%ARGO_NSIS_SA_DIR%$\" >nul"'
       Pop $2
       ${If} $2 == 0
         StrCpy $R8 "conflict"
@@ -160,6 +176,7 @@
       StrCpy $R8 "path-skipped" ; 판정 못 하면 PATH를 건드리지 않는다
     ${EndIf}
     System::Call 'kernel32::SetEnvironmentVariableW(w "ARGO_NSIS_CLI_DIR", i 0)'
+    System::Call 'kernel32::SetEnvironmentVariableW(w "ARGO_NSIS_SA_DIR", i 0)'
     ; 3) PATH 추가 — conflict·판정 불가면 건너뜀
     ${If} $R8 == "ok"
       ; 값의 크기부터 본다: 0 = 있음(바이트 수는 $4), 2 = 값 없음, 그 밖 = 읽을 수 없음
@@ -190,8 +207,25 @@
       ${ElseIf} $2 != 2
         StrCpy $R8 "path-skipped"
       ${EndIf}
+      ; 단독 argo의 PATH 항목을 뺀다(;로 감싸 정확히 같은 항목만, 앞뒤 ; 정리 — 다른 항목은 바이트 그대로). $R2 = 뺐으면 1
       ${If} $R8 == "ok"
-        ; 이미 들어 있으면(;로 감싸 정확히 같은 항목만) 다시 쓰지 않는다
+      ${AndIf} $R3 != ""
+        ${WordReplace} ";$R9;" ";$R3;" ";" "+*" $R6
+        ${If} $R6 != ";$R9;"
+          StrCpy $0 $R6 1
+          ${If} $0 == ";"
+            StrCpy $R6 $R6 "" 1
+          ${EndIf}
+          StrCpy $0 $R6 1 -1
+          ${If} $0 == ";"
+            StrCpy $R6 $R6 -1
+          ${EndIf}
+          StrCpy $R9 $R6
+          StrCpy $R2 "1"
+        ${EndIf}
+      ${EndIf}
+      ${If} $R8 == "ok"
+        ; 이미 들어 있으면(;로 감싸 정확히 같은 항목만) 다시 쓰지 않는다 — 단독 항목을 뺐으면 그 결과는 쓴다
         ${WordReplace} ";$R9;" ";$INSTDIR\cli;" ";" "+*" $R6
         ${If} $R6 == ";$R9;"
           ${If} $R9 == ""
@@ -200,6 +234,9 @@
             StrCpy $R6 "$R9;$INSTDIR\cli"
           ${EndIf}
           WriteRegExpandStr HKCU "Environment" "Path" "$R6"
+          !insertmacro ARGO_CLI_BROADCAST
+        ${ElseIf} $R2 == "1"
+          WriteRegExpandStr HKCU "Environment" "Path" "$R9"
           !insertmacro ARGO_CLI_BROADCAST
         ${EndIf}
         StrCpy $R8 "installed"
@@ -213,6 +250,8 @@
   Pop $R6
   Pop $R5
   Pop $R4
+  Pop $R3
+  Pop $R2
   Pop $4
   Pop $3
   Pop $2

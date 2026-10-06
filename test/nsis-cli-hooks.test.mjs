@@ -51,10 +51,22 @@ test('설치 훅 — 값이 없는 사용자는 등록하고, 읽을 수 없거�
 
 test('설치 훅 — 다른 프로그램의 argo가 PATH에 있으면 추가하지 않고 conflict로 남긴다', () => {
   const m = section('ARGO_CLI_POSTINSTALL');
-  assert.ok(m.includes('where argo 2>nul | findstr /v /i /c:$\\"%ARGO_NSIS_CLI_DIR%$\\" >nul'), '우리 폴더가 아닌 줄이 하나라도 있으면 findstr이 0');
+  assert.ok(m.includes('where argo 2>nul | findstr /v /i /c:$\\"%ARGO_NSIS_CLI_DIR%$\\" /c:$\\"%ARGO_NSIS_SA_DIR%$\\" >nul'), '우리 폴더·단독 argo 폴더가 아닌 줄이 하나라도 있으면 findstr이 0');
   assert.match(m, /SetEnvironmentVariableW\(w "ARGO_NSIS_CLI_DIR", w "\$INSTDIR\\cli"\)/, '경로는 환경변수로 넘긴다(보간 금지)');
   assert.match(m, /\$\{If\} \$2 == 0\s+StrCpy \$R8 "conflict"/);
   assert.match(m, /\$\{If\} \$R8 == "ok"\s+; 값의 크기부터/, 'conflict면 PATH 단계로 가지 않는다');
+});
+
+// 경우 표 P2(2026-10-06): 설치 명령(install.ps1)으로 넣은 단독 argo는 충돌이 아니라 바꿀 대상 — 그 PATH 항목만 정확히 빼고 앱 cli를 넣는다
+test('설치 훅 — 단독 argo(argo-selfhost 표식)가 있으면 충돌로 보지 않고 그 PATH 항목만 빼고 앱 cli를 넣는다', () => {
+  const m = section('ARGO_CLI_POSTINSTALL');
+  assert.ok(m.includes('findstr /m /c:$\\"argo-cli-shim v1 argo-selfhost$\\" $\\"%LOCALAPPDATA%\\argo-cli\\bin\\argo.cmd$\\"'), '표식이 있는 우리 단독 argo.cmd만');
+  assert.match(m, /StrCpy \$R3 "\$R7\\argo-cli\\bin"/);
+  assert.match(m, /\$\{If\} \$R3 == ""\s+System::Call 'kernel32::SetEnvironmentVariableW\(w "ARGO_NSIS_SA_DIR", w "\$INSTDIR\\cli"\)/, '단독 argo가 없으면 빈 /c:(모든 줄과 맞음)를 쓰지 않는다');
+  assert.match(m, /\$\{WordReplace\} ";\$R9;" ";\$R3;" ";" "\+\*" \$R6/, ';로 감싸 정확히 같은 항목만 뺀다');
+  assert.match(m, /\$\{ElseIf\} \$R2 == "1"\s+WriteRegExpandStr HKCU "Environment" "Path" "\$R9"/, '앱 cli가 이미 있어도 단독 항목을 뺐으면 쓴다');
+  const pushes = [...m.matchAll(/^\s*Push (\$\w+)/gm)].map((x) => x[1]); const pops = [...m.slice(m.lastIndexOf('ARGO_CLI_STATE_VAR')).matchAll(/^\s*Pop (\$\w+)/gm)].map((x) => x[1]); // 끝의 복원 구간만(nsExec 결과를 꺼내는 Pop $2는 제외)
+  assert.deepEqual(pops, [...pushes].reverse(), 'Push·Pop 짝(레지스터 보존)');
 });
 
 test('설치 훅 — 결과는 ASCII 한 줄로 %LOCALAPPDATA%\\<번들 id>\\cli-install.json에', () => {

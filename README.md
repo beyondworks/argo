@@ -43,9 +43,24 @@ command (`~/.local/bin/argo`). Sign in with `argo`, then `argo service install` 
 running. `--local` installs the loopback-only local web server instead. Re-run the same
 command to update. Details & security defaults: [docs/selfhost.md](docs/selfhost.md).
 
-**macOS · Windows:** the `argo` command ships inside the desktop app — on macOS register it in
-**Settings → Devices & data** (the app must be in Applications); on Windows the installer
-registers it. A standalone CLI installer for macOS/Windows is planned.
+**Terminal-only `argo` on macOS · Windows (from v0.1.97):** no desktop app needed — the asset
+bundles its own Node.js and is checked against a SHA-256 file before install.
+
+```bash
+# macOS (Apple Silicon · Intel) — installs to ~/.argo-selfhost/app and ~/.local/bin/argo
+curl -fsSL https://github.com/beyondworks/argo-agent/releases/latest/download/install.sh | bash
+```
+
+```powershell
+# Windows (PowerShell, x64) — installs to %LOCALAPPDATA%\argo-cli and adds it to your user PATH
+irm https://github.com/beyondworks/argo-agent/releases/latest/download/install.ps1 | iex
+```
+
+Re-run to update; `argo uninstall` removes the program (your data in `~/.argo` stays). If the
+desktop app is installed, use its `argo` instead — on macOS register it in **Settings → Devices &
+data**, on Windows the app installer registers it (installing the app later replaces the
+standalone `argo` command with the app's; the app's `argo` uses the app's data, and the standalone
+data in `~/.argo` stays where it is — both sync through your account when signed in).
 
 ## Run from source
 
@@ -108,7 +123,7 @@ AI 회사입니다. 러너·기억·오케스트레이션은 전부 로컬에서
 **로그인 시 기기 간 기억 동기화에만** 쓰입니다.
 
 - 다운로드: [argo.ceo](https://argo.ceo) (맥 실리콘 dmg 서명·공증 / Windows 설치본)
-- 터미널 한 줄 설치(리눅스 x86_64 서버·CLI): 위 [Install](#install) 명령 그대로. 맥은 앱의 설정 → 기기·데이터에서 `argo` 명령을 등록하고, 윈도우는 설치 프로그램이 등록한다
+- 터미널 한 줄 설치: 리눅스 x86_64·맥은 위 `install.sh` 명령, 윈도우는 PowerShell `irm …/install.ps1 | iex`(맥·윈도우는 v0.1.97부터, node 포함·해시 확인). 업데이트는 다시 실행, 제거는 `argo uninstall`(데이터는 남김). 데스크톱 앱이 있으면 앱의 `argo`를 쓴다(맥은 설정 → 기기·데이터에서 등록, 윈도우는 설치 프로그램이 등록)
 - 러너 연결은 설정 → AI 연결에서 본인 계정으로(BYOK — Claude·Codex·Gemini·GLM·Kimi)
 - 셀프호스트 보안 기본값·헤드리스 연결: [docs/selfhost.md](docs/selfhost.md)
 - 클라우드 동기화 범위(자격 증명 포함)·암호화 열쇠 위치·끄는 방법: [docs/privacy-sync.md](docs/privacy-sync.md)
