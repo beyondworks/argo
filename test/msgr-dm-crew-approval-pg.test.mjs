@@ -193,10 +193,11 @@ test('③ 조직 탈퇴 정리(msgr_member_offboard) — 방을 연 사람이 �
 test('③ added_at이 먼저인 사람이 id보다 앞선다 — 같을 때만 user id 순', { skip }, () => {
   const g = groupDm('tie');
   // mate(2222…)를 other(3333…)보다 늦게 들어온 것으로 만든다 → 먼저 들어온 other가 결재자
-  sql(`update public.msgr_channel_members set added_at = added_at + interval '1 minute' where channel_id = '${g}' and member_kind = 'user' and member_id = '${U.mate}'`);
+  // added_at은 #849부터 update 잠금(msgr_lock_channel_members) — 순서를 만드는 시드는 트리거를 끈 슈퍼유저 문장으로(제품 경로 아님)
+  sql(`set session_replication_role = replica; update public.msgr_channel_members set added_at = added_at + interval '1 minute' where channel_id = '${g}' and member_kind = 'user' and member_id = '${U.mate}'`);
   assert.equal(last(asUser(U.host, `select public.msgr_leave_dm('${g}')`)), 't');
   assert.equal(approver(g), U.other, 'id가 뒤여도 먼저 들어온 사람');
-  sql(`update public.msgr_channel_members set added_at = (select added_at from public.msgr_channel_members where channel_id = '${g}' and member_id = '${U.other}') where channel_id = '${g}' and member_id = '${U.mate}'`);
+  sql(`set session_replication_role = replica; update public.msgr_channel_members set added_at = (select added_at from public.msgr_channel_members where channel_id = '${g}' and member_id = '${U.other}') where channel_id = '${g}' and member_id = '${U.mate}'`);
   assert.equal(approver(g), U.mate, '같으면 user id 순');
 });
 

@@ -316,7 +316,10 @@ test('결정 1-b·1-c. 우회·옆 길 — 일반 참여자는 남을 빼거나 
   assert.equal(d.grpMemberKicksOther, false, '일반 참여자가 남의 참여 행을 지우지 못한다');
   assert.equal(d.grpBypassByKick, false, '남을 빼고 지우는 길');
   assert.equal(d.grpMemberSwapsOther, false, '옆 길(update): 남의 참여 행을 바꿔 빼내지 못한다');
-  for (const k of ['grpCreatorKicksOther', 'grpOwnerKicksOther', 'grpSelfRowLeave', 'dmKickOther', 'privCreatorKicks', 'privMemberKicks', 'grpCreatorSwapsOther', 'privCreatorSwaps', 'privMemberSwaps']) assert.equal(d[k], PRE.d[k], `전후 같음: ${k}`);
+  for (const k of ['grpCreatorKicksOther', 'grpOwnerKicksOther', 'grpSelfRowLeave', 'dmKickOther', 'privCreatorKicks', 'privMemberKicks', 'privMemberSwaps']) assert.equal(d[k], PRE.d[k], `전후 같음: ${k}`);
+  // 뒤 파일 20261006180000_msgr_member_row_lock.sql이 함께 적용된다 — 참여 행 신원 열 update는 누구도 못 한다(사람 바꾸기는 delete + insert).
+  //   만든 사람의 바꿔치기도 거절로 바뀐다(의도된 변경, 시험 test/msgr-member-row-lock-pg.test.mjs).
+  for (const k of ['grpCreatorSwapsOther', 'privCreatorSwaps']) assert.equal(d[k], false, `참여 행 신원 잠금 뒤 거절: ${k}`);
   for (const o of [PRE.d, POST.d]) {
     assert.match(o.grpForgeCreator, /immutable|msgr_/, `created_by 변경 거절: ${o.grpForgeCreator}`);
     assert.match(o.grpForgeKind, /immutable|msgr_/, `kind 변경 거절: ${o.grpForgeKind}`);
