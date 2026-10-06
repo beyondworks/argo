@@ -77,7 +77,7 @@
     if ((Test-Path -LiteralPath $shim) -and -not (& $isOurs $shim $mark)) { $skip = $shim }
     New-Item -ItemType Directory -Force -Path $binDir | Out-Null
     if (-not $skip) {
-      $lines = @('@echo off', "rem $mark - created by the Argo install.ps1, removed by argo uninstall", 'setlocal', 'set "ARGO_CLI_APP=0"', 'set "ARGO_CLI_SHIM=cmd"', '"%~dp0..\app\node.exe" "%~dp0..\app\bin\argo.mjs" %*', 'if errorlevel 77 if not errorlevel 78 if exist "%TEMP%\argo-uninstall.ps1" powershell -NoProfile -ExecutionPolicy Bypass -File "%TEMP%\argo-uninstall.ps1" & exit /b 0', 'exit /b %ERRORLEVEL%')
+      $lines = @('@echo off', "rem $mark - created by the Argo install.ps1, removed by argo uninstall", 'setlocal', 'set "ARGO_CLI_APP=0"', 'set "ARGO_CLI_SHIM=cmd"', '"%~dp0..\app\node.exe" "%~dp0..\app\bin\argo.mjs" %*', 'if errorlevel 77 if not errorlevel 78 if exist "%TEMP%\argo-uninstall.ps1" set "ARGO_UNINSTALL_FROM_CMD=1" & powershell -NoProfile -ExecutionPolicy Bypass -File "%TEMP%\argo-uninstall.ps1" & (goto) 2>nul & del "%~f0" 2>nul & rmdir "%~dp0" 2>nul & rmdir "%~dp0.." 2>nul & exit /b 0', 'exit /b %ERRORLEVEL%')
       Set-Content -LiteralPath "$shim.tmp" -Value $lines -Encoding ASCII
       Move-Item -LiteralPath "$shim.tmp" -Destination $shim -Force
     }

@@ -92,8 +92,9 @@
     if ((Test-Path -LiteralPath $shim) -and -not (& $isOurs $shim $mark)) { $skip = $shim }
     New-Item -ItemType Directory -Force -Path $binDir | Out-Null
     if (-not $skip) {
-      # argo uninstall은 node가 끝난 뒤에만 지울 수 있다(node.exe가 폴더 안) — 종료 코드 77이면 node가 쓴 제거 스크립트를 이 창에서 실행한다(src/cli/uninstall.mjs)
-      $lines = @('@echo off', "rem $mark - created by the Argo install.ps1, removed by argo uninstall", 'setlocal', 'set "ARGO_CLI_APP=0"', 'set "ARGO_CLI_SHIM=cmd"', '"%~dp0..\app\node.exe" "%~dp0..\app\bin\argo.mjs" %*', 'if errorlevel 77 if not errorlevel 78 if exist "%TEMP%\argo-uninstall.ps1" powershell -NoProfile -ExecutionPolicy Bypass -File "%TEMP%\argo-uninstall.ps1" & exit /b 0', 'exit /b %ERRORLEVEL%')
+      # argo uninstall은 node가 끝난 뒤에만 지울 수 있다(node.exe가 폴더 안) — 종료 코드 77이면 node가 쓴 제거 스크립트를 이 창에서 실행하고(src/cli/uninstall.mjs),
+      # 마지막에 배치 파일이 스스로를 지운다((goto) 2>nul & del "%~f0" — 실행 중인 배치 파일을 남이 먼저 지우면 cmd가 경로 오류를 낸다)
+      $lines = @('@echo off', "rem $mark - created by the Argo install.ps1, removed by argo uninstall", 'setlocal', 'set "ARGO_CLI_APP=0"', 'set "ARGO_CLI_SHIM=cmd"', '"%~dp0..\app\node.exe" "%~dp0..\app\bin\argo.mjs" %*', 'if errorlevel 77 if not errorlevel 78 if exist "%TEMP%\argo-uninstall.ps1" set "ARGO_UNINSTALL_FROM_CMD=1" & powershell -NoProfile -ExecutionPolicy Bypass -File "%TEMP%\argo-uninstall.ps1" & (goto) 2>nul & del "%~f0" 2>nul & rmdir "%~dp0" 2>nul & rmdir "%~dp0.." 2>nul & exit /b 0', 'exit /b %ERRORLEVEL%')
       Set-Content -LiteralPath "$shim.tmp" -Value $lines -Encoding ASCII
       Move-Item -LiteralPath "$shim.tmp" -Destination $shim -Force
     }

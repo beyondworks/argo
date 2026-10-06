@@ -17,12 +17,14 @@ const ourShim = (f) => { try { return readFileSync(f, 'utf8').slice(0, 512).incl
 // 종료 코드 WIN_UNINSTALL_EXIT로 끝내면, argo.cmd가 node가 끝난 뒤 같은 창에서 그 스크립트를 실행한다(install.ps1이 만든 argo.cmd).
 // 숨긴 분리 프로세스로 지우던 방식은 Windows CI에서 실행되지 않았다(같은 인자의 동기 실행은 지워짐 — 10/6 실측).
 // 파일은 UTF-8 BOM — PowerShell 5.1은 BOM 없는 파일을 ANSI로 읽어 한글 사용자 이름이 든 경로가 깨진다.
+// argo.cmd에서 실행하면(ARGO_UNINSTALL_FROM_CMD) argo.cmd와 빈 폴더는 남겨 두고 argo.cmd가 마지막에 스스로 지운다 — 실행 중인 배치 파일과 그 폴더를
+// 먼저 지우면 cmd가 돌아와 경로를 못 찾아 오류 두 줄·종료 코드 1을 냈다(제거는 끝났는데도, Windows CI 10/6 실측).
 // 지우기 전 확인(검수 #843 M3): 프로그램 폴더는 설치 기록이 있는 폴더만, shim은 표식 있는 argo.cmd만, 레지스트리는 HKCU 아래의 …Environment 키만.
 export const WIN_UNINSTALL_EXIT = 77;
 export const WIN_UNINSTALL_SCRIPT = 'argo-uninstall.ps1';
 const WIN_BODY = `if (-not (Test-Path -LiteralPath (Join-Path $AppDir '.argo-install.json'))) { return }
 for ($i = 0; $i -lt 40 -and (Test-Path -LiteralPath $AppDir); $i++) { try { Remove-Item -LiteralPath $AppDir -Recurse -Force -ErrorAction Stop } catch { Start-Sleep -Milliseconds 500 } }
-if ($Shim -and $Shim.EndsWith('\\argo.cmd') -and (Test-Path -LiteralPath $Shim) -and ((Get-Content -LiteralPath $Shim -TotalCount 3) -join ' ') -match 'argo-cli-shim v1 argo-selfhost') { Remove-Item -LiteralPath $Shim -Force -ErrorAction SilentlyContinue }
+if (-not $env:ARGO_UNINSTALL_FROM_CMD -and $Shim -and $Shim.EndsWith('\\argo.cmd') -and (Test-Path -LiteralPath $Shim) -and ((Get-Content -LiteralPath $Shim -TotalCount 3) -join ' ') -match 'argo-cli-shim v1 argo-selfhost') { Remove-Item -LiteralPath $Shim -Force -ErrorAction SilentlyContinue }
 if ($PathEntry -and $EnvKey -match '^HKCU:\\\\(.+\\\\)?Environment$' -and (Test-Path $EnvKey)) {
   $k = Get-Item -Path $EnvKey
   $raw = [string]$k.GetValue('Path', '', 'DoNotExpandEnvironmentNames')
@@ -37,7 +39,7 @@ if ($PathEntry -and $EnvKey -match '^HKCU:\\\\(.+\\\\)?Environment$' -and (Test-
   }
 }
 $base = Split-Path -Parent $AppDir
-foreach ($d in @((Join-Path $base 'bin'), $base)) { if ((Test-Path -LiteralPath $d) -and -not (Get-ChildItem -LiteralPath $d -Force)) { Remove-Item -LiteralPath $d -Force -ErrorAction SilentlyContinue } }
+if (-not $env:ARGO_UNINSTALL_FROM_CMD) { foreach ($d in @((Join-Path $base 'bin'), $base)) { if ((Test-Path -LiteralPath $d) -and -not (Get-ChildItem -LiteralPath $d -Force)) { Remove-Item -LiteralPath $d -Force -ErrorAction SilentlyContinue } } }
 Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
 `;
 /** 지울 값을 PowerShell 작은따옴표 문자열로 박는다 — 유니코드 작은따옴표(‘’‚‛)도 PowerShell은 따옴표로 읽어 두 번 쓴다. */
