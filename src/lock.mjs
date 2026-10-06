@@ -24,17 +24,27 @@ export async function daemonLeasesSettled(names, timeoutMs = 2_000) {
 export function daemonLease(name, { ttl = 15_000, beat = 5_000 } = {}) {
   const file = join(WS_ROOT, `.${name}.lock`);
   let mine = false;
+  let heldTs = 0; // 내 것으로 확인된 마지막 기록의 ts — 남들은 이 값으로 만료를 판단한다
+  let failing = false;
   const tick = async () => {
     try {
       try {
         const cur = JSON.parse(await readFile(file, 'utf8'));
         if (cur.owner !== OWNER && Date.now() - cur.ts < ttl) { mine = false; return; } // 살아있는 리더 존중
       } catch { /* lock 없음 — 선점 시도 */ }
-      await writeFile(file, JSON.stringify({ owner: OWNER, ts: Date.now() }));
+      const ts = Date.now();
+      await writeFile(file, JSON.stringify({ owner: OWNER, ts }));
       await new Promise((r) => setTimeout(r, 150)); // 동시 선점 레이스 — 최종 기록자만 리더
       mine = JSON.parse(await readFile(file, 'utf8')).owner === OWNER;
-    } catch {
-      mine = false;
+      if (mine) heldTs = ts;
+      failing = false;
+    } catch (e) {
+      // 일시 I/O 오류(Windows EPERM·EBUSY 등)로 바로 내려놓으면, 파일의 내 기록이 아직 살아 있어 남도 안 가져가므로 다음 박자까지
+      // 실행 주체가 0개가 된다(2026-10-02 Windows CI 재시작 경쟁 실패). 다음 박자 전에 내 기록이 만료되지 않는 동안만 유지한다.
+      const was = mine;
+      mine = mine && Date.now() - heldTs < ttl - beat;
+      if (!failing || was !== mine) console.warn(`[argo] ${name} 리스 갱신 실패(${e?.code || e?.message}) — 리더 ${mine ? '유지' : '해제'}`);
+      failing = true;
     }
   };
   const ready = tick(); // 첫 판정(쓰기 + 150ms 재확인) — daemonLeasesSettled가 기다린다
