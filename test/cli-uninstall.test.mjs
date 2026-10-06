@@ -69,6 +69,7 @@ test('argo uninstall 명령 — 저장소 CLI에서는 거절(종료 1), 단독 
   const env = { PATH: process.env.PATH, HOME: join(tmpdir(), 'argo-uninstall-home-none'), ARGO_CLI_APP: '0', ARGO_CLI_HOME: join(tmpdir(), 'argo-uninstall-cli-none'), LANG: 'ko_KR.UTF-8' };
   const repo = spawnSync(process.execPath, [join(ROOT, 'bin/argo.mjs'), 'uninstall'], { env, encoding: 'utf8', timeout: 60_000 });
   assert.equal(repo.status, 1, repo.stdout + repo.stderr); assert.match(repo.stderr, /설치 명령으로 설치한 것이 아니라 지우지 않습니다/);
+  if (process.platform === 'win32') return; // 윈도우는 종료 뒤 지우는 경로(U2·install-ps1 W1에서 실제로 확인)
   // 단독 설치 트리를 흉내 — 저장소의 bin·src·package.json을 복사하고 설치 기록을 둔다
   const f = await fixture(t);
   await rm(f.appDir, { recursive: true, force: true });

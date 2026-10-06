@@ -9,7 +9,7 @@ import { createServer } from 'node:http';
 import { createHash, randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { buildInstallPs1 } from '../scripts/build-install-ps1.mjs';
 import { packCli } from '../scripts/stage-cli-dist.mjs';
@@ -29,6 +29,7 @@ test('배포본은 ASCII만 — 한글은 \\u 이스케이프로, 원본의 한�
 });
 
 const win = process.platform === 'win32';
+const texts = (r) => `${r.stdout}\n${r.stderr}`;
 const ps = (cmd, env, policy = 'Bypass') => spawnSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', policy, '-Command', cmd], { env, encoding: 'utf8', timeout: 180_000 });
 
 async function fixture(t, { badSum = false, app = false, foreign = false } = {}) {
@@ -57,14 +58,20 @@ async function fixture(t, { badSum = false, app = false, foreign = false } = {})
   if (foreign) { await mkdir(other, { recursive: true }); await writeFile(join(other, 'argo.cmd'), '@echo off\r\necho argo-workflows\r\n'); }
   const env = { ...process.env, LOCALAPPDATA: local, USERPROFILE: profile, ARGO_INSTALL_API: `http://127.0.0.1:${server.address().port}/api`, ARGO_INSTALL_ENV_KEY: envKey, PATH: foreign ? `${other};${process.env.PATH}` : process.env.PATH };
   // 일반 윈도우 PC의 기본 실행 정책(Restricted)과 같은 조건 — 스크립트 모듈 자동 로드가 막혀도 설치돼야 한다(재검수 #843)
-  const run = () => ps(`irm http://127.0.0.1:${server.address().port}/install.ps1 | iex`, env, 'Restricted');
+  // 비동기로 실행한다 — 가짜 릴리스 서버가 이 프로세스 안에 있어 spawnSync로 막으면 irm 요청에 응답하지 못하고 시간 초과까지 멈춘다(CI 첫 실행 실측)
+  const run = () => new Promise((resolve) => {
+    const p = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Restricted', '-Command', `[Console]::OutputEncoding = [Text.Encoding]::UTF8; irm http://127.0.0.1:${server.address().port}/install.ps1 | iex`], { env });
+    let stdout = '', stderr = ''; p.stdout.on('data', (d) => (stdout += d)); p.stderr.on('data', (d) => (stderr += d));
+    const timer = setTimeout(() => p.kill(), 170_000);
+    p.on('close', (status) => { clearTimeout(timer); resolve({ status, stdout, stderr }); });
+  });
   const pathValue = () => ps(`$k = Get-Item -Path '${envKey}' -ErrorAction SilentlyContinue; if ($k) { $k.GetValue('Path', '', 'DoNotExpandEnvironmentNames') + '|' + $k.GetValueKind('Path') }`, process.env).stdout.trim();
   return { root, local, profile, env, run, pathValue, app: join(local, 'argo-cli/app'), shim: join(local, 'argo-cli/bin/argo.cmd'), bin: join(local, 'argo-cli/bin') };
 }
 
 test('W1·W4 새 설치 → 해시 확인·실행 확인·argo.cmd·PATH 한 번(REG_EXPAND_SZ), 다시 실행해도 PATH 중복 없음, U2 제거', { skip: !win, timeout: 300_000 }, async (t) => {
   const f = await fixture(t);
-  const r = f.run();
+  const r = await f.run();
   assert.equal(r.status, 0, r.stdout + r.stderr);
   assert.ok(existsSync(join(f.app, 'node.exe')));
   assert.match(await readFile(f.shim, 'utf8'), /argo-cli-shim v1 argo-selfhost/);
@@ -73,7 +80,7 @@ test('W1·W4 새 설치 → 해시 확인·실행 확인·argo.cmd·PATH 한 번
   assert.equal(run.stdout.trim(), 'args:chat nova');
   const rec = JSON.parse(await readFile(join(f.app, '.argo-install.json'), 'utf8'));
   assert.deepEqual({ kind: rec.kind, shim: rec.shim, pathEntry: rec.pathEntry }, { kind: 'standalone', shim: f.shim, pathEntry: f.bin });
-  assert.equal(f.run().status, 0, '다시 실행(업데이트)');
+  assert.equal((await f.run()).status, 0, '다시 실행(업데이트)');
   assert.equal(f.pathValue(), `${f.bin}|ExpandString`, 'PATH 중복 없음');
   // U2 — 실제 제거 스크립트(src/cli/uninstall.mjs)를 이 설치에 대고 실행: 종료 뒤 폴더·shim·PATH 항목이 지워진다
   const { uninstallStandalone } = await import('../src/cli/uninstall.mjs');
@@ -85,17 +92,19 @@ test('W1·W4 새 설치 → 해시 확인·실행 확인·argo.cmd·PATH 한 번
 });
 
 test('W3 해시가 다르면 설치하지 않는다', { skip: !win, timeout: 300_000 }, async (t) => {
-  const f = await fixture(t, { badSum: true }), r = f.run();
-  assert.notEqual(r.status, 0); assert.ok(!existsSync(f.app)); assert.equal(f.pathValue(), '');
+  const f = await fixture(t, { badSum: true }), r = await f.run();
+  assert.equal(r.status, 1, r.stdout + r.stderr); assert.ok(!existsSync(f.app)); assert.equal(f.pathValue(), '');
+  assert.ok(texts(r).includes('해시가 맞지 않아'), r.stdout + r.stderr);
 });
 
 test('W5 데스크톱 앱이 있으면 설치하지 않는다', { skip: !win, timeout: 300_000 }, async (t) => {
-  const f = await fixture(t, { app: true }), r = f.run();
-  assert.notEqual(r.status, 0); assert.ok(!existsSync(f.app));
+  const f = await fixture(t, { app: true }), r = await f.run();
+  assert.equal(r.status, 1, r.stdout + r.stderr); assert.ok(!existsSync(f.app));
+  assert.ok(texts(r).includes('데스크톱 앱이 설치돼 있습니다'), r.stdout + r.stderr);
 });
 
 test('W6 PATH에 남의 argo가 있으면 PATH에 넣지 않고 직접 실행 경로를 안내', { skip: !win, timeout: 300_000 }, async (t) => {
-  const f = await fixture(t, { foreign: true }), r = f.run();
+  const f = await fixture(t, { foreign: true }), r = await f.run();
   assert.equal(r.status, 0, r.stdout + r.stderr); assert.ok(existsSync(f.shim)); assert.equal(f.pathValue(), '');
   assert.equal(JSON.parse(await readFile(join(f.app, '.argo-install.json'), 'utf8')).pathEntry, null);
 });
