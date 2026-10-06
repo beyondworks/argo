@@ -41,6 +41,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 윈도우: 테스트가 처음 띄우는 32비트 PowerShell·Chrome을 미리 기동해 둔다(이미지 디스크의 첫 읽기가 16~74초) — 설치 단계와 겹치게 백그라운드로.
+      # 이 비용이 테스트 안에서 나면 nsis-hooks·K58 같은 시간 상한에 걸렸다(2026-10-01 실측, scripts/ci-windows-prewarm.ps1 주석).
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: Start-Process pwsh -WindowStyle Hidden -ArgumentList '-NoProfile', '-File', 'scripts/ci-windows-prewarm.ps1'
+
       # Hermes adapter behavioral tests execute Python on every test platform.
       - uses: actions/setup-python@v5
         with:
@@ -60,6 +66,18 @@ jobs:
       # 윈도우: Bash 도구의 POSIX sh(동봉 busybox UTF-8 빌드)를 해시 고정으로 레포 루트 bin/에 — 테스트가 실제 실행기(사다리의 cwd/bin 후보)로 돈다
       - if: runner.os == 'Windows'
         run: node scripts/fetch-busybox.mjs bin  # 레포 동봉본(vendor/)에서 해시 검증 뒤 복사 — 네트워크 없음
+
+      # 윈도우: 예열이 끝날 때까지 기다리고(보통 설치 단계 동안 끝나 0초), 임시 폴더를 작업 드라이브(D:)로 옮긴다.
+      # 실측(2026-10-01): 작은 파일 1,500개 쓰기·읽기·삭제가 기본 TEMP(C:)에서 2.5~48초, RUNNER_TEMP(D:)에서 0.4~0.7초 — 러너마다 C:가 크게 흔들려
+      # 임시 폴더를 쓰는 테스트들이 시간 상한에 걸렸다. 전체 테스트는 D:에서 402~425초, C:에서 455~505초(예열 동일).
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP 'prewarm.log'
+          for ($i = 0; $i -lt 300 -and -not (Select-String -Quiet -Path $log -Pattern '^done' -ErrorAction SilentlyContinue); $i++) { Start-Sleep 1 }
+          "prewarm waited ${i}s"; Get-Content $log -ErrorAction SilentlyContinue
+          "TEMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
+          "TMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
 
       # Windows에서도 glob이 동작한다 — cmd는 글롭 확장을 안 하지만 node --test가 패턴을 직접 해석(Node 21+)
       - run: npm test
