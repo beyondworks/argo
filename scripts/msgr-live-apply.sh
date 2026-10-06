@@ -33,7 +33,10 @@ for f in "${FILES[@]}"; do
   NEWER=$(psql "$C" -At -c "select count(*) from supabase_migrations.schema_migrations where version > '$V'")
   if [ "$NEWER" != "0" ]; then echo "거부  $f — 더 새 버전 ${NEWER}개가 이미 기록됨(옛 정의로 덮을 수 있다). 그 파일이 정말 빠졌는지 정의 대조 뒤 손으로 적용하세요."; exit 3; fi
   # 실패하면 여기서 멈춘다 — 종전 `| grep -v NOTICE || true`는 SQL 실패를 삼키고 아래에서 적용됨으로 기록했다(2026-09-17 발견). NOTICE는 PGOPTIONS로 끈다.
-  PGOPTIONS='-c client_min_messages=warning' psql "$C" -v ON_ERROR_STOP=1 -1 -q -f "supabase/migrations/$f.sql"
+  # 잠금을 오래 기다리지 않는다(2026-10-06 #846 검수) — alter policy·create trigger는 표에 강한 잠금(ACCESS EXCLUSIVE)을 건다. 그 표에 긴 쿼리가 있으면
+  # 기다리는 동안 뒤따르는 모든 읽기·쓰기가 줄을 선다. 못 얻으면 이 파일은 통째로 되돌려지고(-1) 여기서 멈춘다 — 같은 명령으로 다시 실행하면 된다.
+  # 기본 5초, ARGO_APPLY_LOCK_TIMEOUT으로 바꾼다. 사용자가 준 PGOPTIONS는 덮지 않고 이어 붙인다.
+  PGOPTIONS="${PGOPTIONS:-} -c client_min_messages=warning -c lock_timeout=${ARGO_APPLY_LOCK_TIMEOUT:-5s}" psql "$C" -v ON_ERROR_STOP=1 -1 -q -f "supabase/migrations/$f.sql"
   psql "$C" -q -c "insert into supabase_migrations.schema_migrations (version, name, statements) values ('$V', '${f#*_}', array[]::text[]) on conflict (version) do nothing"
   echo "OK    $f"
 done
