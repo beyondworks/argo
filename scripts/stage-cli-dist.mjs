@@ -17,7 +17,7 @@ export function cliPlatform(platform = process.platform, arch = process.arch) {
 }
 export const cliAssetName = (version, plat) => `argo-cli-${version}-${plat}.${plat.startsWith('windows') ? 'zip' : 'tar.gz'}`;
 
-/** work/argo-cli → out(맥 tar.gz·윈도우 zip). 형식(머리 바이트)과 윈도우는 사용자 설치와 같은 Expand-Archive로 풀리는지까지 확인한다.
+/** work/argo-cli → out(맥 tar.gz·윈도우 zip). 형식(머리 바이트)과 윈도우는 사용자 설치와 같은 .NET ZipFile로 풀리는지까지 확인한다.
     test/install-ps1.test.mjs가 윈도우 CI에서 같은 함수로 자산을 만든다 — 발행 빌드에서만 도는 경로를 PR CI에서도 실행하려고. */
 export function packCli(work, out, win = process.platform === 'win32') {
   const name = basename(out);
@@ -27,10 +27,10 @@ export function packCli(work, out, win = process.platform === 'win32') {
   execFileSync(tar, win ? ['-a', '-cf', out, '-C', work, 'argo-cli'] : ['-czf', out, '-C', work, 'argo-cli'], { stdio: 'inherit' });
   const magic = readFileSync(out).subarray(0, 4).toString('hex');
   if (win ? magic !== '504b0304' : !magic.startsWith('1f8b')) { throw new Error(`[stage-cli-dist] ${name}이 ${win ? 'zip' : 'gzip'}이 아닙니다(머리 ${magic})`); }
-  if (win) { // 사용자 설치와 같은 방법(Expand-Archive)으로 풀리는지
+  if (win) { // 사용자 설치(install.ps1)와 같은 방법(.NET ZipFile)으로 풀리는지
     const probe = join(work, 'expand-probe');
-    const r2 = spawnSync('powershell.exe', ['-NoProfile', '-Command', `Expand-Archive -LiteralPath '${out.replaceAll("'", "''")}' -DestinationPath '${probe.replaceAll("'", "''")}'`], { encoding: 'utf8' });
-    if (r2.status !== 0 || !existsSync(join(probe, 'argo-cli', 'node.exe')) || !existsSync(join(probe, 'argo-cli', 'bin', 'argo.mjs'))) { throw new Error(`[stage-cli-dist] Expand-Archive로 풀리지 않습니다\n${r2.stdout}\n${r2.stderr}`); }
+    const r2 = spawnSync('powershell.exe', ['-NoProfile', '-Command', `Add-Type -AssemblyName System.IO.Compression.FileSystem; [IO.Compression.ZipFile]::ExtractToDirectory('${out.replaceAll("'", "''")}', '${probe.replaceAll("'", "''")}')`], { encoding: 'utf8' });
+    if (r2.status !== 0 || !existsSync(join(probe, 'argo-cli', 'node.exe')) || !existsSync(join(probe, 'argo-cli', 'bin', 'argo.mjs'))) { throw new Error(`[stage-cli-dist] ZipFile로 풀리지 않습니다\n${r2.stdout}\n${r2.stderr}`); }
     rmSync(probe, { recursive: true, force: true });
   }
 }

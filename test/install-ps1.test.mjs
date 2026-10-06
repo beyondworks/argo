@@ -29,13 +29,13 @@ test('배포본은 ASCII만 — 한글은 \\u 이스케이프로, 원본의 한�
 });
 
 const win = process.platform === 'win32';
-const ps = (cmd, env) => spawnSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', cmd], { env, encoding: 'utf8', timeout: 180_000 });
+const ps = (cmd, env, policy = 'Bypass') => spawnSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', policy, '-Command', cmd], { env, encoding: 'utf8', timeout: 180_000 });
 
 async function fixture(t, { badSum = false, app = false, foreign = false } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'argo-ps1-'));
   const local = join(root, 'Local'), profile = join(root, 'Profile');
-  const envKey = `HKCU:\\Software\\ArgoInstallTest\\${randomBytes(4).toString('hex')}`;
-  t.after(async () => { ps(`Remove-Item -Path '${envKey}' -Recurse -Force -ErrorAction SilentlyContinue`, process.env); await rm(root, { recursive: true, force: true }); });
+  const envKey = `HKCU:\\Software\\ArgoInstallTest\\${randomBytes(4).toString('hex')}\\Environment`; // 제거 스크립트는 …Environment 키만 손댄다
+  t.after(async () => { ps(`Remove-Item -Path '${envKey.replace(/\\Environment$/, '')}' -Recurse -Force -ErrorAction SilentlyContinue`, process.env); await rm(root, { recursive: true, force: true }); });
   const pkg = join(root, 'pkg/argo-cli');
   await mkdir(join(pkg, 'bin'), { recursive: true });
   await copyFile(process.execPath, join(pkg, 'node.exe'));
@@ -56,7 +56,8 @@ async function fixture(t, { badSum = false, app = false, foreign = false } = {})
   const other = join(root, 'other');
   if (foreign) { await mkdir(other, { recursive: true }); await writeFile(join(other, 'argo.cmd'), '@echo off\r\necho argo-workflows\r\n'); }
   const env = { ...process.env, LOCALAPPDATA: local, USERPROFILE: profile, ARGO_INSTALL_API: `http://127.0.0.1:${server.address().port}/api`, ARGO_INSTALL_ENV_KEY: envKey, PATH: foreign ? `${other};${process.env.PATH}` : process.env.PATH };
-  const run = () => ps(`irm http://127.0.0.1:${server.address().port}/install.ps1 | iex`, env);
+  // 일반 윈도우 PC의 기본 실행 정책(Restricted)과 같은 조건 — 스크립트 모듈 자동 로드가 막혀도 설치돼야 한다(재검수 #843)
+  const run = () => ps(`irm http://127.0.0.1:${server.address().port}/install.ps1 | iex`, env, 'Restricted');
   const pathValue = () => ps(`$k = Get-Item -Path '${envKey}' -ErrorAction SilentlyContinue; if ($k) { $k.GetValue('Path', '', 'DoNotExpandEnvironmentNames') + '|' + $k.GetValueKind('Path') }`, process.env).stdout.trim();
   return { root, local, profile, env, run, pathValue, app: join(local, 'argo-cli/app'), shim: join(local, 'argo-cli/bin/argo.cmd'), bin: join(local, 'argo-cli/bin') };
 }

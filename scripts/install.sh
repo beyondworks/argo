@@ -106,7 +106,11 @@ for (const company of entries(root).filter(e => e.isDirectory() && !e.name.start
   }
 }
 NODE
-  if [ "$svc_on" = 1 ]; then launchctl bootout "gui/$(id -u)/$svc_label" >/dev/null 2>&1 || die "상주 argo를 멈추지 못해 교체하지 않습니다 — argo service status로 확인하세요"; fi
+  if [ "$svc_on" = 1 ] && ! launchctl bootout "gui/$(id -u)/$svc_label" >/dev/null 2>&1; then
+    # 오류 코드를 냈지만 실제로는 내려간 경우 다시 올려 둔다 — 상주가 꺼진 채 남지 않게(재검수 #843 N2, 리눅스의 start || true와 같은 자리)
+    launchctl print "gui/$(id -u)/$svc_label" >/dev/null 2>&1 || launchctl bootstrap "gui/$(id -u)" "$svc_plist" >/dev/null 2>&1 || true
+    die "상주 argo를 멈추지 못해 교체하지 않습니다 — argo service status로 확인하세요"
+  fi
   CHANGED=1
   if [ "$HAD_APP" = 1 ]; then mv "$APP_DIR" "$TMP/previous-app"; fi
   mv "$CANDIDATE" "$APP_DIR"

@@ -56,9 +56,12 @@
     Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $zip
     try { Invoke-WebRequest -UseBasicParsing -Uri "$url.sha256" -OutFile $sumFile } catch { Fail "해시 파일(.sha256)을 받지 못해 설치하지 않습니다" }
     $want = ((Get-Content -LiteralPath $sumFile -TotalCount 1) -split '\s+')[0].ToLower()
-    $got = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLower()
+    # 기본 실행 정책(Restricted)에서는 스크립트 모듈(Archive·5.1의 Get-FileHash)이 자동 로드되지 않는다 — .NET으로 직접(재검수 #843)
+    $fs = [IO.File]::OpenRead($zip)
+    try { $got = ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($fs)) -replace '-', '').ToLower() } finally { $fs.Dispose() }
     if (-not $want -or $want -ne $got) { Fail "내려받은 파일의 해시가 맞지 않아 설치하지 않습니다(기대 $want, 실제 $got)" }
-    Expand-Archive -LiteralPath $zip -DestinationPath $tmp -Force
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [IO.Compression.ZipFile]::ExtractToDirectory($zip, $tmp)
     $cand = Join-Path $tmp 'argo-cli'
     $node = Join-Path $cand 'node.exe'
     if (-not (Test-Path -LiteralPath $node) -or -not (Test-Path -LiteralPath (Join-Path $cand 'bin\argo.mjs'))) { Fail "자산 구조가 예상과 다릅니다(argo-cli\node.exe·bin\argo.mjs 부재)" }

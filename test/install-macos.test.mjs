@@ -45,7 +45,7 @@ async function fixture(t, { arch = 'arm64', arm64Chip = arch === 'arm64', versio
   await put(join(bin, 'uname'), runner + `console.log(process.argv.includes('-m')?${JSON.stringify(arch)}:'Darwin');`, 0o755);
   await put(join(bin, 'sysctl'), `#!/bin/sh\necho ${arm64Chip ? 1 : 0}\n`, 0o755);
   // launchctl — 호출을 기록하고, 교체 중인 앱 폴더 버전을 남긴다(멈춘 뒤 교체·교체 뒤 시작 순서 확인)
-  await put(join(bin, 'launchctl'), runner + `const fs=require('fs');let v='none';try{v=JSON.parse(fs.readFileSync(${JSON.stringify(join(base, 'app/package.json'))})).version}catch{}fs.appendFileSync(${JSON.stringify(join(root, 'launchctl.log'))},process.argv[2]+' '+v+'\\n');`, 0o755);
+  await put(join(bin, 'launchctl'), runner + `const fs=require('fs'),st=${JSON.stringify(join(root, 'launchd.state'))};let v='none';try{v=JSON.parse(fs.readFileSync(${JSON.stringify(join(base, 'app/package.json'))})).version}catch{}fs.appendFileSync(${JSON.stringify(join(root, 'launchctl.log'))},process.argv[2]+' '+v+'\\n');const on=!fs.existsSync(st)||fs.readFileSync(st,'utf8')==='on';const c=process.argv[2];if(c==='print')process.exit(on?0:113);if(c==='bootout'){fs.writeFileSync(st,'off');process.exit(process.env.LAUNCH_BOOTOUT_FAIL?1:0)}if(c==='bootstrap')fs.writeFileSync(st,'on');`, 0o755);
   const names = noAsset ? [] : [`argo-cli-${version}-${plat}.tar.gz`, `argo-cli-${version}-${plat}.tar.gz.sha256`, `argo-server-${version}-linux-x64.tar.gz`];
   await put(join(bin, 'curl'), runner + `
 const fs=require('fs'),path=require('path'),args=process.argv.slice(2),root=${JSON.stringify(root)};
@@ -138,6 +138,11 @@ test('A13 argo service install(launchd) 상주 — 교체 전에 멈추고 교�
   const bad = await fixture(t, { oldApp: true, svc: true }), r2 = bad.run({ CLI_STATUS_FAIL: '1' });
   assert.equal(r2.status, 1);
   assert.equal(await bad.launchLog(), 'print 1.0.0\nbootout 1.0.0\nbootstrap 1.0.0\n', '복구한 이전 앱으로 다시 시작');
+  // 멈춤 명령이 오류 코드를 냈지만 실제로는 내려간 경우 — 교체하지 않고, 꺼진 채 두지 않고 다시 올린다(재검수 N2)
+  const stuck = await fixture(t, { oldApp: true, svc: true }), r3 = stuck.run({ LAUNCH_BOOTOUT_FAIL: '1' });
+  assert.equal(r3.status, 1); assert.match(r3.stderr, /멈추지 못해 교체하지 않습니다/);
+  assert.equal(await stuck.launchLog(), 'print 1.0.0\nbootout 1.0.0\nprint 1.0.0\nbootstrap 1.0.0\n');
+  assert.equal(JSON.parse(await readFile(join(stuck.base, 'app/package.json'), 'utf8')).version, '1.0.0');
   const none = await fixture(t, { oldApp: true });
   assert.equal(none.run().status, 0); assert.equal(await none.launchLog(), '', '상주가 없으면 launchctl을 부르지 않는다');
 });

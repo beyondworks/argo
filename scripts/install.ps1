@@ -46,9 +46,11 @@
     Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $zip
     try { Invoke-WebRequest -UseBasicParsing -Uri "$url.sha256" -OutFile $sumFile } catch { Fail "$([regex]::Unescape('\ud574\uc2dc\u0020\ud30c\uc77c'))(.sha256)$([regex]::Unescape('\uc744\u0020\ubc1b\uc9c0\u0020\ubabb\ud574\u0020\uc124\uce58\ud558\uc9c0\u0020\uc54a\uc2b5\ub2c8\ub2e4'))" }
     $want = ((Get-Content -LiteralPath $sumFile -TotalCount 1) -split '\s+')[0].ToLower()
-    $got = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLower()
+    $fs = [IO.File]::OpenRead($zip)
+    try { $got = ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($fs)) -replace '-', '').ToLower() } finally { $fs.Dispose() }
     if (-not $want -or $want -ne $got) { Fail "$([regex]::Unescape('\ub0b4\ub824\ubc1b\uc740\u0020\ud30c\uc77c\uc758\u0020\ud574\uc2dc\uac00\u0020\ub9de\uc9c0\u0020\uc54a\uc544\u0020\uc124\uce58\ud558\uc9c0\u0020\uc54a\uc2b5\ub2c8\ub2e4'))($([regex]::Unescape('\uae30\ub300')) $want, $([regex]::Unescape('\uc2e4\uc81c')) $got)" }
-    Expand-Archive -LiteralPath $zip -DestinationPath $tmp -Force
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [IO.Compression.ZipFile]::ExtractToDirectory($zip, $tmp)
     $cand = Join-Path $tmp 'argo-cli'
     $node = Join-Path $cand 'node.exe'
     if (-not (Test-Path -LiteralPath $node) -or -not (Test-Path -LiteralPath (Join-Path $cand 'bin\argo.mjs'))) { Fail "$([regex]::Unescape('\uc790\uc0b0\u0020\uad6c\uc870\uac00\u0020\uc608\uc0c1\uacfc\u0020\ub2e4\ub985\ub2c8\ub2e4'))(argo-cli\node.exe$([regex]::Unescape('\u00b7'))bin\argo.mjs $([regex]::Unescape('\ubd80\uc7ac')))" }
