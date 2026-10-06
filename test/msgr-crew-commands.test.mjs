@@ -1,7 +1,7 @@
 // '/' 커맨더 목록 미러(유건 지시 2026-09-14) — 회사 별칭·스킬을 크루 행(commands)에 올린다. 본문·키는 싣지 않고, 같은 내용이면 폴마다 쓰지 않는다.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { crewCommands, mirrorCommands, fitCommands, commandsSize, COMMANDS_BUDGET, _resetCommandsForTest } from '../src/gateway/msgr.mjs';
+import { crewCommands, mirrorCommands, fitCommands, commandsSize, COMMANDS_BUDGET, COMMANDS_REJECT_RETRY_MS, _resetCommandsForTest } from '../src/gateway/msgr.mjs';
 
 test('crewCommands — 별칭(cmd·text)과 스킬(id·title)만, 빈 항목·비배열은 버리고 길이를 자른다', () => {
   const out = crewCommands({
@@ -79,6 +79,34 @@ test('mirrorCommands — 거절된 내용 뒤 예전 내용으로 돌아오면 �
     assert.equal(await mirrorCommands('ws1', { db, uid: 'u', commands: B }), false, 'B는 이미 거절됐다');
   });
   assert.deepEqual(calls, ['a', 'b']);
+});
+
+// 검수 #837 L-1·L-3: 거절 기억이 재시작 없이는 영영 안 풀리면 옛 서버에 마이그레이션이 들어온 뒤에도 상주의 '/' 목록이 낡은 채로 남는다.
+test('mirrorCommands — 거절 기억은 1시간 뒤 한 번 다시 시도하고(로그는 처음 한 번), 성공하면 지운다', async () => {
+  _resetCommandsForTest();
+  const err = (code) => Object.assign(new Error(code), { code });
+  const A = [{ kind: 'skill', id: 'a', title: 'A' }]; const B = [{ kind: 'skill', id: 'b', title: 'B' }];
+  let fail = true; const calls = [];
+  const db = { setCommands: async (u, ws, commands) => { calls.push(commands[0].id); if (fail) throw err('PGRST204'); } };
+  const t0 = 1_000_000; const logs = []; const orig = console.error; console.error = (...a) => logs.push(a.join(' '));
+  try {
+    assert.equal(await mirrorCommands('ws1', { db, uid: 'u', commands: A, now: t0 }), false);
+    assert.equal(await mirrorCommands('ws1', { db, uid: 'u', commands: A, now: t0 + COMMANDS_REJECT_RETRY_MS - 1 }), false);
+    assert.deepEqual(calls, ['a'], '1시간 안에는 다시 보내지 않는다');
+    assert.equal(await mirrorCommands('ws1', { db, uid: 'u', commands: A, now: t0 + COMMANDS_REJECT_RETRY_MS }), false, '1시간 뒤 한 번 다시 — 아직 거절');
+    assert.deepEqual(calls, ['a', 'a']); assert.equal(logs.length, 1, '같은 거절은 로그 한 번');
+    assert.equal(await mirrorCommands('ws1', { db, uid: 'u', commands: A, now: t0 + COMMANDS_REJECT_RETRY_MS + 1 }), false, '다시 1시간 기다린다');
+    assert.deepEqual(calls, ['a', 'a']);
+    fail = false; // 서버가 열을 받게 됨(마이그레이션 적용)
+    assert.equal(await mirrorCommands('ws1', { db, uid: 'u', commands: A, now: t0 + 2 * COMMANDS_REJECT_RETRY_MS }), true, '재시작 없이 회복');
+    fail = true;
+    assert.equal(await mirrorCommands('ws1', { db, uid: 'u', commands: B, now: t0 + 2 * COMMANDS_REJECT_RETRY_MS }), false, 'B 거절');
+    fail = false;
+    assert.equal(await mirrorCommands('ws1', { db, uid: 'u', commands: A, now: t0 + 2 * COMMANDS_REJECT_RETRY_MS }), false, 'A는 서버에 있다');
+    const C = [{ kind: 'skill', id: 'c', title: 'C' }];
+    assert.equal(await mirrorCommands('ws1', { db, uid: 'u', commands: C, now: t0 + 2 * COMMANDS_REJECT_RETRY_MS }), true);
+    assert.equal(await mirrorCommands('ws1', { db, uid: 'u', commands: B, now: t0 + 2 * COMMANDS_REJECT_RETRY_MS }), true, '성공하면 거절 기억을 지운다 — 이제 받는 서버라 B를 바로 보낸다');
+  } finally { console.error = orig; }
 });
 
 test('mirrorCommands — 유휴 폴은 쓰기 0: 같은 목록 100폴에 update 1번', async () => {

@@ -841,21 +841,26 @@ export function fitCommands(list, budget = COMMANDS_BUDGET) {
   return { commands: kept, dropped: items.length - kept.length };
 }
 const commandsPushed = new Map(); // wsId → 마지막으로 올린 JSON. 같은 내용이면 폴마다 update를 치지 않는다(재기동 뒤 첫 폴은 한 번 쓴다)
-const commandsRejected = new Map(); // wsId → 서버가 영구 오류로 거절한 JSON. 같은 내용이면 다시 보내지 않는다(내용이 바뀌거나 재시작하면 다시 시도)
+const commandsRejected = new Map(); // wsId → { json, at }: 서버가 영구 오류로 거절한 내용. 같은 내용이면 1시간 동안 다시 보내지 않는다(내용이 바뀌거나 재시작하면 바로)
+// 1시간 뒤 한 번 더 보내는 이유: 옛 서버(PGRST204)에 마이그레이션이 들어오거나 스키마 캐시가 늦게 갱신된 경우 상주가 재시작 없이 회복해야 한다(검수 #837 L-1). 부하는 회사당 시간당 1건.
+export const COMMANDS_REJECT_RETRY_MS = 60 * 60 * 1000;
 // 같은 목록을 다시 보내도 결과가 같은 실패: 권한·무결성(permanentWrite), 데이터 형식(22xxx), 옛 서버(commands 열 없음: PGRST204·42703).
 // 네트워크·5xx·시간 초과는 여기에 들지 않는다 — 다음 폴(15초)에 다시 시도한다.
 const permanentCommandsWrite = (e) => permanentWrite(e) || /^22/.test(String(e?.code ?? '')) || ['PGRST204', '42703'].includes(e?.code);
 /** 크루 행의 commands를 회사 목록과 맞춘다 — 바뀐 폴에만 update. 본체에서 스킬·별칭이 바뀌면 다음 폴(15초)에 메신저에 반영된다.
     상한을 넘는 목록은 fitCommands로 줄여서 올린다(빈 목록으로 남지 않게). 영구 오류는 그 내용을 기억해 같은 내용이면 다시 쓰지 않고 한 번만 남긴다. */
-export async function mirrorCommands(wsId, { db, uid, commands }) {
+export async function mirrorCommands(wsId, { db, uid, commands, now = Date.now() }) {
   const { commands: fit, dropped } = fitCommands(commands);
   const json = JSON.stringify(fit);
-  if (commandsPushed.get(wsId) === json || commandsRejected.get(wsId) === json) return false;
+  const rejected = commandsRejected.get(wsId);
+  if (commandsPushed.get(wsId) === json || (rejected?.json === json && now - rejected.at < COMMANDS_REJECT_RETRY_MS)) return false;
   try {
     await db.setCommands(uid, wsId, fit);
   } catch (e) {
     if (!permanentCommandsWrite(e)) throw e;
-    commandsRejected.set(wsId, json);
+    const again = rejected?.json === json;
+    commandsRejected.set(wsId, { json, at: now });
+    if (again) return false; // 1시간 뒤 다시 시도해도 같은 거절 — 로그는 처음 한 번만
     console.error(`[argo] msgr 커맨더 목록을 서버가 거절했습니다 — 내용이 바뀔 때까지 다시 보내지 않습니다(${wsId}, ${fit.length}개, ${e?.code ?? '?'}):`, e?.message ?? e);
     return false;
   }
