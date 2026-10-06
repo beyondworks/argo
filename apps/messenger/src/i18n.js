@@ -1793,6 +1793,7 @@ export const DICT = {
   'dm.delete.confirm': ['정말 삭제', 'Delete for real'],
   'dm.delete.confirm.note': ['모든 참여자의 대화·첨부가 영구 삭제되고 되돌릴 수 없습니다.', 'Messages and attachments are permanently deleted for all participants. This cannot be undone.'],
   'dm.delete.done': ['{name}과(와)의 대화를 삭제했습니다.', 'Conversation with {name} deleted.'],
+  'dm.delete.groupOnly': ['삭제는 방장·관리자만 — 나가기를 쓰세요', 'Only the creator or an admin can delete — use Leave'], // 조직 그룹 대화(유건 결정 2026-10-06, room-delete.mjs)
   'ch.remove.ownerBlocked': ['이 사람의 에이전트가 채널에 있어 내보낼 수 없습니다. 에이전트를 먼저 내보내세요(소유자가 없으면 에이전트가 답할 수 없습니다).', 'This person’s agent is in the channel. Remove the agent first (an agent cannot answer without its owner).'],
   'ch.archive': ['채널 보관', 'Archive channel'],
   'ch.archive.confirm': ['이 채널을 보관할까요? 목록에서 사라지고 새 글을 쓸 수 없습니다. 기록은 남습니다.', 'Archive this channel? It leaves the list and accepts no new messages. History is kept.'],

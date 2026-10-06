@@ -56,6 +56,8 @@ import { useMobileViewport } from './mobile-viewport.js';
 import { useIsPhone, useEdgeSwipeBack } from './use-phone.js';
 import { bindRowSwipe, bindSwipeReply } from './row-swipe.js';
 import { PHONE_TABS, isPhoneRoot, spaceForTab, pickChannelOrg, startTab, tabBadges, badgeText, roomTraits, chatVisible, chatUnreadTotal, roomRow, sortRooms, tabSearch, CHAT_FILTERS, memoryGroups, memSnippet, agentCardAction, orgCardStep, personalCardLocks, orgMenuItems, savedOrgAfter, withoutHidden, hiddenGroups, settingsOrgRows, orgScreen, joinReqKey, maskedPreview, tabBodyQuery, emptyPersonalDm, personalDmWith } from './phone-shell.mjs'; // 폰 셸 v2(친구·채팅·채널·에이전트·기억, 유건 확정 2026-10-01) — 판단은 이 모듈 한 곳
+import { canDeleteRoom } from './room-delete.mjs';
+import { canReportMessage } from './report-target.mjs';
 import { bindPullRefresh, enteredReady } from './pull-refresh.mjs';
 import { haptic } from './haptics.js';
 import { refreshMessageWindow, mergeRefreshedMessages, readMissed, createCatchUp } from './refresh-messages.mjs';
@@ -2573,7 +2575,10 @@ function Shell({ session }) {
                 { icon: 'out', label: t('dm.leave'), run: () => confirmVia('leave') },
                 ...(c._personal_group && c.created_by !== uid ? [] : [ // 개인 그룹은 만든 사람만 끝내거나 지운다(친구의 친구가 모두의 기록을 지우지 못하게 — 서버 msgr_can_manage_channel과 같은 규칙)
                   { icon: 'archive', label: t('dm.end'), run: () => confirmVia('end') },
-                  { icon: 'trash', label: t('dm.delete'), danger: true, run: () => confirmVia('delete') },
+                  // 조직 그룹 대화는 만든 사람·조직 관리자만 삭제(유건 결정 2026-10-06 — 서버 msgr_can_delete_channel). 나머지는 비활성 항목으로 나가기를 안내한다
+                  canDeleteRoom({ c, members: dmMembers[c.id] ?? [], uid, isOrgAdmin: isAdmin })
+                    ? { icon: 'trash', label: t('dm.delete'), danger: true, run: () => confirmVia('delete') }
+                    : { icon: 'trash', label: t('dm.delete.groupOnly'), disabled: true, run: () => {} },
                 ]),
               ]; };
   const dmRow = (c) => { const dmMs = dmMembers[c.id] ?? []; const dmCrew = dmMs.find((m) => m.member_kind === 'crew'); const dmOther = dmMs.find((m) => m.member_kind === 'user' && m.member_id !== uid); const isGroupRow = dmIsGroup(c); const withCrew = !!dmCrew && !isGroupRow && !(c.org_id == null && c._personal_other && !c._personal_group && !c._personal_crew); /* 개인 1:1은 에이전트가 들어와도 친구 아바타(2026-09-30) */ const items = dmItemsOf(c, dmTab); return (
@@ -6496,7 +6501,7 @@ function Message({ m, shape = 'bubble', uploadNames = null, uid, lang, t, nameOf
   };
   const muteCrewAct = async () => { setSafetyBusy(true); try { await safety.muteCrew(m.crew_id); } catch { onError?.(t('crew.mute.failed')); } finally { setSafetyBusy(false); } }; // 크루·봇 숨기기(App Store 1.2) — 확인 모달 없이 바로(설정에서 언제든 되돌릴 수 있다)
   const mine = m.author_kind === 'user' && m.author_user_id === uid;
-  const canReport = !mine && !m.pending && m.kind !== 'system' && (m.author_kind === 'user' || m.author_kind === 'crew'); // 사람 글과 AI 에이전트 답 모두 신고 가능
+  const canReport = canReportMessage(m, uid); // 사람 글과 에이전트 명의 글(kind 무관) — 진짜 시스템 글만 제외(유건 결정 2026-10-06, 서버 msgr_report_message)
   const canBlock = !mine && !m.pending && m.author_kind === 'user' && !!m.author_user_id && !!safety.block;
   const canMuteCrew = !mine && !m.pending && m.author_kind === 'crew' && !!m.crew_id && !!safety.muteCrew && !safety.mutedCrewIds.has(m.crew_id) && crew?.owner_user_id !== uid; // 검수 L5: 내 크루는 숨길 수 없다
   const hasMore = canReport || canBlock || canMuteCrew || mine; // ⋯ 메뉴에 담을 나머지(신고·차단·숨기기·편집·삭제)가 있을 때만
