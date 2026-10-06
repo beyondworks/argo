@@ -1034,6 +1034,7 @@ export const DICT = {
   'org.agents.auto.step.plugin': ['플러그인 설치', 'Plugin installed'],
   'org.agents.auto.step.env': ['설정 기록', 'Settings written'],
   'org.agents.auto.step.enable': ['플러그인 활성화', 'Plugin enabled'],
+  'org.agents.auto.step.approvals': ['위험 명령 결재 설정', 'Risky-command approval set'],
   'org.agents.auto.step.gateway': ['게이트웨이 시작', 'Gateway started'],
   'org.agents.setup.manual': ['직접 넣기(다른 컴퓨터·앱 밖)', 'Manual setup (another computer, or outside the app)'],
   'org.agents.setup.hermes.1': ['처음 한 번: Argo 소스의 `integrations/hermes-argo-msgr` 폴더를 `~/.hermes/plugins/argo-msgr/`로 복사하고 `hermes plugins enable argo-msgr-platform --no-allow-tool-override`를 실행합니다.', 'Once: copy `integrations/hermes-argo-msgr` from the Argo source to `~/.hermes/plugins/argo-msgr/` and run `hermes plugins enable argo-msgr-platform --no-allow-tool-override`.'],
