@@ -33,6 +33,16 @@ grant execute on function public.msgr_can_delete_channel(uuid) to authenticated;
 alter policy msgr_channels_delete on public.msgr_channels
   using (public.msgr_can_delete_channel(id));
 
+-- 1-b. 같은 결과의 다른 길 — 남의 참여 행 지우기(분리 검수 자동 표시 반박 중 확인). 참여 행 delete 정책의 사람 갈래가 관리 판정을 써서
+--   조직 그룹 대화의 일반 참여자도 다른 사람을 PostgREST로 빼낼 수 있었다 → 사람이 둘만 남으면 1:1 규칙으로 방을 지웠다(그룹 삭제 우회).
+--   남을 빼는 판정을 삭제 판정과 같게 둔다. 자기 행(나가기)과 에이전트 갈래는 그대로. 조직 그룹이 아닌 방은 msgr_can_delete_channel = 관리 판정이라 종전과 같다.
+--   앱은 대화방에서 사람 내보내기를 보이지 않는다(ChannelSheet canKick = canEdit && kind !== 'dm') — 앱 동작은 바뀌지 않는다.
+-- 정책 출처: 20261002120000_msgr_crew_remove_owner_only.sql(마지막) — 사람 갈래의 판정 함수 이름만 바꾼다.
+-- 부하: 남의 사람 행 delete 때만 판정 1회(위 함수와 같다).
+alter policy msgr_channel_members_delete on public.msgr_channel_members
+  using ((member_kind = 'user' and (member_id = (select auth.uid()) or public.msgr_can_delete_channel(channel_id)))
+      or (member_kind = 'crew' and public.msgr_crew_removable(channel_id, member_id)));
+
 -- ── 2. 신고 제외는 진짜 시스템 글(author_kind='system')만 ────────────────────────────────────
 -- 원인: #846의 조건 (kind = 'system' and author_kind <> 'user')가 에이전트(author_kind='crew') 명의 system 글도 신고 대상에서 뺐다.
 --   사람이 자기 에이전트 명의로 "관리자 공지: 재로그인 링크" 같은 안내 글을 써도 신고할 수 없었다.
