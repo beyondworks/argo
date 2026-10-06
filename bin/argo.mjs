@@ -296,7 +296,11 @@ async function turn(ws, crew, message, sessionId) {
   const { paths } = await import('../src/workspace.mjs');
   // 앱 폴더를 같이 쓴다 — 앱이 같은 크루의 턴을 진행 중이면(신선한 상태 파일) 같은 sessionId를 동시에 이어 쓰지 않도록 시작하지 않는다(검토 M-b ③, 시작 때 한 번 확인)
   if (appShared && await getTurnStatus(ws, crew.slug).catch(() => null)) throw Object.assign(new Error(T.appBusy(crew.name)), { appBusy: true });
-  const turnId = await beginTurn(ws, crew.slug, { userMsg: message }).catch(() => null);
+  // 신호 처리기(abandonTurn)가 이 턴을 보도록 기록 **전에** 등록한다. 기록 뒤에 등록하면 "답 대기" 줄은 파일에 있는데 처리기는 진행 중 턴이
+  // 없다고 보고 바로 끝내, 앱 화면에 "답 대기"가 남았다(CI macOS 10/6 — 파일 잠금 해제가 느린 사이에 신호가 온 경우, 지연 주입으로 재현).
+  const begun = beginTurn(ws, crew.slug, { userMsg: message }).catch(() => null);
+  current = { ws, slug: crew.slug, turnId: null, userMsg: message, stopping: false, begun };
+  const turnId = current.turnId = await begun;
   const tty = !!process.stdout.isTTY; const t0 = Date.now();
   let printed = ''; let statusShown = false;
   const clearStatus = () => { if (statusShown) { process.stdout.write('\r\x1b[2K'); statusShown = false; } };
@@ -305,7 +309,6 @@ async function turn(ws, crew, message, sessionId) {
     if (!printed) process.stdout.write(`\n  ${bold(crew.name)}\n`);
     process.stdout.write(text.split('\n').map((l) => `  ${l}`).join('\n'));
   };
-  current = { ws, slug: crew.slug, turnId, userMsg: message, stopping: false };
   const draw = (detail) => {
     if (!tty) return;
     const sec = Math.round((Date.now() - t0) / 1000);
@@ -320,6 +323,7 @@ async function turn(ws, crew, message, sessionId) {
   }, 800);
   draw('');
   try {
+    if (current.stopping) throw Object.assign(new Error(T.interrupted), { aborted: true }); // 기록하는 사이에 신호가 왔다 — 턴을 시작하지 않고 중단으로 마무리
     const t = await chat(ws, crew.slug, message, sessionId, { ...(turnId ? { abortTag: turnId } : {}), sessionChain: { blocked: true } }); // 세션 메시지는 싣지 않는다 — 이 프로세스는 턴 뒤 곧 끝나 답을 받을 수 없다(보낸 기다림이 고아가 된다)
     const handover = t.handover ? { rel: relative(paths(ws).vault, t.handover.file), linked: t.handover.linked } : null;
     await appendTurn(ws, crew.slug, { turnId, userMsg: message, reply: t.reply, handover, sessionId: t.sessionId, steerFailed: t.steerFailed, artifacts: t.artifacts, fellBack: t.fellBack, modelFallback: t.modelFallback });
@@ -342,6 +346,7 @@ async function turn(ws, crew, message, sessionId) {
 async function abandonTurn() {
   const c = current; if (!c) return;
   c.stopping = true;
+  if (c.turnId == null) c.turnId = await c.begun; // 아직 "답 대기" 줄을 쓰는 중 — 다 쓴 뒤에 그 줄을 마무리한다
   try { const { interruptTurn } = await import('../src/turn-abort.mjs'); interruptTurn(c.ws, c.slug, { tag: c.turnId }).catch(() => {}); } catch { /* 아래 직접 기록 */ }
   for (let i = 0; i < 60 && current === c; i++) await new Promise((r) => setTimeout(r, 50));
   if (current === c) { try { const { appendTurn } = await import('../src/thread.mjs'); await appendTurn(c.ws, c.slug, { turnId: c.turnId, userMsg: c.userMsg, failed: T.interrupted, aborted: true }); } catch { /* 베스트에포트 */ } }
