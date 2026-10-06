@@ -122,6 +122,9 @@ export async function runOneShot(wsId, prompt, opts = {}) {
         allowedTools: [], // 순수 생성 — 도구 불필요. 단 이것은 자동 허용 목록일 뿐 도구를 끄지 않는다
         hooks: noToolHooks(lang), // 작업 폴더 안 읽기는 SDK가 묻지 않고 허용한다 — 외부 원문을 요약하는 자리라 전부 거부(noToolHooks 주석)
         settingSources: [], // 호스트 머신의 CLAUDE.md 등 미주입(테넌트 격리)
+        // 제목을 주면 SDK가 새 세션마다 하는 자동 제목 생성(haiku로 첫 글 전체를 한 번 더 보냄)을 건너뛴다 — Argo는 SDK 세션 제목을 쓰지 않는데
+        // 그 요청 비용이 사용자 키로 나갔다(요약 원샷이면 긴 대화 전체가 한 번 더 감, 2026-10-06 CI 실측).
+        title: 'Argo',
         maxTurns,
         ...(sdkEnv ? { env: sdkEnv } : {}),
         ...sdkNoDockOptions(),

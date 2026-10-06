@@ -2199,12 +2199,12 @@ body.split-resizing { cursor: col-resize; user-select: none; }
 /* The main shell measures content width without containment, so fixed dialogs retain
    their viewport anchor. A narrow split or zoomed view must not hide the session rail. */
 .chat-body { height: 100%; }
+/* 좁은 본문(폰·옆 패널·배율)에서도 레일+본문을 한 화면 높이(.chat-cols 기본 높이) 안에 담는다 — 본문은 레일을 뺀 나머지(1fr)를
+   .chat-body height 100%로 채운다. 예전에는 그리드를 auto로 풀고 본문만 화면 높이로 고정해, 레일 높이(+간격)만큼 입력창이
+   첫 화면 아래로 밀렸다(T6 실측 390×844: 입력창 top 859, 0.1.95도 같음). 레일은 아래 26vh 상한이라 본문 몫이 남는다.
+   잠금: test/topbar-phone-policy.test.mjs '좁은 본문 — 입력창이 첫 화면 안'. */
 .content[data-narrow-content] > .chat-cols {
-  height: auto;
   grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr);
-}
-.content[data-narrow-content] > .chat-cols > .chat-body {
-  height: calc(100vh / var(--z, 1) - 100px);
 }
 .content[data-narrow-content] > .chat-cols > .side-rail {
   position: static; width: auto; max-height: calc(26vh / var(--z, 1)); overflow-y: auto;
@@ -2385,9 +2385,26 @@ main.content:has(.vault-split) .vault-split { height: calc(100vh / var(--z, 1) -
 @media (hover: hover) { ::-webkit-scrollbar-thumb:hover { background-color: var(--border); } } ::-webkit-scrollbar-thumb:active { background-color: var(--border); }
 ::-webkit-scrollbar-track { background: transparent; }
 
+/* 폰 폭 사이드바 서랍(UX-A04) — 넓은 화면에선 버튼·배경막이 없다 */
+.side-toggle, .side-backdrop { display: none; }
 @media (max-width: 900px) {
   .shell { grid-template-columns: 1fr; }
   .side { position: static; height: auto; }
+  /* 사이드바는 상단바 메뉴 버튼으로 여는 서랍 — 본문 위에 약 730px 쌓여 화면을 열 때마다 메뉴만 보이던 것(UX-A04).
+     닫힌 서랍은 visibility로 포커스·읽기 순서에서도 빠진다(닫힐 때는 미끄러진 뒤에 숨김).
+     ⚠ 본체 사이드바만. 메신저도 이 파일을 그대로 가져오고 레일이 class="side msgr-side"라, 범위 없이 .side에 걸면
+     폰 홈의 탭 내용·폰 레일·900px 아래 데스크톱 창 레일이 화면 밖으로 밀려 숨는다(rc-0195 회귀). 메신저 레일은 자기
+     서랍(styles.css .msgr-shell.rail-open)이 있고 위의 static 한 줄까지만 받는다. :where()는 명시도 0이라 본체 쪽 우선순위는
+     종전 .side·.side.open과 같다(테마별 .side 배경 규칙이 그대로 이긴다). 테스트: apps/messenger/test/side-drawer-scope.test.mjs */
+  .side:where(:not(.msgr-side)) {
+    position: fixed; inset: 0 auto 0 0; z-index: 70; width: min(300px, 86vw);
+    height: calc(100vh / var(--z, 1)); background: var(--bg); box-shadow: var(--shadow-float);
+    transform: translateX(-105%); visibility: hidden;
+    transition: transform 180ms cubic-bezier(0.23, 1, 0.32, 1), visibility 0s linear 180ms;
+  }
+  .side.open:where(:not(.msgr-side)) { transform: none; visibility: visible; transition: transform 180ms cubic-bezier(0.23, 1, 0.32, 1); }
+  .side-backdrop { display: block; position: fixed; inset: 0; z-index: 69; background: var(--overlay); }
+  .side-toggle { display: inline-flex; }
   .content { padding: 16px 14px 70px; }
   .search-pill { width: auto; flex: 1; }
   /* 크루 컨트롤: topbar 슬롯 → 채팅 위 인라인 밴드. 슬롯 자식은 전부 flex:none이라 좁은 상단바에서
@@ -2480,6 +2497,24 @@ html[data-os='win'] .table th { letter-spacing: 0.06em; }
 :root[data-narrow-bar] .topbar-clock,
 :root[data-narrow-bar] .topbar-ver,
 :root[data-narrow-bar] .topbar-upd { display: none; }
+/* 상단바 칩('새 소식'·'새로 고침 실패')은 알림이라 통째로 숨기지 않고 라벨만 접는다(UM1). 접는 것은 시계·버전과 **다른 단계**다(2차 M1: 같은 단계에서 접혀 자리가 남아도 글이 사라졌다) —
+   fitBar(topbar-fit.mjs TOPBAR_STAGES)가 새 소식(data-narrow-notes) → 오류(data-narrow-error, 가장 늦게) 순으로 한 단계씩 걸고 매번 다시 잰다.
+   접힌 칩은 점이 아니라 아이콘(✦·↻) 하나다(M2 — 점은 뜻도 눌러도 된다는 것도 알 수 없었다): 상자 32×32, 눌리는 영역은 ::after로 44×44까지(폰 터치 권장). 이름은 aria-label·title이 지킨다 */
+.topbar-chip { position: relative; }
+.topbar-chip .chip-icon { display: none; }
+:root[data-narrow-notes] .topbar-chip-notes,
+:root[data-narrow-error] .topbar-chip-error { width: 32px; height: 32px; padding: 0; justify-content: center; gap: 0; }
+:root[data-narrow-notes] .topbar-chip-notes .chip-label, :root[data-narrow-notes] .topbar-chip-notes .dot,
+:root[data-narrow-error] .topbar-chip-error .chip-label, :root[data-narrow-error] .topbar-chip-error .dot { display: none; }
+:root[data-narrow-notes] .topbar-chip-notes .chip-icon,
+:root[data-narrow-error] .topbar-chip-error .chip-icon { display: inline-flex; }
+:root[data-narrow-notes] .topbar-chip-notes::after,
+:root[data-narrow-error] .topbar-chip-error::after { content: ''; position: absolute; inset: -7px; }
+/* 가장 좁은 폭(360)에서 칩 둘이 32×32 아이콘이 되면 제목 하한(56px)이 검색 알약 하한(96px)과 함께 12px를 넘겼다 — 마지막 접기 단계에서는 제목 하한도 줄인다(글자는 …로 줄어든다) */
+:root[data-narrow-error] .topbar-title { min-width: 40px; }
+/* 그래도 360 폭(세로 스크롤바 8px)에서 칩 둘이 다 뜨면 검색칸이 오른쪽 패딩을 4px 침범했다(4차 검수, ko·en 같음 — 이 단계에선 글자가 없다).
+   마지막 단계에서는 상단바 간격도 12→8px로 줄인다: 항목 6개(메뉴·제목·칩 둘·작업·검색)의 간격 5개에서 20px — 예산 계산은 test/topbar-fit.test.mjs */
+:root[data-narrow-error] .topbar { gap: 8px; }
 /* 플로어(96px)는 base .search-pill이 전 구간 보장한다(3R HIGH-1 — 여기 두면 순환이라 base로 승격).
    접기 단계는 접은 폭을 검색으로 보내는 flex 전환만 담당한다. */
 :root[data-narrow-bar] .search-pill { flex: 1; width: auto; }
@@ -2560,3 +2595,9 @@ html[data-os='win'] .table th { letter-spacing: 0.06em; }
   /* 늘 보이는 '옆에 열기'는 선택 행 시각(.when)과 같은 자리 — hover에서 .when을 숨기던 짝을 여기에도 둔다 */
   .vault-tree .row-wrap:has(.row-side) .row .when { opacity: 0; }
 }
+
+/* 모달 닫기 버튼의 ' ESC' 안내 — 키보드 없는 터치 기기에선 숨긴다(UX-A13) */
+@media (hover: none) { .kbd-hint { display: none; } }
+/* 폰 폭 설정 탭 — 다섯 탭이 두 줄로 다 보이게(가로 스크롤 숨김이라 '위험 구역'이 안 보였다), 터치 탭 높이 40px(UX-A10) */
+@media (max-width: 560px) { .settings-tabs { flex-wrap: wrap; } }
+@media (pointer: coarse) { .tabbar .tab { min-height: 40px; } }

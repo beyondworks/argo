@@ -1,6 +1,7 @@
 // 결재 결과 카드(1:1 화면) — 펼친 본문·요약에 크루에게 하는 지시문 꼬리("결과를 사용자에게 한두 줄로 보고하라." 등)가 보이지 않는다
 // (본체 분리 검수 L5, 2026-10-03). 지시문은 approval-actions.mjs가 inbound-marks.mjs의 함수로 만들고, 화면은 같은 상수로 뗀다.
 // 모델에게 가는 문자열은 한 글자도 바뀌면 안 된다 — 아래 OLD는 바꾸기 전 approval-actions.mjs의 템플릿을 그대로 옮긴 것이다.
+// 용어 변경(2026-10-05)으로 머리말 꼬리표만 '(사장 결재)' → '(사용자 결재)'로 바뀌었다(newTag). OLD는 이미 저장된 옛 기록의 모양으로도 쓴다 — 화면은 둘 다 읽는다.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp } from './helpers/tmp.mjs';
@@ -49,21 +50,29 @@ async function sentMessage(item, approve) {
   return got;
 }
 
-test('모델에게 가는 결재 후속 메시지는 바꾸기 전과 한 글자도 다르지 않다(7가지 모양)', async () => {
-  for (const c of OLD) assert.equal(await sentMessage(c.item, c.approve), c.fact + c.order, c.name);
+/** 새 기록의 모양 — 꼬리표와 사실 문장 속 '사장에게'(용어 변경 T2a — approval-actions 실행 취소 문장)만 새 낱말이고 나머지는 OLD 그대로 */
+const newTag = (s) => s.replace(/^\(사장 결재\) /, '(사용자 결재) ').replace('사장에게 다시 올려라', '사용자에게 다시 올려라');
+
+test('모델에게 가는 결재 후속 메시지는 꼬리표만 "(사용자 결재)"로 바뀌고 나머지는 바꾸기 전과 한 글자도 다르지 않다(7가지 모양)', async () => {
+  for (const c of OLD) assert.equal(await sentMessage(c.item, c.approve), newTag(c.fact) + c.order, c.name);
+  assert.equal((await sentMessage(OLD[5].item, true)).startsWith('(사용자 결재) '), true, '꼬리표가 새 낱말이 아니다');
 });
 
-test('결재 결과 카드 — 펼친 본문·요약에는 사실 문장만, 크루에게 하는 지시문 꼬리는 없다', async () => {
+test('결재 결과 카드 — 펼친 본문·요약에는 사실 문장만, 크루에게 하는 지시문 꼬리는 없다(새 기록·옛 기록 둘 다)', async () => {
   for (const c of OLD) {
-    const card = inboundCard({ who: 'user', text: await sentMessage(c.item, c.approve) });
-    assert.equal(card.kind, 'approval', c.name);
-    const fact = c.fact.replace(/^\((사장|관리자) 결재\) /, '');
-    assert.equal(card.body, fact, c.name);
-    assert.doesNotMatch(plainPreview(card.body).text, /보고하라|정리하라|하지 마라/, c.name);
+    const bodyOf = (f) => f.replace(/^\((사장|사용자|관리자) 결재\) /, '');
+    for (const [label, text, fact] of [['새 기록', await sentMessage(c.item, c.approve), bodyOf(newTag(c.fact))], ['옛 기록', c.fact + c.order, bodyOf(c.fact)]]) {
+      const card = inboundCard({ who: 'user', text });
+      assert.equal(card?.kind, 'approval', `${c.name} ${label}`);
+      assert.equal(card.body, fact, `${c.name} ${label}`);
+      assert.doesNotMatch(plainPreview(card.body).text, /보고하라|정리하라|하지 마라/, `${c.name} ${label}`);
+    }
   }
 });
 
 test('지시문 꼬리를 못 알아보면 머리말 뒤 문장을 그대로 둔다(숨기지 않는다)', () => {
-  const card = inboundCard({ who: 'user', text: '(사장 결재) 요청한 "x" 이(가) 승인되었다. 새 형식의 꼬리.' });
-  assert.equal(card.body, '요청한 "x" 이(가) 승인되었다. 새 형식의 꼬리.');
+  for (const tag of ['(사장 결재)', '(사용자 결재)']) {
+    const card = inboundCard({ who: 'user', text: `${tag} 요청한 "x" 이(가) 승인되었다. 새 형식의 꼬리.` });
+    assert.equal(card.body, '요청한 "x" 이(가) 승인되었다. 새 형식의 꼬리.', tag);
+  }
 });

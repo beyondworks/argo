@@ -87,14 +87,14 @@ test('SDK 단계 — 풀림은 hop 3에서도 동료 안내가 있고 hop 4에�
   assert.match(sysOf('페르소나-Y-마커')[0], RELAXED_ROSTER, '풀림 hop 3 — 아직 위임 가능');
   reset(null);
   await chat(ws, 'y', '이어서', null, { from: 'x', hop: 3, chain: chain3 });
-  assert.doesNotMatch(sysOf('페르소나-Y-마커')[0], /동료 크루 — 위임 규칙/, '켜짐 hop 3 — 동료 명단 없음(종전)');
+  assert.doesNotMatch(sysOf('페르소나-Y-마커')[0], /동료 에이전트 — 위임 규칙/, '켜짐 hop 3 — 동료 명단 없음(종전)');
   reset(null);
   await chat(ws, 'y', '이어서', null, { from: 'x', hop: 3, chain: chain3, delegationRelaxed: true });
-  assert.doesNotMatch(sysOf('페르소나-Y-마커')[0], /동료 크루 — 위임 규칙/, '풀림이라고 주장하지만 예산 객체가 없으면 켜짐으로 — 예산 없는 무제한이 되지 않는다');
+  assert.doesNotMatch(sysOf('페르소나-Y-마커')[0], /동료 에이전트 — 위임 규칙/, '풀림이라고 주장하지만 예산 객체가 없으면 켜짐으로 — 예산 없는 무제한이 되지 않는다');
   reset(null);
   await chat(ws, 'y', '이어서', null, { from: 'x', hop: 4, chain: [...chain3, 'z'], delegationRelaxed: true, delegationTree: newTree({ kind: 'chat', slug: 'x' }) });
   const last = sysOf('페르소나-Y-마커')[0];
-  assert.match(last, /허용된 위임 단계\(4단계\)의 끝/); assert.doesNotMatch(last, /동료 크루 — 위임 규칙/);
+  assert.match(last, /허용된 위임 단계\(4단계\)의 끝/); assert.doesNotMatch(last, /동료 에이전트 — 위임 규칙/);
 });
 
 test('SDK 크루 도구 — 풀린 대화방의 send_to_crew는 relaxed 표지와 합계 예산 id를 달고 나가며 예산이 차감된다(켜짐은 종전 모양)', async () => {

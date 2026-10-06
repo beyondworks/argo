@@ -285,21 +285,17 @@ test('접기 2단계(data-narrow-shell): 슬롯을 인라인 밴드로 내린다
     '밴드 노출 — 숨기기만 하면 컨트롤 접근이 끊긴다');
   assert.equal(effective('#argo-topbar-slot', 'display', 900), 'none', '미디어쿼리 쌍둥이 유지(배율 1의 좁은 창)');
 });
-test('배선: fitBar는 매번 가장 넓은 상태에서 재측정하고 2단계로만 올라간다(래칫 금지)', async () => {
+test('배선: fitBar는 매번 가장 넓은 상태에서 재측정한다(래칫 금지) — 단계 선택은 topbar-fit.mjs fitTopbar가 하고 행동은 test/topbar-fit.test.mjs가 잠근다', async () => {
   const layout = await readFile(new URL('../app/c/[ws]/layout.jsx', import.meta.url), 'utf8');
   const i0 = layout.indexOf('const fitBar = useCallback(');
   assert.ok(i0 > 0, 'fitBar 존재');
   const body = layout.slice(i0, layout.indexOf('}, []);', i0));
-  // 순서 불변식 — 낱개 문자열 핀은 순서를 못 지킨다(MEMORY: 삼항 순서 뒤집기 fail-open). 인덱스로 본다.
-  const iClrBar = body.indexOf("removeAttribute('data-narrow-bar')");
-  const iClrShell = body.indexOf("removeAttribute('data-narrow-shell')");
-  const iSetBar = body.indexOf("setAttribute('data-narrow-bar'");
-  const iSetShell = body.indexOf("setAttribute('data-narrow-shell'");
-  assert.ok(iClrBar >= 0 && iClrShell >= 0, '측정 전 두 단계 모두 되돌려야 한다');
-  assert.ok(iSetBar > iClrBar && iSetBar > iClrShell, '되돌림이 판정보다 먼저 — 아니면 접힌 상태를 재어 못 돌아온다');
-  assert.ok(iSetShell > iSetBar, '2단계는 1단계 뒤에만');
-  assert.match(body, /scrollWidth > bar\.clientWidth/, '판정 기준은 실제 넘침(임계 폭 금지 — 마법수는 언어·라벨을 못 따라간다)');
-  assert.doesNotMatch(body, /clientWidth \/ z|eff <|narrowBar/, '옛 임계 판정이 남아 있으면 두 축이 갈라진다');
+  // 3차 검수 M1: 단계(시계·버전 → 새 소식 라벨 → 오류 라벨 → 슬롯 밴드)가 fitBar 안의 속성 순서 대신 fitTopbar의 단계표로 옮겨 갔다 — 되돌림·순서·'가장 넓은 단계부터'는 행동 테스트(topbar-fit.test.mjs)가 본다
+  assert.match(body, /fitTopbar\(root, \(\) => isTopbarOver\(bar\)\)/, 'fitBar는 단계 선택을 fitTopbar에 맡기고 넘침 판정은 isTopbarOver로 한다');
+  assert.doesNotMatch(body, /setAttribute\('data-narrow-/, '단계 속성을 fitBar가 직접 세우면 단계표와 갈라진다');
+  const fit = await readFile(new URL('../app/c/[ws]/topbar-fit.mjs', import.meta.url), 'utf8');
+  assert.match(fit, /scrollWidth > bar\.clientWidth/, '판정 기준은 실제 넘침(임계 폭 금지 — 마법수는 언어·라벨을 못 따라간다)');
+  assert.doesNotMatch(body + fit, /clientWidth \/ z|eff <|narrowBar/, '옛 임계 판정이 남아 있으면 두 축이 갈라진다');
   // 등록 — 관찰기(슬롯 내용 변화)와 창/배율 이벤트 둘 다. 하나라도 빠지면 낡은 판정이 남는다.
   assert.match(layout, /new ResizeObserver\(fitBar\)/, '슬롯·상단바 크기 관찰');
   assert.match(layout, /getElementById\('argo-topbar-slot'\);\s*\n\s*if \(slot\) ro\.observe\(slot\)/, '슬롯 관찰 — 포털 내용이 늦게 온다');

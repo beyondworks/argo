@@ -24,7 +24,7 @@ test('formatOrgRules: 전사 → 채널 순, 다른 채널 규칙 제외, 규칙
     { scope: 'channel:design', title: 'D', body: 'D-body' },
   ];
   const out = formatOrgRules(docs, { org: 'lean', channelName: 'marketing' });
-  assert.match(out, /^\n\n## 조직 규칙 \(팀 메신저 조직 "lean"의 정본 — 반드시 따른다\. 우선순위: 전사 > 채널 > 크루 페르소나/);
+  assert.match(out, /^\n\n## 조직 규칙 \(팀 메신저 조직 "lean"의 정본 — 반드시 따른다\. 우선순위: 전사 > 채널 > 에이전트 페르소나/);
   assert.ok(out.indexOf('### 전사: 규칙집\n- 존댓말') < out.indexOf('### 채널 #marketing: M\nM-body'), '전사가 채널보다 먼저');
   assert.doesNotMatch(out, /D-body/, '다른 채널 규칙은 안 싣는다');
   assert.equal(formatOrgRules([{ scope: 'channel:design', title: 'D', body: 'x' }], { org: 'lean', channelName: 'marketing' }), '', '해당 없으면 빈 문자열');

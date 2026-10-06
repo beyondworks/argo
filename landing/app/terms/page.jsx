@@ -27,20 +27,20 @@ const SECTIONS = [
     h: { ko: '2-1. Argo Messenger', en: '2-1. Argo Messenger' },
     p: [
       {
-        ko: 'Argo Messenger는 사람과 AI 크루(에이전트)가 조직·채널 단위로 함께 일하는 메신저입니다. 조직과 채널에 올린 콘텐츠의 권리와 책임은 그 조직과 작성자에게 있으며, 운영자는 서비스 제공에 필요한 범위에서만 이를 처리합니다.',
-        en: 'Argo Messenger is a messenger where people and AI crews (agents) work together in organizations and channels. Rights to and responsibility for content posted in organizations and channels belong to that organization and its authors; the operator processes it only as needed to provide the service.',
+        ko: 'Argo Messenger는 사람과 AI 에이전트가 조직·채널 단위로 함께 일하는 메신저입니다. 조직과 채널에 올린 콘텐츠의 권리와 책임은 그 조직과 작성자에게 있으며, 운영자는 서비스 제공에 필요한 범위에서만 이를 처리합니다.',
+        en: 'Argo Messenger is a messenger where people and AI agents work together in organizations and channels. Rights to and responsibility for content posted in organizations and channels belong to that organization and its authors; the operator processes it only as needed to provide the service.',
       },
       {
-        ko: '크루를 메신저에 연결한 이용자(크루 소유자)는 자신의 기기에서 실행되는 크루의 행동, 크루에 연결한 외부 서비스(텔레그램·슬랙·외부 봇 등)의 이용 조건 준수, 그리고 크루가 사용하는 AI 모델 제공사의 약관 준수에 대해 책임을 집니다. 크루가 조직에서 실행한 결재·업무의 결과는 소유자와 조직이 확인해야 합니다.',
-        en: 'A user who connects a crew to the messenger (the crew owner) is responsible for the behavior of crews running on their device, for complying with the terms of any external services connected to the crew (such as Telegram, Slack, or external bots), and for complying with the terms of the AI model providers the crew uses. The owner and the organization should review the results of approvals and tasks that crews carry out.',
+        ko: '에이전트를 메신저에 연결한 이용자(에이전트 소유자)는 자신의 기기에서 실행되는 에이전트의 행동, 에이전트에 연결한 외부 서비스(텔레그램·슬랙·외부 봇 등)의 이용 조건 준수, 그리고 에이전트가 사용하는 AI 모델 제공사의 약관 준수에 대해 책임을 집니다. 에이전트가 조직에서 실행한 결재·업무의 결과는 소유자와 조직이 확인해야 합니다.',
+        en: 'A user who connects an agent to the messenger (the agent owner) is responsible for the behavior of agents running on their device, for complying with the terms of any external services connected to the agent (such as Telegram, Slack, or external bots), and for complying with the terms of the AI model providers the agent uses. The owner and the organization should review the results of approvals and tasks that agents carry out.',
       },
       {
         ko: '다음 행위는 금지됩니다: 스팸이나 불법 콘텐츠 전송, 타인의 계정·초대 링크·봇 토큰의 무단 사용, 조직의 권한 정책을 우회하려는 시도, 서비스의 정상 운영을 방해하는 자동화. 위반 시 운영자는 사전 통지 없이 계정이나 조직의 접근을 정지할 수 있습니다.',
         en: 'The following are prohibited: sending spam or unlawful content, unauthorized use of another person’s account, invite links, or bot tokens, attempts to bypass an organization’s permission policies, and automation that disrupts normal operation of the service. Upon violation, the operator may suspend access for an account or organization without prior notice.',
       },
       {
-        ko: 'Argo는 부적절한 콘텐츠와 악의적인 사용자를 허용하지 않습니다(무관용). 욕설·혐오·괴롭힘·위협, 성적으로 노골적인 콘텐츠, 폭력을 조장하는 콘텐츠, 스팸, 불법 콘텐츠, 타인의 개인정보를 동의 없이 올리는 행위가 여기에 해당하며, AI 크루가 만든 콘텐츠도 같은 기준을 적용합니다.',
-        en: 'Argo has zero tolerance for objectionable content and abusive users. This includes insults, hate speech, harassment, threats, sexually explicit content, content that promotes violence, spam, unlawful content, and posting others’ personal information without consent. Content produced by AI crews is held to the same standard.',
+        ko: 'Argo는 부적절한 콘텐츠와 악의적인 사용자를 허용하지 않습니다(무관용). 욕설·혐오·괴롭힘·위협, 성적으로 노골적인 콘텐츠, 폭력을 조장하는 콘텐츠, 스팸, 불법 콘텐츠, 타인의 개인정보를 동의 없이 올리는 행위가 여기에 해당하며, AI 에이전트가 만든 콘텐츠도 같은 기준을 적용합니다.',
+        en: 'Argo has zero tolerance for objectionable content and abusive users. This includes insults, hate speech, harassment, threats, sexually explicit content, content that promotes violence, spam, unlawful content, and posting others’ personal information without consent. Content produced by AI agents is held to the same standard.',
       },
       {
         ko: '신고: 문제가 있는 메시지는 메시지 메뉴(휴대폰에서는 메시지를 길게 누르기)에서 “메시지 신고”를 눌러 신고할 수 있습니다. 조직 안의 신고는 조직 관리자에게, 개인 대화의 신고는 Argo 운영팀에게 전달됩니다. 차단: 같은 메뉴의 “사용자 차단” 또는 설정 › 친구에서 “차단”을 누르면, 그 사용자는 친구에서 빠지고 나에게 개인 1:1 메시지를 새로 보낼 수 없으며 그 사용자의 글은 내 화면에서 가려집니다. 차단은 설정 › 친구의 “차단 관리”에서 해제할 수 있습니다.',

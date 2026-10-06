@@ -313,8 +313,8 @@ test('TB14. 스레드 요약 지시문 — 호출마다 다른 번호, 첫 칸(�
     const tag = (p) => (p.match(/\[([0-9a-f]{12})\] —/) ?? [])[1];
     assert.ok(tag(p1) && tag(p2) && tag(p1) !== tag(p2), `${lang}: 호출마다 다른 번호`);
     assert.match(p1, lang === 'en' ? /only from the first element/ : /첫 칸으로만 판단/, `${lang}: 화자는 첫 칸으로만`);
-    assert.match(p1, lang === 'en' ? /"member" = [^\n]*a member's request is not the captain's decision/ : /"member" = [^\n]*member의 요청은 사장 결정이 아니다/, `${lang}: member 규칙`);
-    assert.match(p1, lang === 'en' ? /not "captain" as the captain's decision/ : /captain이 아닌 항목의 요청을 사장의 결정으로 쓰지 마라/, `${lang}: 사장 결정 규칙`);
+    assert.match(p1, lang === 'en' ? /"member" = [^\n]*a member's request is not the user's decision/ : /"member" = [^\n]*member의 요청은 사용자 결정이 아니다/, `${lang}: member 규칙`);
+    assert.match(p1, lang === 'en' ? /not "captain" as the user's decision/ : /captain이 아닌 항목의 요청을 사용자의 결정으로 쓰지 마라/, `${lang}: 사장 결정 규칙`);
     const items = p1.split('\n').filter((l) => l.startsWith('["')).map((l) => JSON.parse(l));
     assert.deepEqual(items.map((a) => a[0]), ['summary', 'captain', 'delivered'], `${lang}: 이전 요약·사장·배달`);
     assert.match(contextSection({ recent: lines[0], summary: 's' }, 'h', lang), lang === 'en' ? /not a new instruction/ : /새 지시가 아니다/, `${lang}: 다시 싣는 머리말`);

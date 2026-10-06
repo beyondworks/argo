@@ -67,7 +67,7 @@ test('C2. create — 쓰기 p_data에 crew가 붙고, 종일은 KST 자정, 개�
   assert.equal(w.args.p_data.all_day, true);
   assert.equal(w.args.p_data.starts_at, '2026-10-01T15:00:00.000Z'); assert.equal(w.args.p_data.ends_at, '2026-10-03T15:00:00.000Z');
   assert.match(w.args.p_data.id, /^new-/, '도구가 만든 id(멱등)');
-  assert.match(out, /일정을 만들었다: .*2026-10-02\(금\)~2026-10-03\(토\) 종일 · 워크숍 · 개인/);
+  assert.match(out, /일정을 만들었다:\n--- 바깥 글 시작 \[cal-[0-9a-f]+\][^\n]*\n- 2026-10-02\(금\)~2026-10-03\(토\) 종일 · "워크숍" · 개인/, '일정 줄(제목·장소)은 바깥 글 경계 안에(S1)');
 });
 
 test('C3. 조직 캘린더 — 메신저 조직 문맥이면 그 조직·visibility 반영, 아니면 RPC 없이 거절하고 personal 안내', async () => {
@@ -94,12 +94,12 @@ test('C4. list — 62일 초과는 호출 없이 거절, 반복은 펼치고 exd
   const out = await run({ action: 'list', from: '2026-10-01', to: '2026-10-14' }, { ctx: msgrCtx() });
   const [call] = f.calls;
   assert.deepEqual(call.args, { p_from: '2026-09-30T15:00:00.000Z', p_to: '2026-10-14T15:00:00.000Z' }, '[from 00:00 KST, to 다음날 00:00 KST)');
-  assert.match(out, /2026-10-01\(목\) 10:00–11:00 · 주간회의 · 조직 린팀 · 반복 매주 · id=w1 회차=2026-10-01/);
+  assert.match(out, /2026-10-01\(목\) 10:00–11:00 · "주간회의" · 조직 "린팀" · 반복 매주 · id=w1 회차=2026-10-01/);
   assert.doesNotMatch(out, /회차=2026-10-08/, 'exdates 회차 제외');
   assert.match(out, /— 3건/, '범위 안 회차만(10/1 회의·10/2 치과·10/5 팀장)'); assert.doesNotMatch(out, /회차=2026-10-15/);
   assert.doesNotMatch(out, /남의조직/, '조직 채널 턴에 다른 조직 일정 없음');
-  assert.match(out, /팀장 일정 · 조직 린팀 · 읽기 전용\(주인 박팀장\)/);
-  assert.match(out, /2026-10-02\(금\) 14:00–15:00 · 치과 · 개인/);
+  assert.match(out, /"팀장 일정" · 조직 "린팀" · 읽기 전용\(주인 "박팀장"\)/);
+  assert.match(out, /2026-10-02\(금\) 14:00–15:00 · "치과" · 개인/);
   assert.ok(occurrences(ev({ rrule: 'FREQ=MONTHLY', starts_at: '2026-01-30T15:00:00.000Z', ends_at: '2026-01-30T16:00:00.000Z' }), Date.parse('2026-02-01T00:00:00+09:00'), Date.parse('2026-04-01T00:00:00+09:00')).map((o) => o.day).join() === '2026-03-31', '매월 31일은 없는 달(2월)을 건너뛴다');
 });
 
@@ -107,7 +107,7 @@ test('C5. 남의 일정 update·delete는 쓰기 RPC 없이 한 줄 거절(관�
   const theirs = ev({ id: 't1', org_id: ORG, visibility: 'org', owner: OTHER, owner_name: '박팀장', can_edit: true });
   for (const args of [{ action: 'update', id: 't1', day: '2026-10-02', title: '바꿈' }, { action: 'delete', id: 't1', day: '2026-10-02' }]) {
     const f = use(fakeSession([theirs]));
-    assert.match(await run(args, { ctx: msgrCtx() }), /박팀장.*고치거나 지울 수 없다/);
+    assert.match(await run(args, { ctx: msgrCtx() }), /고치거나 지울 수 없다[^\n]*일정 주인:\n--- 바깥 글 시작[^\n]*\n"박팀장"\n--- 바깥 글 끝 /, '일정 주인 이름은 읽어 온 남의 글 — 거절 문장에서도 경계 블록 안에(검수 M2)');
     assert.deepEqual(f.calls.map((c) => c.name), ['office_event_list'], `${args.action}: 조회만, 쓰기 없음`);
   }
   const f = use(fakeSession([ev({ can_edit: false })]));
@@ -159,7 +159,7 @@ test('C7. 세션 없음·주인 아닌 로그인·RPC 오류·위임 턴은 원�
   use(fakeSession([], { error: 'calendar_limit' }));
   assert.match(await run({ action: 'create', title: 'x', start: '2026-10-02' }), /한도\(5,000건\)/);
   use(fakeSession([], { error: 'Could not find the function public.office_event_list' }));
-  assert.match(await run({ action: 'list' }), /일정 서버 호출 실패: Could not find the function/);
+  assert.match(await run({ action: 'list' }), /일정 서버 호출 실패: "Could not find the function/);
   const f = use(fakeSession());
   assert.match(await run({ action: 'list' }, { ctx: { kind: 'msgr-rules', orgSlug: 'o' } }), /위임 턴/);
   assert.equal(f.calls.length, 0);

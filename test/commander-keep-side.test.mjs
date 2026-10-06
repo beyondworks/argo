@@ -162,7 +162,7 @@ const ALLOW = { // 회사(/c/[ws]) 밖으로 나가는 경로 — side 문맥이
 /** 파일별 router.push( 개수 — 전역 합계 하한은 과제거 1건과 신규 1건이 상쇄돼 눈먼다(검수 LOW-2). 새 이동을 넣으면
     여기서 red가 나고, 그때 side 판정을 한 뒤 기대치를 갱신한다(재판정 강제). 줄어들면 수집기·스트리퍼부터 의심. */
 const EXPECTED = {
-  'app/page.jsx': 1, 'app/c/[ws]/layout.jsx': 2 /* 업데이트 뱃지 → 설정 카드(앱을 옮겨야 할 때, L 경유) */, 'app/c/[ws]/page.jsx': 4, 'app/c/[ws]/settings/page.jsx': 1,
+  'app/page.jsx': 1, 'app/c/[ws]/layout.jsx': 2 /* 업데이트 뱃지 → 설정 카드(앱을 옮겨야 할 때, L 경유) */, 'app/c/[ws]/page.jsx': 5 /* +1: 검색 결과 크루 링크(UL8) — keepSide를 거친다 */, 'app/c/[ws]/settings/page.jsx': 1,
   'app/c/[ws]/crew/[slug]/page.jsx': 4, 'app/c/[ws]/room/page.jsx': 2,
 };
 

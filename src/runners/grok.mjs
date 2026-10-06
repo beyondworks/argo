@@ -143,5 +143,5 @@ export const isGrokCreditError = (text) => /personal-team-blocked|spending-limit
 
 /** 충전·구독처를 함께 준다 — "안 된다"만 말하면 사용자가 갈 곳이 없다(openrouter 402 선례와 동형). */
 export const grokCreditNotice = (lang) => (lang === 'en'
-  ? 'Your xAI account has no credits (or needs a Grok subscription) — the sign-in itself worked. Add credits at https://console.x.ai or subscribe at https://grok.com/supergrok, then try again. You can also switch this crew to another engine.'
-  : 'xAI 계정에 크레딧이 없거나 Grok 구독이 필요합니다 — 로그인 자체는 정상입니다. https://console.x.ai 에서 충전하거나 https://grok.com/supergrok 에서 구독한 뒤 다시 시도해 주세요. 이 크루의 엔진을 다른 러너로 바꿔도 됩니다.');
+  ? 'Your xAI account has no credits (or needs a Grok subscription) — the sign-in itself worked. Add credits at https://console.x.ai or subscribe at https://grok.com/supergrok, then try again. You can also switch this agent to another engine.'
+  : 'xAI 계정에 크레딧이 없거나 Grok 구독이 필요합니다 — 로그인 자체는 정상입니다. https://console.x.ai 에서 충전하거나 https://grok.com/supergrok 에서 구독한 뒤 다시 시도해 주세요. 이 에이전트의 엔진을 다른 러너로 바꿔도 됩니다.');

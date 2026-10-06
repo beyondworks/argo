@@ -136,3 +136,12 @@ test('검사기 알려진 한계: 값 안의 "], //"는 완결 토큰 수에 따
   assert.deepEqual(scanDictEntries("  'p.threeBlock': ['x', 'y', 'z ], /* 함정'],"), [['p.threeBlock', 3]],
     '값 안 "], /*"는 닫힘 없는 블록 주석이라 꼬리에 안 걸린다 — 형식 위반이 그대로 적발돼야 한다');
 });
+
+// UL11(2026-10-05 분리 검수): UX-A13이 모달 닫기 버튼을 common.close + `.kbd-hint`(터치 기기에서 숨김) 조합으로 바꿨는데, 사전에 "닫기 ESC" 문구가 그대로 남아
+// crew-edit.jsx가 터치 기기에서도 ESC 안내를 보였고 chat.closeEsc는 아무도 안 썼다. ESC 안내는 문구에 박지 않고 kbd-hint 조각으로만 단다.
+test('닫기 문구에 ESC 안내가 박힌 사전 항목이 없다 — 키보드 안내는 kbd-hint 조각(터치에서 숨김)으로만', () => {
+  const src = readFileSync(join(APP, 'i18n.jsx'), 'utf8');
+  const bad = [...src.matchAll(/^\s*'([^']*[cC]lose[^']*)':\s*\[(.*)\],?\s*$/gm)].filter((m) => /\bESC\b/i.test(m[2])).map((m) => m[1]);
+  assert.deepEqual(bad, [], `ESC가 박힌 닫기 문구: ${bad.join(', ')}`);
+  // 이 문구들을 쓰던 자리가 같은 조합으로 옮겨졌는지는 사전에 없는 키를 t()에 넘기면 위 첫 테스트가 잡는다
+});

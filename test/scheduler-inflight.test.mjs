@@ -20,6 +20,14 @@ const { createCompany } = await import('../src/workspace.mjs');
 
 const WS = 'ovlco';
 await createCompany(WS, '겹침사', 'captain');
+// 루틴의 크루 카드 — 실제 루틴은 늘 있는 크루에 걸린다. 스케줄러가 카드 없는 루틴을 건너뛰게 된 뒤(F4, 2026-10-05)
+// 카드 없이 적재하면 이 파일의 겹침 판정이 아예 돌지 않는다(픽스처를 프로덕션 모양으로).
+{
+  const { paths } = await import('../src/workspace.mjs');
+  const { mkdir, writeFile } = await import('node:fs/promises');
+  await mkdir(paths(WS).agents, { recursive: true });
+  await writeFile(join(paths(WS).agents, 'alpha.md'), '---\nname: alpha\n---\n\n본문.\n');
+}
 const byId = async (id) => (await loadRoutines(WS)).find((r) => r.id === id);
 // 미래(2099년) 고정 날짜 — created(지금)보다 뒤라 "생성 이전 시각 스킵" 규칙에 안 걸리고,
 // 실제 시계와 무관하게 결정적이다. 시각은 이 기기 로컬 = addRoutine이 각인하는 tz와 일치.

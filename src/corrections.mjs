@@ -32,17 +32,17 @@ export const CORRECTION_HINT_RE = /([가-힣]{1,6}지\s*(마(?![가-힣])|마요
 const DETECT_PROMPT = (userMsg, candidates, lang) => {
   const list = candidates.map((c) => `- ${c.id}: ${c.rule}`).join('\n') || (lang === 'en' ? '(none)' : '(없음)');
   if (lang === 'en') {
-    return `A boss just wrote this to an AI crew member. Decide if it is a CORRECTION of the crew's behavior (pointing out a mistake, forbidding something, demanding a different way — not a new task, not a question).
+    return `A user just wrote this to an AI agent. Decide if it is a CORRECTION of the agent's behavior (pointing out a mistake, forbidding something, demanding a different way — not a new task, not a question).
 Existing correction candidates:
 ${list}
-Boss message: <<<${userMsg.slice(0, 600)}>>>
-Reply with JSON only: {"correction": true|false, "rule": "one imperative sentence the crew should follow from now on (empty if not a correction)", "matches": "<candidate id if this is the same kind of correction, else null>"}`;
+User message: <<<${userMsg.slice(0, 600)}>>>
+Reply with JSON only: {"correction": true|false, "rule": "one imperative sentence the agent should follow from now on (empty if not a correction)", "matches": "<candidate id if this is the same kind of correction, else null>"}`;
   }
-  return `사장이 AI 크루에게 방금 보낸 메시지다. 이것이 크루 행동에 대한 **교정**(실수 지적·금지·다른 방식 요구 — 새 업무 지시나 질문이 아님)인지 판정하라.
+  return `사용자가 AI 에이전트에게 방금 보낸 메시지다. 이것이 에이전트 행동에 대한 **교정**(실수 지적·금지·다른 방식 요구 — 새 업무 지시나 질문이 아님)인지 판정하라.
 기존 교정 후보 목록:
 ${list}
-사장 메시지: <<<${userMsg.slice(0, 600)}>>>
-JSON으로만 답하라: {"correction": true|false, "rule": "앞으로 크루가 따라야 할 명령형 한 문장(교정이 아니면 빈 문자열)", "matches": "같은 계열 후보가 있으면 그 id, 없으면 null"}`;
+사용자 메시지: <<<${userMsg.slice(0, 600)}>>>
+JSON으로만 답하라: {"correction": true|false, "rule": "앞으로 에이전트가 따라야 할 명령형 한 문장(교정이 아니면 빈 문자열)", "matches": "같은 계열 후보가 있으면 그 id, 없으면 null"}`;
 };
 
 function extractJson(text) {
@@ -125,8 +125,8 @@ export async function adoptCorrection(wsId, id, { lang = 'ko' } = {}) {
     await mkdir(skillsDir, { recursive: true });
     const f = join(skillsDir, RULES_SKILL);
     const head = lang === 'en'
-      ? '# Captain rules — adopted from repeated corrections\n\n> Rules the captain approved when the same correction came up twice. Injected to every crew, every turn.\n'
-      : '# 사장 지침 — 반복 교정에서 채택된 회사 규칙\n\n> 사장이 같은 지적을 반복했을 때 "규칙으로 기억할까요?" 제안을 승인한 항목들. 전 크루에게 매 턴 주입된다.\n';
+      ? '# User rules — adopted from repeated corrections\n\n> Rules the user approved when the same correction came up twice. Injected to every agent, every turn.\n'
+      : '# 사용자 지침 — 반복 교정에서 채택된 회사 규칙\n\n> 사용자가 같은 지적을 반복했을 때 "규칙으로 기억할까요?" 제안을 승인한 항목들. 모든 에이전트에게 매 턴 주입된다.\n';
     const existing = await readFile(f, 'utf8').catch(() => null);
     // 같은 규칙 재적립 방지(검수 M3) — 채택된 계열이 새 후보로 다시 쌓여 재채택되면 불릿이
     // 중복돼 주입 예산(6000자)을 갉는다. 이미 있으면 상태만 adopted로 넘긴다.

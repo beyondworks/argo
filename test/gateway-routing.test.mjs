@@ -51,11 +51,34 @@ test('다중 멘션 — 첫 번째가 to, 나머지는 cc(중복 제거)', async
 
 test('미등록 @이름 경계 — 단독이면 오류+명단 안내, 유효 멘션 뒤면 본문으로 남긴다', async () => {
   const bad = await routeMessage(WS, {}, '@함장 보고해');
-  assert.ok(bad.error?.includes('"함장" 크루를 못 찾았습니다'), '오타 멘션은 조용히 기본 크루로 넘기지 않는다');
+  assert.ok(bad.error?.includes('"함장" 에이전트를 못 찾았습니다'), '오타 멘션은 조용히 기본 크루로 넘기지 않는다');
   assert.ok(bad.error.includes('루카') && bad.error.includes('페퍼'), '오류에 실제 명단을 보여준다');
   const mixed = await routeMessage(WS, {}, '@루카 @함장 에게 전달해');
   assert.equal(mixed.slug, 'luca');
   assert.equal(mixed.msg, '@함장 에게 전달해', '크루가 아닌 @단어는 본문의 일부');
+});
+
+// 안내가 시키는 현황 명령 낱말은 현황 판정(protocol.isStatusCommand)이 실제로 받는 낱말이어야 한다 — 안내 문구만 바꾸고
+// 판정을 안 바꾸면 "에이전트라고 보내라"를 따른 사용자의 글이 지시로 모델에 넘어간다(용어 변경 T2b, 계획 M5).
+test('현황 명령 안내 ↔ 판정: 오류 안내·텔레그램 연결 안내가 시키는 낱말을 isStatusCommand가 받는다(ko·en)', async () => {
+  const { isStatusCommand } = await import('../src/gateway/protocol.mjs');
+  const { readFile } = await import('node:fs/promises');
+  const WSE = 'routeco-en';
+  await mkdir(join(process.env.ARGO_ROOT, WSE, 'agents'), { recursive: true });
+  await writeFile(join(process.env.ARGO_ROOT, WSE, 'company.json'), JSON.stringify({ id: WSE, name: 'Voyage', lang: 'en' }));
+  await writeFile(join(process.env.ARGO_ROOT, WSE, 'agents', 'luca.md'), '---\nname: Luca\n---\n');
+  const ko = (await routeMessage(WS, {}, '@함장 보고해')).error;
+  const en = (await routeMessage(WSE, {}, '@captain report')).error;
+  const koWord = ko.match(/"([^"]+)"라고 보내면/)?.[1];
+  const enWord = en.match(/send "([^"]+)" to see/)?.[1];
+  assert.equal(koWord, '에이전트'); assert.equal(enWord, 'agents');
+  for (const w of [koWord, enWord]) assert.equal(isStatusCommand(w), true, `안내 낱말 "${w}"를 현황 명령으로 받는다`);
+  // 텔레그램 회사 게이트웨이 연결 안내(gateway.mjs 페어링 성공 문구) — 폴러 안 문자열이라 원문에서 낱말을 꺼내 같은 판정에 넣는다
+  const src = await readFile(new URL('../src/gateway.mjs', import.meta.url), 'utf8');
+  const pairKo = [...src.matchAll(/"([^"\n]+)"라고 보내면/g)].map((m) => m[1]);
+  const pairEn = [...src.matchAll(/Send "([^"\n]+)" to see/g)].map((m) => m[1]);
+  assert.deepEqual([pairKo, pairEn], [['에이전트'], ['agents']]);
+  for (const w of [...pairKo, ...pairEn]) assert.equal(isStatusCommand(w), true, `연결 안내 낱말 "${w}"를 현황 명령으로 받는다`);
 });
 
 test('그룹방 봇 멘션(@봇이름) 접두는 벗겨지고 그 뒤 @크루가 라우팅된다', async () => {
@@ -72,12 +95,12 @@ test('크루 없는 회사 — 오류 안내(모델 호출 없이 즉답)', asyn
   const WS0 = 'routeco-empty';
   await mkdir(join(process.env.ARGO_ROOT, WS0), { recursive: true });
   const r = await routeMessage(WS0, {}, '아무거나');
-  assert.ok(r.error?.includes('아직 크루가 없습니다'));
+  assert.ok(r.error?.includes('아직 에이전트가 없습니다'));
 });
 
 test('crewStatusReply: 명단·기본 크루 표기·역할 표기', async () => {
   const s = await crewStatusReply(WS, {});
-  assert.ok(s.includes('연결된 크루 2명'));
+  assert.ok(s.includes('연결된 에이전트 2명'));
   assert.ok(s.includes('• 루카 (@luca) — 항해사 · 기본'), '첫 크루 = 기본 표기 + 역할');
   assert.ok(s.includes('• 페퍼 (@pepper)') && !s.includes('페퍼 (@pepper) · 기본'), '기본이 아닌 크루엔 표기 없음');
 });

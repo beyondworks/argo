@@ -197,7 +197,7 @@ test('앱 모드 대화 — 앱 폴더에 기록되고, 다른 프로세스가 �
   const before = readFileSync(f, 'utf8');
   const busy = await argo(['chat', 'nova', '겹치는 지시']);
   assert.notEqual(busy.status, 0);
-  assert.match(busy.stderr + busy.stdout, /앱에서 이 크루가 답하는 중입니다/);
+  assert.match(busy.stderr + busy.stdout, /앱에서 이 에이전트가 답하는 중입니다/);
   assert.equal(readFileSync(f, 'utf8'), before, '턴을 시작하지 않았다(대화 파일 그대로)');
 });
 

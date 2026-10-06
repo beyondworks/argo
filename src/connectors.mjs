@@ -347,8 +347,8 @@ const MSG = {
   not_in_catalog: { ko: (s) => `카탈로그에 없는 커넥터입니다: ${s}`, en: (s) => `No such connector in the catalog: ${s}` },
   // 결재 대기 — 실패가 아니라 "아직"이다. 크루가 이 문구를 읽고 사장에게 기다리라고 말한다.
   approval_pending: {
-    ko: (t) => `이 작업(${t})은 회사 밖으로 나가는 쓰기라 사장 결재가 필요합니다. 결재를 올렸습니다 — 승인되면 자동으로 실행되고 결과를 이어서 보고합니다.`,
-    en: (t) => `This action (${t}) writes outside the company, so it needs the captain's approval. The request is filed — once approved it runs automatically and I'll report back.`,
+    ko: (t) => `이 작업(${t})은 회사 밖으로 나가는 쓰기라 사용자 결재가 필요합니다. 결재를 올렸습니다 — 승인되면 자동으로 실행되고 결과를 이어서 보고합니다.`,
+    en: (t) => `This action (${t}) writes outside the company, so it needs the user's approval. The request is filed — once approved it runs automatically and I'll report back.`,
   },
 };
 

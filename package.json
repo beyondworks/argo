@@ -1,6 +1,6 @@
 {
   "name": "argo",
-  "version": "0.1.95",
+  "version": "0.1.96",
   "description": "Argo — 프롬프트 한 줄로 전문 AI 크루를 영입하고, 회사가 폴더 단위 기억으로 항해하는 개인용 AI 회사 SaaS",
   "scripts": {
     "dev": "next dev",
@@ -47,6 +47,8 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "acorn": "^8.18.0",
+    "acorn-jsx": "^5.3.2",
     "eslint": "^10.8.0",
     "espree": "^11.2.0",
     "express": "^5.2.1",

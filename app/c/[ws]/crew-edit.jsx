@@ -59,7 +59,7 @@ export function CrewEditModal({ ws, agent, teams: teamsProp = null, onClose, onS
           <span className="card-title">{t('deck.editCrewInfo')}</span>
           <span className="microlabel">{agent.slug}</span>
           <span className="rule" />
-          <button type="button" className="btn sm" onClick={onClose}>{t('deck.closeEsc')}</button>
+          <button type="button" className="btn sm" onClick={onClose}>{t('common.close')}<span className="kbd-hint"> ESC</span></button>
         </div>
         <div style={{ padding: '0 20px 18px', display: 'grid', gap: 10 }}>
           <label style={{ display: 'grid', gap: 4 }}>

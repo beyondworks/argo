@@ -12,6 +12,9 @@ const root = await mkdtemp(join(tmpdir(), 'argo-ctxb-sdk-'));
 const home = await mkdtemp(join(tmpdir(), 'argo-ctxb-sdk-home-'));
 Object.assign(process.env, { ARGO_ROOT: root, HOME: home, USERPROFILE: home, ARGO_ENC_VAULT: '0', ARGO_MODEL_CATALOG: 'off', ARGO_NATIVE_RUNNERS: 'off' });
 for (const key of ['NEXT_PUBLIC_SUPABASE_URL', 'NEXT_PUBLIC_SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY']) delete process.env[key];
+// 호스트 Claude Code가 심은 변수(CLAUDE_CODE_ENTRYPOINT 등)가 SDK 자식에 새면 SDK의 곁가지 요청이 달라진다 — 맥 개발 셸에서는 상태 분류 요청,
+// 깨끗한 환경(CI·env -i·데스크톱 앱)에서는 자동 제목 생성 요청이 나갔다(2026-10-06 실측). 어느 셸에서 돌려도 CI와 같은 결과가 되게 지운다.
+for (const key of Object.keys(process.env)) if (/^(CLAUDECODE$|CLAUDE_CODE_|CLAUDE_AGENT_SDK_|ANTHROPIC_)/.test(key)) delete process.env[key];
 
 const reqs = [];
 let slowSummary = false;
@@ -27,7 +30,9 @@ const srv = http.createServer((req, res) => {
   let b = ''; req.on('data', (c) => { b += c; }); req.on('end', () => {
     if (req.method === 'POST' && req.url.startsWith('/v1/messages')) {
       const body = JSON.parse(b || '{}'); const all = JSON.stringify(body.messages ?? []);
-      const kind = all.includes('<conversation>') ? 'summary' : (body.tools ?? []).length ? 'turn' : 'other';
+      // SDK 자동 제목 생성은 첫 글 전체(요약 지시면 <conversation>까지)를 감싸 보낸다 — 요약으로 세지 않고 따로 센다(Argo는 title을 줘서 끈다)
+      const title = JSON.stringify(body.system ?? '').includes('naming a coding session');
+      const kind = title ? 'title' : all.includes('<conversation>') ? 'summary' : (body.tools ?? []).length ? 'turn' : 'other';
       reqs.push({ kind, messages: all });
       if (kind === 'summary' && slowSummary) return setTimeout(() => sse(res, '늦은 요약'), 15_000);
       return sse(res, kind === 'summary' ? '요약-SDK 결정은 금요일 마감' : kind === 'turn' ? '턴 답' : 'title', kind === 'summary' ? { input_tokens: 4321, output_tokens: 765 } : undefined);
@@ -67,6 +72,7 @@ test('TBS2. 다른 기기 세션 + 긴 스레드 — 같은 러너(Claude SDK) �
   const r = await chat(ws, 'a', '보고서 이어서', 'old-sess');
   assert.equal(r.reply, '턴 답');
   assert.equal(reqs.filter((q) => q.kind === 'summary').length, 1, '요약 1회');
+  assert.equal(reqs.filter((q) => q.kind === 'title').length, 0, 'SDK 자동 제목 생성 요청 없음(요약 원샷·턴 둘 다 title 옵션)');
   const turn = reqs.find((q) => q.kind === 'turn');
   assert.ok(turn.messages.includes('요약-SDK 결정은 금요일 마감'), '첫 글에 요약');
   assert.ok(turn.messages.includes('m299|'), '최근 대화');

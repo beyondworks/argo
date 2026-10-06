@@ -45,7 +45,7 @@ async function update(wsId, id, mutate) {
 }
 
 /** 경쟁 프롬프트 래핑 — 결재/외부 발신 없이 "완성된 시안 1건"으로 답하게 한다(비교 가능해야 하므로). */
-const wrap = (prompt) => `사장이 같은 과제로 여러 시안을 동시에 받아 비교 중이다(경쟁 시안). 네 답변은 다른 시안과 나란히 비교된다.
+const wrap = (prompt) => `사용자가 같은 과제로 여러 시안을 동시에 받아 비교 중이다(경쟁 시안). 네 답변은 다른 시안과 나란히 비교된다.
 너의 전문성이 드러나는 **완성된 시안 1건**을 지금 이 답변 안에 제출하라 — 되묻지 말고, 합리적으로 가정하고 만들어라.
 결재가 필요한 행동(외부 발신·설정 변경)은 하지 마라. 시안 자체가 답이다.
 
@@ -85,7 +85,7 @@ export async function startCompetition(wsId, prompt, spec) {
   const agents = await listAgents(wsId);
   const entrants = uniqItems.map((it, i) => {
     const a = agents.find((x) => x.slug === it.slug);
-    if (!a) throw new Error(`크루를 찾을 수 없습니다: ${it.slug}`);
+    if (!a) throw new Error(`에이전트를 찾을 수 없습니다: ${it.slug}`);
     const modelLabel = it.model ? (effectiveModels(it.runner).find((m) => m.id === it.model)?.label ?? it.model) : null;
     return { key: `e${i}`, slug: a.slug, name: a.name, role: a.role ?? '', runner: it.runner, model: it.model, modelLabel,
       status: 'running', reply: null, error: null, ms: null, sessionId: null };
