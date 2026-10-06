@@ -301,7 +301,8 @@ test('유휴 이벤트 조회는 시간이 지나도 쓰기 0(검수 M-1), 결�
 });
 
 test('D5 — 전달된 글(meta.relay)은 getUpdates에 relayed_by가 실리고, 일반 글에는 없다', { skip }, () => {
-  const relayed = last(asUser(U.member, `insert into public.msgr_messages(channel_id, author_kind, author_user_id, body, mentions, meta) values ('${PUB}', 'user', '${U.member}', 'relay', '[{"kind":"crew","id":"${B.crew_id}"}]', '{"relay":{"role":"to","via_name":"효원 - v"}}') returning id`));
+  // 전달 글은 서버(msgr_dm_relay 정의자 함수)만 넣는다 — 사람 세션의 RLS insert로는 meta.relay를 실을 수 없다(20261006160000). 시드는 서버 경로(슈퍼유저)로.
+  const relayed = last(sql(`insert into public.msgr_messages(channel_id, author_kind, author_user_id, body, mentions, meta) values ('${PUB}', 'user', '${U.member}', 'relay', '[{"kind":"crew","id":"${B.crew_id}"}]', '{"relay":{"role":"to","via_name":"효원 - v"}}') returning id`));
   const plain = post(B, 'plain');
   const ups = JSON.parse(asAnon(`select coalesce(jsonb_agg(x), '[]') from public.msgr_bot_updates('${B.token}') x`)).map((u) => u.message);
   assert.equal(ups.find((x) => x.message_id === Number(relayed))?.relayed_by, '효원 - v');
