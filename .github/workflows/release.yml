@@ -315,6 +315,15 @@ jobs:
           ls -la "$DMG_DIR"
           echo "✓ DMG 공증·스테이플 완료 — 재서명·공증·스테이플 전 산출물 준비됨"
 
+      # argo 명령 단독 설치 자산(맥·윈도우, 2026-10-06) — node를 담고 해시 파일을 같이 낸다. 설치는 install.sh(맥 갈래)·install.ps1.
+      # 공개 Supabase 설정은 서버 타르볼과 같은 CLI 전용 이름으로만 넘긴다(앱 번들 빌드에 섞이지 않게 이 단계에서만).
+      - name: Stage argo CLI standalone asset (macOS·Windows)
+        shell: bash
+        env:
+          ARGO_CLI_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          ARGO_CLI_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+        run: node scripts/stage-cli-dist.mjs dist
+
       - name: Collect installers
         shell: bash
         run: |
@@ -379,8 +388,8 @@ jobs:
           EXPECT_CLI_PUBLIC: '1'
         run: |
           node scripts/server-tarball-smoke.mjs "dist-server/argo-server-$(node -p 'require("./package.json").version')-linux-x64.tar.gz"
-      - name: Attach install script
-        run: cp scripts/install.sh dist-server/install.sh
+      - name: Attach install scripts
+        run: cp scripts/install.sh dist-server/install.sh && cp scripts/install.ps1 dist-server/install.ps1
       # 원격 모델 카탈로그 오버레이(src/runners/catalog-remote.mjs) — 릴리스 자산 model-catalog.json.
       # 첫 발행은 빈 오버레이(코드 목록 그대로). 벤더가 모델을 바꾸면 이 파일만 고쳐 Latest 자산으로
       # 다시 올린다(앱 발행 불필요 — 전 기기 20분 TTL 안에 반영). 발행 드릴의 `*/*` 글롭이 함께 올린다.
@@ -392,6 +401,7 @@ jobs:
           path: |
             dist-server/*.tar.gz
             dist-server/install.sh
+            dist-server/install.ps1
             dist-server/model-catalog.json
           if-no-files-found: error
           retention-days: 3
@@ -438,6 +448,11 @@ jobs:
             | **Windows 10+** | [argo-windows-setup.exe](https://github.com/beyondworks/argo-agent/releases/download/${{ github.ref_name }}/argo-windows-setup.exe) |
 
             기존 설치 사용자는 앱 안에서: **설정 → 기기 → 앱 업데이트**. / Existing users: **Settings → Devices → App updates**.
+
+            ## 터미널 argo 명령만 설치 / Terminal-only argo CLI
+            - **macOS·Linux**: `curl -fsSL https://github.com/beyondworks/argo-agent/releases/latest/download/install.sh | bash`
+            - **Windows (PowerShell)**: `irm https://github.com/beyondworks/argo-agent/releases/latest/download/install.ps1 | iex`
+            - 데스크톱 앱을 쓰면 앱 설정에서 등록하세요(같은 데이터). 제거: `argo uninstall` / With the desktop app, register it in app settings. Remove with `argo uninstall`.
 
             ## 설치 — 첫 실행 안내 / First-run notes
             - **macOS**: Developer ID 서명·Apple 공증을 거친 설치본입니다. / Developer ID signed and Apple notarized.

@@ -12,14 +12,17 @@ for (const product of ['argo', 'argo-messenger']) {
     const put = (name, value = 'fixture') => writeFileSync(join(dir, name), value);
     const installers = ['macos-apple-silicon.dmg', 'macos-intel.dmg', 'windows-setup.exe'].map(n => `${product}-${n}`);
     const updates = [`${product}-aarch64-apple-darwin.app.tar.gz`, `${product}-x86_64-apple-darwin.app.tar.gz`, `${product}_1.2.3_x64-setup.exe`];
-    for (const file of [...installers, ...updates, ...updates.map(n => `${n}.sig`), 'argo-server-1.2.3-linux-x64.tar.gz', 'install.sh']) put(file);
+    // argo 명령 단독 설치 자산(맥·윈도우) + 해시 파일 — argo만(메신저는 없음)
+    const cli = product === 'argo' ? ['macos-arm64.tar.gz', 'macos-x64.tar.gz', 'windows-x64.zip'].map(n => `argo-cli-1.2.3-${n}`) : [];
+    for (const file of [...installers, ...updates, ...updates.map(n => `${n}.sig`), 'argo-server-1.2.3-linux-x64.tar.gz', 'install.sh', 'install.ps1', ...cli]) put(file);
+    for (const file of cli) put(`${file}.sha256`, `${'a'.repeat(64)}  ${file}\n`);
     const catalog = JSON.stringify({ schema: 1, runners: { openrouter: { add: [], retire: [], alias: {} } } });
     put('model-catalog.json', catalog);
     const result = releaseManifest(dir, product, '1.2.3');
     assert.equal(Object.keys(result.platforms).length, 3);
     assert.equal(result.platforms['windows-x86_64'].url, `https://github.com/beyondworks/${product === 'argo' ? 'argo-agent' : product}/releases/download/v1.2.3/${updates[2]}`);
     assert.throws(() => releaseManifest(dir, product, '1.2.4'));
-    for (const file of [...installers, ...updates, ...updates.map(n => `${n}.sig`), ...(product === 'argo' ? ['argo-server-1.2.3-linux-x64.tar.gz', 'install.sh'] : [])]) {
+    for (const file of [...installers, ...updates, ...updates.map(n => `${n}.sig`), ...(product === 'argo' ? ['argo-server-1.2.3-linux-x64.tar.gz', 'install.sh', 'install.ps1', ...cli] : [])]) {
       unlinkSync(join(dir, file));
       assert.throws(() => releaseManifest(dir, product, '1.2.3'), file);
       put(file, '');
@@ -34,6 +37,13 @@ for (const product of ['argo', 'argo-messenger']) {
         assert.throws(() => releaseManifest(dir, product, '1.2.3'), `catalog: ${invalid}`);
       }
       put('model-catalog.json', catalog);
+      for (const file of cli) { // 해시 파일이 없거나 형식이 다르면 막는다 — 설치 스크립트가 해시 확인에 실패해 설치가 안 된다
+        unlinkSync(join(dir, `${file}.sha256`));
+        assert.throws(() => releaseManifest(dir, product, '1.2.3'), `${file}.sha256`);
+        put(`${file}.sha256`, 'not a checksum');
+        assert.throws(() => releaseManifest(dir, product, '1.2.3'), /Bad checksum file/);
+        put(`${file}.sha256`, `${'a'.repeat(64)}  ${file}\n`);
+      }
     }
     put(`${updates[0]}.sig`, ' \n');
     assert.throws(() => releaseManifest(dir, product, '1.2.3'), /Blank updater signature/);
@@ -42,7 +52,8 @@ for (const product of ['argo', 'argo-messenger']) {
 test('per-platform collection requires its signed updater, without other platform files', t => {
   const dir = mkdtempSync(join(tmpdir(), 'argo-release-platform-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
-  for (const file of ['argo-macos-intel.dmg', 'argo-x86_64-apple-darwin.app.tar.gz', 'argo-x86_64-apple-darwin.app.tar.gz.sig']) writeFileSync(join(dir, file), 'fixture');
+  for (const file of ['argo-macos-intel.dmg', 'argo-x86_64-apple-darwin.app.tar.gz', 'argo-x86_64-apple-darwin.app.tar.gz.sig', 'argo-cli-1.2.3-macos-x64.tar.gz']) writeFileSync(join(dir, file), 'fixture');
+  writeFileSync(join(dir, 'argo-cli-1.2.3-macos-x64.tar.gz.sha256'), `${'b'.repeat(64)}  argo-cli-1.2.3-macos-x64.tar.gz\n`);
   assert.deepEqual(Object.keys(releaseManifest(dir, 'argo', '1.2.3', 'x86_64-apple-darwin').platforms), ['darwin-x86_64']);
   assert.throws(() => releaseManifest(dir, 'argo', '1.2.3'));
 });

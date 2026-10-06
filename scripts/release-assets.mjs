@@ -16,14 +16,16 @@ export function releaseManifest(dir, product, version, target) {
   const base = `https://github.com/beyondworks/${repo}/releases/download/v${version}`;
   const platforms = {};
   const targets = [
-    ['aarch64-apple-darwin', 'darwin-aarch64', 'macos-apple-silicon.dmg'],
-    ['x86_64-apple-darwin', 'darwin-x86_64', 'macos-intel.dmg'],
-    ['x86_64-pc-windows-msvc', 'windows-x86_64', 'windows-setup.exe'],
+    ['aarch64-apple-darwin', 'darwin-aarch64', 'macos-apple-silicon.dmg', 'macos-arm64.tar.gz'],
+    ['x86_64-apple-darwin', 'darwin-x86_64', 'macos-intel.dmg', 'macos-x64.tar.gz'],
+    ['x86_64-pc-windows-msvc', 'windows-x86_64', 'windows-setup.exe', 'windows-x64.zip'],
   ];
   assert(!target || targets.some(t => t[0] === target), 'Unknown release target');
-  for (const [rust, platform, installer] of targets) {
+  for (const [rust, platform, installer, cli] of targets) {
     if (target && target !== rust) continue;
     nonempty(`${product}-${installer}`);
+    // argo 명령 단독 설치 자산 + 해시(scripts/stage-cli-dist.mjs) — install.sh 맥 갈래·install.ps1이 이 이름으로 고른다
+    if (product === 'argo') { const sum = readFileSync(join(dir, nonempty(`argo-cli-${version}-${cli}.sha256`)), 'utf8'); nonempty(`argo-cli-${version}-${cli}`); assert(/^[0-9a-f]{64}  argo-cli-/.test(sum), `Bad checksum file: argo-cli-${version}-${cli}.sha256`); }
     const name = platform.startsWith('darwin')
       ? nonempty(`${product}-${rust}.app.tar.gz`)
       : pick(new RegExp(`^${product}_${version.replaceAll('.', '\\.')}_(?:x64)-setup\\.exe$`));
@@ -34,6 +36,7 @@ export function releaseManifest(dir, product, version, target) {
   if (!target && product === 'argo') {
     nonempty(`argo-server-${version}-linux-x64.tar.gz`);
     nonempty('install.sh');
+    nonempty('install.ps1');
     const catalog = JSON.parse(readFileSync(join(dir, nonempty('model-catalog.json')), 'utf8'));
     assert(!Array.isArray(catalog?.runners) && validateOverlay(catalog), 'Invalid model-catalog.json schema');
   }
