@@ -59,7 +59,7 @@
     $cliHome = if ($env:ARGO_CLI_HOME) { $env:ARGO_CLI_HOME } else { Join-Path $env:USERPROFILE '.argo' }
     $busy = "const fs=require('fs'),path=require('path');const root=process.argv[1];const ls=d=>{try{return fs.readdirSync(d,{withFileTypes:true})}catch{return[]}};for(const c of ls(root).filter(e=>e.isDirectory()&&!e.name.startsWith('.')))for(const f of ls(path.join(root,c.name,'chats')).filter(e=>e.isFile()&&e.name.endsWith('.status.json'))){try{const s=JSON.parse(fs.readFileSync(path.join(root,c.name,'chats',f.name),'utf8'));if(s.ts&&Date.now()-s.ts<120000)process.exit(3)}catch{}}"
     & $node -e $busy (Join-Path $cliHome 'cli-workspaces')
-    if ($LASTEXITCODE -eq 3) { Fail "$([regex]::Unescape('\ud06c\ub8e8\uac00\u0020\ub2f5\ud558\ub294\u0020\uc911\uc785\ub2c8\ub2e4\u0020\u2014\u0020\ub05d\ub09c\u0020\ub4a4\u0020\ub2e4\uc2dc\u0020\uc124\uce58\ud558\uc138\uc694'))" }
+    if ($LASTEXITCODE -eq 3) { Fail "$([regex]::Unescape('\uc5d0\uc774\uc804\ud2b8\uac00\u0020\ub2f5\ud558\ub294\u0020\uc911\uc785\ub2c8\ub2e4\u0020\u2014\u0020\ub05d\ub09c\u0020\ub4a4\u0020\ub2e4\uc2dc\u0020\uc124\uce58\ud558\uc138\uc694'))" }
 
     $changed = $true
     if ($hadApp) {

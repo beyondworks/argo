@@ -67,11 +67,11 @@
     if (-not (Test-Path -LiteralPath $node) -or -not (Test-Path -LiteralPath (Join-Path $cand 'bin\argo.mjs'))) { Fail "자산 구조가 예상과 다릅니다(argo-cli\node.exe·bin\argo.mjs 부재)" }
     $version = (Get-Content -LiteralPath (Join-Path $cand 'package.json') -Raw | ConvertFrom-Json).version
 
-    # 3) 크루가 답하는 중이면 교체하지 않는다(맥·리눅스와 같은 규칙)
+    # 3) 에이전트가 답하는 중이면 교체하지 않는다(맥·리눅스와 같은 규칙)
     $cliHome = if ($env:ARGO_CLI_HOME) { $env:ARGO_CLI_HOME } else { Join-Path $env:USERPROFILE '.argo' }
     $busy = "const fs=require('fs'),path=require('path');const root=process.argv[1];const ls=d=>{try{return fs.readdirSync(d,{withFileTypes:true})}catch{return[]}};for(const c of ls(root).filter(e=>e.isDirectory()&&!e.name.startsWith('.')))for(const f of ls(path.join(root,c.name,'chats')).filter(e=>e.isFile()&&e.name.endsWith('.status.json'))){try{const s=JSON.parse(fs.readFileSync(path.join(root,c.name,'chats',f.name),'utf8'));if(s.ts&&Date.now()-s.ts<120000)process.exit(3)}catch{}}"
     & $node -e $busy (Join-Path $cliHome 'cli-workspaces')
-    if ($LASTEXITCODE -eq 3) { Fail "크루가 답하는 중입니다 — 끝난 뒤 다시 설치하세요" }
+    if ($LASTEXITCODE -eq 3) { Fail "에이전트가 답하는 중입니다 — 끝난 뒤 다시 설치하세요" }
 
     # 4) 교체 — 실행 중인 argo가 파일을 잡고 있으면 옮기지 못한다
     $changed = $true

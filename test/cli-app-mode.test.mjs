@@ -4,7 +4,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -199,6 +199,24 @@ test('앱 모드 대화 — 앱 폴더에 기록되고, 다른 프로세스가 �
   assert.notEqual(busy.status, 0);
   assert.match(busy.stderr + busy.stdout, /앱에서 이 에이전트가 답하는 중입니다/);
   assert.equal(readFileSync(f, 'utf8'), before, '턴을 시작하지 않았다(대화 파일 그대로)');
+});
+
+test('argo --version·-v·version — 버전만 출력하고 0으로 끝난다(설정·데이터 파일을 만들지 않는다)', async () => {
+  const pkg = JSON.parse(readFileSync(join(REPO, 'package.json'), 'utf8'));
+  for (const a of ['--version', '-v', 'version']) { const r = await argo([a]); assert.equal(r.status, 0, r.stderr); assert.equal(r.stdout.trim(), `argo ${pkg.version}`); }
+});
+
+// KB 점검(10/6): 한 번 실행(argo chat <에이전트> <지시>)에서 턴이 실패해도 종료 코드가 0이라 스크립트가 실패를 알 수 없었다 — 실패는 1
+test('한 번 실행 — 턴이 실패하면 종료 코드 1(성공은 0), 대화에는 실패로 남는다', { timeout: 180_000 }, async () => {
+  rmSync(join(ROOT, 'app-co', 'chats', 'nova.status.json'), { force: true }); // 앞 시험이 남긴 '앱에서 답하는 중' 표시
+  const bad = http.createServer((req, res) => { req.on('data', () => {}); req.on('end', () => { res.writeHead(400, { 'content-type': 'application/json' }); res.end(JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: 'fixture: bad request' } })); }); });
+  await new Promise((r) => bad.listen(0, '127.0.0.1', r));
+  try {
+    const r = await argo(['chat', 'nova', '실패할 지시'], { ARGO_CLAUDE_BASE_URL: `http://127.0.0.1:${bad.address().port}` });
+    assert.equal(r.status, 1, `${r.stdout}\n${r.stderr}`);
+    const last = JSON.parse(readFileSync(join(ROOT, 'app-co', 'chats', 'nova.json'), 'utf8')).messages.at(-1);
+    assert.equal(last.text, '실패할 지시'); assert.ok(last.failed && !last.awaiting);
+  } finally { bad.close(); }
 });
 
 test('앱 모드에서 회사가 없으면 40초를 기다리거나 새 회사를 권하지 않고 앱을 먼저 열라고 안내한다 — 계정 세션이 있고 앱이 아직 회사를 받지 못한 경우(검토 L-h)', async () => {

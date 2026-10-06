@@ -95,14 +95,14 @@ install_macos() {
   CANDIDATE="$TMP/argo-cli"
   [ -x "$CANDIDATE/node" ] && [ -f "$CANDIDATE/bin/argo.mjs" ] || die "자산 구조가 예상과 다릅니다(argo-cli/node·bin/argo.mjs 부재)"
   EXPECTED_VERSION=$("$CANDIDATE/node" -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1])).version||"")' "$CANDIDATE/package.json")
-  # 크루가 답하는 중이면 교체하지 않는다(리눅스 계정 모드와 같은 규칙)
+  # 에이전트가 답하는 중이면 교체하지 않는다(리눅스 계정 모드와 같은 규칙)
   "$CANDIDATE/node" - "${ARGO_CLI_HOME:-$HOME/.argo}/cli-workspaces" <<'NODE'
 const fs = require('fs'), path = require('path');
 const root = process.argv[2];
 const entries = dir => { try { return fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { if (e.code === 'ENOENT') return []; throw e; } };
 for (const company of entries(root).filter(e => e.isDirectory() && !e.name.startsWith('.'))) {
   for (const file of entries(path.join(root, company.name, 'chats')).filter(e => e.isFile() && e.name.endsWith('.status.json'))) {
-    try { const s = JSON.parse(fs.readFileSync(path.join(root, company.name, 'chats', file.name), 'utf8')); if (s.ts && Date.now() - s.ts < 120000) { console.error('[argo] 크루가 답하는 중입니다 — 끝난 뒤 다시 설치하세요'); process.exit(1); } } catch { /* 잔재 */ }
+    try { const s = JSON.parse(fs.readFileSync(path.join(root, company.name, 'chats', file.name), 'utf8')); if (s.ts && Date.now() - s.ts < 120000) { console.error('[argo] 에이전트가 답하는 중입니다 — 끝난 뒤 다시 설치하세요'); process.exit(1); } } catch { /* 잔재 */ }
   }
 }
 NODE
@@ -251,7 +251,7 @@ const root = process.argv[2];
 const entries = dir => { try { return fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { if (e.code === 'ENOENT') return []; throw e; } };
 for (const company of entries(root).filter(e => e.isDirectory() && !e.name.startsWith('.'))) {
   for (const file of entries(path.join(root, company.name, 'chats')).filter(e => e.isFile() && e.name.endsWith('.status.json'))) {
-    try { const s = JSON.parse(fs.readFileSync(path.join(root, company.name, 'chats', file.name), 'utf8')); if (s.ts && Date.now() - s.ts < 120000) { console.error('[argo] 크루가 답하는 중입니다 — 끝난 뒤 다시 설치하세요'); process.exit(1); } } catch { /* 잔재 */ }
+    try { const s = JSON.parse(fs.readFileSync(path.join(root, company.name, 'chats', file.name), 'utf8')); if (s.ts && Date.now() - s.ts < 120000) { console.error('[argo] 에이전트가 답하는 중입니다 — 끝난 뒤 다시 설치하세요'); process.exit(1); } } catch { /* 잔재 */ }
   }
 }
 NODE
@@ -300,7 +300,7 @@ SHIM
     case ":$PATH:" in *":$SHIM_DIR:"*) ;; *) say "PATH에 $SHIM_DIR 이 없습니다 — ~/.bashrc 등에 추가하세요: export PATH=\"\$PATH:\$HOME/.local/bin\"" ;; esac
   fi
   say "다음: $RUN_CMD  (로그인 — 서버에 브라우저가 없으면 안내에 나오는 ssh -L 명령을 내 PC에서 먼저 실행)"
-  say "그다음: $RUN_CMD service install  (재부팅에도 켜져 메신저·예약 작업에 크루가 답합니다)"
+  say "그다음: $RUN_CMD service install  (재부팅에도 켜져 메신저·예약 작업에 에이전트가 답합니다)"
   say "로그인 없는 로컬 웹 서버가 필요하면: 이 스크립트를 --local로 실행"
   exit 0
 fi
