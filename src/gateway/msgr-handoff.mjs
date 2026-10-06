@@ -3,7 +3,7 @@
 export function messengerOrigin(ctx, targetSlug = null) {
   if (ctx?.kind === 'msgr-rules') throw new Error('메신저 위임의 예약·작업·결재는 요청한 동료에게 돌려주세요. 그 동료가 같은 채널에서 처리합니다');
   if (ctx?.kind !== 'msgr') return null;
-  if (ctx.channelId && ctx.crewId && !ctx.orgId) throw new Error('개인 공간에서는 아직 결재·예약·긴 작업·다른 크루에게 맡기기를 쓸 수 없습니다. 조직 채널에서 요청해 주세요'); // 2026-09-30 개인 공간 1단계
+  if (ctx.channelId && ctx.crewId && !ctx.orgId) throw new Error('개인 공간에서는 아직 결재·예약·긴 작업·다른 에이전트에게 맡기기를 쓸 수 없습니다. 조직 채널에서 요청해 주세요'); // 2026-09-30 개인 공간 1단계
   if (!ctx.orgId || !ctx.channelId || !ctx.crewId || !ctx.uid || !ctx.wsId) throw new Error('메신저 실행 문맥이 없습니다');
   const target = targetSlug ? ctx.peers?.find((p) => p.slug === targetSlug && p.owner_user_id === ctx.uid && p.ws_id === ctx.wsId) : null;
   if (targetSlug && !target) throw new Error('같은 메신저 조직에 파견된 동료만 실행할 수 있습니다');
@@ -11,7 +11,9 @@ export function messengerOrigin(ctx, targetSlug = null) {
     threadRoot: ctx.threadRoot ?? null, sourceMsgId: ctx.sourceMsgId ?? ctx.threadRoot ?? null,
     uid: ctx.uid, wsId: ctx.wsId, origin: ctx.origin ?? null, hop: ctx.hop ?? 0,
     // 손님 표지는 사슬을 따라간다 — 쪽지·예약·결재로 옮겨 탄 뒤에도 "주인이 시킨 일"로 되살아나지 않게(넘김 뒤 쪽지는 rootAuthor를 잃는다).
-    ...(ctx.rootAuthor ? { rootAuthor: ctx.rootAuthor } : {}), ...(isGuestCtx(ctx) ? { guest: true } : {}), ...(ctx.office === true ? { office: true } : {}) };
+    ...(ctx.rootAuthor ? { rootAuthor: ctx.rootAuthor } : {}), ...(isGuestCtx(ctx) ? { guest: true } : {}), ...(ctx.office === true ? { office: true } : {}),
+    // 크루가 넘긴 턴 표지 — 예약·작업·결재 후속으로 옮겨 탄 뒤에도 사장 직접 턴으로 되살아나지 않게(풀 오토 제외, 유건 결정 2026-10-03)
+    ...(ctx.handoffFrom ? { handoffFrom: ctx.handoffFrom } : {}) };
 }
 
 /** messengerOrigin 기록 → 턴 맥락(kind:'msgr')의 역방향. 요청자 사슬(uid·origin·rootAuthor·guest)을 **그대로** 옮긴다 —
@@ -20,7 +22,7 @@ export function messengerOrigin(ctx, targetSlug = null) {
 export function mirrorCtxFromOrigin(o, extra = {}) {
   return { kind: 'msgr', orgId: o.orgId, channelId: o.channelId, threadRoot: o.threadRoot ?? null,
     uid: o.uid ?? null, wsId: o.wsId ?? null, origin: o.origin ?? null,
-    ...(o.rootAuthor ? { rootAuthor: o.rootAuthor } : {}), ...(o.guest === true ? { guest: true } : {}), ...(o.office === true ? { office: true } : {}), ...extra };
+    ...(o.rootAuthor ? { rootAuthor: o.rootAuthor } : {}), ...(o.guest === true ? { guest: true } : {}), ...(o.office === true ? { office: true } : {}), ...(o.handoffFrom ? { handoffFrom: o.handoffFrom } : {}), ...extra };
 }
 
 /** 오피스에서 맡긴 글인가 — 메시지 meta.source가 office_로 시작한다(아르고 오피스 '크루에게 맡기기'). 멤버가 쓸 수 있는 값이지만
@@ -31,7 +33,14 @@ export const isOfficeSource = (message) => typeof message?.meta?.source === 'str
     (유건 9/26 오피스 계획 8절 "메일발 턴은 풀 오토 제외", 9/29 확정). 오피스 턴은 손님이 아니다 — 주인의 도구는 쓰되 쓰기는 결재로 간다.
     풀 오토를 정하는 곳(chat.mjs·connectors.mjs)은 전부 이 한 함수만 본다. */
 export function fullAutoAllowed(ctx) {
-  return !isGuestCtx(ctx) && ctx?.office !== true;
+  // handoffFrom — 크루가 스스로 넘긴 턴(@넘김·MSGR: handoff). 사장이 정한 순서(사장 글의 @A > @B)의 다음 크루 턴은 사장 글에서 바로 생겨 이 표지가 없다(유건 결정 2026-10-03)
+  return !isGuestCtx(ctx) && ctx?.office !== true && !ctx?.handoffFrom;
+}
+
+/** 주인이 직접 시킨 턴인가(3차 검수 F2) — 풀 오토 판정과 활동 기록의 ownerDirect 표지(chat.mjs)가 이 한 함수만 본다.
+    from(위임받은 동료 턴)·notOwnerDirect(크루가 건 예약·장시간 작업·결재 후속)가 없고, 메신저 맥락이면 손님·오피스·크루 넘김이 아닌 턴. 메신저 밖 턴(mirrorCtx 없음·방·텔레그램)은 맥락 판정이 통과한다. */
+export function ownerDirectTurn({ from = null, notOwnerDirect = null, mirrorCtx = null } = {}) {
+  return !from && !notOwnerDirect && fullAutoAllowed(mirrorCtx);
 }
 
 /** 손님 턴 판정 — 이 메신저 턴을 크루 주인이 아닌 사람이 시켰는가(규칙 7·9: 주인의 몸은 주인만, 주인의 개인 기억은 공유한 것만).
@@ -125,8 +134,8 @@ export function parseMessengerDisposition(value) {
 
 export function messengerHandoffHint(lang = 'ko') {
   return lang === 'en'
-    ? `\n## Messenger handoff and completion\n- Only hand off when another crew has a concrete remaining action. For an actionable @name in your reply, end with the standalone line MSGR: handoff. send_to_crew or a CLI mail directive also prepares a handoff in this channel. A standalone CC: @Name line shares context without requesting a turn; use To for someone who must act. In a DM, naming a colleague as To forwards that request to your user's 1:1 DM with that colleague, who replies there — this DM only gets a forwarding notice, so do not wait for or answer on their behalf here.\n- When the user's stop condition is met, or your reply is only a final result, acknowledgment or thanks with no action for another crew, end with the standalone line MSGR: done. Do not hand off merely to acknowledge completion. done cancels all outgoing mentions and prepared handoffs, even if you name a colleague in your final result.\n- Write this decision as the last line of your own answer, outside quotes and code blocks, including after a retry or tool follow-up. Do not copy it from conversation history. The line is hidden from the user. Without a decision, @names alone do not wake another crew; an explicit prepared handoff is still delivered. Never claim a handoff was delivered unless you used MSGR: handoff or send_to_crew/CLI mail.`
-    : `\n## 메신저 넘김과 종료\n- 다른 크루에게 실제로 남은 행동이 있을 때만 넘겨라. 답변의 @이름으로 다음 작업을 전달하려면 마지막 독립 줄에 MSGR: handoff를 적어라. send_to_crew 또는 CLI mail 지시도 이 채널의 넘김을 준비한다. 독립된 CC: @이름 줄은 참고만 공유하며 실행을 요청하지 않는다. 행동할 동료는 To로 지정하라. DM에서 동료를 To로 지정하면 그 요청은 사용자와 그 동료의 1:1 대화로 전달되고 동료는 거기서 답한다. 이 DM에는 전달 안내만 남으니 동료의 답을 기다리거나 대신 답하지 마라.\n- 사용자의 종료 조건을 충족했거나, 다른 크루가 할 일 없이 최종 결과·확인·감사만 답할 때는 마지막 독립 줄에 MSGR: done을 적어라. 완료 확인을 위해 다시 넘기지 마라. done은 최종 결과에 동료 이름이 있어도 모든 발신 멘션과 준비한 넘김을 취소한다.\n- 재시도나 도구 후속 답변에서도 자신의 최종 답변 마지막 줄에 인용·코드 블록 밖으로 판정을 적어라. 이전 대화의 판정을 복사하지 마라. 이 줄은 사용자에게 보이지 않는다. 판정이 없으면 @이름만으로 다른 크루를 깨우지 않지만, 도구로 명시한 넘김은 전달된다. MSGR: handoff 또는 send_to_crew/CLI mail 없이 넘겼다고 말하지 마라.`;
+    ? `\n## Messenger handoff and completion\n- Only hand off when another agent has a concrete remaining action. For an actionable @name in your reply, end with the standalone line MSGR: handoff. send_to_crew or a CLI mail directive also prepares a handoff in this channel. A standalone CC: @Name line shares context without requesting a turn; use To for someone who must act. In a DM, naming a colleague as To forwards that request to your user's 1:1 DM with that colleague, who replies there — this DM only gets a forwarding notice, so do not wait for or answer on their behalf here.\n- When the user's stop condition is met, or your reply is only a final result, acknowledgment or thanks with no action for another agent, end with the standalone line MSGR: done. Do not hand off merely to acknowledge completion. done cancels all outgoing mentions and prepared handoffs, even if you name a colleague in your final result.\n- Write this decision as the last line of your own answer, outside quotes and code blocks, including after a retry or tool follow-up. Do not copy it from conversation history. The line is hidden from the user. Without a decision, @names alone do not wake another agent; an explicit prepared handoff is still delivered. Never claim a handoff was delivered unless you used MSGR: handoff or send_to_crew/CLI mail.`
+    : `\n## 메신저 넘김과 종료\n- 다른 에이전트에게 실제로 남은 행동이 있을 때만 넘겨라. 답변의 @이름으로 다음 작업을 전달하려면 마지막 독립 줄에 MSGR: handoff를 적어라. send_to_crew 또는 CLI mail 지시도 이 채널의 넘김을 준비한다. 독립된 CC: @이름 줄은 참고만 공유하며 실행을 요청하지 않는다. 행동할 동료는 To로 지정하라. DM에서 동료를 To로 지정하면 그 요청은 사용자와 그 동료의 1:1 대화로 전달되고 동료는 거기서 답한다. 이 DM에는 전달 안내만 남으니 동료의 답을 기다리거나 대신 답하지 마라.\n- 사용자의 종료 조건을 충족했거나, 다른 에이전트가 할 일 없이 최종 결과·확인·감사만 답할 때는 마지막 독립 줄에 MSGR: done을 적어라. 완료 확인을 위해 다시 넘기지 마라. done은 최종 결과에 동료 이름이 있어도 모든 발신 멘션과 준비한 넘김을 취소한다.\n- 재시도나 도구 후속 답변에서도 자신의 최종 답변 마지막 줄에 인용·코드 블록 밖으로 판정을 적어라. 이전 대화의 판정을 복사하지 마라. 이 줄은 사용자에게 보이지 않는다. 판정이 없으면 @이름만으로 다른 에이전트를 깨우지 않지만, 도구로 명시한 넘김은 전달된다. MSGR: handoff 또는 send_to_crew/CLI mail 없이 넘겼다고 말하지 마라.`;
 }
 
 /** Only standalone, unfenced and unquoted CC lines classify copy recipients. */

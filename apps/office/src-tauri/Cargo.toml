@@ -18,3 +18,4 @@ tauri-plugin-dialog = "2"
 tauri-plugin-deep-link = "2"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 tauri-plugin-window-state = "2"
+tauri-plugin-notification = "2" # 새 메일 OS 알림(15차) — 웹 Notification API를 그대로 채워 넣는다(오피스가 열려 있을 때만)

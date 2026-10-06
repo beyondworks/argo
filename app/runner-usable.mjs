@@ -1,5 +1,6 @@
 // 러너 가용 판정(순수) — runner-connect.jsx(온보딩 게이트·데크 배너·홈 안내)가 쓰고,
 // node 테스트가 직접 임포트할 수 있도록 JSX 없는 모듈로 분리(test/runner-gate.test.mjs).
+import { isAbortedTurnEvent } from '../src/legacy-terms.mjs'; // 중단 판정 — failure-digest와 같은 술어(옛 중단 문자열 포함)
 
 /** 러너 상태 dict(runnerStatus 응답)에서 쓸 수 있는 러너가 하나라도 있는가.
     판정 = **사장이 명시적으로 연결한 자격(유효)뿐** — 호스트 로그인 감지(hostAuthed)는 가용이 아니다
@@ -51,7 +52,7 @@ export function lastTurnByRunner(events) {
   const by = {};
   for (const e of events ?? []) {
     if (e?.type !== 'turn' || !e.runner || (e.runner in by)) continue;
-    by[e.runner] = { ok: e.ok !== false, aborted: e.aborted === true || e.error === '사장 지시로 중단' };
+    by[e.runner] = { ok: e.ok !== false, aborted: isAbortedTurnEvent(e) };
   }
   return by;
 }

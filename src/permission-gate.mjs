@@ -282,6 +282,7 @@ const WS_DOT_FILES = new Set([
   '.sessions', // 네이티브 엔진 전사(<ws>/.sessions/native/<slug>.json — 도구 출력·대화 원문). 크루가 자기 전사를 고치면 문맥 위조·타 크루 전사 열람(하네스 통일 P-A)
   '.tg-claims-state.json', '.tg-claims', // 텔레그램 토큰 클레임 상태(sync.mjs) — 크루가 mine을 심으면 두 기기가 같은 봇을 동시 폴링(getUpdates Conflict)
   '.msgr-journal', // 팀 메신저 채널 기억의 PC 사본(memory.mjs relocateOrgJournals) — 다른 채널 턴의 셸로 읽히면 채널 경계가 샌다(2026-09-24)
+  '.msgr-sessions.json', // 채널 세션 장부(thread.mjs — 기억 회수용 세션 id 목록, 2026-10-03). 셸로 고쳐지면 회수가 전사를 놓친다
 ]);
 const BASH_GUARDED = [...WS_CONTROL_FILES, ...WS_LEDGER_FILES, ...WS_DOT_FILES];
 // 경계 클래스에 리다이렉트·쉼표(<>,) 포함 — `>chats/b.json`(공백 없는 리다이렉트)이 위조 명령의 가장
@@ -435,8 +436,8 @@ const FORBIDDEN_MSG = {
   // 크루는 막혔을 때 이 텍스트만 읽으므로 "그 목록엔 없던데"로 재시도하게 된다(분리 검수 MEDIUM).
   // ⚠ 없어진 도구를 지시하지 않는다 — request_capability는 전권 전환으로 제거됐다(분리 검수 2026-07-30:
   // denyHard마다 크루가 이 문구를 읽으므로, 죽은 도구 지시는 "그 도구가 없는데요" 혼란을 양산한다).
-  ko: 'Argo 앱 자체(설치 폴더·서버 코드)와 다른 회사의 데이터, 그리고 이 회사의 설정·자격·결재·원장 파일과 크루 카드(agents/)·대화 정본(chats/)은 보호 구역이다. 회사 폴더 바로 아래에 있는 설정 파일들과 `.`으로 시작하는 항목이 전부 여기 해당한다 — 읽기도 쓰기도 막히고, 원장(사용액·활동)만 읽기가 열려 있다. 이 설정들은 파일을 고쳐서가 아니라 도구로 바꾼다 — 도구 설치는 request_tool_install(자동 승인·활동 기록), 프로필·영입은 update_profile/hire_crew로 사장 결재를 올려라. 네 책상(vault/·skills/·산출물)은 그대로 쓸 수 있다. 앱 개선 요청이면 사장에게 "설정 → 피드백"으로 전달하라고 안내하라.',
-  en: 'The Argo app itself (install folder, server code), other companies’ data, and this company’s settings, credential, approval and ledger files plus crew cards (agents/) and chat threads (chats/) are protected. That means every settings file sitting directly in the company folder and anything starting with `.` — blocked for both reading and writing, except the ledgers (usage, activity) which stay readable. These settings change through tools, not file edits: use request_tool_install for tools (auto-approved, logged to Activity), and update_profile / hire_crew for crew changes, which go to the captain for approval. Your desk (vault/, skills/, project output) is unaffected. If the captain wants app improvements, point them to Settings → Feedback.',
+  ko: 'Argo 앱 자체(설치 폴더·서버 코드)와 다른 회사의 데이터, 그리고 이 회사의 설정·자격·결재·원장 파일과 에이전트 카드(agents/)·대화 정본(chats/)은 보호 구역이다. 회사 폴더 바로 아래에 있는 설정 파일들과 `.`으로 시작하는 항목이 전부 여기 해당한다 — 읽기도 쓰기도 막히고, 원장(사용액·활동)만 읽기가 열려 있다. 이 설정들은 파일을 고쳐서가 아니라 도구로 바꾼다 — 도구 설치는 request_tool_install(자동 승인·활동 기록), 프로필·영입은 update_profile/hire_crew로 사용자 결재를 올려라. 네 책상(vault/·skills/·산출물)은 그대로 쓸 수 있다. 앱 개선 요청이면 사용자에게 "설정 → 피드백"으로 전달하라고 안내하라.',
+  en: 'The Argo app itself (install folder, server code), other companies’ data, and this company’s settings, credential, approval and ledger files plus agent cards (agents/) and chat threads (chats/) are protected. That means every settings file sitting directly in the company folder and anything starting with `.` — blocked for both reading and writing, except the ledgers (usage, activity) which stay readable. These settings change through tools, not file edits: use request_tool_install for tools (auto-approved, logged to Activity), and update_profile / hire_crew for agent changes, which go to the user for approval. Your desk (vault/, skills/, project output) is unaffected. If the user wants app improvements, point them to Settings → Feedback.',
 };
 
 /** SDK 도구 호출의 유일한 게이트(전권 모델) — allowedTools에 없는 도구가 여기로 온다.

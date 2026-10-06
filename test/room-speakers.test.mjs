@@ -89,7 +89,7 @@ test('회의록 참석자에 system이 섞이지 않는다 — 안내 줄이 2�
   const r = await endMeeting('rs-minutes');
   assert.equal(r.archived, true);
   const md = await readFile(join(paths('rs-minutes').journal, r.journal.replace(/^journal\//, '')), 'utf8');
-  assert.match(md, /^참석: 사장, 비스트, 울프, 슈리, 에드나$/m, "참석자는 사람·크루만 — 'system'은 참석자가 아니다");
+  assert.match(md, /^참석: 사용자, 비스트, 울프, 슈리, 에드나$/m, "참석자는 사람·크루만 — 'system'은 참석자가 아니다");
   assert.match(md, /\*\*system\*\*: 4명 동시 발언 — /, '본문에는 종전 규약대로 남는다(무엇이 지시됐는지의 기록)');
 });
 
@@ -102,7 +102,7 @@ test('릴레이에서 발언자 실패로 루프가 끊기면 차례가 오지 �
     const msgs = (await loadRoom('rs-fail')).messages;
     assert.deepEqual(msgs.map((m) => m.who), ['user', 'system', 'beast', 'system', 'system']);
     assert.deepEqual(msgs.slice(-2).map((m) => m.kind), ['error', 'skipped'], '실패 안내 다음에 남은 발언자 안내');
-    assert.equal(msgs.at(-1).text, '차례가 오지 않은 크루: 에드나 — 다시 부르면 이어갑니다.', '뒷사람만(실패자·이미 말한 사람 제외)');
+    assert.equal(msgs.at(-1).text, '차례가 오지 않은 에이전트: 에드나 — 다시 부르면 이어갑니다.', '뒷사람만(실패자·이미 말한 사람 제외)');
     await seed('rs-fail-en', { lang: 'en' });
     await assert.rejects(runRoomTurn('rs-fail-en', '@beast > @shuri > @edna go'));
     assert.equal((await loadRoom('rs-fail-en')).messages.at(-1).text, 'Did not get to: 에드나 — mention them again to continue.');

@@ -89,6 +89,25 @@ test('크루 1:1: 한 크루에 한 방, 주인만 연다', { skip }, () => {
   assert.equal(list, A1, '개인 목록에 크루 1:1로 표시');
 });
 
+// 에이전트 = 한 사람(유건 2026-10-03, P2) — 본체 알림(src/gateway/msgr.mjs msgrNotifyPush)이 조직마다가 아니라 개인 1:1 방 하나로 간다.
+// 게이트웨이가 주인 세션으로 msgr_dm_personal_crew를 부르고 nt: 모양(reply_to·thread_root 없음)의 크루 글을 넣는 것이 서버에서 그대로 통과하는지.
+test('본체 알림 모양(nt:)은 개인 1:1 방에 그 개인 크루 이름으로 들어가고, 같은 키는 한 번만·남은 못 넣는다', { skip }, () => {
+  const N1 = personalCrew(U.a, 'n1'); // 다른 테스트가 크루를 더 넣은 방과 섞이지 않게 새 크루의 새 방
+  const room = last(asUser(U.a, `select public.msgr_dm_personal_crew('${N1}')`));
+  const nt = (uid, crew, key) => asUserRaw(uid, `insert into public.msgr_messages (channel_id, author_kind, crew_id, kind, reply_to, thread_root, client_msg_id, body, mentions, meta) values ('${room}', 'crew', '${crew}', 'text', null, null, 'nt:${crew}:${key}', '[장시간 작업 완료] T', '[]'::jsonb, '{"disposition":"done","notification":"job"}'::jsonb) returning id`);
+  const ok = nt(U.a, N1, 'deadbeef');
+  assert.equal(ok.status, 0, `주인 세션의 개인 크루 알림이 거절됨: ${ok.stderr.trim().slice(0, 200)}`);
+  assert.equal(sql(`select author_kind||'/'||crew_id::text||'/'||coalesce(org_id::text,'NULL') from public.msgr_messages where channel_id='${room}' and client_msg_id='nt:${N1}:deadbeef'`), `crew/${N1}/NULL`, '개인 방 글(org 없음), 그 크루 이름');
+  fails(nt(U.a, N1, 'deadbeef'), /duplicate key|msgr_messages_client_id/, '같은 이벤트 재배달(같은 키) — 게이트웨이 insertMessage가 null로 삼킨다');
+  fails(nt(U.b, N1, 'b0b0b0b0'), /row-level security|msgr_not_allowed|msgr_crew_not_in_channel/, '남이 내 개인 크루 이름으로');
+  fails(nt(U.a, ORG_CREW, 'cafe0001'), /row-level security|msgr_not_allowed|msgr_crew_not_in_channel/, '조직 크루 행으로는 개인 방에 못 쓴다');
+  // 주인이 그 1:1을 보관했어도 알림 경로(같은 RPC)가 같은 방을 다시 꺼내 거기에 올린다 — 새 방을 만들지 않는다
+  sql(`update public.msgr_channels set archived_at = now() where id='${room}'`);
+  assert.equal(last(asUser(U.a, `select public.msgr_dm_personal_crew('${N1}')`)), room, '보관한 방을 다시 꺼낸다(같은 방)');
+  assert.equal(sql(`select archived_at is null from public.msgr_channels where id='${room}'`), 't');
+  assert.equal(nt(U.a, N1, 'feedface').status, 0, '다시 꺼낸 방에 알림이 들어간다');
+});
+
 test('친구 1:1에 내 크루를 넣고, 친구 글에는 답하지 않는다(기본 주인만)', { skip }, () => {
   assert.equal(join(U.a, AB, A1), 'joined', '방을 연 사람(a)은 바로 넣는다');
   fails(asUserRaw(U.a, `select public.msgr_crew_join('${AB}', '${ORG_CREW}')`), /msgr_bad_member/, '조직 크루는 개인 방에 못 들어온다');

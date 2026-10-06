@@ -1,4 +1,6 @@
-// 노션식 블록 고르기와 부분 가림(유건 9/29). 여백에서 끌어 사각형을 그리면 걸친 블록을 고르고, 우클릭으로 가리기·해제·복사·삭제.
+// 노션식 블록 고르기와 부분 가림(유건 9/29). 끌어 사각형을 그리면 걸친 블록을 고르고, 우클릭으로 가리기·해제·복사·삭제.
+// 11차(유건 10/2): 사각형은 오피스 공용 선택 상자(core/selection.js·ui/marquee.js) — 여백만이 아니라 어디서든, 글자 선택으로 시작했다가 처음 블록 밖으로 나가면 블록 고르기.
+// 편집기는 그 선택 상자에 '블록 묶음'으로 붙는다: 항목 key = 맨 위 블록의 문서 위치(blockKeys·keysRange), 고른 블록은 이어진 한 범위(pickKey).
 // 가림은 문서의 표시(mark)로 저장된다 — 공유받은 사람도 가려진 채로 보고, 누르고 있는 동안만 보인다(CSS :active).
 // 화면에서 덮는 것이지 접근을 막는 것이 아니다. 내용 자체를 숨기려면 블록 메뉴의 '비공개'를 쓴다.
 import { Mark, Extension } from '@tiptap/react'; // 코어는 react 패키지가 다시 내보낸다(따로 의존성을 늘리지 않는다)
@@ -16,6 +18,19 @@ export const RedactMark = Mark.create({
 export function pickRange(blocks, box) {
   const hit = blocks.filter(({ rect }) => rect.bottom > box.top && rect.top < box.bottom);
   return hit.length ? { from: hit[0].from, to: hit.at(-1).to } : null;
+}
+
+/** 고른 범위 → 그 안 맨 위 블록 key(문서 위치 문자열) */
+export function blockKeys(doc, range) {
+  const out = new Set();
+  if (range) doc.forEach((node, offset) => { if (offset >= range.from && offset + node.nodeSize <= range.to) out.add(String(offset)); });
+  return out;
+}
+/** 블록 key들 → 첫 블록 시작부터 마지막 블록 끝까지(이어진 한 범위). 없는 key는 건너뛰고, 남는 것이 없으면 null */
+export function keysRange(doc, keys) {
+  let from = null, to = null;
+  doc.forEach((node, offset) => { if (keys.has(String(offset))) { from ??= offset; to = offset + node.nodeSize; } });
+  return from == null ? null : { from, to };
 }
 
 /** 범위 안 글자 중 표시를 받을 수 있는 글자가 가려져 있는지 — any: 하나라도, all: 전부 */

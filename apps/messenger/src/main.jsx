@@ -14,7 +14,7 @@ pushDiag('boot', `start ${location.href.slice(0, 80)}`, navigator.userAgent.slic
 bootMessenger({
   platform: import.meta.env.TAURI_ENV_PLATFORM,
   startSplash,
-  followThemeBackground,
+  followThemeBackground: () => followThemeBackground(undefined, undefined, import.meta.env.TAURI_ENV_PLATFORM), // 창·문서는 기본값, iOS는 앱 플러그인으로(webview-bg.js)
   loadApp: () => import('./app-root.jsx'),
   diag: (e) => pushDiag('boot', `app chunk failed: ${e?.message || e}`, String(e?.stack || '').slice(0, 600)),
   onChunkError: () => renderChunkError(),

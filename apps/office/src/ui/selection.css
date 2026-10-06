@@ -1,0 +1,25 @@
+/* 여러 개 고르기(11차) — 선택 상자·고른 항목·선택 막대·여러 모듈 옮기기 미리보기. 선택 상자 본체·막대와 함께 지연 로드된다(첫 화면 150KB 상한).
+   고른 표시는 기존 선택 바탕·포커스 링 토큰(보기 목록 vw와 같은 값). 왼쪽 막대 모양은 쓰지 않는다(오피스 전체 금지). */
+body.sel-banding, body.sel-banding * { user-select: none; -webkit-user-select: none; cursor: default; }
+.sel-band { position: fixed; left: 0; top: 0; z-index: 40; pointer-events: none; border-radius: 4px; background: color-mix(in srgb, var(--primary) 8%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 35%, transparent); }
+
+/* 고른 행·카드 — 선택 바탕 + 1px 안쪽 테두리(사방) */
+:root [data-sel-on]:not(.module) { background: color-mix(in srgb, var(--primary) 10%, var(--surface)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 30%, transparent); }
+:root tr[data-sel-on] > td { background: color-mix(in srgb, var(--primary) 10%, transparent); }
+:root tr[data-sel-on] { box-shadow: none; }
+/* 고른 칸(12차) — 칸 바탕 + 1px 안쪽 테두리(사방), 가린 칸도 같은 표시 */
+:root .redact[data-cell-on] { background: color-mix(in srgb, var(--primary) 12%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 40%, transparent); border-radius: 4px; }
+/* 고른 모듈 — 포커스 링(바깥 2px). 셸(유리·리퀴드·뉴모피즘)이 모듈 바탕·그림자를 덮어쓰므로 링은 outline으로 */
+:root .module[data-sel-on] { outline: 2px solid var(--ring); outline-offset: 2px; }
+
+/* 선택 막대 — 아래 가운데에 떠 있다(보기 목록 막대와 같은 모양) */
+.sel-bar { position: fixed; left: 50%; bottom: max(20px, env(safe-area-inset-bottom)); z-index: 60; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; max-width: calc(100vw - 32px); padding: 6px 6px 6px 14px; border-radius: var(--rs); background: var(--float); box-shadow: var(--shadow-float), 0 0 0 1px var(--border-soft); transform: translateX(-50%); animation: sel-rise 200ms var(--ease-out); }
+.sel-bar strong { font-size: 12.5px; font-weight: 600; margin-right: 4px; font-variant-numeric: tabular-nums; }
+.sel-bar .danger-text { color: var(--danger); }
+@keyframes sel-rise { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
+
+/* 여러 모듈 옮기기 — 손을 따라오는 미리보기 뒤에 겹친 카드 두 장, 손잡이 옆에 개수 */
+:root .module.drag-ghost.group { box-shadow: 6px 6px 0 -1px var(--surface), 6px 6px 0 0 var(--border-soft), 12px 12px 0 -1px var(--surface), 12px 12px 0 0 var(--border-soft), var(--shadow-float); } /* 셸 그림자보다 우선 */
+.ghost-count { position: fixed; left: 0; top: 0; z-index: 61; pointer-events: none; min-width: 22px; height: 22px; padding: 0 7px; border-radius: 11px; display: grid; place-items: center; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--primary-fg); background: var(--primary); box-shadow: 0 0 0 2px var(--surface); }
+
+@media (prefers-reduced-motion: reduce) { .sel-bar { animation: none; } }

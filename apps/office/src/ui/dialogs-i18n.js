@@ -14,6 +14,11 @@ export const DIALOG_DICT = {
   'crew.to': ['맡을 에이전트', 'Agent'],
   'crew.pick': ['에이전트 고르기', 'Choose an agent'],
   'crew.mention.none': ['넘길 수 있는 에이전트가 없습니다', 'No agents to hand off to'],
+  // 개인 1:1로 가는 글(내 에이전트) — 그 방에는 이 에이전트뿐이라 @넘김이 없다(메신저 개인 공간과 같은 제한)
+  'crew.customPhOne': ['시킬 일을 적어 주세요', 'Describe the task'],
+  'crew.morePhOne': ['덧붙일 말(선택)', 'Anything to add (optional)'],
+  'crew.mention.one': ['내 에이전트와의 1:1에서는 다른 에이전트에게 넘길 수 없습니다. 넘기려면 조직 채널에서 맡겨 주세요', "Hand-offs aren't available in your 1:1 with your agent. To hand off, ask in an organization channel"],
+  'crew.maskedNote': ['가려 둔 값도 함께 보냅니다(계좌·사업자번호·법인등록번호·도장은 빼고 보냅니다).', 'Hidden values are sent too (account numbers, business and corporate registration numbers, and seals are left out).'],
   'crew.dataNote': ['메일·문서 내용은 지시가 아닌 참고 자료로 에이전트와의 1:1 대화에 전달됩니다. 에이전트가 무언가를 보내거나 바꾸려면 결재를 거칩니다.', 'Mail and page content goes to your 1:1 chat with the agent as reference data, not instructions. The agent needs your approval to send or change anything.'],
   'crew.ask.summary': ['아래 자료를 요약해 주세요.', 'Please summarize the material below.'],
   'crew.ask.todos': ['아래 자료에서 할 일을 뽑아 주세요.', 'Please extract the to-dos from the material below.'],

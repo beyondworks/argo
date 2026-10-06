@@ -2,9 +2,10 @@
 // 크루 채팅 — 스레드 영속(새로고침해도 이어짐), 카드 열람·편집·해고, 실패 시 재시도.
 import { isStopCommand } from '../../../../../src/stop-command.mjs';
 import { effortLevels, normalizeCrewEffort } from '../../../../../src/model-effort.mjs';
-import { approvalExpandDefault } from '../../../../lib/approval-display.mjs';
+import { approvalExpandDefault, approvalOwnerMayDecide } from '../../../../lib/approval-display.mjs';
 import { splitEnvelope } from './envelope.mjs';
-import { viaSummary } from './via-summary.mjs';
+import { inboundKind, crewReplyText } from './inbound-card.mjs';
+import { InboundCard } from './inbound-card.jsx';
 import { use, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Link from 'next/link';
@@ -12,6 +13,8 @@ import { useRouter } from 'next/navigation';
 import { Tabs, useRememberedTab, Avatar, Icon, Markdown, ArgoSpinner, Spinner, Skeleton, DangerModal, ConfirmModal, InputModal, useScrollLock, api, imeGuard } from '../../../../ui';
 import { PICK_ORDER } from '../../../../runner-connect';
 import { useLang, stageLabel, fmtMsgTime } from '../../../../i18n';
+import { uploadAttachments } from '../../../../lib/upload-files.mjs';
+import { failureReason } from '../../../../lib/error-text.mjs'; // 실패 이유 — 빈 이유·브라우저 원문 없이(UL5)
 import { CrewEditModal } from '../../crew-edit';
 import { ArtifactChips } from '../../artifact-chips';
 import { useWorkFolder, WorkFolderPopover, WorkFolderRow, WorkFolderButton } from '../../work-folder';
@@ -20,6 +23,11 @@ import { useSplitAlive } from '../../split-alive';
 import { keepSide, keepSideExcept, sideParam, withSide } from '../../split.mjs';
 import { dropUpClamp } from '../../zoom-math.mjs';
 import { matchSlash } from '../../slash-match.mjs';
+import { useSessionMention, SessionMentionPanel, SessionMsgCard, isSessionCard } from './session-msg.jsx'; // 세션 메시지 — @크루 자동 완성·접힌 카드
+import { parseSessionTarget } from './session-msg-parse.mjs';
+import { mergePolledThread, makePollApplier, startThreadPolls } from './thread-poll.mjs'; // 두 폴의 같은 반영 경로(F2·F2+)·방을 바꾼 뒤 도착한 응답은 버린다(UL3)
+import { isNoRunnerFailure } from './fail-display.mjs'; // '러너 없음' 실패 → 사전 문구 + 설정 링크(UX-A02)
+import { gistLabel } from '../../../../lib/gist-display.mjs'; // 메신저 머리말을 뗀 요약(UX-A08)
 
 // 러너 표시명(폴백 안내용) — runner-connect의 RUNNER_NAMES와 동일 값(서버 RUNNERS.name 준거)
 const RUNNER_LABELS = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', antigravity: 'Antigravity', glm: 'GLM', kimi: 'Kimi', openrouter: 'OpenRouter', grok: 'Grok' };
@@ -78,22 +86,6 @@ function UserText({ text }) {
 // 래퍼·액션 버튼·레이아웃은 건수에 비례해 키 입력마다 다시 도는 비용이었다(652건: 키당 ~130ms → 창 60건).
 const THREAD_WINDOW = 60;
 const THREAD_STEP = 100;
-// 배달 지시 카드 본문 — 두 줄로 접고 눌러야 펼친다(제보 2026-09-27 "구구절절 올라오게 하지 말라").
-// 회의실 발언은 프롬프트 원문 대신 사장의 마지막 발언만(viaSummary).
-function ViaText({ via, text, t }) {
-  const [open, setOpen] = useState(false);
-  const body = viaSummary(via, text);
-  const clamp = open ? {} : { display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' };
-  return (
-    <button type="button" className="card" aria-expanded={open} title={open ? t('chat.via.collapse') : t('chat.via.expand')}
-      onClick={() => setOpen((v) => !v)}
-      style={{ padding: '10px 13px', fontSize: 12.5, color: 'var(--fg-2)', whiteSpace: 'pre-wrap', textAlign: 'left', fontFamily: 'inherit', lineHeight: 'inherit', cursor: 'pointer' }}>
-      {/* 줄 자르기는 안쪽 글자에 — 패딩 있는 카드에 걸면 셋째 줄 윗부분이 아래 패딩에 비친다(실측 2026-09-27) */}
-      <span style={clamp}>{body}</span>
-    </button>
-  );
-}
-
 export default function CrewChat({ params, embedded = false, onClose }) {
   const { ws, slug: slugParam } = use(params);
   // 경로 조각은 **디코딩되지 않은 채** 온다(한글 이름 크루면 '%ED%81%B4…'). 예전엔 이 값을 그대로
@@ -162,6 +154,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
   function onInputKeyDown(e) {
     // imeGuard 병합 — 이 입력은 스프레드 대신 여기서 IME Enter를 막는다({...imeGuard}가 onKeyDown을 덮는 문제)
     if (e.key === 'Enter' && e.nativeEvent.isComposing) { e.preventDefault(); return; }
+    if (sm.onKeyDown(e)) return; // '@' 크루 자동 완성이 떠 있으면 Enter·Tab=완성, ↑↓=이동
     // Enter=전송, Shift+Enter=줄바꿈(textarea 기본 동작) — 유건 지시 2026-07-19
     // 단 '/' 커맨더가 떠 있으면 Enter=선택 항목 실행, ↑↓=항목 이동(명령은 크루에게 전송되지 않는다)
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -204,6 +197,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
   const [busy, setBusy] = useState(false);
   // busy 최신값 — 비동기 흐름(바로 보내기 응답 뒤 등) 안에서 클릭 시점 렌더의 낡은 busy가 아니라 지금 값을 본다.
   const busyRef = useRef(false);
+  const [crewMissing, setCrewMissing] = useState(false); // 없는 크루 주소(UX-A07)
   useEffect(() => { busyRef.current = busy; }, [busy]);
   // 바로 보내기(끼워 넣기) 요청 중인 대기열 항목(qid). 대기열 배출 이펙트의 deps에서도 쓰이므로 그보다 먼저(TDZ) 선언한다 —
   // 요청 중에 턴이 끝나면 배출이 같은 항목을 새 턴으로 또 보내지 않게 막는다(응답을 보고 대기열에서 빼거나 남긴다).
@@ -316,7 +310,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
       const res = await fetch(`/api/companies/${ws}/chat/sessions`, {
         method: 'PATCH', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ slug, id: s.id ?? null, title }),
-      }).then((r) => r.json());
+      }).then(async (r) => { const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || t('chat.sessions.saveFail')); return d; });
       if (!s.id) setThreadTitle(res?.title ?? null); // 현재 대화 — 라벨 즉시 반영
       else loadSessions();
     } catch (e) { setError(String(e.message)); }
@@ -326,7 +320,8 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     const s = trashSess; setTrashSess(null);
     if (!s) return;
     try {
-      await fetch(`/api/companies/${ws}/chat/sessions?slug=${encodeURIComponent(slug)}&id=${encodeURIComponent(s.id)}`, { method: 'DELETE' });
+      const r = await fetch(`/api/companies/${ws}/chat/sessions?slug=${encodeURIComponent(slug)}&id=${encodeURIComponent(s.id)}`, { method: 'DELETE' });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || t('chat.sessions.deleteFail')); // 실패를 성공처럼 넘기지 않는다
       if (viewing === s.id) openSession(null); // 열람 중이던 대화를 지웠으면 현재 대화로
       loadSessions();
     } catch (e) { setError(String(e.message)); }
@@ -334,10 +329,11 @@ export default function CrewChat({ params, embedded = false, onClose }) {
   // 세션 고정/해제 — 보관 세션에 pinned 기록. 고정 세션은 레일 상단에 최근순으로 묶인다(비파괴·즉시, 확인 불필요).
   async function doTogglePin(s) {
     try {
-      await fetch(`/api/companies/${ws}/chat/sessions`, {
+      const r = await fetch(`/api/companies/${ws}/chat/sessions`, {
         method: 'PATCH', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ slug, id: s.id, pinned: !s.pinned }),
       });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error || t('chat.sessions.saveFail'));
       loadSessions();
     } catch (e) { setError(String(e.message)); }
   }
@@ -389,10 +385,14 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     let alive = true;
     setThread(null); setDelegLimited(null); setError(''); sessionRef.current = null; setShown(THREAD_WINDOW);
     pinMidRef.current = null; spacerHRef.current = 0; // 대화(크루) 전환 — 이전 대화의 핀·여백을 끌고 오지 않는다
+    setCrewMissing(false);
     api(`/api/companies/${ws}?light=1`)
       .then((d) => {
         if (!alive) return;
-        const a = d.agents.find((a) => a.slug === slug) ?? { name: slug, role: '' };
+        const found = d.agents.find((a) => a.slug === slug);
+        // 회사 정보를 받았는데 이 크루가 없다(해고·이름 변경·옛 링크) — 있는 척 대화 화면을 열지 않는다(UX-A07). 네트워크 실패는 아래 catch(종전 대체 이름)
+        setCrewMissing(!found);
+        const a = found ?? { name: slug, role: '' };
         setAgent(a);
         setCrewList(d.agents ?? []);
         setAliases(d.company?.aliases ?? []); // '/' 커맨더 사용자 별칭 — 회사 단위 공유
@@ -473,34 +473,21 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     return () => ro.disconnect();
   }, [recalcSpacer]);
 
-  // 다른 창구(텔레그램·슬랙·루틴·결재 후속)에서 붙은 대화를 웹에도 반영 — 채널을 오가도 맥락은 하나다.
-  useEffect(() => {
-    const t = setInterval(() => {
-      if (busy) return; // 내가 보내는 중엔 낙관적 UI를 덮지 않는다
-      api(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}&mtime=${mtimeRef.current}`)
-        .then((r) => {
-          // 변경 없음 — 서버가 본문을 생략했다(폴링 dedup). 진행 상태만 갱신.
-          if (r.unchanged) { setLiveStage(r.status ?? null); return; }
-          if (r.mtime) mtimeRef.current = r.mtime;
-          const msgs = r.messages ?? [];
-          setThread((cur) => {
-            if (cur === null) return cur;
-            if (msgs.length <= cur.length) return cur;
-            // 실패 사본 캐리오버는 **서버 미보존분(unsaved)만** — 서버가 보존한 실패 턴(route.js
-            // failed)은 msgs에 이미 있어, 전부 캐리오버하면 폴링마다 복제가 누적된다(분리 검수 HIGH,
-            // 리듀서 시뮬레이션 확증). "서버엔 없는 사본" 전제는 실패 턴 보존으로 무효가 됐다.
-            const unsent = cur.filter((m) => m.failed && m.unsaved);
-            return unsent.length ? [...msgs, ...unsent] : msgs;
-          });
-          if (r.sessionId) sessionRef.current = r.sessionId;
-          setLiveStage(r.status ?? null); // 결재 후속·루틴·메신저발 턴도 진행 카드가 보인다
-          setThreadTitle(r.title ?? null); // 다른 기기에서 바꾼 현재 대화명도 준실시간 반영(검수 LOW)
-          if (Date.now() - delegSavedAt.current > 4000) setDelegLimited(r.delegationLimit !== false); // 다른 기기에서 바꾼 위임 제한도 같은 방식으로
-        })
-        .catch(() => {});
-    }, 3000); // 준실시간 — 동기화(≈8s)로 당겨온 다른 기기의 대화를 더 빨리 표시(기존 8s)
-    return () => clearInterval(t);
-  }, [ws, slug, busy]);
+  // 폴 응답 반영 — 3초 준실시간 폴과 2.5초 진행 폴이 **같은 경로**를 쓴다(F2+, 2026-10-05: 진행 폴이 본문을 버리고 mtime만
+  // 옮겨 성공한 답이 안 붙던 결함). 병합 규칙(실패 표시 반영·미보존 사본 캐리오버·뜻이 같으면 참조 유지)은 thread-poll.mjs.
+  const refetchRef = useRef(false); // 내 턴 중 본문을 버린 적이 있다 — 다음 유휴 폴은 mtime 없이 전체를 받는다
+  const applyPoll = useMemo(() => makePollApplier({
+    isBusy: () => busyRef.current, // 내 턴 중엔 본문을 반영하지 않는다(낙관 사본 보호)
+    setStatus: setLiveStage,
+    setMtime: (m) => { mtimeRef.current = m; },
+    setRefetch: (v) => { refetchRef.current = v; },
+    mergeThread: (msgs) => setThread((cur) => mergePolledThread(cur, msgs)),
+    onApplied: (r) => {
+      if (r.sessionId) sessionRef.current = r.sessionId;
+      setThreadTitle(r.title ?? null); // 다른 기기에서 바꾼 현재 대화명도 준실시간 반영(검수 LOW)
+      if (Date.now() - delegSavedAt.current > 4000) setDelegLimited(r.delegationLimit !== false); // 다른 기기에서 바꾼 위임 제한도 같은 방식으로
+    },
+  }), []);
 
   // 이 크루의 대기 결재 — 대화창에서 바로 승인/거절 (데크 결재함은 백업 창구)
   const [pendings, setPendings] = useState([]);
@@ -551,17 +538,17 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     wasWorking.current = working;
   }, [working, ws]);
 
-  // 진행 단계 고빈도 폴 — 턴이 도는 동안(내 턴 + 시운전·루틴·메신저발) 2.5초 간격.
-  // 서버가 턴 종료 시 상태 파일을 지우므로, status가 null로 돌아오면 스스로 멎는다.
-  useEffect(() => {
-    if (!working) return;
-    const t = setInterval(() => {
-      api(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}&mtime=${mtimeRef.current || 1}`)
-        .then((r) => { if (r.mtime) mtimeRef.current = r.mtime; setLiveStage(r.status ?? null); })
-        .catch(() => {});
-    }, 2500);
-    return () => clearInterval(t);
-  }, [working, ws, slug]);
+  // 스레드 폴 두 줄기 — 준실시간 3초(내 턴이 아닐 때) + 진행 단계 2.5초(무언가 도는 중: 내 턴·시운전·루틴·메신저발). 같은 반영기(applyPoll)를 지난다.
+  // 서버가 턴 종료 시 상태 파일을 지우므로 status가 null로 돌아오면 진행 폴은 스스로 멎는다. 방(ws·slug)이 바뀌면 정리에서 stop()이 불려
+  // 그 전에 나간 요청의 응답은 버려진다(UL3 — 새 방에 이전 방 스레드·진행 카드가 섞이던 것). 판정은 ref로 읽어 타이머는 방이 바뀔 때만 다시 만든다.
+  const workingRef = useRef(false);
+  workingRef.current = working;
+  useEffect(() => startThreadPolls({
+    fetchThread: (mtime) => api(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}&mtime=${mtime}`),
+    apply: applyPoll,
+    isBusy: () => busyRef.current, isWorking: () => workingRef.current,
+    getMtime: () => mtimeRef.current, shouldRefetch: () => refetchRef.current,
+  }), [ws, slug, applyPoll]);
 
   /** 파일 추가 — 드롭·붙여넣기·클립 버튼 모두 이 관문을 지난다. 업로드 즉시 vault/files/ 저장. */
   async function addFiles(fileList, { announceEmpty = false } = {}) {
@@ -571,14 +558,10 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     if (uploading) return;
     setUploading(true); setError('');
     try {
-      const fd = new FormData();
-      files.forEach((f) => fd.append('file', f));
-      const r = await fetch(`/api/companies/${ws}/chat/upload`, { method: 'POST', body: fd });
-      const d = await r.json();
-      if (!r.ok) throw new Error(d.error);
-      setAtt((cur) => [...cur, ...d.files].slice(0, 8));
+      const uploaded = await uploadAttachments(ws, files, lang); // 보내기 전에 파일마다 10MB 확인, 파일마다 요청 하나 — 한도는 app/lib/upload-limit.mjs 한 곳(2차 M3·4차)
+      setAtt((cur) => [...cur, ...uploaded].slice(0, 8));
     } catch (err) {
-      setError(t('chat.attachFailed', { msg: String(err.message) }));
+      setError(t('chat.attachFailed', { msg: failureReason(err, t) }));
     } finally {
       setUploading(false);
     }
@@ -631,6 +614,18 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     }
   }
 
+  async function sendSessionMsg(target, raw) {
+    setError('');
+    try {
+      const r = await api(`/api/companies/${ws}/session-msg`, { room: slug, to: target.to, message: target.message });
+      if (r.line) setThread((cur) => [...(cur ?? []), r.line]); // B의 답은 폴링이 카드로 가져온다
+    } catch (err) {
+      setInput(raw); // 보낸 글을 잃지 않게 입력창으로 되돌린다
+      const code = err?.data?.code;
+      setError(['DUP', 'NOT_FOUND', 'TOO_LONG', 'AMBIGUOUS', 'TREE_CAP'].includes(code) ? t(`chat.session.err.${code}`, { name: target.toName }) : t('chat.session.err.generic', { msg: String(err.message) }));
+    }
+  }
+
   async function send(e) {
     e?.preventDefault();
     // 전송 버튼 경로에서도 '/' 커맨더 우선 — '/new' 같은 명령 토큰이 크루에게 전송되지 않게
@@ -643,6 +638,10 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     if (uploading) return;
     const attachments = att;
     histIdx.current = -1; // 히스토리로 불러온 지시를 전송했으면 탐색 위치 초기화
+    // `@다른크루 내용` = 세션 메시지 — 이 크루의 턴은 만들지 않으므로 답변 중이어도 대기열을 거치지 않는다(첨부는 아직 싣지 않는다)
+    const target = !attachments.length ? parseSessionTarget(message, crewList, slug) : null;
+    if (target?.ambiguous) { setError(t('chat.session.err.AMBIGUOUS', { name: target.name })); return; } // 이름이 겹친다 — 입력은 그대로 두고 slug로 고르게
+    if (target) { setInput(''); await sendSessionMsg(target, message); return; }
     setInput(''); setAtt([]);
     if (!attachments.length && isStopCommand(message)) {
       setQueueHeld(true);
@@ -750,14 +749,16 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     const prev = delegLimited;
     setDelegLimited(next); delegSavedAt.current = Date.now();
     try { await api(`/api/companies/${ws}/chat/delegation`, { slug, limit: next }); }
-    catch (e) { setDelegLimited(prev); setError(t('deleg.fail', { msg: String(e.message) })); }
+    catch (e) { setDelegLimited(prev); setError(t('deleg.fail', { msg: failureReason(e, t) })); }
   }
 
   async function newChat() {
     if (busy) return;
     // 현재 대화는 서버(resetThread)가 .archive로 적재한 뒤 비우므로 비파괴 — 확인창 없이 바로 새 대화.
     // window.confirm은 Tauri 데스크톱 웹뷰에서 막혀 무동작(버튼이 안 열리던 원인) → 제거. 파괴적 액션만 DangerModal.
-    await fetch(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}`, { method: 'DELETE' });
+    // 결과 확인 — 실패한 DELETE를 성공처럼 비우면 다음 폴이 옛 대화를 되살렸다(검증 추가 항목, 2026-10-05). 실패면 화면을 그대로 두고 안내한다.
+    const ok = await fetch(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}`, { method: 'DELETE' }).then((r) => r.ok, () => false);
+    if (!ok) { setError(t('chat.newChatFail')); return; }
     setThread([]); sessionRef.current = null; setError(''); setThreadTitle(null); setDelegLimited(true); // 새 대화 = 위임 제한 켜짐(서버 resetThread와 같은 규칙)
     setViewing(null); setArchMsgs(null); resetAnnot(); pinMidRef.current = null; spacerHRef.current = 0;
     loadSessions(); // 방금 넘긴 대화가 좌측 레일에 적재된다
@@ -789,6 +790,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
   const slashMatches = slashToken ? matchSlash(input, { builtins: SLASH_CMDS, aliases, skills: skillCmds ?? [], skillInsert: (s) => t('chat.cmd.skillPrefix', { name: s.title }) }) : [];
   const [slashIdx, setSlashIdx] = useState(0);
   useEffect(() => { setSlashIdx(0); }, [slashQ, slashToken?.[0]]);
+  const sm = useSessionMention({ input, setInput, crew: crewList, selfSlug: slug, disabled: !!viewing, onPicked: () => inputRef.current?.focus() });
   const slashPanelRef = useRef(null);
   const slashWrapRef = useRef(null);
   const slashNatW = useRef(0);
@@ -822,6 +824,16 @@ export default function CrewChat({ params, embedded = false, onClose }) {
       });
     } catch { /* 실패해도 다음 로드에서 서버 정본으로 복구 */ }
   }
+
+  // 없는 크루 — 회사 없음 화면과 같은 문구·링크 패턴. 입력창을 그리지 않는다(UX-A07: 'nobody에게 지시하기'가 열렸다)
+  if (crewMissing) return (
+    <div className="empty" style={{ marginTop: 40, display: 'grid', gap: 10, justifyItems: 'center' }}>
+      <span>{t('chat.crewMissing')}</span>
+      {embedded
+        ? <button type="button" className="btn sm" onClick={onClose}>{t('common.close')}</button>
+        : <Link href={`/c/${ws}`} style={{ color: 'var(--primary-strong)', fontWeight: 700 }}>{t('chat.crewMissingBack')}</Link>}
+    </div>
+  );
 
   return (
     // 세션레일(216, 좌측 원위치) + 채팅 컬럼(나머지 전체). 채팅은 .thread를 컬럼 전체폭으로 두고 안쪽 레인만 중앙정렬 →
@@ -867,7 +879,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
                 <span style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12.5, fontWeight: 600 }}>
                   {/* 고정 표식 — 상시 노출(hover 아니어도) so 어느 대화가 고정됐는지 한눈에 */}
                   {s.pinned && <Icon name="pin" size={11} style={{ flex: 'none', color: pinColor }} />}
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.title || s.gist || t('chat.sessions.untitled')}</span>
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.title || gistLabel(s.gist, t) || t('chat.sessions.untitled')}</span>
                 </span>
                 <span className="nav-sub">{new Date(s.ts).toLocaleDateString('sv-SE')} · {t('chat.sessions.msgs', { n: s.count })}</span>
               </span>
@@ -978,13 +990,9 @@ export default function CrewChat({ params, embedded = false, onClose }) {
           </button>
         ); })()}
         {(() => { const all = (viewing ? archMsgs : thread) ?? []; const base = Math.max(0, all.length - shown); return all.slice(base).map((m, k) => { const i = base + k; return (
-          m.who === 'user' && m.via ? (
-            /* 배달 지시(쪽지·위임·루틴) — 사장 말풍선(우측)과 구분해 좌측 중립 카드로. who:'user'는
-               러너 프롬프트 관점의 역할일 뿐 사장이 쓴 글이 아니다(신고 2026-07-28 "내가 쓴 게 아니거든"). */
-            <div key={i} className="fade-up" style={{ alignSelf: 'flex-start', maxWidth: '85%', display: 'grid', gap: 4 }}>
-              <span className="microlabel" title={t('chat.via.hint')} style={{ color: 'var(--fg-3)' }}>{t(`chat.via.${['crewmail', 'delegate', 'routine', 'job', 'room'].includes(m.via) ? m.via : 'generic'}`)}</span>
-              <ViaText via={m.via} text={m.text} t={t} />
-            </div>
+          isSessionCard(m) ? <SessionMsgCard key={i} m={m} t={t} ws={ws} /> : inboundKind(m) ? (
+            /* 바깥에서 들어온 글(메신저·루틴·쪽지·위임·결재 결과) — 출처 줄 + 앞 2줄 요약 카드, ▾로 본문 전체(inbound-card.jsx) */
+            <InboundCard key={i} m={m} wsId={ws} />
           ) : m.who === 'user' ? (
             <div key={i} className="msg-wrap fade-up" style={{ alignSelf: 'flex-end', alignItems: 'flex-end', maxWidth: '75%' }}
               ref={(el) => { if (!m.mid) return; if (el) msgRefs.current.set(m.mid, el); else msgRefs.current.delete(m.mid); }}>
@@ -1004,11 +1012,15 @@ export default function CrewChat({ params, embedded = false, onClose }) {
               </div>
               {/* 실패한 턴 — 글은 스레드에 그대로 두고 사유와 재시도만 붙인다(호버로 숨지 않게 항상 표시) */}
               {m.failed && !viewing && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 5, fontSize: 12, color: 'var(--danger)', maxWidth: '100%' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 5, fontSize: 12, color: 'var(--danger)', maxWidth: '100%', flexWrap: 'wrap' }}>
                   {/* failed는 코드/원문 — 표시 문구는 여기서 사전(t)으로. 서버 보존분·로컬 사본 공통 */}
                   {/* failedCode(error-class.mjs 표) — 원문 대신 "할 일"을 먼저(불변식 C). 코드 없음/미상은 종전 원문 표시 */}
                   {/* 코드 안내는 행동 지시가 뒤에 오므로 줄바꿈 허용(검수 LOW: EN 한 줄 말줄임이 "switch to an API key in S…"에서 잘림) */}
-                  <span style={{ minWidth: 0, overflow: 'hidden', ...(m.cancellationIncomplete || (m.failedCode && m.failedCode !== 'unknown') ? { whiteSpace: 'normal' } : { textOverflow: 'ellipsis', whiteSpace: 'nowrap' }) }} title={m.failed}>{m.cancellationIncomplete ? t('chat.cancelIncomplete') : m.aborted ? t('chat.aborted') : (m.failedCode && m.failedCode !== 'unknown') ? t(`chat.fail.${m.failedCode}`, { msg: m.failed }) : t('chat.turnFailed', { msg: m.failed })}</span>
+                  {/* 원문도 말줄임 대신 줄바꿈(최대 3줄) — 한 줄 말줄임이 다음 행동("연결한 뒤 다시 …")을 잘랐다(UX-A02). 전체 원문은 title */}
+                  <span style={{ minWidth: 0, flex: '1 1 200px', overflow: 'hidden', overflowWrap: 'anywhere', whiteSpace: 'normal', ...(m.cancellationIncomplete || (m.failedCode && m.failedCode !== 'unknown') || isNoRunnerFailure(m.failed) ? {} : { display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical' }) }} title={m.failed}>{m.cancellationIncomplete ? t('chat.cancelIncomplete') : m.aborted ? t('chat.aborted') : (m.failedCode && m.failedCode !== 'unknown') ? t(`chat.fail.${m.failedCode}`, { msg: m.failed }) : isNoRunnerFailure(m.failed) ? t('chat.fail.no_runner') : t('chat.turnFailed', { msg: m.failed })}</span>
+                  {!m.aborted && isNoRunnerFailure(m.failed) && (
+                    <Link href={`/c/${ws}/settings?ai=1`} className="btn sm" style={{ flex: 'none', textDecoration: 'none' }}>{t('chat.fail.openAi')}</Link>
+                  )}
                   <button type="button" className="btn sm" style={{ flex: 'none' }} disabled={busy || uploading}
                     onClick={() => sendMessage(m.text, m.attachments ?? [])}>{t('chat.resend')}</button>
                 </div>
@@ -1049,7 +1061,8 @@ export default function CrewChat({ params, embedded = false, onClose }) {
                     const sel = window.getSelection()?.toString();
                     if (sel) { e.clipboardData.setData('text/plain', sel); e.preventDefault(); }
                   }}>
-                  <Markdown text={m.text} wsId={ws} />
+                  {/* 루프 회차 답 끝의 판정 표지(LOOP: …)는 엔진용 — 화면에서만 뺀다(저장·판정 그대로) */}
+                  <Markdown text={crewReplyText(all[i - 1], m)} wsId={ws} />
                   {m.handover && (
                     <Link className="memo-chip" href={`/c/${ws}/vault?doc=${encodeURIComponent(m.handover.rel)}`}>
                       <Icon name="memory" size={12} />
@@ -1153,6 +1166,10 @@ export default function CrewChat({ params, embedded = false, onClose }) {
                   {p.reason && <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: '4px 0 0', lineHeight: 1.55 }}>{p.reason}</p>}
                 </>
               )}
+              {!approvalOwnerMayDecide(p) ? (
+                // 조직 관리자가 정하는 고위험 결재 — 데크 카드와 같은 판정(F8). 여기서 누르면 서버가 항상 거절했다
+                <p style={{ margin: '11px 0 0', fontSize: 12, color: 'var(--fg-2)' }}>{t('deck.approvalAdminOnlyHint')}</p>
+              ) : (
               <div style={{ display: 'flex', gap: 8, marginTop: 11 }}>
                 <button className="btn btn-primary sm" disabled={!!resolving} onClick={() => resolvePending(p.id, true)}>
                   {resolving === p.id ? <Spinner size={12} /> : (p.kind === 'capability' ? t('chat.approval.yes') : t('common.approve'))}
@@ -1161,6 +1178,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
                   {p.kind === 'capability' ? t('chat.approval.no') : t('common.reject')}
                 </button>
               </div>
+              )}
             </div>
           </div>
         ); })}
@@ -1254,6 +1272,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
         {/* '/' 커맨더 드롭업 — 클로드코드 커맨더 문법(입력창 위 세로 목록, ↑↓ 이동·Enter 실행).
             위치 기준은 이 relative 래퍼(입력바). 별칭 행은 ✕로 삭제, 하단 고정 행으로 새 별칭 등록. */}
         <div ref={slashWrapRef} style={{ position: 'relative' }}>
+        <SessionMentionPanel sm={sm} t={t} />
         {slashToken && (
           <div ref={slashPanelRef} className="card card-float" role="listbox" style={{
             position: 'absolute', bottom: 'calc(100% + 8px)', left: slashClamp.shift, zIndex: 40,
@@ -1373,7 +1392,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
           {/* 오른쪽 — 잔여 한도 게이지(이 크루가 쓰는 러너의 구독 한도가 있을 때만, K92) + 모델 버튼 */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
             <LimitGauge limit={limits.find((l) => l.runner === (sel.runner || autoRunnerId))} />
-            <ModelMenu runners={runners} sel={sel} onChange={saveRunner} disabled={busy} />
+            <ModelMenu ws={ws} runners={runners} sel={sel} onChange={saveRunner} disabled={busy} />
           </div>
         </div>
       </div>
@@ -1435,7 +1454,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
                   {rec.map((e, i) => (
                     <Link key={e.ts ?? i} className="task-row" href={`/c/${ws}/activity`}>
                       <span style={{ width: 6, height: 6, borderRadius: 999, flex: 'none', background: e.ok ? 'var(--ok)' : 'var(--danger)' }} aria-hidden="true" />
-                      <span className="t-main"><span className="t-title">{e.gist || t(`tasks.type.${e.type}`)}</span></span>
+                      <span className="t-main"><span className="t-title">{gistLabel(e.gist, t) || t(`tasks.type.${e.type}`)}</span></span>
                     </Link>
                   ))}
                 </>
@@ -1645,7 +1664,7 @@ function LimitGauge({ limit }) {
   );
 }
 
-function ModelMenu({ runners, sel, onChange, disabled }) {
+function ModelMenu({ ws, runners, sel, onChange, disabled }) {
   const { t, lang } = useLang();
   const [open, setOpen] = useState(false);
   const [entered, setEntered] = useState(false); // 두 프레임 마운트 — scale 0.97→1 진입(끊김 없는 transition)
@@ -1701,8 +1720,12 @@ function ModelMenu({ runners, sel, onChange, disabled }) {
           </button>
           {(runners ?? []).filter((r) => !r.hidden || r.id === sel.runner).map((r) => (
             <div key={r.id} style={{ padding: '2px 0' }}>
-              <div className="microlabel" style={{ padding: '4px 8px 2px', color: r.authed ? undefined : 'var(--fg-3)' }}>
-                {r.name}{r.retired ? ` — ${t('runner.retired')}` : r.hidden ? '' : r.authed ? '' : ` — ${t('runner.needConnect')}`}
+              <div className="microlabel" style={{ padding: '4px 8px 2px', color: r.authed ? undefined : 'var(--fg-3)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span>{r.name}{r.retired ? ` — ${t('runner.retired')}` : r.hidden ? '' : r.authed ? '' : ` — ${t('runner.needConnect')}`}</span>
+                {/* 연결하러 갈 길 — 흐린 항목만 보고 메뉴를 닫던 것(UX-A16). 홈 러너 배너와 같은 주소 */}
+                {!r.authed && !r.retired && !r.hidden && ws && (
+                  <Link href={`/c/${ws}/settings?ai=1`} style={{ marginLeft: 'auto', textTransform: 'none', color: 'var(--primary-strong)', textDecoration: 'underline', textUnderlineOffset: 2 }}>{t('runner.connectLink')}</Link>
+                )}
               </div>
               {(r.models ?? []).map((m) => {
                 const active = sel.runner === r.id && (sel.model || '') === m.id;
@@ -2016,14 +2039,16 @@ function CardPanel({ ws, slug, agent, agentName, runners, autoRunnerId, sel, onR
   }
 
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'var(--overlay)', display: 'grid', placeItems: 'center', padding: 24 }} onClick={onClose}>
+    // gridTemplateColumns minmax(0,1fr) — grid auto 트랙이 내용 최소 폭으로 늘어나 390px에서 카드가 화면 밖으로 넘쳤다(UX-A05)
+    <div style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'var(--overlay)', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', placeItems: 'center', padding: 'max(12px, min(24px, 4vw))' }} onClick={onClose}>
       {/* 높이는 탭 내용과 무관하게 고정(86vh) — 탭을 오갈 때 모달이 들썩이지 않는다. 본문만 스크롤, 푸터(저장·편집·해고)는 항상 보인다. */}
-      <div className="card card-float fade-up crew-card-modal" style={{ width: 'min(680px, 100%)', height: 'calc(86vh / var(--z, 1))', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
+      <div className="card card-float fade-up crew-card-modal" style={{ width: 'min(680px, 100%)', height: 'calc(86vh / var(--z, 1))', minWidth: 0, display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}
+        role="dialog" aria-modal="true" aria-label={t('chat.cardTitle')}>
         <div className="card-head" style={{ paddingBottom: 10 }}>
           <span className="card-title">{t('chat.cardTitle')}</span>
           <span className="microlabel">{t('chat.systemPromptEq')}</span>
           <span className="rule" />
-          <button className="btn sm" onClick={onClose}>{t('chat.closeEsc')}</button>
+          <button className="btn sm" onClick={onClose}>{t('common.close')}<span className="kbd-hint"> ESC</span></button>
         </div>
         <Tabs label={t('chat.card.tab.label')} value={tab} onChange={setTab} className="crew-card-tabs" tabs={[
           { id: 'overview', label: t('chat.card.tab.overview') },
@@ -2043,7 +2068,7 @@ function CardPanel({ ws, slug, agent, agentName, runners, autoRunnerId, sel, onR
                 {profile.recent.slice(0, 5).map((r, i) => (
                   <div key={i} style={{ fontSize: 12, color: 'var(--fg-2)', display: 'flex', gap: 7, alignItems: 'center', minWidth: 0 }}>
                     <span style={{ width: 5, height: 5, borderRadius: 999, flex: 'none', background: r.ok ? 'var(--ok)' : 'var(--danger)' }} />
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.gist}</span>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{gistLabel(r.gist, t)}</span>
                   </div>
                 ))}
               </div>
@@ -2052,7 +2077,7 @@ function CardPanel({ ws, slug, agent, agentName, runners, autoRunnerId, sel, onR
           {/* 엔진 — 러너·모델을 카드에서 바로 선택. 채팅 셀렉터와 같은 상태(즉시 저장). */}
           <div style={{ display: 'grid', gap: 7 }}>
             <span className="microlabel">{t('chat.card.engine')}</span>
-            <div style={{ display: 'flex', gap: 8 }}>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', minWidth: 0 }}>
               <RunnerPicker runners={runners} sel={sel} onChange={onRunnerChange} />
             </div>
           </div>
@@ -2214,11 +2239,14 @@ function CardPanel({ ws, slug, agent, agentName, runners, autoRunnerId, sel, onR
           </div>)}
         </div>
         {/* 푸터 — 탭과 무관하게 항상 보인다: 원문 저장·정보 편집·해고 */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 20px 14px', borderTop: '1px solid var(--border-soft)', flex: 'none' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 20px 14px', borderTop: '1px solid var(--border-soft)', flex: 'none', flexWrap: 'wrap' }}>
           {/* 원문(md) 저장 — 규칙·기억 카드·범위는 즉시 저장이라, 이 버튼은 연결·원문 탭의 textarea 편집만 담는다(검수: 라벨로 대상 명시) */}
+          {/* 원문 textarea가 있는 연결 탭에서만 — 개요·능력·방식 탭에서 검은 주 버튼이 "저장할 게 있다"로 읽혔다(UX-A12) */}
+          {tab !== 'link' ? null : (
           <button className="btn btn-primary sm" onClick={() => save()} disabled={saving || md === null}>
             {saving ? <Spinner size={12} /> : t('chat.card.saveRaw')}
           </button>
+          )}
           <span style={{ fontSize: 12, color: msg === t('chat.saved') ? 'var(--fg-2)' : 'var(--danger)' }}>{msg}</span>
           <span style={{ flex: 1 }} />
           <button className="btn sm" onClick={() => setEditOpen(true)}>{t('chat.editInfo')}</button>

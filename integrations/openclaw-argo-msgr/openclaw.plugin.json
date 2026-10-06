@@ -8,7 +8,7 @@
   "channelConfigs": {
     "argo-msgr": {
       "label": "Argo Messenger",
-      "description": "Company team messenger with AI crews (bot API)",
+      "description": "Company team messenger with AI agents (bot API)",
       "schema": {
         "type": "object",
         "additionalProperties": true,

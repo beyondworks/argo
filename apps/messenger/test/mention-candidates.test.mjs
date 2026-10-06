@@ -72,8 +72,44 @@ test('outsideCrewMentions: 방 밖 조직 에이전트만, 방 안 이름·동�
   assert.deepEqual(outsideCrewMentions('서윤 얘기 좀 하자', room, org).map((c) => c.id), [], '@ 없이 이름만은 멘션이 아님');
   assert.deepEqual(outsideCrewMentions('@페퍼 (VPS) 상태?', [...room, { kind: 'crew', id: 'pv', name: '페퍼 (VPS)' }], org).map((c) => c.id), [], '방 안 "페퍼 (VPS)"의 접두 "페퍼"가 방 밖으로 새지 않는다');
   assert.deepEqual(outsideCrewMentions('@서윤 @페퍼 둘 다', room, org).map((c) => c.id).sort(), ['p', 's'], '여럿');
+  // 같은 이름이 여럿이면 하나만, 진짜를 고른다 — 동기화 충돌 사본이 '페퍼' 크루로 미러돼 [이 방에 추가]가 사본을 넣었다(2026-10-04 실기기)
+  const pick = (org) => outsideCrewMentions('@페퍼 봐 줘', room, org, 'me').map((c) => c.id);
+  const p = (id, o) => ({ id, display_name: '페퍼', owner_user_id: 'me', status: 'active', slug: 'pepper', created_at: '2026-09-01', ...o });
+  assert.deepEqual(pick([p('theirs', { owner_user_id: 'x', created_at: '2026-01-01' }), p('mine')]), ['mine'], '내 것이 먼저');
+  assert.deepEqual(pick([p('new', { created_at: '2026-10-04' }), p('old')]), ['old'], '그다음은 먼저 만든 것');
   assert.equal(canInstructCrew({ owner_user_id: 'me', allow: 'owner' }, 'me'), true, '주인');
   assert.equal(canInstructCrew({ owner_user_id: 'x', allow: 'all' }, 'me'), true, '모두');
   assert.equal(canInstructCrew({ owner_user_id: 'x', allow: 'list', allow_users: ['me'] }, 'me'), true, '정한 사람');
   assert.equal(canInstructCrew({ owner_user_id: 'x', allow: 'owner' }, 'me'), false, '주인만');
+});
+
+// 재검수 #826 MEDIUM-2: 정렬만으로는 1:1 후보·@ 팝업·파견 전 목록·내 에이전트에 사본이 남았다 — 조회 단계에서 뺀다(withoutCopies).
+test('withoutCopies·crewOrder: 충돌 사본은 목록에서 빠지고, 남은 목록은 회사 크루 먼저·이름순 — @페퍼는 진짜가 받는다', async () => {
+  const { crewOrder, withoutCopies, mentionsFromBody } = await import('../src/mention-candidates.mjs');
+  const c = (id, display_name, o = {}) => ({ id, display_name, slug: id, ...o });
+  const list = [c('copy', '페퍼', { slug: 'pepper.conflict-mac-1759000000000' }), c('real', '페퍼', { slug: 'pepper' }), c('b', '가나'), c('co', '하늘', { company: true })];
+  const sorted = withoutCopies(list).sort(crewOrder((x) => !!x.company)).map((x) => x.id);
+  assert.deepEqual(sorted, ['co', 'b', 'real'], '사본은 빠지고 회사 크루 먼저·이름순');
+  assert.equal(withoutCopies(null), null, '실패한 조회(null)는 그대로 — 호출부가 null을 판정한다');
+  const cand = withoutCopies(list).sort(crewOrder((x) => !!x.company)).map((x) => ({ kind: 'crew', id: x.id, name: x.display_name }));
+  assert.deepEqual(mentionsFromBody('@페퍼 봐 줘', cand), [{ kind: 'crew', id: 'real' }]);
+});
+
+// 검수 #826 LOW-3: Composer의 [이 방에 추가] 결과 판정이 CI 테스트 없이 App.jsx 안에만 있었다 — 순수 함수로 빼서 잠근다.
+test('outsideAddDone·outsideRowView: 넣은 뒤엔 결과 줄만, 요청은 종전 줄 + "요청했어요", 버튼은 닫힐 때까지 같은 크기·자리', async () => {
+  const { outsideAddDone, outsideRowView } = await import('../src/mention-candidates.mjs');
+  assert.equal(outsideAddDone('joined'), 'joined');
+  assert.equal(outsideAddDone('already'), 'already');
+  assert.equal(outsideAddDone('requested'), 'requested');
+  assert.equal(outsideAddDone(null), 'requested', '모르는 응답은 요청으로 본다(종전과 같다)');
+  const mine = { owner_user_id: 'me' };
+  const v = (done, o = {}) => outsideRowView({ crew: mine, uid: 'me', done, isDm: false, can: true, ...o });
+  assert.deepEqual(v(undefined), { line: 'mention.outside', denied: false, suffix: null, request: 'on' });
+  assert.deepEqual(v('pending'), { line: 'mention.outside', denied: false, suffix: null, request: 'busy' }, '응답 전에는 같은 글자로 꺼진 버튼(글자가 짧아지면 폰에서 줄바꿈이 바뀌었다)');
+  assert.deepEqual(v('joined'), { line: 'mention.outside.joined', denied: false, suffix: null, request: 'slot' }, '결과 뒤에도 보이지 않는 같은 크기 자리 — 지우면 [1:1로 시키기]가 밀려와 더블탭 둘째 번이 1:1을 열었다(재검수 N2·NEW-1)');
+  assert.deepEqual(v('already'), { line: 'mention.outside.already', denied: false, suffix: null, request: 'slot' });
+  assert.deepEqual(v('requested'), { line: 'mention.outside', denied: false, suffix: 'mention.outside.requested', request: 'slot' });
+  assert.equal(v(undefined, { isDm: true }).request, null, '1:1 방에는 [이 방에 추가]가 없다');
+  assert.equal(v('joined', { crew: { owner_user_id: 'x' } }).request, null, '남의 에이전트는 주인만 데려온다 — 자리도 만들지 않는다');
+  assert.equal(v(undefined, { can: false }).denied, true);
 });

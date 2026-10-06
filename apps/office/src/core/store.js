@@ -9,6 +9,7 @@ import { between } from './position.js';
 import { SPACES, ME } from './session.js';
 import { writeNav, readNav, readFav, writeFav, routeInfo } from './nav-model.js';
 import { usable, isMine } from './crew-list.js';
+import { renameDoc } from '../pages/page-title.js';
 
 const KEY = 'argo-office-draft-v1';
 const fresh = () => ({ pages: S.PAGES.map((p, i) => ({ ...p, position: p.position ?? String.fromCharCode(97 + Math.floor(i / 10)) + (i % 10 + 1) })), mails: S.MAILS, mailAccounts: [], approvals: S.APPROVALS, decisions: S.DECISIONS, work: S.WORK, crews: S.CREWS, outputs: S.OUTPUTS, journal: S.JOURNAL, docs: [], layouts: {}, trash: [], todosDone: {}, pagesReady: true, crewsReady: true });
@@ -20,7 +21,7 @@ const listeners = new Set();
 export function activateDraftScope(uid) {
   draftScope = uid;
   setLegacyRecovery({ draft: restore(KEY, null) !== null });
-  state = { ...(uid === 'sample' ? fresh() : empty()), ...(uid ? restore(scopedStorageKey(KEY, uid), {}) : {}) };
+  state = { ...(uid === 'sample' ? fresh() : empty()), ...(uid ? restore(scopedStorageKey(KEY, uid), {}) : {}), boardError: null, mailError: undefined }; // 지난번 읽기 실패 표시는 이어 오지 않는다(이번에 다시 읽는다). 메일은 받은편지함을 받기 전 = 확인 전(core/mail.js)
   listeners.forEach((listener) => listener());
 }
 
@@ -47,8 +48,6 @@ const nowIso = () => new Date().toISOString();
 // 저장은 보내는 순간의 최신 제목·본문과 서버가 아는 버전으로 간다(core/transport.js) — 글자마다 불려도 마지막 값 하나.
 const byPos = (a, b) => ((a.position ?? '') < (b.position ?? '') ? -1 : (a.position ?? '') > (b.position ?? '') ? 1 : 0);
 export const crewName = (id) => state.crews.find((c) => c.id === id)?.name ?? '';
-/** 공간의 크루 — 내 공간은 내 크루(모든 조직), 조직은 그 조직 크루. 예시 크루(공간·주인 없음)는 어디서나 */
-export const crewsIn = (crews, space, me) => crews.filter((c) => (space === 'me' ? !c.owner || c.owner === me : !c.space || c.space === space));
 /** 결재 — 내 공간은 내가 결정할 수 있는 것만(모든 조직), 조직 공간은 그 조직 전부 */
 export const approvalsIn = (space) => (a) => (space === 'me' || a.space === space) && (space !== 'me' || a.canDecide !== false);
 export const childrenOf = (pages, space, parent) => pages.filter((p) => !p.template && p.space === space && (p.parent ?? null) === (parent ?? null)).sort(byPos); // 템플릿은 트리에 안 섞는다
@@ -76,8 +75,12 @@ export function duplicatePage(id) {
   const map = new Map(ids.map((x) => [x, uid()]));
   const src = s.pages.find((q) => q.id === id);
   const next = s.pages.filter((q) => q.space === src.space && (q.parent ?? null) === (src.parent ?? null) && (q.position ?? '') > (src.position ?? '')).sort(byPos)[0];
-  const copies = ids.map((x) => { const p = s.pages.find((q) => q.id === x); return { ...p, id: map.get(x), parent: x === id ? p.parent : map.get(p.parent), restricted: false, template: false, version: 1, fresh: true,
-    position: x === id ? between(src.position ?? null, next?.position ?? null) : p.position, title: x === id ? t('page.copyTitle', { title: p.title || t('page.untitled') }) : p.title, updated: nowIso() }; });
+  const copies = ids.map((x) => {
+    const p = s.pages.find((q) => q.id === x), title = x === id ? t('page.copyTitle', { title: p.title || t('page.untitled') }) : p.title;
+    // 원본의 제목 줄이 이름과 이어져 있으면 사본 첫 줄도 사본 이름으로 — 사본에서도 첫 줄을 고치면 이름이 따라간다(16차 검수 LOW 4)
+    return { ...p, id: map.get(x), parent: x === id ? p.parent : map.get(p.parent), restricted: false, template: false, version: 1, fresh: true,
+      position: x === id ? between(src.position ?? null, next?.position ?? null) : p.position, title, content: x === id ? renameDoc(p.content, p.title, title) : p.content, updated: nowIso() };
+  });
   update((st) => ({ pages: [...st.pages, ...copies] }), copies.map((c) => [`page-create:${c.id}`, { type: 'page.create', id: c.id }]));
   return map.get(id);
 }
@@ -154,8 +157,8 @@ export function assign({ space, crew, goal }) {
   const row = { id: uid(), space, goal, lead: crew, status: 'running', started: nowIso(), steps: '0/…', channel: 'DM' };
   update((s) => ({ work: [row, ...s.work] }));
 }
-export function sendToCrew({ orgId, crewId, crewName, body, meta }) {
+export function sendToCrew({ orgId, crewId, personalId = null, personalBot = false, crewName, body, meta }) { // personalId: 내 에이전트의 개인 1:1(crew-assign.js assignTarget)
   const clientId = uid();
-  update(() => ({}), [[`assign:${clientId}`, { type: 'crew.assign', orgId, crewId, crewName, body, meta, clientId }]]);
+  update(() => ({}), [[`assign:${clientId}`, { type: 'crew.assign', orgId, crewId, personalId, personalBot, crewName, body, meta, clientId }]]);
 }
 export const resetDraft = () => { state = getStorageScope() === 'sample' ? fresh() : empty(); listeners.forEach((l) => l()); persist(scopedStorageKey(KEY), state, 0); };

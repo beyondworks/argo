@@ -8,6 +8,7 @@ import { Icon, Avatar, Spinner, Skeleton, useScrollLock, ConfirmModal, DropUp, a
 import { useLang } from '../../../i18n';
 import { detectDevicePaths } from '../../../../src/device-paths.mjs'; // 기기 종속 경로 안내 — 노드 의존 0 순수 모듈
 import { onceExpired } from '../../../../src/routine-time.mjs'; // '만료' 판정 — 노드 의존 0 순수 모듈(표시 전용, 상태 쓰기 없음)
+import { routineCrewMissing, applyRoutineToggle, routineStateKind, activeRoutineCount, routineFailKind, routinePillView } from './routine-row.mjs';
 
 function scheduleLabel(s, t, DOW) {
   // 복수 시각·요일은 '·'로 이어 기존 라벨 템플릿에 그대로 태운다 (예: 매주 월·수 09:00·18:00)
@@ -126,6 +127,9 @@ export default function Routines({ params }) {
   ];
   const [routines, setRoutines] = useState(null);
   const [agents, setAgents] = useState([]);
+  const [agentsLoaded, setAgentsLoaded] = useState(false); // 크루 목록을 받았나 — 못 받았으면 '크루 없음'을 단정하지 않는다
+  const [pendingIds, setPendingIds] = useState(() => new Set()); // 켜기/끄기·삭제 진행 중인 루틴 id — 누르는 즉시 눌림 표시(F15)
+  const [listError, setListError] = useState(''); // 목록 조작(켜기/끄기·삭제) 실패 안내 — 폼 오류와 따로
   const [form, setForm] = useState(null); // {agentSlug,title,prompt,type,time,dow}
   const [saving, setSaving] = useState(false);
   const [refining, setRefining] = useState(false); // AI 설계 확장 진행 중
@@ -165,7 +169,7 @@ export default function Routines({ params }) {
     api(`/api/companies/${ws}/routines`)
       .then((d) => { setRoutines(d.routines ?? []); setError(''); })
       .catch((e) => { setRoutines(null); setError(String(e?.message || '') || t('routines.loadFail')); });
-    api(`/api/companies/${ws}?light=1`).then((d) => setAgents(d.agents)).catch(() => {});
+    api(`/api/companies/${ws}?light=1`).then((d) => { setAgents(d.agents ?? []); setAgentsLoaded(true); }).catch(() => {});
   }
   useEffect(load, [ws]);
 
@@ -247,12 +251,25 @@ export default function Routines({ params }) {
     }
   }
 
+  const markPending = (id, on) => setPendingIds((cur) => { const next = new Set(cur); if (on) next.add(id); else next.delete(id); return next; });
+  // 켜기/끄기 — 누르는 즉시 바뀐 상태로 보이고(낙관 반영) 진행 중엔 눌림 표시, 실패하면 되돌리고 안내한다(F15).
+  // 종전: 진행 표시 없이 기다리고, 실패해도 아무 말 없이 load()가 옛 상태를 다시 그렸다.
   async function toggle(r) {
-    await fetch(`/api/companies/${ws}/routines`, {
-      method: 'PUT', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ id: r.id, enabled: !r.enabled }),
-    });
-    load();
+    if (pendingIds.has(r.id)) return;
+    const next = !r.enabled;
+    setListError(''); markPending(r.id, true);
+    setRoutines((cur) => applyRoutineToggle(cur, r.id, next));
+    try {
+      const res = await fetch(`/api/companies/${ws}/routines`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id: r.id, enabled: next }),
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw Object.assign(new Error(d?.error || ''), { status: res.status, errorCode: d?.errorCode }); }
+      load();
+    } catch (e) {
+      if (routineFailKind(e) === 'gone') { setListError(t('routines.gone')); load(); } // 이미 지워진 루틴 — 목록을 다시 읽는다(되돌릴 행이 없다)
+      else { setRoutines((cur) => applyRoutineToggle(cur, r.id, r.enabled)); setListError(t('routines.toggleFail')); }
+    } finally { markPending(r.id, false); }
   }
 
   function remove(r) { setDelTarget(r); } // window.confirm(Tauri 무동작) 대신 인앱 ConfirmModal
@@ -260,8 +277,15 @@ export default function Routines({ params }) {
     const r = delTarget;
     if (!r) return;
     setDelTarget(null); // 모달을 await 전에 닫아 확인 버튼 더블클릭(이중 DELETE) 차단
-    await fetch(`/api/companies/${ws}/routines?id=${r.id}`, { method: 'DELETE' });
-    load();
+    setListError(''); markPending(r.id, true);
+    try {
+      const res = await fetch(`/api/companies/${ws}/routines?id=${encodeURIComponent(r.id)}`, { method: 'DELETE' });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw Object.assign(new Error(d?.error || ''), { status: res.status, errorCode: d?.errorCode }); }
+      load();
+    } catch (e) {
+      if (routineFailKind(e) === 'gone') { setListError(t('routines.gone')); load(); }
+      else setListError(t('routines.deleteFail')); // 삭제 실패 — 행은 그대로 남아 있다(지워진 척하지 않는다)
+    } finally { markPending(r.id, false); }
   }
 
   const nameOf = (slug) => agents.find((a) => a.slug === slug)?.name ?? slug;
@@ -478,8 +502,9 @@ export default function Routines({ params }) {
           <span className="card-title"><Icon name="clock" size={14} />{t('routines.registered')}</span>
           <span className="rule" />
           {/* 가동 수에서 만료를 뺀다 — 영영 안 도는 루틴을 세면 집계도 같은 거짓말을 한다 */}
-          <span className="pill"><span className="dot" />{t('routines.active', { n: routines?.filter((r) => r.enabled && !onceExpired(r)).length ?? 0 })}</span>
+          <span className="pill"><span className="dot" />{t('routines.active', { n: activeRoutineCount(routines, agentsLoaded ? agents : null, onceExpired) })}</span>
         </div>
+        {listError && <p role="alert" style={{ margin: '0 20px 10px', fontSize: 12.5, color: 'var(--danger)' }}>{listError}</p>}
         {routines === null ? (
           error
             ? <div style={{ padding: '0 18px 18px', fontSize: 12.5, color: 'var(--danger)' }}>{t('routines.loadFail')}</div>
@@ -499,6 +524,10 @@ export default function Routines({ params }) {
                 // 행당 1회 판정 — 셀 3곳 재호출 비용(tz 각인 once당 ~155µs×4)과 호출 간 시계가
                 // 경계를 걸쳐 라벨·클래스가 어긋나는 이론적 사각을 함께 제거(#364 검수 LOW).
                 const expired = onceExpired(r);
+                const crewGone = routineCrewMissing(r, agentsLoaded ? agents : null); // 해고·이름 변경 — 켜도 돌 크루가 없다(F4)
+                const pending = pendingIds.has(r.id);
+                const state = routineStateKind(r, { crewGone, expired }); // 크루 없는 켜진 루틴은 '가동'이 아니라 '크루 없음으로 멈춤'(UM2)
+                const pill = routinePillView(r, { crewGone, expired, pending }); // 크루 없는 루틴은 누를 수 없다·툴팁은 켜짐/꺼짐별(2차 L5)
                 return (
                 <tr key={r.id} role="row" style={{ cursor: 'default' }}>
                   <td role="cell" className={styles.summary}>
@@ -511,6 +540,7 @@ export default function Routines({ params }) {
                     <span className={styles.crew} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12.5 }}>
                       <Avatar name={nameOf(r.agentSlug)} sm />{nameOf(r.agentSlug)}
                     </span>
+                    {crewGone && <span className="chip danger" title={t('routines.crewMissingHint')} style={{ marginTop: 4, fontSize: 10, minHeight: 18, padding: '0 6px', textTransform: 'none' }}>{t('routines.crewMissing')}</span>}
                   </td>
                   <td role="cell" className="mono" style={{ fontSize: 11.5 }}>
                     <span className={styles.mobileLabel} aria-hidden="true">{t('routines.colSchedule')}</span>
@@ -550,16 +580,19 @@ export default function Routines({ params }) {
                     {/* 만료 — 예약 시각이 catch-up 창(4h)까지 지나도록 발화하지 못한 once. '가동'으로
                         두면 영영 안 도는 루틴이 도는 척한다(#354 검수 3R 잔존 집합). 표시 전용 파생
                         판정이라 저장 상태는 건드리지 않는다 — 클릭(끄기)·편집(날짜 수정)·삭제는 그대로. */}
-                    <button className={`pill${r.enabled && !expired ? ' ok' : ''}`} onClick={() => toggle(r)} style={{ cursor: 'pointer' }}
-                      title={expired ? t('routines.expiredHint') : (!r.enabled && r.loop?.stoppedReason ? t('routines.loop.resume') : undefined)}>
-                      <span className="dot" />{r.enabled ? (expired ? t('routines.expired') : t('routines.on')) : (r.loop?.stoppedReason ? t('routines.loop.resume') : t('routines.off'))}
+                    {/* 크루가 없는 꺼진 루틴은 켤 수 없다(켜도 돌 크루가 없다) — 편집에서 크루를 바꾸면 다시 켤 수 있다 */}
+                    <button className={`pill${state === 'on' ? ' ok' : ''}`} onClick={() => pill.clickable && toggle(r)}
+                      disabled={pill.disabled} aria-busy={pending || undefined}
+                      style={{ cursor: pill.clickable ? 'pointer' : 'default', opacity: pending ? 0.6 : 1 }}
+                      title={pill.titleKey ? t(pill.titleKey) : undefined}>
+                      {pending ? <Spinner size={10} /> : <span className="dot" />}{state === 'crewMissing' ? t('routines.crewPaused') : r.enabled ? (expired ? t('routines.expired') : t('routines.on')) : (r.loop?.stoppedReason ? t('routines.loop.resume') : t('routines.off'))}
                     </button>
                   </td>
                   <td role="cell" className={styles.actions}>
                     <span>
                       <button className="btn sm" onClick={() => setRunTarget(r)}><Icon name="play" size={12} /> {t('routines.run')}</button>
                       <button className="btn sm btn-icon" style={{ width: 28 }} onClick={() => openEdit(r)} aria-label={t('routines.editAria')}><Icon name="edit" size={13} /></button>
-                      <button className="btn sm btn-icon" style={{ width: 28 }} onClick={() => remove(r)} aria-label={t('routines.deleteAria')}><Icon name="trash" size={13} /></button>
+                      <button className="btn sm btn-icon" style={{ width: 28 }} onClick={() => remove(r)} disabled={pending} aria-label={t('routines.deleteAria')}>{pending ? <Spinner size={11} /> : <Icon name="trash" size={13} />}</button>
                     </span>
                   </td>
                 </tr>

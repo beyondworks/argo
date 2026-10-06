@@ -1,6 +1,6 @@
 {
   "identifier": "mobile",
-  "description": "Mobile login callback, push, haptics",
+  "description": "Mobile login callback, push, haptics, media save/share",
   "platforms": [
     "iOS",
     "android"
@@ -13,6 +13,7 @@
     "push-notifications:default",
     "core:window:allow-set-badge-count",
     "haptics:default",
-    "core:webview:allow-set-webview-background-color"
+    "core:webview:allow-set-webview-background-color",
+    "media-share:default"
   ]
 }

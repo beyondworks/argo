@@ -34,6 +34,9 @@ export function LocalAssetOffer({ selected, onChange, disabled }) {
     return () => { alive = false; };
   }, []);
   if (discovery && ['deferred', 'completed'].includes(discovery.phase)) return null;
+  // 이 환경에서 쓸 수 없다(웹 모드·조회 실패) — 누를 것 없는 큰 카드로 첫 화면 자리를 차지하지 않는다(UX-A06). 회사를 만든 뒤
+  // 설정의 가져오기 화면은 그대로 이유를 보여 준다(LocalAssetImport).
+  if (error || (discovery && discovery.available !== true)) return null;
   const available = discovery?.available === true;
   return <section className="card" style={{ padding: 16, marginBottom: 16 }}>
     <h2 className="card-title">{t('localImport.title')}</h2>

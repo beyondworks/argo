@@ -1,0 +1,53 @@
+/* 페이지 블록(16차) — 편집기(pages/Editor.jsx)와 읽기 화면·공개 페이지(ui/DocView.jsx)가 같은 class로 같은 모양을 그린다.
+   편집기의 토글·콜아웃은 그리기(node view)가 안쪽 블록을 한 겹 더 싼다([data-node-view-content-react]) — 아래 선택자는 두 모양을 함께 받는다.
+   색 막대 금지(콜아웃도 왼쪽 테두리 없이 표면색과 아이콘으로). 둥글기는 토큰(--rs·--rc). */
+
+/* 링크 — 본문에 끼운 모듈 카드 안의 링크(목록 줄 등)에는 새지 않게 */
+.prose a:not(.page-module-node *) { color: inherit; text-decoration: underline; text-decoration-color: var(--fg-3); text-underline-offset: 2px; text-decoration-thickness: 1px; }
+@media (hover: hover) { .prose a:not(.page-module-node *):hover { text-decoration-color: currentColor; } }
+.prose[contenteditable='true'] a:not(.page-module-node *) { cursor: text; }
+
+/* 토글 — 첫 줄은 늘 보이고 나머지는 접힌다 */
+.prose .toggle { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0 2px; margin: 2px 0; }
+.prose .toggle-btn { flex: none; display: grid; place-items: center; width: 24px; height: 26px; margin-left: -2px; border-radius: 5px; color: var(--fg-3); }
+.prose .toggle-btn .ico { transition: transform 160ms var(--ease-out); }
+.prose .toggle[data-open='true'] > .toggle-btn .ico { transform: rotate(90deg); }
+@media (hover: hover) { .prose .toggle-btn:hover { background: var(--wash); color: var(--fg); } }
+.prose .toggle-content { flex: 1; min-width: 0; }
+.prose .toggle-content > :first-child, .prose .toggle-content > [data-node-view-content-react] > :first-child { margin-top: 0; }
+.prose .toggle-content > * + *, .prose .toggle-content > [data-node-view-content-react] > * + * { margin-top: 4px; }
+.prose .toggle[data-open='false'] > .toggle-content > :not(:first-child),
+.prose .toggle[data-open='false'] > .toggle-content > [data-node-view-content-react] > :not(:first-child) { display: none; }
+.prose .toggle[data-empty][data-open='true']::after { content: attr(data-hint); flex-basis: 100%; padding-left: 26px; color: var(--fg-3); font-size: 13px; line-height: 1.6; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { .prose .toggle-btn .ico { transition: none; } }
+
+/* 콜아웃 — 표면색 바탕 + 아이콘 */
+.prose .callout { display: flex; align-items: flex-start; gap: 8px; margin: 8px 0; padding: 10px 14px 10px 10px; border-radius: var(--rs); background: var(--wash); }
+.prose .callout-icon { flex: none; display: grid; place-items: center; width: 26px; height: 26px; border-radius: var(--rc); color: var(--fg-2); }
+.prose button.callout-icon { cursor: pointer; }
+@media (hover: hover) { .prose button.callout-icon:hover { background: var(--wash); color: var(--fg); } }
+.prose .callout-body { flex: 1; min-width: 0; }
+.prose .callout-body > :first-child, .prose .callout-body > [data-node-view-content-react] > :first-child { margin-top: 0; }
+.prose .callout-body > :last-child, .prose .callout-body > [data-node-view-content-react] > :last-child { margin-bottom: 0; }
+.prose .callout-body > * + *, .prose .callout-body > [data-node-view-content-react] > * + * { margin-top: 4px; }
+
+/* 2열·3열 — 좁은 화면은 위아래로 */
+.prose .cols { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 28px; margin: 8px 0; }
+.prose .col { min-width: 0; border-radius: var(--rc); }
+.prose .col > :first-child { margin-top: 0; }
+.prose .col > * + * { margin-top: 4px; }
+.prose[contenteditable='true'] .col { box-shadow: 0 0 0 1px transparent; transition: box-shadow 120ms var(--ease-out); }
+@media (hover: hover) { .prose[contenteditable='true'] .cols:hover > .col { box-shadow: 0 0 0 1px var(--border-soft); } } /* 칸 자리를 보이게 — 빈 칸도 어디에 쓰는지 알 수 있게 */
+@media (max-width: 640px) { .prose .cols { grid-auto-flow: row; gap: 4px; } }
+
+/* 표 — 가로로 넘치면 상자 안에서 민다. 열 너비는 칸 경계를 끌어 바꾼다(편집기) */
+/* 표 규칙은 .tableWrapper 안에만 — 본문에 끼운 모듈 카드의 표에 새지 않게 */
+.prose .tableWrapper { overflow-x: auto; margin: 8px 0; }
+.prose .tableWrapper > table { border-collapse: collapse; table-layout: fixed; width: 100%; font-size: 14px; line-height: 1.6; }
+.prose .tableWrapper td, .prose .tableWrapper th { position: relative; min-width: 64px; padding: 6px 9px; border: 1px solid var(--border); vertical-align: top; text-align: left; box-sizing: border-box; }
+.prose .tableWrapper th { font-weight: 600; background: var(--wash); }
+.prose .tableWrapper td > p, .prose .tableWrapper th > p { margin: 0; }
+.prose .tableWrapper td > * + *, .prose .tableWrapper th > * + * { margin-top: 4px; }
+.prose .column-resize-handle { position: absolute; top: 0; right: -2px; bottom: -1px; width: 4px; background: var(--pick-line); pointer-events: none; }
+.prose.resize-cursor { cursor: col-resize; }
+.prose .selectedCell::after { content: ''; position: absolute; inset: 0; background: var(--pick-wash); pointer-events: none; }

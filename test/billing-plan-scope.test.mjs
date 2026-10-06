@@ -7,7 +7,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { proRowActive } from '../src/entitlement.mjs';
+import { accountPlan, proRowActive } from '../src/entitlement.mjs';
 
 const page = await readFile(new URL('../app/c/[ws]/settings/page.jsx', import.meta.url), 'utf8');
 
@@ -15,7 +15,7 @@ test('결제 분기는 sync.plan(기기값)을 쓰지 않는다', async () => {
   // 슬라이스로 범위를 좁혔더니 경계가 뒤집혀 빈 문자열이 됐고, 변이를 넣어도 초록이었다(2026-08-05).
   // 파일 전체에서 센다 — 이 화면의 plan 비교는 전부 계정 기준이어야 하므로 예외가 없다.
   assert.doesNotMatch(page, /sync\??\.plan === /, '결제 분기가 기기 플랜으로 되돌아갔다 — 남의 플랜이 보인다');
-  assert.match(page, /const acctPlan = bill/, '계정 기준 플랜 계산이 없다');
+  assert.match(page, /const acctPlan = accountPlan\(bill\);/, '계정 기준 플랜 계산이 없다');
   // 기기값 폴백은 **계정이 없는 모드에서만**. 문장 리터럴이 아니라 그 문장이 지켜야 할 두 성질을
   // 잠근다 — 리터럴을 박으면 정당한 정정에도 거짓 red가 난다(실제로 났다: 2026-08-19 MED-A 수정).
   const planStmt = page.match(/const plan = [^;]+;/)?.[0] ?? '';
@@ -29,7 +29,10 @@ test('결제 분기는 sync.plan(기기값)을 쓰지 않는다', async () => {
 });
 
 test('판정은 서버 is_pro와 같은 공유 술어를 쓴다 — 네 번째 판정을 만들지 않는다', () => {
-  assert.match(page, /proRowActive\(\{ plan: bill\.plan, ends_at: bill\.endsAt \}\)/);
+  // 화면은 accountPlan 하나로 판정한다 — 서버 판정(effectivePlan)이 없을 때의 폴백이 proRowActive다
+  assert.doesNotMatch(page, /proRowActive\(/, '화면이 원시 행으로 다시 판정한다 — 부여 Pro가 Free로 보인다(2026-10-06)');
+  assert.equal(accountPlan({ plan: 'pro', endsAt: null }), 'pro', '폴백은 proRowActive와 같은 판정');
+  assert.equal(accountPlan({ plan: 'pro', endsAt: new Date(Date.now() - 1000).toISOString() }), 'free');
   // 공유 술어 자체의 계약(해지 예약·만료 반영)
   assert.equal(proRowActive({ plan: 'pro', ends_at: null }), true);
   assert.equal(proRowActive({ plan: 'pro', ends_at: new Date(Date.now() - 1000).toISOString() }), false, '만료된 pro는 pro가 아니다');

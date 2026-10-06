@@ -5,6 +5,8 @@ import { use, useCallback, useEffect, useLayoutEffect, useRef, useState } from '
 import { useRouter } from 'next/navigation';
 import { Avatar, Icon, Markdown, ArgoSpinner, Skeleton, Spinner, InputModal, api, imeGuardWith } from '../../../ui';
 import { useLang, stageLabel } from '../../../i18n';
+import { uploadAttachments } from '../../../lib/upload-files.mjs';
+import { failureReason } from '../../../lib/error-text.mjs'; // 실패 이유 — 빈 이유·브라우저 원문 없이(UL5)
 import { dropUpClamp } from '../zoom-math.mjs';
 import { ArtifactChips } from '../artifact-chips';
 import { matchSlash, SLASH_TOKEN_RE } from '../slash-match.mjs';
@@ -21,7 +23,7 @@ const LANE = 'min(768px, 100%)';
 
 export default function Room({ params }) {
   const { ws } = use(params);
-  const { t } = useLang();
+  const { t, lang } = useLang();
   const router = useRouter();
   const [agents, setAgents] = useState([]);
   const [messages, setMessages] = useState(null);
@@ -218,14 +220,10 @@ export default function Room({ params }) {
     if (!files.length || uploading) return;
     setUploading(true); setError('');
     try {
-      const fd = new FormData();
-      files.forEach((f) => fd.append('file', f));
-      const r = await fetch(`/api/companies/${ws}/chat/upload`, { method: 'POST', body: fd });
-      const d = await r.json();
-      if (!r.ok) throw new Error(d.error);
-      setAtt((cur) => [...cur, ...d.files].slice(0, 8));
+      const uploaded = await uploadAttachments(ws, files, lang); // 보내기 전에 파일마다 10MB 확인, 파일마다 요청 하나 — 한도는 app/lib/upload-limit.mjs 한 곳(2차 M3·4차)
+      setAtt((cur) => [...cur, ...uploaded].slice(0, 8));
     } catch (err) {
-      setError(t('chat.attachFailed', { msg: String(err.message) }));
+      setError(t('chat.attachFailed', { msg: failureReason(err, t) }));
     } finally {
       setUploading(false);
     }
@@ -277,7 +275,7 @@ export default function Room({ params }) {
     const prev = delegLimited;
     setDelegLimited(next); delegSavedAt.current = Date.now();
     try { await api(`/api/companies/${ws}/room/delegation`, { limit: next }); }
-    catch (e) { setDelegLimited(prev); setError(t('deleg.fail', { msg: String(e.message) })); }
+    catch (e) { setDelegLimited(prev); setError(t('deleg.fail', { msg: failureReason(e, t) })); }
   }
 
   async function endMeeting() {
@@ -519,7 +517,8 @@ export default function Room({ params }) {
                 </div>
               ) : m.who === 'user' ? (
                 <div key={i} style={{ justifySelf: 'end', maxWidth: '78%' }}>
-                  <div className="bubble-user" style={{ background: 'var(--primary)', color: 'var(--primary-fg)', borderRadius: 14, padding: '9px 13px', fontSize: 13.5, whiteSpace: 'pre-wrap' }}>
+                  {/* msg-user — 크루 대화 말풍선과 같은 테마 규칙(graphite는 회색). 인라인 검정 배경이 테마를 덮어 화면마다 색이 달랐다(UX-A15) */}
+                  <div className="bubble-user msg-user" style={{ maxWidth: '100%', borderRadius: 14, padding: '9px 13px', fontSize: 13.5, whiteSpace: 'pre-wrap' }}>
                     {m.attachments?.length > 0 && (
                       <span style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: m.text ? 8 : 0 }}>
                         {m.attachments.map((a, j) => a.isImage ? (

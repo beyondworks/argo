@@ -10,10 +10,11 @@ import { useEffect, useRef, useState } from 'react';
 import { isMobileNative, isIos } from './platform.js';
 import { observeMobileResume } from './mobile-lifecycle.mjs';
 import { pushDiag } from './diag.jsx';
-import { parseGithubRelease, pickAndroidAsset, isNewer } from './update-release.mjs';
+import { parseGithubRelease, pickAndroidAsset, isNewer, mobileUpdateFailure } from './update-release.mjs';
 import { shouldCheckMobile, shouldShowVersion } from './update-schedule.mjs';
 
 const RELEASE_API = 'https://api.github.com/repos/beyondworks/argo-messenger/releases/latest';
+const RELEASE_PAGE = 'https://github.com/beyondworks/argo-messenger/releases/latest'; // 설치 파일(APK)을 직접 받는 곳 — 막대는 Android에서만 뜬다(iOS는 막대·확인 자체가 없다)
 // 마지막 확인 시각을 sessionStorage에 둔다 — location.reload() 직후의 'start' 확인이 메모리(ref)만으로는 간격 판정을
 // 우회한다(리로드가 ref를 지우므로). sessionStorage는 같은 웹뷰 세션 동안(진짜 앱 재시작 전까지) 남는다.
 const LAST_CHECK_KEY = 'msgr-update-last-check';
@@ -29,10 +30,11 @@ export function useMobileUpdate() {
   const ref = useRef({ lastCheckAt: readLastCheckAt(), dismissedVersion: null, phase: 'idle', busy: false, release: null });
   const downloadRef = useRef(() => {}); // 설정에서 돌아왔을 때 이펙트가 최신 downloadAndInstall을 부를 수 있게(마운트 이펙트는 []이라 클로저가 고정된다)
 
+  const fail = (error) => { ref.current.phase = 'error'; pushDiag('mobile-update', String(error)); setSt((s) => ({ ...s, phase: 'error', error })); }; // 원문은 진단 기록에만 — 막대는 사용자 문구(mobileUpdateFailure, MSG-11)
   const downloadAndInstall = async () => {
     const asset = pickAndroidAsset(ref.current.release?.assets);
-    if (!asset) { ref.current.phase = 'error'; setSt((s) => ({ ...s, phase: 'error', error: 'no-apk-asset' })); return; }
-    if (!asset.sha256) { ref.current.phase = 'error'; setSt((s) => ({ ...s, phase: 'error', error: 'missing-sha256' })); return; } // 무결성 대조 불가 자산은 설치하지 않는다
+    if (!asset) { fail('no-apk-asset'); return; }
+    if (!asset.sha256) { fail('missing-sha256'); return; } // 무결성 대조 불가 자산은 설치하지 않는다
     ref.current.phase = 'downloading';
     setSt((s) => ({ ...s, phase: 'downloading', progress: 0 }));
     try {
@@ -46,7 +48,7 @@ export function useMobileUpdate() {
     } catch (e) {
       const message = String(e?.message ?? e);
       if (/PERMISSION_REQUIRED/.test(message)) { ref.current.phase = 'permission'; setSt((s) => ({ ...s, phase: 'permission', error: message })); }
-      else { ref.current.phase = 'error'; setSt((s) => ({ ...s, phase: 'error', error: message })); }
+      else fail(message);
     }
   };
   downloadRef.current = downloadAndInstall;
@@ -90,16 +92,22 @@ export function useMobileUpdate() {
 
   const openInstallSettings = async () => {
     try { const { invoke } = await import('@tauri-apps/api/core'); await invoke('plugin:apk-installer|open_unknown_sources_settings'); }
-    catch (e) { setSt((s) => ({ ...s, phase: 'error', error: String(e?.message ?? e) })); }
+    catch (e) { fail(`SETTINGS_FAILED ${String(e?.message ?? e)}`); }
   };
 
   const retry = () => { ref.current.phase = 'available'; setSt((s) => ({ ...s, phase: 'available', error: '' })); };
+  // 같은 실패가 되풀이되는 원인(파일 확인 실패·서버 한도)이면 릴리스 페이지에서 직접 받게 한다(MSG-11)
+  const openRelease = async () => {
+    const url = /^https:\/\/github\.com\/beyondworks\/argo-messenger\/releases\//.test(ref.current.release?.htmlUrl ?? '') ? ref.current.release.htmlUrl : RELEASE_PAGE;
+    try { await (await import('@tauri-apps/plugin-opener')).openUrl(url); } catch (e) { pushDiag('mobile-update', `open release: ${String(e?.message ?? e)}`); }
+  };
 
-  return { ...st, dismiss, downloadAndInstall, openInstallSettings, retry };
+  return { ...st, dismiss, downloadAndInstall, openInstallSettings, retry, openRelease };
 }
 
 export function MobileUpdateBar({ t }) {
   const u = useMobileUpdate();
+  const failure = u.phase === 'error' ? mobileUpdateFailure(u.error) : null; // 내부 코드 대신 사용자 문구 + 다음 할 일(MSG-11)
   if (!isMobileNative || isIos || u.phase === 'idle') return null; // iOS는 useMobileUpdate가 phase를 'idle' 밖으로 옮기지 않지만, 방어적으로 한 번 더 막는다
   return (
     <div className="msgr-updbar" role="status">
@@ -120,8 +128,9 @@ export function MobileUpdateBar({ t }) {
       )}
       {u.phase === 'error' && (
         <>
-          <span style={{ color: 'var(--danger)' }}>{t('upd.error')} {u.error}</span>
-          <button type="button" className="btn sm ghost" onClick={u.retry}>{t('upd.mobile.retry')}</button>
+          <span style={{ color: 'var(--danger)' }}>{t(failure.key)}</span>
+          {failure.retry && <button type="button" className="btn sm ghost" onClick={u.retry}>{t('upd.mobile.retry')}</button>}
+          {failure.download && <button type="button" className="btn sm" onClick={() => { u.openRelease(); u.dismiss(); }}>{t('upd.mobile.download')}</button>}
           <button type="button" className="btn sm ghost" onClick={u.dismiss}>{t('upd.later')}</button>
         </>
       )}

@@ -11,8 +11,13 @@ const patch = (fn) => update((s) => ({ crews: s.crews.map((c) => fn(c) ?? c) }))
 
 async function save(orgId, action, ids, on = null) {
   if (getMode() !== 'signedIn' || !orgId) return; // 예시 모드는 화면에서만
-  try { await rpc('office_crew_prefs', { p_org: orgId, p_action: action, p_ids: ids, p_on: on }); }
-  catch (e) { pullBoard().catch(() => {}); throw e; }
+  await rpc('office_crew_prefs', { p_org: orgId, p_action: action, p_ids: ids, p_on: on });
+}
+/** 조직마다 저장을 다 기다린 뒤, 하나라도 실패했으면 서버에서 한 번만 다시 읽고 실패를 알린다 — 실패한 저장마다 바로 다시 읽으면
+ *  아직 끝나지 않은 다른 조직 저장보다 먼저 읽어 화면이 서버와 갈렸다(R3-L2) */
+async function saveAll(jobs) {
+  const bad = (await Promise.allSettled(jobs)).find((r) => r.status === 'rejected');
+  if (bad) { pullBoard().catch(() => {}); throw bad.reason; }
 }
 
 /** 한 묶음(order: 화면 순서의 크루 id) 안에서 끌어 놓기. mode 'pin' = 고정 묶음. 내 공간은 여러 조직 크루가 섞이므로 조직마다 따로 */
@@ -23,18 +28,20 @@ export async function moveCrew(order, movedId, targetId, mode) {
   const slots = mode === 'pin' ? reslot(crews, next) : null;
   patch((c) => { const i = next.indexOf(c.id); return i < 0 ? null : mode === 'pin' ? { ...c, pinPos: slots.get(c.id) } : { ...c, sortPos: i }; });
   const orgs = [...new Set(next.map((id) => orgOf.get(id)))];
-  await Promise.all(orgs.map((org) => {
+  await saveAll(orgs.map((org) => {
     const ids = next.filter((id) => orgOf.get(id) === org);
     if (mode !== 'pin') patch((c) => (ids.includes(c.id) ? { ...c, sortPos: ids.indexOf(c.id) } : null)); // 서버와 같은 번호(조직 안 순서)
     return save(org, mode === 'pin' ? 'pin_order' : 'sort', ids);
   }));
 }
 
-/** 고정 켜기/끄기 — 켜면 맨 뒤 */
+/** 고정 켜기/끄기 — 켜면 맨 뒤. 내 공간의 묶인 줄(같은 에이전트 = 한 사람)은 조직 행 전부에 같은 값 — 한 행만 바꾸면 두 조직 고정이 안 풀리고
+ *  다시 고정할 때 저장 조직이 바뀌었다(2차 검수 M3·L1). 서버 함수가 조직마다 한 행씩이라 행마다 저장. 개인 공간 행은 고정을 저장할 곳이 없다 */
 export function pinCrew(crew, on) {
+  const ids = crew.ids ?? [crew.id], rows = getState().crews.filter((c) => ids.includes(c.id) && (c.org || getMode() !== 'signedIn'));
   const last = Math.max(-1, ...getState().crews.filter((c) => c.pinned && c.pinPos != null).map((c) => c.pinPos));
-  patch((c) => (c.id === crew.id ? { ...c, pinned: on, pinPos: on ? last + 1 : null } : null));
-  return save(crew.org, 'pin', [crew.id], on);
+  patch((c) => (rows.includes(c) ? { ...c, pinned: on, pinPos: on ? last + 1 : null } : null));
+  return saveAll(rows.map((c) => save(c.org, 'pin', [c.id], on)));
 }
 
 export const canPin = (crew) => (crew.access ?? 'ok') === 'ok' && (!!crew.org || getMode() !== 'signedIn') && !!ME;

@@ -1,12 +1,14 @@
 'use client';
 // 공용 클라이언트 조각들 — 화면 전체가 같이 쓴다.
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { resolveTab } from './tabs-state.mjs';
 import { marked } from 'marked';
 import { labelTableCells } from './md-table.mjs';
 import { useLang } from './i18n';
 import { rewriteVaultHref } from '../src/vault-links.mjs'; // 산출물 링크 재작성(순수 — 테스트는 src 쪽)
 import { dropUpClamp } from './c/[ws]/zoom-math.mjs'; // 표시 배율(#334) 좌표 환산 계열 — DropUp 패널 클램프
+import { errorTextFor } from './apimsg.mjs'; // errorCode → 화면 언어 문구(F11)
+import { AUTH_MSG } from './authmsg.mjs';
 
 // SSR에는 layout effect가 없다(서버 렌더 경고) — 클라이언트에서만 "그리기 전" 실행이 필요한
 // 팝오버 클램프용 별칭. 서버에서는 useEffect로 동작이 같다(열림은 클라이언트 상호작용에서만 발생).
@@ -64,6 +66,9 @@ const PATHS = {
   sort: 'M3 6h18M6 12h12M10 18h4',          // 탐색기 정렬(옵시디언 툴바)
   check: 'M20 6 9 17l-5-5',                 // 완료 조건 배지(루틴 목록)
   collapse: 'M7 11l5-5 5 5M7 19l5-5 5 5',   // 모두 접기(옵시디언 툴바)
+  menu: 'M3 6h18M3 12h18M3 18h18',          // 폰 폭 사이드바 서랍 열기(UX-A04)
+  refresh: 'M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8M21 3v5h-5', // 새로 고침(상단바 '새로 고침 실패' 칩이 접혔을 때 — 2차 M2)
+  pulse: 'M3 12h4l3-8 4 16 3-8h4',          // 활동 — 경쟁 시안(bolt)과 같은 아이콘이던 것(UX-A17)
 };
 
 export function Icon({ name, size = 16, strokeWidth = 1.8, ...rest }) {
@@ -79,9 +84,9 @@ export function Icon({ name, size = 16, strokeWidth = 1.8, ...rest }) {
 }
 
 /** 브랜드 별 마크 — 채워진 4포인트 스타. */
-export function StarMark({ size = 16, ...rest }) {
+export function StarMark({ size = 16 }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" {...rest}>
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
       <path d="M12 2.5 L14.3 9.7 L21.5 12 L14.3 14.3 L12 21.5 L9.7 14.3 L2.5 12 L9.7 9.7 Z" fill="currentColor" />
     </svg>
   );
@@ -90,8 +95,7 @@ export function StarMark({ size = 16, ...rest }) {
 export function Logo({ size = 14 }) {
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, color: 'var(--fg)' }}>
-      {/* data-splash-target — 데스크톱 시작 스플래시가 끝날 때 로고의 별이 이 별 자리로 날아가 앉는다(app/splash-continue.jsx) */}
-      <StarMark size={size + 1} data-splash-target="" />
+      <StarMark size={size + 1} />
       <span className="mono" style={{ fontWeight: 600, fontSize: size, letterSpacing: '0.16em' }}>ARGO</span>
     </span>
   );
@@ -352,9 +356,10 @@ export async function api(path, opts) {
     if (!res.ok) {
       // api()는 훅 밖(컴포넌트 외부)에서도 호출되므로 localStorage를 직접 읽는다.
       const lang = (typeof window !== 'undefined' && localStorage.getItem('argo-lang')) || 'ko';
-      const fallback = lang === 'en' ? `Request failed (${res.status})` : `요청 실패 (${res.status})`;
-      const err = new Error(data.error || fallback);
+      // errorCode가 있으면 화면 언어 문구로(F11 — 서버가 한국어로 그렸어도 영어 화면엔 영어), 없으면 원문·상태 문구
+      const err = new Error(errorTextFor(data, res.status, lang, AUTH_MSG));
       err.data = data; // 에러 바디의 부가 필드(예: chat의 failed·saved)를 호출부가 읽을 수 있게
+      err.status = res.status; // 상태별 일반 문구(app/lib/error-text.mjs failureReason)가 읽는다
       throw err;
     }
     return data;
@@ -402,13 +407,14 @@ export function DangerModal({ title, description, requireText, phraseKey = 'dang
   }, [onClose]);
 
   const field = { height: 34, padding: '0 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 13, width: '100%' };
+  const titleId = useId(); // 화면 읽기 프로그램이 모달과 제목을 안다(UX-A13)
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 120, background: 'var(--overlay)', display: 'grid', placeItems: 'center', padding: 24 }} onClick={onClose}>
-      <div className="card card-float fade-up" style={{ width: 'min(420px, 100%)', borderColor: 'var(--danger)' }} onClick={(e) => e.stopPropagation()}>
+      <div className="card card-float fade-up" role="dialog" aria-modal="true" aria-labelledby={titleId} style={{ width: 'min(420px, 100%)', borderColor: 'var(--danger)' }} onClick={(e) => e.stopPropagation()}>
         <div className="card-head">
-          <span className="card-title" style={{ color: 'var(--danger)' }}>{title}</span>
+          <span id={titleId} className="card-title" style={{ color: 'var(--danger)' }}>{title}</span>
           <span className="rule" />
-          <button type="button" className="btn sm" onClick={onClose}>{t('common.close')} ESC</button>
+          <button type="button" className="btn sm" onClick={onClose}><span>{t('common.close')}<span className="kbd-hint"> ESC</span></span></button>
         </div>
         <div style={{ padding: '0 20px 18px', display: 'grid', gap: 12 }}>
           <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.65 }}>{description}</p>
@@ -445,13 +451,14 @@ export function ConfirmModal({ title, description, confirmLabel, tone = 'danger'
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
   const danger = tone === 'danger';
+  const titleId = useId();
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 120, background: 'var(--overlay)', display: 'grid', placeItems: 'center', padding: 24 }} onClick={onClose}>
-      <div className="card card-float fade-up" style={{ width: 'min(400px, 100%)', ...(danger ? { borderColor: 'var(--danger)' } : {}) }} onClick={(e) => e.stopPropagation()}>
+      <div className="card card-float fade-up" role="dialog" aria-modal="true" aria-labelledby={titleId} style={{ width: 'min(400px, 100%)', ...(danger ? { borderColor: 'var(--danger)' } : {}) }} onClick={(e) => e.stopPropagation()}>
         <div className="card-head">
-          <span className="card-title" style={danger ? { color: 'var(--danger)' } : undefined}>{title}</span>
+          <span id={titleId} className="card-title" style={danger ? { color: 'var(--danger)' } : undefined}>{title}</span>
           <span className="rule" />
-          <button type="button" className="btn sm" onClick={onClose}>{t('common.close')} ESC</button>
+          <button type="button" className="btn sm" onClick={onClose}><span>{t('common.close')}<span className="kbd-hint"> ESC</span></span></button>
         </div>
         <div style={{ padding: '0 20px 18px', display: 'grid', gap: 14 }}>
           <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: 0, lineHeight: 1.65 }}>{description}</p>
@@ -481,13 +488,14 @@ export function InputModal({ title, label, defaultValue = '', placeholder, confi
   }, [onClose]);
   const submit = () => { const v = val.trim(); if (v && !busy) onConfirm(v); };
   const field = { height: 34, padding: '0 12px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 13, width: '100%' };
+  const titleId = useId();
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 120, background: 'var(--overlay)', display: 'grid', placeItems: 'center', padding: 24 }} onClick={onClose}>
-      <div className="card card-float fade-up" style={{ width: 'min(400px, 100%)' }} onClick={(e) => e.stopPropagation()}>
+      <div className="card card-float fade-up" role="dialog" aria-modal="true" aria-labelledby={titleId} style={{ width: 'min(400px, 100%)' }} onClick={(e) => e.stopPropagation()}>
         <div className="card-head">
-          <span className="card-title">{title}</span>
+          <span id={titleId} className="card-title">{title}</span>
           <span className="rule" />
-          <button type="button" className="btn sm" onClick={onClose}>{t('common.close')} ESC</button>
+          <button type="button" className="btn sm" onClick={onClose}><span>{t('common.close')}<span className="kbd-hint"> ESC</span></span></button>
         </div>
         <div style={{ padding: '0 20px 18px', display: 'grid', gap: 12 }}>
           <label style={{ display: 'grid', gap: 5 }}>
@@ -684,7 +692,7 @@ export function FeedbackModal({ onClose }) {
         <div className="card-head">
           <span className="card-title">{t('feedback.title')}</span>
           <span className="rule" />
-          <button type="button" className="btn sm" onClick={onClose}>{t('common.close')} ESC</button>
+          <button type="button" className="btn sm" onClick={onClose}><span>{t('common.close')}<span className="kbd-hint"> ESC</span></span></button>
         </div>
         <div style={{ padding: '0 20px 18px', display: 'grid', gap: 12 }}>
           {state === 'sent' ? (

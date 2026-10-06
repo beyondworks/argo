@@ -8,9 +8,21 @@ let current = null;
 const listeners = new Set();
 const emit = () => listeners.forEach((l) => l());
 
-/** e: 마우스 이벤트(커서 위치) 또는 anchor 요소(버튼 아래). items: {label, icon, shortcut, danger, checked, run} | {sep:true} | {heading} */
-export function openMenu(e, items, { anchor } = {}) {
-  e?.preventDefault?.(); e?.stopPropagation?.();
+let innerEvent = null; // 안쪽 값(가리기)이 먼저 연 메뉴의 이벤트 — 같은 우클릭으로 바깥 대상(카드·줄)의 메뉴가 열리면 한 메뉴로 합친다
+
+/** e: 마우스 이벤트(커서 위치) 또는 anchor 요소(버튼 아래). items: {label, icon, shortcut, danger, checked, run} | {sep:true} | {heading}
+ *  inner: 이 메뉴를 연 뒤에도 이벤트를 바깥으로 보낸다 — 바깥 대상이 메뉴를 열면 그 항목을 앞에, 안쪽 항목을 뒤에 둔다.
+ *  카드 제목처럼 가린 값 위에서 우클릭하면 '가리기'만 떠 카드 메뉴(에이전트에게 맡기기 등)에 닿지 못했다(17차 화면 확인) */
+export function openMenu(e, items, { anchor, inner = false } = {}) {
+  const native = e?.nativeEvent ?? null;
+  if (!inner && native && native === innerEvent && current) {
+    e.preventDefault?.(); e.stopPropagation?.(); innerEvent = null;
+    current = { ...current, items: [...items.filter(Boolean), { sep: true }, ...current.items] };
+    emit();
+    return;
+  }
+  innerEvent = inner ? native : null;
+  e?.preventDefault?.(); if (!inner) e?.stopPropagation?.();
   let x = e?.clientX, y = e?.clientY, anchorRect = null;
   if (anchor || x == null) {
     anchorRect = (anchor ?? e.currentTarget).getBoundingClientRect();
@@ -95,7 +107,8 @@ export function menuProps(build) {
   let timer = null, start = null, fired = false;
   const cancel = () => { clearTimeout(timer); timer = null; };
   return {
-    onContextMenu: (e) => { if (fromInside(e)) openMenu(e, build()); },
+    // 끌어서 고른 칸(data-cell-on) 위 우클릭은 전역 '칸 N개 가리기' 메뉴(ui/marquee.js)에 맡긴다 — 카드 메뉴가 가로채던 것(17차 A 검수 MEDIUM-3)
+    onContextMenu: (e) => { if (fromInside(e) && !e.target.closest?.('[data-cell-on]')) openMenu(e, build()); },
     onKeyDown: (e) => { if (fromInside(e) && ((e.shiftKey && e.key === 'F10') || e.key === 'ContextMenu')) openMenu({ preventDefault: () => e.preventDefault(), stopPropagation() {}, currentTarget: e.currentTarget }, build()); },
     onPointerDown: (e) => {
       if (e.pointerType !== 'touch' || !fromInside(e)) return;

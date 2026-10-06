@@ -1,0 +1,12 @@
+/* 공유 링크(15차) — 공개 화면(/f#<토큰>)은 서명 페이지 모양(docs.css .sign-*) 위에 이 몇 줄만 더한다 */
+.link-name { display: flex; align-items: center; gap: 8px; font-size: 18px; word-break: break-all; }
+.link-name .ico { flex: none; color: var(--fg-2); }
+.link-foot { margin-top: 16px; text-align: center; }
+/* 파일 상세의 '공유 링크' 칸 */
+.files-links { display: grid; gap: 8px; padding-top: 4px; }
+.files-links-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12.5px; }
+.files-links-row .grow { flex: 1; min-width: 0; color: var(--fg-2); }
+.files-links-fail { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.files-links-fail .grow { flex: 1; min-width: 0; }
+.files-links-new { display: grid; gap: 6px; padding: 10px 12px; border-radius: var(--rc); background: var(--bg); }
+.files-links-new .url-row { background: var(--surface); }

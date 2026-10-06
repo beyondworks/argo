@@ -39,14 +39,14 @@ export async function listCompanies() {
     if (!e.isDirectory() || e.name.startsWith('.')) continue;
     try {
       const company = JSON.parse(await readFile(join(WS_ROOT, e.name, 'company.json'), 'utf8'));
-      const agents = await listAgents(e.name);
+      const { agents, broken } = await scanAgents(e.name);
       const docCount = await countVaultDocs(e.name);
       // 기억 칩 = 기억 화면 트리 칩과 같은 셈법(docs+projects 합) — 두 화면 숫자 불일치 방지(PR #204 LOW).
       // 수는 경량 카운트로: listProjectDocs는 전 파일 stat + md 본문 readFile이라, listCompanies를
       // 타는 gateway 10초 폴에 산출물 수천 개면 수백 ms가 실린다(분리 검수 2026-07-31 M-1 실측).
       // 산출물 카운트 실패가 회사 카드까지 무너뜨리지 않게 격벽(vault route의 M-2와 동일).
       const projectCount = await countProjectFiles(e.name).catch(() => 0);
-      out.push({ ...company, crew: agents.length, memories: docCount + projectCount });
+      out.push({ ...company, crew: agents.length, memories: docCount + projectCount, broken }); // broken — 못 읽은 크루 카드 { count, names }(L2)
     } catch { /* company.json 없는 폴더는 워크스페이스가 아님 */ }
   }
   return out.sort((a, b) => String(b.created).localeCompare(String(a.created)));
@@ -94,13 +94,31 @@ export async function listCompanyIds() {
   return out;
 }
 
-export async function listAgents(wsId) {
+const brokenCardLogged = new Set(); // `${wsId}/${파일}` — 깨진 카드 경고는 프로세스당 한 번(10초 폴마다 같은 줄이 쌓이지 않게)
+
+/** 크루 카드 읽기 — { agents, broken }. broken = 못 읽은 카드 { count, names }(파일명, .md 제외·정렬).
+    경고 로그는 프로세스당 한 번이지만 broken은 호출마다 돌려준다 — 화면이 "크루 카드 N개를 읽지 못했어요"를 계속 보일 수 있게(L2, 2026-10-05).
+    일시 실패(Windows EBUSY·EMFILE 등)도 같은 경로라 다음 호출에서 읽히면 broken이 비고 크루가 돌아온다.
+    opts.strict — 카드 하나라도 못 읽으면 던진다(종전 동작). 메신저 인벤토리 미러 전용: 못 읽은 카드를 "없는 크루"로 보고
+    그 크루의 메신저 행을 지우면 안 된다. 그 밖(홈 목록·게이트웨이·화면)은 깨진 카드만 건너뛴다 — 카드 하나 때문에 회사 전체가
+    목록에서 사라지고 그 회사의 큐 드레인까지 멈추던 결함(F7, 2026-10-05). */
+export async function scanAgents(wsId, { strict = false } = {}) {
   const p = paths(wsId);
   let names = [];
-  try { names = await readdir(p.agents); } catch { return []; }
+  try { names = await readdir(p.agents); } catch { return { agents: [], broken: { count: 0, names: [] } }; }
+  const broken = [];
   const out = [];
-  for (const n of names.filter((f) => f.endsWith('.md')).sort()) {
-    const md = await readFile(join(p.agents, n), 'utf8');
+  // 동기화 충돌 사본(`<slug>.conflict-<기기>-<ts>.md`, sync.mjs)은 크루가 아니다 — 목록·메신저 미러에 같은 이름 크루가 하나 더 생겼다(2026-10-04).
+  for (const n of names.filter((f) => f.endsWith('.md') && !/\.conflict-.*\.md$/.test(f)).sort()) {
+    let md;
+    try { md = await readFile(join(p.agents, n), 'utf8'); }
+    catch (e) {
+      if (strict) throw e;
+      broken.push(n.replace(/\.md$/, ''));
+      const k = `${wsId}/${n}`;
+      if (!brokenCardLogged.has(k)) { brokenCardLogged.add(k); console.warn(`[argo] 에이전트 카드를 읽지 못해 건너뜁니다(${k}): ${e?.code ?? e?.message ?? e}`); }
+      continue;
+    }
     const meta = parseFrontmatter(md);
     out.push({
       slug: n.replace(/\.md$/, ''),
@@ -115,8 +133,10 @@ export async function listAgents(wsId) {
       tone: sectionBullets(md, '톤', 1)[0] || '',
     });
   }
-  return out;
+  return { agents: out, broken: { count: broken.length, names: broken } };
 }
+/** 크루 목록(배열) — 못 읽은 카드는 건너뛴다. 못 읽은 수·이름이 필요하면 scanAgents. */
+export async function listAgents(wsId, opts) { return (await scanAgents(wsId, opts)).agents; }
 
 /** vault 문서 목록 — 최신순. 제목/링크/발췌까지 화면용으로 가공. */
 // listDocs 캐시(doc-cache.mjs) — 회사별 { 파일 → { key, doc } }. 매 호출 readdir+stat만 하고 키가 같은 파일은 다시 읽지 않는다.

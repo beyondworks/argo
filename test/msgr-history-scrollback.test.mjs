@@ -17,7 +17,8 @@ test('스크롤백: 가장 오래된 id 앞을 한 페이지씩(lt·desc·PAGE),
   assert.match(ch, /stick\.current = false; \/\/ 이전 기록을 부르는 건 위를 보는 것/, '이전 기록 로드는 바닥 추종을 끈다(검수 #531 L-4)');
   assert.match(ch, /useLayoutEffect\(keepAnchor, \[msgs, atts, older, keepAnchor\]\);/, '본문·첨부·컨트롤 커밋 직후 동기 보정');
   assert.match(ch, /new ResizeObserver\(\(\) => \{ keepAnchor\(\); toBottom\(\); \}\)/, '늦게 오는 높이 변화(이미지 로드)에도 같은 앵커로(검수 #531 HIGH-1)');
-  assert.match(ch, /observeMobileResume\(\(\) => load\(live\.current\.msgs\?\.at\(-1\)\?\.id \?\? 0\)/, '모바일 재개는 증분 — 불러 둔 기록 보존(검수 #531 HIGH-2)');
+  assert.match(ch, /observeMobileResume\(\(\) => catchUp\(\)/, '모바일 재개는 증분 — 불러 둔 기록 보존(검수 #531 HIGH-2)');
+  assert.match(ch, /createCatchUp\(\(\) => load\(live\.current\.msgs\?\.at\(-1\)\?\.id \?\? 0\)\)/, '따라잡기는 마지막 글 뒤부터(검수 L3 — 한 번에 하나)');
   assert.match(ch, /if \(miss\.length\) hydrate\(miss\)/, 'hydrate 실패분은 폴에서 재시도(M-1)');
   assert.match(ch, /parent=\{m\.reply_to \? byId\.get\(m\.reply_to\) \?\? null : null\}/, '답글 부모는 맵 조회(M-2)');
   assert.match(ch, /if \(el\.scrollTop < 120\) loadOlder\(\);/, '위로 스크롤하면 자동 로드');

@@ -25,6 +25,16 @@ export async function createInvite(sb, opts, now = Date.now()) {
     if (!res.error) return { id: res.data.id, code: res.data.code, legacy: true };
   }
   if (res.error) throw errOf(res.error);
+  // '새 링크로 바꾸기'(opts.replace) — 새 링크를 만든 뒤 같은 종류의 나머지를 서버가 취소한다(20261002130000 msgr_invite_replace).
+  // 넣기만으로는 아무것도 취소하지 않는다(옛 앱이 창을 열고 닫기만 해도 공유 링크가 죽던 것 — 분리 검수 MEDIUM 2026-10-02).
+  // 바꾸기가 거절되면 새 링크를 지워(안 쓰였을 때만) 이전 링크가 그대로 남게 하고 오류를 낸다. 함수가 없는 서버면 새 링크만 둔다.
+  if (opts.replace && (row.role === 'member' || row.role === 'admin')) {
+    const rep = await sb.rpc('msgr_invite_replace', { keep: res.data.id });
+    if (rep.error && !missingFn(rep.error)) {
+      await sb.from('msgr_invites').delete().eq('id', res.data.id).eq('use_count', 0).select('id');
+      throw errOf(rep.error);
+    }
+  }
   return { id: res.data.id, code: res.data.code, legacy: false };
 }
 
@@ -114,3 +124,17 @@ export function settingsSummary(s, t) {
   return [exp, uses, role].join(' · ');
 }
 
+
+// 조직 링크는 멤버 하나·관리자 하나(5차 피드백 — 앱은 있는 링크를 다시 쓰고, '새 링크로 바꾸기'만 서버 msgr_invite_replace로 이전 것을 취소한다).
+// 지금 링크 = 그 종류에서 쓸 수 있는(live) 것 중 가장 최근. 노드 코드는 따로 관리하므로 뺀다.
+export function currentLink(invites, role, now = Date.now()) {
+  return (invites ?? []).filter((i) => i.role === role && !i.for_node && inviteStatus(i, now) === 'live')
+    .sort((a, b) => Date.parse(b.created_at ?? 0) - Date.parse(a.created_at ?? 0))[0] ?? null;
+}
+// 관리 목록 — 멤버·관리자는 지금 링크 하나씩, 게스트(채널 하나·사람마다)는 살아 있는 것 모두. 만료·취소·소진·이전 링크는 숨긴다(지우지 않는다).
+export function shownInvites(invites, now = Date.now()) {
+  return [currentLink(invites, 'member', now), currentLink(invites, 'admin', now),
+    ...(invites ?? []).filter((i) => i.role === 'guest' && !i.for_node && inviteStatus(i, now) === 'live')].filter(Boolean);
+}
+// 채널 칩은 둘까지, 나머지는 '+N'
+export const chipPreview = (items, max = 2) => ({ shown: (items ?? []).slice(0, max), more: Math.max(0, (items ?? []).length - max) });

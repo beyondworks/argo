@@ -44,3 +44,59 @@ test('투명 바탕(테마 미정)·Tauri 없음(브라우저·테스트)에서�
   delete g.win.__TAURI__;
   assert.equal(followThemeBackground(g.win, g.doc), false);
 });
+
+// iOS(유건 실기기 제보 2026-10-03) — Tauri의 웹뷰 바탕 명령은 데스크톱에만 등록돼 iOS에서는 조용히 실패했고, 라이트 테마에서
+// 키보드 위·둥근 모서리 뒤로 스플래시 색(#1F1E1B)이 검은 띠로 남았다. iOS는 앱 플러그인 ios-webview의 set_background로 간다.
+function fakeIos(bg) {
+  const f = fake(bg);
+  const invokes = [];
+  f.win.__TAURI__.core = { invoke: (cmd, args) => { invokes.push([cmd, args]); return Promise.resolve(); } };
+  return { ...f, invokes };
+}
+
+test('iOS는 ios-webview 플러그인 명령으로 칠하고, 데스크톱 전용 웹뷰 명령은 부르지 않는다', () => {
+  const f = fakeIos('rgb(233, 230, 223)');
+  assert.equal(followThemeBackground(f.win, f.doc, 'ios'), true);
+  assert.deepEqual(f.invokes, [['plugin:ios-webview|set_background', { red: 233, green: 230, blue: 223 }]]);
+  assert.equal(f.calls.length, 0, 'iOS에 없는 set_webview_background_color 경로는 타지 않는다');
+  f.fireTheme();
+  assert.equal(f.invokes.length, 1, '같은 색이면 호출 0');
+  f.state.bg = 'rgb(31, 30, 27)';
+  f.fireScheme();
+  assert.deepEqual(f.invokes[1], ['plugin:ios-webview|set_background', { red: 31, green: 30, blue: 27 }], '시스템 다크로 바뀌면 따라간다');
+});
+
+test('Android·데스크톱은 그대로 Tauri 웹뷰 명령(플랫폼 값이 없거나 ios가 아니면)', () => {
+  for (const platform of [undefined, 'android', 'macos']) {
+    const f = fakeIos('rgb(244, 241, 234)');
+    followThemeBackground(f.win, f.doc, platform);
+    assert.deepEqual(f.calls, [[244, 241, 234]], String(platform));
+    assert.equal(f.invokes.length, 0, String(platform));
+  }
+});
+
+test('iOS인데 Tauri 호출 수단이 없으면 아무것도 안 한다', () => {
+  const f = fake('rgb(1, 2, 3)');
+  assert.equal(followThemeBackground(f.win, f.doc, 'ios'), false);
+  assert.equal(f.calls.length, 0);
+});
+
+test('iOS 네이티브 배선 — 플러그인 등록·권한·명령 이름이 서로 맞는다', async () => {
+  const { readFileSync } = await import('node:fs');
+  const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
+  assert.match(read('src-tauri/Cargo.toml'), /\[target\.'cfg\(target_os = "ios"\)'\.dependencies\][^[]*tauri-plugin-ios-webview = \{ path = "plugins\/ios-webview" \}/, 'iOS에만 의존');
+  assert.match(read('src-tauri/src/lib.rs'), /#\[cfg\(target_os = "ios"\)\]\s*let builder = builder\.plugin\(tauri_plugin_ios_webview::init\(\)\)/, 'iOS에서만 등록');
+  const cap = JSON.parse(read('src-tauri/capabilities/ios-webview.json'));
+  assert.deepEqual([cap.platforms, cap.permissions], [['iOS'], ['ios-webview:default']]);
+  assert.match(read('src-tauri/plugins/ios-webview/permissions/default.toml'), /permissions = \["allow-set-background"\]/);
+  assert.match(read('src-tauri/plugins/ios-webview/build.rs'), /COMMANDS: &\[&str\] = &\["set_background"\]/);
+  assert.match(read('src-tauri/plugins/ios-webview/src/lib.rs'), /Builder::new\("ios-webview"\)[\s\S]*generate_handler!\[ios::set_background\]/);
+  const swift = read('src-tauri/plugins/ios-webview/ios/Sources/IosWebviewPlugin.swift');
+  // load() 본문 안의 호출만 인정한다 — [\s\S]*로 두면 아래 hideFormAccessoryBar 정의와도 맞아 호출을 지워도 통과했다(분리 검수 M2).
+  // 네이티브 동작(막대가 실제로 사라지는지·바탕색)은 문자열로 증명되지 않는다 — 시뮬레이터 확인 항목으로 따로 남긴다.
+  assert.match(swift, /override func load\(webview: WKWebView\) \{[^}]*Self\.hideFormAccessoryBar\(\)[^}]*\}/, '플러그인이 실릴 때 보조 막대를 숨긴다');
+  assert.match(swift, /@convention\(block\) \(AnyObject\) -> UIView\? = \{ _ in nil \}/, '보조 막대 getter는 nil을 돌려준다');
+  assert.match(swift, /webview\.backgroundColor = color\s+webview\.scrollView\.backgroundColor = color/, '웹뷰와 스크롤 뷰를 테마 색으로 칠한다');
+  assert.match(swift, /@objc public func setBackground\(_ invoke: Invoke\)/, 'Rust의 run_mobile_plugin("setBackground")와 같은 이름');
+  assert.match(swift, /@_cdecl\("init_plugin_ios_webview"\)/);
+});

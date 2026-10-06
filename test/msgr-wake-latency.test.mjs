@@ -134,9 +134,12 @@ test('수동 재연결(nudge)은 관리 작업까지 한 번 돈다 — 네트�
   const stop = M.startMsgrBridge(WS, { session, pollMs: 60_000 });
   try {
     for (let i = 0; i < 40 && !db.calls.some((c) => c[0] === 'heartbeat'); i++) await settle();
-    const before = db.calls.filter((c) => c[0] === 'heartbeat').length;
+    const beats = () => db.calls.filter((c) => c[0] === 'heartbeat').length;
+    const before = beats();
     stop.nudge();
-    await settle(300);
-    assert.ok(db.calls.filter((c) => c[0] === 'heartbeat').length > before, 'nudge가 깨우기로 분류돼 하트비트가 다음 폴까지 밀렸다');
+    // 고정 300ms 대기는 느린 Windows 러너에서 관리 작업이 덜 끝나 거짓 실패했다(#822·#824, 2026-10-04) — 하트비트가 올 때까지
+    // 최대 3초 기다린다. 결함(깨우기로 분류)이면 하트비트는 다음 폴(60초)까지 밀려 이 3초 안에 오지 않는다.
+    for (let i = 0; i < 50 && beats() <= before; i++) await settle();
+    assert.ok(beats() > before, 'nudge가 깨우기로 분류돼 하트비트가 다음 폴까지 밀렸다');
   } finally { stop(); }
 });

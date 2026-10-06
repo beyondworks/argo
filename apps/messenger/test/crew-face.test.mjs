@@ -193,7 +193,7 @@ test('오피스 — 같은 그림의 정지 얼굴(faceStill), 몸짓·상태 �
     assert.doesNotMatch(still, /class="(grin|yawn)"/);
   }
   const face = read('../../office/src/ui/Face.jsx');
-  assert.match(face, /m\.faceStill\(m\.faceOf\(id, .*\{ px: size \}\)/, '쉼 표정 하나');
+  assert.match(face, /m\.faceStill\(m\.faceOf\(c\?\.faceSeed \?\? id, c\?\.face \?\? null\), \{ px: size \}\)/, '쉼 표정 하나 — 같은 에이전트의 대표 행 기준(board.js faceSeed, 유건 2026-10-05)');
   assert.match(face, /import\('@msgr\/crew-face'\)/, '그림 정의는 첫 화면 묶음 밖에서 받는다(150KB 상한, 검수 #789)');
   assert.doesNotMatch(face, /^import [^;]*'@msgr\/crew-face'/m, '정적 import 금지 — 첫 화면 묶음에 다시 들어간다');
   assert.doesNotMatch(face, /face-gestures|faceGestures|state:/, '몸짓·상태 표정 없음');

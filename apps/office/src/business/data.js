@@ -3,6 +3,7 @@ import { getClient } from '../core/supabase.js';
 import { ME, SPACES, getMode, useSession } from '../core/session.js';
 import { validateFilters } from './dashboard-model.js';
 import { isSameUserEcho } from '../core/auth-events.js';
+import { createSampleBusinessClient } from './sample-business.js';
 
 const fail = (message, code = message) => Object.assign(new Error(message), { code });
 const journalKey = (scope, namespace) => `${namespace}:${scope.uid}:${scope.org ?? 'me'}`;
@@ -14,6 +15,7 @@ export function businessError(error) {
     business_order_state: 'orderState', business_number: 'number', business_quantity: 'quantity', business_not_found: 'missing',
     business_kind_in_use: 'kindInUse', business_product_only: 'productOnly', business_total_limit: 'total', business_dates: 'dates',
     business_idempotency_conflict: 'pending', business_input: 'input', business_owner: 'owner', business_settings: 'input', business_settings_duplicate: 'input', business_kind: 'input',
+    business_amount_locked: 'amountLocked', business_line_in_use: 'lineInUse', business_customer_archived: 'archived', business_edit_limit: 'editLimit', business_due: 'due', // 14차
   };
   if (specific[error?.message]) return `biz.error.${specific[error.message]}`;
   if (['PGRST202', 'PGRST205', '42883', '42P01'].includes(error?.code)) return 'biz.error.schema';
@@ -82,6 +84,7 @@ export function createBusinessClient({ client, scope, journal, key = () => crypt
     try {
       const result = await rpc(expected, `${rpcPrefix}_write`, { p_org: expected.org, p_key: pending.key, p_action: pending.action, p_data: pending.payload });
       written = true;
+      globalThis.dispatchEvent?.(new CustomEvent('office:biz-written', { detail: pending.action })); // 거래처를 바꿨으면 문서함·일정이 거래처 목록을 비운다(core/biz-events.js, OFC-10)
       try { journal.removeItem(receiptKey(expected)); }
       catch { emit({ uncertain: true, error: 'biz.error.receipt' }); return result; }
       emit({ uncertain: false });
@@ -165,6 +168,21 @@ export function useScopedBusiness(space, createClient = createBusinessClient) {
   return { ...snapshot, data: visible ? snapshot.data : null, ...scoped };
 }
 
+/** 예시 데이터 모드(서버 없음) — 이 브라우저의 예시 원장(sample-business.js). 다른 화면·다른 탭(서명 링크)에서 바뀌면 다시 읽는다 */
+function useSampleBusiness(space) {
+  const client = useMemo(() => createSampleBusinessClient({ storage: globalThis.localStorage, space, people: [{ user_id: ME.id, name: ME.name }] }), [space]);
+  const snapshot = useSyncExternalStore(client.subscribe, client.getSnapshot, client.getSnapshot);
+  useEffect(() => {
+    client.refresh();
+    const again = () => client.refresh();
+    const onStorage = (e) => { if (e.key?.startsWith('argo-office-sample-business:')) again(); };
+    window.addEventListener('office:biz-refresh', again); window.addEventListener('storage', onStorage);
+    return () => { window.removeEventListener('office:biz-refresh', again); window.removeEventListener('storage', onStorage); };
+  }, [client]);
+  return { ...snapshot, ...client };
+}
+
 export function useBusiness(space) {
-  return useScopedBusiness(space);
+  // 모드는 앱이 뜰 때 정해지고 바뀌지 않는다(서버 설정 유무) — 훅 순서가 흔들리지 않는다
+  return getMode() === 'sample' ? useSampleBusiness(space) : useScopedBusiness(space);
 }

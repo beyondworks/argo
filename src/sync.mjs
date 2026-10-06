@@ -22,6 +22,7 @@ import { join, dirname, basename, sep } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import { WS_ROOT, WS_ID_RE, paths, archiveCompany, writeTombstone, TOMBSTONE_DIR, getDeviceId } from './workspace.mjs';
+import { applyDeparted, mergeDeparted } from './departed.mjs';
 import { writeJsonAtomic, writeFileAtomic, readJsonLenient } from './jsonstore.mjs';
 import { withLock, withDirLock, withFileLock } from './mutex.mjs';
 import { cryptoOn, isSecretRel, isSecretNameRel, isEncRel, encVaultOn, sealSecret, sealSecretV3, openSecret, openSecretCompat, isEnvelopeGeneration, CRED_WITHDRAWN, isCredWithdrawn } from './secretbox.mjs';
@@ -64,6 +65,12 @@ const uploadBackoff = new Map(); // wsId → until(ms)
 const companyRetry = new Map(); // owner/ws → bounded failure cooldown; local nudge cannot bypass it
 const companyIdle = new Map();
 const IDLE_PROBE_MS = 60_000;
+// 객체 없는 매니페스트 항목은 이만큼 다시 받으러 가지 않는다 — 활성 회사는 8초마다 전체 동기화라 매번 같은 404를 부른다.
+// [규모] 빈 항목 1개당 기기·회사마다 시간당 GET 최대 1회(응답 88바이트). 이전에는 같은 GET이 실패로 세져 재시도(최대 10분)마다
+// 매니페스트 GET 2회·PUT 1회(각 424KB, lean-ax-wqou 10/4 실측 하루 GET 214회 90.7MB·PUT 109회)를 끌고 왔다.
+const MISSING_RECHECK_MS = 60 * 60_000;
+const missingSeen = new Map(); // owner/ws/rel → { sig: 그때의 원격 메타, until }
+const noticeLog = new Map(); // 같은 실패·빈 항목 경고는 목록이 바뀔 때만 로그에 남긴다(재시도마다 같은 줄 반복 방지)
 // 크로스 프로세스 락 스테일 판정 — CYCLE_MS와 분리한다. 주기 단축(45→8s)이 이중 동기화 방어막을
 // 좁히면(느린 사이클의 살아있는 리더를 오탈취) 삭제 피드백 루프=대형 유실이 날 수 있다(리뷰 H1).
 // 죽은 프로세스 락은 이 시간 내 회수하되, 살아있는 리더는 오탈취 안 되게 넉넉히.
@@ -119,6 +126,9 @@ export const EXCLUDE = (rel) => { // (export: 회귀 테스트용)
   // 타면 지운 파일이 원격에서 되살아나 같은 쪽지를 이중 배달한다(.gw-queue와 동일 결함 계급,
   // 분리 검수 CRITICAL-2 2026-07-27). 세션 간 소통은 배달 결과가 스레드(동기화 대상)로 남아 성립한다.
   if (rel.split('/')[0] === 'mail') return true;
+  // 세션 메시지 대기 기록(sessmsg/ — session-msg.mjs) — 이 기기 프로세스가 답을 기다리는 상태. 다른 기기로 가면 그 기기의 부팅 정리가
+  // 남의 살아 있는 기다림을 "재시작으로 끊김"으로 지운다. 주고받은 글은 스레드(동기화 대상)에 남는다.
+  if (rel.split('/')[0] === 'sessmsg') return true;
   // 조직 문서 미러(vault/org/) — 팀 메신저 서버가 정본이고 브리지가 기기마다 내려받는 파생물(G-2). 동기화를 타면
   // 두 기기의 미러가 서로를 덮고, 오프보딩 회수(미러 삭제)가 원격에서 되살아난다.
   if (rel.startsWith('vault/org/')) return true;
@@ -201,7 +211,31 @@ function resetDiscoverClock() { globalThis.__argoLastDiscover = 0; }
 const client = () => sb; // ensureClient() 성공 뒤에만 호출된다 (cycle/ensureSync 게이트)
 // 테스트 전용 — fake storage를 주입해 syncCompany를 실 Supabase 없이 실행 검증한다.
 // 프로덕션 경로는 절대 호출하지 않는다(ensureClient가 실 클라이언트를 세팅). (export: 통합 테스트용)
-export function _setSyncClientForTest(fake) { sb = fake; sbKey = '__test__'; companyRetry.clear(); companyIdle.clear(); }
+export function _setSyncClientForTest(fake) { sb = fake; sbKey = '__test__'; companyRetry.clear(); companyIdle.clear(); missingSeen.clear(); noticeLog.clear(); }
+
+// Supabase Storage는 인증 다운로드도 CDN(Cloudflare)에 캐시하고, 같은 키를 덮어쓴 직후에도 한동안 옛 사본(cf HIT)을 준다.
+// 라이브 실측(2026-09-26 03:05Z): 매니페스트를 올리고 10초 뒤 GET이 HIT로 이전 판을 받아 방금 지운 항목을 되살렸고(그 회사는 그 뒤
+// 매 주기 객체 없는 항목 4건에서 실패), 직전에 올린 파일을 '원격 변경'으로 읽어 자기 자신과 충돌 사본을 만들었다. 동기화가 읽는 객체는
+// 전부 같은 키를 덮어쓰는 가변 객체라 요청마다 다른 cacheNonce로 원본을 읽는다 — 요청 수·바이트는 그대로고 캐시 전송량이 비캐시로 옮겨 간다.
+// [규모] 10/4 하루 전 계정의 매니페스트 GET 30,553건 중 29,628건(573.6MB)이 CDN 사본이었다 → 갱신된 기기가 늘수록 이만큼이
+// 원본 요청(초당 약 0.34건 추가)이 된다. 기기 수 × 회사 수 × 전체 동기화 횟수에 선형이며, 유휴 확인(60초 info)이 이 횟수를 묶는다.
+const fresh = () => ({ cacheNonce: randomUUID() });
+/** 원격에 없음 — 매니페스트 읽기·blob 실존 검사·파일 받기(객체 없는 항목 판정)가 같은 판정을 쓴다. 진짜 없음은 storage-api의 'Object not found' 하나뿐이다
+    (이 레포 download 경로 기준. storage-js 2.110.2는 statusCode를 문자열 '404'로 주므로 숫자 비교는 쓰지 않는다).
+    그 밖의 404 모양은 모두 확인 불가(보류)다 — 'Bucket not found'(만료 토큰을 Storage가 익명으로 처리, 2026-10-05 운영 storage_logs:
+    role anon, NoSuchBucket), 'Not Found'(JSON 없는 404의 statusText), 'no Route matched'(게이트웨이 404), 'The resource was not found',
+    ENOENT 'no such file'. 없음으로 잘못 읽으면 매니페스트가 빈 원격이 되고 blob 검사가 로컬 파일을 지운다(분리 검수 LOW-1). */
+const isNotFound = (error) => /\bobject not found\b/i.test(String(error?.message || error));
+/** 파일 실패 한 줄 — lastError(설정 카드)에 회사와 첫 파일 이름·사유를 싣는다. lastError는 기기 전체에 하나라 다른 회사 카드에도 보이므로
+    회사 ID를 앞에 붙인다(다른 per-회사 lastError와 같은 형식). (export: 회귀 테스트용) */
+export const syncFailedMessage = (wsId, r) => {
+  const f = r.failures?.[0];
+  return `${wsId}: 동기화 파일 ${r.failed}건 실패${f ? ` (${f.rel}: ${f.reason}${r.failed > 1 ? ` 외 ${r.failed - 1}건` : ''})` : ''} — 잠시 후 재시도`;
+};
+const noteOnce = (k, line) => {
+  if (!line) { noticeLog.delete(k); return; }
+  if (noticeLog.get(k) !== line) { noticeLog.set(k, line); console.warn(line); }
+};
 
 // 스토리지 키 — 한글·특수문자 세그먼트는 base64url로(스토리지가 %·비ASCII 키를 거부, 실측).
 // 매니페스트에 논리 경로를 담고 키는 항상 이 함수로 파생하므로 역디코딩은 불필요하다.
@@ -581,6 +615,14 @@ export function mergeThread(localBuf, remoteBuf, prefer = 'remote') {
   // sessionDevice는 sessionId를 제공한 쪽과 짝으로 — 어긋나면 남의 기기 세션을 내 것으로 오판한다
   merged.sessionDevice = (primary.sessionId != null ? primary.sessionDevice : other.sessionDevice) ?? null;
   if (L.scopedSessions || R.scopedSessions) merged.scopedSessions = { ...other.scopedSessions, ...primary.scopedSessions }; // 메신저 채널 세션은 채널 단위로 합친다(세션·기기 짝은 항목 안에 함께 있다)
+  // 누적 요약(thread-context.mjs {text, upto}) — 통째로 한쪽 것을 쓰면 다른 기기의 더 최신 요약·그 기기에만 있는 채널 요약이 사라져 같은 몫을 다시 요약한다(재검수 LOW).
+  // 키마다 upto(요약이 덮는 마지막 메시지 ts)가 큰 쪽, 같으면 최근 편집 쪽. 회수된 채널의 요약은 아래 applyDeparted가 지운다.
+  const newerSum = (p, o) => (!p ? o : !o ? p : (Number(o.upto) || 0) > (Number(p.upto) || 0) ? o : p);
+  const sum = newerSum(primary.summary, other.summary); if (sum) merged.summary = sum; else delete merged.summary;
+  if (L.scopedSummaries || R.scopedSummaries) merged.scopedSummaries = Object.fromEntries([...new Set([...Object.keys(other.scopedSummaries ?? {}), ...Object.keys(primary.scopedSummaries ?? {})])].map((k) => [k, newerSum(primary.scopedSummaries?.[k], other.scopedSummaries?.[k])]));
+  // 채널 기억 회수 각인(departed.mjs) — 채널마다 늦은 시각으로 합치고 병합 결과에 다시 적용한다. 다른 기기가 아직 든 옛 채널 줄·세션이 합집합으로 되살아나지 않게.
+  const departed = mergeDeparted(L.departed, R.departed);
+  if (departed) { merged.departed = departed; applyDeparted(merged); } else delete merged.departed;
   return Buffer.from(JSON.stringify(merged, null, 2));
 }
 
@@ -594,8 +636,8 @@ export async function syncStateExists(wsId) {
 const loadState = (wsId) => readJsonLenient(stateFile(wsId), { files: {} });
 
 async function download(key) {
-  const { data, error } = await client().storage.from(BUCKET).download(key);
-  if (error) throw new Error(error.message);
+  const { data, error } = await client().storage.from(BUCKET).download(key, fresh());
+  if (error) throw Object.assign(new Error(error.message), { notFound: isNotFound(error) });
   return Buffer.from(await data.arrayBuffer());
 }
 
@@ -632,11 +674,11 @@ async function upload(key, buf) {
 export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
   const key = `${client().storage.url ?? 'test'}/${owner}/${wsId}`;
   const prior = companyRetry.get(key);
-  if (prior && Date.now() < prior.until) return { skipped: 'retry-backoff', retryAt: prior.until };
-  const deferFailure = () => {
+  if (prior && Date.now() < prior.until) return { skipped: 'retry-backoff', retryAt: prior.until, ...(prior.lastFailures ? { failures: prior.lastFailures } : {}) };
+  const deferFailure = (lastFailures) => {
     companyIdle.delete(key);
     const failures = Math.min((prior?.failures ?? 0) + 1, 6);
-    companyRetry.set(key, { failures, until: Date.now() + Math.min(600_000, 30_000 * 2 ** (failures - 1)) });
+    companyRetry.set(key, { failures, until: Date.now() + Math.min(600_000, 30_000 * 2 ** (failures - 1)), lastFailures });
   };
   const fingerprint = async () => {
     const failed = new Set();
@@ -664,7 +706,10 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
       }
     }
     const result = await syncCompanyOnce(wsId, owner, isRestore, opts);
-    if (result.failed > 0) { deferFailure(); return result; }
+    // 실패 파일·빈 항목은 이름까지 로그에 남긴다(~/Library/Logs/argo.err.log) — 목록이 바뀔 때만 한 줄
+    noteOnce(`${key}:fail`, result.failed ? `[argo] 동기화(${wsId}): 파일 ${result.failed}건 실패 — ${(result.failures ?? []).map((f) => `${f.rel}: ${f.reason}`).join(' | ')}` : '');
+    noteOnce(`${key}:missing`, result.missing ? `[argo] 동기화(${wsId}): 매니페스트에만 있고 객체가 없는 항목 ${result.missing}개 — 건너뜀(항목 보존): ${result.missingRels.join(', ')}` : '');
+    if (result.failed > 0) { deferFailure(result.failures); return result; }
     companyRetry.delete(key);
     if (canIdle && !result.failed && !result.held && !result.deferred) {
       const stamp = await fingerprint();
@@ -690,11 +735,10 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
   let manifestExists = false;
   let manifestNeedsSeal = false;
   {
-    const { data, error } = await client().storage.from(BUCKET).download(manifestKey);
+    const { data, error } = await client().storage.from(BUCKET).download(manifestKey, fresh());
     if (error) {
       const msg = String(error.message || error);
-      const notFound = /not[ _]?found|does not exist|no such|404/i.test(msg) || error.status === 404 || error.statusCode === 404;
-      if (!notFound) throw new Error(`매니페스트 읽기 실패 — 삭제 보류(다음 사이클 재시도): ${msg.slice(0, 80)}`);
+      if (!isNotFound(error)) throw new Error(`매니페스트 읽기 실패 — 삭제 보류(다음 사이클 재시도): ${msg.slice(0, 80)}`);
       // notFound = 원격 진짜 없음(최초 푸시). 이때 base(.sync-state)도 비어 삭제 분기가 안 타므로 안전.
     } else {
       manifestExists = true;
@@ -735,17 +779,18 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
   let pulled = 0, pushed = 0, deletedL = 0, deletedR = 0, merged = 0, conflicts = 0, failed = 0, healed = 0, denied = 0, withdrawn = 0, deferred = 0;
   let uploadDenied = 0; // 쓰기 시도에서 난 실패 수(플랜 무관) — cycle이 전부 거절이면 회사 단위 백오프
   let held = 0; // 계정 키 미확보로 이번 사이클 불가시 보류된 암호화 대상 파일 수
+  let missing = 0; const missingRels = []; // 매니페스트에만 있고 객체가 없는 항목(받을 내용 없음) — 실패가 아니라 건너뜀
+  const failures = []; // 실패한 파일 이름·사유(앞 5개) — 상태·lastError·로그용
   const deletedRels = new Set(); // 이번 사이클에 내가 원격 삭제한 rel — 매니페스트 병합에서 재추가 금지
   // blob 실존 검사 — 매니페스트 항목 부재가 "삭제"인지 "동시 쓰기로 항목만 유실"인지 가르는 판별자.
   // 404만 "없음"이다. 타임아웃·5xx 등 확인 불가는 throw → per-file catch가 이번 사이클 보류(failed++).
   // "확인 불가 = 없음"으로 떨어뜨리면 네트워크 열화 시 이 방어가 역으로 오삭제를 만든다(검수 CRITICAL).
-  // 판정 규칙은 위 매니페스트 읽기의 notFound 구분과 동일하게 유지한다.
+  // 판정 규칙은 위 매니페스트 읽기와 같은 isNotFound를 쓴다(단일 출처).
   const blobExists = async (key) => {
-    const { error } = await client().storage.from(BUCKET).download(key);
+    const { error } = await client().storage.from(BUCKET).download(key, fresh()); // CDN 사본의 200은 이미 지운 blob을 '있음'으로 만든다
     if (!error) return true;
-    const msg = String(error.message || error);
-    if (/not[ _]?found|does not exist|no such|404/i.test(msg) || error.status === 404 || error.statusCode === 404) return false;
-    throw new Error(`blob 확인 실패 — 삭제 보류(다음 사이클 재시도): ${msg.slice(0, 80)}`);
+    if (isNotFound(error)) return false;
+    throw new Error(`blob 확인 실패 — 삭제 보류(다음 사이클 재시도): ${String(error.message || error).slice(0, 80)}`);
   };
 
   const relFull = (rel) => {
@@ -760,7 +805,16 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
   // 읽기는 스위치와 무관하게 항상 봉투 개봉 가능 — 2단계 롤아웃의 핵심(다른 기기가 먼저 sealing을 켜도 안전).
   // 태생부터 봉투인 크레덴셜 2종만 엄격(깨진 평문 수용 금지), 그 외는 관용 개봉(기존 평문 그대로 통과 → 전환 무중단).
   const pullBuf = async (rel) => {
-    const b = await download(remoteKey(rel));
+    // 최근 객체 없음으로 확인한 항목(같은 원격 메타)은 다시 받으러 가지 않는다 — 메타가 바뀌면(누가 다시 올림) 바로 다시 받는다.
+    // 객체 없음은 어느 분기에서도 쓰기로 이어지지 않으므로(아래 catch가 missing으로 건너뜀) 기억이 낡아도 늦어질 뿐 덮어쓰지 않는다.
+    const seenKey = `${owner}/${wsId}/${rel}`, r0 = remote.files[rel], sig = r0?.h ?? `${r0?.m}:${r0?.s}`;
+    const seen = missingSeen.get(seenKey);
+    if (seen?.sig === sig && Date.now() < seen.until) throw Object.assign(new Error('Object not found(최근 확인)'), { notFound: true });
+    const b = await download(remoteKey(rel)).catch((e) => {
+      if (e.notFound) missingSeen.set(seenKey, { sig, until: Date.now() + MISSING_RECHECK_MS });
+      throw e;
+    });
+    missingSeen.delete(seenKey); // 받았으면 더는 빈 항목이 아니다
     // 회수 마커 — 다른 기기가 credSync를 껐다. throw → per-file catch가 failed로 보류하고, 이 기기도
     // 곧 company.json 동기화로 토글을 받아 불가시가 된다(로컬 자격은 그동안 그대로).
     // 안전성 자체는 마커 형식(무효 봉투 — openSecret이 어차피 throw)이 담보하므로 이 가드는 현재
@@ -832,6 +886,15 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
   };
   const changed = (a, b) => !a || !b || (a.h ?? `${a.m}:${a.s}`) !== (b.h ?? `${b.m}:${b.s}`);
 
+  // 로컬 삭제 직전 매니페스트 재확인 — 매니페스트를 정상으로 읽은 사이클에서도 blob 확인의 '없음'이 잘못 분류됐을 수 있다.
+  // 삭제 후보가 처음 나올 때 한 번만(사이클당 GET 1건, 후보가 없으면 0건) 매니페스트 키를 다시 읽어 성공할 때만 '없음'을 믿는다.
+  // 오류든 '없음'이든 읽지 못하면 사이클 전체를 보류한다(holdCycle — 파일 단위 실패로 두면 그 항목이 state에서 빠진다). (분리 검수 F2-2)
+  let manifestRecheck = null;
+  const confirmManifest = () => (manifestRecheck ??= (async () => {
+    const { error } = await client().storage.from(BUCKET).download(manifestKey, fresh()); // CDN 사본의 200은 지워진 매니페스트를 '있음'으로 만든다
+    if (error) throw Object.assign(new Error(`로컬 삭제 전 매니페스트 재확인 실패 — 동기화 보류: ${String(error.message || error).slice(0, 80)}`), { holdCycle: true });
+  })());
+
   // credSync off 회수 — 클라우드에 남은 자격 암호문의 **활성 사본**을 마커로 덮고(플랫폼 백업·스냅샷의
   // 과거 사본 보존까지는 보장 못 함 — docs/privacy-sync.md에 같은 한계를 고지) 매니페스트에서
   // 내린다. **remove 금지**: blob 부재는 토글 미반영 기기(구버전 포함)의 `l && !r` 분기에서 "다른 기기가
@@ -899,6 +962,24 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
     }
   }
 
+  // 매니페스트가 없는 사이클의 '다른 기기가 지웠다' 후보(기록 있음·무변경·원격 항목 없음) — 매니페스트가 없으면 그 추론이 성립하지 않는다
+  // (정리된 원격·끊긴 첫 동기화). blob이 있으면 아래 루프가 main처럼 항목을 되살린다(치유). blob까지 없으면 지우지도 다시 밀지도 않고
+  // 사이클 전체를 보류한다 — 다시 밀면 옛 사본 기기가 먼저 들어와 최신 기기의 편집·파일을 덮거나 지운다(최종 검수 HIGH, 기기 2대 재현).
+  // 보류 판정은 어떤 업로드보다 먼저다. 확인 결과는 루프가 다시 쓴다(blob GET은 main처럼 후보당 최대 1건). 확인 오류는 main처럼 그 파일만 실패.
+  const blobProbe = new Map();
+  if (!manifestExists) {
+    for (const rel of allRels) {
+      if ((noSecrets && isSecretRel(rel)) || isDevArtifactRel(rel) || (isEncRel(rel) && !cryptoOn())) continue; // 아래 루프와 같은 불가시
+      const l = local[rel], base = state[rel];
+      if (!(l && !remote.files[rel] && base && !changed(base, l))) continue;
+      const probe = blobExists(remoteKey(rel));
+      blobProbe.set(rel, probe);
+      if ((await probe.catch(() => true)) === false) {
+        throw new Error('클라우드 사본이 비어 있어 이 회사 동기화를 멈췄습니다 — 이 기기 파일은 지우지도 다시 올리지도 않습니다');
+      }
+    }
+  }
+
   for (const rel of allRels) {
     // credSync off — 자격 3종은 push/pull/삭제 전파 전부 불가시. 회수(마커 upsert)는 위 단계가 전담하고,
     // 여기서 real-delete로 흐르면 blob remove가 나가 미반영 기기의 로컬 자격 오삭제로 이어진다(가드 필수).
@@ -939,8 +1020,10 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
           // 매니페스트 lost-update 방어 — 진짜 삭제(다른 기기의 삭제 전파)는 blob도 함께 지워져 있다.
           // blob이 살아 있으면 동시 동기화 중인 기기가 매니페스트를 통째로 덮어써 항목만 유실된 것
           // (실측: 영입 직후 크루 카드가 8초 안에 오삭제) → 지우지 말고 항목을 복원한다(자기치유).
-          if (await blobExists(remoteKey(rel))) { remote.files[rel] = base; healed++; }
-          else { await rmLocal(rel, l.h); delete local[rel]; deletedL++; } // 다른 기기가 지움 → 로컬도
+          // 매니페스트 없는 사이클의 blob 없음은 위 사전 확인이 이미 보류했다. 지우기 직전 매니페스트를 한 번 더 읽어 확인한다(confirmManifest —
+          // 매니페스트가 없으면 여기서도 보류). 실측 2026-10-05: 만료 토큰 읽기가 없음으로 분류되자 이 분기가 로컬 파일을 지웠다(재현 테스트).
+          if (await (blobProbe.get(rel) ?? blobExists(remoteKey(rel)))) { remote.files[rel] = base; healed++; }
+          else { await confirmManifest(); await rmLocal(rel, l.h); delete local[rel]; deletedL++; } // 다른 기기가 지움 → 로컬도(매니페스트 재확인 뒤)
         }
         else { await upload(remoteKey(rel), await pushBuf(rel)); remote.files[rel] = l; pushed++; } // 신규/수정 → 밀기
         continue;
@@ -964,7 +1047,7 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
         remote.files[rel] = l; continue;
       }
       const localBuf = await readFile(relFull(rel));
-      const remoteBuf = await pullBuf(rel);
+      const remoteBuf = await pullBuf(rel); // 객체 없음이면 catch가 missing으로 건너뛴다 — 편집본은 로컬에 그대로(아래 catch 주석)
       if (isLedger(rel)) { // 원장 — 행 합집합 병합 후 양쪽 수렴
         const mBuf = mergeLedger(localBuf, remoteBuf);
         await writeLocal(rel, mBuf, undefined, hashBuf(localBuf)); // 원장은 재확인 대상이 아니라 이 인자는 무시된다(guarded 주석) — 형식을 맞춰 둘 뿐
@@ -997,7 +1080,14 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
         conflicts++;
       }
     } catch (e) {
+      if (e?.holdCycle) throw e; // 삭제 근거를 확인 못 함 — 이 사이클 전체 보류(매니페스트·state 쓰기 없음)
       if (e?.deferred) { deferred++; continue; } // 로컬이 사이클 도중 바뀜 — 실패가 아니라 미룸(base 그대로라 다음 사이클이 양쪽 변경으로 병합·재판정)
+      // 매니페스트에는 있는데 객체가 없다(받을 내용이 없음) — 실패가 아니다. 항목은 지우지 않는다: 그 파일을 가진 기기는 항목이 빠지는 순간
+      // '다른 기기가 지웠다'로 읽어 로컬 사본을 지운다(2026-09-15 Storage 정리가 객체만 지우고 매니페스트를 남긴 이유). 건너뛰고 상태에만 남긴다.
+      // 충돌(양쪽 변경)이어도 내 편집본을 밀지 않는다 — 항목이 내 base보다 새롭다는 건 더 새 판을 가진 기기가 있을 수 있다는 뜻이고, 밀면 그 기기가
+      // 내 판을 받아 자기 최신본을 조용히 잃는다(분리 검수 2차 HIGH-1). 편집본은 로컬에 남고, 누가 그 파일을 다시 올리면 종전 충돌 처리로 수렴한다.
+      // 항목이 내 base 그대로인 파일을 고친 경우는 위 '로컬만 변경 → 밀기'가 객체를 되살린다(기록된 새 판이 없으니 안전).
+      if (e?.notFound) { missing++; if (missingRels.length < 5) missingRels.push(rel); continue; }
       // free의 **쓰기 실패는 실패가 아니라 이 플랜의 정상 결과**다(클라우드 쓰기 자체가 금지) — 분리 집계한다.
       // 뭉뚱그리면(전부 failed) 한 번도 성공 동기화한 적 없는 free 회사(체험 만료 후 첫 동기화·state
       // 유실·손상)가 영구 미완에 고착한다: 로컬 전용 파일 하나만 있어도 failed>0 → 아래 매니페스트
@@ -1014,6 +1104,9 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
       // pull(download) 실패는 uploadFailed 태그를 못 받으므로 어느 플랜에서도 관용되지 않는다.
       if (e?.uploadFailed) uploadDenied++;
       if (e?.uploadFailed && opts.freePlan) denied++; else failed++; // 파일 하나 실패는 다음 사이클이 재시도
+      // 실패로 센 것만 이름·사유를 남긴다. 회사 폴더 경로와 원자 쓰기 임시 파일의 pid·시각·순번 꼬리(jsonstore writeFileAtomic)는 뗀다 —
+      // 꼬리가 남으면 같은 실패도 주기마다 사유가 달라져 '바뀔 때만 한 줄'인 로그가 재시도마다 새 줄을 쓴다(격리 서버 실측 10/5).
+      if (!(e?.uploadFailed && opts.freePlan) && failures.length < 5) failures.push({ rel, reason: String(e?.message ?? e).split(root + sep).join('').replace(/(\.tmp-[^'"]*)-\d+-[0-9a-z]+-\d+(?=['"])/g, '$1').slice(0, 120) });
     }
   }
 
@@ -1029,7 +1122,11 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
   // steady-state to 1,440 manifests/day/device/company; 100 × 420KB ≈ 60.5GB/day.
   // This is a bound, not a scalable replacement for a revision/conditional index.
   // No write means no lost-update window requiring a second GET. Resealing must write.
-  if (!manifestExists || manifestNeedsSeal || isRestore || opts.freePlan || opts.reseal || failed || originalFiles !== JSON.stringify(remote.files)) {
+  // 복원(isRestore)도 예외가 아니다 — 받기만 한 복원은 원격 목록을 바꾸지 않는다. 복원이면 무조건 쓰던 때, 파일 없는 빈 원격 회사(company.json이 없어
+  // 로컬 회사가 되지 못하고 발견 주기마다 다시 복원된다)가 기기마다 5분에 한 번 매니페스트를 다시 썼다(2026-10-05 lean-company-kqav 실측: 시간당 GET 24·POST 12).
+  // 그리고 매니페스트가 없는 원격을 받을 것 없이 복원한 기기(쓸 항목 0)는 빈 매니페스트를 쓰지 않는다 — 빈 {files:{}}가 생기면 다른 기기가
+  // '매니페스트 있음 + 항목 없음 + blob 없음'을 '다른 기기가 지웠다'로 읽어 못 민 파일을 지운다(3차 검수 2번 재현). 올린 파일이 있으면 main처럼 쓴다.
+  if (!(isRestore && !manifestExists && Object.keys(remote.files).length === 0) && (!manifestExists || manifestNeedsSeal || opts.freePlan || opts.reseal || failed || originalFiles !== JSON.stringify(remote.files))) {
   const uploadFiles = { ...remote.files };
   {
     // 재읽기는 두 단계로 갈라 관용의 범위를 정확히 한다(분리 검수 HIGH-1):
@@ -1040,7 +1137,7 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
     // 같은 세대를 만나 정식 잠김(보류) 경로로 수렴한다.
     let freshBuf = null;
     try {
-      const { data } = await client().storage.from(BUCKET).download(manifestKey);
+      const { data } = await client().storage.from(BUCKET).download(manifestKey, fresh());
       if (data) freshBuf = Buffer.from(await data.arrayBuffer());
     } catch { /* 재읽기 네트워크 실패 — 병합 없이 진행(남는 경합은 blob 검사가 방어, 다음 사이클 self-heal) */ }
     if (freshBuf) {
@@ -1095,7 +1192,7 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
     else if (state[rel]) nextFiles[rel] = state[rel];
   }
   await writeJsonAtomic(stateFile(wsId), { files: nextFiles, ts: Date.now() });
-  return { pulled, pushed, deletedL, deletedR, merged, conflicts, failed, healed, denied, uploadDenied, ...(deferred ? { deferred } : {}), ...(held ? { held } : {}), ...(withdrawn ? { withdrawn } : {}), ...(manifestDenied ? { manifestDenied: true } : {}) };
+  return { pulled, pushed, deletedL, deletedR, merged, conflicts, failed, healed, denied, uploadDenied, ...(deferred ? { deferred } : {}), ...(held ? { held } : {}), ...(withdrawn ? { withdrawn } : {}), ...(manifestDenied ? { manifestDenied: true } : {}), ...(failures.length ? { failures } : {}), ...(missing ? { missing, missingRels } : {}) };
 }
 
 // 이 인스턴스가 책임지는 오너(들) — 테넌트 격리의 핵심.
@@ -1305,6 +1402,19 @@ export function syncStatus() {
   // 별도 번들에서 사본이 갈라져 항상 null이 되는 함정(위 lease 주석과 동일 클래스).
   return { ...status, on: syncOn(), leader: isCloudLeader(), companies: { ...status.companies } };
 }
+/** 한 회사 화면용 상태 — 회사 가드(guardCompany)는 그 회사만 보므로, 같은 기기의 게스트·다른 계정이 자기 회사 화면을 열어도
+    다른 회사의 실패·빈 항목 파일 경로가 보이지 않게 companies는 그 회사 것만 싣는다. lastError는 기기 전체 오류(자격 만료·다른 프로세스
+    동기화 중 등 — 회사 접두 없음)가 있으면 그것, 아니면 이 회사 오류(companies[ws].error)다. 회사 접두(`<회사 ID>: `)가 붙은 lastError는
+    마지막으로 실패한 회사 하나 몫이라 공통으로 보이지 않는다. (분리 검수 LOW-1·2차 MEDIUM-1·보안 검토) */
+export function syncStatusFor(ws) {
+  const s = syncStatus();
+  const mine = s.companies[ws];
+  const companyScoped = Object.keys(s.companies).some((id) => s.lastError?.startsWith(`${id}: `));
+  return { ...s, lastError: (!companyScoped && s.lastError) || mine?.error || '', companies: mine ? { [ws]: mine } : {} };
+}
+/** 회사 몫 오류는 반드시 이 함수로 — lastError(기기 전체 하나)와 그 회사 결과(error)에 같이 두고 회사를 등록한다. 등록이 빠지면
+    syncStatusFor가 `<회사 ID>: ` 접두를 회사 몫으로 못 알아봐 다른 회사·게스트 화면에 보인다(분리 검수 2·3차 LOW). */
+const setCompanyError = (wsId, msg) => { status.lastError = msg; (status.companies[wsId] ??= { ts: Date.now() }).error = msg; };
 
 /** 세션(JWT) 모드면 세션 사용자 id, 서비스 모드(셀프호스트·워커)면 null — 회사 소유자 게이트와 요금제 캐시 키가 같이 쓴다. */
 const currentSessionUid = () => ((loadSyncCreds() && serviceCredsAllowed()) ? null : (loadDeviceSession()?.user?.id ?? null));
@@ -1516,7 +1626,10 @@ async function cycle() {
     try {
       const reseal = !!resealSet[wsId];
       const r = await syncCompany(wsId, owner, restoring, { freePlan, noSecrets: noSecretsWs.has(wsId), reseal });
-      if (r.skipped === 'retry-backoff') { status.companies[wsId] = { ts: Date.now(), ...r }; companyFailed++; continue; }
+      if (r.skipped === 'retry-backoff') { // 대기 중에도 이 회사 오류(회사 화면용, syncStatusFor)는 유지한다
+        const error = status.companies[wsId]?.error;
+        status.companies[wsId] = { ts: Date.now(), ...r, ...(error ? { error } : {}) }; companyFailed++; continue;
+      }
       // 업로드 거절 = 요금제가 바뀌었을 수 있다(pro 만료 등) — 캐시한 판정을 버리고 다음 주기에 다시 묻는다(확정 free는 위에서 스킵돼 여기 안 온다)
       if (!freePlan && (r.uploadDenied ?? 0) > 0) invalidatePlanCache();
       if (!freePlan && (r.uploadDenied ?? 0) > 0 && (r.pushed ?? 0) === 0) { // 확정 free는 이미 스킵 경로 — 여기는 미확인·무자격이 거절당하는 경우
@@ -1528,13 +1641,16 @@ async function cycle() {
       // 다음 사이클이 회사째 재시도한다(무변경 재푸시 비용 < 영구 평문 잔존).
       if (reseal && (r.failed ?? 0) === 0) await clearReseal(wsId).catch(() => {});
       status.companies[wsId] = { ts: Date.now(), ...r };
-      if (r.failed > 0) { status.lastError = `동기화 파일 ${r.failed}건 실패 — 잠시 후 재시도`; companyFailed++; }
+      // 회사 오류는 lastError(기기 전체 하나 — 여러 회사가 실패하면 마지막 것만 남는다)와 회사 결과(error) 양쪽에 둔다 — 회사 화면은 자기 것을 본다(분리 검수 2차 MEDIUM-1)
+      if (r.failed > 0) { setCompanyError(wsId, syncFailedMessage(wsId, r)); companyFailed++; }
       // 키 미확보 보류는 "성공"이 아니다 — 무증상이면 셀프호스트의 account_keys 미적용 같은 영구 무동작이 정상으로 보인다(#436 검수 HIGH-2)
-      if (r.held) { status.lastError = `${wsId}: 계정 키 미확보 — 파일 ${r.held}개 동기화 보류(재시도 중)${accountKeyError() ? ` — ${accountKeyError()}` : ''}`; companyFailed++; }
+      if (r.held) { setCompanyError(wsId, `${wsId}: 계정 키 미확보 — 파일 ${r.held}개 동기화 보류(재시도 중)${accountKeyError() ? ` — ${accountKeyError()}` : ''}`); companyFailed++; }
     } catch (e) {
       // 매니페스트 업로드 거절은 여기로 온다(pro·미확인 경로는 관용 없이 throw) — 파일 거절과 같이 요금제 캐시를 버린다
       if (!freePlan && e?.uploadFailed) invalidatePlanCache();
-      status.lastError = `${wsId}: ${String(e.message).slice(0, 120)}`;
+      // 이번 시도의 결과가 없으니 새 항목으로 — 이전 주기의 failures·↑↓를 이어받으면 지금 오류와 무관한 옛 파일 이름이 같이 보인다(3차 LOW-1)
+      status.companies[wsId] = { ts: Date.now() };
+      setCompanyError(wsId, `${wsId}: ${String(e.message).slice(0, 120)}`); // 첫 주기에 throw해도 회사로 등록된다(2차 LOW-1)
       console.error(`[argo] 동기화 실패(${wsId}):`, e.message);
       companyFailed++;
     }

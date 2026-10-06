@@ -3,6 +3,9 @@
 // 알림 탭·이동('tap'·'nav')은 따로 'msgr-diag-nav'에 20건 — 'notify' 줄에 밀려나지 않게(diag-store.mjs).
 import { Component } from 'react';
 import { createDiagStore } from './diag-store.mjs';
+import { readLang } from './i18n.js';
+import { rootErrorView, prefersDark } from './root-error.mjs';
+import { PHONE_QUERY } from './use-phone.js';
 
 const store = createDiagStore(() => globalThis.localStorage);
 export function readDiag() { return store.read(); }
@@ -21,11 +24,15 @@ export class RootBoundary extends Component {
   render() {
     if (!this.state.err) return this.props.children;
     const msg = String(this.state.err?.message || this.state.err);
+    // 언어·테마 Provider 밖 — 저장된 언어(argo-lang)와 <html data-theme>·OS 다크를 직접 읽는다(MSG-12: 한국어·검은 글자 고정이라 다크 바탕에서 안 보였다)
+    let dark = false; try { dark = prefersDark({ theme: document.documentElement.dataset.theme ?? '', systemDark: matchMedia('(prefers-color-scheme: dark)').matches }); } catch { /* 판정 못 하면 라이트 */ }
+    const v = rootErrorView({ lang: readLang(), dark, phone: !!globalThis.matchMedia?.(PHONE_QUERY).matches }); // 진단 경로가 폰 셸·데스크톱에서 다르다(2차 검수 L-h)
     return (
-      <div role="alert" style={{ padding: 'max(24px, env(safe-area-inset-top)) 20px 20px', fontFamily: 'system-ui, sans-serif', color: '#1a1a1a' }}>
-        <p style={{ fontWeight: 700, fontSize: 16, margin: '0 0 6px' }}>앱을 그리는 중 오류가 났습니다</p>
-        <p style={{ fontSize: 13, color: '#666', margin: '0 0 14px', overflowWrap: 'anywhere' }}>{msg}</p>
-        <button type="button" onClick={() => location.reload()} style={{ font: 'inherit', padding: '10px 16px', borderRadius: 999, border: '1px solid #ccc', background: '#fff' }}>다시 열기</button>
+      <div role="alert" style={{ minHeight: '100vh', boxSizing: 'border-box', padding: 'max(24px, env(safe-area-inset-top)) 20px 20px', fontFamily: 'system-ui, sans-serif', color: v.fg, background: v.bg }}>
+        <p style={{ fontWeight: 700, fontSize: 16, margin: '0 0 6px' }}>{v.title}</p>
+        <p style={{ fontSize: 13, color: v.fg2, margin: '0 0 6px' }}>{v.hint}</p>
+        <p style={{ fontSize: 12, color: v.fg2, margin: '0 0 14px', overflowWrap: 'anywhere', fontFamily: 'ui-monospace, monospace' }}>{msg}</p>
+        <button type="button" onClick={() => location.reload()} style={{ font: 'inherit', fontWeight: 600, minHeight: 44, padding: '10px 18px', borderRadius: 999, border: `1px solid ${v.border}`, background: v.btnBg, color: v.fg }}>{v.reload}</button>
       </div>
     );
   }

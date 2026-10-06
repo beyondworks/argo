@@ -162,7 +162,7 @@ async function runMain(platform, { appFails = false } = {}) {
       '@argo/globals.css': nonce, './styles.css': '',
       './splash.js': 'export const startSplash = (o) => { globalThis.__log.push(["splash", o]); return { ready() {} }; };',
       './diag.jsx': 'export const pushDiag = (...a) => globalThis.__log.push(["diag", a[0], String(a[1]).slice(0, 20)]);',
-      './webview-bg.js': 'export const followThemeBackground = () => globalThis.__log.push(["follow"]);',
+      './webview-bg.js': 'export const followThemeBackground = (...a) => globalThis.__log.push(["follow", a[2]]);',
       './app-root.jsx': (appFails ? 'throw new Error("boom");' : 'globalThis.__log.push(["app"]);') + nonce,
       './boot-entry.mjs': readFileSync(new URL('../src/boot-entry.mjs', import.meta.url), 'utf8')
         .replace("export function renderChunkError(", 'export function __real(').replace(/^/, 'export const renderChunkError = () => globalThis.__log.push(["chunk-ui"]);\n'),
@@ -178,7 +178,7 @@ test('main.jsx — iOS 빌드는 스플래시 닫힘에 바탕 바꾸기를 걸�
   assert.equal(typeof s[1].onClosed, 'function');
   assert.ok(ios.some((e) => e[0] === 'app'), '앱 본체 청크 로드');
   s[1].onClosed();
-  assert.ok(ios.some((e) => e[0] === 'follow'));
+  assert.deepEqual(ios.find((e) => e[0] === 'follow'), ['follow', 'ios'], 'iOS는 플랫폼을 넘겨 앱 플러그인 경로를 탄다(웹뷰 바탕 명령은 데스크톱 전용)');
   const mac = await runMain(undefined);
   assert.equal(mac.find((e) => e[0] === 'splash')[1].onClosed, undefined);
   assert.ok(mac.some((e) => e[0] === 'app'));

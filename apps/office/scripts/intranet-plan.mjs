@@ -1,7 +1,7 @@
 // 인트라넷 → 오피스 업무 이관 계획(유건 9/29). DB 없이 순수 변환만 — 실행은 intranet-migrate.mjs가 오피스 업무 기능(RPC)으로 한다.
 // 이관이지 불러오기가 아니다: 인트라넷 원본 링크·페이지 id는 옮기지 않는다.
 
-const CATEGORY = { 고객: 'customer', 협력사: 'partner' };
+const CATEGORY = { 고객: 'customer', 협력사: 'partner', 공급사: 'supplier', 기타: 'other' }; // 14차: 공급사·기타도 그대로(예전에는 '고객'으로 바뀌었다)
 const STATUS = { 활성: 'active', 보류: 'hold', 종료: 'closed' };
 // 계좌·사업자번호는 처음부터 가린다(우클릭으로 해제)
 export const DEFAULT_REDACTED = ['account', 'biz_no'];
@@ -15,6 +15,8 @@ const nameKey = (s) => String(s ?? '').normalize('NFC').replace(/\s+/g, '').toLo
 const day = (s) => (s ? String(s).slice(0, 10) : null);
 const kstDay = (iso) => (iso ? new Date(Date.parse(iso) + 9 * 3600e3).toISOString().slice(0, 10) : null);
 const text = (s) => String(s ?? '').trim();
+/** 오피스 입금 예정일로 받는 날짜인가(office_business_due와 같다: YYYY-MM-DD, 2000~2100년) */
+const validDay = (s) => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s) && Number.isFinite(Date.parse(`${s}T00:00:00Z`)) && new Date(`${s}T00:00:00Z`).toISOString().slice(0, 10) === s && s >= '2000-01-01' && s <= '2100-12-31';
 
 /** 같은 회사명(공백·대소문자 무시)은 하나로 합친다. 빈 칸은 먼저 나온 값을 뒤의 값으로 채우고, 서로 다른 값은 메모에 남긴다 */
 export function mergeCustomers(rows) {
@@ -71,17 +73,20 @@ export function planMigration({ customers, deals }) {
     const vat = Math.round(Number(d.vat ?? 0));
     const supply = d.supply != null ? Math.round(Number(d.supply)) : total - vat;
     const taxType = vat > 0 ? 'taxable' : 'exempt';
+    // 입금예정일(14차) — 날짜 부분만. 날짜로 읽을 수 없는 값은 옮기지 않고 메모에 남긴다(서버가 거절해 이관이 멈추지 않게)
+    const dueRaw = text(d.dueDate), dueOn = validDay(day(dueRaw)) ? day(dueRaw) : null;
     const memo = [
       text(d.notes),
       vat === 0 && supply > 0 ? '부가세 0원으로 이관됨 — 과세 구분(면세·영세율) 확인 필요' : '',
       estimated.length ? `추정한 날짜: ${estimated.map((s) => `${STAGE_LABEL[s]} ${dates[s]}`).join(', ')}` : '',
       d.total != null && Math.round(Number(d.total)) !== supply + vat ? `원본 합계 ${Math.round(Number(d.total))}원과 공급가액+세액 ${supply + vat}원이 다름 — 확인 필요` : '',
+      dueRaw && !dueOn ? `입금예정일 "${dueRaw}"을 날짜로 읽지 못해 옮기지 않음 — 확인 필요` : '',
     ].filter(Boolean);
     if (status === '취소') {
       if (day(d.contractDate)) { dates.contract = dates.quote > day(d.contractDate) ? dates.quote : day(d.contractDate); stages.push('contract'); }
       dates.cancel = [dates.quote, dates.contract, day(d.invoiceDate), day(d.paidDate)].filter(Boolean).sort().at(-1);
     }
-    return { sourceId: d.id, totalMismatch: d.total != null && Math.round(Number(d.total)) !== supply + vat, customerKey, title: text(d.title).slice(0, 200) || '(제목 없음)', supply, vat, taxType, stages, cancelled: status === '취소', dates, memo };
+    return { sourceId: d.id, totalMismatch: d.total != null && Math.round(Number(d.total)) !== supply + vat, customerKey, title: text(d.title).slice(0, 200) || '(제목 없음)', supply, vat, taxType, stages, cancelled: status === '취소', dates, dueOn, memo };
   });
   return { customers: list, deals: plans };
 }
@@ -91,7 +96,7 @@ export function expectedTotals(plan) {
   const live = plan.deals.filter((d) => !d.cancelled);
   const gross = (d) => d.supply + d.vat;
   return {
-    customers: plan.customers.length, deals: plan.deals.length, cancelled: plan.deals.length - live.length,
+    customers: plan.customers.length, deals: plan.deals.length, cancelled: plan.deals.length - live.length, due: plan.deals.filter((d) => d.dueOn).length,
     sales: live.filter((d) => d.stages.includes('contract')).reduce((a, d) => a + d.supply, 0),
     invoiced: live.filter((d) => d.stages.includes('invoice')).reduce((a, d) => a + gross(d), 0),
     paid: live.filter((d) => d.stages.includes('paid')).reduce((a, d) => a + gross(d), 0),

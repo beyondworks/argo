@@ -7,7 +7,6 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { t, registerDict, useLang, getLang } from '../core/i18n.js';
 import { ME, SPACES } from '../core/session.js';
-import { baseOf } from '../core/commands.js';
 import { navigate, useUrl } from '../core/router.jsx';
 import { crewName } from '../core/store.js';
 import { Modal, showToast } from '../ui/Overlay.jsx';
@@ -17,9 +16,9 @@ import { Icon } from '../ui/Icon.jsx';
 import { Face } from '../ui/Face.jsx';
 import * as M from './model.js';
 import * as V from '../views/model.js';
-import { useEvents, useEventWindows, writeEvent, loadPeople, loadCustomers } from './api.js';
+import { useEvents, useEventWindows, writeEvent, loadPeople, loadCustomers, refreshEvents } from './api.js';
 import { orgSpaces, idOf, spaceOfOrg, writableOrgs, inSpace, calOf, colorOf, fmtDay, fmtTime, locale, pref, setPref } from './shared.js';
-import { useViewTasks, usePeople, makeCtx, readCfg, writeCfg } from '../views/data.js';
+import { useViewTasks, usePeople, makeCtx, readCfg, writeCfg, useTaskCategories } from '../views/data.js';
 import { ItemsView, useItemActions, filterMenu, filterCount, Dropdown } from '../views/Board.jsx';
 import { CAL_DICT, holidayName } from './calendar-i18n.js';
 import './calendar.css';
@@ -88,17 +87,19 @@ export default function Calendar({ space, day }) {
   const [from, to] = M.windowOf(board ? 'list' : view, anchor);
   const data = useEvents(from, to);
   const tasks = useViewTasks(space), people = usePeople(space);
-  const ctx = useMemo(() => makeCtx(today, people), [today, people]);
+  const catVer = useTaskCategories(view === 'kanban' && cfg.group === 'category' ? [space, ...tasks.map((x) => x.space)] : []); // 칸반 '분류로 묶기'에서 할 일을 옮길 때만 할 일 분류를 읽는다(공간마다 세션에 한 번)
+  const ctx = useMemo(() => makeCtx(today, people), [today, people, catVer]);
   const occ = useMemo(() => (data.events ? M.expand(inSpace(data.events, space), M.kstStart(from) - 86400e3, M.kstStart(to) + 86400e3).filter((o) => !off.has(calOf(o, space))) : []), [data.events, space, off, from, to]);
   const items = useMemo(() => {
     const dues = off.has('tasks') ? [] : tasks.filter((x) => x.due_on).map((x) => ({ kind: 'task', key: `t:${x.id}`, id: x.id, title: x.title, done: !!x.done_at, space: x.space, all_day: true, start: M.kstStart(x.due_on), end: M.kstStart(M.addDays(x.due_on, 1)), vi: V.taskItem(x) }));
     return [...dues, ...occ];
   }, [occ, tasks, off]);
   const boardItems = useMemo(() => (board ? V.mergeItems(occ.filter((o) => o.end > M.kstStart(from) && o.start < M.kstStart(to)), off.has('tasks') ? [] : tasks, { from, to, undated: true, overdue: true }) : []), [board, occ, tasks, off, from, to]);
-  const categories = useMemo(() => [...new Set((data.events ?? []).map((e) => e.category).filter(Boolean))].sort(), [data.events]);
+  // 분류 이름 — 일정 분류 + 할 일 분류(유건 10/4, 할 일에도 분류가 생겼다). 필터·일정 분류 입력 제안에 같이 쓴다
+  const categories = useMemo(() => [...new Set([...(data.events ?? []).map((e) => e.category), ...tasks.map((x) => (x.category_id ? x.category : ''))].filter(Boolean))].sort(), [data.events, tasks]);
   const holidays = !off.has('holidays');
 
-  const openTask = (x) => navigate(`${baseOf(x.space)}?open=${x.id}`);
+  const openTask = (x) => actions.openTask(x.vi ?? x); // 할 일은 그 자리에서 오른쪽 할 일 패널(유건 10/4) — 예전에는 홈으로 갔다
   const open = (o) => { if (o.kind === 'task') openTask(o); else setSheet({ occ: o }); };
   const openItem = (it) => (it.kind === 'task' ? openTask(it) : setSheet({ occ: it.src }));
   const create = (at) => {
@@ -147,7 +148,7 @@ export default function Calendar({ space, day }) {
           </span>}
           <h2 className="cal-title" aria-live="polite">{periodTitle(view, monthVis ?? anchor, phone)}</h2>
           {data.loading && <span className="dim small" role="status">{t('cal.loading')}</span>}
-          {data.error && <span className="cal-err small" role="alert">{t(data.error)}</span>}
+          {data.error && <span className="cal-err small" role="alert">{t(data.error)} <button type="button" className="link-btn small" onClick={() => refreshEvents().catch(() => {})}>{t('desktop.retry')}</button></span>}{/* 다시 시도(OFC-08) — 보고 있는 창만 다시 읽는다 */}
           <span className="cal-tools">
             {view === 'kanban' && <Dropdown label={t('views.group')} value={cfg.group} options={opts(V.GROUPS, 'views.g')} onChange={(g) => setCfg({ group: g })} />}
             {board && <Dropdown label={t('views.sort')} value={cfg.sort} options={opts(V.SORTS, 'views.s')} onChange={(x) => setCfg({ sort: x })} />}

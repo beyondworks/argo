@@ -9,9 +9,12 @@ import { emitNotify } from './notify.mjs';
 import { runOneShot } from './oneshot.mjs'; // 자연어 → 루틴 초안(러너 독립 — 어떤 러너든 연결만 되면 동작)
 import { writeJsonAtomic, readJson } from './jsonstore.mjs';
 import { withLock } from './mutex.mjs';
+import { routineHead, loopHead } from './inbound-marks.mjs'; // 머리말 = 1:1 화면 출처 카드와 같은 함수
+import { LOOP_VERDICT_RE, parseLoopVerdict, loopVerdictLine, stripLoopVerdict } from './loop-verdict.mjs'; // 표지 = 엔진 판정·화면 제거와 같은 모듈
 // 시각 판정(순수)은 routine-time.mjs가 원천 — 목록 화면(클라이언트)이 '만료' 표시에 같은 판정을
 // 쓰기 위한 분리. 기존 소비자를 위해 그대로 재수출한다(임포트 경로 하위호환).
 import { normalizeTz, zonedParts, onceSpent, CATCHUP_MS } from './routine-time.mjs';
+import { codedError } from './coded-error.mjs'; // 화면 문구 코드(F11)
 export { normalizeTz, zonedParts, onceSpent, onceExpired } from './routine-time.mjs';
 
 const lockKey = (wsId) => `routines:${wsId}`;
@@ -74,9 +77,9 @@ export function normalizeSchedule(schedule = {}) {
   // once = 특정 날짜에 1회(예약 발송). 실행되면 자동으로 꺼진다(runRoutine) — 반복 예약과 구분.
   if (schedule.type === 'once') {
     const date = String(schedule.date ?? '').trim();
-    if (!DATE_RE.test(date)) throw new Error('1회 예약은 날짜(YYYY-MM-DD)가 필요합니다');
+    if (!DATE_RE.test(date)) throw codedError('routine_once_date_required', '1회 예약은 날짜(YYYY-MM-DD)가 필요합니다');
     const t = String(schedule.time ?? (Array.isArray(schedule.times) ? schedule.times[0] : '')).trim();
-    if (!TIME_RE.test(t)) throw new Error('예약 시각은 HH:MM 형식');
+    if (!TIME_RE.test(t)) throw codedError('routine_time_format', '예약 시각은 HH:MM 형식');
     return withTz({ type: 'once', date, time: t, times: [t] });
   }
   // interval = N분마다 반복(크루 Start-loop — 실사용 요청 2026-07-27 "루프 잡"). 하한 10분:
@@ -85,18 +88,18 @@ export function normalizeSchedule(schedule = {}) {
   // 건너뛰어 발화하지 않는다(깨지지 않고 조용히 대기 — 이 기기들은 업데이트 후 발화 시작).
   if (schedule.type === 'interval') {
     const every = Math.floor(Number(schedule.everyMinutes));
-    if (!Number.isInteger(every) || every < 10 || every > 1440) throw new Error('반복 간격은 10~1440분');
+    if (!Number.isInteger(every) || every < 10 || every > 1440) throw codedError('routine_interval_range', '반복 간격은 10~1440분');
     return { type: 'interval', everyMinutes: every };
   }
   const type = schedule.type === 'weekly' ? 'weekly' : 'daily';
   const rawTimes = Array.isArray(schedule.times) && schedule.times.length ? schedule.times : [schedule.time];
   // 잘못된 항목은 통째로 거절 — 일부만 조용히 수용하면 사용자가 지정한 시각이 소리 없이 빠진다
-  if (!rawTimes.every((t) => TIME_RE.test(t || ''))) throw new Error('예약 시각은 HH:MM 형식');
+  if (!rawTimes.every((t) => TIME_RE.test(t || ''))) throw codedError('routine_time_format', '예약 시각은 HH:MM 형식');
   const times = [...new Set(rawTimes)].sort();
-  if (times.length > 8) throw new Error('예약 시각은 하루 8개까지');
+  if (times.length > 8) throw codedError('routine_times_max', '예약 시각은 하루 8개까지');
   const rawDows = Array.isArray(schedule.dows) && schedule.dows.length ? schedule.dows : [schedule.dow ?? 1];
   const dows = [...new Set(rawDows.map(Number))].sort((a, b) => a - b);
-  if (type === 'weekly' && !dows.every((d) => Number.isInteger(d) && d >= 0 && d <= 6)) throw new Error('요일은 일(0)~토(6) 범위');
+  if (type === 'weekly' && !dows.every((d) => Number.isInteger(d) && d >= 0 && d <= 6)) throw codedError('routine_dow_range', '요일은 일(0)~토(6) 범위');
   // 단수 필드(time/dow)는 첫 값으로 함께 유지 — 이 파일을 읽는 구버전(다른 기기 동기화)이 깨지지 않는다
   return withTz({ type, time: times[0], times, dow: dows[0], ...(type === 'weekly' ? { dows } : {}) });
 }
@@ -126,21 +129,9 @@ export function normalizeLoop(loop = {}, prev = null) {
   };
 }
 
-/** 회차 판정 마커 — 답변 **마지막 줄**. `LOOP: continue` / `LOOP: done <이유>` / `LOOP: blocked <필요한 결정>`.
-    (export: 테스트·프롬프트 문구 앵커) */
-export const LOOP_VERDICT_RE = /^\s*`?\s*LOOP\s*:\s*(continue|done|blocked)\b[\s.:\-—]*(.*?)\s*`?\s*[.。]?\s*$/i;
+// 회차 판정 표지(정규식·판정)는 src/loop-verdict.mjs — 1:1 화면의 표시용 제거와 같은 규칙을 쓴다. 예전 경로 그대로 다시 내보낸다.
+export { LOOP_VERDICT_RE, parseLoopVerdict };
 const LOOP_MISSING_LIMIT = 3; // 마커 연속 누락 허용 — CLI 러너가 형식을 못 지켜도 조용히 죽지 않되, 영영 헛돌지도 않게
-
-/** 답변에서 판정 추출 — 마지막 비어있지 않은 줄만 본다. 마커가 없으면 { verdict:'continue', missing:true } —
-    형식을 안 지킨 러너를 곧바로 정지시키지 않는다(연속 누락 상한은 runRoutine이 센다).
-    (export: 단위 테스트용 — 순수 함수) */
-export function parseLoopVerdict(reply) {
-  const lines = String(reply ?? '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  const last = lines[lines.length - 1] ?? '';
-  const m = last.match(LOOP_VERDICT_RE);
-  if (!m) return { verdict: 'continue', reason: '', missing: true };
-  return { verdict: m[1].toLowerCase(), reason: (m[2] ?? '').trim().slice(0, 300), missing: false };
-}
 
 const isLoopRoutine = (r) => r?.schedule?.type === 'interval' && !!r.loop;
 
@@ -162,13 +153,13 @@ export function normalizeVerify(verify) {
   for (const f of rawFiles) {
     const rel = String(f ?? '').trim().replace(/\\/g, '/').replace(/^\.\//, '');
     if (!rel) continue;
-    if (rel.length > 200) throw new Error('완료 조건 파일 경로는 200자 이내');
-    if (rel.startsWith('/') || /^[A-Za-z]:/.test(rel) || rel.includes('\0')) throw new Error('완료 조건 경로는 회사 기억 안 상대경로만');
-    if (rel.split('/').includes('..')) throw new Error('완료 조건 경로에 상위 탈출(..) 금지');
+    if (rel.length > 200) throw codedError('routine_verify_path_len', '완료 조건 파일 경로는 200자 이내');
+    if (rel.startsWith('/') || /^[A-Za-z]:/.test(rel) || rel.includes('\0')) throw codedError('routine_verify_path_relative', '완료 조건 경로는 회사 기억 안 상대경로만');
+    if (rel.split('/').includes('..')) throw codedError('routine_verify_path_traversal', '완료 조건 경로에 상위 탈출(..) 금지');
     if (!files.includes(rel)) files.push(rel);
   }
   if (!files.length) return null; // 파일 조건이 핵심 — 문구만으로는 조건이 성립하지 않는다
-  if (files.length > VERIFY_MAX_FILES) throw new Error(`완료 조건 파일은 ${VERIFY_MAX_FILES}개까지`);
+  if (files.length > VERIFY_MAX_FILES) throw codedError('routine_verify_files_max', `완료 조건 파일은 ${VERIFY_MAX_FILES}개까지`);
   const contains = String(verify.contains ?? '').trim().slice(0, 200) || null;
   let retries = Math.floor(Number(verify.retries ?? 2));
   if (!Number.isFinite(retries)) retries = 2;
@@ -212,9 +203,9 @@ export async function checkVerify(wsId, verify, { lang = 'ko' } = {}) {
 export function verifyRetryPrompt(r, failures, attempt, lang) {
   const list = failures.map((f) => `- ${f}`).join('\n');
   if (lang === 'en') {
-    return `[Routine: ${r.title}] Completion check failed (attempt ${attempt}). The routine is NOT done until these are satisfied — do not relax or reinterpret the conditions; produce the deliverables:\n${list}\nOriginal instruction:\n${r.prompt}`;
+    return `${routineHead(r.title, 'en')} Completion check failed (attempt ${attempt}). The routine is NOT done until these are satisfied — do not relax or reinterpret the conditions; produce the deliverables:\n${list}\nOriginal instruction:\n${r.prompt}`;
   }
-  return `[루틴: ${r.title}] 완료 조건 미충족(${attempt}차 시도). 아래가 채워질 때까지 이 루틴은 완료가 아니다 — 조건을 완화하거나 재해석하지 말고 산출물을 완성하라:\n${list}\n원래 지시:\n${r.prompt}`;
+  return `${routineHead(r.title, 'ko')} 완료 조건 미충족(${attempt}차 시도). 아래가 채워질 때까지 이 루틴은 완료가 아니다 — 조건을 완화하거나 재해석하지 말고 산출물을 완성하라:\n${list}\n원래 지시:\n${r.prompt}`;
 }
 
 /** 루프 프로토콜 문단 — 회차·상한·지난 결과를 주고 마지막 줄 마커를 요구한다(러너 무관 — 텍스트 규약). */
@@ -223,9 +214,9 @@ function loopProtocol(r, lang) {
   const last = String(r.lastResult ?? '').trim();
   const budget = r.loop.maxUsd != null ? (lang === 'en' ? ` Loop budget: $${r.loop.spentUsd.toFixed(2)} of $${r.loop.maxUsd} used.` : ` 루프 예산: $${r.loop.maxUsd} 중 $${r.loop.spentUsd.toFixed(2)} 사용.`) : '';
   if (lang === 'en') {
-    return `\n\n---\n[Loop protocol] This is run ${n} of at most ${r.loop.maxRuns} in a repeating loop.${budget}\nPrevious run summary: ${last || '(none — first run)'}\nDo the next step of the work. The VERY LAST line of your answer must be exactly one of:\n\`LOOP: continue\` — more to do next run\n\`LOOP: done <one-line reason>\` — the goal is reached, stop the loop\n\`LOOP: blocked <the decision you need from the boss>\` — you cannot proceed without a human decision`;
+    return `${loopHead('en')} This is run ${n} of at most ${r.loop.maxRuns} in a repeating loop.${budget}\nPrevious run summary: ${last || '(none — first run)'}\nDo the next step of the work. The VERY LAST line of your answer must be exactly one of:\n\`${loopVerdictLine('continue')}\` — more to do next run\n\`${loopVerdictLine('done', ' <one-line reason>')}\` — the goal is reached, stop the loop\n\`${loopVerdictLine('blocked', ' <the decision you need from the user>')}\` — you cannot proceed without a human decision`;
   }
-  return `\n\n---\n[루프 프로토콜] 이것은 반복 루프의 ${n}회차 / 최대 ${r.loop.maxRuns}회다.${budget}\n지난 회차 결과 요약: ${last || '(없음 — 첫 회차)'}\n이번 회차 몫의 일을 진행하라. 답변의 **마지막 줄**은 반드시 다음 셋 중 하나로만 끝내라:\n\`LOOP: continue\` — 다음 회차에 할 일이 남음\n\`LOOP: done <한 줄 이유>\` — 목표 달성, 루프 종료\n\`LOOP: blocked <사장에게 필요한 결정>\` — 사람 결정 없이는 진행 불가`;
+  return `${loopHead('ko')} 이것은 반복 루프의 ${n}회차 / 최대 ${r.loop.maxRuns}회다.${budget}\n지난 회차 결과 요약: ${last || '(없음 — 첫 회차)'}\n이번 회차 몫의 일을 진행하라. 답변의 **마지막 줄**은 반드시 다음 셋 중 하나로만 끝내라:\n\`${loopVerdictLine('continue')}\` — 다음 회차에 할 일이 남음\n\`${loopVerdictLine('done', ' <한 줄 이유>')}\` — 목표 달성, 루프 종료\n\`${loopVerdictLine('blocked', ' <사용자에게 필요한 결정>')}\` — 사람 결정 없이는 진행 불가`;
 }
 
 /** 정지 사유 문장 — 알림(emitNotify)에 그대로 실린다. */
@@ -252,8 +243,8 @@ export async function resumeLoop(wsId, id) {
     곧 사용자의 시간대다(한국 사용자면 Asia/Seoul). 클라이언트가 tz를 보내면 그쪽이 우선. */
 const hostTz = () => { try { return new Intl.DateTimeFormat().resolvedOptions().timeZone || null; } catch { return null; } };
 
-export async function addRoutine(wsId, { agentSlug, title, prompt, schedule, enabled = true, loop = null, verify = null, msgr = null, notifications }) {
-  if (!agentSlug || !title?.trim() || !prompt?.trim()) throw new Error('크루·제목·지시가 필요합니다');
+export async function addRoutine(wsId, { agentSlug, title, prompt, schedule, enabled = true, loop = null, verify = null, msgr = null, notifications, from = null }) { // from = 사장 직접 턴이 아닌 턴(또는 다른 크루에게 건 예약)의 시작점 크루 — 실행 턴이 풀 오토가 아니다
+  if (!agentSlug || !title?.trim() || !prompt?.trim()) throw codedError('routine_fields_required', '에이전트·제목·지시가 필요합니다');
   if (msgr && msgr.wsId !== wsId) throw new Error('메신저 예약 회사 불일치');
   const destinations = await validateRoutineNotifications(wsId, agentSlug, notifications);
   const sched = normalizeSchedule({ tz: hostTz(), ...schedule });
@@ -275,6 +266,8 @@ export async function addRoutine(wsId, { agentSlug, title, prompt, schedule, ena
     ...(sched.type === 'interval' && loop ? { loop: normalizeLoop(loop) } : {}),
     ...(ver ? { verify: ver } : {}),
     ...(msgr ? { msgr: (await import('./gateway/msgr-handoff.mjs')).messengerOrigin({ ...msgr, kind: 'msgr' }) } : {}),
+    // 출처 — 있으면 실행 때 notOwnerDirect로 잇는다(풀 오토 아님). 없으면(사장이 만든 것·사장 직접 턴에서 자기 일로 만든 것·이 필드 전의 옛 루틴) 종전대로
+    ...(typeof from === 'string' && from ? { from } : {}),
   };
   return lockRoutines(wsId, async () => {
     const routines = await loadRoutines(wsId);
@@ -290,15 +283,15 @@ export async function addRoutine(wsId, { agentSlug, title, prompt, schedule, ena
 export function sanitizeRoutinePatch(patch = {}) {
   const out = {};
   if ('title' in patch) {
-    if (!patch.title?.trim()) throw new Error('제목이 필요합니다');
+    if (!patch.title?.trim()) throw codedError('routine_title_required', '제목이 필요합니다');
     out.title = patch.title.trim();
   }
   if ('prompt' in patch) {
-    if (!patch.prompt?.trim()) throw new Error('지시가 필요합니다');
+    if (!patch.prompt?.trim()) throw codedError('routine_prompt_required', '지시가 필요합니다');
     out.prompt = patch.prompt.trim();
   }
   if ('agentSlug' in patch) {
-    if (!patch.agentSlug) throw new Error('크루가 필요합니다');
+    if (!patch.agentSlug) throw codedError('routine_crew_required', '에이전트가 필요합니다');
     out.agentSlug = patch.agentSlug;
   }
   if ('schedule' in patch) out.schedule = normalizeSchedule(patch.schedule);
@@ -310,11 +303,12 @@ export function sanitizeRoutinePatch(patch = {}) {
   return out;
 }
 
-export async function updateRoutine(wsId, id, patch) {
+/** opts.from — 사장 직접 턴이 아닌 턴이 고칠 때(cancel_routine의 다시 켜기) 그 크루로 출처를 바꾼다. 사람 편집(API·화면)은 출처를 지우거나 바꾸지 않는다(화이트리스트 밖). */
+export async function updateRoutine(wsId, id, patch, { from = null } = {}) {
   const clean = sanitizeRoutinePatch(patch);
   if ('notifications' in clean || 'agentSlug' in clean) {
     const before = (await loadRoutines(wsId)).find((r) => r.id === id);
-    if (!before) throw new Error('루틴을 찾을 수 없습니다');
+    if (!before) throw codedError('routine_not_found', '루틴을 찾을 수 없습니다');
     if ('notifications' in clean && clean.notifications === undefined) throw new Error('Invalid routine notification channels');
     const next = 'notifications' in clean ? clean.notifications : before.notifications;
     const changed = JSON.stringify(next) !== JSON.stringify(before.notifications)
@@ -322,7 +316,7 @@ export async function updateRoutine(wsId, id, patch) {
     if (changed) await validateRoutineNotifications(wsId, clean.agentSlug ?? before.agentSlug, next);
   }
   const r = await patchRoutine(wsId, id, (cur) => {
-    const out = { ...clean, editedAt: new Date().toISOString() }; // 사람 편집 경로(H1) — patchRoutine 자체는 더 이상 이 값을 안 찍는다
+    const out = { ...clean, editedAt: new Date().toISOString(), ...(typeof from === 'string' && from ? { from } : {}) }; // 사람 편집 경로(H1) — patchRoutine 자체는 더 이상 이 값을 안 찍는다
     const nextSched = out.schedule ?? cur.schedule;
     if ('verify' in out) out.verify = nextSched?.type === 'interval' ? null : normalizeVerify(out.verify);
     else if (nextSched?.type === 'interval' && cur.verify) out.verify = null; // interval로 바꾸면 기존 조건도 비운다
@@ -341,8 +335,26 @@ export async function updateRoutine(wsId, id, patch) {
     }
     return out;
   });
-  if (!r) throw new Error('루틴을 찾을 수 없습니다');
+  if (!r) throw codedError('routine_not_found', '루틴을 찾을 수 없습니다');
   return r;
+}
+
+/** 해고한 크루의 루틴을 끈다(지우지 않는다 — 제목·지시·일정은 남겨 다른 크루로 바꿔 다시 켤 수 있게). 켜진 채 남으면 예약마다
+    "없는 크루" 실패 알림이 갔다(F4, 2026-10-05). editedAt — 사람의 행동(해고)에서 나온 변경이라 메신저 대기 편집보다 나중으로 친다.
+    반환: 끈 루틴 수. */
+export async function disableRoutinesForCrew(wsId, slug) {
+  return lockRoutines(wsId, async () => {
+    const routines = await loadRoutines(wsId);
+    const at = new Date().toISOString();
+    let n = 0;
+    for (const r of routines) {
+      if (r.agentSlug !== slug || !r.enabled) continue;
+      r.enabled = false; r.editedAt = at; n += 1;
+      if (r.loop) r.loop = { ...r.loop, stoppedReason: r.loop.stoppedReason ?? 'manual' }; // 루프 정지 사유(수동)와 같은 표시
+    }
+    if (n) await saveRoutines(wsId, routines);
+    return n;
+  });
 }
 
 export async function removeRoutine(wsId, id) {
@@ -359,7 +371,7 @@ export async function runRoutine(wsId, id, { chatFn = null, startAt = null, sess
   // startAt = 테스트 전용(시작 시각 주입) — "시작이 예약 시각을 가로지르는 실행"은 실제 분 경계를
   // 기다리지 않고는 재현할 수 없다(catch의 once 끄기 판정 시계가 이 각인을 쓴다).
   const r0 = await patchRoutine(wsId, id, { lastRun: (startAt ?? new Date()).toISOString() });
-  if (!r0) throw new Error('루틴을 찾을 수 없습니다');
+  if (!r0) throw codedError('routine_not_found', '루틴을 찾을 수 없습니다');
   // Edits apply to the next execution: never send an in-flight result to a newly chosen recipient.
   const resultRoutine = (current) => ({ ...(current ?? r0), title: r0.title, agentSlug: r0.agentSlug,
     lastRun: r0.lastRun, notifications: r0.notifications, msgr: r0.msgr });
@@ -385,11 +397,11 @@ export async function runRoutine(wsId, id, { chatFn = null, startAt = null, sess
   try {
     const chat = chatFn ?? (await import('./chat.mjs')).chat; // 순환 차단 — 파일 상단 주석 참조. chatFn=테스트 주입(실 러너 불필요)
     const run = r0.msgr
-      ? async (message) => (await import('./gateway/msgr.mjs')).runMessengerContinuation(wsId, r0.agentSlug, r0.msgr, message, null, { runChat: chat, session })
+      ? async (message) => (await import('./gateway/msgr.mjs')).runMessengerContinuation(wsId, r0.agentSlug, r0.msgr, message, null, { runChat: chat, session, loopTurn: loop, ...(r0.from ? { notOwnerDirect: r0.from } : {}) }) // loopTurn — 채널 글에서 판정 표지를 넘김 줄 앞에서 뺀다
       : async (message) => {
         // 결과가 공유 목적지(슬랙 채널·텔레그램 그룹·메신저 채널)로 나가면 그 범위 맥락만 — 주인 대화를 붙이지 않는다(gateway briefingCtx, 동적 임포트 = 순환 차단)
         const destCtx = await (await import('./gateway.mjs')).briefingCtx(wsId, 'routine', r0.agentSlug, { notifications: r0.notifications });
-        return chat(wsId, r0.agentSlug, message, null, { source: 'routine', ...(destCtx ? { mirrorCtx: destCtx } : {}) });
+        return chat(wsId, r0.agentSlug, message, null, { source: 'routine', ...(destCtx ? { mirrorCtx: destCtx } : {}), ...(r0.from ? { notOwnerDirect: r0.from } : {}) }); // 출처 있는 루틴 = 풀 오토 아님(출처·프롬프트는 그대로)
       };
     // 완료 조건 저장값 정규화는 chat **전** — 오염된 저장값이면 LLM 비용을 쓰기 전에 실패하고,
     // 사유에 루틴 제목을 붙여 어느 설정 문제인지 드러낸다(검수 LOW-2).
@@ -399,7 +411,7 @@ export async function runRoutine(wsId, id, { chatFn = null, startAt = null, sess
         throw new Error(lang === 'en' ? `[${r0.title}] completion check config invalid: ${e.message}` : `[${r0.title}] 완료 조건 설정 오류: ${e.message}`);
       }
     }
-    const userMsg = `[루틴: ${r0.title}] ${r0.prompt}${loop ? loopProtocol(r0, lang) : ''}`;
+    const userMsg = `${routineHead(r0.title, 'ko')} ${r0.prompt}${loop ? loopProtocol(r0, lang) : ''}`;
     let t = await run(userMsg);
     // 대화 스레드에 남긴다 — 루틴만 이게 빠져 있어서, 실행 중엔 채팅창에 보이다가 끝나면 사라졌다
     // (신고 2026-07-28 "루틴 돌면서 채팅이 올라왔다가 실행되고 나니 유실"). 저장한 적이 없었던 것.
@@ -431,7 +443,11 @@ export async function runRoutine(wsId, id, { chatFn = null, startAt = null, sess
           : `완료 조건 미충족(${tried}회 시도): ${res.failures.join(' · ')}`);
       }
     }
-    const summary = t.reply.replace(/\s+/g, ' ').slice(0, 160);
+    // 사용자에게 나가는 답(알림 이벤트 → 텔레그램·슬랙·메신저, 마지막 결과 요약, 지금 실행 응답) — 루프 회차 답 끝의 판정 표지(LOOP: …)는
+    // 엔진용이라 여기서 한 번만 뺀다. 판정(아래 parseLoopVerdict)과 1:1 대화 기록은 원문 그대로. 메신저발 루프는
+    // runMessengerContinuation(loopTurn)이 넘김 줄을 붙이기 전에 이미 뺐다 — 두 번 빼지 않는다.
+    const shown = loop && !r0.msgr ? stripLoopVerdict(t.reply) : t.reply;
+    const summary = shown.replace(/\s+/g, ' ').slice(0, 160);
     // 1회 예약은 **성공하면** 스스로 꺼진다 — 산출이 이미 나갔으니 예약 시각에 또 보내지 않는다
     // (미래 예약을 미리 시험해 성공한 경우도 동일 — 이중 발송 방지). 실패는 catch가 다르게 다룬다.
     // 당일 자동 재시도는 없다: 시작 시 lastRun을 각인하므로 isDue가 같은 슬롯을 다시 due로 만들지
@@ -448,7 +464,7 @@ export async function runRoutine(wsId, id, { chatFn = null, startAt = null, sess
       // 정지 조건 — 먼저 걸린 하나만 사유로 남긴다(판정 > 누락 상한 > 회차 > 예산)
       if (v.verdict === 'done') stop = { reason: 'done', detail: v.reason };
       else if (v.verdict === 'blocked') stop = { reason: 'blocked', detail: v.reason };
-      else if (L.missingVerdicts >= LOOP_MISSING_LIMIT) stop = { reason: 'blocked', detail: lang === 'en' ? `No LOOP verdict in ${LOOP_MISSING_LIMIT} consecutive runs — check the crew's runner/output format` : `${LOOP_MISSING_LIMIT}회 연속 LOOP 판정 누락 — 크루의 러너·출력 형식을 확인해 주세요` };
+      else if (L.missingVerdicts >= LOOP_MISSING_LIMIT) stop = { reason: 'blocked', detail: lang === 'en' ? `No LOOP verdict in ${LOOP_MISSING_LIMIT} consecutive runs — check the agent's runner/output format` : `${LOOP_MISSING_LIMIT}회 연속 LOOP 판정 누락 — 에이전트의 러너·출력 형식을 확인해 주세요` };
       else if (L.runs >= L.maxRuns) stop = { reason: 'maxRuns', detail: '' };
       else if (L.maxUsd != null && L.spentUsd >= L.maxUsd) stop = { reason: 'maxUsd', detail: '' };
       if (stop) { L.stoppedReason = stop.reason; L.stoppedDetail = String(stop.detail ?? '').slice(0, 300); patch.enabled = false; }
@@ -458,8 +474,8 @@ export async function runRoutine(wsId, id, { chatFn = null, startAt = null, sess
     // 잘못 끄지 않는다(검수 LOW-1: catch와 기준 통일). enabled:false 덮어쓰기라 루프 정지와 무충돌.
     const r = await patchRoutine(wsId, id, (cur) => ({ ...patch, ...(cur.schedule?.type === 'once' ? { enabled: false } : {}) }));
     if (stop) await announceStop(r, stop, t.msgr);
-    emitNotify({ type: 'routine', wsId, runAt: r0.lastRun, routine: resultRoutine(r), ok: true, reply: t.reply, ...(t.msgr ? { msgr: t.msgr, msgrReply: t.msgrReply } : {}) }); // 메신저 브리핑 푸시
-    return { ok: true, reply: t.reply, handover: t.handover, ...(loop ? { loop: r?.loop ?? null, stopped: stop?.reason ?? null } : {}) };
+    emitNotify({ type: 'routine', wsId, runAt: r0.lastRun, routine: resultRoutine(r), ok: true, reply: shown, ...(t.msgr ? { msgr: t.msgr, msgrReply: t.msgrReply } : {}) }); // 메신저 브리핑 푸시
+    return { ok: true, reply: shown, handover: t.handover, ...(loop ? { loop: r?.loop ?? null, stopped: stop?.reason ?? null } : {}) };
   } catch (e) {
     const msg = String(e.message || e).slice(0, 160);
     // 1회 예약은 **예약 시각이 지난 실패**면 끈다 — 같은 슬롯은 lastRun 각인으로 재발화하지 않아,
@@ -580,8 +596,8 @@ export const PROMPT_DESIGN_SPEC = `prompt는 사용자의 한 줄 요청을 **�
 요청에 없는 사실(고유명사·수치·링크)을 지어내지 않는다 — 모호하면 단계 안에 "~를 먼저 파악"으로 담는다.`;
 
 const DRAFT_PROMPT = (text, roster) => `너는 루틴(반복 업무) 설계자다. 사용자의 요청을 아래 JSON으로만 변환해 출력하라. JSON 외 텍스트·설명 금지.
-스키마: {"title": "짧은 제목", "prompt": "설계된 반복 지시문(아래 설계 규격)", "schedule": {"type": "daily"|"weekly", "times": ["HH:MM", ...], "dows": [0-6 정수 배열 — weekly일 때만, 0=일요일]}, "agentSlug": "아래 크루 목록의 slug — 사용자가 특정 크루를 지목했을 때만, 아니면 null"}
-크루 목록:
+스키마: {"title": "짧은 제목", "prompt": "설계된 반복 지시문(아래 설계 규격)", "schedule": {"type": "daily"|"weekly", "times": ["HH:MM", ...], "dows": [0-6 정수 배열 — weekly일 때만, 0=일요일]}, "agentSlug": "아래 에이전트 목록의 slug — 사용자가 특정 에이전트를 지목했을 때만, 아니면 null"}
+에이전트 목록:
 ${roster || '(없음)'}
 설계 규격:
 ${PROMPT_DESIGN_SPEC}
@@ -593,7 +609,7 @@ ${PROMPT_DESIGN_SPEC}
 사용자 요청: <<<${text}>>>`;
 
 const REFINE_PROMPT = (text, agentLine) => `너는 루틴(반복 업무) 설계자다. 사용자가 직접 적은 반복 지시문을 아래 설계 규격으로 확장해, {"prompt": "확장된 지시문"} JSON으로만 출력하라. JSON 외 텍스트·설명 금지.
-${agentLine ? `실행할 크루: ${agentLine}\n` : ''}설계 규격:
+${agentLine ? `실행할 에이전트: ${agentLine}\n` : ''}설계 규격:
 ${PROMPT_DESIGN_SPEC}
 - 시각·요일 언급은 지시문에서 뺀다(스케줄은 별도 필드가 담당).
 사용자 지시문: <<<${text}>>>`;

@@ -2,8 +2,15 @@
 // 외부 자료는 "지시 아님" 표지로 감싸 지시와 분리하고, 메일·페이지 본문은 앞 8천 자까지만 싣는다.
 // meta.source(office_*)는 게이트웨이가 이 턴의 풀 오토를 끄는 표지다(src/gateway/msgr-handoff.mjs fullAutoAllowed).
 
+import { registerDict } from './i18n.js';
+import { CREW_ASSIGN_DICT } from './crew-assign-i18n.js';
+
+registerDict(CREW_ASSIGN_DICT); // 표지 문구(crew.msg.*)는 이 파일과 함께 지연 로드된다(첫 화면 150KB 상한)
+
 export const EXCERPT_MAX = 8000;
-export const SOURCES = { mail: 'office_mail', page: 'office_page', file: 'office_file', record: 'office_record' };
+// 값은 모두 office_로 시작해야 한다 — 게이트웨이가 office_* 전체를 오피스 글로 보고 그 턴의 풀 오토를 끈다(루트 src/gateway/msgr-handoff.mjs isOfficeSource). 테스트가 잠근다
+// 17차: 거래·거래처·일정·견적/계약·회사 정보도 맡긴다(글자는 core/crew-items.js가 그 화면에서 뽑아 text로 넘긴다)
+export const SOURCES = { mail: 'office_mail', page: 'office_page', file: 'office_file', record: 'office_record', deal: 'office_deal', customer: 'office_customer', event: 'office_event', doc: 'office_doc', company: 'office_company' };
 
 /** 메일 HTML → 글자. 스크립트·스타일은 버리고 줄바꿈을 남긴다. parse는 테스트에서 바꿔 끼운다 */
 export function htmlText(html, parse = (h) => new DOMParser().parseFromString(h, 'text/html')) {
@@ -29,6 +36,10 @@ export const excerpt = (text, max = EXCERPT_MAX) => {
   return s.length > max ? `${s.slice(0, max)}…` : s;
 };
 
+/** 맡기기 창의 "가린 값도 함께 보냅니다" 안내를 보일지 — 가릴 수 있는 값이 든 종류(거래·거래처·회사 정보·견적)거나 전체 가리기 중일 때(유건 10/4 결정: 가림은 화면용, 글에는 들어간다) */
+const MASKABLE = ['deal', 'customer', 'company', 'doc'];
+export const maskedNote = (items, hideAll) => items.length > 0 && (hideAll || items.some((i) => MASKABLE.includes(i.kind)));
+
 /** 크루에게 보낼 글과 meta. items: [{ kind, id, label, from?, text? }] — text는 이미 글자로 바꾼 본문(없으면 이름만).
     t는 문구 사전(crew.msg.*) — 오피스 화면 언어로 표지를 쓴다 */
 export function composeAssign({ instruction, items = [], t }) {
@@ -51,6 +62,29 @@ export function composeTools(tools, t) {
   return `[${t('crew.tools.head')}]\n${tools.map((x) => `- ${x.title}${x.url ? ` (${x.url})` : ''}${String(x.guide ?? '').trim() ? `: ${excerpt(String(x.guide).replace(/\s+/g, ' ').trim(), 600)}` : ''}`).join('\n')}`;
 }
 
+// 플러그인 배정(spec.crews)은 같은 에이전트(= 한 사람)의 행 전부로 판정한다 — 내 공간 줄은 ids, 조직 공간 줄은 묶음 키로 찾는다(agentIds, 2차 검수 L3).
+// all = 가게의 크루 행 전부
+/** 이 줄에 배정돼 있나 — 같은 에이전트의 어느 행으로 배정했어도(대표가 아닌 행·다른 조직 행으로 예전에 배정한 것 포함) */
+export const toolCrewOn = (list, c, all = []) => agentIds(c, all).some((id) => list.includes(id));
+/** 체크 켜고 끄기 — 끄면 같은 에이전트의 행 id를 모두 빼고, 켜면 이 줄 id 하나 */
+export const toggleToolCrew = (list, c, all = []) => (toolCrewOn(list, c, all) ? list.filter((id) => !agentIds(c, all).includes(id)) : [...list, c.id]);
+/** 저장 전 — 같은 에이전트는 처음 id 하나만. 목록(crews)에 없는 에이전트의 id(꺼진 크루 등)는 지우지 않는다 */
+export function oncePerAgent(list, crews, all = []) {
+  const seen = new Set();
+  return list.filter((id) => { const c = crews.find((x) => agentIds(x, all).includes(id)); if (!c) return true; if (seen.has(c.id)) return false; seen.add(c.id); return true; });
+}
+/** 같은 에이전트의 행 id(고른 행 먼저) — 내 공간의 묶인 줄은 ids, 조직 공간에서 고른 행은 같은 묶음 키(agent)의 행(사본·꺼진 행 빼고) */
+export function agentIds(c, crews) {
+  const ids = c.ids ?? (c.agent != null ? crews.filter((x) => x.agent === c.agent && !x.copy && (x.access ?? 'ok') !== 'inactive').map((x) => x.id) : []);
+  return [c.id, ...ids.filter((id) => id !== c.id)];
+}
+/** 맡길 때 배정된 플러그인 — 서버 crew.tools는 크루 id 하나만 보므로 같은 에이전트의 행마다 물어 합친다(같은 플러그인은 한 번). 못 읽은 행은 건너뛴다.
+ *  부하: 보낼 때만, 그 에이전트의 행 수(보통 1~3)만큼 호출 — 맞는 플러그인이 있으면 서버가 그 플러그인의 전달 횟수(uses)를 올린다(쓰기, 표시에만 쓰는 값) */
+export async function crewTools(ids, ask) {
+  const all = (await Promise.all(ids.map((id) => ask(id).catch(() => [])))).flat();
+  return all.filter((x, i) => all.findIndex((y) => y.id === x.id) === i);
+}
+
 /** 업무 세트(4단계) → 맡기는 글에 붙일 문단. used = office_asset_write 'asset.use' 결과. 노하우 본문은 max를 노하우 수로 나눠 자른다 */
 export function composeSet(used, t, max = 6000) {
   if (!used) return '';
@@ -71,13 +105,22 @@ export function mentionAt(text, caret) {
   const m = /(^|\s)@([^\s@]*)$/.exec(text.slice(0, caret));
   return m ? { start: caret - m[2].length - 1, q: m[2] } : null;
 }
-/** 넘길 수 있는 에이전트 — 주 에이전트와 같은 조직, 내가 시킬 수 있는(메신저 peers와 같은 판정), 주 에이전트 빼고 */
-export const mentionCands = (crews, main, q = '') => crews.filter((c) => c.id !== main.id && (c.space ?? null) === (main.space ?? null)
-  && (c.access ?? 'ok') === 'ok' && c.name.toLowerCase().includes(q.toLowerCase()));
+/** 넘길 수 있는 에이전트 — 주 에이전트와 같은 조직, 내가 시킬 수 있는(메신저 peers와 같은 판정), 주 에이전트·동기화 충돌 사본 빼고.
+ *  target(assignTarget)이 개인 1:1이면 없다 — 개인 방의 동료는 그 방에 든 크루뿐이라(서버 msgr_crew_context peers, 게이트웨이 stageMessengerHandoff) 1:1에서는 넘길 곳이 없다 */
+export const mentionCands = (crews, main, q = '', target = null) => (target?.personalId ? [] : crews.filter((c) => c.id !== main.id && !c.copy && (c.space ?? null) === (main.space ?? null)
+  && (c.access ?? 'ok') === 'ok' && c.name.toLowerCase().includes(q.toLowerCase())));
 /** "@q"를 "@이름 "으로 바꾼다 — 뒤에 이미 공백이 있으면 그 공백을 쓴다 */
 export function putMention(text, at, caret, name) {
   const rest = text.slice(caret), ins = `@${name}${/^\s/.test(rest) ? '' : ' '}`;
   return { text: text.slice(0, at.start) + ins + rest, caret: at.start + ins.length + (/^\s/.test(rest) ? 1 : 0) };
+}
+
+/** 맡길 곳 — 고른 줄(조직 행·내 공간에서 묶인 줄·개인 공간 행)에서 조직 1:1(orgId·crewId)과 내 개인 1:1(personalId)을 고른다(CX-03).
+ *  개인 행 = 같은 에이전트 묶음(agent, 내 에이전트만)의 org 없는 행. 조직 행이 없으면 개인 1:1로만. spaces = 공간 목록(조직 키 → 서버 id) */
+export function assignTarget(crew, crews, spaces) {
+  const twin = crew.personal ? crew : crews.find((x) => x.personal && (x.id === crew.twin || (crew.agent != null && x.agent === crew.agent))) ?? null;
+  const org = crew.personal ? null : spaces.find((sp) => sp.kind === 'org' && sp.key === crew.space)?.id ?? null;
+  return { orgId: org, crewId: org ? crew.id : null, personalId: twin?.id ?? null, personalBot: twin?.hosting === 'bot' };
 }
 
 export const ASSIGN_REASONS = ['unentitled', 'locked', 'consent', 'not_allowed', 'no_crew', 'unavailable'];
@@ -85,17 +128,34 @@ const deny = (code) => Object.assign(new Error(`assign_${code}`), { transient: f
 
 /** 내 크루와의 1:1 방에 글을 넣는다. db는 { rpc(fn, args), myChannels(), members(ids), insert(row) } — 오류 객체는 { code }를 가진다.
     서버가 뒤에서 조용히 멈출 조건(잠김·체험 끝·권한·AI 동의)은 보내기 전에 거절한다 — 보낸 뒤 아무 일도 안 일어나는 가짜 성공을 막는다(유건 9/29).
-    반환: 'sent' | 'already'(같은 client_msg_id가 이미 들어감 — 앞선 시도가 응답만 잃었다). 거절은 { assign: 사유, transient: false }로 던진다 */
-export async function deliverToCrew(db, { owner, orgId, crewId, crewName, body, meta, clientId }) {
+    내 에이전트의 개인 공간 행(personalId)이 있으면 그 1:1로 보낸다 — 메신저 '에이전트' 탭이 여는 방과 같은 방(agent-groups.mjs agentRoomTarget, 10/3 P2 '에이전트 = 한 사람', CX-03).
+    봇 쌍둥이(personalBot)는 서버가 준비됐다고 할 때만(msgr_personal_room_crews ready — 아니면 개인 방 글이 봇에 가지 않는다), 아니면 종전처럼 조직 1:1.
+    개인 방은 조직 잠금·자격과 상관없어 그 확인은 하지 않는다(메신저 개인 방과 같다).
+    반환: 'sent'(조직 1:1) | 'personal'(개인 1:1) | 'already'(같은 client_msg_id가 이미 들어감 — 앞선 시도가 응답만 잃었다). 거절은 { assign: 사유, transient: false }로 던진다 */
+export async function deliverToCrew(db, { owner, orgId, crewId, personalId = null, personalBot = false, crewName, body, meta, clientId }) {
+  const gone = (e) => { throw e?.code === 'PGRST202' ? deny('unavailable') : e; }; // 확인 함수가 서버에 없다 — 다시 보내도 같으니 무한 재시도로 조용히 사라지지 않게 끝낸다
+  // 서버 함수 거절(msgr_forbidden·msgr_bad_member·msgr_not_allowed, 권한 42501·입력 22023) — 다시 보내도 같다
+  const refused = (e) => { if (['P0001', '22023', '42501'].includes(e?.code)) throw deny('not_allowed'); throw e; };
+  const put = async (channel, done) => {
+    try { await db.insert({ channel_id: channel, author_kind: 'user', author_user_id: owner, body, meta, client_msg_id: clientId }); }
+    catch (e) { if (e?.code === '23505') return 'already'; refused(e); }
+    return done;
+  };
+  if (personalId && (!personalBot || (await db.rpc('msgr_personal_room_crews', {}).catch(() => null))?.find?.((r) => r.id === personalId)?.ready === true)) {
+    const [check, consent] = await Promise.all([db.rpc('msgr_instruct_check', { crew: personalId, author: owner, channel: null }), db.rpc('msgr_my_ai_consent', {})]).catch(gone);
+    if (check !== 'ok') throw deny('not_allowed');
+    if (!consent) throw deny('consent');
+    return put(await db.rpc('msgr_dm_personal_crew', { crew: personalId }).catch(refused), 'personal');
+  }
+  if (!orgId || !crewId) throw deny(personalId ? 'unavailable' : 'no_crew'); // 개인 행뿐인데 1:1을 열 수 없다(봇 다시 연결 필요 등)
   const [locked, entitled, check, consent] = await Promise.all([
     db.rpc('msgr_org_locked', { org: orgId }), db.rpc('msgr_org_entitled', { org: orgId }),
     db.rpc('msgr_instruct_check', { crew: crewId, author: owner, channel: null }), db.rpc('msgr_my_ai_consent', {}),
-  ]).catch((e) => { throw e?.code === 'PGRST202' ? deny('unavailable') : e; }); // 확인 함수가 서버에 없다 — 다시 보내도 같으니 무한 재시도로 조용히 사라지지 않게 끝낸다
+  ]).catch(gone);
   if (locked === true) throw deny('locked');
   if (entitled !== true) throw deny(entitled === false ? 'unentitled' : 'not_allowed'); // null = 이 조직 멤버가 아님
   if (check !== 'ok') throw deny('not_allowed');
   if (!consent) throw deny('consent');
-  const refused = (e) => { if (e?.code === 'P0001') throw deny('not_allowed'); throw e; }; // 서버 함수 거절(msgr_forbidden·msgr_bad_member·msgr_not_allowed) — 다시 보내도 같다
   const dmIds = (await db.myChannels()).filter((r) => r.msgr_channels?.kind === 'dm' && r.msgr_channels.org_id === orgId && !r.msgr_channels.archived_at).map((r) => r.channel_id);
   const members = dmIds.length ? await db.members(dmIds) : [];
   let channel = dmIds.find((cid) => { // 나 혼자 + 이 크루 하나인 방(메신저 openDm과 같은 판정)
@@ -104,7 +164,5 @@ export async function deliverToCrew(db, { owner, orgId, crewId, crewName, body, 
     return users.length === 1 && users[0].member_id === owner && crews.length === 1 && crews[0].member_id === crewId;
   });
   if (!channel) channel = await db.rpc('msgr_create_channel', { org: orgId, kind: 'dm', name: `dm:${crewName ?? ''}`, others: [{ kind: 'crew', id: crewId }] }).catch(refused);
-  try { await db.insert({ channel_id: channel, author_kind: 'user', author_user_id: owner, body, meta, client_msg_id: clientId }); }
-  catch (e) { if (e?.code === '23505') return 'already'; refused(e); }
-  return 'sent';
+  return put(channel, 'sent');
 }

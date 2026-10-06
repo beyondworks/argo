@@ -29,10 +29,10 @@ const openDmSheet = async (p) => {
   await p.locator('.msgr-crewsheet').waitFor({ timeout: 5000 });
 };
 
-// 1. 1:1 대화방에서도 '추가'가 열린다 — 종전에는 항목 자체가 없었다
+// 1. 1:1 대화방에서도 '초대하기'(옛 '추가')가 열린다 — 종전에는 항목 자체가 없었다
 await scenario(1280, 'dm-add-menu', async (p) => {
   await openDmSheet(p);
-  await p.locator('.msgr-addwrap button', { hasText: '추가' }).first().click();
+  await p.locator('.msgr-addwrap button', { hasText: '초대하기' }).first().click();
   const menu = await p.locator('.msgr-addmenu').innerText();
   assert.ok(menu.includes('사람 더 부르기'), `사람 초대 항목 (실제: ${menu})`);
   assert.ok(menu.includes('에이전트'), `에이전트 초대 항목 (실제: ${menu})`);
@@ -41,7 +41,7 @@ await scenario(1280, 'dm-add-menu', async (p) => {
 // 2. 사람을 고르면 지금 방에 끼워 넣지 않고 새 방을 연다
 await scenario(1280, 'dm-widen-opens-new-room', async (p) => {
   await openDmSheet(p);
-  await p.locator('.msgr-addwrap button', { hasText: '추가' }).first().click();
+  await p.locator('.msgr-addwrap button', { hasText: '초대하기' }).first().click();
   await p.locator('.msgr-addmenu button', { hasText: '사람 더 부르기' }).click();
   await p.locator('.msgr-chips .msgr-chan', { hasText: 'Third Person' }).click();
   await p.waitForTimeout(800);
@@ -73,7 +73,7 @@ await scenario(1280, 'new-conversation-button', async (p) => {
   await p.locator('[aria-label="새 채팅"]').first().click();
   await p.waitForTimeout(400);
   const sheet = await p.locator('.msgr-sheetwrap, .msgr-crewsheet').first().innerText();
-  assert.ok(/사람|크루|고르/.test(sheet), `상대를 고르는 화면이 열린다 (실제: ${sheet.slice(0, 120)})`);
+  assert.ok(/사람|에이전트|고르/.test(sheet), `상대를 고르는 화면이 열린다 (실제: ${sheet.slice(0, 120)})`);
 });
 
 // 5. 폰 DM 탭 — 정렬과 '새 대화'가 나란히 눌린다(겹치거나 밀리지 않게)
@@ -138,7 +138,7 @@ await scenario(1280, 'public-channel-people', async (p) => {
   const people = () => sheet.locator('.msgr-rows .row').evaluateAll((rs) => rs.filter((r) => !r.querySelector('.msgr-av.crew') && !r.closest('.msgr-excluded')).map((r) => r.querySelector('.name')?.innerText));
   assert.deepEqual(await people(), ['Fixture Owner'], '참여한 사람만 — 조직원 전원이 아니다');
   assert.match(await sheet.locator('.note').first().innerText(), /참여한 사람/, '안내가 참여 기준을 말한다');
-  await sheet.locator('.msgr-addwrap button', { hasText: '추가' }).first().click();
+  await sheet.locator('.msgr-addwrap button', { hasText: '초대하기' }).first().click();
   await sheet.locator('.msgr-addmenu button', { hasText: '사람 추가' }).click();
   await sheet.locator('.msgr-chips .msgr-chan', { hasText: 'Third Person' }).click(); await p.waitForTimeout(700);
   const calls = () => p.evaluate(() => window.__dmInviteFixture.calls);
@@ -194,7 +194,7 @@ await scenario(1280, 'dm-has-no-vacated-label', async (p) => {
 
 await scenario(1280, 'own-attachment-right-aligns-with-bubble', async (p) => {
   await p.locator('.msgr-list button.item', { hasText: 'Fixture General' }).first().click();
-  const attachment = p.locator('.msgr-mine .msgr-attachments').first(); await attachment.waitFor({ state: 'visible', timeout: 5000 });
+  const attachment = p.locator('.msgr-mine .msgr-media').first(); await attachment.waitFor({ state: 'visible', timeout: 5000 });
   const geometry = await attachment.evaluate((el) => { const row = el.closest('.msgr-mine'); const bubble = row?.querySelector('.bubble'); const a = el.getBoundingClientRect(); const b = bubble?.getBoundingClientRect(); return { attachmentRight: a.right, bubbleRight: b?.right }; });
   assert.ok(geometry.bubbleRight, `내 말풍선이 있다 (${JSON.stringify(geometry)})`);
   assert.ok(Math.abs(geometry.attachmentRight - geometry.bubbleRight) <= 1, `이미지 첨부와 말풍선의 우측선이 맞는다 (${JSON.stringify(geometry)})`);
@@ -219,7 +219,7 @@ await scenario(1280, 'agent-offline-visible', async (p) => {
   assert.match(pop, /Fixture Agent[\s\S]*꺼져 있음/, `멘션 후보에 꺼짐 표시 (실제: ${pop.replace(/\s+/g, ' ')})`);
   await ta.fill('@Fixture Agent 오늘 정리해 줘'); await ta.press('Escape'); await ta.press('Enter'); await p.waitForTimeout(800);
   const chip = p.locator('.msgr-awaychip'); await chip.waitFor({ timeout: 3000 });
-  assert.match(await chip.innerText(), /Fixture Agent은\(는\) 지금 꺼져 있어요/, '보낸 뒤 꺼짐 안내');
+  assert.match(await chip.innerText(), /Fixture Agent는 지금 꺼져 있어요/, '보낸 뒤 꺼짐 안내(조사 고름 — UXM-15)');
   // 대조군: 켜진 에이전트는 표시도 안내도 없다(전원 '꺼짐'으로 그리는 변이를 잡는다)
   await ta.click(); await ta.pressSequentially('@Sec', { delay: 20 }); await p.waitForTimeout(400);
   const pop2 = await p.locator('.msgr-mention-pop, [role=listbox]').first().innerText().catch(() => '');
@@ -263,6 +263,13 @@ await scenario(1280, 'outside-mention-notice', async (p) => {
   await chip.locator('button', { hasText: '이 방에 추가 요청' }).click(); await p.waitForTimeout(700);
   const joins = await p.evaluate(() => window.__dmInviteFixture.calls.filter((c) => c.rpc === 'msgr_crew_join'));
   assert.ok(joins.some((c) => c.args?.crew === 'crew-1' && c.args?.ch === 'general'), '기존 에이전트 참여 경로(msgr_crew_join)로 요청');
+  // 0.1.49 실기기 "반응 없음": 넣은 뒤에도 "없어요 · 넣었어요"가 한 줄에 보였고, 구성원을 다시 읽지 않아 다시 불러도 멘션 없이 '없어요'만 반복됐다
+  assert.match(await chip.innerText(), /Fixture Agent를 이 방에 넣었어요/);
+  assert.doesNotMatch(await chip.innerText(), /없어요/, '넣은 뒤엔 결과만 보인다');
+  await ta.fill('@Fixture Agent 다시'); await ta.press('Escape'); await ta.press('Enter'); await p.waitForTimeout(800);
+  const again = await p.evaluate(() => window.__dmInviteFixture.calls.filter((c) => c.table === 'msgr_messages' && c.op === 'insert').map((c) => [].concat(c.values)[0]).at(-1));
+  assert.deepEqual(again?.mentions, [{ kind: 'crew', id: 'crew-1' }], '방금 넣은 에이전트를 다시 부르면 멘션이 붙는다');
+  assert.equal(await p.locator('.msgr-outsidechip').count(), 0, '"없어요" 안내가 다시 뜨지 않는다');
 });
 
 // D31(원장 P2-8). 파견을 해제했다가 다시 파견하면 허용 범위가 조직 기본값으로 조용히 바뀌었다(「모두」→「에이전트 주인만」).
@@ -331,7 +338,7 @@ await scenario(1280, 'host-adds-and-approves', async (p) => {
   assert.ok((await calls()).some((c) => c.rpc === 'msgr_crew_join_decide' && c.args.req === 'req-1' && c.args.approve === true), '허락을 서버에 보낸다');
   assert.ok((await crewRows(sheet)).includes('Colleague Agent'), '허락하면 구성에 들어온다');
   assert.equal(await sheet.locator('.row.req').count(), 0, '요청 행이 사라진다');
-  await sheet.locator('.msgr-addwrap button', { hasText: '추가' }).first().click();
+  await sheet.locator('.msgr-addwrap button', { hasText: '초대하기' }).first().click();
   await sheet.locator('.msgr-addmenu button', { hasText: '에이전트 추가' }).click();
   // 칩이 아니라 목록 + 여러 명 선택(유건 2026-09-17)
   const list = sheet.locator('.msgr-picklist'); await list.waitFor();
@@ -368,7 +375,7 @@ await scenario(1280, 'host-inbox-request', async (p) => {
 // 15. 참여자 — 자기 에이전트는 '승인 필요', 누르면 요청이 가고 대기로 보인다. 남의 개인 에이전트는 후보가 아니다
 await scenario(1280, 'member-requests-approval', async (p) => {
   const sheet = await openGeneralSheet(p);
-  await sheet.locator('.msgr-addwrap button', { hasText: '추가' }).first().click();
+  await sheet.locator('.msgr-addwrap button', { hasText: '초대하기' }).first().click();
   await sheet.locator('.msgr-addmenu button', { hasText: '에이전트 추가' }).click();
   await sheet.locator('.msgr-picklist').waitFor();
   const chips = await sheet.locator('.msgr-picklist .pickrow').allInnerTexts();

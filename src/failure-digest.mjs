@@ -8,6 +8,7 @@ import { paths } from './workspace.mjs';
 import { readJson, writeJsonAtomic } from './jsonstore.mjs';
 import { readEvents, appendEvent } from './events.mjs';
 import { RUNNERS } from './runners/catalog.mjs';
+import { isAbortedTurnEvent } from './legacy-terms.mjs';
 
 export const DIGEST_WINDOW_MS = 24 * 60 * 60_000;
 export const DIGEST_MIN_COUNT = 3;
@@ -53,7 +54,7 @@ export const errorSample = (error) => headTail(errorCore(error).replace(/\s+/g, 
 export function digestFailures(events, { now = Date.now(), windowMs = DIGEST_WINDOW_MS, minCount = DIGEST_MIN_COUNT } = {}) {
   const groups = new Map();
   for (const e of events ?? []) {
-    if (e?.type !== 'turn' || e.ok !== false || e.aborted === true || e.error === '사장 지시로 중단' || !e.error) continue; // 레거시 중단 문자열도 제외(runner-usable.lastTurnByRunner와 같은 술어 — D8)
+    if (e?.type !== 'turn' || e.ok !== false || isAbortedTurnEvent(e) || !e.error) continue; // 중단은 실패가 아니다 — 옛 중단 문자열 포함(runner-usable.lastTurnByRunner와 같은 술어 — D8)
     const ts = Date.parse(e.ts ?? ''); if (!Number.isFinite(ts) || now - ts > windowMs || ts > now + 60_000) continue;
     const runner = e.runner || 'unknown'; const signature = errorSignature(e.error); const key = `${runner}|${signature}`;
     const g = groups.get(key) ?? { runner, signature, count: 0, firstTs: ts, lastTs: ts, sample: errorSample(e.error), slugs: new Set() };

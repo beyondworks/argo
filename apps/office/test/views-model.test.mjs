@@ -53,8 +53,8 @@ test('칸 키와 칸 순서', () => {
   assert.equal(V.bucketOf('2026-10-05', TODAY), 'later');
   assert.equal(V.bucketOf(null, TODAY), 'none');
   const items = [ev({ category: '영업' }), task({ done_at: '2026-09-30T00:00:00Z' })];
-  assert.deepEqual(V.groupItems(items, 'status', { today: TODAY, me: ME }).map(([k, l]) => [k, l.length]), [['event', 1], ['todo', 0], ['done', 1]]);
-  assert.deepEqual(V.groupItems(items, 'status', { today: TODAY, me: ME, kind: 'task' }).map(([k]) => k), ['todo', 'done']);
+  assert.deepEqual(V.groupItems(items, 'status', { today: TODAY, me: ME }).map(([k, l]) => [k, l.length]), [['event', 1], ['todo', 0], ['doing', 0], ['hold', 0], ['done', 1]]); // 할 일 상태 4단계(유건 10/4)
+  assert.deepEqual(V.groupItems(items, 'status', { today: TODAY, me: ME, kind: 'task' }).map(([k]) => k), ['todo', 'doing', 'hold', 'done']);
   assert.deepEqual(V.groupItems(items, 'date', { today: TODAY, me: ME }).map(([k]) => k), ['overdue', 'today', 'week', 'later', 'none']);
   assert.deepEqual(V.groupItems(items, 'category', { today: TODAY, me: ME }).map(([k]) => k), ['c:영업', 'none']);
   const who = [task({ id: '1', assignee: 'u-b' }), ev({ crew: 'crew-luna' }), task({ id: '2' })];
@@ -93,7 +93,7 @@ test('planMove: 거절 이유', () => {
   const why = (it, by, to, cx = c) => V.planMove(it, by, to, cx).reason;
   assert.equal(why(ev({}), 'status', 'done'), 'eventStatus');
   assert.equal(why(task(), 'status', 'event'), 'taskToEvent');
-  assert.equal(why(task(), 'category', 'c:영업'), 'taskCategory');
+  assert.equal(why(task(), 'category', 'c:영업'), 'taskCategoryMissing'); // 할 일 분류는 분류 표의 이름만(유건 10/4) — 일정에만 있는 분류 칸으로는 못 옮긴다
   assert.equal(why(task(), 'customer', 'u:c1'), 'taskCustomer');
   assert.equal(why(ev({}), 'who', 'p:u-a'), 'eventWho');
   assert.equal(why(task({ space: 'org-admin' }), 'who', 'a:crew-luna'), 'taskAgent');
@@ -134,9 +134,9 @@ test('planMany·planDelete·planDuplicate', () => {
 
 // 이유: 저장된 설정이 망가졌거나 예전 값이어도 화면이 깨지지 않게 — 모르는 값은 기본값, 이 자리에서 못 고르는 보기는 첫 보기.
 test('normalizeCfg', () => {
-  assert.deepEqual(V.normalizeCfg(null), { view: 'list', group: 'status', sort: 'date', filter: { kind: 'all', who: 'all', category: 'all', period: 'all' } });
-  const c = V.normalizeCfg({ view: 'customers', group: 'x', sort: 'title', filter: { kind: 'task', period: 'nope', who: 5 } }, { view: 'month' });
-  assert.deepEqual(c, { view: 'month', group: 'status', sort: 'title', filter: { kind: 'task', who: 'all', category: 'all', period: 'all' } });
+  assert.deepEqual(V.normalizeCfg(null), { view: 'list', group: 'status', sort: 'date', dir: 'asc', listGroup: 'none', filter: { kind: 'all', who: 'all', category: 'all', period: 'all', status: 'all', priority: 'all' } });
+  const c = V.normalizeCfg({ view: 'customers', group: 'x', sort: 'title', dir: 'up', listGroup: 'z', filter: { kind: 'task', period: 'nope', who: 5, status: 'done', priority: 7 } }, { view: 'month' });
+  assert.deepEqual(c, { view: 'month', group: 'status', sort: 'title', dir: 'asc', listGroup: 'none', filter: { kind: 'task', who: 'all', category: 'all', period: 'all', status: 'done', priority: 'all' } });
   assert.equal(V.normalizeCfg({ view: 'tasks' }, { view: 'tasks' }, ['tasks', 'list']).view, 'tasks');
   assert.equal(V.normalizeCfg({ view: 'day' }, {}, ['list', 'week']).view, 'list');
 });
