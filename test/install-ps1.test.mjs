@@ -84,9 +84,11 @@ test('W1·W4 새 설치 → 해시 확인·실행 확인·argo.cmd·PATH 한 번
   assert.equal(f.pathValue(), `${f.bin}|ExpandString`, 'PATH 중복 없음');
   // U2 — 실제 제거 스크립트(src/cli/uninstall.mjs)를 이 설치에 대고 실행: 종료 뒤 폴더·shim·PATH 항목이 지워진다
   const { uninstallStandalone } = await import('../src/cli/uninstall.mjs');
-  const u = uninstallStandalone({ appDir: f.app, home: f.profile, platform: 'win32', pid: 999999 });
+  // 분리 실행 대신 같은 인자로 동기 실행해 종료 코드·오류 출력을 본다(분리 실행이면 실패해도 원인이 안 보인다)
+  let ran = null;
+  const u = uninstallStandalone({ appDir: f.app, home: f.profile, platform: 'win32', pid: 999999, spawnImpl: (cmd, args) => { ran = spawnSync(cmd, args.filter((a) => a !== '-WindowStyle' && a !== 'Hidden'), { encoding: 'utf8', timeout: 120_000 }); return { unref() {} }; } });
   assert.equal(u.pending, true);
-  for (let i = 0; i < 60 && existsSync(f.app); i++) await new Promise((res) => setTimeout(res, 500));
+  assert.equal(ran?.status, 0, `${ran?.stdout}\n${ran?.stderr}`);
   assert.ok(!existsSync(f.app) && !existsSync(f.shim), '프로그램 폴더·argo.cmd 삭제');
   assert.equal(f.pathValue(), '|ExpandString', '우리 PATH 항목만 지운다');
 });
