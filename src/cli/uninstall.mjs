@@ -51,7 +51,7 @@ export function uninstallStandalone({ appDir, home = homedir(), platform = proce
   if (platform === 'win32') {
     const script = join(tmp, `argo-uninstall-${pid}.ps1`);
     writeFileSync(script, WIN_SCRIPT);
-    spawnImpl('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', script, '-ParentPid', String(pid), '-AppDir', appDir, '-Shim', shim ?? '', '-PathEntry', rec.pathEntry ?? '', '-EnvKey', rec.envKey ?? 'HKCU:\\Environment'], { detached: true, stdio: 'ignore', windowsHide: true }).unref(); // 이름 있는 인자 — 빈 값이 위치를 밀지 않게(검수 #843 M3)
+    spawnImpl('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, '-ParentPid', String(pid), '-AppDir', appDir, '-Shim', shim ?? '', '-PathEntry', rec.pathEntry ?? '', '-EnvKey', rec.envKey ?? 'HKCU:\\Environment'], { detached: true, stdio: 'ignore', windowsHide: true }).unref(); // 창은 windowsHide로 숨긴다(-WindowStyle Hidden은 창 없는 세션에서 실패할 수 있어 쓰지 않는다). 이름 있는 인자 — 빈 값이 위치를 밀지 않게(검수 #843 M3)
     return { ok: true, pending: true, removed: [appDir, shim, rec.pathEntry].filter(Boolean) };
   }
   if (shim) rmSync(shim, { force: true });
