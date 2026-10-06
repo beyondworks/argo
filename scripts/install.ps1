@@ -66,7 +66,8 @@
     }
     Move-Item -LiteralPath $cand -Destination $app
     $prev = $env:ARGO_CLI_APP; $env:ARGO_CLI_APP = '0'
-    try { & (Join-Path $app 'node.exe') (Join-Path $app 'bin\argo.mjs') status *> (Join-Path $tmp 'status.log'); $st = $LASTEXITCODE } finally { $env:ARGO_CLI_APP = $prev }
+    $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try { & (Join-Path $app 'node.exe') (Join-Path $app 'bin\argo.mjs') status *> (Join-Path $tmp 'status.log'); $st = $LASTEXITCODE } finally { $env:ARGO_CLI_APP = $prev; $ErrorActionPreference = $eap }
     if ($st -ne 0) { Get-Content -LiteralPath (Join-Path $tmp 'status.log') | Write-Host; Fail "argo $([regex]::Unescape('\uba85\ub839\u0020\uc2e4\ud589\u0020\ud655\uc778\u0020\uc2e4\ud328\u0020\u2014\u0020\uc774\uc804\u0020\uc124\uce58\ub85c\u0020\ubcf5\uad6c\ud569\ub2c8\ub2e4'))" }
 
     $other = @(Get-Command argo -All -ErrorAction SilentlyContinue | Where-Object { $_.Source -and -not (& $isOurs $_.Source $mark) }) | Select-Object -First 1
@@ -80,7 +81,6 @@
     }
 
     $envKey = if ($env:ARGO_INSTALL_ENV_KEY) { $env:ARGO_INSTALL_ENV_KEY } else { 'HKCU:\Environment' }
-    $pathAdded = $false
     if (-not $skip -and -not $other) {
       if (-not (Test-Path $envKey)) { New-Item -Path $envKey -Force | Out-Null }
       $key = Get-Item -Path $envKey
@@ -89,17 +89,20 @@
       if (-not ($items | Where-Object { $_.TrimEnd('\') -ieq $binDir.TrimEnd('\') })) {
         $new = (@($items) + $binDir) -join ';'
         Set-ItemProperty -Path $envKey -Name Path -Value $new -Type ExpandString
-        $pathAdded = $true
-        if (-not ('ArgoEnv' -as [type])) {
-          Add-Type -Namespace '' -Name ArgoEnv -MemberDefinition '[DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr SendMessageTimeout(IntPtr h, uint m, UIntPtr w, string l, uint f, uint t, out UIntPtr r);'
-        }
-        $r = [UIntPtr]::Zero
-        [void][ArgoEnv]::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, 'Environment', 2, 5000, [ref]$r)
+        try {
+          if (-not ('ArgoEnv' -as [type])) {
+            Add-Type -Namespace '' -Name ArgoEnv -MemberDefinition '[DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr SendMessageTimeout(IntPtr h, uint m, UIntPtr w, string l, uint f, uint t, out UIntPtr r);'
+          }
+          $r = [UIntPtr]::Zero
+          [void][ArgoEnv]::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, 'Environment', 2, 5000, [ref]$r)
+        } catch { Say "$([regex]::Unescape('\uc0c8\u0020\ud130\ubbf8\ub110\u0020\ucc3d\uc5d0\uc11c')) PATH$([regex]::Unescape('\uac00\u0020\ubc14\ub85c\u0020\ubcf4\uc774\uc9c0\u0020\uc54a\uc73c\uba74\u0020\ub85c\uadf8\uc544\uc6c3\u0020\ub4a4\u0020\ub2e4\uc2dc\u0020\ub85c\uadf8\uc778\ud558\uc138\uc694'))" }
       }
       if (-not (($env:Path -split ';') | Where-Object { $_.TrimEnd('\') -ieq $binDir.TrimEnd('\') })) { $env:Path = "$env:Path;$binDir" }
     }
 
-    $record = [ordered]@{ kind = 'standalone'; platform = $plat; shim = $(if ($skip) { $null } else { $shim }); pathEntry = $(if ($pathAdded) { $binDir } else { $null }); envKey = $envKey }
+    $inUserPath = $false
+    if (Test-Path $envKey) { $inUserPath = [bool](@(([string](Get-Item -Path $envKey).GetValue('Path', '', 'DoNotExpandEnvironmentNames')) -split ';') | Where-Object { $_.TrimEnd('\') -ieq $binDir.TrimEnd('\') }) }
+    $record = [ordered]@{ kind = 'standalone'; platform = $plat; shim = $(if ($skip) { $null } else { $shim }); pathEntry = $(if ($inUserPath) { $binDir } else { $null }); envKey = $envKey }
     [IO.File]::WriteAllText((Join-Path $app '.argo-install.json'), ($record | ConvertTo-Json -Compress))
     $success = $true
   } finally {

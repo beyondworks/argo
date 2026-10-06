@@ -31,7 +31,7 @@ die() { printf '\033[31m[argo] %s\033[0m\n' "$*" >&2; exit 1; }
 #     PATH는 고치지 않고 넣을 줄만 안내한다(앱·리눅스와 같은 규칙). 업데이트 = 다시 실행, 제거 = argo uninstall(데이터는 남는다).
 install_macos() {
   [ "$LOCAL" = 0 ] || die "맥에서는 --local(로컬 웹 서버)을 지원하지 않습니다 — 데스크톱 앱(dmg)을 쓰세요"
-  local arch plat app_dirs d shim_dir shim in_path skip run_cmd found url sum want got status=0
+  local arch plat app_dirs d app found_app shim_dir shim in_path skip run_cmd found url sum want got status=0 svc_label svc_plist svc_on=0
   arch=$(uname -m)
   # Rosetta로 실행된 셸은 x86_64로 보인다 — 칩이 Apple Silicon이면 arm64 자산을 쓴다
   if [ "$arch" = x86_64 ] && [ "$(sysctl -n hw.optional.arm64 2>/dev/null || echo 0)" = 1 ]; then arch=arm64; fi
@@ -40,10 +40,15 @@ install_macos() {
   command -v tar >/dev/null || die "tar가 필요합니다"
   app_dirs="${ARGO_MAC_APP_DIRS:-/Applications:$HOME/Applications}"
   IFS=: read -r -a dirs <<<"$app_dirs"
+  # 이름이 바뀐 사본(argo 2.app 등)도 잡게 번들 id로 본다(검수 #843 L2). 메신저 앱은 id가 달라 해당하지 않는다.
   for d in "${dirs[@]}"; do
-    if [ -d "$d/argo.app" ] || [ -d "$d/Argo.app" ]; then
-      die "Argo 데스크톱 앱이 설치돼 있습니다($d) — argo 명령은 앱 설정 → 기기·데이터에서 등록하세요(앱과 같은 데이터를 씁니다)"
-    fi
+    for app in "$d"/*.app; do
+      [ -d "$app" ] || continue
+      case "$(basename "$app")" in argo.app|Argo.app|ARGO.app) found_app="$app" ;; *) found_app='' ;; esac
+      if [ -n "$found_app" ] || grep -q '<string>com\.beyondworks\.argo</string>' "$app/Contents/Info.plist" 2>/dev/null; then
+        die "Argo 데스크톱 앱이 설치돼 있습니다($app) — argo 명령은 앱 설정 → 기기·데이터에서 등록하세요(앱과 같은 데이터를 씁니다)"
+      fi
+    done
   done
   shim_dir="$HOME/.local/bin"; shim="$shim_dir/argo"
   if head -c 512 "$shim" 2>/dev/null | grep -q 'argo-cli-shim v1 com.beyondworks.argo'; then
@@ -60,13 +65,20 @@ install_macos() {
   TMP=$(mktemp -d "$BASE_DIR/.install.XXXXXX")
   HAD_APP=0; [ ! -d "$APP_DIR" ] || HAD_APP=1
   CHANGED=0; SUCCESS=0
+  # argo service install(launchd) 상주 — 교체 동안 멈추고 끝나면 다시 시작한다(리눅스 argo-cli.service와 같은 규칙, 검수 #843 M4).
+  # 실행 중인 상주가 바뀌는 폴더에서 새·옛 모듈을 섞어 읽지 않게. 상주는 같은 경로(~/.argo-selfhost/app/node)를 가리키므로 plist는 그대로 둔다.
+  svc_label=com.beyondworks.argo-cli; svc_plist="$HOME/Library/LaunchAgents/$svc_label.plist"
+  if [ -f "$svc_plist" ] && launchctl print "gui/$(id -u)/$svc_label" >/dev/null 2>&1; then svc_on=1; fi
   mac_cleanup() {
     status=$?
     trap - EXIT
     if [ "$CHANGED" = 1 ] && [ "$SUCCESS" = 0 ]; then
       say "새 설치 확인 실패 — 이전 설치를 복구합니다"
-      if [ -d "$APP_DIR" ]; then mv "$APP_DIR" "$TMP/failed-app"; fi
-      if [ "$HAD_APP" = 1 ] && [ -d "$TMP/previous-app" ]; then mv "$TMP/previous-app" "$APP_DIR"; fi
+      if [ -d "$TMP/previous-app" ] || [ "$HAD_APP" = 0 ]; then # 이전 앱을 옮겨 둔 뒤에만 지금 폴더를 치운다(리눅스와 같은 안전 조건)
+        if [ -d "$APP_DIR" ]; then mv "$APP_DIR" "$TMP/failed-app"; fi
+        if [ "$HAD_APP" = 1 ]; then mv "$TMP/previous-app" "$APP_DIR"; fi
+      fi
+      if [ "$svc_on" = 1 ]; then launchctl bootstrap "gui/$(id -u)" "$svc_plist" >/dev/null 2>&1 || say "상주 argo를 다시 시작하지 못했습니다 — argo service install로 다시 등록하세요"; fi
       say "복구 자료: $TMP"
     else
       rm -rf "$TMP"
@@ -94,6 +106,7 @@ for (const company of entries(root).filter(e => e.isDirectory() && !e.name.start
   }
 }
 NODE
+  if [ "$svc_on" = 1 ]; then launchctl bootout "gui/$(id -u)/$svc_label" >/dev/null 2>&1 || die "상주 argo를 멈추지 못해 교체하지 않습니다 — argo service status로 확인하세요"; fi
   CHANGED=1
   if [ "$HAD_APP" = 1 ]; then mv "$APP_DIR" "$TMP/previous-app"; fi
   mv "$CANDIDATE" "$APP_DIR"
@@ -120,6 +133,10 @@ SHIM
   # argo uninstall이 지울 대상 — 이 설치가 만든 것만(데이터는 적지 않는다)
   printf '{"kind":"standalone","platform":"%s","shim":%s}\n' "$plat" "$([ -z "$skip" ] && "$APP_DIR/node" -e 'process.stdout.write(JSON.stringify(process.argv[1]))' "$shim" || echo null)" > "$APP_DIR/.argo-install.json"
   SUCCESS=1
+  if [ "$svc_on" = 1 ]; then # 설치는 끝났다 — 시작 실패는 안내만(리눅스와 같음)
+    if launchctl bootstrap "gui/$(id -u)" "$svc_plist" >/dev/null 2>&1; then say "상주 중인 argo를 새 버전으로 다시 시작했습니다"
+    else say "상주 argo를 다시 시작하지 못했습니다 — argo service install로 다시 등록하세요(로그: ~/Library/Logs/argo-cli.log)"; fi
+  fi
   say "설치 완료 — argo 명령 (버전: $EXPECTED_VERSION)"
   if [ -n "$skip" ]; then
     say "다른 프로그램의 argo 명령이 있어 argo 명령을 등록하지 않았습니다(그 파일은 그대로 둡니다): $skip"

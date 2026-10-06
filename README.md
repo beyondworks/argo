@@ -59,7 +59,8 @@ irm https://github.com/beyondworks/argo-agent/releases/latest/download/install.p
 Re-run to update; `argo uninstall` removes the program (your data in `~/.argo` stays). If the
 desktop app is installed, use its `argo` instead — on macOS register it in **Settings → Devices &
 data**, on Windows the app installer registers it (installing the app later replaces the
-standalone command so both use the same data).
+standalone `argo` command with the app's; the app's `argo` uses the app's data, and the standalone
+data in `~/.argo` stays where it is — both sync through your account when signed in).
 
 ## Run from source
 

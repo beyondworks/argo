@@ -12,6 +12,7 @@ import { join, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { buildInstallPs1 } from '../scripts/build-install-ps1.mjs';
+import { packCli } from '../scripts/stage-cli-dist.mjs';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const shipped = readFileSync(join(ROOT, 'scripts/install.ps1'), 'utf8');
@@ -39,9 +40,10 @@ async function fixture(t, { badSum = false, app = false, foreign = false } = {})
   await mkdir(join(pkg, 'bin'), { recursive: true });
   await copyFile(process.execPath, join(pkg, 'node.exe'));
   await writeFile(join(pkg, 'package.json'), JSON.stringify({ name: 'argo', version: '2.0.0' }));
-  await writeFile(join(pkg, 'bin/argo.mjs'), `if(process.argv[2]==='status'){process.exit(process.env.ARGO_CLI_APP==='0'?0:2)}console.log('args:'+process.argv.slice(2).join(' '))`);
+  // status가 stderr에 경고를 써도(손상된 기기 세션 등) 종료 코드 0이면 설치는 성공해야 한다(검수 #843 M2)
+  await writeFile(join(pkg, 'bin/argo.mjs'), `if(process.argv[2]==='status'){console.error('[argo] warning');process.exit(process.env.ARGO_CLI_APP==='0'?0:2)}console.log('args:'+process.argv.slice(2).join(' '))`);
   const zip = join(root, 'argo-cli-2.0.0-windows-x64.zip');
-  assert.equal(spawnSync('tar', ['-a', '-cf', zip, '-C', join(root, 'pkg'), 'argo-cli']).status, 0);
+  packCli(join(root, 'pkg'), zip, true); // 발행 빌드와 같은 함수 — 시스템 tar.exe·zip 머리·Expand-Archive 확인(검수 #843 HIGH-1)
   const sum = createHash('sha256').update(await readFile(zip)).digest('hex');
   const files = { '/install.ps1': shipped, '/argo-cli-2.0.0-windows-x64.zip': await readFile(zip), '/argo-cli-2.0.0-windows-x64.zip.sha256': `${badSum ? '0'.repeat(64) : sum}  argo-cli-2.0.0-windows-x64.zip\n` };
   const server = createServer((req, res) => {

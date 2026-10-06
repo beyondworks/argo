@@ -78,7 +78,9 @@
     }
     Move-Item -LiteralPath $cand -Destination $app
     $prev = $env:ARGO_CLI_APP; $env:ARGO_CLI_APP = '0'
-    try { & (Join-Path $app 'node.exe') (Join-Path $app 'bin\argo.mjs') status *> (Join-Path $tmp 'status.log'); $st = $LASTEXITCODE } finally { $env:ARGO_CLI_APP = $prev }
+    # stderr 한 줄(경고)을 PowerShell 5.1이 오류로 바꿔 Stop에 걸리지 않게 이 호출만 Continue — 판정은 종료 코드로만(검수 #843 M2)
+    $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try { & (Join-Path $app 'node.exe') (Join-Path $app 'bin\argo.mjs') status *> (Join-Path $tmp 'status.log'); $st = $LASTEXITCODE } finally { $env:ARGO_CLI_APP = $prev; $ErrorActionPreference = $eap }
     if ($st -ne 0) { Get-Content -LiteralPath (Join-Path $tmp 'status.log') | Write-Host; Fail "argo 명령 실행 확인 실패 — 이전 설치로 복구합니다" }
 
     # 5) argo.cmd — ASCII만(cmd는 OEM 코드 페이지로 읽는다). setlocal로 호출한 cmd 창의 환경을 바꾸지 않는다.
@@ -94,7 +96,6 @@
 
     # 6) 사용자 PATH — 남의 argo가 있으면 가리지 않게 넣지 않는다. 원래 형식(REG_EXPAND_SZ)을 지키고 %VAR%를 펼치지 않는다. 같은 항목이 있으면 쓰지 않는다.
     $envKey = if ($env:ARGO_INSTALL_ENV_KEY) { $env:ARGO_INSTALL_ENV_KEY } else { 'HKCU:\Environment' }
-    $pathAdded = $false
     if (-not $skip -and -not $other) {
       if (-not (Test-Path $envKey)) { New-Item -Path $envKey -Force | Out-Null }
       $key = Get-Item -Path $envKey
@@ -103,18 +104,23 @@
       if (-not ($items | Where-Object { $_.TrimEnd('\') -ieq $binDir.TrimEnd('\') })) {
         $new = (@($items) + $binDir) -join ';'
         Set-ItemProperty -Path $envKey -Name Path -Value $new -Type ExpandString
-        $pathAdded = $true
-        if (-not ('ArgoEnv' -as [type])) {
-          Add-Type -Namespace '' -Name ArgoEnv -MemberDefinition '[DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr SendMessageTimeout(IntPtr h, uint m, UIntPtr w, string l, uint f, uint t, out UIntPtr r);'
-        }
-        $r = [UIntPtr]::Zero
-        [void][ArgoEnv]::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, 'Environment', 2, 5000, [ref]$r)
+        # 열려 있는 탐색기·새 터미널에 알림 — 실패해도(C# 컴파일이 막힌 PC) 설치는 계속한다(검수 #843 L4)
+        try {
+          if (-not ('ArgoEnv' -as [type])) {
+            Add-Type -Namespace '' -Name ArgoEnv -MemberDefinition '[DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr SendMessageTimeout(IntPtr h, uint m, UIntPtr w, string l, uint f, uint t, out UIntPtr r);'
+          }
+          $r = [UIntPtr]::Zero
+          [void][ArgoEnv]::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, 'Environment', 2, 5000, [ref]$r)
+        } catch { Say "새 터미널 창에서 PATH가 바로 보이지 않으면 로그아웃 뒤 다시 로그인하세요" }
       }
       if (-not (($env:Path -split ';') | Where-Object { $_.TrimEnd('\') -ieq $binDir.TrimEnd('\') })) { $env:Path = "$env:Path;$binDir" } # 이 창에서도 바로
     }
 
     # 7) argo uninstall이 지울 대상 — 이 설치가 만든 것만(데이터는 적지 않는다)
-    $record = [ordered]@{ kind = 'standalone'; platform = $plat; shim = $(if ($skip) { $null } else { $shim }); pathEntry = $(if ($pathAdded) { $binDir } else { $null }); envKey = $envKey }
+    # PATH에 우리 bin이 있으면 누가 넣었든(이전 설치 포함) 제거 대상으로 적는다 — 다시 설치한 뒤에도 argo uninstall이 지운다(검수 #843 M1)
+    $inUserPath = $false
+    if (Test-Path $envKey) { $inUserPath = [bool](@(([string](Get-Item -Path $envKey).GetValue('Path', '', 'DoNotExpandEnvironmentNames')) -split ';') | Where-Object { $_.TrimEnd('\') -ieq $binDir.TrimEnd('\') }) }
+    $record = [ordered]@{ kind = 'standalone'; platform = $plat; shim = $(if ($skip) { $null } else { $shim }); pathEntry = $(if ($inUserPath) { $binDir } else { $null }); envKey = $envKey }
     [IO.File]::WriteAllText((Join-Path $app '.argo-install.json'), ($record | ConvertTo-Json -Compress))
     $success = $true
   } finally {

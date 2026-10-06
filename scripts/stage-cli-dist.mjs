@@ -4,7 +4,7 @@
 // node를 같이 담는다(빌드 러너의 고정 node 22) — 단독 설치 사용자는 node가 없을 수 있다. Claude Agent SDK 네이티브 CLI가 플랫폼별이라 자산도 플랫폼별이다.
 // 사용: node scripts/stage-cli-dist.mjs <출력 폴더>   → argo-cli-<버전>-<플랫폼>.tar.gz(맥)·.zip(윈도우) + .sha256
 import { cpSync, mkdirSync, rmSync, existsSync, readdirSync, readFileSync, writeFileSync, copyFileSync, chmodSync, mkdtempSync } from 'node:fs';
-import { join, resolve, dirname } from 'node:path';
+import { join, resolve, dirname, basename } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -16,6 +16,24 @@ export function cliPlatform(platform = process.platform, arch = process.arch) {
   return ({ 'darwin-arm64': 'macos-arm64', 'darwin-x64': 'macos-x64', 'win32-x64': 'windows-x64' })[`${platform}-${arch}`] ?? null;
 }
 export const cliAssetName = (version, plat) => `argo-cli-${version}-${plat}.${plat.startsWith('windows') ? 'zip' : 'tar.gz'}`;
+
+/** work/argo-cli → out(맥 tar.gz·윈도우 zip). 형식(머리 바이트)과 윈도우는 사용자 설치와 같은 Expand-Archive로 풀리는지까지 확인한다.
+    test/install-ps1.test.mjs가 윈도우 CI에서 같은 함수로 자산을 만든다 — 발행 빌드에서만 도는 경로를 PR CI에서도 실행하려고. */
+export function packCli(work, out, win = process.platform === 'win32') {
+  const name = basename(out);
+  // 윈도우는 시스템 tar.exe(bsdtar)를 절대 경로로 — CI의 bash 단계는 PATH 앞에 Git의 GNU tar가 있어, 'D:\…'를 원격 호스트로 읽거나
+  // -a를 무시하고 이름만 .zip인 tar를 만든다(검수 #843 HIGH-1). bsdtar는 -a로 확장자에 맞춰 zip을 만든다.
+  const tar = win ? join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe') : 'tar';
+  execFileSync(tar, win ? ['-a', '-cf', out, '-C', work, 'argo-cli'] : ['-czf', out, '-C', work, 'argo-cli'], { stdio: 'inherit' });
+  const magic = readFileSync(out).subarray(0, 4).toString('hex');
+  if (win ? magic !== '504b0304' : !magic.startsWith('1f8b')) { throw new Error(`[stage-cli-dist] ${name}이 ${win ? 'zip' : 'gzip'}이 아닙니다(머리 ${magic})`); }
+  if (win) { // 사용자 설치와 같은 방법(Expand-Archive)으로 풀리는지
+    const probe = join(work, 'expand-probe');
+    const r2 = spawnSync('powershell.exe', ['-NoProfile', '-Command', `Expand-Archive -LiteralPath '${out.replaceAll("'", "''")}' -DestinationPath '${probe.replaceAll("'", "''")}'`], { encoding: 'utf8' });
+    if (r2.status !== 0 || !existsSync(join(probe, 'argo-cli', 'node.exe')) || !existsSync(join(probe, 'argo-cli', 'bin', 'argo.mjs'))) { throw new Error(`[stage-cli-dist] Expand-Archive로 풀리지 않습니다\n${r2.stdout}\n${r2.stderr}`); }
+    rmSync(probe, { recursive: true, force: true });
+  }
+}
 
 async function main(outDir) {
   const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -53,8 +71,7 @@ async function main(outDir) {
   const name = cliAssetName(version, plat);
   const out = join(outDir, name);
   rmSync(out, { force: true });
-  // 윈도우 tar.exe(bsdtar)는 -a로 확장자에 맞춰 zip을 만든다 — PowerShell Expand-Archive가 연다
-  execFileSync('tar', win ? ['-a', '-cf', out, '-C', work, 'argo-cli'] : ['-czf', out, '-C', work, 'argo-cli'], { stdio: 'inherit' });
+  packCli(work, out, win);
   const sum = createHash('sha256').update(readFileSync(out)).digest('hex');
   writeFileSync(`${out}.sha256`, `${sum}  ${name}\n`);
   rmSync(work, { recursive: true, force: true });

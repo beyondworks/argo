@@ -25,7 +25,12 @@ export function releaseManifest(dir, product, version, target) {
     if (target && target !== rust) continue;
     nonempty(`${product}-${installer}`);
     // argo 명령 단독 설치 자산 + 해시(scripts/stage-cli-dist.mjs) — install.sh 맥 갈래·install.ps1이 이 이름으로 고른다
-    if (product === 'argo') { const sum = readFileSync(join(dir, nonempty(`argo-cli-${version}-${cli}.sha256`)), 'utf8'); nonempty(`argo-cli-${version}-${cli}`); assert(/^[0-9a-f]{64}  argo-cli-/.test(sum), `Bad checksum file: argo-cli-${version}-${cli}.sha256`); }
+    if (product === 'argo') {
+      const asset = `argo-cli-${version}-${cli}`, sum = readFileSync(join(dir, nonempty(`${asset}.sha256`)), 'utf8');
+      assert(/^[0-9a-f]{64}  argo-cli-/.test(sum), `Bad checksum file: ${asset}.sha256`);
+      const head = readFileSync(join(dir, nonempty(asset))).subarray(0, 4).toString('hex'); // 이름만 .zip인 tar 등을 막는다(검수 #843 HIGH-1)
+      assert(cli.endsWith('.zip') ? head === '504b0304' : head.startsWith('1f8b'), `Not a ${cli.endsWith('.zip') ? 'zip' : 'gzip'} archive: ${asset}`);
+    }
     const name = platform.startsWith('darwin')
       ? nonempty(`${product}-${rust}.app.tar.gz`)
       : pick(new RegExp(`^${product}_${version.replaceAll('.', '\\.')}_(?:x64)-setup\\.exe$`));

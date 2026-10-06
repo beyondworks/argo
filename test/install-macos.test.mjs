@@ -13,7 +13,7 @@ import { spawnSync } from 'node:child_process';
 const installer = new URL('../scripts/install.sh', import.meta.url).pathname;
 const available = process.platform !== 'win32';
 
-async function fixture(t, { arch = 'arm64', arm64Chip = arch === 'arm64', version = '2.0.0', badSum = false, noSum = false, noAsset = false, statusFail = false, oldApp = false, app = false, appShim = false, shim = null, foreignInPath = false, cliBusy = false } = {}) {
+async function fixture(t, { arch = 'arm64', arm64Chip = arch === 'arm64', version = '2.0.0', badSum = false, noSum = false, noAsset = false, statusFail = false, oldApp = false, app = false, appCopy = false, messengerApp = false, svc = false, appShim = false, shim = null, foreignInPath = false, cliBusy = false } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'argo-mac-installer-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const home = join(root, 'home'), base = join(home, '.argo-selfhost'), bin = join(root, 'bin'), apps = join(root, 'Applications');
@@ -32,6 +32,10 @@ async function fixture(t, { arch = 'arm64', arm64Chip = arch === 'arm64', versio
   await writeFile(`${tar}.sha256`, `${badSum ? '0'.repeat(64) : sum}  argo-cli-${version}-${plat}.tar.gz\n`);
   if (oldApp) await asset(join(base, 'app'), '1.0.0');
   if (app) await mkdir(join(apps, 'argo.app'), { recursive: true });
+  const plist = (id) => `<?xml version="1.0"?><plist><dict><key>CFBundleIdentifier</key><string>${id}</string></dict></plist>`;
+  if (appCopy) await put(join(apps, 'argo 2.app/Contents/Info.plist'), plist('com.beyondworks.argo'));
+  if (messengerApp) await put(join(apps, 'Argo Messenger.app/Contents/Info.plist'), plist('com.beyondworks.argo-messenger'));
+  if (svc) await put(join(home, 'Library/LaunchAgents/com.beyondworks.argo-cli.plist'), plist('x'));
   if (appShim) await put(join(home, '.local/bin/argo'), '#!/bin/sh\n# argo-cli-shim v1 com.beyondworks.argo — Argo 앱이 만든 파일입니다.\n', 0o755);
   if (shim != null) await put(join(home, '.local/bin/argo'), shim, 0o755);
   if (cliBusy) await put(join(home, '.argo/cli-workspaces/co/chats/crew.status.json'), JSON.stringify({ ts: Date.now() }));
@@ -40,6 +44,8 @@ async function fixture(t, { arch = 'arm64', arm64Chip = arch === 'arm64', versio
   const runner = `#!${process.execPath}\n`;
   await put(join(bin, 'uname'), runner + `console.log(process.argv.includes('-m')?${JSON.stringify(arch)}:'Darwin');`, 0o755);
   await put(join(bin, 'sysctl'), `#!/bin/sh\necho ${arm64Chip ? 1 : 0}\n`, 0o755);
+  // launchctl — 호출을 기록하고, 교체 중인 앱 폴더 버전을 남긴다(멈춘 뒤 교체·교체 뒤 시작 순서 확인)
+  await put(join(bin, 'launchctl'), runner + `const fs=require('fs');let v='none';try{v=JSON.parse(fs.readFileSync(${JSON.stringify(join(base, 'app/package.json'))})).version}catch{}fs.appendFileSync(${JSON.stringify(join(root, 'launchctl.log'))},process.argv[2]+' '+v+'\\n');`, 0o755);
   const names = noAsset ? [] : [`argo-cli-${version}-${plat}.tar.gz`, `argo-cli-${version}-${plat}.tar.gz.sha256`, `argo-server-${version}-linux-x64.tar.gz`];
   await put(join(bin, 'curl'), runner + `
 const fs=require('fs'),path=require('path'),args=process.argv.slice(2),root=${JSON.stringify(root)};
@@ -51,7 +57,7 @@ fs.copyFileSync(path.join(root,name),out);
 `, 0o755);
   const PATH = [bin, ...(foreignInPath ? [other] : []), '/usr/bin', '/bin'].join(':');
   const run = (extra = {}) => spawnSync('bash', [installer], { env: { PATH, HOME: home, ARGO_HOME: base, ARGO_MAC_APP_DIRS: apps, SHELL: '/bin/zsh', ...extra }, encoding: 'utf8', timeout: 60_000 });
-  return { root, home, base, apps, run, plat, curlLog: () => readFile(join(root, 'curl.log'), 'utf8').catch(() => '') };
+  return { root, home, base, apps, run, plat, curlLog: () => readFile(join(root, 'curl.log'), 'utf8').catch(() => ''), launchLog: () => readFile(join(root, 'launchctl.log'), 'utf8').catch(() => '') };
 }
 const shimPath = (f) => join(f.home, '.local/bin/argo');
 
@@ -115,6 +121,25 @@ test('A9 데스크톱 앱이 있거나 앱이 등록한 argo가 있으면 설치
     assert.ok(!existsSync(join(f.base, 'app')), '아무것도 설치하지 않는다');
     assert.equal(await f.curlLog(), '', '내려받지도 않는다');
   }
+});
+
+test('A9 이름이 바뀐 앱 사본(번들 id com.beyondworks.argo)도 감지, 메신저 앱(다른 id)은 막지 않는다', { skip: !available }, async (t) => {
+  const copy = await fixture(t, { appCopy: true }), r = copy.run();
+  assert.equal(r.status, 1); assert.match(r.stderr, /argo 2\.app/);
+  const msgr = await fixture(t, { messengerApp: true });
+  assert.equal(msgr.run().status, 0, '메신저만 있으면 설치한다');
+});
+
+test('A13 argo service install(launchd) 상주 — 교체 전에 멈추고 교체 뒤 다시 시작, 실패하면 이전 앱으로 되돌리고 다시 시작', { skip: !available }, async (t) => {
+  const f = await fixture(t, { oldApp: true, svc: true }), r = f.run();
+  assert.equal(r.status, 0, r.stderr + r.stdout);
+  assert.equal(await f.launchLog(), 'print 1.0.0\nbootout 1.0.0\nbootstrap 2.0.0\n', '멈춘 뒤 교체하고 새 버전으로 다시 시작');
+  assert.match(r.stdout, /새 버전으로 다시 시작/);
+  const bad = await fixture(t, { oldApp: true, svc: true }), r2 = bad.run({ CLI_STATUS_FAIL: '1' });
+  assert.equal(r2.status, 1);
+  assert.equal(await bad.launchLog(), 'print 1.0.0\nbootout 1.0.0\nbootstrap 1.0.0\n', '복구한 이전 앱으로 다시 시작');
+  const none = await fixture(t, { oldApp: true });
+  assert.equal(none.run().status, 0); assert.equal(await none.launchLog(), '', '상주가 없으면 launchctl을 부르지 않는다');
 });
 
 test('A10 남의 argo는 덮지도 가리지도 않고 직접 실행 명령을 안내, 우리 shim은 갱신', { skip: !available }, async (t) => {
