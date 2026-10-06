@@ -3,7 +3,7 @@
 //  - 검색이 참여 전 공개 채널(previewChannels)을 빼던 것 → 포함한다
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { hasChannelRows, browseHintVisible, searchChannelsByName, channelSearchPool, addableToChannel } from '../src/channel-browse.mjs';
+import { hasChannelRows, browseHintVisible, searchChannelsByName, channelSearchPool, addableToChannel, kickExcludes } from '../src/channel-browse.mjs';
 
 const dm = { id: 'd1', kind: 'dm', name: 'dm:x' };
 const pub = { id: 'p1', kind: 'public', name: 'general' };
@@ -40,6 +40,14 @@ test('사람 추가 후보 — 공개 채널은 게스트·내보낸 사람을 �
   assert.equal(addableToChannel(pub, guest), false, '공개 채널 게스트는 후보가 아니다');
   assert.equal(addableToChannel(pub, member, ['m']), false, '공개 채널에서 내보낸 사람');
   assert.equal(addableToChannel(priv, guest), true, '비공개 채널은 게스트를 초대할 수 있다');
-  assert.equal(addableToChannel(priv, member, ['m']), true, '비공개 채널은 제외 목록을 보지 않는다(종전과 같다)');
+  assert.equal(addableToChannel(priv, member, ['m']), false, '비공개 채널에서 내보낸 사람도 후보가 아니다 — 되돌리기로(유건 결정 2026-10-06, 공개 채널과 같게)');
+  assert.equal(addableToChannel(priv, member, ['x']), true, '비공개 채널의 다른 멤버는 후보');
   assert.equal(addableToChannel(dm, { user_id: 'f' }), true, '개인 방 친구(역할 없음)');
+});
+
+test('내보내기가 제외 목록에 올리는 채널 — 공개·비공개(유건 결정 2026-10-06), 대화방은 아님', () => {
+  assert.equal(kickExcludes({ kind: 'public' }), true);
+  assert.equal(kickExcludes({ kind: 'private' }), true);
+  assert.equal(kickExcludes({ kind: 'dm' }), false);
+  assert.equal(kickExcludes(null), false);
 });

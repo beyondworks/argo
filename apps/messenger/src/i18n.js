@@ -329,9 +329,6 @@ export const DICT = {
   'inv.uses.unlimitedShort': ["제한 없음", "Unlimited"],
   'inv.here': ['이 채널로 초대', 'Invite to this channel'],
   'inv.org': ['멤버 초대', 'Invite members'],
-  'ch.kick.invites': ['내가 확인할 수 있는 초대 링크 중 이 채널로 들어오는 살아 있는 링크가 {n}개 있어요. 다시 들어오지 못하게 하려면 링크를 취소하세요.', 'You can see {n} active invite {n|link|links} into this channel. Cancel them if this person should not rejoin.'],
-  'ch.kick.anyway': ['링크는 두고 내보내기', 'Remove, keep links'],
-  'ch.kick.revokeAll': ['링크 취소하고 내보내기', 'Cancel links and remove'],
   'inv.here.guest': ['게스트 초대', 'Invite guest'],
   'inv.askAdmin': ['초대가 필요하면 조직 관리자 {name}님에게 말해 주세요.', 'To invite someone, ask the organization admin {name}.'],
   'inv.askAdmin.more': ['초대가 필요하면 조직 관리자 {name}님 외 {n}명에게 말해 주세요.', 'To invite someone, ask an organization admin ({name} and {n} more).'],
@@ -1793,6 +1790,7 @@ export const DICT = {
   'dm.delete.confirm': ['정말 삭제', 'Delete for real'],
   'dm.delete.confirm.note': ['모든 참여자의 대화·첨부가 영구 삭제되고 되돌릴 수 없습니다.', 'Messages and attachments are permanently deleted for all participants. This cannot be undone.'],
   'dm.delete.done': ['{name}과(와)의 대화를 삭제했습니다.', 'Conversation with {name} deleted.'],
+  'dm.delete.groupOnly': ['삭제는 방장·관리자만 — 나가기를 쓰세요', 'Only the creator or an admin can delete — use Leave'], // 조직 그룹 대화(유건 결정 2026-10-06, room-delete.mjs)
   'ch.remove.ownerBlocked': ['이 사람의 에이전트가 채널에 있어 내보낼 수 없습니다. 에이전트를 먼저 내보내세요(소유자가 없으면 에이전트가 답할 수 없습니다).', 'This person’s agent is in the channel. Remove the agent first (an agent cannot answer without its owner).'],
   'ch.archive': ['채널 보관', 'Archive channel'],
   'ch.archive.confirm': ['이 채널을 보관할까요? 목록에서 사라지고 새 글을 쓸 수 없습니다. 기록은 남습니다.', 'Archive this channel? It leaves the list and accepts no new messages. History is kept.'],

@@ -28,7 +28,7 @@ import { createInvite, previewInvite, acceptInvite, revokeInvite, discardInvite,
 import { InviteDialog, InvitePreview } from './invite-dialog.jsx';
 import { sortDms, DM_SORTS, sortByCustomOrder } from './dm-sort.mjs';
 import { pickStartSpace, needsPersonalProbe } from './start-space.mjs';
-import { addableToChannel, hasChannelRows, searchChannelsByName } from './channel-browse.mjs';
+import { addableToChannel, kickExcludes, hasChannelRows, searchChannelsByName } from './channel-browse.mjs';
 import { resolvePeopleNames, nameForUser, needsNameLookup } from './person-names.mjs';
 import { activitySentence } from './activity-sentence.mjs';
 import { dmEmptyKey, roomTabEmptyKey } from './empty-state.mjs';
@@ -56,6 +56,8 @@ import { useMobileViewport } from './mobile-viewport.js';
 import { useIsPhone, useEdgeSwipeBack } from './use-phone.js';
 import { bindRowSwipe, bindSwipeReply } from './row-swipe.js';
 import { PHONE_TABS, isPhoneRoot, spaceForTab, pickChannelOrg, startTab, tabBadges, badgeText, roomTraits, chatVisible, chatUnreadTotal, roomRow, sortRooms, tabSearch, CHAT_FILTERS, memoryGroups, memSnippet, agentCardAction, orgCardStep, personalCardLocks, orgMenuItems, savedOrgAfter, withoutHidden, hiddenGroups, settingsOrgRows, orgScreen, joinReqKey, maskedPreview, tabBodyQuery, emptyPersonalDm, personalDmWith } from './phone-shell.mjs'; // 폰 셸 v2(친구·채팅·채널·에이전트·기억, 유건 확정 2026-10-01) — 판단은 이 모듈 한 곳
+import { canDeleteRoom } from './room-delete.mjs';
+import { canReportMessage } from './report-target.mjs';
 import { bindPullRefresh, enteredReady } from './pull-refresh.mjs';
 import { haptic } from './haptics.js';
 import { refreshMessageWindow, mergeRefreshedMessages, readMissed, createCatchUp } from './refresh-messages.mjs';
@@ -2573,7 +2575,10 @@ function Shell({ session }) {
                 { icon: 'out', label: t('dm.leave'), run: () => confirmVia('leave') },
                 ...(c._personal_group && c.created_by !== uid ? [] : [ // 개인 그룹은 만든 사람만 끝내거나 지운다(친구의 친구가 모두의 기록을 지우지 못하게 — 서버 msgr_can_manage_channel과 같은 규칙)
                   { icon: 'archive', label: t('dm.end'), run: () => confirmVia('end') },
-                  { icon: 'trash', label: t('dm.delete'), danger: true, run: () => confirmVia('delete') },
+                  // 조직 그룹 대화는 만든 사람·조직 관리자만 삭제(유건 결정 2026-10-06 — 서버 msgr_can_delete_channel). 나머지는 비활성 항목으로 나가기를 안내한다
+                  canDeleteRoom({ c, members: dmMembers[c.id] ?? [], uid, isOrgAdmin: isAdmin })
+                    ? { icon: 'trash', label: t('dm.delete'), danger: true, run: () => confirmVia('delete') }
+                    : { icon: 'trash', label: t('dm.delete.groupOnly'), disabled: true, run: () => {} },
                 ]),
               ]; };
   const dmRow = (c) => { const dmMs = dmMembers[c.id] ?? []; const dmCrew = dmMs.find((m) => m.member_kind === 'crew'); const dmOther = dmMs.find((m) => m.member_kind === 'user' && m.member_id !== uid); const isGroupRow = dmIsGroup(c); const withCrew = !!dmCrew && !isGroupRow && !(c.org_id == null && c._personal_other && !c._personal_group && !c._personal_crew); /* 개인 1:1은 에이전트가 들어와도 친구 아바타(2026-09-30) */ const items = dmItemsOf(c, dmTab); return (
@@ -3016,7 +3021,7 @@ function Shell({ session }) {
       <main className="msgr-main" {...edgeBack}>
         {personalCard && <PersonalAgentCard crewId={personalCard} uid={uid} saveLook={saveLook} onClose={() => setPersonalCard(null)} onNote={setNote} onError={setErr} onChanged={() => { loadMyAgents().catch(() => {}); if (isPersonal) loadPersonal().catch(() => {}); }} />}
         {sheet && crewOf(sheet) && !orgBlocked && !isPersonal && <CrewSheet crew={crewOf(sheet)} saveLook={saveLook} org={org} uid={uid} me={me} members={members} policy={policy} channelId={chId} channelName={channel?.kind === 'dm' ? null : channel?.name} nameOfUser={nameOfUser} onClose={() => setSheet(null)} onChanged={() => loadOrg(orgId).catch(() => {})} onPosted={() => setEvent({ kind: 'message', channel_id: chId, at: Date.now() })} onNote={setNote} onError={setErr} onDm={() => dmWithCrew(sheet)} dmPersonal={dmGoesPersonal(crewOf(sheet))} />}
-        {chSheet && channel && !orgBlocked && <ChannelSheet muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} myAvailable={myAvailable} onDispatch={dispatchCrew} channel={channel} dmName={dmName} org={org} uid={uid} isAdmin={isAdmin} policy={policy} members={members} crews={crews} chMembers={chMembers} people={chPeople} chCrews={chCrews} ent={ent} onInvite={isAdmin ? orgInvite : null} onInviteHere={(role) => setInviteFor({ channelIds: [channel.id], role })} onManageInvites={isAdmin ? manageInvites : null} askAdmin={askAdmin} onCrew={(id) => { setChSheet(false); setSheet(id); }} onDm={(id) => openDm('user', id)} onWiden={widenDm} isPersonal={isPersonal} needConsent={isPersonal ? needPersonalConsent : null} refreshKey={`${membersEpoch}:${sheetReqTick}`} nameOfUser={nameOfUser} initialAdd={chSheetAdd} onMention={(c) => { setChSheet(false); setChSheetAdd(null); setMentionReq(c); }} onClose={() => { setChSheet(false); setChSheetAdd(null); }} onChanged={async () => { await (isPersonal ? loadPersonal() : loadOrg(orgId)).catch(() => {}); await loadChMembers(chId).catch(() => {}); }} onArchived={() => { setChSheet(false); setChId(null); loadOrg(orgId).catch(() => {}); }} onNote={setNote} onError={setErr} />}
+        {chSheet && channel && !orgBlocked && <ChannelSheet muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} myAvailable={myAvailable} onDispatch={dispatchCrew} channel={channel} dmName={dmName} org={org} uid={uid} isAdmin={isAdmin} policy={policy} members={members} crews={crews} chMembers={chMembers} people={chPeople} chCrews={chCrews} ent={ent} onInvite={isAdmin ? orgInvite : null} onInviteHere={(role) => setInviteFor({ channelIds: [channel.id], role })} askAdmin={askAdmin} onCrew={(id) => { setChSheet(false); setSheet(id); }} onDm={(id) => openDm('user', id)} onWiden={widenDm} isPersonal={isPersonal} needConsent={isPersonal ? needPersonalConsent : null} refreshKey={`${membersEpoch}:${sheetReqTick}`} nameOfUser={nameOfUser} initialAdd={chSheetAdd} onMention={(c) => { setChSheet(false); setChSheetAdd(null); setMentionReq(c); }} onClose={() => { setChSheet(false); setChSheetAdd(null); }} onChanged={async () => { await (isPersonal ? loadPersonal() : loadOrg(orgId)).catch(() => {}); await loadChMembers(chId).catch(() => {}); }} onArchived={() => { setChSheet(false); setChId(null); loadOrg(orgId).catch(() => {}); }} onNote={setNote} onError={setErr} />}
         {inviteFor && org && !isPersonal && <InviteDialog org={org} channels={inviteChannels} isAdmin={!!isAdmin} hostOf={hostChannels} initialChannelIds={inviteFor.channelIds} initialRole={inviteFor.role} create={createInviteCode} loadCurrent={isAdmin ? currentMemberLink : null} confirmReplace={confirmReplace} discard={async (id) => { inviteSync.current.start(); let gone = 0; try { const r = await discardInvite(supabase, id); gone = r ? -1 : 0; return r; } finally { inviteSync.current.finish(gone); } }} shareText={inviteShare} linkOf={inviteLinkOf} errorText={inviteErr} onClose={() => setInviteFor(null)} onManage={isAdmin ? manageInvites : null} t={t} phone={isPhone} />}
         {joinPreview && <InvitePreview p={joinPreview} avatar={<Av name={joinPreview.org_name} size="lg" />} busy={joinBusy} err={joinErr} onJoin={joinFromPreview} onOpen={() => { const p = joinPreview; setJoinPreview(null); if (p.org_id) setOrgId(p.org_id); if (p.channels?.[0]) requestNav(p.channels[0].id, 'invite'); }} onClose={() => setJoinPreview(null)} fmtWhen={(iso) => fmtWhen(iso, lang)} t={t} phone={isPhone} />}
         {orgLocked && <div className="msgr-notice locked"><span>{t(isAdmin ? 'org.locked.admin' : 'org.locked')}</span></div>}
@@ -3301,7 +3306,7 @@ function CrewSheet({ crew, org, uid, me, members, policy, channelId, channelName
 }
 
 /* ─── 채널 시트: 이름·주제(관리자·생성자) · 크루 기억 스위치 · 멤버(비공개·DM: 사람·크루 추가/내보내기, 크루=소유자 동반) · 보관 ─── */
-function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org, uid, isAdmin, policy, members, crews, chMembers, people = [], chCrews = [], ent, myAvailable = [], onDispatch, onInvite, onInviteHere, onManageInvites = null, askAdmin = null, onCrew, onDm, onMention, onWiden, isPersonal = false, needConsent = null, refreshKey = 0, initialAdd = null, nameOfUser, onClose, onChanged, onArchived, onNote, onError }) {
+function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org, uid, isAdmin, policy, members, crews, chMembers, people = [], chCrews = [], ent, myAvailable = [], onDispatch, onInvite, onInviteHere, askAdmin = null, onCrew, onDm, onMention, onWiden, isPersonal = false, needConsent = null, refreshKey = 0, initialAdd = null, nameOfUser, onClose, onChanged, onArchived, onNote, onError }) {
   const { t } = useT();
   const chAdmins = channel.admin_user_ids ?? [];
   const canEdit = isAdmin || channel.created_by === uid || chAdmins.includes(uid); // J-1: 채널 관리자도 설정·멤버 관리(최종은 RLS msgr_can_manage_channel)
@@ -3424,27 +3429,9 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
     }
     await upd({ [key]: cur.filter((x) => x !== id) }, t('ch.restore.done'));
   };
-  const kick = (kind, id) => (channel.kind === 'public' ? excludeMember(kind, id) : removeMember(kind, id));
-  // 비공개 채널에서 사람을 내보낼 때 — 이 채널로 들어오는 살아 있는 초대가 있으면 다시 들어올 수 있다고 먼저 알린다(총괄 2026-09-18, Discord 선례: 링크는 그대로 유효)
-  const [kickAsk, setKickAsk] = useState(null); // { id, n }
-  const liveInvitesHere = async () => {
-    let res = await supabase.from('msgr_invites').select('id, channel_ids, expires_at, max_uses, use_count, revoked_at, accepted_at').eq('org_id', org.id);
-    if (res.error && missingFn(res.error)) res = await supabase.from('msgr_invites').select('id, channel_id, expires_at, accepted_at').eq('org_id', org.id); // 옛 서버: 게스트 초대만 채널이 있다
-    if (res.error) return 0; // 목록을 못 읽으면(권한 등) 안내 없이 예전처럼 내보낸다
-    return (res.data ?? []).filter((i) => inviteStatus(i) === 'live' && ((i.channel_ids ?? []).includes(channel.id) || i.channel_id === channel.id)).map((i) => i.id);
-  }; // RLS로 내가 읽을 수 있는 것만 — 관리자 아닌 방장은 관리자의 멤버 초대를 못 본다(그래서 문구가 "내가 확인할 수 있는")
-  const kickUser = async (m) => {
-    if (channel.kind !== 'private') return kick('user', m.user_id);
-    const ids = await liveInvitesHere();
-    if (!ids.length) return kick('user', m.user_id);
-    setKickAsk({ id: m.user_id, ids });
-  };
-  const revokeAndKick = async () => { // 관리 목록이 없는 방장도 "링크를 취소하세요"를 여기서 실행한다(서버 msgr_invite_revoke가 채널 관리자의 게스트 초대 취소를 허용)
-    const { id, ids } = kickAsk; setBusy(true);
-    try { for (const inv of ids) await revokeInvite(supabase, inv); }
-    catch (e) { setBusy(false); return onError(friendlyErr(e.message, t)); } // 링크가 남으면 다시 들어올 수 있으니 내보내지 않고 멈춘다
-    setBusy(false); setKickAsk(null); kick('user', id);
-  };
+  const kick = (kind, id) => (channel.kind === 'public' || (kind === 'user' && kickExcludes(channel)) ? excludeMember(kind, id) : removeMember(kind, id)); // 사람 내보내기는 공개·비공개 모두 제외 목록(유건 결정 2026-10-06 — 재사용 초대로 다시 들어오지 않게, 서버 msgr_channel_kick_excludes가 보장). 비공개 채널 에이전트는 종전대로 행만
+  // 비공개 채널 내보내기도 제외 목록에 올라 재사용·게스트 초대로 그 채널에 다시 들어오지 않는다(유건 결정 2026-10-06) — 예전의 '살아 있는 링크를 취소하세요' 확인은 필요 없어 뺐다
+  const kickUser = (m) => kick('user', m.user_id);
   const isDmRoom = channel.kind === 'dm';
   const inRoom = people.some((m) => m.user_id === uid);
   const canManage = isDmRoom ? inRoom : canEdit; // 대화방은 그 방에 있는 사람만 — 조직 관리자라도 밖에서는 손대지 못한다(서버 msgr_can_manage_channel과 같은 규칙)
@@ -3545,11 +3532,6 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
                 )}
               </div>
             ); })}
-            {kickAsk && <div className="confirm" role="alertdialog" aria-label={t('ch.remove')}><p>{t('ch.kick.invites', { n: kickAsk.ids.length })}</p><div className="row inv-kick-acts">
-              <button type="button" className="btn btn-primary sm danger" disabled={busy} onClick={revokeAndKick}>{t('ch.kick.revokeAll')}</button>
-              <button type="button" className="btn sm" disabled={busy} onClick={() => { const id = kickAsk.id; setKickAsk(null); kick('user', id); }}>{t('ch.kick.anyway')}</button>
-              {onManageInvites && <button type="button" className="btn sm" onClick={() => { setKickAsk(null); onManageInvites(); }}>{t('inv.manage')}</button>}
-              <button type="button" className="btn sm" onClick={() => setKickAsk(null)}>{t('ui.cancel')}</button></div></div>}
             {chCrews.map((c) => { const on = seenWithin(c, AWAY_MS, Date.now(), crewSeenAt(c)); const company = crewTier(c, org) === 'company'; const key = `c:${c.id}`; return (
               <div key={key} className="row">
                 <Av name={c.display_name} crew size="sm" company={company} crewId={c.id} /><span className="name">{c.display_name}</span>
@@ -3568,7 +3550,7 @@ function ChannelSheet({ channel, muted = false, onToggleMute, dmName = null, org
               </div>
             ); })}
             {(() => { const k = crewListEmptyKey({ crewCount: chCrews.length, pendingCount: joinReqs.length, isPersonal, canAddCrew, scoped }); return k && <p className="empty">{t(k)}{k === 'ch.crews.none.personal' && <> <RunnerButton /></>}</p>; })()}{/* 넣을 내 에이전트가 없는데 "아래 추가"를 가리키던 문구(유건 제보 2026-09-30) */}
-            {channel.kind === 'public' && canEdit && (excludedUsers.length > 0 || excludedCrews.length > 0) && (<>
+            {kickExcludes(channel) && canEdit && (excludedUsers.length > 0 || (channel.kind === 'public' && excludedCrews.length > 0)) && (<>
               <div className="msgr-klabel">{t('ch.excluded')}</div>
               {excludedUsers.map((id) => { const m = members.find((x) => x.user_id === id); return (
                 <div key={`xu:${id}`} className="row"><Av name={m?.display_name || id} size="sm" userId={id} /><span className="name">{m?.display_name || id.slice(0, 8)}</span><button type="button" className="btn sm ghost text" disabled={busy} onClick={() => restoreMember('user', id)}>{t('ch.restore')}</button></div>
@@ -6496,7 +6478,7 @@ function Message({ m, shape = 'bubble', uploadNames = null, uid, lang, t, nameOf
   };
   const muteCrewAct = async () => { setSafetyBusy(true); try { await safety.muteCrew(m.crew_id); } catch { onError?.(t('crew.mute.failed')); } finally { setSafetyBusy(false); } }; // 크루·봇 숨기기(App Store 1.2) — 확인 모달 없이 바로(설정에서 언제든 되돌릴 수 있다)
   const mine = m.author_kind === 'user' && m.author_user_id === uid;
-  const canReport = !mine && !m.pending && m.kind !== 'system' && (m.author_kind === 'user' || m.author_kind === 'crew'); // 사람 글과 AI 에이전트 답 모두 신고 가능
+  const canReport = canReportMessage(m, uid); // 사람 글과 에이전트 명의 글(kind 무관) — 진짜 시스템 글만 제외(유건 결정 2026-10-06, 서버 msgr_report_message)
   const canBlock = !mine && !m.pending && m.author_kind === 'user' && !!m.author_user_id && !!safety.block;
   const canMuteCrew = !mine && !m.pending && m.author_kind === 'crew' && !!m.crew_id && !!safety.muteCrew && !safety.mutedCrewIds.has(m.crew_id) && crew?.owner_user_id !== uid; // 검수 L5: 내 크루는 숨길 수 없다
   const hasMore = canReport || canBlock || canMuteCrew || mine; // ⋯ 메뉴에 담을 나머지(신고·차단·숨기기·편집·삭제)가 있을 때만
