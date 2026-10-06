@@ -267,7 +267,7 @@ def restart_unit(unit, aid):
 
 def yaml_sets(text, top, sub):
     """원본 YAML에 top.sub가 명시돼 있는가(기본값과 구분) — PyYAML 없이 두 형태만: 블록(`top:` 아래 들여쓴 `sub:`)과 한 줄(`top: {sub: …}`)."""
-    lines = (text or "").splitlines()
+    lines = (text or "").lstrip("\ufeff").splitlines()  # BOM은 YAML이 무시한다(Windows 편집기)
     for i, line in enumerate(lines):
         if re.match(rf"^{re.escape(top)}\s*:\s*\{{[^}}]*\b{re.escape(sub)}\s*:", line):
             return True
@@ -301,6 +301,9 @@ def default_manual_approvals_hermes(cli, home, env):
 def default_ask_exec_openclaw(cli):
     """OpenClaw 기본값 full은 사람 승인 없이 모든 명령을 실행한다(결재 카드가 한 번도 뜨지 않는다). 명시한 값이 없을 때만 ask로."""
     ok, out = run(cli, ["config", "get", "tools.exec.mode"])
+    # 값이 없다고 확신할 때만 쓴다 — 시간 초과·권한 오류를 "없음"으로 읽으면 사용자가 적은 값을 덮는다
+    if not ok and not any(m in (out or "") for m in ("Config path not found", "Config path is valid but unset")):
+        return "failed"
     val = (out or "").strip().strip('"') if ok else ""
     if val and val.lower() not in ("undefined", "null", "none"):
         return "kept"

@@ -312,7 +312,8 @@ fn openclaw_enable_plugin(run: &mut impl FnMut(&[&str]) -> (bool, String), steps
 /// 블록(`top:` 바로 아래 한 단계 들여쓴 `sub:`)과 한 줄(`top: {sub: …}`)만 본다. 다른 최상위 키·더 깊은 같은 이름은 아니다.
 fn yaml_sets(text: &str, top: &str, sub: &str) -> bool {
     let key_at = |s: &str| s.strip_prefix(sub).is_some_and(|r| r.trim_start().starts_with(':'));
-    let lines: Vec<&str> = text.lines().collect();
+    // 파이썬 splitlines처럼 CR만·NEL 줄끝도 나눈다(CRLF 사이에 생기는 빈 줄은 아래에서 건너뛴다). BOM은 YAML이 무시한다.
+    let lines: Vec<&str> = text.trim_start_matches('\u{feff}').split(['\n', '\r', '\u{85}']).collect();
     for (i, line) in lines.iter().enumerate() {
         let Some(rest) = line.strip_prefix(top).map(str::trim_start).and_then(|r| r.strip_prefix(':')).map(str::trim_start) else { continue };
         if let Some(inner) = rest.strip_prefix('{') {
@@ -344,6 +345,8 @@ fn hermes_default_manual(home: &Path, mut run: impl FnMut(&[&str]) -> (bool, Str
 /// OpenClaw 기본값 full은 사람 승인 없이 모든 명령을 실행한다(결재 카드가 한 번도 뜨지 않는다). 명시한 값이 없을 때만 ask로(connect.py와 같은 규칙).
 fn openclaw_default_ask(run: &mut impl FnMut(&[&str]) -> (bool, String)) -> &'static str {
     let (ok, out) = run(&["config", "get", "tools.exec.mode"]);
+    // 값이 없다고 확신할 때만 쓴다 — 시간 초과·권한 오류를 "없음"으로 읽으면 사용자가 적은 값을 덮는다(openclaw_bindings와 같은 문구 판정).
+    if !ok && !["Config path not found", "Config path is valid but unset"].iter().any(|m| out.contains(m)) { return "failed"; }
     let val = if ok { out.trim().trim_matches('"').to_ascii_lowercase() } else { String::new() };
     if !val.is_empty() && !["undefined", "null", "none"].contains(&val.as_str()) { return "kept"; }
     if run(&["config", "set", "tools.exec.mode", "ask"]).0 { "ask" } else { "failed" }
@@ -617,6 +620,10 @@ mod tests {
         assert!(!yaml_sets("approvals: {timeout: 60, submode: x}\n", "approvals", "mode"), "한 줄 형식에서 다른 키 끝의 mode는 아니다");
         assert!(!yaml_sets("approvalsx:\n  mode: smart\n", "approvals", "mode"));
         assert!(!yaml_sets("", "approvals", "mode"));
+        assert!(yaml_sets("approvals:\r  mode: smart\r", "approvals", "mode"), "CR만 쓰는 줄끝");
+        assert!(yaml_sets("approvals:\r\n  mode: smart\r\n", "approvals", "mode"), "CRLF");
+        assert!(yaml_sets("approvals:\u{85}  mode: smart\u{85}", "approvals", "mode"), "NEL");
+        assert!(yaml_sets("\u{feff}approvals:\n  mode: smart\n", "approvals", "mode"), "BOM으로 시작하는 파일(Windows 편집기)");
     }
     #[test]
     fn hermes_connect_defaults_to_manual_only_when_unset() {
@@ -661,6 +668,11 @@ mod tests {
         let (ok, _, results) = openclaw_connect(|a| authored.call(a), || Ok(3), "https://x", &[oc_agent("main")]);
         assert!(ok); assert_eq!(authored.exec_mode.as_deref(), Some("full"), "명시한 full은 덮어쓰지 않는다");
         assert!(results[0]["steps"].as_array().unwrap().iter().any(|s| s["name"] == "approvals" && s["detail"] == "kept"));
+
+        let mut slow = FakeOpenclaw::new(); slow.exec_mode = Some("full".into());
+        let mut calls = Vec::new();
+        assert_eq!(super::openclaw_default_ask(&mut |a: &[&str]| { calls.push(a.join(" ")); if a[1] == "get" { (false, "timed out".to_string()) } else { slow.call(a) } }), "failed");
+        assert!(!calls.iter().any(|c| c.starts_with("config set")), "조회 실패(시간 초과)를 '값 없음'으로 보고 full을 덮지 않는다");
 
         let mut broken = FakeOpenclaw::new(); broken.inspect = OC_LOAD_FAILED.into();
         let _ = openclaw_connect(|a| broken.call(a), || Ok(3), "https://x", &[oc_agent("main")]);
