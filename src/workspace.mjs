@@ -1,6 +1,6 @@
 // 워크스페이스 = 회사 1개의 격리 폴더 트리. SaaS에서는 유저별로 이 트리가 격리 컨테이너/볼륨에 산다.
 import './netdefaults.mjs'; // side-effect — 코어를 쓰는 모든 프로세스의 아웃바운드 fetch 기본값 교정(모듈 주석 참조)
-import { mkdir, readFile, writeFile, rename, rm } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, rename, rm, readdir, utimes } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import { hostname } from 'node:os';
@@ -113,11 +113,57 @@ export async function archiveCompany(wsId) {
   // tombstone 먼저 — 클라우드 사본이 있는 회사는 보관 사실을 동기화로 전파해야 한다.
   // 없으면 discoverRemote가 "원격에만 있는 회사 = 새 기기 복원"으로 판단해 8초 뒤 되살린다(실측).
   // ownerId 없는 회사(클라우드 미동기)는 되살릴 원본이 없지만, tombstone은 무해하니 일괄 기록한다.
-  // 회사 보관 해제(unarchive) 기능을 만들게 되면 반드시 이 tombstone(로컬+원격)을 지워야 한다.
+  // 보관 되돌리기(restoreArchivedCompany)는 이 tombstone을 직접 지우지 않고 company.json mtime을 옮겨 동기화가 로컬+원격을 철회하게 한다.
   let ownerId = null;
   try { ownerId = JSON.parse(await readFile(paths(wsId).company, 'utf8'))?.ownerId ?? null; } catch { /* 손상/부재 */ }
   await writeTombstone(wsId, ownerId);
   await rename(paths(wsId).root, join(archive, `${Date.now()}-${wsId}`));
+}
+
+/* ─── 회사 보관 되돌리기(F14, 2026-10-05) — '회사 보관'은 데이터 보관이라 안내하면서 앱 안에서 되돌릴 길이 없었다 ───
+   보관본 = WS_ROOT/.archive/<보관 시각 ms>-<wsId>/(archiveCompany). 되돌리기는 그 폴더를 원래 자리로 옮긴다.
+   tombstone(보관 전파 마커)은 여기서 지우지 않는다 — company.json mtime을 지금으로 옮겨 두면 동기화의 기존 규칙
+   (sync.mjs syncTombstones 1.5: 보관 이후 수정 → 로컬 마커 삭제 + 같은 오너면 원격 마커도 철회)이 그대로 처리한다.
+   mtime은 **옮기기 전에** 바꾼다 — 옮긴 직후·바꾸기 전에 사이클이 돌면 1.5가 "보관 이후 수정 없음"으로 보고 다시 보관한다.
+   한계: 이 회사를 이미 보관한 **다른 기기**는 자기 로컬 마커를 들고 있어 그 기기에서도 되돌리기 전까지 원격 마커를 다시 올리고,
+   이 기기가 다시 철회한다(5분 발견 주기마다 1회씩 — 회사는 다시 보관되지 않는다). 화면 안내로 그 기기에서도 되돌리게 한다. */
+const ARCHIVE_DIR = join(WS_ROOT, '.archive');
+const ARCHIVE_ID_RE = /^(\d{10,16})-([a-z0-9][a-z0-9-]{0,127})$/;
+
+/** 보관한 회사 목록 — [{ archiveId, wsId, name, ownerId, archivedAt }] 최신순. company.json 없는 폴더는 건너뛴다. */
+export async function listArchivedCompanies() {
+  let names = [];
+  try { names = await readdir(ARCHIVE_DIR); } catch { return []; }
+  const out = [];
+  for (const n of names) {
+    const m = n.match(ARCHIVE_ID_RE);
+    if (!m) continue;
+    try {
+      const c = JSON.parse(await readFile(join(ARCHIVE_DIR, n, 'company.json'), 'utf8'));
+      out.push({ archiveId: n, wsId: m[2], name: String(c?.name ?? m[2]), ownerId: c?.ownerId ?? null, archivedAt: Number(m[1]) });
+    } catch { /* 손상·회사 아님 — 목록에서 뺀다(지우지 않는다) */ }
+  }
+  return out.sort((a, b) => b.archivedAt - a.archivedAt);
+}
+
+/** 보관 되돌리기 — 같은 id 회사가 이미 있으면 덮지 않는다(code EXISTS). 형식 밖 id는 거부(code BAD_ID). */
+export async function restoreArchivedCompany(archiveId) {
+  const m = typeof archiveId === 'string' ? archiveId.match(ARCHIVE_ID_RE) : null;
+  if (!m || !WS_ID_RE.test(m[2])) throw Object.assign(new Error('잘못된 보관 항목입니다'), { code: 'BAD_ID' });
+  const wsId = m[2];
+  const from = join(ARCHIVE_DIR, archiveId);
+  const to = paths(wsId).root; // 경계 재확인 포함
+  return withLock(`company:${wsId}`, async () => {
+    if (!existsSync(join(from, 'company.json'))) throw Object.assign(new Error('보관 항목을 찾을 수 없습니다'), { code: 'NOT_FOUND' });
+    if (existsSync(to)) throw Object.assign(new Error('같은 이름의 회사가 이미 있습니다'), { code: 'EXISTS' });
+    const now = new Date();
+    // 알려진 한계(L3, 2026-10-05 분리 검수 — 조건이 좁고 추론이라 이번에는 고치지 않는다): 되돌리기가 company.json 수정 시각(mtime) 한 값에 의존한다.
+    // 기기 시계가 보관 시각보다 과거이거나 이 utimes가 막힌 파일시스템(읽기 전용·mtime 고정)이면 동기화가 "보관 이후 수정 없음"으로 보고 다시 보관할 수 있다.
+    await utimes(join(from, 'company.json'), now, now); // 옮기기 전에 — 동기화가 "보관 이후 수정"으로 보고 tombstone을 철회하게
+    await rename(from, to);
+    dropDocCache(wsId);
+    return { wsId };
+  });
 }
 
 /* ─── 회사 tombstone — "이 회사는 보관됐다"는 기기 간 공유 마커 ───

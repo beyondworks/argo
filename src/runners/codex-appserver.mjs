@@ -77,7 +77,7 @@ export function mapTurnError(errParams) {
   if (info === 'usageLimitExceeded' || /usage limit/i.test(message)) {
     const when = message.match(/try again at ([^.]+)/i)?.[1]?.trim();
     return Object.assign(new Error(
-      `Codex 구독 사용 한도에 도달했습니다${when ? ` — ${when}에 재개됩니다` : ''}. 다른 러너를 연결해 두면 그동안 크루가 그쪽으로 일합니다. `
+      `Codex 구독 사용 한도에 도달했습니다${when ? ` — ${when}에 재개됩니다` : ''}. 다른 러너를 연결해 두면 그동안 에이전트가 그쪽으로 일합니다. `
       + `Codex usage limit reached${when ? ` — resets at ${when}` : ''}.`,
     ), { limitReached: true, runner: 'codex' });
   }

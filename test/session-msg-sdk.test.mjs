@@ -177,7 +177,7 @@ test('풀 오토(MEDIUM-4) — 크루가 보낸 세션 메시지의 B 턴·깨�
   } finally { await updateCompany(ws, { fullAuto: false }); }
 });
 
-test('새 세션 머리말(L3) — 다른 기기 세션을 새로 열 때 세션 메시지를 "사장의 새 메시지" 아래에 싣지 않는다', async () => {
+test('새 세션 머리말(L3) — 다른 기기 세션을 새로 열 때 세션 메시지를 "사용자의 새 메시지" 아래에 싣지 않는다', async () => {
   await fresh();
   const { writeFile: wf } = await import('node:fs/promises');
   await wf(join(p.chats, 'b.json'), JSON.stringify({ sessionId: 'old-sess', sessionDevice: 'other-device', messages: [
@@ -186,5 +186,5 @@ test('새 세션 머리말(L3) — 다른 기기 세션을 새로 열 때 세션
   await sess._drainForTest();
   const b = reqs.find((r) => r.who === 'b');
   assert.ok(b?.messages.includes('예전 지시'), '최근 대화를 붙여 새 세션으로 이어 간다');
-  assert.ok(!b.messages.includes('사장의 새 메시지'), '사장의 직접 지시처럼 머리를 달지 않는다');
+  assert.ok(!b.messages.includes('사용자의 새 메시지'), '사용자의 직접 지시처럼 머리를 달지 않는다');
 });

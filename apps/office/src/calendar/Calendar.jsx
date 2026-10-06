@@ -16,7 +16,7 @@ import { Icon } from '../ui/Icon.jsx';
 import { Face } from '../ui/Face.jsx';
 import * as M from './model.js';
 import * as V from '../views/model.js';
-import { useEvents, useEventWindows, writeEvent, loadPeople, loadCustomers } from './api.js';
+import { useEvents, useEventWindows, writeEvent, loadPeople, loadCustomers, refreshEvents } from './api.js';
 import { orgSpaces, idOf, spaceOfOrg, writableOrgs, inSpace, calOf, colorOf, fmtDay, fmtTime, locale, pref, setPref } from './shared.js';
 import { useViewTasks, usePeople, makeCtx, readCfg, writeCfg, useTaskCategories } from '../views/data.js';
 import { ItemsView, useItemActions, filterMenu, filterCount, Dropdown } from '../views/Board.jsx';
@@ -148,7 +148,7 @@ export default function Calendar({ space, day }) {
           </span>}
           <h2 className="cal-title" aria-live="polite">{periodTitle(view, monthVis ?? anchor, phone)}</h2>
           {data.loading && <span className="dim small" role="status">{t('cal.loading')}</span>}
-          {data.error && <span className="cal-err small" role="alert">{t(data.error)}</span>}
+          {data.error && <span className="cal-err small" role="alert">{t(data.error)} <button type="button" className="link-btn small" onClick={() => refreshEvents().catch(() => {})}>{t('desktop.retry')}</button></span>}{/* 다시 시도(OFC-08) — 보고 있는 창만 다시 읽는다 */}
           <span className="cal-tools">
             {view === 'kanban' && <Dropdown label={t('views.group')} value={cfg.group} options={opts(V.GROUPS, 'views.g')} onChange={(g) => setCfg({ group: g })} />}
             {board && <Dropdown label={t('views.sort')} value={cfg.sort} options={opts(V.SORTS, 'views.s')} onChange={(x) => setCfg({ sort: x })} />}

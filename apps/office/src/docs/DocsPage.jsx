@@ -262,7 +262,7 @@ export default function DocsPage({ space, params }) {
         <td className="hide-sm mono">{day(d.created_at)}</td>
         <td className="act"><button type="button" className="icon-btn" aria-label={t('more')} onClick={(e) => docMenu(e, d)}><Icon name="dots" /></button></td>
       </tr>)}</tbody></table></div>
-      : <div className="empty-state"><Icon name="doc" size={22} /><p>{t('docs.empty')}</p>{canWrite && <div className="docs-head-actions"><button type="button" className="btn" onClick={() => go({ new: 'quote' })}>{t('docs.new.quote')}</button><button type="button" className="btn" onClick={() => go({ new: 'contract' })}>{t('docs.new.contract')}</button></div>}</div>)}
+      : <div className="empty-state"><Icon name="doc" size={22} /><p>{t('docs.empty')}</p>{canWrite && <div className="row-actions docs-head-actions"><button type="button" className="btn" onClick={() => go({ new: 'quote' })}>{t('docs.new.quote')}</button><button type="button" className="btn" onClick={() => go({ new: 'contract' })}>{t('docs.new.contract')}</button></div>}</div>)}
     {data && tab === 'esign' && (data.esign.length ? <div className="table-wrap" data-sel-scope="esign"><table className="table docs-table">
       <thead><tr><th>{t('esign.col.title')}</th><th className="hide-sm">{t('esign.col.signers')}</th><th>{t('esign.col.status')}</th><th className="hide-sm">{t('esign.col.created')}</th><th className="hide-sm">{t('esign.col.final')}</th><th className="act" /></tr></thead>
       <tbody>{data.esign.map((e) => { const n = signedCount(e.signers); return <tr key={e.id} className="row-open" {...selProps(esSel, e.id)} onClick={(ev) => { if (!ev.target.closest('button')) go({ tab: 'esign', open: e.id }); }}>

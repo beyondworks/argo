@@ -3,16 +3,28 @@
 // 규칙은 (name, check(body) → 거절 문구|null) 한 줄씩. 새 제보가 오면 규칙 한 줄을 더한다 — 같은 모양은 두 번 새지 않는다.
 import { createServer } from 'node:http';
 
+/** 본문 안 cache_control 자리 수(프롬프트 캐시 표지 — B1). */
+const cacheMarks = (x) => { if (!x || typeof x !== 'object') return []; if (Array.isArray(x)) return x.flatMap(cacheMarks); return Object.entries(x).flatMap(([k, v]) => (k === 'cache_control' ? [v] : cacheMarks(v))); };
+/** 캐시 표지를 모르는 벤더로 가정하는 규칙 — xAI·z.ai·Moonshot의 Anthropic 호환 엔드포인트가 cache_control을 받는지는 확인 안 함.
+    모르는 필드에 400을 낸 전례(xAI required, 2026-09-06)가 있어 보수적으로 거절로 둔다 — 이 규칙이 있는 한 엔진이 그 벤더에 표지를 실으면 테스트가 red. */
+const NO_CACHE_CONTROL = (body) => (cacheMarks(body).length ? 'Invalid request content: unknown field cache_control' : null);
+
 const walkSchemas = (s, out = []) => { if (!s || typeof s !== 'object') return out; out.push(s); for (const v of Object.values(s.properties ?? {})) walkSchemas(v, out); if (s.items) walkSchemas(s.items, out); for (const k of ['anyOf', 'oneOf', 'allOf', 'prefixItems']) for (const v of s[k] ?? []) walkSchemas(v, out); return out; };
 
 /** 벤더별 규칙 — Anthropic Messages 와이어(/v1/messages) 본문을 본다. */
 export const VENDOR_RULES = {
   // xAI(Grok) — 사용자 제보 2026-09-06(v0.1.62): object 스키마에 required 배열이 없으면 `400 Invalid request content: Schema validation failed: [standard_violation] /required: null is not of type "array"`
   xai: [
+    NO_CACHE_CONTROL,
     (body) => { for (const t of body.tools ?? []) for (const s of walkSchemas(t.input_schema)) if (s.type === 'object' && !Array.isArray(s.required)) return `Invalid request content: Schema validation failed: [standard_violation] /required: null is not of type "array" (invalid-argument) [tool ${t.name}]`; return null; },
   ],
+  // GLM(z.ai)·Kimi(Moonshot)의 Anthropic 호환 엔드포인트 — 캐시 표지 보수 거절(위 NO_CACHE_CONTROL 주석)
+  zai: [NO_CACHE_CONTROL],
+  moonshot: [NO_CACHE_CONTROL],
   // Anthropic — 도구 이름·max_tokens 필수(공식 문서)
   anthropic: [
+    // 프롬프트 캐시 표지는 요청당 4곳까지, type은 ephemeral(공식 문서 "A maximum of 4 blocks with cache_control")
+    (body) => { const m = cacheMarks(body); if (m.length > 4) return `A maximum of 4 blocks with cache_control may be provided. Found ${m.length}.`; return m.find((v) => v?.type !== 'ephemeral') ? 'cache_control.type: Input should be \'ephemeral\'' : null; },
     (body) => (!Number.isInteger(body.max_tokens) || body.max_tokens < 1 ? 'max_tokens: Field required' : null),
     // 미지 최상위 필드 → 400(#445 2R N-HIGH-1: 프로브 전용 min_output_tokens가 messages 본문에 실려 나갔다 — 이 서버의 존재 이유가 정확히 '예상 밖 필드에 엄격한 벤더')
     (body) => { const bad = Object.keys(body).find((k) => !ANTHROPIC_TOP.has(k)); return bad ? `${bad}: Extra inputs are not permitted` : null; },
@@ -20,18 +32,55 @@ export const VENDOR_RULES = {
   ],
 };
 
+/** Anthropic 와이어가 아닌 벤더 — 경로·인증 헤더·응답 모양이 다르다. 본문 규칙은 캐시 표지 거절(B1 표지는 Anthropic Messages 와이어 전용)과
+    각 벤더의 최소 필수 필드다. Gemini(generateContent)는 모르는 필드를 'Unknown name' 400으로, OpenAI Responses는 'Unknown parameter' 400으로 거절한다고
+    가정한다(엄격 쪽 가정 — 실벤더 확인 아님, 이 서버의 목적은 엔진이 그 와이어에 표지를 싣지 않는다는 것을 잠그는 것). */
+const OTHER_WIRES = {
+  gemini: {
+    path: /^\/models\/[^/]+:generateContent$/, auth: (h) => !!h['x-goog-api-key'],
+    rules: [
+      (body) => (cacheMarks(body).length ? 'Invalid JSON payload received. Unknown name "cache_control": Cannot find field.' : null),
+      (body) => (!Array.isArray(body.contents) || !body.contents.length ? 'contents is not specified' : null),
+    ],
+    ok: (body, n) => ({ status: 200, type: 'application/json', body: JSON.stringify({ candidates: [{ content: { role: 'model', parts: [{ text: 'ok' }] }, finishReason: 'STOP' }], usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1 }, responseId: `g${n}` }) }),
+    bad: (msg) => JSON.stringify({ error: { code: 400, message: msg, status: 'INVALID_ARGUMENT' } }),
+  },
+  responses: {
+    path: /^\/responses$/, auth: (h) => !!h.authorization,
+    rules: [
+      (body) => (cacheMarks(body).length ? "Unknown parameter: 'cache_control'." : null),
+      (body) => (!body.model ? "Missing required parameter: 'model'." : null),
+    ],
+    ok: (body, n) => {
+      const ev = { type: 'response.completed', response: { id: `resp_${n}`, model: body.model, status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: 'ok' }] }], usage: { input_tokens: 1, output_tokens: 1 } } };
+      return { status: 200, type: 'text/event-stream', body: `event: ${ev.type}\ndata: ${JSON.stringify(ev)}\n\n` };
+    },
+    bad: (msg) => JSON.stringify({ error: { message: msg, type: 'invalid_request_error', param: null, code: 'unknown_parameter' } }),
+  },
+};
+
 /** Messages API 최상위 필드(공식 레퍼런스) — 이 밖은 벤더가 거절할 수 있는 필드로 본다. */
 const ANTHROPIC_TOP = new Set(['model', 'max_tokens', 'messages', 'system', 'tools', 'tool_choice', 'metadata', 'stop_sequences', 'stream', 'temperature', 'top_p', 'top_k', 'thinking', 'service_tier']);
 
-/** 엄격 가짜 벤더를 띄운다 — vendor 규칙 전부 통과하면 reply(body)로 응답(기본: 텍스트 'ok'), 위반하면 400 + Anthropic 오류 모양. 경로는 /v1/messages만(404), 인증 헤더(x-api-key 또는 authorization) 없으면 401. */
+/** 엄격 가짜 벤더를 띄운다 — vendor 규칙 전부 통과하면 reply(body)로 응답(기본: 텍스트 'ok'), 위반하면 400 + Anthropic 오류 모양. 경로는 /v1/messages만(404), 인증 헤더(x-api-key 또는 authorization) 없으면 401.
+    vendor 'gemini'·'responses'는 그 와이어의 경로·인증·응답 모양(위 OTHER_WIRES)으로 받는다. */
 export async function startStrictVendor({ vendor = 'xai', reply = null } = {}) {
   const rules = [...(VENDOR_RULES[vendor] ?? []), ...(vendor !== 'anthropic' ? VENDOR_RULES.anthropic : [])];
   const calls = [];
+  const other = OTHER_WIRES[vendor];
   const srv = createServer((req, res) => {
     let d = ''; req.on('data', (c) => { d += c; });
     req.on('end', () => {
       let body = {}; try { body = JSON.parse(d || '{}'); } catch { /* 빈 본문 */ }
       calls.push({ url: req.url, headers: req.headers, body });
+      if (other) { // Gemini·Responses 와이어 — vendor: 'gemini' | 'responses'
+        const send = (status, type, text) => { res.writeHead(status, { 'content-type': type }); res.end(text); };
+        if (!other.path.test(req.url)) return send(404, 'application/json', other.bad(`Not Found: ${req.url}`));
+        if (!other.auth(req.headers)) return send(401, 'application/json', other.bad('missing credential'));
+        for (const rule of other.rules) { const bad = rule(body); if (bad) return send(400, 'application/json', other.bad(bad)); }
+        const out = other.ok(body, calls.length);
+        return send(out.status, out.type, out.body);
+      }
       // 경로·인증 헤더도 본다(1R LOW-4 잔여): 실벤더는 /v1/messages 밖은 404, 키 없는 요청은 401
       if (req.url !== '/v1/messages') { res.writeHead(404, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ type: 'error', error: { type: 'not_found_error', message: `Not Found: ${req.url}` } })); }
       if (!req.headers['x-api-key'] && !req.headers.authorization) { res.writeHead(401, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ type: 'error', error: { type: 'authentication_error', message: 'missing api key' } })); }

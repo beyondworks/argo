@@ -25,8 +25,8 @@ const desktopLinkBridge = `document.addEventListener('click',function(e){try{var
 
 // 글로벌 타깃 — 탭 제목·SEO는 영어 기본(서버 metadata라 t() 자동전환 불가). 앱 UI는 argo-lang로 한/영 전환된다.
 export const metadata = {
-  title: 'Argo — AI crew on one ship',
-  description: 'Hire expert AI crew with one prompt; your company sails on folder-based memory.',
+  title: 'Argo — AI agents on one ship',
+  description: 'Hire expert AI agents with one prompt; your company sails on folder-based memory.',
 };
 
 export default function RootLayout({ children }) {

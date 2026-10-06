@@ -3,6 +3,7 @@
 // 함수로 뽑은 파서 3개(parseApprovalText·parseApprovalCallback·pairCodeMatches)뿐 — 정규식·판정은 원문과 동일.
 
 import { channelSends } from '../channel-events.mjs'; // 발송 판정 정본 — 사본 금지(channel-mute 계약)
+import { STATUS_COMMAND_WORDS, OLD_STATUS_COMMAND_WORDS } from '../legacy-terms.mjs'; // 현황 명령 낱말 — 옛 낱말(크루·crew)도 계속 받는다
 
 const MAX_MSG = 3800; // 텔레그램 4096 제한 대비 여유
 export const clip = (t) => (t.length > MAX_MSG ? `${t.slice(0, MAX_MSG)}\n…(전체 내용은 Argo 데크에서)` : t);
@@ -34,6 +35,10 @@ export function parseApprovalText(text) {
   const m = String(text ?? '').match(/^(승인|거절)\s+(ap-[a-z0-9]+)/);
   return m ? { verb: m[1], approve: m[1] === '승인', id: m[2] } : null;
 }
+
+const STATUS_RE = new RegExp(`^/?(${[...STATUS_COMMAND_WORDS, ...OLD_STATUS_COMMAND_WORDS].join('|')})$`, 'i');
+/** 텔레그램·슬랙 현황 명령인가 — 한 낱말(앞 '/' 허용, 대소문자 무시)만. 모델을 부르지 않고 연결된 에이전트 목록으로 답한다(routing.crewStatusReply) */
+export const isStatusCommand = (text) => STATUS_RE.test(String(text ?? '').trim());
 
 /** 결재 인라인 버튼 콜백 파서 — callback_data "ap:<결재id>:<1=승인|0=거절>". 형식 밖이면 null(무시). */
 export function parseApprovalCallback(data) {

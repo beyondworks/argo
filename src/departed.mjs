@@ -47,6 +47,11 @@ export function applyDeparted(t) {
     const e = d[k.toLowerCase()];
     if (e && entry(e).sids.includes(v?.sessionId)) delete t.scopedSessions[k];
   }
+  // 그 채널 대화의 누적 요약(thread-context.mjs)도 회수한다 — 각인 시각까지를 덮는 요약만(다시 들어온 뒤의 새 요약은 남는다)
+  for (const [k, v] of Object.entries(t.scopedSummaries ?? {})) {
+    const e = d[k.toLowerCase()];
+    if (e && (Number(v?.upto) || 0) <= entry(e).ts) delete t.scopedSummaries[k];
+  }
   return before - t.messages.length;
 }
 

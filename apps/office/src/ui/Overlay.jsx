@@ -61,10 +61,11 @@ export function Modal({ open, onClose, title, children, width = 480, footer }) {
 let toast = null, timer = null;
 const tl = new Set();
 const temit = () => tl.forEach((l) => l());
-export function showToast(message, { undo } = {}) {
+/** action = { label, run } — 되돌리기 말고 다른 한 동작(예: '메신저 앱 받기', '휴지통 보기')을 붙인다. 누를 시간을 주려고 되돌리기처럼 6초 */
+export function showToast(message, { undo, action } = {}) {
   clearTimeout(timer);
-  toast = { message, undo, key: Date.now() }; temit();
-  timer = setTimeout(() => { toast = null; temit(); }, undo ? 6000 : 3000);
+  toast = { message, undo, action, key: Date.now() }; temit();
+  timer = setTimeout(() => { toast = null; temit(); }, undo || action ? 6000 : 3000);
 }
 export function ToastHost() {
   const cur = useSyncExternalStore((l) => { tl.add(l); return () => tl.delete(l); }, () => toast);
@@ -73,6 +74,7 @@ export function ToastHost() {
     <div className="toast" role="status" aria-live="polite" key={cur.key}>
       <span>{cur.message}</span>
       {cur.undo && <button type="button" className="toast-undo" onClick={() => { cur.undo(); toast = null; temit(); }}>{t('undo')}</button>}
+      {cur.action && <button type="button" className="toast-undo" onClick={() => { cur.action.run(); toast = null; temit(); }}>{cur.action.label}</button>}
     </div>,
     document.body,
   );

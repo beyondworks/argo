@@ -6,7 +6,8 @@ import { Icon } from './Icon.jsx';
 import { Face } from './Face.jsx';
 import { t, ago, useLang, registerDict } from '../core/i18n.js';
 import { useUi, setUi } from '../core/ui-state.js';
-import { useStore, assign, sendToCrew, update, crewsIn, getState } from '../core/store.js';
+import { useStore, assign, sendToCrew, update, getState } from '../core/store.js';
+import { crewsIn } from '../core/crew-list.js';
 import { imeGuardWith } from '../core/ime.js';
 import { SPACES, ME, getMode } from '../core/session.js';
 import { getClient } from '../core/supabase.js';
@@ -14,7 +15,9 @@ import { baseOf } from '../core/commands.js';
 import { flushNow, outbox } from '../core/sync.js';
 import { loadPageContent } from '../core/pull.js';
 import { readMail } from '../core/mail.js';
-import { composeAssign, composeSet, composeTools, htmlText, docText, mentionAt, mentionCands, putMention, maskedNote } from '../core/crew-assign.js';
+import { composeAssign, composeSet, composeTools, htmlText, docText, mentionAt, mentionCands, putMention, maskedNote, assignTarget, crewTools, agentIds } from '../core/crew-assign.js';
+import { openExternal } from '../core/platform.js';
+import { FAMILY } from '../core/family.js';
 import { hideAllOn } from '../core/hide-all.js';
 import { rpc } from '../core/tasks.js';
 import { DocView } from './DocView.jsx';
@@ -159,9 +162,10 @@ export function HistorySheet() {
       const { data, error } = await sb.rpc('office_page_restore', { p_id: id, p_version: v });
       if (error) throw error;
       update((s) => ({ pages: s.pages.map((p) => (p.id === id ? { ...p, version: data } : p)) }));
-      await loadPageContent(id, { force: true });
+      const shown = await loadPageContent(id, { force: true }).then(() => true, () => false); // 되돌리기는 서버에서 됐다 — 본문만 못 읽었으면 그렇게 알린다(되돌리지 못했다고 하지 않는다)
       setSel(null); load();
-      if (!undoing) showToast(t('history.restored', { n: v }), { undo: () => restore(prev, true) });
+      if (!shown) showToast(t('load.readFail'));
+      else if (!undoing) showToast(t('history.restored', { n: v }), { undo: () => restore(prev, true) });
     } catch { showToast(t('history.failed')); }
     finally { setBusy(false); }
   };
@@ -190,30 +194,41 @@ const TASKS = ['summary', 'todos', 'reply', 'custom'];
 export function AssignSheet() {
   useLang();
   const { assign: a } = useUi();
-  const [crew, setCrew] = useState(null);
+  const [crew, setCrew] = useState(() => a?.crew ?? null); // 처음 그릴 때부터 고른 에이전트(효과는 다음 장면에서 돈다)
   const [task, setTask] = useState('summary');
   const [text, setText] = useState('');
   const [at, setAt] = useState(null), [hi, setHi] = useState(0); // '@' 후보 목록이 열린 자리({ start, q, caret })와 강조한 줄
   const box = useRef(null), shut = useRef(-1); // shut: Esc로 닫은 '@'의 자리 — 키를 뗄 때(onSelect) 다시 열지 않게
   const [sets, setSets] = useState([]), [setId, setSetId] = useState(''); // 업무 세트(4단계) — 고르면 노하우·도구·점검 목록이 글에 실린다
-  const orgOfSheet = SPACES.find((sp) => sp.kind === 'org' && sp.key === a?.space)?.id;
+  const orgOfSheet = SPACES.find((sp) => sp.kind === 'org' && sp.key === a?.space)?.id ?? null; // 내 공간이면 null — 업무 세트는 내 것(office_asset_ctx p_org NULL = 개인)
+  // AI 이용 동의(CX-11) — 창을 열 때 한 번 읽는다(사람이 열 때만, 주기 없음). undefined 읽는 중, null 동의 안 함 → 이 창에서 동의(메신저와 같은 기록·같은 문구)
+  const [consent, setConsent] = useState(undefined), [agreeing, setAgreeing] = useState(false);
   useEffect(() => { if (a) { setCrew(a.crew ?? null); setTask(a.items?.some((i) => i.kind === 'mail') ? 'summary' : 'custom'); setText(''); setAt(null); shut.current = -1; setSetId(''); } }, [a]);
   useEffect(() => {
     let live = true;
-    if (a && orgOfSheet && getMode() === 'signedIn') rpc('office_asset_list', { p_org: orgOfSheet }).then((l) => { if (live) setSets([...l.company, ...l.mine].filter((x) => x.kind === 'set')); }).catch(() => {});
+    setConsent(undefined); setSets([]);
+    if (a && getMode() === 'signedIn') {
+      rpc('office_asset_list', { p_org: orgOfSheet }).then((l) => { if (live) setSets([...l.company, ...l.mine].filter((x) => x.kind === 'set')); }).catch(() => {});
+      rpc('msgr_my_ai_consent', {}).then((v) => { if (live) setConsent(v ?? null); }, () => { if (live) setConsent('?'); }); // 못 읽으면 막지 않는다 — 보낼 때 다시 확인한다(crew-assign.js)
+    }
     return () => { live = false; };
   }, [a, orgOfSheet]);
   const label = useMemo(() => a?.items?.map((i) => i.label).filter(Boolean).join(', ') ?? '', [a]);
-  const allCrews = useStore((s) => s.crews);
+  const allCrews = useStore((s) => s.crews), failed = useStore((s) => !!s.boardError);
   const live = getMode() === 'signedIn';
   // 1:1 방은 내 크루와만 열린다(msgr_create_channel·메신저와 같은 규칙) — 로그인 상태에서는 내 크루만 보인다
   const crews = crewsIn(allCrews, a?.space ?? 'me', ME.id).filter((c) => !live || (c.owner === ME.id && !c.company && (c.access ?? 'ok') === 'ok')); // 꺼진 크루·권한 없는 크루는 빼고(사이드바와 같은 규칙)
   const [busy, setBusy] = useState(false);
   if (!a) return null;
-  // 좌측에서 고른 에이전트면 그 한 명만(유건 9/30) — 메일·페이지 메뉴에서 열었으면 고르기 칸
-  const main = crews.find((x) => x.id === crew), fixed = !!a.crew && main?.id === a.crew;
+  // 좌측에서 고른 에이전트면 그 한 명만(유건 9/30) — 메일·페이지 메뉴에서 열었으면 고르기 칸. 내 공간은 같은 에이전트를 한 줄로 묶었다(묶인 행 id 어느 것으로 열어도 그 줄)
+  const main = crews.find((x) => x.id === crew || x.ids?.includes(crew)), fixed = !!a.crew && !!main && (main.id === a.crew || !!main.ids?.includes(a.crew));
   // '@' 멘션 — 글에 "@이름"만 넣고, 넘김은 주 에이전트가 메신저 @넘김으로 한다(협업 태그 없음)
-  const cands = at && main ? mentionCands(allCrews, main, at.q).slice(0, 8) : [];
+  const target = main ? assignTarget(main, allCrews, SPACES) : null; // 내 에이전트는 개인 1:1(메신저 에이전트 탭과 같은 방, CX-03), 없으면 조직 1:1
+  // 개인 1:1로 가는 글은 넘길 곳이 없다(그 방의 크루는 주 에이전트뿐) — '@' 안내도 빼고 이유를 말한다. 봇 쌍둥이는 서버가 준비됐을 때만 개인 1:1이라
+  // 열 때는 모른다 — 조직 1:1일 수 있어 종전 후보·안내 그대로(2차 검수 L4)
+  const one = live && !!target?.personalId && !target.personalBot;
+  const cands = at && main ? mentionCands(allCrews, main, at.q, one ? target : null).slice(0, 8) : [];
+  const ph = `crew.${task === 'custom' ? 'customPh' : 'morePh'}${one ? 'One' : ''}`;
   const sync = (el) => {
     const m = mentionAt(el.value, el.selectionStart);
     if (!m) shut.current = -1;
@@ -233,14 +248,13 @@ export function AssignSheet() {
   const hasMail = a.items.some((i) => i.kind === 'mail');
   const close = () => setUi({ assign: null });
   const go = async () => {
-    const c = crews.find((x) => x.id === crew);
+    const c = main;
     if (!c || busy) return;
     if (!live) { // 예시 데이터 — 화면에서만
       assign({ space: c.space ?? a.space, crew, goal: task === 'custom' ? (text || label) : [`${t(`crew.task.${task}`)} · ${label}`, text.trim()].filter(Boolean).join(' — ') });
       close(); showToast(t('crew.handed', { crew: c.name })); return;
     }
-    const orgId = SPACES.find((sp) => sp.kind === 'org' && sp.key === c.space)?.id;
-    if (!orgId) { showToast(t('crew.fail.not_allowed')); return; }
+    if (!target.orgId && !target.personalId) { showToast(t('crew.fail.not_allowed')); return; }
     setBusy(true);
     try {
       // 자료를 글자로 — 메일은 본문(이 탭에만 있는 것), 페이지는 본문, 파일·기록은 이름만. 못 불러오면 보내지 않는다(빈 자료로 맡기지 않게)
@@ -260,35 +274,47 @@ export function AssignSheet() {
         return { ...i };
       }));
       const asked = task === 'custom' ? text.trim() || label : [t(`crew.ask.${task}`), text.trim()].filter(Boolean).join('\n\n'); // 미리 정한 일에도 덧붙인 말(@넘김 포함)을 싣는다
-      const used = setId ? await rpc('office_asset_write', { p_org: orgId, p_action: 'asset.use', p_data: { id: setId } }) : null;
-      // 이 크루에게 배정·켜진 도구(5단계) — 세트가 이미 실은 도구는 빼고
-      const mine = await rpc('office_asset_write', { p_org: orgId, p_action: 'crew.tools', p_data: { id: crypto.randomUUID(), crew_id: c.id } }).then((r) => r.tools).catch(() => []);
+      const used = setId ? await rpc('office_asset_write', { p_org: orgOfSheet, p_action: 'asset.use', p_data: { id: setId } }) : null; // 세트는 목록을 읽은 공간에서
+      // 이 크루에게 배정·켜진 도구(5단계) — 세트가 이미 실은 도구는 빼고. 크루가 사는 조직(없으면 내 것만)
+      // 같은 에이전트의 행마다 물어 합친다(내 공간 묶음의 대표가 아닌 행으로 배정한 플러그인도 싣는다 — 서버 crew.tools는 크루 id 하나만 본다)
+      const mine = await crewTools(agentIds(c, allCrews), (id) => rpc('office_asset_write', { p_org: target.orgId, p_action: 'crew.tools', p_data: { id: crypto.randomUUID(), crew_id: id } }).then((r) => r.tools ?? []));
       const extra = mine.filter((x) => !used?.tool_list?.some((y) => y.id === x.id));
       const instruction = [asked, used && composeSet(used, t), composeTools(extra, t)].filter(Boolean).join('\n\n');
-      sendToCrew({ orgId, crewId: c.id, crewName: c.name, ...composeAssign({ instruction, items, t }) });
+      sendToCrew({ ...target, crewName: c.name, ...composeAssign({ instruction, items, t }) });
       close(); showToast(t('crew.sending', { crew: c.name }));
     } catch { showToast(t('crew.fail.read')); }
     finally { setBusy(false); }
   };
+  const agree = async () => { setAgreeing(true); try { setConsent((await rpc('msgr_set_ai_consent', { consent: true })) ?? null); } catch { showToast(t('consent.failed')); } finally { setAgreeing(false); } };
+  // 동의하지 않았으면 쓰기 전에 이 창에서 동의(메신저 개인 공간 동의 화면과 같은 문구·같은 기록 msgr_set_ai_consent — 계정마다 한 번, 두 앱에 같이 적용, CX-11)
+  if (consent === null) return (
+    <Sheet open onClose={close} title={t('consent.title')}
+      footer={<><button type="button" className="btn" disabled={agreeing} onClick={close}>{t('consent.later')}</button><button type="button" className="btn primary" disabled={agreeing} onClick={agree}><Icon name="check" size={14} />{t('consent.confirm')}</button></>}>
+      <p>{t('consent.desc')}</p>
+      <p className="dim small">{t('consent.note')}</p>
+      <p><button type="button" className="link-btn small" onClick={() => openExternal(FAMILY.privacy)}>{t('consent.privacy')}</button></p>
+    </Sheet>
+  );
   return (
     <Sheet open onClose={close} title={fixed ? t('crew.assignTo', { crew: main.name }) : t('crew.assign')}
-      footer={<><button type="button" className="btn" onClick={close}>{t('cancel')}</button><button type="button" className="btn primary" disabled={busy || !crew || (task === 'custom' && !text.trim() && !label)} onClick={go}><Icon name="hand" size={14} />{t('crew.go')}</button></>}>
+      footer={<><button type="button" className="btn" onClick={close}>{t('cancel')}</button><button type="button" className="btn primary" disabled={busy || !main || (live && consent === undefined) || (task === 'custom' && !text.trim() && !label)} onClick={go}><Icon name="hand" size={14} />{t('crew.go')}</button></>}>
       {main && <div className="ap-who assign-who"><Face id={main.id} size={32} /><div><b>{main.name}</b>{(main.job || main.role) && <small className="dim">{main.job || main.role}</small>}</div></div>}{/* 맡을 에이전트 얼굴(유건 9/30) */}
+      {main?.on === false && !failed && <p className="data-note"><Icon name="info" size={12} />{t('crew.offNote')}</p>}{/* 꺼진 에이전트 — 메신저와 같은 90초 기준(CX-06). 기록판을 못 읽는 동안은 말하지 않는다(R3-L1) */}
       {a.items.length > 0 && <div className="assign-items">{a.items.map((i) => <span key={`${i.kind}-${i.id}`} className="chip"><Icon name={{ mail: 'mail', page: 'doc', file: 'file', record: 'run', deal: 'deal', customer: 'person', event: 'calendar', doc: 'sign', company: 'building' }[i.kind]} size={12} />{i.label}</span>)}</div>}
       {!fixed && <label className="field-block"><span className="label">{t('crew.to')}</span>
-        {crews.length ? <select className="input" value={crew ?? ''} onChange={(e) => { setCrew(e.target.value || null); setAt(null); }}><option value="" disabled>{t('crew.pick')}</option>{crews.map((c) => <option key={c.id} value={c.id}>{c.name}{c.role ? ` · ${c.role}` : ''}</option>)}</select>
+        {crews.length ? <select className="input" value={main?.id ?? crew ?? ''} onChange={(e) => { setCrew(e.target.value || null); setAt(null); }}><option value="" disabled>{t('crew.pick')}</option>{crews.map((c) => <option key={c.id} value={c.id}>{c.name}{c.role ? ` · ${c.role}` : ''}</option>)}</select>
           : <p className="dim small">{t('crew.fail.no_crew')}</p>}</label>}
       <div className="field-block"><span className="label">{t('crew.what')}</span>
         {a.items.length > 0 && <div className="seg">{TASKS.filter((k) => hasMail || k !== 'reply').map((k) => <button key={k} type="button" className={`seg-btn${task === k ? ' on' : ''}`} aria-pressed={task === k} onClick={() => setTask(k)}>{t(`crew.task.${k}`)}</button>)}</div>}
         <div className="mention-wrap">
-          <textarea ref={box} data-autofocus className="input area" rows={4} value={text} placeholder={t(task === 'custom' ? 'crew.customPh' : 'crew.morePh')} aria-label={t(task === 'custom' ? 'crew.customPh' : 'crew.morePh')}
+          <textarea ref={box} data-autofocus className="input area" rows={4} value={text} placeholder={t(ph)} aria-label={t(ph)}
             aria-autocomplete="list" aria-controls={cands.length ? 'assign-mention' : undefined} aria-activedescendant={cands.length ? `assign-mention-${Math.min(hi, cands.length - 1)}` : undefined}
             onChange={(e) => { setText(e.target.value); setHi(0); sync(e.target); }} onSelect={(e) => sync(e.target)} onBlur={() => setAt(null)} {...imeGuardWith(onKey)} />
           {cands.length > 0 && <div id="assign-mention" role="listbox" className="mention-list">{cands.map((c, i) => (
             <div key={c.id} id={`assign-mention-${i}`} role="option" aria-selected={i === Math.min(hi, cands.length - 1)} className={`mention-opt${i === Math.min(hi, cands.length - 1) ? ' on' : ''}`}
               onMouseDown={(e) => { e.preventDefault(); pick(c); }} onMouseEnter={() => setHi(i)}>
               <Face id={c.id} size={20} /><b>{c.name}</b><small>{c.owner === ME.id || !c.owner ? c.role : c.ownerName ?? ''}</small></div>))}</div>}
-          {at && main && !at.q && !cands.length && <p className="dim small">{t('crew.mention.none')}</p>}
+          {at && main && !at.q && !cands.length && <p className="dim small">{t(one ? 'crew.mention.one' : 'crew.mention.none')}</p>}
         </div>
       </div>
       {sets.length > 0 && <label className="field-block"><span className="label">{t('crew.set.pick')}</span>

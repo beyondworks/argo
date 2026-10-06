@@ -104,3 +104,7 @@
   .mail-date { grid-column: 2; padding-top: 0; }
   .mail-cal { width: 100vw; }
 }
+
+/* 좁은 폭에서만 보이는 '새 메일'(OFC-01) — 1100px 이하에서 왼쪽 메일함 칸(.mail-folders)이 숨는 것과 같은 폭 */
+.mail-new-narrow { display: none; }
+@media (max-width: 1100px) { .mail-new-narrow { display: inline-grid; } }

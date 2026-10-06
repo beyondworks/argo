@@ -73,7 +73,7 @@ await scenario(1280, 'new-conversation-button', async (p) => {
   await p.locator('[aria-label="새 채팅"]').first().click();
   await p.waitForTimeout(400);
   const sheet = await p.locator('.msgr-sheetwrap, .msgr-crewsheet').first().innerText();
-  assert.ok(/사람|크루|고르/.test(sheet), `상대를 고르는 화면이 열린다 (실제: ${sheet.slice(0, 120)})`);
+  assert.ok(/사람|에이전트|고르/.test(sheet), `상대를 고르는 화면이 열린다 (실제: ${sheet.slice(0, 120)})`);
 });
 
 // 5. 폰 DM 탭 — 정렬과 '새 대화'가 나란히 눌린다(겹치거나 밀리지 않게)
@@ -219,7 +219,7 @@ await scenario(1280, 'agent-offline-visible', async (p) => {
   assert.match(pop, /Fixture Agent[\s\S]*꺼져 있음/, `멘션 후보에 꺼짐 표시 (실제: ${pop.replace(/\s+/g, ' ')})`);
   await ta.fill('@Fixture Agent 오늘 정리해 줘'); await ta.press('Escape'); await ta.press('Enter'); await p.waitForTimeout(800);
   const chip = p.locator('.msgr-awaychip'); await chip.waitFor({ timeout: 3000 });
-  assert.match(await chip.innerText(), /Fixture Agent은\(는\) 지금 꺼져 있어요/, '보낸 뒤 꺼짐 안내');
+  assert.match(await chip.innerText(), /Fixture Agent는 지금 꺼져 있어요/, '보낸 뒤 꺼짐 안내(조사 고름 — UXM-15)');
   // 대조군: 켜진 에이전트는 표시도 안내도 없다(전원 '꺼짐'으로 그리는 변이를 잡는다)
   await ta.click(); await ta.pressSequentially('@Sec', { delay: 20 }); await p.waitForTimeout(400);
   const pop2 = await p.locator('.msgr-mention-pop, [role=listbox]').first().innerText().catch(() => '');

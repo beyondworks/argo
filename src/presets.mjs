@@ -149,8 +149,8 @@ export async function applyPreset(wsId, presetKey, lang) {
   await installSkill(wsId, 'deep-research', lang).catch(() => { /* 스킬은 부가 — 온보딩을 막지 않는다 */ });
   // 주간 업무 보고 — 매주 금 17:00, 직원이 진짜 회사처럼 주간 보고서를 올린다(회사 언어에 맞춰 분기, ko는 기존 그대로)
   const weekly = lang === 'en'
-    ? { title: 'Weekly Report', prompt: 'Review this week\'s vault journal and write a weekly report for the owner: ① a summary of what each crew did ② the deliverables produced and lessons learned ③ three suggestions for next week. Keep it under 15 lines, with short reference filenames.' }
-    : { title: '주간 업무 보고', prompt: '이번 주 vault 일지(journal)를 훑고 사장에게 주간 업무 보고서를 작성하라: ① 크루별로 한 일 요약 ② 만들어진 산출물·배운 것 ③ 다음 주 제안 3가지. 전체 15줄 이내, 근거 파일명을 짧게 표기.' };
+    ? { title: 'Weekly Report', prompt: 'Review this week\'s vault journal and write a weekly report for the user: ① a summary of what each agent did ② the deliverables produced and lessons learned ③ three suggestions for next week. Keep it under 15 lines, with short reference filenames.' }
+    : { title: '주간 업무 보고', prompt: '이번 주 vault 일지(journal)를 훑고 사용자에게 주간 업무 보고서를 작성하라: ① 에이전트별로 한 일 요약 ② 만들어진 산출물·배운 것 ③ 다음 주 제안 3가지. 전체 15줄 이내, 근거 파일명을 짧게 표기.' };
   await addRoutine(wsId, {
     agentSlug, title: weekly.title, prompt: weekly.prompt,
     schedule: { type: 'weekly', time: '17:00', dow: 5 },

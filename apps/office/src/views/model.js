@@ -63,6 +63,16 @@ export function taskItem(x) {
 /** ?due(홈 '챙길 것'·메뉴 배지에서 온 주소) 거르기 — 내가 맡은·안 끝낸·그 기한 할 일만. 분류·중요도 거르기는 푼다(배지 수와 같은 건수가 보이게, 18차 검수 LOW 1). 모르는 값은 null */
 export const dueFilter = (filter, due, me) => (due === 'overdue' || due === 'today' ? { ...filter, period: due, who: `p:${me}`, status: 'open', category: 'all', priority: 'all' } : null);
 
+/** 보기 설정 바꾸기(OFC-15) — 홈 '챙길 것'에서 ?due로 온 임시 거르기(temp)는 이 창에서만 쓰고 저장하지 않는다.
+ *  정렬·보기·묶기만 바꾸면 저장값(saved)에 임시 거르기가 섞이지 않고 임시는 그대로, 사람이 거르기를 바꾸면 그 거르기(임시 위에서 고친 것)가 저장되고 임시는 끝난다.
+ *  fixed = 늘 같은 칸(할 일 화면은 kind 'task') */
+export function patchCfg(cfg, temp, patch, { base, views, fixed = {} } = {}) {
+  const from = patch.filter && temp ? { ...cfg, filter: temp } : cfg;
+  return { saved: normalizeCfg({ ...from, ...patch, filter: { ...from.filter, ...patch.filter, ...fixed } }, base, views), temp: patch.filter ? null : temp };
+}
+/** 화면에 쓸 설정 — 임시 거르기가 있으면 그 거르기로 */
+export const shownCfg = (cfg, temp, base, views) => (temp ? normalizeCfg({ ...cfg, filter: temp }, base, views) : cfg);
+
 /** 기한이 지났는데 끝내지 않았는가 — 여러 날이면 마지막 날 기준(필터 '지난 일'과 할 일 배지가 같이 쓴다) */
 export const isOverdue = (it, today) => !!it.day && (it.last ?? it.day) < today && !it.done;
 
@@ -332,3 +342,6 @@ export function planMany(items, plan) {
 }
 /** 계획 결과의 쓰기 목록(없으면 빈 목록) */
 export const writesOf = (plan) => (plan?.write ? [].concat(plan.write) : []);
+
+/** '날짜 바꾸기' 창의 처음 날짜(OFC-16) — 고른 첫 항목의 날짜, 없으면 오늘(한국 날짜). UTC로 잡으면 한국 오전 9시 전에는 어제가 들어가 바로 '기한 지남'이 됐다 */
+export const askDay = (items, now = Date.now()) => items[0]?.day ?? M.kstDay(now);

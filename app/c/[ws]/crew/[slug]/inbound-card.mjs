@@ -3,7 +3,7 @@
 // 마크다운 프롬프트 원문이 길게 올라와 읽기 어렵다는 제보(2026-10-02)로, 출처 줄 + 앞 2줄 플레인 텍스트로 접는다.
 // 판정은 기록의 구조화 필드(via·contextScope·actor)가 먼저다. 필드가 없는 결재 결과와 필드에 없는 이름(채널·루틴 제목·보낸 크루)만
 // 머리말에서 읽고, 머리말은 기록을 만드는 쪽과 같은 함수(src/inbound-marks.mjs)로 맞춰 본다.
-import { parseMsgr, parseRoutine, parseMail, parseDelegate, parseJob, parseApproval } from '../../../../../src/inbound-marks.mjs';
+import { parseMsgrAuthor, parseRoutine, parseMail, parseDelegate, parseJob, parseApproval } from '../../../../../src/inbound-marks.mjs';
 import { viaSummary } from './via-summary.mjs';
 import { stripLoopVerdict } from '../../../../../src/loop-verdict.mjs';
 
@@ -33,7 +33,8 @@ export function inboundCard(m) {
   switch (kind) {
     case 'msgr':
     case 'msgr-dm': {
-      const p = parseMsgr(text, actor.split(' ← ')[0]); // 넘긴 턴의 actor = '넘긴 크루 ← 사람', 본문 줄 앞 이름은 넘긴 크루
+      // 넘긴 턴의 actor = '넘긴 크루 ← 사람', 본문 줄 앞 이름은 넘긴 크루. 본문은 스레드 맥락(msgrAuthorBody)과 같은 자르기 — 답글 원글·첨부 실패 안내·팀 업무 블록을 뗀다
+      const p = parseMsgrAuthor(text, actor.split(' ← ')[0]);
       return { kind, channel: p?.channel ?? '', name: actor, body: p ? p.body : text, context: p?.context ?? [], replyTo: p?.replyTo ?? '' };
     }
     case 'routine': {

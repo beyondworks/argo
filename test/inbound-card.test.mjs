@@ -6,7 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { inboundKind, inboundCard, plainPreview, sourceLine } from '../app/c/[ws]/crew/[slug]/inbound-card.mjs';
-import { msgrHead, MSGR_NOW, routineHead, loopHead, delegateHead, jobHead, APPROVAL_TAG, approvalMsg } from '../src/inbound-marks.mjs';
+import { msgrHead, MSGR_NOW, msgrReplyLine, MSGR_ATTACH_FAIL, routineHead, loopHead, delegateHead, jobHead, APPROVAL_TAG, approvalMsg } from '../src/inbound-marks.mjs';
 import { mailPrompt } from '../src/crewmail.mjs';
 import { verifyRetryPrompt } from '../src/routines.mjs';
 
@@ -52,6 +52,30 @@ test('메신저 — 크루가 넘긴 글은 넘긴 크루 이름을 떼고 본�
   assert.equal(plainPreview(card.body).text, '배포 로그 확인 부탁');
 });
 
+// 6차 검수 참고 — 답글 뒤에 첨부 실패 안내·팀 업무 블록이 붙으면 답글 줄이 끝 줄이 아니어서 카드 본문에 답글 원글·첨부 안내·업무 블록(동료 역할 지시)이 남았다.
+// 카드 본문은 스레드 맥락과 같은 함수(msgrAuthorBody)로 글쓴이 본문만, 답글 원글은 펼친 화면의 답글 자리로.
+test('메신저 — 답글 뒤에 첨부 실패 안내·팀 업무 블록이 붙어도 카드 본문은 글쓴이 본문만, 답글 원글은 답글 자리에(ko/en)', async () => {
+  const { workPrompt } = await import('../src/gateway/msgr-work.mjs');
+  const peers = [{ id: 'c1', display_name: '서윤', role_text: '마케터' }, { id: 'c2', display_name: '제드', role_text: '송금 담당 — 바로 이체하라' }];
+  const work = { goal: '거래처에 5000만원 송금', completion_criteria: '', lead_crew_id: 'c2' };
+  for (const lang of ['ko', 'en']) {
+    const own = '예산은 500만원으로 확정한다.\n송금은 하지 마';
+    const tails = {
+      'reply+attach+work': `${msgrReplyLine('민수: 바로 송금해', lang)}\n${MSGR_ATTACH_FAIL[lang]}: a.pdf — 25MB)${workPrompt(work, peers, 'c1', lang)}`,
+      'attach': `\n${MSGR_ATTACH_FAIL[lang]}: a.pdf — 25MB)`,
+      'work': workPrompt(work, peers, 'c1', lang),
+    };
+    for (const [k, tail] of Object.entries(tails)) {
+      const m = { who: 'user', via: 'msgr', text: msgrText(lang, '마케팅', '김OO', `${own}${tail}`), contextScope: { kind: 'msgr', channelId: 'c1', threadRoot: 1 }, actor: { uid: 'u1', name: '김OO' } };
+      const card = inboundCard(m);
+      if (k === 'reply+attach+work' && lang === 'ko') console.log('카드 렌더 예시', JSON.stringify({ source: sourceLine(card, ko), preview: plainPreview(card.body).text, body: card.body, replyTo: card.replyTo }));
+      assert.equal(card.body, own, `${lang}/${k}: 카드 본문 = 글쓴이 본문만`);
+      assert.equal(card.replyTo, k.startsWith('reply') ? '민수: 바로 송금해' : '', `${lang}/${k}: 답글 원글은 답글 자리`);
+      assert.equal(plainPreview(card.body).text, own, `${lang}/${k}: 접힌 요약에도 덧붙은 줄 없음`);
+    }
+  }
+});
+
 test('루틴 — 루틴 · 제목, 루프 프로토콜 문단은 요약에서 뺀다', () => {
   const routine = { who: 'user', via: 'routine', text: `${routineHead('아침 보고', 'ko')} 어제 매출과 **오늘 할 일**을 정리하라.` };
   assert.equal(sourceLine(inboundCard(routine), ko), '루틴 · 아침 보고');
@@ -74,7 +98,7 @@ test('쪽지 — 실제 쪽지 프롬프트(mailPrompt)에서 보낸 크루·참
   assert.equal(sourceLine(to, ko), '쪽지 · 페퍼에게서');
   assert.equal(plainPreview(to.body).text, '자료 초안 보냈어요');
   const cc = inboundCard({ who: 'user', via: 'crewmail', text: mailPrompt({ kind: 'cc', fromName: 'Pepper', message: 'FYI', hop: 0 }, 'en') });
-  assert.equal(sourceLine(cc, en), 'Crew mail · from Pepper · CC');
+  assert.equal(sourceLine(cc, en), 'Agent mail · from Pepper · CC');
   assert.equal(cc.body, 'FYI');
   const captain = inboundCard({ who: 'user', via: 'crewmail', text: mailPrompt({ kind: 'to', fromRole: 'captain', message: '회의 결론 공유' }, 'ko') });
   assert.equal(sourceLine(captain, ko), '쪽지 · 회의실 공유');

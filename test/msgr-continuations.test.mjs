@@ -574,3 +574,47 @@ test('a Messenger-started loop posts its result without the LOOP marker even wit
     assert.doesNotMatch(row.body, /LOOP/);
   } finally { f.stop(); }
 });
+
+// 5차 검수 LOW-3 — 메신저 결재를 주인이 아닌 조직 관리자가 확정해도 후속 줄이 actor 없이 '(사장 결재)'로 남아 스레드 맥락·요약에 사용자 결정(captain)으로 실렸다.
+// 확정한 사람(resolvedBy — syncApprovals가 msgr 행의 decided_by로 남긴다)을 후속 줄 actor로 싣고, 주인이 아니면 '(관리자 결재)' 머리말로 → member.
+test('approval follow-up: 메신저에서 확정한 사람이 주인이 아니면 후속 줄은 member(관리자 결재), 주인이면 captain(사용자 결재 — 옛 "사장 결재"), 메신저 밖 확정은 종전대로', async () => {
+  const f = await setup({ requester: 'owner' });
+  const { updateCompany } = await import('../src/workspace.mjs');
+  const { loadThread } = await import('../src/thread.mjs');
+  const { threadCtxLine } = await import('../src/chat.mjs');
+  await updateCompany(f.ws, { ownerId: 'owner' });
+  const runChat = async () => ({ reply: 'ok', sessionId: null, handover: null });
+  const last = async () => (await loadThread(f.ws, 'alpha')).messages.filter((m) => m.who === 'user').at(-1);
+  try {
+    for (const [by, tag, who] of [['admin-uid', '(관리자 결재)', 'member'], ['owner', '(사용자 결재)', 'captain']]) {
+      await approvals._followUpForTest(f.ws, { id: `ap-${by}`, slug: 'alpha', kind: 'action', action: '거래처 송금', msgr: f.origin, resolvedBy: { uid: by, via: 'msgr', at: '2026-10-05T00:00:00Z' } }, true, { runChat, session: f.session });
+      const m = await last();
+      assert.ok(m.text.startsWith(`${tag} `), `${by}: 머리말 ${tag}`);
+      assert.deepEqual(m.actor, { uid: by, relay: false }, `${by}: 확정한 사람이 후속 줄에 남는다`);
+      assert.equal(JSON.parse(threadCtxLine(m, 'ko', '알파', { ownerId: 'owner' }))[0], who, `${by}: 맥락 항목 ${who}`);
+    }
+    await approvals._followUpForTest(f.ws, { id: 'ap-web', slug: 'alpha', kind: 'action', action: '보고서 발송' }, true, { runChat });
+    const m = await last();
+    assert.ok(m.text.startsWith('(사용자 결재) ') && !m.actor, '메신저 밖(웹·텔레그램 — 주인만 확정) 확정은 종전대로');
+    assert.equal(JSON.parse(threadCtxLine(m, 'ko', '알파', { ownerId: 'owner' }))[0], 'captain');
+  } finally { f.stop(); }
+});
+
+// 6차 검수 LOW-B(M21) — 후속 턴이 실패해 남기는 '(후속 실행 실패: …)' 줄도 확정한 사람을 actor로 싣는다. 빠지면 관리자 확정이 실패 줄에서 captain으로 실린다.
+test('approval follow-up: 후속 실행이 실패해도 실패 줄에 확정한 사람(actor)이 남는다 — 관리자 확정은 member, 주인 확정은 captain', async () => {
+  const f = await setup({ requester: 'owner' });
+  const { updateCompany } = await import('../src/workspace.mjs');
+  const { loadThread } = await import('../src/thread.mjs');
+  const { threadCtxLine } = await import('../src/chat.mjs');
+  await updateCompany(f.ws, { ownerId: 'owner' });
+  const runChat = async () => { throw new Error('모델 장애'); };
+  try {
+    for (const [by, who] of [['admin-uid', 'member'], ['owner', 'captain']]) {
+      await assert.rejects(approvals._followUpForTest(f.ws, { id: `ap-fail-${by}`, slug: 'alpha', kind: 'action', action: '거래처 송금', msgr: f.origin, resolvedBy: { uid: by, via: 'msgr', at: '2026-10-05T00:00:00Z' } }, true, { runChat, session: f.session }), /모델 장애/);
+      const turn = (await loadThread(f.ws, 'alpha')).messages.slice(-2);
+      assert.match(turn[1]?.text ?? '', /후속 실행 실패: 모델 장애/, `${by}: 실패 줄이 남는다 — 재현 조건`);
+      assert.deepEqual(turn[0].actor, { uid: by, relay: false }, `${by}: 실패 줄에도 확정한 사람`);
+      assert.equal(JSON.parse(threadCtxLine(turn[0], 'ko', '알파', { ownerId: 'owner' }))[0], who, `${by}: 맥락 항목 ${who}`);
+    }
+  } finally { f.stop(); }
+});

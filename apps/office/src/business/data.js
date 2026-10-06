@@ -84,6 +84,7 @@ export function createBusinessClient({ client, scope, journal, key = () => crypt
     try {
       const result = await rpc(expected, `${rpcPrefix}_write`, { p_org: expected.org, p_key: pending.key, p_action: pending.action, p_data: pending.payload });
       written = true;
+      globalThis.dispatchEvent?.(new CustomEvent('office:biz-written', { detail: pending.action })); // 거래처를 바꿨으면 문서함·일정이 거래처 목록을 비운다(core/biz-events.js, OFC-10)
       try { journal.removeItem(receiptKey(expected)); }
       catch { emit({ uncertain: true, error: 'biz.error.receipt' }); return result; }
       emit({ uncertain: false });

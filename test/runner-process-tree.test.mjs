@@ -20,7 +20,7 @@ for(const mode of ['abort','timeout']) test(`${mode} ends detached descendants a
  await writeFile(root,`const {spawn}=require('child_process');require('fs').appendFileSync(process.argv[5],process.pid+'\\n');const child=spawn(process.execPath,[process.argv[2],process.argv[3],process.argv[4],process.argv[5]],{detached:true,stdio:'ignore'});child.unref();setInterval(()=>{},1000);`);
  const other=spawn(process.execPath,['-e',`setInterval(()=>require('fs').appendFileSync(process.argv[1],'x'),40)`,otherBeat],{stdio:'ignore'});
  const ac=new AbortController();
- const run=execTurnFile(process.execPath,[root,branch,leaf,beat,pidfile],{signal:ac.signal,timeout:mode==='timeout'?1000:10000});
+ const run=execTurnFile(process.execPath,[root,branch,leaf,beat,pidfile],{signal:ac.signal,timeout:mode==='timeout'?3000:10000}); // 3초: Windows 러너는 노드 3단계 시작이 1초를 넘겨, 손자가 박동하기 전에 제한이 끝나 'fixture timeout'(8초)이 났다(#832 CI)
  const rejected=assert.rejects(run,e=>mode==='abort'?e.aborted===true:e.timedOut===true&&e.killed===true);
  try {
   await waitFor(async()=> (await size(beat))>2);

@@ -4,7 +4,10 @@ import { useCallback, useEffect, useId, useState } from 'react';
 import { t, registerDict, useLang } from '../core/i18n.js';
 import { rpc, orgOf } from '../core/tasks.js';
 import { ME } from '../core/session.js';
-import { useStore, crewsIn } from '../core/store.js';
+import { useStore } from '../core/store.js';
+import { crewsIn } from '../core/crew-list.js';
+import { toolCrewOn, toggleToolCrew, oncePerAgent } from '../core/crew-assign.js';
+import { LoadFail } from '../ui/LoadFail.jsx';
 import { loadAccounts } from '../core/mail.js';
 import { Link } from '../core/router.jsx';
 import { Modal, showToast } from '../ui/Overlay.jsx';
@@ -13,17 +16,18 @@ import { TOOL_DICT } from './tools-i18n.js';
 import './perf.css';
 
 registerDict(TOOL_DICT);
-const ERR = { asset_forbidden: 'permission', asset_version: 'version', asset_input: 'input', asset_limit: 'limit' };
+const ERR = { asset_forbidden: 'permission', asset_version: 'version', asset_input: 'input', asset_limit: 'limit', task_signin: 'signin' };
 const errKey = (e) => `tool.error.${ERR[e?.message] ?? 'failed'}`;
 const KINDS = ['service', 'mcp', 'plugin', 'account', 'other'];
 
 export default function Tools({ space }) {
   useLang();
   const org = orgOf(space);
-  const [data, setData] = useState(null), [edit, setEdit] = useState(null), [tab, setTab] = useState(org ? 'company' : 'mine');
+  const [data, setData] = useState(null), [edit, setEdit] = useState(null), [tab, setTab] = useState(org ? 'company' : 'mine'), [error, setError] = useState(null);
   const accounts = useStore((s) => s.mailAccounts), allCrews = useStore((s) => s.crews);
   const crews = crewsIn(allCrews, space, ME.id);
-  const load = useCallback(() => rpc('office_asset_list', { p_org: org }).then(setData).catch((e) => showToast(t(errKey(e)))), [org]);
+  // 목록을 못 읽으면 '…'에 멈추지 않고 오류와 다시 시도(UX-O01). 쓰기 뒤 다시 읽기가 실패하면 보던 목록 위에 알림만
+  const load = useCallback(() => rpc('office_asset_list', { p_org: org }).then((d) => { setData(d); setError(null); }).catch((e) => { setError(errKey(e)); showToast(t(errKey(e))); }), [org]);
   useEffect(() => { setData(null); load(); loadAccounts().catch(() => {}); }, [load]);
   const write = async (action, payload) => { try { await rpc('office_asset_write', { p_org: org, p_action: action, p_data: payload }); await load(); } catch (e) { showToast(t(errKey(e))); throw e; } };
   const manager = data?.role === 'manager' || !org;
@@ -42,12 +46,13 @@ export default function Tools({ space }) {
     </section>
     {org && <div className="perf-bar"><div className="seg" role="tablist">{['company', 'mine'].map((k) => <button key={k} type="button" role="tab" aria-selected={tab === k} className={`seg-btn${tab === k ? ' on' : ''}`} onClick={() => setTab(k)}>{t(`tool.tab.${k}`)}</button>)}</div></div>}
     <section className="module"><header className="module-head"><Icon name="box" size={15} /><h3>{t(`tool.tab.${tab}`)}</h3></header>
-      {!data ? <p className="dim small" role="status">…</p> : !list.length ? <p className="mod-empty">{t('tool.empty')}</p>
+      {!data && error ? <LoadFail small text={t(error === 'tool.error.failed' ? 'load.readFail' : error)} onRetry={() => { setError(null); load(); }} />
+        : !data ? <p className="dim small" role="status">…</p> : !list.length ? <p className="mod-empty">{t('tool.empty')}</p>
         : <ul className="perf-days">{list.map((a) => <li key={a.id} className={`perf-item${a.spec.enabled ? '' : ' tool-off'}`}>
           <label className="tool-switch" title={t(a.spec.enabled ? 'tool.on' : 'tool.off')}><input type="checkbox" checked={!!a.spec.enabled} disabled={!canEdit(a)} onChange={() => toggle(a)} aria-label={t('tool.enabled')} /></label>
           <span className="badge">{t(`tool.kind.${a.spec.tool_kind}`)}</span>
           <button type="button" className="perf-item-main asset-open" onClick={() => full(a).then((x) => setEdit({ ...x, spec: { crews: [], ...x.spec, url: x.spec.url ?? '' } })).catch((e) => showToast(t(errKey(e))))}><strong>{a.title}</strong><br />
-            <small className="dim">{[a.spec.crews?.length ? t('tool.crews', { names: a.spec.crews.map(crewName).join(', ') }) : t('tool.noCrew'), t('tool.uses', { n: a.uses })].join(' · ')}</small></button>
+            <small className="dim">{[a.spec.crews?.length ? t('tool.crews', { names: [...new Set(a.spec.crews.map(crewName))].join(', ') }) : t('tool.noCrew'), t('tool.uses', { n: a.uses })].join(' · ')}</small></button>
           {a.spec.url && <a className="btn ghost sm" href={a.spec.url} target="_blank" rel="noreferrer noopener">{t('tool.open')}</a>}
         </li>)}</ul>}
     </section>
@@ -57,11 +62,12 @@ export default function Tools({ space }) {
 }
 
 function Editor({ edit, setEdit, crews, readOnly, write }) {
+  const all = useStore((s) => s.crews); // 같은 에이전트 판정은 가게의 크루 행 전부로(어느 공간에서 열어도, 2차 검수 L3)
   const formId = useId();
   const spec = edit.spec, set = (patch) => setEdit({ ...edit, ...patch }), setSpec = (patch) => set({ spec: { ...spec, ...patch } });
   const save = async (e) => {
     e.preventDefault();
-    const payload = { title: edit.title.trim(), body: edit.body, spec: { tool_kind: spec.tool_kind, url: spec.url.trim() || null, enabled: spec.enabled, crews: spec.crews } };
+    const payload = { title: edit.title.trim(), body: edit.body, spec: { tool_kind: spec.tool_kind, url: spec.url.trim() || null, enabled: spec.enabled, crews: oncePerAgent(spec.crews, crews, all) } }; // 같은 에이전트는 한 번만(어느 공간에서 고쳐도)
     try {
       if (edit.id) await write('asset.update', { id: edit.id, version: edit.version, ...payload });
       else await write('asset.create', { id: crypto.randomUUID(), kind: 'tool', scope: edit.scope, ...payload });
@@ -82,7 +88,7 @@ function Editor({ edit, setEdit, crews, readOnly, write }) {
       <label className="check-row"><input type="checkbox" checked={!!spec.enabled} disabled={readOnly} onChange={(e) => setSpec({ enabled: e.target.checked })} />{t('tool.enabledLong')}</label>
       <fieldset className="field-block"><legend className="label">{t('tool.assign')}</legend>
         {!crews.length ? <p className="dim small">{t('tool.noCrews')}</p> : <div className="deal-owner-list">{crews.map((c) => <label key={c.id} className="check-row">
-          <input type="checkbox" disabled={readOnly} checked={spec.crews.includes(c.id)} onChange={() => setSpec({ crews: spec.crews.includes(c.id) ? spec.crews.filter((x) => x !== c.id) : [...spec.crews, c.id] })} />{c.name}</label>)}</div>}
+          <input type="checkbox" disabled={readOnly} checked={toolCrewOn(spec.crews, c, all)} onChange={() => setSpec({ crews: toggleToolCrew(spec.crews, c, all) })} />{c.name}</label>)}</div>}
         <p className="dim small">{t('tool.assignHint')}</p></fieldset>
     </form>
   </Modal>;

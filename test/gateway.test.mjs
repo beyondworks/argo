@@ -623,7 +623,7 @@ test('pushEvent: 담당 크루 봇이 없으면 루틴이 기본 크루 봇으�
   const firstLine = String(sends[0].body.text).split('\n')[0];
   assert.match(firstLine, /pepper/u, '귀속 접두 — 담당 크루가 표기된다(H3)');
   assert.doesNotMatch(firstLine, /루카/u, '배달 봇 크루 이름으로 오귀속하면 안 된다(H3의 요점)');
-  assert.match(sends[0].body.text, /담당 크루의 봇이 연결돼 있지 않아|delivered via this bot/, '폴백 사유가 정직하게 표기된다');
+  assert.match(sends[0].body.text, /담당 에이전트의 봇이 연결돼 있지 않아|delivered via this bot/, '폴백 사유가 정직하게 표기된다');
 });
 
 test('pushEvent: 게이트웨이 사장과 다른 사람의 봇만 있으면 결재·루틴 모두 그 봇으로 나가지 않는다(H1)', async () => {
@@ -767,7 +767,7 @@ test('결재 확정 인가(C1): 타인 봇 소유자의 콜백은 거절(문구+
     let it = (await loadApprovals(WS)).find((x) => x.id === item.id);
     assert.equal(it.status, 'pending', '타인 확정은 상태를 바꾸지 못한다 — V1 변이(인가 무력화)가 red가 되는 게이트');
     const ack = calls.find((c) => c.url.includes('answerCallbackQuery'));
-    assert.match(String(ack?.body?.text ?? ''), /사장만 확정/, '무음 스피너가 아니라 정직 거절 문구');
+    assert.match(String(ack?.body?.text ?? ''), /사용자만 확정/, '무음 스피너가 아니라 정직 거절 문구');
     // 대조군 — 회사 사장(1) 본인이 게이트웨이 카드에서 확정하면 승인된다(오차단 아님 + return false 상수 변이도 red)
     await _approvalCallbackForTest(WS, 'gw-tok-c1', { id: 'cb2', data: `ap:${item.id}:1`, from: { id: 1 }, message: { chat: { id: 100 }, message_id: 10 } }, { chatId: '100', ownerId: 1 });
     it = (await loadApprovals(WS)).find((x) => x.id === item.id);
@@ -842,5 +842,5 @@ test('직통 봇 폴러: 타인 봇 소유자의 텍스트 결재는 거절된�
   } finally { stop(); globalThis.fetch = origFetch; }
   assert.equal((await loadApprovals(WS)).find((a) => a.id === item.id).status, 'pending', '타인 텍스트 결재는 확정되지 않는다(matrix4-A 원 재현의 게이트)');
   const replyMsg = calls.find((c) => c.url.includes('/botbot-tok-td/sendMessage'));
-  assert.match(String(replyMsg?.body?.text ?? ''), /사장만 확정/, '무음이 아니라 정직 거절 회신');
+  assert.match(String(replyMsg?.body?.text ?? ''), /사용자만 확정/, '무음이 아니라 정직 거절 회신');
 });

@@ -70,7 +70,7 @@ const JSON_LD = {
     'Built-in LLM wiki — related work links itself, so knowledge compounds over time',
     'Do it twice and it becomes a skill — repeated work turns into reusable skills automatically',
     'Zero tokens while idle — pay for work, not waiting',
-    'Specialist AI crew from a single prompt',
+    'Specialist AI agents from a single prompt',
   ],
   offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
   publisher: { '@type': 'Organization', name: 'Argo', url: 'https://argo.ceo' },

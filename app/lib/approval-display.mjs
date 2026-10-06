@@ -10,3 +10,10 @@
 export function approvalExpandDefault(a) {
   return a?.risk === 'high';
 }
+
+/** 이 화면(소유자)이 승인·거절할 수 있는 결재인가 — 메신저가 결재권 판정 RPC로 "소유자는 확정 불가"(조직 관리자가 정하는 고위험)라고
+    적은 결재(msgr.ownerMayDecide===false)는 버튼 대신 "조직 관리자가 결정합니다"를 보인다. 서버 src/approvals.mjs resolveApproval이
+    메신저 밖 창구에서 같은 결재를 항상 거절하는 규칙과 같다(F8, 2026-10-05 — 누르면 '조직 정책' 오류만 나던 버튼). */
+export function approvalOwnerMayDecide(a) {
+  return a?.msgr?.ownerMayDecide !== false;
+}

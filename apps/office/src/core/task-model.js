@@ -39,3 +39,6 @@ export function groupTasks(rows, today, me) {
   g.done.sort((a, b) => Date.parse(b.done_at) - Date.parse(a.done_at));
   return g;
 }
+
+/** 할 일 화면의 읽기 상태(OFC-04) — st = 할 일 저장소의 그 공간(core/tasks.js useTasks). 받기 전 = 불러오는 중, 받아 둔 것 없이 실패 = 오류(사전 키), 받아 둔 목록이 있으면 그 목록 */
+export const taskLoad = (st, retry) => ({ waiting: st.rows === undefined && !st.error, failed: !st.rows && st.error ? st.error : null, retry });

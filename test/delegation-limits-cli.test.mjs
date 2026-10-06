@@ -70,10 +70,10 @@ test('codex 크루 다리 턴 — 풀림은 hop 3에서도 동료 안내가 있�
   await chat(WS, 'bee', '이어서', null, { from: 'ay', hop: 3, chain, delegationRelaxed: true, delegationTree: newTree({ kind: 'chat', slug: 'ay' }) });
   assert.match(await prompt(), ROSTER_OFF);
   await chat(WS, 'bee', '이어서', null, { from: 'ay', hop: 3, chain });
-  assert.doesNotMatch(await prompt(), /동료 크루 — 위임 규칙/);
+  assert.doesNotMatch(await prompt(), /동료 에이전트 — 위임 규칙/);
   await chat(WS, 'bee', '이어서', null, { from: 'ay', hop: 4, chain: [...chain, 'x'], delegationRelaxed: true, delegationTree: newTree({ kind: 'chat', slug: 'ay' }) });
   const last = await prompt();
-  assert.match(last, /허용된 위임 단계\(4단계\)의 끝/); assert.doesNotMatch(last, /동료 크루 — 위임 규칙/);
+  assert.match(last, /허용된 위임 단계\(4단계\)의 끝/); assert.doesNotMatch(last, /동료 에이전트 — 위임 규칙/);
 });
 
 test('codex 턴이 답변에 쪽지 지시 블록을 25개 적어도 — 켜짐 2건, 풀림 10건만 나간다(합계 예산도 차감)', opts, async () => {

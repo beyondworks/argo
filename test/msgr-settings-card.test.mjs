@@ -223,7 +223,7 @@ test('I-3: 채널 개인 크루 정책 — 조회·시트 세그먼트(dm 제외
   assert.match(bridge, /let why = envelope \? 'ok' : await db\.instructCheck\(crew\.id, origin, m\.channel_id\)\.catch\(/, '브리지가 채널을 넣어 사유 RPC를 묻지 않는다');
   assert.match(bridge, /if \(why !== 'ok'\) \{/, '허용 판정 분기');
   assert.match(bridge, /body: denyBody\(why, crew, lang\),/, '거절 안내가 denyBody 문구 표를 거치지 않는다');
-  assert.match(bridge, /if \(why === 'channel_policy'\) return pick\(`이 채널은 회사 크루만 일할 수 있습니다\(채널 정책\)/, '채널 사유 안내'); // 문구가 실제로 나가는지는 행동으로 — test/msgr-bridge.test.mjs '봉투 거부 사유 네 갈래'
+  assert.match(bridge, /if \(why === 'channel_policy'\) return pick\(`이 채널은 회사 에이전트만 일할 수 있습니다\(채널 정책\)/, '채널 사유 안내'); // 문구가 실제로 나가는지는 행동으로 — test/msgr-bridge.test.mjs '봉투 거부 사유 네 갈래'
   const sql = read('supabase/migrations/20260903120000_msgr.sql');
   assert.match(sql, /when channel is not null and ch\.personal_crews <> 'allowed'\n\s*and not \(o\.service_user_id is not null and c\.owner_user_id = o\.service_user_id and c\.hosting = 'resident'\) then 'channel_policy'/, '서버 채널 정책 판정');
   assert.match(sql, /if not public\.msgr_can_instruct\(new\.crew_id, src\.author_user_id, new\.channel_id\) then/, '답글 게이트가 채널을 안 본다');
@@ -509,7 +509,7 @@ test('J-5 조직 삭제 유예·복구 — 이름 입력 2단계 삭제(네이�
 test('검수 반영(코드) — 삭제 조직 목록 제외, 오류 문구 매핑, 조직 전체 초대는 게스트 제외, 카드 값 개행 세척, 서버 가드', () => {
   const app = read('apps/messenger/src/App.jsx');
   assert.match(app, /rows\.filter\(\(r\) => r\.msgr_orgs && !r\.msgr_orgs\.deleted_at\)/, 'M-3');
-  assert.match(app, /const friendlyErr = \(msg, t\) => \/msgr_session_refreshing\/\.test\(msg\) \? t\('err\.sessionRefreshing'\) : [^\n]*?\/row-level security\/\.test\(msg\) \? t\('err\.denied'\)/, 'M-5 매핑(D50: 세션 갱신 중이 RLS보다 먼저 — 사이에 더 좁은 매핑(D8 msgr_crew_remove_owner_only)은 들어올 수 있다)');
+  assert.match(read('apps/messenger/src/error-toast.mjs'), /export const friendlyErr = \(msg, t\) => \/msgr_session_refreshing\/\.test\(msg\) \? t\('err\.sessionRefreshing'\) : [^\n]*?\/row-level security\/\.test\(msg\) \? t\('err\.denied'\)/, 'M-5 매핑(D50: 세션 갱신 중이 RLS보다 먼저 — 사이에 더 좁은 매핑(D8 msgr_crew_remove_owner_only)은 들어올 수 있다) — friendlyErr는 error-toast.mjs로 옮겼다(UXM-05)');
   assert.ok((app.match(/onError\(friendlyErr\(res\.error\.message, t\)\)/g) || []).length >= 4, 'M-5 적용 4곳 이상');
   assert.match(app, /const adminInvite = \(\) => \(adminLink \? copyLink\(adminLink\) : makeInvite\('admin'\)\);/, 'L-3 초대는 멤버·관리자 두 버튼(관리자 링크는 있으면 복사, 없으면 만든다 — 5차 피드백 2)');
   assert.match(app, /onClick=\{adminInvite\}/);

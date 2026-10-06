@@ -7,6 +7,7 @@ import { createServerClient } from '@supabase/ssr';
 import { paths, updateCompany } from '../src/workspace.mjs';
 import { loadDeviceSession } from '../src/devicesession.mjs';
 import { AUTH_ON, TENANT, authError, tenantDenied } from './authmsg.mjs';
+import { apiError } from './apimsg.mjs';
 
 // 요청 스코프가 필요 없는 판정·응답 조립(authError·CSRF·테넌트·표시 언어)은 authmsg.mjs로 내렸다 —
 // next/headers 없는 순수 계층이라 node --test로 행동을 잠근다. 라우트의 임포트 표면은 그대로 유지.
@@ -76,8 +77,12 @@ export async function guardCompany(wsId) {
   let meta;
   try {
     meta = JSON.parse(await readFile(paths(wsId).company, 'utf8'));
-  } catch {
-    return authError('company_not_found', lang);
+  } catch (e) {
+    // 없음(ENOENT)·규칙 밖 id만 404 — 손상·권한·잠김·읽기 실패(EACCES·EBUSY·EMFILE·JSON 파싱)까지 404로 돌려주면 화면이 '회사를 찾을 수 없습니다'로 바뀌어
+    // 회사가 사라진 것처럼 보인다. 인증 꺼짐(라우트의 catch)은 이미 이렇게 갈랐는데 이 가드가 그보다 먼저 읽어 인증 켜짐(출하 구성)에서는 효과가 없었다(UH1, F3).
+    if (e?.code === 'ENOENT' || /잘못된 워크스페이스 id|워크스페이스 경계/.test(String(e?.message))) return authError('company_not_found', lang);
+    console.error('[argo] 회사 정보 읽기 실패(가드):', e?.code ?? e?.name ?? '', String(e?.message ?? e).slice(0, 200));
+    return apiError('company_load_failed', lang);
   }
   // 게스트(로컬 전용) — 주인 없는(로컬 생성) 회사만 접근. 계정 귀속 회사는 로그인해야 열린다.
   if (user.id === 'local') {

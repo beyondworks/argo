@@ -54,8 +54,10 @@ async function fetchTasks(space, quiet, again) {
     // 계정이 바뀌었거나(LOW 10), 더 늦게 시작한 읽기가 이미 적용됐거나, 탭 복귀 읽기 사이 쓰기가 시작됐거나 더 새 읽기가 먼저 끝났으면 이 응답은 옛것이다
     if (!keepResponse({ owner, nowOwner: ME.id, quiet, writing, started, newerAt: mine(space)?.at ?? 0, order, appliedOrder: mine(space)?.order ?? 0 })) return;
     set(space, { rows: rows ?? [], people: got ?? prev?.people ?? [], peopleOk: got !== null, loading: false, error: null, at: Date.now(), order });
-  } catch (e) { if (!quiet && owner === ME.id) set(space, { loading: false, error: taskError(e) }); }
+  } catch (e) { if (!quiet && owner === ME.id) set(space, { loading: false, error: readError(e) }); }
 }
+/** 읽기 실패 문구 — 쓰기 실패와 나눈다(OFC-08: 읽기 실패가 '저장하지 못했습니다'로 보였다). 권한·로그인처럼 사유가 있으면 그 사유 */
+export const readError = (e) => { const k = taskError(e); return k === 'task.error.request' ? 'load.readFail' : k; };
 
 /** 쓰는 중인 할 일 쓰기 수 — 탭 복귀 다시 읽기가 쓰는 사이에 끼지 않게(여러 건 쓰기는 views/data.js가 이것으로 감싼다) */
 let writing = 0;
@@ -83,9 +85,10 @@ onTabReturn(() => {
   if (spaces.has('me')) taskOrgKeys(SPACES).forEach((k) => spaces.add(k));
   for (const space of spaces) {
     const s = mine(space), now = Date.now();
-    if (!s?.rows || !refetchDue({ hidden: document.hidden, now, last: Math.max(tried[space] ?? 0, s.at ?? 0), busy: writing > 0 || busy.has(bk(space)) })) continue;
+    // 받아 둔 곳 + 처음 읽기에 실패한 곳(OFC-04: 실패한 화면은 탭에 돌아와도 다시 읽지 않았다 — 실패한 곳은 '불러오는 중'·오류 표시를 고칠 수 있게 조용하지 않게 읽는다)
+    if (!(s?.rows || s?.error) || !refetchDue({ hidden: document.hidden, now, last: Math.max(tried[space] ?? 0, s.at ?? 0), busy: writing > 0 || busy.has(bk(space)) })) continue;
     tried[space] = now;
-    loadTasks(space, true, true);
+    loadTasks(space, true, !!s.rows);
   }
 });
 const useShown = (space, on = true) => useEffect(() => { if (!on) return undefined; shown.set(space, (shown.get(space) ?? 0) + 1); return () => { const n = shown.get(space) - 1; if (n > 0) shown.set(space, n); else shown.delete(space); }; }, [space, on]);

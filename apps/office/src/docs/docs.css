@@ -179,3 +179,5 @@
 .docs-preview.zoomable:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 @media (max-width: 640px) { .doc-zoom-scrim { padding: 0; } .doc-zoom { border-radius: 0; } .doc-zoom-stage { padding: 12px; }
   .doc-zoom .modal-head h2 { order: 1; flex: 1 1 calc(100% - 132px); } .doc-zoom-page { order: 2; } .doc-zoom .modal-head .icon-btn.x { order: 3; } .doc-zoom-bar { order: 4; } .doc-zoom .modal-head > .btn { order: 5; } } /* 폰: 첫 줄 = 제목·쪽·닫기, 둘째 줄 = 돋보기 줄·받기 */
+
+.empty-state .docs-head-actions { justify-content: center; } /* 빈 화면의 새 견적서·새 계약서 단추 사이 간격(OFC-17, row-actions = flex gap) */

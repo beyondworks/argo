@@ -53,6 +53,9 @@ export const scopeKey = (s) => (s?.kind === 'msgr' && s.channelId ? s.channelId 
 export const scopedSession = (t, key) => t?.scopedSessions?.[key] ?? { sessionId: null, sessionDevice: null };
 /** 프롬프트에 붙일 스레드 줄 — 범위 턴은 같은 범위 기록만, 그 밖의 턴은 범위 없는 기록만(채널·그룹·DM 기록이 데스크톱 대화에 섞이지 않게). */
 export const inContextScope = (m, scope) => { const k = scopeKey(scope); return scope ? !!k && scopeKey(m.contextScope) === k : !m.contextScope; }; // 키 없는 범위(여러 공유 목적지 {kind:'shared'})는 아무것도 붙이지 않는다
+/** 스레드 맥락 누적 요약(thread-context.mjs) — 범위 없는 대화는 summary, 키 있는 범위(채널·그룹)는 scopedSummaries[key]. 범위끼리 섞이지 않게 세션과 같은 키를 쓴다.
+    {text, upto} — upto는 요약이 덮는 마지막 메시지 ts(앵커). 앵커가 스레드에 없으면 쓰는 쪽(planContext)이 무효로 본다. 없으면 null. */
+export const threadSummary = (t, scope) => { const s = scope ? (scopeKey(scope) ? t?.scopedSummaries?.[scopeKey(scope)] : null) : t?.summary; return s && typeof s.text === 'string' ? s : null; };
 /** 결재 항목에 실을 범위 — 메신저가 아닌 범위 턴(텔레그램 그룹·슬랙 채널·자동 턴 목적지)에서 올린 결재의 후속이 그 범위로 돈다(approval-actions followUp). 메신저는 msgr 각인이 맡는다. */
 export const approvalScope = (ctx) => { const s = ctx?.kind === 'msgr' ? null : turnScope(ctx); return s ? { scope: s } : {}; };
 
@@ -81,6 +84,20 @@ export async function loadThread(wsId, slug) {
   return t;
 }
 
+/** 누적 요약 저장 — 앵커 메시지가 아직 스레드에 있을 때만(그 사이 새 대화·회수로 사라졌으면 쓰지 않는다). 키 없는 범위는 저장하지 않는다. */
+export async function setThreadSummary(wsId, slug, scope, summary) {
+  const key = scope ? scopeKey(scope) : null;
+  if (scope && !key) return false;
+  return lockThread(wsId, slug, async () => {
+    const t = await loadThread(wsId, slug);
+    if (!t.messages.some((m) => m.ts === summary?.upto)) return false;
+    const val = { text: String(summary.text), upto: summary.upto, at: Date.now() };
+    if (key) t.scopedSummaries = { ...t.scopedSummaries, [key]: val }; else t.summary = val;
+    await writeJsonAtomic(file(wsId, slug), t);
+    return true;
+  });
+}
+
 /** 턴 시작 — 사장의 지시를 **답변을 기다리기 전에** 저장한다.
     예전엔 턴이 끝난 뒤에야 appendTurn으로 한꺼번에 저장했다. 그래서 답변을 만드는 동안에는 사장의 글이
     브라우저 메모리에만 있었고, 페이지를 벗어나거나 새로고침하면 **내가 쓴 글이 사라졌다가 답변이
@@ -103,12 +120,22 @@ export async function beginTurn(wsId, slug, { userMsg, attachments, via, context
   return turnId;
 }
 
-/** 턴 없이 한 줄을 더한다 — 세션 메시지의 보낸 줄·돌아온 답 카드·안내(session-msg.mjs). 줄 모양은 호출부가 정한다(ts는 없으면 지금). */
+/** 턴 없이 한 줄을 더한다 — 세션 메시지의 보낸 줄·돌아온 답 카드·안내(session-msg.mjs). 줄 모양은 호출부가 정한다(ts는 없으면 지금).
+    noticeOf = 진행 중인 턴(turnId)에 딸린 안내(예: 앞 대화 요약 안내, chat.mjs) — 그 지시(와 끼워 넣기·앞 안내) 바로 뒤에 둔다.
+    appendTurn이 같은 표지를 보고 답을 그 뒤에 넣으므로 순서가 지시 → 안내 → 답으로 고정된다. 그 턴 줄이 없으면(메신저 표지 등) 끝에. */
 export async function appendLine(wsId, slug, line) {
   return lockThread(wsId, slug, async () => {
     const t = await loadThread(wsId, slug);
     const m = { ts: Date.now(), ...line };
-    t.messages.push(m);
+    const at = m.noticeOf ? t.messages.findIndex((x) => x.turnId === m.noticeOf) : -1;
+    if (at >= 0) {
+      let end = at;
+      t.messages.forEach((x, i) => { if (i > at && (x.steerOf === m.noticeOf || x.noticeOf === m.noticeOf)) end = i; });
+      t.messages.splice(end + 1, 0, m);
+    } else {
+      delete m.noticeOf;
+      t.messages.push(m);
+    }
     await writeJsonAtomic(file(wsId, slug), t);
     return m;
   });
@@ -136,6 +163,7 @@ async function appendTurnLocked(wsId, slug, { turnId, userMsg, reply, handover, 
       // 이 턴에 끼워 넣은 사장 메시지(addSteer) — 같은 결과로 마무리하고, 답은 그 뒤에 넣는다(질문들 → 답 순서)
       let end = at;
       t.messages.forEach((x, i) => {
+        if (x.noticeOf === turnId) { end = Math.max(end, i); return; } // 이 턴의 안내 줄(appendLine noticeOf) — 답은 그 뒤에
         if (x.steerOf !== turnId) return;
         end = Math.max(end, i); delete x.awaiting;
         if (failed) Object.assign(x, { failed, ...(failedCode ? { failedCode } : {}), ...(failedOrigin ? { failedOrigin } : {}), ...(aborted ? { aborted: true } : {}) });

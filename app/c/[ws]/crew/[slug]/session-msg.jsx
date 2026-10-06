@@ -7,7 +7,7 @@
 //   out    = A 방, 사장이 보낸 줄(사장 말풍선 그대로 — 이 파일은 그리지 않는다)
 //   in     = B 방, 받은 메시지(via:'session' 사용자 줄)
 //   reply  = A 방, B의 답(사장이 보낸 경우 crew 줄 = 답 카드, 크루가 보낸 경우 via:'session' 사용자 줄 = 깨움 알림)
-//   notice = A 방, 상한·기한·재시작·실패 안내(code)
+//   notice = A 방, 상한·기한·재시작·실패 안내(code). code 'summarized' = 앞 대화를 요약해 이어 감(chat.mjs compact_boundary — 세션 메시지가 아닌 같은 모양의 안내 줄)
 import { useEffect, useState } from 'react';
 import { Markdown } from '../../../../ui';
 import { sessionCandidates, mentionToken, sessionBody } from './session-msg-parse.mjs';
@@ -74,7 +74,7 @@ export function SessionMsgCard({ m, t, ws }) {
   if (s.dir === 'notice') {
     return (
       <div className="fade-up" data-session-msg="notice" style={{ alignSelf: 'flex-start', maxWidth: '85%', fontSize: 12, color: 'var(--fg-2)', padding: '6px 12px', borderRadius: 10, background: 'var(--card-2)' }}>
-        {t(`chat.session.notice.${['cap', 'expired', 'restart', 'capReached', 'budget'].includes(s.code) ? s.code : 'failed'}`, { name: s.fromName ?? s.from ?? '', cap: s.cap ?? '' })}
+        {t(`chat.session.notice.${['cap', 'expired', 'restart', 'capReached', 'budget', 'summarized'].includes(s.code) ? s.code : 'failed'}`, { name: s.fromName ?? s.from ?? '', cap: s.cap ?? '' })}
       </div>
     );
   }

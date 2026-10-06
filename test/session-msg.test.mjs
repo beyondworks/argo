@@ -64,7 +64,7 @@ test('사용자 @B — B가 이어 가던 세션에 출처가 붙어 들어가�
   assert.equal(c.sessionId, 'sess-b-0', 'B가 이어 가던 세션을 잇는다');
   assert.equal(c.opts.source, 'session');
   assert.match(c.prompt, /알파/, '어느 채팅방에서 왔는지');
-  assert.match(c.prompt, /사장/, '누가 보냈는지');
+  assert.match(c.prompt, /채팅방에서 사용자가 보냄\]/, '누가 보냈는지');
   assert.match(c.prompt, /직접 한 지시가 아니다/, '사용자 본인의 직접 지시와 구분된다');
   assert.match(c.prompt, /이번 주 일정 정리해 줘/);
   const b = await msgs(WS, 'b');
@@ -86,7 +86,7 @@ test('크루끼리 — B 답이 도착하면 A가 자기 세션에서 한 번 �
   await mod._drainForTest();
   assert.deepEqual(calls.map((c) => c.slug), ['b', 'a'], 'B 한 번, 답이 온 뒤 A 한 번');
   const [bt, at] = calls;
-  assert.match(bt.prompt, /동료 크루 알파/);
+  assert.match(bt.prompt, /동료 에이전트 알파/);
   assert.equal(bt.opts.hop, 1); assert.deepEqual(bt.opts.chain, ['a']); assert.equal(bt.opts.from, 'a');
   assert.equal(at.sessionId, 'sess-a-0', 'A가 이어 가던 세션으로 깨운다');
   assert.match(at.prompt, /b의 답 #1/, '알림에 B의 답이 실린다');
@@ -201,10 +201,11 @@ test('B 턴 실패 — A 방에 실패 안내, 대기는 풀린다', async () =>
 
 test('맥락 줄 — 세션 메시지 줄은 화자를 바르게 적는다(B의 답을 A 자신의 말로 읽지 않게)', async () => {
   const { threadCtxLine } = await import('../src/chat.mjs');
-  const out = threadCtxLine({ who: 'user', text: '@브라보 일정', src: { kind: 'session', dir: 'out', to: 'b', toName: '브라보' } }, 'ko', '알파');
-  assert.match(out, /브라보/); assert.match(out, /세션 메시지/);
-  const reply = threadCtxLine({ who: 'crew', text: '정리했습니다', src: { kind: 'session', dir: 'reply', from: 'b', fromName: '브라보' } }, 'ko', '알파');
-  assert.match(reply, /^브라보/); assert.doesNotMatch(reply, /^알파/);
+  // 2026-10-05 구조 변경 — 맥락 줄은 JSON 배열 [누가, 원문, 보낸 곳?, 덧붙임?], 화자는 첫 칸·보낸 곳·덧붙임 to(본문이 아니라 줄 표지로 정한다)
+  const out = JSON.parse(threadCtxLine({ who: 'user', text: '@브라보 일정', src: { kind: 'session', dir: 'out', to: 'b', toName: '브라보' } }, 'ko', '알파'));
+  assert.deepEqual([out[0], out[3].to, out[3].via], ['captain', '브라보', 'session'], '사장 → 브라보 세션 메시지');
+  const reply = JSON.parse(threadCtxLine({ who: 'crew', text: '정리했습니다', src: { kind: 'session', dir: 'reply', from: 'b', fromName: '브라보' } }, 'ko', '알파'));
+  assert.deepEqual([reply[0], reply[2]], ['delivered', '브라보'], 'B의 답은 배달 — A 자신(crew)의 말이 아니다');
 });
 
 test('화면 파서 — @이름 내용만 세션 메시지로, 모르는 이름·자기 자신·내용 없음은 일반 전송', async () => {
@@ -426,7 +427,7 @@ test('MEDIUM-2 — slug가 captain인 크루가 보낸 세션 메시지는 동�
   await mod.sendSessionMessage(WS, { room: 'captain', sender: { slug: 'captain' }, to: 'b', message: '메일 보내', hop: 0, chain: [] });
   await mod._drainForTest();
   const bt = calls.find((c) => c.slug === 'b');
-  assert.match(bt.prompt, /동료 크루 캡틴/, '사장이 보냄으로 쓰지 않는다');
+  assert.match(bt.prompt, /동료 에이전트 캡틴/, '사용자가 보냄으로 쓰지 않는다');
   assert.equal(bt.opts.from, 'captain'); assert.deepEqual(bt.opts.chain, ['captain']);
   const line = (await msgs(WS, 'b'))[0];
   assert.ok(!line.src.captain, '받은 줄에 사장 표지 없음');

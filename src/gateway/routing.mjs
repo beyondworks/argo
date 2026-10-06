@@ -37,7 +37,7 @@ export function resolveTelegramDest(t, type, primarySlug, agents = [], { widen =
 export async function routeMessage(wsId, cfg, text) {
   const agents = await listAgents(wsId);
   const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
-  if (!agents.length) return { error: pick('아직 크루가 없습니다. Argo 데크에서 먼저 영입해 주세요.', 'No crew yet. Hire your first crew from the Argo deck.', lang) };
+  if (!agents.length) return { error: pick('아직 에이전트가 없습니다. Argo 데크에서 먼저 영입해 주세요.', 'No agents yet. Hire your first agent from the Argo deck.', lang) };
   let body = text.trim();
   // 그룹방에서 봇 멘션(@봇이름)으로 시작하면 벗겨낸다 — 그 뒤의 @크루 멘션이 라우팅 대상
   if (cfg.botUsername) body = body.replace(new RegExp(`^@?${cfg.botUsername.replace(/^@/, '')}\\s+`, 'i'), '');
@@ -54,8 +54,8 @@ export async function routeMessage(wsId, cfg, text) {
   if (!mentions.length && /^@\S+\s+\S/.test(body)) {
     const bad = body.match(/^@(\S+)/)[1];
     return { error: pick(
-      `"${bad}" 크루를 못 찾았습니다. 크루: ${agents.map((a) => a.name).join(', ')} — "크루"라고 보내면 현황을 보여드립니다.`,
-      `Couldn't find crew "${bad}". Crew: ${agents.map((a) => a.name).join(', ')} — send "crew" to see the roster.`,
+      `"${bad}" 에이전트를 못 찾았습니다. 에이전트: ${agents.map((a) => a.name).join(', ')} — "에이전트"라고 보내면 현황을 보여드립니다.`,
+      `Couldn't find agent "${bad}". Agents: ${agents.map((a) => a.name).join(', ')} — send "agents" to see the roster.`,
       lang,
     ) };
   }
@@ -67,15 +67,15 @@ export async function routeMessage(wsId, cfg, text) {
 export async function crewStatusReply(wsId, cfg) {
   const agents = await listAgents(wsId);
   const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
-  if (!agents.length) return pick('아직 크루가 없습니다. Argo 데크에서 먼저 영입해 주세요.', 'No crew yet. Hire your first crew from the Argo deck.', lang);
+  if (!agents.length) return pick('아직 에이전트가 없습니다. Argo 데크에서 먼저 영입해 주세요.', 'No agents yet. Hire your first agent from the Argo deck.', lang);
   const def = defaultCrew(agents, cfg);
   return [
-    pick(`**연결된 크루 ${agents.length}명**`, `**${agents.length} crew connected**`, lang),
+    pick(`**연결된 에이전트 ${agents.length}명**`, `**Connected agents: ${agents.length}**`, lang),
     ...agents.map((a) => `• ${a.name} (@${a.slug})${a.role ? ` — ${a.role}` : ''}${a.runner ? ` · ${a.runner}` : ''}${a.slug === def?.slug ? pick(' · 기본', ' · default', lang) : ''}`),
     '',
     pick(
-      '"@이름 지시"로 특정 크루를 부르고, "@이름1 @이름2 지시"처럼 여러 명을 적으면 첫 번째가 실행하고 나머지에게 맥락이 공유됩니다(cc).',
-      'Address a specific crew with "@name instruction". List several like "@name1 @name2 instruction" and the first one acts while the rest receive the shared context (cc).',
+      '"@이름 지시"로 특정 에이전트를 부르고, "@이름1 @이름2 지시"처럼 여러 명을 적으면 첫 번째가 실행하고 나머지에게 맥락이 공유됩니다(cc).',
+      'Address a specific agent with "@name instruction". List several like "@name1 @name2 instruction" and the first one acts while the rest receive the shared context (cc).',
       lang,
     ),
   ].join('\n');
