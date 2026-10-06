@@ -51,3 +51,10 @@ test('i18n: 비활성 삭제 안내 문구 ko/en', async () => {
   assert.equal(t('dm.delete.groupOnly', 'ko'), '삭제는 방장·관리자만 — 나가기를 쓰세요');
   assert.equal(t('dm.delete.groupOnly', 'en'), 'Only the creator or an admin can delete — use Leave');
 });
+
+test('App.jsx — 사람 내보내기는 공개·비공개 모두 excludeMember, 내보낸 사람 목록도 비공개 채널에 보인다', async () => {
+  const src = await readFile(new URL('../src/App.jsx', import.meta.url), 'utf8');
+  assert.match(src, /const kick = \(kind, id\) => \(channel\.kind === 'public' \|\| \(kind === 'user' && kickExcludes\(channel\)\) \? excludeMember\(kind, id\) : removeMember\(kind, id\)\);/);
+  assert.match(src, /\{kickExcludes\(channel\) && canEdit && \(excludedUsers\.length > 0/);
+  assert.doesNotMatch(src, /kickAsk|liveInvitesHere/, '링크 취소 확인 흐름은 없어졌다');
+});

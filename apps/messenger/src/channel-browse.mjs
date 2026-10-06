@@ -20,6 +20,9 @@ export const searchChannelsByName = (channels, previewChannels, needle) => {
 // 공개 채널에 사람으로 참여할 수 있는 조직 역할 — 서버 msgr_can_read_channel·msgr_channel_member_ok(20261006160000)와 같은 목록. 게스트는 초대받은 비공개 채널만.
 const PUBLIC_ROLES = ['owner', 'admin', 'member'];
 
-/** 채널 설정의 '사람 추가' 후보인가 — 공개 채널은 제외 목록에 든 사람과 게스트를 빼고(서버가 거절한다), 비공개·개인 방은 그대로. */
+/** 내보내기가 제외 목록에 올리는 채널인가 — 공개·비공개 채널(유건 결정 2026-10-06, 서버 msgr_channel_kick_excludes). 대화방(dm)은 내보내기가 없다. */
+export const kickExcludes = (channel) => channel?.kind === 'public' || channel?.kind === 'private';
+
+/** 채널 설정의 '사람 추가' 후보인가 — 공개·비공개 채널은 제외 목록에 든 사람을 빼고(되돌리기는 '내보낸 사람' 목록에서), 공개 채널은 게스트도 뺀다(서버가 거절한다). */
 export const addableToChannel = (channel, member, excludedUsers = []) =>
-  channel?.kind !== 'public' || (!excludedUsers.includes(member.user_id) && PUBLIC_ROLES.includes(member.role));
+  !(kickExcludes(channel) && excludedUsers.includes(member.user_id)) && (channel?.kind !== 'public' || PUBLIC_ROLES.includes(member.role));
