@@ -186,6 +186,32 @@ function observe(tag) {
   const r2 = recipients(qm);
   o.pushPubUnjoinedMember = r2.includes(U.d); o.pushPubGuest = r2.includes(U.g); o.pushPubOutsider = r2.includes(U.x);
   o.pushPubParticipantA = r2.includes(U.a);
+  // 1-c 강등: 공개 채널 참여 중인 멤버 e를 게스트로 강등(앱 역할 변경과 같은 행 변경 — 시드는 슈퍼유저) → 참여 행은 남는다
+  sql(`update public.msgr_org_members set role = 'guest' where org_id = '${ORG}' and user_id = '${U.e}'`);
+  o.demotedRowKept = memberRow(s.PUB, U.e) === '1';
+  o.demotedReadsPub = canRead(U.e, s.PUB);
+  o.demotedWritesPub = ok(insertMsg(U.e, s.PUB));
+  o.demotedSeesChannelRow = asUser(U.e, `select count(*) from public.msgr_channels where id = '${s.PUB}'`) === '1';
+  const dmid = last(asUser(U.b, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, body, mentions, client_msg_id) values ('${s.PUB}', 'user', '${U.b}', '강등 뒤', '[{"kind":"user","id":"${U.e}"}]'::jsonb, gen_random_uuid()::text) returning id`));
+  o.pushDemoted = recipients(dmid).includes(U.e);
+  o.demotedPrivRead = canRead(U.e, s.PRIV_G); // 정상: 게스트도 참여한 비공개 채널은 읽는다
+  sql(`update public.msgr_org_members set role = 'member' where org_id = '${ORG}' and user_id = '${U.e}'`);
+  // 2 재사용 멤버 초대: c를 PUB2에서 내보낸 뒤(앱 excludeMember와 같이 제외 목록 + 참여 행 삭제) PUB2를 담은 멤버 초대를 수락
+  const inv = last(asUser(U.a, `insert into public.msgr_invites (org_id, role, created_by, channel_ids) values ('${ORG}', 'member', '${U.a}', array['${s.PUB2}']::uuid[]) returning code`));
+  sql(`update public.msgr_channels set excluded_user_ids = array['${U.c}']::uuid[] where id = '${s.PUB2}'`);
+  sql(`delete from public.msgr_channel_members where channel_id = '${s.PUB2}' and member_kind = 'user' and member_id = '${U.c}'`);
+  asUser(U.c, `select public.msgr_accept_invite('${inv}')`);
+  o.excludedInviteRejoins = memberRow(s.PUB2, U.c) === '1';
+  asUser(U.d, `select public.msgr_accept_invite('${inv}')`);
+  o.memberInviteJoinsPub = memberRow(s.PUB2, U.d) === '1'; // 정상: 제외되지 않은 멤버는 같은 초대로 공개 채널에 들어간다
+  // 3 에이전트 명의 전달 표지: a가 자기 에이전트로 PUB에 meta.relay 글
+  const crew = last(asUser(U.a, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name) values ('${ORG}', '${U.a}', 'ws-${tag}', 'rl-${tag}', '전달') returning id`));
+  asUser(U.a, `insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${s.PUB}', 'crew', '${crew}', '${U.a}')`);
+  const root = last(asUser(U.a, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, body, mentions, client_msg_id) values ('${s.PUB}', 'user', '${U.a}', '부탁', '[{"kind":"crew","id":"${crew}"}]'::jsonb, gen_random_uuid()::text) returning id`));
+  const crewMsg = (meta) => asUserRaw(U.a, `insert into public.msgr_messages (channel_id, author_kind, crew_id, kind, body, reply_to, thread_root, client_msg_id, meta) values ('${s.PUB}', 'crew', '${crew}', 'text', '답', ${root}, ${root}, gen_random_uuid()::text, '${meta}'::jsonb)`);
+  o.crewRelay = ok(crewMsg('{"relay":{"via_name":"가짜"}}'));
+  o.crewRelayTo = ok(crewMsg('{"relay_to":["x"]}'));
+  o.crewPlainMeta = ok(crewMsg('{"hop":1,"origin":"msgr"}')); // 정상: 게이트웨이가 쓰는 meta
   return { s, o };
 }
 
@@ -198,6 +224,9 @@ test('수정 전: 네 결함이 재현된다(빨강) — 정상 경로는 동작
   assert.equal(o.guestJoin && o.guestRowInPub, true, '1 재현: 게스트가 공개 채널에 참여');
   assert.equal(o.guestWritesPub && o.guestReadsPub, true, '1 재현: 참여한 게스트가 공개 채널을 읽고 쓴다');
   assert.equal(o.adminAddsGuestToPub, true, '1-b 재현: 방장·조직 관리자가 게스트를 공개 채널 참여 행으로 넣는다');
+  assert.equal(o.demotedReadsPub && o.demotedWritesPub && o.demotedSeesChannelRow && o.pushDemoted, true, '1-c 재현: 게스트로 강등된 참여자가 공개 채널을 읽고·쓰고·채널 행을 보고·푸시를 받는다');
+  assert.equal(o.excludedInviteRejoins, true, '2-c 재현: 내보낸 사람이 재사용 멤버 초대로 공개 채널에 다시 들어온다');
+  assert.equal(o.crewRelay && o.crewRelayTo, true, '3-c 재현: 사람 세션이 자기 에이전트 명의로 전달 표지를 넣는다');
   // 2
   assert.equal(o.leftCreatorManage && o.leftCreatorHost, true, '2 재현: 나간 생성자가 관리자·방장');
   assert.equal(o.leftCreatorReaddsOther && o.leftCreatorReaddsSelf, true, '2 재현: 나간 생성자가 남·자기를 다시 넣는다');
@@ -230,6 +259,36 @@ test('1. 게스트는 공개 채널을 찾아보거나 들어가지 못한다 �
   for (const k of ['memberBrowseSeesPub2', 'memberJoin', 'guestPrivRead', 'guestPrivWrite', 'guestJoinPrivRefused', 'adminAddsMemberToPub', 'guestInvitePublicRefused']) {
     assert.equal(o[k], true, `정상 경로 ${k} (수정 뒤)`); assert.equal(PRE.o[k], true, `정상 경로 ${k} (수정 전)`);
   }
+});
+
+test('1-c. 공개 채널 참여 행을 가진 게스트(강등·수정 전에 들어간 행)는 읽기·쓰기·채널 행·푸시가 막힌다 — 행은 지우지 않는다', { skip }, () => {
+  const o = POST.o;
+  assert.equal(o.demotedRowKept, true, '강등해도 참여 행은 남아 있다(이 판정이 행에 기대지 않음을 보이는 전제)');
+  assert.equal(o.demotedReadsPub, false, '강등된 게스트 읽기');
+  assert.equal(o.demotedWritesPub, false, '강등된 게스트 쓰기');
+  assert.equal(o.demotedSeesChannelRow, false, '강등된 게스트에게 채널 행(msgr_channels_select)');
+  assert.equal(o.pushDemoted, false, '강등된 게스트 멘션 푸시');
+  assert.equal(o.demotedPrivRead, true, '정상: 참여한 비공개 채널은 게스트도 읽는다(수정 뒤)'); assert.equal(PRE.o.demotedPrivRead, true);
+  // 수정 전에 게스트가 msgr_join_channel로 만든 행(PRE 단계 PUB) — 마이그레이션은 데이터를 지우지 않는다
+  const pub = PRE.s.PUB;
+  assert.equal(memberRow(pub, U.g), '1', '수정 전에 생긴 게스트 참여 행이 그대로 있다(삭제 없음)');
+  assert.equal(canRead(U.g, pub), false, '그 게스트는 읽지 못한다');
+  assert.equal(ok(insertMsg(U.g, pub)), false, '그 게스트는 쓰지 못한다');
+  assert.equal(asUser(U.g, `select count(*) from public.msgr_channels where id = '${pub}'`), '0', '채널 행도 보이지 않는다');
+  assert.equal(asUser(U.g, `select count(*) from public.msgr_messages where channel_id = '${pub}'`), '0', '글도 보이지 않는다');
+  const mid = last(asUser(U.b, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, body, mentions, client_msg_id) values ('${pub}', 'user', '${U.b}', '옛 행', '[{"kind":"user","id":"${U.g}"}]'::jsonb, gen_random_uuid()::text) returning id`));
+  assert.ok(!recipients(mid).includes(U.g), '참여자이자 멘션 대상이어도 푸시가 가지 않는다');
+});
+
+test('2-c. 채널에서 내보낸 사람은 재사용 멤버 초대로 공개 채널에 다시 들어오지 못한다 — 다른 멤버는 같은 초대로 들어간다', { skip }, () => {
+  assert.equal(POST.o.excludedInviteRejoins, false);
+  assert.equal(POST.o.memberInviteJoinsPub, true, '수정 뒤'); assert.equal(PRE.o.memberInviteJoinsPub, true, '수정 전');
+});
+
+test('3-c. 사람 세션은 자기 에이전트 명의로도 전달 표지를 넣지 못한다 — 게이트웨이식 meta는 그대로', { skip }, () => {
+  assert.equal(POST.o.crewRelay, false, 'meta.relay');
+  assert.equal(POST.o.crewRelayTo, false, 'meta.relay_to');
+  assert.equal(POST.o.crewPlainMeta, true, '수정 뒤 hop·origin'); assert.equal(PRE.o.crewPlainMeta, true, '수정 전 hop·origin');
 });
 
 test('2. 나간 생성자·채널 관리자는 관리·재입장을 못 한다 — 참여 중인 방장·조직 관리자는 그대로', { skip }, () => {

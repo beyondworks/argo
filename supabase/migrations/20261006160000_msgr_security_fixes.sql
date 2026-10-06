@@ -58,6 +58,29 @@ create or replace function public.msgr_channel_member_ok(ch uuid, kind text, mid
       else false end
 $$;
 
+-- 1-c. 이미 공개 채널 참여 행을 가진 게스트(수정 전에 들어간 행, 멤버를 게스트로 강등한 경우 — 앱 역할 변경)도 읽고 쓰지 못하게 —
+--   열람 판정의 참여 행 갈래가 공개 채널에서 역할을 보지 않았다. 행은 지우지 않는다(데이터 보존 — 정리는 따로 승인).
+--   쓰기 판정 msgr_can_write_channel은 이 함수를 그대로 부르므로 함께 닫힌다(첨부 버킷 정책도 이 두 함수를 쓴다).
+-- 정의 출처: msgr_can_read_channel = 20260916150000_msgr_personal_dm.sql(마지막), msgr_channels_select = 같은 파일의 정책(마지막) — 참여 갈래에 조건 한 줄만.
+-- 부하: 공개 채널 참여 행 갈래에서만 msgr_role 1회(조직 멤버 기본 키 조회). 비공개·1:1은 조건이 먼저 참이라 추가 조회 없음.
+create or replace function public.msgr_can_read_channel(ch uuid) returns boolean
+  language sql stable security definer set search_path = public, pg_temp as $$
+    select exists (
+      select 1 from public.msgr_channels c
+       where c.id = ch and (
+         (c.kind = 'public' and c.org_id is not null and public.msgr_role(c.org_id) in ('owner', 'admin', 'member') and not (auth.uid() = any (c.excluded_user_ids)))
+         or exists (select 1 from public.msgr_channel_members m
+                     where m.channel_id = c.id and m.member_kind = 'user' and m.member_id = auth.uid()
+                       and (c.org_id is null or public.msgr_is_member(c.org_id))
+                       and (c.kind <> 'public' or public.msgr_role(c.org_id) in ('owner', 'admin', 'member'))) -- 공개 채널은 참여 행이 있어도 게스트 제외
+       )
+    )
+$$;
+alter policy msgr_channels_select on public.msgr_channels
+  using (((kind = 'public'::text) and (org_id is not null) and (msgr_role(org_id) = any (array['owner'::text, 'admin'::text, 'member'::text])) and (not ((select auth.uid() as uid) = any (excluded_user_ids))))
+    or (msgr_is_channel_user(id) and ((org_id is null) or msgr_is_member(org_id))
+        and ((kind <> 'public'::text) or (msgr_role(org_id) = any (array['owner'::text, 'admin'::text, 'member'::text])))));
+
 -- ── 2. 채널을 나간 생성자·채널 관리자는 그 채널을 관리하지 못한다 ────────────────────────────
 -- 원인: created_by·admin_user_ids만 보고 지금 참여 중인지 보지 않았다. 참여 행 insert 정책이 이 판정을 써서
 --   나간 사람이 자기·남을 다시 넣었다(비공개 채널 재입장). 조직 관리자 갈래와 1:1(dm) 갈래는 그대로다.
@@ -88,10 +111,12 @@ $$;
 --   초대를 만든 사람이 created_by·admin_user_ids에 있는지만 봤다 → 방장이 나가기 전에 만든 초대로 본인·남이 그 비공개 채널에 다시 들어왔다.
 --   만든 사람이 지금 그 채널에 참여 중일 때만 연다(조직 관리자 갈래는 그대로). 공개 채널 갈래는 게스트 초대를 뺀다
 --   (게스트 초대는 만들 때 비공개 채널 하나만 받지만 — msgr_invite_prepare·msgr_invites_insert — 수락 시점 판정도 같은 규칙으로).
+--   채널 제외 목록(excluded_user_ids)에 든 수락자는 공개·비공개 모두 건너뛴다 — 재사용 멤버 초대로 내보낸 공개 채널에 다시 들어왔다(검수 #846).
 -- 정의 출처: 20260918200000_msgr_invite_channels.sql(유일한 정의). 소비자: msgr_invite_redeem(수락), msgr_invite_preview(미리보기 목록) — 둘 다 같은 판정을 따른다.
 create or replace function public.msgr_invite_channel_ok(inv public.msgr_invites, ch uuid) returns boolean
   language sql stable security definer set search_path = public, pg_temp as $$
     select exists (select 1 from public.msgr_channels c where c.id = ch and c.org_id = inv.org_id and c.archived_at is null and c.kind in ('public', 'private')
+                     and not coalesce(auth.uid() = any (c.excluded_user_ids), false) -- 채널에서 내보낸(제외한) 사람은 초대로도 다시 들어오지 않는다(수락자 = auth.uid())
                      and ((c.kind = 'public' and inv.role <> 'guest')
                           or ((c.created_by = inv.created_by or inv.created_by = any (c.admin_user_ids))
                               and exists (select 1 from public.msgr_channel_members cm where cm.channel_id = c.id and cm.member_kind = 'user' and cm.member_id = inv.created_by))
@@ -106,7 +131,8 @@ $$;
 -- 서버가 쓰는 사람 명의 system 글(msgr_dm_relay 전달 안내·한도 안내)과 전달 글(meta.relay)은 security definer 함수가 테이블 소유자로 넣어
 --   RLS를 거치지 않는다(로컬 실측: msgr_messages에 insert하는 public 함수 15개 전부 prosecdef=t·소유자 postgres, relforcerowsecurity=f).
 --   그래서 트리거가 아니라 정책에서 막는다 — 서버 경로·서비스 롤·에이전트(author_kind='crew') 글은 바뀌지 않는다.
--- 정책 출처: 20260930210000_msgr_personal_crews.sql의 alter policy(마지막) — 식은 그대로, 사람 갈래에 조건 둘만 더한다.
+-- 정책 출처: 20260930210000_msgr_personal_crews.sql의 alter policy(마지막) — 식은 그대로, 사람 갈래에 kind·relay 조건, 에이전트 갈래에 relay 조건만 더한다.
+--   에이전트(crew) 명의 system·approval_card 글과 신고 제외(author_kind<>'user')는 이번에 바꾸지 않는다(제품 결정 대기).
 -- 1:1(dm) 방은 b_msgr_dm_message_guard(BEFORE INSERT)가 relay·relay_to·relay_capped를 먼저 지운다 — WITH CHECK는 BEFORE 트리거 뒤에 보므로 그 경로는 그대로 통과한다.
 -- 부하: 사람 글 insert마다 meta 키 검사 1회(메모리 안 계산, 쿼리 없음).
 alter policy msgr_messages_insert on public.msgr_messages
@@ -115,7 +141,9 @@ alter policy msgr_messages_insert on public.msgr_messages
       and not (coalesce(meta, '{}'::jsonb) ?| array['relay', 'relay_to', 'relay_capped', 'relay_cycle', 'relay_chain_id']))
     or ((author_kind = 'crew'::text) and (exists (select 1 from msgr_crews c
       where c.id = msgr_messages.crew_id and c.owner_user_id = (select auth.uid()) and c.status = 'active'::text
-        and c.org_id is not distinct from (select ch.org_id from msgr_channels ch where ch.id = msgr_messages.channel_id))))));
+        and c.org_id is not distinct from (select ch.org_id from msgr_channels ch where ch.id = msgr_messages.channel_id)))
+      -- 사람 세션이 자기 에이전트 명의로도 전달 표지를 넣지 못한다(검수 #846). 게이트웨이의 crew 글 meta는 hop·origin·guest·office·disposition·link_preview뿐
+      and not (coalesce(meta, '{}'::jsonb) ?| array['relay', 'relay_to', 'relay_capped', 'relay_cycle', 'relay_chain_id']))));
 
 -- 3-b. 같은 결과의 다른 길 — 고치기(update). kind는 msgr_lock_messages가 이미 잠근다(msgr_immutable_kind). meta는 작성자가 고칠 수 있어
 --   보통 글에 전달 표지(meta.relay — 봇 getUpdates의 relayed_by, 앱의 전달 표시)를 나중에 붙일 수 있었다. 1:1(dm)은 msgr_dm_routing_immutable이 meta 변경을
@@ -193,6 +221,7 @@ language sql stable set search_path = public, pg_temp as $$
              and (c.org_id is null
                   or exists (select 1 from public.msgr_org_members om join public.msgr_orgs o on o.id = om.org_id and o.deleted_at is null
                               where om.org_id = c.org_id and om.user_id = s.u and om.removed_at is null
-                                and (om.expires_at is null or om.expires_at > now()))))
+                                and (om.expires_at is null or om.expires_at > now())
+                                and (c.kind <> 'public' or om.role in ('owner', 'admin', 'member'))))) -- 공개 채널 참여 행만 남은 게스트 제외(1-c)
        ))
 $$;
