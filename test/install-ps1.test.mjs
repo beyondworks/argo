@@ -91,6 +91,7 @@ test('W1·W4 새 설치 → 해시 확인·실행 확인·argo.cmd·PATH 한 번
   const un = spawnSync('cmd.exe', ['/d', '/c', f.shim, 'uninstall'], { env: { ...f.env, TEMP: tempDir, TMP: tempDir }, encoding: 'utf8', timeout: 120_000 });
   const after = { app: existsSync(f.app), shim: existsSync(f.shim), bin: existsSync(f.bin), script: existsSync(join(tempDir, 'argo-uninstall.ps1')), shimText: un.status === 0 ? '' : await readFile(f.shim, 'utf8').catch(() => '(없음)') };
   assert.equal(un.status, 0, `${un.stdout}\n${un.stderr}\n${JSON.stringify(after)}`);
+  assert.doesNotMatch(`${un.stdout}\n${un.stderr}`, /cannot find|찾을 수 없습니다/i, '제거가 끝났는데 cmd가 경로 오류를 보이지 않는다');
   assert.ok(!existsSync(f.app) && !existsSync(f.shim), '프로그램 폴더·argo.cmd 삭제');
   assert.equal(f.pathValue(), '|ExpandString', '우리 PATH 항목만 지운다');
 });
