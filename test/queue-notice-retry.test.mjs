@@ -52,7 +52,10 @@ test('LOW-3: onStalled가 던져도 큐는 계속 돌고 잡은 큐에 남는다
   await quiet(() => until(() => calls >= 5, 30_000));
   stop();
   assert.ok(calls >= 5); assert.equal(hook, 2, '첫 시도는 던졌고 다음 실패에서 한 번 더 — 보낸 뒤에는 부르지 않는다');
-  assert.equal((await readdir(queueDir(WS, 'msgr'))).filter((n) => n.startsWith('103-skew.json')).length, 1);
+  // 멈춘 직후에는 진행 중이던 잡 파일 정리가 끝나지 않았을 수 있다(Windows CI: 2개로 보임) — 정리가 끝난 뒤 하나인지 본다
+  const skew = async () => (await readdir(queueDir(WS, 'msgr'))).filter((n) => n.startsWith('103-skew.json')).length;
+  await settled(async () => (await skew()) === 1);
+  assert.equal(await skew(), 1);
 });
 
 test('LOW-4: 안내가 실패하면(false 반환·던짐) .failed에 noticePending 표지가 남고, 성공하면 남지 않는다', async () => {
