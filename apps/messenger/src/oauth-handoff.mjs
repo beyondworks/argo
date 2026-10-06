@@ -80,3 +80,8 @@ export async function fetchProviderSettings(supabaseUrl, fetchFn = globalThis.fe
 export const providerShown = (enabled, p) => !enabled || enabled[p] !== false;
 /** 서버가 제공자를 하나도 켜지 않았다(검수 #530 H-1: 버튼 0개면 안내와 서버 바꾸기 유도). */
 export const noProviders = (enabled) => !!enabled && PROVIDERS.every((p) => enabled[p] === false);
+
+/** 로그인 방법 확인 실패 문구 키 — Argo 클라우드(직접 연결한 서버가 아님)는 '서버 관리자에게 문의' 대신 문의하기를 안내한다(UXM-23). */
+export function providerErrorKey(error, { custom = false } = {}) {
+  return !custom && (error === 'restricted' || error === 'failed') ? `auth.providers.${error}.cloud` : `auth.providers.${error}`;
+}

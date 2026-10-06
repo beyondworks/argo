@@ -14,7 +14,7 @@ export function crewMcpWorkerPath({ cwd = process.cwd(), argv1 = process.argv[1]
   const candidates = [resolve(cwd, ...rel), argv1 ? resolve(dirname(argv1), ...rel) : null,
     (() => { try { return fileURLToPath(new URL('./crew-mcp-stdio.mjs', import.meta.url)); } catch { return null; } })()];
   const file = candidates.find((p) => p && existsSync(p));
-  if (!file) throw new Error('Crew tool worker is missing from this installation');
+  if (!file) throw new Error('Agent tool worker is missing from this installation');
   return file;
 }
 
@@ -41,14 +41,14 @@ export async function createCrewMcpBridge(specs = []) {
       if (body?.op === 'list') return send(200, list);
       const spec = byName.get(body?.name);
       const input = body?.arguments ?? {};
-      if (body?.op !== 'call' || !spec || !input || typeof input !== 'object' || Array.isArray(input)) return send(400, { error: 'Invalid crew tool' });
+      if (body?.op !== 'call' || !spec || !input || typeof input !== 'object' || Array.isArray(input)) return send(400, { error: 'Invalid agent tool' });
       controller.signal.throwIfAborted();
       const text = String(await spec.run(input) ?? '');
       called.push({ name: body.name, input }); // 턴 뒤 지시 블록이 **같은 대상·내용**을 두 번 하지 않게(cli-directives SAME_AS_TOOL)
       send(200, { content: [{ type: 'text', text }] });
     } catch (e) {
       // run은 입력 검증 실패·처리기 isError를 던진다 — 모델이 고쳐 다시 부를 수 있게 문구를 그대로 돌려준다(네이티브 엔진과 같은 동작)
-      send(200, { isError: true, content: [{ type: 'text', text: controller.signal.aborted ? 'Crew task closed' : String(e?.message || 'Crew tool failed').slice(0, 2000) }] });
+      send(200, { isError: true, content: [{ type: 'text', text: controller.signal.aborted ? 'Agent task closed' : String(e?.message || 'Agent tool failed').slice(0, 2000) }] });
     }
   });
   server.requestTimeout = 0; // 동기 위임은 동료 턴 끝까지 걸린다 — 상한은 자식(30분)이 쥔다

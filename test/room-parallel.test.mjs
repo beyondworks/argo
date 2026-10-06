@@ -145,7 +145,7 @@ test('HIGH-2: 반응 라운드 프롬프트는 인원에서 창을 넓히고 안
   const second = stub.state.calls.filter((c) => /## 지시 — 반응 라운드/.test(c.prompt));
   assert.equal(second.length, 22, '반응 라운드 22명');
   for (const c of second) {
-    assert.match(c.prompt, /사장: @전체 이번 분기 목표를 정하자/, '안건이 반응 라운드 프롬프트에 있다 — 없으면 무엇에 반응하는지 모른다');
+    assert.match(c.prompt, /\n사용자: @전체 이번 분기 목표를 정하자/, '안건이 반응 라운드 프롬프트에 있다 — 없으면 무엇에 반응하는지 모른다');
     for (const n of ['c00', 'c10', 'c21']) assert.ok(c.prompt.includes(`${n} 답변`), `1라운드 발언 전부(누락: ${n})`);
   }
 });

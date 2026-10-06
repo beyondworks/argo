@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { mergeLayout, rowsOf, rowInfo, spanOf, heightOf, spanRange, sizeForSpan, minHeight } from '../src/core/layout.js';
+import { mergeLayout, rowsOf, spanOf, heightOf, spanRange, sizeForSpan, minHeight } from '../src/core/layout.js';
 import { snapH, stepH, applySizes, resetSize, resetPatch } from '../src/core/module-size.js';
 import { normalizeModuleItems } from '../src/core/module-items.js';
 import { normalizeDashboards, defaultDashboard } from '../src/business/dashboard-model.js';
@@ -79,10 +79,9 @@ test('⋯ 크기 되돌리기: 그 모듈의 폭·높이만 끌기 전으로', (
   assert.deepEqual(resetPatch([{ id: 'x', size: 'm' }], 'x', 'span'), {}); // 바꾼 게 없으면 저장하지 않는다
 });
 // 이유: 줄 구성은 CSS 격자 자동 배치와 같은 규칙 — 이제 열 수(span)로 센다. 줄 높이는 그 줄에 정해진 높이 중 가장 큰 값.
-test('줄 나누기·줄 높이: span 기준, 같은 줄은 가장 큰 높이를 같이 쓴다', () => {
+test('줄 나누기: span 기준(옛 배치를 9차 줄로 바꿀 때 쓴다)', () => {
   const items = [{ id: 'a', size: 'm', span: 7 }, { id: 'b', size: 's', span: 5, h: 320 }, { id: 'c', size: 'l', span: 9 }, { id: 'd', size: 's' }, { id: 'e', size: 'm' }];
   assert.deepEqual(rowsOf(items).map((r) => r.map((i) => i.id)), [['a', 'b'], ['c'], ['d', 'e']]);
-  assert.deepEqual([...rowInfo(items, () => ({}))].map(([id, r]) => [id, r.h]), [['a', 320], ['b', 320], ['c', 0], ['d', 0], ['e', 0]]);
 });
 
 // 이유: 홈 배치 병합은 아는 필드만 다시 조립한다 — 새 필드(span·h)를 빠뜨리면 저장한 크기가 새로고침에 사라진다.
@@ -132,13 +131,6 @@ test('모듈 최소 높이: 기본 120, 본문 최소가 있으면 머리 + 본�
 
 // 이유(검수 10/1 2차, 유건 10/1 확정): 줄 첫 모듈의 왼쪽 가장자리는 잡은 선이 손을 따라오지 않는다(반대편이 움직인다) — 그 손잡이는 그리지 않는다(first).
 // 높이 손잡이가 알리는 최소는 그 줄 모듈 최소 중 가장 큰 값 — 줄 높이를 같이 쓰므로 실제로 그 밑으로 줄지 않는다(min).
-test('줄 정보: 줄 높이·줄 최소 높이·줄 첫 모듈', () => {
-  const cal = OFFICE_MODULES.find((m) => m.id === 'calendar');
-  const items = [{ id: 'cal', size: 'm', h: 320 }, { id: 'work', size: 'm' }, { id: 'c', size: 'full' }];
-  const info = rowInfo(items, (item) => (item.id === 'cal' ? cal : {}));
-  assert.deepEqual([...info], [['cal', { h: 320, min: 248, first: true }], ['work', { h: 320, min: 248, first: false }], ['c', { h: 0, min: 120, first: true }]]);
-});
-
 // 이유(유건 10/1 C4 "↑/↓ = 16px", 통합 검수 10/1): 정한 적 없는 줄의 높이는 내용대로(8의 배수가 아님)다. 거기서 바로 16을 더하고 맞추면 418→432(+14)가 됐다.
 // 먼저 눈금(손잡이가 알리는 값 416)에 맞춘 뒤 더해 알리는 값 기준으로 늘 정확히 16씩 움직인다.
 test('키보드 높이: 한 번에 정확히 16px(알리는 값 기준)', () => {
@@ -152,8 +144,3 @@ test('키보드 높이: 한 번에 정확히 16px(알리는 값 기준)', () => 
 });
 
 // 이유(유건 10/1 C4 "aria-valuenow"): 높이 손잡이도 지금 높이를 알린다 — 정한 적 없는 줄은 그릴 때 값이 없어 화면에서 잰다(ResizeObserver).
-test('높이 손잡이: 지금 높이를 알린다, 줄 첫 모듈은 왼쪽 손잡이 없음', () => {
-  const src = readFileSync(new URL('../src/ui/ModuleGrid.jsx', import.meta.url), 'utf8');
-  assert.match(src, /new ResizeObserver[\s\S]{0,160}\.edge-y[\s\S]{0,80}'aria-valuenow'/);
-  assert.match(src, /place\.first && side === 'l'\) return null/);
-});

@@ -69,21 +69,30 @@ test('App.jsx 배선: 개인 공간의 방과 조직의 비공개 방(공개 채
   const { readFileSync } = await import('node:fs');
   const app = readFileSync(new URL('../apps/messenger/src/App.jsx', import.meta.url), 'utf8');
   assert.match(app, /const roomTopic = !!chId && \(isPersonal \|\| \(openKind !== null && openKind !== 'public'\)\);/, '조직 비공개 방도 대상(공개 채널만 제외)');
-  const eff = app.slice(app.indexOf('const lastAtRank ='), app.indexOf('const lastAtRank =') + 3200); // 구독 효과는 lastAt 선언 뒤(최근순 상한 — 검수 #690 M1)
+  const eff = app.slice(app.indexOf('const lastAtRank ='), app.indexOf('const lastAtRank =') + 5200); // 구독 효과는 lastAt 선언 뒤(최근순 상한 — 검수 #690 M1). 끊김·다시 붙음 신호(MSG-03)로 길어졌다
   assert.match(eff, /const roomIdsKey = useMemo\(\(\) => roomTopicIds\(channels, chId, isPersonal, 50, lastAt\)\.join\(','\)/, '구독할 방 = roomTopicIds(열린 방 포함, 상한 50·최근순 — room-topics.test.mjs)');
-  assert.match(eff, /for \(const \[id, c\] of subs\) if \(!want\.has\(id\) \|\| c\.state === 'closed' \|\| supabase\.getChannels\?\.\(\)\.includes\(c\) === false\) \{ supabase\.removeChannel\(c\)/, '빠진 방·밖에서 닫힌 방만 뗀다(차분 — 검수 #690 M1, 재검 MEDIUM)');
-  assert.match(eff, /if \(subs\.has\(id\)\) continue;/, '이미 붙은 방은 다시 붙이지 않는다');
+  assert.match(eff, /for \(const \[id, c\] of subs\) \{ const closed = c\.state === 'closed' \|\| supabase\.getChannels\?\.\(\)\.includes\(c\) === false; if \(\(ready && spaces\.get\(id\) === space && !want\.has\(id\)\) \|\| closed\) \{ supabase\.removeChannel\(c\)/, '빠진 방(지금 공간 목록이 다 온 뒤 그 공간에서 빠진 방)·밖에서 닫힌 방만 뗀다(차분 — 검수 #690 M1, 공간을 오가도 유지 — 기능 점검 D3)');
+  assert.match(eff, /if \(subs\.has\(id\)\) \{ spaces\.set\(id, space\); continue; \}/, '이미 붙은 방은 다시 붙이지 않는다(그 방의 공간만 맞춘다)');
   assert.match(eff, /supabase\.channel\(`dm:\$\{id\}`, \{ config: \{ private: true \} \}\)/);
-  assert.match(eff, /event: 'typing' \}, onTypingEvent\)/, 'dm:의 typing도 답글 직후 늦은 방송 거름망(typing-state.js)을 탄다');
-  assert.match(eff, /event: 'progress' \}, onProgressEvent\)/);
+  assert.match(eff, /event: 'typing' \}, mine\(onTypingEvent\)\)/, 'dm:의 typing도 답글 직후 늦은 방송 거름망(typing-state.js)을 탄다 — 보는 공간의 방만(기능 점검 D3)');
+  assert.match(eff, /event: 'progress' \}, mine\(onProgressEvent\)\)/);
   assert.match(eff, /\}, \[roomIdsKey, isPersonal, resumeEpoch, roomReset\]\);/, '방 집합·모바일 복귀·removeAllChannels 뒤에 다시 맞춘다 — 토큰은 조직 구독의 setAuth가 전달(검수 #690 M2)');
-  assert.match(eff, /await supabase\.realtime\.setAuth\(session\.access_token\);\s*if \(!live\) return;/, '정리가 먼저 끝났으면 채널을 만들지 않는다(고아 dm: 누적 — 검수 #607)');
-  assert.match(eff, /if \(roomEpoch\.current !== resumeEpoch\) \{ for \(const c of subs\.values\(\)\) supabase\.removeChannel\(c\)/, '복귀하면 전부 다시 붙인다');
+  assert.match(eff, /await supabase\.realtime\.setAuth\(\);[^\n]*\n\s*if \(!live\) return;/, '정리가 먼저 끝났으면 채널을 만들지 않는다(고아 dm: 누적 — 검수 #607). 토큰 값을 넘기지 않는다(검수 M2 — 콜백이 갱신된 토큰을 준다)');
+  assert.match(eff, /if \(roomEpoch\.current !== resumeEpoch\) \{ for \(const \[id, c\] of subs\) \{ supabase\.removeChannel\(c\)/, '복귀하면 전부 다시 붙인다(다시 건 방은 첫 SUBSCRIBED에서 따라잡는다 — MSG-03·04)');
   assert.match(eff, /return \(\) => \{ live = false;/, '정리에서 live를 끈다');
-  assert.match(app, /if \(await supabase\.removeChannel\(ch\) !== 'ok'\) \{ await supabase\.removeAllChannels\(\); setRoomReset\(\(x\) => x \+ 1\); \}/, '조직 구독 해제가 실패해 전부 뗐으면 방 구독도 다시 붙인다(검수 #690 재검 MEDIUM)');
-  assert.match(app, /\}, \[uid, orgIdsKey, orgId, session\.access_token, resumeEpoch, roomReset\]\);/, 'u:·다른 조직 구독도 같이 다시 붙인다(재검 #690 2차)');
-  assert.match(eff, /event: 'reaction' \}, \(\{ payload \}\) => setEvent\(broadcastEvent\('reaction'/, 'dm:로 반응을 받는다');
-  assert.match(eff, /event: 'edit' \}, \(\{ payload \}\) => setEvent\(broadcastEvent\('edit'/, 'dm:로 수정을 받는다');
+  assert.match(app, /if \(res\.some\(\(r\) => r !== 'ok'\)\) \{ await supabase\.removeAllChannels\(\); setRoomReset\(\(x\) => x \+ 1\); \}/, '조직 구독 해제가 하나라도 실패해 전부 뗐으면 방 구독도 다시 붙인다(검수 #690 재검 MEDIUM)');
+  { // 구독 키 다음의 효과 하나가 [orgSubKey, hasToken]으로 닫히고 그 효과가 조직·u: 구독을 건다 — 사이에 다른 효과가 끼면(키가 엉뚱한 효과에 붙으면) 실패
+    const s = app.indexOf('const orgSubKey = orgSubscriptionKey({ uid, orgIdsKey, resumeEpoch, roomReset });'); const e = app.indexOf('}, [orgSubKey, hasToken]);', s);
+    assert.ok(s > 0 && e > s, 'u:·조직 구독도 전부 해제 뒤(roomReset) 같이 다시 붙인다(재검 #690 2차) — orgId(탭·고른 조직)·토큰 갱신으로는 다시 걸지 않는다(MSG-01, 키 판정은 apps/messenger/test/realtime-link.test.mjs)');
+    const eff2 = app.slice(s, e);
+    assert.equal((eff2.match(/useEffect\(/g) ?? []).length, 1, '키와 의존성 사이에 효과는 하나');
+    assert.match(eff2, /^const orgSubKey = [^\n]*\n  useEffect\(\(\) => \{\n    if \(!uid \|\| !hasToken \|\| !orgs\) return undefined;/, '키 바로 다음 효과');
+    assert.match(eff2, /supabase\.channel\(`org:\$\{o\.id\}`/, '그 효과가 조직 구독을 건다');
+    assert.match(eff2, /stopU = joinWithBackoff\(supabase, \(\) => supabase\.channel\(`u:\$\{uid\}`/, '그 효과가 u:를 건다');
+    assert.equal(app.split('}, [orgSubKey, hasToken]);').length, 2, '이 의존성 목록은 한 곳');
+  }
+  assert.match(eff, /event: 'reaction' \}, mine\(\(\{ payload \}\) => setEvent\(broadcastEvent\('reaction'/, 'dm:로 반응을 받는다(보는 공간의 방)');
+  assert.match(eff, /event: 'edit' \}, mine\(\(\{ payload \}\) => setEvent\(broadcastEvent\('edit'/, 'dm:로 수정을 받는다(보는 공간의 방)');
   assert.match(app, /broadcast=\{\(ev, payload\) => \(roomTopic \? roomSubs\.current\.get\(chId\) : rt\.current\)\?\.send\(/, '비공개 방의 반응·수정 송신은 dm:로만(org: 폴백 없음)');
 });
 

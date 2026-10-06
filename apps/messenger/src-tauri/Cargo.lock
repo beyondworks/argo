@@ -58,12 +58,13 @@ dependencies = [
 
 [[package]]
 name = "argo-messenger"
-version = "0.1.47"
+version = "0.1.51"
 dependencies = [
  "block2",
  "chrono",
  "futures-util",
  "getrandom 0.2.17",
+ "libc",
  "objc2",
  "objc2-foundation",
  "objc2-user-notifications",
@@ -75,6 +76,9 @@ dependencies = [
  "tauri-plugin-apk-installer",
  "tauri-plugin-deep-link",
  "tauri-plugin-haptics",
+ "tauri-plugin-ios-webview",
+ "tauri-plugin-media-share",
+ "tauri-plugin-notif-tray",
  "tauri-plugin-notification",
  "tauri-plugin-opener",
  "tauri-plugin-process",
@@ -4212,6 +4216,36 @@ dependencies = [
  "tauri",
  "tauri-plugin",
  "thiserror 2.0.20",
+]
+
+[[package]]
+name = "tauri-plugin-ios-webview"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-plugin",
+]
+
+[[package]]
+name = "tauri-plugin-media-share"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-plugin",
+]
+
+[[package]]
+name = "tauri-plugin-notif-tray"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-plugin",
 ]
 
 [[package]]

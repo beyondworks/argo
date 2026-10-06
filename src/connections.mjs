@@ -172,7 +172,7 @@ export async function findTelegramTokenUse(token, { exceptWs = null, exceptSlug 
 
 const tokenInUseMsg = (used) => used.where === 'gateway'
   ? `이 봇 토큰은 이미 회사 텔레그램 연결(설정 화면)에서 사용 중입니다 (회사: ${used.wsId}). 텔레그램 봇 하나는 한 곳에만 연결할 수 있어요 — @BotFather로 전용 봇을 새로 만들거나, 기존 연결을 해제한 뒤 저장하세요.`
-  : `이 봇 토큰은 이미 크루 직통 봇(${used.slug})에서 사용 중입니다 (회사: ${used.wsId}). 텔레그램 봇 하나는 한 곳에만 연결할 수 있어요 — @BotFather로 전용 봇을 새로 만들거나, 그 크루 카드에서 연결을 해제하세요.`;
+  : `이 봇 토큰은 이미 에이전트 직통 봇(${used.slug})에서 사용 중입니다 (회사: ${used.wsId}). 텔레그램 봇 하나는 한 곳에만 연결할 수 있어요 — @BotFather로 전용 봇을 새로 만들거나, 그 에이전트 카드에서 연결을 해제하세요.`;
 
 /** 설정 화면이 고칠 수 있는 필드 — API 라우트의 허용 목록이자 이 모듈의 저장 계약.
     라우트에 인라인으로 두면 한 토큰이 빠져도 아무도 모른다: 화면은 낙관 반영으로 꺼진 것처럼 보이고

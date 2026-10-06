@@ -7,7 +7,9 @@ import { Logo, Icon, Avatar, Spinner, Skeleton, ConfirmModal, api, imeGuard, tim
 import { AiConnectionCard, ACCOUNT_WS, anyRunnerUsable, runnerNeedsReconnect } from './runner-connect';
 import { useLang } from './i18n';
 import { LocalAssetOffer } from './components/LocalAssetImport';
-import { markSplashReady, homeSplashReady } from './splash-continue-core.mjs';
+import { homeListView } from './home-list.mjs';
+import ArchivedCompaniesCard from './archived-companies'; // 보관한 회사 되돌리기 — 회사가 하나뿐이면 설정이 사라지므로 홈에도 입구(UM3)
+import { archivedEntryCount } from './lib/archived-view.mjs';
 
 export default function Home() {
   const { t, lang } = useLang();
@@ -19,6 +21,11 @@ export default function Home() {
   const [creating, setCreating] = useState(false);
   const [importLocalAssets, setImportLocalAssets] = useState(false);
   const [error, setError] = useState('');
+  const [listFailed, setListFailed] = useState(false); // 회사 목록 조회 실패 — 끝없는 해골 대신 오류 + 다시 시도(F13)
+  const [listTry, setListTry] = useState(0);
+  const [archivedCount, setArchivedCount] = useState(0); // 보관한 회사 수 — 1개 이상이면 입구를 보인다(목록을 못 받으면 0 = 입구 없음)
+  const [archivedOpen, setArchivedOpen] = useState(false);
+  const [archivedMsg, setArchivedMsg] = useState(null); // 되돌리기 결과 안내 — 카드(개수 0이면 사라짐·온보딩↔목록에서 자리가 바뀌어 다시 마운트)가 아니라 홈이 들고 있는다(2차 L2)
   const [pairCode, setPairCode] = useState('');
   const [pairState, setPairState] = useState(''); // '' | 'waiting' | 'done'
   const [pairError, setPairError] = useState('');
@@ -43,13 +50,12 @@ export default function Home() {
     // stale 가드 — 마운트 직후 ko→en(저장 언어 복원)으로 연쇄 발화할 때 앞선 ko 응답이 늦게
     // 도착하면 en 화면에 한국어 프리셋이 눌러앉는다(응답 역전). 늦은 응답은 버린다.
     let alive = true;
-    api(`/api/companies?lang=${lang}`).then((d) => { if (!alive) return; setCompanies(d.companies); setPresets(d.presets ?? []); }).catch((e) => { if (alive) setError(String(e.message)); });
+    setListFailed(false);
+    api(`/api/companies?lang=${lang}`).then((d) => { if (!alive) return; setCompanies(d.companies); setPresets(d.presets ?? []); }).catch(() => { if (alive) setListFailed(true); });
     api('/api/me').then((d) => { if (!alive) return; setMe(d); setAuthOn(!!d.authOn); }).catch(() => {});
+    api('/api/archived-companies').then((d) => { if (alive) setArchivedCount(archivedEntryCount(d.items)); }).catch(() => { if (alive) setArchivedCount(0); });
     return () => { alive = false; };
-  }, [lang]);
-
-  // 데스크톱 시작 스플래시(북극성 2단계)는 회사 목록이 오면(또는 실패하면) 닫는다 — 빈 목록 위로 걷히지 않게. 스플래시가 없으면 아무 일도 없다
-  useEffect(() => { if (homeSplashReady(companies, error)) markSplashReady(); }, [companies, error]);
+  }, [lang, listTry]);
 
   // 온보딩 러너 상태 — 카드가 연결/제거 시 쏘는 argo:refresh로 즉시 재판정(연결되면 3단계가 풀린다)
   useEffect(() => {
@@ -132,6 +138,24 @@ export default function Home() {
     } catch (err) { setPairError(String(err.message)); }
   }
 
+  // 보관한 회사 — 목록에서 사라진 회사를 되돌린다. 하나뿐인 회사를 보관하면 그 회사의 설정도 함께 사라지므로 홈에 입구를 둔다(UM3).
+  // 온보딩(회사 0개)에서는 "내 회사" 구역이 러너 카드 아래 첫 화면 밖이라, 회사 이름 입력 바로 아래에 둔다.
+  const archivedEntry = archivedCount > 0 && (
+    <div style={{ marginTop: 14 }}>
+      <button type="button" className="btn sm" onClick={() => setArchivedOpen((v) => !v)} aria-expanded={archivedOpen}>
+        {t('home.archived.entry', { n: archivedCount })}
+      </button>
+      {archivedOpen && (
+        <div style={{ marginTop: 10 }}>
+          <ArchivedCompaniesCard existingIds={new Set((companies ?? []).map((c) => c.id))}
+            onLoaded={(items) => setArchivedCount(archivedEntryCount(items))}
+            onMessage={setArchivedMsg}
+            onRestored={() => setListTry((n) => n + 1)} />
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <div>
       <header className="topbar" style={{ justifyContent: 'space-between' }}>
@@ -186,11 +210,12 @@ export default function Home() {
         )}
         {runnerNotice && (
           /* 러너 미연결/끊김 안내 — 누르면 그 회사 설정의 러너 연결 섹션으로 직행(?ai=1) */
+          /* 폰 폭: 줄바꿈 — 버튼이 카드 밖으로 나가 페이지가 가로로 흔들렸다(UX-A09). 버튼 모양은 데크 배너와 같은 btn-primary */
           <Link href={`/c/${runnerNotice.ws}/settings?ai=1`} className="card card-i fade-up"
-            style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 16px', borderColor: 'var(--accent)', marginBottom: 22 }}>
+            style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12, padding: '13px 16px', borderColor: 'var(--accent)', marginBottom: 22, minWidth: 0 }}>
             <span style={{ color: 'var(--accent)', display: 'inline-flex' }}><Icon name="bolt" size={15} /></span>
-            <span style={{ fontSize: 13, flex: 1, minWidth: 200 }}>{t(runnerNotice.invalid ? 'home.runnerReconnect' : 'home.runnerNotice', { name: runnerNotice.name })}</span>
-            <span className="chip" style={{ flex: 'none' }}>{t('deck.aiKey.cta')}</span>
+            <span style={{ fontSize: 13, flex: '1 1 200px', minWidth: 0 }}>{t(runnerNotice.invalid ? 'home.runnerReconnect' : 'home.runnerNotice', { name: runnerNotice.name })}</span>
+            <span className="btn btn-primary sm" style={{ flex: 'none', maxWidth: '100%' }}>{t('deck.aiKey.cta')}</span>
           </Link>
         )}
         <div className="fade-up" style={{ marginBottom: 30 }}>
@@ -203,25 +228,6 @@ export default function Home() {
           </p>
         </div>
 
-        {onboarding && (
-          /* 첫 항해 — 러너 연결은 선택 단계. 회사 만들기를 막지 않고, 미연결이면 데크 배너가 이어받는다. */
-          <div className="fade-up" style={{ display: 'grid', gap: 10, margin: '0 0 22px' }}>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-              <span className="chip" style={{ color: 'var(--ok)', borderColor: 'currentColor' }}>
-                <span className="dot" />{t(me?.authOn ? 'onboard.step1' : 'onboard.step1Local')}
-              </span>
-              <span className="chip" style={runnerReady ? { color: 'var(--ok)', borderColor: 'currentColor' } : {}}>
-                {runnerReady && <span className="dot" />}{t(runnerReady ? 'onboard.step2done' : 'onboard.step2')}
-              </span>
-              <span className="chip" style={{ color: 'var(--warn)', borderColor: 'currentColor' }}>
-                {t('onboard.step3')}
-              </span>
-            </div>
-            {!runnerReady && <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: 0 }}>{t('onboard.help')}</p>}
-            <AiConnectionCard ws={ACCOUNT_WS} accordion />
-          </div>
-        )}
-        {onboarding && <LocalAssetOffer key={me?.user?.id ?? 'local'} selected={importLocalAssets} onChange={setImportLocalAssets} disabled={creating} />}
         <form onSubmit={create} className="input-bar fade-up" style={{ animationDelay: '0.06s' }}>
           <input suppressHydrationWarning
             placeholder={t('home.namePlaceholder')}
@@ -258,9 +264,42 @@ export default function Home() {
           )}
         </div>
 
+        {archivedMsg && ( // 카드가 사라져도(마지막 보관 회사를 되돌림) 남는다 — 자리는 온보딩·목록 어느 쪽이든 같다
+          <p role={archivedMsg.ok ? 'status' : 'alert'} style={{ margin: '14px 0 0', fontSize: 12.5, color: archivedMsg.ok ? 'var(--fg-2)' : 'var(--danger)' }}>
+            {archivedMsg.text}{archivedMsg.href && <> <Link href={archivedMsg.href} style={{ textDecoration: 'underline', textUnderlineOffset: 3 }}>{t('settings.archived.open')}</Link></>}
+          </p>
+        )}
+        {onboarding && archivedEntry}
+
+        {/* 첫 화면 순서(UX-A06, 2026-10-05): 회사 이름 입력이 첫 행동이라 위로 — 러너 연결(선택)과 가져오기는 그 아래.
+            종전엔 러너 카드·가져오기 카드가 먼저 나와 1280×800에서도 입력이 첫 화면 밖(y≈1077)이었다. */}
+        {onboarding && (
+          /* 첫 항해 — 러너 연결은 선택 단계. 회사 만들기를 막지 않고, 미연결이면 데크 배너가 이어받는다. */
+          <div className="fade-up" style={{ display: 'grid', gap: 10, margin: '26px 0 0' }}>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+              <span className="chip" style={{ color: 'var(--ok)', borderColor: 'currentColor' }}>
+                <span className="dot" />{t(me?.authOn ? 'onboard.step1' : 'onboard.step1Local')}
+              </span>
+              <span className="chip" style={runnerReady ? { color: 'var(--ok)', borderColor: 'currentColor' } : {}}>
+                {runnerReady && <span className="dot" />}{t(runnerReady ? 'onboard.step2done' : 'onboard.step2')}
+              </span>
+              <span className="chip" style={{ color: 'var(--warn)', borderColor: 'currentColor' }}>
+                {t('onboard.step3')}
+              </span>
+            </div>
+            {!runnerReady && <p style={{ fontSize: 12.5, color: 'var(--fg-2)', margin: 0 }}>{t('onboard.help')}</p>}
+            <AiConnectionCard ws={ACCOUNT_WS} accordion />
+          </div>
+        )}
+        {onboarding && <div style={{ marginTop: 16 }}><LocalAssetOffer key={me?.user?.id ?? 'local'} selected={importLocalAssets} onChange={setImportLocalAssets} disabled={creating} /></div>}
         <section style={{ marginTop: 42 }}>
           <div className="microlabel" style={{ marginBottom: 10 }}>{t('home.myCompanies')}</div>
-          {companies === null ? (
+          {homeListView(companies, listFailed) === 'error' ? (
+            <div className="empty" role="alert" style={{ display: 'grid', gap: 10, justifyItems: 'center' }}>
+              <span>{t('home.listFail')}</span>
+              <button type="button" className="btn sm" onClick={() => setListTry((n) => n + 1)}>{t('common.retry')}</button>
+            </div>
+          ) : companies === null ? (
             <div style={{ display: 'grid', gap: 10 }}>
               <Skeleton h={70} style={{ borderRadius: 16 }} />
               <Skeleton h={70} style={{ borderRadius: 16 }} />
@@ -288,6 +327,7 @@ export default function Home() {
               ))}
             </div>
           )}
+          {!onboarding && archivedEntry}
         </section>
 
         {/* M-1 페어링 — 다른 기기의 회사를 연결 코드로 가져온다 (회사가 이미 있어도 추가 연결 가능) */}

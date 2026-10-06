@@ -3,7 +3,7 @@ import { createOutbox, autoFlush } from './outbox.js';
 import { setSyncState, getStorageScope, scopedStorageKey, setLegacyRecovery } from './save.js';
 
 const KEY = 'argo-office-outbox';
-let transport = async () => { throw Object.assign(new Error('transport not ready'), { transient: true }); };
+let transport = async (op) => { await import('./transport.js'); return transport(op); }; // 첫 화면에서 뺐다(bundle.md ⑤) — main.jsx가 그린 뒤 한가할 때 미리 받고, 그 전에 보내면 여기서 받는다. transport.js가 불러와지면서 setTransport로 자기를 등록한다
 let rejected = () => {};
 export function setTransport(send, onRejected) { transport = send; if (onRejected) rejected = onRejected; }
 const boxes = new Map();

@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { readFileSync, readdirSync } from 'node:fs';
 import { psqlSpawn } from './helpers/pg.mjs';
+import { NOTICE } from './helpers/msgr-terms.mjs';
 const DB = process.env.ARGO_PG_TEST_URL;
 const skip = !DB && 'ARGO_PG_TEST_URL 미설정 — bash scripts/billing-pg-drill.sh test/msgr-personal-bots-pg.test.mjs';
 const mig = (f) => fileURLToPath(new URL(`../supabase/migrations/${f}`, import.meta.url));
@@ -49,7 +50,7 @@ before(() => {
     create table if not exists auth.users (id uuid primary key, created_at timestamptz not null default now(), email text);
     create or replace function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('argo.uid', true), '')::uuid $$;
     create schema if not exists storage;
-    create table if not exists storage.objects (id uuid primary key default gen_random_uuid(), bucket_id text, name text, owner uuid);
+    create table if not exists storage.objects (id uuid primary key default gen_random_uuid(), bucket_id text, name text, owner uuid, metadata jsonb, created_at timestamptz not null default now()); -- 실제 Storage 열(봇 첨부 준비가 created_at·metadata를 본다)
     create table if not exists storage.buckets (id text primary key, name text, public boolean not null default false);
     create or replace function storage.foldername(name text) returns text[] language sql immutable as $$ select (string_to_array(name, '/'))[1:array_length(string_to_array(name, '/'), 1) - 1] $$;
     grant usage on schema storage to authenticated; grant select, insert, delete on storage.objects to authenticated;
@@ -424,12 +425,14 @@ test('결과 미도착 안내(10분)는 쌍둥이 기준으로 한 번만', { sk
   finish(T1, CH1, '끝', P, got[0].message.execution_attempt);
 });
 
-test('미지원(#779와 같음): 개인 글에 파일·결재 카드는 엣지 ERR의 403 이름으로 거부', { skip }, () => {
+test('개인 글: 파일은 개인 방 경로로 된다(20261002140000), 결재 카드는 여전히 미지원(#779와 같음 — 엣지 ERR의 403 이름)', { skip }, () => {
   drain(T1);
   const P = post(U.a, CH1, '파일 줘');
   const got = ups(T1, 0, 10);
   const rid = last(finish(T1, CH1, '여기', P, got[0].message.execution_attempt));
-  fails(asAnonRaw(`select public.msgr_bot_attach_prepare('${T1}', ${rid}, 'a.txt', 10)`), /msgr_bot_bad_attach_target/, '개인 방 파일');
+  const prep = asAnonRaw(`select public.msgr_bot_attach_prepare('${T1}', ${rid}, 'a.txt', 10)`); // 2026-10-02부터 개인 방 파일 허용 — 상세 경계는 msgr-bot-personal-attach-pg
+  assert.equal(prep.status, 0, prep.stderr);
+  assert.match(JSON.parse(last(prep.stdout)).storage_path, new RegExp(`^p/${CH1}/${rid}/bot-[0-9a-f]{8}-a\\.txt$`), '개인 방 파일은 p/<방>/<글>/ 경로');
   const P2 = post(U.a, CH1, '위험한 일');
   const g2 = ups(T1, 0, 10);
   fails(asAnonRaw(`select public.msgr_bot_request_approval('${T1}', '${g2[0].message.execution_attempt}', 'ap1', 'rm -rf /')`), /msgr_not_allowed/, '결재 카드');
@@ -446,6 +449,7 @@ test('개인 방 AI 동의는 명시적 동의만: 동의 전엔 안내 한 번�
   post(U.c, cch, '또 해줘');
   assert.equal(ups(cb.token, 0, 10).length, 0);
   assert.equal(sql(`select count(*) from public.msgr_messages where client_msg_id='aiconsent:${ctw}:${cch}'`), '1', '안내 한 번');
+  assert.equal(sql(`select body from public.msgr_messages where client_msg_id='aiconsent:${ctw}:${cch}'`), `${NOTICE.consent.ko} / ${NOTICE.consent.en}`, '안내 문구는 새 낱말(용어 T3, 20261006100000)');
   asUser(U.c, `select public.msgr_set_ai_consent(true)`);
   const got = ups(cb.token, 0, 10);
   assert.equal(got[0]?.update_id, Number(P), '동의하면 보류된 글부터');

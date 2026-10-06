@@ -144,7 +144,7 @@ test('queued means queued; running/completion follows actual execution record wi
 const concurrentSql = query => new Promise((resolve,reject)=>{
   const p=spawn('psql',[DB,'-X','-v','ON_ERROR_STOP=1','-A','-t','-q','-c',query]);
   let out='',err='';p.stdout.on('data',d=>out+=d);p.stderr.on('data',d=>err+=d);
-  p.on('error',reject);p.on('exit',code=>code?reject(new Error(err)):resolve(out.trim()));
+  p.on('error',reject);p.on('close',code=>code?reject(new Error(err)):resolve(out.trim()));
 });
 test('simultaneous cloud/resident workers claim one slot and lost-response manual retries reuse request id', {skip},async()=>{
   const a=create();due(a.id);

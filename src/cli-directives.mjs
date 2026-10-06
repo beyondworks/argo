@@ -110,10 +110,13 @@ export const handledByTool = (d, calls) => { const f = SAME_AS_TOOL[String(d?.ac
     실패도 줄로 남긴다: 조용한 실패는 크루의 거짓말이 된다.
     `results`는 호출측이 건네는 수집함이다(커넥터 도구에 실제로 닿은 호출만 담긴다) — 채워지면
     호출측이 runToolFollowUp으로 후속 턴 1회를 돌린다. `toolHop`은 그 후속 턴 카운터. */
-export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', bad = [], hop = 0, chain = [], toolHop = 0, results = [], mirrorCtx = null, turnControl = null, usedTools = null, delegationRelaxed = false, delegationTree = null, counters = null } = {}) { // counters = 이 턴의 {delegate, mail} 횟수 — runChat이 SDK/CLI 도구와 같은 카운터를 끼워 넣기 구간·마지막 처리에 함께 넘긴다(블록 25개 = 쪽지 25건 구멍, 검수 2026-10-01 MEDIUM-4)
+export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', bad = [], hop = 0, chain = [], toolHop = 0, results = [], mirrorCtx = null, turnControl = null, usedTools = null, delegationRelaxed = false, delegationTree = null, counters = null, fullAuto = true, origin = null } = {}) { // origin = 이 턴의 notOwnerDirect(사장 직접 턴이 아닌 시작점의 크루) — 결재·예약 출처 // fullAuto = 이 턴의 풀 오토 판정(chat.mjs) — 커넥터 게이트에 그대로 넘긴다 // counters = 이 턴의 {delegate, mail} 횟수 — runChat이 SDK/CLI 도구와 같은 카운터를 끼워 넣기 구간·마지막 처리에 함께 넘긴다(블록 25개 = 쪽지 25건 구멍, 검수 2026-10-01 MEDIUM-4)
   const en = lang === 'en';
   const lim = limitsFor(delegationRelaxed && !!delegationTree, mirrorCtx); // 위임 제한 표 — SDK 도구(chat.mjs)와 같은 값(러너 패리티). 메신저 맥락은 항상 켜짐. 합계 예산 객체 없는 풀림은 켜짐(fail-closed)
   const cnt = counters ?? { delegate: 0, mail: 0 };
+  // 결재·예약 출처 — SDK 경로(chat.mjs delegatedBy·originFor)와 같은 규칙. 사장 직접 턴이 아니면 그 시작점, 다른 크루에게 건 예약은 이 크루의 위임
+  const delegatedBy = chain.length ? chain[chain.length - 1] : (origin ?? null);
+  const originFor = (target) => delegatedBy ?? (target && target !== fromSlug ? fromSlug : null);
   const notes = [];
   let budget = TOOL_RESULT_BUDGET_BYTES; // 턴 전체 주입 예산 — 블록이 여럿이면 앞에서부터 소진된다
   const agents = await listAgents(wsId).catch(() => []);
@@ -143,6 +146,7 @@ export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', b
         const schedule = normalizeSchedule(toSchedule(d));
         const r = await addRoutine(wsId, {
           agentSlug: target?.slug ?? fromSlug, msgr: messengerOrigin(mirrorCtx, target?.slug ?? fromSlug),
+          ...(originFor(target?.slug ?? fromSlug) ? { from: originFor(target?.slug ?? fromSlug) } : {}),
           title: String(d.title ?? prompt).replace(/\s+/g, ' ').slice(0, 60),
           prompt,
           schedule,
@@ -166,7 +170,7 @@ export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', b
           if (norm(d.to) === norm(fromSlug) || norm(d.to) === norm(fromName)) {
             throw new Error(en ? "you can't send a note to yourself" : '자기 자신에게는 쪽지를 보낼 수 없다');
           }
-          throw new Error(en ? `no crew named "${d.to}"` : `"${d.to}"는 크루 명단에 없습니다`);
+          throw new Error(en ? `no agent named "${d.to}"` : `"${d.to}"는 에이전트 명단에 없습니다`);
         }
         const cc = (Array.isArray(d.cc) ? d.cc : []).map(find).filter(Boolean).map((a) => a.slug);
         const msg = String(d.message ?? '').trim();
@@ -181,7 +185,7 @@ export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', b
         try {
           await sendCrewMail(wsId, { from: fromSlug, fromName, to: to.slug, cc, message: msg, hop: hop + 1, chain: [...chain, fromSlug], relaxed: lim.relaxed, ...(delegationTree ? { tree: delegationTree.id } : {}) });
         } catch (e) {
-          if (e?.code === 'TREE_CAP') throw new Error(en ? `total limit for crew turns from this message reached (${lim.tree}) — report what remains and ask the captain whether to continue` : `이번 지시에서 이어진 크루 턴이 합계 상한(${lim.tree}회)에 닿았다 — 남은 일을 알리고 사장에게 계속할지 물어라`);
+          if (e?.code === 'TREE_CAP') throw new Error(en ? `total limit for agent turns from this message reached (${lim.tree}) — report what remains and ask the user whether to continue` : `이번 지시에서 이어진 에이전트 턴이 합계 상한(${lim.tree}회)에 닿았다 — 남은 일을 알리고 사용자에게 계속할지 물어라`);
           throw e;
         }
         cnt.mail += cost; // 풀림도 배달 턴으로 잇는다 — 안 실으면 배달된 크루가 켜짐으로 돌아가 풀린 단계 상한이 한 번 더 못 간다
@@ -197,13 +201,13 @@ export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', b
         // 하나도 없으면 addApproval의 sanitizePlain이 null을 만들어 카드가 기존 action/reason 그대로다(폴백).
         const { purpose, task, need } = d;
         const item = await addApproval(wsId, {
-          slug: fromSlug, msgr: messengerOrigin(mirrorCtx), ...approvalScope(mirrorCtx), action: request.replace(/[\r\n\t\x00-\x1f]+/g, ' ').slice(0, 200),
+          slug: fromSlug, ...(delegatedBy ? { from: delegatedBy } : {}), msgr: messengerOrigin(mirrorCtx), ...approvalScope(mirrorCtx), action: request.replace(/[\r\n\t\x00-\x1f]+/g, ' ').slice(0, 200),
           reason: String(d.reason ?? '').replace(/[\r\n\t\x00-\x1f]+/g, ' ').slice(0, 300),
           ...((purpose || task || need) ? { plain: { purpose, task, need } } : {}),
         });
         notes.push(en
-          ? `✓ Approval filed (${item.id}) — waiting for the captain. Do NOT perform the action until approved.`
-          : `✓ 결재 올림(${item.id}) — 사장 승인 대기. 승인 전에는 그 행동을 실행하지 마라.`);
+          ? `✓ Approval filed (${item.id}) — waiting for the user. Do NOT perform the action until approved.`
+          : `✓ 결재 올림(${item.id}) — 사용자 승인 대기. 승인 전에는 그 행동을 실행하지 마라.`);
       } else if (action === 'tool') {
         // 커넥터 도구 호출 — SDK 표면(use_connector)과 **같은 코어 함수**로 수렴한다(설계서 §1 단일 실행 경로).
         // 러너가 다르다고 능력이 갈리면 안 된다는 절대 조건이 이 한 줄로 담보된다.
@@ -220,7 +224,7 @@ export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', b
             ? `connector follow-up limit reached (${TOOL_FOLLOWUP_MAX} per turn) — answer with the results you already have`
             : `커넥터 후속 턴 상한(턴당 ${TOOL_FOLLOWUP_MAX}회)에 도달했다 — 이미 받은 결과로 답하라`);
         }
-        const r = await callConnectorTool(wsId, server, tool, args, { lang, slug: fromSlug, mirrorCtx });
+        const r = await callConnectorTool(wsId, server, tool, args, { lang, slug: fromSlug, mirrorCtx, fullAuto, from: delegatedBy });
         const text = connectorContentText(r.content);
         if (r.error) {
           // 미연결·재인증 필요·전송 실패 — 도구에 닿지 못했다. 정직한 줄만 남기고 후속 턴 재료로 삼지
@@ -277,12 +281,12 @@ export function toolFollowUpMessage(results, { lang = 'ko', userMsg = '' } = {})
   const ask = String(userMsg ?? '').replace(/\s+/g, ' ').trim().slice(0, 500);
   return en
     ? `(System) The connector calls you asked for have run. Their real results are below.\n\n${blocks}\n\n`
-      + `${ask ? `The captain's instruction was: ${ask}\n\n` : ''}`
-      + `Answer the captain using these results — never invent or guess what they contain. `
+      + `${ask ? `The user's instruction was: ${ask}\n\n` : ''}`
+      + `Answer the user using these results — never invent or guess what they contain. `
       + `Do NOT emit another ${fence} tool block: the automatic follow-up is one turn per turn, and a second block will be refused.${caution}`
     : `(시스템) 네가 요청한 커넥터 호출이 실행됐다. 실제 결과는 아래와 같다.\n\n${blocks}\n\n`
-      + `${ask ? `사장의 지시는 이것이었다: ${ask}\n\n` : ''}`
-      + `이 결과를 근거로 사장에게 답하라 — 내용을 지어내거나 추측하지 마라. `
+      + `${ask ? `사용자의 지시는 이것이었다: ${ask}\n\n` : ''}`
+      + `이 결과를 근거로 사용자에게 답하라 — 내용을 지어내거나 추측하지 마라. `
       + `${fence} tool 블록을 다시 내지 마라: 자동 후속 턴은 턴당 1회뿐이라 두 번째 블록은 거부된다.${caution}`;
 }
 

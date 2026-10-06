@@ -6,6 +6,7 @@ import { paths, getDeviceId } from './workspace.mjs';
 import { withLock } from './mutex.mjs';
 import { writeJsonAtomic, readJson, salvageFromCorrupt } from './jsonstore.mjs';
 import { resetStamp, resumeStamp } from './reset-stamp.mjs';
+import { channelIdsOf, forgetChannels, applyDeparted, mergeDeparted, msgChannel } from './departed.mjs'; // 채널 기억 회수(유건 결정 2026-10-03)
 import { isRelaxedStored, resetDelegationLimit } from './delegation-limits.mjs'; // 위임 제한 스위치 — 대화방(스레드)마다 저장
 import { sanitizeFileSlug } from './slug.mjs'; // 파일 이름 세척의 단일 원천 — 회의록 충돌 판정(sync 반입 문)과 같은 규칙
 
@@ -14,6 +15,23 @@ const file = (wsId, slug) => join(paths(wsId).chats, `${sanitizeFileSlug(slug)}.
 const lockKey = (wsId, slug) => `thread:${wsId}:${sanitizeFileSlug(slug)}`;
 // 앱 사이드카·argo CLI가 같은 폴더를 쓰면 프로세스 간 잠금도 필요하다(M-b) — 파일 단위(<chat>.json.lockd). 보관·휴지통 편집도 활성 스레드 잠금 하나로 직렬화한다.
 const lockThread = (wsId, slug, fn) => withLock(lockKey(wsId, slug), fn, { file: file(wsId, slug) });
+
+// 턴 기록(appendTurn)을 기다리는 쪽 — 세션 메시지가 크루의 직전 턴이 새 sessionId를 쓸 때까지 기다린다(session-msg.mjs idleSession).
+// globalThis: Next가 진입점마다 모듈을 따로 번들한다(turn-abort.mjs와 같은 이유). 같은 프로세스 안의 기록만 알린다.
+const writeWaiters = (globalThis.__argoThreadWrite ??= new Map()); // lockKey → Set<resolve>
+const notifyWrite = (wsId, slug) => {
+  const k = lockKey(wsId, slug); const set = writeWaiters.get(k);
+  if (set) { writeWaiters.delete(k); for (const wake of set) wake(); }
+};
+/** 이 스레드의 다음 턴 기록에 풀리는 약속. cancel()로 걸어 둔 것을 거둔다(쌓이지 않게). */
+export function nextThreadWrite(wsId, slug) {
+  const k = lockKey(wsId, slug);
+  let resolve;
+  const promise = new Promise((r) => { resolve = r; });
+  const set = writeWaiters.get(k) ?? new Set();
+  set.add(resolve); writeWaiters.set(k, set);
+  return { promise, cancel: () => { const cur = writeWaiters.get(k); cur?.delete(resolve); if (cur && !cur.size) writeWaiters.delete(k); } };
+}
 
 /** 스레드 파일 mtime(ms) — 폴링 dedup용. 파일이 없으면 0. */
 export async function threadMtime(wsId, slug) {
@@ -35,6 +53,9 @@ export const scopeKey = (s) => (s?.kind === 'msgr' && s.channelId ? s.channelId 
 export const scopedSession = (t, key) => t?.scopedSessions?.[key] ?? { sessionId: null, sessionDevice: null };
 /** 프롬프트에 붙일 스레드 줄 — 범위 턴은 같은 범위 기록만, 그 밖의 턴은 범위 없는 기록만(채널·그룹·DM 기록이 데스크톱 대화에 섞이지 않게). */
 export const inContextScope = (m, scope) => { const k = scopeKey(scope); return scope ? !!k && scopeKey(m.contextScope) === k : !m.contextScope; }; // 키 없는 범위(여러 공유 목적지 {kind:'shared'})는 아무것도 붙이지 않는다
+/** 스레드 맥락 누적 요약(thread-context.mjs) — 범위 없는 대화는 summary, 키 있는 범위(채널·그룹)는 scopedSummaries[key]. 범위끼리 섞이지 않게 세션과 같은 키를 쓴다.
+    {text, upto} — upto는 요약이 덮는 마지막 메시지 ts(앵커). 앵커가 스레드에 없으면 쓰는 쪽(planContext)이 무효로 본다. 없으면 null. */
+export const threadSummary = (t, scope) => { const s = scope ? (scopeKey(scope) ? t?.scopedSummaries?.[scopeKey(scope)] : null) : t?.summary; return s && typeof s.text === 'string' ? s : null; };
 /** 결재 항목에 실을 범위 — 메신저가 아닌 범위 턴(텔레그램 그룹·슬랙 채널·자동 턴 목적지)에서 올린 결재의 후속이 그 범위로 돈다(approval-actions followUp). 메신저는 msgr 각인이 맡는다. */
 export const approvalScope = (ctx) => { const s = ctx?.kind === 'msgr' ? null : turnScope(ctx); return s ? { scope: s } : {}; };
 
@@ -52,6 +73,7 @@ async function keepSession(t, sessionId, scope) {
 export async function loadThread(wsId, slug) {
   // 대화는 유실이 치명적 — 손상 시 조용히 빈 상태로 리셋하지 않고 throw로 드러낸다(readJson).
   const t = await readJson(file(wsId, slug), { sessionId: null, messages: [] });
+  applyDeparted(t); // 회수 각인 — 예전 버전·다른 기기가 되살린 옛 채널 줄·세션은 읽는 자리에서 거른다(설계 검수 M4)
   // 회의실과 동일 계약 — 파일 부재일 때만 손상본에서 건져 화면에 되돌리고, 파일은 쓰지 않는다.
   // (새 대화·신규 크루처럼 정상적으로 비어 있는 경우는 파일이 존재하므로 복구가 발동하지 않는다.)
   // sessionId는 복구하지 않는다 — 이어가기 세션은 새로 시작(대화 기록 보존이 우선).
@@ -62,12 +84,26 @@ export async function loadThread(wsId, slug) {
   return t;
 }
 
+/** 누적 요약 저장 — 앵커 메시지가 아직 스레드에 있을 때만(그 사이 새 대화·회수로 사라졌으면 쓰지 않는다). 키 없는 범위는 저장하지 않는다. */
+export async function setThreadSummary(wsId, slug, scope, summary) {
+  const key = scope ? scopeKey(scope) : null;
+  if (scope && !key) return false;
+  return lockThread(wsId, slug, async () => {
+    const t = await loadThread(wsId, slug);
+    if (!t.messages.some((m) => m.ts === summary?.upto)) return false;
+    const val = { text: String(summary.text), upto: summary.upto, at: Date.now() };
+    if (key) t.scopedSummaries = { ...t.scopedSummaries, [key]: val }; else t.summary = val;
+    await writeJsonAtomic(file(wsId, slug), t);
+    return true;
+  });
+}
+
 /** 턴 시작 — 사장의 지시를 **답변을 기다리기 전에** 저장한다.
     예전엔 턴이 끝난 뒤에야 appendTurn으로 한꺼번에 저장했다. 그래서 답변을 만드는 동안에는 사장의 글이
     브라우저 메모리에만 있었고, 페이지를 벗어나거나 새로고침하면 **내가 쓴 글이 사라졌다가 답변이
     끝나야 다시 나타났다**(실사용 신고 2026-08-02). 오래 걸리는 턴일수록 오래 사라져 있는 셈이다.
     반환한 turnId로 나중에 같은 줄을 찾아 답변을 붙인다 — 새 줄을 밀어 넣지 않으므로 중복이 없다. */
-export async function beginTurn(wsId, slug, { userMsg, attachments, via, contextScope } = {}) {
+export async function beginTurn(wsId, slug, { userMsg, attachments, via, contextScope, src } = {}) {
   const turnId = `t${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   await lockThread(wsId, slug, async () => {
     const t = await loadThread(wsId, slug);
@@ -77,13 +113,40 @@ export async function beginTurn(wsId, slug, { userMsg, attachments, via, context
       ...(attachments?.length ? { attachments } : {}),
       ...(via ? { via } : {}),
       ...(contextScope ? { contextScope } : {}),
+      ...(src ? { src } : {}), // 출처 표지(세션 메시지 — session-msg.mjs). 화면 카드와 맥락 줄이 이 값으로 화자·출처를 적는다
     });
     await writeJsonAtomic(file(wsId, slug), t);
   });
   return turnId;
 }
 
-export async function appendTurn(wsId, slug, { turnId, userMsg, reply, handover, sessionId, attachments, artifacts, via, actor, failed, aborted, cancellationIncomplete, fellBack, failedCode, failedOrigin, modelFallback, contextScope, steerFailed }) {
+/** 턴 없이 한 줄을 더한다 — 세션 메시지의 보낸 줄·돌아온 답 카드·안내(session-msg.mjs). 줄 모양은 호출부가 정한다(ts는 없으면 지금).
+    noticeOf = 진행 중인 턴(turnId)에 딸린 안내(예: 앞 대화 요약 안내, chat.mjs) — 그 지시(와 끼워 넣기·앞 안내) 바로 뒤에 둔다.
+    appendTurn이 같은 표지를 보고 답을 그 뒤에 넣으므로 순서가 지시 → 안내 → 답으로 고정된다. 그 턴 줄이 없으면(메신저 표지 등) 끝에. */
+export async function appendLine(wsId, slug, line) {
+  return lockThread(wsId, slug, async () => {
+    const t = await loadThread(wsId, slug);
+    const m = { ts: Date.now(), ...line };
+    const at = m.noticeOf ? t.messages.findIndex((x) => x.turnId === m.noticeOf) : -1;
+    if (at >= 0) {
+      let end = at;
+      t.messages.forEach((x, i) => { if (i > at && (x.steerOf === m.noticeOf || x.noticeOf === m.noticeOf)) end = i; });
+      t.messages.splice(end + 1, 0, m);
+    } else {
+      delete m.noticeOf;
+      t.messages.push(m);
+    }
+    await writeJsonAtomic(file(wsId, slug), t);
+    return m;
+  });
+}
+
+export async function appendTurn(wsId, slug, opts) {
+  const out = await appendTurnLocked(wsId, slug, opts);
+  notifyWrite(wsId, slug); // 기록이 끝난 뒤 — 기다리던 세션 메시지가 새 sessionId를 읽는다
+  return out;
+}
+async function appendTurnLocked(wsId, slug, { turnId, userMsg, reply, handover, sessionId, attachments, artifacts, via, actor, failed, aborted, cancellationIncomplete, fellBack, failedCode, failedOrigin, modelFallback, contextScope, steerFailed }) {
   return lockThread(wsId, slug, async () => {
     const t = await loadThread(wsId, slug); // 락 안에서 최신 상태를 다시 읽는다
     const ts = Date.now();
@@ -100,6 +163,7 @@ export async function appendTurn(wsId, slug, { turnId, userMsg, reply, handover,
       // 이 턴에 끼워 넣은 사장 메시지(addSteer) — 같은 결과로 마무리하고, 답은 그 뒤에 넣는다(질문들 → 답 순서)
       let end = at;
       t.messages.forEach((x, i) => {
+        if (x.noticeOf === turnId) { end = Math.max(end, i); return; } // 이 턴의 안내 줄(appendLine noticeOf) — 답은 그 뒤에
         if (x.steerOf !== turnId) return;
         end = Math.max(end, i); delete x.awaiting;
         if (failed) Object.assign(x, { failed, ...(failedCode ? { failedCode } : {}), ...(failedOrigin ? { failedOrigin } : {}), ...(aborted ? { aborted: true } : {}) });
@@ -117,6 +181,7 @@ export async function appendTurn(wsId, slug, { turnId, userMsg, reply, handover,
       if (!failed) t.messages.splice(end + 1, 0, { who: 'crew', text: reply, handover, ts, ...scoped, ...(artifacts?.length ? { artifacts } : {}), ...(fellBack ? { fellBack } : {}), ...(modelFallback ? { modelFallback } : {}) }); // fellBack = 폴백 투명화(P2) — UI가 대체 실행 안내를 그린다
       await keepSession(t, sessionId, scope);
       await writeJsonAtomic(file(wsId, slug), t);
+      await noteChannelSession(wsId, slug, scope, sessionId);
       return t;
     }
     t.messages.push(
@@ -135,6 +200,7 @@ export async function appendTurn(wsId, slug, { turnId, userMsg, reply, handover,
     );
     await keepSession(t, sessionId, scope);
     await writeJsonAtomic(file(wsId, slug), t);
+    await noteChannelSession(wsId, slug, scope, sessionId);
     return t;
   });
 }
@@ -232,7 +298,11 @@ export async function listArchivedSessions(wsId, slug) {
 export async function readArchivedSession(wsId, slug, id) {
   const safe = slug.replace(/[^a-z0-9-]/g, '');
   if (!new RegExp(`^${safe}-\\d+\\.json$`).test(id)) throw new Error('잘못된 세션 id');
-  return JSON.parse(await readFile(join(paths(wsId).chats, '.archive', id), 'utf8'));
+  const t = JSON.parse(await readFile(join(paths(wsId).chats, '.archive', id), 'utf8'));
+  const cur = await readJson(file(wsId, slug), null).catch(() => null);
+  const departed = mergeDeparted(cur?.departed, t.departed); // 보관 화면도 지운 채널 줄을 보이지 않는다(분리 검수 L-3)
+  if (departed) { t.departed = departed; applyDeparted(t); }
+  return t;
 }
 
 /** 새 대화 — 삭제가 아니라 적재. 이전 대화는 chats/.archive/에 보관되고, vault 기억은 그대로다(그게 제품의 핵심). */
@@ -247,7 +317,7 @@ export async function resetThread(wsId, slug) {
     // salvage 게이트), 새 대화가 파일을 지우면 옛 손상본이 되살아난다(검수 CRITICAL-1 C 케이스 실측).
     // 회의실 endMeeting이 {messages:[], sid+1}을 쓰는 것과 같은 계약으로 통일한다.
     // resetAt = 비움 각인(tombstone) — 근거·산식은 src/reset-stamp.mjs에 있다(벽시계 미사용 이유 포함).
-    await writeJsonAtomic(file(wsId, slug), { sessionId: null, messages: [], ...resetStamp(t), ...resetDelegationLimit() }); // 새 대화 = 위임 제한 켜짐(기본값) — 이전이 풀림이었으면 명시적 true(동기화 병합에서 옛 꺼짐이 되살아나지 않게)
+    await writeJsonAtomic(file(wsId, slug), { sessionId: null, messages: [], ...resetStamp(t), ...resetDelegationLimit(), ...(t.departed ? { departed: t.departed } : {}) }); // 회수 각인은 새 대화로 이어진다 — 각인 없는 옛 보관본을 되살려도 지운 줄이 돌아오지 않게(분리 검수 L-2) // 새 대화 = 위임 제한 켜짐(기본값) — 이전이 풀림이었으면 명시적 true(동기화 병합에서 옛 꺼짐이 되살아나지 않게)
   });
 }
 
@@ -271,6 +341,8 @@ export async function resumeSession(wsId, slug, id) {
     delete restored.resetAt;
     delete restored.cutTs; // 보관본의 옛 자르기 지점 정리 — 방어적: 되살림 직후엔 resumedAt >= resetAt 게이트가 먼저 걸려 현재 무행동(4R 차등 탐색 4000시드 차이 0), 옛 각인이 새 문맥에 실려 다니지 않게만 한다
     restored.resumedAt = resumeStamp(cur); // 각인 보유자는 활성 스레드(cur) — 보관본은 리셋을 모른다
+    const departed = mergeDeparted(cur.departed, restored.departed); // 회수 각인은 보관본으로 바꿔도 이어진다 — 되살린 대화에 지운 채널 기억이 돌아오지 않게(설계 검수 H2)
+    if (departed) { restored.departed = departed; applyDeparted(restored); }
     await writeJsonAtomic(file(wsId, slug), restored);
     await rm(join(dir, id), { force: true });
     return restored;
@@ -394,4 +466,83 @@ export async function purgeTrashed(wsId, id) {
   if (!ANY_ARCH_ID.test(id)) throw new Error('잘못된 세션 id');
   await rm(join(trashDir(wsId), id), { force: true });
   return { id };
+}
+
+/** 이 크루의 대화 파일(활성·보관·보관함)에 남은 메신저 채널 id 전부 — 기억 회수 판정에 물을 목록. */
+export async function threadChannelIds(wsId, slug) {
+  const out = new Set();
+  for (const f of await threadFiles(wsId, slug)) {
+    const t = await readJson(f, null).catch(() => null);
+    for (const c of channelIdsOf(t)) out.add(c);
+  }
+  return out;
+}
+
+/** 채널 기억 회수 — 이 크루의 활성·보관·보관함 대화에서 그 채널 줄과 채널 세션을 지우고 각인(departed)을 남긴다.
+    활성 스레드 잠금 하나로 직렬화한다(보관·보관함 편집과 같은 잠금). 반환: 지운 줄 수, 지운 세션 id(전사 파일 정리용). */
+export async function forgetThreadChannels(wsId, slug, ids) {
+  if (!ids?.length) return { removed: 0, sessionIds: [] };
+  return lockThread(wsId, slug, async () => {
+    let removed = 0; const sessionIds = [];
+    const hit = new Set(ids.map((x) => String(x).toLowerCase()));
+    const files = [];
+    for (const f of await threadFiles(wsId, slug)) {
+      const t = await readJson(f, null).catch(() => null);
+      if (t && Array.isArray(t.messages)) files.push([f, t]);
+    }
+    // 각인 시각은 모든 파일(활성·보관·보관함)에 걸친 그 채널 줄의 가장 늦은 ts — 활성 파일에는 줄이 없어도 각인을 쓴다.
+    // 채널 줄이 보관본에만 있을 때 활성에 각인이 없으면, 각인 없는 옛 보관본이 동기화로 돌아와도 거를 근거가 없다(재검수 L-a).
+    const ts = {};
+    for (const [, t] of files) for (const m of t.messages) { const c = msgChannel(m); if (c && hit.has(c)) ts[c] = Math.max(ts[c] ?? 0, Number(m.ts) || 0); }
+    const active = file(wsId, slug);
+    for (const [f, t] of files) {
+      if (f !== active && ![...channelIdsOf(t)].some((c) => hit.has(c))) continue; // 그 채널 기록이 없는 보관본은 쓰지 않는다
+      const r = forgetChannels(t, ids, ts);
+      removed += r.removed; sessionIds.push(...r.sessionIds);
+      await writeJsonAtomic(f, t);
+    }
+    return { removed, sessionIds };
+  });
+}
+
+async function threadFiles(wsId, slug) {
+  const safe = slug.replace(/[^a-z0-9-]/g, ''); // 보관본 이름 규칙(resetThread·listArchivedSessions)과 같다
+  const out = [file(wsId, slug)];
+  for (const dir of [join(paths(wsId).chats, '.archive'), trashDir(wsId)]) {
+    try { for (const n of await readdir(dir)) if (ARCH_ID(safe).test(n)) out.push(join(dir, n)); } catch { /* 폴더 없음 */ }
+  }
+  return out;
+}
+
+// 채널 세션 장부(기기 로컬 — 점 파일이라 동기화되지 않는다): <회사>/.msgr-sessions.json = { "<slug>:<channelId>": [세션 id…] }.
+// 채널·DM 턴이 이 기기에서 쓴 세션 id를 모두 남긴다 — 스레드에는 마지막 하나만 남아(기기 전환·새 세션 재시도) 회수 때 전사를 다 못 지운다(설계 검수 H3).
+const ledgerFile = (wsId) => join(paths(wsId).root, '.msgr-sessions.json');
+const LEDGER_MAX = 50; // ponytail: 채널당 최근 50개 — 더 오래된 전사는 SDK가 따로 정리한다
+async function noteChannelSession(wsId, slug, scope, sessionId) {
+  const c = msgChannel({ contextScope: scope });
+  if (!c || !sessionId) return;
+  await withLock(`msgr-sessions:${wsId}`, async () => {
+    const l = await readJson(ledgerFile(wsId), {}).catch(() => null);
+    if (!l) return; // 손상된 장부를 빈 것으로 덮으면 다른 채널의 세션 id가 사라진다(분리 검수 L-5)
+    const k = `${slug}:${c}`; const list = Array.isArray(l[k]) ? l[k] : [];
+    if (list.includes(sessionId)) return;
+    l[k] = [...list, sessionId].slice(-LEDGER_MAX);
+    await writeJsonAtomic(ledgerFile(wsId), l);
+  }, { file: ledgerFile(wsId) }).catch(() => {}); // 장부 실패가 턴 기록을 막지 않는다
+}
+/** 회수 — 그 채널들의 장부 세션 id를 꺼내고 장부에서 지운다. */
+export async function takeChannelSessions(wsId, slug, ids) {
+  return withLock(`msgr-sessions:${wsId}`, async () => {
+    const l = await readJson(ledgerFile(wsId), {}).catch(() => null);
+    if (!l) return [];
+    const out = [];
+    for (const id of ids) { const k = `${slug}:${String(id).toLowerCase()}`; if (Array.isArray(l[k])) { out.push(...l[k]); delete l[k]; } }
+    if (out.length) await writeJsonAtomic(ledgerFile(wsId), l);
+    return out;
+  }, { file: ledgerFile(wsId) });
+}
+/** 장부에 남은 이 크루의 채널 id — 스레드 줄이 이미 없어도 전사가 남은 채널까지 묻는다. */
+export async function channelSessionIds(wsId, slug) {
+  const l = await readJson(ledgerFile(wsId), {}).catch(() => ({}));
+  return Object.keys(l).filter((k) => k.startsWith(`${slug}:`)).map((k) => k.slice(slug.length + 1));
 }

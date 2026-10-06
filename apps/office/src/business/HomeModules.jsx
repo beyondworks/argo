@@ -9,8 +9,11 @@ import { Link } from '../core/router.jsx';
 import { defaultPeriod } from './dashboard-model.js';
 import { linkedTotals, effectOf } from './marketing-model.js';
 import { InfoTip } from '../ui/InfoTip.jsx';
+import { Hide } from './Redact.jsx';
 
 const HomeBusiness = createContext(null);
+/** 홈의 업무 읽기(업무 카드가 놓여 있으면 그 읽기) — '챙길 것'(18차, HomeAttention.jsx)이 같은 읽기를 쓴다. 없으면 null */
+export const useHomeBusiness = () => useContext(HomeBusiness);
 const money = (value) => new Intl.NumberFormat(getLang() === 'en' ? 'en-US' : 'ko-KR', { style: 'currency', currency: 'KRW', maximumFractionDigits: 0 }).format(value);
 
 export function BusinessHomeProvider({ space, tabs, children }) {
@@ -64,8 +67,8 @@ export function BusinessHomeCard({ space, tab }) {
   const rowPath = () => path;
   const main = (title, detail) => <span className="mod-main"><span className="clamp">{title}</span>{detail && <small>{detail}</small>}</span>;
   let content;
-  if (tab === 'customers') content = <Rows rows={data.customers} path={rowPath} render={(row) => main(row.name, row.email)} />;
-  if (tab === 'catalog') content = <Rows rows={data.items} path={rowPath} render={(row) => main(row.name, `${t(`bizui.${row.kind}`)} · ${money(row.price)}`)} />;
+  if (tab === 'customers') content = <Rows rows={data.customers.filter((row) => !row.archived_at)} path={rowPath} render={(row) => main(row.name, row.email && <Hide k={`customer:${row.id}:email`} focusable={false}>{row.email}</Hide>)} />;
+  if (tab === 'catalog') content = <Rows rows={data.items} path={rowPath} render={(row) => main(row.name, <>{t(`bizui.${row.kind}`)} · <Hide k={`item:${row.id}:price`} focusable={false}>{money(row.price)}</Hide></>)} />;
   if (tab === 'orders') content = <Rows rows={data.orders} path={(row) => `${path}?open=${encodeURIComponent(row.id)}`} render={(row) => main(row.title, t(`bizui.${row.status}`))} />;
   if (tab === 'inventory') content = <Rows rows={data.items.filter((row) => row.kind === 'product')} path={rowPath} render={(row) => main(row.name, `${t('bizui.available')}: ${row.stock - row.reserved} · ${t('bizui.reserved')}: ${row.reserved}`)} />;
   if (tab === 'marketing') content = <Rows rows={marketing.data.campaigns} path={rowPath} render={(row) => main(row.name, `${row.channel} · ${t(`mkt.status.${row.status}`)}`)} />;
@@ -74,14 +77,14 @@ export function BusinessHomeCard({ space, tab }) {
     content = <>
     <p className="mod-period"><span className="mono">{from} – {to}</span><InfoTip text={t('biz.home.utc')} /></p>
     {!performance ? <p role="status">{t('biz.loading')}</p> : performance.error ? <div role="alert"><p>{t(performance.error)}</p><button className="btn" onClick={() => marketing.refresh().catch(() => {})}>{t('biz.refresh')}</button></div> : <>
-      {['spend', 'sales', 'paid'].map((metric) => <div className="mod-row" key={metric}><span className="mod-main">{t(`mkt.metric.${metric}`)}</span><strong className="mono">{money(totals[metric])}</strong></div>)}
+      {['spend', 'sales', 'paid'].map((metric) => <div className="mod-row" key={metric}><span className="mod-main">{t(`mkt.metric.${metric}`)}</span><strong className="mono"><Hide k={`mkt:${metric}`}>{money(totals[metric])}</Hide></strong></div>)}
       <div className="mod-row"><span className="mod-main">{t('mkt.metric.roas')}</span><strong className="mono">{effect.kind === 'times' ? t('mkt.times', { n: effect.times.toLocaleString(getLang() === 'en' ? 'en-US' : 'ko-KR') }) : effect.kind === 'less' ? t('mkt.lessShort') : t('mkt.ratio.na')}</strong></div>
     </>}
   </>;
   }
   if (tab === 'payments' || tab === 'analytics') content = <>
     <p className="mod-period"><span className="mono">{from} – {to}</span><InfoTip text={`${t('biz.home.utc')} · ${t('biz.home.balanceThrough')}`} /></p>
-    {!summary ? <p role="status">{t('biz.loading')}</p> : summary.error ? <div role="alert"><p>{t(summary.error)}</p><button className="btn" onClick={() => business.refresh().catch(() => {})}>{t('biz.refresh')}</button></div> : (tab === 'payments' ? ['invoiced', 'paid', 'receivable'] : ['sales', 'invoiced', 'paid', 'receivable']).map((metric) => <div className="mod-row" key={metric}><span className="mod-main">{t(`biz.metric.${metric}`)}</span><strong className="mono">{money(summary.report.metrics[metric])}</strong></div>)}
+    {!summary ? <p role="status">{t('biz.loading')}</p> : summary.error ? <div role="alert"><p>{t(summary.error)}</p><button className="btn" onClick={() => business.refresh().catch(() => {})}>{t('biz.refresh')}</button></div> : (tab === 'payments' ? ['invoiced', 'paid', 'receivable'] : ['sales', 'invoiced', 'paid', 'receivable']).map((metric) => <div className="mod-row" key={metric}><span className="mod-main">{t(`biz.metric.${metric}`)}</span><strong className="mono"><Hide k={`biz:kpi:${metric}`}>{money(summary.report.metrics[metric])}</Hide></strong></div>)}
   </>;
   return content;
 }

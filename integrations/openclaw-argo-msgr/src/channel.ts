@@ -383,7 +383,7 @@ async function handleEvent(ev: any, l: Live) {
 export const argoMsgrPlugin: ChannelPlugin<ResolvedAccount> = {
   id: CHANNEL_ID,
   meta: { id: CHANNEL_ID, label: "Argo Messenger", selectionLabel: "Argo Messenger (bot API)", docsPath: "/channels/argo-msgr",
-    blurb: "Company team messenger with AI crews; OpenClaw joins as an external agent bot.", aliases: ["argo"] },
+    blurb: "Company team messenger with AI agents; OpenClaw joins as an external agent bot.", aliases: ["argo"] },
   capabilities: { chatTypes: ["direct", "group"], media: true, blockStreaming: false },
   approvalCapability: createChannelApprovalCapability({
     native: {

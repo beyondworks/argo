@@ -1,6 +1,6 @@
 # 루틴과 자동화 알림
 
-프롬프트에는 할 일과 시간을 적습니다. 예를 들어 “매일 오전 9시에 오늘 일정을 정리해줘”라고 요청하고, 저장 화면에서 실행 시간과 담당 크루를 확인하세요. 알림을 받을 곳은 프롬프트와 별도로 선택합니다.
+프롬프트에는 할 일과 시간을 적습니다. 예를 들어 “매일 오전 9시에 오늘 일정을 정리해줘”라고 요청하고, 저장 화면에서 실행 시간과 담당 에이전트를 확인하세요. 알림을 받을 곳은 프롬프트와 별도로 선택합니다.
 
 ## Argo 루틴
 
@@ -19,7 +19,7 @@
 2. **알림 받을 곳**에서 본인에게 연결된 텔레그램·슬랙을 선택합니다. 연결이 여러 회사에 있다면 회사 이름을 확인합니다.
 3. 저장합니다. 실행 결과는 원래 메신저 대화에 남고, 선택한 외부 채널에도 결과 알림을 보냅니다.
 
-다른 사람의 크루가 실행하더라도 알림은 자동화를 만든 사람이 선택한 본인 연결로 보냅니다. 크루 사이의 논의·위임·중간 대화는 이 설정으로 외부에 복사되지 않습니다.
+다른 사람의 에이전트가 실행하더라도 알림은 자동화를 만든 사람이 선택한 본인 연결로 보냅니다. 에이전트 사이의 논의·위임·중간 대화는 이 설정으로 외부에 복사되지 않습니다.
 
 텔레그램·슬랙 연결 정보는 해당 Argo 기기에 보관됩니다. 그 연결이 있는 기기나 서버에서 Argo가 실행 중이어야 외부 알림을 보낼 수 있습니다. 모바일에서는 알림 받을 곳을 선택하고 상태를 확인할 수 있습니다. 기기가 잠시 꺼졌다면 최대 24시간 대기하며, 너무 늦은 알림은 만료됩니다.
 
@@ -30,7 +30,7 @@
 Describe the work and timing in the prompt, then choose **Notification destinations** in the create or edit form. You do not need to repeat destinations in every prompt.
 
 - **Argo → Routines:** select Telegram, Slack and/or Argo Messenger. For Messenger, select an organization and conversation. Existing routines retain their previous routing until you change it.
-- **Argo Messenger → Work → Automations:** the result stays in the original conversation. Select your own Telegram or Slack connections for additional result notifications, even when someone else's crew performs the work.
+- **Argo Messenger → Work → Automations:** the result stays in the original conversation. Select your own Telegram or Slack connections for additional result notifications, even when someone else's agent performs the work.
 - Connection-level notification mutes still apply. Routine execution and notification delivery have separate statuses.
 - The Argo device or server holding an external connection must be running to send through it. Mobile can configure destinations and inspect delivery history. Offline automation notifications wait up to 24 hours, then expire.
-- Uncertain delivery is marked for review and is not automatically resent. Internal crew discussions and handoffs are not copied to external channels by these settings.
+- Uncertain delivery is marked for review and is not automatically resent. Internal agent discussions and handoffs are not copied to external channels by these settings.

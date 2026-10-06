@@ -50,7 +50,8 @@ function transportFixture() {
   load('transport.js', { setTransport: (fn, failure) => { send = fn; reject = failure; }, getState: () => state, update: (fn) => Object.assign(state, fn(state)),
     getMode: () => 'signedIn', SPACES: [], ME, getStorageScope: () => uid, getClient: async () => ({ auth: { getSession: async () => ({ data: { session: { user: { id: uid }, access_token: `${uid}-fixture` } } }) },
       rpc: (name, args) => ({ setHeader: (key, value) => { calls.push({ name, args, key, value }); return new Promise((resolve) => { finish = resolve; }); } }) }),
-    classify: (e) => e, setUi() {}, getUi: () => ({}), showToast() {}, t: (k) => k, persist() {}, heldKey: (id) => id, scopedStorageKey: (key) => `${key}:${uid}`, apiUrl: (url) => url });
+    classify: (e) => e, setUi() {}, getUi: () => ({}), showToast() {}, t: (k) => k, persist() {}, heldKey: (id) => id, scopedStorageKey: (key) => `${key}:${uid}`, apiUrl: (url) => url,
+    announce() {} }); // 16차: 저장이 닿으면 다른 창에 알린다(core/page-live.js) — 이 시험의 대상이 아니다
   return { send, reject, calls, state, switchAccount(next) { uid = next; ME.id = next; }, finish(value) { finish(value); } };
 }
 const settle = () => new Promise((resolve) => setImmediate(resolve));

@@ -52,8 +52,8 @@ test('moveId: a를 b 자리로, 같은 자리·없는 id면 그대로', () => {
 // 이유(9/30 일정 추가): 메뉴 순서를 저장해 둔 사람에게 새 메뉴가 맨 아래로 붙으면 못 찾는다 — 기본 자리(앞 메뉴 바로 뒤)에 들어가야 한다.
 test('메뉴: 저장한 뒤 새로 생긴 메뉴는 기본 순서의 앞 메뉴 바로 뒤에 들어간다, 저장 순서는 그대로', () => {
   const saved = ['home', 'tools', 'business', 'mail', 'approvals', 'shared', 'knowhow'].map((id) => ({ id }));
-  assert.deepEqual(readNav(saved, 'me').shown, ['home', 'calendar', 'tools', 'business', 'mail', 'approvals', 'shared', 'knowhow']);
-  assert.deepEqual(readNav([{ id: 'tools' }, { id: 'home' }], 'me').shown.slice(0, 3), ['tools', 'home', 'calendar'], '앞 메뉴를 옮겨 뒀으면 그 뒤를 따라간다');
+  assert.deepEqual(readNav(saved, 'me').shown, ['home', 'calendar', 'tasks', 'tools', 'business', 'contracts', 'files', 'mail', 'approvals', 'shared', 'knowhow'], '견적·계약·문서함(10/2)도 업무 바로 뒤에, 할 일(10/4)은 캘린더 바로 뒤에');
+  assert.deepEqual(readNav([{ id: 'tools' }, { id: 'home' }], 'me').shown.slice(0, 4), ['tools', 'home', 'calendar', 'tasks'], '앞 메뉴를 옮겨 뒀으면 그 뒤를 따라간다');
 });
 
 // 이유(유건 9/30 #7): 즐겨찾기는 사람마다 계정에 저장 — 지워지거나(휴지통) 권한이 사라진 항목은 조용히 숨기고, 다음 저장 때 저장값에서도 뺀다.
@@ -128,4 +128,26 @@ test('즐겨찾기 제외: 홈·설정·휴지통·모듈 보관함은 대상이
   assert.deepEqual(shown, [{ kind: 'route', id: '/o/a/calendar' }, { kind: 'page', id: 'p1' }, { kind: 'crew', id: 'c1' }]);
   assert.deepEqual(writeFav(shown, { add: { kind: 'page', id: 'p2' } }).map((x) => x.id), ['/o/a/calendar', 'p1', 'c1', 'p2'], '다음 저장에는 제외 항목이 빠진다');
   assert.equal(saved.length, 7, '저장값은 건드리지 않는다');
+});
+
+// 이유(17차 A-2, PARITY-agents O1): 에이전트 조직도는 조직 공간 메뉴에만 — 내 공간은 다른 조직 전용 화면(작업·결정·직원)처럼 메뉴에 없다.
+// 자리는 에이전트 작업 바로 앞, 예전에 메뉴 순서를 저장해 둔 사람에게도 앞 메뉴(문서함) 바로 뒤에 끼어 나온다
+test('에이전트 조직도: 조직 메뉴에만, 에이전트 작업 바로 앞, 예전 저장 순서에도 끼어 나온다', () => {
+  assert.equal(NAV.org.indexOf('agents') + 1, NAV.org.indexOf('work'));
+  assert.ok(!NAV.me.includes('agents'));
+  assert.ok(VIEWS.includes('agents') && NAV_ICON.agents);
+  const shown = readNav([{ id: 'home' }, { id: 'files' }, { id: 'work' }], 'org').shown;
+  assert.deepEqual(shown.slice(shown.indexOf('files'), shown.indexOf('files') + 3), ['files', 'agents', 'work']);
+  assert.deepEqual(readNav([{ id: 'home' }, { id: 'files' }, { id: 'work' }], 'me').shown.includes('agents'), false);
+  assert.equal(routeLabelKey(routeInfo('/o/x/agents')), 'nav.agents');
+  assert.deepEqual(favTarget('/o/x/agents'), { kind: 'route', id: '/o/x/agents' }, '즐겨찾기에도 넣을 수 있다');
+});
+
+// 이유: 새 메뉴는 같은 공간에 함께 나오는 메뉴 뒤에 끼운다 — 조직도의 바로 앞 기본 메뉴가 내 공간 전용 '메일'이라, 메일을 옮겨 둔 사람은 조직도가 조직 메뉴 맨 끝·홈 바로 다음에 나왔다(17차 A 검수 LOW-1)
+test('새 메뉴 자리: 다른 공간 전용 메뉴(메일)를 옮겨 둔 저장 순서에서도 조직도는 문서함 바로 뒤', () => {
+  const mailLast = readNav(['home', 'calendar', 'tasks', 'business', 'contracts', 'files', 'work', 'approvals', 'mail'].map((id) => ({ id })), 'org').shown;
+  assert.equal(mailLast[mailLast.indexOf('files') + 1], 'agents');
+  const mailFirst = readNav(['mail', 'home', 'calendar', 'tasks', 'business', 'contracts', 'files', 'work'].map((id) => ({ id })), 'org').shown;
+  assert.equal(mailFirst[mailFirst.indexOf('files') + 1], 'agents');
+  assert.equal(mailFirst[mailFirst.indexOf('home') + 1], 'calendar');
 });

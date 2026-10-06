@@ -46,3 +46,19 @@ test('diag.jsx는 저장을 이 모듈 한 곳에 맡긴다(키·상한을 따�
   assert.match(src, /createDiagStore\(\(\) => globalThis\.localStorage\)/);
   assert.doesNotMatch(src, /localStorage\.setItem/);
 });
+
+// 화면 검수 UL2(2026-10-05): 일반 기록 20칸을 'toast'(오류 원문) 줄이 'shell'·'notify' 줄과 같이 써서, 실시간 글이 몇 개만 와도 오류 원문이 밀려났다.
+// 오류 줄(error·rejection·render·toast)을 먼저 지킨다 — 다른 줄은 최소 8칸, 상한 20은 그대로.
+test('UL2 알림·셸 줄이 많이 와도 오류 줄(토스트 원문 등)은 남는다 — 상한 20 유지', () => {
+  const s = memory(); const store = createDiagStore(() => s, tick);
+  store.push('toast', 'msgr_forbidden'); store.push('render', 'boom');
+  for (let i = 0; i < 40; i++) store.push(i % 2 ? 'notify' : 'shell', `n${i}`);
+  const list = JSON.parse(s.getItem(DIAG_KEY));
+  assert.equal(list.length, DIAG_LIMIT);
+  assert.deepEqual(list.filter((x) => ['toast', 'render'].includes(x.kind)).map((x) => x.message).sort(), ['boom', 'msgr_forbidden']);
+  for (let i = 0; i < 30; i++) store.push('error', `e${i}`);
+  const after = JSON.parse(s.getItem(DIAG_KEY));
+  assert.equal(after.length, DIAG_LIMIT);
+  assert.equal(after.filter((x) => ['notify', 'shell'].includes(x.kind)).length, 8, '오류가 넘쳐도 다른 줄은 최소 8칸');
+  assert.equal(after[0].message, 'e29', '최신순 그대로');
+});

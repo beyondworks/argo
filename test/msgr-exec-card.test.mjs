@@ -28,19 +28,22 @@ test('서버: chat.mjs가 steps를 상태 파일에 싣고 trace를 반환(데�
   assert.match(bridge, /if \(now - lastSentAt < PROGRESS_MIN_GAP_MS\) return;/, '4초 안 지났으면 보내지 않는다');
   assert.match(bridge, /const payload = \{ channel_id: channelId, crew_id: crewId, startedAt: s\.startedAt, source_msg_id: sourceMsgId \};.*\n\s*lastSentAt = now;\n\s*await ch\.send\(\{ type: 'broadcast', event: 'progress', payload \}\)/, '4초 지나면 무조건 다시 방송(값이 그대로여도)');
   assert.match(bridge, /if \(stopped \|\| !s \|\| s\.source !== 'messenger'\) return;/, '상태 파일 source 게이트(검수 M-6)');
-  assert.match(bridge, /startTyping\(wsId, job\.orgId, job\.channelId, job\.crewId, job\.slug, \{ full: ch\.kind === 'public', sourceMsgId: job\.msgId \}\)/, 'slug·원본 메시지 id 전달(id는 크루 작업 중단 버튼의 대상) + 본문·사고 방송은 공개 채널만(검수 C-1)');
+  assert.match(bridge, /startTyping\(wsId, job\.orgId, job\.channelId, job\.crewId, job\.slug, \{ full: ch\.kind === 'public', sourceMsgId: job\.msgId(, topic: [^}]*)? \}\)/, 'slug·원본 메시지 id 전달(id는 크루 작업 중단 버튼의 대상) + 본문·사고 방송은 공개 채널만(검수 C-1)');
   assert.doesNotMatch(bridge, /turnTrace = ch\.kind === 'public'/, '메신저 답글에는 궤적을 저장하지 않는다(유건 결정 2026-09-24)');
   assert.match(read('supabase/migrations/20260909003000_msgr_message_meta.sql'), /add column if not exists meta jsonb not null default '\{\}'::jsonb/, 'meta 열');
 });
 
 test('클라이언트: progress 방송 → ExecCard는 "답변 준비 중" 한 줄(사고·도구 단계·작성 중 본문·궤적 없음 — 유건 결정 2026-09-24) · 점 세 개는 progress 없는 크루만', () => {
-  assert.match(app, /\.on\('broadcast', \{ event: 'progress' \}, active\(onProgressEvent\)\)/, 'progress 수신 — 해제 뒤 콜백을 막는 active() 안에서');
+  assert.match(app, /\.on\('broadcast', \{ event: 'progress' \}, mine\(onProgressEvent\)\)/, 'progress 수신 — 해제 뒤 콜백을 막는 on() 안에서(보는 조직만 — 기능 점검 D3)');
+  assert.match(app, /const on = \(fn\) => \(e\) => \{ if \(!isDisposed\(\)\) fn\(e\); \};/, 'on()은 해제 뒤 콜백을 막는다');
+  assert.match(app, /const mine = \(fn\) => on\(\(e\) => \{ if \(here\(o\.id\)\) fn\(e\); \}\);/, 'mine()은 on() 안에서 보는 조직만');
   assert.match(app, /const onProgressEvent = \(\{ payload \}\) => \{ if \(acceptTyping\(settledRef\.current, payload\)\) setProgress\(/, 'progress 처리기 = 답글 직후 늦은 방송 거름 + setProgress(2026-09-23 유령 표시)');
   assert.match(app, /const working = Object\.entries\(progress\)\.filter\(\(\[k, p\]\) => k\.startsWith\(`\$\{chId\}:`\) && Date\.now\(\) - p\.at < 8000 && typing\[k\]/, '실행 카드 대상 = progress+typing 살아 있는 크루');
-  assert.match(app, /\{working\.map\(\(\[c, p\]\) => <ExecCard key=\{`exec-\$\{c\.id\}`\} crew=\{c\} t=\{t\} canStop=\{canStop\(c, p\)\} stopping=\{!!stopping\[`\$\{c\.id\}:\$\{p\.source_msg_id\}`\]\} stopRequested=\{!!stopRequested\[`\$\{c\.id\}:\$\{p\.source_msg_id\}`\]\} onStop=\{\(\) => requestStop\(c\.id, p\.source_msg_id\)\} \/>\)\}\n\s*\{typingBubbleGrouped/, '중단 버튼 3단 상태 배선(2026-09-26) — 실행 카드 바로 뒤에 입력 중 말풍선');
-  assert.match(app, /const typingBubbleShown = typingCrews\.filter\(\(c\) => !workingIds\.has\(c\.id\)\);/, '점 세 개는 카드 없는 크루만(2026-09-29 입력 중 묶음으로 변수화)');
+  // 2026-10-05 보낸 뒤 대기 표시: 대기 카드가 있는 크루의 실행 카드는 대기 카드 안에서 그린다(같은 크루를 두 번 그리지 않는다) → 실행 카드는 대기 없는 크루만.
+  assert.match(app, /\{working\.filter\(\(\[c\]\) => !awaitIds\.has\(c\.id\)\)\.map\(\(\[c, p\]\) => <ExecCard key=\{`exec-\$\{c\.id\}`\} crew=\{c\} t=\{t\} canStop=\{canStop\(c, p\)\} stopping=\{!!stopping\[`\$\{c\.id\}:\$\{p\.source_msg_id\}`\]\} stopRequested=\{!!stopRequested\[`\$\{c\.id\}:\$\{p\.source_msg_id\}`\]\} onStop=\{\(\) => requestStop\(c\.id, p\.source_msg_id\)\} \/>\)\}\n\s*\{typingBubbleGrouped/, '중단 버튼 3단 상태 배선(2026-09-26) — 실행 카드 바로 뒤에 입력 중 말풍선');
+  assert.match(app, /const typingBubbleShown = typingCrews\.filter\(\(c\) => !workingIds\.has\(c\.id\) && !awaitIds\.has\(c\.id\)\);/, '점 세 개는 실행 카드·대기 카드 없는 크루만(2026-09-29 입력 중 묶음으로 변수화, 2026-10-05 대기 카드)');
   const card = app.slice(app.indexOf('function ExecCard('), app.indexOf('/** 결재 슬립'));
-  assert.match(card, /\{t\('exec\.preparing'\)\}/, '"답변 준비 중"');
+  assert.match(card, /\{stateLabel \?\? t\('exec\.preparing'\)\}/, '"답변 준비 중" — 보낸 뒤 대기 표시(2026-10-05)는 단계 문구(stateLabel)로 바꿔 쓴다');
   for (const gone of ['exec.thought', 'exec.partial', 'StepList', '<details', 'p.thought', 'p.partial', 'p.steps']) assert.ok(!card.includes(gone), `실행 카드에 ${gone} 없음`);
   assert.match(card, /canStop && <button type="button" className=\{`btn sm ghost msgr-stop-btn\$\{stopRequested \? ' requested' : ''\}`\} disabled=\{stopping \|\| stopRequested\}/, '시킨 사람·크루 주인에게만 보이는 중단 버튼(서버 msgr_request_stop이 권한을 다시 검사) — 중단 중/요청됨이면 비활성, 요청됨은 대비용 클래스(UI LOW)');
   assert.match(read('apps/messenger/src/styles.css'), /\.msgr-exec > \.summary \.msgr-stop-btn\.requested \{ opacity: 1 !important; color: var\(--fg\); background: var\(--card-2\); border-color: var\(--border\); font-weight: 600; \}/, '"중단 요청됨"은 최고 대비 텍스트로 고정(재검수 UI LOW)');
@@ -52,15 +55,15 @@ test('클라이언트: progress 방송 → ExecCard는 "답변 준비 중" 한 �
 
 test('P0: 안 읽음 RPC → 레일 배지(멘션은 mark·음소거는 dim)·굵은 이름·새 메시지 구분선(열 때 커서 고정)·보는 채널은 커서 갱신 · 편집/삭제는 본인 hover 액션 · 반응 칩·피커 · 음소거 메뉴·헤더 표시 · 조용한 시간은 알림 게이트', () => {
   assert.match(app, /supabase\.rpc\('msgr_unread', \{ org: orgId === PERSONAL \? null : orgId \}\)/, '안 읽음 RPC(개인 공간은 org=null)');
-  assert.match(app, /useEffect\(\(\) => \{ if \(event\?\.kind === 'message'\) loadUnread\(\); \}, \[event\]\);/, '새 메시지 방송이면 재집계');
+  assert.match(app, /if \(unreadWorthy\(payload, \{ uid, listIds: listIdsRef\.current, previewIds: previewIdsRef\.current, asked: roomAsked\.current, openId: activeChannel\.current \}\)\) unreadSoon\.request\(\);/, '새 메시지 방송이면 재집계(1.5초 창에 한 번 — 판정은 apps/messenger/test/read-sync.test.mjs, MSG-08)');
   assert.match(app, /<span className=\{`msgr-badge\$\{unread\[c\.id\]\.mention \? ' mark' : ''\}\$\{muted\.has\(c\.id\) \? ' dim' : ''\}`\}>\{unread\[c\.id\]\.n\}<\/span>/, '채널 배지');
   assert.match(app, /const isNewAt = \(m\) => divider > 0 && m\.id > divider && !\(m\.author_kind === 'user' && m\.author_user_id === uid\);/, '구분선은 남의 첫 새 글 앞(2026-09-29 연속 묶음이 같은 자리에서 끊도록 함수화)');
   assert.match(app, /if \(divider > 0 && !newLine && isNewAt\(m\)\)/, '구분선은 한 번만');
   assert.match(app, /afterId \? null : q\(supabase\.from\('msgr_reads'\)[\s\S]{0,200}\n    if \(!afterId && !preserve\) setDivider\(rd\?\.last_read_id \?\? 0\);/, '구분선 기준은 열 때 한 번, 글보다 먼저, 보존 새로고침에서는 변경하지 않는다(D15 순서는 apps/messenger/test/newline-divider.test.mjs)');
   assert.match(app, /onRead\?\.\(chId, lastId\)/, '보는 채널은 커서 갱신');
   assert.match(app, /supabase\.from\('msgr_reads'\)\.upsert\(\{ channel_id: channelId, user_id: uid, last_read_id: lastId/, '커서 upsert');
-  assert.match(app, /\{mine && m\.kind === 'text' && <button type="button" tabIndex=\{tabStop\} onClick=\{\(\) => \{ setDraft\(m\.body\); setEditing\(true\); \}\}>/, '편집은 내 글만(숨은 hover 동작은 탭 순서 밖 — D11)');
-  assert.match(app, /\{mine && \(confirmDel \? <button type="button" tabIndex=\{tabStop\} className="danger"/, '삭제는 2단계 확인');
+  assert.match(app, /\{mine && m\.kind === 'text' && <button type="button" onClick=\{\(\) => \{ setActsOpen\(false\); setDraft\(m\.body\); setEditing\(true\); \}\}>/, '편집은 내 글만 — 데스크톱은 ⋯·우클릭 메뉴 안(아이콘 줄 버튼은 탭 순서 밖 — D11, 2026-10-02 아이콘 줄)');
+  assert.match(app, /\{mine && \(confirmDel \? <button type="button" className="danger"/, '삭제는 2단계 확인');
   assert.match(app, /update\(\{ body: '', deleted_at: new Date\(\)\.toISOString\(\) \}\)/, '삭제 = deleted_at + 본문 비움');
   assert.doesNotMatch(app, /const quick = topEmoji\(3\);/, 'hover 추천 없음(유건 지시)'); assert.match(app, /className="msgr-actsheet"[\s\S]*?<div className="quick">[\s\S]*?topEmoji\(5\)/, '빠른 반응은 폰의 길게 누른 시트 안에서만(슬랙식, 2026-09-11)'); assert.match(app, /grid\(topEmoji\(COLS\), 'freq'\)/, '자주 사용은 피커 상단 한 줄(열 수만큼)'); assert.match(app, /function EmojiPicker\(\{ t, anchor, onPick, onClose \}\)[\s\S]*?searchEmoji\(q\)[\s\S]*?EMOJI_GROUPS\.map/, '슬랙식 피커: 검색·자주 사용·분류'); assert.match(app, /className=\{`msgr-emojipop\$\{phone \? ' phone' : ''\}`\} ref=\{ref\}[^\n]*style=\{phone \? undefined : \{ left, top, width: W, maxHeight: H \}\}/, '피커는 화면 고정(스크롤 무관) — 폰은 앵커 대신 아래 시트(CSS)'); assert.match(read('apps/messenger/src/styles.css'), /^\.msgr-emojipop \{ position: fixed;/m, 'fixed'); assert.match(app, /document\.body\.classList\.add\('msgr-lock'\)/, '열린 동안 스크롤 잠금'); assert.match(read('apps/messenger/src/styles.css'), /^body\.msgr-lock \.msgr-thread \{ pointer-events: none; \}/m, '잠금 CSS');
   assert.match(app, /broadcast\?\.\('reaction', \{ channel_id: chId, message_id: m\.id \}\)/, '반응 방송');

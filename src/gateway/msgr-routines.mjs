@@ -105,7 +105,7 @@ export async function mirrorRoutines(wsId, { db, crews, load = loadRoutines, log
         backoffAttempts.set(crew.id, attempts);
         backoffUntil.set(crew.id, now() + Math.min(BACKOFF_CAP_MS, BACKOFF_BASE_MS * 2 ** (attempts - 1)));
       }
-      log('[argo] msgr 루틴 미러 실패(crew=' + crew.slug + '):', e.message);
+      log('[argo] msgr 루틴 미러 실패(agent=' + crew.slug + '):', e.message);
     }
   }
   return { synced, failed, unsupported };

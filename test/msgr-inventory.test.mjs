@@ -43,11 +43,11 @@ test('새 크루는 내가 속한 모든 조직에 기본 파견(active, allow =
   }
 });
 
-test('이미 있는 크루: 이름·역할이 같으면 무변경, 바뀌면 상태와 무관하게 갱신(active도)', async () => {
+test('이미 있는 크루: 이름·역할이 같으면 무변경, 이름이 바뀌면 상태와 무관하게 이름만 갱신(active도) — 직무는 카드 변화로만(test/msgr-mirror-edges.test.mjs, CX-08)', async () => {
   const d = db({ rows: [{ id: 'r1', org_id: O1, slug: 'seoyun', display_name: '서윤', role_text: '마케터', status: 'active' }, { id: 'r2', org_id: O1, slug: 'jun', display_name: '준(옛)', role_text: '데이터 분석', status: 'available' }] });
   const r = await mirrorInventory('ws1', { db: d, uid: UID, agents });
   assert.deepEqual(r, { orgs: 1, inserted: 0, updated: 1, removed: 0 });
-  assert.deepEqual(d.calls.filter(([k]) => k === 'updateCrewInfo'), [['updateCrewInfo', 'r2', { display_name: '준', role_text: '데이터 분석' }]]);
+  assert.deepEqual(d.calls.filter(([k]) => k === 'updateCrewInfo'), [['updateCrewInfo', 'r2', { display_name: '준' }]], '이름만 — 메신저에서 고친 직무를 같이 덮지 않는다');
   assert.ok(!d.calls.some(([k]) => k === 'upsertAvailable'));
 });
 
@@ -56,8 +56,10 @@ test('카드에서 사라진(해고) 크루: available 행만 삭제, active·de
     { id: 'a', org_id: O1, slug: 'gone1', display_name: 'x', role_text: null, status: 'available' },
     { id: 'b', org_id: O1, slug: 'gone2', display_name: 'y', role_text: null, status: 'active' },
     { id: 'c', org_id: O1, slug: 'gone3', display_name: 'z', role_text: null, status: 'detached' },
+    { id: 'k', org_id: O1, slug: 'keep', display_name: 'keep', role_text: null, status: 'active' },
   ] });
-  const r = await mirrorInventory('ws1', { db: d, uid: UID, agents: [] });
+  // 카드가 하나라도 있는 틱의 회수 — 빈 카드 목록(폴더 읽기 실패)에서는 지우지 않는다(검수 #fix-cross L4, test/msgr-mirror-edges.test.mjs E11)
+  const r = await mirrorInventory('ws1', { db: d, uid: UID, agents: [{ slug: 'keep', name: 'keep', role: null }] });
   assert.deepEqual(r, { orgs: 1, inserted: 0, updated: 0, removed: 1 });
   assert.deepEqual(d.calls.find(([k]) => k === 'deleteCrews')[1], ['a']);
 });

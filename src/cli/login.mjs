@@ -15,13 +15,15 @@
 // 브라우저가 없는 서버는 `ssh -L <port>:127.0.0.1:<port> 서버`로 내 PC 브라우저에서 같은 주소를 연다(고정 포트).
 import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
-import { createClient } from '@supabase/supabase-js';
+import { verifyAccessToken, linkFailure, describeFailure } from '../auth-error.mjs';
 
 export const DEFAULT_LOGIN_PORT = 38417;
 
 const TEXT = {
-  ko: { title: 'Argo 터미널 로그인', pick: '로그인할 계정을 고르세요.', confirm: '이 터미널(argo CLI)을 이 계정으로 로그인할까요?', approve: '이 터미널 로그인', done: '로그인했습니다. 이 탭을 닫고 터미널로 돌아가세요.', fail: '로그인하지 못했습니다. 터미널에 나온 처음 주소를 다시 열어 시도하세요.', noToken: '로그인 정보를 받지 못했습니다. 처음부터 다시 시도하세요.', needKey: '터미널에 나온 주소를 그대로(끝까지) 열어 주세요.', checkTerminal: '터미널에서 계정을 확인하고 y를 눌러 주세요.', declined: '터미널에서 로그인을 취소했습니다. 다시 하려면 터미널에 나온 처음 주소를 여세요.' },
-  en: { title: 'Argo terminal sign-in', pick: 'Choose the account to sign in with.', confirm: 'Sign this terminal (argo CLI) in with this account?', approve: 'Sign in this terminal', done: 'Signed in. Close this tab and return to the terminal.', fail: 'Sign-in failed. Open the first address shown in the terminal and try again.', noToken: 'No sign-in data was received. Start over from the terminal.', needKey: 'Open the full address shown in the terminal.', checkTerminal: 'Check the account in the terminal and press y.', declined: 'Sign-in was cancelled in the terminal. To retry, open the first address shown in the terminal.' },
+  ko: { title: 'Argo 터미널 로그인', pick: '로그인할 계정을 고르세요.', confirm: '이 터미널(argo CLI)을 이 계정으로 로그인할까요?', approve: '이 터미널 로그인', done: '로그인했습니다. 이 탭을 닫고 터미널로 돌아가세요.', fail: '로그인하지 못했습니다. 터미널에 나온 처음 주소를 다시 열어 시도하세요.', noToken: '로그인 정보를 받지 못했습니다. 처음부터 다시 시도하세요.', needKey: '터미널에 나온 주소를 그대로(끝까지) 열어 주세요.', checkTerminal: '터미널에서 계정을 확인하고 y를 눌러 주세요.', declined: '터미널에서 로그인을 취소했습니다. 다시 하려면 터미널에 나온 처음 주소를 여세요.',
+    unreachable: '이 컴퓨터의 argo가 로그인 서버(Supabase)에 연결하지 못했습니다. 회사 네트워크·VPN·프록시·보안 프로그램이 인터넷 연결을 막고 있는지 확인한 뒤, 터미널에 나온 처음 주소를 다시 여세요.', verifyFailed: '로그인 서버에서 세션을 확인하지 못했습니다. 잠시 뒤 터미널에 나온 처음 주소를 다시 여세요.' },
+  en: { title: 'Argo terminal sign-in', pick: 'Choose the account to sign in with.', confirm: 'Sign this terminal (argo CLI) in with this account?', approve: 'Sign in this terminal', done: 'Signed in. Close this tab and return to the terminal.', fail: 'Sign-in failed. Open the first address shown in the terminal and try again.', noToken: 'No sign-in data was received. Start over from the terminal.', needKey: 'Open the full address shown in the terminal.', checkTerminal: 'Check the account in the terminal and press y.', declined: 'Sign-in was cancelled in the terminal. To retry, open the first address shown in the terminal.',
+    unreachable: 'argo on this computer could not reach the sign-in server (Supabase). Check whether a company network, VPN, proxy, or security software is blocking its internet access, then reopen the first address shown in the terminal.', verifyFailed: 'The sign-in server could not verify the session. Wait a moment, then reopen the first address shown in the terminal.' },
 };
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const page = (title, body) => `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title>
@@ -55,10 +57,9 @@ export async function startLoginServer({ supabaseUrl, anonKey, port = DEFAULT_LO
   let settled = false; let confirming = false; let resolveDone;
   const done = new Promise((res) => { resolveDone = res; }); // 검증 실패는 끝내지 않는다 — 브라우저에서 다시 시도할 수 있다
   const verifyToken = verify ?? (async (accessToken) => {
-    const sb = createClient(supabaseUrl, anonKey, { auth: { persistSession: false, autoRefreshToken: false } });
-    const { data, error } = await sb.auth.getUser(accessToken);
-    if (error || !data?.user) throw new Error('유효하지 않은 세션입니다');
-    return data.user;
+    const { user, failure } = await verifyAccessToken({ url: supabaseUrl, anonKey, accessToken });
+    if (failure) throw Object.assign(new Error(linkFailure(failure).body.error), { failure }); // 연결 실패·거부를 /bind가 나눠 알린다
+    return user;
   });
   const saveSession = save ?? (async (session) => (await import('../devicesession.mjs')).saveDeviceSession({ url: supabaseUrl, anonKey, session }));
   let base = '';
@@ -82,11 +83,11 @@ export async function startLoginServer({ supabaseUrl, anonKey, port = DEFAULT_LO
 <script>const h=new URLSearchParams(location.hash.slice(1));history.replaceState(null,'','/auth/paired?cli=${nonce}');
 const at=h.get('access_token'),rt=h.get('refresh_token'),m=document.getElementById('m'),a=document.getElementById('a');
 if(!at||!rt){m.textContent=${JSON.stringify(tx.noToken)};}else{a.hidden=false;a.onclick=async()=>{a.disabled=true;a.hidden=true;m.textContent=${JSON.stringify(tx.checkTerminal)};
-const r=await fetch('/bind',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({cli:${JSON.stringify(nonce)},access_token:at,refresh_token:rt})}).then(r=>r.status).catch(()=>0);
-m.textContent=r===200?${JSON.stringify(tx.done)}:r===409?${JSON.stringify(tx.declined)}:${JSON.stringify(tx.fail)};};}</script>`));
+const x=await fetch('/bind',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({cli:${JSON.stringify(nonce)},access_token:at,refresh_token:rt})}).then(async r=>({s:r.status,j:await r.json().catch(()=>({}))})).catch(()=>({s:0,j:{}}));
+const r=x.s;m.textContent=r===200?${JSON.stringify(tx.done)}:r===409?${JSON.stringify(tx.declined)}:r===502?(x.j.kind==='unreachable'?${JSON.stringify(tx.unreachable)}:${JSON.stringify(tx.verifyFailed)})+(x.j.code?' ('+x.j.code+')':''):${JSON.stringify(tx.fail)};};}</script>`));
     }
     if (req.method === 'POST' && u.pathname === '/bind') {
-      const fail = (status) => send(status, JSON.stringify({ ok: false }), 'application/json');
+      const fail = (status, extra = {}) => send(status, JSON.stringify({ ok: false, ...extra }), 'application/json');
       if (!sameOriginBind(req.headers, base)) return fail(403);
       if (!String(req.headers['content-type'] ?? '').toLowerCase().startsWith('application/json')) return fail(415); // text/plain 같은 "단순 요청"은 사전 확인 없이 교차 출처로 온다
       let body = '';
@@ -99,7 +100,12 @@ m.textContent=r===200?${JSON.stringify(tx.done)}:r===409?${JSON.stringify(tx.dec
       confirming = true;
       try {
         let user;
-        try { user = await verifyToken(j.access_token); } catch { return fail(401); }
+        try { user = await verifyToken(j.access_token); } catch (e) {
+          const f = e?.failure; // 로그인 서버 확인 실패 — 연결 못 함·알 수 없음은 502로 구분해 브라우저가 이유를 보여 준다(토큰은 기록하지 않는다)
+          if (!f) return fail(401);
+          console.warn(`[argo login] ${describeFailure(f)}`);
+          return f.kind === 'rejected' ? fail(401) : fail(502, { kind: f.kind, ...(f.code ? { code: f.code } : {}) });
+        }
         if (confirm) {
           let ok = false;
           try { ok = await confirm({ id: user.id, email: user.email ?? '' }); } catch { ok = false; }

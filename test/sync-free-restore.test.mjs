@@ -99,9 +99,12 @@ test('관용은 pull 완결일 때만 — pull 실패가 남으면 throw해 복�
   const WS2 = 'ws2';
   await mkdir(join(ROOT, WS2), { recursive: true });
   const note = Buffer.from('x');
-  // 매니페스트는 파일을 선언하는데 blob이 없다 → pull 실패(failed>0) → 관용 불가
-  const manifest = Buffer.from(JSON.stringify({ files: { 'vault/notes/missing.md': meta(note) } }));
-  const fake = freeStorage({ [`${OWNER}/${WS2}/__manifest__.json`]: manifest });
+  // 매니페스트가 선언한 파일을 받다가 네트워크 실패 → pull 실패(failed>0) → 관용 불가.
+  // (객체가 아예 없는 항목은 받을 내용이 없어 실패가 아니다 — 2026-10-05부터 missing으로 건너뛴다. 아래 테스트)
+  const manifest = Buffer.from(JSON.stringify({ files: { 'vault/notes/flaky.md': meta(note) } }));
+  const fake = freeStorage({ [`${OWNER}/${WS2}/__manifest__.json`]: manifest, [`${OWNER}/${WS2}/vault/notes/flaky.md`]: note });
+  const bucket = fake.client.storage.from(), download = bucket.download.bind(bucket);
+  bucket.download = async (key, opts) => (key.includes('flaky.md') ? { data: null, error: { message: 'fetch failed', status: 500 } } : download(key, opts));
   _setSyncClientForTest(fake.client);
   const r = await syncCompany(WS2, OWNER, true, { freePlan: true }).catch((e) => ({ threw: String(e.message) }));
   // 파일 실패는 루프 안 catch(failed++)로 삼켜지고 매니페스트 업로드에서 throw — 어느 쪽이든 state 미기록이 계약
@@ -109,10 +112,26 @@ test('관용은 pull 완결일 때만 — pull 실패가 남으면 throw해 복�
   assert.equal(await syncStateExists(WS2), false, 'state 미기록 = 다음 사이클 재시도(복원 미완)');
 });
 
+test('객체 없는 항목은 pull 실패가 아니다 — 그 항목 때문에 free 복원이 영영 미완으로 남지 않는다', async () => {
+  const WS2b = 'ws2b';
+  await mkdir(join(ROOT, WS2b), { recursive: true });
+  const manifest = Buffer.from(JSON.stringify({ files: { 'vault/notes/missing.md': meta(Buffer.from('x')) } }));
+  const fake = freeStorage({ [`${OWNER}/${WS2b}/__manifest__.json`]: manifest });
+  _setSyncClientForTest(fake.client);
+  const r = await syncCompany(WS2b, OWNER, true, { freePlan: true });
+  assert.equal(r.failed, 0);
+  assert.equal(r.missing, 1);
+  assert.equal(await syncStateExists(WS2b), true, '받을 수 있는 것은 다 받았다 = 복원 완결');
+});
+
 test('관용 미지정(비free 계약)이면 쓰기 거부는 그대로 throw — pro의 실패 가시성 유지', async () => {
   const WS3 = 'ws3';
   await mkdir(join(ROOT, WS3), { recursive: true });
-  const fake = freeStorage({ [`${OWNER}/${WS3}/__manifest__.json`]: Buffer.from(JSON.stringify({ files: {} })) });
+  // 전제: 평문 매니페스트 — 계정 키를 가진 이 기기가 봉인해 다시 써야 해서(manifestNeedsSeal) 쓰기가 일어난다. 복원이라는 이유만으로는
+  // 쓰지 않는다(빈 원격 회사 루프 수정 2026-10-05). 봉인본으로 바꾸면 쓰기 자체가 없어 이 계약을 못 본다 — 그때 isRestore를 조건에 되돌리지 말 것.
+  const plain = Buffer.from(JSON.stringify({ files: {} }));
+  assert.equal(plain.subarray(0, 11).toString(), '{"files":{}', '전제: 봉투(argosecret.) 아님');
+  const fake = freeStorage({ [`${OWNER}/${WS3}/__manifest__.json`]: plain });
   _setSyncClientForTest(fake.client);
   await assert.rejects(() => syncCompany(WS3, OWNER, true), /row-level security/);
   assert.equal(await syncStateExists(WS3), false);

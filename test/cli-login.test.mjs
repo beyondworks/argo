@@ -187,3 +187,26 @@ test('#791 LOW-6 — 검증(verify)이 느려도 동시 승인 요청 둘이 터
     assert.equal(saved.length, 1);
   } finally { await srv.close(); }
 });
+
+test('로그인 서버 확인 실패 — 연결 못 함은 502(+원인 코드), 토큰 거부·일반 오류는 401, 어느 쪽도 저장하지 않고 다시 시도할 수 있다', async () => {
+  const warns = []; const realWarn = console.warn; console.warn = (...a) => warns.push(a.join(' '));
+  let mode = 'unreachable';
+  const { srv, saved } = await boot({ verify: async () => {
+    if (mode === 'unreachable') throw Object.assign(new Error('x'), { failure: { kind: 'unreachable', name: 'AuthRetryableFetchError', status: 0, code: 'ECONNREFUSED' } });
+    if (mode === 'rejected') throw Object.assign(new Error('x'), { failure: { kind: 'rejected', name: 'AuthApiError', status: 401 } });
+    if (mode === 'unknown') throw Object.assign(new Error('x'), { failure: { kind: 'unknown', name: 'Error', status: 503 } });
+    throw new Error('plain');
+  } });
+  try {
+    const bind = () => call(srv.port, { method: 'POST', path: '/bind', body: { cli: srv._nonce, access_token: 'SECRET-TOK', refresh_token: 'r' } });
+    const a = await bind(); assert.equal(a.status, 502); assert.deepEqual(JSON.parse(a.body), { ok: false, kind: 'unreachable', code: 'ECONNREFUSED' });
+    mode = 'unknown'; const u = await bind(); assert.equal(u.status, 502); assert.deepEqual(JSON.parse(u.body), { ok: false, kind: 'unknown' });
+    mode = 'rejected'; assert.equal((await bind()).status, 401);
+    mode = 'plain'; assert.equal((await bind()).status, 401);
+    assert.equal(saved.length, 0);
+    assert.ok(warns.some((w) => w.includes('unreachable') && w.includes('ECONNREFUSED')), '서버 콘솔에 이름·status·code가 남는다');
+    assert.ok(warns.every((w) => !w.includes('SECRET-TOK')), '토큰은 기록하지 않는다');
+    const pg = await call(srv.port, { path: `/auth/paired?cli=${srv._nonce}` }); // 승인 뒤 화면 문구가 구분된다
+    assert.match(pg.body, /로그인 서버\(Supabase\)에 연결하지 못했습니다/);
+  } finally { console.warn = realWarn; await srv.close(); }
+});

@@ -20,9 +20,10 @@ test('상한을 넘어도 열린 방은 남는다', () => {
   const ids = roomTopicIds(list, 'd59', false);
   assert.equal(ids.length, 50); assert.ok(ids.includes('d59'));
 });
-test('typing 6초 창 — 그 방 크루만, 지나면 꺼진다', () => {
+test('typing 20초 창 — 그 방 크루만, 지나면 꺼진다', () => {
   const now = 10_000;
-  assert.equal(typingIn({ 'd1:c1': now - 5999 }, 'd1', now), true);
-  assert.equal(typingIn({ 'd1:c1': now - 6000 }, 'd1', now), false);
+  assert.equal(typingIn({ 'd1:c1': now - 15_000 }, 'd1', now), true, '서버 4초 주기 방송이 몇 번 끊겨도(턴 실행 중) 표시가 남는다 — 20초 창(2026-10-05)');
+  assert.equal(typingIn({ 'd1:c1': now - 19_999 }, 'd1', now), true);
+  assert.equal(typingIn({ 'd1:c1': now - 20_000 }, 'd1', now), false);
   assert.equal(typingIn({ 'd10:c1': now }, 'd1', now), false, '접두 겹치는 다른 방');
 });

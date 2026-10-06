@@ -13,12 +13,13 @@ export const SPACES = [
   { key: 'lean-studio', kind: 'org', name: '린 스튜디오', role: 'member', members: 5, mark: 'L' },
 ];
 
+// 서버 모양(board.js)과 같게 role = 부서(없으면 직무) — 에이전트 조직도(17차)가 부서별로 묶는다. 미오는 부서 없음 묶음
 export const CREWS = [
-  { id: 'crew-luna', name: '루나', role: '영업', status: 'work' },
-  { id: 'crew-otto', name: '오토', role: '리서치', status: 'idle' },
-  { id: 'crew-mio', name: '미오', role: '디자인', status: 'idle' },
-  { id: 'crew-hana', name: '하나', role: '고객 응대', status: 'ask' },
-  { id: 'crew-pepper', name: '페퍼', role: '마케팅', status: 'idle' },
+  { id: 'crew-luna', name: '루나', role: '사업팀', dept: '사업팀', job: '영업', status: 'work' },
+  { id: 'crew-otto', name: '오토', role: '리서치팀', dept: '리서치팀', job: '리서치', status: 'idle' },
+  { id: 'crew-mio', name: '미오', role: '디자인', job: '디자인', status: 'idle' },
+  { id: 'crew-hana', name: '하나', role: '고객지원팀', dept: '고객지원팀', job: '고객 응대', status: 'ask' },
+  { id: 'crew-pepper', name: '페퍼', role: '사업팀', dept: '사업팀', job: '마케팅', status: 'idle' },
 ];
 
 const doc = (...blocks) => ({ type: 'doc', content: blocks });

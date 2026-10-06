@@ -14,7 +14,8 @@ const snapshot = () => art;
 
 export function Face({ id, size = 20, dim = false }) {
   const m = useSyncExternalStore(subscribe, snapshot, snapshot);
-  const html = m ? m.faceStill(m.faceOf(id, getState().crews?.find((c) => c.id === id)?.face ?? null), { px: size }) : '';
+  const c = getState().crews?.find((x) => x.id === id); // faceSeed·face = 같은 에이전트의 대표 행 기준(board.js mapBoard, 유건 2026-10-05) — 예시 데이터는 자기 id
+  const html = m ? m.faceStill(m.faceOf(c?.faceSeed ?? id, c?.face ?? null), { px: size }) : '';
   return (
     <svg className="face" width={size} height={size} viewBox="0 0 100 100" aria-hidden="true" style={dim ? { opacity: 0.45 } : undefined}
       dangerouslySetInnerHTML={{ __html: html }} />

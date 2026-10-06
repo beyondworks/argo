@@ -24,8 +24,8 @@ export async function POST(req, { params }) {
     const lang = (await loadCompany(ws).catch(() => ({}))).lang === 'en' ? 'en' : 'ko';
     const attNote = attachments.length
       ? (lang === 'en'
-        ? `\n\n(Files the captain attached — read them directly: ${attachments.map((a) => `vault/${a.rel}`).join(', ')})`
-        : `\n\n(사장이 첨부한 파일 — 직접 읽어 참고하라: ${attachments.map((a) => `vault/${a.rel}`).join(', ')})`)
+        ? `\n\n(Files the user attached — read them directly: ${attachments.map((a) => `vault/${a.rel}`).join(', ')})`
+        : `\n\n(사용자가 첨부한 파일 — 직접 읽어 참고하라: ${attachments.map((a) => `vault/${a.rel}`).join(', ')})`)
       : '';
     // tag = 그 사장 턴(chat 라우트가 abortTag로 등록) — 같은 크루의 결재 후속 턴(source 'chat')으로 새지 않는다
     const steered = await steerTurn(ws, slug, { source: 'chat', tag: turnId, text: `${text}${attNote}` });

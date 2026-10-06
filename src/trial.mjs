@@ -20,9 +20,9 @@ async function notConnectedReply(wsId) {
   return `AI 연결이 아직 안 되어 있어요. 설정 → AI 연결에서 ${visibleRunnerNamesLine()} 중 하나를 연결하면 바로 일을 시작할게요.\n\nAI isn't connected yet. Connect any runner (${visibleRunnerNamesLine('en')}) in Settings → AI connections and I'll get started right away.`;
 }
 
-const TRIAL_PROMPT = `방금 이 회사에 영입되었다. 사장에게 첫 인사를 하라.
+const TRIAL_PROMPT = `방금 이 회사에 영입되었다. 사용자에게 첫 인사를 하라.
 ① 두 문장 자기소개 — 무엇을 맡고, 어떻게 일하는지.
-② 네 역할에 맞는 샘플 산출물 1건을 지금 바로 만들어 보여줘라. 사장 지시 없이도 무엇을 할 수 있는지 보여주는 시운전이다 — 짧고 실전적으로.
+② 네 역할에 맞는 샘플 산출물 1건을 지금 바로 만들어 보여줘라. 사용자 지시 없이도 무엇을 할 수 있는지 보여주는 시운전이다 — 짧고 실전적으로.
 ③ 마지막 줄에 "이런 일을 시켜보세요:" 뒤에 지시 예시 2개.
 전체 15줄 이내. 결재가 필요한 행동은 하지 마라.`;
 

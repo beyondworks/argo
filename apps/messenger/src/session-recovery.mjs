@@ -26,10 +26,11 @@ export function createSessionRecovery({ auth, hasStoredSession, applySession, se
   let generation = 0;
   let cleanupPhase = null;
   let markerWriteFailed = false;
+  let signoutFailed = false; // 로그아웃 정리가 실패한 채 멈춰 있다 — 정리 대기로 다시 들어가도(다시 연결·초점·온라인) 그 실패를 지우지 않는다(화면 검수 UM4)
 
   const clearRetry = () => { if (timer !== null) clearTimer(timer); timer = null; };
   const finish = (session) => {
-    clearRetry(); setFailure(null);
+    clearRetry(); signoutFailed = false; setFailure(null);
     const applied = applySession(session);
     if (session || !applied?.then) { setWaiting(false); return Promise.resolve(); }
     return applied.then(() => { if (cleanupPhase !== 'pending') setWaiting(false); });
@@ -39,7 +40,7 @@ export function createSessionRecovery({ auth, hasStoredSession, applySession, se
     if (active) timer = setTimer(() => { timer = null; return retryNow(); }, retryMs);
   };
   const failClosed = (error, phase = 'session') => {
-    clearRetry(); setWaiting(true); setFailure(error, phase);
+    clearRetry(); setWaiting(true); if (phase === 'signout') signoutFailed = true; setFailure(error, phase);
   };
   const refreshCleanupState = () => {
     if (!cleanupState) return cleanupPhase;
@@ -49,7 +50,7 @@ export function createSessionRecovery({ auth, hasStoredSession, applySession, se
     return cleanupPhase;
   };
   const enterCleanup = () => {
-    clearRetry(); setFailure(null); setWaiting(true);
+    clearRetry(); if (!signoutFailed) setFailure(null); setWaiting(true);
     if (!cleanupReady) cleanupReady = Promise.resolve().then(onCleanupPending);
     return cleanupReady;
   };
@@ -121,7 +122,7 @@ export function createSessionRecovery({ auth, hasStoredSession, applySession, se
       if (cleanupFlight) return cleanupFlight;
       cleanupFlight = (async () => {
         ++generation;
-        clearRetry(); setFailure(null); setWaiting(true);
+        clearRetry(); if (!signoutFailed) setFailure(null); setWaiting(true); // 앞서 실패했으면 다시 하는 동안에도 실패를 두어 멈춤 화면을 유지한다 — 지우면 일반 '연결 대기'로 돌아갔다(2차 검수 L-c). 성공(SIGNED_OUT)이 finish에서 지운다
         cleanupPhase = 'pending';
         let markerPersisted = false;
         try {
@@ -131,14 +132,14 @@ export function createSessionRecovery({ auth, hasStoredSession, applySession, se
           cleanupReady = null;
           await enterCleanup();
           const { error } = await auth.signOut({ scope: 'local' });
-          if (error) { setFailure(error, 'signout'); return { error }; }
+          if (error) { signoutFailed = true; setFailure(error, 'signout'); return { error }; }
           // Only SIGNED_OUT proves auth-js completed primary, PKCE/user companion
           // cleanup and broadcast. Promise success alone cannot open Auth.
           return { error: null };
         } catch (error) {
           if (!markerPersisted) markerWriteFailed = true;
           if (cleanupPhase === 'complete') return { error: null };
-          setFailure(error, 'signout');
+          signoutFailed = true; setFailure(error, 'signout');
           return { error };
         }
       })().finally(() => { cleanupFlight = null; });
@@ -168,4 +169,12 @@ export function createSessionRecovery({ auth, hasStoredSession, applySession, se
       else if (!hasStoredSession()) { generation += 1; void finish(null); }
     },
   };
+}
+
+/** 연결 대기 화면의 모양(화면 검수 UM4, 2026-10-05). error = 앱이 보인 실패 키. 로그아웃 정리가 실패한 동안('auth.signInAgainFailed')은
+    다시 연결이 아무 일도 못 한다(정리 대기로 돌아갈 뿐) — 다시 연결을 숨기고 로그아웃을 주 단추로, 진행 표시는 로그아웃을 다시 하는 동안만.
+    retrying = 다시 연결을 누른 뒤(바로 실패해도 잠깐은 '연결하는 중…'), busy = 로그아웃 중. */
+export function waitingView({ error = '', retrying = false, busy = false } = {}) {
+  if (error === 'auth.signInAgainFailed') return { title: 'auth.signOutStuck', desc: 'auth.signInAgainFailed', error: '', spin: busy, reconnect: false, primary: 'signout', status: busy ? 'ui.loading' : 'auth.signOutStuck' };
+  return { title: 'auth.connectionWaiting', desc: 'auth.connectionWaiting.desc', error, spin: true, reconnect: true, primary: 'reconnect', status: retrying ? 'auth.reconnecting' : 'auth.connectionWaiting' };
 }

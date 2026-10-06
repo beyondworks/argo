@@ -8,6 +8,7 @@ import { listAgents } from '../../../../../src/hub.mjs';
 import { loadCompany, updateCompany } from '../../../../../src/workspace.mjs';
 import { msgrGatewayStatus } from '../../../../../src/connections.mjs';
 import { nudgeGateway } from '../../../../../src/gateway.mjs';
+import { splitCardRows } from './card-rows.mjs'; // 행 나누기 — 카드 판정과 같은 모양을 테스트가 잠근다(UL10)
 
 const ALLOW = new Set(['all', 'list', 'owner']);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -22,12 +23,22 @@ function runtimeState(gateway) {
   return { state: gateway?.lastTs ? 'offline' : 'waiting' };
 }
 
+const REG_COLS = 'id, org_id, slug, display_name, hosting, status, allow, allow_users, last_seen_at, msgr_orgs(name, slug)';
 async function myRegistrations(c, ws) {
   const { data, error } = await c.client.from('msgr_crews')
-    .select('id, org_id, slug, display_name, hosting, status, allow, allow_users, last_seen_at, msgr_orgs(name, slug)')
+    .select(REG_COLS)
     .eq('owner_user_id', c.uid).eq('ws_id', ws).not('org_id', 'is', null); // 조직 등록만 — 개인 공간 행(org NULL)은 이 카드의 연결·해제 판정 대상이 아니다(분리 검수 M2)
   if (error) throw new Error(error.message);
   return data ?? [];
+}
+/** 카드 조회용 — 같은 한 번의 조회로 조직 등록과 개인 공간 행 수를 함께 얻는다(호출 수 그대로). 개인 공간 행(org NULL)은
+    연결·해제 판정에는 쓰지 않고 "개인 공간에 연결됨" 표시에만 쓴다(CX-12, 2026-10-05). */
+async function myCardRows(c, ws) {
+  const { data, error } = await c.client.from('msgr_crews')
+    .select(REG_COLS)
+    .eq('owner_user_id', c.uid).eq('ws_id', ws);
+  if (error) throw new Error(error.message);
+  return splitCardRows(data);
 }
 async function myOrgs(c) {
   const { data, error } = await c.client.from('msgr_org_members').select('org_id, role, msgr_orgs(id, name, slug)').eq('user_id', c.uid).is('removed_at', null); // 본인 행만(멤버 select 정책은 조직 전원 행을 준다 — 검수 MEDIUM-2)
@@ -58,8 +69,8 @@ export async function GET(_req, { params }) {
   const c = await sessionClient().catch(() => null);
   if (!c) return Response.json({ signedIn: false, orgs: [], crews: [] });
   try {
-    const [orgs, crews, gateway] = await Promise.all([myOrgs(c), myRegistrations(c, ws), msgrGatewayStatus(ws)]);
-    return Response.json({ signedIn: true, uid: c.uid, orgs, crews, runtime: runtimeState(gateway) });
+    const [orgs, { crews, personalCount }, gateway] = await Promise.all([myOrgs(c), myCardRows(c, ws), msgrGatewayStatus(ws)]);
+    return Response.json({ signedIn: true, uid: c.uid, orgs, crews, personalCount, runtime: runtimeState(gateway) });
   } catch (e) { return upstream('GET', e, await requestLang()); }
 }
 

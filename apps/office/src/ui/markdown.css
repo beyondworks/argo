@@ -1,0 +1,23 @@
+/* 마크다운 보기(ui/Markdown.jsx) — 평가 총평·업무내용·공용 문서 본문. company.css에서 옮겼다(16차, 공용 문서 화면도 쓴다).
+   인용은 왼쪽 막대 없이 연한 바탕 상자(유건 9/30 — 편집기 인용과 같다). */
+.md { display: grid; gap: 8px; font-size: 13.5px; line-height: 1.6; overflow-wrap: anywhere; }
+.md h1, .md h2, .md h3 { margin: 4px 0 0; font-size: 14px; font-weight: 650; }
+.md h1 { font-size: 15px; }
+.md p, .md ul, .md ol, .md blockquote, .md pre, .md hr { margin: 0; }
+.md ul, .md ol { padding-left: 20px; }
+.md li > ul, .md li > ol { margin-top: 2px; }
+.md blockquote { padding: 6px 10px; border-radius: var(--rc); background: var(--wash); color: var(--fg-2); }
+.md code { font-family: var(--mono); font-size: 12.5px; padding: 1px 4px; border-radius: 4px; background: var(--secondary); }
+.md pre.md-code { padding: 10px 12px; border-radius: var(--rc); background: var(--wash); overflow-x: auto; }
+.md pre.md-code code { padding: 0; background: none; font-size: 12.5px; white-space: pre; }
+.md hr { height: 1px; border: 0; background: var(--border); }
+.md ul.md-tasks { list-style: none; padding-left: 2px; }
+.md ul.md-tasks ul.md-tasks { padding-left: 20px; }
+.md .md-task { display: inline-flex; align-items: flex-start; gap: 7px; }
+.md .md-task input { margin: 4px 0 0; width: 14px; height: 14px; accent-color: var(--primary); }
+.md li.done > .md-task > span { color: var(--fg-3); text-decoration: line-through; }
+.md a { color: inherit; text-decoration: underline; text-underline-offset: 2px; text-decoration-color: var(--fg-3); }
+.md .md-table { overflow-x: auto; }
+.md table { border-collapse: collapse; font-size: 12.5px; min-width: 100%; }
+.md th, .md td { padding: 5px 9px; border-bottom: 1px solid var(--border-soft); text-align: left; vertical-align: top; }
+.md th { font-weight: 600; color: var(--fg-2); border-bottom-color: var(--border); }

@@ -6,10 +6,11 @@ import { rpc, orgOf } from '../core/tasks.js';
 import { Modal, showToast } from '../ui/Overlay.jsx';
 import { Icon } from '../ui/Icon.jsx';
 import { ASSET_DICT } from './assets-i18n.js';
+import { LoadFail } from '../ui/LoadFail.jsx';
 import './perf.css';
 
 registerDict(ASSET_DICT);
-const ERR = { asset_forbidden: 'permission', asset_version: 'version', asset_input: 'input', asset_conflict: 'conflict', asset_not_found: 'missing', asset_limit: 'limit' };
+const ERR = { asset_forbidden: 'permission', asset_version: 'version', asset_input: 'input', asset_conflict: 'conflict', asset_not_found: 'missing', asset_limit: 'limit', task_signin: 'signin' }; // task_signin = 세션 없음(core/tasks.js rpc) — '잠시 뒤 다시'가 아니라 로그인(UX-O01)
 const errKey = (e) => `asset.error.${ERR[e?.message] ?? 'failed'}`;
 const day = (v) => new Date(v).toLocaleDateString(getLang() === 'en' ? 'en-US' : 'ko-KR', { timeZone: 'Asia/Seoul', month: 'short', day: 'numeric' });
 const lines = (s) => String(s ?? '').split('\n').map((x) => x.trim()).filter(Boolean);
@@ -34,8 +35,9 @@ export default function Assets({ space }) {
     <div className="page-title-row"><div><h1 className="page-h1">{t('asset.title')}</h1><p className="dim">{t('asset.subtitle')}</p></div>
       <div className="perf-nav"><button type="button" className="btn sm" onClick={() => blank('knowhow')}><Icon name="plus" size={13} />{t('asset.newKnowhow')}</button>
         <button type="button" className="btn sm" onClick={() => blank('set')}><Icon name="plus" size={13} />{t('asset.newSet')}</button></div></div>
-    {error && <p className="biz-error" role="alert">{t(error)}</p>}
-    {!data ? <p className="dim small" role="status">{t('asset.loading')}</p> : <>
+    {/* 목록을 못 읽었으면 오류와 '불러오는 중…'을 같이 두지 않고 다시 시도(UX-O01) */}
+    {error && !data ? <LoadFail text={t(error === 'asset.error.failed' ? 'load.readFail' : error)} onRetry={() => { setError(null); load(); }} />
+      : !data ? <p className="dim small" role="status">{t('asset.loading')}</p> : <>
       {data.suggestions.length > 0 && <section className="module"><header className="module-head"><Icon name="info" size={15} /><h3>{t('asset.suggest')}</h3></header>
         <ul className="perf-days">{data.suggestions.map((s) => <li key={s.key} className="perf-item">
           <span className="badge">{t('asset.times', { n: s.count })}</span>

@@ -56,15 +56,9 @@ test('picked blocks survive unrelated transactions and clear on a new selection 
 
 // 공유받은 사람·공개 화면(DocView)도 가린 글자를 가린 채로 그린다 — 보기는 누르고 있는 동안만(base.css :active)
 test('read-only document view keeps hidden text hidden', async () => {
-  const { readFileSync } = await import('node:fs');
-  const { transformSync } = await import('esbuild');
-  const { createRequire } = await import('node:module');
-  const { createElement } = await import('react');
-  const { renderToStaticMarkup } = await import('react-dom/server');
-  const code = transformSync(readFileSync(new URL('../src/ui/DocView.jsx', import.meta.url), 'utf8'), { loader: 'jsx', format: 'cjs', jsx: 'automatic' }).code;
-  const module = { exports: {} };
-  new Function('require', 'module', 'exports', code)(createRequire(import.meta.url), module, module.exports);
-  const html = renderToStaticMarkup(createElement(module.exports.DocView, { doc: { content: [{ type: 'paragraph', content: [{ type: 'text', text: '계좌 ' }, { type: 'text', text: '110-123', marks: [{ type: 'redact' }] }] }] } }));
+  const { loadDocView } = await import('./helpers/docview.mjs'); // DocView가 아이콘·사전·css를 들여오게 되어(16차) 묶어서 그린다
+  const render = await loadDocView();
+  const html = render({ content: [{ type: 'paragraph', content: [{ type: 'text', text: '계좌 ' }, { type: 'text', text: '110-123', marks: [{ type: 'redact' }] }] }] }, { wrap: false });
   assert.equal(html, '<p>계좌 <span data-redact="" class="redact-text">110-123</span></p>');
 });
 
@@ -113,4 +107,16 @@ test('unpick never leaves a node selection on a trailing atom block', () => {
     assert.ok(state.selection instanceof TextSelection, `${JSON.stringify(d.toJSON().content.map((n) => n.type))}: ${state.selection.constructor.name}`);
     assert.equal(state.selection.empty, true);
   }
+});
+
+// 11차(유건 10/2): 편집기 블록 고르기가 공용 선택 상자로 — 블록 key(맨 위 블록 문서 위치) ↔ 고른 범위가 서로 바뀌어도 같은 범위다. 이어지지 않게 골라도 처음부터 끝까지 한 범위(노션처럼)
+test('block keys and the picked range round-trip', async () => {
+  const { blockKeys, keysRange } = await import('../src/pages/block-pick.js');
+  const d = doc(p('하나'), p('둘'), p('셋'));
+  const a = d.child(0).nodeSize, b = a + d.child(1).nodeSize;
+  assert.deepEqual([...blockKeys(d, { from: a, to: d.content.size })], [String(a), String(b)]);
+  assert.deepEqual(keysRange(d, new Set([String(a), String(b)])), { from: a, to: d.content.size });
+  assert.deepEqual(keysRange(d, new Set(['0', String(b)])), { from: 0, to: d.content.size });
+  assert.equal(keysRange(d, new Set(['999'])), null);
+  assert.deepEqual(blockKeys(d, null), new Set());
 });

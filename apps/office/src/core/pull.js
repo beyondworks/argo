@@ -4,8 +4,9 @@ import { SPACES, ME } from './session.js';
 import { update, getState } from './store.js';
 import { outbox } from './sync.js';
 import { mergePages } from './layout.js';
-import { mapBoard } from './board.js';
+import { mapBoard, decidableSet } from './board.js';
 import { getStorageScope } from './save.js';
+import { getUi, setUi } from './ui-state.js';
 
 export async function pullLayouts({ recoverKey = null } = {}) {
   const owner = getStorageScope();
@@ -20,7 +21,7 @@ export async function pullLayouts({ recoverKey = null } = {}) {
   if (getStorageScope() !== owner) return;
   if (mine.error || shared.error) throw mine.error ?? shared.error;
   const next = Object.fromEntries(['me', ...orgs.map((o) => o.key)].map((space) => [`home:${space}`, { items: [], version: 0 }]));
-  next['nav:me'] = { items: [], version: 0 }; next['biztabs:me'] = { items: [], version: 0 }; next['fav:me'] = { items: [], version: 0 }; // 좌측 메뉴·업무 탭 순서·즐겨찾기(사람마다, 9/30)
+  next['nav:me'] = { items: [], version: 0 }; next['biztabs:me'] = { items: [], version: 0 }; next['fav:me'] = { items: [], version: 0 }; next['presets:me'] = { items: [], version: 0 }; // 좌측 메뉴·업무 탭 순서·즐겨찾기(사람마다, 9/30)·설정 저장본(10/1)
   for (const r of mine.data ?? []) next[`${r.surface}:me`] = { ...r.prefs, version: r.version };
   for (const r of shared.data ?? []) { const o = orgs.find((x) => x.id === r.org_id); if (o) next[`${r.surface}:${o.key}`] = { ...r.layout, version: r.version }; }
   const keep = Object.entries(next).filter(([k]) => !busy.has(k) && !outbox.has(`layout:${k}`) && (!getState().layouts[k]?.conflict || k === recoverKey));
@@ -48,8 +49,9 @@ export async function pullPages() {
   update(() => ({ pages, trash, pagesReady: true }));
 }
 
-/** 페이지 본문을 불러온다. force면 이 기기의 아직 안 보낸 저장을 버리고 서버 값으로(충돌 뒤 "새로 불러오기") */
-export async function loadPageContent(id, { force = false } = {}) {
+/** 페이지 본문을 불러온다. force면 이 기기의 아직 안 보낸 저장을 버리고 서버 값으로(충돌 뒤 "새로 불러오기").
+ *  skip()은 응답을 적용하기 직전에 다시 묻는다 — 탭 복귀 다시 읽기는 읽는 사이에 친 글자(편집기 입력 대기)·충돌을 넘겨 준다(16차 검수 M1) */
+export async function loadPageContent(id, { force = false, skip } = {}) {
   const owner = getStorageScope();
   const sb = await getClient();
   if (!sb || owner !== ME.id || getStorageScope() !== owner) return;
@@ -60,24 +62,41 @@ export async function loadPageContent(id, { force = false } = {}) {
   ]);
   if (getStorageScope() !== owner) return;
   if (rights.error) throw rights.error;
-  if (error || !data) return;
-  if (!force && (busy || outbox.has(`page:${id}`))) return;
+  if (error) throw error; // 읽기 실패는 실패로 — 예전에는 조용히 끝나 페이지가 회색 자리(스켈레톤)만 보였다(OFC-06)
+  if (!data) { setUi({ missingPage: id }); return null; } // 없는 페이지(지워졌거나 볼 수 없다) — 화면은 '찾을 수 없음', 머리줄도 숨긴다(App Header)
+  if (!force && (busy || outbox.has(`page:${id}`) || skip?.())) return;
   update((s) => ({ pages: s.pages.map((p) => (p.id === id ? { ...p, title: data.title, content: data.content, version: data.version, owner: data.owner_user_id, orgId: data.org_id, access: rights.data, updated: data.updated_at, loadedAt: Date.now() } : p)) }));
+  if (getUi().missingPage === id) setUi({ missingPage: null }); // 다시 생긴 페이지 — 어느 경로로 읽었든 머리줄을 되돌린다(2차 검수 L5)
   return data;
 }
 
-/** 기록판 — 내 조직들의 메신저 기록(크루·진행 중인 일·대기 결재·최근 결정·산출물·일지)을 읽는다. 읽기만(DB 쓰기 0).
- *  결재 버튼은 서버가 결재권이 있다고 한 것만(msgr_can_decide — 메신저 앱과 같은 판정). */
-export async function pullBoard() {
+/** 기록판 — 내 조직들의 메신저 기록(크루·진행 중인 일·대기 결재·최근 결정·산출물·일지)과 내 개인 공간 에이전트·산출물을 읽는다. 읽기만(DB 쓰기 0).
+ *  결재 버튼은 메신저와 같은 판정(board.js canDecideAp = 메신저 approval-display.js approvalDecider, 최종은 서버 RLS)으로 — 결재마다 msgr_can_decide를 부르던 것을
+ *  조직 결재 정책 한 번 읽기로 바꿨다(OFC-20: 대기 결재 N건이면 요청 N건 → 1건, 대기 결재가 없으면 0건).
+ *  부하: 시작·탭 복귀(60초 간격)마다 크루 1 + 개인 산출물 1 + (조직이 있으면) 목록 8 + 결재 정책 0~1 + 결정한 사람 이름 0~1. 주기 읽기 없음 */
+export function pullBoard() {
+  // 실패는 기록판 오류로 남긴다(OFC-08) — 홈 현황·결재함 등이 '없음·정상'이 아니라 '불러오지 못함 · 다시 시도'를 보인다. 성공하면 지운다(readBoard)
+  return readBoard().catch((e) => { if (getStorageScope() === ME.id) update(() => ({ boardError: Date.now() })); throw e; });
+}
+async function readBoard() {
   const owner = getStorageScope();
   const sb = await getClient();
   if (!sb || owner !== ME.id || getStorageScope() !== owner) return;
   const orgs = SPACES.filter((s) => s.kind === 'org');
-  const empty = { crews: [], work: [], approvals: [], decisions: [], outputs: [], journal: [], docs: [], crewsReady: true };
-  if (!orgs.length) { update(() => empty); return; }
   const ids = orgs.map((o) => o.id);
   const since = new Date(Date.now() - 30 * 864e5).toISOString();
-  const res = await Promise.all([
+  const at = Date.now();
+  // 크루 행 한 번 읽기 — 내 조직들의 크루 + 내 개인 공간 크루(org_id NULL은 주인만 읽힌다, RLS msgr_crews_select).
+  // 쓰는 곳: 같은 에이전트 = 같은 얼굴(유건 2026-10-05, 내 행만으로 메신저와 같은 지도), 개인 공간 에이전트(9/30 #779), 사본 거르기(slug), 접속 표시(last_seen_at 90초).
+  // 못 읽으면 기록판 읽기 실패(다시 시도). 얼굴 모듈은 첫 화면 묶음 밖이라(Face.jsx와 같은 조각) 나중에 받는다.
+  const agentsQ = sb.from('msgr_crews').select('id, org_id, owner_user_id, ws_id, slug, status, face, created_at, display_name, role_text, department, hosting, last_seen_at').in('status', ['active', 'available']);
+  // 얼굴 모듈 조각을 못 받는 것은 기록판 실패가 아니다 — 얼굴 지도 없이(같은 에이전트 묶음은 board.js가 행으로) 그린다(R3-L3). 실패는 크루 행 읽기 실패뿐
+  const agentsP = Promise.all([ids.length ? agentsQ.or(`owner_user_id.eq.${ME.id},org_id.in.(${ids.join(',')})`) : agentsQ.eq('owner_user_id', ME.id), import('@msgr/crew-face').catch(() => null)])
+    .then(([r, m]) => (r.error ? null : { rows: r.data ?? [], looks: m?.agentLooks((r.data ?? []).filter((x) => x.owner_user_id === ME.id)) ?? null })).catch(() => null);
+  // 개인 방 첨부(10/2 #개인 첨부, org_id NULL) — 에이전트가 보낸 것만 산출물로(친구 1:1의 사람 파일은 산출물이 아니다). 읽기 정책은 그 방을 읽을 수 있는 사람
+  const personalFilesP = sb.from('msgr_attachments').select('id, org_id, name, bytes, mime, storage_path, created_at, msg:msgr_messages!inner(channel_id, crew_id)').is('org_id', null).not('msg.crew_id', 'is', null).order('created_at', { ascending: false }).limit(50)
+    .then((r) => (r.error ? [] : r.data ?? []), () => []);
+  const res = ids.length ? await Promise.all([
     // 크루는 주인·쓸 수 있는지·내 고정/순서까지 한 번에(9/30). 함수가 없는 옛 DB면 예전처럼 표에서 읽는다
     sb.rpc('office_crew_list', { p_orgs: ids }).then((r) => (r.error?.code === 'PGRST202' ? sb.from('msgr_crews').select('id, org_id, owner_user_id, display_name, department, role_text, face').in('org_id', ids) : r)),
     sb.from('msgr_work_runs').select('id, org_id, channel_id, goal, completion_criteria, lead_crew_id, status, created_at').in('org_id', ids).in('status', ['running', 'blocked']).order('created_at', { ascending: false }).limit(100),
@@ -87,17 +106,20 @@ export async function pullBoard() {
     sb.from('msgr_channels').select('id, name, kind').in('org_id', ids),
     sb.from('msgr_org_docs').select('org_id, title, body').in('org_id', ids).like('path', 'journal/%').order('updated_at', { ascending: false }).limit(30),
     sb.from('msgr_org_docs').select('id, org_id, channel_id, path, title, updated_at').in('org_id', ids).not('path', 'like', 'journal/%').order('path').limit(300), // 본문은 열 때만
-  ]);
+  ]) : [];
+  const [got, personalFiles] = await Promise.all([agentsP, personalFilesP]);
+  if (!got) throw new Error('board: crews read failed'); // 크루 행은 같은 에이전트 묶음·개인 에이전트·접속의 원천 — 못 읽었으면 '에이전트 없음'·'대기'로 지어내지 않고 읽기 실패(2차 검수 L8)
   const bad = res.find((r) => r.error);
   if (bad) throw bad.error;
-  const [crews, runs, approvals, decisions, files, channels, journals, docs] = res.map((r) => r.data ?? []);
-  const deciders = [...new Set(decisions.map((d) => d.decided_by).filter(Boolean))]; // 결정한 사람 이름 — 결정이 있을 때만 한 번 더 읽는다
-  const [can, members] = await Promise.all([
-    Promise.all(approvals.map((a) => sb.rpc('msgr_can_decide', { ap: a.id }).then((r) => (r.data ? a.id : null)))),
+  const [crews, runs, approvals, decisions, files, channels, journals, docs] = ids.length ? res.map((r) => r.data ?? []) : [];
+  const deciders = [...new Set((decisions ?? []).map((d) => d.decided_by).filter(Boolean))]; // 결정한 사람 이름 — 결정이 있을 때만 한 번 더 읽는다
+  const [policies, members] = await Promise.all([
+    approvals?.length ? sb.from('msgr_org_policies').select('org_id, approval_high_by, approver_user_ids').in('org_id', [...new Set(approvals.map((a) => a.org_id))]).then((r) => (r.error ? null : r.data ?? []), () => null) : [],
     deciders.length ? sb.from('msgr_org_members').select('org_id, user_id, display_name').in('org_id', ids).in('user_id', deciders).then((r) => r.data ?? []) : [],
   ]);
   if (getStorageScope() !== owner) return;
-  update(() => ({ ...mapBoard({ crews, runs, approvals, decisions, files, channels, journals, docs, members }, { orgKey: new Map(orgs.map((o) => [o.id, o.key])), decidable: new Set(can.filter(Boolean)) }), crewsReady: true }));
+  const decidable = decidableSet(approvals ?? [], { me: ME.id, crews: crews ?? [], orgs, policies });
+  update(() => ({ ...mapBoard({ crews, runs, approvals, decisions, files: [...(files ?? []), ...personalFiles], channels, journals, docs, members, agents: got?.rows ?? [] }, { orgKey: new Map(orgs.map((o) => [o.id, o.key])), decidable, looks: got?.looks ?? null, me: ME.id, at }), crewsReady: true, boardError: null }));
 }
 
 /** 공용 문서 본문 — 목록에는 싣지 않고 열 때만 읽는다(문서당 최대 64KB) */

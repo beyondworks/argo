@@ -1,0 +1,13 @@
+/* 페이지 트리 '이름 바꾸기'·'옮기기'(16차, pages/tree-actions.jsx와 함께 받는다) */
+.tree-rename { position: fixed; z-index: 70; height: 28px; padding: 0 6px; border-radius: var(--rc); border: 1px solid var(--border); background: var(--float); color: var(--fg); font: inherit;
+  box-shadow: 0 0 0 3px var(--primary-soft); outline: none; }
+.tree-rename-field { width: 100%; }
+.tree-move { display: grid; gap: 10px; }
+.tree-move .input { width: 100%; }
+.tree-move-list { display: grid; gap: 1px; max-height: min(52vh, 420px); overflow: auto; }
+.tree-move-row { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 0 10px; border-radius: var(--rc); text-align: left; color: var(--fg); }
+.tree-move-row .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tree-move-row.on { background: var(--wash); }
+.tree-move-row:disabled { color: var(--fg-3); cursor: default; }
+.tree-move-empty { padding: 10px; }
+@media (pointer: coarse) { .tree-move-row { min-height: 44px; } }

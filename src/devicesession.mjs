@@ -78,18 +78,39 @@ async function persist(sess, root) {
   epoch++;
 }
 
+/* ─── 사용자 이름(msgr_profiles.display_name) — 에이전트가 사용자를 부를 이름(src/user-name.mjs) ───
+   DB 호출량(프로젝트 DB 위생 규칙 5): 기기 1대당 로그인 1회 + 회전 때 마지막 조회 뒤 24시간이 지났을 때만 1회 = 하루 최대 1~2회 SELECT, DB 쓰기 0.
+   턴마다 읽지 않는다(턴은 이 파일에 저장된 값만 본다). 상주·워커(ARGO_TENANT_OWNER)는 기기 세션이 서비스 계정이라 읽지 않는다.
+   RLS msgr_profiles_self(본인 행). 실패·행 없음은 이름 없음 — 회전·로그인을 막지 않는다. */
+export const NAME_REFRESH_MS = 24 * 60 * 60_000;
+const NAME_FETCH_TIMEOUT_MS = 5_000;
+async function fetchProfileName({ url, anonKey, accessToken, userId }, mk) {
+  if (process.env.ARGO_TENANT_OWNER?.trim()) return { ok: false, name: null };
+  try {
+    const sb = mk(url, anonKey, { auth: { persistSession: false, autoRefreshToken: false }, global: { headers: { Authorization: `Bearer ${accessToken}` } } });
+    const { data, error } = await sb.from('msgr_profiles').select('display_name').eq('user_id', userId)
+      .abortSignal(AbortSignal.timeout(NAME_FETCH_TIMEOUT_MS)).maybeSingle();
+    if (error) return { ok: false, name: null };
+    const name = typeof data?.display_name === 'string' ? data.display_name.trim().slice(0, 80) : ''; // 세척은 읽는 쪽(user-name.mjs cleanUserName) 한 곳
+    return { ok: true, name: name || null };
+  } catch { return { ok: false, name: null }; }
+}
+
 /** 로그인/링크 시 저장. session = Supabase Auth 세션(user 포함).
  * getFreshDeviceSession의 회전과 같은 락(devsess:root)으로 직렬화 — 회전 대기 중 끼어들어도 lost update 없음. */
-export async function saveDeviceSession({ url, anonKey, session }, { root = WS_ROOT } = {}) {
+export async function saveDeviceSession({ url, anonKey, session }, { root = WS_ROOT, _mkClient = createClient } = {}) {
+  if (!url || !anonKey || !session?.access_token || !session?.refresh_token || !session?.user?.id) {
+    throw new Error('기기 세션 저장에 필요한 값 누락 (url/anonKey/session)');
+  }
+  // 사용자 이름(프로필 표시 이름) — 로그인마다 1회. 잠금 밖에서 읽는다(네트워크를 기다리며 회전을 막지 않게). 실패하면 이름 없이 저장하고
+  // nameAt=0으로 두어 다음 회전 때 한 번 더 읽는다(기기 연동 라우트처럼 만료된 토큰으로 저장하는 경로). 계정이 바뀌어도 옛 이름은 남지 않는다(user를 새로 만든다).
+  const prof = await fetchProfileName({ url, anonKey, accessToken: session.access_token, userId: session.user.id }, _mkClient);
   return withLock(`devsess:${root}`, async () => {
-    if (!url || !anonKey || !session?.access_token || !session?.refresh_token || !session?.user?.id) {
-      throw new Error('기기 세션 저장에 필요한 값 누락 (url/anonKey/session)');
-    }
     await mkdir(root, { recursive: true });
     // 프로세스 간 잠금도 잡는다 — 다른 프로세스가 회전하는 중에 로그인을 저장하면, 그 회전이 끝나며 옛 세션으로 덮어 로그인이 사라진다.
     await withDirLock(lockOf(root), () => persist({
       url, anonKey,
-      user: { id: session.user.id, email: session.user.email ?? '' },
+      user: { id: session.user.id, email: session.user.email ?? '', ...(prof.name ? { name: prof.name } : {}), nameAt: prof.ok ? Date.now() : 0 },
       access_token: session.access_token,
       refresh_token: session.refresh_token,
       expires_at: session.expires_at ?? 0,
@@ -245,17 +266,31 @@ async function rotateLocked(root, _mkClient) {
     const { data, error } = await sb.auth.refreshSession({ refresh_token: sess.refresh_token });
     if (!error && data?.session) {
       const s = data.session;
+      // 이름은 같은 계정일 때만 이어 간다. 조회 시각(nameAt)은 조회하기 전에 먼저 적는다 — 실패해도 하루에 한 번만 다시 읽는다.
+      const uid = s.user?.id ?? sess.user.id;
+      const prevUser = uid === sess.user.id ? sess.user : {};
+      const nameDue = Date.now() - (Number(prevUser.nameAt) || 0) >= NAME_REFRESH_MS;
       const next = {
         ...sess,
         access_token: s.access_token,
         refresh_token: s.refresh_token, // 회전된 토큰 즉시 영속 — 유실 시 세션 일가족 폐기
         expires_at: s.expires_at ?? 0,
-        user: { id: s.user?.id ?? sess.user.id, email: s.user?.email ?? sess.user.email },
+        user: { id: uid, email: s.user?.email ?? sess.user.email, ...(prevUser.name ? { name: prevUser.name } : {}),
+          ...(nameDue ? { nameAt: Date.now() } : prevUser.nameAt !== undefined ? { nameAt: prevUser.nameAt } : {}) },
       };
       MEM.backoff.delete(root);
-      await persist(next, root);
+      await persist(next, root); // 토큰이 먼저다 — 이름 조회(네트워크)를 기다리지 않고 회전 결과부터 디스크에
       await rm(deadMarkerOf(root), { force: true }).catch(() => {}); // 회생 — 마커 해제(persist의 해제와 같은 계약: '새/살아난 세션을 디스크에 쓰면 옛 사망 판정은 무효'. 한쪽만 고치지 말 것 — 검수 LOW-1)
       await logLine(root, { ev: 'rotated', retried, expires_at: next.expires_at });
+      if (nameDue) {
+        const prof = await fetchProfileName({ url: next.url, anonKey: next.anonKey, accessToken: next.access_token, userId: uid }, _mkClient);
+        // 값이 바뀌었을 때만 다시 쓴다(같으면 파일 재기록 0). 실패는 이전 값 유지
+        if (prof.ok && (prof.name ?? null) !== (next.user.name ?? null)) {
+          const { name: _old, ...rest } = next.user;
+          next.user = { ...rest, ...(prof.name ? { name: prof.name } : {}) };
+          await persist(next, root);
+        }
+      }
       return next;
     }
     console.warn('[argo] 기기 세션 갱신 실패 — 재로그인 필요:', mask(error?.message ?? 'no session')); // stderr 로그(0644)에도 토큰 모양은 안 싣는다

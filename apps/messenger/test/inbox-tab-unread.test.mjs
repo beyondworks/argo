@@ -7,6 +7,6 @@ import { readFileSync } from 'node:fs';
 test('탭 숫자 = 그 종류의 읽지 않은 것(내가 결정할 참여 요청 포함), 0이면 숨김', () => {
   const src = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
   assert.match(src, /const unreadOf = \(k\) => items\.filter\(\(it\) => it\.kind === k && \(isNew\(it\) \|\| pendingMine\(it\)\)\)\.length;/);
-  assert.match(src, /\{!phone && k !== 'all' && unreadOf\(k\) > 0 && <span className="n">\{unreadOf\(k\)\}<\/span>\}/);
+  assert.match(src, /n: !phone && k !== 'all' && unreadOf\(k\) > 0 \? unreadOf\(k\) : null/, '숫자는 0이면 null(Seg가 그리지 않는다, 5차 피드백 3 공통 세그먼트)');
   assert.doesNotMatch(src, /items\.filter\(\(it\) => it\.kind === k\)\.length/, '총수 표시 없음');
 });

@@ -36,6 +36,27 @@ export const proRowActive = (row) => row?.plan === 'pro' && !(row.ends_at && Dat
     강등되지 않고, LS 호출량은 쿨다운 2컬럼(10분·24시간)이 그대로 막는다. */
 export const reconcileUnneeded = (row) => proRowActive(row) && !!row?.ls_subscription_id;
 
+/** my_plan() RPC 응답에서 서버 판정 요금제를 꺼낸다(순수). 'pro' | 'trial' | 'free' | null(모르는 값·응답 없음).
+    /api/me/billing이 이 값을 billing.effectivePlan으로 싣는다 — 서버 판정(entitled_pro_for: 원시 행 +
+    운영자 부여 granted + 조직 좌석)은 원시 plan·ends_at만으로는 다시 계산할 수 없다(실측 2026-10-06:
+    부여 Pro 계정의 원시 행이 ls_status=expired·ends_at 경과라 설정 카드가 Free·업그레이드를 보였다). */
+export const effectivePlanOf = (myPlan) => {
+  const p = myPlan?.plan;
+  return p === 'pro' || p === 'trial' || p === 'free' ? p : null;
+};
+
+/** 설정 화면이 보여 줄 **계정** 요금제(순수). 'pro' | 'trial' | 'free' | null(billing 없음 = 계정 없는 모드).
+    서버 판정(billing.effectivePlan)이 있으면 그것이 이긴다 — 동기화 엔진(fetchPlan)이 같은 my_plan()을
+    쓰므로 화면과 엔진이 갈리지 않는다. 없으면(옛 서버 응답·my_plan 실패) 원시 행으로 예전 판정을 한다:
+    proRowActive(서버 is_pro의 공유 술어) → 체험 배지 → free. */
+export const accountPlan = (bill, now = Date.now()) => {
+  if (!bill) return null;
+  const eff = effectivePlanOf({ plan: bill.effectivePlan });
+  if (eff) return eff;
+  if (proRowActive({ plan: bill.plan, ends_at: bill.endsAt })) return 'pro';
+  return trialBadgeState(bill.trialEndsAt, bill.plan, now).active ? 'trial' : 'free';
+};
+
 /** 계정 plan. 'pro' | 'trial'(T 이전 가입자의 남은 체험 — R1) | 'free' | null(조회 실패·오너 미상=미확인).
     조회 실패를 'free'가 아닌 null로 두어, 일시적 실패로 유료 사용자를 오차단하지 않는다(아래 syncEntitled).
     ⚠ 2026-09-29 변경: 체험 마감일을 여기서 가입일로 다시 계산하지 않는다 — 14일 무료 체험이 폐지되면서
@@ -92,7 +113,7 @@ export async function syncEntitled(sb, ownerId) {
     것은 test/billing-cta.test.mjs의 구조 검사가 막는다.
 */
 export function billingCta(bill, { paywalled = false, now = Date.now() } = {}) {
-  const plan = bill?.plan ?? null;
+  const plan = accountPlan(bill, now); // 서버 판정(effectivePlan) 우선 — 설정 카드와 같은 판정
   const hasSub = !!bill?.hasSub;
   if (bill?.status === 'past_due' && hasSub) return 'past-due';
   if (paywalled) return 'paywalled';

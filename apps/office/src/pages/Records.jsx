@@ -6,7 +6,8 @@ import { Face } from '../ui/Face.jsx';
 import { menuProps, mergeHandlers } from '../ui/Menu.jsx';
 import { showToast } from '../ui/Overlay.jsx';
 import { Sheet } from '../ui/Panel.jsx';
-import { t, ago, useLang } from '../core/i18n.js';
+import { t, ago, useLang, registerDict } from '../core/i18n.js';
+import { RECORDS_DICT } from './records-i18n.js';
 import { useStore, decide, crewName, approvalsIn } from '../core/store.js';
 import { recordMenu, fileMenu } from '../core/commands.js';
 import { fmtBytes, fileKind } from '../core/files.js';
@@ -14,19 +15,40 @@ import { getClient } from '../core/supabase.js';
 import { isDesktop, saveAttachment } from '../core/platform.js';
 import { setUi } from '../core/ui-state.js';
 import { navigate } from '../core/router.jsx';
-import { loadDocBody } from '../core/pull.js';
-import { mdToDoc } from '../core/board.js';
-import { folderKey, isoDay, byDate, journalDigest, fileGroup, canQuickDecide } from '../core/folders.js';
+import { loadDocBody, pullBoard } from '../core/pull.js';
+import { mdToDoc, apStale } from '../core/board.js';
+import { folderKey, isoDay, byDate, journalDigest, fileGroup, canQuickDecide, HUMAN } from '../core/folders.js';
 import { FolderView, DateSections, useFolder, folderName, FolderIcon, openItem, closeItem, pickFolder, when, countText } from '../ui/FolderView.jsx';
 import { kstDay } from '../core/task-model.js';
 import { DocView } from '../ui/DocView.jsx';
-import { SPACES, ME } from '../core/session.js';
+import { LoadFail } from '../ui/LoadFail.jsx';
+import { Markdown } from '../ui/Markdown.jsx';
+import { stripFrontMatter } from '../core/markdown.js';
+import { restore, persist } from '../core/save.js';
+import { SPACES, getMode, nameIn } from '../core/session.js';
+import { useSelection, selProps } from '../core/selection.js';
+
+registerDict(RECORDS_DICT);
 
 const inSpace = (space) => (x) => space === 'me' || x.space === space;
 const spaceName = (key) => SPACES.find((s) => s.key === key)?.name ?? '';
+/** 여러 개 고르기(11차) — 고른 기록을 한 번에 크루에게 맡기기(기록 메뉴의 단일 동작과 같은 창). 공간이 섞이면(내 공간 모아 보기) 맡길 곳이 하나가 아니라 뺀다 */
+const assignMany = (list, label) => {
+  const spaces = new Set(list.map((x) => x.space));
+  return list.length > 0 && spaces.size === 1 && { label: t('crew.assign'), icon: 'hand', run: (_, clear) => { setUi({ assign: { space: list[0].space, items: list.map((x) => ({ kind: 'record', id: x.id, label: label(x) })) } }); clear(); } };
+};
 
+/** 기록판 화면의 빈 자리 — 못 읽었으면 '결재를 기다리는 일이 없습니다'라고 하지 않는다(OFC-08, 제목 아래 안내가 다시 시도를 준다) */
+function BoardEmpty({ icon, text }) {
+  const failed = useStore((s) => !!s.boardError);
+  return failed ? null : <div className="empty-state"><Icon name={icon} size={20} /><p>{t(text)}</p></div>;
+}
+
+/** 제목 — 기록판을 못 읽었으면 바로 아래에 '불러오지 못했습니다 · 다시 시도'(보이는 목록은 지난번에 받은 것일 수 있다) */
 function Title({ h, sub }) {
-  return <div className="page-title-row"><div><h1 className="page-h1">{h}</h1>{sub && <p className="dim">{sub}</p>}</div></div>;
+  const failed = useStore((s) => !!s.boardError);
+  return <><div className="page-title-row"><div><h1 className="page-h1">{h}</h1>{sub && <p className="dim">{sub}</p>}</div></div>
+    {failed && <LoadFail small onRetry={() => pullBoard().catch(() => {})} />}</>;
 }
 
 // 폴더 보기 공통(유건 9/30) — 에이전트별 폴더, 날짜 구간, 한 줄 요약. 누르면 지금의 자세히 보기(Sheet)가 열린다.
@@ -35,9 +57,9 @@ const atMs = (x) => Date.parse(x.at ?? '') || 0;
 const byDay = (x) => isoDay(x.at);
 
 /** 결정 한 줄 — 내용 한 줄 말줄임 + 배지 + 시각. 전체 폴더에서만 얼굴을 붙인다 */
-function RecRow({ x, all, bucket, active, badges, extra }) {
+function RecRow({ x, all, bucket, active, badges, extra, sel }) {
   return (
-    <button type="button" className={`rec-row${active ? ' on' : ''}`} onClick={() => openItem(x.id)}>
+    <button type="button" className={`rec-row${active ? ' on' : ''}`} {...selProps(sel, x.id)} onClick={() => openItem(x.id)}>
       {all && <FolderIcon id={crewKey(x)} size={20} />}
       <span className="rec-text">{x.plain}</span>
       {badges}
@@ -48,15 +70,35 @@ function RecRow({ x, all, bucket, active, badges, extra }) {
 
 /** 위험도 배지 — 결재가 보이는 모든 곳이 같은 문구(risk.*)와 색(가장 높은 등급만 warn) */
 const Risk = ({ risk }) => <span className={`badge ${risk === 'high' ? 'warn' : ''}`}>{t(`risk.${risk}`)}</span>;
-/** 결정 — 카드 버튼과 상세 창이 같은 경로(store.decide → 전송함 approval.decide) */
-const decideAp = (a, result) => { decide(a.id, result, ME.name); showToast(t('ap.decided', { result: t(`status.${result}`) })); };
+/** 결정 전 최신 상태(CX-10) — 메신저 등 다른 곳에서 이미 정한 결재를 '승인했습니다' 뒤 '권한 없음'으로 보이지 않게, 누를 때만 한 번 읽는다(여러 개는 한 번에).
+ *  못 읽으면(망 오류·예시) 막지 않고 종전대로 보낸다 — 최종 판정은 서버(RLS), 0행이면 전송함이 같은 판정(apStale)으로 안내한다 */
+async function freshStatus(ids) {
+  const pending = new Map(ids.map((id) => [id, 'pending']));
+  if (getMode() !== 'signedIn' || !ids.length) return pending;
+  try {
+    const { data, error } = await (await getClient()).from('msgr_crew_approvals').select('id, status').in('id', ids);
+    return error ? pending : new Map(ids.map((id) => [id, data.find((r) => r.id === id)?.status ?? 'gone']));
+  } catch { return pending; }
+}
+const staleToast = (s) => { showToast(t(s.key, { result: t(`status.${s.result}`) })); pullBoard().catch(() => {}); };
+/** 결정 — 카드 버튼과 상세 창이 같은 경로(store.decide → 전송함 approval.decide). 결정한 사람 이름은 그 조직에서 보이는 이름(메신저와 같은 이름, CX-07) */
+const deciding = new Set(); // 상태를 읽는 동안 같은 결재를 또 누르면 무시한다(승인 뒤 바로 거절을 누르면 '거절했습니다'가 뜨던 것)
+const decideAp = async (a, result) => {
+  if (deciding.has(a.id)) return;
+  deciding.add(a.id);
+  try {
+    const s = apStale((await freshStatus([a.id])).get(a.id));
+    if (s) { staleToast(s); return; }
+    decide(a.id, result, nameIn(a.space)); showToast(t('ap.decided', { result: t(`status.${result}`) }));
+  } finally { deciding.delete(a.id); }
+};
 
 /** 결재 카드(유건 9/30 #7) — 한 줄 핵심(에이전트가 적은 목적·할 일, 없으면 요청 앞부분) + 바로 승인·거절.
  *  위험도가 가장 높은 것은 버튼 대신 '열어서 확인'(상세 창에서 명령까지 보고 결정). 결정 권한이 없으면 버튼이 없다 */
-function ApRow({ a, all, bucket, active, extra }) {
+function ApRow({ a, all, bucket, active, extra, sel }) {
   return (
-    <div className={`rec-row ap-row${active ? ' on' : ''}`} {...menuProps(() => recordMenu(a, a.plain))}>
-      <button type="button" className="ap-open" onClick={() => openItem(a.id)}>
+    <div className={`rec-row ap-row${active ? ' on' : ''}`} {...selProps(sel, a.id)} {...menuProps(() => recordMenu(a, a.plain))}>
+      <button type="button" className="ap-open" data-sel-body="" onClick={() => openItem(a.id)}>
         {all && <FolderIcon id={crewKey(a)} size={20} />}
         <span className="rec-text">{a.head || a.plain}</span>
         <Risk risk={a.risk} />
@@ -75,14 +117,27 @@ export function Approvals({ space, openId, folder }) {
   const rows = useMemo(() => list.filter(approvalsIn(space)), [list, space]);
   const { folders, current, visible } = useFolder(rows, crewKey, atMs, folder);
   const cur = rows.find((a) => a.id === openId);
-  const act = (result) => { decideAp(cur, result); closeItem(); };
+  const act = (result) => { closeItem(); decideAp(cur, result); };
+  // 여러 개 승인·거절(11차) — 카드의 바로 승인·거절과 같은 경로. 위험도가 가장 높은 것은 카드처럼 열어서 확인해야 해 건너뛰고 알린다
+  const [sel] = useSelection('approvals', { keys: visible.map((a) => a.id), actions: (keys) => {
+    const mine = rows.filter((a) => keys.includes(a.id) && a.canDecide !== false), quick = mine.filter(canQuickDecide);
+    const many = (result) => async (_, clear) => {
+      clear();
+      const st = await freshStatus(quick.map((a) => a.id)), open = quick.filter((a) => st.get(a.id) === 'pending'); // 이미 다른 곳에서 정한 것은 건너뛴다(CX-10)
+      open.forEach((a) => decide(a.id, result, nameIn(a.space)));
+      const skip = mine.length - quick.length, gone = quick.length - open.length;
+      showToast([open.length && t('sel.decided', { n: open.length, result: t(`status.${result}`) }), skip && t('sel.skipped', { n: skip }), gone && t('ap.alreadyN', { n: gone })].filter(Boolean).join(' · '));
+      if (gone) pullBoard().catch(() => {});
+    };
+    return [quick.length > 0 && { label: t('ap.reject'), run: many('rejected') }, quick.length > 0 && { label: t('ap.approve'), icon: 'check', run: many('approved') }, assignMany(rows.filter((a) => keys.includes(a.id)), (a) => a.plain)];
+  } });
   return (
     <div className="page-wrap wide">
       <Title h={t('nav.approvals')} />
-      {rows.length === 0 ? <div className="empty-state"><Icon name="stamp" size={20} /><p>{t('ap.empty')}</p></div> : (
+      {rows.length === 0 ? <BoardEmpty icon="stamp" text="ap.empty" /> : (
         <FolderView folders={folders} current={current} total={rows.length} human="fold.people">
-          <DateSections groups={byDate(visible, byDay, kstDay())} render={(g) => g.items.map((a) => (
-            <ApRow key={a.id} a={a} all={current === 'all'} bucket={g.key} active={a.id === openId} extra={space === 'me' ? spaceName(a.space) : ''} />))} />
+          <div data-sel-scope="approvals"><DateSections groups={byDate(visible, byDay, kstDay())} render={(g) => g.items.map((a) => (
+            <ApRow key={a.id} a={a} all={current === 'all'} bucket={g.key} active={a.id === openId} sel={sel} extra={space === 'me' ? spaceName(a.space) : ''} />))} /></div>
         </FolderView>)}
       <Sheet open={!!cur} onClose={closeItem} title={t('nav.approvals')}
         footer={cur && cur.canDecide !== false && <><button type="button" className="btn" onClick={() => act('rejected')}>{t('ap.reject')}</button><button type="button" className="btn primary" onClick={() => act('approved')}><Icon name="check" size={14} />{t('ap.approve')}</button></>}>
@@ -103,11 +158,11 @@ export function Approvals({ space, openId, folder }) {
 const openRow = (id) => ({ onClick: () => openItem(id), onKeyDown: (e) => { if (e.key === 'Enter') openItem(id); } }); // ?folder=는 그대로 둔다
 const closeOpen = closeItem;
 
-function Table({ cols, rows, render, rowProps }) {
+function Table({ cols, rows, render, rowProps, sel, scope }) {
   return (
-    <div className="table-wrap"><table className="table">
+    <div className="table-wrap" data-sel-scope={scope}><table className="table">
       <thead><tr>{cols.map((c) => <th key={c}>{t(c)}</th>)}</tr></thead>
-      <tbody>{rows.map((r) => <tr key={r.id} tabIndex={0} className="row-link" {...mergeHandlers(rowProps?.(r), openRow(r.id))}>{render(r)}</tr>)}</tbody>
+      <tbody>{rows.map((r) => <tr key={r.id} tabIndex={0} className="row-link" {...(sel ? selProps(sel, r.id) : {})} {...mergeHandlers(rowProps?.(r), openRow(r.id))}>{render(r)}</tr>)}</tbody>
     </table></div>
   );
 }
@@ -115,21 +170,33 @@ function Table({ cols, rows, render, rowProps }) {
 /** 자세히 보기 한 줄 — 이름표와 값 */
 const Fact = ({ k, children }) => children ? <div className="fact"><span className="dim">{t(k)}</span><span>{children}</span></div> : null;
 
-export function Work({ space, openId }) {
+// 크루별로 묶어 보기(17차 A-3, PARITY-agents D8) — 결재·결정과 같은 폴더 보기. 폴더 = 이끄는 에이전트, 오른쪽은 지금 표 그대로.
+// 크루가 만든 할 일은 이 표(메신저 진행 중인 일)와 다른 기록이라 에이전트 상세의 '맡은 일'에서 같이 본다 — 폴더에서 상세로 가는 단추를 둔다
+const workKey = (w) => folderKey(w.lead);
+const workAt = (w) => Date.parse(w.started ?? '') || 0;
+
+export function Work({ space, openId, folder }) {
   useLang();
   const list = useStore((s) => s.work);
   const rows = useMemo(() => list.filter(inSpace(space)), [list, space]);
+  const { folders, current, visible } = useFolder(rows, workKey, workAt, folder);
   const cur = rows.find((w) => w.id === openId);
+  const [sel] = useSelection('work', { keys: visible.map((w) => w.id), actions: (keys) => [assignMany(rows.filter((w) => keys.includes(w.id)), (w) => w.goal)] });
+  const crewOpen = current !== 'all' && !current.startsWith('name:') && current !== HUMAN && crewName(current);
+  const tools = crewOpen && <div className="fold-tools"><button type="button" className="btn sm" onClick={() => setUi({ crew: { id: current, space } })}><Icon name="info" size={13} />{t('work.crewDetail', { crew: crewOpen })}</button></div>;
   return (
     <div className="page-wrap wide">
       <Title h={t('nav.work')} />
-      <Table cols={['col.goal', 'col.lead', 'col.status', 'col.progress', 'col.channel', 'col.started']} rows={rows} rowProps={(w) => menuProps(() => recordMenu(w, w.goal))}
-        render={(w) => <>
-          <td className="strong">{w.goal}</td>
-          <td><span className="who"><Face id={w.lead} size={16} />{crewName(w.lead)}</span></td>
-          <td><span className={`badge ${w.status === 'blocked' ? 'warn' : 'ok'}`}>{t(`status.${w.status}`)}</span>{w.blockedBy && <small className="dim"> · {w.blockedBy}</small>}</td>
-          <td className="mono">{w.steps ?? '—'}</td><td className="dim">{w.channel && `#${w.channel}`}</td><td className="dim">{ago(w.started)}</td>
-        </>} />
+      {rows.length === 0 ? <BoardEmpty icon="run" text="fold.empty" /> : (
+        <FolderView folders={folders} current={current} total={rows.length} human="fold.people" toolbar={tools}>
+          <Table scope="work" sel={sel} cols={['col.goal', 'col.lead', 'col.status', 'col.progress', 'col.channel', 'col.started']} rows={visible} rowProps={(w) => menuProps(() => recordMenu(w, w.goal))}
+            render={(w) => <>
+              <td className="strong">{w.goal}</td>
+              <td><span className="who"><Face id={w.lead} size={16} />{crewName(w.lead)}</span></td>
+              <td><span className={`badge ${w.status === 'blocked' ? 'warn' : 'ok'}`}>{t(`status.${w.status}`)}</span>{w.blockedBy && <small className="dim"> · {w.blockedBy}</small>}</td>
+              <td className="mono">{w.steps ?? '—'}</td><td className="dim">{w.channel && `#${w.channel}`}</td><td className="dim">{ago(w.started)}</td>
+            </>} />
+        </FolderView>)}
       <Sheet open={!!cur} onClose={closeOpen} title={t('nav.work')}>
         {cur && <div className="ap-detail">
           <div className="ap-who"><Face id={cur.lead} size={28} /><div><b>{crewName(cur.lead)}</b><small className="dim">{[cur.channel && `#${cur.channel}`, ago(cur.started)].filter(Boolean).join(' · ')}</small></div><span className={`badge ${cur.status === 'blocked' ? 'warn' : 'ok'}`}>{t(`status.${cur.status}`)}</span></div>
@@ -147,14 +214,15 @@ export function Decisions({ space, openId, folder }) {
   const rows = useMemo(() => list.filter(inSpace(space)), [list, space]);
   const { folders, current, visible } = useFolder(rows, crewKey, atMs, folder);
   const cur = rows.find((d) => d.id === openId);
+  const [sel] = useSelection('decisions', { keys: visible.map((d) => d.id), actions: (keys) => [assignMany(rows.filter((d) => keys.includes(d.id)), (d) => d.plain)] });
   return (
     <div className="page-wrap wide">
       <Title h={t('nav.decisions')} />
-      {rows.length === 0 ? <div className="empty-state"><Icon name="check" size={20} /><p>{t('fold.empty')}</p></div> : (
+      {rows.length === 0 ? <BoardEmpty icon="check" text="fold.empty" /> : (
         <FolderView folders={folders} current={current} total={rows.length} human="fold.people">
-          <DateSections groups={byDate(visible, byDay, kstDay())} render={(g) => g.items.map((d) => (
-            <RecRow key={d.id} x={d} all={current === 'all'} bucket={g.key} active={d.id === openId} extra={space === 'me' ? spaceName(d.space) : ''}
-              badges={<>{d.risk && <Risk risk={d.risk} />}<span className={`badge ${d.result === 'approved' ? 'ok' : 'danger'}`}>{t(`status.${d.result}`)}</span></>} />))} />
+          <div data-sel-scope="decisions"><DateSections groups={byDate(visible, byDay, kstDay())} render={(g) => g.items.map((d) => (
+            <RecRow key={d.id} x={d} all={current === 'all'} bucket={g.key} active={d.id === openId} sel={sel} extra={space === 'me' ? spaceName(d.space) : ''}
+              badges={<>{d.risk && <Risk risk={d.risk} />}<span className={`badge ${d.result === 'approved' ? 'ok' : 'danger'}`}>{t(`status.${d.result}`)}</span></>} />))} /></div>
         </FolderView>)}
       <Sheet open={!!cur} onClose={closeOpen} title={t('nav.decisions')}>
         {cur && <div className="ap-detail">
@@ -169,12 +237,13 @@ export function Decisions({ space, openId, folder }) {
   );
 }
 
-function FileRow({ f, all, bucket }) {
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: `file:${f.id}`, data: { kind: 'file', id: f.id, label: f.name } });
+function FileRow({ f, all, bucket, sel, group }) {
+  // 고른 산출물을 끌면 고른 것 전부가 크루에게 간다(11차, items)
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: `file:${f.id}`, data: { kind: 'file', id: f.id, label: group?.length > 1 && sel.has(f.id) ? t('sel.count', { n: group.length }) : f.name, items: group?.length > 1 && sel.has(f.id) ? group : undefined } });
   const { onTouchStart, onKeyDown: dragKey, ...mouse } = listeners ?? {};
   const keys = { onKeyDown: (e) => { if (e.key !== 'Enter') dragKey?.(e); } }; // Enter = 열기, Space = 키보드로 끌기(끌기 센서는 둘 다 시작 키로 본다)
   return (
-    <div ref={setNodeRef} className={`rec-row file-row${isDragging ? ' ghost' : ''}`} {...attributes} {...mergeHandlers(mouse, keys, menuProps(() => fileMenu(f)), openRow(f.id))}>
+    <div ref={setNodeRef} className={`rec-row file-row${isDragging ? ' ghost' : ''}`} {...attributes} {...selProps(sel, f.id)} {...mergeHandlers(mouse, keys, menuProps(() => fileMenu(f)), openRow(f.id))}>
       <Icon name={fileGroup(f.name, f.mime) === 'image' ? 'box' : 'file'} size={14} className="dim" />
       <span className="rec-text mono-name">{f.name}</span>
       {all && <span className="who rec-who"><FolderIcon id={crewKey(f)} size={16} />{folderName(crewKey(f), 'fold.human')}</span>}
@@ -224,6 +293,7 @@ function FileView({ f }) {
 }
 
 const KINDS = ['all', 'doc', 'image', 'other'];
+const fileItems = (list) => list.map((f) => ({ kind: 'file', id: f.id, label: f.name }));
 const outKey = (f) => folderKey(f.crew);
 
 export function Outputs({ space, openId, folder }) {
@@ -234,14 +304,20 @@ export function Outputs({ space, openId, folder }) {
   const rows = useMemo(() => (kind === 'all' ? inSp : inSp.filter((f) => fileGroup(f.name, f.mime) === kind)), [inSp, kind]);
   const { folders, current, visible } = useFolder(rows, outKey, atMs, folder);
   const cur = inSp.find((f) => f.id === openId);
+  const [sel] = useSelection('outputs', { keys: visible.map((f) => f.id), actions: (keys) => {
+    const list = inSp.filter((f) => keys.includes(f.id)), spaces = new Set(list.map((f) => f.space));
+    return [{ label: t('file.download'), icon: 'download', run: () => list.forEach((f) => downloadOutput(f)) },
+      spaces.size === 1 && { label: t('file.sendCrew'), icon: 'hand', run: (_, clear) => { setUi({ assign: { space: list[0].space, items: fileItems(list) } }); clear(); } }];
+  } });
+  const group = fileItems(inSp.filter((f) => sel.has(f.id)));
   const kinds = <div className="seg fold-kinds" role="group" aria-label={t('fold.kind')}>{KINDS.map((k) => <button key={k} type="button" className={`seg-btn${kind === k ? ' on' : ''}`} aria-pressed={kind === k} onClick={() => setKind(k)}>{t(`fold.kind.${k}`)}</button>)}</div>;
   return (
     <div className="page-wrap wide">
       <Title h={t('nav.outputs')} />
-      {inSp.length === 0 ? <div className="empty-state"><Icon name="file" size={20} /><p>{t('fold.empty')}</p></div> : (
+      {inSp.length === 0 ? <BoardEmpty icon="file" text="fold.empty" /> : (
         <FolderView folders={folders} current={current} total={rows.length} human="fold.human" toolbar={kinds}>
           {visible.length === 0 ? <p className="dim fold-none">{t('fold.none')}</p>
-            : <DateSections groups={byDate(visible, byDay, kstDay())} render={(g) => g.items.map((f) => <FileRow key={f.id} f={f} all={current === 'all'} bucket={g.key} />)} />}
+            : <div data-sel-scope="outputs"><DateSections groups={byDate(visible, byDay, kstDay())} render={(g) => g.items.map((f) => <FileRow key={f.id} f={f} all={current === 'all'} bucket={g.key} sel={sel} group={group} />)} /></div>}
         </FolderView>)}
       <Sheet open={!!cur} onClose={closeOpen} title={cur?.name ?? ''}
         footer={cur && <><button type="button" className="btn" onClick={() => setUi({ assign: { space: cur.space, items: [{ kind: 'file', id: cur.id, label: cur.name }] } })}><Icon name="hand" size={14} />{t('file.sendCrew')}</button><button type="button" className="btn primary" onClick={() => downloadOutput(cur)}><Icon name="file" size={14} />{t('file.download')}</button></>}>
@@ -260,12 +336,12 @@ const jAt = (e) => Date.parse(`${e.day}T${e.time || '00:00'}:00+09:00`) || 0; //
 const jDay = (e) => e.day;
 
 /** 에이전트 폴더 안 — 구간별 기록, 긴 글은 세 줄로 줄였다가 눌러서 펼친다 */
-function JournalSection({ g }) {
+function JournalSection({ g, sel }) {
   const [shown, setShown] = useState(DAY_SHOW), [open, setOpen] = useState(() => new Set());
   const toggle = (id) => setOpen((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   return <>
     {g.items.slice(0, shown).map((e) => (
-      <button key={e.id} type="button" className={`journal-entry${open.has(e.id) ? ' open' : ''}`} aria-expanded={open.has(e.id)} onClick={() => toggle(e.id)}>
+      <button key={e.id} type="button" className={`journal-entry${open.has(e.id) ? ' open' : ''}`} {...selProps(sel, e.id)} aria-expanded={open.has(e.id)} onClick={() => toggle(e.id)}>
         <p className={open.has(e.id) ? '' : 'clamp three'}>{e.text}</p><small className="rec-when">{when(jAt(e), g.key)}</small>
       </button>))}
     {g.items.length > shown && <button type="button" className="btn journal-more" onClick={() => setShown((n) => n + DAY_SHOW)}>{t('journal.more', { n: g.items.length - shown })}</button>}
@@ -278,6 +354,8 @@ export function Journal({ space, folder }) {
   const entries = useMemo(() => all.filter(inSpace(space)).flatMap((d) => d.entries.map((e, i) => ({ ...e, id: `${d.space}|${d.date}|${i}`, day: d.date, space: d.space }))), [all, space]);
   const { folders, current, visible } = useFolder(entries, jKey, jAt, folder);
   const today = kstDay();
+  // 일지는 읽기만 — 고르기는 되고 일괄 동작은 없다(선택 막대 = 개수·해제). 전체 폴더의 에이전트별 한 줄은 폴더 열기 단추라 고르지 않는다
+  const [sel] = useSelection('journal', { keys: current === 'all' ? [] : visible.map((e) => e.id) });
   let body;
   if (current === 'all') { // 전체 — 날짜마다 에이전트별 한 줄(하루 40건이 섞이지 않게), 누르면 그 에이전트 폴더로
     const groups = byDate(journalDigest(visible, jKey), (r) => r.day, today).map((g) => ({ ...g, count: g.items.reduce((n, r) => n + r.n, 0) }));
@@ -287,44 +365,69 @@ export function Journal({ space, folder }) {
         <span className="rec-text"><b>{folderName(r.key, 'fold.people', r.latest.name)}</b><span className="dim"> · {countText(r.n)} · </span>{r.latest.text}</span>
         <small className="rec-when">{when(jAt(r.latest), g.key)}</small>
       </button>))} />;
-  } else body = <DateSections groups={byDate(visible, jDay, today)} render={(g) => <JournalSection key={`${current}|${g.key}`} g={g} />} />;
+  } else body = <div data-sel-scope="journal"><DateSections groups={byDate(visible, jDay, today)} render={(g) => <JournalSection key={`${current}|${g.key}`} g={g} sel={sel} />} /></div>;
   return (
     <div className="page-wrap wide">
       <Title h={t('nav.journal')} />
-      {entries.length === 0 ? <div className="empty-state"><Icon name="book" size={20} /><p>{t('fold.empty')}</p></div>
+      {entries.length === 0 ? <BoardEmpty icon="book" text="fold.empty" />
         : <FolderView folders={folders} current={current} total={entries.length} human="fold.people">{body}</FolderView>}
     </div>
   );
 }
 
 const FOLDERS = ['rules', 'glossary', 'projects'];
+const DOC_FOLD = 'argo-office-docs-fold';
 
-/** 크루 공용 문서(메신저 조직 문서 — 규칙·용어·프로젝트). 편집은 메신저에서(문서 변경은 결재를 거친다) — 오피스는 읽기 */
+/** 크루 공용 문서(메신저 조직 문서 — 규칙·용어·프로젝트). 편집은 메신저에서(문서 변경은 결재를 거친다) — 오피스는 읽기.
+ *  16차(PARITY-common W4·W5·W7): 폴더마다 문서 수와 접기(이 기기에 기억), 제목으로 찾기(찾는 동안은 모두 펼침), 본문은 마크다운 보기(표·목록·체크·코드·링크, 머리말 뺌) */
 export function Docs({ space, openId }) {
   useLang();
   const all = useStore((s) => s.docs);
-  const rows = useMemo(() => all.filter(inSpace(space)), [all, space]);
+  const [sample, setSample] = useState(null);                                       // 예시 데이터 모드(서버 없음)의 예시 문서 — 화면과 함께만 받는다
+  useEffect(() => { if (getMode() === 'sample' && !all.length) import('../data/docs-sample.js').then(setSample).catch(() => {}); }, [all.length]);
+  const source = all.length ? all : sample?.SAMPLE_DOCS ?? all;
+  const rows = useMemo(() => source.filter(inSpace(space)), [source, space]);
+  const [q, setQ] = useState('');
+  const [fold, setFold] = useState(() => restore(DOC_FOLD, {}));
+  const term = q.trim().toLowerCase();
+  const shown = useMemo(() => (term ? rows.filter((d) => (d.title ?? '').toLowerCase().includes(term)) : rows), [rows, term]);
   const cur = rows.find((d) => d.id === openId);
   const [body, setBody] = useState(undefined);
-  useEffect(() => { let live = true; setBody(undefined); if (openId) loadDocBody(openId).then((b) => live && setBody(b)); return () => { live = false; }; }, [openId]);
+  useEffect(() => {
+    let live = true;
+    setBody(undefined);
+    const local = sample?.SAMPLE_DOC_BODIES?.[openId];
+    if (openId) (local != null ? Promise.resolve(local) : loadDocBody(openId)).then((b) => live && setBody(b)).catch(() => live && setBody(null));
+    return () => { live = false; };
+  }, [openId, sample]);
   const close = () => navigate(location.pathname);
+  const flip = (f) => setFold((m) => { const next = { ...m, [f]: !m[f] }; persist(DOC_FOLD, next); return next; });
+  const [sel] = useSelection('crew-docs', { keys: shown.map((d) => d.id) }); // 읽기만 — 고르기만(일괄 동작 없음)
   return (
-    <div className="page-wrap">
+    <div className="page-wrap" data-sel-scope="crew-docs">
       <Title h={t('nav.docs')} sub={t('docs.sub')} />
-      {rows.length === 0 && <div className="empty-state"><Icon name="book" size={20} /><p>{t('docs.empty')}</p></div>}
-      {FOLDERS.map((f) => { const list = rows.filter((d) => d.folder === f); return list.length > 0 && (
-        <section key={f} className="doc-group">
-          <h2 className="label">{t(`docs.${f}`)}</h2>
-          <div className="list">{list.map((d) => (
-            <button key={d.id} type="button" className={`list-row${d.id === openId ? ' on' : ''}`} onClick={() => navigate(`${location.pathname}?open=${d.id}`)}>
-              <Icon name="doc" size={14} className="dim" /><span className="grow">{d.title}</span><small className="dim">{[d.channel && `#${d.channel}`, ago(d.updated)].filter(Boolean).join(' · ')}</small>
-            </button>))}
-          </div>
-        </section>); })}
+      {rows.length === 0 ? <BoardEmpty icon="book" text="docs.sharedEmpty" />
+        : <div className="docs-find"><Icon name="search" size={14} className="dim" /><input className="input" type="search" value={q} placeholder={t('docs.search')} aria-label={t('docs.search')}
+          onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape' && q) { e.stopPropagation(); setQ(''); } }} /></div>}
+      {term && rows.length > 0 && !shown.length && <p className="dim docs-none">{t('docs.noMatch')}</p>}
+      {FOLDERS.map((f) => {
+        const total = rows.filter((d) => d.folder === f).length, list = shown.filter((d) => d.folder === f), open = !!term || !fold[f];
+        return list.length > 0 && (
+          <section key={f} className="doc-group">
+            <h2 className="doc-group-title"><button type="button" className="doc-group-head" aria-expanded={open} disabled={!!term} onClick={() => flip(f)}>
+              <Icon name={open ? 'caret' : 'chevron'} size={14} /><span>{t(`docs.${f}`)}</span><small className="dim">{term ? t('docs.found', { n: list.length, total }) : total}</small>
+            </button></h2>
+            {open && <div className="list">{list.map((d) => (
+              <button key={d.id} type="button" className={`list-row${d.id === openId ? ' on' : ''}`} {...selProps(sel, d.id)} onClick={() => navigate(`${location.pathname}?open=${d.id}`)}>
+                <Icon name="doc" size={14} className="dim" /><span className="grow">{d.title}</span><small className="dim">{[d.channel && `#${d.channel}`, ago(d.updated)].filter(Boolean).join(' · ')}</small>
+              </button>))}
+            </div>}
+          </section>);
+      })}
       <Sheet open={!!cur} onClose={close} title={cur?.title ?? ''}>
         {cur && <div className="doc-read">
           <p className="dim small mono">{cur.path}</p>
-          {body === undefined ? <div className="skeleton-lines"><span /><span /></div> : body ? <article className="prose"><DocView doc={mdToDoc(body)} /></article> : <p className="dim">{t('docs.empty')}</p>}
+          {body === undefined ? <div className="skeleton-lines"><span /><span /></div> : body ? <Markdown text={stripFrontMatter(body)} className="doc-md" /> : <p className="dim">{t('docs.bodyEmpty')}</p>}
           <p className="dim small">{t('docs.readOnly')}</p>
         </div>}
       </Sheet>

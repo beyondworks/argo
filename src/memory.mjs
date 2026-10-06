@@ -364,9 +364,9 @@ export async function writeBossProfile(wsId, items) {
     const list = items.filter((i) => i.section === name && i.text?.trim());
     return `## ${name}\n${list.length ? list.map((i) => `- ${i.text.trim()}`).join('\n') : '(아직 없음)'}\n`;
   };
-  const md = `# 사장 프로필 — 회사가 아는 사장
+  const md = `# 사용자 프로필 — 회사가 아는 사용자
 
-(크루가 대화에서 알게 된 사장의 취향·확정 결정·금지사항을 기록한다. 사장이 크루 카드에서 직접 정정할 수 있다.)
+(에이전트가 대화에서 알게 된 사용자의 취향·확정 결정·금지사항을 기록한다. 사용자가 에이전트 카드에서 직접 정정할 수 있다.)
 
 ${BOSS_SECTIONS.map(sec).join('\n')}`;
   await mkdir(p.notes, { recursive: true });

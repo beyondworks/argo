@@ -52,5 +52,25 @@ test('원본 합계가 공급가액+세액과 다르면 메모로 남긴다(분�
 
 test('대조 합계: 취소는 빠지고, 매출은 공급가액·청구와 입금은 부가세 포함', () => {
   const plan = planMigration({ customers: [cust('a', 'A')], deals: [deal('1', 'a', '입금완료'), deal('2', 'a', '계약'), deal('3', 'a', '취소')] });
-  assert.deepEqual(expectedTotals(plan), { customers: 1, deals: 3, cancelled: 1, sales: 20000000, invoiced: 11000000, paid: 11000000, vat: 1000000 });
+  assert.deepEqual(expectedTotals(plan), { customers: 1, deals: 3, cancelled: 1, due: 0, sales: 20000000, invoiced: 11000000, paid: 11000000, vat: 1000000 });
+});
+
+// 14차(PARITY-customers F2·D1): 지금 이관하면 공급사·기타가 '고객'으로 바뀌고 입금예정일이 빠졌다
+test('분류: 공급사·기타는 그대로 옮기고, 모르는 분류만 고객으로', () => {
+  const { customers } = mergeCustomers([cust('a', 'A', { category: '공급사' }), cust('b', 'B', { category: '기타' }), cust('c', 'C', { category: '협력사' }), cust('d', 'D', { category: '이상한 값' })]);
+  assert.deepEqual(customers.map((c) => [c.name, c.category]), [['A', 'supplier'], ['B', 'other'], ['C', 'partner'], ['D', 'customer']]);
+});
+
+test('입금예정일: 날짜 부분만 옮기고, 읽을 수 없는 값은 옮기지 않고 메모에 남기며, 대조 합계에 건수가 잡힌다', () => {
+  const plan = planMigration({ customers: [cust('a', 'A')], deals: [
+    deal('1', 'a', '계약', { dueDate: '2026-10-01' }),
+    deal('2', 'a', '계산서발행', { dueDate: '2026-11-01T10:00:00.000+09:00' }),
+    deal('3', 'a', '계약', { dueDate: '2026-02-30' }),
+    deal('4', 'a', '취소', { dueDate: '2026-10-01' }),
+    deal('5', 'a', '견적'),
+  ] });
+  assert.deepEqual(plan.deals.map((d) => d.dueOn), ['2026-10-01', '2026-11-01', null, '2026-10-01', null]);
+  assert.match(plan.deals[2].memo.join('\n'), /입금예정일 "2026-02-30"/);
+  assert.equal(plan.deals[4].memo.some((m) => m.includes('입금예정일')), false, '값이 없으면 메모도 없다');
+  assert.equal(expectedTotals(plan).due, 3);
 });

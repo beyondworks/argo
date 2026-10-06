@@ -11,11 +11,11 @@ cloud, your **credentials are not uploaded**: the three credential files — `.s
 no one but you (operator included); new devices simply reconnect runners and bots. A copy left in
 the cloud by an older version is withdrawn on the next sync — except on the free plan, where a
 cloud-write restriction defers withdrawal until you are on Pro/trial. Your company **data**
-(memory, chats, crew) does still replicate to Argo cloud, encrypted (AES-256-GCM); its envelope
+(memory, chats, agents) does still replicate to Argo cloud, encrypted (AES-256-GCM); its envelope
 key lives in the same cloud, so for that data the operator can technically decrypt — we do not
 claim otherwise. Self-hosting (your own server, your own Supabase) is the one case where
 credential sync is offered as a choice, because there "the operator" is you. Cloud workers
-(operator-provisioned instances that run your crew for you) are a delegation model still in
+(operator-provisioned instances that run your agents for you) are a delegation model still in
 design — not covered by this guarantee. Disable all sync with `ARGO_SYNC=0`, or never sign in.
 
 ## 자격 증명 (러너 로그인 열쇠) — 호스티드에서는 클라우드로 가지 않습니다
@@ -38,10 +38,10 @@ design — not covered by this guarantee. Disable all sync with `ARGO_SYNC=0`, o
 
 두 가지 예외는 정직하게 밝힙니다. **무료 플랜**은 클라우드 쓰기가 막혀 있어, 과거 버전에서 올라간
 사본이 있다면 그 회수가 보류됩니다(다시 Pro·체험이 되는 시점에 회수됩니다). **클라우드 워커**
-(운영자가 프로비저닝해 사용자 대신 크루를 돌리는 인스턴스)는 자격 접근이 기능의 전제인 위임
+(운영자가 프로비저닝해 사용자 대신 에이전트를 돌리는 인스턴스)는 자격 접근이 기능의 전제인 위임
 모델이라 이 보장의 범위 밖이며, 별도 설계 트랙(위임 동의)으로 진행 중입니다.
 
-## 회사 데이터 (기억·대화·크루) — 봉투 암호화로 올라가며, 열쇠는 클라우드에 있습니다
+## 회사 데이터 (기억·대화·에이전트) — 봉투 암호화로 올라가며, 열쇠는 클라우드에 있습니다
 
 > 전환기 안내(2026-09): 봉투 암호화 기본 적용 이후 **새로 동기화되는 파일부터** 암호문입니다. 그 전에 올라간 파일은 서버 일괄 재봉인이 끝날 때까지 평문으로 남아 있을 수 있고, v0.1.24 미만 클라이언트는 업데이트가 필요합니다.
 
@@ -102,8 +102,8 @@ Argo Messenger(팀 메신저)의 조직·채널·메시지·첨부·결재 카�
 있습니다: 회사가 직접 운영하는 서버(셀프호스트 Supabase — [selfhost.md](selfhost.md) "팀 메신저")를
 쓰거나, 메신저를 쓰지 않는 것입니다.
 
-크루가 조직 채널에서 돌린 턴이 **크루 주인의 컴퓨터**(개인 vault)에 일지로 남는지는 조직 정책
-(채널의 "크루 기억")이 정합니다. 남긴 일지에는 `org` 태그가 붙어 조직 데이터 회수 명령으로 지울 수
+에이전트가 조직 채널에서 돌린 턴이 **에이전트 주인의 컴퓨터**(개인 vault)에 일지로 남는지는 조직 정책
+(채널의 "에이전트 기억")이 정합니다. 남긴 일지에는 `org` 태그가 붙어 조직 데이터 회수 명령으로 지울 수
 있지만, 개인 컴퓨터의 파일을 서버가 강제로 지울 수는 없습니다(로컬 우선의 한계 — 관리자 화면에도
 같은 문장을 표기합니다).
 

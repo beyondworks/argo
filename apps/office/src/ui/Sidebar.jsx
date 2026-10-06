@@ -8,15 +8,19 @@ import { Face } from './Face.jsx';
 import { openMenu, menuProps, mergeHandlers } from './Menu.jsx';
 import { Link, navigate } from '../core/router.jsx';
 import { t, useLang } from '../core/i18n.js';
-import { crewsIn, approvalsIn, useStore, childrenOf, createPage, saveNav, favOf, saveFav, isFav, toggleFav } from '../core/store.js';
+import { approvalsIn, useStore, childrenOf, createPage, saveNav, favOf, saveFav, isFav, toggleFav } from '../core/store.js';
 import { readNav, routeInfo, favTarget, routeLabelKey, routeIcon, favKey, NAV_ICON } from '../core/nav-model.js';
 import { setUi } from '../core/ui-state.js';
 import { baseOf, pageMenu, crewMenu, mod } from '../core/commands.js';
 import { dragHasFiles, filesFromTransfer } from '../core/files.js';
-import { groupCrews, isMine } from '../core/crew-list.js';
+import { groupCrews, isMine, crewsIn, byOrg } from '../core/crew-list.js';
 import { showToast } from './Overlay.jsx';
-import { SPACES, ME, canManage, getMode } from '../core/session.js';
+import { SPACES, ME, canManage, getMode, nameIn } from '../core/session.js';
+import { openExternal } from '../core/platform.js';
+import { FAMILY } from '../core/family.js';
 import { restore, persist, scopedStorageKey } from '../core/save.js';
+import { useTaskRows, useTaskDay } from '../core/tasks.js';
+import { dueCounts } from '../core/task-model.js';
 
 const ACCEPTS = ['mail', 'page', 'file', 'record'];
 
@@ -34,7 +38,7 @@ function SpaceSwitcher({ space }) {
   return (
     <button type="button" className="space-switch" onClick={open} aria-haspopup="menu">
       <SpaceMark space={cur} />
-      <span className="space-name"><b>{cur.kind === 'me' ? t('space.me') : cur.name}</b><small>{cur.kind === 'me' ? ME.email : [t(`space.role.${cur.role}`), cur.members != null && t('space.members', { n: cur.members })].filter(Boolean).join(' · ')}</small></span>
+      <span className="space-name"><b>{cur.kind === 'me' ? t('space.me') : cur.name}</b><small>{cur.kind === 'me' ? <span className="ha">{ME.email}</span> : [t(`space.role.${cur.role}`), cur.members != null && t('space.members', { n: cur.members })].filter(Boolean).join(' · ')}</small></span>
       <Icon name="caret" size={14} />
     </button>
   );
@@ -84,7 +88,7 @@ function PageRow({ page, depth, path, open, onToggle, hasKids }) {
   const to = `${baseOf(page.space)}/p/${page.id}`;
   const menu = menuProps(() => pageMenu(page));
   return (
-    <div ref={setNodeRef} style={{ transform: CSS.Translate.toString(transform), transition, paddingLeft: 6 + depth * 14 }} className={`tree-row${path === to ? ' active' : ''}${isDragging ? ' dragging' : ''}`}
+    <div ref={setNodeRef} data-tree-id={page.id} style={{ transform: CSS.Translate.toString(transform), transition, paddingLeft: 6 + depth * 14 }} className={`tree-row${path === to ? ' active' : ''}${isDragging ? ' dragging' : ''}`}
       {...attributes} {...mergeHandlers(mouseListeners, menu)} role="treeitem" aria-expanded={hasKids ? open : undefined} aria-selected={path === to}>
       <button type="button" className={`tree-toggle${hasKids ? '' : ' leaf'}`} tabIndex={-1} aria-label={t('more')} onClick={(e) => { e.stopPropagation(); onToggle(page.id); }}>
         <Icon name={hasKids ? (open ? 'caret' : 'chevron') : (page.restricted ? 'lock' : 'doc')} size={14} />
@@ -127,12 +131,16 @@ function CrewRow({ crew, space, group, order, mode, movable }) {
   const can = direct && active && ACCEPTS.includes(active.data.current?.kind);
   const owner = crew.company ? t('crew.owner.company') : isMine(crew, ME.id) ? t('crew.owner.me') : crew.ownerName || t('crew.owner.unknown');
   const job = crew.job || (crew.dept ? '' : crew.role); // 예시 데이터는 role 하나뿐
-  const tip = [job ? t('crew.tip.job', { job }) : t('crew.tip.noJob'), crew.dept && t('crew.tip.dept', { dept: crew.dept }), t('crew.tip.owner', { name: isMine(crew, ME.id) ? ME.name : owner })].filter(Boolean).join('\n');
-  // 터치는 길게 누르기 = 메뉴(트리와 같은 규칙). 키보드는 끌기를 시작하지 않는다 — Enter·Space는 맡기기(검수 MEDIUM-1), 순서는 마우스로
+  // 같은 에이전트를 한 줄로 묶은 내 공간(crew-list.js oneEach) — 조직이 둘 이상이면 어느 조직에 있는지 작게(CX-05)
+  const where = SPACES.filter((x) => x.kind === 'org').length > 1 ? (crew.spaces ?? []).map((k) => SPACES.find((x) => x.key === k)?.name).filter(Boolean).join(', ') : '';
+  const st = useStore((s) => (s.boardError ? 'rest' : crew.status)); // 기록판을 못 읽는 동안 접속은 '확인 못 함'(2차 검수 L8)
+  const tip = [job ? t('crew.tip.job', { job }) : t('crew.tip.noJob'), crew.dept && t('crew.tip.dept', { dept: crew.dept }), t('crew.tip.owner', { name: isMine(crew, ME.id) ? nameIn(space) : owner }), where, t(`crew.status.${st}`)].filter(Boolean).join('\n');
+  // 터치는 길게 누르기 = 메뉴(트리와 같은 규칙). 키보드는 끌기를 시작하지 않는다 — Enter·Space는 누르기와 같이 상세 열기(검수 MEDIUM-1), 순서는 마우스로
   const { onTouchStart, onKeyDown, ...dragListeners } = sort.listeners ?? {};
   const { role, tabIndex, ...sortAttrs } = sort.attributes ?? {}; // 줄 자체는 초점을 받지 않는다(안쪽 버튼 하나만)
   const menu = menuProps(() => crewMenu(crew, space));
-  const open = () => (direct ? setUi({ assign: { space, crew: crew.id, items: [] } }) : showToast(t('crew.viaChannel', { crew: crew.name })));
+  // 누르면 오른쪽 에이전트 상세(17차 A-1) — 맡기기는 상세 맨 위 단추·크루 메뉴·끌어 놓기로. 1:1을 받지 않는 크루의 안내도 상세가 보인다
+  const open = () => setUi({ crew: { id: crew.id, space } });
   return (
     <div ref={sort.setNodeRef} style={{ transform: CSS.Translate.toString(sort.transform), transition: sort.transition }} className={`crew-row${can ? ' drop-ok' : ''}${isOver || fileOver ? ' drop-over' : ''}${sort.isDragging ? ' dragging' : ''}`}
       {...sortAttrs} {...mergeHandlers(dragListeners, menu)}
@@ -140,18 +148,20 @@ function CrewRow({ crew, space, group, order, mode, movable }) {
       onDrop={(e) => { e.preventDefault(); setFileOver(false); const files = filesFromTransfer(e.dataTransfer); if (direct && files.length) setUi({ assign: { space, crew: crew.id, items: files.map((f, i) => ({ kind: 'file', id: `drop-${i}`, label: f.name })) } }); }}>
       <button ref={setNodeRef} type="button" className="crew-btn" onClick={open} title={isOver || fileOver ? t('crew.drop', { crew: crew.name }) : tip}>
         <Face id={crew.id} size={18} />
-        <span className="nav-label"><span className="crew-name">{crew.name}</span><small>{isMine(crew, ME.id) ? crew.role : owner}</small></span>{/* 오피스에는 내 크루만 — 작은 글씨는 부서(없으면 직무) */}
-        <span className={`dot ${crew.status}`} aria-label={t(`crew.status.${crew.status}`)} />
+        <span className="nav-label"><span className="crew-name">{crew.name}</span><small>{isMine(crew, ME.id) ? [crew.role, where].filter(Boolean).join(' · ') : owner}</small></span>{/* 오피스에는 내 크루만 — 작은 글씨는 부서(없으면 직무) */}
+        <span className={`dot ${st}`} aria-label={t(`crew.status.${st}`)} />
       </button>
     </div>
   );
 }
 
 const FOLD_KEY = 'argo-office-crew-fold';
+const rank = (org) => (org ? SPACES.findIndex((x) => x.id === org) : 1e9); // 조직 덩어리 순서 = 공간 목록(이름순), 개인 공간은 끝
 
 /** 좌측 크루 목록(유건 9/30 #6): 고정 → 내 에이전트 두 묶음(고정한 크루는 내 에이전트에서 빠진다). 쓸 수 없는(꺼진) 크루는 보이지 않는다(#9).
  *  고정·순서는 메신저 레일과 같은 저장소(계정), 접힘·검색은 이 기기에서만. 주인별·부서별·일하는 중만 필터는 뺐다 */
 function CrewSection({ space, crews, handle }) {
+  const ready = useStore((s) => s.crewsReady && !s.boardError); // 못 읽었으면 '아직 없음'이라고 하지 않는다
   const [fold, setFold] = useState(() => restore(FOLD_KEY, {}));
   const [query, setQuery] = useState(null); // null = 검색칸 닫힘
   const { groups } = useMemo(() => groupCrews(crews, { me: ME.id, query: query ?? '' }), [crews, query]);
@@ -164,15 +174,21 @@ function CrewSection({ space, crews, handle }) {
     {query != null && <input className="crew-search" autoFocus value={query} placeholder={t('crew.search')} aria-label={t('crew.search')} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape') setQuery(null); }} />}
     <div className="crews">
       {groups.map((g) => {
-        const mode = g.key === 'pinned' ? 'pin' : 'sort', order = g.crews.map((c) => c.id), label = t(`crew.group.${g.key}`);
+        const mode = g.key === 'pinned' ? 'pin' : 'sort', label = t(`crew.group.${g.key}`);
         return <div key={g.key} className="crew-group" role="group" aria-label={label}>
-          <button type="button" className="crew-group-head" aria-expanded={!fold[g.key] || !!query} onClick={() => toggle(g.key)}><Icon name={fold[g.key] && !query ? 'chevron' : 'caret'} size={12} /><span>{label}</span><small>{g.crews.length}</small></button>
-          {(!fold[g.key] || query) && <SortableContext items={order.map((id) => `crewsort:${id}`)} strategy={verticalListSortingStrategy}>
-            {g.crews.map((c) => <CrewRow key={c.id} crew={c} space={space} group={`${space}|${g.key}`} order={order} mode={mode} movable={g.movable} />)}
-          </SortableContext>}
+          <button type="button" className="crew-group-head" aria-expanded={!fold[g.key] || !!query} onClick={() => toggle(g.key)}><span>{label}</span><Icon name={fold[g.key] && !query ? 'chevron' : 'caret'} size={12} /><small>{g.crews.length}</small></button>
+          {/* 순서는 조직마다 따로 저장된다 — 같은 조직 덩어리(byOrg)마다 끌기 영역을 나눠, 다른 조직 자리에는 놓기 표시도 저장도 없다. 개인 공간 행은 저장할 곳이 없어 끌지 않는다.
+              조직 덩어리가 둘 이상일 때만 조직 이름을 머리에, 개인 덩어리는 조직이 하나라도 있으면 항상 '개인 공간' 머리에(조직 0개 + 개인만이면 머리줄 없음)(경계가 보이게), 덩어리 순서는 조직 이름 순(SPACES), 개인 공간은 끝(R3-L8) */}
+          {(!fold[g.key] || query) && byOrg(g.crews).sort((x, y) => rank(x.org) - rank(y.org)).map((run, i, runs) => { const order = run.crews.map((c) => c.id); return <div key={run.org ?? '-'} role="none">
+            {(() => { const n = runs.filter((r) => r.org).length; return (run.org ? n > 1 : n > 0) && <small className="crew-org">{run.org ? SPACES.find((x) => x.id === run.org)?.name : t('crew.group.personal')}</small>; })()}
+            <SortableContext items={order.map((id) => `crewsort:${id}`)} strategy={verticalListSortingStrategy}>
+            {run.crews.map((c) => <CrewRow key={c.id} crew={c} space={space} group={`${space}|${g.key}|${run.org}`} order={order} mode={mode} movable={g.movable && (!!run.org || getMode() !== 'signedIn')} />)}
+          </SortableContext></div>; })}
         </div>;
       })}
-      {!groups.length && <p className="crew-empty">{t('crew.none')}</p>}
+      {/* 검색 결과가 없을 때만 '맞는 에이전트 없음'. 아직 하나도 없으면 다음에 할 일(실행기 = Argo 앱 받기, 패밀리 원칙 6 — OFC-18) */}
+      {!groups.length && ready && (query ? <p className="crew-empty">{t('crew.none')}</p>
+        : <p className="crew-empty">{t('crew.noneYet')} <button type="button" className="link-btn small" onClick={() => openExternal(FAMILY.download)}>{t('crew.getApp')}</button></p>)}
     </div>
   </>;
 }
@@ -191,7 +207,7 @@ function FavRow({ fav, space, path }) {
   const inner = page ? <Icon name={page.restricted ? 'lock' : 'doc'} /> : r ? <Icon name={routeIcon(r)} /> : <Face id={crew.id} size={18} />;
   return <div ref={setNodeRef} style={{ transform: CSS.Translate.toString(transform), transition }} className={isDragging ? 'dragging' : ''} {...attributes} {...mergeHandlers(mouse, menu)} role="none">
     {to ? <Link to={to} className={`nav-item${path === to ? ' active' : ''}`} aria-current={path === to ? 'page' : undefined} draggable={false}>{inner}<span className="nav-label">{label}</span>{sp && <small className="fav-space">{sp.kind === 'me' ? t('space.me') : sp.name}</small>}</Link>
-      : <button type="button" className="nav-item" onClick={() => setUi({ assign: { space, crew: crew.id, items: [] } })}>{inner}<span className="nav-label">{label}</span></button>}
+      : <button type="button" className="nav-item" onClick={() => setUi({ crew: { id: crew.id, space } })}>{inner}<span className="nav-label">{label}</span></button>}
   </div>;
 }
 
@@ -222,6 +238,9 @@ export function Sidebar({ space, path }) {
   const pendingHere = approvals.filter(approvalsIn(space)).length;
   const crews = crewsIn(useStore((s) => s.crews), space, ME.id);
   const unread = mails.filter((m) => m.folder === 'inbox' && m.unread).length;
+  // 할 일 배지(18차) = 내가 맡은 일의 기한 지남 + 오늘 마감 — 할 일 화면과 같은 행(개인 공간은 읽어 둔 조직 할 일 포함)을 같은 함수로 센다. 이미 받아 둔 것만(새로 읽지 않는다),
+  // 아직 안 받았으면 숨긴다. 탭 복귀 때 할 일 화면과 같은 키로 1분에 한 번까지 다시 읽고(watch), 자정을 넘겼으면 '오늘'을 다시 계산한다
+  const due = dueCounts(useTaskRows(space, true), useTaskDay(), ME.id);
   const at = (p) => path === p;
   const kind = isMe ? 'me' : 'org';
   const nav = readNav(useStore((s) => s.layouts['nav:me']?.items), kind);
@@ -229,6 +248,8 @@ export function Sidebar({ space, path }) {
     home: { to: base, icon: NAV_ICON.home, label: t('nav.home'), active: at(base) },
     calendar: { to: `${base}/calendar`, icon: NAV_ICON.calendar, label: t('nav.calendar'), active: at(`${base}/calendar`) },
     business: { to: `${base}/business`, icon: NAV_ICON.business, label: t('nav.business'), active: (path === `${base}/business` || path.startsWith(`${base}/business/`)) && !path.startsWith(`${base}/business/library`) },
+    contracts: { to: `${base}/contracts`, icon: NAV_ICON.contracts, label: t('nav.contracts'), active: at(`${base}/contracts`) },
+    files: { to: `${base}/files`, icon: NAV_ICON.files, label: t('nav.files'), active: path === `${base}/files` || path.startsWith(`${base}/files/`) },
     mail: { to: '/me/mail', icon: NAV_ICON.mail, label: t('nav.mail'), count: unread, active: path.startsWith('/me/mail') },
     work: { to: `${base}/work`, icon: NAV_ICON.work, label: t('nav.work'), active: at(`${base}/work`) },
     approvals: { to: `${base}/approvals`, icon: NAV_ICON.approvals, label: t('nav.approvals'), count: pendingHere, active: at(`${base}/approvals`) },
@@ -237,6 +258,8 @@ export function Sidebar({ space, path }) {
     journal: { to: `${base}/journal`, icon: NAV_ICON.journal, label: t('nav.journal'), active: at(`${base}/journal`) },
     docs: { to: `${base}/docs`, icon: NAV_ICON.docs, label: t('nav.docs'), active: at(`${base}/docs`) },
     perf: { to: `${base}/perf`, icon: NAV_ICON.perf, label: t('nav.perf'), active: at(`${base}/perf`) },
+    ...Object.fromEntries(['people', 'company', 'agents'].map((v) => [v, { to: `${base}/${v}`, icon: NAV_ICON[v], label: t(`nav.${v}`), active: at(`${base}/${v}`) }])),
+    tasks: { to: `${base}/tasks`, icon: NAV_ICON.tasks, label: t('nav.tasks'), count: due && due.overdue + due.today, active: at(`${base}/tasks`) },
     shared: { to: '/me/shared', icon: NAV_ICON.shared, label: t('nav.shared'), active: at('/me/shared') },
     knowhow: { to: `${base}/knowhow`, icon: NAV_ICON.knowhow, label: t('nav.knowhow'), active: at(`${base}/knowhow`) },
     tools: { to: `${base}/tools`, icon: NAV_ICON.tools, label: t('nav.tools'), active: at(`${base}/tools`) },

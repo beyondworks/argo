@@ -4,6 +4,7 @@
 @keyframes vw-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 .vw.compact { padding: 0; min-height: 0; }
 .vw-empty { padding: 28px 8px; text-align: center; color: var(--fg-3); font-size: 13px; margin: 0; }
+.vw-empty p { margin: 0 0 10px; }
 body.vw-banding, body.vw-banding * { user-select: none; -webkit-user-select: none; }
 .vw-band { position: fixed; z-index: 40; pointer-events: none; border-radius: 4px; background: color-mix(in srgb, var(--primary) 8%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 35%, transparent); }
 .vw [data-vkey] { cursor: default; outline-offset: -2px; }
@@ -75,6 +76,51 @@ body.vw-banding, body.vw-banding * { user-select: none; -webkit-user-select: non
 .vw-form p { margin: 0; }
 .vw-form .input { width: 100%; }
 
+/* 할 일 속성(유건 10/4) — 상태·중요도는 글자 배지(카드·줄 한쪽 색 막대 없음), 묶음 머리에 끝낸 수/전체와 진행 막대 */
+.tk-badges { display: inline-flex; flex-wrap: wrap; gap: 4px; min-width: 0; flex: none; }
+.tk-badges .badge { height: 18px; padding: 0 6px; font-size: 11px; }
+.vw-title-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.vw-title-row .clamp { min-width: 0; }
+.vw-group-head { gap: 10px; }
+.vw-group-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vw-progress { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; font-weight: 450; white-space: nowrap; }
+.vw-progress-note { margin: 0 0 4px; padding: 0 8px; font-size: 12px; } /* 묶음 목록 위 한 줄 — 진행률이 무엇을 세는지 */
+/* 할 일 화면(메뉴 '할 일') */
+.tk { display: flex; flex-direction: column; min-height: 100%; }
+.tk-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; } /* 다른 화면과 같은 page-wrap 틀 안에서 제목 아래 한 줄 */
+.tk > .vw { padding: 4px 0 72px; } /* page-wrap이 이미 좌우 여백을 준다 — 제목과 왼쪽 선을 맞춘다 */
+.tk-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+/* 할 일 패널 */
+.tk-panel { display: grid; gap: 14px; }
+.tk-title-in { width: 100%; height: auto; padding: 8px 10px; font-size: 16px; font-weight: 600; }
+.tk-fields { display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 10px 12px; align-items: center; }
+.tk-fields .seg { justify-self: start; }
+.tk-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.tk-row select.input { flex: 1; min-width: 0; }
+.tk-date { max-width: 180px; }
+.tk-value { font-size: 13px; }
+.tk-note { min-height: 140px; margin-top: 0; line-height: 1.5; }
+.tk-note.short { min-height: 84px; }
+.tk-hint { margin: 0; font-size: 12px; color: var(--fg-3); }
+.tk-cancel { color: var(--danger); }
+.tk-hist h3 { margin: 4px 0 8px; font-size: 12.5px; font-weight: 600; color: var(--fg-2); }
+.tk-hist ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.tk-hist li { font-size: 12.5px; line-height: 1.45; color: var(--fg-2); overflow-wrap: anywhere; }
+.tk-hist-who { font-weight: 600; color: var(--fg); }
+.tk-hist time { margin-left: 4px; font-size: 11.5px; }
+.tk-two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+/* 분류 관리 */
+.tk-cats { display: grid; gap: 10px; }
+.tk-cat-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.tk-cat { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.tk-cat > .input { flex: 1; min-width: 0; }
+.tk-cat-n { white-space: nowrap; }
+.tk-cat-ask { display: grid; gap: 6px; flex: 1; padding: 8px 10px; border-radius: var(--rc); background: var(--danger-soft); }
+.tk-cat-ask p { margin: 0; font-size: 12.5px; }
+.tk-cat-add { display: flex; gap: 6px; }
+.tk-cat-add .input { flex: 1; min-width: 0; }
+.tk-up { transform: rotate(180deg); }
+
 /* 드롭다운 — `보기: 월 ⌄`. 이름은 흐리게, 고른 값은 진하게 */
 .vw-dd { gap: 4px; padding: 0 7px 0 10px; }
 .vw-dd-k { color: var(--fg-3); font-weight: 450; }
@@ -100,6 +146,10 @@ body.vw-banding, body.vw-banding * { user-select: none; -webkit-user-select: non
   .vw-lane { flex-basis: min(78vw, 280px); }
   .vw-cards { grid-template-columns: minmax(0, 1fr); }
   .vw-selbar { bottom: max(12px, env(safe-area-inset-bottom)); }
+  .tk-tools { margin-left: 0; }
+  .tk-fields { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .tk-fields > .label { margin-top: 6px; }
+  .tk-two { grid-template-columns: minmax(0, 1fr); }
 }
 @media (prefers-reduced-motion: reduce) {
   .vw-lane, .vw-kcard, .vw-check { transition: none; }

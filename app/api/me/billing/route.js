@@ -13,7 +13,7 @@ import { createServerClient } from '@supabase/ssr';
 import { createClient } from '@supabase/supabase-js';
 import { currentUser } from '../../../auth.mjs';
 import { getFreshDeviceSession } from '../../../../src/devicesession.mjs'; // 설치본 결제 표면 — 서비스키 없이 RLS로
-import { reconcileUnneeded } from '../../../../src/entitlement.mjs';
+import { effectivePlanOf, reconcileUnneeded } from '../../../../src/entitlement.mjs';
 import { lsGateOpts } from '../../../../src/lsbilling.mjs';
 import { reconcileDueFromRow, reconcileEntitlement } from '../../../../src/lsreconcile.mjs';
 import { invalidatePlanCache } from '../../../../src/plan-cache.mjs';
@@ -36,23 +36,27 @@ const pick = (data, extras = {}, reconciling = false) => Response.json({
   billing: {
     plan: data?.plan ?? null, status: data?.ls_status ?? null, hasSub: !!data?.ls_subscription_id,
     endsAt: data?.ends_at ?? null, trialEndsAt: extras.trialEndsAt ?? null, purgeAfter: extras.purgeAfter ?? null,
+    // 서버 판정 요금제(my_plan().plan) — 화면의 Free/Pro 표시는 이것을 먼저 쓴다(accountPlan, entitlement.mjs).
+    // 원시 plan·status·endsAt은 구독 관리(포털·대사)용으로 그대로 둔다. 추가만 한 필드라 옛 앱은 무시한다.
+    effectivePlan: extras.plan ?? null,
   },
   reconciling,
 });
 
 const cols = 'plan, ls_status, ls_subscription_id, ls_customer_id, ends_at, ls_reconciled_at, ls_reconcile_empty_at';
 
-/** my_plan() RPC 호출 — trialEndsAt·purgeAfter의 단일 원천(서버 판정, R3). 실패해도 billing 전체를
+/** my_plan() RPC 호출 — 서버 판정 plan·trialEndsAt·purgeAfter의 단일 원천(서버 판정, R3). 실패해도 billing 전체를
     깨지 않는다 — 체험 배지·삭제 예정 안내만 생략(배너 없음이지 화면 고장 아님). uid를 주면 서비스 롤
     경로(auth.uid() 없음)로 그 사용자를 명시 조회, 생략하면 사용자 스코프(JWT의 auth.uid() 그대로). */
 async function planExtras(sb, uid) {
   try {
     const { data, error } = uid ? await sb.rpc('my_plan', { p_uid: uid }) : await sb.rpc('my_plan');
     if (error) throw new Error(error.message);
-    return { trialEndsAt: data?.trialEndsAt ?? null, purgeAfter: data?.purgeAfter ?? null };
+    return { plan: effectivePlanOf(data), trialEndsAt: data?.trialEndsAt ?? null, purgeAfter: data?.purgeAfter ?? null };
   } catch (e) {
+    // plan=null → 화면은 원시 행으로 예전 판정을 한다(accountPlan 폴백)
     console.warn('[argo] my_plan 조회 실패 — 체험·삭제예정 안내 생략:', e?.message ?? e);
-    return { trialEndsAt: null, purgeAfter: null };
+    return { plan: null, trialEndsAt: null, purgeAfter: null };
   }
 }
 

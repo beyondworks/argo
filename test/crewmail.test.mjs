@@ -589,3 +589,15 @@ test('회수(reclaimClaim)는 옛 소유자의 claimBy·claimedAt을 떼고 되�
   assert.equal(b.claimBy, undefined); assert.equal(b.claimedAt, undefined); assert.equal(b.attempts, 1);
   await rename(p, `${p}.claimed`); const { rm } = await import('node:fs/promises'); await rm(`${p}.claimed`, { force: true }); // 정리
 });
+
+test('배달 기록·실패함 — 사장 쪽지는 fromRole을 남긴다(화면이 from 문자열 대신 이것으로 사장을 표시)', async () => {
+  await mod.sendCrewMail(WS, { from: 'captain', fromName: '사장', fromRole: 'captain', to: 'rl', message: '사장 쪽지' });
+  await mod.deliverCrewMail(WS, async () => {});
+  const log = (await mod.listMail(WS)).log.find((l) => l.to === 'rl');
+  assert.equal(log?.fromRole, 'captain');
+  await mod.sendCrewMail(WS, { from: 'captain', fromName: '캡틴', to: 'rl2', message: '크루 captain 쪽지' });
+  await mod.deliverCrewMail(WS, async () => {});
+  const log2 = (await mod.listMail(WS)).log.find((l) => l.to === 'rl2');
+  assert.equal(log2?.fromRole, 'crew', '크루가 보낸 쪽지(이름이 captain이어도)는 crew');
+});
+

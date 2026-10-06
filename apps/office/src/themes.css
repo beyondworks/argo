@@ -79,7 +79,7 @@
   --t-nav-r: var(--rs); --t-btn-r: 999px; --t-icon-r: 50%; --t-chip-r: 999px; --t-input-r: 16px; --t-seg-r: 999px;
   --t-h1-size: 30px; --t-h1-w: 540; --t-h1-ls: -0.03em; --t-num-size: 30px; --t-num-w: 500;
   --t-space-bg: var(--surface); --t-space-edge: none;
-  --t-active-shadow: 0 2px 8px rgba(30, 30, 20, 0.1);
+  --t-active-shadow: 0 1px 3px rgba(30, 30, 20, 0.08); /* 활성 표시 그림자 — 리퀴드와 같이 짧게(유건 10/2 10차) */
   --t-win-m: 20px; --t-win-r: 34px; --t-main-r: 28px;
   --t-top-bg: transparent; --t-doc-bg: transparent; --t-bar-line: transparent;
 }
@@ -89,7 +89,7 @@
   --t-nav-r: var(--rs); --t-btn-r: 999px; --t-icon-r: 50%; --t-chip-r: 999px; --t-input-r: 16px; --t-seg-r: 999px;
   --t-h1-size: 34px; --t-h1-w: 520; --t-h1-ls: -0.035em; --t-num-size: 32px; --t-num-w: 500;
   --t-space-bg: var(--t-glass-strong); --t-space-edge: none;
-  --t-active-shadow: 0 2px 10px rgba(120, 70, 40, 0.12);
+  --t-active-shadow: 0 1px 3px rgba(120, 70, 40, 0.09); /* 활성 표시 그림자 — 리퀴드와 같이 짧게(유건 10/2 10차) */
   --t-win-m: 20px; --t-win-r: 34px;
   --t-win-bg: color-mix(in srgb, var(--bg) 72%, transparent);
   --t-top-bg: transparent; --t-doc-bg: transparent; --t-bar-line: transparent;
@@ -101,14 +101,14 @@
   --r-sm: 10px; --r: 16px; --r-lg: 22px; --r-pill: 999px;
   --t-nav-r: var(--rs); --t-btn-r: 999px; --t-icon-r: 50%; --t-chip-r: 999px; --t-input-r: 14px; --t-seg-r: 999px;
   --t-h1-size: 32px; --t-h1-w: 560; --t-h1-ls: -0.03em; --t-num-size: 30px; --t-num-w: 540;
-  --t-space-bg: var(--t-lq-chip); --t-space-edge: inset 0 1px 0 var(--t-shine-lo); --t-active-shadow: inset 0 1px 0 var(--t-shine), 0 2px 10px var(--t-shade);
+  --t-space-bg: var(--t-lq-chip); --t-space-edge: inset 0 1px 0 var(--t-shine-lo); --t-active-shadow: inset 0 1px 0 var(--t-shine-lo), 0 1px 3px var(--t-shade); /* 활성 표시(유건 10/2 10차 "쨍한 흰색이라 진하다") — 반사광은 옅은 쪽(--t-shine-lo), 그림자는 짧게 */
   --t-win-m: 14px; --t-win-r: 30px;
   --t-top-bg: transparent; --t-doc-bg: transparent; --t-bar-line: transparent;
   --t-lq-win: color-mix(in srgb, var(--card) 22%, transparent);
   --t-lq-side: color-mix(in srgb, var(--card) 34%, transparent);
   --t-lq-card: color-mix(in srgb, var(--card) 40%, transparent); --t-lq-card-hi: color-mix(in srgb, var(--card) 64%, transparent);
   --t-lq-chip: color-mix(in srgb, var(--card) 50%, transparent);
-  --t-lq-pill: color-mix(in srgb, var(--card) 86%, transparent);
+  --t-lq-pill: color-mix(in srgb, var(--card) 62%, transparent); /* 활성 표시 바탕 — 사이드바·탭·세그먼트·폴더 목록·고른 줄이 같이 쓴다(86%는 바탕과 너무 달라 쨍했다, 유건 10/2 10차) */
   --t-lq-pop: color-mix(in srgb, var(--card) 70%, transparent);
   --t-lq-toast: color-mix(in srgb, var(--primary) 84%, transparent);
   --t-lq-blur: blur(24px) saturate(170%);
@@ -203,6 +203,8 @@
   /* #root가 창 바깥 여백을 품는다 — 여백이 #root 밖으로 겹쳐 나가면 문서가 그만큼 스크롤돼 창이 위로 밀렸다(scrollIntoView·초점 이동 때) */
   :root:is([data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass'], [data-shell='liquid']) #root { display: flow-root; }
   :root:is([data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass']) .shell { margin: var(--t-win-m); height: calc(100dvh - 2 * var(--t-win-m)); border-radius: var(--t-win-r); background: var(--t-win-bg); box-shadow: var(--t-win-edge); overflow: hidden; }
+  /* 본문 스크롤 막대는 창(본문 판) 아래 둥근 모서리가 시작하기 전에 끝난다(유건 10/1 밤 6차) — 창 둥글기가 본문 판 둥글기보다 크거나 같다 */
+  :root:is([data-shell='window'], [data-shell='panel'], [data-shell='pill'], [data-shell='glass'], [data-shell='liquid']) .content::-webkit-scrollbar-track { margin-bottom: var(--t-win-r); }
   /* window — 사이드바는 창과 같은 바탕에 경계선 하나, 본문은 얇은 테두리의 큰 판 */
   :root[data-shell='window'] .side { border-right: 1px solid var(--t-top-line); }
   :root[data-shell='window'] .content:not(.view-mail, .view-page) { padding: 12px; }
@@ -247,7 +249,7 @@
 :root[data-shell='window'] .tabs { background: var(--lift); padding: 4px; border-radius: 14px; border-bottom: 0; gap: 2px; }
 :root[data-shell='window'] .tab { height: 32px; border-radius: 10px; }
 :root[data-shell='window'] .tab.on { background: var(--surface); box-shadow: var(--t-active-shadow); }
-:root[data-shell='window'] .biz-tabbar { border-bottom: 0; }
+:root[data-shell='window'] :is(.biz-tabbar, .page-tabbar) { border-bottom: 0; }
 :root[data-shell='window'] .badge { font-weight: 560; }
 
 /* panel — 가는 큰 제목 + 밑줄 탭 (피치 레퍼런스) */
@@ -259,16 +261,16 @@
 /* pill — 알약 탭 + 둥근 아이콘 배지 (미스트 레퍼런스) */
 :root[data-shell='pill'] .tabs { border-bottom: 0; gap: 4px; }
 :root[data-shell='pill'] .tab { border-radius: 999px; padding: 0 14px; }
-:root[data-shell='pill'] .tab.on { background: var(--surface); box-shadow: var(--t-active-shadow); }
-:root[data-shell='pill'] .biz-tabbar { border-bottom: 0; }
+:root[data-shell='pill'] :is(.tab.on, .fold-item.on) { background: var(--surface); box-shadow: var(--t-active-shadow); } /* 폴더 목록 고른 줄도 탭과 같은 활성 표시 */
+:root[data-shell='pill'] :is(.biz-tabbar, .page-tabbar) { border-bottom: 0; }
 :root[data-shell='pill'] .stat-card { padding: 16px 18px; }
 
 /* glass — 반투명 카드·아이콘 (글로우 레퍼런스). 3절 색 공통보다 뒤에 있어야 카드 바탕을 덮는다 */
 :root[data-shell='glass'] :is(.module, .set-card, .table-wrap, .login-card) { background: var(--t-glass); }
 :root[data-shell='glass'] .tabs { border-bottom: 0; gap: 4px; }
 :root[data-shell='glass'] .tab { border-radius: 999px; padding: 0 14px; }
-:root[data-shell='glass'] .tab.on { background: var(--t-glass-strong); box-shadow: var(--t-active-shadow); }
-:root[data-shell='glass'] .biz-tabbar { border-bottom: 0; }
+:root[data-shell='glass'] :is(.tab.on, .fold-item.on) { background: var(--t-glass-strong); box-shadow: var(--t-active-shadow); } /* 폴더 목록 고른 줄도 탭과 같은 활성 표시 */
+:root[data-shell='glass'] :is(.biz-tabbar, .page-tabbar) { border-bottom: 0; }
 :root[data-shell='glass'] .stat-card { padding: 18px 20px; }
 :root[data-shell='glass'] .module-head h3 { font-weight: 560; }
 :root[data-shell='glass'] .icon-btn { background: var(--t-glass); }
@@ -319,7 +321,7 @@
 :root[data-shell='liquid'] :is(.vw-lane, .deal-lane) { background: color-mix(in srgb, var(--card) 24%, transparent); box-shadow: inset 0 1px 0 var(--t-shine-lo); }
 /* 조작 요소 — 알약 유리 */
 :root[data-shell='liquid'] .btn:not(.primary, .danger, .ghost, .on) { background: var(--t-lq-chip); box-shadow: inset 0 1px 0 var(--t-shine-lo), 0 1px 3px var(--t-shade); }
-:root[data-shell='liquid'] .btn.on { background: var(--t-lq-pill); box-shadow: inset 0 1px 0 var(--t-shine), 0 2px 8px var(--t-shade); }
+:root[data-shell='liquid'] .btn.on { background: var(--t-lq-pill); box-shadow: var(--t-active-shadow); }
 :root[data-shell='liquid'] :is(.btn.primary, .btn.danger) { box-shadow: inset 0 1px 0 var(--t-shine-lo), 0 6px 16px var(--t-shade); }
 :root[data-shell='liquid'] :is(.input, .select, .field input, .field select, .compose-body, .crew-search) { background: var(--t-lq-chip); box-shadow: inset 0 1px 2px var(--t-shade); }
 :root[data-shell='liquid'] :is(.input, .select, .field input, .compose-body):focus { box-shadow: inset 0 1px 2px var(--t-shade), 0 0 0 2px var(--ring); }
@@ -327,9 +329,9 @@
 :root[data-shell='liquid'] :is(.seg, .tabs) { background: var(--t-lq-chip); box-shadow: inset 0 1px 2px var(--t-shade); }
 :root[data-shell='liquid'] .tabs { width: max-content; max-width: 100%; padding: 3px; gap: 2px; border-bottom: 0; border-radius: 999px; }
 :root[data-shell='liquid'] .tab { height: 30px; padding: 0 14px; border-radius: 999px; }
-:root[data-shell='liquid'] :is(.seg-btn.on, .tab.on) { background: var(--t-lq-pill); box-shadow: inset 0 1px 0 var(--t-shine), 0 2px 8px var(--t-shade); }
-:root[data-shell='liquid'] .biz-tabbar { border-bottom: 0; }
-:root[data-shell='liquid'] .fold-item.on { background: var(--t-lq-pill); box-shadow: inset 0 1px 0 var(--t-shine), 0 2px 8px var(--t-shade); }
+:root[data-shell='liquid'] :is(.seg-btn.on, .tab.on) { background: var(--t-lq-pill); box-shadow: var(--t-active-shadow); }
+:root[data-shell='liquid'] :is(.biz-tabbar, .page-tabbar) { border-bottom: 0; }
+:root[data-shell='liquid'] .fold-item.on { background: var(--t-lq-pill); box-shadow: var(--t-active-shadow); }
 :root[data-shell='liquid'] :is(.menu-item.on, .palette-row.on) { background: color-mix(in srgb, var(--card) 70%, transparent); box-shadow: inset 0 1px 0 var(--t-shine-lo); }
 :root[data-shell='liquid'] input[role='switch'] { box-shadow: inset 0 1px 2px var(--t-shade); }
 /* 떠 있는 층 — 본문 위에 뜨는 포털이라 흐림을 직접 준다. 뒤 화면이 더 보이게 가림막을 옅게 */
@@ -381,7 +383,7 @@
 :root[data-shell='neu'] .palette-input { margin: 10px 10px 4px; height: 44px; border-radius: var(--rc); border-bottom: 0; }
 :root[data-shell='neu'] :is(.seg, .tabs) { background: transparent; box-shadow: none; border-bottom: 0; gap: 6px; padding: 4px; }
 :root[data-shell='neu'] .tab { border-radius: var(--rc); padding: 0 14px; }
-:root[data-shell='neu'] .biz-tabbar { border-bottom: 0; }
+:root[data-shell='neu'] :is(.biz-tabbar, .page-tabbar) { border-bottom: 0; }
 /* 토글 — 홈이 파이고 손잡이가 솟는다. 켜지면 홈에 강조색이 고인다 */
 :root[data-shell='neu'] input[role='switch'] { width: 40px; height: 22px; background: var(--bg); box-shadow: var(--t-neu-in-sm); }
 :root[data-shell='neu'] input[role='switch']::after { top: 3px; left: 3px; background: var(--bg); box-shadow: 1px 1px 3px var(--t-neu-lo), -1px -1px 2px var(--t-neu-hi); }

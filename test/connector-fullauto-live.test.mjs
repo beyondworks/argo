@@ -111,6 +111,14 @@ test('풀 오토 켜짐 + 오피스에서 맡긴 주인 턴(office) — 쓰기�
   assert.equal(s.counters.toolCalls.send_mail_demo ?? 0, sent, '결재 전에 발송이 서버에 닿았다');
 });
 
+test('풀 오토 켜짐 + 이 턴이 주인 직접 턴이 아님(fullAuto:false — 크루가 보낸 세션 메시지의 받는 턴·깨움 턴) — 쓰기는 결재로 간다(0.1.94 분리 검수 MEDIUM-4)', async () => {
+  await updateCompany(WS, { fullAuto: true });
+  const sent = s.counters.toolCalls.send_mail_demo ?? 0;
+  const r = await callConnectorTool(WS, ID, 'send_mail_demo', { to: 'g@example.com', body: 'crew-sent' }, { slug: 'captain', fullAuto: false });
+  assert.equal(r.error, 'approval_pending', '턴이 풀 오토가 아닌데 결재 없이 보냈다');
+  assert.equal(s.counters.toolCalls.send_mail_demo ?? 0, sent, '결재 전에 발송이 서버에 닿았다');
+});
+
 test('읽기 전용 도구는 이름에 sensitive 단어가 있어도 영향 없음 — 결재 자체가 애초에 없다(분리 검수 MEDIUM 반영)', async () => {
   // 이 시점 회사 상태는 fullAuto:true(위 테스트가 켰다) — 단어 보강이 조회까지 결재로 밀어붙이지 않는지
   // 가장 엄격한 조건(풀 오토 켜짐)에서 잰다. 결재가 전혀 등록되지 않고 그대로 실행돼야 한다.

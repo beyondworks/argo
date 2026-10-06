@@ -124,4 +124,7 @@ jobs:
           sudo apt-get install -y -q postgresql-17
           echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
       - run: psql --version && initdb --version
+      # 에이전트 셸과 같은 LC_ALL=C로 돈다 — 드릴이 셸 로캘을 물려받던 회귀(SQL_ASCII 클러스터, 2026-10-03)를 여기서 잡는다.
       - run: bash scripts/billing-pg-drill.sh
+        env:
+          LC_ALL: C

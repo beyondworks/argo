@@ -24,7 +24,7 @@ test('좁을 때 주제와 인원 글자는 숨기되 탭 글자는 숨기지 �
 });
 
 test('아이콘만 남아도 탭 이름은 title·aria-label로 남고, 아이콘 없는 탭(전체)은 글자를 숨기지 않는다', () => {
-  assert.match(app, /onClick=\{\(\) => setTab\(k\)\} title=\{t\(`tab\.\$\{k\}`\)\} aria-label=\{n > 0 \? `\$\{t\(`tab\.\$\{k\}`\)\} \$\{n\}` : t\(`tab\.\$\{k\}`\)\}>/);
+  assert.match(app, /title: t\(`tab\.\$\{k\}`\), aria: n > 0 \? `\$\{t\(`tab\.\$\{k\}`\)\} \$\{n\}` : t\(`tab\.\$\{k\}`\)/, '공통 세그먼트(Seg)의 칸별 title·aria-label');
   assert.match(app, /<span className=\{ic \? 'lbl' : undefined\}>\{t\(`tab\.\$\{k\}`\)\}<\/span>/);
   assert.match(app, /const tabs = \[\['all', null, 0\]/, '전체 탭은 아이콘이 없다 — 글자가 남아야 한다');
 });

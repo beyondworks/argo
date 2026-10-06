@@ -147,10 +147,18 @@ const routineRunning = new Map();
     인접 슬롯은 유실된다(가드 이전엔 겹쳐서라도 돌았다 — 의도된 트레이드, 검수 LOW-4 명시).
     가드는 루틴별 — 다른 루틴의 동시 실행은 막지 않는다.
     (export: 회귀 테스트용 — 틱 콜백은 단위로 태울 수 없다. runFn 주입=테스트 전용) */
+const orphanLogged = new Set(); // `${wsId}/${routineId}` — 크루 없는 루틴 건너뜀 로그는 프로세스당 한 번
 export async function runDueRoutines(wsId, now, { runFn = runRoutine } = {}) {
   for (const r of await loadRoutines(wsId)) {
     if (!isDue(r, now)) continue;
     const key = `${wsId}/${r.id}`;
+    // 크루 카드가 없는 루틴(이 수정 전에 해고된 크루 등)은 실행하지 않는다 — 돌리면 "없는 크루" 실패 알림만 간다(F4).
+    // 끄지는 않는다: 새 기기에서 동기화가 routines.json을 카드보다 먼저 받는 순간에도 이 판정이 돌아, 끄면 그 상태가 다른 기기로 퍼진다.
+    // 끄는 것은 해고(removeAgentCard → disableRoutinesForCrew)라는 사람의 행동에서만 한다. 화면은 '크루 없음'으로 표시한다.
+    if (await readAgentCard(wsId, r.agentSlug).then(() => false, (e) => e?.code === 'NOT_FOUND')) {
+      if (!orphanLogged.has(key)) { orphanLogged.add(key); console.warn(`[argo] 루틴 건너뜀(${key}): 에이전트 "${r.agentSlug}" 카드가 없습니다`); }
+      continue;
+    }
     const startedAt = routineRunning.get(key);
     if (startedAt != null && now.getTime() - startedAt < ROUTINE_STALE_MS) continue;
     // 실행 직전 lastRun을 원자적으로 선점 — 실패(이미 이 주기에 실행됨)면 스킵해 이중 실행을 막는다
@@ -199,6 +207,9 @@ async function treeOriginRelaxed(cid, origin) {
 /** 쪽지 배달 턴 한 통 — 스케줄러가 deliverCrewMail에 넘기는 실행기. 메신저발이면 그 채널 문맥, 메신저 밖이면 배달 브리핑의 목적지 범위(briefingCtx)로 돈다.
     (export: 목적지 기준 붙여넣기 행동 테스트 — test/shared-dest-context.test.mjs) */
 export async function crewmailTurn(cid, slug, msg, opts) {
+  // 사장이 보낸 쪽지(쪽지 API·회의실 참조 — fromRole 'captain', 크루 도구는 이 표지를 넣지 않는다)의 배달 턴은 사장 직접 턴 — from 없이 돈다.
+  // 사장 판정을 from 문자열('captain')로 하면 slug가 captain인 크루의 쪽지가 사장으로 둔갑한다(최종 재검수 MEDIUM-1). 프롬프트(mailPrompt)는 msg를 그대로 쓴다.
+  if (msg.fromRole === 'captain') opts = { ...opts, from: null };
   // 수신 크루의 유효 러너 판정 — CLI 러너(codex/gemini/antigravity) 턴에는 send_to_crew가
   // 없어 회신 안내가 없는 도구 지시가 된다(분리 검수 MEDIUM 2026-07-28). chat.mjs의 해석
   // (meta.runner → resolveRunner 폴백)과 같은 경로로 근사한다 — chat()이 턴 시점에 재해석
@@ -227,7 +238,7 @@ export async function crewmailTurn(cid, slug, msg, opts) {
   const t = await chat(cid, slug, prompt, null, { from: opts.from, hop: opts.hop, chain: opts.chain, source: 'crewmail', ...(mirrorCtx ? { mirrorCtx, journal: msgrJournal(msg.msgr.orgId, msg.msgr.channelId, msg.msgr.memoryOff) } : await briefingCtx(cid, 'crewmail', slug).then((c) => (c ? { mirrorCtx: c } : {}))), ...(relaxed ? { delegationRelaxed: true, delegationTree: tree } : {}) }); // 위임 제한을 푼 대화방에서 시작된 쪽지의 배달 턴은 같은 상한을 이어 받는다(메신저발 제외) // 메신저 밖 쪽지: 배달 브리핑이 공유 목적지로 나가면 그 범위 맥락만 // 메신저발 쪽지의 배달 턴 = 그 채널의 규칙·기억 정책(검수 M-3)
   // 스레드 기록 실패는 무증상으로 삼키지 않는다(분리 검수 MEDIUM — 비용은 나갔는데 화면에 없음)
   await appendTurn(cid, slug, { userMsg: prompt, reply: t.reply, handover: t.handover, sessionId: null, via: 'crewmail', artifacts: t.artifacts, contextScope: t.contextScope })
-    .catch((e) => console.error(`[argo] 크루 우편 스레드 기록 실패(${cid}/${slug}):`, e.message));
+    .catch((e) => console.error(`[argo] 에이전트 우편 스레드 기록 실패(${cid}/${slug}):`, e.message));
   // 배달 알림 — pushEvent의 crewmail 분기(텔레그램 문안)와 짝(재검 N1 보류 해소). 슬랙은
   // 타입 게이트로 좁혀져 이 이벤트에 반응하지 않는다(과거 event.routine TypeError 경로).
   emitNotify({ type: 'crewmail', wsId: cid, slug, from: msg.from, fromName: msg.fromName, kind: msg.kind, reply: t.reply, id: msg.id, message: msg.message, msgr: msg.msgr ?? null });
@@ -274,7 +285,7 @@ export function ensureScheduler() {
           if (!mailDelivering.has(cid)) {
             mailDelivering.add(cid);
             deliverCrewMail(cid, (slug, msg, opts) => crewmailTurn(cid, slug, msg, opts))
-              .catch((e) => console.error(`[argo] 크루 우편 배달 오류(${cid}):`, e.message))
+              .catch((e) => console.error(`[argo] 에이전트 우편 배달 오류(${cid}):`, e.message))
               .finally(() => mailDelivering.delete(cid));
           }
           // 러너 주기 건강 검진(P1-2 후속) — fire-and-forget. 자체 스로틀(30분·과금 러너 6시간)이

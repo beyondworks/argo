@@ -106,7 +106,8 @@ test('독 배지: 보고 있는 공간은 채널별 안 읽음(음소거 제외)
 test('App.jsx 배선: 소속 조직 전부의 org: 토픽과 u:<나> 토픽을 구독하고, 알림은 readableForNotify를 거친다', () => {
   const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
   assert.match(app, /supabase\.channel\(`u:\$\{uid\}`/, 'u:<나> 구독');
-  assert.match(app, /orgs\.filter\(\(o\) => o\.id !== orgId\)\.map\(\(o\) => supabase\.channel\(`org:\$\{o\.id\}`/, '보고 있지 않은 조직의 org: 구독');
+  assert.match(app, /for \(const o of orgs\) \{\s*const ch = supabase\.channel\(`org:\$\{o\.id\}`/, '소속 조직 전부의 org: 구독(보는 조직 포함 — 기능 점검 D3: 한 번 걸어 유지)');
+  assert.match(app, /const orgSubKey = orgSubscriptionKey\(\{ uid, orgIdsKey, resumeEpoch, roomReset \}\);[\s\S]*?\}, \[orgSubKey, hasToken\]\);[^\n]*탭·고른 조직·토큰 갱신은 아니다/, '구독은 탭·고른 조직(orgId)·토큰 갱신에 다시 걸지 않는다(키 판정은 realtime-link.test.mjs)');
   // 알림 전 읽힘 확인 — 알릴 상황(shouldNotify)일 때만 조회. D55부터 건너뛴 이유를 진단에 남긴다(notifySkip → 'viewing'은 shouldNotify 거짓)
   assert.match(app, /const notifySkip = \(payload\) => \{[^\n]*return shouldNotify\(payload\.channel_id\) \? '' : 'viewing'; \};/);
   const body = app.slice(app.indexOf('const notifyReadable = (payload, space) => {'), app.indexOf('const notifyApproval'));
@@ -164,4 +165,47 @@ test('u: 구독: 소켓이 끊겨 난 오류(서버 응답 없음)는 채널을 
   connected = true;
   made[0].cb('CHANNEL_ERROR', new Error('Unauthorized', { cause: { reason: 'Unauthorized' } }));
   assert.deepEqual([removed, timers.map((x) => x.ms)], [[0], [60_000]], '연결된 상태의 가입 거절(평범한 {reason} 객체)은 여전히 걷고 1분 뒤');
+});
+
+// 조직이 없는 사용자는 재연결 신호가 전혀 없었다(목록 다시 읽기는 org: 구독 상태에서만, 2026-10-05 분리 검증) — u: 상태도 앱에 알린다.
+test('u: 구독 상태를 앱에 알린다(onStatus) — 지금 붙어 있는 채널 것만, 걷어 낸 옛 채널의 CLOSED는 알리지 않는다', () => {
+  const made = []; const seen = []; const timers = [];
+  const sb = { realtime: { isConnected: () => true }, removeChannel: () => Promise.resolve('ok') };
+  const make = () => { const c = { n: made.length, subscribe(cb) { c.cb = cb; return c; } }; made.push(c); return c; };
+  joinWithBackoff(sb, make, { timer: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clear: () => {}, onStatus: (st) => seen.push(st) });
+  made[0].cb('SUBSCRIBED'); made[0].cb('TIMED_OUT'); made[0].cb('SUBSCRIBED');
+  made[0].cb('CHANNEL_ERROR', new Error('Unauthorized', { cause: { reason: 'Unauthorized' } })); // 가입 거절 → 걷고 1분 뒤
+  made[0].cb('CLOSED'); // 걷힌 옛 채널
+  timers.at(-1).fn(); made[1].cb('SUBSCRIBED');
+  assert.deepEqual(seen, ['SUBSCRIBED', 'TIMED_OUT', 'SUBSCRIBED', 'CHANNEL_ERROR', 'SUBSCRIBED']);
+});
+
+// 분리 검수 M2(2026-10-05, 1bab588b): 만료 토큰으로 거절된 u:가 토큰 갱신 뒤에도 최소 60초 비었다 — 구독 효과가 토큰 갱신에 다시 돌지 않게 바뀐 뒤(MSG-01)
+// 거절 대기(60초~10분)를 깨울 길이 없었다. 갱신되면 retry()로 기다리던 재시도를 바로 실행한다(붙어 있거나 붙는 중이면 아무것도 안 한다).
+test('u: 구독: 거절 뒤 기다리는 중에 retry()를 부르면 예약을 걷고 바로 다시 붙는다 — 붙어 있으면 아무것도 안 한다', () => {
+  const made = []; const timers = [];
+  const sb = { realtime: { isConnected: () => true }, removeChannel: () => Promise.resolve('ok') };
+  const make = () => { const c = { n: made.length, subscribe(cb) { c.cb = cb; return c; } }; made.push(c); return c; };
+  const stop = joinWithBackoff(sb, make, { timer: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clear: (id) => { if (id) timers[id - 1].cleared = true; } });
+  stop.retry(); assert.equal(made.length, 1, '붙는 중에는 새 채널을 만들지 않는다');
+  made[0].cb('CHANNEL_ERROR', new Error('expired', { cause: { reason: 'InvalidJWTToken: Token has expired 3 seconds ago' } }));
+  assert.deepEqual([made.length, timers.length], [1, 1], '거절 — 1분 뒤로 예약');
+  stop.retry(); // 토큰이 갱신됐다
+  assert.equal(made.length, 2, '바로 다시 붙는다(60초를 기다리지 않는다)');
+  assert.equal(timers[0].cleared, true, '기다리던 예약은 걷는다(두 번 붙지 않게)');
+  made[1].cb('SUBSCRIBED'); stop.retry();
+  assert.equal(made.length, 2, '붙어 있으면 아무것도 안 한다');
+  stop(); stop.retry(); assert.equal(made.length, 2, '멈춘 뒤에는 다시 붙지 않는다');
+});
+
+test('실시간 인증은 콜백(세션)에서 새로 읽는다 — 구독 효과가 토큰 값을 넘기면 갱신 전 토큰이 다시 박힌다(검수 M2)', async () => {
+  const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
+  const calls = app.match(/realtime\.setAuth\([^)]*\)/g) ?? [];
+  assert.ok(calls.length >= 2, 'setAuth 호출을 찾지 못함');
+  assert.deepEqual([...new Set(calls)], ['realtime.setAuth()'], '토큰 값을 넘기지 않는다');
+  // 왜 인자가 없어야 하나 — 실제 realtime-js: 콜백이 있어도 setAuth(토큰)은 그 토큰을 채널 가입 값으로 쓴다
+  const { RealtimeClient } = await import('@supabase/realtime-js');
+  const rt = new RealtimeClient('ws://127.0.0.1:9/realtime/v1', { params: { apikey: 'anon' }, accessToken: async () => 'fresh' });
+  await rt.setAuth('stale'); assert.equal(rt.accessTokenValue, 'stale');
+  await rt.setAuth(); assert.equal(rt.accessTokenValue, 'fresh');
 });

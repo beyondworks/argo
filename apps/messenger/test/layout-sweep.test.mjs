@@ -93,7 +93,7 @@ test('LA-05 데스크톱 721~900px: 설정 탭이 위 가로 줄로 올라간다
 test('LA-06·23 입력창 받침과 안내 띠는 같은 열 변수(--col-l/--col-r)를 쓰고, 패널 옆으로 비키는 건 본문 732px 이상일 때만이다', () => {
   assert.match(css, /\.msgr-main \{ --col-l: calc\(max\(24px, \(100% - 720px\) \/ 2\) \+ var\(--sbw, 0px\)\); --col-r: var\(--col-l\); \}/);
   assert.match(css, /\.msgr-dock \{ padding: 14px var\(--col-r\) 16px var\(--col-l\);/);
-  assert.match(css, /\.msgr-shell:not\(\.msgr-phone\) \.msgr-main > \.msgr-joinbar \{ width: auto; margin: 0 var\(--col-r\) 12px var\(--col-l\);/);
+  assert.match(css, /\.msgr-shell:not\(\.msgr-phone\) \.msgr-main > \.msgr-joinbar \{ width: auto; margin: 0 var\(--col-r\) var\(--msg-gap-sys\) var\(--col-l\);/); // 아래 여백은 간격 표(--msg-gap-sys, 2026-10-02)
   // 컨테이너 쿼리는 컨테이너 자신(.msgr-main)이 아니라 자손만 고친다 — 변수를 .msgr-main에 걸면 조용히 안 먹는다(실측)
   const at732 = css.match(/@container msgr-main \(min-width: 732px\) \{\s*\n\s*(\.msgr-shell:not\(\.msgr-phone\) \.msgr-main:has\([^{]*\)) > :is\(\.msgr-dock, \.msgr-joinbar\) \{ --col-l:/);
   assert.ok(at732, '732px 이상에서만 받침·띠의 열을 패널 왼쪽으로');
@@ -188,7 +188,7 @@ test('LA-13 폰 봇 행: 상태가 이름 아래 줄로 전부 보이고 단추�
 
 test('LA-17 폰 입력창 위 카드·띠는 알약과 같은 좌우 여백', () => {
   assert.match(css, /\.msgr-phone \.msgr-main \.msgr-dock :is\(\.msgr-delivery, \.msgr-dm-delivery-warning, \.msgr-replychip, \.msgr-outsidechip\) \{ margin-inline: var\(--ph-pad\); \}/);
-  assert.match(css, /\.msgr-phone \.msgr-main > \.msgr-joinbar \{ width: auto; margin: 0 var\(--ph-pad\) 8px; \}/);
+  assert.match(css, /\.msgr-phone \.msgr-main > \.msgr-joinbar \{ width: auto; margin: 0 var\(--ph-pad\) var\(--msg-gap-sys\); \}/); // 좌우는 알약과 같은 --ph-pad, 아래는 간격 표
 });
 
 test('LA-18·19 레일: 찾아보기 행(높이 36·말줄임·오른쪽 정렬)과 파견 해제 행의 "대기"는 오른쪽 열', () => {

@@ -108,6 +108,7 @@ fn main() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init()) // 새 메일 알림(15차) — window.Notification을 OS 알림으로
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 .with_state_flags(

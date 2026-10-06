@@ -1,7 +1,7 @@
 [package]
 name = "argo-messenger"
-version = "0.1.47"
-description = "Argo Messenger — 사람과 크루가 같은 채널에서 일하는 조직 공간"
+version = "0.1.51"
+description = "Argo Messenger — 사람과 에이전트가 같은 채널에서 일하는 조직 공간"
 edition = "2021"
 rust-version = "1.77.2"
 
@@ -29,6 +29,7 @@ tauri-plugin-notification = "2"
 
 # macOS OS 알림 — UNUserNotificationCenter(notify_mac.rs). 세 크레이트 모두 이미 잠금 파일에 있던 판(wry·tao 경유)
 [target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2" # 앱 안 업데이트 설치 위치 확인(update_location.rs — access(2))
 objc2 = "0.6"
 block2 = "0.6"
 objc2-foundation = "0.3"
@@ -43,13 +44,16 @@ tokio-tungstenite = { version = "0.27", default-features = false, features = ["c
 tauri-plugin-deep-link = "2"
 tauri-plugin-haptics = "2" # 짧은 진동(길게 누르기·당겨서 새로고침·보내기·끌어 집기) — 앱 느낌 통일 초안 승인 2026-09-29
 tauri-plugin-push-notifications = "0.1" # APNs·FCM 기기 토큰 + 알림 탭(모바일 푸시, 2026-09-12) — 발송은 엣지 msgr-push
+tauri-plugin-media-share = { path = "plugins/media-share" } # 첨부 저장·공유(사진 앱·파일·공유 시트, 2026-10-02) — 웹뷰로는 할 수 없다
 
 [target.'cfg(target_os = "ios")'.dependencies]
 tauri-plugin-web-auth = { path = "plugins/web-auth" } # 로그인 창 — Chrome 등 기본 브라우저가 콜백을 앱에 안 넘기는 문제(2026-09-10)
+tauri-plugin-ios-webview = { path = "plugins/ios-webview" } # 키보드 위 폼 보조 막대 숨김 + 웹뷰 바탕을 테마 색으로(유건 실기기 제보 2026-10-03)
 
 # Android APK 자가 업데이트(스토어 미발행 단계) — GitHub 릴리스 APK를 앱이 받아 같은 서명으로 겹쳐 설치(2026-09-24)
 [target.'cfg(target_os = "android")'.dependencies]
 tauri-plugin-apk-installer = { path = "plugins/apk-installer" }
+tauri-plugin-notif-tray = { path = "plugins/notif-tray" } # 읽은 채널의 트레이 알림 지우기 — 런처 아이콘 숫자가 트레이 알림에서 나온다(2026-10-01)
 
 # tao 0.35.3 + iOS 씬 구성 해제 후 사용 수정 1줄(tao 0.36.0에서 고쳐졌으나 tauri 2.x는 tao ^0.35만 받는다).
 # iOS 27에서 씬 생명주기가 필수가 된 뒤 이 경로가 실행돼 TestFlight 0.1.27.2가 실행 즉시 죽었다(2026-09-17). tauri가 tao 0.36+를 받게 되면 이 패치를 지운다.

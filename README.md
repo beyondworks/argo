@@ -2,7 +2,7 @@
 
 [![Latest release](https://img.shields.io/github/v/release/beyondworks/argo-agent?label=release&color=b8860b)](https://github.com/beyondworks/argo-agent/releases/latest)
 
-> **The AI agent company that remembers everything.** One prompt hires a crew of
+> **The AI agent company that remembers everything.** One prompt hires a team of
 > specialist AI agents; they share a folder-based long-term memory and finish work
 > together — on your machine, with your own model accounts.
 >
@@ -21,7 +21,7 @@
   memory across devices when you sign in. Sync payloads support envelope encryption.
 - **Bring your own runner** — connect any of five engines with your own account:
   Claude (Agent SDK / subscription OAuth), Codex, Gemini, GLM, Kimi. No middleman keys.
-- **A crew, not a chatbot** — agents message each other (`to/cc`, inbox, delegation),
+- **A team of agents, not a chatbot** — agents message each other (`to/cc`, inbox, delegation),
   compete on drafts, hold meeting-room discussions, and run scheduled routines.
 - **Leave your desk, keep the thread** — hand off any conversation to Telegram/Slack;
   your PC stays the leader device.
@@ -32,15 +32,20 @@
 [latest release](https://github.com/beyondworks/argo-agent/releases/latest)
 (macOS Apple Silicon dmg, signed & notarized · Windows installer).
 
-**One line (macOS · Linux, self-host/CLI track):**
+**One line (Linux x86_64 server / CLI):**
 
 ```bash
 curl -fsSL https://github.com/beyondworks/argo-agent/releases/latest/download/install.sh | bash
 ```
 
-Installs the latest server build under `~/.argo-selfhost`, binds to loopback
-(`127.0.0.1:3001`), and registers a self-healing user service. Re-run the same
+Installs the latest server build under `~/.argo-selfhost` and registers the `argo`
+command (`~/.local/bin/argo`). Sign in with `argo`, then `argo service install` to keep it
+running. `--local` installs the loopback-only local web server instead. Re-run the same
 command to update. Details & security defaults: [docs/selfhost.md](docs/selfhost.md).
+
+**macOS · Windows:** the `argo` command ships inside the desktop app — on macOS register it in
+**Settings → Devices & data** (the app must be in Applications); on Windows the installer
+registers it. A standalone CLI installer for macOS/Windows is planned.
 
 ## Run from source
 
@@ -71,7 +76,7 @@ scheduler run without the UI open (`ARGO_PORT` to change the default 3999).
 ## Adding a device
 
 **Sign-in = sync (default).** Install Argo on the new device and sign in with the same
-account — companies (memory, crew, conversations, bot tokens and runner credentials)
+account — companies (memory, agents, conversations, bot tokens and runner credentials)
 come down automatically. Credentials cross the cloud only as account-key envelope
 ciphertext; sessions live in a `0600` device file; storage is locked per-owner by RLS.
 
@@ -98,12 +103,12 @@ consent from beyondworks.
 
 ## 한국어
 
-프롬프트 한 줄로 전문 AI 크루를 영입하고, 회사가 **폴더 단위 기억**으로 일하는 개인용
+프롬프트 한 줄로 전문 AI 에이전트를 영입하고, 회사가 **폴더 단위 기억**으로 일하는 개인용
 AI 회사입니다. 러너·기억·오케스트레이션은 전부 로컬에서 돌고, 클라우드(Supabase)는
 **로그인 시 기기 간 기억 동기화에만** 쓰입니다.
 
 - 다운로드: [argo.ceo](https://argo.ceo) (맥 실리콘 dmg 서명·공증 / Windows 설치본)
-- 터미널 한 줄 설치(맥·리눅스 셀프호스트): 위 [Install](#install) 명령 그대로
+- 터미널 한 줄 설치(리눅스 x86_64 서버·CLI): 위 [Install](#install) 명령 그대로. 맥은 앱의 설정 → 기기·데이터에서 `argo` 명령을 등록하고, 윈도우는 설치 프로그램이 등록한다
 - 러너 연결은 설정 → AI 연결에서 본인 계정으로(BYOK — Claude·Codex·Gemini·GLM·Kimi)
 - 셀프호스트 보안 기본값·헤드리스 연결: [docs/selfhost.md](docs/selfhost.md)
 - 클라우드 동기화 범위(자격 증명 포함)·암호화 열쇠 위치·끄는 방법: [docs/privacy-sync.md](docs/privacy-sync.md)

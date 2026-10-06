@@ -25,7 +25,7 @@ export const calOf = (e, space) => (space === 'me' ? e.org_id ?? 'me' : e.owner 
 export function colorOf(o, by) {
   const key = colorKey(o, by);
   if (!key) return undefined;
-  if (key.agent) return CALENDAR_COLORS[calendarColorIndex(key.agent, getState().crews?.find((c) => c.id === key.agent)?.face ?? null)]; // 얼굴 v2와 별개로 예전 달력 색 그대로(검수 #789)
+  if (key.agent) { const c = getState().crews?.find((x) => x.id === key.agent); return CALENDAR_COLORS[calendarColorIndex(c?.faceSeed ?? key.agent, c?.face ?? null)]; } // 얼굴 v2와 별개로 예전 달력 색 그대로(검수 #789). 씨앗은 얼굴과 같은 대표 행(같은 에이전트 = 같은 색)
   return CALENDAR_COLORS[hashIndex(key.hash, CALENDAR_COLORS.length)];
 }
 

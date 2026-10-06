@@ -1,0 +1,24 @@
+# /etc/systemd/system/argo-office-ocr.service — VPS 상주(유건 승인 뒤 설치). 값은 EnvironmentFile에만 두고 이 파일에는 이름만 적는다.
+[Unit]
+Description=Argo Office OCR sidecar (PaddleOCR, loopback only)
+After=network-online.target
+
+[Service]
+Type=simple
+User=crew
+WorkingDirectory=/opt/argo-office-ocr
+# OCR_KEY(16자 이상, 오피스 Vercel의 OFFICE_OCR_KEY와 같은 값) · OCR_HOST=127.0.0.1 · OCR_PORT=8765 · OCR_MAX_BYTES · OCR_MAX_PAGES
+EnvironmentFile=/etc/argo-office-ocr.env
+ExecStart=/opt/argo-office-ocr/.venv/bin/python /opt/argo-office-ocr/ocr_server.py
+Restart=always
+RestartSec=10
+# 받은 문서를 남기지 않는다: 쓰기 가능한 곳은 모델 캐시뿐, 임시 폴더는 서비스 전용(재시작 때 비움)
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/argo-office-ocr/.paddlex
+Environment=PADDLE_PDX_CACHE_HOME=/opt/argo-office-ocr/.paddlex
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

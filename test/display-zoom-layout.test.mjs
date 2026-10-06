@@ -205,7 +205,10 @@ test('상단바 배율 반응형 배선 — 적재 조절은 임계 폭이 아�
   // 따라가는 마법수라 영어 UI·긴 크루 이름에서 겹침이 임계 위로 올라갔다(#383 분리 검수 2R HIGH-2
   // 실측: 영어 1150에서 15px, 긴 라벨 1200에서 43px). scrollWidth/clientWidth는 배율이 적용된
   // 레이아웃 픽셀이라 유효 폭 환산 자체가 필요 없다.
-  assert.match(layout, /bar\.scrollWidth > bar\.clientWidth/, '판정 = 상단바 실제 넘침');
+  // 판정 함수는 topbar-fit.mjs로 옮겼다(2차 M1·L3 — 단계별 접기·끝 패딩 침범). 레이아웃은 그 함수를 지나야 한다
+  const fit = stripComments(readFileSync(join(ROOT, 'app/c/[ws]/topbar-fit.mjs'), 'utf8'));
+  assert.match(fit, /bar\.scrollWidth > bar\.clientWidth/, '판정 = 상단바 실제 넘침');
+  assert.match(layout, /isTopbarOver\(bar\)/, '레이아웃 fitBar가 넘침 판정 함수를 쓴다');
   assert.doesNotMatch(layout, /clientWidth \/ z\b/, '유효 폭 임계 판정 잔존 금지(두 축이 갈라진다)');
   assert.match(layout, /window\.addEventListener\('argo:zoom', fitBar\)/,
     'argo:zoom 리스너 — 배율 변경 시 재판정');
@@ -812,4 +815,53 @@ test('Dial 바늘 핀 — translate(사용자 좌표계) 그룹 안에서 로컬
   assert.ok(iT !== -1 && iO !== -1 && iL !== -1, `Dial 바늘 구조 소실 — translate 그룹 ${iT}, 원점 0 0 ${iO}, 바늘 (0,0) 시작 ${iL}`);
   assert.ok(iT < iO && iO < iL && iL < iEnd, 'Dial 바늘 순서 — translate 그룹 › 회전 그룹(원점 0 0) › 바늘 line 이 중첩돼 있어야 한다');
   assert.ok(/transition:\s*'transform 1s/.test(body.slice(iT, iEnd)), 'Dial 바늘 스윕 전환(transform 1s)이 회전 그룹에 남아 있어야 한다(키 순서 무관 — 분리 검수 L-2)');
+});
+
+// UX-A01(2026-10-05): 오른쪽 아래 고정이던 패널이 크루 대화 보내기·데크 크루 영입·설정 '해제' 버튼을 덮었다.
+// 불변식: 패널은 상단바(56px) 아래에서 시작하고, 바닥은 하단 입력줄 구역(뷰포트 바닥 180px) 위에서 끝난다 — 배율·폭 무관.
+test('업데이트 패널은 상단바 아래에 붙고 하단 입력줄·버튼 구역(바닥 180px)을 덮지 않는다', () => {
+  const source = sources.get('app/update-notes.jsx');
+  const card = source.split('<div className="card-head"')[0];
+  assert.doesNotMatch(card, /\bbottom:\s*'/, '바닥 고정 금지 — 입력줄 구역을 덮는다');
+  const top = card.match(/\btop:\s*'([^']+)'/)?.[1];
+  const height = decls.find((d) => d.file === 'app/update-notes.jsx' && d.prop === 'maxHeight');
+  assert.ok(top && height, '실제 패널의 위치·높이 선언을 검사한다');
+  for (const [viewportWidth, viewportHeight] of [[390, 844], [768, 1024], [1280, 800], [1440, 900]]) {
+    for (const z of [1, 1.25]) {
+      const t0 = evalSize(top, { z, viewportWidth, viewportHeight }) * z;
+      const h = evalSize(height.expr, { z, viewportWidth, viewportHeight }) * z;
+      assert.ok(t0 >= 56 * z, `${viewportWidth}×${viewportHeight}·배율 ${z}: 상단바(${56 * z}px)를 덮는다(top ${t0})`);
+      assert.ok(t0 + h <= viewportHeight - 180 * z + 1e-6, `${viewportWidth}×${viewportHeight}·배율 ${z}: 바닥 ${t0 + h}px가 입력줄 구역을 덮는다`);
+    }
+  }
+});
+
+// UM1(2026-10-05 분리 검수): '새 소식'·'새로 고침 실패' 칩이 좁은 폭에서 상단바를 넘쳤다(561 en 21px·360 en 20px·600 en 새로 고침 실패 47px).
+// 넘침 0 자체는 폭별 실측(360·390·561·600 × ko/en, 칩 둘 다 켜기)으로 확인했고, 여기서는 그 방어가 끊기지 않게 세 고리를 핀으로 잠근다 —
+// ① 칩이 접는 단계(data-narrow-bar)에서 라벨을 접는 CSS ② 두 칩이 그 클래스·라벨 span을 실제로 단다 ③ 칩이 생기거나 사라질 때 재측정하는 배선과 턴 때문에 사라지지 않는 안내 차단 판정.
+test('상단바 칩 접기 — 칩은 시계·버전과 다른 단계에서 접히고(M1), 접힌 칩은 아이콘+32px 상자+44px 눌림 영역이다(M2), 두 칩이 그 클래스를 단다', () => {
+  const css = sources.get('app/globals.css');
+  // M1: 칩 접기 선택자는 data-narrow-bar가 아니라 자기 단계 속성(notes·error)을 쓴다 — 같은 단계에서 접히면 자리가 남아도 글이 사라진다
+  assert.doesNotMatch(css, /:root\[data-narrow-bar\]\s+\.topbar-chip/, '칩 접기가 시계·버전 숨김 단계(data-narrow-bar)에 걸려 있으면 안 된다');
+  assert.match(css, /:root\[data-narrow-notes\] \.topbar-chip-notes \.chip-label[^{]*\{ display: none; \}/, '새 소식 칩 라벨 접기');
+  assert.match(css, /:root\[data-narrow-error\] \.topbar-chip-error \.chip-label[^{]*\{ display: none; \}/, '오류 칩 라벨 접기');
+  // M2: 접힌 칩 = 아이콘 하나, 상자 32×32, 눌림 영역 ::after inset -6px(= 44×44)
+  assert.match(css, /\.topbar-chip \.chip-icon \{ display: none; \}/, '평소엔 아이콘이 없다');
+  assert.match(css, /data-narrow-error\] \.topbar-chip-error \.chip-icon \{ display: inline-flex; \}/, '접히면 아이콘이 보인다');
+  assert.match(css, /\.topbar-chip-notes,\s*:root\[data-narrow-error\] \.topbar-chip-error \{ width: 32px; height: 32px;/, '접힌 칩 상자 32×32(24 이상)');
+  assert.match(css, /\.topbar-chip-error::after \{ content: ''; position: absolute; inset: -7px; \}/, "눌림 영역 44×44 (테두리 1px 안쪽 기준이라 -7px)");
+  // 360px에서 칩 둘이 32px 아이콘이 되면 제목 하한 56px + 검색 하한 96px이 12px를 넘겼다 — 마지막 접기 단계(error)에서 제목 하한을 줄인다
+  assert.match(css, /:root\[data-narrow-error\] \.topbar-title \{ min-width: 40px; \}/, '마지막 접기 단계에서 제목 하한 40px');
+  for (const [f, cls, icon] of [['app/update-notes.jsx', 'topbar-chip-notes', 'memory'], ['app/c/[ws]/layout.jsx', 'topbar-chip-error', 'refresh']]) {
+    const src = sources.get(f);
+    assert.match(src, new RegExp(`className="chip topbar-chip ${cls}"`), `${f}: 칩에 topbar-chip·${cls}`);
+    assert.match(src, /<span className="chip-label">/, `${f}: 라벨은 chip-label span 안`);
+    assert.match(src, new RegExp(`<span className="chip-icon"><Icon name="${icon}"`), `${f}: 접힌 칩의 아이콘(${icon})`);
+    assert.match(src, /aria-label=\{t\('(updates\.chip|shell\.reloadFail)'\)\}/, `${f}: 라벨이 접혀도 접근 가능한 이름이 남는다`);
+  }
+  const layout = sources.get('app/c/[ws]/layout.jsx');
+  assert.match(layout, /watchTopbarContent\(barRef\.current, fitBar\)/, '칩이 생기고 사라질 때 fitBar 재측정(바 크기가 안 변해 ResizeObserver가 안 돈다)');
+  assert.match(layout, /fitTopbar\(root, \(\) => isTopbarOver\(bar\)\)/, 'fitBar는 단계 선택(fitTopbar)과 넘침 판정(isTopbarOver, L3)을 지난다');
+  assert.match(layout, /blocked=\{updateNotesBlocked\(/, '안내 차단 판정은 순수 함수(실행 중 턴은 조건이 아니다)');
+  assert.doesNotMatch(layout, /tasks\.running\?\.length[^\n]*renameTeam/, 'blocked 식에 실행 중 턴을 다시 넣지 않는다 — 턴마다 칩이 사라졌다 생긴다');
 });
