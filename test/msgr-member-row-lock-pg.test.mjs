@@ -3,7 +3,7 @@
 //   처방: channel_id·member_kind·member_id를 바꾸는 update는 어느 채널 종류·역할·문맥(서비스 포함)에서든 거절. 사람 바꾸기는 delete + insert.
 //   정상 update(added_by — 앱 upsert·계정 삭제의 added_by = null)와 delete + insert 결과는 전후 같다.
 // 실행: bash scripts/billing-pg-drill.sh test/msgr-member-row-lock-pg.test.mjs
-// 변이: ARGO_MUTATE_MEMBER_LOCK=channel_id|member_kind|member_id — 적용할 마이그레이션에서 그 열의 잠금 한 줄을 지운다 → 해당 칸이 빨개져야 한다.
+// 변이: ARGO_MUTATE_MEMBER_LOCK=channel_id|member_kind|member_id|added_at — 적용할 마이그레이션에서 그 열의 잠금 한 줄을 지운다 → 해당 칸이 빨개져야 한다.
 import test, { before } from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
@@ -122,6 +122,11 @@ function observe() {
   { const ch = orgDm(U.b, [U.c, U.g, U.a]); swap('grpCreatorSwaps', U.b, ch, U.c, U.d); }
   { const ch = orgDm(U.b, [U.c, U.g, U.a]); swap('grpOwnerSwaps', U.a, ch, U.c, U.d); }
   { const ch = orgDm(U.b, [U.c, U.g, U.a]); swap('grpGuestSwaps', U.g, ch, U.c, U.d); }
+  // 검수 #849 LOW: 만든 사람이 나가 사람 둘이 남은 대화방에서 참여자가 자기 added_at을 과거로 고쳐 결재자(msgr_dm_approver)를 가로챈다
+  { const ch = orgDm(U.b, [U.c, U.g]); asUser(U.b, `select public.msgr_leave_dm('${ch}')`);
+    const before = sql(`select public.msgr_dm_approver('${ch}')`);
+    const r = upd(U.g, `added_at = '2000-01-01', added_by = '${U.g}'`, ch, 'user', U.g); o.dmApproverHijack = r.ok; o.dmApproverHijackErr = r.err;
+    o.dmApproverChanged = sql(`select public.msgr_dm_approver('${ch}')`) !== before; }
   // ── 공개·비공개 채널 — 만든 사람·조직 admin·일반 참여자
   { const ch = channel(U.b, 'public'); asUser(U.c, `select public.msgr_join_channel('${ch}')`); swap('pubCreatorSwaps', U.b, ch, U.c, U.d); }
   { const ch = channel(U.b, 'public'); asUser(U.c, `select public.msgr_join_channel('${ch}')`); swap('pubOrgAdminSwaps', U.k, ch, U.c, U.d); }
@@ -158,7 +163,7 @@ function observeDeleteMe(tag) {
 
 let PRE, POST;
 const IDENTITY = ['dmMemberSwapsCreator', 'dmCreatorSwapsOther', 'dmSelfSwap', 'dmKindSwap', 'dmMoveRow', 'grpCreatorSwaps', 'grpOwnerSwaps', 'grpGuestSwaps',
-  'pubCreatorSwaps', 'pubOrgAdminSwaps', 'privCreatorSwaps', 'privMemberSwaps', 'privMoveRow', 'personalPairSwaps', 'personalGroupCreatorSwaps', 'svcMemberId', 'svcKind', 'svcChannel'];
+  'pubCreatorSwaps', 'pubOrgAdminSwaps', 'privCreatorSwaps', 'privMemberSwaps', 'privMoveRow', 'personalPairSwaps', 'personalGroupCreatorSwaps', 'svcMemberId', 'svcKind', 'svcChannel', 'dmApproverHijack'];
 const NORMAL = ['privAddedByUpd', 'appUpsertExisting', 'appUpsertNew', 'pubAppUpsertNew', 'svcAddedByNull'];
 const DELINS = ['privCreatorDelIns', 'privCreatorDelInsRows', 'privMemberDelIns', 'dmKickB', 'dmInsD', 'dmDelInsRows', 'grpCreatorKick', 'grpCreatorIns'];
 
@@ -169,6 +174,7 @@ test('수정 전(#847까지) — 참여 행 바꿔치기가 통한다(재현)', 
   assert.equal(o.dmCreatorLost && o.dmOutsiderIn, true, '재현: b는 자기 1:1에서 빠지고 d가 들어간다');
   assert.equal(o.dmMoveRow && o.dmMoveRowLanded, true, `재현: 1:1 참여자가 상대 행을 자기 비공개 채널로 옮긴다 ${o.dmMoveRowErr}`);
   for (const k of ['svcMemberId', 'svcKind', 'svcChannel']) assert.equal(o[k], true, `재현(서비스 문맥): ${k} ${o[`${k}Err`]}`);
+  assert.equal(o.dmApproverHijack && o.dmApproverChanged, true, `재현: added_at을 고쳐 결재자를 가로챈다 ${o.dmApproverHijackErr}`);
   for (const k of NORMAL) assert.equal(o[k], true, `수정 전 정상: ${k}`);
   // 다른 칸의 수정 전 값은 기록만 한다(아래 표 출력) — 수정 뒤에는 칸마다 거절이어야 한다
   console.log('# PRE', JSON.stringify(Object.fromEntries([...IDENTITY, ...NORMAL, ...DELINS].map((k) => [k, o[k]]))));
@@ -183,7 +189,7 @@ test('새 마이그레이션 적용(그 뒤 파일이 있으면 순서대로 함
   console.log('# POST', JSON.stringify(Object.fromEntries([...IDENTITY, ...NORMAL, ...DELINS].map((k) => [k, POST[k]]))));
 });
 
-test('신원 열(channel_id·member_kind·member_id) update는 채널 종류·역할·문맥과 상관없이 거절', { skip }, () => {
+test('신원 열(channel_id·member_kind·member_id)·added_at update는 채널 종류·역할·문맥과 상관없이 거절', { skip }, () => {
   const o = POST;
   for (const k of IDENTITY) assert.equal(o[k], false, `거절이어야 한다: ${k}`);
   assert.match(o.dmMemberSwapsCreatorErr, /msgr_immutable_member_id/, '신고된 결함 — 1:1 바꿔치기');
@@ -194,6 +200,7 @@ test('신원 열(channel_id·member_kind·member_id) update는 채널 종류·�
   assert.match(o.svcKindErr, /msgr_immutable_member_kind/);
   assert.match(o.svcChannelErr, /msgr_immutable_channel_id/);
   assert.equal(o.dmCreatorLost || o.dmOutsiderIn || o.dmMoveRowLanded, false, 'b는 1:1에 남고 d는 들어오지 못한다');
+  assert.match(o.dmApproverHijackErr, /msgr_immutable_added_at/); assert.equal(o.dmApproverChanged, false, '결재자가 바뀌지 않는다');
 });
 
 test('정상 update(added_by — 앱 upsert·서비스·계정 삭제)와 delete + insert는 전후 같다', { skip }, () => {
@@ -208,7 +215,7 @@ test('정상 update(added_by — 앱 upsert·서비스·계정 삭제)와 delete
 test('잠금 모양 — WHEN 절로 신원 열이 바뀔 때만 함수가 돈다, 정의자 아님·우회 조건 없음', { skip }, () => {
   const def = sql(`select pg_get_triggerdef(t.oid) from pg_trigger t where t.tgrelid = 'public.msgr_channel_members'::regclass and t.tgname = 'msgr_lock_channel_members'`);
   assert.match(def, /BEFORE UPDATE/);
-  for (const c of ['channel_id', 'member_kind', 'member_id']) assert.match(def, new RegExp(`old\\.${c} IS DISTINCT FROM new\\.${c}`), `WHEN 절: ${c}`);
+  for (const c of ['channel_id', 'member_kind', 'member_id', 'added_at']) assert.match(def, new RegExp(`old\\.${c} IS DISTINCT FROM new\\.${c}`), `WHEN 절: ${c}`);
   const src = sql(`select prosrc from pg_proc where proname = 'msgr_channel_member_identity_lock'`);
   assert.doesNotMatch(src, /pg_trigger_depth|current_setting|auth\.uid/, '위조 가능한 통과 조건이 없다(#691)');
   assert.equal(sql(`select prosecdef from pg_proc where proname = 'msgr_channel_member_identity_lock'`), 'f');
