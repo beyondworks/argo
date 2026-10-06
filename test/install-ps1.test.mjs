@@ -45,7 +45,7 @@ async function fixture(t, { badSum = false, app = false, foreign = false } = {})
   const uninstallUrl = pathToFileURL(join(ROOT, 'src/cli/uninstall.mjs')).href; // argo uninstall 분기는 bin/argo.mjs와 같게(실제 제거 모듈)
   await writeFile(join(pkg, 'bin/argo.mjs'), `import { dirname } from 'node:path'; import { fileURLToPath } from 'node:url';
 if(process.argv[2]==='status'){console.error('[argo] warning');process.exit(process.env.ARGO_CLI_APP==='0'?0:2)}
-if(process.argv[2]==='uninstall'){const m=await import(${JSON.stringify(uninstallUrl)});const r=m.uninstallStandalone({appDir:dirname(dirname(fileURLToPath(import.meta.url)))});if(!r.ok)process.exit(1);if(r.pending&&process.env.ARGO_CLI_SHIM==='cmd')process.exit(m.WIN_UNINSTALL_EXIT);process.exit(0)}
+if(process.argv[2]==='uninstall'){const m=await import(${JSON.stringify(uninstallUrl)});const r=m.uninstallStandalone({appDir:dirname(dirname(fileURLToPath(import.meta.url)))});console.log('stub-uninstall '+JSON.stringify({ok:r.ok,pending:r.pending,script:r.script,reason:r.reason,shim:process.env.ARGO_CLI_SHIM,temp:process.env.TEMP}));if(!r.ok)process.exit(1);if(r.pending&&process.env.ARGO_CLI_SHIM==='cmd')process.exit(m.WIN_UNINSTALL_EXIT);process.exit(0)}
 console.log('args:'+process.argv.slice(2).join(' '))`);
   const zip = join(root, 'argo-cli-2.0.0-windows-x64.zip');
   packCli(join(root, 'pkg'), zip, true); // 발행 빌드와 같은 함수 — 시스템 tar.exe·zip 머리·Expand-Archive 확인(검수 #843 HIGH-1)
@@ -89,7 +89,8 @@ test('W1·W4 새 설치 → 해시 확인·실행 확인·argo.cmd·PATH 한 번
   // U2 — 사용자와 같이 설치된 argo.cmd로 argo uninstall: node가 끝난 뒤 argo.cmd가 제거 스크립트를 실행한다
   const tempDir = join(f.root, 'Temp'); await mkdir(tempDir, { recursive: true });
   const un = spawnSync('cmd.exe', ['/d', '/c', f.shim, 'uninstall'], { env: { ...f.env, TEMP: tempDir, TMP: tempDir }, encoding: 'utf8', timeout: 120_000 });
-  assert.equal(un.status, 0, `${un.stdout}\n${un.stderr}`);
+  const after = { app: existsSync(f.app), shim: existsSync(f.shim), bin: existsSync(f.bin), script: existsSync(join(tempDir, 'argo-uninstall.ps1')), shimText: un.status === 0 ? '' : await readFile(f.shim, 'utf8').catch(() => '(없음)') };
+  assert.equal(un.status, 0, `${un.stdout}\n${un.stderr}\n${JSON.stringify(after)}`);
   assert.ok(!existsSync(f.app) && !existsSync(f.shim), '프로그램 폴더·argo.cmd 삭제');
   assert.equal(f.pathValue(), '|ExpandString', '우리 PATH 항목만 지운다');
 });
