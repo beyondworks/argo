@@ -1397,10 +1397,13 @@ async function clearReseal(wsId) {
 
 /* ─── 상주 루프 ─── */
 const status = (globalThis.__argoSyncStatus ??= { lastTs: null, lastError: '', paywalled: false, plan: null, companies: {} });
+const lockState = (globalThis.__argoSyncLockState ??= { elsewhere: false }); // 화면용 상태(status)와 따로 — syncStatus 응답 모양을 바꾸지 않는다
 export function syncStatus() {
   // plan은 status(globalThis)로 나른다 — 모듈 변수는 Next의 라우트/instrumentation
   // 별도 번들에서 사본이 갈라져 항상 null이 되는 함정(위 lease 주석과 동일 클래스).
-  return { ...status, on: syncOn(), leader: isCloudLeader(), companies: { ...status.companies } };
+  // 주인 없는 회사(no-owner)는 화면에 싣지 않는다 — 동기화한 적도 클라우드 사본도 없다(설정 화면은 companies[ws] 존재를 '동기화한 적 있음'으로 읽는다).
+  const companies = Object.fromEntries(Object.entries(status.companies).filter(([, c]) => c?.skipped !== 'no-owner'));
+  return { ...status, on: syncOn(), leader: isCloudLeader(), companies };
 }
 /** 한 회사 화면용 상태 — 회사 가드(guardCompany)는 그 회사만 보므로, 같은 기기의 게스트·다른 계정이 자기 회사 화면을 열어도
     다른 회사의 실패·빈 항목 파일 경로가 보이지 않게 companies는 그 회사 것만 싣는다. lastError는 기기 전체 오류(자격 만료·다른 프로세스
@@ -1414,16 +1417,21 @@ export function syncStatusFor(ws) {
 }
 /** 이 회사의 로컬 사본이 `since`(ms) 이후 원격과 한 번 맞춰졌는가 — 낡은 사본으로 판정·기록하면 안 되는 일의 관문(지금은 놓친 루틴 회차 기록, scheduler.mjs).
     동기화가 꺼져 있으면 참(이 기기가 정본). 켜져 있으면 since 뒤에 끝난 그 회사의 사이클 결과(status.companies — 이 프로세스가 돌린 사이클만 있다)가 있어야 한다:
-    정상 완료·유휴 확인(idle-probe — 매니페스트 판이 그대로)·동기화 대상 아님(free-plan 단일 기기·foreign-owner 남의 회사)은 참,
-    오류·재시도 대기(retry-backoff)·업로드 거절 대기(upload-denied)·결과 없음은 거짓 — 다음 사이클을 기다린다.
-    거짓 쪽이 안전하다: 이 프로세스가 동기화를 돌리지 않거나(다른 프로세스가 동기화 잠금을 쥠) 자격이 만료돼 사이클이 회사까지 못 가면 판정을 미룰 뿐이다. */
-const SYNCED_SKIPS = new Set(['idle-probe', 'free-plan', 'foreign-owner']);
+    정상 완료·유휴 확인(idle-probe — 매니페스트 판이 그대로)·동기화 대상 아님(free-plan 단일 기기·foreign-owner 남의 회사·no-owner 주인 없는
+    게스트 회사 — 클라우드에 자리가 없어 이 기기가 정본)은 참, 오류·재시도 대기(retry-backoff)·업로드 거절 대기(upload-denied)·결과 없음은 거짓 — 다음 사이클을 기다린다.
+    거짓 쪽이 안전하다: 이 프로세스가 동기화를 돌리지 않거나(다른 프로세스가 동기화 잠금을 쥠 — syncRunsElsewhere) 자격이 만료돼 사이클이 회사까지 못 가면
+    판정을 미룰 뿐이다. 다른 프로세스의 완료 신호로 회사별 .sync-state.json의 ts를 쓰지 않는 이유: 파일 받기가 일부 실패한 사이클도 이 파일을 쓰고(못 받은
+    항목은 옛 base를 유지한 채 ts만 새로), 유휴 확인 사이클은 쓰지 않는다 — 이 관문이 막는 '낡은 routines.json' 경우를 통과시키면서 정상 경우는 막는다. */
+const SYNCED_SKIPS = new Set(['idle-probe', 'free-plan', 'foreign-owner', 'no-owner']);
 export function companySyncedSince(wsId, since) {
   if (!syncOn()) return true;
   const c = status.companies[wsId];
   if (!c || !(Number(c.ts) >= since) || c.error) return false;
   return !c.skipped || SYNCED_SKIPS.has(c.skipped);
 }
+/** 같은 데이터 루트를 다른 살아 있는 프로세스가 동기화하고 있어 이 프로세스는 파일 동기화를 대기 중인가(마지막 사이클 기준) — 이 프로세스에는 회사별
+    사이클 결과가 쌓이지 않아 companySyncedSince가 거짓으로 남는다. 판정을 미루는 쪽(스케줄러)이 그 사실을 로그로 알리는 데 쓴다. */
+export const syncRunsElsewhere = () => syncOn() && lockState.elsewhere;
 /** 회사 몫 오류는 반드시 이 함수로 — lastError(기기 전체 하나)와 그 회사 결과(error)에 같이 두고 회사를 등록한다. 등록이 빠지면
     syncStatusFor가 `<회사 ID>: ` 접두를 회사 몫으로 못 알아봐 다른 회사·게스트 화면에 보인다(분리 검수 2·3차 LOW). */
 const setCompanyError = (wsId, msg) => { status.lastError = msg; (status.companies[wsId] ??= { ts: Date.now() }).error = msg; };
@@ -1445,7 +1453,9 @@ async function collectLocalTargets(sessionUid) {
     if (!e.isDirectory() || e.name.startsWith('.')) continue;
     try {
       const meta = JSON.parse(await readFile(join(WS_ROOT, e.name, 'company.json'), 'utf8'));
-      if (!meta.ownerId) continue;
+      // 주인 없는 회사(게스트 시절 만들고 로그인 뒤 귀속하지 않음)는 클라우드에 자리가 없다 — 동기화 대상이 아님을 결과로 남긴다(이 기기가 정본).
+      // 남기지 않으면 결과 없음 = '아직 안 맞춰짐'으로 읽혀 companySyncedSince가 영영 거짓이다(놓친 루틴 회차 판정이 무기한 보류, 3차 검수 LOW). 화면에는 싣지 않는다(syncStatus).
+      if (!meta.ownerId) { if (meta.id) status.companies[meta.id] = { ts: Date.now(), skipped: 'no-owner' }; continue; }
       if (sessionUid && meta.ownerId !== sessionUid) {
         if (status.companies[meta.id]?.skipped !== 'foreign-owner') {
           console.log(`[argo] 동기화: 다른 계정 소유 회사 제외 (${meta.id})`);
@@ -1512,7 +1522,8 @@ async function arbitrateLease(targets) {
 async function cycle() {
   if (!(await ensureClient())) { status.lastError = '동기화 자격 없음/만료 — 재로그인 필요'; return; }
   // 크로스 프로세스 락 — 같은 root를 다른 살아있는 프로세스가 동기화 중이면 파일 동기화는 대기(이중 동기화=대형 유실 차단)
-  if (!(await holdSyncLock())) {
+  lockState.elsewhere = !(await holdSyncLock());
+  if (lockState.elsewhere) {
     status.lastError = '같은 데이터 루트를 다른 프로세스가 동기화 중 — 이 인스턴스는 대기';
     // 파일 동기화는 대기하지만 실행 담당 판정은 한다 — 이 프로세스가 실행 리스 주인이면 리스를 중재해야 한다(arbitrateLease 주석)
     await arbitrateLease((await collectLocalTargets(currentSessionUid())).targets);

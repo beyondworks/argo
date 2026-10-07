@@ -17,7 +17,7 @@ import { consolidateBacklog, rollupJournals } from './consolidate.mjs';
 import { runHealthChecks } from './runner-health.mjs';
 import { runFailureDigest } from './failure-digest.mjs';
 import { daemonLease } from './lock.mjs';
-import { isCloudLeader, companySyncedSince } from './sync.mjs';
+import { isCloudLeader, companySyncedSince, syncRunsElsewhere } from './sync.mjs';
 import { writeJsonAtomic, readJson } from './jsonstore.mjs';
 import { withLock } from './mutex.mjs';
 import { paths } from './workspace.mjs';
@@ -160,6 +160,7 @@ export function noteSchedulerTick(state, nowMs, gapMs = RESUME_GAP_MS) {
   return state.since;
 }
 const awake = { since: Date.now(), lastTick: 0 };
+let missedGateDeferNoted = false; // 판정 보류(다른 프로세스가 동기화) 로그는 프로세스당 한 번 — 틱마다 쓰면 로그만 쌓인다
 
 export async function runDueRoutines(wsId, now, { runFn = runRoutine, awakeSince = awake.since } = {}) {
   // 크루 카드가 없는 루틴(이 수정 전에 해고된 크루 등)은 실행하지 않는다 — 돌리면 "없는 크루" 실패 알림만 간다(F4).
@@ -173,9 +174,13 @@ export async function runDueRoutines(wsId, now, { runFn = runRoutine, awakeSince
   // 동기화가 켜진 기기는 깨어난 뒤 그 회사의 동기화 사이클을 한 번 끝낸 뒤에만 판정한다(검수 MEDIUM): 그 전의 routines.json은 다른 기기가 그동안
   // 실행한 lastRun을 모르는 낡은 사본일 수 있다 — 그 회차를 '꺼져 있어 건너뛰었다'로 알리게 되고, missed 쓰기가 로컬 수정 시각을 최신으로 만들어
   // json 충돌 처리(최근 수정 시각이 이김)가 낡은 사본으로 원격을 덮는다. 미뤄도 잃는 것은 없다 — 판정 기간(7일) 안이면 다음 틱이 남긴다.
+  // 같은 데이터 루트를 다른 프로세스가 동기화하면 이 프로세스에는 사이클 결과가 쌓이지 않아 그동안 판정을 미룬다 — 조용히 미루지 않게 프로세스당 한 번 알린다.
   if (companySyncedSince(wsId, awakeSince)) {
     await recordMissedSlots(wsId, routines, now, { hasCrew: async (slug) => !(await orphan(slug)) })
       .catch((e) => console.error(`[argo] 놓친 루틴 회차 기록 실패(${wsId}):`, e.message));
+  } else if (!missedGateDeferNoted && syncRunsElsewhere()) {
+    missedGateDeferNoted = true;
+    console.log('[argo] 놓친 루틴 회차 판정 보류: 같은 데이터 루트를 다른 프로세스가 동기화하고 있어 이 프로세스는 회사 사본이 최신인지 알 수 없습니다 — 이 프로세스가 동기화를 맡을 때까지 놓친 회차를 기록하지 않습니다(루틴 실행은 그대로, 이 안내는 프로세스당 한 번)');
   }
   for (const r of routines) {
     if (!isDue(r, now)) continue;

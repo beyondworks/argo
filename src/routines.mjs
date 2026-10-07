@@ -240,6 +240,8 @@ const NO_REPORT = 'NO_REPORT';
 const TXT = {
   noReportResult: { ko: '보고할 내용 없음', en: 'Nothing to report' },
   noReportThread: { ko: '보고할 내용 없음 — 알림을 보내지 않았습니다.', en: 'Nothing to report — no notification was sent.' },
+  // 표지 줄과 다른 줄(설명·보고)이 같이 온 답 — 대화 기록에 그 줄들을 남기고, 왜 알림이 없는지 덧붙인다
+  noReportNote: { ko: '(보고할 내용 없음으로 답해 알림을 보내지 않았습니다.)', en: '(Answered as nothing to report — no notification was sent.)' },
 };
 /** 루틴 턴에 덧붙이는 보고 규칙(러너 무관 — 텍스트 규약). chat의 runnerNote로 넘겨 **러너 프롬프트에만** 붙는다 — 지시 원문(대화 기록·일지·
     턴 이벤트 msg·활동 '다시 실행')에는 싣지 않는다(검수 LOW: 일지에 쌓이면 밤사이 기억 정리가 이 규약을 메모로 만들 수 있다).
@@ -249,9 +251,21 @@ function noReportRule(lang = 'ko') {
     ? `\n\n---\n[Report rule] If this run has nothing to tell the user (for example zero new items or no change), reply with exactly one line: ${NO_REPORT} — nothing else; no notification is sent then. If there is something to report, report as usual and do not write ${NO_REPORT}. If an error kept you from checking, do not reply ${NO_REPORT} — report what you could not check.`
     : `\n\n---\n[보고 규칙] 이번 실행에서 사용자에게 알릴 내용이 없으면(예: 확인할 새 항목 0건, 변동 없음) 다른 말 없이 정확히 ${NO_REPORT} 한 줄만 답하라 — 그러면 알림이 가지 않는다. 알릴 내용이 있으면 평소대로 보고하고 ${NO_REPORT}는 쓰지 마라. 오류로 확인하지 못했다면 ${NO_REPORT}가 아니라 무엇을 확인하지 못했는지 보고하라.`;
 }
-const NO_REPORT_LINE = /^[\s>*_`"'“”]*NO_REPORT[\s*_`"'“”.。!]*$/;
-// 같은 줄에 설명이 붙은 앞머리 표지('NO_REPORT — 새 항목 0건', 'NO_REPORT (새 메일 없음)') — 표지 바로 뒤가 글자·숫자면 표지가 아니다('NO_REPORT였던 …').
-const NO_REPORT_LEAD = /^[\s>*_`"'“”]*NO_REPORT(?![\p{L}\p{N}_])[\s*_`"'“”]*[:：.。!\-–—]*\s*/u;
+// 표지 = 줄 머리의 NO_REPORT(대소문자 무시). 앞: 공백·인용(>)·목록 기호(- + • · 1. 1))·굵게·기울임·백틱·따옴표. 뒤: 닫는 꾸밈과 한국어 서술어('입니다'·'임').
+// 줄 머리가 아니면(문장 속 '오늘은 NO_REPORT 대상이 아닙니다') 표지가 아니다. 서술어 뒤에 글자가 이어지는 'NO_REPORT입니다만 …'은 아래 noReportMark가 거른다.
+const NO_REPORT_HEAD = /^[\s>]*(?:(?:[-+•·]|\d{1,3}[.)])\s+)?[\s>*_`"'“”]*no_report[*_`"'“”]*(?:\s*(?:입니다|임))?[*_`"'“”]*/iu;
+const NO_REPORT_END = /^[\s*_`"'“”.。!]*$/u; // 표지 뒤가 마침표·꾸밈뿐 — 표지 줄
+const NO_REPORT_SEP = /^\s*(?:[:：(（–—]|[-.。!](?=\s|$))/u; // 표지 뒤가 구분 기호 — 같은 줄 설명('NO_REPORT — 새 항목 0건', 'NO_REPORT (새 메일 없음)')
+/** 한 줄이 표지인가 — 아니면 null, 맞으면 { note: 같은 줄 설명(없으면 '') }. 표지 뒤가 글자로 바로 이어지면('NO_REPORT였던', 'NO_REPORT 대상이 아닙니다',
+    'NO_REPORTS') 표지가 아니다 — 보고로 둔다(알림을 잘못 막는 것보다 보내는 쪽이 안전). */
+function noReportMark(line) {
+  const m = line.match(NO_REPORT_HEAD);
+  if (!m) return null;
+  const rest = line.slice(m[0].length);
+  if (NO_REPORT_END.test(rest)) return { note: '' };
+  if (!NO_REPORT_SEP.test(rest)) return null;
+  return { note: rest.replace(/^[\s:：\-–—.。!]+/u, '').trim().replace(/^[(（](.*)[)）]$/u, '$1').trim() };
+}
 const FENCE_LINE = /^\s*(`{3,}|~{3,})[\w-]*\s*$/;
 /** 표지 줄을 뗀 뒤 남은 빈 코드 블록(여는 펜스 바로 뒤가 닫는 펜스)을 지운다 — 펜스로 감싼 NO_REPORT에서 펜스만 알림으로 나가던 것(검수 LOW). */
 function dropEmptyFences(lines) {
@@ -270,22 +284,22 @@ function dropEmptyFences(lines) {
   }
   return out;
 }
-/** 답에서 NO_REPORT 표지를 뗀다(순수). none = 떼고 나니 남는 게 없음(보고할 것 없음). 표지가 없으면 원문 그대로.
-    혼자 있는 표지 줄(펜스로 감싼 것 포함)은 통째로, 같은 줄에 설명이 붙은 앞머리 표지는 표지만 떼고 설명은 보고로 둔다(원문 토큰이 사용자에게 가지 않게,
-    설명은 버리지 않게 — 무엇을 확인했는지가 담겼을 수 있다). 문장 속 단어("어제는 NO_REPORT였지만…")는 표지가 아니다 — 보고로 본다. */
+/** 답의 NO_REPORT 판정(순수). 표지 줄이 답 안에 하나라도 따로 있으면 보고 없음(marked) — 알림·메신저 글을 보내지 않는다. 이때 text = 표지를 뗀 나머지
+    (같은 줄 설명 포함, 펜스로 감쌌던 빈 코드 블록 제외)로, 대화 기록에만 남긴다(버리지 않는다 — 무엇을 확인했는지가 담겼을 수 있다). 3차 검수 정책:
+    '보고할 것 없음.\nNO_REPORT'·'NO_REPORT\n\n(새 메일 0건)'·'- NO_REPORT'·'no_report'가 보고로 나가 알림이 갔다 — 표지와 다른 줄이 같이 오면
+    표지(에이전트가 고른 결론)를 따른다. 줄을 바꿔 쓰든 같은 줄에 쓰든('NO_REPORT — 새 항목 0건') 결과가 같다. 표지가 없으면 원문 그대로(보고). */
 function splitNoReport(text) {
   const raw = String(text ?? '');
   let marked = false;
   const kept = [];
   for (const line of raw.split('\n')) {
-    if (NO_REPORT_LINE.test(line)) { marked = true; continue; }
-    const lead = line.match(NO_REPORT_LEAD);
-    if (lead) { marked = true; kept.push(line.slice(lead[0].length).trim().replace(/^\((.*)\)$/, '$1').trim()); continue; }
-    kept.push(line);
+    const mark = noReportMark(line);
+    if (!mark) { kept.push(line); continue; }
+    marked = true;
+    if (mark.note) kept.push(mark.note);
   }
-  if (!marked) return { none: false, text: raw };
-  const rest = dropEmptyFences(kept).join('\n').replace(/\n{3,}/g, '\n\n').trim();
-  return { none: !rest, text: rest };
+  if (!marked) return { marked: false, text: raw };
+  return { marked: true, text: dropEmptyFences(kept).join('\n').replace(/\n{3,}/g, '\n\n').trim() };
 }
 /** 빈 답 — 실패 그대로(빈 답을 성공으로 받으면 도구 실패 때의 침묵을 가린다). 문구만 사용자가 알아듣게. 루프에는 보고 규칙이 없어 안내를 붙이지 않는다. */
 function emptyAnswerError(lang, loop, cause = null) {
@@ -295,12 +309,13 @@ function emptyAnswerError(lang, loop, cause = null) {
   return Object.assign(new Error(msg), cause ? { cause } : {});
 }
 const failedText = (reason, lang) => (lang === 'en' ? `This routine run failed — ${reason}` : `루틴 실행에 실패했습니다 — ${reason}`);
-/** 놓친 회차 안내 한 줄 — 다음 실행의 대화 기록·건너뜀 알림이 같이 쓴다. */
+/** 놓친 회차 안내 한 줄 — 다음 실행의 대화 기록·건너뜀 알림이 같이 쓴다. 사실만 말한다: '4시간 안에 켜져 있으면 실행된다'는 isDue가 날짜를 넘겨
+    따라잡지 않아(23:00 회차는 00:30에 켜져도 실행되지 않는다) 맞지 않는다(3차 검수 LOW). 활동 화면 문구(i18n activity.routineSkipped)도 같은 내용. */
 function missedNote(slots, lang) {
   const list = formatMissedSlots(slots, lang);
   return lang === 'en'
-    ? `${(slots?.length ?? 0) > 1 ? 'These runs were' : 'This run was'} skipped because this device was off at the scheduled time: ${list} (a run has to start within 4 hours of its time).`
-    : `${list} 회차는 예정 시각에 기기가 꺼져 있어 건너뛰었습니다(예정 시각부터 4시간 안에 켜져 있어야 실행됩니다).`;
+    ? `${(slots?.length ?? 0) > 1 ? 'These runs were' : 'This run was'} skipped because this device was off or asleep at the scheduled time: ${list}.`
+    : `${list} 회차는 예정 시각에 기기가 꺼져 있었거나 잠들어 있어 실행하지 못했습니다.`;
 }
 const companyLang = async (wsId) => {
   const { loadCompany } = await import('./workspace.mjs');
@@ -538,11 +553,12 @@ export async function runRoutine(wsId, id, { chatFn = null, startAt = null, sess
       if (!String(t?.reply ?? '').trim() && !String(t?.replyForChecks ?? '').trim()) throw emptyAnswerError(lang, loop);
       return t;
     };
-    // 대화 기록의 답 — 혼자 있는 NO_REPORT 줄은 엔진용 표지라 화면에 그대로 두지 않는다(루프는 표지 규칙 밖)
+    // 대화 기록의 답 — NO_REPORT 표지는 엔진용이라 화면에 그대로 두지 않는다(루프는 표지 규칙 밖). 표지와 같이 온 설명은 여기(대화 기록)에만 남는다.
     const recorded = (t) => {
       if (loop) return t.reply;
       const nr = splitNoReport(t.reply);
-      return nr.none ? TXT.noReportThread[lang] : nr.text;
+      if (!nr.marked) return t.reply;
+      return nr.text ? `${nr.text}\n\n${TXT.noReportNote[lang]}` : TXT.noReportThread[lang];
     };
     // 한 턴 = 실행 + 대화 기록(지시와 답을 짝지어). 루틴만 기록이 빠져 있어서 실행 중엔 채팅창에 보이다가 끝나면 사라졌다
     // (신고 2026-07-28 "루틴 돌면서 채팅이 올라왔다가 실행되고 나니 유실") — 사장 직접 대화·위임·쪽지 배달은 전부 appendTurn을 한다.
@@ -595,9 +611,9 @@ export async function runRoutine(wsId, id, { chatFn = null, startAt = null, sess
     // 사용자에게 나가는 답(알림 이벤트 → 텔레그램·슬랙·메신저, 마지막 결과 요약, 지금 실행 응답) — 루프 회차 답 끝의 판정 표지(LOOP: …)는
     // 엔진용이라 여기서 한 번만 뺀다. 판정(아래 parseLoopVerdict)과 1:1 대화 기록은 원문 그대로. 메신저발 루프는
     // runMessengerContinuation(loopTurn)이 넘김 줄을 붙이기 전에 이미 뺐다 — 두 번 빼지 않는다.
-    // 보고할 것이 없음 — NO_REPORT(혼자 있는 표지 줄만 남은 답) 또는 루프 회차 답이 판정 줄뿐. 이때는 알림·메신저 글을 보내지 않는다(제목만 있는 글이 갔다).
-    // 결과 요약·지금 실행 응답은 알아듣는 말로. 표지 줄과 보고가 같이 오면 표지 줄만 뗀 보고를 보낸다.
-    let shown = loop ? (r0.msgr ? t.reply : stripLoopVerdict(t.reply)) : splitNoReport(t.reply).text;
+    // 보고할 것이 없음 — 답에 NO_REPORT 표지가 있음(다른 줄·같은 줄 설명이 같이 와도 — 그 설명은 대화 기록에만) 또는 루프 회차 답이 판정 줄뿐.
+    // 이때는 알림·메신저 글을 보내지 않는다(제목만 있는 글이 갔다). 결과 요약·지금 실행 응답은 알아듣는 말로.
+    let shown = loop ? (r0.msgr ? t.reply : stripLoopVerdict(t.reply)) : (splitNoReport(t.reply).marked ? '' : t.reply);
     const quiet = !String(shown).trim();
     if (quiet) shown = TXT.noReportResult[lang];
     const summary = shown.replace(/\s+/g, ' ').slice(0, 160);

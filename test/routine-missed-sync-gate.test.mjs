@@ -121,3 +121,97 @@ test('B19: 깨어남 판정 — 틱 사이 벽시계 간격이 RESUME_GAP_MS를 
   assert.equal(noteSchedulerTick(s, woke + 60_000), woke, '그 뒤 평소 틱은 깨어난 시각을 유지');
   assert.ok(RESUME_GAP_MS > 60_000 && RESUME_GAP_MS <= 10 * 60_000, '60초 틱보다 넉넉하고, 잠자기는 놓치지 않을 만큼 짧다');
 });
+
+/* ─── 3차 검수 LOW(1) — 관문이 영영 닫혀 있던 두 경우를 실제 동기화 루프(ensureSync, 자식 프로세스 + 가짜 Supabase)로 잠근다 ───
+   ① 주인 없는 회사(게스트로 쓰다 로그인 뒤 귀속하지 않음)는 동기화 대상이 아니라(collectLocalTargets가 건너뜀) 사이클 결과가 남지 않아
+      놓친 회차 판정이 영원히 미뤄졌다 → 사이클이 'no-owner'로 표시하고 관문은 참(이 기기가 정본). 화면용 상태(syncStatus·syncStatusFor)에는
+      싣지 않는다 — 클라우드 사본이 없는 회사에 '클라우드 사본 삭제 예정' 같은 안내가 붙지 않게(설정 화면 mine 근사).
+   ② 같은 데이터 루트의 다른 살아 있는 프로세스가 동기화 잠금을 쥐면 이 프로세스(스케줄러)에는 사이클 결과가 쌓이지 않는다 → 판정을 미루고,
+      미룬다는 사실을 프로세스당 한 번 로그로 남긴다(무증상 보류가 아니게). */
+const { spawn } = await import('node:child_process');
+const { startFakeSupabase } = await import('./helpers/fake-supabase-http.mjs');
+const { seedRoot, childEnv, srcUrl } = await import('./helpers/sync-child.mjs');
+
+/** 자식: 회사 둘(주인 있는 co-own, 주인 없는 guest-ws)에 일주일 낡은 daily 09:00 루틴을 깔고 동기화 루프를 켠 뒤, 사이클을 기다려
+    놓친 회차 판정(runDueRoutines)을 직접 돌린다. 반환: 회사별 관문·건너뜀 기록 수·보류 로그 줄 수·화면용 상태. */
+async function runGateChild(root, { holdLockPid = null } = {}) {
+  if (holdLockPid) await writeFile(join(root, '.sync-process.lock'), JSON.stringify({ pid: holdLockPid, ts: Date.now() }));
+  const S = (rel) => JSON.stringify(srcUrl(rel));
+  const script = `
+const lines = [];
+for (const k of ['log', 'warn']) { const orig = console[k]; console[k] = (...a) => { lines.push(a.join(' ')); orig(...a); }; }
+globalThis.__argoRunnerProbe = { ts: Date.now(), ok: true };
+const T0 = Date.now();
+const { mkdir, writeFile } = await import('node:fs/promises');
+const { join } = await import('node:path');
+const { createCompany, paths } = await import(${S('workspace.mjs')});
+const { addRoutine, loadRoutines } = await import(${S('routines.mjs')});
+const { writeJsonAtomic } = await import(${S('jsonstore.mjs')});
+const { readEvents } = await import(${S('events.mjs')});
+await createCompany('guest-ws', '게스트 회사', 'owner', null, 'ko');
+for (const ws of ['co-own', 'guest-ws']) {
+  await mkdir(paths(ws).agents, { recursive: true });
+  await writeFile(join(paths(ws).agents, 'alpha.md'), '---\\nname: 알파\\nrole: 검증\\n---\\n검증용.\\n');
+  const r = await addRoutine(ws, { agentSlug: 'alpha', title: '아침 보고', prompt: '보고하라', schedule: { type: 'daily', times: ['09:00'], tz: 'Asia/Seoul' } });
+  const raw = await loadRoutines(ws);
+  Object.assign(raw.find((x) => x.id === r.id), { lastRun: '2026-10-01T00:00:00.000Z', created: '2026-09-01T00:00:00.000Z', editedAt: '2026-09-01T00:00:00.000Z' });
+  await writeJsonAtomic(paths(ws).routines, raw);
+}
+const sync = await import(${S('sync.mjs')});
+const { runDueRoutines } = await import(${S('scheduler.mjs')});
+sync.ensureSync();
+const ready = () => ${holdLockPid ? `/다른 프로세스/.test(sync.syncStatus().lastError)` : `Number(globalThis.__argoSyncStatus.companies['co-own']?.ts) >= T0`};
+for (const t0 = Date.now(); !ready() && Date.now() - t0 < 30000;) await new Promise((r) => setTimeout(r, 100));
+await new Promise((r) => setTimeout(r, 1200)); // 사이클(300ms 주기)이 몇 번 더 돌게 — 잠금을 못 얻은 사이클의 회사 수집까지 끝나도록
+const NOW = new Date('2026-10-08T15:00:00+09:00');
+const tick = (ws) => runDueRoutines(ws, NOW, { runFn: async () => { throw new Error('실행되면 안 된다'); }, awakeSince: T0 });
+const out = { ready: ready(), lastError: sync.syncStatus().lastError, gate: {}, skipped: {}, entry: {} };
+for (const ws of ['co-own', 'guest-ws']) out.gate[ws] = sync.companySyncedSince(ws, T0);
+for (const ws of ['co-own', 'guest-ws']) { await tick(ws); await tick(ws); await tick(ws); }
+for (const ws of ['co-own', 'guest-ws']) {
+  out.skipped[ws] = (await readEvents(ws)).filter((e) => e.type === 'routine-skipped').length;
+  out.entry[ws] = globalThis.__argoSyncStatus.companies[ws] ?? null;
+}
+out.deferLogs = lines.filter((l) => /판정 보류/.test(l)).length;
+out.screenKeys = Object.keys(sync.syncStatus().companies);
+out.guestScreen = sync.syncStatusFor('guest-ws').companies;
+process.stdout.write('\\n@@' + JSON.stringify(out) + '\\n');
+process.exit(0);`;
+  return new Promise((resolve, reject) => {
+    const p = spawn(process.execPath, ['--input-type=module', '-e', script], { env: childEnv(root, { ARGO_SYNC_CYCLE_MS: '300' }), stdio: ['ignore', 'pipe', 'pipe'] });
+    let o = '', e = '';
+    p.stdout.on('data', (c) => { o += c; }); p.stderr.on('data', (c) => { e += c; });
+    const t = setTimeout(() => { p.kill('SIGKILL'); reject(new Error(`timeout\n${e.slice(-1500)}`)); }, 60_000);
+    p.on('exit', () => { clearTimeout(t); const line = o.split('\n').find((l) => l.startsWith('@@')); line ? resolve(JSON.parse(line.slice(2))) : reject(new Error(`no result\n${o.slice(-1500)}\n${e.slice(-1500)}`)); });
+  });
+}
+
+test('B24: 주인 없는 회사는 동기화 대상이 아니다 — 사이클이 no-owner로 표시해 관문이 열리고 놓친 회차를 남긴다. 화면용 상태에는 싣지 않는다', { timeout: 90_000 }, async (t) => {
+  const fake = await startFakeSupabase({ plan: 'pro' }); t.after(() => fake.close());
+  const root = await mkdtemp(join(tmpdir(), 'argo-rtn-gate-noowner-'));
+  seedRoot(root, { url: fake.url, wsId: 'co-own' });
+  const out = await runGateChild(root);
+  assert.equal(out.ready, true, `전제: co-own 사이클이 끝났다 ${JSON.stringify(out)}`);
+  assert.equal(out.entry['co-own']?.error ?? null, null, `전제: co-own 사이클은 오류 없이 끝났다 ${JSON.stringify(out.entry['co-own'])}`);
+  assert.equal(out.gate['guest-ws'], true, `주인 없는 회사의 관문이 열린다(이 기기가 정본): ${JSON.stringify(out.entry['guest-ws'])}`);
+  assert.equal(out.entry['guest-ws']?.skipped, 'no-owner');
+  assert.equal(out.skipped['guest-ws'], 1, '놓친 회차를 활동 기록에 한 번 남긴다(세 번 틱해도 한 번)');
+  assert.equal(out.gate['co-own'], true, '주인 있는 회사는 그 회사 사이클이 끝났으니 열린다(B16의 실제 사이클판)');
+  assert.equal(out.skipped['co-own'], 1);
+  assert.equal(out.deferLogs, 0, '이 프로세스가 동기화를 돌리면 보류 로그는 없다');
+  assert.ok(!out.screenKeys.includes('guest-ws'), `화면용 상태에 주인 없는 회사를 싣지 않는다: ${out.screenKeys}`);
+  assert.deepEqual(out.guestScreen, {}, '주인 없는 회사 화면에는 동기화 기록이 없다(종전과 같다)');
+});
+
+test('B25: 같은 데이터 루트의 다른 프로세스가 동기화 잠금을 쥐면 주인 있는 회사의 판정은 미루고, 미룬다는 로그를 프로세스당 한 번 남긴다 — 주인 없는 회사는 판정한다', { timeout: 90_000 }, async (t) => {
+  const fake = await startFakeSupabase({ plan: 'pro' }); t.after(() => fake.close());
+  const root = await mkdtemp(join(tmpdir(), 'argo-rtn-gate-lock-'));
+  seedRoot(root, { url: fake.url, wsId: 'co-own' });
+  const out = await runGateChild(root, { holdLockPid: process.pid }); // 이 테스트 프로세스가 살아 있는 잠금 주인
+  assert.equal(out.ready, true, `전제: 잠금을 못 얻은 사이클이 돌았다 ${out.lastError}`);
+  assert.equal(out.gate['co-own'], false, '이 프로세스는 co-own 사본이 최신인지 모른다');
+  assert.equal(out.skipped['co-own'], 0, '낡았을 수 있는 사본으로 놓친 회차를 남기지 않는다');
+  assert.equal(out.deferLogs, 1, `판정 보류 로그는 프로세스당 한 번(틱 세 번): ${out.deferLogs}`);
+  assert.equal(out.gate['guest-ws'], true, '주인 없는 회사는 어느 프로세스가 동기화하든 이 기기가 정본');
+  assert.equal(out.skipped['guest-ws'], 1);
+});

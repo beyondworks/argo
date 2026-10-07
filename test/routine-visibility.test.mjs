@@ -203,29 +203,68 @@ test('C1·C11: 답이 NO_REPORT면 성공(lastResult 보고할 내용 없음)으
   assert.doesNotMatch(msgs[1].text, /NO_REPORT/, '엔진용 표지를 대화에 그대로 보이지 않는다');
 });
 
-test('C4: 앞뒤 공백·백틱·마침표가 붙은 NO_REPORT도 인정한다', async () => {
-  for (const reply of ['  NO_REPORT  ', '`NO_REPORT`', 'NO_REPORT.', '\n\nNO_REPORT\n']) {
+// 표지 줄 = 줄 머리의 NO_REPORT(대소문자 무시). 앞에는 공백·인용(>)·목록 기호(- + • · 1. 1))·굵게·백틱·따옴표, 뒤에는 닫는 꾸밈·
+// 한국어 서술어('입니다'·'임' — 바로 뒤가 글자면 아님)·마침표만 허용한다. 답 안에 표지 줄이 따로 있으면 보고 없음이다(3차 검수 정책).
+test('C4: 표지 줄의 변형(공백·백틱·마침표·서술어·목록 기호·소문자)도 NO_REPORT로 인정한다 — 알림 0, 대화 기록에 원문 토큰 없음', async () => {
+  for (const reply of ['  NO_REPORT  ', '`NO_REPORT`', 'NO_REPORT.', '\n\nNO_REPORT\n',
+    'NO_REPORT입니다', 'NO_REPORT입니다.', 'NO_REPORT임', '`NO_REPORT`입니다.', '- NO_REPORT', '* **NO_REPORT**', '1. NO_REPORT', '> NO_REPORT', 'no_report', 'No_Report.']) {
     const ws = await company();
     const r = await daily(ws);
     const n = notices(ws);
-    await runRoutine(ws, r.id, { chatFn: fakeChat([{ reply }]) });
+    const out = await runRoutine(ws, r.id, { chatFn: fakeChat([{ reply }]) });
     await n.stop();
     assert.equal(n.got.filter((e) => e.type === 'routine').length, 0, JSON.stringify(reply));
+    assert.equal(out.noReport, true, JSON.stringify(reply));
     assert.equal((await byId(ws, r.id)).lastResult, '보고할 내용 없음', JSON.stringify(reply));
+    const msgs = await thread(ws);
+    assert.equal(msgs.at(-1).text, '보고할 내용 없음 — 알림을 보내지 않았습니다.', JSON.stringify(reply));
   }
 });
 
-test('C3·C5: 보고 뒤에 붙은 NO_REPORT 줄은 떼고 보고를 보낸다 / 문장 속 단어는 보고로 본다', async () => {
-  const ws = await company();
-  const r = await daily(ws);
-  const n = notices(ws);
-  await runRoutine(ws, r.id, { chatFn: fakeChat([{ reply: '새 메일 1건: 견적 회신\n\nNO_REPORT' }]) });
-  await runRoutine(ws, r.id, { chatFn: fakeChat([{ reply: '어제는 NO_REPORT 였지만 오늘은 1건 있습니다' }]) });
-  await n.stop();
-  const results = n.got.filter((e) => e.type === 'routine');
-  assert.equal(results.length, 2);
-  assert.equal(results[0].reply, '새 메일 1건: 견적 회신');
-  assert.equal(results[1].reply, '어제는 NO_REPORT 였지만 오늘은 1건 있습니다');
+test('C3: 표지 줄이 따로 있으면 다른 줄(보고·설명)이 같이 와도 보고 없음 — 알림 0, 나머지는 대화 기록에만 남는다', async () => {
+  for (const [reply, rest] of [
+    ['새 메일 1건: 견적 회신\n\nNO_REPORT', '새 메일 1건: 견적 회신'],
+    ['보고할 것 없음.\nNO_REPORT', '보고할 것 없음.'],
+    ['NO_REPORT\n\n(새 메일 0건)', '(새 메일 0건)'],
+    ['- 확인한 메일 3건, 새 것 없음\n- NO_REPORT', '- 확인한 메일 3건, 새 것 없음'],
+    ['오늘 확인 결과\nno_report입니다.', '오늘 확인 결과'],
+  ]) {
+    const ws = await company();
+    const r = await daily(ws);
+    const n = notices(ws);
+    const out = await runRoutine(ws, r.id, { chatFn: fakeChat([{ reply }]) });
+    await n.stop();
+    assert.equal(n.got.filter((e) => e.type === 'routine').length, 0, `알림·메신저 글을 보내지 않는다: ${JSON.stringify(reply)}`);
+    assert.equal(out.noReport, true, JSON.stringify(reply));
+    assert.equal(out.reply, '보고할 내용 없음', JSON.stringify(reply));
+    assert.equal((await byId(ws, r.id)).lastResult, '보고할 내용 없음', JSON.stringify(reply));
+    const last = (await thread(ws)).at(-1);
+    assert.equal(last.who, 'crew');
+    assert.equal(last.text, `${rest}\n\n(보고할 내용 없음으로 답해 알림을 보내지 않았습니다.)`, `나머지 설명은 대화 기록에 남는다: ${JSON.stringify(reply)}`);
+  }
+});
+
+test('C5: 표지가 문장 속에 섞였거나 바로 뒤에 글자가 이어지면 표지가 아니다 — 보고로 원문 그대로 보낸다', async () => {
+  for (const reply of [
+    '어제는 NO_REPORT 였지만 오늘은 1건 있습니다',
+    '오늘은 NO_REPORT 대상이 아닙니다 — 새 메일 1건이 있습니다',
+    'NO_REPORT 대상이 아닙니다. 새 메일 1건',
+    'NO_REPORT입니다만 새 메일 1건이 있습니다',
+    'NO_REPORT였던 어제와 달리 오늘은 1건',
+    'NO_REPORTS 2건을 확인했습니다',
+    '오늘 확인 결과 NO_REPORT', // 줄 머리가 아니다 — 표지 줄이 따로 있지 않으면 보고로 둔다(잘못 막는 것보다 보내는 쪽)
+    '확인 끝 — NO_REPORT.',
+  ]) {
+    const ws = await company();
+    const r = await daily(ws);
+    const n = notices(ws);
+    const out = await runRoutine(ws, r.id, { chatFn: fakeChat([{ reply }]) });
+    await n.stop();
+    const ev = n.got.filter((e) => e.type === 'routine');
+    assert.equal(ev.length, 1, JSON.stringify(reply));
+    assert.equal(ev[0].reply, reply, `원문 그대로: ${JSON.stringify(reply)}`);
+    assert.equal(out.noReport, undefined, JSON.stringify(reply));
+  }
 });
 
 test('C10: 1회 예약도 NO_REPORT는 성공 — 성공 규칙대로 스스로 꺼진다', async () => {
@@ -331,14 +370,14 @@ test('B2·B3: 다음 실행 때 대화 기록에 건너뛴 회차 한 줄(같은
   assert.equal((await byId(ws, r.id)).missed?.length, 2);
   await runRoutine(ws, r.id, { chatFn: fakeChat([{ reply: '보고 완료' }]) });
   const msgs = await thread(ws);
-  const notes = msgs.filter((m) => /건너뛰었습니다/.test(m.text));
+  const notes = msgs.filter((m) => /실행하지 못했습니다/.test(m.text));
   assert.equal(notes.length, 1, '같은 날 두 회차는 한 줄');
   assert.match(notes[0].text, /10월 8일 09:00·13:00/);
   assert.ok(msgs.indexOf(notes[0]) < msgs.findIndex((m) => m.text === '[루틴: 아침 보고] 보고하라'), '그 실행의 지시보다 앞에');
   assert.equal(notes[0].via, 'routine', '루틴에서 온 글로 표시된다(1:1 화면 출처 카드)');
   assert.equal((await byId(ws, r.id)).missed, undefined, '한 번 남긴 회차는 다음 실행에 다시 남기지 않는다');
   await runRoutine(ws, r.id, { chatFn: fakeChat([{ reply: '보고 완료' }]) });
-  assert.equal((await thread(ws)).filter((m) => /건너뛰었습니다/.test(m.text)).length, 1);
+  assert.equal((await thread(ws)).filter((m) => /실행하지 못했습니다/.test(m.text)).length, 1);
 });
 
 test('B4: catch-up 창 안에 켜지면 종전대로 실행하고 건너뜀 기록은 없다', async () => {
@@ -376,7 +415,7 @@ test('B5: 사람이 루틴을 고친 시각(editedAt)·만든 시각 이전 슬�
 
 /* ─── 검수 반영(2차) ─────────────────────────────────────────────────────── */
 
-test('C4b·C4d: 코드 펜스로 감싼 NO_REPORT는 보고할 것 없음 — 보고 뒤에 붙어 오면 빈 펜스 없이 보고만 보낸다', async () => {
+test('C4b·C4d: 코드 펜스로 감싼 NO_REPORT는 보고할 것 없음 — 보고 뒤에 붙어 와도 보고 없음, 대화 기록에는 빈 펜스 없이 보고만 남는다', async () => {
   for (const reply of ['```\nNO_REPORT\n```', '~~~text\nNO_REPORT\n~~~', '```\n\nNO_REPORT\n\n```\n']) {
     const ws = await company();
     const r = await daily(ws);
@@ -390,24 +429,24 @@ test('C4b·C4d: 코드 펜스로 감싼 NO_REPORT는 보고할 것 없음 — �
   const ws = await company();
   const r = await daily(ws);
   const n = notices(ws);
-  await runRoutine(ws, r.id, { chatFn: fakeChat([{ reply: '새 메일 1건: 견적 회신\n\n```\nNO_REPORT\n```' }]) });
+  const out = await runRoutine(ws, r.id, { chatFn: fakeChat([{ reply: '새 메일 1건: 견적 회신\n\n```\nNO_REPORT\n```' }]) });
   await n.stop();
-  const ev = n.got.filter((e) => e.type === 'routine');
-  assert.equal(ev.length, 1);
-  assert.equal(ev[0].reply, '새 메일 1건: 견적 회신', '빈 코드 블록이 남지 않는다');
+  assert.equal(n.got.filter((e) => e.type === 'routine').length, 0, '표지 줄이 따로 있으면 보고 없음(C3과 같은 정책)');
+  assert.equal(out.noReport, true);
+  assert.equal((await thread(ws)).at(-1).text, '새 메일 1건: 견적 회신\n\n(보고할 내용 없음으로 답해 알림을 보내지 않았습니다.)', '빈 코드 블록이 남지 않는다');
 });
 
-test('C4c: 같은 줄에 설명이 붙은 NO_REPORT는 보고로 보내되 앞머리 표지는 뗀다(원문 토큰이 사용자에게 가지 않는다)', async () => {
-  for (const [reply, shown] of [['NO_REPORT (새 메일 없음)', '새 메일 없음'], ['NO_REPORT — 새 항목 0건', '새 항목 0건'], ['NO_REPORT: 변동 없음', '변동 없음'], ['**NO_REPORT** - 확인 완료', '확인 완료']]) {
+test('C4c: 같은 줄에 설명이 붙은 앞머리 표지(구분 기호 — : ( - .)도 보고 없음 — 설명은 대화 기록에만(줄을 바꿔 쓴 C3과 결과가 같다)', async () => {
+  for (const [reply, shown] of [['NO_REPORT (새 메일 없음)', '새 메일 없음'], ['NO_REPORT — 새 항목 0건', '새 항목 0건'], ['NO_REPORT: 변동 없음', '변동 없음'], ['**NO_REPORT** - 확인 완료', '확인 완료'], ['NO_REPORT. 새 메일 0건', '새 메일 0건'], ['NO_REPORT입니다 — 변동 없음', '변동 없음']]) {
     const ws = await company();
     const r = await daily(ws);
     const n = notices(ws);
-    await runRoutine(ws, r.id, { chatFn: fakeChat([{ reply }]) });
+    const out = await runRoutine(ws, r.id, { chatFn: fakeChat([{ reply }]) });
     await n.stop();
-    const ev = n.got.filter((e) => e.type === 'routine');
-    assert.equal(ev.length, 1, reply);
-    assert.equal(ev[0].reply, shown, reply);
-    assert.equal((await byId(ws, r.id)).lastResult, shown, reply);
+    assert.equal(n.got.filter((e) => e.type === 'routine').length, 0, reply);
+    assert.equal(out.noReport, true, reply);
+    assert.equal((await byId(ws, r.id)).lastResult, '보고할 내용 없음', reply);
+    assert.equal((await thread(ws)).at(-1).text, `${shown}\n\n(보고할 내용 없음으로 답해 알림을 보내지 않았습니다.)`, `표지만 떼고 설명은 대화 기록에: ${reply}`);
   }
   // 문장 속 단어(C5)는 그대로 — 앞머리 표지가 아니다
   const ws = await company();
@@ -428,7 +467,7 @@ test('A10·A11: 루틴 실패 기록(지시·실패 안내)은 대화 기록에 
   assert.equal(msgs.length, 5, '건너뜀 1 + 성공 턴 2 + 실패 지시·안내 2 — 화면에는 다 보인다');
   const ctx = msgs.filter((m) => inThreadContext(m, null)).map((m) => [m.who, m.text]);
   assert.deepEqual(ctx.map(([w]) => w), ['user', 'user', 'crew'], `맥락 = 건너뜀 한 줄 + 성공 턴: ${JSON.stringify(ctx)}`);
-  assert.match(ctx[0][1], /건너뛰었습니다/);
+  assert.match(ctx[0][1], /실행하지 못했습니다/);
   assert.equal(ctx[2][1], '보고: 새 메일 2건');
   assert.ok(!ctx.some(([, t]) => /루틴 실행에 실패했습니다/.test(t)), '실패 안내가 에이전트가 한 말처럼 다음 턴 맥락에 실리지 않는다');
 
@@ -464,6 +503,33 @@ test('E1: 영문 회사의 여러 회차 건너뜀 안내는 복수형이다(한
   assert.match(many, /These runs were skipped/); assert.match(many, /Oct 8 09:00 · 13:00/);
   assert.doesNotMatch(many, /run was/);
   assert.match(n1.got.find((e) => e.phase === 'skipped')?.reply ?? '', /This run was skipped/);
+});
+
+test('B26: 건너뜀 안내는 사실만 말한다 — 날짜를 넘긴 23:00 회차는 00:30에 켜져 있어도 실행되지 않으므로 "4시간 안에 켜져 있으면 실행된다"고 하지 않는다', async () => {
+  for (const lang of ['ko', 'en']) {
+    const ws = await company(lang);
+    const r = await seoulDaily(ws, { times: ['23:00'], lastRun: kst('2026-10-07', '23:00').toISOString() });
+    const runs = [];
+    await runDueRoutines(ws, kst('2026-10-09', '00:30'), { runFn: async (_w, id) => { runs.push(id); } });
+    assert.deepEqual(runs, [], '전제: isDue는 날짜를 넘겨 따라잡지 않는다 — 10/8 23:00 회차를 1시간 30분 뒤인 00:30에 켜도 실행되지 않는다');
+    const n = notices(ws);
+    await runDueRoutines(ws, kst('2026-10-09', '03:30'), { runFn: async (_w, id) => { runs.push(id); } });
+    await n.stop();
+    const reply = n.got.find((e) => e.phase === 'skipped')?.reply ?? '';
+    assert.match(reply, lang === 'en' ? /Oct 8 23:00/ : /10월 8일 23:00/);
+    assert.doesNotMatch(reply, /4시간|4 hours/, `있지도 않은 4시간 규칙을 말하지 않는다: ${reply}`);
+    assert.match(reply, lang === 'en' ? /off or asleep/ : /꺼져 있었거나 잠들어 있어 실행하지 못했습니다/, reply);
+    await runRoutine(ws, r.id, { chatFn: fakeChat([{ reply: '보고 완료' }]) }); // 다음 실행이 대화 기록에 같은 문구 한 줄
+    const note = (await thread(ws)).find((m) => /23:00/.test(m.text))?.text ?? '';
+    assert.doesNotMatch(note, /4시간|4 hours/, note);
+    assert.match(note, lang === 'en' ? /off or asleep/ : /꺼져 있었거나 잠들어/, note);
+  }
+  // 활동 화면 문구(app/i18n.jsx activity.routineSkipped) — 같은 사실만
+  const dict = await readFile(new URL('../app/i18n.jsx', import.meta.url), 'utf8');
+  const line = dict.split('\n').find((l) => l.includes("'activity.routineSkipped':")) ?? '';
+  assert.ok(line, '활동 화면 키가 있다');
+  assert.doesNotMatch(line, /4시간|4 hours/, line);
+  assert.match(line, /꺼져 있었거나 잠들어/); assert.match(line, /off or asleep/);
 });
 
 test('B22: 판정 기간(7일) 밖의 missed 표지는 새로 남길 때 정리된다(쌓이지 않는다)', async () => {
