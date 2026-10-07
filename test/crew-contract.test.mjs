@@ -57,6 +57,10 @@ const CONTRACT = {
   office_company_write: { pending: '다음 단계 — 외부 에이전트(봇) 회사 정보 쓰기. 서버가 관리자인지 판정하므로 봇 주인의 역할을 넘겨받는 방식이 필요하다' },
   office_people_read: { pending: '다음 단계 — 외부 에이전트(봇) 직원 명부 읽기. 메모는 관리자만이라 봇 응답 범위를 정해야 한다' },
   office_perf_eval_list: { pending: '다음 단계 — 외부 에이전트(봇) 평가 레포트 읽기. 사람 대상은 본인·관리자만이라 봇 권한 범위부터' },
+  // 오피스 브리핑(에이전트 office_briefing 도구, 유건 10/5) — 받는 사람의 내 공간에 모인다(src/gateway/office-briefing.mjs)
+  office_briefing_write: { pending: '다음 단계 — 외부 에이전트(봇) 브리핑 쓰기(헤르메스 페퍼 정기 브리핑 이관). 받는 사람·작성자 이름을 봇 토큰에 맞춘다' },
+  office_briefing_list: { pending: '다음 단계 — 외부 에이전트(봇) 브리핑 읽기. 주인 개인 기록이라 봇이 읽을 범위부터 정한다' },
+  office_briefing_get: { pending: '다음 단계 — 외부 에이전트(봇) 브리핑 한 건 읽기(office_briefing_list와 같은 범위)' },
   office_perf_eval_write: { pending: '다음 단계 — 외부 에이전트(봇) 평가 쓰기(헤르메스 페퍼 루틴 이관). 관리자 판정과 crew 표시를 봇 토큰에 맞춘다' },
   // 오피스 문서함·드라이브(에이전트 office_files 도구, 분리 검수 MEDIUM 4) — Argo 크루는 주인의 기기 세션으로 부른다(src/gateway/office-files.mjs)
   office_file_list: { pending: '다음 단계 — 외부 에이전트(봇) 문서함 검색. 봇 토큰으로 조직 문서함을 읽는 범위(손님 방·통장사본 가림)부터 정한다' },
@@ -90,7 +94,7 @@ const CONTRACT = {
   msgr_notification_finish: { argoOnly: 'Argo 데스크톱 알림 경로' },
 };
 // 다음 단계로 미룬 항목 — 늘리거나 줄일 때 이 목록을 같이 고친다(조용히 늘지 않게).
-const PENDING = ['msgr_crew_memory', 'msgr_execution_heartbeat', 'msgr_org_docs', 'msgr_personal_ai_consent_ok', 'msgr_work_heartbeat', 'office_business_read', 'office_business_write', 'office_company_read', 'office_company_write', 'office_event_list', 'office_event_write', 'office_file_get', 'office_file_list', 'office_file_write', 'office_mail_accounts', 'office_org_people', 'office_page_create', 'office_page_list_access', 'office_page_save', 'office_pages', 'office_people_read', 'office_perf_eval_list', 'office_perf_eval_write', 'office_task_category_list', 'office_task_list', 'office_task_write'];
+const PENDING = ['msgr_crew_memory', 'msgr_execution_heartbeat', 'msgr_org_docs', 'msgr_personal_ai_consent_ok', 'msgr_work_heartbeat', 'office_briefing_get', 'office_briefing_list', 'office_briefing_write', 'office_business_read', 'office_business_write', 'office_company_read', 'office_company_write', 'office_event_list', 'office_event_write', 'office_file_get', 'office_file_list', 'office_file_write', 'office_mail_accounts', 'office_org_people', 'office_page_create', 'office_page_list_access', 'office_page_save', 'office_pages', 'office_people_read', 'office_perf_eval_list', 'office_perf_eval_write', 'office_task_category_list', 'office_task_list', 'office_task_write'];
 
 function gatewayCalls() {
   const dir = root('src/gateway');

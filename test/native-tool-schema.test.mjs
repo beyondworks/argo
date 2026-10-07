@@ -84,8 +84,8 @@ test('S3b. 메신저 1:1 턴의 크루 도구 전량(오피스 회사·문서함
   const ws = 'sch3b'; await createCompany(ws, '스키마3b', '사장', 'owner-uid'); const root = paths(ws).root;
   const dm = { kind: 'msgr', chatType: 'group', channelKind: 'dm', orgId: '11111111-1111-4111-8111-111111111111', channelId: 'dm-1', crewId: 'crew-1', uid: 'owner-uid', wsId: ws, origin: 'owner-uid' };
   const sink = []; makeCrewServer(ws, 's', 'S', [], 0, [], dm, 'ko', [], '', sink);
-  const office = ['office', 'office_files', 'office_work', 'office_deals', 'office_mail'];
-  assert.deepEqual(office.filter((n) => !sink.some((d) => d.name === n)), [], '메신저 1:1 턴에 오피스 도구 다섯이 실린다');
+  const office = ['office', 'office_files', 'office_work', 'office_deals', 'office_mail', 'office_briefing'];
+  assert.deepEqual(office.filter((n) => !sink.some((d) => d.name === n)), [], '메신저 1:1 턴에 오피스 도구 여섯이 실린다');
   const strict = await startStrictVendor({ vendor: 'xai', reply: (body) => ({ id: 'm1', type: 'message', role: 'assistant', model: body.model, content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } }) });
   try {
     let last; for await (const ev of nativeQuery({ wsId: ws, slug: 's', prompt: '안녕', cwd: root, systemPrompt: 'SYS', model: 'grok-4', saveSession: false,

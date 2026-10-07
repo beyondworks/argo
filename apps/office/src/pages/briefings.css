@@ -1,0 +1,9 @@
+/* 브리핑 화면(10/5) — 화면과 함께 지연 로드된다 */
+.brief-list .list-row { width: 100%; border: 0; background: transparent; font: inherit; color: inherit; text-align: left; cursor: pointer; align-items: flex-start; }
+.brief-list .list-row:hover { background: var(--surface); }
+.brief-list .list-row.on { background: var(--secondary); }
+.brief-list .list-row > .icon { margin-top: 3px; }
+.brief-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.brief-actions { display: flex; justify-content: flex-end; margin-top: 16px; }
+.brief-more { margin-top: 12px; }
+.brief-mod-body { padding: 0 8px 8px; }

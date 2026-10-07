@@ -3,17 +3,17 @@ import { BUSINESS_MODULES } from './module-registry.js';
 // 좌측 메뉴·업무 탭 순서(유건 9/30: "메뉴가 하드코딩이면 모듈식이 아니다") — 사람마다 저장한다(office_user_layouts nav:me · biztabs:me).
 // 메뉴는 내 공간·조직 공간 목록이 달라도 순서·숨김은 한 목록으로 둔다. 홈은 숨길 수 없고, 설정·휴지통은 아래 고정 칸이라 목록에 없다.
 export const NAV = {
-  me: ['home', 'calendar', 'tasks', 'business', 'contracts', 'files', 'mail', 'approvals', 'shared', 'knowhow', 'tools'],
+  me: ['home', 'calendar', 'tasks', 'business', 'contracts', 'files', 'mail', 'briefings', 'approvals', 'shared', 'knowhow', 'tools'],
   // 에이전트 조직도(agents, 17차)는 조직 공간에만 — 에이전트 작업 바로 앞. 내 공간은 다른 조직 전용 화면(작업·결정·직원)처럼 메뉴에 없다
   org: ['home', 'calendar', 'tasks', 'business', 'contracts', 'files', 'agents', 'work', 'approvals', 'decisions', 'outputs', 'journal', 'docs', 'people', 'company', 'perf', 'knowhow', 'tools'],
 };
 export const SECTIONS = ['menu', 'pages', 'crews'];
 // 공간 주소 뒤에 붙는 화면(App.jsx route가 같은 목록을 쓴다) — 메뉴 이름 사전은 nav.<화면>, 아이콘은 NAV_ICON
-export const VIEWS = ['calendar', 'tasks', 'contracts', 'files', 'mail', 'shared', 'agents', 'work', 'approvals', 'decisions', 'outputs', 'journal', 'docs', 'people', 'company', 'perf', 'knowhow', 'tools', 'trash', 'settings'];
-export const NAV_ICON = { home: 'home', calendar: 'calendar', tasks: 'todo', business: 'chart', contracts: 'sign', files: 'folder', mail: 'mail', agents: 'hand', work: 'run', approvals: 'stamp', decisions: 'check', outputs: 'file', journal: 'book', docs: 'doc', people: 'person', company: 'building', perf: 'target', shared: 'share', knowhow: 'book', tools: 'box', trash: 'trash', settings: 'gear' };
+export const VIEWS = ['calendar', 'tasks', 'contracts', 'files', 'mail', 'briefings', 'shared', 'agents', 'work', 'approvals', 'decisions', 'outputs', 'journal', 'docs', 'people', 'company', 'perf', 'knowhow', 'tools', 'trash', 'settings'];
+export const NAV_ICON = { home: 'home', calendar: 'calendar', tasks: 'todo', business: 'chart', contracts: 'sign', files: 'folder', mail: 'mail', briefings: 'text', agents: 'hand', work: 'run', approvals: 'stamp', decisions: 'check', outputs: 'file', journal: 'book', docs: 'doc', people: 'person', company: 'building', perf: 'target', shared: 'share', knowhow: 'book', tools: 'box', trash: 'trash', settings: 'gear' };
 const LOCKED = new Set(['home']);
 // 두 목록을 합친 기본 순서 — 어느 공간에서 걸러 내도 그 공간의 기본 순서가 나온다(테스트가 잠근다)
-const ALL = ['home', 'calendar', 'tasks', 'business', 'contracts', 'files', 'mail', 'agents', 'work', 'approvals', 'decisions', 'outputs', 'journal', 'docs', 'people', 'company', 'perf', 'shared', 'knowhow', 'tools'];
+const ALL = ['home', 'calendar', 'tasks', 'business', 'contracts', 'files', 'mail', 'briefings', 'agents', 'work', 'approvals', 'decisions', 'outputs', 'journal', 'docs', 'people', 'company', 'perf', 'shared', 'knowhow', 'tools'];
 
 /** a를 b 자리로 옮긴 새 배열 — 같은 자리·없는 id면 그대로 */
 export function moveId(list, a, b) {

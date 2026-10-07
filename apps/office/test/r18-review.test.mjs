@@ -86,7 +86,9 @@ test('LOW2: 기본 배치는 기존 순서 그대로 + 챙길 것만 현황 뒤'
   for (const kind of ['me', 'org']) {
     const list = HOME_DEFAULTS[kind].map((d) => `${d.id}:${d.size}`);
     assert.equal(list[1], 'attention:m', kind);
-    assert.deepEqual(list.filter((x) => !x.startsWith('attention:')), HEAD[kind], kind);
+    // 새 모듈은 기존 순서를 밀지 않게 끝에만 붙는다(브리핑 10/5)
+    assert.deepEqual(list.filter((x) => !x.startsWith('attention:')).slice(0, HEAD[kind].length), HEAD[kind], kind);
+    assert.deepEqual(list.slice(HEAD[kind].length + 1), { me: ['briefing:l'], org: [] }[kind], kind);
   }
 });
 

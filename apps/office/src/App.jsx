@@ -47,6 +47,7 @@ const SignPage = lazy(() => import('./docs/SignPage.jsx')); // 서명 링크(로
 const FileLink = lazy(() => import('./files/LinkPage.jsx')); // 문서함 공유 링크(로그인 없음, 15차)
 const Files = lazy(() => import('./files/FilesPage.jsx')); // 문서함·구글 드라이브(유건 10/2)
 const DriveConnect = lazy(() => import('./files/FilesPage.jsx').then((m) => ({ default: m.DriveConnect })));
+const Briefings = lazy(() => import('./pages/Briefings.jsx')); // 브리핑(유건 10/5 — 내 공간)
 const Company = lazy(() => import('./pages/Company.jsx')); // 회사 정보(유건 10/2 트랙 C)
 const People = lazy(() => import('./pages/People.jsx')); // 직원 명부(유건 10/2 트랙 C)
 // 에이전트 조직도·에이전트 상세(17차 A) — 한 청크. 상세는 열 때만 받는다(첫 화면에는 여는 단추만)
@@ -269,7 +270,7 @@ export default function App() {
     business: <Lazy reset={path}>{r.tab === 'library' ? <ModuleLibrary key={r.space} space={r.space} targetId={params.get('target')} /> : <BusinessPage key={r.space} space={r.space} tab={r.tab} openId={params.get('open')} view={params.get('view')} />}</Lazy>,
     home: <Home space={r.space} />, contracts: <Contracts key={r.space} space={r.space} params={params} />, files: <Files key={r.space} space={r.space} query={query} />, filesConnect: <DriveConnect query={query} />, calendar: <Calendar key={r.space} space={r.space} day={params.get('day')} />, tasks: <Tasks key={r.space} space={r.space} />, mail: <Mail id={r.id} />, mailConnect: <MailConnect query={query} />, page: <PageView key={r.id} id={r.id} space={r.space} />, shared: <Shared />,
     work: <Work space={r.space} openId={params.get('open')} folder={params.get('folder')} />, agents: <CrewOrg space={r.space} />, approvals: <Approvals space={r.space} openId={params.get('open')} folder={params.get('folder')} />, decisions: <Decisions space={r.space} openId={params.get('open')} folder={params.get('folder')} />,
-    outputs: <Outputs space={r.space} openId={params.get('open')} folder={params.get('folder')} />, journal: <Journal space={r.space} folder={params.get('folder')} />, docs: <Docs space={r.space} openId={params.get('open')} />, perf: <Perf space={r.space} tab={params.get('tab')} />, people: <People key={r.space} space={r.space} />, company: <Company key={r.space} space={r.space} />, knowhow: <Assets space={r.space} />, tools: <Tools space={r.space} />, trash: <Trash space={r.space} />, settings: <Settings />,
+    outputs: <Outputs space={r.space} openId={params.get('open')} folder={params.get('folder')} />, journal: <Journal space={r.space} folder={params.get('folder')} />, docs: <Docs space={r.space} openId={params.get('open')} />, perf: <Perf space={r.space} tab={params.get('tab')} />, people: <People key={r.space} space={r.space} />, company: <Company key={r.space} space={r.space} />, briefings: <Briefings openId={params.get('open')} />, knowhow: <Assets space={r.space} />, tools: <Tools space={r.space} />, trash: <Trash space={r.space} />, settings: <Settings />,
   };
   return (
     <DndContext sensors={sensors} collisionDetection={collision} onDragStart={({ active }) => setDragging(active.data.current)} onDragCancel={() => setDragging(null)} onDragEnd={onDragEnd}>
