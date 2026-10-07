@@ -55,6 +55,7 @@ export function digestFailures(events, { now = Date.now(), windowMs = DIGEST_WIN
   const groups = new Map();
   for (const e of events ?? []) {
     if (e?.type !== 'turn' || e.ok !== false || isAbortedTurnEvent(e) || !e.error) continue; // 중단은 실패가 아니다 — 옛 중단 문자열 포함(runner-usable.lastTurnByRunner와 같은 술어 — D8)
+    if (e.preRun === true) continue; // 러너를 고르기 전에 끝난 턴(러너 없음·http 러너·카드 없음 — chat.mjs failBeforeRun)은 러너 오류가 아니라 설정 상태다. 설정 화면·활동 행이 이미 원인을 보인다(2026-10-08 검수 LOW-2: 'unknown' 라벨·제보 안내 행이 생기던 것)
     const ts = Date.parse(e.ts ?? ''); if (!Number.isFinite(ts) || now - ts > windowMs || ts > now + 60_000) continue;
     const runner = e.runner || 'unknown'; const signature = errorSignature(e.error); const key = `${runner}|${signature}`;
     const g = groups.get(key) ?? { runner, signature, count: 0, firstTs: ts, lastTs: ts, sample: errorSample(e.error), slugs: new Set() };
