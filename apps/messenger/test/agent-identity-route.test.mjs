@@ -39,7 +39,7 @@ function fakeLookup({ cands = [], members = [], counts = {}, fail = null } = {})
   };
 }
 
-test('#2 earlierAgentDms: 그 에이전트의 조직 행마다 옛 1:1(나 + 그 행)과 글 수 — 조직마다 한 줄', async () => {
+test('#2 earlierAgentDms: 그 에이전트의 조직 행마다 옛 1:1(나 + 그 행)과 글 수 — 그룹 방·다른 에이전트는 빼고', async () => {
   const f = fakeLookup({
     cands: [chan('dm-lean', 'o-lean', LEAN), chan('dm-design', 'o-design', DESIGN), chan('grp', 'o-lean', LEAN)],
     members: [mem('dm-lean', 'user', ME), mem('dm-lean', 'crew', 'o-lean'), mem('dm-design', 'user', ME), mem('dm-design', 'crew', 'o-design'),
@@ -47,19 +47,27 @@ test('#2 earlierAgentDms: 그 에이전트의 조직 행마다 옛 1:1(나 + 그
     counts: { 'dm-lean': 282, 'dm-design': 4, grp: 9 },
   });
   const got = await G.earlierAgentDms('p-1', { uid: ME, rows: own, ...f });
-  assert.deepEqual(got.sort((a, b) => a.orgId.localeCompare(b.orgId)), [{ channelId: 'dm-design', orgId: DESIGN, n: 4 }, { channelId: 'dm-lean', orgId: LEAN, n: 282 }]);
+  assert.deepEqual(got.sort((a, b) => a.orgId.localeCompare(b.orgId)), [
+    { channelId: 'dm-design', orgId: DESIGN, crewId: 'o-design', n: 4, archived: false },
+    { channelId: 'dm-lean', orgId: LEAN, crewId: 'o-lean', n: 282, archived: false }]);
   assert.deepEqual(f.calls.crewDms, [['o-lean', 'o-design']], '같은 에이전트의 조직 행만(다른 에이전트 x-lean 제외), 한 번');
   assert.equal(f.calls.members.length, 1, '구성원 확인 한 번');
   assert.deepEqual(f.calls.count.sort(), ['dm-design', 'dm-lean'], '그룹 방은 세지 않는다');
 });
 
-test('#2 earlierAgentDms: 글 0개·보관한 방·다른 조직에 걸린 행은 뺀다, 같은 조직에 방이 둘이면 글이 많은 쪽 한 줄', async () => {
+// 유건 결정 2026-10-08 1-②: 옛 조직 1:1은 보관하고 '이전 대화 보기'로 연다 — 보관한 방을 빼면 보관 뒤 옛 글(실측 페퍼 287개)을 볼 길이 없다.
+// 같은 조직에 같은 에이전트와의 옛 1:1이 둘이면(운영 실측: 페퍼 287개·13개) 큰 방 하나만 보이던 것도 모두 보이게 한다.
+test('#2 earlierAgentDms: 보관한 옛 1:1도, 같은 조직의 두 방도 모두 — 글 0개와 다른 조직에 걸린 행만 뺀다', async () => {
   const f = fakeLookup({
-    cands: [chan('empty', 'o-lean', LEAN), chan('arch', 'o-lean', LEAN, { archived_at: '2026-09-30T00:00:00Z' }), chan('a', 'o-design', DESIGN), chan('b', 'o-design', DESIGN), chan('wrongorg', 'o-design', LEAN)],
+    cands: [chan('empty', 'o-lean', LEAN), chan('arch', 'o-lean', LEAN, { archived_at: '2026-10-08T00:00:00Z' }), chan('a', 'o-design', DESIGN), chan('b', 'o-design', DESIGN), chan('wrongorg', 'o-design', LEAN)],
     members: ['empty', 'arch', 'a', 'b', 'wrongorg'].flatMap((id) => [mem(id, 'user', ME), mem(id, 'crew', id === 'empty' || id === 'arch' ? 'o-lean' : 'o-design')]),
     counts: { empty: 0, arch: 50, a: 3, b: 7, wrongorg: 99 },
   });
-  assert.deepEqual(await G.earlierAgentDms('p-1', { uid: ME, rows: own, ...f }), [{ channelId: 'b', orgId: DESIGN, n: 7 }]);
+  const got = await G.earlierAgentDms('p-1', { uid: ME, rows: own, ...f });
+  assert.deepEqual(got.sort((x, y) => x.channelId.localeCompare(y.channelId)), [
+    { channelId: 'a', orgId: DESIGN, crewId: 'o-design', n: 3, archived: false },
+    { channelId: 'arch', orgId: LEAN, crewId: 'o-lean', n: 50, archived: true },
+    { channelId: 'b', orgId: DESIGN, crewId: 'o-design', n: 7, archived: false }]);
 });
 
 test('#2 earlierAgentDms: 조직 행이 없거나·남의 행·조직 행에서 부르면 조회 0, 조회가 실패하면 빈 목록', async () => {
@@ -75,11 +83,24 @@ test('#2 earlierAgentDms: 조직 행이 없거나·남의 행·조직 행에서 
   assert.deepEqual(await G.earlierAgentDms('p-1', { uid: ME, rows: own, ...badCount }), []);
 });
 
-test('#2 earlierLines: 조직 목록 순서로, 내가 나간 조직(목록에 없음)은 빼고 조직 이름을 붙인다', () => {
+test('#2 earlierLines: 조직 목록 순서로(같은 조직이면 글이 많은 방 먼저), 내가 나간 조직(목록에 없음)은 빼고 조직 이름을 붙인다', () => {
   const orgs = [{ id: DESIGN, name: 'Design' }, { id: LEAN, name: 'Lean' }];
   assert.deepEqual(G.earlierLines([{ channelId: 'dm-lean', orgId: LEAN, n: 282 }, { channelId: 'gone', orgId: 'org-left', n: 3 }, { channelId: 'dm-design', orgId: DESIGN, n: 4 }], orgs),
     [{ channelId: 'dm-design', orgId: DESIGN, n: 4, org: 'Design' }, { channelId: 'dm-lean', orgId: LEAN, n: 282, org: 'Lean' }]);
+  assert.deepEqual(G.earlierLines([{ channelId: 'small', orgId: LEAN, n: 13, archived: true }, { channelId: 'big', orgId: LEAN, n: 287, archived: true }, { channelId: 'dm-design', orgId: DESIGN, n: 4 }], orgs).map((x) => x.channelId),
+    ['dm-design', 'big', 'small'], '같은 조직의 두 방은 둘 다, 글이 많은 방 먼저');
   assert.deepEqual(G.earlierLines([], orgs), []);
   assert.deepEqual(G.earlierLines(null, null), []);
+});
+
+// 보관한 옛 1:1을 읽기로 연 방(App openEarlier가 남긴 것) — 지금 공간·지금 방일 때만 그 행. 목록(보관 제외)에 없는 방을 이것으로 그린다.
+test('#2 archivedRoomFor: 지금 공간·지금 방이 읽기로 연 보관 방이면 그 행, 아니면 없음', () => {
+  const row = { id: 'arch', kind: 'dm', org_id: LEAN, archived_at: '2026-10-08T00:00:00Z', name: 'dm:페퍼' };
+  const earlier = { orgId: LEAN, channel: row, crewId: 'o-lean' };
+  assert.equal(G.archivedRoomFor(earlier, { orgId: LEAN, chId: 'arch' }), row);
+  assert.equal(G.archivedRoomFor(earlier, { orgId: DESIGN, chId: 'arch' }), undefined, '다른 공간');
+  assert.equal(G.archivedRoomFor(earlier, { orgId: LEAN, chId: 'general' }), undefined, '다른 방으로 옮겼다');
+  assert.equal(G.archivedRoomFor({ ...earlier, channel: { ...row, archived_at: null } }, { orgId: LEAN, chId: 'arch' }), undefined, '보관이 풀린 방은 목록이 그린다');
+  assert.equal(G.archivedRoomFor(null, { orgId: LEAN, chId: 'arch' }), undefined);
 });
 

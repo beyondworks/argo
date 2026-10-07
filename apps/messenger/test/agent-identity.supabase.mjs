@@ -2,16 +2,20 @@
 // 에이전트 = 한 사람(유건 2026-10-05) 화면 확인용 — personal-space 픽스처에 같은 에이전트(페퍼)의 조직 행(주황 얼굴 저장)·개인 행(저장값 없음)과
 // #819 전에 만든 옛 조직 1:1 방(나 + 조직 행 페퍼)을 더했다. 띄우기: npx vite --config test/agent-identity.config.mjs (AI_TEST_PORT, 기본 5288)
 // 옛 방에는 글 3개(검수 #2: 개인 1:1 위 '이전 대화 보기'), localStorage aiFixtureLegacyUnread='1'이면 그중 2개가 안 읽은 글(검수 #1: 안 읽은 글이 있으면 옛 방을 연다)
+// localStorage aiFixtureArchived='1'이면 옛 방을 보관한 뒤(유건 결정 2026-10-08 1-② — 마이그레이션 20261008103000) + 같은 조직의 두 번째 옛 페퍼 1:1(글 2개, 보관):
+//   조직 목록에는 둘 다 없고, 개인 공간 페퍼 1:1 위 '이전 대화 보기'에 두 줄 → 누르면 읽기 전용(입력창 대신 안내, 답글·반응 줄 없음)
 export const configured = true, customServer = false, SB_URL = 'http://fixture.invalid', SB_ANON = 'fixture';
 const uid = 'user-me', org = 'org-fixture', now = new Date().toISOString();
 const legacyUnread = localStorage.getItem('aiFixtureLegacyUnread') === '1';
+const archivedLegacy = localStorage.getItem('aiFixtureArchived') === '1';
+const ARCHIVED_AT = archivedLegacy ? '2026-10-08T01:00:00+00:00' : null;
 const noFace = localStorage.getItem('aiFixtureNoFace') === '1'; // 검수 #3: 페퍼가 얼굴을 저장한 적 없을 때 — 로그인 뒤 대표 행 얼굴을 한 번 저장하는지(window.__psFixture.calls의 msgr_crews update)
-const legacyMsg = (id, body, crew = false) => ({ id, channel_id: 'org-pepper-dm', org_id: org, author_kind: crew ? 'crew' : 'user', author_user_id: crew ? null : uid, crew_id: crew ? 'crew-pepper-org' : null, kind: 'text', body, mentions: [], reply_to: null, thread_root: null, created_at: `2026-09-2${id}T09:00:00+00:00`, edited_at: null, deleted_at: null, meta: null, client_msg_id: null });
+const legacyMsg = (id, body, crew = false, ch = 'org-pepper-dm') => ({ id, channel_id: ch, org_id: org, author_kind: crew ? 'crew' : 'user', author_user_id: crew ? null : uid, crew_id: crew ? 'crew-pepper-org' : null, kind: 'text', body, mentions: [], reply_to: null, thread_root: null, created_at: `2026-09-2${id}T09:00:00+00:00`, edited_at: null, deleted_at: null, meta: null, client_msg_id: null });
 const channel = (id, kind, name, orgId = org) => ({ id, org_id: orgId, kind, name, created_by: uid, archived_at: null, admin_user_ids: [], crew_memory: true, personal_crews: orgId ? 'allowed' : 'blocked' });
 const state = window.__psFixture = { calls: [], failNext: null, aiConsent: localStorage.getItem('psFixtureAiConsent') === 'none' ? null : undefined, tables: { // aiConsent: 시나리오가 동의 전 상태를 볼 때 'none'
   msgr_org_members: [{ user_id: uid, org_id: org, role: 'owner', display_name: 'Fixture Owner', removed_at: null, msgr_orgs: { id: org, name: 'Fixture Organization', slug: 'fixture', owner_user_id: uid } },
     { user_id: 'user-colleague', org_id: org, role: 'member', display_name: 'Org Colleague', removed_at: null }], // 조직원이면서 친구 — 개인 공간에서는 조직 DM이 아니라 개인 1:1로 가야 한다
-  msgr_channels: [channel('general', 'public', 'Fixture General'), channel('org-dm', 'dm', 'dm:Org Colleague'), channel('org-pepper-dm', 'dm', 'dm:페퍼')],
+  msgr_channels: [channel('general', 'public', 'Fixture General'), channel('org-dm', 'dm', 'dm:Org Colleague'), { ...channel('org-pepper-dm', 'dm', 'dm:페퍼'), archived_at: ARCHIVED_AT }, ...(archivedLegacy ? [{ ...channel('org-pepper-dm-2', 'dm', 'dm:페퍼'), archived_at: ARCHIVED_AT }] : [])],
   msgr_crews: [{ id: 'crew-1', org_id: org, owner_user_id: uid, slug: 'fixture-crew', display_name: 'Fixture Agent', hosting: 'local', status: 'active', last_seen_at: now, created_at: now, allow: 'all' },
     { id: 'crew-pepper-org', org_id: org, owner_user_id: uid, ws_id: 'ws-a', slug: 'pepper', display_name: '페퍼', role_text: '모더레이터', hosting: 'local', status: 'active', last_seen_at: now, created_at: '2026-09-01T00:00:00+00:00', allow: 'owner', face: noFace ? null : { v: 2, shape: 8, color: 9 }, avatar_url: null },
     { id: 'pcrew-pepper', org_id: null, owner_user_id: uid, ws_id: 'ws-a', slug: 'pepper', display_name: '페퍼', role_text: '모더레이터', hosting: 'local', status: 'active', last_seen_at: now, created_at: '2026-10-01T00:00:00+00:00', allow: 'owner', face: null, avatar_url: null }],
@@ -20,8 +24,10 @@ const state = window.__psFixture = { calls: [], failNext: null, aiConsent: local
     { channel_id: 'org-dm', member_kind: 'user', member_id: uid },
     { channel_id: 'org-dm', member_kind: 'user', member_id: 'user-colleague' },
     { channel_id: 'org-pepper-dm', member_kind: 'user', member_id: uid }, { channel_id: 'org-pepper-dm', member_kind: 'crew', member_id: 'crew-pepper-org' }, // 옛 조직 1:1
+    ...(archivedLegacy ? [{ channel_id: 'org-pepper-dm-2', member_kind: 'user', member_id: uid }, { channel_id: 'org-pepper-dm-2', member_kind: 'crew', member_id: 'crew-pepper-org' }] : []), // 같은 쌍의 두 번째 옛 방(운영 실측 모양)
   ],
-  msgr_messages: [legacyMsg(1, '지난주 보고서 정리해 줘'), legacyMsg(2, '정리했습니다 — 요약은 아래에', true), legacyMsg(3, '오늘 회의 안건도 올려 두었습니다', true)],
+  msgr_messages: [legacyMsg(1, '지난주 보고서 정리해 줘'), legacyMsg(2, '정리했습니다 — 요약은 아래에', true), legacyMsg(3, '오늘 회의 안건도 올려 두었습니다', true),
+    ...(archivedLegacy ? [legacyMsg(4, '바버샵 예약 30분 전에 알려 줘', false, 'org-pepper-dm-2'), legacyMsg(5, '예약 시간 30분 전에 알려 드릴게요', true, 'org-pepper-dm-2')] : [])],
   msgr_channel_crew_requests: [{ id: 'req-alice', channel_id: 'pdm-alice', crew_id: 'pcrew-alice2', requested_by: 'user-alice', status: 'pending' }], // 친구가 자기 에이전트를 1:1에 넣겠다고 요청(승인자 = 방을 연 나)
   msgr_target_prefs: [], msgr_channel_prefs: [],
   // Friends fixture

@@ -121,7 +121,9 @@ export function agentDmRoute({ channel, unread, from }) {
 }
 
 /** 내 에이전트 개인 1:1 위 '이전 대화 보기'(분리 검수 2026-10-05 #2 — 유건 계정 실측: 페퍼 조직 1:1 글 282개, 개인 1:1 3개) — 그 에이전트의 옛 조직 1:1과 글 수.
-    옛 조직 1:1 = 그 에이전트의 조직 행 하나와 나만 있는 그 조직의 DM(legacyAgentDm과 같은 판정). 조직마다 한 줄(방이 둘이면 글이 많은 쪽), 글 0개·보관한 방은 뺀다.
+    옛 조직 1:1 = 그 에이전트의 조직 행 하나와 나만 있는 그 조직의 DM(legacyAgentDm과 같은 판정). 방마다 한 줄, 글 0개는 뺀다.
+    보관한 방도 넣는다(유건 결정 2026-10-08 1-② — 옛 조직 1:1은 보관하고 여기서 읽기로 연다, archived 표지). 같은 조직에 방이 둘이면 둘 다
+    (운영 실측: 페퍼 287개·13개 — 큰 방 하나만 보여 작은 방 글을 볼 길이 없었다). 반환 [{ channelId, orgId, crewId: 그 방의 조직 행, n, archived }]
     crewId = 개인 1:1의 내 개인 행, rows = 내 크루 행(App ownCrews — 로그인 때 이미 읽은 것). 조회는 주입한다(App은 supabase, 테스트는 가짜):
       crewDms(조직 행 id들) → [{ channel_id, member_id, msgr_channels: { org_id, kind, archived_at } }]  — 그 행들이 든 채널 1건
       members(채널 id들)    → [{ channel_id, member_kind, member_id }]                                  — 1:1인지 구성원 1건
@@ -135,20 +137,23 @@ export async function earlierAgentDms(crewId, { uid, rows, crewDms, members, cou
   if (!orgRows.length) return [];
   try {
     const rowOf = new Map(orgRows.map((r) => [r.id, r]));
-    const dms = ((await crewDms(orgRows.map((r) => r.id))) ?? []).filter((x) => x.msgr_channels?.kind === 'dm' && !x.msgr_channels.archived_at && x.msgr_channels.org_id === rowOf.get(x.member_id)?.org_id);
+    const dms = ((await crewDms(orgRows.map((r) => r.id))) ?? []).filter((x) => x.msgr_channels?.kind === 'dm' && x.msgr_channels.org_id === rowOf.get(x.member_id)?.org_id);
     if (!dms.length) return [];
     const ms = (await members([...new Set(dms.map((x) => x.channel_id))])) ?? [];
     const solo = dms.filter((x) => legacyAgentDm({ id: x.channel_id, kind: 'dm', org_id: x.msgr_channels.org_id }, ms.filter((m) => m.channel_id === x.channel_id), { uid, crewOf: (id) => rowOf.get(id) ?? null })?.id === x.member_id);
-    const counted = await Promise.all(solo.map(async (x) => ({ channelId: x.channel_id, orgId: x.msgr_channels.org_id, n: Number(await count(x.channel_id)) || 0 })));
-    const best = new Map();
-    for (const r of counted) if (r.n > 0 && r.n > (best.get(r.orgId)?.n ?? 0)) best.set(r.orgId, r);
-    return [...best.values()];
+    const counted = await Promise.all(solo.map(async (x) => ({ channelId: x.channel_id, orgId: x.msgr_channels.org_id, crewId: x.member_id, n: Number(await count(x.channel_id)) || 0, archived: !!x.msgr_channels.archived_at })));
+    return counted.filter((r) => r.n > 0);
   } catch { return []; }
 }
-/** 그릴 줄 — 조직 목록 순서, 내가 나간 조직(목록에 없음 — 그 방은 이제 못 연다)은 빼고 조직 이름을 붙인다 */
+/** 그릴 줄 — 조직 목록 순서(같은 조직이면 글이 많은 방 먼저), 내가 나간 조직(목록에 없음 — 그 방은 이제 못 연다)은 빼고 조직 이름을 붙인다 */
 export function earlierLines(list, orgs) {
   const order = new Map((orgs ?? []).map((o, i) => [o.id, i]));
-  return (list ?? []).filter((x) => order.has(x.orgId)).sort((a, b) => order.get(a.orgId) - order.get(b.orgId)).map((x) => ({ ...x, org: orgs[order.get(x.orgId)].name ?? '' }));
+  return (list ?? []).filter((x) => order.has(x.orgId)).sort((a, b) => order.get(a.orgId) - order.get(b.orgId) || b.n - a.n).map((x) => ({ ...x, org: orgs[order.get(x.orgId)].name ?? '' }));
+}
+/** 보관한 옛 조직 1:1을 읽기로 연 방(유건 결정 2026-10-08 1-②) — App openEarlier가 남긴 것(earlier = { orgId, channel: 채널 행, crewId })이
+    지금 공간·지금 방이고 아직 보관돼 있으면 그 채널 행, 아니면 undefined. 조직 목록(loadOrg)은 보관한 방을 읽지 않아 이 행으로 그린다(읽기 전용) */
+export function archivedRoomFor(earlier, { orgId, chId }) {
+  return earlier?.channel?.archived_at && earlier.orgId === orgId && earlier.channel.id === chId ? earlier.channel : undefined;
 }
 
 /** 얼굴·사진 저장 — 같은 에이전트(agentLooks의 ids, 내 행만)를 한 요청으로. 지도를 모르면 누른 행 하나(종전).

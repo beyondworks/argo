@@ -390,6 +390,10 @@ export function makeDb(client) {
       const rows = unwrap(await client.from('msgr_channel_members').select('member_id').eq('channel_id', channelId).eq('member_kind', 'crew')) ?? [];
       return new Set(rows.map((r) => r.member_id));
     },
+    /** 채널 구성원 전부(사람·에이전트) — 보관한 옛 1:1 판정(movedAgentRoom)용. 그 판정이 필요한 실패 경로에서만 부른다. */
+    async channelMembers(channelId) {
+      return unwrap(await client.from('msgr_channel_members').select('member_kind, member_id').eq('channel_id', channelId)) ?? [];
+    },
     async memberName(orgId, uid) {
       if (!orgId) return (unwrap(await client.from('msgr_profiles').select('display_name').eq('user_id', uid).maybeSingle()))?.display_name ?? null; // 개인 방 — 조직 이름이 없다
       const r = unwrap(await client.from('msgr_org_members').select('display_name').eq('org_id', orgId).eq('user_id', uid).maybeSingle());
@@ -1344,7 +1348,16 @@ async function restoreMessengerContext(wsId, slug, origin, session, { ownerAppro
 /** 결재·예약·장시간 실행은 매번 새 수집함으로 같은 채널의 최신 문맥과 기억 설정을 복원한다. */
 export async function runMessengerContinuation(wsId, slug, origin, message, _globalSessionId, { runChat = chat, session = sessionClient, ownerApproved = false, loopTurn = false, notOwnerDirect = null } = {}) { // notOwnerDirect = 사장 직접 턴이 아닌 시작점의 크루(장시간 작업·예약·결재 후속) — 풀 오토만 끈다
   return withLock(`msgr-turn:${wsId}:${slug}`, async () => {
-    const { db, ctx, ch, source, envelope, orgPeers } = await restoreMessengerContext(wsId, slug, origin, session, { ownerApproved }); // 주인이 승인한 결재 후속 — 권한은 OWNER_APPROVAL_LIFTS_GUEST가 정한다
+    let restored;
+    try { restored = await restoreMessengerContext(wsId, slug, origin, session, { ownerApproved }); } // 주인이 승인한 결재 후속 — 권한은 OWNER_APPROVAL_LIFTS_GUEST가 정한다
+    catch (e) { // 목적지가 보관한 옛 조직 1:1이면(유건 결정 2026-10-08 1-②) 그 방 문맥 없이 돌리고 결과는 개인 1:1로(msgrPush가 같은 판정으로 보낸다). 아니면 종전 오류
+      const moved = await movedAgentRoom(session, wsId, slug, origin);
+      if (!moved) throw e;
+      const turn = await runChat(wsId, slug, message, null, { source: 'messenger', ...(notOwnerDirect ? { notOwnerDirect } : {}) });
+      const text = parseMessengerDisposition(turn.reply ?? '').text;
+      return { ...turn, replyForChecks: turn.reply, reply: loopTurn ? stripLoopVerdict(text) : text, msgr: origin };
+    }
+    const { db, ctx, ch, source, envelope, orgPeers } = restored;
     // 조직 자격(2026-09-27 M5) — 결재 확정 후속도 실행(유료 LLM 호출) 직전에 다시 확인한다. 채널 안내는 drain()의 다음 폴이 낸다
     // (여기서 또 남기면 실패 노트까지 겹쳐 두 번 시도된다) — 여기서는 비용 큰 실행만 막는다. fail-open.
     if (ch?.org_id && !(db.orgEntitled ? await db.orgEntitled(ch.org_id).catch(() => true) : true)) throw new Error('msgr_org_unentitled');
@@ -1764,6 +1777,36 @@ async function personalCrewRoom(c, crew) {
   if (!data) throw new Error('msgr_dm_personal_crew: no room');
   return data;
 }
+/** 보관한 옛 조직 1:1(유건 결정 2026-10-08 1-② — 마이그레이션 20261008103000)을 가리키는 메신저 목적지면 같은 에이전트의 개인 1:1 { crew: 개인 행, channelId }, 아니면 null.
+    옛 방 판정은 마이그레이션·앱 legacyAgentDm과 같다: 조직 DM, 보관됨, 구성원은 나(로그인 계정) 한 명 + 이 slug의 내 조직 행 한 명. 같은 에이전트(이 회사·slug)의 개인 행이 있을 때만
+    (없으면 옛 본체 — 마이그레이션도 그 방은 보관하지 않는다). 루틴의 msgr 출처·명시 알림 목적지는 routines.json에 그대로 두고 실행 때마다 여기서 판정한다(파일 일괄 수정 없음).
+    부하: 메신저 복원·목적지 확인이 실패한 경로에서만 — 채널 1 + 구성원 1 + 내 크루 행 1 + 개인 방 RPC 1(있으면 찾기만, 쓰기 0). 성공 경로는 0. 판정 중 오류는 null(종전 오류를 낸다). */
+async function movedAgentRoom(session, wsId, slug, origin) {
+  try {
+    const c = await session();
+    if (!c || !slug || !origin?.orgId || !origin.channelId || !origin.crewId || (origin.uid && origin.uid !== c.uid) || (origin.wsId && origin.wsId !== wsId) || !c.db.channelMembers) return null;
+    const ch = await c.db.channel(origin.channelId);
+    if (!ch?.archived_at || ch.kind !== 'dm' || ch.org_id !== origin.orgId) return null;
+    const ms = (await c.db.channelMembers(ch.id)) ?? [];
+    const users = ms.filter((m) => m.member_kind === 'user'); const crews = ms.filter((m) => m.member_kind === 'crew');
+    if (users.length !== 1 || users[0].member_id !== c.uid || crews.length !== 1 || crews[0].member_id !== origin.crewId) return null; // 구성원 종류는 사람·에이전트뿐(표 제약)
+    const mine = ((await c.db.myCrews(c.uid, wsId)) ?? []).filter((r) => r.slug === slug);
+    if (!mine.some((r) => r.id === origin.crewId && r.org_id === origin.orgId)) return null; // 그 방의 에이전트가 이 회사·slug의 내 조직 행
+    const personal = mine.find((r) => r.org_id == null);
+    if (!personal) return null;
+    return { crew: personal, channelId: await personalCrewRoom(c, personal) };
+  } catch (e) { console.error(`[argo] 메신저: 보관한 옛 1:1의 개인 1:1을 찾지 못함(${wsId}/${slug}) — 종전 오류로: ${e?.message ?? e}`); return null; }
+}
+const routineResultBody = (event, body, lang) => pick(`[루틴] ${event.routine?.title ?? ''}${event.ok === false ? ' (실패)' : ''}\n\n${body}`,
+  `[Routine] ${event.routine?.title ?? ''}${event.ok === false ? ' (failed)' : ''}\n\n${body}`, lang).slice(0, MSG_MAX);
+/** 옮긴 개인 1:1에 결과 글 한 건 — 스레드·멘션 없음(그 방에는 원래 지시가 없다), 넘김 없이 끝(done). 같은 결과는 key(멱등)로 한 번만, 답 속 파일은 첨부(개인 경로 p/). */
+async function postToMovedRoom(c, wsId, moved, { body, key, plan, lang }) {
+  const row = { channel_id: moved.channelId, author_kind: 'crew', crew_id: moved.crew.id, kind: 'text', reply_to: null, thread_root: null,
+    client_msg_id: `${key}:${moved.crew.id}`, body: String(body ?? '').slice(0, MSG_MAX), mentions: [], meta: { disposition: 'done' } };
+  const posted = await c.db.insertMessage(row);
+  if (posted && plan) await deliverReplyFiles(wsId, c.db, { orgId: null, channelId: moved.channelId, channelKind: 'dm', crewId: moved.crew.id, threadRoot: null, failKey: `attfail:${row.client_msg_id}` }, posted, plan, lang);
+  return true;
+}
 /** 크루와 나의 1:1 방 id — 크루가 든 DM 중 **사람 멤버가 정확히 나 한 명, 크루 멤버가 정확히 그 크루**인 방(메신저 앱 App.jsx의 DM 매처와 같은 규칙).
     DM 모양(msgr_dm_shape)은 사람 2명+크루 1명까지 허용하고, 다른 구성원이 내 크루와 연 DM에는 소유자인 내가 동반 멤버로 들어가므로
     "내가 든 DM"만 보면 그 방(제3자가 읽음)에 결재 사유·쪽지 본문이 올라간다(검수 #537 HIGH-1). 보관된 방은 건너뛰고 새로 만든다 —
@@ -1799,7 +1842,15 @@ export async function msgrPush(event, { session = sessionClient } = {}) {
     if (!c) throw new Error('Messenger notification session unavailable');
     if (company.ownerId !== c.uid) throw new Error('Messenger notification owner mismatch');
     const available = await messengerNotificationChannels(event.wsId, event.routine.agentSlug, { session: async () => c });
-    if (!available.some((r) => r.orgId === target.orgId && r.channelId === target.channelId)) throw new Error('Messenger notification channel unavailable');
+    if (!available.some((r) => r.orgId === target.orgId && r.channelId === target.channelId)) {
+      // 고른 방이 보관한 옛 조직 1:1이면(유건 결정 2026-10-08 1-②) 같은 에이전트의 개인 1:1로 — 루틴 파일(routines.json)은 고치지 않고 실행 때 판정한다
+      const orgCrew = await c.db.crewBySlug(c.uid, event.wsId, event.routine.agentSlug, target.orgId).catch(() => null);
+      const moved = orgCrew ? await movedAgentRoom(async () => c, event.wsId, event.routine.agentSlug, { orgId: target.orgId, channelId: target.channelId, crewId: orgCrew.id }) : null;
+      if (!moved) throw new Error('Messenger notification channel unavailable');
+      const key = [event.wsId, event.routine.id, event.runAt ?? event.routine.lastRun, target.channelId, event.phase ?? (event.ok === false ? 'failed' : 'result')].join(':');
+      const plan = await planOrRaw(event.wsId, parseMessengerDisposition(event.reply ?? '').text, company.lang, ROUTINE_FILES_MAX);
+      return postToMovedRoom(c, event.wsId, moved, { body: routineResultBody(event, plan.body, company.lang), key: `rn:${createHash('sha256').update(key).digest('hex').slice(0, 32)}`, plan, lang: company.lang });
+    }
     const crew = await c.db.crewBySlug(c.uid, event.wsId, event.routine.agentSlug, target.orgId);
     if (!crew) throw new Error('Messenger notification agent unavailable');
     // L-8(2026-09-27 밤, 3차 검수) — 루틴은 일정마다 계속 다시 돈다. 자격을 미리 안 보면 미자격 조직에서
@@ -1885,9 +1936,18 @@ export async function msgrPush(event, { session = sessionClient } = {}) {
   if (['approval_followup', 'routine', 'job'].includes(event.type) && origin) {
     if (event.type !== 'approval_followup' && muted(event.type)) return false;
     const slug = it?.slug ?? event.routine?.agentSlug ?? event.slug;
-    const { db, ctx } = await restoreMessengerContext(event.wsId, slug, origin, session);
     const key = [event.type, it?.id ?? event.routine?.id ?? event.id, event.routine?.lastRun ?? '', event.phase ?? (event.ok === false ? 'failed' : 'result')].join(':');
     const digest = createHash('sha1').update(key).digest('hex').slice(0, 20);
+    let restored;
+    try { restored = await restoreMessengerContext(event.wsId, slug, origin, session); }
+    catch (e) { // 출처가 보관한 옛 조직 1:1이면 같은 에이전트의 개인 1:1에 결과만(유건 결정 2026-10-08 1-② — runMessengerContinuation과 같은 판정). 아니면 종전 오류
+      const moved = await movedAgentRoom(session, event.wsId, slug, origin);
+      if (!moved) throw e;
+      const c = await session(); const lang = company?.lang ?? 'ko';
+      const plan = await planOrRaw(event.wsId, parseMessengerDisposition(event.reply ?? '').text, lang);
+      return postToMovedRoom(c, event.wsId, moved, { body: event.type === 'routine' ? routineResultBody(event, plan.body, lang) : plan.body, key: `ct:${digest}`, plan, lang });
+    }
+    const { db, ctx } = restored;
     const done = event.msgrReply?.meta?.disposition === 'done';
     const mentions = event.ok === false || done ? [] : (event.msgrReply?.mentions ?? []).filter((m) => m.kind === 'crew' && m.id !== ctx.crewId && ctx.peers.some((p) => p.id === m.id));
     const lang = company?.lang ?? 'ko';
