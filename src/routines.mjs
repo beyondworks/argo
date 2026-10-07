@@ -258,8 +258,10 @@ const NO_REPORT_END = /^[\s*_`"'“”.。!]*$/u; // 표지 뒤가 마침표·�
 const NO_REPORT_SEP = /^\s*(?:[:：(（–—]|[-.。!](?=\s|$))/u; // 표지 뒤가 구분 기호 — 같은 줄 설명('NO_REPORT — 새 항목 0건', 'NO_REPORT (새 메일 없음)')
 /** 한 줄이 표지인가 — 아니면 null, 맞으면 { note: 같은 줄 설명(없으면 '') }. 표지 뒤가 글자로 바로 이어지면('NO_REPORT였던', 'NO_REPORT 대상이 아닙니다',
     'NO_REPORTS') 표지가 아니다 — 보고로 둔다(알림을 잘못 막는 것보다 보내는 쪽이 안전). */
+const NO_REPORT_LINE_MAX = 400; // 표지 줄은 짧다(꾸밈 + 60자 설명). 아래 정규식은 앞쪽 문자 집합(공백·>)이 겹쳐 머리가 맞지 않는 긴 줄에서 되짚기가 제곱으로 는다
 function noReportMark(line) {
-  if (!/no_report/i.test(line)) return null; // 선형 사전 검사 — 앞쪽 문자 집합이 겹치는 정규식이 긴 공백 줄에서 제곱 시간이 걸리지 않게(검수 LOW)
+  if (line.length > NO_REPORT_LINE_MAX) return null; // 공백 5만 칸 + 'x no_report' 한 줄이 판정 한 번에 4초 걸렸다(검수 LOW) — 긴 줄은 표지가 아니다(보고로 보낸다)
+  if (!/no_report/i.test(line)) return null; // 대부분의 줄은 여기서 끝난다
   const m = line.match(NO_REPORT_HEAD);
   if (!m) return null;
   const rest = line.slice(m[0].length);
@@ -268,28 +270,51 @@ function noReportMark(line) {
   return { note: rest.replace(/^[\s:：\-–—.。!]+/u, '').trim().replace(/^[(（](.*)[)）]$/u, '$1').trim() };
 }
 const FENCE_LINE = /^\s*(`{3,}|~{3,})[\w-]*\s*$/;
-/** 답의 NO_REPORT 판정(순수). marked면 알림·메신저 글을 보내지 않고, text(같은 줄 설명, 없으면 '')만 대화 기록에 남긴다. 아니면 원문 그대로 보고. */
+// 내용 줄 = 빈 줄·펜스 줄·보이지 않는 문자(U+200B 등)만 있는 줄이 아닌 줄. 'NO_REPORT\n\u200b'가 내용 두 줄로 보여 빈 알림이 나갔다(검수 LOW).
+const BLANK_LINE = /^[\s\p{Default_Ignorable_Code_Point}]*$/u;
+const isContent = (line) => !BLANK_LINE.test(line) && !FENCE_LINE.test(line);
+const QUOTE_LINE = /^\s*>/;
+const FENCE = /^\s*(`{3,}|~{3,})(.*)$/s;
+/** 줄마다 코드 블록 안인가(펜스 줄 자신은 false). 닫는 펜스 = 여는 펜스와 같은 문자·그 이상 길이·뒤에 글자 없음. 닫히지 않으면 끝까지 코드 블록. */
+function codeBlockLines(lines) {
+  let open = null; // 여는 펜스('```'·'~~~~' …)
+  return lines.map((line) => {
+    const m = line.match(FENCE);
+    if (open) {
+      if (m && m[1][0] === open[0] && m[1].length >= open.length && !m[2].trim()) open = null;
+      return open !== null;
+    }
+    if (m && !(m[1][0] === '`' && m[2].includes('`'))) open = m[1]; // 백틱 펜스의 정보 문자열에는 백틱이 없다(줄 안 코드 '```a```'는 펜스가 아니다)
+    return false;
+  });
+}
+/** 답의 NO_REPORT 판정(순수). marked면 알림·메신저 글을 보내지 않고, text(같은 줄 설명, 없으면 '')만 대화 기록에 남긴다. 아니면 보고. */
 // 보안 검토(2026-10-08, 알림 억제): '표지 줄이 어디든 있으면 보고 없음'은 루틴이 읽은 바깥 글(메일 본문 등)에 NO_REPORT 한 줄을 심으면
-// 그 글을 인용한 보고 전체가 알림 없이 사라진다. 그래서 내용 줄(빈 줄·펜스 줄 제외)이 표지 한 줄뿐일 때만 보고 없음으로 본다 — 같은 줄의 짧은 설명은 허용.
-// 표지가 다른 줄과 같이 오면 보고로 원문 그대로 보낸다(알림을 잘못 막는 것보다 한 번 더 보내는 쪽이 안전하다).
-const NO_REPORT_NOTE_MAX = 200;
-const EMPTY_FENCE_BLOCK = /(^|\n)[ \t]*(`{3,}|~{3,})[\w-]*[ \t]*\n(?:[ \t]*\n)*[ \t]*\2[ \t]*(?=\n|$)/g;
+// 그 글을 인용한 보고 전체가 알림 없이 사라진다. 그래서 내용 줄이 표지 한 줄뿐일 때만 보고 없음으로 본다 — 같은 줄 설명은 60자까지
+// (그보다 길면 바깥 글이 한 줄 답을 유도해 보고를 표지 뒤에 숨기는 경로가 된다 — 보고로 보낸다).
+// 표지가 다른 줄과 같이 오면 보고로 보낸다(알림을 잘못 막는 것보다 한 번 더 보내는 쪽이 안전하다).
+const NO_REPORT_NOTE_MAX = 60;
 function splitNoReport(text) {
   const raw = String(text ?? '');
   const lines = raw.split('\n');
-  const content = lines.filter((line) => line.trim() && !FENCE_LINE.test(line));
+  const content = lines.filter(isContent);
   if (content.length === 1) {
     const mark = noReportMark(content[0]);
     if (mark && mark.note.length <= NO_REPORT_NOTE_MAX) return { marked: true, text: mark.note };
   }
   // 보고로 보낼 때도 따로 떨어진 표지 줄(설명 없는 'NO_REPORT')은 엔진용이라 뗀다 — 알림·대화 기록에 토큰이 그대로 보이지 않게(검수 지적).
-  // 같은 줄 설명이 붙은 줄은 보고 내용일 수 있어 그대로 둔다. 다 떼고 남는 내용이 없으면(표지 줄만 여러 개) 보고 없음.
-  const kept = lines.filter((line) => { const m = noReportMark(line); return !(m && !m.note); });
+  // 인용(>) 줄과 코드 블록 속 줄은 바깥 글(메일 본문·명령 출력)일 가능성이 높아 떼지 않는다 — 주입 흔적이 사용자에게 보이게(보안 검토).
+  // 그래서 떼는 줄은 언제나 코드 블록 밖이라 펜스 짝을 건드릴 일이 없다(옛 빈 블록 정규식은 앞 블록의 닫는 펜스와 뒤 블록의 여는 펜스를 빈 블록으로 보고
+  // 지워 두 블록을 합쳤다 — 검수 MEDIUM). 같은 줄 설명이 붙은 줄은 보고 내용일 수 있어 그대로 둔다. 다 떼고 남는 내용이 없으면(표지 줄만 여러 개) 보고 없음.
+  const inCode = codeBlockLines(lines);
+  const kept = lines.filter((line, i) => {
+    if (inCode[i] || QUOTE_LINE.test(line)) return true;
+    const m = noReportMark(line);
+    return !(m && !m.note);
+  });
   if (kept.length === lines.length) return { marked: false, text: raw };
-  const left = kept.filter((line) => line.trim() && !FENCE_LINE.test(line));
-  if (!left.length) return { marked: true, text: '' };
-  const body = kept.join('\n').replace(EMPTY_FENCE_BLOCK, '$1').replace(/\n{3,}/g, '\n\n').trim(); // 표지를 감쌌던 빈 코드 블록도 지운다
-  return { marked: false, text: body };
+  if (!kept.some(isContent)) return { marked: true, text: '' };
+  return { marked: false, text: kept.join('\n').replace(/\n{3,}/g, '\n\n').trim() };
 }
 /** 빈 답 — 실패 그대로(빈 답을 성공으로 받으면 도구 실패 때의 침묵을 가린다). 문구만 사용자가 알아듣게. 루프에는 보고 규칙이 없어 안내를 붙이지 않는다. */
 function emptyAnswerError(lang, loop, cause = null) {
