@@ -88,13 +88,18 @@ function query(table) {
 const fire = (event, payload) => { for (const [topic, bag] of Object.entries(state.topics)) if (/^(org:|ch:|dm:|u:)/.test(topic)) bag[event]?.forEach((h) => h({ payload })); };
 state.typing = (ch, phase) => fire('typing', { channel_id: ch, crew_id: 'crew-p', ...(phase ? { phase } : {}) });
 state.progress = (ch, src) => fire('progress', { channel_id: ch, crew_id: 'crew-p', startedAt: Date.now(), source_msg_id: src ?? null });
-state.reply = (ch, body) => {
-  const row = { id: state.nextId++, org_id: org, channel_id: ch, author_kind: 'crew', author_user_id: null, crew_id: 'crew-p', kind: 'text', body, created_at: new Date().toISOString(),
-    edited_at: null, deleted_at: null, mentions: [], reply_to: null, meta: null, client_msg_id: `reply:${Date.now()}` };
-  state.tables.msgr_messages.push(row); memo.clear();
-  fire('message', { ...row });
-  return row.id;
-};
+const crewRow = (ch, body) => { const row = { id: state.nextId++, org_id: org, channel_id: ch, author_kind: 'crew', author_user_id: null, crew_id: 'crew-p', kind: 'text', body, created_at: new Date().toISOString(),
+  edited_at: null, deleted_at: null, mentions: [], reply_to: null, meta: null, client_msg_id: `reply:${Date.now()}` }; state.tables.msgr_messages.push(row); memo.clear(); return row; };
+state.reply = (ch, body) => { const row = crewRow(ch, body); fire('message', { ...row }); return row.id; };
+// 방송을 놓친 답(2026-10-07 운영: 재연결 중 u: 방송 누락) — 행만 넣고 방송은 쏘지 않는다. 열린 방은 재연결로 목록을 다시 읽을 때(아래 status로 u: 끊김→붙음)나
+// 안 읽음 재집계(다른 방 글: reply('general', …))가 이 방에 모르는 글이 있다고 할 때 따라잡아야 한다.
+state.replyMissed = (ch, body) => crewRow(ch, body).id;
+// 안 읽음(msgr_unread와 같은 규칙) — 내 읽음 커서 뒤 남의 글·지우지 않은 글, 99 상한
+const unreadRows = () => state.tables.msgr_channels.map((c) => {
+  const cursor = Math.max(0, ...state.tables.msgr_reads.filter((r) => r.channel_id === c.id && r.user_id === uid).map((r) => r.last_read_id ?? 0));
+  const n = state.tables.msgr_messages.filter((m) => m.channel_id === c.id && m.id > cursor && !m.deleted_at && m.author_user_id !== uid).length;
+  return { channel_id: c.id, n: Math.min(99, n), mention: 0 };
+}).filter((r) => r.n > 0);
 // 구독이 끊겼다고 알린다(CHANNEL_ERROR·TIMED_OUT·CLOSED) — 실제 전송이 끊길 때 supabase-js가 부르는 것과 같은 자리.
 state.status = (topic, status) => (state.statusCbs[topic] ?? []).forEach((cb) => cb?.(status));
 
@@ -102,8 +107,8 @@ export const supabase = {
   from: query,
   auth: { getSession: async () => ({ data: { session: { user: { id: uid, email: 'fixture@example.invalid' }, access_token: 'fixture' } } }),
           onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }) },
-  rpc: async (name) => settle({ rpc: name }, () => []),
-  realtime: { setAuth: async () => {} },
+  rpc: async (name) => settle({ rpc: name }, () => (name === 'msgr_unread' ? unreadRows() : [])),
+  realtime: { setAuth: async () => {}, isConnected: () => true },
   channel: (name) => { const bag = state.topics[name] ??= {}; const own = [];
     const c = { __topic: name, __own: own,
       on: (_kind, { event }, handler) => { const w = (...a) => { state.hits = (state.hits ?? 0) + 1; return handler(...a); };
