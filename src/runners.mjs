@@ -15,7 +15,7 @@ import { monthCostByRunner } from './usage.mjs'; // usage는 workspace만 의존
 import { recordCodexRollout } from './runner-limits.mjs'; // 구독 잔여 한도(K91)
 import { exec, exists, scrubServerSecrets } from './runners/shared.mjs';
 import { RUNNERS, RUNNER_AUTH, hostOptInAllowed, isCliRunner, isCliTurn, pickRunner, oauthFormatError, isHiddenRunner, isRetiredRunner } from './runners/catalog.mjs';
-import { codexHome, codexCmd, importCodexAuth, recoverCodexAuth, writeCodexTurnConfig, codexEffortArgs, CODEX_LOCKUP_RE, reprovisionCodexCli, codexOutdatedError, codexPinStale } from './runners/codex.mjs';
+import { codexHome, codexCmd, importCodexAuth, recoverCodexAuth, writeCodexTurnConfig, codexEffortArgs, CODEX_LOCKUP_RE, reprovisionCodexCli, codexOutdatedError, codexPinStale, codexUnsetModel } from './runners/codex.mjs';
 import { execCodexAppServer } from './runners/codex-appserver.mjs';
 import { geminiCmd, writeGeminiTurnSettings } from './runners/gemini.mjs';
 import { openRoots } from './workroots.mjs'; // 파일 반경 단일 진실(codex·gemini·antigravity 공유)
@@ -35,7 +35,7 @@ export {
   endpointNotFoundNotice, isEndpointNotFoundMsg,
   isOpenRouterCreditError, isOpenRouterCreditReply, isOpenRouterLimitError, isOpenRouterLimitReply,
   isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice,
-  pickRunner, autoRunnerOf, oauthFormatError, excludeWith, authExcludedNoRunnerMsg, isCliTurn, GEMINI_DEFAULT_MODEL, CODEX_DEFAULT_MODEL, CODEX_ONESHOT_MODEL } from './runners/catalog.mjs';
+  pickRunner, autoRunnerOf, oauthFormatError, excludeWith, authExcludedNoRunnerMsg, isCliTurn, GEMINI_DEFAULT_MODEL, CODEX_DEFAULT_MODEL } from './runners/catalog.mjs';
 export {
   provisionCodexCli, CODEX_EFFORTS, codexEffortArgs, CODEX_PIN, CODEX_LOCKUP_RE,
   importCodexAuth, recoverCodexAuth, writeCodexTurnConfig,
@@ -176,6 +176,9 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = CLI
       auth = await importCodexAuth(baseHome, CODEX_HOME);
       await writeCodexTurnConfig(CODEX_HOME, mcpServers); // MCP 주입만 — 샌드박스 섹션은 danger-full-access 전환으로 소멸
       const cmd = await codexCmd(); // 관리본(핀) 우선 > 즉석 조달 > PATH 폴백(2026-08-25 반전) — 사용자 설치 없이도 돈다
+      // 모델을 비운 턴은 고정 모델로 — `-m` 없이 돌리면 서버 기본 모델이 바이너리 버전마다 바뀐다(codexUnsetModel, 검수 2026-10-08 HIGH).
+      // 강도 인자는 크루가 준 모델로 계산한다(비운 모델 = 옛 사상 max→xhigh) — 0.1.97과 같은 인자에 -m만 더한다.
+      const runModel = model || codexUnsetModel(cmd);
       const run = await exec(cmd.file, [
         ...cmd.args,
         // danger-full-access — 유건 지시 2026-08-21 "샌드박스 없이". workspace-write + 홈 한정
@@ -186,7 +189,7 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = CLI
         'exec', '--sandbox', readOnly ? 'read-only' : 'danger-full-access', '--skip-git-repo-check',
         ...codexEffortArgs(effort, model), // Model-specific effort; legacy max still maps to xhigh.
         '--output-last-message', out,
-        ...(model ? ['-m', model] : []),
+        ...(runModel ? ['-m', runModel] : []),
         // 프롬프트는 표준 입력으로('-' = stdin에서 읽음, 핀 0.149.1 `codex exec --help`). 인자로 넘기면 Windows
         // 32,767자·Linux 인자당 128KB를 넘는 턴이 "spawn ENAMETOOLONG"으로 죽었다(사용자 실측 K01).
         '--', '-', // '--'는 유지 — 뒤 인자가 플래그로 해석되지 않게

@@ -221,10 +221,12 @@ export const isCliTurn = (r, credType) => isCliRunner(r) && !(
 );
 export const GEMINI_DEFAULT_MODEL = 'gemini-2.5-pro';
 export const CODEX_DEFAULT_MODEL = 'gpt-5.6-sol';
-/** CLI 원샷(기억 정리·교정 감지·페르소나·직함·루틴 초안·대화 요약)의 codex 모델. 원샷은 예전에 `-m` 없이 돌아 서버 기본 모델을 썼는데,
-    서버 기본은 핀 버전에 따라 바뀐다(0.157.1 = gpt-6-astra, 0.159.3 = gpt-6.1-sol — 2026-10-07 실측). 핀 승격이 원샷 모델을 말없이
-    바꾸지 않게 0.157.1 시절 실제로 돌던 모델을 고정한다(강도는 넣지 않는다 — 서버 기본 medium, 종전과 같음). 바꾸려면 유건 결정 뒤 여기만. */
-export const CODEX_ONESHOT_MODEL = 'gpt-6-astra';
+/** 모델을 비운 codex CLI 턴의 모델 — 프롬프트로 영입한 자동 에이전트·모델 없는 codex 카드·다른 러너에서 넘어온 대체 턴·목록 밖 모델,
+    그리고 CLI 원샷(기억 정리·교정 감지·페르소나·직함·루틴 초안·대화 요약). 예전엔 `-m` 없이 돌아 서버 기본 모델을 썼는데, 서버 기본은
+    바이너리 버전마다 바뀐다(0.157.1 = gpt-6-astra, 0.159.3 = gpt-6.1-sol·기본 강도 low — 2026-10-07 머리글 실측). 핀 승격이 이 턴들의
+    모델·강도를 말없이 바꾸지 않게 0.157.1(0.1.97) 시절 실제로 돌던 모델을 넣는다(강도 인자는 크루 값 그대로 — 비우면 Astra 서버 기본 medium).
+    넣는 자리는 codex.mjs codexUnsetModel(핀 이상 관리본일 때만). 바꾸려면 유건 결정 뒤 여기만. */
+export const CODEX_UNSET_MODEL = 'gpt-6-astra';
 
 /** 크루가 effort를 고르지 않았을 때 claude 러너에 보낼 기본값. Opus 5.5는 API 기본이 medium(Opus 5는 high)이라
     같은 크루가 모델만 바꿔도 얕아지지 않게 high를 준다(유건 결정 2026-09-23). 그 밖의 모델은 '' = SDK 기본 그대로(종전 동작). */

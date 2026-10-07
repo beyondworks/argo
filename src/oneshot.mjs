@@ -8,12 +8,12 @@ import { nativeOneShot, nativeRunnerEnabled } from './engine/native-query.mjs'; 
 import { paths } from './workspace.mjs';
 import { loadCapabilities } from './capabilities.mjs';
 import { effectiveModels, normalizeModelId, loadRemoteCatalog, openrouterFallbackModel } from './runners/catalog-remote.mjs'; // 오버레이 반영(분리 검수 MEDIUM-3)
-import { runnerStatus, unsupportedMethodStatus, unsupportedMethodNotice, scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, RUNNERS, authExcludedNoRunnerMsg, excludeWith, externalExec, grokCreditNotice, isGrokCreditError, isProcessCrash, isOpenRouterCreditError, isOpenRouterLimitError, isSwallowedSdkError, resolveRunner, runnerCredEnv, sdkEnvFor, visibleRunnerNamesLine, isCliTurn, GEMINI_DEFAULT_MODEL, runnerCredType, CODEX_DEFAULT_MODEL, CODEX_ONESHOT_MODEL } from './runners.mjs';
+import { runnerStatus, unsupportedMethodStatus, unsupportedMethodNotice, scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, RUNNERS, authExcludedNoRunnerMsg, excludeWith, externalExec, grokCreditNotice, isGrokCreditError, isProcessCrash, isOpenRouterCreditError, isOpenRouterLimitError, isSwallowedSdkError, resolveRunner, runnerCredEnv, sdkEnvFor, visibleRunnerNamesLine, isCliTurn, GEMINI_DEFAULT_MODEL, runnerCredType, CODEX_DEFAULT_MODEL } from './runners.mjs';
 
 /** 단발 프롬프트 1회 실행 — resolveRunner로 가용 러너를 고르고(SDK 또는 벤더 CLI), 실패하면 그 러너를
     누적 제외하고 남은 가용 러너를 차례로 시도한다(스테일 자격 오탐 자가 치유 — chat.mjs의 인증 재시도와
     같은 누적 제외 원칙. 다만 이쪽은 실패 종류를 가리지 않고, chat.mjs는 AUTH_ERR_RE 한정이다).
-    model은 SDK·네이티브 러너에 적용(카탈로그 밖 id는 러너 기본으로). CLI 러너는 각자 기본 모델 — 단 codex는 CODEX_ONESHOT_MODEL 고정. 반환 { runner, text, usage, costUsd }. */
+    model은 SDK·네이티브 러너에 적용(카탈로그 밖 id는 러너 기본으로). CLI 러너는 모델을 넘기지 않는다 — codex는 externalExec가 모델을 비운 턴의 고정 모델(CODEX_UNSET_MODEL)을 넣는다. 반환 { runner, text, usage, costUsd }. */
 export async function runOneShot(wsId, prompt, opts = {}) {
   // timeoutMs는 **두 실행 경로 공통** 상한이다(검수 2026-07-27 M-3): CLI는 externalExec가, SDK는
   // 아래 AbortController가 같은 값을 쓴다. 러너에 따라 상한이 갈리면 같은 작업이 codex로 뽑히면
@@ -69,10 +69,7 @@ export async function runOneShot(wsId, prompt, opts = {}) {
       // readOnly면 caps를 넘겨도 externalExec가 무력화하지만, 계약을 명시적으로 — 순수 생성 턴은
       // 도구가 필요 없다(신뢰 불가 원문 요약이 전권으로 돌지 않게, 검수 HIGH-1). 기본은 전권 유지.
       const caps = readOnly ? { fs: false, browser: false, shell: false, bypass: false } : await loadCapabilities();
-      // codex는 모델을 명시한다 — `-m` 없이 돌리면 서버 기본 모델을 쓰는데, 그 기본이 핀 버전마다 바뀐다(CODEX_ONESHOT_MODEL 주석).
-      // 원격 카탈로그 alias가 있으면 그쪽(모델 폐기 때 앱 발행 없이 옮길 길). 다른 CLI 러너는 지금처럼 각자 기본 모델.
-      const cliModel = runner === 'codex' ? normalizeModelId('codex', CODEX_ONESHOT_MODEL) : undefined;
-      const text = (await externalExec({ runner, model: cliModel, cwd: paths(wsId).root, prompt, cred, caps, timeoutMs, readOnly, signal: ac.signal })).trim();
+      const text = (await externalExec({ runner, cwd: paths(wsId).root, prompt, cred, caps, timeoutMs, readOnly, signal: ac.signal })).trim();
       if (!text) throw new Error('empty-reply');
       return { runner, text, usage: {}, costUsd: null }; // 외부 CLI — 토큰 사용량 비노출(채팅 경로와 동일)
     }

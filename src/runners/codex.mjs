@@ -9,6 +9,8 @@ import { dirname, join } from 'node:path';
 import { exec, exists } from './shared.mjs';
 import { withDirLock } from '../mutex.mjs';
 import { codexModelEffort } from '../model-effort.mjs';
+import { CODEX_UNSET_MODEL } from './catalog.mjs';
+import { normalizeModelId } from './catalog-remote.mjs';
 
 /** Argo 전용 CODEX_HOME — 사용자 전역 config(커스텀 에이전트·모델 핀)와 격리하고 auth만 빌린다.
     (전역 config의 spawn_agent 커스텀 스키마가 신형 모델의 예약 도구와 충돌하는 사례 확인) */
@@ -43,8 +45,22 @@ const codexHostManagedBin = () => join(CODEX_TOOL_DIR, CODEX_HOST_BIN);
 // 0.157.1 → 0.159.3(2026-10-08, 유건 결정): 서버가 클라이언트 버전으로 모델 목록을 거른다 — 0.157.1 목록엔 GPT-6.1 Sol이 없고
 // 턴은 "not supported when using Codex with a ChatGPT account"(2026-10-07 실측). 0.159.3로 계약 프로브 19/19, ChatGPT 구독 로그인
 // 실제 턴(6.1 Sol 셸 도구·GPT-6 Luna·Astra max)을 확인했다. 모델별 하한은 test/codex-pin-lockup.test.mjs 표가 잠근다.
-// ⚠ 핀을 올리면 `-m` 없이 도는 턴의 서버 기본 모델도 바뀐다(0.157.1 = gpt-6-astra, 0.159.3 = gpt-6.1-sol) — 원샷은 CODEX_ONESHOT_MODEL로 고정.
+// ⚠ 핀을 올리면 `-m` 없이 도는 턴의 서버 기본 모델도 바뀐다(0.157.1 = gpt-6-astra, 0.159.3 = gpt-6.1-sol) — 모델을 비운 턴은 codexUnsetModel이 고정.
+// ⚠ 관리본(~/.argo/tools/codex-cli)은 같은 기기의 모든 Argo(상주·앱·CLI)가 나눠 쓴다. 승격은 한 방향(codexStampCurrent) — 다만 0.1.97 이하는
+//   "핀과 다르면 다시 받기"라 1시간 스로틀마다 자기 핀으로 되돌린다. 핀을 올린 발행은 상주와 앱을 같이 올린다.
 export const CODEX_PIN = 'rust-v0.159.3';
+const pinParts = (tag) => { const m = /^rust-v(\d+)\.(\d+)\.(\d+)$/.exec(String(tag ?? '').trim()); return m ? m.slice(1).map(Number) : null; };
+/** 관리본 스탬프(.pin)가 핀 이상인가(순수). 더 높은 핀은 같은 기기의 더 새 Argo가 검증해 올린 것이라 그대로 쓴다 — "핀과 다르면 다시 받기"는
+    버전이 다른 두 Argo가 1시간마다 서로 되돌리는 핑퐁을 만든다(검수 2026-10-08 MEDIUM). 빈·형식 밖 스탬프는 낡은 것으로 본다(다시 받기 — 종전과 같음).
+    (export: 회귀 테스트용) */
+export function codexStampCurrent(stamp, pin = CODEX_PIN) {
+  if (stamp === pin) return true;
+  const a = pinParts(stamp), b = pinParts(pin);
+  if (!a || !b) return false;
+  for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] > b[i];
+  return true;
+}
+const readCodexStamp = () => readFile(join(CODEX_TOOL_DIR, '.pin'), 'utf8').then((v) => v.trim(), () => '');
 export const codexAssetUrl = (asset) => `https://github.com/openai/codex/releases/download/${CODEX_PIN}/${asset}`;
 /** 플랫폼 → 릴리스 자산 이름. 래퍼 bin/codex.js의 트리플 표와 동일 매핑. (export: 순수 — 회귀 테스트용) */
 export function codexTripleFor(platform, arch) {
@@ -130,8 +146,7 @@ export async function provisionCodexCli({ force = false } = {}) {
     // 락 획득 후 재확인 — 다른 프로세스가 방금 조달을 끝냈을 수 있다(TOCTOU 방어, 릴리스 검수 M-1 계열).
     if (!force && await exists(codexManagedBin())) return codexManagedBin();
     if (force && await exists(codexManagedBin())) {
-      const stamp = await readFile(join(CODEX_TOOL_DIR, '.pin'), 'utf8').then((v) => v.trim(), () => '');
-      if (stamp === CODEX_PIN) return codexManagedBin(); // 경합 상대가 이미 같은 핀으로 교체 완료
+      if (codexStampCurrent(await readCodexStamp())) return codexManagedBin(); // 경합 상대가 이미 핀 이상으로 교체 완료(더 높은 핀을 되돌리지 않는다)
     }
     const asset = codexAssetName();
     const hostAsset = codexHostAssetName();
@@ -211,12 +226,17 @@ export async function reprovisionCodexCli() {
   return true;
 }
 
-/** 관리본이 핀 버전이 아닌가 — 승격이 실패(오프라인·스로틀 1시간)해 낡은 관리본으로 턴이 돈 경우, 또는 관리본이
-    없어 PATH 설치본(버전 미상)으로 폴백한 경우 true. */
+/** 관리본이 핀보다 낮은가 — 승격이 실패(오프라인·스로틀 1시간)해 낡은 관리본으로 턴이 돈 경우, 또는 관리본이
+    없어 PATH 설치본(버전 미상)으로 폴백한 경우 true. 더 높은 핀은 낡은 것이 아니다(codexStampCurrent). */
 export async function codexPinStale() {
-  const stamp = await readFile(join(CODEX_TOOL_DIR, '.pin'), 'utf8').then((v) => v.trim(), () => '');
-  return stamp !== CODEX_PIN;
+  return !codexStampCurrent(await readCodexStamp());
 }
+
+/** 모델을 비운 codex 턴에 넣을 모델(검수 2026-10-08 HIGH) — 자동 에이전트·러너 대체·목록 밖 모델·CLI 원샷은 `-m` 없이 돌아 서버 기본
+    모델을 썼고, 그 기본이 바이너리 버전마다 바뀐다(catalog.mjs CODEX_UNSET_MODEL). 핀 이상 관리본(cmd.pinned)일 때만 넣는다 — 버전을
+    모르는 실행 파일(PATH 설치본·승격 못 한 옛 관리본)은 지금처럼 비워 그 버전의 기본 모델로 돈다(옛 codex가 새 모델을 거절하지 않게).
+    원격 카탈로그 alias를 따른다(모델 폐기 때 앱 발행 없이 옮길 길). */
+export const codexUnsetModel = (cmd) => (cmd?.pinned ? normalizeModelId('codex', CODEX_UNSET_MODEL) : '');
 
 /** 낡은 codex의 모델 거절 → 업데이트 대기 안내(순수). "requires a newer version"은 버전 문제가 확실하다. "not supported when
     using Codex with a ChatGPT account"는 낡은 핀이 새 모델에 내는 문구지만(0.149.1→GPT-6 2026-09-28, 0.157.1→GPT-6.1 Sol 2026-10-07 실측) 핀이 최신이면 계정 문제라 건드리지
@@ -235,31 +255,35 @@ export function codexOutdatedError(msg, stale) {
     유입됐다(code_mode_host 사고 계열). 로그인 자격은 HOME(~/.codex/auth.json) 공유라 어떤 버전으로
     로그인했든 관리본이 같은 자격을 읽는다. 첫 회 ~100MB는 연결 시 워밍업이 선다운로드. */
 async function codexCmd() {
+  // 반환 pinned = 핀 이상 관리본인가(버전을 아는 실행 파일) — 모델을 비운 턴의 고정 모델(codexUnsetModel)이 이것만 본다.
   // 이스케이프 해치 — 가짜 codex를 PATH에 꽂는 테스트 하네스·오프라인 환경 전용(관리본 우선을 끄면
   // 벤더 자동 업데이트 유입이 되살아나므로 일반 사용자용 설정으로 노출하지 않는다).
   if (process.env.ARGO_CODEX_PREFER_PATH === '1') {
     const onPath = await exec('codex', ['--version']).then(() => true, () => false);
-    if (onPath) return { file: 'codex', args: [] };
+    if (onPath) return { file: 'codex', args: [], pinned: false };
   }
   if (await exists(codexManagedBin())) {
-    // 핀 승격 — 스탬프(.pin)가 현재 핀과 다르면(구버전 관리본·v0.1.45 이전 무스탬프 포함) 핀 버전으로
-    // 재조달한다. 실패하면 기존 관리본으로 턴은 계속(오프라인 방어) + host 보강만 시도.
-    const stamp = await readFile(join(CODEX_TOOL_DIR, '.pin'), 'utf8').then((v) => v.trim(), () => '');
-    if (stamp !== CODEX_PIN) {
+    // 핀 승격 — 스탬프(.pin)가 핀보다 낮으면(구버전 관리본·v0.1.45 이전 무스탬프 포함) 핀 버전으로
+    // 재조달한다. 더 높은 스탬프는 그대로 쓴다(codexStampCurrent — 버전 섞인 두 Argo의 되돌림 방지).
+    // 실패하면 기존 관리본으로 턴은 계속(오프라인 방어) + host 보강만 시도.
+    const stamp = await readCodexStamp();
+    let pinned = codexStampCurrent(stamp);
+    if (!pinned) {
       // 승격도 스로틀 재조달을 탄다(분리 검수 HIGH) — 실패 상태에서 턴마다 ~125MB를 다시 받지 않게.
       // 스로틀에 걸리거나 실패하면 기존 관리본으로 턴은 계속(오프라인 방어) + host 부재만이라도 보강.
-      const done = await reprovisionCodexCli().then((v) => { if (v) console.log(`[argo] codex 관리본 승격: ${stamp || '(무스탬프)'} → ${CODEX_PIN}`); return v; })
+      pinned = await reprovisionCodexCli().then((v) => { if (v) console.log(`[argo] codex 관리본 승격: ${stamp || '(무스탬프)'} → ${CODEX_PIN}`); return v; })
         .catch((e) => { console.warn('[argo] codex 승격 실패 — 기존 관리본으로 계속:', e?.message ?? e); return false; });
-      if (!done) await ensureCodexHost();
+      if (!pinned) await ensureCodexHost();
     }
-    return { file: codexManagedBin(), args: [] };
+    return { file: codexManagedBin(), args: [], pinned };
   }
   try {
-    return { file: await provisionCodexCli(), args: [] };
+    const file = await provisionCodexCli();
+    return { file, args: [], pinned: codexStampCurrent(await readCodexStamp()) };
   } catch (e) {
     // 조달 불가(오프라인 등) — PATH 설치본 폴백. 미검증 버전임을 로그로 남긴다(정직 표기 계열).
     const onPath = await exec('codex', ['--version']).then(() => true, () => false);
-    if (onPath) { console.warn('[argo] codex 관리본 조달 실패 — PATH 설치본으로 폴백(미검증 버전):', e?.message ?? e); return { file: 'codex', args: [] }; }
+    if (onPath) { console.warn('[argo] codex 관리본 조달 실패 — PATH 설치본으로 폴백(미검증 버전):', e?.message ?? e); return { file: 'codex', args: [], pinned: false }; }
     throw new Error(`Codex 실행기를 준비하지 못했습니다(네트워크 확인 후 재시도): ${String(e.message || e)}`);
   }
 }

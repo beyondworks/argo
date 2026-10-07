@@ -26,7 +26,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { makePermissionGate } from '../permission-gate.mjs';
 import { scrubServerSecrets } from './shared.mjs';
-import { codexHome, codexCmd, importCodexAuth, recoverCodexAuth, writeCodexTurnConfig } from './codex.mjs';
+import { codexHome, codexCmd, importCodexAuth, recoverCodexAuth, writeCodexTurnConfig, codexUnsetModel } from './codex.mjs';
 import { codexModelEffort } from '../model-effort.mjs';
 
 /** 크루 effort → app-server ReasoningEffort 값(순수). CLI 인자(codexEffortArgs)와 같은 사상 —
@@ -87,7 +87,7 @@ export function mapTurnError(errParams) {
 /** app-server 1턴 세션(스트림 지향) — 프로세스와 분리해 가짜 스트림으로 행동 테스트가 가능한 이음매.
     input/output = 서버의 stdin(쓰기)/stdout(읽기) 스트림. judge = makeApprovalJudge 산출.
     반환: { reply }. 실패는 throw(mapTurnError·timedOut). (export: 테스트 이음매) */
-export function runAppServerSession({ input, output, prompt, model = '', effort = '', cwd, timeoutMs, judge, signal = null, onSteerable = null }) {
+export function runAppServerSession({ input, output, prompt, model = '', unsetModel = '', effort = '', cwd, timeoutMs, judge, signal = null, onSteerable = null }) {
   return new Promise((resolveP, rejectP) => {
     let nextId = 1;
     const pending = new Map();
@@ -172,11 +172,13 @@ export function runAppServerSession({ input, output, prompt, model = '', effort 
     (async () => {
       await send('initialize', { clientInfo: { name: 'argo', title: 'Argo', version: '0' } });
       write({ jsonrpc: '2.0', method: 'initialized' });
+      // 모델을 비운 턴은 unsetModel(exec 경로의 `-m`과 같은 codexUnsetModel) — 강도는 아래처럼 크루가 준 모델로 계산(0.1.97과 같은 값)
+      const threadModel = model || unsetModel;
       const th = await send('thread/start', {
         cwd,
         approvalPolicy: 'untrusted', // 전량 승인 — 게이트가 유일한 판정자다. acceptForSession은 쓰지 않는다(세션 우회 방향)
         sandbox: 'read-only',        // 승인 없는 쓰기 경로 자체를 벤더 수준에서 제거
-        ...(model ? { model } : {}),
+        ...(threadModel ? { model: threadModel } : {}),
       });
       const threadId = th?.thread?.id;
       if (!threadId) throw new Error('thread/start가 스레드 id를 주지 않았습니다');
@@ -235,7 +237,7 @@ export async function execCodexAppServer({ model, cwd, prompt, timeoutMs = 30 * 
     const { reply } = await Promise.race([
       runAppServerSession({
         input: child.stdin, output: child.stdout,
-        prompt, model, effort, cwd, timeoutMs, signal, onSteerable,
+        prompt, model, unsetModel: codexUnsetModel(cmd), effort, cwd, timeoutMs, signal, onSteerable,
         judge: makeApprovalJudge(cwd, { workRoots, lang }),
       }),
       childFail,
