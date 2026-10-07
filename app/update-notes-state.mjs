@@ -14,6 +14,8 @@ export const UPDATE_NOTES = Object.freeze({
   // errorText: 4b642752(F11)·191046c8(UL6)·f9561ac8(UL5)·ad43f7db(M3)·8796a8dd(F3) / msgrCard: d6ce9ab3(CX-12·CX-13)
   '0.1.96': Object.freeze(['updates.note.agentRename', 'updates.note.companyRestore', 'updates.note.longChat',
     'updates.note.phoneScreen', 'updates.note.errorText', 'updates.note.msgrCard']),
+  // 근거 PR — cliStandalone: #843(맥·윈도우 단독 설치·argo uninstall)·#845(--version) / msgrCommands: #837 / officeBriefing: #838
+  '0.1.97': Object.freeze(['updates.note.cliStandalone', 'updates.note.msgrCommands', 'updates.note.officeBriefing']),
 });
 
 export function stableVersion(value) {
