@@ -124,3 +124,61 @@ test('L-a 매 회차 실패하면서 요청이 계속 겹쳐도 회차 상한에
   await assert.rejects(go(), /fail 3/);
   assert.equal(runs, 3, '상한 3회');
 });
+
+// ── 재연결 한 번에 목록 다시 읽기 한 번(2026-10-07 운영 데스크톱 0.1.51: 재연결 한 번에 구독 약 55개가 몇 초에 걸쳐 붙으며 고정 창(0.8초)마다
+// 전체 재조회(요청 약 24건)가 7~8번 돌았다 — 23:21:54~23:24:10에 요청 576건). 조용해진 뒤 한 번 + 상한, u:가 붙는 서버에서는 방 토픽이 부르지 않는다.
+// 가상 시계 — 타이머를 시각 순으로 돌린다(묶기 창·상한을 실제 시간 없이 잰다)
+function clock() {
+  let t = 0; let id = 0; const q = [];
+  return {
+    now: () => t,
+    timer: (fn, ms) => { q.push({ id: ++id, fn, at: t + ms }); return id; },
+    clear: (x) => { const i = q.findIndex((e) => e.id === x); if (i >= 0) q.splice(i, 1); },
+    advance(ms) { const end = t + ms; for (;;) { q.sort((a, b) => a.at - b.at || a.id - b.id); if (!q.length || q[0].at > end) break; const e = q.shift(); t = e.at; e.fn(); } t = end; },
+  };
+}
+const watchOn = (c, onSync) => createLinkWatch({ onSync, timer: c.timer, clear: c.clear, now: c.now });
+const rooms = (n) => Array.from({ length: n }, (_, i) => `dm:r${i}`);
+
+test('재연결 한 번 — 조직 2 + u: + 방 52가 150ms 간격으로 8초에 걸쳐 붙어도 목록 다시 읽기는 한 번, 방 52개를 기다리지 않는다', () => {
+  const c = clock(); const at = [];
+  const w = watchOn(c, () => at.push(c.now()));
+  const keys = ['org:a', 'org:b', 'u:me', ...rooms(52)];
+  for (const k of keys) w.status(k, 'SUBSCRIBED'); // 처음 연결 — 신호 없음
+  for (const k of keys) w.status(k, 'CHANNEL_ERROR'); // 소켓이 끊겼다(하트비트 시간 초과)
+  for (const k of keys) { assert.equal(w.status(k, 'SUBSCRIBED'), 'up', k); c.advance(150); }
+  c.advance(20_000);
+  assert.equal(at.length, 1, `목록 다시 읽기 ${at.length}번(종전: 0.8초 창마다 한 번)`);
+  assert.ok(at[0] <= 3 * 150 + 800, `u:가 붙은 뒤 0.8초 안에(${at[0]}ms) — 방 토픽 52개가 다 붙을 때까지(7.8초) 미루지 않는다`);
+});
+
+test('옛 서버(u:가 한 번도 안 붙음) — 방 토픽이 끊겼다 붙으면 종전처럼 목록을 다시 읽되, 8초에 걸쳐 붙어도 한 번', () => {
+  const c = clock(); let syncs = 0;
+  const w = watchOn(c, () => { syncs++; });
+  w.status('u:me', 'CHANNEL_ERROR'); // 서버가 u:를 거절(joinWithBackoff가 1분 뒤 다시 시도)
+  for (const k of rooms(52)) w.status(k, 'SUBSCRIBED');
+  for (const k of rooms(52)) w.status(k, 'CLOSED');
+  for (const k of rooms(52)) { w.status(k, 'SUBSCRIBED'); c.advance(150); }
+  c.advance(20_000);
+  assert.equal(syncs, 1);
+});
+
+test('u:가 붙는 서버에서 방 토픽만 끊겼다 붙으면 목록은 다시 읽지 않는다 — 다시 붙음(up)은 그대로(열린 개인 방의 rt_up)', () => {
+  const c = clock(); let syncs = 0;
+  const w = watchOn(c, () => { syncs++; });
+  for (const k of ['org:a', 'u:me', 'dm:r1']) w.status(k, 'SUBSCRIBED');
+  assert.equal(w.status('dm:r1', 'CHANNEL_ERROR'), 'down');
+  assert.equal(w.status('dm:r1', 'SUBSCRIBED'), 'up');
+  c.advance(20_000);
+  assert.equal(syncs, 0);
+});
+
+test('구독이 30초 동안 0.3초마다 끊겼다 붙어도(폭주) 목록 다시 읽기는 첫 붙음 뒤 10초마다 많아야 한 번', () => {
+  const c = clock(); const at = [];
+  const w = watchOn(c, () => at.push(c.now()));
+  w.status('org:a', 'SUBSCRIBED'); w.status('u:me', 'SUBSCRIBED');
+  for (let i = 0; i < 100; i++) { w.status('org:a', 'CHANNEL_ERROR'); w.status('org:a', 'SUBSCRIBED'); c.advance(300); }
+  c.advance(20_000);
+  assert.ok(at.length >= 3 && at.length <= 4, `${at.length}번(종전 약 33번)`);
+  for (let i = 1; i < at.length - 1; i++) assert.ok(at[i] - at[i - 1] >= 10_000, `간격 ${at[i] - at[i - 1]}ms`);
+});
