@@ -30,7 +30,8 @@ import { pick } from './protocol.mjs';
 import { msgrHead, MSGR_NOW, msgrContextHead, msgrReplyLine, MSGR_ATTACH_FAIL } from '../inbound-marks.mjs';
 import { stripLoopVerdict } from '../loop-verdict.mjs'; // 루프 회차 채널 글에서 판정 표지만 뺀다(판정은 replyForChecks 원문) // 머리말 = 1:1 화면 출처 카드(채널 이름·본문 판정)와 같은 함수
 import { beatGateway } from './persist.mjs';
-import { chat } from '../chat.mjs';
+import { chat, turnRunnerAvailable } from '../chat.mjs';
+import { shouldYieldAcquire, YIELD_GRACE_MS } from '../sync.mjs'; // 러너 없는 프로세스의 양보 기한 — 클라우드 리스의 '러너 없는 기기는 양보'와 같은 기준
 import { mirrorRoutines, applyRoutineEdits } from './msgr-routines.mjs'; // 업무 > 자동화 1단계 — Argo 루틴 ↔ msgr_crew_routines 양방향 미러
 import { loadThread, appendTurn, scopedSession } from '../thread.mjs';
 import { relocateOrgJournals, purgeDepartedJournals } from '../memory.mjs';
@@ -1394,10 +1395,28 @@ async function noteJobDenied(wsId, job, { db, uid, lang }) {
     thread_root: job.threadRoot ?? job.msgId, client_msg_id: `deny:${job.crewId}:${job.msgId}`, body: denyBody(why === 'ok' ? null : why, crew, lang) });
 }
 const receivedSent = new Set(); // 받음 방송을 이미 보낸 잡(크루:글) — 프로세스 안에서 잡당 한 번
-export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat, now = Date.now, linkPreview = replyLinkPreview } = {}) {
+/** runnerReady(wsId, slug) — 이 프로세스가 그 크루의 턴을 돌릴 러너를 받을 수 있나. 기본은 chat()과 같은 판정(turnRunnerAvailable)이고,
+    턴 실행기(runChat)를 바꿔 끼운 호출자(테스트 등)는 그 실행기를 모르므로 기본으로 양보 판정을 하지 않는다 — 필요하면 직접 넘긴다. */
+export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat, now = Date.now, linkPreview = replyLinkPreview, runnerReady = runChat === chat ? turnRunnerAvailable : null } = {}) {
   // 크루 답 속 파일 → 첨부(공통 deliverReplyFiles). plan = planReplyFiles 결과(게시 전에 만들어 잡에 보존 — job.msgrAttach).
   const deliverAttachments = (db, job, row, plan, lang) => deliverReplyFiles(wsId, db, { orgId: job.orgId, channelId: job.channelId, channelKind: job.channelKind ?? null, crewId: job.crewId,
     threadRoot: job.threadRoot ?? job.msgId, failKey: `attfail:${job.crewId}:${job.msgId}` }, row, plan, lang);
+  // 러너 양보(2026-10-07 운영 사고) — 러너 없는 프로세스(옛 앱 사본·러너 자격이 동기화되지 않는 다른 기기)가 실행권을 먼저 잡으면 'AI 러너가 하나도 연결돼 있지 않습니다'로
+  // 실패 답을 올리고, 러너 있는 프로세스는 '이미 답함'으로 건너뛴다. 아직 실행권을 잡지 않은 잡(체크포인트 없음·claiming)만 본다 — running(끊긴 턴 닫기)·publishing(결과 게시)은
+  // 러너가 필요 없고 이 프로세스가 끝내야 한다. 양보 중에는 세션·DB를 부르지 않는다(DEFER 3초 간격의 로컬 판정만).
+  // 기한(YIELD_GRACE_MS — 클라우드 리스의 '러너 없는 기기는 양보'와 같은 기준)이 지나도 아무도 안 가져갔으면 종전 경로로 진행한다 — 이미 답했으면 '이미 답함'으로 끝나고,
+  // 아니면 실패 답을 한 번(reply:<crew>:<msg>) 남긴다. 리스와 같은 이유: 어느 프로세스에도 러너가 없을 때 무응답이 실패 안내보다 나쁘다. 그 실패는 chat()이 회사 활동에 남긴다.
+  const noRunnerSince = new Map(); // 잡(크루:글) → 이 프로세스가 러너가 없어 처음 양보한 시각. 프로세스 메모리(재시작하면 다시 양보 — 리스 yieldSince와 같다), 500건 상한
+  const yieldForRunner = async (job) => {
+    if (!runnerReady || (job.msgrExecution && job.msgrExecution.phase !== 'claiming')) return false;
+    const k = `${job.crewId}:${job.msgId}`;
+    if (await runnerReady(wsId, job.slug)) { noRunnerSince.delete(k); return false; }
+    if (!noRunnerSince.has(k)) {
+      noRunnerSince.set(k, now()); if (noRunnerSince.size > 500) noRunnerSince.delete(noRunnerSince.keys().next().value);
+      console.log(`[argo] msgr ${job.slug}: 이 프로세스엔 이 에이전트를 실행할 러너가 없어 메시지 ${job.msgId}의 실행권을 러너 있는 Argo에 양보합니다(최대 ${Math.round(YIELD_GRACE_MS / 1000)}초)`);
+    }
+    return shouldYieldAcquire(false, noRunnerSince.get(k), now());
+  };
   const run = async (job, executionMeta = {}, ctl = {}) => {
     stageLog(job, 'start', now());
     // 받음 방송 — 잡을 받자마자(세션·DB 왕복 전) 그 방 토픽으로 한 번. phase:'received'는 새 앱이 '전달됨 · 준비 중' 신호로만 쓰고 입력 중 말풍선은 띄우지 않는다
@@ -1411,6 +1430,8 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
       try { early.ch.send({ type: 'broadcast', event: 'typing', payload: { channel_id: job.channelId, crew_id: job.crewId, phase: 'received' } })?.catch?.(() => {}); } catch { /* 무해 */ }
       stageLog(job, 'broadcast', now());
     }
+    // 러너 양보 — 받음 방송(잡을 받자마자) 뒤, 세션·DB 앞. 러너 판정은 처음 한 번(또는 10분 캐시가 지난 뒤) CLI 감지로 몇 초 걸릴 수 있어 방송을 늦추지 않게 이 자리에 둔다.
+    if (await yieldForRunner(job)) return DEFER;
     const c = await session();
     if (!c) { throw new Error('기기 세션 없음 — 다음 틱 재시도'); } // 인프라 예외 = 파일 유지·재시도(queue.mjs 계약)
     const { db, uid } = c;
