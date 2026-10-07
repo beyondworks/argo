@@ -1412,6 +1412,18 @@ export function syncStatusFor(ws) {
   const companyScoped = Object.keys(s.companies).some((id) => s.lastError?.startsWith(`${id}: `));
   return { ...s, lastError: (!companyScoped && s.lastError) || mine?.error || '', companies: mine ? { [ws]: mine } : {} };
 }
+/** 이 회사의 로컬 사본이 `since`(ms) 이후 원격과 한 번 맞춰졌는가 — 낡은 사본으로 판정·기록하면 안 되는 일의 관문(지금은 놓친 루틴 회차 기록, scheduler.mjs).
+    동기화가 꺼져 있으면 참(이 기기가 정본). 켜져 있으면 since 뒤에 끝난 그 회사의 사이클 결과(status.companies — 이 프로세스가 돌린 사이클만 있다)가 있어야 한다:
+    정상 완료·유휴 확인(idle-probe — 매니페스트 판이 그대로)·동기화 대상 아님(free-plan 단일 기기·foreign-owner 남의 회사)은 참,
+    오류·재시도 대기(retry-backoff)·업로드 거절 대기(upload-denied)·결과 없음은 거짓 — 다음 사이클을 기다린다.
+    거짓 쪽이 안전하다: 이 프로세스가 동기화를 돌리지 않거나(다른 프로세스가 동기화 잠금을 쥠) 자격이 만료돼 사이클이 회사까지 못 가면 판정을 미룰 뿐이다. */
+const SYNCED_SKIPS = new Set(['idle-probe', 'free-plan', 'foreign-owner']);
+export function companySyncedSince(wsId, since) {
+  if (!syncOn()) return true;
+  const c = status.companies[wsId];
+  if (!c || !(Number(c.ts) >= since) || c.error) return false;
+  return !c.skipped || SYNCED_SKIPS.has(c.skipped);
+}
 /** 회사 몫 오류는 반드시 이 함수로 — lastError(기기 전체 하나)와 그 회사 결과(error)에 같이 두고 회사를 등록한다. 등록이 빠지면
     syncStatusFor가 `<회사 ID>: ` 접두를 회사 몫으로 못 알아봐 다른 회사·게스트 화면에 보인다(분리 검수 2·3차 LOW). */
 const setCompanyError = (wsId, msg) => { status.lastError = msg; (status.companies[wsId] ??= { ts: Date.now() }).error = msg; };
