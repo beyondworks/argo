@@ -5,6 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { railRooms } from '../src/rail-rooms.mjs';
 
 const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
 
@@ -25,15 +26,26 @@ test('조직 공간(설정 제외)은 동의 전엔 AiConsentGate를 보여준�
 test('동의 전엔(또는 아직 모르면) 사이드바 채널·멤버·에이전트·DM 절과 크루 시트·설정의 조직 탭도 막힌다(본문만이 아니라)', () => {
   assert.match(app, /const orgBlocked = orgGateActive \|\| aiConsentLoading;/);
   for (const needle of [
-    '{!isPersonal && !orgBlocked && favs.length > 0 && (<RailSection id="fav"',
+    'blocked: orgBlocked, space: orgId });', // 즐겨찾기·채팅 절은 railRooms가 가린다 — 행동은 아래 테스트와 test/rail-rooms.test.mjs
+    '{railRoom.showFavs && (<RailSection id="fav"',
     "{!isPersonal && !orgBlocked && <RailSection id={orgId ? 'channels' : 'start'}",
-    '{!orgBlocked && (dms.length > 0 || dmTab || !!orgId)',
+    '{railRoom.showDms && (<RailSection id="dms"',
     '{!isPersonal && !orgBlocked && org && members.length > 0 && (<RailSection id="people"',
     '{(isPersonal ? railVisible.length > 0 : !orgBlocked && org)', // 개인 공간 에이전트(2026-09-30) — 조직 쪽은 그대로 동의 게이트가 막는다. 조직은 비어도 구역을 둔다(UXM-08)
     '{sheet && crewOf(sheet) && !orgBlocked && !isPersonal && <CrewSheet',
     '{chSheet && channel && !orgBlocked && <ChannelSheet',
     'gated={orgBlocked}',
   ]) assert.ok(app.includes(needle), `누락: ${needle}`);
+});
+
+// 2026-10-08 — 즐겨찾기·채팅 절의 표시 조건을 src/rail-rooms.mjs로 옮겼다(개인 공간 즐겨찾기 절 결함). 게이트 동작은 문자열이 아니라 판정 결과로 잠근다.
+test('동의 전·조회 중(orgBlocked)이면 레일의 즐겨찾기·채팅 절이 둘 다 비고, 동의 뒤에는 보인다', () => {
+  const channels = [{ id: 'g', kind: 'public', name: 'general' }, { id: 'd1', kind: 'dm', name: 'dm:Kim' }, { id: 'd2', kind: 'dm', name: 'dm:Lee' }];
+  const pinned = new Set(['g', 'd1']);
+  const blocked = railRooms({ channels, pinned, blocked: true, space: 'org-1' });
+  assert.equal(blocked.showFavs, false); assert.equal(blocked.showDms, false);
+  const open = railRooms({ channels, pinned, blocked: false, space: 'org-1' });
+  assert.equal(open.showFavs, true); assert.equal(open.showDms, true);
 });
 
 test('동의 조회 실패는 fail-open — 로딩에 갇히지 않고 게이트도 걸지 않는다', () => {

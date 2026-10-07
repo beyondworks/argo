@@ -40,6 +40,14 @@ const state = window.__psFixture = { calls: [], failNext: null, aiConsent: local
     { channel_id: 'pdm-alice', member_kind: 'user', member_id: 'user-alice' },
   ],
 }};
+// '즐겨찾기된 에이전트 1:1' 상태(2026-10-08 — 개인 공간 넓은 화면에서 즐겨찾기한 방이 목록에서 사라지던 결함). 주소에 ?favCrewDm=1을 붙이면 연다.
+// 기본 상태는 그대로라 personal-space.browser.mjs 시나리오에 영향이 없다. 개인 공간 1280: '즐겨찾기' 절에 My Agent(안 읽음 2), '채팅' 절에 Alice Friend.
+const favCrewDm = new URLSearchParams(location.search).has('favCrewDm');
+if (favCrewDm) {
+  state.tables.msgr_personal_list.unshift({ channel_id: 'pcdm-pcrew-mine', other_user_id: null, last_at: now, last_body: 'Pinned agent hello', crew_dm: 'pcrew-mine', crews: [{ id: 'pcrew-mine', name: 'My Agent', owner_user_id: uid }], members: [{ id: uid, name: 'Me' }] }); // msgr_dm_personal_crew가 만드는 모양과 같다
+  state.tables.msgr_personal_channels.push(channel('pcdm-pcrew-mine', 'dm', 'dm:My Agent', null));
+  state.tables.msgr_channel_prefs.push({ user_id: uid, channel_id: 'pcdm-pcrew-mine', muted: false, pinned: true, pin_pos: 0, sort_pos: null });
+}
 
 function result(call, action) {
   state.calls.push(structuredClone(call));
@@ -134,7 +142,7 @@ export const supabase = {
       return 'joined';
     }
     if (name === 'msgr_crew_join_decide') { const r = state.tables.msgr_channel_crew_requests.find((x) => x.id === args.req); if (!r) throw new Error('msgr_request_closed'); r.status = args.approve ? 'approved' : 'rejected'; return r.status; }
-    if (name === 'msgr_unread') return [];
+    if (name === 'msgr_unread') return favCrewDm && args?.org == null ? [{ channel_id: 'pcdm-pcrew-mine', n: 2, mention: 0 }] : []; // 즐겨찾기 절 줄에도 안 읽음 배지가 보이는지
     if (name === 'msgr_joinable_orgs') return [];
     if (name === 'msgr_my_deleted_orgs') return [];
     if (name === 'msgr_find_user') return [{ user_id: 'user-newbie', display_name: 'New Person', handle: 'newbie', relation: 'none' }]; // 친구 추가 팝업(2026-09-30)

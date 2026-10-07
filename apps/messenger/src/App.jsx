@@ -32,6 +32,7 @@ import { addableToChannel, kickExcludes, hasChannelRows, searchChannelsByName } 
 import { resolvePeopleNames, nameForUser, needsNameLookup } from './person-names.mjs';
 import { activitySentence } from './activity-sentence.mjs';
 import { dmEmptyKey, roomTabEmptyKey } from './empty-state.mjs';
+import { railRooms } from './rail-rooms.mjs'; // 넓은 화면 레일의 '즐겨찾기'·'채팅' 두 절 — 즐겨찾기한 방이 어느 절에도 없게 되지 않게(2026-10-08)
 import { nodeIndicator } from './node-indicator.mjs';
 import { duplicateNameHints } from './crew-hints.mjs';
 import { pendingCrewLabel } from './crew-label.mjs';
@@ -2388,8 +2389,9 @@ function Shell({ session }) {
     const target = p.target_kind === 'crew' ? crews.find((c) => c.id === p.target_id) : members.find((m) => m.user_id === p.target_id);
     return target ? [{ id: `target:${p.target_kind}:${p.target_id}`, kind: 'target', targetKind: p.target_kind, targetId: p.target_id, name: target.display_name || nameOfUser(p.target_id), pin_pos: p.pin_pos }] : [];
   });
-  const favs = [...channels.filter((c) => pinned.has(c.id)), ...targetFavs].sort((a, b) => ((a.kind === 'target' ? a.pin_pos : pinPos.get(a.id)) ?? 1e9) - ((b.kind === 'target' ? b.pin_pos : pinPos.get(b.id)) ?? 1e9) || a.name.localeCompare(b.name));
-  const dms = channels.filter((c) => c.kind === 'dm' && !pinned.has(c.id) && !emptyPersonalDm(c, lastMsg[c.id])); // 글 없는 개인 1:1은 목록에서 뺀다(D13)
+  // 레일 두 절(src/rail-rooms.mjs — 단위 테스트 대상): 즐겨찾기한 방은 채팅 절에서 빠지고 즐겨찾기 절에만 있다. 개인 공간도 즐겨찾기 절을 그린다(2026-10-08 — 감추던 탓에 즐겨찾기한 1:1이 넓은 화면에서 사라졌다). 글 없는 개인 1:1은 채팅 절에서 뺀다(D13)
+  const railRoom = railRooms({ channels, pinned, pinPos, targets: targetFavs, hidden: (c) => emptyPersonalDm(c, lastMsg[c.id]), blocked: orgBlocked, space: orgId });
+  const { favs, dms } = railRoom;
   const dmTab = isPhone && (page === 'dm' || swipeTo === 'dm'); // 스와이프로 DM에 돌아가는 중에도 DM 탭 모양(밑 화면이 전환 순간 다시 그려지지 않게) // 폰 DM 탭에서만: 고정(즐겨찾기) DM을 맨 위에 + 선택한 정렬
   const dmSorted = (list) => sortDms(list, { sort: dmSort, lastAt, unread, nameOf: dmName, sortPos: dmSortPos }); // 순수 함수(src/dm-sort.mjs) — 단위 테스트 대상
   const dmPinnedTop = dmTab ? channels.filter((c) => c.kind === 'dm' && pinned.has(c.id)).sort((a, b) => (pinPos.get(a.id) ?? 1e9) - (pinPos.get(b.id) ?? 1e9)) : [];
@@ -2912,7 +2914,7 @@ function Shell({ session }) {
         </div>
         <div className={`msgr-railbody${dmTab && dmAnim ? ` anim-list-${dmAnim}` : ''}`} ref={pullList.setRef}><PullIndicator phase={pullList.phase} pulse={pullList.pulse} t={t} /><div className="msgr-railinner">
           {isPhone && (dmTab ? <h1 className="msgr-bigtitle">{t('phone.tab.dm')}</h1> : <button type="button" className="msgr-bigtitle" onClick={() => setOrgMenu((v) => !v)} aria-haspopup="menu" aria-expanded={orgMenu} title={t('org.switch')}><span className="name">{isPersonal ? t('personal.space') : (org?.name ?? t('org.pick'))}</span><SpaceBadge c={elsewhere} /><I name="caret" size={18} className="caret" /></button>)}{/* 폰 큰 제목(유건 승인 초안 2026-09-29) — 스크롤하면 머리의 작은 제목으로 접힌다. 홈은 조직 전환 단추를 겸한다 */}{/* 내용 래퍼 — 폰에서 min-height: 100%+1px로 늘 1px 넘치게 해 짧은 목록도 iOS 바운스가 된다(유건 2026-09-14) */}
-        {!isPersonal && !orgBlocked && favs.length > 0 && (<RailSection id="fav" label={`${t('rail.fav')} · ${favs.length}`}>{/* 즐겨찾기 — 채널·1:1 대화 한 목록, 끌어서 순서(유건 지시 2026-09-12) */}
+        {railRoom.showFavs && (<RailSection id="fav" label={`${t('rail.fav')} · ${favs.length}`}>{/* 즐겨찾기 — 채널·1:1 대화 한 목록, 끌어서 순서(유건 지시 2026-09-12) */}
           <div className="msgr-list">{favs.map((c) => c.kind === 'target' ? targetRow(c) : c.kind === 'dm' ? dmRow(c) : chRow(c))}</div>
         </RailSection>)}
         {!isPersonal && isPhone && orgGateActive && ( // M-5: 폰은 레일이 화면 전체라 여기서 bare 게이트. 넓은 배치는 본문만(iPad 중복 표시 실측 2026-09-27)
@@ -2954,7 +2956,7 @@ function Shell({ session }) {
 </RailSection>}
         {dmTab && <Seg className="msgr-dmfilter" label={t('dm.filter')} value={dmFilter} onPick={pickDmFilter} options={DM_FILTERS.map((k) => ({ v: k, label: t(`dm.filter.${k}`) }))} />}
         {dmPinnedShown.length > 0 && (<RailSection id="dmpin" label={t('dm.pinned')} forceOpen><div className="msgr-list">{dmPinnedShown.map(dmRow)}</div></RailSection>)}
-        {!orgBlocked && (dms.length > 0 || dmTab || !!orgId) && !(isPhone && isPersonal && !dmTab) && (<RailSection id="dms" label={t('ch.dms')} forceOpen={dmTab} right={<span className="right">{dmTab && <span className="msgr-sortwrap msgr-dmsort"><button type="button" className={`msgr-sortbtn${dmSortMenu ? ' on' : ''}`} onClick={() => setDmSortMenu((v) => !v)} title={t('dm.sort')} aria-label={t('dm.sort')} aria-haspopup="menu" aria-expanded={dmSortMenu}><I name="sort" size={14} /></button>{dmSortMenu && <div className="msgr-rowmenu" role="menu" onMouseLeave={() => setDmSortMenu(false)}>{DM_SORTS.map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={dmSort === v} onClick={() => { pickDmSort(v); setDmSortMenu(false); }}>{dmSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`dm.sort.${v}`)}</button>)}</div>}</span>}
+        {railRoom.showDms && (<RailSection id="dms" label={t('ch.dms')} forceOpen={dmTab} right={<span className="right">{dmTab && <span className="msgr-sortwrap msgr-dmsort"><button type="button" className={`msgr-sortbtn${dmSortMenu ? ' on' : ''}`} onClick={() => setDmSortMenu((v) => !v)} title={t('dm.sort')} aria-label={t('dm.sort')} aria-haspopup="menu" aria-expanded={dmSortMenu}><I name="sort" size={14} /></button>{dmSortMenu && <div className="msgr-rowmenu" role="menu" onMouseLeave={() => setDmSortMenu(false)}>{DM_SORTS.map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={dmSort === v} onClick={() => { pickDmSort(v); setDmSortMenu(false); }}>{dmSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`dm.sort.${v}`)}</button>)}</div>}</span>}
           <button type="button" className="btn" onClick={() => setDmGroup(true)} disabled={!orgId} title={t('dm.new')} aria-label={t('dm.new')}><I name="plus" size={14} /></button>{/* 새 대화 — 종전에는 폰에만 있어서 PC에서는 멤버 목록을 거쳐야 했다(유건 2026-09-16) */}
         </span>}>{/* 폰 DM 탭은 비어 있어도 안내를 띄운다 — 빈 화면이 되지 않게 */}
           <div className="msgr-list">{dmList.map(dmRow)}</div>
