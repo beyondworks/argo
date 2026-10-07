@@ -58,6 +58,11 @@ export const USER_ADDRESS_NOTE = Object.freeze({
     ko: "사용자를 부를 때 '사장님'·'대표님'·'고객님' 같은 호칭을 쓰지 말고 바로 말한다.",
     en: "Do not address the user with titles such as 'boss' or 'captain'; speak to them directly.",
   }),
+  // 사용자가 직접 정한 호칭 규칙이 있을 때(유건 결정 2026-10-08 ③) — 카드 '일하는 방식'·확정 규칙이 메신저 공간별 표시 이름보다 우선한다
+  ruled: Object.freeze({
+    ko: "사용자를 부르는 호칭은 사용자가 직접 정한 규칙(카드의 '일하는 방식'·회사 규칙)을 따른다. 메신저 공간마다 다른 표시 이름이 보여도 그 규칙이 우선이다.",
+    en: "Address the user exactly as the rule they set says (your card's working rules or the company rules). That rule takes precedence over any display name shown in a messenger space.",
+  }),
 });
 
 // ── M11 옛 기록 속 낱말 — 에이전트 지시문 공통 한 줄(chat.mjs systemPromptFor → SDK·CLI·네이티브 러너 모두). 이미 저장된 대화·요약·회의록·쪽지·

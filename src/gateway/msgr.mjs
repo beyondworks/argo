@@ -46,13 +46,14 @@ import { replyLinkPreview } from './link-preview-node.mjs';
 import { createHash } from 'node:crypto';
 import { channelSends } from '../channel-events.mjs';
 import { getTurnStatus } from '../turn-status.mjs';
-import { renderMessengerHandoffs, messengerOrigin, parseMessengerDisposition, messengerRecipientText, isGuestCtx, isOfficeSource, msgrJournal } from './msgr-handoff.mjs';
+import { renderMessengerHandoffs, messengerOrigin, parseMessengerDisposition, messengerRecipientText, isGuestCtx, isOfficeSource, msgrJournal, ownerSoloTurn } from './msgr-handoff.mjs';
 import { executionDb, beginMessengerExecution, finishMessengerExecution, executionHeartbeat } from './msgr-execution.mjs';
 import { roomTurnFailure, roomTurnInterrupted, roomTurnStopped, roomAttachReason } from './msgr-room-errors.mjs';
 import { withLock } from '../mutex.mjs';
 import { workDb, workCanContinue, workPrompt, parseWorkReply, workPeers } from './msgr-work.mjs';
 import { dispatchMessengerAutomations } from './msgr-automations.mjs';
 import { joinTranslate, leaveTranslate } from './office-translate.mjs';
+import { ownerSoloRoom } from './office-audience.mjs'; // 주인 혼자 1:1 판정(유건 결정 2026-10-08 ①) — 오피스 도구의 'owner' 판정과 같은 사람 규칙
 
 export const MSGR_KEY = 'msgr';
 export const HEARTBEAT_WRITE_MS = 30_000; // 심박 쓰기 최소 간격 — 행 나이 최대 45초 + 앱 재조회 30초 < 판정 90초(검수 #689 M3: 60초면 온라인 크루가 주기적으로 부재중)
@@ -1570,12 +1571,20 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     const stopTyping = startTyping(wsId, job.orgId, job.channelId, job.crewId, job.slug, { full: ch.kind === 'public', sourceMsgId: job.msgId, topic: early?.full === (ch.kind === 'public') ? early : null }); if (!early) stageLog(job, 'broadcast', now()); // 받음 방송에 쓴 방 토픽을 그대로 잇는다(방 채널을 두 번 열지 않는다). 공개 채널은 조직 토픽, 비공개 방은 그 방 토픽(조직 토픽은 조직 전원이 듣는다 — 검수 C-1). 방송 내용은 어디서나 채널·크루·시작 시각·원본 메시지 id뿐
     let reply; let failed = false; let aborted = false; let replyMentions = []; let replyMeta = {};
     try {
+      // 주인 혼자 1:1(유건 결정 2026-10-08 ① — 에이전트는 한 사람) — 데스크톱 대화와 같은 대화로 본다(맥락 양방향 + 일지, 세션은 잇지 않는다 — chat.mjs ownerSoloTurn).
+      // 주인이 직접 보낸 첫 단계 턴(손님·넘김·DM 전달·오피스 아님 — ownerSoloTurn)이고, 지난 대화도 주인·이 에이전트의 글뿐이며(나간 사람·전달된 글이 섞인 방 제외),
+      // 방 구성원이 주인·이 에이전트 하나씩일 때만(office-audience ownerSoloRoom). 기억 안 남김 방·서버 봉투가 없는 옛 서버(지난 대화의 전달 표지를 못 본다)는 제외. 비용: 그런 턴에만 구성원 조회 1건(쓰기 0, 주기 호출 0).
+      const solo = !!envelope && ch.kind === 'dm' && ch.crew_memory !== false
+        && ownerSoloTurn({ ...ctx, ownerSolo: true }, { hop: job.hop ?? 0, notOwnerDirect: job.fromCrewId || job.relayVia ? 'handoff' : null }) // 턴 규칙은 chat.mjs와 같은 한 함수
+        && ctxRows.every((r) => !r.meta?.relay && ((r.author_kind === 'user' && r.author_user_id === uid) || (r.author_kind === 'crew' && r.crew_id === job.crewId)))
+        && await ownerSoloRoom(c.client, { channelKind: ch.kind, channelId: job.channelId }, uid, job.crewId);
+      if (solo) ctx.ownerSolo = true;
       // DM은 뿌리마다 새로 허가한 문맥만, 채널은 그 채널 세션만 잇는다(전역 세션 = 주인의 데스크톱 대화). 기억 안 남김 채널은 세션도 없이
       const sessionId = ch.kind === 'dm' || ch.crew_memory === false ? null : scopedSession(await loadThread(wsId, job.slug), job.channelId).sessionId;
       stageLog(job, 'turn-start', now());
       const turn = await runChat(wsId, job.slug, text, sessionId, {
         source: 'messenger', attachments, mirrorCtx: ctx, abortTag: job.msgId, ...(job.fromCrewId || job.relayVia ? { notOwnerDirect: handoffLabel(orgPeers, job.fromCrewId ?? job.relayVia, job.fromCrewId ? null : job.relayViaName) } : {}), // 크루가 넘긴 턴(DM 전달 포함) — 풀 오토만 끈다(넘긴 크루를 잇는다) // abortTag — 중단은 이 원본 메시지의 실행만(검수 2026-09-26 M-1: 같은 크루의 텔레그램·결재 후속 턴도 source:'messenger'다)
-        journal: msgrJournal(job.orgId, job.channelId, ch.crew_memory === false), // 채널 설정: 기억 안 남김 / 채널 태그 파일(회수 단위)
+        journal: { ...msgrJournal(job.orgId, job.channelId, ch.crew_memory === false), ...(solo ? { text: job.text } : {}) }, // 채널 설정: 기억 안 남김 / 채널 태그 파일(회수 단위). 주인 혼자 1:1은 주인이 쓴 글만 데스크톱 일지에(text)
       });
       stageLog(job, 'turn-end', now());
       reply = String(turn.reply ?? '');
@@ -1588,7 +1597,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
       replyMentions = rendered.msgrReply.mentions;
       replyMeta = rendered.msgrReply.meta;
       await appendTurn(wsId, job.slug, { userMsg: text, reply, handover: turn.handover, sessionId: turn.sessionId, attachments, artifacts: turn.artifacts,
-        contextScope: ch.kind === 'dm' ? { kind: 'msgr-dm', channelId: job.channelId, threadRoot: job.threadRoot } : { kind: 'msgr', channelId: job.channelId, threadRoot: job.threadRoot },
+        contextScope: ch.kind === 'dm' ? { kind: 'msgr-dm', channelId: job.channelId, threadRoot: job.threadRoot, ...(solo ? { ownerSolo: true } : {}) } : { kind: 'msgr', channelId: job.channelId, threadRoot: job.threadRoot }, // ownerSolo — 데스크톱 맥락에 싣는 1:1 기록 표지(thread.mjs isOwnerSoloScope)
         via: 'msgr', actor: { uid: job.authorId, name: job.fromCrewId ? `${authorName} ← ${humanName}` : authorName, relay: !!(job.fromCrewId || job.relayVia) } }); // actor = 사람 발화자(who:'user' 고정으로는 구분 불가하던 갭). relay = 크루가 넘긴 줄(authorId는 사슬을 시작한 사람이라 이 줄의 글쓴이가 아니다 — 스레드 맥락이 사장 글로 올리지 않게, chat.mjs threadCtxLine)
       // 메신저에는 사고 과정·도구 단계를 싣지 않는다(유건 결정 2026-09-24 — "답변 준비 중"만). 궤적은 주인 쪽 활동 로그가 정본.
     } catch (e) {

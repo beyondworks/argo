@@ -33,12 +33,34 @@ export function cleanUserName(raw) {
 /** 한국어 호칭 — 이미 '님'으로 끝나면 다시 붙이지 않는다('유건님' → '유건님', '유건님님' 아님). */
 export const koAddress = (name) => (name.endsWith('님') ? name : `${name}님`);
 
-/** 지시문 한 줄(순수) — 이름이 있으면 이름과 부를 말, 없으면 호칭 없이 말하라는 줄. */
-export function userAddressNote(name, lang = 'ko') {
+/** 지시문 한 줄(순수) — 사용자가 정한 호칭 규칙이 있으면(ruled) 그 규칙을 따르라는 줄, 아니면 이름이 있으면 이름과 부를 말, 없으면 호칭 없이 말하라는 줄. */
+export function userAddressNote(name, lang = 'ko', { ruled = false } = {}) {
   const n = cleanUserName(name);
   const l = lang === 'en' ? 'en' : 'ko';
+  if (ruled) return USER_ADDRESS_NOTE.ruled[l]; // 유건 결정 2026-10-08 ③ — 사용자가 정한 규칙이 공간별 표시 이름 지시보다 우선
   if (!n) return USER_ADDRESS_NOTE.unnamed[l];
   return l === 'en' ? USER_ADDRESS_NOTE.named.en(jsonText(n)) : USER_ADDRESS_NOTE.named.ko(jsonText(n), jsonText(koAddress(n)));
+}
+
+/* ── 사용자가 정한 호칭 규칙(유건 결정 2026-10-08 ③) — 카드 '## 일하는 방식'이나 확정 규칙(교정에서 채택한 회사 스킬 captain-rules.md)에
+   호칭 규칙이 있으면, 메신저 공간마다 다른 표시 이름으로 "이 이름으로 불러라"는 지시를 넣지 않는다(그 규칙을 따르라는 한 줄로 바꾼다).
+   판정은 줄 단위 낱말 규칙이다 — 놓치면 종전 이름 지시가 남을 뿐이고(지금과 같음), 잘못 잡으면 이름 대신 "정한 규칙대로"가 실린다. ── */
+export const ADDRESS_RULE_SKILL = 'captain-rules.md'; // corrections.mjs RULES_SKILL과 같은 파일(가져오면 러너 모듈까지 끌려와 이름만 맞춘다 — 테스트가 잠근다)
+const ADDRESS_RULE_RES = [
+  /호칭/,
+  /(?:이?라고|님으로|이름으로)\s*(?:불러|부르|부를|부른|칭하|칭해)/,
+  /(?:사용자|주인|유저|(?<![가-힣])나|(?<![가-힣])저)(?:를|을)\s*(?:부를|부르|불러|부른)/,
+  /\b(?:call|address|refer to)\s+(?:me|the user|the owner)\b(?!['’]s)/i,
+];
+/** 글에 호칭 규칙 줄이 있는가(순수) */
+export const hasAddressRule = (text) => String(text ?? '').split('\n').some((line) => ADDRESS_RULE_RES.some((re) => re.test(line)));
+const RULES_BLOCK_RE = new RegExp(`### (?:스킬|Skill): ${ADDRESS_RULE_SKILL.replace(/\.md$/, '')}\\n([\\s\\S]*?)(?=\\n### (?:스킬|Skill): |$)`); // 주입 머리의 스킬 id는 확장자 없는 이름(chat.mjs loadSkills ← market.mjs readInstalledSkills)
+/** 사용자가 호칭을 직접 정했는가(순수) — 카드 '## 일하는 방식' 절 + 이번 턴에 주입된 확정 규칙 본문(skills 문자열의 captain-rules.md 절).
+    주입 예산 때문에 본문이 빠진 확정 규칙은 모델도 못 보므로 보지 않는다. */
+export function userSetAddress(cardMd, skills) {
+  const rules = String(cardMd ?? '').match(/## 일하는 방식\s*\n([\s\S]*?)(?=\n## |$)/)?.[1] ?? '';
+  const adopted = String(skills ?? '').match(RULES_BLOCK_RE)?.[1] ?? '';
+  return hasAddressRule(rules) || hasAddressRule(adopted);
 }
 
 /** company.owner가 사용자가 직접 적은 이름인가 — 기본값('captain')·회사 노드·빈 값은 이름이 아니다. */

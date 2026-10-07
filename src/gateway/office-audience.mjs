@@ -27,6 +27,21 @@ export async function audienceOf(client, ctx, ownerId) {
   } catch { return 'mixed'; }
 }
 
+/** 주인 혼자 1:1 방인가(유건 결정 2026-10-08 ① — 에이전트는 한 사람). audienceOf의 'owner'(dm이고 사람 구성원이 주인 하나)와 같은 사람 규칙에,
+    방의 에이전트도 이 에이전트 하나뿐이어야 한다는 조건을 더한다 — 다른 사람의 에이전트가 같은 방에 있으면 그 주인이 에이전트를 거쳐 방 글을 읽는다.
+    비용: 방 구성원 조회 1건(사람·에이전트 한 번에). 모르면(오류·빈 결과) false — 좁게. */
+export async function ownerSoloRoom(client, ctx, ownerId, crewId) {
+  if (ctx?.channelKind !== 'dm' || !ctx?.channelId || !ownerId || !crewId) return false;
+  try {
+    const { data, error } = await client.from('msgr_channel_members').select('member_kind, member_id').eq('channel_id', ctx.channelId);
+    if (error || !Array.isArray(data) || !data.length) return false;
+    const of = (kind) => [...new Set(data.filter((r) => r.member_kind === kind).map((r) => r.member_id))];
+    const users = of('user'); const crews = of('crew');
+    return data.every((r) => r.member_kind === 'user' || r.member_kind === 'crew')
+      && users.length === 1 && users[0] === ownerId && crews.length === 1 && crews[0] === crewId;
+  } catch { return false; }
+}
+
 const pick = (ko, en, lang) => (lang === 'en' ? en : ko);
 /** 도구가 직접 쓰는 문장에 되울리는 바깥·모델 값(오류 원문·모델이 준 id·날짜) — 앞 n자만 잘라 JSON 문자열 한 줄로(날것 줄·따옴표 밖 글을 만들지 못하게, 검수 3차 L-3) */
 export const quoted = (v, n = 200) => { const raw = String(v ?? ''), p = cutPrefix(raw, n); return jsonText(p) + (p.length < raw.length ? '…' : ''); }; // 글자 묶음 경계로 자르고 잘렸으면 따옴표 밖에 …

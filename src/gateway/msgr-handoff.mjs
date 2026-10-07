@@ -37,6 +37,14 @@ export function fullAutoAllowed(ctx) {
   return !isGuestCtx(ctx) && ctx?.office !== true && !ctx?.handoffFrom;
 }
 
+/** 주인 혼자 1:1 턴인가(유건 결정 2026-10-08 ① — 에이전트는 한 사람). 이런 턴은 데스크톱 대화와 같은 대화다(맥락 양방향 + 일지, 세션은 잇지 않는다 — chat.mjs).
+    방 확인(사람 구성원이 주인 하나·에이전트도 이 에이전트 하나·최근 대화도 둘의 글뿐)은 게이트웨이가 하고 ctx.ownerSolo로 싣는다(msgr.mjs).
+    여기서는 그 표지가 있어도 이 턴 자체가 주인 직접 턴인지 다시 본다(fail-closed): 1:1(dm)·손님/오피스/넘김 아님·위임 아님·첫 단계. */
+export function ownerSoloTurn(ctx, { hop = 0, from = null, notOwnerDirect = null } = {}) {
+  return ctx?.kind === 'msgr' && ctx.channelKind === 'dm' && ctx.ownerSolo === true
+    && !from && !notOwnerDirect && !(hop > 0) && !(ctx.hop > 0) && fullAutoAllowed(ctx);
+}
+
 /** 주인이 직접 시킨 턴인가(3차 검수 F2) — 풀 오토 판정과 활동 기록의 ownerDirect 표지(chat.mjs)가 이 한 함수만 본다.
     from(위임받은 동료 턴)·notOwnerDirect(크루가 건 예약·장시간 작업·결재 후속)가 없고, 메신저 맥락이면 손님·오피스·크루 넘김이 아닌 턴. 메신저 밖 턴(mirrorCtx 없음·방·텔레그램)은 맥락 판정이 통과한다. */
 export function ownerDirectTurn({ from = null, notOwnerDirect = null, mirrorCtx = null } = {}) {

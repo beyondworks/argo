@@ -51,8 +51,20 @@ export function turnScope(ctx) {
 /** 세션을 따로 잇는 범위의 키 — 메신저 채널 = channelId(#593 저장분 그대로), 텔레그램 그룹 = tg:<chatId>, 슬랙 채널 = slack:<channelId>. 그 밖(메신저 DM 등)은 세션을 남기지 않는다. */
 export const scopeKey = (s) => (s?.kind === 'msgr' && s.channelId ? s.channelId : s?.kind === 'tg-group' && s.chatId ? `tg:${s.chatId}` : s?.kind === 'slack' && s.channelId ? `slack:${s.channelId}` : null);
 export const scopedSession = (t, key) => t?.scopedSessions?.[key] ?? { sessionId: null, sessionDevice: null };
-/** 프롬프트에 붙일 스레드 줄 — 범위 턴은 같은 범위 기록만, 그 밖의 턴은 범위 없는 기록만(채널·그룹·DM 기록이 데스크톱 대화에 섞이지 않게). */
-export const inContextScope = (m, scope) => { const k = scopeKey(scope); return scope ? !!k && scopeKey(m.contextScope) === k : !m.contextScope; }; // 키 없는 범위(여러 공유 목적지 {kind:'shared'})는 아무것도 붙이지 않는다
+/** 주인 혼자 1:1 기록인가(유건 결정 2026-10-08 ① — 에이전트는 한 사람) — 사람 구성원이 주인 하나·에이전트도 이 에이전트 하나인 메신저 1:1에서
+    주인이 직접 보낸 턴의 줄. 게이트웨이(msgr.mjs)가 방을 확인한 턴에만 contextScope.ownerSolo를 적는다. 표지가 없는 DM 줄(옛 버전·남 낀 방)은 해당 없음. */
+export const isOwnerSoloScope = (s) => s?.kind === 'msgr-dm' && s.ownerSolo === true;
+/** 프롬프트에 붙일 스레드 줄 — 범위 턴은 같은 범위 기록만, 그 밖의 턴은 범위 없는 기록 + 주인 혼자 1:1 기록(채널·그룹·남 낀 DM 기록이 데스크톱 대화에 섞이지 않게).
+    주인 혼자 1:1 턴은 범위 없는 턴처럼 이 규칙을 쓴다(chat.mjs lineScope = null) — 데스크톱과 같은 대화다. */
+export const inContextScope = (m, scope) => { const k = scopeKey(scope); return scope ? !!k && scopeKey(m.contextScope) === k : (!m.contextScope || isOwnerSoloScope(m.contextScope)); }; // 키 없는 범위(여러 공유 목적지 {kind:'shared'})는 아무것도 붙이지 않는다
+/** 데스크톱 세션이 아직 못 본 주인 혼자 1:1 기록이 있는가 — 1:1 턴은 세션 밖에서 돈다(세션을 남기지 않는다). 마지막 범위 없는 답 뒤에 1:1 줄이 있으면 참.
+    chat.mjs가 이때 세션을 이어 쓰지 않고 다른 기기에서 이어받을 때처럼 새 세션 + 최근 대화로 연다. */
+export const soloAfterSession = (t) => {
+  const msgs = t?.messages ?? [];
+  let i = msgs.length - 1;
+  for (; i >= 0; i--) if (msgs[i].who === 'crew' && !msgs[i].contextScope) break;
+  return msgs.slice(i + 1).some((m) => isOwnerSoloScope(m.contextScope) && !m.failed);
+};
 /** 스레드 맥락 누적 요약(thread-context.mjs) — 범위 없는 대화는 summary, 키 있는 범위(채널·그룹)는 scopedSummaries[key]. 범위끼리 섞이지 않게 세션과 같은 키를 쓴다.
     {text, upto} — upto는 요약이 덮는 마지막 메시지 ts(앵커). 앵커가 스레드에 없으면 쓰는 쪽(planContext)이 무효로 본다. 없으면 null. */
 export const threadSummary = (t, scope) => { const s = scope ? (scopeKey(scope) ? t?.scopedSummaries?.[scopeKey(scope)] : null) : t?.summary; return s && typeof s.text === 'string' ? s : null; };
