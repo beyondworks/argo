@@ -457,8 +457,9 @@ test('18. 러너 있는 프로세스의 drain은 종전대로 바로 적재한�
 });
 
 test('19. 운영 배선 — startMsgrBridge가 drain에 러너 판정을 넘긴다: 러너 없는 회사는 새 대상 글에 커서를 쓰지 않고, 기한이 지난 글은 종전대로 넘긴다', async () => {
-  const run = async (ws, created) => {
+  const run = async (ws, created, seenSince = null) => {
     await seed(ws);
+    if (seenSince != null) M._runnerYieldSeenForTest.set(`${ws}:${CREW}:11`, seenSince); // 이 프로세스가 그 글을 이미 그만큼 지켜봤다
     await writeFile(paths(ws).company, JSON.stringify({ id: ws, name: '린', lang: 'ko', created: '2026-10-08', ownerId: OWNER })); // 브리지는 소유자 계정일 때만 연다
     const cursorWrites = []; let inboxReads = 0;
     const known = {
@@ -484,11 +485,13 @@ test('19. 운영 배선 — startMsgrBridge가 drain에 러너 판정을 넘긴�
   const fresh = await run('bridge-fresh', Date.now());
   assert.ok(fresh.inboxReads >= 1, '전제: 브리지가 drain했다');
   assert.deepEqual(fresh.cursorWrites, [], '러너 없는 회사의 새 대상 글 — 커서를 넘기지 않는다(러너 있는 프로세스 몫)');
-  const old = await run('bridge-old', Date.now() - YIELD_GRACE_MS - 5000);
-  assert.deepEqual(old.cursorWrites, [11], '기한이 지난 글은 종전대로 적재·전진');
+  const old = await run('bridge-old', Date.now() - YIELD_GRACE_MS - 5000, Date.now() - YIELD_GRACE_MS - 5000);
+  assert.deepEqual(old.cursorWrites, [11], '기한이 지난 글(글 시각·처음 본 시각 모두 160초 넘음)은 종전대로 적재·전진');
+  const unseen = await run('bridge-old-unseen', Date.now() - YIELD_GRACE_MS - 5000);
+  assert.deepEqual(unseen.cursorWrites, [], '묵은 글이라도 이 프로세스가 처음 보면 160초는 보류한다 — 이 기기 시계가 빨라 새 글이 묵어 보이는 경우(검수 E1)와 구분할 수 없다');
 });
 
-test('20. 핸들러 양보 기한은 글 나이 — 재시작한 프로세스도 다시 160초를 기다리지 않고, 시각을 모르는 옛 잡은 양보하지 않는다', async () => {
+test('20. 핸들러 양보 기한 — 처음 본 시각은 프로세스 메모리라 재시작하면 처음 본 뒤 최대 160초 다시 양보하고(시계가 빠른 기기와 구분할 수 없어 감수 — 검수 E1) 그 뒤엔 끝난다. 시각을 모르는 옛 잡은 양보하지 않는다', async () => {
   const ws = await seed('yield-restart');
   const srv = server();
   let clock = Date.now(); const now = () => clock;
@@ -496,8 +499,12 @@ test('20. 핸들러 양보 기한은 글 나이 — 재시작한 프로세스도
   const A1 = M.makeMsgrHandler(ws, { session: async () => ({ db: srv.forProc('A'), uid: OWNER }), now, linkPreview: noPreview });
   assert.equal(await A1(structuredClone(job)), DEFER);
   clock += YIELD_GRACE_MS + 1;
-  const A2 = M.makeMsgrHandler(ws, { session: async () => ({ db: srv.forProc('A'), uid: OWNER }), now, linkPreview: noPreview }); // 재시작 — 프로세스 메모리 없음
-  assert.notEqual(await A2(structuredClone(job)), DEFER, '재시작해도 기한은 글 나이 기준이라 다시 160초를 기다리지 않는다');
+  M._runnerYieldSeenForTest.delete(`${ws}:${CREW}:${job.msgId}`); // 재시작 — 프로세스 메모리(처음 본 시각) 없음
+  const A2 = M.makeMsgrHandler(ws, { session: async () => ({ db: srv.forProc('A'), uid: OWNER }), now, linkPreview: noPreview });
+  assert.equal(await A2(structuredClone(job)), DEFER, '재시작한 프로세스는 글 시각이 지났어도 처음 본 뒤 160초는 다시 양보한다');
+  assert.equal(srv.calls.length, 0);
+  clock += YIELD_GRACE_MS + 1;
+  assert.notEqual(await A2(structuredClone(job)), DEFER, '처음 본 뒤 160초가 지나면 끝(상한)');
   assert.equal(replyOf(srv, job)[0]?.meta?.failed, true);
   const legacy = { ...jobAt(clock) }; delete legacy.createdAt;
   const A3 = M.makeMsgrHandler(ws, { session: async () => ({ db: srv.forProc('A'), uid: OWNER }), now, linkPreview: noPreview });
@@ -575,4 +582,127 @@ test('24. 멘션 없이 이 에이전트 글에 단 답글도 대상 후보로 �
   const enqB = collector();
   await M.drain(wsB, { db: dbB, uid: OWNER, enqueue: enqB, housekeeping: false, now, runnerReady: C.turnRunnerAvailable });
   assert.deepEqual(enqB.jobs.map((j) => j.msgId), [31], '전제: 부모가 이 에이전트 글이라 실제 대상이다(러너 있는 쪽이 적재)');
+});
+
+// ── 시계 어긋남(재검수 LOW E1·E2) ──────────────────────────────────────────────
+// 기한을 서버 created_at과 이 기기 시계의 차이만으로 세면, 이 기기 시계가 160초 넘게 빠를 때 새 글이 이미 묵은 글로 보여 보류가 꺼지고(E1 — 10/7 사고 재발),
+// 느릴 때는 글이 미래에 있어 보류가 상한 없이 길어진다(E2 — 1시간 느리면 1시간). 그래서 이 프로세스가 그 글을 처음 본 로컬 시각으로도 같은 기한을 센다.
+
+test('25. 이 기기 시계가 200초 빠름(검수 E1) — 새 글이 160초 넘게 묵어 보여도 처음 본 뒤 160초는 적재·실행권을 양보하고, 그 사이 러너 있는 B가 가져간다', async () => {
+  const wsA = await seed('skew-fast-a'); // 러너 없음, 시계 200초 빠름
+  const wsB = await seed('skew-fast-b', { cred: true }); // 러너 있음, 서버와 같은 시계
+  const server0 = Date.now();
+  let clockA = server0 + 200_000; const nowA = () => clockA;
+  const srv = inboxServer([inboxMsg(11, server0)]);
+  const enqA = collector(), enqB = collector();
+  await drainAs(wsA, srv, 'A', enqA, nowA);
+  assert.equal(enqA.jobs.length, 0, '시계가 빨라도 새 글은 적재하지 않는다(옛 기준은 글 나이 200초로 보고 바로 적재·전진했다)');
+  assert.equal(srv.cursor, 10, 'A는 서버 커서를 넘기지 않는다');
+  clockA += YIELD_GRACE_MS - 1000;
+  await drainAs(wsA, srv, 'A', enqA, nowA);
+  assert.equal(enqA.jobs.length, 0, '처음 본 뒤 160초 안에는 계속 보류');
+  assert.equal(srv.cursor, 10);
+  await drainAs(wsB, srv, 'B', enqB, () => server0 + 30_000);
+  assert.deepEqual(enqB.jobs.map((j) => j.msgId), [11], '러너 있는 B가 적재한다');
+  // 핸들러(이미 적재된 잡 — 두 프로세스가 같은 커서를 동시에 읽은 경우)도 같은 판정
+  const job = jobAt(server0);
+  let t = server0 + 200_000;
+  const A = M.makeMsgrHandler(wsA, { session: async () => ({ db: srv.forProc('A'), uid: OWNER }), now: () => t, linkPreview: noPreview });
+  assert.equal(await A(structuredClone(job)), DEFER, '시계가 빨라도 실행권을 먼저 잡지 않는다');
+  assert.equal(srv.callsOf('A', 'claimExecution').length, 0);
+  t += YIELD_GRACE_MS - 1000;
+  assert.equal(await A(structuredClone(job)), DEFER, '처음 본 뒤 160초 안');
+  t += 2000;
+  assert.notEqual(await A(structuredClone(job)), DEFER, '처음 본 뒤 160초가 지나면 더 미루지 않는다(상한)');
+  assert.equal(replyOf(srv, job)[0]?.meta?.failed, true, '아무도 안 가져갔으면 종전대로 실패 안내 한 번');
+});
+
+test('26. 이 기기 시계가 1시간 느림(검수 E2) — 글이 미래에 있어 보여도 보류·양보는 처음 본 뒤 160초까지다. 60초 안쪽으로 느린 시계는 종전처럼 글 시각도 세고, 양보 중 시계가 뒤로 가도 기한이 늘지 않는다', async () => {
+  const ws = await seed('skew-slow');
+  const server0 = Date.now();
+  let clock = server0 - 3_600_000; const now = () => clock;
+  const srv = inboxServer([inboxMsg(11, server0)]);
+  const enq = collector();
+  await drainAs(ws, srv, 'A', enq, now);
+  assert.equal(enq.jobs.length, 0, '처음 본 순간은 보류');
+  clock += YIELD_GRACE_MS - 1000;
+  await drainAs(ws, srv, 'A', enq, now);
+  assert.equal(enq.jobs.length, 0);
+  clock += 2000;
+  await drainAs(ws, srv, 'A', enq, now);
+  assert.deepEqual(enq.jobs.map((j) => j.msgId), [11], '처음 본 뒤 160초가 지나면 적재한다(옛 기준은 1시간 + 160초 동안 보류했다)');
+  assert.equal(srv.cursor, 11);
+  // 핸들러 — 1시간 미래 글
+  const job = jobAt(server0);
+  let t = server0 - 3_600_000;
+  const A = M.makeMsgrHandler(ws, { session: async () => ({ db: srv.forProc('A'), uid: OWNER }), now: () => t, linkPreview: noPreview });
+  assert.equal(await A(structuredClone(job)), DEFER);
+  t += YIELD_GRACE_MS + 1;
+  assert.notEqual(await A(structuredClone(job)), DEFER, '처음 본 뒤 160초면 끝(옛 기준은 1시간 동안 양보)');
+  assert.equal(replyOf(srv, job)[0]?.meta?.failed, true);
+  // 30초 느린 시계(60초 안) — 글 시각 기준 기한도 그대로 센다: 처음 본 뒤 160초가 지나도 글 시각 + 160초까지는 양보
+  const near = jobAt(server0);
+  let u = server0 - 30_000;
+  const A2 = M.makeMsgrHandler(ws, { session: async () => ({ db: srv.forProc('A'), uid: OWNER }), now: () => u, linkPreview: noPreview });
+  assert.equal(await A2(structuredClone(near)), DEFER);
+  u += YIELD_GRACE_MS + 1;
+  assert.equal(await A2(structuredClone(near)), DEFER, '글 시각이 60초 안쪽 미래면 글 시각 기한도 센다');
+  u += 30_000;
+  assert.notEqual(await A2(structuredClone(near)), DEFER);
+  // 양보 중에 이 기기 시계가 1시간 뒤로 감(시계 맞춤) — 처음 본 시각을 지금으로 다시 잡아 기한이 1시간 늘지 않는다
+  const back = jobAt(server0);
+  let v = server0;
+  const A3 = M.makeMsgrHandler(ws, { session: async () => ({ db: srv.forProc('A'), uid: OWNER }), now: () => v, linkPreview: noPreview });
+  assert.equal(await A3(structuredClone(back)), DEFER);
+  v -= 3_600_000;
+  assert.equal(await A3(structuredClone(back)), DEFER);
+  v += YIELD_GRACE_MS + 1;
+  assert.notEqual(await A3(structuredClone(back)), DEFER, '시계가 뒤로 가도 그때부터 160초가 상한');
+});
+
+test('27. 처음 본 시각은 받은 대상 글 전부에 남기고 핸들러와 같이 쓴다 — 앞 글에서 보류가 멈춘 동안 뒤 글도 함께 세어, 어느 프로세스에도 러너가 없을 때 글마다 160초씩 밀리지 않는다(시계 200초 빠름)', async () => {
+  const ws = await seed('seen-batch');
+  const server0 = Date.now();
+  let clock = server0 + 200_000; const now = () => clock;
+  const srv = inboxServer([inboxMsg(11, server0), inboxMsg(12, server0 + 500)]);
+  const enq = collector();
+  await drainAs(ws, srv, 'A', enq, now);
+  assert.equal(enq.jobs.length, 0);
+  assert.equal(srv.cursor, 10);
+  clock += YIELD_GRACE_MS + 1;
+  await drainAs(ws, srv, 'A', enq, now);
+  assert.deepEqual(enq.jobs.map((j) => j.msgId), [11, 12], '두 글 모두 처음 본 뒤 160초 — 함께 적재(뒤 글이 160초 더 밀리지 않는다)');
+  assert.equal(srv.cursor, 12);
+  const A = M.makeMsgrHandler(ws, { session: async () => ({ db: srv.forProc('A'), uid: OWNER }), now, linkPreview: noPreview });
+  for (const j of enq.jobs) assert.notEqual(await A(j), DEFER, 'drain에서 처음 본 시각을 핸들러도 쓴다 — 다시 160초를 기다리지 않는다');
+  assert.equal(srv.messages.filter((m) => m.meta?.failed).length, 2);
+});
+
+test('28. drain의 러너 판정은 크루마다 따로 — 카드 있는 크루와 없는 크루를 함께 부른 새 글: 카드 있는 크루만 적재·커서 전진, 카드 없는 크루는 커서 그대로(크루 순서 두 가지)', async () => {
+  const GHOST = 'cccccccc-0000-4000-8000-000000000002';
+  const rows = { seoyun: { id: CREW, slug: 'seoyun', display_name: '서윤' }, ghost: { id: GHOST, slug: 'ghost', display_name: '유령' } };
+  for (const order of [['seoyun', 'ghost'], ['ghost', 'seoyun']]) {
+    const ws = await seed(`per-crew-${order[0]}-first`, { cred: true }); // 러너는 있다 — seoyun 카드만 있고 ghost 카드는 없다(다른 기기에서 만든 에이전트·동기화 지연)
+    const clock = Date.now(); const now = () => clock;
+    const cursors = new Map([[CREW, 10], [GHOST, 10]]);
+    const msg = { ...inboxMsg(11, clock), mentions: [{ kind: 'crew', id: CREW }, { kind: 'crew', id: GHOST }] };
+    const checks = [];
+    const db = Object.assign(server().forProc('A'), {
+      async myCrews() { return order.map((s) => ({ ...rows[s], org_id: ORG, allow: 'all', allow_users: [], cursor_msg_id: cursors.get(rows[s].id), hosting: 'local' })); },
+      async crewChannels() { return []; },
+      async crewScope() { return new Set([CH]); },
+      async crewInbox(_ws, _crew, after) { return [msg].filter((m) => m.id > after); },
+      async instructCheck() { return 'ok'; },
+      async orgEntitled() { return true; },
+      async orgConsentOk() { return true; },
+      async setCursor(id, n) { if (n > cursors.get(id)) cursors.set(id, n); },
+    });
+    const enq = collector();
+    const runnerReady = async (w, slug) => { checks.push(slug); return C.turnRunnerAvailable(w, slug); };
+    await M.drain(ws, { db, uid: OWNER, enqueue: enq, housekeeping: false, now, runnerReady });
+    assert.deepEqual(enq.jobs.map((j) => [j.slug, j.msgId]), [['seoyun', 11]], `카드 있는 크루만 적재(${order.join('→')})`);
+    assert.equal(cursors.get(CREW), 11, '카드 있는 크루 커서 전진');
+    assert.equal(cursors.get(GHOST), 10, '카드 없는 크루 커서는 그대로 — 카드 있는 프로세스가 가져가게');
+    assert.deepEqual([...checks].sort(), ['ghost', 'seoyun'], '크루마다 한 번씩 판정');
+  }
 });

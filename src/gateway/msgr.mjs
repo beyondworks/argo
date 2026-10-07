@@ -1029,19 +1029,22 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
     const ccOf = (m) => (m.mentions ?? []).some((x) => x?.kind === 'crew' && x.id === crew.id && x.role === 'cc');
     // 러너 양보(drain 단계, 2026-10-08 검수 HIGH) — 서버 커서(cursor_msg_id)는 같은 계정·회사의 모든 프로세스(상주·앱 사본·다른 기기)가 나눠 쓴다.
     // 이 프로세스가 이 크루의 턴을 돌릴 수 없는데(runnerReady false — 러너 자격·카드 없음) 적재와 함께 커서를 넘기면 러너 있는 프로세스는 그 글을 영영 보지 못하고,
-    // 핸들러의 양보는 넘겨받을 상대 없이 기한 뒤 실패 답으로 끝났다(검수 실험 R1, 러너 있는 쪽이 같은 크루로 바쁠 때 R2). 그래서 기한(글 나이 YIELD_GRACE_MS) 안의
+    // 핸들러의 양보는 넘겨받을 상대 없이 기한 뒤 실패 답으로 끝났다(검수 실험 R1, 러너 있는 쪽이 같은 크루로 바쁠 때 R2). 그래서 기한(YIELD_GRACE_MS — 글 시각·처음 본 시각, withinRunnerYield) 안의
     // 대상 후보 글부터는 적재도 커서 전진도 하지 않는다 — 러너 있는 프로세스가 그 사이 적재·전진하면 이 프로세스는 그 글을 다시 보지 않고(턴이 바쁘거나 큐 슬롯이 차도
     // drain은 따로 돈다), 아무도 안 가져가면 기한 뒤 종전대로 처리한다(무응답보다 실패 안내 — 리스와 같은 이유). 대상 후보 = step이 적재까지 갈 수 있는 글의 상위 집합
     // (답글은 부모가 이 크루라고 본다 — 부모 조회 없이). 잡담은 종전대로 지나간다. 판정은 대상 후보가 처음 나올 때 크루당 한 번, 글별 RPC(crewContext·message·instructCheck)
     // 전이다 — 보류는 DB 호출을 늘리지 않는다(받은 글 조회는 원래 틱마다 하고, 보류 동안 같은 글을 다시 읽을 뿐이며 커서 쓰기는 줄어든다).
+    // 기한은 글 시각과 이 프로세스가 처음 본 시각 중 늦은 쪽(withinRunnerYield) — 처음 본 시각은 받은 대상 후보 글 전부에 지금 남긴다. 보류는 첫 대상 글에서 멈추므로
+    // 뒤 글을 그 글이 풀린 뒤에야 처음 본 것으로 세면, 어느 프로세스에도 러너가 없을 때 글마다 160초씩 밀린다. 판정(ready)은 크루마다 따로다(카드·러너는 크루별).
     let ready = null;
+    const candidate = (m) => ccOf(m) || targetsCrew(m, crew, dm, m.author_kind === 'user' && m.reply_to ? crew.id : null);
+    if (runnerReady) for (const m of msgs ?? []) if (candidate(m)) firstSeenAt(yieldKey(wsId, crew.id, m.id), now());
     const holdFrom = async (m) => {
-      if (!runnerReady || !withinRunnerYield(m.created_at, now())) return false;
-      if (!ccOf(m) && !targetsCrew(m, crew, dm, m.author_kind === 'user' && m.reply_to ? crew.id : null)) return false;
+      if (!runnerReady || !candidate(m) || !withinRunnerYield(yieldKey(wsId, crew.id, m.id), m.created_at, now())) return false;
       ready ??= await (async () => runnerReady(wsId, crew.slug))().catch(() => false) === true;
       if (ready) return false;
       const k = `${crew.id}:${m.id}`;
-      if (!heldLogged.has(k)) { heldLogged.add(k); if (heldLogged.size > 500) heldLogged.delete(heldLogged.values().next().value); console.log(`[argo] msgr ${crew.slug}: 이 프로세스엔 이 에이전트를 실행할 러너가 없어 메시지 ${m.id}부터 적재를 러너 있는 Argo에 양보합니다(글 나이 최대 ${Math.round(YIELD_GRACE_MS / 1000)}초)`); }
+      if (!heldLogged.has(k)) { heldLogged.add(k); if (heldLogged.size > 500) heldLogged.delete(heldLogged.values().next().value); console.log(`[argo] msgr ${crew.slug}: 이 프로세스엔 이 에이전트를 실행할 러너가 없어 메시지 ${m.id}부터 적재를 러너 있는 Argo에 양보합니다(처음 본 뒤 최대 ${Math.round(YIELD_GRACE_MS / 1000)}초)`); }
       return true;
     };
     const step = async (m) => { // 한 메시지 처리 — 예외(순단)는 이 크루의 커서만 보류하고 다른 크루·결재 동기화는 계속(검수 4R M-3)
@@ -1416,11 +1419,29 @@ async function noteJobDenied(wsId, job, { db, uid, lang }) {
 const receivedSent = new Set(); // 받음 방송을 이미 보낸 잡(크루:글) — 프로세스 안에서 잡당 한 번
 const heldLogged = new Set(); // drain 보류 로그를 남긴 글(크루:글) — 틱마다 같은 줄을 찍지 않게, 500건 상한
 const yieldLogged = new Set(); // 핸들러 양보 로그를 남긴 잡(크루:글) — DEFER 3초마다 같은 줄을 찍지 않게, 500건 상한
-/** 러너 없는 프로세스가 이 글을 아직 양보하나 — 글 나이(서버 created_at) 기준이라 재시작해도, 프로세스끼리도 같은 기한이다.
-    기준은 클라우드 리스의 '러너 없는 기기는 양보'(shouldYieldAcquire·YIELD_GRACE_MS)와 같다. 시각을 모르면 양보하지 않는다(무기한 양보 금지 — 종전 동작). */
-function withinRunnerYield(createdAt, t) {
+const yieldSeenAt = new Map(); // (회사:크루:글) → 이 프로세스가 그 글을 처음 본 로컬 시각 — drain 보류와 핸들러 양보가 같이 쓴다, 500건 상한
+export const _runnerYieldSeenForTest = yieldSeenAt;
+const YIELD_CLOCK_AHEAD_MS = 60_000; // 글 시각(created_at)이 이 기기 시계보다 이만큼 넘게 미래면 이 기기 시계가 느린 것 — 글 시각 기한을 쓰지 않는다
+const yieldKey = (wsId, crewId, msgId) => `${wsId}:${crewId}:${msgId}`;
+/** 처음 본 시각 — 없으면 지금으로 남긴다. 이 기기 시계가 뒤로 갔으면(남긴 시각이 미래) 지금으로 다시 남겨 기한이 늘지 않게 한다. */
+function firstSeenAt(key, t) {
+  const seen = yieldSeenAt.get(key);
+  if (seen !== undefined && seen <= t) return seen;
+  yieldSeenAt.delete(key); yieldSeenAt.set(key, t);
+  if (yieldSeenAt.size > 500) yieldSeenAt.delete(yieldSeenAt.keys().next().value);
+  return t;
+}
+/** 러너 없는 프로세스가 이 글을 아직 양보하나 — drain 보류와 핸들러 양보가 이 함수 하나로 판정한다.
+    기한(YIELD_GRACE_MS)은 클라우드 리스의 '러너 없는 기기는 양보'(shouldYieldAcquire)와 같고, 두 시각 중 하나라도 기한 안이면 양보한다:
+    ① 이 프로세스가 그 글을 처음 본 로컬 시각 ② 글 시각(서버 created_at). 글 시각만 쓰면 이 기기 시계가 160초 넘게 빠를 때 새 글이 이미 묵은 글로 보여
+    양보가 꺼지고(재검수 E1 — 10/7 사고 재발), 느릴 때는 글이 미래에 있어 상한 없이 길어졌다(E2 — 1시간 느리면 1시간). 그래서 글 시각이 이 기기 시계보다
+    60초 넘게 미래면 처음 본 시각만 쓴다 — 어느 경우든 처음 본 뒤 160초(+ 60초 안쪽 시계 차이)가 상한이다.
+    대가: 처음 본 시각은 프로세스 메모리라 재시작한 프로세스와 오래 꺼져 있다 켜진 프로세스는 묵은 글도 처음 본 뒤 160초 다시 양보한다(시계가 빠른 기기와 구분할 수 없다).
+    시각을 모르는 글(옛 큐 파일)은 양보하지 않는다(종전 동작). */
+function withinRunnerYield(key, createdAt, t) {
   const born = Date.parse(createdAt ?? '');
-  return Number.isFinite(born) && born > 0 && shouldYieldAcquire(false, born, t);
+  if (!Number.isFinite(born) || born <= 0) return false;
+  return shouldYieldAcquire(false, firstSeenAt(key, t), t) || (born - t <= YIELD_CLOCK_AHEAD_MS && shouldYieldAcquire(false, born, t));
 }
 /** runnerReady(wsId, slug) — 이 프로세스가 그 크루의 턴을 돌릴 러너를 받을 수 있나. 기본은 chat()과 같은 판정(turnRunnerAvailable)이고,
     턴 실행기(runChat)를 바꿔 끼운 호출자(테스트 등)는 그 실행기를 모르므로 기본으로 양보 판정을 하지 않는다 — 필요하면 직접 넘긴다. */
@@ -1432,16 +1453,16 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
   // 실패 답을 올리고, 러너 있는 프로세스는 '이미 답함'으로 건너뛴다. 1차 양보는 drain(적재·커서 보류)이고, 여기는 이미 적재된 잡(두 프로세스가 같은 커서를 동시에 읽음·
   // 적재 뒤 러너가 사라짐·업데이트 전에 쌓인 큐 파일)의 2차 방어다. 아직 실행권을 잡지 않은 잡(체크포인트 없음·claiming)만 본다 — running(끊긴 턴 닫기)·publishing(결과 게시)은
   // 러너가 필요 없고 이 프로세스가 끝내야 한다. 양보 중에는 세션·DB를 부르지 않는다(DEFER 3초 간격의 로컬 판정만).
-  // 기한은 drain과 같은 글 나이(withinRunnerYield) — drain에서 이미 기다린 글을 여기서 다시 160초 기다리지 않고, 재시작해도 늘어나지 않는다. 기한이 지나도 아무도 안 가져갔으면
+  // 기한은 drain과 같은 판정·같은 처음 본 시각(withinRunnerYield) — drain에서 이미 기다린 글을 여기서 다시 160초 기다리지 않는다. 기한이 지나도 아무도 안 가져갔으면
   // 종전 경로로 진행한다 — 이미 답했으면 '이미 답함'으로 끝나고, 아니면 실패 답을 한 번(reply:<crew>:<msg>) 남긴다(리스와 같은 이유: 어느 프로세스에도 러너가 없을 때
   // 무응답이 실패 안내보다 나쁘다). 그 실패는 chat()이 회사 활동에 남긴다.
   const yieldForRunner = async (job) => {
     if (!runnerReady || (job.msgrExecution && job.msgrExecution.phase !== 'claiming')) return false;
-    if (!withinRunnerYield(job.createdAt, now()) || await runnerReady(wsId, job.slug)) return false;
+    if (!withinRunnerYield(yieldKey(wsId, job.crewId, job.msgId), job.createdAt, now()) || await runnerReady(wsId, job.slug)) return false;
     const k = `${job.crewId}:${job.msgId}`;
     if (!yieldLogged.has(k)) {
       yieldLogged.add(k); if (yieldLogged.size > 500) yieldLogged.delete(yieldLogged.values().next().value);
-      console.log(`[argo] msgr ${job.slug}: 이 프로세스엔 이 에이전트를 실행할 러너가 없어 메시지 ${job.msgId}의 실행권을 러너 있는 Argo에 양보합니다(글 나이 최대 ${Math.round(YIELD_GRACE_MS / 1000)}초)`);
+      console.log(`[argo] msgr ${job.slug}: 이 프로세스엔 이 에이전트를 실행할 러너가 없어 메시지 ${job.msgId}의 실행권을 러너 있는 Argo에 양보합니다(처음 본 뒤 최대 ${Math.round(YIELD_GRACE_MS / 1000)}초)`);
     }
     return true;
   };
