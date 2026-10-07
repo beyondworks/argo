@@ -21,6 +21,8 @@
   memory across devices when you sign in. Sync payloads support envelope encryption.
 - **Bring your own runner** — connect any of five engines with your own account:
   Claude (Agent SDK / subscription OAuth), Codex, Gemini, GLM, Kimi. No middleman keys.
+  Each user connects their own Claude subscription through Anthropic's official login, or uses
+  their own API key; Argo never resells or brokers Claude usage.
 - **A team of agents, not a chatbot** — agents message each other (`to/cc`, inbox, delegation),
   compete on drafts, hold meeting-room discussions, and run scheduled routines.
 - **Leave your desk, keep the thread** — hand off any conversation to Telegram/Slack;
