@@ -267,39 +267,18 @@ function noReportMark(line) {
   return { note: rest.replace(/^[\s:：\-–—.。!]+/u, '').trim().replace(/^[(（](.*)[)）]$/u, '$1').trim() };
 }
 const FENCE_LINE = /^\s*(`{3,}|~{3,})[\w-]*\s*$/;
-/** 표지 줄을 뗀 뒤 남은 빈 코드 블록(여는 펜스 바로 뒤가 닫는 펜스)을 지운다 — 펜스로 감싼 NO_REPORT에서 펜스만 알림으로 나가던 것(검수 LOW). */
-function dropEmptyFences(lines) {
-  const out = [];
-  let open = false;
-  for (let i = 0; i < lines.length; i++) {
-    if (FENCE_LINE.test(lines[i])) {
-      if (!open) {
-        let j = i + 1;
-        while (j < lines.length && !lines[j].trim()) j++;
-        if (j < lines.length && FENCE_LINE.test(lines[j])) { i = j; continue; }
-      }
-      open = !open;
-    }
-    out.push(lines[i]);
-  }
-  return out;
-}
-/** 답의 NO_REPORT 판정(순수). 표지 줄이 답 안에 하나라도 따로 있으면 보고 없음(marked) — 알림·메신저 글을 보내지 않는다. 이때 text = 표지를 뗀 나머지
-    (같은 줄 설명 포함, 펜스로 감쌌던 빈 코드 블록 제외)로, 대화 기록에만 남긴다(버리지 않는다 — 무엇을 확인했는지가 담겼을 수 있다). 3차 검수 정책:
-    '보고할 것 없음.\nNO_REPORT'·'NO_REPORT\n\n(새 메일 0건)'·'- NO_REPORT'·'no_report'가 보고로 나가 알림이 갔다 — 표지와 다른 줄이 같이 오면
-    표지(에이전트가 고른 결론)를 따른다. 줄을 바꿔 쓰든 같은 줄에 쓰든('NO_REPORT — 새 항목 0건') 결과가 같다. 표지가 없으면 원문 그대로(보고). */
+/** 답의 NO_REPORT 판정(순수). marked면 알림·메신저 글을 보내지 않고, text(같은 줄 설명, 없으면 '')만 대화 기록에 남긴다. 아니면 원문 그대로 보고. */
+// 보안 검토(2026-10-08, 알림 억제): '표지 줄이 어디든 있으면 보고 없음'은 루틴이 읽은 바깥 글(메일 본문 등)에 NO_REPORT 한 줄을 심으면
+// 그 글을 인용한 보고 전체가 알림 없이 사라진다. 그래서 내용 줄(빈 줄·펜스 줄 제외)이 표지 한 줄뿐일 때만 보고 없음으로 본다 — 같은 줄의 짧은 설명은 허용.
+// 표지가 다른 줄과 같이 오면 보고로 원문 그대로 보낸다(알림을 잘못 막는 것보다 한 번 더 보내는 쪽이 안전하다).
+const NO_REPORT_NOTE_MAX = 200;
 function splitNoReport(text) {
   const raw = String(text ?? '');
-  let marked = false;
-  const kept = [];
-  for (const line of raw.split('\n')) {
-    const mark = noReportMark(line);
-    if (!mark) { kept.push(line); continue; }
-    marked = true;
-    if (mark.note) kept.push(mark.note);
-  }
-  if (!marked) return { marked: false, text: raw };
-  return { marked: true, text: dropEmptyFences(kept).join('\n').replace(/\n{3,}/g, '\n\n').trim() };
+  const content = raw.split('\n').filter((line) => line.trim() && !FENCE_LINE.test(line));
+  if (content.length !== 1) return { marked: false, text: raw };
+  const mark = noReportMark(content[0]);
+  if (!mark || mark.note.length > NO_REPORT_NOTE_MAX) return { marked: false, text: raw };
+  return { marked: true, text: mark.note };
 }
 /** 빈 답 — 실패 그대로(빈 답을 성공으로 받으면 도구 실패 때의 침묵을 가린다). 문구만 사용자가 알아듣게. 루프에는 보고 규칙이 없어 안내를 붙이지 않는다. */
 function emptyAnswerError(lang, loop, cause = null) {
