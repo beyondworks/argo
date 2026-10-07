@@ -97,7 +97,9 @@ const mk = (slug, mode) => addRoutine(WS, { agentSlug: slug, title: `${mode} ${+
 const routineEvents = (id) => events.filter((e) => e.type === 'routine' && e.routine?.id === id);
 
 for (const [slug, label] of [['cx', 'Codex CLI'], ['sd', 'Claude SDK']]) {
-  test(`${label}: NO_REPORT 규칙이 러너 프롬프트까지 가고, NO_REPORT 답은 알림 없는 성공이다`, async () => {
+  // 가짜 codex는 POSIX 실행 파일이다 — Windows에서는 찾지 못해 다른 러너로 대체 실행되므로 Codex 판을 건너뛴다(cli-runner-turn-io와 같은 한계).
+  const skip = slug === 'cx' && process.platform === 'win32';
+  test(`${label}: NO_REPORT 규칙이 러너 프롬프트까지 가고, NO_REPORT 답은 알림 없는 성공이다`, { skip }, async () => {
     const r = await mk(slug, 'MODE-NOREPORT');
     const out = await runRoutine(WS, r.id, { chatFn: chat });
     await settle();
@@ -122,7 +124,7 @@ for (const [slug, label] of [['cx', 'Codex CLI'], ['sd', 'Claude SDK']]) {
     assert.doesNotMatch(journal, /보고 규칙|NO_REPORT 한 줄/, '일지에는 규칙 문장이 실리지 않는다');
   });
 
-  test(`${label}: 빈 최종 답은 실패 — 알아듣는 문구로 기록·알림하고 대화 기록에 남는다`, async () => {
+  test(`${label}: 빈 최종 답은 실패 — 알아듣는 문구로 기록·알림하고 대화 기록에 남는다`, { skip }, async () => {
     const r = await mk(slug, 'MODE-EMPTY');
     await assert.rejects(runRoutine(WS, r.id, { chatFn: chat }), /에이전트가 아무 답도 내지 않았습니다/);
     await settle();
@@ -137,7 +139,7 @@ for (const [slug, label] of [['cx', 'Codex CLI'], ['sd', 'Claude SDK']]) {
     assert.match(msgs[i + 1]?.text ?? '', /루틴 실행에 실패했습니다.*아무 답도 내지 않았습니다/s);
   });
 
-  test(`${label}: 보고가 있으면 종전대로 성공·결과 알림 1건(인접 핀)`, async () => {
+  test(`${label}: 보고가 있으면 종전대로 성공·결과 알림 1건(인접 핀)`, { skip }, async () => {
     const r = await mk(slug, 'MODE-REPORT');
     const out = await runRoutine(WS, r.id, { chatFn: chat });
     await settle();
@@ -148,7 +150,7 @@ for (const [slug, label] of [['cx', 'Codex CLI'], ['sd', 'Claude SDK']]) {
   });
 }
 
-test('C8 핀: 루틴이 아닌 대화 턴의 Codex 빈 응답은 종전 문구 그대로 실패한다', async () => {
+test('C8 핀: 루틴이 아닌 대화 턴의 Codex 빈 응답은 종전 문구 그대로 실패한다', { skip: process.platform === 'win32' }, async () => {
   await assert.rejects(chat(WS, 'cx', 'MODE-EMPTY 안녕', null, {}), /Codex 러너가 빈 응답을 반환했습니다/);
 });
 
