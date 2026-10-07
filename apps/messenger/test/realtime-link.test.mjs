@@ -182,3 +182,83 @@ test('구독이 30초 동안 0.3초마다 끊겼다 붙어도(폭주) 목록 다
   assert.ok(at.length >= 3 && at.length <= 4, `${at.length}번(종전 약 33번)`);
   for (let i = 1; i < at.length - 1; i++) assert.ok(at[i] - at[i - 1] >= 10_000, `간격 ${at[i] - at[i - 1]}ms`);
 });
+
+// ── 검수 반영(2026-10-08): '조용해진 뒤 한 번'은 org:와 u:가 연달아 붙을 때만 한 번이었다. phoenix는 소켓이 다시 붙으면 채널을 만든 순서대로
+// 다시 가입한다 — 만료 토큰 거절 뒤 joinWithBackoff가 u:를 새로 만들면 u:가 방 토픽들 뒤로 간다. 그러면 org: 뒤 0.8초에 한 번, u: 뒤에 또 한 번,
+// 조직이 방 토픽 사이에 갈리면 세 번 전체 재조회가 돌았다. 아직 안 붙은 목록 키(org:·u:)가 있으면 조용함을 기다리지 않는다.
+const reconnect = (order) => {
+  const c = clock(); const at = []; let uUp = -1;
+  const w = watchOn(c, () => at.push(c.now()));
+  for (const k of order) w.status(k, 'SUBSCRIBED');
+  for (const k of order) w.status(k, 'CHANNEL_ERROR');
+  for (const k of order) { if (k === 'u:me') uUp = c.now(); w.status(k, 'SUBSCRIBED'); c.advance(150); }
+  c.advance(20_000);
+  return { at, uUp };
+};
+for (const [name, order] of [
+  ['u 먼저', ['org:a', 'org:b', 'u:me', ...rooms(52)]],
+  ['u 중간(방 25개 뒤)', ['org:a', 'org:b', ...rooms(25), 'u:me', ...rooms(27)]],
+  ['u 마지막', ['org:a', 'org:b', ...rooms(52), 'u:me']],
+  ['조직 사이에 방', ['org:a', ...rooms(20), 'org:b', ...rooms(32), 'u:me']],
+  ['u가 조직보다 먼저', ['u:me', ...rooms(30), 'org:a', ...rooms(22), 'org:b']],
+]) {
+  test(`재연결 순서 '${name}' — 목록 다시 읽기는 한 번, 마지막 목록 키(org:·u:)가 붙은 뒤 0.8초`, () => {
+    const { at } = reconnect(order);
+    const lastList = Math.max(...order.map((k, i) => (k.startsWith('dm:') ? -1 : i))) * 150;
+    assert.deepEqual(at, [lastList + 800], `목록 다시 읽기 시각(종전: org: 뒤와 u: 뒤에 각각)`);
+  });
+}
+
+test('나간 조직 — 조직 집합에서 빠진 키(only)는 다시 붙기를 기다리지 않는다(종전 키가 남으면 매번 10초 상한까지 미뤄진다)', () => {
+  const c = clock(); const at = [];
+  const w = watchOn(c, () => at.push(c.now()));
+  for (const k of ['org:a', 'org:b', 'u:me']) w.status(k, 'SUBSCRIBED');
+  for (const k of ['org:a', 'org:b', 'u:me']) w.status(k, 'CHANNEL_ERROR');
+  w.only(['org:a', 'u:me']); // 끊긴 동안 org:b에서 나갔다 — 구독 효과가 남은 조직으로 다시 건다
+  w.status('org:a', 'SUBSCRIBED'); c.advance(150); w.status('u:me', 'SUBSCRIBED');
+  c.advance(20_000);
+  assert.deepEqual(at, [150 + 800]);
+});
+
+test('옛 서버(u:를 한 번도 받아 주지 않음) — 거절된 u:는 기다리지 않는다, 조직이 붙고 0.8초 뒤 한 번', () => {
+  const c = clock(); const at = [];
+  const w = watchOn(c, () => at.push(c.now()));
+  w.status('u:me', 'CHANNEL_ERROR'); // 가입 거절 — joinWithBackoff가 1분 뒤 다시 시도
+  w.status('org:a', 'SUBSCRIBED'); w.status('org:a', 'CHANNEL_ERROR');
+  c.advance(1000); w.status('org:a', 'SUBSCRIBED');
+  c.advance(20_000);
+  assert.deepEqual(at, [1000 + 800]);
+});
+
+test('u:를 받아 주는 서버에서 u:가 거절 대기 중(1~10분)이면 — 상한(첫 키 뒤 10초)에 한 번은 부른다', () => {
+  const c = clock(); const at = [];
+  const w = watchOn(c, () => at.push(c.now()));
+  w.status('u:me', 'SUBSCRIBED'); w.status('org:a', 'SUBSCRIBED');
+  w.status('u:me', 'CHANNEL_ERROR'); w.status('org:a', 'CHANNEL_ERROR'); // 소켓이 끊겼다 — u:는 만료 토큰으로 거절돼 대기
+  c.advance(500); w.status('org:a', 'SUBSCRIBED');
+  c.advance(60_000);
+  assert.deepEqual(at, [500 + 10_000]);
+});
+
+test('복귀(resumed)는 예약된 목록 다시 읽기를 대신한다 — 복귀가 지금 읽으니 앞서 붙은 키의 예약도 버린다(복귀 뒤 따로 한 번 더 읽던 것)', () => {
+  const c = clock(); const at = [];
+  const w = watchOn(c, () => at.push(c.now()));
+  for (const k of ['org:a', 'u:me']) w.status(k, 'SUBSCRIBED');
+  for (const k of ['org:a', 'u:me']) w.status(k, 'CHANNEL_ERROR');
+  w.status('org:a', 'SUBSCRIBED'); // 목록 다시 읽기 예약(u:를 기다린다)
+  c.advance(100); w.resumed(); w.expect(['org:a', 'u:me']); // 폰 복귀 — 셸이 바로 목록을 다시 읽는다
+  c.advance(200); assert.equal(w.status('u:me', 'SUBSCRIBED'), 'up', '열린 방 따라잡기 신호는 그대로');
+  c.advance(20_000);
+  assert.deepEqual(at, []);
+});
+
+test('기다리던 조직에서 나가면(only) 예약을 바로 당긴다 — 남은 키가 다 붙었으면 0.8초 뒤', () => {
+  const c = clock(); const at = [];
+  const w = watchOn(c, () => at.push(c.now()));
+  for (const k of ['org:a', 'org:b', 'u:me']) w.status(k, 'SUBSCRIBED');
+  for (const k of ['org:a', 'org:b', 'u:me']) w.status(k, 'CHANNEL_ERROR');
+  w.status('org:a', 'SUBSCRIBED'); c.advance(150); w.status('u:me', 'SUBSCRIBED'); // org:b는 거절돼 안 붙는다(나간 조직)
+  c.advance(150); w.only(['org:a', 'u:me']); // 조직 목록이 바뀌어 구독 효과가 다시 돈다
+  c.advance(20_000);
+  assert.deepEqual(at, [300 + 800]);
+});

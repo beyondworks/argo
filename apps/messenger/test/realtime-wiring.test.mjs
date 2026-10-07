@@ -24,15 +24,16 @@ function fakeSupabase() {
 
 // ── 조직·u: 구독 효과(useEffect(() => { if (!uid || !hasToken || !orgs) … }, [orgSubKey, hasToken]))
 const orgEffectSrc = between('useEffect(() => {\n    if (!uid || !hasToken || !orgs) return undefined;', ', [orgSubKey, hasToken]);').slice('useEffect('.length);
-function orgShell({ orgs, active }) {
-  const rt = fakeSupabase(); const events = []; let syncs = 0;
-  const watch = createLinkWatch({ onSync: () => { syncs++; }, timer: (fn) => setTimeout(fn, 0), clear: clearTimeout });
+function orgShell({ orgs, active, watch = null }) {
+  const rt = fakeSupabase(); const events = []; let syncs = 0; let uRejoins = 0;
+  watch ??= createLinkWatch({ onSync: () => { syncs++; }, timer: (fn) => setTimeout(fn, 0), clear: clearTimeout });
   const scope = { uid: 'u1', hasToken: true, orgs, linkWatch: () => watch, linkRef: { current: { subUid: null } }, realtimeScope: createRealtimeScope(), supabase: rt.sb,
     activeOrg: { current: active }, PERSONAL: '__personal__', setEvent: (e) => events.push(e.kind), broadcastEvent: (kind, p) => ({ kind, ...p }), subsRef: { current: new Map() }, rt: { current: null },
     setRoomReset: () => {}, handleMessageRef: { current: () => {} }, crossRef: { current: () => {} }, approvalsSoon: { current: () => {} }, notifyApproval: () => {}, inboxSoon: { current: () => {} },
-    spaceChanged: { current: () => {} }, activeChannel: { current: null }, bumpMembers: () => {}, onTypingEvent: () => {}, onProgressEvent: () => {}, bumpFriends: () => {}, joinWithBackoff, uRetryRef: { current: null } };
-  const effect = build(orgEffectSrc, scope);
-  return { rt, events, scope, syncs: () => syncs, run: async () => { const off = effect(); await tick(); return off; } };
+    spaceChanged: { current: () => {} }, activeChannel: { current: null }, bumpMembers: () => {}, onTypingEvent: () => {}, onProgressEvent: () => {}, bumpFriends: () => {}, joinWithBackoff, uRetryRef: { current: null },
+    bumpURejoin: () => { uRejoins++; } };
+  // 다시 걸 때 바뀐 값(조직 집합 등)은 run(덮을 값)으로 — 효과를 그 값으로 다시 만든다
+  return { rt, events, scope, syncs: () => syncs, uRejoins: () => uRejoins, run: async (over = {}) => { const off = build(orgEffectSrc, { ...scope, ...over })(); await tick(); await tick(); return off; } };
 }
 
 test('조직이 없는 사용자 — u:가 끊겼다 붙으면 목록을 한 번 다시 읽는다(onStatus 배선), 열린 방 신호(rt_down·rt_up)는 내지 않는다', async () => {
@@ -58,6 +59,42 @@ test('조직 구독 — 보는 공간이 끊기면 rt_down, 다시 붙으면 rt_
   await s.run(); // 복귀(resumeEpoch)로 다시 건다 — linkRef.subUid가 같은 계정
   s.rt.last('org:o1').cb('SUBSCRIBED'); s.rt.last('org:o2').cb('SUBSCRIBED'); s.rt.last('u:u1').cb('SUBSCRIBED');
   assert.deepEqual(s.events, ['rt_up'], '다시 건 보는 공간 구독의 첫 SUBSCRIBED = 거는 사이 놓친 글 따라잡기(MSG-01)');
+});
+
+// 검수 반영(2026-10-08): 조직 비공개 방의 글 방송은 u:로만 온다(msgr_room_send). u:가 다시 붙을 때(끊김 뒤든, 복귀·조직 집합·전체 해제로 다시 건 구독이든)
+// 열린 방이 따라잡게 신호(bumpURejoin)를 낸다. 다시 건 구독은 목록 다시 읽기가 없어, 종전엔 복귀 따라잡기·org rt_up이 u: 가입 전에 끝나 그 사이 글이 남았다.
+test('u: 다시 붙음 신호 — 끊겼다 붙을 때와 다시 건 u:의 첫 SUBSCRIBED마다 한 번, 앱 첫 구독·조직 토픽 재연결은 내지 않는다', async () => {
+  const s = orgShell({ orgs: [{ id: 'o1' }], active: 'o1' });
+  const off = await s.run();
+  for (const c of s.rt.made) c.cb('SUBSCRIBED');
+  assert.equal(s.uRejoins(), 0, '앱 첫 구독 — 대화 화면이 열 때 읽는다');
+  s.rt.last('org:o1').cb('CHANNEL_ERROR'); s.rt.last('org:o1').cb('SUBSCRIBED');
+  assert.equal(s.uRejoins(), 0, '조직 토픽만 다시 붙음 — u:는 붙어 있어 놓친 비공개 방 글이 없다');
+  s.rt.last('u:u1').cb('CHANNEL_ERROR', new Error('heartbeat timeout')); s.rt.last('u:u1').cb('SUBSCRIBED');
+  assert.equal(s.uRejoins(), 1, 'u: 끊김 → 붙음');
+  assert.deepEqual(s.events, ['rt_down', 'rt_up'], 'u:는 여전히 rt_down·rt_up을 내지 않는다(옛 서버에서 보정 조회가 멈추지 않던 이유) — 조직 토픽의 짝만');
+  off(); await s.run(); // 복귀(resumeEpoch)·조직 집합·전체 해제로 다시 건다
+  s.rt.last('org:o1').cb('SUBSCRIBED'); s.rt.last('u:u1').cb('SUBSCRIBED');
+  assert.equal(s.uRejoins(), 2, '다시 건 u:의 첫 SUBSCRIBED');
+  s.rt.last('u:u1').cb('SUBSCRIBED');
+  assert.equal(s.uRejoins(), 2, '두 번째 SUBSCRIBED는 신호 없음');
+});
+
+// 검수 반영(2026-10-08): 아직 안 붙은 목록 키(org:·u:)를 기다리게 되면서, 끊긴 채 조직에서 나가면 그 키가 다시 붙지 않아 매번 10초 상한까지 미뤄진다 —
+// 다시 거는 구독 효과가 지금 조직 집합으로 끊김 기록을 추린다(only).
+test('나간 조직 — 끊긴 동안 조직 집합이 바뀌어 다시 걸면, 남은 구독이 붙고 0.8초 뒤 목록 다시 읽기 한 번(빠진 조직을 10초 기다리지 않는다)', async () => {
+  let t = 0; let id = 0; const q = []; const at = [];
+  const c = { now: () => t, timer: (fn, ms) => { q.push({ id: ++id, fn, at: t + ms }); return id; }, clear: (x) => { const i = q.findIndex((e) => e.id === x); if (i >= 0) q.splice(i, 1); },
+    advance(ms) { const end = t + ms; for (;;) { q.sort((a, b) => a.at - b.at || a.id - b.id); if (!q.length || q[0].at > end) break; const e = q.shift(); t = e.at; e.fn(); } t = end; } };
+  const watch = createLinkWatch({ onSync: () => at.push(c.now()), timer: c.timer, clear: c.clear, now: c.now });
+  const s = orgShell({ orgs: [{ id: 'o1' }, { id: 'o2' }], active: 'o1', watch });
+  const off = await s.run();
+  for (const ch of s.rt.made) ch.cb('SUBSCRIBED');
+  for (const ch of s.rt.made) ch.cb('CHANNEL_ERROR', new Error('heartbeat timeout')); // 소켓이 끊겼다
+  off(); await s.run({ orgs: [{ id: 'o1' }] }); // 끊긴 동안 o2에서 나갔다
+  c.advance(1000); s.rt.last('org:o1').cb('SUBSCRIBED'); c.advance(150); s.rt.last('u:u1').cb('SUBSCRIBED');
+  c.advance(20_000);
+  assert.deepEqual(at, [1150 + 800]);
 });
 
 // ── 방 토픽(dm:<방>) 구독 효과
