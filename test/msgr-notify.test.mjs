@@ -251,17 +251,35 @@ test('msgrNotifyPush — 개인 행이 있으면 개인 1:1 방 하나에만 한
   assert.equal(f.rpc.filter((x) => x.fn === 'msgr_create_channel').length, 0);
 });
 
-test('msgrNotifyPush — 개인 1:1 방을 열지 못하면(서버 거절·연결 실패) 종전 조직별 1:1로 보내 알림을 잃지 않는다', async () => {
+// 유건 결정 2026-10-08 1-②(검수 #857 MEDIUM): 옛 조직 1:1을 보관한다. 개인 행이 있는 에이전트의 알림이 개인 방 확보에 실패했을 때(402·타임아웃)
+// 조직 1:1을 새로 만들면 보관한 방과 같은 방이 다시 생겨 목록에 남는다(1:1은 개인 방 하나 — 결정 1-①). 그래서 이 경로는 **있던**(보관 안 된) 조직 1:1만 쓰고 새로 만들지 않는다.
+// 종전(#819 L-d)에는 없는 조직에 만들었다(ORG2) — 의도한 동작 변경. 개인 행이 없는 옛 본체 경로(아래 '보관한 1:1 방은 되살리지 않고 새 방을 만든다')는 그대로 만든다.
+test('msgrNotifyPush — 개인 1:1 방을 열지 못하면(서버 거절·연결 실패) 있던 조직 1:1로 보내 알림을 잃지 않는다, 조직 1:1을 새로 만들지는 않는다', async () => {
   const { msgrNotifyPush } = await import('../src/gateway/msgr.mjs');
   const ws = 'msgr-notify-personal-fallback'; await notifyWs(ws);
   for (const personalRpc of ['error', 'throw']) {
     const f = fakeMsgr({ personal: 'beta', personalRpc });
     assert.equal(await msgrNotifyPush({ type: 'job', wsId: ws, slug: 'beta', title: 'T', ok: true, reply: 'r' }, { mode: 'dm' }, { session: f.session, now: 0 }), true, personalRpc);
-    assert.deepEqual(f.rows.map((x) => x.crew_id), ['crew-beta', 'crew-beta-2'], `${personalRpc}: 조직마다 그 조직의 크루 행으로(종전과 같다)`);
-    assert.equal(f.rows[0].channel_id, CH, `${personalRpc}: ORG는 기존 1:1 방`);
-    assert.ok(f.rows.every((x) => x.channel_id !== f.PCH));
-    assert.deepEqual(f.rpc.map((x) => x.fn), ['msgr_dm_personal_crew', 'msgr_create_channel'], `${personalRpc}: 개인 방 시도 한 번 뒤 조직 경로(ORG2는 생성)`);
+    assert.deepEqual(f.rows.map((x) => [x.crew_id, x.channel_id]), [['crew-beta', CH]], `${personalRpc}: ORG는 있던 1:1 방, 1:1이 없는 ORG2는 건너뛴다`);
+    assert.deepEqual(f.rpc.map((x) => x.fn), ['msgr_dm_personal_crew'], `${personalRpc}: 개인 방 시도 한 번, 조직 1:1 생성 0`);
   }
+});
+
+test('msgrNotifyPush — 개인 행이 있고 개인 1:1 방을 열지 못했는데 조직 1:1이 보관한 방뿐이면 새로 만들지 않고 false, 로그는 보내지 못했다고', async () => {
+  const { msgrNotifyPush } = await import('../src/gateway/msgr.mjs');
+  const ws = 'msgr-notify-personal-archived-only'; await notifyWs(ws);
+  const logs = []; const orig = console.error; console.error = (...a) => logs.push(a.join(' '));
+  try {
+    for (const personalRpc of ['error', 'throw']) {
+      logs.length = 0;
+      const f = fakeMsgr({ personal: 'beta', personalRpc, archived: true });
+      assert.equal(await msgrNotifyPush({ type: 'job', wsId: ws, slug: 'beta', title: 'T', ok: true, reply: 'r' }, { mode: 'dm' }, { session: f.session, now: 0 }), false, personalRpc);
+      assert.equal(f.rows.length, 0, `${personalRpc}: 보관한 방에 올리지 않고`);
+      assert.equal(f.rpc.filter((x) => x.fn === 'msgr_create_channel').length, 0, `${personalRpc}: 보관한 옛 1:1을 대신할 조직 1:1을 만들지 않는다`);
+      assert.ok(logs.some((l) => /개인 1:1 방 확보 실패/.test(l) && /보내지 못함/.test(l)), `${personalRpc}: ${logs.join(' | ')}`);
+      assert.ok(!logs.some((l) => /조직 1:1로 보냄/.test(l)), `${personalRpc}: 보내지 않았는데 보냈다고 남기지 않는다`);
+    }
+  } finally { console.error = orig; }
 });
 
 test('msgrNotifyPush — 개인 1:1 방을 확보한 뒤 글 넣기가 실패하면 던지고 조직 방으로 다시 보내지 않는다(응답만 끊긴 경우 두 방에 중복으로 올라가지 않게 — 재검수 #819 L-d)', async () => {
