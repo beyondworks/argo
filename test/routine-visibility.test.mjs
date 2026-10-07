@@ -221,13 +221,13 @@ test('C4: 표지 줄의 변형(공백·백틱·마침표·서술어·목록 기�
   }
 });
 
-test('C3: 표지가 다른 줄과 같이 오면 보고로 원문 그대로 보낸다 — 보안 검토(알림 억제): 표지 한 줄뿐일 때만 보고 없음', async () => {
-  for (const reply of [
-    '새 메일 1건: 견적 회신\n\nNO_REPORT',
-    '보고할 것 없음.\nNO_REPORT',
-    'NO_REPORT\n\n(새 메일 0건)',
-    '- 확인한 메일 3건, 새 것 없음\n- NO_REPORT',
-    '오늘 확인 결과\nno_report입니다.',
+test('C3: 표지가 다른 줄과 같이 오면 보고로 보낸다(따로 떨어진 표지 줄만 뗀다) — 보안 검토(알림 억제): 표지 한 줄뿐일 때만 보고 없음', async () => {
+  for (const [reply, sentText] of [
+    ['새 메일 1건: 견적 회신\n\nNO_REPORT', '새 메일 1건: 견적 회신'],
+    ['보고할 것 없음.\nNO_REPORT', '보고할 것 없음.'],
+    ['NO_REPORT\n\n(새 메일 0건)', '(새 메일 0건)'],
+    ['- 확인한 메일 3건, 새 것 없음\n- NO_REPORT', '- 확인한 메일 3건, 새 것 없음'],
+    ['오늘 확인 결과\nno_report입니다.', '오늘 확인 결과'],
   ]) {
     const ws = await company();
     const r = await daily(ws);
@@ -236,8 +236,10 @@ test('C3: 표지가 다른 줄과 같이 오면 보고로 원문 그대로 보�
     await n.stop();
     const sent = n.got.filter((e) => e.type === 'routine');
     assert.equal(sent.length, 1, `보고로 알림 1건: ${JSON.stringify(reply)}`);
-    assert.equal(sent[0].reply, reply, `원문 그대로: ${JSON.stringify(reply)}`);
+    assert.equal(sent[0].reply, sentText, `표지 줄만 떼고 나머지 그대로: ${JSON.stringify(reply)}`);
+    assert.doesNotMatch(sent[0].reply, /no_report/i);
     assert.notEqual(out.noReport, true, JSON.stringify(reply));
+    assert.equal((await thread(ws)).at(-1).text, sentText, '대화 기록에도 토큰 없이');
   }
 });
 
@@ -250,7 +252,7 @@ test('C3s: 루틴이 읽은 바깥 글(메일 본문)에 심은 NO_REPORT 줄을
   await n.stop();
   const sent = n.got.filter((e) => e.type === 'routine');
   assert.equal(sent.length, 1, '바깥 글 한 줄로 보고 전체가 숨겨지면 안 된다');
-  assert.equal(sent[0].reply, reply);
+  assert.equal(sent[0].reply, reply.replace('\n> NO_REPORT', ''), '보고는 그대로 가고 따로 떨어진 표지 줄만 빠진다');
   assert.notEqual(out.noReport, true);
   assert.notEqual((await byId(ws, r.id)).lastResult, '보고할 내용 없음');
 });
@@ -445,7 +447,7 @@ test('C4b·C4d: 코드 펜스로 감싼 NO_REPORT 한 줄은 보고할 것 없�
   await n.stop();
   const sent = n.got.filter((e) => e.type === 'routine');
   assert.equal(sent.length, 1, '보고 뒤에 표지가 붙어 오면 보고로 보낸다(C3과 같은 정책)');
-  assert.equal(sent[0].reply, reply);
+  assert.equal(sent[0].reply, '새 메일 1건: 견적 회신\n\n```\n```', '표지 줄만 빠진다');
   assert.notEqual(out.noReport, true);
 });
 
@@ -569,4 +571,14 @@ test('B23: 틱이 읽은 목록이 낡았어도(그 사이 실행으로 lastRun�
   assert.deepEqual(found, []);
   assert.equal(await readFile(paths(ws).routines, 'utf8'), before, '디스크 최신본 기준으로는 놓친 회차가 없다 — 쓰기 0');
   assert.equal(n.got.length, 0);
+});
+
+test('C3p: 표지 판정은 긴 공백 줄에서도 선형 시간 — 공백 5만 칸 답도 50ms 안', async () => {
+  const ws = await company();
+  const r = await daily(ws);
+  const n = notices(ws);
+  const t0 = performance.now();
+  await runRoutine(ws, r.id, { chatFn: fakeChat([{ reply: ' '.repeat(50_000) + 'x\n' + '\t'.repeat(50_000) + 'y' }]) });
+  await n.stop();
+  assert.ok(performance.now() - t0 < 2000, '판정이 몇 초씩 걸리면 안 된다');
 });

@@ -259,6 +259,7 @@ const NO_REPORT_SEP = /^\s*(?:[:：(（–—]|[-.。!](?=\s|$))/u; // 표지 �
 /** 한 줄이 표지인가 — 아니면 null, 맞으면 { note: 같은 줄 설명(없으면 '') }. 표지 뒤가 글자로 바로 이어지면('NO_REPORT였던', 'NO_REPORT 대상이 아닙니다',
     'NO_REPORTS') 표지가 아니다 — 보고로 둔다(알림을 잘못 막는 것보다 보내는 쪽이 안전). */
 function noReportMark(line) {
+  if (!/no_report/i.test(line)) return null; // 선형 사전 검사 — 앞쪽 문자 집합이 겹치는 정규식이 긴 공백 줄에서 제곱 시간이 걸리지 않게(검수 LOW)
   const m = line.match(NO_REPORT_HEAD);
   if (!m) return null;
   const rest = line.slice(m[0].length);
@@ -274,11 +275,18 @@ const FENCE_LINE = /^\s*(`{3,}|~{3,})[\w-]*\s*$/;
 const NO_REPORT_NOTE_MAX = 200;
 function splitNoReport(text) {
   const raw = String(text ?? '');
-  const content = raw.split('\n').filter((line) => line.trim() && !FENCE_LINE.test(line));
-  if (content.length !== 1) return { marked: false, text: raw };
-  const mark = noReportMark(content[0]);
-  if (!mark || mark.note.length > NO_REPORT_NOTE_MAX) return { marked: false, text: raw };
-  return { marked: true, text: mark.note };
+  const lines = raw.split('\n');
+  const content = lines.filter((line) => line.trim() && !FENCE_LINE.test(line));
+  if (content.length === 1) {
+    const mark = noReportMark(content[0]);
+    if (mark && mark.note.length <= NO_REPORT_NOTE_MAX) return { marked: true, text: mark.note };
+  }
+  // 보고로 보낼 때도 따로 떨어진 표지 줄(설명 없는 'NO_REPORT')은 엔진용이라 뗀다 — 알림·대화 기록에 토큰이 그대로 보이지 않게(검수 지적).
+  // 같은 줄 설명이 붙은 줄은 보고 내용일 수 있어 그대로 둔다. 다 떼고 남는 내용이 없으면(표지 줄만 여러 개) 보고 없음.
+  const kept = lines.filter((line) => { const m = noReportMark(line); return !(m && !m.note); });
+  if (kept.length === lines.length) return { marked: false, text: raw };
+  const left = kept.filter((line) => line.trim() && !FENCE_LINE.test(line));
+  return left.length ? { marked: false, text: kept.join('\n').replace(/\n{3,}/g, '\n\n').trim() } : { marked: true, text: '' };
 }
 /** 빈 답 — 실패 그대로(빈 답을 성공으로 받으면 도구 실패 때의 침묵을 가린다). 문구만 사용자가 알아듣게. 루프에는 보고 규칙이 없어 안내를 붙이지 않는다. */
 function emptyAnswerError(lang, loop, cause = null) {
@@ -536,7 +544,7 @@ export async function runRoutine(wsId, id, { chatFn = null, startAt = null, sess
     const recorded = (t) => {
       if (loop) return t.reply;
       const nr = splitNoReport(t.reply);
-      if (!nr.marked) return t.reply;
+      if (!nr.marked) return nr.text;
       return nr.text ? `${nr.text}\n\n${TXT.noReportNote[lang]}` : TXT.noReportThread[lang];
     };
     // 한 턴 = 실행 + 대화 기록(지시와 답을 짝지어). 루틴만 기록이 빠져 있어서 실행 중엔 채팅창에 보이다가 끝나면 사라졌다
@@ -592,7 +600,7 @@ export async function runRoutine(wsId, id, { chatFn = null, startAt = null, sess
     // runMessengerContinuation(loopTurn)이 넘김 줄을 붙이기 전에 이미 뺐다 — 두 번 빼지 않는다.
     // 보고할 것이 없음 — 답에 NO_REPORT 표지가 있음(다른 줄·같은 줄 설명이 같이 와도 — 그 설명은 대화 기록에만) 또는 루프 회차 답이 판정 줄뿐.
     // 이때는 알림·메신저 글을 보내지 않는다(제목만 있는 글이 갔다). 결과 요약·지금 실행 응답은 알아듣는 말로.
-    let shown = loop ? (r0.msgr ? t.reply : stripLoopVerdict(t.reply)) : (splitNoReport(t.reply).marked ? '' : t.reply);
+    let shown = loop ? (r0.msgr ? t.reply : stripLoopVerdict(t.reply)) : (() => { const nr = splitNoReport(t.reply); return nr.marked ? '' : nr.text; })();
     const quiet = !String(shown).trim();
     if (quiet) shown = TXT.noReportResult[lang];
     const summary = shown.replace(/\s+/g, ' ').slice(0, 160);
