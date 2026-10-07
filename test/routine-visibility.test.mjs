@@ -447,7 +447,7 @@ test('C4b·C4d: 코드 펜스로 감싼 NO_REPORT 한 줄은 보고할 것 없�
   await n.stop();
   const sent = n.got.filter((e) => e.type === 'routine');
   assert.equal(sent.length, 1, '보고 뒤에 표지가 붙어 오면 보고로 보낸다(C3과 같은 정책)');
-  assert.equal(sent[0].reply, '새 메일 1건: 견적 회신\n\n```\n```', '표지 줄만 빠진다');
+  assert.equal(sent[0].reply, '새 메일 1건: 견적 회신', '표지 줄과 그것을 감쌌던 빈 코드 블록이 빠진다');
   assert.notEqual(out.noReport, true);
 });
 

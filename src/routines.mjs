@@ -273,6 +273,7 @@ const FENCE_LINE = /^\s*(`{3,}|~{3,})[\w-]*\s*$/;
 // 그 글을 인용한 보고 전체가 알림 없이 사라진다. 그래서 내용 줄(빈 줄·펜스 줄 제외)이 표지 한 줄뿐일 때만 보고 없음으로 본다 — 같은 줄의 짧은 설명은 허용.
 // 표지가 다른 줄과 같이 오면 보고로 원문 그대로 보낸다(알림을 잘못 막는 것보다 한 번 더 보내는 쪽이 안전하다).
 const NO_REPORT_NOTE_MAX = 200;
+const EMPTY_FENCE_BLOCK = /(^|\n)[ \t]*(`{3,}|~{3,})[\w-]*[ \t]*\n(?:[ \t]*\n)*[ \t]*\2[ \t]*(?=\n|$)/g;
 function splitNoReport(text) {
   const raw = String(text ?? '');
   const lines = raw.split('\n');
@@ -286,7 +287,9 @@ function splitNoReport(text) {
   const kept = lines.filter((line) => { const m = noReportMark(line); return !(m && !m.note); });
   if (kept.length === lines.length) return { marked: false, text: raw };
   const left = kept.filter((line) => line.trim() && !FENCE_LINE.test(line));
-  return left.length ? { marked: false, text: kept.join('\n').replace(/\n{3,}/g, '\n\n').trim() } : { marked: true, text: '' };
+  if (!left.length) return { marked: true, text: '' };
+  const body = kept.join('\n').replace(EMPTY_FENCE_BLOCK, '$1').replace(/\n{3,}/g, '\n\n').trim(); // 표지를 감쌌던 빈 코드 블록도 지운다
+  return { marked: false, text: body };
 }
 /** 빈 답 — 실패 그대로(빈 답을 성공으로 받으면 도구 실패 때의 침묵을 가린다). 문구만 사용자가 알아듣게. 루프에는 보고 규칙이 없어 안내를 붙이지 않는다. */
 function emptyAnswerError(lang, loop, cause = null) {
