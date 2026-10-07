@@ -7,7 +7,7 @@
 // 실행으로 검증한다. 승격 절차: CODEX_PIN을 올리기 전, 새 바이너리로 이 스크립트가 초록이어야 한다.
 //
 // 사용: node scripts/runner-contract-probe.mjs [codex-바이너리-경로]
-//   기본 대상 = 관리본(~/.argo/tools/codex-cli/codex). 실자격 불필요 — 가짜 auth.json + 로컬 목
+//   기본 대상 = 이 핀의 관리본(~/.argo/tools/codex-cli-<핀>/codex — codexToolDirFor). 실자격 불필요 — 가짜 auth.json + 로컬 목
 //   모델(Responses SSE)로 승인 왕복까지 오프라인 검증한다(구독·한도·과금 무관).
 //
 // 검증 계약면(2026-08-28 스파이크 실측으로 확정):
@@ -24,9 +24,10 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { codexToolDirFor } from '../src/runners/codex.mjs';
 
 const execP = promisify(execFile);
-const BIN = process.argv[2] || join(homedir(), '.argo', 'tools', 'codex-cli', process.platform === 'win32' ? 'codex.exe' : 'codex');
+const BIN = process.argv[2] || join(codexToolDirFor(homedir()), process.platform === 'win32' ? 'codex.exe' : 'codex');
 
 const results = [];
 const check = (id, ok, detail = '') => {

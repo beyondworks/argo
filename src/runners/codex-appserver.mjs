@@ -81,6 +81,16 @@ export function mapTurnError(errParams) {
       + `Codex usage limit reached${when ? ` — resets at ${when}` : ''}.`,
     ), { limitReached: true, runner: 'codex' });
   }
+  // 0.159.3에서 생긴 실패 코드(0.157.1 스키마엔 없다 — 두 바이너리 generate-json-schema 비교, 검수 2026-10-08 LOW). 원문은 진단용으로 뒤에 둔다.
+  // 문구에 인증·한도·과부하 단어를 넣지 않는다 — error-class 분류(러너 교체·재시도)는 지금처럼 원문이 정한다.
+  if (info === 'tooManyDenials') {
+    return new Error('권한 승인 거절이 여러 번 이어져 Codex가 이 턴을 멈췄습니다. 이 작업에 필요한 파일 쓰기·명령 실행이 허용 범위 밖일 수 있습니다. '
+      + `Codex stopped this turn after repeated permission denials — the task may need file writes or commands outside the allowed scope. (${message.slice(0, 200)})`);
+  }
+  if (info === 'flexUnavailable') {
+    return new Error('Codex 서버가 지금 이 요청을 처리할 여유가 없습니다. 잠시 뒤 다시 시도해 주세요. '
+      + `Codex could not take this request right now — please try again shortly. (${message.slice(0, 200)})`);
+  }
   return new Error(message.slice(0, 300));
 }
 

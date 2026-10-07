@@ -17,7 +17,7 @@ import { mkdtemp } from './helpers/tmp.mjs';
 const HOME = await mkdtemp(join(tmpdir(), 'argo-codex-k25-27-'));
 process.env.HOME = HOME;
 process.env.USERPROFILE = HOME; // 윈도우 os.homedir()는 USERPROFILE을 읽는다
-const { codexHome, importCodexAuth, recoverCodexAuth, provisionCodexCli } = await import('../src/runners/codex.mjs');
+const { codexHome, importCodexAuth, recoverCodexAuth, provisionCodexCli, codexToolDirFor } = await import('../src/runners/codex.mjs');
 
 // Windows(개발자 모드 아님)의 심링크 EPERM을 흉내 — 내장 모듈 바인딩을 바꿔 codex.mjs의 symlink가 실제로 던지게 한다.
 const fsp = createRequire(import.meta.url)('node:fs/promises');
@@ -70,7 +70,7 @@ test('K27 병렬 복사 턴: 갱신 안 한 사본은 원본을 덮지 않고, �
   assert.match(await readFile(join(base, 'auth.json'), 'utf8'), /R1/, '회전된 refresh 토큰이 원본에 남아야 다음 턴이 산다');
 });
 
-const LOCK = join(HOME, '.argo', 'tools', 'codex-cli.lockd');
+const LOCK = `${codexToolDirFor(HOME)}.lockd`; // 조달 락은 핀 폴더마다(codex.mjs CODEX_LOCK_DIR)
 
 test('K25 죽은 보유자의 락 잔재(3분 전)는 곧바로 회수 — 120초 대기·거짓 "다른 프로세스" 문구 없음', { timeout: 30_000 }, async () => {
   const realFetch = globalThis.fetch;

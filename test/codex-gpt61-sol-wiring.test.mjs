@@ -4,6 +4,7 @@
 //  ③ app-server 경로: 낡은 관리본(.pin ≠ 핀)의 "ChatGPT 계정 미지원" 거절 → exec 경로와 같은 ko/en 업데이트 대기 안내.
 //     핀이 최신이면 원문 유지(계정 문제 — model_unavailable)
 //  ④ app-server 경로: 6.1 Sol + 강도 비움 → turn/start effort=medium
+//  ⑤~⑩ 모델을 비운 턴의 고정 모델, ⑧·⑨·⑪ 핀별 관리본 폴더(버전이 다른 Argo와 예전 공용 폴더를 나눠 쓰지 않는다), ⑫ 내려받기 해시 대조
 // 가짜 CLI 하네스는 test/cli-runner-turn-io.test.mjs와 같은 모양(격리 HOME·TMPDIR·ARGO_ROOT, PATH 맨 앞 가짜 실행 파일).
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -29,7 +30,7 @@ const log = join(base, 'log.json');
 const { externalExec } = await import('../src/runners.mjs');
 const { runOneShot } = await import('../src/oneshot.mjs');
 const { saveRunnerCred } = await import('../src/runners/creds.mjs');
-const { CODEX_PIN } = await import('../src/runners/codex.mjs');
+const { CODEX_PIN, codexToolDirFor } = await import('../src/runners/codex.mjs');
 const { classifyRunnerError } = await import('../src/runners/error-class.mjs');
 process.env.PATH = `${bin}:${process.env.PATH}`;
 process.env.ARGO_CODEX_PREFER_PATH = '1';
@@ -86,7 +87,6 @@ await mkdir(cwd, { recursive: true });
 const lastArgv = async () => JSON.parse(await readFile(log, 'utf8')).argv;
 const effortArg = (argv) => { const i = argv.indexOf('-c'); return i >= 0 ? argv[i + 1] : null; };
 const modelArg = (argv) => { const i = argv.indexOf('-m'); return i >= 0 ? argv[i + 1] : null; };
-const pinFile = join(process.env.HOME, '.argo', 'tools', 'codex-cli', '.pin');
 
 test('① exec — 6.1 Sol + 강도 비움은 medium, 고른 강도는 그대로, 다른 모델의 비움은 강도 인자 없음', { skip: process.platform === 'win32' }, async () => {
   for (const [model, effort, want] of [
@@ -105,29 +105,50 @@ test('① exec — 6.1 Sol + 강도 비움은 medium, 고른 강도는 그대로
   }
 });
 
-// 관리본 자리(~/.argo/tools/codex-cli)에 가짜 codex를 두고 스탬프(.pin)를 정한 채 실행한다 — 모델을 비운 턴의 고정 모델은
-// "핀 이상 관리본"일 때만 들어가므로 PATH 가짜(ARGO_CODEX_PREFER_PATH)로는 그 경로를 못 탄다. 내려받기(fetch)는 가짜로 막고
-// 시도한 주소를 기록한다(승격·되돌림 관찰). attempt=true면 실패 스로틀(.attempt-at)을 지금으로 찍어 둔다(승격 실패 뒤 1시간 안).
-const toolDir = join(process.env.HOME, '.argo', 'tools', 'codex-cli');
+// 관리본 자리에 가짜 codex를 두고 실행한다 — 모델을 비운 턴의 고정 모델은 "이 핀 관리본"일 때만 들어가므로 PATH 가짜
+// (ARGO_CODEX_PREFER_PATH)로는 그 경로를 못 탄다. 관리본은 핀마다 폴더가 따로다(~/.argo/tools/codex-cli-<핀>). 예전 공용 폴더
+// (~/.argo/tools/codex-cli)는 0.1.97 이하가 쓰는 자리라 legacy로 따로 심는다. 내려받기(fetch)는 가짜로 막고 시도한 주소를 기록한다.
+//  own: 이 핀 관리본을 둔다(false면 없음), ownStamp: 설치 완료 스탬프(.pin), legacy: 예전 공용 관리본의 스탬프(null이면 폴더 없음),
+//  attempt: 이 핀 폴더의 실패 스로틀(.attempt-at)을 지금으로(승격 실패 뒤 1시간 안), legacyAttempt: 옛 Argo가 공용 폴더에 남긴 스로틀.
+const toolDir = codexToolDirFor(process.env.HOME);
 const managedBin = join(toolDir, 'codex');
+const pinFile = join(toolDir, '.pin');
 const attemptFile = join(toolDir, '.attempt-at');
-async function withManaged({ pin, attempt = false }, fn) {
+const legacyDir = join(process.env.HOME, '.argo', 'tools', 'codex-cli');
+const legacyBin = join(legacyDir, 'codex');
+const FAKE_LEGACY = '#!/bin/sh\n# legacy 0.157.1 자리\n';
+async function withManaged({ own = true, ownStamp = true, legacy = null, attempt = false, legacyAttempt = false }, fn) {
   const preferPath = process.env.ARGO_CODEX_PREFER_PATH;
   delete process.env.ARGO_CODEX_PREFER_PATH;
-  await writeFile(managedBin, await readFile(join(bin, 'codex')));
-  await chmod(managedBin, 0o755);
-  if (pin == null) await rm(pinFile, { force: true }); else await writeFile(pinFile, pin);
+  const fake = await readFile(join(bin, 'codex'));
+  if (own) { await writeFile(managedBin, fake); await chmod(managedBin, 0o755); } else await rm(managedBin, { force: true });
+  if (own && ownStamp) await writeFile(pinFile, CODEX_PIN); else await rm(pinFile, { force: true });
   if (attempt) await writeFile(attemptFile, String(Date.now())); else await rm(attemptFile, { force: true });
+  if (legacy != null) {
+    await mkdir(legacyDir, { recursive: true });
+    await writeFile(legacyBin, fake); await chmod(legacyBin, 0o755); // 실행은 같은 가짜(버전 판정은 어느 폴더를 골랐는가로 본다)
+    await writeFile(join(legacyDir, '.pin'), legacy);
+    if (legacyAttempt) await writeFile(join(legacyDir, '.attempt-at'), String(Date.now()));
+  }
   const fetched = [];
   const realFetch = globalThis.fetch;
   globalThis.fetch = async (url) => { fetched.push(String(url)); return { ok: false, status: 503, arrayBuffer: async () => new ArrayBuffer(0) }; };
   try { return await fn(fetched); } finally {
     globalThis.fetch = realFetch;
     process.env.ARGO_CODEX_PREFER_PATH = preferPath;
-    await writeFile(managedBin, ''); // stubRunnerToolDirs 상태로 되돌린다
-    await rm(pinFile, { force: true }); await rm(attemptFile, { force: true });
+    await mkdir(toolDir, { recursive: true });
+    await writeFile(managedBin, ''); await writeFile(pinFile, CODEX_PIN); // stubRunnerToolDirs 상태로 되돌린다
+    await rm(attemptFile, { force: true });
+    await rm(join(toolDir, 'codex-code-mode-host'), { force: true });
+    await rm(legacyDir, { recursive: true, force: true });
   }
 }
+// 예전 공용 폴더의 내용 — 새 Argo는 이 폴더에 쓰지도 지우지도 않는다(0.1.97 이하가 그 폴더의 주인)
+const legacySnapshot = async () => {
+  const { readdir } = await import('node:fs/promises');
+  const names = (await readdir(legacyDir).catch(() => [])).sort();
+  return Promise.all(names.map(async (n) => `${n}=${(await readFile(join(legacyDir, n)).catch(() => Buffer.from('?'))).toString('base64')}`));
+};
 const UNSET_MODEL = 'gpt-6-astra'; // 0.157.1(0.1.97 핀)이 -m 없이 쓰던 서버 기본 모델(2026-10-07 머리글 실측)
 
 test('② 원샷 CLI 경로 — 핀 관리본이면 codex에 -m gpt-6-astra, 강도 인자 없음(핀 승격 뒤에도 0.1.97과 같은 모델)', { skip: process.platform === 'win32' }, async () => {
@@ -151,7 +172,7 @@ test('③ app-server — 낡은 관리본의 계정 미지원 거절은 업데�
   process.env.ARGO_CODEX_ENGINE = 'appserver';
   process.env.FAKE_AS_REJECT = ACCOUNT_REJECT;
   try {
-    await writeFile(pinFile, 'rust-v0.157.1'); // 승격 실패(오프라인·스로틀)로 옛 관리본에 머문 PC
+    await rm(managedBin, { force: true }); // 이 핀을 아직 못 받은(오프라인·스로틀) PC — 이 핀 관리본이 없다
     const stale = await externalExec({ runner: 'codex', model: 'gpt-6.1-sol', cwd, prompt: 'hi', timeoutMs: 60_000 }).then(() => null, (e) => e);
     assert.ok(stale, '거절이 실패로 올라와야 한다');
     assert.match(stale.message, /Codex 실행기 업데이트가 아직 끝나지 않아/);
@@ -159,14 +180,14 @@ test('③ app-server — 낡은 관리본의 계정 미지원 거절은 업데�
     assert.ok(stale.message.includes(ACCOUNT_REJECT), '벤더 원문 보존(진단용)');
     assert.equal(classifyRunnerError(stale.message).code, 'runner_outdated');
 
-    await writeFile(pinFile, CODEX_PIN); // 핀이 최신 — 같은 거절은 계정 문제
+    await writeFile(managedBin, ''); // 이 핀 관리본이 있다 — 같은 거절은 계정 문제
     const fresh = await externalExec({ runner: 'codex', model: 'gpt-6.1-sol', cwd, prompt: 'hi', timeoutMs: 60_000 }).then(() => null, (e) => e);
     assert.ok(fresh);
     assert.doesNotMatch(fresh.message, /Codex 실행기 업데이트가 아직 끝나지 않아/);
     assert.equal(classifyRunnerError(fresh.message).code, 'model_unavailable');
   } finally {
     delete process.env.ARGO_CODEX_ENGINE; delete process.env.FAKE_AS_REJECT;
-    await rm(pinFile, { force: true });
+    await writeFile(managedBin, ''); // stubRunnerToolDirs 상태
   }
 });
 
@@ -251,54 +272,69 @@ test('⑦ 실제 chat() — 자동 에이전트·모델 없는 codex 카드·cla
   });
 });
 
-test('⑧ 버전을 모르는 실행 파일은 지금처럼 -m 없이 — 승격 못 한 옛 관리본·PATH 설치본(크루 턴·원샷 모두)', { skip: process.platform === 'win32' }, async () => {
+test('⑧ 버전을 모르는 실행 파일은 지금처럼 -m 없이 — 이 핀을 못 받아 빌려 쓰는 예전 공용 관리본·PATH 설치본(크루 턴·원샷 모두)', { skip: process.platform === 'win32' }, async () => {
   const ws = 'oneshot-stale';
   await mkdir(join(process.env.ARGO_ROOT, ws), { recursive: true });
   await saveRunnerCred(ws, 'codex', 'host', 'host');
-  const runBoth = async (label) => {
+  const runBoth = async (label, wantFile) => {
     assert.equal(await externalExec({ runner: 'codex', model: '', cwd, prompt: 'hi', timeoutMs: 60_000 }), 'OK');
     assert.equal(modelArg(await lastArgv()), null, `${label} — 크루 턴`);
     const r = await runOneShot(ws, '요약해', { pin: 'codex', timeoutMs: 60_000 });
     assert.equal(r.text, 'OK');
     assert.equal(modelArg(await lastArgv()), null, `${label} — 원샷`);
   };
-  // 승격이 실패해 1시간 스로틀 안에 있는 옛 관리본(0.157.1) — 그 버전의 기본 모델 그대로(0.157.1이면 Astra)
-  await withManaged({ pin: 'rust-v0.157.1', attempt: true }, async (fetched) => {
-    await runBoth('옛 관리본');
+  // 이 핀 관리본을 받으려다 실패해 1시간 스로틀 안 — 예전 공용 관리본(0.157.1)을 그대로 빌린다(그 버전 기본 모델 = Astra)
+  await withManaged({ own: false, legacy: 'rust-v0.157.1', attempt: true }, async (fetched) => {
+    const before = await legacySnapshot();
+    await runBoth('예전 공용 관리본');
     assert.deepEqual(fetched, [], '스로틀 안에서는 다시 받지 않는다');
+    assert.deepEqual(await legacySnapshot(), before, '예전 공용 폴더에 쓰지 않는다');
   });
   // 관리본을 못 받아 PATH의 사용자 설치본으로 도는 경우(여기선 PREFER_PATH 가짜) — 버전 미상
   await runBoth('PATH 설치본');
 });
 
-test('⑨ 관리본 스탬프는 한 방향으로만 승격 — 더 높은 핀(새 Argo가 설치)은 되돌리지 않고, 낮은 핀만 다시 받는다', { skip: process.platform === 'win32' }, async () => {
+// ⑨ 검수(2026-10-08 재검수 MEDIUM) — 관리본을 한 폴더로 나눠 쓰면 0.1.97(핀 0.157.1)과 이 버전(0.159.3)이 1시간마다 서로 되돌리고,
+// 그 사이 옛 쪽은 새 바이너리로 -m 없이 돌아 6.1 Sol·low가 됐다. 핀마다 폴더를 나눴으므로 새 Argo는 예전 공용 폴더를 건드리지 않고,
+// 옛 Argo가 그 폴더를 무엇으로 바꾸든(되돌림·더 높은 핀·스로틀 기록) 새 Argo의 실행 파일·모델·스로틀은 그대로다.
+test('⑨ 버전이 섞인 기기 — 새 Argo는 자기 핀 폴더만 쓰고, 예전 공용 폴더는 읽지도 덮지도 않는다(옛 Argo의 되돌림이 새 Argo에 닿지 않는다)', { skip: process.platform === 'win32' }, async () => {
   const codex = await import('../src/runners/codex.mjs');
-  const [maj, min] = CODEX_PIN.replace(/^rust-v/, '').split('.').map(Number);
-  const higher = `rust-v${maj}.${min + 1}.0`;
-  // 같은 기기의 더 새 Argo(상주 등)가 올려 둔 관리본 — 이 프로세스가 내려받아 되돌리면 두 프로세스가 1시간마다 서로 덮는다(검수 MEDIUM)
-  await withManaged({ pin: higher }, async (fetched) => {
+  for (const legacy of ['rust-v0.157.1', 'rust-v0.160.0', '', 'garbage']) { // 옛 Argo가 남긴 어떤 상태든
+    await withManaged({ own: true, legacy, legacyAttempt: true }, async (fetched) => {
+      const before = await legacySnapshot();
+      assert.equal(await externalExec({ runner: 'codex', model: '', cwd, prompt: 'hi', timeoutMs: 60_000 }), 'OK');
+      assert.equal(modelArg(await lastArgv()), UNSET_MODEL, `${legacy || '(빈 스탬프)'} — 자기 핀 관리본이라 고정 모델`);
+      assert.equal(await codex.codexPinStale(), false);
+      // 도구 잠김 자가치유(L2 — reprovisionRunner)의 강제 재조달도 자기 핀 폴더에만 — 공용 폴더는 그대로
+      await codex.reprovisionCodexCli().catch(() => {});
+      assert.ok(fetched.every((u) => u.includes(`/download/${CODEX_PIN}/`)), `다른 핀을 받지 않는다: ${fetched.join(', ')}`);
+      assert.deepEqual(await legacySnapshot(), before, `${legacy || '(빈 스탬프)'} — 예전 공용 폴더에 쓰지 않는다`);
+    });
+  }
+  // 이 핀 폴더가 아직 없는 첫 턴 — 이 핀을 받으려 하고(실패 → 예전 공용 관리본으로 계속), 옛 Argo가 공용 폴더에 남긴 스로틀에 막히지 않는다
+  await withManaged({ own: false, legacy: 'rust-v0.157.1', legacyAttempt: true }, async (fetched) => {
+    const before = await legacySnapshot();
     assert.equal(await externalExec({ runner: 'codex', model: '', cwd, prompt: 'hi', timeoutMs: 60_000 }), 'OK');
-    assert.deepEqual(fetched, [], '더 높은 핀을 되돌리려고 내려받지 않는다');
-    assert.equal((await readFile(pinFile, 'utf8')).trim(), higher, '스탬프 유지');
-    assert.equal(modelArg(await lastArgv()), UNSET_MODEL, '핀 이상 관리본 — 고정 모델');
-    assert.equal(await codex.codexPinStale(), false, '더 높은 핀은 낡은 관리본이 아니다');
-    // 도구 잠김 자가치유(L2 — reprovisionRunner)의 강제 재조달도 더 높은 핀을 되돌리지 않는다
-    await codex.reprovisionCodexCli().catch(() => {});
-    assert.deepEqual(fetched, [], '강제 재조달도 더 높은 핀을 내려받아 덮지 않는다');
-    assert.equal((await readFile(pinFile, 'utf8')).trim(), higher);
-  });
-  // 낮은 핀(0.1.97이 남긴 관리본)은 지금처럼 핀 버전 승격을 시도한다(여기선 내려받기 실패 → 옛 관리본으로 계속)
-  await withManaged({ pin: 'rust-v0.157.1' }, async (fetched) => {
-    assert.equal(await externalExec({ runner: 'codex', model: '', cwd, prompt: 'hi', timeoutMs: 60_000 }), 'OK');
-    assert.ok(fetched.some((u) => u.includes(`/download/${CODEX_PIN}/`)), `핀 버전 승격 시도: ${fetched.join(', ')}`);
-    assert.equal(modelArg(await lastArgv()), null, '승격 실패 — 버전을 모르니 비운 채로');
+    assert.ok(fetched.some((u) => u.includes(`/download/${CODEX_PIN}/`)), `이 핀 관리본 준비 시도: ${fetched.join(', ')}`);
+    assert.equal(modelArg(await lastArgv()), null, '받지 못함 — 공용 관리본(버전 미상)은 비운 채로');
     assert.equal(await codex.codexPinStale(), true);
+    const n = fetched.length;
+    assert.equal(await externalExec({ runner: 'codex', model: '', cwd, prompt: 'hi', timeoutMs: 60_000 }), 'OK');
+    assert.equal(fetched.length, n, '실패 뒤 1시간은 턴마다 다시 받지 않는다(이 핀 폴더의 스로틀)');
+    assert.deepEqual(await legacySnapshot(), before, '예전 공용 폴더에 쓰지 않는다(host 보강 포함)');
   });
-  // 스탬프 비교는 숫자 단위(사전순 아님), 형식이 다르면 낡은 것으로 본다(다시 받는다 — 지금과 같음)
-  for (const [stamp, want] of [
-    ['rust-v0.159.3', true], ['rust-v0.159.10', true], ['rust-v0.160.0', true], ['rust-v1.0.0', true],
-    ['rust-v0.159.2', false], ['rust-v0.157.1', false], ['rust-v0.99.9', false], ['', false], ['garbage', false], ['rust-v0.159.4-alpha.1', false],
-  ]) assert.equal(codex.codexStampCurrent(stamp, 'rust-v0.159.3'), want, stamp || '(빈 스탬프)');
+});
+
+// ⑪ 검수(재검수 LOW) — 스탬프만 보고 판정하면 기록 실패·윈도우 EBUSY로 .pin만 비었을 때 이 핀 실행 파일인데도 -m 없이 돌았다.
+// 핀 폴더에는 이 핀만 들어가므로 실행 파일이 있으면 이 핀이다 — 스탬프가 비면 host 보강만 시도한다.
+test('⑪ 스탬프가 빈 이 핀 관리본 — 여전히 이 핀(-m gpt-6-astra, 낡지 않음), host가 없으면 보강을 시도한다', { skip: process.platform === 'win32' }, async () => {
+  const codex = await import('../src/runners/codex.mjs');
+  await withManaged({ own: true, ownStamp: false }, async (fetched) => {
+    assert.equal(await externalExec({ runner: 'codex', model: '', cwd, prompt: 'hi', timeoutMs: 60_000 }), 'OK');
+    assert.equal(modelArg(await lastArgv()), UNSET_MODEL);
+    assert.equal(await codex.codexPinStale(), false);
+    assert.ok(fetched.some((u) => u.includes('codex-code-mode-host-')), `host 보강 시도: ${fetched.join(', ')}`);
+  });
 });
 
 test('⑩ 고정 모델도 원격 카탈로그 alias를 따른다(모델 폐기 때 앱 발행 없이 옮길 길) — 이름 있는 모델은 그대로', { skip: process.platform === 'win32' }, async () => {
@@ -317,4 +353,40 @@ test('⑩ 고정 모델도 원격 카탈로그 alias를 따른다(모델 폐기 
     remote._resetForTest();
     await rm(remote.cacheFile(), { force: true }); // 디스크 캐시가 다음 테스트의 첫 로드에 섞이지 않게
   }
+});
+
+// ⑫ 검수(재검수 LOW) — 예전엔 내려받은 타르볼을 부팅·크기로만 봐서 손상·변조본도 부팅만 하면 채택됐다. 풀기 전에 핀 표의 sha256과 대조한다.
+// 윈도우에서도 돈다(가짜 실행 파일 없이 조달 함수만 부른다 — 해시 대조는 tar 전에 끝난다).
+test('⑫ 내려받은 자산의 해시가 표와 다르면 채택하지 않는다 — 이 핀 관리본이 생기지 않고 원인이 드러난다', async () => {
+  const codex = await import('../src/runners/codex.mjs');
+  const { existsSync } = await import('node:fs');
+  const exe = join(toolDir, process.platform === 'win32' ? 'codex.exe' : 'codex');
+  await rm(exe, { force: true }); await rm(join(toolDir, '.pin'), { force: true });
+  const realFetch = globalThis.fetch;
+  const fetched = [];
+  globalThis.fetch = async (url) => { fetched.push(String(url)); return { ok: true, status: 200, arrayBuffer: async () => new TextEncoder().encode('not the real tarball').buffer }; };
+  try {
+    const err = await codex.provisionCodexCli().then(() => null, (e) => e);
+    assert.ok(err, '해시가 다른데 조달이 성공했다');
+    assert.match(err.message, /해시가 맞지 않습니다/);
+    assert.ok(fetched.length >= 1 && fetched[0].includes(`/download/${CODEX_PIN}/`), fetched.join(', '));
+    assert.equal(existsSync(exe), false, '검증 실패본이 관리본 자리에 들어갔다');
+  } finally {
+    globalThis.fetch = realFetch;
+    await mkdir(toolDir, { recursive: true });
+    await writeFile(exe, ''); await writeFile(join(toolDir, '.pin'), CODEX_PIN);
+  }
+});
+
+// 핀 폴더 이름(순수) — 윈도우 CI에서도 돈다(재검수 LOW: 배선 테스트가 전부 win32 skip이라 경로 규칙이 윈도우에서 한 번도 안 돌았다).
+test('핀 폴더는 핀마다 다르고 예전 공용 폴더(codex-cli)와 겹치지 않는다', () => {
+  const home = join(base, 'h');
+  const a = codexToolDirFor(home, 'rust-v0.157.1'), b = codexToolDirFor(home, 'rust-v0.159.3');
+  assert.notEqual(a, b);
+  assert.equal(codexToolDirFor(home), codexToolDirFor(home, CODEX_PIN));
+  for (const d of [a, b]) {
+    assert.notEqual(d, join(home, '.argo', 'tools', 'codex-cli'));
+    assert.ok(d.startsWith(join(home, '.argo', 'tools') + (process.platform === 'win32' ? '\\' : '/')), d);
+  }
+  assert.ok(b.endsWith('codex-cli-rust-v0.159.3'), b);
 });

@@ -9,7 +9,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { exec, execP, exists, maskKeyLike, mergePath } from './shared.mjs';
 import { RUNNER_AUTH } from './catalog.mjs';
-import { codexManagedBin } from './codex.mjs';
+import { codexInstalledBin } from './codex.mjs';
 import { geminiManagedEntry } from './gemini.mjs';
 import { saveRunnerCred, verifyRunnerCred } from './creds.mjs';
 
@@ -106,7 +106,7 @@ export async function detectRunners(force = false) {
   const home = homedir();
   const [codexV, codexManaged, geminiV, geminiManaged, agyV, agyLocalBin, codexAuth, geminiAuth, claudeCredFile, claudeCfgLogin] = await Promise.all([
     exec('codex', ['--version']).then((r) => r.stdout.trim(), () => null),
-    exists(codexManagedBin()),    // 관리본(자동 조달)도 설치로 취급 — PATH 없이도 돈다
+    codexInstalledBin().then(Boolean), // 관리본(자동 조달 — 이 핀 폴더 또는 예전 공용 폴더)도 설치로 취급 — PATH 없이도 돈다
     exec('gemini', ['--version']).then((r) => r.stdout.trim(), () => null),
     exists(geminiManagedEntry()),
     exec('agy', ['--version']).then((r) => r.stdout.trim(), () => null),
@@ -149,7 +149,7 @@ export async function detectRunners(force = false) {
 // 로그인·상태 확인 실행 파일 — 감지(detectRunners)가 관리본도 설치로 치므로 실행도 관리본을 본다(K05: 관리본만
 // 있는 기기에서 이름 'codex'로 스폰해 ENOENT, 폴링은 영원히 미인증). 턴(codexCmd)과 같은 관리본 우선이되,
 // 버튼·폴링이 ~100MB 조달·핀 승격을 떠안지 않게 존재만 본다. 자격은 HOME(~/.codex) 공유라 어느 쪽이든 같다.
-const connectBin = async (runner, c) => (runner === 'codex' && await exists(codexManagedBin()) ? codexManagedBin() : c.bin);
+const connectBin = async (runner, c) => (runner === 'codex' ? (await codexInstalledBin()) ?? c.bin : c.bin);
 
 /** OAuth 연결 시작 — 벤더 CLI의 브라우저 로그인을 서버가 대신 실행한다(서버가 사용자 PC에 있는
     로컬/데스크톱 전용). detached spawn이라 서버 응답을 막지 않고, CLI가 시스템 브라우저를 연다.

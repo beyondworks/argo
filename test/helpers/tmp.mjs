@@ -32,12 +32,16 @@ export async function mkdtemp(prefix) {
     발화하는데, 두 조달 모두 관리본이 "존재하면" 즉시 반환한다(src/runners/codex.mjs·gemini.mjs
     첫 분기) — 빈 파일이면 충분하다. 자격 배관만 검증하고 CLI를 실행하지 않는 테스트 전용.
     경로 계약: codexManagedBin()·geminiManagedEntry()와 동일 경로 — 제품 경로가 바뀌면 조달이
-    재개될 뿐(구 동작 복귀 + exit 청소는 유지)이라 조용히 깨지지 않는다. */
+    재개될 뿐(구 동작 복귀 + exit 청소는 유지)이라 조용히 깨지지 않는다.
+    codex 관리본은 핀마다 폴더가 따로라(codexToolDirFor) 제품 함수로 경로를 받는다. 스탬프(.pin)까지 심어 설치 완료 상태로 둔다 —
+    스탬프가 없으면 턴이 host 보강 내려받기를 시도한다. 호출 전에 HOME이 정해져 있어야 한다(codex.mjs가 로드 시 homedir()로 경로를 고정). */
 export async function stubRunnerToolDirs(home = process.env.HOME) {
-  const codexDir = join(home, '.argo', 'tools', 'codex-cli');
+  const { codexToolDirFor, CODEX_PIN } = await import('../../src/runners/codex.mjs');
+  const codexDir = codexToolDirFor(home);
   const geminiBundle = join(home, '.argo', 'tools', 'gemini-cli', 'package', 'bundle');
   await mkdir(codexDir, { recursive: true });
   await mkdir(geminiBundle, { recursive: true });
   await writeFile(join(codexDir, process.platform === 'win32' ? 'codex.exe' : 'codex'), '');
+  await writeFile(join(codexDir, '.pin'), CODEX_PIN);
   await writeFile(join(geminiBundle, 'gemini.js'), '');
 }

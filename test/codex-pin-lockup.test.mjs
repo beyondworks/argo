@@ -5,7 +5,7 @@
 //  ④ lockupAction: 미재시도=재조달, 재시도 후=러너 교체(인증 실패와 같은 계열)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CODEX_PIN, codexAssetUrl, codexAssetNameFor, codexHostAssetNameFor, CODEX_LOCKUP_RE, codexOutdatedError } from '../src/runners/codex.mjs';
+import { CODEX_PIN, CODEX_ASSET_SHA256, codexAssetUrl, codexAssetNameFor, codexHostAssetNameFor, CODEX_LOCKUP_RE, codexOutdatedError } from '../src/runners/codex.mjs';
 import { lockupAction } from '../src/runners.mjs';
 import { RUNNERS } from '../src/runners/catalog.mjs';
 
@@ -65,6 +65,15 @@ test('codex·host 자산 이름이 6트리플 전부 짝으로 존재(윈도우�
     else { assert.ok(!a.includes('.exe') && !h.includes('.exe'), `${a} ${h}`); }
   }
   assert.equal(codexAssetNameFor('sunos', 'x64'), null, '미지원 플랫폼은 null');
+});
+
+// 내려받기 해시 표는 핀과 한 쌍 — 핀만 올리고 표를 안 바꾸면 모든 신규 조달이 "해시가 맞지 않습니다"로 실패한다(fail-closed). 여기서 먼저 red.
+test('자산 해시 표 — 현재 핀의 표이고, codex·host 6트리플 12개 자산이 전부 sha256(64자 hex)으로 있다', () => {
+  assert.equal(CODEX_ASSET_SHA256.pin, CODEX_PIN, '핀을 올렸으면 해시 표도 새 릴리스 digest로 바꾼다(gh api repos/openai/codex/releases/tags/<핀>)');
+  const want = [['darwin', 'arm64'], ['darwin', 'x64'], ['linux', 'arm64'], ['linux', 'x64'], ['win32', 'arm64'], ['win32', 'x64']]
+    .flatMap(([pf, arch]) => [codexAssetNameFor(pf, arch), codexHostAssetNameFor(pf, arch)]).sort();
+  assert.deepEqual(Object.keys(CODEX_ASSET_SHA256.sha256).sort(), want);
+  for (const [k, v] of Object.entries(CODEX_ASSET_SHA256.sha256)) assert.match(v, /^[0-9a-f]{64}$/, k);
 });
 
 test('잠김 신호 — 벤더 경고 줄(줄머리 warning:)만 잡고, 인용·제보 문구·일반 오류는 안 잡는다', () => {
