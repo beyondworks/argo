@@ -706,3 +706,35 @@ test('28. drain의 러너 판정은 크루마다 따로 — 카드 있는 크루
     assert.deepEqual([...checks].sort(), ['ghost', 'seoyun'], '크루마다 한 번씩 판정');
   }
 });
+
+test('29. 보류 중인 글이 500건을 넘어도 보류는 처음 본 뒤 160초에 끝난다 — 개수 상한으로 처음 본 시각을 지우면 지워진 글이 다시 160초를 세어 끝이 없었다(확인 검수 2026-10-08)', async () => {
+  const ws = await seed('yield-many'); // 러너 없음
+  M._runnerYieldSeenForTest.clear();
+  let clock = Date.now(); const t0 = clock; const now = () => clock;
+  const crews = Array.from({ length: 12 }, (_, i) => ({ id: `cccccccc-0000-4000-8000-${String(i).padStart(12, '0')}`, slug: `c${i}`, display_name: `c${i}` }));
+  const cursors = new Map(crews.map((c) => [c.id, 0]));
+  const inbox = new Map(crews.map((c, i) => [c.id, Array.from({ length: 50 }, (_, j) => ({ id: (i + 1) * 1000 + j + 1, channel_id: CH, author_kind: 'user', author_user_id: OWNER, crew_id: null, kind: 'text', body: 'x',
+    mentions: [{ kind: 'crew', id: c.id }], reply_to: null, thread_root: null, created_at: new Date(t0).toISOString(), meta: {} }))]));
+  const jobs = [];
+  const db = {
+    async myCrews() { return crews.map((c) => ({ ...c, org_id: ORG, allow: 'all', allow_users: [], cursor_msg_id: cursors.get(c.id), hosting: 'local' })); },
+    async crewChannels() { return []; },
+    async crewScope() { return new Set([CH]); },
+    async crewInbox(_ws, id, after) { return inbox.get(id).filter((m) => m.id > after).slice(0, M.PAGE); },
+    async channel(id) { return { id, org_id: ORG, kind: 'public', name: 'general' }; },
+    async message() { return null; },
+    async instructCheck() { return 'ok'; },
+    async orgEntitled() { return true; },
+    async orgConsentOk() { return true; },
+    async setCursor(id, n) { if (n > cursors.get(id)) cursors.set(id, n); },
+  };
+  let firstAt = null;
+  for (let i = 0; i < 80; i++) { // 3초 틱, 240초
+    await M.drain(ws, { db, uid: OWNER, enqueue: async (_w, _k, _n, job) => { jobs.push(job); }, housekeeping: false, now, runnerReady: C.turnRunnerAvailable });
+    if (jobs.length && firstAt == null) firstAt = clock - t0;
+    clock += 3000;
+  }
+  assert.ok(firstAt != null && firstAt <= YIELD_GRACE_MS + 6000, `처음 본 뒤 160초 무렵 적재가 시작된다(실제 ${firstAt}ms)`);
+  assert.equal(jobs.length, 600, '600건 모두 적재된다(보류가 끝난다)');
+  assert.equal([...cursors.values()].filter((v) => v > 0).length, 12, '모든 크루 커서가 넘어간다');
+});

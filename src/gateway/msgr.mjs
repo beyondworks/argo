@@ -1419,16 +1419,24 @@ async function noteJobDenied(wsId, job, { db, uid, lang }) {
 const receivedSent = new Set(); // 받음 방송을 이미 보낸 잡(크루:글) — 프로세스 안에서 잡당 한 번
 const heldLogged = new Set(); // drain 보류 로그를 남긴 글(크루:글) — 틱마다 같은 줄을 찍지 않게, 500건 상한
 const yieldLogged = new Set(); // 핸들러 양보 로그를 남긴 잡(크루:글) — DEFER 3초마다 같은 줄을 찍지 않게, 500건 상한
-const yieldSeenAt = new Map(); // (회사:크루:글) → 이 프로세스가 그 글을 처음 본 로컬 시각 — drain 보류와 핸들러 양보가 같이 쓴다, 500건 상한
+const yieldSeenAt = new Map(); // (회사:크루:글) → 이 프로세스가 그 글을 처음 본 로컬 시각 — drain 보류와 핸들러 양보가 같이 쓴다, 나이로 정리(아래 firstSeenAt)
 export const _runnerYieldSeenForTest = yieldSeenAt;
 const YIELD_CLOCK_AHEAD_MS = 60_000; // 글 시각(created_at)이 이 기기 시계보다 이만큼 넘게 미래면 이 기기 시계가 느린 것 — 글 시각 기한을 쓰지 않는다
 const yieldKey = (wsId, crewId, msgId) => `${wsId}:${crewId}:${msgId}`;
 /** 처음 본 시각 — 없으면 지금으로 남긴다. 이 기기 시계가 뒤로 갔으면(남긴 시각이 미래) 지금으로 다시 남겨 기한이 늘지 않게 한다. */
+// 정리는 개수가 아니라 나이로 한다(확인 검수 2026-10-08): 500건 상한에서 먼저 넣은 것부터 지우면, 보류 중인 글이 500건을 넘을 때 지워진 글이
+// '지금'으로 다시 들어와 160초를 처음부터 세서 보류가 끝나지 않았다. 기한이 한참 지난 키(30분)만 지우고, 그래도 넘치면 5만 건에서 오래된 것부터.
+const YIELD_SEEN_SWEEP_AT = 2_000, YIELD_SEEN_MAX = 50_000, YIELD_SEEN_KEEP_MS = 30 * 60_000, YIELD_SEEN_SWEEP_EVERY_MS = 60_000;
+let yieldSeenSweptAt = 0;
 function firstSeenAt(key, t) {
   const seen = yieldSeenAt.get(key);
   if (seen !== undefined && seen <= t) return seen;
   yieldSeenAt.delete(key); yieldSeenAt.set(key, t);
-  if (yieldSeenAt.size > 500) yieldSeenAt.delete(yieldSeenAt.keys().next().value);
+  if (yieldSeenAt.size > YIELD_SEEN_SWEEP_AT && t - yieldSeenSweptAt >= YIELD_SEEN_SWEEP_EVERY_MS) {
+    yieldSeenSweptAt = t;
+    for (const [k, v] of yieldSeenAt) if (v < t - YIELD_SEEN_KEEP_MS) yieldSeenAt.delete(k);
+  }
+  while (yieldSeenAt.size > YIELD_SEEN_MAX) yieldSeenAt.delete(yieldSeenAt.keys().next().value);
   return t;
 }
 /** 러너 없는 프로세스가 이 글을 아직 양보하나 — drain 보류와 핸들러 양보가 이 함수 하나로 판정한다.
