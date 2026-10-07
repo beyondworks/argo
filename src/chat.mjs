@@ -28,6 +28,7 @@ import { saveHandover } from './memory.mjs';
 import { loadMcp, safeMcpServersForRuntime } from './market.mjs';
 import { materializeMcpServers } from './runners/npx.mjs'; // node/npx를 실행형으로 — 시스템 npm 없는 기기 지원
 import { nativeQuery, nativeRunnerEnabled, nativeToolsDirective, crewToolSpecs, steerNote } from './engine/native-query.mjs'; // 하네스 통일 P-A — Argo 소유 도구 루프(플래그 러너)
+import { savedNativeSessionId } from './engine/session.mjs'; // 이어 쓸 네이티브 세션이 다른 턴에 덮였는지(세션 파일은 에이전트당 하나)
 import { createCrewMcpBridge } from './engine/crew-mcp.mjs'; // CLI 러너 크루 도구 다리(K94)
 import { appendUsage } from './usage.mjs';
 import { recordClaudeLimits } from './runner-limits.mjs'; // 구독 잔여 한도(K91) — 데크 상태 줄
@@ -2036,15 +2037,18 @@ ${lang === 'en'
     const me = await getDeviceId().catch(() => null);
     const device = scopeKey(contextScope) ? scopedSession(t, scopeKey(contextScope)).sessionDevice : t.sessionDevice; // 범위 세션은 범위별 소유 기기
     const foreign = !dmTurn && !!(sessionId || __freshRetry) && !!device && !!me && device !== me;
+    // 네이티브(키) 러너의 세션 파일은 에이전트당 하나다 — 채널·회의실·루틴 턴이 덮었으면 이 id로는 빈 새 세션이 열려 앞 대화가 통째로 빠진다(재검수 MEDIUM 2026-10-08).
+    // 다른 기기에서 이어받을 때처럼 새 세션 + 최근 대화로 연다(못 본 1:1만 건네는 갈래로 가지 않는다 — 이을 세션이 없다). 비용: 이어 쓰는 네이티브 턴마다 로컬 파일 읽기 1회.
+    const lost = !dmTurn && !foreign && !!resumeId && nativeOn && (await savedNativeSessionId(wsId, agentSlug)) !== resumeId;
     const solos = !dmTurn && !contextScope ? (t.messages ?? []).filter(soloLine) : [];
     const seen = soloSeenFor(t, resumeId);
-    const unseen = ownerConvo && resumeId && !foreign ? solos.filter((m) => !seen.has(soloKey(m))) : [];
+    const unseen = ownerConvo && resumeId && !foreign && !lost ? solos.filter((m) => !seen.has(soloKey(m))) : [];
     const catchUp = unseen.length ? await soloCatchUp(wsId, unseen, { lang, name: meta.name || agentSlug }) : null;
     const reopen = unseen.length > 0 && !catchUp; // 못 본 1:1이 예산을 넘는다 — 새 세션 + 최근 대화(요약 포함)
     const fresh = ownerConvo && !resumeId && !foreign && !__freshRetry && solos.length > 0; // 이을 세션이 없다 — 1:1 줄이 있으면 최근 대화로 연다
-    if (foreign || reopen) resumeId = null;
+    if (foreign || reopen || lost) resumeId = null;
     if (catchUp) { crossCtx = `${catchUp}\n${newMsgHead(source, lang)}`; soloSeenNext = [...seen, ...unseen.map(soloKey)]; }
-    else if ((foreign || reopen || fresh || ownerSolo || (!dmTurn && __freshRetry)) && (t.messages ?? []).length) {
+    else if ((foreign || reopen || fresh || lost || ownerSolo || (!dmTurn && __freshRetry)) && (t.messages ?? []).length) {
       // 실패 턴·화자·범위 규칙과 예산·요약은 CLI 경로와 같은 함수(threadContextFor)
       // 요약 원샷도 정지 버튼이 끊게 — 이 구간은 아래 실행 등록(abortReg) 전이라 같은 실행 그룹(__turnControl)으로 잠깐 등록한다.
       // 상태는 요약하는 동안만 '앞 대화 정리 중', 끝나면 지운다(아래 'boot'가 이어 받는다 — 중단으로 끝나도 남지 않는다).
@@ -2059,7 +2063,9 @@ ${lang === 'en'
       ctxCostUsd = parts.costUsd;
       const ctx = contextSection(parts, foreign || (__freshRetry && !ownerSolo && !reopen && !fresh)
         ? (lang === 'en' ? 'Recent conversation (continued from another device — a new session opens here)' : '최근 대화 (다른 기기에서 이어짐 — 이 기기에서 새 세션으로 계속)')
-        : (lang === 'en' ? 'Recent conversation (desktop and your 1:1 messenger chat with the user are one conversation — a new session continues here)' : '최근 대화 (데스크톱과 메신저 1:1은 한 대화다 — 새 세션으로 계속)'), lang);
+        : ownerSolo || solos.length // 1:1 문구는 실제로 1:1 줄이 실리는 턴에만 — 덮인 세션을 다시 연 채널·데스크톱 턴은 중립 문구(lost)
+          ? (lang === 'en' ? 'Recent conversation (desktop and your 1:1 messenger chat with the user are one conversation — a new session continues here)' : '최근 대화 (데스크톱과 메신저 1:1은 한 대화다 — 새 세션으로 계속)')
+          : (lang === 'en' ? 'Recent conversation (earlier in this conversation — a new session continues here)' : '최근 대화 (앞서 나눈 대화 — 새 세션으로 계속)'), lang);
       if (ctx) crossCtx = `${ctx}\n${newMsgHead(source, lang)}`;
       if (!dmTurn && !contextScope) soloSeenNext = solos.map(soloKey); // 새 세션이 최근 대화로 받은 1:1 줄(예산 밖은 요약으로)
     }
@@ -2179,7 +2185,7 @@ ${lang === 'en'
     env: sdkEnv, model: sdkModel, crewTools: crewSink, mcpServers: servers ?? {}, computer: computerOn,
     ...(runner === 'codex' && codexModelEffort(meta.effort, sdkModel) ? { effort: codexModelEffort(meta.effort, sdkModel) } : {}), // Responses reasoning.effort uses the same model contract as CLI.
     canUseTool: makePermissionGate(wsId, agentSlug, p.root, chain.length ? chain[chain.length - 1] : notOwnerDirect, lang, workRoots, { computerUse: computerOn, guest, msgr: gateMsgr }),
-    resume: resumeId, lang, contextTokens: contextWindowFor(runner, sdkModel), // 토큰 예산 — 창의 75%를 넘으면 앞부분 요약(engine/compact.mjs)
+    resume: resumeId, saveSession: !sessionless, lang, contextTokens: contextWindowFor(runner, sdkModel), // saveSession — 세션을 남기지 않는 턴(메신저 DM·기억 안 남김 채널)은 에이전트당 하나인 세션 파일을 덮지 않는다(재검수 MEDIUM 2026-10-08: 1:1 턴이 데스크톱 세션을 지웠다) // 토큰 예산 — 창의 75%를 넘으면 앞부분 요약(engine/compact.mjs)
   }) : query({
     prompt: promptInput,
     options: {

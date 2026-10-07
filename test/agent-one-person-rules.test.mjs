@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { ownerSoloRoom, audienceOf } from '../src/gateway/office-audience.mjs';
 import { ownerSoloTurn } from '../src/gateway/msgr-handoff.mjs';
 import { inContextScope, isOwnerSoloScope, soloKey, soloSeenFor, soloMsgIds } from '../src/thread.mjs';
-import { applyDeparted, forgetChannels } from '../src/departed.mjs';
+import { applyDeparted, forgetChannels, mergeDeparted, summaryRecalled } from '../src/departed.mjs';
 import { hasAddressRule, userSetAddress, userAddressNote, ADDRESS_RULE_SKILL } from '../src/user-name.mjs';
 import { RULES_SKILL } from '../src/corrections.mjs';
 
@@ -126,15 +126,37 @@ test('회수 — 지우는 주인 혼자 1:1 줄을 덮는 범위 없는 요약(
   const revived = { messages: lines(), summary: { text: 'S', upto: 3 }, departed: { [CH]: { ts: 2, sids: [] } } };
   applyDeparted(revived);
   assert.equal(revived.summary, undefined);
+  assert.deepEqual(revived.departed[CH].sum, { at: 0, upto: 3 }, '줄로 거둘 때도 거둔 요약을 각인에 남긴다(at 없는 옛 요약은 0)');
+});
+
+test('회수가 거둔 요약 표지(sum) — 옛 버전이 줄 없이 되돌린 요약·그보다 앞 요약은 거르고, 회수 뒤 새 요약은 남긴다. 병합은 큰 값으로 보존', () => {
+  const CH = 'dddddddd-0000-4000-8000-000000000002', CH2 = 'dddddddd-0000-4000-8000-000000000003';
+  const d = { [CH]: { ts: 2, sids: [], sum: { at: 500, upto: 3 } } };
+  assert.equal(summaryRecalled(d, { text: 'S', upto: 3, at: 500 }), true, '거둔 그 요약');
+  assert.equal(summaryRecalled(d, { text: 'S0', upto: 2, at: 400 }), true, '그 앞 요약(같은 1:1 줄을 접었을 수 있다)');
+  assert.equal(summaryRecalled(d, { text: 'S0', upto: 2 }), true, 'at 없는 옛 요약');
+  assert.equal(summaryRecalled(d, { text: 'N', upto: 3, at: 501 }), false, '회수 뒤 만든 요약(기준점이 같아도)');
+  assert.equal(summaryRecalled(d, { text: 'N', upto: 4, at: 400 }), false, '기준점이 더 뒤인 요약(시계가 늦은 기기가 만든 새 요약)');
+  assert.equal(summaryRecalled({ [CH]: { ts: 2, sids: [] } }, { text: 'S', upto: 3, at: 1 }), false, '표지 없는 각인(옛 버전·요약을 거두지 않은 회수)');
+  assert.equal(summaryRecalled(null, { text: 'S', upto: 3, at: 1 }), false);
+  const t = { messages: [{ who: 'user', text: 'd', ts: 9 }], summary: { text: 'S', upto: 3, at: 500 }, departed: d };
+  applyDeparted(t);
+  assert.equal(t.summary, undefined, '읽기·병합 자리(applyDeparted)에서 줄 없이도 거른다');
+  const m = mergeDeparted({ [CH]: { ts: 2, sids: ['a'], sum: { at: 500, upto: 3 } } }, { [CH]: { ts: 5, sids: ['b'] }, [CH2]: { ts: 1, sids: [], sum: { at: 7, upto: 9 } } });
+  assert.deepEqual(m, { [CH]: { ts: 5, sids: ['a', 'b'], sum: { at: 500, upto: 3 } }, [CH2]: { ts: 1, sids: [], sum: { at: 7, upto: 9 } } }, '옛 버전 쪽(sum 없음)과 합쳐도 sum이 남는다');
+  assert.deepEqual(mergeDeparted({ [CH]: { ts: 1, sids: [], sum: { at: 5, upto: 1 } } }, { [CH]: { ts: 1, sids: [], sum: { at: 3, upto: 4 } } })[CH].sum, { at: 5, upto: 4 }, '큰 값으로');
+  assert.deepEqual(mergeDeparted({ [CH]: { ts: 1, sids: [], sum: { at: 'x', upto: 1 } } }, null)[CH], { ts: 1, sids: [] }, '깨진 sum은 버린다');
 });
 
 test('호칭 규칙 판정 — 사용자를 부르는 방법을 정한 줄만', () => {
   for (const s of ['- 나를 "대표님"이라고 불러라', '- 사용자를 형이라고 부른다', '- 저를 유건님으로 불러 주세요', '- 호칭은 대표님', '- Call me "Chief".', '- Address the user as Dr. Kim', '- refer to me as boss',
-    '- 나를 대표님이라 불러', '- 대표님이라고 해줘', '- 나는 형이라 부르면 돼', '- 나를 부를 때는 대표님', '- 사용자 호칭은 대표님']) // 검수 LOW: 앞의 셋을 놓쳤다
+    '- 나를 대표님이라 불러', '- 대표님이라고 해줘', '- 나는 형이라 부르면 돼', '- 나를 부를 때는 대표님', '- 사용자 호칭은 대표님', // 검수 LOW: 앞의 셋을 놓쳤다
+    '- 내 이름을 부르지 마', '- 제 이름은 부르지 말고 대표님이라고 해 주세요', '- 말할 때는 대표님이라고 불러줘', '- 앞으로 "대표님"이라고 불러줘', '- 대표님으로 불러']) // 재검수 LOW: '내 이름을 부르지 마'를 놓쳤다
     assert.equal(hasAddressRule(s), true, s);
   for (const s of ['- 결론부터 말한다', '- 함수 하나를 부를 때 인자를 확인한다', '- 도구를 부를 때 결재를 먼저', "- Always address the user's question first", '- call them back when a customer emails', '- 결재를 부르기 전에', '',
     '- 고객은 고객님이라고 부른다', '- 메일에서 상대를 이름으로 부르지 마라', '- 상대방 호칭은 OO님으로 통일', '- 너를 서윤이라고 부를게', // 검수 LOW: 사용자가 아닌 대상을 잡았다
-    '- 출처가 없으면 "출처 없음"이라고 해', '- 모르면 모른다고 해', '- 결론부터 말하는 걸로 해', '- 파일은 Read로 불러온다', '- 템플릿으로 불러와 채운다', '- 너무 길게 쓰지 마', '- 저장 전에 확인'])
+    '- 출처가 없으면 "출처 없음"이라고 해', '- 모르면 모른다고 해', '- 결론부터 말하는 걸로 해', '- 파일은 Read로 불러온다', '- 템플릿으로 불러와 채운다', '- 너무 길게 쓰지 마', '- 저장 전에 확인',
+    '- 보고서 제목은 "주간 보고"라고 부른다', '- 이 프로젝트를 앞으로 "아르고"라 부른다', '- 회의는 스탠드업이라고 부른다', '- API를 호출할 때는 재시도로 부른다', '- 함수는 helper로 불러 쓴다']) // 재검수 LOW: 사람이 아닌 대상의 이름을 정한 줄을 잡았다
     assert.equal(hasAddressRule(s), false, s);
 });
 

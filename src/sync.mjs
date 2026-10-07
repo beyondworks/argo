@@ -22,7 +22,7 @@ import { join, dirname, basename, sep } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import { WS_ROOT, WS_ID_RE, paths, archiveCompany, writeTombstone, TOMBSTONE_DIR, getDeviceId } from './workspace.mjs';
-import { applyDeparted, mergeDeparted } from './departed.mjs';
+import { applyDeparted, mergeDeparted, summaryRecalled } from './departed.mjs';
 import { writeJsonAtomic, writeFileAtomic, readJsonLenient } from './jsonstore.mjs';
 import { withLock, withDirLock, withFileLock } from './mutex.mjs';
 import { cryptoOn, isSecretRel, isSecretNameRel, isEncRel, encVaultOn, sealSecret, sealSecretV3, openSecret, openSecretCompat, isEnvelopeGeneration, CRED_WITHDRAWN, isCredWithdrawn } from './secretbox.mjs';
@@ -623,10 +623,12 @@ export function mergeThread(localBuf, remoteBuf, prefer = 'remote') {
   // 누적 요약(thread-context.mjs {text, upto}) — 통째로 한쪽 것을 쓰면 다른 기기의 더 최신 요약·그 기기에만 있는 채널 요약이 사라져 같은 몫을 다시 요약한다(재검수 LOW).
   // 키마다 upto(요약이 덮는 마지막 메시지 ts)가 큰 쪽, 같으면 최근 편집 쪽. 회수된 채널의 요약은 아래 applyDeparted가 지운다.
   const newerSum = (p, o) => (!p ? o : !o ? p : (Number(o.upto) || 0) > (Number(p.upto) || 0) ? o : p);
-  const sum = newerSum(primary.summary, other.summary); if (sum) merged.summary = sum; else delete merged.summary;
-  if (L.scopedSummaries || R.scopedSummaries) merged.scopedSummaries = Object.fromEntries([...new Set([...Object.keys(other.scopedSummaries ?? {}), ...Object.keys(primary.scopedSummaries ?? {})])].map((k) => [k, newerSum(primary.scopedSummaries?.[k], other.scopedSummaries?.[k])]));
-  // 채널 기억 회수 각인(departed.mjs) — 채널마다 늦은 시각으로 합치고 병합 결과에 다시 적용한다. 다른 기기가 아직 든 옛 채널 줄·세션이 합집합으로 되살아나지 않게.
+  // 회수 각인은 먼저 합친다 — 회수가 거둔 요약(옛 버전 사본이 되돌린 것)은 고르기 전에 뺀다. 안 빼면 기준점이 같거나 큰 옛 요약이 회수 뒤 새 요약을 이기고 아래에서 둘 다 사라진다.
   const departed = mergeDeparted(L.departed, R.departed);
+  const live = (s) => (s && !summaryRecalled(departed, s) ? s : null);
+  const sum = newerSum(live(primary.summary), live(other.summary)); if (sum) merged.summary = sum; else delete merged.summary;
+  if (L.scopedSummaries || R.scopedSummaries) merged.scopedSummaries = Object.fromEntries([...new Set([...Object.keys(other.scopedSummaries ?? {}), ...Object.keys(primary.scopedSummaries ?? {})])].map((k) => [k, newerSum(primary.scopedSummaries?.[k], other.scopedSummaries?.[k])]));
+  // 채널 기억 회수 각인(departed.mjs) — 채널마다 늦은 시각으로 합치고(위) 병합 결과에 다시 적용한다. 다른 기기가 아직 든 옛 채널 줄·세션이 합집합으로 되살아나지 않게.
   if (departed) { merged.departed = departed; applyDeparted(merged); } else delete merged.departed;
   return Buffer.from(JSON.stringify(merged, null, 2));
 }

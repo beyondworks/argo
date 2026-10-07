@@ -81,6 +81,13 @@ export async function loadNativeSession(wsId, slug, resumeId = null) {
   return { id: `native-${randomUUID()}`, messages: [], resumed: false };
 }
 
+/** 이 기기에 저장된 세션 id(없으면 null) — 파일은 에이전트당 하나라 채널·회의실·루틴 턴이 덮을 수 있다. 이어 쓸 id와 다르면
+    loadNativeSession은 빈 새 세션을 연다 — chat.mjs가 턴 앞에서 이 값을 보고 최근 대화를 대신 싣는다(재검수 MEDIUM 2026-10-08). */
+export async function savedNativeSessionId(wsId, slug) {
+  const saved = await readJson(sessionFile(wsId, slug), null).catch(() => null);
+  return typeof saved?.id === 'string' && Array.isArray(saved.messages) ? saved.id : null;
+}
+
 /** 턴 중 저장(K57) — 넘치면 오래된 스크린샷 정리를 전체에 먼저, 그 뒤 마지막 지시 앞(이전 턴)만 예산까지 절단한다.
     현재 턴(마지막 지시~꼬리)은 손대지 않는다 — 전체를 trimMessages로 자르면 큰 도구 결과가 든 현재 턴이 지시 하나로 줄어
     모델이 같은 작업(쓰기·쪽지·제출)을 처음부터 반복했다. 현재 턴 단독으로 상한을 넘으면 넘긴 채 저장한다(알려진 한계).

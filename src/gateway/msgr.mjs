@@ -1510,27 +1510,29 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     // 최근 채널 대화 — 참고용(지시 아님). 이름 접두로 발화자를 가르고 본문은 세척.
     const ctxRows = envelope?.context ?? await db.contextOf(job.channelId, job.msgId, CONTEXT_N, job.after ?? []);
     // 주인 혼자 1:1(유건 결정 2026-10-08 ① — 에이전트는 한 사람) — 데스크톱 대화와 같은 대화로 본다(맥락 양방향 + 일지, 세션은 잇지 않는다 — chat.mjs ownerSoloTurn).
-    // 주인이 직접 보낸 첫 단계 턴(손님·넘김·DM 전달·오피스 아님 — ownerSoloTurn)이고, 지난 대화도 주인·이 에이전트의 글뿐이며(나간 사람·전달된 글이 섞인 방 제외),
-    // 방 구성원이 주인·이 에이전트 하나씩일 때만(office-audience ownerSoloRoom). 기억 안 남김 방·서버 봉투가 없는 옛 서버(지난 대화의 전달 표지를 못 본다)는 제외. 비용: 그런 턴에만 구성원 조회 1건(쓰기 0, 주기 호출 0).
-    const solo = !!envelope && ch.kind === 'dm' && ch.crew_memory !== false
+    // 주인이 직접 보낸 첫 단계 턴(손님·넘김·DM 전달·오피스 아님 — ownerSoloTurn)이고, 지난 대화도 주인과 이 에이전트의 글뿐이며(나간 사람·전달된 글이 섞인 방 제외),
+    // 방 구성원이 주인·이 에이전트 하나씩일 때만(office-audience ownerSoloRoom — 실행권을 잡은 뒤 아래 solo에서 1회). 기억 안 남김 방·서버 봉투가 없는 옛 서버(지난 대화의 전달 표지를 못 본다)는 제외.
+    // 에이전트 글은 주인이 시킨 일의 답(meta.origin = 주인)이거나 그 에이전트가 주인에게 보낸 알림·루틴 결과(origin 없음 + meta.notification)만 — 나간 손님이 시킨 일의 답(origin = 손님)이
+    // 12건 안에 남은 방은 그 내용이 주인 맥락으로 넘어가지 않게 1:1로 보지 않는다(재검수 LOW 2026-10-08). origin이 없는 그 밖의 옛 답은 좁게 — 1:1로 보지 않는다.
+    const soloRow = (r) => !r.meta?.relay && r.meta?.guest !== true && ((r.author_kind === 'user' && r.author_user_id === uid)
+      || (r.author_kind === 'crew' && r.crew_id === job.crewId && ((r.meta?.origin ?? null) === uid || (r.meta?.origin == null && typeof r.meta?.notification === 'string'))));
+    const soloCandidate = !!envelope && ch.kind === 'dm' && ch.crew_memory !== false
       && ownerSoloTurn({ ...authority, channelKind: ch.kind, hop: job.hop ?? 0, ownerSolo: true }, { hop: job.hop ?? 0, notOwnerDirect: job.fromCrewId || job.relayVia ? 'handoff' : null }) // 턴 규칙은 chat.mjs와 같은 한 함수(아래 ctx와 같은 권한 값)
-      && ctxRows.every((r) => !r.meta?.relay && ((r.author_kind === 'user' && r.author_user_id === uid) || (r.author_kind === 'crew' && r.crew_id === job.crewId)))
-      && await ownerSoloRoom(c.client, { channelKind: ch.kind, channelId: job.channelId }, uid, job.crewId);
-    // 주인 혼자 1:1의 지난 방 대화는 스레드(데스크톱 대화와 시간순 한 줄기 — chat.mjs)가 싣는다. 봉투에서는 이 기기 스레드에 없는 턴(다른 기기가 처리한 턴·실패 답 등)만 —
-    // 둘 다 실으면 같은 대화가 두 번 들어가고, 봉투 쪽이 지시 바로 앞에 놓여 데스크톱에서 나중에 한 말보다 최근처럼 읽힌다(검수 LOW 2026-10-08).
-    const local = solo ? soloMsgIds(await loadThread(wsId, job.slug).catch(() => null), job.channelId) : null;
-    const roomRows = local?.size ? ctxRows.filter((r) => !local.has(String(msgrRowTurn(r) ?? ''))) : ctxRows;
-    if (roomRows.length) {
+      && ctxRows.every(soloRow);
+    // 지난 방 대화 — 넣을 자리만 잡고, 실행권을 잡은 뒤 채운다(roomSection). 주인 혼자 1:1이면 봉투에서 이 기기 스레드에 없는 턴만 싣는다(아래 solo 주석).
+    const roomAt = text.length;
+    const roomSection = async (rows) => {
+      if (!rows.length) return '';
       const names = new Map();
       const nameOf = async (r) => {
         if (r.author_kind === 'crew') return clean(crewName(r.crew_id), 40);
         if (!names.has(r.author_user_id)) names.set(r.author_user_id, clean((await db.memberName(job.orgId, r.author_user_id).catch(() => null)) ?? pick('멤버', 'member', lang), 40));
         return names.get(r.author_user_id);
       };
-      text += `\n${msgrContextHead(roomRows.length, lang)}`;
-      for (const r of roomRows) text += `\n${await nameOf(r)}: ${clean(r.body, r.id > job.msgId && job.after?.includes(r.crew_id) ? MSG_MAX : 300)}`; // 기다린 답글의 넘김 꼬리까지 보존, 일반 과거 대화만 요약
-      text += `\n${pick(MSGR_NOW.ko, MSGR_NOW.en, lang)}`;
-    }
+      let out = `\n${msgrContextHead(rows.length, lang)}`;
+      for (const r of rows) out += `\n${await nameOf(r)}: ${clean(r.body, r.id > job.msgId && job.after?.includes(r.crew_id) ? MSG_MAX : 300)}`; // 기다린 답글의 넘김 꼬리까지 보존, 일반 과거 대화만 요약
+      return `${out}\n${pick(MSGR_NOW.ko, MSGR_NOW.en, lang)}`;
+    };
     text += `\n${authorName}: ${job.text}`;
     if (job.replyTo) {
       const parent = envelope ? [envelope.root, ...envelope.context].find((r) => r.id === job.replyTo) : await db.message(job.replyTo);
@@ -1588,7 +1590,13 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     const stopTyping = startTyping(wsId, job.orgId, job.channelId, job.crewId, job.slug, { full: ch.kind === 'public', sourceMsgId: job.msgId, topic: early?.full === (ch.kind === 'public') ? early : null }); if (!early) stageLog(job, 'broadcast', now()); // 받음 방송에 쓴 방 토픽을 그대로 잇는다(방 채널을 두 번 열지 않는다). 공개 채널은 조직 토픽, 비공개 방은 그 방 토픽(조직 토픽은 조직 전원이 듣는다 — 검수 C-1). 방송 내용은 어디서나 채널·크루·시작 시각·원본 메시지 id뿐
     let reply; let failed = false; let aborted = false; let replyMentions = []; let replyMeta = {};
     try {
-      if (solo) ctx.ownerSolo = true; // 판정은 위(최근 방 대화를 싣기 전)
+      // 주인 혼자 1:1 방 확인(구성원 조회 1건)은 실행권을 잡은 뒤에만 — 다른 프로세스가 실행 중인 잡이 3초마다 DEFER로 다시 집힐 때 조회를 되풀이하지 않게(재검수 LOW 2026-10-08).
+      const solo = soloCandidate && await ownerSoloRoom(c.client, { channelKind: ch.kind, channelId: job.channelId }, uid, job.crewId);
+      if (solo) ctx.ownerSolo = true;
+      // 주인 혼자 1:1의 지난 방 대화는 스레드(데스크톱 대화와 시간순 한 줄기 — chat.mjs)가 싣는다. 봉투에서는 이 기기 스레드에 없는 턴(다른 기기가 처리한 턴·실패 답 등)만 —
+      // 둘 다 실으면 같은 대화가 두 번 들어가고, 봉투 쪽이 지시 바로 앞에 놓여 데스크톱에서 나중에 한 말보다 최근처럼 읽힌다(검수 LOW 2026-10-08).
+      const local = solo ? soloMsgIds(await loadThread(wsId, job.slug).catch(() => null), job.channelId) : null;
+      text = text.slice(0, roomAt) + await roomSection(local?.size ? ctxRows.filter((r) => !local.has(String(msgrRowTurn(r) ?? ''))) : ctxRows) + text.slice(roomAt);
       // DM은 뿌리마다 새로 허가한 문맥만, 채널은 그 채널 세션만 잇는다(전역 세션 = 주인의 데스크톱 대화). 기억 안 남김 채널은 세션도 없이
       const sessionId = ch.kind === 'dm' || ch.crew_memory === false ? null : scopedSession(await loadThread(wsId, job.slug), job.channelId).sessionId;
       stageLog(job, 'turn-start', now());

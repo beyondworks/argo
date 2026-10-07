@@ -37,7 +37,7 @@ const wrappers = new Map();
 for (const [relative, replacements] of [
   ['./runners.mjs', `export const resolveRunner = async () => ({runner:globalThis.__opRunner(),available:true,fellBack:false});
     export const runnerCredType = async () => 'host'; export const runnerCredEnv = async () => ({});
-    export const sdkEnvFor = async () => ({}); export const isBilledRunner = async () => false;
+    export const sdkEnvFor = async () => (globalThis.__opEnv?.() ?? {}); export const isBilledRunner = async () => false;
     export const externalExec = async (args) => globalThis.__opCli(args);`],
   ['./connectors.mjs', 'export const connectorBriefing = async () => [];'],
 ]) {
@@ -58,7 +58,7 @@ const hooks = registerHooks({ resolve(specifier, context, next) {
   if (context.parentURL?.endsWith('/src/chat.mjs') && wrappers.has(specifier)) return { url: wrappers.get(specifier), shortCircuit: true };
   return next(specifier, context);
 } });
-after(() => { hooks.deregister(); globalThis.fetch = fetchBefore; for (const k of ['__opRunner', '__opCli', '__opSdk']) delete globalThis[k]; });
+after(() => { hooks.deregister(); globalThis.fetch = fetchBefore; for (const k of ['__opRunner', '__opCli', '__opSdk', '__opEnv']) delete globalThis[k]; });
 
 const { createCompany, paths } = await import('../src/workspace.mjs');
 const { appendTurn, loadThread, setThreadSummary, noteSoloSeen, isOwnerSoloScope } = await import('../src/thread.mjs');
@@ -67,6 +67,8 @@ const M = await import('../src/gateway/msgr.mjs');
 const { mergeThread } = await import('../src/sync.mjs');
 const { relocateOrgJournals } = await import('../src/memory.mjs');
 const { recallDeparted } = await import('../src/gateway/msgr-recall.mjs');
+const { sessionFile } = await import('../src/engine/session.mjs');
+const { DEFER } = await import('../src/gateway/queue.mjs');
 
 const OWNER = '11111111-1111-4111-8111-111111111111';
 const GUEST = '22222222-2222-4222-8222-222222222222';
@@ -457,15 +459,17 @@ test('주인 혼자 1:1 — 데스크톱에서 나중에 한 말이 마지막으
   const m2 = msgSeq;
   await desk(ws, '3 기억해');
   const rows = [{ id: m2, author_kind: 'user', author_user_id: OWNER, crew_id: null, body: '2 기억해', meta: {} },
-    { id: m2 + 900, author_kind: 'crew', author_user_id: null, crew_id: CREW, body: '기억했어요', client_msg_id: `reply:${CREW}:${m2}`, reply_to: m2, meta: {} }];
+    { id: m2 + 900, author_kind: 'crew', author_user_id: null, crew_id: CREW, body: '기억했어요', client_msg_id: `reply:${CREW}:${m2}`, reply_to: m2, meta: { hop: 0, origin: OWNER } }]; // 실제 답 행 모양(msgr.mjs metaBase — origin = 시킨 사람)
   assert.equal(await say(ws, room({ pair: `crew:${CREW}`, context: rows }), '방금 숫자?'), '3');
   assert.equal(lastPrompt().match(/2 기억해/g)?.length, 1);
 });
 test('주인 혼자 1:1 — 다른 기기가 처리해 이 기기 스레드에 아직 없는 방 대화는 봉투로 받는다(두 사본)', async () => {
   runner = 'codex'; const ws = await company();
   const rows = [{ id: 4242, author_kind: 'user', author_user_id: OWNER, crew_id: null, body: '5 기억해', meta: {} },
-    { id: 4243, author_kind: 'crew', author_user_id: null, crew_id: CREW, body: '기억했어요', client_msg_id: `reply:${CREW}:4242`, reply_to: 4242, meta: {} }];
+    { id: 4243, author_kind: 'crew', author_user_id: null, crew_id: CREW, body: '기억했어요', client_msg_id: `reply:${CREW}:4242`, reply_to: 4242, meta: { hop: 0, origin: OWNER } }];
+  await desk(ws, '다른 이야기 DESK_LINE');
   assert.equal(await say(ws, room({ pair: `crew:${CREW}`, context: rows }), '방금 숫자?'), '5');
+  assert.match(lastPrompt(), /DESK_LINE/, '주인 혼자 1:1로 판정된 턴이다(데스크톱 대화가 실림)');
 });
 test('msgrRowTurn — 사람 글은 그 글 id, 이 크루 답은 reply 표지의 원본 id, 그 밖(거절·안내)은 null', () => {
   assert.equal(M.msgrRowTurn({ author_kind: 'user', id: 7 }), 7);
@@ -487,4 +491,150 @@ test('건넨 1:1 기록 쓰기 — 같은 세션이면 더하고(동시에 끝�
   assert.equal(await noteSoloSeen(ws, 'seoyun', 'T', [keys[3]], solo), true);
   assert.deepEqual((await loadThread(ws, 'seoyun')).soloSeen, { session: 'T', keys: [keys[3]] }, '다른 세션 — 그 세션이 본 줄로 바꾼다');
   assert.equal(await noteSoloSeen(ws, 'seoyun', null, keys, solo), false, '세션이 없으면 남기지 않는다');
+});
+
+// ── 9. 네이티브(키) 러너(재검수 MEDIUM 2026-10-08) — 세션 파일이 에이전트당 하나라, 세션을 남기지 않는 1:1 턴이 그 파일을 덮으면 데스크톱 앞 대화가 통째로 빠졌다 ──
+const NATIVE_BASE = 'http://native.test';
+/** 가짜 Messages 서버 — 받은 전사 전체(이어 쓴 세션 + 이번 글)에서 답을 정한다. 보낸 전사 글을 seen에 남긴다 */
+async function withNative(fn) {
+  const prev = { runners: process.env.ARGO_NATIVE_RUNNERS, fetch: globalThis.fetch };
+  process.env.ARGO_NATIVE_RUNNERS = 'glm';
+  globalThis.__opEnv = () => ({ ANTHROPIC_BASE_URL: NATIVE_BASE, ANTHROPIC_AUTH_TOKEN: 'test-only' });
+  globalThis.fetch = async (url, init) => {
+    if (!String(url).startsWith(`${NATIVE_BASE}/v1/messages`)) throw new Error('Network disabled in one-person test');
+    const body = JSON.parse(init.body);
+    const text = body.messages.filter((m) => m.role === 'user').map((m) => (typeof m.content === 'string' ? m.content : m.content.map((b) => b.text ?? '').join(''))).join('\n');
+    const last = body.messages.at(-1); const lastText = typeof last.content === 'string' ? last.content : last.content.map((b) => b.text ?? '').join('');
+    seen.push({ runner: 'glm', prompt: text, system: JSON.stringify(body.system ?? ''), resume: body.messages.length > 1 ? 'native' : null });
+    const answer = /방금 숫자/.test(lastText) ? answerFor(text) : answerFor(lastText);
+    return new Response(JSON.stringify({ id: 'msg_1', type: 'message', role: 'assistant', model: body.model, content: [{ type: 'text', text: answer }], stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  runner = 'glm';
+  try { return await fn(); } finally { process.env.ARGO_NATIVE_RUNNERS = prev.runners; globalThis.fetch = prev.fetch; delete globalThis.__opEnv; }
+}
+const savedNativeId = async (ws) => JSON.parse(await readFile(sessionFile(ws, 'seoyun'), 'utf8')).id;
+
+test('[native] 데스크톱 → 주인 혼자 1:1 → 데스크톱: 세션을 잇고(앞 대화 유지) 1:1 줄도 안다 — 1:1 턴은 세션 파일을 덮지 않는다', () => withNative(async () => {
+  const ws = await company();
+  const a = await desk(ws, '0 기억해 DESK_ONLY');
+  assert.match(a.sessionId, /^native-/);
+  const b = await desk(ws, '다른 이야기', a.sessionId);
+  assert.equal(b.sessionId, a.sessionId);
+  assert.match(lastPrompt(), /DESK_ONLY/, '이어 쓴 세션 전사가 앞 대화를 보낸다');
+  assert.equal(await say(ws, room({ pair: `crew:${CREW}` }), '2 기억해'), '기억했어요');
+  assert.equal(await savedNativeId(ws), a.sessionId, '세션을 남기지 않는 1:1 턴은 데스크톱 세션 파일을 덮지 않는다');
+  const c = await desk(ws, '방금 숫자?', b.sessionId);
+  assert.equal(c.reply, '2');
+  assert.match(lastPrompt(), /DESK_ONLY/, '데스크톱 앞 대화가 빠지지 않는다');
+  assert.match(lastPrompt(), CATCH_KO, '세션을 잇고 못 본 1:1 줄만 건넨다');
+  assert.equal(c.sessionId, a.sessionId, '같은 세션');
+}));
+
+test('[native] 이어 쓸 세션 파일이 다른 턴(채널·회의실·루틴)에 덮였으면 새 세션 + 최근 대화로 연다 — 앞 대화와 1:1을 둘 다 안다', () => withNative(async () => {
+  const ws = await company();
+  const a = await desk(ws, '0 기억해 DESK_ONLY');
+  await say(ws, room({ pair: `crew:${CREW}` }), '2 기억해');
+  await writeFile(sessionFile(ws, 'seoyun'), JSON.stringify({ id: 'native-other-turn', at: Date.now(), messages: [{ role: 'user', content: 'CHANNEL_TURN' }, { role: 'assistant', content: [{ type: 'text', text: 'x' }] }] }));
+  const c = await desk(ws, '방금 숫자?', a.sessionId);
+  assert.equal(c.reply, '2');
+  assert.match(lastPrompt(), /DESK_ONLY/, '스레드의 최근 대화로 앞 대화를 싣는다');
+  assert.match(lastPrompt(), /데스크톱과 메신저 1:1은 한 대화다/);
+  assert.doesNotMatch(lastPrompt(), /CHANNEL_TURN/, '덮은 턴의 전사는 잇지 않는다');
+  assert.notEqual(c.sessionId, a.sessionId, '새 세션');
+  const d = await desk(ws, '다른 이야기', c.sessionId);
+  assert.equal(d.sessionId, c.sessionId, '그 뒤로는 새 세션을 이어 쓴다');
+  assert.doesNotMatch(lastPrompt(), CATCH_KO, '새 세션이 최근 대화로 받은 1:1 줄은 다시 건네지 않는다');
+}));
+
+test('[native] 1:1 줄이 없어도 덮인 세션은 최근 대화로 다시 연다(데스크톱만 쓰는 회사 — 1:1 문구 없이)', () => withNative(async () => {
+  const ws = await company();
+  const a = await desk(ws, '0 기억해 DESK_ONLY');
+  await writeFile(sessionFile(ws, 'seoyun'), JSON.stringify({ id: 'native-other-turn', at: Date.now(), messages: [] }));
+  const c = await desk(ws, '방금 숫자?', a.sessionId);
+  assert.equal(c.reply, '0');
+  assert.match(lastPrompt(), /DESK_ONLY/);
+  assert.doesNotMatch(lastPrompt(), /메신저 1:1/, '1:1 대화가 없으면 1:1 문구를 쓰지 않는다');
+}));
+test('[native] 채널 턴도 — 그 채널 세션 파일이 데스크톱 턴에 덮였으면 그 채널의 최근 대화로 다시 연다(데스크톱 대화는 싣지 않는다)', () => withNative(async () => {
+  const ws = await company();
+  const ch = () => room({ orgId: ORG, channelId: GCH, kind: 'public', users: [OWNER, GUEST] });
+  await say(ws, ch(), '5 기억해 CH_ONE');
+  assert.ok((await loadThread(ws, 'seoyun')).scopedSessions?.[GCH]?.sessionId, '채널 세션이 남는다');
+  await desk(ws, '7 기억해 DESK_SECRET'); // 데스크톱 턴이 에이전트당 하나인 세션 파일을 덮는다
+  assert.equal(await say(ws, ch(), '방금 숫자?'), '5');
+  assert.match(lastPrompt(), /CH_ONE/);
+  assert.doesNotMatch(lastPrompt(), /DESK_SECRET|메신저 1:1/, '채널 범위 그대로 — 데스크톱 대화·1:1 문구 없음');
+}));
+
+// ── 10. 회수 뒤 옛 버전 사본(재검수 MEDIUM 2026-10-08) — 옛 버전은 1:1 줄은 지우지만 요약은 병합으로 되돌린다(1:1 표지·각인의 sum을 모른다) ──
+/** 옛 버전(0.1.97) 병합 결과 흉내 — 그 버전 mergeDeparted는 각인을 {ts, sids}로 다시 만들어 sum을 버리고, 줄이 없으니 요약은 거르지 못한다. 실제 옛 코드로 같은 결과를 확인했다(PR 본문). */
+const oldVersionCopy = (t, summary) => ({ ...t, summary, departed: Object.fromEntries(Object.entries(t.departed).map(([k, v]) => [k, { ts: v.ts, sids: v.sids }])) });
+test('조직에서 빠진 뒤 옛 버전 기기가 거둔 요약을 병합으로 되돌려도 다시 거르고, 회수 뒤 새로 만든 요약은 남긴다', async () => {
+  runner = 'codex'; const ws = await company();
+  await desk(ws, 'DESK_KEEP');
+  await say(ws, room({ orgId: ORG, channelId: OCH }), 'ORG_SECRET');
+  await desk(ws, 'DESK_AFTER');
+  const anchor = (await loadThread(ws, 'seoyun')).messages.at(-1).ts;
+  assert.ok(await setThreadSummary(ws, 'seoyun', null, { text: 'SUMMARY_HAS_ORG_SECRET', upto: anchor }));
+  const reaped = (await loadThread(ws, 'seoyun')).summary;
+  await recallDeparted(ws, ['seoyun'], async (pairs) => new Map(pairs.map((p) => [`${p.slug}:${p.id}`, p.id !== OCH])), { configDirs: [] });
+  const after = JSON.parse(await readFile(chatFile(ws), 'utf8'));
+  assert.equal(after.summary, undefined);
+  assert.deepEqual(after.departed[OCH].sum, { at: reaped.at, upto: anchor }, '거둔 요약을 각인에 남긴다');
+  const old = await company(); // 옛 버전 기기의 사본 — 줄은 지웠지만 요약을 되돌렸다
+  await writeFile(chatFile(old), JSON.stringify(oldVersionCopy(after, reaped)));
+  await mergeInto(ws, old);
+  const merged = JSON.parse(await readFile(chatFile(ws), 'utf8'));
+  assert.doesNotMatch(JSON.stringify(merged), /ORG_SECRET/, '되돌린 요약을 다시 거른다');
+  assert.ok(merged.departed[OCH].sum, '각인의 sum은 회수한 쪽 사본에서 다시 합쳐진다');
+  await desk(ws, '방금 숫자?');
+  assert.doesNotMatch(lastPrompt(), /ORG_SECRET/, '데스크톱 맥락에 실리지 않는다');
+  await tick();
+  assert.ok(await setThreadSummary(ws, 'seoyun', null, { text: 'NEW_SUMMARY', upto: anchor })); // 회수 뒤 새 요약 — 기준점이 같아도 만든 시각이 늦다
+  await mergeInto(ws, old);
+  assert.equal((await loadThread(ws, 'seoyun')).summary?.text, 'NEW_SUMMARY', '회수 뒤 새 요약은 옛 요약에 밀리지도, 함께 지워지지도 않는다');
+});
+
+// ── 11. 지난 방 대화의 에이전트 글은 누가 시킨 일인가(재검수 LOW 2026-10-08) · 방 확인은 실행권을 잡은 뒤(재검수 LOW) ──
+const crewRow = (id, body, meta) => ({ id, author_kind: 'crew', author_user_id: null, crew_id: CREW, body, client_msg_id: `reply:${CREW}:${id - 1}`, reply_to: id - 1, meta });
+test('남 낀 방 경계 — 나간 손님이 시킨 일의 에이전트 답(origin = 손님)이 최근 대화에 남은 방은 1:1이 아니다(데스크톱 대화 안 실림, 1:1 기록 표지 없음)', async () => {
+  runner = 'codex'; const ws = await company();
+  await desk(ws, '7 기억해 DESK_SECRET');
+  const context = [crewRow(110, 'GUEST_DERIVED 민수님 계약 금액은 3억입니다', { origin: GUEST, hop: 0 }), { id: 111, author_kind: 'user', author_user_id: OWNER, crew_id: null, body: '고마워', meta: {} }];
+  await say(ws, room({ orgId: ORG, channelId: OCH, context }), '아까 금액 정리해줘');
+  assert.doesNotMatch(lastPrompt(), /DESK_SECRET/);
+  const t = await loadThread(ws, 'seoyun');
+  assert.ok(!t.messages.some((m) => isOwnerSoloScope(m.contextScope)), '1:1 기록 표지가 없다');
+  await desk(ws, '방금 숫자?');
+  assert.doesNotMatch(lastPrompt(), /GUEST_DERIVED|아까 금액/);
+});
+test('주인 혼자 1:1 — 주인이 시킨 일의 답(origin = 주인)·에이전트가 주인에게 보낸 알림·루틴 결과(origin 없음 + notification)는 1:1을 막지 않는다', async () => {
+  runner = 'codex'; const ws = await company();
+  await desk(ws, '7 기억해');
+  const context = [crewRow(120, '기억했어요', { origin: OWNER, hop: 0 }), { ...crewRow(121, '[루틴] 아침 메일 확인\n\n새 메일 없음', { disposition: 'done', notification: 'routine', routine_id: 'r1' }), client_msg_id: `rn:${CREW}:x`, reply_to: null },
+    { ...crewRow(122, '할 일 알림', { disposition: 'done', notification: 'todo_due' }), client_msg_id: `nt:${CREW}:y`, reply_to: null }];
+  assert.equal(await say(ws, room({ pair: `crew:${CREW}`, context }), '방금 숫자?'), '7');
+});
+test('주인 혼자 1:1 — origin이 없는 옛 에이전트 답(알림 아님)이 최근 대화에 있으면 좁게 1:1로 보지 않는다', async () => {
+  runner = 'codex'; const ws = await company();
+  await desk(ws, '7 기억해 DESK_SECRET');
+  assert.equal(await say(ws, room({ pair: `crew:${CREW}`, context: [crewRow(130, '옛 답', { hop: 0 })] }), '방금 숫자?'), '모름');
+  assert.doesNotMatch(lastPrompt(), /DESK_SECRET/);
+});
+test('실행권을 다른 프로세스가 쥔 잡(3초마다 DEFER로 다시 집힘)은 방 구성원을 조회하지 않는다 — 조회는 실행권을 잡은 뒤 턴당 1건', async () => {
+  runner = 'codex'; const ws = await company();
+  const r = room({ pair: `crew:${CREW}` });
+  const claim = r.db.claimExecution;
+  r.db.claimExecution = async () => ({ acquired: false, state: 'running', heartbeat_at: new Date().toISOString() });
+  r.db.setSource({ author: OWNER, body: '안녕', crewId: null, meta: {} });
+  const h = M.makeMsgrHandler(ws, { session: async () => ({ db: r.db, uid: OWNER, client: r.client }), linkPreview: async () => null });
+  const msgId = ++msgSeq;
+  const job = { msgId, orgId: null, channelId: PCH, crewId: CREW, slug: 'seoyun', text: '안녕', authorId: OWNER, threadRoot: msgId, hop: 0, origin: OWNER, createdAt: new Date().toISOString(), channelKind: 'dm' };
+  for (let i = 0; i < 5; i++) assert.equal(await h(job), DEFER);
+  assert.equal(r.client.reads, 0, '선점 대기 중에는 조회 0');
+  r.db.claimExecution = claim;
+  delete job.msgrExecution; // 다른 프로세스가 놓아준 뒤 새 시도
+  await h(job);
+  assert.equal(r.client.reads, 1, '실행권을 잡은 턴에 1건');
+  assert.ok(r.reply(msgId));
 });
