@@ -128,8 +128,12 @@ export function agentDmRoute({ channel, unread, from }) {
       crewDms(조직 행 id들) → [{ channel_id, member_id, msgr_channels: { org_id, kind, archived_at } }]  — 그 행들이 든 채널 1건
       members(채널 id들)    → [{ channel_id, member_kind, member_id }]                                  — 1:1인지 구성원 1건
       count(채널 id)        → 글 수(삭제 제외, head count)                                              — 옛 방마다 1건(보통 1~2)
+      reads(채널 id들)      → [{ channel_id, last_read_id }] 내 읽음 커서                                — 보관한 방이 있을 때만 1건
+      unread(채널 id, 커서) → 커서 뒤 남의 글 수(head count)                                             — 보관한 방마다 1건
+    보관한 방에는 unread(안 읽은 수, 셀 수 없으면 null)를 붙인다 — 서버 안 읽음 수(msgr_unread)는 보관 방을 세지 않아 보관하는 순간 배지가 사라진다
+    (검수 #857 MEDIUM: 보관 대상 19개 방에 안 읽은 글 54개). 보관 안 된 방은 목록 배지가 그대로라 세지 않는다.
     방을 열 때만 부른다(App이 세션에 에이전트당 한 번 — 주기 조회 없음). 조직 행이 없거나 남의 행이면 조회 0. 실패하면 빈 목록(띠를 그리지 않는다) */
-export async function earlierAgentDms(crewId, { uid, rows, crewDms, members, count }) {
+export async function earlierAgentDms(crewId, { uid, rows, crewDms, members, count, reads = null, unread = null }) {
   const mine = rows?.find((r) => r.id === crewId);
   if (!mine || mine.org_id != null || !uid || mine.owner_user_id !== uid) return [];
   const key = agentKey(mine);
@@ -142,8 +146,31 @@ export async function earlierAgentDms(crewId, { uid, rows, crewDms, members, cou
     const ms = (await members([...new Set(dms.map((x) => x.channel_id))])) ?? [];
     const solo = dms.filter((x) => legacyAgentDm({ id: x.channel_id, kind: 'dm', org_id: x.msgr_channels.org_id }, ms.filter((m) => m.channel_id === x.channel_id), { uid, crewOf: (id) => rowOf.get(id) ?? null })?.id === x.member_id);
     const counted = await Promise.all(solo.map(async (x) => ({ channelId: x.channel_id, orgId: x.msgr_channels.org_id, crewId: x.member_id, n: Number(await count(x.channel_id)) || 0, archived: !!x.msgr_channels.archived_at })));
-    return counted.filter((r) => r.n > 0);
+    const lines = counted.filter((r) => r.n > 0);
+    const arch = lines.filter((r) => r.archived);
+    if (arch.length && reads && unread) {
+      try { // 안 읽은 수를 못 세도 줄은 그린다(이전 대화를 볼 길을 막지 않는다)
+        const cur = new Map(((await reads(arch.map((r) => r.channelId))) ?? []).map((x) => [x.channel_id, Number(x.last_read_id) || 0]));
+        const ns = await Promise.all(arch.map((r) => unread(r.channelId, cur.get(r.channelId) ?? 0)));
+        arch.forEach((r, i) => { r.unread = Number(ns[i]) || 0; });
+      } catch { for (const r of arch) r.unread = null; }
+    }
+    return lines;
   } catch { return []; }
+}
+/** 이전 대화 보기 한 줄의 문구 [키, 값] — 보관한 방에 안 읽은 글이 있으면 그 수를 붙인다(earlierAgentDms unread) */
+export function earlierLineLabel(l) {
+  return l.unread > 0 ? ['dm.earlier.unread', { org: l.org, n: l.n, u: l.unread }] : ['dm.earlier', { org: l.org, n: l.n }];
+}
+/** 읽음 커서를 쓸지 — 이전 대화 보기로 연 보관 방(earlier = App earlierRoom)만 판정한다. 'once' = 안 읽은 글이 있던 방(한 번 올리고 0으로),
+    'skip' = 없었거나 셀 수 없던 방(새 글이 오지 않는 방이라 쓰기 0), null = 보관 방이 아님(종전대로 쓴다) */
+export function archivedReadStep(earlier, channelId) {
+  if (!earlier?.channel?.archived_at || earlier.channel.id !== channelId) return null;
+  return earlier.unread > 0 ? 'once' : 'skip';
+}
+/** 보관 방을 읽은 뒤 세션에 기억한 이전 대화 목록(earlierAgentDms 결과)에서 그 방 줄의 안 읽은 수만 0으로 — 다시 묻지 않는다 */
+export function clearEarlierUnread(list, channelId) {
+  return (list ?? []).map((x) => (x.channelId === channelId && x.unread ? { ...x, unread: 0 } : x));
 }
 /** 그릴 줄 — 조직 목록 순서(같은 조직이면 글이 많은 방 먼저), 내가 나간 조직(목록에 없음 — 그 방은 이제 못 연다)은 빼고 조직 이름을 붙인다 */
 export function earlierLines(list, orgs) {

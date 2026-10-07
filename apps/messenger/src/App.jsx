@@ -41,7 +41,7 @@ import { useLongPress, longPressHandlers } from './long-press.js';
 import { groupFlags } from './msg-group.mjs';
 import { t as tm } from './i18n.js';
 import { plainField, approvalPlainFields, orgDocTitle, approvalOneLineSummary, approvalGrade, approvalSummaryKey, approvalPageItems, approvalDecider, phoneApprovalDecider, decidableApprovals, approvalOnlyKey, approvalDenied, approvalCmdMode, decideApproval, readRoomJoinRequests, singleFlight } from './approval-display.js';
-import { agentRowState, AGENT_FILTERS, AGENT_FAV_KEY, groupAgents, rowForSpace, agentRoomTarget, agentStateRow, personalRoomFor, personalRoomKnown, agentDmRedirect, agentDmRoute, earlierAgentDms, earlierLines, archivedRoomFor, saveAgentLook, fillAgentLooks, ownRowsReader, loadUntilListed, spaceMoveNotice, spaceMoveBack, MOVE_NOTICE_MS, agentSections, groupIsFav, favChanges, readAgentFav } from './agent-groups.mjs'; // 폰 에이전트 탭 — 같은 에이전트 한 줄·상단 메뉴·즐겨찾기(유건 2026-10-02), 1:1은 개인 방 하나(2026-10-03)
+import { agentRowState, AGENT_FILTERS, AGENT_FAV_KEY, groupAgents, rowForSpace, agentRoomTarget, agentStateRow, personalRoomFor, personalRoomKnown, agentDmRedirect, agentDmRoute, earlierAgentDms, earlierLines, earlierLineLabel, archivedRoomFor, archivedReadStep, clearEarlierUnread, saveAgentLook, fillAgentLooks, ownRowsReader, loadUntilListed, spaceMoveNotice, spaceMoveBack, MOVE_NOTICE_MS, agentSections, groupIsFav, favChanges, readAgentFav } from './agent-groups.mjs'; // 폰 에이전트 탭 — 같은 에이전트 한 줄·상단 메뉴·즐겨찾기(유건 2026-10-02), 1:1은 개인 방 하나(2026-10-03)
 import { toggleId, foldAll, allFolded } from './collapse-set.mjs';
 import { useLang } from '@argo/i18n';
 import { useTheme, THEMES } from '@argo/theme';
@@ -1386,8 +1386,9 @@ function Shell({ session }) {
   };
   const toggleMemory = async (c) => { const r = await supabase.from('msgr_channels').update({ crew_memory: c.crew_memory === false }).eq('id', c.id).select('id'); if (r.error) return setErr(friendlyErr(r.error.message, t)); if (!r.data?.length) return setErr(t('err.denied')); setNote(t(c.crew_memory === false ? 'ch.memory.nowOn' : 'ch.memory.nowOff')); loadOrg(orgId).catch(() => {}); }; // 권한 최종 판정은 RLS(msgr_can_manage_channel)·정책 트리거
   // 읽음 커서 저장 — 같은 값을 다시 쓰지 않고(기능 점검 D2: 초점·가시성 바뀔 때마다 upsert), 실패한 위치는 다음 초점·가시성·새 글 때 다시 쓴다(MSG-05). 폰 아이콘은 저장된 뒤 서버 숫자로
-  const markRead = useCallback(async (channelId, lastId) => { setUnread((u) => (u[channelId]?.n ? { ...u, [channelId]: { n: 0, mention: 0 } } : u)); const w = readCursor.begin(channelId, lastId); if (!w) return; try { await q(supabase.from('msgr_reads').upsert({ channel_id: channelId, user_id: uid, last_read_id: lastId, updated_at: new Date().toISOString() })); } catch { w.fail(); return; } w.ok(); iconBadge?.request(); }, [uid, iconBadge, readCursor]);
-  const noRead = useCallback(() => {}, []); // 보관한 방(이전 대화 보기) — 새 글이 오지 않는 방이라 읽음 커서를 쓰지 않는다(DB 쓰기 0)
+  // 이전 대화 보기로 연 보관 방(유건 결정 2026-10-08 1-②)은 새 글이 오지 않는다 — 안 읽은 글이 있었을 때만 한 번 올리고(줄의 '안 읽은 n개'를 지운다, 검수 #857 MEDIUM)
+  // 없었으면 쓰지 않는다(DB 쓰기 0). 그 밖의 방은 종전대로. earlierAsked는 아래(이전 대화 보기)에서 만든 세션 기억 — 다시 묻지 않고 그 줄만 고친다
+  const markRead = useCallback(async (channelId, lastId) => { const step = archivedReadStep(earlierRoomRef.current, channelId); if (step === 'skip') return; if (step === 'once') { const er = { ...earlierRoomRef.current, unread: 0 }; earlierRoomRef.current = er; setEarlierRoom(er); for (const [k, p] of earlierAsked.current) earlierAsked.current.set(k, p.then((l) => clearEarlierUnread(l, channelId))); } setUnread((u) => (u[channelId]?.n ? { ...u, [channelId]: { n: 0, mention: 0 } } : u)); const w = readCursor.begin(channelId, lastId); if (!w) return; try { await q(supabase.from('msgr_reads').upsert({ channel_id: channelId, user_id: uid, last_read_id: lastId, updated_at: new Date().toISOString() })); } catch { w.fail(); return; } w.ok(); iconBadge?.request(); }, [uid, iconBadge, readCursor]);
   // event.kind는 '무슨 방송인가'(message·approval·reaction·edit)다. 서버 payload에도 kind가 있는데
   // 그건 '글 종류'(text·system)다. 전개를 뒤에 두면 후자가 전자를 덮어 방송이 통째로 버려진다 —
   // 그래서 구분자는 항상 전개 **뒤**에 놓고, 글 종류는 msgKind로 따로 싣는다.
@@ -2129,28 +2130,35 @@ function Shell({ session }) {
   };
   // 이전 대화 보기(분리 검수 2026-10-05 #2) — 내 에이전트 개인 1:1 위에 그 에이전트의 옛 조직 1:1(조직마다 한 줄, 글 수). 개인 1:1이 주 경로가 되며 옛 기록(실측 282개)이 안 보였다.
   // 판정은 agent-groups.mjs earlierAgentDms. 내 크루 행은 이미 읽은 것(ownCrews)을 쓰고, 방을 열 때 에이전트당 세션에 한 번만 묻는다:
-  // 그 에이전트 조직 행이 든 채널 1건 + 구성원 1건 + 옛 방마다 글 수(head count) 1건. 조직 행이 없으면 0건. 주기 조회 없음, 실패하면 띠를 그리지 않는다(다시 묻지 않는다).
+  // 그 에이전트 조직 행이 든 채널 1건 + 구성원 1건 + 옛 방마다 글 수(head count) 1건 + 보관한 방이 있으면 내 읽음 커서 1건·보관 방마다 안 읽은 수 1건.
+  // 조직 행이 없으면 0건. 주기 조회 없음, 실패하면 띠를 그리지 않는다(다시 묻지 않는다 — 보관 방을 읽으면 markRead가 이 기억의 그 줄만 고친다).
   const earlierAsked = useRef(new Map());
   const findEarlier = (crewId) => {
     if (!ownCrews) return null; // 내 크루 행을 읽기 전 — 읽은 뒤 다시 부른다(빈 결과를 세션에 남기지 않게)
     if (!earlierAsked.current.has(crewId)) earlierAsked.current.set(crewId, earlierAgentDms(crewId, { uid, rows: ownCrews.rows,
       crewDms: (ids) => q(supabase.from('msgr_channel_members').select('channel_id, member_id, msgr_channels!inner(org_id, kind, archived_at)').eq('member_kind', 'crew').in('member_id', ids)),
       members: (ids) => q(supabase.from('msgr_channel_members').select('channel_id, member_kind, member_id').in('channel_id', ids)),
-      count: async (id) => { const r = await supabase.from('msgr_messages').select('id', { count: 'exact', head: true }).eq('channel_id', id).is('deleted_at', null); if (r.error) throw new Error(r.error.message); return r.count ?? 0; } }));
+      count: async (id) => { const r = await supabase.from('msgr_messages').select('id', { count: 'exact', head: true }).eq('channel_id', id).is('deleted_at', null); if (r.error) throw new Error(r.error.message); return r.count ?? 0; },
+      // 보관한 방만(검수 #857 MEDIUM — 서버 안 읽음 수는 보관 방을 세지 않는다): 내 읽음 커서 1건 + 방마다 커서 뒤 남의 글 수 1건(msgr_unread와 같은 기준 — 삭제 제외, 내 글 제외)
+      reads: (ids) => q(supabase.from('msgr_reads').select('channel_id, last_read_id').eq('user_id', uid).in('channel_id', ids)),
+      unread: async (id, after) => { const r = await supabase.from('msgr_messages').select('id', { count: 'exact', head: true }).eq('channel_id', id).gt('id', after).is('deleted_at', null).or(`author_user_id.is.null,author_user_id.neq.${uid}`); if (r.error) throw new Error(r.error.message); return r.count ?? 0; } }));
     return earlierAsked.current.get(crewId);
   };
   // 누르면 그 조직으로 옮겨 옛 방을 연다 — 돌리기 없이(입구 판정을 거치지 않는다). 그 방 위에는 개인 1:1로 돌아오는 안내 띠가 뜬다
   // 보관한 방(유건 결정 2026-10-08 1-②)은 조직 목록에 없다 — 누를 때 그 방 행을 한 번 읽어 earlierRoom으로 남기고 읽기 전용으로 연다(주기 조회 없음).
-  // 읽는 동안 공간을 옮겼으면 열지 않고, 못 읽으면 안내만 한다(빈 화면으로 옮기지 않는다). 그 사이 보관이 풀렸으면 종전 목록 경로
-  const openEarlier = (l) => runInSpace(l.orgId, async () => {
+  // 행은 공간을 옮기기 전에 읽는다(채널 읽기 권한은 공간과 무관 — msgr_channels_select). 읽는 동안 사용자가 다른 공간으로 옮겼으면 열지 않고,
+  // 못 읽으면 안내만 — 그 조직으로 공간도 옮기지 않는다(검수 #857 LOW). 그 사이 보관이 풀렸으면 종전 목록 경로. unread = 줄의 안 읽은 수(markRead가 한 번 쓸지 본다)
+  const openEarlier = async (l) => {
+    let room = null;
     if (l.archived) {
+      const from = activeOrg.current;
       const row = await q(supabase.from('msgr_channels').select('id, kind, name, topic, crew_memory, personal_crews, created_by, admin_user_ids, excluded_user_ids, excluded_crew_ids, org_id, archived_at').eq('id', l.channelId).maybeSingle()).catch(() => null);
-      if (activeOrg.current !== l.orgId) return;
+      if (activeOrg.current !== from) return;
       if (!row) { setErr(t('dm.archived.fail')); return; }
-      if (row.archived_at) setEarlierRoom({ orgId: l.orgId, channel: row, crewId: l.crewId });
+      if (row.archived_at) room = { orgId: l.orgId, channel: row, crewId: l.crewId, unread: l.unread ?? 0 };
     }
-    setChId(l.channelId); setPage('chat'); setRail(false); setSheet(null);
-  });
+    runInSpace(l.orgId, () => { if (room) setEarlierRoom(room); setChId(l.channelId); setPage('chat'); setRail(false); setSheet(null); });
+  };
   // ── 개인 공간 에이전트 1:1(2026-09-30): 내 개인 크루와 한 방. 남의 크루면 그 주인(친구)과의 1:1. AI 이용 동의 전이면 동의부터 받는다 ──
   // text = 그 방 입력창에 옮겨 둘 글(조직에서 방 밖 멘션으로 쓴 글을 개인 1:1로 가져올 때 — openDm). 동의를 거쳐도 남는다. 보내기는 사람이 누른다.
   const openPersonalCrewDm = async (crewId, text = '') => {
@@ -2527,7 +2535,8 @@ function Shell({ session }) {
   const reorderRailCustom = (dragId, beforeId = null, visible = null) => reorderTargetPos('crew', myCrews.map((c) => c.id), dragId, beforeId, visible, () => { if (railSort !== 'custom') pickSort('custom'); });
   // 행은 아바타·이름·상태점만(유건 지적 2026-09-09 "레일이 복잡"). 출처는 글자 대신 소속별 정렬일 때 소제목으로.
   // 지금 연 방이 내 에이전트의 옛 조직 1:1이고 개인 1:1이 있다고 알면 방 위에 안내 띠(유건 2026-10-05) — 오래된 링크·마지막으로 본 방 복원처럼 돌리기를 거치지 않고 열린 경우
-  const legacyDm = channel && !isPersonal ? agentDmRedirect(channel, dmMembers[channel.id], { uid, crewOf, myAgents }) : null;
+  // 이전 대화 보기로 연 보관 방(archivedView)도 같은 띠 — 그 방의 에이전트 조직 행으로 dmWithCrew가 개인 1:1을 연다
+  const legacyDm = archivedView?.id && earlierRoom?.crewId ? { crew: { id: earlierRoom.crewId }, known: true } : channel && !isPersonal ? agentDmRedirect(channel, dmMembers[channel.id], { uid, crewOf, myAgents }) : null;
   // 내 에이전트와의 개인 1:1이면 그 개인 행 — 방 위 '이전 대화 보기'(분리 검수 2026-10-05 #2). 남의 에이전트 방·친구 방·그룹 방은 null(내 행이 아니면 earlierAgentDms가 조회 없이 빈 목록)
   const earlierCrew = isPersonal && channel?.kind === 'dm' && channel._personal_crew && !channel._personal_group ? channel._personal_crew : null;
   const crewCtx = (c) => isPersonal ? [{ icon: 'at', label: t('ui.dm'), run: () => { dmWithCrew(c.id); setRail(false); } }] // 개인 공간 — 크루 카드·즐겨찾기는 조직 기능(2026-09-30 1단계)
@@ -3068,7 +3077,7 @@ function Shell({ session }) {
         ) : dmDraft && isPersonal && page === 'chat' ? (
           <DmDraft key={dmDraft.userId} userId={dmDraft.userId} name={nameOfUser(dmDraft.userId)} initialText={dmDraft.text} onSend={(body) => sendFirstDm(dmDraft.userId, body)} onMenu={openNav} />
         ) : isPhone && page !== 'chat' ? null /* 폰 목록·설정 뒤에 숨은 대화방을 그리지 않는다 — 공간을 바꿀 때마다 보이지 않는 방의 글·첨부·반응을 읽던 것(기능 점검 D3) */ : channel ? (
-          <Channel key={chId} movedBar={legacyDm?.known ? <LegacyDmBar key={legacyDm.crew.id} onGo={() => dmWithCrew(legacyDm.crew.id)} t={t} /> : earlierCrew ? <EarlierDmBar key={earlierCrew} find={() => findEarlier(earlierCrew)} ready={!!ownCrews} orgs={orgs} onOpen={openEarlier} t={t} /> : archivedView && earlierRoom.crewId ? <LegacyDmBar key={`arch-${earlierRoom.crewId}`} onGo={() => dmWithCrew(earlierRoom.crewId)} t={t} /> : null} archived={!!archivedView} onCrewJoined={bumpMembers} onCrewFailed={noteCrewFailed} onPersonalChanged={async () => { await loadPersonal().catch(() => {}); await loadChMembers(chId).catch(() => {}); }} onScreen={channelOnScreen({ isPhone, page })} namePrompt={org && !isPersonal && me && !orgLocked ? <NamePrompt key={orgId} org={org} me={me} email={session.user.email} onChanged={() => loadOrg(orgId).catch(() => {})} onNote={setNote} onError={setErr} /> : null} onOutsideDm={dmWithCrew} outsideDmPersonal={dmGoesPersonal} startCard={org && !isPersonal && org.role !== 'guest' && channel.kind !== 'dm' ? <OnboardCard key={orgId} orgId={orgId} t={t} steps={orgSteps({ t, ...onboard, hasChannel: true, invite: isAdmin ? orgInvite : null })} /> : null} jumpTo={jump?.ch === chId ? jump.mid : null} jumpStart={!!jump?.start} onJumped={() => setJump(null)} channel={channel} preview={!!previewing} onJoin={() => joinChannel(channel)} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} mentionPeople={mentionPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} typingStart={typingStartRef.current} progress={progress} received={received} onRead={archivedView ? noRead : markRead} muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} onToggleMemory={() => toggleMemory(channel)} broadcast={(ev, payload) => (roomTopic ? roomSubs.current.get(chId) : rt.current)?.send({ type: 'broadcast', event: ev, payload }).catch?.(() => {})} onError={setErr} onNote={setNote} onMenu={openNav} onCrew={openers.channel} onTitle={archivedView ? undefined : () => setChSheet(true)} onCrewAdd={() => { setChSheetAdd('crew'); setChSheet(true); }} mentionReq={mentionReq} onMentionDone={() => setMentionReq(null)} dmName={dmName} channels={channels} onOpenRelay={openRelay} isPersonal={isPersonal} crewPosts={crewPosts} seenAt={seenMine} onCrewPosted={(crewId) => settleCrew({ channel_id: chId, crew_id: crewId })} />
+          <Channel key={chId} movedBar={legacyDm?.known ? <LegacyDmBar key={legacyDm.crew.id} onGo={() => dmWithCrew(legacyDm.crew.id)} t={t} /> : earlierCrew ? <EarlierDmBar key={earlierCrew} find={() => findEarlier(earlierCrew)} ready={!!ownCrews} orgs={orgs} onOpen={openEarlier} t={t} /> : null} onCrewJoined={bumpMembers} onCrewFailed={noteCrewFailed} onPersonalChanged={async () => { await loadPersonal().catch(() => {}); await loadChMembers(chId).catch(() => {}); }} onScreen={channelOnScreen({ isPhone, page })} namePrompt={org && !isPersonal && me && !orgLocked ? <NamePrompt key={orgId} org={org} me={me} email={session.user.email} onChanged={() => loadOrg(orgId).catch(() => {})} onNote={setNote} onError={setErr} /> : null} onOutsideDm={dmWithCrew} outsideDmPersonal={dmGoesPersonal} startCard={org && !isPersonal && org.role !== 'guest' && channel.kind !== 'dm' ? <OnboardCard key={orgId} orgId={orgId} t={t} steps={orgSteps({ t, ...onboard, hasChannel: true, invite: isAdmin ? orgInvite : null })} /> : null} jumpTo={jump?.ch === chId ? jump.mid : null} jumpStart={!!jump?.start} onJumped={() => setJump(null)} channel={channel} preview={!!previewing} onJoin={() => joinChannel(channel)} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} mentionPeople={mentionPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewOf} event={event} typing={typing} typingStart={typingStartRef.current} progress={progress} received={received} onRead={markRead} muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} onToggleMemory={() => toggleMemory(channel)} broadcast={(ev, payload) => (roomTopic ? roomSubs.current.get(chId) : rt.current)?.send({ type: 'broadcast', event: ev, payload }).catch?.(() => {})} onError={setErr} onNote={setNote} onMenu={openNav} onCrew={openers.channel} onTitle={() => setChSheet(true)} onCrewAdd={() => { setChSheetAdd('crew'); setChSheet(true); }} mentionReq={mentionReq} onMentionDone={() => setMentionReq(null)} dmName={dmName} channels={channels} onOpenRelay={openRelay} isPersonal={isPersonal} crewPosts={crewPosts} seenAt={seenMine} onCrewPosted={(crewId) => settleCrew({ channel_id: chId, crew_id: crewId })} />
         ) : isPersonal ? (
           <><div className="msgr-top"><NavButton onMenu={openNav} /><span className="title">{t('personal')}</span><span className="topic">{t('personal.space')}</span></div><div className="msgr-thread" style={{ display: 'flex' }}><div className="msgr-empty"><p>{t('personal.empty')}</p><button type="button" className="btn btn-primary sm" onClick={() => setFriendAdd(true)}><I name="plus" size={13} />{t('friends.add')}</button></div></div></>
         ) : (
@@ -5987,10 +5996,13 @@ function EarlierDmBar({ find, ready, orgs, onOpen, t }) {
   const lines = earlierLines(list, orgs);
   if (!lines.length) return null;
   return <nav className="msgr-joinbar msgr-movedbar msgr-earlier" aria-label={t('dm.earlier.label')}>{lines.map((l) => (
-    <button key={l.channelId} type="button" className="msgr-earlier-line" onClick={() => onOpen(l)}><I name="clock" size={14} /><span>{t('dm.earlier', { org: l.org, n: l.n })}</span><I name="next" size={14} className="go" /></button>))}</nav>;
+    <button key={l.channelId} type="button" className="msgr-earlier-line" onClick={() => onOpen(l)}><I name="clock" size={14} /><span>{t(...earlierLineLabel(l))}</span><I name="next" size={14} className="go" /></button>))}</nav>;
 }
-function Channel({ movedBar = null, archived = false, onCrewJoined = null, onCrewFailed = null, onScreen = true, namePrompt = null, onOutsideDm = null, outsideDmPersonal = null, onPersonalChanged = null, startCard = null, jumpTo = null, jumpStart = false, onJumped, channel, preview = false, onJoin, orgId, org, uid, isAdmin, locked = false, policy, members, crews, people = [], mentionPeople = null, chCrews = [], nameOfUser, crewOf, event, typing, typingStart = {}, progress = {}, received = {}, onRead, muted = false, onToggleMute, onToggleMemory, broadcast, onError, onNote = () => {}, onMenu, onCrew, onTitle, onCrewAdd, mentionReq, onMentionDone, dmName, channels = [], onOpenRelay, isPersonal = false, onCrewPosted = () => {}, crewPosts = null, seenAt = null }) {
+function Channel({ movedBar = null, onCrewJoined = null, onCrewFailed = null, onScreen = true, namePrompt = null, onOutsideDm = null, outsideDmPersonal = null, onPersonalChanged = null, startCard = null, jumpTo = null, jumpStart = false, onJumped, channel, preview = false, onJoin, orgId, org, uid, isAdmin, locked = false, policy, members, crews, people = [], mentionPeople = null, chCrews = [], nameOfUser, crewOf, event, typing, typingStart = {}, progress = {}, received = {}, onRead, muted = false, onToggleMute, onToggleMemory, broadcast, onError, onNote = () => {}, onMenu, onCrew, onTitle, onCrewAdd, mentionReq, onMentionDone, dmName, channels = [], onOpenRelay, isPersonal = false, onCrewPosted = () => {}, crewPosts = null, seenAt = null }) {
   const { t, lang } = useT();
+  // 보관한 방(이전 대화 보기로 연 옛 조직 1:1, 유건 결정 2026-10-08 1-②) — 읽기 전용. 목록·개인 방 조회는 보관 방을 빼고 archived_at을 돌려주지 않아(loadOrg·addRoom·msgr_dm_personal_list)
+  // 이 표지는 Shell archivedRoomFor가 넘긴 행에서만 선다. 새 글은 서버도 막는다(msgr_can_write_channel)
+  const archived = !!channel.archived_at;
   const phone = useIsPhone(); // 폰 머리 부제(멤버·에이전트 수) — 데스크톱은 그리지 않는다
   const topRef = useRef(null);
   // 상단 바 실제 높이 → .msgr-main의 --msgr-top-h. 우측 패널·크루 시트가 그 아래에서 시작한다(상단 바가 두 줄로 접히면 72px 고정 패널이
@@ -6289,7 +6301,7 @@ function Channel({ movedBar = null, archived = false, onCrewJoined = null, onCre
   return (<>
     <div className="msgr-top" ref={topRef}>
       <NavButton onMenu={onMenu} />
-      <button type="button" className="title msgr-titlebtn" onClick={onTitle} title={t('ch.sheet')}><I name={channel.kind === 'private' ? 'lock' : channel.kind === 'dm' ? 'at' : 'hash'} size={18} />{phone ? <span className="msgr-channel-name">{channel.kind === 'dm' ? dmName(channel) : channel.name}</span> : (channel.kind === 'dm' ? dmName(channel) : channel.name)}<I name="caret" size={13} className="caret" /></button>
+      <button type="button" className="title msgr-titlebtn" onClick={archived ? undefined : onTitle} title={t('ch.sheet')}><I name={channel.kind === 'private' ? 'lock' : channel.kind === 'dm' ? 'at' : 'hash'} size={18} />{phone ? <span className="msgr-channel-name">{channel.kind === 'dm' ? dmName(channel) : channel.name}</span> : (channel.kind === 'dm' ? dmName(channel) : channel.name)}<I name="caret" size={13} className="caret" /></button>
       {channel.org_id === null && <span className="msgr-klabel msgr-scope-badge">{t('personal.badge')}</span>}
       {channel.org_id && org && <span className="msgr-klabel msgr-scope-badge">{org.name}</span>}
       {channel.topic && <span className="topic">{channel.topic}</span>}
@@ -6297,8 +6309,8 @@ function Channel({ movedBar = null, archived = false, onCrewJoined = null, onCre
       {/* 켜고 끄는 자리가 안 보인다(유건 2026-09-09) → 표지 자체가 토글. 아이콘만, 꺼짐 = 취소선·붉은색 */}
       {!archived && <span className="msgr-hchips"><button type="button" className={`msgr-hchip${muted ? ' off' : ''}`} onClick={onToggleMute} title={t(muted ? 'ch.mute.off.tip' : 'ch.mute.on.tip')} aria-pressed={muted} aria-label={t('ch.muted')}><I name={muted ? 'belloff' : 'bell'} size={14} /></button>
       {!isPersonal && <button type="button" className={`msgr-hchip${channel.crew_memory === false ? ' off' : ''}`} onClick={onToggleMemory} title={t(channel.crew_memory === false ? 'ch.memory.off.tip' : 'ch.memory.on.tip')} aria-pressed={channel.crew_memory === false} aria-label={t('ch.memoryOff')}><I name={channel.crew_memory === false ? 'memoff' : 'folder'} size={14} /></button>}</span>}
-      <button type="button" className="members" onClick={onTitle} title={t('ch.composition')} aria-label={t('ch.composition')}>{phone && <I name="dots" size={20} className="ph-dots" />}{people.slice(0, 4).map((m) => <Av key={m.user_id} name={m.display_name || m.user_id} size="sm" userId={m.user_id} />)}{chCrews.slice(0, 3).map((c) => <Av key={c.id} name={c.display_name} crew size="sm" company={crewTier(c, org) === 'company'} crewId={c.id} />)}<span className="n">{t('ch.composition.count', { p: people.length, c: chCrews.length })}</span></button>
-      {!isPersonal && <button type="button" className="btn sm msgr-work-button" onClick={() => setWorkOpen((v) => !v)} aria-pressed={workOpen} aria-label={t('work.title')}>{t('work.button')}</button>}
+      <button type="button" className="members" onClick={archived ? undefined : onTitle} title={t('ch.composition')} aria-label={t('ch.composition')}>{phone && <I name="dots" size={20} className="ph-dots" />}{people.slice(0, 4).map((m) => <Av key={m.user_id} name={m.display_name || m.user_id} size="sm" userId={m.user_id} />)}{chCrews.slice(0, 3).map((c) => <Av key={c.id} name={c.display_name} crew size="sm" company={crewTier(c, org) === 'company'} crewId={c.id} />)}<span className="n">{t('ch.composition.count', { p: people.length, c: chCrews.length })}</span></button>
+      {!isPersonal && !archived && <button type="button" className="btn sm msgr-work-button" onClick={() => setWorkOpen((v) => !v)} aria-pressed={workOpen} aria-label={t('work.title')}>{t('work.button')}</button>}
       <Seg kind="tab" label={t('ch.tabs')} value={tab} onPick={setTab} options={tabs.map(([k, ic, n]) => ({ v: k, title: t(`tab.${k}`), aria: n > 0 ? `${t(`tab.${k}`)} ${n}` : t(`tab.${k}`), icon: ic ? <I name={ic} size={13} /> : null, label: <span className={ic ? 'lbl' : undefined}>{t(`tab.${k}`)}</span>, n: n > 0 ? n : null }))} />{/* .lbl = 좁은 폭에서 숨기는 글자(아이콘 있는 탭만). 이름은 title·aria-label로 남는다 */}
     </div>
     {movedBar}
@@ -6507,12 +6519,12 @@ function Message({ m, shape = 'bubble', uploadNames = null, uid, lang, t, nameOf
   // 이 줄은 턴의 마지막 글(turn을 받은 이 Message)이 그린다 — 복사는 턴 전체, 답글·반응·더보기는 이 글(m). 턴 중간 글은 우클릭(데스크톱)·길게 누르기(폰).
   // 더보기: 데스크톱은 나머지 동작 메뉴(신고·차단·숨기기·편집·삭제), 폰은 길게 누르기와 같은 시트. 보내는 중인 글은 자리는 두고 누를 수만 없게(서버 행으로 바뀔 때 아이콘이 밀리지 않게)
   const barTab = rowTab === 0 ? undefined : -1;
-  // readOnly = 보관한 방(이전 대화 보기, 유건 결정 2026-10-08 1-②) — 답글·반응·편집·삭제 줄과 길게 누르기 시트 없음
-  const turnActs = !readOnly && turn && !editing && !ap && !m.deleted_at && m.kind !== 'system' && (<div className="msgr-turnacts" role="toolbar" aria-label={t('msg.actions')}>
+  // readOnly = 보관한 방(이전 대화 보기, 유건 결정 2026-10-08 1-②) — 복사(읽기 동작)만 남기고 답글·반응·더보기(편집·삭제·신고)와 길게 누르기 시트는 없다
+  const turnActs = (!readOnly || turnText) && turn && !editing && !ap && !m.deleted_at && m.kind !== 'system' && (<div className="msgr-turnacts" role="toolbar" aria-label={t('msg.actions')}>
     {turnText && <button type="button" data-act="copy" tabIndex={barTab} onClick={() => copyText(turnText)} title={copied ? t('ui.copied') : t('msg.copyTurn')} aria-label={copied ? t('ui.copied') : t('msg.copyTurn')}><I name={copied ? 'check' : 'copy'} size={16} /></button>}
-    {onReply && <button type="button" data-act="reply" tabIndex={barTab} disabled={m.pending} onClick={() => onReply(m)} title={t('msg.reply')} aria-label={t('msg.reply')}><I name="reply" size={16} /></button>}
-    <button type="button" data-act="react" tabIndex={barTab} disabled={m.pending} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setPick((v) => (v ? false : { left: r.left, right: r.right, top: r.top, bottom: r.bottom })); }} aria-expanded={!!pick} title={t('msg.react')} aria-label={t('msg.react')}><I name="react" size={16} /></button>
-    {(phone || hasMore) && <button type="button" data-act="more" tabIndex={barTab} disabled={m.pending} aria-haspopup={phone ? 'dialog' : 'menu'} aria-expanded={!!(actsOpen && (phone || ctxMore))} onClick={(e) => { if (phone) { openedAt.current = Date.now(); setActsOpen(true); return; } const r = e.currentTarget.getBoundingClientRect(); setCtxMore(true); setCtxAt({ x: r.left, y: r.bottom + 4 }); setActsOpen(true); }} title={t('msg.more')} aria-label={t('msg.more')}><I name="dots" size={16} /></button>}
+    {!readOnly && onReply && <button type="button" data-act="reply" tabIndex={barTab} disabled={m.pending} onClick={() => onReply(m)} title={t('msg.reply')} aria-label={t('msg.reply')}><I name="reply" size={16} /></button>}
+    {!readOnly && <button type="button" data-act="react" tabIndex={barTab} disabled={m.pending} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setPick((v) => (v ? false : { left: r.left, right: r.right, top: r.top, bottom: r.bottom })); }} aria-expanded={!!pick} title={t('msg.react')} aria-label={t('msg.react')}><I name="react" size={16} /></button>}
+    {!readOnly && (phone || hasMore) && <button type="button" data-act="more" tabIndex={barTab} disabled={m.pending} aria-haspopup={phone ? 'dialog' : 'menu'} aria-expanded={!!(actsOpen && (phone || ctxMore))} onClick={(e) => { if (phone) { openedAt.current = Date.now(); setActsOpen(true); return; } const r = e.currentTarget.getBoundingClientRect(); setCtxMore(true); setCtxAt({ x: r.left, y: r.bottom + 4 }); setActsOpen(true); }} title={t('msg.more')} aria-label={t('msg.more')}><I name="dots" size={16} /></button>}
   </div>);
   const acts = !readOnly && !ap && !m.deleted_at && !editing && ( // 보내는 중에도 자리는 그린다(숨김·inert) — 서버 행으로 바뀔 때 행 높이가 36px 늘며 밀리지 않게
     phone && actsOpen ? createPortal( // body 포털 — 행의 animation(transform)이 fixed 기준점을 바꿔 시트가 글 안에 그려졌다(실측 2026-09-11)

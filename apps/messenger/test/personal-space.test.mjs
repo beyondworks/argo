@@ -68,7 +68,8 @@ test('개인 공간에서 채널 절·멤버 절은 감춰지고, 내 에이전�
 });
 
 test('개인 공간에서 업무 버튼은 감춰지고 첨부 버튼은 조직과 같이 보인다(2026-10-02)', () => {
-  assert.match(src, /\{!isPersonal && <button type="button" className="btn sm msgr-work-button"/);
+  // 보관한 옛 1:1(이전 대화 보기 — 유건 결정 2026-10-08 1-②)에서도 감춘다: 서버가 보관 방의 업무 만들기를 거절한다(msgr_work_create, 검수 #857 LOW)
+  assert.match(src, /\{!isPersonal && !archived && <button type="button" className="btn sm msgr-work-button"/);
   assert.doesNotMatch(src, /\{!isPersonal && <button type="button" className="tb" onMouseDown.*msg\.attach/);
   assert.match(src, /<button type="button" className="tb" onMouseDown=\{\(e\) => e\.preventDefault\(\)\} onClick=\{\(\) => fileRef\.current\?\.click\(\)\}/);
 });

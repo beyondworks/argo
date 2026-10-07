@@ -3,7 +3,8 @@
 // #819 전에 만든 옛 조직 1:1 방(나 + 조직 행 페퍼)을 더했다. 띄우기: npx vite --config test/agent-identity.config.mjs (AI_TEST_PORT, 기본 5288)
 // 옛 방에는 글 3개(검수 #2: 개인 1:1 위 '이전 대화 보기'), localStorage aiFixtureLegacyUnread='1'이면 그중 2개가 안 읽은 글(검수 #1: 안 읽은 글이 있으면 옛 방을 연다)
 // localStorage aiFixtureArchived='1'이면 옛 방을 보관한 뒤(유건 결정 2026-10-08 1-② — 마이그레이션 20261008103000) + 같은 조직의 두 번째 옛 페퍼 1:1(글 2개, 보관):
-//   조직 목록에는 둘 다 없고, 개인 공간 페퍼 1:1 위 '이전 대화 보기'에 두 줄 → 누르면 읽기 전용(입력창 대신 안내, 답글·반응 줄 없음)
+//   조직 목록에는 둘 다 없고, 개인 공간 페퍼 1:1 위 '이전 대화 보기'에 두 줄 → 누르면 읽기 전용(입력창 대신 안내, 복사만 남고 답글·반응·더보기·업무 버튼 없음)
+//   첫 방은 다 읽었고(읽음 커서 3), 두 번째 방은 에이전트 글 1개를 안 읽었다 → 그 줄만 '안 읽은 글 1개'. 열면 커서를 한 번 올려(window.__psFixture.calls의 msgr_reads upsert) 돌아왔을 때 수가 사라진다
 export const configured = true, customServer = false, SB_URL = 'http://fixture.invalid', SB_ANON = 'fixture';
 const uid = 'user-me', org = 'org-fixture', now = new Date().toISOString();
 const legacyUnread = localStorage.getItem('aiFixtureLegacyUnread') === '1';
@@ -30,6 +31,7 @@ const state = window.__psFixture = { calls: [], failNext: null, aiConsent: local
     ...(archivedLegacy ? [legacyMsg(4, '바버샵 예약 30분 전에 알려 줘', false, 'org-pepper-dm-2'), legacyMsg(5, '예약 시간 30분 전에 알려 드릴게요', true, 'org-pepper-dm-2')] : [])],
   msgr_channel_crew_requests: [{ id: 'req-alice', channel_id: 'pdm-alice', crew_id: 'pcrew-alice2', requested_by: 'user-alice', status: 'pending' }], // 친구가 자기 에이전트를 1:1에 넣겠다고 요청(승인자 = 방을 연 나)
   msgr_target_prefs: [], msgr_channel_prefs: [],
+  msgr_reads: archivedLegacy ? [{ channel_id: 'org-pepper-dm', user_id: uid, last_read_id: 3, updated_at: now }] : [], // 보관 방 안 읽은 수(이전 대화 보기 줄)
   // Friends fixture
   msgr_friends: [
     { user_id: 'user-alice', status: 'accepted', requested_by: uid, display_name: 'Alice Friend', handle: 'alice', created_at: now },
@@ -69,7 +71,7 @@ function query(table) {
   const api = {
     select(c = '*', opts = null) { cols = c; countOpt = opts; return api; }, eq(k, v) { eqs.push([k, v]); filters.push(r => r[k] === v); return api; }, neq(k, v) { filters.push(r => r[k] !== v); return api; }, is(k, v) { filters.push(r => (r[k] ?? null) === v); return api; },
     in(k, vs) { filters.push(r => vs.includes(r[k])); return api; }, gt(k, v) { filters.push(r => r[k] > v); return api; }, lt(k, v) { filters.push(r => r[k] < v); return api; },
-    order() { return api; }, limit() { return api; }, contains() { return api; }, or() { return api; }, ilike() { return api; }, maybeSingle() { one = true; return api; }, single() { one = true; return api; },
+    order() { return api; }, limit() { return api; }, contains() { return api; }, or(expr) { const alts = String(expr).split(',').map((x) => x.split('.')).filter((x) => x.length >= 3); if (alts.length) filters.push((r) => alts.some(([k, o, ...v]) => (o === 'is' && v.join('.') === 'null' ? (r[k] ?? null) === null : o === 'neq' ? r[k] !== v.join('.') : o === 'eq' ? r[k] === v.join('.') : true))); return api; }, // 'a.is.null,a.neq.x' 꼴만(보관 방 안 읽은 수 — 서버처럼 내 글 제외) ilike() { return api; }, maybeSingle() { one = true; return api; }, single() { one = true; return api; },
     upsert(v) { op = 'upsert'; values = v; return api; }, update(v) { op = 'update'; values = v; return api; }, delete() { op = 'delete'; return api; }, insert(v) { op = 'insert'; values = v; return api; },
     then(resolve, reject) {
       const slow = state.slow?.[`${table}:${op}`]; // 화면 확인용 지연(window.__psFixture.slow = { 'msgr_crews:select': 1500 }) — 돌리는 동안 연타(검수 #5)

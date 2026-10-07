@@ -11,8 +11,11 @@ import { psqlSpawn } from './helpers/pg.mjs';
 
 const DB = process.env.ARGO_PG_TEST_URL;
 const skip = !DB && 'ARGO_PG_TEST_URL 미설정 — bash scripts/billing-pg-drill.sh test/msgr-legacy-dm-archive-pg.test.mjs';
-const FIX = '20261008103000_msgr_legacy_dm_archive.sql';
 const mig = (f) => fileURLToPath(new URL(`../supabase/migrations/${f}`, import.meta.url));
+// 이름 끝으로 찾는다 — 적용은 앱이 사용자에게 간 뒤라, 그 사이 더 새 마이그레이션이 운영에 적용되면 scripts/msgr-live-apply.sh가 이 파일을 거부한다
+// (더 새 버전이 기록돼 있으면 거부). 적용 직전에 파일 이름의 버전만 다시 매기면 이 테스트는 그대로 돈다(검수 #857 LOW).
+const FIX = readdirSync(mig('')).filter((f) => f.endsWith('_msgr_legacy_dm_archive.sql')).sort().pop();
+assert.ok(FIX, 'supabase/migrations/*_msgr_legacy_dm_archive.sql 이 있어야 한다');
 const U = {
   a: '11111111-1111-4111-8111-111111111111', // 조직 owner — 본체 에이전트 여럿
   b: '22222222-2222-4222-8222-222222222222', // member — 자기 에이전트 1:1 하나

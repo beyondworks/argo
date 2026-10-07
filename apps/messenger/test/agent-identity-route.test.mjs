@@ -104,3 +104,53 @@ test('#2 archivedRoomFor: 지금 공간·지금 방이 읽기로 연 보관 방�
   assert.equal(G.archivedRoomFor(null, { orgId: LEAN, chId: 'arch' }), undefined);
 });
 
+// 검수 #857 MEDIUM(2026-10-08): 보관 대상 중 19개 방에 안 읽은 에이전트 글 54개(가장 최근 10/6, 운영 읽기 조회). 서버 안 읽음 수(msgr_unread·totals)는
+// 보관 방을 세지 않아 보관하는 순간 배지가 안내 없이 사라진다 → 이전 대화 보기 줄에 보관 방의 안 읽은 수를 붙이고, 열어 읽으면 한 번만 커서를 올린다.
+const reader = ({ cursors = {}, unread = {}, fail = null } = {}) => {
+  const calls = { reads: [], unread: [] };
+  return { calls,
+    reads: async (ids) => { calls.reads.push(ids); if (fail === 'reads') throw new Error('net'); return ids.filter((id) => id in cursors).map((id) => ({ channel_id: id, last_read_id: cursors[id] })); },
+    unread: async (id, after) => { calls.unread.push([id, after]); if (fail === 'unread') throw new Error('net'); return unread[`${id}>${after}`] ?? 0; } };
+};
+test('#2 earlierAgentDms: 보관한 방만 안 읽은 수를 센다 — 내 읽음 커서 한 번 + 보관 방마다 커서 뒤 글 수 1건, 보관 안 된 방은 조회 0', async () => {
+  const f = fakeLookup({
+    cands: [chan('arch-big', 'o-lean', LEAN, { archived_at: '2026-10-08T00:00:00Z' }), chan('arch-new', 'o-lean', LEAN, { archived_at: '2026-10-08T00:00:00Z' }), chan('live', 'o-design', DESIGN)],
+    members: ['arch-big', 'arch-new', 'live'].flatMap((id) => [mem(id, 'user', ME), mem(id, 'crew', id === 'live' ? 'o-design' : 'o-lean')]),
+    counts: { 'arch-big': 287, 'arch-new': 4, live: 3 },
+  });
+  const r = reader({ cursors: { 'arch-big': 900 }, unread: { 'arch-big>900': 3, 'arch-new>0': 4 } });
+  const got = await G.earlierAgentDms('p-1', { uid: ME, rows: own, ...f, reads: r.reads, unread: r.unread });
+  const by = Object.fromEntries(got.map((x) => [x.channelId, x]));
+  assert.equal(by['arch-big'].unread, 3, '커서 뒤 글 수');
+  assert.equal(by['arch-new'].unread, 4, '읽음 행이 없으면 처음부터(커서 0)');
+  assert.equal('unread' in by.live, false, '보관 안 된 방은 목록 배지(서버 셈)가 그대로 있어 세지 않는다');
+  assert.equal(r.calls.reads.length, 1, '내 읽음 커서는 한 번에');
+  assert.deepEqual(r.calls.reads[0].sort(), ['arch-big', 'arch-new'], '보관 방만 묻는다');
+  assert.deepEqual(r.calls.unread.sort(), [['arch-big', 900], ['arch-new', 0]]);
+});
+test('#2 earlierAgentDms: 안 읽은 수 조회가 실패해도 줄은 그대로(unread null) — 이전 대화를 볼 길을 막지 않는다', async () => {
+  const base = () => fakeLookup({ cands: [chan('arch', 'o-lean', LEAN, { archived_at: '2026-10-08T00:00:00Z' })], members: [mem('arch', 'user', ME), mem('arch', 'crew', 'o-lean')], counts: { arch: 50 } });
+  for (const fail of ['reads', 'unread']) {
+    const r = reader({ fail });
+    assert.deepEqual(await G.earlierAgentDms('p-1', { uid: ME, rows: own, ...base(), reads: r.reads, unread: r.unread }), [{ channelId: 'arch', orgId: LEAN, crewId: 'o-lean', n: 50, archived: true, unread: null }], fail);
+  }
+});
+test('#2 earlierLineLabel: 보관 방에 안 읽은 글이 있으면 그 수를 붙인 문구, 없거나 모르면 종전 문구', () => {
+  assert.deepEqual(G.earlierLineLabel({ org: 'Lean', n: 287, unread: 3 }), ['dm.earlier.unread', { org: 'Lean', n: 287, u: 3 }]);
+  for (const unread of [0, null, undefined]) assert.deepEqual(G.earlierLineLabel({ org: 'Lean', n: 287, unread }), ['dm.earlier', { org: 'Lean', n: 287 }], String(unread));
+});
+test('#2 archivedReadStep: 이전 대화 보기로 연 보관 방만 판정 — 안 읽은 글이 있었으면 한 번(once), 없었으면 쓰기 0(skip), 그 밖은 종전(null)', () => {
+  const ch = { id: 'arch', archived_at: '2026-10-08T00:00:00Z' };
+  assert.equal(G.archivedReadStep({ orgId: LEAN, channel: ch, crewId: 'o-lean', unread: 3 }, 'arch'), 'once');
+  assert.equal(G.archivedReadStep({ orgId: LEAN, channel: ch, crewId: 'o-lean', unread: 0 }, 'arch'), 'skip');
+  assert.equal(G.archivedReadStep({ orgId: LEAN, channel: ch, crewId: 'o-lean', unread: null }, 'arch'), 'skip', '셀 수 없었으면 쓰지 않는다(종전과 같다)');
+  assert.equal(G.archivedReadStep({ orgId: LEAN, channel: ch, crewId: 'o-lean', unread: 3 }, 'general'), null, '다른 방은 종전대로');
+  assert.equal(G.archivedReadStep({ orgId: LEAN, channel: { ...ch, archived_at: null }, unread: 3 }, 'arch'), null, '보관이 풀린 방은 목록 방과 같다');
+  assert.equal(G.archivedReadStep(null, 'arch'), null);
+});
+test('#2 clearEarlierUnread: 읽은 보관 방의 줄만 안 읽은 수 0으로(다시 묻지 않고 세션 기억을 고친다)', () => {
+  const list = [{ channelId: 'a', n: 9, archived: true, unread: 3 }, { channelId: 'b', n: 2, archived: true, unread: 1 }, { channelId: 'c', n: 4, archived: false }];
+  assert.deepEqual(G.clearEarlierUnread(list, 'a'), [{ channelId: 'a', n: 9, archived: true, unread: 0 }, list[1], list[2]]);
+  assert.equal(list[0].unread, 3, '원래 목록은 바꾸지 않는다');
+  assert.deepEqual(G.clearEarlierUnread(null, 'a'), []);
+});

@@ -1227,6 +1227,7 @@ export const DICT = {
   'dm.legacy.go': ['개인 1:1로 이동', 'Go to personal 1:1'],
   'dm.legacy.going': ['여는 중…', 'Opening…'],
   'dm.earlier': ['이전 대화 보기 · {org} {n}개', 'Earlier conversation · {org} ({n})'], // 내 에이전트 개인 1:1 위 — 옛 조직 1:1로(분리 검수 2026-10-05 #2)
+  'dm.earlier.unread': ['이전 대화 보기 · {org} {n}개 · 안 읽은 글 {u}개', 'Earlier conversation · {org} ({n}) · {u} unread'], // 보관한 옛 1:1에 안 읽은 글(검수 #857 — 서버 배지는 보관 방을 세지 않는다)
   'dm.earlier.label': ['이전 대화', 'Earlier conversations'],
   'dm.archived.note': ['보관한 이전 대화예요. 읽기만 할 수 있고, 새 대화는 개인 1:1에서 이어집니다.', 'This earlier conversation is archived and read-only. New messages continue in your personal 1:1.'], // 이전 대화 보기로 연 보관 방 — 입력창 자리(유건 결정 2026-10-08 1-②)
   'dm.archived.fail': ['이전 대화를 열지 못했어요. 잠시 뒤 다시 눌러 주세요.', "Couldn't open the earlier conversation. Try again in a moment."],

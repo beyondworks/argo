@@ -1757,15 +1757,22 @@ export async function msgrNotifyPush(event, _target = null, { session = sessionC
       reply_to: null, thread_root: null, client_msg_id: `nt:${crew.id}:${digest}`,
       body, mentions: [], meta: { disposition: 'done', notification: event.type } });
   };
+  let personalFail = null;
   if (personal) {
-    const room = await personalCrewRoom(c, personal).catch((e) => { console.error(`[argo] 메신저 알림: 개인 1:1 방 확보 실패(${personal.display_name}) — ${crews.length ? '조직 1:1로 보냄' : '보낼 조직 1:1도 없어 이번 알림은 보내지 못함'}: ${e.message}`); return null; });
+    const room = await personalCrewRoom(c, personal).catch((e) => { personalFail = e; return null; });
     if (room) return !!(await post(personal, room)); // 중복(같은 이벤트 재배달)이면 null → false. 글 넣기 실패는 던진다(조직 방으로 다시 보내지 않는다)
   }
+  // 개인 행이 있으면(개인 방 확보 실패로 여기 온 경우) **있던** 조직 1:1만 쓴다 — 새로 만들면 보관한 옛 조직 1:1(유건 결정 2026-10-08 1-②)과 같은 방이 다시 생겨
+  // 목록에 남는다(1:1은 개인 방 하나, 결정 1-①). 개인 행이 없는 옛 본체 경로는 종전대로 만든다.
   let posted = 0;
-  for (const crew of crews) {
-    const channelId = await dmWithOwner(c, crew).catch((e) => { console.error(`[argo] 메신저 알림: 1:1 방 확보 실패(${crew.display_name}): ${e.message}`); return null; });
-    if (!channelId) continue;
-    if (await post(crew, channelId)) posted++;
+  try {
+    for (const crew of crews) {
+      const channelId = await dmWithOwner(c, crew, { create: !personal }).catch((e) => { console.error(`[argo] 메신저 알림: 1:1 방 확보 실패(${crew.display_name}): ${e.message}`); return null; });
+      if (!channelId) continue;
+      if (await post(crew, channelId)) posted++;
+    }
+  } finally {
+    if (personalFail) console.error(`[argo] 메신저 알림: 개인 1:1 방 확보 실패(${personal.display_name}) — ${posted ? '있던 조직 1:1로 보냄' : '보낼 조직 1:1(보관 안 된 방)이 없어 이번 알림은 보내지 못함 — 조직 1:1을 새로 만들지 않는다'}: ${personalFail.message}`);
   }
   return posted > 0;
 }
@@ -1810,8 +1817,9 @@ async function postToMovedRoom(c, wsId, moved, { body, key, plan, lang }) {
 /** 크루와 나의 1:1 방 id — 크루가 든 DM 중 **사람 멤버가 정확히 나 한 명, 크루 멤버가 정확히 그 크루**인 방(메신저 앱 App.jsx의 DM 매처와 같은 규칙).
     DM 모양(msgr_dm_shape)은 사람 2명+크루 1명까지 허용하고, 다른 구성원이 내 크루와 연 DM에는 소유자인 내가 동반 멤버로 들어가므로
     "내가 든 DM"만 보면 그 방(제3자가 읽음)에 결재 사유·쪽지 본문이 올라간다(검수 #537 HIGH-1). 보관된 방은 건너뛰고 새로 만든다 —
-    RPC들이 보관 채널을 msgr_not_allowed로 거절하므로 거기엔 올릴 수 없다. 없으면 앱과 같은 RPC로 만든다(이름 dm:<크루 이름>, 나는 서버가 첫 멤버로). */
-async function dmWithOwner(c, crew) {
+    RPC들이 보관 채널을 msgr_not_allowed로 거절하므로 거기엔 올릴 수 없다. 없으면 앱과 같은 RPC로 만든다(이름 dm:<크루 이름>, 나는 서버가 첫 멤버로).
+    create:false면 만들지 않고 null(개인 행이 있는 에이전트 — msgrNotifyPush가 개인 방 확보에 실패했을 때, 유건 결정 2026-10-08 1-②). */
+async function dmWithOwner(c, crew, { create = true } = {}) {
   const dms = await c.db.crewChannels(crew.id);
   if (dms.length) {
     const rows = unwrap(await c.client.from('msgr_channel_members').select('channel_id, member_kind, member_id, msgr_channels!inner(archived_at)').in('channel_id', dms)) ?? [];
@@ -1823,6 +1831,7 @@ async function dmWithOwner(c, crew) {
       if (users.length === 1 && users[0] === c.uid && crews.length === 1 && crews[0] === crew.id) return id;
     }
   }
+  if (!create) return null;
   const { data, error } = await c.client.rpc('msgr_create_channel', { org: crew.org_id, kind: 'dm', name: `dm:${crew.display_name}`, others: [{ kind: 'crew', id: crew.id }] });
   if (error) throw new Error(error.message);
   return data;
