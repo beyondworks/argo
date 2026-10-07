@@ -17,7 +17,7 @@ import { stubRunnerToolDirs } from './helpers/tmp.mjs';
 const base = await mkdtemp(join(tmpdir(), 'argo-gpt61-wiring-'));
 after(() => rm(base, { recursive: true, force: true }));
 // 모듈이 import 시점에 homedir()·ARGO_ROOT로 경로를 잡으므로 import 전에 바꾼다
-process.env.HOME = join(base, 'home');
+process.env.HOME = process.env.USERPROFILE = join(base, 'home'); // 윈도우 homedir()는 USERPROFILE을 본다
 process.env.TMPDIR = join(base, 'tmp');
 process.env.ARGO_ROOT = join(base, 'root');
 process.env.ARGO_MODEL_CATALOG = 'off';
