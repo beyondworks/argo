@@ -1375,7 +1375,7 @@ const DICT = {
   'activity.runnerHealth': ['자격 확인', 'Credential check'],
   'activity.failureDigest': ['같은 오류가 24시간 안에 {count}회 반복됐습니다 — 설정에서 러너 상태를 확인하고, 앱 업데이트 뒤에도 계속되면 아래 원문과 함께 제보해 주세요', 'The same error repeated {count} times in 24 hours — check the runner in Settings, and if it persists after updating, report it with the message below'],
   'activity.failureDigestChip': ['반복 실패', 'Repeated failure'],
-  'activity.routineSkipped': ['루틴 「{title}」의 {slots} 회차를 건너뛰었습니다 — 예정 시각에 기기가 꺼져 있었습니다(4시간 안에 켜져야 실행됩니다)', 'Skipped the {slots} run of routine "{title}" — this device was off at the scheduled time (a run has to start within 4 hours)'],
+  'activity.routineSkipped': ['루틴 「{title}」의 {slots} 회차를 건너뛰었습니다 — 예정 시각에 기기가 꺼져 있었습니다(4시간 안에 켜져야 실행됩니다)', 'Routine "{title}" skipped {slots} — this device was off at the scheduled time (a run has to start within 4 hours)'],
   'activity.routineSkippedChip': ['루틴 건너뜀', 'Routine skipped'],
   'activity.shell': ['셸 도구', 'Shell tool'],
   'activity.shellFallback': ['동봉 실행기(busybox64u.exe)를 쓰지 못해 {kind}(으)로 명령을 실행합니다 — 보안 프로그램이 파일을 격리했을 수 있습니다. 예외에 추가하거나 앱을 재설치해 주세요. 건너뛴 후보', 'The bundled shell (busybox64u.exe) could not be used, so commands run via {kind} — security software may have quarantined it. Add an exception or reinstall the app. Skipped candidates'],

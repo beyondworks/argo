@@ -21,6 +21,9 @@ const { readEvents } = await import('../src/events.mjs');
 const { onNotify } = await import('../src/notify.mjs');
 const { runDueRoutines } = await import('../src/scheduler.mjs');
 const { writeJsonAtomic } = await import('../src/jsonstore.mjs');
+const { inThreadContext } = await import('../src/chat.mjs');
+const { formatMsgrNotify } = await import('../src/msgr-notify.mjs');
+const { recordMissedSlots } = await import('../src/routines.mjs');
 
 let seq = 0;
 /** 회사 하나 + 에이전트 카드(alpha). 스케줄러는 카드 없는 루틴을 건너뛰므로 프로덕션 모양으로 카드를 둔다. */
@@ -31,10 +34,11 @@ async function company(lang = 'ko') {
   await writeFile(join(paths(ws).agents, 'alpha.md'), '---\nname: 알파\nrole: 검증\n---\n검증용.\n');
   return ws;
 }
+/** 가짜 러너 — calls[i] = { msg: chat에 넘긴 지시(일지·턴 이벤트·기억에 남는 글), note: 러너 프롬프트에만 붙는 덧붙임(opts.runnerNote) } */
 const fakeChat = (replies) => {
   const calls = [];
-  const fn = async (_ws, _slug, msg) => {
-    calls.push(msg);
+  const fn = async (_ws, _slug, msg, _sid, opts) => {
+    calls.push({ msg, note: opts?.runnerNote ?? '' });
     const r = replies.shift() ?? { reply: '보고: 새 항목 1건' };
     if (r instanceof Error) throw r;
     if (r.make) await writeFile(join(paths(_ws).vault, r.make[0]), r.make[1]);
@@ -89,8 +93,8 @@ test('핀: 루프 루틴의 지시에는 루프 프로토콜이 붙고, 재시�
   const loop = await addRoutine(ws, { agentSlug: 'alpha', title: '점검 루프', prompt: '서버를 점검하라', schedule: { type: 'interval', everyMinutes: 10 }, loop: { maxRuns: 5 } });
   const chatFn = fakeChat([{ reply: '정상\nLOOP: continue' }]);
   await runRoutine(ws, loop.id, { chatFn });
-  assert.match(chatFn.calls[0], /\[루프 프로토콜\]/);
-  assert.match(chatFn.calls[0], /LOOP: continue/);
+  assert.match(chatFn.calls[0].msg, /\[루프 프로토콜\]/);
+  assert.match(chatFn.calls[0].msg, /LOOP: continue/);
 });
 
 /* ─── A. 실패를 대화 기록에 남긴다 ─────────────────────────────────────────── */
@@ -159,14 +163,15 @@ test('A8: 루프 회차 실패도 기록되고, 회차·연속 무판정 카운�
 
 /* ─── C. NO_REPORT ───────────────────────────────────────────────────────── */
 
-test('C9·C7: 러너에게 가는 지시에만 NO_REPORT 규칙이 붙는다 — 대화 기록의 지시와 완료 조건 재시도 지시에는 없다', async () => {
+test('C9·C7·C13: NO_REPORT 규칙은 러너 프롬프트에만(runnerNote) — 지시 원문(일지·턴 이벤트·대화 기록 재료)과 완료 조건 재시도 지시에는 없다', async () => {
   const ws = await company();
   const r = await daily(ws, { verify: { files: ['보고.md'], retries: 1 } });
   const chatFn = fakeChat([{ reply: '아직' }, { reply: '만들었습니다', make: ['보고.md', '# 보고'] }]);
   await runRoutine(ws, r.id, { chatFn });
-  assert.ok(chatFn.calls[0].startsWith(HEAD), '지시 앞부분은 종전 그대로');
-  assert.match(chatFn.calls[0], /NO_REPORT/, '첫 지시에 보고 규칙이 붙는다');
-  assert.doesNotMatch(chatFn.calls[1], /NO_REPORT/, '재시도는 산출물을 요구하는 지시라 규칙을 붙이지 않는다');
+  assert.equal(chatFn.calls[0].msg, HEAD, 'chat에 넘기는 지시는 종전 모양 그대로(규칙이 일지·턴 이벤트·기억 재료에 섞이지 않는다)');
+  assert.match(chatFn.calls[0].note, /NO_REPORT/, '첫 실행의 러너 프롬프트에 보고 규칙이 붙는다');
+  assert.equal(chatFn.calls[1].note, '', '재시도는 산출물을 요구하는 지시라 규칙을 붙이지 않는다');
+  assert.doesNotMatch(chatFn.calls[1].msg, /NO_REPORT/);
   const msgs = await thread(ws);
   assert.equal(msgs[0].text, HEAD, '대화 기록의 지시는 종전 모양(규칙 없음)');
 });
@@ -176,7 +181,8 @@ test('C6: 루프 루틴에는 NO_REPORT 규칙을 붙이지 않는다(마지막 
   const loop = await addRoutine(ws, { agentSlug: 'alpha', title: '점검 루프', prompt: '서버를 점검하라', schedule: { type: 'interval', everyMinutes: 10 }, loop: { maxRuns: 5 } });
   const chatFn = fakeChat([{ reply: '정상\nLOOP: continue' }]);
   await runRoutine(ws, loop.id, { chatFn });
-  assert.doesNotMatch(chatFn.calls[0], /NO_REPORT/);
+  assert.doesNotMatch(chatFn.calls[0].msg, /NO_REPORT/);
+  assert.equal(chatFn.calls[0].note, '');
 });
 
 test('C1·C11: 답이 NO_REPORT면 성공(lastResult 보고할 내용 없음)으로 기록하고 알림은 보내지 않는다', async () => {
@@ -235,8 +241,8 @@ test('C12: 영문 회사는 규칙·결과·실패 문구가 영어다', async (
   const r = await daily(ws);
   const chatFn = fakeChat([{ reply: 'NO_REPORT' }, { reply: '' }]);
   await runRoutine(ws, r.id, { chatFn });
-  assert.match(chatFn.calls[0], /nothing to (report|tell)/i);
-  assert.doesNotMatch(chatFn.calls[0], /보고 규칙/);
+  assert.match(chatFn.calls[0].note, /nothing to (report|tell)/i);
+  assert.doesNotMatch(chatFn.calls[0].note, /보고 규칙/);
   assert.equal((await byId(ws, r.id)).lastResult, 'Nothing to report');
   await assert.rejects(runRoutine(ws, r.id, { chatFn }), /The agent returned no answer at all/);
 });
@@ -366,4 +372,122 @@ test('B5: 사람이 루틴을 고친 시각(editedAt)·만든 시각 이전 슬�
   await writeJsonAtomic(paths(ws).routines, raw);
   await runDueRoutines(ws, kst('2026-10-08', '15:00'), { runFn: async () => {} });
   assert.equal((await readEvents(ws)).filter((e) => e.type === 'routine-skipped').length, 0);
+});
+
+/* ─── 검수 반영(2차) ─────────────────────────────────────────────────────── */
+
+test('C4b·C4d: 코드 펜스로 감싼 NO_REPORT는 보고할 것 없음 — 보고 뒤에 붙어 오면 빈 펜스 없이 보고만 보낸다', async () => {
+  for (const reply of ['```\nNO_REPORT\n```', '~~~text\nNO_REPORT\n~~~', '```\n\nNO_REPORT\n\n```\n']) {
+    const ws = await company();
+    const r = await daily(ws);
+    const n = notices(ws);
+    const out = await runRoutine(ws, r.id, { chatFn: fakeChat([{ reply }]) });
+    await n.stop();
+    assert.equal(n.got.filter((e) => e.type === 'routine').length, 0, `펜스만 남은 알림이 나가면 안 된다: ${JSON.stringify(reply)}`);
+    assert.equal(out.noReport, true, JSON.stringify(reply));
+    assert.equal((await byId(ws, r.id)).lastResult, '보고할 내용 없음', JSON.stringify(reply));
+  }
+  const ws = await company();
+  const r = await daily(ws);
+  const n = notices(ws);
+  await runRoutine(ws, r.id, { chatFn: fakeChat([{ reply: '새 메일 1건: 견적 회신\n\n```\nNO_REPORT\n```' }]) });
+  await n.stop();
+  const ev = n.got.filter((e) => e.type === 'routine');
+  assert.equal(ev.length, 1);
+  assert.equal(ev[0].reply, '새 메일 1건: 견적 회신', '빈 코드 블록이 남지 않는다');
+});
+
+test('C4c: 같은 줄에 설명이 붙은 NO_REPORT는 보고로 보내되 앞머리 표지는 뗀다(원문 토큰이 사용자에게 가지 않는다)', async () => {
+  for (const [reply, shown] of [['NO_REPORT (새 메일 없음)', '새 메일 없음'], ['NO_REPORT — 새 항목 0건', '새 항목 0건'], ['NO_REPORT: 변동 없음', '변동 없음'], ['**NO_REPORT** - 확인 완료', '확인 완료']]) {
+    const ws = await company();
+    const r = await daily(ws);
+    const n = notices(ws);
+    await runRoutine(ws, r.id, { chatFn: fakeChat([{ reply }]) });
+    await n.stop();
+    const ev = n.got.filter((e) => e.type === 'routine');
+    assert.equal(ev.length, 1, reply);
+    assert.equal(ev[0].reply, shown, reply);
+    assert.equal((await byId(ws, r.id)).lastResult, shown, reply);
+  }
+  // 문장 속 단어(C5)는 그대로 — 앞머리 표지가 아니다
+  const ws = await company();
+  const r = await daily(ws);
+  const n = notices(ws);
+  await runRoutine(ws, r.id, { chatFn: fakeChat([{ reply: 'NO_REPORT였던 어제와 달리 오늘은 1건' }]) });
+  await n.stop();
+  assert.equal(n.got.filter((e) => e.type === 'routine')[0]?.reply, 'NO_REPORT였던 어제와 달리 오늘은 1건');
+});
+
+test('A10·A11: 루틴 실패 기록(지시·실패 안내)은 대화 기록에 보이되 다음 턴 맥락에서는 빠진다 — 성공 턴·놓친 회차 한 줄은 맥락에 남는다', async () => {
+  const ws = await company();
+  const r = await seoulDaily(ws, { times: ['09:00', '13:00'], lastRun: kst('2026-10-07', '13:00').toISOString() });
+  await runDueRoutines(ws, kst('2026-10-08', '18:00'), { runFn: async () => {} }); // 10/8 두 회차 놓침 → 다음 실행이 한 줄 남긴다
+  await runRoutine(ws, r.id, { chatFn: fakeChat([{ reply: '보고: 새 메일 2건' }]) });
+  await assert.rejects(runRoutine(ws, r.id, { chatFn: fakeChat([new Error('러너 연결 안 됨')]) }));
+  const msgs = await thread(ws);
+  assert.equal(msgs.length, 5, '건너뜀 1 + 성공 턴 2 + 실패 지시·안내 2 — 화면에는 다 보인다');
+  const ctx = msgs.filter((m) => inThreadContext(m, null)).map((m) => [m.who, m.text]);
+  assert.deepEqual(ctx.map(([w]) => w), ['user', 'user', 'crew'], `맥락 = 건너뜀 한 줄 + 성공 턴: ${JSON.stringify(ctx)}`);
+  assert.match(ctx[0][1], /건너뛰었습니다/);
+  assert.equal(ctx[2][1], '보고: 새 메일 2건');
+  assert.ok(!ctx.some(([, t]) => /루틴 실행에 실패했습니다/.test(t)), '실패 안내가 에이전트가 한 말처럼 다음 턴 맥락에 실리지 않는다');
+
+  // 완료 조건 최종 미충족 — 시도 턴은 맥락에 남고, 뒤의 실패 안내 한 줄만 빠진다
+  const ws2 = await company();
+  const v = await daily(ws2, { verify: { files: ['보고.md'], retries: 1 } });
+  await assert.rejects(runRoutine(ws2, v.id, { chatFn: fakeChat([{ reply: '다 했습니다' }, { reply: '또 다 했습니다' }]) }));
+  const m2 = (await loadThread(ws2, 'alpha')).messages;
+  assert.equal(m2.length, 5);
+  assert.deepEqual(m2.filter((m) => inThreadContext(m, null)).map((m) => m.who), ['user', 'crew', 'user', 'crew']);
+});
+
+test('D3: 건너뜀 알림 머리는 (건너뜀)/(skipped) — 실패는 (실패)/(failed), 결과는 꼬리 없음(메신저 1:1 알림 문안)', () => {
+  const base = { type: 'routine', routine: { title: '아침 보고' }, reply: '10월 8일 09:00 회차는 건너뛰었습니다' };
+  const skipped = formatMsgrNotify({ ...base, ok: false, phase: 'skipped' }, 'ko');
+  assert.match(skipped, /^\[루틴\] 아침 보고 \(건너뜀\)\n/);
+  assert.doesNotMatch(skipped, /실패/);
+  assert.match(formatMsgrNotify({ ...base, ok: false, phase: 'skipped' }, 'en'), /^\[Routine\] 아침 보고 \(skipped\)\n/);
+  assert.match(formatMsgrNotify({ ...base, ok: false }, 'ko'), /^\[루틴\] 아침 보고 \(실패\)\n/);
+  assert.match(formatMsgrNotify({ ...base, ok: true }, 'ko'), /^\[루틴\] 아침 보고\n/);
+});
+
+test('E1: 영문 회사의 여러 회차 건너뜀 안내는 복수형이다(한 회차는 단수)', async () => {
+  const ws = await company('en');
+  await seoulDaily(ws, { times: ['09:00', '13:00'], lastRun: kst('2026-10-07', '13:00').toISOString() });
+  const one = await company('en');
+  await seoulDaily(one);
+  const n = notices(ws); const n1 = notices(one);
+  await runDueRoutines(ws, kst('2026-10-08', '18:00'), { runFn: async () => {} });
+  await runDueRoutines(one, kst('2026-10-08', '15:00'), { runFn: async () => {} });
+  await n.stop(); await n1.stop();
+  const many = n.got.find((e) => e.phase === 'skipped')?.reply ?? '';
+  assert.match(many, /These runs were skipped/); assert.match(many, /Oct 8 09:00 · 13:00/);
+  assert.doesNotMatch(many, /run was/);
+  assert.match(n1.got.find((e) => e.phase === 'skipped')?.reply ?? '', /This run was skipped/);
+});
+
+test('B22: 판정 기간(7일) 밖의 missed 표지는 새로 남길 때 정리된다(쌓이지 않는다)', async () => {
+  const ws = await company();
+  const r = await seoulDaily(ws);
+  const raw = await loadRoutines(ws);
+  raw.find((x) => x.id === r.id).missed = [{ at: '2026-09-20T00:00:00.000Z', date: '2026-09-20', time: '09:00' }, { at: '2026-10-05T00:00:00.000Z', date: '2026-10-05', time: '09:00' }];
+  await writeJsonAtomic(paths(ws).routines, raw);
+  await runDueRoutines(ws, kst('2026-10-08', '15:00'), { runFn: async () => {} });
+  assert.deepEqual((await byId(ws, r.id)).missed.map((m) => m.date), ['2026-10-05', '2026-10-08'], '7일 넘은 9/20 표지는 빠지고 기간 안 표지와 새 표지만 남는다');
+});
+
+test('B23: 틱이 읽은 목록이 낡았어도(그 사이 실행으로 lastRun이 바뀜) 잠금 안에서 디스크를 다시 판정해 기록하지 않는다', async () => {
+  const ws = await company();
+  const r = await seoulDaily(ws);
+  const stale = await loadRoutines(ws); // 틱이 먼저 읽은 목록 — lastRun 10/7 09:00
+  const raw = await loadRoutines(ws);
+  raw.find((x) => x.id === r.id).lastRun = kst('2026-10-08', '14:59').toISOString(); // 같은 틱 사이 수동 '실행'이 lastRun을 바꿨다
+  await writeJsonAtomic(paths(ws).routines, raw);
+  const before = await readFile(paths(ws).routines, 'utf8');
+  const n = notices(ws);
+  const found = await recordMissedSlots(ws, stale, kst('2026-10-08', '15:00'));
+  await n.stop();
+  assert.deepEqual(found, []);
+  assert.equal(await readFile(paths(ws).routines, 'utf8'), before, '디스크 최신본 기준으로는 놓친 회차가 없다 — 쓰기 0');
+  assert.equal(n.got.length, 0);
 });

@@ -27,7 +27,7 @@ import { createAgentCard } from '../persona.mjs'; // I-5: 회사 노드가 요�
 import { paths, loadCompany, updateCompany } from '../workspace.mjs';
 import { enqueueJob, DEFER } from './queue.mjs';
 import { pick } from './protocol.mjs';
-import { msgrHead, MSGR_NOW, msgrContextHead, msgrReplyLine, MSGR_ATTACH_FAIL } from '../inbound-marks.mjs';
+import { msgrHead, MSGR_NOW, msgrContextHead, msgrReplyLine, MSGR_ATTACH_FAIL, routineNoticeTail } from '../inbound-marks.mjs';
 import { stripLoopVerdict } from '../loop-verdict.mjs'; // 루프 회차 채널 글에서 판정 표지만 뺀다(판정은 replyForChecks 원문) // 머리말 = 1:1 화면 출처 카드(채널 이름·본문 판정)와 같은 함수
 import { beatGateway } from './persist.mjs';
 import { chat } from '../chat.mjs';
@@ -1342,7 +1342,7 @@ async function restoreMessengerContext(wsId, slug, origin, session, { ownerAppro
 }
 
 /** 결재·예약·장시간 실행은 매번 새 수집함으로 같은 채널의 최신 문맥과 기억 설정을 복원한다. */
-export async function runMessengerContinuation(wsId, slug, origin, message, _globalSessionId, { runChat = chat, session = sessionClient, ownerApproved = false, loopTurn = false, notOwnerDirect = null } = {}) { // notOwnerDirect = 사장 직접 턴이 아닌 시작점의 크루(장시간 작업·예약·결재 후속) — 풀 오토만 끈다
+export async function runMessengerContinuation(wsId, slug, origin, message, _globalSessionId, { runChat = chat, session = sessionClient, ownerApproved = false, loopTurn = false, notOwnerDirect = null, runnerNote = '' } = {}) { // notOwnerDirect = 사장 직접 턴이 아닌 시작점의 크루(장시간 작업·예약·결재 후속) — 풀 오토만 끈다 · runnerNote = 러너 프롬프트에만 붙는 덧붙임(루틴 보고 규칙, chat.mjs)
   return withLock(`msgr-turn:${wsId}:${slug}`, async () => {
     const { db, ctx, ch, source, envelope, orgPeers } = await restoreMessengerContext(wsId, slug, origin, session, { ownerApproved }); // 주인이 승인한 결재 후속 — 권한은 OWNER_APPROVAL_LIFTS_GUEST가 정한다
     // 조직 자격(2026-09-27 M5) — 결재 확정 후속도 실행(유료 LLM 호출) 직전에 다시 확인한다. 채널 안내는 drain()의 다음 폴이 낸다
@@ -1364,7 +1364,7 @@ export async function runMessengerContinuation(wsId, slug, origin, message, _glo
       // 호출자가 넘기는 전역 세션(_globalSessionId — 주인의 데스크톱 대화)은 쓰지 않는다: 후속 실행도 그 채널 세션만 잇는다
       const sessionId = ch.kind === 'dm' || ch.crew_memory === false ? null : scopedSession(await loadThread(wsId, slug), ctx.channelId).sessionId;
       const nod = notOwnerDirect ?? (ctx.handoffFrom ? handoffLabel(orgPeers ?? ctx.peers, ctx.handoffFrom, relayChannel(ch) ? source.meta?.relay?.via_name : null) : null);
-      const turn = await runChat(wsId, slug, text, sessionId, { source: 'messenger', mirrorCtx: ctx, journal: msgrJournal(ctx.orgId, ctx.channelId, ch.crew_memory === false), ...(nod ? { notOwnerDirect: nod } : {}) });
+      const turn = await runChat(wsId, slug, text, sessionId, { source: 'messenger', mirrorCtx: ctx, journal: msgrJournal(ctx.orgId, ctx.channelId, ch.crew_memory === false), ...(nod ? { notOwnerDirect: nod } : {}), ...(runnerNote ? { runnerNote } : {}) });
       return { ...turn, ...(await messengerReply(ctx, turn.reply, { db, lang, loopTurn })), msgr: messengerOrigin(ctx) };
     } finally {
       if (activeCtx.get(key) === ctx) activeCtx.delete(key);
@@ -1812,8 +1812,8 @@ export async function msgrPush(event, { session = sessionClient } = {}) {
     const plan = await planOrRaw(event.wsId, parseMessengerDisposition(event.reply ?? '').text, company.lang, ROUTINE_FILES_MAX); // 답 속 로컬 파일 → 첨부(경로는 본문에서 지운다). 일정마다 반복되는 글이라 상한 3
     const posted = await c.db.insertMessage({ channel_id: target.channelId, author_kind: 'crew', crew_id: crew.id, kind: 'text',
       reply_to: null, thread_root: null, client_msg_id: `rn:${crew.id}:${digest}`,
-      body: pick(`[루틴] ${event.routine.title}${event.ok === false ? ' (실패)' : ''}\n\n${plan.body}`,
-        `[Routine] ${event.routine.title}${event.ok === false ? ' (failed)' : ''}\n\n${plan.body}`, company.lang).slice(0, MSG_MAX),
+      body: pick(`[루틴] ${event.routine.title}${routineNoticeTail(event, 'ko')}\n\n${plan.body}`,
+        `[Routine] ${event.routine.title}${routineNoticeTail(event, 'en')}\n\n${plan.body}`, company.lang).slice(0, MSG_MAX),
       mentions: [], meta: { disposition: 'done', notification: 'routine', routine_id: event.routine.id } });
     const targetKind = available.find((r) => r.orgId === target.orgId && r.channelId === target.channelId)?.kind ?? null;
     if (posted) await deliverReplyFiles(event.wsId, c.db, { orgId: target.orgId, channelId: target.channelId, channelKind: targetKind, crewId: crew.id, threadRoot: null, failKey: `attfail:rn:${crew.id}:${digest}` }, posted, plan, company.lang);

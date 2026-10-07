@@ -626,10 +626,11 @@ test('messenger routine: NO_REPORT 답이면 채널 글(알림 이벤트)을 만
   try {
     const r = await addRoutine(f.ws, { agentSlug: 'alpha', title: '메일 보고', prompt: '새 메일을 보고하라', schedule: { type: 'daily', time: '09:00' }, msgr: f.origin });
     const seen = [];
-    const out = await runRoutine(f.ws, r.id, { session: f.session, chatFn: async (_ws, _slug, msg) => { seen.push(msg); return { reply: 'NO_REPORT', sessionId: null, handover: null }; } });
+    const out = await runRoutine(f.ws, r.id, { session: f.session, chatFn: async (_ws, _slug, msg, _sid, opts) => { seen.push({ msg, note: opts?.runnerNote ?? '' }); return { reply: 'NO_REPORT', sessionId: null, handover: null }; } });
     await new Promise((res) => setTimeout(res, 20));
     assert.equal(out.ok, true);
-    assert.match(seen[0], /\[보고 규칙\]/, '메신저 후속 실행 글에도 보고 규칙이 실린다');
+    assert.match(seen[0].note, /\[보고 규칙\]/, '메신저 후속 실행에도 보고 규칙이 러너 프롬프트로 간다');
+    assert.doesNotMatch(seen[0].msg, /보고 규칙|NO_REPORT/, '채널 후속 실행 글(턴 이벤트 원문)에는 규칙을 섞지 않는다');
     assert.equal(f.events.filter((e) => e.type === 'routine').length, 0, '보고할 것이 없으면 채널에 글을 올리지 않는다');
     const saved = (await loadRoutines(f.ws)).find((x) => x.id === r.id);
     assert.equal(saved.lastOk, true); assert.equal(saved.lastResult, '보고할 내용 없음');
@@ -672,5 +673,23 @@ test('messenger routine: 실행 없이 여러 날 놓친 회차는 날마다 다
     assert.equal(f.rows.length, 2);
     assert.equal(new Set(f.rows.map((row) => row.client_msg_id)).size, 2, '두 번째 건너뜀 글이 첫 글과 같은 키로 버려지지 않는다');
     assert.match(f.rows[0].body, /10월 7일 09:00/); assert.match(f.rows[1].body, /10월 8일 09:00/);
+    // 시작 채널(origin) 글은 머리 없이 본문만 — '(실패)' 꼬리가 붙지 않는다. 알림 채널 글의 머리 '(건너뜀)'은 routine-notifications.test.mjs가 잠근다.
+    for (const row of f.rows) assert.doesNotMatch(row.body, /\(실패\)|실패했습니다/);
+  } finally { f.stop(); }
+});
+
+// 검수 LOW(b) — 메신저발 루프 회차 답이 판정 줄뿐이면 채널 글 본문(reply)은 비지만 판정 원문(replyForChecks)이 있다. 빈 답 실패로 세지 않는다.
+test('messenger loop: 답이 LOOP 판정 줄뿐이면 빈 답 실패가 아니다 — 알림 0, 판정 continue', async () => {
+  const f = await setup({ requester: 'owner' });
+  try {
+    const loop = await addRoutine(f.ws, { agentSlug: 'alpha', title: '계속', prompt: '이어서', schedule: { type: 'interval', everyMinutes: 10 }, loop: {}, msgr: f.origin });
+    const out = await runRoutine(f.ws, loop.id, { session: f.session, chatFn: async () => ({ reply: 'LOOP: continue', sessionId: null, handover: null }) });
+    await new Promise((res) => setTimeout(res, 20));
+    assert.equal(out.ok, true);
+    const cur = (await loadRoutines(f.ws)).find((r) => r.id === loop.id);
+    assert.equal(cur.lastOk, true);
+    assert.equal(cur.loop.lastVerdict, 'continue');
+    assert.equal(cur.loop.missingVerdicts, 0);
+    assert.equal(f.events.filter((e) => e.type === 'routine').length, 0, '판정 줄뿐인 회차는 채널에 제목만 있는 글을 올리지 않는다');
   } finally { f.stop(); }
 });

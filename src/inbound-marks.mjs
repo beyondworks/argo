@@ -26,15 +26,11 @@ export const LOOP_MARK = { ko: '[루프 프로토콜]', en: '[Loop protocol]' };
 /** 루프 프로토콜 문단의 시작 — 루프 지시는 `지시 + loopHead + 회차 안내` 모양이다 */
 export const loopHead = (lang = 'ko') => `\n\n---\n${LOOP_MARK[L(lang)]}`;
 
-// ── 루틴 보고 규칙(NO_REPORT) — 루틴 턴에서 러너에게 가는 글에만 덧붙는다(routines.mjs noReportRule). 대화 기록의 지시에는 없고,
-//    턴 이벤트의 원문(events msg)에는 실린다 — 활동 '다시 실행'은 대화 턴이라 이 머리 앞에서 잘라 다시 보낸다(stripReportRule).
-export const REPORT_RULE_MARK = { ko: '[보고 규칙]', en: '[Report rule]' };
-export const reportRuleHead = (lang = 'ko') => `\n\n---\n${REPORT_RULE_MARK[L(lang)]}`;
-export function stripReportRule(text) {
-  const s = String(text ?? '');
-  const cuts = ['ko', 'en'].map((l) => s.indexOf(reportRuleHead(l))).filter((i) => i >= 0);
-  return cuts.length ? s.slice(0, Math.min(...cuts)) : s;
-}
+/** 루틴 알림 머리 꼬리 — 놓친 회차 안내(phase 'skipped')면 (건너뜀), 실패면 (실패), 결과면 없음. 텔레그램·슬랙·메신저 채널 글·메신저 1:1 알림이
+    같은 판정을 쓴다(건너뜀 알림은 ok:false라 실패 꼬리를 달면 본문 '건너뛰었습니다'와 머리 '(실패)'가 어긋났다 — 검수 LOW). */
+export const routineNoticeTail = (event, lang = 'ko') => (event?.phase === 'skipped'
+  ? (L(lang) === 'en' ? ' (skipped)' : ' (건너뜀)')
+  : event?.ok === false ? (L(lang) === 'en' ? ' (failed)' : ' (실패)') : '');
 
 export function parseRoutine(text) {
   for (const lang of ['ko', 'en']) {

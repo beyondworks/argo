@@ -7,7 +7,7 @@ import Link from 'next/link';
 import styles from './responsive.module.css';
 import { Avatar, Skeleton, Spinner, api, timeAgo } from '../../../ui';
 import { useLang, stageLabel } from '../../../i18n';
-import { rerunMode, rerunMessage } from './rerun.mjs'; // '다시 실행'은 사장이 직접 시킨 턴만(F5), 보낼 글은 루틴 보고 규칙을 뗀 원문
+import { rerunMode } from './rerun.mjs'; // '다시 실행'은 사장이 직접 시킨 턴만(F5)
 import { subscribeSearch } from '../search-bus.mjs'; // 상단 검색 받기(UL10)
 import { gistLabel } from '../../../lib/gist-display.mjs'; // 메신저 머리말을 뗀 요약(UX-A08)
 import { turnErrorDesc } from './turn-desc.mjs'; // 사용자가 멈춘 턴은 저장된 원문 대신 화면 언어 문구
@@ -69,7 +69,7 @@ export default function Activity({ params }) {
       // 결과는 크루 스레드에 쌓인다 — 활동 화면은 시작만 확인하고 손을 뗀다
       fetch(`/api/companies/${ws}/chat`, {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ slug: e.slug, message: rerunMessage(e) }),
+        body: JSON.stringify({ slug: e.slug, message: e.msg }),
       }).then(() => window.dispatchEvent(new Event('argo:refresh'))).catch(() => {});
       await new Promise((r) => setTimeout(r, 600)); // 시작 체감 — 버튼이 즉시 되돌아오지 않게
       setRerunNote(i);

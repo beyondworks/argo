@@ -18,7 +18,7 @@ import { onNotify, emitNotify } from './notify.mjs'; // emitNotify = 장시간 �
 import { daemonLease } from './lock.mjs';
 import { isCloudLeader, setClaimTokens, tokenOwnership, deviceLabel } from './sync.mjs';
 import { appendEvent } from './events.mjs';
-import { jobHead } from './inbound-marks.mjs'; // 장시간 작업 기록 머리말 = 1:1 화면 출처 카드와 같은 함수
+import { jobHead, routineNoticeTail } from './inbound-marks.mjs'; // 장시간 작업 기록 머리말 = 1:1 화면 출처 카드와 같은 함수
 import { writeJsonAtomic } from './jsonstore.mjs';
 import { mkdir, readFile, writeFile, readdir, stat, rename, copyFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -871,8 +871,8 @@ export async function sendRoutineNotification(event, kind, { pushMsgr = msgrPush
     }
     const all = await loadConnections(event.wsId);
     if (all[kind]?.mutedEvents?.includes('routine')) return { status: 'muted' };
-    let body = pick(`[루틴] ${event.routine.title}${event.ok === false ? ' (실패)' : ''}\n\n${event.reply ?? ''}`,
-      `[Routine] ${event.routine.title}${event.ok === false ? ' (failed)' : ''}\n\n${event.reply ?? ''}`, lang);
+    let body = pick(`[루틴] ${event.routine.title}${routineNoticeTail(event, 'ko')}\n\n${event.reply ?? ''}`,
+      `[Routine] ${event.routine.title}${routineNoticeTail(event, 'en')}\n\n${event.reply ?? ''}`, lang);
     if (kind === 'telegram') {
       const agents = await listAgents(event.wsId);
       const slug = event.routine.agentSlug;
@@ -1057,7 +1057,7 @@ async function pushEvent(event, { pushMsgr = msgrPush, notifyMsgr = msgrNotifyPu
           `(Result from ${nameOf(primarySlug)} — delivered via this bot because their own bot isn't connected)\n${body}`, lang)
         : body);
       if (event.type === 'routine') {
-        await sendTgReply(dest.token, dest.chatId, event.wsId, attributed(pick(`**[루틴] ${event.routine.title}${event.ok ? '' : ' (실패)'}**\n\n${event.reply}`, `**[Routine] ${event.routine.title}${event.ok ? '' : ' (failed)'}**\n\n${event.reply}`, lang)))
+        await sendTgReply(dest.token, dest.chatId, event.wsId, attributed(pick(`**[루틴] ${event.routine.title}${routineNoticeTail(event, 'ko')}**\n\n${event.reply}`, `**[Routine] ${event.routine.title}${routineNoticeTail(event, 'en')}**\n\n${event.reply}`, lang)))
           .catch((e) => console.error('[argo] 텔레그램 루틴 푸시 실패:', e.message));
       }
       // 장시간 작업 완료 — 사장이 앱을 안 보고 있어도 결과가 도착한다(이 큐의 존재 이유)
@@ -1097,8 +1097,8 @@ async function pushEvent(event, { pushMsgr = msgrPush, notifyMsgr = msgrNotifyPu
             lang,
           ))
       : pick(
-          `[루틴] ${event.routine.title} ${event.ok ? '' : '(실패)'}\n${event.reply}`,
-          `[Routine] ${event.routine.title} ${event.ok ? '' : '(failed)'}\n${event.reply}`,
+          `[루틴] ${event.routine.title}${routineNoticeTail(event, 'ko')}\n${event.reply}`,
+          `[Routine] ${event.routine.title}${routineNoticeTail(event, 'en')}\n${event.reply}`,
           lang,
         );
     await slackApi(s.token, 'chat.postMessage', { channel: s.channel, text: clip(text) })

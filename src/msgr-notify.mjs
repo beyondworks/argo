@@ -4,6 +4,7 @@
 // 원점 귀속 규칙(메신저에서 시작한 실행은 그 방으로만)은 그대로 — 원점이 없는 이벤트에만 쓴다(gateway.mjs pushEvent).
 import { CHANNEL_EVENTS } from './channel-events.mjs';
 import { approvalPlainText, approvalCommandLabel } from './approvals.mjs';
+import { routineNoticeTail } from './inbound-marks.mjs';
 
 /** 보낼 수 있는 종류 = 메신저 채널이 받는 종류(channel-events.mjs 정본). */
 export const MSGR_NOTIFY_EVENTS = CHANNEL_EVENTS.msgr;
@@ -43,8 +44,8 @@ export function formatMsgrNotify(event, lang = 'ko', names = {}) {
       return en ? `[Agent mail] ${name(event.from)} → ${name(event.slug)}\n\n${body(event.reply)}`
         : `[동료 쪽지] ${name(event.from)} → ${name(event.slug)}\n\n${body(event.reply)}`;
     case 'routine':
-      return en ? `[Routine] ${one(event.routine?.title)}${event.ok === false ? ' (failed)' : ''}\n\n${body(event.reply)}`
-        : `[루틴] ${one(event.routine?.title)}${event.ok === false ? ' (실패)' : ''}\n\n${body(event.reply)}`;
+      return en ? `[Routine] ${one(event.routine?.title)}${routineNoticeTail(event, 'en')}\n\n${body(event.reply)}`
+        : `[루틴] ${one(event.routine?.title)}${routineNoticeTail(event, 'ko')}\n\n${body(event.reply)}`;
     case 'delegate':
       return en ? `[Delegation result] ${name(event.from)} → ${name(event.to)}: ${one(event.task)}\n\n${body(event.reply)}`
         : `[위임 결과] ${name(event.from)} → ${name(event.to)}: ${one(event.task)}\n\n${body(event.reply)}`;

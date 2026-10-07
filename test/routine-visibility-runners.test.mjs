@@ -7,7 +7,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { mkdir, writeFile, readFile, chmod } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, readdir, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mkdtemp } from './helpers/tmp.mjs';
@@ -74,7 +74,7 @@ const { addRoutine, runRoutine, loadRoutines } = await import('../src/routines.m
 const { loadThread } = await import('../src/thread.mjs');
 const { onNotify } = await import('../src/notify.mjs');
 const { readEvents } = await import('../src/events.mjs');
-const { rerunMode, rerunMessage } = await import('../app/c/[ws]/activity/rerun.mjs');
+const { rerunMode } = await import('../app/c/[ws]/activity/rerun.mjs');
 
 const WS = 'rtn-runners';
 await createCompany(WS, '러너별 루틴 검수', 'owner', null, 'ko');
@@ -107,17 +107,19 @@ for (const [slug, label] of [['cx', 'Codex CLI'], ['sd', 'Claude SDK']]) {
     const saved = await byId(r.id);
     assert.equal(saved.lastOk, true); assert.equal(saved.lastResult, '보고할 내용 없음');
     assert.equal(routineEvents(r.id).length, 0, '보고할 것이 없으면 알림·메신저 글을 보내지 않는다');
-    // 활동 '다시 실행'은 대화 턴이다 — 턴 이벤트 원문(msg)에 실린 보고 규칙을 떼고 보낸다(대화 턴의 답 처리는 루틴 규칙과 무관)
+    // 보고 규칙은 러너 프롬프트에만 — 턴 이벤트 원문(활동 '다시 실행'이 보내는 글)·일지(밤사이 기억 정리의 재료)에는 싣지 않는다(검수 LOW)
     const ev = (await readEvents(WS)).find((e) => e.type === 'turn' && e.source === 'routine' && e.slug === slug && String(e.gist ?? '').includes(r.title));
     assert.ok(ev, '루틴 턴 이벤트가 기록됐다');
     if (slug === 'cx') {
-      // CLI 경로의 턴 이벤트는 원문(msg)을 싣지 않는다(종전) — 다시 실행 버튼 자체가 없어 규칙이 대화 턴으로 새지 않는다
+      // CLI 경로의 턴 이벤트는 원문(msg)을 싣지 않는다(종전) — 다시 실행 버튼 자체가 없다
       assert.equal(ev.msg, undefined); assert.equal(rerunMode(ev), 'none');
     } else {
-      assert.match(ev.msg, /\[보고 규칙\]/, '전제: 이벤트 원문에는 러너에게 보낸 그대로 규칙이 실려 있다');
+      assert.equal(ev.msg, `[루틴: ${r.title}] ${r.prompt}`, '턴 이벤트 원문은 규칙 없는 지시 그대로 — 다시 실행이 이 글을 그대로 보낸다');
       assert.equal(rerunMode(ev), 'rerun', '전제: 사장이 만든 루틴 턴은 다시 실행 버튼이 보인다');
-      assert.equal(rerunMessage(ev), `[루틴: ${r.title}] ${r.prompt}`, '다시 실행은 규칙을 뗀 지시만 보낸다');
     }
+    const journal = (await Promise.all((await readdir(paths(WS).journal)).filter((f) => f.endsWith('.md')).map((f) => readFile(join(paths(WS).journal, f), 'utf8')))).join('\n');
+    assert.ok(journal.includes(`[루틴: ${r.title}]`), '전제: 이 루틴 턴이 일지에 남았다');
+    assert.doesNotMatch(journal, /보고 규칙|NO_REPORT 한 줄/, '일지에는 규칙 문장이 실리지 않는다');
   });
 
   test(`${label}: 빈 최종 답은 실패 — 알아듣는 문구로 기록·알림하고 대화 기록에 남는다`, async () => {
