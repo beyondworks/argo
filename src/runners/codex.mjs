@@ -40,7 +40,11 @@ const codexHostManagedBin = () => join(CODEX_TOOL_DIR, CODEX_HOST_BIN);
     (export: 회귀 테스트·계약 프로브용) */
 // 0.149.1 → 0.157.1(2026-09-29): 0.149.1은 GPT-6 Astra·Sol·Luna를 서버가 400으로 거절한다. 0.157.1로 계약 프로브 19/19,
 // Argo 로그인 실제 턴(셸 도구 파일 생성·MCP 도구 호출)을 GPT-6 세 모델과 GPT-5.6 Sol에서 확인했다.
-export const CODEX_PIN = 'rust-v0.157.1';
+// 0.157.1 → 0.159.3(2026-10-08, 유건 결정): 서버가 클라이언트 버전으로 모델 목록을 거른다 — 0.157.1 목록엔 GPT-6.1 Sol이 없고
+// 턴은 "not supported when using Codex with a ChatGPT account"(2026-10-07 실측). 0.159.3로 계약 프로브 19/19, ChatGPT 구독 로그인
+// 실제 턴(6.1 Sol 셸 도구·GPT-6 Luna·Astra max)을 확인했다. 모델별 하한은 test/codex-pin-lockup.test.mjs 표가 잠근다.
+// ⚠ 핀을 올리면 `-m` 없이 도는 턴의 서버 기본 모델도 바뀐다(0.157.1 = gpt-6-astra, 0.159.3 = gpt-6.1-sol) — 원샷은 CODEX_ONESHOT_MODEL로 고정.
+export const CODEX_PIN = 'rust-v0.159.3';
 export const codexAssetUrl = (asset) => `https://github.com/openai/codex/releases/download/${CODEX_PIN}/${asset}`;
 /** 플랫폼 → 릴리스 자산 이름. 래퍼 bin/codex.js의 트리플 표와 동일 매핑. (export: 순수 — 회귀 테스트용) */
 export function codexTripleFor(platform, arch) {
@@ -215,7 +219,7 @@ export async function codexPinStale() {
 }
 
 /** 낡은 codex의 모델 거절 → 업데이트 대기 안내(순수). "requires a newer version"은 버전 문제가 확실하다. "not supported when
-    using Codex with a ChatGPT account"는 0.149.1이 GPT-6에 내는 문구지만(2026-09-28 실측) 핀이 최신이면 계정 문제라 건드리지
+    using Codex with a ChatGPT account"는 낡은 핀이 새 모델에 내는 문구지만(0.149.1→GPT-6 2026-09-28, 0.157.1→GPT-6.1 Sol 2026-10-07 실측) 핀이 최신이면 계정 문제라 건드리지
     않는다(→ error-class의 model_unavailable). 문구는 error-class RUNNER_OUTDATED_RE와 한 쌍 — 바꾸면 같이. */
 const CODEX_NEWER_RE = /requires a newer version of codex/i;
 const CODEX_ACCOUNT_RE = /not supported when using codex with a chatgpt account/i;
@@ -269,8 +273,8 @@ async function codexCmd() {
 
 /** 크루별 추론 강도 → codex CLI 인자(순수). codex도 강도를 지원한다 — `-c model_reasoning_effort=…`가
     인식되는 키임을 실측(2026-07-26, codex-cli 0.144.1: 미인식 키는 --strict-config에서 즉시 에러,
-    이 키는 통과하고 low·high·xhigh 모두 실턴 성공). 기존 모델은 max→xhigh, GPT-6 Sol/Luna는 모델별 값을 보존한다.
-    빈 값·미지원 값이면 인자를 넣지 않는다(모델 기본). (export: 회귀 테스트용 — 순수 함수) */
+    이 키는 통과하고 low·high·xhigh 모두 실턴 성공). 기존 모델은 max→xhigh, GPT-6 계열은 모델별 값을 보존한다.
+    빈 값·미지원 값이면 인자를 넣지 않는다(모델 기본) — 단 GPT-6.1 Sol은 medium(model-effort.mjs EMPTY_EFFORT). (export: 회귀 테스트용 — 순수 함수) */
 export const CODEX_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh'];
 export function codexEffortArgs(effort, model) {
   const mapped = codexModelEffort(effort, model);

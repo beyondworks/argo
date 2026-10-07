@@ -30,7 +30,7 @@ import { codexHome, codexCmd, importCodexAuth, recoverCodexAuth, writeCodexTurnC
 import { codexModelEffort } from '../model-effort.mjs';
 
 /** 크루 effort → app-server ReasoningEffort 값(순수). CLI 인자(codexEffortArgs)와 같은 사상 —
-    기존 모델 max→xhigh, GPT-6 Sol/Luna는 모델별 값 보존. 미지원 값은 null(모델 기본). */
+    기존 모델 max→xhigh, GPT-6 계열은 모델별 값 보존. 미지원 값은 null(모델 기본), GPT-6.1 Sol은 medium. */
 export const codexEffortValue = codexModelEffort;
 
 /** 승인 판정자 — permission-gate를 codex 승인 표면에 사상한다(규칙 사본 금지: 판정은 게이트 함수
@@ -182,7 +182,7 @@ export function runAppServerSession({ input, output, prompt, model = '', effort 
       if (!threadId) throw new Error('thread/start가 스레드 id를 주지 않았습니다');
       const eff = codexEffortValue(effort, model);
       const started = await send('turn/start', { threadId, input: [{ type: 'text', text: prompt }], ...(eff ? { effort: eff } : {}) });
-      // 끼워 넣기 — 진행 중 턴에 사장 메시지를 더한다(turn/steer, 0.157.1 스키마: expectedTurnId 필수). 거절되거나 응답 전에 턴이 끝나면
+      // 끼워 넣기 — 진행 중 턴에 사장 메시지를 더한다(turn/steer, 0.157.1·0.159.3 스키마: expectedTurnId 필수). 거절되거나 응답 전에 턴이 끝나면
       // false — 호출부(chat.mjs)가 받아 두었다가 이 실행 뒤 이어 실행한다. 시간 제한으로 끊지 않는다: 늦게 받아들여진 것을 false로 치면 두 번 전달된다(검수 5).
       const turnId = started?.turn?.id;
       if (turnId && onSteerable && !done) onSteerable(async (text) => {

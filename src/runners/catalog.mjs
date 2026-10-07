@@ -55,7 +55,11 @@ export const RUNNERS = {
     models: [
       // GPT-5.6 패밀리(2026-07-09) — Sol(플래그십)·Terra(중간)·Luna(경량). sol id는 로컬 codex 설정으로 실증
       { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' },
-      // GPT-6 Astra(2026-09-22) — 핀 0.157.1 이상에서만 돈다(0.149.1은 400 — 2026-09-28 실사고, test/codex-pin-lockup.test.mjs가 잠금). 기본은 Sol 유지(유건 결정) — models[0]이 러너 전환 기본값이라 두 번째 자리
+      // GPT-6.1 Sol(2026-10-08 유건 결정) — 핀 0.159.3 이상에서만 돈다(0.157.1은 ChatGPT 구독에서 400, 2026-10-07 실측). 기본은 5.6 Sol 유지.
+      // 원격 카탈로그(scripts/gen-model-catalog.mjs LEGACY)에는 넣지 않는다 — 옛 앱(핀 0.157.1)이 목록에서 고르면 400이다.
+      // 강도를 비우면 medium(서버 기본 low — model-effort.mjs EMPTY_EFFORT).
+      { id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol' },
+      // GPT-6 Astra(2026-09-22) — 핀 0.157.1 이상에서만 돈다(0.149.1은 400 — 2026-09-28 실사고, test/codex-pin-lockup.test.mjs가 잠금). 기본은 Sol 유지(유건 결정) — models[0]이 러너 전환 기본값이라 맨 앞에 두지 않는다
       { id: 'gpt-6-astra', label: 'GPT-6 Astra' },
       // GPT-6 Sol·Luna — 핀 0.157.1 + ChatGPT 구독 로그인으로 실제 턴·셸 도구·MCP 호출 확인(2026-09-29).
       { id: 'gpt-6-sol', label: 'GPT-6 Sol' },
@@ -217,6 +221,10 @@ export const isCliTurn = (r, credType) => isCliRunner(r) && !(
 );
 export const GEMINI_DEFAULT_MODEL = 'gemini-2.5-pro';
 export const CODEX_DEFAULT_MODEL = 'gpt-5.6-sol';
+/** CLI 원샷(기억 정리·교정 감지·페르소나·직함·루틴 초안·대화 요약)의 codex 모델. 원샷은 예전에 `-m` 없이 돌아 서버 기본 모델을 썼는데,
+    서버 기본은 핀 버전에 따라 바뀐다(0.157.1 = gpt-6-astra, 0.159.3 = gpt-6.1-sol — 2026-10-07 실측). 핀 승격이 원샷 모델을 말없이
+    바꾸지 않게 0.157.1 시절 실제로 돌던 모델을 고정한다(강도는 넣지 않는다 — 서버 기본 medium, 종전과 같음). 바꾸려면 유건 결정 뒤 여기만. */
+export const CODEX_ONESHOT_MODEL = 'gpt-6-astra';
 
 /** 크루가 effort를 고르지 않았을 때 claude 러너에 보낼 기본값. Opus 5.5는 API 기본이 medium(Opus 5는 high)이라
     같은 크루가 모델만 바꿔도 얕아지지 않게 high를 준다(유건 결정 2026-09-23). 그 밖의 모델은 '' = SDK 기본 그대로(종전 동작). */

@@ -35,7 +35,7 @@ export {
   endpointNotFoundNotice, isEndpointNotFoundMsg,
   isOpenRouterCreditError, isOpenRouterCreditReply, isOpenRouterLimitError, isOpenRouterLimitReply,
   isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice,
-  pickRunner, autoRunnerOf, oauthFormatError, excludeWith, authExcludedNoRunnerMsg, isCliTurn, GEMINI_DEFAULT_MODEL, CODEX_DEFAULT_MODEL } from './runners/catalog.mjs';
+  pickRunner, autoRunnerOf, oauthFormatError, excludeWith, authExcludedNoRunnerMsg, isCliTurn, GEMINI_DEFAULT_MODEL, CODEX_DEFAULT_MODEL, CODEX_ONESHOT_MODEL } from './runners/catalog.mjs';
 export {
   provisionCodexCli, CODEX_EFFORTS, codexEffortArgs, CODEX_PIN, CODEX_LOCKUP_RE,
   importCodexAuth, recoverCodexAuth, writeCodexTurnConfig,
@@ -153,7 +153,8 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = CLI
       return await execCodexAppServer({ model, cwd, prompt, timeoutMs, cred, signal, effort, workRoots, mcpServers, onSteerable });
     } catch (e) {
       if (e.limitReached || e.aborted) throw e;
-      throw cliTurnFailure(e, 'codex', Date.now() - t0, timeoutMs, { stage: e.stage ?? 'exec', kind });
+      const t = cliTurnFailure(e, 'codex', Date.now() - t0, timeoutMs, { stage: e.stage ?? 'exec', kind });
+      throw codexOutdatedError(t?.message, await codexPinStale()) ?? t; // 낡은 관리본의 모델 거절 → exec 경로와 같은 업데이트 대기 안내(ko/en)
     }
   }
   if (runner === 'codex') {
