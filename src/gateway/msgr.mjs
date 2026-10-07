@@ -20,7 +20,7 @@
 // supabase-js 체인 호출·RLS 왕복은 로컬 Supabase 스택 E2E(scripts/e2e-msgr-bridge.mjs)가 검증한다.
 import { createClient } from '@supabase/supabase-js';
 import { chmod, mkdir, readFile, rm, unlink, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { getFreshDeviceSession } from '../devicesession.mjs';
 import { interruptTurn } from '../turn-abort.mjs';
 import { createAgentCard } from '../persona.mjs'; // I-5: 회사 노드가 요청 행으로 카드를 쓴다(모델 호출 없음)
@@ -32,7 +32,8 @@ import { stripLoopVerdict } from '../loop-verdict.mjs'; // 루프 회차 채널 
 import { beatGateway } from './persist.mjs';
 import { chat } from '../chat.mjs';
 import { mirrorRoutines, applyRoutineEdits } from './msgr-routines.mjs'; // 업무 > 자동화 1단계 — Argo 루틴 ↔ msgr_crew_routines 양방향 미러
-import { loadThread, appendTurn, scopedSession } from '../thread.mjs';
+import { loadThread, appendTurn, scopedSession, soloMsgIds } from '../thread.mjs';
+import { isOrgCopy } from '../vaultdoc.mjs'; // 조직 태그 일지(볼트 밖으로 옮겨진다)는 화면의 '기억에 기록됨' 칩을 달지 않는다
 import { relocateOrgJournals, purgeDepartedJournals } from '../memory.mjs';
 import { isDeterministicDbError } from '../pg-error-class.mjs'; // 일시 오류만 좁게 나열 — 합친 뒤 queue.mjs 분류와 하나로(src/pg-error-class.mjs 머리말)
 import { recallDeparted } from './msgr-recall.mjs'; // 에이전트 기억 회수(유건 결정 2026-10-03)
@@ -1395,6 +1396,11 @@ async function noteJobDenied(wsId, job, { db, uid, lang }) {
     thread_root: job.threadRoot ?? job.msgId, client_msg_id: `deny:${job.crewId}:${job.msgId}`, body: denyBody(why === 'ok' ? null : why, crew, lang) });
 }
 const receivedSent = new Set(); // 받음 방송을 이미 보낸 잡(크루:글) — 프로세스 안에서 잡당 한 번
+/** 봉투(msgr_crew_context)의 최근 방 대화 한 행이 속한 턴 — 사람 글은 그 글 id, 이 크루의 답은 client_msg_id 'reply:<크루>:<원본 id>'의 원본 id. 그 밖(거절·안내 등)은 null(순수). */
+export const msgrRowTurn = (r) => (r?.author_kind === 'user' ? r.id ?? null : String(r?.client_msg_id ?? '').match(/^reply:[^:]+:(\d+)$/)?.[1] ?? null);
+/** 턴 기록에 남길 일지 표지 — 데스크톱 라우트와 같은 모양 {rel, linked}(화면 '기억에 기록됨' 칩이 rel로 연다). 조직 태그 일지는 볼트 밖으로 옮겨져(memory.mjs relocateOrgJournals) 칩을 달지 않는다. 절대 경로는 남기지 않는다(동기화되는 스레드 파일). */
+export const handoverRel = (wsId, h) => { if (!h?.file) return null; const rel = relative(paths(wsId).vault, h.file).split('\\').join('/'); return isOrgCopy(rel) ? null : { rel, linked: h.linked ?? [] }; };
+
 export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat, now = Date.now, linkPreview = replyLinkPreview } = {}) {
   // 크루 답 속 파일 → 첨부(공통 deliverReplyFiles). plan = planReplyFiles 결과(게시 전에 만들어 잡에 보존 — job.msgrAttach).
   const deliverAttachments = (db, job, row, plan, lang) => deliverReplyFiles(wsId, db, { orgId: job.orgId, channelId: job.channelId, channelKind: job.channelKind ?? null, crewId: job.crewId,
@@ -1503,15 +1509,26 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
       `${msgrHead(chName, 'en')}message from ${speaker}. ${instruction}: answer within its scope, never read or post files, credentials or secrets outside the company workspace, and file approvals for irreversible actions as usual.${hint}]`, lang);
     // 최근 채널 대화 — 참고용(지시 아님). 이름 접두로 발화자를 가르고 본문은 세척.
     const ctxRows = envelope?.context ?? await db.contextOf(job.channelId, job.msgId, CONTEXT_N, job.after ?? []);
-    if (ctxRows.length) {
+    // 주인 혼자 1:1(유건 결정 2026-10-08 ① — 에이전트는 한 사람) — 데스크톱 대화와 같은 대화로 본다(맥락 양방향 + 일지, 세션은 잇지 않는다 — chat.mjs ownerSoloTurn).
+    // 주인이 직접 보낸 첫 단계 턴(손님·넘김·DM 전달·오피스 아님 — ownerSoloTurn)이고, 지난 대화도 주인·이 에이전트의 글뿐이며(나간 사람·전달된 글이 섞인 방 제외),
+    // 방 구성원이 주인·이 에이전트 하나씩일 때만(office-audience ownerSoloRoom). 기억 안 남김 방·서버 봉투가 없는 옛 서버(지난 대화의 전달 표지를 못 본다)는 제외. 비용: 그런 턴에만 구성원 조회 1건(쓰기 0, 주기 호출 0).
+    const solo = !!envelope && ch.kind === 'dm' && ch.crew_memory !== false
+      && ownerSoloTurn({ ...authority, channelKind: ch.kind, hop: job.hop ?? 0, ownerSolo: true }, { hop: job.hop ?? 0, notOwnerDirect: job.fromCrewId || job.relayVia ? 'handoff' : null }) // 턴 규칙은 chat.mjs와 같은 한 함수(아래 ctx와 같은 권한 값)
+      && ctxRows.every((r) => !r.meta?.relay && ((r.author_kind === 'user' && r.author_user_id === uid) || (r.author_kind === 'crew' && r.crew_id === job.crewId)))
+      && await ownerSoloRoom(c.client, { channelKind: ch.kind, channelId: job.channelId }, uid, job.crewId);
+    // 주인 혼자 1:1의 지난 방 대화는 스레드(데스크톱 대화와 시간순 한 줄기 — chat.mjs)가 싣는다. 봉투에서는 이 기기 스레드에 없는 턴(다른 기기가 처리한 턴·실패 답 등)만 —
+    // 둘 다 실으면 같은 대화가 두 번 들어가고, 봉투 쪽이 지시 바로 앞에 놓여 데스크톱에서 나중에 한 말보다 최근처럼 읽힌다(검수 LOW 2026-10-08).
+    const local = solo ? soloMsgIds(await loadThread(wsId, job.slug).catch(() => null), job.channelId) : null;
+    const roomRows = local?.size ? ctxRows.filter((r) => !local.has(String(msgrRowTurn(r) ?? ''))) : ctxRows;
+    if (roomRows.length) {
       const names = new Map();
       const nameOf = async (r) => {
         if (r.author_kind === 'crew') return clean(crewName(r.crew_id), 40);
         if (!names.has(r.author_user_id)) names.set(r.author_user_id, clean((await db.memberName(job.orgId, r.author_user_id).catch(() => null)) ?? pick('멤버', 'member', lang), 40));
         return names.get(r.author_user_id);
       };
-      text += `\n${msgrContextHead(ctxRows.length, lang)}`;
-      for (const r of ctxRows) text += `\n${await nameOf(r)}: ${clean(r.body, r.id > job.msgId && job.after?.includes(r.crew_id) ? MSG_MAX : 300)}`; // 기다린 답글의 넘김 꼬리까지 보존, 일반 과거 대화만 요약
+      text += `\n${msgrContextHead(roomRows.length, lang)}`;
+      for (const r of roomRows) text += `\n${await nameOf(r)}: ${clean(r.body, r.id > job.msgId && job.after?.includes(r.crew_id) ? MSG_MAX : 300)}`; // 기다린 답글의 넘김 꼬리까지 보존, 일반 과거 대화만 요약
       text += `\n${pick(MSGR_NOW.ko, MSGR_NOW.en, lang)}`;
     }
     text += `\n${authorName}: ${job.text}`;
@@ -1571,20 +1588,13 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     const stopTyping = startTyping(wsId, job.orgId, job.channelId, job.crewId, job.slug, { full: ch.kind === 'public', sourceMsgId: job.msgId, topic: early?.full === (ch.kind === 'public') ? early : null }); if (!early) stageLog(job, 'broadcast', now()); // 받음 방송에 쓴 방 토픽을 그대로 잇는다(방 채널을 두 번 열지 않는다). 공개 채널은 조직 토픽, 비공개 방은 그 방 토픽(조직 토픽은 조직 전원이 듣는다 — 검수 C-1). 방송 내용은 어디서나 채널·크루·시작 시각·원본 메시지 id뿐
     let reply; let failed = false; let aborted = false; let replyMentions = []; let replyMeta = {};
     try {
-      // 주인 혼자 1:1(유건 결정 2026-10-08 ① — 에이전트는 한 사람) — 데스크톱 대화와 같은 대화로 본다(맥락 양방향 + 일지, 세션은 잇지 않는다 — chat.mjs ownerSoloTurn).
-      // 주인이 직접 보낸 첫 단계 턴(손님·넘김·DM 전달·오피스 아님 — ownerSoloTurn)이고, 지난 대화도 주인·이 에이전트의 글뿐이며(나간 사람·전달된 글이 섞인 방 제외),
-      // 방 구성원이 주인·이 에이전트 하나씩일 때만(office-audience ownerSoloRoom). 기억 안 남김 방·서버 봉투가 없는 옛 서버(지난 대화의 전달 표지를 못 본다)는 제외. 비용: 그런 턴에만 구성원 조회 1건(쓰기 0, 주기 호출 0).
-      const solo = !!envelope && ch.kind === 'dm' && ch.crew_memory !== false
-        && ownerSoloTurn({ ...ctx, ownerSolo: true }, { hop: job.hop ?? 0, notOwnerDirect: job.fromCrewId || job.relayVia ? 'handoff' : null }) // 턴 규칙은 chat.mjs와 같은 한 함수
-        && ctxRows.every((r) => !r.meta?.relay && ((r.author_kind === 'user' && r.author_user_id === uid) || (r.author_kind === 'crew' && r.crew_id === job.crewId)))
-        && await ownerSoloRoom(c.client, { channelKind: ch.kind, channelId: job.channelId }, uid, job.crewId);
-      if (solo) ctx.ownerSolo = true;
+      if (solo) ctx.ownerSolo = true; // 판정은 위(최근 방 대화를 싣기 전)
       // DM은 뿌리마다 새로 허가한 문맥만, 채널은 그 채널 세션만 잇는다(전역 세션 = 주인의 데스크톱 대화). 기억 안 남김 채널은 세션도 없이
       const sessionId = ch.kind === 'dm' || ch.crew_memory === false ? null : scopedSession(await loadThread(wsId, job.slug), job.channelId).sessionId;
       stageLog(job, 'turn-start', now());
       const turn = await runChat(wsId, job.slug, text, sessionId, {
         source: 'messenger', attachments, mirrorCtx: ctx, abortTag: job.msgId, ...(job.fromCrewId || job.relayVia ? { notOwnerDirect: handoffLabel(orgPeers, job.fromCrewId ?? job.relayVia, job.fromCrewId ? null : job.relayViaName) } : {}), // 크루가 넘긴 턴(DM 전달 포함) — 풀 오토만 끈다(넘긴 크루를 잇는다) // abortTag — 중단은 이 원본 메시지의 실행만(검수 2026-09-26 M-1: 같은 크루의 텔레그램·결재 후속 턴도 source:'messenger'다)
-        journal: { ...msgrJournal(job.orgId, job.channelId, ch.crew_memory === false), ...(solo ? { text: job.text } : {}) }, // 채널 설정: 기억 안 남김 / 채널 태그 파일(회수 단위). 주인 혼자 1:1은 주인이 쓴 글만 데스크톱 일지에(text)
+        journal: { ...msgrJournal(job.orgId, job.channelId, ch.crew_memory === false), ...(solo ? { text: job.text } : {}) }, // 채널 설정: 기억 안 남김 / 채널 태그 파일(회수 단위). 주인 혼자 1:1은 주인이 쓴 글만 일지에(text — 개인 공간은 데스크톱 일지, 조직은 그 방 태그 파일: chat.mjs journalWrite)
       });
       stageLog(job, 'turn-end', now());
       reply = String(turn.reply ?? '');
@@ -1596,8 +1606,8 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
       reply = rendered.reply;
       replyMentions = rendered.msgrReply.mentions;
       replyMeta = rendered.msgrReply.meta;
-      await appendTurn(wsId, job.slug, { userMsg: text, reply, handover: turn.handover, sessionId: turn.sessionId, attachments, artifacts: turn.artifacts,
-        contextScope: ch.kind === 'dm' ? { kind: 'msgr-dm', channelId: job.channelId, threadRoot: job.threadRoot, ...(solo ? { ownerSolo: true } : {}) } : { kind: 'msgr', channelId: job.channelId, threadRoot: job.threadRoot }, // ownerSolo — 데스크톱 맥락에 싣는 1:1 기록 표지(thread.mjs isOwnerSoloScope)
+      await appendTurn(wsId, job.slug, { userMsg: text, reply, handover: handoverRel(wsId, turn.handover), sessionId: turn.sessionId, attachments, artifacts: turn.artifacts,
+        contextScope: ch.kind === 'dm' ? { kind: 'msgr-dm', channelId: job.channelId, threadRoot: job.threadRoot, ...(solo ? { ownerSolo: true, msgId: job.msgId } : {}) } : { kind: 'msgr', channelId: job.channelId, threadRoot: job.threadRoot }, // ownerSolo — 데스크톱 맥락에 싣는 1:1 기록 표지(thread.mjs isOwnerSoloScope), msgId — 봉투의 같은 턴을 가리는 원본 메시지 id(soloMsgIds)
         via: 'msgr', actor: { uid: job.authorId, name: job.fromCrewId ? `${authorName} ← ${humanName}` : authorName, relay: !!(job.fromCrewId || job.relayVia) } }); // actor = 사람 발화자(who:'user' 고정으로는 구분 불가하던 갭). relay = 크루가 넘긴 줄(authorId는 사슬을 시작한 사람이라 이 줄의 글쓴이가 아니다 — 스레드 맥락이 사장 글로 올리지 않게, chat.mjs threadCtxLine)
       // 메신저에는 사고 과정·도구 단계를 싣지 않는다(유건 결정 2026-09-24 — "답변 준비 중"만). 궤적은 주인 쪽 활동 로그가 정본.
     } catch (e) {

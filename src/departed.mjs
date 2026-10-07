@@ -6,6 +6,11 @@
 // 다른 크루가 쪽지·위임·세션 메시지로 전해 준 줄과 그 답은 지우지 않는다 — 이 크루가 그 채널에 있었던 기록이 아니라 전해 받은 일이다(설계 검수 M2).
 export const CHANNEL_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** 주인 혼자 1:1 기록인가(유건 결정 2026-10-08 ① — 에이전트는 한 사람) — 사람 구성원이 주인 하나·에이전트도 이 에이전트 하나인 메신저 1:1에서
+    주인이 직접 보낸 턴의 줄. 게이트웨이(msgr.mjs)가 방을 확인한 턴에만 contextScope.ownerSolo를 적는다. 표지가 없는 DM 줄(옛 버전·남 낀 방)은 해당 없음.
+    이런 줄은 범위 없는 대화(데스크톱)의 맥락·누적 요약(t.summary)에 들어간다 — 회수 때 그 요약도 거둔다(아래 applyDeparted). thread.mjs가 다시 내보낸다. */
+export const isOwnerSoloScope = (s) => s?.kind === 'msgr-dm' && s.ownerSolo === true;
+
 /** 메신저 채널 범위 줄이면 그 채널 id(소문자), 아니면 null. 텔레그램·슬랙·범위 없는 줄은 대상이 아니다. */
 export const msgChannel = (m) => {
   const s = m?.contextScope;
@@ -42,7 +47,11 @@ export function applyDeparted(t) {
   if (!d || typeof d !== 'object' || !Array.isArray(t.messages)) return 0;
   const own = ownChannels(t.messages);
   const before = t.messages.length;
-  t.messages = t.messages.filter((m, i) => { const c = own[i]; return !(c && d[c] && (Number(m.ts) || 0) <= entry(d[c]).ts); });
+  const gone = (m, i) => { const c = own[i]; return !!(c && d[c] && (Number(m.ts) || 0) <= entry(d[c]).ts); };
+  // 주인 혼자 1:1 줄은 범위 없는 누적 요약(t.summary)에도 접혀 있다 — 지우는 1:1 줄을 덮는 요약(upto가 그 줄 이후)은 통째로 거둔다(다시 만들 수 있는 캐시).
+  // 다른 기기의 옛 사본이 병합으로 되살린 줄을 거를 때도 같다(mergeThread가 병합 결과에 이 함수를 다시 적용한다).
+  if (t.summary && t.messages.some((m, i) => gone(m, i) && isOwnerSoloScope(m.contextScope) && (Number(m.ts) || 0) <= (Number(t.summary.upto) || 0))) delete t.summary;
+  t.messages = t.messages.filter((m, i) => !gone(m, i));
   for (const [k, v] of Object.entries(t.scopedSessions ?? {})) {
     const e = d[k.toLowerCase()];
     if (e && entry(e).sids.includes(v?.sessionId)) delete t.scopedSessions[k];

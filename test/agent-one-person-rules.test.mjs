@@ -1,10 +1,12 @@
-// 에이전트 '한 사람'(유건 결정 2026-10-08 ①·③)의 순수 규칙 — 방 판정(ownerSoloRoom), 턴 판정(ownerSoloTurn), 기록 범위(inContextScope·soloAfterSession),
+// 에이전트 '한 사람'(유건 결정 2026-10-08 ①·③)의 순수 규칙 — 방 판정(ownerSoloRoom), 턴 판정(ownerSoloTurn), 기록 범위(inContextScope), 세션이 본 1:1 줄(soloKey·soloSeenFor·soloMsgIds),
+// 회수 때 범위 없는 요약 거두기(applyDeparted),
 // 호칭 규칙 판정(hasAddressRule·userSetAddress). 행동 전체는 test/agent-one-person.test.mjs(실제 chat()·게이트웨이 처리기)가 잠근다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ownerSoloRoom, audienceOf } from '../src/gateway/office-audience.mjs';
 import { ownerSoloTurn } from '../src/gateway/msgr-handoff.mjs';
-import { inContextScope, isOwnerSoloScope, soloAfterSession } from '../src/thread.mjs';
+import { inContextScope, isOwnerSoloScope, soloKey, soloSeenFor, soloMsgIds } from '../src/thread.mjs';
+import { applyDeparted, forgetChannels } from '../src/departed.mjs';
 import { hasAddressRule, userSetAddress, userAddressNote, ADDRESS_RULE_SKILL } from '../src/user-name.mjs';
 import { RULES_SKILL } from '../src/corrections.mjs';
 
@@ -77,22 +79,62 @@ test('기록 범위 — 범위 없는 턴은 범위 없는 기록 + 주인 혼�
   assert.equal(inContextScope({ contextScope: solo }, plain), false, '남 낀 DM 턴(범위 키 없음)에는 아무 기록도 없음');
 });
 
-test('soloAfterSession — 마지막 범위 없는 답 뒤의 1:1 기록만 "세션이 못 본 것"', () => {
-  const solo = { kind: 'msgr-dm', channelId: 'a', ownerSolo: true };
-  const T = (messages) => ({ messages });
-  assert.equal(soloAfterSession(T([])), false);
-  assert.equal(soloAfterSession(T([{ who: 'user', text: 'd' }, { who: 'crew', text: 'r' }])), false);
-  assert.equal(soloAfterSession(T([{ who: 'crew', text: 'r' }, { who: 'user', contextScope: solo }, { who: 'crew', contextScope: solo }])), true);
-  assert.equal(soloAfterSession(T([{ who: 'user', contextScope: solo }, { who: 'crew', contextScope: solo }, { who: 'user', text: 'd' }, { who: 'crew', text: 'r' }])), false, '그 뒤 데스크톱 답이 있으면 세션이 이미 받았다');
-  assert.equal(soloAfterSession(T([{ who: 'crew', text: 'r' }, { who: 'user', contextScope: { kind: 'msgr-dm', channelId: 'a' } }])), false, '표지 없는 DM은 세지 않는다');
-  assert.equal(soloAfterSession(T([{ who: 'crew', text: 'r' }, { who: 'user', contextScope: solo, failed: 'x' }])), false, '실패 줄은 세지 않는다');
-  assert.equal(soloAfterSession(T([{ who: 'user', contextScope: solo }, { who: 'user', text: 'now', awaiting: true }])), true, '지금 보내는 데스크톱 글(대기 줄) 앞의 1:1');
+test('세션이 본 1:1 줄 — 키는 시각·화자·방, 기록은 그 세션 것일 때만', () => {
+  const solo = { kind: 'msgr-dm', channelId: 'AbC', ownerSolo: true };
+  assert.equal(soloKey({ ts: 5, who: 'user', contextScope: solo }), '5|user|abc');
+  assert.notEqual(soloKey({ ts: 5, who: 'user', contextScope: solo }), soloKey({ ts: 5, who: 'crew', contextScope: solo }), '같은 턴의 지시·답은 다른 줄');
+  const t = { soloSeen: { session: 's1', keys: ['5|user|abc'] } };
+  assert.deepEqual([...soloSeenFor(t, 's1')], ['5|user|abc']);
+  assert.equal(soloSeenFor(t, 's2').size, 0, '다른 세션의 기록은 이 세션이 본 줄이 아니다');
+  assert.equal(soloSeenFor(t, null).size, 0, '세션이 없으면 본 줄도 없다');
+  assert.equal(soloSeenFor({}, 's1').size, 0, '기록 없음 = 본 줄 없음(못 본 줄을 건넨다 — 잃지 않는다)');
+  assert.equal(soloSeenFor({ soloSeen: { session: 's1', keys: 'x' } }, 's1').size, 0, '깨진 기록은 무시');
+});
+
+test('soloMsgIds — 이 기기 스레드에 있는 그 방의 주인 혼자 1:1 턴(원본 메시지 id)만', () => {
+  const T = { messages: [
+    { who: 'user', contextScope: { kind: 'msgr-dm', channelId: 'A', ownerSolo: true, msgId: 11 } },
+    { who: 'crew', contextScope: { kind: 'msgr-dm', channelId: 'A', ownerSolo: true, msgId: 11 } },
+    { who: 'user', contextScope: { kind: 'msgr-dm', channelId: 'B', ownerSolo: true, msgId: 12 } },
+    { who: 'user', contextScope: { kind: 'msgr-dm', channelId: 'A', msgId: 13 } },
+    { who: 'user', contextScope: { kind: 'msgr-dm', channelId: 'A', ownerSolo: true } },
+    { who: 'user', text: 'desk' },
+  ] };
+  assert.deepEqual([...soloMsgIds(T, 'a')], ['11'], '다른 방·표지 없는 줄·id 없는 줄은 빼고, 방 id는 대소문자 무관');
+  assert.equal(soloMsgIds(null, 'a').size, 0);
+});
+
+test('회수 — 지우는 주인 혼자 1:1 줄을 덮는 범위 없는 요약(t.summary)도 거둔다, 덮지 않는 요약·채널 요약 규칙은 그대로', () => {
+  const CH = 'dddddddd-0000-4000-8000-000000000002';
+  const lines = () => [
+    { who: 'user', text: 'desk', ts: 1 },
+    { who: 'user', text: 'solo', ts: 2, contextScope: { kind: 'msgr-dm', channelId: CH, ownerSolo: true } },
+    { who: 'crew', text: 'r', ts: 2, contextScope: { kind: 'msgr-dm', channelId: CH, ownerSolo: true } },
+    { who: 'user', text: 'desk2', ts: 3 },
+  ];
+  const covered = { messages: lines(), summary: { text: 'S', upto: 3 } };
+  assert.equal(forgetChannels(covered, [CH]).removed, 2);
+  assert.equal(covered.summary, undefined, '요약이 지운 1:1 줄(ts 2)을 덮는다(upto 3) — 거둔다');
+  assert.deepEqual(covered.messages.map((m) => m.text), ['desk', 'desk2'], '데스크톱 줄은 남는다');
+  const before = { messages: lines(), summary: { text: 'S', upto: 1 } };
+  forgetChannels(before, [CH]);
+  assert.deepEqual(before.summary, { text: 'S', upto: 1 }, '1:1 줄보다 앞까지만 덮는 요약은 그대로');
+  const plainDm = { messages: [{ who: 'user', text: 'x', ts: 2, contextScope: { kind: 'msgr-dm', channelId: CH } }, { who: 'user', text: 'd', ts: 3 }], summary: { text: 'S', upto: 3 } };
+  forgetChannels(plainDm, [CH]);
+  assert.deepEqual(plainDm.summary, { text: 'S', upto: 3 }, '표지 없는 DM 줄은 범위 없는 요약에 없다 — 요약을 거두지 않는다');
+  // 다른 기기의 옛 사본이 병합으로 되살린 줄을 거르는 자리(읽기·병합에서 다시 적용)도 같다
+  const revived = { messages: lines(), summary: { text: 'S', upto: 3 }, departed: { [CH]: { ts: 2, sids: [] } } };
+  applyDeparted(revived);
+  assert.equal(revived.summary, undefined);
 });
 
 test('호칭 규칙 판정 — 사용자를 부르는 방법을 정한 줄만', () => {
-  for (const s of ['- 나를 "대표님"이라고 불러라', '- 사용자를 형이라고 부른다', '- 저를 유건님으로 불러 주세요', '- 호칭은 대표님', '- Call me "Chief".', '- Address the user as Dr. Kim', '- refer to me as boss'])
+  for (const s of ['- 나를 "대표님"이라고 불러라', '- 사용자를 형이라고 부른다', '- 저를 유건님으로 불러 주세요', '- 호칭은 대표님', '- Call me "Chief".', '- Address the user as Dr. Kim', '- refer to me as boss',
+    '- 나를 대표님이라 불러', '- 대표님이라고 해줘', '- 나는 형이라 부르면 돼', '- 나를 부를 때는 대표님', '- 사용자 호칭은 대표님']) // 검수 LOW: 앞의 셋을 놓쳤다
     assert.equal(hasAddressRule(s), true, s);
-  for (const s of ['- 결론부터 말한다', '- 함수 하나를 부를 때 인자를 확인한다', '- 도구를 부를 때 결재를 먼저', "- Always address the user's question first", '- call them back when a customer emails', '- 결재를 부르기 전에', ''])
+  for (const s of ['- 결론부터 말한다', '- 함수 하나를 부를 때 인자를 확인한다', '- 도구를 부를 때 결재를 먼저', "- Always address the user's question first", '- call them back when a customer emails', '- 결재를 부르기 전에', '',
+    '- 고객은 고객님이라고 부른다', '- 메일에서 상대를 이름으로 부르지 마라', '- 상대방 호칭은 OO님으로 통일', '- 너를 서윤이라고 부를게', // 검수 LOW: 사용자가 아닌 대상을 잡았다
+    '- 출처가 없으면 "출처 없음"이라고 해', '- 모르면 모른다고 해', '- 결론부터 말하는 걸로 해', '- 파일은 Read로 불러온다', '- 템플릿으로 불러와 채운다', '- 너무 길게 쓰지 마', '- 저장 전에 확인'])
     assert.equal(hasAddressRule(s), false, s);
 });
 

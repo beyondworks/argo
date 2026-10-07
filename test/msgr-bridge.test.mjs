@@ -429,8 +429,8 @@ test('journal 정책: tag는 별도 일지 파일(회수 단위), chat()의 세 
   assert.equal(direct.length, 1, 'saveHandover 직접 호출은 journalWrite 정의 1곳뿐 — 한 지점이라도 우회하면 crew_memory=false 채널 내용이 기억에 샌다');
   assert.equal((src.match(/await journalWrite\(reply, meta\.name \|\| agentSlug\)/g) ?? []).length, 3, '세 저장 지점 전부 journalWrite');
   // 메신저 채널 턴(조직 태그)은 PC 일지에 쓰지 않는다 — 채널·조직 기억은 서버 일지에만(유건 결정 2026-09-24)
-  // 주인 혼자 1:1(유건 결정 2026-10-08 ①)만 DM이어도 데스크톱 일지(태그 없음)에 주인 글(journal.text)을 쓴다 — 동작은 test/agent-one-person.test.mjs가 잠근다
-  assert.match(src, /const journalWrite = \(reply, label\) => \(!ownerSolo && \(dmTurn \|\| journal\?\.off \|\| String\(journal\?\.tag \?\? ''\)\.startsWith\('org-'\)\) \? null\n\s+: saveHandover\(wsId, agentSlug, ownerSolo && typeof journal\?\.text === 'string' \? journal\.text : userMsg, reply, label, \{ tag: ownerSolo \? '' : journal\?\.tag \?\? '' \}\)\);/);
+  // 주인 혼자 1:1(유건 결정 2026-10-08 ①)만 DM이어도 일지에 주인 글(journal.text)을 쓴다 — 개인 공간은 태그 없음, 조직은 그 방 태그 파일(회수 단위). 동작은 test/agent-one-person.test.mjs가 잠근다
+  assert.match(src, /const journalWrite = \(reply, label\) => \(!ownerSolo && \(dmTurn \|\| journal\?\.off \|\| String\(journal\?\.tag \?\? ''\)\.startsWith\('org-'\)\) \? null\n\s+: saveHandover\(wsId, agentSlug, ownerSolo && typeof journal\?\.text === 'string' \? journal\.text : userMsg, reply, label, \{ tag: ownerSolo \? \(mirrorCtx\.orgId \? msgrJournal\(mirrorCtx\.orgId, mirrorCtx\.channelId\)\.tag : ''\) : journal\?\.tag \?\? '' \}\)\);/);
 });
 
 test('journal 전파 핀: chat() 재귀 재시도 6곳·위임 1곳·makeCrewServer가 journal을 넘긴다(검수 HIGH-2 — 한 곳이 빠지면 crew_memory=false 내용이 일지에 샌다)', async () => {

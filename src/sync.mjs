@@ -614,6 +614,11 @@ export function mergeThread(localBuf, remoteBuf, prefer = 'remote') {
   merged.sessionId = primary.sessionId ?? other.sessionId ?? null; // 이어가기 세션은 최근 편집 쪽으로 수렴
   // sessionDevice는 sessionId를 제공한 쪽과 짝으로 — 어긋나면 남의 기기 세션을 내 것으로 오판한다
   merged.sessionDevice = (primary.sessionId != null ? primary.sessionDevice : other.sessionDevice) ?? null;
+  // 그 세션이 본 주인 혼자 1:1 줄(thread.mjs soloSeen)도 세션 id와 짝 — 고른 sessionId의 기록만 남기고, 양쪽이 같은 세션이면 합친다(세션은 본 것을 잊지 않는다).
+  // 어긋난 기록을 남기면 다른 세션이 본 줄을 이 세션이 본 것으로 읽어 건네지 않는다(1:1 대화를 모른다). 기록이 없으면 못 본 줄을 다시 건넬 뿐이다.
+  const soloSeenOf = (x) => (merged.sessionId && x?.soloSeen?.session === merged.sessionId && Array.isArray(x.soloSeen.keys) ? x.soloSeen.keys : null);
+  const seenKeys = [soloSeenOf(primary), soloSeenOf(other)].filter(Boolean);
+  if (seenKeys.length) merged.soloSeen = { session: merged.sessionId, keys: [...new Set(seenKeys.flat())] }; else delete merged.soloSeen;
   if (L.scopedSessions || R.scopedSessions) merged.scopedSessions = { ...other.scopedSessions, ...primary.scopedSessions }; // 메신저 채널 세션은 채널 단위로 합친다(세션·기기 짝은 항목 안에 함께 있다)
   // 누적 요약(thread-context.mjs {text, upto}) — 통째로 한쪽 것을 쓰면 다른 기기의 더 최신 요약·그 기기에만 있는 채널 요약이 사라져 같은 몫을 다시 요약한다(재검수 LOW).
   // 키마다 upto(요약이 덮는 마지막 메시지 ts)가 큰 쪽, 같으면 최근 편집 쪽. 회수된 채널의 요약은 아래 applyDeparted가 지운다.

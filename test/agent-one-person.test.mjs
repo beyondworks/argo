@@ -4,6 +4,7 @@
 // 고정하는 것: ① 데스크톱 ↔ 주인 혼자 1:1 양방향(개인 공간·조직, CLI·SDK), 일지, 세션 미사용
 //              ② 남의 글이 주인 맥락에 들어가지 않음(손님 낀 방·나간 손님 글·친구 방·그룹·채널·넘김·오피스·기억 안 남김)
 //              ③ 주인 데스크톱 대화가 남 낀 방 답에 새지 않음 ④ 두 사본 병합 ⑤ 호칭 규칙이 공간별 이름 지시보다 우선(ko·en)
+//              ⑥ 데스크톱 세션이 본 1:1 줄(세션과 짝 — 위치로 판정하지 않는다, 검수 HIGH) ⑦ 조직 1:1 일지·요약 회수(검수 MEDIUM) ⑧ 방 대화 겹침·순서(검수 LOW)
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
@@ -60,10 +61,12 @@ const hooks = registerHooks({ resolve(specifier, context, next) {
 after(() => { hooks.deregister(); globalThis.fetch = fetchBefore; for (const k of ['__opRunner', '__opCli', '__opSdk']) delete globalThis[k]; });
 
 const { createCompany, paths } = await import('../src/workspace.mjs');
-const { appendTurn, loadThread } = await import('../src/thread.mjs');
+const { appendTurn, loadThread, setThreadSummary, noteSoloSeen, isOwnerSoloScope } = await import('../src/thread.mjs');
 const { chat } = await import('../src/chat.mjs');
 const M = await import('../src/gateway/msgr.mjs');
 const { mergeThread } = await import('../src/sync.mjs');
+const { relocateOrgJournals } = await import('../src/memory.mjs');
+const { recallDeparted } = await import('../src/gateway/msgr-recall.mjs');
 
 const OWNER = '11111111-1111-4111-8111-111111111111';
 const GUEST = '22222222-2222-4222-8222-222222222222';
@@ -139,6 +142,10 @@ async function say(ws, r, body, { author = OWNER, hop = 0, crewId = null, meta =
   return r.reply(msgId);
 }
 const lastPrompt = () => seen.slice(mark).map((x) => x.prompt).join('\n'); // 마지막 호출이 러너에 보낸 글 전부(없으면 빈 글)
+const CATCH_KO = /그 사이 메신저 1:1에서 나눈 대화/;
+const tick = () => new Promise((r) => setTimeout(r, 5));
+const chatFile = (ws) => join(paths(ws).chats, 'seoyun.json');
+const mergeInto = async (a, b) => writeFile(chatFile(a), mergeThread(await readFile(chatFile(a)), await readFile(chatFile(b)))); // b(다른 사본)를 a로 동기화 병합
 const lastSystem = () => { const s = seen.slice(mark).map((x) => x.system).join('\n'); assert.ok(s, '러너가 불리지 않았다'); return s; };
 const journalText = async (ws) => {
   const dir = paths(ws).journal;
@@ -167,18 +174,26 @@ for (const r0 of ['codex', 'claude']) {
     assert.equal(line.contextScope.channelId, OCH, '기록은 그 방 id를 그대로 지닌다(채널 기억 회수 단위)');
     const again = await desk(ws, '방금 숫자?', first.sessionId);
     assert.equal(again.reply, '2');
-    if (r0 === 'claude') assert.equal(seen[seen.length - 1].resume, null, '세션이 모르는 1:1 기록이 있으면 이어 쓰지 않고 새 세션 + 최근 대화');
+    if (r0 === 'claude') {
+      assert.equal(seen[seen.length - 1].resume, 'sdk-session-1', '세션은 그대로 이어 쓴다(긴 도구 작업 세부를 잃지 않는다)');
+      assert.match(lastPrompt(), CATCH_KO, '세션이 못 본 1:1 줄만 이번 글 앞에 건넨다');
+    }
   });
 }
 
-test('[claude] 세션이 1:1 기록을 이미 본 뒤에는 데스크톱 세션을 그대로 이어 쓴다', async () => {
+test('[claude] 세션이 1:1 줄을 받은 뒤에는 다시 건네지 않고 그대로 이어 쓴다 — 건넨 줄은 세션과 짝으로 남는다', async () => {
   runner = 'claude'; const ws = await company();
   const a = await desk(ws, '0 기억해');
   await say(ws, room({ pair: `crew:${CREW}` }), '3 기억해');
-  const b = await desk(ws, '방금 숫자?', a.sessionId); // 새 세션으로 1:1 기록을 받음
+  const b = await desk(ws, '방금 숫자?', a.sessionId);
   assert.equal(b.reply, '3');
+  assert.equal(seen.at(-1).resume, 'sdk-session-1');
+  const t = await loadThread(ws, 'seoyun');
+  assert.equal(t.soloSeen?.session, 'sdk-session-1');
+  assert.equal(t.soloSeen.keys.length, 2, '건넨 1:1 줄 — 지시와 답');
   await desk(ws, '다른 이야기', b.sessionId);
-  assert.equal(seen[seen.length - 1].resume, 'sdk-session-1', '그 뒤로는 종전처럼 이어 쓴다');
+  assert.equal(seen.at(-1).resume, 'sdk-session-1', '그 뒤로도 이어 쓴다');
+  assert.doesNotMatch(lastPrompt(), /3 기억해|그 사이 메신저/, '이미 받은 줄은 다시 건네지 않는다');
 });
 
 test('주인 혼자 1:1 턴은 일지를 쓰고(주인 글만), 세션은 남기지 않는다', async () => {
@@ -320,3 +335,156 @@ for (const r0 of ['codex', 'claude']) {
     if (r0 === 'claude') assert.match(lastPrompt(), /desktop and your 1:1 messenger chat with the user are one conversation/);
   });
 }
+
+// ── 5. 데스크톱 세션이 본 1:1 줄(검수 HIGH 2026-10-08) — '마지막 데스크톱 답 뒤'라는 위치가 아니라 세션과 짝으로 남긴 "건넨 줄"로 판정한다 ──
+for (const r0 of ['claude', 'codex']) {
+  test(`[${r0}] 두 사본 — 1:1이 앱의 데스크톱 턴보다 먼저 끝났지만 늦게 병합돼도 다음 데스크톱 턴이 1:1을 안다(검수 R1)`, async () => {
+    runner = r0;
+    const a = await company(); const b = await company(); // a = 앱(데스크톱), b = 상주(메신저 턴)
+    const s1 = await desk(a, '0 기억해'); await tick();
+    await say(b, room({ pair: `crew:${CREW}` }), '6 기억해 FROM_SOLO'); await tick(); // 상주에서 1:1(시각이 앱의 다음 데스크톱 답보다 앞)
+    const s2 = await desk(a, '다른 이야기', s1.sessionId); // 앱은 아직 1:1 줄을 못 받았다
+    await mergeInto(a, b);
+    const r = await desk(a, '방금 숫자?', s2.sessionId);
+    assert.equal(r.reply, '6');
+    if (r0 === 'claude') assert.equal(seen.at(-1).resume, 'sdk-session-1', '세션은 이어 쓰고 못 본 줄만 건넨다');
+  });
+}
+test('[claude] 데스크톱 턴이 도는 동안 1:1 턴이 끝나도(턴 끝에 기록하는 경로) 다음 데스크톱 턴이 1:1을 안다(검수 R2)', async () => {
+  runner = 'claude'; const ws = await company();
+  const s1 = await desk(ws, '0 기억해');
+  let release; const gate = new Promise((r) => { release = r; });
+  // 텔레그램 1:1(gateway.mjs)처럼 턴이 끝난 뒤에야 지시·답 두 줄을 붙이는 경로 — 그 사이 1:1 줄이 앞에 놓인다
+  const deskP = (async () => { const r = await chat(ws, 'seoyun', '긴 작업', s1.sessionId, {}); await gate; await appendTurn(ws, 'seoyun', { userMsg: '긴 작업', reply: r.reply, sessionId: r.sessionId }); return r; })();
+  await tick();
+  await say(ws, room({ pair: `crew:${CREW}` }), '6 기억해 FROM_SOLO');
+  release(); const s2 = await deskP;
+  const r = await desk(ws, '방금 숫자?', s2.sessionId);
+  assert.equal(r.reply, '6');
+  assert.equal(seen.at(-1).resume, 'sdk-session-1');
+});
+for (const via of ['routine', 'delegate', 'crewmail']) {
+  test(`[claude] 1:1 뒤 세션과 무관한 자동 턴(${via}) 줄이 끼어도 다음 데스크톱 턴이 1:1을 안다(검수 R3)`, async () => {
+    runner = 'claude'; const ws = await company();
+    const s1 = await desk(ws, '0 기억해');
+    await say(ws, room({ pair: `crew:${CREW}` }), '6 기억해 FROM_SOLO');
+    await appendTurn(ws, 'seoyun', { userMsg: `[${via}] 아침 메일 확인`, reply: '새 메일 없음', handover: null, sessionId: null, via }); // routines.mjs·chat.mjs 위임·scheduler.mjs 쪽지와 같은 모양(범위 없음, 세션 없음)
+    const r = await desk(ws, '방금 숫자?', s1.sessionId);
+    assert.equal(r.reply, '6');
+    assert.equal(seen.at(-1).resume, 'sdk-session-1');
+  });
+}
+test('[claude] 못 본 1:1 줄이 맥락 예산(CTX_BUDGET_TOKENS)을 넘으면 세션을 잇지 않고 새 세션 + 최근 대화로 연다', async () => {
+  runner = 'claude'; const ws = await company();
+  const a = await desk(ws, '0 기억해');
+  const long = '가'.repeat(480);
+  for (let i = 0; i < 26; i++) await appendTurn(ws, 'seoyun', { userMsg: long, reply: long, contextScope: { kind: 'msgr-dm', channelId: PCH, threadRoot: i, ownerSolo: true, msgId: 100 + i }, via: 'msgr', actor: { uid: OWNER, name: '유건', relay: false } });
+  await say(ws, room({ pair: `crew:${CREW}` }), '7 기억해');
+  const r = await desk(ws, '방금 숫자?', a.sessionId);
+  assert.equal(r.reply, '7');
+  assert.equal(seen.at(-1).resume, null, '이어 쓰지 않는다');
+  assert.match(lastPrompt(), /데스크톱과 메신저 1:1은 한 대화다/);
+  assert.doesNotMatch(lastPrompt(), CATCH_KO);
+});
+
+// ── 6. 병합 — 세션이 본 1:1 기록은 세션 id와 짝 ──
+test('병합 — 세션이 본 1:1 기록은 고른 세션 id와 짝만 남고, 양쪽이 같은 세션이면 합친다', () => {
+  const m = (L, R) => JSON.parse(mergeThread(Buffer.from(JSON.stringify({ messages: [], ...L })), Buffer.from(JSON.stringify({ messages: [], ...R }))).toString());
+  assert.deepEqual(m({ sessionId: 'S', soloSeen: { session: 'S', keys: ['a'] } }, { sessionId: 'S', soloSeen: { session: 'S', keys: ['b'] } }).soloSeen, { session: 'S', keys: ['b', 'a'] });
+  assert.deepEqual(m({ sessionId: 'S', soloSeen: { session: 'S', keys: ['a'] } }, { sessionId: 'T', soloSeen: { session: 'T', keys: ['c'] } }).soloSeen, { session: 'T', keys: ['c'] }, '고른 세션(T)의 기록만');
+  assert.equal(m({ sessionId: 'S', soloSeen: { session: 'S', keys: ['a'] } }, { sessionId: 'T' }).soloSeen, undefined, '고른 세션의 기록이 없으면 남기지 않는다 — 다른 세션이 본 줄을 이 세션이 본 것으로 읽지 않게');
+  assert.deepEqual(m({ sessionId: 'S', soloSeen: { session: 'S', keys: ['a'] } }, { sessionId: null }).soloSeen, { session: 'S', keys: ['a'] }, '세션을 가진 쪽의 기록');
+});
+
+// ── 7. 조직 1:1 기록 회수(검수 MEDIUM) — 조직 기록은 조직 단위로 거둔다 ──
+test('일지 — 개인 공간 1:1은 데스크톱 일지, 조직 1:1은 그 방 태그 파일. 화면 칩은 볼트 상대 경로(조직 태그 일지는 칩 없음), 절대 경로를 스레드에 남기지 않는다', async () => {
+  runner = 'codex'; const ws = await company();
+  await say(ws, room({ pair: `crew:${CREW}` }), 'PERSONAL_NOTE');
+  await say(ws, room({ orgId: ORG, channelId: OCH }), 'ORG_NOTE');
+  const names = await readdir(paths(ws).journal);
+  const day = names.find((n) => /^\d{4}-\d{2}-\d{2}-seoyun\.md$/.test(n));
+  const tagged = names.find((n) => n.includes(`.org-${ORG}-ch-${OCH}`));
+  assert.ok(day && tagged, names.join(','));
+  const read = (n) => readFile(join(paths(ws).journal, n), 'utf8');
+  assert.match(await read(day), /PERSONAL_NOTE/);
+  assert.doesNotMatch(await read(day), /ORG_NOTE/, '조직 1:1은 태그 없는 일지(기억 정리·회상에 섞이는 파일)에 쓰지 않는다');
+  assert.match(await read(tagged), /ORG_NOTE/);
+  const t = await loadThread(ws, 'seoyun');
+  const crewIn = (ch) => t.messages.find((m) => m.who === 'crew' && m.contextScope?.channelId === ch);
+  assert.deepEqual(crewIn(PCH).handover, { rel: `journal/${day}`, linked: [] }, '데스크톱 라우트와 같은 모양 — 화면 칩이 rel로 연다');
+  assert.equal(crewIn(OCH).handover, null);
+  assert.ok(!JSON.stringify(t).includes(paths(ws).vault), '로컬 절대 경로(OS 사용자 이름 포함)가 동기화되는 스레드 파일에 없다');
+});
+test('조직에서 빠지면 — 조직 1:1 줄·그 줄을 덮은 데스크톱 요약·조직 태그 일지가 회수되고, 개인 공간 1:1·데스크톱 대화는 남는다', async () => {
+  runner = 'codex'; const ws = await company();
+  await desk(ws, 'DESK_KEEP');
+  await say(ws, room({ pair: `crew:${CREW}` }), 'PERSONAL_KEEP');
+  await say(ws, room({ orgId: ORG, channelId: OCH }), 'ORG_SECRET');
+  await desk(ws, 'DESK_AFTER');
+  const t0 = await loadThread(ws, 'seoyun');
+  assert.ok(await setThreadSummary(ws, 'seoyun', null, { text: 'SUMMARY_HAS_ORG_SECRET', upto: t0.messages.at(-1).ts }));
+  await relocateOrgJournals(ws); // 게이트웨이 정리 틱과 같은 자리 — 조직 태그 일지는 .msgr-journal로
+  const r = await recallDeparted(ws, ['seoyun'], async (pairs) => new Map(pairs.map((p) => [`${p.slug}:${p.id}`, p.id !== OCH])), { configDirs: [] });
+  assert.equal(r.channels, 1); assert.equal(r.journals, 1);
+  const t = await loadThread(ws, 'seoyun');
+  const text = JSON.stringify(t);
+  assert.doesNotMatch(text, /ORG_SECRET/, '조직 1:1 줄과 그 줄을 덮은 요약이 없다');
+  for (const k of ['DESK_KEEP', 'PERSONAL_KEEP', 'DESK_AFTER']) assert.match(text, new RegExp(k));
+  assert.equal(t.summary, undefined);
+  assert.deepEqual((await readdir(join(paths(ws).root, '.msgr-journal')).catch(() => [])), [], '조직 태그 일지 파일째 회수');
+  assert.match(await journalText(ws), /PERSONAL_KEEP/, '개인 공간 1:1 일지는 남는다');
+});
+test('이전 버전이 만든 범위 없는 요약(1:1 줄 모름)은 그 기준점 앞에 1:1 줄이 있으면 쓰지 않는다 — 1:1 줄이 맥락에서 빠지지 않게(검수 LOW d)', async () => {
+  runner = 'codex'; const ws = await company();
+  await say(ws, room({ pair: `crew:${CREW}` }), '6 기억해 SOLO_BEFORE_ANCHOR');
+  await desk(ws, '다른 이야기');
+  const t = JSON.parse(await readFile(chatFile(ws), 'utf8'));
+  t.summary = { text: 'OLD_VERSION_SUMMARY', upto: t.messages.at(-1).ts, at: Date.now() }; // 이전 버전 — withSolo 없음
+  await writeFile(chatFile(ws), JSON.stringify(t));
+  await desk(ws, '방금 숫자?');
+  assert.match(lastPrompt(), /SOLO_BEFORE_ANCHOR/);
+  assert.doesNotMatch(lastPrompt(), /OLD_VERSION_SUMMARY/);
+  await setThreadSummary(ws, 'seoyun', null, { text: 'NEW_VERSION_SUMMARY', upto: (await loadThread(ws, 'seoyun')).messages.at(-1).ts });
+  await desk(ws, '방금 숫자?');
+  assert.match(lastPrompt(), /NEW_VERSION_SUMMARY/, '이번 버전 요약(1:1 줄까지 접음)은 그대로 쓴다');
+});
+
+// ── 8. 방 대화 겹침·순서(검수 LOW c) — 이 방의 지난 대화는 스레드(데스크톱과 시간순 한 줄기)로, 봉투는 이 기기 스레드에 없는 턴만 ──
+test('주인 혼자 1:1 — 데스크톱에서 나중에 한 말이 마지막으로 읽히고, 같은 1:1 줄이 두 번 들어가지 않는다', async () => {
+  runner = 'codex'; const ws = await company();
+  await desk(ws, '1 기억해');
+  await say(ws, room({ pair: `crew:${CREW}` }), '2 기억해');
+  const m2 = msgSeq;
+  await desk(ws, '3 기억해');
+  const rows = [{ id: m2, author_kind: 'user', author_user_id: OWNER, crew_id: null, body: '2 기억해', meta: {} },
+    { id: m2 + 900, author_kind: 'crew', author_user_id: null, crew_id: CREW, body: '기억했어요', client_msg_id: `reply:${CREW}:${m2}`, reply_to: m2, meta: {} }];
+  assert.equal(await say(ws, room({ pair: `crew:${CREW}`, context: rows }), '방금 숫자?'), '3');
+  assert.equal(lastPrompt().match(/2 기억해/g)?.length, 1);
+});
+test('주인 혼자 1:1 — 다른 기기가 처리해 이 기기 스레드에 아직 없는 방 대화는 봉투로 받는다(두 사본)', async () => {
+  runner = 'codex'; const ws = await company();
+  const rows = [{ id: 4242, author_kind: 'user', author_user_id: OWNER, crew_id: null, body: '5 기억해', meta: {} },
+    { id: 4243, author_kind: 'crew', author_user_id: null, crew_id: CREW, body: '기억했어요', client_msg_id: `reply:${CREW}:4242`, reply_to: 4242, meta: {} }];
+  assert.equal(await say(ws, room({ pair: `crew:${CREW}`, context: rows }), '방금 숫자?'), '5');
+});
+test('msgrRowTurn — 사람 글은 그 글 id, 이 크루 답은 reply 표지의 원본 id, 그 밖(거절·안내)은 null', () => {
+  assert.equal(M.msgrRowTurn({ author_kind: 'user', id: 7 }), 7);
+  assert.equal(M.msgrRowTurn({ author_kind: 'crew', client_msg_id: `reply:${CREW}:7` }), '7');
+  assert.equal(M.msgrRowTurn({ author_kind: 'crew', client_msg_id: `deny:${CREW}:7` }), null);
+  assert.equal(M.msgrRowTurn({ author_kind: 'crew' }), null);
+});
+test('건넨 1:1 기록 쓰기 — 같은 세션이면 더하고(동시에 끝난 턴이 서로 덮지 않게), 다른 세션이면 바꾸고, 스레드에 없는 줄은 남기지 않고, 바뀐 게 없으면 쓰지 않는다', async () => {
+  runner = 'codex'; const ws = await company();
+  await say(ws, room({ pair: `crew:${CREW}` }), 'A 줄');
+  await say(ws, room({ pair: `crew:${CREW}` }), 'B 줄');
+  const solo = (m) => isOwnerSoloScope(m.contextScope);
+  const keys = (await loadThread(ws, 'seoyun')).messages.filter(solo).map((m) => `${m.ts}|${m.who}|${m.contextScope.channelId}`);
+  assert.equal(keys.length, 4);
+  assert.equal(await noteSoloSeen(ws, 'seoyun', 'S', [keys[0], keys[1]], solo), true);
+  assert.equal(await noteSoloSeen(ws, 'seoyun', 'S', [keys[2], 'gone|user|x'], solo), true);
+  assert.deepEqual((await loadThread(ws, 'seoyun')).soloSeen, { session: 'S', keys: [keys[0], keys[1], keys[2]] }, '같은 세션 — 더한다, 스레드에 없는 키는 버린다');
+  assert.equal(await noteSoloSeen(ws, 'seoyun', 'S', [keys[1]], solo), false, '바뀐 게 없으면 쓰지 않는다');
+  assert.equal(await noteSoloSeen(ws, 'seoyun', 'T', [keys[3]], solo), true);
+  assert.deepEqual((await loadThread(ws, 'seoyun')).soloSeen, { session: 'T', keys: [keys[3]] }, '다른 세션 — 그 세션이 본 줄로 바꾼다');
+  assert.equal(await noteSoloSeen(ws, 'seoyun', null, keys, solo), false, '세션이 없으면 남기지 않는다');
+});

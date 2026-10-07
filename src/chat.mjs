@@ -1,4 +1,4 @@
-import { stageMessengerHandoff, messengerOrigin, messengerHandoffHint, parseMessengerDisposition, isGuestCtx, ownerDirectTurn, ownerSoloTurn } from './gateway/msgr-handoff.mjs';
+import { stageMessengerHandoff, messengerOrigin, messengerHandoffHint, parseMessengerDisposition, isGuestCtx, ownerDirectTurn, ownerSoloTurn, msgrJournal } from './gateway/msgr-handoff.mjs';
 import { calendarTool, calendarDescription } from './gateway/office-calendar.mjs'; // 에이전트 일정 도구(주인의 오피스 일정 — 명세 2026-09-30 규칙 9·10)
 import { companyTool, companyDescription } from './gateway/office-company.mjs'; // 에이전트 회사 도구(오피스 회사 정보·직원·평가 — 트랙 C 2026-10-02)
 import { filesTool, filesDescription } from './gateway/office-files.mjs'; // 에이전트 문서함·드라이브 도구(오피스 문서함 검색·읽기·거래처 첨부·드라이브 — 분리 검수 MEDIUM 4)
@@ -50,8 +50,8 @@ import { scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, authExclu
 import { userAddressNote, turnUserName, userSetAddress } from './user-name.mjs'; // 에이전트가 사용자를 이름으로 부르기(T5) — 이름 출처·남의 이름 차단은 그 파일 한 곳
 import { USER_ABORT_ERROR, LEGACY_RECORD_TERMS_NOTE } from './legacy-terms.mjs'; // 중단 이벤트 문자열 — 읽는 쪽(runner-usable·failure-digest)은 옛 문자열도 본다
 import { delegateHead } from './inbound-marks.mjs'; // 위임 머리말 = 1:1 화면 출처 카드와 같은 함수
-import { loadThread, takeSharedNotes, restoreSharedNotes, scopedSession, inContextScope, isOwnerSoloScope, soloAfterSession, turnScope, scopeKey, approvalScope, threadSummary, setThreadSummary, appendLine } from './thread.mjs';
-import { buildThreadContext, contextSection, contextLimits, fitContextSection, isArgvRunner, argvLen, ARGV_PROMPT_LIMIT } from './thread-context.mjs';
+import { loadThread, takeSharedNotes, restoreSharedNotes, scopedSession, inContextScope, isOwnerSoloScope, soloKey, soloSeenFor, noteSoloSeen, turnScope, scopeKey, approvalScope, threadSummary, setThreadSummary, appendLine } from './thread.mjs';
+import { buildThreadContext, contextSection, contextLimits, fitContextSection, isArgvRunner, argvLen, ARGV_PROMPT_LIMIT, estTokens, CTX_BUDGET_TOKENS } from './thread-context.mjs';
 import { item } from './record-block.mjs'; import { msgrAuthorBody } from './inbound-marks.mjs'; // 메신저 줄은 글쓴이 본문만 항목에(5차 검수 MEDIUM-1) // 스레드 맥락 한 줄 = 항목 하나(구조로 화자를 가른다) // 스레드 맥락 토큰 예산 + 누적 요약(최근 6개 고정을 대체) · argv 러너 길이 맞춤
 import { runOneShot } from './oneshot.mjs';
 import { readInstalledSkills, planSkillInjection, SKILL_INJECT_CAP } from './market.mjs'; // 주입·마켓 표기 공용 규칙(단일 진실)
@@ -527,8 +527,11 @@ async function threadContextFor(wsId, slug, t, { contextScope, lang, name, runne
   let costUsd = null;
   // 회사 주인 id — 메신저 줄의 사람 글을 사장(captain)과 다른 사람(member)으로 가른다(threadCtxLine). 모르면 null(사람 글은 member로 — 사장으로 올리지 않는다)
   const ownerId = (await loadCompany(wsId).catch(() => ({}))).ownerId ?? null;
+  // 범위 없는 요약이 주인 혼자 1:1 줄을 모르는 이전 버전 것이면(withSolo 없음) 그 기준점 앞의 1:1 줄이 요약에도 최근 대화에도 없다 — 그런 1:1 줄이 기준점 앞에 있을 때만 요약을 무효로 본다(다시 요약된다)
+  let summary = threadSummary(t, contextScope);
+  if (summary && !contextScope && !summary.withSolo) { const at = msgs.findIndex((m) => m.ts === summary.upto); if (at > 0 && msgs.slice(0, at).some((m) => isOwnerSoloScope(m.contextScope))) summary = null; }
   const parts = await buildThreadContext({
-    msgs, lang, lineOf: (m) => threadCtxLine(m, lang, name, { ownerId }), summary: threadSummary(t, contextScope), limits, // limits — argv 러너(agy)는 명령줄 길이 기준(contextLimits)
+    msgs, lang, lineOf: (m) => threadCtxLine(m, lang, name, { ownerId }), summary, limits, // limits — argv 러너(agy)는 명령줄 길이 기준(contextLimits)
     memoKey: `${wsId}:${slug}:${scopeKey(contextScope) ?? ''}`, // 요약 실패 기억은 범위별(채널·그룹마다 따로) — 요약 저장 키와 같은 구분
     summarize: async (prompt) => {
       await status?.(true);
@@ -544,6 +547,16 @@ async function threadContextFor(wsId, slug, t, { contextScope, lang, name, runne
     save: (sum) => setThreadSummary(wsId, slug, contextScope, sum),
   });
   return { ...parts, costUsd };
+}
+
+/** 이어 쓰는 데스크톱 세션이 아직 못 본 주인 혼자 1:1 줄을 건넬 구획(유건 결정 2026-10-08 ①) — 줄 모양은 threadCtxLine(최근 대화와 같다). 데스크톱 맥락과 같은 예산(CTX_BUDGET_TOKENS)을 넘으면 null:
+    호출부가 다른 기기에서 이어받을 때처럼 새 세션 + 최근 대화(요약 포함)로 연다. 세션을 이어 쓰므로 긴 도구 작업의 세부를 잃지 않는다. */
+async function soloCatchUp(wsId, msgs, { lang, name }) {
+  const ownerId = (await loadCompany(wsId).catch(() => ({}))).ownerId ?? null;
+  const lines = msgs.map((m) => threadCtxLine(m, lang, name, { ownerId }));
+  if (lines.reduce((a, l) => a + estTokens(l) + 1, 0) > CTX_BUDGET_TOKENS) return null;
+  return contextSection({ recent: lines.join('\n'), summary: null },
+    lang === 'en' ? 'Meanwhile in your 1:1 messenger chat with the user (same conversation as here — lines this session has not seen yet)' : '그 사이 메신저 1:1에서 나눈 대화 (여기와 같은 대화 — 이 세션이 아직 못 본 줄)', lang);
 }
 
 export const CONNECTOR_DESC_CAP = 1200;
@@ -1438,9 +1451,10 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
   const discardHandoffs = () => mirrorCtx?.handoffs?.splice(handoffStart); // 실패한 시도의 미게시 넘김은 재시도에 섞지 않는다
   // Scoped DM audit stays in the thread; auto-journaling would promote private text into shared memory.
   // 메신저 채널 턴(조직 태그)은 PC 일지에 쓰지 않는다 — 채널·조직 기억은 서버 일지(msgr_channel_journal)에만(유건 결정 2026-09-24).
-  // 주인 혼자 1:1은 데스크톱 일지(태그 없음)에 주인이 쓴 글만(journal.text — 방 머리말·지난 대화 줄은 싣지 않는다).
+  // 주인 혼자 1:1은 일지에 주인이 쓴 글만(journal.text — 방 머리말·지난 대화 줄은 싣지 않는다). 개인 공간 1:1은 데스크톱 일지(태그 없음), 조직 1:1은 그 방 태그 파일 —
+  // 조직에서 빠지면 그 파일째 회수되고(msgr-recall), 기억 정리·회상에 섞이지 않는다(consolidate isOrgTagged·memory isOrgCopy). 조직 기록은 조직 단위로 거둔다는 원칙(2026-09-24·10-03)을 지킨다.
   const journalWrite = (reply, label) => (!ownerSolo && (dmTurn || journal?.off || String(journal?.tag ?? '').startsWith('org-')) ? null
-    : saveHandover(wsId, agentSlug, ownerSolo && typeof journal?.text === 'string' ? journal.text : userMsg, reply, label, { tag: ownerSolo ? '' : journal?.tag ?? '' }));
+    : saveHandover(wsId, agentSlug, ownerSolo && typeof journal?.text === 'string' ? journal.text : userMsg, reply, label, { tag: ownerSolo ? (mirrorCtx.orgId ? msgrJournal(mirrorCtx.orgId, mirrorCtx.channelId).tag : '') : journal?.tag ?? '' }));
   // 상태 파일(chats/<slug>.status.json)에 남길 턴 출처 — 회의실은 source==='room'인 상태만 실시간 표시에 채택한다(#393 검수 MEDIUM-2)
   const turnSource = source ?? (from ? 'delegate' : 'chat');
   const p = paths(wsId);
@@ -2012,17 +2026,25 @@ ${lang === 'en'
   let resumeId = __freshRetry ? null : sessionId;
   let crossCtx = '';
   let ctxCostUsd = null; // 다른 기기 이어받기 맥락의 요약 원샷 금액 — 이 턴의 청구 금액(루프 루틴 예산)에 더한다(원장에는 요약 행으로 따로 남았다)
-  // 주인 혼자 1:1(유건 결정 2026-10-08 ①) — 1:1 턴은 세션 밖에서 돈다. 주인과의 범위 없는 대화 턴(데스크톱·텔레그램 1:1)이 세션을 이어 쓰면 그 1:1 대화를 모른다:
-  // 세션이 아직 못 본 1:1 기록이 있으면(thread.mjs soloAfterSession) 다른 기기에서 이어받을 때처럼 새 세션 + 최근 대화(같은 예산 규칙)로 연다. 1:1 턴 자신은 늘 최근 대화를 싣는다.
+  // 주인 혼자 1:1(유건 결정 2026-10-08 ①) — 1:1 턴은 세션 밖에서 돈다(늘 최근 대화를 싣는다). 주인과의 범위 없는 대화 턴(데스크톱·텔레그램 1:1)이 세션을 이어 쓰면 그 1:1 대화를 모른다:
+  // 그 세션이 아직 못 본 1:1 줄(thread.mjs soloSeen — 세션과 짝으로 남긴 "건넨 줄")을 이번 글 앞에 건네고 세션은 그대로 잇는다. 예산을 넘거나 세션이 없으면 새 세션 + 최근 대화로 연다.
   const ownerConvo = !dmTurn && !contextScope && !from && !notOwnerDirect && (source == null || source === 'messenger');
+  let soloSeenNext = null; // 이 턴이 끝나면 이 세션(sid)이 본 1:1 줄 키 — 성공한 뒤 세션과 짝으로 남긴다(noteSoloSeen)
+  const soloLine = (m) => isOwnerSoloScope(m.contextScope) && inThreadContext(m, null); // 데스크톱 맥락에 들어가는 1:1 줄(실패·대기·공유 노트 제외 — 맥락 규칙 그대로)
   if (ownerSolo || ownerConvo || (!dmTurn && (sessionId || __freshRetry))) {
     const t = await loadThread(wsId, agentSlug).catch(() => ({ messages: [] }));
     const me = await getDeviceId().catch(() => null);
     const device = scopeKey(contextScope) ? scopedSession(t, scopeKey(contextScope)).sessionDevice : t.sessionDevice; // 범위 세션은 범위별 소유 기기
     const foreign = !dmTurn && !!(sessionId || __freshRetry) && !!device && !!me && device !== me;
-    const unseenSolo = ownerConvo && soloAfterSession(t);
-    if (foreign || unseenSolo) resumeId = null;
-    if ((foreign || unseenSolo || ownerSolo || (!dmTurn && __freshRetry)) && (t.messages ?? []).length) {
+    const solos = !dmTurn && !contextScope ? (t.messages ?? []).filter(soloLine) : [];
+    const seen = soloSeenFor(t, resumeId);
+    const unseen = ownerConvo && resumeId && !foreign ? solos.filter((m) => !seen.has(soloKey(m))) : [];
+    const catchUp = unseen.length ? await soloCatchUp(wsId, unseen, { lang, name: meta.name || agentSlug }) : null;
+    const reopen = unseen.length > 0 && !catchUp; // 못 본 1:1이 예산을 넘는다 — 새 세션 + 최근 대화(요약 포함)
+    const fresh = ownerConvo && !resumeId && !foreign && !__freshRetry && solos.length > 0; // 이을 세션이 없다 — 1:1 줄이 있으면 최근 대화로 연다
+    if (foreign || reopen) resumeId = null;
+    if (catchUp) { crossCtx = `${catchUp}\n${newMsgHead(source, lang)}`; soloSeenNext = [...seen, ...unseen.map(soloKey)]; }
+    else if ((foreign || reopen || fresh || ownerSolo || (!dmTurn && __freshRetry)) && (t.messages ?? []).length) {
       // 실패 턴·화자·범위 규칙과 예산·요약은 CLI 경로와 같은 함수(threadContextFor)
       // 요약 원샷도 정지 버튼이 끊게 — 이 구간은 아래 실행 등록(abortReg) 전이라 같은 실행 그룹(__turnControl)으로 잠깐 등록한다.
       // 상태는 요약하는 동안만 '앞 대화 정리 중', 끝나면 지운다(아래 'boot'가 이어 받는다 — 중단으로 끝나도 남지 않는다).
@@ -2035,10 +2057,11 @@ ${lang === 'en'
       } finally { sumReg.release(); }
       __turnControl.check();
       ctxCostUsd = parts.costUsd;
-      const ctx = contextSection(parts, foreign || (__freshRetry && !ownerSolo && !unseenSolo)
+      const ctx = contextSection(parts, foreign || (__freshRetry && !ownerSolo && !reopen && !fresh)
         ? (lang === 'en' ? 'Recent conversation (continued from another device — a new session opens here)' : '최근 대화 (다른 기기에서 이어짐 — 이 기기에서 새 세션으로 계속)')
         : (lang === 'en' ? 'Recent conversation (desktop and your 1:1 messenger chat with the user are one conversation — a new session continues here)' : '최근 대화 (데스크톱과 메신저 1:1은 한 대화다 — 새 세션으로 계속)'), lang);
       if (ctx) crossCtx = `${ctx}\n${newMsgHead(source, lang)}`;
+      if (!dmTurn && !contextScope) soloSeenNext = solos.map(soloKey); // 새 세션이 최근 대화로 받은 1:1 줄(예산 밖은 요약으로)
     }
   }
 
@@ -2487,6 +2510,8 @@ ${lang === 'en'
       : `(이 계정에는 ${__downgradedFrom} 접근 권한이 없어 — Ultra·유료 전용 모델 — 러너 기본 모델로 대신 답했습니다.)`) + `\n\n${reply}`;
   }
   const handover = creditTurn ? null : await journalWrite(reply, meta.name || agentSlug);
+  // 이 세션에 건넨 1:1 줄 — 세션과 짝으로 남긴다(바뀐 게 없으면 쓰지 않는다). 기록 실패는 턴을 막지 않는다(다음 턴이 같은 줄을 다시 건넬 뿐)
+  if (soloSeenNext && sid && !sessionless) await noteSoloSeen(wsId, agentSlug, sid, soloSeenNext, soloLine).catch((e) => console.warn(`[argo] 1:1 건넴 기록 실패(${wsId}/${agentSlug}): ${String(e?.message ?? e).slice(0, 120)}`));
   await appendEvent(wsId, {
     ...evBase, ok: true, ms: Date.now() - t0, steps, ...(__downgradedFrom ? { downgradedFrom: __downgradedFrom } : {}),
     ...(handover ? { journalRel: relative(p.vault, handover.file) } : {}), // 산출물 — 활동 행에서 일지 원문으로 드릴다운

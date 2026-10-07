@@ -46,14 +46,21 @@ export function userAddressNote(name, lang = 'ko', { ruled = false } = {}) {
    호칭 규칙이 있으면, 메신저 공간마다 다른 표시 이름으로 "이 이름으로 불러라"는 지시를 넣지 않는다(그 규칙을 따르라는 한 줄로 바꾼다).
    판정은 줄 단위 낱말 규칙이다 — 놓치면 종전 이름 지시가 남을 뿐이고(지금과 같음), 잘못 잡으면 이름 대신 "정한 규칙대로"가 실린다. ── */
 export const ADDRESS_RULE_SKILL = 'captain-rules.md'; // corrections.mjs RULES_SKILL과 같은 파일(가져오면 러너 모듈까지 끌려와 이름만 맞춘다 — 테스트가 잠근다)
-const ADDRESS_RULE_RES = [
-  /호칭/,
-  /(?:이?라고|님으로|이름으로)\s*(?:불러|부르|부를|부른|칭하|칭해)/,
-  /(?:사용자|주인|유저|(?<![가-힣])나|(?<![가-힣])저)(?:를|을)\s*(?:부를|부르|불러|부른)/,
-  /\b(?:call|address|refer to)\s+(?:me|the user|the owner)\b(?!['’]s)/i,
-];
+// 한 줄이 호칭 규칙인가 = 부르는 말(ADDRESS_CALL·영어 ADDRESS_EN)이 있고 그 대상이 사용자다. 대상이 사용자로 적혀 있으면(나를·사용자를·me…) 참,
+// 대상 낱말이 아예 없으면("대표님이라고 해줘") 사용자에게 하는 말로 보고 참, 다른 사람(고객·상대·거래처·손님·메일·너 …)만 적혀 있으면 거짓(검수 LOW 2026-10-08:
+// '고객은 고객님이라고 부른다'·'너를 서윤이라고 부를게'를 잡고 '나를 대표님이라 불러'·'대표님이라고 해줘'를 놓치던 것).
+const ADDRESS_CALL = new RegExp([
+  '호칭',
+  '(?:이?라(?:고)?|로)\\s*(?:불러(?![오와온올들])|부르|부를|부른|칭하|칭해)', // ~이라(고) 불러 · ~(으)로 불러 · ~라 칭해 — '불러오다'(자료를 ~로 불러온다)는 아니다
+  '님(?:이)?라(?:고)?\\s*(?:해|하)', // ~님이라고 해(줘) — '님'까지 있어야('"출처 없음"이라고 해'는 호칭이 아니다)
+  '(?:사용자|주인|유저|(?<![가-힣])나|(?<![가-힣])저)(?:를|을)\\s*(?:부를|부르|불러(?![오와온올들])|부른)', // 나를 부를 때는 …
+].join('|'));
+const ADDRESS_EN = /\b(?:call|address|refer to)\s+(?:me|the user|the owner)\b(?!['’]s)/i;
+const USER_TARGET = /(?<![가-힣])(?:나|날|저)(?:를|을|는|은|도|한테|에게)?(?![가-힣])|사용자|주인|유저/;
+const OTHER_TARGET = /고객|상대|거래처|손님|메일|동료|직원|팀원|다른 사람|(?<![가-힣])남(?:을|은|에게|한테)(?![가-힣])|(?<![가-힣])너(?:를|는|도|의|한테|에게)?(?![가-힣])/;
+const addressRuleLine = (line) => ADDRESS_EN.test(line) || (ADDRESS_CALL.test(line) && (USER_TARGET.test(line) || !OTHER_TARGET.test(line)));
 /** 글에 호칭 규칙 줄이 있는가(순수) */
-export const hasAddressRule = (text) => String(text ?? '').split('\n').some((line) => ADDRESS_RULE_RES.some((re) => re.test(line)));
+export const hasAddressRule = (text) => String(text ?? '').split('\n').some(addressRuleLine);
 const RULES_BLOCK_RE = new RegExp(`### (?:스킬|Skill): ${ADDRESS_RULE_SKILL.replace(/\.md$/, '')}\\n([\\s\\S]*?)(?=\\n### (?:스킬|Skill): |$)`); // 주입 머리의 스킬 id는 확장자 없는 이름(chat.mjs loadSkills ← market.mjs readInstalledSkills)
 /** 사용자가 호칭을 직접 정했는가(순수) — 카드 '## 일하는 방식' 절 + 이번 턴에 주입된 확정 규칙 본문(skills 문자열의 captain-rules.md 절).
     주입 예산 때문에 본문이 빠진 확정 규칙은 모델도 못 보므로 보지 않는다. */
