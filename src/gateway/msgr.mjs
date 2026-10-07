@@ -1677,8 +1677,8 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
 
 /** 봉투(msgr_crew_context)의 최근 방 대화 한 행이 속한 턴 — 사람 글은 그 글 id, 이 크루의 답은 client_msg_id 'reply:<크루>:<원본 id>'의 원본 id. 그 밖(거절·안내 등)은 null(순수). */
 export const msgrRowTurn = (r) => (r?.author_kind === 'user' ? r.id ?? null : String(r?.client_msg_id ?? '').match(/^reply:[^:]+:(\d+)$/)?.[1] ?? null);
-/** 턴 기록에 남길 일지 표지 — 데스크톱 라우트와 같은 모양 {rel, linked}(화면 '기억에 기록됨' 칩이 rel로 연다). 조직 태그 일지는 볼트 밖으로 옮겨져(memory.mjs relocateOrgJournals) 칩을 달지 않는다. 절대 경로는 남기지 않는다(동기화되는 스레드 파일). */
-export const handoverRel = (wsId, h) => { if (!h?.file) return null; const rel = relative(paths(wsId).vault, h.file).split('\\').join('/'); return isOrgCopy(rel) ? null : { rel, linked: h.linked ?? [] }; };
+/** 턴 기록에 남길 일지 표지 — 데스크톱 라우트와 같은 모양 {rel, linked}(화면 '기억에 기록됨' 칩이 rel로 연다). 볼트 밖 파일·조직 태그 일지(볼트 밖 .msgr-journal에 쓰여 handover가 null — memory.mjs saveHandover)는 칩을 달지 않는다. 절대 경로는 남기지 않는다(동기화되는 스레드 파일). */
+export const handoverRel = (wsId, h) => { if (!h?.file) return null; const rel = relative(paths(wsId).vault, h.file).split('\\').join('/'); return rel.startsWith('../') || isOrgCopy(rel) ? null : { rel, linked: h.linked ?? [] }; };
 
 /** 단계 로그 — stdout 한 줄(DB 쓰기 없음). ISO 시각 · 글 id 앞 8자 · 원글 created_at 기준 경과 ms · 크루. 보낸 뒤 어디서 시간이 걸렸는지 운영 로그로 가른다(2026-10-05). */
 export function stageLog(job, stage, at = Date.now()) {

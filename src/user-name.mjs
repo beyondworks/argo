@@ -48,27 +48,36 @@ export function userAddressNote(name, lang = 'ko', { ruled = false } = {}) {
 export const ADDRESS_RULE_SKILL = 'captain-rules.md'; // corrections.mjs RULES_SKILL과 같은 파일(가져오면 러너 모듈까지 끌려와 이름만 맞춘다 — 테스트가 잠근다)
 // 한 줄이 호칭 규칙인가 = 부르는 말(ADDRESS_CALL·영어 ADDRESS_EN)이 있고 그 대상이 사용자다. 대상이 사용자로 적혀 있으면(나를·사용자를·내 이름·me…) 참,
 // 다른 사람(고객·상대·거래처·손님·메일·너 …)만 적혀 있으면 거짓(검수 LOW 2026-10-08: '고객은 고객님이라고 부른다'·'너를 서윤이라고 부를게'를 잡고 '나를 대표님이라 불러'·'대표님이라고 해줘'를 놓치던 것).
-// 대상 낱말이 없을 때는 부르는 말 앞에 '은/는/을/를'이 붙은 다른 낱말이 있으면 그 낱말의 이름을 정한 줄로 보고 거짓('보고서 제목은 "주간 보고"라고 부른다'·
+// 대상 낱말이 없을 때는 부르는 말과 같은 절 안, 그 앞에 '은/는/을/를'이 붙은 다른 낱말이 있으면 그 낱말의 이름을 정한 줄로 보고 거짓('보고서 제목은 "주간 보고"라고 부른다'·
 // '함수는 helper로 불러 쓴다' — 재검수 LOW 2026-10-08: 확정 규칙은 모든 에이전트에 실려 용어 교정 한 줄이 회사 전체의 이름 지시를 바꾸던 것), 없으면("대표님이라고 해줘") 사용자에게 하는 말로 보고 참.
+// 앞 절의 낱말('반말은 쓰지 말고 유건님이라고 불러'·'존댓말을 쓰고 …'·'보고는 결론부터, 그리고 …')은 부르는 대상이 아니다(재검수 LOW 2026-10-08 2차: 같은 줄 앞의 다른 지시가 참을 거짓으로 바꾸던 것).
 const ADDRESS_CALL = new RegExp([
   '호칭',
-  '(?:이?라(?:고)?|로)\\s*(?:불러(?![오와온올들])|부르|부를|부른|칭하|칭해)', // ~이라(고) 불러 · ~(으)로 불러 · ~라 칭해 — '불러오다'(자료를 ~로 불러온다)는 아니다
+  '이?라(?:고)?\\s*(?:불러(?![오와온올들])|부르|부를|부른|칭하|칭해)', // ~이라(고) 불러 · ~라 칭해 — '불러오다'(자료를 ~라고 불러온다)는 아니다
+  '로\\s*(?:불러(?![오와온올들서])|부르|부를|부른|칭하|칭해)', // ~(으)로 불러 — '불러오다'(자료를 ~로 불러온다)·'불러서'(도구로 불러서 처리한다)는 아니다
   '님(?:이)?라(?:고)?\\s*(?:해|하)', // ~님이라고 해(줘) — '님'까지 있어야('"출처 없음"이라고 해'는 호칭이 아니다)
   '(?:사용자|주인|유저|(?<![가-힣])나|(?<![가-힣])저)(?:를|을)\\s*(?:부를|부르|불러(?![오와온올들])|부른)', // 나를 부를 때는 …
   '(?<![가-힣])(?:내|제)\\s*이름(?:을|를|은|도)?\\s*(?:부를|부르|불러(?![오와온올들])|부른)', // 내 이름을 부르지 마 · 제 이름은 부르지 말고
 ].join('|'));
 const ADDRESS_EN = /\b(?:call|address|refer to)\s+(?:me|the user|the owner)\b(?!['’]s)/i;
-const USER_TARGET = /(?<![가-힣])(?:나|날|저)(?:를|을|는|은|도|한테|에게)?(?![가-힣])|(?<![가-힣])(?:내|제)\s*이름|사용자|주인|유저/;
+const USER_TARGET = /(?<![가-힣])(?:나|날|저)(?:를|을|는|은|도|한테|에게)?(?![가-힣])|(?<![가-힣])(?:내|제)\s*(?:이름|(?:직함|성함|성|호칭)(?:은|는|을|를|도|이|만|으로|로)?(?![가-힣]))|사용자|주인|유저/;
+// 사용자 자신의 이름·직함·성·호칭 — 줄 머리('- 이름은 유건님으로 불러줘')나 때를 정하는 말 뒤('앞으로 이름은 …'), 내/제 뒤('제 직함은 빼고'). 다른 낱말 뒤('프로젝트 이름은 …')는 그 낱말의 이름이다.
+const SELF_NAME = /^(?:이름|직함|성함|성|호칭)(?:은|는|을|를|도)?$/;
+const SELF_LEAD = /^(?:내|제|앞으로는?|이제부터|이제|지금부터|항상|늘|꼭)$/;
+const selfName = (line) => { const w = line.replace(/^[\s\-*•·]+/, '').split(/\s+/).map((x) => x.replace(/[,，;"'“”‘’]/g, '')); return w.some((x, i) => SELF_NAME.test(x) && (i === 0 || SELF_LEAD.test(w[i - 1]))); };
 const OTHER_TARGET = /고객|상대|거래처|손님|메일|동료|직원|팀원|다른 사람|(?<![가-힣])남(?:을|은|에게|한테)(?![가-힣])|(?<![가-힣])너(?:를|는|도|의|한테|에게)?(?![가-힣])/;
 // 부르는 말 앞의 '<낱말>은/는/을/를' — 이름을 정하는 대상(제목은·프로젝트를·함수는·API를 …). 때·경우('말할 때는')와 '-하는/-되는/-있는/-없는'(꾸미는 말)은 대상이 아니다.
 const NAMED_THING = /([가-힣A-Za-z0-9]+?)(?:은|는|을|를)(?=[\s"'“”‘’]|$)/g;
 const NOT_THING = /^(?:때|경우)$|(?:하|되|있|없)$/;
+// 절 경계 — 쉼표·쌍반점, '-고 / -면 / -며 / -지만 / -는데' 뒤 띄어쓰기(말고·빼고·쓰고·그리고·필요하면 …). 부르는 말 앞의 마지막 경계 뒤만 같은 절로 본다.
+const CLAUSE_CUT = /[,，;]|[가-힣]*(?:고|면|며|지만|는데)(?=\s)/g;
+const sameClause = (pre) => { let at = 0; for (const m of pre.matchAll(CLAUSE_CUT)) at = m.index + m[0].length; return pre.slice(at); };
 const addressRuleLine = (line) => {
   if (ADDRESS_EN.test(line)) return true;
   const call = ADDRESS_CALL.exec(line);
   if (!call) return false;
-  if (USER_TARGET.test(line)) return true;
-  return !OTHER_TARGET.test(line) && ![...line.slice(0, call.index).matchAll(NAMED_THING)].some(([, stem]) => !NOT_THING.test(stem));
+  if (USER_TARGET.test(line) || selfName(line)) return true;
+  return !OTHER_TARGET.test(line) && ![...sameClause(line.slice(0, call.index)).matchAll(NAMED_THING)].some(([, stem]) => !NOT_THING.test(stem));
 };
 /** 글에 호칭 규칙 줄이 있는가(순수) */
 export const hasAddressRule = (text) => String(text ?? '').split('\n').some(addressRuleLine);

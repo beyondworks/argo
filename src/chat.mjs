@@ -51,7 +51,7 @@ import { scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, authExclu
 import { userAddressNote, turnUserName, userSetAddress } from './user-name.mjs'; // 에이전트가 사용자를 이름으로 부르기(T5) — 이름 출처·남의 이름 차단은 그 파일 한 곳
 import { USER_ABORT_ERROR, LEGACY_RECORD_TERMS_NOTE } from './legacy-terms.mjs'; // 중단 이벤트 문자열 — 읽는 쪽(runner-usable·failure-digest)은 옛 문자열도 본다
 import { delegateHead } from './inbound-marks.mjs'; // 위임 머리말 = 1:1 화면 출처 카드와 같은 함수
-import { loadThread, takeSharedNotes, restoreSharedNotes, scopedSession, inContextScope, isOwnerSoloScope, soloKey, soloSeenFor, noteSoloSeen, turnScope, scopeKey, approvalScope, threadSummary, setThreadSummary, appendLine } from './thread.mjs';
+import { loadThread, takeSharedNotes, restoreSharedNotes, scopedSession, inContextScope, isOwnerSoloScope, foldedSolo, soloKey, soloSeenFor, noteSoloSeen, turnScope, scopeKey, approvalScope, threadSummary, setThreadSummary, appendLine } from './thread.mjs';
 import { buildThreadContext, contextSection, contextLimits, fitContextSection, isArgvRunner, argvLen, ARGV_PROMPT_LIMIT, estTokens, CTX_BUDGET_TOKENS } from './thread-context.mjs';
 import { item } from './record-block.mjs'; import { msgrAuthorBody } from './inbound-marks.mjs'; // 메신저 줄은 글쓴이 본문만 항목에(5차 검수 MEDIUM-1) // 스레드 맥락 한 줄 = 항목 하나(구조로 화자를 가른다) // 스레드 맥락 토큰 예산 + 누적 요약(최근 6개 고정을 대체) · argv 러너 길이 맞춤
 import { runOneShot } from './oneshot.mjs';
@@ -545,7 +545,7 @@ async function threadContextFor(wsId, slug, t, { contextScope, lang, name, runne
         return r.text;
       } finally { await status?.(false); }
     },
-    save: (sum) => setThreadSummary(wsId, slug, contextScope, sum),
+    save: (sum) => setThreadSummary(wsId, slug, contextScope, { ...sum, solo: foldedSolo(msgs, sum.upto, summary?.solo) }), // solo — 이 요약이 접은 주인 혼자 1:1 방(요약할 때 본 줄 + 이어 접은 앞 요약). 회수가 이 표지로 요약을 거둔다(departed.mjs)
   });
   return { ...parts, costUsd };
 }
@@ -1453,7 +1453,7 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
   // Scoped DM audit stays in the thread; auto-journaling would promote private text into shared memory.
   // 메신저 채널 턴(조직 태그)은 PC 일지에 쓰지 않는다 — 채널·조직 기억은 서버 일지(msgr_channel_journal)에만(유건 결정 2026-09-24).
   // 주인 혼자 1:1은 일지에 주인이 쓴 글만(journal.text — 방 머리말·지난 대화 줄은 싣지 않는다). 개인 공간 1:1은 데스크톱 일지(태그 없음), 조직 1:1은 그 방 태그 파일 —
-  // 조직에서 빠지면 그 파일째 회수되고(msgr-recall), 기억 정리·회상에 섞이지 않는다(consolidate isOrgTagged·memory isOrgCopy). 조직 기록은 조직 단위로 거둔다는 원칙(2026-09-24·10-03)을 지킨다.
+  // 볼트 밖 .msgr-journal/에 바로 쓰여(saveHandover — 동기화·기억 정리·회상에 섞이지 않는다) 조직에서 빠지면 그 파일째 회수된다(msgr-recall). 조직 기록은 조직 단위로 거둔다는 원칙(2026-09-24·10-03)을 지킨다.
   const journalWrite = (reply, label) => (!ownerSolo && (dmTurn || journal?.off || String(journal?.tag ?? '').startsWith('org-')) ? null
     : saveHandover(wsId, agentSlug, ownerSolo && typeof journal?.text === 'string' ? journal.text : userMsg, reply, label, { tag: ownerSolo ? (mirrorCtx.orgId ? msgrJournal(mirrorCtx.orgId, mirrorCtx.channelId).tag : '') : journal?.tag ?? '' }));
   // 상태 파일(chats/<slug>.status.json)에 남길 턴 출처 — 회의실은 source==='room'인 상태만 실시간 표시에 채택한다(#393 검수 MEDIUM-2)

@@ -40,6 +40,7 @@ for (const [relative, replacements] of [
     export const sdkEnvFor = async () => (globalThis.__opEnv?.() ?? {}); export const isBilledRunner = async () => false;
     export const externalExec = async (args) => globalThis.__opCli(args);`],
   ['./connectors.mjs', 'export const connectorBriefing = async () => [];'],
+  ['./oneshot.mjs', "export const runOneShot = async (...a) => (globalThis.__opOneShot ? globalThis.__opOneShot(...a) : Promise.reject(new Error('one-shot off')));"], // 대화 요약 원샷(chat.mjs threadContextFor)
 ]) {
   const real = new URL(`../src/${relative.slice(2)}`, import.meta.url).href;
   wrappers.set(relative, `data:text/javascript,${encodeURIComponent(`export * from ${JSON.stringify(real)}; ${replacements}`)}`);
@@ -58,13 +59,13 @@ const hooks = registerHooks({ resolve(specifier, context, next) {
   if (context.parentURL?.endsWith('/src/chat.mjs') && wrappers.has(specifier)) return { url: wrappers.get(specifier), shortCircuit: true };
   return next(specifier, context);
 } });
-after(() => { hooks.deregister(); globalThis.fetch = fetchBefore; for (const k of ['__opRunner', '__opCli', '__opSdk', '__opEnv']) delete globalThis[k]; });
+after(() => { hooks.deregister(); globalThis.fetch = fetchBefore; for (const k of ['__opRunner', '__opCli', '__opSdk', '__opEnv', '__opOneShot']) delete globalThis[k]; });
 
 const { createCompany, paths } = await import('../src/workspace.mjs');
-const { appendTurn, loadThread, setThreadSummary, noteSoloSeen, isOwnerSoloScope } = await import('../src/thread.mjs');
+const { appendTurn, loadThread, setThreadSummary, noteSoloSeen, isOwnerSoloScope, foldedSolo } = await import('../src/thread.mjs');
 const { chat } = await import('../src/chat.mjs');
 const M = await import('../src/gateway/msgr.mjs');
-const { mergeThread } = await import('../src/sync.mjs');
+const { mergeThread, EXCLUDE } = await import('../src/sync.mjs');
 const { relocateOrgJournals } = await import('../src/memory.mjs');
 const { recallDeparted } = await import('../src/gateway/msgr-recall.mjs');
 const { sessionFile } = await import('../src/engine/session.mjs');
@@ -149,10 +150,14 @@ const tick = () => new Promise((r) => setTimeout(r, 5));
 const chatFile = (ws) => join(paths(ws).chats, 'seoyun.json');
 const mergeInto = async (a, b) => writeFile(chatFile(a), mergeThread(await readFile(chatFile(a)), await readFile(chatFile(b)))); // b(다른 사본)를 a로 동기화 병합
 const lastSystem = () => { const s = seen.slice(mark).map((x) => x.system).join('\n'); assert.ok(s, '러너가 불리지 않았다'); return s; };
+/** 이 에이전트의 일지 전부 — 볼트 일지 + 조직 태그 일지(볼트 밖 .msgr-journal — memory.mjs saveHandover) */
 const journalText = async (ws) => {
-  const dir = paths(ws).journal;
-  const names = (await readdir(dir).catch(() => [])).filter((n) => /^\d{4}-\d{2}-\d{2}-seoyun/.test(n));
-  return (await Promise.all(names.map((n) => readFile(join(dir, n), 'utf8')))).join('\n');
+  const out = [];
+  for (const dir of [paths(ws).journal, join(paths(ws).root, '.msgr-journal')]) {
+    const names = (await readdir(dir).catch(() => [])).filter((n) => /^\d{4}-\d{2}-\d{2}-seoyun/.test(n));
+    out.push(...await Promise.all(names.map((n) => readFile(join(dir, n), 'utf8'))));
+  }
+  return out.join('\n');
 };
 
 // ── 1. 재현 — 본체에서 '1 기억해' → 메신저 개인 방 '방금 숫자?' ──
@@ -405,16 +410,21 @@ test('일지 — 개인 공간 1:1은 데스크톱 일지, 조직 1:1은 그 방
   await say(ws, room({ orgId: ORG, channelId: OCH }), 'ORG_NOTE');
   const names = await readdir(paths(ws).journal);
   const day = names.find((n) => /^\d{4}-\d{2}-\d{2}-seoyun\.md$/.test(n));
-  const tagged = names.find((n) => n.includes(`.org-${ORG}-ch-${OCH}`));
-  assert.ok(day && tagged, names.join(','));
+  assert.ok(day, names.join(','));
+  assert.ok(!names.some((n) => n.includes('.org-')), '조직 태그 일지는 볼트(동기화·기억 정리 대상)에 한순간도 없다 — 처음부터 .msgr-journal에(재검수 2차 LOW)');
+  const orgDir = join(paths(ws).root, '.msgr-journal');
+  const tagged = (await readdir(orgDir)).find((n) => n.includes(`.org-${ORG}-ch-${OCH}`));
+  assert.ok(tagged);
+  assert.equal(EXCLUDE(`.msgr-journal/${tagged}`), true, '동기화 제외 자리');
   const read = (n) => readFile(join(paths(ws).journal, n), 'utf8');
   assert.match(await read(day), /PERSONAL_NOTE/);
   assert.doesNotMatch(await read(day), /ORG_NOTE/, '조직 1:1은 태그 없는 일지(기억 정리·회상에 섞이는 파일)에 쓰지 않는다');
-  assert.match(await read(tagged), /ORG_NOTE/);
+  assert.match(await readFile(join(orgDir, tagged), 'utf8'), /ORG_NOTE/);
   const t = await loadThread(ws, 'seoyun');
   const crewIn = (ch) => t.messages.find((m) => m.who === 'crew' && m.contextScope?.channelId === ch);
   assert.deepEqual(crewIn(PCH).handover, { rel: `journal/${day}`, linked: [] }, '데스크톱 라우트와 같은 모양 — 화면 칩이 rel로 연다');
   assert.equal(crewIn(OCH).handover, null);
+  assert.equal(M.handoverRel(ws, { file: join(orgDir, tagged), linked: [] }), null, '볼트 밖 파일은 칩을 달지 않는다(../ 경로를 화면에 넘기지 않는다)');
   assert.ok(!JSON.stringify(t).includes(paths(ws).vault), '로컬 절대 경로(OS 사용자 이름 포함)가 동기화되는 스레드 파일에 없다');
 });
 test('조직에서 빠지면 — 조직 1:1 줄·그 줄을 덮은 데스크톱 요약·조직 태그 일지가 회수되고, 개인 공간 1:1·데스크톱 대화는 남는다', async () => {
@@ -425,7 +435,7 @@ test('조직에서 빠지면 — 조직 1:1 줄·그 줄을 덮은 데스크톱 
   await desk(ws, 'DESK_AFTER');
   const t0 = await loadThread(ws, 'seoyun');
   assert.ok(await setThreadSummary(ws, 'seoyun', null, { text: 'SUMMARY_HAS_ORG_SECRET', upto: t0.messages.at(-1).ts }));
-  await relocateOrgJournals(ws); // 게이트웨이 정리 틱과 같은 자리 — 조직 태그 일지는 .msgr-journal로
+  assert.equal(await relocateOrgJournals(ws), 0, '옮길 것이 없다 — 조직 태그 일지는 처음부터 .msgr-journal(브리지 정리 틱을 기다리지 않는다)');
   const r = await recallDeparted(ws, ['seoyun'], async (pairs) => new Map(pairs.map((p) => [`${p.slug}:${p.id}`, p.id !== OCH])), { configDirs: [] });
   assert.equal(r.channels, 1); assert.equal(r.journals, 1);
   const t = await loadThread(ws, 'seoyun');
@@ -566,33 +576,104 @@ test('[native] 채널 턴도 — 그 채널 세션 파일이 데스크톱 턴에
   assert.doesNotMatch(lastPrompt(), /DESK_SECRET|메신저 1:1/, '채널 범위 그대로 — 데스크톱 대화·1:1 문구 없음');
 }));
 
-// ── 10. 회수 뒤 옛 버전 사본(재검수 MEDIUM 2026-10-08) — 옛 버전은 1:1 줄은 지우지만 요약은 병합으로 되돌린다(1:1 표지·각인의 sum을 모른다) ──
-/** 옛 버전(0.1.97) 병합 결과 흉내 — 그 버전 mergeDeparted는 각인을 {ts, sids}로 다시 만들어 sum을 버리고, 줄이 없으니 요약은 거르지 못한다. 실제 옛 코드로 같은 결과를 확인했다(PR 본문). */
+// ── 10. 회수 뒤 옛 버전 사본(재검수 MEDIUM 2026-10-08 · 2차 MEDIUM) — 옛 버전은 1:1 줄은 지우지만 범위 없는 요약은 모른다(1:1 표지·summary.solo를 모른다) ──
+// 거를 근거는 옛 버전도 그대로 두는 자리에만 둔다: 요약 객체(옛 병합은 통째로 고른다)의 solo와 회수 각인의 ts(옛 병합·옛 회수가 남긴다).
+/** 옛 버전(0.1.97)이 병합한 사본 흉내 — 각인은 {ts, sids}로 다시 만들고, 줄이 없으니 요약은 거르지 못하고 통째로 남긴다. 실제 옛 코드(7454af48 mergeThread)로 같은 결과를 확인했다(PR 본문). */
 const oldVersionCopy = (t, summary) => ({ ...t, summary, departed: Object.fromEntries(Object.entries(t.departed).map(([k, v]) => [k, { ts: v.ts, sids: v.sids }])) });
-test('조직에서 빠진 뒤 옛 버전 기기가 거둔 요약을 병합으로 되돌려도 다시 거르고, 회수 뒤 새로 만든 요약은 남긴다', async () => {
-  runner = 'codex'; const ws = await company();
+/** 옛 버전이 먼저 회수한 사본 흉내 — 그 버전 forgetChannels는 그 방 줄을 지우고 각인 {ts: 지운 줄 가운데 가장 늦은 ts, sids}를 남기지만 범위 없는 요약은 건드리지 않는다. 실제 옛 코드(7454af48 forgetChannels)로 같은 결과를 확인했다(PR 본문). */
+const oldVersionRecall = (t, ch) => {
+  const own = t.messages.filter((m) => String(m.contextScope?.channelId ?? '').toLowerCase() === ch);
+  return { ...t, messages: t.messages.filter((m) => !own.includes(m)), departed: { ...t.departed, [ch]: { ts: Math.max(0, ...own.map((m) => Number(m.ts) || 0)), sids: [] } } };
+};
+/** 데스크톱 · 조직 1:1('ORG_SECRET') · 데스크톱 뒤 그 1:1 줄을 접은 범위 없는 요약을 만든 회사 */
+async function orgSummaryCompany() {
+  const ws = await company();
   await desk(ws, 'DESK_KEEP');
   await say(ws, room({ orgId: ORG, channelId: OCH }), 'ORG_SECRET');
   await desk(ws, 'DESK_AFTER');
   const anchor = (await loadThread(ws, 'seoyun')).messages.at(-1).ts;
   assert.ok(await setThreadSummary(ws, 'seoyun', null, { text: 'SUMMARY_HAS_ORG_SECRET', upto: anchor }));
-  const reaped = (await loadThread(ws, 'seoyun')).summary;
-  await recallDeparted(ws, ['seoyun'], async (pairs) => new Map(pairs.map((p) => [`${p.slug}:${p.id}`, p.id !== OCH])), { configDirs: [] });
+  const summary = (await loadThread(ws, 'seoyun')).summary;
+  assert.deepEqual(Object.keys(summary.solo ?? {}), [OCH], '요약이 접은 1:1 방을 요약 자신이 든다');
+  return { ws, anchor, summary };
+}
+const recallOrg = (ws) => recallDeparted(ws, ['seoyun'], async (pairs) => new Map(pairs.map((p) => [`${p.slug}:${p.id}`, p.id !== OCH])), { configDirs: [] });
+test('조직에서 빠진 뒤 옛 버전 기기가 거둔 요약을 병합으로 되돌려도 다시 거르고, 회수 뒤 새로 만든 요약은 남긴다', async () => {
+  runner = 'codex';
+  const { ws, anchor, summary: reaped } = await orgSummaryCompany();
+  await recallOrg(ws);
   const after = JSON.parse(await readFile(chatFile(ws), 'utf8'));
   assert.equal(after.summary, undefined);
-  assert.deepEqual(after.departed[OCH].sum, { at: reaped.at, upto: anchor }, '거둔 요약을 각인에 남긴다');
+  assert.deepEqual(Object.keys(after.departed[OCH]).sort(), ['sids', 'ts'], '각인 모양은 종전 그대로 — 옛 버전이 그대로 보존한다');
   const old = await company(); // 옛 버전 기기의 사본 — 줄은 지웠지만 요약을 되돌렸다
   await writeFile(chatFile(old), JSON.stringify(oldVersionCopy(after, reaped)));
   await mergeInto(ws, old);
   const merged = JSON.parse(await readFile(chatFile(ws), 'utf8'));
   assert.doesNotMatch(JSON.stringify(merged), /ORG_SECRET/, '되돌린 요약을 다시 거른다');
-  assert.ok(merged.departed[OCH].sum, '각인의 sum은 회수한 쪽 사본에서 다시 합쳐진다');
   await desk(ws, '방금 숫자?');
   assert.doesNotMatch(lastPrompt(), /ORG_SECRET/, '데스크톱 맥락에 실리지 않는다');
   await tick();
-  assert.ok(await setThreadSummary(ws, 'seoyun', null, { text: 'NEW_SUMMARY', upto: anchor })); // 회수 뒤 새 요약 — 기준점이 같아도 만든 시각이 늦다
+  assert.ok(await setThreadSummary(ws, 'seoyun', null, { text: 'NEW_SUMMARY', upto: anchor })); // 회수 뒤 새 요약 — 1:1 줄이 없어 그 방을 접지 않았다
   await mergeInto(ws, old);
   assert.equal((await loadThread(ws, 'seoyun')).summary?.text, 'NEW_SUMMARY', '회수 뒤 새 요약은 옛 요약에 밀리지도, 함께 지워지지도 않는다');
+});
+test('조직에서 빠진 뒤 — 옛 버전이 되돌린 사본을 병합 없이 그대로 받아도, 같은 방을 다시 회수해도 그 요약을 쓰지 않는다(재검수 2차 MEDIUM 경로 A)', async () => {
+  runner = 'codex';
+  const { ws, summary: reaped } = await orgSummaryCompany();
+  await recallOrg(ws);
+  const after = JSON.parse(await readFile(chatFile(ws), 'utf8'));
+  await writeFile(chatFile(ws), JSON.stringify(oldVersionCopy(after, reaped))); // 로컬 변경 없이 원격만 바뀜 → 그대로 받기(sync.mjs — 병합 없이 덮어쓴다)
+  assert.equal((await loadThread(ws, 'seoyun')).summary, undefined, '읽는 자리에서 거른다');
+  await desk(ws, '방금 숫자?');
+  assert.doesNotMatch(lastPrompt(), /ORG_SECRET/);
+  await writeFile(chatFile(ws), JSON.stringify(oldVersionCopy(JSON.parse(await readFile(chatFile(ws), 'utf8')), reaped))); // 한 번 더 되돌린 사본
+  const { forgetThreadChannels } = await import('../src/thread.mjs');
+  await forgetThreadChannels(ws, 'seoyun', [OCH]); // 지울 줄이 없는 재회수
+  assert.doesNotMatch(await readFile(chatFile(ws), 'utf8'), /ORG_SECRET/, '재회수 뒤 저장본에도 없다');
+  await desk(ws, '방금 숫자?');
+  assert.doesNotMatch(lastPrompt(), /ORG_SECRET/);
+});
+test('조직에서 빠진 뒤 — 옛 버전 기기가 먼저 회수한 사본(줄은 지웠고 요약은 그대로)을 받아도 그 요약을 쓰지 않는다(재검수 2차 MEDIUM 경로 B)', async () => {
+  runner = 'codex';
+  const { ws } = await orgSummaryCompany();
+  const before = JSON.parse(await readFile(chatFile(ws), 'utf8'));
+  await writeFile(chatFile(ws), JSON.stringify(oldVersionRecall(before, OCH))); // 옛 기기가 회수한 사본을 그대로 받기
+  const t = await loadThread(ws, 'seoyun');
+  assert.equal(t.summary, undefined);
+  assert.ok(t.messages.some((m) => m.text === 'DESK_KEEP') && !t.messages.some((m) => /ORG_SECRET/.test(m.text ?? '')));
+  await desk(ws, '방금 숫자?');
+  assert.doesNotMatch(lastPrompt(), /ORG_SECRET/);
+  assert.match(lastPrompt(), /DESK_KEEP/, '데스크톱 대화는 남는다');
+  const other = await company(); // 병합 경로도 같다 — 회수하지 않은 새 버전 사본(요약 있음)에 옛 기기의 회수본을 합친다
+  await writeFile(chatFile(other), JSON.stringify(before));
+  await writeFile(chatFile(ws), JSON.stringify(oldVersionRecall(before, OCH)));
+  await mergeInto(other, ws);
+  assert.doesNotMatch(await readFile(chatFile(other), 'utf8'), /ORG_SECRET/);
+});
+test('요약하는 사이 그 방이 회수됐으면 그 1:1 줄을 접은 요약을 저장하지 않는다(요약은 시작 때 본 줄 기준 solo를 든다)', async () => {
+  runner = 'codex';
+  const ws = await company();
+  await say(ws, room({ orgId: ORG, channelId: OCH }), 'ORG_SECRET');
+  await desk(ws, 'DESK_AFTER');
+  const t = await loadThread(ws, 'seoyun');
+  const anchor = t.messages.at(-1).ts;
+  const solo = foldedSolo(t.messages, anchor); // 요약 시작 때 본 줄(chat.mjs threadContextFor가 넘기는 값과 같은 함수)
+  await recallOrg(ws); // 요약 원샷이 도는 사이 회수
+  assert.equal(await setThreadSummary(ws, 'seoyun', null, { text: 'SUMMARY_HAS_ORG_SECRET', upto: anchor, solo }), false);
+  assert.doesNotMatch(await readFile(chatFile(ws), 'utf8'), /ORG_SECRET/);
+});
+test('요약 원샷이 도는 사이 그 방이 회수되면 그 1:1 줄을 접은 요약을 남기지 않는다 — chat.mjs가 요약할 때 본 줄로 solo를 넘긴다(실제 턴 경로)', async () => {
+  runner = 'codex'; const ws = await company();
+  await say(ws, room({ orgId: ORG, channelId: OCH }), '8 기억해 ORG_SECRET');
+  const long = '가'.repeat(600); // 맥락 예산(24,000토큰)을 넘기는 데스크톱 대화(맥락 한 줄 = 500자 ≈ 500토큰) — 1:1 줄이 요약 대상(예산 밖)으로 밀린다
+  for (let i = 0; i < 45; i++) await appendTurn(ws, 'seoyun', { userMsg: `${i} ${long}`, reply: `ok ${long}` });
+  let calls = 0;
+  globalThis.__opOneShot = async (_ws, prompt) => { calls += 1; assert.match(prompt, /ORG_SECRET/, '요약 대상에 1:1 줄이 있다'); await recallOrg(ws); return { text: 'SUMMARY_FROM_ONESHOT ORG_SECRET', usage: {}, costUsd: 0, runner: 'codex' }; };
+  try { await desk(ws, '방금 숫자?'); } finally { delete globalThis.__opOneShot; }
+  assert.equal(calls, 1, '요약 원샷이 돌았다');
+  const saved = JSON.parse(await readFile(chatFile(ws), 'utf8'));
+  assert.equal(saved.summary, undefined, '회수된 1:1 줄을 접은 요약을 저장하지 않는다');
+  assert.doesNotMatch(JSON.stringify(saved), /ORG_SECRET/);
 });
 
 // ── 11. 지난 방 대화의 에이전트 글은 누가 시킨 일인가(재검수 LOW 2026-10-08) · 방 확인은 실행권을 잡은 뒤(재검수 LOW) ──

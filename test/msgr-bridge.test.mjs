@@ -419,9 +419,12 @@ test('push: 결재에 plain이 없으면(폴백) 카드 본문에 새 "명령:" 
 });
 
 test('journal 정책: tag는 별도 일지 파일(회수 단위), chat()의 세 saveHandover 지점은 journalWrite 하나를 거친다(소스 구간 불변식)', async () => {
-  const h = await saveHandover(WS, 'seoyun', '지시', '답', '서윤', { tag: 'org-abc' });
-  assert.match(h.file, /\d{4}-\d{2}-\d{2}-seoyun\.org-abc\.md$/);
-  assert.match(await readFile(h.file, 'utf8'), /^# .* 서윤 일지 \(org-abc\)\n/);
+  // 조직 태그 일지는 처음부터 볼트 밖(.msgr-journal/ — 동기화 제외·셸 게이트 차단·퇴장 회수 자리)에 쓰고, 볼트 문서가 아니라 handover는 null(재검수 LOW 2026-10-08)
+  assert.equal(await saveHandover(WS, 'seoyun', '지시', '답', '서윤', { tag: 'org-abc' }), null);
+  const orgName = (await readdir(join(paths(WS).root, '.msgr-journal'))).find((n) => /^\d{4}-\d{2}-\d{2}-seoyun\.org-abc\.md$/.test(n));
+  assert.ok(orgName);
+  assert.match(await readFile(join(paths(WS).root, '.msgr-journal', orgName), 'utf8'), /^# .* 서윤 일지 \(org-abc\)\n/);
+  assert.ok(!(await readdir(paths(WS).journal).catch(() => [])).some((n) => n.includes('.org-')), '볼트 일지 폴더에 조직 태그 파일이 한순간도 없다');
   const plain = await saveHandover(WS, 'seoyun', '지시', '답', '서윤');
   assert.match(plain.file, /\d{4}-\d{2}-\d{2}-seoyun\.md$/);
   const src = await readFile(new URL('../src/chat.mjs', import.meta.url), 'utf8');
