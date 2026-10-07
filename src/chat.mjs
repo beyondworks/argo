@@ -1792,7 +1792,8 @@ ${lang === 'en'
       }
       cliInbox.closed = true;
       __turnControl.check();
-      if (!reply && !doneText) throw new Error(lang === 'en' ? `The ${RUNNERS[runner].name} runner returned an empty response` : `${RUNNERS[runner].name} 러너가 빈 응답을 반환했습니다`);
+      // emptyReply 표지 — 대화 턴의 문구·처리는 그대로 두고, 루틴(routines.mjs runTurn)만 이 표지를 보고 사용자가 알아듣는 문구로 바꾼다(빈 답은 실패 그대로)
+      if (!reply && !doneText) throw Object.assign(new Error(lang === 'en' ? `The ${RUNNERS[runner].name} runner returned an empty response` : `${RUNNERS[runner].name} 러너가 빈 응답을 반환했습니다`), { emptyReply: true });
       // 메신저 제어 줄은 러너 출력에서 먼저 분리한다 — 지시 실행·거부 안내가 뒤에 붙어도 마지막 판정이 유지된다.
       let msgrDisposition = null;
       if (mirrorCtx?.kind === 'msgr') ({ text: reply, disposition: msgrDisposition } = parseMessengerDisposition(reply));

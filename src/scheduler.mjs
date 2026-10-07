@@ -1,7 +1,7 @@
 // 루틴 스케줄러 — 첫 API 호출 시 1회 기동, 매분 전체 워크스페이스의 due 루틴을 실행.
 // (nodejs 런타임 라우트에서만 로드되므로 node: 임포트가 안전하다. P1에서 워커로 분리)
 import { listCompanyIds } from './hub.mjs';
-import { loadRoutines, runRoutine, isDue } from './routines.mjs';
+import { loadRoutines, runRoutine, isDue, recordMissedSlots } from './routines.mjs';
 import { CATCHUP_MS } from './routine-time.mjs';
 import { deliverCrewMail, mailPrompt } from './crewmail.mjs';
 import { emitNotify } from './notify.mjs';
@@ -149,13 +149,20 @@ const routineRunning = new Map();
     (export: 회귀 테스트용 — 틱 콜백은 단위로 태울 수 없다. runFn 주입=테스트 전용) */
 const orphanLogged = new Set(); // `${wsId}/${routineId}` — 크루 없는 루틴 건너뜀 로그는 프로세스당 한 번
 export async function runDueRoutines(wsId, now, { runFn = runRoutine } = {}) {
-  for (const r of await loadRoutines(wsId)) {
+  // 크루 카드가 없는 루틴(이 수정 전에 해고된 크루 등)은 실행하지 않는다 — 돌리면 "없는 크루" 실패 알림만 간다(F4).
+  // 끄지는 않는다: 새 기기에서 동기화가 routines.json을 카드보다 먼저 받는 순간에도 이 판정이 돌아, 끄면 그 상태가 다른 기기로 퍼진다.
+  // 끄는 것은 해고(removeAgentCard → disableRoutinesForCrew)라는 사람의 행동에서만 한다. 화면은 '크루 없음'으로 표시한다.
+  const orphan = (slug) => readAgentCard(wsId, slug).then(() => false, (e) => e?.code === 'NOT_FOUND');
+  const routines = await loadRoutines(wsId);
+  // 놓친 회차(catch-up 창 4h를 넘겨 isDue가 다시는 발화하지 않는 슬롯) — 활동 기록·알림에 남기고 다음 실행이 대화 기록에 한 줄을 남긴다.
+  // 실행 판정보다 먼저: 같은 틱에 다음 회차가 due면 그 실행이 바로 이 기록을 남긴다. 새로 놓친 회차가 없으면 쓰기·잠금 0(유휴 틱).
+  // 실패는 실행을 막지 않는다(기록은 부가 — 루틴 실행이 본 흐름).
+  await recordMissedSlots(wsId, routines, now, { hasCrew: async (slug) => !(await orphan(slug)) })
+    .catch((e) => console.error(`[argo] 놓친 루틴 회차 기록 실패(${wsId}):`, e.message));
+  for (const r of routines) {
     if (!isDue(r, now)) continue;
     const key = `${wsId}/${r.id}`;
-    // 크루 카드가 없는 루틴(이 수정 전에 해고된 크루 등)은 실행하지 않는다 — 돌리면 "없는 크루" 실패 알림만 간다(F4).
-    // 끄지는 않는다: 새 기기에서 동기화가 routines.json을 카드보다 먼저 받는 순간에도 이 판정이 돌아, 끄면 그 상태가 다른 기기로 퍼진다.
-    // 끄는 것은 해고(removeAgentCard → disableRoutinesForCrew)라는 사람의 행동에서만 한다. 화면은 '크루 없음'으로 표시한다.
-    if (await readAgentCard(wsId, r.agentSlug).then(() => false, (e) => e?.code === 'NOT_FOUND')) {
+    if (await orphan(r.agentSlug)) {
       if (!orphanLogged.has(key)) { orphanLogged.add(key); console.warn(`[argo] 루틴 건너뜀(${key}): 에이전트 "${r.agentSlug}" 카드가 없습니다`); }
       continue;
     }

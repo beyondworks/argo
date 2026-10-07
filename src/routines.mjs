@@ -9,11 +9,11 @@ import { emitNotify } from './notify.mjs';
 import { runOneShot } from './oneshot.mjs'; // 자연어 → 루틴 초안(러너 독립 — 어떤 러너든 연결만 되면 동작)
 import { writeJsonAtomic, readJson } from './jsonstore.mjs';
 import { withLock } from './mutex.mjs';
-import { routineHead, loopHead } from './inbound-marks.mjs'; // 머리말 = 1:1 화면 출처 카드와 같은 함수
+import { routineHead, loopHead, reportRuleHead } from './inbound-marks.mjs'; // 머리말 = 1:1 화면 출처 카드와 같은 함수(보고 규칙 머리 = 활동 '다시 실행'이 떼는 표지)
 import { LOOP_VERDICT_RE, parseLoopVerdict, loopVerdictLine, stripLoopVerdict } from './loop-verdict.mjs'; // 표지 = 엔진 판정·화면 제거와 같은 모듈
 // 시각 판정(순수)은 routine-time.mjs가 원천 — 목록 화면(클라이언트)이 '만료' 표시에 같은 판정을
 // 쓰기 위한 분리. 기존 소비자를 위해 그대로 재수출한다(임포트 경로 하위호환).
-import { normalizeTz, zonedParts, onceSpent, CATCHUP_MS } from './routine-time.mjs';
+import { normalizeTz, zonedParts, onceSpent, CATCHUP_MS, missedSlots, formatMissedSlots, MISSED_LOOKBACK_DAYS } from './routine-time.mjs';
 import { codedError } from './coded-error.mjs'; // 화면 문구 코드(F11)
 export { normalizeTz, zonedParts, onceSpent, onceExpired } from './routine-time.mjs';
 
@@ -231,6 +231,91 @@ function loopStopMessage(reason, detail, lang, loop) {
   }
 }
 
+/* ─── 보고할 것이 없을 때(NO_REPORT)·빈 답·실패와 놓친 회차의 기록 ───────────────────
+   루틴이 '안 돌았다'는 제보의 대부분은 실행은 됐지만 실패했거나 건너뛴 경우였고, 그 사실이 화면에 남지 않았다(2026-10-07 조사 —
+   실패 28건 중 대화 기록에 남은 것 0건, 4시간 넘게 놓친 회차는 흔적 없음, 'Codex 러너가 빈 응답' 12건은 "보고할 게 없으면 아무 말도
+   하지 말라"는 지시에 모델이 빈 답을 낸 것). 아래 문구는 대화 기록·알림·목록에 그대로 나간다(회사 언어). */
+
+const NO_REPORT = 'NO_REPORT';
+const TXT = {
+  noReportResult: { ko: '보고할 내용 없음', en: 'Nothing to report' },
+  noReportThread: { ko: '보고할 내용 없음 — 알림을 보내지 않았습니다.', en: 'Nothing to report — no notification was sent.' },
+};
+/** 루틴 턴에 덧붙이는 보고 규칙(러너 무관 — 텍스트 규약). 러너에게 가는 글에만 붙이고 대화 기록의 지시는 종전 모양으로 둔다.
+    마지막 문장: 빈 답·NO_REPORT를 성공으로 받으면 도구 실패 때의 침묵을 가린다(검수 지적) — 확인을 못 했으면 그 사실을 보고하게 한다. */
+function noReportRule(lang = 'ko') {
+  return lang === 'en'
+    ? `${reportRuleHead('en')} If this run has nothing to tell the user (for example zero new items or no change), reply with exactly one line: ${NO_REPORT} — nothing else; no notification is sent then. If there is something to report, report as usual and do not write ${NO_REPORT}. If an error kept you from checking, do not reply ${NO_REPORT} — report what you could not check.`
+    : `${reportRuleHead('ko')} 이번 실행에서 사용자에게 알릴 내용이 없으면(예: 확인할 새 항목 0건, 변동 없음) 다른 말 없이 정확히 ${NO_REPORT} 한 줄만 답하라 — 그러면 알림이 가지 않는다. 알릴 내용이 있으면 평소대로 보고하고 ${NO_REPORT}는 쓰지 마라. 오류로 확인하지 못했다면 ${NO_REPORT}가 아니라 무엇을 확인하지 못했는지 보고하라.`;
+}
+const NO_REPORT_LINE = /^[\s>*_`"'“”]*NO_REPORT[\s*_`"'“”.。!]*$/;
+/** 답에서 혼자 있는 NO_REPORT 줄을 뗀다(순수). none = 떼고 나니 남는 게 없음(보고할 것 없음). 표지가 없으면 원문 그대로.
+    문장 속 단어("어제는 NO_REPORT였지만…")는 표지가 아니다 — 보고로 본다. */
+function splitNoReport(text) {
+  const raw = String(text ?? '');
+  const lines = raw.split('\n');
+  const kept = lines.filter((l) => !NO_REPORT_LINE.test(l));
+  if (kept.length === lines.length) return { none: false, text: raw };
+  const rest = kept.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  return { none: !rest, text: rest };
+}
+/** 빈 답 — 실패 그대로(빈 답을 성공으로 받으면 도구 실패 때의 침묵을 가린다). 문구만 사용자가 알아듣게. 루프에는 보고 규칙이 없어 안내를 붙이지 않는다. */
+function emptyAnswerError(lang, loop, cause = null) {
+  const msg = lang === 'en'
+    ? `The agent returned no answer at all${loop ? '' : ` (when there is nothing to report, it is now asked to reply ${NO_REPORT})`}`
+    : `에이전트가 아무 답도 내지 않았습니다${loop ? '' : `(보고할 것이 없을 때는 ${NO_REPORT}로 답하도록 바뀌었습니다)`}`;
+  return Object.assign(new Error(msg), cause ? { cause } : {});
+}
+const failedText = (reason, lang) => (lang === 'en' ? `This routine run failed — ${reason}` : `루틴 실행에 실패했습니다 — ${reason}`);
+/** 놓친 회차 안내 한 줄 — 다음 실행의 대화 기록·건너뜀 알림이 같이 쓴다. */
+function missedNote(slots, lang) {
+  const list = formatMissedSlots(slots, lang);
+  return lang === 'en'
+    ? `The ${list} run was skipped — this device was off at the scheduled time (a run has to start within 4 hours of its time).`
+    : `${list} 회차는 예정 시각에 기기가 꺼져 있어 건너뛰었습니다(예정 시각부터 4시간 안에 켜져 있어야 실행됩니다).`;
+}
+const companyLang = async (wsId) => {
+  const { loadCompany } = await import('./workspace.mjs');
+  return (await loadCompany(wsId).catch(() => ({}))).lang === 'en' ? 'en' : 'ko';
+};
+
+/** 놓친 회차를 남긴다 — 스케줄러 틱(클라우드 리더 기기)이 부른다. routines = 이번 틱에 읽은 목록: 잠금 없이 먼저 판정해
+    **새로 놓친 회차가 없으면 쓰기·잠금 0**(유휴 틱). 있으면 잠금 안에서 다시 읽고 판정해 routine.missed에 더한다(다음 실행이 대화 기록에
+    한 줄로 남기고 비운다 — 같은 회차를 두 번 알리지 않는 표지도 이것). 그리고 루틴마다 활동 기록 한 줄 + 알림 한 건(기존 알림 설정을
+    그대로 탄다 — phase 'skipped', runAt = 마지막 놓친 슬롯이라 직전 실행의 배달 기록을 덮지 않는다). hasCrew = 에이전트 카드 판정(실행
+    건너뜀과 같은 기준 — 카드 없는 루틴은 남기지 않는다). 반환: 새로 남긴 [{ routine, slots }]. */
+export async function recordMissedSlots(wsId, routines, now = new Date(), { hasCrew = async () => true } = {}) {
+  const fresh = (r) => { const seen = new Set((r.missed ?? []).map((m) => m?.at)); return missedSlots(r, now).filter((x) => !seen.has(x.at)); };
+  const ids = new Set();
+  for (const r of routines ?? []) if (fresh(r).length && await hasCrew(r.agentSlug)) ids.add(r.id);
+  if (!ids.size) return [];
+  const keepFrom = now.getTime() - MISSED_LOOKBACK_DAYS * 86_400_000; // 판정 기간 밖의 표지는 더 막을 게 없다 — 쌓이지 않게 정리
+  const found = await lockRoutines(wsId, async () => {
+    const list = await loadRoutines(wsId);
+    const out = [];
+    for (const r of list) {
+      if (!ids.has(r.id)) continue;
+      const slots = fresh(r);
+      if (!slots.length) continue;
+      r.missed = [...(r.missed ?? []).filter((m) => Date.parse(m?.at) >= keepFrom), ...slots];
+      out.push({ routine: { ...r }, slots });
+    }
+    if (out.length) await saveRoutines(wsId, list);
+    return out;
+  });
+  if (!found.length) return [];
+  const { appendEvent } = await import('./events.mjs');
+  const lang = await companyLang(wsId);
+  for (const { routine: r, slots } of found) {
+    await appendEvent(wsId, { type: 'routine-skipped', ok: false, slug: r.agentSlug, routineId: r.id, title: r.title, slots: slots.map(({ date, time }) => ({ date, time })) });
+    // lastRun = 마지막 놓친 슬롯 — 메신저 글의 중복 방지 키(종류·루틴·lastRun·phase)가 놓친 날마다 달라야 한다. 저장된 lastRun 그대로면
+    // 실행 없이 여러 날 놓친 루틴의 두 번째 건너뜀 글이 첫 글과 같은 키로 버려진다.
+    const at = slots.at(-1).at;
+    emitNotify({ type: 'routine', wsId, runAt: at, phase: 'skipped', ok: false, reply: missedNote(slots, lang), routine: { ...r, lastRun: at } });
+  }
+  return found;
+}
+
 /** 결재 승인 후 재개 — approval-actions(kind:'loop')가 부른다. 거절이면 부르지 않는다(정지 유지). */
 export async function resumeLoop(wsId, id) {
   // 재검수(2차): 결재로 재개하는 것도 사람이 한 결정 — editedAt을 찍는다(메신저의 "나중 수정이 이긴다" 판정이 이 재개를 안다).
@@ -370,17 +455,29 @@ export async function removeRoutine(wsId, id) {
 export async function runRoutine(wsId, id, { chatFn = null, startAt = null, session } = {}) {
   // startAt = 테스트 전용(시작 시각 주입) — "시작이 예약 시각을 가로지르는 실행"은 실제 분 경계를
   // 기다리지 않고는 재현할 수 없다(catch의 once 끄기 판정 시계가 이 각인을 쓴다).
-  const r0 = await patchRoutine(wsId, id, { lastRun: (startAt ?? new Date()).toISOString() });
+  // 시작 각인과 함께 놓친 회차 표지(missed — 스케줄러 recordMissedSlots)를 꺼내 비운다: 이번 실행이 대화 기록에 한 줄로 남긴다(같은 회차를 두 번 남기지 않게).
+  let pendingMissed = null;
+  const r0 = await patchRoutine(wsId, id, (cur) => {
+    pendingMissed = Array.isArray(cur.missed) && cur.missed.length ? cur.missed : null;
+    return { lastRun: (startAt ?? new Date()).toISOString(), ...('missed' in cur ? { missed: undefined } : {}) };
+  });
   if (!r0) throw codedError('routine_not_found', '루틴을 찾을 수 없습니다');
   // Edits apply to the next execution: never send an in-flight result to a newly chosen recipient.
   const resultRoutine = (current) => ({ ...(current ?? r0), title: r0.title, agentSlug: r0.agentSlug,
     lastRun: r0.lastRun, notifications: r0.notifications, msgr: r0.msgr });
   const loop = isLoopRoutine(r0);
-  let lang = 'ko';
-  if (loop || r0.verify) { // verify도 lang을 쓴다 — 검수 MEDIUM-1: en 회사의 재시도 지시가 한국어로 나가던 것
-    const { loadCompany } = await import('./workspace.mjs');
-    lang = (await loadCompany(wsId).catch(() => ({}))).lang === 'en' ? 'en' : 'ko';
-  }
+  // 회사 언어 — 루프·완료 조건 재시도 지시(검수 MEDIUM-1), 보고 규칙, 실패·건너뜀 안내가 쓴다
+  const lang = await companyLang(wsId);
+  // 대화 기록 범위 — 성공 턴이 chat에서 받는 범위(contextScope)와 같게: 메신저발은 그 채널, 그 밖은 결과가 나가는 목적지(briefingCtx).
+  // 실패·건너뜀 안내처럼 chat을 거치지 않는 기록도 이 범위로 남아야 공유 목적지의 기록이 주인 1:1 맥락에 섞이지 않는다.
+  const destCtx = async () => (await import('./gateway.mjs')).briefingCtx(wsId, 'routine', r0.agentSlug, { notifications: r0.notifications });
+  const recordScope = async () => {
+    const { turnScope } = await import('./thread.mjs');
+    return r0.msgr ? turnScope({ ...r0.msgr, kind: 'msgr' }) : turnScope(await destCtx());
+  };
+  // 사람이 읽는 지시(대화 기록·1:1 화면 카드가 읽는 모양) — 러너에게는 루프가 아니면 보고 규칙(NO_REPORT)을 덧붙여 보낸다
+  const userMsg = `${routineHead(r0.title, 'ko')} ${r0.prompt}${loop ? loopProtocol(r0, lang) : ''}`;
+  let pending = userMsg; // 아직 대화 기록에 답과 짝지어 남기지 못한 지시 — 실패하면 실패 안내를 그 답 자리에 두고 남긴다
   // 루프 정지 알림 — blocked면 사장 결재로 푼다(승인 → approval-actions(kind:'loop')가 resumeLoop, 거절 → 정지 유지). 성공·실패 경로 공용.
   const announceStop = async (r, stop, msgr) => {
     if (stop.reason === 'blocked') {
@@ -400,9 +497,30 @@ export async function runRoutine(wsId, id, { chatFn = null, startAt = null, sess
       ? async (message) => (await import('./gateway/msgr.mjs')).runMessengerContinuation(wsId, r0.agentSlug, r0.msgr, message, null, { runChat: chat, session, loopTurn: loop, ...(r0.from ? { notOwnerDirect: r0.from } : {}) }) // loopTurn — 채널 글에서 판정 표지를 넘김 줄 앞에서 뺀다
       : async (message) => {
         // 결과가 공유 목적지(슬랙 채널·텔레그램 그룹·메신저 채널)로 나가면 그 범위 맥락만 — 주인 대화를 붙이지 않는다(gateway briefingCtx, 동적 임포트 = 순환 차단)
-        const destCtx = await (await import('./gateway.mjs')).briefingCtx(wsId, 'routine', r0.agentSlug, { notifications: r0.notifications });
-        return chat(wsId, r0.agentSlug, message, null, { source: 'routine', ...(destCtx ? { mirrorCtx: destCtx } : {}), ...(r0.from ? { notOwnerDirect: r0.from } : {}) }); // 출처 있는 루틴 = 풀 오토 아님(출처·프롬프트는 그대로)
+        const ctx = await destCtx();
+        return chat(wsId, r0.agentSlug, message, null, { source: 'routine', ...(ctx ? { mirrorCtx: ctx } : {}), ...(r0.from ? { notOwnerDirect: r0.from } : {}) }); // 출처 있는 루틴 = 풀 오토 아님(출처·프롬프트는 그대로)
       };
+    // 빈 답은 실패다(성공으로 받으면 도구 실패 때의 침묵을 가린다) — 러너 무관하게 여기서 한 번 판정하고 문구를 알아듣게 바꾼다.
+    // CLI 경로는 chat이 빈 답을 이미 던진다(emptyReply 표지 — 대화 턴 문구는 그대로 두고 루틴에서만 바꾼다), SDK·네이티브 경로는 빈 문자열이 돌아온다.
+    // 메신저발은 판정 표지·넘김 줄을 뗀 뒤의 본문(reply)과 원문(replyForChecks)이 둘 다 비어야 빈 답이다(루프 판정 줄만 있는 답은 빈 답이 아니다).
+    const runTurn = async (message) => {
+      let t;
+      try { t = await run(message); } catch (e) { throw e?.emptyReply ? emptyAnswerError(lang, loop, e) : e; }
+      if (!String(t?.reply ?? '').trim() && !String(t?.replyForChecks ?? '').trim()) throw emptyAnswerError(lang, loop);
+      return t;
+    };
+    // 대화 기록의 답 — 혼자 있는 NO_REPORT 줄은 엔진용 표지라 화면에 그대로 두지 않는다(루프는 표지 규칙 밖)
+    const recorded = (t) => {
+      if (loop) return t.reply;
+      const nr = splitNoReport(t.reply);
+      return nr.none ? TXT.noReportThread[lang] : nr.text;
+    };
+    if (pendingMissed) { // 지난 실행 뒤 건너뛴 회차 — 이번 실행의 지시 앞에 루틴에서 온 글 한 줄로(같은 날 여러 회차는 한 묶음)
+      const { appendLine } = await import('./thread.mjs');
+      const scope = await recordScope().catch(() => null);
+      await appendLine(wsId, r0.agentSlug, { who: 'user', via: 'routine', text: `${routineHead(r0.title, 'ko')} ${missedNote(pendingMissed, lang)}`, ...(scope ? { contextScope: scope } : {}) })
+        .catch((e) => console.error(`[argo] 루틴 건너뜀 기록 실패(${wsId}/${r0.agentSlug}):`, e.message));
+    }
     // 완료 조건 저장값 정규화는 chat **전** — 오염된 저장값이면 LLM 비용을 쓰기 전에 실패하고,
     // 사유에 루틴 제목을 붙여 어느 설정 문제인지 드러낸다(검수 LOW-2).
     let ver = null;
@@ -411,8 +529,7 @@ export async function runRoutine(wsId, id, { chatFn = null, startAt = null, sess
         throw new Error(lang === 'en' ? `[${r0.title}] completion check config invalid: ${e.message}` : `[${r0.title}] 완료 조건 설정 오류: ${e.message}`);
       }
     }
-    const userMsg = `${routineHead(r0.title, 'ko')} ${r0.prompt}${loop ? loopProtocol(r0, lang) : ''}`;
-    let t = await run(userMsg);
+    let t = await runTurn(loop ? userMsg : `${userMsg}${noReportRule(lang)}`);
     // 대화 스레드에 남긴다 — 루틴만 이게 빠져 있어서, 실행 중엔 채팅창에 보이다가 끝나면 사라졌다
     // (신고 2026-07-28 "루틴 돌면서 채팅이 올라왔다가 실행되고 나니 유실"). 저장한 적이 없었던 것.
     // 사장 직접 대화·위임·쪽지 배달은 전부 appendTurn을 한다 — 루틴만 비대칭이었다.
@@ -420,8 +537,9 @@ export async function runRoutine(wsId, id, { chatFn = null, startAt = null, sess
     // 기록은 chat **직후**(완료 조건 검사 전) — 재시도·최종 실패(throw)와 무관하게 모든 턴이
     // 자기 지시와 짝지어 스레드에 남는다(재시도 턴은 아래 루프가 각자 기록).
     const { appendTurn } = await import('./thread.mjs');
-    await appendTurn(wsId, r0.agentSlug, { userMsg, reply: t.reply, handover: t.handover, sessionId: null, via: 'routine', artifacts: t.artifacts, contextScope: t.contextScope })
+    await appendTurn(wsId, r0.agentSlug, { userMsg, reply: recorded(t), handover: t.handover, sessionId: null, via: 'routine', artifacts: t.artifacts, contextScope: t.contextScope })
       .catch((e) => console.error(`[argo] 루틴 스레드 기록 실패(${wsId}/${r0.agentSlug}):`, e.message));
+    pending = null;
     // 완료 조건(verify) — 산출물이 실제로 없으면 "다 됐어요"를 인정하지 않는다. 미충족이면 실패
     // 목록을 그대로 들려 재시도(retries회), 그래도 미충족이면 throw로 기존 실패 표면
     // (lastOk:false + 알림)에 정직하게 태운다.
@@ -431,9 +549,11 @@ export async function runRoutine(wsId, id, { chatFn = null, startAt = null, sess
       while (!res.ok && verifyTried < ver.retries) {
         verifyTried += 1;
         const retryMsg = verifyRetryPrompt(r0, res.failures, verifyTried + 1, lang);
-        t = await run(retryMsg);
-        await appendTurn(wsId, r0.agentSlug, { userMsg: retryMsg, reply: t.reply, handover: t.handover, sessionId: null, via: 'routine', artifacts: t.artifacts, contextScope: t.contextScope })
+        pending = retryMsg;
+        t = await runTurn(retryMsg); // 재시도는 산출물을 요구하는 지시 — 보고 규칙(NO_REPORT)을 붙이지 않는다
+        await appendTurn(wsId, r0.agentSlug, { userMsg: retryMsg, reply: recorded(t), handover: t.handover, sessionId: null, via: 'routine', artifacts: t.artifacts, contextScope: t.contextScope })
           .catch((e) => console.error(`[argo] 루틴 재시도 스레드 기록 실패(${wsId}/${r0.agentSlug}):`, e.message));
+        pending = null;
         res = await checkVerify(wsId, ver, { lang });
       }
       if (!res.ok) {
@@ -446,7 +566,11 @@ export async function runRoutine(wsId, id, { chatFn = null, startAt = null, sess
     // 사용자에게 나가는 답(알림 이벤트 → 텔레그램·슬랙·메신저, 마지막 결과 요약, 지금 실행 응답) — 루프 회차 답 끝의 판정 표지(LOOP: …)는
     // 엔진용이라 여기서 한 번만 뺀다. 판정(아래 parseLoopVerdict)과 1:1 대화 기록은 원문 그대로. 메신저발 루프는
     // runMessengerContinuation(loopTurn)이 넘김 줄을 붙이기 전에 이미 뺐다 — 두 번 빼지 않는다.
-    const shown = loop && !r0.msgr ? stripLoopVerdict(t.reply) : t.reply;
+    // 보고할 것이 없음 — NO_REPORT(혼자 있는 표지 줄만 남은 답) 또는 루프 회차 답이 판정 줄뿐. 이때는 알림·메신저 글을 보내지 않는다(제목만 있는 글이 갔다).
+    // 결과 요약·지금 실행 응답은 알아듣는 말로. 표지 줄과 보고가 같이 오면 표지 줄만 뗀 보고를 보낸다.
+    let shown = loop ? (r0.msgr ? t.reply : stripLoopVerdict(t.reply)) : splitNoReport(t.reply).text;
+    const quiet = !String(shown).trim();
+    if (quiet) shown = TXT.noReportResult[lang];
     const summary = shown.replace(/\s+/g, ' ').slice(0, 160);
     // 1회 예약은 **성공하면** 스스로 꺼진다 — 산출이 이미 나갔으니 예약 시각에 또 보내지 않는다
     // (미래 예약을 미리 시험해 성공한 경우도 동일 — 이중 발송 방지). 실패는 catch가 다르게 다룬다.
@@ -474,8 +598,8 @@ export async function runRoutine(wsId, id, { chatFn = null, startAt = null, sess
     // 잘못 끄지 않는다(검수 LOW-1: catch와 기준 통일). enabled:false 덮어쓰기라 루프 정지와 무충돌.
     const r = await patchRoutine(wsId, id, (cur) => ({ ...patch, ...(cur.schedule?.type === 'once' ? { enabled: false } : {}) }));
     if (stop) await announceStop(r, stop, t.msgr);
-    emitNotify({ type: 'routine', wsId, runAt: r0.lastRun, routine: resultRoutine(r), ok: true, reply: shown, ...(t.msgr ? { msgr: t.msgr, msgrReply: t.msgrReply } : {}) }); // 메신저 브리핑 푸시
-    return { ok: true, reply: shown, handover: t.handover, ...(loop ? { loop: r?.loop ?? null, stopped: stop?.reason ?? null } : {}) };
+    if (!quiet) emitNotify({ type: 'routine', wsId, runAt: r0.lastRun, routine: resultRoutine(r), ok: true, reply: shown, ...(t.msgr ? { msgr: t.msgr, msgrReply: t.msgrReply } : {}) }); // 메신저 브리핑 푸시
+    return { ok: true, reply: shown, handover: t.handover, ...(quiet ? { noReport: true } : {}), ...(loop ? { loop: r?.loop ?? null, stopped: stop?.reason ?? null } : {}) };
   } catch (e) {
     const msg = String(e.message || e).slice(0, 160);
     // 1회 예약은 **예약 시각이 지난 실패**면 끈다 — 같은 슬롯은 lastRun 각인으로 재발화하지 않아,
@@ -499,6 +623,18 @@ export async function runRoutine(wsId, id, { chatFn = null, startAt = null, sess
       loopPatch.loop = L;
     }
     const r = await patchRoutine(wsId, id, (cur) => ({ lastOk: false, lastResult: msg, ...loopPatch, ...(onceSpent(cur.schedule, new Date(r0.lastRun)) ? { enabled: false } : {}) }));
+    // 실패도 대화 기록에 남긴다(종전엔 성공 때만 남아 실패 28건이 화면에 0건이었다 — 2026-10-07 조사). 답과 짝을 못 지은 지시가 있으면
+    // 성공 때와 같은 모양의 지시 + 답 자리에 실패 안내, 이미 다 남긴 뒤의 실패(완료 조건 최종 미충족)면 안내 한 줄만 — 지시를 두 번 쓰지 않는다.
+    // 기록 실패는 루틴 실패 처리(lastOk·알림·throw)를 막지 않는다.
+    {
+      const { appendTurn, appendLine } = await import('./thread.mjs');
+      const scope = await recordScope().catch(() => null);
+      const text = failedText(String(e?.message || e).slice(0, 500), lang);
+      await (pending
+        ? appendTurn(wsId, r0.agentSlug, { userMsg: pending, reply: text, handover: null, sessionId: null, via: 'routine', ...(scope ? { contextScope: scope } : {}) })
+        : appendLine(wsId, r0.agentSlug, { who: 'crew', text, ...(scope ? { contextScope: scope } : {}) }))
+        .catch((err) => console.error(`[argo] 루틴 실패 기록 실패(${wsId}/${r0.agentSlug}):`, err.message));
+    }
     if (stop) await announceStop(r, stop, null);
     emitNotify({ type: 'routine', wsId, runAt: r0.lastRun, routine: resultRoutine(r), ok: false, reply: msg });
     throw e;

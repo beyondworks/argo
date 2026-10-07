@@ -618,3 +618,59 @@ test('approval follow-up: 후속 실행이 실패해도 실패 줄에 확정한 
     }
   } finally { f.stop(); }
 });
+
+// 루틴 표시(fix/routine-failure-visible) — 메신저발 루틴도 데스크톱 루틴과 같은 규칙: 보고할 것이 없으면(NO_REPORT) 채널 글 0,
+// 실패는 대화 기록에 그 채널 범위(contextScope)로 남아 주인 1:1 맥락에 섞이지 않는다.
+test('messenger routine: NO_REPORT 답이면 채널 글(알림 이벤트)을 만들지 않고 성공으로 기록한다', async () => {
+  const f = await setup({ requester: 'owner' });
+  try {
+    const r = await addRoutine(f.ws, { agentSlug: 'alpha', title: '메일 보고', prompt: '새 메일을 보고하라', schedule: { type: 'daily', time: '09:00' }, msgr: f.origin });
+    const seen = [];
+    const out = await runRoutine(f.ws, r.id, { session: f.session, chatFn: async (_ws, _slug, msg) => { seen.push(msg); return { reply: 'NO_REPORT', sessionId: null, handover: null }; } });
+    await new Promise((res) => setTimeout(res, 20));
+    assert.equal(out.ok, true);
+    assert.match(seen[0], /\[보고 규칙\]/, '메신저 후속 실행 글에도 보고 규칙이 실린다');
+    assert.equal(f.events.filter((e) => e.type === 'routine').length, 0, '보고할 것이 없으면 채널에 글을 올리지 않는다');
+    const saved = (await loadRoutines(f.ws)).find((x) => x.id === r.id);
+    assert.equal(saved.lastOk, true); assert.equal(saved.lastResult, '보고할 내용 없음');
+  } finally { f.stop(); }
+});
+
+test('messenger routine: 실패는 대화 기록에 그 채널 범위로 남는다(채널 실패 글 1건은 종전대로)', async () => {
+  const f = await setup({ requester: 'owner' });
+  const { loadThread, inContextScope } = await import('../src/thread.mjs');
+  try {
+    const r = await addRoutine(f.ws, { agentSlug: 'alpha', title: '메일 보고', prompt: '새 메일을 보고하라', schedule: { type: 'daily', time: '09:00' }, msgr: f.origin });
+    await assert.rejects(runRoutine(f.ws, r.id, { session: f.session, chatFn: async () => { throw new Error('모델 장애'); } }), /모델 장애/);
+    await new Promise((res) => setTimeout(res, 20));
+    const msgs = (await loadThread(f.ws, 'alpha')).messages.slice(-2);
+    assert.equal(msgs[0].text, '[루틴: 메일 보고] 새 메일을 보고하라');
+    assert.match(msgs[1].text, /루틴 실행에 실패했습니다 — 모델 장애/);
+    for (const m of msgs) {
+      assert.deepEqual(m.contextScope, { kind: 'msgr', channelId: 'channel', threadRoot: 10 }, '그 채널 범위');
+      assert.equal(inContextScope(m, null), false, '주인 1:1(범위 없음) 맥락에는 실리지 않는다');
+    }
+    assert.equal(f.events.filter((e) => e.type === 'routine' && e.ok === false).length, 1);
+  } finally { f.stop(); }
+});
+
+test('messenger routine: 실행 없이 여러 날 놓친 회차는 날마다 다른 채널 글로 간다(중복 방지 키가 놓친 날을 담는다)', async () => {
+  const f = await setup({ requester: 'owner' });
+  const { recordMissedSlots } = await import('../src/routines.mjs');
+  const { writeJsonAtomic } = await import('../src/jsonstore.mjs');
+  try {
+    const r = await addRoutine(f.ws, { agentSlug: 'alpha', title: '아침 보고', prompt: '보고하라', schedule: { type: 'daily', times: ['09:00'], tz: 'Asia/Seoul' }, msgr: f.origin });
+    const raw = await loadRoutines(f.ws);
+    Object.assign(raw.find((x) => x.id === r.id), { lastRun: '2026-10-06T00:00:00.000Z', created: '2026-09-01T00:00:00.000Z', editedAt: '2026-09-01T00:00:00.000Z' });
+    await writeJsonAtomic(paths(f.ws).routines, raw);
+    await recordMissedSlots(f.ws, await loadRoutines(f.ws), new Date('2026-10-07T06:00:00Z')); // 10/7 09:00 KST 놓침
+    await recordMissedSlots(f.ws, await loadRoutines(f.ws), new Date('2026-10-08T06:00:00Z')); // 10/8 09:00 KST 놓침(그 사이 실행 없음)
+    await new Promise((res) => setTimeout(res, 20));
+    const skips = f.events.filter((e) => e.type === 'routine' && e.phase === 'skipped');
+    assert.equal(skips.length, 2, '놓친 날마다 한 번');
+    for (const e of skips) assert.equal(await msgrPush(e, { session: f.session }), true);
+    assert.equal(f.rows.length, 2);
+    assert.equal(new Set(f.rows.map((row) => row.client_msg_id)).size, 2, '두 번째 건너뜀 글이 첫 글과 같은 키로 버려지지 않는다');
+    assert.match(f.rows[0].body, /10월 7일 09:00/); assert.match(f.rows[1].body, /10월 8일 09:00/);
+  } finally { f.stop(); }
+});

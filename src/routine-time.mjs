@@ -53,6 +53,83 @@ export function onceSpent(schedule, now = new Date()) {
   return zp.hour * 60 + zp.minute >= h * 60 + m;
 }
 
+/** 그 시간대의 벽시계(YYYY-MM-DD, HH:MM) → 절대 시각(ms). tz가 없으면 기기 로컬(isDue와 같은 규칙).
+    JS는 임의 시간대의 Date를 못 만든다 — 벽시계를 UTC로 읽은 값에서 그 순간의 시간대 차이를 빼 맞춘다(두 번 — DST 경계 근사). */
+function zonedInstant(date, time, tz) {
+  const [y, mo, d] = date.split('-').map(Number);
+  const [h, mi] = time.split(':').map(Number);
+  if (!tz) return new Date(y, mo - 1, d, h, mi).getTime();
+  const want = Date.UTC(y, mo - 1, d, h, mi);
+  let t = want;
+  for (let i = 0; i < 2; i++) {
+    const p = zonedParts(new Date(t), tz);
+    t += want - Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute);
+  }
+  return t;
+}
+const ymd = (p) => `${p.year}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')}`;
+
+/** 놓친 회차를 거슬러 찾는 기간 — 오래 꺼져 있던 기기가 켜져도 최근 일주일만 알린다(판정 계산량·알림 상한). */
+export const MISSED_LOOKBACK_DAYS = 7;
+
+/** 놓친 회차(순수) — catch-up 창(CATCHUP_MS)을 넘겨 isDue가 **다시는 발화하지 않을** 슬롯. 반환 [{ at(ISO), date, time }] 오래된 순.
+    isDue는 창을 넘긴 슬롯을 조용히 건너뛴다(기기가 꺼져 있었으면 그날 회차가 기록 없이 사라졌다 — 2026-10-07 조사). 여기서 같은 규칙으로 그 슬롯을 찾는다:
+    기준 시각(since) 이후 ~ now−CATCHUP_MS 이전. since = 마지막 실행(lastRun)·만든 시각(created)·사람이 고친 시각(editedAt) 중 가장 늦은 것 —
+    고친 시각 이전 슬롯은 "꺼져 있었다"가 아니라 그때 꺼져 있었거나(enabled) 시각이 달랐던 것이라 놓침으로 치지 않는다(isDue보다 보수적: 덜 알린다).
+    interval은 대상이 아니다(다음 틱에 자연 캐치업). 알려진 한계 — isDue의 DST 되돌림 결함(같은 슬롯 두 번 발화)과 같은 날의 벽시계 해석 차이. */
+export function missedSlots(routine, now = new Date(), { lookbackDays = MISSED_LOOKBACK_DAYS } = {}) {
+  if (!routine?.enabled) return [];
+  const s = routine.schedule ?? {};
+  if (s.type === 'interval') return [];
+  const until = now.getTime() - CATCHUP_MS; // 이보다 늦은 슬롯은 아직 catch-up으로 발화할 수 있다
+  const marks = [routine.lastRun, routine.created, routine.editedAt].map((v) => Date.parse(v ?? '')).filter(Number.isFinite);
+  const since = Math.max(now.getTime() - lookbackDays * 86_400_000, ...marks);
+  if (since >= until) return [];
+  const tz = normalizeTz(s.tz);
+  const times = (Array.isArray(s.times) && s.times.length ? s.times : [s.time]).filter((t) => /^\d{2}:\d{2}$/.test(String(t ?? '')));
+  const dows = Array.isArray(s.dows) && s.dows.length ? s.dows.map(Number) : [Number(s.dow ?? 1)];
+  let dates;
+  if (s.type === 'once') dates = /^\d{4}-\d{2}-\d{2}$/.test(String(s.date ?? '')) ? [s.date] : [];
+  else {
+    // 그 시간대의 달력 날짜를 since가 속한 날부터 until이 속한 날까지 하루씩(최대 lookbackDays+1일)
+    dates = [];
+    const first = zonedParts(new Date(since), tz); const last = ymd(zonedParts(new Date(until), tz));
+    for (let d = Date.UTC(first.year, first.month - 1, first.day), i = 0; i <= lookbackDays + 1; d += 86_400_000, i++) {
+      const u = new Date(d);
+      const date = `${u.getUTCFullYear()}-${String(u.getUTCMonth() + 1).padStart(2, '0')}-${String(u.getUTCDate()).padStart(2, '0')}`;
+      if (date > last) break;
+      if (s.type !== 'weekly' || dows.includes(u.getUTCDay())) dates.push(date);
+    }
+  }
+  const out = [];
+  for (const date of dates) {
+    for (const time of times) {
+      const at = zonedInstant(date, time, tz);
+      if (at > since && at < until) out.push({ at: new Date(at).toISOString(), date, time });
+    }
+  }
+  return out.sort((a, b) => a.at.localeCompare(b.at));
+}
+
+const MONTHS_EN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+/** 놓친 회차 목록 → 사람이 읽는 한 줄(순수 — 엔진의 대화·알림 문구와 활동 화면이 같이 쓴다). 같은 날은 한 묶음,
+    날짜가 많으면 앞 3일 + "외 N건". 예: ko '10월 8일 09:00·13:00, 10월 9일 09:00' / en 'Oct 8 09:00 · 13:00, Oct 9 09:00'. */
+export function formatMissedSlots(slots, lang = 'ko') {
+  const en = lang === 'en';
+  const days = [];
+  for (const { date, time } of slots ?? []) {
+    const last = days.at(-1);
+    if (last?.date === date) last.times.push(time); else days.push({ date, times: [time] });
+  }
+  const shown = days.slice(0, 3);
+  const label = ({ date, times }) => {
+    const [, m, d] = String(date).split('-').map(Number);
+    return `${en ? `${MONTHS_EN[m - 1] ?? m} ${d}` : `${m}월 ${d}일`} ${times.join(en ? ' · ' : '·')}`;
+  };
+  const rest = days.slice(3).reduce((n, x) => n + x.times.length, 0);
+  return shown.map(label).join(', ') + (rest ? (en ? ` and ${rest} more` : ` 외 ${rest}건`) : '');
+}
+
 /** 만료 판정(순수) — "한 번도 발화하지 못한 once": 예약 시각이 앱이 꺼진 사이 지나가 catch-up
     창(4h)까지 놓치면 enabled:true인 채 영영 발화하지 않고 목록에 '가동'으로 남는다(PR #354 검수
     3R 잔존 집합). 화면은 이런 루틴을 '만료'로 표시한다 — 표시만이고 자동 비활성은 하지 않는다:

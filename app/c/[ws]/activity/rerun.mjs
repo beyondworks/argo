@@ -2,6 +2,8 @@
 // F5(2026-10-05): '다시 실행'이 메신저(손님 포함) 턴을 사장 직접 턴으로 데스크톱 1:1에서 다시 돌렸다 — 손님 요청이 사장 권한
 // (풀 오토 등)으로 승격되고, 답도 메신저가 아니라 데스크톱 대화에 붙었다. 사장이 직접 시킨 턴만 그 자리에서 다시 돌린다.
 
+import { stripReportRule } from '../../../../src/inbound-marks.mjs';
+
 const OWNER_SOURCES = new Set(['deck', 'routine', 'trial', 'room', 'compete']); // 사장이 직접 시킨 턴(데크 1:1·루틴·시운전·회의실·경쟁 시안)
 
 /** 'rerun' = 버튼을 보인다 · 'messenger' = 숨기고 "메신저에서 다시 보내 주세요" · 'none' = 숨긴다(다른 크루가 건 턴 등). */
@@ -20,4 +22,10 @@ export function rerunMode(e) {
   // 표지가 생기기 전에 기록된 사장 본인의 옛 이벤트도 숨는다(안전한 쪽) — 새로 실행한 턴부터 다시 보인다.
   if (src === 'routine' || src === 'deck') return e.ownerDirect === true ? 'rerun' : 'none';
   return OWNER_SOURCES.has(src) ? 'rerun' : 'none';
+}
+
+/** '다시 실행'이 보낼 글 — 루틴 턴 이벤트의 원문(msg)에는 엔진이 덧붙인 보고 규칙(NO_REPORT)이 실려 있다. 다시 실행은 대화 턴이라
+    규칙을 떼고 보낸다(대화 턴의 답 처리는 루틴 규칙과 무관해야 한다 — fix/routine-failure-visible). 머리는 붙이는 쪽과 같은 함수(inbound-marks). */
+export function rerunMessage(e) {
+  return stripReportRule(e?.msg ?? '');
 }
