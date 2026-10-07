@@ -276,7 +276,7 @@ const DICT = {
     'Argo — 스스로 일하는 자율형 AI 에이전트.',
     'Argo — autonomous AI agents that work on their own.',
   ],
-  'footer.copy': ['© 2026 Argo. All rights reserved.', '© 2026 Argo. All rights reserved.'],
+  'footer.copy': ['© 2026 AIDU (AI 개발단) · Seoul, Korea', '© 2026 AIDU (AI 개발단) · Seoul, Korea'],
   'footer.nav': ['푸터 내비게이션', 'Footer navigation'],
 
   // side nav (데스크톱 좌측)

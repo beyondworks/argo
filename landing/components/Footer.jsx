@@ -25,7 +25,7 @@ export default function Footer() {
         <Link href="/refund">{t('legal.refund')}</Link>
       </nav>
 
-      <span className="mono-label footer-copy">{t('footer.copy')}</span>
+      <a className="mono-label footer-copy" href="https://leankim.xyz/about">{t('footer.copy')}</a>
     </footer>
   );
 }
