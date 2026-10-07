@@ -8,7 +8,22 @@
 export function normalizeTz(tz) {
   const name = String(tz ?? '').trim();
   if (!name) return null;
-  try { new Intl.DateTimeFormat('en-US', { timeZone: name }); return name; } catch { return null; }
+  try { zonedFormat(name); return name; } catch { return null; }
+}
+
+// 시간대별 포맷터 캐시 — Intl.DateTimeFormat 생성이 판정 비용의 대부분이다(놓친 회차 판정은 루틴마다 최대 7일×8회차를 매 틱 계산한다 —
+// 검수 측정: 캐시 없이 호출당 5~54ms). 시간대 이름 수만큼만 쌓인다(잘못된 이름은 생성자가 던져 캐시에 들어가지 않는다).
+const FORMATS = new Map();
+function zonedFormat(tz) {
+  let f = FORMATS.get(tz);
+  if (!f) {
+    f = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz, hour12: false, weekday: 'short',
+      year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+    });
+    FORMATS.set(tz, f);
+  }
+  return f;
 }
 
 // 예약 시각을 놓쳐도(슬립·재시작으로 폴러가 그 분을 건너뜀) 당일 안에서 1회 catch-up 한다.
@@ -26,10 +41,7 @@ export function zonedParts(now, tz) {
       hour: now.getHours(), minute: now.getMinutes(), dow: now.getDay(),
     };
   }
-  const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
-    timeZone: tz, hour12: false, weekday: 'short',
-    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
-  }).formatToParts(now).map((x) => [x.type, x.value]));
+  const p = Object.fromEntries(zonedFormat(tz).formatToParts(now).map((x) => [x.type, x.value]));
   const DOW = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
   return {
     year: Number(p.year), month: Number(p.month), day: Number(p.day),
