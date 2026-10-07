@@ -738,3 +738,103 @@ test('29. 보류 중인 글이 500건을 넘어도 보류는 처음 본 뒤 160�
   assert.equal(jobs.length, 600, '600건 모두 적재된다(보류가 끝난다)');
   assert.equal([...cursors.values()].filter((v) => v > 0).length, 12, '모든 크루 커서가 넘어간다');
 });
+
+// ── 처음 본 시각의 나이 정리(974568c2) 잠금 + 시계 되감김(확인 검수 LOW) ──────────────────────────
+// 정리는 2,000건이 넘을 때 1분 간격으로 30분 넘은 키만 지운다. 상수는 테스트에서 바꾸지 않는다 — 실제 값(2,000건·30분·1분) 그대로 가짜 시계만 움직인다.
+// 보류 중인 글의 키를 지우면 그 글이 '지금'으로 다시 들어와 160초를 처음부터 센다(500건 개수 상한의 결함). 29번은 600건이라 정리가 돌지 않는다.
+const MIN = 60_000;
+const fillSeen = (prefix, n, at) => { for (let i = 0; i < n; i++) M._runnerYieldSeenForTest.set(`${prefix}:${i}`, at); };
+const countSeen = (prefix) => [...M._runnerYieldSeenForTest.keys()].filter((k) => k.startsWith(`${prefix}:`)).length;
+
+test('30. 처음 본 시각은 2,000건이 넘으면 30분 넘은 키만 지운다 — 29분 된 키는 남고, 정리 뒤 30초에는 다시 정리하지 않으며 61초에 정리한다', async () => {
+  const ws = await seed('seen-sweep-age'); // 러너 없음
+  M._resetRunnerYieldSeenForTest();
+  const seen = M._runnerYieldSeenForTest;
+  const T = Date.now(); let clock = T; const now = () => clock;
+  fillSeen('stale-a', 2_500, T - 31 * MIN); // 다른 글들 — 처음 본 지 31분(160초 기한은 한참 지남)
+  seen.set('recent', T - 29 * MIN);
+  const srv = inboxServer([inboxMsg(11, T)]);
+  const enq = collector();
+  await drainAs(ws, srv, 'A', enq, now); // 새 대상 글 11을 처음 본다 → 2,000건이 넘어 정리
+  assert.equal(enq.jobs.length, 0, '전제: 러너 없는 프로세스라 새 글은 보류');
+  assert.equal(countSeen('stale-a'), 0, '30분 넘은 키 2,500개는 지운다');
+  assert.equal(seen.get('recent'), T - 29 * MIN, '29분 된 키는 남는다(개수가 아니라 나이로 정리)');
+  assert.equal(seen.get(`${ws}:${CREW}:11`), T, '방금 본 글의 처음 본 시각');
+  fillSeen('stale-b', 2_500, T - 31 * MIN);
+  clock = T + 30_000; srv.msgs.push(inboxMsg(12, clock));
+  await drainAs(ws, srv, 'A', enq, now);
+  assert.equal(countSeen('stale-b'), 2_500, '정리 뒤 30초 — 2,000건이 넘어도 다시 정리하지 않는다(1분 간격)');
+  clock = T + 61_000; srv.msgs.push(inboxMsg(13, clock));
+  await drainAs(ws, srv, 'A', enq, now);
+  assert.equal(countSeen('stale-b'), 0, '정리 뒤 61초 — 다시 정리한다');
+  assert.equal(seen.has('recent'), false, '그 사이 30분을 넘긴 키도 이때 지운다');
+  assert.deepEqual([11, 12, 13].map((id) => seen.get(`${ws}:${CREW}:${id}`)), [T, T + 30_000, T + 61_000], '보류 중인 글의 처음 본 시각은 그대로');
+  assert.equal(enq.jobs.length, 0);
+  assert.equal(srv.cursor, 10);
+});
+
+test('31. 보류 중인 글이 2,000건 넘을 때 1분 뒤 정리가 돌아도 보류 중 키는 지우지 않는다 — 160초를 다시 세지 않고 처음 본 뒤 160초에 모두 적재한다', async () => {
+  const ws = await seed('seen-sweep-pending'); // 러너 없음
+  M._resetRunnerYieldSeenForTest();
+  const seen = M._runnerYieldSeenForTest;
+  const T = Date.now(); let clock = T; const now = () => clock;
+  const N = 45; // 크루 45명 × 50건 = 2,250건 보류
+  const crews = Array.from({ length: N + 1 }, (_, i) => ({ id: `dddddddd-0000-4000-8000-${String(i).padStart(12, '0')}`, slug: `p${i}`, display_name: `p${i}` }));
+  const late = crews[N]; // 1분 뒤 새 글이 오는 크루 — 그 글의 새 키가 정리를 부른다
+  const cursors = new Map(crews.map((c) => [c.id, 0]));
+  const msg = (id, crewId, at) => ({ id, channel_id: CH, author_kind: 'user', author_user_id: OWNER, crew_id: null, kind: 'text', body: 'x',
+    mentions: [{ kind: 'crew', id: crewId }], reply_to: null, thread_root: null, created_at: new Date(at).toISOString(), meta: {} });
+  const inbox = new Map(crews.map((c, i) => [c.id, i < N ? Array.from({ length: M.PAGE }, (_, j) => msg((i + 1) * 1000 + j + 1, c.id, T)) : []]));
+  const jobs = [];
+  const db = {
+    async myCrews() { return crews.map((c) => ({ ...c, org_id: ORG, allow: 'all', allow_users: [], cursor_msg_id: cursors.get(c.id), hosting: 'local' })); },
+    async crewChannels() { return []; },
+    async crewScope() { return new Set([CH]); },
+    async crewInbox(_ws, id, after) { return inbox.get(id).filter((m) => m.id > after).slice(0, M.PAGE); },
+    async channel(id) { return { id, org_id: ORG, kind: 'public', name: 'general' }; },
+    async message() { return null; },
+    async instructCheck() { return 'ok'; },
+    async orgEntitled() { return true; },
+    async orgConsentOk() { return true; },
+    async setCursor(id, n) { if (n > cursors.get(id)) cursors.set(id, n); },
+  };
+  const tick = () => M.drain(ws, { db, uid: OWNER, enqueue: async (_w, _k, _n, job) => { jobs.push(job); }, housekeeping: false, now, runnerReady: C.turnRunnerAvailable });
+  const pending = crews.slice(0, N).flatMap((c) => inbox.get(c.id).map((m) => `${ws}:${c.id}:${m.id}`));
+  await tick();
+  assert.equal(jobs.length, 0);
+  assert.equal(pending.length, 2_250);
+  assert.ok(pending.every((k) => seen.get(k) === T), '전제: 2,250건 모두 지금 처음 봤다');
+  clock = T + 61_000;
+  seen.set('stale', T - 31 * MIN); // 정리가 실제로 돌았는지 보는 표지
+  inbox.get(late.id).push(msg(99_001, late.id, clock));
+  await tick();
+  assert.equal(seen.has('stale'), false, '전제: 1분 뒤 정리가 돌았다');
+  assert.equal(pending.filter((k) => seen.get(k) !== T).length, 0, '보류 중인 키(처음 본 지 1분)는 지우지 않는다 — 다시 160초를 세지 않는다');
+  assert.equal(jobs.length, 0);
+  clock = T + YIELD_GRACE_MS + 3_000;
+  await tick();
+  assert.equal(jobs.length, 2_250, '처음 본 뒤 160초 무렵 2,250건 모두 적재(정리 뒤 다시 센다면 61초 + 160초까지 밀린다)');
+  assert.equal(crews.slice(0, N).filter((c) => cursors.get(c.id) === (crews.indexOf(c) + 1) * 1000 + M.PAGE).length, N, '보류하던 크루 커서가 모두 넘어간다');
+  assert.equal(cursors.get(late.id), 0, '1분 뒤에 처음 본 글은 아직 보류(처음 본 지 102초)');
+});
+
+test('32. 이 기기 시계가 뒤로 가면 마지막 정리 시각도 내린다 — 1시간 되감은 뒤에도 61초 뒤에 정리한다(그대로 두면 1시간 넘게 정리가 멈춘다)', async () => {
+  const ws = await seed('seen-sweep-rewind'); // 러너 없음
+  M._resetRunnerYieldSeenForTest();
+  const T = Date.now(); let clock = T; const now = () => clock;
+  fillSeen('stale-c', 2_500, T - 31 * MIN);
+  const srv = inboxServer([inboxMsg(11, T)]);
+  const enq = collector();
+  await drainAs(ws, srv, 'A', enq, now);
+  assert.equal(countSeen('stale-c'), 0, '전제: 지금 정리했다');
+  const back = T - 60 * MIN; // 시계 맞춤으로 1시간 뒤로
+  fillSeen('stale-d', 2_500, back - 31 * MIN);
+  clock = back; srv.msgs.push(inboxMsg(12, T + 1_000)); // 서버 글 시각은 그대로 앞으로 간다
+  await drainAs(ws, srv, 'A', enq, now);
+  assert.equal(countSeen('stale-d'), 2_500, '되감은 순간은 정리하지 않는다 — 그때부터 1분 간격');
+  clock = back + 61_000; srv.msgs.push(inboxMsg(13, T + 2_000));
+  await drainAs(ws, srv, 'A', enq, now);
+  assert.equal(countSeen('stale-d'), 0, '되감은 뒤 61초 — 정리한다');
+  assert.equal(enq.jobs.length, 0, '보류는 그대로');
+  assert.equal(srv.cursor, 10);
+});

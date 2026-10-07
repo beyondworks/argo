@@ -1428,10 +1428,13 @@ const yieldKey = (wsId, crewId, msgId) => `${wsId}:${crewId}:${msgId}`;
 // '지금'으로 다시 들어와 160초를 처음부터 세서 보류가 끝나지 않았다. 기한이 한참 지난 키(30분)만 지우고, 그래도 넘치면 5만 건에서 오래된 것부터.
 const YIELD_SEEN_SWEEP_AT = 2_000, YIELD_SEEN_MAX = 50_000, YIELD_SEEN_KEEP_MS = 30 * 60_000, YIELD_SEEN_SWEEP_EVERY_MS = 60_000;
 let yieldSeenSweptAt = 0;
+/** 테스트 전용 — 처음 본 시각과 마지막 정리 시각을 비운다(다른 테스트가 남긴 정리 시각에 기대지 않게). 상수는 바꾸지 않는다. */
+export function _resetRunnerYieldSeenForTest() { yieldSeenAt.clear(); yieldSeenSweptAt = 0; }
 function firstSeenAt(key, t) {
   const seen = yieldSeenAt.get(key);
   if (seen !== undefined && seen <= t) return seen;
   yieldSeenAt.delete(key); yieldSeenAt.set(key, t);
+  if (t < yieldSeenSweptAt) yieldSeenSweptAt = t; // 이 기기 시계가 뒤로 갔다 — 마지막 정리 시각을 그대로 두면 되감은 만큼(1시간이면 1시간) 정리가 멈춘다
   if (yieldSeenAt.size > YIELD_SEEN_SWEEP_AT && t - yieldSeenSweptAt >= YIELD_SEEN_SWEEP_EVERY_MS) {
     yieldSeenSweptAt = t;
     for (const [k, v] of yieldSeenAt) if (v < t - YIELD_SEEN_KEEP_MS) yieldSeenAt.delete(k);
@@ -1445,6 +1448,7 @@ function firstSeenAt(key, t) {
     양보가 꺼지고(재검수 E1 — 10/7 사고 재발), 느릴 때는 글이 미래에 있어 상한 없이 길어졌다(E2 — 1시간 느리면 1시간). 그래서 글 시각이 이 기기 시계보다
     60초 넘게 미래면 처음 본 시각만 쓴다 — 어느 경우든 처음 본 뒤 160초(+ 60초 안쪽 시계 차이)가 상한이다.
     대가: 처음 본 시각은 프로세스 메모리라 재시작한 프로세스와 오래 꺼져 있다 켜진 프로세스는 묵은 글도 처음 본 뒤 160초 다시 양보한다(시계가 빠른 기기와 구분할 수 없다).
+    또 처음 본 시각은 2,000건이 넘으면 30분 나이로 정리되므로(firstSeenAt), 30분 넘게 남은 잡·멈춘 커서는 러너 없는 프로세스에서 160초를 한 번 더 양보할 수 있다.
     시각을 모르는 글(옛 큐 파일)은 양보하지 않는다(종전 동작). */
 function withinRunnerYield(key, createdAt, t) {
   const born = Date.parse(createdAt ?? '');
