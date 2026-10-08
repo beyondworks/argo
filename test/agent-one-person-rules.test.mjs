@@ -179,7 +179,11 @@ test('호칭 규칙 판정 — 사용자를 부르는 방법을 정한 줄만', 
     '- 이름은 유건님으로 불러줘', '- 제 직함은 빼고 이름으로 불러 주세요', '- 직함은 빼고 유건님이라고 불러줘', '- 앞으로는 성은 빼고 유건님이라고 불러', '- 앞으로 이름은 유건님으로 불러줘', // 재검수 2차 LOW: 사용자 자신의 이름·직함·성
     '- 보고는 결론부터, 그리고 대표님이라 부르지 말고 유건님이라 불러', '- 반말은 쓰지 말고 유건님이라고 불러', '- 존댓말을 쓰고 유건님이라고 불러줘', // 재검수 2차 LOW: 앞 절의 다른 지시('반말은 쓰지 말고')가 참을 거짓으로 바꿨다
     '- 대표님 말고 유건님이라고 불러줘', '- 보고할 때는 유건님이라고 부른다', '- 말투는 친근하게 하고 형이라고 불러', '- 보고는 결론부터. 유건님이라고 불러', '- 대화에서 호칭은 유건님', '- 메일은 짧게 쓰고 나를 팀장님이라고 불러', '- 대표님은 말고 유건님이라고 불러', // 재검수 3차 LOW: 끊는 경계·말투 낱말·'말고' 절
-    '- 주인을 형이라고 불러', '- 저는 유건님이라고 불러 주세요', '- 사용자에게 대표님이라고 부르지 않는다', '- 유저 호칭은 대표님', '- Call the user "boss"', '- Address the owner by first name', '- Call me Yugeon', '- Address the user.']) // 재검수 4차 LOW: 좁힌 뒤에도 잡아야 하는 줄
+    '- 주인을 형이라고 불러', '- 저는 유건님이라고 불러 주세요', '- 사용자에게 대표님이라고 부르지 않는다', '- 유저 호칭은 대표님', '- Call the user "boss"', '- Address the owner by first name', '- Call me Yugeon', '- Address the user.', // 재검수 4차 LOW: 좁힌 뒤에도 잡아야 하는 줄
+    '- 사용자 호칭: 유건님', '- 사용자 호칭 : 대표님', '- 사용자 호칭 = 유건님', '- 사용자 호칭 - 유건님', '- 사용자 호칭 유건님', '- 사용자 호칭 "대표님"', '- 주인 호칭: 형', '- 유저 호칭: 대표님', // 확인 검수 LOW: 좁히며 놓친 정탐(쌍점·줄표·'…님')
+    '- 사용자의 호칭은 유건님', '- 사용자의 호칭은 "대표님"으로 통일', '- 사용자의 이름은 유건님으로 불러', '- 사용자의 이름을 부를 때는 유건님', '- 주인의 호칭은 형', '- 유저의 호칭은 대표님', // '의'
+    '- 사용자에게는 유건님이라고 부른다', '- 사용자한테는 대표님이라 부르지 마', '- 저한테는 유건님이라고 해 주세요', '- 사용자님을 유건님이라고 불러', '- 주인님을 형이라고 불러', '- 저를 부르실 때는 유건님이라고 해 주세요',
+    '- Address the user formally', '- Address the user politely, as Yugeon', '- Address the user casually', '- Always call the user Yugeon', '- Call the user Yugeon', '- Call me "boss" in every reply', '- Please call me by my first name', '- Call me 유건님'])
     assert.equal(hasAddressRule(s), true, s);
   for (const s of ['- 결론부터 말한다', '- 함수 하나를 부를 때 인자를 확인한다', '- 도구를 부를 때 결재를 먼저', "- Always address the user's question first", '- call them back when a customer emails', '- 결재를 부르기 전에', '',
     '- 고객은 고객님이라고 부른다', '- 메일에서 상대를 이름으로 부르지 마라', '- 상대방 호칭은 OO님으로 통일', '- 너를 서윤이라고 부를게', // 검수 LOW: 사용자가 아닌 대상을 잡았다
@@ -192,7 +196,12 @@ test('호칭 규칙 판정 — 사용자를 부르는 방법을 정한 줄만', 
     '- 유저 플로우 문서는 "흐름도"라고 부른다', '- 주인공은 루나라고 부른다', '- 사용자 테스트는 UT라고 부른다', '- 사용자 인터뷰 기록은 "인터뷰 노트"로 부른다', "- '유저'라는 말 대신 '사용자'라고 부른다",
     '- 고객은 "사용자"라고 부른다', '- 주인 없는 업무는 "공용 업무"라고 부른다', '- 저 장표는 "요약"이라고 부른다', '- 사용자의 고객은 "회원님"이라고 부른다', '- 사용자의 회사는 "린"이라고 부른다',
     '- 회의 때는 서로 이름으로 부른다', '- 에이전트끼리는 서로 이름으로 부른다',
-    '- Refer to the user manual before answering setup questions', '- Address the user stories in priority order', '- Call me only when you are blocked', '- Call me back after the deploy finishes', '- Refer to the owner dashboard for revenue numbers'])
+    '- Refer to the user manual before answering setup questions', '- Address the user stories in priority order', '- Call me only when you are blocked', '- Call me back after the deploy finishes', '- Refer to the owner dashboard for revenue numbers',
+    '- 막히면 나를 불러', '- 결재가 필요하면 사용자를 부른다', '- 급한 일이면 저를 불러 주세요', '- 판단이 어려우면 주인을 부른다', '- 사용자를 부르기 전에 결재 카드를 만든다', '- 저를 불러서 확인받으세요', // 확인 검수 LOW: 이름이 아니라 찾아오라는 말
+    '- Call me during an incident', '- Call me in an emergency', '- Call me immediately if the deploy fails', '- Call me ASAP when the build breaks', '- Call me by 5pm with the numbers', '- Call me by phone if it breaks', '- Call me Monday about the deploy',
+    '- If unsure, refer to the user.', '- Escalate billing questions; refer to the owner.', '- If blocked, call the user.', '- Call the owner, then wait', '- Refer to me if you are unsure', '- Address the user feedback in the next release',
+    '- 사용자 호칭 정리는 나중에 한다', '- 사용자 이름 "닉네임" 필드는 "별명"이라고 부른다', '- 사용자의 이름 필드는 "닉네임"이라고 부른다', '- 사용자 이름 목록은 "명단"이라고 부른다', '- 사용자 호칭 관련 문서는 "호칭표"라고 부른다', // 넓힌 모양('의'·띄어쓰기)이 다른 낱말을 잡지 않는다
+    '- 사용자들에게는 "회원"이라고 부른다', '- 주인의 고객은 "손님"이라고 부른다', '- 사용자의 화면 이름은 "홈"이라고 부른다', '- 사용자들은 "멤버"라고 부른다', '- 주인공을 루나라고 부른다'])
     assert.equal(hasAddressRule(s), false, s);
 });
 

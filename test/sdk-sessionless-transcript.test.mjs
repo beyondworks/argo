@@ -87,6 +87,7 @@ test('데스크톱 턴은 종전대로 SDK 전사를 남기고, 다음 턴이 �
   assert.ok(after1.some((f) => f.endsWith(`${r.sessionId}.jsonl`)), '그 세션의 전사');
   const r2 = await chat(WS, 'sd', '이어서', r.sessionId, {});
   assert.equal(r2.reply.trim(), '네', '저장된 세션을 이어 쓴다(전사가 있어야 resume이 된다)');
+  assert.equal(r2.sessionId, r.sessionId, '같은 세션을 이었다(resume이 실패해 새 세션으로 다시 시도해도 답은 "네"라 답만으로는 모른다 — 확인 검수 LOW)');
 });
 
 test('메신저 DM 턴(세션을 남기지 않는 턴)은 SDK 전사를 하나도 남기지 않는다', async () => {
