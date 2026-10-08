@@ -347,6 +347,17 @@ for (const r0 of ['codex', 'claude']) {
     assert.match(sys, NAMED_KO, '이름 지시가 그대로');
     assert.doesNotMatch(sys, /직접 정한 규칙/);
   });
+  test(`[${r0}] 호칭 — 판정이 놓치는 모양('사용자 호칭: 유건님')이 확정 규칙에 있으면 이름 줄과 우선 문구가 함께 실린다(8차 — 문구로 덮음)`, async () => {
+    runner = r0; const ws = await company();
+    await mkdir(join(paths(ws).root, 'skills'), { recursive: true });
+    await writeFile(join(paths(ws).root, 'skills', 'captain-rules.md'), '# 사용자 규칙\n\n- 사용자 호칭: 유건님 (2026-10-08 채택)\n');
+    await say(ws, room({ pair: `crew:${CREW}` }), '안녕');
+    const sys = lastSystem();
+    assert.match(sys, /사용자 호칭: 유건님/, '확정 규칙 본문은 실린다');
+    const line = sys.split('\n').find((l) => NAMED_KO.test(l));
+    assert.ok(line, '이름 줄이 그대로');
+    assert.ok(line.endsWith('단, 사용자가 카드나 확정된 규칙에서 호칭을 따로 정했으면 그 규칙을 따른다.'), '같은 줄 끝에 우선 문구');
+  });
   test(`[${r0}] 호칭 — 규칙이 없으면 종전대로 이름 지시가 실린다`, async () => {
     runner = r0; const ws = await company();
     await say(ws, room({ pair: `crew:${CREW}` }), '안녕');

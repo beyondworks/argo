@@ -33,55 +33,62 @@ export function cleanUserName(raw) {
 /** 한국어 호칭 — 이미 '님'으로 끝나면 다시 붙이지 않는다('유건님' → '유건님', '유건님님' 아님). */
 export const koAddress = (name) => (name.endsWith('님') ? name : `${name}님`);
 
-/** 지시문 한 줄(순수) — 사용자가 정한 호칭 규칙이 있으면(ruled) 그 규칙을 따르라는 줄, 아니면 이름이 있으면 이름과 부를 말, 없으면 호칭 없이 말하라는 줄. */
+/** 지시문 한 줄(순수) — 사용자가 정한 호칭 규칙이 있으면(ruled) 그 규칙을 따르라는 줄, 아니면 이름이 있으면 이름과 부를 말, 없으면 호칭 없이 말하라는 줄.
+    규칙을 찾지 못한 두 줄(이름·호칭 없음) 끝에는 "사용자가 카드나 확정된 규칙에서 호칭을 정했으면 그 규칙을 따른다"를 항상 붙인다(판정이 놓친 규칙을 모델이 따르게).
+    세 러너(SDK·CLI·네이티브)와 메신저·데스크톱 턴이 모두 chat.mjs systemPromptFor → 이 함수 하나로 이 줄을 만든다. */
 export function userAddressNote(name, lang = 'ko', { ruled = false } = {}) {
   const n = cleanUserName(name);
   const l = lang === 'en' ? 'en' : 'ko';
   if (ruled) return USER_ADDRESS_NOTE.ruled[l]; // 유건 결정 2026-10-08 ③ — 사용자가 정한 규칙이 공간별 표시 이름 지시보다 우선
-  if (!n) return USER_ADDRESS_NOTE.unnamed[l];
-  return l === 'en' ? USER_ADDRESS_NOTE.named.en(jsonText(n)) : USER_ADDRESS_NOTE.named.ko(jsonText(n), jsonText(koAddress(n)));
+  const base = !n ? USER_ADDRESS_NOTE.unnamed[l]
+    : l === 'en' ? USER_ADDRESS_NOTE.named.en(jsonText(n)) : USER_ADDRESS_NOTE.named.ko(jsonText(n), jsonText(koAddress(n)));
+  return `${base} ${USER_ADDRESS_NOTE.deferToRule[l]}`;
 }
 
 /* ── 사용자가 정한 호칭 규칙(유건 결정 2026-10-08 ③) — 카드 '## 일하는 방식'이나 확정 규칙(교정에서 채택한 회사 스킬 captain-rules.md)에
    호칭 규칙이 있으면, 메신저 공간마다 다른 표시 이름으로 "이 이름으로 불러라"는 지시를 넣지 않는다(그 규칙을 따르라는 한 줄로 바꾼다).
-   판정은 줄 단위 낱말 규칙이다 — 놓치면 종전 이름 지시가 남을 뿐이고(지금과 같음), 잘못 잡으면 이름 대신 "정한 규칙대로"가 실린다. ── */
+   판정은 줄 단위 낱말 규칙이고 정밀도가 먼저다(8차 2026-10-08 총괄 결정 — 5~7차에서 넓히면 오탐, 좁히면 놓침이 번갈아 나와 수렴하지 않았다).
+     잘못 잡으면 확정 규칙 한 줄 때문에 그 회사 모든 에이전트의 이름 줄이 빠진다 → 애매한 모양은 잡지 않는다.
+     놓치면 이름 줄이 남지만, 이름 줄 끝에 "사용자가 카드나 확정된 규칙에서 호칭을 따로 정했으면 그 규칙을 따른다"가 항상 붙어(userAddressNote) 모델이 그 규칙을 따른다. ── */
 export const ADDRESS_RULE_SKILL = 'captain-rules.md'; // corrections.mjs RULES_SKILL과 같은 파일(가져오면 러너 모듈까지 끌려와 이름만 맞춘다 — 테스트가 잠근다)
 // 한 줄이 호칭 규칙인가 = 부르는 말(ADDRESS_CALL·영어 ADDRESS_EN)이 있고 그 대상이 사용자다. 대상이 사용자로 적혀 있으면(나를·사용자를·내 이름·me…) 참,
 // 다른 사람(고객·상대·거래처·손님·메일·너 …)만 적혀 있으면 거짓(검수 LOW 2026-10-08: '고객은 고객님이라고 부른다'·'너를 서윤이라고 부를게'를 잡고 '나를 대표님이라 불러'·'대표님이라고 해줘'를 놓치던 것).
 // 대상 낱말이 없을 때는 부르는 말과 같은 절 안, 그 앞에 '은/는/을/를'이 붙은 다른 낱말이 있으면 그 낱말의 이름을 정한 줄로 보고 거짓('보고서 제목은 "주간 보고"라고 부른다'·
 // '함수는 helper로 불러 쓴다' — 재검수 LOW 2026-10-08: 확정 규칙은 모든 에이전트에 실려 용어 교정 한 줄이 회사 전체의 이름 지시를 바꾸던 것), 없으면("대표님이라고 해줘") 사용자에게 하는 말로 보고 참.
+// 대상 낱말이 부르는 말보다 앞에 있으면 그 사이만 같은 방식으로 본다('사용자에게는 결론만 보고하고, 회의록은 "스탠드업"이라고 부른다'는 회의록의 이름 — 확인 검수 2차 MEDIUM 2026-10-08).
 // 앞 절의 낱말('반말은 쓰지 말고 유건님이라고 불러'·'존댓말을 쓰고 …'·'보고는 결론부터, 그리고 …')은 부르는 대상이 아니다(재검수 LOW 2026-10-08 2차: 같은 줄 앞의 다른 지시가 참을 거짓으로 바꾸던 것).
 const ADDRESS_CALL = new RegExp([
   '호칭',
   '이?라(?:고)?\\s*(?:불러(?![오와온올들])|부르|부를|부른|칭하|칭해)', // ~이라(고) 불러 · ~라 칭해 — '불러오다'(자료를 ~라고 불러온다)는 아니다
-  '로\\s*(?:불러(?![오와온올들서])|부르|부를|부른|칭하|칭해)', // ~(으)로 불러 — '불러오다'(자료를 ~로 불러온다)·'불러서'(도구로 불러서 처리한다)는 아니다
+  '로\\s*(?:불러(?![오와온올들서])(?!\\s*(?:쓰|쓴|써|씁|씀))|부르|부를|부른|칭하|칭해)', // ~(으)로 불러 — '불러오다'(자료를 ~로 불러온다)·'불러서'(도구로 불러서 처리한다)·'불러 쓴다'(helper로 불러 쓴다)는 아니다
   '님(?:이)?라(?:고)?\\s*(?:해|하)', // ~님이라고 해(줘) — '님'까지 있어야('"출처 없음"이라고 해'는 호칭이 아니다)
-  // 나를 부를 때는 … — 바로 뒤가 '때'일 때만. '막히면 나를 불러'·'결재가 필요하면 사용자를 부른다'는 이름이 아니라 찾아오라는 말이다(확인 검수 LOW 2026-10-08).
-  // 같은 줄에 '~라고/~로 부르'가 따로 있으면('사용자를 "대표님"으로 부르지 말 것') 위의 두 갈래가 잡는다.
-  '(?:(?:사용자|주인|유저)님?(?:의?\\s*이름)?|(?<![가-힣])나|(?<![가-힣])저)(?:를|을)\\s*(?:부를|부르는|부르실)\\s*(?:때|땐)', // 사용자의 이름을 부를 때는 …
+  // 나를 부를 때는 대표님 — 바로 뒤가 '때'이고 그다음이 부를 말('…님'·따옴표·이름·호칭)일 때만. '막히면 나를 불러'·'결재가 필요하면 사용자를 부른다'는 찾아오라는 말이고(확인 검수 LOW 2026-10-08),
+  // '나를 부를 때는 로그를 첨부해'·'사용자를 부를 때는 결재 카드를 만든다'도 그렇다(확인 검수 2차). 같은 줄에 '~라고/~로 부르'가 따로 있으면('사용자를 "대표님"으로 부르지 말 것') 위의 두 갈래가 잡는다.
+  '(?:사용자|주인|유저|(?<![가-힣])나|(?<![가-힣])저)(?:를|을)\\s*(?:부를|부르는|부르실)\\s*(?:때|땐)(?:는|에는|엔)?[\\s,，]*(?:["\'“‘「]|[가-힣]*님(?=$|[^가-힣]|이?라|으로|로)|(?:이름|호칭|직함|성)(?:으로|로|은|을|만)?(?![가-힣]))',
   '(?<![가-힣])(?:내|제)\\s*이름(?:을|를|은|도)?\\s*(?:부를|부르|불러(?![오와온올들])|부른)', // 내 이름을 부르지 마 · 제 이름은 부르지 말고
 ].join('|'));
-// 영어 — 대소문자는 낱말마다 직접 받는다(이름 판정의 대문자 낱말을 /i가 무너뜨리지 않게).
-//   call me / call the user·owner — 뒤에 이름(따옴표·대문자로 시작하는 낱말·한글)이나 as/by가 올 때만 참. 'Call me during an incident'·'Call me ASAP'·'If blocked, call the user.'는
-//     이름이 아니라 연락하라는 말이다(확인 검수 LOW 2026-10-08). 요일·때를 뜻하는 대문자 낱말('Call me Monday')도 이름이 아니다.
-//   address me / address the user·owner — 뒤가 끝·문장부호·as/by·말투 부사(formally·politely …)일 때 참('Address the user formally'·'Address the user politely, as Yugeon').
-//     뒤에 다른 낱말이 오면 그 낱말이 대상이다('Address the user stories' — 재검수 4차 LOW).
-//   refer to me / refer to the user·owner — 뒤에 as/by가 올 때만 참('If unsure, refer to the user.'·'Refer to the user manual'은 아니다).
-const EN_ME_USER = "(?:[Mm]e|[Tt]he (?:user|owner))\\b(?!['’]s)";
-const EN_AS_BY = '(?:as\\b|by\\b(?!\\s+(?:\\d|(?:phone|e-?mail|text|noon|midnight|tomorrow|tonight|today|eod|end)\\b)))'; // 'by 5pm·by phone'은 때·수단이다
-const EN_NAME = `(?!(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|Today|Tomorrow|Tonight)\\b)(?:["'“‘「]|[A-Z][a-z]|[가-힣])`;
-const EN_MANNER = '(?:formally|informally|politely|casually|respectfully|warmly|kindly|professionally)\\b';
+// 영어 — 이름 낱말을 짐작하지 않는다(대문자 낱말·'Call me Yugeon'은 'Call me Monday·ASAP·If …'와 가르지 못한다). 이름은 따옴표 안이나 as/by 뒤에 올 때만 본다.
+//   call me / call the user·owner — 뒤에 as/by나 따옴표 이름이 올 때만('Call me "boss"'·'Call me by my first name'). 'Call me during an incident'·'Call me only when …'·
+//     'If blocked, call the user.'는 연락하라는 말이다(확인 검수 LOW 2026-10-08). 'Call me Yugeon'은 놓친다(이름 줄 끝의 우선 문구가 덮는다).
+//   address me / address the user·owner — 뒤가 끝·문장부호·as/by·따옴표 이름일 때('Address the user as Dr. Kim'·'Address the user.'). 뒤에 다른 낱말이 오면 그 낱말이 대상이다('Address the user stories').
+//   refer to me / refer to the user·owner — 뒤에 as/by가 올 때만('If unsure, refer to the user.'·'Refer to the user manual'은 아니다).
+// as/by 뒤가 때·수단이면('as soon as'·'as a last resort'·'by 5pm'·'by EOD'·'by Friday'·'by phone'·'by Slack') 이름이 아니다. 따옴표 안이 때·조건 낱말이면('Call me "now"') 이름이 아니다.
+const EN_TARGET = "(?:me|the (?:user|owner))\\b(?!['’]s)";
+const EN_WHEN = '(?:\\d|(?:phone|e-?mail|text|slack|teams|dm|noon|midnight|tomorrow|tonight|today|now|eod|eow|cob|end|next|this|monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun)\\b)';
+const EN_AS_BY = `(?:as\\b(?!\\s+(?:soon|needed|necessary|required|usual|well|appropriate|possible|early|late|a|an)\\b)|by\\b(?!\\s+${EN_WHEN}))`;
+const EN_QUOTED = `["'“‘「](?!\\s*(?:only|now|asap|immediately|urgently|later|soon|back|first|anytime|today|tonight|tomorrow)\\b)[^"'”’」\\n]+["'”’」]`;
 const ADDRESS_EN = new RegExp([
-  `\\b(?:[Cc]all|CALL)\\s+${EN_ME_USER}\\s+(?:${EN_AS_BY}|${EN_NAME})`,
-  `\\b(?:[Aa]ddress|ADDRESS)\\s+${EN_ME_USER}(?=\\s*(?:$|[.,;:!?)"'“”‘’]|${EN_AS_BY}|${EN_MANNER}))`,
-  `\\b(?:[Rr]efer|REFER) to\\s+${EN_ME_USER}\\s+${EN_AS_BY}`,
-].join('|'));
-// '사용자·주인·유저(님)'는 바로 뒤에 조사(를·을·에게·한테·은·는·도·에게는·한테는)가 붙고 그다음이 한글이 아닐 때, 또는 '사용자(의) 호칭은'처럼 그 사람의 이름·호칭을 가리킬 때만 사용자다.
-//   이름·호칭 뒤는 조사, 쌍점·등호('사용자 호칭: 유건님'), 띄운 줄표('사용자 호칭 - 유건님'), 띄어쓰기 뒤 '…님'('사용자 호칭 유건님'·'사용자 호칭 "대표님"')만 받는다
-//   (확인 검수 LOW 2026-10-08: 좁히며 이 모양들을 놓쳤다). 띄어쓰기 뒤 다른 낱말('사용자 이름 목록은 …'·'사용자 이름 "닉네임" 칸은 …')은 그 낱말이 대상이다.
+  `\\bcall\\s+${EN_TARGET}\\s+(?:${EN_AS_BY}|${EN_QUOTED})`,
+  `\\baddress\\s+${EN_TARGET}(?=\\s*(?:$|[.,;:!?)]|${EN_AS_BY}|${EN_QUOTED}))`,
+  `\\brefer to\\s+${EN_TARGET}\\s+${EN_AS_BY}`,
+].join('|'), 'i');
+// '사용자·주인·유저'는 바로 뒤에 조사(를·을·에게·한테·은·는·도)가 붙고 그다음이 한글이 아닐 때, 또는 '사용자 호칭은'처럼 그 사람의 호칭을 가리킬 때만 사용자다.
 // '사용자 매뉴얼은'·'사용자의 고객은'·'유저 스토리는'·'주인공은'·'"사용자"라고'는 다른 낱말이 대상이다(재검수 4차 LOW — 교정 채택 한 줄이 모든 에이전트의 호칭 지시를 바꾸던 것).
-// 단독 '저'는 조사가 붙을 때만('저를·저는·저한테는' — '저 장표는'의 '저'는 가리키는 말이다).
-const USER_TARGET = /(?<![가-힣])(?:나|날)(?:를|을|는|은|도|(?:한테|에게)(?:는|도)?)?(?![가-힣])|(?<![가-힣])저(?:를|을|는|은|도|(?:한테|에게)(?:는|도)?)(?![가-힣])|(?<![가-힣])(?:내|제)\s*(?:이름|(?:직함|성함|성|호칭)(?:은|는|을|를|도|이|만|으로|로)?(?![가-힣]))|(?<![가-힣])(?:사용자|주인|유저)님?(?:(?:를|을|은|는|도|(?:에게|한테)(?:는|도)?)(?![가-힣])|의?\s*(?:호칭|이름|직함|성함)(?:(?:은|는|을|를|도|이|으로|로)(?![가-힣])|\s*[:：=]|\s+[-–—]\s|\s+(?=["'“‘「]?[가-힣]+님(?:으로|이라|$|(?![가-힣])))))/;
+// '사용자 이름·직함·성함은'은 받지 않는다 — 용어집·데이터 칸 이름일 때가 많다('사용자 이름은 "닉네임"이라고 부른다' — 확인 검수 오탐). 그 모양의 호칭 규칙은 놓치고 우선 문구가 덮는다.
+// '에게는·한테는'·'사용자의 …'·'사용자 호칭: …'도 받지 않는다(7차에 넓혔다가 다른 지시·용어집 줄을 잡았다 — 확인 검수 2차 MEDIUM 2026-10-08).
+// 단독 '저'는 조사가 붙을 때만('저를·저는' — '저 장표는'의 '저'는 가리키는 말이다).
+const USER_TARGET = /(?<![가-힣])(?:나|날)(?:를|을|는|은|도|한테|에게)?(?![가-힣])|(?<![가-힣])저(?:를|을|는|은|도|한테|에게)(?![가-힣])|(?<![가-힣])(?:내|제)\s*(?:이름|(?:직함|성함|성|호칭)(?:은|는|을|를|도|이|만|으로|로)?(?![가-힣]))|(?<![가-힣])(?:사용자|주인|유저)(?:(?:를|을|에게|한테|은|는|도)(?![가-힣])|\s*호칭(?:은|는|을|를|도|이|으로|로)(?![가-힣]))/;
+const USER_TARGET_ALL = new RegExp(USER_TARGET.source, 'g');
 // 사용자 자신의 이름·직함·성·호칭 — 줄 머리('- 이름은 유건님으로 불러줘')나 때를 정하는 말 뒤('앞으로 이름은 …'), 내/제 뒤('제 직함은 빼고'). 다른 낱말 뒤('프로젝트 이름은 …')는 그 낱말의 이름이다.
 const SELF_NAME = /^(?:이름|직함|성함|성|호칭)(?:은|는|을|를|도)?$/;
 const SELF_LEAD = /^(?:내|제|앞으로는?|이제부터|이제|지금부터|항상|늘|꼭)$/;
@@ -89,7 +96,7 @@ const selfName = (line) => { const w = line.replace(/^[\s\-*•·]+/, '').split(
 const OTHER_TARGET = /고객|상대|거래처|손님|메일|동료|직원|팀원|다른 사람|(?<![가-힣])서로(?![가-힣])|(?<![가-힣])남(?:을|은|에게|한테)(?![가-힣])|(?<![가-힣])너(?:를|는|도|의|한테|에게)?(?![가-힣])/;
 // 부르는 말 앞의 '<낱말>은/는/을/를' — 이름을 정하는 대상(제목은·프로젝트를·함수는·API를 …). 때·경우('말할 때는')와 '-하는/-되는/-있는/-없는'(꾸미는 말)은 대상이 아니다.
 const NAMED_THING = /([가-힣A-Za-z0-9]+?)(?:은|는|을|를)(?=[\s"'“”‘’,，]|$)/g; // 뒤에 쉼표가 와도('프로젝트 이름은, 앞으로 …')
-const NOT_THING = /^(?:때|경우)$|(?:하|되|있|없)$/;
+const NOT_THING = /^(?:때|경우)$|(?:하|되|있|없|부르)$/; // '저를 부르는 호칭은 …'의 '부르는'은 꾸미는 말
 // 절 경계는 두 가지다(재검수 3차 LOW 2026-10-08: 모든 '-고/-면'에서 끊으니 '회의록은 정리하고 "스탠드업"이라고 부른다'처럼 앞 절의 주제어가 뒤 절까지 걸리는 줄을 참으로 잡았다).
 //   끊는 경계 — 문장 끝·쌍반점·'그리고/또'(앞 지시와 따로인 새 지시). 그 앞 낱말은 보지 않는다('보고는 결론부터, 그리고 …').
 //   잇는 경계 — 쉼표·'-고 / -면 / -며 / -지만 / -는데' 뒤 띄어쓰기. 앞 절의 '은/는/을/를' 낱말은 뒤 절의 대상일 수 있어 그대로 본다.
@@ -115,9 +122,15 @@ const addressRuleLine = (line) => {
   if (ADDRESS_EN.test(line)) return true;
   const call = ADDRESS_CALL.exec(line);
   if (!call) return false;
-  if (USER_TARGET.test(line) || selfName(line)) return true;
-  if (OTHER_TARGET.test(line)) return false;
+  if (selfName(line)) return true;
   const pre = line.slice(0, call.index);
+  const targets = [...line.matchAll(USER_TARGET_ALL)];
+  if (targets.length) {
+    // 사용자 대상 낱말이 부르는 말 앞에 있으면 그 뒤부터 부르는 말까지 사이에 이름을 정하는 다른 대상이 있는지만 본다(없으면 사용자를 부르는 줄)
+    const last = targets.filter((m) => m.index < call.index).at(-1);
+    return !last || !namedBefore(pre.slice(last.index + last[0].length));
+  }
+  if (OTHER_TARGET.test(line)) return false;
   if (call[0] === '호칭' && thingAddress(pre)) return false;
   return !namedBefore(pre);
 };

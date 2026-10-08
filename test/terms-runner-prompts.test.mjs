@@ -68,7 +68,7 @@ after(() => { hooks.deregister(); for (const s of [messages, gemini, responses])
 const { createCompany, paths } = await import('../src/workspace.mjs');
 const { saveRunnerCred } = await import('../src/runners/creds.mjs');
 const { chat } = await import('../src/chat.mjs');
-const { LEGACY_RECORD_TERMS_NOTE } = await import('../src/legacy-terms.mjs');
+const { LEGACY_RECORD_TERMS_NOTE, USER_ADDRESS_NOTE } = await import('../src/legacy-terms.mjs'); // 테스트 등록 사이에 await를 두지 않는다(앞 테스트가 끝나 after()가 서버를 닫는다)
 const { userAddressNote } = await import('../src/user-name.mjs');
 // T5(경우 표 B5) — 로그인한 기기(기기 세션에 프로필 이름)라 러너마다 같은 사용자 이름 한 줄을 받는다. url은 닫힌 포트(턴은 Supabase를 부르지 않는다 — test/user-name.test.mjs)
 await writeFile(join(root, '.device-session.json'), JSON.stringify({ url: 'http://127.0.0.1:9', anonKey: 'anon', user: { id: 'u-terms', email: 't@example.invalid', name: '유건', nameAt: Date.now() }, access_token: 'at', refresh_token: 'rt', expires_at: Math.floor(Date.now() / 1000) + 3600 }), { mode: 0o600 });
@@ -79,10 +79,11 @@ const KEYS = {
 }; // 형식만 맞춘 가짜 — 요청은 위 로컬 가짜 서버로만 간다
 
 /** 한 러너로 한 턴 — 러너가 받은 시스템 글들(첫 요청부터) */
-async function turnWith(runner, lang, { cli = false } = {}) {
-  const ws = `terms-${runner}-${cli ? 'cli' : 'api'}-${lang}`;
+async function turnWith(runner, lang, { cli = false, rules = null, tag = '' } = {}) {
+  const ws = `terms-${runner}-${cli ? 'cli' : 'api'}-${lang}${tag}`;
   await createCompany(ws, '용어', 'owner', null, lang);
   await mkdir(paths(ws).agents, { recursive: true });
+  if (rules != null) { await mkdir(paths(ws).skills, { recursive: true }); await writeFile(join(paths(ws).skills, 'captain-rules.md'), rules); } // 확정 규칙(교정 채택 — corrections.mjs RULES_SKILL)
   await writeFile(join(paths(ws).agents, 'a.md'), `---\nname: 에이\nrole: 검증\nrunner: ${runner}\n---\n검증용 카드.\n`);
   if (!cli) await saveRunnerCred(ws, runner, ...KEYS[runner]);
   const key = ws; // 턴마다 따로 모은다(앞 턴의 글을 다음 턴 결과로 읽지 않게)
@@ -111,6 +112,42 @@ for (const lang of ['ko', 'en']) {
       assert.ok(sys.includes(userAddressNote('유건', lang)), `${runner}: 사용자 이름 한 줄(T5)이 없다`);
       assert.match(sys, lang === 'en' ? /The user's instructions/ : /사용자의 지시/, `${runner}: 새 낱말(지시 우선순위 줄)`);
       assert.deepEqual(leftovers(sys, lang), [], `${runner}: 옛 낱말이 남았다`);
+    });
+  }
+}
+
+// 호칭 8차(2026-10-08) — 호칭 규칙 판정은 정밀도가 먼저라 놓치는 모양이 있다. 확정 규칙에 그 모양(놓침)이나 오탐 후보가 있어도
+// 러너마다 같은 이름 줄이 실리고, 그 끝에 "카드나 확정된 규칙에서 호칭을 정했으면 그 규칙을 따른다"가 붙는다(user-name.mjs userAddressNote 한 곳).
+// 판정이 잡는 규칙이면 이름 줄 대신 그 규칙을 따르라는 줄만(우선 문구 없음).
+const RULE_RUNNERS = [['claude', 'SDK', false, 'messages'], ['codex', 'CLI', true, 'cli'], ['openrouter', '네이티브', false, 'messages']];
+const RULES = {
+  ko: { missed: '- 사용자 호칭: 유건님 (2026-10-08 채택)', notRule: '- 사용자에게는 결론만 보고하고, 회의록은 "스탠드업 노트"라고 부른다 (2026-10-08 채택)', ruled: '- 나를 "유건님"이라고 불러 (2026-10-08 채택)' },
+  en: { missed: '- Call me Yugeon (adopted 2026-10-08)', notRule: '- Call me ASAP when the build breaks (adopted 2026-10-08)', ruled: '- Call me "Yugeon" (adopted 2026-10-08)' },
+};
+const noteLine = (sys, lang) => sys.split('\n').find((l) => l.includes(USER_ADDRESS_NOTE.deferToRule[lang]) || l.includes(USER_ADDRESS_NOTE.ruled[lang]));
+for (const lang of ['ko', 'en']) {
+  for (const kind of ['missed', 'notRule', 'ruled']) {
+    test(`호칭 8차 ${lang} ${kind} — 확정 규칙에 '${RULES[lang][kind]}'가 있을 때 SDK·CLI·네이티브가 같은 호칭 줄을 받는다`, { timeout: 120_000 }, async () => {
+      const lines = [];
+      for (const [runner, path, cli, via] of RULE_RUNNERS) {
+        const got = await turnWith(runner, lang, { cli, rules: `# 사용자 규칙\n\n${RULES[lang][kind]}\n`, tag: `-addr-${kind.toLowerCase()}` });
+        assert.equal(got?.[0]?.via, via, `${runner} ${path}: 경로`);
+        const sys = got[0].text;
+        assert.ok(sys.includes(RULES[lang][kind]), `${runner}: 확정 규칙 본문이 실린다`);
+        if (kind === 'ruled') {
+          assert.ok(sys.includes(USER_ADDRESS_NOTE.ruled[lang]), `${runner}: 정한 규칙을 따르라는 줄`);
+          assert.ok(!sys.includes(USER_ADDRESS_NOTE.deferToRule[lang]), `${runner}: 우선 문구는 붙지 않는다`);
+          assert.ok(!sys.includes('"유건"'), `${runner}: 표시 이름 지시 없음`);
+        } else {
+          assert.ok(sys.includes(userAddressNote('유건', lang)), `${runner}: 이름 줄 + 우선 문구`);
+          assert.ok(sys.includes(`"유건". `) || sys.includes('"유건"이다.'), `${runner}: 이름은 그대로`);
+          assert.ok(sys.includes(USER_ADDRESS_NOTE.deferToRule[lang]), `${runner}: 우선 문구`);
+          assert.ok(!sys.includes(USER_ADDRESS_NOTE.ruled[lang]), `${runner}: 규칙 줄로 바뀌지 않는다`);
+        }
+        lines.push(noteLine(sys, lang));
+      }
+      assert.ok(lines[0], '호칭 줄을 찾지 못했다');
+      assert.deepEqual(lines, lines.map(() => lines[0]), '러너마다 같은 호칭 줄');
     });
   }
 }

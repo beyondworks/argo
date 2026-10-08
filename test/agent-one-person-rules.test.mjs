@@ -9,6 +9,7 @@ import { inContextScope, isOwnerSoloScope, soloKey, soloSeenFor, soloMsgIds } fr
 import { applyDeparted, forgetChannels, foldedSolo, summaryRecalled, unscopedSummaryGone } from '../src/departed.mjs';
 import { hasAddressRule, userSetAddress, userAddressNote, ADDRESS_RULE_SKILL } from '../src/user-name.mjs';
 import { RULES_SKILL } from '../src/corrections.mjs';
+import { USER_ADDRESS_NOTE } from '../src/legacy-terms.mjs';
 
 const OWNER = 'u-owner', GUEST = 'u-guest', CREW = 'c-me', OTHER = 'c-other';
 const clientOf = (rows, { error = null, throws = false } = {}) => ({ reads: 0, from() {
@@ -172,37 +173,143 @@ test('옛 버전 요약(withSolo 없음) — 회수 각인이 있는 스레드�
   assert.equal(t.scopedSummaries[GCH]?.text, 'CH', '채널 요약은 종전 규칙(upto ≤ 각인 ts)만 — 다시 들어온 뒤 요약은 옛 모양이어도 거두지 않는다');
 });
 
-test('호칭 규칙 판정 — 사용자를 부르는 방법을 정한 줄만', () => {
-  for (const s of ['- 나를 "대표님"이라고 불러라', '- 사용자를 형이라고 부른다', '- 저를 유건님으로 불러 주세요', '- 호칭은 대표님', '- Call me "Chief".', '- Address the user as Dr. Kim', '- refer to me as boss',
-    '- 나를 대표님이라 불러', '- 대표님이라고 해줘', '- 나는 형이라 부르면 돼', '- 나를 부를 때는 대표님', '- 사용자 호칭은 대표님', // 검수 LOW: 앞의 셋을 놓쳤다
-    '- 내 이름을 부르지 마', '- 제 이름은 부르지 말고 대표님이라고 해 주세요', '- 말할 때는 대표님이라고 불러줘', '- 앞으로 "대표님"이라고 불러줘', '- 대표님으로 불러', // 재검수 LOW: '내 이름을 부르지 마'를 놓쳤다
-    '- 이름은 유건님으로 불러줘', '- 제 직함은 빼고 이름으로 불러 주세요', '- 직함은 빼고 유건님이라고 불러줘', '- 앞으로는 성은 빼고 유건님이라고 불러', '- 앞으로 이름은 유건님으로 불러줘', // 재검수 2차 LOW: 사용자 자신의 이름·직함·성
-    '- 보고는 결론부터, 그리고 대표님이라 부르지 말고 유건님이라 불러', '- 반말은 쓰지 말고 유건님이라고 불러', '- 존댓말을 쓰고 유건님이라고 불러줘', // 재검수 2차 LOW: 앞 절의 다른 지시('반말은 쓰지 말고')가 참을 거짓으로 바꿨다
-    '- 대표님 말고 유건님이라고 불러줘', '- 보고할 때는 유건님이라고 부른다', '- 말투는 친근하게 하고 형이라고 불러', '- 보고는 결론부터. 유건님이라고 불러', '- 대화에서 호칭은 유건님', '- 메일은 짧게 쓰고 나를 팀장님이라고 불러', '- 대표님은 말고 유건님이라고 불러', // 재검수 3차 LOW: 끊는 경계·말투 낱말·'말고' 절
-    '- 주인을 형이라고 불러', '- 저는 유건님이라고 불러 주세요', '- 사용자에게 대표님이라고 부르지 않는다', '- 유저 호칭은 대표님', '- Call the user "boss"', '- Address the owner by first name', '- Call me Yugeon', '- Address the user.', // 재검수 4차 LOW: 좁힌 뒤에도 잡아야 하는 줄
-    '- 사용자 호칭: 유건님', '- 사용자 호칭 : 대표님', '- 사용자 호칭 = 유건님', '- 사용자 호칭 - 유건님', '- 사용자 호칭 유건님', '- 사용자 호칭 "대표님"', '- 주인 호칭: 형', '- 유저 호칭: 대표님', // 확인 검수 LOW: 좁히며 놓친 정탐(쌍점·줄표·'…님')
-    '- 사용자의 호칭은 유건님', '- 사용자의 호칭은 "대표님"으로 통일', '- 사용자의 이름은 유건님으로 불러', '- 사용자의 이름을 부를 때는 유건님', '- 주인의 호칭은 형', '- 유저의 호칭은 대표님', // '의'
-    '- 사용자에게는 유건님이라고 부른다', '- 사용자한테는 대표님이라 부르지 마', '- 저한테는 유건님이라고 해 주세요', '- 사용자님을 유건님이라고 불러', '- 주인님을 형이라고 불러', '- 저를 부르실 때는 유건님이라고 해 주세요',
-    '- Address the user formally', '- Address the user politely, as Yugeon', '- Address the user casually', '- Always call the user Yugeon', '- Call the user Yugeon', '- Call me "boss" in every reply', '- Please call me by my first name', '- Call me 유건님'])
-    assert.equal(hasAddressRule(s), true, s);
-  for (const s of ['- 결론부터 말한다', '- 함수 하나를 부를 때 인자를 확인한다', '- 도구를 부를 때 결재를 먼저', "- Always address the user's question first", '- call them back when a customer emails', '- 결재를 부르기 전에', '',
-    '- 고객은 고객님이라고 부른다', '- 메일에서 상대를 이름으로 부르지 마라', '- 상대방 호칭은 OO님으로 통일', '- 너를 서윤이라고 부를게', // 검수 LOW: 사용자가 아닌 대상을 잡았다
-    '- 출처가 없으면 "출처 없음"이라고 해', '- 모르면 모른다고 해', '- 결론부터 말하는 걸로 해', '- 파일은 Read로 불러온다', '- 템플릿으로 불러와 채운다', '- 너무 길게 쓰지 마', '- 저장 전에 확인',
-    '- 보고서 제목은 "주간 보고"라고 부른다', '- 이 프로젝트를 앞으로 "아르고"라 부른다', '- 회의는 스탠드업이라고 부른다', '- API를 호출할 때는 재시도로 부른다', '- 함수는 helper로 불러 쓴다', // 재검수 LOW: 사람이 아닌 대상의 이름을 정한 줄을 잡았다
-    '- 필요하면 도구로 불러서 처리한다', '- 프로젝트 이름은 Argo라고 부른다', '- 회사 이름은 린이라고 부른다', '- 회의 이름은 스탠드업이라고 부른다', '- 고객 호칭은 고객님으로', // 재검수 2차 LOW: 도구를 부르는 말, 다른 낱말의 이름
-    '- 회의록은 정리하고 "스탠드업"이라고 부른다', '- 매주 월요일 회의는 짧게 하고 스탠드업이라고 부른다', '- 이 저장소는 비공개로 두고 Argo라고 부른다', '- 주간 보고서를 만들면 "주간 보고"라고 부른다', '- 문서 호칭은 정식 명칭으로', // 재검수 3차 LOW: 앞 절의 주제어가 뒤 절까지 걸린다
-    '- 결제 모듈은 따로 빼고, 이름은 pay라고 부른다', '- 프로젝트 이름은, 앞으로 Argo라고 부른다', '- 새 버전은 v2.0이라고 부른다', '- 회의록은 짧게, 스탠드업이라고 부른다', '- 문서호칭은 정식 명칭으로',
-    '- 사용자 매뉴얼은 "가이드"라고 부른다', '- 사용자 화면은 "홈"이라고 부른다', '- 고객 화면은 "사용자 화면"이라고 부른다', '- 유저 스토리는 US라고 부른다', // 재검수 4차 LOW: 사용자 대상 낱말이 다른 명사의 일부
-    '- 유저 플로우 문서는 "흐름도"라고 부른다', '- 주인공은 루나라고 부른다', '- 사용자 테스트는 UT라고 부른다', '- 사용자 인터뷰 기록은 "인터뷰 노트"로 부른다', "- '유저'라는 말 대신 '사용자'라고 부른다",
-    '- 고객은 "사용자"라고 부른다', '- 주인 없는 업무는 "공용 업무"라고 부른다', '- 저 장표는 "요약"이라고 부른다', '- 사용자의 고객은 "회원님"이라고 부른다', '- 사용자의 회사는 "린"이라고 부른다',
-    '- 회의 때는 서로 이름으로 부른다', '- 에이전트끼리는 서로 이름으로 부른다',
-    '- Refer to the user manual before answering setup questions', '- Address the user stories in priority order', '- Call me only when you are blocked', '- Call me back after the deploy finishes', '- Refer to the owner dashboard for revenue numbers',
-    '- 막히면 나를 불러', '- 결재가 필요하면 사용자를 부른다', '- 급한 일이면 저를 불러 주세요', '- 판단이 어려우면 주인을 부른다', '- 사용자를 부르기 전에 결재 카드를 만든다', '- 저를 불러서 확인받으세요', // 확인 검수 LOW: 이름이 아니라 찾아오라는 말
-    '- Call me during an incident', '- Call me in an emergency', '- Call me immediately if the deploy fails', '- Call me ASAP when the build breaks', '- Call me by 5pm with the numbers', '- Call me by phone if it breaks', '- Call me Monday about the deploy',
-    '- If unsure, refer to the user.', '- Escalate billing questions; refer to the owner.', '- If blocked, call the user.', '- Call the owner, then wait', '- Refer to me if you are unsure', '- Address the user feedback in the next release',
-    '- 사용자 호칭 정리는 나중에 한다', '- 사용자 이름 "닉네임" 필드는 "별명"이라고 부른다', '- 사용자의 이름 필드는 "닉네임"이라고 부른다', '- 사용자 이름 목록은 "명단"이라고 부른다', '- 사용자 호칭 관련 문서는 "호칭표"라고 부른다', // 넓힌 모양('의'·띄어쓰기)이 다른 낱말을 잡지 않는다
-    '- 사용자들에게는 "회원"이라고 부른다', '- 주인의 고객은 "손님"이라고 부른다', '- 사용자의 화면 이름은 "홈"이라고 부른다', '- 사용자들은 "멤버"라고 부른다', '- 주인공을 루나라고 부른다'])
+// 호칭 규칙 판정 표(8차 2026-10-08 — 정밀도 우선). 잘못 잡으면 확정 규칙 한 줄 때문에 그 회사 모든 에이전트의 이름 줄이 빠지고,
+// 놓치면 이름 줄이 남지만 그 끝의 우선 문구('단, 사용자가 카드나 확정된 규칙에서 호칭을 따로 정했으면 그 규칙을 따른다')가 덮는다.
+//   CAUGHT   — 사용자 호칭 규칙이고 판정이 잡는 줄
+//   MISSED   — 사용자 호칭 규칙이지만 판정이 일부러 잡지 않는 줄('놓침(문구로 덮음)'). 5~7차에 이 모양을 잡으려 넓힐 때마다 다른 줄을 잘못 잡았다.
+//              여기서 CAUGHT로 옮기려면 NOT_RULE 표 전체가 그대로 거짓인지 먼저 본다.
+//   NOT_RULE — 사용자 호칭 규칙이 아닌 줄(1~7차 검수 탐침의 오탐 후보 전부). 하나라도 참이면 실패.
+// 줄은 각 차수 탐침(scratchpad one-person-addr3/all-lines.mjs가 모은 것)에서 출처별로 그대로 가져왔다.
+const CAUGHT = [
+    // 7차 표 (42)
+    '- 나를 "대표님"이라고 불러라', '- 사용자를 형이라고 부른다', '- 저를 유건님으로 불러 주세요', '- 호칭은 대표님', '- Call me "Chief".',
+    '- Address the user as Dr. Kim', '- refer to me as boss', '- 나를 대표님이라 불러', '- 대표님이라고 해줘', '- 나는 형이라 부르면 돼',
+    '- 나를 부를 때는 대표님', '- 사용자 호칭은 대표님', '- 내 이름을 부르지 마', '- 제 이름은 부르지 말고 대표님이라고 해 주세요', '- 말할 때는 대표님이라고 불러줘',
+    '- 앞으로 "대표님"이라고 불러줘', '- 대표님으로 불러', '- 이름은 유건님으로 불러줘', '- 제 직함은 빼고 이름으로 불러 주세요', '- 직함은 빼고 유건님이라고 불러줘',
+    '- 앞으로는 성은 빼고 유건님이라고 불러', '- 앞으로 이름은 유건님으로 불러줘', '- 보고는 결론부터, 그리고 대표님이라 부르지 말고 유건님이라 불러', '- 반말은 쓰지 말고 유건님이라고 불러', '- 존댓말을 쓰고 유건님이라고 불러줘',
+    '- 대표님 말고 유건님이라고 불러줘', '- 보고할 때는 유건님이라고 부른다', '- 말투는 친근하게 하고 형이라고 불러', '- 보고는 결론부터. 유건님이라고 불러', '- 대화에서 호칭은 유건님',
+    '- 메일은 짧게 쓰고 나를 팀장님이라고 불러', '- 대표님은 말고 유건님이라고 불러', '- 주인을 형이라고 불러', '- 저는 유건님이라고 불러 주세요', '- 사용자에게 대표님이라고 부르지 않는다',
+    '- 유저 호칭은 대표님', '- Call the user "boss"', '- Address the owner by first name', '- Address the user.', '- 저를 부르실 때는 유건님이라고 해 주세요',
+    '- Call me "boss" in every reply', '- Please call me by my first name',
+    // 6차 검수 탐침 (24)
+    '- 사용자(유건)는 유건님이라고 부른다', '- 사용자 이름: 유건, 유건님이라고 불러', '- 사용자를 부르는 호칭은 유건님', '- 사용자를 부를 때 유건님', '- 사용자를 "대표님"으로 부르지 말 것',
+    '- 사용자는 대표님이라고 부른다', '- 사용자도 유건님이라고 부른다', '- 주인님이라고 불러줘', '- 유저를 대표님으로 불러', '- 저를 유건님이라고 불러 주세요',
+    '- 저는 유건님으로 불러 주세요', '- 저, 유건님이라고 불러주세요', '- 나를 유건님이라고 불러', '- 날 형이라고 불러', '- 나는 대표님이라고 불러줘',
+    '- 호칭: 유건님', '- 호칭은 유건님', '- 앞으로 호칭은 대표님', '- Address the user as Yugeon', '- Address the user by first name',
+    '- Refer to the user as Yugeon', '- Address the owner as Mr. Kim', '- Address me as boss', '- Refer to me by first name',
+    // 7차 반례 (4)
+    '- 유저 이름: 유건, 유건님으로 불러', '- Call me "Chief"', '- Call the user by first name', '- Refer to the owner as Mr. Kim',
+    // 7차 확인 검수 (13)
+    '- 앞으로 사용자를 대표님이라고 부르지 않는다', '- 앞으로 사용자를 부를 때는 유건님이라고 한다', '- 앞으로 나를 형이라고 부른다', '- 저를 부르는 호칭은 유건님', '- 사용자한테도 유건님이라고 불러',
+    '- 사용자 호칭은 유건님으로', '- Never call me "CEO"', '- Always address me as Yugeon', '- Please address the owner by first name', '- Call the user by their first name',
+    '- Refer to the user as Yugeon in reports', '- Don\'t refer to me as the CEO', '- Address the user by name.',
+    // 3차 (3)
+    '- 존댓말을 쓰고 유건님이라고 불러', '- 항상 "유건님"으로 불러', '- 나는 그냥 유건이라고 불러',
+    // 3차 수정 (4)
+    '- 보고는 짧게 그리고 유건님이라고 불러', '- 반말 말고 존댓말로, 대표님이라고 불러', '- 존댓말을 쓰고, 유건님이라고 불러', '- 제 호칭은 대표님으로',
+    // 4차 검수 (3)
+    '- 사용자를 "대표님"이라고 부르지 않는다', '- 유건님이라고 불러줘', '- 사장님 대신 유건님이라고 부른다',
+    // #858 첫 검수 (2)
+    '- 나를 부를 때는 유건님', '- 대표님 말고 유건님으로 불러줘',
+    // 8차 반례 (5)
+    '- 사용자는 대표님 말고 유건님이라고 부른다', '- 나를 "유건님"이라고 불러', '- Call me "Yugeon", not CEO', '- Call the user "유건님"', '- Address me as "boss"',
+];
+const MISSED = [
+    // 7차 표 (26)
+    '- Call me Yugeon', '- 사용자 호칭: 유건님', '- 사용자 호칭 : 대표님', '- 사용자 호칭 = 유건님', '- 사용자 호칭 - 유건님',
+    '- 사용자 호칭 유건님', '- 사용자 호칭 "대표님"', '- 주인 호칭: 형', '- 유저 호칭: 대표님', '- 사용자의 호칭은 유건님',
+    '- 사용자의 호칭은 "대표님"으로 통일', '- 사용자의 이름은 유건님으로 불러', '- 사용자의 이름을 부를 때는 유건님', '- 주인의 호칭은 형', '- 유저의 호칭은 대표님',
+    '- 사용자에게는 유건님이라고 부른다', '- 사용자한테는 대표님이라 부르지 마', '- 저한테는 유건님이라고 해 주세요', '- 사용자님을 유건님이라고 불러', '- 주인님을 형이라고 불러',
+    '- Address the user formally', '- Address the user politely, as Yugeon', '- Address the user casually', '- Always call the user Yugeon', '- Call the user Yugeon',
+    '- Call me 유건님',
+    // 6차 검수 탐침 (3)
+    '- Call me Yugeon, not CEO', '- Refer to the user in the third person', '- address me formally',
+    // 7차 반례 (5)
+    '- 사용자 호칭 = "유건님"', '- 나한테는 형이라고 해', '- 사용자 호칭 – 유건님', '- call me Yugeon', '- Address me respectfully',
+    // 7차 확인 검수 (18)
+    '- 사용자님은 유건님이라고 부른다', '- 사용자의 호칭: 유건님', '- 사용자 호칭 = 대표님', '- 사용자 호칭 — 유건님', '- 사용자의 성함은 김유건, 유건님으로 불러',
+    '- 앞으로 사용자에게는 유건님이라고 부른다', '- 앞으로 나한테는 대표님이라고 해', '- 앞으로 사용자의 호칭은 "유건님"으로 통일한다', '- 나를 부르는 이름은 형', '- 날 부를 땐 형이라고',
+    '- Don\'t call me sir', '- Call me boss, not CEO', '- call me yugeon', '- When you call me, use my first name', '- Address me formally',
+    '- Call me Mr. Kim', '- Call the user 유건님', '- From now on, call me Yugeon',
+    // 7차 확인 검수(교정 채택 문장 모양) (2)
+    '사용자에게는 "유건님"이라고 부른다.', '앞으로 사용자에게는 대표님이라고 하지 말고 유건님이라고 부른다.',
+    // 4차 검수 (1)
+    '- 답변을 시작할 때 유건님이라고 부른다',
+    // #858 첫 검수 (1)
+    '- 메일 서명은 "유건 드림"으로, 호칭은 "유건님"으로',
+];
+const NOT_RULE = [
+    // 7차 표 (88)
+    '- 결론부터 말한다', '- 함수 하나를 부를 때 인자를 확인한다', '- 도구를 부를 때 결재를 먼저', '- Always address the user\'s question first', '- call them back when a customer emails',
+    '- 결재를 부르기 전에', '', '- 고객은 고객님이라고 부른다', '- 메일에서 상대를 이름으로 부르지 마라', '- 상대방 호칭은 OO님으로 통일',
+    '- 너를 서윤이라고 부를게', '- 출처가 없으면 "출처 없음"이라고 해', '- 모르면 모른다고 해', '- 결론부터 말하는 걸로 해', '- 파일은 Read로 불러온다',
+    '- 템플릿으로 불러와 채운다', '- 너무 길게 쓰지 마', '- 저장 전에 확인', '- 보고서 제목은 "주간 보고"라고 부른다', '- 이 프로젝트를 앞으로 "아르고"라 부른다',
+    '- 회의는 스탠드업이라고 부른다', '- API를 호출할 때는 재시도로 부른다', '- 함수는 helper로 불러 쓴다', '- 필요하면 도구로 불러서 처리한다', '- 프로젝트 이름은 Argo라고 부른다',
+    '- 회사 이름은 린이라고 부른다', '- 회의 이름은 스탠드업이라고 부른다', '- 고객 호칭은 고객님으로', '- 회의록은 정리하고 "스탠드업"이라고 부른다', '- 매주 월요일 회의는 짧게 하고 스탠드업이라고 부른다',
+    '- 이 저장소는 비공개로 두고 Argo라고 부른다', '- 주간 보고서를 만들면 "주간 보고"라고 부른다', '- 문서 호칭은 정식 명칭으로', '- 결제 모듈은 따로 빼고, 이름은 pay라고 부른다', '- 프로젝트 이름은, 앞으로 Argo라고 부른다',
+    '- 새 버전은 v2.0이라고 부른다', '- 회의록은 짧게, 스탠드업이라고 부른다', '- 문서호칭은 정식 명칭으로', '- 사용자 매뉴얼은 "가이드"라고 부른다', '- 사용자 화면은 "홈"이라고 부른다',
+    '- 고객 화면은 "사용자 화면"이라고 부른다', '- 유저 스토리는 US라고 부른다', '- 유저 플로우 문서는 "흐름도"라고 부른다', '- 주인공은 루나라고 부른다', '- 사용자 테스트는 UT라고 부른다',
+    '- 사용자 인터뷰 기록은 "인터뷰 노트"로 부른다', '- \'유저\'라는 말 대신 \'사용자\'라고 부른다', '- 고객은 "사용자"라고 부른다', '- 주인 없는 업무는 "공용 업무"라고 부른다', '- 저 장표는 "요약"이라고 부른다',
+    '- 사용자의 고객은 "회원님"이라고 부른다', '- 사용자의 회사는 "린"이라고 부른다', '- 회의 때는 서로 이름으로 부른다', '- 에이전트끼리는 서로 이름으로 부른다', '- Refer to the user manual before answering setup questions',
+    '- Address the user stories in priority order', '- Call me only when you are blocked', '- Call me back after the deploy finishes', '- Refer to the owner dashboard for revenue numbers', '- 막히면 나를 불러',
+    '- 결재가 필요하면 사용자를 부른다', '- 급한 일이면 저를 불러 주세요', '- 판단이 어려우면 주인을 부른다', '- 사용자를 부르기 전에 결재 카드를 만든다', '- 저를 불러서 확인받으세요',
+    '- Call me during an incident', '- Call me in an emergency', '- Call me immediately if the deploy fails', '- Call me ASAP when the build breaks', '- Call me by 5pm with the numbers',
+    '- Call me by phone if it breaks', '- Call me Monday about the deploy', '- If unsure, refer to the user.', '- Escalate billing questions; refer to the owner.', '- If blocked, call the user.',
+    '- Call the owner, then wait', '- Refer to me if you are unsure', '- Address the user feedback in the next release', '- 사용자 호칭 정리는 나중에 한다', '- 사용자 이름 "닉네임" 필드는 "별명"이라고 부른다',
+    '- 사용자의 이름 필드는 "닉네임"이라고 부른다', '- 사용자 이름 목록은 "명단"이라고 부른다', '- 사용자 호칭 관련 문서는 "호칭표"라고 부른다', '- 사용자들에게는 "회원"이라고 부른다', '- 주인의 고객은 "손님"이라고 부른다',
+    '- 사용자의 화면 이름은 "홈"이라고 부른다', '- 사용자들은 "멤버"라고 부른다', '- 주인공을 루나라고 부른다',
+    // 6차 검수 탐침 (5)
+    '- 유저들은 "회원"이라고 부른다', '- Refer to the user guide', '- Address the user\'s concerns first', '- 사용자 화면 이름은 "홈"이라고 부른다', '- 사용자 이름은 "닉네임"이라고 부른다',
+    // 7차 반례 (7)
+    '- 막히면 사용자님을 불러', '- 승인이 필요하면 나를 불러 줘', '- Call me when the release is out', '- Call the user if payment fails', '- Refer to the owner for pricing questions',
+    '- Call me ASAP', '- Address the owner\'s questions first',
+    // 7차 확인 검수 (53)
+    '- 사용자에게는 결론만 보고하고, 회의록은 "스탠드업 노트"라고 부른다', '- 사용자에게는 존댓말을 쓰고, 이 문서는 "주간 보고"라고 부른다', '- 사용자에게도 같은 요약을 보내고, 그 요약은 "데일리"라고 부른다', '- 사용자한테는 숫자만 보여 주고, 내부 지표는 "북극성"이라고 부른다', '- 주인에게는 매주 금요일에 보고하고, 이 보고는 "주간 결산"이라고 부른다',
+    '- 앞으로 사용자에게는 결론부터 말하고, 이 보고서는 "주간 요약"이라고 부른다', '- 앞으로 사용자한테는 표로 보여 주고, 표는 "현황판"이라고 부른다', '- 나한테는 요약만 보내고, 긴 문서는 "부록"이라고 부른다', '- 나에게는 링크만 주고, 저장 폴더는 "보관함"이라고 부른다', '- 저한테는 결과만 알려 주시고, 이번 작업은 "알파 프로젝트"라고 부릅니다',
+    '- 저에게는 메일로 보내 주시고, 첨부 파일은 "증빙"이라고 부릅니다', '- 사용자에게는 묻지 말고 helper로 불러 쓴다', '- 유저에게는 보이지 않게, 내부 플래그는 "섀도"라고 부른다', '- 사용자의 이름은 프로필에서 가져오고, 화면에서는 "멤버"라고 부른다', '- 사용자의 이름은 마스킹하고, 보고서에서는 "고객 A"라고 부른다',
+    '- 사용자의 이름을 로그에 남기지 않고, 대신 "user-1"처럼 번호로 부른다', '- 사용자의 성함은 계약서에서 확인하고, 계약서는 "원본"이라고 부른다', '- 앞으로 사용자의 이름은 DB에서 읽고, 그 테이블은 "프로필 표"라고 부른다', '- 사용자 이름: 로그인 ID를 말한다. 팀에서는 "계정명"이라고 부른다', '- 사용자 이름 = username 칼럼, 화면에서는 "아이디"라고 부른다',
+    '- 사용자 이름 - 로그인할 때 쓰는 값, "아이디"라고 부른다', '- 사용자 이름: username (화면에서는 "닉네임"이라 부름)', '- 유저 이름: 표시용 문자열. 내부에서는 handle로 부른다', '- 사용자 이름：이메일 앞부분, "아이디"라고 부른다', '- 사용자 이름 뒤에 "님"을 붙이는 기능은 "존칭 붙이기"라고 부른다',
+    '- 사용자 호칭 관리님 메뉴는 "설정"이라고 부른다', '- 사용자 이름 고객님으로 표시되는 오류는 "이름 누락"이라고 부른다', '- 사용자님들은 "멤버"라고 부른다', '- 사용자를 부를 때는 결재 카드를 만든다', '- 사용자님을 부를 때는 결재 카드로 알린다',
+    '- 주인을 부르실 때는 알림을 먼저 보낸다', '- 막혀서 나를 부를 때는 로그를 첨부해', '- 저를 부르는 때는 급한 일일 때만', '- Call me by Friday if it is not done', '- Call me by EOD with the numbers',
+    '- Call me by Slack if blocked', '- Call me Next week to review', '- Call the user Service to fetch profiles', '- Call the user API before rendering', '- Address the user kindly when they are upset',
+    '- Address the user warmly in greetings', '- Address the user stories first', '- Refer to the user by email in the ticket', '- Refer to the owner by Slack for approvals', '- Call me 바로 if blocked',
+    '- 급하면 call me 해줘', '- Call me Asap if prod is down', '- Call me On weekends only for outages', '- Call me If anything breaks', '- Address me with questions anytime',
+    '- Address the user’s feedback first', '- If blocked, call the user "now" via the alert channel', '- Call me \'only\' in emergencies',
+    // 7차 확인 검수(교정 채택 문장 모양) (11)
+    '- 저한테는 결과만 알려 주시고, 이번 작업은 "알파 프로젝트"라고 부른다', '- 저에게는 메일로 보내 주시고, 첨부 파일은 "증빙"이라고 부른다', '사용자에게는 결론부터 보고하고, 보고서는 "주간 요약"이라고 부른다.', '사용자에게는 확인을 받지 말고, 배포 스크립트는 deploy.sh로 부른다.', '사용자의 이름은 외부 메일에 쓰지 않고, 고객사는 "A사"라고 부른다.',
+    '앞으로 사용자에게는 표 대신 목록으로 보여 주고, 이 목록은 "할 일 목록"이라고 부른다.', 'Report to the user formally, and call the sprint "Phase 2".', '- 사용자의 이름 칸은 "닉네임"이라고 부른다', '- 사용자 이름 필드는 "닉네임"이라고 부른다', '- 사용자의 이름 목록은 "명단"이라고 부른다',
+    '- 사용자 호칭 설정 메뉴는 "호칭 관리"라고 부른다',
+    // 3차 (3)
+    '- 새 기능은 v2라고 부르고, 옛 기능은 v1이라고 부른다', '- 거래처 담당자는 과장님이라고 부른다', '- 고객 문의는 티켓이라고 부르고 우선순위를 붙인다',
+    // 3차 수정 (1)
+    '- 이 문서는 정리하면 보고서라고 부른다',
+    // 4차 검수 (7)
+    '- 결재 카드는 "승인 요청"이라고 부른다', '- 크루는 "에이전트"라고 부른다', '- 자동화는 루틴이라고 부르지 않는다', '- 회사 이름은 "린"으로 부른다', '- 팀 이름을 "Argo팀"이라고 부른다',
+    '- 필요하면 도구를 불러 처리한다', '- 상대방 호칭은 직함으로',
+    // #858 첫 검수 (1)
+    '- 결과는 표로 정리하고 회의는 스탠드업이라고 부른다',
+    // 8차 반례 (12)
+    '- Call me as soon as the build breaks', '- Call me as needed', '- Call me as a last resort', '- Refer to the owner as an escalation path', '- Call me by Mon if blocked',
+    '- Call the user by phone', '- Address the user by Slack', '- 사용자는 결론만 보고받고, 회의록은 "스탠드업"이라고 부른다', '- 나는 요약만 받고, 긴 문서는 "부록"이라고 부른다', '- 사용자 직함은 "PM"이라고 부른다',
+    '- 사용자 성함은 계약서에서 확인하고, 계약서는 "원본"이라고 부른다', '- 사용자를 위해 만든 화면은 "홈"이라고 부른다',
+];
+
+test('호칭 규칙 판정 — 사용자를 부르는 방법을 정한 줄만, 애매하면 잡지 않는다', () => {
+  for (const s of CAUGHT) assert.equal(hasAddressRule(s), true, s);
+  for (const s of NOT_RULE) assert.equal(hasAddressRule(s), false, s);
+});
+
+test('호칭 규칙 판정 — 놓치는 모양(문구로 덮음)은 잡지 않고, 그때 이름 줄 끝에 우선 문구가 붙는다', () => {
+  for (const s of MISSED) {
     assert.equal(hasAddressRule(s), false, s);
+    const ruled = userSetAddress('', `\n### 스킬: ${ADDRESS_RULE_SKILL.replace(/\.md$/, '')}\n${s}\n`);
+    assert.equal(ruled, false, s);
+    for (const lang of ['ko', 'en']) {
+      const note = userAddressNote('유건', lang, { ruled });
+      assert.ok(note.endsWith(USER_ADDRESS_NOTE.deferToRule[lang]), `${lang} ${s}`);
+      assert.match(note, /"유건"/, `${lang} 이름 줄은 그대로`);
+    }
+  }
 });
 
 test('호칭 규칙 위치 — 카드는 "## 일하는 방식" 절만, 확정 규칙은 주입된 captain-rules 절만', () => {
@@ -215,8 +322,17 @@ test('호칭 규칙 위치 — 카드는 "## 일하는 방식" 절만, 확정 �
   assert.equal(ADDRESS_RULE_SKILL, RULES_SKILL, '확정 규칙 파일 이름이 교정 채택(corrections.mjs)과 같아야 한다');
 });
 
-test('호칭 지시문 — 규칙이 있으면 이름 대신 "정한 규칙대로"(ko·en), 없으면 종전 그대로', () => {
+test('호칭 지시문 — 규칙이 있으면 이름 대신 "정한 규칙대로"(ko·en), 없으면 이름 줄·호칭 없음 줄 끝에 우선 문구', () => {
   assert.match(userAddressNote('유건', 'ko'), /이름은 "유건"/);
+  for (const lang of ['ko', 'en']) {
+    for (const name of ['유건', 'Yugeon', null, '']) {
+      const note = userAddressNote(name, lang);
+      assert.ok(note.endsWith(` ${USER_ADDRESS_NOTE.deferToRule[lang]}`), `${lang} ${name}: 끝에 우선 문구`);
+      assert.equal(note.split(USER_ADDRESS_NOTE.deferToRule[lang]).length, 2, `${lang} ${name}: 한 번만`);
+    }
+    assert.ok(!userAddressNote('유건', lang, { ruled: true }).includes(USER_ADDRESS_NOTE.deferToRule[lang]), `${lang}: 규칙을 찾았으면 그 규칙을 따르라는 줄만`);
+  }
+  assert.equal(USER_ADDRESS_NOTE.deferToRule.ko, '단, 사용자가 카드나 확정된 규칙에서 호칭을 따로 정했으면 그 규칙을 따른다.');
   assert.doesNotMatch(userAddressNote('유건', 'ko', { ruled: true }), /유건/);
   assert.match(userAddressNote('유건', 'ko', { ruled: true }), /직접 정한 규칙/);
   assert.match(userAddressNote('Yugeon', 'en', { ruled: true }), /rule they set/);

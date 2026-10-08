@@ -58,6 +58,12 @@ export const USER_ADDRESS_NOTE = Object.freeze({
     ko: "사용자를 부를 때 '사장님'·'대표님'·'고객님' 같은 호칭을 쓰지 말고 바로 말한다.",
     en: "Do not address the user with titles such as 'boss' or 'captain'; speak to them directly.",
   }),
+  // 이름 줄(named·unnamed) 끝에 항상 붙는 우선 문구 — 호칭 규칙 판정(user-name.mjs hasAddressRule)은 정밀도가 먼저라 놓치는 모양이 있다.
+  //   놓쳐도 모델이 카드·확정 규칙의 호칭을 따르게 한다(8차 2026-10-08 총괄 결정). 붙이는 곳은 user-name.mjs userAddressNote 한 곳
+  deferToRule: Object.freeze({
+    ko: '단, 사용자가 카드나 확정된 규칙에서 호칭을 따로 정했으면 그 규칙을 따른다.',
+    en: 'However, if the user has set how to address them in your card or in the confirmed rules, follow that rule instead.',
+  }),
   // 사용자가 직접 정한 호칭 규칙이 있을 때(유건 결정 2026-10-08 ③) — 카드 '일하는 방식'·확정 규칙이 메신저 공간별 표시 이름보다 우선한다
   ruled: Object.freeze({
     ko: "사용자를 부르는 호칭은 사용자가 직접 정한 규칙(카드의 '일하는 방식'·회사 규칙)을 따른다. 메신저 공간마다 다른 표시 이름이 보여도 그 규칙이 우선이다.",
