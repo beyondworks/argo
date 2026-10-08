@@ -36,7 +36,31 @@ for f in "${FILES[@]}"; do
   # 잠금을 오래 기다리지 않는다(2026-10-06 #846 검수) — alter policy·create trigger는 표에 강한 잠금(ACCESS EXCLUSIVE)을 건다. 그 표에 긴 쿼리가 있으면
   # 기다리는 동안 뒤따르는 모든 읽기·쓰기가 줄을 선다. 못 얻으면 이 파일은 통째로 되돌려지고(-1) 여기서 멈춘다 — 같은 명령으로 다시 실행하면 된다.
   # 기본 5초, ARGO_APPLY_LOCK_TIMEOUT으로 바꾼다. 사용자가 준 PGOPTIONS는 덮지 않고 이어 붙인다.
-  PGOPTIONS="${PGOPTIONS:-} -c client_min_messages=warning -c lock_timeout=${ARGO_APPLY_LOCK_TIMEOUT:-5s}" psql "$C" -v ON_ERROR_STOP=1 -1 -q -f "supabase/migrations/$f.sql"
+  # 선잠금(2026-10-08 실측): 이 Supabase의 supautils는 트리거·정책 DDL(drop trigger·create/alter/drop policy)을 실행하는 순간
+  # auth·storage·realtime 표 23개를 ACCESS EXCLUSIVE로 잠근다. 메신저·동기화가 storage.objects를 읽은 채 auth.users를 기다리고 있으면
+  # 교착이 나고(10/8 0.1.99 적용 세 번 연속), 교착이 안 나도 그 사이 로그인·파일 요청이 줄을 선다. 그런 파일은 트랜잭션 첫 문장에서
+  # 그 표들을 NOWAIT로 먼저 잠근다 — 못 얻으면 아무도 기다리게 하지 않고 바로 실패해 통째로 되돌려지고, 1초 뒤 다시 한다(최대 ARGO_APPLY_TRIES, 기본 30).
+  # 함수만 바꾸는 파일은 선잠금하지 않는다(그 표들을 잠그지 않는다 — 같은 날 실측).
+  WRAP=$(mktemp); ERR=$(mktemp)
+  if grep -qiE '(create|alter|drop)[[:space:]]+policy|drop[[:space:]]+trigger' "supabase/migrations/$f.sql"; then
+    cat > "$WRAP" <<'PRELOCK'
+do $prelock$ declare t text; begin
+  foreach t in array array['storage.objects','storage.buckets','storage.buckets_analytics','storage.s3_multipart_uploads','storage.s3_multipart_uploads_parts',
+    'realtime.messages','realtime.subscription','auth.users','auth.identities','auth.sessions','auth.refresh_tokens','auth.mfa_factors','auth.mfa_challenges',
+    'auth.mfa_amr_claims','auth.one_time_tokens','auth.flow_state','auth.audit_log_entries','auth.instances','auth.sso_providers','auth.sso_domains',
+    'auth.saml_providers','auth.saml_relay_states','auth.oauth_clients'] loop
+    if to_regclass(t) is not null then execute 'lock table ' || t || ' in access exclusive mode nowait'; end if;
+  end loop;
+end $prelock$;
+PRELOCK
+  fi
+  echo "\\i supabase/migrations/$f.sql" >> "$WRAP"
+  for try in $(seq 1 "${ARGO_APPLY_TRIES:-30}"); do
+    if PGOPTIONS="${PGOPTIONS:-} -c client_min_messages=warning -c lock_timeout=${ARGO_APPLY_LOCK_TIMEOUT:-5s}" psql "$C" -v ON_ERROR_STOP=1 -1 -q -f "$WRAP" 2> "$ERR"; then break; fi
+    if grep -qE 'could not obtain lock|deadlock detected' "$ERR" && [ "$try" -lt "${ARGO_APPLY_TRIES:-30}" ]; then echo "잠금 대기 — ${try}회째 되돌림, 1초 뒤 다시"; sleep 1; continue; fi
+    cat "$ERR" >&2; rm -f "$WRAP" "$ERR"; exit 1
+  done
+  rm -f "$WRAP" "$ERR"
   psql "$C" -q -c "insert into supabase_migrations.schema_migrations (version, name, statements) values ('$V', '${f#*_}', array[]::text[]) on conflict (version) do nothing"
   echo "OK    $f"
 done
