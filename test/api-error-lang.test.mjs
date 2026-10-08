@@ -100,8 +100,8 @@ const EXPECT = {
   assistant_lead_invalid: { status: 400, ko: '일정 알림은 10·15·30·60분 전 중에서 고를 수 있습니다', en: 'Event reminders can be 10, 15, 30 or 60 minutes before' },
   assistant_time_invalid: { status: 400, ko: '시각은 HH:MM 형식이어야 합니다', en: 'Times must be in HH:MM format' },
   assistant_quiet_empty: { status: 400, ko: '조용한 시간의 시작과 끝이 같습니다', en: 'Quiet hours start and end at the same time' },
-  assistant_evening_in_quiet: { status: 400, ko: '내일 일정 요약 시각이 조용한 시간 안에 있습니다 — 조용한 시간 밖으로 정해 주세요', en: "The tomorrow's summary time falls in quiet hours — pick a time outside them" },
-  assistant_evening_before_morning: { status: 400, ko: '내일 일정 요약은 아침 정리(조용한 시간이 끝나는 시각)보다 늦어야 합니다', en: "The tomorrow's summary must come after the morning summary (when quiet hours end)" },
+  assistant_evening_in_quiet: { status: 400, ko: '내일 일정 요약 시각이 조용한 시간 안에 있습니다 — 조용한 시간 밖으로 정해 주세요', en: 'The summary time for tomorrow falls in quiet hours — pick a time outside them' },
+  assistant_evening_before_morning: { status: 400, ko: '내일 일정 요약은 아침 정리(조용한 시간이 끝나는 시각)보다 늦어야 합니다', en: 'The summary for tomorrow must come after the morning summary (when quiet hours end)' },
 };
 
 test('apiError — ko 문구는 기존 프로덕션 문자열 그대로 + 상태코드 + errorCode 동봉', async () => {

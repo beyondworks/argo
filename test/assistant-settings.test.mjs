@@ -6,8 +6,9 @@ import assert from 'node:assert/strict';
 import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { writeFile, readFile, mkdir } from 'node:fs/promises';
+import { writeFile, readFile, mkdir, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-asst-set-'));
 for (const k of ['NEXT_PUBLIC_SUPABASE_URL', 'NEXT_PUBLIC_SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY', 'ARGO_SYNC']) delete process.env[k];
@@ -20,6 +21,7 @@ const S = await import('../src/assistant/settings.mjs');
 const T = await import('../src/assistant/tick.mjs');
 const { stateFile } = await import('../src/assistant/state.mjs');
 const route = await import('../app/api/companies/[ws]/assistant/route.js');
+const V = await import('../app/c/[ws]/crew/[slug]/assistant-view.mjs');
 
 const NOW = Date.parse('2026-10-08T13:00:00+09:00');
 const cfgPath = (ws) => join(paths(ws).root, 'assistant.json');
@@ -200,6 +202,32 @@ test('A11: CSRF — 다른 사이트에서 온 저장 요청은 거절(파일 �
   assert.equal(existsSync(cfgPath(ws)), false);
 });
 
+test('A13: 다른 회사의 비서를 끄다가 한 회사에서 오류(그 회사 assistant.json 자리가 폴더) — 이 회사 켜기는 저장되고 PUT 200(보기), 나머지 회사는 그대로 끄고, 오류는 기록', async () => {
+  const broken = await mkCompany({ name: '고장 난 회사' });
+  const prev = await mkCompany({ name: '이전 비서 회사' });
+  const ws = await mkCompany({ name: '새 비서 회사' });
+  await put(prev, { enabled: true, agent: 'pepper', tz: 'Asia/Seoul' });
+  await mkdir(cfgPath(broken), { recursive: true }); // 읽으면 EISDIR(코드 없는 오류) — 순서와 상관없이 그 회사만 실패한다
+  const logs = [];
+  const realErr = console.error;
+  console.error = (...a) => { logs.push(a.join(' ')); };
+  let res;
+  try { res = await put(ws, { enabled: true, agent: 'wolff', tz: 'Asia/Seoul' }); } finally { console.error = realErr; }
+  assert.equal(res.status, 200, JSON.stringify(res.data));
+  assert.deepEqual([res.data.config.enabled, res.data.current?.ws, res.data.current?.agent], [true, ws, 'wolff'], '화면은 오류 문구가 아니라 켜진 보기를 받는다');
+  assert.equal((await cfgOf(ws)).enabled, true);
+  assert.equal((await cfgOf(prev)).enabled, false, '고장 난 회사 뒤·앞의 다른 회사도 끈다(한 회사 오류로 멈추지 않는다)');
+  assert.ok(logs.some((l) => l.includes(broken)), `실패한 회사를 기록: ${JSON.stringify(logs)}`);
+});
+
+test('A14: 코드 없는 서버 오류(파일 읽기 실패)는 500 — 400(요청 잘못)으로 보이지 않는다', async () => {
+  const ws = await mkCompany();
+  await mkdir(cfgPath(ws), { recursive: true }); // 이 회사의 assistant.json 자리가 폴더 → 읽기 EISDIR
+  const { status, data } = await put(ws, { enabled: true, agent: 'pepper', tz: 'Asia/Seoul' });
+  assert.equal(status, 500, JSON.stringify(data));
+  assert.equal(data.errorCode, undefined); // 코드 있는 검증 오류가 그대로 400인 것은 A6
+});
+
 /* ── 봉인 — 옛 버전 기기의 에이전트가 assistant.json을 쓴 경우 ── */
 
 test('A7: 옛 기기 에이전트가 봉인 없이 assistant.json에 켜짐을 씀 — 엔진 꺼짐·호출 0·상태 파일 0, 다른 회사의 진짜 비서를 쉬게 하지도 못한다', async () => {
@@ -286,13 +314,15 @@ test('V3: 동기화로 assistant.json이 먼저 오고 company.json 봉인이 �
 test('S2(서버): 로그인·끈 목록·실행 기기·상태 파일 — 실행 기기가 이 기기일 때만 마지막 확인·오늘 알림 수', async () => {
   const ws = await mkCompany();
   await put(ws, { enabled: true, agent: 'pepper', tz: 'Asia/Seoul' });
-  const deps = (over = {}) => ({ lease: () => ({ syncOn: false }), deviceSession: () => null, deviceId: async () => 'Geony-Mac-Pro-c40da337', ...over });
+  const deps = (over = {}) => ({ lease: () => ({ syncOn: false }), deviceSession: () => null, sessionDead: () => false, deviceId: async () => 'Geony-Mac-Pro-c40da337', ...over });
   let v = await S.assistantSettingsView(ws, { now: NOW, deps: deps() });
   assert.deepEqual([v.status.login, v.status.runner, v.status.device, v.status.muted], [false, 'this_device', 'Geony-Mac-Pro', false], '기기 세션 없음 = 로그인 필요');
   v = await S.assistantSettingsView(ws, { now: NOW, deps: deps({ deviceSession: () => ({ user: { id: owner } }) }) });
   assert.equal(v.status.login, true, '기기 세션 계정 = 회사 주인');
   v = await S.assistantSettingsView(ws, { now: NOW, deps: deps({ deviceSession: () => ({ user: { id: 'u9' } }) }) });
   assert.equal(v.status.login, false, '다른 계정');
+  v = await S.assistantSettingsView(ws, { now: NOW, deps: deps({ deviceSession: () => ({ user: { id: owner } }), sessionDead: () => true }) });
+  assert.equal(v.status.login, false, '세션 파일은 주인 계정이지만 갱신이 거절돼 죽은 상태 — 엔진처럼 로그인 필요');
   // 상태 파일(엔진이 쓴 모양) — 오늘 날짜면 알림 수, 다른 날이면 0
   await mkdir(join(paths(ws).root, '.assistant'), { recursive: true });
   await writeFile(stateFile(ws), JSON.stringify({ v: 1, sent: { k: 1 }, pending: [], outbox: null, cal: { coveredUntil: NOW, readAt: NOW - 60_000 }, bundles: { am: '', pm: '' }, day: { date: '2026-10-08', instant: 3 }, status: { code: 'calendar_error', at: NOW } }));
@@ -311,6 +341,38 @@ test('S2(서버): 로그인·끈 목록·실행 기기·상태 파일 — 실행
   await updateCompany(ws, (c) => ({ msgr: { ...(c.msgr ?? {}), mutedEvents: ['assistant'] } }));
   v = await S.assistantSettingsView(ws, { now: NOW, deps: deps() });
   assert.equal(v.status.muted, true);
+});
+
+test('S2b: 기기 세션이 죽은 상태(만료 + 갱신 거절 사망 마커, 파일은 남음) — 엔진은 login_required, 설정 화면도 "로그인 필요"(실제 파일·기본 판정)', async () => {
+  const ws = await mkCompany();
+  await put(ws, { enabled: true, agent: 'pepper', tz: 'Asia/Seoul' });
+  const sessFile = join(process.env.ARGO_ROOT, '.device-session.json');
+  const deadFile = `${sessFile}.dead`;
+  const rt = 'rt-test-dead';
+  const writeSession = (expiresInSec) => writeFile(sessFile, JSON.stringify({ url: 'http://127.0.0.1:9', anonKey: 'anon-test', access_token: 'at-test', refresh_token: rt, expires_at: Math.floor(Date.now() / 1000) + expiresInSec, user: { id: owner, email: 'dead@example.invalid' } }), { mode: 0o600 });
+  const realFetch = globalThis.fetch;
+  let n = 0;
+  globalThis.fetch = async (...a) => { n += 1; return realFetch(...a); };
+  try {
+    await writeSession(-3600);
+    await writeFile(deadFile, JSON.stringify({ at: new Date().toISOString(), lastAt: new Date().toISOString(), count: 1, kind: 'revoked', reason: 'Invalid Refresh Token: Refresh Token Not Found', tokenTag: createHash('sha256').update(rt).digest('hex').slice(0, 16) }));
+    // 엔진 — 실제 기기 세션 경로(msgr.sessionClient → getFreshDeviceSession). 사망 게이트가 같은 토큰을 다시 보내지 않아 null
+    const r = await T.runAssistantTick(ws, { now: NOW, deps: { ...T.assistantDeps, lease: () => ({ syncOn: false }), companyIds: async () => [ws], agentExists: async () => true } });
+    assert.deepEqual([r.ran, r.why], [true, 'login']);
+    assert.equal(JSON.parse(await readFile(stateFile(ws), 'utf8')).status?.code, 'login_required');
+    // 설정 화면 — 라우트 GET(기본 판정, 회전 없음)
+    const { data } = await get(ws);
+    assert.equal(data.status.login, false, `세션 파일이 남아 있어도 죽은 세션은 로그인 아님: ${JSON.stringify(data.status)}`);
+    assert.deepEqual(V.statusNotes(data, ws, 'pepper'), ['login_required'], '비서 탭에 경고 줄');
+    // 사망 마커가 남아 있어도 세션이 살아 있으면(만료 전 — 다른 경로가 새 토큰을 받아 둔 경우) 로그인으로 본다
+    await writeSession(3600);
+    assert.equal((await get(ws)).data.status.login, true);
+  } finally {
+    globalThis.fetch = realFetch;
+    await rm(sessFile, { force: true });
+    await rm(deadFile, { force: true });
+  }
+  assert.equal(n, 0, '엔진 틱·보기 모두 네트워크 0(죽은 토큰을 다시 보내지 않는다)');
 });
 
 test('D7: 설정 화면 읽기·저장은 네트워크 호출 0(로컬 파일만 — Supabase 요청 0)', async () => {

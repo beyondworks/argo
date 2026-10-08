@@ -30,6 +30,10 @@ test('S2: 상태 문구 판정 — 로그인 필요·끈 목록·옛 버전·이
   assert.deepEqual(V.statusNotes(st({ code: 'calendar_error' }), WS, SLUG), ['calendar_error']);
   assert.deepEqual(V.statusNotes(st({ code: 'calendar_error', runner: 'other_device' }), WS, SLUG), [], '상태 파일은 기기 로컬 — 실행 기기가 다른 기기면 이 기기의 옛 코드를 보이지 않는다');
   assert.deepEqual(V.statusNotes(st({ code: 'login_required', login: true }), WS, SLUG), [], '로그인은 지금 값으로 다시 판정(상태 파일의 옛 코드 무시)');
+  // 로그인 판정은 이 기기의 기기 세션 — 다른 기기·옛 버전 기기가 실행 중이면 이 기기의 로그인 문구를 보이지 않는다
+  assert.deepEqual(V.statusNotes(st({ login: false, runner: 'other_device' }), WS, SLUG), [], '실행 기기가 다른 기기');
+  assert.deepEqual(V.statusNotes(st({ login: false, runner: 'runner_outdated' }), WS, SLUG), ['runner_outdated'], '실행 기기가 옛 버전 — 업데이트 안내만');
+  assert.deepEqual(V.statusNotes(st({ login: false, runner: 'no_runner' }), WS, SLUG), ['login_required'], '실행 중인 기기가 없음 — 이 기기가 맡으려면 로그인이 필요하다');
   assert.deepEqual(V.statusNotes(mineView(), WS, 'wolff'), [], '비서가 아닌 에이전트 카드에는 비서 상태를 보이지 않는다');
   // 이 회사 설정은 이 에이전트로 켜져 있지만 다른 회사의 비서가 맡음(두 기기에서 거의 같은 때 켬)
   const waiting = baseView({ config: { ...baseView().config, enabled: true, agent: SLUG }, current: { ws: 'co-b', company: '회사 B', agent: 'wolff', name: '울프' } });
@@ -120,10 +124,13 @@ test('U-b: 다른 비서가 있음 — "지금 비서: 회사 · 이름" + 바�
 });
 
 test('U-c: 비서 상태 문구(S2) — 로그인 필요·옛 버전 실행 기기·화면 밖 변경이 사전 키로 그려진다', async () => {
+  const r0 = await render(mineView({ status: { ...mineView().status, login: false, muted: true } }));
+  assert.deepEqual(find(r0.out(), (n) => n.props['data-note']).map((n) => [n.props['data-note'], text(n)]),
+    [['login_required', 'assistant.st.login_required'], ['muted', 'assistant.st.muted']], '이 기기가 실행 기기 — 로그인 필요');
   const v = mineView({ unsealed: false, status: { ...mineView().status, login: false, runner: 'runner_outdated', device: 'Old-Mac' } });
   const { out } = await render(v);
   const notes = find(out(), (n) => n.props['data-note']).map((n) => [n.props['data-note'], text(n)]);
-  assert.deepEqual(notes, [['login_required', 'assistant.st.login_required'], ['runner_outdated', 'assistant.st.runner_outdated']]);
+  assert.deepEqual(notes, [['runner_outdated', 'assistant.st.runner_outdated']], '옛 버전 기기가 실행 중 — 이 기기의 로그인 문구는 보이지 않는다');
   assert.equal(text(byTest(out(), 'assistant-runner')), 'assistant.runnerOld|{"device":"Old-Mac"}');
   assert.ok(text(out()).includes('assistant.onRunner'), '실행 기기가 이 기기가 아니면 마지막 확인은 그 기기에서');
   const r2 = await render(baseView({ unsealed: true }));

@@ -1,7 +1,8 @@
 'use client';
 // 에이전트 카드 "비서" 탭 — 능동 비서 켜기·끄기·바꾸기, 기본값, 상태(설계 13절).
 // 저장은 설정 API(PUT /api/companies/[ws]/assistant)가 하고 이 컴포넌트는 그 응답(보기)으로 다시 그린다. 값마다 바로 저장한다(카드의 범위 칩·규칙과 같은 방식).
-// 주기 호출 없음 — 탭을 열 때 1번 읽는다. 읽기·쓰기 모두 기기 로컬 파일이라 Supabase 호출 0이고, 저장 1번 = 동기화가 올리는 파일 2개(assistant.json·company.json 봉인).
+// 주기 호출 없음 — 탭을 열 때 1번 읽는다. 읽기·쓰기 모두 기기 로컬 파일이라 Supabase 호출 0이다. 저장 1번은 그 회사의 다음 동기화에서 파일 2개(assistant.json·company.json 봉인)
+// 업로드 + 매니페스트 재읽기 1·쓰기 1이 되고, 다른 기기는 파일 2개를 내려받는다(값을 바꿀 때마다 저장 — 드문 동작이라 주기 호출이 아니다).
 // 고를 필요 없는 값은 화면에 없다 — 아침 정리 시각은 조용한 시간이 끝나는 시각, 받는 곳·권한은 표시만, 볼 것은 지금 일정 하나(src/assistant/settings.mjs).
 import { useEffect, useState } from 'react';
 import { Skeleton, Spinner } from '../../../../ui';

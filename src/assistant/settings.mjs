@@ -14,7 +14,8 @@
 // 사용자당 비서 1명(설계 3.2): 켜거나 바꾸면 같은 주인의 다른 회사에서 켜져 있던(봉인이 맞는) 비서를 끈다. 다른 기기에서 거의 같은 때 켠 경우는
 // 엔진이 켠 시각이 늦은 쪽만 돌린다(rules.mjs assistantCompanyOf).
 //
-// 보기 = 설정 + 지금 비서(회사·에이전트) + 상태. 전부 로컬 파일·메모리에서 읽는다 — Supabase 호출 0(리스 주인은 동기화가 이미 읽은 메모리 값, 로그인은 기기 세션 파일).
+// 보기 = 설정 + 지금 비서(회사·에이전트) + 상태. 전부 로컬 파일·메모리에서 읽는다 — Supabase 호출 0(리스 주인은 동기화가 이미 읽은 메모리 값, 로그인은 기기 세션 파일과
+// 사망 마커 — 회전을 일으키지 않는 읽기 전용 판정).
 // 상태 파일(.assistant/state.json)은 기기 로컬이라 실행 기기가 이 기기일 때만 마지막 확인·오늘 알림 수를 보여 준다.
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -23,7 +24,7 @@ import { writeJsonAtomic } from '../jsonstore.mjs';
 import { withLock } from '../mutex.mjs';
 import { listCompanyIds } from '../hub.mjs';
 import { readAgentCard } from '../persona.mjs';
-import { loadDeviceSession } from '../devicesession.mjs';
+import { loadDeviceSession, deviceSessionDead } from '../devicesession.mjs';
 import { leaseCheck, deviceLabel } from '../sync.mjs';
 import { normalizeTz } from '../routine-time.mjs';
 import { codedError } from '../coded-error.mjs';
@@ -122,20 +123,26 @@ export async function saveAssistantSettings(wsId, input = {}, { now = Date.now()
     await writeSealed(wsId, out);
   });
   // 사용자당 1명 — 켜거나 바꾸면 같은 주인의 다른 회사에서 켜진(봉인 맞는) 비서를 끈다. 회사마다 그 회사의 잠금 안에서(중첩 없음).
+  // 이 회사는 이미 켜졌으므로 다른 회사에서 난 오류는 기록만 하고 다음 회사로 간다 — 오류를 돌려주면 화면은 켜지지 않은 것처럼 보인다.
+  // 끄지 못한 회사가 남아도 엔진은 켠 시각이 늦은 쪽(이 회사)만 돌리고(rules.mjs assistantCompanyOf), 그 회사 카드는 "다른 회사의 비서가 맡고 있음"을 보인다.
   const changedOthers = [];
   if (enabledIn === true) {
     const owner = company.ownerId ?? null;
-    for (const id of await listCompanyIds()) {
+    const failOther = (id, e) => console.error(`[argo] 비서: 다른 회사(${id})의 비서를 끄지 못했습니다 — 이 회사(${wsId})가 나중에 켜져 엔진은 이 회사만 돌립니다: ${String(e?.message ?? e).slice(0, 160)}`);
+    const ids = await listCompanyIds().catch((e) => { failOther('*', e); return []; });
+    for (const id of ids) {
       if (id === wsId) continue;
-      const co = await loadCompany(id).catch(() => null);
-      if (!co || (co.ownerId ?? null) !== owner) continue;
-      await lockAssistant(id, async () => {
-        const f = await readAssistantFile(id, await loadCompany(id));
-        if (!f?.sealed || !f.cfg.enabled) return;
-        const { enabledAt: _drop, ...rest } = f.obj;
-        await writeSealed(id, { ...rest, enabled: false });
-        changedOthers.push(id);
-      });
+      try {
+        const co = await loadCompany(id).catch(() => null);
+        if (!co || (co.ownerId ?? null) !== owner) continue;
+        await lockAssistant(id, async () => {
+          const f = await readAssistantFile(id, await loadCompany(id));
+          if (!f?.sealed || !f.cfg.enabled) return;
+          const { enabledAt: _drop, ...rest } = f.obj;
+          await writeSealed(id, { ...rest, enabled: false });
+          changedOthers.push(id);
+        });
+      } catch (e) { failOther(id, e); }
     }
   }
   return { changedOthers };
@@ -151,7 +158,7 @@ const agentName = async (wsId, slug) => {
 };
 
 /** 바꿔 끼우는 자리 — 테스트가 리스·기기 세션·기기 id를 넘긴다. */
-export const viewDeps = { lease: leaseCheck, deviceSession: () => loadDeviceSession(), deviceId: () => getDeviceId() };
+export const viewDeps = { lease: leaseCheck, deviceSession: () => loadDeviceSession(), sessionDead: () => deviceSessionDead(), deviceId: () => getDeviceId() };
 
 /**
  * 설정 화면이 그리는 값. 반환:
@@ -192,7 +199,10 @@ export async function assistantSettingsView(wsId, { now = Date.now(), deps = vie
     current,
     choices: { lead: [...LEAD_CHOICES] },
     status: {
-      login: !!owner && sess?.user?.id === owner, // 엔진은 메신저 기기 세션 계정 = 회사 주인일 때만 일정을 읽는다(tick.mjs session)
+      // 엔진과 같은 판정 — 엔진은 getFreshDeviceSession(msgr.sessionClient)이 돌려준 세션의 계정이 회사 주인일 때만 일정을 읽는다(tick.mjs session).
+      // 갱신이 거절돼 죽은 세션(만료 + 사망 마커)은 파일이 남아 있어도 엔진에게는 null이다 — 회전을 일으키지 않는 deviceSessionDead로 같은 결과를 본다.
+      // 네트워크 실패로 회전을 못 한 경우는 로그인 문제가 아니라서 여기서 로그인 필요로 보이지 않는다(재로그인으로 오진하지 않게 — devicesession.mjs 분리 검수 M3).
+      login: !!owner && sess?.user?.id === owner && !deps.sessionDead(),
       muted: assistantMuted(company),
       runner,
       device,

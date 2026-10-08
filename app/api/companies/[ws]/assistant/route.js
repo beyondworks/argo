@@ -25,6 +25,6 @@ export async function PUT(req, { params }) {
     await saveAssistantSettings(ws, body);
     return Response.json(await assistantSettingsView(ws));
   } catch (e) {
-    return apiErrorFrom(e, await requestLang(), 400); // 코드 달린 검증 오류는 화면 언어 문구(apimsg.mjs API_MSG)
+    return apiErrorFrom(e, await requestLang(), 500); // 코드 달린 검증 오류는 화면 언어 문구·400(apimsg.mjs API_MSG), 코드 없는 오류(파일 읽기·쓰기 실패 등)는 서버 오류 500
   }
 }

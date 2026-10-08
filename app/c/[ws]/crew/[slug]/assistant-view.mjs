@@ -14,7 +14,8 @@ export function assistantRole(view, ws, slug) {
 }
 
 /** 문제 줄 — 상태 코드 목록(화면이 사전 assistant.st.<code>로 그린다). 순서 = 보여 줄 순서.
-    엔진 상태 파일의 코드(calendar_error 등)는 이 기기가 실행 기기일 때만 의미가 있다(상태 파일은 기기 로컬). 로그인·끈 목록·다른 회사는 지금 값으로 다시 판정한다. */
+    엔진 상태 파일의 코드(calendar_error 등)는 이 기기가 실행 기기일 때만 의미가 있다(상태 파일은 기기 로컬). 로그인·끈 목록·다른 회사는 지금 값으로 다시 판정한다.
+    로그인은 이 기기의 기기 세션으로 판정하므로 이 기기가 실행 기기이거나 실행 중인 기기가 없을 때만 보인다 — 다른 기기·옛 버전 기기가 실행 중이면 그 기기의 로그인은 여기서 알 수 없다. */
 export function statusNotes(view, ws, slug) {
   const out = [];
   if (view?.unsealed) out.push('unsealed');
@@ -22,7 +23,7 @@ export function statusNotes(view, ws, slug) {
   if (waiting) out.push('other_company');
   if (!mine) return out;
   const s = view.status ?? {};
-  if (!s.login) out.push('login_required');
+  if (!s.login && (s.runner === 'this_device' || s.runner === 'no_runner')) out.push('login_required');
   if (s.muted) out.push('muted');
   if (s.runner === 'runner_outdated') out.push('runner_outdated');
   if (s.runner === 'this_device' && ['calendar_error', 'deliver_failed', 'personal_room_unavailable'].includes(s.code)) out.push(s.code);
