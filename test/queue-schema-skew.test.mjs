@@ -42,7 +42,8 @@ test('스키마 없음 오류는 잡을 .failed로 버리지 않고 큐에 둔�
   assert.ok(calls >= 2, `스키마 없음은 계속 기다리며 재시도한다(${calls}회)`);
   let names = await files(WS);
   assert.equal(names.filter((n) => n.endsWith('.failed')).length, 0, '실패 기록으로 빠지지 않는다');
-  assert.equal(names.filter((n) => n.endsWith('.json')).length, 1, '잡은 큐에 남는다');
+  // 재시도 중이면 워커가 잡을 .json.claimed로 쥐고 있다 — 두 상태 모두 '큐에 남음'이다(윈도우 CI에서 이 순간을 읽어 0 !== 1로 흔들림, 10/8)
+  assert.equal(names.filter((n) => /\.json(\.claimed)?$/.test(n)).length, 1, '잡은 큐에 남는다');
   assert.deepEqual(abandoned, [], '버리지 않았으니 실패 안내도 없다');
   migrated = true; // 라이브 마이그레이션 적용
   assert.ok(await until(async () => handled === 1 && !(await files(WS)).some((n) => /\.json(\.claimed)?$/.test(n))), '마이그레이션 뒤 잡이 처리되고 큐에서 빠진다');
