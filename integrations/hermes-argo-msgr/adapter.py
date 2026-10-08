@@ -37,6 +37,7 @@ import json
 import logging
 import os
 import random
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -117,6 +118,190 @@ def _upload_file(base: str, token: str, message_id: int, path: str, name: Option
     up = _call(base, token, "createUpload", {"message_id": int(message_id), "file_name": name, "file_size": size}, post=True) or {}
     _put_file(str(up.get("upload_url") or ""), path, mime, size)
     return _call(base, token, "attachFile", {"message_id": int(message_id), "storage_path": up.get("storage_path"), "file_name": name, "mime_type": mime}, post=True) or {}
+
+
+# 모델이 파일을 MEDIA: 대신 '링크'로 적은 모양 — [이름](attachment:/경로)·(sandbox:/경로)·(file:///경로)·(/경로), 링크 없이 attachment:/경로.
+# Hermes 코어(extract_local_files)는 'scheme:' 뒤와 링크 대상의 경로를 URL로 보고 건너뛴다(경로 앞 글자가 ':'·'/'이면 제외).
+# 운영 2026-10-08 메시지 3799: VPS 헤르메스가 [download-test-vps.md](attachment:/home/crew/…)만 적어 첨부 0건, 본문에 서버 경로가 남았다.
+# 인라인 코드(첫 갈래, 코어 _INLINE_CODE_RE와 같이 한 글자 이상 — 이중 백틱 ``…`` 안도 코드)는 그대로 돌려준다.
+# 코드 블록·인용 줄은 pick_linked_files가 줄 단위로 건너뛴다.
+# 경로는 코어 extract_local_files(#34632)처럼 '/'·'~/'·드라이브 문자(C:\·C:/ — Windows에서 도는 Hermes)로 시작한다(검수 Cb-2 HIGH).
+# 제목은 "…"·'…'·(…) 셋 다(검수 Cb-2 LOW). 이름·대상·제목·경로에 길이 상한 — 이 판정은 게이트웨이 이벤트 루프에서 동기로 돌아
+# ']' 없는 '['가 길게 이어진 줄이 길이의 제곱으로 느려지면 같은 Hermes의 다른 플랫폼도 멈춘다(20,000자 2.6초, 검수 Cb-2 LOW).
+# 맨 표기 갈래는 '](' 바로 뒤를 잡지 않는다 — 링크 갈래가 읽지 못한 모양(대괄호 중첩·상한 초과) 안의 경로만 바꿔 깨진 링크를 남기지 않게.
+_FILE_LINK_RE = re.compile(
+    r'(`[^`\n]+`)'
+    r'|!?\[([^\[\]\n]{0,300})\]\(\s*(<[^>\n]{1,1024}>|[^\s()<>]{1,1024})'
+    r'(?:\s+(?:"[^"\n]{0,300}"|\'[^\'\n]{0,300}\'|\([^()\n]{0,300}\)))?\s*\)'
+    r'|(?<![\w/:])(?<!\]\()((?:attachment:|sandbox:|file://)(?:~/|/|[A-Za-z]:[/\\])[^\s()<>\[\]`"\']{1,1024})')
+_FILE_SCHEME_RE = re.compile(r'^(?:attachment:|sandbox:|file://(?:localhost)?)')
+_DRIVE_RE = re.compile(r'[A-Za-z]:[/\\]')
+_FENCE_RE = re.compile(r'^\s*(`{3,}|~{3,})(.*)$')   # 목록 안에 4칸 넘게 들여 쓴 코드 블록도(코어 _FENCED_CODE_RE는 줄 시작에 묶이지 않는다)
+# 확장자와 무관하게 보내는 명시적 전달 표지. scheme 없는 링크·file:// 는 코드 답의 참조 링크([main.py](/…))가 흔해
+# 코어가 맨 경로를 자동 첨부하는 확장자(MEDIA_DELIVERY_EXTS)일 때만 보낸다(검수 Cb-1 MEDIUM).
+_EXPLICIT_SCHEMES = ('attachment:', 'sandbox:')
+# 비밀 이름 — 코어 검증은 이름이 아니라 위치(~/.ssh·~/.aws·/etc·Hermes 홈의 인증 파일)로만 거부해 프로젝트 폴더의 이런 파일은 통과시킨다.
+# SSH·서명 키(id_*·.ppk·.jks·.keystore·.p8), 금고(.kdbx·.gpg), VPN(.ovpn), Codex·Hermes 인증(auth.json), 클라우드·OAuth 인증 JSON,
+# kubeconfig, htpasswd, 브라우저 로그인 저장소(Cookies·Login Data·Web Data·Local State) — 커밋 보안 검토 2026-10-09.
+_SECRET_NAME_RE = re.compile(
+    r'(?i)(secret|token|passw|credential|api[_-]?key|private[_-]?key|kubeconfig|id_(?:rsa|dsa|ecdsa|ed25519)'
+    r'|^auth\.json$|service[_-]?account[^\\/]*\.json$|oauth[^\\/]*\.json$'
+    r'|^(?:cookies|login data|web data|local state)(?:-journal)?$'
+    r'|\.(?:env|pem|key|p12|pfx|p8|ppk|jks|keystore|kdbx|gpg|ovpn)$)')
+
+
+def _core_media_exts() -> tuple:
+    """Hermes 코어가 맨 경로를 자동 첨부하는 확장자(gateway.platforms.base.MEDIA_DELIVERY_EXTS). 없는 옛 Hermes면 빈 목록."""
+    try:
+        import importlib
+        exts = getattr(importlib.import_module('gateway.platforms.base'), 'MEDIA_DELIVERY_EXTS', None)
+        return tuple(str(e).lower() for e in exts) if isinstance(exts, (tuple, list, set, frozenset)) else ()
+    except Exception:
+        return ()
+
+
+def _link_denied(path: str) -> bool:
+    """링크로는 보내지 않는 파일 — 점으로 시작하는 폴더·파일(.env·.ssh·.git 등)과 비밀 이름. 적힌 경로와 실제 경로(심볼릭 링크) 둘 다 본다.
+    코어 검증(비엄격)은 Hermes 홈의 .env·~/.ssh·/etc 등만 막아 프로젝트의 .env는 통과시킨다(검수 Cb-1 HIGH) — 그래서 코어를 통과해도 늘 함께 적용한다.
+    경로 마디는 '/'와 '\\' 둘 다로 나눈다 — 어느 OS에서 돌든 같은 판정(첫 마디는 루트·드라이브).
+    기준은 실제로 열리는 경로다: realpath는 심볼릭 링크를 푼 뒤 '..'를 따라간다(커널과 같다). abspath를 먼저 하면 '..'가 글자로 지워져
+    H/l2/../notes.txt(H/l2 → H/.private/sub)가 H/notes.txt로 판정되고 실제로는 점 폴더 파일이 열린다(3차 검수 MEDIUM). 적힌 경로는 덧붙여 본다."""
+    for p in {os.path.realpath(os.path.expanduser(path)), os.path.abspath(os.path.expanduser(path))}:
+        parts = re.split(r'[\\/]+', p)
+        if any(part.startswith('.') for part in parts[1:]) or _SECRET_NAME_RE.search(parts[-1]):
+            return True
+    return False
+
+
+def _link_roots() -> list:
+    """링크로 보낼 수 있는 위치 [(폴더, 임시 폴더인가)] — 에이전트가 파일을 만드는 곳: 홈, 터미널 작업 폴더(TERMINAL_CWD), 임시 폴더,
+    운영자가 허용한 폴더(HERMES_MEDIA_ALLOW_DIRS, os.pathsep·쉼표 구분). 파일 시스템 루트(/·C:\\)는 위치를 좁히지 못하니 뺀다.
+    매번 읽는다(세션별 작업 폴더·설정 변경). Hermes 함수는 없을 때(ImportError)만 환경 변수로 대신한다 — 다른 예외(다른 프로필의 거부 범위 등)에
+    환경 변수로 넘어가면 앞 턴이 남긴 값으로 판정하게 된다(코어 _tenv와 같게, 3차 검수 LOW). 그때는 그 위치를 비운다."""
+    try:
+        from tools.terminal_scope import terminal_env
+    except ImportError:
+        cwd = os.environ.get('TERMINAL_CWD', '')
+    else:
+        try:
+            cwd = terminal_env('TERMINAL_CWD', '')
+        except Exception:
+            cwd = ''
+    try:
+        from gateway.media_policy import media_delivery_allow_dirs
+    except ImportError:
+        allow = os.environ.get('HERMES_MEDIA_ALLOW_DIRS', '')
+    else:
+        try:
+            allow = media_delivery_allow_dirs()
+        except Exception:
+            allow = ''
+    roots = []
+    cands = [(os.path.expanduser('~'), False), (tempfile.gettempdir(), True), (cwd, False)]
+    cands += [(x, False) for chunk in str(allow or '').split(os.pathsep) for x in chunk.split(',')]
+    for r, is_tmp in cands:
+        r = os.path.expanduser(str(r or '').strip())
+        if r and os.path.isabs(r):
+            r = os.path.realpath(r)
+            if os.path.dirname(r) != r:
+                roots.append((os.path.normcase(r), is_tmp))
+    return roots
+
+
+def _in_link_roots(path: str) -> bool:
+    """실제로 열리는 경로(realpath — 심볼릭 링크를 푼 뒤 '..'를 따라감)가 _link_roots 안인가. 거부 목록만으로는 늘 새는 이름이 생겨
+    위치도 좁힌다(커밋 보안 검토 2026-10-09). abspath를 먼저 하지 않는다 — H/link/../x(H/link → 바깥)가 H/x로 판정되던 문제(3차 검수 MEDIUM).
+    임시 폴더라서 허용되는 파일은 게이트웨이 사용자 소유일 때만 — 공유 /tmp에는 다른 사용자 파일이 있다(3차 검수 LOW, Windows는 소유자 판정 없음)."""
+    real = os.path.normcase(os.path.realpath(os.path.expanduser(path)))
+    tmp_only = False
+    for root, is_tmp in _link_roots():
+        try:
+            inside = os.path.commonpath([real, root]) == root
+        except ValueError:   # Windows에서 드라이브가 다르다
+            continue
+        if inside and not is_tmp:
+            return True
+        tmp_only = tmp_only or inside
+    if tmp_only:
+        if not hasattr(os, 'geteuid'):
+            return True
+        try:
+            return os.stat(real).st_uid == os.geteuid()
+        except OSError:
+            return False
+    return False
+
+
+def _deliverable_path(path: str) -> Optional[str]:
+    """링크로 보내도 되는 파일이면 실제 경로. 어댑터의 최소 거부 목록(_link_denied)을 늘 먼저 적용하고, 그 다음 Hermes 코어의 전달 정책
+    (validate_media_delivery_path — 자격 증명·시스템 경로 거부, 엄격 모드)을 쓴다. 그 함수가 없는 옛 Hermes에서는 시스템 경로 목록으로 판정한다."""
+    if _link_denied(path) or not _in_link_roots(path):
+        return None
+    check = getattr(BasePlatformAdapter, 'validate_media_delivery_path', None)
+    if callable(check):
+        try:
+            return check(path) or None
+        except Exception:
+            return None
+    given = os.path.abspath(os.path.expanduser(path))
+    real = os.path.realpath(os.path.expanduser(path))   # 실제로 열리는 경로('..'는 심볼릭 링크를 푼 뒤)
+    if not os.path.isfile(real):
+        return None
+    home = os.path.realpath(os.path.expanduser('~'))
+    for p in {given, real}:   # 코어 _MEDIA_DELIVERY_DENIED_PREFIXES와 같은 목록. 맥은 /etc → /private/etc
+        p = p[len('/private'):] if p.startswith('/private/') else p
+        if not p.startswith(home + os.sep) and p.startswith(('/etc/', '/proc/', '/sys/', '/dev/', '/root/', '/boot/', '/var/log/', '/var/lib/', '/var/run/')):
+            return None
+    return real
+
+
+def pick_linked_files(content: str):
+    """답 본문에서 파일 링크 모양을 찾아 (보낼 파일 경로, 링크를 이름으로 바꾼 본문). 이 서버에 없거나 정책이 거부한 파일은 본문을 그대로 둔다."""
+    found = []
+
+    def take(mt):
+        if mt.group(1):
+            return mt.group(0)
+        label, target, bare = mt.group(2), mt.group(3), mt.group(4)
+        raw = target.strip('<>') if target is not None else bare
+        scheme = _FILE_SCHEME_RE.match(raw)
+        path = raw[scheme.end():] if scheme else raw
+        if raw.startswith('file:') and path[:1] == '/' and _DRIVE_RE.match(path, 1):
+            path = path[1:]   # file:///C:/… — 드라이브 문자 앞 '/'는 URL 표기일 뿐이다
+        if not (path.startswith(('/', '~/')) or _DRIVE_RE.match(path)):
+            return mt.group(0)
+        # None = 명시적 표지라 확장자와 무관. 상수가 없는 옛 Hermes는 빈 목록 — scheme 없는 링크·file:// 는 코어 맨 경로 동작에 맡긴다
+        exts = None if raw.startswith(_EXPLICIT_SCHEMES) else _core_media_exts()
+        tail = ''
+        if bare:   # 문장 끝 구두점은 경로가 아니다. 뗀 쪽부터 파일이 있는지 본다 — Windows는 'x.md.'도 'x.md'로 열어 줘서 긴 쪽부터 보면 점이 경로에 붙는다
+            for i in range(len(path.rstrip('.,;:!?')), len(path) + 1):
+                if any(os.path.isfile(os.path.expanduser(c)) for c in (path[:i], urllib.parse.unquote(path[:i]))):
+                    path, tail = path[:i], path[i:]
+                    break
+        hit = next((p for p in dict.fromkeys((path, urllib.parse.unquote(path))) if os.path.isfile(os.path.expanduser(p))), None)
+        if hit and exts is not None and Path(hit).suffix.lower() not in exts:
+            return mt.group(0)
+        safe = _deliverable_path(os.path.expanduser(hit)) if hit else None
+        if not safe:
+            return mt.group(0)
+        if safe not in found:
+            found.append(safe)
+        name = (label or '').strip()
+        return (name if name and not re.search(r'[\\/]', name) else re.split(r'[\\/]', safe)[-1]) + tail
+
+    out, fence = [], None
+    for line in str(content or '').split('\n'):
+        mark = _FENCE_RE.match(line)
+        if mark:
+            if fence:
+                if mark[1][0] == fence[0] and len(mark[1]) >= len(fence) and not mark[2].strip():
+                    fence = None
+            elif mark[1][0] != '`' or '`' not in mark[2]:
+                fence = mark[1]
+            out.append(line)
+            continue
+        out.append(line if fence or re.match(r'^\s*>', line) else _FILE_LINK_RE.sub(take, line))
+    return found, '\n'.join(out)
 
 
 def _file_error_text(name: str, e: Exception) -> str:
@@ -470,10 +655,25 @@ class ArgoMsgrAdapter(BasePlatformAdapter):
         self._reply_ids: Dict[int, int] = {}               # 원문 id → 봇 답글 id(대화)
         self._followup_ids: Dict[str, int] = {}            # 결재 id → 후속 보고 글 id(재개 턴)
         self._posts: Dict[str, Any] = {}                   # chat_id → (글 id, 시각) 원문 없이 쓴 마지막 글(예약 작업 결과)
+        self._attached: Dict[Any, bool] = {}               # (글 id, 실제 경로, 크기, 수정 시각) → 이미 올린 파일(같은 답에 MEDIA:와 링크로 함께 적은 파일, 검수 Cb-2 MEDIUM)
 
     @property
     def name(self) -> str:
         return "Argo Messenger"
+
+    @staticmethod
+    def extract_local_files(content: str):
+        """Hermes가 최종 답에서 보낼 로컬 파일을 찾는 자리(base.py _extract_response_content). 코어의 맨 경로 찾기에 더해 파일 링크 모양
+        (pick_linked_files)을 첨부로 바꾼다. 둘 다 이 뒤에 코어의 전달 정책(filter_local_delivery_paths)과 send_document·send_image_file을 거친다."""
+        try:
+            linked, text = pick_linked_files(content)
+        except Exception as e:   # 답 전달 경로다 — 이 보조 판정이 실패해도 답은 코어 동작 그대로 나가야 한다
+            logger.warning("Argo Messenger: linked file scan skipped — %s", _redact(str(e))[:200])
+            linked, text = [], content
+        core = getattr(BasePlatformAdapter, 'extract_local_files', None)
+        bare, text = core(text) if callable(core) else ([], text)
+        seen = {os.path.realpath(p) for p in linked}
+        return linked + [p for p in bare if os.path.realpath(p) not in seen], text
 
     async def _api(self, method: str, params: Optional[Dict[str, Any]] = None, *, post: bool = False, timeout: float = 30.0):
         return await asyncio.to_thread(_call, self.base_url, self.token, method, params, post=post, timeout=timeout)
@@ -821,7 +1021,19 @@ class ArgoMsgrAdapter(BasePlatformAdapter):
             if os.path.getsize(path) > _ATTACH_MAX:
                 raise ArgoMsgrError(413, 'files are limited to 25 MB')
             target = await self._attach_target(chat_id, (caption or '').strip() or ('📎 ' + name), bool((caption or '').strip()), final)
-            res = await asyncio.to_thread(_upload_file, self.base_url, self.token, target, path, name)
+            # 코어는 MEDIA: 파일과 본문에서 찾은 파일을 서로 중복 제거하지 않고 둘 다 보낸다(_deliver_media_attachments). 같은 글에 같은 실제 경로는
+            # 한 번만 올린다 — 업로드·저장 객체·첨부 행이 두 배가 되지 않게. 올리기 전에 표시하고 실패하면 지운다(다시 부르면 올린다).
+            st = os.stat(path)   # 같은 경로라도 내용이 바뀌었으면(크기·수정 시각) 다시 올린다 — 배포본은 매번 올렸다(3차 검수 LOW)
+            key = (target, os.path.realpath(path), st.st_size, st.st_mtime_ns)
+            if key in self._attached:
+                logger.info("Argo Messenger: file %s already attached to message %s", name, target)
+                return SendResult(success=True, message_id=str(target))
+            self._remember(self._attached, key, True)
+            try:
+                res = await asyncio.to_thread(_upload_file, self.base_url, self.token, target, path, name)
+            except Exception:
+                self._attached.pop(key, None)
+                raise
         except Exception as e:
             logger.warning("Argo Messenger: file %s not sent — %s", name, _redact(str(e)))
             await self._notice(chat_id, _file_error_text(name, e), final)
@@ -1368,5 +1580,7 @@ def register(ctx):
             "where the owner can pause or edit them; dangerous commands you run are shown to the owner as approval cards. "
             "When something needs a person's approval before you act, call argo_request_approval, then end your turn; "
             "the decision comes back in the same conversation. "
-            "Files people attach are saved locally and listed with their paths. To send a file back, include it in your reply "
-            "the usual way (a MEDIA: path) — it is attached to your reply, up to 25 MB per file."))
+            "Files people attach are saved locally and listed with their paths. To send a file back, put MEDIA:/absolute/path/to/file "
+            "on its own line in your reply (any file type, up to 25 MB each) — it is uploaded and attached to your reply. "
+            "Never hand over a file as a server path, an attachment: or file:// link, or a GitHub or cloud-storage link instead: "
+            "the people reading cannot open those."))
