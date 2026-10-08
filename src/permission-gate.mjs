@@ -284,9 +284,17 @@ const WS_DOT_FILES = new Set([
   '.tg-claims-state.json', '.tg-claims', // 텔레그램 토큰 클레임 상태(sync.mjs) — 크루가 mine을 심으면 두 기기가 같은 봇을 동시 폴링(getUpdates Conflict)
   '.msgr-journal', // 팀 메신저 채널 기억의 PC 사본(memory.mjs relocateOrgJournals) — 다른 채널 턴의 셸로 읽히면 채널 경계가 샌다(2026-09-24)
   '.msgr-sessions.json', // 채널 세션 장부(thread.mjs — 기억 회수용 세션 id 목록, 2026-10-03). 셸로 고쳐지면 회수가 전사를 놓친다
-  '.assistant', // 능동 비서 상태(<ws>/.assistant/state.json — 보낸 키·대기열·커서). 셸로 고쳐지면 알림을 영구 침묵시키거나 대기열 글을 바꿔 비서 이름으로 올린다(.failure-digest.json과 같은 계열)
 ]);
 const BASH_GUARDED = [...WS_CONTROL_FILES, ...WS_LEDGER_FILES, ...WS_DOT_FILES];
+/* 이름이 흔한 일반어라 부분 문자열로 넣을 수 없는 직속 도트 디렉터리 — 앞뒤 경계가 있는 형태로만 막는다.
+   · .assistant  능동 비서 상태(<ws>/.assistant/state.json — 보낸 키·대기열·확인 범위). 셸로 고치면 알림을 영구 침묵시키거나 대기열 글을 바꿔
+                 비서 이름으로 올린다(.failure-digest.json과 같은 계열). 무경계로 WS_DOT_FILES에 넣었더니 남의 코드베이스의 평범한 명령 —
+                 OpenAI SDK `client.beta.assistants`, `message.assistant`, `Chat.Assistant.tsx` — 이 전부 거절됐다(#863 분리 검수 MEDIUM 실측, `.gateway` 전례).
+   앞 경계 = 시작·공백·따옴표·셸 기호·경로 구분자(절대 경로 `<ws>/.assistant/…`), 뒤 경계 = 끝·공백·따옴표·셸 기호·경로 구분자·`*`.
+   그래서 `rm -rf .assistant`·`cat .assistant/state.json`·절대 경로는 거부, `x.assistant`·`.assistants`·`.assistant.content`는 통과.
+   남는 오차단: `jq '.assistant' f.json`처럼 따옴표로 감싼 키 하나 — 경로와 글자로 구별할 수 없어 fail-closed로 둔다.
+   파일 도구·MCP는 이 목록과 무관하게 직속 도트 규칙(isForbidden)이 거부한다. */
+const BASH_DOT_DIR_RE = /(^|[\s'"`;|&(=<>,\\/])\.assistant(?=$|[\s'"`;|&)<>,\\/*])/i;
 // 경계 클래스에 리다이렉트·쉼표(<>,) 포함 — `>chats/b.json`(공백 없는 리다이렉트)이 위조 명령의 가장
 // 자연스러운 형태다(재검수 3R). 잔여: `../`·`$PWD/` 간접 표기는 파일 헤더의 셸 한계 범위(실판정은 isForbidden).
 const BASH_DIR_RE = new RegExp(String.raw`(^|[\s'"\x60;|&(=<>,])(\.[\\/])?(${[...WS_CONTROL_DIRS].join('|')})[\\/]`, 'i');
@@ -599,7 +607,7 @@ export function makePermissionGate(wsId, slug, wsRoot, from = null, lang = 'ko',
       // 입력의 모든 문자열 잎(중첩 포함)을 훑는다 — 고정 키 목록은 다른 이름(texts·input·label)으로 우회됐다(4R). 분할 입력·조합키 한 글자씩은 못 막는다 —
       // 실효 통제는 옵트인이고 이 줄은 순진한 시도의 1차 방어다(셸 리터럴 방어와 같은 정직 표기).
       const typed = stringLeaves(input).join(' ');
-      if (typed.trim() && (bashHardLiterals.some((r) => fold(typed).includes(fold(r))) || BASH_GUARDED.some((n) => fold(typed).includes(fold(n))) || BASH_DIR_RE.test(typed))) return denyHard();
+      if (typed.trim() && (bashHardLiterals.some((r) => fold(typed).includes(fold(r))) || BASH_GUARDED.some((n) => fold(typed).includes(fold(n))) || BASH_DIR_RE.test(typed) || BASH_DOT_DIR_RE.test(typed))) return denyHard();
       return allow;
     }
 
@@ -654,7 +662,7 @@ export function makePermissionGate(wsId, slug, wsRoot, from = null, lang = 'ko',
       // 이게 없으면 shell 능력이 켜진 SDK 크루가 `echo '{"bypass":true}' > capabilities.json` 한 줄로
       // 게이트를 우회한다(실측). 오탐(그 이름을 언급한 정당한 명령 거절)은 fail-closed로 수용한다.
       // 폴딩은 위 줄과 동일 기준(대소문자 무시 FS에서 CAPABILITIES.JSON 우회 차단 — #145 계열).
-      if (BASH_GUARDED.some((n) => fold(cmd).includes(fold(n))) || BASH_DIR_RE.test(cmd)) return denyHard();
+      if (BASH_GUARDED.some((n) => fold(cmd).includes(fold(n))) || BASH_DIR_RE.test(cmd) || BASH_DOT_DIR_RE.test(cmd)) return denyHard();
       // 메신저 문맥 턴(주인 턴 포함)의 고위험 셸 명령은 결재를 거친다(D28) — 모델이 request_approval을 부르지 않아도 코드가 카드를 만든다.
       // 승인된 같은 명령(이 크루·이 채널)은 한 번 허용한다. 대기 중이면 새 카드를 만들지 않고 그 결재를 가리킨다.
       if (opts.msgr) {

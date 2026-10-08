@@ -90,6 +90,11 @@ export const syncOn = () => (!!loadSyncCreds() || !!loadDeviceSession()) && proc
     .archive/(해고본)는 살아 있는 slug가 아니라 대상 아님. */
 export const isRoomCardRel = (rel) => /^agents\/[^/]+\.md$/.test(rel) && collidesWithRoom(rel.slice('agents/'.length, -'.md'.length));
 const isLocalImportRel = (rel) => rel.split('/')[0] === '.local-assets';
+/** 능동 비서 상태(.assistant/ — src/assistant/state.mjs): 보낸 키·보류 목록·대기열·확인 범위. 확인할 때마다 바뀌는 기기 로컬 값이라 올리지 않고(EXCLUDE —
+    storage.objects 업서트가 쌓이는 2026-09-23 리스·심박 711MB와 같은 모양), 원격에 있어도 **diff 불가시**(받기·삭제 전파·브레이크 집계 전부 건너뜀)로 다룬다.
+    버전 섞임(#863 분리 검수 LOW): 옛 버전으로 내린 기기는 EXCLUDE에 이 줄이 없어 상태 파일을 올린다. EXCLUDE는 로컬 walk에만 걸려, 새 기기가 그 사본을 받아
+    자기 상태를 덮고 다음 사이클에 '로컬 삭제'로 원격을 지우게 된다(.local-assets와 같은 계약). 기기 사이 이어받기는 알림 글 meta로 한다(설계 7절, 3단계). */
+const isAssistantStateRel = (rel) => rel.split('/')[0] === '.assistant';
 
 /** 개발 산출물 디렉터리(node_modules·.git·가상환경·크롬 프로필 등) — 라이브 실측(2026-09-14): companies 버킷
     25GB 중 이런 디렉터리가 약 7GB를 차지하고 매 사이클(8s) walk가 전부 읽고 해시했다. isRoomCardRel과 같은
@@ -138,9 +143,8 @@ export const EXCLUDE = (rel) => { // (export: 회귀 테스트용)
   // 팀 메신저 채널 기억의 PC 사본(.msgr-journal/ — memory.mjs relocateOrgJournals). 채널·조직 기억은 서버에만(유건 결정 2026-09-24) —
   // 개인 클라우드·다른 기기로 퍼지면 퇴장 회수가 원격에서 되살아난다(검수 #691 M2).
   if (rel.split('/')[0] === '.msgr-journal') return true;
-  // 능동 비서 상태(.assistant/state.json — src/assistant/state.mjs): 메일 커서·보낸 키·보류 목록·대기열. 확인할 때마다 바뀌는 값이라 동기화를 타면
-  // storage.objects 업서트가 쌓인다(2026-09-23 리스·심박 업서트 711MB와 같은 모양). 기기 사이 이어받기는 알림 글 meta로 한다(설정은 assistant.json — 동기화 대상).
-  if (rel.split('/')[0] === '.assistant') return true;
+  // 능동 비서 상태(.assistant/ — isAssistantStateRel 주석). 설정(assistant.json)은 동기화 대상이다.
+  if (isAssistantStateRel(rel)) return true;
   const base = rel.split('/').pop();
   if (
     base.startsWith('.gateway') || base.startsWith('.gw-offset') ||
@@ -929,8 +933,8 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
     }
   }
 
-  // 회의록 충돌 카드는 집합에서 빼 불가시 — 아래 브레이크 집계·전파 루프가 같은 집합을 돌므로 한 곳이면 된다(isRoomCardRel 주석).
-  const allRels = new Set([...Object.keys(local), ...Object.keys(remote.files), ...Object.keys(state)].filter((rel) => !isRoomCardRel(rel) && !isLocalImportRel(rel)));
+  // 회의록 충돌 카드·기기 로컬 상태(.local-assets·.assistant)는 집합에서 빼 불가시 — 아래 브레이크 집계·전파 루프가 같은 집합을 돌므로 한 곳이면 된다(isRoomCardRel 주석).
+  const allRels = new Set([...Object.keys(local), ...Object.keys(remote.files), ...Object.keys(state)].filter((rel) => !isRoomCardRel(rel) && !isLocalImportRel(rel) && !isAssistantStateRel(rel)));
 
   const archMoves = archivalCreateNames(local, state); // .archive→.trash 이동의 목적지 basename
   // 로컬 손상(readJson이 .corrupt-로 치워둠)으로 '부재'가 된 삭제 후보 — 삭제가 아니라 self-heal 대상.
