@@ -137,13 +137,17 @@ const STOP_NOTE_HEADS = ['[작업 중단 — 요청이 모델의 컨텍스트 �
 export const isOverflowStopNote = (m) => m?.role === 'assistant' && Array.isArray(m.content) && m.content.length === 1 && m.content[0]?.type === 'text'
   && STOP_NOTE_HEADS.some((h) => String(m.content[0].text ?? '').startsWith(h));
 
-/** 안전망(순수, 3차 검수 HIGH) — 이번 턴 지시 바로 앞이 중단 기록으로 끝난 턴이면 그 턴을 걷어낸 전사, 아니면 null. 중단 기록을 빼면 그 턴 꼬리가
-    tool_result(또는 답 없는 지시)가 되어 재개 정리(session.mjs sanitizeTranscript)가 main처럼 그 턴을 통째로 걷어낸다 — 같은 함수를 그대로 쓴다.
-    native-query가 1단계 길이 초과에서 줄여 다시 보내기로도 못 풀 때 한 번만 쓴다: 어떤 추정이 틀려도 중단 기록으로 이은 전사가 대화를 영구히 막지 않게. */
+/** 안전망(순수, 3차 검수 HIGH) — 이번 턴 지시 바로 앞에 중단 기록으로 끝난 턴이 있으면 연달은 그런 턴을 **전부** 걷어낸 전사, 없으면 null.
+    중단 기록을 빼면 그 턴 꼬리가 tool_result(또는 답 없는 지시)가 되어 재개 정리(session.mjs sanitizeTranscript)가 main처럼 그 턴을 통째로 걷어낸다 — 같은 함수를
+    그대로 쓰고, 걷어낸 뒤 꼬리가 또 중단 기록이면(멈춘 턴이 연달아 저장됨) 그것도 걷어낸다(4차 검수 MEDIUM: 하나만 걷어내면 앞의 멈춘 턴이 남아 한도가 준 뒤
+    대화가 영구히 막혔다 — main은 재개 정리가 둘 다 걷어낸다). 끝난 턴이 사이에 끼면 거기서 멈춘다. native-query가 1단계 길이 초과에서 줄여 다시 보내기로도
+    못 풀 때 한 번만 쓴다: 어떤 추정이 틀려도 중단 기록으로 이은 전사가 대화를 영구히 막지 않게. */
 export function dropStoppedTurn(messages) {
   const p = turnStartIndex(messages);
   if (p < 1 || !isOverflowStopNote(messages[p - 1])) return null;
-  return [...sanitizeTranscript(messages.slice(0, p - 1)), ...messages.slice(p)];
+  let head = messages.slice(0, p);
+  while (head.length && isOverflowStopNote(head.at(-1))) head = sanitizeTranscript(head.slice(0, -1));
+  return [...head, ...messages.slice(p)];
 }
 
 /** 실패 원문(errors[0]) — 사실(한도 초과·줄여 다시 보냈는가·진행분을 다음 턴이 잇는가) + 벤더 원문. 화면은 실패 코드(chat.fail.context_exceeded)로 할 일을 따로 보이고

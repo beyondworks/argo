@@ -131,6 +131,9 @@ test('K09 분류 — 인증 만료·한도 실패의 꼬리에 셸 "command not 
   assert.equal(classifyRunnerError(`턴 실패: error_during_execution — API Error: 529 overloaded${flat}`).code, 'vendor_overloaded');
   assert.equal(classifyRunnerError(`턴 실패: error_during_execution — API Error: 401 {"type":"authentication_error"}${flat}`).code, 'auth_expired');
   assert.equal(classifyRunnerError(`러너 실행 실패 (exit 1): usage limit reached for this week${flat}`.slice(0, 220)).code, 'quota');
+  // 모델 사용 불가 원문도 같다 — 크루 로그 꼬리가 길이 초과로 덮지 않는다(4차 검수 LOW)
+  assert.equal(classifyRunnerError(`API Error: 404 model not found: grok-9${ctxTail}`).code, 'model_unavailable');
+  assert.equal(classifyRunnerError(`턴 실패: error_during_execution — The 'gpt-6-luna' model is not supported when using Codex with a ChatGPT account.${flat}`).code, 'model_unavailable');
   // 길이 초과 낱말이 앞이면(벤더 원문·엔진 머리 문구) 그대로 길이 초과다 — Responses의 429 상태 숫자는 낱말 비교에서 뺀다
   assert.equal(classifyRunnerError('턴 실패: error_during_execution — API Error: 429 Your input exceeds the context window of this model. (context_length_exceeded)').code, 'context_exceeded');
   assert.equal(classifyRunnerError("턴 실패: error_during_execution — 컨텍스트 한도 초과 — 요청이 모델 한도를 넘었다: API Error: 400 This model's maximum prompt length is 500000 but the request contains 503958 tokens. rate limit note").code, 'context_exceeded');

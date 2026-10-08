@@ -736,3 +736,41 @@ test('TB18b. 들어가는지 잴 때 system 프롬프트·도구 정의와 중�
   assert.equal(r2.saved.messages.at(-1).role, 'user', `2회차는 잇지 않는다 — 여유 ${0.75 * r2.ok - (r2.fixed + estimateTokens(r2.saved.messages) + note)}토큰(중단 기록 포함 추정)`);
   assert.match(r2.out.at(-1).errors[0], /이번 진행분은 다음 턴에 싣지 않는다/);
 });
+
+test('TB20b. 안전망 — 중단 기록으로 끝난 턴이 연달아 두 개 저장된 뒤 한도가 줄면(작은 창 모델로 바꿈) 연달은 멈춘 턴을 전부 걷어내고 1번만 다시 보낸다(4차 검수 MEDIUM)', async () => {
+  // 저장 전사: 앞 대화 → [지시 A → 큰 Write 2번 → 중단 기록] → [지시 B('이어서 해 줘') → 큰 Write 2번 → 중단 기록]. 한도 6,000(벤더 셈)이면
+  // B만 걷어내도 A가 남아 넘친다 — b2e4d51b는 B 하나만 걷어내고 다시 보내 또 거절됐고, 1단계 실패라 저장도 없어 다음 턴마다 같은 자리에서 막혔다(main은 둘 다 걷어내 성공).
+  const content = Array.from({ length: 150 }, (_, i) => NN_LINE(i)).join('\n');
+  const { overflowStopNote } = await import('../src/engine/turn-budget.mjs');
+  const stopped = (tag, prompt) => [{ role: 'user', content: prompt },
+    ...[0, 1].flatMap((i) => [{ role: 'assistant', content: [{ type: 'tool_use', id: `${tag}${i}`, name: 'Write', input: { file_path: `${tag}${i}.md`, content } }] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: `${tag}${i}`, content: `Wrote ${content.length} bytes` }] }]),
+    { role: 'assistant', content: [{ type: 'text', text: overflowStopNote('ko') }] }];
+  for (const [name, r] of Object.entries({ grok: RUNNERS.grok, glm: RUNNERS.glm })) {
+    const ws = `tb20b-${name}`; const root = await company(ws);
+    await saveNativeSession(ws, 'crew', { id: 'tb20b-prev', messages: [...PRIOR('tb20b-prev').messages, ...stopped('a', '보고서 4개를 써 줘'), ...stopped('b', '이어서 해 줘')] });
+    const srv = await startStrictVendor({ vendor: r.vendor, reply: parallelReader(r.wire, 0), contextLimit: 6_000 });
+    try {
+      const o = await run(ws, root, r, srv.base, { contextTokens: 128_000, resume: 'tb20b-prev', prompt: '그건 됐고 인사만 해 줘' });
+      assert.equal(o.at(-1).subtype, 'success', `${name}: 막히지 않는다 — ${JSON.stringify(o.at(-1).errors ?? o.at(-1).error?.message ?? '').slice(0, 200)}`);
+      assert.equal(srv.calls.length, 2, `${name}: 거절 1 + 걷어내고 다시 보냄 1(다시 보내기는 그대로 1번)`);
+      const resentMsgs = JSON.stringify(srv.calls[1].body.messages);
+      assert.doesNotMatch(resentMsgs, /"Write"|작업 중단|보고서 4개를 써 줘|이어서 해 줘/, `${name}: 연달은 멈춘 턴 둘 다 빠진다`);
+      assert.match(resentMsgs, /앞 대화 답/, `${name}: 앞 대화는 그대로`);
+      const saved = JSON.parse(await readFile(sessionFile(ws, 'crew'), 'utf8'));
+      assert.equal(saved.messages.length, 4, `${name}: 저장 전사 = 앞 대화 2 + 이번 지시·답 2`);
+      const n0 = srv.calls.length;
+      const o2 = await run(ws, root, r, srv.base, { contextTokens: 128_000, resume: 'tb20b-prev', prompt: '고마워' });
+      assert.equal(o2.at(-1).subtype, 'success');
+      assert.equal(srv.calls.slice(n0).filter((c) => c.rejected).length, 0, `${name}: 그다음 턴은 거절 0`);
+    } finally { await srv.close(); }
+  }
+  // 멈춘 턴 사이에 끝난 턴이 끼어 있으면(연달지 않음) 그 앞은 건드리지 않는다 — 걷어내는 것은 이번 지시 바로 앞에 연달은 멈춘 턴뿐(순수)
+  const { dropStoppedTurn } = await import('../src/engine/turn-budget.mjs');
+  const mid = [{ role: 'user', content: '중간 지시' }, { role: 'assistant', content: [{ type: 'text', text: '중간 답' }] }];
+  const msgs = [...PRIOR('x').messages, ...stopped('a', 'A 지시'), ...mid, ...stopped('b', 'B 지시'), { role: 'user', content: '이번 지시' }];
+  const rest = dropStoppedTurn(msgs);
+  assert.deepEqual(rest.map((m) => (typeof m.content === 'string' ? m.content : m.content[0]?.text ?? m.content[0]?.type)),
+    ['앞 대화 지시', '앞 대화 답', 'A 지시', 'tool_use', 'tool_result', 'tool_use', 'tool_result', overflowStopNote('ko'), '중간 지시', '중간 답', '이번 지시']);
+  assert.equal(dropStoppedTurn([...PRIOR('x').messages, { role: 'user', content: '이번 지시' }]), null, '멈춘 턴이 없으면 null');
+});
