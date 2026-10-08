@@ -1,6 +1,7 @@
 // 스케줄러 틱 배선(행동) — 60초 틱이 회사마다 무엇을 리더 게이트 안팎에서 부르는가를 가짜 일(jobs)로 잠근다.
 // 그동안 이 배선은 소스 문자열 앵커로만 잠겨 있었다(crewmail·runner-health·failure-digest 테스트) — 앵커는 `null &&`·죽은 코드 변이에 초록이다.
-// 능동 비서(feat/assistant-engine-calendar)가 이 틱에 한 줄을 더하기 전에, 지금 부르는 일(루틴·우편·검진·다이제스트·기억 정리)을 먼저 고정한다.
+// 능동 비서(feat/assistant-engine-calendar)가 이 틱에 한 줄을 더하기 전에, 지금 부르는 일(루틴·우편·검진·다이제스트·기억 정리)을 먼저 고정했다(커밋 581fde14).
+// 비서 감시기(tickAssistant)는 리더만, 회사 처리의 맨 끝 — 던져도 같은 회사의 앞 일과 다음 회사를 막지 않는다(아래 C13 칸).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp } from './helpers/tmp.mjs';
@@ -14,7 +15,7 @@ const leader = { isLeader: () => true };
 const flush = () => new Promise((r) => setTimeout(r, 20));
 const at = (h, m = 0) => new Date(2026, 9, 8, h, m); // 기기 로컬 — 기억 정리 시각(04:00) 판정이 로컬 hh:mm이다
 
-function fakeJobs({ companies = ['c1', 'c2'], claim = true, throwRoutinesFor = null, mailGate = null } = {}) {
+function fakeJobs({ companies = ['c1', 'c2'], claim = true, throwRoutinesFor = null, mailGate = null, throwAssistant = false } = {}) {
   const calls = [];
   const rec = (name) => (cid) => { calls.push(`${name}:${cid}`); };
   return {
@@ -25,6 +26,7 @@ function fakeJobs({ companies = ['c1', 'c2'], claim = true, throwRoutinesFor = n
       deliverCrewMail: (cid) => { calls.push(`mail:${cid}`); return mailGate ?? Promise.resolve(); },
       tickHealthCheck: rec('health'),
       tickFailureDigest: rec('digest'),
+      tickAssistant: (cid) => { calls.push(`assistant:${cid}`); if (throwAssistant) throw new Error('비서 틱 동기 예외'); return true; },
       claimConsolidate: async (cid) => { calls.push(`claim:${cid}`); return claim ? { attempts: 1, nextRetryAt: null } : null; },
       consolidateBacklog: async (cid) => { calls.push(`consolidate:${cid}`); return { chunks: 0, bytes: 0, notes: [], stoppedBy: 'empty' }; },
       rollupJournals: async (cid) => { calls.push(`rollup:${cid}`); },
@@ -39,7 +41,7 @@ test('클라우드 리더 + 04:00 이후 — 회사마다 루틴·우편·검진
   await schedulerTick(leader, { jobs, now: at(9), cloudLeader: true });
   await flush();
   for (const cid of ['c1', 'c2']) {
-    for (const name of ['routines', 'mail', 'health', 'digest', 'claim', 'consolidate', 'rollup', 'done']) {
+    for (const name of ['routines', 'mail', 'health', 'digest', 'claim', 'consolidate', 'rollup', 'done', 'assistant']) {
       assert.ok(calls.includes(`${name}:${cid}`), `${name}:${cid} 호출이 빠졌다 — ${calls.join(' ')}`);
     }
   }
@@ -85,4 +87,16 @@ test('우편 배달이 아직 끝나지 않았으면 다음 틱은 그 회사 �
   release(); await flush();
   await schedulerTick(leader, { jobs, now: at(9, 2), cloudLeader: false });
   assert.equal(calls.filter((c) => c === 'mail:c1').length, 2, '끝난 뒤 다음 틱은 다시 배달');
+});
+
+test('C13: 비서 감시기 — 클라우드 리더만 회사마다 한 번, 리더가 아니면 0. 동기 예외를 던져도 같은 회사의 앞 일·다음 회사는 그대로', async () => {
+  const { calls, jobs } = fakeJobs();
+  await schedulerTick(leader, { jobs, now: at(9), cloudLeader: false });
+  assert.equal(calls.some((c) => c.startsWith('assistant:')), false, '리더 아닌 기기 — 비서 호출 0');
+  const t = fakeJobs({ throwAssistant: true });
+  await schedulerTick(leader, { jobs: t.jobs, now: at(9), cloudLeader: true });
+  await flush();
+  assert.deepEqual(t.calls.filter((c) => c.startsWith('assistant:')), ['assistant:c1', 'assistant:c2']);
+  for (const name of ['routines', 'mail', 'health', 'digest', 'claim']) assert.ok(t.calls.includes(`${name}:c2`), `${name}:c2 — 앞 회사의 비서 예외가 다음 회사를 막지 않는다`);
+  assert.ok(t.calls.indexOf('claim:c1') < t.calls.indexOf('assistant:c1'), '비서는 회사 처리의 맨 끝 — 기억 정리 선점보다 뒤');
 });

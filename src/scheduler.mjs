@@ -16,6 +16,7 @@ import { DELEGATION_LIMITS, getTree, isRelaxedStored } from './delegation-limits
 import { consolidateBacklog, rollupJournals } from './consolidate.mjs';
 import { runHealthChecks } from './runner-health.mjs';
 import { runFailureDigest } from './failure-digest.mjs';
+import { tickAssistant } from './assistant/tick.mjs'; // 능동 비서 감시기(일정) — 리더만, 기다리지 않는다
 import { daemonLease } from './lock.mjs';
 import { isCloudLeader, companySyncedSince, syncRunsElsewhere } from './sync.mjs';
 import { writeJsonAtomic, readJson } from './jsonstore.mjs';
@@ -285,12 +286,12 @@ export function crewmailMirrorCtx(cid, slug, msg) {
 
 /** 틱이 부르는 일 — 기본값이 곧 실제 배선이다. 테스트만 가짜를 넘겨 "어느 일을 리더 게이트 안팎에서 부르는가"를 행동으로 잠근다
     (test/scheduler-tick-wiring.test.mjs). 소스 문자열 단언은 변이(`null &&`·죽은 코드)에 초록이라 게이트가 아니다(Argo CLAUDE.md 인접 회귀 방지 2). */
-const TICK_JOBS = { listCompanyIds, runDueRoutines, deliverCrewMail, tickHealthCheck, tickFailureDigest, claimConsolidate, consolidateBacklog, rollupJournals, markConsolidateDone, bumpConsolidateClaim };
+const TICK_JOBS = { listCompanyIds, runDueRoutines, deliverCrewMail, tickHealthCheck, tickFailureDigest, tickAssistant, claimConsolidate, consolidateBacklog, rollupJournals, markConsolidateDone, bumpConsolidateClaim };
 
 /** 스케줄러 틱 한 번 — ensureScheduler의 60초 setInterval 본문을 그대로 옮긴 것. 주입(jobs·now·cloudLeader)은 테스트 전용이다.
     본문은 아래 이름 그대로 부르도록 jobs를 같은 이름으로 펼친다 — 기존 배선 앵커(crewmail·runner-health·failure-digest·consolidate 테스트)가 같은 문장을 본다. */
 export async function schedulerTick(lease, { jobs = TICK_JOBS, now: nowAt = null, cloudLeader: leaderAt = null } = {}) {
-  const { listCompanyIds, runDueRoutines, deliverCrewMail, tickHealthCheck, tickFailureDigest, claimConsolidate, consolidateBacklog, rollupJournals, markConsolidateDone, bumpConsolidateClaim } = jobs;
+  const { listCompanyIds, runDueRoutines, deliverCrewMail, tickHealthCheck, tickFailureDigest, tickAssistant, claimConsolidate, consolidateBacklog, rollupJournals, markConsolidateDone, bumpConsolidateClaim } = jobs;
   noteSchedulerTick(awake, Date.now()); // 깨어남 판정은 리스와 무관하게 매 틱 — 리더가 아닐 때 잠들었다 깨어나 리더가 돼도 깨어난 시각을 안다
   // 프로세스 단위 단일 실행(daemonLease)은 틱 전체의 전제. 기기 간 단일 실행(isCloudLeader)은
   // **루틴·기억 정리에만** 건다 — 크루 우편함(mail/)은 동기화 제외 기기 로컬 큐(sync.mjs EXCLUDE)라
@@ -348,6 +349,9 @@ export async function schedulerTick(lease, { jobs = TICK_JOBS, now: nowAt = null
               .finally(() => consolidating.delete(cid));
           }
         }
+        // 능동 비서 감시기(src/assistant/tick.mjs) — 사용자의 일정을 읽기만 하며 시작 전·아침·저녁에 개인 공간 1:1 방으로 먼저 알린다. 기본 꺼짐(assistant.json).
+        // 검진·다이제스트와 같은 이유로 리더만(기기 수만큼 곱하지 않게), 기다리지 않는다(회사별 진행 중 표시). 회사 처리의 맨 끝 — 앞의 일을 막지 않는다.
+        if (cloudLeader) tickAssistant(cid);
       } catch (e) {
         console.error(`[argo] 스케줄러 회사 처리 실패(${cid}):`, e.message);
       }
