@@ -1416,7 +1416,7 @@ const DICT = {
   'chat.fail.runner_outdated': ['Codex 실행기가 아직 새 버전으로 업데이트되지 않아 이 모델을 쓸 수 없습니다 — 앱이 1시간 안에 자동으로 다시 받습니다. 인터넷 연결을 확인하고 잠시 뒤 다시 보내거나, 에이전트 카드에서 GPT-5.6 모델을 골라 주세요. 입력은 복원했습니다.', 'The Codex runner has not finished updating, so this model is unavailable — the app retries the download automatically within an hour. Check your internet connection and try again shortly, or pick a GPT-5.6 model in the agent card. Your input was restored.'],
   'chat.fail.model_unavailable': ['이 계정·러너에서 쓸 수 없는 모델입니다 — 에이전트 카드에서 다른 모델을 골라 주세요. ({msg})', 'This model is not available for this account or runner — pick another model in the agent card. ({msg})'],
   'chat.fail.crash': ['러너 프로세스가 비정상 종료됐습니다 — 다시 보내 주세요. 반복되면 앱을 재시작해 주세요. ({msg})', 'The runner process crashed — try again. If it repeats, restart the app. ({msg})'],
-  'chat.fail.context_exceeded': ['작업 내용이 이 모델이 한 번에 받는 양(컨텍스트 한도)을 넘었습니다 — 다시 보내면 저장된 단계부터 이어서 하고, 반복되면 창이 큰 모델로 바꾸거나 작업을 나눠 주세요.', 'The work grew past what this model accepts at once (its context limit) — send again to continue from the saved steps; if it repeats, switch to a model with a larger window or split the task.'],
+  'chat.fail.context_exceeded': ['작업 내용이 이 모델의 컨텍스트 한도를 넘었습니다 — 다시 보내 보고, 반복되면 한도가 큰 모델로 바꾸거나 작업을 나눠 주세요.', 'The work exceeded the context limit of this model — try sending again; if it repeats, switch to a model with a larger context limit or split the task.'],
   'chat.fail.no_runner': ['연결된 AI 러너가 없습니다 — 설정 → AI 연결에서 하나를 연결한 뒤 다시 보내 주세요. 입력은 그대로 있습니다.', 'No AI runner is connected — connect one in Settings → AI connections, then send again. Your message is kept.'],
   'chat.fail.openAi': ['AI 연결 열기', 'Open AI connections'],
   'chat.crewMissing': ['이 에이전트를 찾을 수 없습니다 — 해고됐거나 이름이 바뀌었을 수 있어요.', 'This agent could not be found — it may have been let go or renamed.'],
@@ -1928,6 +1928,8 @@ const DICT = {
   'graph.controlsHint': ['드래그 회전 · 휠 줌 · 기억 클릭 = 열기', 'Drag to rotate · Scroll to zoom · Click a memory to open'],
   'graph.openInRecords': ['기록 화면에서 열기', 'Open in records'],
 };
+/** 사전에 있는 키인가 — 다른 기기의 새 버전이 남긴 실패 코드처럼 이 버전 사전에 없는 키를 화면이 키 글자 그대로 보이지 않게(fail-display.mjs failCodeKey). */
+export const hasMsg = (key) => Object.prototype.hasOwnProperty.call(DICT, key);
 
 const LangCtx = createContext(null);
 

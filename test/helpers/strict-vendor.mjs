@@ -79,8 +79,9 @@ const ANTHROPIC_TOP = new Set(['model', 'max_tokens', 'messages', 'system', 'too
 
 /** 엄격 가짜 벤더를 띄운다 — vendor 규칙 전부 통과하면 reply(body)로 응답(기본: 텍스트 'ok'), 위반하면 400 + Anthropic 오류 모양. 경로는 /v1/messages만(404), 인증 헤더(x-api-key 또는 authorization) 없으면 401.
     vendor 'gemini'·'responses'는 그 와이어의 경로·인증·응답 모양(위 OTHER_WIRES)으로 받는다 — 그 와이어의 reply(body, n)는 { status, type, body(문자열) }를 돌려준다.
-    contextLimit = 요청 토큰 한도(vendorTokens로 센다) 또는 (호출 번호 n) → 한도 — 넘으면 그 벤더의 길이 초과 거절(CONTEXT_REJECT). calls[].tokens에 셈을 남긴다. */
-export async function startStrictVendor({ vendor = 'xai', reply = null, contextLimit = null } = {}) {
+    contextLimit = 요청 토큰 한도(countTokens로 센다, 기본 vendorTokens) 또는 (호출 번호 n) → 한도 — 넘으면 그 벤더의 길이 초과 거절(CONTEXT_REJECT). calls[].tokens에 셈을 남긴다.
+    countTokens = 요청 본문(날것 JSON) → 벤더 토큰 — 해시·압축 JSON처럼 벤더가 엔진 추정(바이트/3)보다 많이 세는 내용을 흉내 낼 때 바꾼다. */
+export async function startStrictVendor({ vendor = 'xai', reply = null, contextLimit = null, countTokens = vendorTokens } = {}) {
   const rules = [...(VENDOR_RULES[vendor] ?? []), ...(vendor !== 'anthropic' ? VENDOR_RULES.anthropic : [])];
   const calls = [];
   const other = OTHER_WIRES[vendor];
@@ -88,7 +89,7 @@ export async function startStrictVendor({ vendor = 'xai', reply = null, contextL
     let d = ''; req.on('data', (c) => { d += c; });
     req.on('end', () => {
       let body = {}; try { body = JSON.parse(d || '{}'); } catch { /* 빈 본문 */ }
-      const tokens = contextLimit === null ? null : vendorTokens(d);
+      const tokens = contextLimit === null ? null : countTokens(d);
       calls.push({ url: req.url, headers: req.headers, body, tokens });
       const limit = typeof contextLimit === 'function' ? contextLimit(calls.length) : contextLimit;
       const over = limit !== null && tokens > limit ? (CONTEXT_REJECT[vendor] ?? CONTEXT_REJECT.anthropic)(tokens, limit) : null;

@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile, writeFile, stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { mkdtemp } from './helpers/tmp.mjs';
@@ -16,7 +17,7 @@ process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-tb-'));
 process.env.ARGO_MODEL_CATALOG = 'off';
 
 const { nativeQuery } = await import('../src/engine/native-query.mjs');
-const { sessionFile, loadNativeSession } = await import('../src/engine/session.mjs');
+const { sessionFile, loadNativeSession, saveNativeSession } = await import('../src/engine/session.mjs');
 const { createCompany, paths } = await import('../src/workspace.mjs');
 const { classifyRunnerError } = await import('../src/runners/error-class.mjs');
 
@@ -52,6 +53,25 @@ function reader(wire, reads) {
     }
     const content = file ? [{ type: 'tool_use', id: `tu${n}`, name: 'Read', input: { file_path: file } }] : [{ type: 'text', text: `다 읽었다 ${k}` }];
     return { id: `m${n}`, type: 'message', role: 'assistant', model: body.model, content, stop_reason: file ? 'tool_use' : 'end_turn', usage: { input_tokens: 10, output_tokens: 5 } };
+  };
+}
+
+/** 지시만 있으면(끝난 도구 결과 0) 한 단계에서 par개를 한꺼번에 Read하고(병렬 도구 호출), 결과가 있으면 답하는 가짜 모델(와이어별). */
+function parallelReader(wire, par) {
+  return (body, n) => {
+    const k = doneReads(wire, body);
+    const files = k ? [] : Array.from({ length: par }, (_, i) => `big${i}.txt`);
+    if (wire === 'gemini') {
+      const parts = files.length ? files.map((f) => ({ functionCall: { name: 'Read', args: { file_path: f } } })) : [{ text: `답 ${k}` }];
+      return { status: 200, type: 'application/json', body: JSON.stringify({ candidates: [{ content: { role: 'model', parts }, finishReason: 'STOP' }], usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 }, responseId: `g${n}` }) };
+    }
+    if (wire === 'responses') {
+      const output = files.length ? files.map((f, i) => ({ type: 'function_call', call_id: `call_${n}_${i}`, name: 'Read', arguments: JSON.stringify({ file_path: f }) })) : [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: `답 ${k}` }] }];
+      const ev = { type: 'response.completed', response: { id: `resp_${n}`, model: body.model, status: 'completed', output, usage: { input_tokens: 10, output_tokens: 5 } } };
+      return { status: 200, type: 'text/event-stream', body: `event: ${ev.type}\ndata: ${JSON.stringify(ev)}\n\n` };
+    }
+    const content = files.length ? files.map((f, i) => ({ type: 'tool_use', id: `tu${n}_${i}`, name: 'Read', input: { file_path: f } })) : [{ type: 'text', text: `답 ${k}` }];
+    return { id: `m${n}`, type: 'message', role: 'assistant', model: body.model, content, stop_reason: files.length ? 'tool_use' : 'end_turn', usage: { input_tokens: 10, output_tokens: 5 } };
   };
 }
 
@@ -99,6 +119,10 @@ test('TB1. 턴 안 예산 — 큰 Read 14회 턴이 창을 넘지 않고 끝난�
       for (const b of results.slice(-3)) assert.ok(!SQUEEZED.test(String(b.content)) && String(b.content).length > 50_000, `${name}: 최근 3개는 그대로`);
       for (const b of squeezed) assert.match(String(b.content), /^1\t0000 quarterly revenue line/, `${name}: 줄인 결과는 앞부분을 남긴다(Read 줄번호 포함)`);
       assert.match(String(squeezed[0].content), /원래 \d+자/, `${name}: 원래 길이를 적는다`);
+      // 줄일 때 넉넉히(창의 50%까지) 줄여 매 단계 다시 줄이지 않는다 — 줄인 블록 수가 바뀐 호출 = 프롬프트 캐시 앞부분이 바뀐 호출(TURN_SQUEEZE_TO를 기준선 가까이 올리면 거의 매 호출이 된다)
+      const nSq = srv.calls.map((c) => (JSON.stringify(c.body).match(new RegExp(SQUEEZED.source, 'g')) ?? []).length);
+      const changes = nSq.filter((v, i) => i > 0 && v !== nSq[i - 1]).length;
+      assert.ok(changes >= 1 && changes <= 3, `${name}: 앞부분이 바뀐 호출은 3번 이하(${changes}번 — 줄인 수 ${nSq.join(',')})`);
     } finally { await srv.close(); }
   }
 });
@@ -131,6 +155,11 @@ test('TB2. 길이 초과 400 복구 — 카탈로그 창(1M)보다 실제 한도
       assert.equal(rej.length, 1, `${name}: 길이 초과 거절은 1번 — 그 뒤로는 낮춘 창으로 미리 줄인다(거절 ${rej.length}회)`);
       assert.ok(srv.calls[rej[0] + 1].tokens < srv.calls[rej[0]].tokens * 0.8, `${name}: 다시 보낸 요청은 줄었다`);
       assert.equal(doneReads(r.wire, srv.calls[rej[0] + 1].body), doneReads(r.wire, srv.calls[rej[0]].body), `${name}: 같은 단계를 다시 보냈다(도구 재실행 없음)`);
+      if (r.wire === 'messages') { // 재전송은 평소(앞 1,000자)보다 세게 — 줄인 결과마다 앞 200자만 남긴다(HARD_HEAD_CHARS)
+        const heads = srv.calls[rej[0] + 1].body.messages.flatMap((m) => (Array.isArray(m.content) ? m.content : []))
+          .filter((b) => b.type === 'tool_result' && SQUEEZED.test(String(b.content))).map((b) => String(b.content).split('\n…(')[0].length);
+        assert.ok(heads.length && heads.every((h) => h <= 200), `${name}: 재전송에서 줄인 결과는 앞 200자까지만(${heads.join(',')})`);
+      }
     } finally { await srv.close(); }
   }
 });
@@ -284,6 +313,7 @@ test('TB9. 줄이기(순수) — 오래된 것부터·목표 도달 시 멈춤·
   assert.deepEqual(overflowNumbers('The input token count (1200000) exceeds the maximum number of tokens allowed (1048576).'), { requested: 1200000, limit: 1048576 });
   assert.deepEqual(overflowNumbers('Your request exceeded model token limit: 262144 (requested: 300000)'), { requested: 300000, limit: 262144 });
   assert.deepEqual(overflowNumbers("This endpoint's maximum context length is 131072 tokens. However, you requested about 150000 tokens (141808 of text input, 8192 in the output)."), { requested: 150000, limit: 131072 }, '출력 몫 숫자에 속지 않는다');
+  assert.deepEqual(overflowNumbers('input length and `max_tokens` exceed context limit: 188240 + 21333 > 200000, decrease input length or `max_tokens` and try again'), { requested: 188240, limit: 178667 }, 'Anthropic 입력 + 출력 > 한도 — 입력 몫(한도 − 출력)을 한도로');
   assert.equal(overflowNumbers('Prompt too long'), null);
   assert.equal(windowAfterOverflow(1_000_000, 200_000, 'prompt is too long: 150000 tokens > 100000 maximum'), 133_333, '벤더 셈과 우리 추정의 비로 환산');
   assert.equal(windowAfterOverflow(1_000_000, 200_000, 'Prompt too long'), 200_000, '숫자가 없으면 거절 지점');
@@ -299,6 +329,7 @@ test('TB10. 실패 코드 표 — 벤더별 길이 초과 문구는 context_exce
     'API Error: 400 The input token count (1200000) exceeds the maximum number of tokens allowed (1048576). (INVALID_ARGUMENT)',
     'API Error: 400 Your input exceeds the context window of this model. Please adjust your input and try again. (context_length_exceeded)',
     'API Error: 429 Your input exceeds the context window (context_length_exceeded)',
+    'API Error: 400 input length and `max_tokens` exceed context limit: 188240 + 21333 > 200000, decrease input length or `max_tokens` and try again',
     '턴 실패: error_during_execution — 컨텍스트 한도 초과 — 이번 턴의 작업 내용이', 'Turn failed: error_during_execution — Context limit exceeded — the work',
   ];
   for (const s of pos) assert.equal(classifyRunnerError(s).code, 'context_exceeded', s);
@@ -310,4 +341,126 @@ test('TB10. 실패 코드 표 — 벤더별 길이 초과 문구는 context_exce
     ['API Error: 401 invalid x-api-key', 'auth_expired'],
   ];
   for (const [s, code] of neg) assert.equal(classifyRunnerError(s).code, code, s);
+});
+
+test('TB11. 한 단계의 결과만으로 실제 한도를 넘으면(병렬 Read·작은 실제 창) 그 턴은 사실대로 끝나되 저장 전사는 한도 안으로 줄여, 다음 턴들이 막히지 않는다(러너 7종)', async () => {
+  for (const [name, r] of Object.entries(RUNNERS)) {
+    const ws = `tb11-${name}`; const root = await company(ws);
+    // 카탈로그 창 200,000(엔진 추정) — 큰 Read 6개 병렬 결과 한 메시지(엔진 추정 약 12만, 벤더 셈 약 9.5만)는 사전 줄이기 기준(75%) 아래라 그대로 나가고,
+    // 실제 한도 80,000에 거절된다. 최근 결과 메시지는 재시도에서 보호돼 줄일 것이 없다 → 재전송 없이 실패(1차 검수 HIGH 재현 모양).
+    let mode = 'parallel';
+    const par = parallelReader(r.wire, 6); const txt = parallelReader(r.wire, 0);
+    const srv = await startStrictVendor({ vendor: r.vendor, reply: (b, n) => (mode === 'parallel' ? par(b, n) : txt(b, n)), contextLimit: 80_000 });
+    try {
+      const out = await run(ws, root, r, srv.base, { contextTokens: 200_000, prompt: '보고서 6개를 한 번에 읽어 줘' });
+      const sid = out[0].session_id; const last = out.at(-1);
+      assert.equal(last.subtype, 'error_during_execution', `${name}: 1턴은 사실대로 실패`);
+      assert.match(last.errors[0], /^컨텍스트 한도 초과 — 요청이 모델 한도를 넘었다\. 더 줄일 도구 결과가 없어 다시 보내지 않았다/, `${name}: 다시 보내지 않았으면 그렇게 적는다 — ${last.errors[0].slice(0, 120)}`);
+      assert.equal(srv.calls.length, 2, `${name}: 재전송 없음(병렬 호출 1 + 거절 1)`);
+      const saved = JSON.parse(await readFile(sessionFile(ws, 'crew'), 'utf8'));
+      assertWellFormed(saved.messages, `${name} 1턴 저장 전사`);
+      assert.match(saved.messages.at(-1).content[0].text, /^\[작업 중단 — /, `${name}: 꼬리는 중단 기록`);
+      const results = saved.messages.flatMap((m) => (Array.isArray(m.content) ? m.content : [])).filter((b) => b.type === 'tool_result');
+      assert.equal(results.length, 6, `${name}: 끝난 결과 6개(짝 유지)`);
+      for (const b of results) assert.match(String(b.content), SQUEEZED, `${name}: 저장 전에 이번 단계 결과까지 줄였다(그대로 저장하면 다음 턴마다 넘친다)`);
+      mode = 'text';
+      for (const p of ['그건 됐고 오늘 날짜만 알려 줘', '인사만 해 줘']) {
+        const n0 = srv.calls.length;
+        const o = await run(ws, root, r, srv.base, { contextTokens: 200_000, resume: sid, prompt: p });
+        assert.equal(o.at(-1).subtype, 'success', `${name}: '${p}' 턴 성공 — ${JSON.stringify(o.at(-1).errors ?? o.at(-1).error?.message ?? '').slice(0, 200)}`);
+        assert.equal(srv.calls.slice(n0).filter((c) => c.rejected).length, 0, `${name}: '${p}' 턴은 거절 0`);
+        assert.equal(doneReads(r.wire, srv.calls[n0].body), 6, `${name}: 끝난 결과 6개를 이어받는다(재개 정리가 걷어내지 않는다)`);
+      }
+    } finally { await srv.close(); }
+  }
+});
+
+test('TB11b. 이미 넘친 결과를 그대로 저장한 세션도 풀린다 — 재시도 줄이기는 이번 턴 지시 뒤의 결과만 최근으로 보호한다', async () => {
+  const ws = 'tb11b'; const root = await company(ws);
+  const big = await readFile(join(root, 'big0.txt'), 'utf8');
+  const body = big.split('\n').map((l, i) => `${i + 1}\t${l}`).join('\n').slice(0, 60_000);
+  const ids = Array.from({ length: 6 }, (_, i) => `old${i}`);
+  // 수정 전(PR 5786a8a2)이 남긴 모양: 지시 → 병렬 Read 6개 → 줄이지 않은 결과 6개(한 메시지) → 중단 기록
+  await saveNativeSession(ws, 'crew', { id: 'stale-1', messages: [
+    { role: 'user', content: '보고서 6개를 한 번에 읽어 줘' },
+    { role: 'assistant', content: ids.map((id, i) => ({ type: 'tool_use', id, name: 'Read', input: { file_path: `big${i}.txt` } })) },
+    { role: 'user', content: ids.map((id) => ({ type: 'tool_result', tool_use_id: id, content: body })) },
+    { role: 'assistant', content: [{ type: 'text', text: '[작업 중단 — 요청이 모델의 컨텍스트 한도를 넘어 이 단계에서 멈췄다.]' }] },
+  ] });
+  const srv = await startStrictVendor({ vendor: 'xai', reply: parallelReader('messages', 0), contextLimit: 80_000 });
+  try {
+    const o2 = await run(ws, root, RUNNERS.grok, srv.base, { contextTokens: 200_000, resume: 'stale-1', prompt: '그건 됐고 오늘 날짜만 알려 줘' });
+    assert.equal(o2.at(-1).subtype, 'success', `막히지 않는다 — ${JSON.stringify(o2.at(-1).errors ?? o2.at(-1).error?.message ?? '').slice(0, 200)}`);
+    assert.equal(srv.calls.filter((c) => c.rejected).length, 1, '앞 턴의 큰 결과로 한 번 거절된 뒤');
+    assert.ok(srv.calls[1].tokens < srv.calls[0].tokens * 0.2, '앞 턴의 결과를 줄여 다시 보냈다');
+    const n0 = srv.calls.length;
+    const o3 = await run(ws, root, RUNNERS.grok, srv.base, { contextTokens: 200_000, resume: 'stale-1', prompt: '인사만 해 줘' });
+    assert.equal(o3.at(-1).subtype, 'success');
+    assert.equal(srv.calls.slice(n0).filter((c) => c.rejected).length, 0, '줄인 전사가 저장돼 다음 턴은 거절 0');
+  } finally { await srv.close(); }
+});
+
+test('TB12. 줄이는 순서·자리표시 — 읽기 도구 결과를 먼저 "다시 실행해 읽어라"로, 위임·셸·쓰기·MCP 결과는 그 뒤에만 "다시 하지 마라"로 줄인다', async () => {
+  const { squeezeToolResults, RERUNNABLE_TOOLS } = await import('../src/engine/turn-budget.mjs');
+  const { estimateTokens } = await import('../src/engine/compact.mjs');
+  const big = (c) => c.repeat(30_000);
+  const step = (id, name, text) => [{ role: 'assistant', content: [{ type: 'tool_use', id, name, input: {} }] }, { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: text }] }];
+  const msgs = [{ role: 'user', content: '동료에게 맡기고 자료도 읽어 줘' },
+    ...step('d1', 'mcp__crew__delegate', big('동')), ...step('b1', 'Bash', big('b')), ...step('r1', 'Read', big('r')), ...step('w1', 'WebFetch', big('w')),
+    ...step('m1', 'mcp__mail__send', big('m')), ...step('last', 'Read', big('z'))];
+  const text = (r, id) => String(r.messages.flatMap((m) => (Array.isArray(m.content) ? m.content : [])).find((b) => b.tool_use_id === id).content);
+  const RERUN = /필요하면 도구를 다시 실행해 읽어라\)$/; const NORERUN = /이 도구는 이미 실행됐다 — 같은 호출을 다시 하지 마라\)$/;
+  // 읽기 결과 둘(r1·w1)만 줄이면 목표에 닿는다 — 더 오래된 위임(d1)·셸(b1)은 그대로
+  const two = squeezeToolResults(msgs, { target: estimateTokens(msgs) - 15_000, keepRecent: 1 }); // 읽기 결과 하나 ≈ 1만 토큰
+  assert.equal(two.squeezed, 2, '읽기 결과 둘');
+  assert.match(text(two, 'r1'), RERUN); assert.match(text(two, 'w1'), RERUN);
+  for (const id of ['d1', 'b1', 'm1', 'last']) assert.equal(text(two, id).length, 30_000, `${id}는 그대로(읽기 결과를 먼저 줄인다)`);
+  // 목표가 빠듯하면 나머지도 줄이되 다시 실행하지 말라고 적는다(delegate를 다시 부르면 동료 턴이 또 돈다)
+  const all = squeezeToolResults(msgs, { target: 1, keepRecent: 1 });
+  assert.equal(all.squeezed, 5);
+  for (const id of ['d1', 'b1', 'm1']) { assert.match(text(all, id), NORERUN, `${id}: 다시 하지 마라`); assert.doesNotMatch(text(all, id), /다시 실행해 읽어라/); }
+  assert.match(text(all, 'r1'), RERUN);
+  assert.equal(text(all, 'last').length, 30_000, '최근 1개는 그대로');
+  assert.match(text(all, 'd1'), /^동{1000}\n/, '앞부분은 남긴다');
+  // en·다시 줄이기 — 원래 길이·문구 유지
+  const en = squeezeToolResults(all.messages, { target: 1, keepRecent: 1, head: 0, lang: 'en' });
+  assert.match(text(en, 'd1'), /^…\(This tool result was shortened because the conversation grew long — originally 30000 chars\. The tool already ran — do not call it again\.\)$/);
+  assert.match(text(en, 'r1'), /originally 30000 chars\. Run the tool again if you need it\.\)$/);
+  // 이름을 모르는 결과(짝 tool_use 없음)는 다시 실행하라고 하지 않는다
+  const orphan = squeezeToolResults([{ role: 'user', content: 'x' }, { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'gone', content: big('o') }] }], { target: 1, keepRecent: 0 });
+  assert.match(text(orphan, 'gone'), NORERUN);
+  for (const t of ['Read', 'Grep', 'Glob', 'WebFetch', 'WebSearch', 'browser_snapshot', 'browser_screenshot', 'computer_screenshot']) assert.ok(RERUNNABLE_TOOLS.has(t), t);
+  for (const t of ['Write', 'Edit', 'Bash', 'browser_click', 'browser_type', 'browser_navigate', 'browser_eval', 'computer_click', 'mcp__crew__delegate']) assert.ok(!RERUNNABLE_TOOLS.has(t), t);
+});
+
+test('TB13. 사전 줄이기 기준선(창의 75%) — 벤더가 우리 추정(바이트/3)보다 26% 많이 세는 내용(해시·압축 JSON)도 실제 한도 = 카탈로그 창이면 거절 없이 끝난다', async () => {
+  const ws = 'tb13'; const root = await company(ws);
+  for (let f = 0; f < 14; f++) await writeFile(join(root, `big${f}.txt`), Array.from({ length: 2000 }, (_, i) => `${String(i).padStart(4, '0')} ${createHash('sha256').update(`${f}:${i}`).digest('hex')}`).join('\n'));
+  // 벤더 셈 = 글자당 0.42토큰(엔진 추정 0.333의 1.26배). 75%에서 줄이면 보내는 요청이 한도의 75% × 1.26 ≈ 95%를 넘지 않는다 — 기준선을 95%로 올리면 넘는다.
+  const srv = await startStrictVendor({ vendor: 'xai', reply: reader('messages', 14), contextLimit: 200_000, countTokens: (raw) => Math.ceil(raw.length * 0.42) });
+  try {
+    const out = await run(ws, root, RUNNERS.grok, srv.base, { contextTokens: 200_000 });
+    assert.equal(out.at(-1).subtype, 'success', JSON.stringify(out.at(-1).errors ?? '').slice(0, 200));
+    assert.equal(srv.calls.filter((c) => c.rejected).length, 0, `거절 0 — 최대 ${Math.max(...srv.calls.map((c) => c.tokens))}토큰`);
+    assert.ok(srv.calls.some((c) => SQUEEZED.test(JSON.stringify(c.body))), '줄이기가 일어났다');
+  } finally { await srv.close(); }
+});
+
+test('TB14. 다시 보낸 요청도 거절되면 그 거절로 창을 한 번 더 낮춰 저장 전 줄이기의 목표로 쓴다 — 다음 턴은 거절 없이 시작한다(숫자 없는 z.ai 문구)', async () => {
+  const ws = 'tb14'; const root = await company(ws);
+  // 3번째 호출까지 통과(큰 Read 3개) → 4번째 거절(줄여 재전송) → 재전송도 한도 10,000에 거절 → 실패·저장. 다음 턴도 한도 10,000.
+  // 첫 거절만으로 낮춘 창(≈ 첫 요청 크기)의 절반은 재전송 크기보다 커서 저장 전 줄이기가 아무것도 줄이지 않는다 — 최근 결과가 그대로 저장돼 다음 턴 첫 호출이 또 거절된다.
+  const srv = await startStrictVendor({ vendor: 'zai', reply: reader('messages', 3), contextLimit: (n) => (n <= 3 ? null : n === 4 ? 1 : 10_000) });
+  try {
+    const out = await run(ws, root, RUNNERS.glm, srv.base, { contextTokens: 1_000_000 });
+    const sid = out[0].session_id; const last = out.at(-1);
+    assert.equal(last.subtype, 'error_during_execution');
+    assert.match(last.errors[0], /^컨텍스트 한도 초과 — 오래된 도구 결과를 줄여 한 번 다시 보냈지만/, '다시 보냈으면 그렇게 적는다');
+    assert.equal(srv.calls.length, 5, '통과 3 + 거절 + 재전송 거절');
+    const n0 = srv.calls.length;
+    const o2 = await run(ws, root, RUNNERS.glm, srv.base, { contextTokens: 1_000_000, resume: sid, prompt: '이어서 해 줘' });
+    assert.equal(o2.at(-1).subtype, 'success', JSON.stringify(o2.at(-1).errors ?? o2.at(-1).error?.message ?? '').slice(0, 200));
+    assert.equal(srv.calls.slice(n0).filter((c) => c.rejected).length, 0, `다음 턴은 거절 0 — 첫 요청 ${srv.calls[n0].tokens}토큰`);
+    assert.equal(doneReads('messages', srv.calls[n0].body), 3, '끝난 결과 3개를 이어받는다');
+  } finally { await srv.close(); }
 });

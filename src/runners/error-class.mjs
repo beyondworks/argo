@@ -28,13 +28,13 @@ export const OVERLOADED_RE = /\boverloaded\b|\b529\b|\b503\b|connection closed m
 export const CLI_MISSING_RE = /러너 CLI를 찾지 못했습니다|runner cli not found/i;
 export const MODEL_UNAVAILABLE_RE = /does not support this model|model not found|unknown model|requested entity was not found|no such model|invalid model|not supported when using codex with a chatgpt account/i;
 // 컨텍스트 길이 초과 — 벤더마다 문구가 다르다(상태도 400·413, Responses 스트림 실패는 502로 온다): Anthropic "prompt is too long: N tokens > L maximum"·
-// 413 request_too_large, xAI "This model's maximum prompt length is L but the request contains N tokens.", OpenRouter·OpenAI 호환 "maximum context length is L tokens"·
+// "input length and `max_tokens` exceed context limit: N + M > L"·413 request_too_large, xAI "This model's maximum prompt length is L but the request contains N tokens.", OpenRouter·OpenAI 호환 "maximum context length is L tokens"·
 // "context_length_exceeded", OpenAI Responses "Your input exceeds the context window of this model", Gemini "The input token count (N) exceeds the maximum number of
 // tokens allowed (L)", z.ai(GLM) 1261 "Prompt too long"·"tokens in request more than max tokens allowed", Moonshot(Kimi) "exceeded model token limit".
 // 출처: Gemini는 Google 개발자 포럼 원문, z.ai 1261은 docs.z.ai 오류 코드 표, 나머지는 opencode packages/llm/src/provider-error.ts의 벤더 문구 목록(2026-10-08 확인).
 // 실벤더에 쏴서 받은 원문 대조는 아직 없다(제보 사용자의 원문도 받지 못함) — 실원문이 다르면 아래 낱말에 한 줄 더한다.
 // 네이티브 엔진이 이 문구로 턴 안 예산 재시도(engine/turn-budget.mjs)를 하고, 그래도 실패하면 '컨텍스트 한도 초과' 머리 문구로 끝낸다(아래 두 낱말이 그 머리).
-export const CONTEXT_EXCEEDED_RE = /prompt (?:is )?too long|request_too_large|context[_ ]length[_ ]exceeded|model_context_window_exceeded|maximum (?:prompt|context) length is \d|exceeds? (?:the )?(?:model'?s )?(?:maximum )?context (?:window|length)|input token count.*exceeds the maximum|tokens in request more than max tokens allowed|exceeded model token limit|reduce the length of the messages|컨텍스트 한도 초과|context limit exceeded/i;
+export const CONTEXT_EXCEEDED_RE = /prompt (?:is )?too long|request_too_large|context[_ ]length[_ ]exceeded|model_context_window_exceeded|maximum (?:prompt|context) length is \d|exceeds? (?:the )?(?:model'?s )?(?:maximum )?context (?:window|length|limit)|input token count.*exceeds the maximum|tokens in request more than max tokens allowed|exceeded model token limit|reduce the length of the messages|컨텍스트 한도 초과|context limit exceeded/i;
 // 분당 토큰 한도("too many tokens per minute")·잔액(OpenRouter 402 "requires more credits, or fewer max_tokens")·출력 상한("max_tokens: … maximum allowed number of
 // output tokens") 문구는 위 낱말에 걸리지 않는다(test/native-turn-budget TB10이 잠근다) — 넓은 낱말("too many tokens", "token limit")은 그래서 넣지 않았다.
 export const isContextOverflowText = (s) => CONTEXT_EXCEEDED_RE.test(String(s ?? ''));

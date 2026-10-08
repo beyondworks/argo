@@ -361,7 +361,8 @@ test('R2·R3·R9·MEDIUM-3 배선 핀 — 이벤트·라우트 응답·UI 렌더
   const page = await readFile(join(ROOT, 'app', 'c', '[ws]', 'crew', '[slug]', 'page.jsx'), 'utf8');
   assert.match(page, /\{m\.modelFallback && \(/, 'R9: 강등 고지 렌더 블록');
   assert.match(page, /t\('chat\.modelFallback', \{ wanted: m\.modelFallback\.wanted/, 'R9: 사전 키 배선');
-  assert.match(page, /t\(`chat\.fail\.\$\{m\.failedCode\}`/, 'R9: 실패 코드 렌더');
+  // 2026-10-09: 사전에 없는 코드(다른 기기의 새 버전이 남긴 코드)는 키 글자 대신 원문 표시로 — 판정은 fail-display.mjs failCodeKey(test/crew-fail-display가 행동으로 잠금)
+  assert.match(page, /t\(failCodeKey\(m\.failedCode, hasMsg\), \{ msg: m\.failed \}\)/, 'R9: 실패 코드 렌더');
   // MEDIUM-3: 오버레이 소비자 전수 — RUNNERS 원목록(.models)을 직접 판정에 쓰는 곳이 남아 있으면 UI·백엔드가 갈린다
   for (const f of ['src/chat.mjs', 'src/compete.mjs', 'src/oneshot.mjs']) {
     const s = await readFile(join(ROOT, f), 'utf8');
