@@ -316,13 +316,18 @@ test('보류 안내 훅 — 사람 입력의 보류 표현에만 argo office hol
     assert.equal(r.code, 0);
     const o = JSON.parse(r.out);
     assert.equal(o.hookSpecificOutput.hookEventName, 'UserPromptSubmit', p);
-    assert.match(o.hookSpecificOutput.additionalContext, /argo office hold "/);
-    assert.match(o.hookSpecificOutput.additionalContext, /--reason/);
-    assert.match(o.hookSpecificOutput.additionalContext, /ARGO_ROOT=~\/\.argo\/office-hook/);
     const ctx = o.hookSpecificOutput.additionalContext;
-    const cmds = ctx.match(/(\S+\s+)?argo office \w+/g);
+    assert.match(ctx, /--reason/);
+    // 10/8 실측: 맥에 설치된 argo가 office 명령이 없는 예전 판이라 'argo office …' 안내대로 실행하면 실패했다 →
+    // 이 훅과 같은 저장소의 bin/argo.mjs를 훅을 돌린 node로 부르는 명령이어야 하고, 그 명령이 실제로 실행돼야 한다
+    const cmds = [...ctx.matchAll(/ARGO_ROOT=~\/\.argo\/office-hook '([^']+)' '([^']+)' office (\w+)/g)];
     assert.ok(cmds.length >= 3, ctx);
-    for (const c of cmds) assert.match(c, /^ARGO_ROOT=~\/\.argo\/office-hook argo office/, `모든 argo office 명령은 훅 폴더로: ${c}`);
+    for (const [, node, bin, sub] of cmds) {
+      assert.equal(node, process.execPath); assert.equal(bin, join(REPO, 'bin', 'argo.mjs')); assert.ok(['hold', 'tasks'].includes(sub), sub);
+    }
+    assert.ok(!/(^|\s)argo office/.test(ctx), '설치된 argo에 기대는 명령이 남지 않는다');
+    const help = await new Promise((resolve) => { const c = spawn(cmds[0][1], [cmds[0][2], 'office', 'help'], { env: { PATH: process.env.PATH, HOME: base, ARGO_ROOT: join(base, 'help-root') } }); let out = ''; c.stdout.on('data', (d) => (out += d)); c.on('close', (code) => resolve({ code, out })); });
+    assert.equal(help.code, 0); assert.match(help.out, /office (report|hold|tasks)/);
     assert.match(ctx, /--source-name "<이 세션 제목>"/);
     assert.match(ctx, /꼭 넣는다/);
   }

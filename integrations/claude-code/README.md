@@ -12,12 +12,12 @@
 ## 설치
 
 저장소 체크아웃(루트에서 `npm ci`를 마친 상태)이 필요합니다. 훅이 저장소의 `src/office-cli.mjs`와 `@supabase/supabase-js`를 씁니다.
-아래에서 `<argo>`는 저장소 경로입니다(예: `~/lean-projects/saas/argo`). `argo` 명령이 설치돼 있지 않으면 `node <argo>/bin/argo.mjs`로 바꿔 쓰면 됩니다.
+아래에서 `<argo>`는 저장소 경로입니다(예: `~/lean-projects/saas/argo`). 명령은 `node <argo>/bin/argo.mjs`로 부릅니다 — 맥에 설치된 `argo`가 `office` 명령이 없는 예전 판일 수 있습니다(보류 안내 훅과 로그인 안내 문구도 이 저장소의 `bin/argo.mjs` 절대 경로를 씁니다).
 
 ### 1. 훅 전용 폴더로 로그인
 
 ```bash
-ARGO_ROOT=~/.argo/office-hook argo login
+ARGO_ROOT=~/.argo/office-hook node <argo>/bin/argo.mjs login
 ```
 
 훅은 `~/.argo/office-hook`의 기기 로그인만 씁니다. Argo 앱·상주 서버·`argo` 대화 화면의 로그인과 따로 두는 것이 중요합니다 — 같은 로그인을 두 프로그램이 나눠 쓰면 토큰 갱신이 겹쳐 로그인이 풀립니다.
@@ -64,7 +64,7 @@ ARGO_ROOT=~/.argo/office-hook argo login
 ### 4. 확인
 
 ```bash
-ARGO_ROOT=~/.argo/office-hook argo office tasks
+ARGO_ROOT=~/.argo/office-hook node <argo>/bin/argo.mjs office tasks
 ```
 
 끝내지 않은 일 목록이 나오면 로그인과 조직 설정이 맞습니다. 로그인이 안 돼 있으면 안내 한 줄과 함께 종료 코드 2로 끝납니다.
@@ -73,16 +73,16 @@ ARGO_ROOT=~/.argo/office-hook argo office tasks
 
 ```bash
 # 세션 상태를 직접 보고(훅이 하는 일) — 맡은 할 일을 정하면 이후 훅이 그 id를 이어 보낸다
-ARGO_ROOT=~/.argo/office-hook argo office report --org <조직 id> --id <세션 id> --name "<제목>" [--project <폴더>] [--task <할 일 id>]
+ARGO_ROOT=~/.argo/office-hook node <argo>/bin/argo.mjs office report --org <조직 id> --id <세션 id> --name "<제목>" [--project <폴더>] [--task <할 일 id>]
 
 # 미루는 일을 새 보류 일로 남기기(담당 = 로그인한 사람, 출처 = 이 세션). --source-name(세션 제목)은 꼭 넣는다 — 없으면 종료 코드 1
-ARGO_ROOT=~/.argo/office-hook argo office hold "<제목>" --reason "<보류 사유>" --source-name "<세션 제목>" [--org <조직 id>]
+ARGO_ROOT=~/.argo/office-hook node <argo>/bin/argo.mjs office hold "<제목>" --reason "<보류 사유>" --source-name "<세션 제목>" [--org <조직 id>]
 
 # 오피스에 이미 있는 일을 보류로(이미 보류인 일이면 보류한 날은 두고 사유만 바꾼다)
-ARGO_ROOT=~/.argo/office-hook argo office hold --task <할 일 id> --reason "<보류 사유>" [--org <조직 id>]
+ARGO_ROOT=~/.argo/office-hook node <argo>/bin/argo.mjs office hold --task <할 일 id> --reason "<보류 사유>" [--org <조직 id>]
 
 # 끝내지 않은 일 보기
-ARGO_ROOT=~/.argo/office-hook argo office tasks [--org <조직 id>] [--json]
+ARGO_ROOT=~/.argo/office-hook node <argo>/bin/argo.mjs office tasks [--org <조직 id>] [--json]
 ```
 
 "이것부터"처럼 먼저 할 일을 정했다면, 그 대상은 미루는 일의 보류 사유에 적습니다.

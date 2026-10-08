@@ -14,6 +14,7 @@ import { randomUUID } from 'node:crypto';
 import { open, readFile, writeFile, rename, mkdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 
 export const REPORT_EVERY_MS = 4 * 60_000;   // 같은 값이면 4분에 한 번(서버 office_session_report의 쓰기 조건과 같은 값)
 export const FAIL_PAUSE_MS = 60_000;         // 실패(로그인 없음·네트워크) 뒤 1분은 다시 부르지 않는다 — 턴마다 3초씩 기다리지 않게
@@ -21,6 +22,8 @@ export const DENY_PAUSE_MS = 6 * 3600e3;     // 영구 거절(권한·입력) �
 export const STATE_KEEP_MS = 8 * 24 * 3600e3; // 상태 파일 기록 보존 8일(서버 세션 보존과 같다)
 /** 다시 불러도 같은 답이 오는 서버 거절 — 네트워크·로그인 실패(1분 쉬기)와 가른다 */
 export const PERMANENT_DENY = /session_forbidden|session_input/; // 서버는 200행 상한에서 거절하지 않고 오래된 행을 밀어낸다(session_limit 없음)
+// 로그인 안내에 쓰는 명령 — 이 저장소의 bin/argo.mjs를 지금 node로(맥에 설치된 argo가 office가 없는 예전 판일 수 있다, 10/8 실측)
+const LOGIN = `ARGO_ROOT=~/.argo/office-hook '${process.execPath}' '${fileURLToPath(new URL('../bin/argo.mjs', import.meta.url))}' login`;
 export const NAME_MAX = 120, TITLE_MAX = 200, REASON_MAX = 500;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const STATE_FILE = 'sessions.json';
@@ -166,7 +169,7 @@ const T = {
       '  argo office tasks [--org <조직 id>] [--json]',
       '조직 id를 비우면 데이터 폴더(ARGO_ROOT)의 config.json {"org":"…"}을 씁니다.',
     ].join('\n'),
-    needLogin: '먼저 로그인해야 합니다 — argo login (훅 폴더라면 ARGO_ROOT=~/.argo/office-hook argo login)',
+    needLogin: `먼저 로그인해야 합니다 — ${LOGIN}`,
     needOrg: '조직 id가 필요합니다 — --org <조직 id> 또는 config.json {"org":"…"}',
     badId: (k) => `${k}는 uuid여야 합니다.`,
     badName: `--name은 1~${NAME_MAX}자입니다.`, badProject: `--project는 ${NAME_MAX}자까지입니다.`,
@@ -196,7 +199,7 @@ const T = {
       '  argo office tasks [--org <org id>] [--json]',
       'Without an org id, config.json {"org":"…"} in the data folder (ARGO_ROOT) is used.',
     ].join('\n'),
-    needLogin: 'Sign in first — argo login (for the hook folder: ARGO_ROOT=~/.argo/office-hook argo login)',
+    needLogin: `Sign in first — ${LOGIN}`,
     needOrg: 'An org id is needed — --org <org id> or config.json {"org":"…"}',
     badId: (k) => `${k} must be a uuid.`,
     badName: `--name must be 1-${NAME_MAX} characters.`, badProject: `--project is limited to ${NAME_MAX} characters.`,
