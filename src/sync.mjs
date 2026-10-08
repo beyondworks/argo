@@ -90,6 +90,11 @@ export const syncOn = () => (!!loadSyncCreds() || !!loadDeviceSession()) && proc
     .archive/(해고본)는 살아 있는 slug가 아니라 대상 아님. */
 export const isRoomCardRel = (rel) => /^agents\/[^/]+\.md$/.test(rel) && collidesWithRoom(rel.slice('agents/'.length, -'.md'.length));
 const isLocalImportRel = (rel) => rel.split('/')[0] === '.local-assets';
+/** 능동 비서 상태(.assistant/ — src/assistant/state.mjs): 보낸 키·보류 목록·대기열·확인 범위. 확인할 때마다 바뀌는 기기 로컬 값이라 올리지 않고(EXCLUDE —
+    storage.objects 업서트가 쌓이는 2026-09-23 리스·심박 711MB와 같은 모양), 원격에 있어도 **diff 불가시**(받기·삭제 전파·브레이크 집계 전부 건너뜀)로 다룬다.
+    버전 섞임(#863 분리 검수 LOW): 옛 버전으로 내린 기기는 EXCLUDE에 이 줄이 없어 상태 파일을 올린다. EXCLUDE는 로컬 walk에만 걸려, 새 기기가 그 사본을 받아
+    자기 상태를 덮고 다음 사이클에 '로컬 삭제'로 원격을 지우게 된다(.local-assets와 같은 계약). 기기 사이 이어받기는 알림 글 meta로 한다(설계 7절, 3단계). */
+const isAssistantStateRel = (rel) => rel.split('/')[0] === '.assistant';
 
 /** 개발 산출물 디렉터리(node_modules·.git·가상환경·크롬 프로필 등) — 라이브 실측(2026-09-14): companies 버킷
     25GB 중 이런 디렉터리가 약 7GB를 차지하고 매 사이클(8s) walk가 전부 읽고 해시했다. isRoomCardRel과 같은
@@ -138,6 +143,8 @@ export const EXCLUDE = (rel) => { // (export: 회귀 테스트용)
   // 팀 메신저 채널 기억의 PC 사본(.msgr-journal/ — memory.mjs relocateOrgJournals). 채널·조직 기억은 서버에만(유건 결정 2026-09-24) —
   // 개인 클라우드·다른 기기로 퍼지면 퇴장 회수가 원격에서 되살아난다(검수 #691 M2).
   if (rel.split('/')[0] === '.msgr-journal') return true;
+  // 능동 비서 상태(.assistant/ — isAssistantStateRel 주석). 설정(assistant.json)은 동기화 대상이다.
+  if (isAssistantStateRel(rel)) return true;
   const base = rel.split('/').pop();
   if (
     base.startsWith('.gateway') || base.startsWith('.gw-offset') ||
@@ -281,6 +288,18 @@ export function isCloudLeader() {
   return !syncOn() || leaseState.leader;
 }
 
+/** 리스 글의 비서 엔진 번호 — 능동 비서 감시기(src/assistant)가 든 본체가 리스를 쓸 때 싣는다. 옛 본체는 이 칸을 쓰지 않고 모르는 칸은 무시한다(쓰기 수 그대로).
+    리더가 아닌 새 본체는 매 주기 읽는 리스 글에서 이 칸이 없거나 낮으면 "실행 기기가 옛 버전이라 비서가 꺼져 있음"을 안다.
+    앱 버전 대신 번호를 쓰는 이유: 발행 전 개발 빌드(상주 :3001 등)는 package.json 버전이 직전 발행 그대로라 버전 비교가 감시기 있는 기기를 옛 버전으로 오판한다. */
+export const LEASE_ASSISTANT_ENGINE = 1;
+
+/** 리스 판정 값 읽기(능동 비서의 "리더 확인이 새것인가") — isCloudLeader는 메모리 표시(leader)만 보고 그 기본값이 true라,
+    잠들었다 깬 기기·막 시작한 프로세스도 동기화 주기가 리스를 다시 확인하기 전까지 자기가 리더라고 본다. 비서는 여기서
+    확인된 보유(ownedAt > 0)와 확인 시각(checkedAt)까지 본다. holder = 마지막으로 읽은 원격 리스 글의 주인({ deviceId, assistant, ts }, 없으면 null). */
+export function leaseCheck() {
+  return { syncOn: syncOn(), leader: !!leaseState.leader, ownedAt: leaseState.ownedAt || 0, checkedAt: leaseState.checkedAt || 0, holder: leaseState.holder ?? null };
+}
+
 /** 리스 쓰기 실패(판정 불가) 시 리더십을 유지해도 되는가 — **확인된 CAS 획득자이고 TTL 내**일 때만 참.
     기본값 leader:true(미획득)는 여기서 반드시 거짓이어야 한다: 참이면 리스를 얻은 적 없는 프로세스가
     리더로 고착해 루틴 이중 실행·이중 과금·텔레그램 409가 난다(검수 2026-07-23). (export: 회귀 테스트용) */
@@ -299,6 +318,8 @@ export async function renewLease(owner, { runnerUsable = true } = {}) {
     const { data } = await client().storage.from(BUCKET).download(key);
     if (data) cur = JSON.parse(Buffer.from(await data.arrayBuffer()).toString());
   } catch { /* 최초 */ }
+  // 읽은 리스 글의 주인 — 리더가 아닌 기기가 "실행 기기가 옛 버전인가"를 판정하는 재료(leaseCheck, LEASE_ASSISTANT_ENGINE). 메모리만, 쓰기 없음.
+  leaseState.holder = cur?.deviceId ? { deviceId: String(cur.deviceId), assistant: Number(cur.assistant) || 0, ts: Number(cur.ts) || 0 } : null;
   const fresh = cur && Date.now() - cur.ts < LEASE_TTL_MS;
   // 실행 담당 우선 기기(ARGO_PREFER_LEADER=1 — 항상 켜진 서버의 argo CLI 상주, 2026-09-29): 다른 **일반** 기기가 잡은 새 리스는
   // 양보하지 않고 가져온다. 우선 기기끼리는 먼저 잡은 쪽을 존중(요동 금지). 러너 없는 우선 기기는 아래 양보 판정이 그대로 막는다.
@@ -334,7 +355,7 @@ export async function renewLease(owner, { runnerUsable = true } = {}) {
   // 이중 리더 창을 좁힌다: 내 토큰을 쓰고, 잠깐 뒤 다시 읽어 최종 승자가 나인지 확인.
   const token = randomUUID();
   const { error: upErr } = await client().storage.from(BUCKET).upload(
-    key, new Blob([JSON.stringify({ deviceId: me, token, ts: Date.now(), ...(preferred ? { preferred: true } : {}) })]),
+    key, new Blob([JSON.stringify({ deviceId: me, token, ts: Date.now(), ...(preferred ? { preferred: true } : {}), assistant: LEASE_ASSISTANT_ENGINE })]),
     { upsert: true, contentType: 'application/json' },
   );
   // 쓰기 실패(네트워크·RLS 거부 등) = 판정 불가. **확인된 보유자이고 TTL 내일 때만** 유지하고,
@@ -355,6 +376,7 @@ export async function renewLease(owner, { runnerUsable = true } = {}) {
     if (data) winner = JSON.parse(Buffer.from(await data.arrayBuffer()).toString());
   } catch { /* 재확인 실패 — 보수적으로 팔로워 */ }
   const iWon = winner && winner.token === token; // 내가 마지막 승자여야만 리더
+  if (winner?.deviceId) leaseState.holder = { deviceId: String(winner.deviceId), assistant: Number(winner.assistant) || 0, ts: Number(winner.ts) || 0 };
   if (iWon && !leaseState.leader) console.log(`[argo] 동기화: 실행 리더 획득 (${me})`);
   if (!iWon && leaseState.leader) console.log(`[argo] 동기화: 실행 리더 경합 양보 (${me})`);
   leaseState.leader = !!iWon;
@@ -515,7 +537,7 @@ export const isLedger = (rel) => rel.endsWith('.jsonl'); // usage.jsonl, events.
 export const isText = (rel) => rel.endsWith('.md');       // 노트·일지 — 충돌 시 양쪽 보존
 export const isThread = (rel) => /^chats\/[^/]+\.json$/.test(rel); // 진행 중 턴과 레이스 → 스레드 락
 /** 코어 모듈이 `<file>.lockd` 프로세스 간 잠금 안에서 읽고-고쳐-쓰는 파일(스레드 제외 — 스레드는 isThread). 동기화가 이 파일들을 쓸 때도 같은 잠금을 잡는다. (export: 회귀 테스트용) */
-export const isFileLockedRel = (rel) => /^(company|approvals|corrections|routines|connections)\.json$/.test(rel) || /^agents\/[^/]+\.md$/.test(rel);
+export const isFileLockedRel = (rel) => /^(company|approvals|corrections|routines|connections|assistant)\.json$/.test(rel) || /^agents\/[^/]+\.md$/.test(rel); // assistant.json — 비서 설정·알리지 않기 목록(설정 API가 같은 잠금 안에서 고친다)
 // 아카이브(.archive)·휴지통(.trash)은 content 삭제가 아니라 이동(비파괴) — 대량삭제 브레이크 집계에서 제외한다.
 // 세션 여러 개 삭제(=.archive→.trash 이동)가 브레이크를 걸어 소규모 회사 동기화를 영구 정지시키던 문제 방지(리뷰 M2). 동기화 push/pull 자체는 정상 진행.
 export const isArchival = (rel) => /(^|\/)\.(archive|trash)\//.test(rel);
@@ -918,8 +940,8 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
     }
   }
 
-  // 회의록 충돌 카드는 집합에서 빼 불가시 — 아래 브레이크 집계·전파 루프가 같은 집합을 돌므로 한 곳이면 된다(isRoomCardRel 주석).
-  const allRels = new Set([...Object.keys(local), ...Object.keys(remote.files), ...Object.keys(state)].filter((rel) => !isRoomCardRel(rel) && !isLocalImportRel(rel)));
+  // 회의록 충돌 카드·기기 로컬 상태(.local-assets·.assistant)는 집합에서 빼 불가시 — 아래 브레이크 집계·전파 루프가 같은 집합을 돌므로 한 곳이면 된다(isRoomCardRel 주석).
+  const allRels = new Set([...Object.keys(local), ...Object.keys(remote.files), ...Object.keys(state)].filter((rel) => !isRoomCardRel(rel) && !isLocalImportRel(rel) && !isAssistantStateRel(rel)));
 
   const archMoves = archivalCreateNames(local, state); // .archive→.trash 이동의 목적지 basename
   // 로컬 손상(readJson이 .corrupt-로 치워둠)으로 '부재'가 된 삭제 후보 — 삭제가 아니라 self-heal 대상.

@@ -67,7 +67,7 @@ export function onceSpent(schedule, now = new Date()) {
 
 /** 그 시간대의 벽시계(YYYY-MM-DD, HH:MM) → 절대 시각(ms). tz가 없으면 기기 로컬(isDue와 같은 규칙).
     JS는 임의 시간대의 Date를 못 만든다 — 벽시계를 UTC로 읽은 값에서 그 순간의 시간대 차이를 빼 맞춘다(두 번 — DST 경계 근사). */
-function zonedInstant(date, time, tz) {
+export function zonedInstant(date, time, tz) { // export: 능동 비서의 아침·저녁 묶음 시각(src/assistant/rules.mjs) — 같은 규칙을 두 벌 두지 않는다
   const [y, mo, d] = date.split('-').map(Number);
   const [h, mi] = time.split(':').map(Number);
   if (!tz) return new Date(y, mo - 1, d, h, mi).getTime();

@@ -479,6 +479,7 @@ const DOT_ITEMS = [
   ['root', '.sync-process.lock'], ['root', '.tombstones/my-co.json'],
   ['root', '.scheduler.lock'], ['root', '.gateway.lock'],
   ['root', '.server-presence.json'], // 앱 사이드카 실행 표식(2026-10-01) — 크루가 심으면 argo login이 영구 거절되거나 앱 실행 중 판정이 위조된다
+  ['ws', '.assistant/state.json'], // 능동 비서 상태(보낸 키·대기열) — 이름이 흔한 일반어라 경계 있는 형태로만 막는다(permission-gate BASH_DOT_DIR_RE)
 ];
 
 test('Bash 리터럴: 직속 도트 항목은 파일 도구와 같은 판정 — 도구별로 갈리지 않는다', async (tc) => {
@@ -521,6 +522,11 @@ test('Bash 리터럴: 과차단 없음 — 크루의 평범한 명령은 그대�
     'cat /Users/x/proj/src/events.gateway.ts',
     'npm test -- app.gateway.spec.ts',
     'cat config/payment.gateway.json',
+    // 무경계 `.assistant` 등재가 깨뜨렸던 것들(#863 분리 검수 MEDIUM 실측) — OpenAI SDK·채팅 앱 코드에 흔한 속성·파일 이름이다.
+    'python3 -c "from openai import OpenAI; print(OpenAI().beta.assistants.list())"',
+    'ls ~/work/app/src/components/Chat.Assistant.tsx',
+    `node -e "const r = require('./out.json'); console.log(r.choices[0].message.assistant)"`,
+    "jq '.assistant.content' ~/work/app/data.json",
   ];
   for (const command of ORDINARY) {
     assert.equal((await gate('Bash', { command })).behavior, 'allow', `과차단: ${command}`);

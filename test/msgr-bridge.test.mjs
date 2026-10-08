@@ -462,7 +462,7 @@ test('배선 핀: 게이트웨이 매니저·pushEvent·채널 종류 등재(구
   const pushStart = gw.indexOf('async function pushEvent(');
   const push = gw.slice(pushStart, gw.indexOf('const all = await loadConnections(event.wsId);', pushStart));
   assert.match(push, /await pushMsgr\(event\)\.catch\(/, 'pushEvent 머리에서 msgr 먼저(연결 파일 로드 전)');
-  assert.deepEqual([...CHANNEL_EVENTS.msgr], ['approval', 'delegate', 'crewmail', 'routine', 'job']);
+  assert.deepEqual([...CHANNEL_EVENTS.msgr], ['approval', 'delegate', 'crewmail', 'routine', 'job', 'assistant']); // assistant = 능동 비서(감시기가 직접 올린다 — 알림 버스 밖, 끈 목록만 공유)
   assert.equal(channelSends('msgr', { enabled: true }, 'approval'), true);
   assert.equal(channelSends('msgr', { enabled: true, mutedEvents: ['approval'] }, 'approval'), false, '음소거 존중');
 });

@@ -16,6 +16,7 @@ import { DELEGATION_LIMITS, getTree, isRelaxedStored } from './delegation-limits
 import { consolidateBacklog, rollupJournals } from './consolidate.mjs';
 import { runHealthChecks } from './runner-health.mjs';
 import { runFailureDigest } from './failure-digest.mjs';
+import { tickAssistant } from './assistant/tick.mjs'; // 능동 비서 감시기(일정) — 리더만, 기다리지 않는다
 import { daemonLease } from './lock.mjs';
 import { isCloudLeader, companySyncedSince, syncRunsElsewhere } from './sync.mjs';
 import { writeJsonAtomic, readJson } from './jsonstore.mjs';
@@ -283,75 +284,87 @@ export function crewmailMirrorCtx(cid, slug, msg) {
     crewId: msgrCrewIdBySlug(cid, slug, msg.msgr.orgId) ?? null, orgSlug: msg.msgr.orgSlug ?? null, channelName: msg.msgr.channelName ?? '' } : null;
 }
 
+/** 틱이 부르는 일 — 기본값이 곧 실제 배선이다. 테스트만 가짜를 넘겨 "어느 일을 리더 게이트 안팎에서 부르는가"를 행동으로 잠근다
+    (test/scheduler-tick-wiring.test.mjs). 소스 문자열 단언은 변이(`null &&`·죽은 코드)에 초록이라 게이트가 아니다(Argo CLAUDE.md 인접 회귀 방지 2). */
+const TICK_JOBS = { listCompanyIds, runDueRoutines, deliverCrewMail, tickHealthCheck, tickFailureDigest, tickAssistant, claimConsolidate, consolidateBacklog, rollupJournals, markConsolidateDone, bumpConsolidateClaim };
+
+/** 스케줄러 틱 한 번 — ensureScheduler의 60초 setInterval 본문을 그대로 옮긴 것. 주입(jobs·now·cloudLeader)은 테스트 전용이다.
+    본문은 아래 이름 그대로 부르도록 jobs를 같은 이름으로 펼친다 — 기존 배선 앵커(crewmail·runner-health·failure-digest·consolidate 테스트)가 같은 문장을 본다. */
+export async function schedulerTick(lease, { jobs = TICK_JOBS, now: nowAt = null, cloudLeader: leaderAt = null } = {}) {
+  const { listCompanyIds, runDueRoutines, deliverCrewMail, tickHealthCheck, tickFailureDigest, tickAssistant, claimConsolidate, consolidateBacklog, rollupJournals, markConsolidateDone, bumpConsolidateClaim } = jobs;
+  noteSchedulerTick(awake, Date.now()); // 깨어남 판정은 리스와 무관하게 매 틱 — 리더가 아닐 때 잠들었다 깨어나 리더가 돼도 깨어난 시각을 안다
+  // 프로세스 단위 단일 실행(daemonLease)은 틱 전체의 전제. 기기 간 단일 실행(isCloudLeader)은
+  // **루틴·기억 정리에만** 건다 — 크루 우편함(mail/)은 동기화 제외 기기 로컬 큐(sync.mjs EXCLUDE)라
+  // 비리더 기기에서 발신된 쪽지는 그 기기만 배달할 수 있다. 클라우드 리더 게이트를 우편에까지 걸면
+  // 비리더 발신분이 attempts 0인 채 영영 미배달(dead-letter로도 못 감)되는 무증상 소실이 된다
+  // (architect 검증 2026-07-28). 기기 간 이중 배달은 큐가 로컬이라 구조적으로 불가하고, 같은 기기
+  // 안의 중복은 daemonLease + .claimed rename 선점이 이미 막는다.
+  if (!lease.isLeader()) return;
+  const cloudLeader = leaderAt ?? isCloudLeader();
+  try {
+    // 틱은 회사 id만 쓴다 — listCompanies()는 크루·기억 md 전체를 파싱해 60초 폴에 비싸고,
+    // 우편 배달이 비리더 기기에서도 돌게 되면서(위) 그 비용이 전 기기로 번진다(분리 검수 LOW-1).
+    const companyIds = await listCompanyIds();
+    const now = nowAt ?? new Date();
+    const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    for (const cid of companyIds) {
+      // 회사별 오류 격리 — loadRoutines는 손상 routines.json에 의도적으로 throw한다. 틱 단위
+      // catch뿐이면 회사 하나의 손상이 뒤 회사 전부의 루틴·우편·정리를 매분 굶긴다(검수 MEDIUM-1).
+      try {
+        if (cloudLeader) await runDueRoutines(cid, now);
+        // 크루 우편 배달 — 비동기 쪽지(send_to_crew)를 수신 크루의 새 턴으로. 회사당 틱 상한은
+        // crewmail이 강제. **await 금지**(분리 검수 HIGH-4): LLM 턴을 틱에서 기다리면 다른 회사의
+        // 루틴·기억 정리가 밀리고 틱이 겹쳐 이중 배달 조건이 된다 — 루틴과 같은 fire-and-forget +
+        // 회사별 in-flight 가드(consolidating 패턴).
+        if (!mailDelivering.has(cid)) {
+          mailDelivering.add(cid);
+          deliverCrewMail(cid, (slug, msg, opts) => crewmailTurn(cid, slug, msg, opts))
+            .catch((e) => console.error(`[argo] 에이전트 우편 배달 오류(${cid}):`, e.message))
+            .finally(() => mailDelivering.delete(cid));
+        }
+        // 러너 주기 건강 검진(P1-2 후속) — fire-and-forget. 자체 스로틀(30분·과금 러너 6시간)이
+        // 있어 매 틱 호출해도 실제 벤더 호출은 드물다. cloudLeader 게이트 안에 두는 이유: 기기마다
+        // 돌면 같은 자격에 대한 과금 검증이 기기 수만큼 곱해진다(#378 검수 지적의 확대판).
+        if (cloudLeader) tickHealthCheck(cid);
+        // 실패 서명 다이제스트 — 같은 오류가 24h에 N회 반복되면 활동 한 줄(서명당 하루 1회). 검진과 같은 이유로 리더만(기기 수만큼 곱하지 않게).
+        if (cloudLeader) tickFailureDigest(cid);
+        if (cloudLeader && hhmm >= CONSOLIDATE_AT) {
+          const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+          // 진행 중이면 시도 횟수를 태우지 않고 그냥 넘긴다(선점 자체를 하지 않는다)
+          const claimed = consolidating.has(cid) ? null : await claimConsolidate(cid, now.getTime(), today);
+          if (claimed) {
+            consolidating.add(cid);
+            const nth = `${claimed.attempts}/${CONSOLIDATE_MAX_ATTEMPTS}회차`;
+            console.log(`[argo] 기억 정리: ${cid} (${nth})`);
+            // 재시도는 consolidate부터 다시 탄다 — 워터마크가 성공 후에만 전진하므로 이미 정제된
+            // 구간은 조기 반환(LLM 호출 0)이고, rollup은 주간 블록 중복 append를 자체 차단한다.
+            // 야간 루프 — 잔량 소진·밤당 7MB·08:00·청구 러너 5청크 중 먼저 닿는 것까지 청크를 연속 정리
+            const deadline = new Date(now.getFullYear(), now.getMonth(), now.getDate(), CONSOLIDATE_UNTIL_HOUR, 0, 0).getTime();
+            consolidateBacklog(cid, { deadlineMs: Math.max(deadline, now.getTime() + 60_000), onChunk: () => bumpConsolidateClaim(cid, Date.now(), today) }) // 08:00 뒤 캐치업이면 최소 1청크
+              .then((r) => console.log(`[argo] 기억 정리 끝: ${cid} 청크 ${r.chunks}·${Math.round(r.bytes / 1024)}KB·노트 ${r.notes.length} (${r.stoppedBy})`))
+              .then(() => rollupJournals(cid)) // 정제가 소화한 일지만 주간으로 접힌다
+              .then(() => markConsolidateDone(cid, today))
+              .catch((e) => console.error(
+                `[argo] 기억 정리 실패 ${cid} (${nth}, 다음 재시도 ${claimed.nextRetryAt ?? '없음 — 오늘은 종료'}):`, e.message))
+              .finally(() => consolidating.delete(cid));
+          }
+        }
+        // 능동 비서 감시기(src/assistant/tick.mjs) — 사용자의 일정을 읽기만 하며 시작 전·아침·저녁에 개인 공간 1:1 방으로 먼저 알린다. 기본 꺼짐(assistant.json).
+        // 검진·다이제스트와 같은 이유로 리더만(기기 수만큼 곱하지 않게), 기다리지 않는다(회사별 진행 중 표시). 회사 처리의 맨 끝 — 앞의 일을 막지 않는다.
+        if (cloudLeader) tickAssistant(cid);
+      } catch (e) {
+        console.error(`[argo] 스케줄러 회사 처리 실패(${cid}):`, e.message);
+      }
+    }
+  } catch (e) {
+    console.error('[argo] 스케줄러 오류:', e.message);
+  }
+}
+
 export function ensureScheduler() {
   if (globalThis.__argoScheduler) return;
   globalThis.__argoScheduler = true;
   const lease = daemonLease('scheduler'); // Next 멀티 워커에서도 실행 주체는 하나만
   console.log('[argo] 루틴 스케줄러 시작 (60s 폴)');
-  setInterval(async () => {
-    noteSchedulerTick(awake, Date.now()); // 깨어남 판정은 리스와 무관하게 매 틱 — 리더가 아닐 때 잠들었다 깨어나 리더가 돼도 깨어난 시각을 안다
-    // 프로세스 단위 단일 실행(daemonLease)은 틱 전체의 전제. 기기 간 단일 실행(isCloudLeader)은
-    // **루틴·기억 정리에만** 건다 — 크루 우편함(mail/)은 동기화 제외 기기 로컬 큐(sync.mjs EXCLUDE)라
-    // 비리더 기기에서 발신된 쪽지는 그 기기만 배달할 수 있다. 클라우드 리더 게이트를 우편에까지 걸면
-    // 비리더 발신분이 attempts 0인 채 영영 미배달(dead-letter로도 못 감)되는 무증상 소실이 된다
-    // (architect 검증 2026-07-28). 기기 간 이중 배달은 큐가 로컬이라 구조적으로 불가하고, 같은 기기
-    // 안의 중복은 daemonLease + .claimed rename 선점이 이미 막는다.
-    if (!lease.isLeader()) return;
-    const cloudLeader = isCloudLeader();
-    try {
-      // 틱은 회사 id만 쓴다 — listCompanies()는 크루·기억 md 전체를 파싱해 60초 폴에 비싸고,
-      // 우편 배달이 비리더 기기에서도 돌게 되면서(위) 그 비용이 전 기기로 번진다(분리 검수 LOW-1).
-      const companyIds = await listCompanyIds();
-      const now = new Date();
-      const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-      for (const cid of companyIds) {
-        // 회사별 오류 격리 — loadRoutines는 손상 routines.json에 의도적으로 throw한다. 틱 단위
-        // catch뿐이면 회사 하나의 손상이 뒤 회사 전부의 루틴·우편·정리를 매분 굶긴다(검수 MEDIUM-1).
-        try {
-          if (cloudLeader) await runDueRoutines(cid, now);
-          // 크루 우편 배달 — 비동기 쪽지(send_to_crew)를 수신 크루의 새 턴으로. 회사당 틱 상한은
-          // crewmail이 강제. **await 금지**(분리 검수 HIGH-4): LLM 턴을 틱에서 기다리면 다른 회사의
-          // 루틴·기억 정리가 밀리고 틱이 겹쳐 이중 배달 조건이 된다 — 루틴과 같은 fire-and-forget +
-          // 회사별 in-flight 가드(consolidating 패턴).
-          if (!mailDelivering.has(cid)) {
-            mailDelivering.add(cid);
-            deliverCrewMail(cid, (slug, msg, opts) => crewmailTurn(cid, slug, msg, opts))
-              .catch((e) => console.error(`[argo] 에이전트 우편 배달 오류(${cid}):`, e.message))
-              .finally(() => mailDelivering.delete(cid));
-          }
-          // 러너 주기 건강 검진(P1-2 후속) — fire-and-forget. 자체 스로틀(30분·과금 러너 6시간)이
-          // 있어 매 틱 호출해도 실제 벤더 호출은 드물다. cloudLeader 게이트 안에 두는 이유: 기기마다
-          // 돌면 같은 자격에 대한 과금 검증이 기기 수만큼 곱해진다(#378 검수 지적의 확대판).
-          if (cloudLeader) tickHealthCheck(cid);
-          // 실패 서명 다이제스트 — 같은 오류가 24h에 N회 반복되면 활동 한 줄(서명당 하루 1회). 검진과 같은 이유로 리더만(기기 수만큼 곱하지 않게).
-          if (cloudLeader) tickFailureDigest(cid);
-          if (cloudLeader && hhmm >= CONSOLIDATE_AT) {
-            const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-            // 진행 중이면 시도 횟수를 태우지 않고 그냥 넘긴다(선점 자체를 하지 않는다)
-            const claimed = consolidating.has(cid) ? null : await claimConsolidate(cid, now.getTime(), today);
-            if (claimed) {
-              consolidating.add(cid);
-              const nth = `${claimed.attempts}/${CONSOLIDATE_MAX_ATTEMPTS}회차`;
-              console.log(`[argo] 기억 정리: ${cid} (${nth})`);
-              // 재시도는 consolidate부터 다시 탄다 — 워터마크가 성공 후에만 전진하므로 이미 정제된
-              // 구간은 조기 반환(LLM 호출 0)이고, rollup은 주간 블록 중복 append를 자체 차단한다.
-              // 야간 루프 — 잔량 소진·밤당 7MB·08:00·청구 러너 5청크 중 먼저 닿는 것까지 청크를 연속 정리
-              const deadline = new Date(now.getFullYear(), now.getMonth(), now.getDate(), CONSOLIDATE_UNTIL_HOUR, 0, 0).getTime();
-              consolidateBacklog(cid, { deadlineMs: Math.max(deadline, now.getTime() + 60_000), onChunk: () => bumpConsolidateClaim(cid, Date.now(), today) }) // 08:00 뒤 캐치업이면 최소 1청크
-                .then((r) => console.log(`[argo] 기억 정리 끝: ${cid} 청크 ${r.chunks}·${Math.round(r.bytes / 1024)}KB·노트 ${r.notes.length} (${r.stoppedBy})`))
-                .then(() => rollupJournals(cid)) // 정제가 소화한 일지만 주간으로 접힌다
-                .then(() => markConsolidateDone(cid, today))
-                .catch((e) => console.error(
-                  `[argo] 기억 정리 실패 ${cid} (${nth}, 다음 재시도 ${claimed.nextRetryAt ?? '없음 — 오늘은 종료'}):`, e.message))
-                .finally(() => consolidating.delete(cid));
-            }
-          }
-        } catch (e) {
-          console.error(`[argo] 스케줄러 회사 처리 실패(${cid}):`, e.message);
-        }
-      }
-    } catch (e) {
-      console.error('[argo] 스케줄러 오류:', e.message);
-    }
-  }, 60_000);
+  setInterval(() => schedulerTick(lease), 60_000); // 오류 처리 범위는 종전 콜백과 같다 — 회사별·틱 단위 try가 schedulerTick 안에 그대로 있다
 }

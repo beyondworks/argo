@@ -19,7 +19,9 @@ export const CHANNEL_EVENTS = Object.freeze({
   telegram: Object.freeze(['approval', 'routine', 'job', 'crewmail', 'inbox']),
   slack: Object.freeze(['approval', 'routine']),
   // 팀 메신저에서 시작한 실행만 원래 채널에 보낸다. 저장 origin 없는 일반 루틴은 기존 채널을 유지한다.
-  msgr: Object.freeze(['approval', 'delegate', 'crewmail', 'routine', 'job']),
+  // 'assistant' = 능동 비서 알림(src/assistant — 개인 공간 1:1 방). 알림 버스(emitNotify)를 타지 않고 감시기가 직접 올리지만, 이 채널이 보내는 전부를
+  // 열거한다는 원칙(위 'inbox'와 같은 이유)으로 여기 있다. 끈 목록(company.json msgr.mutedEvents)에 있으면 감시기가 글을 만들지 않는다.
+  msgr: Object.freeze(['approval', 'delegate', 'crewmail', 'routine', 'job', 'assistant']),
 });
 
 /** 저장 정규화 — 목록 밖 값·중복·비배열을 걸러낸다(끈 목록이 쓰레기로 커지지 않게).
