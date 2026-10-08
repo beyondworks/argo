@@ -96,7 +96,7 @@ test('예비 기기가 담당일 때 갱신 간격은 일반 기기와 같다 �
 
 /* ── 일반 기기(맥)의 되찾기 ── */
 
-test('맥(일반·러너 있음)은 예비 기기가 잡은 새 리스를 되찾는다 — 첫 주기는 쓰기만 하고 담당이 아니며, 다음 주기에 그 글이 그대로면 담당(쓰기 합계 1)', async () => {
+test('맥(일반·러너 있음)은 예비 기기가 잡은 새 리스를 되찾는다 — 가져온 주기는 쓰기만 하고 담당이 아니며, 넘겨받기 대기(한 주기 + 2초) 뒤 그 글이 그대로면 담당(쓰기 합계 1)', async () => {
   const f = fakeClient(fresh('vps', { standby: true }));
   _setSyncClientForTest(f.client); reset({ leader: false });
   await renewLease('owner-m1', { runnerUsable: true });
