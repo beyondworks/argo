@@ -26,6 +26,7 @@ const FIELD_OF = { title: 'task.f.title', due: 'task.f.due', start: 'task.f.star
 /** 바뀐 기록 한 줄의 글 */
 export function historyLine(h) {
   if (!FIELD_OF[h.kind]) return t(`task.h.${h.kind}`);
+  if (h.kind === 'status' && h.from === 'hold' && h.to === 'hold') return t('task.h.holdReason'); // 이미 보류인 일의 사유만 고친 기록(서버는 같은 'status' 줄로 남긴다 — 사유 값은 없다)
   const val = (v) => {
     if (v == null || v === '') return t('task.h.none');
     if (h.kind === 'status') return t(`task.st.${v}`);
@@ -47,27 +48,31 @@ export default function TaskPanel({ space, id, taskSpace, onClose, onManageCats 
   const ctx = useMemo(() => makeCtx(today, people), [today, people]);
   const [rev, setRev] = useState(0), [hist, setHist] = useState(null), [histFail, setHistFail] = useState(false);
   const [saving, setSaving] = useState(0), [ask, setAsk] = useState(false);
-  const [title, setTitle] = useState(row?.title ?? ''), [note, setNote] = useState(row?.note ?? '');
+  const [title, setTitle] = useState(row?.title ?? ''), [note, setNote] = useState(row?.note ?? ''), [reason, setReason] = useState(row?.hold_reason ?? '');
   const editing = useRef(new Set()); // 지금 고치는 글 칸 — 다시 읽은 값이 친 글자를 덮지 않게
   const seen = useRef(false);
   useEffect(() => { let live = true; setHistFail(false); loadTaskHistory(ts, id).then((h) => { if (live) setHist(h); }, () => { if (live) setHistFail(true); }); return () => { live = false; }; }, [ts, id, rev]);
   useEffect(() => { if (row && !editing.current.has('title')) setTitle(row.title); }, [row?.title]);
   useEffect(() => { if (row && !editing.current.has('note')) setNote(row.note ?? ''); }, [row?.note]);
+  useEffect(() => { if (row && !editing.current.has('reason')) setReason(row.hold_reason ?? ''); }, [row?.hold_reason]);
   useEffect(() => { if (row) seen.current = true; else if (seen.current) onClose(); }, [!!row]); // 취소하면 목록에서 빠진다 — 패널도 닫는다
   const latest = useRef(null);
+  // 이 할 일의 쓰기는 한 줄로 이어 보낸다 — 사유 칸을 벗어나며 저장하는 것과 상태 단추가 겹쳐도 보낸 차례대로 처리돼 뒤 요청이 앞 요청을 되돌리지 않게
+  const queue = useRef(Promise.resolve());
+  const inLine = (job) => { const run = queue.current.then(job, job); queue.current = run.catch(() => {}); return run; };
   useEffect(() => () => { // 글 칸에 커서를 둔 채 Esc·바깥 누르기로 닫으면 칸을 벗어나는 일이 생기지 않는다 — 닫을 때 남은 글을 저장한다
     const cur = latest.current;
     if (!cur) return;
-    for (const [field, value] of [['title', cur.title], ['note', cur.note]]) {
+    for (const [field, value] of [['title', cur.title], ['note', cur.note], ['reason', cur.reason]]) {
       if (!editing.current.has(field)) continue;
-      const plan = V.planField(cur.it, field, value, cur.ctx), writes = V.writesOf(plan);
-      if (!plan.reason && writes.length) runWrites(writes, space).then(({ failed }) => { if (failed) showToast(t(failed)); });
+      const plan = field === 'reason' ? V.planHoldReason(cur.it, value, cur.ctx) : V.planField(cur.it, field, value, cur.ctx), writes = V.writesOf(plan);
+      if (!plan.reason && writes.length) inLine(() => runWrites(writes, space)).then(({ failed }) => { if (failed) showToast(t(failed)); });
     }
   }, []);
 
   if (!row) return <Panel title={t('task.panel')} onClose={onClose}><p className="mod-empty" role="status">…</p></Panel>;
   const it = V.taskItem(row);
-  latest.current = { it, title, note, ctx };
+  latest.current = { it, title, note, reason, ctx };
   const admin = ts !== 'me' && canManage(ts);
   const may = (action) => V.taskCan(action, row, ctx.me, admin);
   const canEdit = (field) => !it.done && may(V.FIELD_ACTION[field]);
@@ -82,9 +87,9 @@ export default function TaskPanel({ space, id, taskSpace, onClose, onManageCats 
     const writes = V.writesOf(plan);
     if (!writes.length) return true;
     setSaving((n) => n + 1);
-    const { failed } = await runWrites(writes, space);
+    const { failed } = await inLine(() => runWrites(writes, space));
     setSaving((n) => n - 1);
-    if (failed) { showToast(t(failed)); return false; }
+    if (failed) { showToast(t(failed)); if (failed === 'task.error.conflict') setRev((r) => r + 1); return false; } // 충돌이면 목록은 runWrites가 다시 읽는다 — 기록도 다시
     setRev((r) => r + 1);
     return true;
   };
@@ -92,6 +97,12 @@ export default function TaskPanel({ space, id, taskSpace, onClose, onManageCats 
     editing.current.delete(field);
     if (!(await save(V.planField(it, field, value, ctx)))) reset(field === 'title' ? row.title : row.note ?? '');
   };
+  // 보류 사유(업무 현황 10/8) — 메모처럼 칸을 벗어날 때 저장, 실패하면 저장된 값으로 되돌린다
+  const saveReason = async () => {
+    editing.current.delete('reason');
+    if (!(await save(V.planHoldReason(it, reason, ctx)))) setReason(row.hold_reason ?? '');
+  };
+  const holding = !it.done && it.status === 'hold';
   const spaceName = ts === 'me' ? '' : SPACES.find((s) => s.key === ts)?.name;
   const page = row.source?.kind === 'page' && typeof row.source.page_id === 'string' ? row.source.page_id : null;
   const hint = it.done ? (canStatus ? t('task.doneLock') : t('task.viewOnly')) : !anyEdit ? (canStatus ? t('task.assigned') : t('task.viewOnly')) : '';
@@ -144,6 +155,11 @@ export default function TaskPanel({ space, id, taskSpace, onClose, onManageCats 
           onChange={(e) => save(V.planField(it, 'due_on', e.target.value || null, ctx))} />
       </div>
       {badDates && <p className="tk-hint" role="alert">{t('task.badDates')}</p>}
+      {holding && <label className="field-block">
+        <span className="label">{t('task.f.holdReason')}{row.held_at && <span className="dim"> · {t('task.heldAt', { d: stamp(row.held_at) })}</span>}</span>
+        <textarea className="input area tk-reason" rows={2} value={reason} maxLength={V.HOLD_REASON_MAX} placeholder={canStatus ? t('task.holdReasonPh') : ''} disabled={!canStatus}
+          onFocus={() => editing.current.add('reason')} onChange={(e) => setReason(e.target.value)} onBlur={saveReason} />
+      </label>}
       <label className="field-block">
         <span className="label">{t('task.f.note')}</span>
         <textarea className="input area tk-note" value={note} maxLength={4000} placeholder={canEdit('note') ? t('task.notePh') : ''} disabled={!canEdit('note')}

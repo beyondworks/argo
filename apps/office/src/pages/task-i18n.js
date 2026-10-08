@@ -27,6 +27,8 @@ export const TASK_DICT = {
   'task.details': ['자세히 보기', 'Details'], 'task.panel': ['할 일', 'To-do'],
   'task.f.title': ['제목', 'Title'], 'task.f.status': ['상태', 'Status'], 'task.f.priority': ['중요도', 'Priority'], 'task.f.category': ['분류', 'Category'],
   'task.f.assignee': ['맡은 사람', 'Assignee'], 'task.f.start': ['시작일', 'Start'], 'task.f.due': ['기한', 'Due'], 'task.f.note': ['메모', 'Notes'],
+  'task.f.holdReason': ['보류 사유', 'Why on hold'], 'task.h.holdReason': ['보류 사유를 고침', 'Changed the reason for hold'], 'task.heldAt': ['{d} 보류', 'On hold since {d}'],
+  'task.holdReasonPh': ['왜 멈췄는지, 무엇부터 해야 하는지 적어 두세요', 'Why it is paused and what has to happen first'],
   'task.notePh': ['메모를 적고 칸을 벗어나면 저장됩니다', 'Notes save when you leave the box'],
   'task.saving': ['저장 중…', 'Saving…'], 'task.savedNow': ['저장했습니다', 'Saved'],
   'task.assigned': ['남이 맡긴 일은 상태 바꾸기와 끝내기만 할 수 있습니다.', 'On to-dos assigned to you, you can change the status and finish them.'],

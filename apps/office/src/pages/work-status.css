@@ -1,0 +1,27 @@
+/* 업무 현황(10/8) — 화면과 함께 지연 로드된다. 카드는 홈 모듈(.module)·줄은 .mod-row 규칙을 그대로 쓰고, 색·둥글기는 토큰만 */
+.ws { display: grid; gap: var(--module-gap); }
+.ws .page-title-row { margin-bottom: 0; }
+.ws-sum { display: flex; flex-wrap: wrap; gap: 6px; }
+.ws-sum .badge { height: 26px; padding: 0 10px; font-size: 12.5px; }
+.ws-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: var(--module-gap); align-items: start; }
+.ws-head-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
+.ws-head-main h3 { flex: 0 1 auto; }
+.ws-owner { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } /* 남의 카드 — 주인 이름(10/8 결정 다) */
+.ws-places { display: flex; flex-wrap: wrap; gap: 4px; padding: 10px 16px 0; }
+.ws-places .badge { height: 18px; padding: 0 6px; font-size: 11px; }
+.ws-now { display: grid; gap: 2px; padding: 8px 16px 2px; }
+.ws-now p { margin: 0; font-size: 12.5px; color: var(--fg-2); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-now b { font-weight: 600; color: var(--fg); margin-right: 6px; }
+.ws-group { padding: 6px 8px 0; }
+.ws-group h4 { margin: 4px 8px 2px; font-size: 11.5px; font-weight: 560; color: var(--fg-3); }
+.ws-task { width: 100%; border: 0; background: transparent; font: inherit; color: inherit; text-align: left; cursor: pointer; align-items: flex-start; }
+.ws-task > .dot { margin-top: 6px; }
+.ws-task .badge { flex: none; margin-top: 1px; }
+.ws-task-main { flex: 1; min-width: 0; display: grid; line-height: 1.45; font-size: 13px; }
+.ws-task-main small { font-size: 12px; color: var(--fg-3); }
+.ws-reason { color: var(--fg-2); }
+.ws-more { padding: 2px 8px 0 25px; font-size: 12px; color: var(--fg-3); }
+.ws-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 16px 12px; font-size: 12px; color: var(--fg-3); }
+.ws-idle { margin: 0; padding: 0 4px; font-size: 12.5px; color: var(--fg-3); }
+.ws-idle b { font-weight: 560; color: var(--fg-2); }
+@media (hover: hover) { .ws-task:hover { background: var(--card-2); } }

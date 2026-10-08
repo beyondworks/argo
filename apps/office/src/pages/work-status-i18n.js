@@ -1,0 +1,23 @@
+// 업무 현황 화면 사전 — 화면과 함께 지연 로드된다(첫 화면 150KB 상한). 메뉴 이름(nav.status)만 core/i18n.js에 있다
+export const WORK_STATUS_DICT = {
+  'ws.sub': ['맥 세션·VPS 봇·아르고 에이전트가 하는 일을 사람별로 봅니다', 'What Mac sessions, VPS bots and Argo agents are working on, by person'],
+  'ws.subMember': ['내 에이전트·내 세션과 내가 맡거나 맡긴 일만 보입니다', 'Only your agents, your sessions and tasks you own or assigned are shown'],
+  'ws.orgOnly': ['업무 현황은 조직 공간에서 봅니다', 'Work status is shown in an organization space'],
+  'ws.sum.doing': ['진행 중 {n}', '{n} in progress'], 'ws.sum.hold': ['보류 {n}', '{n} on hold'], 'ws.sum.overdue': ['기한 지남 {n}', '{n} overdue'],
+  'ws.sum.online': ['연결 {n}/{m}', '{n}/{m} online'],
+  'ws.held': ['보류된 업무', 'On hold'], 'ws.heldAt': ['{d} 보류', 'Held {d}'], 'ws.noReason': ['보류 사유가 없습니다', 'No reason given'],
+  'ws.place.session': ['맥 세션', 'Mac session'], 'ws.place.bot': ['VPS', 'VPS'], 'ws.place.local': ['아르고', 'Argo'],
+  'ws.online': ['연결됨', 'Online'], 'ws.offline': ['끊김', 'Offline'], 'ws.lastSeen': ['마지막 {t}', 'Last seen {t}'],
+  'ws.now.run': ['작업', 'Run'], 'ws.now.blocked': ['멈춘 작업', 'Blocked run'], 'ws.now.session': ['맡은 일', 'Working on'], 'ws.now.exec': ['답하는 중', 'Replying'],
+  'ws.doing': ['진행 중', 'In progress'], 'ws.hold': ['보류', 'On hold'], 'ws.todo': ['시작 전', 'Not started'], 'ws.more': ['외 {n}건', '+{n} more'],
+  'ws.overdueN': ['기한 지남 {n}', '{n} overdue'], 'ws.nextDue': ['다음 기한 {d}', 'Next due {d}'], 'ws.due': ['기한 {d}', 'Due {d}'],
+  'ws.idle': ['맡은 업무 없음', 'No work assigned'], 'ws.hiddenN': ['7일 넘게 안 보인 {n}명은 숨겼습니다', '{n} not seen for over 7 days are hidden'],
+  'ws.unowned': ['에이전트 없이 맡긴 일', 'Assigned without an agent'], 'ws.left': ['나간 사람', 'Former member'],
+  'ws.from.session': ['세션 {name}', 'Session {name}'], 'ws.from.crew': ['에이전트 {name}', 'Agent {name}'], 'ws.from.person': ['사람이 맡김', 'Assigned by a person'],
+  'ws.from.sessionAnon': ['세션', 'Session'], 'ws.otherOwner': ['다른 사람', 'Someone else'],
+  'ws.empty': ['아직 보여 줄 업무가 없습니다. 에이전트를 연결하거나 할 일을 만들어 보세요.', 'Nothing to show yet. Connect an agent or create a to-do.'],
+  'ws.refresh': ['새로 고침', 'Refresh'], 'ws.loading': ['불러오는 중…', 'Loading…'],
+  'ws.err.load': ['업무 현황을 불러오지 못했습니다', 'Could not load work status'],
+  'ws.err.forbidden': ['이 조직의 업무 현황을 볼 수 없습니다', 'You cannot view work status for this organization'],
+  'ws.err.signin': ['로그인이 풀렸습니다. 다시 로그인해 주세요.', 'You were signed out. Please sign in again.'],
+};

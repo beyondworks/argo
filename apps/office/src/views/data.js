@@ -157,7 +157,10 @@ async function writeAll(writes) {
         events = true;
       }
       ok++;
-    } catch (e) { failed ??= e.message; }
+    } catch (e) {
+      failed ??= e.message;
+      if (w.type === 'task' && e.message === 'task.error.conflict' && !sample()) stores.add(w.space); // 그사이 남이 바꿨다(예: 보류 사유만 고치는데 보류가 풀림) — 다시 읽어 지금 값을 보인다
+    }
   }
   if (sample()) emit();
   else await Promise.all([...stores].map((k) => loadTasks(k, true)));

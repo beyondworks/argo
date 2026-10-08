@@ -260,6 +260,7 @@ export function Sidebar({ space, path }) {
     docs: { to: `${base}/docs`, icon: NAV_ICON.docs, label: t('nav.docs'), active: at(`${base}/docs`) },
     perf: { to: `${base}/perf`, icon: NAV_ICON.perf, label: t('nav.perf'), active: at(`${base}/perf`) },
     ...Object.fromEntries(['people', 'company', 'agents'].map((v) => [v, { to: `${base}/${v}`, icon: NAV_ICON[v], label: t(`nav.${v}`), active: at(`${base}/${v}`) }])),
+    status: { to: `${base}/status`, icon: NAV_ICON.status, label: t('nav.status'), active: at(`${base}/status`) }, // 업무 현황(10/8) — 조직 공간에만
     tasks: { to: `${base}/tasks`, icon: NAV_ICON.tasks, label: t('nav.tasks'), count: due && due.overdue + due.today, active: at(`${base}/tasks`) },
     shared: { to: '/me/shared', icon: NAV_ICON.shared, label: t('nav.shared'), active: at('/me/shared') },
     knowhow: { to: `${base}/knowhow`, icon: NAV_ICON.knowhow, label: t('nav.knowhow'), active: at(`${base}/knowhow`) },
