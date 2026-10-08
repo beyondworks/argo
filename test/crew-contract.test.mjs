@@ -31,6 +31,9 @@ const CONTRACT = {
   msgr_crew_approvals: { bot: ['msgr_bot_request_approval', 'msgr_bot_request_agent_approval', 'msgr_bot_events', 'msgr_bot_ack_approval', 'msgr_bot_expire_approval'] },
   msgr_create_thread_approval: { bot: ['msgr_bot_request_agent_approval'] }, // 1-b: 에이전트가 올리는 결재(도구)
   msgr_can_decide: { server: '결정은 메신저에서 사람이 하고 RLS가 판정한다 — 크루 쪽 호출 없음' },
+  // 개인 공간 crew 1:1 결재(2026-10-08 PR-C, 계획 rc-0195 personal-crew-room-features-plan.md 7절) — 외부 봇 결재(msgr_bot_*)는 별도 경로라 이번 범위 밖
+  msgr_create_personal_approval: { pending: '개인 crew 1:1 결재 넣기(본체) — 외부 봇 결재는 msgr_bot_* 별도 경로라 이번 범위 밖, 봇 결재 RPC의 개인 갈래를 정할 때 연다' },
+  msgr_is_own_crew_room: { server: '봇 결재 카드는 넣기 트리거(msgr_personal_approval_gate)가 같은 판정(_msgr_own_crew_room)으로 막는다 — 봇 쪽 호출 없음' },
   msgr_post_thread_followup: { bot: ['msgr_bot_followup'] }, // 1-b: 결정 뒤 한 번만 원문 답글
   // 팀 업무
   msgr_work_runs: { bot: ['msgr_bot_updates'] },
@@ -94,7 +97,7 @@ const CONTRACT = {
   msgr_notification_finish: { argoOnly: 'Argo 데스크톱 알림 경로' },
 };
 // 다음 단계로 미룬 항목 — 늘리거나 줄일 때 이 목록을 같이 고친다(조용히 늘지 않게).
-const PENDING = ['msgr_crew_memory', 'msgr_execution_heartbeat', 'msgr_org_docs', 'msgr_personal_ai_consent_ok', 'msgr_work_heartbeat', 'office_briefing_get', 'office_briefing_list', 'office_briefing_write', 'office_business_read', 'office_business_write', 'office_company_read', 'office_company_write', 'office_event_list', 'office_event_write', 'office_file_get', 'office_file_list', 'office_file_write', 'office_mail_accounts', 'office_org_people', 'office_page_create', 'office_page_list_access', 'office_page_save', 'office_pages', 'office_people_read', 'office_perf_eval_list', 'office_perf_eval_write', 'office_task_category_list', 'office_task_list', 'office_task_write'];
+const PENDING = ['msgr_create_personal_approval', 'msgr_crew_memory', 'msgr_execution_heartbeat', 'msgr_org_docs', 'msgr_personal_ai_consent_ok', 'msgr_work_heartbeat', 'office_briefing_get', 'office_briefing_list', 'office_briefing_write', 'office_business_read', 'office_business_write', 'office_company_read', 'office_company_write', 'office_event_list', 'office_event_write', 'office_file_get', 'office_file_list', 'office_file_write', 'office_mail_accounts', 'office_org_people', 'office_page_create', 'office_page_list_access', 'office_page_save', 'office_pages', 'office_people_read', 'office_perf_eval_list', 'office_perf_eval_write', 'office_task_category_list', 'office_task_list', 'office_task_write'];
 
 function gatewayCalls() {
   const dir = root('src/gateway');

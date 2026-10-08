@@ -10,10 +10,10 @@ const { createCompany, paths } = await import('../src/workspace.mjs');
 const { makeCrewServer } = await import('../src/chat.mjs');
 const { runDirectives } = await import('../src/cli-directives.mjs');
 const { addRoutine, runRoutine, loadRoutines } = await import('../src/routines.mjs');
-const { loadApprovals } = await import('../src/approvals.mjs');
+const { loadApprovals, addApproval } = await import('../src/approvals.mjs');
 const approvals = await import('../src/approval-actions.mjs');
 const gateway = await import('../src/gateway.mjs');
-const { msgrPush } = await import('../src/gateway/msgr.mjs');
+const { msgrPush, _activeCtxForTest } = await import('../src/gateway/msgr.mjs');
 const { onNotify } = await import('../src/notify.mjs');
 let n = 0;
 // requester = 이 방에서 크루에게 지시한 사람. 기본은 주인이 아닌 'person'(종전 그대로). 손님 턴(PR-A)은 주인이 아닌 요청자의
@@ -691,5 +691,154 @@ test('messenger loop: 답이 LOOP 판정 줄뿐이면 빈 답 실패가 아니�
     assert.equal(cur.loop.lastVerdict, 'continue');
     assert.equal(cur.loop.missingVerdicts, 0);
     assert.equal(f.events.filter((e) => e.type === 'routine').length, 0, '판정 줄뿐인 회차는 채널에 제목만 있는 글을 올리지 않는다');
+  } finally { f.stop(); }
+});
+
+// ── 개인 공간 crew 1:1 이어 실행(2026-10-08 PR-C, 계획 rc-0195 personal-crew-room-features-plan.md 5-3 #4·#5) ──
+// 결재 후속·예약·긴 작업이 같은 이어 실행(restoreMessengerContext)을 지난다. 개인 기록(orgId null + ownCrewRoom 표지)은 서버 봉투가 있고, 방이 조직 없는 방이며,
+// 서버가 지금도 주인과 이 에이전트만 있는 crew 1:1이라고 판정할 때만 잇는다(저장된 표지는 믿지 않는다). 동의는 drain과 같은 방 기준으로 다시 본다.
+async function setupPersonal() {
+  const ws = `continuation-p-${++n}`;
+  await createCompany(ws, '검수', 'alpha');
+  await mkdir(paths(ws).agents, { recursive: true });
+  for (const [slug, name] of [['alpha', '알파'], ['beta', '베타']]) await writeFile(join(paths(ws).agents, `${slug}.md`), `---\nname: ${name}\nslug: ${slug}\n---\n`);
+  const self = { id: 'a', slug: 'alpha', display_name: '알파', owner_user_id: 'owner', ws_id: ws };
+  const origin = { orgId: null, ownCrewRoom: true, channelId: 'pch', channelKind: 'dm', crewId: 'a', threadRoot: 10, sourceMsgId: 10, uid: 'owner', wsId: ws, origin: 'owner', hop: 0 };
+  const state = { own: true, consent: true, archived: false, crewGone: false };
+  const source = { id: 10, channel_id: 'pch', author_kind: 'user', author_user_id: 'owner', body: '개인 방에서 계속', reply_to: null, thread_root: null, meta: {} };
+  const rows = []; const seen = []; const events = []; const calls = [];
+  const db = {
+    crewBySlug: async (uid, wsId, slug, orgId) => { calls.push(['crewBySlug', orgId]); return !state.crewGone && uid === 'owner' && wsId === ws && slug === 'alpha' && orgId === null ? { ...self, org_id: null } : null; },
+    crewContext: async (_ws, _crew, sourceId, channelId) => { calls.push(['crewContext', sourceId, channelId]); return { delivery_role: 'to', actor: 'owner', org: null, peers: [self], root: source, source, attachments: [],
+      channel: { id: channelId, org_id: null, kind: 'dm', name: 'dm', crew_memory: true, archived_at: state.archived ? '2026-10-08T00:00:00Z' : null, excluded_crew_ids: [] },
+      context: [{ id: 9, author_kind: 'crew', crew_id: 'a', body: '이전 결과' }], settled_source: true, settled_predecessors: [] }; },
+    ownCrewRoom: async (ch, crew) => { calls.push(['ownCrewRoom', ch, crew]); return state.own; },
+    personalConsentOk: async (ch, u) => { calls.push(['personalConsentOk', ch, u]); return state.consent; },
+    orgConsentOk: async () => { calls.push(['orgConsentOk']); return true; },
+    orgEntitled: async () => { calls.push(['orgEntitled']); return true; },
+    insertMessage: async (row) => { rows.push(row); return { id: 20 + rows.length }; },
+  };
+  const session = async () => ({ uid: 'owner', db });
+  const stop = onNotify((e) => { if (e.wsId === ws) events.push(e); });
+  // 이어 실행 턴 안에서도 개인 기능이 열려 있는지 — SDK는 schedule_task, CLI는 지시 블록으로 자기 예약을 건다(기록이 같은 방이어야 한다)
+  const runChat = (runner) => async (_ws, slug, msg, _sid, opts) => {
+    seen.push(opts);
+    assert.equal(opts.mirrorCtx.orgId, null); assert.equal(opts.mirrorCtx.ownCrewRoom, true); assert.equal(opts.mirrorCtx.channelId, 'pch');
+    assert.match(msg, /이전 결과/);
+    if (runner === 'SDK') assert.match(JSON.stringify(await sdk(ws, slug, opts.mirrorCtx, 'schedule_task')({ title: '후속 예약', prompt: '확인', type: 'daily', time: '09:00' })), /예약 완료/);
+    else await runDirectives(ws, slug, [{ action: 'schedule', prompt: '확인', time: '09:00' }], { mirrorCtx: opts.mirrorCtx });
+    return { reply: '개인 결과', sessionId: null, handover: null };
+  };
+  return { ws, origin, state, db, session, rows, seen, events, calls, stop, runChat };
+}
+const count = (f, k) => f.calls.filter((c) => c[0] === k).length;
+async function assertPersonalDelivered(f, type) {
+  await Promise.resolve();
+  const event = f.events.find((e) => e.type === type);
+  assert.ok(event, `${type} 이벤트`);
+  assert.equal(await msgrPush(event, { session: f.session }), true);
+  assert.equal(f.rows.length, 1);
+  assert.deepEqual([f.rows[0].channel_id, f.rows[0].crew_id, f.rows[0].reply_to, f.rows[0].thread_root], ['pch', 'a', 10, 10], '결과는 같은 개인 1:1의 원래 글에');
+  assert.equal(f.rows[0].meta.origin, 'owner');
+  assert.match(f.rows[0].body, /개인 결과/);
+  assert.equal(count(f, 'ownCrewRoom'), 2, '서버 판정은 이어 실행 1 + 결과 게시 1(저장된 표지를 믿지 않는다)');
+  assert.equal(count(f, 'personalConsentOk'), 1, '동의 재확인은 이어 실행 직전 1회');
+  assert.equal(count(f, 'orgConsentOk') + count(f, 'orgEntitled'), 0, '개인 방에 조직 판정을 부르지 않는다');
+  const [r] = (await loadRoutines(f.ws)).filter((x) => x.title === '후속 예약' || x.prompt === '확인');
+  assert.deepEqual([r.msgr.orgId, r.msgr.channelId, r.msgr.ownCrewRoom], [null, 'pch', true], '이어 실행 턴 안의 예약도 같은 개인 방 기록');
+}
+for (const runner of ['SDK', 'CLI']) {
+  test(`${runner}: 개인 crew 1:1 결재 후속이 같은 방에서 이어 실행되고 결과가 같은 방에 올라간다`, async () => {
+    const f = await setupPersonal();
+    try {
+      await approvals._followUpForTest(f.ws, { id: 'ap-p', slug: 'alpha', kind: 'action', action: '보고서 발송', msgr: f.origin }, true, { runChat: f.runChat(runner), session: f.session });
+      await assertPersonalDelivered(f, 'approval_followup');
+    } finally { f.stop(); }
+  });
+  test(`${runner}: 개인 crew 1:1 예약 실행(daily) — 같은 방에서 이어 실행, 결과도 같은 방`, async () => {
+    const f = await setupPersonal();
+    try {
+      const r = await addRoutine(f.ws, { agentSlug: 'alpha', title: '개인 예약', prompt: '이어하기', schedule: { type: 'daily', time: '09:00' }, msgr: f.origin });
+      assert.deepEqual([r.msgr.orgId, r.msgr.ownCrewRoom], [null, true], '저장 때 messengerOrigin 재확인을 통과');
+      await runRoutine(f.ws, r.id, { chatFn: f.runChat(runner), session: f.session });
+      await assertPersonalDelivered(f, 'routine');
+    } finally { f.stop(); }
+  });
+  test(`${runner}: 개인 crew 1:1 긴 작업 — 같은 방에서 이어 실행, 결과도 같은 방`, async () => {
+    const f = await setupPersonal();
+    try {
+      await gateway._makeJobHandlerForTest(f.ws, { runChat: f.runChat(runner), session: f.session })({ id: 'job-p', slug: 'alpha', title: '개인 작업', prompt: '이어하기', msgr: f.origin });
+      await assertPersonalDelivered(f, 'job');
+    } finally { f.stop(); }
+  });
+}
+
+// 1차 검수 MEDIUM(PR #864) — 메신저 밖 턴(데스크톱·텔레그램·회의실·msgr 없는 루틴)이 같은 에이전트의 crew 1:1 턴과 동시에 돌다 결재를 올리면, 항목에 msgr가 없어
+// 실행 중 문맥(activeCtx)으로 목적지를 찾는다. 카드는 개인 결재 RPC로 들어가는데 저장되는 기록에 개인 표지가 빠지면 승인 뒤 이어 실행이 '소유자·회사 불일치'로 멈춘다(배포본은 RLS로 미러 실패 → 데스크톱 후속).
+for (const runner of ['SDK', 'CLI']) {
+  test(`${runner}: 메신저 밖 턴의 결재 · crew 1:1 턴 실행 중(activeCtx) — 저장 기록에 개인 표지가 남고, 승인하면 같은 방에서 이어 실행된다`, async () => {
+    const f = await setupPersonal();
+    const key = `${f.ws}:alpha`;
+    Object.assign(f.db, {
+      createPersonalApproval: async (row) => { f.calls.push(['createPersonalApproval', row]); return { id: 'ap-row' }; },
+      insertApproval: async () => { f.calls.push(['insertApproval']); throw new Error('rls'); },
+      updateApproval: async (id) => [{ id }],
+      canDecide: async () => true,
+    });
+    try {
+      const item = await addApproval(f.ws, { slug: 'alpha', action: '보고서 발송', reason: '마감' }); // 메신저 밖 턴 — 항목에 msgr 없음
+      assert.equal(item.msgr, undefined);
+      _activeCtxForTest.set(key, { ...f.origin, kind: 'msgr', peers: [], handoffs: [], lang: 'ko' }); // crew 1:1 메신저 턴(run()이 서버 판정 true를 문맥에 남김)
+      try { assert.equal(await msgrPush({ type: 'approval', wsId: f.ws, item }, { session: f.session }), true); } finally { _activeCtxForTest.delete(key); }
+      assert.equal(count(f, 'createPersonalApproval'), 1); assert.equal(count(f, 'insertApproval'), 0);
+      const saved = (await loadApprovals(f.ws)).find((a) => a.id === item.id);
+      assert.deepEqual([saved.msgr.rowId, saved.msgr.orgId, saved.msgr.channelId, saved.msgr.ownCrewRoom], ['ap-row', null, 'pch', true], '개인 표지가 저장 기록에 남는다(운반용 — 이어 실행이 서버 판정을 다시 한다)');
+      f.rows.length = 0; f.calls.length = 0;
+      await approvals._followUpForTest(f.ws, { ...saved, status: 'approved' }, true, { runChat: f.runChat(runner), session: f.session });
+      assert.equal(f.seen.length, 1, '승인한 일이 같은 방에서 한 번 실행된다');
+      assert.equal(count(f, 'ownCrewRoom'), 1, '이어 실행은 저장된 표지를 믿지 않고 서버 판정을 다시 한다');
+      await assertPersonalDelivered(f, 'approval_followup');
+    } finally { f.stop(); }
+  });
+}
+
+test('개인 이어 실행 — 방이 바뀌었거나(서버 판정 false)·판정을 모르거나(옛 서버·옛 어댑터)·봉투가 없거나·보관·에이전트 삭제·동의 철회면 실행하지 않는다(경우 15·16)', async () => {
+  const { runMessengerContinuation } = await import('../src/gateway/msgr.mjs');
+  const cases = [
+    ['서버 판정 false(친구가 들어옴·다른 에이전트가 들어옴)', (f) => { f.state.own = false; }, /개인 1:1로 확인되지 않아/],
+    ['판정 모름(옛 서버 PGRST202 → null)', (f) => { f.state.own = null; }, /개인 1:1로 확인되지 않아/],
+    ['옛 db 어댑터(판정 함수 없음)', (f) => { delete f.db.ownCrewRoom; }, /개인 1:1로 확인되지 않아/],
+    ['봉투 없음(옛 서버 경로)', (f) => { delete f.db.crewContext; }, /실행 권한이 없습니다/],
+    ['방 보관', (f) => { f.state.archived = true; }, /보관된/],
+    ['에이전트 삭제', (f) => { f.state.crewGone = true; }, /실행 권한이 없습니다/], // 행이 없으면 봉투를 묻지 않는다 — 조직 경로와 같은 문구
+    ['동의 철회', (f) => { f.state.consent = false; }, /msgr_ai_consent_declined/],
+    ['표지 없는 개인 기록', (f) => { delete f.origin.ownCrewRoom; }, /소유자·회사 불일치/],
+    // 이어 실행의 조직 일치 검사(계획 5-3 #4 'ch.org_id가 NULL이어야') — 서버 판정이 true여도 봉투의 채널·에이전트 행이 조직 것이면 잇지 않는다(PR-C 2차 검수 LOW)
+    ['봉투 채널이 조직 채널(서버 판정 true)', (f) => { const orig = f.db.crewContext; f.db.crewContext = async (...a) => { const e = await orig(...a); return { ...e, channel: { ...e.channel, org_id: 'org-x' } }; }; }, /확인할 수 없습니다/],
+    ['에이전트 행이 조직 행(서버 판정 true)', (f) => { const orig = f.db.crewBySlug; f.db.crewBySlug = async (...a) => { const c = await orig(...a); return c && { ...c, org_id: 'org-x' }; }; }, /확인할 수 없습니다/],
+  ];
+  for (const [label, change, re] of cases) {
+    const f = await setupPersonal();
+    let ran = false;
+    try {
+      change(f);
+      await assert.rejects(runMessengerContinuation(f.ws, 'alpha', f.origin, '진행', null, { session: f.session, runChat: async () => { ran = true; return { reply: 'must not run' }; } }), re, label);
+      assert.equal(ran, false, `${label}: 유료 턴 0(LLM 호출 없음)`);
+      assert.equal(f.rows.length, 0, `${label}: 방에 글 0`);
+    } finally { f.stop(); }
+  }
+});
+
+test('핀: 조직 이어 실행(결재 후속)은 개인 판정 RPC·개인 동의 함수를 부르지 않는다', async () => {
+  const f = await setup({ requester: 'owner' });
+  const spied = [];
+  f.db.ownCrewRoom = async () => { spied.push('ownCrewRoom'); return true; };
+  f.db.personalConsentOk = async () => { spied.push('personalConsentOk'); return true; };
+  try {
+    await approvals._followUpForTest(f.ws, { id: 'ap-org-pin', slug: 'alpha', kind: 'action', action: '처리', msgr: f.origin }, true, { runChat: async () => ({ reply: '조직 결과', sessionId: null, handover: null }), session: f.session });
+    const event = f.events.find((e) => e.type === 'approval_followup');
+    assert.equal(await msgrPush(event, { session: f.session }), true);
+    assert.equal(f.rows[0].channel_id, 'channel');
+    assert.deepEqual(spied, []);
   } finally { f.stop(); }
 });

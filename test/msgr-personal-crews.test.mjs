@@ -1,7 +1,7 @@
 // 개인 공간 에이전트 1단계(2026-09-30 유건) — 게이트웨이: 조직 없이 개인 크루 행을 올리고, 개인 방 글을 받아 답한다.
 //  · 인벤토리: 조직이 없어도 개인 행(org NULL, 허용 owner)을 올린다. 카드에서 사라진 크루의 개인 행은 지운다(개인 행엔 '파견 해제'가 없다)
 //  · 폴링: 개인 방에 든 개인 크루만 받은 글을 본다(방 없는 개인 크루는 조회 0 — DB 위생) / 동의는 방 기준
-//  · 친구가 있는 개인 방은 @로 부를 때만(크루 1:1만 모든 글) / 개인 턴의 결재·예약은 이유를 말하고 거절
+//  · 친구가 있는 개인 방은 @로 부를 때만(크루 1:1만 모든 글) / 개인 턴의 결재·예약은 crew 1:1 주인 턴만 열고 나머지는 이유를 말하고 거절(2026-10-08 PR-C)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -198,8 +198,18 @@ test('폴링: 방에 든 개인 크루만 받은 글을 보고, 동의는 방 �
   assert.match(calls.find(([k]) => k === 'insertMessage')[1].client_msg_id, /^aiconsent:c-pin:/);
 });
 
-test('개인 턴에서 결재·예약·긴 작업을 부르면 이유를 말하고 거절한다', () => {
-  assert.throws(() => messengerOrigin({ kind: 'msgr', orgId: null, channelId: PCH, crewId: 'c-pin', uid: UID, wsId: WS }), /개인 공간에서는 아직/);
+// 2026-10-08 PR-C(계획 rc-0195 personal-crew-room-features-plan.md 5-3 #1) — 1단계의 '개인 턴은 전부 거절'을 바꾼다: 주인과 이 에이전트만 있는
+// crew 1:1(서버 판정 ctx.ownCrewRoom === true)에서 주인이 시킨 일·자기 자신 대상만 연다. 나머지는 이유별 문구로 거절(자세한 경우는 msgr-personal-room-body.test.mjs).
+test('개인 턴의 결재·예약·긴 작업 — crew 1:1(서버 판정 true)·주인 턴·자기 자신만 열고, 친구 방·판정 모름·손님·다른 에이전트 대상은 이유를 말하고 거절한다', () => {
+  const peers = [{ id: 'c-pin', slug: 'seoyun', owner_user_id: UID, ws_id: WS }, { id: 'c-jun', slug: 'jun', owner_user_id: UID, ws_id: WS }];
+  const base = { kind: 'msgr', orgId: null, channelId: PCH, channelKind: 'dm', crewId: 'c-pin', uid: UID, wsId: WS, origin: UID, peers };
+  const own = messengerOrigin({ ...base, ownCrewRoom: true });
+  assert.deepEqual([own.orgId, own.ownCrewRoom, own.channelId, own.crewId], [null, true, PCH, 'c-pin'], 'crew 1:1 주인 턴은 연다 — 기록은 조직 없음 + 표지');
+  assert.equal(messengerOrigin({ ...base, ownCrewRoom: true }, 'seoyun').crewId, 'c-pin', '자기 자신 대상(예약·긴 작업 기본 담당)');
+  assert.throws(() => messengerOrigin({ ...base, ownCrewRoom: false }), /친구와의 방/, '친구 1:1·그룹(서버 판정 false)');
+  assert.throws(() => messengerOrigin(base), /개인 공간에서는 아직/, '판정 모름(옛 서버·조회 실패)은 1단계 문구 그대로');
+  assert.throws(() => messengerOrigin({ ...base, ownCrewRoom: true, origin: FRIEND, rootAuthor: FRIEND }), /주인이 아닌 사람/, '손님');
+  assert.throws(() => messengerOrigin({ ...base, ownCrewRoom: true }, 'jun'), /다른 에이전트/, '다른 에이전트 대상');
   assert.equal(messengerOrigin({ kind: 'msgr', orgId: ORG, channelId: 'ch', crewId: 'c', uid: UID, wsId: WS }).orgId, ORG, '조직 턴은 그대로');
 });
 

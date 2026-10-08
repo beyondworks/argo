@@ -301,7 +301,7 @@ test('CLI 지시 블록 쪽지 — 단계 상한이 표를 따른다(켜짐 hop 
   assert.match((await run({ hop: 3, delegationRelaxed: true })).join('\n'), /연쇄 상한\(2단계\)/, '풀림이라 주장해도 합계 예산 객체가 없으면 켜짐(fail-closed)');
   assert.match((await run({ hop: 3, delegationRelaxed: true, delegationTree: tree })).join('\n'), /쪽지 보냄/);
   assert.match((await run({ hop: 4, delegationRelaxed: true, delegationTree: tree })).join('\n'), /연쇄 상한\(4단계\)/);
-  assert.match((await run({ hop: 3, delegationRelaxed: true, delegationTree: tree, mirrorCtx: { kind: 'msgr', channelId: 'c', uid: 'u', wsId: 'dl-cli', crewId: 'self', handoffs: [], peers: [] } })).join('\n'), /같은 메신저 조직에 파견된 동료만/, '메신저 맥락은 우편 큐가 아니라 채널 넘김 경로 — 풀림이 우편으로 새지 않는다');
+  assert.match((await run({ hop: 3, delegationRelaxed: true, delegationTree: tree, mirrorCtx: { kind: 'msgr', orgId: 'o', channelId: 'c', uid: 'u', wsId: 'dl-cli', crewId: 'self', handoffs: [], peers: [] } })).join('\n'), /같은 메신저 조직에 파견된 동료만/, '메신저 맥락은 우편 큐가 아니라 채널 넘김 경로 — 풀림이 우편으로 새지 않는다');
   const { listMail } = await import('../src/crewmail.mjs');
   const sent = (await listMail('dl-cli')).pending.filter((m) => m.to === 'beta');
   assert.equal(sent.length, 1, '허용된 풀림 쪽지 1건만 적재');
