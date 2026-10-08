@@ -544,7 +544,8 @@ export async function runRoutine(wsId, id, { chatFn = null, startAt = null, sess
         slug: r0.agentSlug, kind: 'loop',
         action: lang === 'en' ? `Resume loop — ${r0.title}`.slice(0, 300) : `루프 재개 — ${r0.title}`.slice(0, 300),
         reason: stop.detail, payload: { routineId: id },
-        ...(r0.msgr ? { msgr: msgr ?? r0.msgr } : {}),
+        // 회차 턴의 기록(msgr — 이어 실행 근거 포함)이 없으면(실패 회차) 저장된 예약 기록에 예약 근거를 붙인다 — 이 결재도 예약의 이어 실행이다(카드 출처 = 원래 글, 실행 완료)
+        ...(r0.msgr ? { msgr: msgr ?? { ...r0.msgr, continuation: { kind: 'routine' } } } : {}),
       }).catch((e) => console.error(`[argo] 루프 결재 등록 실패(${wsId}/${id}):`, e.message));
     }
     emitNotify({ type: 'routine', wsId, runAt: r0.lastRun, routine: resultRoutine(r), phase: 'stop', ok: true, reply: loopStopMessage(stop.reason, stop.detail, lang, r?.loop ?? r0.loop) });
@@ -553,7 +554,7 @@ export async function runRoutine(wsId, id, { chatFn = null, startAt = null, sess
     const chat = chatFn ?? (await import('./chat.mjs')).chat; // 순환 차단 — 파일 상단 주석 참조. chatFn=테스트 주입(실 러너 불필요)
     // runnerNote = 러너 프롬프트에만 붙는 덧붙임(보고 규칙) — 지시 원문(message)과 따로 넘긴다(chat.mjs runnerNote)
     const run = r0.msgr
-      ? async (message, runnerNote = '') => (await import('./gateway/msgr.mjs')).runMessengerContinuation(wsId, r0.agentSlug, r0.msgr, message, null, { runChat: chat, session, loopTurn: loop, ...(r0.from ? { notOwnerDirect: r0.from } : {}), ...(runnerNote ? { runnerNote } : {}) }) // loopTurn — 채널 글에서 판정 표지를 넘김 줄 앞에서 뺀다
+      ? async (message, runnerNote = '') => (await import('./gateway/msgr.mjs')).runMessengerContinuation(wsId, r0.agentSlug, r0.msgr, message, null, { runChat: chat, session, loopTurn: loop, continuation: { kind: 'routine' }, ...(r0.from ? { notOwnerDirect: r0.from } : {}), ...(runnerNote ? { runnerNote } : {}) }) // loopTurn — 채널 글에서 판정 표지를 넘김 줄 앞에서 뺀다 · continuation = 예약 턴이 올리는 결재 카드의 이어 실행 근거
       : async (message, runnerNote = '') => {
         // 결과가 공유 목적지(슬랙 채널·텔레그램 그룹·메신저 채널)로 나가면 그 범위 맥락만 — 주인 대화를 붙이지 않는다(gateway briefingCtx, 동적 임포트 = 순환 차단)
         const ctx = await destCtx();

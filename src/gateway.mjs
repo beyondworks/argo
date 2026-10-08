@@ -67,7 +67,7 @@ function makeJobHandler(wsId, { runChat = chat, session } = {}) {
     try {
       const prompt = `[장시간 작업: ${title}] ${job.prompt}`;
       const t = job.msgr
-        ? await runMessengerContinuation(wsId, slug, job.msgr, prompt, null, { runChat, session, ...(job.from ? { notOwnerDirect: job.from } : {}) }) // 메신저 작업도 같은 규칙(통합본 재검수 LOW-7)
+        ? await runMessengerContinuation(wsId, slug, job.msgr, prompt, null, { runChat, session, continuation: { kind: 'job' }, ...(job.from ? { notOwnerDirect: job.from } : {}) }) // 메신저 작업도 같은 규칙(통합본 재검수 LOW-7). continuation = 이 작업 턴이 올리는 결재 카드의 이어 실행 근거
         : await runChat(wsId, slug, prompt, null, { source: 'job', ...(job.from ? { notOwnerDirect: job.from } : {}), ...await briefingCtx(wsId, 'job', slug).then((c) => (c ? { mirrorCtx: c } : {})) }); // 결과가 공유 목적지로 나가면 그 범위 맥락만. from = 사장 직접 턴이 아닌 턴에서 건 작업(풀 오토 아님)
       await appendTurn(wsId, slug, {
         userMsg: `${jobHead(lang)}${title}`,

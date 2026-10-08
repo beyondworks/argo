@@ -30,7 +30,10 @@ export function messengerOrigin(ctx, targetSlug = null) {
     // 손님 표지는 사슬을 따라간다 — 쪽지·예약·결재로 옮겨 탄 뒤에도 "주인이 시킨 일"로 되살아나지 않게(넘김 뒤 쪽지는 rootAuthor를 잃는다).
     ...(ctx.rootAuthor ? { rootAuthor: ctx.rootAuthor } : {}), ...(isGuestCtx(ctx) ? { guest: true } : {}), ...(ctx.office === true ? { office: true } : {}),
     // 크루가 넘긴 턴 표지 — 예약·작업·결재 후속으로 옮겨 탄 뒤에도 사장 직접 턴으로 되살아나지 않게(풀 오토 제외, 유건 결정 2026-10-03)
-    ...(ctx.handoffFrom ? { handoffFrom: ctx.handoffFrom } : {}) };
+    ...(ctx.handoffFrom ? { handoffFrom: ctx.handoffFrom } : {}),
+    // 이어 실행 근거(msgr.mjs restoreMessengerContext — 결재 후속·예약·긴 작업 턴) — 이 턴이 올리는 결재 카드용이다(msgrPush가 payload에 싣는다).
+    // 예약·작업을 거는 기록(targetSlug 경로)에는 남기지 않는다 — 실행할 때 호출자가 종류를 다시 정한다
+    ...(!targetSlug && ctx.continuation ? { continuation: ctx.continuation } : {}) };
 }
 
 /** messengerOrigin 기록 → 턴 맥락(kind:'msgr')의 역방향. 요청자 사슬(uid·origin·rootAuthor·guest)을 **그대로** 옮긴다 —
