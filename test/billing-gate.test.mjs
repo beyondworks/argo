@@ -6,11 +6,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, writeFile, readFile, readdir } from 'node:fs/promises';
-import { mkdtemp } from './helpers/tmp.mjs';
+import { mkdtemp, stubRunnerToolDirs } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-billing-gate-'));
+process.env.HOME = process.env.USERPROFILE = join(process.env.ARGO_ROOT, 'home'); // 실제 HOME에 codex 관리본(~300MB)을 내려받지 않게 — saveRunnerCred('codex')의 연결 워밍업
+await stubRunnerToolDirs(process.env.HOME);
 const { paths } = await import('../src/workspace.mjs');
 const { rowBilled, rowRunner } = await import('../src/usage.mjs');
 const { saveRunnerCred } = await import('../src/runners.mjs');

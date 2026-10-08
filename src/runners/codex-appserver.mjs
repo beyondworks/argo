@@ -26,11 +26,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { makePermissionGate } from '../permission-gate.mjs';
 import { scrubServerSecrets } from './shared.mjs';
-import { codexHome, codexCmd, importCodexAuth, recoverCodexAuth, writeCodexTurnConfig } from './codex.mjs';
+import { codexHome, codexCmd, importCodexAuth, recoverCodexAuth, writeCodexTurnConfig, codexUnsetModel } from './codex.mjs';
 import { codexModelEffort } from '../model-effort.mjs';
 
 /** 크루 effort → app-server ReasoningEffort 값(순수). CLI 인자(codexEffortArgs)와 같은 사상 —
-    기존 모델 max→xhigh, GPT-6 Sol/Luna는 모델별 값 보존. 미지원 값은 null(모델 기본). */
+    기존 모델 max→xhigh, GPT-6 계열은 모델별 값 보존. 미지원 값은 null(모델 기본), GPT-6.1 Sol은 medium. */
 export const codexEffortValue = codexModelEffort;
 
 /** 승인 판정자 — permission-gate를 codex 승인 표면에 사상한다(규칙 사본 금지: 판정은 게이트 함수
@@ -81,13 +81,23 @@ export function mapTurnError(errParams) {
       + `Codex usage limit reached${when ? ` — resets at ${when}` : ''}.`,
     ), { limitReached: true, runner: 'codex' });
   }
+  // 0.159.3에서 생긴 실패 코드(0.157.1 스키마엔 없다 — 두 바이너리 generate-json-schema 비교, 검수 2026-10-08 LOW). 원문은 진단용으로 뒤에 둔다.
+  // 문구에 인증·한도·과부하 단어를 넣지 않는다 — error-class 분류(러너 교체·재시도)는 지금처럼 원문이 정한다.
+  if (info === 'tooManyDenials') {
+    return new Error('권한 승인 거절이 여러 번 이어져 Codex가 이 턴을 멈췄습니다. 이 작업에 필요한 파일 쓰기·명령 실행이 허용 범위 밖일 수 있습니다. '
+      + `Codex stopped this turn after repeated permission denials — the task may need file writes or commands outside the allowed scope. (${message.slice(0, 200)})`);
+  }
+  if (info === 'flexUnavailable') {
+    return new Error('Codex 서버가 지금 이 요청을 처리할 여유가 없습니다. 잠시 뒤 다시 시도해 주세요. '
+      + `Codex could not take this request right now — please try again shortly. (${message.slice(0, 200)})`);
+  }
   return new Error(message.slice(0, 300));
 }
 
 /** app-server 1턴 세션(스트림 지향) — 프로세스와 분리해 가짜 스트림으로 행동 테스트가 가능한 이음매.
     input/output = 서버의 stdin(쓰기)/stdout(읽기) 스트림. judge = makeApprovalJudge 산출.
     반환: { reply }. 실패는 throw(mapTurnError·timedOut). (export: 테스트 이음매) */
-export function runAppServerSession({ input, output, prompt, model = '', effort = '', cwd, timeoutMs, judge, signal = null, onSteerable = null }) {
+export function runAppServerSession({ input, output, prompt, model = '', unsetModel = '', effort = '', cwd, timeoutMs, judge, signal = null, onSteerable = null }) {
   return new Promise((resolveP, rejectP) => {
     let nextId = 1;
     const pending = new Map();
@@ -172,17 +182,19 @@ export function runAppServerSession({ input, output, prompt, model = '', effort 
     (async () => {
       await send('initialize', { clientInfo: { name: 'argo', title: 'Argo', version: '0' } });
       write({ jsonrpc: '2.0', method: 'initialized' });
+      // 모델을 비운 턴은 unsetModel(exec 경로의 `-m`과 같은 codexUnsetModel) — 강도는 아래처럼 크루가 준 모델로 계산(0.1.97과 같은 값)
+      const threadModel = model || unsetModel;
       const th = await send('thread/start', {
         cwd,
         approvalPolicy: 'untrusted', // 전량 승인 — 게이트가 유일한 판정자다. acceptForSession은 쓰지 않는다(세션 우회 방향)
         sandbox: 'read-only',        // 승인 없는 쓰기 경로 자체를 벤더 수준에서 제거
-        ...(model ? { model } : {}),
+        ...(threadModel ? { model: threadModel } : {}),
       });
       const threadId = th?.thread?.id;
       if (!threadId) throw new Error('thread/start가 스레드 id를 주지 않았습니다');
       const eff = codexEffortValue(effort, model);
       const started = await send('turn/start', { threadId, input: [{ type: 'text', text: prompt }], ...(eff ? { effort: eff } : {}) });
-      // 끼워 넣기 — 진행 중 턴에 사장 메시지를 더한다(turn/steer, 0.157.1 스키마: expectedTurnId 필수). 거절되거나 응답 전에 턴이 끝나면
+      // 끼워 넣기 — 진행 중 턴에 사장 메시지를 더한다(turn/steer, 0.157.1·0.159.3 스키마: expectedTurnId 필수). 거절되거나 응답 전에 턴이 끝나면
       // false — 호출부(chat.mjs)가 받아 두었다가 이 실행 뒤 이어 실행한다. 시간 제한으로 끊지 않는다: 늦게 받아들여진 것을 false로 치면 두 번 전달된다(검수 5).
       const turnId = started?.turn?.id;
       if (turnId && onSteerable && !done) onSteerable(async (text) => {
@@ -235,7 +247,7 @@ export async function execCodexAppServer({ model, cwd, prompt, timeoutMs = 30 * 
     const { reply } = await Promise.race([
       runAppServerSession({
         input: child.stdin, output: child.stdout,
-        prompt, model, effort, cwd, timeoutMs, signal, onSteerable,
+        prompt, model, unsetModel: codexUnsetModel(cmd), effort, cwd, timeoutMs, signal, onSteerable,
         judge: makeApprovalJudge(cwd, { workRoots, lang }),
       }),
       childFail,

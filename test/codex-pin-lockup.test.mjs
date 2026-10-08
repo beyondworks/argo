@@ -5,7 +5,7 @@
 //  ④ lockupAction: 미재시도=재조달, 재시도 후=러너 교체(인증 실패와 같은 계열)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CODEX_PIN, codexAssetUrl, codexAssetNameFor, codexHostAssetNameFor, CODEX_LOCKUP_RE, codexOutdatedError } from '../src/runners/codex.mjs';
+import { CODEX_PIN, CODEX_ASSET_SHA256, codexAssetUrl, codexAssetNameFor, codexHostAssetNameFor, CODEX_LOCKUP_RE, codexOutdatedError } from '../src/runners/codex.mjs';
 import { lockupAction } from '../src/runners.mjs';
 import { RUNNERS } from '../src/runners/catalog.mjs';
 
@@ -16,13 +16,28 @@ test('조달 URL은 핀 버전 — latest 금지(무통보 업스트림 변경 �
   assert.ok(!/latest/.test(url), 'latest가 되살아났다 — 핀 원칙 위반');
 });
 
-// 2026-09-28 실사고: GPT-6 Astra·Sol·Luna를 목록에 넣으며 PC에 설치된 최신 codex로만 응답을 확인했다. Argo는 핀 버전(0.149.1)으로
-// 실행해 세 모델 모두 400("ChatGPT 계정에서 지원 안 함"·"더 새 버전 필요")으로 전멸했다. 0.157.1이 세 모델의 실제 턴·셸 도구·MCP 호출을 통과한 첫 핀이다.
-test('GPT-6 계열이 Codex 모델 목록에 있으면 핀은 0.157.1 이상 — 핀이 못 돌리는 모델을 목록에 싣지 않는다', () => {
-  const ver = CODEX_PIN.replace(/^rust-v/, '').split('.').map(Number);
-  const atLeast = (min) => { for (let i = 0; i < 3; i++) { if (ver[i] !== min[i]) return ver[i] > min[i]; } return true; };
-  const gpt6 = RUNNERS.codex.models.map((m) => m.id).filter((id) => /^gpt-6-/.test(id));
-  if (gpt6.length) assert.ok(atLeast([0, 157, 1]), `핀 ${CODEX_PIN}으로는 ${gpt6.join(', ')} 턴이 400으로 실패한다`);
+// 모델별 핀 하한 — 서버는 클라이언트 버전으로 모델 목록을 거르고, 목록 밖 모델은 400으로 거절한다.
+// 2026-09-28 실사고: GPT-6 Astra·Sol·Luna를 PC의 최신 codex로만 확인하고 목록에 실어 핀(0.149.1) 턴이 전멸했다.
+// 2026-10-07 실측: 0.157.1의 서버 목록에 gpt-6.1-sol이 없고 턴은 "not supported when using Codex with a ChatGPT account",
+// 0.159.3은 목록 첫 자리에 있고 실제 턴·셸 도구가 된다. 새 GPT-6 계열을 목록에 넣으려면 여기 하한을 먼저 적는다(없으면 red).
+const CODEX_MODEL_MIN_PIN = {
+  'gpt-6-astra': '0.157.1', // 0.149.1: "requires a newer version of Codex"
+  'gpt-6-sol': '0.157.1', // 0.149.1: ChatGPT 계정 미지원
+  'gpt-6-luna': '0.157.1',
+  'gpt-6.1-sol': '0.159.3', // 0.157.1: ChatGPT 계정 미지원
+};
+const pinAtLeast = (min) => {
+  const v = CODEX_PIN.replace(/^rust-v/, '').split('.').map(Number); const m = min.split('.').map(Number);
+  for (let i = 0; i < 3; i++) { if (v[i] !== m[i]) return v[i] > m[i]; }
+  return true;
+};
+test('모델별 핀 하한 — 목록의 GPT-6 계열은 전부 하한이 있고, 핀은 각 하한 이상(핀이 못 돌리는 모델을 목록에 싣지 않는다)', () => {
+  const ids = RUNNERS.codex.models.map((m) => m.id);
+  for (const id of ids.filter((x) => /^gpt-6/.test(x))) assert.ok(CODEX_MODEL_MIN_PIN[id], `${id}의 핀 하한이 표에 없다`);
+  for (const [id, min] of Object.entries(CODEX_MODEL_MIN_PIN)) {
+    assert.ok(ids.includes(id), `${id}가 Codex 모델 목록에 없다`);
+    assert.ok(pinAtLeast(min), `핀 ${CODEX_PIN}으로는 ${id} 턴이 400으로 실패한다(하한 ${min})`);
+  }
 });
 
 // 승격 실패(오프라인·스로틀)로 낡은 관리본에 머문 PC에서 GPT-6을 고르면 벤더 영어 원문만 떴다(분리 검수 #744 L1, 유건 지시로 ko/en 안내).
@@ -50,6 +65,15 @@ test('codex·host 자산 이름이 6트리플 전부 짝으로 존재(윈도우�
     else { assert.ok(!a.includes('.exe') && !h.includes('.exe'), `${a} ${h}`); }
   }
   assert.equal(codexAssetNameFor('sunos', 'x64'), null, '미지원 플랫폼은 null');
+});
+
+// 내려받기 해시 표는 핀과 한 쌍 — 핀만 올리고 표를 안 바꾸면 모든 신규 조달이 "해시가 맞지 않습니다"로 실패한다(fail-closed). 여기서 먼저 red.
+test('자산 해시 표 — 현재 핀의 표이고, codex·host 6트리플 12개 자산이 전부 sha256(64자 hex)으로 있다', () => {
+  assert.equal(CODEX_ASSET_SHA256.pin, CODEX_PIN, '핀을 올렸으면 해시 표도 새 릴리스 digest로 바꾼다(gh api repos/openai/codex/releases/tags/<핀>)');
+  const want = [['darwin', 'arm64'], ['darwin', 'x64'], ['linux', 'arm64'], ['linux', 'x64'], ['win32', 'arm64'], ['win32', 'x64']]
+    .flatMap(([pf, arch]) => [codexAssetNameFor(pf, arch), codexHostAssetNameFor(pf, arch)]).sort();
+  assert.deepEqual(Object.keys(CODEX_ASSET_SHA256.sha256).sort(), want);
+  for (const [k, v] of Object.entries(CODEX_ASSET_SHA256.sha256)) assert.match(v, /^[0-9a-f]{64}$/, k);
 });
 
 test('잠김 신호 — 벤더 경고 줄(줄머리 warning:)만 잡고, 인용·제보 문구·일반 오류는 안 잡는다', () => {

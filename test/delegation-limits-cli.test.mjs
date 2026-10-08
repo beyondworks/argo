@@ -1,12 +1,14 @@
 // 위임 제한 스위치 — 가짜 codex CLI로 **CLI 크루 다리 턴**의 프롬프트·지시 블록 연결을 행동으로 잠근다(검수 2026-10-01 MEDIUM-2·3).
 // 가짜 codex는 받은 프롬프트를 기록하고, 모드 파일이 있으면 답변에 쪽지 지시 블록 N개를 적는다(실제 모델이 한 답에 여러 블록을 내는 경우의 재현).
 import { mkdir, writeFile, chmod, readFile, rm } from 'node:fs/promises';
-import { mkdtemp } from './helpers/tmp.mjs';
+import { mkdtemp, stubRunnerToolDirs } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const ROOT = await mkdtemp(join(tmpdir(), 'argo-deleg-cli-'));
 process.env.ARGO_ROOT = ROOT;
+process.env.HOME = process.env.USERPROFILE = join(ROOT, 'home'); // 실제 HOME에 codex 관리본(~300MB)을 내려받지 않게 — saveRunnerCred('codex')의 연결 워밍업
+await stubRunnerToolDirs(process.env.HOME);
 Object.assign(process.env, { ARGO_ENC_VAULT: '0', ARGO_MODEL_CATALOG: 'off', ARGO_NATIVE_RUNNERS: 'off' });
 const BIN = join(ROOT, 'bin');
 const CAP = join(ROOT, 'captured.txt');
