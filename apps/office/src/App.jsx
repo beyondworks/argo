@@ -42,6 +42,7 @@ const Assets = lazy(() => import('./pages/Assets.jsx')); // 노하우·업무 �
 const Tools = lazy(() => import('./pages/Tools.jsx')); // 도구함(유건 9/29)
 const Calendar = lazy(() => import('./calendar/Calendar.jsx')); // 일정(유건 9/30)
 const Tasks = lazy(() => import('./views/TasksPage.jsx')); // 할 일 화면(유건 10/4)
+const WorkStatus = lazy(() => import('./pages/WorkStatus.jsx')); // 업무 현황(유건 10/8 — 조직 공간)
 const Contracts = lazy(() => import('./docs/DocsPage.jsx')); // 견적·계약·전자서명(10/2 인트라넷 이식)
 const SignPage = lazy(() => import('./docs/SignPage.jsx')); // 서명 링크(로그인 없음)
 const FileLink = lazy(() => import('./files/LinkPage.jsx')); // 문서함 공유 링크(로그인 없음, 15차)
@@ -109,7 +110,7 @@ function route(path) {
   if ((m = match('/p/:id', rest))) return { space, view: 'page', id: m.id };
   if (space === 'me' && rest === '/files/connect') return { space, view: 'filesConnect' };             // 구글 드라이브 권한 승인 뒤
   if (space === 'me' && rest === '/mail/connect') return { space, view: 'mailConnect' };             // Google 권한 승인 뒤 돌아오는 자리
-  if (space === 'me' && (m = match('/mail/:id', rest))) return { space, view: 'mail', id: m.id };
+  if ((m = match('/mail/:id', rest))) return { space, view: 'mail', id: m.id }; // 조직 공간 메일(10/8)도 같은 내 개인 메일함
   return VIEWS.includes(rest.slice(1)) ? { space, view: rest.slice(1) } : { redirect: baseOf(space), lost: true };
 }
 
@@ -268,7 +269,7 @@ export default function App() {
   const params = new URLSearchParams(query ?? '');
   const views = {
     business: <Lazy reset={path}>{r.tab === 'library' ? <ModuleLibrary key={r.space} space={r.space} targetId={params.get('target')} /> : <BusinessPage key={r.space} space={r.space} tab={r.tab} openId={params.get('open')} view={params.get('view')} />}</Lazy>,
-    home: <Home space={r.space} />, contracts: <Contracts key={r.space} space={r.space} params={params} />, files: <Files key={r.space} space={r.space} query={query} />, filesConnect: <DriveConnect query={query} />, calendar: <Calendar key={r.space} space={r.space} day={params.get('day')} />, tasks: <Tasks key={r.space} space={r.space} />, mail: <Mail id={r.id} />, mailConnect: <MailConnect query={query} />, page: <PageView key={r.id} id={r.id} space={r.space} />, shared: <Shared />,
+    home: <Home space={r.space} />, contracts: <Contracts key={r.space} space={r.space} params={params} />, files: <Files key={r.space} space={r.space} query={query} />, filesConnect: <DriveConnect query={query} />, calendar: <Calendar key={r.space} space={r.space} day={params.get('day')} />, tasks: <Tasks key={r.space} space={r.space} />, status: <WorkStatus key={r.space} space={r.space} folder={params.get('folder')} />, mail: <Mail id={r.id} />, mailConnect: <MailConnect query={query} />, page: <PageView key={r.id} id={r.id} space={r.space} />, shared: <Shared />,
     work: <Work space={r.space} openId={params.get('open')} folder={params.get('folder')} />, agents: <CrewOrg space={r.space} />, approvals: <Approvals space={r.space} openId={params.get('open')} folder={params.get('folder')} />, decisions: <Decisions space={r.space} openId={params.get('open')} folder={params.get('folder')} />,
     outputs: <Outputs space={r.space} openId={params.get('open')} folder={params.get('folder')} />, journal: <Journal space={r.space} folder={params.get('folder')} />, docs: <Docs space={r.space} openId={params.get('open')} />, perf: <Perf space={r.space} tab={params.get('tab')} />, people: <People key={r.space} space={r.space} />, company: <Company key={r.space} space={r.space} />, briefings: <Briefings openId={params.get('open')} />, knowhow: <Assets space={r.space} />, tools: <Tools space={r.space} />, trash: <Trash space={r.space} />, settings: <Settings />,
   };

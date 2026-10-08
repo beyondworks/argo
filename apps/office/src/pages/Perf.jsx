@@ -1,6 +1,7 @@
 // 성과 기록(유건 9/29) — 사람 직원의 일과 성과가 매일 자동으로 쌓이는 개인 기록. 연봉 협상·월말/연말 평가 자료.
 // 일간 기록이 주·월·연으로 모인다(숫자는 서버가 원본에서 계산). 본인만 보고, 월말·연말에 공유하면 관리자가 그 사본을 본다.
 // 고치기·지우기는 없고 추가만 — 성과 한 줄은 관리자가 허용한 고치기 요청으로 한 번 고친다(원래 내용이 같이 남는다).
+import { baseOf } from '../core/commands.js';
 import { lazy, Suspense, useEffect, useId, useMemo, useState } from 'react';
 import { t, getLang, registerDict, useLang } from '../core/i18n.js';
 import { ME, canManage } from '../core/session.js';
@@ -207,7 +208,7 @@ function Log({ report, space, requests = [], goals = [], reload, day, canAdd, un
     {d.crew > 0 && <li className="perf-item"><span className="badge">{t('perf.crew', { n: d.crew })}</span></li>}
     {d.mail.map((m) => <li key={m.thread_id} className="perf-item"><span className={`badge mail-${m.grade}`}>{t(`perf.g.${m.grade}`)}</span>
       <span className="perf-item-main">{m.customer ?? '—'} <small className="dim">· {m.reasons.map((x) => t(`perf.r.${x}`)).join(' · ')}</small></span>
-      {canAdd && m.account && <Link className="btn ghost sm" to={`/me/mail/${m.account}.${m.message_id}`}>{t('perf.mailOpen')}</Link>}</li>)}
+      {canAdd && m.account && <Link className="btn ghost sm" to={`${baseOf(space)}/mail/${m.account}.${m.message_id}`}>{t('perf.mailOpen')}</Link>}</li>)}
     {d.asks.length > 0 && <li className="perf-item"><span className="badge">{t('perf.asks', { n: d.asks.length })}</span>
       <span className="perf-item-main dim">{[d.asks.some((q) => q.minutes != null) && t('perf.asksAvg', { t: minutes(Math.round(d.asks.filter((q) => q.minutes != null).reduce((a, q) => a + q.minutes, 0) / d.asks.filter((q) => q.minutes != null).length)) }),
         d.asks.some((q) => q.unanswered) && t('perf.asksLate', { n: d.asks.filter((q) => q.unanswered).length }), d.asks.some((q) => q.done) && t('perf.asksDone', { n: d.asks.filter((q) => q.done).length })].filter(Boolean).join(' · ')}</span></li>}

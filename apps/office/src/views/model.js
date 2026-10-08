@@ -258,6 +258,20 @@ export function planStatus(it, status, ctx) {
   const reopen = taskWrite(it, 'task.reopen', {}, { done_at: null }).write;
   return { write: same ? reopen : [reopen, change] };
 }
+/** 보류 사유(업무 현황, 유건 10/8) — 보류인 일에만. 서버 office_task_write task.status { status: 'hold', hold_reason, reason_only: true }(이미 보류면 사유만, 아니면 task_conflict).
+ *  권한은 상태 바꾸기와 같다. 앞뒤 공백을 걷고 비면 null(사유 지우기), 500자까지, 같은 값이면 쓰지 않는다. 끝낸 일은 바꾸지 않는다 */
+export const HOLD_REASON_MAX = 500;
+export function planHoldReason(it, value, ctx) {
+  if (it.kind !== 'task') return no('eventStatus');
+  if (it.done) return no('done');
+  if (statusOf(it.src) !== 'hold') return no('input');
+  const r = whyNot(it, 'status', ctx);
+  if (r) return no(r);
+  const v = String(value ?? '').trim() || null;
+  if (v && v.length > HOLD_REASON_MAX) return no('input');
+  if ((it.src.hold_reason ?? null) === v) return { write: null };
+  return taskWrite(it, 'task.status', { status: 'hold', hold_reason: v, reason_only: true }, { hold_reason: v }); // reason_only: 그사이 보류가 풀렸으면 서버가 상태를 되돌리지 않고 task_conflict
+}
 /** 할 일 한 칸 고치기(할 일 패널) — 제목·메모·중요도·시작일·기한. 값이 같으면 쓰지 않고, 시작일이 기한보다 늦으면 거절 */
 export function planField(it, field, value, ctx) {
   if (it.kind !== 'task') return no('eventPerm');

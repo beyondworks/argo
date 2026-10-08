@@ -23,11 +23,11 @@ export const SAMPLE_TASK_CATEGORIES = {
   'lean-studio': [{ id: 'tc-ls-1', name: '촬영', position: 0 }],
 };
 const ago = (days) => new Date(Date.now() - days * 86400e3).toISOString();
-const task = (over) => ({ assignee: 'u-me', created_by: 'u-me', done_at: null, status: 'todo', priority: 2, category_id: null, starts_on: null, note: '', created_at: ago(10), ...over });
+const task = (over) => ({ assignee: 'u-me', created_by: 'u-me', done_at: null, status: 'todo', priority: 2, category_id: null, starts_on: null, note: '', hold_reason: null, held_at: null, created_at: ago(10), ...over });
 export const SAMPLE_TASKS = [
   task({ id: 't-s1', org: null, title: '10월 캠페인 초안 검토', due_on: addDays(today, 1), status: 'doing', priority: 1, category_id: 'tc-me-1', starts_on: addDays(today, -2), note: '초안 2개 중 하나를 고르고 문구만 다듬기', created_at: ago(5) }),
   task({ id: 't-s2', org: 'beyondworks', title: '3분기 부가세 자료 보내기', due_on: addDays(today, 6), created_by: 'u-minji', priority: 1, category_id: 'tc-bw-2', note: '세무사 사무실에 매출·매입 자료 정리본 전달', created_at: ago(8) }),
-  task({ id: 't-s3', org: 'beyondworks', title: '견적 템플릿 정리', due_on: addDays(today, 2), assignee: 'u-jun', status: 'hold', category_id: 'tc-bw-1', note: '가격표 확정 뒤 다시 시작', created_at: ago(12) }),
+  task({ id: 't-s3', org: 'beyondworks', title: '견적 템플릿 정리', due_on: addDays(today, 2), assignee: 'u-jun', status: 'hold', hold_reason: '가격표 확정 뒤 다시 시작', held_at: ago(2), category_id: 'tc-bw-1', note: '가격표 확정 뒤 다시 시작', created_at: ago(12) }),
   task({ id: 't-s4', org: null, title: '영수증 정리', due_on: null, priority: 3, created_at: ago(20) }),
   task({ id: 't-s5', org: 'lean-studio', title: '촬영 콘티 확인', due_on: addDays(today, 4), created_by: 'u-sora', category_id: 'tc-ls-1', created_at: ago(3) }),
   task({ id: 't-s6', org: null, title: '지난주 회의록 올리기', due_on: addDays(today, -2), category_id: 'tc-me-1', created_at: ago(9) }),
@@ -35,6 +35,9 @@ export const SAMPLE_TASKS = [
   task({ id: 't-s8', org: null, title: '노션 정리법 읽기', due_on: addDays(today, 10), category_id: 'tc-me-2', created_at: ago(2) }),
   // 크루가 만든 할 일(17차) — 크루 도구가 남기는 출처 모양(source.kind 'crew', crew = 크루 id). 에이전트 상세 '맡은 일'에 묶인다
   task({ id: 't-s9', org: 'beyondworks', title: '경쟁사 가격표를 표로 정리', due_on: addDays(today, 3), category_id: 'tc-bw-1', note: '가격 조사 결과를 회의 자료용 표로', source: { kind: 'crew', crew: 'crew-otto', slug: 'otto', name: '오토' }, created_at: ago(1) }),
+  // 맥 세션이 남긴 할 일(업무 현황 10/8) — 출처 kind 'session', name = 세션 제목. 업무 현황 화면이 세션 주인 이름(" - " 앞부분)으로 묶는다
+  task({ id: 't-s10', org: 'beyondworks', title: '오피스 업무 현황 화면 만들기', due_on: addDays(today, 1), status: 'doing', note: '사람별 카드·보류된 업무 먼저', source: { kind: 'session', name: '맥가이버 - 정비사' }, created_at: ago(1) }),
+  task({ id: 't-s11', org: 'beyondworks', title: '노션 업무 이관 범위 확인', due_on: addDays(today, -1), status: 'hold', hold_reason: '이것부터: 업무 현황 화면 검수', held_at: ago(0.5), source: { kind: 'session', name: '페퍼 - 총괄' }, created_at: ago(4) }),
 ];
 // 바뀐 기록(예시) — 할 일 id → 새것부터 쌓인 줄. 서버 office_task_history와 같은 모양
 const NAME_OF = (id) => (id === 'u-me' ? ME.name : NAMES[id] ?? '?');
@@ -46,6 +49,8 @@ const SAMPLE_TASK_EVENTS = Object.fromEntries(SAMPLE_TASKS.map((x) => [x.id, [
 export const sampleTaskHistory = (id) => (SAMPLE_TASK_EVENTS[id] ?? []).slice();
 const logEvent = (id, kind, from = null, to = null) => { (SAMPLE_TASK_EVENTS[id] ??= []).unshift({ kind, at: new Date().toISOString(), actor: ME.id, name: ME.name, from: from == null ? null : String(from), to: to == null ? null : String(to) }); };
 const catName = (key, id) => SAMPLE_TASK_CATEGORIES[key]?.find((c) => c.id === id)?.name ?? null;
+/** 보류 사유 — 서버와 같게 앞뒤 공백을 걷고 1~500자, 비면 null */
+const holdReason = (v) => { if (v == null) return null; if (typeof v !== 'string') fail('task_input'); const r = v.trim(); if (r.length > 500) fail('task_input'); return r || null; };
 const EDITS = ['task.title', 'task.due', 'task.cancel', 'task.note', 'task.priority', 'task.category', 'task.start'];
 /** 할 일 쓰기(예시 모드) — 서버 office_task_write와 같은 권한·거절 이유로 화면 메모리의 SAMPLE_TASKS만 바꾼다 */
 export function sampleTaskWrite(space, action, d) {
@@ -59,7 +64,8 @@ export function sampleTaskWrite(space, action, d) {
     if (assignee !== ME.id && !admin) fail('task_forbidden');
     if (d.starts_on && d.due_on && d.starts_on > d.due_on) fail('task_dates');
     const row = task({ id: d.id, org, title: d.title.trim(), due_on: d.due_on || null, assignee, created_by: ME.id, created_at: new Date().toISOString(),
-      status: d.status || 'todo', priority: Number(d.priority) || 2, category_id: cat(d.category_id), starts_on: d.starts_on || null, note: d.note ?? '', source: d.source ?? null });
+      status: d.status || 'todo', priority: Number(d.priority) || 2, category_id: cat(d.category_id), starts_on: d.starts_on || null, note: d.note ?? '', source: d.source ?? null,
+      ...(d.status === 'hold' ? { held_at: new Date().toISOString(), hold_reason: holdReason(d.hold_reason) } : {}) });
     SAMPLE_TASKS.push(row);
     logEvent(row.id, 'create', null, row.due_on);
     return row;
@@ -75,7 +81,18 @@ export function sampleTaskWrite(space, action, d) {
   else if (t.done_at) fail('task_done');
   else if (action === 'task.due') { if (t.starts_on && d.due_on && t.starts_on > d.due_on) fail('task_dates'); set('due_on', 'due', d.due_on || null); }
   else if (action === 'task.title') set('title', 'title', d.title.trim());
-  else if (action === 'task.status') { if (!['todo', 'doing', 'hold'].includes(d.status)) fail('task_input'); set('status', 'status', d.status); }
+  else if (action === 'task.status') {
+    if (!['todo', 'doing', 'hold'].includes(d.status)) fail('task_input');
+    const reason = d.status === 'hold' ? holdReason(d.hold_reason) : null;
+    // 사유만 고치기(reason_only — 할 일 패널): 그사이 남이 보류를 풀었으면 상태를 되돌리지 않고 task_conflict(서버와 같다)
+    if (d.reason_only && (d.status !== 'hold' || t.status !== 'hold')) fail('task_conflict');
+    if (t.status === 'hold' && d.status === 'hold') { // 이미 보류: 사유를 보냈고 다르면 사유만(보류한 때 그대로), 기록은 'status' 보류→보류 한 줄(사유 값은 남기지 않는다)
+      if ('hold_reason' in d && t.hold_reason !== reason) { logEvent(t.id, 'status', 'hold', 'hold'); t.hold_reason = reason; }
+    } else {
+      t.held_at = d.status === 'hold' ? new Date().toISOString() : null; t.hold_reason = reason;
+      set('status', 'status', d.status);
+    }
+  }
   else if (action === 'task.priority') { if (![1, 2, 3].includes(Number(d.priority))) fail('task_input'); set('priority', 'priority', Number(d.priority)); }
   else if (action === 'task.category') { const id = cat(d.category_id); set('category_id', 'category', id, catName(key, t.category_id), catName(key, id)); }
   else if (action === 'task.start') { if (d.starts_on && t.due_on && d.starts_on > t.due_on) fail('task_dates'); set('starts_on', 'start', d.starts_on || null); }

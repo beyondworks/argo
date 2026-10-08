@@ -101,6 +101,7 @@ body.vw-banding, body.vw-banding * { user-select: none; -webkit-user-select: non
 .tk-value { font-size: 13px; }
 .tk-note { min-height: 140px; margin-top: 0; line-height: 1.5; }
 .tk-note.short { min-height: 84px; }
+.tk-reason { min-height: 60px; margin-top: 0; line-height: 1.5; } /* 보류 사유(10/8) — 메모보다 짧게 */
 .tk-hint { margin: 0; font-size: 12px; color: var(--fg-3); }
 .tk-cancel { color: var(--danger); }
 .tk-hist h3 { margin: 4px 0 8px; font-size: 12.5px; font-weight: 600; color: var(--fg-2); }

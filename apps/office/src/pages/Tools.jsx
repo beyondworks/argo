@@ -10,6 +10,7 @@ import { toolCrewOn, toggleToolCrew, oncePerAgent } from '../core/crew-assign.js
 import { LoadFail } from '../ui/LoadFail.jsx';
 import { loadAccounts } from '../core/mail.js';
 import { Link } from '../core/router.jsx';
+import { baseOf } from '../core/commands.js';
 import { Modal, showToast } from '../ui/Overlay.jsx';
 import { Icon } from '../ui/Icon.jsx';
 import { TOOL_DICT } from './tools-i18n.js';
@@ -41,7 +42,7 @@ export default function Tools({ space }) {
     <div className="page-title-row"><div><h1 className="page-h1">{t('tool.title')}</h1><p className="dim">{t('tool.subtitle')}</p></div>
       {(tab === 'mine' || manager) && <button type="button" className="btn sm" onClick={() => setEdit({ scope: tab === 'company' ? 'org' : 'me', title: '', body: '', spec: { tool_kind: 'service', url: '', enabled: true, crews: [] } })}><Icon name="plus" size={13} />{t('tool.add')}</button>}</div>
     <section className="module"><header className="module-head"><Icon name="mail" size={15} /><h3>{t('tool.connected')}</h3></header>
-      {!accounts.length ? <p className="mod-empty">{t('tool.noAccount')} <Link to="/me/mail">{t('tool.connect')}</Link></p>
+      {!accounts.length ? <p className="mod-empty">{t('tool.noAccount')} <Link to={`${baseOf(space)}/mail`}>{t('tool.connect')}</Link></p>
         : <ul className="perf-days">{accounts.map((a) => <li key={a.id} className="perf-item"><span className={`badge${a.status === 'ok' ? '' : ' late'}`}>{t(a.status === 'ok' ? 'tool.ok' : 'tool.expired')}</span><span className="perf-item-main">{a.address}</span><small className="dim">{t('tool.mailUse')}</small></li>)}</ul>}
     </section>
     {org && <div className="perf-bar"><div className="seg" role="tablist">{['company', 'mine'].map((k) => <button key={k} type="button" role="tab" aria-selected={tab === k} className={`seg-btn${tab === k ? ' on' : ''}`} onClick={() => setTab(k)}>{t(`tool.tab.${k}`)}</button>)}</div></div>}

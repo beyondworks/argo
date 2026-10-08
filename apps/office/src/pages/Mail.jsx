@@ -32,14 +32,17 @@ const haAddr = (s) => <span className="ha">{s}</span>;
 import {
   loadAccounts, pullMail, syncMail, readMail, finishConnect, mailConfig, refreshMail, hasMore, wantSync, lastSynced, subscribeSync, limitLeft, subscribeLimit, getLimitUntil,
   saveDraft, sendMail, sendDraft, deleteDraft, toggleStar, fileToPart, openAttachment, mailDoc, mailPaper, ATTACH_CAP,
-  readSnap, saveSnap, clearSnap, readView, writeView, firstView, seedSample, notifyOn, subscribeNotify, hardFails,
-} from '../core/mail.js';
+  readSnap, saveSnap, clearSnap, readView, writeView, firstView, seedSample, notifyOn, subscribeNotify, hardFails, takeMailReturn } from '../core/mail.js';
 import {
   VIEWS, inView, byDate, replySubject, forwardSubject, replyTo, replyAll, fmtExact, linkify, quoteBlock, forwardBlock, htmlToText, escapeHtml,
   splitAttachments, composeBody, isBlank, resumable, avatarOf, parseAddrs, SYNC_MAIL_MS, SYNC_WATCH_MS, attachSig, draftSavePlan,
 } from './mail-model.js';
 import { okAccount as ok, reconnect, copyAdminNote, DisconnectModal } from './MailAccounts.jsx';
 import './mail.css';
+
+// 메일함 주소(10/8) — 조직 공간 메뉴의 메일도 같은 내 개인 메일함이다. 지금 있는 공간의 메일 주소 안에서 움직인다(조직 공간에서 메일을 열어도 내 공간으로 넘어가지 않게)
+const MAIL_PATH = /^\/(me|o\/[^/]+)\/mail(\/|$)/;
+const mailHome = () => location.pathname.match(/^\/o\/[^/]+\/mail(?=\/|$)/)?.[0] ?? '/me/mail';
 
 registerDict(MAIL_DICT);
 const MailEditor = lazy(() => import('./MailEditor.jsx'));          // 서식 편집기 — 작성 창을 열 때만(tiptap)
@@ -79,7 +82,7 @@ function MailRow({ m, active, tag, sel, group }) {
     <div className={`mail-item${m.starred ? ' starred' : ''}`}>
       <button ref={setNodeRef} type="button" className={`mail-row${active ? ' active' : ''}${m.unread ? ' unread' : ''}${isDragging ? ' ghost' : ''}`}
         {...attributes} {...selProps(sel, m.id)} {...mergeHandlers(mouse, menuProps(() => mailMenu(m)))} role="option" aria-selected={active}
-        onClick={() => { navigate(`/me/mail/${m.id}`); if (m.unread) setMail(m.id, { unread: false }); }}>
+        onClick={() => { navigate(`${mailHome()}/${m.id}`); if (m.unread) setMail(m.id, { unread: false }); }}>
         <Avatar name={draft ? m.to : m.from} addr={draft ? parseAddrs(m.to)[0] : m.addr} />
         <span className="mail-from">{m.unread && <span className="dot mark" />}{who}{draft && <span className="badge">{t('mailx.draft')}</span>}</span>
         <span className="mail-time mono" title={fmtExact(m.at, getLang())}>{ago(m.at)}</span>
@@ -144,7 +147,7 @@ function Reader({ m, onBack }) {
     const kind = ask; setAsk(null);
     try {
       if (kind === 'send') { await sendDraft(m); showToast(t('mailc.sent')); } else { await deleteDraft(m); showToast(t('mailx.deleted')); }
-      navigate('/me/mail');
+      navigate(mailHome());
     } catch { showToast(t('mailx.failed')); }
   };
   const cc = c?.cc;
@@ -179,7 +182,7 @@ function Reader({ m, onBack }) {
               <Icon name="globe" size={14} />{tr?.busy ? t('tr.busy', { n: tr.done, t: tr.total || '…' }) : showTr && tr ? t('tr.original') : t('tr.translate')}
             </button>}
             <button type="button" className={`icon-btn mail-star-btn${m.starred ? ' on' : ''}`} aria-pressed={!!m.starred} aria-label={t(m.starred ? 'mailx.unstar' : 'mailx.star')} title={t(m.starred ? 'mailx.unstar' : 'mailx.star')} onClick={() => toggleStar(m)}><Icon name="star" /></button>
-            {m.folder !== 'archive' && <button type="button" className="btn" onClick={() => { const undo = archiveMail(m.id); showToast(t('mail.archived'), { undo }); navigate('/me/mail'); }}><Icon name="archive" size={14} />{t('mail.archiveIt')}</button>}
+            {m.folder !== 'archive' && <button type="button" className="btn" onClick={() => { const undo = archiveMail(m.id); showToast(t('mail.archived'), { undo }); navigate(mailHome()); }}><Icon name="archive" size={14} />{t('mail.archiveIt')}</button>}
             <button type="button" className="icon-btn" aria-label={t('more')} onClick={(e) => openMenu(e, mailMenu(m), { anchor: e.currentTarget })}><Icon name="dots" /></button>
           </>}
         </div>
@@ -365,7 +368,7 @@ function ComposeWindow({ spec, real }) {
     clearSnap();
     if (had && latest.current.ref.draftId) {
       showToast(t('mailx.closedSaved'));
-      if (real && readView() === 'drafts' && location.pathname.startsWith('/me/mail')) pullMail('drafts').catch(() => {}); // 임시 보관함을 보고 있으면 방금 저장한 초안이 보이게
+      if (real && readView() === 'drafts' && MAIL_PATH.test(location.pathname)) pullMail('drafts').catch(() => {}); // 임시 보관함을 보고 있으면 방금 저장한 초안이 보이게
     }
   };
   const discard = async () => {
@@ -506,7 +509,7 @@ export function MailConnect({ query }) {
     const q = new URLSearchParams(query ?? '');
     if (q.get('error')) { setError(q.get('error')); return; }
     finishConnect(q.get('code'), q.get('state'))
-      .then(async ({ address }) => { await loadAccounts(); showToast(t('mailc.connected', { addr: address })); navigate('/me/mail', { replace: true }); })
+      .then(async ({ address }) => { await loadAccounts(); showToast(t('mailc.connected', { addr: address })); navigate(takeMailReturn(), { replace: true }); })
       .catch((e) => setError(e.code));
   }, [mode, query]);
   const known = ['access_denied', 'admin_policy_enforced', 'scopes', 'state', 'not_configured'];
@@ -517,7 +520,7 @@ export function MailConnect({ query }) {
         <p>{t(`mailc.err.${known.includes(error) ? error : 'other'}`)}</p>
         <div className="row-gap">
           <button type="button" className="btn primary" onClick={() => reconnect()}>{t('mailc.reconnect')}</button>
-          <button type="button" className="btn" onClick={() => navigate('/me/mail', { replace: true })}>{t('mail.back')}</button>
+          <button type="button" className="btn" onClick={() => navigate(takeMailReturn(), { replace: true })}>{t('mail.back')}</button>
         </div>
         <button type="button" className="link-btn small" onClick={copyAdminNote}>{t('mailc.copyAdmin')}</button>
       </>}
@@ -635,7 +638,7 @@ export function Mail({ id }) {
     const onKey = (e) => {
       if (e.metaKey || e.ctrlKey || e.altKey || /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName) || document.activeElement?.isContentEditable || getUi().compose) return;
       const i = rows.findIndex((m) => m.id === id);
-      if (e.key === 'j' || e.key === 'k') { const next = rows[Math.max(0, Math.min(rows.length - 1, i + (e.key === 'j' ? 1 : -1)))]; if (next) { navigate(`/me/mail/${next.id}`); if (next.unread) setMail(next.id, { unread: false }); } }
+      if (e.key === 'j' || e.key === 'k') { const next = rows[Math.max(0, Math.min(rows.length - 1, i + (e.key === 'j' ? 1 : -1)))]; if (next) { navigate(`${mailHome()}/${next.id}`); if (next.unread) setMail(next.id, { unread: false }); } }
       if (e.key === 'e' && cur && cur.folder !== 'archive' && !isDraft(cur)) { const undo = archiveMail(cur.id); showToast(t('mail.archived'), { undo }); }
       if (e.key === 'r' && cur && !isDraft(cur)) setUi({ compose: { mode: 'reply', of: cur.id } });
       if (e.key === 's' && cur && !isDraft(cur)) toggleStar(cur);
@@ -653,7 +656,7 @@ export function Mail({ id }) {
       list.every((m) => !m.unread) && { label: t('mail.markUnread'), icon: 'mail', run: done(() => list.forEach((m) => setMail(m.id, { unread: true }))) },
       !list.every((m) => m.starred) && { label: t('mailx.star'), icon: 'star', run: done(() => list.forEach((m) => !m.starred && !isDraft(m) && toggleStar(m))) },
       list.every((m) => m.starred) && { label: t('mailx.unstar'), icon: 'star', run: done(() => list.forEach((m) => toggleStar(m))) },
-      view !== 'archive' && { label: t('mail.archiveIt'), icon: 'archive', run: done(() => { const undos = list.map((m) => archiveMail(m.id)); showToast(t('sel.archived', { n: list.length }), { undo: () => undos.forEach((u) => u?.()) }); if (list.some((m) => m.id === id)) navigate('/me/mail'); }) },
+      view !== 'archive' && { label: t('mail.archiveIt'), icon: 'archive', run: done(() => { const undos = list.map((m) => archiveMail(m.id)); showToast(t('sel.archived', { n: list.length }), { undo: () => undos.forEach((u) => u?.()) }); if (list.some((m) => m.id === id)) navigate(mailHome()); }) },
       { label: t('crew.assign'), icon: 'hand', run: done(() => setUi({ assign: { space: 'me', items: mailItems(list) } })) },
     ];
   } });
@@ -661,7 +664,7 @@ export function Mail({ id }) {
   const multi = accounts.length > 1;
   const noAccounts = real && ready && !accounts.length;
   const expired = accounts.filter((a) => !ok(a));
-  const pickView = (v) => { setView(v); clearSearch(); navigate('/me/mail'); };
+  const pickView = (v) => { setView(v); clearSearch(); navigate(mailHome()); };
   const checked = lastSynced();
   return (
     <div className={`mail${cur ? ' has-reader' : ''}${cal ? ' with-cal' : ''}`} style={{ '--list-w': `${listW}px` }}>
@@ -703,7 +706,7 @@ export function Mail({ id }) {
         {canMore && rows.length > 0 && <div className="mail-more"><button type="button" className="btn sm" disabled={moreBusy} onClick={more}>{moreBusy ? t('mailx.loadingMore') : t('mailx.more')}</button></div>}
       </section>
       <SplitHandle width={listW} onChange={setListW} label={t('mod.resize')} />
-      <section className="mail-reader"><Reader m={cur} onBack={() => navigate('/me/mail')} /></section>
+      <section className="mail-reader"><Reader m={cur} onBack={() => navigate(mailHome())} /></section>
       {cal && <CalendarAside onClose={toggleCal} />}
     </div>
   );

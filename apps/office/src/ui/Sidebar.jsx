@@ -250,7 +250,7 @@ export function Sidebar({ space, path }) {
     business: { to: `${base}/business`, icon: NAV_ICON.business, label: t('nav.business'), active: (path === `${base}/business` || path.startsWith(`${base}/business/`)) && !path.startsWith(`${base}/business/library`) },
     contracts: { to: `${base}/contracts`, icon: NAV_ICON.contracts, label: t('nav.contracts'), active: at(`${base}/contracts`) },
     files: { to: `${base}/files`, icon: NAV_ICON.files, label: t('nav.files'), active: path === `${base}/files` || path.startsWith(`${base}/files/`) },
-    mail: { to: '/me/mail', icon: NAV_ICON.mail, label: t('nav.mail'), count: unread, active: path.startsWith('/me/mail') },
+    mail: { to: `${base}/mail`, icon: NAV_ICON.mail, label: t('nav.mail'), count: unread, active: path === `${base}/mail` || path.startsWith(`${base}/mail/`) }, // 조직 공간에서도 내 개인 메일함
     briefings: { to: '/me/briefings', icon: NAV_ICON.briefings, label: t('nav.briefings'), active: path.startsWith('/me/briefings') }, // 브리핑(10/5) — 내 공간에만
     work: { to: `${base}/work`, icon: NAV_ICON.work, label: t('nav.work'), active: at(`${base}/work`) },
     approvals: { to: `${base}/approvals`, icon: NAV_ICON.approvals, label: t('nav.approvals'), count: pendingHere, active: at(`${base}/approvals`) },
@@ -260,6 +260,7 @@ export function Sidebar({ space, path }) {
     docs: { to: `${base}/docs`, icon: NAV_ICON.docs, label: t('nav.docs'), active: at(`${base}/docs`) },
     perf: { to: `${base}/perf`, icon: NAV_ICON.perf, label: t('nav.perf'), active: at(`${base}/perf`) },
     ...Object.fromEntries(['people', 'company', 'agents'].map((v) => [v, { to: `${base}/${v}`, icon: NAV_ICON[v], label: t(`nav.${v}`), active: at(`${base}/${v}`) }])),
+    status: { to: `${base}/status`, icon: NAV_ICON.status, label: t('nav.status'), active: at(`${base}/status`) }, // 업무 현황(10/8) — 조직 공간에만
     tasks: { to: `${base}/tasks`, icon: NAV_ICON.tasks, label: t('nav.tasks'), count: due && due.overdue + due.today, active: at(`${base}/tasks`) },
     shared: { to: '/me/shared', icon: NAV_ICON.shared, label: t('nav.shared'), active: at('/me/shared') },
     knowhow: { to: `${base}/knowhow`, icon: NAV_ICON.knowhow, label: t('nav.knowhow'), active: at(`${base}/knowhow`) },
