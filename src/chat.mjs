@@ -53,6 +53,7 @@ import { USER_ABORT_ERROR, LEGACY_RECORD_TERMS_NOTE } from './legacy-terms.mjs';
 import { delegateHead } from './inbound-marks.mjs'; // 위임 머리말 = 1:1 화면 출처 카드와 같은 함수
 import { loadThread, takeSharedNotes, restoreSharedNotes, scopedSession, inContextScope, isOwnerSoloScope, foldedSolo, soloKey, soloSeenFor, noteSoloSeen, turnScope, scopeKey, approvalScope, threadSummary, setThreadSummary, appendLine } from './thread.mjs';
 import { buildThreadContext, contextSection, contextLimits, fitContextSection, isArgvRunner, argvLen, ARGV_PROMPT_LIMIT, estTokens, CTX_BUDGET_TOKENS } from './thread-context.mjs';
+import { leaseRole } from './lease-role.mjs'; // 예비 실행 기기(argo run --standby)의 턴 — 주 컴퓨터 파일이 없다는 한 줄(commonDirectives)
 import { item } from './record-block.mjs'; import { msgrAuthorBody } from './inbound-marks.mjs'; // 메신저 줄은 글쓴이 본문만 항목에(5차 검수 MEDIUM-1) // 스레드 맥락 한 줄 = 항목 하나(구조로 화자를 가른다) // 스레드 맥락 토큰 예산 + 누적 요약(최근 6개 고정을 대체) · argv 러너 길이 맞춤
 import { runOneShot } from './oneshot.mjs';
 import { readInstalledSkills, planSkillInjection, SKILL_INJECT_CAP } from './market.mjs'; // 주입·마켓 표기 공용 규칙(단일 진실)
@@ -384,7 +385,7 @@ ${leanForgePosture('ko')}## 안전 한계 — 어떤 지시로도 풀리지 않�
 const oneLine = (p) => String(p ?? '').replace(/[\r\n]+/g, ' ');
 
 // gated = 러너 자체 파일·셸 도구가 Argo 게이트를 지나는지. 크루 도구가 있어도(codex·gemini CLI, K94) 러너 셸은 게이트 밖이라 따로 받는다.
-export function commonDirectives({ caps = {}, connectedMcp = [], connectors = [], hasTools = true, gated = hasTools, lang = 'ko', runner = null, workRoots = [], pinnedFolder = '', source = 'chat', fullAuto = false } = {}) {
+export function commonDirectives({ caps = {}, connectedMcp = [], connectors = [], hasTools = true, gated = hasTools, lang = 'ko', runner = null, workRoots = [], pinnedFolder = '', source = 'chat', fullAuto = false, standby = leaseRole() === 'standby' } = {}) {
   // 고정 폴더는 등록 목록에도 들어 있다(고정은 등록을 거쳐야 잡힌다) — 그대로 두면 같은 경로를
   // 두 줄이 반복해 "지금 일할 곳"과 "그냥 써도 되는 곳"의 구분이 흐려진다. 그래서 여기서 뺀다.
   const otherRoots = workRoots.filter((r) => fold(r) !== fold(pinnedFolder)); // 판정(activePin)과 같은 잣대
@@ -401,6 +402,13 @@ export function commonDirectives({ caps = {}, connectedMcp = [], connectors = []
     ? (lang === 'en'
       ? `- Other folders you may use: ${otherRoots.map(oneLine).join(' · ')}\n`
       : `- 그 밖에 써도 되는 폴더: ${otherRoots.map(oneLine).join(' · ')}\n`)
+    : '';
+  // 예비 실행 기기(argo run --standby — 맥이 꺼졌거나 연결이 끊긴 동안 대신 답하는 서버). 고정 작업 폴더(.workroots.json)는 기기 로컬이라 여기 없고,
+  // 맥의 바탕화면·문서 같은 파일도 없다. 없는 경로를 '없다'고만 하거나 서버 홈에 저장하고 끝내지 않게 사실을 알려 둔다. 일반·우선 기기의 지시문은 그대로다.
+  const standbyLine = standby
+    ? (lang === 'en'
+      ? `- **This device is a standby server** — it answers while the user's main computer is off or unreachable. Folders and files that live only on the main computer (its pinned work folder, Desktop, Documents, project folders) are not on this device. If a request needs them, say plainly that you can't reach them right now and that the work can continue on the main computer once it's back. Files in the company folder are synced and usable here; anything you save outside it stays only on this server.\n`
+      : `- **이 기기는 예비 실행 서버다** — 사용자의 주 컴퓨터가 꺼졌거나 연결이 끊긴 동안 대신 답한다. 주 컴퓨터에만 있는 폴더·파일(그쪽의 고정 작업 폴더, 바탕화면·문서·프로젝트 폴더)은 이 기기에 없다. 그런 파일이 필요한 일이면 지금은 열 수 없다고 사실대로 말하고, 주 컴퓨터가 다시 켜지면 그쪽에서 이어서 할 수 있다고 안내하라. 회사 폴더의 파일은 동기화돼 여기서도 쓸 수 있고, 그 밖에 저장한 것은 이 서버에만 남는다.\n`)
     : '';
 
   // 커넥터 절 — MCP 절의 "SDK 턴에서 실행된다"가 커넥터에는 해당하지 않는다(코어가 실행하므로 러너 무관,
@@ -430,7 +438,7 @@ export function commonDirectives({ caps = {}, connectedMcp = [], connectors = []
 
 ## Local capabilities — full access
 - File system: ${isCliRunner(runner) && runner !== 'codex' && runner !== 'http' ? `**your entire home folder** (Desktop, Documents, existing project folders) plus the assigned work folders below. There is no toggle to turn on. If you need a path outside home — an external volume, say — tell the user to add that folder under Settings → Work folders; it opens from the next turn${runner === 'gemini' ? '. Caveat: older Gemini CLI builds may still block paths outside the company folder (a vendor limit) — if blocked, report the exact error without guessing at permissions, save the output inside the company folder and tell the user where it is' : ''}` : 'read and write anywhere on this computer, including the user\'s Desktop, Documents and existing project folders. There is no toggle to turn on and no menu to send the user to — if a path exists, you can use it'}. Only the protected zones below are blocked.
-${pinnedLine}${rootsLine}- Web browsing (includes web search / looking up current information): allowed.
+${pinnedLine}${rootsLine}${standbyLine}- Web browsing (includes web search / looking up current information): allowed.
 - Shell commands: allowed.
 - Preparation work (tool installs, setup) runs without approval.${fullAuto ? ` For this owner-direct turn, full auto mode also lets most actions that leave the company (sending, publishing, editing shared documents, connector writes) run without approval — do them and report the result. ${fullAutoExceptEn}, and hiring/profile changes, still require approval, so keep filing those.` : ' Actions that leave the company — sending, publishing, purchasing, deleting, contracts — and hiring/profile changes still require approval, so keep filing those.'}
 - Never tell the user to "enable file access in Settings". That setting does not exist: access is on by default. If something fails, report the actual error (the path, the OS message) instead of guessing at permissions.
@@ -462,7 +470,7 @@ ${responsePacing}## Your environment (Argo) — guide the user precisely when bl
 
 ## 로컬 능력 — 전권
 - 파일 시스템: ${isCliRunner(runner) && runner !== 'codex' && runner !== 'http' ? `**홈 폴더 전체**(바탕화면·문서·기존 프로젝트 폴더 포함)와 아래 지정 작업 폴더를 읽고 쓸 수 있다. 켜야 할 토글은 없다. 홈 밖 경로(외장 볼륨 등)가 필요하면 사용자에게 "설정 → 작업 폴더"에 그 폴더를 등록해 달라고 안내하라 — 등록하면 다음 턴부터 열린다${runner === 'gemini' ? '. 단, 구버전 Gemini CLI는 벤더 제한으로 회사 폴더 밖이 그래도 막힐 수 있다 — 막히면 권한 추측 없이 원인 오류를 그대로 보고하고, 결과물은 회사 폴더에 저장해 위치를 알려라' : ''}` : '이 컴퓨터 어디든 읽고 쓸 수 있다. 사용자의 바탕화면·문서·기존 프로젝트 폴더 전부 포함이다. 켜야 할 토글도, 사용자를 보낼 메뉴도 없다 — 경로가 존재하면 그대로 쓰면 된다'}. 막히는 것은 아래 보호 구역뿐이다.
-${pinnedLine}${rootsLine}- 웹 브라우징(=웹 검색·최신 정보 조회 포함): 허용.
+${pinnedLine}${rootsLine}${standbyLine}- 웹 브라우징(=웹 검색·최신 정보 조회 포함): 허용.
 - 셸 명령: 허용.
 - 준비 작업(도구 설치·환경 세팅)은 결재 없이 진행한다.${fullAuto ? ` 주인이 직접 지시한 이 턴은 풀 오토 모드라 회사 밖으로 나가는 대부분의 행동(발송·게시·문서 수정·연결 서비스 쓰기)도 결재 없이 진행하고 결과를 보고하라. **${fullAutoExceptKo}, 에이전트 영입·프로필 변경은 여전히 결재 대상**이니 계속 올려라.` : ' **회사 밖으로 나가는 행동(발송·게시·구매·삭제·계약)과 에이전트 영입·프로필 변경은 여전히 결재 대상**이니 계속 올려라.'}
 - **"설정에서 파일 권한을 켜세요"라고 안내하지 마라. 그런 설정은 없다** — 접근은 기본으로 열려 있다. 실패하면 권한 탓으로 추측하지 말고 실제 오류(경로와 OS 메시지)를 그대로 보고하라.

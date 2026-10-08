@@ -9,7 +9,7 @@ import { join } from 'node:path';
 
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-prefer-'));
 process.env.ARGO_SYNC = '1';
-const { renewLease, _setSyncClientForTest } = await import('../src/sync.mjs');
+const { renewLease, _setSyncClientForTest, HANDOVER_WAIT_MS } = await import('../src/sync.mjs');
 
 const fakeClient = (initialDoc = null) => {
   const calls = { upload: 0 };
@@ -25,7 +25,9 @@ const fakeClient = (initialDoc = null) => {
   return { client: { storage: { from: () => bucket } }, calls, doc: () => (stored ? JSON.parse(stored.toString()) : null) };
 };
 const lease = () => (globalThis.__argoSyncLease ??= { leader: true, checkedAt: 0, ownedAt: 0, yieldSince: 0 });
-const reset = () => Object.assign(lease(), { leader: true, ownedAt: 0, checkedAt: 0, yieldSince: 0 });
+// 깨어 있은 지 오래된 프로세스로 — 되찾기는 끊김 없이 30초 깨어 있은 뒤에만 한다(sync.mjs AWAKE_MIN_MS, lease-standby.test.mjs가 잠근다). 여기서는 역할 판정만 본다.
+const awakeLong = () => Object.assign((globalThis.__argoSyncAwake ??= {}), { since: Date.now() - 10 * 60_000, wall: Date.now(), mono: performance.now() });
+const reset = () => { awakeLong(); globalThis.__argoSyncLeaseBootAt = Date.now() - 60_000; return Object.assign(lease(), { leader: true, ownedAt: 0, checkedAt: 0, yieldSince: 0, pending: null, token: null, validUntil: 0, peers: {}, peersSavedAt: {} }); };
 afterEach(() => { delete process.env.ARGO_PREFER_LEADER; });
 
 test('우선 기기는 다른 일반 기기가 잡은 새 리스를 가져온다 — 리스에 preferred 표시', async () => {
@@ -33,9 +35,16 @@ test('우선 기기는 다른 일반 기기가 잡은 새 리스를 가져온다
   const f = fakeClient({ deviceId: 'mac-app', token: 'm', ts: Date.now() });
   _setSyncClientForTest(f.client); reset();
   await renewLease('owner-p1', { runnerUsable: true });
-  assert.equal(lease().leader, true);
-  assert.ok(f.calls.upload >= 1);
+  // 넘겨받기(2026-10-08): 남의 새 리스를 가져와도 바로 담당을 시작하지 않는다 — 앞 담당(맥)이 리스를 다시 읽고 물러날 시간(HANDOVER_WAIT_MS = 한 주기 + 2초)까지(겹침 0)
+  assert.equal(lease().leader, false, '가져온 주기에는 아직 담당이 아니다');
+  assert.equal(f.calls.upload, 1);
   assert.equal(f.doc().preferred, true, '다른 우선 기기와 서로 뺏지 않게 표시를 남긴다');
+  await renewLease('owner-p1', { runnerUsable: true });
+  assert.equal(lease().leader, false, '앞 담당이 리스를 다시 읽을 시간(HANDOVER_WAIT_MS)이 지나기 전에는 주기가 돌아도 담당이 아니다');
+  lease().pending.ts -= HANDOVER_WAIT_MS;
+  await renewLease('owner-p1', { runnerUsable: true });
+  assert.equal(lease().leader, true, '그 시간이 지난 뒤 그 글이 그대로면 담당');
+  assert.equal(f.calls.upload, 1, '확인 주기는 쓰지 않는다');
 });
 
 test('우선 기기끼리는 먼저 잡은 쪽을 존중한다(뺏고 뺏기는 요동 금지)', async () => {
