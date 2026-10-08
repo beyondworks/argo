@@ -5,7 +5,7 @@
 // ② 팀 메신저 브리지는 리스와 무관하게 모든 기기에서 돈다(9/6부터, 실행권은 서버 클레임이 하나로 묶는다). 예비 기기만 담당일 때만 돈다 —
 //    VPS가 맥과 함께 켜져 있어도 메신저 일은 맥이 맡게. 일반 기기의 종전 동작은 그대로다(핀).
 // 리스 만료(120초)를 기다리는 장면(맥 전원 끔·잠자기)은 테스트 시간이 길어 여기서 돌리지 않는다 — 단위 테스트(lease-standby.test.mjs)와 PR의 실측 기록이 맡는다.
-import { test, after } from 'node:test';
+import { describe, test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
@@ -31,6 +31,9 @@ async function device(fake, deviceId, { msgr = false } = {}) {
   return root;
 }
 
+// 장면은 서로 독립이다(가짜 Supabase·데이터 폴더·자식 프로세스가 장면마다 따로) — 대부분 운영 주기를 기다리는 시간이라 세 개씩 나란히 돌린다.
+// 차례로 돌리면 이 파일이 약 2.5~3분이라 CI macOS 잡(20분 제한)을 넘겼다(#884 5c167c9f: npm test 18분 43초 → smoke 취소).
+describe('맥 우선·서버 예비 두 기기 장면', { concurrency: 3 }, () => {
 test('VPS(예비)가 담당 중에 맥(일반)이 켜지면 맥이 되찾고, 넘어가는 동안 둘이 함께 담당인 순간이 없다 — 이후 리스 쓰기는 담당 기기만 30초에 1번', { timeout: 90_000 }, async () => {
   const fake = await startFakeSupabase({ plan: 'pro' }); fakes.push(fake);
   const vps = spawnLeaseChild({ root: await device(fake, 'dev-vps'), env: { ...FAST, ARGO_STANDBY_LEADER: '1' }, name: 'vps' }); kids.push(vps);
@@ -155,3 +158,4 @@ test('VPS(예비)는 담당이 되면 팀 메신저를 받기 시작하고(공�
   assert.equal(vps.last()?.cloud, false);
   assert.equal(fake.count(MSGR_POLL, quietFrom), 0, `맥이 되찾은 뒤에도 VPS가 메신저를 받는다 — ${fake.count(MSGR_POLL, quietFrom)}번`);
 });
+}); // describe

@@ -36,8 +36,9 @@ jobs:
       matrix:
         os: [macos-15, windows-latest]
     runs-on: ${{ matrix.os }}
-    # 행 방지 — 테스트가 자식 프로세스를 스폰하는 계열이 있어 hang 시 기본 6시간을 태우지 않게 상한
-    timeout-minutes: 20
+    # 행 방지 — 테스트가 자식 프로세스를 스폰하는 계열이 있어 hang 시 기본 6시간을 태우지 않게 상한.
+    # 25분: 리스 넘겨받기 e2e(운영 주기 8초·TTL 120초 장면, #884)가 더해져 macOS 잡이 20분 근처까지 왔다(npm test 17~19분 + 스모크 1~1.5분).
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 

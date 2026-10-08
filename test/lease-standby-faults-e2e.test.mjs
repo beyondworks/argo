@@ -6,7 +6,7 @@
 // ② 짧게 깬 맥(D 2차 검수 MEDIUM-2): 맥이 W초만 깼다 다시 잠들면(DarkWake·뚜껑 잠깐 열기) 깬 주기에 가져간 리스 때문에 VPS가 물러나고, 맥은 담당을
 //    시작하기 전에 잠들어 맥의 글이 만료되는 120초 동안 아무도 맡지 않았다. 운영 값(주기 8초·깨어 있은 시간 30초) 그대로 W=6초를 본다 — 리스 쪽에서
 //    보면 잠든 것과 같도록 맥은 SIGKILL로 끈다(검수 실측과 같은 방법).
-import { test, after } from 'node:test';
+import { describe, test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -43,6 +43,9 @@ function armLeaseReadFaults(fake, deviceId, faults) {
 }
 const overlapMax = (children, from, to) => { let max = 0; for (let t = from; t <= to; t += 100) max = Math.max(max, runnersAt(children, t)); return max; };
 
+// 장면은 서로 독립이다(가짜 Supabase·데이터 폴더·자식 프로세스가 장면마다 따로) — 대부분 운영 주기를 기다리는 시간이라 세 개씩 나란히 돌린다.
+// 차례로 돌리면 이 파일이 약 2.5~3분이라 CI macOS 잡(20분 제한)을 넘겼다(#884 5c167c9f: npm test 18분 43초 → smoke 취소).
+describe('장애가 낀 넘겨받기 장면', { concurrency: 3 }, () => {
 test('맥이 담당 중에 예비 VPS의 리스 읽기가 500·연결 끊김이어도 VPS는 가져가지 않는다 — 겹침 0, VPS 리스 쓰기 0', { timeout: 60_000 }, async () => {
   const fake = await startFakeSupabase({ plan: 'pro' }); fakes.push(fake);
   const mac = spawnLeaseChild({ root: await device(fake, 'dev-mac'), env: FAST, name: 'mac', intervalMs: 100 }); kids.push(mac);
@@ -196,10 +199,12 @@ test('혼자 쓰는 기기의 기동 첫 리스 읽기가 한 번 오류여도 1
   const at = Date.now();
   const solo = spawnLeaseChild({ root: await device(fake, 'dev-solo'), name: 'solo', intervalMs: 100 }); kids.push(solo); // 운영 주기(8초) 그대로
   assert.equal(await waitUntil(() => solo.last()?.proc && solo.last()?.cloud, 15_000), true, solo.err.slice(-300));
-  const onAt = solo.samples.find((x) => x.proc && x.cloud).t - at;
   assert.equal(failed, 1, '재현 조건: 첫 리스 읽기가 오류였다');
-  assert.ok(onAt < 5_000, `첫 담당 ${onAt / 1000}초 — 다음 판정(8초)까지 기다렸다`);
-  const gets = fake.hits.filter((h) => h.k === `GET ${LEASE_PATH}` && h.t <= at + 8_000).length;
-  assert.ok(gets <= 3, `기동 다시 읽기는 한 번 — 8초 안 리스 읽기 ${gets}번(첫 읽기·다시 읽기·쓰기 뒤 재확인)`);
+  const firstGet = fake.hits.find((h) => h.k === `GET ${LEASE_PATH}` && h.t >= at).t; // 자식 기동 시간을 빼고 첫 리스 읽기부터 잰다
+  const onAt = solo.samples.find((x) => x.proc && x.cloud).t - firstGet;
+  assert.ok(onAt < 5_000, `첫 리스 읽기 뒤 ${onAt / 1000}초에 첫 담당 — 다음 판정(8초)까지 기다렸다`);
+  const gets = fake.hits.filter((h) => h.k === `GET ${LEASE_PATH}` && h.t >= firstGet && h.t <= firstGet + 7_000).length;
+  assert.ok(gets <= 3, `기동 다시 읽기는 한 번 — 첫 읽기 뒤 7초 안 리스 읽기 ${gets}번(첫 읽기·다시 읽기·쓰기 뒤 재확인)`);
   await solo.kill();
 });
+}); // describe
