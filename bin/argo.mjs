@@ -496,7 +496,10 @@ function service(action, flags = []) {
       const lingerOn = () => /Linger=yes/.test(spawnSync('loginctl', ['show-user', user, '--property=Linger'], { encoding: 'utf8' }).stdout ?? '');
       if (!lingerOn()) spawnSync('loginctl', ['enable-linger', user], { stdio: 'ignore' });
       if (spawnSync('systemctl', ['--user', 'daemon-reload']).status !== 0) { console.error(T.svcNoBus(user)); return false; }
-      spawnSync('systemctl', ['--user', 'enable', '--now', 'argo-cli.service'], { stdio: 'inherit' });
+      // enable --now는 이미 돌고 있는 상주를 다시 시작하지 않는다 — 역할을 바꿔 다시 등록해도(argo service install --standby) 옛 실행 인자로 계속 돌았다(D 1차 검수).
+      // restart는 멈춰 있으면 시작하고 돌고 있으면 새 유닛으로 다시 시작한다(macOS는 아래 bootout → bootstrap이 같은 일을 한다).
+      spawnSync('systemctl', ['--user', 'enable', 'argo-cli.service'], { stdio: 'inherit' });
+      spawnSync('systemctl', ['--user', 'restart', 'argo-cli.service'], { stdio: 'inherit' });
       console.log(T.svcDone(f)); console.log(T.svcRole[role]);
       if (!lingerOn()) console.log(T.svcLinger(user));
       return;

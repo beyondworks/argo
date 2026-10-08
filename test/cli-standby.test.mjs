@@ -89,8 +89,25 @@ test('argo service install --standby — 상주 파일의 실행 인자가 run -
   const { r, body, calls } = await serviceInstall(['install', '--standby']);
   assert.equal(r.status, 0, r.stderr + r.stdout);
   assert.deepEqual(runArgs(body), ['run', '--standby']);
-  assert.match(calls, process.platform === 'darwin' ? /launchctl bootstrap/ : /systemctl --user enable --now argo-cli\.service/);
+  assert.match(calls, process.platform === 'darwin' ? /launchctl bootstrap/ : /systemctl --user enable argo-cli\.service/);
   assert.match(r.stdout, /예비/, '등록 안내가 예비 역할을 말한다');
+});
+
+test('역할을 바꿔 다시 등록하면(argo service install → --standby) 돌고 있는 상주를 새 실행 인자로 다시 시작한다 — enable --now만으로는 옛 인자로 계속 돈다', { skip: process.platform === 'win32' && '윈도우는 서비스 등록 미지원' }, async () => {
+  const { r, body, calls } = await serviceInstall(['install', '--standby']);
+  assert.equal(r.status, 0, r.stderr + r.stdout);
+  assert.deepEqual(runArgs(body), ['run', '--standby']);
+  const lines = calls.trim().split('\n');
+  const at = (re) => lines.findIndex((l) => re.test(l));
+  if (process.platform === 'darwin') {
+    assert.ok(at(/^launchctl bootout /) >= 0 && at(/^launchctl bootout /) < at(/^launchctl bootstrap /), `내린 뒤 다시 올린다\n${calls}`);
+  } else {
+    // systemd: start(= enable --now)는 이미 active인 유닛에 아무 일도 하지 않는다 — 바뀐 ExecStart는 다음 재시작 때에야 적용됐다(D 1차 검수)
+    assert.ok(at(/^systemctl --user daemon-reload$/) >= 0, calls);
+    assert.ok(at(/^systemctl --user restart argo-cli\.service$/) > at(/^systemctl --user daemon-reload$/), `새 유닛을 읽은 뒤 다시 시작한다\n${calls}`);
+    assert.ok(at(/^systemctl --user enable argo-cli\.service$/) >= 0, `재부팅 뒤에도 켜지게 enable\n${calls}`);
+    assert.equal(at(/enable --now/), -1, calls);
+  }
 });
 
 test('argo service install(기본) — 종전대로 run만(우선 기기)', { skip: process.platform === 'win32' && '윈도우는 서비스 등록 미지원' }, async () => {
