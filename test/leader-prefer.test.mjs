@@ -25,7 +25,9 @@ const fakeClient = (initialDoc = null) => {
   return { client: { storage: { from: () => bucket } }, calls, doc: () => (stored ? JSON.parse(stored.toString()) : null) };
 };
 const lease = () => (globalThis.__argoSyncLease ??= { leader: true, checkedAt: 0, ownedAt: 0, yieldSince: 0 });
-const reset = () => Object.assign(lease(), { leader: true, ownedAt: 0, checkedAt: 0, yieldSince: 0 });
+// 깨어 있은 지 오래된 프로세스로 — 되찾기는 끊김 없이 30초 깨어 있은 뒤에만 한다(sync.mjs AWAKE_MIN_MS, lease-standby.test.mjs가 잠근다). 여기서는 역할 판정만 본다.
+const awakeLong = () => Object.assign((globalThis.__argoSyncAwake ??= {}), { since: Date.now() - 10 * 60_000, wall: Date.now(), mono: performance.now() });
+const reset = () => { awakeLong(); return Object.assign(lease(), { leader: true, ownedAt: 0, checkedAt: 0, yieldSince: 0 }); };
 afterEach(() => { delete process.env.ARGO_PREFER_LEADER; });
 
 test('우선 기기는 다른 일반 기기가 잡은 새 리스를 가져온다 — 리스에 preferred 표시', async () => {

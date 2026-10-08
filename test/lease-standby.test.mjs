@@ -14,20 +14,29 @@ process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-standby-'));
 process.env.ARGO_SYNC = '1';
 writeFileSync(join(process.env.ARGO_ROOT, '.device-session.json'), JSON.stringify({ url: 'https://example.invalid', anonKey: 'anon', access_token: 'a.b.c', refresh_token: 'r', expires_at: Math.floor(Date.now() / 1000) + 3600, user: { id: 'u-standby', email: '' } }), { mode: 0o600 });
 for (const k of ['ARGO_PREFER_LEADER', 'ARGO_NO_LEADER', 'ARGO_STANDBY_LEADER']) delete process.env[k];
-const { renewLease, isCloudLeader, standbyIdle, _setSyncClientForTest, LEASE_TTL_MS, YIELD_GRACE_MS, HANDOVER_WAIT_MS } = await import('../src/sync.mjs');
+const { renewLease, isCloudLeader, standbyIdle, _setSyncClientForTest, LEASE_TTL_MS, YIELD_GRACE_MS, HANDOVER_WAIT_MS, AWAKE_MIN_MS = 30_000 } = await import('../src/sync.mjs');
 const { leaseRole } = await import('../src/lease-role.mjs');
 const { getDeviceId } = await import('../src/workspace.mjs');
 const ME = await getDeviceId();
 
+/** 가짜 저장소. failReads(...errs) = 다음 리스 읽기들이 차례대로 돌려줄 오류(supabase-js download는 오류를 던지지 않고 { data: null, error }로 준다 —
+    { throw }를 주면 그 읽기가 던진다: 응답 본문 중단 등). staleCdn(doc) = CDN이 들고 있는 옛 사본 — cacheNonce·?t= 없는 읽기는 이걸 받는다. */
 const fakeClient = (initialDoc = null) => {
   const calls = { upload: 0, download: 0 };
   let stored = initialDoc ? Buffer.from(JSON.stringify(initialDoc)) : null;
+  let cdn = null;
+  const failNext = [];
+  const body = (buf) => ({ data: { arrayBuffer: async () => buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) }, error: null });
   const bucket = {
-    async download() {
+    async download(key, opts) {
       calls.download += 1;
-      if (!stored) return { data: null, error: { message: 'Object not found' } };
-      const buf = stored;
-      return { data: { arrayBuffer: async () => buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) } };
+      const f = failNext.shift();
+      if (f?.throw) throw f.throw;
+      if (f) return { data: null, error: f };
+      const busted = opts?.cacheNonce != null || String(key).includes('?t=');
+      if (cdn && !busted) return body(cdn);
+      if (!stored) return { data: null, error: { name: 'StorageApiError', message: 'Object not found', status: 400, statusCode: '404' } };
+      return body(stored);
     },
     async upload(_key, blob) { calls.upload += 1; stored = Buffer.from(await blob.arrayBuffer()); return { data: {}, error: null }; },
   };
@@ -35,10 +44,22 @@ const fakeClient = (initialDoc = null) => {
     client: { storage: { from: () => bucket } }, calls,
     doc: () => (stored ? JSON.parse(stored.toString()) : null),
     set: (doc) => { stored = Buffer.from(JSON.stringify(doc)); }, // 다른 기기의 쓰기
+    failReads: (...errs) => { failNext.push(...errs); },
+    staleCdn: (doc) => { cdn = Buffer.from(JSON.stringify(doc)); },
   };
 };
+/** supabase-js가 실제로 돌려주는 읽기 오류 모양(2.110.2 handleError) — 없음('Object not found')이 아닌 것들. */
+const READ_ERRORS = [
+  { name: 'StorageApiError', message: 'Internal Server Error', status: 500, statusCode: '500' },
+  { name: 'StorageApiError', message: 'Bad Gateway', status: 502, statusCode: '502' },
+  { name: 'StorageUnknownError', message: 'fetch failed' },
+  { name: 'StorageApiError', message: 'Bucket not found', status: 400, statusCode: '404' }, // 만료 토큰 GET을 Storage가 익명으로 처리(2026-10-05 운영 storage_logs)
+  { throw: new TypeError('terminated') }, // 응답 본문을 받다 끊김 — blob()이 던진다
+];
 const lease = () => (globalThis.__argoSyncLease ??= { leader: true, checkedAt: 0, ownedAt: 0, yieldSince: 0 });
-const reset = (patch = {}) => Object.assign(lease(), { leader: true, ownedAt: 0, checkedAt: 0, yieldSince: 0, pending: null }, patch);
+/** 이 프로세스가 ms 전부터 끊김 없이 깨어 있던 것으로(되찾기 조건 AWAKE_MIN_MS). 관찰 시각도 지금으로 맞춰 '잠들었다 깸'으로 읽히지 않게 한다. */
+const awakeFor = (ms) => Object.assign((globalThis.__argoSyncAwake ??= {}), { since: Date.now() - ms, wall: Date.now(), mono: performance.now() });
+const reset = (patch = {}) => { awakeFor(10 * 60_000); return Object.assign(lease(), { leader: true, ownedAt: 0, checkedAt: 0, yieldSince: 0, pending: null, readFailSince: 0 }, patch); };
 const role = (r) => {
   delete process.env.ARGO_PREFER_LEADER; delete process.env.ARGO_STANDBY_LEADER;
   if (r === 'preferred') process.env.ARGO_PREFER_LEADER = '1';
@@ -251,4 +272,178 @@ test('standbyIdle — 예비 기기이고 확인된 담당이 아닐 때만 참(
   reset({ leader: true, ownedAt: Date.now() - LEASE_TTL_MS - 1, checkedAt: Date.now() - LEASE_TTL_MS - 1 }); assert.equal(standbyIdle(), true);
   role('normal'); reset({ leader: false, checkedAt: Date.now() }); assert.equal(standbyIdle(), false);
   role('preferred'); reset({ leader: false, checkedAt: Date.now() }); assert.equal(standbyIdle(), false);
+});
+
+/* ── 리스 읽기 오류 (D 2차 검수 MEDIUM-1) ──
+   supabase-js download는 오류를 던지지 않고 { data: null, error }로 돌려준다. error를 보지 않으면 읽기가 한 번 실패할 때 '리스 없음'으로 읽고 써서,
+   예비 VPS가 맥 담당 중에 가져가 겹치고(실측 4.8초), 되찾는 맥은 넘겨받기 대기 없이 담당이 됐다. 없음은 storage-api 'Object not found' 하나뿐이다(isNotFound). */
+
+test('리스를 읽지 못하면(5xx·fetch failed·만료 토큰의 Bucket not found·응답 중단) 없음으로 보지 않는다 — 예비 VPS는 맥 담당 중에 가져가지 않는다(쓰기 0·담당 아님)', async () => {
+  for (const err of READ_ERRORS) {
+    role('standby');
+    const f = fakeClient(fresh('mac')); _setSyncClientForTest(f.client); reset();
+    f.failReads(err);
+    await renewLease('owner-e1', { runnerUsable: true });
+    assert.equal(f.calls.upload, 0, `${err.message ?? err.throw?.message}: 읽기 오류로 맥의 살아 있는 리스를 덮어썼다`);
+    assert.equal(isCloudLeader(), false, err.message ?? err.throw?.message);
+    assert.equal(standbyIdle(), true);
+    await renewLease('owner-e1', { runnerUsable: true }); // 다음 읽기는 성공 — 맥의 새 리스를 보고 양보
+    assert.equal(f.calls.upload, 0);
+    assert.equal(f.doc().deviceId, 'mac');
+  }
+});
+
+test('되찾는 맥은 리스를 읽지 못한 주기에 가져가지도 담당을 시작하지도 않는다 — 넘겨받기 대기를 건너뛰지 않는다(쓰기는 읽기가 성공한 뒤 1번)', async () => {
+  for (const err of READ_ERRORS) {
+    const label = err.message ?? err.throw?.message;
+    const f = fakeClient(fresh('vps', { standby: true })); _setSyncClientForTest(f.client); reset({ leader: false });
+    f.failReads(err);
+    await renewLease('owner-e2', { runnerUsable: true });
+    assert.equal(f.calls.upload, 0, `${label}: 읽지 못한 주기에 썼다`);
+    assert.equal(isCloudLeader(), false, label);
+    await renewLease('owner-e2', { runnerUsable: true }); // 읽기 성공 → 넘겨받기 시작(쓰기 1, 아직 담당 아님)
+    assert.equal(f.calls.upload, 1, label);
+    assert.equal(isCloudLeader(), false, label);
+    elapseHandover();
+    f.failReads(err); // 대기가 끝난 뒤 확인 읽기를 못 하면 — 앞 담당이 물러났는지 모르니 시작하지 않는다
+    await renewLease('owner-e2', { runnerUsable: true });
+    assert.equal(isCloudLeader(), false, `${label}: 확인 읽기 없이 담당을 시작했다`);
+    assert.equal(f.calls.upload, 1, label);
+    await renewLease('owner-e2', { runnerUsable: true });
+    assert.equal(isCloudLeader(), true, label);
+    assert.equal(f.calls.upload, 1, `${label}: 넘겨받는 데 쓰기 1번`);
+  }
+});
+
+test('일반·우선 기기도 같은 판정이다 — 읽기 오류 주기에는 빈 리스여도 가져가지 않고(다음 주기에 가져감), 남의 리스도 빼앗지 않는다', async () => {
+  for (const r of ['normal', 'preferred']) {
+    role(r);
+    const f = fakeClient(null); _setSyncClientForTest(f.client); reset();
+    f.failReads(READ_ERRORS[0]);
+    await renewLease('owner-e3', { runnerUsable: true });
+    assert.equal(f.calls.upload, 0, `${r}: 읽기 오류 주기`);
+    assert.equal(isCloudLeader(), false, r);
+    await renewLease('owner-e3', { runnerUsable: true });
+    assert.equal(f.calls.upload, 1, `${r}: 읽기가 되면 빈 리스를 가져온다`);
+    assert.equal(isCloudLeader(), true, r);
+    const g = fakeClient(fresh('other-mac')); _setSyncClientForTest(g.client); reset();
+    g.failReads(READ_ERRORS[2]);
+    await renewLease('owner-e3', { runnerUsable: true });
+    assert.equal(g.calls.upload, 0, `${r}: 남의 리스를 읽지 못한 채 덮어썼다`);
+    assert.equal(g.doc().deviceId, 'other-mac');
+  }
+});
+
+test('보유자가 리스를 읽지 못하면 TTL 안에서만 담당을 유지하고 쓰지 않는다 — 쓰기 실패 규칙(holdsLeaseOnWriteFailure)과 같은 기준, 남의 넘겨받기 글을 덮어쓰지 않게', async () => {
+  for (const r of ['standby', 'normal', 'preferred']) {
+    role(r);
+    const f = fakeClient(fresh(ME)); _setSyncClientForTest(f.client);
+    reset({ leader: true, ownedAt: Date.now() - 40_000, checkedAt: Date.now() - 8_000 }); // 30초 갱신 차례
+    f.failReads(READ_ERRORS[0]);
+    await renewLease('owner-e4', { runnerUsable: true });
+    assert.equal(f.calls.upload, 0, `${r}: 읽지 못한 채 갱신 쓰기 — 그 사이 맥이 쓴 넘겨받기 글을 덮을 수 있다`);
+    assert.equal(isCloudLeader(), true, `${r}: TTL 안이면 일시 오류로 담당을 놓지 않는다`);
+    reset({ leader: true, ownedAt: Date.now() - LEASE_TTL_MS - 1_000, checkedAt: Date.now() - 8_000 });
+    f.failReads(READ_ERRORS[2]);
+    await renewLease('owner-e4', { runnerUsable: true });
+    assert.equal(isCloudLeader(), false, `${r}: TTL이 지나면 담당이 아니다`);
+    assert.equal(f.calls.upload, 0, r);
+  }
+});
+
+test('리스를 TTL(120초) 넘게 한 번도 읽지 못하면 종전처럼 없음으로 보고 갱신을 시도한다 — 읽을 수 없는 리스 객체가 모든 기기의 담당을 영영 막지 않게', async () => {
+  const f = fakeClient(fresh('mac-x')); _setSyncClientForTest(f.client); reset({ leader: false });
+  f.failReads(READ_ERRORS[0]);
+  await renewLease('owner-e5', { runnerUsable: true });
+  assert.equal(f.calls.upload, 0, '첫 실패는 건너뛴다');
+  lease().readFailSince = Date.now() - LEASE_TTL_MS - 1_000; // 실패가 TTL 넘게 이어졌다
+  f.failReads(READ_ERRORS[0]);
+  await renewLease('owner-e5', { runnerUsable: true });
+  assert.equal(f.calls.upload, 1, '배포본처럼 써서 객체를 새로 만든다(자가 복구)');
+  await renewLease('owner-e5', { runnerUsable: true }); // 읽기가 돌아오면 실패 시각을 지운다
+  assert.equal(lease().readFailSince, 0);
+});
+
+test('앞 담당은 리스를 CDN 옛 사본이 아니라 원본으로 읽는다 — 옛 사본(자기 글)을 읽으면 맥의 넘겨받기 글을 못 보고 계속 담당이다', async () => {
+  role('standby');
+  const f = fakeClient(fresh(ME, { standby: true })); _setSyncClientForTest(f.client);
+  reset({ leader: true, ownedAt: Date.now() - 5_000, checkedAt: Date.now() });
+  f.staleCdn(fresh(ME, { standby: true })); // Storage 인증 다운로드도 Cloudflare에 캐시된다(10/5 edge_logs: 리스 첫 읽기 HIT)
+  f.set(fresh('mac')); // 맥이 넘겨받기 글을 썼다(원본)
+  await renewLease('owner-c1', { runnerUsable: true });
+  assert.equal(isCloudLeader(), false, 'CDN 사본을 읽고 계속 담당 — 맥이 대기 뒤 시작하면 둘이 겹친다');
+  assert.equal(f.calls.upload, 0);
+});
+
+/* ── 넘겨받기 대기 길이 (D 2차 검수 LOW) ── */
+
+test('넘겨받기 대기는 앞 담당이 리스를 두 번 읽을 시간이다(2 × 주기 + 4초) — 한 주기 + 2초가 지난 것만으로는 담당을 시작하지 않는다(앞 담당 읽기 간격 실측 8.1~10.2초)', async () => {
+  const f = fakeClient(fresh('vps', { standby: true })); _setSyncClientForTest(f.client); reset({ leader: false });
+  await renewLease('owner-h2', { runnerUsable: true });
+  assert.equal(f.calls.upload, 1);
+  lease().pending.ts -= 8_000 + 2_000 + 500; // 옛 대기(한 주기 + 2초)를 넘김
+  await renewLease('owner-h2', { runnerUsable: true });
+  assert.equal(isCloudLeader(), false, '앞 담당의 읽기 한 번이 늦으면(10.2초) 겹친다');
+  lease().pending.ts -= HANDOVER_WAIT_MS;
+  await renewLease('owner-h2', { runnerUsable: true });
+  assert.equal(isCloudLeader(), true);
+  assert.equal(f.calls.upload, 1);
+});
+
+/* ── 깨어 있은 시간 (D 2차 검수 MEDIUM-2) ──
+   맥이 잠깐 깼다(DarkWake 1~17초·뚜껑 잠깐 열기) 다시 잠들면, 깬 주기에 가져간 리스 때문에 VPS는 물러나고 맥은 담당을 시작하지 못한 채 잠들어
+   맥의 글이 만료되는 120초 동안 아무도 맡지 않았다. 더 높은 역할의 기기는 끊김 없이 깨어 있은 지 AWAKE_MIN_MS가 지나야 남의 새 리스를 가져온다. */
+
+test('맥은 끊김 없이 깨어 있은 지 30초가 지나야 예비 기기의 새 리스를 가져온다 — 그 전에는 읽기만(쓰기 0), VPS가 계속 맡는다. 우선 기기도 같다', async () => {
+  for (const [r, doc] of [['normal', fresh('vps', { standby: true })], ['preferred', fresh('mac-app')]]) {
+    role(r);
+    const f = fakeClient(doc); _setSyncClientForTest(f.client); reset({ leader: false });
+    awakeFor(6_000); // 깬 지 6초(또는 막 켜짐)
+    for (let i = 0; i < 3; i++) await renewLease('owner-a1', { runnerUsable: true });
+    assert.equal(f.calls.upload, 0, `${r}: 깬 지 6초에 남의 담당을 가져갔다 — 곧 다시 잠들면 2분 공백`);
+    assert.equal(isCloudLeader(), false, r);
+    awakeFor(AWAKE_MIN_MS + 1_000);
+    await renewLease('owner-a1', { runnerUsable: true });
+    assert.equal(f.calls.upload, 1, `${r}: 30초 넘게 깨어 있으면 넘겨받기를 시작한다`);
+  }
+  assert.equal(AWAKE_MIN_MS, 30_000);
+});
+
+test('만료된 리스는 깨어 있은 시간과 무관하게 바로 가져온다 — 아무도 맡지 않은 리스를 기다리면 공백만 늘어난다', async () => {
+  const f = fakeClient({ ...fresh('vps', { standby: true }), ts: Date.now() - LEASE_TTL_MS - 1_000 }); _setSyncClientForTest(f.client); reset();
+  awakeFor(1_000);
+  await renewLease('owner-a2', { runnerUsable: true });
+  assert.equal(f.calls.upload, 1);
+  assert.equal(isCloudLeader(), true);
+});
+
+test('잠들었다 깬 것을 알아채 깨어 있은 시간을 다시 센다 — 벽시계가 단조 시계보다 크게 앞섰거나(시스템 잠자기) 관찰 사이가 크게 벌어졌으면(SIGSTOP·일시 정지)', async () => {
+  // [이름, 마지막 관찰 뒤 벽시계 경과, 단조 시계 경과, 가져오는가] — 앞의 둘은 두 감지(시계 차이·관찰 간격)를 하나씩만 건드린다(변이로 각각 확인)
+  const cases = [['시스템 잠자기 7초(관찰 간격 9초 — 간격 기준 10초 미만, 단조 시계는 2초만 감)', 9_000, 2_000, false],
+    ['프로세스 정지 30초(SIGSTOP — 단조 시계도 흐름)', 30_000, 30_000, false], ['정상(2초 간격 관찰)', 2_000, 2_000, true]];
+  for (const [label, wallAgo, monoAgo, takes] of cases) {
+    const f = fakeClient(fresh('vps', { standby: true })); _setSyncClientForTest(f.client); reset({ leader: false });
+    Object.assign(globalThis.__argoSyncAwake, { wall: Date.now() - wallAgo, mono: performance.now() - monoAgo }); // 마지막 관찰 시각
+    await renewLease('owner-a3', { runnerUsable: true });
+    assert.equal(f.calls.upload, takes ? 1 : 0, label);
+    if (!takes) assert.ok(Date.now() - globalThis.__argoSyncAwake.since < 5_000, `${label}: 깨어 있은 시간을 깬 순간부터 다시 센다`);
+  }
+});
+
+/* ── 예비 기기 + 동기화 꺼짐 (D 2차 검수 LOW-①) ── */
+
+test('예비 기기는 동기화가 꺼져 있으면(기기 세션 없음·ARGO_SYNC=0) 담당이 아니다 — 맥이 담당인지 알 수 없다(③과 같은 원칙). 일반·우선 기기는 종전대로 단일 기기로 담당', () => {
+  const sync = process.env.ARGO_SYNC;
+  process.env.ARGO_SYNC = '0';
+  try {
+    role('standby'); reset();
+    assert.equal(isCloudLeader(), false);
+    assert.equal(isCloudLeader(Date.now() + 10 * 60_000), false);
+    assert.equal(standbyIdle(), true, '메신저 판정도 같다');
+    for (const r of ['normal', 'preferred']) {
+      role(r); reset({ leader: false });
+      assert.equal(isCloudLeader(), true, `${r}: 동기화 off = 단일 기기 — 핀`);
+      assert.equal(standbyIdle(), false, r);
+    }
+  } finally { process.env.ARGO_SYNC = sync; }
 });

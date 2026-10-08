@@ -38,11 +38,14 @@ test('VPS(예비)가 담당 중에 맥(일반)이 켜지면 맥이 되찾고, �
   assert.equal(vps.last()?.cloud, true, `혼자일 때는 예비 기기가 담당 ${vps.err.slice(-400)}`);
   assert.equal(leaseDoc(fake).standby, true);
   const macAt = Date.now();
-  const mac = spawnLeaseChild({ root: await device(fake, 'dev-mac'), env: FAST, name: 'mac' }); kids.push(mac);
-  await sleep(9000);
+  // 깨어 있은 시간 조건(AWAKE_MIN_MS 30초)을 3초만 남기고 시작 — 짧은 주기로 그 조건과 넘겨받기 대기(2 × 1초 + 4초)를 둘 다 지나 본다
+  const mac = spawnLeaseChild({ root: await device(fake, 'dev-mac'), env: FAST, name: 'mac', awakeAgoMs: 27_000 }); kids.push(mac);
+  await sleep(15_000);
   assert.equal(mac.last()?.proc && mac.last()?.cloud, true, `맥이 되찾는다 ${mac.err.slice(-400)}`);
   assert.equal(vps.last()?.cloud, false, 'VPS는 물러난다');
   assert.equal(leaseDoc(fake).deviceId, 'dev-mac');
+  const macLeadAt = mac.samples.find((x) => x.proc && x.cloud)?.t;
+  assert.ok(macLeadAt - macAt >= 3_000 + 6_000, `맥이 깨어 있은 시간(남은 3초)과 넘겨받기 대기(6초)를 다 채우기 전에 담당이 됐다 — ${(macLeadAt - macAt) / 1000}초`);
   let max = 0;
   for (let t = macAt; t <= Date.now() - 300; t += 100) max = Math.max(max, runnersAt([vps, mac], t));
   assert.equal(max <= 1, true, `넘어가는 동안 담당이 ${max}개 — 이중 실행`);
@@ -60,8 +63,9 @@ test('운영 주기(8초)에서 맥이 켜지자마자 대화를 보내도(nudge
   await sleep(6000);
   assert.equal(vps.last()?.cloud, true, `혼자일 때는 예비 기기가 담당 ${vps.err.slice(-400)}`);
   const macAt = Date.now();
-  const mac = spawnLeaseChild({ root: await device(fake, 'dev-mac'), name: 'mac', intervalMs: 100, nudgeForMs: 4000 }); kids.push(mac);
-  await sleep(22_000);
+  // 깨어 있은 지 오래된 맥 — nudge가 넘겨받기 대기와 겹치는 장면을 그대로 본다(깨어 있은 시간 조건은 1번 장면·lease-standby-faults-e2e가 본다)
+  const mac = spawnLeaseChild({ root: await device(fake, 'dev-mac'), name: 'mac', intervalMs: 100, nudgeForMs: 4000, awakeAgoMs: 10 * 60_000 }); kids.push(mac);
+  await sleep(34_000); // 넘겨받기 쓰기(~1초) → 대기 2 × 8초 + 4초 → 그 뒤 첫 주기(~29초)에 담당
   assert.equal(mac.last()?.proc && mac.last()?.cloud, true, `맥이 되찾는다 ${mac.err.slice(-400)}`);
   assert.equal(vps.last()?.cloud, false, 'VPS는 물러난다');
   let max = 0;

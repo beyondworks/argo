@@ -32,7 +32,9 @@ const fakeClient = (initialDoc = null) => {
   return { client: { storage: { from: () => bucket } }, calls, doc: () => (stored ? JSON.parse(stored.toString()) : null) };
 };
 const lease = () => (globalThis.__argoSyncLease ??= { leader: true, checkedAt: 0, ownedAt: 0, yieldSince: 0 });
-const reset = (patch = {}) => Object.assign(lease(), { leader: true, ownedAt: 0, checkedAt: 0, yieldSince: 0 }, patch);
+// 깨어 있은 지 오래된 프로세스로 — 이 브랜치의 되찾기는 끊김 없이 30초 깨어 있은 뒤에만 한다(sync.mjs AWAKE_MIN_MS). 배포본에는 없는 상태라 거기서는 무시된다.
+const awakeLong = () => Object.assign((globalThis.__argoSyncAwake ??= {}), { since: Date.now() - 10 * 60_000, wall: Date.now(), mono: performance.now() });
+const reset = (patch = {}) => { awakeLong(); return Object.assign(lease(), { leader: true, ownedAt: 0, checkedAt: 0, yieldSince: 0 }, patch); };
 afterEach(() => { delete process.env.ARGO_PREFER_LEADER; });
 
 test('일반 기기는 다른 일반 기기의 새 리스에 양보한다 — 쓰기 0', async () => {

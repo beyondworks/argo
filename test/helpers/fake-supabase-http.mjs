@@ -10,6 +10,7 @@ export async function startFakeSupabase({ plan = 'pro', userId = 'u1', rejectUpl
   const usedRefresh = new Set();
   const reused = [];
   let issued = 0;
+  const api = { fault: null };
   const srv = createServer((req, res) => {
     const chunks = [];
     req.on('data', (c) => chunks.push(c));
@@ -18,6 +19,10 @@ export async function startFakeSupabase({ plan = 'pro', userId = 'u1', rejectUpl
       const path = new URL(req.url, 'http://fake').pathname;
       hits.push({ t: Date.now(), k: `${req.method} ${path}`, auth: req.headers.authorization ?? null });
       const json = (status, obj) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)); };
+      // 장애 주입(선택) — api.fault(req, path)가 { status, body }를 주면 그 응답, 'reset'이면 연결을 끊는다(클라이언트는 fetch failed). 안 주면 종전 그대로.
+      const fault = api.fault?.(req, path);
+      if (fault === 'reset') { req.socket.destroy(); return; }
+      if (fault) return json(fault.status, fault.body ?? { statusCode: String(fault.status), error: 'fault', message: `HTTP ${fault.status}` });
       try {
         if (path === '/auth/v1/user') return json(200, { id: userId, email: `${userId}@example.test`, aud: 'authenticated', role: 'authenticated' });
         if (path === '/auth/v1/token') {
@@ -70,10 +75,11 @@ export async function startFakeSupabase({ plan = 'pro', userId = 'u1', rejectUpl
   });
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   const url = `http://127.0.0.1:${srv.address().port}`;
-  return {
+  Object.assign(api, {
     url, hits, store, reused,
     count: (k, since = 0) => hits.filter((h) => h.k === k && h.t >= since).length,
     issued: () => issued,
     close: () => new Promise((r) => { srv.closeAllConnections?.(); srv.close(() => r()); }),
-  };
+  });
+  return api;
 }
