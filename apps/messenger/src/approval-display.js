@@ -80,18 +80,23 @@ export function approvalPageItems(items, { done = new Set() } = {}) {
 // ── 결재권 판정(분리 검수 M-2, 2026-10-02) — 데스크톱 슬립과 폰 결재 페이지가 같은 함수를 쓴다.
 // 서버 msgr_can_decide(20260918193000)와 같은 갈래: low → 크루 소유자, high → 조직 정책(기본 관리자 · 'approvers'면 관리자 또는 지정 결재권자 · 'owner'면 크루 소유자).
 // 화면용이다 — 최종 판정은 RLS. 크루를 모르면(crewOwnerId === undefined, 비활성 등) 소유자로 보고 버튼을 띄운다(데스크톱 검수 M1과 같은 규칙, 서버가 거절하면 안내).
-export function approvalDecider({ ap, uid, crewOwnerId, isAdmin, policy }) {
+// personal = 개인 공간 결재(org_id NULL — 주인과 자기 에이전트만 있는 1:1 방, 2026-10-08 계획 5-4). 서버 msgr_can_decide의 개인 갈래와 같이 등급과 무관하게 크루 주인이 결정한다.
+// 개인 공간에는 조직 정책·관리자가 없어 isAdmin·policy는 보지 않는다. '꼭 확인'(high) 표시는 그대로 돌려준다.
+export function approvalDecider({ ap, uid, crewOwnerId, isAdmin, policy, personal = false }) {
   const high = approvalExpandDefault(ap);
+  const owner = crewOwnerId === undefined ? true : crewOwnerId === uid;
+  if (personal) return { can: owner, byAdmin: false, mode: 'owner', high };
   const mode = policy?.approval_high_by ?? 'admin';
   const byAdmin = high && mode !== 'owner';
-  const owner = crewOwnerId === undefined ? true : crewOwnerId === uid;
   const isApprover = (policy?.approver_user_ids ?? []).includes(uid);
   return { can: byAdmin ? (!!isAdmin || (mode === 'approvers' && isApprover)) : owner, byAdmin, mode, high };
 }
 
-/** 폰 결재 페이지의 한 줄(loadApprovals가 붙인 crewOwnerId·policy) — 내 역할은 조직 목록(orgs[].role)에서. 넣기 요청은 서버가 결정할 사람에게만 보여 준 행이라 그대로 가능. */
+/** 폰 결재 페이지의 한 줄(loadApprovals가 붙인 crewOwnerId·policy) — 내 역할은 조직 목록(orgs[].role)에서. 넣기 요청은 서버가 결정할 사람에게만 보여 준 행이라 그대로 가능.
+    org_id가 NULL인 행(조회가 org_id를 가져온다)은 개인 결재 — 주인이 결정. org_id가 빠진 행(undefined)은 개인으로 보지 않는다(종전 판정). */
 export function phoneApprovalDecider(it, { uid, orgs } = {}) {
   if (it?.kind !== 'approval') return { can: true, byAdmin: false, mode: null, high: false };
+  if (it.org_id === null) return approvalDecider({ ap: it, uid, crewOwnerId: it.crewOwnerId, personal: true });
   const role = (orgs ?? []).find((o) => o.id === it.org_id)?.role;
   return approvalDecider({ ap: it, uid, crewOwnerId: it.crewOwnerId, isAdmin: role === 'owner' || role === 'admin', policy: it.policy ?? null });
 }
@@ -101,6 +106,19 @@ export const decidableApprovals = (items, ctx) => (items ?? []).filter((it) => p
 
 /** 결정할 수 없는 카드·거절 안내 문구 키 — 정책의 결재권자 갈래면 approverOnly, 소유자 갈래면 ownerOnly */
 export const approvalOnlyKey = (dec) => (dec?.byAdmin ? 'ap.approverOnly' : 'ap.ownerOnly');
+
+/** 채널 결재 카드의 결정이 권한 때문에 막혔을 때 안내 키 — 조직은 종전대로(high=결재권자, 그 밖=소유자), 개인 공간 결재는 등급과 무관하게 소유자 */
+export const approvalDeniedKey = (ap, personal = false) => (!personal && ap?.risk === 'high' ? 'ap.approverOnly' : 'ap.ownerOnly');
+
+/** 폰 결재 목록 조회 범위 — 내 조직들의 결재와 개인 결재(org_id NULL)를 요청 한 번(or 필터)으로. 조직이 없으면 개인 결재만.
+    어떤 행을 읽을 수 있는지는 서버 읽기 정책(msgr_can_read_channel)이 정한다 — 개인 결재는 그 방을 읽는 사람(주인)만. id는 PostgREST 필터 문자열에 들어가므로 글자·숫자·_·-만 받는다. */
+export function scopePendingApprovals(query, orgIds) {
+  const ids = (orgIds ?? []).filter((id) => typeof id === 'string' && /^[\w-]+$/.test(id));
+  return ids.length ? query.or(`org_id.in.(${ids.join(',')}),org_id.is.null`) : query.is('org_id', null);
+}
+
+/** '꼭 확인' 결재의 조직 정책을 읽을 조직 — 개인 결재(org_id NULL)는 조직 정책이 없다(주인이 결정). 개인 high만 있으면 정책 조회를 하지 않는다 */
+export const highPolicyOrgs = (aps) => [...new Set((aps ?? []).filter((a) => a?.risk === 'high' && a.org_id).map((a) => a.org_id))];
 
 /** 결정 쓰기가 결재권 때문에 막혔나 — USING에 걸리면 0행, WITH CHECK에 걸리면(예: high의 크루 소유자) RLS 오류(42501). 다른 오류(연결 등)는 아니다. */
 export function approvalDenied(error, rows) {
