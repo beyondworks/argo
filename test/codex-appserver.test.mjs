@@ -181,3 +181,20 @@ test('mapTurnError: 한도는 limitReached+재개 시각, 그 외는 원문 유�
   assert.equal(auth.limitReached, undefined);
   assert.match(auth.message, /Missing bearer/, '인증 원문 보존 — chat AUTH_ERR_RE가 그대로 잡는다');
 });
+
+// 0.159.3 app-server의 새 실패 코드(0.157.1 스키마엔 없음 — 검수 2026-10-08 LOW). 영어 원문 한 줄만 보이던 것을 ko/en 안내로 바꾸되
+// 분류(러너 교체·재시도·한도)는 지금처럼 원문이 정한다 — 번역 문구가 새 분류를 만들지 않는다.
+test('mapTurnError: tooManyDenials·flexUnavailable은 ko/en 안내 + 원문 보존, 분류는 원문과 같다', async () => {
+  const { classifyRunnerError } = await import('../src/runners/error-class.mjs');
+  for (const [info, raw, ko, en] of [
+    ['tooManyDenials', 'Turn aborted: too many denied tool calls', /권한 승인 거절이 여러 번/, /repeated permission denials/],
+    ['flexUnavailable', 'Flex processing is currently unavailable', /처리할 여유가 없습니다/, /could not take this request/],
+  ]) {
+    const e = mapTurnError({ error: { message: raw, codexErrorInfo: info } });
+    assert.match(e.message, ko, info); assert.match(e.message, en, info);
+    assert.ok(e.message.includes(raw), `${info} 원문 보존`);
+    assert.equal(e.limitReached, undefined, info);
+    assert.equal(classifyRunnerError(e.message).code, classifyRunnerError(raw).code, `${info} 분류가 원문과 달라졌다`);
+  }
+  assert.equal(mapTurnError({ error: { message: 'x', codexErrorInfo: 'badRequest' } }).message, 'x', '다른 코드는 원문 그대로');
+});

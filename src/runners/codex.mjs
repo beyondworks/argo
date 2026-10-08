@@ -9,6 +9,8 @@ import { dirname, join } from 'node:path';
 import { exec, exists } from './shared.mjs';
 import { withDirLock } from '../mutex.mjs';
 import { codexModelEffort } from '../model-effort.mjs';
+import { CODEX_UNSET_MODEL } from './catalog.mjs';
+import { normalizeModelId } from './catalog-remote.mjs';
 
 /** Argo 전용 CODEX_HOME — 사용자 전역 config(커스텀 에이전트·모델 핀)와 격리하고 auth만 빌린다.
     (전역 config의 spawn_agent 커스텀 스키마가 신형 모델의 예약 도구와 충돌하는 사례 확인) */
@@ -29,18 +31,58 @@ async function codexHome() {
    npm 래퍼(@openai/codex)의 플랫폼 바이너리 패키지는 공개 레지스트리 packument가 404라(실측)
    레지스트리 경로가 못 쓰인다. 정본 배포처는 GitHub 릴리스의 플랫폼별 단일 바이너리 타르볼
    (rust-v* 태그, 실측: codex-aarch64-apple-darwin.tar.gz → 압축 해제 후 --version 부팅 확인). */
-const CODEX_TOOL_DIR = join(homedir(), '.argo', 'tools', 'codex-cli');
 const CODEX_BIN = process.platform === 'win32' ? 'codex.exe' : 'codex';
 const CODEX_HOST_BIN = process.platform === 'win32' ? 'codex-code-mode-host.exe' : 'codex-code-mode-host';
-const codexManagedBin = () => join(CODEX_TOOL_DIR, CODEX_BIN);
-const codexHostManagedBin = () => join(CODEX_TOOL_DIR, CODEX_HOST_BIN);
 /** 조달 버전 핀 — `latest` 금지. code_mode_host 사고(2026-08-25): 미고정 latest가 벤더의 의미 변경
     (0.148+에서 host 없이는 도구 fail-closed)을 무통보로 전 사용자에게 실어 날랐다. 승격 절차:
     새 버전은 러너 계약 프로브(scripts/runner-contract-probe.mjs — PR3에서 추가 예정, 그 전엔 수동 프로브) 통과 확인 후 이 상수만 올린다.
     (export: 회귀 테스트·계약 프로브용) */
 // 0.149.1 → 0.157.1(2026-09-29): 0.149.1은 GPT-6 Astra·Sol·Luna를 서버가 400으로 거절한다. 0.157.1로 계약 프로브 19/19,
 // Argo 로그인 실제 턴(셸 도구 파일 생성·MCP 도구 호출)을 GPT-6 세 모델과 GPT-5.6 Sol에서 확인했다.
-export const CODEX_PIN = 'rust-v0.157.1';
+// 0.157.1 → 0.159.3(2026-10-08, 유건 결정): 서버가 클라이언트 버전으로 모델 목록을 거른다 — 0.157.1 목록엔 GPT-6.1 Sol이 없고
+// 턴은 "not supported when using Codex with a ChatGPT account"(2026-10-07 실측). 0.159.3로 계약 프로브 19/19, ChatGPT 구독 로그인
+// 실제 턴(6.1 Sol 셸 도구·GPT-6 Luna·Astra max)을 확인했다. 모델별 하한은 test/codex-pin-lockup.test.mjs 표가 잠근다.
+// ⚠ 핀을 올리면 `-m` 없이 도는 턴의 서버 기본 모델도 바뀐다(0.157.1 = gpt-6-astra, 0.159.3 = gpt-6.1-sol) — 모델을 비운 턴은 codexUnsetModel이 고정.
+// ⚠ 핀을 올리면 CODEX_ASSET_SHA256도 같이 바꾼다(test/codex-pin-lockup.test.mjs가 핀과 표가 어긋나면 red).
+export const CODEX_PIN = 'rust-v0.159.3';
+/** 핀 자산 12개의 sha256 — GitHub 릴리스 API의 자산 digest(2026-10-08 `gh api repos/openai/codex/releases/tags/rust-v0.159.3`).
+    내려받은 타르볼을 풀기 전에 대조한다(검수 2026-10-08 LOW: 예전엔 부팅·크기만 봐서 손상·변조본도 부팅만 하면 채택됐다). */
+export const CODEX_ASSET_SHA256 = {
+  pin: 'rust-v0.159.3',
+  sha256: {
+    'codex-aarch64-apple-darwin.tar.gz': '51de50a39ea592b5b0a64ae0474548c282181cb6b96d9bd08965a682ae12774c',
+    'codex-x86_64-apple-darwin.tar.gz': 'cbaea8206d3189b8a7cd7c1b476e14a541ab22d469c37253f758ff71d4ed24b7',
+    'codex-aarch64-unknown-linux-musl.tar.gz': 'cd5f307b3fcd6080773e684b86c3114a67d4f1c61dc447be09876b552eb4bea7',
+    'codex-x86_64-unknown-linux-musl.tar.gz': 'b48ca1b2d6b1bf42b944e02c3d937c898e24651916684cdc35fdedf31b291bcb',
+    'codex-aarch64-pc-windows-msvc.exe.tar.gz': 'f082733878ed75d7f63009d1fef9e9973b7b4107c94253a2e506abb0444567d7',
+    'codex-x86_64-pc-windows-msvc.exe.tar.gz': 'aafad434e70c1a69b97f727a80fcd0ff183305de850e41c0a5a3bebfc125a048',
+    'codex-code-mode-host-aarch64-apple-darwin.tar.gz': 'd1a3254374b733fff1fa31cbeb20f65e3ef871e3431c196353dea189df15d4c5',
+    'codex-code-mode-host-x86_64-apple-darwin.tar.gz': 'd27385b2c5bc0cd9537154c84abafeeddba38f93e135257f1cf6ca4e862fcb9f',
+    'codex-code-mode-host-aarch64-unknown-linux-musl.tar.gz': '7cbb47c472c2dc115abfeebf52ff11bf66eb364bf8f5d14659742615919b8e6f',
+    'codex-code-mode-host-x86_64-unknown-linux-musl.tar.gz': '0f58dd9848c717382e5223e39c1fc8f43a8f4a8cbe20d7af0c0dee0ef3abd438',
+    'codex-code-mode-host-aarch64-pc-windows-msvc.exe.tar.gz': '90e39fa805a32aa792eacf7b7c48b9cc3c529152193f751b2b277c2590f8c811',
+    'codex-code-mode-host-x86_64-pc-windows-msvc.exe.tar.gz': '31a34f28d898e7e79d38661fa93f93f3aa7b39f2fa9261c01645e72c21166b38',
+  },
+};
+/** 관리본 폴더는 핀마다 따로 둔다 — ~/.argo/tools/codex-cli-rust-v0.159.3 (검수 2026-10-08 MEDIUM). 예전에는 한 폴더(~/.argo/tools/codex-cli)를
+    같은 기기의 모든 Argo(상주·앱·CLI 단독 설치본)가 나눠 썼고, 버전이 다른 둘이 1시간 스로틀마다 자기 핀으로 서로 되돌렸다(~120MB씩).
+    그 사이 옛 Argo는 새 바이너리로 `-m` 없이 돌아 서버 기본 모델이 바뀌었다. 폴더를 나누면 각 Argo가 자기 핀의 실행 파일만 돌린다.
+    예전 공용 폴더(codexLegacyBin)는 0.1.97 이하가 쓰므로 쓰지도 지우지도 않고, 이 핀을 아직 못 받은 동안(오프라인·스로틀)만 실행 파일로 빌린다.
+    (export: 순수 — 회귀 테스트·스텁 헬퍼용) */
+export const codexToolDirFor = (home, pin = CODEX_PIN) => join(home, '.argo', 'tools', `codex-cli-${pin}`);
+const CODEX_TOOL_DIR = codexToolDirFor(homedir());
+const CODEX_LEGACY_DIR = join(homedir(), '.argo', 'tools', 'codex-cli');
+const codexManagedBin = () => join(CODEX_TOOL_DIR, CODEX_BIN);
+const codexHostManagedBin = () => join(CODEX_TOOL_DIR, CODEX_HOST_BIN);
+const codexLegacyBin = () => join(CODEX_LEGACY_DIR, CODEX_BIN);
+/** 설치된 codex 실행 파일 — 이 핀 관리본, 없으면 예전 공용 관리본, 둘 다 없으면 null. 감지·로그인 버튼(exec.mjs)이 쓴다 —
+    핀 폴더로 옮긴 직후에도 옛 관리본만 있는 기기를 "미설치"로 보지 않게(로그인은 버전과 무관하게 같은 ~/.codex 자격을 쓴다). */
+export async function codexInstalledBin() {
+  if (await exists(codexManagedBin())) return codexManagedBin();
+  if (await exists(codexLegacyBin())) return codexLegacyBin();
+  return null;
+}
+const readCodexStamp = () => readFile(join(CODEX_TOOL_DIR, '.pin'), 'utf8').then((v) => v.trim(), () => '');
 export const codexAssetUrl = (asset) => `https://github.com/openai/codex/releases/download/${CODEX_PIN}/${asset}`;
 /** 플랫폼 → 릴리스 자산 이름. 래퍼 bin/codex.js의 트리플 표와 동일 매핑. (export: 순수 — 회귀 테스트용) */
 export function codexTripleFor(platform, arch) {
@@ -67,12 +109,15 @@ let codexProvisioning = null; // 단일 비행 — ~100MB 다운로드 중복 �
 
 /** 자산 하나 다운로드+해제 → tmp 안 실행 파일 경로. 파일명 = 자산명에서 .tar.gz만 뗀 것(실측). */
 async function fetchCodexAsset(tmp, asset, fallbackName) {
-  const buf = await fetch(codexAssetUrl(asset), { signal: AbortSignal.timeout(300_000) }).then((r) => {
+  const buf = Buffer.from(await fetch(codexAssetUrl(asset), { signal: AbortSignal.timeout(300_000) }).then((r) => {
     if (!r.ok) throw new Error(`바이너리 다운로드 실패 ${r.status} (${asset})`);
     return r.arrayBuffer();
-  });
+  }));
+  // 풀기 전에 해시 대조 — 표에 없는 자산도 거절한다(핀과 표가 어긋난 발행이 검증 없이 받지 않게)
+  const want = CODEX_ASSET_SHA256.pin === CODEX_PIN ? CODEX_ASSET_SHA256.sha256[asset] : null;
+  if (!want || createHash('sha256').update(buf).digest('hex') !== want) throw new Error(`내려받은 Codex 실행기의 해시가 맞지 않습니다(${asset}) — 다시 시도해 주세요`);
   const tar = join(tmp, `${asset}.tgz`);
-  await writeFile(tar, Buffer.from(buf));
+  await writeFile(tar, buf);
   await exec('tar', ['-xzf', tar, '-C', tmp]);
   const inner = join(tmp, asset.replace(/\.tar\.gz$/, ''));
   const src = (await exists(inner)) ? inner : join(tmp, fallbackName); // 미래 이름 변경 대비 폴백
@@ -126,8 +171,7 @@ export async function provisionCodexCli({ force = false } = {}) {
     // 락 획득 후 재확인 — 다른 프로세스가 방금 조달을 끝냈을 수 있다(TOCTOU 방어, 릴리스 검수 M-1 계열).
     if (!force && await exists(codexManagedBin())) return codexManagedBin();
     if (force && await exists(codexManagedBin())) {
-      const stamp = await readFile(join(CODEX_TOOL_DIR, '.pin'), 'utf8').then((v) => v.trim(), () => '');
-      if (stamp === CODEX_PIN) return codexManagedBin(); // 경합 상대가 이미 같은 핀으로 교체 완료
+      if (await readCodexStamp() === CODEX_PIN) return codexManagedBin(); // 경합 상대가 이미 같은 핀으로 교체 완료
     }
     const asset = codexAssetName();
     const hostAsset = codexHostAssetName();
@@ -197,25 +241,31 @@ async function ensureCodexHost() {
     **디스크 스탬프**(.attempt-at): 상주·사이드카·CLI가 프로세스마다 1시간을 따로 갖거나 재시작마다
     리셋되지 않게(분리 검수 MEDIUM-2·HIGH — 조달 실패 상태에서 턴마다 ~125MB 재다운로드 방지).
     반환: 실제로 재조달했으면 true, 스로틀에 걸렸으면 false. */
-const ATTEMPT_STAMP = () => join(CODEX_TOOL_DIR, '.attempt-at');
-export async function reprovisionCodexCli() {
+const ATTEMPT_STAMP = () => join(CODEX_TOOL_DIR, '.attempt-at'); // 핀 폴더마다 따로 — 버전이 다른 Argo의 시도가 서로의 스로틀을 막지 않는다
+async function provisionThrottled({ force }) {
   const last = Number(await readFile(ATTEMPT_STAMP(), 'utf8').catch(() => '0')) || 0;
   if (Date.now() - last < 60 * 60_000) return false;
   await mkdir(CODEX_TOOL_DIR, { recursive: true }).catch(() => {});
   await writeFile(ATTEMPT_STAMP(), String(Date.now())).catch(() => {}); // 시도 자체를 기록 — 실패 루프 방지가 목적
-  await provisionCodexCli({ force: true });
+  await provisionCodexCli({ force });
   return true;
 }
+export const reprovisionCodexCli = () => provisionThrottled({ force: true });
 
-/** 관리본이 핀 버전이 아닌가 — 승격이 실패(오프라인·스로틀 1시간)해 낡은 관리본으로 턴이 돈 경우, 또는 관리본이
-    없어 PATH 설치본(버전 미상)으로 폴백한 경우 true. */
+/** 이 핀 관리본이 없는가 — 이 핀을 아직 못 받아(오프라인·스로틀 1시간) 예전 공용 관리본이나 PATH 설치본(버전 미상)으로
+    턴이 돈 경우 true. 핀 폴더에는 이 핀만 들어가므로 실행 파일이 있으면 낡지 않았다(스탬프가 비어도 — 기록 실패·윈도우 EBUSY). */
 export async function codexPinStale() {
-  const stamp = await readFile(join(CODEX_TOOL_DIR, '.pin'), 'utf8').then((v) => v.trim(), () => '');
-  return stamp !== CODEX_PIN;
+  return !(await exists(codexManagedBin()));
 }
 
+/** 모델을 비운 codex 턴에 넣을 모델(검수 2026-10-08 HIGH) — 자동 에이전트·러너 대체·목록 밖 모델·CLI 원샷은 `-m` 없이 돌아 서버 기본
+    모델을 썼고, 그 기본이 바이너리 버전마다 바뀐다(catalog.mjs CODEX_UNSET_MODEL). 이 핀 관리본(cmd.pinned)일 때만 넣는다 — 버전을
+    모르는 실행 파일(PATH 설치본·이 핀을 아직 못 받아 빌려 쓰는 예전 공용 관리본)은 지금처럼 비워 그 버전의 기본 모델로 돈다(옛 codex가 새 모델을 거절하지 않게).
+    원격 카탈로그 alias를 따른다(모델 폐기 때 앱 발행 없이 옮길 길). */
+export const codexUnsetModel = (cmd) => (cmd?.pinned ? normalizeModelId('codex', CODEX_UNSET_MODEL) : '');
+
 /** 낡은 codex의 모델 거절 → 업데이트 대기 안내(순수). "requires a newer version"은 버전 문제가 확실하다. "not supported when
-    using Codex with a ChatGPT account"는 0.149.1이 GPT-6에 내는 문구지만(2026-09-28 실측) 핀이 최신이면 계정 문제라 건드리지
+    using Codex with a ChatGPT account"는 낡은 핀이 새 모델에 내는 문구지만(0.149.1→GPT-6 2026-09-28, 0.157.1→GPT-6.1 Sol 2026-10-07 실측) 핀이 최신이면 계정 문제라 건드리지
     않는다(→ error-class의 model_unavailable). 문구는 error-class RUNNER_OUTDATED_RE와 한 쌍 — 바꾸면 같이. */
 const CODEX_NEWER_RE = /requires a newer version of codex/i;
 const CODEX_ACCOUNT_RE = /not supported when using codex with a chatgpt account/i;
@@ -231,31 +281,34 @@ export function codexOutdatedError(msg, stale) {
     유입됐다(code_mode_host 사고 계열). 로그인 자격은 HOME(~/.codex/auth.json) 공유라 어떤 버전으로
     로그인했든 관리본이 같은 자격을 읽는다. 첫 회 ~100MB는 연결 시 워밍업이 선다운로드. */
 async function codexCmd() {
+  // 반환 pinned = 이 핀 관리본인가(버전을 아는 실행 파일) — 모델을 비운 턴의 고정 모델(codexUnsetModel)이 이것만 본다.
   // 이스케이프 해치 — 가짜 codex를 PATH에 꽂는 테스트 하네스·오프라인 환경 전용(관리본 우선을 끄면
   // 벤더 자동 업데이트 유입이 되살아나므로 일반 사용자용 설정으로 노출하지 않는다).
   if (process.env.ARGO_CODEX_PREFER_PATH === '1') {
     const onPath = await exec('codex', ['--version']).then(() => true, () => false);
-    if (onPath) return { file: 'codex', args: [] };
+    if (onPath) return { file: 'codex', args: [], pinned: false };
   }
   if (await exists(codexManagedBin())) {
-    // 핀 승격 — 스탬프(.pin)가 현재 핀과 다르면(구버전 관리본·v0.1.45 이전 무스탬프 포함) 핀 버전으로
-    // 재조달한다. 실패하면 기존 관리본으로 턴은 계속(오프라인 방어) + host 보강만 시도.
-    const stamp = await readFile(join(CODEX_TOOL_DIR, '.pin'), 'utf8').then((v) => v.trim(), () => '');
-    if (stamp !== CODEX_PIN) {
-      // 승격도 스로틀 재조달을 탄다(분리 검수 HIGH) — 실패 상태에서 턴마다 ~125MB를 다시 받지 않게.
-      // 스로틀에 걸리거나 실패하면 기존 관리본으로 턴은 계속(오프라인 방어) + host 부재만이라도 보강.
-      const done = await reprovisionCodexCli().then((v) => { if (v) console.log(`[argo] codex 관리본 승격: ${stamp || '(무스탬프)'} → ${CODEX_PIN}`); return v; })
-        .catch((e) => { console.warn('[argo] codex 승격 실패 — 기존 관리본으로 계속:', e?.message ?? e); return false; });
-      if (!done) await ensureCodexHost();
-    }
-    return { file: codexManagedBin(), args: [] };
+    // 이 핀 폴더에는 이 핀만 들어간다(다른 버전의 Argo는 자기 핀 폴더를 쓴다) — 스탬프(.pin)는 설치 완료 표시일 뿐이라 없으면 host 보강만.
+    if (await readCodexStamp() !== CODEX_PIN) await ensureCodexHost();
+    return { file: codexManagedBin(), args: [], pinned: true };
+  }
+  if (await exists(codexLegacyBin())) {
+    // 이 핀은 아직 없고 예전 공용 관리본(0.1.97 이하가 쓰는 폴더)만 있다 — 이 핀을 받는다. 스로틀(이 핀 폴더의 .attempt-at)을 타서
+    // 실패 상태에서 턴마다 ~120MB를 다시 받지 않는다(분리 검수 HIGH 계열). 못 받으면 공용 관리본으로 턴은 계속(오프라인 방어) — 버전을
+    // 모르니 pinned:false. 공용 폴더에는 쓰지 않는다(host 보강 포함 — 다른 핀의 host를 섞지 않고, 그 폴더는 옛 Argo가 관리한다).
+    const got = await provisionThrottled({ force: false })
+      .then((v) => { if (v) console.log(`[argo] codex 관리본 준비: ${CODEX_PIN} (예전 공용 관리본은 그대로 둔다)`); return v; })
+      .catch((e) => { console.warn('[argo] codex 관리본 준비 실패 — 예전 공용 관리본으로 계속:', e?.message ?? e); return false; });
+    if (got && await exists(codexManagedBin())) return { file: codexManagedBin(), args: [], pinned: true };
+    return { file: codexLegacyBin(), args: [], pinned: false };
   }
   try {
-    return { file: await provisionCodexCli(), args: [] };
+    return { file: await provisionCodexCli(), args: [], pinned: true };
   } catch (e) {
     // 조달 불가(오프라인 등) — PATH 설치본 폴백. 미검증 버전임을 로그로 남긴다(정직 표기 계열).
     const onPath = await exec('codex', ['--version']).then(() => true, () => false);
-    if (onPath) { console.warn('[argo] codex 관리본 조달 실패 — PATH 설치본으로 폴백(미검증 버전):', e?.message ?? e); return { file: 'codex', args: [] }; }
+    if (onPath) { console.warn('[argo] codex 관리본 조달 실패 — PATH 설치본으로 폴백(미검증 버전):', e?.message ?? e); return { file: 'codex', args: [], pinned: false }; }
     throw new Error(`Codex 실행기를 준비하지 못했습니다(네트워크 확인 후 재시도): ${String(e.message || e)}`);
   }
 }
@@ -269,8 +322,8 @@ async function codexCmd() {
 
 /** 크루별 추론 강도 → codex CLI 인자(순수). codex도 강도를 지원한다 — `-c model_reasoning_effort=…`가
     인식되는 키임을 실측(2026-07-26, codex-cli 0.144.1: 미인식 키는 --strict-config에서 즉시 에러,
-    이 키는 통과하고 low·high·xhigh 모두 실턴 성공). 기존 모델은 max→xhigh, GPT-6 Sol/Luna는 모델별 값을 보존한다.
-    빈 값·미지원 값이면 인자를 넣지 않는다(모델 기본). (export: 회귀 테스트용 — 순수 함수) */
+    이 키는 통과하고 low·high·xhigh 모두 실턴 성공). 기존 모델은 max→xhigh, GPT-6 계열은 모델별 값을 보존한다.
+    빈 값·미지원 값이면 인자를 넣지 않는다(모델 기본) — 단 GPT-6.1 Sol은 medium(model-effort.mjs EMPTY_EFFORT). (export: 회귀 테스트용 — 순수 함수) */
 export const CODEX_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh'];
 export function codexEffortArgs(effort, model) {
   const mapped = codexModelEffort(effort, model);
@@ -399,4 +452,4 @@ export async function writeCodexTurnConfig(home, mcpServers = null) {
     재조달+러너 교체까지 태운다(#286 CLI 미발견 오분류와 같은 계열). (export: 회귀 테스트용) */
 export const CODEX_LOCKUP_RE = /^warning: Code Mode is unavailable\b.*(?:code-mode host is disabled|failed to spawn code-mode host|fail closed)/im;
 
-export { codexHome, codexManagedBin, codexHostManagedBin, codexCmd }; // 러너 모듈 내부 공용(facade 미노출 — externalExec·detectRunners가 쓴다)
+export { codexHome, codexManagedBin, codexHostManagedBin, codexLegacyBin, codexCmd }; // 러너 모듈 내부 공용(facade 미노출 — externalExec·detectRunners가 쓴다)

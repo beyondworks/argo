@@ -1,12 +1,14 @@
 // K94 배선 — 실제 chat() codex 턴이 크루 다리를 config.toml [mcp_servers.crew]로 받고(도구 상한 포함), 프롬프트가 도구 판(결재 도구·동료 명단)으로
 // 바뀌는지. 가짜 codex가 받은 설정 파일·프롬프트를 기록한다(진짜 codex 왕복은 스크래치 E2E로 실측 — 위임 B 턴·결재 등록).
 import { mkdir, writeFile, chmod, readFile } from 'node:fs/promises';
-import { mkdtemp } from './helpers/tmp.mjs';
+import { mkdtemp, stubRunnerToolDirs } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const ROOT = await mkdtemp(join(tmpdir(), 'argo-cli-crew-wire-'));
 process.env.ARGO_ROOT = ROOT; // workspace.mjs 임포트 전 — 실데이터 미접촉
+process.env.HOME = process.env.USERPROFILE = join(ROOT, 'home'); // 실제 HOME에 codex 관리본(~300MB)을 내려받지 않게 — saveRunnerCred('codex')의 연결 워밍업
+await stubRunnerToolDirs(process.env.HOME);
 Object.assign(process.env, { ARGO_ENC_VAULT: '0', ARGO_MODEL_CATALOG: 'off', ARGO_NATIVE_RUNNERS: 'off' });
 const BIN = join(ROOT, 'bin');
 const CAP = join(ROOT, 'captured.txt');

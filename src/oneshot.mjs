@@ -13,7 +13,7 @@ import { runnerStatus, unsupportedMethodStatus, unsupportedMethodNotice, scrubSd
 /** 단발 프롬프트 1회 실행 — resolveRunner로 가용 러너를 고르고(SDK 또는 벤더 CLI), 실패하면 그 러너를
     누적 제외하고 남은 가용 러너를 차례로 시도한다(스테일 자격 오탐 자가 치유 — chat.mjs의 인증 재시도와
     같은 누적 제외 원칙. 다만 이쪽은 실패 종류를 가리지 않고, chat.mjs는 AUTH_ERR_RE 한정이다).
-    model은 claude 러너일 때만 적용(다른 러너는 각자 기본 모델). 반환 { runner, text, usage, costUsd }. */
+    model은 SDK·네이티브 러너에 적용(카탈로그 밖 id는 러너 기본으로). CLI 러너는 모델을 넘기지 않는다 — codex는 externalExec가 모델을 비운 턴의 고정 모델(CODEX_UNSET_MODEL)을 넣는다. 반환 { runner, text, usage, costUsd }. */
 export async function runOneShot(wsId, prompt, opts = {}) {
   // timeoutMs는 **두 실행 경로 공통** 상한이다(검수 2026-07-27 M-3): CLI는 externalExec가, SDK는
   // 아래 AbortController가 같은 값을 쓴다. 러너에 따라 상한이 갈리면 같은 작업이 codex로 뽑히면
