@@ -60,7 +60,7 @@ const OTHER_WIRES = {
 };
 
 /** 컨텍스트 길이 초과 거절 — 벤더별 상태·본문 모양(제보 2026-10-08 Grok "50만·60만 컨텍스트 넘음" 뒤 추가). 문구 출처는 src/runners/error-class.mjs CONTEXT_EXCEEDED_RE 주석
-    (xAI는 정비사 재현 원문, Gemini·z.ai는 공식 문서·포럼 원문, 나머지는 공개 클라이언트의 벤더 문구 목록 — 실벤더 대조 아님). n = 요청 토큰(아래 셈), l = 한도.
+    (Gemini는 포럼 원문, z.ai는 공식 오류 코드 표, 나머지는 공개 클라이언트의 벤더 문구 목록 — 실벤더에 쏴서 받은 원문 대조 아님). n = 요청 토큰(아래 셈), l = 한도.
     z.ai는 숫자 없는 문구라 엔진이 원문에서 한도를 못 읽는 갈래를 탄다. */
 export const CONTEXT_REJECT = {
   xai: (n, l) => ({ status: 400, json: { code: 'Client specified an invalid argument', error: `This model's maximum prompt length is ${l} but the request contains ${n} tokens.` } }),
