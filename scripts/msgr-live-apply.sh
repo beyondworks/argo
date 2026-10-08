@@ -12,6 +12,9 @@ cd "$(dirname "$0")/.."
 # 라이브 함수를 덮는 사고(9/23)를 구조로 막는다. 접속 정보를 읽기 전에 거른다.
 [ $# -gt 0 ] || { echo "적용할 마이그레이션 이름을 인자로 주세요 (예: 20260923120000_msgr_server_links)"; exit 2; }
 set -- "${@%.sql}" # 확장자를 붙여 줘도 같은 이름으로
+# 잠금 대기 제한 — 아래 WRAP 첫 줄의 SQL에 그대로 들어가므로 형식만 받는다(숫자=밀리초, 또는 숫자+ms·s·min).
+LOCK_TIMEOUT=${ARGO_APPLY_LOCK_TIMEOUT:-5s}; LT_RE='^[0-9]+(ms|s|min)?$'
+[[ $LOCK_TIMEOUT =~ $LT_RE ]] || { echo "거부  ARGO_APPLY_LOCK_TIMEOUT 형식이 아닙니다 (예: 5s·500ms·1min)"; exit 2; }
 # main을 명시적으로 가져온다 — fetch 대상 설정이 좁으면 `git fetch origin main`이 origin/main을 갱신하지 않아 낡은 main과 비교된다
 git fetch -q origin +refs/heads/main:refs/remotes/origin/main || { echo "거부  origin/main을 가져오지 못했습니다 — 네트워크 확인 뒤 다시"; exit 4; }
 MAINTMP=$(mktemp); trap 'rm -f "$MAINTMP"' EXIT
@@ -32,18 +35,20 @@ for f in "${FILES[@]}"; do
   [ -f "supabase/migrations/$f.sql" ] || { echo "없는 파일: $f"; exit 2; }
   NEWER=$(psql "$C" -At -c "select count(*) from supabase_migrations.schema_migrations where version > '$V'")
   if [ "$NEWER" != "0" ]; then echo "거부  $f — 더 새 버전 ${NEWER}개가 이미 기록됨(옛 정의로 덮을 수 있다). 그 파일이 정말 빠졌는지 정의 대조 뒤 손으로 적용하세요."; exit 3; fi
-  # 실패하면 여기서 멈춘다 — 종전 `| grep -v NOTICE || true`는 SQL 실패를 삼키고 아래에서 적용됨으로 기록했다(2026-09-17 발견). NOTICE는 PGOPTIONS로 끈다.
+  # 실패하면 여기서 멈춘다 — 종전 `| grep -v NOTICE || true`는 SQL 실패를 삼키고 아래에서 적용됨으로 기록했다(2026-09-17 발견). NOTICE는 WRAP 첫 줄 set local로 끈다.
   # 잠금을 오래 기다리지 않는다(2026-10-06 #846 검수) — alter policy·create trigger는 표에 강한 잠금(ACCESS EXCLUSIVE)을 건다. 그 표에 긴 쿼리가 있으면
   # 기다리는 동안 뒤따르는 모든 읽기·쓰기가 줄을 선다. 못 얻으면 이 파일은 통째로 되돌려지고(-1) 여기서 멈춘다 — 같은 명령으로 다시 실행하면 된다.
-  # 기본 5초, ARGO_APPLY_LOCK_TIMEOUT으로 바꾼다. 사용자가 준 PGOPTIONS는 덮지 않고 이어 붙인다.
+  # 기본 5초, ARGO_APPLY_LOCK_TIMEOUT으로 바꾼다. 설정은 트랜잭션(-1) 첫 문장 set local로 건다 — Supavisor 풀러는 PGOPTIONS(시작 옵션)를 버려서
+  # 종전 방식은 lock_timeout=0·client_min_messages=notice 그대로였다(2026-10-08 show로 관찰). set local은 이 트랜잭션이 끝나면 사라진다.
   # 선잠금(2026-10-08 실측): 이 Supabase의 supautils는 트리거·정책 DDL(drop trigger·create/alter/drop policy)을 실행하는 순간
   # auth·storage·realtime 표 23개를 ACCESS EXCLUSIVE로 잠근다. 메신저·동기화가 storage.objects를 읽은 채 auth.users를 기다리고 있으면
-  # 교착이 나고(10/8 0.1.99 적용 세 번 연속), 교착이 안 나도 그 사이 로그인·파일 요청이 줄을 선다. 그런 파일은 트랜잭션 첫 문장에서
+  # 교착이 나고(10/8 0.1.99 적용 세 번 연속), 교착이 안 나도 그 사이 로그인·파일 요청이 줄을 선다. 그런 파일은 set local 바로 다음, 마이그레이션보다 먼저
   # 그 표들을 NOWAIT로 먼저 잠근다 — 못 얻으면 아무도 기다리게 하지 않고 바로 실패해 통째로 되돌려지고, 1초 뒤 다시 한다(최대 ARGO_APPLY_TRIES, 기본 30).
   # 함수만 바꾸는 파일은 선잠금하지 않는다(그 표들을 잠그지 않는다 — 같은 날 실측).
   WRAP=$(mktemp); ERR=$(mktemp)
+  printf "set local lock_timeout = '%s';\nset local client_min_messages = warning;\n" "$LOCK_TIMEOUT" > "$WRAP"
   if grep -qiE '(create|alter|drop)[[:space:]]+policy|drop[[:space:]]+trigger' "supabase/migrations/$f.sql"; then
-    cat > "$WRAP" <<'PRELOCK'
+    cat >> "$WRAP" <<'PRELOCK'
 do $prelock$ declare t text; begin
   foreach t in array array['storage.objects','storage.buckets','storage.buckets_analytics','storage.s3_multipart_uploads','storage.s3_multipart_uploads_parts',
     'realtime.messages','realtime.subscription','auth.users','auth.identities','auth.sessions','auth.refresh_tokens','auth.mfa_factors','auth.mfa_challenges',
@@ -56,7 +61,9 @@ PRELOCK
   fi
   echo "\\i supabase/migrations/$f.sql" >> "$WRAP"
   for try in $(seq 1 "${ARGO_APPLY_TRIES:-30}"); do
-    if PGOPTIONS="${PGOPTIONS:-} -c client_min_messages=warning -c lock_timeout=${ARGO_APPLY_LOCK_TIMEOUT:-5s}" psql "$C" -v ON_ERROR_STOP=1 -1 -q -f "$WRAP" 2> "$ERR"; then break; fi
+    # 성공해도 경고는 보인다(NOTICE는 위 set local로 꺼져 경고 이상만 남는다) — -1이 빠지거나 파일 안에 commit이 있으면
+    # set local이 트랜잭션 밖이 되어 'SET LOCAL can only be used in transaction blocks' 같은 경고만 남고 제한이 조용히 꺼진다(2026-10-08 검수).
+    if psql "$C" -v ON_ERROR_STOP=1 -1 -q -f "$WRAP" 2> "$ERR"; then cat "$ERR" >&2; break; fi
     if grep -qE 'could not obtain lock|deadlock detected' "$ERR" && [ "$try" -lt "${ARGO_APPLY_TRIES:-30}" ]; then echo "잠금 대기 — ${try}회째 되돌림, 1초 뒤 다시"; sleep 1; continue; fi
     cat "$ERR" >&2; rm -f "$WRAP" "$ERR"; exit 1
   done

@@ -8,5 +8,6 @@ set -a; . ./.env.local; set +a
 REF=$(echo "$NEXT_PUBLIC_SUPABASE_URL" | sed -E 's#https?://([a-z0-9]+)\.supabase\.co.*#\1#')
 export PGPASSWORD="$SUPABASE_DB_PASSWORD"
 C="host=aws-1-ap-northeast-2.pooler.supabase.com port=5432 user=postgres.$REF dbname=postgres sslmode=require"
-PGOPTIONS='-c client_min_messages=warning' psql "$C" -v ON_ERROR_STOP=1 -q -f scripts/incident-2026-09-23-restore.sql
+# 경고 수준은 세션 첫 문장 set으로 건다 — Supavisor 풀러는 PGOPTIONS(시작 옵션)를 버린다(2026-10-08 show로 관찰).
+psql "$C" -v ON_ERROR_STOP=1 -q -c 'set client_min_messages = warning' -f scripts/incident-2026-09-23-restore.sql
 echo "restore applied"

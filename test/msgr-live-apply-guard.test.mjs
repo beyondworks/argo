@@ -88,20 +88,40 @@ test('확장자를 붙여도 같은 파일로 본다(재검수 L3)', { skip }, (
 
 function readScript(dir) { return execFileSync('cat', [join(dir, 'scripts/msgr-live-apply.sh')]).toString(); }
 
-// 2026-10-06(#846 검수): 마이그레이션 적용에 잠금 대기 제한을 건다 — 종전에는 PGOPTIONS를 덮어써 사용자가 lock_timeout을 줘도 먹히지 않았다.
-// 가짜 psql(PATH 앞)이 받은 PGOPTIONS를 기록한다. 접속 정보는 가짜 값(.env.local)이고 네트워크에 나가지 않는다.
-test('적용은 lock_timeout(기본 5초·ARGO_APPLY_LOCK_TIMEOUT)과 경고 수준을 걸고, 사용자가 준 PGOPTIONS를 덮지 않는다', { skip }, () => {
+// 2026-10-06(#846 검수): 마이그레이션 적용에 잠금 대기 제한을 건다. 2026-10-08: 종전 PGOPTIONS 방식은 Supavisor 풀러가 시작 옵션을 버려
+// 운영에서 lock_timeout=0·client_min_messages=notice 그대로였다(show로 관찰) — 그래서 적용 트랜잭션(-1) 첫 문장 set local로 건다.
+// 가짜 psql(PATH 앞)이 -f로 받은 파일 내용을 기록한다. 접속 정보는 가짜 값(.env.local)이고 네트워크에 나가지 않는다.
+test('적용 트랜잭션은 첫 문장에서 lock_timeout(기본 5초·ARGO_APPLY_LOCK_TIMEOUT)과 경고 수준을 set local로 건다 — 선잠금보다 먼저', { skip }, () => {
   const f = fixture();
   try {
+    const seed = join(f.root, 'seed');
+    writeFileSync(join(seed, 'supabase/migrations/20990103000000_policy.sql'), 'drop policy if exists p on public.t;\n');
+    git(seed, '-c', 'user.email=t@t', '-c', 'user.name=t', 'add', '.'); git(seed, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'policy');
+    git(seed, 'push', '-q', join(f.root, 'origin.git'), 'main'); git(f.work, 'pull', '-q');
     const bin = join(f.root, 'bin'); mkdirSync(bin);
     const log = join(f.root, 'psql.log');
-    writeFileSync(join(bin, 'psql'), `#!/bin/sh\ncase "$*" in *" -f "*) printf '%s\\n' "$PGOPTIONS" >> ${JSON.stringify(log)} ;; *"count(*)"*) echo 0 ;; esac\nexit 0\n`, { mode: 0o755 });
+    // set local은 -1 트랜잭션 안에서만 듣는다 — 적용 호출에 -1이 있었는지도 기록하고, 성공한 호출의 경고가 사용자에게 보이는지 보려고 경고 한 줄을 낸다
+    writeFileSync(join(bin, 'psql'), `#!/bin/sh\ncase "$*" in *"count(*)"*) echo 0 ;; esac\none=0; for a in "$@"; do [ "$a" = -1 ] && one=1; done\nwhile [ $# -gt 0 ]; do if [ "$1" = -f ]; then { echo "-1=$one"; cat "$2"; echo '--end'; } >> ${JSON.stringify(log)}; echo 'psql:w.sql:1: WARNING:  fixture-warning' >&2; fi; shift; done\nexit 0\n`, { mode: 0o755 });
     writeFileSync(join(f.work, '.env.local'), 'NEXT_PUBLIC_SUPABASE_URL=https://fixtureref.supabase.co\nSUPABASE_DB_PASSWORD=fixture\n');
-    const run = (env) => spawnSync('bash', ['scripts/msgr-live-apply.sh', '20990101000000_merged'], { cwd: f.work, encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, ...env } });
-    let r = run({ PGOPTIONS: '' }); assert.equal(r.status, 0, r.stdout + r.stderr);
-    r = run({ PGOPTIONS: '-c statement_timeout=60s', ARGO_APPLY_LOCK_TIMEOUT: '2s' }); assert.equal(r.status, 0, r.stdout + r.stderr);
-    const lines = readFileSync(log, 'utf8').trim().split('\n');
-    assert.match(lines[0], /-c client_min_messages=warning -c lock_timeout=5s$/);
-    assert.match(lines[1], /^-c statement_timeout=60s -c client_min_messages=warning -c lock_timeout=2s$/, '사용자 PGOPTIONS를 앞에 두고 이어 붙인다');
+    const run = (env, ...m) => spawnSync('bash', ['scripts/msgr-live-apply.sh', ...m], { cwd: f.work, encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, ...env } });
+    let r = run({}, '20990101000000_merged', '20990103000000_policy'); assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stderr, /fixture-warning/, '성공한 적용의 경고도 보인다(set local이 트랜잭션 밖이 되면 경고로만 드러난다)');
+    r = run({ ARGO_APPLY_LOCK_TIMEOUT: '2s' }, '20990101000000_merged'); assert.equal(r.status, 0, r.stdout + r.stderr);
+    const [plain, policy, custom] = readFileSync(log, 'utf8').split('--end\n');
+    const head = (t) => "-1=1\nset local lock_timeout = '" + t + "';\nset local client_min_messages = warning;\n";
+    assert.equal(plain, head('5s') + '\\i supabase/migrations/20990101000000_merged.sql\n');
+    assert.ok(policy.startsWith(head('5s') + 'do $prelock$'), `선잠금 파일도 set local이 맨 앞(선잠금 블록이 덮어쓰지 않는다):\n${policy}`);
+    assert.equal(custom, head('2s') + '\\i supabase/migrations/20990101000000_merged.sql\n');
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('ARGO_APPLY_LOCK_TIMEOUT은 시간 형식만 받는다(SQL에 그대로 들어간다) — 접속 전에 거부', { skip }, () => {
+  const f = fixture();
+  try {
+    for (const bad of ["5s'; select 1; --", '5 s', 'abc', '']) {
+      const r = spawnSync('bash', ['scripts/msgr-live-apply.sh', '20990101000000_merged'], { cwd: f.work, encoding: 'utf8', env: { ...process.env, ARGO_APPLY_LOCK_TIMEOUT: bad } });
+      if (bad === '') { assert.notEqual(r.status, 2, '빈 값은 기본 5초로 본다'); continue; }
+      assert.equal(r.status, 2, `${bad}: ${r.stdout}${r.stderr}`); assert.match(r.stdout, /ARGO_APPLY_LOCK_TIMEOUT 형식이 아닙니다/);
+    }
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
