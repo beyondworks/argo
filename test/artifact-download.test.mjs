@@ -51,7 +51,7 @@ test('배선: 채팅 칩·프리뷰(공용 모듈)·기억 페이지·설정 리
   assert.equal((chips.match(/artifactDownload\(/g) ?? []).length, 3, '공용 칩: 칩(미리볼 수 없는 형식) + 프리뷰 노트 + 보기 창 저장 버튼');
   // 칩 클릭 = 열기(유건 2026-09-17: 다운로드만 되고 열리지 않았다) — 미리볼 수 있는 형식은 앱 안 보기 창, 닫기·ESC·바깥 클릭
   assert.match(chips, /previewKind\(rel\) !== 'none' \? \(e\) => \{ e\.preventDefault\(\); setViewing\(rel\); \}/, '미리볼 수 있는 칩은 보기 창');
-  assert.match(chips, /function ArtifactViewer[\s\S]*?'Escape'[\s\S]*?onClick=\{onClose\}[\s\S]*?common\.close/, '보기 창은 ESC·바깥 클릭·닫기 버튼');
+  assert.match(chips, /function ArtifactViewer[\s\S]*?useEscapeClose\(onClose\)[\s\S]*?onClick=\{onClose\}[\s\S]*?common\.close/, '보기 창은 ESC(공용 층 — 겹친 창은 맨 위만, chat-image-freshness 행동 테스트)·바깥 클릭·닫기 버튼');
   for (const [name, src] of [['crew', crew], ['room', room]]) {
     assert.match(src, /import \{ ArtifactChips \} from '(\.\.\/)+artifact-chips';/, `${name}: 공용 칩을 임포트해야 헬퍼를 지난다(사본 금지)`);
     assert.equal((src.match(/artifactDownload\(/g) ?? []).length, 0, `${name}: 페이지 안 직접 호출 0 — 있으면 공용 모듈과 열람 계약이 갈린다`);

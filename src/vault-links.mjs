@@ -36,12 +36,16 @@ export function rewriteVaultHref(href, wsId) {
 }
 
 /** 마크다운 그림 src → files API 주소 또는 null(호출부가 태그를 지운다). 서빙 구역(projects/·files/·_imported/) 안 래스터 그림만 —
-    외부 http·data·프로토콜 상대 주소는 vaultRel이 스킴·빈 세그먼트로 거르고, 구역 밖·탈출은 여기서 걸러진다. */
-export function vaultImageSrc(src, wsId) {
+    외부 http·data·프로토콜 상대 주소는 vaultRel이 스킴·빈 세그먼트로 거르고, 구역 밖·탈출은 여기서 걸러진다.
+    ver(그 답의 시각)를 주면 &v=로 붙인다 — 브라우저는 한 문서 안에서 같은 주소의 그림을 서버에 다시 묻지 않고 재사용해서, 같은 경로를
+    덮어쓴 뒤 온 새 답도 옛 그림을 그렸다(IMG 1차 검수 MEDIUM, 격리 실측: files API를 no-cache+ETag로 바꾼 뒤에도 새 답 256px=옛 그림,
+    새로고침 뒤에만 32px). 답마다 주소가 달라 새 답은 그때의 파일을 받는다. 라우트는 v를 읽지 않는다(pdf 미리보기 inline=1과 같은 방식). */
+export function vaultImageSrc(src, wsId, ver = null) {
   if (!wsId) return null;
   const rel = vaultRel(src);
   if (!rel || !SERVE_PREFIXES.some((p) => rel.startsWith(p))) return null;
-  return IMAGE_EXTS.has(rel.split('.').pop().toLowerCase()) ? filesUrl(wsId, rel) : null;
+  if (!IMAGE_EXTS.has(rel.split('.').pop().toLowerCase())) return null;
+  return ver == null || ver === '' ? filesUrl(wsId, rel) : `${filesUrl(wsId, rel)}&v=${encodeURIComponent(String(ver))}`;
 }
 
 /** 본문 그림 주소 → 이 회사 files API가 서빙하는 rel 또는 null — 크게 보기 창이 연다. 다른 회사 주소·구역 밖·탈출은 null. */

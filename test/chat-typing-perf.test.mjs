@@ -29,7 +29,7 @@ test('파싱이 useMemo 안에 있다 — memo를 통과해 재렌더돼도 파�
   const parseAt = body.indexOf('marked.parse(');
   assert.ok(memoAt >= 0, 'useMemo 사용');
   assert.ok(parseAt > memoAt, 'marked.parse가 useMemo 안에 있어야 한다(밖으로 나가면 매 렌더 재파싱)');
-  assert.ok(/\}, \[text, wsId\]\)/.test(body), '의존성은 text·wsId — 둘이 그대로면 결과 재사용');
+  assert.ok(/\}, \[text, wsId, ver\]\)/.test(body), '의존성은 text·wsId·ver(그 답의 시각 — 답마다 고정) — 셋이 그대로면 결과 재사용');
 });
 
 test('보안 처리가 메모 안으로 옮겨오며 유실되지 않았다', () => {

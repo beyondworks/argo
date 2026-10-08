@@ -35,10 +35,10 @@ test('배선: Markdown 렌더러가 재작성 함수를 쓰고, 채팅·회의�
   assert.match(ui, /rewriteVaultHref\(h, wsId\)/, '렌더러 재작성 경유');
   assert.match(ui, /'href="#"'/, '재작성 불가는 여전히 # (방어 유지)');
   for (const [p, re] of [
-    ['../app/c/[ws]/crew/[slug]/page.jsx', /<Markdown text={crewReplyText\(all\[i - 1\], m\)} wsId={ws} \/>/], // 크루 답 — 루프 판정 표지만 뺀 표시 문장
+    ['../app/c/[ws]/crew/[slug]/page.jsx', /<Markdown text={crewReplyText\(all\[i - 1\], m\)} wsId={ws} ver={m\.ts} \/>/], // 크루 답 — 루프 판정 표지만 뺀 표시 문장, ver = 그 답의 시각(덮어쓴 그림도 새 답은 새 그림)
     ['../app/c/[ws]/crew/[slug]/page.jsx', /<InboundCard key={i} m={m} wsId={ws} \/>/], // 바깥 글 카드의 펼친 본문
     ['../app/c/[ws]/crew/[slug]/inbound-card.jsx', /<Markdown text={card\.body} wsId={wsId} \/>/],
-    ['../app/c/[ws]/room/page.jsx', /<Markdown text={m\.text} wsId={ws} \/>/],
+    ['../app/c/[ws]/room/page.jsx', /<Markdown text={m\.text} wsId={ws} ver={m\.ts} \/>/],
     ['../app/c/[ws]/compete/page.jsx', /wsId={ws} \/>/],
   ]) assert.match(await readFile(new URL(p, import.meta.url), 'utf8'), re, `wsId 전달 누락: ${p}`);
 });

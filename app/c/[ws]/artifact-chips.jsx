@@ -5,7 +5,7 @@
 // 같은 파일이 크루 채팅에선 열리고 회의실에선 안 열리는 비대칭이 생긴다.
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Icon, Markdown, Spinner, api, artifactDownload, useScrollLock } from '../../ui';
+import { Icon, Markdown, Spinner, api, artifactDownload, useEscapeClose, useScrollLock } from '../../ui';
 import { useLang } from '../../i18n';
 
 /* ─── 산출물 인라인 미리보기 ───
@@ -37,6 +37,10 @@ function ArtifactPreview({ ws, rel, large = false }) {
   const fileUrl = `/api/companies/${ws}/files?rel=${encodeURIComponent(rel)}`;
   const needsFetch = kind === 'md' || kind === 'text' || kind === 'svg';
   const [st, setSt] = useState({ status: needsFetch ? 'loading' : 'ready' });
+  // 펼친 시각 — 그림은 지금 파일로(브라우저는 한 문서 안에서 같은 주소 그림을 다시 묻지 않고 재사용해, 같은 경로를 덮어쓴 뒤에도 옛 그림이었다 —
+  // IMG 1차 검수 MEDIUM). 라우트는 v를 읽지 않는다. text·svg는 fetch no-cache(매번 재확인), pdf 프레임도 같은 v — 업데이트 전 받아 둔
+  // 하루짜리 캐시(옛 max-age=86400 응답)가 남아 있어도 옛 바이트를 쓰지 않게(격리 실측: 그 사본은 기본 fetch에 그대로 나왔다).
+  const [opened] = useState(() => Date.now());
   useEffect(() => {
     if (!needsFetch) return;
     let alive = true;
@@ -49,7 +53,7 @@ function ArtifactPreview({ ws, rel, large = false }) {
           if (alive) setSt({ status: 'ready', text: content.slice(0, PREVIEW_TEXT_CAP), truncated: content.length > PREVIEW_TEXT_CAP });
           return;
         }
-        const res = await fetch(fileUrl);
+        const res = await fetch(fileUrl, { cache: 'no-cache' });
         if (!res.ok) throw new Error(String(res.status));
         // 상한 스트림 컷 — cap 초과분은 받지 않고 끊는다(대용량이 탭을 굳히지 않게)
         const reader = res.body.getReader();
@@ -90,12 +94,12 @@ function ArtifactPreview({ ws, rel, large = false }) {
     <div className={`artifact-preview fade-up${large ? ' large' : ''}`}>
       {/* 로드 실패는 조용한 빈 상자가 아니라 텍스트 경로와 같은 계약(오류 안내+다운로드)으로 —
           img는 onError가 신뢰되고, iframe은 브라우저가 404를 프레임 안에 그려 best-effort다. */}
-      {kind === 'img' && <div className="ap-body"><img src={fileUrl} alt={name} onError={() => setSt({ status: 'error' })} /></div>}
+      {kind === 'img' && <div className="ap-body"><img src={`${fileUrl}&v=${opened}`} alt={name} onError={() => setSt({ status: 'error' })} /></div>}
       {kind === 'svg' && <div className="ap-body"><img src={st.src} alt={name} onError={() => setSt({ status: 'error' })} /></div>}
       {/* inline=1 = 캐시 분리(라우트는 무시하는 파라미터) — 같은 URL의 다운로드 응답이 옛
           X-Frame-Options: DENY와 함께 24h 캐시돼 있으면 iframe이 그 사본을 재생해 빈 프레임이
           된다(실측: 헤더 교체 후에도 캐시 재생으로 차단 지속 → 캐시버스트로 즉시 렌더). */}
-      {kind === 'pdf' && <iframe src={`${fileUrl}&inline=1`} title={name} onError={() => setSt({ status: 'error' })} />}
+      {kind === 'pdf' && <iframe src={`${fileUrl}&inline=1&v=${opened}`} title={name} onError={() => setSt({ status: 'error' })} />}
       {kind === 'md' && <div className="ap-body ap-md"><Markdown text={st.text} wsId={ws} /></div>}
       {kind === 'text' && <div className="ap-body"><pre className="ap-text">{st.text}</pre></div>}
       {st.truncated && note(t('chat.preview.truncated'))}
@@ -108,8 +112,8 @@ function ArtifactPreview({ ws, rel, large = false }) {
 function ArtifactViewer({ ws, rel, onClose }) {
   const { t } = useLang();
   useScrollLock();
-  // 캡처 단계에서 받아 여기서 끝낸다 — 같은 ESC로 뒤의 패널·메뉴까지 닫히지 않게(2차 검수 LOW)
-  useEffect(() => { const onKey = (e) => { if (e.key === 'Escape') { e.stopImmediatePropagation(); onClose(); } }; window.addEventListener('keydown', onKey, true); return () => window.removeEventListener('keydown', onKey, true); }, [onClose]);
+  // ESC — 캡처 단계에서 받아 끝낸다(같은 ESC로 뒤의 패널·메뉴까지 닫히지 않게, 2차 검수 LOW). 보기 창이 겹치면 맨 위 창만(ui.jsx useEscapeClose)
+  useEscapeClose(onClose);
   const name = rel.split('/').pop();
   const fileUrl = `/api/companies/${ws}/files?rel=${encodeURIComponent(rel)}`;
   // body로 포털 — 유리 테마의 .card backdrop-filter가 fixed 기준 박스가 돼 창이 말풍선 안에 갇혔다(2차 검수 HIGH-1)

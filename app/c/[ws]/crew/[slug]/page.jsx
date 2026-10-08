@@ -1077,7 +1077,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
                     if (sel) { e.clipboardData.setData('text/plain', sel); e.preventDefault(); }
                   }}>
                   {/* 루프 회차 답 끝의 판정 표지(LOOP: …)는 엔진용 — 화면에서만 뺀다(저장·판정 그대로) */}
-                  <Markdown text={crewReplyText(all[i - 1], m)} wsId={ws} />
+                  <Markdown text={crewReplyText(all[i - 1], m)} wsId={ws} ver={m.ts} />
                   {m.handover && (
                     <Link className="memo-chip" href={`/c/${ws}/vault?doc=${encodeURIComponent(m.handover.rel)}`}>
                       <Icon name="memory" size={12} />
