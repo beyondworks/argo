@@ -6,7 +6,7 @@ import { paths, getDeviceId } from './workspace.mjs';
 import { withLock } from './mutex.mjs';
 import { writeJsonAtomic, readJson, salvageFromCorrupt } from './jsonstore.mjs';
 import { resetStamp, resumeStamp } from './reset-stamp.mjs';
-import { channelIdsOf, forgetChannels, applyDeparted, mergeDeparted, msgChannel } from './departed.mjs'; // 채널 기억 회수(유건 결정 2026-10-03)
+import { channelIdsOf, forgetChannels, applyDeparted, mergeDeparted, msgChannel, isOwnerSoloScope, foldedSolo, summaryRecalled } from './departed.mjs'; // 채널 기억 회수(유건 결정 2026-10-03)
 import { isRelaxedStored, resetDelegationLimit } from './delegation-limits.mjs'; // 위임 제한 스위치 — 대화방(스레드)마다 저장
 import { sanitizeFileSlug } from './slug.mjs'; // 파일 이름 세척의 단일 원천 — 회의록 충돌 판정(sync 반입 문)과 같은 규칙
 
@@ -51,8 +51,38 @@ export function turnScope(ctx) {
 /** 세션을 따로 잇는 범위의 키 — 메신저 채널 = channelId(#593 저장분 그대로), 텔레그램 그룹 = tg:<chatId>, 슬랙 채널 = slack:<channelId>. 그 밖(메신저 DM 등)은 세션을 남기지 않는다. */
 export const scopeKey = (s) => (s?.kind === 'msgr' && s.channelId ? s.channelId : s?.kind === 'tg-group' && s.chatId ? `tg:${s.chatId}` : s?.kind === 'slack' && s.channelId ? `slack:${s.channelId}` : null);
 export const scopedSession = (t, key) => t?.scopedSessions?.[key] ?? { sessionId: null, sessionDevice: null };
-/** 프롬프트에 붙일 스레드 줄 — 범위 턴은 같은 범위 기록만, 그 밖의 턴은 범위 없는 기록만(채널·그룹·DM 기록이 데스크톱 대화에 섞이지 않게). */
-export const inContextScope = (m, scope) => { const k = scopeKey(scope); return scope ? !!k && scopeKey(m.contextScope) === k : !m.contextScope; }; // 키 없는 범위(여러 공유 목적지 {kind:'shared'})는 아무것도 붙이지 않는다
+export { isOwnerSoloScope, foldedSolo }; // 주인 혼자 1:1 기록 표지·요약이 접은 1:1 방(정의는 departed.mjs — 회수가 같은 술어로 범위 없는 요약을 거둔다)
+/** 프롬프트에 붙일 스레드 줄 — 범위 턴은 같은 범위 기록만, 그 밖의 턴은 범위 없는 기록 + 주인 혼자 1:1 기록(채널·그룹·남 낀 DM 기록이 데스크톱 대화에 섞이지 않게).
+    주인 혼자 1:1 턴은 범위 없는 턴처럼 이 규칙을 쓴다(chat.mjs lineScope = null) — 데스크톱과 같은 대화다. */
+export const inContextScope = (m, scope) => { const k = scopeKey(scope); return scope ? !!k && scopeKey(m.contextScope) === k : (!m.contextScope || isOwnerSoloScope(m.contextScope)); }; // 키 없는 범위(여러 공유 목적지 {kind:'shared'})는 아무것도 붙이지 않는다
+
+/* ── 데스크톱 세션이 본 주인 혼자 1:1 줄(유건 결정 2026-10-08 ①) — 1:1 턴은 세션 밖에서 돈다(세션을 남기지 않는다). 그래서 데스크톱(범위 없는) 세션이
+   이어 쓸 때 그 세션이 아직 못 본 1:1 줄을 알아야 한다. 위치(마지막 데스크톱 답 뒤)로는 못 가린다 — 루틴·위임·쪽지 줄이 끼고, 동기화 병합은 줄을 시각순으로
+   다시 놓고, 턴 끝에 기록하는 경로는 도는 사이 끝난 1:1을 앞에 둔다(검수 HIGH 2026-10-08). 그래서 "이 세션에 건넨 1:1 줄"을 세션 id와 짝으로 남긴다:
+   t.soloSeen = { session, keys:[soloKey…] }. 병합은 줄을 더하기만 하므로 순서와 상관없이 맞다. 다른 세션의 기록이거나 기록이 없으면 본 줄이 없는 것으로 본다
+   (못 본 줄을 다시 건넬 뿐 — 잃지 않는다). 쓰기는 건넨 줄이 생긴 턴에만 1회(로컬 파일, DB 0). ── */
+/** 1:1 줄의 키 — 시각·화자·방(동기화 병합의 줄 동일성 ts|who와 같은 축 + 방) */
+export const soloKey = (m) => `${m?.ts ?? ''}|${m?.who ?? ''}|${String(m?.contextScope?.channelId ?? '').toLowerCase()}`;
+/** 이 세션이 본 1:1 줄 키 — 기록이 그 세션 것이 아니면 빈 집합 */
+export const soloSeenFor = (t, session) => new Set(session && t?.soloSeen?.session === session && Array.isArray(t.soloSeen.keys) ? t.soloSeen.keys : []);
+/** 기록 쓰기 — 같은 세션이면 이미 본 줄에 더한다(한 세션은 본 것을 잊지 않는다 — 동시에 끝난 두 턴이 서로의 기록을 덮지 않게). 키는 지금 스레드에 있는 1:1 줄로만 남긴다(크기 상한 = 스레드).
+    바뀐 것이 없으면 쓰지 않는다. inThread = 지금 스레드에서 키를 셀 줄(chat.mjs가 맥락 규칙으로 고른 1:1 줄). */
+export async function noteSoloSeen(wsId, slug, session, keys, inThread) {
+  if (!session) return false;
+  return lockThread(wsId, slug, async () => {
+    const t = await loadThread(wsId, slug);
+    const present = new Set(t.messages.filter(inThread).map(soloKey));
+    const prev = soloSeenFor(t, session);
+    const next = [...new Set([...prev, ...keys])].filter((k) => present.has(k));
+    if (t.soloSeen?.session === session && next.length === prev.size && next.every((k) => prev.has(k))) return false;
+    t.soloSeen = { session, keys: next };
+    await writeJsonAtomic(file(wsId, slug), t);
+    return true;
+  });
+}
+/** 이 기기 스레드에 이미 있는 그 방의 주인 혼자 1:1 턴(메신저 원본 메시지 id) — 게이트웨이가 서버 봉투의 최근 방 대화에서 겹치는 줄을 뺄 때 쓴다(msgr.mjs). */
+export const soloMsgIds = (t, channelId) => new Set((t?.messages ?? []).filter((m) => isOwnerSoloScope(m.contextScope) && m.contextScope.msgId != null
+  && String(m.contextScope.channelId ?? '').toLowerCase() === String(channelId ?? '').toLowerCase()).map((m) => String(m.contextScope.msgId)));
 /** 스레드 맥락 누적 요약(thread-context.mjs) — 범위 없는 대화는 summary, 키 있는 범위(채널·그룹)는 scopedSummaries[key]. 범위끼리 섞이지 않게 세션과 같은 키를 쓴다.
     {text, upto} — upto는 요약이 덮는 마지막 메시지 ts(앵커). 앵커가 스레드에 없으면 쓰는 쪽(planContext)이 무효로 본다. 없으면 null. */
 export const threadSummary = (t, scope) => { const s = scope ? (scopeKey(scope) ? t?.scopedSummaries?.[scopeKey(scope)] : null) : t?.summary; return s && typeof s.text === 'string' ? s : null; };
@@ -84,14 +114,18 @@ export async function loadThread(wsId, slug) {
   return t;
 }
 
-/** 누적 요약 저장 — 앵커 메시지가 아직 스레드에 있을 때만(그 사이 새 대화·회수로 사라졌으면 쓰지 않는다). 키 없는 범위는 저장하지 않는다. */
+/** 누적 요약 저장 — 앵커 메시지가 아직 스레드에 있을 때만(그 사이 새 대화·회수로 사라졌으면 쓰지 않는다). 키 없는 범위는 저장하지 않는다.
+    범위 없는 요약은 접은 주인 혼자 1:1 방을 solo로 든다(departed.mjs foldedSolo) — summary.solo(호출부가 요약할 때 본 줄·이어 접은 앞 요약 기준) + 지금 스레드의 기준점 이하 1:1 줄.
+    그 방이 요약하는 사이 회수됐으면 저장하지 않는다(회수된 내용을 접은 요약을 남기지 않는다). */
 export async function setThreadSummary(wsId, slug, scope, summary) {
   const key = scope ? scopeKey(scope) : null;
   if (scope && !key) return false;
   return lockThread(wsId, slug, async () => {
     const t = await loadThread(wsId, slug);
     if (!t.messages.some((m) => m.ts === summary?.upto)) return false;
-    const val = { text: String(summary.text), upto: summary.upto, at: Date.now() };
+    const solo = key ? {} : foldedSolo(t.messages, summary.upto, summary.solo);
+    const val = { text: String(summary.text), upto: summary.upto, at: Date.now(), ...(key ? {} : { withSolo: true }), ...(Object.keys(solo).length ? { solo } : {}) }; // withSolo — 주인 혼자 1:1 줄까지 접을 수 있는 요약(이전 버전 요약과 가른다 — chat.mjs threadContextFor)
+    if (summaryRecalled(t.departed, val)) return false;
     if (key) t.scopedSummaries = { ...t.scopedSummaries, [key]: val }; else t.summary = val;
     await writeJsonAtomic(file(wsId, slug), t);
     return true;

@@ -180,7 +180,8 @@ export async function appendSourceLinks(file, rels) {
   await writeKeepingMtime(file, `${body.trimEnd()}\n${renderLinkSections(links)}`);
 }
 
-/** 턴 핸드오버 — 크루별 하루 1파일 일지에 append(원수 층). 링크·정제는 정리 데몬이 맡는다. */
+/** 턴 핸드오버 — 크루별 하루 1파일 일지에 append(원수 층). 링크·정제는 정리 데몬이 맡는다.
+    조직 태그(org-…) 일지는 처음부터 볼트 밖 .msgr-journal/에 쓰고 null을 돌려준다 — 볼트 문서가 아니라 화면 칩·활동 링크로 열 일지가 없다(아래 orgCopy). */
 export async function saveHandover(wsId, agentSlug, userMsg, reply, label = agentSlug, { tag = '' } = {}) {
   const p = paths(wsId);
   const now = new Date();
@@ -190,8 +191,12 @@ export async function saveHandover(wsId, agentSlug, userMsg, reply, label = agen
   // tag(예: org-<orgId>-ch-<channelId>) = 팀 메신저 채널 턴 — 같은 날 일지라도 **별도 파일**로 둔다. 하루 파일은 절(section)을
   // 덧붙이는 구조라 절 단위 삭제가 불가능한데, 오프보딩 "조직 데이터 회수"는 파일 단위로 지워야 하기 때문(MESSENGER-DESIGN.md).
   const safeTag = String(tag).replace(/[^a-z0-9-]/gi, '').slice(0, 90); // org·채널 uuid 둘(4+36+4+36)이 잘리지 않게
-  const file = join(p.journal, `${day}-${agentSlug}${safeTag ? `.${safeTag}` : ''}.md`);
-  await mkdir(p.journal, { recursive: true });
+  // 조직 태그 일지 = 조직 기억의 PC 사본 — 볼트(동기화·기억 정리·회상·크루 파일 도구가 보는 곳)에 한순간도 두지 않는다(재검수 LOW 2026-10-08: 볼트에 먼저 쓰고
+  // 브리지 정리 틱이 옮기던 동안 동기화 주기가 개인 클라우드로 올렸다). .msgr-journal/은 동기화 제외·셸 게이트 차단·퇴장 회수(msgr-recall·purgeDepartedJournals) 자리다.
+  const orgCopy = safeTag.startsWith('org-');
+  const dir = orgCopy ? join(p.root, '.msgr-journal') : p.journal;
+  const file = join(dir, `${day}-${agentSlug}${safeTag ? `.${safeTag}` : ''}.md`);
+  await mkdir(dir, { recursive: true });
   const gist = userMsg.replace(/\s+/g, ' ').trim().slice(0, 48);
   const head = existsSync(file) ? '' : `# ${day} ${label} 일지${safeTag ? ` (${safeTag})` : ''}\n`;
   // 장문 응답은 절단 표시를 남긴다 — 표시 없이 자르면 크루·정리 데몬이 잘린 걸 완전한 기록으로 오인한다
@@ -204,6 +209,7 @@ export async function saveHandover(wsId, agentSlug, userMsg, reply, label = agen
 ${body}
 `;
   await appendFile(file, head + section);
+  if (orgCopy) return null; // 볼트 색인(_index.md)에 넣지 않는다
   await updateIndex(wsId);
   return { file, linked: [] };
 }

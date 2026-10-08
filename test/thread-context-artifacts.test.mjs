@@ -156,7 +156,7 @@ test('배선 — 두 맥락 빌더(CLI 경로·SDK 기기 교차 경로)가 thre
   // 2026-10-05(B3' 토큰 예산): 두 경로가 threadContextFor 한 벌을 지나고, 그 안에서만 threadCtxLine을 부른다(줄 모양·예산·요약이 경로마다 갈리지 않게)
   assert.equal((src.match(/lineOf: \(m\) => threadCtxLine\(m, lang, name, \{ ownerId \}\)/g) ?? []).length, 1, 'threadContextFor 안 1곳(회사 주인 id를 함께 — member 판정)');
   // 2026-10-05(검수 반영): CLI 경로는 argv 러너 한도(limits)·중단 신호 같은 인자를 더 받는다 — 공통 앞부분(같은 줄 모양·범위·러너·모델)까지만 고정한다
-  const calls = src.match(/await threadContextFor\(wsId, agentSlug, (thread|t), \{ contextScope, lang, name: meta\.name \|\| agentSlug, runner, model: effModel[ ,}]/g) ?? [];
+  const calls = src.match(/await threadContextFor\(wsId, agentSlug, (thread|t), \{ contextScope: lineScope, lang, name: meta\.name \|\| agentSlug, runner, model: effModel[ ,}]/g) ?? []; // lineScope — 주인 혼자 1:1 턴은 데스크톱과 같은 범위(유건 결정 2026-10-08 ①, chat.mjs)
   assert.equal(calls.length, 2, 'CLI 경로 + SDK 기기 교차 경로 = 2곳(한 곳이 옛 인라인 식으로 돌아가면 노트가 그 경로에서만 사라진다). 정당한 새 호출부를 추가하거나 인자 형태를 바꾸면 이 숫자·앵커를 함께 갱신할 것 — 핀을 우회하지 말고(검수 LOW-1)');
   // 옛 인라인 식 부활 금지 — 맥락 줄은 threadCtxLine 한 곳에서만 JSON 항목으로 만든다(2026-10-05 구조 변경 — 노트 문구 대신 경로 필드)
   assert.equal((src.match(/export function threadCtxLine\(/g) ?? []).length, 1, 'threadCtxLine 정의 1곳');

@@ -58,6 +58,18 @@ export const USER_ADDRESS_NOTE = Object.freeze({
     ko: "사용자를 부를 때 '사장님'·'대표님'·'고객님' 같은 호칭을 쓰지 말고 바로 말한다.",
     en: "Do not address the user with titles such as 'boss' or 'captain'; speak to them directly.",
   }),
+  // 이름 줄(named·unnamed) 끝에 항상 붙는 우선 문구 — 호칭 규칙 판정(user-name.mjs hasAddressRule)은 정밀도가 먼저라 놓치는 모양이 있다.
+  //   놓쳐도 모델이 카드·확정 규칙의 호칭을 따르게 한다(8차 2026-10-08 총괄 결정). 붙이는 곳은 user-name.mjs userAddressNote 한 곳
+  deferToRule: Object.freeze({
+    // 가리키는 이름은 지시문 안의 실제 이름과 맞춘다 — 카드 절 '## 일하는 방식', 확정 규칙 절 '# 사용자 지침 — … 회사 규칙'(corrections.mjs), 아래 ruled 줄(9차 확인 검수 LOW)
+    ko: "단, 사용자가 카드의 '일하는 방식'이나 회사 규칙(사용자 지침)에서 호칭을 따로 정했으면 그 규칙을 따른다.",
+    en: "However, if the user has set how to address them in your card's working rules or the company rules (user rules), follow that rule instead.",
+  }),
+  // 사용자가 직접 정한 호칭 규칙이 있을 때(유건 결정 2026-10-08 ③) — 카드 '일하는 방식'·확정 규칙이 메신저 공간별 표시 이름보다 우선한다
+  ruled: Object.freeze({
+    ko: "사용자를 부르는 호칭은 사용자가 직접 정한 규칙(카드의 '일하는 방식'·회사 규칙)을 따른다. 메신저 공간마다 다른 표시 이름이 보여도 그 규칙이 우선이다.",
+    en: "Address the user exactly as the rule they set says (your card's working rules or the company rules). That rule takes precedence over any display name shown in a messenger space.",
+  }),
 });
 
 // ── M11 옛 기록 속 낱말 — 에이전트 지시문 공통 한 줄(chat.mjs systemPromptFor → SDK·CLI·네이티브 러너 모두). 이미 저장된 대화·요약·회의록·쪽지·

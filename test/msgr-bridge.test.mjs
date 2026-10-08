@@ -419,9 +419,12 @@ test('push: 결재에 plain이 없으면(폴백) 카드 본문에 새 "명령:" 
 });
 
 test('journal 정책: tag는 별도 일지 파일(회수 단위), chat()의 세 saveHandover 지점은 journalWrite 하나를 거친다(소스 구간 불변식)', async () => {
-  const h = await saveHandover(WS, 'seoyun', '지시', '답', '서윤', { tag: 'org-abc' });
-  assert.match(h.file, /\d{4}-\d{2}-\d{2}-seoyun\.org-abc\.md$/);
-  assert.match(await readFile(h.file, 'utf8'), /^# .* 서윤 일지 \(org-abc\)\n/);
+  // 조직 태그 일지는 처음부터 볼트 밖(.msgr-journal/ — 동기화 제외·셸 게이트 차단·퇴장 회수 자리)에 쓰고, 볼트 문서가 아니라 handover는 null(재검수 LOW 2026-10-08)
+  assert.equal(await saveHandover(WS, 'seoyun', '지시', '답', '서윤', { tag: 'org-abc' }), null);
+  const orgName = (await readdir(join(paths(WS).root, '.msgr-journal'))).find((n) => /^\d{4}-\d{2}-\d{2}-seoyun\.org-abc\.md$/.test(n));
+  assert.ok(orgName);
+  assert.match(await readFile(join(paths(WS).root, '.msgr-journal', orgName), 'utf8'), /^# .* 서윤 일지 \(org-abc\)\n/);
+  assert.ok(!(await readdir(paths(WS).journal).catch(() => [])).some((n) => n.includes('.org-')), '볼트 일지 폴더에 조직 태그 파일이 한순간도 없다');
   const plain = await saveHandover(WS, 'seoyun', '지시', '답', '서윤');
   assert.match(plain.file, /\d{4}-\d{2}-\d{2}-seoyun\.md$/);
   const src = await readFile(new URL('../src/chat.mjs', import.meta.url), 'utf8');
@@ -429,7 +432,8 @@ test('journal 정책: tag는 별도 일지 파일(회수 단위), chat()의 세 
   assert.equal(direct.length, 1, 'saveHandover 직접 호출은 journalWrite 정의 1곳뿐 — 한 지점이라도 우회하면 crew_memory=false 채널 내용이 기억에 샌다');
   assert.equal((src.match(/await journalWrite\(reply, meta\.name \|\| agentSlug\)/g) ?? []).length, 3, '세 저장 지점 전부 journalWrite');
   // 메신저 채널 턴(조직 태그)은 PC 일지에 쓰지 않는다 — 채널·조직 기억은 서버 일지에만(유건 결정 2026-09-24)
-  assert.match(src, /const journalWrite = \(reply, label\) => dmTurn \|\| journal\?\.off \|\| String\(journal\?\.tag \?\? ''\)\.startsWith\('org-'\) \? null : saveHandover\(wsId, agentSlug, userMsg, reply, label, \{ tag: journal\?\.tag \?\? '' \}\);/);
+  // 주인 혼자 1:1(유건 결정 2026-10-08 ①)만 DM이어도 일지에 주인 글(journal.text)을 쓴다 — 개인 공간은 태그 없음, 조직은 그 방 태그 파일(회수 단위). 동작은 test/agent-one-person.test.mjs가 잠근다
+  assert.match(src, /const journalWrite = \(reply, label\) => \(!ownerSolo && \(dmTurn \|\| journal\?\.off \|\| String\(journal\?\.tag \?\? ''\)\.startsWith\('org-'\)\) \? null\n\s+: saveHandover\(wsId, agentSlug, ownerSolo && typeof journal\?\.text === 'string' \? journal\.text : userMsg, reply, label, \{ tag: ownerSolo \? \(mirrorCtx\.orgId \? msgrJournal\(mirrorCtx\.orgId, mirrorCtx\.channelId\)\.tag : ''\) : journal\?\.tag \?\? '' \}\)\);/);
 });
 
 test('journal 전파 핀: chat() 재귀 재시도 6곳·위임 1곳·makeCrewServer가 journal을 넘긴다(검수 HIGH-2 — 한 곳이 빠지면 crew_memory=false 내용이 일지에 샌다)', async () => {
