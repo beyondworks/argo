@@ -72,7 +72,7 @@ const bool = (v) => (typeof v === 'boolean' ? v : undefined);
 
 /**
  * 설정 저장. input(전부 선택) = { enabled, agent, leadMinutes, eveningAt, quiet: { from, to, calendarAlerts }, tz }.
- *  - enabled: true  → 켜기(또는 이 에이전트로 바꾸기). agent 필수·이 회사에 있어야 한다. 처음 켜거나 에이전트가 바뀌면 켠 시각을 지금으로, tz는 화면(브라우저) 값.
+ *  - enabled: true  → 켜기(또는 이 에이전트로 바꾸기). agent 필수·이 회사에 있어야 한다. 켠 시각을 지금으로, tz는 화면(브라우저) 값.
  *  - enabled: false → 끄기(에이전트는 그대로 적어 둔다).
  *  - 그 밖 칸만 → 값만 바꾼다(켜짐·에이전트·켠 시각 그대로).
  * 반환 = { changedOthers: [wsId] }(이 저장으로 꺼진 다른 회사).
@@ -88,7 +88,6 @@ export async function saveAssistantSettings(wsId, input = {}, { now = Date.now()
     const sealed = cur?.sealed === true;
     const base = sealed ? cur.obj : {};
     const prev = normalizeAssistantConfig(base); // 봉인 안 맞음·없음 = 기본값(꺼짐)
-    const prevOn = prev.enabled && !!prev.agent;
     const q = inp.quiet && typeof inp.quiet === 'object' ? inp.quiet : {};
     const next = {
       leadMinutes: inp.leadMinutes !== undefined ? Number(inp.leadMinutes) : prev.leadMinutes,
@@ -103,7 +102,8 @@ export async function saveAssistantSettings(wsId, input = {}, { now = Date.now()
     if (bad) throw codedError(bad, `비서 설정 값이 올바르지 않습니다(${bad})`);
     const enabled = enabledIn ?? prev.enabled;
     const agent = enabledIn === true ? inp.agent : prev.agent;
-    const fresh = enabledIn === true && (!prevOn || agent !== prev.agent); // 새로 켬·다른 에이전트로 바꿈
+    // 켜기·바꾸기는 사용자의 마지막 선택 — 이미 켜져 있던 회사로 바꿔도 켠 시각을 지금으로 한다(이 기기에 없는 같은 주인의 회사가 다른 기기에서 더 늦게 켜졌어도 이 선택이 맡게 — rules.mjs assistantCompanyOf)
+    const fresh = enabledIn === true;
     const enabledAtMs = !enabled ? null : fresh ? now : (prev.enabledAt ?? now);
     const out = {
       ...base,

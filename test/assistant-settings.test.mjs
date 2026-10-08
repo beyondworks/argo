@@ -138,7 +138,7 @@ test('A3: 사용자당 1명 — 다른 회사(같은 주인)에서 켜면 이전
   assert.equal((await cfgOf(other)).enabled, true, '다른 주인의 회사는 손대지 않는다');
 });
 
-test('A4: 같은 회사의 다른 에이전트로 바꾸기 — 에이전트·켠 시각이 바뀐다', async () => {
+test('A4: 같은 회사의 다른 에이전트로 바꾸기 — 에이전트·켠 시각이 바뀐다, 켜기를 다시 눌러도 켠 시각은 지금으로', async () => {
   const ws = await mkCompany();
   await put(ws, { enabled: true, agent: 'pepper', tz: 'Asia/Seoul' });
   const before = await cfgOf(ws);
@@ -147,8 +147,9 @@ test('A4: 같은 회사의 다른 에이전트로 바꾸기 — 에이전트·�
   const after = await cfgOf(ws);
   assert.equal(after.agent, 'wolff');
   assert.ok(Date.parse(after.enabledAt) > Date.parse(before.enabledAt), '새 비서 = 새로 켠 시각');
+  await new Promise((r) => setTimeout(r, 5));
   await put(ws, { enabled: true, agent: 'wolff' });
-  assert.equal((await cfgOf(ws)).enabledAt, after.enabledAt, '이미 그 에이전트로 켜져 있으면 켠 시각 그대로');
+  assert.ok(Date.parse((await cfgOf(ws)).enabledAt) > Date.parse(after.enabledAt), '켜기·바꾸기는 마지막 선택 — 이미 켜져 있어도 켠 시각을 지금으로(다른 기기에서 켠 비서보다 이 선택이 맡게)');
 });
 
 test('A5: 값 바꾸기(켠 상태) — 알림 10분·저녁 20:00·조용한 시간 22~07·예외 켬이 저장되고 켬·에이전트·켠 시각은 그대로', async () => {

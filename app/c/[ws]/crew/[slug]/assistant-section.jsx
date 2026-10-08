@@ -77,7 +77,6 @@ export function AssistantSection({ ws, slug }) {
   return (
     <div data-assistant-section="" style={{ display: 'grid', gap: 16, minWidth: 0 }}>
       <div style={{ display: 'grid', gap: 8, minWidth: 0 }}>
-        <span className="microlabel">{t('assistant.title')}</span>
         <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.6 }}>{t('assistant.desc')}</p>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <span className={mine ? 'pill ok' : 'pill'} data-testid="assistant-state"><span className="dot" />{mine ? t('assistant.on') : t('assistant.off')}</span>

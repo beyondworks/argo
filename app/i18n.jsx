@@ -505,7 +505,6 @@ const DICT = {
   'chat.card.tab.link': ['연결·원문', 'Links & raw'],
   'chat.card.tab.label': ['에이전트 카드 구획', 'Agent card sections'],
   // ── 에이전트 카드 "비서" 탭(능동 비서 설정 — app/c/[ws]/crew/[slug]/assistant-section.jsx, 설계 13절)
-  'assistant.title': ['비서', 'Assistant'],
   'assistant.desc': ['비서로 정한 에이전트가 일정을 읽기만 하며 지켜보다가, 일정 시작 전과 아침·저녁에 개인 공간 1:1 방으로 먼저 알려 줍니다. 비서는 계정마다 한 명입니다.', 'Your assistant agent watches your calendar (read only) and messages you first in your personal 1:1 room — before events start, and in the morning and evening. One assistant per account.'],
   'assistant.on': ['켜짐', 'On'],
   'assistant.off': ['꺼짐', 'Off'],
@@ -543,7 +542,7 @@ const DICT = {
   'assistant.onRunner': ['실행 기기에서 볼 수 있습니다', 'Shown on the running device'],
   'assistant.loadErr': ['비서 설정을 불러오지 못했습니다', 'Could not load assistant settings'],
   'assistant.saveErr': ['저장하지 못했습니다 — 다시 시도해 주세요', 'Could not save — please try again'],
-  'assistant.st.unsealed': ['비서 설정 파일이 이 화면 밖에서 바뀌어 비서를 멈췄습니다. 다시 켜면 이 화면의 값으로 새로 저장됩니다.', 'The assistant settings file was changed outside this screen, so the assistant stopped. Turn it on again to save fresh settings from this screen.'],
+  'assistant.st.unsealed': ['비서 설정 파일이 이 화면 밖에서 바뀌어 이 회사의 비서를 멈췄습니다. 이 화면에서 켜거나 바꾸면 새로 저장됩니다.', "The assistant settings file was changed outside this screen, so this company's assistant stopped. Turn it on or switch here to save fresh settings."],
   'assistant.st.other_company': ['다른 회사의 비서가 맡고 있습니다.', "Another company's assistant is handling this."],
   'assistant.st.login_required': ['로그인이 필요합니다 — 이 기기에서 이 회사를 만든 계정으로 로그인해 주세요.', 'Sign-in needed — sign in on this device with the account that created this company.'],
   'assistant.st.muted': ['메신저 알림 종류에서 비서 알림이 꺼져 있어 보내지 않습니다.', 'Assistant notifications are turned off in the messenger notification types, so nothing is sent.'],
