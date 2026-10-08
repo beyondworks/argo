@@ -119,6 +119,80 @@ def _upload_file(base: str, token: str, message_id: int, path: str, name: Option
     return _call(base, token, "attachFile", {"message_id": int(message_id), "storage_path": up.get("storage_path"), "file_name": name, "mime_type": mime}, post=True) or {}
 
 
+# 모델이 파일을 MEDIA: 대신 '링크'로 적은 모양 — [이름](attachment:/경로)·(sandbox:/경로)·(file:///경로)·(/경로), 링크 없이 attachment:/경로.
+# Hermes 코어(extract_local_files)는 'scheme:' 뒤와 링크 대상의 경로를 URL로 보고 건너뛴다(경로 앞 글자가 ':'·'/'이면 제외).
+# 운영 2026-10-08 메시지 3799: VPS 헤르메스가 [download-test-vps.md](attachment:/home/crew/…)만 적어 첨부 0건, 본문에 서버 경로가 남았다.
+# 인라인 코드(첫 갈래)는 그대로 돌려준다. 코드 블록·인용 줄은 pick_linked_files가 줄 단위로 건너뛴다.
+_FILE_LINK_RE = re.compile(
+    r'(`[^`\n]*`)'
+    r'|!?\[([^\]\n]*)\]\(\s*(<[^>\n]+>|[^\s()<>]+)(?:\s+"[^"\n]*")?\s*\)'
+    r'|(?<![\w/:])((?:attachment:|sandbox:|file://)(?:~/|/)[^\s()<>\[\]`"\']+)')
+_FILE_SCHEME_RE = re.compile(r'^(?:attachment:|sandbox:|file://(?:localhost)?)')
+_SECRET_NAME_RE = re.compile(r'(?i)(secret|token|passw|credential|api[_-]?key|private[_-]?key|id_rsa|id_ed25519|\.env$|\.pem$)')
+
+
+def _deliverable_path(path: str) -> Optional[str]:
+    """보내도 되는 파일이면 실제 경로. Hermes 코어의 전달 정책(validate_media_delivery_path — 자격 증명·시스템 경로 거부, 엄격 모드)을 그대로 쓰고,
+    그 함수가 없는 옛 Hermes에서는 최소 거부 목록(점으로 시작하는 폴더·파일, 비밀 이름, 시스템 경로)으로 판정한다."""
+    check = getattr(BasePlatformAdapter, 'validate_media_delivery_path', None)
+    if callable(check):
+        try:
+            return check(path) or None
+        except Exception:
+            return None
+    given = os.path.abspath(os.path.expanduser(path))
+    real = os.path.realpath(given)
+    if not os.path.isfile(real) or any(p.startswith('.') for p in Path(real).parts[1:]) or _SECRET_NAME_RE.search(os.path.basename(real)):
+        return None
+    home = os.path.realpath(os.path.expanduser('~'))
+    for p in {given, real}:   # 코어 _MEDIA_DELIVERY_DENIED_PREFIXES와 같은 목록. 맥은 /etc → /private/etc
+        p = p[len('/private'):] if p.startswith('/private/') else p
+        if not p.startswith(home + os.sep) and p.startswith(('/etc/', '/proc/', '/sys/', '/dev/', '/root/', '/boot/', '/var/log/', '/var/lib/', '/var/run/')):
+            return None
+    return real
+
+
+def pick_linked_files(content: str):
+    """답 본문에서 파일 링크 모양을 찾아 (보낼 파일 경로, 링크를 이름으로 바꾼 본문). 이 서버에 없거나 정책이 거부한 파일은 본문을 그대로 둔다."""
+    found = []
+
+    def take(mt):
+        if mt.group(1):
+            return mt.group(0)
+        label, target, bare = mt.group(2), mt.group(3), mt.group(4)
+        raw = target.strip('<>') if target is not None else bare
+        scheme = _FILE_SCHEME_RE.match(raw)
+        path = raw[scheme.end():] if scheme else raw
+        if not path.startswith(('/', '~/')):
+            return mt.group(0)
+        tail = ''
+        if bare:   # 문장 끝 구두점은 경로가 아니다
+            while path and path[-1] in '.,;:!?' and not os.path.isfile(os.path.expanduser(urllib.parse.unquote(path))):
+                path, tail = path[:-1], path[-1] + tail
+        hit = next((p for p in dict.fromkeys((path, urllib.parse.unquote(path))) if os.path.isfile(os.path.expanduser(p))), None)
+        safe = _deliverable_path(os.path.expanduser(hit)) if hit else None
+        if not safe:
+            return mt.group(0)
+        if safe not in found:
+            found.append(safe)
+        name = (label or '').strip()
+        return (name if name and '/' not in name else os.path.basename(safe)) + tail
+
+    out, fence = [], None
+    for line in str(content or '').split('\n'):
+        mark = re.match(r'^ {0,3}(`{3,}|~{3,})(.*)$', line)
+        if mark:
+            if fence:
+                if mark[1][0] == fence[0] and len(mark[1]) >= len(fence) and not mark[2].strip():
+                    fence = None
+            elif mark[1][0] != '`' or '`' not in mark[2]:
+                fence = mark[1]
+            out.append(line)
+            continue
+        out.append(line if fence or re.match(r'^\s*>', line) else _FILE_LINK_RE.sub(take, line))
+    return found, '\n'.join(out)
+
+
 def _file_error_text(name: str, e: Exception) -> str:
     if isinstance(e, ArgoMsgrError) and e.status == 413:
         return f"파일 {name}은(는) 25MB를 넘어 올리지 못했습니다."
@@ -474,6 +548,20 @@ class ArgoMsgrAdapter(BasePlatformAdapter):
     @property
     def name(self) -> str:
         return "Argo Messenger"
+
+    @staticmethod
+    def extract_local_files(content: str):
+        """Hermes가 최종 답에서 보낼 로컬 파일을 찾는 자리(base.py _extract_response_content). 코어의 맨 경로 찾기에 더해 파일 링크 모양
+        (pick_linked_files)을 첨부로 바꾼다. 둘 다 이 뒤에 코어의 전달 정책(filter_local_delivery_paths)과 send_document·send_image_file을 거친다."""
+        try:
+            linked, text = pick_linked_files(content)
+        except Exception as e:   # 답 전달 경로다 — 이 보조 판정이 실패해도 답은 코어 동작 그대로 나가야 한다
+            logger.warning("Argo Messenger: linked file scan skipped — %s", _redact(str(e))[:200])
+            linked, text = [], content
+        core = getattr(BasePlatformAdapter, 'extract_local_files', None)
+        bare, text = core(text) if callable(core) else ([], text)
+        seen = {os.path.realpath(p) for p in linked}
+        return linked + [p for p in bare if os.path.realpath(p) not in seen], text
 
     async def _api(self, method: str, params: Optional[Dict[str, Any]] = None, *, post: bool = False, timeout: float = 30.0):
         return await asyncio.to_thread(_call, self.base_url, self.token, method, params, post=post, timeout=timeout)
@@ -1368,5 +1456,7 @@ def register(ctx):
             "where the owner can pause or edit them; dangerous commands you run are shown to the owner as approval cards. "
             "When something needs a person's approval before you act, call argo_request_approval, then end your turn; "
             "the decision comes back in the same conversation. "
-            "Files people attach are saved locally and listed with their paths. To send a file back, include it in your reply "
-            "the usual way (a MEDIA: path) — it is attached to your reply, up to 25 MB per file."))
+            "Files people attach are saved locally and listed with their paths. To send a file back, put MEDIA:/absolute/path/to/file "
+            "on its own line in your reply (any file type, up to 25 MB each) — it is uploaded and attached to your reply. "
+            "Never hand over a file as a server path, an attachment: or file:// link, or a GitHub or cloud-storage link instead: "
+            "the people reading cannot open those."))

@@ -301,3 +301,114 @@ async def main():
     assert sent()[-1]['text'] == '완료했습니다.' and sent()[-1]['reply_to_message_id'] == 6 and 6 in a._replied, sent()
 asyncio.run(main())
 `));
+
+// 운영 실측(2026-10-08, 메시지 3799): VPS 헤르메스 페퍼가 파일을 MEDIA: 대신 `[download-test-vps.md](attachment:/home/crew/download-test-vps.md)`로 적어
+// 첨부 행 0건, 본문에 서버 경로만 남았다. Hermes 코어(0.21.3 extract_local_files)는 'scheme:' 뒤와 링크 대상의 경로를 URL로 보고 건너뛴다
+// (경로 앞 글자가 ':'이면 제외). 실제 코어로 재현: attachment·sandbox·file:// 링크 → 0건, [이름](/경로) → 1건이지만 본문에 '[이름]()'.
+// 아래 CORE는 그 코어 함수의 동작(경로 앞 제외 글자·확장자 목록·파일 존재 확인·원문 경로 삭제)을 그대로 흉내 낸다.
+const CORE = String.raw`
+import re, os
+EXTS = ('png', 'jpg', 'jpeg', 'gif', 'webp', 'pdf', 'md', 'txt', 'csv', 'json', 'zip', 'docx', 'html')
+def core_extract_local_files(content):
+    path_re = re.compile(r'(?<![/:\w.])(?:~/|/|[A-Za-z]:[/\\])(?:[\w.\-]+[/\\])*[\w.\-]+\.(?:' + '|'.join(EXTS) + r')\b', re.IGNORECASE)
+    unique = {}
+    for mt in path_re.finditer(content):
+        raw = mt.group(0); ex = os.path.expanduser(raw)
+        if os.path.isfile(ex): unique.setdefault(ex, raw)
+    if not unique: return [], content
+    cleaned = content
+    for raw in unique.values(): cleaned = cleaned.replace(raw, '')
+    return list(unique), re.sub(r'\n{3,}', '\n\n', cleaned).strip()
+Base.extract_local_files = staticmethod(core_extract_local_files)
+md = work / 'download-test-vps.md'; md.write_text('# test\n')
+log = work / 'run.log'; log.write_text('ok\n')
+spaced = work / 'my report.pdf'; spaced.write_bytes(b'%PDF')
+IMG = ('.png', '.jpg', '.jpeg', '.gif', '.webp')
+async def dispatch(text, src=5):
+    # Hermes _extract_response_content → send(최종 답) → _deliver_media_attachments(이미지는 send_image_file, 나머지 send_document)와 같은 순서
+    inbound = {'message_id': src, 'execution_attempt': 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'chat': {'id': CH}}
+    a._pending[src] = inbound; a._inbound.set(inbound)
+    files, body = a.extract_local_files(text)
+    await a.send(CH, body, reply_to=str(src), metadata=FINAL)
+    for f in files:
+        await (a.send_image_file if f.lower().endswith(IMG) else a.send_document)(CH, f, metadata=FINAL)
+    return files, body
+`;
+const runCore = (body) => run(CORE + body);
+
+test('핀 — 링크 모양이 없는 답은 Hermes 코어의 맨 경로 찾기 결과와 똑같다(맨 경로·웹 링크·코드·없는 파일)', () => runCore(String.raw`
+for text in ['보고서: ' + str(pdf), '결과 ' + str(pdf) + ' 와 ' + str(png),
+             '[문서](https://github.com/acme/repo/blob/main/a.md) 참고', '그림 ![x](https://example.com/x.png)',
+             '코드 ' + chr(96) + str(pdf) + chr(96), '없는 파일 /no/such/dir/x.pdf', '', '평범한 답입니다.']:
+    assert a.extract_local_files(text) == core_extract_local_files(text), text
+`));
+
+test('메시지 3799 모양 — [이름](attachment:/경로)는 그 파일을 답글에 첨부하고 본문엔 이름만 남긴다', () => runCore(String.raw`
+async def main():
+    files, body = await dispatch('파일 만들었습니다.\n\n[download-test-vps.md](attachment:' + str(md) + ')')
+    assert body == '파일 만들었습니다.\n\ndownload-test-vps.md', body
+    assert sent()[0]['text'] == body and sent()[0]['reply_to_message_id'] == 5, sent()
+    assert [(u[0], os.path.basename(u[1])) for u in UP] == [(901, 'download-test-vps.md')], UP
+    assert len(sent()) == 1, '파일 때문에 글이 더 생기지 않는다'
+asyncio.run(main())
+`));
+
+test('파일 링크 모양 — sandbox:·file://·<띄어쓰기>·%20·scheme 없는 링크·링크 없는 attachment:·이미지·코어 목록 밖 확장자', () => runCore(String.raw`
+def pick(text):
+    files, body = a.extract_local_files(text)
+    return [os.path.basename(f) for f in files], body
+assert pick('[보고서](sandbox:' + str(pdf) + ')') == (['report.pdf'], '보고서')
+assert pick('[보고서](file://' + str(pdf) + ')') == (['report.pdf'], '보고서')
+assert pick('[보고서](' + str(pdf) + ')') == (['report.pdf'], '보고서'), '코어는 [보고서]()를 남긴다'
+assert pick('[보고서](<' + str(spaced) + '>)') == (['my report.pdf'], '보고서')
+assert pick('[보고서](attachment:' + str(spaced).replace(' ', '%20') + ')') == (['my report.pdf'], '보고서')
+assert pick('[보고서](attachment:' + str(pdf) + ' "제목")') == (['report.pdf'], '보고서')
+assert pick('첨부: attachment:' + str(md) + '.') == (['download-test-vps.md'], '첨부: download-test-vps.md.')
+assert pick('![차트](attachment:' + str(png) + ')') == (['chart.png'], '차트')
+assert pick('[실행 기록](attachment:' + str(log) + ')') == (['run.log'], '실행 기록'), '명시한 첨부는 확장자와 무관'
+assert pick('[' + str(pdf) + '](attachment:' + str(pdf) + ')') == (['report.pdf'], 'report.pdf'), '이름 자리가 경로면 파일 이름만'
+assert pick('[](attachment:' + str(pdf) + ')') == (['report.pdf'], 'report.pdf')
+home = os.path.expanduser('~')
+if str(pdf).startswith(home + os.sep):
+    assert pick('[보고서](attachment:~' + str(pdf)[len(home):] + ')') == (['report.pdf'], '보고서')
+both = a.extract_local_files('[보고서](attachment:' + str(pdf) + ')\n원본: ' + str(pdf))
+assert len(both[0]) == 1, ('같은 파일은 한 번만', both)
+`));
+
+test('파일 링크 모양 — 없는 파일·코드·인용·웹 주소는 손대지 않는다', () => runCore(String.raw`
+for text in ['[x.md](attachment:/no/such/dir/x.md)', 'attachment:/no/such/x.md',
+             '예시: ' + chr(96) + '[r](attachment:' + str(pdf) + ')' + chr(96),
+             '' + chr(96)*3 + '\n[r](attachment:' + str(pdf) + ')\n' + chr(96)*3,
+             '> [r](attachment:' + str(pdf) + ')',
+             '[문서](https://github.com/acme/repo/raw/main/report.pdf)', '[메일](mailto:a@b.c)', '[앵커](#top)']:
+    files, body = a.extract_local_files(text)
+    assert files == [] and body == text, (text, files, body)
+`));
+
+test('전달 정책 — Hermes 검증 함수가 거부한 파일은 링크를 그대로 두고, 그 함수가 없는 옛 Hermes는 최소 거부 목록을 쓴다', () => runCore(String.raw`
+secret_dir = work / '.ssh'; secret_dir.mkdir(); key = secret_dir / 'id_ed25519.txt'; key.write_text('k')
+envf = work / 'api_token.txt'; envf.write_text('t')
+SEEN = []
+def validate(p, session_key=''):
+    SEEN.append(p)
+    return None if 'report' in p else os.path.realpath(p)
+Base.validate_media_delivery_path = staticmethod(validate)
+text = '[보고서](attachment:' + str(pdf) + ')'
+assert a.extract_local_files(text) == ([], text) and SEEN, 'Hermes 정책이 거부하면 그대로'
+files, body = a.extract_local_files('[차트](attachment:' + str(png) + ')')
+assert [os.path.basename(f) for f in files] == ['chart.png'] and body == '차트'
+del Base.validate_media_delivery_path
+for bad in [key, envf]:
+    t = '[x](attachment:' + str(bad) + ')'
+    assert a.extract_local_files(t) == ([], t), bad
+if os.path.isfile('/etc/hosts'):
+    assert a.extract_local_files('[h](attachment:/etc/hosts)')[0] == []
+assert [os.path.basename(f) for f in a.extract_local_files('[r](attachment:' + str(pdf) + ')')[0]] == ['report.pdf']
+`));
+
+test('링크 판정이 예외를 내도 답은 코어 동작 그대로 나간다(답 전달 경로를 막지 않는다)', () => runCore(String.raw`
+def boom(_c): raise RuntimeError('scan bug')
+m.pick_linked_files = boom
+text = '[보고서](attachment:' + str(pdf) + ')\n원본: ' + str(png)
+assert a.extract_local_files(text) == core_extract_local_files(text)
+`));

@@ -32,6 +32,13 @@ hermes plugins enable argo-msgr-platform --no-allow-tool-override
 - 연결 해제 = 메신저 카드의 [연결 해제](토큰 회수). 종료·재시작 버튼은 없습니다.
 - 처음 연결하면 아직 응답하지 않은 멘션(커서 이후 전부)에 답합니다.
 
+## 파일 주고받기 (어댑터 0.3.2~)
+
+- 받기: 메시지에 붙은 파일은 `~/.argo-msgr/files/<메시지 id>/`에 내려받고, 에이전트에게 경로와 함께 알려 줍니다.
+- 보내기: 답에 `MEDIA:/절대/경로` 한 줄을 쓰면 그 파일을 답글에 첨부합니다(파일당 25MB). 첨부는 `createUpload` → 서명 주소에 PUT → `attachFile` 순서로 올라가며 msgr 버킷에 저장됩니다.
+- 모델이 파일을 링크로 적어도 첨부로 바꿉니다(0.3.4): `[이름](attachment:/경로)`·`(sandbox:/경로)`·`(file:///경로)`·`(/경로)`, 링크 없는 `attachment:/경로`. 본문에는 이름만 남습니다. 이 서버에 없는 파일, Hermes 전달 정책(`validate_media_delivery_path`)이 거부한 파일(자격 증명·시스템 경로 등), 코드·인용 안의 링크는 손대지 않습니다. 운영 사례: 2026-10-08 메시지 3799에서 `attachment:` 링크만 적혀 첨부가 0건이었습니다.
+- 지시문(`platform_hint`)은 `MEDIA:/절대/경로`를 쓰고, 서버 경로·`attachment:`/`file://` 링크·GitHub 같은 외부 저장소 링크로 대신 주지 말라고 안내합니다.
+
 ## 검증 기록 (2026-09-08)
 
 로컬 Supabase 스택(edge-runtime 1.71) + `hermes gateway run`(전경) — 멘션 삽입 → 헤르메스 답글이 `reply:<crew>:<msg>` 행으로 착지, 메신저 카드 "연결됨". 실 Supabase(argo 프로젝트)에는 마이그레이션·엣지 펑션 미배포.

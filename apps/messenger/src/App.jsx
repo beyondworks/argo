@@ -145,7 +145,7 @@ export const externalAgentId = (installation, owner, kind, id) => {
 const AWAY_MS = 90_000;
 // 에이전트가 꺼져 있나(상주·봇 하트비트 90초 끊김, 한 번도 안 켜짐 포함) — 주인만 보던 색 점을 모두가 읽는 글자로 드러낸다(D23·D24)
 // 1-b(2026-09-29): 외부 에이전트 연결 도구의 최신 버전 — 보고가 없거나(0.3.0 이전) 더 낮으면 "업데이트 필요". 설정은 강제하지 않고 보여 준다.
-const ADAPTER_LATEST = { hermes: '0.3.3', openclaw: '0.3.2' }; // 0.3.2 = 파일 보내기, hermes 0.3.3 = 표지만 있는 답 처리(2026-09-30)
+const ADAPTER_LATEST = { hermes: '0.3.4', openclaw: '0.3.2' }; // 0.3.2 = 파일 보내기, hermes 0.3.3 = 표지만 있는 답 처리(2026-09-30), 0.3.4 = 파일 링크를 첨부로(2026-10-08)
 const semverLess = (a, b) => { const x = String(a).split('.').map((n) => parseInt(n, 10) || 0), y = String(b).split('.').map((n) => parseInt(n, 10) || 0); for (let i = 0; i < 3; i++) { if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) < (y[i] ?? 0); } return false; };
 const adapterOutdated = (b) => !!ADAPTER_LATEST[b.kind] && (!b.state?.adapter_version || semverLess(b.state.adapter_version, ADAPTER_LATEST[b.kind]));
 // 승인 방식: 사람에게 묻는다(ask) / 보조 AI가 판단해 스스로 승인(ai) / 묻지 않고 실행(none) / 모름(unknown). Hermes manual·smart·off, OpenClaw ask·allowlist·deny·auto·full
