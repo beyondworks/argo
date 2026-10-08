@@ -75,19 +75,20 @@ test('설정 — 카드 20개가 정확히 한 탭에만, 순서는 작은 카�
   assert.doesNotMatch(src, /function Section\(/, '옛 Section 래퍼 제거');
 });
 
-test('크루 카드 — 구간 11개가 탭 4개에 정확히 한 번, 모달 고정 높이 + 푸터 고정', async () => {
+test('크루 카드 — 구간 12개가 탭 5개에 정확히 한 번, 모달 고정 높이 + 푸터 고정', async () => {
   const src = await load('../app/c/[ws]/crew/[slug]/page.jsx');
-  const ids = ['overview', 'ability', 'style', 'link'];
-  assert.match(src, /const CARD_TABS = \['overview', 'ability', 'style', 'link'\];/);
+  const ids = ['overview', 'ability', 'style', 'assistant', 'link']; // assistant = 능동 비서 설정(2단계, 설계 13절)
+  assert.match(src, /const CARD_TABS = \['overview', 'ability', 'style', 'assistant', 'link'\];/);
   assert.match(src, /useRememberedTab\('argo-card-tab', CARD_TABS, 'overview'\)/);
   for (const id of ids) assert.match(src, new RegExp(`\\{tab === '${id}' && \\(<div data-tab-pane="${id}"`), `${id} 게이트 = pane`);
-  assert.equal((src.match(/\{tab === '/g) ?? []).length, 4, '탭 조건은 정확히 4개');
+  assert.equal((src.match(/\{tab === '/g) ?? []).length, 5, '탭 조건은 정확히 5개');
   assert.match(src, /t\('chat\.card\.saveRaw'\)/, '푸터 저장 버튼은 원문 저장임을 라벨로 명시');
   const p = panes(src, ids);
   const sections = {
     overview: ["t('chat.recentWork')", "t('chat.card.engine')", '<StatsBlock'],
     ability: ["t('chat.card.scopeSkills')", "t('chat.card.scopeMcp')", "t('chat.card.mcpCliWarn')"],
     style: ["t('chat.card.rules')", "t('chat.boss.title')"],
+    assistant: ['<AssistantSection ws={ws} slug={slug} />'],
     link: ["t('chat.tg.title')", "t('settings.conn.pairCodeLabel')", "t('chat.card.raw')"],
   };
   for (const [id, list] of Object.entries(sections)) for (const c of list) assert.deepEqual(ids.filter((k) => p[k].includes(c)), [id], `${c} → ${id}`);
