@@ -41,8 +41,10 @@ export function daemonLease(name, { ttl = 15_000, beat = 5_000 } = {}) {
     } catch (e) {
       // 일시 I/O 오류(Windows EPERM·EBUSY 등)로 바로 내려놓으면, 파일의 내 기록이 아직 살아 있어 남도 안 가져가므로 다음 박자까지
       // 실행 주체가 0개가 된다(2026-10-02 Windows CI 재시작 경쟁 실패). 다음 박자 전에 내 기록이 만료되지 않는 동안만 유지한다.
+      // 여유 박자 절반: 기준선이 ttl - beat 그대로면 두 번째 연속 실패 박자가 기준선에 정확히 걸려, 읽기 지연·타이머 흔들림 몇 ms로
+      // 유지 쪽에 떨어지면 세 번째 박자(내 기록 만료 직후)에야 내려놓았다 — 그사이 다른 프로세스가 가져가면 이중 실행(2026-10-08 게이트 A).
       const was = mine;
-      mine = mine && Date.now() - heldTs < ttl - beat;
+      mine = mine && Date.now() - heldTs < ttl - beat - beat / 2;
       if (!failing || was !== mine) console.warn(`[argo] ${name} 리스 갱신 실패(${e?.code || e?.message}) — 리더 ${mine ? '유지' : '해제'}`);
       failing = true;
     }
