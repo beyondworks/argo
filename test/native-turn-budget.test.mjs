@@ -359,11 +359,13 @@ test('TB10. 실패 코드 표 — 벤더별 길이 초과 문구는 context_exce
   for (const [s, code] of neg) assert.equal(classifyRunnerError(s).code, code, s);
 });
 
-test('TB11. 한 단계의 결과만으로 실제 한도를 넘으면(병렬 Read·작은 실제 창) 그 턴은 사실대로 끝나되 저장 전사는 한도 안으로 줄여, 다음 턴들이 막히지 않는다(러너 7종)', async () => {
+test('TB11. 한 단계의 결과만으로 실제 한도를 넘으면(병렬 Read·작은 실제 창) 그 턴은 사실대로 끝나고 다음 턴들이 막히지 않는다 — 원문에 숫자가 있으면 줄인 결과를 이어받고, 없으면 main처럼 걷어낸다(러너 7종)', async () => {
   for (const [name, r] of Object.entries(RUNNERS)) {
     const ws = `tb11-${name}`; const root = await company(ws);
     // 카탈로그 창 200,000(엔진 추정) — 큰 Read 6개 병렬 결과 한 메시지(엔진 추정 약 12만, 벤더 셈 약 9.5만)는 사전 줄이기 기준(75%) 아래라 그대로 나가고,
     // 실제 한도 80,000에 거절된다. 최근 결과 메시지는 재시도에서 보호돼 줄일 것이 없다 → 재전송 없이 실패(1차 검수 HIGH 재현 모양).
+    // 숫자 없는 문구(z.ai·Responses — glm·codex)는 이 턴에 받아 준 요청이 지시 하나뿐이라 확실히 들어간다고 말할 값이 없다 → 잇지 않는다(3차 검수 HIGH, main과 같다).
+    const numeric = !['zai', 'responses'].includes(r.vendor);
     let mode = 'parallel';
     const par = parallelReader(r.wire, 6); const txt = parallelReader(r.wire, 0);
     const srv = await startStrictVendor({ vendor: r.vendor, reply: (b, n) => (mode === 'parallel' ? par(b, n) : txt(b, n)), contextLimit: 80_000 });
@@ -376,13 +378,18 @@ test('TB11. 한 단계의 결과만으로 실제 한도를 넘으면(병렬 Read
       assert.doesNotMatch(last.errors[0], /이어서 해 줘|저장됨/, `${name}: 새 대화의 첫 턴은 이어받기를 약속하지 않는다`);
       assert.equal(srv.calls.length, 2, `${name}: 재전송 없음(병렬 호출 1 + 거절 1)`);
       const saved = JSON.parse(await readFile(sessionFile(ws, 'crew'), 'utf8'));
-      assertWellFormed(saved.messages, `${name} 1턴 저장 전사`);
-      assert.match(saved.messages.at(-1).content[0].text, /^\[작업 중단 — /, `${name}: 꼬리는 중단 기록`);
-      const results = saved.messages.flatMap((m) => (Array.isArray(m.content) ? m.content : [])).filter((b) => b.type === 'tool_result');
-      assert.equal(results.length, 6, `${name}: 끝난 결과 6개(짝 유지)`);
-      for (const b of results) {
-        assert.match(String(b.content), SQUEEZED, `${name}: 저장 전에 이번 단계 결과까지 줄였다(그대로 저장하면 다음 턴마다 넘친다)`);
-        assert.ok(String(b.content).split('\n…(')[0].length <= 200, `${name}: 저장 전 줄이기는 앞 200자까지만 남긴다(HARD_HEAD_CHARS — ${String(b.content).split('\n…(')[0].length}자)`);
+      if (numeric) {
+        assertWellFormed(saved.messages, `${name} 1턴 저장 전사`);
+        assert.match(saved.messages.at(-1).content[0].text, /^\[작업 중단 — /, `${name}: 꼬리는 중단 기록`);
+        const results = saved.messages.flatMap((m) => (Array.isArray(m.content) ? m.content : [])).filter((b) => b.type === 'tool_result');
+        assert.equal(results.length, 6, `${name}: 끝난 결과 6개(짝 유지)`);
+        for (const b of results) {
+          assert.match(String(b.content), SQUEEZED, `${name}: 저장 전에 이번 단계 결과까지 줄였다(그대로 저장하면 다음 턴마다 넘친다)`);
+          assert.ok(String(b.content).split('\n…(')[0].length <= 200, `${name}: 저장 전 줄이기는 앞 200자까지만 남긴다(HARD_HEAD_CHARS — ${String(b.content).split('\n…(')[0].length}자)`);
+        }
+      } else {
+        assert.equal(saved.messages.at(-1).role, 'user', `${name}: 숫자 없는 문구 — 중단 기록을 붙이지 않는다(다음 턴 재개 정리가 이 턴을 걷어낸다)`);
+        assert.match(last.errors[0], /이번 진행분은 다음 턴에 싣지 않는다/, `${name}: 잇지 않는다고 적는다`);
       }
       mode = 'text';
       for (const p of ['그건 됐고 오늘 날짜만 알려 줘', '인사만 해 줘']) {
@@ -390,7 +397,7 @@ test('TB11. 한 단계의 결과만으로 실제 한도를 넘으면(병렬 Read
         const o = await run(ws, root, r, srv.base, { contextTokens: 200_000, resume: sid, prompt: p });
         assert.equal(o.at(-1).subtype, 'success', `${name}: '${p}' 턴 성공 — ${JSON.stringify(o.at(-1).errors ?? o.at(-1).error?.message ?? '').slice(0, 200)}`);
         assert.equal(srv.calls.slice(n0).filter((c) => c.rejected).length, 0, `${name}: '${p}' 턴은 거절 0`);
-        assert.equal(doneReads(r.wire, srv.calls[n0].body), 6, `${name}: 끝난 결과 6개를 이어받는다(재개 정리가 걷어내지 않는다)`);
+        assert.equal(doneReads(r.wire, srv.calls[n0].body), numeric ? 6 : 0, numeric ? `${name}: 끝난 결과 6개를 이어받는다(재개 정리가 걷어내지 않는다)` : `${name}: 실패한 턴은 싣지 않는다(main과 같다)`);
       }
     } finally { await srv.close(); }
   }
@@ -598,4 +605,134 @@ test('TB18. 줄인 전사가 이 턴에 받아 준 가장 큰 요청의 75%를 �
     const loaded = await loadNativeSession(ws, 'crew', 'tb18-prev');
     assert.equal(loaded.messages.length, 2, '다음 턴은 앞 대화부터 잇는다(main과 같다)');
   } finally { await srv.close(); }
+});
+
+// 숫자 없는 길이 초과 문구(z.ai 'Prompt too long'·Responses 'exceeds the context window') — 3차 검수 HIGH. 거절 지점은 한도의 위쪽 끝일 뿐이다.
+const NN_LINE = (i) => `${i}: 매출 보고서 항목 — quarterly revenue line ${i} 지역별 합계와 비고를 적는다 notes`;
+const NN_RUNNERS = { glm: RUNNERS.glm, codex: RUNNERS.codex };
+/** 큰 Write를 단계마다 부르다가 요청이 thresh(벤더 셈)를 넘은 다음 단계에서 [Write, 큰 Read]를 한 번에 부르는 가짜 모델(messages·responses 와이어). mode()가 'text'면 답한다. */
+function writeThenRead(wire, { content, thresh, srv, mode }) {
+  let crossed = false;
+  return (body, n) => {
+    const tokens = srv().calls.at(-1).tokens;
+    let uses = [];
+    if (mode() === 'write' && !crossed) {
+      uses = [{ name: 'Write', input: { file_path: `out${n}.md`, content } }];
+      if (tokens >= thresh) { crossed = true; uses.push({ name: 'Read', input: { file_path: 'nn-big.txt' } }); }
+    }
+    if (wire === 'responses') {
+      const output = uses.length ? uses.map((u, i) => ({ type: 'function_call', call_id: `call_${n}_${i}`, name: u.name, arguments: JSON.stringify(u.input) })) : [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: '답' }] }];
+      const ev = { type: 'response.completed', response: { id: `resp_${n}`, model: body.model, status: 'completed', output, usage: { input_tokens: 10, output_tokens: 5 } } };
+      return { status: 200, type: 'text/event-stream', body: `event: ${ev.type}\ndata: ${JSON.stringify(ev)}\n\n` };
+    }
+    const c = uses.length ? uses.map((u, i) => ({ type: 'tool_use', id: `tu${n}_${i}`, ...u })) : [{ type: 'text', text: '답' }];
+    return { id: `m${n}`, type: 'message', role: 'assistant', model: body.model, content: c, stop_reason: uses.length ? 'tool_use' : 'end_turn', usage: { input_tokens: 10, output_tokens: 5 } };
+  };
+}
+
+test('TB19. 숫자 없는 거절 문구 — 확실한 값(받아 준 요청)으로만 들어가는지 재서, 쓰기 위주 턴은 잇지 않고 다음 턴이 거절 없이 성공한다(glm·codex, 카탈로그 창 > 실제 한도, 3차 검수 HIGH)', async () => {
+  // 큰 Write 반복(입력 약 9천 자) → 요청이 16,000(벤더 셈)을 넘은 다음 단계에서 [Write, 큰 Read] → 실제 한도 20,000에 거절. 카탈로그 창은 128,000.
+  // 57b66a57은 숫자가 없으면 거절된 요청 크기를 창으로 보고 그 75%를 '들어간다'의 기준으로 써서, 실제 한도를 넘는 전사에 중단 기록을 붙였다 → 다음 턴마다 1단계 거절.
+  const content = Array.from({ length: 150 }, (_, i) => NN_LINE(i)).join('\n');
+  for (const [name, r] of Object.entries(NN_RUNNERS)) {
+    const ws = `tb19-${name}`; const root = await company(ws);
+    await writeFile(join(root, 'nn-big.txt'), Array.from({ length: 600 }, (_, i) => NN_LINE(i)).join('\n'));
+    await saveNativeSession(ws, 'crew', PRIOR('tb19-prev'));
+    let mode = 'write'; let srv;
+    const reply = writeThenRead(r.wire, { content, thresh: 16_000, srv: () => srv, mode: () => mode });
+    srv = await startStrictVendor({ vendor: r.vendor, reply, contextLimit: 20_000 });
+    try {
+      const out = await run(ws, root, r, srv.base, { contextTokens: 128_000, resume: 'tb19-prev', prompt: '보고서 파일을 여러 개 쓰고 nn-big.txt도 읽어 줘' });
+      const last = out.at(-1);
+      assert.equal(last.subtype, 'error_during_execution', `${name}: 1턴은 사실대로 실패 — ${JSON.stringify(last.errors ?? last.error?.message ?? '').slice(0, 200)}`);
+      const saved = JSON.parse(await readFile(sessionFile(ws, 'crew'), 'utf8'));
+      assert.equal(saved.messages.at(-1).role, 'user', `${name}: 실제 한도를 넘는 전사에 중단 기록을 붙이지 않는다(받아 준 요청의 75%를 넘는다)`);
+      assert.match(last.errors[0], /이번 진행분은 다음 턴에 싣지 않는다/, `${name}: ${last.errors[0].slice(0, 160)}`);
+      assert.doesNotMatch(last.errors[0], /이어서 해 줘/);
+      mode = 'text';
+      for (const p of ['이어서 해 줘', '그건 됐고 인사만 해 줘']) {
+        const n0 = srv.calls.length;
+        const o = await run(ws, root, r, srv.base, { contextTokens: 128_000, resume: 'tb19-prev', prompt: p });
+        assert.equal(o.at(-1).subtype, 'success', `${name}: '${p}' 턴 성공 — ${JSON.stringify(o.at(-1).errors ?? o.at(-1).error?.message ?? '').slice(0, 200)}`);
+        assert.equal(srv.calls.slice(n0).filter((c) => c.rejected).length, 0, `${name}: '${p}' 턴은 거절 0(안전망에 기대지 않는다 — 첫 요청 ${srv.calls[n0].tokens}토큰)`);
+        assert.equal(doneReads(r.wire, srv.calls[n0].body), 0, `${name}: 실패한 턴은 싣지 않는다(main과 같다)`);
+      }
+    } finally { await srv.close(); }
+  }
+});
+
+test('TB20. 안전망 — 다음 턴 1단계가 길이 초과로 거절되고 줄일 것이 없는데 앞 턴이 중단 기록으로 끝났으면, 그 턴을 걷어내고(main의 꼬리 정리와 같은 결과) 1번만 다시 보낸다', async () => {
+  // 어떤 추정이 틀려도(벤더 셈·창 환산) 중단 기록을 붙여 저장한 전사가 다음 턴을 영구히 막지 않게 하는 마지막 방어. 저장 전사를 직접 만든다:
+  // 앞 대화 → 큰 Write(입력 약 9천 자 — 줄일 수 없다) 4번 → 중단 기록. 한도 6,000(벤더 셈)이면 이 전사만으로 넘친다.
+  const content = Array.from({ length: 150 }, (_, i) => NN_LINE(i)).join('\n');
+  const { overflowStopNote } = await import('../src/engine/turn-budget.mjs');
+  const stale = (id, lang = 'ko') => ({ id, messages: [...PRIOR(id).messages, { role: 'user', content: '보고서 4개를 써 줘' },
+    ...[0, 1, 2, 3].flatMap((i) => [{ role: 'assistant', content: [{ type: 'tool_use', id: `w${i}`, name: 'Write', input: { file_path: `out${i}.md`, content } }] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: `w${i}`, content: `Wrote ${content.length} bytes` }] }]),
+    { role: 'assistant', content: [{ type: 'text', text: overflowStopNote(lang) }] }] });
+  for (const [name, r] of Object.entries({ grok: RUNNERS.grok, glm: RUNNERS.glm })) {
+    const ws = `tb20-${name}`; const root = await company(ws);
+    await saveNativeSession(ws, 'crew', stale('tb20-prev'));
+    const srv = await startStrictVendor({ vendor: r.vendor, reply: parallelReader(r.wire, 0), contextLimit: 6_000 });
+    try {
+      const o = await run(ws, root, r, srv.base, { contextTokens: 128_000, resume: 'tb20-prev', prompt: '이어서 해 줘' });
+      assert.equal(o.at(-1).subtype, 'success', `${name}: 막히지 않는다 — ${JSON.stringify(o.at(-1).errors ?? o.at(-1).error?.message ?? '').slice(0, 200)}`);
+      assert.equal(srv.calls.length, 2, `${name}: 거절 1 + 걷어내고 다시 보냄 1(줄일 도구 결과가 없어 줄여 다시 보내기는 없다)`);
+      assert.equal(srv.calls[0].rejected, 'context');
+      const resentMsgs = JSON.stringify(srv.calls[1].body.messages ?? srv.calls[1].body.contents);
+      assert.doesNotMatch(resentMsgs, /"Write"|작업 중단|보고서 4개를 써 줘/, `${name}: 다시 보낸 요청에는 멈춘 턴(지시·쓰기·중단 기록)이 없다`);
+      assert.match(resentMsgs, /앞 대화 답/, `${name}: 앞 대화는 그대로`);
+      const saved = JSON.parse(await readFile(sessionFile(ws, 'crew'), 'utf8'));
+      assert.equal(saved.messages.length, 4, `${name}: 저장 전사 = 앞 대화 2 + 이번 지시·답 2(멈춘 턴은 걷어냈다)`);
+      const n0 = srv.calls.length;
+      const o2 = await run(ws, root, r, srv.base, { contextTokens: 128_000, resume: 'tb20-prev', prompt: '인사만 해 줘' });
+      assert.equal(o2.at(-1).subtype, 'success');
+      assert.equal(srv.calls.slice(n0).filter((c) => c.rejected).length, 0, `${name}: 그다음 턴은 거절 0`);
+    } finally { await srv.close(); }
+  }
+  // 걷어내고 다시 보내도 넘치면(앞 대화만으로도 넘침) 사실대로 알린다 — 다시 보내기는 1번뿐, 세션 파일은 그대로
+  const ws = 'tb20-fail'; const root = await company(ws);
+  await saveNativeSession(ws, 'crew', stale('tb20-fail', 'en'));
+  const before = await readFile(sessionFile(ws, 'crew'), 'utf8');
+  const srv = await startStrictVendor({ vendor: 'zai', reply: parallelReader('messages', 0), contextLimit: 1 });
+  try {
+    const o = await run(ws, root, RUNNERS.glm, srv.base, { contextTokens: 128_000, resume: 'tb20-fail', prompt: 'continue' });
+    const t = o.at(-1);
+    assert.equal(t.type, 'thrown');
+    assert.match(t.error.message, /^컨텍스트 한도 초과 — 앞 턴의 멈춘 진행분을 빼고 한 번 다시 보냈지만 모델 한도를 넘었다: /, t.error.message.slice(0, 160));
+    assert.equal(classifyRunnerError(t.error.message).code, 'context_exceeded');
+    assert.equal(srv.calls.length, 2, '거절 + 걷어내고 다시 보냄 1번(더 보내지 않는다)');
+    assert.equal(await readFile(sessionFile(ws, 'crew'), 'utf8'), before, '1단계 실패는 저장하지 않는다(종전 그대로)');
+  } finally { await srv.close(); }
+});
+
+test('TB18b. 들어가는지 잴 때 system 프롬프트·도구 정의와 중단 기록까지 센다 — 큰 system 프롬프트가 있으면 같은 진행분도 여유(25%) 밖이면 잇지 않는다(3차 검수 LOW)', async () => {
+  // 큰 Read 2번 뒤 3번째 호출부터 무조건 거절(한도 1토큰) — 원문 숫자로 환산한 창은 거의 0이라 기준은 '받아 준 가장 큰 요청(2번째 호출)'의 75%다.
+  // 1회차: system 프롬프트 3만 토큰 — 줄인 전사가 들어간다(중단 기록으로 이음). 저장 전사로 엔진과 같은 추정을 다시 해 남은 여유(margin)와 중단 기록 크기(note)를 잰다.
+  // 2회차: system 프롬프트를 Δ = 4 × (margin + note/2)토큰 늘린다 — 받아 준 요청과 저장 전사가 같이 Δ씩 커져 여유가 −note/2가 된다:
+  // system·도구 정의를 빼고 재거나(V15) 중단 기록을 빼고 재면(V14) 들어간다고 잘못 판정해 중단 기록을 붙인다.
+  const { estimateTokens } = await import('../src/engine/compact.mjs');
+  const turn = async (ws, sys) => {
+    const root = await company(ws);
+    const srv = await startStrictVendor({ vendor: 'xai', reply: reader('messages', 14), contextLimit: (n) => (n >= 3 ? 1 : null) });
+    try {
+      const out = await collect(nativeQuery({ wsId: ws, slug: 'crew', prompt: '보고서 파일을 차례로 읽어 줘', cwd: root, systemPrompt: sys, env: RUNNERS.grok.env(srv.base), model: 'm-fake', browser: false, contextTokens: 1_000_000 }));
+      assert.equal(out.at(-1).subtype, 'error_during_execution');
+      assert.equal(srv.calls.length, 4, '통과 2 + 거절 + 재전송 거절');
+      const b = srv.calls[1].body; // 받아 준 가장 큰 요청
+      const fixed = estimateTokens(b.system) + estimateTokens(b.tools);
+      return { out, ok: fixed + estimateTokens(b.messages), fixed, saved: JSON.parse(await readFile(sessionFile(ws, 'crew'), 'utf8')) };
+    } finally { await srv.close(); }
+  };
+  const sys1 = `SYS${'x'.repeat(90_000)}`; // 3의 배수 — 추정(바이트/3)이 정확히 3만 1토큰
+  const r1 = await turn('tb18b-1', sys1);
+  assert.match(r1.saved.messages.at(-1).content[0].text, /^\[작업 중단 — /, '1회차는 들어간다(중단 기록으로 잇는다)');
+  const closed = r1.fixed + estimateTokens(r1.saved.messages);
+  const note = estimateTokens(r1.saved.messages) - estimateTokens(r1.saved.messages.slice(0, -1));
+  const margin = 0.75 * r1.ok - closed;
+  assert.ok(margin >= 0 && note > 50, `여유 ${margin}·중단 기록 ${note}토큰`);
+  const delta = Math.ceil(4 * (margin + note / 2));
+  const r2 = await turn('tb18b-2', `${sys1}${'x'.repeat(3 * delta)}`);
+  assert.equal(r2.saved.messages.at(-1).role, 'user', `2회차는 잇지 않는다 — 여유 ${0.75 * r2.ok - (r2.fixed + estimateTokens(r2.saved.messages) + note)}토큰(중단 기록 포함 추정)`);
+  assert.match(r2.out.at(-1).errors[0], /이번 진행분은 다음 턴에 싣지 않는다/);
 });

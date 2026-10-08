@@ -124,6 +124,16 @@ test('K09 분류 — 인증 만료·한도 실패의 꼬리에 셸 "command not 
   assert.equal(classifyRunnerError(`You've hit your weekly limit · resets Aug 6${ctxTail}`).code, 'quota');
   assert.equal(classifyRunnerError(`Codex: session expired, please login again${ctxTail}`, { flags: { auth: true } }).code, 'auth_expired');
   assert.equal(classifyRunnerError(`API Error: 529 overloaded${ctxTail}`).code, 'vendor_overloaded');
+  // 실제 원문을 만드는 두 경로(chat.mjs 턴 실패 clean()·exec.mjs apiError 일반 갈래)는 줄바꿈을 한 칸으로 합친다 — 한 줄 원문에서도 같다(3차 검수 LOW).
+  // 판정은 낱말 순서: 한도·과부하·인증 낱말이 길이 초과 낱말보다 앞이면 그쪽이다.
+  const flat = ctxTail.replace(/\s+/g, ' ');
+  assert.equal(classifyRunnerError(`턴 실패: error_during_execution — You've hit your weekly limit · resets Aug 6${flat}`).code, 'quota');
+  assert.equal(classifyRunnerError(`턴 실패: error_during_execution — API Error: 529 overloaded${flat}`).code, 'vendor_overloaded');
+  assert.equal(classifyRunnerError(`턴 실패: error_during_execution — API Error: 401 {"type":"authentication_error"}${flat}`).code, 'auth_expired');
+  assert.equal(classifyRunnerError(`러너 실행 실패 (exit 1): usage limit reached for this week${flat}`.slice(0, 220)).code, 'quota');
+  // 길이 초과 낱말이 앞이면(벤더 원문·엔진 머리 문구) 그대로 길이 초과다 — Responses의 429 상태 숫자는 낱말 비교에서 뺀다
+  assert.equal(classifyRunnerError('턴 실패: error_during_execution — API Error: 429 Your input exceeds the context window of this model. (context_length_exceeded)').code, 'context_exceeded');
+  assert.equal(classifyRunnerError("턴 실패: error_during_execution — 컨텍스트 한도 초과 — 요청이 모델 한도를 넘었다: API Error: 400 This model's maximum prompt length is 500000 but the request contains 503958 tokens. rate limit note").code, 'context_exceeded');
   // 호출자가 인증 실패로 확정한 표식이 있으면 첫 줄에 크루 로그가 와도 인증 만료다(표식이 원문보다 우선)
   assert.equal(classifyRunnerError(`openai.BadRequestError: This model's maximum context length is 8192 tokens.\nCodex: session expired, please login again`, { flags: { auth: true } }).code, 'auth_expired');
   // 진짜 CLI 미발견은 apiError가 만든 확정 문구로 온다 — 그 연결은 유지된다.

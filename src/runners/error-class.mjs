@@ -38,6 +38,16 @@ export const CONTEXT_EXCEEDED_RE = /prompt (?:is )?too long|request_too_large|co
 // 분당 토큰 한도("too many tokens per minute")·잔액(OpenRouter 402 "requires more credits, or fewer max_tokens")·출력 상한("max_tokens: … maximum allowed number of
 // output tokens") 문구는 위 낱말에 걸리지 않는다(test/native-turn-budget TB10이 잠근다) — 넓은 낱말("too many tokens", "token limit")은 그래서 넣지 않았다.
 export const isContextOverflowText = (s) => CONTEXT_EXCEEDED_RE.test(String(s ?? ''));
+/** 실패 분류용(순수) — 원문에서 길이 초과 낱말이 한도·과부하·인증 낱말보다 **앞에** 나오는가. 원문 꼬리에 섞인 크루 셸 출력(크루가 만든 LLM 앱의
+    'maximum context length is 8192' 로그 등)이 인증 만료·한도·과부하를 덮지 않게 한다(K09와 같은 모양, 2·3차 검수 LOW). 줄 단위로 보지 않는다 —
+    실제 원문을 만드는 두 경로(chat.mjs 턴 실패 clean()·exec.mjs apiError 일반 갈래)가 줄바꿈을 한 칸으로 합친다. 벤더 상태 숫자('API Error: 429 ')는 비교에서 뺀다:
+    Responses 스트림의 길이 초과는 와이어가 429로 매겨 'API Error: 429 Your input exceeds the context window'로 온다(낱말이 판정한다). */
+export function contextOverflowLeads(s) {
+  const t = String(s ?? '').replace(/API Error: \d{3}\b/g, 'API Error:');
+  const at = (re) => { const m = re.exec(t); return m ? m.index : Infinity; };
+  const ctx = at(CONTEXT_EXCEEDED_RE);
+  return ctx < Infinity && [QUOTA_RE, OVERLOADED_RE, AUTH_TEXT_RE, OAUTH_SESSION_EXPIRED_RE].every((re) => at(re) > ctx);
+}
 // 낡은 codex 관리본의 모델 거절 — codex.mjs codexOutdatedError가 만드는 확정 문구만 본다(그 함수와 한 쌍).
 export const RUNNER_OUTDATED_RE = /Codex 실행기 업데이트가 아직 끝나지 않아|codex runner update is not finished/i;
 
@@ -67,9 +77,8 @@ export function classifyRunnerError(msg, { flags = {} } = {}) {
   if (CLI_MISSING_RE.test(s)) return out('cli_missing');
   if (RUNNER_OUTDATED_RE.test(s)) return out('runner_outdated');
   // 길이 초과는 한도(QUOTA_RE)보다 먼저 — Responses 스트림의 context_length_exceeded는 와이어가 429로 매겨 '\b429\b'에 먼저 걸린다(responses-wire finalFromSse).
-  // 원문 첫 줄(벤더 오류 자리 — 엔진 머리 문구·Responses 429 문구도 첫 줄이다)만 보고, 호출자가 인증 실패로 확정한 표식(flags.auth)보다는 뒤다:
-  // 원문 꼬리에 섞인 크루 셸 출력(크루가 만든 LLM 앱의 'maximum context length is 8192' 로그 등)이 인증 만료·한도·과부하를 덮지 않게(K09와 같은 모양, 2차 검수 LOW).
-  if (!flags.credit && !flags.auth && isContextOverflowText(s.split('\n')[0])) return out('context_exceeded');
+  // 단 길이 초과 낱말이 한도·과부하·인증 낱말보다 원문에서 앞설 때만, 호출자가 인증 실패로 확정한 표식(flags.auth)이 없을 때만(contextOverflowLeads 주석).
+  if (!flags.credit && !flags.auth && contextOverflowLeads(s)) return out('context_exceeded');
   if (flags.credit || QUOTA_RE.test(s)) return out('quota');
   if (flags.auth || OAUTH_SESSION_EXPIRED_RE.test(s) || AUTH_TEXT_RE.test(s)) return out('auth_expired');
   if (MODEL_UNAVAILABLE_RE.test(s)) return out('model_unavailable');
