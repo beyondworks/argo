@@ -43,4 +43,8 @@ test('desktop shell wires the boot port decision without bypassing it', async ()
   assert.match(lib, /planner\.settle\(probe_port, /);
   assert.equal((lib.match(/plan\.port\(/g) ?? []).length, 2, '첫 스폰과 즉사 폴백 모두 같은 계획으로 포트를 고른다');
   assert.doesNotMatch(lib, /pick_spawn_port|fn tcp_open|fn can_bind|const PORTS/, '포트 선택을 lib.rs에 다시 만들지 않는다');
+  // 부팅 시작은 두 곳 — 바로 결정(setup)과 기다린 뒤 결정(대기 스레드). 하나라도 빠지면 그 경로의 사용자는 부트 화면에서 멈춘다(#874 2차 검수 LOW).
+  assert.equal((lib.match(/start_boot\(&handle, boot\)/g) ?? []).length, 2, '부팅 시작 호출은 정확히 두 곳');
+  assert.match(lib, /Some\(boot\) => start_boot\(&handle, boot\)/, 'setup에서 바로 결정된 부팅을 시작한다');
+  assert.match(lib, /let boot = planner\.settle\([\s\S]*?\n\s*start_boot\(&handle, boot\);\n\s*\}\);/, '대기 스레드는 기다린 결정으로 부팅을 시작한다');
 });

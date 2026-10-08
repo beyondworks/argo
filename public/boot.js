@@ -40,10 +40,12 @@ var CREEP_CAP = { resident: 40 };
 var phase = 'shell';
 var progress = FLOOR.shell;
 var startedAt = Date.now();
+var residentAt = 0; // 상주 대기에 들어온 시각 — 문구의 경과 초
 var logLines = [];
 
 function setPhase(p) {
   if (phase === 'ready') return;
+  if (p === 'resident' && phase !== 'resident') residentAt = Date.now();
   phase = p;
   if (STATUS_TEXT[p]) statusEl.textContent = STATUS_TEXT[p];
   if (FLOOR[p] && FLOOR[p] > progress) progress = FLOOR[p];
@@ -58,6 +60,8 @@ setInterval(function () {
   var cap = CREEP_CAP[phase] || 90;
   if (progress < cap) progress += (cap - progress) * 0.025;
   render();
+  // 상주 대기(최대 90초)는 막대가 waiting(58%)에 멈춰 있을 수 있고, '동작 줄이기' 설정이면 배·파도도 멈춘다 — 기다린 초로 화면이 살아 있음을 보인다(#874 2차 검수 LOW).
+  if (phase === 'resident') statusEl.textContent = STATUS_TEXT.resident + ' ' + Math.floor((Date.now() - residentAt) / 1000) + 's';
   var elapsed = Date.now() - startedAt;
   if (elapsed > 15000) {
     if (phase === 'waiting' || phase === 'started') statusEl.textContent = STATUS_TEXT.slow;

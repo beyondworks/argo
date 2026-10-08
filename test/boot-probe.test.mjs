@@ -251,10 +251,33 @@ test('상주 대기 끝에 상주에 붙으면(started) 느린 부팅 안내의 
   const tick = () => intervals.forEach((fn) => fn());
   listeners.boot({ payload: { phase: 'resident', port: null, version: '9.9.9' } });
   clock = 50_000; tick();
-  assert.equal(status.textContent, 'Waiting for the Argo background service to start…', '대기 중에는 느린 부팅 안내로 바꾸지 않는다');
+  assert.equal(status.textContent, 'Waiting for the Argo background service to start… 50s', '대기 중에는 느린 부팅 안내로 바꾸지 않는다(기다린 초만 붙는다)');
   listeners.boot({ payload: { phase: 'started', port: 3001, version: '9.9.9' } }); // 50초 기다린 끝에 상주 입양
   clock = 50_500; tick();
   assert.equal(status.textContent, 'Local server is warming up…', '기다린 50초를 세면 "Still working"이 바로 붙는다');
   clock = 66_000; tick();
   assert.equal(status.textContent, 'Still working — first launch can take a couple of minutes…', '붙은 뒤 15초가 지나면 안내는 그대로 뜬다');
 });
+
+test('상주 대기 중에는 문구에 기다린 초가 붙는다 — 막대가 waiting(58%)에 멈춰 있어도 화면이 바뀐다(#874 2차 검수 LOW)', async () => {
+  let clock = 0;
+  const { ctx, listeners, intervals } = load({ fetchImpl: () => Promise.reject(new Error('refused')), now: () => clock });
+  const status = ctx.document.getElementById('status');
+  const width = () => parseFloat(ctx.document.getElementById('fill').style.width);
+  const tick = () => intervals.forEach((fn) => fn());
+  for (let n = 0; n < 12; n++) await drain(); // 닫힌 후보를 먼저 다 돌아 waiting(58%) — 사고 경로의 순서
+  clock = 1_000;
+  listeners.boot({ payload: { phase: 'resident', port: null, version: '9.9.9' } });
+  clock = 4_000; tick();
+  assert.equal(status.textContent, 'Waiting for the Argo background service to start… 3s');
+  clock = 24_500; tick();
+  assert.equal(status.textContent, 'Waiting for the Argo background service to start… 23s');
+  assert.equal(width(), 58, '막대는 그대로여도 문구가 바뀐다');
+  listeners.boot({ payload: { phase: 'resident', port: null, version: '9.9.9' } }); // 셸은 매 간격 같은 상태를 다시 보낸다
+  clock = 25_000; tick();
+  assert.equal(status.textContent, 'Waiting for the Argo background service to start… 24s', '같은 상태를 다시 받아도 처음부터 세지 않는다');
+  listeners.boot({ payload: { phase: 'starting', port: 3011, version: '9.9.9' } });
+  tick();
+  assert.equal(status.textContent, 'Starting the local server…', '대기가 끝나면 초를 붙이지 않는다');
+});
+
