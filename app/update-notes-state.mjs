@@ -18,6 +18,7 @@ export const UPDATE_NOTES = Object.freeze({
   '0.1.97': Object.freeze(['updates.note.cliStandalone', 'updates.note.msgrCommands', 'updates.note.officeBriefing']),
   // 근거 PR — routineVisible: #854 / gpt61Sol: #855 / msgrRunnerYield: #856
   '0.1.98': Object.freeze(['updates.note.routineVisible', 'updates.note.gpt61Sol', 'updates.note.msgrRunnerYield']),
+  '0.1.99': Object.freeze(['updates.note.oneConversation', 'updates.note.personalApprovals', 'updates.note.assistantTab']),
 });
 
 export function stableVersion(value) {
