@@ -122,18 +122,44 @@ def _upload_file(base: str, token: str, message_id: int, path: str, name: Option
 # 모델이 파일을 MEDIA: 대신 '링크'로 적은 모양 — [이름](attachment:/경로)·(sandbox:/경로)·(file:///경로)·(/경로), 링크 없이 attachment:/경로.
 # Hermes 코어(extract_local_files)는 'scheme:' 뒤와 링크 대상의 경로를 URL로 보고 건너뛴다(경로 앞 글자가 ':'·'/'이면 제외).
 # 운영 2026-10-08 메시지 3799: VPS 헤르메스가 [download-test-vps.md](attachment:/home/crew/…)만 적어 첨부 0건, 본문에 서버 경로가 남았다.
-# 인라인 코드(첫 갈래)는 그대로 돌려준다. 코드 블록·인용 줄은 pick_linked_files가 줄 단위로 건너뛴다.
+# 인라인 코드(첫 갈래, 코어 _INLINE_CODE_RE와 같이 한 글자 이상 — 이중 백틱 ``…`` 안도 코드)는 그대로 돌려준다.
+# 코드 블록·인용 줄은 pick_linked_files가 줄 단위로 건너뛴다.
 _FILE_LINK_RE = re.compile(
-    r'(`[^`\n]*`)'
+    r'(`[^`\n]+`)'
     r'|!?\[([^\]\n]*)\]\(\s*(<[^>\n]+>|[^\s()<>]+)(?:\s+"[^"\n]*")?\s*\)'
     r'|(?<![\w/:])((?:attachment:|sandbox:|file://)(?:~/|/)[^\s()<>\[\]`"\']+)')
 _FILE_SCHEME_RE = re.compile(r'^(?:attachment:|sandbox:|file://(?:localhost)?)')
-_SECRET_NAME_RE = re.compile(r'(?i)(secret|token|passw|credential|api[_-]?key|private[_-]?key|id_rsa|id_ed25519|\.env$|\.pem$)')
+# 확장자와 무관하게 보내는 명시적 전달 표지. scheme 없는 링크·file:// 는 코드 답의 참조 링크([main.py](/…))가 흔해
+# 코어가 맨 경로를 자동 첨부하는 확장자(MEDIA_DELIVERY_EXTS)일 때만 보낸다(검수 Cb-1 MEDIUM).
+_EXPLICIT_SCHEMES = ('attachment:', 'sandbox:')
+_SECRET_NAME_RE = re.compile(r'(?i)(secret|token|passw|credential|api[_-]?key|private[_-]?key|id_rsa|id_ed25519|\.(?:env|pem|key|p12|pfx)$)')
+
+
+def _core_media_exts() -> tuple:
+    """Hermes 코어가 맨 경로를 자동 첨부하는 확장자(gateway.platforms.base.MEDIA_DELIVERY_EXTS). 없는 옛 Hermes면 빈 목록."""
+    try:
+        import importlib
+        exts = getattr(importlib.import_module('gateway.platforms.base'), 'MEDIA_DELIVERY_EXTS', None)
+        return tuple(str(e).lower() for e in exts) if isinstance(exts, (tuple, list, set, frozenset)) else ()
+    except Exception:
+        return ()
+
+
+def _link_denied(path: str) -> bool:
+    """링크로는 보내지 않는 파일 — 점으로 시작하는 폴더·파일(.env·.ssh·.git 등)과 비밀 이름. 적힌 경로와 실제 경로(심볼릭 링크) 둘 다 본다.
+    코어 검증(비엄격)은 Hermes 홈의 .env·~/.ssh·/etc 등만 막아 프로젝트의 .env는 통과시킨다(검수 Cb-1 HIGH) — 그래서 코어를 통과해도 늘 함께 적용한다."""
+    given = os.path.abspath(os.path.expanduser(path))
+    for p in {given, os.path.realpath(given)}:
+        if any(part.startswith('.') for part in Path(p).parts[1:]) or _SECRET_NAME_RE.search(os.path.basename(p)):
+            return True
+    return False
 
 
 def _deliverable_path(path: str) -> Optional[str]:
-    """보내도 되는 파일이면 실제 경로. Hermes 코어의 전달 정책(validate_media_delivery_path — 자격 증명·시스템 경로 거부, 엄격 모드)을 그대로 쓰고,
-    그 함수가 없는 옛 Hermes에서는 최소 거부 목록(점으로 시작하는 폴더·파일, 비밀 이름, 시스템 경로)으로 판정한다."""
+    """링크로 보내도 되는 파일이면 실제 경로. 어댑터의 최소 거부 목록(_link_denied)을 늘 먼저 적용하고, 그 다음 Hermes 코어의 전달 정책
+    (validate_media_delivery_path — 자격 증명·시스템 경로 거부, 엄격 모드)을 쓴다. 그 함수가 없는 옛 Hermes에서는 시스템 경로 목록으로 판정한다."""
+    if _link_denied(path):
+        return None
     check = getattr(BasePlatformAdapter, 'validate_media_delivery_path', None)
     if callable(check):
         try:
@@ -142,7 +168,7 @@ def _deliverable_path(path: str) -> Optional[str]:
             return None
     given = os.path.abspath(os.path.expanduser(path))
     real = os.path.realpath(given)
-    if not os.path.isfile(real) or any(p.startswith('.') for p in Path(real).parts[1:]) or _SECRET_NAME_RE.search(os.path.basename(real)):
+    if not os.path.isfile(real):
         return None
     home = os.path.realpath(os.path.expanduser('~'))
     for p in {given, real}:   # 코어 _MEDIA_DELIVERY_DENIED_PREFIXES와 같은 목록. 맥은 /etc → /private/etc
@@ -165,11 +191,15 @@ def pick_linked_files(content: str):
         path = raw[scheme.end():] if scheme else raw
         if not path.startswith(('/', '~/')):
             return mt.group(0)
+        # None = 명시적 표지라 확장자와 무관. 상수가 없는 옛 Hermes는 빈 목록 — scheme 없는 링크·file:// 는 코어 맨 경로 동작에 맡긴다
+        exts = None if raw.startswith(_EXPLICIT_SCHEMES) else _core_media_exts()
         tail = ''
         if bare:   # 문장 끝 구두점은 경로가 아니다
             while path and path[-1] in '.,;:!?' and not os.path.isfile(os.path.expanduser(urllib.parse.unquote(path))):
                 path, tail = path[:-1], path[-1] + tail
         hit = next((p for p in dict.fromkeys((path, urllib.parse.unquote(path))) if os.path.isfile(os.path.expanduser(p))), None)
+        if hit and exts is not None and Path(hit).suffix.lower() not in exts:
+            return mt.group(0)
         safe = _deliverable_path(os.path.expanduser(hit)) if hit else None
         if not safe:
             return mt.group(0)

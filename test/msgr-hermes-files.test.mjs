@@ -306,9 +306,11 @@ asyncio.run(main())
 // 첨부 행 0건, 본문에 서버 경로만 남았다. Hermes 코어(0.21.3 extract_local_files)는 'scheme:' 뒤와 링크 대상의 경로를 URL로 보고 건너뛴다
 // (경로 앞 글자가 ':'이면 제외). 실제 코어로 재현: attachment·sandbox·file:// 링크 → 0건, [이름](/경로) → 1건이지만 본문에 '[이름]()'.
 // 아래 CORE는 그 코어 함수의 동작(경로 앞 제외 글자·확장자 목록·파일 존재 확인·원문 경로 삭제)을 그대로 흉내 낸다.
+// 확장자 목록은 코어 MEDIA_DELIVERY_EXTS(맨 경로 자동 첨부 대상)의 일부이고, 어댑터도 같은 상수를 읽는다.
 const CORE = String.raw`
 import re, os
-EXTS = ('png', 'jpg', 'jpeg', 'gif', 'webp', 'pdf', 'md', 'txt', 'csv', 'json', 'zip', 'docx', 'html')
+EXTS = ('png', 'jpg', 'jpeg', 'gif', 'webp', 'pdf', 'md', 'txt', 'csv', 'json', 'zip', 'docx', 'html', 'key')
+b.MEDIA_DELIVERY_EXTS = tuple('.' + e for e in EXTS)
 def core_extract_local_files(content):
     path_re = re.compile(r'(?<![/:\w.])(?:~/|/|[A-Za-z]:[/\\])(?:[\w.\-]+[/\\])*[\w.\-]+\.(?:' + '|'.join(EXTS) + r')\b', re.IGNORECASE)
     unique = {}
@@ -323,6 +325,8 @@ Base.extract_local_files = staticmethod(core_extract_local_files)
 md = work / 'download-test-vps.md'; md.write_text('# test\n')
 log = work / 'run.log'; log.write_text('ok\n')
 spaced = work / 'my report.pdf'; spaced.write_bytes(b'%PDF')
+code = work / 'main.py'; code.write_text('print(1)\n')
+caddy = work / 'Caddyfile'; caddy.write_text(':80\n')
 IMG = ('.png', '.jpg', '.jpeg', '.gif', '.webp')
 async def dispatch(text, src=5):
     # Hermes _extract_response_content → send(최종 답) → _deliver_media_attachments(이미지는 send_image_file, 나머지 send_document)와 같은 순서
@@ -378,6 +382,7 @@ assert len(both[0]) == 1, ('같은 파일은 한 번만', both)
 test('파일 링크 모양 — 없는 파일·코드·인용·웹 주소는 손대지 않는다', () => runCore(String.raw`
 for text in ['[x.md](attachment:/no/such/dir/x.md)', 'attachment:/no/such/x.md',
              '예시: ' + chr(96) + '[r](attachment:' + str(pdf) + ')' + chr(96),
+             '예시: ' + chr(96)*2 + '[r](attachment:' + str(pdf) + ')' + chr(96)*2,
              '' + chr(96)*3 + '\n[r](attachment:' + str(pdf) + ')\n' + chr(96)*3,
              '> [r](attachment:' + str(pdf) + ')',
              '[문서](https://github.com/acme/repo/raw/main/report.pdf)', '[메일](mailto:a@b.c)', '[앵커](#top)']:
@@ -411,4 +416,55 @@ def boom(_c): raise RuntimeError('scan bug')
 m.pick_linked_files = boom
 text = '[보고서](attachment:' + str(pdf) + ')\n원본: ' + str(png)
 assert a.extract_local_files(text) == core_extract_local_files(text)
+`));
+
+test('코드 블록이 닫힌 뒤의 파일 링크는 다시 첨부한다(코드 블록 안만 건너뛴다)', () => runCore(String.raw`
+for fence in [chr(96)*3, '~~~', chr(96)*4]:
+    text = fence + 'python\ncode\n' + fence + '\n[다운](attachment:' + str(md) + ')'
+    files, body = a.extract_local_files(text)
+    assert [os.path.basename(f) for f in files] == ['download-test-vps.md'], (fence, files)
+    assert body == fence + 'python\ncode\n' + fence + '\n다운', (fence, body)
+`));
+
+// 검수 Cb-1 MEDIUM: 코드 답의 참조 링크([main.py](/경로))까지 올리면 서버 소스가 채널에 보이고 쓰기가 늘어난다.
+// 확장자와 무관하게 보내는 것은 명시적 전달 표지(attachment:·sandbox:)뿐이다. scheme 없는 링크·file:// 는 코어 MEDIA_DELIVERY_EXTS 안일 때만.
+test('참조 링크 — scheme 없는 링크·file:// 는 코어 자동 첨부 확장자일 때만, attachment:·sandbox:는 확장자와 무관하게 첨부', () => runCore(String.raw`
+for text in ['수정했습니다: [main.py](' + str(code) + '), [Caddyfile](' + str(caddy) + ')',
+             '[main.py](file://' + str(code) + ')', '원본 file://' + str(code), '[실행 기록](' + str(log) + ')']:
+    assert a.extract_local_files(text) == ([], text), text
+files, body = a.extract_local_files('[main.py](attachment:' + str(code) + ') [Caddyfile](sandbox:' + str(caddy) + ')')
+assert [os.path.basename(f) for f in files] == ['main.py', 'Caddyfile'] and body == 'main.py Caddyfile', (files, body)
+assert [os.path.basename(f) for f in a.extract_local_files('[보고서](file://' + str(pdf) + ')')[0]] == ['report.pdf']
+# 그 상수가 없는 옛 Hermes: scheme 없는 링크·file:// 는 코어 맨 경로 동작에 맡긴다
+del b.MEDIA_DELIVERY_EXTS
+for text in ['[보고서](' + str(pdf) + ')', '[보고서](file://' + str(pdf) + ')', '[main.py](' + str(code) + ')']:
+    assert a.extract_local_files(text) == core_extract_local_files(text), text
+assert [os.path.basename(f) for f in a.extract_local_files('[실행 기록](attachment:' + str(log) + ')')[0]] == ['run.log']
+`));
+
+// 검수 Cb-1 HIGH: Hermes 코어 검증(비엄격)은 Hermes 홈의 .env·~/.ssh·/etc 등만 막고 프로젝트의 .env는 막지 않는다.
+// 링크로 보내는 파일에는 코어 검증을 통과해도 어댑터의 최소 거부 목록(점 폴더·점 파일·비밀 이름)을 항상 함께 적용한다.
+test('프로젝트 비밀 파일 — 코어 검증이 통과시켜도 점 폴더·점 파일·비밀 이름은 링크로 보내지 않는다(칸반 완료 알림 경로 포함)', () => runCore(String.raw`
+app = work / 'app'; app.mkdir()
+env = app / '.env'; env.write_text('FAKE_KEY=x\n')
+envl = app / '.env.local'; envl.write_text('FAKE_KEY=x\n')
+key = app / 'server.key'; key.write_text('fake\n')
+sdir = work / '.secret'; sdir.mkdir(); hid = sdir / 'a.txt'; hid.write_text('k')
+tok = work / 'api_token.txt'; tok.write_text('t')
+alias = work / 'innocent.md'; os.symlink(str(env), str(alias))
+inside = sdir / 'note.pdf'; os.symlink(str(pdf), str(inside))   # 점 폴더 안 링크가 보통 파일을 가리켜도 적힌 경로로 거부
+Base.validate_media_delivery_path = staticmethod(lambda p, session_key='': os.path.realpath(p))   # 전부 통과(프로젝트 파일)
+bad = ['API 키를 [.env](' + str(env) + ')에 저장했습니다.', 'API 키를 [설정 파일](file://' + str(env) + ')에 저장했습니다.',
+       '[.env](attachment:' + str(env) + ')', '첨부: attachment:' + str(envl), '[x](sandbox:' + str(envl) + ')',
+       '[인증서](attachment:' + str(key) + ')', '[k](attachment:' + str(hid) + ')', '[t](sandbox:' + str(tok) + ')',
+       '[innocent.md](attachment:' + str(alias) + ')', '[n](attachment:' + str(inside) + ')', '[k](' + str(hid) + ')', '[t](' + str(tok) + ')']
+for text in bad:
+    assert m.pick_linked_files(text) == ([], text), ('링크로는 보내지 않는다', text)
+    assert a.extract_local_files(text) == core_extract_local_files(text), ('어댑터가 코어보다 더 보내지 않는다', text)
+for text in bad[:10]:
+    assert a.extract_local_files(text) == ([], text), text
+# 칸반 완료 알림(gateway/kanban_watchers.py _deliver_kanban_artifacts)도 같은 함수의 [0]만 쓴다
+summary = '\n'.join(bad[:10] + ['[download-test-vps.md](attachment:' + str(md) + ')', '수정: [main.py](' + str(code) + ')'])
+assert [os.path.basename(p) for p in a.extract_local_files(summary)[0]] == ['download-test-vps.md'], a.extract_local_files(summary)[0]
+assert [os.path.basename(f) for f in a.extract_local_files('[r](attachment:' + str(pdf) + ')')[0]] == ['report.pdf'], '보통 파일은 그대로 보낸다'
 `));

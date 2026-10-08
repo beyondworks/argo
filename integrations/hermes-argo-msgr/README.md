@@ -36,7 +36,15 @@ hermes plugins enable argo-msgr-platform --no-allow-tool-override
 
 - 받기: 메시지에 붙은 파일은 `~/.argo-msgr/files/<메시지 id>/`에 내려받고, 에이전트에게 경로와 함께 알려 줍니다.
 - 보내기: 답에 `MEDIA:/절대/경로` 한 줄을 쓰면 그 파일을 답글에 첨부합니다(파일당 25MB). 첨부는 `createUpload` → 서명 주소에 PUT → `attachFile` 순서로 올라가며 msgr 버킷에 저장됩니다.
-- 모델이 파일을 링크로 적어도 첨부로 바꿉니다(0.3.4): `[이름](attachment:/경로)`·`(sandbox:/경로)`·`(file:///경로)`·`(/경로)`, 링크 없는 `attachment:/경로`. 본문에는 이름만 남습니다. 이 서버에 없는 파일, Hermes 전달 정책(`validate_media_delivery_path`)이 거부한 파일(자격 증명·시스템 경로 등), 코드·인용 안의 링크는 손대지 않습니다. 운영 사례: 2026-10-08 메시지 3799에서 `attachment:` 링크만 적혀 첨부가 0건이었습니다.
+- 모델이 파일을 링크로 적어도 첨부로 바꿉니다(0.3.4). 본문에는 이름만 남습니다. 운영 사례: 2026-10-08 메시지 3799에서 `attachment:` 링크만 적혀 첨부가 0건이었습니다.
+  - `[이름](attachment:/경로)`·`(sandbox:/경로)`, 링크 없는 `attachment:/경로`: 보내라는 표지라서 확장자와 관계없이 보냅니다.
+  - `[이름](/경로)`·`(file:///경로)`: 코드 답의 참조 링크(`[main.py](/…/main.py)`)가 흔해서, Hermes가 맨 경로를 자동 첨부하는 확장자(`MEDIA_DELIVERY_EXTS` — 문서·이미지·압축 등)일 때만 보냅니다. 그 밖(.py·.sh·확장자 없는 파일)은 본문 그대로 둡니다. 이 상수가 없는 옛 Hermes에서는 코어 동작에 맡깁니다.
+  - 링크로는 보내지 않는 파일: 이 서버에 없는 파일, 점으로 시작하는 폴더·파일 안(`.env`·`.env.local`·`.ssh`·`.git`, `~/.hermes` 캐시 포함), 비밀 이름(`secret`·`token`·`password`·`credential`·`api_key`·`private_key`·`id_rsa`, `.env`·`.pem`·`.key`·`.p12`·`.pfx`로 끝나는 이름), Hermes 전달 정책(`validate_media_delivery_path` — 자격 증명·시스템 경로, 엄격 모드)이 거부한 파일. 심볼릭 링크는 적힌 경로와 실제 경로를 둘 다 봅니다. 코드 블록·인라인 코드(이중 백틱 포함)·인용 안의 링크도 손대지 않습니다.
+  - 칸반 완료 알림(`gateway/kanban_watchers.py`)도 같은 판정으로 요약·결과의 링크 파일을 올립니다. 이 경로는 본문을 바꾸지 않아 링크는 그대로 남습니다.
+- 제한 사항
+  - 위 거부 목록은 어댑터가 링크를 바꿀 때만 씁니다. Hermes 코어는 원래부터 맨 경로와 `[이름](/경로)` 안의 경로를 자동 첨부하므로, 자동 첨부 확장자인 비밀 이름 파일(`/…/api_token.txt`, `/…/server.key`)은 코어가 그대로 올립니다(어댑터 0.3.3 이전과 같음). 코어 쪽은 엄격 모드(`HERMES_MEDIA_DELIVERY_STRICT=1`)·`HERMES_MEDIA_ALLOW_DIRS`로 좁힐 수 있지만, 엄격 모드도 10분 안에 만든 파일은 통과시킵니다.
+  - Docker 터미널 백엔드에서는 컨테이너 경로가 호스트에 없어 링크를 바꾸지 않습니다. `MEDIA:`는 코어가 컨테이너 경로를 호스트 경로로 바꿔 보냅니다.
+  - 링크 없이 `attachment:/경로` 뒤에 글자가 바로 붙으면(`attachment:/…/x.md에 있습니다`) 바꾸지 않습니다.
 - 지시문(`platform_hint`)은 `MEDIA:/절대/경로`를 쓰고, 서버 경로·`attachment:`/`file://` 링크·GitHub 같은 외부 저장소 링크로 대신 주지 말라고 안내합니다.
 
 ## 검증 기록 (2026-09-08)
