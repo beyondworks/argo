@@ -241,3 +241,18 @@ test('loop verdict marker never reaches any routine alert exit; the verdict stil
   assert.equal(fixture.sent.length, 1);
   for (const b of [...bodies, fixture.sent[0].body]) { assert.doesNotMatch(b, /LOOP/); assert.match(b, /All green/); }
 });
+
+// 놓친 회차 알림(phase 'skipped', ok:false)은 모든 출구에서 머리가 (건너뜀)이다 — 본문은 '건너뛰었습니다'인데 머리가 '(실패)'면 앞뒤가 안 맞는다(검수 LOW).
+// 실패 알림은 종전대로 (실패). 출구: 선택한 목적지(텔레그램·슬랙·메신저 채널 글)와 옛 브리핑(텔레그램·슬랙).
+test('skipped routine notices are headed "(건너뜀)" on every exit while failures keep "(실패)"', async () => {
+  const ws = await workspace();
+  for (const [phase, want, not] of [['skipped', /\(건너뜀\)/, /\(실패\)/], [undefined, /\(실패\)/, /\(건너뜀\)/]]) {
+    const e = { ...event(ws), ok: false, ...(phase ? { phase } : {}), reply: '10월 8일 09:00 회차는 건너뛰었습니다', runAt: `2026-10-08T00:00:0${phase ? 1 : 2}Z` };
+    const fixture = messenger();
+    const chosen = await capture(() => _pushEventForTest(e, { pushMsgr: (x) => msgrPush(x, { session: fixture.session }) }));
+    const legacy = await capture(() => _pushEventForTest({ ...e, routine: { ...e.routine, notifications: undefined } }, { pushMsgr: async () => false }));
+    const bodies = [...chosen.calls, ...legacy.calls].map((c) => JSON.stringify(c.body)).concat(fixture.sent.map((row) => row.body));
+    assert.ok(chosen.calls.length >= 2 && legacy.calls.length >= 2 && fixture.sent.length === 1, `텔레그램·슬랙(선택·옛)·메신저 모두 나갔다: ${chosen.calls.length}/${legacy.calls.length}/${fixture.sent.length}`);
+    for (const b of bodies) { assert.match(b, want, `${phase ?? 'failed'}: ${b}`); assert.doesNotMatch(b, not, `${phase ?? 'failed'}: ${b}`); }
+  }
+});

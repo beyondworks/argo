@@ -1,7 +1,7 @@
 // 루틴 스케줄러 — 첫 API 호출 시 1회 기동, 매분 전체 워크스페이스의 due 루틴을 실행.
 // (nodejs 런타임 라우트에서만 로드되므로 node: 임포트가 안전하다. P1에서 워커로 분리)
 import { listCompanyIds } from './hub.mjs';
-import { loadRoutines, runRoutine, isDue } from './routines.mjs';
+import { loadRoutines, runRoutine, isDue, recordMissedSlots } from './routines.mjs';
 import { CATCHUP_MS } from './routine-time.mjs';
 import { deliverCrewMail, mailPrompt } from './crewmail.mjs';
 import { emitNotify } from './notify.mjs';
@@ -17,7 +17,7 @@ import { consolidateBacklog, rollupJournals } from './consolidate.mjs';
 import { runHealthChecks } from './runner-health.mjs';
 import { runFailureDigest } from './failure-digest.mjs';
 import { daemonLease } from './lock.mjs';
-import { isCloudLeader } from './sync.mjs';
+import { isCloudLeader, companySyncedSince, syncRunsElsewhere } from './sync.mjs';
 import { writeJsonAtomic, readJson } from './jsonstore.mjs';
 import { withLock } from './mutex.mjs';
 import { paths } from './workspace.mjs';
@@ -148,14 +148,44 @@ const routineRunning = new Map();
     가드는 루틴별 — 다른 루틴의 동시 실행은 막지 않는다.
     (export: 회귀 테스트용 — 틱 콜백은 단위로 태울 수 없다. runFn 주입=테스트 전용) */
 const orphanLogged = new Set(); // `${wsId}/${routineId}` — 크루 없는 루틴 건너뜀 로그는 프로세스당 한 번
-export async function runDueRoutines(wsId, now, { runFn = runRoutine } = {}) {
-  for (const r of await loadRoutines(wsId)) {
+
+/** 깨어난 시각 — 기동(모듈 로드) 또는 잠자기·멈춤에서 돌아온 첫 틱. 놓친 회차 판정은 그 뒤에 끝난 동기화 사이클이 있어야 한다
+    (companySyncedSince). 잠자기 동안 프로세스는 살아 있어 기동 시각만 보면 깨기 전 동기화 결과로 통과해 버린다 — 깨어난 직후 첫 틱과
+    첫 동기화 사이클의 순서는 정해져 있지 않다. 판정: 60초 틱 사이 벽시계 간격이 RESUME_GAP_MS를 넘으면 그 틱이 새 깨어난 시각.
+    (export: 회귀 테스트용 — 순수 함수, state를 고친다) */
+export const RESUME_GAP_MS = 3 * 60_000;
+export function noteSchedulerTick(state, nowMs, gapMs = RESUME_GAP_MS) {
+  if (state.lastTick && nowMs - state.lastTick > gapMs) state.since = nowMs;
+  state.lastTick = nowMs;
+  return state.since;
+}
+const awake = { since: Date.now(), lastTick: 0 };
+let missedGateDeferNoted = false; // 판정 보류(다른 프로세스가 동기화) 로그는 프로세스당 한 번 — 틱마다 쓰면 로그만 쌓인다
+
+export async function runDueRoutines(wsId, now, { runFn = runRoutine, awakeSince = awake.since } = {}) {
+  // 크루 카드가 없는 루틴(이 수정 전에 해고된 크루 등)은 실행하지 않는다 — 돌리면 "없는 크루" 실패 알림만 간다(F4).
+  // 끄지는 않는다: 새 기기에서 동기화가 routines.json을 카드보다 먼저 받는 순간에도 이 판정이 돌아, 끄면 그 상태가 다른 기기로 퍼진다.
+  // 끄는 것은 해고(removeAgentCard → disableRoutinesForCrew)라는 사람의 행동에서만 한다. 화면은 '크루 없음'으로 표시한다.
+  const orphan = (slug) => readAgentCard(wsId, slug).then(() => false, (e) => e?.code === 'NOT_FOUND');
+  const routines = await loadRoutines(wsId);
+  // 놓친 회차(catch-up 창 4h를 넘겨 isDue가 다시는 발화하지 않는 슬롯) — 활동 기록·알림에 남기고 다음 실행이 대화 기록에 한 줄을 남긴다.
+  // 실행 판정보다 먼저: 같은 틱에 다음 회차가 due면 그 실행이 바로 이 기록을 남긴다. 새로 놓친 회차가 없으면 쓰기·잠금 0(유휴 틱).
+  // 실패는 실행을 막지 않는다(기록은 부가 — 루틴 실행이 본 흐름).
+  // 동기화가 켜진 기기는 깨어난 뒤 그 회사의 동기화 사이클을 한 번 끝낸 뒤에만 판정한다(검수 MEDIUM): 그 전의 routines.json은 다른 기기가 그동안
+  // 실행한 lastRun을 모르는 낡은 사본일 수 있다 — 그 회차를 '꺼져 있어 건너뛰었다'로 알리게 되고, missed 쓰기가 로컬 수정 시각을 최신으로 만들어
+  // json 충돌 처리(최근 수정 시각이 이김)가 낡은 사본으로 원격을 덮는다. 미뤄도 잃는 것은 없다 — 판정 기간(7일) 안이면 다음 틱이 남긴다.
+  // 같은 데이터 루트를 다른 프로세스가 동기화하면 이 프로세스에는 사이클 결과가 쌓이지 않아 그동안 판정을 미룬다 — 조용히 미루지 않게 프로세스당 한 번 알린다.
+  if (companySyncedSince(wsId, awakeSince)) {
+    await recordMissedSlots(wsId, routines, now, { hasCrew: async (slug) => !(await orphan(slug)) })
+      .catch((e) => console.error(`[argo] 놓친 루틴 회차 기록 실패(${wsId}):`, e.message));
+  } else if (!missedGateDeferNoted && syncRunsElsewhere()) {
+    missedGateDeferNoted = true;
+    console.log('[argo] 놓친 루틴 회차 판정 보류: 같은 데이터 루트를 다른 프로세스가 동기화하고 있어 이 프로세스는 회사 사본이 최신인지 알 수 없습니다 — 이 프로세스가 동기화를 맡을 때까지 놓친 회차를 기록하지 않습니다(루틴 실행은 그대로, 이 안내는 프로세스당 한 번)');
+  }
+  for (const r of routines) {
     if (!isDue(r, now)) continue;
     const key = `${wsId}/${r.id}`;
-    // 크루 카드가 없는 루틴(이 수정 전에 해고된 크루 등)은 실행하지 않는다 — 돌리면 "없는 크루" 실패 알림만 간다(F4).
-    // 끄지는 않는다: 새 기기에서 동기화가 routines.json을 카드보다 먼저 받는 순간에도 이 판정이 돌아, 끄면 그 상태가 다른 기기로 퍼진다.
-    // 끄는 것은 해고(removeAgentCard → disableRoutinesForCrew)라는 사람의 행동에서만 한다. 화면은 '크루 없음'으로 표시한다.
-    if (await readAgentCard(wsId, r.agentSlug).then(() => false, (e) => e?.code === 'NOT_FOUND')) {
+    if (await orphan(r.agentSlug)) {
       if (!orphanLogged.has(key)) { orphanLogged.add(key); console.warn(`[argo] 루틴 건너뜀(${key}): 에이전트 "${r.agentSlug}" 카드가 없습니다`); }
       continue;
     }
@@ -259,6 +289,7 @@ export function ensureScheduler() {
   const lease = daemonLease('scheduler'); // Next 멀티 워커에서도 실행 주체는 하나만
   console.log('[argo] 루틴 스케줄러 시작 (60s 폴)');
   setInterval(async () => {
+    noteSchedulerTick(awake, Date.now()); // 깨어남 판정은 리스와 무관하게 매 틱 — 리더가 아닐 때 잠들었다 깨어나 리더가 돼도 깨어난 시각을 안다
     // 프로세스 단위 단일 실행(daemonLease)은 틱 전체의 전제. 기기 간 단일 실행(isCloudLeader)은
     // **루틴·기억 정리에만** 건다 — 크루 우편함(mail/)은 동기화 제외 기기 로컬 큐(sync.mjs EXCLUDE)라
     // 비리더 기기에서 발신된 쪽지는 그 기기만 배달할 수 있다. 클라우드 리더 게이트를 우편에까지 걸면

@@ -33,21 +33,23 @@ export const RUNNER_OUTDATED_RE = /Codex 실행기 업데이트가 아직 끝나
 /** 코드 표 — UI i18n 키(chat.fail.<code>)와 1:1. 새 코드는 여기와 i18n에 **동시에**(테스트가 대조). */
 export const FAIL_CODES = Object.freeze([
   'aborted', 'auth_expired', 'subscription_blocked', 'quota', 'vendor_overloaded',
-  'endpoint_not_found', 'cli_missing', 'runner_outdated', 'model_unavailable', 'crash', 'unknown',
+  'endpoint_not_found', 'cli_missing', 'runner_outdated', 'model_unavailable', 'crash', 'no_runner', 'unknown',
 ]);
+// no_runner = 이 기기·이 회사에 턴을 돌릴 러너 자격이 없다(chat.mjs 러너 확인 갈래가 flags.noRunner로 붙인다 — 문구로 분류하지 않는다).
 const ORIGIN = Object.freeze({
   aborted: 'user', auth_expired: 'probe', subscription_blocked: 'vendor', quota: 'vendor', vendor_overloaded: 'vendor',
-  endpoint_not_found: 'vendor', cli_missing: 'argo', runner_outdated: 'argo', model_unavailable: 'vendor', crash: 'argo', unknown: 'probe',
+  endpoint_not_found: 'vendor', cli_missing: 'argo', runner_outdated: 'argo', model_unavailable: 'vendor', crash: 'argo', no_runner: 'argo', unknown: 'probe',
 });
 
 /** 원문 + 호출자가 이미 아는 표식(flags) → { code, origin }. flags는 chat.mjs가 판정한 것을 그대로 받는다
-    (aborted·endpointNotFound·credit·auth·crash·lockup) — AUTH_ERR_RE 등 기존 정규식을 여기로 옮기지 않는다
+    (aborted·noRunner·endpointNotFound·credit·auth·crash·lockup) — AUTH_ERR_RE 등 기존 정규식을 여기로 옮기지 않는다
     (그 정규식은 자가치유 발동 조건이라 계약이 다르다; 이 표는 표시·통계 전용). 순서가 하중이다:
     구독 차단은 "authenticate" 단어가 섞여 와도 인증보다 먼저(자가치유 오발동 방지), 한도는 과부하보다 먼저. */
 export function classifyRunnerError(msg, { flags = {} } = {}) {
   const s = String(msg ?? '');
   const out = (code) => ({ code, origin: ORIGIN[code] });
   if (flags.aborted) return out('aborted');
+  if (flags.noRunner) return out('no_runner');
   if (SUBSCRIPTION_BLOCKED_RE.test(s)) return out('subscription_blocked');
   if (flags.endpointNotFound) return out('endpoint_not_found');
   if (flags.crash || flags.lockup) return out('crash');

@@ -180,7 +180,8 @@ export async function appendTurn(wsId, slug, opts) {
   notifyWrite(wsId, slug); // 기록이 끝난 뒤 — 기다리던 세션 메시지가 새 sessionId를 읽는다
   return out;
 }
-async function appendTurnLocked(wsId, slug, { turnId, userMsg, reply, handover, sessionId, attachments, artifacts, via, actor, failed, aborted, cancellationIncomplete, fellBack, failedCode, failedOrigin, modelFallback, contextScope, steerFailed }) {
+// noContext = 화면에는 보이되 다음 턴 맥락(chat.mjs inThreadContext — 최근 대화·누적 요약)에는 싣지 않는 기록(루틴 실패 안내 — 에이전트가 한 말이 아니다).
+async function appendTurnLocked(wsId, slug, { turnId, userMsg, reply, handover, sessionId, attachments, artifacts, via, actor, failed, aborted, cancellationIncomplete, fellBack, failedCode, failedOrigin, modelFallback, contextScope, steerFailed, noContext }) {
   return lockThread(wsId, slug, async () => {
     const t = await loadThread(wsId, slug); // 락 안에서 최신 상태를 다시 읽는다
     const ts = Date.now();
@@ -190,7 +191,7 @@ async function appendTurnLocked(wsId, slug, { turnId, userMsg, reply, handover, 
     const at = turnId ? t.messages.findIndex((m) => m.turnId === turnId) : -1;
     // Scoped audit records stay visible, but cannot seed another channel or replace its provider session.
     const scope = contextScope ?? (at >= 0 ? t.messages[at].contextScope : null);
-    const scoped = scope ? { contextScope: scope } : {};
+    const scoped = { ...(scope ? { contextScope: scope } : {}), ...(noContext ? { noContext: true } : {}) };
     if (at >= 0) {
       const m = t.messages[at];
       delete m.awaiting;
@@ -205,6 +206,7 @@ async function appendTurnLocked(wsId, slug, { turnId, userMsg, reply, handover, 
         else if (steerFailed?.texts?.some((t) => String(t).startsWith(x.text))) x.failed = steerFailed.reason || 'failed';
       });
       if (scope) m.contextScope = scope;
+      if (noContext) m.noContext = true;
       if (attachments?.length) m.attachments = attachments;
       if (actor) m.actor = actor; // 팀 메신저: 사람 발화자 {uid,name} — who:'user'만으로는 누가 말했는지 구분 불가(MESSENGER-DESIGN.md)
       if (failed) m.failed = failed;

@@ -41,6 +41,25 @@ export function unreadWorthy(payload, { uid, listIds = new Set(), previewIds = n
   return !previewIds.has(cid) && !asked.has(cid);
 }
 
+/** 열린 방이 서버보다 뒤처졌나 — 서버가 센 이 방의 안 읽음(n, msgr_unread와 같은 규칙: 남의 글·지우지 않은 글·차단한 사람과 숨긴 크루의 글은 빼고·99 상한)이
+    이 화면이 가진 '읽은 위치(readUpTo) 뒤 남의 글' 수보다 많으면 방송을 놓친 글이 서버에 있다(2026-10-07 운영: 목록 배지는 1인데 열린 방은 '전달됨 · 준비 중'이 27초 넘게 남았다 —
+    조직 비공개 방의 글 방송은 u:로만 오고, u: 방송을 놓쳐도 안 읽음 재집계는 서버 숫자를 받아 배지를 그렸다). 방송으로 이미 받은 글이면 숫자가 같아 false(요청 0).
+    readUpTo = 이 화면이 아는 서버 읽음 위치 — 열 때 읽은 커서와 이 화면이 그 뒤 읽음으로 올린 글 중 큰 것(연 때 커서만 쓰면 그 뒤 읽은 글이 놓친 글을 가린다).
+    blocked(사람 id)·mutedCrews(크루 id) = 내 차단 목록(msgr_user_blocks) — 서버처럼 빼야 그 글이 놓친 글을 가리지 않는다(검수 2026-10-08).
+    첫 목록을 읽는 중(msgs 없음)이면 false — 그 조회가 다 가져온다.
+    한계(되풀이 없는 빈 조회 1건): 읽음 저장이 실패했거나, 열 때부터 안 읽은 글이 첫 쪽(100개) 밖까지 이어지면 서버 숫자가 더 커 숫자가 바뀔 때마다 한 번 따라잡는다. */
+export function openRoomBehind({ n, msgs, uid, readUpTo = 0, blocked = null, mutedCrews = null }) {
+  if (!(n > 0) || !Array.isArray(msgs)) return false;
+  let have = 0;
+  for (const m of msgs) {
+    if (!Number.isFinite(m?.id) || m.id <= readUpTo || m.deleted_at || m.author_user_id === uid) continue;
+    if (m.author_kind === 'user' && blocked?.has(m.author_user_id)) continue;
+    if (m.author_kind === 'crew' && mutedCrews?.has(m.crew_id)) continue;
+    have++;
+  }
+  return n > Math.min(have, 99);
+}
+
 /** 창(delayMs) 안의 요청을 한 번으로 — 첫 요청 뒤 delayMs에 한 번 부른다(요청이 계속 와도 미루지 않는다: 글이 1초마다 와도 1.5초마다 센다). */
 export function createCoalescer(fn, { delayMs = 1500, timer = setTimeout, clear = clearTimeout } = {}) {
   let t = null;

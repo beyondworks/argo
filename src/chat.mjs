@@ -519,7 +519,8 @@ export function threadCtxLine(m, lang, name, { ownerId = null } = {}) { // eslin
     요약 안내 줄(아래 compact_boundary — src notice code 'summarized')도 뺀다: 화면용 표지라 크루에게는 '알림: 앞 대화를 요약해…'라는 잡음일 뿐이다(분리 검수 LOW).
     세션 메시지의 다른 안내 줄(상한·기한·실패)은 크루가 알아야 할 사실이라 종전대로 싣는다. export는 테스트용. */
 export const isSummaryNotice = (m) => m?.src?.kind === 'session' && m.src.dir === 'notice' && m.src.code === 'summarized';
-export const inThreadContext = (m, contextScope) => inContextScope(m, contextScope) && !m.shared && !m.failed && !m.awaiting && !isSummaryNotice(m);
+// noContext = 화면용 기록(루틴 실패 안내 등 — 에이전트가 한 말이 아니다, thread.mjs appendTurn)도 뺀다.
+export const inThreadContext = (m, contextScope) => inContextScope(m, contextScope) && !m.shared && !m.failed && !m.awaiting && !m.noContext && !isSummaryNotice(m);
 /*  signal = 턴 중단 신호(정지하면 요약 원샷도 바로 끊긴다 — 중단은 던진다), status(on) = 요약하는 동안의 상태 표시(on=true '앞 대화 정리 중', false 되돌림).
     요약 원샷의 사용량·비용은 사용량 원장에 요약 행(kind 'summary')으로 바로 남긴다 — 월 지출 한도(monthCost)·크루 인건비가 그 행을 센다(분리 검수 MEDIUM:
     종전 .then(r => r.text)가 API 키 러너의 요약 비용을 버렸다). 턴이 실패·중단돼도 이미 쓴 요약 비용은 남는다. 반환에 costUsd(요약 금액, 없으면 null)를 싣는다. */
@@ -1366,6 +1367,21 @@ export async function surfaceRunnerFailure(e, { wsId, runner, lang, cred = null,
     에러(Gemini 3.x는 Ultra·유료 전용 — 실측 2026-07-19). gated 모델 턴에서만 검사한다(과매칭 방지). */
 export const GATED_MODEL_ERR_RE = /requested entity was not found|NOT_FOUND|PERMISSION_DENIED/i;
 
+/** 크루가 원하는 러너 id(순수) — 턴 지정(runnerOverride)이 카드 러너보다 앞선다. null = 무선호.
+    runChat의 러너 결정과 메신저 실행권 양보 판정(turnRunnerAvailable)이 같은 값을 보게 한 곳에 둔다. */
+export const wantRunnerOf = (meta, runnerOverride = null) => String(runnerOverride || meta?.runner || '').toLowerCase() || null;
+
+/** 이 프로세스에서 이 크루의 턴이 러너를 받을 수 있나 — runChat의 러너 결정(resolveRunner, pickRunner 대체 포함)과 같은 판정이다.
+    false면 runChat은 '러너 없음'(또는 카드 없음)으로 끝난다. 메신저 게이트웨이가 적재(drain)·실행권 선점 전에 묻는다 — 러너 없는 프로세스(옛 앱 사본·러너 자격이
+    동기화되지 않는 다른 기기)가 먼저 잡아 실패 답을 올리고 러너 있는 프로세스는 '이미 답함'으로 건너뛰던 결함(2026-10-07 운영).
+    카드를 못 읽으면 미가용 — 이 프로세스는 그 턴을 돌릴 수 없다(앱 전용 데이터 폴더·동기화 지연. 카드 있는 프로세스가 가져가게, 검수 LOW-3). 판정 실패도 runChat과 같이 미가용.
+    집기마다 불리므로 forPick(표시용 월 사용량을 읽지 않고, host 자격이 없으면 CLI 감지도 하지 않는다 — 결정은 같다, 검수 LOW-1). */
+export async function turnRunnerAvailable(wsId, slug) {
+  const meta = await readAgentCard(wsId, slug).then((c) => c.meta, () => null);
+  if (!meta) return false;
+  return (await resolveRunner(wsId, wantRunnerOf(meta), { forPick: true }).catch(() => ({ available: false }))).available === true;
+}
+
 export function fallbackErrorPrefix(fellBack, wantId, ranId, lang = 'ko', { excluded = false } = {}) {
   if (!fellBack) return '';
   const rn = (id) => RUNNERS[id]?.name ?? id;
@@ -1413,7 +1429,9 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, opts = {}
     runChat(wsId, agentSlug, userMsg, sessionId, { ...opts, __turnControl: control }), { source: opts.source ?? (opts.from ? 'delegate' : 'chat'), tag: opts.abortTag ?? null });
 }
 
-async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnControl, from = null, source = null, attachments = [], hop = 0, chain = [], toolHop = 0, mirrorCtx = null, runnerOverride = null, modelOverride = null, journal = null, workFolder = '', delegationRelaxed = false, delegationTree = null, sessionChain = null, notOwnerDirect = null, __freshRetry = false, __seedNotes = null, __excludeRunners = null, __crashRetry = false, __lockupRetry = false, __downgradedFrom = null } = {}) {
+async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnControl, from = null, source = null, attachments = [], hop = 0, chain = [], toolHop = 0, mirrorCtx = null, runnerOverride = null, modelOverride = null, journal = null, workFolder = '', delegationRelaxed = false, delegationTree = null, sessionChain = null, notOwnerDirect = null, runnerNote = '', __freshRetry = false, __seedNotes = null, __excludeRunners = null, __crashRetry = false, __lockupRetry = false, __downgradedFrom = null } = {}) {
+  // runnerNote = 러너 프롬프트에만 붙는 덧붙임(루틴의 보고 규칙 — routines.mjs). 지시 원문(userMsg)과 따로 둔다: 일지(saveHandover)·턴 이벤트 msg(활동
+  // '다시 실행'이 보내는 글)·gist·대화 기록에는 싣지 않는다. 재시도 재귀·도구 후속 턴은 이 값을 그대로 이어 받는다.
   // journal = 팀 메신저 채널 턴의 일지 정책 {off, tag} — off면 saveHandover 생략(402 creditTurn과 같은 갈래), tag면 별도 파일.
   // 세 saveHandover 지점이 모두 이 한 함수를 거친다(한 지점만 빠지면 crew_memory=false 채널의 내용이 기억에 새는 무언 결함).
   const dmTurn = mirrorCtx?.kind === 'msgr' && mirrorCtx.channelKind === 'dm';
@@ -1499,7 +1517,23 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
       return { reply, sessionId: null, handover, ...(contextScope ? { contextScope } : {}) }; // 예산 차단 턴 — 러너 해석 전이라 fellBack 무관(TDZ 회귀 금지 구역)
     }
   }
-  const { md, meta } = await readAgentCard(wsId, agentSlug);
+  // 러너를 고르기 전에 끝나는 턴(카드 없음·http 러너·러너 없음)도 회사 활동에 남긴다 — 이 갈래들은 evBase보다 앞이라 종전엔 기록이 없어, 메신저 실패 답의
+  // "주인이 Argo 활동에서 원인을 확인할 수 있습니다"가 사실이 아니었다(2026-10-07 운영). 대화 기록·오류 객체는 바꾸지 않는다(화면 문구 종전 —
+  // 데스크톱 대화는 라우트가, 메신저는 게이트웨이가 각자 남긴다). 재시도 프레임(아래 catch들의 재귀)은 바깥 프레임이 최종 실패를 한 번 기록하므로 남기지 않는다.
+  // runner 필드 없음 + preRun — 실행한 러너가 없는 설정 단계 실패다(설정 연결 카드의 러너별 마지막 턴·실패 다이제스트의 러너 오류 묶음에 섞이지 않게, 검수 LOW-2).
+  // ev = 발신자 표지. 카드 읽기 실패는 evFrom(스킬 주입 뒤에 계산 — room-slash-commander 핀)보다 앞이라 from만 싣는다(예산 차단 기록과 같은 모양).
+  // 기록 실패는 삼킨다 — 원래 오류(사용자에게 보일 안내)를 가리지 않게.
+  const retryFrame = !!(__excludeRunners?.length || __crashRetry || __lockupRetry || __freshRetry || __downgradedFrom);
+  const failBeforeRun = async (e, { flags = {}, ev = from ? { from } : {} } = {}) => {
+    if (!retryFrame) {
+      const cls = classifyRunnerError(e?.message, { flags });
+      await appendEvent(wsId, { type: 'turn', slug: agentSlug, source: source ?? (from ? 'delegate' : 'deck'), ...ev, gist: userMsg.replace(/\s+/g, ' ').trim().slice(0, 60), msg: userMsg.slice(0, 2000),
+        ok: false, ms: 0, preRun: true, error: String(e?.message ?? e).slice(0, 400), failCode: cls.code, failOrigin: cls.origin })
+        .catch((err) => console.error('[argo] 러너 실행 전 실패를 활동에 남기지 못함:', err?.message ?? err));
+    }
+    throw e;
+  };
+  const { md, meta } = await readAgentCard(wsId, agentSlug).catch((e) => failBeforeRun(e)); // 카드 없음(앱 전용 데이터 폴더·동기화 지연) — 검수 LOW-3
   // 크루별 능력 범위 — 카드 skills:/mcp: 필드(미기재=전체 사용이 기본, 'none'=없음, csv=지정만).
   // 설치는 회사 공용이되 크루 단위로 좁힐 수 있다(유건 지시 2026-07-19 — 크루 카드에서 선택·편집).
   const skillScope = parseScopeList(meta.skills);
@@ -1526,17 +1560,17 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
   // (예: 기본 claude 크루인데 Codex만 연결한 사용자 — 어떤 러너든 연결만 돼 있으면 크루는 응답해야 한다)
   // want=null(무선호) — 카드에 러너 미지정이면 회사의 연결 러너를 대체 고지 없이 쓴다(claude 하드코딩 제거).
   // runnerOverride(경쟁 등) 우선 — 카드 러너 대신 이 턴만 지정 러너로. 미가용이면 기존 폴백 체인이 동일하게 처리.
-  const wantRunner = ((runnerOverride || meta.runner || '')).toLowerCase() || null;
+  const wantRunner = wantRunnerOf(meta, runnerOverride);
   // HTTP 텍스트 러너(runner: http)는 걷어냈다(2026-09-18 — 외부 에이전트는 크루의 두뇌가 아니라 메신저에 봇으로 접속한다).
   // 카드에 그 값이 남은 크루를 다른 러너로 대신 돌리면 외부 에이전트 크루가 다른 두뇌로 답한다 — 대체하지 않고 정직하게 멈춘다.
-  if (wantRunner === 'http') throw new Error(lang === 'en'
+  if (wantRunner === 'http') await failBeforeRun(new Error(lang === 'en'
     ? 'This agent is set to run over an external HTTP connection, which is no longer supported. Change the runner on the agent card, or connect the external agent to the messenger as a bot.'
-    : '이 에이전트는 외부 HTTP 연결로 실행하도록 설정돼 있는데, 이 방식은 더 이상 지원하지 않습니다. 에이전트 카드에서 러너를 바꾸거나, 외부 에이전트는 메신저에 봇으로 연결해 주세요.');
+    : '이 에이전트는 외부 HTTP 연결로 실행하도록 설정돼 있는데, 이 방식은 더 이상 지원하지 않습니다. 에이전트 카드에서 러너를 바꾸거나, 외부 에이전트는 메신저에 봇으로 연결해 주세요.'), { ev: evFrom });
   // __excludeRunners = 지금까지 인증 실패한 러너 **목록**(아래 catch의 자가 치유 재시도) — 다시 뽑히지 않게 제외.
   // 해석 실패(.secrets.json 손상 등)는 미가용으로 — available:true 폴백은 명시 연결 원칙 위반(검수 MEDIUM:
   // 최악의 상태에서 조용히 호스트 자격을 스캐빈징하게 된다). 아래 !available 분기가 재연결을 안내한다.
   const resolved = await resolveRunner(wsId, wantRunner, { exclude: __excludeRunners }).catch(() => ({ runner: wantRunner ?? 'claude', fellBack: false, available: false, credButNoCli: [] }));
-  if (!resolved.available) {
+  if (!resolved.available) try {
     // 자가치유가 인증 실패 러너를 제외한 끝이라면 — "하나도 연결돼 있지 않습니다"는 거짓이 된다.
     // 연결은 있고 인증이 죽은 것(Grok 제보 2026-08-06 '러너 없음'). 사실대로 갈라 말한다.
     if (__excludeRunners?.length) throw new Error(authExcludedNoRunnerMsg(__excludeRunners, lang));
@@ -1559,7 +1593,7 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
       : (lang === 'en'
           ? `No AI runner is connected. Connect one in Settings → AI connections (${visibleRunnerNamesLine('en')}), then try again.`
           : `AI 러너가 하나도 연결돼 있지 않습니다. 설정 → AI 연결에서 ${visibleRunnerNamesLine()} 중 하나를 연결한 뒤 다시 말을 걸어 주세요.`));
-  }
+  } catch (e) { await failBeforeRun(e, { flags: { noRunner: true }, ev: evFrom }); } // 이 갈래가 던지는 것은 위 안내 문구뿐이다 — 활동에 남긴 뒤 그대로 던진다
   const runner = resolved.runner;
   // 이번 턴까지 시도한 러너 목록 — 아래 두 실행 경로(CLI·SDK)의 인증 자가치유가 공유한다.
   const tried = excludeWith(__excludeRunners, runner);
@@ -1736,7 +1770,7 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
 
 ${systemPromptFor(md, p.root, skills, meta, lang, { hasTools: cliTools, connectors: cliConnectors, userName: turnUser })}${orgRules}${commonDirectives({ caps: cliCaps, connectedMcp: cliMcp, connectors: cliConnectors, hasTools: cliTools, gated: cliGated, lang, runner, workRoots: cliWorkRoots, pinnedFolder: cliPin, source: turnSource, fullAuto })}${cliRoster}${browserBridge ? browserMcpDirective(lang) : ''}${messengerNote}${fallbackDirective}
 ${ctx ? `\n${ctx}` : ''}
-${sharedBlock || (source === 'session' ? newMsgHead(source, lang) : (lang === 'en' ? "## User's new instruction\n" : '## 사용자의 새 지시\n'))}${userMsg}${attNote}
+${sharedBlock || (source === 'session' ? newMsgHead(source, lang) : (lang === 'en' ? "## User's new instruction\n" : '## 사용자의 새 지시\n'))}${userMsg}${attNote}${runnerNote}
 
 ${lang === 'en'
         ? '(You are the agent of the persona above. Always reply in English, even if the user wrote to you in Korean.)'
@@ -1814,7 +1848,8 @@ ${lang === 'en'
       }
       cliInbox.closed = true;
       __turnControl.check();
-      if (!reply && !doneText) throw new Error(lang === 'en' ? `The ${RUNNERS[runner].name} runner returned an empty response` : `${RUNNERS[runner].name} 러너가 빈 응답을 반환했습니다`);
+      // emptyReply 표지 — 대화 턴의 문구·처리는 그대로 두고, 루틴(routines.mjs runTurn)만 이 표지를 보고 사용자가 알아듣는 문구로 바꾼다(빈 답은 실패 그대로)
+      if (!reply && !doneText) throw Object.assign(new Error(lang === 'en' ? `The ${RUNNERS[runner].name} runner returned an empty response` : `${RUNNERS[runner].name} 러너가 빈 응답을 반환했습니다`), { emptyReply: true });
       // 메신저 제어 줄은 러너 출력에서 먼저 분리한다 — 지시 실행·거부 안내가 뒤에 붙어도 마지막 판정이 유지된다.
       let msgrDisposition = null;
       if (mirrorCtx?.kind === 'msgr') ({ text: reply, disposition: msgrDisposition } = parseMessengerDisposition(reply));
@@ -1836,7 +1871,7 @@ ${lang === 'en'
           __turnControl.check();
           const follow = await runToolFollowUp(chat, wsId, agentSlug, {
             results: toolResults, toolHop, lang, userMsg, sessionId,
-            chatOpts: { __turnControl, from, source, hop, chain, delegationRelaxed, delegationTree: tree, runnerOverride: runner, modelOverride, mirrorCtx, journal, workFolder, sessionChain, notOwnerDirect },
+            chatOpts: { __turnControl, from, source, hop, chain, delegationRelaxed, delegationTree: tree, runnerOverride: runner, modelOverride, mirrorCtx, journal, workFolder, sessionChain, notOwnerDirect, runnerNote },
           });
           if (follow) {
             let followText = follow.reply || follow.note;
@@ -1917,7 +1952,7 @@ ${lang === 'en'
       if (!aborted && !__crashRetry && isProcessCrash(e?.message || e)) {
         console.warn(`[argo] ${runner} 프로세스 비정상 종료 — 같은 러너로 1회 재시도(${wsId}/${agentSlug})`);
         try {
-          return await chat(wsId, agentSlug, userMsg, sessionId, { __turnControl, from, source, __downgradedFrom, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, sessionChain, notOwnerDirect, __seedNotes: sharedNotes, __excludeRunners, __crashRetry: true, __lockupRetry });
+          return await chat(wsId, agentSlug, userMsg, sessionId, { __turnControl, from, source, __downgradedFrom, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, sessionChain, notOwnerDirect, runnerNote, __seedNotes: sharedNotes, __excludeRunners, __crashRetry: true, __lockupRetry });
         } catch (e2) { e = e2; if (e2?.aborted) aborted = true; }
       }
       // 도구 잠김(L2 자가치유, 2026-08-25) — 실행기 자체 고장(예: codex code-mode host)은 자격도 모델도
@@ -1928,7 +1963,7 @@ ${lang === 'en'
         console.warn(`[argo] ${runner} 도구 잠김 감지 — 재조달 후 1회 재시도(${wsId}/${agentSlug})`);
         await reprovisionRunner(runner).catch((re) => console.warn(`[argo] ${runner} 재조달 실패:`, re?.message ?? re));
         try {
-          return await chat(wsId, agentSlug, userMsg, sessionId, { __turnControl, from, source, __downgradedFrom, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, sessionChain, notOwnerDirect, __seedNotes: sharedNotes, __excludeRunners, __crashRetry, __lockupRetry: true });
+          return await chat(wsId, agentSlug, userMsg, sessionId, { __turnControl, from, source, __downgradedFrom, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, sessionChain, notOwnerDirect, runnerNote, __seedNotes: sharedNotes, __excludeRunners, __crashRetry, __lockupRetry: true });
         } catch (e2) { e = e2; if (e2?.aborted) aborted = true; }
       }
       if (!aborted && shouldSelfHeal(e, { retried: __lockupRetry })) { // 필드(authExpired) 우선 — 게이트가 끊은 턴도 다른 러너로(HIGH-1).
@@ -1942,7 +1977,7 @@ ${lang === 'en'
             // 실패한 러너의 사건을 먼저 남긴다 — 치유 성공 시 조기 return이 실패 기록을 삼켜,
             // P2가 "인증 오류"라 말하는 턴에 연결 카드(P1-1)의 그 러너는 멀쩡해 보였다(검수 관점3 미탐).
             await appendEvent(wsId, { ...evBase, ok: false, ms: Date.now() - t0, error: String(e.message || e).slice(0, 400), selfHealed: true }).catch(() => {});
-            const healed = await chat(wsId, agentSlug, userMsg, sessionId, { __turnControl, from, source, __downgradedFrom: null, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, sessionChain, notOwnerDirect, __seedNotes: sharedNotes, __excludeRunners: tried });
+            const healed = await chat(wsId, agentSlug, userMsg, sessionId, { __turnControl, from, source, __downgradedFrom: null, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, sessionChain, notOwnerDirect, runnerNote, __seedNotes: sharedNotes, __excludeRunners: tried });
             return { ...healed, fellBack: healed.fellBack ?? { from: runner, to: alt.runner, reason: 'auth' } }; // 첫 원인 우선 — 안쪽이 이미 표식했으면 유지(P2)
           } catch (e2) {
             e = e2; if (e2?.aborted) aborted = true; // 재시도도 실패 — 아래 공통 실패 처리(공유 노트 복원 포함)로 낙하. 재시도 중 중단도 중단으로 기록
@@ -2080,7 +2115,7 @@ ${lang === 'en'
     ? (lang === 'en' ? '(Even if this company has full auto mode on, it does not apply to this turn — file request_approval before any action that leaves the company.)\n\n'
       : '(이 회사에 풀 오토 모드가 켜져 있어도 이 턴에는 적용되지 않는다 — 회사 밖으로 나가는 행동은 request_approval로 결재를 먼저 올려라.)\n\n')
     : '';
-  let promptText = `${faNote}${crossCtx}${sharedBlock}${userMsg}`;
+  let promptText = `${faNote}${crossCtx}${sharedBlock}${userMsg}${runnerNote}`;
   if (fileAtt.length) {
     promptText += lang === 'en'
       ? `\n\n(Files the user attached — open them with the Read tool: ${fileAtt.map((a) => `vault/${a.rel}`).join(', ')})`
@@ -2408,7 +2443,7 @@ ${lang === 'en'
       try {
         // 제외 목록은 받은 그대로 넘긴다(tried 아님) — 세션 부재는 러너 잘못이 아니라서 같은 러너로
         // 다시 시도해야 한다. 여기서 현재 러너를 제외하면 세션 문제로 벤더가 갈리는 오작동이 된다.
-        return await chat(wsId, agentSlug, userMsg, null, { __turnControl, from, source, __downgradedFrom, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, sessionChain, notOwnerDirect, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunners });
+        return await chat(wsId, agentSlug, userMsg, null, { __turnControl, from, source, __downgradedFrom, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, sessionChain, notOwnerDirect, runnerNote, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunners });
       } catch (e2) {
         e = e2; retriedDown = true; if (e2?.aborted) aborted = true; // 낙하 — 아래 공통 실패 처리(공유 노트 복원 포함)로. 재시도 중 중단도 중단으로 기록
       }
@@ -2420,7 +2455,7 @@ ${lang === 'en'
       const baseModel = effectiveModels(runner).find((m) => !m.gated)?.id ?? '';
       console.warn(`[argo] ${runner} 게이트 모델 접근 불가(${effModel}) — 기본 모델(${baseModel})로 강등 재시도(${wsId}/${agentSlug})`);
       try {
-        return await chat(wsId, agentSlug, userMsg, sessionId, { __turnControl, from, source, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride: baseModel, workFolder, journal, sessionChain, notOwnerDirect, __freshRetry, __seedNotes: sharedNotes, __excludeRunners, __crashRetry, __lockupRetry, __downgradedFrom: effModel });
+        return await chat(wsId, agentSlug, userMsg, sessionId, { __turnControl, from, source, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride: baseModel, workFolder, journal, sessionChain, notOwnerDirect, runnerNote, __freshRetry, __seedNotes: sharedNotes, __excludeRunners, __crashRetry, __lockupRetry, __downgradedFrom: effModel });
       } catch (e2) { e = e2; retriedDown = true; if (e2?.aborted) aborted = true; }
     }
     // 인증 오탐 자가 치유 — SDK 러너의 자격이 실은 죽어 있던 경우(스테일 로그인 흔적 등), **죽은 러너를
@@ -2432,7 +2467,7 @@ ${lang === 'en'
     if (!aborted && !retriedDown && !__crashRetry && isProcessCrash(e?.message || e)) {
       console.warn(`[argo] ${runner} 프로세스 비정상 종료 — 같은 러너로 1회 재시도(${wsId}/${agentSlug})`);
       try {
-        return await chat(wsId, agentSlug, userMsg, sessionId, { __turnControl, from, source, __downgradedFrom, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, sessionChain, notOwnerDirect, __seedNotes: sharedNotes, __excludeRunners, __crashRetry: true });
+        return await chat(wsId, agentSlug, userMsg, sessionId, { __turnControl, from, source, __downgradedFrom, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, sessionChain, notOwnerDirect, runnerNote, __seedNotes: sharedNotes, __excludeRunners, __crashRetry: true });
       } catch (e2) { e = e2; if (e2?.aborted) aborted = true; }
     }
     if (!aborted && !retriedDown && shouldSelfHeal(e, { lockup: false })) { // SDK 경로는 잠김 교체 없음(종전 계약) — 인증 문구·authExpired 필드만(HIGH-1)
@@ -2441,7 +2476,7 @@ ${lang === 'en'
         console.warn(`[argo] ${runner} 인증 실패 — ${alt.runner}로 재시도(${wsId}/${agentSlug}, 제외 ${tried.join(',')})`);
         try {
           await appendEvent(wsId, { ...evBase, ok: false, ms: Date.now() - t0, error: String(e.message || e).slice(0, 400), selfHealed: true }).catch(() => {}); // 실패 러너 사건 선기록(CLI 갈래와 대칭 — P1-1 미탐 봉합)
-          const healed = await chat(wsId, agentSlug, userMsg, null, { __turnControl, from, source, __downgradedFrom: null, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, sessionChain, notOwnerDirect, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunners: tried });
+          const healed = await chat(wsId, agentSlug, userMsg, null, { __turnControl, from, source, __downgradedFrom: null, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, sessionChain, notOwnerDirect, runnerNote, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunners: tried });
           return { ...healed, fellBack: healed.fellBack ?? { from: runner, to: alt.runner, reason: 'auth' } }; // 첫 원인 우선(P2) — CLI 갈래와 같은 계약
         } catch (e2) {
           e = e2; if (e2?.aborted) aborted = true; // 재시도도 실패 — 아래 공통 실패 처리로 낙하

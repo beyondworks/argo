@@ -303,7 +303,7 @@ test('handler: 중복 답글(다른 기기가 먼저)은 업로드 없이 종료
   await h3({ msgId: 14, orgId: ORG, channelId: CH, crewId: CREW, slug: 'seoyun', text: 'x', authorId: MEMBER, createdAt: new Date(Date.now() - 5 * 60_000).toISOString() });
   assert.match(away.calls.find((x) => x[0] === 'insertMessage')[1].body, /^\(부재중 대기분 · 5분 전 지시\)\n답$/);
   // 기기 세션 없음 → 인프라 예외(파일 유지·재시도) — 잡을 조용히 폐기하지 않는다
-  await assert.rejects(M.makeMsgrHandler(WS, { session: async () => null })({ msgId: 1 }), /기기 세션 없음/);
+  await assert.rejects(M.makeMsgrHandler(WS, { session: async () => null, runnerReady: async () => true })({ msgId: 1 }), /기기 세션 없음/); // 러너 있는 프로세스 — 러너 없는 프로세스는 세션 확인 전에 실행권을 양보한다(test/msgr-claim-runner-yield.test.mjs)
   // 게시 실패는 큐에 결과를 남겨 다시 시도한다. 유료 턴을 다시 실행하지 않는다.
   const boom = fakeDb(); boom.insertMessage = async () => { throw new Error('msgr db: permission denied (42501)'); };
   let turns = 0;
