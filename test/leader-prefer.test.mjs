@@ -9,7 +9,7 @@ import { join } from 'node:path';
 
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-prefer-'));
 process.env.ARGO_SYNC = '1';
-const { renewLease, _setSyncClientForTest } = await import('../src/sync.mjs');
+const { renewLease, _setSyncClientForTest, HANDOVER_WAIT_MS } = await import('../src/sync.mjs');
 
 const fakeClient = (initialDoc = null) => {
   const calls = { upload: 0 };
@@ -33,12 +33,15 @@ test('우선 기기는 다른 일반 기기가 잡은 새 리스를 가져온다
   const f = fakeClient({ deviceId: 'mac-app', token: 'm', ts: Date.now() });
   _setSyncClientForTest(f.client); reset();
   await renewLease('owner-p1', { runnerUsable: true });
-  // 넘겨받기(2026-10-08): 남의 새 리스를 가져온 주기에는 담당을 시작하지 않는다 — 앞 담당(맥)이 다음 주기에 이 글을 읽고 물러날 때까지(겹침 0)
+  // 넘겨받기(2026-10-08): 남의 새 리스를 가져와도 바로 담당을 시작하지 않는다 — 앞 담당(맥)이 리스를 다시 읽고 물러날 시간(HANDOVER_WAIT_MS = 한 주기 + 2초)까지(겹침 0)
   assert.equal(lease().leader, false, '가져온 주기에는 아직 담당이 아니다');
   assert.equal(f.calls.upload, 1);
   assert.equal(f.doc().preferred, true, '다른 우선 기기와 서로 뺏지 않게 표시를 남긴다');
   await renewLease('owner-p1', { runnerUsable: true });
-  assert.equal(lease().leader, true, '다음 주기에 그 글이 그대로면 담당');
+  assert.equal(lease().leader, false, '앞 담당이 리스를 다시 읽을 시간(HANDOVER_WAIT_MS)이 지나기 전에는 주기가 돌아도 담당이 아니다');
+  lease().pending.ts -= HANDOVER_WAIT_MS;
+  await renewLease('owner-p1', { runnerUsable: true });
+  assert.equal(lease().leader, true, '그 시간이 지난 뒤 그 글이 그대로면 담당');
   assert.equal(f.calls.upload, 1, '확인 주기는 쓰지 않는다');
 });
 

@@ -274,8 +274,13 @@ async function holdSyncLock() {
 // leader 기본 true = "동기화 off인 단일 기기" 전제. ownedAt = 리스를 **확인된 CAS로 획득한** 시각(0=미획득).
 // 이 둘을 반드시 구분한다(검수 2026-07-23): 기본값 true는 '획득한 리더십'이 아니므로, 판정 불가 상황에서
 // 기본값을 리더로 존중하면 리스를 얻은 적 없는 프로세스가 리더로 굳어 루틴 이중 실행·이중 과금·텔레그램 409가 난다.
-// pending = 남의 새 리스를 가져오며 쓴 내 글({ token, ts }) — 앞 담당이 물러날 한 주기 동안 담당을 시작하지 않는다(renewLease '넘겨받기').
+// pending = 남의 새 리스를 가져오며 쓴 내 글({ token, ts }) — 앞 담당이 물러날 시간(HANDOVER_WAIT_MS) 동안 담당을 시작하지 않는다(renewLease '넘겨받기').
 const leaseState = (globalThis.__argoSyncLease ??= { leader: true, checkedAt: 0, ownedAt: 0, yieldSince: 0, pending: null });
+/** 넘겨받기 대기 — 남의 새 리스를 가져오며 내 글을 쓴 뒤 담당을 시작하기까지의 최소 시간. 앞 담당은 동기화 주기마다(주기 앞머리의 arbitrateLease) 리스를 다시 읽으므로
+    한 주기(CYCLE_MS) + 여유 2초면 그 사이 내 글을 읽고 물러났다. '내 다음 주기'로 세면 안 된다: 맥에서 대화를 보내면 nudgeSync가 기다림 없이 다음 주기를 돌려
+    대기가 사라졌다(D 1차 검수 실측, 운영 주기 8초: 맥 1.1초 만에 담당·VPS 3.1초에 물러남 → 겹침 2초). 기다리는 동안은 읽기만 한다(쓰기 합계 1 그대로).
+    앞 담당의 주기가 큰 파일 동기화로 2초 넘게 길어지면 그만큼은 덮지 못한다(PR #884 '남은 것'). (export: 회귀 테스트용) */
+export const HANDOVER_WAIT_MS = CYCLE_MS + 2_000;
 
 /** 러너 없는 기기의 리더 획득 양보 판정(유건 지시 2026-07-25) — 자격 있는 기기가 담당이 되도록,
     빈 리스를 그레이스 동안 잡지 않는다. 그레이스가 지나면 그래도 획득한다 — 어느 기기에도 러너가
@@ -293,22 +298,28 @@ export const shouldYieldAcquire = (runnerUsable, yieldSince, now = Date.now()) =
        규칙(holdsLeaseOnWriteFailure)과도 같다.
     ② 기동 직후 기본값(leader true, 리스 확인 전)은 첫 확인(보통 몇 초)까지 담당이 아니다 — 다른 기기가 담당인데 맥 앱이 켜지는 순간 그 몇 초 동안 둘이 함께
        담당이었다(두 프로세스 실측). 30초 안에 리스를 확인하지 못하면(세션 만료 등으로 동기화가 리스까지 못 감) 종전대로 담당이다 — 동기화가 안 되는 단일 기기의
-       루틴이 멈추지 않게. 스케줄러 첫 틱은 기동 60초 뒤라 루틴 시각은 그대로다. */
+       루틴이 멈추지 않게. 스케줄러 첫 틱은 기동 60초 뒤라 루틴 시각은 그대로다.
+    ③ 예비 기기(argo run --standby)에는 ②의 기본값이 없다 — 리스를 직접 확인해 가져온(ownedAt > 0) 신선한 보유일 때만 담당이다. 예비 기기의 약속은
+       "다른 기기가 맡고 있지 않을 때만"인데, 동기화가 리스까지 가지 못하는 예비 기기(세션 만료·같은 refresh 토큰 회전 경합·네트워크)는 그것을 알 수 없다.
+       ②를 그대로 두면 맥이 담당인데 30초 뒤 VPS도 담당이 돼 양쪽 스케줄러가 같은 루틴을 돌렸다(D 1차 검수 실측: 30.1초 뒤 겹침 2).
+       대가: 맥도 꺼져 있고 VPS 동기화도 끊겼으면 아무도 맡지 않는다 — 동기화가 끊긴 기기는 남의 담당 여부를 모르니 공백 쪽이 맞다(docs/selfhost.md). */
 const BOOT_CHECK_WAIT_MS = 30_000;
 const leaseBootAt = (globalThis.__argoSyncLeaseBootAt ??= Date.now());
 export function isCloudLeader(now = Date.now()) {
   if (!syncOn()) return true;
   if (!leaseState.leader) return false;
   if (leaseState.ownedAt > 0) return now - leaseState.ownedAt < LEASE_TTL_MS;
+  if (leaseRole() === 'standby') return false; // ③
   return leaseState.checkedAt > 0 || now - leaseBootAt >= BOOT_CHECK_WAIT_MS;
 }
 
 /** 예비 기기(argo run --standby)가 지금 확인된 담당이 아닌가 — 예비 기기는 담당일 때만 팀 메신저를 받는다(gateway.mjs ensureGateway).
     메신저 브리지는 리스와 무관하게 모든 기기에서 돈다(실행권은 서버 클레임이 하나로 묶는다) — 그대로면 맥이 담당이어도 VPS가 먼저 집은 글은 VPS가 답한다.
-    기동 직후 기본값(리스 확인 전)은 담당으로 치지 않는다: 맥이 담당인데 VPS가 켜지자마자 메신저를 받으면 겹친다. 일반·우선 기기는 늘 거짓(종전 동작). */
+    판정은 isCloudLeader 그대로다(예비 기기는 확인된 신선한 보유만 담당 — 위 ③). 두 판정을 따로 두면 스케줄러·감시는 돌고 메신저만 꺼진 어긋난 상태가 생겼다(D 1차 검수).
+    일반·우선 기기는 늘 거짓(종전 동작). */
 export function standbyIdle(now = Date.now()) {
   if (leaseRole() !== 'standby' || !syncOn()) return false;
-  return !(leaseState.leader && leaseState.ownedAt > 0 && now - leaseState.ownedAt < LEASE_TTL_MS);
+  return !isCloudLeader(now);
 }
 
 /** 리스 글의 비서 엔진 번호 — 능동 비서 감시기(src/assistant)가 든 본체가 리스를 쓸 때 싣는다. 옛 본체는 이 칸을 쓰지 않고 모르는 칸은 무시한다(쓰기 수 그대로).
@@ -360,9 +371,11 @@ export async function renewLease(owner, { runnerUsable = true } = {}) {
     leaseState.yieldSince = 0; // 담당자가 있으니 양보 타이머 리셋
     return;
   }
-  // 넘겨받기 확인 — 앞 주기에 남의 새 리스를 가져오며 쓴 내 글이 그대로면 앞 담당은 그 사이(동기화 주기) 이 글을 읽고 물러났다. 이제 담당을 시작한다.
+  // 넘겨받기 확인 — 남의 새 리스를 가져오며 쓴 내 글이 HANDOVER_WAIT_MS 동안 그대로면 앞 담당은 그 사이(동기화 한 주기) 이 글을 읽고 물러났다. 이제 담당을 시작한다.
+  // 그 시간이 지나기 전에는 읽기만 하고 쓰지도 담당하지도 않는다(nudge로 주기가 빨라져도 대기가 줄지 않게 — HANDOVER_WAIT_MS 주석).
   // 다시 쓰지 않는다(쓰기 합계 1 — DB 위생). 보유 시각은 그 글을 쓴 시각이다: 30초 갱신 규칙과 담당 신선도(isCloudLeader)의 기준.
   if (fresh && cur.deviceId === me && leaseState.pending && cur.token === leaseState.pending.token) {
+    if (Date.now() - leaseState.pending.ts < HANDOVER_WAIT_MS) { leaseState.checkedAt = Date.now(); return; }
     leaseState.pending = null;
     leaseState.leader = true;
     leaseState.ownedAt = Number(cur.ts) || Date.now();
@@ -420,7 +433,7 @@ export async function renewLease(owner, { runnerUsable = true } = {}) {
   if (winner?.deviceId) leaseState.holder = { deviceId: String(winner.deviceId), assistant: Number(winner.assistant) || 0, ts: Number(winner.ts) || 0 };
   if (iWon && preempt) {
     // 남의 새 리스를 가져왔다 — 앞 담당은 다음 동기화 주기에 이 글을 읽고 물러난다. 그때까지 담당을 시작하지 않는다(둘이 함께 담당인 창을 없앤다:
-    // 넘어가는 순간 양쪽 스케줄러가 같은 루틴을, 양쪽 게이트웨이가 같은 슬랙 글을 처리하지 않게). 다음 주기에 이 글이 그대로면 위 '넘겨받기 확인'이 담당을 시작한다.
+    // 넘어가는 순간 양쪽 스케줄러가 같은 루틴을, 양쪽 게이트웨이가 같은 슬랙 글을 처리하지 않게). HANDOVER_WAIT_MS 뒤 주기에 이 글이 그대로면 위 '넘겨받기 확인'이 담당을 시작한다.
     if (!leaseState.pending) console.log(`[argo] 동기화: 실행 담당 넘겨받는 중 ← ${cur.deviceId} (앞 담당이 물러나는 한 주기 뒤 시작)`);
     leaseState.pending = { token, ts: Number(winner.ts) || Date.now() };
     leaseState.leader = false;

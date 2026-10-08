@@ -14,7 +14,7 @@ process.env.ARGO_SYNC = '1';
 // 동기화 켜짐(syncOn) — 기기 세션 파일이 있어야 isCloudLeader가 리스 표시를 본다(없으면 단일 기기로 보고 늘 참). 네트워크는 쓰지 않는다(가짜 저장소).
 writeFileSync(join(process.env.ARGO_ROOT, '.device-session.json'), JSON.stringify({ url: 'https://example.invalid', anonKey: 'anon', access_token: 'a.b.c', refresh_token: 'r', expires_at: Math.floor(Date.now() / 1000) + 3600, user: { id: 'u-pins', email: '' } }), { mode: 0o600 });
 for (const k of ['ARGO_PREFER_LEADER', 'ARGO_NO_LEADER', 'ARGO_STANDBY_LEADER']) delete process.env[k];
-const { renewLease, isCloudLeader, _setSyncClientForTest, LEASE_TTL_MS } = await import('../src/sync.mjs');
+const { renewLease, isCloudLeader, _setSyncClientForTest, LEASE_TTL_MS, HANDOVER_WAIT_MS = 0 } = await import('../src/sync.mjs'); // 넘겨받기 대기는 배포본에 없다(0)
 const { getDeviceId } = await import('../src/workspace.mjs');
 
 const fakeClient = (initialDoc = null) => {
@@ -60,14 +60,16 @@ test('만료된 남의 리스는 바로 가져온다 — 쓰기 1번, 그 주기
   assert.equal(f.doc().deviceId, await getDeviceId());
 });
 
-test('우선 기기(러너 있음)는 일반 기기의 새 리스를 가져와 두 주기 안에 담당이 되고, 쓰기는 1번이다', async () => {
+test('우선 기기(러너 있음)는 일반 기기의 새 리스를 가져와 담당이 되고, 쓰기는 1번이다', async () => {
   process.env.ARGO_PREFER_LEADER = '1';
   const f = fakeClient({ deviceId: 'mac-app', token: 'm', ts: Date.now() });
   _setSyncClientForTest(f.client); reset();
   await renewLease('owner-pin4', { runnerUsable: true });
   await renewLease('owner-pin4', { runnerUsable: true });
+  if (lease().pending) lease().pending.ts -= HANDOVER_WAIT_MS; // 넘겨받기 대기(이 브랜치)가 지난 것으로 — 배포본은 첫 주기에 바로 담당이라 할 일이 없다
+  await renewLease('owner-pin4', { runnerUsable: true });
   assert.equal(lease().leader, true);
-  assert.equal(f.calls.upload, 1, '넘겨받는 데 쓰기 1번 — 두 번째 주기는 쓰지 않는다(30초 갱신 규칙)');
+  assert.equal(f.calls.upload, 1, '넘겨받는 데 쓰기 1번 — 뒤 주기들은 쓰지 않는다(30초 갱신 규칙)');
   assert.equal(f.doc().preferred, true);
 });
 

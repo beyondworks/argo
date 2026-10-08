@@ -14,7 +14,7 @@ process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-standby-'));
 process.env.ARGO_SYNC = '1';
 writeFileSync(join(process.env.ARGO_ROOT, '.device-session.json'), JSON.stringify({ url: 'https://example.invalid', anonKey: 'anon', access_token: 'a.b.c', refresh_token: 'r', expires_at: Math.floor(Date.now() / 1000) + 3600, user: { id: 'u-standby', email: '' } }), { mode: 0o600 });
 for (const k of ['ARGO_PREFER_LEADER', 'ARGO_NO_LEADER', 'ARGO_STANDBY_LEADER']) delete process.env[k];
-const { renewLease, isCloudLeader, standbyIdle, _setSyncClientForTest, LEASE_TTL_MS, YIELD_GRACE_MS } = await import('../src/sync.mjs');
+const { renewLease, isCloudLeader, standbyIdle, _setSyncClientForTest, LEASE_TTL_MS, YIELD_GRACE_MS, HANDOVER_WAIT_MS } = await import('../src/sync.mjs');
 const { leaseRole } = await import('../src/lease-role.mjs');
 const { getDeviceId } = await import('../src/workspace.mjs');
 const ME = await getDeviceId();
@@ -46,6 +46,8 @@ const role = (r) => {
 };
 afterEach(() => role('normal'));
 const fresh = (deviceId, extra = {}) => ({ deviceId, token: `t-${deviceId}`, ts: Date.now(), assistant: 2, ...extra });
+/** 넘겨받기 대기(HANDOVER_WAIT_MS)가 지난 것으로 — 내 글을 쓴 시각(메모리)만 앞당긴다. 리스 글의 ts는 그대로라 보유 시각 단언이 흔들리지 않는다. */
+const elapseHandover = () => { if (lease().pending) lease().pending.ts -= HANDOVER_WAIT_MS; };
 
 /* ── 역할 ── */
 
@@ -102,10 +104,29 @@ test('맥(일반·러너 있음)은 예비 기기가 잡은 새 리스를 되찾
   assert.equal(f.calls.upload, 1);
   assert.equal(f.doc().deviceId, ME);
   assert.equal(f.doc().standby, undefined);
+  elapseHandover();
   await renewLease('owner-m1', { runnerUsable: true });
   assert.equal(lease().leader, true);
   assert.equal(f.calls.upload, 1, '확인 주기는 쓰지 않는다');
   assert.ok(Date.now() - lease().ownedAt < 5_000, '보유 시각 = 넘겨받은 글을 쓴 시각(30초 갱신 규칙의 기준)');
+});
+
+test('넘겨받기 대기는 주기 수가 아니라 시간으로 센다 — 맥에서 대화를 보내 동기화 주기가 연달아 돌아도(nudgeSync) 대기 시간 전에는 담당이 아니고 쓰지 않는다', async () => {
+  for (const [label, r, doc] of [['맥(일반) ← 예비', 'normal', fresh('vps', { standby: true })], ['우선 ← 일반', 'preferred', fresh('mac-app')]]) {
+    role(r);
+    const f = fakeClient(doc);
+    _setSyncClientForTest(f.client); reset({ leader: false });
+    for (let i = 0; i < 6; i++) await renewLease('owner-h1', { runnerUsable: true });
+    assert.equal(lease().leader, false, `${label}: 앞 담당이 리스를 다시 읽을 시간(한 주기 + 2초)이 지나기 전에는 담당을 시작하지 않는다 — 둘이 함께 담당인 창`);
+    assert.equal(isCloudLeader(), false, label);
+    assert.equal(f.calls.upload, 1, `${label}: 기다리는 주기는 읽기만 한다(쓰기 합계 1)`);
+    assert.ok(f.calls.download >= 6, label);
+    elapseHandover();
+    await renewLease('owner-h1', { runnerUsable: true });
+    assert.equal(lease().leader, true, `${label}: 대기 시간이 지난 뒤 그 글이 그대로면 담당`);
+    assert.equal(f.calls.upload, 1, label);
+  }
+  assert.ok(HANDOVER_WAIT_MS > 8_000, '운영 주기(8초)보다 길다');
 });
 
 test('되찾는 사이 VPS가 마침 갱신해 내 글을 덮었으면 다시 넘겨받기를 시도한다(담당 시작 안 함)', async () => {
@@ -117,6 +138,7 @@ test('되찾는 사이 VPS가 마침 갱신해 내 글을 덮었으면 다시 �
   assert.equal(lease().leader, false);
   assert.equal(f.calls.upload, 2);
   assert.equal(f.doc().deviceId, ME);
+  elapseHandover();
   await renewLease('owner-m2', { runnerUsable: true });
   assert.equal(lease().leader, true);
   assert.equal(f.calls.upload, 2);
@@ -148,6 +170,7 @@ test('우선 기기는 예비 기기의 새 리스도 가져온다(우선 > 예�
   const f = fakeClient(fresh('vps', { standby: true }));
   _setSyncClientForTest(f.client); reset({ leader: false });
   await renewLease('owner-p1', { runnerUsable: true });
+  elapseHandover();
   await renewLease('owner-p1', { runnerUsable: true });
   assert.equal(lease().leader, true);
   assert.equal(f.doc().preferred, true);
@@ -183,11 +206,32 @@ test('기동 직후(리스 확인 전 기본값)는 첫 확인까지 담당이 �
   assert.equal(isCloudLeader(), true, '리스를 확인했는데 기본값이 남은 경우(로컬 회사 0개 등)');
 });
 
+test('예비 기기는 기동 직후 기본값으로 담당이 되지 않는다 — 리스를 확인하지 못한 채(세션 만료 등) 30초가 지나도. 확인된 신선한 보유일 때만 담당이고, 메신저 판정(standbyIdle)과 늘 같다', () => {
+  role('standby');
+  reset();
+  assert.equal(isCloudLeader(), false);
+  assert.equal(isCloudLeader(Date.now() + 31_000), false, '맥이 담당인지 알 수 없는 예비 기기가 30초 뒤 맡으면 맥과 같은 루틴을 함께 돌린다(D 1차 검수 실측)');
+  assert.equal(isCloudLeader(Date.now() + 10 * 60_000), false);
+  reset({ leader: true, ownedAt: 0, checkedAt: Date.now() });
+  assert.equal(isCloudLeader(), false, '리스를 읽었어도 가져오지 않았으면(ownedAt 0) 담당이 아니다');
+  reset({ leader: true, ownedAt: Date.now() - 5_000, checkedAt: Date.now() });
+  assert.equal(isCloudLeader(), true, '리스를 가져온 예비 기기는 담당');
+  const states = [{}, { leader: false, checkedAt: Date.now() }, { leader: true, ownedAt: 0, checkedAt: Date.now() }, { leader: true, ownedAt: Date.now() - 5_000 },
+    { leader: true, ownedAt: Date.now() - LEASE_TTL_MS - 1, checkedAt: Date.now() - LEASE_TTL_MS - 1 }];
+  for (const st of states) for (const dt of [0, 31_000]) {
+    reset(st);
+    assert.equal(standbyIdle(Date.now() + dt), !isCloudLeader(Date.now() + dt), `예비 기기의 스케줄러·감시(isCloudLeader)와 메신저(standbyIdle) 판정이 갈리면 안 된다 ${JSON.stringify(st)} +${dt}`);
+  }
+  role('normal'); reset();
+  assert.equal(isCloudLeader(Date.now() + 31_000), true, '일반 기기는 종전대로 30초 뒤 담당(동기화가 안 되는 단일 기기의 루틴이 멈추지 않게) — 핀');
+});
+
 test('깬 맥이 다음 주기에 리스를 다시 확인하면 — VPS가 가져갔으면 넘겨받기, 아무도 안 가져갔으면 바로 담당', async () => {
   const f = fakeClient(fresh('vps', { standby: true }));
   _setSyncClientForTest(f.client); reset({ leader: true, ownedAt: Date.now() - 10 * 60_000, checkedAt: Date.now() - 10 * 60_000 });
   await renewLease('owner-w1', { runnerUsable: true });
   assert.equal(isCloudLeader(), false);
+  elapseHandover();
   await renewLease('owner-w1', { runnerUsable: true });
   assert.equal(isCloudLeader(), true);
   const g = fakeClient({ ...fresh(ME), ts: Date.now() - 10 * 60_000 });
