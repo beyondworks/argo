@@ -24,7 +24,7 @@ globalThis.fetch = async () => { throw new Error('Network disabled in one-person
 
 // ── 가짜 러너 — 러너 이름은 테스트가 고르고, 받은 글(프롬프트·시스템 글·이어 쓰기 세션)을 모은다 ──
 let runner = 'codex';
-const seen = []; // { runner, prompt, system, resume }
+const seen = []; // { runner, prompt, system, resume, persist(SDK persistSession) }
 function answerFor(prompt) {
   if (!/방금 숫자|what number/i.test(prompt)) return '기억했어요';
   const hits = [...String(prompt).matchAll(/(\d+) 기억해/g)];
@@ -32,7 +32,7 @@ function answerFor(prompt) {
 }
 globalThis.__opRunner = () => runner;
 globalThis.__opCli = (args) => { seen.push({ runner, prompt: args.prompt, system: args.prompt, resume: null }); return answerFor(args.prompt); };
-globalThis.__opSdk = (prompt, options) => { seen.push({ runner, prompt, system: String(options?.systemPrompt ?? ''), resume: options?.resume ?? null }); return answerFor(prompt); };
+globalThis.__opSdk = (prompt, options) => { seen.push({ runner, prompt, system: String(options?.systemPrompt ?? ''), resume: options?.resume ?? null, persist: options?.persistSession }); return answerFor(prompt); };
 const wrappers = new Map();
 for (const [relative, replacements] of [
   ['./runners.mjs', `export const resolveRunner = async () => ({runner:globalThis.__opRunner(),available:true,fellBack:false});
@@ -283,6 +283,21 @@ test('주인 혼자 1:1의 기록은 다른(남 낀) 방 답에도 새지 않는
   assert.doesNotMatch(lastPrompt(), /SOLO_SECRET/);
 });
 
+test('[claude] SDK 전사 — 세션을 남기지 않는 턴(1:1·기억 안 남김 채널)은 persistSession:false, 데스크톱·보통 채널 턴은 종전(기본값) 그대로(재검수 4차 LOW)', async () => {
+  runner = 'claude'; const ws = await company();
+  const lastPersist = () => { assert.ok(seen.length > mark, '러너가 불리지 않았다'); return seen.at(-1).persist; };
+  await desk(ws, '3 기억해 ORG_SECRET');
+  assert.equal(lastPersist(), undefined, '데스크톱 턴은 전사를 남긴다(다음 턴이 잇는다)');
+  assert.equal(await say(ws, room({ orgId: ORG, channelId: OCH }), '7 기억해 ORG_SECRET'), '기억했어요');
+  assert.equal(lastPersist(), false, '조직 1:1');
+  assert.equal(await say(ws, room({ pair: `crew:${CREW}` }), '방금 숫자?'), '7', '1:1 맥락은 그대로 이어진다(전사가 아니라 스레드 기록으로)');
+  assert.equal(lastPersist(), false, '개인 공간 1:1');
+  await say(ws, room({ orgId: ORG, channelId: GCH, kind: 'channel', crewMemory: false }), '안녕');
+  assert.equal(lastPersist(), false, '기억 안 남김 채널');
+  await say(ws, room({ orgId: ORG, channelId: GCH, kind: 'channel' }), '안녕');
+  assert.equal(lastPersist(), undefined, '보통 채널은 채널 세션을 잇는다');
+});
+
 // ── 3. 두 Argo 프로세스가 다른 사본을 가진 경우 ──
 test('두 사본 — 한쪽은 데스크톱, 한쪽은 주인 1:1을 기록해도 동기화 병합 뒤 양쪽 맥락에 다 실린다', async () => {
   runner = 'codex';
@@ -321,6 +336,16 @@ for (const r0 of ['codex', 'claude']) {
     await writeFile(join(paths(ws).root, 'skills', 'captain-rules.md'), '# 사용자 규칙\n\n- 사용자를 "형"이라고 부른다 (2026-10-01 채택)\n');
     await say(ws, room({ pair: `crew:${CREW}` }), '안녕');
     assert.doesNotMatch(lastSystem(), NAMED_KO);
+  });
+  test(`[${r0}] 호칭 — 확정 규칙의 '사용자의 고객은 …라고 부른다'는 호칭 규칙이 아니다(이름 지시·호칭 금지 줄이 그대로, 재검수 4차 LOW)`, async () => {
+    runner = r0; const ws = await company();
+    await mkdir(join(paths(ws).root, 'skills'), { recursive: true });
+    await writeFile(join(paths(ws).root, 'skills', 'captain-rules.md'), '# 사용자 규칙\n\n- 사용자의 고객은 "회원님"이라고 부른다 (2026-10-08 채택)\n- 사용자 매뉴얼은 "가이드"라고 부른다 (2026-10-08 채택)\n');
+    await say(ws, room({ pair: `crew:${CREW}` }), '안녕');
+    const sys = lastSystem();
+    assert.match(sys, /회원님/, '확정 규칙 본문은 실린다');
+    assert.match(sys, NAMED_KO, '이름 지시가 그대로');
+    assert.doesNotMatch(sys, /직접 정한 규칙/);
   });
   test(`[${r0}] 호칭 — 규칙이 없으면 종전대로 이름 지시가 실린다`, async () => {
     runner = r0; const ws = await company();

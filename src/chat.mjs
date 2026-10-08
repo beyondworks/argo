@@ -2257,6 +2257,9 @@ ${lang === 'en'
       settingSources: [], // 호스트의 CLAUDE.md/스킬 미주입(테넌트 격리)
       title: 'Argo', // SDK 자동 제목 생성 건너뜀 — 쓰지 않는 제목에 첫 글 전체를 haiku로 한 번 더 보내던 요청(oneshot.mjs 같은 줄 주석)
       ...(resumeId ? { resume: resumeId } : {}),
+      // 세션을 남기지 않는 턴(메신저 DM·기억 안 남김 채널)은 SDK 전사도 디스크(설정 폴더 projects/)에 쓰지 않는다 — 이 턴은 다시 잇지 않고(재시도도 sessionId=null),
+      // 전사를 읽는 코드도 없다. 남기면 1:1 턴에 실린 데스크톱 맥락(다른 조직 1:1 줄 포함)이 턴마다 사본으로 쌓이고, 세션 id를 기록하지 않아 회수(msgr-recall)도 못 지운다(재검수 4차 LOW).
+      ...(sessionless ? { persistSession: false } : {}),
     },
   });
   // 사장 정지 버튼 — 진행 중 턴의 interrupt 핸들을 등록해 abort API가 잡을 수 있게
