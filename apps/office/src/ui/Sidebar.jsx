@@ -250,7 +250,7 @@ export function Sidebar({ space, path }) {
     business: { to: `${base}/business`, icon: NAV_ICON.business, label: t('nav.business'), active: (path === `${base}/business` || path.startsWith(`${base}/business/`)) && !path.startsWith(`${base}/business/library`) },
     contracts: { to: `${base}/contracts`, icon: NAV_ICON.contracts, label: t('nav.contracts'), active: at(`${base}/contracts`) },
     files: { to: `${base}/files`, icon: NAV_ICON.files, label: t('nav.files'), active: path === `${base}/files` || path.startsWith(`${base}/files/`) },
-    mail: { to: '/me/mail', icon: NAV_ICON.mail, label: t('nav.mail'), count: unread, active: path.startsWith('/me/mail') },
+    mail: { to: `${base}/mail`, icon: NAV_ICON.mail, label: t('nav.mail'), count: unread, active: path === `${base}/mail` || path.startsWith(`${base}/mail/`) }, // 조직 공간에서도 내 개인 메일함
     briefings: { to: '/me/briefings', icon: NAV_ICON.briefings, label: t('nav.briefings'), active: path.startsWith('/me/briefings') }, // 브리핑(10/5) — 내 공간에만
     work: { to: `${base}/work`, icon: NAV_ICON.work, label: t('nav.work'), active: at(`${base}/work`) },
     approvals: { to: `${base}/approvals`, icon: NAV_ICON.approvals, label: t('nav.approvals'), count: pendingHere, active: at(`${base}/approvals`) },

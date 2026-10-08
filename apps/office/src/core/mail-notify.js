@@ -21,10 +21,10 @@ export async function askPermission() {
 export function showNotify({ title, body, id = null }) {
   if (notifyPermission() !== 'granted') return false;
   const n = new window.Notification(title, { body, tag: 'argo-office-mail' });
-  if (n && typeof n === 'object') n.onclick = () => { window.focus(); navigate(id ? `/me/mail/${id}` : '/me/mail'); n.close?.(); };
+  if (n && typeof n === 'object') n.onclick = () => { window.focus(); const sp = location.pathname.match(/^\/o\/[^/]+(?=\/|$)/)?.[0] ?? '/me'; navigate(`${sp}/mail${id ? `/${id}` : ''}`); n.close?.(); }; // 지금 있는 공간의 메일함(조직 공간도 같은 내 메일함)
   return true;
 }
-const watching = () => document.hasFocus() && !document.hidden && location.pathname.startsWith('/me/mail');
+const watching = () => document.hasFocus() && !document.hidden && /^\/(me|o\/[^/]+)\/mail(\/|$)/.test(location.pathname);
 /** 자동 갱신이 넘긴 새 메일 — 1통이면 '보낸 사람 / 제목', 여러 통이면 '새 메일 N통 / 이름' */
 export function notifyMail(list) {
   if (!list?.length || watching()) return false;

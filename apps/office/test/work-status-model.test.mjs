@@ -250,3 +250,14 @@ test('출처 표시 sourceOf: 주인 대조를 통과한 일만 이름을 보이
   assert.deepEqual(sourceOf({ source: { kind: 'notion', id: 'x' }, person: null }), { kind: 'person', name: null });
   assert.deepEqual(sourceOf({ source: null }), { kind: 'person', name: null });
 });
+
+// 검수 10/8: 연결이 끊겼고 열린 일도 없는 사람의 멈춘 작업(봇 실행)이 전체 보기·'지금 일하는 중'에서 빠지고, 7일 넘게 안 보였으면 아예 숨겨졌다
+test('지금 하는 일만 있는 사람(끊김·열린 일 없음)도 숨기지 않고 사람 목록에 둔다', () => {
+  const r = buildStatus(data({
+    crews: [crew('c1', '루나', { last_seen_at: iso(10 * 86_400_000) })],
+    runs: [{ id: 'r1', lead_crew_id: 'c1', goal: '결재 기다리는 작업', status: 'blocked', created_at: iso(86_400_000) }],
+  }), { me: 'u-me', now: NOW });
+  assert.deepEqual(keys(r), [K('루나')]);
+  assert.equal(r.hidden, 0); assert.equal(r.idle.length, 0);
+  assert.equal(card(r, '루나').now[0].text, '결재 기다리는 작업');
+});

@@ -197,6 +197,13 @@ export function toggleStar(m) {
   update((s) => ({ mails: s.mails.map((x) => (x.id === m.id ? { ...x, starred: on } : x)) }), m.account ? [[`star:${m.id}`, { type: 'mail.star', id: m.id, on }]] : []);
 }
 
+/** 연결을 시작한 메일함 주소 — Google은 등록된 /me/mail/connect로만 돌려보내므로, 조직 공간 메일에서 시작했으면 끝나고 그리로 돌아간다(10/8 검수) */
+const RETURN_KEY = 'argo-office-mail-return';
+export function takeMailReturn() {
+  let r = '/me/mail';
+  try { const v = sessionStorage.getItem(RETURN_KEY); sessionStorage.removeItem(RETURN_KEY); if (/^\/(me|o\/[^/]+)\/mail$/.test(v ?? '')) r = v; } catch { /* 저장소를 못 쓰면 내 공간 메일함 */ }
+  return r;
+}
 /** Google 로그인 → 권한 승인 화면으로 보낸다(돌아오는 곳: /me/mail/connect) */
 export async function connectGoogle(hint) {
   const { url } = await api('start', { hint, ...(isDesktop() ? { desktop: true } : {}) });
@@ -207,6 +214,7 @@ export async function connectGoogle(hint) {
     await pullMail('inbox');
     return result;
   }
+  try { sessionStorage.setItem(RETURN_KEY, location.pathname.match(/^\/o\/[^/]+\/mail(?=\/|$)/)?.[0] ?? '/me/mail'); } catch { /* 없으면 내 공간으로 돌아온다 */ }
   location.assign(url);
 }
 export const finishConnect = (code, state) => api('finish', { code, state });

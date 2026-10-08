@@ -5,8 +5,9 @@ import { BUSINESS_MODULES } from './module-registry.js';
 export const NAV = {
   me: ['home', 'calendar', 'tasks', 'business', 'contracts', 'files', 'mail', 'briefings', 'approvals', 'shared', 'knowhow', 'tools'],
   // 에이전트 조직도(agents, 17차)는 조직 공간에만 — 에이전트 작업 바로 앞. 내 공간은 다른 조직 전용 화면(작업·결정·직원)처럼 메뉴에 없다
-  // 업무 현황(status, 10/8)은 조직 공간에만 — 할 일 바로 뒤
-  org: ['home', 'calendar', 'tasks', 'status', 'business', 'contracts', 'files', 'agents', 'work', 'approvals', 'decisions', 'outputs', 'journal', 'docs', 'people', 'company', 'perf', 'knowhow', 'tools'],
+  // 업무 현황(status, 10/8)은 조직 공간에만 — 할 일 바로 뒤. 메일(10/8)은 조직 공간에도 — 페이지만 조직 공간에 있고 열리는 것은 내 개인 메일함(조직원끼리 보는 메일이 아니다).
+  // 자리는 에이전트 작업 뒤 — 문서함 뒤에 두면 조직도의 앞 메뉴가 메일이 되어, 메일을 옮겨 둔 사람의 조직도가 메일을 따라가 맨 위·맨 아래로 갔다(17차 LOW-1 재발, 검수 10/8)
+  org: ['home', 'calendar', 'tasks', 'status', 'business', 'contracts', 'files', 'agents', 'work', 'mail', 'approvals', 'decisions', 'outputs', 'journal', 'docs', 'people', 'company', 'perf', 'knowhow', 'tools'],
 };
 export const SECTIONS = ['menu', 'pages', 'crews'];
 // 공간 주소 뒤에 붙는 화면(App.jsx route가 같은 목록을 쓴다) — 메뉴 이름 사전은 nav.<화면>, 아이콘은 NAV_ICON
@@ -14,7 +15,7 @@ export const VIEWS = ['calendar', 'tasks', 'status', 'contracts', 'files', 'mail
 export const NAV_ICON = { home: 'home', calendar: 'calendar', tasks: 'todo', status: 'layout', business: 'chart', contracts: 'sign', files: 'folder', mail: 'mail', briefings: 'text', agents: 'hand', work: 'run', approvals: 'stamp', decisions: 'check', outputs: 'file', journal: 'book', docs: 'doc', people: 'person', company: 'building', perf: 'target', shared: 'share', knowhow: 'book', tools: 'box', trash: 'trash', settings: 'gear' };
 const LOCKED = new Set(['home']);
 // 두 목록을 합친 기본 순서 — 어느 공간에서 걸러 내도 그 공간의 기본 순서가 나온다(테스트가 잠근다)
-const ALL = ['home', 'calendar', 'tasks', 'status', 'business', 'contracts', 'files', 'mail', 'briefings', 'agents', 'work', 'approvals', 'decisions', 'outputs', 'journal', 'docs', 'people', 'company', 'perf', 'shared', 'knowhow', 'tools'];
+const ALL = ['home', 'calendar', 'tasks', 'status', 'business', 'contracts', 'files', 'agents', 'work', 'mail', 'briefings', 'approvals', 'decisions', 'outputs', 'journal', 'docs', 'people', 'company', 'perf', 'shared', 'knowhow', 'tools'];
 
 /** a를 b 자리로 옮긴 새 배열 — 같은 자리·없는 id면 그대로 */
 export function moveId(list, a, b) {

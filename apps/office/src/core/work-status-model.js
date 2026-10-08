@@ -127,7 +127,7 @@ export function buildStatus(data, { me = null, now } = {}) {
   }
 
   // 정렬 — 연결된 사람 → 업무가 있는 사람 → 나머지(같으면 이름순). 업무도 연결도 없으면 7일 안에 보였을 때만 한 줄, 그보다 오래되면 수만
-  const busy = (p) => p.doing.length + p.held.length + p.todo.length > 0;
+  const busy = (p) => p.doing.length + p.held.length + p.todo.length + p.now.length > 0; // 지금 하는 일(멈춘 작업·봇 실행)만 있어도 숨기지 않는다(검수 10/8)
   const rank = (p) => (p.online ? 0 : busy(p) ? 1 : 2);
   const all = [...map.values()].map((p) => { p.doing.sort(byDue); p.held.sort(byDue); p.todo.sort(byDue); delete p.rank; return p; })
     .sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name, 'ko') || (b.mine - a.mine) || String(a.owner).localeCompare(String(b.owner)));

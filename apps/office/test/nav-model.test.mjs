@@ -166,3 +166,11 @@ test('업무 현황: 조직 메뉴에만, 할 일 바로 뒤, 예전 저장 순�
   assert.equal(routeLabelKey(routeInfo('/o/x/status')), 'nav.status');
   assert.deepEqual(favTarget('/o/x/status'), { kind: 'route', id: '/o/x/status' });
 });
+
+// 이유(유건 10/8): 조직 공간에도 메일함 — 페이지만 조직 공간에 있고 여는 것은 내 개인 메일함. 자리는 에이전트 작업 뒤(조직도의 앞 메뉴는 그대로 문서함)
+test('메일: 두 공간 메뉴에 다 있고, 조직 공간은 에이전트 작업 바로 뒤, 내 공간 순서는 그대로', () => {
+  assert.ok(NAV.me.includes('mail') && NAV.org.includes('mail'));
+  assert.equal(NAV.org.indexOf('work') + 1, NAV.org.indexOf('mail'));
+  assert.deepEqual(NAV.me.slice(NAV.me.indexOf('files'), NAV.me.indexOf('files') + 3), ['files', 'mail', 'briefings']);
+  assert.equal(routeLabelKey(routeInfo('/o/x/mail')), 'nav.mail');
+});
