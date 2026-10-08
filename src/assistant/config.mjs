@@ -1,12 +1,24 @@
 // 능동 비서 설정 — <회사>/assistant.json 정규화·읽기.
-// 이 단계(1단계: 일정 감시 엔진)는 읽기만 한다. 쓰는 곳은 설정 API(2단계)와 사람뿐이다 — 에이전트 파일 쓰기는 permission-gate WS_CONTROL_FILES가 막고,
+// 엔진은 읽기만 한다. 쓰는 곳은 설정 API(settings.mjs)뿐이다 — 에이전트 파일 쓰기는 permission-gate WS_CONTROL_FILES가 막고,
 // 동기화는 같은 프로세스 간 잠금(sync.mjs isFileLockedRel)으로 이 파일을 쓴다. 파일이 없거나 꺼져 있으면 비서는 네트워크 호출·쓰기 0이다.
+//
+// 봉인(2단계, #863 2차 검수 LOW): assistant.json은 동기화 대상인데, 이 칸이 없는 옛 버전 본체의 권한 게이트는 assistant.json 쓰기를 막지 않는다.
+// 그 기기의 에이전트가 파일 쓰기 한 번으로 비서를 켜면(일정 읽기·알림 시작) 동기화로 새 기기에 퍼진다. 그래서 설정 API가 파일을 쓸 때마다
+// 그 바이트의 sha256을 company.json `assistantSeal`에 같이 적고, 엔진은 둘이 맞을 때만 켜진 것으로 본다(loadEffectiveAssistantConfig).
+// company.json은 #141(2026-07-28)부터 모든 버전의 권한 게이트가 에이전트 쓰기를 막고, 회사 설정 API는 정해진 칸만 받아 이 칸을 고칠 수 없다
+// (test/assistant-settings-adjacent.test.mjs). 바이트 해시라 버전마다 정규화 결과가 달라도 같은 값이고, 손으로 고친 파일·동기화 충돌로 둘이
+// 어긋나면 꺼진 쪽으로 간다(설정 화면이 "설정 화면 밖에서 바뀜"을 보여 주고, 다시 켜면 새로 봉인한다).
+// 6단계("이런 건 알리지 마")처럼 이 파일을 쓰는 새 경로는 settings.mjs writeSealed로 써야 한다 — 봉인 없이 쓰면 비서가 꺼진다.
+import { createHash } from 'node:crypto';
 import { stat, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { paths } from '../workspace.mjs';
 import { normalizeTz } from '../routine-time.mjs';
 
 export const ASSISTANT_FILE = 'assistant.json';
+export const SEAL_FIELD = 'assistantSeal'; // company.json 칸 이름
+/** 봉인 값 — assistant.json 파일 내용(문자열 그대로)의 sha256 hex. */
+export const sealOf = (text) => createHash('sha256').update(String(text), 'utf8').digest('hex');
 export const LEAD_CHOICES = Object.freeze([10, 15, 30, 60]);
 export const DAILY_CAP_RANGE = Object.freeze([1, 30]);
 export const DEFAULTS = Object.freeze({
@@ -58,15 +70,28 @@ export async function loadAssistantConfig(wsId) {
   const file = join(paths(wsId).root, ASSISTANT_FILE);
   let st;
   try { st = await stat(file); } catch { cache.delete(wsId); return null; }
-  const sig = `${st.mtimeMs}:${st.size}`;
+  const sig = `${st.mtimeMs}:${st.size}:${st.ino}`; // ino — 원자적 쓰기(rename)는 매번 새 파일이라 같은 시각·같은 크기 덮어쓰기도 가른다
   const hit = cache.get(wsId);
   if (hit?.sig === sig) return hit.cfg;
   let cfg = null;
-  try { cfg = normalizeAssistantConfig(JSON.parse(await readFile(file, 'utf8'))); warned.delete(wsId); }
+  try { const text = await readFile(file, 'utf8'); cfg = { ...normalizeAssistantConfig(JSON.parse(text)), seal: sealOf(text) }; warned.delete(wsId); }
   catch (e) {
     if (!warned.has(wsId)) { warned.add(wsId); console.error(`[argo] 비서 설정을 읽지 못해 꺼진 것으로 봅니다(${wsId}): ${String(e?.message ?? e).slice(0, 120)}`); }
   }
   cache.set(wsId, { sig, cfg });
   return cfg;
 }
-export const _resetAssistantConfigCacheForTest = () => { cache.clear(); warned.clear(); };
+const unsealedWarned = new Set();
+/** 엔진이 쓰는 설정 — 켜짐(enabled + 에이전트)이면 company.json 봉인이 이 파일 내용과 맞을 때만 돌려주고, 안 맞으면 null(꺼짐).
+    꺼진 설정은 봉인을 보지 않고 그대로 돌려준다(어차피 꺼짐 — company.json을 더 읽지 않는다). 다른 회사 비서 판정(tick.mjs pickCompany)도 이 함수를 써서
+    봉인 없는 설정이 이 회사를 쉬게 만들지 못한다. company.json을 읽지 못하면 꺼짐(돈·메일 읽기를 쓰지 않는 쪽). */
+export async function loadEffectiveAssistantConfig(wsId) {
+  const cfg = await loadAssistantConfig(wsId);
+  if (!cfg?.enabled || !cfg.agent) return cfg;
+  let seal = null;
+  try { const v = JSON.parse(await readFile(paths(wsId).company, 'utf8'))?.[SEAL_FIELD]; seal = typeof v === 'string' ? v : null; } catch { /* 없음·손상 — 봉인 없음 */ }
+  if (seal === cfg.seal) { unsealedWarned.delete(wsId); return cfg; }
+  if (!unsealedWarned.has(wsId)) { unsealedWarned.add(wsId); console.error(`[argo] 비서 설정이 설정 화면 밖에서 바뀌어 꺼진 것으로 봅니다(${wsId}) — 설정 화면에서 다시 켜면 돌아갑니다`); }
+  return null;
+}
+export const _resetAssistantConfigCacheForTest = () => { cache.clear(); warned.clear(); unsealedWarned.clear(); };

@@ -25,13 +25,14 @@ export function addDays(date, n) {
 /** 그 시간대에서 date의 hh:mm 절대 시각(ms). */
 export const instantIn = (date, hhmm, tz) => zonedInstant(date, hhmm, tz);
 
-/** 조용한 시간인가 — from~to(자정을 넘을 수 있다), 같으면 조용한 시간 없음. */
-export function inQuiet(ms, cfg) {
-  const { from, to } = cfg.quiet;
+/** 하루 중 분 m이 조용한 시간 from~to 안인가(순수) — 자정을 넘을 수 있다, 같으면 조용한 시간 없음. 설정 검증(settings.mjs)도 이 판정을 쓴다. */
+export function minuteInQuiet(m, { from, to }) {
   if (from === to) return false;
-  const m = minuteIn(ms, cfg.tz); const f = toMin(from); const t = toMin(to);
+  const f = toMin(from); const t = toMin(to);
   return f < t ? m >= f && m < t : m >= f || m < t;
 }
+/** 조용한 시간인가 — 회사 시간대의 지금 분으로 minuteInQuiet. */
+export const inQuiet = (ms, cfg) => minuteInQuiet(minuteIn(ms, cfg.tz), cfg.quiet);
 
 /** 지금 보낼 차례인 묶음 — { lane: 'am'|'pm', date, key } | null. done = 그날 처리한 묶음 날짜 { am, pm }(보냈거나, 넣을 것이 없어 건너뜀).
     조용한 시간이면 없다. 저녁 시각이 지났으면 저녁(그날 아침을 놓쳤어도 저녁이 대신한다), 아침 시각이 지났으면 아침. */
