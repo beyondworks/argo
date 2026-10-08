@@ -41,7 +41,7 @@ import { MobileUpdateBar } from './mobile-update.jsx';
 import { useLongPress, longPressHandlers } from './long-press.js';
 import { groupFlags } from './msg-group.mjs';
 import { t as tm } from './i18n.js';
-import { plainField, approvalPlainFields, orgDocTitle, approvalOneLineSummary, approvalGrade, approvalSummaryKey, approvalPageItems, approvalDecider, phoneApprovalDecider, decidableApprovals, approvalOnlyKey, approvalDenied, approvalCmdMode, decideApproval, readRoomJoinRequests, singleFlight } from './approval-display.js';
+import { plainField, approvalPlainFields, orgDocTitle, approvalOneLineSummary, approvalGrade, approvalSummaryKey, approvalPageItems, approvalDecider, phoneApprovalDecider, decidableApprovals, approvalOnlyKey, approvalDeniedKey, scopePendingApprovals, highPolicyOrgs, approvalDenied, approvalCmdMode, decideApproval, readRoomJoinRequests, singleFlight } from './approval-display.js';
 import { agentRowState, AGENT_FILTERS, AGENT_FAV_KEY, groupAgents, rowForSpace, agentRoomTarget, agentStateRow, personalRoomFor, personalRoomKnown, agentDmRedirect, agentDmRoute, earlierAgentDms, earlierLines, saveAgentLook, fillAgentLooks, ownRowsReader, loadUntilListed, spaceMoveNotice, spaceMoveBack, MOVE_NOTICE_MS, agentSections, groupIsFav, favChanges, readAgentFav } from './agent-groups.mjs'; // 폰 에이전트 탭 — 같은 에이전트 한 줄·상단 메뉴·즐겨찾기(유건 2026-10-02), 1:1은 개인 방 하나(2026-10-03)
 import { toggleId, foldAll, allFolded } from './collapse-set.mjs';
 import { useLang } from '@argo/i18n';
@@ -1483,12 +1483,12 @@ function Shell({ session }) {
     if (!uid || !isPhoneRef.current) return;
     const ids = orgIdsKey ? orgIdsKey.split(',') : [];
     const [aps, joins] = await Promise.all([
-      ids.length ? q(supabase.from('msgr_crew_approvals').select('id, org_id, channel_id, crew_id, action, reason, payload, risk, kind, created_at, msgr_crews(owner_user_id)').in('org_id', ids).eq('status', 'pending').order('created_at', { ascending: false }).limit(40)).catch(() => null) : [],
+      q(scopePendingApprovals(supabase.from('msgr_crew_approvals').select('id, org_id, channel_id, crew_id, action, reason, payload, risk, kind, created_at, msgr_crews(owner_user_id)'), ids).eq('status', 'pending').order('created_at', { ascending: false }).limit(40)).catch(() => null), // 조직 결재 + 개인 결재(org_id NULL, 주인과 자기 에이전트 1:1 방 — 2026-10-08)를 한 번에. 조직이 없으면 개인 결재만
       q(supabase.from('msgr_channel_crew_requests').select('id, channel_id, crew_id, requested_by, created_at').eq('status', 'pending').neq('requested_by', uid).order('created_at', { ascending: false }).limit(40)).catch(() => null),
     ]);
     if (aps === null && joins === null) return; // 둘 다 실패하면 지난 값을 둔다
     // 결재권 판정 재료(분리 검수 M-2) — '꼭 확인'(high) 결재가 있는 조직의 정책만 한 번 더 읽는다(없으면 요청 0). 게스트는 정책을 못 읽는데(RLS) 정책이 없으면 관리자 결정으로 보고, 게스트는 어차피 high를 결정 못 한다
-    const highOrgs = [...new Set((aps ?? []).filter((a) => a.risk === 'high').map((a) => a.org_id))];
+    const highOrgs = highPolicyOrgs(aps); // 개인 결재는 조직 정책이 없다(주인이 결정) — 개인 high만 있으면 정책을 읽지 않는다
     const pols = highOrgs.length ? await q(supabase.from('msgr_org_policies').select('org_id, approval_high_by, approver_user_ids').in('org_id', highOrgs)).catch(() => null) : [];
     if (pols === null) return; // 정책을 못 읽으면 결정할 수 있는지 모른다 — 지난 값을 둔다
     const polOf = Object.fromEntries(pols.map((p) => [p.org_id, p]));
@@ -6211,7 +6211,7 @@ function Channel({ movedBar = null, onCrewJoined = null, onCrewFailed = null, on
     const r = await decideApproval({ update: () => supabase.from('msgr_crew_approvals').update({ status, decided_by: uid, decided_at: new Date().toISOString() }).eq('id', ap.id).select('id'),
       reread: () => q(supabase.from('msgr_crew_approvals').select('status').eq('id', ap.id).maybeSingle()) });
     if (r.result === 'error') onError(friendlyErr(r.message, t));
-    else if (r.result === 'denied') onError(t(ap.risk === 'high' ? 'ap.approverOnly' : 'ap.ownerOnly'));
+    else if (r.result === 'denied') onError(t(approvalDeniedKey(ap, isPersonal)));
     await loadApprovals().catch(() => {}); catchUp().catch(() => {});
   };
   // 크루 작업 중단(유건 확정 2026-09-26) — 서버(msgr_request_stop)가 권한을 다시 검사한다. 여기 canStop은 화면 노출만 — 숨김이 권한의 전부가 아니다.
@@ -6589,7 +6589,7 @@ function Message({ m, shape = 'bubble', uploadNames = null, uid, lang, t, nameOf
       <div className="msgr-col">{/* 간격 표(--msg-gap-in)를 쓰는 세로 칸 — 이름 줄·글·사진·파일·링크 카드 사이 같은 간격 */}
         <div className="who">{isCrew && crew && onCrew ? <button type="button" className="msgr-namebtn" onClick={() => onCrew(crew.id)}>{name}</button> : name}{edited}{crew?.role_text && !inDm && <span className="role">{crew.role_text} · {t('org.crew')}</span>}<span className="ts">{fmtTs(m.created_at, lang)}</span></div>
         {m.deleted_at ? <div className="msgr-sys">{t('msg.deleted')}</div>
-          : ap ? <Slip ap={ap} uid={uid} lang={lang} t={t} crew={crew} nameOfUser={nameOfUser} decide={decide} isAdmin={isAdmin} policy={policy} />
+          : ap ? <Slip ap={ap} uid={uid} lang={lang} t={t} crew={crew} nameOfUser={nameOfUser} decide={decide} isAdmin={isAdmin} policy={policy} personal={isPersonal} />
           : m.kind === 'system' ? sysBody
           : bareOther ? null
           : uploadingPill ? uploadingPill
@@ -6627,14 +6627,15 @@ function ExecCard({ crew, t, canStop = false, stopping = false, stopRequested = 
 }
 
 /** 결재 슬립 — 머리띠(요청=옐로 / 확정=차콜 / 만료=회색) + 본문 + 도장 실. 보는 사람이 소유자면 버튼, 아니면 대기 표시. */
-function Slip({ ap, uid, lang, t, crew, nameOfUser, decide, isAdmin, policy }) {
+function Slip({ ap, uid, lang, t, crew, nameOfUser, decide, isAdmin, policy, personal = false }) {
   // 누르는 즉시 두 단추를 끄고 진행 표시(MSG-07 — 서버 왕복 동안 변화가 없어 한 번 더 누르면 이미 처리된 결재에 권한 오류가 떴다). 끝나면 카드가 결과로 바뀐다
   const live = useRef(null); live.current = { decide, ap };
   const [busy, setBusy] = useState(null);
   const run = useMemo(() => singleFlight(async (status) => { setBusy(status); try { await live.current.decide(live.current.ap, status); } finally { setBusy(null); } }), []);
   // 결재권 판정은 화면용 — 최종은 RLS(msgr_can_decide, decide의 0행 처리). 크루가 목록에 없으면(비활성 등) 소유자 미상으로 보고 버튼을 띄운다(검수 M1).
   // H-1: 고위험은 정책의 결재권자(기본 관리자). J-1: 'approvers'면 지정 결재권자도. 판정은 폰 결재 페이지와 같은 함수(approval-display.js approvalDecider)
-  const { can, byAdmin, mode, high } = approvalDecider({ ap, uid, crewOwnerId: crew ? crew.owner_user_id : undefined, isAdmin, policy });
+  // 개인 공간(personal)의 결재는 조직 정책이 없어 등급과 무관하게 크루 주인이 결정한다(서버 msgr_can_decide 개인 갈래, 2026-10-08) — '꼭 확인' 표시는 그대로
+  const { can, byAdmin, mode, high } = approvalDecider({ ap, uid, crewOwnerId: crew ? crew.owner_user_id : undefined, isAdmin, policy, personal });
   const ownerName = nameOfUser(crew?.owner_user_id);
   const cls = `msgr-slip ${ap.status}${ap.status === 'pending' && !can ? ' wait' : ''}${high ? ' high' : ''}`;
   const band = ap.status === 'pending' ? (can ? t('ap.request') : (byAdmin ? t('ap.wait.admin') : t('ap.wait', { name: ownerName }))) : t(`ap.${ap.status}.band`);

@@ -8,7 +8,7 @@ import { parse } from 'espree';
 import { readFileSync } from 'node:fs';
 import { stripComments } from './helpers/strip-comments.mjs';
 import { nudgeMsgrBridge } from '../src/gateway.mjs';
-import { approvalDecider } from '../apps/messenger/src/approval-display.js';
+import { approvalDecider, approvalDeniedKey } from '../apps/messenger/src/approval-display.js';
 
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
 const page = stripComments(read('app/c/[ws]/settings/page.jsx'));
@@ -151,7 +151,8 @@ test('H-1: 결재 슬립은 위험 등급·정책으로 확정권을 나누고(�
   // "명령 보기 기본 펼침"으로 바꾸는 표시 규칙 하나뿐이고(../src/approval-display.js), 여전히 새 위험
   // 판정을 만들지 않는다. 그 함수의 행동은 apps/messenger/test/approval-display.test.mjs가 잠근다.
   // 2026-10-02 분리 검수 M-2: 확정권 판정을 폰 결재 페이지와 같은 함수(approvalDecider)로 옮겼다 — 슬립이 그 함수를 부르는지와 함수의 실제 동작을 본다.
-  assert.match(slip, /const \{ can, byAdmin, mode, high \} = approvalDecider\(\{ ap, uid, crewOwnerId: crew \? crew\.owner_user_id : undefined, isAdmin, policy \}\);/, '슬립 확정권은 공유 판정 함수로');
+  // 2026-10-08 개인 공간 결재(계획 5-4): 슬립이 개인 공간 표지(personal)도 넘긴다 — 개인 갈래의 행동은 apps/messenger/test/approval-personal.test.mjs가 잠근다.
+  assert.match(slip, /const \{ can, byAdmin, mode, high \} = approvalDecider\(\{ ap, uid, crewOwnerId: crew \? crew\.owner_user_id : undefined, isAdmin, policy, personal \}\);/, '슬립 확정권은 공유 판정 함수로');
   assert.match(app, /import \{ [^}]*approvalPlainFields, orgDocTitle, approvalOneLineSummary[^}]*approvalDecider[^}]*\} from '\.\/approval-display\.js';/, '결정 로직을 JSX 없는 파일로 분리 — node --test가 실제로 import해 검증할 수 있게(분리 검수 M-2·M-4)');
   const can = (ap, o) => approvalDecider({ ap, uid: 'me', crewOwnerId: o.owner, isAdmin: o.admin, policy: o.policy ?? null });
   assert.equal(can({ risk: 'high' }, { owner: 'me' }).mode, 'admin', '정책 기본값은 admin이어야 한다');
@@ -162,7 +163,10 @@ test('H-1: 결재 슬립은 위험 등급·정책으로 확정권을 나누고(�
   assert.match(slip, /\{ap\.status === 'pending' && can && \(<>/, '버튼은 확정권자에게만');
   assert.match(slip, /\{ap\.status === 'pending' && !can && <span className="note">\{byAdmin \? \(mode === 'approvers' \? t\('ap\.approverNote'\) : t\('ap\.adminNote'\)\) : t\('ap\.ownerNote'\)\}<\/span>\}/, '비권자 안내가 등급별이 아니다');
   assert.match(slip, /\{high && <span className="msgr-klabel risk">\{t\('ap\.level\.must'\)\}<\/span>\}/, '고위험 배지가 없다(표시 문구는 \'꼭 확인\' — 2026-10-02, 서버 등급 값 high는 그대로)');
-  assert.match(app, /onError\(t\(ap\.risk === 'high' \? 'ap\.approverOnly' : 'ap\.ownerOnly'\)\)/, 'RLS 0행 문구가 등급별이 아니다');
+  // 2026-10-08: 거절 문구 판정을 approvalDeniedKey로 옮겼다(조직은 종전과 같은 등급별, 개인 공간은 소유자) — 행동은 함수로 본다.
+  assert.match(app, /onError\(t\(approvalDeniedKey\(ap, isPersonal\)\)\)/, 'RLS 0행 문구가 등급별이 아니다');
+  assert.equal(approvalDeniedKey({ risk: 'high' }, false), 'ap.approverOnly', '조직 high = 결재권자 문구');
+  assert.equal(approvalDeniedKey({ risk: 'low' }, false), 'ap.ownerOnly', '조직 low = 소유자 문구');
   const pc = app.slice(app.indexOf('function PolicyCard('), app.indexOf('function EmptyOrg('));
   assert.match(pc, /approval_high_by: draft\.approval_high_by, approver_user_ids: draft\.approver_user_ids \?\? \[\], crew_create: draft\.crew_create \?\? 'channel_admin', crew_runner: draft\.crew_runner\?\.trim\(\) \|\| null, crew_model: draft\.crew_model\?\.trim\(\) \|\| null, guest_seats: !!draft\.guest_seats \}\)/, '정책 저장에 approval_high_by·approver_user_ids가 없다');
   assert.match(pc, /value=\{draft\.approval_high_by \?\? 'admin'\} onPick=\{\(v\) => set\(\{ approval_high_by: v \}\)\} disabled=\{ro\} options=\{\['admin', 'approvers', 'owner'\]/, '고위험 결재권 세그먼트');
