@@ -19,10 +19,13 @@ export async function startFakeSupabase({ plan = 'pro', userId = 'u1', rejectUpl
       const path = new URL(req.url, 'http://fake').pathname;
       hits.push({ t: Date.now(), k: `${req.method} ${path}`, auth: req.headers.authorization ?? null });
       const json = (status, obj) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)); };
-      // 장애 주입(선택) — api.fault(req, path)가 { status, body }를 주면 그 응답, 'reset'이면 연결을 끊는다(클라이언트는 fetch failed). 안 주면 종전 그대로.
+      // 장애 주입(선택) — api.fault(req, path)가 { status, body }를 주면 그 응답, 'reset'이면 연결을 끊는다(클라이언트는 fetch failed),
+      // 'hang'이면 답하지 않는다(클라이언트 30초 시간 초과), 숫자면 그만큼(ms) 늦게 종전처럼 답한다(느린 회선·긴 동기화 주기). 안 주면 종전 그대로.
       const fault = api.fault?.(req, path);
       if (fault === 'reset') { req.socket.destroy(); return; }
-      if (fault) return json(fault.status, fault.body ?? { statusCode: String(fault.status), error: 'fault', message: `HTTP ${fault.status}` });
+      if (fault === 'hang') return;
+      if (typeof fault === 'number') await new Promise((r) => setTimeout(r, fault));
+      else if (fault) return json(fault.status, fault.body ?? { statusCode: String(fault.status), error: 'fault', message: `HTTP ${fault.status}` });
       try {
         if (path === '/auth/v1/user') return json(200, { id: userId, email: `${userId}@example.test`, aud: 'authenticated', role: 'authenticated' });
         if (path === '/auth/v1/token') {

@@ -76,9 +76,14 @@ test('운영 주기(8초)에서 VPS(예비)가 담당 중에 되찾는 맥의 �
   assert.equal(vps.last()?.cloud, true, `혼자일 때는 예비 기기가 담당 ${vps.err.slice(-300)}`);
   const left = armLeaseReadFaults(fake, 'dev-mac', [{ status: 500 }]);
   const macAt = Date.now();
-  // 깨어 있은 지 충분한 맥(되찾기 조건은 단위 테스트·아래 장면이 본다) — 이 장면은 읽기 오류만 본다
-  const mac = spawnLeaseChild({ root: await device(fake, 'dev-mac'), name: 'mac', intervalMs: 100, awakeAgoMs: 10 * 60_000 }); kids.push(mac);
-  await sleep(42_000); // 읽기 오류 주기(~1초) → 다음 주기(~9초)에 넘겨받기 쓰기 → 대기(2 × 8 + 4초) → 그 뒤 첫 주기(~33초)에 담당
+  // 깨어 있은 지 충분하고 VPS를 전에 만난 적 있는 맥(데이터 폴더 표지) — 되찾는 맥은 보통 앞서 VPS에게 넘긴 적이 있다. 이 장면은 읽기 오류만 본다.
+  // 처음 만나는 맥(표지 없음)은 배포본처럼 첫 판정이 실패로 끝나면 담당이다 — 다음 읽기(8초)까지 겹칠 수 있다(PR '남은 것').
+  const mRoot = await device(fake, 'dev-mac');
+  writeFileSync(join(mRoot, '.lease-peer.json'), JSON.stringify({ deviceId: 'dev-vps', at: Date.now() - 86_400_000 }));
+  const mac = spawnLeaseChild({ root: mRoot, name: 'mac', intervalMs: 100, awakeAgoMs: 10 * 60_000 }); kids.push(mac);
+  const deadline = Date.now() + 80_000; // 읽기 오류 판정(~1초) → 다음 판정(~9초)에 넘겨받기 쓰기 → 대기(22초) → 그 뒤 첫 판정(~33초)에 담당
+  while (!(mac.last()?.proc && mac.last()?.cloud && !vps.last()?.cloud) && Date.now() < deadline) await sleep(200);
+  await sleep(2_000);
   fake.fault = null;
   assert.equal(left.length, 0, '맥의 첫 리스 읽기에 장애를 냈다');
   assert.equal(mac.last()?.proc && mac.last()?.cloud, true, `맥이 되찾는다 ${mac.err.slice(-300)}`);
@@ -108,4 +113,81 @@ test('운영 값(주기 8초·깨어 있은 시간 30초)에서 맥이 6초만 �
   assert.equal(leasePuts(fake, 'dev-mac', macAt), 0, '깬 지 30초가 안 된 맥이 리스를 가져갔다');
   assert.equal(leaseDoc(fake).deviceId, 'dev-vps');
   await vps.kill();
+});
+
+/* ── D 3차 검수: 리스 판정이 파일 동기화 주기에 묶여 있던 것 ──
+   앞 담당(VPS)의 리스 읽기가 동기화 주기 안에 있어, 주기가 길거나(큰 파일 올리기) 리스 읽기가 걸리면(시간 초과 30초) 실패가 이어지면
+   넘겨받는 맥이 대기를 마치고 시작한 뒤에도 VPS가 담당으로 남았다(검수 실측: 겹침 80초·21초·39초). 짧은 주기(1초)로 보지만 판정 구조는 운영과 같다. */
+
+/** VPS(예비)가 혼자 담당이 된 뒤, 깨어 있은 지 오래된 맥(일반)이 켜진다 — 그 사이 VPS에 장애(faultFor)를 건다. 겹침·맥 담당 시작·VPS 마지막 담당을 돌려준다. */
+async function handoverUnderFault(fake, { vpsFiles = 0, faultFor }) {
+  const vRoot = await device(fake, 'dev-vps');
+  for (let i = 0; i < vpsFiles; i++) writeFileSync(join(vRoot, 'co-1234', `f${i}.md`), `file ${i}\n`.repeat(20));
+  let at = null; // 맥을 켠 시각 — 장애는 VPS를 켜기 전부터 건다(파일 올리기 지연은 VPS 첫 주기부터, 리스 읽기 장애는 맥을 켠 뒤부터 — faultFor가 at으로 가른다)
+  fake.fault = (req, path) => faultFor(req, path, at);
+  const vps = spawnLeaseChild({ root: vRoot, env: { ...FAST, ARGO_STANDBY_LEADER: '1' }, name: 'vps', intervalMs: 100 }); kids.push(vps);
+  assert.equal(await waitUntil(() => vps.last()?.proc && vps.last()?.cloud, 20_000), true, `혼자일 때는 예비 기기가 담당 ${vps.err.slice(-300)}`);
+  at = Date.now();
+  const mac = spawnLeaseChild({ root: await device(fake, 'dev-mac'), env: FAST, name: 'mac', intervalMs: 100, awakeAgoMs: 10 * 60_000 }); kids.push(mac);
+  await waitUntil(() => mac.last()?.proc && mac.last()?.cloud && !vps.last()?.cloud, 60_000);
+  await sleep(2_000);
+  fake.fault = null;
+  const max = overlapMax([vps, mac], at, Date.now() - 300);
+  const macOn = (mac.samples.find((x) => x.proc && x.cloud)?.t ?? 0) - at;
+  const vpsOff = ([...vps.samples].reverse().find((x) => x.proc && x.cloud)?.t ?? 0) - at;
+  await vps.kill(); await mac.kill();
+  return { max, macOn, vpsOff, mac, vps, at };
+}
+const waitUntil = async (pred, ms) => { const u = Date.now() + ms; while (!pred() && Date.now() < u) await sleep(100); return !!pred(); };
+const isVps = (req) => req.headers.authorization === auth('dev-vps');
+
+test('앞 담당(VPS)이 긴 동기화 주기(파일 올리기) 중이어도 맥이 넘겨받는 동안 둘이 함께 담당이 되지 않는다 — 리스는 동기화 주기와 따로 돈다', { timeout: 120_000 }, async () => {
+  const fake = await startFakeSupabase({ plan: 'pro' }); fakes.push(fake);
+  // VPS가 올릴 파일 60개를 하나에 0.5초씩 — 리스를 잡은 첫 동기화 주기가 약 30초. 리스 쓰기·읽기는 늦추지 않는다
+  const r = await handoverUnderFault(fake, { vpsFiles: 60, faultFor: (req, path) => (isVps(req) && req.method === 'POST' && path !== LEASE_PATH ? 500 : null) });
+  assert.equal(r.max, 1, `넘어가는 동안 담당 ${r.max}개 — 맥 담당 시작 ${r.macOn / 1000}초, VPS 마지막 담당 ${r.vpsOff / 1000}초`);
+  const ups = fake.hits.filter((h) => h.auth === auth('dev-vps') && h.k.startsWith('POST /storage/v1/object/companies/u1/co-1234/'));
+  assert.ok(ups.at(-1).t >= r.at + r.macOn, `재현 조건: 맥이 담당을 시작할 때 VPS는 아직 첫 동기화 주기(파일 올리기) 중이었다 — 올리기 ${ups.length}번`);
+  assert.ok(r.macOn > 0, '맥이 되찾는다');
+});
+
+test('앞 담당(VPS)의 리스 읽기가 걸려(응답 없음 → 30초 시간 초과) 맥의 넘겨받기 글을 못 읽어도 대기가 끝나기 전에 스스로 물러난다 — 겹침 0', { timeout: 120_000 }, async () => {
+  const fake = await startFakeSupabase({ plan: 'pro' }); fakes.push(fake);
+  let hung = false;
+  const r = await handoverUnderFault(fake, { faultFor: (req, path, at) => (at && isVps(req) && req.method === 'GET' && path === LEASE_PATH && !hung ? (hung = true, 'hang') : null) });
+  assert.equal(hung, true);
+  assert.equal(r.max, 1, `넘어가는 동안 담당 ${r.max}개 — 맥 담당 시작 ${r.macOn / 1000}초, VPS 마지막 담당 ${r.vpsOff / 1000}초`);
+  assert.ok(r.vpsOff < 25_000, `VPS는 걸린 읽기가 시간 초과(30초)로 끝나기 전에 확인 기한이 지나 물러난다 — 마지막 담당 ${r.vpsOff / 1000}초`);
+});
+
+test('앞 담당(VPS)의 리스 읽기가 20초 동안 계속 실패해도(연결 끊김) 대기가 끝나기 전에 스스로 물러난다 — 겹침 0', { timeout: 120_000 }, async () => {
+  const fake = await startFakeSupabase({ plan: 'pro' }); fakes.push(fake);
+  const r = await handoverUnderFault(fake, { faultFor: (req, path, at) => (at && isVps(req) && req.method === 'GET' && path === LEASE_PATH && Date.now() - at < 20_000 ? 'reset' : null) });
+  assert.equal(r.max, 1, `넘어가는 동안 담당 ${r.max}개 — 맥 담당 시작 ${r.macOn / 1000}초, VPS 마지막 담당 ${r.vpsOff / 1000}초`);
+});
+
+test('세션이 끊긴 맥(일반)도 다른 기기의 리스를 본 적이 있으면 30초 기본값으로 담당이 되지 않는다 — VPS(예비)가 맡는 동안 겹침 0. 본 적 없는 단일 기기는 배포본처럼 바로 담당', { timeout: 120_000 }, async () => {
+  const fake = await startFakeSupabase({ plan: 'pro' }); fakes.push(fake);
+  const brokenMac = async (id, { sawPeer }) => {
+    const root = await device(fake, id);
+    const burned = `rt-${id}-burned`;
+    await fetch(`${fake.url}/auth/v1/token?grant_type=refresh_token`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ refresh_token: burned }) }); // 다른 프로그램이 먼저 회전
+    writeFileSync(join(root, '.device-session.json'), JSON.stringify({ url: fake.url, anonKey: 'anon-fixture', access_token: `${id}.p.s`, refresh_token: burned, expires_at: Math.floor(Date.now() / 1000) - 60, user: { id: 'u1', email: '' } }), { mode: 0o600 });
+    if (sawPeer) writeFileSync(join(root, '.lease-peer.json'), JSON.stringify({ deviceId: 'dev-vps', at: Date.now() - 86_400_000 }));
+    return root;
+  };
+  // ① 다른 기기를 본 적 없는 단일 기기 — 배포본처럼 기동하자마자 담당(동기화가 안 되는 단일 기기의 루틴이 멈추지 않게)
+  const solo = spawnLeaseChild({ root: await brokenMac('dev-solo', { sawPeer: false }), env: FAST, name: 'solo', intervalMs: 100 }); kids.push(solo);
+  assert.equal(await waitUntil(() => solo.last()?.proc && solo.last()?.cloud, 10_000), true, `단일 기기는 세션이 끊겨도 배포본처럼 담당 ${solo.err.slice(-300)}`);
+  await solo.kill();
+  // ② VPS(예비)가 담당 + 다른 기기를 본 적 있는 맥(세션 끊김) — 40초(30초 기본값을 넘김) 동안 맥은 담당이 아니다
+  const vps = spawnLeaseChild({ root: await device(fake, 'dev-vps'), env: { ...FAST, ARGO_STANDBY_LEADER: '1' }, name: 'vps', intervalMs: 100 }); kids.push(vps);
+  assert.equal(await waitUntil(() => vps.last()?.proc && vps.last()?.cloud, 20_000), true);
+  const at = Date.now();
+  const mac = spawnLeaseChild({ root: await brokenMac('dev-mac', { sawPeer: true }), env: FAST, name: 'mac', intervalMs: 100 }); kids.push(mac);
+  await sleep(40_000);
+  assert.match(mac.err, /기기 세션 갱신 실패/, '재현 조건: 맥의 동기화가 리스까지 가지 못한다');
+  assert.equal(mac.samples.some((x) => x.proc && x.cloud), false, `세션이 끊긴 맥이 VPS가 맡는 동안 담당이 됐다 — ${((mac.samples.find((x) => x.proc && x.cloud)?.t ?? at) - at) / 1000}초`);
+  assert.equal(overlapMax([vps, mac], at, Date.now() - 300), 1);
+  await vps.kill(); await mac.kill();
 });

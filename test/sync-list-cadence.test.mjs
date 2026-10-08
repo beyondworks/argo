@@ -57,11 +57,11 @@ test('free 스킵 판정식 — 변이 방어(분리 검수 M4: === \'free\'를 
 });
 
 test('리스 오너 배선 — 로컬 수집 targets에서 오너를 뽑는다 (분리 검수: owners[0]로 되돌리면 TDZ 런타임 오류)', () => {
-  // 2026-10-01 #791: 리스 중재는 arbitrateLease(targets)로 옮겼다(실행 리스 주인만 참여). 오너는 targets의 첫 오너 = 종전 localOwners[0].
-  const cycleBody = SRC.slice(SRC.indexOf('async function cycle()'));
-  assert.match(cycleBody, /await arbitrateLease\(targets\);/, 'cycle이 로컬 수집 targets로 리스를 중재하지 않는다 — owners는 이 시점에 아직 선언 전(TDZ)이다');
-  assert.match(SRC, /async function arbitrateLease\(targets\) \{\n\s*const owner = \[\.\.\.new Set\(targets\.values\(\)\)\]\[0\];/);
-  assert.match(SRC, /await renewLease\(owner, \{ runnerUsable: await probeRunnerUsable\(targets\) \}\);/);
+  // 2026-10-01 #791: 리스 중재는 실행 리스 주인만 참여. 2026-10-09 D 3차 검수: 파일 동기화 주기에서 떼어 리스 타이머(leaseTick)로 옮겼다.
+  // 오너는 로컬 수집 targets의 첫 오너 = 종전 localOwners[0].
+  const tick = SRC.slice(SRC.indexOf('async function leaseTick()'), SRC.indexOf('function startLeaseLoop()'));
+  assert.match(tick, /const \{ targets \} = await collectLocalTargets\(currentSessionUid\(\)\);\n\s*const owner = \[\.\.\.new Set\(targets\.values\(\)\)\]\[0\];/);
+  assert.match(tick, /await renewLease\(owner, \{ runnerUsable: await probeRunnerUsable\(targets\) \}\);/);
 });
 
 // ── 2026-07-27 DB 응답 불능 사후 — 게이트 순서·free 목록 스킵 배선 ──
@@ -78,12 +78,15 @@ test('요금제 게이트가 원격 목록 조회(tombstone·discover)보다 앞
   assert.ok(discover > 0 && gate < discover, '게이트가 discover 뒤에 있다 — 동일 사고 재발');
 });
 
-test('리스 갱신은 요금제 게이트보다 앞이다(architect 2026-07-23 권고)', () => {
-  const cycleBody = SRC.slice(SRC.indexOf('async function cycle()'));
-  const lease = cycleBody.indexOf('await arbitrateLease(targets);'); // 리스 중재(renewLease)는 arbitrateLease 안 — 2026-10-01 #791
-  const gate = cycleBody.indexOf('syncEntitled(');
-  assert.ok(lease > 0 && lease < gate,
-    '무료 계정도 리더 중재는 해야 한다 — 게이트 return이 리스보다 먼저면 무료 단일 기기의 루틴·메신저가 죽는다');
+test('리스 갱신은 요금제 게이트를 지나지 않는다(architect 2026-07-23 권고 — 2026-10-09부터 리스 타이머가 동기화 주기와 따로 돈다)', () => {
+  // 무료 계정도 리더 중재는 해야 한다 — 게이트 return이 리스 판정을 막으면 무료 단일 기기의 루틴·메신저가 죽는다.
+  // 리스 판정은 동기화 주기(cycle) 밖 리스 타이머(leaseTick)에만 있고, 그 안에는 요금제 게이트가 없다. ensureSync가 리스 타이머를 켠다.
+  const cycleBody = SRC.slice(SRC.indexOf('async function cycle()'), SRC.indexOf('export function nudgeSync()'));
+  const tick = SRC.slice(SRC.indexOf('async function leaseTick()'), SRC.indexOf('function startLeaseLoop()'));
+  assert.ok(cycleBody.indexOf('syncEntitled(') > 0, 'cycle 안에 요금제 게이트가 없다');
+  assert.equal(/renewLease\(|leaseTick\(/.test(cycleBody), false, '리스 판정이 다시 동기화 주기 안으로 들어왔다 — 요금제 게이트·긴 주기에 묶인다');
+  assert.equal(tick.includes('syncEntitled('), false, '리스 타이머에 요금제 게이트가 들어왔다');
+  assert.match(SRC.slice(SRC.indexOf('export function ensureSync()')), /startLeaseLoop\(\);/);
 });
 
 test('로컬 스캔이 tombstone보다 앞이 된 대가 — 이번 사이클 보관분을 targets에서 명시 제거한다', () => {

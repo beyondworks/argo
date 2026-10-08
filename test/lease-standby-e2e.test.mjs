@@ -40,12 +40,13 @@ test('VPS(예비)가 담당 중에 맥(일반)이 켜지면 맥이 되찾고, �
   const macAt = Date.now();
   // 깨어 있은 시간 조건(AWAKE_MIN_MS 30초)을 3초만 남기고 시작 — 짧은 주기로 그 조건과 넘겨받기 대기(2 × 1초 + 4초)를 둘 다 지나 본다
   const mac = spawnLeaseChild({ root: await device(fake, 'dev-mac'), env: FAST, name: 'mac', awakeAgoMs: 27_000 }); kids.push(mac);
-  await sleep(15_000);
+  const until = Date.now() + 40_000; // 깨어 있은 시간 남은 3초 + 넘겨받기 대기(2 × 1초 + 6초) → 약 12초. 느린 CI를 넉넉히
+  while (!(mac.last()?.proc && mac.last()?.cloud && !vps.last()?.cloud) && Date.now() < until) await sleep(200);
   assert.equal(mac.last()?.proc && mac.last()?.cloud, true, `맥이 되찾는다 ${mac.err.slice(-400)}`);
   assert.equal(vps.last()?.cloud, false, 'VPS는 물러난다');
   assert.equal(leaseDoc(fake).deviceId, 'dev-mac');
   const macLeadAt = mac.samples.find((x) => x.proc && x.cloud)?.t;
-  assert.ok(macLeadAt - macAt >= 3_000 + 6_000, `맥이 깨어 있은 시간(남은 3초)과 넘겨받기 대기(6초)를 다 채우기 전에 담당이 됐다 — ${(macLeadAt - macAt) / 1000}초`);
+  assert.ok(macLeadAt - macAt >= 3_000 + 8_000, `맥이 깨어 있은 시간(남은 3초)과 넘겨받기 대기(8초)를 다 채우기 전에 담당이 됐다 — ${(macLeadAt - macAt) / 1000}초`);
   let max = 0;
   for (let t = macAt; t <= Date.now() - 300; t += 100) max = Math.max(max, runnersAt([vps, mac], t));
   assert.equal(max <= 1, true, `넘어가는 동안 담당이 ${max}개 — 이중 실행`);
@@ -65,13 +66,18 @@ test('운영 주기(8초)에서 맥이 켜지자마자 대화를 보내도(nudge
   const macAt = Date.now();
   // 깨어 있은 지 오래된 맥 — nudge가 넘겨받기 대기와 겹치는 장면을 그대로 본다(깨어 있은 시간 조건은 1번 장면·lease-standby-faults-e2e가 본다)
   const mac = spawnLeaseChild({ root: await device(fake, 'dev-mac'), name: 'mac', intervalMs: 100, nudgeForMs: 4000, awakeAgoMs: 10 * 60_000 }); kids.push(mac);
-  await sleep(34_000); // 넘겨받기 쓰기(~1초) → 대기 2 × 8초 + 4초 → 그 뒤 첫 주기(~29초)에 담당
+  // 넘겨받기 쓰기(~1초) → 대기(2 × 8초 + 6초) → 그 뒤 첫 리스 판정(~25초)에 담당. 고정 시간 대신 담당이 될 때까지(상한 60초) 기다린다 — 느린 CI에서도 흔들리지 않게
+  const until = Date.now() + 60_000;
+  while (!(mac.last()?.proc && mac.last()?.cloud && !vps.last()?.cloud) && Date.now() < until) await sleep(200);
+  await sleep(2_000);
   assert.equal(mac.last()?.proc && mac.last()?.cloud, true, `맥이 되찾는다 ${mac.err.slice(-400)}`);
   assert.equal(vps.last()?.cloud, false, 'VPS는 물러난다');
   let max = 0;
   for (let t = macAt; t <= Date.now() - 300; t += 100) max = Math.max(max, runnersAt([vps, mac], t));
-  assert.equal(max <= 1, true, `넘어가는 동안 담당이 ${max}개 — 맥 담당 시작 ${(mac.samples.find((x) => x.proc && x.cloud)?.t - macAt) / 1000}초, VPS 마지막 담당 ${([...vps.samples].reverse().find((x) => x.cloud)?.t - macAt) / 1000}초`);
-  assert.equal(fake.count(LEASE_PUT, macAt), 1, '넘겨받기 쓰기 1번 — 기다리는 주기는 읽기만 한다');
+  const macLeadAt = mac.samples.find((x) => x.proc && x.cloud)?.t;
+  assert.equal(max <= 1, true, `넘어가는 동안 담당이 ${max}개 — 맥 담당 시작 ${(macLeadAt - macAt) / 1000}초, VPS 마지막 담당 ${([...vps.samples].reverse().find((x) => x.cloud)?.t - macAt) / 1000}초`);
+  assert.ok(macLeadAt - macAt >= 22_000, `넘겨받기 대기(22초)를 채우기 전에 담당 — ${(macLeadAt - macAt) / 1000}초`);
+  assert.equal(fake.hits.filter((h) => h.k === LEASE_PUT && h.t >= macAt && h.t <= macLeadAt).length, 1, '담당이 되기까지 넘겨받기 쓰기 1번 — 기다리는 주기는 읽기만 한다(그 뒤는 30초 갱신)');
   await vps.kill(); await mac.kill();
 });
 
