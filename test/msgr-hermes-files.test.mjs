@@ -480,6 +480,7 @@ assert [os.path.basename(f) for f in a.extract_local_files('[r](attachment:' + s
 // (Windows CI에서는 위 테스트들이 실제 D:\ 임시 경로로 같은 기대값을 확인한다).
 test('드라이브 문자 경로 — attachment:·sandbox:·file:///C:/·scheme 없는 링크·링크 없는 attachment:가 C:\\·C:/ 경로도 첨부한다', () => runCore(String.raw`
 os.chdir(tmp.name)   # 맥·리눅스에서 C:\… 는 상대 경로로 읽힌다 — 점 폴더 판정이 테스트를 돌린 폴더에 휘둘리지 않게
+os.environ['TERMINAL_CWD'] = 'C:\\Users\\crew'   # Windows: 링크로 보낼 수 있는 위치(작업 폴더). 맥·리눅스에선 절대 경로가 아니라 무시되고 임시 폴더 안이다
 W, U = 'C:\\Users\\crew\\report.pdf', 'C:/Users/crew/report.pdf'
 FAKE = {W, U, 'C:\\Users\\crew\\run.log', 'C:\\Users\\crew\\main.py', 'C:\\Users\\crew\\.env', 'C:\\Users\\crew\\.git\\notes.md'}
 real_isfile = os.path.isfile
@@ -570,4 +571,71 @@ import time
 for line in ['[' * 50000, '[a](<' * 10000, '[a](/b "' * 6000, "[a](/b '" * 6000, 'attachment:/' + 'a' * 50000, '[' + 'x' * 50000 + '](/b)']:
     t = time.perf_counter(); files, body = m.pick_linked_files(line); dt = time.perf_counter() - t
     assert dt < 1.0 and files == [] and body == line, (line[:12], round(dt, 3))
+`));
+
+// 커밋 보안 검토(2026-10-09): 비밀 이름 목록이 SSH·서명 키, 비밀번호 금고, 클라우드·OAuth 인증 파일, 브라우저 로그인 저장소를 빠뜨렸다.
+// Hermes 코어 검증은 이름이 아니라 위치(~/.ssh·~/.aws·/etc·Hermes 홈의 인증 파일)로만 거부해서, 프로젝트 폴더의 이런 파일은 비엄격에서 통과한다
+// (엄격 모드도 10분 안에 만든 파일은 통과). 링크로는 이름만으로도 보내지 않는다. 목록에서 하나를 빼면 이 테스트가 red가 된다.
+const SECRET_NAMES = ['id_ecdsa', 'id_dsa', 'id_ecdsa_sk', 'id_ed25519', 'id_rsa.pub', 'deploy.ppk', 'release.jks', 'app.keystore', 'vault.kdbx', 'backup.gpg',
+  'AuthKey_AB12CD34.p8', 'office.ovpn', 'auth.json', 'my-service-account.json', 'service_account_key.json', 'oauth_client.json', 'oauth2.json',
+  'client_secret_123.json', 'kubeconfig', 'kubeconfig.yaml', 'htpasswd', '.htpasswd', 'Cookies', 'Cookies-journal', 'Login Data', 'Web Data', 'Local State',
+  'server.key', 'cert.pem', 'cert.p12', 'cert.pfx', 'prod.env', 'db_password.txt', 'aws_credentials.csv', 'api-key.txt', 'private_key.der'];
+test('비밀 이름 — SSH·서명 키, 금고, 클라우드·OAuth 인증 파일, 브라우저 로그인 저장소는 코어가 통과시켜도 링크로 보내지 않는다', () => runCore(String.raw`
+sec = work / 'proj'; sec.mkdir()
+Base.validate_media_delivery_path = staticmethod(lambda p, session_key='': os.path.realpath(p))   # 코어 비엄격처럼 위치만 보고 전부 통과
+def forms(f):   # 띄어쓰기 있는 이름(Login Data)도 링크로 읽히는 모양 — %20·<…>
+    q = str(f).replace(' ', '%20')
+    return ['[x](attachment:' + q + ')', '첨부: sandbox:' + q, '[x](<attachment:' + str(f) + '>)']
+for n in ${JSON.stringify(SECRET_NAMES)}:
+    f = sec / n; f.write_text('fake\n')
+    for text in forms(f):
+        assert m.pick_linked_files(text) == ([], text), ('링크로는 보내지 않는다', n, text)
+# 대조군: 같은 모양으로 적은 보통 문서는 보낸다(모양이 링크로 읽힌다는 증거). 인증 파일 규칙은 .json·정확한 이름에만 걸린다
+for n in ['auth-flow.md', 'oauth-guide.md', 'service-account-setup.md', 'cookies-policy.md', 'login-data-report.csv', 'keys.md', 'Login Notes.md', 'Web Data Plan.md']:
+    f = sec / n; f.write_text('doc\n')
+    for text in forms(f):
+        assert [os.path.basename(p) for p in m.pick_linked_files(text)[0]] == [n], (n, text)
+`));
+
+// 커밋 보안 검토(2026-10-09): 거부 목록만으로는 늘 새는 이름이 생긴다. 링크로 보낼 수 있는 위치를 에이전트가 파일을 만드는 곳으로 좁힌다 —
+// 홈, 터미널 작업 폴더(TERMINAL_CWD), 임시 폴더, 운영자가 허용한 폴더(HERMES_MEDIA_ALLOW_DIRS). 그 밖(/opt·/srv·다른 사용자 홈 등)의 파일은
+// 링크를 그대로 둔다(origin/main과 같음). MEDIA:는 코어 정책 그대로라 영향이 없다. 파일 시스템 루트(/·C:\)는 위치를 좁히지 못하니 무시한다.
+test('링크로 보낼 수 있는 위치 — 홈·터미널 작업 폴더·임시 폴더·운영자 허용 폴더 안만, 그 밖은 링크를 그대로 둔다', () => runCore(String.raw`
+import tempfile
+other = Path(tmp.name) / 'elsewhere'; other.mkdir()
+saved = tempfile.tempdir
+tempfile.tempdir = str(other)
+for k in ('HOME', 'USERPROFILE'): os.environ[k] = str(other)
+for k in ('TERMINAL_CWD', 'HERMES_MEDIA_ALLOW_DIRS'): os.environ.pop(k, None)
+text = '[다운](attachment:' + str(md) + ')'
+assert a.extract_local_files(text) == ([], text), 'work 폴더는 홈·임시 폴더·작업 폴더 어디에도 들지 않는다'
+os.environ['TERMINAL_CWD'] = str(work)
+assert [os.path.basename(f) for f in a.extract_local_files(text)[0]] == ['download-test-vps.md'], '터미널 작업 폴더 안'
+os.environ['TERMINAL_CWD'] = os.path.abspath(os.sep)
+assert a.extract_local_files(text) == ([], text), '작업 폴더가 파일 시스템 루트면 위치를 좁히지 못하니 무시한다'
+os.environ.pop('TERMINAL_CWD')
+os.environ['HERMES_MEDIA_ALLOW_DIRS'] = os.path.join(tmp.name, 'none') + os.pathsep + str(work)
+assert [os.path.basename(f) for f in a.extract_local_files(text)[0]] == ['download-test-vps.md'], '운영자가 허용한 폴더 안'
+os.environ.pop('HERMES_MEDIA_ALLOW_DIRS')
+for k in ('HOME', 'USERPROFILE'): os.environ[k] = tmp.name
+assert [os.path.basename(f) for f in a.extract_local_files(text)[0]] == ['download-test-vps.md'], '홈 안'
+for k in ('HOME', 'USERPROFILE'): os.environ[k] = str(other)
+tempfile.tempdir = saved
+assert [os.path.basename(f) for f in a.extract_local_files(text)[0]] == ['download-test-vps.md'], '임시 폴더 안'
+`));
+
+// Windows CI(b4b5309c): Windows는 'x.md.'도 'x.md'로 열어 줘서, 파일이 있는지로 문장 끝 마침표를 떼던 판정이 점을 경로에 붙였다.
+// 짧은 쪽(구두점을 뗀 경로)부터 파일이 있는지 본다. 이 테스트는 파일 확인을 Windows처럼 끝 점을 무시하게 바꿔 OS와 관계없이 같은 결과를 본다.
+test('문장 끝 구두점 — 끝 점을 무시하는 파일 확인(Windows)에서도 마침표는 경로에 붙지 않고 본문에 남는다', () => runCore(String.raw`
+real_isfile = os.path.isfile
+os.path.isfile = lambda p: real_isfile(str(p).rstrip('.'))
+files, body = a.extract_local_files('첨부: attachment:' + str(md) + '.')
+assert [os.path.basename(f) for f in files] == ['download-test-vps.md'] and body == '첨부: download-test-vps.md.', (files, body)
+files, body = a.extract_local_files('첨부: attachment:' + str(md) + '...!')
+assert [os.path.basename(f) for f in files] == ['download-test-vps.md'] and body == '첨부: download-test-vps.md...!', (files, body)
+os.path.isfile = real_isfile
+odd = work / 'v1.'; odd.write_text('x')   # 이름이 정말 점으로 끝나는 파일(맥·리눅스) — 뗀 경로가 없으면 점까지 경로
+if real_isfile(str(odd)) and not real_isfile(str(odd)[:-1]):
+    files, body = a.extract_local_files('첨부: attachment:' + str(odd))
+    assert [os.path.basename(f) for f in files] == ['v1.'] and body == '첨부: v1.', (files, body)
 `));
