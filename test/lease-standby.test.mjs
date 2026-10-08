@@ -15,7 +15,7 @@ process.env.ARGO_SYNC = '1';
 writeFileSync(join(process.env.ARGO_ROOT, '.device-session.json'), JSON.stringify({ url: 'https://example.invalid', anonKey: 'anon', access_token: 'a.b.c', refresh_token: 'r', expires_at: Math.floor(Date.now() / 1000) + 3600, user: { id: 'u-standby', email: '' } }), { mode: 0o600 });
 for (const k of ['ARGO_PREFER_LEADER', 'ARGO_NO_LEADER', 'ARGO_STANDBY_LEADER']) delete process.env[k];
 const { renewLease, isCloudLeader, standbyIdle, _setSyncClientForTest, LEASE_TTL_MS, YIELD_GRACE_MS, HANDOVER_WAIT_MS, AWAKE_MIN_MS = 30_000, LEASE_CONFIRM_VALID_MS = 0 } = await import('../src/sync.mjs');
-const { existsSync } = await import('node:fs');
+const { existsSync, readFileSync, rmSync } = await import('node:fs');
 const { leaseRole } = await import('../src/lease-role.mjs');
 const { getDeviceId } = await import('../src/workspace.mjs');
 const ME = await getDeviceId();
@@ -27,6 +27,7 @@ const fakeClient = (initialDoc = null) => {
   let stored = initialDoc ? Buffer.from(JSON.stringify(initialDoc)) : null;
   let cdn = null;
   let delayMs = 0;
+  let upDelayMs = 0;
   const failNext = [];
   const body = (buf) => ({ data: { arrayBuffer: async () => buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) }, error: null });
   const bucket = {
@@ -41,7 +42,7 @@ const fakeClient = (initialDoc = null) => {
       if (!stored) return { data: null, error: { name: 'StorageApiError', message: 'Object not found', status: 400, statusCode: '404' } };
       return body(stored);
     },
-    async upload(_key, blob) { calls.upload += 1; stored = Buffer.from(await blob.arrayBuffer()); return { data: {}, error: null }; },
+    async upload(_key, blob) { calls.upload += 1; stored = Buffer.from(await blob.arrayBuffer()); if (upDelayMs) await new Promise((r) => setTimeout(r, upDelayMs)); return { data: {}, error: null }; },
   };
   return {
     client: { storage: { from: () => bucket } }, calls,
@@ -50,6 +51,7 @@ const fakeClient = (initialDoc = null) => {
     failReads: (...errs) => { failNext.push(...errs); },
     staleCdn: (doc) => { cdn = Buffer.from(JSON.stringify(doc)); },
     slow: (ms) => { delayMs = ms; }, // 읽기 응답이 이만큼 늦게 온다
+    slowUpload: (ms) => { upDelayMs = ms; }, // 쓰기 응답이 이만큼 늦게 온다(서버에는 바로 닿는다)
   };
 };
 /** supabase-js가 실제로 돌려주는 읽기 오류 모양(2.110.2 handleError) — 없음('Object not found')이 아닌 것들. */
@@ -68,8 +70,15 @@ const awakeFor = (ms) => {
   if (a.timer && typeof a.timer !== 'string') clearInterval(a.timer);
   return Object.assign(a, { timer: 'test', since: Date.now() - ms, wall: Date.now(), mono: performance.now(), wokeAt: 0 });
 };
-/** sawPeer = 다른 기기의 리스를 본 적 있음(엄격 판정) — 테스트마다 정한다(앞 테스트가 본 기기가 남지 않게). 기본은 본 적 없는 단일 기기. */
-const reset = (patch = {}) => { awakeFor(10 * 60_000); globalThis.__argoSyncLeaseBootAt = Date.now() - 60_000; return Object.assign(lease(), { leader: true, ownedAt: 0, checkedAt: 0, yieldSince: 0, pending: null, readFailSince: 0, escapeAt: 0, escapeBlocked: false, token: null, validUntil: 0, sawPeer: false }, patch); };
+/** 이 파일의 계정(기기 세션 사용자) — 다른 기기를 본 적 있음 표지는 계정마다 둔다. */
+const ACCT = 'u-standby';
+/** sawPeer: true = 이 계정이 방금 다른 기기의 리스를 봤다(엄격 판정) — 테스트마다 정한다(앞 테스트가 본 기기가 남지 않게). 기본은 본 적 없는 단일 기기. */
+const reset = (patch = {}) => {
+  awakeFor(10 * 60_000); globalThis.__argoSyncLeaseBootAt = Date.now() - 60_000;
+  const { sawPeer, ...rest } = patch;
+  return Object.assign(lease(), { leader: true, ownedAt: 0, checkedAt: 0, yieldSince: 0, pending: null, readFailSince: 0, escapeAt: 0, escapeBlocked: false, token: null, validUntil: 0,
+    peers: sawPeer ? { [ACCT]: { at: Date.now(), normals: [] } } : {}, peersSavedAt: sawPeer ? { [ACCT]: Date.now() } : {} }, rest);
+};
 /** 확인된 보유자 상태 — 리스 글(doc)이 내 것이고 방금 확인했다(엄격 판정의 담당 기한 안). */
 const held = (doc, patch = {}) => reset({ leader: true, ownedAt: Date.now() - 5_000, checkedAt: Date.now(), token: doc.token, validUntil: Date.now() + 10_000, ...patch });
 const role = (r) => {
@@ -103,10 +112,11 @@ test('예비 기기는 다른 기기(일반·우선·예비)가 잡은 새 리�
   }
 });
 
-test('예비 기기는 남의 리스가 만료되고 두 주기(16초)가 더 지났을 때만 가져오고, 리스 글에 standby 표지를 남긴다 — 맥이 둘이면 남은 맥이 먼저 가져가게', async () => {
+test('예비 기기는 맥을 두 대 이상 봤으면 남의 리스가 만료되고 두 주기(16초)가 더 지났을 때만 가져오고, 리스 글에 standby 표지를 남긴다 — 남은 맥이 먼저 가져가게', async () => {
   role('standby');
   const f = fakeClient({ ...fresh('mac'), ts: Date.now() - LEASE_TTL_MS - 1_000 }); // 막 만료 — 일반 기기(남은 맥)는 이 주기에 가져간다
   _setSyncClientForTest(f.client); reset();
+  lease().peers = { [ACCT]: { at: Date.now(), normals: ['mac', 'mac2'] } }; // 맥 두 대를 본 적 있다
   await renewLease('owner-s2', { runnerUsable: true });
   assert.equal(f.calls.upload, 0, '만료 직후에는 기다린다(D 3차 검수: 세 기기에서 예비가 먼저 가져가 맥2가 다시 되찾음)');
   assert.equal(isCloudLeader(), false);
@@ -265,16 +275,19 @@ test('다른 기기를 본 적 없는 단일 기기는 배포본처럼 표시를
   assert.equal(isCloudLeader(), true);
 });
 
-test('기동 직후 기본값 — 다른 기기를 본 적 없는 단일 기기는 첫 리스 판정이 끝나면(실패여도·최대 5초) 배포본처럼 담당, 본 적 있는 일반·우선 기기는 확인 전까지(세션이 끊겨 30초가 지나도) 담당이 아니다', async () => {
+test('기동 직후 기본값 — 다른 기기를 본 적 없는 단일 기기는 첫 리스 판정 전(최대 5초)·읽기 오류로 끝난 판정 뒤에는 담당이 아니고 다시 읽어 확인되면 담당, 본 적 있는 일반·우선 기기는 확인 전까지(세션이 끊겨 30초가 지나도) 담당이 아니다', async () => {
   for (const r of ['normal', 'preferred']) {
     role(r);
     reset(); globalThis.__argoSyncLeaseBootAt = Date.now(); // 막 켜짐
     assert.equal(isCloudLeader(), false, `${r} 단일 기기: 첫 리스 판정 전 — 그 판정이 다른 기기의 리스를 보면 겹치지 않게(D 1차 검수)`);
     assert.equal(isCloudLeader(Date.now() + 5_000), true, `${r} 단일 기기: 판정이 걸려도 5초 뒤에는 배포본처럼 담당`);
-    const f = fakeClient(fresh(ME)); _setSyncClientForTest(f.client);
+    const f = fakeClient(null); _setSyncClientForTest(f.client);
     f.failReads(READ_ERRORS[2]);
-    await renewLease('owner-b1', { runnerUsable: true }); // 첫 판정이 읽기 실패로 끝남
-    assert.equal(isCloudLeader(), true, `${r} 단일 기기: 판정이 실패로 끝나도 배포본처럼 담당(세션이 끊겨도 루틴이 멈추지 않게 — D 3차 검수 게이트 B)`);
+    await renewLease('owner-b1', { runnerUsable: true }); // 첫 판정이 읽기 오류로 끝남
+    assert.equal(isCloudLeader(), false, `${r} 단일 기기: 리스를 읽지 못한 채 기동 기본값으로 담당이 아니다 — 처음 만나는 맥이 VPS와 겹치던 것(D 4차 검수 MEDIUM-A). 세션 실패만 배포본처럼 담당(e2e)`);
+    assert.equal(f.calls.upload, 0);
+    await renewLease('owner-b1', { runnerUsable: true }); // 다시 읽기(리스 타이머가 1초 뒤 한 번) — 성공하면 바로 가져온다
+    assert.equal(isCloudLeader(), true, r);
     reset({ sawPeer: true });
     assert.equal(isCloudLeader(), false, `${r}: 다른 기기를 본 적 있으면 확인 전에는 담당이 아니다 — 맥 앱이 켜지는 순간 VPS와 겹치던 창`);
     assert.equal(isCloudLeader(Date.now() + 31_000), false, `${r}: 세션이 끊겨 리스를 못 읽어도 30초 기본값으로 담당이 되지 않는다(D 3차 검수 MEDIUM-3: VPS와 40초 겹침)`);
@@ -282,13 +295,45 @@ test('기동 직후 기본값 — 다른 기기를 본 적 없는 단일 기기�
   }
 });
 
-test('다른 기기의 리스 글을 한 번 보면 데이터 폴더에 표지를 남긴다 — 다시 켜진 뒤(세션이 끊겨 리스를 못 읽어도) 엄격 판정을 쓰는 근거', async () => {
-  const file = join(process.env.ARGO_ROOT, '.lease-peer.json');
-  const f = fakeClient(fresh('vps', { standby: true })); _setSyncClientForTest(f.client); reset();
+const PEER_FILE = join(process.env.ARGO_ROOT, '.lease-peer.json');
+const readPeerFile = async () => { for (let i = 0; i < 50; i++) { try { return JSON.parse(readFileSync(PEER_FILE, 'utf8')); } catch { await new Promise((r) => setTimeout(r, 10)); } } return null; };
+test('다른 기기의 리스 글을 보면 데이터 폴더에 계정별 표지를 남긴다 — 다시 켜진 뒤(세션이 끊겨 리스를 못 읽어도) 엄격 판정을 쓰는 근거', async () => {
+  rmSync(PEER_FILE, { force: true });
+  const f = fakeClient(fresh('mac-a')); _setSyncClientForTest(f.client); reset();
   await renewLease('owner-k1', { runnerUsable: true });
-  assert.equal(lease().sawPeer, true);
-  for (let i = 0; i < 20 && !existsSync(file); i++) await new Promise((r) => setTimeout(r, 10));
-  assert.equal(existsSync(file), true, '기기 로컬 표지 파일');
+  assert.ok(lease().peers[ACCT]?.at > Date.now() - 5_000);
+  const saved = await readPeerFile();
+  assert.equal(saved?.v, 2, '기기 로컬 표지 파일');
+  assert.deepEqual(saved.accounts[ACCT].normals, ['mac-a'], '본 적 있는 일반 기기');
+});
+
+test('표지는 볼 때마다 메모리의 시각만 고치고 파일은 하루에 한 번(또는 처음 보는 일반 기기)만 쓴다 — 리스 판정(8초)마다 쓰지 않게', async () => {
+  rmSync(PEER_FILE, { force: true });
+  const f = fakeClient(fresh('mac-a')); _setSyncClientForTest(f.client); reset({ leader: false });
+  await renewLease('owner-k2', { runnerUsable: true });
+  const first = (await readPeerFile()).accounts[ACCT].at;
+  await new Promise((r) => setTimeout(r, 20));
+  for (let i = 0; i < 3; i++) await renewLease('owner-k2', { runnerUsable: true });
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal((await readPeerFile()).accounts[ACCT].at, first, '같은 날 다시 본 것은 쓰지 않는다');
+  assert.ok(lease().peers[ACCT].at > first, '메모리 시각은 고친다(14일 판정)');
+  lease().peersSavedAt[ACCT] -= 25 * 3_600_000; // 마지막으로 쓴 지 하루가 넘었다
+  await renewLease('owner-k2', { runnerUsable: true });
+  await new Promise((r) => setTimeout(r, 50));
+  assert.ok((await readPeerFile()).accounts[ACCT].at > first, '하루가 지나면 고쳐 쓴다');
+  f.set(fresh('mac-b')); await renewLease('owner-k2', { runnerUsable: true });
+  await new Promise((r) => setTimeout(r, 50));
+  assert.deepEqual((await readPeerFile()).accounts[ACCT].normals, ['mac-a', 'mac-b'], '처음 보는 일반 기기는 바로 쓴다');
+});
+
+test('표지는 최근 14일 안에 이 계정이 다른 기기를 봤을 때만 엄격 판정을 쓴다 — 두 번째 기기를 없앴거나 다른 계정으로 로그인했으면 단일 기기(배포본처럼 담당)', () => {
+  reset({ checkedAt: Date.now() });
+  lease().peers = { [ACCT]: { at: Date.now() - 13 * 86_400_000, normals: ['vps'] } };
+  assert.equal(isCloudLeader(), false, '13일 전에 본 기기 — 엄격 판정(확인 전 담당 아님)');
+  lease().peers = { [ACCT]: { at: Date.now() - 15 * 86_400_000, normals: ['vps'] } };
+  assert.equal(isCloudLeader(), true, '15일 동안 다른 기기를 못 봤다 — 단일 기기로 돌아간다(세션이 끊겨도 아무도 실행하지 않는 일이 없게, D 4차 검수 MEDIUM-B)');
+  lease().peers = { 'someone-else': { at: Date.now(), normals: ['vps'] } };
+  assert.equal(isCloudLeader(), true, '다른 계정이 본 기기는 이 계정과 무관하다');
 });
 
 test('예비 기기는 기동 직후 기본값으로 담당이 되지 않는다 — 리스를 확인하지 못한 채(세션 만료 등) 30초가 지나도. 확인된 신선한 보유일 때만 담당이고, 메신저 판정(standbyIdle)과 늘 같다', () => {
@@ -379,14 +424,20 @@ test('되찾는 맥은 리스를 읽지 못한 주기에 가져가지도 담당�
   }
 });
 
-test('일반·우선 기기도 읽기 오류 주기에는 쓰지 않는다 — 빈 리스여도 가져가지 않고(다음 주기에 가져감), 남의 리스도 빼앗지 않는다. 담당 표시는 단일 기기면 배포본처럼 그대로, 다른 기기를 본 적 있으면 아님', async () => {
+test('일반·우선 기기도 읽기 오류 주기에는 쓰지 않는다 — 빈 리스여도 가져가지 않고(다음 주기에 가져감), 남의 리스도 빼앗지 않는다. 담당 표시는 보유자(내 글 만료 전)만 그대로 — 단일 기기도 보유자가 아니면 아님(D 4차 검수 MEDIUM-A)', async () => {
   for (const r of ['normal', 'preferred']) {
     role(r);
     const solo = fakeClient(null); _setSyncClientForTest(solo.client); reset();
     solo.failReads(READ_ERRORS[0]);
     await renewLease('owner-e3', { runnerUsable: true });
     assert.equal(solo.calls.upload, 0, `${r} 단일 기기: 읽기 오류 주기`);
-    assert.equal(isCloudLeader(), true, `${r} 단일 기기: 배포본처럼 기동 기본값 그대로(D 3차 검수 게이트 B: 배포본 0.6초 담당)`);
+    assert.equal(isCloudLeader(), false, `${r} 단일 기기도 읽기 오류면 기동 기본값으로 담당이 아니다(D 4차 검수 MEDIUM-A — 처음 만나는 기기와 겹치지 않게). 리스 타이머가 1초 뒤 다시 읽는다`);
+    const owned = fresh(ME); const g0 = fakeClient(owned); _setSyncClientForTest(g0.client);
+    reset({ leader: true, ownedAt: Date.now() - 40_000, checkedAt: Date.now() });
+    g0.failReads(READ_ERRORS[0]);
+    await renewLease('owner-e3', { runnerUsable: true });
+    assert.equal(isCloudLeader(), true, `${r} 단일 기기 보유자는 읽기 오류에도 내 글 만료 전까지 담당(쓰기 0)`);
+    assert.equal(g0.calls.upload, 0);
     const f = fakeClient(null); _setSyncClientForTest(f.client); reset({ sawPeer: true });
     f.failReads(READ_ERRORS[0]);
     await renewLease('owner-e3', { runnerUsable: true });
@@ -577,4 +628,30 @@ test('예비 기기는 동기화가 꺼져 있으면(기기 세션 없음·ARGO_
       assert.equal(standbyIdle(), false, r);
     }
   } finally { process.env.ARGO_SYNC = sync; }
+});
+
+
+/* ── D 4차 검수 ── */
+
+test('넘겨받기 대기는 내 쓰기의 응답을 받은 시각부터 센다 — 쓰기가 늦게 닿아도 대기가 줄지 않게(D 4차 검수 LOW-C: 14초 늦게 닿자 겹침 6.6~6.9초)', async () => {
+  const f = fakeClient(fresh('vps', { standby: true })); _setSyncClientForTest(f.client); reset({ leader: false });
+  f.slowUpload(400);
+  const before = Date.now();
+  await renewLease('owner-p3', { runnerUsable: true });
+  assert.ok(lease().pending, '넘겨받는 중');
+  assert.ok(lease().pending.ts >= before + 400, `대기 기준이 쓰기 응답 시각이 아니다 — ${lease().pending.ts - before}ms`);
+  assert.ok(f.doc().ts < before + 50, '리스 글의 ts는 그대로 쓰기 전 시각(남이 보는 만료 기준)');
+});
+
+test('예비 기기는 일반 기기를 한 대만 봤으면 만료 뒤 기다리지 않고, 두 대 이상 봤으면 두 주기 기다린다 — 흔한 맥 → VPS 넘어가기를 늦추지 않게(D 4차 검수 LOW-D)', async () => {
+  role('standby');
+  const expired = { ...fresh('mac'), ts: Date.now() - LEASE_TTL_MS - 1_000 };
+  const f = fakeClient(expired); _setSyncClientForTest(f.client); reset();
+  lease().peers = { [ACCT]: { at: Date.now(), normals: ['mac'] } };
+  await renewLease('owner-d1', { runnerUsable: true });
+  assert.equal(f.calls.upload, 1, '맥 한 대 — 만료되면 바로 맡는다');
+  const g = fakeClient(expired); _setSyncClientForTest(g.client); reset();
+  lease().peers = { [ACCT]: { at: Date.now(), normals: ['mac', 'mac2'] } };
+  await renewLease('owner-d1', { runnerUsable: true });
+  assert.equal(g.calls.upload, 0, '맥 두 대 — 남은 맥이 먼저 가져가게 기다린다');
 });

@@ -35,7 +35,7 @@ const lease = () => (globalThis.__argoSyncLease ??= { leader: true, checkedAt: 0
 // 깨어 있은 지 오래된 프로세스로 — 이 브랜치의 되찾기는 끊김 없이 30초 깨어 있은 뒤에만 한다(sync.mjs AWAKE_MIN_MS). 배포본에는 없는 상태라 거기서는 무시된다.
 const awakeLong = () => Object.assign((globalThis.__argoSyncAwake ??= {}), { since: Date.now() - 10 * 60_000, wall: Date.now(), mono: performance.now() });
 // 이 브랜치의 판정 상태(확인 기한·토큰·다른 기기 표지·기동 시각)도 테스트마다 지운다 — 앞 테스트가 본 기기가 다음 판정을 엄격하게 바꾸지 않게. 배포본은 이 칸을 모른다.
-const reset = (patch = {}) => { awakeLong(); globalThis.__argoSyncLeaseBootAt = Date.now() - 60_000; return Object.assign(lease(), { leader: true, ownedAt: 0, checkedAt: 0, yieldSince: 0, pending: null, token: null, validUntil: 0, sawPeer: false }, patch); };
+const reset = (patch = {}) => { awakeLong(); globalThis.__argoSyncLeaseBootAt = Date.now() - 60_000; return Object.assign(lease(), { leader: true, ownedAt: 0, checkedAt: 0, yieldSince: 0, pending: null, token: null, validUntil: 0, peers: {}, peersSavedAt: {} }, patch); };
 afterEach(() => { delete process.env.ARGO_PREFER_LEADER; });
 
 test('일반 기기는 다른 일반 기기의 새 리스에 양보한다 — 쓰기 0', async () => {
