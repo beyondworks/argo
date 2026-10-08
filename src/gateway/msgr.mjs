@@ -2018,6 +2018,9 @@ export async function msgrPush(event, { session = sessionClient } = {}) {
     const ownerMayDecide = await c.db.canDecide(ap.id).catch((e) => { console.error('[argo] msgr 결재권 판정 RPC 실패:', e?.message ?? e); return ctx.delegated !== true; });
     await setApprovalMeta(event.wsId, it.id, { msgr: { ...(it.msgr ?? {}), rowId: ap.id, orgId: ctx.orgId, channelId: ctx.channelId, crewId: ctx.crewId, threadRoot: ctx.threadRoot ?? null,
       ...(ctx.channelKind === 'dm' ? { channelKind: 'dm', delegated: ctx.delegated === true } : {}),
+      // 개인 표지 — 실행 중 문맥(activeCtx)으로 찾은 crew 1:1이면 항목의 msgr에 표지가 없다. 빠지면 승인 뒤 이어 실행이 개인 기록으로 못 읽어 멈춘다(1차 검수 MEDIUM).
+      // 운반용이다 — 이어 실행(restoreMessengerContext)이 msgr_is_own_crew_room으로 방을 다시 판정한다
+      ...(personal ? { ownCrewRoom: true } : {}),
       uid: c.uid, wsId: event.wsId, sourceMsgId: ctx.sourceMsgId ?? ctx.threadRoot ?? null, origin: ctx.origin ?? null, hop: ctx.hop ?? 0, messageId: card?.id ?? null, risk, ownerMayDecide } });
     return true;
   }

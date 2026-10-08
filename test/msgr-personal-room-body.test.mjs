@@ -86,6 +86,7 @@ test('핀: 조직 1:1(dm)·조직 채널의 결재 카드 — 표 직접 넣기(
     assert.match(db.calls[1][1].body, /조직 정책의 결재권자가 확정합니다/, '고위험 카드 문구 그대로(발송 = 고위험)');
     const saved = await lastApproval(ws);
     assert.equal(saved.msgr.rowId, 'ap-row-org'); assert.equal(saved.msgr.orgId, ORG); assert.equal(saved.msgr.ownerMayDecide, true);
+    assert.equal('ownCrewRoom' in saved.msgr, false, '조직 결재 기록에는 개인 표지를 남기지 않는다');
   }
 });
 

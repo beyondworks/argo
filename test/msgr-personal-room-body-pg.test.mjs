@@ -19,7 +19,7 @@ const skip = !DB && 'ARGO_PG_TEST_URL 미설정 — bash scripts/billing-pg-dril
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-personal-room-body-pg-'));
 const { createCompany, paths } = await import('../src/workspace.mjs');
 const chatMod = await import('../src/chat.mjs');
-const { loadApprovals } = await import('../src/approvals.mjs');
+const { loadApprovals, addApproval } = await import('../src/approvals.mjs');
 const approvals = await import('../src/approval-actions.mjs');
 const M = await import('../src/gateway/msgr.mjs');
 const { messengerOrigin } = await import('../src/gateway/msgr-handoff.mjs');
@@ -209,6 +209,30 @@ test('경우 15 — 개인 이어 실행(결재 후속): 서버 판정·봉투·
     await assert.rejects(M.runMessengerContinuation(WS, 'alpha', origin, '진행', null, { session: sessionAs(U.a), runChat }), /개인 1:1로 확인되지 않아/);
     assert.equal(ran, 1, '바뀐 방에서는 유료 턴 0');
   } finally { sql(`delete from public.msgr_channel_members where channel_id = '${CH_A1}' and member_kind = 'crew' and member_id = '${A3}'`); }
+});
+
+// 1차 검수 MEDIUM(PR #864) — 메신저 밖 턴(데스크톱 등)의 결재가 같은 에이전트의 crew 1:1 턴 실행 중에 올라오면 항목에 msgr가 없어 실행 중 문맥으로 목적지를 찾는다.
+// 카드는 개인 RPC로 들어가고, 저장 기록에 개인 표지가 남아야 승인 뒤 이어 실행이 같은 방에서 이어진다(실제 msgr_is_own_crew_room·봉투·동의·RLS 통과).
+test('메신저 밖 턴의 결재 · crew 1:1 턴 실행 중 — 개인 RPC 카드, 저장 기록에 개인 표지, 승인 뒤 같은 방에서 이어 실행', { skip }, async () => {
+  const m = post(U.a, CH_A1, '메신저 턴 진행 중'); execution(A1, m, 'running');
+  const ctx = await turnCtx(U.a, CH_A1, A1, m);
+  assert.equal(ctx.ownCrewRoom, true, '서버 판정(msgr_is_own_crew_room)');
+  const item = await addApproval(WS, { slug: 'alpha', action: '데스크톱 턴의 보고서 발송', reason: '마감' }); // 메신저 밖 턴 — msgr 없음
+  M._activeCtxForTest.set(`${WS}:alpha`, ctx);
+  try { assert.equal(await M.msgrPush({ type: 'approval', wsId: WS, item }, { session: sessionAs(U.a) }), true); }
+  finally { M._activeCtxForTest.delete(`${WS}:alpha`); }
+  const saved = (await loadApprovals(WS)).find((a) => a.id === item.id);
+  assert.deepEqual([saved.msgr.orgId, saved.msgr.channelId, saved.msgr.ownCrewRoom], [null, CH_A1, true], '저장 기록에 개인 표지');
+  assert.equal(rowOf(item.id), `NULL|pending|high|${saved.msgr.messageId}|NULL`, 'org 없는 결재 행 + 카드 연결');
+  execution(A1, m, 'completed'); // 메신저 턴이 끝난 뒤 승인
+  let ran = 0;
+  events.length = 0;
+  await approvals._followUpForTest(WS, { ...saved, status: 'approved' }, true, { session: sessionAs(U.a), runChat: async (_ws, _slug, _msg, _sid, opts) => {
+    ran++; assert.deepEqual([opts.mirrorCtx.orgId, opts.mirrorCtx.channelId, opts.mirrorCtx.ownCrewRoom], [null, CH_A1, true]); return { reply: '데스크톱 결재 후속', sessionId: null, handover: null }; } });
+  assert.equal(ran, 1, '승인한 일이 한 번 실행된다');
+  const event = events.find((e) => e.type === 'approval_followup');
+  assert.equal(await M.msgrPush(event, { session: sessionAs(U.a) }), true);
+  assert.equal(sql(`select concat_ws('|', author_kind, crew_id, reply_to, body) from public.msgr_messages where channel_id = '${CH_A1}' and client_msg_id like 'ct:%' order by id desc limit 1`), `crew|${A1}|${m}|데스크톱 결재 후속`, '같은 방의 원래 글에 답');
 });
 
 // 6절 2번 — 결재 후속·예약·긴 작업(이어 실행) 턴에서 올린 결재 카드의 출처는 원래 지시이고(msgr.mjs msgrPush approval.source_msg_id), 그 지시의 실행은 이미 끝났다(completed).

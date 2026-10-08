@@ -130,7 +130,6 @@ export const guestCliRefusal = (name, lang = 'ko') => (lang === 'en'
   : `${name}은(는) 지금 주인만 일을 시킬 수 있습니다 — 현재 실행 엔진으로는 다른 사람의 요청에서 주인의 파일·계정을 막아 둘 수 없습니다. 주인에게 대신 요청하거나, ${name}을(를) 함께 쓸 수 있는 엔진으로 바꿔 달라고 해 주세요.`);
 export const SDK_ALLOWED_TOOLS = Object.freeze(['WebFetch', 'WebSearch', 'mcp__crew']); // 동결 — 모듈 공유 배열이라 런타임 push 오염이 전 회사·전 턴에 번진다(재검수, CAPABILITIES와 같은 계약)
 
-/** 동료 명단 + 위임 규칙 — 위임 도구가 붙는 턴에만 주입한다. */
 /** 메신저 문맥 턴의 셸 위험 분류 게이트(D28) 목적지 — messengerOrigin 기록. 문맥이 불완전하거나 거절되면({}) 분류는 켜되 결재는 로컬 원장에만 남는다.
     개인 crew 1:1(서버 판정 ownCrewRoom)은 이 방이 목적지가 된다 — 예전에는 개인 거절을 삼켜 {}가 돼, 카드 없이 실행 중 문맥으로 표 직접 넣기를 시도하다 RLS에 막혔다(계획 6절 D28).
     메신저 밖 턴은 null(게이트 꺼짐). 내보내기는 D28 경로 테스트용. */
@@ -139,6 +138,7 @@ export function shellGateMsgr(mirrorCtx) {
   try { return messengerOrigin(mirrorCtx) ?? {}; } catch { return {}; }
 }
 
+/** 동료 명단 + 위임 규칙 — 위임 도구가 붙는 턴에만 주입한다. */
 function messengerColleagues(ctx, hop) {
   if (ctx?.kind !== 'msgr' || hop >= 2) return [];
   return (ctx.peers ?? []).filter((p) => p.id !== ctx.crewId)

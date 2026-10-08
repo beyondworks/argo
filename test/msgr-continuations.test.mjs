@@ -10,10 +10,10 @@ const { createCompany, paths } = await import('../src/workspace.mjs');
 const { makeCrewServer } = await import('../src/chat.mjs');
 const { runDirectives } = await import('../src/cli-directives.mjs');
 const { addRoutine, runRoutine, loadRoutines } = await import('../src/routines.mjs');
-const { loadApprovals } = await import('../src/approvals.mjs');
+const { loadApprovals, addApproval } = await import('../src/approvals.mjs');
 const approvals = await import('../src/approval-actions.mjs');
 const gateway = await import('../src/gateway.mjs');
-const { msgrPush } = await import('../src/gateway/msgr.mjs');
+const { msgrPush, _activeCtxForTest } = await import('../src/gateway/msgr.mjs');
 const { onNotify } = await import('../src/notify.mjs');
 let n = 0;
 // requester = 이 방에서 크루에게 지시한 사람. 기본은 주인이 아닌 'person'(종전 그대로). 손님 턴(PR-A)은 주인이 아닌 요청자의
@@ -769,6 +769,35 @@ for (const runner of ['SDK', 'CLI']) {
     try {
       await gateway._makeJobHandlerForTest(f.ws, { runChat: f.runChat(runner), session: f.session })({ id: 'job-p', slug: 'alpha', title: '개인 작업', prompt: '이어하기', msgr: f.origin });
       await assertPersonalDelivered(f, 'job');
+    } finally { f.stop(); }
+  });
+}
+
+// 1차 검수 MEDIUM(PR #864) — 메신저 밖 턴(데스크톱·텔레그램·회의실·msgr 없는 루틴)이 같은 에이전트의 crew 1:1 턴과 동시에 돌다 결재를 올리면, 항목에 msgr가 없어
+// 실행 중 문맥(activeCtx)으로 목적지를 찾는다. 카드는 개인 결재 RPC로 들어가는데 저장되는 기록에 개인 표지가 빠지면 승인 뒤 이어 실행이 '소유자·회사 불일치'로 멈춘다(배포본은 RLS로 미러 실패 → 데스크톱 후속).
+for (const runner of ['SDK', 'CLI']) {
+  test(`${runner}: 메신저 밖 턴의 결재 · crew 1:1 턴 실행 중(activeCtx) — 저장 기록에 개인 표지가 남고, 승인하면 같은 방에서 이어 실행된다`, async () => {
+    const f = await setupPersonal();
+    const key = `${f.ws}:alpha`;
+    Object.assign(f.db, {
+      createPersonalApproval: async (row) => { f.calls.push(['createPersonalApproval', row]); return { id: 'ap-row' }; },
+      insertApproval: async () => { f.calls.push(['insertApproval']); throw new Error('rls'); },
+      updateApproval: async (id) => [{ id }],
+      canDecide: async () => true,
+    });
+    try {
+      const item = await addApproval(f.ws, { slug: 'alpha', action: '보고서 발송', reason: '마감' }); // 메신저 밖 턴 — 항목에 msgr 없음
+      assert.equal(item.msgr, undefined);
+      _activeCtxForTest.set(key, { ...f.origin, kind: 'msgr', peers: [], handoffs: [], lang: 'ko' }); // crew 1:1 메신저 턴(run()이 서버 판정 true를 문맥에 남김)
+      try { assert.equal(await msgrPush({ type: 'approval', wsId: f.ws, item }, { session: f.session }), true); } finally { _activeCtxForTest.delete(key); }
+      assert.equal(count(f, 'createPersonalApproval'), 1); assert.equal(count(f, 'insertApproval'), 0);
+      const saved = (await loadApprovals(f.ws)).find((a) => a.id === item.id);
+      assert.deepEqual([saved.msgr.rowId, saved.msgr.orgId, saved.msgr.channelId, saved.msgr.ownCrewRoom], ['ap-row', null, 'pch', true], '개인 표지가 저장 기록에 남는다(운반용 — 이어 실행이 서버 판정을 다시 한다)');
+      f.rows.length = 0; f.calls.length = 0;
+      await approvals._followUpForTest(f.ws, { ...saved, status: 'approved' }, true, { runChat: f.runChat(runner), session: f.session });
+      assert.equal(f.seen.length, 1, '승인한 일이 같은 방에서 한 번 실행된다');
+      assert.equal(count(f, 'ownCrewRoom'), 1, '이어 실행은 저장된 표지를 믿지 않고 서버 판정을 다시 한다');
+      await assertPersonalDelivered(f, 'approval_followup');
     } finally { f.stop(); }
   });
 }
