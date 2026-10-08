@@ -529,11 +529,12 @@ test('D4: 에이전트가 파일 쓰기·셸로 assistant.json·비서 상태를
   assert.equal(await deny('Bash', { command: 'rm -rf .assistant' }), 'deny', '폴더째 지우기(보낸 키·대기열 초기화)도 막는다');
   assert.equal(await deny('Bash', { command: `cat ${join(root, '.assistant', 'state.json')}` }), 'deny', '절대 경로');
   // 셸 확장으로 이름을 쪼개는 모양 — 경계 정규식이 앞뒤를 공백·따옴표·경로 구분자만 보던 때(6f1a8911) 통과했다(총괄 실측 10/8). 무경계 부분 문자열 시절에는 막혔다.
-  for (const command of ['cat {.assistant,}/state.json', 'mv f .assistant{,}/state.json', 'cat x{,/.assistant}/state.json', 'cat .assistant?/state.json', 'printf x | tee -a :.assistant/state.json', 'cp f ~.assistant/x']) {
+  // 끝 점 — Windows는 경로 이름 끝의 점을 지워 `.assistant.\\state.json`이 같은 폴더를 가리킨다(10/8 두 번째 보안 검토)
+  for (const command of ['cat {.assistant,}/state.json', 'mv f .assistant{,}/state.json', 'cat x{,/.assistant}/state.json', 'cat .assistant?/state.json', 'printf x | tee -a :.assistant/state.json', 'cp f ~.assistant/x', 'type .assistant.\\state.json', 'del .assistant..\\state.json', 'cat .assistant./state.json']) {
     assert.equal(await deny('Bash', { command }), 'deny', command);
   }
   // 이름의 일부로 쓰인 경우는 그대로 통과(#863 1차 검수 MEDIUM — 남의 코드베이스 오차단)
-  for (const command of ['python3 -c "print(client.beta.assistants.list())"', 'ls src/Chat.Assistant.tsx', 'grep -n message.assistant app.js', 'echo x.assistant .assistants', 'node -e "o.assistant.content"']) {
+  for (const command of ['python3 -c "print(client.beta.assistants.list())"', 'ls src/Chat.Assistant.tsx', 'grep -n message.assistant app.js', 'echo x.assistant .assistants', 'node -e "o.assistant.content"', 'ls .assistant.bak']) {
     assert.equal(await deny('Bash', { command }), 'allow', command);
   }
   assert.equal(await deny('Write', { file_path: join(root, 'vault', 'notes', 'assistant-ideas.md'), content: 'x' }), 'allow', '책상의 일반 문서는 그대로');

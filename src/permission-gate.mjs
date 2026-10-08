@@ -293,10 +293,12 @@ const BASH_GUARDED = [...WS_CONTROL_FILES, ...WS_LEDGER_FILES, ...WS_DOT_FILES];
    경계 = 앞뒤가 이름에 쓰이는 글자(영문·숫자·`_`·`.`·`-`)가 아닐 것. 앞뒤를 공백·따옴표·경로 구분자로만 잡으면 셸 확장으로 이름을
    쪼갠 `{.assistant,}`·`.assistant{,}`·`.assistant?`·`:.assistant`가 통과했다(10/8 총괄 실측 — 무경계 부분 문자열 때는 막히던 모양).
    그래서 `rm -rf .assistant`·`cat .assistant/state.json`·절대 경로·중괄호·`?`·`*`는 거부, `x.assistant`·`.assistants`·`.assistant.content`는 통과.
+   뒤의 점은 바로 뒤가 이름 글자일 때만 다른 이름으로 본다(`.assistant.bak`) — Windows는 경로 이름 끝의 점을 지워 `.assistant.\\state.json`·`.assistant..`이
+   같은 폴더를 가리킨다(10/8 두 번째 보안 검토).
    남는 한계: `.assist*`·`$'\x2e'assistant`처럼 글자 자체를 쪼개는 모양은 다른 보호 파일과 같이 막지 못한다(셸 리터럴 방어의 한계).
    남는 오차단: `jq '.assistant' f.json`처럼 따옴표로 감싼 키 하나 — 경로와 글자로 구별할 수 없어 fail-closed로 둔다.
    파일 도구·MCP는 이 목록과 무관하게 직속 도트 규칙(isForbidden)이 거부한다. */
-const BASH_DOT_DIR_RE = /(?<![A-Za-z0-9_.-])\.assistant(?![A-Za-z0-9_.-])/i;
+const BASH_DOT_DIR_RE = /(?<![A-Za-z0-9_.-])\.assistant(?![A-Za-z0-9_-]|\.[A-Za-z0-9_-])/i;
 // 경계 클래스에 리다이렉트·쉼표(<>,) 포함 — `>chats/b.json`(공백 없는 리다이렉트)이 위조 명령의 가장
 // 자연스러운 형태다(재검수 3R). 잔여: `../`·`$PWD/` 간접 표기는 파일 헤더의 셸 한계 범위(실판정은 isForbidden).
 const BASH_DIR_RE = new RegExp(String.raw`(^|[\s'"\x60;|&(=<>,])(\.[\\/])?(${[...WS_CONTROL_DIRS].join('|')})[\\/]`, 'i');
