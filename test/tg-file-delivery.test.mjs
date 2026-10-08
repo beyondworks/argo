@@ -51,5 +51,8 @@ test('배선: 게이트웨이 발신이 실패를 수집·통보하고, 메신�
   assert.match(chat, /그 구역 밖 파일\([^)]*_imported\/unsorted\/[^)]*\.env\)은 붙지 않고, 결과물 형식\([^)]*\)만 붙는다[^.]*\. 결과물은 반드시 그 구역에 저장하라/, '구역 밖·형식 불가(ko)');
   assert.match(chat, /under vault\/projects\/, vault\/files\/ or vault\/_imported\//, '첨부 구역(en)');
   assert.match(chat, /Argo Messenger attaches those files automatically \(up to 10 per reply\)/, '메신저 자동 첨부·상한(en)');
+  // 외부 링크로 대신 주지 않기(2026-10-08 정비사 전달 — 우분투 CLI 사용자 제보: 에이전트가 비공개 GitHub 링크를 적어 폰에서 404)
+  assert.match(chat, /파일을 GitHub·클라우드 저장소 같은 외부 링크로 대신 주지 마라 — 받는 사람이 열 수 없을 수 있다\. 위 구역에 저장해 첨부로 보내라\./, '외부 링크 대신 첨부(ko)');
+  assert.match(chat, /Do not hand over a file as an external link instead \(GitHub, cloud storage, etc\.\) — the recipient may not be able to open it\. Save it in those folders and send it as an attachment\./, '외부 링크 대신 첨부(en)');
   assert.match(chat, /_imported\/unsorted\/, hidden files and \.env — are never attached, and only deliverable formats are attached \([^)]*\)\. Save deliverables in those folders\./, '구역 밖·형식 불가(en)');
 });
