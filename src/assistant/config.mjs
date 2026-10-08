@@ -1,16 +1,18 @@
 // 능동 비서 설정 — <회사>/assistant.json 정규화·읽기.
-// 엔진은 읽기만 한다. 쓰는 곳은 설정 API(settings.mjs)뿐이다 — 에이전트 파일 쓰기는 permission-gate WS_CONTROL_FILES가 막고,
+// 엔진은 읽기만 한다. 쓰는 곳은 설정 API(2단계 src/assistant/settings.mjs)뿐이다 — 에이전트 파일 쓰기는 permission-gate WS_CONTROL_FILES가 막고,
 // 동기화는 같은 프로세스 간 잠금(sync.mjs isFileLockedRel)으로 이 파일을 쓴다. 파일이 없거나 꺼져 있으면 비서는 네트워크 호출·쓰기 0이다.
 //
-// 봉인(2단계, #863 2차 검수 LOW): assistant.json은 동기화 대상인데, 이 칸이 없는 옛 버전 본체의 권한 게이트는 assistant.json 쓰기를 막지 않는다.
-// 그 기기의 에이전트가 파일 쓰기 한 번으로 비서를 켜면(일정 읽기·알림 시작) 동기화로 새 기기에 퍼진다. 그래서 설정 API가 파일을 쓸 때마다
-// 그 바이트의 sha256을 company.json `assistantSeal`에 같이 적고, 엔진은 둘이 맞을 때만 켜진 것으로 본다(loadEffectiveAssistantConfig).
+// 봉인(#863 2차 검수 LOW, #865 2차 검수 MEDIUM): assistant.json은 동기화 대상인데, 이 칸이 없는 옛 버전 본체(0.1.98 이하)의 권한 게이트는
+// assistant.json 쓰기를 막지 않는다. 그 기기의 에이전트가 파일 쓰기 한 번으로 비서를 켜면(일정 읽기·알림 시작) 동기화로 새 기기에 퍼진다.
+// 그래서 설정 API가 파일을 쓸 때마다 그 바이트의 sha256을 company.json `assistantSeal`에 같이 적고, 엔진은 둘이 맞을 때만 켜진 것으로 본다
+// (loadEffectiveAssistantConfig). 설정 API가 없는 빌드에서는 봉인을 쓰는 곳이 없어 비서는 늘 꺼짐이다 — 엔진 봉인이 설정 화면보다 먼저 발행돼도 안전하다.
+// 봉인을 보는 엔진은 리스 글에 엔진 번호 2를 싣는다(sync.mjs LEASE_ASSISTANT_ENGINE — 봉인을 안 보는 1단계 빌드는 1).
 // company.json은 #141(2026-07-28, 첫 발행본 v0.1.33)부터 권한 게이트가 에이전트의 파일 도구(Write·Edit) 쓰기와 이름이 그대로 적힌 셸 명령을 막고,
 // 회사 설정 API는 정해진 칸만 받아 이 칸을 고칠 수 없다(test/assistant-settings-adjacent.test.mjs). 막지 못하는 경우: v0.1.32 이하 기기의 에이전트,
 // 셸 능력을 켠 에이전트가 이름을 조합해 쓰는 명령('comp'+'any.json') — capabilities.json·fullAuto 같은 다른 제어 파일과 같은 게이트 한계다.
 // 바이트 해시라 버전마다 정규화 결과가 달라도 같은 값이고, 손으로 고친 파일·동기화 충돌로 둘이
 // 어긋나면 꺼진 쪽으로 간다(설정 화면이 "설정 화면 밖에서 바뀜"을 보여 주고, 다시 켜면 새로 봉인한다).
-// 6단계("이런 건 알리지 마")처럼 이 파일을 쓰는 새 경로는 settings.mjs writeSealed로 써야 한다 — 봉인 없이 쓰면 비서가 꺼진다.
+// 6단계("이런 건 알리지 마")처럼 이 파일을 쓰는 새 경로는 설정 API의 봉인 쓰기(settings.mjs writeSealed)로 써야 한다 — 봉인 없이 쓰면 비서가 꺼진다.
 import { createHash } from 'node:crypto';
 import { stat, readFile } from 'node:fs/promises';
 import { join } from 'node:path';

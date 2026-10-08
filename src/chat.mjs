@@ -130,6 +130,14 @@ export const guestCliRefusal = (name, lang = 'ko') => (lang === 'en'
   : `${name}은(는) 지금 주인만 일을 시킬 수 있습니다 — 현재 실행 엔진으로는 다른 사람의 요청에서 주인의 파일·계정을 막아 둘 수 없습니다. 주인에게 대신 요청하거나, ${name}을(를) 함께 쓸 수 있는 엔진으로 바꿔 달라고 해 주세요.`);
 export const SDK_ALLOWED_TOOLS = Object.freeze(['WebFetch', 'WebSearch', 'mcp__crew']); // 동결 — 모듈 공유 배열이라 런타임 push 오염이 전 회사·전 턴에 번진다(재검수, CAPABILITIES와 같은 계약)
 
+/** 메신저 문맥 턴의 셸 위험 분류 게이트(D28) 목적지 — messengerOrigin 기록. 문맥이 불완전하거나 거절되면({}) 분류는 켜되 결재는 로컬 원장에만 남는다.
+    개인 crew 1:1(서버 판정 ownCrewRoom)은 이 방이 목적지가 된다 — 예전에는 개인 거절을 삼켜 {}가 돼, 카드 없이 실행 중 문맥으로 표 직접 넣기를 시도하다 RLS에 막혔다(계획 6절 D28).
+    메신저 밖 턴은 null(게이트 꺼짐). 내보내기는 D28 경로 테스트용. */
+export function shellGateMsgr(mirrorCtx) {
+  if (mirrorCtx?.kind !== 'msgr') return null;
+  try { return messengerOrigin(mirrorCtx) ?? {}; } catch { return {}; }
+}
+
 /** 동료 명단 + 위임 규칙 — 위임 도구가 붙는 턴에만 주입한다. */
 function messengerColleagues(ctx, hop) {
   if (ctx?.kind !== 'msgr' || hop >= 2) return [];
@@ -700,6 +708,10 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     { scope: z.enum(['org', 'channel']), folder: z.enum(['rules', 'glossary', 'projects']), title: z.string(), body: z.string(), reason: z.string(), slug: z.string().optional().describe('파일 이름(영문 소문자·숫자·하이픈, 예 marketing-glossary). 비우면 제목에서 만들되 한글 제목은 시간 기반 이름이 되므로 영문 slug를 주는 편이 좋다') },
     async ({ scope, folder, title, body, reason, slug }) => {
       if (mirrorCtx?.kind !== 'msgr') return text('이 도구는 팀 메신저 조직 채널의 턴에서만 쓸 수 있다.');
+      // 개인 공간(조직 없는 방)에는 조직 문서가 없다 — 결재를 만들지 않고 먼저 알린다(개인 결재 행은 org_doc 불가: msgr_crew_approvals_personal_no_org_doc, 계획 5-3 #7)
+      if (!mirrorCtx.orgId) return text(lang === 'en'
+        ? 'The personal space has no organization docs, so nothing was proposed. Tell the user in one line, and suggest proposing it from an organization channel if it should be shared with an organization.'
+        : '개인 공간에는 조직 문서가 없어 제안을 올리지 않았다. 사용자에게 한 줄로 알리고, 조직과 나눌 내용이면 조직 채널에서 제안하라고 안내하라.');
       const path = `${folder}/${docSlug(slug || title)}.md`;
       const item = await addApproval(wsId, { slug: fromSlug, kind: 'org_doc', ...(delegatedBy ? { from: delegatedBy } : {}),
         action: `조직 문서 제안 — ${String(title).slice(0, 80)} (${scope === 'org' ? '전사' : '채널'} · ${path})`, reason,
@@ -1453,8 +1465,8 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
     // 각자 30턴을 갖는다(검수 재현: 82턴). 세션 메시지를 실을 수 없는 턴(mirrorCtx 있음)은 만들지 않는다 — 예산 표는 24시간 뒤 newTree가 치운다.
     : { relaxed: lim.relaxed, tree: tree?.id ?? (mirrorCtx ? null : newTree({ kind: 'session' }).id) };
   const turnCounters = { delegate: 0, mail: 0 }; // 이 턴의 위임·쪽지 횟수 — SDK/CLI 도구와 CLI 지시 블록(끼워 넣기 구간·마지막 처리)이 **같은 카운터**를 쓴다
-  // 메신저 문맥 턴의 셸 위험 분류 게이트(D28) — 카드 목적지. 문맥이 불완전해도(예외) 분류는 켠다(결재는 로컬 원장에 남는다).
-  const gateMsgr = mirrorCtx?.kind === 'msgr' ? (() => { try { return messengerOrigin(mirrorCtx) ?? {}; } catch { return {}; } })() : null;
+  // 메신저 문맥 턴의 셸 위험 분류 게이트(D28) — 카드 목적지(shellGateMsgr).
+  const gateMsgr = shellGateMsgr(mirrorCtx);
   // 메신저 턴의 기록 범위 — DM은 뿌리 단위, 채널은 채널 단위(세션도 채널마다 따로: thread.mjs scopedSessions). 범위가 있는 기록은 다른 대화에 붙여 넣지 않는다.
   const contextScope = turnScope(mirrorCtx); // 텔레그램 그룹 턴도 그 그룹 범위(주인의 전역 대화를 잇지도 붙이지도 않는다)
   // 주인 혼자 1:1(유건 결정 2026-10-08 ① — 에이전트는 한 사람): 게이트웨이가 방을 확인한 주인 직접 턴은 데스크톱 대화와 같은 대화다 —

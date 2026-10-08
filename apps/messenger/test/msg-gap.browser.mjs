@@ -39,7 +39,10 @@ export function measureGaps() {
           const btns = [...el.querySelectorAll('button')];
           const anchor = [...parts].reverse().find((x) => shown(x) && x !== el && ['body', 'media'].includes(kindOf(x))); // 줄을 맞출 말풍선·카드·사진
           const a = anchor && (anchor.matches('.msgr-media') ? union([...anchor.querySelectorAll('.msgr-thumb, .msgr-file, .msgr-mgrid')].filter(shown)) ?? rect(anchor) : rect(anchor));
+          const cx = [...el.querySelectorAll('svg')].map((s) => { const r = s.getBoundingClientRect(); return r.left + r.width / 2; });
+          const hb = btns.map((x) => x.getBoundingClientRect());
           out.bars.push({ mid, mine, slot: r1(el.getBoundingClientRect().height), acts: btns.map((b) => b.dataset.act), hit: r1(btns[0]?.getBoundingClientRect().height ?? 0),
+            hitW: r1(hb[0]?.width ?? 0), pitch: cx.slice(1).map((c, i) => r1(c - cx[i])), overlap: hb.slice(1).map((r, i) => r1(hb[i].right - r.left)),
             alignL: a && !mine ? r1(v.left - a.left) : null, alignR: a && mine ? r1(a.right - v.right) : null, anchor: anchor ? kindOf(anchor) : null });
         }
       }
@@ -60,6 +63,7 @@ export function measureGaps() {
     contentToNext: blocks[i + 1] ? r1(blocks[i + 1].top - blocks[i - 1].bottom) : null }] : []));
   const top0 = document.querySelector('.msgr-spine').getBoundingClientRect().top; // 스크롤과 무관하게 비교한다(올리기가 대상을 화면 안으로 스크롤한다)
   out.layout = blocks.map((k) => r1(k.top - top0)).join(',');
+  out.phone = !!document.querySelector('.msgr-phone');
   out.gapIn = parseFloat(getComputedStyle(document.querySelector('.msgr-shell')).getPropertyValue('--msg-gap-in'));
   out.hovbars = document.querySelectorAll('.msgr-hovbar').length;
   const any = document.querySelector('.msgr-spine > .msgr-row');
@@ -123,6 +127,10 @@ export function verifyLayout(g) {
   check('턴 안 상자 간격 = --msg-gap-in', g.pairs.every((p) => Math.abs(p.box - g.gapIn) <= 0.5), g.pairs);
   check('동작 줄은 턴 마지막 글에만', g.rows.every((r) => !r.bar || r.tail) && g.rows.filter((r) => r.bar).length >= 6, g.rows.filter((r) => r.bar !== r.tail));
   check('동작 줄 자리 높이 18px', g.bars.every((b) => b.slot === 18), g.bars.map((b) => b.slot));
+  // 아이콘 중심 간격 — 폰 32px·데스크톱 24px(유건 2026-10-08 '더 붙어야 해', 이전 44·28). 누르는 영역은 폰 세로 44, 이웃과 겹치지 않는다
+  const pitch = g.phone ? 32 : 24;
+  check(`동작 줄 아이콘 중심 간격 ${pitch}px`, g.bars.every((b) => b.pitch.length >= 2 && b.pitch.every((x) => Math.abs(x - pitch) <= 0.5)), g.bars.map((b) => [b.mid, b.pitch]));
+  check(`누르는 영역 ${g.phone ? '32×44' : '24×28'}·이웃과 안 겹침`, g.bars.every((b) => b.hit === (g.phone ? 44 : 28) && b.hitW === pitch && b.overlap.every((o) => o <= 0.5)), g.bars.map((b) => [b.mid, b.hitW, b.hit, b.overlap]));
   check('동작 줄 아이콘 네 개(복사·답글·반응·더보기, 사진만 있는 턴은 복사 없음)', g.bars.every((b) => ['reply', 'react', 'more'].every((a) => b.acts.includes(a))), g.bars.map((b) => b.acts));
   check('상대 글 줄은 말풍선·카드·사진 왼쪽 선, 내 글 줄은 오른쪽 끝', g.bars.every((b) => Math.abs((b.mine ? b.alignR : b.alignL) ?? 99) <= 0.5), g.bars.map((b) => [b.mid, b.anchor, b.alignL, b.alignR]));
   check('도구 막대 없음', g.hovbars === 0, g.hovbars);
@@ -155,6 +163,9 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].split('/').pop()
       await page.locator('.msgr-spine').getByText('마케팅 뱃지 점검 2').first().hover(); await page.waitForTimeout(300);
       const after = await page.evaluate(measureGaps);
       if (after.layout !== before.layout || after.hovbars || after.rowBefore !== 'none') fails.push(`${tag} 올림 불변: ${JSON.stringify({ hovbars: after.hovbars, before: after.rowBefore })}`);
+      // 데스크톱 줄은 올렸을 때만 보인다 — 숨긴 줄은 재지 않으므로(shown) 올린 턴의 줄로 아이콘 간격·누르는 영역을 판정한다
+      if (!after.bars.length) fails.push(`${tag} 올린 턴의 동작 줄이 보이지 않는다`);
+      fails.push(...verifyLayout(after).map((f) => `${tag} 올림 ${f}`));
     }
     fails.push(...(await checkTurnBar(page, { phone: w < 720 })).map((f) => `${tag} ${f}`));
     await page.close();

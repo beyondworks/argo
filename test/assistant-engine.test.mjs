@@ -36,7 +36,7 @@ async function company({ cfg = {}, ownerId = 'u1', lang = 'ko', msgr = {} } = {}
   if (cfg !== null) await writeCfg(ws, { enabled: true, agent: 'pepper', enabledAt: '2026-10-01T00:00:00Z', tz: 'Asia/Seoul', ...cfg });
   return ws;
 }
-/** 설정 파일 쓰기 — 설정 API(src/assistant/settings.mjs)처럼 company.json 봉인도 같이 적는다(엔진은 봉인이 맞는 켜짐만 돌린다 — 2단계). */
+/** 설정 파일 쓰기 — 설정 API(src/assistant/settings.mjs)처럼 company.json 봉인도 같이 적는다(엔진은 봉인이 맞는 켜짐만 돌린다 — config.mjs 머리 주석). */
 async function writeCfg(ws, obj) {
   const text = JSON.stringify(obj);
   await writeFile(join(paths(ws).root, 'assistant.json'), text);

@@ -333,10 +333,12 @@ test('S2(서버): 로그인·끈 목록·실행 기기·상태 파일 — 실행
   assert.equal(v.status.instantToday, 0, '날이 바뀌면 0');
   // 다른 기기가 실행 / 옛 버전 기기가 실행 — 이 기기 상태 파일은 보이지 않는다
   const holder = (assistant) => ({ syncOn: true, leader: false, ownedAt: 0, checkedAt: NOW, holder: { deviceId: 'Office-PC-1a2b3c4d', assistant, ts: NOW - 10_000 } });
-  v = await S.assistantSettingsView(ws, { now: NOW, deps: deps({ lease: () => holder(1) }) });
+  v = await S.assistantSettingsView(ws, { now: NOW, deps: deps({ lease: () => holder(2) }) });
   assert.deepEqual([v.status.runner, v.status.device, v.status.code, v.status.readAt], ['other_device', 'Office-PC', null, 0]);
   v = await S.assistantSettingsView(ws, { now: NOW, deps: deps({ lease: () => holder(0) }) });
   assert.equal(v.status.runner, 'runner_outdated', '실행 기기가 옛 버전(리스 글에 비서 엔진 번호 없음)');
+  v = await S.assistantSettingsView(ws, { now: NOW, deps: deps({ lease: () => holder(1) }) });
+  assert.equal(v.status.runner, 'runner_outdated', '실행 기기가 봉인을 안 보는 1단계 빌드(엔진 번호 1, #867) — 옛 버전으로 본다');
   // 메신저 알림 종류에서 비서를 끔
   await updateCompany(ws, (c) => ({ msgr: { ...(c.msgr ?? {}), mutedEvents: ['assistant'] } }));
   v = await S.assistantSettingsView(ws, { now: NOW, deps: deps() });

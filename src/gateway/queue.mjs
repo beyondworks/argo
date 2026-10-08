@@ -298,8 +298,10 @@ export const JOBS_MAX_PENDING = 10;  // 대기 상한 — 비용 폭주·큐 폭
 
 /** 크루 도구용 적재 — 대기 상한을 넘으면 거절(에러 메시지가 크루에게 그대로 간다). (export: 도구·테스트 공용) */
 export async function enqueueLongJob(wsId, { slug, title, prompt, msgr = null, from = null }) { // from = 이 작업을 건 턴이 사장 직접 턴이 아닐 때 그 크루(작업 턴이 이어받아 풀 오토가 아니다)
-  if (msgr && (!['orgId', 'channelId', 'crewId', 'uid', 'wsId'].every((k) => typeof msgr[k] === 'string' && msgr[k]) || msgr.wsId !== wsId)) throw new Error('메신저 작업의 발신 경로가 없거나 다른 워크스페이스입니다');
-  const origin = msgr ? Object.fromEntries(['orgId', 'channelId', 'crewId', 'threadRoot', 'sourceMsgId', 'uid', 'wsId', 'origin', 'hop'].filter((k) => msgr[k] !== undefined).map((k) => [k, msgr[k]])) : null;
+  // 개인 공간 crew 1:1 기록(messengerOrigin — orgId null + ownCrewRoom)은 조직 없이 받는다. 표지는 운반용이고 실행 때 서버가 방을 다시 판정한다(restoreMessengerContext)
+  const personal = msgr?.orgId == null && msgr?.ownCrewRoom === true;
+  if (msgr && (!['channelId', 'crewId', 'uid', 'wsId', ...(personal ? [] : ['orgId'])].every((k) => typeof msgr[k] === 'string' && msgr[k]) || msgr.wsId !== wsId)) throw new Error('메신저 작업의 발신 경로가 없거나 다른 워크스페이스입니다');
+  const origin = msgr ? Object.fromEntries(['orgId', 'channelId', 'crewId', 'threadRoot', 'sourceMsgId', 'uid', 'wsId', 'origin', 'hop', ...(personal ? ['ownCrewRoom'] : [])].filter((k) => msgr[k] !== undefined).map((k) => [k, msgr[k]])) : null;
   let pending = 0;
   try { pending = (await readdir(queueDir(wsId, JOBS_QUEUE))).filter((n) => n.endsWith('.json')).length; } catch { /* 큐 없음 = 0 */ }
   if (pending >= JOBS_MAX_PENDING) throw new Error(`대기 중인 장시간 작업이 이미 ${pending}건입니다 — 끝나기를 기다리거나 사용자에게 정리를 요청하라`);
