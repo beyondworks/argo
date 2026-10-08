@@ -59,12 +59,28 @@ const OTHER_WIRES = {
   },
 };
 
+/** 컨텍스트 길이 초과 거절 — 벤더별 상태·본문 모양(제보 2026-10-08 Grok "50만·60만 컨텍스트 넘음" 뒤 추가). 문구 출처는 src/runners/error-class.mjs CONTEXT_EXCEEDED_RE 주석
+    (xAI는 정비사 재현 원문, Gemini·z.ai는 공식 문서·포럼 원문, 나머지는 공개 클라이언트의 벤더 문구 목록 — 실벤더 대조 아님). n = 요청 토큰(아래 셈), l = 한도.
+    z.ai는 숫자 없는 문구라 엔진이 원문에서 한도를 못 읽는 갈래를 탄다. */
+export const CONTEXT_REJECT = {
+  xai: (n, l) => ({ status: 400, json: { code: 'Client specified an invalid argument', error: `This model's maximum prompt length is ${l} but the request contains ${n} tokens.` } }),
+  anthropic: (n, l) => ({ status: 400, json: { type: 'error', error: { type: 'invalid_request_error', message: `prompt is too long: ${n} tokens > ${l} maximum` } } }),
+  openrouter: (n, l) => ({ status: 400, json: { error: { message: `This endpoint's maximum context length is ${l} tokens. However, you requested about ${n} tokens (${n - 8192} of text input, 8192 in the output). Please reduce the length of either one, or use the "middle-out" transform to compress your prompt automatically.`, code: 400 } } }),
+  zai: () => ({ status: 400, json: { error: { code: '1261', message: 'Prompt too long' } } }),
+  moonshot: (n, l) => ({ status: 400, json: { error: { type: 'invalid_request_error', message: `Invalid request: Your request exceeded model token limit: ${l} (requested: ${n})` } } }),
+  gemini: (n, l) => ({ status: 400, json: { error: { code: 400, message: `The input token count (${n}) exceeds the maximum number of tokens allowed (${l}).`, status: 'INVALID_ARGUMENT' } } }),
+  responses: () => ({ status: 400, json: { error: { message: 'Your input exceeds the context window of this model. Please adjust your input and try again.', type: 'invalid_request_error', param: 'input', code: 'context_length_exceeded' } } }),
+};
+/** 요청 본문(날것 JSON)의 벤더 토큰 근사 — 정비사 실측(OpenRouter x-ai/grok-4.6, 2026-10-08): 한글 0.74, 그 밖 0.26 토큰/글자. 엔진 추정(utf-8 바이트/3)과 다르게 센다. */
+export const vendorTokens = (raw) => { let h = 0; for (const ch of raw) if (ch >= '\uac00' && ch <= '\ud7a3') h += 1; return Math.ceil(h * 0.74 + (raw.length - h) * 0.26); };
+
 /** Messages API 최상위 필드(공식 레퍼런스) — 이 밖은 벤더가 거절할 수 있는 필드로 본다. */
 const ANTHROPIC_TOP = new Set(['model', 'max_tokens', 'messages', 'system', 'tools', 'tool_choice', 'metadata', 'stop_sequences', 'stream', 'temperature', 'top_p', 'top_k', 'thinking', 'service_tier']);
 
 /** 엄격 가짜 벤더를 띄운다 — vendor 규칙 전부 통과하면 reply(body)로 응답(기본: 텍스트 'ok'), 위반하면 400 + Anthropic 오류 모양. 경로는 /v1/messages만(404), 인증 헤더(x-api-key 또는 authorization) 없으면 401.
-    vendor 'gemini'·'responses'는 그 와이어의 경로·인증·응답 모양(위 OTHER_WIRES)으로 받는다. */
-export async function startStrictVendor({ vendor = 'xai', reply = null } = {}) {
+    vendor 'gemini'·'responses'는 그 와이어의 경로·인증·응답 모양(위 OTHER_WIRES)으로 받는다 — 그 와이어의 reply(body, n)는 { status, type, body(문자열) }를 돌려준다.
+    contextLimit = 요청 토큰 한도(vendorTokens로 센다) 또는 (호출 번호 n) → 한도 — 넘으면 그 벤더의 길이 초과 거절(CONTEXT_REJECT). calls[].tokens에 셈을 남긴다. */
+export async function startStrictVendor({ vendor = 'xai', reply = null, contextLimit = null } = {}) {
   const rules = [...(VENDOR_RULES[vendor] ?? []), ...(vendor !== 'anthropic' ? VENDOR_RULES.anthropic : [])];
   const calls = [];
   const other = OTHER_WIRES[vendor];
@@ -72,18 +88,24 @@ export async function startStrictVendor({ vendor = 'xai', reply = null } = {}) {
     let d = ''; req.on('data', (c) => { d += c; });
     req.on('end', () => {
       let body = {}; try { body = JSON.parse(d || '{}'); } catch { /* 빈 본문 */ }
-      calls.push({ url: req.url, headers: req.headers, body });
+      const tokens = contextLimit === null ? null : vendorTokens(d);
+      calls.push({ url: req.url, headers: req.headers, body, tokens });
+      const limit = typeof contextLimit === 'function' ? contextLimit(calls.length) : contextLimit;
+      const over = limit !== null && tokens > limit ? (CONTEXT_REJECT[vendor] ?? CONTEXT_REJECT.anthropic)(tokens, limit) : null;
+      if (over) calls.at(-1).rejected = 'context';
       if (other) { // Gemini·Responses 와이어 — vendor: 'gemini' | 'responses'
         const send = (status, type, text) => { res.writeHead(status, { 'content-type': type }); res.end(text); };
         if (!other.path.test(req.url)) return send(404, 'application/json', other.bad(`Not Found: ${req.url}`));
         if (!other.auth(req.headers)) return send(401, 'application/json', other.bad('missing credential'));
+        if (over) return send(over.status, 'application/json', JSON.stringify(over.json));
         for (const rule of other.rules) { const bad = rule(body); if (bad) return send(400, 'application/json', other.bad(bad)); }
-        const out = other.ok(body, calls.length);
+        const out = typeof reply === 'function' ? reply(body, calls.length) : other.ok(body, calls.length);
         return send(out.status, out.type, out.body);
       }
       // 경로·인증 헤더도 본다(1R LOW-4 잔여): 실벤더는 /v1/messages 밖은 404, 키 없는 요청은 401
       if (req.url !== '/v1/messages') { res.writeHead(404, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ type: 'error', error: { type: 'not_found_error', message: `Not Found: ${req.url}` } })); }
       if (!req.headers['x-api-key'] && !req.headers.authorization) { res.writeHead(401, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ type: 'error', error: { type: 'authentication_error', message: 'missing api key' } })); }
+      if (over) { res.writeHead(over.status, { 'content-type': 'application/json' }); return res.end(JSON.stringify(over.json)); }
       for (const rule of rules) { const bad = rule(body); if (bad) { res.writeHead(400, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: bad } })); } }
       const out = typeof reply === 'function' ? reply(body, calls.length) : (reply ?? { id: `msg_${calls.length}`, type: 'message', role: 'assistant', model: body.model, content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } });
       res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(out));

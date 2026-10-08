@@ -13,7 +13,8 @@ import { connectMcpServers } from './mcp-client.mjs';
 import { loadNativeSession, saveNativeSession, IMAGE_MAX_B64 } from './session.mjs';
 import { appendEvent } from '../events.mjs';
 import { cacheEligible, withCacheControl } from './prompt-cache.mjs';
-import { compactPlan, compactTranscript, DEFAULT_CONTEXT_TOKENS } from './compact.mjs';
+import { compactPlan, compactTranscript, DEFAULT_CONTEXT_TOKENS, estimateTokens } from './compact.mjs';
+import { squeezeToolResults, isContextOverflowError, windowAfterOverflow, overflowStopNote, overflowErrorText, TURN_BUDGET_AT, TURN_SQUEEZE_TO, SQUEEZE_KEEP_RECENT, SQUEEZE_HEAD_CHARS, HARD_KEEP_RECENT, HARD_HEAD_CHARS } from './turn-budget.mjs';
 import { randomUUID } from 'node:crypto';
 
 export const NATIVE_DEFAULT_MAX_TOKENS = 8192; // SDK 기본 32000이 OpenRouter 선불 잔액 402를 부르던 것 완화(실측 2026-09-05)
@@ -157,6 +158,16 @@ async function* run(opts, ac, isInterrupted, inbox = { items: [], closed: false 
       } });
     if (isInterrupted()) throw Object.assign(new Error('aborted'), { aborted: true });
     if (packed.compacted) yield { type: 'system', subtype: 'compact_boundary', session_id: sess.id, compact_metadata: { trigger: 'auto', pre_tokens: packed.preTokens } }; // SDK 자동 압축과 같은 모양 — chat.mjs가 스레드에 안내 줄을 남긴다
+    // 턴 안 예산(turn-budget.mjs) — 위 압축은 턴 시작에만 돈다. 도구 반복 중 매 호출 전 추정이 창의 75%를 넘으면 오래된 도구 결과를 줄인다.
+    // 창은 모델 창 그대로(압축의 128,000 상한은 턴 사이 전사 글자 상한과 짝이라 여기엔 쓰지 않는다). 벤더가 길이 초과로 거절하면 이 턴의 창을 거절 지점 기준으로 낮춘다.
+    const fixedTokens = estimateTokens(systemPrompt) + estimateTokens(specs);
+    let turnWindow = ctxWindow;
+    const squeeze = (hard) => {
+      const r = squeezeToolResults(sess.messages, { fixed: fixedTokens, target: Math.floor(turnWindow * TURN_SQUEEZE_TO), lang,
+        keepRecent: hard ? HARD_KEEP_RECENT : SQUEEZE_KEEP_RECENT, head: hard ? HARD_HEAD_CHARS : SQUEEZE_HEAD_CHARS });
+      if (r.squeezed) sess.messages = r.messages; // 저장 전사에도 반영된다(다음 저장이 이 전사를 쓴다)
+      return r.squeezed;
+    };
     for (;;) {
       if (isInterrupted()) throw Object.assign(new Error('aborted'), { aborted: true });
       steps += 1;
@@ -164,18 +175,40 @@ async function* run(opts, ac, isInterrupted, inbox = { items: [], closed: false 
         yield { type: 'result', subtype: 'error_max_turns', session_id: sess.id, usage, total_cost_usd: null, is_error: true, num_turns: steps - 1, errors: [`max steps ${maxSteps}`] };
         return;
       }
+      if (fixedTokens + estimateTokens(sess.messages) > turnWindow * TURN_BUDGET_AT) squeeze(false);
       let res;
-      try {
-        const body = { model, max_tokens, system: systemPrompt, messages: sess.messages, ...(specs.length ? { tools: specs } : {}) };
-        res = await callMessages({ wire, base, headers, effort, signal: ac.signal, fetchImpl, body: cache ? withCacheControl(body) : body });
-      } catch (e) {
-        // 이미 토큰을 쓴 뒤의 실패는 SDK처럼 usage를 실은 실패 result로 낸다(분리 검수 MEDIUM-1: 던지기만 하면 appendUsage 미도달,
-        // 예산·대시보드 과소 집계). 원문은 errors[]에 — chat.mjs가 `턴 실패: … — <원문>`으로 감싸도 401/402 정규식이 문다.
-        if (e?.usage && !e?.aborted) sumUsage(usage, e.usage); // 차단 응답(SAFETY 등)도 프롬프트 토큰은 썼다 — 첫 스텝이어도 집계(2R LOW-3)
-        if (e?.aborted || !((usage.input_tokens ?? 0) + (usage.output_tokens ?? 0))) throw e;
-        if (saveSession) await saveNativeSession(wsId, slug, sess);
-        yield { type: 'result', subtype: 'error_during_execution', session_id: sess.id, usage, total_cost_usd: null, is_error: true, num_turns: steps, errors: [String(e?.message || e)] };
-        return;
+      for (let retried = false; ;) {
+        try {
+          const body = { model, max_tokens, system: systemPrompt, messages: sess.messages, ...(specs.length ? { tools: specs } : {}) };
+          res = await callMessages({ wire, base, headers, effort, signal: ac.signal, fetchImpl, body: cache ? withCacheControl(body) : body });
+          break;
+        } catch (e) {
+          // 이미 토큰을 쓴 뒤의 실패는 SDK처럼 usage를 실은 실패 result로 낸다(분리 검수 MEDIUM-1: 던지기만 하면 appendUsage 미도달,
+          // 예산·대시보드 과소 집계). 원문은 errors[]에 — chat.mjs가 `턴 실패: … — <원문>`으로 감싸도 401/402 정규식이 문다.
+          if (e?.usage && !e?.aborted) sumUsage(usage, e.usage); // 차단 응답(SAFETY 등)도 프롬프트 토큰은 썼다 — 첫 스텝이어도 집계(2R LOW-3)
+          if (e?.aborted) throw e;
+          const overflow = isContextOverflowError(e);
+          // 길이 초과 — 창을 낮추고 더 세게 줄여 같은 단계를 한 번만 다시 보낸다. 줄일 것이 없으면 같은 요청을 다시 보내지 않는다.
+          if (overflow && !retried) {
+            retried = true;
+            turnWindow = windowAfterOverflow(turnWindow, fixedTokens + estimateTokens(sess.messages), e?.message);
+            if (squeeze(true)) continue;
+          }
+          const spent = !!((usage.input_tokens ?? 0) + (usage.output_tokens ?? 0));
+          if (overflow) {
+            // 사실대로 끝낸다. 이 턴에 끝난 도구 결과가 있으면 크루 글 한 줄(중단 기록)로 꼬리를 닫아 저장한다 — 꼬리가 tool_result면 재개 정리가
+            // 그 턴을 통째로 걷어내 다음 턴이 처음부터 다시 하다 같은 자리에서 또 넘쳤다. 원인 모를 거절(아래 종전 갈래)에는 붙이지 않는다(그 턴을 다시 보내면 또 거절될 수 있다).
+            if (steps === 1 && !spent) throw Object.assign(new Error(overflowErrorText(e?.message, lang)), { cause: e, status: e?.status });
+            sess.messages.push({ role: 'assistant', content: [{ type: 'text', text: overflowStopNote(lang) }] });
+            if (saveSession) await saveNativeSession(wsId, slug, sess);
+            yield { type: 'result', subtype: 'error_during_execution', session_id: sess.id, usage, total_cost_usd: null, is_error: true, num_turns: steps, errors: [overflowErrorText(e?.message, lang, { saved: saveSession })] };
+            return;
+          }
+          if (!spent) throw e;
+          if (saveSession) await saveNativeSession(wsId, slug, sess);
+          yield { type: 'result', subtype: 'error_during_execution', session_id: sess.id, usage, total_cost_usd: null, is_error: true, num_turns: steps, errors: [String(e?.message || e)] };
+          return;
+        }
       }
       sumUsage(usage, res?.usage);
       const content = Array.isArray(res?.content) ? res.content : [];

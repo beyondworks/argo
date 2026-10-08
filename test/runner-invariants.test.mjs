@@ -117,7 +117,10 @@ test('C. classifyRunnerError — 상주 실측 원문 → 코드·출처 표 (�
   // 2026-09-28: 핀이 낡은 codex로 GPT-6을 보내면 400 — 업데이트 대기 안내(argo). 핀이 최신인데 같은 거절이면 계정 문제(모델 선택 안내).
   assert.deepEqual(c('Codex 실행기 업데이트가 아직 끝나지 않아 이 모델을 쓸 수 없습니다(자동 재시도 최대 1시간). Codex runner update is not finished'), { code: 'runner_outdated', origin: 'argo' });
   assert.deepEqual(c("The 'gpt-6-luna' model is not supported when using Codex with a ChatGPT account."), { code: 'model_unavailable', origin: 'vendor' });
-  assert.ok(FAIL_CODES.includes('unknown') && FAIL_CODES.includes('no_runner') && FAIL_CODES.length === 12); // no_runner(2026-10-08) — chat.mjs 러너 확인 갈래의 활동 기록용, 표식(flags.noRunner)으로만 붙는다
+  // 2026-10-08: 벤더 컨텍스트 길이 초과(네이티브 엔진 턴 안 예산 — engine/turn-budget.mjs). 한도(QUOTA_RE)보다 먼저 본다 — Responses 스트림 거절은 429로 온다
+  assert.deepEqual(c("API Error: 400 This model's maximum prompt length is 500000 but the request contains 503958 tokens."), { code: 'context_exceeded', origin: 'vendor' });
+  assert.equal(c('API Error: 429 Your input exceeds the context window of this model. (context_length_exceeded)').code, 'context_exceeded');
+  assert.ok(FAIL_CODES.includes('unknown') && FAIL_CODES.includes('no_runner') && FAIL_CODES.includes('context_exceeded') && FAIL_CODES.length === 13); // no_runner(2026-10-08) — chat.mjs 러너 확인 갈래의 활동 기록용, 표식(flags.noRunner)으로만 붙는다
 });
 
 test('C2. surfaceRunnerFailure — 맨 프로브로 vendor/argo를 갈라 각인하고, 벤더 거절일 때만 다음 턴을 차단한다', async () => {
