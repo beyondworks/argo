@@ -243,6 +243,8 @@ const MISSED = [
     '- 앞으로는 유건님이라고 불러줘', '- 이제는 형이라고 불러', '- 앞으로는 "대표님"이라고 부르지 마', '- 날 부를 땐 형',
 ];
 const NOT_RULE = [
+    // 10차 검수(영어 「」 — 3394에서 거짓): 「」를 받으면 확정 규칙 한 줄로 회사 전체 이름 줄이 빠진다
+    '- Address the owner 「승인 대기」 items first.', '- Address the user 「Ticket #12」 before others.', '- Call the owner 「urgent」 when the server is down.',
     // 7차 표 (88)
     '- 결론부터 말한다', '- 함수 하나를 부를 때 인자를 확인한다', '- 도구를 부를 때 결재를 먼저', '- Always address the user\'s question first', '- call them back when a customer emails',
     '- 결재를 부르기 전에', '', '- 고객은 고객님이라고 부른다', '- 메일에서 상대를 이름으로 부르지 마라', '- 상대방 호칭은 OO님으로 통일',
@@ -329,7 +331,7 @@ const KO_NAME = ['"대표님"', '유건님', '형', '"스탠드업"', 'helper', 
 const KO_VERB = ['이라고 불러', '이라고 부른다', '라 부른다', '으로 불러', '로 불러 쓴다', '이라고 해줘', '님이라고 해', '으로 호칭한다', '', '이라고 부르지 마', '을 부른다'];
 const KO_SUF = ['', '.', ', 사용자에게 결론만 보고한다', ' (2026-10-08 채택)', '. 줄여서 "유틸"이라고 부른다', ' 태그를 붙여'];
 const EN = ['Call', 'Address', 'Refer to', 'Never call', 'Please address'].flatMap((v) => ['me', 'the user', 'the owner', 'the sprint'].flatMap((o) =>
-  ['', ' as', ' by', ' as soon as', ' by phone', ' by the end of', ' only when', ','].flatMap((m) => [' Yugeon', ' "boss"', ' first name', ' the approver', ''].flatMap((n) => ['', '.', ' if blocked'].map((e) => `- ${v} ${o}${m}${n}${e}`)))));
+  ['', ' as', ' by', ' as soon as', ' by phone', ' by the end of', ' only when', ','].flatMap((m) => [' Yugeon', ' "boss"', ' 「boss」', ' 「승인 대기」', ' first name', ' the approver', ''].flatMap((n) => ['', '.', ' if blocked'].map((e) => `- ${v} ${o}${m}${n}${e}`)))));
 test('호칭 규칙 판정 — 지금 판정이 참이면 3394f000 판정도 참(새 오탐 0을 구조로)', () => {
   let n = 0;
   const check = (s) => { n += 1; if (hasAddressRule(s)) assert.equal(hasAddressRule3394(s), true, `3394에서 거짓인데 지금 참: ${s}`); };

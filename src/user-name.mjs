@@ -88,7 +88,8 @@ const ADDRESS_CALL = new RegExp([
 const EN_TARGET = "(?:me|the (?:user|owner))\\b(?!['’]s)";
 const EN_WHEN = '(?:\\d|(?:phone|e-?mail|text|slack|teams|dm|noon|midnight|tomorrow|tonight|today|now|eod|eow|cob|end|next|this|monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun)\\b)';
 const EN_AS_BY = `(?:as\\b(?!\\s+(?:soon|needed|necessary|required|usual|well|appropriate|possible|early|late|a|an)\\b)|by\\b(?!\\s+${EN_WHEN}))`;
-const EN_QUOTED = `["'“‘「](?!\\s*(?:only|now|asap|immediately|urgently|later|soon|back|first|anytime|today|tonight|tomorrow)\\b)[^"'”’」\\n]+["'”’」]`;
+// 「」는 받지 않는다 — 3394f000의 'the user/owner' 뒤 허용 글자에 없어, 받으면 'Address the owner 「승인 대기」 items first'가 새 오탐이 된다(10차 검수, 1,339만 줄 조합 중 3,082줄).
+const EN_QUOTED = `["'“‘](?!\\s*(?:only|now|asap|immediately|urgently|later|soon|back|first|anytime|today|tonight|tomorrow)\\b)[^"'”’\\n]+["'”’]`;
 const ADDRESS_EN = new RegExp([
   `\\bcall\\s+${EN_TARGET}\\s+(?:${EN_AS_BY}|${EN_QUOTED})`,
   `\\baddress\\s+${EN_TARGET}(?=\\s*(?:$|[.,;:!?)]|${EN_AS_BY}|${EN_QUOTED}))`,
