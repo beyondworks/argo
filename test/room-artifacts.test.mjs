@@ -121,7 +121,7 @@ test('화면 배선 — 회의실 크루 말풍선이 공용 ArtifactChips를 �
   const room = await read('app/c/[ws]/room/page.jsx');
   assert.match(room, /^import \{ ArtifactChips \} from '\.\.\/artifact-chips';$/m, '회의실 임포트');
   // 크루 발언 분기 구간 — 본문(Markdown) 줄부터 진행 표시 줄 전까지. 이 안에 칩이 있어야 같은 말풍선 컨테이너다.
-  const i = room.indexOf('<Markdown text={m.text} wsId={ws} />');
+  const i = room.indexOf('<Markdown text={m.text} wsId={ws} ver={m.ts} />');
   assert.ok(i > 0, '크루 본문 앵커(vault-links 테스트와 같은 앵커)');
   const j = room.indexOf('{!viewing && (busy || serverBusy)', i);
   assert.ok(j > i, '진행 표시 앵커');

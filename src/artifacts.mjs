@@ -9,6 +9,8 @@ import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 // 순수부(접두 목록·칩 판정)는 artifact-zones로 분리 — ui.jsx(클라 번들)가 쓴다. 재export로 임포터 무수정.
 export { SERVE_PREFIXES, servableArtifact } from './artifact-zones.mjs';
+import { SERVE_PREFIXES } from './artifact-zones.mjs';
+import { vaultRel } from './vault-links.mjs'; // 순수 — 본문 링크·그림과 같은 경로 판정(%인코딩 복원·탈출 거부)
 
 // notes도 스캔 — md 칩은 SDK(도구 관측)만 받고 CLI는 못 받던 러너별 편차 해소(검수 LOW-1).
 // 비md는 servableArtifact가 걸러 서빙 불일치는 생기지 않는다.
@@ -81,10 +83,31 @@ export function overlappingTurns(wsId, entry, { now = Date.now, book = ledger() 
   const t = now(); const end = entry.endedAt ?? t;
   return [...(book.get(wsId) ?? [])].filter((e) => e !== entry && e.frame !== entry.frame && !dead(e, t) && e.startedAt <= end && (e.endedAt ?? t) >= entry.startedAt);
 }
-/** 순수 귀속: 겹침 없음 → changed 그대로. 겹침 있음 → (내 도구 관측 ∪ 답변에 경로로 언급) − 다른 턴 도구 관측. */
-export function attributeArtifacts(changed, { entry, others = [], reply = '' } = {}) {
-  if (!others.length) return changed;
+/** 순수 귀속: 겹침 없음 → changed 그대로. 겹침 있음 → (내 도구 관측 ∪ 답변에 경로로 언급) − 다른 턴 도구 관측.
+    snapshot(턴 끝 스냅샷)을 주면 **답이 가리킨 기존 파일**(referencedArtifacts)도 더한다 — 같은 겹침 검사(다른 턴 도구 관측 제외)를 지난다.
+    exclude = 이번 턴 사용자 첨부 rel — 사용자가 준 파일을 답이 되짚었다고 "만든 문서"로 붙이지 않는다. */
+export function attributeArtifacts(changed, { entry, others = [], reply = '', snapshot = null, exclude = [] } = {}) {
   const foreign = new Set(others.flatMap((o) => [...o.observed]));
   const text = String(reply ?? '');
-  return changed.filter((rel) => !foreign.has(rel) && (entry?.observed.has(rel) || text.includes(rel)));
+  const mine = others.length ? changed.filter((rel) => !foreign.has(rel) && (entry?.observed.has(rel) || text.includes(rel))) : changed;
+  const skip = new Set(exclude);
+  const extra = snapshot ? referencedArtifacts(text, snapshot).filter((rel) => !foreign.has(rel) && !skip.has(rel) && !mine.includes(rel)) : [];
+  return extra.length ? [...mine, ...extra] : mine;
+}
+
+/* ─── 답이 가리킨 기존 파일(정비사 10/5 전달: "산출물의 페퍼 아바타를 이미지로 첨부해줘"에 칩도 그림도 없었다) ───
+   diff는 "이번 턴에 바뀐 파일"만 잡아, 이미 있던 그림을 답에 적어도 칩이 안 떴다(격리 재현: artifacts []). 답변이 **마크다운 그림·링크의
+   목적지**로 내민 서빙 구역(projects/·files/·_imported/) 안 실제 파일(턴 끝 스냅샷에 있는 것)만 더한다. 데스크톱 웹뷰는 본문 링크의
+   새 창(target=_blank)을 무시해(app/layout.jsx) 칩이 앱 안에서 그 파일을 여는 길이다.
+   맨 경로 언급("첨부하신 vault/files/…/사진.jpg를 보면…", 근거 인용)은 세지 않는다 — 만들지 않은 파일이 '만든 문서'·다음 턴 맥락 made·
+   회의록 '산출물:'로 들어갔다(IMG 1차 검수 LOW). notes/는 근거 인용 자리라 뺀다. 스냅샷에 없는 경로는 원리적으로 못 들어온다(탈출 불가). */
+export function referencedArtifacts(reply, snapshot) {
+  const text = String(reply ?? '');
+  if (!text || !snapshot?.size) return [];
+  const out = new Set();
+  for (const m of text.matchAll(/\]\(\s*([^)\s]+)/g)) { // 마크다운 그림·링크 목적지(%인코딩 복원·./·vault/ 접두 정리 — vaultRel)
+    const rel = vaultRel(m[1]);
+    if (rel && SERVE_PREFIXES.some((p) => rel.startsWith(p)) && snapshot.has(rel)) out.add(rel);
+  }
+  return [...out].sort();
 }

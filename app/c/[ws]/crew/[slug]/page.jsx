@@ -473,6 +473,20 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     ro.observe(el);
     return () => ro.disconnect();
   }, [recalcSpacer]);
+  // 본문 그림이 늦게 그려지면 콘텐츠가 그 높이만큼 자란다(대화창 그림, 2026-10-08 격리 실측: 폴로 온 답의 새 그림이 로드되며 끝 문장이
+  // 146px 화면 아래로 밀림) — 위 효과들은 스레드 배열·.thread 크기 변화만 보므로 못 잡는다. load는 버블링하지 않아 캡처로 받고,
+  // 추종 규칙은 위와 같다(하단 근처일 때만·아래 방향만). 위로 올려 읽는 중이면 끌어내리지 않는다.
+  useEffect(() => {
+    const el = threadRef.current;
+    if (!el) return;
+    const onLoad = (e) => {
+      if (e.target?.tagName !== 'IMG') return;
+      recalcSpacer();
+      if (atBottomRef.current) el.scrollTop = Math.max(el.scrollTop, contentBottom(el) - el.clientHeight);
+    };
+    el.addEventListener('load', onLoad, true);
+    return () => el.removeEventListener('load', onLoad, true);
+  }, [recalcSpacer]);
 
   // 폴 응답 반영 — 3초 준실시간 폴과 2.5초 진행 폴이 **같은 경로**를 쓴다(F2+, 2026-10-05: 진행 폴이 본문을 버리고 mtime만
   // 옮겨 성공한 답이 안 붙던 결함). 병합 규칙(실패 표시 반영·미보존 사본 캐리오버·뜻이 같으면 참조 유지)은 thread-poll.mjs.
@@ -1063,7 +1077,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
                     if (sel) { e.clipboardData.setData('text/plain', sel); e.preventDefault(); }
                   }}>
                   {/* 루프 회차 답 끝의 판정 표지(LOOP: …)는 엔진용 — 화면에서만 뺀다(저장·판정 그대로) */}
-                  <Markdown text={crewReplyText(all[i - 1], m)} wsId={ws} />
+                  <Markdown text={crewReplyText(all[i - 1], m)} wsId={ws} ver={m.ts} />
                   {m.handover && (
                     <Link className="memo-chip" href={`/c/${ws}/vault?doc=${encodeURIComponent(m.handover.rel)}`}>
                       <Icon name="memory" size={12} />

@@ -5,7 +5,8 @@ import { resolveTab } from './tabs-state.mjs';
 import { marked } from 'marked';
 import { labelTableCells } from './md-table.mjs';
 import { useLang } from './i18n';
-import { rewriteVaultHref } from '../src/vault-links.mjs'; // 산출물 링크 재작성(순수 — 테스트는 src 쪽)
+import { createPortal } from 'react-dom';
+import { rewriteVaultHref, vaultImageSrc, vaultFileRel } from '../src/vault-links.mjs'; // 산출물 링크·그림 재작성(순수 — 테스트는 src 쪽)
 import { dropUpClamp } from './c/[ws]/zoom-math.mjs'; // 표시 배율(#334) 좌표 환산 계열 — DropUp 패널 클램프
 import { errorTextFor } from './apimsg.mjs'; // errorCode → 화면 언어 문구(F11)
 import { AUTH_MSG } from './authmsg.mjs';
@@ -294,7 +295,8 @@ export function resolveWikiRel(name, docs, projects) {
     실측(349메시지·크루 168건/117k자 스레드): 1회 전체 렌더 13~15ms(node warm), 웹뷰에선 React
     재조정·DOM 교체가 얹혀 더 크다. text·wsId가 그대로면 파싱도 렌더도 건너뛴다.
     ⚠ 이 memo를 풀거나 내부 계산을 useMemo 밖으로 꺼내면 그 지연이 그대로 돌아온다. */
-export const Markdown = memo(function Markdown({ text, onWikiLink, wsId }) {
+export const Markdown = memo(function Markdown({ text, onWikiLink, wsId, ver = null }) {
+  const [viewing, setViewing] = useState(null); // 크게 보기로 연 그림의 vault rel
   const html = useMemo(() => {
     const escaped = String(text ?? '').replace(/</g, '&lt;');
     let out = marked.parse(escaped);
@@ -303,9 +305,20 @@ export const Markdown = memo(function Markdown({ text, onWikiLink, wsId }) {
       const url = rewriteVaultHref(h, wsId);
       return url ? `href="${url.replace(/"/g, '&quot;')}"` : 'href="#"';
     });
-    // 이미지 src는 동일출처 파일 라우트("/...")만 허용 — 크루 답변 속 외부 http/data 이미지는
-    // 추적 픽셀·데이터 유출 벡터라 태그째 제거한다. "//evil.com"(프로토콜 상대)도 차단.
-    out = out.replace(/<img\b[^>]*>/gi, (tag) => /\ssrc="\/(?!\/)[^"]*"/i.test(tag) ? tag : '');
+    // 이미지 src는 동일출처("/...")와 vault 산출물 구역 안 그림만 — 크루 답변 속 외부 http/data 이미지는 추적 픽셀·데이터 유출
+    // 벡터라 태그째 제거한다. "//evil.com"(프로토콜 상대)도 차단. 구역 안 상대 경로 그림은 files API 주소로 바꿔 대화창에 바로
+    // 그린다(제보 2026-10-05: "이미지로 첨부해줘"에 화면이 비었다 — 링크만 살리고 그림은 지우던 비대칭). 구역 안이지만 <img>로
+    // 못 그리는 형식(svg·pdf…)은 지우지 않고 파일 링크로 남긴다. 치환은 함수로만 — 주소의 $&·$'가 치환 패턴으로 읽히지 않게.
+    out = out.replace(/<img\b[^>]*>/gi, (tag) => {
+      const src = /\ssrc="([^"]*)"/i.exec(tag)?.[1] ?? '';
+      if (/^\/(?!\/)/.test(src)) return tag;
+      const url = vaultImageSrc(src, wsId, ver); // ver = 그 답의 시각 — 덮어쓴 같은 경로도 새 답은 새 그림(vault-links.mjs)
+      if (url) return tag.replace(/\ssrc="[^"]*"/i, () => ` src="${url.replace(/&/g, '&amp;')}" class="md-img" loading="lazy" tabindex="0"`);
+      const href = rewriteVaultHref(src, wsId);
+      if (!href) return '';
+      const label = /\salt="([^"]*)"/i.exec(tag)?.[1] || src.split('/').pop();
+      return `<a href="${href.replace(/"/g, '&quot;')}">${label}</a>`;
+    });
     // 크루가 주는 링크는 항상 새 창 — 대화 흐름을 벗어나지 않는다
     out = out.replace(/<a /gi, '<a target="_blank" rel="noopener noreferrer" ');
     out = out.replace(/\[\[(.+?)\]\]/g, (_, p) => {
@@ -313,18 +326,83 @@ export const Markdown = memo(function Markdown({ text, onWikiLink, wsId }) {
       return `<span class="wikilink" data-wiki="${attr}">${p}</span>`;
     });
     return labelTableCells(out);
-  }, [text, wsId]);
+  }, [text, wsId, ver]);
+  // 본문 그림 누르기(또는 Enter·Space) = 크게 보기 — 이 회사 files API가 서빙하는 그림만(같은 출처 다른 그림은 무반응)
+  const openImage = (e) => {
+    const img = e.target.closest?.('img');
+    const rel = img && vaultFileRel(img.getAttribute('src'), wsId);
+    if (!rel) return false;
+    setViewing(rel);
+    return true;
+  };
   return (
-    <div
-      className="md"
-      onClick={(e) => {
-        const w = e.target.closest?.('[data-wiki]');
-        if (w && onWikiLink) onWikiLink(w.dataset.wiki);
-      }}
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
+    <>
+      <div
+        className="md"
+        onClick={(e) => {
+          const w = e.target.closest?.('[data-wiki]');
+          if (w && onWikiLink) onWikiLink(w.dataset.wiki);
+          if (openImage(e)) e.preventDefault(); // 그림을 감싼 링크([![](…)](…))로 항해하지 않는다 — 크게 보기가 이긴다
+        }}
+        onKeyDown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && openImage(e)) e.preventDefault(); }}
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
+      {viewing && <ImageViewer ws={wsId} rel={viewing} onClose={() => setViewing(null)} />}
+    </>
   );
 });
+
+/** 본문 그림 크게 보기 — 산출물 보기 창(app/c/[ws]/artifact-chips.jsx ArtifactViewer)과 같은 모양·계약: 닫기 버튼·ESC·바깥 클릭으로
+    닫고 저장은 창 안 버튼(artifactDownload — 데스크톱 웹뷰는 IPC 저장). 창 전체를 파일로 항해시키지 않는다(2026-09-17 앱이 그림에 갇힌 실사고).
+    body로 포털 — 유리 테마의 .card backdrop-filter가 fixed 기준 박스가 돼 창이 말풍선 안에 갇힌다(ArtifactViewer 2차 검수 HIGH-1). */
+function ImageViewer({ ws, rel, onClose }) {
+  const { t } = useLang();
+  useScrollLock();
+  useEscapeClose(onClose); // 다른 보기 창 위에 겹쳐 열려도 ESC는 이 창만 닫는다
+  const [broken, setBroken] = useState(false);
+  const [opened] = useState(() => Date.now()); // 연 시각 — 창은 지금 파일을 보여 준다(저장 버튼이 받는 바이트와 같게). 같은 주소면 문서 안 옛 그림을 재사용한다
+  const name = rel.split('/').pop();
+  const fileUrl = `/api/companies/${encodeURIComponent(ws)}/files?rel=${encodeURIComponent(rel)}`;
+  return createPortal(
+    <div className="artifact-viewer" role="dialog" aria-modal="true" aria-label={name} onClick={onClose}>
+      <div className="card card-float fade-up" onClick={(e) => e.stopPropagation()}>
+        <div className="card-head">
+          <span className="card-title" title={rel}>{name}</span>
+          <span className="rule" />
+          <a className="btn sm" href={`${fileUrl}&download=1`} download={name} onClick={artifactDownload(fileUrl, name)}>{t('vault.download')}</a>
+          <button type="button" className="btn sm" onClick={onClose} autoFocus><span>{t('common.close')}<span className="kbd-hint"> ESC</span></span></button>
+        </div>
+        <div className="artifact-preview large">
+          {broken
+            ? <div className="ap-note">{t('chat.preview.error')}</div>
+            : <div className="ap-body"><img src={`${fileUrl}&v=${opened}`} alt={name} onError={() => setBroken(true)} /></div>}
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+/** 보기 창 ESC — 겹쳐 열린 창 중 **맨 위 창만** 닫는다. 창마다 window 캡처 리스너로 ESC를 받아 끝내던 방식은 창이 겹치면 먼저 등록된
+    바깥 창이 먼저 받아 안쪽 창과 함께 닫힌다(IMG 1차 검수 LOW — 지금 칩 경로로는 겹치지 않는다: md 칩은 기억 화면으로 가고, 눈 토글 미리보기는
+    창이 아니다. 2026-10-09 격리 화면 확인). 캡처 단계에서 맨 위 창이 받아 전파를 끊는 것은 그대로다 — 같은 ESC로 뒤의 패널·메뉴까지
+    닫히지 않게. 쓰는 곳: ImageViewer(여기), ArtifactViewer(artifact-chips.jsx). */
+const _escLayers = [];
+export function useEscapeClose(onClose) {
+  const latest = useRef(onClose);
+  latest.current = onClose;
+  useEffect(() => {
+    const me = latest;
+    _escLayers.push(me);
+    const onKey = (e) => {
+      if (e.key !== 'Escape' || _escLayers[_escLayers.length - 1] !== me) return;
+      e.stopImmediatePropagation();
+      me.current();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => { window.removeEventListener('keydown', onKey, true); const i = _escLayers.lastIndexOf(me); if (i >= 0) _escLayers.splice(i, 1); };
+  }, []);
+}
 
 /** 한글 IME 조합 중 Enter가 폼 전송으로 새는 것을 막는다 — 입력에 {...imeGuard} 스프레드. */
 export const imeGuard = {
@@ -790,7 +868,8 @@ export function artifactDownload(url, name) {
     // 닫기·ESC·뒤로가기가 없어 앱을 종료해야만 돌아왔다). 조용한 무동작도 안 된다(검수 MEDIUM) — 닫을 수 있는 안내를 띄운다.
     const fallback = (why = '') => downloadNotice(name, why, url);
     try {
-      const r = await fetch(url);
+      // no-store — 브라우저 캐시의 옛 바이트를 저장하지 않는다(같은 경로를 덮어쓴 그림·문서 — IMG 1차 검수 MEDIUM, 격리 실측: 기본 fetch는 옛 759B)
+      const r = await fetch(url, { cache: 'no-store' });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const blob = await r.blob();
       if (blob.size > DOWNLOAD_IPC_CAP) { fallback('too-large'); return; }
