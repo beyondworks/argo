@@ -220,6 +220,27 @@ test('A13: 다른 회사의 비서를 끄다가 한 회사에서 오류(그 회�
   assert.ok(logs.some((l) => l.includes(broken)), `실패한 회사를 기록: ${JSON.stringify(logs)}`);
 });
 
+test('R2: 같은 주인의 두 회사에 켜기 저장이 거의 동시에 옴 — 둘 다 200, 둘 다 꺼지지 않고 하나만 켜짐(봉인 맞음), 두 카드의 "지금 비서"가 같다(2차 검수 LOW)', async () => {
+  const all = [];
+  for (let i = 0; i < 8; i++) {
+    const a = await mkCompany({ name: `회사 A${i}` });
+    const b = await mkCompany({ name: `회사 B${i}` });
+    all.push(a, b);
+    const [ra, rb] = await Promise.all([put(a, { enabled: true, agent: 'pepper', tz: 'Asia/Seoul' }), put(b, { enabled: true, agent: 'wolff', tz: 'Asia/Seoul' })]);
+    assert.deepEqual([ra.status, rb.status], [200, 200], `${i}회차`);
+    const on = [];
+    for (const ws of all) {
+      const c = await cfgOf(ws);
+      assert.equal((await company(ws)).assistantSeal, C.sealOf(await raw(ws)), `${i}회차 ${ws}: 봉인 맞음(화면 밖 변경으로 보이지 않는다)`);
+      if (c.enabled) on.push(ws);
+    }
+    assert.equal(on.length, 1, `${i}회차: 켜진 회사 하나 — ${JSON.stringify(on)}`);
+    assert.ok([a, b].includes(on[0]), `${i}회차: 이번에 켠 둘 중 하나`);
+    const [va, vb] = [(await get(a)).data, (await get(b)).data];
+    assert.deepEqual([va.current?.ws, vb.current?.ws], [on[0], on[0]], `${i}회차: 두 카드의 "지금 비서" = 켜진 회사`);
+  }
+});
+
 test('A14: 코드 없는 서버 오류(파일 읽기 실패)는 500 — 400(요청 잘못)으로 보이지 않는다', async () => {
   const ws = await mkCompany();
   await mkdir(cfgPath(ws), { recursive: true }); // 이 회사의 assistant.json 자리가 폴더 → 읽기 EISDIR

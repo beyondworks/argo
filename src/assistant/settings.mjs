@@ -12,7 +12,7 @@
 // 봉인이 안 맞거나 없으면 처음 켜는 것처럼 기본값에서 시작한다 — 화면 밖에서 바뀐 값(예: 에이전트가 심은 watch.mail:true)을 다시 봉인하지 않게.
 //
 // 사용자당 비서 1명(설계 3.2): 켜거나 바꾸면 같은 주인의 다른 회사에서 켜져 있던(봉인이 맞는) 비서를 끈다. 다른 기기에서 거의 같은 때 켠 경우는
-// 엔진이 켠 시각이 늦은 쪽만 돌린다(rules.mjs assistantCompanyOf).
+// 엔진이 켠 시각이 늦은 쪽만 돌린다(rules.mjs assistantCompanyOf). 이 기기의 저장끼리는 한 줄로 세운다(SAVE_LOCK).
 //
 // 보기 = 설정 + 지금 비서(회사·에이전트) + 상태. 전부 로컬 파일·메모리에서 읽는다 — Supabase 호출 0(리스 주인은 동기화가 이미 읽은 메모리 값, 로그인은 기기 세션 파일과
 // 사망 마커 — 회전을 일으키지 않는 읽기 전용 판정).
@@ -71,6 +71,12 @@ const agentExists = (wsId, slug) => readAgentCard(wsId, slug).then(() => true, (
 const SLUG_OK = (v) => typeof v === 'string' && v.length > 0 && v.length <= 100 && !/[\\/\0]/.test(v) && v !== '.' && v !== '..';
 const bool = (v) => (typeof v === 'boolean' ? v : undefined);
 
+/** 저장 전체(이 회사 쓰기 + 다른 회사 끄기)를 한 줄로 — 같은 주인의 두 회사에 켜기가 거의 동시에 오면(두 창) 각 저장이 자기 회사를 켠 뒤
+    서로를 꺼서 둘 다 꺼졌다(#865 2차 검수 LOW, 격리 서버 8/8 재현). 줄을 세우면 나중 저장이 앞 저장의 회사를 끄고 하나만 남는다.
+    저장은 사람이 값을 바꿀 때만 오므로 기다림은 앞 저장 하나(로컬 파일 몇 개)다. 프로세스 안 순서라 같은 데이터 폴더를 두 설정 서버가 동시에 받는 경우는
+    덮지 않는다 — 그때도 결과는 꺼지는 쪽이고 보기는 그대로 보인다. 키는 회사 잠금(`assistant:<회사>`)과 겹치지 않게 다른 모양이다(같은 키 중첩 = 교착). */
+const SAVE_LOCK = 'assistant-settings-save';
+
 /**
  * 설정 저장. input(전부 선택) = { enabled, agent, leadMinutes, eveningAt, quiet: { from, to, calendarAlerts }, tz }.
  *  - enabled: true  → 켜기(또는 이 에이전트로 바꾸기). agent 필수·이 회사에 있어야 한다. 켠 시각을 지금으로, tz는 화면(브라우저) 값.
@@ -78,7 +84,11 @@ const bool = (v) => (typeof v === 'boolean' ? v : undefined);
  *  - 그 밖 칸만 → 값만 바꾼다(켜짐·에이전트·켠 시각 그대로).
  * 반환 = { changedOthers: [wsId] }(이 저장으로 꺼진 다른 회사).
  */
-export async function saveAssistantSettings(wsId, input = {}, { now = Date.now() } = {}) {
+export function saveAssistantSettings(wsId, input = {}, opts = {}) {
+  return withLock(SAVE_LOCK, () => saveInLine(wsId, input, opts));
+}
+
+async function saveInLine(wsId, input, { now = Date.now() } = {}) {
   const inp = input && typeof input === 'object' ? input : {};
   const enabledIn = bool(inp.enabled);
   if (enabledIn === true && !SLUG_OK(inp.agent)) throw codedError('assistant_agent_not_found', '비서로 정할 에이전트가 필요합니다');
