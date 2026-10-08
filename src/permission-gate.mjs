@@ -142,6 +142,7 @@ const WS_CONTROL_FILES = new Set([
   'routines.json',     // 예약 실행 — 미래의 턴을 임의 지시로 채울 수 있다
   'corrections.json',  // 교정 후보 대장 — 크루가 심으면 "사장이 반복 지적했다"는 거짓 출처의 규칙 제안이 뜬다(검수 M5)
   'approvals.json',    // 결재 정본 — 위조되면 승인 모델 자체가 무너진다
+  'assistant.json',    // 능동 비서 설정·알리지 않기 목록 — 크루가 고치면 결재 없이 메일 읽기를 켜거나 알림을 끈다(설정 API·사람만 바꾼다)
   'gw-cursor-slack.json', // 게이트웨이 커서 — 조작하면 메시지 재처리·건너뛰기(gateway.mjs)
 ]);
 /* 원장 — **쓰기만** 막고 읽기는 연다. 위조되면 청구·활동의 근거가 무너지지만 자격이 아니라 유출
@@ -283,6 +284,7 @@ const WS_DOT_FILES = new Set([
   '.tg-claims-state.json', '.tg-claims', // 텔레그램 토큰 클레임 상태(sync.mjs) — 크루가 mine을 심으면 두 기기가 같은 봇을 동시 폴링(getUpdates Conflict)
   '.msgr-journal', // 팀 메신저 채널 기억의 PC 사본(memory.mjs relocateOrgJournals) — 다른 채널 턴의 셸로 읽히면 채널 경계가 샌다(2026-09-24)
   '.msgr-sessions.json', // 채널 세션 장부(thread.mjs — 기억 회수용 세션 id 목록, 2026-10-03). 셸로 고쳐지면 회수가 전사를 놓친다
+  '.assistant', // 능동 비서 상태(<ws>/.assistant/state.json — 보낸 키·대기열·커서). 셸로 고쳐지면 알림을 영구 침묵시키거나 대기열 글을 바꿔 비서 이름으로 올린다(.failure-digest.json과 같은 계열)
 ]);
 const BASH_GUARDED = [...WS_CONTROL_FILES, ...WS_LEDGER_FILES, ...WS_DOT_FILES];
 // 경계 클래스에 리다이렉트·쉼표(<>,) 포함 — `>chats/b.json`(공백 없는 리다이렉트)이 위조 명령의 가장
