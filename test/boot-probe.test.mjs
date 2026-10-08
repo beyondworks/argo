@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 
 const BOOT = join(dirname(dirname(fileURLToPath(import.meta.url))), 'public', 'boot.js');
 
-function load({ fetchImpl, hasAC = true }) {
+function load({ fetchImpl, hasAC = true, now = null }) {
   const el = () => ({ textContent: '', hidden: true, style: {} });
   const els = { status: el(), fill: el(), logtail: el(), err: el() };
   const listeners = {};
@@ -24,7 +24,7 @@ function load({ fetchImpl, hasAC = true }) {
     clearTimeout: (id) => { const t = timers.find((x) => x.id === id); if (t) t.cleared = true; },
     setInterval: () => 0,
     fetch: fetchImpl,
-    Date, Math, JSON,
+    Date: now ? { now } : Date, Math, JSON, // now = 가짜 시계(1분 무응답 안내 판정용)
     __navigated: null,
   };
   if (hasAC) {
@@ -166,3 +166,52 @@ for (const stale of [undefined, 0, 10]) {
     assert.equal(ctx.__navigated, 'http://localhost:3011');
   });
 }
+
+// ── 상주 대기(2026-10-08 실사고 — 재시동 직후 앱이 상주 자리 3001을 먼저 차지) ──
+/** 첫 사이클 후보 4개를 상한 발화로 소진시켜 1분 무응답 판정 줄(probe의 i >= TARGETS.length)까지 보낸다. */
+async function exhaustCycle(timers) {
+  for (let n = 0; n < 8; n++) {
+    await drain(); await drain();
+    const t = timers.find((x) => (x.ms === 1500 || x.ms === 8000) && !x.cleared && !x.fired);
+    if (!t) break;
+    t.fired = true; t.fn();
+  }
+  await drain(); await drain();
+}
+
+test('상주 대기: 문구를 보이고, 후보 전부를 계속 프로브한다(상주가 준비되면 바로 이동)', async () => {
+  const calls = [];
+  const { ctx, listeners, timers } = load({ fetchImpl: hangingFetch(calls) });
+  listeners.boot({ payload: { phase: 'resident', detail: 'waiting for the Argo background service', port: null, version: '9.9.9' } });
+  assert.equal(ctx.document.getElementById('status').textContent, 'Waiting for the Argo background service to start…');
+  assert.equal(ctx.TARGETS.length, 4, '포트를 확정하지 않는다 — 상주(3001)도 계속 후보');
+  assert.equal(ctx.APP_VER, '9.9.9', '기다리는 동안 버전 각인 — 다른 버전 상주로는 이동하지 않는다');
+  await exhaustCycle(timers);
+  assert.ok(['3001', '3011', '3021', '3999'].every((p) => calls.some((u) => String(u).includes(p))), '후보 4개 모두 프로브');
+});
+
+test('1분 무응답 안내: 상주 대기 중에는 띄우지 않고, 앱 서버 기동부터 다시 센다', async () => {
+  let clock = 0;
+  const { ctx, listeners, timers } = load({ fetchImpl: hangingFetch([]), now: () => clock });
+  const err = ctx.document.getElementById('err');
+  listeners.boot({ payload: { phase: 'resident', port: null, version: '9.9.9' } });
+  clock = 61_000; // 상주를 60초 기다렸다
+  await exhaustCycle(timers);
+  assert.equal(err.hidden, true, '상주 대기 중 — "다시 열어 보라" 안내 없음');
+  listeners.boot({ payload: { phase: 'starting', port: 3011, version: '9.9.9' } }); // 상한 도달 → 앱 서버 기동
+  timers.find((t) => t.ms === 1200 && !t.fired)?.fn();
+  await exhaustCycle(timers);
+  assert.equal(err.hidden, true, '막 뜨는 앱 서버에 1분 안내를 붙이지 않는다');
+  clock = 122_000; // 기동 뒤 61초
+  timers.filter((t) => t.ms === 1200 && !t.fired).forEach((t) => { t.fired = true; t.fn(); });
+  await exhaustCycle(timers);
+  assert.equal(err.hidden, false, '기동 뒤 1분이 지나면 안내는 그대로 뜬다');
+});
+
+test('1분 무응답 안내: 상주 없는 일반 부팅은 지금과 같다(핀)', async () => {
+  let clock = 0;
+  const { ctx, timers } = load({ fetchImpl: hangingFetch([]), now: () => clock });
+  clock = 61_000;
+  await exhaustCycle(timers);
+  assert.equal(ctx.document.getElementById('err').hidden, false);
+});

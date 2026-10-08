@@ -9,7 +9,15 @@ test('desktop source adoption gate rejects stale resident over isolated HTTP soc
   try { execFileSync('rustc', ['--version'], { stdio: 'pipe' }); }
   catch (error) { if (error.code === 'ENOENT') { t.skip('Rust compiler unavailable in Node-only environment'); return; } throw error; }
   const source = await readFile(new URL('../src-tauri/src/lib.rs', import.meta.url), 'utf8');
-  const predicate = source.match(/fn is_same_version_argo\(port: u16\) -> bool \{[\s\S]*?\n\}/)?.[0];
+  // 입양 판정 = 포트 상태 열거 + ping 본문 판정 + 프로브 + 같은 버전 술어(2026-10-08 상주 대기에서 Silent를 가르려고 나눴다).
+  const items = [
+    /#\[derive\([^)]*\)\]\nenum PortState \{[^}]*\}/,
+    /fn classify_ping\(text: &str\) -> PortState \{[\s\S]*?\n\}/,
+    /fn probe_port\(port: u16\) -> PortState \{[\s\S]*?\n\}/,
+    /fn is_same_version_argo\(port: u16\) -> bool \{[\s\S]*?\n\}/,
+  ].map((re) => source.match(re)?.[0]);
+  assert.ok(items.every(Boolean), 'adoption predicate pieces');
+  const predicate = items.join('\n');
   const behavior = source.match(/    fn adoption_rejects_same_version_without_current_dock_protocol\(\) \{[\s\S]*?\n    \}/)?.[0];
   assert.ok(predicate); assert.ok(behavior);
   const dir = await mkdtemp(join(tmpdir(), 'argo-adoption-dock-'));

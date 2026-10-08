@@ -23,6 +23,9 @@ var errEl = document.getElementById('err');
 
 var STATUS_TEXT = {
   shell: 'Preparing the app shell…',
+  // 상주 서비스가 설치된 기기에서 셸이 상주가 뜨기를 기다리는 동안(lib.rs plan_boot) — 그 사이에도 아래 프로브는
+  // 후보 전부를 계속 확인해, 상주가 같은 버전으로 답하는 순간 그쪽으로 이동한다.
+  resident: 'Waiting for the Argo background service to start…',
   starting: 'Starting the local server…',
   started: 'Local server is warming up…',
   waiting: 'Waiting for the server to respond…',
@@ -30,7 +33,7 @@ var STATUS_TEXT = {
   ready: 'Ready — opening your deck…',
 };
 // 단계별 진행률 바닥값 — 대기 중엔 90%를 향해 천천히 기어간다
-var FLOOR = { shell: 6, starting: 24, started: 52, waiting: 58, ready: 100 };
+var FLOOR = { shell: 6, resident: 14, starting: 24, started: 52, waiting: 58, ready: 100 };
 
 var phase = 'shell';
 var progress = FLOOR.shell;
@@ -83,7 +86,10 @@ try {
           ? 'The local server could not start: ' + (p.detail || 'unknown')
           : 'The local server hit a problem: ' + (p.detail || 'unknown') +
             '\nStill retrying — if this screen stays for minutes, quit and reopen Argo.';
-      } else if (p.phase === 'starting' || p.phase === 'started') {
+      } else if (p.phase === 'starting' || p.phase === 'started' || p.phase === 'resident') {
+        // 상주 대기(최대 60초) 끝에 앱 서버를 띄우기 시작하면 1분 무응답 안내의 기준 시각을 다시 잡는다 —
+        // 기다린 시간까지 세면 서버가 막 뜨는 중인데 "다시 열어 보라"는 안내가 바로 뜬다.
+        if (p.phase === 'starting' && phase === 'resident') startedAt = Date.now();
         setPhase(p.phase);
       }
     });
@@ -106,7 +112,7 @@ function probe(i) {
     if (phase === 'shell') setPhase('waiting');
     // 60초 넘게 신원 확인이 한 번도 성공하지 못하면 침묵 대기 대신 행동 안내를 띄운다
     // (재시도는 계속 — 회복 대비). 검수 LOW: 프로브 측 실패의 무한 'Still working' 방지.
-    if (Date.now() - startedAt > 60000 && phase !== 'error' && errEl.hidden) {
+    if (Date.now() - startedAt > 60000 && phase !== 'error' && phase !== 'resident' && errEl.hidden) {
       errEl.hidden = false;
       errEl.textContent = 'The server has not responded for a minute. Quit and reopen Argo — if it persists, another app may be using ports 3001/3011/3021.';
     }
