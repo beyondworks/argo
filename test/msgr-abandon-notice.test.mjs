@@ -199,7 +199,7 @@ test('LOW-3: 스키마 어긋남으로 오래 막힌 잡은 "업데이트 적용
     const { db, calls } = fakeDb(() => { throw err('PGRST202', 'msgr db: Could not find the function public.msgr_crew_context'); });
     await Q.enqueueJob(ws, 'msgr', '100-seoyun', job(100));
     const session = async () => ({ db, uid: 'u1' });
-    const stop = Q.startQueueWorker(ws, 'msgr', M.makeMsgrHandler(ws, { session }), { stalledAfterMs: 1500, onStalled: makeMsgrStallNotifier(ws, { session }) });
+    const stop = Q.startQueueWorker(ws, 'msgr', M.makeMsgrHandler(ws, { session, runnerReady: async () => true }), { stalledAfterMs: 1500, onStalled: makeMsgrStallNotifier(ws, { session }) }); // 러너 있는 프로세스 — 스키마 어긋남만 본다(러너 없는 프로세스는 DB를 부르기 전에 양보한다)
     assert.ok(await until(async () => calls.rows.length >= 1, 20_000), `${lang}: 안내가 들어간다`);
     assert.ok(await until(() => calls.crewContext >= 4, 20_000));
     stop();

@@ -324,12 +324,16 @@ export async function billedRunnerMap(wsId) {
   return map;
 }
 
-/** 러너별 회사+호스트 연결 상태 — 설정 UI·크루 카드가 먹는다. */
-export async function runnerStatus(wsId) {
-  const host = await detectRunners();
+/** 러너별 회사+호스트 연결 상태 — 설정 UI·크루 카드가 먹는다.
+    forPick = 러너 결정(pickRunner)만 쓰는 호출 — 표시용 월 사용량(회전 없는 usage.jsonl 전체 읽기 — 파일 크기에 비례)을 읽지 않고, 호스트 감지(CLI 스폰)는
+    이 컴퓨터 로그인(host) 자격이 있을 때만 한다. pickRunner가 보는 값(company.connected·invalid·type) 중 감지에 기대는 것은 host 자격의 invalid뿐이라
+    결정 결과는 전체 상태와 같다. 이 모드의 표시 필드(month·hostInstalled 등)는 비어 있다 — 화면에 쓰지 않는다(2026-10-08 메신저 실행권 양보 판정이 집기마다 부른다). */
+export async function runnerStatus(wsId, { forPick = false } = {}) {
+  let host = forPick ? null : await detectRunners(); // 전체 상태는 종전 순서(감지 먼저)
   const secrets = await loadSecrets(wsId);
+  host ??= Object.values(secrets.runners).some((c) => c?.value && credType(c.type) === 'host') ? await detectRunners() : {};
   // 금액은 단일 판정(rowBilled + billedRunnerMap) — billing.mjs와 같은 함수를 쓴다(중복 금지).
-  const usage = await monthCostByRunner(wsId, await billedRunnerMap(wsId)).catch(() => ({})); // 표시용 — 실패해도 상태를 막지 않는다
+  const usage = forPick ? {} : await monthCostByRunner(wsId, await billedRunnerMap(wsId)).catch(() => ({})); // 표시용 — 실패해도 상태를 막지 않는다
   const out = {};
   for (const [id, meta] of Object.entries(RUNNER_AUTH)) {
     const cred = secrets.runners?.[id];
@@ -377,13 +381,13 @@ export async function runnerStatus(wsId) {
 }
 
 /** 턴에 실제로 쓸 러너 결정 — 크루의 러너가 미가용이면 가용한 러너로 폴백(pickRunner).
-    어떤 러너든 하나만 연결돼 있으면 모든 크루가 응답하게 하는 관문. */
-export async function resolveRunner(wsId, want, { exclude = null } = {}) {
+    어떤 러너든 하나만 연결돼 있으면 모든 크루가 응답하게 하는 관문. forPick — runnerStatus 주석(같은 결정, 사용량·불필요한 감지 생략). */
+export async function resolveRunner(wsId, want, { exclude = null, forPick = false } = {}) {
   // ponytail: 회사 기본 러너(K1, 유건 지시 2026-08-08). company.json 읽기 실패는 무해(기존 순서 폴백).
   let defaultRunner = null;
   try {
     const { loadCompany } = await import('./workspace.mjs');
     defaultRunner = (await loadCompany(wsId))?.defaultRunner ?? null;
   } catch { /* 미설정 = null — 기존 RUNNER_AUTH 순서 */ }
-  return pickRunner(await runnerStatus(wsId), want, exclude, { defaultRunner });
+  return pickRunner(await runnerStatus(wsId, { forPick }), want, exclude, { defaultRunner });
 }

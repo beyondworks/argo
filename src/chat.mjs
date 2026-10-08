@@ -1352,6 +1352,21 @@ export async function surfaceRunnerFailure(e, { wsId, runner, lang, cred = null,
     에러(Gemini 3.x는 Ultra·유료 전용 — 실측 2026-07-19). gated 모델 턴에서만 검사한다(과매칭 방지). */
 export const GATED_MODEL_ERR_RE = /requested entity was not found|NOT_FOUND|PERMISSION_DENIED/i;
 
+/** 크루가 원하는 러너 id(순수) — 턴 지정(runnerOverride)이 카드 러너보다 앞선다. null = 무선호.
+    runChat의 러너 결정과 메신저 실행권 양보 판정(turnRunnerAvailable)이 같은 값을 보게 한 곳에 둔다. */
+export const wantRunnerOf = (meta, runnerOverride = null) => String(runnerOverride || meta?.runner || '').toLowerCase() || null;
+
+/** 이 프로세스에서 이 크루의 턴이 러너를 받을 수 있나 — runChat의 러너 결정(resolveRunner, pickRunner 대체 포함)과 같은 판정이다.
+    false면 runChat은 '러너 없음'(또는 카드 없음)으로 끝난다. 메신저 게이트웨이가 적재(drain)·실행권 선점 전에 묻는다 — 러너 없는 프로세스(옛 앱 사본·러너 자격이
+    동기화되지 않는 다른 기기)가 먼저 잡아 실패 답을 올리고 러너 있는 프로세스는 '이미 답함'으로 건너뛰던 결함(2026-10-07 운영).
+    카드를 못 읽으면 미가용 — 이 프로세스는 그 턴을 돌릴 수 없다(앱 전용 데이터 폴더·동기화 지연. 카드 있는 프로세스가 가져가게, 검수 LOW-3). 판정 실패도 runChat과 같이 미가용.
+    집기마다 불리므로 forPick(표시용 월 사용량을 읽지 않고, host 자격이 없으면 CLI 감지도 하지 않는다 — 결정은 같다, 검수 LOW-1). */
+export async function turnRunnerAvailable(wsId, slug) {
+  const meta = await readAgentCard(wsId, slug).then((c) => c.meta, () => null);
+  if (!meta) return false;
+  return (await resolveRunner(wsId, wantRunnerOf(meta), { forPick: true }).catch(() => ({ available: false }))).available === true;
+}
+
 export function fallbackErrorPrefix(fellBack, wantId, ranId, lang = 'ko', { excluded = false } = {}) {
   if (!fellBack) return '';
   const rn = (id) => RUNNERS[id]?.name ?? id;
@@ -1477,7 +1492,23 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
       return { reply, sessionId: null, handover, ...(contextScope ? { contextScope } : {}) }; // 예산 차단 턴 — 러너 해석 전이라 fellBack 무관(TDZ 회귀 금지 구역)
     }
   }
-  const { md, meta } = await readAgentCard(wsId, agentSlug);
+  // 러너를 고르기 전에 끝나는 턴(카드 없음·http 러너·러너 없음)도 회사 활동에 남긴다 — 이 갈래들은 evBase보다 앞이라 종전엔 기록이 없어, 메신저 실패 답의
+  // "주인이 Argo 활동에서 원인을 확인할 수 있습니다"가 사실이 아니었다(2026-10-07 운영). 대화 기록·오류 객체는 바꾸지 않는다(화면 문구 종전 —
+  // 데스크톱 대화는 라우트가, 메신저는 게이트웨이가 각자 남긴다). 재시도 프레임(아래 catch들의 재귀)은 바깥 프레임이 최종 실패를 한 번 기록하므로 남기지 않는다.
+  // runner 필드 없음 + preRun — 실행한 러너가 없는 설정 단계 실패다(설정 연결 카드의 러너별 마지막 턴·실패 다이제스트의 러너 오류 묶음에 섞이지 않게, 검수 LOW-2).
+  // ev = 발신자 표지. 카드 읽기 실패는 evFrom(스킬 주입 뒤에 계산 — room-slash-commander 핀)보다 앞이라 from만 싣는다(예산 차단 기록과 같은 모양).
+  // 기록 실패는 삼킨다 — 원래 오류(사용자에게 보일 안내)를 가리지 않게.
+  const retryFrame = !!(__excludeRunners?.length || __crashRetry || __lockupRetry || __freshRetry || __downgradedFrom);
+  const failBeforeRun = async (e, { flags = {}, ev = from ? { from } : {} } = {}) => {
+    if (!retryFrame) {
+      const cls = classifyRunnerError(e?.message, { flags });
+      await appendEvent(wsId, { type: 'turn', slug: agentSlug, source: source ?? (from ? 'delegate' : 'deck'), ...ev, gist: userMsg.replace(/\s+/g, ' ').trim().slice(0, 60), msg: userMsg.slice(0, 2000),
+        ok: false, ms: 0, preRun: true, error: String(e?.message ?? e).slice(0, 400), failCode: cls.code, failOrigin: cls.origin })
+        .catch((err) => console.error('[argo] 러너 실행 전 실패를 활동에 남기지 못함:', err?.message ?? err));
+    }
+    throw e;
+  };
+  const { md, meta } = await readAgentCard(wsId, agentSlug).catch((e) => failBeforeRun(e)); // 카드 없음(앱 전용 데이터 폴더·동기화 지연) — 검수 LOW-3
   // 크루별 능력 범위 — 카드 skills:/mcp: 필드(미기재=전체 사용이 기본, 'none'=없음, csv=지정만).
   // 설치는 회사 공용이되 크루 단위로 좁힐 수 있다(유건 지시 2026-07-19 — 크루 카드에서 선택·편집).
   const skillScope = parseScopeList(meta.skills);
@@ -1504,17 +1535,17 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
   // (예: 기본 claude 크루인데 Codex만 연결한 사용자 — 어떤 러너든 연결만 돼 있으면 크루는 응답해야 한다)
   // want=null(무선호) — 카드에 러너 미지정이면 회사의 연결 러너를 대체 고지 없이 쓴다(claude 하드코딩 제거).
   // runnerOverride(경쟁 등) 우선 — 카드 러너 대신 이 턴만 지정 러너로. 미가용이면 기존 폴백 체인이 동일하게 처리.
-  const wantRunner = ((runnerOverride || meta.runner || '')).toLowerCase() || null;
+  const wantRunner = wantRunnerOf(meta, runnerOverride);
   // HTTP 텍스트 러너(runner: http)는 걷어냈다(2026-09-18 — 외부 에이전트는 크루의 두뇌가 아니라 메신저에 봇으로 접속한다).
   // 카드에 그 값이 남은 크루를 다른 러너로 대신 돌리면 외부 에이전트 크루가 다른 두뇌로 답한다 — 대체하지 않고 정직하게 멈춘다.
-  if (wantRunner === 'http') throw new Error(lang === 'en'
+  if (wantRunner === 'http') await failBeforeRun(new Error(lang === 'en'
     ? 'This agent is set to run over an external HTTP connection, which is no longer supported. Change the runner on the agent card, or connect the external agent to the messenger as a bot.'
-    : '이 에이전트는 외부 HTTP 연결로 실행하도록 설정돼 있는데, 이 방식은 더 이상 지원하지 않습니다. 에이전트 카드에서 러너를 바꾸거나, 외부 에이전트는 메신저에 봇으로 연결해 주세요.');
+    : '이 에이전트는 외부 HTTP 연결로 실행하도록 설정돼 있는데, 이 방식은 더 이상 지원하지 않습니다. 에이전트 카드에서 러너를 바꾸거나, 외부 에이전트는 메신저에 봇으로 연결해 주세요.'), { ev: evFrom });
   // __excludeRunners = 지금까지 인증 실패한 러너 **목록**(아래 catch의 자가 치유 재시도) — 다시 뽑히지 않게 제외.
   // 해석 실패(.secrets.json 손상 등)는 미가용으로 — available:true 폴백은 명시 연결 원칙 위반(검수 MEDIUM:
   // 최악의 상태에서 조용히 호스트 자격을 스캐빈징하게 된다). 아래 !available 분기가 재연결을 안내한다.
   const resolved = await resolveRunner(wsId, wantRunner, { exclude: __excludeRunners }).catch(() => ({ runner: wantRunner ?? 'claude', fellBack: false, available: false, credButNoCli: [] }));
-  if (!resolved.available) {
+  if (!resolved.available) try {
     // 자가치유가 인증 실패 러너를 제외한 끝이라면 — "하나도 연결돼 있지 않습니다"는 거짓이 된다.
     // 연결은 있고 인증이 죽은 것(Grok 제보 2026-08-06 '러너 없음'). 사실대로 갈라 말한다.
     if (__excludeRunners?.length) throw new Error(authExcludedNoRunnerMsg(__excludeRunners, lang));
@@ -1537,7 +1568,7 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
       : (lang === 'en'
           ? `No AI runner is connected. Connect one in Settings → AI connections (${visibleRunnerNamesLine('en')}), then try again.`
           : `AI 러너가 하나도 연결돼 있지 않습니다. 설정 → AI 연결에서 ${visibleRunnerNamesLine()} 중 하나를 연결한 뒤 다시 말을 걸어 주세요.`));
-  }
+  } catch (e) { await failBeforeRun(e, { flags: { noRunner: true }, ev: evFrom }); } // 이 갈래가 던지는 것은 위 안내 문구뿐이다 — 활동에 남긴 뒤 그대로 던진다
   const runner = resolved.runner;
   // 이번 턴까지 시도한 러너 목록 — 아래 두 실행 경로(CLI·SDK)의 인증 자가치유가 공유한다.
   const tried = excludeWith(__excludeRunners, runner);
