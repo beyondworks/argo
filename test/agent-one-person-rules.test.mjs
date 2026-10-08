@@ -1,12 +1,12 @@
 // 에이전트 '한 사람'(유건 결정 2026-10-08 ①·③)의 순수 규칙 — 방 판정(ownerSoloRoom), 턴 판정(ownerSoloTurn), 기록 범위(inContextScope), 세션이 본 1:1 줄(soloKey·soloSeenFor·soloMsgIds),
-// 회수 때 범위 없는 요약 거두기(applyDeparted·summaryRecalled·foldedSolo),
+// 회수 때 범위 없는 요약 거두기(applyDeparted·summaryRecalled·unscopedSummaryGone·foldedSolo),
 // 호칭 규칙 판정(hasAddressRule·userSetAddress). 행동 전체는 test/agent-one-person.test.mjs(실제 chat()·게이트웨이 처리기)가 잠근다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ownerSoloRoom, audienceOf } from '../src/gateway/office-audience.mjs';
 import { ownerSoloTurn } from '../src/gateway/msgr-handoff.mjs';
 import { inContextScope, isOwnerSoloScope, soloKey, soloSeenFor, soloMsgIds } from '../src/thread.mjs';
-import { applyDeparted, forgetChannels, foldedSolo, summaryRecalled } from '../src/departed.mjs';
+import { applyDeparted, forgetChannels, foldedSolo, summaryRecalled, unscopedSummaryGone } from '../src/departed.mjs';
 import { hasAddressRule, userSetAddress, userAddressNote, ADDRESS_RULE_SKILL } from '../src/user-name.mjs';
 import { RULES_SKILL } from '../src/corrections.mjs';
 
@@ -118,11 +118,11 @@ test('회수 — 회수된 주인 혼자 1:1 줄을 접은 범위 없는 요약(
   assert.equal(covered.summary, undefined, '요약이 지운 1:1 줄(ts 2)을 접었다 — 거둔다');
   assert.deepEqual(covered.messages.map((m) => m.text), ['desk', 'desk2'], '데스크톱 줄은 남는다');
   assert.deepEqual(covered.departed[CH], { ts: 2, sids: [] }, '각인 모양은 종전 그대로({ts, sids}) — 옛 버전이 그대로 읽고 보존한다');
-  const before = { messages: lines(), summary: { text: 'S', upto: 1, solo: foldedSolo(lines(), 1) } };
+  const before = { messages: lines(), summary: { text: 'S', upto: 1, withSolo: true, solo: foldedSolo(lines(), 1) } }; // 이 버전 요약(thread.mjs setThreadSummary — withSolo)
   forgetChannels(before, [CH]);
-  assert.deepEqual(before.summary, { text: 'S', upto: 1, solo: {} }, '1:1 줄보다 앞까지만 접은 요약은 그대로');
+  assert.deepEqual(before.summary, { text: 'S', upto: 1, withSolo: true, solo: {} }, '1:1 줄보다 앞까지만 접은 요약은 그대로');
   const plainLines = [{ who: 'user', text: 'x', ts: 2, contextScope: { kind: 'msgr-dm', channelId: CH } }, { who: 'user', text: 'd', ts: 3 }];
-  const plainDm = { messages: plainLines, summary: { text: 'S', upto: 3, solo: foldedSolo(plainLines, 3) } };
+  const plainDm = { messages: plainLines, summary: { text: 'S', upto: 3, withSolo: true, solo: foldedSolo(plainLines, 3) } };
   forgetChannels(plainDm, [CH]);
   assert.equal(plainDm.summary?.text, 'S', '표지 없는 DM 줄은 범위 없는 요약에 없다 — 요약을 거두지 않는다');
   // 다른 기기의 옛 사본이 병합으로 되살린 줄을 거르는 자리(읽기·병합에서 다시 적용)도 같다
@@ -156,18 +156,37 @@ test('summary.solo — 회수 각인 ts 이하 1:1 줄을 접은 요약은 줄�
   assert.deepEqual(foldedSolo(msgs, 6), { [CH]: 4, [CH2]: 6 });
 });
 
+test('옛 버전 요약(withSolo 없음) — 회수 각인이 있는 스레드에서는 쓰지 않는다(옛 버전이 다시 요약하며 solo 표지를 잃는다, 재검수 3차 MEDIUM). 이 버전 요약·각인 없는 스레드·채널 요약은 그대로', () => {
+  const CH = 'dddddddd-0000-4000-8000-000000000002', GCH = 'dddddddd-0000-4000-8000-000000000003';
+  const d = { [GCH]: { ts: 2, sids: [] } }; // 어느 방이든(채널 회수 #816 포함) — 각인만 보고는 그 방이 1:1이었는지 알 수 없다
+  assert.equal(unscopedSummaryGone(d, { text: 'OLD', upto: 9, at: 1 }), true, '옛 버전 모양 {text, upto, at}');
+  assert.equal(unscopedSummaryGone(d, { text: 'NEW', upto: 9, withSolo: true }), false, '이 버전 요약(1:1을 안 접었다)');
+  assert.equal(unscopedSummaryGone({ [CH]: { ts: 2, sids: [] } }, { text: 'NEW', upto: 9, withSolo: true, solo: { [CH]: 2 } }), true, 'summaryRecalled 경로는 그대로');
+  assert.equal(unscopedSummaryGone(null, { text: 'OLD', upto: 9 }), false, '각인 없는 스레드의 옛 요약은 그대로 쓴다(지금과 같음)');
+  assert.equal(unscopedSummaryGone({}, { text: 'OLD', upto: 9 }), false);
+  assert.equal(unscopedSummaryGone({ nope: { ts: 1 } }, { text: 'OLD', upto: 9 }), false, '방 id가 아닌 키는 각인이 아니다');
+  assert.equal(unscopedSummaryGone(d, null), false);
+  const t = { messages: [{ who: 'user', text: 'd', ts: 9 }], summary: { text: 'OLD', upto: 9, at: 1 }, scopedSummaries: { [GCH]: { text: 'CH', upto: 30, at: 1 } }, departed: d };
+  applyDeparted(t);
+  assert.equal(t.summary, undefined, '읽기·병합 자리(applyDeparted)에서 거른다');
+  assert.equal(t.scopedSummaries[GCH]?.text, 'CH', '채널 요약은 종전 규칙(upto ≤ 각인 ts)만 — 다시 들어온 뒤 요약은 옛 모양이어도 거두지 않는다');
+});
+
 test('호칭 규칙 판정 — 사용자를 부르는 방법을 정한 줄만', () => {
   for (const s of ['- 나를 "대표님"이라고 불러라', '- 사용자를 형이라고 부른다', '- 저를 유건님으로 불러 주세요', '- 호칭은 대표님', '- Call me "Chief".', '- Address the user as Dr. Kim', '- refer to me as boss',
     '- 나를 대표님이라 불러', '- 대표님이라고 해줘', '- 나는 형이라 부르면 돼', '- 나를 부를 때는 대표님', '- 사용자 호칭은 대표님', // 검수 LOW: 앞의 셋을 놓쳤다
     '- 내 이름을 부르지 마', '- 제 이름은 부르지 말고 대표님이라고 해 주세요', '- 말할 때는 대표님이라고 불러줘', '- 앞으로 "대표님"이라고 불러줘', '- 대표님으로 불러', // 재검수 LOW: '내 이름을 부르지 마'를 놓쳤다
     '- 이름은 유건님으로 불러줘', '- 제 직함은 빼고 이름으로 불러 주세요', '- 직함은 빼고 유건님이라고 불러줘', '- 앞으로는 성은 빼고 유건님이라고 불러', '- 앞으로 이름은 유건님으로 불러줘', // 재검수 2차 LOW: 사용자 자신의 이름·직함·성
-    '- 보고는 결론부터, 그리고 대표님이라 부르지 말고 유건님이라 불러', '- 반말은 쓰지 말고 유건님이라고 불러', '- 존댓말을 쓰고 유건님이라고 불러줘']) // 재검수 2차 LOW: 앞 절의 다른 지시('반말은 쓰지 말고')가 참을 거짓으로 바꿨다
+    '- 보고는 결론부터, 그리고 대표님이라 부르지 말고 유건님이라 불러', '- 반말은 쓰지 말고 유건님이라고 불러', '- 존댓말을 쓰고 유건님이라고 불러줘', // 재검수 2차 LOW: 앞 절의 다른 지시('반말은 쓰지 말고')가 참을 거짓으로 바꿨다
+    '- 대표님 말고 유건님이라고 불러줘', '- 보고할 때는 유건님이라고 부른다', '- 말투는 친근하게 하고 형이라고 불러', '- 보고는 결론부터. 유건님이라고 불러', '- 대화에서 호칭은 유건님', '- 메일은 짧게 쓰고 나를 팀장님이라고 불러', '- 대표님은 말고 유건님이라고 불러']) // 재검수 3차 LOW: 끊는 경계·말투 낱말·'말고' 절
     assert.equal(hasAddressRule(s), true, s);
   for (const s of ['- 결론부터 말한다', '- 함수 하나를 부를 때 인자를 확인한다', '- 도구를 부를 때 결재를 먼저', "- Always address the user's question first", '- call them back when a customer emails', '- 결재를 부르기 전에', '',
     '- 고객은 고객님이라고 부른다', '- 메일에서 상대를 이름으로 부르지 마라', '- 상대방 호칭은 OO님으로 통일', '- 너를 서윤이라고 부를게', // 검수 LOW: 사용자가 아닌 대상을 잡았다
     '- 출처가 없으면 "출처 없음"이라고 해', '- 모르면 모른다고 해', '- 결론부터 말하는 걸로 해', '- 파일은 Read로 불러온다', '- 템플릿으로 불러와 채운다', '- 너무 길게 쓰지 마', '- 저장 전에 확인',
     '- 보고서 제목은 "주간 보고"라고 부른다', '- 이 프로젝트를 앞으로 "아르고"라 부른다', '- 회의는 스탠드업이라고 부른다', '- API를 호출할 때는 재시도로 부른다', '- 함수는 helper로 불러 쓴다', // 재검수 LOW: 사람이 아닌 대상의 이름을 정한 줄을 잡았다
-    '- 필요하면 도구로 불러서 처리한다', '- 프로젝트 이름은 Argo라고 부른다', '- 회사 이름은 린이라고 부른다', '- 회의 이름은 스탠드업이라고 부른다', '- 고객 호칭은 고객님으로']) // 재검수 2차 LOW: 도구를 부르는 말, 다른 낱말의 이름
+    '- 필요하면 도구로 불러서 처리한다', '- 프로젝트 이름은 Argo라고 부른다', '- 회사 이름은 린이라고 부른다', '- 회의 이름은 스탠드업이라고 부른다', '- 고객 호칭은 고객님으로', // 재검수 2차 LOW: 도구를 부르는 말, 다른 낱말의 이름
+    '- 회의록은 정리하고 "스탠드업"이라고 부른다', '- 매주 월요일 회의는 짧게 하고 스탠드업이라고 부른다', '- 이 저장소는 비공개로 두고 Argo라고 부른다', '- 주간 보고서를 만들면 "주간 보고"라고 부른다', '- 문서 호칭은 정식 명칭으로', // 재검수 3차 LOW: 앞 절의 주제어가 뒤 절까지 걸린다
+    '- 결제 모듈은 따로 빼고, 이름은 pay라고 부른다', '- 프로젝트 이름은, 앞으로 Argo라고 부른다', '- 새 버전은 v2.0이라고 부른다', '- 회의록은 짧게, 스탠드업이라고 부른다', '- 문서호칭은 정식 명칭으로'])
     assert.equal(hasAddressRule(s), false, s);
 });
 

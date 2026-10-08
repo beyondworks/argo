@@ -22,7 +22,7 @@ import { join, dirname, basename, sep } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import { WS_ROOT, WS_ID_RE, paths, archiveCompany, writeTombstone, TOMBSTONE_DIR, getDeviceId } from './workspace.mjs';
-import { applyDeparted, mergeDeparted, summaryRecalled } from './departed.mjs';
+import { applyDeparted, mergeDeparted, unscopedSummaryGone } from './departed.mjs';
 import { writeJsonAtomic, writeFileAtomic, readJsonLenient } from './jsonstore.mjs';
 import { withLock, withDirLock, withFileLock } from './mutex.mjs';
 import { cryptoOn, isSecretRel, isSecretNameRel, isEncRel, encVaultOn, sealSecret, sealSecretV3, openSecret, openSecretCompat, isEnvelopeGeneration, CRED_WITHDRAWN, isCredWithdrawn } from './secretbox.mjs';
@@ -625,7 +625,7 @@ export function mergeThread(localBuf, remoteBuf, prefer = 'remote') {
   const newerSum = (p, o) => (!p ? o : !o ? p : (Number(o.upto) || 0) > (Number(p.upto) || 0) ? o : p);
   // 회수 각인은 먼저 합친다 — 회수가 거둔 요약(옛 버전 사본이 되돌린 것)은 고르기 전에 뺀다. 안 빼면 기준점이 같거나 큰 옛 요약이 회수 뒤 새 요약을 이기고 아래에서 둘 다 사라진다.
   const departed = mergeDeparted(L.departed, R.departed);
-  const live = (s) => (s && !summaryRecalled(departed, s) ? s : null);
+  const live = (s) => (s && !unscopedSummaryGone(departed, s) ? s : null); // 표지를 잃은 옛 버전 요약(withSolo 없음)도 — 회수 각인이 있으면 고르지 않는다(departed.mjs)
   const sum = newerSum(live(primary.summary), live(other.summary)); if (sum) merged.summary = sum; else delete merged.summary;
   if (L.scopedSummaries || R.scopedSummaries) merged.scopedSummaries = Object.fromEntries([...new Set([...Object.keys(other.scopedSummaries ?? {}), ...Object.keys(primary.scopedSummaries ?? {})])].map((k) => [k, newerSum(primary.scopedSummaries?.[k], other.scopedSummaries?.[k])]));
   // 채널 기억 회수 각인(departed.mjs) — 채널마다 늦은 시각으로 합치고(위) 병합 결과에 다시 적용한다. 다른 기기가 아직 든 옛 채널 줄·세션이 합집합으로 되살아나지 않게.

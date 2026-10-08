@@ -62,6 +62,15 @@ export function summaryRecalled(departed, s) {
   if (!s?.solo || typeof s.solo !== 'object' || !departed || typeof departed !== 'object') return false;
   return Object.entries(s.solo).some(([c, ts]) => { const e = departed[String(c).toLowerCase()]; return !!e && (Number(ts) || 0) <= entry(e).ts; });
 }
+/** 범위 없는 요약(t.summary)을 거둘 것인가(순수) — 위 summaryRecalled + 옛 버전 요약(withSolo 없음)인데 회수 각인이 하나라도 있을 때(재검수 3차 MEDIUM 2026-10-08).
+    옛 버전(0.1.97)은 다시 요약할 때 앞 요약 글을 이어 접고(thread-context threadSummaryPrompt) {text, upto, at}만 저장한다 — 이 버전 요약의 solo 표지가 빠져,
+    그 요약이 회수된 1:1 내용을 품었는지 알 길이 없다. 요약은 다시 만들 수 있는 캐시라 회수 각인이 있는 스레드에서는 옛 요약을 쓰지 않는다(다음 턴에 한 번 다시 요약).
+    범위 있는(채널) 요약에는 쓰지 않는다 — 그쪽은 scopedSummaries 규칙(upto ≤ 각인 ts, applyDeparted). */
+export function unscopedSummaryGone(departed, s) {
+  if (!s) return false;
+  if (summaryRecalled(departed, s)) return true;
+  return !s.withSolo && !!departed && typeof departed === 'object' && Object.keys(departed).some((k) => CHANNEL_ID.test(k));
+}
 
 /** 각인 적용(제자리 수정) — 지운 줄 수를 돌려준다. */
 export function applyDeparted(t) {
@@ -70,7 +79,7 @@ export function applyDeparted(t) {
   const own = ownChannels(t.messages);
   const before = t.messages.length;
   t.messages = t.messages.filter((m, i) => { const c = own[i]; return !(c && d[c] && (Number(m.ts) || 0) <= entry(d[c]).ts); });
-  if (summaryRecalled(d, t.summary)) delete t.summary; // 회수된 주인 혼자 1:1 줄을 접은 범위 없는 요약(위 summary.solo) — 줄이 이미 없어도(옛 버전 사본) 요약 자신의 표지로 거른다
+  if (unscopedSummaryGone(d, t.summary)) delete t.summary; // 회수된 주인 혼자 1:1 줄을 접은 범위 없는 요약(위 summary.solo) — 줄이 이미 없어도(옛 버전 사본) 요약 자신의 표지로 거른다. 표지를 잃은 옛 버전 요약도
   for (const [k, v] of Object.entries(t.scopedSessions ?? {})) {
     const e = d[k.toLowerCase()];
     if (e && entry(e).sids.includes(v?.sessionId)) delete t.scopedSessions[k];

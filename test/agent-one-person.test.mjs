@@ -676,6 +676,73 @@ test('요약 원샷이 도는 사이 그 방이 회수되면 그 1:1 줄을 접�
   assert.doesNotMatch(JSON.stringify(saved), /ORG_SECRET/);
 });
 
+// 옛 버전이 다시 요약한 사본(재검수 3차 MEDIUM 2026-10-08) — 옛 버전은 앞 요약 글을 이어 접고(thread-context threadSummaryPrompt) {text, upto, at}만 저장한다:
+// 이 버전 요약이 접은 1:1 내용을 품은 채 solo·withSolo 표지를 잃는다. 회수 각인이 있는 스레드에서는 그런 옛 요약을 쓰지 않는다(departed.mjs unscopedSummaryGone).
+/** 옛 버전이 다시 요약한 사본 흉내 — 실제 옛 코드(7454af48 setThreadSummary: val = {text, upto, at})로 같은 모양을 확인했다(PR 본문). */
+const oldVersionResummary = (t, text) => ({ ...t, summary: { text, upto: t.messages.at(-1).ts, at: Date.now() } });
+test('옛 버전 기기가 1:1 줄을 접은 요약을 이어 다시 요약한 사본(solo 표지 없음)을 받은 뒤 조직에서 빠져도 그 요약을 쓰지 않는다(재검수 3차 MEDIUM R3-D)', async () => {
+  runner = 'codex';
+  const { ws } = await orgSummaryCompany();
+  const t = JSON.parse(await readFile(chatFile(ws), 'utf8'));
+  await writeFile(chatFile(ws), JSON.stringify(oldVersionResummary(t, 'RESUMMARY carries ORG_SECRET'))); // 회수 전 — 옛 기기 사본을 그대로 받음
+  await recallOrg(ws);
+  assert.equal((await loadThread(ws, 'seoyun')).summary, undefined);
+  assert.doesNotMatch(await readFile(chatFile(ws), 'utf8'), /ORG_SECRET/, '회수 뒤 저장본에도 없다');
+  await desk(ws, '방금 숫자?');
+  assert.doesNotMatch(lastPrompt(), /ORG_SECRET/);
+  assert.match(lastPrompt(), /DESK_KEEP/, '데스크톱 대화는 남는다');
+});
+test('조직에서 빠진 뒤 — 옛 버전 기기가 되돌린 요약을 이어 다시 요약한 사본을 그대로 받아도, 병합해도 쓰지 않는다(재검수 3차 MEDIUM R3-C)', async () => {
+  runner = 'codex';
+  for (const path of ['as-is', 'merge']) {
+    const { ws, summary: reaped } = await orgSummaryCompany();
+    await recallOrg(ws);
+    const oCopy = oldVersionResummary(oldVersionCopy(JSON.parse(await readFile(chatFile(ws), 'utf8')), reaped), 'RESUMMARY carries ORG_SECRET');
+    if (path === 'as-is') await writeFile(chatFile(ws), JSON.stringify(oCopy));
+    else { const old = await company(); await writeFile(chatFile(old), JSON.stringify(oCopy)); await mergeInto(ws, old); }
+    assert.equal((await loadThread(ws, 'seoyun')).summary, undefined, path);
+    await desk(ws, '방금 숫자?');
+    assert.doesNotMatch(lastPrompt(), /ORG_SECRET/, path);
+  }
+});
+test('회수 전에 이 기기가 옛 요약을 이어 다시 요약하면 — 1:1 줄이 아직 스레드에 있어 그 방 표지를 들고, 나중 회수가 거둔다', async () => {
+  runner = 'codex';
+  const { ws } = await orgSummaryCompany();
+  await writeFile(chatFile(ws), JSON.stringify(oldVersionResummary(JSON.parse(await readFile(chatFile(ws), 'utf8')), 'RESUMMARY carries ORG_SECRET')));
+  await desk(ws, 'DESK_MORE');
+  assert.ok(await setThreadSummary(ws, 'seoyun', null, { text: 'NEW_FOLDS_RESUMMARY ORG_SECRET', upto: (await loadThread(ws, 'seoyun')).messages.at(-1).ts })); // 앞 요약(옛 모양)에 solo가 없어도
+  assert.deepEqual(Object.keys((await loadThread(ws, 'seoyun')).summary.solo ?? {}), [OCH]);
+  await recallOrg(ws);
+  assert.equal((await loadThread(ws, 'seoyun')).summary, undefined);
+  await desk(ws, '방금 숫자?');
+  assert.doesNotMatch(lastPrompt(), /ORG_SECRET/);
+});
+test('회수 각인이 있는 스레드의 옛 버전 요약은 다음 턴에 한 번 다시 요약하고(옛 요약 글은 접지 않는다), 다시 만든 요약은 읽기·병합에서 남는다. 각인 없는 스레드의 옛 요약은 그대로 쓴다', async () => {
+  runner = 'codex';
+  const plain = await company();
+  await desk(plain, 'DESK_ONE');
+  await writeFile(chatFile(plain), JSON.stringify(oldVersionResummary(JSON.parse(await readFile(chatFile(plain), 'utf8')), 'OLD_PLAIN_SUMMARY')));
+  assert.equal((await loadThread(plain, 'seoyun')).summary?.text, 'OLD_PLAIN_SUMMARY', '각인 없는 스레드 — 지금과 같다');
+  const ws = await company();
+  const long = '가'.repeat(600); // 맥락 예산을 넘기는 데스크톱 대화 — 요약이 필요한 스레드
+  for (let i = 0; i < 45; i++) await appendTurn(ws, 'seoyun', { userMsg: `${i} ${long}`, reply: `ok ${long}` });
+  const { forgetThreadChannels } = await import('../src/thread.mjs');
+  await forgetThreadChannels(ws, 'seoyun', [GCH]); // 채널 회수(#816) 각인 — 그 방이 1:1이었는지는 각인만으로 모른다
+  const oldCopy = oldVersionResummary(JSON.parse(await readFile(chatFile(ws), 'utf8')), 'OLD_SUMMARY_TEXT');
+  await writeFile(chatFile(ws), JSON.stringify(oldCopy));
+  const prompts = [];
+  globalThis.__opOneShot = async (_ws, prompt) => { prompts.push(prompt); return { text: 'NEW_SUMMARY_TEXT', usage: {}, costUsd: 0, runner: 'codex' }; };
+  try { await desk(ws, '하나'); await desk(ws, '둘'); } finally { delete globalThis.__opOneShot; }
+  assert.equal(prompts.length, 1, '다시 요약은 한 번 — 다음 턴은 다시 만든 요약을 쓴다');
+  assert.doesNotMatch(prompts[0], /OLD_SUMMARY_TEXT/, '옛 요약 글을 이어 접지 않는다');
+  const saved = (await loadThread(ws, 'seoyun')).summary;
+  assert.equal(saved?.text, 'NEW_SUMMARY_TEXT'); assert.equal(saved?.withSolo, true);
+  assert.match(lastPrompt(), /NEW_SUMMARY_TEXT/);
+  const old = await company(); await writeFile(chatFile(old), JSON.stringify(oldCopy)); // 옛 기기가 아직 든 사본과 병합해도
+  await mergeInto(ws, old);
+  assert.equal((await loadThread(ws, 'seoyun')).summary?.text, 'NEW_SUMMARY_TEXT');
+});
+
 // ── 11. 지난 방 대화의 에이전트 글은 누가 시킨 일인가(재검수 LOW 2026-10-08) · 방 확인은 실행권을 잡은 뒤(재검수 LOW) ──
 const crewRow = (id, body, meta) => ({ id, author_kind: 'crew', author_user_id: null, crew_id: CREW, body, client_msg_id: `reply:${CREW}:${id - 1}`, reply_to: id - 1, meta });
 test('남 낀 방 경계 — 나간 손님이 시킨 일의 에이전트 답(origin = 손님)이 최근 대화에 남은 방은 1:1이 아니다(데스크톱 대화 안 실림, 1:1 기록 표지 없음)', async () => {
