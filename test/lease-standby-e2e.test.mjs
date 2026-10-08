@@ -84,7 +84,7 @@ test('VPS(예비)는 맥이 담당인 동안 팀 메신저를 받지 않는다 �
   }
 });
 
-test('VPS(예비)는 담당이 되면 팀 메신저를 받기 시작하고(공백 동안 온 글은 서버 커서부터), 맥이 되찾으면 멈춘다', { timeout: 90_000 }, async () => {
+test('VPS(예비)는 담당이 되면 팀 메신저를 받기 시작하고(공백 동안 온 글은 서버 커서부터), 맥이 되찾으면 멈춘다', { timeout: 120_000 }, async () => {
   const fake = await startFakeSupabase({ plan: 'pro' }); fakes.push(fake);
   fake.store.set(LEASE_KEY, Buffer.from(JSON.stringify({ deviceId: 'dev-mac', token: 'm', ts: Date.now() - 130_000, assistant: 2 }))); // 맥이 꺼진 지 2분 넘음
   const vps = gatewayChild(await device(fake, 'dev-vps', { msgr: true }), { ARGO_STANDBY_LEADER: '1' });
@@ -97,7 +97,7 @@ test('VPS(예비)는 담당이 되면 팀 메신저를 받기 시작하고(공�
   const macBack = setInterval(() => fake.store.set(LEASE_KEY, Buffer.from(JSON.stringify({ deviceId: 'dev-mac', token: 'm2', ts: Date.now(), assistant: 2 }))), 5_000);
   await sleep(14_000);
   const quietFrom = Date.now();
-  await sleep(8_000);
+  await sleep(18_000); // 브리지 폴 주기(15초)보다 길게 — 브리지가 살아 있으면 이 창에 적어도 한 번 조회한다
   clearInterval(macBack);
   assert.equal(vps.last()?.cloud, false);
   assert.equal(fake.count(MSGR_POLL, quietFrom), 0, `맥이 되찾은 뒤에도 VPS가 메신저를 받는다 — ${fake.count(MSGR_POLL, quietFrom)}번`);
