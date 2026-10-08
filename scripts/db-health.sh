@@ -5,9 +5,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 set -a; . ./.env.local; set +a
 REF=$(echo "$NEXT_PUBLIC_SUPABASE_URL" | sed -E 's#https?://([a-z0-9]+)\.supabase\.co.*#\1#')
-export PGPASSWORD="$SUPABASE_DB_PASSWORD" PGOPTIONS='-c default_transaction_read_only=on -c statement_timeout=60000'
+export PGPASSWORD="$SUPABASE_DB_PASSWORD"
 C="host=aws-1-ap-northeast-2.pooler.supabase.com port=5432 user=postgres.$REF dbname=postgres sslmode=require"
-psql "$C" -At -F ' | ' <<'SQL'
+# 읽기 전용은 세션 첫 문장 set으로 건다 — Supavisor 풀러는 PGOPTIONS(시작 옵션)를 버린다(2026-10-08 show로 관찰). 풀러는 다음 접속 전에 세션 설정을 지운다(같은 날 관찰).
+psql "$C" -At -q -F ' | ' <<'SQL'
+set default_transaction_read_only = on;
+set statement_timeout = 60000;
 select '# db_size=' || pg_size_pretty(pg_database_size(current_database()));
 select '# tables';
 select n.nspname||'.'||c.relname, pg_size_pretty(pg_total_relation_size(c.oid)) total, pg_size_pretty(pg_relation_size(c.oid)) heap,
