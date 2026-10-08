@@ -3,7 +3,7 @@
 // Rust(lib.rs)가 emit하는 'boot'(phase/detail/port)와 'boot-log'(서버 로그 라인)를 수신한다.
 // 이동 전 /api/ping 신원 마커로 "진짜 Argo인가"를 확인한다 — 타 앱이 포트를 선점한 기기에서
 // no-cors fetch가 아무 응답이나 성공 처리해 낯선 서버로 이동하던 실사용 사고(2026-07-20,
-// Windows 설치 직후 "Cannot GET /") 방지. lib.rs의 PORTS 후보와 일치해야 한다.
+// Windows 설치 직후 "Cannot GET /") 방지. src-tauri/src/boot_port.rs의 PORTS 후보와 일치해야 한다.
 var TARGETS = ['http://localhost:3001', 'http://localhost:3011', 'http://localhost:3021', 'http://localhost:3999'];
 var DEMO = /[?&]demo\b/.test(location.search); // 시각 QA용 — 리다이렉트 없이 단계 순환
 // 앱(쉘) 버전 — lib.rs boot 이벤트가 실어 준다. 있으면 "같은 버전의 Argo"에만 이동한다.
@@ -23,6 +23,9 @@ var errEl = document.getElementById('err');
 
 var STATUS_TEXT = {
   shell: 'Preparing the app shell…',
+  // 상주 서비스가 설치된 기기에서 셸이 상주가 뜨기를 기다리는 동안(boot_port.rs BootPlanner) — 그 사이에도 아래 프로브는
+  // 후보 전부를 계속 확인해, 상주가 같은 버전으로 답하는 순간 그쪽으로 이동한다.
+  resident: 'Waiting for the Argo background service to start…',
   starting: 'Starting the local server…',
   started: 'Local server is warming up…',
   waiting: 'Waiting for the server to respond…',
@@ -30,15 +33,19 @@ var STATUS_TEXT = {
   ready: 'Ready — opening your deck…',
 };
 // 단계별 진행률 바닥값 — 대기 중엔 90%를 향해 천천히 기어간다
-var FLOOR = { shell: 6, starting: 24, started: 52, waiting: 58, ready: 100 };
+var FLOOR = { shell: 6, resident: 14, starting: 24, started: 52, waiting: 58, ready: 100 };
+// 상주 대기(최대 90초) 중에는 막대가 40%까지만 오른다 — 기다림 끝에 앱 서버를 띄울 때 실제 기동을 보여 줄 구간을 남긴다.
+var CREEP_CAP = { resident: 40 };
 
 var phase = 'shell';
 var progress = FLOOR.shell;
 var startedAt = Date.now();
+var residentAt = 0; // 상주 대기에 들어온 시각 — 문구의 경과 초
 var logLines = [];
 
 function setPhase(p) {
   if (phase === 'ready') return;
+  if (p === 'resident' && phase !== 'resident') residentAt = Date.now();
   phase = p;
   if (STATUS_TEXT[p]) statusEl.textContent = STATUS_TEXT[p];
   if (FLOOR[p] && FLOOR[p] > progress) progress = FLOOR[p];
@@ -50,8 +57,11 @@ render();
 // 진행률 크리프 + 느린 부팅 안내(15초) — 로그 테일 공개
 setInterval(function () {
   if (phase === 'ready' || phase === 'error') return; // 실패도 종결 — 진행바 크리프와 'Still working' 안내를 멈춘다
-  progress += (90 - progress) * 0.025;
+  var cap = CREEP_CAP[phase] || 90;
+  if (progress < cap) progress += (cap - progress) * 0.025;
   render();
+  // 상주 대기(최대 90초)는 막대가 waiting(58%)에 멈춰 있을 수 있고, '동작 줄이기' 설정이면 배·파도도 멈춘다 — 기다린 초로 화면이 살아 있음을 보인다(#874 2차 검수 LOW).
+  if (phase === 'resident') statusEl.textContent = STATUS_TEXT.resident + ' ' + Math.floor((Date.now() - residentAt) / 1000) + 's';
   var elapsed = Date.now() - startedAt;
   if (elapsed > 15000) {
     if (phase === 'waiting' || phase === 'started') statusEl.textContent = STATUS_TEXT.slow;
@@ -83,7 +93,10 @@ try {
           ? 'The local server could not start: ' + (p.detail || 'unknown')
           : 'The local server hit a problem: ' + (p.detail || 'unknown') +
             '\nStill retrying — if this screen stays for minutes, quit and reopen Argo.';
-      } else if (p.phase === 'starting' || p.phase === 'started') {
+      } else if (p.phase === 'starting' || p.phase === 'started' || p.phase === 'resident') {
+        // 상주 대기(최대 90초)가 끝나면 — 앱 서버를 띄우든(starting) 상주에 붙든(started) — 느린 부팅 안내(15초)와
+        // 1분 무응답 안내의 기준 시각을 다시 잡는다. 기다린 시간까지 세면 막 뜨는 서버에 그 안내가 바로 붙는다.
+        if (phase === 'resident' && p.phase !== 'resident') startedAt = Date.now();
         setPhase(p.phase);
       }
     });
@@ -106,7 +119,7 @@ function probe(i) {
     if (phase === 'shell') setPhase('waiting');
     // 60초 넘게 신원 확인이 한 번도 성공하지 못하면 침묵 대기 대신 행동 안내를 띄운다
     // (재시도는 계속 — 회복 대비). 검수 LOW: 프로브 측 실패의 무한 'Still working' 방지.
-    if (Date.now() - startedAt > 60000 && phase !== 'error' && errEl.hidden) {
+    if (Date.now() - startedAt > 60000 && phase !== 'error' && phase !== 'resident' && errEl.hidden) {
       errEl.hidden = false;
       errEl.textContent = 'The server has not responded for a minute. Quit and reopen Argo — if it persists, another app may be using ports 3001/3011/3021.';
     }
