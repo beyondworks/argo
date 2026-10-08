@@ -14,7 +14,7 @@ export const WORK_STATUS_DICT = {
   'ws.idle': ['맡은 업무 없음', 'No work assigned'], 'ws.hiddenN': ['7일 넘게 안 보인 {n}명은 숨겼습니다', '{n} not seen for over 7 days are hidden'],
   'ws.unowned': ['에이전트 없이 맡긴 일', 'Assigned without an agent'], 'ws.left': ['나간 사람', 'Former member'],
   'ws.from.session': ['세션 {name}', 'Session {name}'], 'ws.from.crew': ['에이전트 {name}', 'Agent {name}'], 'ws.from.person': ['사람이 맡김', 'Assigned by a person'],
-  'ws.from.sessionAnon': ['세션', 'Session'], 'ws.otherOwner': ['다른 사람', 'Someone else'],
+  'ws.from.sessionAnon': ['세션', 'Session'], 'ws.from.crewAnon': ['에이전트', 'Agent'], 'ws.otherOwner': ['다른 사람', 'Someone else'],
   'ws.empty': ['아직 보여 줄 업무가 없습니다. 에이전트를 연결하거나 할 일을 만들어 보세요.', 'Nothing to show yet. Connect an agent or create a to-do.'],
   'ws.refresh': ['새로 고침', 'Refresh'], 'ws.loading': ['불러오는 중…', 'Loading…'],
   'ws.err.load': ['업무 현황을 불러오지 못했습니다', 'Could not load work status'],

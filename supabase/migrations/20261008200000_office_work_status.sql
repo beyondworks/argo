@@ -8,7 +8,7 @@
 --   성과 기록(office_perf_compute)·노하우·크루 도구는 바꾸지 않는다 — 성과는 지금처럼 done_at·due_on·cancelled_at만 본다.
 -- · 세션 보고 office_agent_sessions: 세션 제목·프로젝트 폴더 이름·마지막 활동 시각·맡은 할 일 id만 둔다(대화 내용·프롬프트는 받지 않는다).
 --   주인만 자기 세션을 쓴다(남의 세션 id 덮어쓰기 거절). 값이 같고 4분 안이면 쓰지 않는다.
---   맡은 할 일 id는 그 공간(조직 'o:'·개인 'u:')에서 내가 맡았거나 만든 일만 받는다(아니면 session_input) — 남의 일을 '지금 하는 일'로 붙이지 못하게.
+--   맡은 할 일 id는 그 공간(조직 'o:'·개인 'u:')에서 내가 맡았거나 만든 일만 붙인다(아니면 그 id만 버리고 보고는 쓴다, 응답 task=false) — 남의 일을 '지금 하는 일'로 붙이지 못하게.
 -- · 업무 현황 읽기 office_work_status: 조직 관리자(owner·admin)는 조직 전체, 일반 멤버는 자기 에이전트·자기 세션·자기 일만. 손님·밖의 사람은 오류. 쓰기 0.
 -- · 표는 RLS를 켜고 정책 없이 정의자 함수로만 읽고 쓴다(기존 방식).
 -- 부하: 세션 보고는 이름을 붙인 세션만, 세션 10개 × 훅(Stop·UserPromptSubmit·PostToolUse)마다여도 훅이 로컬에서 거르므로
@@ -222,13 +222,16 @@ create index if not exists msgr_work_runs_org_open on public.msgr_work_runs(org_
 
 -- 세션 보고 — 값(조직·제목·프로젝트·할 일)이 바뀌었거나 마지막 기록이 4분 넘게 지났을 때만 쓴다. 같은 값을 4분 안에 다시 보내면 쓰기 0.
 -- 남의 세션 id는 덮어쓰지 않는다(session_forbidden). 조직을 적으면 그 조직의 손님 아닌 지금 멤버여야 한다.
--- 맡은 할 일 id는 그 공간에서 내가 맡았거나 만든 일만(아니면 session_input — 매 호출 확인, 읽기만). 쓰는 호출에서 8일 넘게 안 보인 내 행을 지운다.
+-- 맡은 할 일 id는 그 공간에서 내가 맡았거나 만든 일만 붙인다. 아니면(그사이 남에게 다시 맡겨짐·다른 공간·없는 일) 그 id만 버리고(task_id null)
+-- 보고는 그대로 쓴다 — 거절하면 낡은 task id를 든 세션이 계속 실패해 업무 현황에서 '끊김'으로 굳는다(재검증 10/8). 응답 task=false로 알린다.
+-- 쓰는 호출에서 8일 넘게 안 보인 내 행을 지운다.
 -- 새 세션이 들어올 때 내 행이 200개면 가장 오래 안 보인 내 행부터 밀어낸다(거절하지 않는다 — 새 세션이 화면에서 빠지지 않게).
 create or replace function public.office_session_report(p_id uuid, p_org uuid, p_name text, p_project text, p_task uuid) returns jsonb
 language plpgsql security definer set search_path = public, pg_temp as $$
 declare
   who uuid := auth.uid(); s public.office_agent_sessions%rowtype;
   nm text := btrim(coalesce(p_name, '')); pj text := nullif(btrim(coalesce(p_project, '')), '');
+  tk uuid := p_task; kept boolean := true;
 begin
   if who is null then raise exception 'session_signin' using errcode = '42501'; end if;
   if p_id is null or length(nm) not between 1 and 120 or length(pj) > 120 then raise exception 'session_input'; end if;
@@ -236,34 +239,34 @@ begin
       where m.org_id = p_org and m.user_id = who and m.removed_at is null and m.role <> 'guest' and o.deleted_at is null) then
     raise exception 'session_forbidden' using errcode = '42501';
   end if;
-  if p_task is not null and not exists (select 1 from public.office_tasks t where t.id = p_task
+  if tk is not null and not exists (select 1 from public.office_tasks t where t.id = tk
       and t.scope = case when p_org is null then 'u:' || who else 'o:' || p_org end and (t.assignee = who or t.created_by = who)) then
-    raise exception 'session_input'; -- 남의 일·다른 공간의 일·없는 일
+    tk := null; kept := false; -- 남의 일·다른 공간의 일·없는 일: 붙이지 않는다
   end if;
   select * into s from public.office_agent_sessions where id = p_id;
   if s.id is not null and s.owner_user_id <> who then raise exception 'session_forbidden' using errcode = '42501'; end if;
-  if s.id is not null and (s.org_id, s.name, s.project, s.task_id) is not distinct from (p_org, nm, pj, p_task)
+  if s.id is not null and (s.org_id, s.name, s.project, s.task_id) is not distinct from (p_org, nm, pj, tk)
      and s.last_seen_at >= now() - interval '4 minutes' then
-    return jsonb_build_object('ok', true, 'written', false); -- 유휴 반복 호출: 읽기만
+    return jsonb_build_object('ok', true, 'written', false, 'task', kept); -- 유휴 반복 호출: 읽기만
   end if;
   delete from public.office_agent_sessions x where x.owner_user_id = who and x.last_seen_at < now() - interval '8 days' and x.id <> p_id; -- 보존 8일(내 행만)
   if s.id is null then
     perform pg_advisory_xact_lock(hashtextextended('office-session-limit:' || who, 0)); -- 동시 요청이 상한을 넘지 않게
     delete from public.office_agent_sessions x where x.id in (select y.id from public.office_agent_sessions y where y.owner_user_id = who
       order by y.last_seen_at desc, y.id desc offset 199); -- 상한 200: 넣을 자리 하나를 남기고 가장 오래 안 보인 내 행부터 밀어낸다(남의 행은 그대로)
-    insert into public.office_agent_sessions(id, owner_user_id, org_id, name, project, task_id) values (p_id, who, p_org, nm, pj, p_task)
+    insert into public.office_agent_sessions(id, owner_user_id, org_id, name, project, task_id) values (p_id, who, p_org, nm, pj, tk)
       on conflict (id) do nothing;
-    if found then return jsonb_build_object('ok', true, 'written', true); end if;
+    if found then return jsonb_build_object('ok', true, 'written', true, 'task', kept); end if;
     -- 같은 id가 동시에 먼저 들어왔다 — 아래에서 주인을 다시 보고 고친다
   end if;
-  update public.office_agent_sessions x set org_id = p_org, name = nm, project = pj, task_id = p_task, last_seen_at = now()
+  update public.office_agent_sessions x set org_id = p_org, name = nm, project = pj, task_id = tk, last_seen_at = now()
     where x.id = p_id and x.owner_user_id = who
-      and ((x.org_id, x.name, x.project, x.task_id) is distinct from (p_org, nm, pj, p_task) or x.last_seen_at < now() - interval '4 minutes');
-  if found then return jsonb_build_object('ok', true, 'written', true); end if;
+      and ((x.org_id, x.name, x.project, x.task_id) is distinct from (p_org, nm, pj, tk) or x.last_seen_at < now() - interval '4 minutes');
+  if found then return jsonb_build_object('ok', true, 'written', true, 'task', kept); end if;
   if exists (select 1 from public.office_agent_sessions x where x.id = p_id and x.owner_user_id <> who) then
     raise exception 'session_forbidden' using errcode = '42501';
   end if;
-  return jsonb_build_object('ok', true, 'written', false);
+  return jsonb_build_object('ok', true, 'written', false, 'task', kept);
 end $$;
 
 -- 업무 현황 — 조직의 손님 아닌 지금 멤버만(아니면 business_forbidden). 관리자는 조직 전체, 일반 멤버는 자기 에이전트·자기 세션·자기 일(맡은 일·만든 일)만. 쓰기 0.

@@ -13,6 +13,7 @@ export const TASK_DICT = {
   'task.dueNote': ['기한을 바꾸면 바뀐 기록이 남습니다. 끝낸 일은 기한을 바꿀 수 없습니다.', 'Due date changes are recorded. Finished to-dos keep their due date.'],
   'task.error.permission': ['이 할 일을 바꿀 권한이 없습니다.', "You can't change this to-do."], 'task.error.assignee': ['맡을 사람은 이 조직의 직원이어야 합니다(손님·나간 사람 제외).', 'The assignee must be a current member (not a guest).'],
   'task.error.done': ['끝낸 할 일입니다. 다시 열어야 바꿀 수 있습니다.', 'This to-do is done. Reopen it to change it.'], 'task.error.cancelled': ['취소한 할 일입니다.', 'This to-do was cancelled.'],
+  'task.reasonDropped': ['그사이 보류가 풀려서 쓰던 보류 사유는 저장하지 않았습니다.', 'The task is no longer on hold, so the reason you were typing was not saved.'],
   'task.error.conflict': ['같은 할 일이 이미 다른 내용으로 저장되어 있습니다. 새로고침하세요.', 'This to-do was saved with different content. Refresh.'],
   'task.error.input': ['제목(200자 이내)과 날짜를 확인하세요.', 'Check the title (max 200 chars) and date.'], 'task.error.missing': ['할 일을 찾을 수 없습니다.', 'To-do not found.'],
   'task.error.limit': ['더 만들거나 바꿀 수 없습니다(한 사람이 1년에 만드는 할 일 5,000개, 할 일 하나 고치기 200번·상태 바꾸기 200번, 분류 200개까지).', 'Limit reached (5,000 new to-dos per person per year, 200 edits and 200 status changes per to-do, 200 categories).'],

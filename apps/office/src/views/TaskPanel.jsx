@@ -55,6 +55,15 @@ export default function TaskPanel({ space, id, taskSpace, onClose, onManageCats 
   useEffect(() => { if (row && !editing.current.has('title')) setTitle(row.title); }, [row?.title]);
   useEffect(() => { if (row && !editing.current.has('note')) setNote(row.note ?? ''); }, [row?.note]);
   useEffect(() => { if (row && !editing.current.has('reason')) setReason(row.hold_reason ?? ''); }, [row?.hold_reason]);
+  // 보류 사유를 쓰는 중에 다시 읽은 일이 보류가 아니게 되면(그사이 남이 진행 중으로 바꿈) 칸이 사라진다 — 쓰던 글은 버리고 알린다.
+  // 그대로 두면 나중에 다시 보류가 됐을 때 서버 값 대신 쓰다 만 글이 칸에 남는다(재검증 10/8). 서버는 reason_only 충돌로 이미 지킨다.
+  const isHold = !!row && !row.done_at && row.status === 'hold';
+  useEffect(() => {
+    if (isHold || !editing.current.has('reason')) return;
+    editing.current.delete('reason');
+    if (reason.trim() !== (row?.hold_reason ?? '')) showToast(t('task.reasonDropped'));
+    setReason(row?.hold_reason ?? '');
+  }, [isHold]);
   useEffect(() => { if (row) seen.current = true; else if (seen.current) onClose(); }, [!!row]); // 취소하면 목록에서 빠진다 — 패널도 닫는다
   const latest = useRef(null);
   // 이 할 일의 쓰기는 한 줄로 이어 보낸다 — 사유 칸을 벗어나며 저장하는 것과 상태 단추가 겹쳐도 보낸 차례대로 처리돼 뒤 요청이 앞 요청을 되돌리지 않게

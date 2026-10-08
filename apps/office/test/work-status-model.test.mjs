@@ -1,7 +1,7 @@
 // 업무 현황(유건 10/8 확정) — 맥 세션·VPS 봇·아르고 크루를 이름으로 한 사람에 묶고, 연결·지금 하는 일·할 일을 사람별로 놓는 규칙.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { personKey, cardKey, buildStatus, firstLine, CREW_ONLINE_MS, SESSION_ONLINE_MS, IDLE_MS } from '../src/core/work-status-model.js';
+import { personKey, cardKey, buildStatus, firstLine, sourceOf, CREW_ONLINE_MS, SESSION_ONLINE_MS, IDLE_MS } from '../src/core/work-status-model.js';
 
 const NOW = Date.parse('2026-10-08T03:00:00Z'); // 한국 2026-10-08 12:00
 const iso = (agoMs) => new Date(NOW - agoMs).toISOString();
@@ -239,4 +239,14 @@ test('주인이 다른 같은 이름 크루는 두 카드 — 내 카드 먼저,
   assert.deepEqual(jun.now.map((x) => [x.kind, x.id]), [['session', 'tj']], '세션 주인이 맡은 사람이면 지금 하는 일');
   assert.deepEqual(card(r, '오토').todo.map((x) => x.id), ['tm']);
   assert.equal(r.summary.people, 3);
+});
+
+// 재검증 10/8: 남의 카드에 붙지 않게 막은 위조 일도 보류 카드 출처 줄에 '에이전트 페퍼'처럼 남의 이름이 찍혔다 → 대조에 실패한 출처는 이름 없이
+test('출처 표시 sourceOf: 주인 대조를 통과한 일만 이름을 보이고, 실패한 crew·session 출처는 이름 없이', () => {
+  assert.deepEqual(sourceOf({ source: { kind: 'crew', crew: 'c1', name: '페퍼' }, person: null, personName: null }), { kind: 'crew', name: null });
+  assert.deepEqual(sourceOf({ source: { kind: 'session', name: '페퍼 - 총괄' }, person: null, personName: null }), { kind: 'session', name: null });
+  assert.deepEqual(sourceOf({ source: { kind: 'crew', crew: 'c1' }, person: 'u1|페퍼', personName: '페퍼' }), { kind: 'crew', name: '페퍼' });
+  assert.deepEqual(sourceOf({ source: { kind: 'session', name: '맥가이버 - 정비사' }, person: 'u1|맥가이버', personName: '맥가이버' }), { kind: 'session', name: '맥가이버 - 정비사' });
+  assert.deepEqual(sourceOf({ source: { kind: 'notion', id: 'x' }, person: null }), { kind: 'person', name: null });
+  assert.deepEqual(sourceOf({ source: null }), { kind: 'person', name: null });
 });

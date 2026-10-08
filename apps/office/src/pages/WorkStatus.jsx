@@ -9,7 +9,7 @@ import { navigate } from '../core/router.jsx';
 import { baseOf } from '../core/commands.js';
 import { refetchDue } from '../core/refetch.js';
 import { loadWorkStatus, statusError, POLL_MS } from '../core/work-status.js';
-import { buildStatus, PLACES } from '../core/work-status-model.js';
+import { buildStatus, sourceOf, PLACES } from '../core/work-status-model.js';
 import { Icon } from '../ui/Icon.jsx';
 import { Face } from '../ui/Face.jsx';
 import { LoadFail } from '../ui/LoadFail.jsx';
@@ -24,8 +24,7 @@ const dayText = (d) => new Date(`${d}T00:00:00+09:00`).toLocaleDateString(locale
 const isoDay = (iso) => new Date(iso).toLocaleDateString(locale(), { month: 'short', day: 'numeric', timeZone: 'Asia/Seoul' });
 const DOT = { doing: 'work', hold: 'ask' };
 /** 할 일의 출처 한 줄 — 세션(이름이 없어도 세션)·에이전트·사람 */
-const fromText = (x) => (x.source?.kind === 'session' ? (x.source.name ? t('ws.from.session', { name: x.source.name }) : t('ws.from.sessionAnon'))
-  : x.source?.kind === 'crew' ? t('ws.from.crew', { name: x.personName ?? x.source.name ?? x.source.slug ?? '' }) : t('ws.from.person'));
+const fromText = (x) => { const f = sourceOf(x); return f.kind === 'person' ? t('ws.from.person') : f.name ? t(`ws.from.${f.kind}`, { name: f.name }) : t(`ws.from.${f.kind}Anon`); };
 /** 담당 — 실제로 맡은 사람(에이전트·세션 이름은 출처 줄에만) */
 const who = (x) => x.assigneeName ?? t('ws.left');
 /** 카드 주인 — 내 카드가 아니면 주인 이름(이름을 못 받았으면 '다른 사람') */
@@ -139,8 +138,8 @@ export default function WorkStatus({ space }) {
       </section>}
       {people.length > 0 && <div className="ws-grid">{people.map((p) => <PersonCard key={p.key} p={p} open={open} />)}</div>}
       {(idle.length > 0 || hidden > 0) && <p className="ws-idle">
-        {idle.length > 0 && <><b>{t('ws.idle')}</b> {idle.map(label).join(' · ')}</>}
-        {idle.length > 0 && hidden > 0 && ' · '}{hidden > 0 && t('ws.hiddenN', { n: hidden })}
+        {idle.length > 0 && <span><b>{t('ws.idle')}</b>: {idle.map(label).join(', ')}</span>}
+        {hidden > 0 && <span className="ws-hidden">{t('ws.hiddenN', { n: hidden })}</span>}
       </p>}
       {unownedN > 0 && <section className="module" aria-label={t('ws.unowned')}>
         <div className="module-head"><h3>{t('ws.unowned')} <span className="module-sub">{unownedN}</span></h3></div>

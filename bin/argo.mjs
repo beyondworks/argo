@@ -187,7 +187,7 @@ const makeRl = () => {
   r.on('line', (l) => onQueuedLine?.(l));
   return r;
 };
-let rl = makeRl();
+let rl = cmd === 'office' ? null : makeRl(); // office는 입력을 받지 않는다 — 붙여넣기 요청 문자(ESC[?2004h)가 --json 출력 앞뒤에 섞이지 않게(재검증 10/8)
 const ask = async (q) => {
   for (;;) {
     if (!rl) return '';

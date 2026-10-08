@@ -17,10 +17,10 @@ import { homedir } from 'node:os';
 
 export const REPORT_EVERY_MS = 4 * 60_000;   // 같은 값이면 4분에 한 번(서버 office_session_report의 쓰기 조건과 같은 값)
 export const FAIL_PAUSE_MS = 60_000;         // 실패(로그인 없음·네트워크) 뒤 1분은 다시 부르지 않는다 — 턴마다 3초씩 기다리지 않게
-export const DENY_PAUSE_MS = 6 * 3600e3;     // 영구 거절(권한·한도·입력) 뒤에는 보낼 값(조직 포함)이 바뀌거나 6시간이 지날 때까지 부르지 않는다 — 같은 거절을 분마다 되풀이하지 않게(DB 오류 0)
+export const DENY_PAUSE_MS = 6 * 3600e3;     // 영구 거절(권한·입력) 뒤에는 보낼 값(조직 포함)이 바뀌거나 6시간이 지날 때까지 부르지 않는다 — 같은 거절을 분마다 되풀이하지 않게(DB 오류 0)
 export const STATE_KEEP_MS = 8 * 24 * 3600e3; // 상태 파일 기록 보존 8일(서버 세션 보존과 같다)
 /** 다시 불러도 같은 답이 오는 서버 거절 — 네트워크·로그인 실패(1분 쉬기)와 가른다 */
-export const PERMANENT_DENY = /session_forbidden|session_limit|session_input/;
+export const PERMANENT_DENY = /session_forbidden|session_input/; // 서버는 200행 상한에서 거절하지 않고 오래된 행을 밀어낸다(session_limit 없음)
 export const NAME_MAX = 120, TITLE_MAX = 200, REASON_MAX = 500;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const STATE_FILE = 'sessions.json';
@@ -134,13 +134,13 @@ async function call(client, fn, args, timeoutMs) {
   } catch (e) { return { error: String(e?.message ?? e) }; }
 }
 
-/** 세션 상태 보고 — 반환 { ok, written } | { login: true } | { error } */
+/** 세션 상태 보고 — 반환 { ok, written, task } | { login: true } | { error }. task=false: 보낸 할 일이 내 일이 아니라(그사이 남에게 다시 맡겨짐 등) 서버가 붙이지 않았다 */
 export async function reportSession({ root, org = null, id, name, project = null, task = null, timeoutMs = 15_000, _mkClient, _fresh } = {}) {
   const client = await sessionClient(root, { _mkClient, _fresh });
   if (!client) return { login: true };
   const r = await call(client, 'office_session_report', { p_id: id, p_org: org, p_name: name, p_project: project, p_task: task }, timeoutMs);
   if (r.error) return { error: r.error };
-  return { ok: true, written: !!r.data?.written };
+  return { ok: true, written: !!r.data?.written, task: r.data?.task !== false };
 }
 
 /** 보낸 값을 상태 파일에 남긴다 — 훅과 이 명령이 같은 폴더를 쓰면 훅이 같은 값을 4분 안에 다시 보내지 않고, 명령으로 정한 할 일(task)을 이어 보낸다. */
@@ -172,6 +172,7 @@ const T = {
     badName: `--name은 1~${NAME_MAX}자입니다.`, badProject: `--project는 ${NAME_MAX}자까지입니다.`,
     badTitle: `제목은 1~${TITLE_MAX}자입니다.`, badReason: `--reason(보류 사유)은 1~${REASON_MAX}자입니다.`, badSource: `--source-name "<세션 제목>"을 꼭 넣어 주세요(1~${NAME_MAX}자) — 업무 현황이 그 세션의 카드에 이 일을 붙입니다.`,
     titleAndTask: '새 일의 제목과 --task를 같이 줄 수 없습니다 — 새 일이면 제목만, 있는 일이면 --task만 주세요.',
+    taskDropped: '그 할 일은 내 일이 아니라(다른 사람에게 다시 맡겨졌을 수 있습니다) 붙이지 않았습니다.',
     reported: '업무 현황에 보고했습니다.', unchanged: '바뀐 것이 없어 다시 쓰지 않았습니다(4분에 한 번).',
     heldNew: (t, id) => `보류한 일로 남겼습니다: ${t} (id=${id})`, heldOld: (id) => `보류로 바꿨습니다: id=${id}`, reasonOnly: (id) => `보류 사유를 고쳤습니다: id=${id}`,
     none: '끝내지 않은 일이 없습니다.', count: (n) => `끝내지 않은 일 ${n}건:`,
@@ -179,7 +180,7 @@ const T = {
     failed: (m) => `실패: ${m}`,
     err: {
       session_signin: '로그인이 필요합니다 — argo login', session_forbidden: '권한이 없습니다(그 조직의 손님 아닌 멤버만, 남의 세션은 바꾸지 않습니다).',
-      session_input: '입력이 올바르지 않습니다(제목 1~120자, 폴더 이름 120자까지).', session_limit: '세션 기록 한도(200개)에 걸렸습니다.',
+      session_input: '입력이 올바르지 않습니다(제목 1~120자, 폴더 이름 120자까지).',
       business_forbidden: '권한이 없습니다(이 조직의 손님 아닌 멤버만).', task_input: '입력이 올바르지 않습니다(제목 1~200자, 보류 사유 500자까지).',
       task_forbidden: '권한이 없습니다(맡은 사람·관리자만 상태를 바꿉니다).', task_not_found: '그 할 일이 없습니다 — argo office tasks로 확인하세요.',
       task_cancelled: '취소한 일입니다.', task_done: '끝낸 일입니다 — 오피스에서 다시 연 뒤 보류하세요.', task_limit: '한도에 걸렸습니다(할 일 하나의 고친 기록 200번, 1년에 만드는 일 5,000건).',
@@ -201,14 +202,14 @@ const T = {
     badName: `--name must be 1-${NAME_MAX} characters.`, badProject: `--project is limited to ${NAME_MAX} characters.`,
     badTitle: `The title must be 1-${TITLE_MAX} characters.`, badReason: `--reason (why it is on hold) must be 1-${REASON_MAX} characters.`, badSource: `Give --source-name "<session title>" (1-${NAME_MAX} characters) — Work status puts the task on that session's card.`,
     titleAndTask: 'Give either a title (new task) or --task (existing task), not both.',
-    reported: 'Reported to Work status.', unchanged: 'Nothing changed, so nothing was written (once every 4 minutes).',
+    reported: 'Reported to Work status.', taskDropped: 'That task is not yours (it may have been reassigned), so it was not attached.', unchanged: 'Nothing changed, so nothing was written (once every 4 minutes).',
     heldNew: (t, id) => `Saved as an on-hold task: ${t} (id=${id})`, heldOld: (id) => `Put on hold: id=${id}`, reasonOnly: (id) => `Updated the reason: id=${id}`,
     none: 'No open tasks.', count: (n) => `${n} open tasks:`,
     status: { todo: 'to do', doing: 'doing', hold: 'on hold' }, due: 'due', reason: 'reason',
     failed: (m) => `Failed: ${m}`,
     err: {
       session_signin: 'Sign in first — argo login', session_forbidden: "Not allowed (non-guest members of that org only; other people's sessions are not changed).",
-      session_input: 'Invalid input (title 1-120 chars, folder name up to 120).', session_limit: 'Session record limit (200) reached.',
+      session_input: 'Invalid input (title 1-120 chars, folder name up to 120).',
       business_forbidden: 'Not allowed (non-guest members of this org only).', task_input: 'Invalid input (title 1-200 chars, reason up to 500).',
       task_forbidden: 'Not allowed (only the assignee or an admin changes the status).', task_not_found: 'No such task — check with argo office tasks.',
       task_cancelled: 'The task is cancelled.', task_done: 'The task is done — reopen it in Office first.', task_limit: 'Limit reached (200 edits per task, 5,000 new tasks a year).',
@@ -254,8 +255,8 @@ export async function officeMain(argv, { root = process.env.ARGO_ROOT, lang = 'k
     const r = await reportSession({ root, org: org ?? null, id, name, project, task, timeoutMs, _mkClient, _fresh });
     if (r.login) { err(t.needLogin); return 2; }
     if (r.error) { err(t.failed(errText(t, r.error))); return 1; }
-    await rememberSent(root, id, { org: org ?? null, name, project, task }, now()).catch(() => {});
-    if (v.json) out(JSON.stringify(r)); else out(r.written ? t.reported : t.unchanged);
+    await rememberSent(root, id, { org: org ?? null, name, project, task: r.task ? task : null }, now()).catch(() => {});
+    if (v.json) out(JSON.stringify(r)); else { out(r.written ? t.reported : t.unchanged); if (task && !r.task) err(t.taskDropped); }
     return 0;
   }
 

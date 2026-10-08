@@ -254,12 +254,12 @@ test('성과 기록 불변: 보류·사유를 바꿔도 성과 계산이 같다'
 // ── 세션 보고 ──
 test('세션 보고: 첫 보고는 쓰고, 같은 값을 4분 안에 다시 보내면 쓰기 0(xmin·트랜잭션 번호 그대로)', {skip}, ()=>{
  const id=randomUUID(), tid=newTask({title:'세션이 맡은 일'});
- assert.deepEqual(report(U.member,{id,taskId:tid}),{ok:true,written:true});
+ assert.deepEqual(report(U.member,{id,taskId:tid}),{ok:true,written:true,task:true});
  const s=sess(id);
  assert.deepEqual([s.owner_user_id,s.org_id,s.name,s.project,s.task_id,s.kind],[U.member,ORG,'맥가이버 - 정비사','argo',tid,'claude-code']);
  const x=sxmin(id);
- assert.deepEqual(report(U.member,{id,taskId:tid}),{ok:true,written:false});
- assert.deepEqual(report(U.member,{id,taskId:tid,name:'  맥가이버 - 정비사 ',project:' argo '}),{ok:true,written:false},'앞뒤 공백만 다르면 같은 값');
+ assert.deepEqual(report(U.member,{id,taskId:tid}),{ok:true,written:false,task:true});
+ assert.deepEqual(report(U.member,{id,taskId:tid,name:'  맥가이버 - 정비사 ',project:' argo '}),{ok:true,written:false,task:true},'앞뒤 공백만 다르면 같은 값');
  assert.ok(noWrite(U.member,'office_session_report',reportArgs({id,taskId:tid})),'유휴 반복 호출은 트랜잭션 번호도 안 생긴다');
  assert.equal(sxmin(id),x);
 });
@@ -269,16 +269,16 @@ test('세션 보고: 값(제목·프로젝트·할 일·조직)이 바뀌면 쓰
  report(U.member,{id});
  for(const a of [{name:'맥가이버 - 검수'},{name:'맥가이버 - 검수',project:'office'},{name:'맥가이버 - 검수',project:'office',taskId:newTask()},{name:'맥가이버 - 검수',project:null},{name:'맥가이버 - 검수',project:null,o:null}]){
   const x=sxmin(id);
-  assert.deepEqual(report(U.member,{id,...a}),{ok:true,written:true},JSON.stringify(a));
+  assert.deepEqual(report(U.member,{id,...a}),{ok:true,written:true,task:true},JSON.stringify(a));
   assert.notEqual(sxmin(id),x);
  }
  const s=sess(id); assert.deepEqual([s.name,s.project,s.task_id,s.org_id],['맥가이버 - 검수',null,null,null],'개인 공간(조직 없음)도 된다');
  sql(`update office_agent_sessions set last_seen_at=now()-interval '5 minutes' where id=${quote(id)}`);
  const old=sess(id).last_seen_at;
- assert.deepEqual(report(U.member,{id,name:'맥가이버 - 검수',project:null,o:null}),{ok:true,written:true},'4분 지나면 같은 값도 쓴다');
+ assert.deepEqual(report(U.member,{id,name:'맥가이버 - 검수',project:null,o:null}),{ok:true,written:true,task:true},'4분 지나면 같은 값도 쓴다');
  assert.ok(new Date(sess(id).last_seen_at)>new Date(old));
  sql(`update office_agent_sessions set last_seen_at=now()-interval '3 minutes' where id=${quote(id)}`);
- assert.deepEqual(report(U.member,{id,name:'맥가이버 - 검수',project:null,o:null}),{ok:true,written:false},'3분이면 쓰지 않는다');
+ assert.deepEqual(report(U.member,{id,name:'맥가이버 - 검수',project:null,o:null}),{ok:true,written:false,task:true},'3분이면 쓰지 않는다');
 });
 
 test('세션 보고 경계: 남의 세션 id는 덮어쓰지 않는다, 조직 밖·손님·나간 사람은 그 조직으로 못 쓴다, 로그인 없으면 session_signin', {skip}, ()=>{
@@ -292,11 +292,13 @@ test('세션 보고 경계: 남의 세션 id는 덮어쓰지 않는다, 조직 �
  assert.match(reportFail(U.member,{id:randomUUID(),o:ORG2}),/session_forbidden/,'내가 속하지 않은 조직');
  const r=raw(`set role authenticated; select set_config('argo.uid','',false); select office_session_report(${reportArgs({id:randomUUID()})})`);
  assert.notEqual(r.status,0); assert.match(r.stderr,/session_signin/);
- assert.deepEqual(report(U.outsider,{id:randomUUID(),o:ORG2}),{ok:true,written:true},'자기 조직이면 된다');
+ assert.deepEqual(report(U.outsider,{id:randomUUID(),o:ORG2}),{ok:true,written:true,task:true},'자기 조직이면 된다');
 });
 
 // 검수 10/8: p_task를 검사하지 않아 멤버 세션이 남(주인·다른 멤버)의 일을 '지금 하는 일'로 붙일 수 있었다
-test('세션 보고 할 일: 그 공간에서 내가 맡았거나 만든 일만(아니면 session_input·쓰기 0), 개인 공간은 내 개인 일만', {skip}, ()=>{
+// 재검증 10/8: 거절(session_input)하면 관리자가 그 일을 남에게 다시 맡긴 뒤 세션이 낡은 id를 계속 보내 보고가 영영 실패하고 '끊김'으로 굳었다
+//   → 맞지 않는 id는 버리고(task_id null) 보고는 쓴다, 응답 task=false
+test('세션 보고 할 일: 그 공간에서 내가 맡았거나 만든 일만 붙인다 — 아니면 그 id만 버리고 보고는 쓴다(task=false), 개인 공간은 내 개인 일만', {skip}, ()=>{
  const mine=newTask({title:'내 일'});
  const madeForMe=newTask({title:'관리자가 나에게',assignee:U.member},{u:U.admin});
  const madeByMe=newTask({title:'내가 만들고 넘긴 일'}); task('task.assign',{id:madeByMe,assignee:U.member2},{u:U.admin}); // 관리자가 다시 맡긴 경우 — 만든 사람은 그대로 나
@@ -304,15 +306,27 @@ test('세션 보고 할 일: 그 공간에서 내가 맡았거나 만든 일만(
  const personal=newTask({title:'개인 일'},{o:null});
  const elsewhere=newTask({title:'밖 조직 일'},{u:U.outsider,o:ORG2});
  const id=randomUUID();
- for(const t of [mine,madeForMe,madeByMe])assert.deepEqual(report(U.member,{id,taskId:t}),{ok:true,written:true},t);
+ for(const t of [mine,madeForMe,madeByMe])assert.deepEqual(report(U.member,{id,taskId:t}),{ok:true,written:true,task:true},t);
+ assert.equal(sess(id).task_id,madeByMe);
+ for(const t of [others,personal,elsewhere,randomUUID()]){
+  const r=report(U.member,{id,taskId:t});
+  assert.equal(r.task,false,t); assert.equal(sess(id).task_id,null,'남의 일은 붙지 않는다');
+ }
  const x=sxmin(id);
- for(const t of [others,personal,elsewhere,randomUUID()])assert.match(reportFail(U.member,{id,taskId:t}),/session_input/,t);
- assert.equal(sxmin(id),x,'거절된 보고는 쓰지 않는다'); assert.equal(sess(id).task_id,madeByMe);
- assert.match(reportFail(U.member2,{id:randomUUID(),taskId:mine}),/session_input/,'남이 내 일을 붙이지 못한다');
+ assert.deepEqual(report(U.member,{id,taskId:others}),{ok:true,written:false,task:false},'버린 뒤 같은 값이면 유휴(쓰기 0)');
+ assert.equal(sxmin(id),x);
+ const re=newTask({title:'맡았다가 남에게 넘어간 일',assignee:U.member},{u:U.admin});
+ const id2=randomUUID();
+ assert.deepEqual(report(U.member,{id:id2,taskId:re}),{ok:true,written:true,task:true});
+ task('task.assign',{id:re,assignee:U.member2},{u:U.admin});
+ const r2=report(U.member,{id:id2,taskId:re});
+ assert.equal(r2.written,true,'다시 맡겨진 뒤에도 보고(연결)는 계속된다'); assert.equal(r2.task,false); assert.equal(sess(id2).task_id,null);
+ const o=randomUUID(); report(U.member2,{id:o,taskId:mine});
+ assert.equal(sess(o).task_id,null,'남이 내 일을 붙이지 못한다');
  const p=randomUUID();
- assert.deepEqual(report(U.member,{id:p,o:null,taskId:personal}),{ok:true,written:true},'개인 공간 세션은 내 개인 일');
- assert.match(reportFail(U.member,{id:p,o:null,taskId:mine}),/session_input/,'개인 공간 세션에 조직 일은 안 된다');
- assert.deepEqual(report(U.member,{id,taskId:null}),{ok:true,written:true},'비우기는 된다');
+ assert.deepEqual(report(U.member,{id:p,o:null,taskId:personal}),{ok:true,written:true,task:true},'개인 공간 세션은 내 개인 일');
+ assert.equal(report(U.member,{id:p,o:null,taskId:mine}).task,false,'개인 공간 세션에 조직 일은 안 붙는다'); assert.equal(sess(p).task_id,null);
+ assert.deepEqual(report(U.member,{id,taskId:null}),{ok:true,written:false,task:true},'비우기(이미 null)는 유휴');
 });
 
 test('세션 보고 입력 검사: 제목 1~120자, 프로젝트 120자까지, id 필수', {skip}, ()=>{
@@ -346,17 +360,17 @@ test('세션 보존·상한: 쓰는 호출에서 8일 넘게 안 보인 내 행�
  const named=n=>sql(`select count(*) from office_agent_sessions where owner_user_id=${quote(cap)} and name=${quote(n)}`);
  const othersBefore=sql(`select string_agg(id::text||':'||xmin::text,',' order by id) from office_agent_sessions where owner_user_id<>${quote(cap)}`);
  const fresh=randomUUID();
- assert.deepEqual(report(cap,{id:fresh,o:null,name:'새 세션'}),{ok:true,written:true},'200행이 차도 새 세션은 들어간다');
+ assert.deepEqual(report(cap,{id:fresh,o:null,name:'새 세션'}),{ok:true,written:true,task:true},'200행이 차도 새 세션은 들어간다');
  assert.equal(count(cap),'200','행 수는 200 그대로');
  assert.ok(sess(fresh)); assert.equal(named('s200'),'0','가장 오래 안 보인 내 행이 빠진다'); assert.equal(named('s199'),'1','그다음 행은 남는다');
  assert.equal(sql(`select string_agg(id::text||':'||xmin::text,',' order by id) from office_agent_sessions where owner_user_id<>${quote(cap)}`),othersBefore,'남의 행은 그대로(지우지도 다시 쓰지도 않는다)');
  // 있는 세션 갱신은 아무것도 밀어내지 않는다
  const some=sql(`select id from office_agent_sessions where owner_user_id=${quote(cap)} and name='s1'`);
- assert.deepEqual(report(cap,{id:some,o:null,name:'갱신'}),{ok:true,written:true});
+ assert.deepEqual(report(cap,{id:some,o:null,name:'갱신'}),{ok:true,written:true,task:true});
  assert.equal(count(cap),'200'); assert.equal(named('s199'),'1','갱신은 밀어내지 않는다');
  // 8일 지난 내 행이 있으면 그 행이 먼저 정리되고, 최근 행은 밀려나지 않는다
  sql(`update office_agent_sessions set last_seen_at=now()-interval '9 days' where owner_user_id=${quote(cap)} and name='s100'`);
- assert.deepEqual(report(cap,{id:randomUUID(),o:null,name:'새 세션 2'}),{ok:true,written:true});
+ assert.deepEqual(report(cap,{id:randomUUID(),o:null,name:'새 세션 2'}),{ok:true,written:true,task:true});
  assert.equal(count(cap),'200'); assert.equal(named('s100'),'0','8일 지난 내 행 정리'); assert.equal(named('s199'),'1','최근 행은 그대로');
  sql(`delete from office_agent_sessions where owner_user_id=${quote(cap)}`);
 });

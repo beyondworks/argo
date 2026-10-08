@@ -31,6 +31,7 @@ const srv = http.createServer((req, res) => {
       if (mode === 'hang') return; // 응답하지 않는다 — 훅이 3초 제한으로 끝나야 한다
       if (mode === 'fail') { res.writeHead(500, { 'content-type': 'application/json' }); return res.end('{"message":"boom"}'); }
       if (mode === 'deny') { res.writeHead(400, { 'content-type': 'application/json' }); return res.end('{"code":"P0001","message":"session_forbidden"}'); }
+      if (mode === 'drop') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end('{"ok":true,"written":true,"task":false}'); }
       if (hold) { const h = hold; hold = null; return h.then(() => { res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"ok":true,"written":true}'); }); }
       res.writeHead(200, { 'content-type': 'application/json' }); return res.end('{"ok":true,"written":true}');
     }
@@ -153,6 +154,34 @@ test('보고 훅 — 이름(custom-title)이 없는 세션은 부르지 않는�
   await appendFile(f, `${JSON.stringify({ type: 'custom-title', customTitle: '카카오 - 봇' })}\n`);
   await run(HOOK, home, { session_id: sid(2), transcript_path: f, cwd: '/Users/x/work/kakao-bot', hook_event_name: 'Stop' });
   assert.deepEqual(got().map((c) => c.body), [{ p_id: sid(2), p_org: ORG, p_name: '카카오 - 봇', p_project: 'kakao-bot', p_task: TASK }]);
+});
+
+// 재검증 10/8: 관리자가 그 일을 남에게 다시 맡기면 낡은 task id 때문에 보고가 영영 실패해 '끊김'으로 굳었다 → 서버는 id만 버리고(task=false) 훅은 그 id를 지운다
+test('보고 훅 — 서버가 할 일을 붙이지 않으면(task=false) 들고 있던 할 일 id를 지우고, 다음 보고부터 보내지 않는다', async () => {
+  const { home, root } = await makeHome();
+  const f = await transcript('t-drop', [{ type: 'custom-title', customTitle: '맥가이버 - 정비사' }]);
+  await writeFile(join(root, 'sessions.json'), JSON.stringify({ [sid(30)]: { task: TASK } }));
+  const got = since(); mode = 'drop';
+  await run(HOOK, home, { session_id: sid(30), transcript_path: f, cwd: '/a/argo', hook_event_name: 'Stop' });
+  assert.equal(got()[0].body.p_task, TASK);
+  let st = JSON.parse(await readFile(join(root, 'sessions.json'), 'utf8'));
+  assert.equal(st[sid(30)].task, null); assert.equal(st[sid(30)].sent.task, null);
+  assert.ok(!st[sid(30)].denyAt, '거절로 적지 않는다(연결 보고는 계속)');
+  mode = 'ok';
+  st[sid(30)].at = Date.now() - (REPORT_EVERY_MS + 1000); await writeFile(join(root, 'sessions.json'), JSON.stringify(st));
+  await run(HOOK, home, { session_id: sid(30), transcript_path: f, cwd: '/a/argo', hook_event_name: 'Stop' });
+  assert.equal(got().length, 2); assert.equal(got()[1].body.p_task, null, '낡은 할 일 id는 다시 보내지 않는다');
+});
+
+// 재검증 10/8: PostToolUse에도 걸리면서 세션이 cd로 폴더를 오갈 때마다 값이 바뀌어 4분 판정을 건너뛰었다(한 세션 cwd 8~14개) → 처음 본 폴더로 고정
+test('보고 훅 — 프로젝트 폴더는 처음 본 cwd로 고정한다(폴더를 오가도 4분 안에는 다시 부르지 않는다)', async () => {
+  const { home } = await makeHome();
+  const f = await transcript('t-cwd', [{ type: 'custom-title', customTitle: '슈리 - 개발' }]);
+  const got = since(); mode = 'ok';
+  for (const cwd of ['/Users/x/lean-projects/AI-Native', '/Users/x/lean-projects/_worktrees/ai-native-work-status', '/tmp', '/Users/x/lean-projects/AI-Native'])
+    await run(HOOK, home, { session_id: sid(31), transcript_path: f, cwd, hook_event_name: 'PostToolUse' });
+  assert.equal(got().length, 1, '폴더만 오가면 호출 1번');
+  assert.equal(got()[0].body.p_project, 'AI-Native');
 });
 
 test('보고 훅 — Stop·UserPromptSubmit·PostToolUse 어느 이벤트로 불려도 같은 판정(4분에 한 번), 출력 0바이트, 프롬프트·도구 결과는 보내지 않는다', async () => {

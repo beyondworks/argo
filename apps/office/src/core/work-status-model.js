@@ -20,6 +20,13 @@ export const cardKey = (owner, name) => `${owner ?? ''}|${personKey(name)}`;
 /** 보이는 이름 — 열쇠와 같은 자르기(대소문자는 그대로) */
 const personName = (name) => { const s = String(name ?? '').normalize('NFC').trim(), i = s.indexOf(' - '); return i > 0 ? s.slice(0, i).trim() : s; };
 /** 메모 첫 줄(빈 줄은 건너뛴다) */
+/** 할 일의 출처 표시 — 이름은 주인 대조를 통과해 사람 카드에 붙은 일(person 있음)만 보인다.
+ *  대조에 실패한 출처(남의 크루 id·이름을 적어 보낸 일)는 이름 없이 '에이전트'·'세션'으로만 — source 칸은 서버가 검사하지 않는 바깥 글이다(재검증 10/8). */
+export function sourceOf(row) {
+  const kind = row?.source?.kind === 'session' ? 'session' : row?.source?.kind === 'crew' ? 'crew' : 'person';
+  if (kind === 'person' || !row.person) return { kind, name: null };
+  return { kind, name: (kind === 'session' ? row.source.name : row.personName) || row.personName || null };
+}
 export const firstLine = (note) => String(note ?? '').split('\n').map((l) => l.trim()).find(Boolean) ?? '';
 /** 열린 할 일의 칸 — 진행 중(doing)·보류(hold)·시작 전(그 밖) */
 const bucketOf = (task) => (task.status === 'doing' ? 'doing' : task.status === 'hold' ? 'held' : 'todo');

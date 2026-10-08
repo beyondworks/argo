@@ -89,9 +89,20 @@ test('report — 인자를 office_session_report에 그대로 넘기고 기기 �
   handlers = { office_session_report: () => [200, { ok: true, written: false }] };
   const r2 = await argo(root, ['report', '--org', ORG, '--id', SID, '--name', 'x', '--json']);
   assert.equal(r2.code, 0, r2.err);
-  assert.deepEqual(JSON.parse(r2.out), { ok: true, written: false });
+  assert.deepEqual(JSON.parse(r2.out), { ok: true, written: false, task: true });
   assert.equal(got().at(-1).body.p_task, null, '--task가 없으면 null');
   assert.equal(got().at(-1).body.p_project, null);
+});
+
+// 재검증 10/8: 서버는 남의 일 id를 거절하지 않고 버린다(task=false) — CLI는 알리고, 상태 파일에 그 id를 남기지 않는다(훅이 낡은 id를 이어 보내지 않게)
+test('report — 서버가 할 일을 붙이지 않았다고 하면(task=false) 알리고, 상태 파일에 그 할 일을 남기지 않는다', async () => {
+  const root = await makeRoot();
+  handlers = { office_session_report: () => [200, { ok: true, written: true, task: false }] };
+  const r = await argo(root, ['report', '--org', ORG, '--id', SID, '--name', '맥가이버 - 정비사', '--task', TASK]);
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /보고했습니다/); assert.match(r.err, /붙이지 않았습니다/);
+  const st = JSON.parse(await readFile(join(root, 'sessions.json'), 'utf8'));
+  assert.equal(st[SID].sent.task, null); assert.equal(st[SID].task, null);
 });
 
 test('report — 입력이 틀리면 서버를 부르지 않고 1, 서버 거절은 사유 한 줄과 1', async () => {
