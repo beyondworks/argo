@@ -57,7 +57,7 @@ PRELOCK
   echo "\\i supabase/migrations/$f.sql" >> "$WRAP"
   for try in $(seq 1 "${ARGO_APPLY_TRIES:-30}"); do
     if PGOPTIONS="${PGOPTIONS:-} -c client_min_messages=warning -c lock_timeout=${ARGO_APPLY_LOCK_TIMEOUT:-5s}" psql "$C" -v ON_ERROR_STOP=1 -1 -q -f "$WRAP" 2> "$ERR"; then break; fi
-    if grep -qE 'could not obtain lock|deadlock detected' "$ERR" && [ "$try" -lt "${ARGO_APPLY_TRIES:-30}" ]; then echo "잠금 대기 — $try회째 되돌림, 1초 뒤 다시"; sleep 1; continue; fi
+    if grep -qE 'could not obtain lock|deadlock detected' "$ERR" && [ "$try" -lt "${ARGO_APPLY_TRIES:-30}" ]; then echo "잠금 대기 — ${try}회째 되돌림, 1초 뒤 다시"; sleep 1; continue; fi
     cat "$ERR" >&2; rm -f "$WRAP" "$ERR"; exit 1
   done
   rm -f "$WRAP" "$ERR"
