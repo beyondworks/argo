@@ -14,6 +14,10 @@
 저장소 체크아웃(루트에서 `npm ci`를 마친 상태)이 필요합니다. 훅이 저장소의 `src/office-cli.mjs`와 `@supabase/supabase-js`를 씁니다.
 아래에서 `<argo>`는 저장소 경로입니다(예: `~/lean-projects/saas/argo`). 명령은 `node <argo>/bin/argo.mjs`로 부릅니다 — 맥에 설치된 `argo`가 `office` 명령이 없는 예전 판일 수 있습니다(보류 안내 훅과 로그인 안내 문구도 이 저장소의 `bin/argo.mjs` 절대 경로를 씁니다).
 
+### 0. Supabase 공개 설정
+
+CLI는 공개 설정(주소·anon 키)을 환경변수 → `~/.argo/cli.json` → `bin/argo-public.json`(배포본에 들어 있음) → 저장소 `.env.local` 순으로 찾습니다. 훅만 돌리려고 만든 저장소 사본에는 둘 다 없어 로그인이 `Missing Supabase public config`로 멈춥니다(10/8 실측). 설치된 argo 배포본의 `bin/argo-public.json`(공개 값뿐, git 제외)을 사본의 `bin/`에 복사하면 됩니다.
+
 ### 1. 훅 전용 폴더로 로그인
 
 ```bash
