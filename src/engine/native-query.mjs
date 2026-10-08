@@ -162,13 +162,15 @@ async function* run(opts, ac, isInterrupted, inbox = { items: [], closed: false 
     // 창은 모델 창 그대로(압축의 128,000 상한은 턴 사이 전사 글자 상한과 짝이라 여기엔 쓰지 않는다). 벤더가 길이 초과로 거절하면 이 턴의 창을 거절 지점 기준으로 낮춘다.
     const fixedTokens = estimateTokens(systemPrompt) + estimateTokens(specs);
     let turnWindow = ctxWindow;
+    let okTokens = 0; // 이 턴에 벤더가 받아 준 가장 큰 요청의 추정 — 실패 갈래가 '저장할 전사가 들어갈 크기인가'를 재는 실측 하한
     // pre = 매 호출 전(최근 결과 3개 보호), retry = 길이 초과 뒤 재전송(이번 턴 지시 뒤의 최근 결과 1개만 보호 — 앞 턴이 남긴 큰 결과는 줄인다),
     // final = 실패로 저장하기 직전(보호 없음 — 한 단계 결과만으로 넘친 전사를 그대로 저장하면 다음 턴마다 첫 호출에서 또 넘쳤다, 1차 검수 HIGH)
+    const squeezed = (mode) => squeezeToolResults(sess.messages, { fixed: fixedTokens, target: Math.floor(turnWindow * TURN_SQUEEZE_TO), lang,
+      keepRecent: mode === 'pre' ? SQUEEZE_KEEP_RECENT : mode === 'retry' ? HARD_KEEP_RECENT : 0,
+      recentFrom: mode === 'retry' ? turnStartIndex(sess.messages) : 0,
+      head: mode === 'pre' ? SQUEEZE_HEAD_CHARS : HARD_HEAD_CHARS });
     const squeeze = (mode) => {
-      const r = squeezeToolResults(sess.messages, { fixed: fixedTokens, target: Math.floor(turnWindow * TURN_SQUEEZE_TO), lang,
-        keepRecent: mode === 'pre' ? SQUEEZE_KEEP_RECENT : mode === 'retry' ? HARD_KEEP_RECENT : 0,
-        recentFrom: mode === 'retry' ? turnStartIndex(sess.messages) : 0,
-        head: mode === 'pre' ? SQUEEZE_HEAD_CHARS : HARD_HEAD_CHARS });
+      const r = squeezed(mode);
       if (r.squeezed) sess.messages = r.messages; // 저장 전사에도 반영된다(다음 저장이 이 전사를 쓴다)
       return r.squeezed;
     };
@@ -182,9 +184,11 @@ async function* run(opts, ac, isInterrupted, inbox = { items: [], closed: false 
       if (fixedTokens + estimateTokens(sess.messages) > turnWindow * TURN_BUDGET_AT) squeeze('pre');
       let res;
       for (let retried = false, resent = false; ;) {
+        const sent = fixedTokens + estimateTokens(sess.messages);
         try {
           const body = { model, max_tokens, system: systemPrompt, messages: sess.messages, ...(specs.length ? { tools: specs } : {}) };
           res = await callMessages({ wire, base, headers, effort, signal: ac.signal, fetchImpl, body: cache ? withCacheControl(body) : body });
+          okTokens = Math.max(okTokens, sent);
           break;
         } catch (e) {
           // 이미 토큰을 쓴 뒤의 실패는 SDK처럼 usage를 실은 실패 result로 낸다(분리 검수 MEDIUM-1: 던지기만 하면 appendUsage 미도달,
@@ -194,7 +198,7 @@ async function* run(opts, ac, isInterrupted, inbox = { items: [], closed: false 
           const overflow = isContextOverflowError(e);
           if (overflow) {
             // 길이 초과 — 이 턴의 창을 거절 지점 기준으로 낮춘다(다시 보낸 요청도 거절되면 그 숫자로 한 번 더 — 아래 저장 전 줄이기의 목표가 된다).
-            turnWindow = windowAfterOverflow(turnWindow, fixedTokens + estimateTokens(sess.messages), e?.message);
+            turnWindow = windowAfterOverflow(turnWindow, sent, e?.message);
             // 더 세게 줄여 같은 단계를 한 번만 다시 보낸다. 줄일 것이 없으면 같은 요청을 다시 보내지 않는다.
             if (!retried) { retried = true; if (squeeze('retry')) { resent = true; continue; } }
           }
@@ -203,10 +207,17 @@ async function* run(opts, ac, isInterrupted, inbox = { items: [], closed: false 
             // 사실대로 끝낸다. 이 턴에 끝난 도구 결과가 있으면 크루 글 한 줄(중단 기록)로 꼬리를 닫아 저장한다 — 꼬리가 tool_result면 재개 정리가
             // 그 턴을 통째로 걷어내 다음 턴이 처음부터 다시 하다 같은 자리에서 또 넘쳤다. 원인 모를 거절(아래 종전 갈래)에는 붙이지 않는다(그 턴을 다시 보내면 또 거절될 수 있다).
             if (steps === 1 && !spent) throw Object.assign(new Error(overflowErrorText(e?.message, lang, { resent })), { cause: e, status: e?.status });
-            squeeze('final'); // 저장 전에 이번 단계 결과까지 한도 안으로 — 그대로 저장하면 다음 턴들이 같은 전사를 이어받아 매번 넘친다
-            sess.messages.push({ role: 'assistant', content: [{ type: 'text', text: overflowStopNote(lang) }] });
+            // 저장 전에 이번 단계 결과까지 한도 안으로 줄여 본다 — 그대로 저장하면 다음 턴들이 같은 전사를 이어받아 매번 넘친다.
+            // 줄인 전사(+ 중단 기록)가 실제로 들어갈 크기일 때만 꼬리를 닫는다: 기준은 낮춘 창과 이 턴에 벤더가 받아 준 가장 큰 요청 중 큰 쪽의 75%(사전 기준선과 같은 여유 —
+            // 다음 지시가 붙을 자리). 넘친 부분이 도구 '입력'(큰 Write·Edit·셸 heredoc)·지시·크루 글이면 줄일 것이 없다 — 그때 꼬리를 닫아 저장하면 다음 턴마다
+            // 1단계에서 거절되고 저장 없이 던져 대화가 영구히 막혔다(2차 검수 HIGH). 들어가지 않으면 줄인 사본은 버리고 종전처럼 저장해 재개 정리가 이 턴을 걷어내게 둔다.
+            const closed = [...squeezed('final').messages, { role: 'assistant', content: [{ type: 'text', text: overflowStopNote(lang) }] }];
+            const fits = fixedTokens + estimateTokens(closed) <= TURN_BUDGET_AT * Math.max(turnWindow, okTokens);
+            if (fits) sess.messages = closed;
             if (saveSession) await saveNativeSession(wsId, slug, sess);
-            yield { type: 'result', subtype: 'error_during_execution', session_id: sess.id, usage, total_cost_usd: null, is_error: true, num_turns: steps, errors: [overflowErrorText(e?.message, lang, { saved: saveSession, resent })] };
+            // '이어서 해 줘'는 다음 턴이 실제로 이 전사를 이어받을 때만 쓴다 — 이어 온 세션(sess.resumed)이어야 스레드가 이 세션 id를 쥐고 있다(실패 턴은 id를 남기지 않는다)
+            yield { type: 'result', subtype: 'error_during_execution', session_id: sess.id, usage, total_cost_usd: null, is_error: true, num_turns: steps,
+              errors: [overflowErrorText(e?.message, lang, { resent, resumable: saveSession && fits && !!sess.resumed, dropped: saveSession && !fits })] };
             return;
           }
           if (!spent) throw e;

@@ -66,8 +66,10 @@ export function classifyRunnerError(msg, { flags = {} } = {}) {
   if (flags.crash || flags.lockup) return out('crash');
   if (CLI_MISSING_RE.test(s)) return out('cli_missing');
   if (RUNNER_OUTDATED_RE.test(s)) return out('runner_outdated');
-  // 길이 초과는 한도(QUOTA_RE)보다 먼저 — Responses 스트림의 context_length_exceeded는 와이어가 429로 매겨 '\b429\b'에 먼저 걸린다(responses-wire finalFromSse)
-  if (!flags.credit && isContextOverflowText(s)) return out('context_exceeded');
+  // 길이 초과는 한도(QUOTA_RE)보다 먼저 — Responses 스트림의 context_length_exceeded는 와이어가 429로 매겨 '\b429\b'에 먼저 걸린다(responses-wire finalFromSse).
+  // 원문 첫 줄(벤더 오류 자리 — 엔진 머리 문구·Responses 429 문구도 첫 줄이다)만 보고, 호출자가 인증 실패로 확정한 표식(flags.auth)보다는 뒤다:
+  // 원문 꼬리에 섞인 크루 셸 출력(크루가 만든 LLM 앱의 'maximum context length is 8192' 로그 등)이 인증 만료·한도·과부하를 덮지 않게(K09와 같은 모양, 2차 검수 LOW).
+  if (!flags.credit && !flags.auth && isContextOverflowText(s.split('\n')[0])) return out('context_exceeded');
   if (flags.credit || QUOTA_RE.test(s)) return out('quota');
   if (flags.auth || OAUTH_SESSION_EXPIRED_RE.test(s) || AUTH_TEXT_RE.test(s)) return out('auth_expired');
   if (MODEL_UNAVAILABLE_RE.test(s)) return out('model_unavailable');

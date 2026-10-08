@@ -118,6 +118,14 @@ test('K09 분류 — 인증 만료·한도 실패의 꼬리에 셸 "command not 
   const tail = '\n/bin/sh: pandoc: command not found\nError: ENOENT: no such file or directory, open \'/tmp/x\'';
   assert.equal(classifyRunnerError(`API Error: 401 {"type":"authentication_error"}${tail}`).code, 'auth_expired');
   assert.equal(classifyRunnerError(`You've hit your weekly limit · resets Aug 6${tail}`).code, 'quota');
+  // 같은 모양 — 꼬리에 크루가 만든 LLM 앱의 컨텍스트 길이 오류 로그가 섞여도 컨텍스트 한도 초과로 덮지 않는다(2026-10-09 PR #880 2차 검수 LOW)
+  const ctxTail = "\n  File \"agent.py\", line 12\nopenai.BadRequestError: This model's maximum context length is 8192 tokens. However, your messages resulted in 9000 tokens. Please reduce the length of the messages.";
+  assert.equal(classifyRunnerError(`API Error: 401 {"type":"authentication_error"}${ctxTail}`).code, 'auth_expired');
+  assert.equal(classifyRunnerError(`You've hit your weekly limit · resets Aug 6${ctxTail}`).code, 'quota');
+  assert.equal(classifyRunnerError(`Codex: session expired, please login again${ctxTail}`, { flags: { auth: true } }).code, 'auth_expired');
+  assert.equal(classifyRunnerError(`API Error: 529 overloaded${ctxTail}`).code, 'vendor_overloaded');
+  // 호출자가 인증 실패로 확정한 표식이 있으면 첫 줄에 크루 로그가 와도 인증 만료다(표식이 원문보다 우선)
+  assert.equal(classifyRunnerError(`openai.BadRequestError: This model's maximum context length is 8192 tokens.\nCodex: session expired, please login again`, { flags: { auth: true } }).code, 'auth_expired');
   // 진짜 CLI 미발견은 apiError가 만든 확정 문구로 온다 — 그 연결은 유지된다.
   const spawnFail = apiError(Object.assign(new Error('spawn codex ENOENT'), { code: 'ENOENT', stdout: '', stderr: '' }), 'codex').message;
   assert.equal(classifyRunnerError(spawnFail).code, 'cli_missing');

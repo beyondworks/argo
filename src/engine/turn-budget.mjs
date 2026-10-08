@@ -117,22 +117,27 @@ export function windowAfterOverflow(window, sentTokens, msg) {
 
 /** 길이 초과로 멈춘 턴의 진행분을 다음 턴이 잇게 하는 꼬리(순수) — 저장 전사가 tool_result로 끝나면 재개 정리(session.mjs sanitizeTranscript)가 그 턴을 통째로
     걷어낸다. 끝난 도구 결과 뒤에 크루 글 한 줄을 붙여 역할 교대를 맞추고, 다음 지시에서 끝난 단계를 반복하지 않게 사실을 적는다.
-    저장 전에 이 턴의 결과까지 한도 안으로 줄이므로(native-query 실패 갈래 — 줄인 결과는 자리표시가 스스로 밝힌다) 다시 읽을 때는 나눠 읽으라고 같이 적는다. */
+    저장 전에 이 턴의 결과까지 한도 안으로 줄이므로(native-query 실패 갈래 — 줄인 결과는 자리표시가 스스로 밝힌다) 다시 읽을 때는 나눠 읽으라고 같이 적는다.
+    줄여도 한도 안에 들지 않는 전사(큰 도구 입력·지시·크루 글)에는 붙이지 않는다 — 붙이면 다음 턴마다 첫 호출에서 넘친다(실패 갈래가 판정). */
 export function overflowStopNote(lang = 'ko') {
   return lang === 'en'
     ? "[Stopped — the request exceeded the model's context limit at this step. The tool results above are completed work. If asked to continue, do not repeat completed steps; resume with what remains. If you need a shortened read result again, re-read only the part you need, one at a time.]"
     : '[작업 중단 — 요청이 모델의 컨텍스트 한도를 넘어 이 단계에서 멈췄다. 위 도구 결과까지는 끝난 작업이다. 이어서 하라는 지시가 오면 끝난 단계를 반복하지 말고 남은 일부터 하라. 줄인 읽기 결과가 다시 필요하면 필요한 부분만 하나씩 다시 읽어라.]';
 }
 
-/** 실패 원문(errors[0]) — 사실(한도 초과·줄여 다시 보냈는가·진행분 저장 여부) + 벤더 원문. 화면은 실패 코드(chat.fail.context_exceeded)로 할 일을 따로 보이고
+/** 실패 원문(errors[0]) — 사실(한도 초과·줄여 다시 보냈는가·진행분을 다음 턴이 잇는가) + 벤더 원문. 화면은 실패 코드(chat.fail.context_exceeded)로 할 일을 따로 보이고
     이 글은 활동 기록·툴팁에 남는다. error-class가 머리 낱말('컨텍스트 한도 초과'·'Context limit exceeded')로 context_exceeded를 문다.
-    resent = 이 단계를 줄여 한 번 다시 보냈는가(줄일 도구 결과가 없으면 다시 보내지 않는다 — 그때 '다시 보냈지만'이라고 쓰면 사실이 아니다). */
-export function overflowErrorText(raw, lang = 'ko', { saved = false, resent = false } = {}) {
+    resent = 이 단계를 줄여 한 번 다시 보냈는가(줄일 도구 결과가 없으면 다시 보내지 않는다 — 그때 '다시 보냈지만'이라고 쓰면 사실이 아니다).
+    resumable = 진행분을 저장했고 다음 턴이 그 전사를 이어받는가(이어 온 세션 + 줄인 전사가 한도 안) — 이때만 '이어서 해 줘'를 쓴다(2차 검수 LOW: 새 대화의 첫 턴은
+    스레드에 세션 id가 남지 않아 이어받지 못한다). dropped = 줄여도 한도 안에 들지 않아 진행분을 잇지 않는다(다음 턴 재개 정리가 이 턴을 걷어낸다). 둘 다 아니면 덧붙이지 않는다. */
+export function overflowErrorText(raw, lang = 'ko', { resent = false, resumable = false, dropped = false } = {}) {
   const r = String(raw ?? '').slice(0, 400);
   if (lang === 'en') {
     const what = resent ? 'resent once after shortening old tool results, but it still exceeded the model limit' : 'the request exceeded the model limit; there were no more tool results to shorten, so it was not resent';
-    return `Context limit exceeded — ${what}${saved ? ' (completed steps are saved — send "continue" to resume)' : ''}: ${r}`;
+    const after = resumable ? ' (completed steps are saved — send "continue" to resume)' : dropped ? ' (even with tool results shortened it does not fit the limit, so this progress is not carried into the next turn)' : '';
+    return `Context limit exceeded — ${what}${after}: ${r}`;
   }
   const what = resent ? '오래된 도구 결과를 줄여 한 번 다시 보냈지만 모델 한도를 넘었다' : '요청이 모델 한도를 넘었다. 더 줄일 도구 결과가 없어 다시 보내지 않았다';
-  return `컨텍스트 한도 초과 — ${what}${saved ? '(지금까지 한 단계는 저장됨 — "이어서 해 줘"로 이어 간다)' : ''}: ${r}`;
+  const after = resumable ? '(지금까지 한 단계는 저장됨 — "이어서 해 줘"로 이어 간다)' : dropped ? '(도구 결과를 줄여도 한도 안에 들어가지 않아 이번 진행분은 다음 턴에 싣지 않는다)' : '';
+  return `컨텍스트 한도 초과 — ${what}${after}: ${r}`;
 }
