@@ -207,7 +207,7 @@ test('③ 배선 — 토큰 등록(setClaimTokens)은 procLeader 게이트보다
 
 test('③ 배선 — 텔레그램 폴러는 토큰 소유(tokenOwnership)로, 슬랙·서류함은 기기 리더로 켠다', async () => {
   const gw = await load('../src/gateway.mjs');
-  assert.match(gw, /import \{ isCloudLeader, setClaimTokens, tokenOwnership, deviceLabel \} from '\.\/sync\.mjs';/);
+  assert.match(gw, /import \{ isCloudLeader, setClaimTokens, tokenOwnership, deviceLabel, standbyIdle \} from '\.\/sync\.mjs';/); // standbyIdle — 예비 기기의 메신저 게이트(2026-10-08, lease-standby-e2e)
   assert.match(gw, /setClaimTokens\(myTokens\);/, '이 기기의 토큰 집합을 클레임 대상으로 등록');
   assert.doesNotMatch(gw, /if \(!leader\) \{ \/\/ 클라우드 리더가 아니면 폴러만 내린다/, '리더 아니면 폴러 전부 내리던 조기 return 제거');
   assert.match(gw, /else if \(own && !own\.mine\) \{[^\n]*\n\s*if \(own\.holder\) beatGateway\(c\.id, 'telegram', false, `다른 기기\(\$\{deviceLabel\(own\.holder\)\}\)에서 수신 중`, \{ holder: 'other', holderDevice: deviceLabel\(own\.holder\) \}\)/, '회사 봇: 남의 토큰이면 하트비트에 holder 표지');

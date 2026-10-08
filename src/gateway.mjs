@@ -16,7 +16,7 @@ import { resolveWithFollowUp } from './approval-actions.mjs';
 import { setApprovalMeta, approvalPlainText, approvalCommandLabel } from './approvals.mjs';
 import { onNotify, emitNotify } from './notify.mjs'; // emitNotify = 장시간 작업 완료 통지(잡 핸들러)
 import { daemonLease } from './lock.mjs';
-import { isCloudLeader, setClaimTokens, tokenOwnership, deviceLabel } from './sync.mjs';
+import { isCloudLeader, setClaimTokens, tokenOwnership, deviceLabel, standbyIdle } from './sync.mjs';
 import { appendEvent } from './events.mjs';
 import { jobHead, routineNoticeTail } from './inbound-marks.mjs'; // 장시간 작업 기록 머리말 = 1:1 화면 출처 카드와 같은 함수
 import { writeJsonAtomic } from './jsonstore.mjs';
@@ -1277,8 +1277,10 @@ export function ensureGateway() {
         alive.add(id);
         if (!running.has(id)) running.set(id, { key: 'v1', stop: startInboxWatcher(c.id) });
       }
-      // 팀 메신저 브리지 — 회사마다 1개(리더만). 폴+Realtime 깨우기로 멘션·DM을 큐에 적재(드레인 워커는 위에서 리더 무관 상시)
-      if (c.msgr?.enabled) {
+      // 팀 메신저 브리지 — 회사마다 1개. 폴+Realtime 깨우기로 멘션·DM을 큐에 적재(드레인 워커는 위에서 리더 무관 상시).
+      // 기기 사이 단일화는 리스가 아니라 서버 실행권 클레임이다 — 일반·우선 기기는 담당이 아니어도 받는다(종전). 예비 기기(argo run --standby)만
+      // 확인된 담당일 때 받는다: 맥이 켜져 담당인 동안 VPS가 먼저 집어 답하지 않게(맥 우선·VPS 예비, 2026-10-08). 공백 동안 온 글은 서버 커서부터 이어 받는다.
+      if (c.msgr?.enabled && !standbyIdle()) {
         const id = `${c.id}:${MSGR_KEY}`;
         alive.add(id);
         if (!running.has(id)) running.set(id, { key: 'v1', stop: startMsgrBridge(c.id) });

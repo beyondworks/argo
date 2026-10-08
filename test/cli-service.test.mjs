@@ -7,7 +7,7 @@ import { writeFileSync, chmodSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mkdtemp } from './helpers/tmp.mjs';
-import { launchdPlist, systemdUnit } from '../src/cli/service.mjs';
+import { launchdPlist, systemdUnit, runArgs } from '../src/cli/service.mjs';
 import { writeConfig } from '../src/cli/env.mjs';
 
 const evil = `/legit</string><key>NODE_OPTIONS</key><string>--require=/tmp/evil.js`;
@@ -32,6 +32,17 @@ test('systemd — 개행이 든 값은 거부해 Environment= 줄이 추가되�
   assert.match(u, /^ExecStart="\/opt\/my node\/node" "\/b\/argo\.mjs" run$/m);
   assert.match(u, /^Environment="ARGO_ROOT=\/r\/\\"q\\"\/50%%"$/m);
   assert.equal(u.match(/^Environment=/gm).length, 2);
+});
+
+test('상주 실행 인자 — 아는 역할 표지만 넣고(예비가 이긴다), 모르는 값·공백·제어 문자는 유닛·plist에 들어가지 않는다', () => {
+  assert.deepEqual(runArgs([]), ['run']);
+  assert.deepEqual(runArgs(['--standby']), ['run', '--standby']);
+  assert.deepEqual(runArgs(['--no-prefer']), ['run', '--no-prefer']);
+  assert.deepEqual(runArgs(['--no-prefer', '--standby']), ['run', '--standby'], '둘 다 주면 예비(가져가지 않는 쪽)');
+  assert.deepEqual(runArgs(['--evil', 'x;rm -rf /']), ['run'], '모르는 값은 버린다');
+  assert.match(systemdUnit({ node: '/n', bin: '/b', env: {}, args: runArgs(['--standby']) }), /^ExecStart="\/n" "\/b" run --standby$/m);
+  assert.throws(() => systemdUnit({ node: '/n', bin: '/b', env: {}, args: ['run', '--x\nExecStartPre=/bin/evil'] }), /bad service argument/);
+  assert.throws(() => launchdPlist({ label: 'l', node: '/n', bin: '/b', env: {}, log: '/l', args: ['run', 'a b'] }), /bad service argument/);
 });
 
 test('cli.json — 이미 느슨한 권한(0644)으로 있던 파일도 쓰면 0600이 된다', async () => {

@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 const SRC = (rel) => new URL(`../../src/${rel}`, import.meta.url).href;
 const STRIP = ['SUPABASE_SERVICE_ROLE_KEY', 'NEXT_PUBLIC_SUPABASE_URL', 'NEXT_PUBLIC_SUPABASE_ANON_KEY', 'ARGO_TENANT_OWNER', 'ARGO_SYNC_OWNER',
-  'ARGO_NO_LEADER', 'ARGO_PREFER_LEADER', 'ARGO_ENFORCE_PLAN', 'ARGO_SYNC', 'ARGO_SYNC_CYCLE_MS', 'ARGO_STANDALONE', 'ARGO_PARENT_PID'];
+  'ARGO_NO_LEADER', 'ARGO_PREFER_LEADER', 'ARGO_STANDBY_LEADER', 'ARGO_ENFORCE_PLAN', 'ARGO_SYNC', 'ARGO_SYNC_CYCLE_MS', 'ARGO_STANDALONE', 'ARGO_PARENT_PID'];
 
 export function childEnv(root, extra = {}) {
   const env = { ...process.env };
