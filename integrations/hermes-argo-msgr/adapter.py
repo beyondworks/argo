@@ -163,9 +163,10 @@ def _core_media_exts() -> tuple:
 def _link_denied(path: str) -> bool:
     """링크로는 보내지 않는 파일 — 점으로 시작하는 폴더·파일(.env·.ssh·.git 등)과 비밀 이름. 적힌 경로와 실제 경로(심볼릭 링크) 둘 다 본다.
     코어 검증(비엄격)은 Hermes 홈의 .env·~/.ssh·/etc 등만 막아 프로젝트의 .env는 통과시킨다(검수 Cb-1 HIGH) — 그래서 코어를 통과해도 늘 함께 적용한다.
-    경로 마디는 '/'와 '\\' 둘 다로 나눈다 — 어느 OS에서 돌든 같은 판정(첫 마디는 루트·드라이브)."""
-    given = os.path.abspath(os.path.expanduser(path))
-    for p in {given, os.path.realpath(given)}:
+    경로 마디는 '/'와 '\\' 둘 다로 나눈다 — 어느 OS에서 돌든 같은 판정(첫 마디는 루트·드라이브).
+    기준은 실제로 열리는 경로다: realpath는 심볼릭 링크를 푼 뒤 '..'를 따라간다(커널과 같다). abspath를 먼저 하면 '..'가 글자로 지워져
+    H/l2/../notes.txt(H/l2 → H/.private/sub)가 H/notes.txt로 판정되고 실제로는 점 폴더 파일이 열린다(3차 검수 MEDIUM). 적힌 경로는 덧붙여 본다."""
+    for p in {os.path.realpath(os.path.expanduser(path)), os.path.abspath(os.path.expanduser(path))}:
         parts = re.split(r'[\\/]+', p)
         if any(part.startswith('.') for part in parts[1:]) or _SECRET_NAME_RE.search(parts[-1]):
             return True
@@ -173,37 +174,61 @@ def _link_denied(path: str) -> bool:
 
 
 def _link_roots() -> list:
-    """링크로 보낼 수 있는 위치 — 에이전트가 파일을 만드는 곳: 홈, 터미널 작업 폴더(TERMINAL_CWD), 임시 폴더, 운영자가 허용한 폴더
-    (HERMES_MEDIA_ALLOW_DIRS). 파일 시스템 루트(/·C:\\)는 위치를 좁히지 못하니 뺀다. 매번 읽는다(세션별 작업 폴더·설정 변경)."""
+    """링크로 보낼 수 있는 위치 [(폴더, 임시 폴더인가)] — 에이전트가 파일을 만드는 곳: 홈, 터미널 작업 폴더(TERMINAL_CWD), 임시 폴더,
+    운영자가 허용한 폴더(HERMES_MEDIA_ALLOW_DIRS, os.pathsep·쉼표 구분). 파일 시스템 루트(/·C:\\)는 위치를 좁히지 못하니 뺀다.
+    매번 읽는다(세션별 작업 폴더·설정 변경). Hermes 함수는 없을 때(ImportError)만 환경 변수로 대신한다 — 다른 예외(다른 프로필의 거부 범위 등)에
+    환경 변수로 넘어가면 앞 턴이 남긴 값으로 판정하게 된다(코어 _tenv와 같게, 3차 검수 LOW). 그때는 그 위치를 비운다."""
     try:
         from tools.terminal_scope import terminal_env
-        cwd = terminal_env('TERMINAL_CWD', '')
-    except Exception:
+    except ImportError:
         cwd = os.environ.get('TERMINAL_CWD', '')
+    else:
+        try:
+            cwd = terminal_env('TERMINAL_CWD', '')
+        except Exception:
+            cwd = ''
     try:
         from gateway.media_policy import media_delivery_allow_dirs
-        allow = media_delivery_allow_dirs()
-    except Exception:
+    except ImportError:
         allow = os.environ.get('HERMES_MEDIA_ALLOW_DIRS', '')
+    else:
+        try:
+            allow = media_delivery_allow_dirs()
+        except Exception:
+            allow = ''
     roots = []
-    for r in [os.path.expanduser('~'), tempfile.gettempdir(), cwd] + [x for chunk in str(allow or '').split(os.pathsep) for x in chunk.split(',')]:
+    cands = [(os.path.expanduser('~'), False), (tempfile.gettempdir(), True), (cwd, False)]
+    cands += [(x, False) for chunk in str(allow or '').split(os.pathsep) for x in chunk.split(',')]
+    for r, is_tmp in cands:
         r = os.path.expanduser(str(r or '').strip())
         if r and os.path.isabs(r):
             r = os.path.realpath(r)
             if os.path.dirname(r) != r:
-                roots.append(os.path.normcase(r))
+                roots.append((os.path.normcase(r), is_tmp))
     return roots
 
 
 def _in_link_roots(path: str) -> bool:
-    """실제 경로(심볼릭 링크를 푼 경로)가 _link_roots 안인가. 거부 목록만으로는 늘 새는 이름이 생겨 위치도 좁힌다(커밋 보안 검토 2026-10-09)."""
-    real = os.path.normcase(os.path.realpath(os.path.abspath(os.path.expanduser(path))))
-    for root in _link_roots():
+    """실제로 열리는 경로(realpath — 심볼릭 링크를 푼 뒤 '..'를 따라감)가 _link_roots 안인가. 거부 목록만으로는 늘 새는 이름이 생겨
+    위치도 좁힌다(커밋 보안 검토 2026-10-09). abspath를 먼저 하지 않는다 — H/link/../x(H/link → 바깥)가 H/x로 판정되던 문제(3차 검수 MEDIUM).
+    임시 폴더라서 허용되는 파일은 게이트웨이 사용자 소유일 때만 — 공유 /tmp에는 다른 사용자 파일이 있다(3차 검수 LOW, Windows는 소유자 판정 없음)."""
+    real = os.path.normcase(os.path.realpath(os.path.expanduser(path)))
+    tmp_only = False
+    for root, is_tmp in _link_roots():
         try:
-            if os.path.commonpath([real, root]) == root:
-                return True
+            inside = os.path.commonpath([real, root]) == root
         except ValueError:   # Windows에서 드라이브가 다르다
             continue
+        if inside and not is_tmp:
+            return True
+        tmp_only = tmp_only or inside
+    if tmp_only:
+        if not hasattr(os, 'geteuid'):
+            return True
+        try:
+            return os.stat(real).st_uid == os.geteuid()
+        except OSError:
+            return False
     return False
 
 
@@ -219,7 +244,7 @@ def _deliverable_path(path: str) -> Optional[str]:
         except Exception:
             return None
     given = os.path.abspath(os.path.expanduser(path))
-    real = os.path.realpath(given)
+    real = os.path.realpath(os.path.expanduser(path))   # 실제로 열리는 경로('..'는 심볼릭 링크를 푼 뒤)
     if not os.path.isfile(real):
         return None
     home = os.path.realpath(os.path.expanduser('~'))
@@ -630,7 +655,7 @@ class ArgoMsgrAdapter(BasePlatformAdapter):
         self._reply_ids: Dict[int, int] = {}               # 원문 id → 봇 답글 id(대화)
         self._followup_ids: Dict[str, int] = {}            # 결재 id → 후속 보고 글 id(재개 턴)
         self._posts: Dict[str, Any] = {}                   # chat_id → (글 id, 시각) 원문 없이 쓴 마지막 글(예약 작업 결과)
-        self._attached: Dict[Any, bool] = {}               # (글 id, 실제 경로) → 이미 올린 파일(같은 답에 MEDIA:와 링크로 함께 적은 파일, 검수 Cb-2 MEDIUM)
+        self._attached: Dict[Any, bool] = {}               # (글 id, 실제 경로, 크기, 수정 시각) → 이미 올린 파일(같은 답에 MEDIA:와 링크로 함께 적은 파일, 검수 Cb-2 MEDIUM)
 
     @property
     def name(self) -> str:
@@ -998,7 +1023,8 @@ class ArgoMsgrAdapter(BasePlatformAdapter):
             target = await self._attach_target(chat_id, (caption or '').strip() or ('📎 ' + name), bool((caption or '').strip()), final)
             # 코어는 MEDIA: 파일과 본문에서 찾은 파일을 서로 중복 제거하지 않고 둘 다 보낸다(_deliver_media_attachments). 같은 글에 같은 실제 경로는
             # 한 번만 올린다 — 업로드·저장 객체·첨부 행이 두 배가 되지 않게. 올리기 전에 표시하고 실패하면 지운다(다시 부르면 올린다).
-            key = (target, os.path.realpath(path))
+            st = os.stat(path)   # 같은 경로라도 내용이 바뀌었으면(크기·수정 시각) 다시 올린다 — 배포본은 매번 올렸다(3차 검수 LOW)
+            key = (target, os.path.realpath(path), st.st_size, st.st_mtime_ns)
             if key in self._attached:
                 logger.info("Argo Messenger: file %s already attached to message %s", name, target)
                 return SendResult(success=True, message_id=str(target))

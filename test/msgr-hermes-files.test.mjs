@@ -480,7 +480,8 @@ assert [os.path.basename(f) for f in a.extract_local_files('[r](attachment:' + s
 // (Windows CI에서는 위 테스트들이 실제 D:\ 임시 경로로 같은 기대값을 확인한다).
 test('드라이브 문자 경로 — attachment:·sandbox:·file:///C:/·scheme 없는 링크·링크 없는 attachment:가 C:\\·C:/ 경로도 첨부한다', () => runCore(String.raw`
 os.chdir(tmp.name)   # 맥·리눅스에서 C:\… 는 상대 경로로 읽힌다 — 점 폴더 판정이 테스트를 돌린 폴더에 휘둘리지 않게
-os.environ['TERMINAL_CWD'] = 'C:\\Users\\crew'   # Windows: 링크로 보낼 수 있는 위치(작업 폴더). 맥·리눅스에선 절대 경로가 아니라 무시되고 임시 폴더 안이다
+os.environ['TERMINAL_CWD'] = 'C:\\Users\\crew'   # Windows: 링크로 보낼 수 있는 위치(작업 폴더). 맥·리눅스에선 절대 경로가 아니라 무시된다
+os.environ['HERMES_MEDIA_ALLOW_DIRS'] = tmp.name   # 맥·리눅스: C:\… 는 이 폴더 안 상대 경로(가짜 파일이라 임시 폴더의 소유자 판정 대신 허용 폴더로)
 W, U = 'C:\\Users\\crew\\report.pdf', 'C:/Users/crew/report.pdf'
 FAKE = {W, U, 'C:\\Users\\crew\\run.log', 'C:\\Users\\crew\\main.py', 'C:\\Users\\crew\\.env', 'C:\\Users\\crew\\.git\\notes.md'}
 real_isfile = os.path.isfile
@@ -535,6 +536,15 @@ async def main():
     m._upload_file = real
     res = await a.send_document(CH, str(log), metadata=FINAL)
     assert res.success and os.path.basename(UP[-1][1]) == 'run.log' and len(UP) == 5, '실패한 업로드는 기억하지 않는다 — 다시 부르면 올린다'
+    # 3차 검수 LOW: 같은 글·같은 경로라도 내용이 바뀐 파일(크기·수정 시각)은 다시 올린다 — 배포본은 매번 올렸다
+    await a.send_document(CH, str(md), metadata=FINAL)
+    assert len(UP) == 5, '902에 이미 올린 그대로의 파일'
+    md.write_text('# 고친 내용 — 길이가 다르다\n')
+    await a.send_document(CH, str(md), metadata=FINAL)
+    assert len(UP) == 6 and UP[-1][0] == 902, ('크기가 바뀐 파일은 다시 올린다', UP)
+    st = os.stat(md); os.utime(md, ns=(st.st_atime_ns, st.st_mtime_ns + 2 * 10**9))
+    await a.send_document(CH, str(md), metadata=FINAL)
+    assert len(UP) == 7, '크기는 같고 수정 시각만 바뀐 파일도 다시 올린다'
 asyncio.run(main())
 `));
 
@@ -616,12 +626,39 @@ assert a.extract_local_files(text) == ([], text), '작업 폴더가 파일 시�
 os.environ.pop('TERMINAL_CWD')
 os.environ['HERMES_MEDIA_ALLOW_DIRS'] = os.path.join(tmp.name, 'none') + os.pathsep + str(work)
 assert [os.path.basename(f) for f in a.extract_local_files(text)[0]] == ['download-test-vps.md'], '운영자가 허용한 폴더 안'
+os.environ['HERMES_MEDIA_ALLOW_DIRS'] = os.path.join(tmp.name, 'none') + ',' + str(work)
+assert [os.path.basename(f) for f in a.extract_local_files(text)[0]] == ['download-test-vps.md'], '쉼표로 나눈 운영자 허용 폴더'
 os.environ.pop('HERMES_MEDIA_ALLOW_DIRS')
+# 3차 검수 LOW: Hermes terminal_env가 예외(다른 프로필의 거부 범위 등)를 내면 환경 변수의 TERMINAL_CWD로 넘어가지 않는다 — 코어 _tenv와 같게 ImportError만 환경 변수로
+ts = types.ModuleType('tools.terminal_scope'); sys.modules['tools.terminal_scope'] = ts
+os.environ['TERMINAL_CWD'] = str(work)
+ts.terminal_env = lambda name, default='': str(work) if name == 'TERMINAL_CWD' else default
+assert [os.path.basename(f) for f in a.extract_local_files(text)[0]] == ['download-test-vps.md'], 'Hermes 세션 범위의 작업 폴더'
+def refuse(name, default=''): raise RuntimeError('refusal scope')
+ts.terminal_env = refuse
+assert a.extract_local_files(text) == ([], text), '거부 범위면 작업 폴더를 비운다(환경 변수로 넘어가지 않음)'
+del sys.modules['tools.terminal_scope']; os.environ.pop('TERMINAL_CWD')
+mp = types.ModuleType('gateway.media_policy'); sys.modules['gateway.media_policy'] = mp   # 운영자 허용 폴더도 같은 규칙(config.yaml 값)
+os.environ['HERMES_MEDIA_ALLOW_DIRS'] = str(work)
+mp.media_delivery_allow_dirs = lambda: str(work)
+assert [os.path.basename(f) for f in a.extract_local_files(text)[0]] == ['download-test-vps.md'], 'Hermes 설정의 허용 폴더'
+def cfg_error(): raise RuntimeError('config')
+mp.media_delivery_allow_dirs = cfg_error
+assert a.extract_local_files(text) == ([], text), '설정을 못 읽으면 허용 폴더를 비운다(환경 변수로 넘어가지 않음)'
+del sys.modules['gateway.media_policy']; os.environ.pop('HERMES_MEDIA_ALLOW_DIRS')
 for k in ('HOME', 'USERPROFILE'): os.environ[k] = tmp.name
 assert [os.path.basename(f) for f in a.extract_local_files(text)[0]] == ['download-test-vps.md'], '홈 안'
 for k in ('HOME', 'USERPROFILE'): os.environ[k] = str(other)
 tempfile.tempdir = saved
 assert [os.path.basename(f) for f in a.extract_local_files(text)[0]] == ['download-test-vps.md'], '임시 폴더 안'
+# 3차 검수 LOW: 공유 임시 폴더(/tmp)의 다른 사용자 파일 — 임시 폴더라서 허용될 때만 게이트웨이 사용자 소유 파일로 제한한다(Windows는 소유자 판정 없음)
+if hasattr(os, 'geteuid'):
+    me = os.geteuid
+    os.geteuid = lambda: me() + 1
+    assert a.extract_local_files(text) == ([], text), '임시 폴더의 다른 사용자 파일은 링크로 보내지 않는다'
+    os.environ['TERMINAL_CWD'] = str(work)
+    assert [os.path.basename(f) for f in a.extract_local_files(text)[0]] == ['download-test-vps.md'], '작업 폴더라서 허용되면 소유자를 보지 않는다'
+    os.environ.pop('TERMINAL_CWD'); os.geteuid = me
 `));
 
 // Windows CI(b4b5309c): Windows는 'x.md.'도 'x.md'로 열어 줘서, 파일이 있는지로 문장 끝 마침표를 떼던 판정이 점을 경로에 붙였다.
@@ -638,4 +675,37 @@ odd = work / 'v1.'; odd.write_text('x')   # 이름이 정말 점으로 끝나는
 if real_isfile(str(odd)) and not real_isfile(str(odd)[:-1]):
     files, body = a.extract_local_files('첨부: attachment:' + str(odd))
     assert [os.path.basename(f) for f in files] == ['v1.'] and body == '첨부: v1.', (files, body)
+`));
+
+// 3차 검수 MEDIUM: 위치·점 폴더 판정이 os.path.abspath로 '..'를 글자로 먼저 지운 뒤 실제 경로를 봤다. 커널은 심볼릭 링크를 푼 다음 '..'를 따라가서,
+// 홈 안 링크(H/link → 바깥/sub)를 거친 H/link/../escaped.pdf는 바깥 파일이, H/l2 → H/.private/sub를 거친 H/l2/../notes.txt는 점 폴더 파일이 열린다.
+// 실제로 열리는 경로(realpath(expanduser(path)))로 판정한다. Windows는 '..'를 글자로 먼저 처리해 이 경로가 H\escaped.pdf(없음)라서 결과가 같다.
+test('".."와 심볼릭 링크 — 실제로 열리는 경로로 위치·점 폴더를 판정한다(코어 검증이 있든 없든)', () => runCore(String.raw`
+import tempfile
+H = work / 'h'; H.mkdir(); (H / 'tmpx').mkdir()
+outroot = Path(tmp.name) / 'outside'; (outroot / 'sub').mkdir(parents=True)
+(outroot / 'escaped.pdf').write_bytes(b'%PDF-1.4 OUTSIDE'); (outroot / 'sub' / 'x.pdf').write_bytes(b'%PDF-1.4 OUTSIDE')
+os.symlink(str(outroot / 'sub'), str(H / 'link'), target_is_directory=True)
+priv = H / '.private'; (priv / 'sub').mkdir(parents=True); (priv / 'notes.txt').write_text('DOT-DIR')
+os.symlink(str(priv / 'sub'), str(H / 'l2'), target_is_directory=True)
+(H / 'doc.pdf').write_bytes(b'%PDF-1.4 home')
+(H / 'a' / 'b').mkdir(parents=True); (H / 'a' / 'c.pdf').write_bytes(b'%PDF-1.4 inside')
+os.symlink(str(H / 'a' / 'b'), str(H / 'l3'), target_is_directory=True)   # 홈 안에서 끝나는 링크 — H/l3/../c.pdf는 실제로 H/a/c.pdf
+for k in ('HOME', 'USERPROFILE'): os.environ[k] = str(H)   # 허용 위치는 홈(H)뿐 — 임시 폴더·작업 폴더를 H 안으로
+tempfile.tempdir = str(H / 'tmpx')
+for k in ('TERMINAL_CWD', 'HERMES_MEDIA_ALLOW_DIRS'): os.environ.pop(k, None)
+sep = os.sep
+bad = ['[x](attachment:' + str(H) + sep + 'link' + sep + '..' + sep + 'escaped.pdf)',   # 홈 안 링크를 거쳐 바깥 파일
+       '[n](attachment:' + str(H) + sep + 'l2' + sep + '..' + sep + 'notes.txt)',        # 홈 안 링크를 거쳐 점 폴더 파일
+       '첨부: sandbox:' + str(H) + sep + 'l2' + sep + '..' + sep + 'notes.txt',
+       '[x](attachment:' + str(H) + sep + 'link' + sep + 'x.pdf)']                       # 홈 안 링크가 바깥 파일을 가리킴
+for core in (True, False):   # 코어 검증(실제 경로로 푸는 Hermes) / 그 함수가 없는 옛 Hermes
+    if core: Base.validate_media_delivery_path = staticmethod(lambda p, session_key='': os.path.realpath(p))
+    elif hasattr(Base, 'validate_media_delivery_path'): del Base.validate_media_delivery_path
+    for text in bad:
+        assert m.pick_linked_files(text) == ([], text), (core, text, m.pick_linked_files(text))
+    assert [os.path.basename(f) for f in m.pick_linked_files('[d](attachment:' + str(H / 'doc.pdf') + ')')[0]] == ['doc.pdf'], ('대조군: 홈 안 파일은 보낸다', core)
+    if os.name != 'nt':   # 맥·리눅스: 실제로 열리는 H/a/c.pdf를 보낸다(옛 Hermes 판정도 글자로 지운 H/c.pdf가 없다고 거절하지 않는다). Windows는 '..'를 먼저 처리해 H\c.pdf(없음)
+        files, body = m.pick_linked_files('[c](attachment:' + str(H) + sep + 'l3' + sep + '..' + sep + 'c.pdf)')
+        assert files == [os.path.realpath(str(H / 'a' / 'c.pdf'))] and body == 'c', (core, files, body)
 `));
