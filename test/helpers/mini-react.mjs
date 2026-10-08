@@ -37,11 +37,12 @@ export function useMemo(f, deps) {
   return h.v;
 }
 export const useCallback = (f, deps) => useMemo(() => f, deps);
+export const memo = (f) => f; // React.memo 대역 — 다시 렌더 생략은 흉내 내지 않는다(app/ui.jsx Markdown이 memo로 감싸져 있다)
 export const Fragment = Symbol('Fragment');
 export const jsx = (type, props) => ({ type, props });
 export const jsxs = jsx;
 export const createElement = (type, props, ...children) => ({ type, props: { ...props, children } });
-export default { useId, useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, Fragment, createElement };
+export default { useId, useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, memo, Fragment, createElement };
 
 /** 컴포넌트를 마운트한다. flush()는 예약된 다시 렌더·effect·마이크로태스크가 잦아들 때까지 돈다. */
 export function mount(Component, props = {}) {

@@ -174,8 +174,11 @@ export default function Room({ params }) {
       atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
       if (atBottomRef.current) setUnseen(false);
     };
+    // 본문 그림이 늦게 그려져 콘텐츠가 자라도 하단 추종 중이면 따라 내려간다(대화창 그림 — 크루 채팅과 같은 규칙). load는 버블링하지 않아 캡처로.
+    const onLoad = (e) => { if (e.target?.tagName === 'IMG' && atBottomRef.current) endRef.current?.scrollIntoView({ block: 'end' }); };
     el.addEventListener('scroll', onScroll, { passive: true });
-    return () => el.removeEventListener('scroll', onScroll);
+    el.addEventListener('load', onLoad, true);
+    return () => { el.removeEventListener('scroll', onScroll); el.removeEventListener('load', onLoad, true); };
   }, []);
   // 칩은 **실제 증가**에만(검수 D1: 8초 폴이 매번 새 배열을 넣어 내용 동일에도 켜졌다 — 거짓 신호).
   // 보관 열람 중엔 상태를 만들지 않는다(D2: viewing 중 쌓인 stale 칩). 하단이면 명시 해제(D3).

@@ -2305,6 +2305,14 @@ button.memo-chip.ap-toggle { background: transparent; cursor: pointer; padding: 
 /* display:block — 표는 min-content가 셀 내용만큼 커져 컨테이너를 뚫는 유일한 블록. 자기 폭 안에서 가로 스크롤 */
 .md table { border-collapse: collapse; font-size: 12.5px; display: block; max-width: 100%; overflow-x: auto; }
 .md th, .md td { border: 1px solid var(--border-soft); padding: 6px 10px; text-align: left; }
+/* 본문 그림(vault 산출물 — ui.jsx Markdown이 files API로 바꾼 것만 .md-img). 누르면 크게 보기·저장(ImageViewer).
+   크기 상한만 두고 원본 비율 유지 — 작은 그림은 키우지 않는다. 색은 토큰(양 테마 상속). */
+.md img.md-img {
+  display: block; max-width: min(100%, 420px); max-height: 320px; width: auto; height: auto;
+  margin: 6px 0; border: 1px solid var(--border-soft); border-radius: 10px; background: var(--card-2);
+  cursor: zoom-in;
+}
+.md img.md-img:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 
 .wikilink {
   font-family: var(--mono); font-size: 0.9em; font-weight: 500;
