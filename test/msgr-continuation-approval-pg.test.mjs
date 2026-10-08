@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { readFileSync, readdirSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { psqlSpawn } from './helpers/pg.mjs';
@@ -328,22 +329,43 @@ test('남의 방 — 다른 방의 글을 출처로·친구 1:1에서·에이전
   } finally { sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id) values ('${ORG_CH}', 'crew', '${ORG_CREW}') on conflict do nothing`); }
 });
 
-test('끝난 지 오래된 글 — 결재 후속 근거는 결정 24시간까지, 이어 실행 근거는 그 글을 지금 이어서 할 수 없으면(보관·삭제) 거절, 시간만 지난 글은 받는다(예약은 오래된 글을 계속 잇는다)', { skip }, async () => {
+test('끝난 지 오래된 글 — 원래 실행이 끝난 지 31일이 지나면 근거 카드도 거절(경계 ±1시간), 결재 후속의 24시간 창은 근거 표지 없는 행에만, 보관·삭제된 글은 거절', { skip }, async () => {
   const room = ROOMS().org;
-  // followup_of: 결정 25시간 전 부모 → 거절(봇 선례 그대로). 근거 표지 없이.
+  const age = (src, iv) => sql(`update public.msgr_executions set started_at = now() - interval '${iv}', heartbeat_at = now() - interval '${iv}' where crew_id = '${room.crew}' and source_msg_id = ${src}`);
+  const close = (id) => sql(`update public.msgr_crew_approvals set status = 'rejected', decided_by = '${U.a}', decided_at = now() where id = '${id}'`); // 대기 근거 카드를 닫는다(④ — 한 글에 하나씩)
+  // 근거 표지 없는 결재 후속(봇·옛 본체 행 — followup_of만): 부모 결정 25시간 → 거절, 23시간 → 받음(1b 그대로)
   const m = say(room, '오래전 결재'); execution(room.crew, m, 'running');
   const parent = await insertRow(room, { source_msg_id: Number(m), approval_id: 'old-parent' });
   execution(room.crew, m, 'completed');
   sql(`update public.msgr_crew_approvals set status = 'approved', decided_by = '${U.a}', decided_at = now() - interval '25 hours' where id = '${parent.id}'`);
-  await assert.rejects(insertRow(room, { source_msg_id: Number(m), payload: { followup_of: parent.id } }), /msgr_approval_source_forbidden/, '결정 25시간 지난 부모');
+  await assert.rejects(insertRow(room, { source_msg_id: Number(m), payload: { followup_of: parent.id } }), /msgr_approval_source_forbidden/, '근거 표지 없는 행: 결정 25시간 지난 부모');
+  // 새 본체 결재 후속(continuation='followup' + followup_of): 1b가 24시간으로 거절해도 근거 갈래 — 기준은 원래 실행 완료 31일(검수 R6)
+  const late = await insertRow(room, { source_msg_id: Number(m), payload: { continuation: 'followup', followup_of: parent.id } });
+  assert.ok(late.id, '새 본체 결재 후속: 부모 결정 25시간이어도 원래 실행이 31일 안이면 받는다');
+  close(late.id);
+  age(m, '31 days 1 hour');
+  await assert.rejects(insertRow(room, { source_msg_id: Number(m), payload: { continuation: 'followup', followup_of: parent.id } }), /msgr_approval_source_forbidden/, '원래 실행이 31일 지나면 결재 후속 근거도 거절');
   sql(`update public.msgr_crew_approvals set decided_at = now() - interval '23 hours' where id = '${parent.id}'`);
-  const ok = await insertRow(room, { source_msg_id: Number(m), payload: { followup_of: parent.id } });
-  assert.ok(ok.id, '대조: 결정 23시간 부모는 받는다');
-  // 이어 실행 근거 — 30일 전에 끝난 글(매일 도는 예약): 지금도 이어서 할 수 있으면 받는다
-  const old = say(room, '한 달 전 지시'); execution(room.crew, old, 'completed');
-  sql(`update public.msgr_messages set created_at = now() - interval '30 days' where id = ${old}; update public.msgr_executions set started_at = now() - interval '30 days', heartbeat_at = now() - interval '30 days' where source_msg_id = ${old}`);
-  assert.ok((await insertRow(room, { source_msg_id: Number(old), payload: { continuation: 'routine' } })).id, '시간만 지난 글은 받는다(정책: 예약이 같은 글을 계속 잇는다 — PR 본문)');
-  // 삭제된 원래 글·보관된 방 → 거절
+  assert.ok((await insertRow(room, { source_msg_id: Number(m), payload: { followup_of: parent.id } })).id, '대조: 결정 23시간 부모는 1b 갈래로 받는다(원래 실행 나이와 상관없이 — 배포본 그대로)');
+  // 이어 실행 근거의 경계 — 원래 실행 완료 30일 23시간 전은 받고, 31일 1시간 전은 거절
+  const edge = say(room, '한 달 전 지시'); execution(room.crew, edge, 'completed');
+  age(edge, '30 days 23 hours');
+  const inside = await insertRow(room, { source_msg_id: Number(edge), payload: { continuation: 'routine' } });
+  assert.ok(inside.id, '원래 실행 완료 30일 23시간 전 → 받는다');
+  close(inside.id);
+  age(edge, '31 days 1 hour');
+  await assert.rejects(insertRow(room, { source_msg_id: Number(edge), payload: { continuation: 'routine' } }), /msgr_approval_source_forbidden/, '원래 실행 완료 31일 1시간 전 → 거절');
+  // 본체 흐름: 32일 전에 끝난 글에서 건 예약의 결재 — 카드는 거절되고 결재는 로컬 결재함에만 남는다(상한의 비용 — 배포본과 같은 동작, PR '결정 필요')
+  const { m: oldSrc, origin } = await finishedSource(room, '32일 전 예약');
+  age(oldSrc, '32 days');
+  await tick();
+  const r = await addRoutine(WS, { agentSlug: 'alpha', title: '32일 전 예약', prompt: '보고', schedule: { type: 'daily', time: '09:00' }, msgr: origin });
+  await runRoutine(WS, r.id, { session: sessionAs(U.a), chatFn: raising('32일 전 예약 결재') });
+  const item = await approvalByAction('32일 전 예약 결재');
+  assert.deepEqual(item.msgr.continuation, { kind: 'routine' }, '본체는 근거를 싣는다');
+  await assert.rejects(pushCard(item), /msgr_approval_source_forbidden/, '서버가 31일 상한으로 거절');
+  assert.equal(serverRow(item.id), '', '서버 행 0 — 결재는 로컬 결재함에만');
+  // 삭제된 원래 글·보관된 방 → 거절(시간과 상관없이)
   const gone = say(room, '지울 지시'); execution(room.crew, gone, 'completed');
   sql(`update public.msgr_messages set deleted_at = now() where id = ${gone}`);
   await assert.rejects(insertRow(room, { source_msg_id: Number(gone), payload: { continuation: 'routine' } }), /msgr_approval_source_forbidden/, '삭제된 원래 글');
@@ -370,6 +392,21 @@ for (const key of ['org', 'personal']) {
     await assert.rejects(insertRow(room, { source_msg_id: Number(m), approval_id: 'dup', payload: { continuation: 'followup', followup_of: first.id } }).then(() => insertRow(room, { source_msg_id: Number(m), approval_id: 'dup', payload: { continuation: 'followup', followup_of: first.id } })), /duplicate|23505|unique/i);
   });
 }
+
+test('이미 결재가 있는 글 — 같은 크루·같은 글에 근거 카드 두 개를 동시에 넣으면 하나만 들어간다(크루·글 단위 advisory lock)', { skip }, async () => {
+  // 두 트랜잭션이 같이 떠 있게 한다: 각자 넣은 뒤 2초 쉬고 커밋. 잠금이 없으면 둘 다 ④(대기 근거 카드)에서 서로의 미커밋 행을 못 봐 둘 다 들어간다.
+  // 잠금이 있으면 나중 쪽은 앞 트랜잭션이 커밋할 때까지 기다린 뒤 새 스냅샷으로 ④를 보고 거절된다. 어느 쪽이 먼저 잠금을 잡든 결과는 같다.
+  const m = say(ROOMS().org, '동시 넣기'); execution(ORG_CREW, m, 'completed');
+  const one = (apId) => new Promise((res) => {
+    const p = spawn('psql', [DB, '-X', '-v', 'ON_ERROR_STOP=1', '-q', '-A', '-t', '-c',
+      `begin; set local role authenticated; select set_config('argo.uid', '${U.a}', true); insert into public.msgr_crew_approvals (org_id, channel_id, crew_id, approval_id, action, risk, payload, source_msg_id) values ('${ORG}', '${ORG_DM}', '${ORG_CREW}', '${apId}', '동시', 'low', '{"continuation":"routine"}'::jsonb, ${m}); select pg_sleep(2); commit;`]);
+    let err = ''; p.stderr.on('data', (d) => { err += d; }); p.on('close', (code) => res({ code, err }));
+  });
+  const results = await Promise.all([one('cc-1'), one('cc-2')]);
+  assert.equal(results.filter((r) => r.code === 0).length, 1, `하나만 성공: ${results.map((r) => `${r.code} ${r.err.trim()}`).join(' / ')}`);
+  assert.match(results.find((r) => r.code !== 0).err, /msgr_approval_source_forbidden/, '나머지는 출처 가드 거절');
+  assert.equal(sql(`select count(*) from public.msgr_crew_approvals where source_msg_id = ${m}`), '1', '서버 행 1');
+});
 
 /* ── 버전 섞임 ── */
 test('새 본체 + 옛 DB(가드 1b) — 결재 후속은 followup_of로 들어가고, 예약·긴 작업 카드는 지금처럼 거절(배포본보다 나빠지지 않음)', { skip }, async () => {

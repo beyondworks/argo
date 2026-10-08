@@ -12,8 +12,14 @@
 --      에이전트가 방에 있음·지시 권한·조직 멤버십/개인 방 사람) — 방에서 빠졌거나 보관됐거나 권한이 회수된 묵은 글
 --   ④ 그 글에 근거로 들어온 대기 카드가 없다(같은 크루·같은 원래 글·pending·payload.continuation) — 예약·루프가 같은 글에 카드를 쌓지 않게.
 --      원래 턴의 대기 카드(근거 없음)는 세지 않는다. 동시 넣기는 크루·글 단위 advisory lock으로 하나씩.
---   시간 상한은 두지 않는다(결재 후속 갈래의 '결정 24시간'은 1b 그대로): 매일 도는 예약은 같은 원래 글을 계속 잇고, 그 결과 글도 시간 상한 없이 같은 글에 붙는다.
---   끝난 지 오래된 글은 ③(지금 이을 수 없으면 거절)으로 막는다. 정책으로 상한을 두려면 ②에 e.heartbeat_at(완료 시각) 조건 한 줄을 더한다.
+--      주의할 점: 근거 카드 하나가 서버에서 오래 pending이면(고위험이라 관리자 결정 대기 등) 같은 글의 다음 근거 카드는 모두 거절돼 로컬에만 남는다(PR '남은 것').
+--   ⑤ 끝난 지 오래된 글: 그 실행이 끝난 지 31일 안일 때만(②의 msgr_executions.heartbeat_at — 완료 때 서버 함수만 now()로 적고, 사용자에게는 쓰기 권한이 없다).
+--      31일은 정책 값이다(유건 확인 대상, PR '결정 필요'). 가장 긴 달 하나 — 결재 후속(결정까지 한 달)·긴 작업에는 넉넉하다.
+--      비용: 메신저 글에서 건 예약·루프는 주기와 상관없이 그 글의 실행이 끝나고 31일 동안만 카드가 뜨고, 그 뒤 예약 카드는 배포본처럼 로컬 결재함에만 남는다.
+--      다른 기준(그 에이전트가 그 글에 마지막으로 답한 시각·결재 행 시각)은 쓰지 않았다 — 크루 글은 크루 주인 세션이 아무 글에나 답으로 넣을 수 있고
+--      (msgr_messages_insert 정책), 결재 행 created_at은 서버 시각으로 강제하는 트리거가 없다(넣는 쪽이 값을 정할 수 있다).
+--   결재 후속의 시간 기준: 근거 표지 없는 행(봇·옛 본체 — followup_of만)은 1b의 '부모 결정 24시간' 창 그대로다. 새 본체의 결재 후속은 continuation='followup'도
+--   같이 실으므로 1b가 24시간으로 거절해도 이 갈래(①~⑤)로 받는다 — 새 본체 결재 후속의 시간 기준은 '원래 실행 완료 31일'이다.
 --
 -- 기존 동작: 1b 정의(운영 prosrc md5 7bd34991748cc1165ed40a5e306c5d13 = 20260929150000_1b 283-315, 2026-10-08 읽기 전용 대조)를 그대로 옮기고,
 --   1b가 거절하던 자리에서만 새 갈래를 본다 — 실행 중 카드·followup_of 카드·근거 없는 카드는 1b와 같은 결과다(옛 본체 + 새 DB = 배포본).
@@ -50,12 +56,13 @@ begin
      or not (exists (select 1 from public.msgr_executions e where e.crew_id = new.crew_id and e.source_msg_id = source.id and e.state = 'running')
        or (parent_id is not null and exists (select 1 from public.msgr_crew_approvals pa where pa.id = parent_id and pa.crew_id = new.crew_id
              and pa.source_msg_id = source.id and pa.status = 'approved' and pa.decided_at > now() - interval '24 hours'))) then
-    -- 20261008170000: 1b가 거절하던 자리 — 이어 실행 근거(payload.continuation)가 있을 때만 끝난 원래 글을 받는다(머리 주석 ①~④)
+    -- 20261008170000: 1b가 거절하던 자리 — 이어 실행 근거(payload.continuation)가 있을 때만 끝난 원래 글을 받는다(머리 주석 ①~⑤)
     cont := case when jsonb_typeof(new.payload) = 'object' then new.payload->>'continuation' end;
     if source.id is null or source.deleted_at is not null or source.channel_id is distinct from new.channel_id
        or source.org_id is distinct from new.org_id or crew.org_id is distinct from new.org_id
        or cont is null or cont not in ('followup', 'routine', 'job')
-       or not exists (select 1 from public.msgr_executions e where e.crew_id = new.crew_id and e.source_msg_id = source.id and e.state = 'completed') then
+       or not exists (select 1 from public.msgr_executions e where e.crew_id = new.crew_id and e.source_msg_id = source.id and e.state = 'completed'
+                        and e.heartbeat_at > now() - interval '31 days') then -- ⑤ 끝난 지 31일 안
       raise exception 'msgr_approval_source_forbidden' using errcode = '42501';
     end if;
     if not coalesce(public.msgr_delivery_allowed(new.crew_id, source.id), false) then
