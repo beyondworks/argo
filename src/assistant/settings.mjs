@@ -57,13 +57,19 @@ async function writeSealed(wsId, obj) {
   return text;
 }
 
-/** 입력 검증(순수) — 문제 있으면 errorCode, 없으면 null. 아침 묶음 = 조용한 시간 끝. */
-export function settingsProblem({ leadMinutes, eveningAt, quiet }) {
-  if (!LEAD_CHOICES.includes(leadMinutes)) return 'assistant_lead_invalid';
-  if (![eveningAt, quiet.from, quiet.to].every((v) => HHMM_RE.test(String(v)))) return 'assistant_time_invalid';
-  if (quiet.from === quiet.to) return 'assistant_quiet_empty';
-  if (minuteInQuiet(toMin(eveningAt), quiet)) return 'assistant_evening_in_quiet'; // 조용한 시간 안의 저녁 묶음은 그날 나가지 않는다(rules.mjs bundleDue)
-  if (toMin(quiet.to) >= toMin(eveningAt)) return 'assistant_evening_before_morning';
+/** 입력 검증(순수) — 문제 있으면 errorCode, 없으면 null. 아침 묶음 = 조용한 시간 끝.
+    touched(Set: lead·evening·from·to)를 주면 보낸 칸이 걸린 규칙만 본다 — 새 버전이 봉인해 저장한 값을 이 버전이 받지 않아도
+    끄기·다른 칸 저장이 막히지 않게(#865 3차 검수 LOW). 두 칸 이상 걸린 규칙은 걸린 칸이 모두 시각 모양일 때만 본다. */
+export function settingsProblem({ leadMinutes, eveningAt, quiet }, touched = null) {
+  const t = (k) => !touched || touched.has(k);
+  const times = { evening: eveningAt, from: quiet.from, to: quiet.to };
+  const isTime = (k) => HHMM_RE.test(String(times[k]));
+  if (t('lead') && !LEAD_CHOICES.includes(leadMinutes)) return 'assistant_lead_invalid';
+  if (Object.keys(times).some((k) => t(k) && !isTime(k))) return 'assistant_time_invalid';
+  const rule = (...ks) => ks.some(t) && ks.every(isTime);
+  if (rule('from', 'to') && quiet.from === quiet.to) return 'assistant_quiet_empty';
+  if (rule('evening', 'from', 'to') && minuteInQuiet(toMin(eveningAt), quiet)) return 'assistant_evening_in_quiet'; // 조용한 시간 안의 저녁 묶음은 그날 나가지 않는다(rules.mjs bundleDue)
+  if (rule('to', 'evening') && toMin(quiet.to) >= toMin(eveningAt)) return 'assistant_evening_before_morning';
   return null;
 }
 
@@ -100,16 +106,20 @@ async function saveInLine(wsId, input, { now = Date.now() } = {}) {
     const base = sealed ? cur.obj : {};
     const prev = normalizeAssistantConfig(base); // 봉인 안 맞음·없음 = 기본값(꺼짐)
     const q = inp.quiet && typeof inp.quiet === 'object' ? inp.quiet : {};
+    // 보내지 않은 칸은 봉인된 저장값 그대로 — 이 버전이 모르는 값(새 버전의 선택지)을 기본값으로 덮지 않는다(#865 3차 검수 LOW). 봉인이 안 맞으면 base = {}라 기본값.
+    const bq = base.quiet && typeof base.quiet === 'object' ? base.quiet : {};
+    const kept = (v, d) => (v !== undefined ? v : d);
+    const touched = new Set([['lead', inp.leadMinutes], ['evening', inp.eveningAt], ['from', q.from], ['to', q.to]].filter(([, v]) => v !== undefined).map(([k]) => k));
     const next = {
-      leadMinutes: inp.leadMinutes !== undefined ? Number(inp.leadMinutes) : prev.leadMinutes,
-      eveningAt: inp.eveningAt !== undefined ? String(inp.eveningAt) : prev.eveningAt,
+      leadMinutes: touched.has('lead') ? Number(inp.leadMinutes) : kept(base.leadMinutes, prev.leadMinutes),
+      eveningAt: touched.has('evening') ? String(inp.eveningAt) : kept(base.eveningAt, prev.eveningAt),
       quiet: {
-        from: q.from !== undefined ? String(q.from) : prev.quiet.from,
-        to: q.to !== undefined ? String(q.to) : prev.quiet.to,
-        calendarAlerts: bool(q.calendarAlerts) ?? prev.quiet.calendarAlerts,
+        from: touched.has('from') ? String(q.from) : kept(bq.from, prev.quiet.from),
+        to: touched.has('to') ? String(q.to) : kept(bq.to, prev.quiet.to),
+        calendarAlerts: bool(q.calendarAlerts) ?? kept(bq.calendarAlerts, prev.quiet.calendarAlerts),
       },
     };
-    const bad = settingsProblem(next);
+    const bad = settingsProblem(next, touched);
     if (bad) throw codedError(bad, `비서 설정 값이 올바르지 않습니다(${bad})`);
     const enabled = enabledIn ?? prev.enabled;
     const agent = enabledIn === true ? inp.agent : prev.agent;
@@ -126,7 +136,7 @@ async function saveInLine(wsId, input, { now = Date.now() } = {}) {
       morningAt: next.quiet.to, // 아침 묶음 = 조용한 시간 끝
       eveningAt: next.eveningAt,
       quiet: next.quiet,
-      dailyCap: prev.dailyCap,
+      dailyCap: kept(base.dailyCap, prev.dailyCap), // 화면 밖 칸 — 3단계가 쓰는 값
       tz: (fresh ? normalizeTz(inp.tz) : null) ?? prev.tz ?? hostTz() ?? undefined,
     };
     if (!agent) delete out.agent;

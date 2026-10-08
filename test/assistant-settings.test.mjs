@@ -313,6 +313,46 @@ test('A10: 봉인이 맞는 파일에서 저장 — 이 화면이 다루지 않�
   assert.deepEqual(after.mute, [{ id: 'm1', scope: 'from', match: 'a@b.c' }]);
 });
 
+test('R5: 새 버전이 봉인해 저장한 화면 안 칸(이 버전이 받지 않는 값) — 끄기·다른 칸 저장이 막히지 않고, 건드리지 않은 칸은 원래 값 그대로(3차 검수 LOW)', async () => {
+  // 새 버전 기기가 봉인해 쓴 설정: 조용한 시간 없음(시작 = 끝 — 엔진은 "조용한 시간 없음"으로 받는다), 이 버전 선택지 밖의 알림 분·하루 상한
+  const ws = await mkCompany();
+  await put(ws, { enabled: true, agent: 'pepper', tz: 'Asia/Seoul' });
+  const c = await cfgOf(ws);
+  const text = `${JSON.stringify({ ...c, leadMinutes: 45, quiet: { from: '00:00', to: '00:00', calendarAlerts: false }, morningAt: '00:00', dailyCap: 50 }, null, 2)}\n`;
+  await writeFile(cfgPath(ws), text); await updateCompany(ws, () => ({ assistantSeal: C.sealOf(text) }));
+  const off = await put(ws, { enabled: false });
+  assert.equal(off.status, 200, `끄기는 저장값 검증으로 막히지 않는다: ${JSON.stringify(off.data)}`);
+  let a = await cfgOf(ws);
+  assert.deepEqual([a.enabled, 'enabledAt' in a, a.leadMinutes, a.quiet.from, a.quiet.to, a.morningAt, a.dailyCap], [false, false, 45, '00:00', '00:00', '00:00', 50], '끄기는 켬만 바꾸고 나머지는 원래 값');
+  assert.equal((await company(ws)).assistantSeal, C.sealOf(await raw(ws)));
+  const lead = await put(ws, { leadMinutes: 15 });
+  assert.equal(lead.status, 200, JSON.stringify(lead.data));
+  a = await cfgOf(ws);
+  assert.deepEqual([a.leadMinutes, a.quiet.from, a.quiet.to, a.dailyCap], [15, '00:00', '00:00', 50], '보낸 칸만 바뀌고 조용한 시간·하루 상한은 원래 값');
+  const ev2 = await put(ws, { eveningAt: '22:00' });
+  assert.equal(ev2.status, 200, JSON.stringify(ev2.data));
+  assert.deepEqual([(await cfgOf(ws)).eveningAt, (await cfgOf(ws)).quiet.to], ['22:00', '00:00']);
+  const on = await put(ws, { enabled: true, agent: 'wolff' });
+  assert.equal(on.status, 200, `켜기·바꾸기도 막히지 않는다: ${JSON.stringify(on.data)}`);
+  assert.deepEqual([(await cfgOf(ws)).enabled, (await cfgOf(ws)).quiet.from], [true, '00:00']);
+  for (const [body, code] of [[{ leadMinutes: 7 }, 'assistant_lead_invalid'], [{ eveningAt: '25:00' }, 'assistant_time_invalid'], [{ quiet: { from: '00:00' } }, 'assistant_quiet_empty']]) {
+    const r = await put(ws, body);
+    assert.deepEqual([r.status, r.data.errorCode], [400, code], `보낸 칸은 그대로 검증한다: ${JSON.stringify(body)}`);
+  }
+});
+
+test('R6: 켤 때 다른 회사 끄기는 봉인이 맞는 켜짐만 — 봉인 없이 심은 다른 회사 파일은 바이트 그대로·봉인도 안 생김, 그 회사를 나중에 켜도 심은 메일 보기를 이어받지 않는다(3차 검수 LOW)', async () => {
+  const p = await mkCompany({ name: '회사 P' });
+  const x = await mkCompany({ name: '회사 X' });
+  await agentWrites(p, { enabled: true, agent: 'pepper', watch: { calendar: true, mail: true } });
+  const planted = await raw(p);
+  assert.equal((await put(x, { enabled: true, agent: 'pepper', tz: 'Asia/Seoul' })).status, 200);
+  assert.equal(await raw(p), planted, '봉인 없는 다른 회사 파일은 건드리지 않는다');
+  assert.equal('assistantSeal' in (await company(p)), false, '그 파일을 꺼짐으로 봉인하지 않는다');
+  assert.equal((await put(p, { enabled: true, agent: 'pepper', tz: 'Asia/Seoul' })).status, 200);
+  assert.equal((await cfgOf(p)).watch.mail, false, '나중에 켜도 심은 메일 보기는 기본값(꺼짐)');
+});
+
 test('V3: 동기화로 assistant.json이 먼저 오고 company.json 봉인이 늦게 옴 — 그 사이 틱은 꺼짐(호출·쓰기 0), 봉인이 오면 켜짐', async () => {
   const src = await mkCompany();
   await put(src, { enabled: true, agent: 'pepper', tz: 'Asia/Seoul' });
