@@ -16,6 +16,8 @@ export const UPDATE_NOTES = Object.freeze({
     'updates.note.phoneScreen', 'updates.note.errorText', 'updates.note.msgrCard']),
   // 근거 PR — cliStandalone: #843(맥·윈도우 단독 설치·argo uninstall)·#845(--version) / msgrCommands: #837 / officeBriefing: #838
   '0.1.97': Object.freeze(['updates.note.cliStandalone', 'updates.note.msgrCommands', 'updates.note.officeBriefing']),
+  // 근거 PR — routineVisible: #854 / gpt61Sol: #855 / msgrRunnerYield: #856
+  '0.1.98': Object.freeze(['updates.note.routineVisible', 'updates.note.gpt61Sol', 'updates.note.msgrRunnerYield']),
 });
 
 export function stableVersion(value) {
