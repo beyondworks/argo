@@ -72,8 +72,8 @@ function stubs(dir, { lingerExit = 0, systemctlExit = 0 } = {}) {
   writeFileSync(lc, `#!/bin/sh\necho "loginctl $*" >> "${log}"\nif [ "$1" = show-user ]; then if [ -f "${on}" ]; then echo Linger=yes; else echo Linger=no; fi; exit 0; fi\nif [ ${lingerExit} = 0 ]; then touch "${on}"; fi\nexit ${lingerExit}\n`); chmodSync(lc, 0o755);
   return log;
 }
-function serviceInstall(args, { lingerExit = 0, systemctlExit = 0 } = {}) {
-  const base = join(tmpdir(), `argo-svc-${process.pid}-${Math.random().toString(36).slice(2)}`);
+async function serviceInstall(args, { lingerExit = 0, systemctlExit = 0 } = {}) {
+  const base = await mkdtemp(join(tmpdir(), 'argo-svc-')); // 테스트 끝에 지워진다(helpers/tmp.mjs)
   const home = join(base, 'home'); mkdirSync(join(home, 'Library', 'LaunchAgents'), { recursive: true });
   const log = stubs(join(base, 'bin'), { lingerExit, systemctlExit });
   const env = baseEnv({ HOME: home, USER: 'crew', ARGO_CLI_HOME: join(base, 'cli'), ARGO_ROOT: join(base, 'root'), PATH: `${join(base, 'bin')}:${process.env.PATH}` });
@@ -85,30 +85,30 @@ const runArgs = (body) => (process.platform === 'darwin'
   ? [...body.matchAll(/<string>([^<]*)<\/string>/g)].map((m) => m[1]).filter((v) => v === 'run' || v.startsWith('--'))
   : (body.match(/^ExecStart=.*$/m)?.[0] ?? '').split(' ').slice(2));
 
-test('argo service install --standby — 상주 파일의 실행 인자가 run --standby다', { skip: process.platform === 'win32' && '윈도우는 서비스 등록 미지원' }, () => {
-  const { r, body, calls } = serviceInstall(['install', '--standby']);
+test('argo service install --standby — 상주 파일의 실행 인자가 run --standby다', { skip: process.platform === 'win32' && '윈도우는 서비스 등록 미지원' }, async () => {
+  const { r, body, calls } = await serviceInstall(['install', '--standby']);
   assert.equal(r.status, 0, r.stderr + r.stdout);
   assert.deepEqual(runArgs(body), ['run', '--standby']);
   assert.match(calls, process.platform === 'darwin' ? /launchctl bootstrap/ : /systemctl --user enable --now argo-cli\.service/);
   assert.match(r.stdout, /예비/, '등록 안내가 예비 역할을 말한다');
 });
 
-test('argo service install(기본) — 종전대로 run만(우선 기기)', { skip: process.platform === 'win32' && '윈도우는 서비스 등록 미지원' }, () => {
-  const { r, body } = serviceInstall(['install']);
+test('argo service install(기본) — 종전대로 run만(우선 기기)', { skip: process.platform === 'win32' && '윈도우는 서비스 등록 미지원' }, async () => {
+  const { r, body } = await serviceInstall(['install']);
   assert.equal(r.status, 0, r.stderr + r.stdout);
   assert.deepEqual(runArgs(body), ['run']);
 });
 
-test('리눅스: linger를 켜지 못하면(관리자 권한 필요) 관리자 명령을 안내한다 — 조용히 넘어가면 로그아웃 때 상주가 꺼진다', { skip: process.platform !== 'linux' && 'systemd 사용자 서비스는 리눅스 전용' }, () => {
-  const fail = serviceInstall(['install', '--standby'], { lingerExit: 1 });
+test('리눅스: linger를 켜지 못하면(관리자 권한 필요) 관리자 명령을 안내한다 — 조용히 넘어가면 로그아웃 때 상주가 꺼진다', { skip: process.platform !== 'linux' && 'systemd 사용자 서비스는 리눅스 전용' }, async () => {
+  const fail = await serviceInstall(['install', '--standby'], { lingerExit: 1 });
   assert.equal(fail.r.status, 0);
   assert.match(fail.r.stdout + fail.r.stderr, /sudo loginctl enable-linger crew/);
-  const ok = serviceInstall(['install', '--standby'], { lingerExit: 0 });
+  const ok = await serviceInstall(['install', '--standby'], { lingerExit: 0 });
   assert.doesNotMatch(ok.r.stdout + ok.r.stderr, /sudo loginctl enable-linger/);
 });
 
-test('리눅스: 사용자 systemd에 닿지 못하면(su로 바꾼 셸 등) 실패로 끝내고 SSH 로그인·linger·XDG_RUNTIME_DIR을 안내한다', { skip: process.platform !== 'linux' && 'systemd 사용자 서비스는 리눅스 전용' }, () => {
-  const r = serviceInstall(['install', '--standby'], { lingerExit: 1, systemctlExit: 1 });
+test('리눅스: 사용자 systemd에 닿지 못하면(su로 바꾼 셸 등) 실패로 끝내고 SSH 로그인·linger·XDG_RUNTIME_DIR을 안내한다', { skip: process.platform !== 'linux' && 'systemd 사용자 서비스는 리눅스 전용' }, async () => {
+  const r = await serviceInstall(['install', '--standby'], { lingerExit: 1, systemctlExit: 1 });
   assert.equal(r.r.status, 1);
   assert.match(r.r.stderr, /systemctl --user/);
   assert.match(r.r.stderr, /sudo loginctl enable-linger crew/);
