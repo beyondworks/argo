@@ -42,8 +42,10 @@ curl -fsSL https://github.com/beyondworks/argo-agent/releases/latest/download/in
 
 Installs the latest server build under `~/.argo-selfhost` and registers the `argo`
 command (`~/.local/bin/argo`). Sign in with `argo`, then `argo service install` to keep it
-running. `--local` installs the loopback-only local web server instead. Re-run the same
-command to update. Details & security defaults: [docs/selfhost.md](docs/selfhost.md).
+running. To have the server take over only while your Mac is off (and hand back when it
+wakes), use `argo service install --standby` instead. `--local` installs the loopback-only
+local web server instead. Re-run the same command to update. Details & security defaults:
+[docs/selfhost.md](docs/selfhost.md).
 
 **Terminal-only `argo` on macOS · Windows (from v0.1.97):** no desktop app needed — the asset
 bundles its own Node.js and is checked against a SHA-256 file before install.

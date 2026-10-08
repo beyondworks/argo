@@ -61,21 +61,21 @@ test('argo run(기본) — 종전대로 우선 기기(preferred 표지)', { time
 
 /** 가짜 launchctl·systemctl·loginctl — 받은 인자를 로그에 적는다. loginctl enable-linger는 lingerExit로 끝나고(0이면 켜짐 표시 파일을 만든다),
     show-user는 그 표시 파일로 Linger=yes/no를 답한다(관리자 권한이 없어 켜지 못하는 SSH 셸 흉내). */
-function stubs(dir, { lingerExit = 0 } = {}) {
+function stubs(dir, { lingerExit = 0, systemctlExit = 0 } = {}) {
   mkdirSync(dir, { recursive: true });
   const log = join(dir, 'calls.log'); const on = join(dir, 'linger.on');
-  for (const name of ['launchctl', 'systemctl']) {
+  for (const [name, code] of [['launchctl', 0], ['systemctl', systemctlExit]]) {
     const f = join(dir, name);
-    writeFileSync(f, `#!/bin/sh\necho "${name} $*" >> "${log}"\nexit 0\n`); chmodSync(f, 0o755);
+    writeFileSync(f, `#!/bin/sh\necho "${name} $*" >> "${log}"\nexit ${code}\n`); chmodSync(f, 0o755);
   }
   const lc = join(dir, 'loginctl');
   writeFileSync(lc, `#!/bin/sh\necho "loginctl $*" >> "${log}"\nif [ "$1" = show-user ]; then if [ -f "${on}" ]; then echo Linger=yes; else echo Linger=no; fi; exit 0; fi\nif [ ${lingerExit} = 0 ]; then touch "${on}"; fi\nexit ${lingerExit}\n`); chmodSync(lc, 0o755);
   return log;
 }
-function serviceInstall(args, { lingerExit = 0 } = {}) {
+function serviceInstall(args, { lingerExit = 0, systemctlExit = 0 } = {}) {
   const base = join(tmpdir(), `argo-svc-${process.pid}-${Math.random().toString(36).slice(2)}`);
   const home = join(base, 'home'); mkdirSync(join(home, 'Library', 'LaunchAgents'), { recursive: true });
-  const log = stubs(join(base, 'bin'), { lingerExit });
+  const log = stubs(join(base, 'bin'), { lingerExit, systemctlExit });
   const env = baseEnv({ HOME: home, USER: 'crew', ARGO_CLI_HOME: join(base, 'cli'), ARGO_ROOT: join(base, 'root'), PATH: `${join(base, 'bin')}:${process.env.PATH}` });
   const r = spawnSync(process.execPath, [BIN, 'service', ...args], { env, encoding: 'utf8' });
   const file = process.platform === 'darwin' ? join(home, 'Library', 'LaunchAgents', 'com.beyondworks.argo-cli.plist') : join(home, '.config', 'systemd', 'user', 'argo-cli.service');
@@ -105,4 +105,12 @@ test('리눅스: linger를 켜지 못하면(관리자 권한 필요) 관리자 �
   assert.match(fail.r.stdout + fail.r.stderr, /sudo loginctl enable-linger crew/);
   const ok = serviceInstall(['install', '--standby'], { lingerExit: 0 });
   assert.doesNotMatch(ok.r.stdout + ok.r.stderr, /sudo loginctl enable-linger/);
+});
+
+test('리눅스: 사용자 systemd에 닿지 못하면(su로 바꾼 셸 등) 실패로 끝내고 SSH 로그인·linger·XDG_RUNTIME_DIR을 안내한다', { skip: process.platform !== 'linux' && 'systemd 사용자 서비스는 리눅스 전용' }, () => {
+  const r = serviceInstall(['install', '--standby'], { lingerExit: 1, systemctlExit: 1 });
+  assert.equal(r.r.status, 1);
+  assert.match(r.r.stderr, /systemctl --user/);
+  assert.match(r.r.stderr, /sudo loginctl enable-linger crew/);
+  assert.match(r.r.stderr, /XDG_RUNTIME_DIR/);
 });
