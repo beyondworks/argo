@@ -426,11 +426,14 @@ m.register(Ctx())
 assert m._PLUGIN_VERSION == '0.3.0'
 assert reg['tool']['name'] == 'argo_request_approval' and reg['tool']['toolset'] == 'argo_msgr' and reg['tool']['schema']['parameters']['required'] == ['title']
 assert 'argo_request_approval' in reg['platform']['platform_hint']
+hint = reg['platform']['platform_hint']
+assert 'MEDIA:/absolute/path' in hint and 'own line' in hint, '파일 보내기는 MEDIA:/절대경로 한 줄(메시지 3799: attachment: 링크로 적어 첨부 0건)'
+assert 'attachment:' in hint and 'GitHub' in hint, '서버 경로·attachment: 링크·외부 저장소 링크로 대신 주지 말라는 줄'
 class Old:
     def register_platform(self, **kw): reg['old'] = kw
 m._PLUGIN_VERSION = ''
 m.register(Old())
-assert m._PLUGIN_VERSION == '0.3.3', '옛 Hermes(manifest·register_tool 없음)도 plugin.yaml에서 버전을 읽고 연결은 된다'
+assert m._PLUGIN_VERSION == '0.3.4', '옛 Hermes(manifest·register_tool 없음)도 plugin.yaml에서 버전을 읽고 연결은 된다'
 `));
 
 test('폴 루프 — 이벤트는 처리하되 offset은 메시지만 올리고, getUpdates는 events=1로 부른다', () => run(String.raw`
