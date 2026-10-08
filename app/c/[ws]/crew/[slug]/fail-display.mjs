@@ -11,3 +11,11 @@ export function isNoRunnerFailure(text) {
   const s = String(text ?? '');
   return NO_RUNNER.some((re) => re.test(s));
 }
+
+/** 실패 코드 → 안내 사전 키(없으면 null — 호출부가 종전 원문 표시 chat.turnFailed로 떨어진다). has = 사전에 그 키가 있는가(i18n.jsx hasMsg).
+    다른 기기의 새 버전이 남긴 코드(이 버전 사전에 없는 키)를 t()가 키 글자 그대로 보이던 것을 막는다(2026-10-09 검수 LOW — context_exceeded·no_runner가 같은 모양). */
+export function failCodeKey(code, has) {
+  if (!code || code === 'unknown') return null;
+  const key = `chat.fail.${code}`;
+  return has(key) ? key : null;
+}

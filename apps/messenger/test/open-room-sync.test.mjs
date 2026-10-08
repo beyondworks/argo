@@ -79,11 +79,14 @@ const waiting = (msgs) => awaitingReplies({ msgs, uid: 'me', isDm: true, roomCre
 
 // u:가 다시 붙은 회차(uRejoin) — 셸이 u: 구독의 'up'마다 올린다(realtime-wiring.test.mjs). 대화 화면은 글 방송이 u:로만 오는 방에서만 따라잡는다.
 const uEffectSrc = between('useEffect(() => { if (uRejoinSeen.current === uRejoin) return;', ', [uRejoin]);').slice('useEffect('.length);
+// 되찾기(recover) = 새 글 따라잡기 + 늦은 첨부 다시 읽기(late-attach-wiring.test.mjs) — 본문은 App.jsx 그대로, 늦은 첨부는 횟수만 센다
+const recoverSrc = between('const recover = useCallback(', ', [catchUp, lateAtts]);').slice('const recover = useCallback('.length);
 const uShell = ({ kind = 'dm', isPersonal = false } = {}) => {
   const s = channelShell({ server: [mine(1), crew(2)], have: [mine(1)] });
-  const seen = { current: 0 }; let approvals = 0;
-  const run = (uRejoin) => build(uEffectSrc, { uRejoin, uRejoinSeen: seen, isPersonal, channel: { id: 'ch', kind }, catchUp: s.catchUp, loadApprovals: async () => { approvals++; } })();
-  return { ...s, run, approvals: () => approvals };
+  const seen = { current: 0 }; let approvals = 0; let lateReads = 0;
+  const recover = build(recoverSrc, { catchUp: s.catchUp, lateAtts: async () => { lateReads++; } });
+  const run = (uRejoin) => build(uEffectSrc, { uRejoin, uRejoinSeen: seen, isPersonal, channel: { id: 'ch', kind }, catchUp: s.catchUp, recover, loadApprovals: async () => { approvals++; } })();
+  return { ...s, run, approvals: () => approvals, lateReads: () => lateReads };
 };
 test('경우 1 — 조직 에이전트 1:1(비공개)에서 재연결 중 u: 방송을 놓친 답: u:가 다시 붙으면 한 번 따라잡아 "준비 중"이 사라진다', async () => {
   for (const kind of ['dm', 'private']) {
@@ -94,9 +97,9 @@ test('경우 1 — 조직 에이전트 1:1(비공개)에서 재연결 중 u: 방
     s.run(1); await tick(); await tick();
     assert.deepEqual(s.ids(), [1, 2], kind);
     assert.deepEqual(waiting(s.live.current.msgs), [], `${kind}: 답이 보이고 대기 표시가 사라진다`);
-    assert.deepEqual([s.asked.length, s.approvals()], [1, 1], `${kind}: 글 조회 1 + 결재 1(결재 방송도 u:로 온다)`);
+    assert.deepEqual([s.asked.length, s.approvals(), s.lateReads()], [1, 1, 1], `${kind}: 글 조회 1 + 결재 1(결재 방송도 u:로 온다) + 늦은 첨부 되찾기 1`);
     s.run(1); await tick();
-    assert.deepEqual([s.asked.length, s.approvals()], [1, 1], `${kind}: 같은 회차로는 다시 안 읽는다`);
+    assert.deepEqual([s.asked.length, s.approvals(), s.lateReads()], [1, 1, 1], `${kind}: 같은 회차로는 다시 안 읽는다`);
   }
 });
 
@@ -104,7 +107,7 @@ test('경우 17 — 조직 공개 채널·개인 방은 u: 다시 붙음에 따�
   for (const o of [{ kind: 'public' }, { kind: 'dm', isPersonal: true }, { kind: 'private', isPersonal: true }]) {
     const s = uShell(o);
     s.run(0); s.run(1); s.run(2); await tick(); await tick();
-    assert.deepEqual([s.asked.length, s.approvals()], [0, 0], JSON.stringify(o));
+    assert.deepEqual([s.asked.length, s.approvals(), s.lateReads()], [0, 0, 0], JSON.stringify(o));
   }
 });
 

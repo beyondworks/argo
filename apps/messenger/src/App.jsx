@@ -79,6 +79,7 @@ import { searchView } from './search-view.mjs';
 import { deliveryCardView } from './delivery-card.mjs';
 import { friendlyErr, toastError } from './error-toast.mjs'; // 아는 서버 코드 → 문구, 토스트는 원문을 거른다(UXM-05)
 import { messageShape } from './attach-only.mjs';
+import { createLateAttach, mergeAttachments } from './late-attach.mjs'; // 놓친 'attach' 방송 되찾기(C-a 인접 경로)
 import { appBackStack, rootBackAction } from './back-stack.mjs'; import { useBackClose } from './use-back-close.js'; // Android 뒤로 — 열린 시트·팝업부터 닫기(MSG-10) // 첨부만 보낸 글 — 올리는 중 자리표시·거둔 글 숨김(MSG-06)
 import { watchOnline } from './connection.mjs';
 import { selfMember, personalSelfName } from './self-member.mjs';
@@ -6029,7 +6030,7 @@ function Channel({ movedBar = null, onCrewJoined = null, onCrewFailed = null, on
       q(supabase.from('msgr_reactions').select('message_id, user_id, emoji').in('message_id', ids)),
     ]);
     // 첨부는 지우지 않으므로(보존 규칙) 이미 보이는 첨부를 빈 결과로 덮지 않는다 — 첨부 등록 전에 나간 조회가 attach 방송의 재조회(reloadAtts)보다 늦게 도착하는 경합(검수 LOW)
-    setAtts((cur) => { const n = { ...cur }; const got = {}; for (const r of a) (got[r.message_id] ??= []).push(r); for (const id of ids) n[id] = got[id] ?? (cur[id]?.length ? cur[id] : []); return n; });
+    setAtts((cur) => mergeAttachments(cur, ids, a));
     setReacts((cur) => { const n = { ...cur }; for (const id of ids) n[id] = []; for (const r of rx) (n[r.message_id] ??= []).push(r); return n; });
   }, []);
   // 이전 기록(스크롤백) — 가장 오래된 id 앞을 한 페이지씩. 위로 스크롤(120px 안)하거나 맨 위 버튼으로.
@@ -6090,6 +6091,15 @@ function Channel({ movedBar = null, onCrewJoined = null, onCrewFailed = null, on
     await hydrate(list.map((m) => m.id));
   }, [chId, hydrate]);
   const catchUp = useMemo(() => createCatchUp(() => load(live.current.msgs?.at(-1)?.id ?? 0)), [load]); // 놓친 글 따라잡기는 한 번에 하나 — 겹친 요청은 끝난 뒤 한 번(검수 L3: 방송마다 겹쳐 '최신으로 옮겼다'가 여러 번)
+  // 늦은 첨부 되찾기(late-attach.mjs) — 방송을 놓쳤을 수 있는 때(다시 붙음 rt_up·u: 다시 붙음·끊긴 동안의 보정 조회)에만. 이미 읽은 1시간 안 일반 글의 첨부를 한 번 읽는다
+  // (첨부 수와 관계없이 — 여러 파일 답은 첫 파일만 보인 채 끊길 수 있다, 1차 검수 M). 대상이 없으면 요청 0. 글 방송마다 부르지 않는다(따라잡기와 묶지 않은 이유).
+  // 다시 붙음은 늘 읽고, 끊긴 동안의 보정 조회는 새 글이 대상에 들어왔거나 1분이 지났을 때만 읽는다(같은 첨부를 10초마다 받지 않게). 겹친 신호는 한 번에 하나.
+  const lateAtts = useMemo(() => createLateAttach({
+    snapshot: () => live.current,
+    read: (ids) => q(supabase.from('msgr_attachments').select('id, message_id, storage_path, name, mime, bytes').in('message_id', ids)),
+    apply: (ids, rows) => setAtts((cur) => mergeAttachments(cur, ids, rows)), // 합집합 — 보이는 첨부는 줄지 않는다
+  }), []);
+  const recover = useCallback(({ rejoined = false } = {}) => { catchUp().catch(() => {}); lateAtts({ rejoined }).catch(() => {}); }, [catchUp, lateAtts]); // 놓친 방송 되찾기 — 새 글 + 늦은 첨부
   // 결재 카드는 메시지 도착 경로에서 분리한다. 전에는 글 한 건이 올 때마다 채널의 결재 전량을
   // 다시 읽었다(방송 1건 = 결재 조회 1회). 이제 채널을 열 때와 approval 방송이 올 때만 읽는다.
   const loadApprovals = useCallback(async () => {
@@ -6104,7 +6114,7 @@ function Channel({ movedBar = null, onCrewJoined = null, onCrewFailed = null, on
   }, [catchUp]); // eslint-disable-line react-hooks/exhaustive-deps
   const [reacts, setReacts] = useState({}); const [divider, setDivider] = useState(0); // 반응(메시지별)·새 메시지 구분선(열 때의 읽음 커서)
   const reloadReacts = useCallback(async (id) => { const rx = await q(supabase.from('msgr_reactions').select('message_id, user_id, emoji').eq('message_id', id)); setReacts((cur) => ({ ...cur, [id]: rx })); }, []);
-  const reloadAtts = useCallback(async (id) => { const a = await q(supabase.from('msgr_attachments').select('id, message_id, storage_path, name, mime, bytes').eq('message_id', id)); setAtts((cur) => ({ ...cur, [id]: a })); }, []);
+  const reloadAtts = useCallback(async (id) => { const a = await q(supabase.from('msgr_attachments').select('id, message_id, storage_path, name, mime, bytes').eq('message_id', id)); setAtts((cur) => mergeAttachments(cur, [id], a)); }, []); // 합집합 — 여러 파일 답의 방송 다시 읽기가 거꾸로 도착해도 카드가 줄지 않는다(1차 검수 M)
   const reloadMsg = useCallback(async (id) => { const row = await q(supabase.from('msgr_messages').select('id, author_kind, author_user_id, crew_id, kind, body, mentions, reply_to, thread_root, created_at, edited_at, deleted_at, meta, client_msg_id').eq('id', id).maybeSingle()); if (row) setMsgs((cur) => (cur ?? []).map((m) => (m.id === id ? row : m))); }, []);
   const toggleReact = async (m, emoji) => { try { const mine = (reacts[m.id] ?? []).some((r) => r.user_id === uid && r.emoji === emoji); if (mine) await q(supabase.from('msgr_reactions').delete().eq('message_id', m.id).eq('user_id', uid).eq('emoji', emoji)); else await q(supabase.from('msgr_reactions').insert({ message_id: m.id, user_id: uid, emoji })); await reloadReacts(m.id); broadcast?.('reaction', { channel_id: chId, message_id: m.id }); } catch (e) { onError(e.message); } };
   const editMsg = async (m, body) => { try { await q(supabase.from('msgr_messages').update({ body, edited_at: new Date().toISOString() }).eq('id', m.id)); await reloadMsg(m.id); broadcast?.('edit', { channel_id: chId, message_id: m.id }); } catch (e) { onError(e.message); } };
@@ -6125,7 +6135,7 @@ function Channel({ movedBar = null, onCrewJoined = null, onCrewFailed = null, on
       if (event.msgKind === 'approval_card') loadApprovals().catch(() => {});
     }
     if (event.kind === 'rt_down') { rtSeen.current = 0; setRtDown(true); } // 알려진 끊김 — 보정 조회를 켠다
-    if (event.kind === 'rt_up') { setRtDown(false); catchUp().catch(() => {}); loadApprovals().catch(() => {}); } // 다시 붙었다 — 끊긴 동안 놓친 글을 한 번 따라잡고 보정 조회를 끈다
+    if (event.kind === 'rt_up') { setRtDown(false); recover({ rejoined: true }); loadApprovals().catch(() => {}); } // 다시 붙었다 — 끊긴 동안 놓친 글·늦은 첨부를 한 번 따라잡고 보정 조회를 끈다
     if (event.kind === 'approval' && event.channel_id === chId) { rtSeen.current = Date.now(); loadApprovals().catch(() => {}); catchUp().catch(() => {}); }
     if (event.kind === 'reaction' && event.channel_id === chId && event.message_id) reloadReacts(event.message_id).catch(() => {});
     if (event.kind === 'edit' && event.channel_id === chId && event.message_id) reloadMsg(event.message_id).catch(() => {});
@@ -6197,12 +6207,12 @@ function Channel({ movedBar = null, onCrewJoined = null, onCrewFailed = null, on
   //     서버 셈은 차단한 사람·숨긴 크루의 글을 빼므로 같이 뺀다(SafetyCtx).
   // 둘 다 따라잡기 묶음(createCatchUp)으로 — 도는 중이면 끝난 뒤 한 번. 방을 연 순간은 첫 목록 조회가 다 가져온다.
   const uRejoinSeen = useRef(uRejoin);
-  useEffect(() => { if (uRejoinSeen.current === uRejoin) return; uRejoinSeen.current = uRejoin; if (isPersonal || channel.kind === 'public') return; catchUp().catch(() => {}); loadApprovals().catch(() => {}); }, [uRejoin]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (uRejoinSeen.current === uRejoin) return; uRejoinSeen.current = uRejoin; if (isPersonal || channel.kind === 'public') return; recover({ rejoined: true }); loadApprovals().catch(() => {}); }, [uRejoin]); // eslint-disable-line react-hooks/exhaustive-deps
   const safety = useContext(SafetyCtx);
   useEffect(() => { if (openRoomBehind({ n: serverUnread, msgs, uid, readUpTo: Math.max(divider, readMark.current), blocked: safety.blocked, mutedCrews: safety.mutedCrewIds })) catchUp().catch(() => {}); }, [serverUnread]); // eslint-disable-line react-hooks/exhaustive-deps
   // 보정 조회(10s)는 화면에 보이는 방에서 실시간이 끊겼다고 알려진 동안만 돈다(기능 점검 D2 — 숨겨 둔 방·조용한 방에서 10초마다 글·결재를 읽던 것).
   // 방송이 살아 있으면 새 글은 방송이, 놓친 글은 앞으로 올 때(onForeground)·다시 붙을 때(rt_up)가 따라잡는다.
-  useEffect(() => { if (!onScreen || !rtDown) return undefined; const iv = setInterval(() => { catchUp().catch(() => {}); loadApprovals().catch(() => {}); }, 10_000); return () => clearInterval(iv); }, [onScreen, rtDown, catchUp, lastId]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (!onScreen || !rtDown) return undefined; const iv = setInterval(() => { recover(); loadApprovals().catch(() => {}); }, 10_000); return () => clearInterval(iv); }, [onScreen, rtDown, recover, lastId]); // eslint-disable-line react-hooks/exhaustive-deps — 끊긴 동안 붙은 첨부도(방송이 없다)
   // 첨부·반응이 빈 묶음 메우기 — 빈 것이 있을 때만 조회한다(없으면 요청 0, 검수 #531 M-1)
   useEffect(() => { if (!onScreen) return undefined; const iv = setInterval(() => { const { msgs: ms, atts: at } = live.current; const miss = (ms ?? []).filter((m) => !(m.id in at)).map((m) => m.id); if (miss.length) hydrate(miss).catch(() => {}); }, 10_000); return () => clearInterval(iv); }, [onScreen, hydrate]);
   // 결재 결정(MSG-07) — 0행이면 다시 읽어 이미 결정된 결재는 오류 없이 결과만(연타·다른 사람이 먼저), 대기 중일 때만 권한 없음(최종 판정은 서버 msgr_can_decide).

@@ -174,8 +174,11 @@ export default function Room({ params }) {
       atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
       if (atBottomRef.current) setUnseen(false);
     };
+    // 본문 그림이 늦게 그려져 콘텐츠가 자라도 하단 추종 중이면 따라 내려간다(대화창 그림 — 크루 채팅과 같은 규칙). load는 버블링하지 않아 캡처로.
+    const onLoad = (e) => { if (e.target?.tagName === 'IMG' && atBottomRef.current) endRef.current?.scrollIntoView({ block: 'end' }); };
     el.addEventListener('scroll', onScroll, { passive: true });
-    return () => el.removeEventListener('scroll', onScroll);
+    el.addEventListener('load', onLoad, true);
+    return () => { el.removeEventListener('scroll', onScroll); el.removeEventListener('load', onLoad, true); };
   }, []);
   // 칩은 **실제 증가**에만(검수 D1: 8초 폴이 매번 새 배열을 넣어 내용 동일에도 켜졌다 — 거짓 신호).
   // 보관 열람 중엔 상태를 만들지 않는다(D2: viewing 중 쌓인 stale 칩). 하단이면 명시 해제(D3).
@@ -573,7 +576,7 @@ export default function Room({ params }) {
                   {m.via?.task && (
                     <div style={{ fontSize: 11, color: 'var(--fg-3)', marginBottom: 4, lineHeight: 1.5 }}>{m.via.task}</div>
                   )}
-                  <div style={{ fontSize: 13.5 }}><Markdown text={m.text} wsId={ws} /></div>
+                  <div style={{ fontSize: 13.5 }}><Markdown text={m.text} wsId={ws} ver={m.ts} /></div>
                   {/* 산출물 칩 — 크루 채팅과 같은 컴포넌트(바로 보기=눈 토글, 바로 가기=칩 클릭). 방 메시지의 artifacts는
                       room.mjs가 chat() 결과에서 실어 저장한다(개인 스레드에만 기록되던 비대칭 해소). 보관 회의 열람도 같은 경로. */}
                   {m.artifacts?.length > 0 && <ArtifactChips ws={ws} rels={m.artifacts} />}

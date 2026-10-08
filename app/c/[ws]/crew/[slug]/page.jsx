@@ -12,7 +12,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Tabs, useRememberedTab, Avatar, Icon, Markdown, ArgoSpinner, Spinner, Skeleton, DangerModal, ConfirmModal, InputModal, useScrollLock, api, imeGuard } from '../../../../ui';
 import { PICK_ORDER } from '../../../../runner-connect';
-import { useLang, stageLabel, fmtMsgTime } from '../../../../i18n';
+import { useLang, stageLabel, fmtMsgTime, hasMsg } from '../../../../i18n';
 import { uploadAttachments } from '../../../../lib/upload-files.mjs';
 import { failureReason } from '../../../../lib/error-text.mjs'; // 실패 이유 — 빈 이유·브라우저 원문 없이(UL5)
 import { CrewEditModal } from '../../crew-edit';
@@ -26,7 +26,7 @@ import { matchSlash } from '../../slash-match.mjs';
 import { useSessionMention, SessionMentionPanel, SessionMsgCard, isSessionCard } from './session-msg.jsx'; // 세션 메시지 — @크루 자동 완성·접힌 카드
 import { parseSessionTarget } from './session-msg-parse.mjs';
 import { mergePolledThread, makePollApplier, startThreadPolls } from './thread-poll.mjs'; // 두 폴의 같은 반영 경로(F2·F2+)·방을 바꾼 뒤 도착한 응답은 버린다(UL3)
-import { isNoRunnerFailure } from './fail-display.mjs'; // '러너 없음' 실패 → 사전 문구 + 설정 링크(UX-A02)
+import { isNoRunnerFailure, failCodeKey } from './fail-display.mjs'; // '러너 없음' 실패 → 사전 문구 + 설정 링크(UX-A02)
 import { gistLabel } from '../../../../lib/gist-display.mjs'; // 메신저 머리말을 뗀 요약(UX-A08)
 import { AssistantSection } from './assistant-section.jsx'; // 능동 비서 켜기·기본값·상태(설계 13절) — 카드 "비서" 탭
 
@@ -472,6 +472,20 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     const ro = new ResizeObserver(recalcSpacer);
     ro.observe(el);
     return () => ro.disconnect();
+  }, [recalcSpacer]);
+  // 본문 그림이 늦게 그려지면 콘텐츠가 그 높이만큼 자란다(대화창 그림, 2026-10-08 격리 실측: 폴로 온 답의 새 그림이 로드되며 끝 문장이
+  // 146px 화면 아래로 밀림) — 위 효과들은 스레드 배열·.thread 크기 변화만 보므로 못 잡는다. load는 버블링하지 않아 캡처로 받고,
+  // 추종 규칙은 위와 같다(하단 근처일 때만·아래 방향만). 위로 올려 읽는 중이면 끌어내리지 않는다.
+  useEffect(() => {
+    const el = threadRef.current;
+    if (!el) return;
+    const onLoad = (e) => {
+      if (e.target?.tagName !== 'IMG') return;
+      recalcSpacer();
+      if (atBottomRef.current) el.scrollTop = Math.max(el.scrollTop, contentBottom(el) - el.clientHeight);
+    };
+    el.addEventListener('load', onLoad, true);
+    return () => el.removeEventListener('load', onLoad, true);
   }, [recalcSpacer]);
 
   // 폴 응답 반영 — 3초 준실시간 폴과 2.5초 진행 폴이 **같은 경로**를 쓴다(F2+, 2026-10-05: 진행 폴이 본문을 버리고 mtime만
@@ -1015,10 +1029,10 @@ export default function CrewChat({ params, embedded = false, onClose }) {
               {m.failed && !viewing && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 5, fontSize: 12, color: 'var(--danger)', maxWidth: '100%', flexWrap: 'wrap' }}>
                   {/* failed는 코드/원문 — 표시 문구는 여기서 사전(t)으로. 서버 보존분·로컬 사본 공통 */}
-                  {/* failedCode(error-class.mjs 표) — 원문 대신 "할 일"을 먼저(불변식 C). 코드 없음/미상은 종전 원문 표시 */}
+                  {/* failedCode(error-class.mjs 표) — 원문 대신 "할 일"을 먼저(불변식 C). 코드 없음/미상·이 버전 사전에 없는 코드는 종전 원문 표시 */}
                   {/* 코드 안내는 행동 지시가 뒤에 오므로 줄바꿈 허용(검수 LOW: EN 한 줄 말줄임이 "switch to an API key in S…"에서 잘림) */}
                   {/* 원문도 말줄임 대신 줄바꿈(최대 3줄) — 한 줄 말줄임이 다음 행동("연결한 뒤 다시 …")을 잘랐다(UX-A02). 전체 원문은 title */}
-                  <span style={{ minWidth: 0, flex: '1 1 200px', overflow: 'hidden', overflowWrap: 'anywhere', whiteSpace: 'normal', ...(m.cancellationIncomplete || (m.failedCode && m.failedCode !== 'unknown') || isNoRunnerFailure(m.failed) ? {} : { display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical' }) }} title={m.failed}>{m.cancellationIncomplete ? t('chat.cancelIncomplete') : m.aborted ? t('chat.aborted') : (m.failedCode && m.failedCode !== 'unknown') ? t(`chat.fail.${m.failedCode}`, { msg: m.failed }) : isNoRunnerFailure(m.failed) ? t('chat.fail.no_runner') : t('chat.turnFailed', { msg: m.failed })}</span>
+                  <span style={{ minWidth: 0, flex: '1 1 200px', overflow: 'hidden', overflowWrap: 'anywhere', whiteSpace: 'normal', ...(m.cancellationIncomplete || failCodeKey(m.failedCode, hasMsg) || isNoRunnerFailure(m.failed) ? {} : { display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical' }) }} title={m.failed}>{m.cancellationIncomplete ? t('chat.cancelIncomplete') : m.aborted ? t('chat.aborted') : failCodeKey(m.failedCode, hasMsg) ? t(failCodeKey(m.failedCode, hasMsg), { msg: m.failed }) : isNoRunnerFailure(m.failed) ? t('chat.fail.no_runner') : t('chat.turnFailed', { msg: m.failed })}</span>
                   {!m.aborted && isNoRunnerFailure(m.failed) && (
                     <Link href={`/c/${ws}/settings?ai=1`} className="btn sm" style={{ flex: 'none', textDecoration: 'none' }}>{t('chat.fail.openAi')}</Link>
                   )}
@@ -1063,7 +1077,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
                     if (sel) { e.clipboardData.setData('text/plain', sel); e.preventDefault(); }
                   }}>
                   {/* 루프 회차 답 끝의 판정 표지(LOOP: …)는 엔진용 — 화면에서만 뺀다(저장·판정 그대로) */}
-                  <Markdown text={crewReplyText(all[i - 1], m)} wsId={ws} />
+                  <Markdown text={crewReplyText(all[i - 1], m)} wsId={ws} ver={m.ts} />
                   {m.handover && (
                     <Link className="memo-chip" href={`/c/${ws}/vault?doc=${encodeURIComponent(m.handover.rel)}`}>
                       <Icon name="memory" size={12} />

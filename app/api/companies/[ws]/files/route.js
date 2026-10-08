@@ -1,4 +1,4 @@
-import { readFile, realpath } from 'node:fs/promises';
+import { readFile, realpath, stat } from 'node:fs/promises';
 import { join, normalize, sep } from 'node:path';
 import { paths } from '../../../../../src/workspace.mjs';
 import { guardCompany } from '../../../../auth.mjs';
@@ -21,6 +21,12 @@ const MIME = {
   // 문서가 vault/files/에 .html로 저장되는 투입 경로 실재). octet-stream 폴백 = 다운로드로 끝난다.
 };
 
+/** If-None-Match(쉼표 목록·약한 비교 W/·*) — 같은 바이트를 가진 사본이면 true. */
+function etagMatches(header, etag) {
+  if (!header) return false;
+  return header.split(',').some((v) => { const t = v.trim().replace(/^W\//, ''); return t === '*' || t === etag; });
+}
+
 export async function GET(req, { params }) {
   const { ws } = await params;
   const denied = await guardCompany(ws); if (denied) return denied;
@@ -40,9 +46,17 @@ export async function GET(req, { params }) {
     if (!real.startsWith((await realpath(vault)) + sep)) {
       return new Response('잘못된 경로', { status: 400 });
     }
-    const buf = await readFile(real);
+    // 캐시 — 매번 재확인(no-cache) + 파일 크기·수정 시각으로 만든 ETag. 같으면 304(본문 없음, 로컬이라 왕복 비용은 작다).
+    // 종전 max-age=86400은 같은 경로를 에이전트가 덮어쓰면("시안 수정해줘") 대화창 그림·크게 보기·새로고침·데스크톱 저장이 하루 동안
+    // 옛 그림이었다(IMG 1차 검수 MEDIUM, 격리 실측 2026-10-09: 디스크 99B인데 새 답 그림·기본 fetch는 759B 옛 그림).
+    const st = await stat(real, { bigint: true });
+    const etag = `"${st.size.toString(16)}-${st.mtimeNs.toString(16)}"`;
     const ext = norm.split('.').pop().toLowerCase();
-    const headers = { 'content-type': MIME[ext] ?? 'application/octet-stream', 'cache-control': 'private, max-age=86400' };
+    const headers = { 'content-type': MIME[ext] ?? 'application/octet-stream', 'cache-control': 'private, no-cache', etag };
+    if (etagMatches(req.headers.get('if-none-match'), etag)) {
+      return new Response(null, { status: 304, headers: { 'cache-control': headers['cache-control'], etag } });
+    }
+    const buf = await readFile(real);
     // download=1 — 브라우저 강제 다운로드(제보 2026-08-07). a[download] 속성만으론 html 등
     // 렌더 가능 타입이 탭에서 열리는 브라우저·확장 조합이 있어 서버가 attachment로 못박는다.
     // filename*는 RFC 5987(비ASCII 파일명 — 한글 산출물명 다수). 미리보기(썸네일·iframe)는

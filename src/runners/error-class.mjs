@@ -27,18 +27,39 @@ export const OVERLOADED_RE = /\boverloaded\b|\b529\b|\b503\b|connection closed m
 // 원문 전체의 ENOENT·command not found를 보면 크루 셸 출력이 섞인 인증 만료·한도 실패까지 덮었다(K09).
 export const CLI_MISSING_RE = /러너 CLI를 찾지 못했습니다|runner cli not found/i;
 export const MODEL_UNAVAILABLE_RE = /does not support this model|model not found|unknown model|requested entity was not found|no such model|invalid model|not supported when using codex with a chatgpt account/i;
+// 컨텍스트 길이 초과 — 벤더마다 문구가 다르다(상태도 400·413, Responses 스트림 실패는 502로 온다): Anthropic "prompt is too long: N tokens > L maximum"·
+// "input length and `max_tokens` exceed context limit: N + M > L"·413 request_too_large, xAI "This model's maximum prompt length is L but the request contains N tokens.", OpenRouter·OpenAI 호환 "maximum context length is L tokens"·
+// "context_length_exceeded", OpenAI Responses "Your input exceeds the context window of this model", Gemini "The input token count (N) exceeds the maximum number of
+// tokens allowed (L)", z.ai(GLM) 1261 "Prompt too long"·"tokens in request more than max tokens allowed", Moonshot(Kimi) "exceeded model token limit".
+// 출처: Gemini는 Google 개발자 포럼 원문, z.ai 1261은 docs.z.ai 오류 코드 표, 나머지는 opencode packages/llm/src/provider-error.ts의 벤더 문구 목록(2026-10-08 확인).
+// 실벤더에 쏴서 받은 원문 대조는 아직 없다(제보 사용자의 원문도 받지 못함) — 실원문이 다르면 아래 낱말에 한 줄 더한다.
+// 네이티브 엔진이 이 문구로 턴 안 예산 재시도(engine/turn-budget.mjs)를 하고, 그래도 실패하면 '컨텍스트 한도 초과' 머리 문구로 끝낸다(아래 두 낱말이 그 머리).
+export const CONTEXT_EXCEEDED_RE = /prompt (?:is )?too long|request_too_large|context[_ ]length[_ ]exceeded|model_context_window_exceeded|maximum (?:prompt|context) length is \d|exceeds? (?:the )?(?:model'?s )?(?:maximum )?context (?:window|length|limit)|input token count.*exceeds the maximum|tokens in request more than max tokens allowed|exceeded model token limit|reduce the length of the messages|컨텍스트 한도 초과|context limit exceeded/i;
+// 분당 토큰 한도("too many tokens per minute")·잔액(OpenRouter 402 "requires more credits, or fewer max_tokens")·출력 상한("max_tokens: … maximum allowed number of
+// output tokens") 문구는 위 낱말에 걸리지 않는다(test/native-turn-budget TB10이 잠근다) — 넓은 낱말("too many tokens", "token limit")은 그래서 넣지 않았다.
+export const isContextOverflowText = (s) => CONTEXT_EXCEEDED_RE.test(String(s ?? ''));
+/** 실패 분류용(순수) — 원문에서 길이 초과 낱말이 한도·과부하·인증·모델 사용 불가 낱말보다 **앞에** 나오는가. 원문 꼬리에 섞인 크루 셸 출력(크루가 만든 LLM 앱의
+    'maximum context length is 8192' 로그 등)이 인증 만료·한도·과부하를 덮지 않게 한다(K09와 같은 모양, 2·3차 검수 LOW). 줄 단위로 보지 않는다 —
+    실제 원문을 만드는 두 경로(chat.mjs 턴 실패 clean()·exec.mjs apiError 일반 갈래)가 줄바꿈을 한 칸으로 합친다. 벤더 상태 숫자('API Error: 429 ')는 비교에서 뺀다:
+    Responses 스트림의 길이 초과는 와이어가 429로 매겨 'API Error: 429 Your input exceeds the context window'로 온다(낱말이 판정한다). */
+export function contextOverflowLeads(s) {
+  const t = String(s ?? '').replace(/API Error: \d{3}\b/g, 'API Error:');
+  const at = (re) => { const m = re.exec(t); return m ? m.index : Infinity; };
+  const ctx = at(CONTEXT_EXCEEDED_RE);
+  return ctx < Infinity && [QUOTA_RE, OVERLOADED_RE, AUTH_TEXT_RE, OAUTH_SESSION_EXPIRED_RE, MODEL_UNAVAILABLE_RE].every((re) => at(re) > ctx);
+}
 // 낡은 codex 관리본의 모델 거절 — codex.mjs codexOutdatedError가 만드는 확정 문구만 본다(그 함수와 한 쌍).
 export const RUNNER_OUTDATED_RE = /Codex 실행기 업데이트가 아직 끝나지 않아|codex runner update is not finished/i;
 
 /** 코드 표 — UI i18n 키(chat.fail.<code>)와 1:1. 새 코드는 여기와 i18n에 **동시에**(테스트가 대조). */
 export const FAIL_CODES = Object.freeze([
   'aborted', 'auth_expired', 'subscription_blocked', 'quota', 'vendor_overloaded',
-  'endpoint_not_found', 'cli_missing', 'runner_outdated', 'model_unavailable', 'crash', 'no_runner', 'unknown',
+  'endpoint_not_found', 'cli_missing', 'runner_outdated', 'model_unavailable', 'crash', 'no_runner', 'context_exceeded', 'unknown',
 ]);
 // no_runner = 이 기기·이 회사에 턴을 돌릴 러너 자격이 없다(chat.mjs 러너 확인 갈래가 flags.noRunner로 붙인다 — 문구로 분류하지 않는다).
 const ORIGIN = Object.freeze({
   aborted: 'user', auth_expired: 'probe', subscription_blocked: 'vendor', quota: 'vendor', vendor_overloaded: 'vendor',
-  endpoint_not_found: 'vendor', cli_missing: 'argo', runner_outdated: 'argo', model_unavailable: 'vendor', crash: 'argo', no_runner: 'argo', unknown: 'probe',
+  endpoint_not_found: 'vendor', cli_missing: 'argo', runner_outdated: 'argo', model_unavailable: 'vendor', crash: 'argo', no_runner: 'argo', context_exceeded: 'vendor', unknown: 'probe',
 });
 
 /** 원문 + 호출자가 이미 아는 표식(flags) → { code, origin }. flags는 chat.mjs가 판정한 것을 그대로 받는다
@@ -55,6 +76,9 @@ export function classifyRunnerError(msg, { flags = {} } = {}) {
   if (flags.crash || flags.lockup) return out('crash');
   if (CLI_MISSING_RE.test(s)) return out('cli_missing');
   if (RUNNER_OUTDATED_RE.test(s)) return out('runner_outdated');
+  // 길이 초과는 한도(QUOTA_RE)보다 먼저 — Responses 스트림의 context_length_exceeded는 와이어가 429로 매겨 '\b429\b'에 먼저 걸린다(responses-wire finalFromSse).
+  // 단 길이 초과 낱말이 한도·과부하·인증·모델 사용 불가 낱말보다 원문에서 앞설 때만, 호출자가 인증 실패로 확정한 표식(flags.auth)이 없을 때만(contextOverflowLeads 주석).
+  if (!flags.credit && !flags.auth && contextOverflowLeads(s)) return out('context_exceeded');
   if (flags.credit || QUOTA_RE.test(s)) return out('quota');
   if (flags.auth || OAUTH_SESSION_EXPIRED_RE.test(s) || AUTH_TEXT_RE.test(s)) return out('auth_expired');
   if (MODEL_UNAVAILABLE_RE.test(s)) return out('model_unavailable');
