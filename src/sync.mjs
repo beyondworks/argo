@@ -290,8 +290,10 @@ export function isCloudLeader() {
 
 /** 리스 글의 비서 엔진 번호 — 능동 비서 감시기(src/assistant)가 든 본체가 리스를 쓸 때 싣는다. 옛 본체는 이 칸을 쓰지 않고 모르는 칸은 무시한다(쓰기 수 그대로).
     리더가 아닌 새 본체는 매 주기 읽는 리스 글에서 이 칸이 없거나 낮으면 "실행 기기가 옛 버전이라 비서가 꺼져 있음"을 안다.
-    앱 버전 대신 번호를 쓰는 이유: 발행 전 개발 빌드(상주 :3001 등)는 package.json 버전이 직전 발행 그대로라 버전 비교가 감시기 있는 기기를 옛 버전으로 오판한다. */
-export const LEASE_ASSISTANT_ENGINE = 1;
+    앱 버전 대신 번호를 쓰는 이유: 발행 전 개발 빌드(상주 :3001 등)는 package.json 버전이 직전 발행 그대로라 버전 비교가 감시기 있는 기기를 옛 버전으로 오판한다.
+    번호: 1 = 1단계 엔진(#863 — 봉인을 보지 않는다), 2 = company.json 봉인이 맞는 설정만 켜는 엔진(src/assistant/config.mjs loadEffectiveAssistantConfig).
+    번호 1 빌드가 실행 기기면 0.1.98 이하 기기의 에이전트가 쓴 봉인 없는 assistant.json으로도 비서가 켜질 수 있어서, 새 기기는 그 기기를 옛 버전으로 본다. */
+export const LEASE_ASSISTANT_ENGINE = 2;
 
 /** 리스 판정 값 읽기(능동 비서의 "리더 확인이 새것인가") — isCloudLeader는 메모리 표시(leader)만 보고 그 기본값이 true라,
     잠들었다 깬 기기·막 시작한 프로세스도 동기화 주기가 리스를 다시 확인하기 전까지 자기가 리더라고 본다. 비서는 여기서
