@@ -15,6 +15,7 @@ function load({ fetchImpl, hasAC = true, now = null }) {
   const els = { status: el(), fill: el(), logtail: el(), err: el() };
   const listeners = {};
   const timers = [];
+  const intervals = []; // 진행률 크리프·느린 부팅 안내 틱(500ms) — 테스트가 직접 돌린다
   const ctx = {
     console,
     document: { getElementById: (id) => els[id] },
@@ -22,7 +23,7 @@ function load({ fetchImpl, hasAC = true, now = null }) {
     // 타이머 핸들은 1부터(0이면 boot.js의 `if (timer)` 진위 검사가 거짓 실패 — 검수 하네스 교훈)
     setTimeout: (fn, ms) => { const t = { fn, ms, id: timers.length + 1, cleared: false }; timers.push(t); return t.id; },
     clearTimeout: (id) => { const t = timers.find((x) => x.id === id); if (t) t.cleared = true; },
-    setInterval: () => 0,
+    setInterval: (fn) => { intervals.push(fn); return intervals.length; },
     fetch: fetchImpl,
     Date: now ? { now } : Date, Math, JSON, // now = 가짜 시계(1분 무응답 안내 판정용)
     __navigated: null,
@@ -37,7 +38,7 @@ function load({ fetchImpl, hasAC = true, now = null }) {
   ctx.window.__TAURI__ = { event: { listen: (n, cb) => { listeners[n] = cb; } } };
   vm.createContext(ctx);
   vm.runInContext(readFileSync(BOOT, 'utf8'), ctx);
-  return { ctx, listeners, timers };
+  return { ctx, listeners, timers, intervals };
 }
 
 const drain = () => new Promise((r) => setImmediate(r));
@@ -214,4 +215,46 @@ test('1분 무응답 안내: 상주 없는 일반 부팅은 지금과 같다(핀
   clock = 61_000;
   await exhaustCycle(timers);
   assert.equal(ctx.document.getElementById('err').hidden, false);
+});
+
+test('상주 대기 중 진행 막대는 40%까지만 오르고, 대기 끝에 앱 서버를 띄우면 그때부터 다시 오른다', () => {
+  const { ctx, listeners, intervals } = load({ fetchImpl: () => new Promise(() => {}) });
+  const width = () => parseFloat(ctx.document.getElementById('fill').style.width);
+  const tick = (n) => { for (let k = 0; k < n; k++) intervals.forEach((fn) => fn()); };
+  listeners.boot({ payload: { phase: 'resident', port: null, version: '9.9.9' } });
+  tick(180); // 90초 — 대기 상한 끝
+  assert.ok(width() > 30 && width() <= 40, `기다리는 동안에도 조금씩 오르되 40%를 넘지 않는다: ${width()}`);
+  const atFallback = width();
+  listeners.boot({ payload: { phase: 'starting', port: 3011, version: '9.9.9' } });
+  tick(20); // 10초
+  assert.ok(width() > atFallback + 15, `앱 서버 기동 구간에서 막대가 움직인다: ${atFallback} → ${width()}`);
+});
+
+test('닫힌 후보를 먼저 다 돌아 waiting(58%)이 된 뒤 상주 대기가 와도 막대는 거기서 멈추고, 기동 구간을 남긴다', async () => {
+  const { ctx, listeners, intervals } = load({ fetchImpl: () => Promise.reject(new Error('refused')) });
+  const width = () => parseFloat(ctx.document.getElementById('fill').style.width);
+  const tick = (n) => { for (let k = 0; k < n; k++) intervals.forEach((fn) => fn()); };
+  for (let n = 0; n < 12; n++) await drain(); // 후보 4개 즉시 거절 → 소진 → waiting
+  assert.equal(width(), 58);
+  listeners.boot({ payload: { phase: 'resident', port: null, version: '9.9.9' } });
+  tick(180);
+  assert.equal(width(), 58, '대기 중에 90%로 차오르지 않는다');
+  listeners.boot({ payload: { phase: 'starting', port: 3011, version: '9.9.9' } });
+  tick(20);
+  assert.ok(width() > 68, `앱 서버 기동 구간에서 막대가 움직인다: ${width()}`);
+});
+
+test('상주 대기 끝에 상주에 붙으면(started) 느린 부팅 안내의 기준 시각도 다시 잡는다', () => {
+  let clock = 0;
+  const { ctx, listeners, intervals } = load({ fetchImpl: () => new Promise(() => {}), now: () => clock });
+  const status = ctx.document.getElementById('status');
+  const tick = () => intervals.forEach((fn) => fn());
+  listeners.boot({ payload: { phase: 'resident', port: null, version: '9.9.9' } });
+  clock = 50_000; tick();
+  assert.equal(status.textContent, 'Waiting for the Argo background service to start…', '대기 중에는 느린 부팅 안내로 바꾸지 않는다');
+  listeners.boot({ payload: { phase: 'started', port: 3001, version: '9.9.9' } }); // 50초 기다린 끝에 상주 입양
+  clock = 50_500; tick();
+  assert.equal(status.textContent, 'Local server is warming up…', '기다린 50초를 세면 "Still working"이 바로 붙는다');
+  clock = 66_000; tick();
+  assert.equal(status.textContent, 'Still working — first launch can take a couple of minutes…', '붙은 뒤 15초가 지나면 안내는 그대로 뜬다');
 });
