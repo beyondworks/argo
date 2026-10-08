@@ -134,7 +134,9 @@ async function followUp(wsId, item, approve, { runChat = chat, session } = {}) {
     // 메신저발 결재의 후속 턴은 메신저 턴으로 — 파일 규약(messengerNote)을 받아야 '경로를 적으면
     // 첨부된다'가 작동한다(검수 M-1: 이게 없으면 승인 후속이 규약을 못 받는 유일한 턴이었다).
     const r = item.msgr
-      ? await (await import('./gateway/msgr.mjs')).runMessengerContinuation(wsId, item.slug, item.msgr, msg, t.sessionId, { runChat, session, ownerApproved: approve === true, ...(item.from ? { notOwnerDirect: item.from } : {}) })
+      ? await (await import('./gateway/msgr.mjs')).runMessengerContinuation(wsId, item.slug, item.msgr, msg, t.sessionId, { runChat, session, ownerApproved: approve === true, ...(item.from ? { notOwnerDirect: item.from } : {}),
+        // 이어 실행 근거 — 이 후속 턴이 올리는 결재 카드는 원래 글(실행 완료)에 붙는다. 승인된 부모 결재 행(rowId)이 있으면 followup_of로 싣는다(봇 선례, 옛 서버 가드도 받는다)
+        continuation: { kind: 'followup', ...(approve === true && item.msgr.rowId ? { followupOf: item.msgr.rowId } : {}) } })
       : await runChat(wsId, item.slug, msg, tgScope ? scopedSession(t, scopeKey(tgScope)).sessionId : t.sessionId, { ...(item.tg?.chatId ? { source: 'messenger' } : {}), ...(followCtx ? { mirrorCtx: followCtx } : {}), ...(item.from ? { notOwnerDirect: item.from } : {}) /* 사장 직접 턴이 아닌 턴(위임·쪽지·세션 메시지)에서 올린 결재의 후속 — 풀 오토만 끈다(출처·프롬프트는 그대로, LOW-5). 이 턴에서 다시 올린 결재도 같은 표지 */ });
     await appendTurn(wsId, item.slug, { userMsg: msg, reply: r.reply, handover: r.handover, sessionId: r.sessionId, artifacts: r.artifacts, contextScope: r.contextScope, ...actor });
     // 결재가 메신저에서 왔으면(item.tg) 후속 보고도 그 방으로 — 이 방송이 없어서 카드가

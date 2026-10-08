@@ -2,7 +2,7 @@
 // supabase-js 대신 makeDb가 부르는 모양만 흉내 내는 작은 클라이언트(아래 pgClient)를 그 사용자 권한(set role authenticated + argo.uid)으로 psql에 보낸다.
 // 그래서 RLS·트리거·정의자 함수(msgr_is_own_crew_room·msgr_create_personal_approval·msgr_can_decide·msgr_crew_context)는 마이그레이션 그대로 돈다.
 // 한계: PostgREST가 없어 옛 서버의 '함수 없음'은 PGRST202가 아니라 Postgres 42883으로 온다(어댑터는 둘을 같게 다룬다 — 단위 테스트가 PGRST202를 따로 본다).
-// 경우 표: 1·4(본체 흐름: 판정 → 결재 → 카드 → 판정 → 확정), 7·9(친구 방 거절·위장 기록 거절), 15(이어 실행 중 방 바뀜), 16(옛 서버 — 함수 없음), 6절 2번(이어 실행 결재 카드와 출처 가드, 조직 1:1 재현).
+// 경우 표: 1·4(본체 흐름: 판정 → 결재 → 카드 → 판정 → 확정), 7·9(친구 방 거절·위장 기록 거절), 15(이어 실행 중 방 바뀜), 16(옛 서버 — 함수 없음), 6절 2번(근거 없는 이어 실행 결재 카드는 출처 가드가 거절 — 근거를 싣는 실제 경로는 msgr-continuation-approval-pg.test.mjs).
 // 실행: bash scripts/billing-pg-drill.sh test/msgr-personal-room-body-pg.test.mjs
 import test, { before } from 'node:test';
 import assert from 'node:assert/strict';
@@ -236,8 +236,9 @@ test('메신저 밖 턴의 결재 · crew 1:1 턴 실행 중 — 개인 RPC 카�
 });
 
 // 6절 2번 — 결재 후속·예약·긴 작업(이어 실행) 턴에서 올린 결재 카드의 출처는 원래 지시이고(msgr.mjs msgrPush approval.source_msg_id), 그 지시의 실행은 이미 끝났다(completed).
-// 출처 가드는 실행 중(running)이거나 승인된 부모 결재(payload.followup_of)가 있어야 받는데 본체는 followup_of를 싣지 않는다 → 카드가 거절되고 결재는 로컬에만 남는다.
-// 조직 1:1 테스트는 고치기 전 코드(origin/main)에서도 같은 결과다(이번 범위에서 고치지 않음 — PR 본문 '남은 것'). 개인 crew 1:1도 같은 모양이다.
+// 출처 가드는 실행 중(running)·승인된 부모 결재(payload.followup_of)·이어 실행 근거(payload.continuation, 20261008170000)가 있어야 받는다.
+// 여기서는 호출자가 종류를 밝히지 않은 이어 실행(근거 없음)이 지금도 거절됨을 잠근다. 실제 세 진입점(결재 후속·예약·긴 작업·루프 정지)은
+// 근거를 싣고 카드가 들어간다 — test/msgr-continuation-approval-pg.test.mjs(경우 12 포함).
 async function continuationCard(label, ch, crew, org) {
   const m = post(U.a, ch, `${label} 원래 지시`);
   execution(crew, m, 'completed'); // 원래 턴은 끝났다 — 결재 후속·예약·긴 작업은 이 원문을 출처로 이어 실행한다
@@ -250,17 +251,17 @@ async function continuationCard(label, ch, crew, org) {
     return { reply: '결재 올림', sessionId: null, handover: null };
   } });
   assert.equal(item.msgr.sourceMsgId, Number(m), `${label}: 카드 출처 = 원래 지시(실행 완료)`);
-  assert.equal(item.payload?.followup_of, undefined, `${label}: 본체는 followup_of를 싣지 않는다(봇 경로만 — 20260929150000_1b 318-319)`);
+  assert.equal(item.msgr.continuation, undefined, `${label}: 종류를 밝히지 않은 이어 실행은 근거를 싣지 않는다`);
   await assert.rejects(M.msgrPush({ type: 'approval', wsId: WS, item }, { session: sessionAs(U.a) }), /msgr_approval_source_forbidden/, `${label}: 출처 가드 거절 — 카드 0, 결재는 로컬에만`);
   assert.equal(sql(`select count(*) from public.msgr_crew_approvals where approval_id = '${item.id}'`), '0');
   // 대조: 원래 턴이 도는 동안(running)이면 같은 모양이 들어간다
   execution(crew, m, 'running');
   assert.equal(await M.msgrPush({ type: 'approval', wsId: WS, item }, { session: sessionAs(U.a) }), true, `${label}: 대조 — 실행 중이면 통과`);
 }
-test('6절 2번 재현(조직 1:1, 고치기 전 코드와 같음) — 이어 실행 턴에서 올린 결재 카드는 원문의 실행이 끝나 출처 가드에 거절된다', { skip }, async () => {
+test('6절 2번(조직 1:1) — 근거 없는 이어 실행 턴의 결재 카드는 원문의 실행이 끝나 출처 가드에 거절된다', { skip }, async () => {
   await continuationCard('조직 1:1', ORG_DM, ORG_CREW, ORG);
 });
-test('6절 2번(개인 crew 1:1) — 같은 모양: 이어 실행 턴의 결재 카드는 출처 가드에 거절, 결재는 로컬에만', { skip }, async () => {
+test('6절 2번(개인 crew 1:1) — 같은 모양: 근거 없는 이어 실행 턴의 결재 카드는 출처 가드에 거절, 결재는 로컬에만', { skip }, async () => {
   await continuationCard('개인 crew 1:1', CH_A1, A1, null);
 });
 

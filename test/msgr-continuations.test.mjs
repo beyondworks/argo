@@ -81,7 +81,7 @@ test('verify retries rebuild the collector and blocked loops keep both the decis
     const result = await runRoutine(f.ws, loop.id, { session: f.session, chatFn: async (...args) => ({ ...(await run(...args)), reply: '처리\nLOOP: blocked 결정 필요' }) });
     assert.equal(result.stopped, 'blocked', 'rendered handoff must not hide the LOOP verdict');
     const decision = (await loadApprovals(f.ws)).find((a) => a.kind === 'loop');
-    assert.deepEqual(decision.msgr, f.origin);
+    assert.deepEqual(decision.msgr, { ...f.origin, continuation: { kind: 'routine' } }, '루프 정지 결재는 예약의 이어 실행 — 카드 근거(continuation)를 싣는다(20261008170000)');
     const reports = f.events.filter((e) => e.type === 'routine');
     assert.equal(reports.length, 2);
     for (const event of reports) await msgrPush(event, { session: f.session });

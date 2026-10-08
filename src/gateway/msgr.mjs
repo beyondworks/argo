@@ -1349,10 +1349,24 @@ async function messengerReply(ctx, text, { db = null, lang = 'ko', loopTurn = fa
 /** 개인 공간 crew 1:1 판정(서버 msgr_is_own_crew_room) — true·false·모르면 null(옛 db 어댑터·옛 서버·조회 실패). 호출부는 true일 때만 연다. */
 const ownCrewRoomOf = async (db, channelId, crewId) => (db.ownCrewRoom ? db.ownCrewRoom(channelId, crewId) : null);
 
+/** 이어 실행 근거 — 이어 실행 턴(결재 후속·예약·긴 작업)이 올리는 결재 카드의 출처는 실행이 이미 끝난 원래 글이라, 카드에 '그 글의 이어 실행'이라는 근거를 싣는다.
+    종류는 호출자(approval-actions·routines·gateway)만 정한다 — 저장된 기록(origin.continuation)은 믿지 않는다. 결재 후속은 승인된 부모 결재 행 id(followupOf)도 싣는다
+    (봇 선례 payload.followup_of, 20260929150000_1b). 서버 출처 가드(20261008170000)가 근거를 서버 사실로 다시 판정한다. 모르는 종류는 근거 없음(종전처럼 거절). */
+const CONTINUATION_KINDS = new Set(['followup', 'routine', 'job']);
+function continuationOf(c) {
+  if (!c || !CONTINUATION_KINDS.has(c.kind)) return null;
+  return { kind: c.kind, ...(c.kind === 'followup' && typeof c.followupOf === 'string' && UUID_RE.test(c.followupOf) ? { followupOf: c.followupOf } : {}) };
+}
+/** 결재 행 payload에 더할 근거 — {continuation, followup_of?} 또는 null(근거 없음) */
+function continuationPayload(c) {
+  const v = continuationOf(c);
+  return v ? { continuation: v.kind, ...(v.followupOf ? { followup_of: v.followupOf } : {}) } : null;
+}
+
 /** 저장된 목적지는 실행 때 다시 검증한다. 채널·파견·계정이 바뀌면 일반 채팅으로 우회하지 않는다.
     개인 기록(orgId null + ownCrewRoom 표지 — messengerOrigin)은 서버 봉투가 있고 방이 조직 없는 방이며 서버가 지금도 crew 1:1이라고 판정할 때만 잇는다
     (저장된 표지는 믿지 않는다 — 계획 5-3 #4). 조직 기록은 종전 그대로. */
-async function restoreMessengerContext(wsId, slug, origin, session, { ownerApproved = false } = {}) {
+async function restoreMessengerContext(wsId, slug, origin, session, { ownerApproved = false, continuation = null } = {}) {
   const c = await session();
   if (!c) throw new Error('메신저 기기 세션 없음');
   const personal = origin?.orgId == null && origin?.ownCrewRoom === true;
@@ -1383,19 +1397,20 @@ async function restoreMessengerContext(wsId, slug, origin, session, { ownerAppro
   if (!Number.isInteger(hop) || hop < 0 || hop > HOP_MAX) throw new Error('메신저 넘김 단계가 올바르지 않습니다');
   const chMembers = envelope ? new Set() : await db.channelCrewMembers(ch.id);
   const peers = await workPeers(db, work, envelope ? orgPeers : orgPeers.filter((p) => crewInScope(ch, p.id, chMembers.has(p.id))), ch.id, uid); // 후속 실행의 넘김·멘션도 채널 범위 안에서만
+  const cont = continuationOf(continuation);
   // delegated — DM 위임(0.1.74)의 원래 방 실행 유물. msgr_dm_relay(2026-09-14)가 도입된 뒤로는 서버가 delegated=true를 주지 않아(비구성원 크루는 항상 새 1:1 DM으로 전달) 죽은 경로다. 아래 delegated 분기들은 방어적으로 남긴다.
   const ctx = { kind: 'msgr', chatType: 'group', channelKind: ch.kind, delegated: envelope?.delegated === true, orgId: origin.orgId, channelId: origin.channelId, crewId: crew.id,
     threadRoot: root.id, sourceMsgId: source.id, uid, wsId, origin: actor, hop, orgSlug: org?.slug ?? null, channelName: ch.name ?? '', peers, handoffs: [], ...(work ? { work } : {}), ...(personal ? { ownCrewRoom: true } : {}),
-    ...(source.author_kind === 'crew' && root.author_user_id ? { rootAuthor: root.author_user_id } : {}), ...(origin.guest === true ? { guest: true } : {}), ...(origin.office === true || isOfficeSource(root) || isOfficeSource(source) ? { office: true } : {}), ...(ownerApproved === true ? { ownerApproved: true } : {}),
+    ...(source.author_kind === 'crew' && root.author_user_id ? { rootAuthor: root.author_user_id } : {}), ...(origin.guest === true ? { guest: true } : {}), ...(origin.office === true || isOfficeSource(root) || isOfficeSource(source) ? { office: true } : {}), ...(ownerApproved === true ? { ownerApproved: true } : {}), ...(cont ? { continuation: cont } : {}), // cont = 이어 실행 근거 — 이 턴이 올리는 결재 카드용(messengerOrigin이 결재 기록에 옮긴다)
     ...(origin.handoffFrom || source.author_kind === 'crew' || (relayChannel(ch) && typeof source.meta?.relay?.via_crew_id === 'string' && source.meta.relay.via_crew_id) ? { handoffFrom: origin.handoffFrom ?? (source.author_kind === 'crew' ? source.crew_id : source.meta.relay.via_crew_id) } : {}) }; // 전달 표지는 DM에서만 // 손님 판정. handoffFrom = 크루가 넘긴 지시(DM 전달로 옮겨 적힌 것 포함)의 후속(풀 오토 아님) 재료(isGuestCtx) — rootAuthor는 drain과 같은 뜻(넘김 스레드의 뿌리 사람)
   const orgMemory = await crewMemoryCached(db, crew.id, ch.id); if (orgMemory !== undefined) ctx.orgMemory = orgMemory; // 서버 기억(전사+이 채널) — 없으면 chat이 미러 규칙으로 물러난다
   return { db, ctx, ch, source, envelope, orgPeers }; // orgPeers — 넘긴 크루의 표시 이름(handoffLabel)용. 문맥(ctx)에는 싣지 않는다
 }
 
 /** 결재·예약·장시간 실행은 매번 새 수집함으로 같은 채널의 최신 문맥과 기억 설정을 복원한다. */
-export async function runMessengerContinuation(wsId, slug, origin, message, _globalSessionId, { runChat = chat, session = sessionClient, ownerApproved = false, loopTurn = false, notOwnerDirect = null, runnerNote = '' } = {}) { // notOwnerDirect = 사장 직접 턴이 아닌 시작점의 크루(장시간 작업·예약·결재 후속) — 풀 오토만 끈다 · runnerNote = 러너 프롬프트에만 붙는 덧붙임(루틴 보고 규칙, chat.mjs)
+export async function runMessengerContinuation(wsId, slug, origin, message, _globalSessionId, { runChat = chat, session = sessionClient, ownerApproved = false, loopTurn = false, notOwnerDirect = null, runnerNote = '', continuation = null } = {}) { // notOwnerDirect = 사장 직접 턴이 아닌 시작점의 크루(장시간 작업·예약·결재 후속) — 풀 오토만 끈다 · runnerNote = 러너 프롬프트에만 붙는 덧붙임(루틴 보고 규칙, chat.mjs)
   return withLock(`msgr-turn:${wsId}:${slug}`, async () => {
-    const { db, ctx, ch, source, envelope, orgPeers } = await restoreMessengerContext(wsId, slug, origin, session, { ownerApproved }); // 주인이 승인한 결재 후속 — 권한은 OWNER_APPROVAL_LIFTS_GUEST가 정한다
+    const { db, ctx, ch, source, envelope, orgPeers } = await restoreMessengerContext(wsId, slug, origin, session, { ownerApproved, continuation }); // 주인이 승인한 결재 후속 — 권한은 OWNER_APPROVAL_LIFTS_GUEST가 정한다 · continuation = 호출자가 밝힌 이어 실행 종류(결재 카드 근거)
     // 조직 자격(2026-09-27 M5) — 결재 확정 후속도 실행(유료 LLM 호출) 직전에 다시 확인한다. 채널 안내는 drain()의 다음 폴이 낸다
     // (여기서 또 남기면 실패 노트까지 겹쳐 두 번 시도된다) — 여기서는 비용 큰 실행만 막는다. fail-open.
     if (ch?.org_id && !(db.orgEntitled ? await db.orgEntitled(ch.org_id).catch(() => true) : true)) throw new Error('msgr_org_unentitled');
@@ -1980,8 +1995,12 @@ export async function msgrPush(event, { session = sessionClient } = {}) {
     // 앱의 Slip 컴포넌트가 원문 대신 그 문장을 먼저 보여주고, 원래 action/reason은 "명령 보기" 접힘으로.
     // org_doc은 이미 자기 payload(문서 제목·본문)를 쓰므로 plain과 겹치지 않는다(request_approval·CLI 지시
     // 블록만 plain을 채울 수 있고 둘 다 kind:'action').
+    // 이어 실행 근거(결재 후속·예약·긴 작업 턴 — continuationOf 주석) — 카드 출처(원래 글)의 실행이 이미 끝났으므로 서버 출처 가드가 이 근거로 받는다(20261008170000).
+    // 같은 넣기 행의 payload에 실린다(요청 수 그대로). 옛 서버 가드는 continuation을 모르고 followup_of만 본다 — 근거 없는 카드는 종전처럼 거절.
+    const cont = continuationPayload(ctx.continuation);
     const approval = { org_id: ctx.orgId, channel_id: ctx.channelId, crew_id: ctx.crewId, approval_id: it.id, action: it.action, reason: it.reason ?? null, risk,
-      ...(it.kind === 'org_doc' ? { kind: 'org_doc', payload: it.payload ?? null } : (it.plain ? { payload: { plain: it.plain } } : {})) };
+      ...(it.kind === 'org_doc' ? { kind: 'org_doc', payload: cont ? { ...(it.payload ?? {}), ...cont } : it.payload ?? null }
+        : (it.plain || cont ? { payload: { ...(it.plain ? { plain: it.plain } : {}), ...cont } } : {})) };
     const plainSummary = it.kind !== 'org_doc' ? approvalPlainText(it, lang) : null;
     // 분리 검수 H-1: 카드 글 본문(다른 창구·검색·구버전 클라이언트가 보는 텍스트)은 plain이 있어도
     // 실제 실행될 문장(action)을 "명령: " 한 줄로 반드시 남긴다 — Slip 컴포넌트의 "명령 보기"와 별개로,
