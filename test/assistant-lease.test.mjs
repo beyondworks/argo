@@ -78,6 +78,21 @@ test('V1-c: 새 버전 기기가 쥐고 있으면 "다른 기기가 실행", 리
   assert.equal(assistantRunnerStatus({ syncOn: false, leader: true, ownedAt: 0, holder: null }, now), 'this_device');
 });
 
+test('E8: 봉인을 보는 엔진은 번호 2 — 봉인을 안 보는 1단계 빌드(번호 1)가 쥔 리스는 "옛 버전 실행 기기", 번호 2는 "다른 기기"(#867)', async () => {
+  // 번호 1 빌드는 0.1.98 이하 기기의 에이전트가 쓴 봉인 없는 assistant.json으로도 켜질 수 있다 — 새 기기가 그 기기를 정상 실행 기기로 보이면 안 된다
+  const { client, calls } = fakeClient({ deviceId: 'phase1-build', token: 't', ts: Date.now(), assistant: 1 });
+  _setSyncClientForTest(client);
+  setLease({});
+  await renewLease('owner-e8', { runnerUsable: true });
+  assert.equal(calls.upload, 0, '살아 있는 남의 리스 — 양보(쓰기 0)');
+  const li = leaseCheck();
+  assert.deepEqual([li.leader, li.holder?.deviceId, li.holder?.assistant], [false, 'phase1-build', 1]);
+  assert.equal(assistantRunnerStatus(li), 'runner_outdated');
+  const now = Date.now();
+  assert.equal(assistantRunnerStatus({ syncOn: true, leader: false, ownedAt: 0, holder: { deviceId: 'x', assistant: 2, ts: now - 1000 } }, now), 'other_device');
+  assert.equal(LEASE_ASSISTANT_ENGINE, 2, '이 빌드가 리스 글에 싣는 번호(V1-a가 실제 쓰기로 확인)');
+});
+
 test('leaseCheck — 기본값(leader:true, ownedAt 0)은 확인된 보유가 아니다(비서는 이 값으로 리스 확인 전 호출 0)', () => {
   setLease({ leader: true, ownedAt: 0, checkedAt: 0 });
   const li = leaseCheck();

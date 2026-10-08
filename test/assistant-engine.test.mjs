@@ -15,7 +15,7 @@ for (const k of ['NEXT_PUBLIC_SUPABASE_URL', 'NEXT_PUBLIC_SUPABASE_ANON_KEY', 'S
 
 const { createCompany, updateCompany, paths } = await import('../src/workspace.mjs');
 const T = await import('../src/assistant/tick.mjs');
-const { normalizeAssistantConfig, _resetAssistantConfigCacheForTest } = await import('../src/assistant/config.mjs');
+const { normalizeAssistantConfig, _resetAssistantConfigCacheForTest, sealOf } = await import('../src/assistant/config.mjs');
 const { stateFile } = await import('../src/assistant/state.mjs');
 const { ASSISTANT_TEXT } = await import('../src/assistant/text.mjs');
 const { clientMsgId } = await import('../src/assistant/deliver.mjs');
@@ -33,10 +33,14 @@ async function company({ cfg = {}, ownerId = 'u1', lang = 'ko', msgr = {} } = {}
   const ws = `asst-${++seq}`;
   await createCompany(ws, '비서 테스트', 'owner', ownerId, lang);
   await updateCompany(ws, (c) => ({ msgr: { ...(c.msgr ?? {}), enabled: true, ...msgr } }));
-  if (cfg !== null) {
-    await writeFile(join(paths(ws).root, 'assistant.json'), JSON.stringify({ enabled: true, agent: 'pepper', enabledAt: '2026-10-01T00:00:00Z', tz: 'Asia/Seoul', ...cfg }));
-  }
+  if (cfg !== null) await writeCfg(ws, { enabled: true, agent: 'pepper', enabledAt: '2026-10-01T00:00:00Z', tz: 'Asia/Seoul', ...cfg });
   return ws;
+}
+/** 설정 파일 쓰기 — 설정 API(src/assistant/settings.mjs)처럼 company.json 봉인도 같이 적는다(엔진은 봉인이 맞는 켜짐만 돌린다 — config.mjs 머리 주석). */
+async function writeCfg(ws, obj) {
+  const text = JSON.stringify(obj);
+  await writeFile(join(paths(ws).root, 'assistant.json'), text);
+  await updateCompany(ws, () => ({ assistantSeal: sealOf(text) }));
 }
 const ev = (id, start, end, extra = {}) => ({ id, org_id: null, owner: 'u1', title: `일정 ${id}`, location: '', all_day: false, starts_at: iso(start), ends_at: iso(end), rrule: null, exdates: [], attendees: [], ...extra });
 
@@ -403,11 +407,10 @@ test('묶음 기한 — 저녁 묶음 시각까지 못 보낸 아침 묶음은 �
   env2.failInsert = true;
   await run(ws2, env2, at('07:59'), at('08:02'));
   assert.equal((await state(ws2)).outbox?.kind, 'am');
-  const cfg2 = join(paths(ws2).root, 'assistant.json');
-  await writeFile(cfg2, JSON.stringify({ enabled: false, agent: 'pepper', tz: 'Asia/Seoul' }));
+  await writeCfg(ws2, { enabled: false, agent: 'pepper', tz: 'Asia/Seoul' });
   _resetAssistantConfigCacheForTest();
   await run(ws2, env2, at('08:03'), at('08:05'));
-  await writeFile(cfg2, JSON.stringify({ enabled: true, agent: 'pepper', enabledAt: '2026-10-10T01:00:00Z', tz: 'Asia/Seoul' }));
+  await writeCfg(ws2, { enabled: true, agent: 'pepper', enabledAt: '2026-10-10T01:00:00Z', tz: 'Asia/Seoul' });
   _resetAssistantConfigCacheForTest();
   env2.failInsert = false; env2.events = [];
   await run(ws2, env2, at('10:05', '2026-10-10'), at('10:10', '2026-10-10'));
@@ -425,12 +428,12 @@ test('쉬기에 들어가면(일정 보기 끔·다른 회사가 맡음) 대기�
   assert.equal((await state(ws)).outbox?.kind, 'am');
   const cfgFile = join(paths(ws).root, 'assistant.json');
   const base = JSON.parse(await readFile(cfgFile, 'utf8'));
-  await writeFile(cfgFile, JSON.stringify({ ...base, watch: { calendar: false } }));
+  await writeCfg(ws, { ...base, watch: { calendar: false } });
   _resetAssistantConfigCacheForTest();
   await run(ws, env, at('08:03'), at('08:04'));
   let st = await state(ws);
   assert.deepEqual([st.outbox, st.pending], [null, []], '일정 보기를 끄면 대기열·보류가 빈다');
-  await writeFile(cfgFile, JSON.stringify(base));
+  await writeCfg(ws, base);
   _resetAssistantConfigCacheForTest();
   env.failInsert = false;
   await run(ws, env, at('08:05'), at('08:10'));
@@ -444,14 +447,13 @@ test('쉬기에 들어가면(일정 보기 끔·다른 회사가 맡음) 대기�
   env2.failInsert = true;
   await run(older, env2, at('08:00'), at('08:02'), { deps: deps2 });
   assert.equal((await state(older)).outbox?.kind, 'am');
-  const newerCfg = join(paths(newer).root, 'assistant.json');
-  await writeFile(newerCfg, JSON.stringify({ enabled: true, agent: 'pepper', enabledAt: '2026-10-02T00:00:00Z', tz: 'Asia/Seoul' }));
+  await writeCfg(newer, { enabled: true, agent: 'pepper', enabledAt: '2026-10-02T00:00:00Z', tz: 'Asia/Seoul' });
   _resetAssistantConfigCacheForTest();
   await run(older, env2, at('08:03'), at('08:04'), { deps: deps2 });
   st = await state(older);
   assert.equal(st.status.code, 'other_company');
   assert.deepEqual([st.outbox, st.pending], [null, []], '다른 회사가 맡으면 이 회사의 대기열·보류가 빈다');
-  await writeFile(newerCfg, JSON.stringify({ enabled: false, agent: 'pepper', tz: 'Asia/Seoul' }));
+  await writeCfg(newer, { enabled: false, agent: 'pepper', tz: 'Asia/Seoul' });
   _resetAssistantConfigCacheForTest();
   env2.failInsert = false;
   await run(older, env2, at('08:05'), at('08:10'), { deps: deps2 });

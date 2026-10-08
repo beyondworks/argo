@@ -3,7 +3,7 @@
 // 이 단계(1단계)는 일정만 본다. 글은 템플릿만(LLM 작성은 3단계). **기본 꺼짐** — assistant.json이 없거나 꺼져 있으면 네트워크 호출·쓰기 0.
 //
 // 한 틱(설계 4.2):
-//  0. 설정 읽기(수정 시각 캐시) — 꺼짐이면 끝.
+//  0. 설정 읽기(수정 시각 캐시) — 꺼짐이면 끝. company.json 봉인과 맞지 않는 켜짐도 꺼짐(config.mjs loadEffectiveAssistantConfig).
 //  1. 리더 확인이 새것인가 — 동기화를 쓰는 기기면 리더 + 확인된 보유(ownedAt > 0) + 리스 확인 60초 안. 아니면 끝(호출 0).
 //  2. 사용자당 1명 — 같은 주인의 다른 회사에서 더 나중에 켠 비서가 있으면 이 회사는 쉰다(상태 "다른 회사의 비서가 맡고 있음").
 //  3. 조용한 시간(일정 예외 아니오)이면 확인도 배달도 하지 않는다 — 끝난 뒤 첫 확인이 밤사이를 읽어 아침 묶음에 넣는다.
@@ -14,7 +14,7 @@
 //  6. 감지 → 시작 전 알림(확인 읽기 뒤) / 지난 일정(보류 목록) / 아침·저녁 묶음.
 //  7. 배달 → 묶음, 그다음 시작 전 알림을 하나씩(시작 전 알림은 늘 혼자 — 설계 7절). 성공한 뒤에만 보낸 키를 기록.
 //     상태는 바뀐 때만 로컬 파일에(일정 확인 범위만 바뀐 경우는 15분에 한 번).
-import { loadAssistantConfig, calendarActive } from './config.mjs';
+import { loadEffectiveAssistantConfig, calendarActive } from './config.mjs';
 import { readState, pruneState, stateFile } from './state.mjs';
 import { GAP_MS, LEASE_FRESH_MS, dateIn, addDays, instantIn, inQuiet, bundleDue, bundleUntil, assistantMuted, assistantCompanyOf, retryDelayMs } from './rules.mjs';
 import { CAL_READ_MS, CAL_SPAN_MS, readCalendar, ownEvents, expand, planCalendar, confirmDue, preKey } from './calendar.mjs';
@@ -27,7 +27,7 @@ import { writeJsonAtomic } from '../jsonstore.mjs';
 
 /** 바꿔 끼우는 자리 — 기본값이 곧 실제 동작. 테스트만 가짜(시계·세션·리스·파일)를 넘긴다. */
 export const assistantDeps = {
-  config: loadAssistantConfig,
+  config: loadEffectiveAssistantConfig, // 봉인이 맞는 설정만 켜짐(config.mjs — 옛 버전 기기의 에이전트가 assistant.json을 써도 켜지지 않는다)
   companyIds: listCompanyIds,
   company: loadCompany,
   agentExists: (cid, slug) => readAgentCard(cid, slug).then(() => true, (e) => e?.code !== 'NOT_FOUND'), // 읽기 실패(손상 등)는 있음으로 — 해고만 '없음'
