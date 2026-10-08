@@ -117,7 +117,10 @@ test('C. classifyRunnerError — 상주 실측 원문 → 코드·출처 표 (�
   // 2026-09-28: 핀이 낡은 codex로 GPT-6을 보내면 400 — 업데이트 대기 안내(argo). 핀이 최신인데 같은 거절이면 계정 문제(모델 선택 안내).
   assert.deepEqual(c('Codex 실행기 업데이트가 아직 끝나지 않아 이 모델을 쓸 수 없습니다(자동 재시도 최대 1시간). Codex runner update is not finished'), { code: 'runner_outdated', origin: 'argo' });
   assert.deepEqual(c("The 'gpt-6-luna' model is not supported when using Codex with a ChatGPT account."), { code: 'model_unavailable', origin: 'vendor' });
-  assert.ok(FAIL_CODES.includes('unknown') && FAIL_CODES.includes('no_runner') && FAIL_CODES.length === 12); // no_runner(2026-10-08) — chat.mjs 러너 확인 갈래의 활동 기록용, 표식(flags.noRunner)으로만 붙는다
+  // 2026-10-08: 벤더 컨텍스트 길이 초과(네이티브 엔진 턴 안 예산 — engine/turn-budget.mjs). 한도(QUOTA_RE)보다 먼저 본다 — Responses 스트림 거절은 429로 온다
+  assert.deepEqual(c("API Error: 400 This model's maximum prompt length is 500000 but the request contains 503958 tokens."), { code: 'context_exceeded', origin: 'vendor' });
+  assert.equal(c('API Error: 429 Your input exceeds the context window of this model. (context_length_exceeded)').code, 'context_exceeded');
+  assert.ok(FAIL_CODES.includes('unknown') && FAIL_CODES.includes('no_runner') && FAIL_CODES.includes('context_exceeded') && FAIL_CODES.length === 13); // no_runner(2026-10-08) — chat.mjs 러너 확인 갈래의 활동 기록용, 표식(flags.noRunner)으로만 붙는다
 });
 
 test('C2. surfaceRunnerFailure — 맨 프로브로 vendor/argo를 갈라 각인하고, 벤더 거절일 때만 다음 턴을 차단한다', async () => {
@@ -358,7 +361,8 @@ test('R2·R3·R9·MEDIUM-3 배선 핀 — 이벤트·라우트 응답·UI 렌더
   const page = await readFile(join(ROOT, 'app', 'c', '[ws]', 'crew', '[slug]', 'page.jsx'), 'utf8');
   assert.match(page, /\{m\.modelFallback && \(/, 'R9: 강등 고지 렌더 블록');
   assert.match(page, /t\('chat\.modelFallback', \{ wanted: m\.modelFallback\.wanted/, 'R9: 사전 키 배선');
-  assert.match(page, /t\(`chat\.fail\.\$\{m\.failedCode\}`/, 'R9: 실패 코드 렌더');
+  // 2026-10-09: 사전에 없는 코드(다른 기기의 새 버전이 남긴 코드)는 키 글자 대신 원문 표시로 — 판정은 fail-display.mjs failCodeKey(test/crew-fail-display가 행동으로 잠금)
+  assert.match(page, /t\(failCodeKey\(m\.failedCode, hasMsg\), \{ msg: m\.failed \}\)/, 'R9: 실패 코드 렌더');
   // MEDIUM-3: 오버레이 소비자 전수 — RUNNERS 원목록(.models)을 직접 판정에 쓰는 곳이 남아 있으면 UI·백엔드가 갈린다
   for (const f of ['src/chat.mjs', 'src/compete.mjs', 'src/oneshot.mjs']) {
     const s = await readFile(join(ROOT, f), 'utf8');

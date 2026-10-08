@@ -13,7 +13,8 @@ import { connectMcpServers } from './mcp-client.mjs';
 import { loadNativeSession, saveNativeSession, IMAGE_MAX_B64 } from './session.mjs';
 import { appendEvent } from '../events.mjs';
 import { cacheEligible, withCacheControl } from './prompt-cache.mjs';
-import { compactPlan, compactTranscript, DEFAULT_CONTEXT_TOKENS } from './compact.mjs';
+import { compactPlan, compactTranscript, DEFAULT_CONTEXT_TOKENS, estimateTokens } from './compact.mjs';
+import { squeezeToolResults, turnStartIndex, isContextOverflowError, windowAfterOverflow, limitFromOverflow, dropStoppedTurn, overflowStopNote, overflowErrorText, TURN_BUDGET_AT, TURN_SQUEEZE_TO, SQUEEZE_KEEP_RECENT, SQUEEZE_HEAD_CHARS, HARD_KEEP_RECENT, HARD_HEAD_CHARS } from './turn-budget.mjs';
 import { randomUUID } from 'node:crypto';
 
 export const NATIVE_DEFAULT_MAX_TOKENS = 8192; // SDK 기본 32000이 OpenRouter 선불 잔액 402를 부르던 것 완화(실측 2026-09-05)
@@ -157,6 +158,24 @@ async function* run(opts, ac, isInterrupted, inbox = { items: [], closed: false 
       } });
     if (isInterrupted()) throw Object.assign(new Error('aborted'), { aborted: true });
     if (packed.compacted) yield { type: 'system', subtype: 'compact_boundary', session_id: sess.id, compact_metadata: { trigger: 'auto', pre_tokens: packed.preTokens } }; // SDK 자동 압축과 같은 모양 — chat.mjs가 스레드에 안내 줄을 남긴다
+    // 턴 안 예산(turn-budget.mjs) — 위 압축은 턴 시작에만 돈다. 도구 반복 중 매 호출 전 추정이 창의 75%를 넘으면 오래된 도구 결과를 줄인다.
+    // 창은 모델 창 그대로(압축의 128,000 상한은 턴 사이 전사 글자 상한과 짝이라 여기엔 쓰지 않는다). 벤더가 길이 초과로 거절하면 이 턴의 창을 거절 지점 기준으로 낮춘다.
+    const fixedTokens = estimateTokens(systemPrompt) + estimateTokens(specs);
+    let turnWindow = ctxWindow;
+    // 실패 갈래가 '저장할 전사가 들어갈 크기인가'를 재는 확실한 값 둘(3차 검수 HIGH — 숫자 없는 거절 지점 = turnWindow는 한도의 위쪽 끝일 뿐이라 쓰지 않는다):
+    let okTokens = 0;    // 이 턴에 벤더가 받아 준 가장 큰 요청의 추정(실측 하한)
+    let knownWindow = 0; // 거절 원문의 숫자로 환산한 한도(숫자가 있을 때만)
+    // pre = 매 호출 전(최근 결과 3개 보호), retry = 길이 초과 뒤 재전송(이번 턴 지시 뒤의 최근 결과 1개만 보호 — 앞 턴이 남긴 큰 결과는 줄인다),
+    // final = 실패로 저장하기 직전(보호 없음 — 한 단계 결과만으로 넘친 전사를 그대로 저장하면 다음 턴마다 첫 호출에서 또 넘쳤다, 1차 검수 HIGH)
+    const squeezed = (mode) => squeezeToolResults(sess.messages, { fixed: fixedTokens, target: Math.floor(turnWindow * TURN_SQUEEZE_TO), lang,
+      keepRecent: mode === 'pre' ? SQUEEZE_KEEP_RECENT : mode === 'retry' ? HARD_KEEP_RECENT : 0,
+      recentFrom: mode === 'retry' ? turnStartIndex(sess.messages) : 0,
+      head: mode === 'pre' ? SQUEEZE_HEAD_CHARS : HARD_HEAD_CHARS });
+    const squeeze = (mode) => {
+      const r = squeezed(mode);
+      if (r.squeezed) sess.messages = r.messages; // 저장 전사에도 반영된다(다음 저장이 이 전사를 쓴다)
+      return r.squeezed;
+    };
     for (;;) {
       if (isInterrupted()) throw Object.assign(new Error('aborted'), { aborted: true });
       steps += 1;
@@ -164,18 +183,56 @@ async function* run(opts, ac, isInterrupted, inbox = { items: [], closed: false 
         yield { type: 'result', subtype: 'error_max_turns', session_id: sess.id, usage, total_cost_usd: null, is_error: true, num_turns: steps - 1, errors: [`max steps ${maxSteps}`] };
         return;
       }
+      if (fixedTokens + estimateTokens(sess.messages) > turnWindow * TURN_BUDGET_AT) squeeze('pre');
       let res;
-      try {
-        const body = { model, max_tokens, system: systemPrompt, messages: sess.messages, ...(specs.length ? { tools: specs } : {}) };
-        res = await callMessages({ wire, base, headers, effort, signal: ac.signal, fetchImpl, body: cache ? withCacheControl(body) : body });
-      } catch (e) {
-        // 이미 토큰을 쓴 뒤의 실패는 SDK처럼 usage를 실은 실패 result로 낸다(분리 검수 MEDIUM-1: 던지기만 하면 appendUsage 미도달,
-        // 예산·대시보드 과소 집계). 원문은 errors[]에 — chat.mjs가 `턴 실패: … — <원문>`으로 감싸도 401/402 정규식이 문다.
-        if (e?.usage && !e?.aborted) sumUsage(usage, e.usage); // 차단 응답(SAFETY 등)도 프롬프트 토큰은 썼다 — 첫 스텝이어도 집계(2R LOW-3)
-        if (e?.aborted || !((usage.input_tokens ?? 0) + (usage.output_tokens ?? 0))) throw e;
-        if (saveSession) await saveNativeSession(wsId, slug, sess);
-        yield { type: 'result', subtype: 'error_during_execution', session_id: sess.id, usage, total_cost_usd: null, is_error: true, num_turns: steps, errors: [String(e?.message || e)] };
-        return;
+      for (let retried = false, resent = false, cut = false; ;) {
+        const sent = fixedTokens + estimateTokens(sess.messages);
+        try {
+          const body = { model, max_tokens, system: systemPrompt, messages: sess.messages, ...(specs.length ? { tools: specs } : {}) };
+          res = await callMessages({ wire, base, headers, effort, signal: ac.signal, fetchImpl, body: cache ? withCacheControl(body) : body });
+          okTokens = Math.max(okTokens, sent);
+          break;
+        } catch (e) {
+          // 이미 토큰을 쓴 뒤의 실패는 SDK처럼 usage를 실은 실패 result로 낸다(분리 검수 MEDIUM-1: 던지기만 하면 appendUsage 미도달,
+          // 예산·대시보드 과소 집계). 원문은 errors[]에 — chat.mjs가 `턴 실패: … — <원문>`으로 감싸도 401/402 정규식이 문다.
+          if (e?.usage && !e?.aborted) sumUsage(usage, e.usage); // 차단 응답(SAFETY 등)도 프롬프트 토큰은 썼다 — 첫 스텝이어도 집계(2R LOW-3)
+          if (e?.aborted) throw e;
+          const overflow = isContextOverflowError(e);
+          if (overflow) {
+            // 길이 초과 — 이 턴의 창을 거절 지점 기준으로 낮춘다(다시 보낸 요청도 거절되면 그 숫자로 한 번 더 — 아래 저장 전 줄이기의 목표가 된다).
+            turnWindow = windowAfterOverflow(turnWindow, sent, e?.message);
+            const known = limitFromOverflow(sent, e?.message);
+            if (known !== null) knownWindow = knownWindow ? Math.min(knownWindow, known) : known;
+            // 더 세게 줄여 같은 단계를 한 번만 다시 보낸다. 줄일 것이 없으면 같은 요청을 다시 보내지 않는다.
+            if (!retried) { retried = true; if (squeeze('retry')) { resent = true; continue; } }
+            // 안전망(3차 검수 HIGH): 1단계인데 줄여도 못 풀고 앞 턴이 중단 기록으로 끝났으면 그 턴을 걷어내고(main의 재개 정리와 같은 결과) 한 번만 다시 보낸다 —
+            // 저장할 때의 판정(아래 fits)이 어떤 이유로 틀려도 그 전사가 대화를 영구히 막지 않게 하는 마지막 방어. 다시 보내도 넘치면 아래로(사실대로 실패).
+            if (steps === 1 && !cut) { const rest = dropStoppedTurn(sess.messages); if (rest) { cut = true; sess.messages = rest; continue; } }
+          }
+          const spent = !!((usage.input_tokens ?? 0) + (usage.output_tokens ?? 0));
+          if (overflow) {
+            // 사실대로 끝낸다. 이 턴에 끝난 도구 결과가 있으면 크루 글 한 줄(중단 기록)로 꼬리를 닫아 저장한다 — 꼬리가 tool_result면 재개 정리가
+            // 그 턴을 통째로 걷어내 다음 턴이 처음부터 다시 하다 같은 자리에서 또 넘쳤다. 원인 모를 거절(아래 종전 갈래)에는 붙이지 않는다(그 턴을 다시 보내면 또 거절될 수 있다).
+            if (steps === 1 && !spent) throw Object.assign(new Error(overflowErrorText(e?.message, lang, { resent, cut })), { cause: e, status: e?.status });
+            // 저장 전에 이번 단계 결과까지 한도 안으로 줄여 본다 — 그대로 저장하면 다음 턴들이 같은 전사를 이어받아 매번 넘친다.
+            // 줄인 전사(+ 중단 기록, system·도구 정의 포함)가 실제로 들어갈 크기일 때만 꼬리를 닫는다: 기준은 확실한 값 — 원문 숫자로 환산한 한도와 이 턴에 벤더가 받아 준
+            // 가장 큰 요청 — 중 큰 쪽의 75%(사전 기준선과 같은 여유 — 다음 지시가 붙을 자리). 숫자 없는 문구의 거절 지점(turnWindow)은 쓰지 않는다: 한도의 위쪽 끝일 뿐이라
+            // 그 75%가 실제 한도를 넘을 수 있었다(3차 검수 HIGH, z.ai·Responses). 넘친 부분이 도구 '입력'(큰 Write·Edit·셸 heredoc)·지시·크루 글이면 줄일 것이 없다 — 그때 꼬리를 닫아 저장하면 다음 턴마다
+            // 1단계에서 거절되고 저장 없이 던져 대화가 영구히 막혔다(2차 검수 HIGH). 들어가지 않으면 줄인 사본은 버리고 종전처럼 저장해 재개 정리가 이 턴을 걷어내게 둔다.
+            const closed = [...squeezed('final').messages, { role: 'assistant', content: [{ type: 'text', text: overflowStopNote(lang) }] }];
+            const fits = fixedTokens + estimateTokens(closed) <= TURN_BUDGET_AT * Math.max(knownWindow, okTokens);
+            if (fits) sess.messages = closed;
+            if (saveSession) await saveNativeSession(wsId, slug, sess);
+            // '이어서 해 줘'는 다음 턴이 실제로 이 전사를 이어받을 때만 쓴다 — 이어 온 세션(sess.resumed)이어야 스레드가 이 세션 id를 쥐고 있다(실패 턴은 id를 남기지 않는다)
+            yield { type: 'result', subtype: 'error_during_execution', session_id: sess.id, usage, total_cost_usd: null, is_error: true, num_turns: steps,
+              errors: [overflowErrorText(e?.message, lang, { resent, cut, resumable: saveSession && fits && !!sess.resumed, dropped: saveSession && !fits })] };
+            return;
+          }
+          if (!spent) throw e;
+          if (saveSession) await saveNativeSession(wsId, slug, sess);
+          yield { type: 'result', subtype: 'error_during_execution', session_id: sess.id, usage, total_cost_usd: null, is_error: true, num_turns: steps, errors: [String(e?.message || e)] };
+          return;
+        }
       }
       sumUsage(usage, res?.usage);
       const content = Array.isArray(res?.content) ? res.content : [];
