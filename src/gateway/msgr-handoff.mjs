@@ -1,13 +1,30 @@
 // 메신저의 send_to_crew도 최종 채널 답글로 넘긴다. 일반 우편 큐와 동시에 실행하지 않는다.
 // 수집함은 브리지의 한 턴에만 속하며, 답글 저장 후 기존 권한·순서·홉 상한을 거친다.
+const say = (ctx, ko, en) => (ctx?.lang === 'en' ? en : ko); // 개인 공간 거절 문구 언어 — 개인 문맥만 lang을 싣는다(msgr.mjs run·runMessengerContinuation). 조직 문구는 그대로 한국어
+/** 개인 공간(조직 없는 방) 턴의 거절 이유 — 없으면 null. 결재·예약·긴 작업은 주인과 이 에이전트만 있는 crew 1:1(personal_pair = 'crew:<에이전트>')에서
+    주인이 시킨 일만, 대상은 자기 자신만 연다(계획 rc-0195 personal-crew-room-features-plan.md 5-3 #1). 방 판정은 서버(msgr_is_own_crew_room)가 턴마다 하고
+    게이트웨이가 ctx.ownCrewRoom(true·false·모르면 없음)으로 싣는다 — 여기서는 그 값만 본다(모르면 거절, 옛 서버 = 지금 문구 그대로). */
+function personalRefusal(ctx, target, targetSlug) {
+  if (isGuestCtx(ctx)) return say(ctx, '주인이 아닌 사람이 시킨 일이라 개인 공간에서는 결재·예약·긴 작업을 쓸 수 없습니다. 주인에게 직접 요청해 달라고 안내해 주세요',
+    'This request came from someone other than the owner, so approvals, schedules and long tasks are not available in the personal space. Ask them to request it from the owner directly');
+  if (ctx.ownCrewRoom === false) return say(ctx, '친구와의 방·그룹처럼 주인과 이 에이전트만 있는 1:1이 아닌 방에서는 결재·예약·긴 작업을 쓸 수 없습니다. 이 에이전트와의 1:1 방에서 요청해 주세요',
+    'Approvals, schedules and long tasks are not available in a room shared with friends (a friend 1:1 or a group) — only in the 1:1 room with just you and this agent. Ask there');
+  if (ctx.ownCrewRoom !== true) return say(ctx, '개인 공간에서는 아직 결재·예약·긴 작업·다른 에이전트에게 맡기기를 쓸 수 없습니다. 조직 채널에서 요청해 주세요', // 2026-09-30 개인 공간 1단계 문구 — 판정을 모를 때(옛 서버·조회 실패)
+    'Approvals, schedules, long tasks and handing work to another agent are not available in this personal-space room yet. Ask in an organization channel');
+  if (targetSlug && target?.id !== ctx.crewId) return say(ctx, '개인 공간 1:1에는 넘길 다른 에이전트가 없어 다른 에이전트에게 예약·작업을 맡길 수 없습니다. 직접 하거나 그 에이전트와의 1:1에서 요청해 주세요',
+    'There is no other agent in this personal 1:1, so schedules and tasks cannot be assigned to another agent. Do it yourself or ask in that agent\'s 1:1');
+  return null;
+}
 export function messengerOrigin(ctx, targetSlug = null) {
   if (ctx?.kind === 'msgr-rules') throw new Error('메신저 위임의 예약·작업·결재는 요청한 동료에게 돌려주세요. 그 동료가 같은 채널에서 처리합니다');
   if (ctx?.kind !== 'msgr') return null;
-  if (ctx.channelId && ctx.crewId && !ctx.orgId) throw new Error('개인 공간에서는 아직 결재·예약·긴 작업·다른 에이전트에게 맡기기를 쓸 수 없습니다. 조직 채널에서 요청해 주세요'); // 2026-09-30 개인 공간 1단계
-  if (!ctx.orgId || !ctx.channelId || !ctx.crewId || !ctx.uid || !ctx.wsId) throw new Error('메신저 실행 문맥이 없습니다');
+  if (!ctx.channelId || !ctx.crewId || !ctx.uid || !ctx.wsId) throw new Error('메신저 실행 문맥이 없습니다');
   const target = targetSlug ? ctx.peers?.find((p) => p.slug === targetSlug && p.owner_user_id === ctx.uid && p.ws_id === ctx.wsId) : null;
+  const personal = !ctx.orgId;
+  if (personal) { const why = personalRefusal(ctx, target, targetSlug); if (why) throw new Error(why); }
   if (targetSlug && !target) throw new Error('같은 메신저 조직에 파견된 동료만 실행할 수 있습니다');
-  return { orgId: ctx.orgId, channelId: ctx.channelId, ...(ctx.channelKind === 'dm' ? { channelKind: 'dm', ...(ctx.delegated === true ? { delegated: true } : {}) } : {}), crewId: target?.id ?? ctx.crewId,
+  // 개인 기록은 orgId null + ownCrewRoom 표지 — 이 표지는 운반용이다. 이어 실행 때 서버가 방을 다시 판정한다(restoreMessengerContext — 저장된 표지를 믿지 않는다)
+  return { orgId: ctx.orgId ?? null, ...(personal ? { ownCrewRoom: true } : {}), channelId: ctx.channelId, ...(ctx.channelKind === 'dm' ? { channelKind: 'dm', ...(ctx.delegated === true ? { delegated: true } : {}) } : {}), crewId: target?.id ?? ctx.crewId,
     threadRoot: ctx.threadRoot ?? null, sourceMsgId: ctx.sourceMsgId ?? ctx.threadRoot ?? null,
     uid: ctx.uid, wsId: ctx.wsId, origin: ctx.origin ?? null, hop: ctx.hop ?? 0,
     // 손님 표지는 사슬을 따라간다 — 쪽지·예약·결재로 옮겨 탄 뒤에도 "주인이 시킨 일"로 되살아나지 않게(넘김 뒤 쪽지는 rootAuthor를 잃는다).
@@ -84,6 +101,8 @@ export function stageMessengerHandoff(ctx, { to, cc = [], message }) {
     return matches.length === 1 ? matches[0] : null;
   }; // peers is the freshly authorized organization/thread envelope, never a local slug fallback
   const target = resolve(to);
+  if (!target && !ctx.orgId) throw new Error(say(ctx, '개인 공간의 이 방에는 그 에이전트가 없어 넘길 수 없습니다 — 개인 공간에서는 같은 방에 있는 에이전트에게만 넘길 수 있고, 주인과 이 에이전트만 있는 1:1에는 넘길 다른 에이전트가 없습니다',
+    'That agent is not in this personal-space room, so it cannot be handed off — in the personal space you can only hand off to agents in the same room, and a 1:1 with just you and this agent has no one else'));
   if (!target) throw new Error('같은 메신저 조직에 파견된 동료만 넘겨받을 수 있습니다');
   const body = String(message ?? '').trim();
   if (!body || body.length > 6000) throw new Error('넘김 내용은 1~6000자여야 합니다');
