@@ -813,6 +813,9 @@ test('개인 이어 실행 — 방이 바뀌었거나(서버 판정 false)·판�
     ['에이전트 삭제', (f) => { f.state.crewGone = true; }, /실행 권한이 없습니다/], // 행이 없으면 봉투를 묻지 않는다 — 조직 경로와 같은 문구
     ['동의 철회', (f) => { f.state.consent = false; }, /msgr_ai_consent_declined/],
     ['표지 없는 개인 기록', (f) => { delete f.origin.ownCrewRoom; }, /소유자·회사 불일치/],
+    // 이어 실행의 조직 일치 검사(계획 5-3 #4 'ch.org_id가 NULL이어야') — 서버 판정이 true여도 봉투의 채널·에이전트 행이 조직 것이면 잇지 않는다(PR-C 2차 검수 LOW)
+    ['봉투 채널이 조직 채널(서버 판정 true)', (f) => { const orig = f.db.crewContext; f.db.crewContext = async (...a) => { const e = await orig(...a); return { ...e, channel: { ...e.channel, org_id: 'org-x' } }; }; }, /확인할 수 없습니다/],
+    ['에이전트 행이 조직 행(서버 판정 true)', (f) => { const orig = f.db.crewBySlug; f.db.crewBySlug = async (...a) => { const c = await orig(...a); return c && { ...c, org_id: 'org-x' }; }; }, /확인할 수 없습니다/],
   ];
   for (const [label, change, re] of cases) {
     const f = await setupPersonal();
