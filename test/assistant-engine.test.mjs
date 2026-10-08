@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { writeFile, readFile, readdir } from 'node:fs/promises';
+import { writeFile, readFile, readdir, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-asst-'));
@@ -335,6 +335,152 @@ test('W9: 메신저 알림 끈 목록에 assistant — 글 0, 서버 호출 0', 
   assert.deepEqual(normalizeMuted('msgr', ['assistant']), ['assistant'], '끄기가 저장에서 살아남는다');
 });
 
+/* ── 1차 분리 검수(#863) 반영 — 읽기 실패·혼자 보내는 시작 전 알림·묶음 기한·쉬기·쓰기 횟수·23505 ── */
+
+test('읽기 실패 — 낡은 사본으로 지난 일정·묶음을 만들지 않는다: 밤에 생긴 07:30 일정은 다음 성공한 읽기가 찾아 아침 묶음에, 밤에 지운 일정은 알리지 않는다', async () => {
+  // 밤사이 새로 생긴 일정 + 08:00 첫 읽기 실패 → 다음 15분 차례(08:15)에 다시 읽어 그 사이를 본다(설계 6절 — 확인 범위는 처리한 것으로만 옮긴다)
+  const a = await company();
+  const envA = fakeServer({ events: [] });
+  await run(a, envA, at('22:50', '2026-10-07'), at('22:59', '2026-10-07'));
+  envA.events = [ev('n1', at('07:30'), at('08:30'), { title: '밤에 잡힌 조찬' })];
+  envA.failRead = true;
+  await run(a, envA, at('07:58'), at('08:05'));
+  assert.equal(envA.inserts.length, 0, '읽지 못한 동안 묶음을 만들지 않는다');
+  assert.equal((await state(a)).status.code, 'calendar_error');
+  envA.failRead = false;
+  await run(a, envA, at('08:06'), at('08:20'));
+  const amA = envA.inserts.filter((r) => r.meta.assistant.kind === 'am');
+  assert.deepEqual(amA.map((r) => hhmm(r.at)), ['08:15'], '실패 뒤 다음 15분 차례에 다시 읽고 그때 아침 묶음');
+  assert.match(amA[0].body, /이미 시작한 일정\(조용한 시간 동안\)\n· 07:30 밤에 잡힌 조찬/);
+  // 22:50에 읽은 07:30 일정을 밤사이 지움 + 08:00 읽기 실패 → 낡은 사본으로 "이미 시작한 일정"을 만들지 않는다
+  const b = await company();
+  const envB = fakeServer({ events: [ev('d1', at('07:30'), at('08:30'), { title: '취소된 조찬' })] });
+  await run(b, envB, at('22:50', '2026-10-07'), at('22:59', '2026-10-07'));
+  envB.events = [];
+  envB.failRead = true;
+  await run(b, envB, at('07:58'), at('08:05'));
+  envB.failRead = false;
+  await run(b, envB, at('08:06'), at('08:20'));
+  const morning = envB.inserts.filter((r) => r.at >= at('08:00'));
+  assert.equal(morning.length, 0, '지운 일정을 알리지 않는다: ' + morning.map((r) => r.body).join(' | '));
+});
+
+test('시작 전 알림은 묶음 차례에도 혼자 보낸다(설계 7절 — 기준 = 키 하나): 묶음에 "곧 시작" 줄 없음, 상태 없는 새 리더가 같은 회차를 다시 보내도 DB가 한 번만', async () => {
+  const ws = await company();
+  const env = fakeServer({ events: [ev('s1', at('08:20'), at('09:00'), { title: '스탠드업' }), ev('d1', at('00:00'), at('00:00', '2026-10-09'), { all_day: true, title: '워크숍' })] });
+  await run(ws, env, at('07:59'), at('08:01'));
+  assert.deepEqual(env.inserts.map((r) => [hhmm(r.at), r.meta.assistant.kind]), [['08:00', 'am'], ['08:00', 'pre']]);
+  assert.equal(env.inserts[0].body, '[비서] 아침 정리 — 10월 8일(목)\n\n오늘 종일\n· 종일 워크숍', '묶음에는 곧 시작 줄이 없다 — 늦게 나가도 거짓 "N분 뒤"가 생기지 않는다');
+  assert.equal(env.inserts[1].client_msg_id, clientMsgId('crew-p', `cal:s1:${iso(at('08:20'))}:pre`));
+  assert.equal(env.inserts[1].body, '[비서] 곧 시작하는 일정\n· 08:20 스탠드업 — 20분 뒤 시작');
+  // 리더 교체 — 기기 A가 13:30에 14:00 알림을 보낸 뒤, 이 회사 상태가 없는 기기 B가 13:31에 리더가 된다(낮의 아침 묶음 차례에 그 회차를 다시 넣지 않는다)
+  const ws2 = await company();
+  const env2 = fakeServer({ events: [ev('m1', at('14:00'), at('15:00'), { title: '미팅' })] });
+  await run(ws2, env2, at('13:29'), at('13:30'));
+  T._resetAssistantForTest(); _resetAssistantConfigCacheForTest();
+  await rm(stateFile(ws2), { force: true });
+  await run(ws2, env2, at('13:31'), at('13:33'));
+  assert.equal(env2.inserts.filter((r) => /미팅/.test(r.body)).length, 1, env2.inserts.map((r) => `${hhmm(r.at)} ${r.body}`).join(' | '));
+});
+
+test('묶음 기한 — 저녁 묶음 시각까지 못 보낸 아침 묶음은 버리고 그 안의 지난 일정은 저녁 묶음으로 / 끈 채 이틀 지나 다시 켜면 지난 묶음 0', async () => {
+  const ws = await company();
+  const env = fakeServer({ events: [ev('q1', at('07:30'), at('08:30'), { title: '조찬' }), ev('d1', at('00:00'), at('00:00', '2026-10-09'), { all_day: true, title: '워크숍' })] });
+  await run(ws, env, at('22:59', '2026-10-07'), at('22:59', '2026-10-07'));
+  env.failInsert = true;
+  await run(ws, env, at('08:00'), at('20:55'), { step: 5 * MIN });
+  assert.equal((await state(ws)).outbox?.kind, 'am', '아침 묶음이 대기열에 있다');
+  env.failInsert = false;
+  await run(ws, env, at('21:00'), at('21:02'));
+  const today = env.inserts.filter((r) => r.at >= at('08:00'));
+  assert.deepEqual(today.map((r) => [hhmm(r.at), r.meta.assistant.kind]), [['21:00', 'pm']], '기한 지난 아침 묶음은 보내지 않는다');
+  assert.match(today[0].body, /^\[비서\] 저녁 정리 — 10월 8일\(목\)/);
+  assert.match(today[0].body, /이미 시작한 일정\(조용한 시간 동안\)\n· 07:30 조찬/, '아침 묶음 안의 지난 일정은 보류 목록으로 돌아와 저녁 묶음에');
+  assert.doesNotMatch(today[0].body, /오늘 종일/, '"오늘 종일"은 아침 묶음 몫 — 저녁에 옮겨 쓰지 않는다');
+  // 아침 묶음이 대기열에 있는 채 끄고, 이틀 뒤 다시 켬 — 꺼짐은 파일을 열지 않으므로(D2) 기한이 지난 글을 버린다
+  const ws2 = await company();
+  const env2 = fakeServer({ events: [ev('d2', at('00:00'), at('00:00', '2026-10-09'), { all_day: true, title: '워크숍' })] });
+  env2.failInsert = true;
+  await run(ws2, env2, at('07:59'), at('08:02'));
+  assert.equal((await state(ws2)).outbox?.kind, 'am');
+  const cfg2 = join(paths(ws2).root, 'assistant.json');
+  await writeFile(cfg2, JSON.stringify({ enabled: false, agent: 'pepper', tz: 'Asia/Seoul' }));
+  _resetAssistantConfigCacheForTest();
+  await run(ws2, env2, at('08:03'), at('08:05'));
+  await writeFile(cfg2, JSON.stringify({ enabled: true, agent: 'pepper', enabledAt: '2026-10-10T01:00:00Z', tz: 'Asia/Seoul' }));
+  _resetAssistantConfigCacheForTest();
+  env2.failInsert = false; env2.events = [];
+  await run(ws2, env2, at('10:05', '2026-10-10'), at('10:10', '2026-10-10'));
+  assert.equal(env2.inserts.length, 0, '이틀 전 묶음을 보내지 않는다: ' + env2.inserts.map((r) => r.body).join(' | '));
+  assert.equal((await state(ws2)).outbox, null);
+});
+
+test('쉬기에 들어가면(일정 보기 끔·다른 회사가 맡음) 대기열·보류 목록을 비운다 — 다시 맡았을 때 쉬기 전 글이 나가지 않는다', async () => {
+  // 일정 보기 끔(idle)
+  const ws = await company();
+  const env = fakeServer({ events: [ev('q1', at('07:30'), at('08:30'), { title: '조찬' })] });
+  await run(ws, env, at('22:59', '2026-10-07'), at('22:59', '2026-10-07'));
+  env.failInsert = true;
+  await run(ws, env, at('08:00'), at('08:02'));
+  assert.equal((await state(ws)).outbox?.kind, 'am');
+  const cfgFile = join(paths(ws).root, 'assistant.json');
+  const base = JSON.parse(await readFile(cfgFile, 'utf8'));
+  await writeFile(cfgFile, JSON.stringify({ ...base, watch: { calendar: false } }));
+  _resetAssistantConfigCacheForTest();
+  await run(ws, env, at('08:03'), at('08:04'));
+  let st = await state(ws);
+  assert.deepEqual([st.outbox, st.pending], [null, []], '일정 보기를 끄면 대기열·보류가 빈다');
+  await writeFile(cfgFile, JSON.stringify(base));
+  _resetAssistantConfigCacheForTest();
+  env.failInsert = false;
+  await run(ws, env, at('08:05'), at('08:10'));
+  assert.equal(env.inserts.filter((r) => r.at >= at('08:00')).length, 0, '다시 켠 뒤 쉬기 전 글이 나가지 않는다');
+  // 다른 회사가 맡음(other_company)
+  const older = await company({ cfg: { enabledAt: '2026-10-01T00:00:00Z' } });
+  const newer = await company({ cfg: { enabled: false } });
+  const env2 = fakeServer({ events: [ev('q2', at('07:30'), at('08:30'), { title: '조찬' })] });
+  const deps2 = depsFor(env2, null, { companyIds: async () => [older, newer] });
+  await run(older, env2, at('22:59', '2026-10-07'), at('22:59', '2026-10-07'), { deps: deps2 });
+  env2.failInsert = true;
+  await run(older, env2, at('08:00'), at('08:02'), { deps: deps2 });
+  assert.equal((await state(older)).outbox?.kind, 'am');
+  const newerCfg = join(paths(newer).root, 'assistant.json');
+  await writeFile(newerCfg, JSON.stringify({ enabled: true, agent: 'pepper', enabledAt: '2026-10-02T00:00:00Z', tz: 'Asia/Seoul' }));
+  _resetAssistantConfigCacheForTest();
+  await run(older, env2, at('08:03'), at('08:04'), { deps: deps2 });
+  st = await state(older);
+  assert.equal(st.status.code, 'other_company');
+  assert.deepEqual([st.outbox, st.pending], [null, []], '다른 회사가 맡으면 이 회사의 대기열·보류가 빈다');
+  await writeFile(newerCfg, JSON.stringify({ enabled: false, agent: 'pepper', tz: 'Asia/Seoul' }));
+  _resetAssistantConfigCacheForTest();
+  env2.failInsert = false;
+  await run(older, env2, at('08:05'), at('08:10'), { deps: deps2 });
+  assert.equal(env2.inserts.filter((r) => r.at >= at('08:00')).length, 0);
+});
+
+test('상태 파일은 바뀐 때만 쓴다 — 켜진 채 새 항목 없이 1시간이면 쓰기 5회 이하(첫 틱 1 + 15분마다 확인 범위 1)', async () => {
+  const ws = await company();
+  const env = fakeServer({ events: [] });
+  let writes = 0;
+  const d = depsFor(env, ws, { writeState: async (cid, st) => { writes += 1; return T.assistantDeps.writeState(cid, st); } });
+  await run(ws, env, at('10:00'), at('11:00'), { deps: d });
+  assert.ok(writes >= 1 && writes <= 5, `쓰기 ${writes}회(61틱)`);
+});
+
+test('23505(같은 client_msg_id가 이미 있음) — 보낸 것으로 기록하고 대기열을 비워, 같은 글을 다시 시도하지 않고 다음 알림을 막지 않는다', async () => {
+  const ws = await company();
+  const env = fakeServer({ events: [ev('e1', at('14:00'), at('15:00')), ev('e2', at('14:10'), at('15:00'))] });
+  const k1 = `cal:e1:${iso(at('14:00'))}:pre`;
+  env.ids.add(clientMsgId('crew-p', k1)); // 다른 기기(또는 응답만 끊긴 첫 시도)가 먼저 넣었다
+  await run(ws, env, at('13:29'), at('13:45'));
+  const st = await state(ws);
+  assert.ok(st.sent[k1], '이미 있는 글의 키를 보낸 것으로 기록');
+  assert.equal(st.outbox, null);
+  assert.equal(st.status.code, 'ok');
+  assert.deepEqual(env.inserts.map((r) => [hhmm(r.at), r.client_msg_id]), [['13:40', clientMsgId('crew-p', `cal:e2:${iso(at('14:10'))}:pre`)]], '다음 알림은 제때');
+  assert.equal(env.calls.filter((c) => c.name === 'insertMessage').length, 2, '같은 글을 다시 시도하지 않는다(13:30 1회 + 13:40 1회)');
+});
+
 /* ── 버전 섞임·DB D1~D4 ── */
 
 test('D1: 새 항목 0으로 1시간 — Supabase 쓰기 0(실제 supabase-js → 가짜 HTTP), 상태 파일은 동기화 제외, 대화 기록 쓰기 0', async () => {
@@ -380,6 +526,8 @@ test('D4: 에이전트가 파일 쓰기·셸로 assistant.json·비서 상태를
   assert.equal(await deny('Bash', { command: `echo '{"enabled":false}' > assistant.json` }), 'deny');
   assert.equal(await deny('Write', { file_path: join(root, '.assistant', 'state.json'), content: '{}' }), 'deny', '보낸 키·대기열을 고쳐 알림을 침묵시키지 못한다');
   assert.equal(await deny('Bash', { command: 'cat .assistant/state.json' }), 'deny');
+  assert.equal(await deny('Bash', { command: 'rm -rf .assistant' }), 'deny', '폴더째 지우기(보낸 키·대기열 초기화)도 막는다');
+  assert.equal(await deny('Bash', { command: `cat ${join(root, '.assistant', 'state.json')}` }), 'deny', '절대 경로');
   assert.equal(await deny('Write', { file_path: join(root, 'vault', 'notes', 'assistant-ideas.md'), content: 'x' }), 'allow', '책상의 일반 문서는 그대로');
   assert.equal(isFileLockedRel('assistant.json'), true, '동기화도 같은 프로세스 간 잠금으로 쓴다');
 });

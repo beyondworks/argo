@@ -8,12 +8,15 @@
 //  2. 사용자당 1명 — 같은 주인의 다른 회사에서 더 나중에 켠 비서가 있으면 이 회사는 쉰다(상태 "다른 회사의 비서가 맡고 있음").
 //  3. 조용한 시간(일정 예외 아니오)이면 확인도 배달도 하지 않는다 — 끝난 뒤 첫 확인이 밤사이를 읽어 아침 묶음에 넣는다.
 //  4. 대기열(보낼 글 1건 이하)이 있으면 같은 client_msg_id·같은 본문으로 먼저 다시 보낸다. 비지 않으면 새 글을 만들지 않는다.
+//     기한(시작 전 알림 = 회차 시작, 묶음 = rules.mjs bundleUntil)이 지난 글은 보내지 않고, 그 안의 지난 일정은 보류 목록으로 돌린다.
 //  5. 차례 판정 — 일정 읽기(15분)·잠자기 뒤·저녁 묶음 범위. 차례가 아니면 네트워크 호출 0, 메모리 사본으로 시작 전 시각만 계산한다.
+//     읽어야 할 차례에 읽지 못했으면(실패·실패 뒤 15분) 낡은 사본으로 지난 일정·묶음을 만들지 않고 확인 범위도 옮기지 않는다 — 다음 성공한 읽기가 그 사이를 다시 본다.
 //  6. 감지 → 시작 전 알림(확인 읽기 뒤) / 지난 일정(보류 목록) / 아침·저녁 묶음.
-//  7. 배달 → 성공한 뒤에만 보낸 키를 기록. 상태는 바뀐 때만 로컬 파일에(일정 확인 범위만 바뀐 경우는 15분에 한 번).
+//  7. 배달 → 묶음, 그다음 시작 전 알림을 하나씩(시작 전 알림은 늘 혼자 — 설계 7절). 성공한 뒤에만 보낸 키를 기록.
+//     상태는 바뀐 때만 로컬 파일에(일정 확인 범위만 바뀐 경우는 15분에 한 번).
 import { loadAssistantConfig, calendarActive } from './config.mjs';
 import { readState, pruneState, stateFile } from './state.mjs';
-import { GAP_MS, LEASE_FRESH_MS, dateIn, addDays, instantIn, inQuiet, bundleDue, assistantMuted, assistantCompanyOf, retryDelayMs } from './rules.mjs';
+import { GAP_MS, LEASE_FRESH_MS, dateIn, addDays, instantIn, inQuiet, bundleDue, bundleUntil, assistantMuted, assistantCompanyOf, retryDelayMs } from './rules.mjs';
 import { CAL_READ_MS, CAL_SPAN_MS, readCalendar, ownEvents, expand, planCalendar, confirmDue, preKey } from './calendar.mjs';
 import { personalRoom, insertNotice, composePre, composeBundle, refreshPreBody } from './deliver.mjs';
 import { leaseCheck, LEASE_TTL_MS, LEASE_ASSISTANT_ENGINE } from '../sync.mjs';
@@ -134,12 +137,12 @@ export async function runAssistantTick(cid, { now = Date.now(), deps = assistant
   if (st.day.date !== today) st.day = { date: today, instant: 0 };
   pruneState(st, now);
 
-  // 2. 사용자당 1명 · 비서 에이전트 · 끈 목록 · 볼 것 — 쉬는 동안의 일정은 나중에 "지난 일정"으로 알리지 않는다(확인 범위를 지금으로)
-  const rest = (why, code) => { st.cal.coveredUntil = now; return done(why, code); };
+  // 2. 사용자당 1명 · 비서 에이전트 · 끈 목록 · 볼 것 — 쉬는 동안은 글 0. 쉬는 동안의 일정은 나중에 "지난 일정"으로 알리지 않고(확인 범위를 지금으로),
+  //    쉬기 전 보류·대기열도 비운다 — 다시 맡는 순간 낡은 글이 가지 않게(다른 회사가 맡았으면 그쪽이 알린다). 이미 비어 있으면 쓰기 0(save 비교).
+  const rest = (why, code) => { st.cal.coveredUntil = now; st.pending = []; st.outbox = null; return done(why, code); };
   if ((await pickCompany(cid, owner, cfg, now, deps)) !== cid) return rest('other_company', 'other_company');
   if (!(await deps.agentExists(cid, cfg.agent))) return rest('no_agent', 'no_agent');
-  // 메신저 알림 종류에서 비서를 껐다 — 글 0. 보류·대기열도 비운다(켜는 순간 낡은 글이 가지 않게).
-  if (assistantMuted(company)) { st.pending = []; st.outbox = null; return rest('muted', 'muted'); }
+  if (assistantMuted(company)) return rest('muted', 'muted'); // 메신저 알림 종류에서 비서를 껐다
   if (!calendarActive(cfg)) return rest('idle'); // 이 단계는 일정만 본다
   // 3. 조용한 시간 — 확인 범위를 옮기지 않는다(끝난 뒤 첫 확인이 그 사이를 읽는다)
   const quiet = inQuiet(now, cfg);
@@ -155,9 +158,11 @@ export async function runAssistantTick(cid, { now = Date.now(), deps = assistant
   const lang = company.lang === 'en' ? 'en' : 'ko';
 
   // 4. 대기열 — 남은 글을 먼저. 비지 않으면 이번 틱에 새 글을 만들지 않는다(대기열은 늘 1건 이하).
-  if (st.outbox?.kind === 'pre' && now >= Number(st.outbox.until)) {
-    // 시작이 지난 시작 전 알림 — "N분 뒤 시작"은 이제 거짓이라 다시 보내지 않고, 지난 일정으로 다음 묶음에 넣는다
-    st.pending.push(...(Array.isArray(st.outbox.items) ? st.outbox.items : []).map((p) => ({ ...p, reason: 'gap' })));
+  if (st.outbox && now >= Number(st.outbox.until)) {
+    // 기한이 지난 글 — 시작 전 알림은 "N분 뒤 시작"이, 묶음은 "오늘·내일"이 거짓이 된다. 보내지 않고, 그 안의 지난 일정(시작 전 알림의 회차 포함)은
+    // 보류 목록으로 돌려 다음 묶음에 넣는다(오늘 종일·내일 일정은 다음 묶음이 새 사본으로 다시 고른다).
+    const have = new Set(st.pending.map((p) => p.key));
+    st.pending.push(...(Array.isArray(st.outbox.items) ? st.outbox.items : []).filter((p) => p && typeof p.key === 'string' && !have.has(p.key)));
     st.outbox = null;
   }
   if (st.outbox) {
@@ -195,8 +200,11 @@ export async function runAssistantTick(cid, { now = Date.now(), deps = assistant
     if (!m.snap) return done('no_snapshot');
   }
 
-  // 6. 판정
-  const covered = m.snap.from <= coveredUntil; // 사본이 확인 범위 시작부터 덮어야 "그 사이 시작한 회차"를 믿고 가를 수 있다
+  // 6. 판정 — covered = 지난 일정을 가르고 확인 범위를 옮기고 묶음을 만들어도 되는 사본인가: 사본이 확인 범위 시작부터 덮고, 읽어야 할 차례에 읽지
+  //    못한(stale — 실패·실패 뒤 15분) 사본이 아니어야 한다. 낡은 사본으로 하면 그 사이 새로 생긴 회차는 영영 안 보이고, 지운 회차는 "이미 시작한 일정"으로
+  //    나간다(#863 분리 검수). 시작 전 알림은 확인 읽기를 거치므로 낡은 사본으로도 계산한다.
+  const stale = needRead && !readNow;
+  const covered = !stale && m.snap.from <= coveredUntil;
   const plan = planCalendar({ occs: m.snap.occs, now, coveredUntil, leadMs: cfg.leadMinutes * 60_000, sent: st.sent, skip: m.skip, slot, tz: cfg.tz });
   if (covered) {
     const have = new Set(st.pending.map((p) => p.key));
@@ -220,7 +228,7 @@ export async function runAssistantTick(cid, { now = Date.now(), deps = assistant
     }
   }
 
-  // 7. 배달 — 묶음 차례면 곧 시작할 일정도 그 글에 함께, 아니면 시작 전 알림을 하나씩(일정 시작 전 알림은 늘 혼자 — 설계 7절)
+  // 7. 배달 — 묶음(차례이고 새 사본일 때), 그다음 시작 전 알림을 하나씩. 시작 전 알림은 묶음 차례에도 늘 혼자다(설계 7절 — 기준 = 키 하나).
   const deliverNew = async (ob, extra = {}) => {
     st.outbox = { ...ob, ...extra, at: now, tries: 0, nextAt: 0 };
     await save(cid, m, now, deps); // 대기열에 먼저 저장 — 글 넣기 도중 프로세스가 죽어도 다음 틱이 같은 글을 같은 id로 다시 보낸다
@@ -228,20 +236,19 @@ export async function runAssistantTick(cid, { now = Date.now(), deps = assistant
     if (!s) { setStatus(st, 'login_required', now); return false; }
     return send(cid, m, s, cfg, now, lang);
   };
-  const bundleReady = slot && (slot.lane !== 'pm' || m.snap.to >= pmTo); // 저녁 묶음은 내일 일정을 다 읽은 사본으로만
+  const bundleReady = covered && slot && (slot.lane !== 'pm' || m.snap.to >= pmTo); // 저녁 묶음은 내일 일정을 다 읽은 사본으로만
   if (bundleReady) {
     const pending = st.pending.slice();
-    const ob = composeBundle(slot, { soon: due, allDay: plan.allDay, tomorrow: plan.tomorrow, pending }, { now, lang, tz: cfg.tz });
+    const ob = composeBundle(slot, { allDay: plan.allDay, tomorrow: plan.tomorrow, pending }, { lang, tz: cfg.tz });
     if (ob) {
-      st.pending = st.pending.filter((p) => !pending.includes(p)); // 보류 항목은 이제 대기열 글 안에 있다
-      await deliverNew(ob, { date: slot.date });
-    } else if (covered) {
+      st.pending = st.pending.filter((p) => !pending.includes(p)); // 보류 항목은 이제 대기열 글 안에 있다(기한이 지나 버리면 되돌린다)
+      if (!(await deliverNew(ob, { date: slot.date, until: bundleUntil(slot, cfg) }))) return done('ok'); // 막히면 시작 전 알림은 대기열이 빈 뒤에
+    } else {
       st.bundles[slot.lane] = slot.date; // 넣을 것이 없다 — 그날 이 묶음은 처리한 것으로(뒤에 생긴 지난 일정은 다음 묶음으로)
     }
-  } else {
-    for (const o of due) {
-      if (!(await deliverNew(composePre(o, { now, lang, tz: cfg.tz })))) break; // 막히면 나머지는 다음 틱에 다시 계산된다
-    }
+  }
+  for (const o of due) {
+    if (!(await deliverNew(composePre(o, { now, lang, tz: cfg.tz })))) break; // 막히면 나머지는 다음 틱에 다시 계산된다
   }
   return done('ok');
 }

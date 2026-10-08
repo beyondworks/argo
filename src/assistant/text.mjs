@@ -5,7 +5,6 @@ export const ASSISTANT_TEXT = Object.freeze({
   'head.pre': ['[비서] 곧 시작하는 일정', '[Assistant] Starting soon'],
   'head.am': ['[비서] 아침 정리 — {date}', '[Assistant] Morning summary — {date}'],
   'head.pm': ['[비서] 저녁 정리 — {date}', '[Assistant] Evening summary — {date}'],
-  'sec.soon': ['곧 시작', 'Starting soon'],
   'sec.allDay': ['오늘 종일', 'All day today'],
   'sec.missedQuiet': ['이미 시작한 일정(조용한 시간 동안)', 'Already started (during quiet hours)'],
   'sec.missedGap': ['확인 못 한 사이 지난 일정', 'Started while I could not check'],

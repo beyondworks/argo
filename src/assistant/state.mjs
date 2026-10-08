@@ -1,5 +1,5 @@
-// 능동 비서 상태 — <회사>/.assistant/state.json(기기 로컬, 동기화 제외: sync.mjs EXCLUDE, 에이전트 셸 방어: permission-gate WS_DOT_FILES).
-// 담는 것: 보낸 키(14일), 보류 목록(조용한 시간·잠든 사이 지난 일정), 대기열(보낼 글 1건 이하), 일정 확인 범위, 아침·저녁 묶음을 처리한 날짜,
+// 능동 비서 상태 — <회사>/.assistant/state.json(기기 로컬, 동기화 제외·원격 불가시: sync.mjs isAssistantStateRel, 에이전트 셸 방어: permission-gate BASH_DOT_DIR_RE).
+// 담는 것: 보낸 키(14일), 보류 목록(조용한 시간·잠든 사이 지난 일정), 대기열(보낼 글 1건 이하, 기한 있음), 일정 확인 범위, 아침·저녁 묶음을 처리한 날짜,
 // 오늘 보낸 즉시 알림 수, 마지막 상태.
 // 쓰기는 값이 바뀐 때만 — tick.mjs save가 직전에 쓴 내용과 비교한다(유휴 틱 쓰기 0).
 import { join } from 'node:path';
@@ -25,7 +25,8 @@ export function normalizeState(raw) {
   if (raw.sent && typeof raw.sent === 'object') for (const [k, t] of Object.entries(raw.sent)) if (typeof k === 'string' && Number.isFinite(Number(t))) s.sent[k] = Number(t);
   if (Array.isArray(raw.pending)) s.pending = raw.pending.filter((p) => p && typeof p.key === 'string').slice(-PENDING_MAX);
   const o = raw.outbox;
-  if (o && typeof o === 'object' && typeof o.basis === 'string' && typeof o.body === 'string' && Array.isArray(o.keys)) s.outbox = o;
+  // 기한(until) 없는 대기열 글은 버린다 — 기한이 없으면 낡은 글이 언제까지고 다시 나갈 수 있다(tick.mjs 대기열 기한)
+  if (o && typeof o === 'object' && typeof o.basis === 'string' && typeof o.body === 'string' && Array.isArray(o.keys) && Number.isFinite(Number(o.until))) s.outbox = o;
   s.cal = { coveredUntil: num(raw.cal?.coveredUntil), readAt: num(raw.cal?.readAt) };
   s.bundles = { am: typeof raw.bundles?.am === 'string' ? raw.bundles.am : '', pm: typeof raw.bundles?.pm === 'string' ? raw.bundles.pm : '' };
   s.day = { date: typeof raw.day?.date === 'string' ? raw.day.date : '', instant: num(raw.day?.instant) };

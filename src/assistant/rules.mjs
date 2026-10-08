@@ -44,6 +44,11 @@ export function bundleDue(now, cfg, done = {}) {
   return null;
 }
 
+/** 묶음 글의 유효 기한(ms) — 아침 묶음은 그날 저녁 묶음 시각까지, 저녁 묶음은 그날 자정까지("내일 일정"이 거짓이 되기 전).
+    기한이 지나도록 못 보낸 묶음은 보내지 않고, 그 안의 지난 일정은 보류 목록으로 돌려 다음 묶음에 넣는다(tick.mjs). 꺼짐은 파일을 열지 않으므로(호출·쓰기 0)
+    끈 채 날이 지나 다시 켠 경우도 이 기한이 낡은 묶음을 막는다. 아침 < 저녁은 설정 정규화가 보장한다(config.mjs). */
+export const bundleUntil = (slot, cfg) => (slot.lane === 'am' ? instantIn(slot.date, cfg.eveningAt, cfg.tz) : instantIn(addDays(slot.date, 1), '00:00', cfg.tz));
+
 /** 메신저 알림 종류에서 비서를 껐는가 — company.json msgr.mutedEvents(판정 정본 channelSends, 설계 12절 "알림 종류"). */
 export const assistantMuted = (company) => !channelSends('msgr', { enabled: true, mutedEvents: company?.msgr?.mutedEvents }, 'assistant');
 

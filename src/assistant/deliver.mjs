@@ -78,11 +78,13 @@ export function composePre(o, { now, lang = 'ko', tz = null }) {
 }
 
 /** 아침·저녁 묶음 — 새 항목이 하나도 없으면 null(개수 줄만으로는 보내지 않는다 — 설계 5.3).
-    parts = { soon: [회차](곧 시작), allDay: [회차](오늘 종일, 아침), tomorrow: [회차](내일, 저녁), pending: [보류 항목](지난 일정) }. */
-export function composeBundle(slot, parts, { now, lang = 'ko', tz = null }) {
+    parts = { allDay: [회차](오늘 종일, 아침), tomorrow: [회차](내일, 저녁), pending: [보류 항목](지난 일정) }.
+    곧 시작할 일정은 넣지 않는다 — 시작 전 알림은 묶음 차례에도 혼자 보낸다(설계 7절: 기준 = 키 하나라 두 기기·상태 없는 새 리더가 보내도 DB가 한 번만 넣고,
+    묶음이 대기열에 머물러도 거짓 "N분 뒤 시작"이 생기지 않는다 — #863 분리 검수). items = 넣은 보류 항목(기한이 지나 버릴 때 보류 목록으로 되돌린다). */
+export function composeBundle(slot, parts, { lang = 'ko', tz = null }) {
   const ctx = { lang, tz, date: slot.date };
-  const soon = parts.soon ?? []; const allDay = parts.allDay ?? []; const tomorrow = parts.tomorrow ?? []; const pending = parts.pending ?? [];
-  if (!soon.length && !allDay.length && !tomorrow.length && !pending.length) return null;
+  const allDay = parts.allDay ?? []; const tomorrow = parts.tomorrow ?? []; const pending = parts.pending ?? [];
+  if (!allDay.length && !tomorrow.length && !pending.length) return null;
   const quiet = pending.filter((p) => p.reason === 'quiet'); const gap = pending.filter((p) => p.reason !== 'quiet');
   const asOcc = (p) => ({ id: p.eventId, title: p.title, location: p.location, allDay: false, start: p.start });
   const next = slot.lane === 'pm' ? addDays(slot.date, 1) : null;
@@ -90,13 +92,11 @@ export function composeBundle(slot, parts, { now, lang = 'ko', tz = null }) {
     section(at('sec.allDay', lang), allDay.map((o) => line(o, ctx)), ctx),
     section(at('sec.missedQuiet', lang), quiet.map((p) => line(asOcc(p), ctx)), ctx),
     section(at('sec.missedGap', lang), gap.map((p) => line(asOcc(p), ctx)), ctx),
-    section(at('sec.soon', lang), soon.map((o) => line(o, ctx, { mins: minsLeft(o, now) })), ctx),
     section(at('sec.tomorrow', lang, { n: tomorrow.length, date: next ? dateLabel(next, lang) : '' }), tomorrow.map((o) => line(o, { ...ctx, date: next })), ctx),
   ].filter(Boolean);
   const itemKeys = [
     ...allDay.map((o) => [dayKey(o, slot.date), o]),
     ...pending.map((p) => [p.key, asOcc(p)]),
-    ...soon.map((o) => [preKey(o), o]),
     ...tomorrow.map((o) => [eveKey(o, next), o]),
   ];
   const keys = [slot.key, ...itemKeys.map(([k]) => k)];
@@ -104,5 +104,6 @@ export function composeBundle(slot, parts, { now, lang = 'ko', tz = null }) {
     kind: slot.lane, basis: slot.key, keys,
     body: `${at(slot.lane === 'am' ? 'head.am' : 'head.pm', lang, { date: dateLabel(slot.date, lang) })}\n\n${blocks.join('\n\n')}`,
     meta: { v: 1, kind: slot.lane, keys: keys.slice(0, META_ITEMS_MAX), items: itemKeys.slice(0, META_ITEMS_MAX).map(([k, o]) => metaItem(k, o)) },
+    items: pending,
   };
 }
