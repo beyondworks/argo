@@ -10,6 +10,7 @@ import { applyDeparted, forgetChannels, foldedSolo, summaryRecalled, unscopedSum
 import { hasAddressRule, userSetAddress, userAddressNote, ADDRESS_RULE_SKILL } from '../src/user-name.mjs';
 import { RULES_SKILL } from '../src/corrections.mjs';
 import { USER_ADDRESS_NOTE } from '../src/legacy-terms.mjs';
+import { hasAddressRule3394 } from './helpers/address-rule-3394.mjs';
 
 const OWNER = 'u-owner', GUEST = 'u-guest', CREW = 'c-me', OTHER = 'c-other';
 const clientOf = (rows, { error = null, throws = false } = {}) => ({ reads: 0, from() {
@@ -174,7 +175,7 @@ test('옛 버전 요약(withSolo 없음) — 회수 각인이 있는 스레드�
 });
 
 // 호칭 규칙 판정 표(8차 2026-10-08 — 정밀도 우선). 잘못 잡으면 확정 규칙 한 줄 때문에 그 회사 모든 에이전트의 이름 줄이 빠지고,
-// 놓치면 이름 줄이 남지만 그 끝의 우선 문구('단, 사용자가 카드나 확정된 규칙에서 호칭을 따로 정했으면 그 규칙을 따른다')가 덮는다.
+// 놓치면 이름 줄이 남지만 그 끝의 우선 문구("단, 사용자가 카드의 '일하는 방식'이나 회사 규칙(사용자 지침)에서 호칭을 따로 정했으면 그 규칙을 따른다")가 덮는다.
 //   CAUGHT   — 사용자 호칭 규칙이고 판정이 잡는 줄
 //   MISSED   — 사용자 호칭 규칙이지만 판정이 일부러 잡지 않는 줄('놓침(문구로 덮음)'). 5~7차에 이 모양을 잡으려 넓힐 때마다 다른 줄을 잘못 잡았다.
 //              여기서 CAUGHT로 옮기려면 NOT_RULE 표 전체가 그대로 거짓인지 먼저 본다.
@@ -237,6 +238,9 @@ const MISSED = [
     '- 답변을 시작할 때 유건님이라고 부른다',
     // #858 첫 검수 (1)
     '- 메일 서명은 "유건 드림"으로, 호칭은 "유건님"으로',
+    // 9차 확인 검수 (6) — 맨 앞 둘은 이 맥 ~/.argo 실제 카드 24개 '## 일하는 방식'에 있는 사용자의 실제 호칭 규칙(네 판 모두 놓침)
+    '- 사장을 부를 때 "사장님"이 아니라 "유건님"으로 호칭한다 — 대화·보고·문서·메일 초안 등 모든 산출물에 예외 없이 적용한다.', '- 사장을 부를 때 "사장님"이 아니라 "유건님"으로 호칭한다',
+    '- 앞으로는 유건님이라고 불러줘', '- 이제는 형이라고 불러', '- 앞으로는 "대표님"이라고 부르지 마', '- 날 부를 땐 형',
 ];
 const NOT_RULE = [
     // 7차 표 (88)
@@ -292,6 +296,11 @@ const NOT_RULE = [
     '- Call me as soon as the build breaks', '- Call me as needed', '- Call me as a last resort', '- Refer to the owner as an escalation path', '- Call me by Mon if blocked',
     '- Call the user by phone', '- Address the user by Slack', '- 사용자는 결론만 보고받고, 회의록은 "스탠드업"이라고 부른다', '- 나는 요약만 받고, 긴 문서는 "부록"이라고 부른다', '- 사용자 직함은 "PM"이라고 부른다',
     '- 사용자 성함은 계약서에서 확인하고, 계약서는 "원본"이라고 부른다', '- 사용자를 위해 만든 화면은 "홈"이라고 부른다',
+    // 9차 확인 검수 (20) — 9878a4c0에서 참이고 3394에서 거짓이던 줄(12), 부르는 말 뒤에 사용자 낱말이 오는 순서(5), 3394 오탐이던 집주인 줄(3)
+    '- 흔히 부르는 대로 "스탠드업"이라고 부른다', '- 팀에서 부르는 대로 "린"이라고 부른다', '- 다들 부르는 이름 그대로 "알파"라고 부른다', '- 평소 부르는 말로 "데일리"라고 부른다', '- 공통 함수는 utils로 불러 쓴다. 줄여서 "유틸"이라고 부른다.',
+    '- 설정값은 config로 불러 써. 짧게 cfg라고 부르기도 해.', '헬퍼는 lib로 불러 쓴다. 보통 "헬퍼"라고 부른다. (2026-10-08 채택)', '- 날짜 함수는 dayjs로 불러 쓴다; 줄여서 "데이"라고 부른다', '- 공통 함수는 utils로 불러 쓴다 그리고 줄여서 "유틸"이라고 부른다', '공통 함수는 utils로 불러 쓴다. 줄여서 "유틸"이라고 부른다. (2026-10-08 채택)',
+    '- 공통 함수는 utils로 불러 쓴다; 짧게 "유틸"이라 부른다', '- 건물은 집주인을 부른다. 짧게 "관리인"이라고 부른다', '- 회의록은 "스탠드업"이라고 부르고, 사용자에게 결론만 보고한다', '- 이번 작업은 "알파"라고 부르고, 결과는 나한테 보내 줘', '- 주간 보고서는 "주간 요약"이라고 부르고 사용자에게 금요일마다 보낸다',
+    '- 첨부 파일은 "증빙"이라고 부르고 저한테 메일로 보내 주세요', '- Call the sprint "Phase 2" and report to me formally', '- 고장 나면 집주인을 부른다. 수리 기록은 "AS 일지"라고 부른다', '- 수리는 집주인을 불러 처리한다. 수리 기록은 "AS 일지"라고 부른다', '- 회의는 흔히 부르는 대로 "스탠드업"이라고 부른다',
 ];
 
 test('호칭 규칙 판정 — 사용자를 부르는 방법을 정한 줄만, 애매하면 잡지 않는다', () => {
@@ -310,6 +319,24 @@ test('호칭 규칙 판정 — 놓치는 모양(문구로 덮음)은 잡지 않�
       assert.match(note, /"유건"/, `${lang} 이름 줄은 그대로`);
     }
   }
+});
+
+// 지금 판정은 3394f000 판정의 부분집합이다(9차 2026-10-08 — 판정을 넓혀 정탐을 되찾으려 할 때마다 새 오탐이 생겼다). 표 전체와 조합으로 만든 줄에서
+// "지금 판정이 참이면 3394도 참"을 본다. 기준판은 test/helpers/address-rule-3394.mjs(글자 그대로 옮긴 고정 사본).
+const KO_PRE = ['- ', '', '- 앞으로 ', '- 앞으로는 ', '- 흔히 부르는 대로 ', '- 공통 함수는 utils로 불러 쓴다. ', '- 설정값은 config로 불러 써; ', '- 건물은 집주인을 부른다. ', '- 사용자에게 결론만 보고한다. ', '- 반말은 쓰지 말고 ', '- 보고는 결론부터, 그리고 ', '- 회의록은 정리하고 ', '- 막히면 나를 불러. '];
+const KO_SUBJ = ['', '나를 ', '날 ', '저를 ', '저는 ', '사용자를 ', '사용자는 ', '사용자에게는 ', '나한테는 ', '주인을 ', '회의록은 ', '고객은 ', '저를 부르는 호칭은 ', '사용자 호칭은 ', '사용자의 호칭은 ', '호칭은 ', '이름은 ', '사용자 이름은 ', '보고서에서 ', '사장을 부를 때 ', '나를 부를 때는 ', '팀에서 부르는 대로 '];
+const KO_NAME = ['"대표님"', '유건님', '형', '"스탠드업"', 'helper', '"긴급"'];
+const KO_VERB = ['이라고 불러', '이라고 부른다', '라 부른다', '으로 불러', '로 불러 쓴다', '이라고 해줘', '님이라고 해', '으로 호칭한다', '', '이라고 부르지 마', '을 부른다'];
+const KO_SUF = ['', '.', ', 사용자에게 결론만 보고한다', ' (2026-10-08 채택)', '. 줄여서 "유틸"이라고 부른다', ' 태그를 붙여'];
+const EN = ['Call', 'Address', 'Refer to', 'Never call', 'Please address'].flatMap((v) => ['me', 'the user', 'the owner', 'the sprint'].flatMap((o) =>
+  ['', ' as', ' by', ' as soon as', ' by phone', ' by the end of', ' only when', ','].flatMap((m) => [' Yugeon', ' "boss"', ' first name', ' the approver', ''].flatMap((n) => ['', '.', ' if blocked'].map((e) => `- ${v} ${o}${m}${n}${e}`)))));
+test('호칭 규칙 판정 — 지금 판정이 참이면 3394f000 판정도 참(새 오탐 0을 구조로)', () => {
+  let n = 0;
+  const check = (s) => { n += 1; if (hasAddressRule(s)) assert.equal(hasAddressRule3394(s), true, `3394에서 거짓인데 지금 참: ${s}`); };
+  for (const s of [...CAUGHT, ...MISSED, ...NOT_RULE]) check(s);
+  for (const p of KO_PRE) for (const j of KO_SUBJ) for (const nm of KO_NAME) for (const v of KO_VERB) for (const x of KO_SUF) check(`${p}${j}${nm}${v}${x}`);
+  for (const s of EN) check(s);
+  assert.ok(n > 50000, `조합 줄 수 ${n}`);
 });
 
 test('호칭 규칙 위치 — 카드는 "## 일하는 방식" 절만, 확정 규칙은 주입된 captain-rules 절만', () => {
@@ -332,7 +359,7 @@ test('호칭 지시문 — 규칙이 있으면 이름 대신 "정한 규칙대�
     }
     assert.ok(!userAddressNote('유건', lang, { ruled: true }).includes(USER_ADDRESS_NOTE.deferToRule[lang]), `${lang}: 규칙을 찾았으면 그 규칙을 따르라는 줄만`);
   }
-  assert.equal(USER_ADDRESS_NOTE.deferToRule.ko, '단, 사용자가 카드나 확정된 규칙에서 호칭을 따로 정했으면 그 규칙을 따른다.');
+  assert.equal(USER_ADDRESS_NOTE.deferToRule.ko, "단, 사용자가 카드의 '일하는 방식'이나 회사 규칙(사용자 지침)에서 호칭을 따로 정했으면 그 규칙을 따른다.");
   assert.doesNotMatch(userAddressNote('유건', 'ko', { ruled: true }), /유건/);
   assert.match(userAddressNote('유건', 'ko', { ruled: true }), /직접 정한 규칙/);
   assert.match(userAddressNote('Yugeon', 'en', { ruled: true }), /rule they set/);

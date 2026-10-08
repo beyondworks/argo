@@ -117,7 +117,7 @@ for (const lang of ['ko', 'en']) {
 }
 
 // 호칭 8차(2026-10-08) — 호칭 규칙 판정은 정밀도가 먼저라 놓치는 모양이 있다. 확정 규칙에 그 모양(놓침)이나 오탐 후보가 있어도
-// 러너마다 같은 이름 줄이 실리고, 그 끝에 "카드나 확정된 규칙에서 호칭을 정했으면 그 규칙을 따른다"가 붙는다(user-name.mjs userAddressNote 한 곳).
+// 러너마다 같은 이름 줄이 실리고, 그 끝에 "카드의 '일하는 방식'이나 회사 규칙(사용자 지침)에서 호칭을 정했으면 그 규칙을 따른다"가 붙는다(user-name.mjs userAddressNote 한 곳).
 // 판정이 잡는 규칙이면 이름 줄 대신 그 규칙을 따르라는 줄만(우선 문구 없음).
 const RULE_RUNNERS = [['claude', 'SDK', false, 'messages'], ['codex', 'CLI', true, 'cli'], ['openrouter', '네이티브', false, 'messages']];
 const RULES = {

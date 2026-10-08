@@ -70,6 +70,7 @@ const { relocateOrgJournals } = await import('../src/memory.mjs');
 const { recallDeparted } = await import('../src/gateway/msgr-recall.mjs');
 const { sessionFile } = await import('../src/engine/session.mjs');
 const { DEFER } = await import('../src/gateway/queue.mjs');
+const { USER_ADDRESS_NOTE } = await import('../src/legacy-terms.mjs');
 
 const OWNER = '11111111-1111-4111-8111-111111111111';
 const GUEST = '22222222-2222-4222-8222-222222222222';
@@ -356,7 +357,18 @@ for (const r0 of ['codex', 'claude']) {
     assert.match(sys, /사용자 호칭: 유건님/, '확정 규칙 본문은 실린다');
     const line = sys.split('\n').find((l) => NAMED_KO.test(l));
     assert.ok(line, '이름 줄이 그대로');
-    assert.ok(line.endsWith('단, 사용자가 카드나 확정된 규칙에서 호칭을 따로 정했으면 그 규칙을 따른다.'), '같은 줄 끝에 우선 문구');
+    assert.ok(line.endsWith("단, 사용자가 카드의 '일하는 방식'이나 회사 규칙(사용자 지침)에서 호칭을 따로 정했으면 그 규칙을 따른다."), '같은 줄 끝에 우선 문구');
+  });
+  test(`[${r0}] 호칭 — 실제 카드의 사용자 호칭 규칙('사장을 부를 때 … "유건님"으로 호칭한다')은 판정이 놓치고, 이름 줄과 우선 문구가 같은 줄에 실린다(9차 — 문구로 덮음)`, async () => {
+    runner = r0;
+    const ws = await company({ card: '# 서윤\n\n## 일하는 방식\n- 사장을 부를 때 "사장님"이 아니라 "유건님"으로 호칭한다 — 대화·보고·문서·메일 초안 등 모든 산출물에 예외 없이 적용한다.\n- 결론부터\n' });
+    await say(ws, room({ pair: `crew:${CREW}` }), '안녕');
+    const sys = lastSystem();
+    assert.match(sys, /"유건님"으로 호칭한다/, '카드 규칙은 실린다');
+    const line = sys.split('\n').find((l) => NAMED_KO.test(l));
+    assert.ok(line, '이름 줄이 그대로');
+    assert.ok(line.endsWith(USER_ADDRESS_NOTE.deferToRule.ko), '같은 줄 끝에 우선 문구');
+    assert.doesNotMatch(sys, /직접 정한 규칙/);
   });
   test(`[${r0}] 호칭 — 규칙이 없으면 종전대로 이름 지시가 실린다`, async () => {
     runner = r0; const ws = await company();

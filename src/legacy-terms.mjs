@@ -61,8 +61,9 @@ export const USER_ADDRESS_NOTE = Object.freeze({
   // 이름 줄(named·unnamed) 끝에 항상 붙는 우선 문구 — 호칭 규칙 판정(user-name.mjs hasAddressRule)은 정밀도가 먼저라 놓치는 모양이 있다.
   //   놓쳐도 모델이 카드·확정 규칙의 호칭을 따르게 한다(8차 2026-10-08 총괄 결정). 붙이는 곳은 user-name.mjs userAddressNote 한 곳
   deferToRule: Object.freeze({
-    ko: '단, 사용자가 카드나 확정된 규칙에서 호칭을 따로 정했으면 그 규칙을 따른다.',
-    en: 'However, if the user has set how to address them in your card or in the confirmed rules, follow that rule instead.',
+    // 가리키는 이름은 지시문 안의 실제 이름과 맞춘다 — 카드 절 '## 일하는 방식', 확정 규칙 절 '# 사용자 지침 — … 회사 규칙'(corrections.mjs), 아래 ruled 줄(9차 확인 검수 LOW)
+    ko: "단, 사용자가 카드의 '일하는 방식'이나 회사 규칙(사용자 지침)에서 호칭을 따로 정했으면 그 규칙을 따른다.",
+    en: "However, if the user has set how to address them in your card's working rules or the company rules (user rules), follow that rule instead.",
   }),
   // 사용자가 직접 정한 호칭 규칙이 있을 때(유건 결정 2026-10-08 ③) — 카드 '일하는 방식'·확정 규칙이 메신저 공간별 표시 이름보다 우선한다
   ruled: Object.freeze({
