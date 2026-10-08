@@ -11,6 +11,7 @@ import { rerunMode } from './rerun.mjs'; // '다시 실행'은 사장이 직접 
 import { subscribeSearch } from '../search-bus.mjs'; // 상단 검색 받기(UL10)
 import { gistLabel } from '../../../lib/gist-display.mjs'; // 메신저 머리말을 뗀 요약(UX-A08)
 import { turnErrorDesc } from './turn-desc.mjs'; // 사용자가 멈춘 턴은 저장된 원문 대신 화면 언어 문구
+import { formatMissedSlots } from '../../../../src/routine-time.mjs'; // 놓친 루틴 회차 묶음 문구 — 엔진의 대화·알림 안내와 같은 함수(노드 의존 0)
 
 // 러너 표시명 — 서버 RUNNERS.name 준거(runner-connect RUNNER_NAMES와 같은 값)
 const RUNNER_LABELS = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', antigravity: 'Antigravity', glm: 'GLM', kimi: 'Kimi', openrouter: 'OpenRouter', grok: 'Grok' };
@@ -135,6 +136,12 @@ export default function Activity({ params }) {
     if (e.type === 'shell-fallback') {
       // 윈도우 셸 사다리 폴백(동봉 busybox를 못 씀 — 없음·백신 격리) — 조용히 퇴화하지 않고 한 번 드러낸다(shell-backend.mjs). 건너뛴 후보·사유는 제보용 원문
       return { who: t('activity.shell'), avatar: t('activity.shell').slice(0, 1), desc: `${t('activity.shellFallback', { kind: e.kind })} — ${(e.tried ?? []).join(', ')}`, chip: t('activity.shellFallbackChip'), danger: true, href: `/c/${ws}/settings`, linkLabel: t('activity.settings') };
+    }
+    if (e.type === 'routine-skipped') {
+      // 놓친 루틴 회차(scheduler → routines.recordMissedSlots) — 갈래가 없으면 기본 행으로 떨어져 '? / routine-skipped' 원문이 보인다(runner-health가 겪은 결함과 같은 계열).
+      // 날짜 묶음은 화면 언어로 다시 만든다(이벤트에는 날짜·시각만 저장).
+      return { who: nameOf(e.slug), avatar: nameOf(e.slug), desc: t('activity.routineSkipped', { title: e.title ?? '', slots: formatMissedSlots(e.slots ?? [], lang) }),
+        chip: t('activity.routineSkippedChip'), danger: true, href: `/c/${ws}/routines`, linkLabel: t('nav.routines') };
     }
     if (e.type === 'gateway') {
       return { who: e.kind === 'telegram' ? t('activity.telegram') : t('activity.slack'), avatar: t('activity.connected').slice(0, 1), desc: t('activity.gatewayPaired'), chip: t('activity.connected'), href: `/c/${ws}/settings`, linkLabel: t('activity.settings') };

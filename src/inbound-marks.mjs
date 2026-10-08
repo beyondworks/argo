@@ -26,6 +26,12 @@ export const LOOP_MARK = { ko: '[루프 프로토콜]', en: '[Loop protocol]' };
 /** 루프 프로토콜 문단의 시작 — 루프 지시는 `지시 + loopHead + 회차 안내` 모양이다 */
 export const loopHead = (lang = 'ko') => `\n\n---\n${LOOP_MARK[L(lang)]}`;
 
+/** 루틴 알림 머리 꼬리 — 놓친 회차 안내(phase 'skipped')면 (건너뜀), 실패면 (실패), 결과면 없음. 텔레그램·슬랙·메신저 채널 글·메신저 1:1 알림이
+    같은 판정을 쓴다(건너뜀 알림은 ok:false라 실패 꼬리를 달면 본문 '건너뛰었습니다'와 머리 '(실패)'가 어긋났다 — 검수 LOW). */
+export const routineNoticeTail = (event, lang = 'ko') => (event?.phase === 'skipped'
+  ? (L(lang) === 'en' ? ' (skipped)' : ' (건너뜀)')
+  : event?.ok === false ? (L(lang) === 'en' ? ' (failed)' : ' (실패)') : '');
+
 export function parseRoutine(text) {
   for (const lang of ['ko', 'en']) {
     const h = matchHead(text, (t) => `${routineHead(t, lang)} `);
