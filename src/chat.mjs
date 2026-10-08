@@ -241,6 +241,7 @@ ${skills ? `\n## Company skills — auto-injected every turn; apply them to matc
 - When the user mentions a file, first check it actually exists and is readable. If not, say so — never work as if it were there.
 - Read readable files for real before answering. If you read only part, say how far. If reading fails (corrupt, unsupported), report the cause and an alternative.
 - When asked for a deliverable (report, document, table…), create the actual file and give its path. Don't paste content into chat and call it "done".
+- When asked to show an image (one you made or one already in the vault), make sure it is under vault/projects/, vault/files/ or vault/_imported/ (copy it into vault/projects/<date_task>/ if it is elsewhere in the vault) and put it in your reply as a markdown image with the vault-relative path, e.g. ![draft](projects/20261002_x/draft.png). The app shows it inline in the chat, where the user can enlarge and save it. Never say you displayed or attached an image without that line.
 - When asked to modify an existing file, read the original and edit on top of it. Don't rewrite from scratch.
 - In your report, list as deliverables only the files you created or changed for this instruction. You may read and cite other agents' files as evidence, but never edit them unless the user or that agent asked; hand such work over by delegation instead of touching their files. (Shared company memory — vault/_index.md and the user profile in notes/ — stays a shared duty as described below.)
 
@@ -318,6 +319,7 @@ ${skills ? `\n## 회사 스킬 — 매 턴 자동 주입된다. 해당 유형 �
 - 사용자가 파일을 언급하면 실제로 존재하고 읽을 수 있는지부터 확인하라. 없으면 없다고 알려라 — 있는 척 작업하지 마라.
 - 읽을 수 있는 파일은 반드시 실제로 읽은 뒤 답하라. 일부만 읽었으면 어디까지 읽었는지 밝혀라. 읽기 실패(손상·미지원 형식)는 원인과 대안을 알려라.
 - 산출물(보고서·문서·표 등) 요청에는 실제 파일을 만들고 경로를 알려라. 채팅에 내용만 붙여 놓고 "만들었다"고 하지 마라.
+- 그림을 보여 달라는 요청에는(새로 만든 것이든 vault에 있던 것이든) 그 그림이 vault/projects/·vault/files/·vault/_imported/ 안에 있는지 확인하고(vault의 다른 곳에 있으면 vault/projects/<날짜_작업명>/에 복사), 답변 본문에 vault 기준 경로의 마크다운 이미지로 적어라 — 예: ![시안](projects/20261002_x/시안.png). 앱이 대화창에 바로 띄우고, 사용자는 눌러서 크게 보고 저장한다. 그 줄 없이 "표시했다·첨부했다"고 말하지 마라.
 - 기존 파일 수정 요청은 원본을 읽고 그 위에 고쳐라. 처음부터 다시 쓰지 마라.
 - 보고의 산출물에는 이번 지시로 네가 만들거나 고친 파일만 적어라. 다른 에이전트의 파일은 읽고 근거로 인용할 수 있지만, 사용자나 그 에이전트의 요청 없이 고치지 마라. 그 에이전트가 할 일은 파일을 건드리지 말고 위임으로 넘겨라. (회사 공용 기억 — vault/_index.md·notes의 사용자 프로필 — 갱신은 아래 설명대로 모두의 의무다.)
 
@@ -1683,7 +1685,8 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
     artAfter = await snapshotArtifacts(p.vault).catch(() => new Map());
     closeTurnLedger(ledgerEntry);
     const changed = diffArtifacts(artBefore, artAfter).filter(servableArtifact);
-    return capLatest(artAfter, attributeArtifacts(changed, { entry: ledgerEntry, others: overlappingTurns(wsId, ledgerEntry), reply }));
+    // snapshot — 답이 가리킨 기존 파일(이번 턴에 안 바뀐 그림 등)도 칩에(제보 2026-10-05, artifacts.mjs referencedArtifacts)
+    return capLatest(artAfter, attributeArtifacts(changed, { entry: ledgerEntry, others: overlappingTurns(wsId, ledgerEntry), reply, snapshot: artAfter }));
   };
 
   // 외부 CLI 러너(Codex/Gemini/Antigravity) — 로컬 OAuth 로그인(구독)을 빌려 1턴 실행. 세션은 스레드 맥락으로 잇는다.
