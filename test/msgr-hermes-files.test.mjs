@@ -539,7 +539,7 @@ async def main():
     # 3차 검수 LOW: 같은 글·같은 경로라도 내용이 바뀐 파일(크기·수정 시각)은 다시 올린다 — 배포본은 매번 올렸다
     await a.send_document(CH, str(md), metadata=FINAL)
     assert len(UP) == 5, '902에 이미 올린 그대로의 파일'
-    md.write_text('# 고친 내용 — 길이가 다르다\n')
+    md.write_bytes(b'# changed - different length\n')   # Windows 기본 인코딩(cp1252)에 한글을 쓰지 않는다
     await a.send_document(CH, str(md), metadata=FINAL)
     assert len(UP) == 6 and UP[-1][0] == 902, ('크기가 바뀐 파일은 다시 올린다', UP)
     st = os.stat(md); os.utime(md, ns=(st.st_atime_ns, st.st_mtime_ns + 2 * 10**9))
