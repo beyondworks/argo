@@ -1,26 +1,34 @@
 -- 개인 공간 결재(2026-10-08, 계획 artifacts/rc-0195/personal-crew-room-features-plan.md 5-2 PR-A) — 주인과 자기 에이전트만 있는
 -- crew 1:1 방(personal_pair = 'crew:<에이전트 id>')에서만 org_id 없는 결재 행을 넣고, 위험 등급과 무관하게 크루 주인이 확정한다.
+-- 넣는 길은 정의자 RPC msgr_create_personal_approval 하나다(PR-C 본체가 부른다). 표 직접 넣기 정책(msgr_approvals_insert)은 배포본 그대로 둔다.
+--   왜(1차 재검수 MEDIUM, 계획 5-2 #4와 다름): 옛 본체(0.1.97)도 org 없는 행을 표에 바로 넣으려 한다 — crew 1:1의 D28 고위험 셸 결재.
+--   chat.mjs:1425가 messengerOrigin 오류를 삼켜 gateMsgr = {} → permission-gate가 목적지 없이 결재를 만들고 → msgr.mjs:1825가 실행 중 문맥
+--   (org NULL)으로 insertApproval을 부른다. 배포본에서 이 넣기는 RLS 오류(42501)로 실패하고, 옛 본체는 결재를 로컬에 남겨 승인 뒤 같은 명령을 한 번
+--   실행한다. 정책에 개인 갈래를 열면 그 넣기가 들어가 카드만 생기고, 승인 뒤 이어 실행이 '메신저 실행 소유자·회사 불일치'(msgr.mjs:1311)로
+--   실패하며 재시도마다 카드가 쌓인다(배포본보다 나쁜 칸). 정책을 그대로 두면 옛 본체의 넣기는 같은 오류·같은 SQLSTATE를 받는다
+--   (pg 드릴 '경우 17(D28)'이 origin/main과 이 파일 양쪽에서 같은 단언으로 잠근다).
 -- 친구 1:1·개인 그룹·남의 crew 방은 세 겹에서 닫는다:
---   ① 넣기 RLS(msgr_approvals_insert 개인 갈래)
---   ② BEFORE INSERT 트리거 — RLS를 거치지 않는 정의자 함수(msgr_create_thread_approval·_msgr_bot_approval_card·msgr_bot_request_approval)도 여기서 걸린다.
---      NOT NULL만 풀면 그 함수들이 크루의 org(NULL)나 인자 p_org를 그대로 넣어 친구 방에도 결재 행이 생긴다.
+--   ① 넣기 RPC — 호출자가 그 crew 1:1의 크루 주인일 때만(공개 판정 msgr_is_own_crew_room), 열은 함수가 정한다(org NULL·pending·확정 열 없음).
+--   ② BEFORE INSERT 트리거 — org_id NULL 행은 내부 판정을 통과할 때만. RLS를 거치지 않는 정의자 함수(msgr_create_thread_approval·
+--      _msgr_bot_approval_card·msgr_bot_request_approval)도 여기서 걸린다. NOT NULL만 풀면 그 함수들이 크루의 org(NULL)나 인자 p_org를 그대로 넣어
+--      친구 방에도 결재 행이 생긴다. 옛 본체가 정의자 함수로 개인 행을 만드는 갈래는 없다: msgr_create_thread_approval은 서버가 delegated를 줄 때만
+--      부르고(msgr.mjs:1853), delegated는 '크루가 그 방에 없음'(msgr_crew_context)이라 crew 1:1에서는 거짓이다. 봇 카드는 조직 봇 크루(msgr_bots.org_id NOT NULL)로 넣는다.
 --   ③ 결정(msgr_can_decide·msgr_approvals_decide·msgr_approval_deciders) — 확정하는 순간에도 방이 crew 1:1이어야 한다.
 -- 판정 조건(계획 5-1): 채널 org NULL·dm·보관 안 됨·personal_pair = 'crew:'||크루, 크루 org NULL·active, 사람 참여 행은 주인 하나
 --   (msgr_dm_shape는 짝 방에 사람 둘까지 허용한다), 에이전트 참여 행은 그 크루 하나(주인이 crew 1:1에 다른 크루를 들이면 닫힌다).
--- 기존 동작: 지금 본체는 org 없는 결재를 만들지 않는다(src/gateway/msgr-handoff.mjs messengerOrigin이 개인 턴을 거절 — 여는 스위치는 PR-C).
---   조직 결재의 판정·정책·감사·방송은 그대로다. 아래 함수·정책은 저장소 최신 정의를 그대로 옮기고 갈래만 더했다
---   (출처: msgr_can_decide·msgr_approval_deciders·msgr_approvals_decide = 20260918193000, msgr_approval_broadcast = 20260918184500,
---    msgr_approvals_insert = 20260903120000 — 2026-10-08 운영 prosrc·pg_policies md5가 이 정의와 같음을 읽기 전용으로 확인).
+-- 기존 동작: 조직 결재의 넣기·판정·정책·감사·방송은 그대로다. 아래 함수·정책은 저장소 최신 정의를 그대로 옮기고 갈래만 더했다
+--   (출처: msgr_can_decide·msgr_approval_deciders·msgr_approvals_decide = 20260918193000, msgr_approval_broadcast = 20260918184500
+--    — 2026-10-08 운영 prosrc·pg_policies md5가 이 정의와 같음을 읽기 전용으로 확인).
 -- 감사: 개인 결재는 감사 표(msgr_audit_log.org_id NOT NULL)에 쓰지 않는다 — 기록은 결재 행의 decided_by·decided_at.
 --   계획의 추론("방송 트리거의 감사 쓰기 때문에 개인 확정이 실패")은 드릴에서 틀렸다: msgr_audit(20260903120000 J-5 가드)가 조직이 없으면
---   이미 조용히 건너뛴다(8의 조건을 지운 변이에서도 확정 성공). 8의 조건은 그 뜻을 드러내고, 그 가드가 바뀌어도 개인 확정이 되돌려지지 않게 둔 한 겹이다.
--- DB 부하: 주기 호출·폴링·유휴 쓰기 없음, 새 누적 표 없음. 넣기 1건마다 판정 1회(채널·크루 기본 키 + 그 방 참여 행 기본 키 범위),
+--   이미 조용히 건너뛴다(7의 조건을 지운 변이에서도 확정 성공). 7의 조건은 그 뜻을 드러내고, 그 가드가 바뀌어도 개인 확정이 되돌려지지 않게 둔 한 겹이다.
+-- DB 부하: 주기 호출·폴링·유휴 쓰기 없음, 새 누적 표 없음. 넣기 1건마다 판정 1~2회(채널·크루 기본 키 + 그 방 참여 행 기본 키 범위),
 --   결정 UPDATE·결재 방송마다 판정 1~2회. 개인 갈래는 모두 org_id IS NULL 조건과 묶여 있어 조직 결재에서는 거짓이다
 --   (msgr_can_decide는 case로 갈라 조직 행에서 판정 함수를 부르지 않는다. 정책·집합의 and/or는 평가 순서가 보장되지 않아 부를 수도 있다 — 결과는 같다).
 
 set local lock_timeout = '5s'; -- alter table·create trigger·정책 교체는 결재 표에 강한 잠금을 건다 — 긴 쿼리 뒤에서 기다리며 뒤 요청을 줄 세우지 않고 실패한다(다시 실행하면 된다)
 
--- 1) 판정 — 내부(auth를 보지 않는다: 트리거·확정권자 집합용, 권한 전부 회수) / 공개(호출자 = 크루 주인: 정책·본체 RPC용)
+-- 1) 판정 — 내부(auth를 보지 않는다: 트리거·확정권자 집합용, 권한 전부 회수) / 공개(호출자 = 크루 주인: 넣기 RPC·정책·본체용)
 create or replace function public._msgr_own_crew_room(p_channel uuid, p_crew uuid) returns boolean
   language sql stable security definer set search_path = public, pg_temp as $$
     select exists (
@@ -64,15 +72,33 @@ revoke all on function public.msgr_personal_approval_gate() from public, anon, a
 drop trigger if exists msgr_personal_approval_gate on public.msgr_crew_approvals;
 create trigger msgr_personal_approval_gate before insert on public.msgr_crew_approvals for each row execute function public.msgr_personal_approval_gate();
 
--- 4) 넣기 정책 — 20260903120000 정의 그대로 + 개인 갈래(행 org NULL·크루 org NULL·호출자의 crew 1:1)
-drop policy if exists msgr_approvals_insert on public.msgr_crew_approvals;
-create policy msgr_approvals_insert on public.msgr_crew_approvals for insert to authenticated
-  -- ⚠ 서브쿼리 안의 맨 org_id는 c.org_id로 묶인다(자기 비교=항상 참) — 바깥 행은 테이블명으로 한정한다(실측 2026-09-03).
-  with check (status = 'pending' and (
-    exists (select 1 from public.msgr_crews c where c.id = msgr_crew_approvals.crew_id and c.owner_user_id = (select auth.uid()) and c.org_id = msgr_crew_approvals.org_id)
-    or (msgr_crew_approvals.org_id is null
-        and exists (select 1 from public.msgr_crews c where c.id = msgr_crew_approvals.crew_id and c.owner_user_id = (select auth.uid()) and c.org_id is null)
-        and public.msgr_is_own_crew_room(msgr_crew_approvals.channel_id, msgr_crew_approvals.crew_id))));
+-- 4) 개인 결재 넣기 RPC — org 없는 결재 행을 사용자가 넣는 유일한 길(PR-C 본체). 넣기 정책은 배포본 그대로라 표 직접 넣기는 지금처럼 거절된다(머리 주석).
+--    인자는 본체가 표에 넣던 행 객체 그대로(msgr.mjs msgrPush의 approval), 결과 {id}도 insertApproval과 같다 — 카드 글·message_id 연결·판정은 조직과 같은 길.
+--    정의자 함수라 RLS를 거치지 않으므로 넣기 정책이 하던 일을 여기서 한다: 호출자 = 크루 주인(공개 판정), status는 pending 고정.
+--    받는 키는 본체가 보내는 열뿐이다 — status·decided_by·decided_at·message_id·dm_source_msg_id 같은 키는 거절한다(정책은 decided_by를 막지 않았다).
+--    표 제약·출처 가드(a_msgr_approval_source_guard: 원문의 실행이 running)·넣기 트리거·고유 (crew_id, approval_id)는 그대로 돈다.
+--    옛 서버에는 이 함수가 없다(PGRST202) — 본체는 그때 넣기를 시도하지 않은 것으로 다룬다(계획 5-3 #2와 같은 방향).
+create or replace function public.msgr_create_personal_approval(p_row jsonb) returns jsonb
+  language plpgsql security definer set search_path = public, pg_temp as $$
+declare a public.msgr_crew_approvals;
+begin
+  if jsonb_typeof(p_row) is distinct from 'object'
+     or exists (select 1 from jsonb_object_keys(p_row) k
+                 where k not in ('org_id', 'channel_id', 'crew_id', 'approval_id', 'action', 'reason', 'risk', 'kind', 'payload', 'source_msg_id'))
+     or (p_row ? 'org_id' and jsonb_typeof(p_row->'org_id') <> 'null') then
+    raise exception 'msgr_approval_invalid' using errcode = '22023';
+  end if;
+  if not public.msgr_is_own_crew_room((p_row->>'channel_id')::uuid, (p_row->>'crew_id')::uuid) then
+    raise exception 'msgr_not_allowed' using errcode = '42501', detail = 'personal_approval_room';
+  end if;
+  insert into public.msgr_crew_approvals (org_id, channel_id, crew_id, approval_id, action, reason, status, risk, kind, payload, source_msg_id)
+    values (null, (p_row->>'channel_id')::uuid, (p_row->>'crew_id')::uuid, p_row->>'approval_id', p_row->>'action', p_row->>'reason', 'pending',
+            coalesce(p_row->>'risk', 'low'), coalesce(p_row->>'kind', 'action'), nullif(p_row->'payload', 'null'::jsonb), (p_row->>'source_msg_id')::bigint)
+    returning * into a;
+  return jsonb_build_object('id', a.id);
+end $$;
+revoke all on function public.msgr_create_personal_approval(jsonb) from public, anon;
+grant execute on function public.msgr_create_personal_approval(jsonb) to authenticated;
 
 -- 5) 확정권 판정 — 20260918193000 정의 그대로 + 맨 앞 개인 갈래(위험 등급과 무관하게 crew 1:1의 크루 주인, 확정 시점의 방 모양으로)
 create or replace function public.msgr_can_decide(ap uuid) returns boolean
@@ -119,8 +145,9 @@ create or replace function public.msgr_approval_deciders(ap uuid) returns setof 
 $$;
 revoke all on function public.msgr_approval_deciders(uuid) from public, anon, authenticated;
 
--- 7) 확정 정책 — 20260918193000 정의 그대로. 크루 소유자 갈래(브리지의 카드 링크 등 pending 유지 갱신)의 "현재 멤버" 조건에
+-- 7) 확정 정책 — 20260918193000 정의 그대로. 크루 소유자 갈래(본체의 카드 연결 message_id 등 pending 유지 갱신)의 "현재 멤버" 조건에
 --    개인 갈래(org NULL이면 호출자의 crew 1:1)를 더한다. 확정(최종 상태) 갈래는 msgr_can_decide가 개인 칸을 판정한다.
+--    옛 본체·옛 앱은 개인 결재 행을 만들 수 없으므로(위 4·머리 주석) 이 갈래가 닿는 행도 없다.
 drop policy if exists msgr_approvals_decide on public.msgr_crew_approvals;
 create policy msgr_approvals_decide on public.msgr_crew_approvals for update to authenticated
   using (status = 'pending' and (public.msgr_can_decide(id)
