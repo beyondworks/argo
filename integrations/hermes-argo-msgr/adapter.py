@@ -124,11 +124,18 @@ def _upload_file(base: str, token: str, message_id: int, path: str, name: Option
 # 운영 2026-10-08 메시지 3799: VPS 헤르메스가 [download-test-vps.md](attachment:/home/crew/…)만 적어 첨부 0건, 본문에 서버 경로가 남았다.
 # 인라인 코드(첫 갈래, 코어 _INLINE_CODE_RE와 같이 한 글자 이상 — 이중 백틱 ``…`` 안도 코드)는 그대로 돌려준다.
 # 코드 블록·인용 줄은 pick_linked_files가 줄 단위로 건너뛴다.
+# 경로는 코어 extract_local_files(#34632)처럼 '/'·'~/'·드라이브 문자(C:\·C:/ — Windows에서 도는 Hermes)로 시작한다(검수 Cb-2 HIGH).
+# 제목은 "…"·'…'·(…) 셋 다(검수 Cb-2 LOW). 이름·대상·제목·경로에 길이 상한 — 이 판정은 게이트웨이 이벤트 루프에서 동기로 돌아
+# ']' 없는 '['가 길게 이어진 줄이 길이의 제곱으로 느려지면 같은 Hermes의 다른 플랫폼도 멈춘다(20,000자 2.6초, 검수 Cb-2 LOW).
+# 맨 표기 갈래는 '](' 바로 뒤를 잡지 않는다 — 링크 갈래가 읽지 못한 모양(대괄호 중첩·상한 초과) 안의 경로만 바꿔 깨진 링크를 남기지 않게.
 _FILE_LINK_RE = re.compile(
     r'(`[^`\n]+`)'
-    r'|!?\[([^\]\n]*)\]\(\s*(<[^>\n]+>|[^\s()<>]+)(?:\s+"[^"\n]*")?\s*\)'
-    r'|(?<![\w/:])((?:attachment:|sandbox:|file://)(?:~/|/)[^\s()<>\[\]`"\']+)')
+    r'|!?\[([^\[\]\n]{0,300})\]\(\s*(<[^>\n]{1,1024}>|[^\s()<>]{1,1024})'
+    r'(?:\s+(?:"[^"\n]{0,300}"|\'[^\'\n]{0,300}\'|\([^()\n]{0,300}\)))?\s*\)'
+    r'|(?<![\w/:])(?<!\]\()((?:attachment:|sandbox:|file://)(?:~/|/|[A-Za-z]:[/\\])[^\s()<>\[\]`"\']{1,1024})')
 _FILE_SCHEME_RE = re.compile(r'^(?:attachment:|sandbox:|file://(?:localhost)?)')
+_DRIVE_RE = re.compile(r'[A-Za-z]:[/\\]')
+_FENCE_RE = re.compile(r'^\s*(`{3,}|~{3,})(.*)$')   # 목록 안에 4칸 넘게 들여 쓴 코드 블록도(코어 _FENCED_CODE_RE는 줄 시작에 묶이지 않는다)
 # 확장자와 무관하게 보내는 명시적 전달 표지. scheme 없는 링크·file:// 는 코드 답의 참조 링크([main.py](/…))가 흔해
 # 코어가 맨 경로를 자동 첨부하는 확장자(MEDIA_DELIVERY_EXTS)일 때만 보낸다(검수 Cb-1 MEDIUM).
 _EXPLICIT_SCHEMES = ('attachment:', 'sandbox:')
@@ -147,10 +154,12 @@ def _core_media_exts() -> tuple:
 
 def _link_denied(path: str) -> bool:
     """링크로는 보내지 않는 파일 — 점으로 시작하는 폴더·파일(.env·.ssh·.git 등)과 비밀 이름. 적힌 경로와 실제 경로(심볼릭 링크) 둘 다 본다.
-    코어 검증(비엄격)은 Hermes 홈의 .env·~/.ssh·/etc 등만 막아 프로젝트의 .env는 통과시킨다(검수 Cb-1 HIGH) — 그래서 코어를 통과해도 늘 함께 적용한다."""
+    코어 검증(비엄격)은 Hermes 홈의 .env·~/.ssh·/etc 등만 막아 프로젝트의 .env는 통과시킨다(검수 Cb-1 HIGH) — 그래서 코어를 통과해도 늘 함께 적용한다.
+    경로 마디는 '/'와 '\\' 둘 다로 나눈다 — 어느 OS에서 돌든 같은 판정(첫 마디는 루트·드라이브)."""
     given = os.path.abspath(os.path.expanduser(path))
     for p in {given, os.path.realpath(given)}:
-        if any(part.startswith('.') for part in Path(p).parts[1:]) or _SECRET_NAME_RE.search(os.path.basename(p)):
+        parts = re.split(r'[\\/]+', p)
+        if any(part.startswith('.') for part in parts[1:]) or _SECRET_NAME_RE.search(parts[-1]):
             return True
     return False
 
@@ -189,7 +198,9 @@ def pick_linked_files(content: str):
         raw = target.strip('<>') if target is not None else bare
         scheme = _FILE_SCHEME_RE.match(raw)
         path = raw[scheme.end():] if scheme else raw
-        if not path.startswith(('/', '~/')):
+        if raw.startswith('file:') and path[:1] == '/' and _DRIVE_RE.match(path, 1):
+            path = path[1:]   # file:///C:/… — 드라이브 문자 앞 '/'는 URL 표기일 뿐이다
+        if not (path.startswith(('/', '~/')) or _DRIVE_RE.match(path)):
             return mt.group(0)
         # None = 명시적 표지라 확장자와 무관. 상수가 없는 옛 Hermes는 빈 목록 — scheme 없는 링크·file:// 는 코어 맨 경로 동작에 맡긴다
         exts = None if raw.startswith(_EXPLICIT_SCHEMES) else _core_media_exts()
@@ -206,11 +217,11 @@ def pick_linked_files(content: str):
         if safe not in found:
             found.append(safe)
         name = (label or '').strip()
-        return (name if name and '/' not in name else os.path.basename(safe)) + tail
+        return (name if name and not re.search(r'[\\/]', name) else re.split(r'[\\/]', safe)[-1]) + tail
 
     out, fence = [], None
     for line in str(content or '').split('\n'):
-        mark = re.match(r'^ {0,3}(`{3,}|~{3,})(.*)$', line)
+        mark = _FENCE_RE.match(line)
         if mark:
             if fence:
                 if mark[1][0] == fence[0] and len(mark[1]) >= len(fence) and not mark[2].strip():
@@ -574,6 +585,7 @@ class ArgoMsgrAdapter(BasePlatformAdapter):
         self._reply_ids: Dict[int, int] = {}               # 원문 id → 봇 답글 id(대화)
         self._followup_ids: Dict[str, int] = {}            # 결재 id → 후속 보고 글 id(재개 턴)
         self._posts: Dict[str, Any] = {}                   # chat_id → (글 id, 시각) 원문 없이 쓴 마지막 글(예약 작업 결과)
+        self._attached: Dict[Any, bool] = {}               # (글 id, 실제 경로) → 이미 올린 파일(같은 답에 MEDIA:와 링크로 함께 적은 파일, 검수 Cb-2 MEDIUM)
 
     @property
     def name(self) -> str:
@@ -939,7 +951,18 @@ class ArgoMsgrAdapter(BasePlatformAdapter):
             if os.path.getsize(path) > _ATTACH_MAX:
                 raise ArgoMsgrError(413, 'files are limited to 25 MB')
             target = await self._attach_target(chat_id, (caption or '').strip() or ('📎 ' + name), bool((caption or '').strip()), final)
-            res = await asyncio.to_thread(_upload_file, self.base_url, self.token, target, path, name)
+            # 코어는 MEDIA: 파일과 본문에서 찾은 파일을 서로 중복 제거하지 않고 둘 다 보낸다(_deliver_media_attachments). 같은 글에 같은 실제 경로는
+            # 한 번만 올린다 — 업로드·저장 객체·첨부 행이 두 배가 되지 않게. 올리기 전에 표시하고 실패하면 지운다(다시 부르면 올린다).
+            key = (target, os.path.realpath(path))
+            if key in self._attached:
+                logger.info("Argo Messenger: file %s already attached to message %s", name, target)
+                return SendResult(success=True, message_id=str(target))
+            self._remember(self._attached, key, True)
+            try:
+                res = await asyncio.to_thread(_upload_file, self.base_url, self.token, target, path, name)
+            except Exception:
+                self._attached.pop(key, None)
+                raise
         except Exception as e:
             logger.warning("Argo Messenger: file %s not sent — %s", name, _redact(str(e)))
             await self._notice(chat_id, _file_error_text(name, e), final)

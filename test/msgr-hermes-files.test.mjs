@@ -135,13 +135,17 @@ srv.shutdown()
   assert.equal(r.status, 0, r.stderr || r.stdout);
 });
 
+// 파일마다 다른 픽스처 — 같은 글에 같은 실제 경로를 다시 올리지 않으므로(검수 Cb-2 MEDIUM) 한 파일을 여러 번 쓰면 한 번만 올라간다.
 test('대화 — 최종 답 글을 보낸 뒤 오는 파일은 그 답글에 붙는다(이미지·영상·음성·문서 모두, file:// 포함)', () => run(String.raw`
+clip = work / 'clip.mp4'; clip.write_bytes(b'mp4')
+voice = work / 'note.ogg'; voice.write_bytes(b'ogg')
+photo = work / 'photo.png'; photo.write_bytes(b'\x89PNG....')
 async def main():
     inbound = {'message_id': 5, 'execution_attempt': 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'chat': {'id': CH}}
     a._pending[5] = inbound; a._inbound.set(inbound)
     r = await a.send(CH, '보고서를 첨부합니다.', reply_to='5', metadata={'notify': True})
     assert r.success and r.message_id == '901', r
-    for fn, arg in [(a.send_document, str(pdf)), (a.send_image_file, str(png)), (a.send_video, str(pdf)), (a.send_voice, str(pdf)), (a.send_image, 'file://' + str(png))]:
+    for fn, arg in [(a.send_document, str(pdf)), (a.send_image_file, str(png)), (a.send_video, str(clip)), (a.send_voice, str(voice)), (a.send_image, 'file://' + str(photo))]:
         res = await fn(CH, arg, metadata=FINAL)
         assert res.success and res.message_id == '901', (fn, res)
     assert [u[0] for u in UP] == [901] * 5 and UP[0][2] == 'report.pdf', UP
@@ -385,7 +389,9 @@ for text in ['[x.md](attachment:/no/such/dir/x.md)', 'attachment:/no/such/x.md',
              '예시: ' + chr(96)*2 + '[r](attachment:' + str(pdf) + ')' + chr(96)*2,
              '' + chr(96)*3 + '\n[r](attachment:' + str(pdf) + ')\n' + chr(96)*3,
              '> [r](attachment:' + str(pdf) + ')',
-             '[문서](https://github.com/acme/repo/raw/main/report.pdf)', '[메일](mailto:a@b.c)', '[앵커](#top)']:
+             '[문서](https://github.com/acme/repo/raw/main/report.pdf)', '[메일](mailto:a@b.c)', '[앵커](#top)',
+             # 링크로 읽지 못한 모양(대괄호 중첩·길이 상한 300자 넘는 이름) 안의 attachment:는 맨 표기로도 바꾸지 않는다 — 깨진 링크를 만들지 않게
+             '[파일 [최종]](attachment:' + str(pdf) + ')', '[' + 'x' * 301 + '](attachment:' + str(pdf) + ')']:
     files, body = a.extract_local_files(text)
     assert files == [] and body == text, (text, files, body)
 `));
@@ -467,4 +473,101 @@ for text in bad[:10]:
 summary = '\n'.join(bad[:10] + ['[download-test-vps.md](attachment:' + str(md) + ')', '수정: [main.py](' + str(code) + ')'])
 assert [os.path.basename(p) for p in a.extract_local_files(summary)[0]] == ['download-test-vps.md'], a.extract_local_files(summary)[0]
 assert [os.path.basename(f) for f in a.extract_local_files('[r](attachment:' + str(pdf) + ')')[0]] == ['report.pdf'], '보통 파일은 그대로 보낸다'
+`));
+
+// 검수 Cb-2 HIGH: Windows에서 도는 Hermes는 경로가 D:\…·C:/…·file:///C:/…로 적힌다. 코어(#34632)처럼 드라이브 문자 경로를 링크 대상과
+// 링크 없는 attachment: 표기에서 읽고, file:///C:/…는 드라이브 문자 앞 '/'를 뗀다. 이 테스트는 파일 확인만 가짜로 두어 OS와 관계없이 같은 결과를 본다
+// (Windows CI에서는 위 테스트들이 실제 D:\ 임시 경로로 같은 기대값을 확인한다).
+test('드라이브 문자 경로 — attachment:·sandbox:·file:///C:/·scheme 없는 링크·링크 없는 attachment:가 C:\\·C:/ 경로도 첨부한다', () => runCore(String.raw`
+os.chdir(tmp.name)   # 맥·리눅스에서 C:\… 는 상대 경로로 읽힌다 — 점 폴더 판정이 테스트를 돌린 폴더에 휘둘리지 않게
+W, U = 'C:\\Users\\crew\\report.pdf', 'C:/Users/crew/report.pdf'
+FAKE = {W, U, 'C:\\Users\\crew\\run.log', 'C:\\Users\\crew\\main.py', 'C:\\Users\\crew\\.env', 'C:\\Users\\crew\\.git\\notes.md'}
+real_isfile = os.path.isfile
+os.path.isfile = lambda p: p in FAKE or real_isfile(p)
+Base.validate_media_delivery_path = staticmethod(lambda p, session_key='': p if p in FAKE else None)
+assert a.extract_local_files('[보고서](attachment:' + W + ')') == ([W], '보고서')
+assert a.extract_local_files('[보고서](sandbox:' + U + ')') == ([U], '보고서')
+assert a.extract_local_files('[보고서](file:///' + U + ')') == ([U], '보고서'), 'file:///C:/… — 드라이브 문자 앞 / 를 뗀다'
+assert a.extract_local_files('[보고서](file://localhost/' + U + ')') == ([U], '보고서')
+assert a.extract_local_files('[보고서](file://' + W + ')') == ([W], '보고서')
+assert a.extract_local_files('[보고서](' + W + ')') == ([W], '보고서')
+assert a.extract_local_files('[보고서](<' + U + '>)') == ([U], '보고서')
+assert a.extract_local_files('[실행 기록](attachment:C:\\Users\\crew\\run.log)') == (['C:\\Users\\crew\\run.log'], '실행 기록')
+files, body = a.extract_local_files('첨부: attachment:' + W + '.')
+assert files == [W] and body == '첨부: report.pdf.', (files, body)
+for text in ['[main.py](C:\\Users\\crew\\main.py)', '[main.py](file:///C:/Users/crew/main.py)',   # 참조 링크(목록 밖 확장자)
+             '[k](attachment:C:\\Users\\crew\\.env)', '[n](attachment:C:\\Users\\crew\\.git\\notes.md)',   # 점 파일·점 폴더
+             '[x](attachment:C:\\no\\such\\x.md)', '[x](attachment:C:report.pdf)', '[x](attachment:CC:\\Users\\crew\\report.pdf)']:
+    assert a.extract_local_files(text) == ([], text), text
+`));
+
+// 검수 Cb-2 MEDIUM: 코어는 MEDIA: 파일과 본문에서 찾은 파일을 서로 중복 제거하지 않고 둘 다 보낸다(_deliver_media_attachments).
+// 같은 파일을 MEDIA:와 링크(또는 맨 경로)로 함께 적으면 두 번 올라가 업로드·저장 객체·첨부 행이 두 배가 됐다 — 같은 글에 같은 실제 경로는 한 번만 올린다.
+test('MEDIA와 링크·맨 경로로 같은 파일 — 같은 답글에는 한 번만 올리고, 다른 글이거나 앞서 실패했으면 다시 올린다', () => runCore(String.raw`
+async def deliver(src, media, rest):
+    # Hermes 순서: extract_media가 MEDIA: 줄을 먼저 떼고 → 남은 글에 extract_local_files → 최종 답 글 → MEDIA 파일 → 찾은 파일
+    inbound = {'message_id': src, 'execution_attempt': 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'chat': {'id': CH}}
+    a._pending[src] = inbound; a._inbound.set(inbound)
+    files, body = a.extract_local_files(rest)
+    await a.send(CH, body, reply_to=str(src), metadata=FINAL)
+    out = []
+    for f in media + files:
+        out.append(await (a.send_image_file if f.lower().endswith(IMG) else a.send_document)(CH, f, metadata=FINAL))
+    return files, body, out
+async def main():
+    files, body, out = await deliver(5, [str(md)], '[download-test-vps.md](attachment:' + str(md) + ')')
+    assert len(files) == 1 and body == 'download-test-vps.md', (files, body)
+    assert [os.path.basename(u[1]) for u in UP] == ['download-test-vps.md'] and all(r.success and r.message_id == '901' for r in out), (UP, out)
+    files, body, out = await deliver(6, [str(png)], '원본: ' + str(png))   # MEDIA + 맨 경로(코어만으로도 두 번 가던 조합)
+    assert len(files) == 1 and [os.path.basename(u[1]) for u in UP] == ['download-test-vps.md', 'chart.png'], UP
+    alias = work / 'alias.md'; os.symlink(str(md), str(alias))   # 이름이 달라도 실제 경로가 같으면 같은 파일
+    await a.send_document(CH, str(alias), metadata=FINAL)   # 902 답글엔 md가 처음 — 올린다
+    await a.send_document(CH, str(md), metadata=FINAL)      # 별칭과 실제 경로가 같다 — 다시 올리지 않는다
+    assert len(UP) == 3 and UP[-1][0] == 902, UP
+    await a.send_document('22222222-2222-4222-8222-222222222222', str(md))
+    assert len(UP) == 4 and UP[-1][0] == 903, ('다른 글이면 같은 파일도 올린다', UP)
+    real = m._upload_file
+    def boom(*_a): raise m.ArgoMsgrError(500, 'storage down')
+    m._upload_file = boom
+    res = await a.send_document(CH, str(log), metadata=FINAL)
+    assert not res.success
+    m._upload_file = real
+    res = await a.send_document(CH, str(log), metadata=FINAL)
+    assert res.success and os.path.basename(UP[-1][1]) == 'run.log' and len(UP) == 5, '실패한 업로드는 기억하지 않는다 — 다시 부르면 올린다'
+asyncio.run(main())
+`));
+
+// 검수 Cb-2 LOW: 목록 안에 4칸 이상 들여 쓴 코드 블록도 코드다(코어 _FENCED_CODE_RE는 줄 시작에 묶이지 않는다).
+test('들여 쓴 코드 블록(목록 항목·하위 목록) 안의 링크는 손대지 않고, 닫힌 뒤의 링크는 첨부한다', () => runCore(String.raw`
+BT = chr(96) * 3
+for text in ['10. 예시:\n    ' + BT + '\n    [r](attachment:' + str(md) + ')\n    ' + BT,
+             '- 단계\n  - 하위:\n      ' + BT + 'md\n      [r](attachment:' + str(md) + ')\n      ' + BT,
+             '\t~~~\n\t[r](attachment:' + str(md) + ')\n\t~~~']:
+    assert a.extract_local_files(text) == ([], text), text
+files, body = a.extract_local_files('1. 예시:\n    ' + BT + '\n    code\n    ' + BT + '\n[다운](attachment:' + str(md) + ')')
+assert [os.path.basename(f) for f in files] == ['download-test-vps.md'] and body == '1. 예시:\n    ' + BT + '\n    code\n    ' + BT + '\n다운', (files, body)
+`));
+
+// 검수 Cb-2 LOW: 작은따옴표·괄호 제목이 붙은 링크도 링크로 읽는다. 전에는 링크 안의 경로만 맨 표기로 잡혀 '[r](x.md 'title')'라는 깨진 상대 링크가 남았다.
+test('제목 붙은 링크 — 큰따옴표·작은따옴표·괄호 제목 모두 이름만 남기고 첨부한다', () => runCore(String.raw`
+for title in ['"제목"', "'title'", '(title)']:
+    files, body = a.extract_local_files('[r](attachment:' + str(md) + ' ' + title + ')')
+    assert [os.path.basename(f) for f in files] == ['download-test-vps.md'] and body == 'r', (title, files, body)
+`));
+
+// 검수 Cb-2 LOW: 한 답에서 같은 파일을 링크로 두 번 적어도 첨부 목록엔 한 번만(중복 제거를 없애는 변이를 잡는다).
+test('같은 파일 링크 두 번 — 첨부 목록엔 한 번, 본문엔 두 이름', () => runCore(String.raw`
+files, body = a.extract_local_files('[a](attachment:' + str(md) + ') 그리고 [b](attachment:' + str(md) + ')')
+assert [os.path.basename(f) for f in files] == ['download-test-vps.md'] and body == 'a 그리고 b', (files, body)
+files, body = a.extract_local_files('[a](attachment:' + str(md) + ') [b](sandbox:' + str(md) + ') attachment:' + str(md))
+assert len(files) == 1 and body == 'a b download-test-vps.md', (files, body)
+`));
+
+// 검수 Cb-2 LOW: 링크 판정은 게이트웨이 이벤트 루프에서 동기로 돈다. ']' 없는 '['가 한 줄에 길게 이어지면 길이의 제곱으로 느려졌다
+// (20,000자 2.6초, 50,000자 17.6초 — 그동안 같은 Hermes의 다른 플랫폼도 멈춤). 이름·대상·제목·맨 표기 경로에 길이 상한을 둔다.
+test('긴 줄 — "[" 반복·닫히지 않은 <·제목·긴 경로도 1초 안에 끝난다', () => runCore(String.raw`
+import time
+for line in ['[' * 50000, '[a](<' * 10000, '[a](/b "' * 6000, "[a](/b '" * 6000, 'attachment:/' + 'a' * 50000, '[' + 'x' * 50000 + '](/b)']:
+    t = time.perf_counter(); files, body = m.pick_linked_files(line); dt = time.perf_counter() - t
+    assert dt < 1.0 and files == [] and body == line, (line[:12], round(dt, 3))
 `));
