@@ -84,36 +84,30 @@ export function overlappingTurns(wsId, entry, { now = Date.now, book = ledger() 
   return [...(book.get(wsId) ?? [])].filter((e) => e !== entry && e.frame !== entry.frame && !dead(e, t) && e.startedAt <= end && (e.endedAt ?? t) >= entry.startedAt);
 }
 /** 순수 귀속: 겹침 없음 → changed 그대로. 겹침 있음 → (내 도구 관측 ∪ 답변에 경로로 언급) − 다른 턴 도구 관측.
-    snapshot(턴 끝 스냅샷)을 주면 **답이 가리킨 기존 파일**(referencedArtifacts)도 더한다 — 같은 겹침 검사(다른 턴 도구 관측 제외)를 지난다. */
-export function attributeArtifacts(changed, { entry, others = [], reply = '', snapshot = null } = {}) {
+    snapshot(턴 끝 스냅샷)을 주면 **답이 가리킨 기존 파일**(referencedArtifacts)도 더한다 — 같은 겹침 검사(다른 턴 도구 관측 제외)를 지난다.
+    exclude = 이번 턴 사용자 첨부 rel — 사용자가 준 파일을 답이 되짚었다고 "만든 문서"로 붙이지 않는다. */
+export function attributeArtifacts(changed, { entry, others = [], reply = '', snapshot = null, exclude = [] } = {}) {
   const foreign = new Set(others.flatMap((o) => [...o.observed]));
   const text = String(reply ?? '');
   const mine = others.length ? changed.filter((rel) => !foreign.has(rel) && (entry?.observed.has(rel) || text.includes(rel))) : changed;
-  const extra = snapshot ? referencedArtifacts(text, snapshot).filter((rel) => !foreign.has(rel) && !mine.includes(rel)) : [];
+  const skip = new Set(exclude);
+  const extra = snapshot ? referencedArtifacts(text, snapshot).filter((rel) => !foreign.has(rel) && !skip.has(rel) && !mine.includes(rel)) : [];
   return extra.length ? [...mine, ...extra] : mine;
 }
 
 /* ─── 답이 가리킨 기존 파일(정비사 10/5 전달: "산출물의 페퍼 아바타를 이미지로 첨부해줘"에 칩도 그림도 없었다) ───
-   diff는 "이번 턴에 바뀐 파일"만 잡아, 이미 있던 그림을 답에 적어도 칩이 안 떴다(격리 재현: artifacts []). 답변이 경로로 가리킨
-   **서빙 구역(projects/·files/·_imported/) 안**의 실제 파일(턴 끝 스냅샷에 있는 것)만 더한다 — notes/는 근거 인용 자리라 뺀다.
-   찾는 법: 스냅샷의 구역 rel이 본문(또는 %를 푼 마크다운 목적지)에 경로 경계로 나오는가. 한글 조사가 붙은 맨 경로("…png에")도 잡히고,
-   더 긴 이름의 앞부분(b.png ⊂ b.png.bak)·다른 단어 속(myprojects/…)은 잡지 않는다. 스냅샷에 없는 경로는 원리적으로 못 들어온다(탈출 불가). */
-const PATH_CH = /[A-Za-z0-9_\-/]/;
-function mentions(hay, rel) {
-  for (let i = hay.indexOf(rel); i >= 0; i = hay.indexOf(rel, i + 1)) {
-    const before = hay[i - 1]; const after = hay[i + rel.length]; const after2 = hay[i + rel.length + 1];
-    if (before && /[A-Za-z0-9_\-.]/.test(before)) continue;
-    if (after && (PATH_CH.test(after) || (after === '.' && after2 && /[A-Za-z0-9]/.test(after2)))) continue;
-    return true;
-  }
-  return false;
-}
+   diff는 "이번 턴에 바뀐 파일"만 잡아, 이미 있던 그림을 답에 적어도 칩이 안 떴다(격리 재현: artifacts []). 답변이 **마크다운 그림·링크의
+   목적지**로 내민 서빙 구역(projects/·files/·_imported/) 안 실제 파일(턴 끝 스냅샷에 있는 것)만 더한다. 데스크톱 웹뷰는 본문 링크의
+   새 창(target=_blank)을 무시해(app/layout.jsx) 칩이 앱 안에서 그 파일을 여는 길이다.
+   맨 경로 언급("첨부하신 vault/files/…/사진.jpg를 보면…", 근거 인용)은 세지 않는다 — 만들지 않은 파일이 '만든 문서'·다음 턴 맥락 made·
+   회의록 '산출물:'로 들어갔다(IMG 1차 검수 LOW). notes/는 근거 인용 자리라 뺀다. 스냅샷에 없는 경로는 원리적으로 못 들어온다(탈출 불가). */
 export function referencedArtifacts(reply, snapshot) {
   const text = String(reply ?? '');
   if (!text || !snapshot?.size) return [];
-  const targets = [...text.matchAll(/\]\(\s*([^)\s]+)/g)].map((m) => vaultRel(m[1])).filter(Boolean); // 마크다운 그림·링크 목적지(%인코딩 복원)
-  const hay = `${text}\n${targets.join('\n')}`;
-  const out = [];
-  for (const rel of snapshot.keys()) if (SERVE_PREFIXES.some((p) => rel.startsWith(p)) && mentions(hay, rel)) out.push(rel);
-  return out.sort();
+  const out = new Set();
+  for (const m of text.matchAll(/\]\(\s*([^)\s]+)/g)) { // 마크다운 그림·링크 목적지(%인코딩 복원·./·vault/ 접두 정리 — vaultRel)
+    const rel = vaultRel(m[1]);
+    if (rel && SERVE_PREFIXES.some((p) => rel.startsWith(p)) && snapshot.has(rel)) out.add(rel);
+  }
+  return [...out].sort();
 }

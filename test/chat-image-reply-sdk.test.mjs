@@ -65,3 +65,12 @@ test('SDK: 그림을 가리키지 않는 답은 칩이 비어 있다(종전 동�
   const r = await chat(ws, 'pepper', '아바타 보여줘', null, {});
   assert.deepEqual(r.artifacts, []);
 });
+
+test('SDK: 이번 턴 사용자 첨부를 답이 되짚어도 칩(만든 문서)에 안 든다 — 같은 답의 다른 기존 그림은 든다(IMG 1차 검수 LOW, 배선: runChat → attributeArtifacts exclude)', async () => {
+  const ATT = 'files/20261008_첨부/계약서.pdf';
+  await mkdir(join(p.vault, 'files', '20261008_첨부'), { recursive: true });
+  await writeFile(join(p.vault, ATT), 'pdf'); // 라우트가 턴 전에 저장해 둔 첨부(diff에는 안 잡힌다)
+  replyText = `첨부하신 [계약서](${ATT})를 봤습니다. 시안은 ![페퍼](${AVATAR}) 입니다. 첨부 원본 경로: vault/${ATT}`;
+  const r = await chat(ws, 'pepper', '이 계약서 보고 시안도 보여줘', null, { attachments: [{ rel: ATT, name: '계약서.pdf', mime: 'application/pdf', isImage: false }] });
+  assert.deepEqual(r.artifacts, [AVATAR]);
+});

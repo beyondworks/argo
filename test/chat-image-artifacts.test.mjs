@@ -9,22 +9,28 @@ const AVATAR = 'projects/20261002_페퍼-아바타/페퍼-아바타.png';
 const art = await import('../src/artifacts.mjs');
 const snap = (...rels) => new Map(rels.map((r, i) => [r, `${1000 + i}:10`]));
 const SNAP = snap(AVATAR, 'projects/x/report.md', 'files/표.xlsx', 'notes/outside.png', 'notes/메모.md', '_imported/a/b.pdf', 'projects/a/b.png', 'projects/a/b.png.bak');
-const attrib = (changed, reply, opts = {}) => art.attributeArtifacts(changed, { entry: opts.entry ?? { observed: new Set() }, others: opts.others ?? [], reply, snapshot: SNAP });
-test('칩: 답이 그림·링크·맨 경로로 가리킨 구역 안 기존 파일은 이번 턴에 안 바뀌어도 칩에 든다(제보 사례)', () => {
+const attrib = (changed, reply, opts = {}) => art.attributeArtifacts(changed, { entry: opts.entry ?? { observed: new Set() }, others: opts.others ?? [], reply, snapshot: SNAP, ...(opts.exclude ? { exclude: opts.exclude } : {}) });
+test('칩: 답이 마크다운 그림·링크로 내민 구역 안 기존 파일은 이번 턴에 안 바뀌어도 칩에 든다(제보 사례)', () => {
   assert.deepEqual(attrib([], `페퍼 아바타입니다.\n\n![페퍼](${AVATAR})`), [AVATAR], '그림 문법');
   assert.deepEqual(attrib([], `[보고서](projects/x/report.md)`), ['projects/x/report.md'], '링크 문법');
-  assert.deepEqual(attrib([], `${AVATAR}에 저장돼 있습니다.`), [AVATAR], '맨 경로 + 한글 조사');
-  assert.deepEqual(attrib([], `파일: vault/files/표.xlsx, 그리고 ./_imported/a/b.pdf.`), ['_imported/a/b.pdf', 'files/표.xlsx'], 'vault/·./ 접두, 문장 부호');
+  assert.deepEqual(attrib([], `파일: [표](vault/files/표.xlsx), 그리고 [b](./_imported/a/b.pdf "제목").`), ['_imported/a/b.pdf', 'files/표.xlsx'], 'vault/·./ 접두, 제목 붙은 목적지');
   assert.deepEqual(attrib([], `![a](${encodeURI(AVATAR)})`), [AVATAR], '%인코딩 목적지');
   assert.deepEqual(attrib(['projects/new.md'], `새 문서와 ![a](${AVATAR})`), ['projects/new.md', AVATAR], '이번 턴 변경분과 합집합');
 });
+test('칩: 맨 경로 언급(근거 인용·첨부 되짚기)과 이번 턴 사용자 첨부는 "만든 문서"가 아니다(IMG 1차 검수 LOW)', () => {
+  assert.deepEqual(attrib([], `${AVATAR}에 저장돼 있습니다.`), [], '맨 경로 + 한글 조사 — 인용일 뿐');
+  assert.deepEqual(attrib([], '첨부하신 vault/files/표.xlsx를 보면 3행이 비어 있습니다.'), [], '첨부 경로를 답이 되짚음');
+  assert.deepEqual(attrib([], '![표](files/표.xlsx) 를 보면…', { exclude: ['files/표.xlsx'] }), [], '이번 턴 첨부는 마크다운으로 내밀어도 칩 아님');
+  assert.deepEqual(attrib([], `![표](files/표.xlsx) ![a](${AVATAR})`, { exclude: ['files/표.xlsx'] }), [AVATAR], '첨부만 빠지고 나머지는 그대로');
+  assert.deepEqual(attrib(['files/표.xlsx'], '고친 표입니다.', { exclude: ['files/표.xlsx'] }), ['files/표.xlsx'], '이번 턴에 실제로 바뀐 파일(diff)은 첨부 경로여도 그대로 — exclude는 가리킨 파일에만');
+});
 test('칩: 구역 밖(notes)·없는 파일·탈출·이름만·경로 일부만은 칩에 안 든다', () => {
   assert.deepEqual(attrib([], '![x](notes/outside.png) [m](notes/메모.md) notes/메모.md'), [], 'notes는 근거 인용 자리 — 칩 아님');
-  assert.deepEqual(attrib([], '![x](projects/x/없는그림.png) projects/x/없는파일.pdf'), [], '스냅샷에 없는 파일');
-  assert.deepEqual(attrib([], '![x](projects/x/../x/report.md) projects/%2e%2e/x/report.md'), [], '탈출 표기');
-  assert.deepEqual(attrib([], 'report.md를 참고하세요'), [], '이름만');
-  assert.deepEqual(attrib([], '백업은 projects/a/b.png.bak 입니다'), ['projects/a/b.png.bak'], '긴 이름의 앞부분(b.png)은 잡지 않는다');
-  assert.deepEqual(attrib([], 'myprojects/a/b.png'), [], '경로 앞 경계');
+  assert.deepEqual(attrib([], '![x](projects/x/없는그림.png) [y](projects/x/없는파일.pdf)'), [], '스냅샷에 없는 파일');
+  assert.deepEqual(attrib([], '![x](projects/x/../x/report.md) [y](projects/%2e%2e/x/report.md)'), [], '탈출 표기');
+  assert.deepEqual(attrib([], '[report.md](report.md)를 참고하세요'), [], '이름만');
+  assert.deepEqual(attrib([], '백업은 [여기](projects/a/b.png.bak) 입니다'), ['projects/a/b.png.bak'], '긴 이름의 앞부분(b.png)은 잡지 않는다');
+  assert.deepEqual(attrib([], '[x](myprojects/a/b.png)'), [], '경로 앞 경계');
 });
 test('칩: 겹친 다른 턴이 도구로 쓴 파일은 답이 가리켜도 빠진다(오귀속 겹침 검사 유지 — 제보 2026-09-15)', () => {
   const other = { observed: new Set([AVATAR]) };
@@ -60,5 +66,8 @@ test('지시문: ko·en 시스템 프롬프트에 그림 표시 규칙(구역 �
   const k = sect(ko, '## 파일·산출물'); const e = sect(en, '## Files & deliverables');
   assert.match(k, /마크다운 이미지/); assert.match(k, /!\[[^\]]*\]\(projects\/[^)]+\.png\)/); assert.match(k, /vault\/projects\/·vault\/files\/·vault\/_imported\//); assert.match(k, /표시했다/);
   assert.match(e, /markdown image/); assert.match(e, /!\[[^\]]*\]\(projects\/[^)]+\.png\)/); assert.match(e, /vault\/projects\/, vault\/files\/ or vault\/_imported\//); assert.match(e, /Never say you displayed/);
+  // _imported/ 안이어도 unsorted/는 메신저 답에 안 붙는다(msgr-reply-files) — 일반 규칙이 거기를 그림 자리로 허용하면 메신저 턴엔 아무것도 안 온다(IMG 1차 검수 LOW)
+  assert.match(k, /vault\/_imported\/unsorted\/ 안에 있으면 vault\/projects\/<날짜_작업명>\/에 복사/);
+  assert.match(e, /under vault\/_imported\/unsorted\/, which messenger replies never attach/);
   for (const off of [systemPromptFor('# x', '/ws', '', {}, 'ko', { hasTools: false }), systemPromptFor('# x', '/ws', '', {}, 'en', { hasTools: false })]) assert.match(off, /!\[[^\]]*\]\(projects\//, 'CLI 러너(도구 없음) 골격에도 같은 규칙');
 });

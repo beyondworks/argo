@@ -87,6 +87,6 @@ test('배선 핀: chat.mjs — 장부는 스냅샷과 함께 열리고, artDiff�
   assert.equal((src.match(/await artDiff\(reply\)/g) ?? []).length, 2, 'CLI·SDK 두 반환부 모두 답변을 넘긴다');
   assert.equal((src.match(/closeTurnLedger\(ledgerEntry\)/g) ?? []).length, 3, 'artDiff 안 1 + finally 2');
   assert.match(src, /artifacts\.add\(rel\); ledgerEntry\?\.observed\.add\(rel\);/, 'SDK Write/Edit 관측 → 장부');
-  assert.match(src, /attributeArtifacts\(changed, \{ entry: ledgerEntry, others: overlappingTurns\(wsId, ledgerEntry\), reply, snapshot: artAfter \}\)/, '귀속 호출 — 턴 끝 스냅샷을 넘겨 답이 가리킨 기존 파일도 같은 겹침 검사로(제보 2026-10-05)');
+  assert.match(src, /attributeArtifacts\(changed, \{ entry: ledgerEntry, others: overlappingTurns\(wsId, ledgerEntry\), reply, snapshot: artAfter, exclude: attachments\.map\(\(a\) => a\?\.rel\)\.filter\(Boolean\) \}\)/, '귀속 호출 — 턴 끝 스냅샷을 넘겨 답이 가리킨 기존 파일도 같은 겹침 검사로(제보 2026-10-05)');
   assert.match(src, /보고의 산출물에는 이번 지시로 네가 만들거나 고친 파일만 적어라/, 'ko 규칙'); assert.match(src, /list as deliverables only the files you created or changed for this instruction/, 'en 규칙');
 });
