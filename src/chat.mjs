@@ -1318,12 +1318,12 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
   const argoStatus = tool(
     'argo_status',
     lang === 'en'
-      ? 'Read the current state of this Argo app — the same values the screens show. Use it BEFORE answering any question about Argo itself (numbers on the Deck such as Memory Links %, agents and their runners/models, routines and their last results, the assistant (on/off, last calendar check, reminders sent today, running device), sync, runner connections, plan and usage, messenger connections, pending approvals). section: overview (default: me + deck + assistant) | deck | agents | me | routines | assistant | runners | sync | plan | messenger | approvals. Never guess these values.'
-      : '이 아르고 앱의 지금 상태를 읽는다 — 화면에 보이는 값과 같은 함수로 계산한다. 아르고 자체에 대한 질문(데크 숫자 — 기억 연결 % 등, 에이전트와 러너·모델, 루틴과 마지막 실행 결과, 비서 켜짐·마지막 일정 확인·오늘 보낸 알림·실행 기기, 동기화, 러너 연결, 요금제·사용량, 메신저 연결, 결재 대기)에 답하기 전에 먼저 이것으로 확인하라. section: overview(기본 — 나·데크·비서) | deck | agents | me | routines | assistant | runners | sync | plan | messenger | approvals. 이 값들을 추측하지 마라.',
+      ? 'Read the current state of this Argo app (only in the owner\'s 1:1 — elsewhere it says it is out of scope) — the same values the screens show. Use it BEFORE answering any question about Argo itself (numbers on the Deck such as Memory Links %, agents and their runners/models, routines and their last results, the assistant (on/off, last calendar check, reminders sent today, running device), sync, runner connections, plan and usage, messenger connections, pending approvals). section: overview (default: me + deck + assistant) | deck | agents | me | routines | assistant | runners | sync | plan | messenger | approvals. Never guess these values.'
+      : '이 아르고 앱의 지금 상태를 읽는다(주인의 1:1에서만 — 다른 곳에서는 범위 밖이라고 돌려준다) — 화면에 보이는 값과 같은 함수로 계산한다. 아르고 자체에 대한 질문(데크 숫자 — 기억 연결 % 등, 에이전트와 러너·모델, 루틴과 마지막 실행 결과, 비서 켜짐·마지막 일정 확인·오늘 보낸 알림·실행 기기, 동기화, 러너 연결, 요금제·사용량, 메신저 연결, 결재 대기)에 답하기 전에 먼저 이것으로 확인하라. section: overview(기본 — 나·데크·비서) | deck | agents | me | routines | assistant | runners | sync | plan | messenger | approvals. 이 값들을 추측하지 마라.',
     { section: z.enum(['overview', 'deck', 'agents', 'me', 'routines', 'assistant', 'runners', 'sync', 'plan', 'messenger', 'approvals']).optional() },
     async ({ section }) => {
       const self = await import('./argo-self.mjs');
-      return text(await self.argoStatus(wsId, { section: section ?? 'overview', slug: fromSlug, lang, guest }));
+      return text(await self.argoStatus(wsId, { section: section ?? 'overview', slug: fromSlug, lang, full: settingsDirect })); // 주인 1:1만 전체 상태(손님은 settingsDirect가 늘 거짓)
     },
   );
   const argoHelp = tool(

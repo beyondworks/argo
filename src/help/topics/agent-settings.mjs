@@ -6,9 +6,9 @@ export default {
     keywords: ['설정 바꾸기', '설정 변경', '에이전트가 설정', '권한', '결재', '되돌리기', '바로 바뀜', '상태 확인', '아르고 상태', '무엇을 바꿀 수 있나'],
     body: `에이전트는 아르고 앱의 지금 상태를 읽고, 일부 설정은 직접 바꿀 수 있습니다.
 
-읽을 수 있는 것(화면과 같은 값)
+읽을 수 있는 것(화면과 같은 값 — 회사 주인의 1:1에서만)
 - 데크 숫자(기억·에이전트·기억 연결 %와 계산 내역·구성·일별 적립), 에이전트 목록과 러너·모델·작업 중 여부, 루틴과 마지막 실행 결과, 비서 상태, 기기 간 동기화, 러너 연결(키 값은 보이지 않음), 요금제·사용량, 메신저·알림 연결, 결재 대기.
-- 주인이 아닌 사람이 시킨 요청(예: 조직 채널의 다른 사람)에는 주인의 상태를 보여 주지 않습니다. 기능 설명은 누구에게나 합니다.
+- 상태와 설정 값은 회사 주인의 1:1(데스크톱 앱의 에이전트 대화, 메신저에서 주인과 그 에이전트만 있는 1:1 방)에서만 알려 줍니다. 조직 채널·회의실, 다른 사람이나 손님의 요청, 루틴·위임으로 온 일에서는 알려 주지 않습니다. 에이전트의 답이 그 방 사람들에게 보이기 때문입니다. 기능 설명은 어디서나 합니다.
 
 바꿀 수 있는 설정
 - 비서: 아침 정리 시각(= 조용한 시간 끝), 내일 일정 요약 시각, 조용한 시간 시작, 일정 알림(10·15·30·60분 전), 조용한 시간에도 일정 알림 보내기, 비서 켜기·끄기, 비서 에이전트 바꾸기.
@@ -33,9 +33,9 @@ export default {
     keywords: ['change settings', 'setting change', 'agent changes settings', 'permission', 'approval', 'undo', 'applied immediately', 'status check', 'argo status', 'what can be changed'],
     body: `Agents can read Argo's current state and change some settings themselves.
 
-What they can read (same values as the screens)
+What they can read (same values as the screens — only in the company owner's 1:1)
 - Deck numbers (memory, agents, Memory Links % with the calculation, composition, daily accrual), the agent list with runner/model and whether each is working, routines and their last results, the assistant status, cross-device sync, runner connections (key values are never shown), plan and usage, messenger and notification connections, pending approvals.
-- For requests from someone other than the owner (e.g. another person in an organization channel), the owner's state is not shared. Feature explanations are available to anyone.
+- State and setting values are shared only in the company owner's 1:1 (the agent chat in the desktop app, or a Messenger 1:1 room with just the owner and that agent). They are not shared in organization channels or the Meeting Room, for requests from other people or guests, or in work that came from routines or delegation — the agent's answer is visible to the people in that room. Feature explanations are available anywhere.
 
 Settings they can change
 - Assistant: morning summary time (= quiet hours end), tomorrow's summary time, quiet hours start, event reminder (10/15/30/60 min before), still send reminders during quiet hours, assistant on/off, which agent is the assistant.

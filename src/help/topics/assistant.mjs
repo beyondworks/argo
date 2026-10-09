@@ -30,7 +30,7 @@ export default {
 - 비서 설정 파일이 이 화면 밖에서 바뀌면 비서를 멈춥니다. 비서 탭에서 다시 켜면 새로 저장됩니다.
 
 에이전트에게 물어보기·바꾸기
-- "비서 돌고 있어?"처럼 물으면 에이전트가 argo_status(section=assistant)로 지금 상태를 보고 답합니다.
+- 주인의 1:1에서 "비서 돌고 있어?"처럼 물으면 에이전트가 argo_status(section=assistant)로 지금 상태를 보고 답합니다.
 - 회사 주인이 1:1에서 "아침 정리 7시로"처럼 시키면 에이전트가 바로 바꾸고 바뀐 값과 되돌리는 법을 알려 줍니다. 채널·루틴·다른 사람의 요청은 주인 결재 카드로 갑니다.`,
   },
   en: {
@@ -62,7 +62,7 @@ Statuses when it stops
 - If the assistant settings file is changed outside the screen, the assistant stops. Turning it on again in the Assistant tab saves fresh settings.
 
 Asking an agent / changing it
-- Ask "Is the assistant running?" and the agent checks argo_status (section=assistant) before answering.
+- In the owner's 1:1, ask "Is the assistant running?" and the agent checks argo_status (section=assistant) before answering.
 - If the company owner asks in a 1:1, e.g. "set the morning summary to 7:00", the agent changes it right away and tells you the new value and how to undo it. Requests from channels, routines, or other people go to the owner as an approval card.`,
   },
 };

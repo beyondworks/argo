@@ -7,6 +7,9 @@
 //  - 비밀은 싣지 않는다: 토큰·키·가려진 키 조각(masked)·계정 이메일은 결과에 넣지 않는다.
 //  - 설정 바꾸기는 허용 목록 키만. 바로 바꾸는 것은 서버가 판정한 "주인의 1:1 직접 지시" 턴뿐이고(settingsDirectTurn), 그 밖은 결재 카드, 금지 키는 거절.
 //    출처는 도구 입력에 없다 — 에이전트가 무엇을 적어 보내도 판정이 바뀌지 않는다.
+//  - 누가 물었나로 범위를 정한다: 상태·설정 값은 주인 1:1(같은 판정 settingsDirect)에서만. 그 밖(채널·회의실·다른 사람·손님·루틴·위임)은
+//    그 방 사람이 이미 볼 수 있는 것과 기능 도움말만 — 도구 결과는 에이전트의 답을 거쳐 그 방에 그대로 나갈 수 있다.
+//  - 회사는 지금 턴의 회사로 고정이다 — 도구 인자에 회사 id·경로 칸이 없다(zod가 모르는 키를 버린다). 루틴 id·에이전트 slug는 이 회사 안에서만 찾는다.
 import { loadCompany } from './workspace.mjs';
 import { scanAgents, listDocs } from './hub.mjs';
 import { deckMetrics } from './deck-metrics.mjs';
@@ -17,6 +20,7 @@ import { assistantSettingsView, saveAssistantSettings } from './assistant/settin
 import { LEAD_CHOICES } from './assistant/config.mjs';
 import { CAL_READ_MS } from './assistant/calendar.mjs';
 import { settingsDirectTurn } from './gateway/msgr-handoff.mjs';
+import { maskKeyLike } from './runners/shared.mjs';
 
 const ko = (lang) => lang !== 'en';
 const pick = (lang, k, e) => (ko(lang) ? k : e);
@@ -206,6 +210,15 @@ export async function applySetting(wsId, { key, id = null, value }, { slug = nul
   return { ok: false, text: 'unsupported' };
 }
 
+/** 결재 승인 뒤 적용 결과 문구(순수) — 후속 턴이 원래 방(채널일 수 있다)에 보고하므로 이전 값은 싣지 않는다. 새 값과 화면 위치만. */
+export function appliedNote({ key, value }, r, lang = 'ko') {
+  const def = settingOf(key);
+  if (!r?.ok || !def) return pick(lang, `적용 실패 — ${r?.text ?? key}`, `Not applied — ${r?.text ?? key}`);
+  const L = ko(lang) ? 'ko' : 'en';
+  return pick(lang, `적용 완료 — ${def.label.ko} → ${showVal(r.after ?? value, lang)}(화면: ${def.where.ko}). 이전 값은 말하지 마라.`,
+    `Applied — ${def.label[L]} → ${showVal(r.after ?? value, lang)} (screen: ${def.where.en}). Don't mention the previous value.`);
+}
+
 function assistantErrorText(e, lang) {
   const code = e?.code ?? '';
   const ko_ = {
@@ -256,32 +269,33 @@ export async function argoSettings(wsId, { action = 'list', key = '', id = null,
   }
   const def = settingOf(key);
   if (def.needsId && !id) return { kind: 'text', text: pick(lang, '이 설정은 id가 필요하다(루틴 id — argo_status section=routines).', 'This setting needs an id (routine id — argo_status section=routines).') };
+  if (id != null && !/^[A-Za-z0-9_-]{1,40}$/.test(String(id))) return { kind: 'text', text: pick(lang, 'id 형식이 맞지 않는다(루틴 id).', 'Invalid id (routine id).') }; // 카드 문구에 들어가는 값 — 글자 제한
   const norm = normalizeSettingValue(def, value, lang);
   if (norm.error) return { kind: 'text', text: norm.error };
   if (policy === 'apply') {
     const r = await applySetting(wsId, { key: def.key, id, value: norm.value }, { slug, lang });
     return { kind: 'text', text: r.text };
   }
-  // 결재 — 값이 이미 같으면 카드를 만들지 않는다(쓰레기 결재 방지)
-  const cur = await currentValue(wsId, def, { id, lang });
-  if (cur.error) return { kind: 'text', text: cur.error };
-  if (cur.value === norm.value) return { kind: 'text', text: pick(lang, `이미 ${showVal(norm.value, lang)}(으)로 되어 있다 — 바꿀 것이 없다.`, `Already ${showVal(norm.value, lang)} — nothing to change.`) };
-  const payload = { key: def.key, ...(id ? { id } : {}), value: norm.value, lang: ko(lang) ? 'ko' : 'en', ...(slug ? { by: slug } : {}) };
+  // 결재 — 주인의 1:1이 아닌 턴이다. 지금 값을 읽지도 알려 주지도 않는다(같다/다르다도 — 도구 결과는 그 방으로 나갈 수 있다).
+  // 이미 같은 값이면 승인 뒤 적용 단계(applySetting)가 "이미 …"로 끝낸다. 사유는 에이전트가 쓴 글 — 키 모양 문자열을 가린다(maskKeyLike).
+  const payload = { key: def.key, ...(id ? { id: String(id) } : {}), value: norm.value, lang: ko(lang) ? 'ko' : 'en', ...(slug ? { by: slug } : {}) };
+  const reason = maskKeyLike(String(why || '').replace(/[\r\n\t]+/g, ' ').trim()).slice(0, 500) || pick(lang, '에이전트가 올린 설정 변경 요청', 'Setting change requested by an agent');
   return {
     kind: 'approval',
-    approval: { action: settingActionText(payload, lang), reason: String(why || '').slice(0, 500) || pick(lang, `지금 값 ${showVal(cur.value, lang)}`, `current value ${showVal(cur.value, lang)}`), payload },
+    approval: { action: settingActionText(payload, lang), reason, payload },
     text: pick(lang,
-      `이 요청은 주인이 1:1에서 직접 시킨 것이 아니라서 바로 바꾸지 않고 주인 결재로 올렸다(${def.label.ko}: ${showVal(cur.value, lang)} → ${showVal(norm.value, lang)}). 승인되면 시스템이 바꾸고 결과가 이어서 온다 — 승인 전에는 바뀐 것처럼 말하지 마라.`,
-      `This request didn't come from the owner directly in a 1:1, so it was filed for the owner's approval instead of applied (${def.label.en}: ${showVal(cur.value, lang)} → ${showVal(norm.value, lang)}). Once approved the system applies it and reports back — don't say it changed before then.`),
+      `이 요청은 주인이 1:1에서 직접 시킨 것이 아니라서 바로 바꾸지 않고 주인 결재로 올렸다(${def.label.ko} → ${showVal(norm.value, lang)}). 승인되면 시스템이 바꾸고 결과가 이어서 온다 — 승인 전에는 바뀐 것처럼 말하지 마라. 지금 값은 이 방에 알리지 않는다.`,
+      `This request didn't come from the owner directly in a 1:1, so it was filed for the owner's approval instead of applied (${def.label.en} → ${showVal(norm.value, lang)}). Once approved the system applies it and reports back — don't say it changed before then. Don't share the current value here.`),
   };
 }
 
 async function settingsList(wsId, { lang, direct, guest }) {
   const L = ko(lang) ? 'ko' : 'en';
-  const view = guest ? null : await assistantSettingsView(wsId).catch(() => null);
-  const company = guest ? {} : await loadCompany(wsId).catch(() => ({}));
+  const reveal = direct && !guest; // 설정 값은 주인 1:1에서만(argoStatus와 같은 범위)
+  const view = reveal ? await assistantSettingsView(wsId).catch(() => null) : null;
+  const company = reveal ? await loadCompany(wsId).catch(() => ({})) : {};
   const now = (def) => {
-    if (guest) return pick(lang, '(주인의 값 — 이 요청에는 보여 주지 않는다)', "(owner's value — not shared with this request)"); // 손님 턴은 주인의 설정 값을 읽지 않는다(argoStatus와 같은 규칙)
+    if (!reveal) return pick(lang, '(주인의 1:1에서만 보여 준다)', "(shown only in the owner's 1:1)");
     if (def.key.startsWith('assistant.')) return view ? showVal(def.read(view), lang) : '?';
     if (def.key === 'company.lang') return company.lang ?? 'ko';
     return pick(lang, '루틴마다 다름(argo_status section=routines)', 'per routine (argo_status section=routines)');
@@ -532,8 +546,10 @@ async function messengerSection(wsId, { lang, now }) {
 }
 
 /** 상태 읽기(도구 처리기 본체) — 반환 문자열. guest(주인이 아닌 사람이 시킨 턴)는 주인의 상태를 보지 않는다. */
-export async function argoStatus(wsId, { section = 'overview', slug = null, lang = 'ko', guest = false, now = Date.now() } = {}) {
-  if (guest) return pick(lang, '이 요청은 주인이 아닌 사람이 했다 — 주인의 아르고 상태(숫자·설정·루틴)는 보여 주지 않는다. 기능 설명은 argo_help로 할 수 있다.', "This request came from someone other than the owner — the owner's Argo status (numbers, settings, routines) is not shared. Feature explanations are available via argo_help.");
+export async function argoStatus(wsId, { section = 'overview', slug = null, lang = 'ko', full = false, now = Date.now() } = {}) {
+  // full = 주인 1:1(runChat의 settingsDirect — 서버 판정). 아니면 주인의 상태를 하나도 읽지 않는다(손님·채널·회의실·루틴·위임 전부)
+  if (!full) return pick(lang, '아르고 상태(데크 숫자·에이전트·루틴·비서·러너·동기화·요금제·메신저 연결·결재)는 주인의 1:1에서만 보여 준다 — 이 대화는 주인의 1:1이 아니다(다른 사람이 보는 방이거나, 루틴·위임으로 온 턴). 상태를 말하지 말고, 필요하면 주인에게 1:1에서 물어보라고 안내하라. 기능 설명은 argo_help로 할 수 있다.',
+    "Argo status (Deck numbers, agents, routines, assistant, runners, sync, plan, messenger connections, approvals) is shared only in the owner's 1:1 — this conversation is not (others may see this room, or it came from a routine or delegation). Don't state any of it; suggest asking in the owner's 1:1 if needed. Feature explanations are available via argo_help.");
   const sec = STATUS_SECTIONS.includes(section) ? section : 'overview';
   const opts = { lang, slug, now };
   const safe = async (fn, name) => { try { return await fn(); } catch (e) { return pick(lang, `${name}: 읽지 못했다(${String(e?.message ?? e).slice(0, 120)}) — 추측하지 말고 읽지 못했다고 말하라.`, `${name}: could not read (${String(e?.message ?? e).slice(0, 120)}) — say so instead of guessing.`); } };

@@ -78,7 +78,7 @@ test('데크 기억 연결 — 회사 API stats → 화면 linkedPercent → Dia
   assert.equal(screen, 67, '2/3 = 66.7% → 화면 67%');
   assert.equal(d.linkedPercentShown, screen);
   assert.equal(d.links, data.stats.links);
-  const out = await handlers(ws).call('argo_status', { section: 'deck' });
+  const out = await handlers(ws, { direct: true }).call('argo_status', { section: 'deck' });
   assert.match(out, new RegExp(`연결된 기억 ${screen}%`), out);
   assert.match(out, /2건 ÷ \(연결된 기억 2 \+ 고립된 기억 1\) = 66\.7%/);
   assert.match(out, /연결 1쌍/);
@@ -106,7 +106,7 @@ test('비서 상태 — 켜짐·비서 에이전트·마지막 일정 확인·�
   await writeFile(stateFile(ws), JSON.stringify({ v: 1, sent: {}, pending: [], outbox: null, cal: { coveredUntil: now, readAt: now - 4 * 60_000 }, bundles: { am: '', pm: '' }, day: { date: dateIn(now, 'Asia/Seoul'), instant: 2 }, status: { code: 'ok', at: now } }));
   const view = await assistantSettingsView(ws);
   assert.equal(view.status.instantToday, 2, '화면 값(전제)');
-  const out = await handlers(ws).call('argo_status', { section: 'assistant' });
+  const out = await handlers(ws, { direct: true }).call('argo_status', { section: 'assistant' });
   assert.match(out, /이 회사 비서: 켜짐 · 비서 에이전트 pepper\(나\)/);
   assert.match(out, /마지막 일정 확인: .+\(4분 전\)/);
   assert.match(out, /오늘 보낸 일정 알림: 2건/);
@@ -124,12 +124,12 @@ test('자기 루틴 — me 구획은 내 루틴만, routines 구획은 전부. �
   const rs = await loadRoutines(ws);
   Object.assign(rs.find((r) => r.id === a.id), { lastRun: new Date(Date.now() - 2 * 3_600_000).toISOString(), lastOk: false, lastResult: '메일 서버 응답 없음으로 실패' });
   await writeJsonAtomic(paths(ws).routines, rs);
-  const me = await handlers(ws).call('argo_status', { section: 'me' });
+  const me = await handlers(ws, { direct: true }).call('argo_status', { section: 'me' });
   assert.match(me, /내 루틴 1개/);
   assert.match(me, /아침 브리핑 \[r[0-9a-z]+\] — 매일 09:00 · 담당 pepper · 가동 · 마지막 실행 .+\(2시간 전\) 실패/);
   assert.match(me, /결과 요약: 메일 서버 응답 없음으로 실패/);
   assert.doesNotMatch(me, /가격 조사/, '남의 루틴은 me에 없다');
-  const all = await handlers(ws).call('argo_status', { section: 'routines' });
+  const all = await handlers(ws, { direct: true }).call('argo_status', { section: 'routines' });
   assert.match(all, /루틴 2개/);
   assert.match(all, /가격 조사 .* 매주 월 10:00 · 담당 mina · 가동 · 아직 실행 전/);
 });
@@ -204,7 +204,7 @@ test('출처 위조 — 에이전트가 도구 인자에 출처를 적어 보내
 test('손님(주인이 아닌 사람) — 주인의 상태는 읽지 않는다, 도움말은 된다', async () => {
   const ws = await company('as-guest-read');
   const h = handlers(ws, { ctx: msgrCtx(ws, { origin: 'u-guest' }) });
-  assert.match(await h.call('argo_status', { section: 'deck' }), /주인이 아닌 사람이 했다/);
+  assert.match(await h.call('argo_status', { section: 'deck' }), /주인의 1:1에서만 보여 준다/);
   assert.match(await h.call('argo_help', { q: '회의실' }), /회의실/);
   const list = await h.call('argo_settings', { action: 'list' });
   assert.doesNotMatch(list, /지금: 08:00/, '주인의 설정 값도 보여 주지 않는다');
@@ -222,7 +222,8 @@ test('결재 승인 — 서버가 허용 목록 설정을 적용하고 후속 �
   const item = await resolveApproval(ws, ap.id, true);
   await _followUpForTest(ws, item, true, { runChat });
   assert.equal((await assistantSettingsView(ws)).config.eveningAt, '20:30');
-  assert.match(seen.msg, /적용 완료 — 바꿨다 — 비서 내일 일정 요약 시각: 21:00 → 20:30/);
+  assert.match(seen.msg, /적용 완료 — 비서 내일 일정 요약 시각 → 20:30/);
+  assert.doesNotMatch(seen.msg, /21:00/, '후속 보고(원래 방으로 간다)에 이전 값을 싣지 않는다');
   assert.equal(seen.opts.notOwnerDirect, 'mina', '후속 턴도 주인 직접 턴이 아니다');
   // 문구 조작 — 카드에는 20:00으로 보였는데 payload가 23:00이면 적용하지 않는다
   await h.call('argo_settings', { action: 'set', key: 'assistant.evening', value: '20:00' });
@@ -272,7 +273,7 @@ test('데스크톱 표지는 대화 라우트만 붙이고(요청 본문에서 �
 test('러너별 부착 — SDK 크루 서버·네이티브 sink·Codex 다리(실제 stdio 자식)에 같은 세 도구가 있고 처리기가 돈다', async () => {
   const ws = await company('as-runners');
   const want = ['argo_help', 'argo_settings', 'argo_status'];
-  const sdk = makeCrewServer(ws, 'pepper', '페퍼', [], 0, [], null, 'ko');
+  const sdk = makeCrewServer(ws, 'pepper', '페퍼', [], 0, [], null, 'ko', [], '', null, null, false, undefined, null, null, null, null, { settingsDirect: true });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   await sdk.instance.connect(st);
   const sdkClient = new Client({ name: 't', version: '1' }); await sdkClient.connect(ct);
@@ -346,7 +347,7 @@ test('메신저 응답 상태 — 카드 라우트와 도구가 같은 판정 �
 
 test('상태 구획 — 러너는 키 값을 싣지 않고, 메신저·동기화·요금제 구획은 로컬 값으로 답한다', async () => {
   const ws = await company('as-sections');
-  const { call } = handlers(ws);
+  const { call } = handlers(ws, { direct: true });
   const runners = await call('argo_status', { section: 'runners' });
   assert.match(runners, /러너 연결/);
   assert.doesNotMatch(runners, /sk-|\*\*\*/, '가려진 키 조각도 싣지 않는다');
@@ -388,4 +389,73 @@ test('언어 설정 — 주인 1:1에서 바꾸면 회사 언어가 바뀐다(up
   const afterCo = JSON.parse(await readFile(paths(ws).company, 'utf8'));
   assert.equal(afterCo.lang, 'en');
   assert.deepEqual(Object.keys(afterCo).sort(), Object.keys(before).sort(), '다른 칸을 만들지 않는다');
+});
+
+/* ── ⑩ 누가 물었나로 범위를 정한다(총괄 보안 지적 2026-10-09) ─────────────── */
+// 주인 1:1(데스크톱 1:1·메신저 주인 혼자 1:1 — 서버 판정 settingsDirect)만 전체 상태. 그 밖은 그 방 사람이 이미 볼 수 있는 것과 도움말만.
+// 판정 재료는 runChat이 정한 값(makeCrewServer의 settingsDirect·mirrorCtx·chain·origin)뿐 — 도구 인자로 받지 않는다.
+test('범위 표 — 칸마다 돌려주는 것: 주인 1:1만 전체 상태·설정 값, 나머지는 도움말만(상태·설정 값 없음)', async () => {
+  const ws = await company('as-scope', { owner: 'u-owner', agents: [['pepper', '페퍼', '비서'], ['mina', '미나', '리서처']] });
+  await saveAssistantSettings(ws, { enabled: true, agent: 'pepper', tz: 'Asia/Seoul' });
+  await addRoutine(ws, { agentSlug: 'mina', title: '비밀 보고', prompt: '보고', schedule: { type: 'daily', time: '09:00', tz: 'Asia/Seoul' } });
+  const cells = [
+    ['주인 1:1', { direct: true }, true],
+    ['채널에서 주인', { ctx: msgrCtx(ws) }, false],
+    ['채널에서 다른 사람', { ctx: msgrCtx(ws, { origin: 'u-other' }) }, false],
+    ['게스트', { ctx: msgrCtx(ws, { guest: true }) }, false],
+    ['루틴(주인이 만든 것)', {}, false],
+    ['위임', { chain: ['mina'] }, false],
+  ];
+  for (const [label, o, full] of cells) {
+    const h = handlers(ws, { direct: !!o.direct, ctx: o.ctx ?? null, chain: o.chain ?? [] });
+    const overview = await h.call('argo_status', {});
+    const plan = await h.call('argo_status', { section: 'plan' });
+    const routines = await h.call('argo_status', { section: 'routines' });
+    const list = await h.call('argo_settings', { action: 'list' });
+    const help = await h.call('argo_help', { q: '회의실' });
+    assert.match(help, /회의실/, `${label}: 도움말은 누구에게나`);
+    if (full) {
+      assert.match(overview, /데크 계기판/, label); assert.match(overview, /비서\(능동 알림\)/, label);
+      assert.match(plan, /요금제·사용량/, label);
+      assert.match(routines, /비밀 보고/, label);
+      assert.match(list, /지금: 08:00/, label);
+    } else {
+      for (const [name, out] of [['overview', overview], ['plan', plan], ['routines', routines]]) {
+        assert.match(out, /주인의 1:1에서만/, `${label} ${name}: 범위 밖 안내`);
+        assert.doesNotMatch(out, /데크 계기판|요금제·사용량|비밀 보고|비서\(능동 알림\)|러너 연결|기기 간 동기화|결재 대기 \d/, `${label} ${name}: 주인 상태가 새지 않는다`);
+      }
+      assert.doesNotMatch(list, /지금: 08:00|지금: ko/, `${label}: 설정 값 없음`);
+    }
+  }
+});
+
+test('범위 밖 설정 변경 — 결재 카드에 지금 값이 실리지 않고, 사유의 키 모양 문자열은 가린다', async () => {
+  const ws = await company('as-scope-card');
+  const fake = `sk-ant-api03-${'q'.repeat(40)}`;
+  const out = await handlers(ws, { ctx: msgrCtx(ws, { origin: 'u-other' }) }).call('argo_settings', { action: 'set', key: 'assistant.morning', value: '07:00', why: `토큰 ${fake} 참고` });
+  assert.match(out, /주인 결재로 올렸다/);
+  assert.doesNotMatch(out, /08:00/, '도구 결과에 지금 값 없음');
+  const [ap] = await pendingSettings(ws);
+  assert.doesNotMatch(`${ap.action}\n${ap.reason}`, /08:00/, '카드에 지금 값 없음');
+  assert.doesNotMatch(ap.reason, /sk-ant-api03-q/, '키 모양 문자열은 가린다');
+  // 이미 같은 값이어도 범위 밖에서는 같다/다르다를 알려 주지 않는다(카드는 올리고, 적용 단계가 "이미"로 끝낸다)
+  const same = await handlers(ws, { ctx: msgrCtx(ws, { origin: 'u-other' }) }).call('argo_settings', { action: 'set', key: 'assistant.morning', value: '08:00' });
+  assert.doesNotMatch(same, /이미 08:00/);
+});
+
+test('다른 회사 지정 불가 — 도구 인자에 회사 id·슬러그·경로를 넣어도 지금 턴의 회사만 본다', async () => {
+  const a = await company('as-co-a');
+  const b = await company('as-co-b', { agents: [['bee', '비', '다른 회사 비서']] });
+  await writeFile(join(paths(b).notes, 'b1.md'), '# B1\n[[B2]]\n'); await writeFile(join(paths(b).notes, 'b2.md'), '# B2\n');
+  const rb = await addRoutine(b, { agentSlug: 'bee', title: 'B 루틴', prompt: 'p', schedule: { type: 'daily', time: '10:00', tz: 'Asia/Seoul' } });
+  const h = handlers(a, { direct: true });
+  const spec = (name) => crewToolSpecs(h.sink).find((s) => s.name === `mcp__crew__${name}`);
+  const deck = await spec('argo_status').run({ section: 'deck', wsId: b, ws: b, company: b, companyId: b, path: `../${b}`, slug: 'bee' });
+  assert.match(deck, /에이전트: 1명/); assert.doesNotMatch(deck, /연결 1쌍/, 'B 회사 숫자가 아니다');
+  const routines = await spec('argo_status').run({ section: 'routines', wsId: b });
+  assert.doesNotMatch(routines, /B 루틴/);
+  assert.match(await spec('argo_settings').run({ action: 'set', key: 'assistant.agent', value: 'bee', wsId: b }), /이 회사에 없는 에이전트/);
+  assert.match(await spec('argo_settings').run({ action: 'set', key: 'assistant.agent', value: `../${b}/agents/bee` }), /에이전트 slug를 적어라/);
+  assert.match(await spec('argo_settings').run({ action: 'set', key: 'routine.time', id: rb.id, value: '11:00', wsId: b }), /그런 루틴이 없다/);
+  assert.equal((await loadRoutines(b))[0].schedule.time, '10:00', 'B 회사 루틴은 그대로');
 });
