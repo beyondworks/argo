@@ -35,7 +35,7 @@ import { looksLikeAddr } from '../core/hide-all.js';
 const haAddr = (s) => <span className="ha">{s}</span>;
 import {
   loadAccounts, pullMail, syncMail, readMail, finishConnect, mailConfig, refreshMail, hasMore, wantSync, lastSynced, subscribeSync, limitLeft, subscribeLimit, getLimitUntil,
-  saveDraft, sendMail, sendDraft, deleteDraft, toggleStar, fileToPart, openAttachment, mailDoc, mailPaper, ATTACH_CAP,
+  saveDraft, sendMail, sendDraft, deleteDraft, toggleStar, trashMail, fileToPart, openAttachment, mailDoc, mailPaper, ATTACH_CAP,
   readSnap, saveSnap, clearSnap, readView, writeView, firstView, seedSample, notifyOn, subscribeNotify, hardFails, takeMailReturn } from '../core/mail.js';
 import {
   VIEWS, inView, byDate, replySubject, forwardSubject, replyTo, replyAll, fmtExact, linkify, quoteBlock, forwardBlock, htmlToText, escapeHtml,
@@ -61,7 +61,11 @@ const subjectOf = (m) => (m?.subject?.trim() ? m.subject : t('mailx.noSubject'))
 const isDraft = (m) => m?.folder === 'drafts';
 /** 마우스·터치로 누른 체크박스는 초점을 놓는다 — 키 입력 뒤 :focus-visible이 켜져 고르지 않은 줄의 아바타가 사라지지 않게(재검수 #895). 키보드(스페이스, detail 0)는 그대로 */
 const unfocus = (e) => { if (e.nativeEvent.detail) e.currentTarget.blur(); };
-const touchy = () => matchMedia('(hover: none)').matches; // 터치 기기 — 고르는 중에는 줄을 눌러도 열지 않고 넣고 뺀다
+const touchy = () => matchMedia('(hover: none)').matches;
+/** 휴지통으로 한 통(읽기 화면 단추·# 키) — 되돌리기 알림, 목록으로 */
+const trashOne = (m) => { const undo = trashMail(m); showToast(t('mailx.trashed'), { undo }); navigate(mailHome()); };
+/** 메일 화면의 메뉴(우클릭·…) — 공용 메일 메뉴(첫 화면·홈 모듈) + 휴지통(메일 화면에서만, 첫 화면 150KB 상한) */
+const menuOf = (m) => (isDraft(m) ? mailMenu(m) : [...mailMenu(m), { sep: true }, { label: t('mailx.trash'), icon: 'trash', shortcut: '#', danger: true, run: () => trashOne(m) }]); // 터치 기기 — 고르는 중에는 줄을 눌러도 열지 않고 넣고 뺀다
 const clock = (ms) => new Date(ms).toLocaleTimeString(getLang() === 'en' ? 'en-US' : 'ko-KR', { hour: 'numeric', minute: '2-digit' });
 
 /** 요청 제한 남은 초 — 쉬는 동안만 1초마다 다시 그린다 */
@@ -91,7 +95,7 @@ function MailRow({ m, active, tag, sel, group, onPick }) {
       {/* 고르기(유건 10/9 "이메일 일괄 선택") — 아바타 자리의 체크박스. ⇧ = 마지막으로 누른 줄부터 여기까지 */}
       <label className="mail-check"><input type="checkbox" checked={on} aria-label={t('mailx.pickOne', { subject: subjectOf(m) })} onChange={(e) => { onPick(m.id, e.nativeEvent.shiftKey); unfocus(e); }} /></label>
       <button ref={setNodeRef} type="button" className={`mail-row${active ? ' active' : ''}${m.unread ? ' unread' : ''}${isDragging ? ' ghost' : ''}`}
-        {...attributes} {...selProps(sel, m.id)} {...mergeHandlers(mouse, menuProps(() => mailMenu(m)))} role="option" aria-selected={active}
+        {...attributes} {...selProps(sel, m.id)} {...mergeHandlers(mouse, menuProps(() => menuOf(m)))} role="option" aria-selected={active}
         onClick={() => { if (rowTapPicks(sel.size, touchy())) { onPick(m.id); return; } navigate(`${mailHome()}/${m.id}`); if (m.unread) setMail(m.id, { unread: false }); }}>
         <Avatar name={draft ? m.to : m.from} addr={draft ? parseAddrs(m.to)[0] : m.addr} />
         <span className="mail-from">{m.unread && <span className="dot mark" />}{who}{draft && <span className="badge">{t('mailx.draft')}</span>}</span>
@@ -193,7 +197,8 @@ function Reader({ m, onBack }) {
             </button>}
             <button type="button" className={`icon-btn mail-star-btn${m.starred ? ' on' : ''}`} aria-pressed={!!m.starred} aria-label={t(m.starred ? 'mailx.unstar' : 'mailx.star')} title={t(m.starred ? 'mailx.unstar' : 'mailx.star')} onClick={() => toggleStar(m)}><Icon name="star" /></button>
             {m.folder !== 'archive' && <button type="button" className="btn" onClick={() => { const undo = archiveMail(m.id); showToast(t('mail.archived'), { undo }); navigate(mailHome()); }}><Icon name="archive" size={14} />{t('mail.archiveIt')}</button>}
-            <button type="button" className="icon-btn" aria-label={t('more')} onClick={(e) => openMenu(e, mailMenu(m), { anchor: e.currentTarget })}><Icon name="dots" /></button>
+            <button type="button" className="icon-btn" aria-label={t('mailx.trash')} title={`${t('mailx.trash')} (#)`} onClick={() => trashOne(m)}><Icon name="trash" /></button>
+            <button type="button" className="icon-btn" aria-label={t('more')} onClick={(e) => openMenu(e, menuOf(m), { anchor: e.currentTarget })}><Icon name="dots" /></button>
           </>}
         </div>
       </header>
@@ -652,6 +657,7 @@ export function Mail({ id }) {
       if (e.key === 'e' && cur && cur.folder !== 'archive' && !isDraft(cur)) { const undo = archiveMail(cur.id); showToast(t('mail.archived'), { undo }); }
       if (e.key === 'r' && cur && !isDraft(cur)) setUi({ compose: { mode: 'reply', of: cur.id } });
       if (e.key === 's' && cur && !isDraft(cur)) toggleStar(cur);
+      if (e.key === '#' && cur && !isDraft(cur)) trashOne(cur); // Gmail과 같은 키
       if (e.key === '/') { e.preventDefault(); searchRef.current?.focus(); }
     };
     window.addEventListener('keydown', onKey);
@@ -669,6 +675,7 @@ export function Mail({ id }) {
       b.unstar.length > 0 && { label: t('mailx.unstar'), icon: 'star', run: done(() => b.unstar.forEach((m) => toggleStar(m))) },
       b.archive.length > 0 && { label: t('mail.archiveIt'), icon: 'archive', run: done(() => { const undos = b.archive.map((m) => archiveMail(m.id)); showToast(t('sel.archived', { n: b.archive.length }), { undo: () => undos.forEach((u) => u?.()) }); if (b.archive.some((m) => m.id === id)) navigate(mailHome()); }) },
       { label: t('crew.assign'), icon: 'hand', run: done(() => setUi({ assign: { space: 'me', items: mailItems(list) } })) },
+      b.trash.length > 0 && { label: t('mailx.trash'), icon: 'trash', danger: true, run: done(() => { const undos = b.trash.map((m) => trashMail(m)); showToast(t('mailx.trashedN', { n: b.trash.length }), { undo: () => undos.forEach((u) => u()) }); if (b.trash.some((m) => m.id === id)) navigate(mailHome()); }) },
     ];
   } });
   const group = mailItems(rows.filter((m) => sel.has(m.id)));

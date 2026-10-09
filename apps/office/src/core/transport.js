@@ -112,6 +112,13 @@ async function send(op) {
       if (!response.ok) { const failure = await response.json().catch(() => ({})); throw Object.assign(new Error('mail'), { code: failure.error, transient: response.status >= 500 || response.status === 429 }); }
       return;
     }
+    case 'mail.trash': {                                                           // 휴지통(10/9) — 옮기기·되돌리기. 메일이 목록에서 빠졌어도 보낼 목록의 계정·Gmail id로 보낸다(여러 번 보내도 같다)
+      assertOwner();
+      const response = await fetch(apiUrl('/api/mail/trash'), { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ account: p.account, id: p.gid, on: p.on }) });
+      assertOwner();
+      if (!response.ok) { const failure = await response.json().catch(() => ({})); throw Object.assign(new Error('mail'), { code: failure.error, transient: response.status >= 500 || response.status === 429 }); }
+      return;
+    }
     case 'crew.assign': {                                                          // 크루에게 맡기기 — 메신저 앱과 같은 방(내 크루와의 1:1)에 같은 표로 쓴다(core/crew-assign.js deliverToCrew)
       const run = async (q) => { const r = await q.setHeader('Authorization', `Bearer ${token}`); assertOwner(); if (r.error) throw classify(r.error); return r.data ?? []; };
       const { deliverToCrew } = await import('./crew-assign.js'); // 보낼 때만 불러온다(첫 화면 JS 150KB 상한) — 알림 문구(crew.sentPersonal·msgr.get)도 이 조각의 사전
@@ -149,7 +156,7 @@ function rejected(op, err) {
     return;
   }
   if (op.payload.type === 'crew.assign') { import('./crew-assign.js').catch(() => {}).then(() => showToast(t(`crew.fail.${err?.assign ?? 'generic'}`))); return; } // 거절 사유 문구는 맡기기 조각의 사전
-  if (op.payload.type === 'mail.flag' || op.payload.type === 'mail.star') { showToast(t(err?.code === 'expired' ? 'mailc.expired' : 'sync.rejected')); import('./mail.js').then((m) => m.loadAccounts()).catch(() => {}); return; }
+  if (op.payload.type === 'mail.flag' || op.payload.type === 'mail.star' || op.payload.type === 'mail.trash') { showToast(t(err?.code === 'expired' ? 'mailc.expired' : 'sync.rejected')); import('./mail.js').then((m) => m.loadAccounts()).catch(() => {}); return; }
   showToast(t('sync.rejected'));
   import('./pull.js').then((m) => m.pullPages()).catch(() => {});                  // 서버 상태로 되돌린다
 }

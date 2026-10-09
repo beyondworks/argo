@@ -265,6 +265,14 @@ const OPS = {
     return { ok: true };
   },
 
+  // 휴지통(10/9) — Gmail 휴지통으로 옮기기·되돌리기만(30일 뒤 Gmail이 지운다, 영구 삭제는 하지 않는다). 다시 보내도 결과가 같다.
+  // 이미 없는 메일을 휴지통으로 = 성공, 되돌리기가 404면 실패(돌아오지 않았다)
+  async trash(jwt, { account, id, on = true }) {
+    const token = await accessToken(jwt, account);
+    try { await gmail(token, `/messages/${encodeURIComponent(id)}/${on ? 'trash' : 'untrash'}`, { method: 'POST' }, { retry: true }); } catch (e) { if (!(on && e.status === 404)) throw e; }
+    return { ok: true };
+  },
+
   // 작성 중 초안(바뀔 때만 화면이 부른다) — 첫 저장은 만들고 그 뒤로는 같은 초안을 고친다. carry: 원문 첨부(전달·고치기) 다시 싣기
   // Gmail은 초안 일부만 고칠 수 없어(drafts.update = 메시지 전체 바꾸기) 첨부가 있으면 매번 다시 실어야 한다. 그래서 화면은 첨부가 있는 초안을
   // 첨부가 바뀐 때·닫을 때만 여기로 보내고(글만 바뀐 자동 저장은 그 기기에만 — pages/mail-model.js draftSavePlan), 첨부 없는 초안만 멈출 때마다 보낸다(분리 검수 MEDIUM-2)

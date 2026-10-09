@@ -52,7 +52,7 @@ let config = null;
 export const mailConfig = () => (config ??= api('config').catch(() => { config = null; return { google: null, failed: true }; }));
 const real = () => getMode() === 'signedIn';
 const okAccounts = () => (getState().mailAccounts ?? []).filter((a) => a.status === 'ok');
-const busy = (id) => outbox.has(`mail:${id}`) || outbox.has(`star:${id}`);
+const busy = (id) => outbox.has(`mail:${id}`) || outbox.has(`star:${id}`) || outbox.has(`trash:${id}`);
 const needsLink = () => ((getState().mailAccounts ?? []).some((a) => a.status !== 'ok') ? 'expired' : null); // 다시 연결해야 하는 계정이 있나
 const markExpired = (id) => update((s) => ({ mailAccounts: s.mailAccounts.map((a) => (a.id === id ? { ...a, status: 'expired' } : a)) }));
 
@@ -195,6 +195,14 @@ export const forgetBody = (id) => bodies.delete(id);
 export function toggleStar(m) {
   const on = !m.starred;
   update((s) => ({ mails: s.mails.map((x) => (x.id === m.id ? { ...x, starred: on } : x)) }), m.account ? [[`star:${m.id}`, { type: 'mail.star', id: m.id, on }]] : []);
+}
+
+/** 휴지통(10/9) — 화면에서 먼저 빼고 보낼 목록으로(Gmail trash, 30일 뒤 Gmail이 지운다 — 영구 삭제는 하지 않는다). 되돌리면 원래 메일함으로(untrash).
+ *  보낼 목록에 계정·Gmail id를 같이 싣는다 — 휴지통 메일은 동기화가 목록에서 치우므로, 그 뒤 되돌려도 메일을 다시 넣고 보낼 수 있게 */
+export function trashMail(m) {
+  const op = (on) => (m.account ? [[`trash:${m.id}`, { type: 'mail.trash', id: m.id, account: m.account, gid: m.gid, on }]] : []);
+  update((s) => ({ mails: s.mails.map((x) => (x.id === m.id ? { ...x, folder: 'trash' } : x)) }), op(true));
+  return () => update((s) => ({ mails: s.mails.some((x) => x.id === m.id) ? s.mails.map((x) => (x.id === m.id ? { ...x, folder: m.folder } : x)) : [...s.mails, m] }), op(false));
 }
 
 /** 연결을 시작한 메일함 주소 — Google은 등록된 /me/mail/connect로만 돌려보내므로, 조직 공간 메일에서 시작했으면 끝나고 그리로 돌아간다(10/8 검수) */

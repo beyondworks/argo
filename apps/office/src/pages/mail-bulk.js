@@ -9,6 +9,7 @@ export function bulkTargets(list, view) {
     star: allStarred ? [] : mail.filter((m) => !m.starred),
     unstar: allStarred ? mail : [],
     archive: view === 'archive' ? [] : mail.filter((m) => m.folder !== 'archive'),
+    trash: mail, // 초안은 '임시 보관함 메일 지우기'(확인 창)가 따로 있다
   };
 }
 
