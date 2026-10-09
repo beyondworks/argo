@@ -1,4 +1,4 @@
-import { stageMessengerHandoff, messengerOrigin, messengerHandoffHint, parseMessengerDisposition, isGuestCtx, ownerDirectTurn, ownerSoloTurn, msgrJournal } from './gateway/msgr-handoff.mjs';
+import { stageMessengerHandoff, messengerOrigin, messengerHandoffHint, parseMessengerDisposition, isGuestCtx, ownerDirectTurn, ownerSoloTurn, settingsDirectTurn, msgrJournal } from './gateway/msgr-handoff.mjs';
 import { calendarTool, calendarDescription } from './gateway/office-calendar.mjs'; // 에이전트 일정 도구(주인의 오피스 일정 — 명세 2026-09-30 규칙 9·10)
 import { companyTool, companyDescription } from './gateway/office-company.mjs'; // 에이전트 회사 도구(오피스 회사 정보·직원·평가 — 트랙 C 2026-10-02)
 import { filesTool, filesDescription } from './gateway/office-files.mjs'; // 에이전트 문서함·드라이브 도구(오피스 문서함 검색·읽기·거래처 첨부·드라이브 — 분리 검수 MEDIUM 4)
@@ -206,6 +206,14 @@ export function systemPromptFor(cardMd, wsRoot, skills, meta = {}, lang = 'ko', 
         ? ` Connected external services (${connectorNames(connectors, true)}) are called the same way: {"action":"tool","server":"<service>","tool":"<tool name>","args":{…}}. Argo runs it after your turn, appends the real result, and then gives you one automatic follow-up turn to answer with it — so never invent or guess what a connector returned.${needsReconnect ? ' A service marked "needs reconnect" cannot be called until the user reconnects it in Settings — say so instead of silently failing.' : ''}`
         : ` 연결된 외부 서비스(${connectorNames(connectors, false)})도 같은 블록으로 부른다: {"action":"tool","server":"<서비스>","tool":"<도구 이름>","args":{…}}. Argo가 턴이 끝난 뒤 실행해 실제 결과를 덧붙이고, 그 결과로 답하라고 후속 턴을 1회 준다 — 커넥터가 무엇을 돌려줬는지 지어내거나 추측하지 마라.${needsReconnect ? ' "(재연결 필요)"로 표시된 서비스는 사용자가 설정에서 다시 연결하기 전까지 부를 수 없다 — 조용히 실패하지 말고 그 사실을 알려라.' : ''}`)
     : '';
+  // 아르고 자기 인식(argo_status·argo_help·argo_settings — makeCrewServer). 도구가 없는 러너(지시 블록 러너)는 확인할 길이 없다는 사실을 말하게 한다 — 없는 능력을 광고하지 않는다.
+  const argoSelfLine = hasTools
+    ? (lang === 'en'
+        ? 'Questions about Argo itself — what a screen or number shows (e.g. Deck Memory Links %), your own routines and their results, whether the assistant is running, sync/runner/plan/messenger state, or how a feature works — must be checked with argo_status / argo_help before you answer. Never guess or say "I can\'t check" without calling them. To change an Argo setting use argo_settings (it decides whether the change applies now or needs the owner\'s approval).'
+        : '아르고 자체에 대한 질문 — 화면·숫자가 무엇인지(예: 데크의 기억 연결 %), 네 루틴과 실행 결과, 비서가 돌고 있는지, 동기화·러너·요금제·메신저 상태, 기능이 어떻게 동작하는지 — 은 답하기 전에 argo_status·argo_help로 확인하라. 부르지 않고 추측하거나 "확인할 수 없다"고 답하지 마라. 아르고 설정을 바꿀 때는 argo_settings를 쓴다(바로 바뀔지 주인 결재로 갈지는 그 도구가 정한다).')
+    : (lang === 'en'
+        ? 'This runner has no Argo status tools. For questions about Argo\'s current numbers, routines, assistant or settings, say you can\'t check them from here and point the user to the screen (Deck, Routines, Agent card → Assistant tab, Settings) — never guess the values.'
+        : '이 러너에는 아르고 상태 도구가 없다. 아르고의 지금 숫자·루틴·비서·설정을 물으면 여기서는 확인할 수 없다고 말하고 화면(데크·루틴·에이전트 카드 → 비서 탭·설정)을 안내하라 — 값을 추측하지 마라.');
   const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Seoul' }); // YYYY-MM-DD
   // 현재 시각 — 크루에겐 시계가 없다(셸 능력이 꺼져 있으면 date조차 못 친다). 시각을 안 주면
   // "지금 몇 시인지 확인할 도구가 없다"며 예약·마감 계산을 거절한다(실사용 신고 2026-07-26).
@@ -234,6 +242,7 @@ ${skills ? `\n## Company skills — auto-injected every turn; apply them to matc
 - Today is ${today} — right now it is ${clock} (Asia/Seoul), as of the moment this turn started. You do have the current time; never claim you have no way to check it. ${scheduleGuide}${connectorGuide} Never state unverified facts as true. Mark every guess with "Estimate:".
 - Never claim to have read what you haven't read — files, links, and search results alike. Pretending to know is worse than saying you don't.
 - Before saying "I don't know", search first — order: ① vault search (Grep/_index.md) ② web search (when web capability is on). Never answer an unfamiliar proper noun, product, or version by guessing — that is a search signal.
+- ${argoSelfLine}
 - For freshness-sensitive questions (prices, news, versions, schedules, current officeholders), search as of today's date and state the as-of point in your answer. Timeless knowledge (math, established science, concept definitions) needs no search.
 - Attach grounds (file name, source, link) to concrete claims based on search or documents. Drop claims you cannot source. Inventing sources, numbers, dates, or names is the worst offense.
 - If you still can't confirm it, say "could not verify" honestly and list what you tried.
@@ -312,6 +321,7 @@ ${skills ? `\n## 회사 스킬 — 매 턴 자동 주입된다. 해당 유형 �
 - 오늘은 ${today}, 지금은 ${clock}(한국 시간)이다 — 이 턴이 시작된 시점 기준. 너는 현재 시각을 알고 있다. "시간을 확인할 도구가 없다"고 말하지 마라. ${scheduleGuide}${connectorGuide} 확인되지 않은 사실을 지어내지 마라. 추측은 반드시 "추정:"을 붙여 구분하라.
 - 읽지 않은 것을 읽었다고 말하지 마라 — 파일·링크·검색 결과 모두. 아는 척은 모른다는 말보다 나쁘다.
 - "모른다"고 답하기 전에 먼저 찾아라 — 순서: ① vault 검색(Grep/_index.md) ② (웹 능력 시) 웹 검색. 모르는 고유명사·제품·버전은 추측으로 답하지 마라 — 그것이 곧 검색 신호다.
+- ${argoSelfLine}
 - 최신성이 필요한 질문(시세·뉴스·버전·일정·현직)은 오늘 날짜 기준으로 검색하고, 답에 기준 시점을 명시하라. 시대 불변 지식(수학·확립된 과학·개념 정의)은 검색 없이 답해도 된다.
 - 검색·문서에 근거한 구체적 주장에는 근거(파일명·출처·링크)를 붙여라. 출처를 특정할 수 없는 주장은 빼라. 출처·숫자·날짜·이름을 지어내는 것은 최악이다.
 - 검색으로도 확인 못 하면 솔직하게 "확인 불가"라 말하고, 시도한 경로를 밝혀라.
@@ -451,7 +461,7 @@ ${pinnedLine}${rootsLine}${standbyLine}- Web browsing (includes web search / loo
 ## Protected zones — never touch, no exceptions
 - The Argo app itself (its install folder and server code), \`~/.argo\`, other companies' workspaces, and credential/secret files (e.g. \`.secrets.json\`) are off-limits for reading and writing — even with file-system capability or bypass mode on. ${gated ? 'The tool gate blocks them.' : 'This runner has no tool gate, so nothing may technically stop you — it is still forbidden; do not access them.'}
 - Your own company's control files are off-limits too, for reading and writing: every settings file sitting directly in the company folder (\`capabilities.json\`, \`mcp.json\`, \`connections.json\`, \`company.json\`, \`routines.json\`, \`approvals.json\`, …), anything starting with \`.\`, and agent cards under \`agents/\`. The ledgers (\`usage.jsonl\`, \`events.jsonl\`) you may read but not write. These settings change through dedicated tools — never by editing the file${caps.shell ? ' (this includes shell redirects and editors, not just Write/Edit)' : ''}. Need a tool? \`request_tool_install\`. Profile or hiring? \`update_profile\` / \`hire_crew\`. Your desk — \`vault/\`, \`skills/\`, project output — stays fully yours.
-- If the user asks you to change Argo's design, settings, or features, do NOT edit app code — explain that the app itself can't be modified from inside, and point them to Settings → Feedback.
+- If the user asks you to change Argo's design or features, do NOT edit app code — explain that the app itself can't be modified from inside, and point them to Settings → Feedback.${hasTools ? ' Settings are different: change the ones agents may change with argo_settings (never by editing files).' : ''}
 
 ${responsePacing}## Your environment (Argo) — guide the user precisely when blocked
 - You work inside an Argo company. External tools (MCP) are connected PER COMPANY — this runtime does NOT inherit the computer's Claude Code config (.claude.json, .mcp.json) by design (tenant isolation). Never hunt for those files.${caps.shell ? `
@@ -483,7 +493,7 @@ ${pinnedLine}${rootsLine}${standbyLine}- 웹 브라우징(=웹 검색·최신 �
 ## 보호 구역 — 예외 없이 금지
 - Argo 앱 자체(설치 폴더·서버 코드), \`~/.argo\`, 다른 회사의 워크스페이스, 자격·시크릿 파일(예: \`.secrets.json\`)은 읽기도 쓰기도 금지다 — ${gated ? '도구 게이트가 하드 차단한다.' : '이 러너에는 도구 게이트가 없어 기술적으로 막히지 않을 수 있다. 그래도 금지다 — 접근하지 마라.'}
 - 네 회사의 제어 파일도 읽기·쓰기 모두 금지다: 회사 폴더 바로 아래의 설정 파일 전부(\`capabilities.json\`, \`mcp.json\`, \`connections.json\`, \`company.json\`, \`routines.json\`, \`approvals.json\` 등), \`.\`으로 시작하는 항목 전부, 그리고 \`agents/\`의 에이전트 카드. 원장(\`usage.jsonl\`, \`events.jsonl\`)은 읽을 수는 있고 쓸 수는 없다. 이 설정들은 전용 도구로 바꾸는 것이지 파일을 고쳐서 바꾸는 것이 아니다${caps.shell ? ' (Write/Edit뿐 아니라 셸 리다이렉트·에디터도 마찬가지다)' : ''}. 도구 설치는 \`request_tool_install\`, 프로필·영입은 \`update_profile\`·\`hire_crew\`. 네 책상(\`vault/\`, \`skills/\`, 산출물)은 그대로 전부 네 것이다.
-- 사용자가 Argo의 디자인·설정·기능을 고쳐 달라고 하면 앱 코드를 수정하지 마라 — 앱 자체는 안에서 고칠 수 없다고 설명하고 "설정 → 피드백"으로 전달하라고 안내하라.
+- 사용자가 Argo의 디자인·기능을 고쳐 달라고 하면 앱 코드를 수정하지 마라 — 앱 자체는 안에서 고칠 수 없다고 설명하고 "설정 → 피드백"으로 전달하라고 안내하라.${hasTools ? ' 설정은 다르다: 에이전트가 바꿀 수 있는 설정은 argo_settings로 바꾼다(파일을 고쳐서 바꾸지 않는다).' : ''}
 
 ${responsePacing}## 너의 환경(Argo) — 막혔을 때 사용자에게 정확히 안내하라
 - 너는 Argo 회사 안에서 일한다. 외부 도구(MCP)는 **회사별로** 연결된다 — 이 런타임은 컴퓨터의 Claude Code 설정(.claude.json, .mcp.json)을 설계상 상속하지 않는다(테넌트 격리). 그 파일들을 찾아 헤매지 마라.${caps.shell ? `
@@ -645,7 +655,7 @@ async function sessionToolFor(wsId, agentSlug, mirrorCtx, source, sessCtx, hop) 
 /** 크루 도구 서버 — request_approval(항상) + delegate(hop 2단계까지 연쇄 허용, 순환 차단).
     connectors = 이 턴의 커넥터 요약(connectorBriefing). 비어 있으면 use_connector를 **등재하지 않는다**.
     (export: 행동 테스트용 — 등재 조건·수렴 경로를 인메모리 MCP 클라이언트로 실제로 돌려 확인한다) */
-export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [], mirrorCtx = null, lang = 'ko', connectors = [], workFolder = '', sink = null, journal = null, fullAuto = false, limits = DELEGATION_LIMITS.on, tree = null, counters = null, session = null, origin = null) { // session = 세션 메시지 문맥 {peers, chain, child} — runChat이 sessionToolFor로 만든다(peers가 비면 도구 없음). origin = 이 턴의 notOwnerDirect(사장 직접 턴이 아닌 시작점의 크루) // sink = 네이티브 엔진 도구 정의 수집(P-A), journal = 팀 메신저 일지 정책(위임 턴에 전달), fullAuto = 풀 오토(회사 단위 스위치, 주인 직접 턴에만 true — 호출부가 guest 판정까지 끝내 넘긴다), limits = 위임 제한 표(delegation-limits.mjs — 생략·메신저 맥락은 켜짐), tree = 풀림의 합계 예산 객체(사용자 메시지 하나에서 이어지는 크루 턴 총량 — 없으면 이 서버 단독 임시 예산), counters = 이 턴의 위임·쪽지 횟수 {delegate, mail}(CLI 지시 블록과 같은 카운터를 쓰려고 runChat이 만들어 넘긴다)
+export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [], mirrorCtx = null, lang = 'ko', connectors = [], workFolder = '', sink = null, journal = null, fullAuto = false, limits = DELEGATION_LIMITS.on, tree = null, counters = null, session = null, origin = null, { settingsDirect = false } = {}) { // settingsDirect = 이 턴이 주인의 1:1 직접 지시인가(runChat이 settingsDirectTurn으로 정한다 — 생략 = 거짓 = 결재 카드) // session = 세션 메시지 문맥 {peers, chain, child} — runChat이 sessionToolFor로 만든다(peers가 비면 도구 없음). origin = 이 턴의 notOwnerDirect(사장 직접 턴이 아닌 시작점의 크루) // sink = 네이티브 엔진 도구 정의 수집(P-A), journal = 팀 메신저 일지 정책(위임 턴에 전달), fullAuto = 풀 오토(회사 단위 스위치, 주인 직접 턴에만 true — 호출부가 guest 판정까지 끝내 넘긴다), limits = 위임 제한 표(delegation-limits.mjs — 생략·메신저 맥락은 켜짐), tree = 풀림의 합계 예산 객체(사용자 메시지 하나에서 이어지는 크루 턴 총량 — 없으면 이 서버 단독 임시 예산), counters = 이 턴의 위임·쪽지 횟수 {delegate, mail}(CLI 지시 블록과 같은 카운터를 쓰려고 runChat이 만들어 넘긴다)
   const lim = isMessengerCtx(mirrorCtx) ? DELEGATION_LIMITS.on : limits; // 메신저 턴은 스위치 밖 — 호출부가 무엇을 넘겨도 종전 2회·2단계(방어)
   const budget = lim.relaxed ? (tree ?? newTree({ kind: 'turn' })) : null; // 풀림은 합계 예산 없이 돌지 않는다 — 못 받았으면 이 서버 단독의 임시 예산
   const cnt = counters ?? { delegate: 0, mail: 0 };
@@ -1302,9 +1312,55 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     },
   );
 
+  // 아르고 자기 인식(유건 요청 2026-10-09 — "에이전트는 아르고 앱 상황을 전부 알고, 기능을 정확히 설명하고, 설정도 바꿀 수 있어야") — 처리기 본체는 src/argo-self.mjs.
+  // 읽기는 로컬 파일·메모리만(호출 0), 화면과 같은 함수. 설정 바꾸기는 허용 목록 키만이고, 바로 바꾸는 것은 settingsDirect(서버 판정 — 주인의 1:1 직접 지시)일 때뿐이다.
+  // 손님 턴은 주인의 상태를 읽지 않고(처리기가 거절), 설정 변경은 주인 결재로 간다. 동적 import — argo-self는 비서·동기화 모듈을 끌고 오므로 부를 때만 싣는다.
+  const argoStatus = tool(
+    'argo_status',
+    lang === 'en'
+      ? 'Read the current state of this Argo app — the same values the screens show. Use it BEFORE answering any question about Argo itself (numbers on the Deck such as Memory Links %, agents and their runners/models, routines and their last results, the assistant (on/off, last calendar check, reminders sent today, running device), sync, runner connections, plan and usage, messenger connections, pending approvals). section: overview (default: me + deck + assistant) | deck | agents | me | routines | assistant | runners | sync | plan | messenger | approvals. Never guess these values.'
+      : '이 아르고 앱의 지금 상태를 읽는다 — 화면에 보이는 값과 같은 함수로 계산한다. 아르고 자체에 대한 질문(데크 숫자 — 기억 연결 % 등, 에이전트와 러너·모델, 루틴과 마지막 실행 결과, 비서 켜짐·마지막 일정 확인·오늘 보낸 알림·실행 기기, 동기화, 러너 연결, 요금제·사용량, 메신저 연결, 결재 대기)에 답하기 전에 먼저 이것으로 확인하라. section: overview(기본 — 나·데크·비서) | deck | agents | me | routines | assistant | runners | sync | plan | messenger | approvals. 이 값들을 추측하지 마라.',
+    { section: z.enum(['overview', 'deck', 'agents', 'me', 'routines', 'assistant', 'runners', 'sync', 'plan', 'messenger', 'approvals']).optional() },
+    async ({ section }) => {
+      const self = await import('./argo-self.mjs');
+      return text(await self.argoStatus(wsId, { section: section ?? 'overview', slug: fromSlug, lang, guest }));
+    },
+  );
+  const argoHelp = tool(
+    'argo_help',
+    lang === 'en'
+      ? 'Search Argo\'s built-in feature guide (what each screen and feature does, where it is, how numbers are calculated, limits). Use it when asked how Argo works or what a feature means — answer from the guide, not from memory. Empty q lists the topics.'
+      : '아르고 기능 안내서를 검색한다(화면·기능이 무엇을 하는지, 어디에 있는지, 숫자를 어떻게 계산하는지, 한도). 아르고가 어떻게 동작하는지·기능이 무슨 뜻인지 물으면 기억이 아니라 이 안내서로 답하라. q를 비우면 주제 목록.',
+    { q: z.string().optional().describe(lang === 'en' ? 'question or keywords, or a topic id' : '질문·낱말·주제 id') },
+    async ({ q }) => text((await import('./help/index.mjs')).searchHelp(q ?? '', { lang })),
+  );
+  const argoSettingsTool = tool(
+    'argo_settings',
+    lang === 'en'
+      ? 'Read or change Argo settings that agents may change (assistant times/reminders/on-off, routine time, agent response language). action=list shows keys, current values and whether changes apply now or go to approval in this turn. action=set changes one key: it applies immediately only when the company owner asked you directly in a 1:1 (the system decides — you cannot claim it); otherwise it files an approval card for the owner. Billing, deletion, firing, API keys/tokens/logins, permissions and sharing can never be changed by agents — tell the user where to do it. After a change, tell the user the old → new value and how to undo it.'
+      : '에이전트가 바꿀 수 있는 아르고 설정을 읽거나 바꾼다(비서 시각·알림·켜기/끄기, 루틴 시각, 에이전트 응답 언어). action=list는 키·지금 값·이 턴에서 바로 바뀌는지/결재로 가는지를 보여 준다. action=set은 키 하나를 바꾼다: 회사 주인이 1:1에서 직접 시킨 턴이면 바로 바뀌고(시스템이 판정한다 — 네가 주장할 수 없다), 그 밖에는 주인 결재 카드로 올라간다. 결제·삭제·해고·API 키·토큰·로그인 연결·권한·공유 범위는 에이전트가 절대 바꾸지 못한다 — 사용자가 어디서 바꾸는지 안내하라. 바꾼 뒤에는 이전 값 → 새 값과 되돌리는 법을 사용자에게 알려라.',
+    {
+      action: z.enum(['list', 'set']),
+      key: z.string().optional().describe(lang === 'en' ? 'setting key from action=list, e.g. assistant.morning' : 'action=list가 보여 준 키 — 예: assistant.morning'),
+      id: z.string().optional().describe(lang === 'en' ? 'routine id for routine.* keys' : 'routine.* 키의 루틴 id'),
+      value: z.string().optional().describe(lang === 'en' ? 'new value — HH:MM for times, true/false for on/off' : '새 값 — 시각은 HH:MM, 켜기/끄기는 true/false'),
+      why: z.string().optional().describe(lang === 'en' ? 'one line on why (shown on the approval card)' : '왜 바꾸는지 한 줄(결재 카드에 보인다)'),
+    },
+    async (args) => {
+      const self = await import('./argo-self.mjs');
+      const r = await self.argoSettings(wsId, args, { slug: fromSlug, lang, direct: settingsDirect, guest });
+      if (r.kind !== 'approval') return text(r.text);
+      const item = await addApproval(wsId, { slug: fromSlug, kind: 'setting', ...(delegatedBy ? { from: delegatedBy } : {}),
+        action: r.approval.action, reason: r.approval.reason, payload: r.approval.payload,
+        ...(mirrorCtx ? { msgr: messengerOrigin(mirrorCtx) } : {}), ...approvalScope(mirrorCtx) });
+      return text(`${r.text} (${item.id})${await channelHealthNote()}`);
+    },
+  );
+
   const tools = [
     requestApproval, requestToolInstall, updateProfile, hireCrew, scheduleTask, listRoutines, cancelRoutine, startLongTask,
     ...(mirrorCtx?.kind === 'msgr' ? [proposeOrgDoc] : []), // 팀 메신저 채널 턴에만 — 조직 문서 제안(G-4). sink(네이티브 엔진)도 같은 배열을 받는다
+    argoStatus, argoHelp, argoSettingsTool, // 아르고 자기 인식 — 모든 턴(손님·설정 판정은 처리기 안)
     calendar, // 주인의 일정 — 항상 등재(세션 없음·손님은 처리기가 한 줄로 알린다)
     ...(mirrorCtx?.kind === 'msgr' && mirrorCtx.orgId ? [office, officeFiles, officeWork, officeDeals] : []), // 오피스 회사 기록·문서함·드라이브·할 일·페이지·거래 — 메신저 조직 채널 턴에만(그 조직). 개인 공간 턴에는 늘 거절할 도구라 싣지 않는다
     ...(mirrorCtx?.kind === 'msgr' && mirrorCtx.channelKind === 'dm' ? [officeBriefing] : []), // 오피스 브리핑 — 주인 1:1 턴에만(주인 계정으로 쓰므로 여럿 있는 방에서 남의 부탁을 주인 권한으로 실행하지 않게)
@@ -1451,7 +1507,7 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, opts = {}
     runChat(wsId, agentSlug, userMsg, sessionId, { ...opts, __turnControl: control }), { source: opts.source ?? (opts.from ? 'delegate' : 'chat'), tag: opts.abortTag ?? null });
 }
 
-async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnControl, from = null, source = null, attachments = [], hop = 0, chain = [], toolHop = 0, mirrorCtx = null, runnerOverride = null, modelOverride = null, journal = null, workFolder = '', delegationRelaxed = false, delegationTree = null, sessionChain = null, notOwnerDirect = null, runnerNote = '', __freshRetry = false, __seedNotes = null, __excludeRunners = null, __crashRetry = false, __lockupRetry = false, __downgradedFrom = null } = {}) {
+async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnControl, from = null, source = null, attachments = [], hop = 0, chain = [], toolHop = 0, mirrorCtx = null, runnerOverride = null, modelOverride = null, journal = null, workFolder = '', delegationRelaxed = false, delegationTree = null, sessionChain = null, notOwnerDirect = null, runnerNote = '', ownerSeat = null, __freshRetry = false, __seedNotes = null, __excludeRunners = null, __crashRetry = false, __lockupRetry = false, __downgradedFrom = null } = {}) {
   // runnerNote = 러너 프롬프트에만 붙는 덧붙임(루틴의 보고 규칙 — routines.mjs). 지시 원문(userMsg)과 따로 둔다: 일지(saveHandover)·턴 이벤트 msg(활동
   // '다시 실행'이 보내는 글)·gist·대화 기록에는 싣지 않는다. 재시도 재귀·도구 후속 턴은 이 값을 그대로 이어 받는다.
   // journal = 팀 메신저 채널 턴의 일지 정책 {off, tag} — off면 saveHandover 생략(402 creditTurn과 같은 갈래), tag면 별도 파일.
@@ -1578,6 +1634,9 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
   //   바꾸지 않고 풀 오토만 끄는 표지다(통합본 재검수 LOW-5). 이 값은 커넥터 쓰기 게이트까지 그대로 넘어간다(callConnectorTool fullAuto).
   // 사장이 보낸 쪽지의 배달 턴은 scheduler가 from 없이 돌린다(fromRole 표지) — 사장 판정을 from 문자열로 하지 않는다(최종 재검수 MEDIUM-1)
   const fullAuto = companyFullAuto === true && ownerDirect; // 손님·오피스에서 맡긴 턴 제외(msgr-handoff ownerDirectTurn 한 곳 — 활동 기록의 ownerDirect 표지와 같다)
+  // 설정 바로 바꾸기(argo_settings) — 주인이 1:1로 직접 시킨 턴만(argo-self.mjs settingsDirectTurn). ownerSeat는 데스크톱 대화 라우트만 붙이는 서버 표지이고
+  // 재시도 재귀만 이어 받는다(도구 결과 후속 턴은 받지 않는다 — 외부 결과가 담긴 턴이라 결재로 간다). 그 밖의 턴은 결재 카드.
+  const settingsDirect = settingsDirectTurn({ ownerSeat, source, from, notOwnerDirect, hop, chain, mirrorCtx });
   // 러너 결정 + 폴백 — 크루의 러너가 이 기기·회사에서 미가용이면 가용한 러너로 대신 실행한다.
   // (예: 기본 claude 크루인데 Codex만 연결한 사용자 — 어떤 러너든 연결만 돼 있으면 크루는 응답해야 한다)
   // want=null(무선호) — 카드에 러너 미지정이면 회사의 연결 러너를 대체 고지 없이 쓴다(claude 하드코딩 제거).
@@ -1781,7 +1840,7 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
       const cliColleagues = bridgeable ? await turnColleagues(wsId, agentSlug, hop, chain, mirrorCtx, lim) : [];
       if (bridgeable) {
         const sink = [];
-        makeCrewServer(wsId, agentSlug, meta.name || agentSlug, cliColleagues, hop, chain, mirrorCtx, lang, cliConnectors, workFolder, sink, journal, fullAuto, lim, tree, turnCounters, await sessionToolFor(wsId, agentSlug, mirrorCtx, source, sessCtx, hop), notOwnerDirect);
+        makeCrewServer(wsId, agentSlug, meta.name || agentSlug, cliColleagues, hop, chain, mirrorCtx, lang, cliConnectors, workFolder, sink, journal, fullAuto, lim, tree, turnCounters, await sessionToolFor(wsId, agentSlug, mirrorCtx, source, sessCtx, hop), notOwnerDirect, { settingsDirect });
         // 자식 파일이 없는 산출물(셀프호스트 등)이면 크루 도구 없이 진행한다 — 도구 부재가 턴 사망이 되면 안 된다(분리 검수 LOW-7)
         crewBridge = await createCrewMcpBridge(crewToolSpecs(sink)).catch((e) => { console.warn(`[argo] 에이전트 도구 다리 생략(지시 블록으로 진행): ${e?.message ?? e}`); return null; });
       }
@@ -1978,7 +2037,7 @@ ${lang === 'en'
       if (!aborted && !__crashRetry && isProcessCrash(e?.message || e)) {
         console.warn(`[argo] ${runner} 프로세스 비정상 종료 — 같은 러너로 1회 재시도(${wsId}/${agentSlug})`);
         try {
-          return await chat(wsId, agentSlug, userMsg, sessionId, { __turnControl, from, source, __downgradedFrom, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, sessionChain, notOwnerDirect, runnerNote, __seedNotes: sharedNotes, __excludeRunners, __crashRetry: true, __lockupRetry });
+          return await chat(wsId, agentSlug, userMsg, sessionId, { __turnControl, from, source, ownerSeat, __downgradedFrom, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, sessionChain, notOwnerDirect, runnerNote, __seedNotes: sharedNotes, __excludeRunners, __crashRetry: true, __lockupRetry });
         } catch (e2) { e = e2; if (e2?.aborted) aborted = true; }
       }
       // 도구 잠김(L2 자가치유, 2026-08-25) — 실행기 자체 고장(예: codex code-mode host)은 자격도 모델도
@@ -1989,7 +2048,7 @@ ${lang === 'en'
         console.warn(`[argo] ${runner} 도구 잠김 감지 — 재조달 후 1회 재시도(${wsId}/${agentSlug})`);
         await reprovisionRunner(runner).catch((re) => console.warn(`[argo] ${runner} 재조달 실패:`, re?.message ?? re));
         try {
-          return await chat(wsId, agentSlug, userMsg, sessionId, { __turnControl, from, source, __downgradedFrom, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, sessionChain, notOwnerDirect, runnerNote, __seedNotes: sharedNotes, __excludeRunners, __crashRetry, __lockupRetry: true });
+          return await chat(wsId, agentSlug, userMsg, sessionId, { __turnControl, from, source, ownerSeat, __downgradedFrom, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, sessionChain, notOwnerDirect, runnerNote, __seedNotes: sharedNotes, __excludeRunners, __crashRetry, __lockupRetry: true });
         } catch (e2) { e = e2; if (e2?.aborted) aborted = true; }
       }
       if (!aborted && shouldSelfHeal(e, { retried: __lockupRetry })) { // 필드(authExpired) 우선 — 게이트가 끊은 턴도 다른 러너로(HIGH-1).
@@ -2003,7 +2062,7 @@ ${lang === 'en'
             // 실패한 러너의 사건을 먼저 남긴다 — 치유 성공 시 조기 return이 실패 기록을 삼켜,
             // P2가 "인증 오류"라 말하는 턴에 연결 카드(P1-1)의 그 러너는 멀쩡해 보였다(검수 관점3 미탐).
             await appendEvent(wsId, { ...evBase, ok: false, ms: Date.now() - t0, error: String(e.message || e).slice(0, 400), selfHealed: true }).catch(() => {});
-            const healed = await chat(wsId, agentSlug, userMsg, sessionId, { __turnControl, from, source, __downgradedFrom: null, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, sessionChain, notOwnerDirect, runnerNote, __seedNotes: sharedNotes, __excludeRunners: tried });
+            const healed = await chat(wsId, agentSlug, userMsg, sessionId, { __turnControl, from, source, ownerSeat, __downgradedFrom: null, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, sessionChain, notOwnerDirect, runnerNote, __seedNotes: sharedNotes, __excludeRunners: tried });
             return { ...healed, fellBack: healed.fellBack ?? { from: runner, to: alt.runner, reason: 'auth' } }; // 첫 원인 우선 — 안쪽이 이미 표식했으면 유지(P2)
           } catch (e2) {
             e = e2; if (e2?.aborted) aborted = true; // 재시도도 실패 — 아래 공통 실패 처리(공유 노트 복원 포함)로 낙하. 재시도 중 중단도 중단으로 기록
@@ -2059,7 +2118,7 @@ ${lang === 'en'
   // 하네스 통일(P-A): 플래그 러너(ARGO_NATIVE_RUNNERS)는 Argo 소유 루프(nativeQuery)로 — 크루 도구 정의를 sink로 받아 같은 핸들러를 실행한다.
   const nativeOn = nativeRunnerEnabled(runner);
   const crewSink = nativeOn ? [] : null;
-  const crewServer = makeCrewServer(wsId, agentSlug, meta.name || agentSlug, colleagues, hop, chain, mirrorCtx, lang, connectors, workFolder, crewSink, journal, fullAuto, lim, tree, turnCounters, await sessionToolFor(wsId, agentSlug, mirrorCtx, source, sessCtx, hop), notOwnerDirect);
+  const crewServer = makeCrewServer(wsId, agentSlug, meta.name || agentSlug, colleagues, hop, chain, mirrorCtx, lang, connectors, workFolder, crewSink, journal, fullAuto, lim, tree, turnCounters, await sessionToolFor(wsId, agentSlug, mirrorCtx, source, sessCtx, hop), notOwnerDirect, { settingsDirect });
 
   // 로컬 능력 — 전권(capabilities.mjs). 파일·셸 부작용 도구는 사전 승인 목록에서 빼고 canUseTool
   // 게이트로 보낸다 — 게이트가 금지 구역(앱 코드·타사 데이터·자격, 2026-07-22 크리티컬)을 판정한다.
@@ -2472,7 +2531,7 @@ ${lang === 'en'
       try {
         // 제외 목록은 받은 그대로 넘긴다(tried 아님) — 세션 부재는 러너 잘못이 아니라서 같은 러너로
         // 다시 시도해야 한다. 여기서 현재 러너를 제외하면 세션 문제로 벤더가 갈리는 오작동이 된다.
-        return await chat(wsId, agentSlug, userMsg, null, { __turnControl, from, source, __downgradedFrom, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, sessionChain, notOwnerDirect, runnerNote, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunners });
+        return await chat(wsId, agentSlug, userMsg, null, { __turnControl, from, source, ownerSeat, __downgradedFrom, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, sessionChain, notOwnerDirect, runnerNote, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunners });
       } catch (e2) {
         e = e2; retriedDown = true; if (e2?.aborted) aborted = true; // 낙하 — 아래 공통 실패 처리(공유 노트 복원 포함)로. 재시도 중 중단도 중단으로 기록
       }
@@ -2484,7 +2543,7 @@ ${lang === 'en'
       const baseModel = effectiveModels(runner).find((m) => !m.gated)?.id ?? '';
       console.warn(`[argo] ${runner} 게이트 모델 접근 불가(${effModel}) — 기본 모델(${baseModel})로 강등 재시도(${wsId}/${agentSlug})`);
       try {
-        return await chat(wsId, agentSlug, userMsg, sessionId, { __turnControl, from, source, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride: baseModel, workFolder, journal, sessionChain, notOwnerDirect, runnerNote, __freshRetry, __seedNotes: sharedNotes, __excludeRunners, __crashRetry, __lockupRetry, __downgradedFrom: effModel });
+        return await chat(wsId, agentSlug, userMsg, sessionId, { __turnControl, from, source, ownerSeat, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride: baseModel, workFolder, journal, sessionChain, notOwnerDirect, runnerNote, __freshRetry, __seedNotes: sharedNotes, __excludeRunners, __crashRetry, __lockupRetry, __downgradedFrom: effModel });
       } catch (e2) { e = e2; retriedDown = true; if (e2?.aborted) aborted = true; }
     }
     // 인증 오탐 자가 치유 — SDK 러너의 자격이 실은 죽어 있던 경우(스테일 로그인 흔적 등), **죽은 러너를
@@ -2496,7 +2555,7 @@ ${lang === 'en'
     if (!aborted && !retriedDown && !__crashRetry && isProcessCrash(e?.message || e)) {
       console.warn(`[argo] ${runner} 프로세스 비정상 종료 — 같은 러너로 1회 재시도(${wsId}/${agentSlug})`);
       try {
-        return await chat(wsId, agentSlug, userMsg, sessionId, { __turnControl, from, source, __downgradedFrom, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, sessionChain, notOwnerDirect, runnerNote, __seedNotes: sharedNotes, __excludeRunners, __crashRetry: true });
+        return await chat(wsId, agentSlug, userMsg, sessionId, { __turnControl, from, source, ownerSeat, __downgradedFrom, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, sessionChain, notOwnerDirect, runnerNote, __seedNotes: sharedNotes, __excludeRunners, __crashRetry: true });
       } catch (e2) { e = e2; if (e2?.aborted) aborted = true; }
     }
     if (!aborted && !retriedDown && shouldSelfHeal(e, { lockup: false })) { // SDK 경로는 잠김 교체 없음(종전 계약) — 인증 문구·authExpired 필드만(HIGH-1)
@@ -2505,7 +2564,7 @@ ${lang === 'en'
         console.warn(`[argo] ${runner} 인증 실패 — ${alt.runner}로 재시도(${wsId}/${agentSlug}, 제외 ${tried.join(',')})`);
         try {
           await appendEvent(wsId, { ...evBase, ok: false, ms: Date.now() - t0, error: String(e.message || e).slice(0, 400), selfHealed: true }).catch(() => {}); // 실패 러너 사건 선기록(CLI 갈래와 대칭 — P1-1 미탐 봉합)
-          const healed = await chat(wsId, agentSlug, userMsg, null, { __turnControl, from, source, __downgradedFrom: null, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, sessionChain, notOwnerDirect, runnerNote, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunners: tried });
+          const healed = await chat(wsId, agentSlug, userMsg, null, { __turnControl, from, source, ownerSeat, __downgradedFrom: null, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, sessionChain, notOwnerDirect, runnerNote, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunners: tried });
           return { ...healed, fellBack: healed.fellBack ?? { from: runner, to: alt.runner, reason: 'auth' } }; // 첫 원인 우선(P2) — CLI 갈래와 같은 계약
         } catch (e2) {
           e = e2; if (e2?.aborted) aborted = true; // 재시도도 실패 — 아래 공통 실패 처리로 낙하
