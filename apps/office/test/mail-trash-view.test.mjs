@@ -14,9 +14,10 @@ const run = (file, deps) => {
   new Function(...Object.keys(deps), 'module', 'exports', transformSync(source, { loader: 'js', format: 'cjs' }).code)(...Object.values(deps), module, module.exports);
   return module.exports;
 };
-function mailWith(state) {
+function mailWith(state, { answer = () => [200, {}] } = {}) {
   const ops = [];
-  const M = run('mail.js', { getClient: async () => ({}), getMode: () => 'signedIn', ME: { id: 'u' }, update: (fn, o = []) => { Object.assign(state, fn(state)); ops.push(...o); }, getState: () => state,
+  globalThis.fetch = async (url, init) => { const op = /\/api\/mail\/(\w+)/.exec(url)[1]; const [status, data] = answer(op, init?.body ? JSON.parse(init.body) : null); return { ok: status < 400, status, json: async () => data, headers: { get: () => null } }; };
+  const M = run('mail.js', { getClient: async () => ({ auth: { getSession: async () => ({ data: { session: null } }) } }), getMode: () => 'signedIn', ME: { id: 'u' }, update: (fn, o = []) => { Object.assign(state, fn(state)); ops.push(...o); }, getState: () => state,
     outbox: { has: () => false }, VIEWABLE: {}, isDesktop: () => false, apiUrl: (u) => u, saveAttachment() {}, restore: (_k, d) => d, persist() {}, forget() {},
     scopedStorageKey: (k) => k, getStorageScope: () => 'u', mergeList: MM.mergeList, applySync: MM.applySync, newArrivals: MM.newArrivals, byDate: MM.byDate, replySubject: MM.replySubject, CAP: 1,
     t: (k) => k, registerDict() {}, MAIL_DICT: {} });
@@ -40,7 +41,6 @@ test('메일함: 휴지통 메일은 휴지통에만, 스팸은 어디에도 없
 test('서버: 스팸은 spam, 휴지통 목록은 TRASH 라벨', () => {
   assert.equal(folderOf(['TRASH', 'INBOX']), 'trash');
   assert.equal(folderOf(['SPAM', 'INBOX']), 'spam');
-  assert.deepEqual(FOLDER_QUERY.trash, { labelIds: 'TRASH' });
 });
 
 // 이유: 휴지통 메일함을 볼 때는 받은 휴지통 메일을 넣고, 30초 동기화도 지우지 않는다. 다른 메일함에서는 지금처럼 휴지통 메일을 넣지 않는다.
@@ -88,4 +88,35 @@ test('일괄: 휴지통 보기에서는 꺼내기만', () => {
   assert.deepEqual(b.restore.map((m) => m.id), ['a', 'b']);
   assert.deepEqual([b.read, b.unread, b.star, b.unstar, b.archive, b.trash], [[], [], [], [], [], []]);
   assert.deepEqual(bulkTargets([mail({ id: 'c' })], 'inbox').restore, []);
+});
+
+// 이유(검수 #903 MEDIUM): 휴지통 메일함을 보는 중에 다른 목록 받기(앱을 열 때 받은편지함·보낸 뒤 보낸편지함·검색 지우기)나 '더 보기'가 끝나면 휴지통 목록이 비었다.
+// 휴지통을 보고 있는지는 받는 메일함이 아니라 화면(동기화를 원하는 화면이 휴지통)으로 정한다.
+test('목록 합치기: 휴지통을 보는 동안은 어느 메일함을 받아도 휴지통 메일을 지우지 않는다', () => {
+  const cache = [mail({ id: 't1', folder: 'trash' }), mail({ id: 't2', folder: 'trash' })];
+  assert.deepEqual(MM.mergeList(cache, [mail({ id: 'i1' })], { view: 'inbox', trash: true }).map((m) => m.id), ['t1', 't2', 'i1']);
+  assert.deepEqual(MM.mergeList(cache, [mail({ id: 't3', folder: 'trash' })], { view: 'trash', append: true, trash: true }).map((m) => m.id), ['t1', 't2', 't3'], '더 보기는 첫 쪽을 남긴다');
+  assert.deepEqual(MM.mergeList(cache, [mail({ id: 'i1' })], { view: 'inbox' }).map((m) => m.id), ['i1'], '휴지통을 안 보면 지금처럼 치운다');
+});
+test('목록 받기: 휴지통 메일함 화면이 있으면 받은편지함을 받아도 휴지통 목록이 남는다', async () => {
+  const state = { mails: [mail({ id: 'a1.t1', gid: 't1', folder: 'trash' })], mailAccounts: [{ id: 'a1', status: 'ok' }] };
+  const { M } = mailWith(state, { answer: (op) => (op === 'list' ? [200, { items: [mail({ id: 'a1.i1', gid: 'i1' })], next: null }] : [200, { results: [] }]) });
+  const stop = M.wantSync('mail', { ms: 30_000, view: 'trash' });
+  await M.pullMail('inbox');
+  assert.deepEqual(state.mails.map((m) => m.id).sort(), ['a1.i1', 'a1.t1']);
+  stop();
+  await M.pullMail('inbox');
+  assert.deepEqual(state.mails.map((m) => m.id), ['a1.i1'], '휴지통 화면을 닫으면 지금처럼 치운다');
+});
+
+// 이유(검수 #903 LOW): 휴지통 메일 줄을 끌어 에이전트에게 맡길 수 있었다 · 휴지통에서 검색하면(결과는 휴지통이 아닌 메일) 막대에 동작이 없었다.
+test('휴지통 검색 결과는 일반 일괄 동작', () => {
+  const b = bulkTargets([mail({ id: 'c' })], 'search');
+  assert.deepEqual(b.archive.map((m) => m.id), ['c']);
+  assert.deepEqual(b.restore, []);
+});
+
+// 이유(검토 #903 미검증 → 방어): Gmail이 labelIds=TRASH만으로 휴지통 메일을 주는지 확인하지 못했다 — includeSpamTrash도 같이 보내 어느 쪽이든 받는다.
+test('서버: 휴지통 목록은 휴지통을 포함해 받는다', () => {
+  assert.deepEqual(FOLDER_QUERY.trash, { labelIds: 'TRASH', includeSpamTrash: 'true' });
 });

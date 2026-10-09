@@ -87,7 +87,7 @@ function Avatar({ name, addr }) {
 function MailRow({ m, active, tag, sel, group, onPick }) {
   // 고른 메일 중 하나를 끌면 고른 것 전부가 크루에게 간다(11차, items)
   const many = group.length > 1 && sel.has(m.id);
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: `mail:${m.id}`, data: { kind: 'mail', id: m.id, label: many ? t('sel.count', { n: group.length }) : m.subject, items: many ? group : undefined } });
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ disabled: inTrash(m), id: `mail:${m.id}`, data: { kind: 'mail', id: m.id, label: many ? t('sel.count', { n: group.length }) : m.subject, items: many ? group : undefined } });
   const { onTouchStart, ...mouse } = listeners ?? {};
   const draft = isDraft(m);
   const toLine = draft && m.to ? t('mailx.toLine', { to: '\n' }).split('\n') : null;
@@ -673,14 +673,15 @@ export function Mail({ id }) {
   // 여러 개 고르기(11차) — 메일 메뉴의 단일 동작(읽음·안 읽음·보관·맡기기)을 고른 메일 전부에. 보관은 토스트 '되돌리기' 한 번으로 전부
   const keys = useMemo(() => rows.map((m) => m.id), [rows]);
   const [sel, setSel] = useSelection('mail', { keys, actions: (picked) => {
-    const list = rows.filter((m) => picked.includes(m.id)), b = bulkTargets(list, view), done = (fn) => (_, clear) => { fn(); clear(); };
+    const box = search ? 'search' : view; // 휴지통에서 검색하면 결과는 휴지통이 아닌 메일 — 일반 동작(검수 #903)
+    const list = rows.filter((m) => picked.includes(m.id)), b = bulkTargets(list, box), done = (fn) => (_, clear) => { fn(); clear(); };
     return [
       b.read.length > 0 && { label: t('mail.markRead'), icon: 'mail', run: done(() => b.read.forEach((m) => setMail(m.id, { unread: false }))) },
       b.unread.length > 0 && { label: t('mail.markUnread'), icon: 'mail', run: done(() => b.unread.forEach((m) => setMail(m.id, { unread: true }))) },
       b.star.length > 0 && { label: t('mailx.star'), icon: 'star', run: done(() => b.star.forEach((m) => toggleStar(m))) },
       b.unstar.length > 0 && { label: t('mailx.unstar'), icon: 'star', run: done(() => b.unstar.forEach((m) => toggleStar(m))) },
       b.archive.length > 0 && { label: t('mail.archiveIt'), icon: 'archive', run: done(() => { const undos = b.archive.map((m) => archiveMail(m.id)); showToast(t('sel.archived', { n: b.archive.length }), { undo: () => undos.forEach((u) => u?.()) }); if (b.archive.some((m) => m.id === id)) navigate(mailHome()); }) },
-      view !== 'trash' && { label: t('crew.assign'), icon: 'hand', run: done(() => setUi({ assign: { space: 'me', items: mailItems(list) } })) },
+      box !== 'trash' && { label: t('crew.assign'), icon: 'hand', run: done(() => setUi({ assign: { space: 'me', items: mailItems(list) } })) },
       b.restore.length > 0 && { label: t('mailx.restore'), icon: 'refresh', run: done(() => { const undos = b.restore.map((m) => restoreMail(m)); showToast(t('mailx.restoredN', { n: b.restore.length }), { undo: () => undos.forEach((u) => u()) }); if (b.restore.some((m) => m.id === id)) navigate(mailHome()); }) },
       b.trash.length > 0 && { label: t('mailx.trash'), icon: 'trash', danger: true, run: done(() => { const undos = b.trash.map((m) => trashMail(m)); showToast(t('mailx.trashedN', { n: b.trash.length }), { undo: () => undos.forEach((u) => u()) }); if (b.trash.some((m) => m.id === id)) navigate(mailHome()); }) },
     ];

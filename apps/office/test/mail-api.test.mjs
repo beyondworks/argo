@@ -231,5 +231,6 @@ test('목록: 휴지통 메일함 = labelIds TRASH', async () => {
   gmail = (c) => (c.path === '/messages' ? ok({ messages: [{ id: 'm1' }] }) : c.q.get('format') === 'metadata' ? ok(meta('m1', ['TRASH', 'INBOX'])) : new Response('{}', { status: 404 }));
   const r = await post('list', { account: 'acc', folder: 'trash' });
   assert.equal(calls.find((c) => c.path === '/messages').q.get('labelIds'), 'TRASH');
+  assert.equal(calls.find((c) => c.path === '/messages').q.get('includeSpamTrash'), 'true');
   assert.equal(r.body.items[0].folder, 'trash');
 });

@@ -95,7 +95,7 @@ export async function pullMail(view, { more = false, q = null, only = null } = {
   // 요청 제한(429)도 실패다 — 못 받았으니 '확인 못 함'(L7). 만료된 계정이 있으면 '다시 연결'(R3-L6 — 받지 못한 받은편지함을 '모두 확인'으로 보이지 않게).
   // mailError: undefined 확인 전 · null 받음 · 'expired' 다시 연결 · 시각 실패
   const err = inbox ? { mailError: failed.some((f) => f.code !== 'expired') ? Date.now() : needsLink() } : {};
-  update((s) => ({ mails: mergeList(s.mails, got, { view: q ? null : view, done, busy, append: more || !!q, hasMore: next }), ...err }));
+  update((s) => ({ mails: mergeList(s.mails, got, { view: q ? null : view, done, busy, append: more || !!q, hasMore: next, trash: trashOpen() }), ...err }));
   return { ids: got.sort(byDate).map((m) => m.id), failed, more: hasMore(key) };
 }
 /** 받은편지함 받기(앱을 열 때·홈 '다시 시도') — 계정 목록부터 못 받아도 실패 표시 */
@@ -128,7 +128,7 @@ async function runSync({ view = 'inbox' } = {}) {
     if (r.primed) continue;
     const changed = r.changed ?? [], gone = new Set((r.gone ?? []).map((g) => `${r.account}.${g}`));
     if (!first) arrivals.push(...newArrivals(getState().mails, changed));
-    update((s) => ({ mails: applySync(s.mails, changed, gone, busy, view === 'trash') })); // 휴지통 메일함을 보는 동안은 휴지통 메일을 둔다
+    update((s) => ({ mails: applySync(s.mails, changed, gone, busy, trashOpen()) })); // 휴지통 메일함을 보는 동안은 휴지통 메일을 둔다
   }
   persist(key, hist, 0);
   if (reset) await pullMail(view).catch(() => {}); // 변경 기록이 만료됐거나 한꺼번에 많이 바뀌면 보고 있는 목록을 새로 받는다
@@ -139,6 +139,8 @@ async function runSync({ view = 'inbox' } = {}) {
 
 /* ── 자동 갱신 — 화면이 보이는 동안만, 여러 곳이 원하면 가장 짧은 간격으로 하나만 ── */
 const wants = new Map();
+/** 휴지통 메일함 화면이 열려 있나 — 받는 메일함이 아니라 화면 기준(검수 #903: 받은편지함·보낸편지함 받기가 휴지통 목록을 비웠다) */
+const trashOpen = () => [...wants.values()].some((w) => w.view === 'trash');
 let timer = null, lastSync = 0;
 const listeners = new Set();
 export const lastSynced = () => lastSync;

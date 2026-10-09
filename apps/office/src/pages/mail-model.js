@@ -36,7 +36,7 @@ const keepLocal = (m, old) => ({ ...m, unread: old.unread, folder: old.folder, s
  *  - 받은 메일은 새 값으로 바꾸되(이 기기에만 있는 칸은 남긴다), 보내는 중인(busy) 메일은 이 기기 값을 지킨다.
  *  - append(더 보기·검색)가 아니면, 이번에 받은 계정(done)의 이 보기 메일 중 새 목록에 없는 것은 뺀다(다른 기기에서 보관·지움).
  *    다만 그 계정에 다음 쪽이 있으면 받은 가장 오래된 메일보다 새것만 — 그보다 오래된 것은 아직 안 받은 쪽일 수 있다. */
-export function mergeList(cache, fresh, { view = null, done = new Set(), busy = () => false, append = false, hasMore = {} } = {}) {
+export function mergeList(cache, fresh, { view = null, done = new Set(), busy = () => false, append = false, hasMore = {}, trash = false } = {}) {
   const local = new Map(cache.map((m) => [m.id, m]));
   const got = fresh.map((m) => { const old = local.get(m.id); return old ? (busy(m.id) ? keepLocal({ ...old, ...m }, old) : { ...old, ...m }) : m; });
   const ids = new Set(got.map((m) => m.id));
@@ -44,7 +44,8 @@ export function mergeList(cache, fresh, { view = null, done = new Set(), busy = 
   for (const m of got) oldest[m.account] = Math.min(oldest[m.account] ?? Infinity, Date.parse(m.at));
   const stale = (m) => !append && view && done.has(m.account) && inView(m, view) && !busy(m.id)
     && (!hasMore[m.account] || Date.parse(m.at) >= (oldest[m.account] ?? -Infinity));
-  return [...cache.filter((m) => !ids.has(m.id) && !stale(m) && !trashed(m, busy)), ...got.filter((m) => keep(m, view === 'trash'))];
+  // trash: 휴지통 메일함 화면이 열려 있다 — 어느 메일함을 받든(더 보기 포함) 휴지통 메일을 치우지 않는다(검수 #903)
+  return [...cache.filter((m) => !ids.has(m.id) && !stale(m) && (trash || !trashed(m, busy))), ...got.filter((m) => keep(m, trash || view === 'trash'))];
 }
 
 /** 바뀐 것만 받기(계정 하나)의 결과 반영 — 바뀐 메일은 새 값(휴지통으로 간 것은 뺀다), 지워진 메일(gone: 오피스 id)은 뺀다 */
