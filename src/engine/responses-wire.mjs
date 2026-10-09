@@ -41,16 +41,19 @@ export function toResponsesRequest({ system, messages, tools, model, effort, max
   };
 }
 
-/** Responses 응답(최종 객체) → Messages 응답 모양(순수). reasoning 항목은 버리고 message·function_call만 블록으로. */
+/** Responses 응답(최종 객체) → Messages 응답 모양(순수). reasoning 항목은 블록으로 싣지 않고(다음 요청에 보내지 않는다 — store:false 무상태)
+    요약 글이 있으면(모델이 줄 때만 — 요약 옵션을 켜지 않는다) 응답 옆자리 thoughts[]로만 돌려준다(작업 과정 표시용, native-query displayContent). */
 export function fromResponsesResponse(resp, model) {
   const content = [];
+  const thoughts = [];
   for (const it of resp?.output ?? []) {
+    if (it?.type === 'reasoning') { for (const p of it.summary ?? []) if (typeof p?.text === 'string' && p.text.trim()) thoughts.push(p.text.trim()); continue; }
     if (it?.type === 'message') for (const p of it.content ?? []) { if (p?.type === 'output_text' || p?.type === 'refusal') content.push({ type: 'text', text: p.text ?? p.refusal ?? '' }); }
     else if (it?.type === 'function_call') { let input = {}; try { input = it.arguments ? JSON.parse(it.arguments) : {}; } catch { input = { _raw: String(it.arguments ?? '') }; } content.push({ type: 'tool_use', id: it.call_id || it.id, name: it.name, input }); }
   }
   const stop_reason = content.some((b) => b.type === 'tool_use') ? 'tool_use' : (resp?.status === 'incomplete' && resp?.incomplete_details?.reason === 'max_output_tokens') ? 'max_tokens' : 'end_turn';
   const u = resp?.usage ?? {};
-  return { id: resp?.id || `resp_${Date.now().toString(36)}`, type: 'message', role: 'assistant', model: resp?.model || model, content, stop_reason,
+  return { id: resp?.id || `resp_${Date.now().toString(36)}`, type: 'message', role: 'assistant', model: resp?.model || model, content, stop_reason, ...(thoughts.length ? { thoughts } : {}),
     usage: { input_tokens: Number(u.input_tokens) || 0, output_tokens: Number(u.output_tokens) || 0, cache_read_input_tokens: Number(u.input_tokens_details?.cached_tokens) || 0 } };
 }
 

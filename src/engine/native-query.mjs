@@ -124,6 +124,14 @@ const sumUsage = (acc, u = {}) => {
   return acc;
 };
 
+/** 표시용 assistant 내용(순수) — gem_thought 글과 와이어가 준 사고 요약을 thinking 블록으로 앞에 붙인다. 원본 배열은 바꾸지 않는다. */
+export function displayContent(content, thoughts = null) {
+  const extra = [];
+  for (const b of content ?? []) if (b?.type === 'gem_thought' && typeof b.text === 'string' && b.text.trim()) extra.push({ type: 'thinking', thinking: b.text.trim() });
+  for (const t of Array.isArray(thoughts) ? thoughts : []) if (typeof t === 'string' && t.trim()) extra.push({ type: 'thinking', thinking: t.trim() });
+  return extra.length ? [...extra, ...content] : content;
+}
+
 async function* run(opts, ac, isInterrupted, inbox = { items: [], closed: false }) {
   const { wsId, slug, prompt, cwd, systemPrompt, env = {}, model, crewTools = [], mcpServers = {}, canUseTool, lang = 'ko',
     resume = null, maxTokens, maxSteps = NATIVE_MAX_STEPS, fetchImpl = globalThis.fetch, saveSession = true, effort = '' } = opts;
@@ -237,7 +245,9 @@ async function* run(opts, ac, isInterrupted, inbox = { items: [], closed: false 
       sumUsage(usage, res?.usage);
       const content = Array.isArray(res?.content) ? res.content : [];
       sess.messages.push({ role: 'assistant', content });
-      yield { type: 'assistant', message: { model: res?.model || model, content } };
+      // 표시용 사본 — 와이어가 따로 실어 준 사고(Gemini 사고 파트 gem_thought의 글·Responses reasoning 요약 res.thoughts)를 thinking 블록으로 앞에 둔다.
+      // 전사(sess.messages)는 받은 그대로 — 벤더로 다시 가는 내용은 바뀌지 않는다(사고 옵션을 새로 켜지도 않는다: 모델이 준 만큼만).
+      yield { type: 'assistant', message: { model: res?.model || model, content: displayContent(content, res?.thoughts) } };
       const uses = content.filter((b) => b?.type === 'tool_use');
       // tool_use 블록이 있으면 stop_reason과 무관하게 실행한다(분리 검수 HIGH-2: max_tokens 절단 응답의 tool_use를 버리면
       // 도구는 안 돌고 전사에는 짝 없는 tool_use가 남아 다음 턴이 죽는다).
@@ -274,6 +284,9 @@ async function* run(opts, ac, isInterrupted, inbox = { items: [], closed: false 
         }
         results.push({ type: 'tool_result', tool_use_id: u.id, content: blocks ?? (text.slice(0, TOOL_RESULT_CAP) || '(empty)'), ...(isError ? { is_error: true } : {}) });
       }
+      // 도구 결과도 SDK query()처럼 type:'user' 메시지로 낸다 — chat.mjs가 작업 과정(turn-trace)에 결과를 짝지어 싣는다(2026-10-09).
+      // 이 메시지를 받지 않는 소비자는 무시한다(chat.mjs 루프는 system·assistant·result만 분기). 전사(sess.messages)와 같은 배열을 그대로 보낸다 — 사본을 바꾸지 않는다.
+      yield { type: 'user', message: { role: 'user', content: results.slice() }, parent_tool_use_id: null, session_id: sess.id };
       // 도구가 도는 사이에 온 끼워 넣기 — 다음 모델 호출에 도구 결과와 같이 싣는다(tool_result 블록 뒤 text 블록)
       if (inbox.items.length) results.push({ type: 'text', text: steerNote(inbox.items.splice(0), lang) });
       sess.messages.push({ role: 'user', content: results });

@@ -206,7 +206,7 @@ test('배선: chat.mjs가 assistant 메시지의 thinking 블록을 누적해 �
   assert.ok(src.includes("let thought = '';"), 'thought 누적 변수');
   assert.ok(/filter\(\(b\) => b\.type === 'thinking' && typeof b\.thinking === 'string'\)\.map\(\(b\) => b\.thinking\)/.test(src), 'thinking 블록 수집');
   assert.ok(/if \(thoughtNow\) thought = thought \? `\$\{thought\}\\n\\n\$\{thoughtNow\}` : thoughtNow;/.test(src), '누적(이전 생각 뒤에 덧붙임)');
-  assert.ok(src.includes("await setTurnStatus(wsId, agentSlug, stage, detail, partial, turnSource, thought, steps);"), '단계 갱신에 thought·steps 전달(메신저 실행 카드 2026-09-09)');
+  assert.ok(src.includes("await setTurnStatus(wsId, agentSlug, stage, detail, partial, turnSource, thought, stepsNow(), traceRec.id);"), '단계 갱신에 thought·steps 전달(메신저 실행 카드 2026-09-09) + 작업 과정 기록 포인터(2026-10-09)');
   // 상태 파일 왕복 — thought는 뒤 1500자만, 미전달 시 유지
   const ws = 'hb-thought'; await seed(ws);
   await setTurnStatus(ws, 'kim', 'think', '', '', 'room', 'x'.repeat(2000));

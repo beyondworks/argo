@@ -285,6 +285,7 @@ const WS_DOT_FILES = new Set([
   '.tg-claims-state.json', '.tg-claims', // 텔레그램 토큰 클레임 상태(sync.mjs) — 크루가 mine을 심으면 두 기기가 같은 봇을 동시 폴링(getUpdates Conflict)
   '.msgr-journal', // 팀 메신저 채널 기억의 PC 사본(memory.mjs relocateOrgJournals) — 다른 채널 턴의 셸로 읽히면 채널 경계가 샌다(2026-09-24)
   '.msgr-sessions.json', // 채널 세션 장부(thread.mjs — 기억 회수용 세션 id 목록, 2026-10-03). 셸로 고쳐지면 회수가 전사를 놓친다
+  '.turn-traces', // 작업 과정 기록(turn-trace.mjs — 다른 턴의 도구 입력·결과). 셸로 읽히면 다른 대화의 명령 출력이 새고, 고치면 기록이 위조된다. `.traces`가 아니라 이 이름이라 평범한 명령(jq '.traces')은 안 걸린다
 ]);
 const BASH_GUARDED = [...WS_CONTROL_FILES, ...WS_LEDGER_FILES, ...WS_DOT_FILES];
 /* 이름이 흔한 일반어라 부분 문자열로 넣을 수 없는 직속 도트 디렉터리 — 앞뒤 경계가 있는 형태로만 막는다.

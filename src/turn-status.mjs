@@ -89,7 +89,7 @@ async function touch(wsId, slug) {
   await writeJsonAtomic(file(wsId, slug), { ...s, ts: Date.now() });
 }
 
-export async function setTurnStatus(wsId, slug, stage, detail = '', partial, source, thought, steps) {
+export async function setTurnStatus(wsId, slug, stage, detail = '', partial, source, thought, steps, traceId) {
   const k = keyOf(wsId, slug);
   let e = live.get(k);
   if (!e) {
@@ -123,6 +123,9 @@ export async function setTurnStatus(wsId, slug, stage, detail = '', partial, sou
         thought: String(thought ?? prev.thought ?? '').slice(-1500),
         // steps — 단계 궤적(도구 하나 = 단계 하나, chat.mjs step). 메신저 실행 카드가 클로드코드식 드롭다운으로 실시간 표시(유건 요청 2026-09-09). 미전달이면 이전 값 유지.
         steps: Array.isArray(steps) ? steps.slice(-40) : (prev.steps ?? []),
+        // traceId — 이 상태를 쓴 턴의 작업 과정 기록(turn-trace) id. 화면이 진행 중 단계 목록을 고를 때의 포인터일 뿐 — 단계 자체는 턴별 기록에 있어 섞이지 않는다.
+        // 미전달이면 이전 값 유지(같은 턴의 후속 갱신).
+        traceId: traceId ?? prev.traceId ?? null,
         startedAt: prev.startedAt ?? Date.now(), ts: Date.now(), pid: process.pid,
       });
     } catch { /* 상태 표시는 베스트에포트 */ }
@@ -153,7 +156,7 @@ export async function getTurnStatus(wsId, slug) {
     const s = await readJsonLenient(file(wsId, slug), null);
     if (!s || !s.ts) return null;
     return Date.now() - s.ts < 120_000
-      ? { stage: s.stage, detail: s.detail ?? '', partial: s.partial ?? '', thought: s.thought ?? '', source: s.source ?? '', steps: Array.isArray(s.steps) ? s.steps : [], startedAt: s.startedAt ?? s.ts }
+      ? { stage: s.stage, detail: s.detail ?? '', partial: s.partial ?? '', thought: s.thought ?? '', source: s.source ?? '', steps: Array.isArray(s.steps) ? s.steps : [], startedAt: s.startedAt ?? s.ts, traceId: s.traceId ?? null }
       : null;
   } catch {
     return null;
