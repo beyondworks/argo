@@ -196,7 +196,7 @@ test('(b) 짧은 알림 묶음 — "확인할 것 2건: 1. … 2. …", 보안�
   const due = mail('d1', { from: 'OpenAI', addr: 'noreply@tm.openai.com', subject: 'Your ChatGPT Pro subscription will be canceled on Oct 8' });
   const body = X.composeBatch([{ m: due, cls: C.classifyMail(due, { now, tz: 'Asia/Seoul' }) }, { m: sec, cls: C.classifyMail(sec, { now, tz: 'Asia/Seoul' }) }], { lang: 'ko', now, tz: 'Asia/Seoul' });
   assert.match(body, /^\[비서\] 확인할 것 2건\n1\. 오늘이 기한이에요 — OpenAI/);
-  assert.match(body, /2\. 보안 알림 — Google \(no-reply@accounts\.google\.com\) · 03:12/);
+  assert.match(body, /2\. 보안 알림 — Google \(`no-reply@accounts\.google\.com`\) · 03:12/);
   assert.match(body, /그 서비스에 직접 들어가 확인하세요/);
   assert.ok(!body.includes('https://') && !body.includes('4829'));
 });
@@ -420,7 +420,7 @@ test('저녁 몫 — 뉴스레터·그 밖은 개수와 보낸 사람, 목록 �
   await run(w, at('09:10'), { st });
   assert.equal(w.inserts.length, 0);
   const sum = M.takeSummary('ws1', { lang: 'ko', consume: true });
-  assert.match(sum.text, /^메일\n· 보안 알림처럼 보이는 메일 — 보낸 주소 alert@g00gle-security\.io\. 보낸 곳을 확인하지 못했어요/);
+  assert.match(sum.text, /^메일\n· 보안 알림처럼 보이는 메일 — 보낸 주소 `alert@g00gle-security\.io`\. 보낸 곳을 확인하지 못했어요/);
   assert.match(sum.text, /· 뉴스레터 2건\(Stripe\)/);
   assert.match(sum.text, /· 그 밖의 새 메일 1건\(김대리\)/);
   assert.equal(sum.keys.length, 4);
@@ -548,6 +548,14 @@ test('알림 본문의 메일 유래 글 — 링크는 (링크), 낱말 앞 @·�
   assert.match(b3, /See `https:\/\/deck\.example\/k3` and `\(www\.a\.b\)\.`/);
   assert.match(b3, /초안에 메일에 없던 링크·번호가 있어요/);
   assert.equal(C.scrubLine('Sign-in alert:https://x.y now'), 'Sign-in now');
+  // 메일 주소도 GFM 자동 링크(mailto)가 된다 — 피싱 보낸 주소가 눌리는 링크로 보이지 않게 `코드`로(글자는 그대로, 실측 캡처 10/9)
+  assert.equal(X.display('보낸 주소 alert@g00gle-security.example 끝', 200), '보낸 주소 `alert@g00gle-security.example` 끝');
+  assert.equal(X.display('(no-reply@accounts.google.com)', 200), '`(no-reply@accounts.google.com)`');
+  assert.equal(X.display('a`b@c.d', 200), '`aˋb@c.d`', '백틱은 바꿔 감싼 코드가 깨지지 않게');
+  assert.equal(X.display('x@y.zz', 4), '', '감싼 주소를 자르면 백틱이 짝이 안 맞는다 — 넘치는 낱말은 통째로 뺀다');
+  assert.equal(X.display('가 나 x@y.zz', 4), '가 나');
+  const sec = X.composeBatch([{ m: { ...evil, from: 'Google', addr: 'no-reply@accounts.google.com', subject: 'Security alert' }, cls: { cat: 'security', lane: 'now' } }], { lang: 'ko', now: at('10:00'), tz: 'Asia/Seoul' });
+  assert.ok(!/(^|[^`(])[\w.-]+@[\w-]+\.[\w.]+/.test(sec.replace(/`[^`]*`/g, '')), sec);
 });
 
 test('I1(CLI·Codex): 도구를 끌 수 없는 외부 CLI 러너(gemini 로그인 등)·Codex 에이전트(결정 대기)면 메일 글을 원샷에 보내지 않고, 알림은 준비 없이 이유와 함께', async () => {

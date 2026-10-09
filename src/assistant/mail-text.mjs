@@ -68,10 +68,21 @@ const HIDDEN_RE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u00ad\u2
 const LINKY_RE = /https?:\/\/|www\.|\]\(/i;
 /** 메일 쪽이 쓴 글을 알림 본문에 싣기 전에(순수, 10/9 보안 검토) — 숨은 글자를 지우고, 링크가 될 낱말은 '(링크)'로(비서 목소리로 남의 링크를 건네지 않게),
     낱말 앞 @는 전각 ＠로(멘션처럼 보이거나 읽히지 않게), 줄 앞 /는 전각 ／로(명령처럼 보이지 않게). 한 줄로, n자까지. */
+// 메일 주소 모양 낱말 — GFM은 주소도 mailto 링크로 만든다(피싱 보낸 주소가 눌리는 링크로 보이지 않게 `코드`로 감싼다, 10/9 실측 캡처)
+const EMAILY_RE = /[^\s@]@[^\s@]+\.[^\s@]/;
 export function display(s, n) {
-  return String(s ?? '').slice(0, 4 * n).replace(HIDDEN_RE, '').split(/\s+/).filter(Boolean)
-    .map((w) => (LINKY_RE.test(w) ? '(링크)' : w.replace(/^@/, '＠').replace(/^\//, '／')))
-    .join(' ').slice(0, n);
+  const words = String(s ?? '').slice(0, 4 * n).replace(HIDDEN_RE, '').replace(/`/g, 'ˋ').split(/\s+/).filter(Boolean)
+    .map((w) => (LINKY_RE.test(w) ? '(링크)' : EMAILY_RE.test(w) ? `\`${w}\`` : w.replace(/^@/, '＠').replace(/^\//, '／')));
+  const out = words.join(' ');
+  if (out.length <= n) return out;
+  // 자를 때 감싼 낱말 가운데서 자르면 백틱 짝이 깨진다 — 감싼 낱말은 통째로 빼고, 그 밖은 글자 단위로 자른다(예전과 같다)
+  let acc = '';
+  for (const w of words) {
+    const next = acc ? `${acc} ${w}` : w;
+    if (next.length <= n) { acc = next; continue; }
+    return w.startsWith('`') ? acc : next.slice(0, n);
+  }
+  return acc;
 }
 /** 초안처럼 줄을 살려야 하는 글 — 숨은 글자를 지우고, 링크가 될 낱말은 `인라인 코드`로 감싸 누를 수 없게(글자는 그대로 — 쓰기 전에 사람이 본다.
     메일에 없던 링크는 parsePrep이 "새 링크·번호" 표시도 단다). 백틱은 'ˋ'로 바꿔 감싼 코드가 깨지지 않게. */
