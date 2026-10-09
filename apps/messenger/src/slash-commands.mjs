@@ -26,6 +26,25 @@ export function slashCandidates(text, crews, { skillPrefix = (title) => `${title
   return [...byKey.values()].filter((r) => r.match.some(hit)).map(({ match, ...r }) => r); // 별칭 먼저(삽입 순서), 그다음 스킬 — 본체와 같은 순서
 }
 
+/** '/' 팝업을 연 순간 그 방 에이전트의 최신 명령 목록만 따로 읽는다 — 조직 목록(loadOrg)은 commands 열(행당 최대 64KB)을 읽지 않는다(H33).
+    @returns {Promise<{[crewId]: commands}>} 던지지 않는다: 오류·차단(402)·예외는 {}로 끝나 '불러오는 중'에서 벗어나고, 아는 것(내장 명령, 행에 이미 있는 목록)만 보인다. */
+export async function readSlashCommands(db, ids) {
+  try {
+    const { data, error } = await db.from('msgr_crews').select('id, commands').in('id', ids);
+    if (error || !Array.isArray(data)) return {};
+    return Object.fromEntries(data.map((r) => [r.id, r.commands]));
+  } catch { return {}; }
+}
+
+/** 팝업이 그릴 것 = { cands, loading }. cands: slashCandidates 결과(토큰이 아니면 null). 재조회 값(fresh)이 행 값보다 앞선다.
+    loading: 재조회가 아직 안 왔고(fresh === null), 명령을 모르는 에이전트가 있다 — loadOrg 행에는 commands 열이 없다(undefined).
+    개인 공간 RPC 행은 내 것은 배열·남의 것은 null로 이미 정해져 있어 기다리지 않는다. 그동안 '명령 없음'이 아니라 '불러오는 중'을 보인다. */
+export function slashView(text, crews, fresh, opts) {
+  const list = Array.isArray(crews) ? crews : [];
+  const cands = slashCandidates(text, list.map((c) => ({ ...c, commands: fresh?.[c.id] ?? c.commands })), opts);
+  return { cands, loading: !!cands && !fresh && list.some((c) => c?.commands === undefined) };
+}
+
 /** 선택 결과를 입력창 텍스트로 — 1:1 방은 방 자체가 대상이라 지시문만, 단체 방은 명령을 가진 크루가 하나면 @이름을 앞에 붙인다(둘 이상이면 사장이 @로 고른다). */
 export function slashInsert(cand, { isDm }) {
   const one = !isDm && cand.crews.length === 1 ? cand.crews[0] : null;

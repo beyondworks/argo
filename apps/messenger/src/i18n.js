@@ -9,6 +9,7 @@ export const DICT = {
   'cmd.cc': ['참조 에이전트 고르기 — 답하지 않고 참고만 받습니다', 'Pick a CC agent — reads along, does not answer'],
   'cmd.noMatch': ['일치하는 에이전트가 없습니다. 명령이 아닌 글이면 Esc로 지우고 다시 쓰세요.', 'No agent matches. If this is not a command, press Esc to clear it and type again.'],
   'cmd.skillPrefix': ['"{name}" 스킬을 사용해서 ', 'Use the "{name}" skill to '],
+  'cmd.loading': ['명령을 불러오는 중…', 'Loading commands…'],
   'cmd.empty': ['사용할 명령이 없습니다. Argo 앱에서 스킬을 설치하거나 별칭(/명령)을 등록하면 여기 나타납니다.', 'No commands yet. Install a skill or register an alias in the Argo app and it shows up here.'],
   'dm.relay.from': ['{name} 대화에서 전달됨', 'Forwarded from the {name} conversation'],
   'dm.relay.fromOther': ['다른 대화에서 전달됨', 'Forwarded from another conversation'],
