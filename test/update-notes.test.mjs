@@ -99,6 +99,20 @@ test('0.1.90 업데이트 안내 항목이 있고 i18n 사전에 ko·en 둘 다 
   for (const k of keys) assert.match(src, new RegExp(`'${k.replace('.', '\\.')}': \\['[^']+', '[^']+'\\]`), k);
 });
 
+// 0.1.100 — 처음 나오는 세 자리 패치 번호. 버전을 글자로 비교하면 '0.1.100' < '0.1.99'라 0.1.99를 확인한 사용자에게 안내가 안 뜨고,
+// 확인 기록도 앞으로 못 간다. 판정(cmpVersion)·웹 확인 기록이 숫자로 비교하는지 잠근다(네이티브는 update_notes.rs가 [u64; 3]으로 비교).
+test('0.1.100 안내 항목이 있고, 0.1.99를 확인한 사용자에게 뜨며 0.1.100을 확인하면 다시 뜨지 않는다', async () => {
+  const keys = updateNotesFor('0.1.100', '0.1.100');
+  assert.deepEqual([...keys], ['updates.note.contextBudget', 'updates.note.chatImages', 'updates.note.macFirst', 'updates.note.gpt55Retire']);
+  const v100 = { current: '0.1.100', bundleVersion: '0.1.100', ready: true, loaded: true };
+  assert.equal(shouldShowUpdateNotes({ ...v100, ackVersion: '0.1.99' }), true);
+  assert.equal(shouldShowUpdateNotes({ ...v100, ackVersion: '0.1.100' }), false);
+  const storage = store('0.1.99');
+  await acknowledgeUpdateNotesVersion('0.1.100', { isApp: false, storage });
+  assert.deepEqual(storage.writes, ['0.1.100'], '0.1.99 → 0.1.100은 앞으로 가는 기록');
+  assert.equal(shouldShowUpdateNotes({ ...v100, ackVersion: await readUpdateNotesVersion({ isApp: false, storage }) }), false);
+});
+
 // 범프에 안내 항목이 빠지면 업데이트한 사용자에게 안내가 조용히 안 뜬다 — 0.1.90·0.1.95 두 번 빠뜨렸다(2026-09-29·10-05, 0.1.95는 빌드를 다시 했다).
 // 그래서 버전 파일(package.json)과 안내 항목을 같이 잠근다: 범프 PR이 항목 없이 올라오면 이 테스트가 실패한다.
 test('package.json 버전에 업데이트 안내 항목이 있고, 모든 안내 항목이 i18n 사전에 ko·en으로 있다', async () => {

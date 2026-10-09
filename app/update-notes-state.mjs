@@ -19,6 +19,9 @@ export const UPDATE_NOTES = Object.freeze({
   // 근거 PR — routineVisible: #854 / gpt61Sol: #855 / msgrRunnerYield: #856
   '0.1.98': Object.freeze(['updates.note.routineVisible', 'updates.note.gpt61Sol', 'updates.note.msgrRunnerYield']),
   '0.1.99': Object.freeze(['updates.note.oneConversation', 'updates.note.personalApprovals', 'updates.note.assistantTab']),
+  // 근거 PR — contextBudget: #880 / chatImages: #882 / macFirst: #884 / gpt55Retire: #887
+  // #874(재시동 직후 앱이 상주 자리를 먼저 차지)는 소스 설치 상주(LaunchAgent next start)에만 생겨 일반 사용자 안내에서 뺐다(분리 검수 2026-10-09)
+  '0.1.100': Object.freeze(['updates.note.contextBudget', 'updates.note.chatImages', 'updates.note.macFirst', 'updates.note.gpt55Retire']),
 });
 
 export function stableVersion(value) {
