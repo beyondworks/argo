@@ -781,7 +781,7 @@ export function Mail({ id }) {
         {left > 0 && <div className="mail-banner" role="status">{t('mailx.wait', { n: left })}</div>}
         {failN > 0 && rows.length > 0 && <div className="mail-banner" role="alert"><span className="dot ask" />{t('mailx.someFail', { n: failN })}<button type="button" className="btn sm" onClick={() => setAgain((n) => n + 1)}>{t('desktop.retry')}</button></div>}
         {view === 'trash' && !search && rows.length > 0 && <div className="mail-search-state mail-trash-bar"><span>{t('mailx.trashNote')}</span>
-          <button type="button" className="link-btn small danger-text" onClick={() => setPurge({ picked: false, targets: purgeTargets({ accounts: accounts.filter(ok), pick, sample: !real }) })}>{t('mailx.emptyTrash')}</button></div>}
+          <button type="button" className="link-btn small danger-text" onClick={() => { pickSet(new Set()); setPurge({ picked: false, targets: purgeTargets({ accounts: accounts.filter(ok), pick, sample: !real }) }); }}>{t('mailx.emptyTrash')}</button></div>}
         {search && <div className="mail-search-state" role="status">{search.busy ? t('mailx.searching') : t('mailx.results', { n: rows.length })}{search.some && !search.busy && <span className="dim"> · {t('mailx.searchSome')}</span>}</div>}
         {noAccounts ? <ConnectPanel />
           : rows.length ? rows.map((m) => <MailRow key={m.id} m={m} active={m.id === id} sel={sel} group={group} onPick={checkRow} tag={multi && pick === 'all' ? domain(accounts.find((a) => a.id === m.account)?.address) : null} />)
@@ -792,7 +792,7 @@ export function Mail({ id }) {
       <SplitHandle width={listW} onChange={setListW} label={t('mod.resize')} />
       <section className="mail-reader"><Reader m={cur} onBack={() => navigate(mailHome())} /></section>
       {cal && <CalendarAside onClose={toggleCal} />}
-      {purge && <PurgeModal spec={purge} accounts={accounts} onClose={() => setPurge(null)} />}
+      {purge && <PurgeModal key={purge.picked ? 'picked' : 'all'} spec={purge} accounts={accounts} onClose={() => setPurge(null)} />}{/* 선택은 창을 열 때 지운다 — 막대가 창 위에 남아 '영구 삭제'를 누르면 내용만 바뀌고 전체 비우기 대상이 그대로 남아 휴지통 전체가 지워졌다(5차 확인 #905). key로 바뀐 창은 새로 그린다 */}
     </div>
   );
 }
