@@ -1,6 +1,7 @@
 // The host owns browser profiles; per-turn stdio children only forward scoped tool calls.
 import { createServer } from 'node:http';
 import { noDockMcpEnv } from '../no-dock.mjs';
+import { PEER_GUARD_EXEMPT } from '../agent-peer.mjs';
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
@@ -57,6 +58,7 @@ export async function createBrowserMcpBridge({ wsId, slug, runId = randomUUID(),
       send(200, { content: out?.image ? [{ type: 'image', data: out.image.toString('base64'), mimeType: out.mime }] : [{ type: 'text', text: String(out ?? '') }] });
     } catch (e) { send(200, { isError: true, content: [{ type: 'text', text: controller.signal.aborted ? 'Browser task closed' : safeBrowserError(e) }] }); }
   });
+  server[PEER_GUARD_EXEMPT] = true; // 러너 CLI 자식(=서버 자손)이 부르는 도구 중계 — 에이전트 프로세스 판정 제외(agent-peer.mjs)
   server.requestTimeout = 120_000;
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
   server.unref();

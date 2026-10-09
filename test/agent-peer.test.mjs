@@ -10,10 +10,12 @@ import { execFile, spawn } from 'node:child_process';
 import { networkInterfaces, tmpdir } from 'node:os';
 import { readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   descendantsOf, normAddr, isLocalAddr, lsofOwner, procAddr, procSocket, netstatOwner, judgePeer, isInstalledAppExe, peerCheckExempt,
-  denyAgentPeer, installAgentPeerGuard, AGENT_MARK,
+  denyAgentPeer, installAgentPeerGuard, AGENT_MARK, PEER_GUARD_EXEMPT,
 } from '../src/agent-peer.mjs';
+const MOD = fileURLToPath(new URL('../src/agent-peer.mjs', import.meta.url));
 
 test('자손 계산(순수) — 손자까지, 무관한 가지·자기 자신·순환은 제외', () => {
   const pairs = [[10, 1], [11, 10], [12, 11], [20, 1], [21, 20], [13, 10], [10, 10]];
@@ -75,7 +77,7 @@ test('이 컴퓨터 주소 판정 — 루프백·자기 카드 주소는 판정 
   for (const a of ['192.168.0.8', '10.0.0.1', 'fdaa::3', '', undefined]) assert.equal(isLocalAddr(a, ifaces), false, String(a));
 });
 
-test('판정 규칙 표(순수) — 사람 클라이언트는 통과, 자손·표지·고아 묶음·에이전트 묶음·서버 묶음 이탈은 에이전트', () => {
+test('판정 규칙 표(순수) — 사람 클라이언트·파이프라인·서버 부모는 통과, 자손·표지·에이전트 묶음·앱 밖 고아만 에이전트', () => {
   // 1=launchd, 50=앱(Tauri, 서버 부모·그룹 우두머리), 100=서버, 101=CLI 러너, 102=bash(그룹 102), 200=WebKit 네트워크(자기 그룹),
   // 300=터미널 zsh, 301=사람 curl(자기 작업 그룹), 60=리눅스 WebKitGTK 네트워크(앱의 자식 — 서버와 같은 그룹)
   const base = [[1, 0, 1], [50, 1, 50], [100, 50, 50], [101, 100, 50], [102, 101, 102], [200, 1, 200], [300, 1, 300], [301, 300, 301], [60, 50, 50]];
@@ -87,9 +89,10 @@ test('판정 규칙 표(순수) — 사람 클라이언트는 통과, 자손·�
   assert.deepEqual(j(60), { agent: false, reason: 'human' }, '리눅스 WebKitGTK — 서버와 같은 그룹이어도 앱 밑');
   assert.equal(j(102).reason, 'descendant');
   assert.equal(j(400, T([[400, 1, 400]]), new Set([400])).reason, 'marked', '표지 env가 보이는 고아(python 등)');
-  assert.equal(j(401, T([[401, 1, 999]])).reason, 'orphan-group', '우두머리(끝난 bash)를 잃은 고아 curl');
+  assert.deepEqual(j(50), { agent: false, reason: 'human' }, '서버를 띄운 부모(앱·테스트 하네스·smoke:standalone) — ⑤ 제거로 통과(HIGH-2)');
+  assert.deepEqual(j(401, T([[401, 1, 999]])), { agent: false, reason: 'human' }, '우두머리 죽은 고아는 사람 파이프라인일 수 있어 통과(옛 ③ 제거 — echo|cat|curl 오거절 방지)');
   assert.equal(j(402, T([[402, 1, 102]])).reason, 'agent-group', '살아 있는 에이전트 bash 그룹의 고아');
-  assert.equal(j(403, T([[403, 1, 50]])).reason, 'server-group', '서버와 같은 그룹인데 앱 밑이 아닌 고아');
+  assert.deepEqual(j(403, T([[403, 1, 50]])), { agent: false, reason: 'human' }, '서버와 같은 그룹이어도(옛 ⑤ 제거) 통과');
   assert.equal(j(404, T([[404, 1, 404]])).reason, 'human', '그룹을 새로 만들고 표지도 지운 고아 — 프로세스로 가릴 수 없다(문서화된 한계)');
   assert.throws(() => j(999), { code: 'PEER_GONE' }, '표에 없는 상대 = 판정 불가');
   // ⑥ macOS 표(exe 있음): 고아인데 설치된 앱 묶음 밖이면 에이전트, 앱 묶음 안(브라우저·웹뷰)이면 사람
@@ -135,7 +138,7 @@ test('fail-closed 범위 — 읽기는 판정 실패여도 통과, 원격(이 �
   assert.equal(await denyAgentPeer(fakeReq('POST', '203.0.113.9'), fakeRes(), { classify: boom }), false, '원격 사용자(클라우드·프록시 뒤)');
   assert.equal(await denyAgentPeer(fakeReq('POST'), fakeRes(), { classify: async () => ({ agent: false, reason: 'human', pid: 9 }) }), false);
   const res = fakeRes();
-  assert.equal(await denyAgentPeer(fakeReq('POST'), res, { classify: async () => ({ agent: true, reason: 'orphan-group', pid: 9 }) }), true);
+  assert.equal(await denyAgentPeer(fakeReq('POST'), res, { classify: async () => ({ agent: true, reason: 'agent-group', pid: 9 }) }), true);
   assert.equal(JSON.parse(res.body).errorCode, 'agent_loopback');
 });
 
@@ -272,4 +275,42 @@ test('에이전트가 아닌 상대(여기서는 서버 프로세스 자신)는 
   const g = await fetch(`http://127.0.0.1:${PORT}/api/companies/w/approvals`);
   assert.equal(g.status, 200);
   alive.kill();
+});
+
+// ── HIGH-3: 사람(자손 아님) 클라이언트가 변경 요청을 통과하는가 — "자기 아닌 상대 전부 거절" 변이에서 빨강이어야 한다 ──
+test('사람 자리(서버의 자손도 표지도 아닌 별도 세션 프로세스)의 변경 POST는 200 — 서버는 별도 프로세스, 클라이언트는 그 형제', { skip: onWin, timeout: 60_000 }, async () => {
+  const portFile = join(tmpdir(), `argo-peer-srv-${process.pid}-${Date.now()}.port`);
+  await rm(portFile, { force: true });
+  // 서버: 별도 프로세스(자기 세션). 가드 설치 후 listen, 포트를 파일에 쓴다. ARGO_AGENT_PROC은 지우고 띄워 자기 pid로 새로 심게 한다.
+  const srvEnv = { ...process.env }; delete srvEnv[AGENT_MARK]; delete srvEnv.ARGO_AGENT_PEER_CHECK;
+  const srvCode = `import http from 'node:http'; import fs from 'node:fs';`
+    + ` const m = await import(${JSON.stringify(MOD)}); m.installAgentPeerGuard();`
+    + ` const reached = []; const s = http.createServer((q,r)=>{ let b=''; q.on('data',c=>b+=c); q.on('end',()=>{ if(q.url==='/api/ping'){r.end('{\\"argo\\":true}');return;} reached.push(q.method); r.setHeader('content-type','application/json'); r.end(JSON.stringify({ok:true,reached:reached.length})); }); });`
+    + ` s.listen(0,'127.0.0.1',()=>fs.writeFileSync(${JSON.stringify(portFile)}, String(s.address().port))); setTimeout(()=>process.exit(0), 30000);`;
+  const srv = spawn(process.execPath, ['--input-type=module', '-e', srvCode], { env: srvEnv, detached: true, stdio: 'ignore' });
+  srv.unref();
+  after(() => { try { process.kill(-srv.pid); } catch { /* 이미 종료 */ } });
+  let port = '';
+  for (let i = 0; i < 80 && !port; i++) { await new Promise((r) => setTimeout(r, 100)); port = (await readFile(portFile, 'utf8').catch(() => '')).trim(); }
+  await rm(portFile, { force: true });
+  assert.ok(port, '별도 서버가 떴다');
+  // 클라이언트: 이 테스트 프로세스(서버의 부모 — 자손 아님). 표지 env는 서버가 자기 pid로 심어 이 프로세스엔 그 pid가 없다.
+  const r = await fetch(`http://127.0.0.1:${port}/api/companies/w/approvals`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"id":"a1","approve":true}' });
+  assert.equal(r.status, 200, `사람 자리 변경 요청이 거절됐다(변이면 여기서 빨강): ${await r.clone().text()}`);
+  const j = await r.json();
+  assert.equal(j.ok, true); assert.ok(j.reached >= 1, '핸들러에 닿았다');
+});
+
+// ── HIGH-1: 가드 아래에서도 제외 표시된 중계 서버는 자손(러너 CLI)의 요청을 받는다 ──
+test('제외 표시(PEER_GUARD_EXEMPT)된 중계 서버는 자손 자식의 POST도 200 — 도구 중계가 전멸하지 않는다', async () => {
+  const got = [];
+  const relay = http.createServer((q, r) => { let b = ''; q.on('data', (c) => { b += c; }); q.on('end', () => { got.push(q.method); r.end('{"ok":true}'); }); });
+  relay[PEER_GUARD_EXEMPT] = true;
+  await new Promise((r) => relay.listen(0, '127.0.0.1', r));
+  after(() => relay.close());
+  const rp = relay.address().port;
+  // 이 서버 자손(에이전트 셸 자리)이 부른다 — 제외 표시가 없으면 403이어야 하는 상대
+  const out = await new Promise((resolve) => execFile(process.execPath, ['-e', `fetch('http://127.0.0.1:${rp}/',{method:'POST',body:'x'}).then(async r=>console.log(r.status, await r.text()))`], { timeout: 15000 }, (e, o) => resolve(String(o))));
+  assert.match(out, /^200 /, `중계 서버가 자손 요청을 막았다(HIGH-1 회귀): ${out}`);
+  assert.deepEqual(got, ['POST']);
 });

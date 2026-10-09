@@ -5,28 +5,38 @@
 // 결재를 자가 승인하고 루틴을 지우고 주인 직접 턴(ownerSeat)을 열 수 있었다. 요청 본문·헤더·쿠키는 에이전트가 전부
 // 흉내 낼 수 있어 HTTP 층에서는 사람과 구별할 수 없다. 구별되는 것은 **연결의 상대 프로세스**뿐이다.
 //
+// 이것은 담장이 아니라 **방지턱(과속 방지)**이다 — 같은 OS 계정의 에이전트가 사람인 척 사람용 변경 라우트를 바로 호출하는 것을 어렵게 만든다.
+// 확실한 통제는 OS 샌드박스(에이전트 셸의 네트워크·쓰기 제한)와 기동 비밀이고(후속), 이 판정은 그 전까지의 깊이 방어다.
+//
 // 판정(이 컴퓨터 안에서 온 연결만 — 원격·리버스 프록시 뒤 사용자는 이 컴퓨터의 프로세스가 아니다):
 //  - 읽기(GET·HEAD·OPTIONS): 상대가 이 서버의 자손이면 거절. 판정 실패는 통과(읽기 화면이 도구 오류로 멈추지 않게).
 //  - 변경(그 밖 메서드): 상대 프로세스를 전체 프로세스에서 찾아 아래 중 하나면 에이전트로 거절하고, **찾지 못하거나 판정이 실패하면
 //    거절한다(fail-closed)** — "에이전트가 아님을 확인한 연결만" 결재·루틴·설정·대화 시작을 바꾼다.
 //      ① 이 서버의 자손 ② 에이전트 표지 env(AGENT_MARK — 서버가 자기 env에 심어 모든 자식이 물려받는다)
-//      ③ 프로세스 그룹 우두머리가 죽었다(부모를 끊고 나간 고아 묶음) ④ 그룹 우두머리가 이 서버·자손·표지 프로세스
-//      ⑤ 이 서버와 같은 그룹인데 서버 부모(앱) 밑이 아니다 ⑥(macOS) launchd에 입양된 고아인데 실행 파일이 설치된 앱 묶음 밖
-//    (Claude CLI는 Bash 명령이 끝나면 그 그룹을 정리한다(실측) — 살아남는 고아는 세션을 새로 만든 것이고, ⑥이 그 모양을 받는다).
+//      ④ 그룹 우두머리가 이 서버·자손·표지 프로세스(agent-group) ⑥(macOS) launchd에 입양된 고아인데 실행 파일이 설치된 앱 묶음 밖(orphan-cli)
 //    사람의 클라이언트는 이 중 어디에도 안 걸린다(관찰 2026-10-09: macOS WebKit 네트워크 프로세스·Argo 앱은 launchd 자식이고
-//    자기 그룹의 우두머리. 터미널 명령은 셸의 작업 그룹 — 우두머리가 살아 있다).
-//  - Windows: 연결 소유 pid(netstat)의 실행 파일이 브라우저·웹뷰 목록에 있을 때만 변경을 받는다(그 밖은 확인 불가 = 거절).
+//    실행 파일이 설치된 앱 묶음 안. 터미널 명령·파이프라인은 셸의 자식이라 고아가 아니다).
+//  - 설계 조정(검수 반영): 옛 ③(그룹 우두머리 사망)·⑤(서버와 같은 그룹)은 제거했다. ③은 `echo … | cat | curl -d @-` 같은
+//    사람 터미널 파이프라인을 오거절했고(맥은 ⑥, 리눅스는 ②가 에이전트 고아를 덮어 효과가 겹친다), ⑤는 서버를 띄운 부모(테스트 하네스·
+//    smoke:standalone)를 오거절했다. ⑥은 ps가 주는 실행 파일 경로를 믿는데 **argv[0]·실행 파일 경로는 위장될 수 있다**(exec로 가짜 경로)
+//    — 방지턱의 한 겹일 뿐이다.
+//  - Windows: 기본 꺼짐(ARGO_AGENT_PEER_CHECK=on 옵트인). WebView2 실기·netstat 비용 확인 전이라 사람을 오거절하지 않도록 켜짐은 선택이다.
+//    켜면 연결 소유 pid(netstat)의 실행 파일이 브라우저·웹뷰 목록일 때만 변경을 받는다.
 //  - 리눅스: 다른 OS 계정의 소켓(리버스 프록시 등)은 위협 모델(같은 계정의 에이전트) 밖이라 통과.
-// 한계(정직 표기): 사람 앱(브라우저·터미널 앱)에 실행을 맡기는 경로, 사람 쪽에서 이미 돌고 있는 중계 프로그램을 거치는 경로, 리눅스에서
-// 세션을 새로 만들고 표지 env도 지운 고아는 프로세스로 가릴 수 없다 — 같은 OS 계정의 에이전트를 완전히 가두는 것은 OS 샌드박스의 몫이다(후속).
-// 운영자 끄기: ARGO_AGENT_PEER_CHECK=off(부팅 때 읽음) — 다른 계정이 띄운 프록시가 맥 루프백 앞에 있는 등 상대를 볼 수 없는 구성용.
-// 비용: 연결(소켓)·종류(읽기/변경)당 한 번 판정하고 소켓에 묶는다(keep-alive 재사용). 변경 판정은 새 연결마다 lsof·ps 각 1~2회.
+// 남은 우회(정직 표기): 중간 프로세스를 살려 둔 이중 fork(그룹·표지를 사람 쪽으로 유지), argv[0]/실행 파일 경로 위장, osascript로 사람
+// WKWebView를 몰아 호출, 리눅스에서 세션을 새로 만들고 표지 env까지 지운 고아(setsid + env -i). 근본 대책은 기동 비밀·OS 샌드박스(후속).
+// 운영자 끄기: ARGO_AGENT_PEER_CHECK=off(부팅 때 읽음). Windows는 반대로 ARGO_AGENT_PEER_CHECK=on이어야 켜진다.
+// 비용: 연결(소켓)·종류(읽기/변경)당 한 번 판정하고 소켓에 묶는다(keep-alive 재사용). 변경 판정은 새 연결마다 lsof·ps 각 1~2회(실측 median 107ms),
+//   읽기 판정은 자손만 조회(실측 새 연결 +88ms, 캐시 히트는 0).
 import http from 'node:http';
 import { execFile } from 'node:child_process';
 import { readdir, readFile, readlink } from 'node:fs/promises';
 import { networkInterfaces } from 'node:os';
 
 export const AGENT_MARK = 'ARGO_AGENT_PROC';
+// 가드 제외 표시 — 같은 프로세스 안의 도구 중계 서버(src/engine/crew-mcp.mjs·browser-mcp.mjs)는 러너 CLI 자식(=서버 자손)이
+// 정당하게 부르는 곳이다. 이 심볼을 http.Server에 달면 가드가 그 서버의 요청은 판정하지 않는다(HIGH-1: 중계 서버까지 403나 도구 전멸).
+export const PEER_GUARD_EXEMPT = Symbol.for('argo.agentPeer.exempt');
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 const EXEC_TIMEOUT_MS = 5_000;
 
@@ -130,15 +140,13 @@ export function judgePeer({ self, pid, table, marked = new Set(), home = process
   const desc = descendantsOf(self, [...table].map(([p, r]) => [p, r.ppid]));
   if (desc.has(pid)) return { agent: true, reason: 'descendant' };
   if (marked.has(pid)) return { agent: true, reason: 'marked' };
+  // ④ 그룹 우두머리가 서버·자손·표지면 에이전트(살아 있는 에이전트 그룹의 고아). 우두머리가 표에 없으면(죽음) 사람 파이프라인일 수도
+  //    있어(옛 ③은 제거) 여기서 판정하지 않는다 — 맥은 ⑥, 리눅스는 ②가 그 고아를 덮는다.
   const leader = row.pgid;
-  if (leader !== pid) {
-    if (!table.has(leader)) return { agent: true, reason: 'orphan-group' };
-    if (leader === self || desc.has(leader) || marked.has(leader)) return { agent: true, reason: 'agent-group' };
-  }
-  const me = table.get(self);
-  if (me && row.pgid === me.pgid && me.ppid > 1 && !descendantsOf(me.ppid, [...table].map(([p, r]) => [p, r.ppid])).has(pid)) return { agent: true, reason: 'server-group' };
+  if (leader !== pid && table.has(leader) && (leader === self || desc.has(leader) || marked.has(leader))) return { agent: true, reason: 'agent-group' };
   // ⑥ macOS: launchd에 입양된 고아(ppid 1)인데 실행 파일이 설치된 앱 묶음 밖 — 세션을 새로 만들고 시스템 실행 파일(env가 안 보인다)로 부른 셸 도구.
-  //    사람 쪽 고아는 앱(브라우저·웹뷰·Argo)뿐이다. 터미널 명령은 셸의 자식이라 고아가 아니다. exe가 없으면(리눅스 표) 이 규칙은 건너뛴다.
+  //    사람 쪽 고아는 앱(브라우저·웹뷰·Argo)뿐이다. 터미널 명령·파이프라인은 셸의 자식이라 고아가 아니다. exe가 없으면(리눅스 표) 건너뛴다.
+  //    ⚠ exe 경로는 위장될 수 있다(exec로 가짜 경로) — 방지턱의 한 겹.
   if (row.ppid === 1 && typeof row.exe === 'string' && !isInstalledAppExe(row.exe, home)) return { agent: true, reason: 'orphan-cli' };
   return { agent: false, reason: 'human' };
 }
@@ -276,6 +284,7 @@ const deny = (req, res, code, detail) => {
 /** 요청 하나를 판정해 거절했으면 true(403 응답까지 여기서 쓴다). opts.platform·opts.classify·opts.descendant는 시험용 주입. */
 export async function denyAgentPeer(req, res, opts = {}) {
   if (peerCheckExempt(req.url)) return false;
+  if ((opts.platform ?? process.platform) === 'win32' && String(process.env.ARGO_AGENT_PEER_CHECK ?? '').toLowerCase() !== 'on') return false; // Windows는 옵트인(기본 꺼짐)
   const write = !SAFE_METHODS.has(String(req.method ?? 'GET').toUpperCase());
   const s = req.socket;
   if (!s?.remotePort) return write ? deny(req, res, 'agent_check_failed', 'no-socket') : false;
@@ -301,11 +310,13 @@ export async function denyAgentPeer(req, res, opts = {}) {
 export function installAgentPeerGuard(env = process.env) {
   if (globalThis.__argoAgentPeerGuard) return;
   globalThis.__argoAgentPeerGuard = true;
-  if (String(env.ARGO_AGENT_PEER_CHECK ?? '').toLowerCase() === 'off') { console.warn('[argo] ARGO_AGENT_PEER_CHECK=off — 에이전트 프로세스의 로컬 API 호출 판정을 끔'); return; }
+  const flag = String(env.ARGO_AGENT_PEER_CHECK ?? '').toLowerCase();
+  if (flag === 'off') { console.warn('[argo] ARGO_AGENT_PEER_CHECK=off — 에이전트 프로세스의 로컬 API 호출 판정을 끔'); return; }
+  if (process.platform === 'win32' && flag !== 'on') { console.warn('[argo] Windows에서는 에이전트 프로세스 판정이 기본 꺼짐 — 켜려면 ARGO_AGENT_PEER_CHECK=on'); return; } // 요청마다 async 훅을 걸지 않는다
   env[AGENT_MARK] = String(process.pid);
   const emit = http.Server.prototype.emit;
   http.Server.prototype.emit = function guardedEmit(ev, req, res, ...rest) {
-    if (ev !== 'request' || !req || !res) return emit.call(this, ev, req, res, ...rest);
+    if (ev !== 'request' || !req || !res || this[PEER_GUARD_EXEMPT]) return emit.call(this, ev, req, res, ...rest); // 중계 서버(crew/browser MCP)는 제외
     denyAgentPeer(req, res).then(
       (denied) => { if (!denied) emit.call(this, ev, req, res, ...rest); },
       (e) => { // 판정 코드 자체의 예외 — 변경은 거절, 읽기는 통과(위 규칙과 같다)

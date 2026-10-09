@@ -42,9 +42,19 @@ export function probeArgoPort(port) {
   return argo;
 }
 
-/** 셸 명령이 Argo 루프백 API를 부르는가. ownPort = 이 서버의 포트(Next가 listen 뒤 process.env.PORT에 적는다) — 같으면 탐침 없이 참. */
+// 네트워크 호출 도구가 명령에 쓰였는가 — 이게 있어야 "루프백 포트를 **부르는**" 것이다.
+// 이 조건이 없으면 `grep -rn "localhost:3001" src`·`echo "…http://localhost:3001…" >> README.md`처럼 주소를 **언급만** 하는 정상 명령이 오탐된다(검수 MED).
+// 도구: curl·wget·nc/ncat/netcat·httpie(http/https)·그리고 인터프리터(python/node/ruby/perl/php/deno/bun)의 http 호출 흔적(urllib·requests·http.client·fetch·net.·httplib·LWP·Net::HTTP 등).
+// httpie는 `http`/`https` 명령으로도 불린다 — 단, URL의 `http://`·`https://`는 도구가 아니므로 뒤에 `://`가 오면 제외한다(검수 MED 오탐).
+const NET_TOOL_RE = /(?:^|[\s;&|(`"'=])(?:sudo\s+)?(?:\\|(?:\/usr(?:\/local)?)?\/s?bin\/)?(?:curl|wget|nc|ncat|netcat|telnet|socat|xh|httpie|https?(?!:?\/\/))\b/i;
+const INTERP_HTTP_RE = /\b(?:python3?|node|nodejs|ruby|perl|php|deno|bun|osascript)\b[\s\S]*?(?:urllib|requests\.|http\.client|httplib|httpx|\bfetch\s*\(|net\.(?:connect|createConnection|Socket)|http\.(?:get|request)|https\.(?:get|request)|LWP|Net::HTTP|HTTParty|open-uri|URLSession|NSURL|curl)/i;
+const callsNetwork = (cmd) => NET_TOOL_RE.test(cmd) || INTERP_HTTP_RE.test(cmd);
+
+/** 셸 명령이 Argo 루프백 API를 **부르는가**(언급만 하는 게 아니라). ownPort = 이 서버의 포트(Next가 listen 뒤 process.env.PORT에 적는다) — 같으면 탐침 없이 참. */
 export async function shellCallsArgoApi(command, { ownPort = Number(process.env.PORT) || 0, probe = probeArgoPort } = {}) {
-  const ports = loopbackPortCandidates(command);
+  const cmd = String(command ?? '');
+  if (!callsNetwork(cmd)) return false; // 네트워크 도구가 없으면 호출이 아니다(grep·echo·주석 등 언급은 통과)
+  const ports = loopbackPortCandidates(cmd);
   if (!ports.length) return false;
   if (ownPort && ports.includes(ownPort)) return true;
   const hits = await Promise.all(ports.filter((p) => p >= 1024).map((p) => probe(p)));

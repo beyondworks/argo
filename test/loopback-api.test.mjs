@@ -37,7 +37,7 @@ test('포트 후보 — 루프백 호스트가 있을 때만, URL·nc·python �
   assert.deepEqual(loopbackPortCandidates('echo x127.0.0.1y'), [], '단어 중간은 호스트가 아니다');
 });
 
-test('판정 — 이 서버 포트는 탐침 없이 참, 다른 포트는 /api/ping이 Argo라고 답할 때만 참', async () => {
+test('판정 — 네트워크 도구가 루프백 Argo 포트를 부를 때만 참, 언급만 하는 정상 명령은 거짓', async () => {
   const noProbe = async () => { throw new Error('탐침하면 안 된다'); };
   assert.equal(await shellCallsArgoApi('curl -X POST http://127.0.0.1:3477/api/companies/w/approvals', { ownPort: 3477, probe: noProbe }), true);
   assert.equal(await shellCallsArgoApi('curl https://example.com/', { ownPort: 3477, probe: noProbe }), false, '루프백 없으면 탐침도 없다');
@@ -45,6 +45,18 @@ test('판정 — 이 서버 포트는 탐침 없이 참, 다른 포트는 /api/p
   assert.equal(await shellCallsArgoApi(`curl http://127.0.0.1:${OTHER}/api/items`, { ownPort: 0 }), false, '사용자의 다른 로컬 서버는 그대로');
   assert.equal(await probeArgoPort(OTHER), false);
   assert.equal(await probeArgoPort(ARGO), true);
+  // 네트워크 도구가 없는 "언급"은 통과(검수 MED-1 오탐 제거) — grep·echo·주석
+  const noNet = { ownPort: 3477, probe: noProbe };
+  assert.equal(await shellCallsArgoApi('grep -rn "localhost:3001" src', noNet), false, 'grep 검색어');
+  assert.equal(await shellCallsArgoApi('echo "see http://localhost:3001 for dev" >> README.md', noNet), false, 'echo로 문서에 주소 적기');
+  assert.equal(await shellCallsArgoApi('rg "127.0.0.1:3477" -l', noNet), false, 'ripgrep');
+  assert.equal(await shellCallsArgoApi('cat notes.txt | grep 3477', noNet), false);
+  // 네트워크 도구 + 루프백 Argo 포트 = 참
+  assert.equal(await shellCallsArgoApi(`wget -qO- http://127.0.0.1:${ARGO}/api/x`, { ownPort: 0 }), true, 'wget');
+  assert.equal(await shellCallsArgoApi(`node -e "fetch('http://127.0.0.1:${ARGO}/api/x')"`, { ownPort: 0 }), true, 'node fetch');
+  assert.equal(await shellCallsArgoApi(`python3 -c "import urllib.request as u; u.urlopen('http://127.0.0.1:${ARGO}/api/x')"`, { ownPort: 0 }), true, 'python urllib');
+  assert.equal(await shellCallsArgoApi(`perl -e 'use LWP::Simple; get("http://127.0.0.1:${ARGO}/")'`, { ownPort: 0 }), true, 'perl LWP');
+  assert.equal(await shellCallsArgoApi(`printf x | nc 127.0.0.1 ${ARGO}`, { ownPort: 0 }), true, 'nc');
 });
 
 test('권한 게이트 배선 — 모든 턴(주인 턴 포함)에서 Argo API 셸은 거절 + 이유 안내, 다른 셸은 종전대로', async () => {
