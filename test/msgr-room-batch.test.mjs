@@ -223,8 +223,9 @@ test('drain 결과(적재·커서·안내)가 일괄 경로와 옛 크루별 경
 });
 
 // ④ 방 목록 조회 실패 — 받은 글이 있는 에이전트는 이번 틱 보류(커서 유지, 같은 로그 문구), 받은 글이 없는 에이전트는 영향 없음
-test('방 목록 조회가 실패하면 받은 글이 있는 에이전트는 커서를 올리지 않고 보류, 실패 요청은 에이전트 수와 무관하게 1회 — 다음 틱에 회복', async () => {
+test('방 목록 조회가 실패하면 받은 글이 있는 에이전트(조직·개인)는 커서를 올리지 않고 보류, 실패 요청은 에이전트 수와 무관하게 1회 — 다음 틱에 회복', async () => {
   const f = orgFixture(5); const srv = await fakeRest(f);
+  f.crews.push(orgCrew(9999, { org_id: null, allow: 'owner' })); f.personalInRooms = new Set([crewId(9999)]); // 방에 든 개인 에이전트도 같은 규칙
   const m = userMsg(301, chId(1000)); // c0의 조직 DM — 멘션 없는 1:1
   const inbox = (id) => (id === crewId(4) ? [] : [m]); // c4는 받은 글 없음
   const errs = []; const ce = console.error; console.error = (...a) => errs.push(a.join(' '));
@@ -234,12 +235,12 @@ test('방 목록 조회가 실패하면 받은 글이 있는 에이전트는 커
     const { enq } = await run(db);
     assert.equal(srv.roomHits().length, 1, `실패한 방 목록 요청 ${srv.roomHits().length}회(종전: 받은 글이 있는 에이전트마다)`);
     assert.deepEqual(jobs(enq), [], '적재하지 않는다'); assert.deepEqual(cursors(db), [], '커서 보류');
-    assert.equal(errs.filter((e) => e.includes('[argo] msgr DM 채널 조회 실패 — 이 에이전트는 이 틱에 답하지 않음(커서 보류):')).length, 4, '종전과 같은 로그 문구, 보류한 에이전트마다');
+    assert.equal(errs.filter((e) => e.includes('[argo] msgr DM 채널 조회 실패 — 이 에이전트는 이 틱에 답하지 않음(커서 보류):')).length, 5, '종전과 같은 로그 문구, 보류한 에이전트마다(조직 4 + 개인 1)');
     srv.state.fail = false;
     const db2 = drainDb(srv.client, { ...f, inbox });
     const { enq: e2 } = await run(db2);
     assert.deepEqual(jobs(e2), [[301, 'c0']], '회복 틱에 답한다');
-    assert.deepEqual(cursors(db2).map(([id]) => id).sort(), [0, 1, 2, 3].map(crewId).sort());
+    assert.deepEqual(cursors(db2).map(([id]) => id).sort(), [0, 1, 2, 3, 9999].map(crewId).sort());
   } finally { console.error = ce; await srv.close(); }
 });
 
