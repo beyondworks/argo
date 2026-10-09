@@ -43,6 +43,13 @@
   --side-line: var(--dark-line); --side-hover: var(--dark-hover); --side-active: var(--dark-active); --side-mark: var(--mark);
   --info: #3a6ea5; --info-soft: rgba(58, 110, 165, 0.1); --overlay: rgba(20, 19, 17, 0.42);
 }
+/* 린넨 라이트 미색(유건 10/9 "기본 린넨 테마에서는 흰색 대신 미색, 투명도 더") — 오피스만. 메신저 정본(tokens.css의 --card #fbfaf7)은 그대로 두고 여기서 덮는다.
+   카드색을 아이보리로, 표면은 바탕이 더 비치게(85% → 72%). 떠 있는 층(--float)은 같은 비율을 --bg 위에 섞은 단색 — 불투명이고 캔버스 위 --surface와 같은 색.
+   hover(--card-2)는 미색 표면보다 한 단계 짙게(면 구분·글자 대비는 test/themes.test.mjs가 잰다). 시스템 다크(.dark-emul)·린넨 다크는 그대로 */
+:root[data-theme='linen-light'], :root[data-theme='linen']:not(.dark-emul) {
+  --card: #faf4e6; --card-2: #ede6d6;
+  --surface: color-mix(in srgb, var(--card) 72%, transparent); --float: color-mix(in srgb, var(--card) 72%, var(--bg));
+}
 :root[data-theme='graphite'], :root[data-theme='graphite-light'] {
   --fg-3: #686868; --bg: #f2f2f2; /* 오피스만 — 순백 카드(#fff)와 바탕(#fafafa)이 선 없이는 구분되지 않는다(10/1) */
   --side-bg: #ebebeb; --side-fg: var(--fg); --side-fg-2: var(--fg-2); --side-fg-3: var(--fg-3);

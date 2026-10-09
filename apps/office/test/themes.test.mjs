@@ -184,6 +184,24 @@ for (const fam of ['linen', 'graphite', ...NEW]) for (const mode of ['light', 'd
   });
 }
 
+// 이유(유건 10/9 "기본 린넨 테마에서는 흰색 대신 미색, 투명도 더"): 린넨 라이트 카드는 순백에 가까운 메신저 값(#fbfaf7)이 아니라 아이보리, 표면은 바탕이 더 비친다.
+// 오피스만 바꾼다 — 메신저 정본에서 만든 tokens.css는 그대로, 린넨 다크·그래파이트도 그대로.
+test('린넨 라이트 미색: 카드는 따뜻한 아이보리, 표면은 더 비치고, 정본·다른 테마는 그대로', () => {
+  const t = tokens('linen-light');
+  const card = resolve(t, t.card), surface = resolve(t, t.surface), float = resolve(t, t.float);
+  assert.ok(card.r - card.b >= 12, `아이보리(노란 쪽): ${t.card}`);
+  assert.ok(surface.a <= 0.75, `바탕이 더 비친다: ${t.surface}`);
+  assert.equal(float.a, 1, '떠 있는 층은 불투명');
+  const seen = over(surface, resolve(t, t.bg));
+  assert.ok(seen.r - seen.b >= 12, '캔버스 위에 보이는 카드도 미색');
+  assert.match(tokensCss, /:root, :root\[data-theme='linen'\], :root\[data-theme='linen-light'\] \{[^}]*--card: #fbfaf7;/, '메신저 정본 토큰은 그대로');
+  assert.equal(tokens('linen-dark').card, '#2a2926');
+  assert.equal(resolve(tokens('linen-dark'), tokens('linen-dark').surface).a, 0.85);
+  // 시스템 다크(.dark-emul)에는 걸리지 않는다
+  const rule = rulesOf(baseCss).find((r) => r.sel.includes("[data-theme='linen-light']") && /--card:/.test(r.decl));
+  assert.match(rule.sel, /:root\[data-theme='linen'\]:not\(\.dark-emul\)/);
+});
+
 // 이유: 사이드바가 창 바탕에 녹는 셸(panel·pill·glass)은 사이드바 글자를 창 바탕(--bg) 위에 그린다.
 // 보정 목록(linen·cream처럼 어두운 사이드바)에 없는 색은 사이드바 글자가 --bg 위에서도 읽혀야 한다.
 test('녹는 사이드바 셸: 보정하지 않는 색은 사이드바 글자가 --bg 위에서도 4.5:1', () => {
