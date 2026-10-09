@@ -123,22 +123,23 @@ test('표 상태 칸: 기다리는 칸은 고른 값 뱃지 + 기다림 표시, 
 test('setCell: 끝낸 일의 상태를 바꾸는 동안만 기다림, 끝나면 끄고 실패는 알린다(한 건 쓰기는 기다림 없음)', async () => {
   const { board } = await boardB();
   const P = actionsOf(board);
-  let release;
+  let release = () => {};
   T.runWrites = () => new Promise((r) => { release = r; });
   T.toasts = []; T.writes = [];
-  const it = tk(DONE);
-  const run = P.get().setCell(it, 'status', 'doing');
-  await settle();
-  assert.deepEqual(T.writes.at(-1).map((w) => w.action), ['task.reopen', 'task.status']);
-  assert.deepEqual(P.again().busy.get(it.key), { cell: 'status', value: 'doing' });
-  release({ ok: 1, failed: 'task.error.request' }); await run;
-  assert.equal(P.again().busy.size, 0, '끝나면 끈다');
-  assert.ok(T.toasts.some(([msg]) => msg === TASK_DICT['task.error.request'][0]), '실패를 알린다');
-  const one = P.get().setCell(tk(), 'priority', 1);
-  await settle();
-  assert.equal(P.again().busy.size, 0, '한 건 쓰기는 먼저 화면에 반영하므로 기다림 없음');
-  release({ ok: 1, failed: null }); await one;
-  T.runWrites = async () => ({ ok: 1, failed: null });
+  try {
+    const it = tk(DONE);
+    const run = P.get().setCell(it, 'status', 'doing');
+    await settle();
+    assert.deepEqual(T.writes.at(-1).map((w) => w.action), ['task.reopen', 'task.status']);
+    assert.deepEqual(P.again().busy.get(it.key), { cell: 'status', value: 'doing' });
+    release({ ok: 1, failed: 'task.error.request' }); await run;
+    assert.equal(P.again().busy.size, 0, '끝나면 끈다');
+    assert.ok(T.toasts.some(([msg]) => msg === TASK_DICT['task.error.request'][0]), '실패를 알린다');
+    const one = P.get().setCell(tk(), 'priority', 1);
+    await settle();
+    assert.equal(P.again().busy.size, 0, '한 건 쓰기는 먼저 화면에 반영하므로 기다림 없음');
+    release({ ok: 1, failed: null }); await one;
+  } finally { release({ ok: 1, failed: null }); T.runWrites = async () => ({ ok: 1, failed: null }); } // 실패해도 다음 시험이 멈춘 쓰기를 기다리지 않게
 });
 
 // 이유(검수 화면 연결 — check.can): 캘린더 칩의 ✓는 끝낼 수 있는 일(맡은 사람·관리자)에만 단추. 남이 맡은 일·일정이 단추가 되면 눌러도 거절된다
@@ -198,9 +199,10 @@ test('칸반: 보류 칸에 놓으면 사유 적기 알림, 진행 중 칸은 �
   await drop(tk(), 'doing');
   assert.equal(T.toasts.length, 0, '진행 중 칸은 알림 없음');
   T.runWrites = async () => ({ ok: 0, failed: 'task.error.permission' });
-  await drop(tk(), 'hold');
-  assert.deepEqual(T.toasts.map(([m]) => m), [TASK_DICT['task.error.permission'][0]], '실패하면 오류만');
-  T.runWrites = async () => ({ ok: 1, failed: null });
+  try {
+    await drop(tk(), 'hold');
+    assert.deepEqual(T.toasts.map(([m]) => m), [TASK_DICT['task.error.permission'][0]], '실패하면 오류만');
+  } finally { T.runWrites = async () => ({ ok: 1, failed: null }); }
 });
 
 // 이유(검수 화면 연결 — Chip의 할 일 조건): 끝내기 ✓는 할 일 칩에만. 일정 칩에 ✓가 붙으면 일정에는 완료가 없어 누를 때 오류가 난다
