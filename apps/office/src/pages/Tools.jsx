@@ -8,6 +8,7 @@ import { useStore } from '../core/store.js';
 import { crewsIn } from '../core/crew-list.js';
 import { toolCrewOn, toggleToolCrew, oncePerAgent } from '../core/crew-assign.js';
 import { LoadFail } from '../ui/LoadFail.jsx';
+import { badgeTone } from '../ui/badge-tone.js';
 import { loadAccounts } from '../core/mail.js';
 import { Link } from '../core/router.jsx';
 import { baseOf } from '../core/commands.js';
@@ -51,7 +52,7 @@ export default function Tools({ space }) {
         : !data ? <p className="dim small" role="status">…</p> : !list.length ? <p className="mod-empty">{t('tool.empty')}</p>
         : <ul className="perf-days">{list.map((a) => <li key={a.id} className={`perf-item${a.spec.enabled ? '' : ' tool-off'}`}>
           <label className="tool-switch" title={t(a.spec.enabled ? 'tool.on' : 'tool.off')}><input type="checkbox" checked={!!a.spec.enabled} disabled={!canEdit(a)} onChange={() => toggle(a)} aria-label={t('tool.enabled')} /></label>
-          <span className="badge">{t(`tool.kind.${a.spec.tool_kind}`)}</span>
+          <span className={`badge ${badgeTone(a.spec.tool_kind)}`}>{t(`tool.kind.${a.spec.tool_kind}`)}</span>
           <button type="button" className="perf-item-main asset-open" onClick={() => full(a).then((x) => setEdit({ ...x, spec: { crews: [], ...x.spec, url: x.spec.url ?? '' } })).catch((e) => showToast(t(errKey(e))))}><strong>{a.title}</strong><br />
             <small className="dim">{[a.spec.crews?.length ? t('tool.crews', { names: [...new Set(a.spec.crews.map(crewName))].join(', ') }) : t('tool.noCrew'), t('tool.uses', { n: a.uses })].join(' · ')}</small></button>
           {a.spec.url && <a className="btn ghost sm" href={a.spec.url} target="_blank" rel="noreferrer noopener">{t('tool.open')}</a>}

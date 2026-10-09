@@ -74,6 +74,9 @@ export function AssistantSection({ ws, slug }) {
       : s.runner === 'runner_outdated' ? t('assistant.runnerOld', { device: s.device || '—' })
         : t('assistant.runnerNone');
   const turnOn = () => save({ enabled: true, agent: slug, tz: localTz() });
+  const n = s.instantToday ?? 0;
+  const todayText = s.instantSure === false ? t('assistant.todayUnsure', { n }) // 다른 기기가 보낸 수를 아직 모름(방에서 복구 실패)
+    : n > s.dailyCap ? t('assistant.todayOver', { n, cap: s.dailyCap }) : t('assistant.todayUnder', { n, cap: s.dailyCap });
 
   return (
     <div data-assistant-section="" style={{ display: 'grid', gap: 16, minWidth: 0 }}>
@@ -146,7 +149,7 @@ export function AssistantSection({ ws, slug }) {
           <span className="microlabel">{t('assistant.status')}</span>
           <Row label={t('assistant.runner')}><span data-testid="assistant-runner" style={{ overflowWrap: 'anywhere' }}>{runnerText}</span></Row>
           <Row label={t('assistant.lastCheck')}>{!here ? t('assistant.onRunner') : s.readAt ? fmtMsgTime(lang, s.readAt) : t('assistant.lastCheckNone')}</Row>
-          <Row label={t('assistant.today')}>{!here ? t('assistant.onRunner') : t('assistant.todayN', { n: s.instantToday ?? 0 })}</Row>
+          <Row label={t('assistant.today')}><span data-testid="assistant-today">{!here ? t('assistant.onRunner') : todayText}</span></Row>
         </div>
       )}
     </div>

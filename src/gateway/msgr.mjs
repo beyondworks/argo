@@ -491,6 +491,26 @@ export function makeDb(client) {
       if (error) { if (error.code === '23505') return null; throw Object.assign(new Error(`msgr db: ${error.message}`), { code: error.code }); }
       return data;
     },
+    /* 능동 비서 — 방에서 복구(src/assistant/recover.mjs). 읽기만 한다: 실행 기기가 바뀌거나 상태가 없는 기기가 맡을 때 1번(잠자기·재시작 뒤 포함). */
+    /** 이 회사들(wsIds)의 내 개인 크루 행(org 없음·활성) — 한 번의 조회(msgr_crews는 owner_user_id로 거른다). */
+    async personalCrewsOf(uid, wsIds) {
+      if (!wsIds.length) return [];
+      return unwrap(await client.from('msgr_crews').select('id, org_id, slug, ws_id').eq('owner_user_id', uid).in('ws_id', wsIds).is('org_id', null).eq('status', 'active')) ?? [];
+    },
+    /** 개인 크루 1:1 방 찾기 — 이미 있는 방만. msgr_dm_personal_crew는 방이 없으면 만들고 보관을 풀어(쓰기) 복구에 쓰지 않는다. 방 열쇠 = 'crew:<크루 id>'(같은 함수, 유니크 부분 인덱스). */
+    async personalRoomsOf(crewIds) {
+      if (!crewIds.length) return [];
+      return unwrap(await client.from('msgr_channels').select('id, personal_pair').in('personal_pair', crewIds.map((id) => `crew:${id}`))) ?? [];
+    },
+    /** 그 방에 그 크루가 쓴 비서 알림 글(client_msg_id 'as:' 접두 — src/assistant/deliver.mjs clientMsgId), 새 글부터 limit개. 지운 글도 센다(보낸 것은 보낸 것). 방 하나씩.
+        afterId가 있으면 그 id보다 큰 글만(작성자 종류는 부르는 쪽이 거른다) — (channel_id, id) 인덱스 범위라 방 크기와 무관하다(PG 14 사용자 권한 EXPLAIN: 버퍼 397~409·약 1ms,
+        author_kind를 서버 조건에 넣으면 msgr_messages_client_id로 바뀌어 방의 에이전트 글에 비례). afterId가 없으면(그 방을 처음 읽음) 최근 since 이후 —
+        msgr_messages_client_id로 그 방 에이전트 글 전부를 거르므로 그 수에 비례한다(8,012개 방 61~104ms). 측정 값과 예외는 src/assistant/recover.mjs 머리 주석. */
+    async assistantNotices(channelId, crewId, { afterId = null, sinceIso, limit }) {
+      let q = client.from('msgr_messages').select('id, author_kind, client_msg_id, meta, created_at').eq('channel_id', channelId).eq('crew_id', crewId).like('client_msg_id', 'as:%');
+      q = afterId != null ? q.gt('id', afterId) : q.eq('author_kind', 'crew').gte('created_at', sinceIso);
+      return unwrap(await q.order('id', { ascending: false }).limit(limit)) ?? [];
+    },
     async attachmentsOf(messageId) {
       return unwrap(await client.from('msgr_attachments').select('storage_path, name, mime, bytes').eq('message_id', messageId)) ?? [];
     },

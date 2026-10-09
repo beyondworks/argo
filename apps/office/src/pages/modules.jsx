@@ -12,7 +12,7 @@ import { baseOf, mailMenu, pageMenu, fileMenu, recordMenu } from '../core/comman
 import { SPACES, ME, useSession } from '../core/session.js';
 import { looksLikeAddr } from '../core/hide-all.js';
 import { useTasks, useTaskRows, useTaskDay } from '../core/tasks.js';
-import { groupTasks } from '../core/task-model.js';
+import { groupTasks, dueCounts } from '../core/task-model.js';
 import { fmtBytes } from '../core/files.js';
 import { LoadFail } from '../ui/LoadFail.jsx';
 import { pullBoard } from '../core/pull.js';
@@ -176,7 +176,8 @@ function useStatValues(space) {
       // 로그인하면 실제 할 일 — 받기 전에는 예시 문구('메일에서 뽑음')가 아니라 '…', 못 읽었으면 '확인 못 함'(OFC-09). 누르면 할 일 화면
       todos: live ? (tasks ? (() => {
         const g = groupTasks(tasks.filter((r) => !r.cancelled_at), today, ME.id), open = g.overdue.length + g.today.length + g.week.length + g.later.length + g.none.length;
-        return { n: open, badge: g.overdue.length ? warn(t('stat.b.late'), 'check') : ok(t('stat.b.none'), 'check'), main: t('stat.taskMain', { late: g.overdue.length, today: g.today.length }), sub: t('stat.tasksSub'), to: `${base}/tasks` };
+        const d = dueCounts(tasks, today, ME.id); // 기한 지남·오늘은 배지와 같은 수(보류 제외, #907 검수) — 열린 일 수(open)는 보류도 센다
+        return { n: open, badge: d.overdue ? warn(t('stat.b.late'), 'check') : ok(t('stat.b.none'), 'check'), main: t('stat.taskMain', { late: d.overdue, today: d.today }), sub: t('stat.tasksSub'), to: `${base}/tasks` };
       })() : (taskErr ? fail : waiting)('check', t('stat.tasksSub'), `${base}/tasks`))
         : { n: todos.length - todoDone, badge: todos.length - todoDone ? warn(t('stat.b.open'), 'check') : ok(t('stat.b.none'), 'check'), main: t('stat.todoDone', { done: todoDone, total: todos.length }), sub: t('stat.todosSub') },
       decisions: { n: dec.length, badge: ok(t('stat.b.week'), 'check'), main: t('stat.decided', { a: approved, r: dec.length - approved }), sub: t('stat.weekSub'), to: `${base}/decisions` },

@@ -1548,10 +1548,11 @@ export const DICT = {
   'phone.set.adminOnly.why': ['이 조직에서 내 역할은 {role}입니다. 관리자만 바꿀 수 있습니다.', 'Your role in this organization is {role}. Only admins can change this.'],
   'phone.set.agentMemory': ['에이전트 기억', 'Agent memory'],
   'phone.set.chMemory': ['채널별 에이전트 기억', 'Agent memory by channel'],
-  'phone.set.chMemory.desc': ['켜 두면 그 채널의 에이전트 답이 일지로 쌓이고, 다음 답에 기억으로 쓰입니다. 채널을 만든 사람·채널장·조직 관리자가 바꿉니다.', 'When on, agent replies in that channel are kept as a journal and used as memory. The channel creator, channel leads and admins can change it.'],
+  'phone.set.chMemory.desc': ['켜 두면 그 채널의 에이전트 답이 일지로 쌓이고, 다음 답에 기억으로 쓰입니다. 조직 관리자와, 그 채널에 참여 중인 만든 사람·채널 관리자가 바꿉니다.', 'When on, agent replies in that channel are kept as a journal and used as memory. Organization admins, and the channel creator and channel admins who have joined that channel, can change it.'],
   'phone.set.chMemory.locked': ['조직 정책으로 고정되어 있어 채널에서 바꿀 수 없습니다.', 'Locked by organization policy — channels cannot change it.'],
   'phone.set.chMemory.lockedShort': ['정책 고정', 'Locked'],
   'phone.set.chMemory.hostOnly': ['채널 관리자만', 'Channel admins'],
+  'phone.set.chMemory.needJoin': ['참여하면 바꿀 수 있음', 'Join to change'], // 만든 사용자·채널 관리자인데 아직 참여하지 않은 채널 — 채널 시트의 ch.noEdit.join과 같은 뜻
   'phone.set.memPolicy': ['조직 기억 정책', 'Organization memory policy'],
   'phone.set.memPolicy.desc': ['새 채널의 에이전트 기억 기본값과, 채널에서 바꾸지 못하게 고정할지 정합니다.', 'Default agent memory for new channels, and whether channels may change it.'],
   'phone.set.ext.sub': ['헤르메스·오픈클로 같은 외부 에이전트', 'External agents such as Hermes or OpenClaw'],

@@ -29,7 +29,7 @@ import { InviteDialog, InvitePreview } from './invite-dialog.jsx';
 import { sortDms, DM_SORTS, sortByCustomOrder } from './dm-sort.mjs';
 import { pickStartSpace, needsPersonalProbe } from './start-space.mjs';
 import { addableToChannel, kickExcludes, hasChannelRows, searchChannelsByName } from './channel-browse.mjs';
-import { channelManage, hostChannelIds } from './channel-host.mjs';
+import { channelManage, hostChannelIds, memoryToggle } from './channel-host.mjs';
 import { resolvePeopleNames, nameForUser, needsNameLookup } from './person-names.mjs';
 import { activitySentence } from './activity-sentence.mjs';
 import { dmEmptyKey, roomTabEmptyKey } from './empty-state.mjs';
@@ -4166,7 +4166,7 @@ function Settings({ session, me, uid, invitesTick = 0, org, orgs = [], isAdmin, 
       <OrgCard key={org.id} part="agents" org={org} orgs={orgs} uid={uid} members={members} channels={channels} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} onOpenCrew={onOpenCrew} />
     </div>)}</>);
     if (view === 'memory') return body(t('phone.set.agentMemory'), <>{pick}{!ready ? waiting : (<div className="msgr-setbody">
-      <MemoryChannelsCard channels={channels} hostIds={hostIds} isAdmin={!!isAdmin} locked={!!policy?.crew_memory_locked} onToggle={onToggleMemory} />
+      <MemoryChannelsCard channels={channels} uid={uid} hostIds={hostIds} isAdmin={!!isAdmin} locked={!!policy?.crew_memory_locked} onToggle={onToggleMemory} />
       {policy && <PolicyCard part="memory" org={org} isAdmin={isAdmin} policy={policy} members={members} onChanged={onChanged} onNote={onNote} onError={onError} />}
     </div>)}</>);
     if (view === 'agents') return body(t('phone.set.myAgents'), (<div className="msgr-setbody">
@@ -4888,7 +4888,7 @@ function OrgProfileCard({ org, me, uid, onChanged, onNote, onError }) {
   );
 }
 /* ─── 폰 설정 > 기억: 채널별 '에이전트 기억' 켜기·끄기 — 바꾸는 것은 채널 관리자(만든 사람·채널장·조직 관리자, 최종 판정은 RLS·정책 트리거), 조직 정책으로 고정이면 잠금 ─── */
-function MemoryChannelsCard({ channels = [], hostIds, isAdmin, locked, onToggle }) {
+function MemoryChannelsCard({ channels = [], uid, hostIds, isAdmin, locked, onToggle }) {
   const { t } = useT();
   const [busy, setBusy] = useState(null);
   const list = channels.filter((c) => c.kind !== 'dm').sort((a, b) => String(a.name).localeCompare(String(b.name), 'ko'));
@@ -4896,8 +4896,8 @@ function MemoryChannelsCard({ channels = [], hostIds, isAdmin, locked, onToggle 
     <section className="msgr-setcard">
       <h2>{t('phone.set.chMemory')}</h2><p>{t('phone.set.chMemory.desc')}</p>
       {locked && <p className="note ph-locknote"><I name="lock" size={13} /> {t('phone.set.chMemory.locked')}</p>}
-      <div className="ph-memtoggles">{list.map((c) => { const can = !locked && (isAdmin || hostIds.has(c.id)); return (
-        <label key={c.id} className={`switchrow ph-memtoggle${can ? '' : ' ro'}`}><input type="checkbox" checked={c.crew_memory !== false} disabled={!can || busy === c.id} onChange={async () => { setBusy(c.id); try { await onToggle?.(c); } finally { setBusy(null); } }} /><span className="name"><I name={c.kind === 'private' ? 'lock' : 'hash'} size={13} />{c.name}</span>{!can && <span className="msgr-klabel">{locked ? t('phone.set.chMemory.lockedShort') : t('phone.set.chMemory.hostOnly')}</span>}</label>); })}</div>
+      <div className="ph-memtoggles">{list.map((c) => { const { can, hintKey } = memoryToggle({ channel: c, uid, isAdmin, hostIds, locked }); return (
+        <label key={c.id} className={`switchrow ph-memtoggle${can ? '' : ' ro'}`}><input type="checkbox" checked={c.crew_memory !== false} disabled={!can || busy === c.id} onChange={async () => { setBusy(c.id); try { await onToggle?.(c); } finally { setBusy(null); } }} /><span className="name"><I name={c.kind === 'private' ? 'lock' : 'hash'} size={13} />{c.name}</span>{!can && <span className="msgr-klabel">{t(hintKey)}</span>}</label>); })}</div>
       {!list.length && <p className="empty">{t('ch.noneYet.short')}</p>}{/* 설정 화면에는 + 가 없다 — '+ 로 만드세요'를 빼고 사실만(2차 검수 L-b) */}
     </section>
   );

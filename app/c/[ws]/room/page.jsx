@@ -352,6 +352,30 @@ export default function Room({ params }) {
     composerRef.current?.focus();
   }
   // 좌우 클램프 — 멘션 패널과 같은 기준 박스(mentionWrapRef)·같은 측정형 처방(dropUpClamp, #367)
+  // 입력 안내(placeholder) — 긴 안내가 입력창 한 줄에 안 들어가면 짧은 안내로 바꾼다. textarea 안내는 줄을 바꿔 둘째 줄이
+  // 한 줄 높이(rows=1)에 잘렸다(10/6 폰 390 실제 계정 점검, 10/9 재현: 문구 446px / 칸 286px). 넓은 화면은 긴 안내 그대로.
+  // 부르는 법 전체는 빈 회의실 안내(room.empty)가 보여 준다 — 입력창 위아래 안내 줄은 #291에서 중복이라 걷어 냈으니 되살리지 않는다.
+  const phLong = t('room.placeholder');
+  const [phShort, setPhShort] = useState(false);
+  useIsoLayoutEffect(() => {
+    const el = composerRef.current;
+    if (!el) return;
+    const ctx = document.createElement('canvas').getContext('2d');
+    let alive = true;
+    const measure = () => {
+      if (!alive) return;
+      const cs = getComputedStyle(el);
+      ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+      const room = el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+      setPhShort(room > 0 && ctx.measureText(phLong).width > room);
+    };
+    measure();
+    const ro = new ResizeObserver(measure); // 창 크기·옆 패널·배율이 바뀌면 입력창 폭이 바뀐다
+    ro.observe(el);
+    document.fonts?.ready.then(measure).catch(() => {}); // 웹 글꼴이 늦게 오면 글자 폭이 달라진다
+    return () => { alive = false; ro.disconnect(); };
+  }, [phLong, viewing]); // 보관 회의를 보다가 돌아오면 입력창이 새로 생긴다
+
   const slashPanelRef = useRef(null);
   const slashNatW = useRef(0);
   const [slashClamp, setSlashClamp] = useState({ shift: 0, maxW: 0 });
@@ -765,7 +789,7 @@ export default function Room({ params }) {
                 <textarea suppressHydrationWarning
                   ref={composerRef}
                   rows={1}
-                  placeholder={t('room.placeholder')}
+                  placeholder={phShort ? t('room.placeholderShort') : phLong}
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onPaste={(e) => { if (e.clipboardData?.files?.length) { e.preventDefault(); addFiles(e.clipboardData.files); } }}

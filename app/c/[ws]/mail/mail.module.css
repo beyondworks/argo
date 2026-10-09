@@ -1,0 +1,54 @@
+/* 쪽지함 표 — 넓으면 표, 표가 카드에 안 들어가는 폭이면 한 행을 두 줄짜리 카드로 접는다.
+   기준은 뷰포트가 아니라 내용 폭(옆 패널·표시 배율 포함) — 루틴 화면(routines.module.css)과 같은 문법.
+   60rem = 가장 넓은 '대기 중' 표의 최소 폭(실측 1280: ko 910px · en 약 945px)에 여유. 1280 창(내용 폭 980px)은 표 그대로다.
+   종전에는 좁은 폭에서 표가 카드 안에서 가로로 스크롤되어 시간·버튼이 카드 밖에 숨었다(10/6 폰 390 실제 계정 점검, 10/9 재현). */
+.page { container: mail / inline-size; }
+
+/* 열 폭 — 종전 인라인 width 값 그대로(표 모드 화면 불변) */
+.wTo { width: 150px; }
+.wFrom { width: 130px; }
+.wWhen { width: 150px; }
+.wAct { width: 90px; }
+.wDot { width: 24px; }
+.wTime { width: 120px; }
+.wOpen { width: 110px; }
+.wDeadAct { width: 170px; }
+
+@container mail (max-width: 60rem) {
+  .page .table,
+  .page .table tbody { display: block; }
+  .page .table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .page .table tbody tr {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 10px;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .page .table tbody tr:last-child { border-bottom: 0; }
+  /* 첫 줄(받는 사람·보낸 이·버튼)과 둘째 줄 사이의 줄바꿈 — 높이 0 */
+  .page .table tbody tr::after { content: ''; order: 1; flex-basis: 100%; }
+  .page .table td {
+    display: block;
+    width: auto;
+    min-width: 0;
+    max-width: 100%;
+    padding: 0;
+    border: 0;
+    overflow-wrap: anywhere;
+  }
+  /* 첫 줄 오른쪽 끝 — 취소·대화 열기·다시 보내기 */
+  .page .table td.act { margin-left: auto; text-align: right; }
+  /* 둘째 줄 — 내용은 한 줄을 다 쓰고, 상태·시간은 그 아래(배달 기록은 내용이 없어 바로 둘째 줄) */
+  .page .table td.body { order: 2; flex: 1 1 100%; }
+  .page .table td.note { order: 3; flex: 1 1 auto; }
+  .page .table td.meta { order: 3; }
+}

@@ -28,14 +28,14 @@ import { useSelection, selProps } from '../core/selection.js';
 import { checkKeys, checkState, checkAll } from '../ui/marquee-model.js';
 import { CELLS } from '../core/selection.js';
 import { typing } from '../core/history.js';
-import { bulkTargets, rowTapPicks } from './mail-bulk.js';
+import { bulkTargets, rowTapPicks, purgeTargets, purgeable } from './mail-bulk.js';
 import { Hide, HideIn } from '../business/Redact.jsx';
 import { looksLikeAddr } from '../core/hide-all.js';
 /** 목록 줄의 주소(받는 사람·이름 없는 보낸 사람) — 화면 전체 가리기 중 흐린다(제목·요약과 같은 흐림, 18차 검수 M2) */
 const haAddr = (s) => <span className="ha">{s}</span>;
 import {
   loadAccounts, pullMail, syncMail, readMail, finishConnect, mailConfig, refreshMail, hasMore, wantSync, lastSynced, subscribeSync, limitLeft, subscribeLimit, getLimitUntil,
-  saveDraft, sendMail, sendDraft, deleteDraft, toggleStar, trashMail, fileToPart, openAttachment, mailDoc, mailPaper, ATTACH_CAP,
+  saveDraft, sendMail, sendDraft, deleteDraft, toggleStar, trashMail, restoreMail, restoredFolder, purgeMail, trashCounts, connectGoogle, fileToPart, openAttachment, mailDoc, mailPaper, ATTACH_CAP,
   readSnap, saveSnap, clearSnap, readView, writeView, firstView, seedSample, notifyOn, subscribeNotify, hardFails, takeMailReturn } from '../core/mail.js';
 import {
   VIEWS, inView, byDate, replySubject, forwardSubject, replyTo, replyAll, fmtExact, linkify, quoteBlock, forwardBlock, htmlToText, escapeHtml,
@@ -55,7 +55,8 @@ const CalendarWidget = lazy(() => import('../views/CalendarWidget.jsx')); // 홈
 const mailItems = (list) => list.map((m) => ({ kind: 'mail', id: m.id, label: m.subject }));
 const domain = (addr) => String(addr ?? '').split('@')[1] ?? '';
 const subscribeMailPending = (cb) => { window.addEventListener('office-mail-pending', cb); return () => window.removeEventListener('office-mail-pending', cb); };
-const ICON = { inbox: 'inbox', unread: 'mail', starred: 'star', drafts: 'draft', sent: 'send', archive: 'archive' };
+const ICON = { inbox: 'inbox', unread: 'mail', starred: 'star', drafts: 'draft', sent: 'send', archive: 'archive', trash: 'trash' };
+const inTrash = (m) => m?.folder === 'trash'; // 휴지통 메일 — 읽고 꺼내기만(10/9 휴지통 메일함)
 const viewName = (v) => t(v === 'unread' || v === 'starred' ? `mailx.${v}` : `mail.${v}`);
 const subjectOf = (m) => (m?.subject?.trim() ? m.subject : t('mailx.noSubject'));
 const isDraft = (m) => m?.folder === 'drafts';
@@ -63,9 +64,11 @@ const isDraft = (m) => m?.folder === 'drafts';
 const unfocus = (e) => { if (e.nativeEvent.detail) e.currentTarget.blur(); };
 const touchy = () => matchMedia('(hover: none)').matches; // 터치 기기 — 고르는 중에는 줄을 눌러도 열지 않고 넣고 뺀다
 /** 휴지통으로 한 통(읽기 화면 단추·# 키·메뉴) — 되돌리기 알림. 열어 둔 메일을 지웠을 때만 목록으로(다른 줄을 메뉴로 지우면 그대로, 검수 #899) */
+/** 휴지통에서 꺼내기 한 통 — 어디로 갔는지 알림(되돌리기 = 다시 휴지통), 열어 둔 메일을 꺼냈을 때만 목록으로 */
+const restoreOne = (m) => { const to = restoredFolder(m), undo = restoreMail(m); if (!undo) return showToast(t('mailx.restoreBlocked')); showToast(t('mailx.restored', { box: viewName(to) }), { undo }); if (decodeURIComponent(location.pathname).endsWith(`/mail/${m.id}`)) navigate(mailHome()); };
 const trashOne = (m) => { const undo = trashMail(m); showToast(t('mailx.trashed'), { undo }); if (decodeURIComponent(location.pathname).endsWith(`/mail/${m.id}`)) navigate(mailHome()); };
 /** 메일 화면의 메뉴(우클릭·…) — 공용 메일 메뉴(첫 화면·홈 모듈) + 휴지통(메일 화면에서만, 첫 화면 150KB 상한) */
-const menuOf = (m) => (isDraft(m) ? mailMenu(m) : [...mailMenu(m), { sep: true }, { label: t('mailx.trash'), icon: 'trash', shortcut: '#', danger: true, run: () => trashOne(m) }]);
+const menuOf = (m) => (inTrash(m) ? [{ label: t('mailx.restore'), icon: 'refresh', run: () => restoreOne(m) }] : isDraft(m) ? mailMenu(m) : [...mailMenu(m), { sep: true }, { label: t('mailx.trash'), icon: 'trash', shortcut: '#', danger: true, run: () => trashOne(m) }]);
 const clock = (ms) => new Date(ms).toLocaleTimeString(getLang() === 'en' ? 'en-US' : 'ko-KR', { hour: 'numeric', minute: '2-digit' });
 
 /** 요청 제한 남은 초 — 쉬는 동안만 1초마다 다시 그린다 */
@@ -84,7 +87,7 @@ function Avatar({ name, addr }) {
 function MailRow({ m, active, tag, sel, group, onPick }) {
   // 고른 메일 중 하나를 끌면 고른 것 전부가 크루에게 간다(11차, items)
   const many = group.length > 1 && sel.has(m.id);
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: `mail:${m.id}`, data: { kind: 'mail', id: m.id, label: many ? t('sel.count', { n: group.length }) : m.subject, items: many ? group : undefined } });
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ disabled: inTrash(m), id: `mail:${m.id}`, data: { kind: 'mail', id: m.id, label: many ? t('sel.count', { n: group.length }) : m.subject, items: many ? group : undefined } });
   const { onTouchStart, ...mouse } = listeners ?? {};
   const draft = isDraft(m);
   const toLine = draft && m.to ? t('mailx.toLine', { to: '\n' }).split('\n') : null;
@@ -104,7 +107,7 @@ function MailRow({ m, active, tag, sel, group, onPick }) {
         <span className="mail-snippet ha">{tag && <span className="mail-tag">{tag}</span>}{m.snippet ?? m.body?.[0]}</span>
         {m.note && <span className="mail-crew"><Face id={m.note.crew} size={14} />{t('mail.note', { crew: crewName(m.note.crew) })}</span>}
       </button>
-      {!draft && <button type="button" className={`mail-star${m.starred ? ' on' : ''}`} aria-pressed={!!m.starred} aria-label={t(m.starred ? 'mailx.unstar' : 'mailx.star')} title={t(m.starred ? 'mailx.unstar' : 'mailx.star')}
+      {!draft && !inTrash(m) && <button type="button" className={`mail-star${m.starred ? ' on' : ''}`} aria-pressed={!!m.starred} aria-label={t(m.starred ? 'mailx.unstar' : 'mailx.star')} title={t(m.starred ? 'mailx.unstar' : 'mailx.star')}
         onClick={() => toggleStar(m)}><Icon name="star" size={14} /></button>}
     </div>
   );
@@ -183,7 +186,10 @@ function Reader({ m, onBack }) {
           <time className="dim small mail-date" dateTime={m.at} title={ago(m.at)}>{fmtExact(m.at, getLang())}</time>
         </div>
         <div className="reader-actions">
-          {draft ? <>
+          {inTrash(m) ? <>
+            <button type="button" className="btn primary" onClick={() => restoreOne(m)}><Icon name="refresh" size={14} />{t('mailx.restore')}</button>
+            <span className="dim small">{t('mailx.trashNote')}</span>
+          </> : draft ? <>
             <button type="button" className="btn primary" disabled={!canDraft} onClick={() => write('draft')}><Icon name="draft" size={14} />{t('mailx.edit')}</button>
             <button type="button" className="btn" disabled={!m.to || !canDraft} onClick={() => setAsk('send')}><Icon name="send" size={14} />{t('mail.send')}</button>
             <button type="button" className="btn ghost" disabled={!canDraft} onClick={() => setAsk('delete')}><Icon name="trash" size={14} />{t('mailx.deleteDraft')}</button>
@@ -543,6 +549,52 @@ export function MailConnect({ query }) {
   );
 }
 
+/** 휴지통 비우기·고른 메일 영구 삭제 확인 창(유건 10/9) — 계정별 개수를 보여 주고 한 번 확인받는다(되돌릴 수 없다).
+ *  처음 비우는 계정은 Gmail 영구 삭제 권한이 없어 scope_needed — 그 계정만 '권한 승인'(연결 다시, full)을 띄운다 */
+function PurgeModal({ spec, accounts, onClose }) {
+  const [rows, setRows] = useState(spec.targets);
+  const [step, setStep] = useState(spec.picked ? 'confirm' : 'counting'); // counting | confirm | busy | done
+  useEffect(() => {
+    if (spec.picked) return undefined;
+    let live = true;
+    trashCounts(spec.targets.map((x) => x.account)).then((cs) => { if (live) { setRows(spec.targets.map((x, i) => ({ ...x, ...cs[i] }))); setStep('confirm'); } });
+    return () => { live = false; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const addr = (id) => accounts.find((a) => a.id === id)?.address ?? ME.email;
+  const total = rows.reduce((n, r) => n + (r.total ?? 0), 0);
+  const go = async () => {
+    setStep('busy');
+    showToast(t('mailx.purgeBusy')); // 떠 있던 '되돌리기' 알림을 바꾼다 — 지우는 중에 꺼낸 메일은 keep에 없어 같이 지워진다(재검수 #905). 지우기 전 확인 단계의 되돌리기는 purgeMail이 먼저 보낸다
+    const out = [];
+    for (const r of rows) {
+      if (!purgeable(r)) { out.push(r.error ? r : { ...r, done: 0 }); continue; } // 빈 휴지통은 부르지 않고, 개수를 못 받은 계정은 지우지 않는다
+      try { out.push({ ...r, done: (await purgeMail({ account: r.account, mails: r.mails })).deleted }); } catch (e) { out.push({ ...r, fail: e.code ?? 'server', done: e.deleted || undefined }); }
+    }
+    const deleted = out.reduce((n, r) => n + (r.done ?? 0), 0);
+    if (deleted) showToast(t('mailx.purged', { n: deleted }));
+    if (out.every((r) => !r.fail && !r.error)) { onClose(); return; }
+    setRows(out); setStep('done');
+  };
+  const line = (r) => (r.fail === 'scope_needed' ? <><span>{t('mailx.purgeScope')}</span>
+      <button type="button" className="btn sm" onClick={() => connectGoogle(addr(r.account), { full: true }).catch(() => showToast(t('mailc.err.other')))}>{t('mailx.purgeGrant')}</button></>
+    : r.fail ? <span className="danger-text">{r.done ? t('mailx.purgePartial', { n: r.done }) : t(r.fail === 'pending_many' ? 'mailx.purgePending' : 'mailx.purgeFailed')}</span>
+      : r.done != null ? <span>{t('mailx.purgeDone', { n: r.done })}</span>
+        : r.error ? <span className="dim">{t(step === 'done' ? 'mailx.purgeSkipped' : 'mailx.purgeUnknown')}</span>
+          : r.total == null ? <span className="dim">{t('mailx.purgeCounting')}</span> : <b>{t('mailx.purgeCount', { n: r.total })}</b>);
+  const footer = step === 'done' ? <button type="button" className="btn" onClick={onClose}>{t('close')}</button> : <>
+    <button type="button" className="btn" disabled={step === 'busy'} onClick={onClose}>{t('cancel')}</button>
+    <button type="button" className="btn danger" disabled={step !== 'confirm' || !rows.some(purgeable)} onClick={go}><Icon name="trash" size={14} />{step === 'busy' ? t('mailx.purgeBusy') : t('mailx.purge')}</button>
+  </>;
+  return <Modal open onClose={() => step !== 'busy' && onClose()} title={t(spec.picked ? 'mailx.purgePickedTitle' : 'mailx.emptyTrash')} footer={footer}>
+    <div className="mail-purge">
+      {step !== 'done' && <p>{t('mailx.purgeBody')}</p>}
+      <ul className="mail-purge-list">{rows.map((r) => <li key={r.account ?? 'sample'}><span className="ellip"><Hide k={`mail:acct:${addr(r.account)}`} focusable={false}>{addr(r.account)}</Hide></span>{line(r)}</li>)}</ul>
+      {step === 'confirm' && (total > 0 ? <p><b>{t('mailx.purgeTotal', { n: total })}</b></p> : rows.every((r) => !r.error) && <p className="dim">{t('mailx.purgeEmpty')}</p>)}
+      {step === 'confirm' && !spec.picked && <p className="dim small">{t('mailx.purgeScopeHint')}</p>}
+    </div>
+  </Modal>;
+}
+
 function AccountList({ accounts, pick, setPick }) {
   const [bye, setBye] = useState(null);
   const menu = (a) => [
@@ -594,6 +646,7 @@ export function Mail({ id }) {
   const [loading, setLoading] = useState(false), [moreBusy, setMoreBusy] = useState(false), [refreshing, setRefreshing] = useState(false);
   const [qInput, setQInput] = useState(''), [search, setSearch] = useState(null); // search: { q, ids, busy, some(일부 실패) }
   const [cal, setCal] = useState(() => { try { return localStorage.getItem('argo-office-mail-cal-open') === '1'; } catch { return false; } });
+  const [purge, setPurge] = useState(null); // 휴지통 비우기·영구 삭제 확인 창 { picked, targets }
   const toggleCal = () => setCal((v) => { try { localStorage.setItem('argo-office-mail-cal-open', v ? '0' : '1'); } catch { /* 저장소 없음 */ } return !v; });
   const [listW, setListW] = useWidth('argo-office-mail-list', 360, 280, 560);
   const [ready, setReady] = useState(!real);
@@ -618,7 +671,7 @@ export function Mail({ id }) {
     if (search) return search.ids.map((x) => mails.find((m) => m.id === x)).filter((m) => m && m.folder !== 'trash' && (pick === 'all' || m.account === pick)).sort(byDate);
     return mails.filter((m) => inView(m, view, pick)).sort(byDate);
   }, [mails, view, pick, search]);
-  const cur = mails.find((m) => m.id === id && m.folder !== 'trash'); // 휴지통 메일 주소(뒤로 가기)는 열지 않는다(재검수 #899)
+  const cur = mails.find((m) => m.id === id && (m.folder !== 'trash' || view === 'trash')); // 다른 메일함에서 휴지통 메일 주소(뒤로 가기)는 열지 않는다(재검수 #899), 휴지통 메일함에서는 연다
   useEffect(() => { if (cur?.unread) setMail(cur.id, { unread: false }); }, [cur?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const runSearch = async (raw) => {
@@ -654,27 +707,30 @@ export function Mail({ id }) {
       if (e.metaKey || e.ctrlKey || e.altKey || typing(document.activeElement) || getUi().compose) return; // 체크박스에 초점이 있어도 단축키는 그대로(검수 #895)
       const i = rows.findIndex((m) => m.id === id);
       if (e.key === 'j' || e.key === 'k') { const next = rows[Math.max(0, Math.min(rows.length - 1, i + (e.key === 'j' ? 1 : -1)))]; if (next) { navigate(`${mailHome()}/${next.id}`); if (next.unread) setMail(next.id, { unread: false }); } }
-      if (e.key === 'e' && cur && cur.folder !== 'archive' && !isDraft(cur)) { const undo = archiveMail(cur.id); showToast(t('mail.archived'), { undo }); }
-      if (e.key === 'r' && cur && !isDraft(cur)) setUi({ compose: { mode: 'reply', of: cur.id } });
-      if (e.key === 's' && cur && !isDraft(cur)) toggleStar(cur);
-      if (e.key === '#' && cur && !isDraft(cur)) trashOne(cur); // Gmail과 같은 키
+      if (e.key === 'e' && cur && cur.folder !== 'archive' && !isDraft(cur) && !inTrash(cur)) { const undo = archiveMail(cur.id); showToast(t('mail.archived'), { undo }); }
+      if (e.key === 'r' && cur && !isDraft(cur) && !inTrash(cur)) setUi({ compose: { mode: 'reply', of: cur.id } });
+      if (e.key === 's' && cur && !isDraft(cur) && !inTrash(cur)) toggleStar(cur);
+      if (e.key === '#' && cur && !isDraft(cur) && !inTrash(cur)) trashOne(cur); // Gmail과 같은 키
       if (e.key === '/') { e.preventDefault(); searchRef.current?.focus(); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [rows, id, cur]);
-  const counts = useMemo(() => Object.fromEntries(VIEWS.map((v) => [v, mails.filter((m) => inView(m, v, pick) && (v === 'drafts' || v === 'starred' ? true : m.unread)).length])), [mails, pick]);
+  const counts = useMemo(() => Object.fromEntries(VIEWS.map((v) => [v, mails.filter((m) => inView(m, v, pick) && v !== 'trash' && (v === 'drafts' || v === 'starred' ? true : m.unread)).length])), [mails, pick]);
   // 여러 개 고르기(11차) — 메일 메뉴의 단일 동작(읽음·안 읽음·보관·맡기기)을 고른 메일 전부에. 보관은 토스트 '되돌리기' 한 번으로 전부
   const keys = useMemo(() => rows.map((m) => m.id), [rows]);
   const [sel, setSel] = useSelection('mail', { keys, actions: (picked) => {
-    const list = rows.filter((m) => picked.includes(m.id)), b = bulkTargets(list, view), done = (fn) => (_, clear) => { fn(); clear(); };
+    const box = search ? 'search' : view; // 휴지통에서 검색하면 결과는 휴지통이 아닌 메일 — 일반 동작(검수 #903)
+    const list = rows.filter((m) => picked.includes(m.id)), b = bulkTargets(list, box), done = (fn) => (_, clear) => { fn(); clear(); };
     return [
       b.read.length > 0 && { label: t('mail.markRead'), icon: 'mail', run: done(() => b.read.forEach((m) => setMail(m.id, { unread: false }))) },
       b.unread.length > 0 && { label: t('mail.markUnread'), icon: 'mail', run: done(() => b.unread.forEach((m) => setMail(m.id, { unread: true }))) },
       b.star.length > 0 && { label: t('mailx.star'), icon: 'star', run: done(() => b.star.forEach((m) => toggleStar(m))) },
       b.unstar.length > 0 && { label: t('mailx.unstar'), icon: 'star', run: done(() => b.unstar.forEach((m) => toggleStar(m))) },
       b.archive.length > 0 && { label: t('mail.archiveIt'), icon: 'archive', run: done(() => { const undos = b.archive.map((m) => archiveMail(m.id)); showToast(t('sel.archived', { n: b.archive.length }), { undo: () => undos.forEach((u) => u?.()) }); if (b.archive.some((m) => m.id === id)) navigate(mailHome()); }) },
-      { label: t('crew.assign'), icon: 'hand', run: done(() => setUi({ assign: { space: 'me', items: mailItems(list) } })) },
+      box !== 'trash' && { label: t('crew.assign'), icon: 'hand', run: done(() => setUi({ assign: { space: 'me', items: mailItems(list) } })) },
+      b.restore.length > 0 && { label: t('mailx.restore'), icon: 'refresh', run: done(() => { const ok = b.restore.map((m) => [m, restoreMail(m)]).filter(([, u]) => u); if (!ok.length) return showToast(t('mailx.restoreBlocked')); showToast(t('mailx.restoredN', { n: ok.length }), { undo: () => ok.forEach(([, u]) => u()) }); if (ok.some(([m]) => m.id === id)) navigate(mailHome()); }) }, // 비우는 중인 계정 메일은 빠진다(4차 재검수 #905)
+      box === 'trash' && b.restore.length > 0 && { label: t('mailx.purge'), icon: 'trash', danger: true, run: done(() => setPurge({ picked: true, targets: purgeTargets({ picked: b.restore }) })) }, // 고른 메일 영구 삭제(확인 창). 선택은 바로 지운다 — 막대가 창 위에 남아 지우는 중에 꺼내기를 누를 수 있었다(4차 재검수 #905)
       b.trash.length > 0 && { label: t('mailx.trash'), icon: 'trash', danger: true, run: done(() => { const undos = b.trash.map((m) => trashMail(m)); showToast(t('mailx.trashedN', { n: b.trash.length }), { undo: () => undos.forEach((u) => u()) }); if (b.trash.some((m) => m.id === id)) navigate(mailHome()); }) },
     ];
   } });
@@ -724,6 +780,8 @@ export function Mail({ id }) {
         {expired.length > 0 && <div className="mail-banner"><span className="dot ask" />{t('mailc.expired')}<button type="button" className="btn sm" onClick={() => reconnect(expired[0])}>{t('mailc.reconnect')}</button></div>}
         {left > 0 && <div className="mail-banner" role="status">{t('mailx.wait', { n: left })}</div>}
         {failN > 0 && rows.length > 0 && <div className="mail-banner" role="alert"><span className="dot ask" />{t('mailx.someFail', { n: failN })}<button type="button" className="btn sm" onClick={() => setAgain((n) => n + 1)}>{t('desktop.retry')}</button></div>}
+        {view === 'trash' && !search && rows.length > 0 && <div className="mail-search-state mail-trash-bar"><span>{t('mailx.trashNote')}</span>
+          <button type="button" className="link-btn small danger-text" onClick={() => { pickSet(new Set()); setPurge({ picked: false, targets: purgeTargets({ accounts: accounts.filter(ok), pick, sample: !real }) }); }}>{t('mailx.emptyTrash')}</button></div>}
         {search && <div className="mail-search-state" role="status">{search.busy ? t('mailx.searching') : t('mailx.results', { n: rows.length })}{search.some && !search.busy && <span className="dim"> · {t('mailx.searchSome')}</span>}</div>}
         {noAccounts ? <ConnectPanel />
           : rows.length ? rows.map((m) => <MailRow key={m.id} m={m} active={m.id === id} sel={sel} group={group} onPick={checkRow} tag={multi && pick === 'all' ? domain(accounts.find((a) => a.id === m.account)?.address) : null} />)
@@ -734,6 +792,7 @@ export function Mail({ id }) {
       <SplitHandle width={listW} onChange={setListW} label={t('mod.resize')} />
       <section className="mail-reader"><Reader m={cur} onBack={() => navigate(mailHome())} /></section>
       {cal && <CalendarAside onClose={toggleCal} />}
+      {purge && <PurgeModal key={purge.picked ? 'picked' : 'all'} spec={purge} accounts={accounts} onClose={() => setPurge(null)} />}{/* 선택은 창을 열 때 지운다 — 막대가 창 위에 남아 '영구 삭제'를 누르면 내용만 바뀌고 전체 비우기 대상이 그대로 남아 휴지통 전체가 지워졌다(5차 확인 #905). key로 바뀐 창은 새로 그린다 */}
     </div>
   );
 }

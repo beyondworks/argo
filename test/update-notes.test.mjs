@@ -103,7 +103,7 @@ test('0.1.90 업데이트 안내 항목이 있고 i18n 사전에 ko·en 둘 다 
 // 확인 기록도 앞으로 못 간다. 판정(cmpVersion)·웹 확인 기록이 숫자로 비교하는지 잠근다(네이티브는 update_notes.rs가 [u64; 3]으로 비교).
 test('0.1.100 안내 항목이 있고, 0.1.99를 확인한 사용자에게 뜨며 0.1.100을 확인하면 다시 뜨지 않는다', async () => {
   const keys = updateNotesFor('0.1.100', '0.1.100');
-  assert.deepEqual([...keys], ['updates.note.contextBudget', 'updates.note.chatImages', 'updates.note.macFirst', 'updates.note.gpt55Retire']);
+  assert.deepEqual([...keys], ['updates.note.contextBudget', 'updates.note.chatImages', 'updates.note.macFirst', 'updates.note.gpt55Retire', 'updates.note.assistantOnce']);
   const v100 = { current: '0.1.100', bundleVersion: '0.1.100', ready: true, loaded: true };
   assert.equal(shouldShowUpdateNotes({ ...v100, ackVersion: '0.1.99' }), true);
   assert.equal(shouldShowUpdateNotes({ ...v100, ackVersion: '0.1.100' }), false);

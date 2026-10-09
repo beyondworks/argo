@@ -12,7 +12,9 @@ test('봉인: 같은 주인(aad)만 풀린다 — 남의 계정 봉인 문자열
   assert.equal(unseal(key, s, 'u1:google:a@x.com'), 'refresh-1');
   assert.equal(unseal(key, s, 'u2:google:a@x.com'), null);
   assert.equal(unseal(randomBytes(32), s, 'u1:google:a@x.com'), null, '다른 키');
-  assert.equal(unseal(key, s.slice(0, -2) + 'AA', 'u1:google:a@x.com'), null, '변조');
+  // 변조 — 가운데 글자 하나를 다른 글자로(끝 글자는 base64url의 버려지는 비트라 바이트가 안 바뀔 수 있다: 예전 'AA' 덮어쓰기가 1/256로 흔들렸다)
+  let i = s.length >> 1; while (!/[A-Za-z0-9_-]/.test(s[i])) i++;
+  assert.equal(unseal(key, s.slice(0, i) + (s[i] === 'A' ? 'B' : 'A') + s.slice(i + 1), 'u1:google:a@x.com'), null, '변조');
   assert.equal(unseal(key, 'garbage', 'x'), null);
 });
 

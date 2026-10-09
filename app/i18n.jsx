@@ -229,6 +229,7 @@ const DICT = {
   'room.thought': ['생각', 'Thinking'],
   'room.noAdd': ['추가 의견 없음', 'Nothing to add'],
   'room.placeholder': ['@이름 을 붙여 안건을 던지세요 (여러 명 가능, 부른 에이전트 모두 발언) · / 명령·스킬', 'Mention @name(s) and drop a topic (everyone mentioned speaks) · / commands & skills'],
+  'room.placeholderShort': ['@이름 안건 · / 명령', '@name topic · / commands'], // 폰 폭처럼 긴 안내가 입력창 한 줄에 안 들어갈 때(회의실 화면이 재서 고른다)
   'room.mentionOnly': ['이름 뒤에 안건을 적어 주세요 — 이름만으로는 보내지 않습니다', 'Add the topic after the name — a mention alone is not sent'],
   'room.newMsgs': ['새 메시지 ↓', 'New messages ↓'],
   'room.hint': ['멘션이 없으면 첫 번째 에이전트가 답합니다. @all을 붙이면 모든 에이전트가 발언합니다. 회의 내용은 자동으로 회사 기억(일지)에 남습니다.', 'No mention → the first agent replies. @all calls everyone. Everything lands in company memory automatically.'],
@@ -317,6 +318,7 @@ const DICT = {
   'updates.note.chatImages': ["에이전트가 만든 그림이 대화창과 회의실에 바로 보입니다. 그림을 누르면 크게 보고 저장할 수 있습니다.", "Images an agent makes now appear right in the chat and in meeting rooms. Click an image to view it larger and save it."],
   'updates.note.macFirst': ["서버에도 같은 계정으로 로그인하고 AI를 연결한 뒤 argo service install --standby로 설치하면, 이 컴퓨터가 켜져 있을 때는 이 컴퓨터가, 꺼지면 서버가 메신저와 루틴을 실행합니다.", "Sign in to the same account on a server, connect an AI there, and install with argo service install --standby: Messenger and routines run on this computer while it's on, and on the server when it's off."],
   'updates.note.gpt55Retire': ["GPT-5.5 종료(10월 14일)에 맞춰 Codex 모델 목록에서 뺐습니다. GPT-5.5를 쓰던 에이전트는 GPT-5.6 Sol로 실행하고, 강도를 비워 뒀다면 예전과 같은 medium으로 실행합니다.", "With GPT-5.5 retiring on October 14, it has been removed from the Codex model list. Agents that used GPT-5.5 now run on GPT-5.6 Sol, at medium effort as before if the effort was left empty."],
+  'updates.note.assistantOnce': ["비서가 앱을 다시 켜거나 다른 기기가 실행을 맡아도 이미 보낸 일정 알림을 다시 보내지 않습니다. 비서 탭에서 오늘 보낸 알림 수와 하루 한도를 볼 수 있습니다.", "The assistant no longer re-sends calendar alerts it already sent when the app restarts or another device takes over. The Assistant tab now shows how many alerts went out today and the daily limit."],
   'topbar.monthCost': ['이번 달 사용액', 'This month'],
   'topbar.monthSubUse': ['이번 달 사용량 — 구독 연결이라 추가 청구가 없습니다', 'This month — on your subscription, no extra charge'],
   'topbar.monthTurns': ['{n}턴', '{n} turns'],
@@ -545,7 +547,10 @@ const DICT = {
   'assistant.lastCheck': ['마지막 일정 확인', 'Last calendar check'],
   'assistant.lastCheckNone': ['아직 없음', 'Not yet'],
   'assistant.today': ['오늘 보낸 일정 알림', 'Reminders sent today'],
-  'assistant.todayN': ['{n}건', '{n}'],
+  // 오늘 보낸 일정 알림과 하루 즉시 알림 한도(설계 9·13절) — 한도를 넘어도 일정 알림은 나간다(엔진 tick.mjs). 넘은 수가 오류처럼 보이지 않게 말로(#894 분리 검수 L5)
+  'assistant.todayUnder': ['{n}건 (하루 한도 {cap}건)', '{n} (daily limit {cap})'],
+  'assistant.todayOver': ['{n}건 — 하루 한도 {cap}건 넘음', '{n} — over the daily limit of {cap}'],
+  'assistant.todayUnsure': ['{n}건 이상 — 다른 기기에서 보낸 알림 확인 중', '{n} or more — checking alerts sent from other devices'], // 방에서 복구가 실패한 동안
   'assistant.onRunner': ['실행 기기에서 볼 수 있습니다', 'Shown on the running device'],
   'assistant.loadErr': ['비서 설정을 불러오지 못했습니다', 'Could not load assistant settings'],
   'assistant.saveErr': ['저장하지 못했습니다 — 다시 시도해 주세요', 'Could not save — please try again'],

@@ -277,7 +277,8 @@ function Vault({ params }) {
                 {!cur ? null : cur.kind === 'graph' ? (
                   docs === null || !meta ? <Skeleton h={320} style={{ margin: 18 }} /> : (
                     <>
-                      <Graph2D key={cur.root ?? 'all'} docs={docs} agents={meta.agents ?? []} onSelectDoc={(rel) => openDoc(rel)} focusRel={cur.root} />
+                      {/* 높이: 넓은 화면은 칸을 채우고(100%), 세로로 쌓이는 좁은 폭은 responsive.module.css가 정한 값 */}
+                      <Graph2D key={cur.root ?? 'all'} docs={docs} agents={meta.agents ?? []} onSelectDoc={(rel) => openDoc(rel)} focusRel={cur.root} height="var(--vault-graph-h, 100%)" />
                       {cur.root && (
                         <button className="chip" style={{ position: 'absolute', top: 10, left: 12, cursor: 'pointer' }} onClick={() => openGraph(null)}>{t('graph.backToAll')}</button>
                       )}

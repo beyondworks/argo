@@ -2,7 +2,8 @@
    셸: plain(기본 — base.css 그대로) · float(떠 있는 사이드바, 크림 레퍼런스) · window(창, 샌드) · panel(떠 있는 본문, 피치) · pill(알약, 미스트) · glass(유리, 글로우)
        · liquid(리퀴드 글래스 — 진짜 흐림 유리, 10/1) · neu(뉴모피즘 — 같은 색 면이 빛과 그늘로 솟고 파임, 10/1).
    색: linen·graphite(tokens.css) + cream·sand·peach·mist·glow + sage·ocean·rose·lavender·slate·ember(아래 6절). 어느 셸이든 어느 색과도 섞인다.
-   원칙: ① plain 셸 + linen·graphite 색 화면은 한 픽셀도 바뀌지 않는다 — 모양 규칙은 plain이 아닌 셸 아래에만, 색 규칙은 새 색(cream 이후) 아래에만 있다.
+   원칙: ① 이 파일은 plain 셸 + linen·graphite 색 화면을 한 픽셀도 바꾸지 않는다 — 모양 규칙은 plain이 아닌 셸 아래에만, 색 규칙은 새 색(cream 이후) 아래에만 있다.
+            (linen·graphite의 오피스 전용 조정은 base.css에 있다. 10/9부터 린넨 라이트의 표면은 순백에 가까운 메신저 값 대신 미색·더 비치는 표면 — 유건 "흰색 대신 미색, 투명도 더")
          ② 색은 토큰만 쓴다(글자 대비는 test/themes.test.mjs가 잠근다). ③ hover는 (hover: hover) 안에서만. ④ 왼쪽 테두리 막대는 쓰지 않는다(유건 9/30).
          ⑤ 글꼴은 Pretendard 그대로 — 굵기·자간·크기로만 느낌을 낸다(데스크톱 CSP가 외부 글꼴을 막는다). */
 

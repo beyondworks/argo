@@ -11,7 +11,8 @@ import { fmtBytes } from '../core/files.js';
 import { CATEGORIES, kindOf, ocrable, folderPath, parseTags } from './model.js';
 import { getFile, fileBlob, updateFile, trashFiles, restoreFiles, downloadFile, ocrFile, ocrPending, fileError, useFiles } from './api.js';
 import { FIcon } from './FIcon.jsx';
-import { catLabel, day, kindKey, ocrBadge, withQuery } from './FilesPage.jsx';
+import { badgeTone } from '../ui/badge-tone.js';
+import { catLabel, day, kindKey, ocrBadge, tagTone, withQuery } from './FilesPage.jsx';
 import { ShareLinks } from './ShareLinks.jsx'; // 공유 링크(15차 — 메일 큰 첨부·직접 공유)
 
 const DocZoom = lazy(() => import('../docs/DocZoom.jsx')); // PDF 크게 보기 — 견적·계약 미리보기와 같은 창
@@ -56,11 +57,11 @@ export default function Preview({ space, id, customers, folders, onClose }) {
   return <><Sheet open onClose={onClose} title={f?.title ?? t('files.preview')} footer={footer}>
     {f === undefined ? <div className="skeleton-lines"><span /><span /><span /></div> : !f ? <p className="dim">{t('files.err.missing')}</p> : <div className="files-preview">
       <div className="files-meta">
-        <span className="badge">{t(`files.kind.${kind}`)}</span>{ocrBadge(f)}
+        <span className={`badge ${badgeTone(kind)}`}>{t(`files.kind.${kind}`)}</span>{ocrBadge(f)}
         {f.kind === 'file' && <span className="dim small">{fmtBytes(f.size ?? 0)}</span>}
-        {f.source !== 'upload' && <span className="badge">{t(`files.src.${f.source}`)}</span>}
+        {f.source !== 'upload' && <span className={`badge ${badgeTone(f.source)}`}>{t(`files.src.${f.source}`)}</span>}
         <span className="dim small">{t('files.addedBy', { date: day(f.created_at) })}</span>
-        {(f.tags ?? []).map((x) => <span key={x} className="badge">{x}</span>)}
+        {(f.tags ?? []).map((x) => <span key={x} className={`badge ${tagTone(x)}`}>{x}</span>)}
         {pdf && <button type="button" className="btn sm files-zoom" onClick={() => setZoom(true)}><Icon name="expand" size={13} />{t('files.zoom')}</button>}
       </div>
       <div className="files-preview-grid">

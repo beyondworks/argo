@@ -11,9 +11,12 @@ import { Icon } from '../ui/Icon.jsx';
 import { LoadFail } from '../ui/LoadFail.jsx';
 import { fmtBytes, dragHasFiles, filesFromTransfer } from '../core/files.js';
 import { FILES_DICT } from './files-i18n.js';
-import { usageInfo, fmtSize, CATEGORIES, pageMenuIds, kindOf, countBy, filterFiles, folderPath, childFolders, canMoveFolder, uploadSummary, daysLeft, missingBizcert } from './model.js';
+import { usageInfo, fmtSize, CATEGORIES, pageMenuIds, countBy, filterFiles, folderPath, childFolders, canMoveFolder, uploadSummary, daysLeft, missingBizcert } from './model.js';
 import { useFiles, uploadMany, trashFiles, restoreFiles, purgeFiles, purgeExpired, updateFile, downloadFile, createFolder, renameFolder, moveFolder, deleteFolder, loadCustomers, ocrPending, fileError } from './api.js';
 import { FIcon } from './FIcon.jsx';
+import { badgeTone } from '../ui/badge-tone.js';
+import { kindKey, tagTone } from './tones.js';
+export { kindKey, tagTone }; // 미리보기(Preview)는 이 화면 묶음에서 가져간다 — 첫 화면의 지연 로드 모양이 그대로다
 import { useSelection, selProps } from '../core/selection.js';
 import { CustomerFiles } from './CustomerFiles.jsx';
 import './files.css';
@@ -42,7 +45,6 @@ const go = (patch) => navigate(withQuery(patch));
 export const catLabel = (c) => t(`files.cat.${c ?? 'general'}`);
 export const day = (iso) => (iso ? new Date(iso).toLocaleDateString(getLang() === 'en' ? 'en-US' : 'ko-KR', { timeZone: 'Asia/Seoul', year: 'numeric', month: 'short', day: 'numeric' }) : '—');
 const useDebounced = (value, ms) => { const [v, setV] = useState(value); useEffect(() => { const id = setTimeout(() => setV(value), ms); return () => clearTimeout(id); }, [value, ms]); return v; };
-export const kindKey = (f) => (f.kind === 'link' ? 'link' : kindOf(f.filename || f.title, f.mime));
 export const ocrBadge = (f) => { const s = ocrPending(f.id) ? 'pending' : f.ocr_status ?? 'none'; return s === 'none' ? null : <span className={`badge${s === 'failed' ? ' danger' : s === 'done' ? ' ok' : s === 'pending' ? ' warn' : ''}`}>{t(`files.ocr.${s}`)}</span>; };
 
 export default function FilesPage({ space, query }) {
@@ -170,7 +172,7 @@ export default function FilesPage({ space, query }) {
       </div>
       <div className="chips files-cats" role="group" aria-label={t('files.col.category')}>
         <button type="button" className={`chip${!cat ? ' on' : ''}`} aria-pressed={!cat} onClick={() => setCat(null)}>{t('files.all')} <span className="dim">{files.length}</span></button>
-        {CATEGORIES.filter((c) => counts[c] || c === cat).map((c) => <button key={c} type="button" className={`chip${cat === c ? ' on' : ''}`} aria-pressed={cat === c} onClick={() => setCat((v) => (v === c ? null : c))}>{catLabel(c)} <span className="dim">{counts[c] ?? 0}</span></button>)}
+        {CATEGORIES.filter((c) => counts[c] || c === cat).map((c) => <button key={c} type="button" className={`chip${cat === c ? ' on' : ''}`} aria-pressed={cat === c} onClick={() => setCat((v) => (v === c ? null : c))}><span className={`dot ${badgeTone(c)}`} aria-hidden="true" />{catLabel(c)} <span className="dim">{counts[c] ?? 0}</span></button>)}
       </div>
       <button type="button" className={`files-drop${over ? ' on' : ''}`} disabled={!!progress} onClick={() => input.current?.click()}>
         <FIcon name="upload" size={18} /><span><strong>{progress ? t('files.uploading', progress) : t('files.drop')}</strong><small className="dim">{t('files.dropHint')}</small></span>
@@ -196,13 +198,13 @@ export default function FilesPage({ space, query }) {
             <tbody>{shown.map((f) => <tr key={f.id} className={sel.has(f.id) ? 'on' : ''} {...selProps(sel, f.id)} onContextMenu={(e) => rowMenu(e, f)}>
               <td className="files-check"><input type="checkbox" checked={sel.has(f.id)} aria-label={f.title} onChange={() => toggle(f.id)} /></td>
               <td><button type="button" className="files-name" onClick={() => go({ open: f.id })}><FIcon name={kindKey(f)} size={15} /><span className="files-title">{f.title}</span>
-                {f.source !== 'upload' && t(`files.src.${f.source}`) !== `files.src.${f.source}` && <span className="badge">{t(`files.src.${f.source}`)}</span>}</button></td>
-              <td className="c-cat"><button type="button" className="badge files-cat" onClick={(e) => catMenu(e, [f])}>{catLabel(f.category)}</button></td>
+                {f.source !== 'upload' && t(`files.src.${f.source}`) !== `files.src.${f.source}` && <span className={`badge ${badgeTone(f.source)}`}>{t(`files.src.${f.source}`)}</span>}</button></td>
+              <td className="c-cat"><button type="button" className={`badge files-cat ${badgeTone(f.category ?? 'general')}`} onClick={(e) => catMenu(e, [f])}>{catLabel(f.category)}</button></td>
               <td className="c-cust dim">{custName(f.customer_id) ?? '—'}</td>
-              <td className="c-kind"><span className="badge">{t(`files.kind.${kindKey(f)}`)}</span></td>
+              <td className="c-kind"><span className={`badge ${badgeTone(kindKey(f))}`}>{t(`files.kind.${kindKey(f)}`)}</span></td>
               <td className="num c-size">{f.kind === 'file' ? fmtBytes(f.size ?? 0) : '—'}</td>
               <td className="c-ocr">{ocrBadge(f) ?? <span className="dim">—</span>}</td>
-              <td className="c-tags">{(f.tags ?? []).length ? <span className="files-tags">{f.tags.slice(0, 3).map((x) => <span key={x} className="badge">{x}</span>)}{f.tags.length > 3 && <span className="badge">+{f.tags.length - 3}</span>}</span> : <span className="dim">—</span>}</td>
+              <td className="c-tags">{(f.tags ?? []).length ? <span className="files-tags">{f.tags.slice(0, 3).map((x) => <span key={x} className={`badge ${tagTone(x)}`}>{x}</span>)}{f.tags.length > 3 && <span className="badge">+{f.tags.length - 3}</span>}</span> : <span className="dim">—</span>}</td>
               <td className="c-date dim">{day(f.created_at)}</td>
               <td className="files-act"><button type="button" className="icon-btn" aria-label={t('more')} onClick={(e) => rowMenu(e, f)}><Icon name="dots" size={14} /></button></td>
             </tr>)}</tbody></table></div>}
@@ -274,7 +276,7 @@ function TrashView({ space, data, act, setDialog }) {
       : <div className="table-wrap" data-sel-scope="files-trash"><table className="table files-table files-trash-table"><thead><tr><th>{t('files.col.name')}</th><th className="c-cat">{t('files.col.category')}</th><th className="c-date">{t('files.col.deleted')}</th><th className="c-left" /><th className="files-act" /></tr></thead>
         <tbody>{rows.map((f) => <tr key={f.id} {...selProps(sel, f.id)}>
           <td><span className="files-name static"><FIcon name={kindKey(f)} size={15} /><span className="files-title">{f.title}</span></span></td>
-          <td className="c-cat"><span className="badge">{catLabel(f.category)}</span></td>
+          <td className="c-cat"><span className={`badge ${badgeTone(f.category ?? 'general')}`}>{catLabel(f.category)}</span></td>
           <td className="c-date dim">{day(f.deleted_at)}</td><td className="dim small c-left">{t('files.daysLeft', { n: daysLeft(f) })}</td>
           <td className="files-act"><div className="files-trash-act"><button type="button" className="btn sm" onClick={() => act(() => restoreFiles(space, [f.id]), 'files.restored', { n: 1 })}>{t('files.restore')}</button>
             {mine(f) && <button type="button" className="btn sm ghost" onClick={() => setDialog({ kind: 'purge', files: [f] })}>{t('files.purge')}</button>}</div></td>

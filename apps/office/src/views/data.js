@@ -135,8 +135,9 @@ export const makeCtx = (today, people) => ({ today, me: ME.id, isAdmin: (space) 
 /* ── 쓰기 ── */
 async function writeTask(w, optimistic) {
   if (sample()) { try { sampleTaskWrite(w.space, w.action, w.data); } catch (e) { throw new Error(taskError(e)); } return; }
-  if (optimistic) return taskAction(w.space, w.action, w.data, w.patch); // 한 건은 먼저 화면에 반영하고 실패하면 되돌린다(다시 읽기 포함)
-  try { await rpc('office_task_write', { p_org: orgOf(w.space), p_action: w.action, p_data: w.data }); } catch (e) { throw new Error(taskError(e)); }
+  // 할 일 하나마다 한 줄로(core/tasks.js taskAction — 패널·표·캘린더·칸반·할 일 모듈이 같은 줄). 한 건은 먼저 화면에 반영하고 실패하면 그 칸만 되돌린다(다시 읽기 포함),
+  // 여러 건은 화면 반영 없이 보내고 다시 읽기는 끝에 한 번
+  return taskAction(w.space, w.action, w.data, optimistic ? w.patch : null, optimistic);
 }
 
 /** 계획(model.js)대로 쓴다 — 한 건씩 보내고, 끝나면 다시 읽기는 그 할 일의 공간마다 한 번·일정 창 한 번.
@@ -159,7 +160,7 @@ async function writeAll(writes) {
       ok++;
     } catch (e) {
       failed ??= e.message;
-      if (w.type === 'task' && e.message === 'task.error.conflict' && !sample()) stores.add(w.space); // 그사이 남이 바꿨다(예: 보류 사유만 고치는데 보류가 풀림) — 다시 읽어 지금 값을 보인다
+      if (w.type === 'task' && (e.message === 'task.error.conflict' || e.message === 'task.error.request') && !sample()) stores.add(w.space); // 그사이 남이 바꿨거나(예: 보류 사유만 고치는데 보류가 풀림), 응답을 못 받았다(시간 초과·연결 끊김 — 서버엔 들어갔을 수 있다, 재확인 #906) — 다시 읽어 지금 값을 보인다
     }
   }
   if (sample()) emit();

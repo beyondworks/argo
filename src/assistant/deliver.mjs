@@ -59,10 +59,12 @@ function section(title, rows, ctx) {
 const minsLeft = (o, now) => Math.max(1, Math.round((o.start - now) / 60_000));
 const metaItem = (key, o) => ({ key, source: 'calendar', eventId: o.id, at: new Date(o.start).toISOString() });
 
-const prebody = (o, now, ctx) => `${at('head.pre', ctx.lang)}\n${line(o, ctx, { mins: minsLeft(o, now) })}`;
+/** capTail = 하루 즉시 알림 상한(설계 9절) — 상한에 처음 걸린 글이면 그 수, 아니면 0. 끝에 한 줄을 붙인다(그 글 하나만 — tick.mjs send가 정한다). */
+const prebody = (o, now, ctx, capTail = 0) => `${at('head.pre', ctx.lang)}\n${line(o, ctx, { mins: minsLeft(o, now) })}${capTail ? `\n${at('tail.cap', ctx.lang, { n: capTail })}` : ''}`;
 /** 대기열의 시작 전 알림 본문을 보내는 순간 기준으로 다시 쓴다 — 템플릿이라 비용이 없고, client_msg_id(기준 = 키)는 그대로라 응답만 끊겼던 첫 시도와 겹쳐도
-    DB에 한 번만 들어간다. 대기열에 오래 머문 글이 "30분 뒤 시작"을 8분 전에 보내지 않게. (3단계 LLM 머리말이 붙는 글은 같은 본문을 다시 보낸다 — 작성 턴 재호출 0) */
-export const refreshPreBody = (ob, { now, lang = 'ko', tz = null }) => (ob?.kind === 'pre' && ob.occ ? prebody(ob.occ, now, { lang, tz, date: dateIn(now, tz) }) : ob?.body);
+    DB에 한 번만 들어간다. 대기열에 오래 머문 글이 "30분 뒤 시작"을 8분 전에 보내지 않게. 다시 보내기 전 확인 읽기가 바꾼 제목·장소(ob.occ)와
+    하루 상한 꼬리(ob.capTail)도 여기서 반영된다. (3단계 LLM 머리말이 붙는 글은 같은 본문을 다시 보낸다 — 작성 턴 재호출 0) */
+export const refreshPreBody = (ob, { now, lang = 'ko', tz = null }) => (ob?.kind === 'pre' && ob.occ ? prebody(ob.occ, now, { lang, tz, date: dateIn(now, tz) }, ob.capTail) : ob?.body);
 
 /** 시작 전 알림 한 건(설계 7절: 일정 시작 전 알림은 늘 혼자 보낸다 — client_msg_id 기준 = 그 키 하나). */
 export function composePre(o, { now, lang = 'ko', tz = null }) {

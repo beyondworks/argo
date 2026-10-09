@@ -14,6 +14,7 @@ import { SCORE_KEYS, SCOPES, scoreTone, autoTotal, radarPoints, hasScores, versi
 import { Modal, showToast } from '../ui/Overlay.jsx';
 import { Icon } from '../ui/Icon.jsx';
 import { Markdown } from '../ui/Markdown.jsx';
+import { badgeTone } from '../ui/badge-tone.js';
 import { EVAL_DICT } from './eval-i18n.js';
 import './company.css';
 import { Hide } from '../business/Redact.jsx';
@@ -60,7 +61,7 @@ export default function PerfEvals({ space, manager, openId }) {
 function EvalCard({ e, onOpen }) {
   return <button type="button" className="ev-card" onClick={onOpen}>
     <span className="ev-card-head"><strong>{e.title}</strong><span className="badge">{t(`ev.scope.${e.scope}`)}</span></span>
-    <span className="ev-meta"><span className="badge">{t(`ev.type.${e.subject_type}`)}</span><Icon name={e.subject_kind === 'crew' ? 'hand' : 'person'} size={12} />{e.subject_name}</span>
+    <span className="ev-meta"><span className={`badge ${badgeTone(e.subject_type)}`}>{t(`ev.type.${e.subject_type}`)}</span><Icon name={e.subject_kind === 'crew' ? 'hand' : 'person'} size={12} />{e.subject_name}</span>
     <span className="ev-foot"><span><Icon name="calendar" size={12} /> {periodText(e)}</span><span className={`ev-total tone-${scoreTone(e.total)}`}>{e.total ?? '—'}</span></span>
     <span className="ev-foot"><span>{authorText(e)}</span>{e.replaces && <span>{t('ev.versionN', { n: 2 })}+</span>}</span>
   </button>;
@@ -108,7 +109,7 @@ function Detail({ e, all, manager, onClose, onPick, onNewVersion }) {
     {manager && !e.replaced_by && <button type="button" className="btn" onClick={() => onNewVersion(e)}><Icon name="draft" size={13} />{t('ev.newVersion')}</button>}
     <span className="spacer" /><button type="button" className="btn primary" onClick={onClose}>{t('ev.close')}</button></>}>
     <div className="ev-detail">
-      <div className="ev-meta"><span className="badge">{t(`ev.scope.${e.scope}`)}</span><span className="badge">{t(`ev.type.${e.subject_type}`)}</span><strong>{e.subject_name}</strong><span>· {periodText(e)}</span>
+      <div className="ev-meta"><span className="badge">{t(`ev.scope.${e.scope}`)}</span><span className={`badge ${badgeTone(e.subject_type)}`}>{t(`ev.type.${e.subject_type}`)}</span><strong>{e.subject_name}</strong><span>· {periodText(e)}</span>
         {e.replaced_by && <button type="button" className="badge late link-btn" onClick={() => onPick(e.replaced_by)}>{t('ev.replaced')}</button>}</div>
       {versions.length > 1 && <div className="ev-versions" role="group" aria-label={t('ev.versions')}>{versions.map((v, i) => <button key={v.id} type="button" className={`btn sm${v.id === e.id ? ' primary' : ''}`} aria-pressed={v.id === e.id} onClick={() => onPick(v.id)}>{t('ev.versionN', { n: i + 1 })}{!v.replaced_by ? ` · ${t('ev.current')}` : ''}</button>)}</div>}
       <div className="ev-top">

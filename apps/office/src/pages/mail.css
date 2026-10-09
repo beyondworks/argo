@@ -5,8 +5,9 @@
 .mail-folders .nav-count.plain { background: transparent; color: var(--fg-3); }
 .mail-folders .mail-cal-btn { margin-top: 10px; }
 
-/* 목록 위 도구 줄 — 메일함 고르기(좁은 화면만)·검색·새로고침·일정 */
-.mail-tools { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 6px; padding: 8px 10px; background: var(--surface); border-bottom: 1px solid var(--border-soft); }
+/* 목록 위 도구 줄 — 메일함 고르기(좁은 화면만)·검색·새로고침·일정. 목록 위에 붙어 있어(sticky) 밑으로 메일 줄이 지나간다 —
+   반투명 --surface면 지나가는 줄이 비친다(린넨 라이트 72% 표면에서 28%). 떠 있는 층과 같은 단색(--float, 캔버스 위 --surface와 같은 색)을 쓴다 */
+.mail-tools { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 6px; padding: 8px 10px; background: var(--float); border-bottom: 1px solid var(--border-soft); }
 .mail-search { flex: 1; }
 .mail-search .input { height: 32px; padding-right: 30px; }
 .mail-search .icon-btn { position: absolute; right: 2px; }
@@ -118,3 +119,10 @@
 /* 좁은 폭에서만 보이는 '새 메일'(OFC-01) — 1100px 이하에서 왼쪽 메일함 칸(.mail-folders)이 숨는 것과 같은 폭 */
 .mail-new-narrow { display: none; }
 @media (max-width: 1100px) { .mail-new-narrow { display: inline-grid; } }
+/* 휴지통 비우기(10/9) — 안내 줄 오른쪽 끝 단추, 확인 창의 계정별 줄 */
+.mail-trash-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.mail-trash-bar .link-btn, .mail-purge .danger-text { color: var(--danger); }
+.mail-trash-bar .link-btn { flex: none; white-space: nowrap; }
+.mail-purge-list { list-style: none; margin: 10px 0; padding: 0; display: grid; gap: 6px; }
+.mail-purge-list li { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; font-size: 13.5px; }
+.mail-purge-list li > :last-child { display: inline-flex; align-items: center; gap: 8px; flex: none; }
