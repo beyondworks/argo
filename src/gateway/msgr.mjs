@@ -366,9 +366,25 @@ export function makeDb(client) {
       return unwrap(await client.from('msgr_messages').select('id, channel_id, author_kind, author_user_id, crew_id, kind, body, mentions, reply_to, thread_root, created_at, meta')
         .eq('org_id', orgId).gt('id', afterId).is('deleted_at', null).order('id', { ascending: true }).limit(limit)) ?? [];
     },
-    // Same poll frequency as the existing crew cursor; one bounded indexed inbox read per active crew/tick.
+    // 에이전트 한 명의 받은 글 — 서버에 일괄 함수가 없을 때(옛 서버·적용 전 운영)의 경로. 새 서버에서는 crewInboxMany가 묶음마다 한 번.
     async crewInbox(wsId, crewId, afterId, limit = PAGE) {
       return unwrap(await client.rpc('msgr_crew_inbox', { p_ws: wsId, p_crew: crewId, p_after: afterId, p_limit: limit })) ?? [];
+    },
+    /** 여러 에이전트의 받은 글을 한 번에(msgr_crew_inbox_many, 2026-10-09) — items [{crew, after}] → Map(크루 id → 글 배열 | Error).
+        결과는 crewInbox를 에이전트마다 부른 것과 같다(서버 함수가 보장 — test/msgr-crew-inbox-many-pg.test.mjs). 서버는 글을 한 번씩만 싣고(조직 글은
+        그 조직 에이전트 모두가 받는다) 에이전트별 id 목록을 준다 — 여기서 에이전트마다 따로 된 객체로 푼다(옛 경로처럼 서로 공유하지 않게).
+        거절된 에이전트(옛 함수의 42501)는 옛 오류와 같은 코드·문구의 Error. 옛 서버(함수 없음)면 undefined → 호출부가 에이전트별 경로로 돌아간다.
+        응답에 없는 글을 가리키면 던진다(이 묶음 전체를 받은 글 조회 실패로). */
+    async crewInboxMany(wsId, items, limit = PAGE) {
+      const { data, error } = await client.rpc('msgr_crew_inbox_many', { p_ws: wsId, p_items: items, p_limit: limit });
+      if (error) { if (['PGRST202', '42883'].includes(error.code)) return undefined; throw Object.assign(new Error(`msgr db: ${error.message}`), { code: error.code }); }
+      const byId = new Map((data?.messages ?? []).map((m) => [m.id, m]));
+      const out = new Map();
+      for (const c of data?.crews ?? []) {
+        if (c.forbidden) { out.set(c.crew, Object.assign(new Error('msgr db: msgr_execution_forbidden'), { code: '42501' })); continue; }
+        out.set(c.crew, (c.ids ?? []).map((id) => { const m = byId.get(id); if (!m) throw new Error(`msgr db: 받은 글 일괄 응답에 없는 글 ${id}`); return { ...m }; }));
+      }
+      return out;
     },
     async crewContext(wsId, crewId, sourceId, channelId) {
       const result = await client.rpc('msgr_crew_context', { p_ws: wsId, p_crew: crewId, p_source: sourceId, p_channel: channelId });
@@ -1005,6 +1021,41 @@ export async function mapLimited(items, limit, fn) {
   return out;
 }
 const CREW_FETCH_LIMIT = 8; // 크루별 조회의 순간 동시 요청 상한 — 크루 수에 비례해 폭발하지 않게(검수 L2)
+/** 받은 글 일괄 조회의 한 요청 에이전트 수. 응답 크기: 서버가 글을 한 번씩만 싣고 에이전트별로는 id만 주므로 보통은 새 글 수(≤ PAGE)와 id 목록(100 × 50개)뿐이다.
+    가장 나쁜 경우(커서가 모두 다르고 받은 글이 서로 겹치지 않음)는 100 × PAGE(50) = 5,000건 — 옛 경로가 같은 틱에 100번 나눠 받던 양과 같다.
+    서버 상한은 200(msgr_crew_inbox_many). 200명 계정은 틱당 2회(종전 200회). */
+export const INBOX_BATCH = 100;
+let inboxManyMissing = false; // 서버에 일괄 함수가 없음(PGRST202·42883) — 이 프로세스 동안 에이전트별 옛 경로(옛 서버·운영 적용 전). 다시 확인하려면 프로세스를 다시 띄운다
+export const _resetInboxManyForTest = () => { inboxManyMissing = false; };
+/** drain의 받은 글 — 크루 순서대로 [{ msgs } | { inboxError }]. 새 서버는 묶음(INBOX_BATCH명)마다 한 번(crewInboxMany), 함수가 없거나 에이전트가 하나면 에이전트별(crewInbox, 동시 8).
+    실패 의미는 종전과 같다: 실패한 에이전트는 inboxError — drain이 그 에이전트 차례에 던진다(앞 에이전트는 처리, 커서 유지). 일괄 요청이 실패하면 그 묶음 에이전트 모두. */
+async function crewInboxes(db, wsId, crews) {
+  const one = async (crew) => { try { return { msgs: db.crewInbox ? await db.crewInbox(wsId, crew.id, crew.cursor_msg_id ?? 0) : await db.messagesAfter(crew.org_id, crew.cursor_msg_id ?? 0) }; } catch (inboxError) { return { inboxError }; } };
+  // 에이전트가 하나면 묶을 것이 없다 — 요청 수는 같고, 새 글이 있는 틱은 옛 함수가 더 가볍다(임시 PG 측정: 버퍼 386 vs 688, 묶음은 받은 글을 기본키로 다시 읽어 JSON을 만든다)
+  if (crews.length < 2 || typeof db.crewInboxMany !== 'function' || inboxManyMissing) return mapLimited(crews, CREW_FETCH_LIMIT, one);
+  const out = new Array(crews.length);
+  for (let i = 0; i < crews.length; i += INBOX_BATCH) {
+    const part = crews.slice(i, i + INBOX_BATCH);
+    let got;
+    try { got = await db.crewInboxMany(wsId, part.map((c) => ({ crew: c.id, after: c.cursor_msg_id ?? 0 }))); } catch (inboxError) {
+      part.forEach((_, j) => { out[i + j] = { inboxError }; });
+      continue;
+    }
+    if (!(got instanceof Map)) { // 이 묶음부터 에이전트별 경로(앞 묶음이 성공했다면 그 결과는 그대로)
+      if (got === undefined) { // 옛 서버(함수 없음) — 이 프로세스 동안 기억한다
+        inboxManyMissing = true;
+        console.warn('[argo] msgr 서버에 받은 글 일괄 조회 함수(msgr_crew_inbox_many)가 없어 이 프로세스 동안 에이전트별로 묻습니다(옛 서버)');
+      } // 그 밖(Map이 아닌 값)은 일괄을 모르는 옛 어댑터·테스트 더블 — 방 목록(crewRoomsFor)과 같은 규칙으로 종전 경로
+      (await mapLimited(crews.slice(i), CREW_FETCH_LIMIT, one)).forEach((r, j) => { out[i + j] = r; });
+      return out;
+    }
+    part.forEach((c, j) => {
+      const r = got.get(c.id);
+      out[i + j] = r instanceof Error ? { inboxError: r } : Array.isArray(r) ? { msgs: r } : { inboxError: new Error('msgr db: 받은 글 응답에 이 에이전트가 없음') }; // 빠진 항목을 "받은 글 없음"으로 보지 않는다
+    });
+  }
+  return out;
+}
 const ROOMS_DM_FAIL = '[argo] msgr DM 채널 조회 실패 — 이 에이전트는 이 틱에 답하지 않음(커서 보류):';
 /** drain의 방 참여 — Map(크루 id → { dm, member }). 모르는 크루는 빠진다(호출부가 그 크루를 이 틱 보류 — 커서 유지).
     새 어댑터는 한 번에(crewMemberships), 일괄 함수가 없거나 Map을 돌려주지 않는 옛 어댑터·테스트 더블은 크루별 종전 경로(crewChannels → crewScope). */
@@ -1102,13 +1153,12 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
   // H3: 확인 함수가 없거나 실패하면 열어 둔다(fail-open) — 1차 관문은 앱의 필수 동의 화면이고, 이 서버 확인은 옛 클라이언트·철회자 대상 보조 방어선이다.
   const consentCache = new Map();
   const orgConsentOk = async (orgId, userId, channelId = null) => { const key = orgId ? `${orgId}:${userId}` : `ch:${channelId}:${userId}`; if (!consentCache.has(key)) consentCache.set(key, await (async () => (orgId ? db.orgConsentOk(orgId, userId) : db.personalConsentOk(channelId, userId)))().catch((e) => { console.error('[argo] msgr AI 동의 확인 RPC 실패 — 이 틱은 열어 둡니다(fail-open):', e?.message ?? e); return true; })); return consentCache.get(key); }; // 개인 방(org 없음)은 방 기준 확인(2026-09-30) // 옛 db 어댑터(orgConsentOk 없음)의 동기 TypeError도 여기서 잡는다(entCache와 같은 요령)
-  // 받은 글은 크루끼리 동시에 먼저 받는다 — 순서대로면 크루 12명에 수십 왕복이 쌓였다(2026-09-23 실측 픽업 4~7초).
+  // 받은 글은 처리 전에 먼저 받는다 — 회사 단위 묶음(crewInboxes: INBOX_BATCH명마다 msgr_crew_inbox_many 한 번, 옛 서버면 에이전트별 동시 8).
+  // 2026-10-09 운영 실측: 에이전트마다 틱당 받은 글 RPC 1회 = 분당 약 2,350회(에이전트 200명 계정 하나가 10분 10,828회) — 묶음으로 틱당 ⌈N/100⌉회.
   // 방 참여(DM 목록·채널 범위)는 받은 글이 있는 크루만 모아 한 번에 받는다(crewRoomsFor). 받은 글이 없는 크루는 대상 후보가 없어 방 목록을 쓸 데가 없다 —
   // 종전에도 빈 목록이면 아래 루프가 돌지 않고 커서도 그대로였다. 2026-10-09 운영 실측: 크루마다 틱당 방 목록 2회(받은 글 1회당 2회, msgr_channel_members 분당 약 4.5천 회).
   // 처리(적재·커서)는 아래에서 크루 순서대로. 받은 글 조회 실패는 그 크루 차례에 던진다(앞 크루는 종전처럼 처리된 뒤 drain 실패).
-  const pre = await mapLimited(crews, CREW_FETCH_LIMIT, async (crew) => {
-    try { return { msgs: db.crewInbox ? await db.crewInbox(wsId, crew.id, crew.cursor_msg_id ?? 0) : await db.messagesAfter(crew.org_id, crew.cursor_msg_id ?? 0) }; } catch (inboxError) { return { inboxError }; }
-  });
+  const pre = await crewInboxes(db, wsId, crews);
   const rooms = await crewRoomsFor(db, crews.filter((_, i) => pre[i].msgs?.length > 0));
   for (const [ci, crew] of crews.entries()) {
     const { msgs, inboxError } = pre[ci];

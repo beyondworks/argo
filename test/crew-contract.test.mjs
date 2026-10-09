@@ -14,6 +14,7 @@ const CONTRACT = {
   msgr_messages: { bot: ['msgr_bot_send', 'msgr_bot_finish', 'msgr_bot_updates'] },
   msgr_executions: { bot: ['msgr_bot_updates', 'msgr_bot_finish'] },
   msgr_crew_inbox: { bot: ['msgr_bot_updates'] },
+  msgr_crew_inbox_many: { bot: ['msgr_bot_updates'] }, // 회사 단위 받은 글 묶음(2026-10-09) — 봇은 토큰 하나 = 에이전트 하나라 getUpdates 한 번이 이미 그 에이전트의 묶음이다
   msgr_crew_context: { bot: ['msgr_bot_updates'] },
   msgr_channels: { bot: ['msgr_bot_updates'] },
   msgr_channel_members: { bot: ['msgr_bot_updates'] },

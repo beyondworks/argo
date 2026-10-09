@@ -106,6 +106,8 @@ function drainDb(client, { crews, inbox, channels, personalInRooms = new Set(), 
     async myCrews() { return crews; },
     async personalCrewsInRooms(ids) { return new Set(ids.filter((id) => personalInRooms.has(id))); },
     async crewInbox(_ws, id, after) { calls.push(['crewInbox', id, after]); const m = inbox(id); if (m instanceof Error) throw m; return m.filter((x) => x.id > after); },
+    // 받은 글 일괄(2026-10-09, makeDb.crewInboxMany와 같은 계약 — Map(크루 id → 글 | Error)). 받은 글은 같은 inbox(id)에서, 요청 수만 다르다
+    async crewInboxMany(_ws, items) { calls.push(['crewInboxMany', items.length]); return new Map(items.map(({ crew, after }) => { const m = inbox(crew); return [crew, m instanceof Error ? m : m.filter((x) => x.id > after)]; })); },
     async setCursor(id, n) { calls.push(['setCursor', id, n]); },
     async channel(id) { const c = channels[id]; return c ? { id, name: c.name ?? 'ch', crew_memory: true, archived_at: c.archived_at ?? null, excluded_crew_ids: [], kind: c.kind, org_id: c.org_id } : null; },
     async message() { return null; },
@@ -150,7 +152,8 @@ for (const n of [1, 3, 50]) {
       const db = drainDb(srv.client, { ...f, inbox: () => [] });
       const { r, enq } = await run(db);
       assert.equal(r.crews, n + 1);
-      assert.equal(db.calls.filter((c) => c[0] === 'crewInbox').length, n + 1, '받은 글은 에이전트마다 1회(종전과 같음)');
+      assert.equal(db.calls.filter((c) => c[0] === 'crewInboxMany').length, 1, '받은 글은 회사 단위 한 번(2026-10-09 일괄 — test/msgr-inbox-batch.test.mjs)');
+      assert.equal(db.calls.filter((c) => c[0] === 'crewInbox').length, 0);
       assert.equal(srv.roomHits().length, 0, `방 목록을 ${srv.roomHits().length}회 물었다`);
       assert.deepEqual(cursors(db), [], '커서를 쓰지 않는다'); assert.deepEqual(jobs(enq), []);
       const old = legacy(drainDb(srv.client, { ...f, inbox: () => [] }));
