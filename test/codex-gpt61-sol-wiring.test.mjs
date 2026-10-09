@@ -358,21 +358,76 @@ test('⑩ 고정 모델도 원격 카탈로그 alias를 따른다(모델 폐기 
 // ⑬ GPT-5.5 종료(Codex 서버 목록 upgrade.retirement_at 2026-10-14T19:00Z) — 목록에서 뺀 뒤에도 이미 gpt-5.5를 고른 에이전트는 실패하지 않고
 // GPT-5.6 Sol로 돈다(원격 카탈로그 없이도 — catalog.mjs RETIRED_MODEL_ALIASES). 대체표가 없으면 목록 밖 모델이라 ⑦ codex-unknown처럼
 // 고정 모델(gpt-6-astra)로 강등되고 '모델 대체' 안내가 붙는다. 6.1 Sol로 보내지 않는 이유: 핀 0.157.1 옛 앱에서 400(catalog.mjs 주석).
-test('⑬ 실제 chat() — 옛 설정 gpt-5.5 에이전트는 -m gpt-5.6-sol로 실행, 강도는 카드 값 그대로, 모델 대체 안내 없음', { skip: process.platform === 'win32' }, async () => {
+// 강도(분리 검수 MEDIUM, 총괄 결정 c): 빈 강도는 인자 없이 서버 기본을 쓰는데 서버 기본이 gpt-5.5 = medium, 5.6 Sol = low
+// (~/.codex/models_cache.json default_reasoning_level)라 옮기기만 하면 말없이 low로 내려간다. 대체표로 옮겨진 카드의 빈 강도만 옛 기본(medium)을
+// 넘기고, 원래 5.6 Sol을 고른 카드의 빈 강도·직접 고른 강도는 그대로 둔다.
+const OLD55 = {
+  old55: ['---\nname: 바\nrole: 일\nrunner: codex\nmodel: gpt-5.5\n---\n일한다.\n', 'model_reasoning_effort=medium', 'medium'],
+  old55high: ['---\nname: 사\nrole: 일\nrunner: codex\nmodel: gpt-5.5\neffort: high\n---\n일한다.\n', 'model_reasoning_effort=high', 'high'],
+  old55max: ['---\nname: 아\nrole: 일\nrunner: codex\nmodel: gpt-5.5\neffort: max\n---\n일한다.\n', 'model_reasoning_effort=xhigh', 'xhigh'], // 5.6 Sol은 옛 사상(max→xhigh)
+  sol56: ['---\nname: 자\nrole: 일\nrunner: codex\nmodel: gpt-5.6-sol\n---\n일한다.\n', null, undefined], // 원래 5.6 Sol — 빈 강도는 서버 기본 그대로
+};
+async function old55Company(ws) {
   const { createCompany, paths } = await import('../src/workspace.mjs');
-  const { chat } = await import('../src/chat.mjs');
-  const ws = 'gpt55retire';
   await createCompany(ws, 'GPT-5.5 종료', 'captain', null, 'ko');
   await mkdir(paths(ws).agents, { recursive: true });
-  await writeFile(join(paths(ws).agents, 'old55.md'), '---\nname: 바\nrole: 일\nrunner: codex\nmodel: gpt-5.5\neffort: high\n---\n일한다.\n');
+  for (const [slug, [md]] of Object.entries(OLD55)) await writeFile(join(paths(ws).agents, `${slug}.md`), md);
   await saveRunnerCred(ws, 'codex', 'apikey', 'sk-test-fake');
+}
+test('⑬ 실제 chat() exec — gpt-5.5 카드는 -m gpt-5.6-sol, 빈 강도는 medium, 고른 강도는 그대로, 원래 5.6 Sol 빈 강도는 인자 없음, 모델 대체 안내 없음', { skip: process.platform === 'win32' }, async () => {
+  const { chat } = await import('../src/chat.mjs');
+  const ws = 'gpt55retire';
+  await old55Company(ws);
   await withManaged({ pin: CODEX_PIN }, async () => {
-    const r = await chat(ws, 'old55', '안녕', null, {});
-    assert.equal(r.reply, 'OK');
+    for (const [slug, [, wantEffort]] of Object.entries(OLD55)) {
+      const r = await chat(ws, slug, '안녕', null, {});
+      assert.equal(r.reply, 'OK', slug);
+      const argv = await lastArgv();
+      assert.equal(modelArg(argv), 'gpt-5.6-sol', `${slug} — 대체 모델로 실행`);
+      assert.equal(effortArg(argv), wantEffort, `${slug} — 강도`);
+      assert.equal(r.modelFallback, undefined, `${slug} — 대체표로 옮긴 모델은 목록 안 모델이라 강등 안내가 없다`);
+    }
+  });
+});
+
+test('⑬-b 실제 chat() app-server — gpt-5.5 빈 강도 카드는 thread/start model=gpt-5.6-sol·turn/start effort=medium, 원래 5.6 Sol 빈 강도는 effort 없음', { skip: process.platform === 'win32' }, async () => {
+  const { chat } = await import('../src/chat.mjs');
+  const ws = 'gpt55retire-as';
+  await old55Company(ws);
+  process.env.ARGO_CODEX_ENGINE = 'appserver';
+  try {
+    await withManaged({ pin: CODEX_PIN }, async () => {
+      for (const [slug, [, , wantEffort]] of Object.entries(OLD55)) {
+        const r = await chat(ws, slug, '안녕', null, {});
+        assert.equal(r.reply, 'OK', slug);
+        const { argv, received } = JSON.parse(await readFile(log, 'utf8'));
+        assert.deepEqual(argv, ['app-server']);
+        assert.equal(received.find((m) => m.method === 'thread/start').params.model, 'gpt-5.6-sol', slug);
+        assert.equal(received.find((m) => m.method === 'turn/start').params.effort, wantEffort, slug);
+      }
+    });
+  } finally { delete process.env.ARGO_CODEX_ENGINE; }
+});
+
+// ⑭ 카드 저장(편집 화면은 이름만 고쳐도 model을 같이 보낸다)이 gpt-5.5를 5.6 Sol로 바꿔 저장할 때 빈 강도는 medium을 같이 저장한다 —
+// 저장 뒤에는 원래 5.6 Sol 카드와 구별되지 않으므로, 저장 때 강도를 남기지 않으면 다음 턴부터 low로 내려간다.
+test('⑭ 카드 저장 뒤 다음 턴도 medium — gpt-5.5 빈 강도 카드를 저장하면 5.6 Sol + medium으로 저장되고, 원래 5.6 Sol 카드는 빈 강도 그대로', { skip: process.platform === 'win32' }, async () => {
+  const { chat } = await import('../src/chat.mjs');
+  const { updateAgentMeta, readAgentCard } = await import('../src/persona.mjs');
+  const ws = 'gpt55retire-save';
+  await old55Company(ws);
+  await updateAgentMeta(ws, 'old55', { name: '바뀐 이름', role: '일', model: 'gpt-5.5' });
+  await updateAgentMeta(ws, 'sol56', { name: '바뀐 이름2', role: '일', model: 'gpt-5.6-sol' });
+  const saved = (await readAgentCard(ws, 'old55')).meta;
+  assert.equal(saved.model, 'gpt-5.6-sol'); assert.equal(saved.effort, 'medium');
+  assert.equal((await readAgentCard(ws, 'sol56')).meta.effort || '', '', '원래 5.6 Sol 카드에는 강도를 박지 않는다');
+  await withManaged({ pin: CODEX_PIN }, async () => {
+    assert.equal((await chat(ws, 'old55', '안녕', null, {})).reply, 'OK');
     const argv = await lastArgv();
-    assert.equal(modelArg(argv), 'gpt-5.6-sol', '대체 모델로 실행');
-    assert.equal(effortArg(argv), 'model_reasoning_effort=high', '강도는 카드 값 그대로');
-    assert.equal(r.modelFallback, undefined, '대체표로 옮긴 모델은 목록 안 모델이라 강등 안내가 없다');
+    assert.equal(modelArg(argv), 'gpt-5.6-sol');
+    assert.equal(effortArg(argv), 'model_reasoning_effort=medium', '저장 뒤 다음 턴도 medium');
+    assert.equal((await chat(ws, 'sol56', '안녕', null, {})).reply, 'OK');
+    assert.equal(effortArg(await lastArgv()), null);
   });
 });
 

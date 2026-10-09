@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mkdtemp } from './helpers/tmp.mjs';
 import { RUNNERS, CODEX_DEFAULT_MODEL } from '../src/runners/catalog.mjs';
-import { isKnownModel, effectiveModels, normalizeModelId } from '../src/runners/catalog-remote.mjs';
+import { isKnownModel, effectiveModels, normalizeModelId, retiredModelEffort, modelAliases } from '../src/runners/catalog-remote.mjs';
 import { effortLevels, normalizeCrewEffort, codexModelEffort } from '../src/model-effort.mjs';
 import { codexEffortArgs } from '../src/runners/codex.mjs';
 import { toResponsesRequest } from '../src/engine/responses-wire.mjs';
@@ -132,4 +132,49 @@ test('GPT-5.5 retired: hidden from the Codex list, old ids resolve to GPT-5.6 So
   const saved = await readAgentCard(ws, slug);
   assert.equal(saved.meta.model, 'gpt-5.6-sol');
   assert.equal(saved.meta.effort, 'high', '5.5와 5.6 Sol은 강도 단계가 같다(low~xhigh·max→xhigh)');
+});
+
+// 빈 강도(분리 검수 MEDIUM, 총괄 결정 c) — 서버 기본이 gpt-5.5 = medium, 5.6 Sol = low(~/.codex/models_cache.json default_reasoning_level, 2026-10-09).
+// 대체표로 옮겨진 카드의 빈 강도만 옛 기본(대체표 effort)으로 채운다. 직접 고른 강도·원래 그 모델을 고른 카드·옮겨지지 않은 id는 그대로.
+test('GPT-5.5 retired: an empty effort follows the old server default only when the card was moved by the retired table', async () => {
+  for (const e of ['', '  ', null, undefined]) assert.equal(retiredModelEffort('codex', 'gpt-5.5', e, null), 'medium', String(e));
+  assert.equal(retiredModelEffort('codex', ' gpt-5.5 ', '', null), 'medium');
+  for (const e of ['low', 'high', 'max', 'xhigh']) assert.equal(retiredModelEffort('codex', 'gpt-5.5', e, null), e, e);
+  for (const id of ['gpt-5.6-sol', 'gpt-6.1-sol', '', 'toString', '__proto__']) assert.equal(retiredModelEffort('codex', id, '', null), '', id);
+  assert.equal(retiredModelEffort('claude', 'gpt-5.5', '', null), '', '다른 러너에는 대체표가 없다');
+  // 원격 alias가 목적지를 바꿔도 옛 모델의 기본 강도는 같다 / 원격이 그 id를 되살리면(자기 자신으로) 옮긴 것이 아니다
+  const ov = (to) => ({ schema: 1, runners: { codex: { add: [], retire: [], alias: { 'gpt-5.5': to } } } });
+  assert.equal(retiredModelEffort('codex', 'gpt-5.5', '', ov('gpt-6-sol')), 'medium');
+  assert.equal(retiredModelEffort('codex', 'gpt-5.5', '', ov('gpt-5.5')), '');
+  // 화면용 별칭 — 코드 대체표 위에 원격 alias(원격이 먼저)
+  assert.deepEqual(modelAliases('codex', null), { 'gpt-5.5': 'gpt-5.6-sol' });
+  assert.deepEqual(modelAliases('codex', ov('gpt-6-sol')), { 'gpt-5.5': 'gpt-6-sol' });
+  assert.deepEqual(modelAliases('claude', null), {});
+  assert.deepEqual(modelAliases('toString', null), {});
+
+  const ws = 'models55e';
+  await mkdir(paths(ws).agents, { recursive: true });
+  const card = (slug, model, effort = '') => writeFile(join(paths(ws).agents, `${slug}.md`), `---\nname: T\nslug: ${slug}\nrole: T\nrunner: codex\nmodel: ${model}\n${effort ? `effort: ${effort}\n` : ''}---\n\n# T\n`);
+  await card('a', 'gpt-5.5'); await updateAgentMeta(ws, 'a', { name: 'T2', model: 'gpt-5.5' }); // 편집 화면 저장 모양(강도 안 보냄)
+  assert.deepEqual([(await readAgentCard(ws, 'a')).meta.model, (await readAgentCard(ws, 'a')).meta.effort], ['gpt-5.6-sol', 'medium']);
+  await card('b', 'gpt-5.5'); await updateAgentMeta(ws, 'b', { model: 'gpt-5.5', effort: '' }); // 강도를 빈 값으로 보내도 옛 기본
+  assert.equal((await readAgentCard(ws, 'b')).meta.effort, 'medium');
+  await card('c', 'gpt-5.5', 'low'); await updateAgentMeta(ws, 'c', { model: 'gpt-5.5' });
+  assert.equal((await readAgentCard(ws, 'c')).meta.effort, 'low', '고른 강도는 그대로');
+  await card('d', 'gpt-5.6-sol'); await updateAgentMeta(ws, 'd', { name: 'T3', model: 'gpt-5.6-sol' });
+  assert.equal((await readAgentCard(ws, 'd')).meta.effort || '', '', '원래 5.6 Sol 카드에는 박지 않는다');
+  await card('e', 'gpt-5.5'); await updateAgentMeta(ws, 'e', { runner: 'claude', model: 'claude-opus-5-5' }); // 다른 러너로 옮기면 해당 없음
+  assert.equal((await readAgentCard(ws, 'e')).meta.effort || '', '');
+});
+
+test('/api/runners carries the retired-model aliases so the editor can say which model actually runs', async () => {
+  delete process.env.NEXT_PUBLIC_SUPABASE_URL; delete process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const { register } = await import('node:module');
+  register(new URL('./helpers/next-esm-resolve.mjs', import.meta.url));
+  const route = await import('../app/api/runners/route.js');
+  const j = await (await route.GET(new Request('http://127.0.0.1/api/runners'))).json();
+  const codex = j.runners.find((r) => r.id === 'codex');
+  assert.deepEqual(codex.aliases, { 'gpt-5.5': 'gpt-5.6-sol' });
+  assert.ok(codex.models.some((m) => m.id === codex.aliases['gpt-5.5']), '별칭 목적지는 목록 안 모델');
+  assert.deepEqual(j.runners.find((r) => r.id === 'claude').aliases, {});
 });

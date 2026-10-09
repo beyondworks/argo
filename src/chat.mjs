@@ -22,7 +22,7 @@ import { codexModelEffort } from './model-effort.mjs';
 import { defaultClaudeEffort } from './runners/catalog.mjs';
 import { classifyRunnerError, subscriptionBlockedNotice } from './runners/error-class.mjs'; // 실패 코드 표(불변식 C)
 import { markRunnerAuthFail, HEALTH_BILLED_RUNNERS } from './runner-health.mjs'; // 다음 턴 차단(불변식 A)
-import { effectiveModels, normalizeModelId, loadRemoteCatalog, openrouterFallbackModel, contextWindowFor } from './runners/catalog-remote.mjs';
+import { effectiveModels, normalizeModelId, loadRemoteCatalog, openrouterFallbackModel, contextWindowFor, retiredModelEffort } from './runners/catalog-remote.mjs';
 import { addRoutine, loadRoutines, updateRoutine, removeRoutine } from './routines.mjs'; // schedule_task·list_routines·cancel_routine — 크루가 '나중에 하기'를 걸고, 되돌리는 수단
 import { saveHandover } from './memory.mjs';
 import { loadMcp, safeMcpServersForRuntime } from './market.mjs';
@@ -1631,6 +1631,9 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
   // 오류/무시"의 뿌리). 실행은 그대로 기본 모델로 살리고(턴을 죽이지 않는다), 사실을 fellBackInfo와 같은
   // 통로로 표면에 싣는다 — 스레드(thread.mjs)·UI(chat.modelFallback)가 그린다.
   const modelFallbackInfo = (!resolved.fellBack && wantModel && !knownHere) ? { modelFallback: { wanted: wantModel, runner } } : {};
+  // 대체표로 옮겨진 카드(gpt-5.5 → 5.6 Sol)의 빈 강도는 옛 모델의 서버 기본으로 — 옮기기만 하면 대체 모델의 더 낮은 서버 기본(low)으로
+  // 말없이 내려간다(분리 검수 MEDIUM, 2026-10-09). 실제로 옮긴 모델로 돌 때만(러너 대체·목록 밖 강등·게이트 강등 턴은 카드 값 그대로).
+  const turnEffort = effModel ? retiredModelEffort(runner, modelOverride || meta.model, meta.effort) : (meta.effort ?? '');
   // 러너 대체 고지 — 조용한 폴백은 사용자가 "왜 딴 모델 말투/비용?"을 겪게 한다(신뢰 훼손). 크루가
   // 스스로 한 줄 알리게 지시한다(UI 변경 없이 chat·회의실·경쟁·위임·메신저 전 경로에 자연 반영).
   const rn = (id) => RUNNERS[id]?.name ?? id;
@@ -1832,7 +1835,7 @@ ${lang === 'en'
       const runPrompt = promptFor(withEarly);
       try {
         __turnControl.check();
-        reply = await externalExec({ runner, model: effModel, cwd: p.root, prompt: runPrompt, cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers, onSteerable });
+        reply = await externalExec({ runner, model: effModel, cwd: p.root, prompt: runPrompt, cred, signal: ac.signal, caps: cliCaps, effort: turnEffort, workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers, onSteerable });
       } catch (e) {
         const gated = !!(effModel && effectiveModels(runner).find((m) => m.id === effModel)?.gated); // 오버레이 반영(MEDIUM-3)
         if (abortReg.wasAborted() || !gated || !GATED_MODEL_ERR_RE.test(String(e.message || e))) throw e;
@@ -1861,7 +1864,7 @@ ${lang === 'en'
         const segNotes = seg.directives.length || seg.bad.length ? await runDirectives(wsId, agentSlug, seg.directives, { lang, bad: seg.bad, hop, chain, toolHop, results: [], mirrorCtx, delegationRelaxed: lim.relaxed, delegationTree: tree, counters: turnCounters, fullAuto, origin: notOwnerDirect, turnControl: __turnControl, usedTools: crewBridge?.called ?? null }) : [];
         doneText = [doneText, seg.directives.length || seg.bad.length ? [seg.clean, segNotes.join('\n')].filter(Boolean).join('\n\n') : reply].filter(Boolean).join('\n\n');
         try {
-          reply = await externalExec({ runner, model: usedModel, cwd: p.root, prompt: promptFor((ctx) => cliSteerPrompt(withEarly(ctx), doneText, texts, lang)), cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers, onSteerable }) ?? '';
+          reply = await externalExec({ runner, model: usedModel, cwd: p.root, prompt: promptFor((ctx) => cliSteerPrompt(withEarly(ctx), doneText, texts, lang)), cred, signal: ac.signal, caps: cliCaps, effort: usedModel ? turnEffort : (meta.effort ?? ''), workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers, onSteerable }) ?? '';
         } catch (e) {
           if (abortReg.wasAborted() || e?.aborted) throw e;
           steerFailed = { texts, reason: String(e?.message || e).slice(0, 400) };
@@ -2241,7 +2244,7 @@ ${lang === 'en'
     wsId, slug: agentSlug, prompt: promptBlocks ?? promptText, cwd: p.root,
     systemPrompt: systemPromptFor(md, p.root, skills, meta, lang, { userName: turnUser }) + sysTail + nativeToolsDirective(lang), // 브라우저·컴퓨터 유즈 안내는 네이티브 턴에만(SDK 턴엔 그 도구가 없다)
     env: sdkEnv, model: sdkModel, crewTools: crewSink, mcpServers: servers ?? {}, computer: computerOn,
-    ...(runner === 'codex' && codexModelEffort(meta.effort, sdkModel) ? { effort: codexModelEffort(meta.effort, sdkModel) } : {}), // Responses reasoning.effort uses the same model contract as CLI.
+    ...(runner === 'codex' && codexModelEffort(turnEffort, sdkModel) ? { effort: codexModelEffort(turnEffort, sdkModel) } : {}), // Responses reasoning.effort uses the same model contract as CLI.
     canUseTool: makePermissionGate(wsId, agentSlug, p.root, chain.length ? chain[chain.length - 1] : notOwnerDirect, lang, workRoots, { computerUse: computerOn, guest, msgr: gateMsgr }),
     resume: resumeId, saveSession: !sessionless, lang, contextTokens: contextWindowFor(runner, sdkModel), // saveSession — 세션을 남기지 않는 턴(메신저 DM·기억 안 남김 채널)은 에이전트당 하나인 세션 파일을 덮지 않는다(재검수 MEDIUM 2026-10-08: 1:1 턴이 데스크톱 세션을 지웠다) // 토큰 예산 — 창의 75%를 넘으면 앞부분 요약(engine/compact.mjs)
   }) : query({

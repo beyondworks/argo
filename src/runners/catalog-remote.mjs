@@ -70,10 +70,28 @@ export function contextWindowFor(runnerId, modelId, overlay = mem.overlay) {
 /** 옛 id → 현행 id(순수). 원격 alias가 먼저, 없으면 코드 대체표(RETIRED_MODEL_ALIASES — 원격 없이도 폐기 모델을 옮긴다), 둘 다 없으면 그대로.
     체인은 1단만(a→b→c는 명시적으로 a→c로 쓰게 — 순환 방지). 표 조회는 자기 속성만('toString' 같은 id가 객체 기본 속성을 받지 않게). */
 const ownGet = (o, k) => (o && typeof o === 'object' && Object.hasOwn(o, k) ? o[k] : undefined);
+const retiredEntry = (runnerId, id) => ownGet(ownGet(RETIRED_MODEL_ALIASES, runnerId), id);
 export function normalizeModelId(runnerId, id, overlay = mem.overlay) {
   const s = typeof id === 'string' ? id.trim() : '';
   if (!s) return s;
-  return ownGet(ownGet(overlay?.runners, runnerId)?.alias, s) ?? ownGet(ownGet(RETIRED_MODEL_ALIASES, runnerId), s) ?? s;
+  return ownGet(ownGet(overlay?.runners, runnerId)?.alias, s) ?? retiredEntry(runnerId, s)?.to ?? s;
+}
+/** 대체표로 옮겨진 카드의 강도(순수) — 강도가 비어 있으면 옛 모델의 서버 기본(대체표 effort)을, 그 밖에는 받은 값 그대로.
+    gpt-5.5(서버 기본 medium) → 5.6 Sol(서버 기본 low)처럼 옮기기만 하면 말없이 얕아지는 것을 막는다(분리 검수 MEDIUM, 2026-10-09).
+    직접 고른 강도·원래 그 모델을 고른 카드·옮겨지지 않은 id(원격이 자기 자신으로 되살린 경우 포함)는 건드리지 않는다.
+    소비자: chat.mjs(크루 턴 — 실제로 옮긴 모델로 돌 때만), persona.mjs(카드 저장 — 옮겨 저장할 때 강도도 같이 남겨 다음 턴에도 같게). */
+export function retiredModelEffort(runnerId, wantedId, effort, overlay = mem.overlay) {
+  if (String(effort ?? '').trim()) return effort;
+  const s = typeof wantedId === 'string' ? wantedId.trim() : '';
+  const old = s ? retiredEntry(runnerId, s)?.effort : '';
+  return old && normalizeModelId(runnerId, s, overlay) !== s ? old : '';
+}
+/** 화면용 별칭표(순수) — 옛 id → 지금 실행되는 id. 코드 대체표 위에 원격 alias(원격이 먼저 — normalizeModelId와 같은 순서).
+    편집 화면이 목록 밖 저장값을 '목록에 없음(기본 모델)'이 아니라 실제로 도는 모델로 말하게 /api/runners가 싣는다. */
+export function modelAliases(runnerId, overlay = mem.overlay) {
+  const code = ownGet(RETIRED_MODEL_ALIASES, runnerId) ?? {};
+  const remote = ownGet(ownGet(overlay?.runners, runnerId), 'alias') ?? {};
+  return { ...Object.fromEntries(Object.entries(code).map(([from, e]) => [from, e.to])), ...remote };
 }
 /** 카탈로그 밖 OpenRouter 모델의 강등 목적지 — chat(크루 턴)·oneshot(첫 영입·기억 정리)이 같은 관문을 쓴다(2차 검수 MEDIUM-2).
     무료(:free) id는 무료(온보딩 기본)로, 유료는 유료 기본으로 — 무료↔유료 티어 선을 코드가 넘지 않게(1차 검수 H-1: 죽은 무료 모델의

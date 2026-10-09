@@ -33,7 +33,8 @@ test('GPT-5.5 종료 — 생성한 카탈로그가 옛 앱의 Codex 목록에서
 test('코드 대체표의 모든 항목이 생성 카탈로그에도 retire·alias로 있다 — 새 앱만 고치고 옛 앱을 빠뜨리지 않게', () => {
   const v = validateOverlay(doc);
   for (const [rid, map] of Object.entries(RETIRED_MODEL_ALIASES)) {
-    for (const [from, to] of Object.entries(map)) {
+    for (const [from, { to, effort }] of Object.entries(map)) {
+      assert.ok(['low', 'medium', 'high', 'xhigh'].includes(effort), `${rid}/${from} 옛 기본 강도는 대체 모델도 받는 값`);
       assert.ok(v.runners[rid].retire.includes(from), `${rid}/${from} retire`);
       assert.equal(v.runners[rid].alias[from], to, `${rid}/${from} alias`);
       assert.equal(RUNNERS[rid].models.some((m) => m.id === from), false, `${rid}/${from}는 코드 목록에서 빠져야 한다`);

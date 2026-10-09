@@ -229,12 +229,15 @@ export const CODEX_UNSET_MODEL = 'gpt-6-astra';
 
 /** 폐기 모델 → 대체 모델(러너별) — 목록에서 뺀 id를 이미 고른 에이전트를 **원격 카탈로그 없이도**(오프라인·첫 실행·ARGO_MODEL_CATALOG=off)
     대체 모델로 돌린다. 없으면 목록 밖 모델이라 기본(codex는 CODEX_UNSET_MODEL)으로 강등되고 '모델 대체' 안내가 붙는다.
-    조회는 catalog-remote normalizeModelId 한 곳(원격 alias가 먼저 — 앱 발행 없이 목적지를 바꿀 길). 옛 앱은 이 표를 모르므로
+    항목: to = 대체 모델, effort = 옛 모델의 서버 기본 강도. 강도를 비운 카드는 인자 없이 서버 기본을 쓰는데, 대체 모델의 서버 기본이
+    더 낮으면 옮긴 사실만으로 말없이 얕아진다 — 옮긴 카드의 빈 강도만 이 값으로 채운다(catalog-remote retiredModelEffort: 턴·카드 저장).
+    조회는 catalog-remote 한 곳(normalizeModelId — 원격 alias가 먼저, 앱 발행 없이 목적지를 바꿀 길). 옛 앱은 이 표를 모르므로
     scripts/gen-model-catalog.mjs LEGACY에도 같은 retire/alias를 둔다(test/model-catalog-legacy.test.mjs가 두 표를 대조한다).
     GPT-5.5: Codex 서버 목록이 2026-10-14T19:00Z 종료를 안내(~/.codex/models_cache.json upgrade.retirement_at, 2026-10-09 확인). 대체는 5.6 Sol —
-    서버가 권하는 6.1 Sol은 핀 0.157.1 옛 앱에서 400이라 원격 alias(옛 앱)와 같은 목적지로 맞춘다. */
+    서버가 권하는 6.1 Sol은 핀 0.157.1 옛 앱에서 400이라 원격 alias(옛 앱)와 같은 목적지로 맞춘다. 서버 기본 강도는 gpt-5.5 = medium,
+    5.6 Sol = low(같은 파일 default_reasoning_level, 2026-10-09 확인). */
 export const RETIRED_MODEL_ALIASES = {
-  codex: { 'gpt-5.5': 'gpt-5.6-sol' },
+  codex: { 'gpt-5.5': { to: 'gpt-5.6-sol', effort: 'medium' } },
 };
 
 /** 크루가 effort를 고르지 않았을 때 claude 러너에 보낼 기본값. Opus 5.5는 API 기본이 medium(Opus 5는 high)이라
