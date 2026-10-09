@@ -70,7 +70,7 @@ import { OutsideRow } from './outside-row.mjs';
 import { dmMentionCrews, mentionPopupCrews, setDmRecipient, dmDeliveryMentions, dmUnavailableRecipients, relayCaptionKey, relayToLabel, relayToNames, relayNoticeView } from './dm-delivery.mjs';
 import { acceptFiles, withoutFile } from './attach-files.mjs';
 import { MediaAttachments, LinkCard, linkify, onLinkClick } from './media.jsx'; // 첨부 말풍선·크게 보기·링크 카드(2026-10-02)
-import { slashCandidates, slashInsert, rolePickCandidates, ROLE_PICK_RE } from './slash-commands.mjs';
+import { slashView, readSlashCommands, slashInsert, rolePickCandidates, ROLE_PICK_RE } from './slash-commands.mjs';
 import { getComposerSession, bindComposerSession, clearComposerSessions, composerTransport, setDeliveryReporter } from './composer-delivery.mjs';
 import { fetchSearchRows } from './search-rows.mjs';
 import { memberRows, memberPerms, MEMBER_CHIPS } from './phone-members.mjs';
@@ -1141,7 +1141,8 @@ function Shell({ session }) {
       q(supabase.from('msgr_org_members').select('user_id, role, display_name, expires_at').eq('org_id', id).is('removed_at', null)),
       // 크루 목록 — face(얼굴 고르기, 2026-09-24)는 옛 서버(열 없음)에 없을 수 있다. 없다는 오류(스키마 캐시에 없음·열 없음)면 그 열만 빼고 다시 읽어(다른 열은 이미 옛 서버에서도 됐다) 목록이 통째로 비지 않게 한다.
       (async () => {
-        const cols = 'id, owner_user_id, slug, display_name, role_text, hosting, status, allow, allow_users, last_seen_at, folder, created_at, avatar_url, bio, commands';
+        // commands('/' 명령 목록, 행당 최대 64KB)는 읽지 않는다 — 조직 에이전트 전원분이 조직을 열 때마다 따라왔다(H33). '/' 팝업이 열릴 때 그 방 에이전트만 따로 읽는다(slash-commands.mjs readSlashCommands).
+        const cols = 'id, owner_user_id, slug, display_name, role_text, hosting, status, allow, allow_users, last_seen_at, folder, created_at, avatar_url, bio';
         if (Date.now() - faceCol.missingAt > 600_000) try { const rows = await q(supabase.from('msgr_crews').select(`${cols}, face`).eq('org_id', id).in('status', ['active', 'available'])); return rows.map((r) => ('face' in r ? r : { ...r, face: null })); }
         catch (err) { const msg = err?.message ?? ''; if (!/face/i.test(msg) || !/schema cache|does not exist|could not find/i.test(msg)) throw err; faceCol.missingAt = Date.now(); } // 한 번 확인하면 기억 — 15초 재조회마다 실패할 요청을 다시 보내지 않는다(검수 #704 L-3, DB 위생)
         const rows = await q(supabase.from('msgr_crews').select(cols).eq('org_id', id).in('status', ['active', 'available'])); return rows.map((r) => ({ ...r, face: null }));
@@ -6745,15 +6746,16 @@ function Composer({ broadcast = null, onCrewJoined = null, outsideDmPersonal = n
   // '/' 커맨더(유건 지시 2026-09-14) — 채널 크루가 미러한 본체 명령(별칭·스킬, msgr_crews.commands). 팝업이 열리는 순간 최신 목록을
   // 한 번 다시 읽는다(본체에서 스킬·별칭이 바뀜 → 게이트웨이 폴이 행 갱신 → 여기). 실행은 본체 몫이고 여기서는 지시문을 입력창에 넣는다.
   const slashCrews = scopeCrews ?? crews;
-  const [freshCmds, setFreshCmds] = useState(null); // crewId → commands(팝업 열 때 재조회분)
+  const [freshCmds, setFreshCmds] = useState(null); // 팝업 열 때 재조회 결과 { ok, cmds }. null = 아직 안 왔다 — 조직 목록(loadOrg)은 commands를 싣지 않으므로 그동안은 '불러오는 중'(H33)
   const slashOpen = /^\/(\S*)$/.test(text);
+  const slashIds = slashCrews.map((c) => c.id).join(',');
   useEffect(() => {
     if (!slashOpen) { setFreshCmds(null); return; }
-    const ids = slashCrews.map((c) => c.id); if (!ids.length) return;
+    if (!slashIds) return;
     let alive = true;
-    supabase.from('msgr_crews').select('id, commands').in('id', ids).then(({ data }) => { if (alive && data) setFreshCmds(Object.fromEntries(data.map((r) => [r.id, r.commands]))); }).catch(() => {});
+    readSlashCommands(supabase, slashIds.split(',')).then((res) => { if (alive) setFreshCmds(res); }); // 던지지 않는다 — 실패·시간 초과(8초)는 {ok:false}로 끝나 불러오는 중에서 벗어나고 실패 안내가 보인다
     return () => { alive = false; };
-  }, [slashOpen, chId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [slashOpen, chId, slashIds]);
   // 1:1 방 수신·참조 = 입력창 명령(유건 결정 2026-09-14: 별도 패널 대신 "/to·/cc 치면 목록"). 서버는 역할 없는 @멘션을 to로 보므로 /to는 @ 삽입,
   // /cc만 참조 칩(recipients)에 남긴다. 후보 = 서버가 준 msgr_dm_candidates(지원 여부 포함). 이미 고른 크루는 빼고, 이 방 상대는 /to에서만 뺀다(/cc는 "참고만"이 가능).
   // 채널에서도 연다(유건 2026-09-14: "메신저 기능인데 왜 1:1에서만") — /to = @멘션, /cc = 답하지 않는 멘션(브리지 targetsCrew·서버 클레임이 cc를 실행에서 뺀다).
@@ -6769,7 +6771,8 @@ function Composer({ broadcast = null, onCrewJoined = null, outsideDmPersonal = n
   }, [isDm, text, scopeCrews, byName, allByName, recipients, roleCands]);
   const [slashOff, setSlashOff] = useState(null); // Esc로 닫은 그 글자에서는 '/' 목록을 다시 띄우지 않는다(D18 S95) — 글자가 바뀌면 다시
   useEffect(() => { if (slashOff !== null && text !== slashOff) setSlashOff(null); }, [text]); // eslint-disable-line react-hooks/exhaustive-deps
-  const slashCands = useMemo(() => rolePick || text === slashOff ? null : slashCandidates(text, slashCrews.map((c) => ({ ...c, commands: freshCmds?.[c.id] ?? c.commands })), { skillPrefix: (title) => t('cmd.skillPrefix', { name: title }), builtins: [{ cmd: 'to', desc: t('cmd.to') }, { cmd: 'cc', desc: t('cmd.cc') }] }), [rolePick, text, slashOff, slashCrews, freshCmds, t]);
+  const slash = useMemo(() => rolePick || text === slashOff ? null : slashView(text, slashCrews, freshCmds, { skillPrefix: (title) => t('cmd.skillPrefix', { name: title }), builtins: [{ cmd: 'to', desc: t('cmd.to') }, { cmd: 'cc', desc: t('cmd.cc') }] }), [rolePick, text, slashOff, slashCrews, freshCmds, t]);
+  const slashCands = slash?.cands ?? null; const slashLoading = !!slash?.loading; const slashFailed = !!slash?.failed; // loading = 재조회 전이고 명령을 아직 모르는 에이전트가 있다, failed = 재조회가 실패했다
   const [slashSel, setSlashSel] = useState(0);
   useEffect(() => { setSlashSel(0); }, [text]);
   const pickSlash = (cand) => {
@@ -6865,6 +6868,7 @@ function Composer({ broadcast = null, onCrewJoined = null, outsideDmPersonal = n
       if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pickSlash(slashCands[Math.min(slashSel, slashCands.length - 1)]); return; }
       if (e.key === 'Escape') { e.preventDefault(); setSlashOff(text); return; } // 목록만 닫는다 — 쓴 글은 그대로
     }
+    if (slashLoading && e.key === 'Enter' && !e.shiftKey && !isMobilePlatform) { e.preventDefault(); return; } // 명령을 아직 읽는 중(후보가 비어 위 분기를 못 탄다) — '/보고'가 그대로 전송되지 않게(검수 #892). 폰은 원래 Enter로 보내지 않아 건드리지 않는다. 읽기가 끝나면(실패·8초 시간 초과 포함) 예전대로
     if (pop && candidates.length) {
       if (e.key === 'ArrowDown') { e.preventDefault(); setSel((s) => (s + 1) % candidates.length); return; }
       if (e.key === 'ArrowUp') { e.preventDefault(); setSel((s) => (s - 1 + candidates.length) % candidates.length); return; }
@@ -6894,10 +6898,12 @@ function Composer({ broadcast = null, onCrewJoined = null, outsideDmPersonal = n
       )}
       {slashCands && (
         <div className="msgr-pop msgr-slashpop" role="listbox" aria-label={t('cmd.title')}>
-          {slashCands.length === 0 && <p className="empty">{t('cmd.empty')}</p>}
+          {slashCands.length === 0 && !slashLoading && !slashFailed && <p className="empty">{t('cmd.empty')}</p>}
           {slashCands.map((c, i) => <button key={c.key} type="button" role="option" aria-selected={i === slashSel} className={i === slashSel ? 'on' : ''} ref={i === slashSel ? (el) => el?.scrollIntoView?.({ block: 'nearest' }) : null} onMouseDown={(e) => e.preventDefault()} onClick={() => pickSlash(c)}>
             <span className="cmd">/{c.cmd}</span><span className="desc">{c.desc}</span>
           </button>)}
+          {slashLoading && <p className="empty" role="status">{t('cmd.loading')}</p>}
+          {slashFailed && <p className="empty" role="alert">{t('cmd.loadFailed')}</p>}
         </div>
       )}
       {pop && candidates.length > 0 && (

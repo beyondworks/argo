@@ -26,6 +26,37 @@ export function slashCandidates(text, crews, { skillPrefix = (title) => `${title
   return [...byKey.values()].filter((r) => r.match.some(hit)).map(({ match, ...r }) => r); // 별칭 먼저(삽입 순서), 그다음 스킬 — 본체와 같은 순서
 }
 
+/** 재조회 시간 제한 — supabase-js에는 기본 제한이 없어 응답이 안 오면 '불러오는 중'이 끝나지 않고 Enter도 계속 막힌다.
+    8초: 같은 앱의 설정 조회(oauth-handoff PROVIDER_SETTINGS_TIMEOUT_MS)와 같고, 서버 statement_timeout(8초)과 맞춰 DB가 느려도 네트워크가 막혀도 같은 때 끝난다.
+    가장 큰 경우(방 에이전트 30명 × 59KB ≈ 1.8MB)도 2Mbps에서 약 7초라 느린 회선의 정상 응답은 자르지 않는다. */
+export const SLASH_READ_TIMEOUT_MS = 8_000;
+
+/** '/' 팝업을 연 순간 그 방 에이전트의 최신 명령 목록만 따로 읽는다 — 조직 목록(loadOrg)은 commands 열(행당 최대 64KB)을 읽지 않는다(H33).
+    @returns {Promise<{ok:true, cmds:{[crewId]: commands}} | {ok:false}>} 던지지 않는다. 오류 응답·402·네트워크 예외·시간 초과는 {ok:false}(실패),
+    오류 없이 온 응답은 비어 있어도 {ok:true}(명령 없음) — 둘을 구분해야 실패 때 에이전트 명령이 안내 없이 사라지지 않는다.
+    시간이 지나면 요청을 취소(AbortController — AbortSignal.timeout은 오래된 웹뷰에 없다)하고, 신호를 무시하는 전송이어도 끝나게 경쟁시킨다(oauth-handoff와 같은 방식). */
+export async function readSlashCommands(db, ids, { timeoutMs = SLASH_READ_TIMEOUT_MS } = {}) {
+  const ctl = new AbortController(); let timer;
+  const timedOut = new Promise((_, reject) => { timer = setTimeout(() => { reject(new Error('timeout')); ctl.abort(); }, timeoutMs); });
+  try {
+    const query = db.from('msgr_crews').select('id, commands').in('id', ids);
+    const { data, error } = await Promise.race([typeof query.abortSignal === 'function' ? query.abortSignal(ctl.signal) : query, timedOut]);
+    if (error || !Array.isArray(data)) return { ok: false };
+    return { ok: true, cmds: Object.fromEntries(data.map((r) => [r.id, r.commands])) };
+  } catch { return { ok: false }; } finally { clearTimeout(timer); }
+}
+
+/** 팝업이 그릴 것 = { cands, loading, failed }. cands: slashCandidates 결과(토큰이 아니면 null). fresh = null(아직 안 옴) | readSlashCommands 결과. 재조회 값이 행 값보다 앞선다.
+    unknown = 명령을 모르는 에이전트가 있다 — loadOrg 행에는 commands 열이 없다(undefined). 개인 공간 RPC 행은 내 것은 배열·남의 것은 null로 이미 정해져 있어 기다리지 않는다.
+    loading = 재조회 전 → '명령 없음'이 아니라 '불러오는 중'. failed = 재조회가 실패했다 → '명령 없음'이 아니라 '불러오지 못했습니다'. */
+export function slashView(text, crews, fresh, opts) {
+  const list = Array.isArray(crews) ? crews : [];
+  const cmds = fresh?.ok ? fresh.cmds : null;
+  const cands = slashCandidates(text, list.map((c) => ({ ...c, commands: cmds?.[c.id] ?? c.commands })), opts);
+  const unknown = list.some((c) => c?.commands === undefined);
+  return { cands, loading: !!cands && !fresh && unknown, failed: !!cands && fresh?.ok === false && unknown };
+}
+
 /** 선택 결과를 입력창 텍스트로 — 1:1 방은 방 자체가 대상이라 지시문만, 단체 방은 명령을 가진 크루가 하나면 @이름을 앞에 붙인다(둘 이상이면 사장이 @로 고른다). */
 export function slashInsert(cand, { isDm }) {
   const one = !isDm && cand.crews.length === 1 ? cand.crews[0] : null;
