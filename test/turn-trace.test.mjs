@@ -422,3 +422,106 @@ test('다른 에이전트의 읽기 — 파일 도구·셸·codex app-server 승
   const judge = makeApprovalJudge(root);
   assert.equal(await judge('exec', { command: 'cat .turn-traces/other/trabcdef0011223344.json' }), 'decline', 'codex app-server 승인도 같은 게이트');
 });
+
+/* ─── 분리 검수 #914(2026-10-09) 반영 ─── */
+// MEDIUM: shrinkTrace가 단계 하나 줄일 때마다 기록 전체를 직렬화해 크기를 셌다(단계 수 × 크기). finish()의 저장이 턴 끝에서 동기로 돌아
+// 서버 전체가 멈췄다(13KB Write 1000개 32.7초, 60줄 Bash 1000개 4.8초). LOW-1: 크기는 압축 JSON으로 재고 파일은 들여쓰기 2칸으로 써 200KB를 넘었다.
+test('1000단계 저장 — 줄이기·저장이 정해진 시간 안, 디스크 파일도 200KB 이하(잰 직렬화 그대로 쓴다)', async () => {
+  const ws = 'big'; await mkdir(paths(ws).root, { recursive: true });
+  const out = 'drwxr-xr-x  5 user staff  160 Oct  9 12:00 some/path/to/file-name.txt\n'.repeat(60);
+  const tr = T.createTrace({ wsId: ws, slug: 'k', source: 'chat' });
+  for (let i = 0; i < 1000; i++) { tr.toolStart({ id: `c${i}`, name: 'Bash', input: { command: `ls -la some/dir/${i} && grep -rn pattern src | head -60` } }); tr.toolEnd(`c${i}`, { result: out }); }
+  const data = tr.data();
+  assert.ok(Buffer.byteLength(JSON.stringify(data)) > 4 * T.TRACE_CAP_BYTES, '줄여야 하는 크기여야 시험이 뜻이 있다');
+  let t0 = performance.now();
+  const sh = T.shrinkTrace(data);
+  const shrinkMs = performance.now() - t0;
+  assert.ok(shrinkMs < 300, `shrinkTrace ${Math.round(shrinkMs)}ms`);
+  assert.ok(Buffer.byteLength(T.serializeTrace(sh)) <= T.TRACE_CAP_BYTES);
+  t0 = performance.now();
+  await tr.finish({ ok: true });
+  const finishMs = performance.now() - t0;
+  assert.ok(finishMs < 1000, `finish ${Math.round(finishMs)}ms`);
+  const size = (await stat(join(traceDir(ws, 'k'), `${tr.id}.json`))).size;
+  assert.ok(size <= T.TRACE_CAP_BYTES, `디스크 파일 ${size}바이트`);
+  const back = await T.readTrace(ws, 'k', tr.id);
+  assert.equal(back.capped, true); assert.equal(back.n, 1000);
+  assert.equal(back.steps[0].name, 'Bash'); assert.equal(back.steps.at(-1).i, 999, '처음과 끝 단계는 남는다');
+});
+
+test('shrinkTrace — 차이로 센 크기가 실제 직렬화 크기와 같다(가운데 단계를 빼는 극단까지)', () => {
+  const steps = Array.from({ length: 4000 }, (_, i) => ({ i, id: `t${i}`, kind: i % 3 ? 'tool' : 'think', name: 'Bash', input: `$ c${i} ${'é'.repeat(i % 700)}`, result: `${'가'.repeat(i % 900)}\n`.repeat(i % 30), lines: 1, cut: false, status: 'ok', t: i, ms: 1, parent: null }));
+  for (const cap of [T.TRACE_CAP_BYTES, 60_000]) {
+    const out = T.shrinkTrace({ v: 1, id: 'trabcdef0123abcd', steps, n: 4000, dropped: 0 }, cap);
+    const real = Buffer.byteLength(T.serializeTrace(out));
+    assert.ok(real <= cap, `cap ${cap}: ${real}`);
+    assert.ok(real > cap - 2000, `상한에 붙어 멈춘다(덜 줄이지 않는다): ${real}`);
+  }
+});
+
+// LOW-2: 메모리 예산이 결과에만 걸려, 큰 입력(Write 본문)·긴 생각은 끝까지 다 들고 있었다(1000단계 9.9MB).
+test('메모리 예산 — 넘긴 뒤에는 입력·생각도 줄여 들고 있다(13KB Write 1000개)', () => {
+  const body = `${'lorem ipsum dolor sit amet '}${'x'.repeat(40)}\n`.repeat(200);
+  const tr = T.createTrace({ wsId: 'mem', slug: 'k', source: 'routine' });
+  for (let i = 0; i < 1000; i++) {
+    tr.toolStart({ id: `u${i}`, name: 'Write', input: { file_path: `/x/${i}.md`, content: body } });
+    tr.toolEnd(`u${i}`, { result: body });
+    tr.think(body);
+  }
+  const held = Buffer.byteLength(JSON.stringify(tr.data()));
+  assert.ok(held < 3_500_000, `들고 있는 기록 ${held}바이트`);
+  const last = tr.data().steps.at(-2);
+  assert.equal(last.name, 'Write');
+  assert.ok(last.input.length <= 501 && last.input.startsWith('file_path: /x/'), '예산을 넘긴 뒤 입력은 500자');
+  assert.ok(tr.data().steps.at(-1).result.length <= 501, '예산을 넘긴 뒤 생각은 500자');
+  tr.finish();
+});
+
+// LOW-6: 정리가 새 기록 저장 때만 돌아, 쉬는·해고한 크루의 기록은 30일이 지나도 남았다.
+test('전체 보존 정리 — 저장이 없는 크루의 30일 지난 기록도 지우고, 다 지우면 index·빈 폴더도 지운다', async () => {
+  const ws = 'idleco'; await mkdir(paths(ws).root, { recursive: true });
+  await writeFile(join(paths(ws).root, 'company.json'), JSON.stringify({ id: ws, name: 'idle' }));
+  const old = Date.now() - 40 * 86_400_000;
+  const mk = async (slug) => { const tr = T.createTrace({ wsId: ws, slug, source: 'chat' }); tr.think('x'); await tr.finish(); return tr.id; };
+  const age = async (slug, id) => { // 40일 전에 저장된 것처럼(그 뒤로 이 크루는 저장이 없었다)
+    const f = join(traceDir(ws, slug), 'index.json'); const idx = JSON.parse(await readFile(f, 'utf8'));
+    idx.items[id].at = old; await writeFile(f, JSON.stringify(idx));
+    await utimes(join(traceDir(ws, slug), `${id}.json`), old / 1000, old / 1000);
+  };
+  const gone = await mk('fired'); await age('fired', gone);
+  const fresh = await mk('mixed');
+  const oldKeep = await mk('mixed'); await age('mixed', oldKeep);
+  await writeFile(join(traceDir(ws, 'mixed'), 'notes.txt'), 'keep me');
+  const removed = await T.pruneAllTraces();
+  assert.equal(removed, 2);
+  assert.equal(existsSync(traceDir(ws, 'fired')), false, '기록이 하나도 안 남은 크루 폴더는 지운다');
+  const left = await readdir(traceDir(ws, 'mixed'));
+  assert.ok(left.includes(`${fresh}.json`) && !left.includes(`${oldKeep}.json`), left.join(','));
+  assert.equal(await readFile(join(traceDir(ws, 'mixed'), 'notes.txt'), 'utf8'), 'keep me', '모르는 파일은 지우지 않는다');
+  const idx = JSON.parse(await readFile(join(traceDir(ws, 'mixed'), 'index.json'), 'utf8'));
+  assert.deepEqual(Object.keys(idx.items), [fresh], 'index도 남은 기록만');
+  assert.deepEqual(await T.traceSummaries(ws, 'fired', [gone]), {});
+});
+
+test('서버 시작 때와 하루 한 번 전체 보존 정리를 건다(instrumentation-node)', async () => {
+  const src = await readFile(new URL('../instrumentation-node.mjs', import.meta.url), 'utf8');
+  assert.match(src, /pruneAllTraces\(\)/);
+});
+
+// LOW-4·5: 화면별 출처 — 회의실 발언 카드는 회의실 턴만, 1:1 진행 폴은 1:1 턴만(같은 크루의 메신저·루틴 턴 단계가 섞이지 않게).
+test('출처 필터 — 회의실 발언 카드에는 회의실 턴 기록만, 같은 크루의 1:1·메신저 기록은 싣지 않는다', async () => {
+  const { roomTraceGlance } = await import('../src/room.mjs');
+  const ws = 'roomsrc';
+  const chatTr = T.createTrace({ wsId: ws, slug: 'm', source: 'chat' }); chatTr.toolStart({ id: 'a', name: 'Read', input: { file_path: 'private-1on1.md' } });
+  assert.deepEqual(roomTraceGlance(ws, 'm', null), {}, '1:1 기록만 돌고 있으면 발언 카드는 비어 있다');
+  assert.deepEqual(roomTraceGlance(ws, 'm', chatTr.id), {}, '포인터가 1:1 기록을 가리켜도 싣지 않는다');
+  const roomTr = T.createTrace({ wsId: ws, slug: 'm', source: 'room' }); roomTr.toolStart({ id: 'b', name: 'Read', input: { file_path: 'agenda.md' } });
+  const msgr = T.createTrace({ wsId: ws, slug: 'm', source: 'messenger' }); msgr.toolStart({ id: 'c', name: 'Read', input: { file_path: 'dm.md' } });
+  const g = roomTraceGlance(ws, 'm', roomTr.id);
+  assert.equal(g.trace.id, roomTr.id); assert.match(g.trace.steps[0].input, /agenda\.md/);
+  assert.equal(roomTraceGlance(ws, 'm', null).trace.id, roomTr.id, '포인터가 없어도 가장 최근의 메신저 기록이 아니라 회의실 기록');
+  assert.equal(T.pickLiveTrace(ws, 'm', { source: 'chat' }).id, chatTr.id);
+  assert.equal(T.pickLiveTrace(ws, 'm', { want: msgr.id, source: 'chat' }).id, chatTr.id, '보고 있던 id라도 출처가 다르면 고르지 않는다');
+  assert.equal(T.pickLiveTrace(ws, 'm', { source: 'routine' }), null);
+  for (const t of [chatTr, roomTr, msgr]) t.finish();
+});

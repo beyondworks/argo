@@ -171,3 +171,28 @@ test('동기화되는 기록(활동 이벤트·대화)과 상태 파일에 명�
   assert.match(JSON.stringify(saved), /Bearer \*\*\*/, '무엇을 했는지는 남는다');
   assert.equal(r.trace.thought.includes('secrettoken'), false, '결과 객체의 생각 요약도');
 });
+
+// 분리 검수 #914 LOW-5: 1:1 진행 폴이 상태 파일 포인터·최신 기록을 출처 구분 없이 골라, 같은 크루의 메신저·루틴 턴 단계가 1:1 화면에 섞였다.
+test('라우트 출처 — 1:1 진행 폴은 1:1 턴 기록만, 같은 크루의 메신저·루틴 턴 단계는 싣지 않는다', { timeout: 120_000 }, async () => {
+  const chatRoute = await import('../app/api/companies/[ws]/chat/route.js');
+  const { setTurnStatus, clearTurnStatus } = await import('../src/turn-status.mjs');
+  const { appendTurn } = await import('../src/thread.mjs');
+  const get = async (url) => (await (await chatRoute.GET(new Request(`http://127.0.0.1${url}`), { params: Promise.resolve({ ws }) })).json());
+  await appendTurn(ws, 'r', { userMsg: 'qs', reply: 'as' });
+  const msgr = T.createTrace({ wsId: ws, slug: 'r', source: 'messenger' });
+  msgr.toolStart({ id: 'm1', name: 'Read', input: { file_path: 'dm-only.md' } });
+  const routine = T.createTrace({ wsId: ws, slug: 'r', source: 'routine' });
+  routine.toolStart({ id: 'r1', name: 'Read', input: { file_path: 'routine-only.md' } });
+  await setTurnStatus(ws, 'r', 'read', 'dm-only.md', undefined, 'messenger', undefined, msgr.compact(40), msgr.id);
+  let body = await get(`/api/companies/${ws}/chat?slug=r`);
+  assert.ok(body.status, '진행 줄(상태)은 그대로 온다');
+  assert.equal(body.status.trace, undefined, '메신저·루틴 기록 단계는 1:1 화면에 싣지 않는다');
+  body = await get(`/api/companies/${ws}/chat?slug=r&tr=${msgr.id}&rev=0`);
+  assert.equal(body.status.trace, undefined, '보고 있던 id로 메신저 기록을 달라고 해도 싣지 않는다');
+  const one = T.createTrace({ wsId: ws, slug: 'r', source: 'chat' });
+  one.toolStart({ id: 'c1', name: 'Read', input: { file_path: 'chat.md' } });
+  body = await get(`/api/companies/${ws}/chat?slug=r`);
+  assert.equal(body.status.trace.id, one.id, '1:1 턴이 돌면 그 기록을 싣는다(상태 파일이 메신저 턴을 가리켜도)');
+  for (const t of [msgr, routine, one]) await t.finish();
+  await clearTurnStatus(ws, 'r');
+});

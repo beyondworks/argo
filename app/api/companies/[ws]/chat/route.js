@@ -12,11 +12,12 @@ import { guardCompany } from '../../../../auth.mjs';
 export const maxDuration = 800; // 호스티드(Vercel Pro) 함수 상한 800 — SDK 턴(상한 없음)이 5분을 넘으면 옛 300은 HTTP가 먼저 죽었다. 로컬·상주·데스크톱은 무관, CLI 러너는 호스티드에서 안 돈다
 
 /** 진행 상태 + 작업 과정 — 화면이 보고 있던 기록(tr)이 살아 있으면 그 기록의 rev 이후 단계만(늘어난 부분), 아니면 상태 파일이 가리키는 기록을 처음부터.
-    상태의 옛 steps(최대 40개 요약)는 이 화면이 쓰지 않아 뺀다 — 폴 응답을 줄인다. 같은 크루의 다른 턴과 섞이지 않는 근거는 턴별 기록(turn-trace)이다. */
+    상태의 옛 steps(최대 40개 요약)는 이 화면이 쓰지 않아 뺀다 — 폴 응답을 줄인다. 같은 크루의 다른 턴과 섞이지 않는 근거는 턴별 기록(turn-trace)이고,
+    1:1 화면은 1:1 턴(source 'chat')의 기록만 싣는다 — 같은 크루의 메신저·루틴·회의실 턴 단계는 여기 보이지 않는다. */
 function withTrace(ws, slug, status, tr, rev) {
   if (!status) return status;
   const { steps: _legacy, ...rest } = status;
-  const live = pickLiveTrace(ws, slug, { want: tr, pointer: status.traceId });
+  const live = pickLiveTrace(ws, slug, { want: tr, pointer: status.traceId, source: 'chat' });
   return live ? { ...rest, trace: live.view(live.id === tr ? rev : 0) } : rest;
 }
 

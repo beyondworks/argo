@@ -201,3 +201,24 @@ test('64KB 넘는 글 — 64KB 앞 마지막 공백에서 잘라 가리고, 경�
     }
   }
 });
+
+// 검수 2026-10-09 LOW-3: 위 시험은 64KB 자리를 지나지 않아, 공백 기준 자르기를 64KB 고정 자르기로 바꿔도 초록이었다(검수 target.mjs: 150건 중 35건 노출).
+// 앞 글이 가림으로 크게 줄면(키 1300개 → '***') 64KB 자리에 걸친 비밀이 저장 상한 안으로 당겨진다 — 그 비밀이 반쯤 잘린 채 가림을 피하면 안 된다.
+test('64KB 자리에 걸친 비밀 — 공백 기준으로 잘라 통째로 빼므로 반쪽이 남지 않는다(앞 글이 가림으로 줄어 그 자리가 상한 안으로 당겨지는 경우)', () => {
+  const keys = Array.from({ length: 1300 }, () => `sk-proj-${'A'.repeat(40)} `).join('');
+  const shapes = [(v) => `https://u:${v}@h/p`, (v) => `postgres://admin:${v}@db/app`, (v) => `curl -u admin:${v} x`, (v) => `"password": "${v}"`, (v) => `-p'${v}'`];
+  let tried = 0; let masked = 0;
+  for (const shape of shapes) {
+    for (let off = 0; off < 30; off += 1) {
+      const v = `SECRETVAL${'Zq7'.repeat(5)}`;
+      const pad = 65_536 - keys.length - 12 - off;
+      const text = `${keys}${'y'.repeat(pad)} ${shape(v)} tail`;
+      tried += 1;
+      const cap = T.maskSecrets(text, 16_000);
+      const full = maskWhole(text).slice(0, 16_000); // 기준 — 원문 전체를 가린 뒤 자른 것(secret-mask가 원래 안 가리는 모양 -p'…'은 기준에서도 보인다)
+      if (!full.includes('SECRETV')) { masked += 1; assert.ok(!cap.includes('SECRETV'), `${shape('V')} off=${off}: ${JSON.stringify(cap.slice(-60))}`); }
+    }
+  }
+  assert.equal(tried, 150);
+  assert.ok(masked >= 100, `기준이 가리는 칸이 충분해야 시험이 뜻이 있다: ${masked}`);
+});

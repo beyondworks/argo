@@ -6,10 +6,10 @@
 //    같은 크루의 다른 턴(루틴·회의실·메신저)·위임받은 동료 턴은 다른 trace다 — 크루당 하나인 상태 파일이 섞이던 문제를 여기서 끊는다.
 //  · 진행 중에는 메모리(globalThis 등록부)에만 있다 — 디스크 쓰기 0. 끝나면 저장 대상 출처(1:1 'chat'·회의실 'room')만
 //    <ws>/.turn-traces/<slug>/<id>.json 한 번 + index.json 한 줄. 이 기기에만 둔다(sync EXCLUDE·diff 불가시).
-//  · 턴당 200KB 상한, 에이전트별 최근 100턴 그리고 30일 보존(저장할 때마다 정리).
+//  · 턴당 200KB 상한(디스크에 쓰는 압축 JSON 그대로 잰다), 에이전트별 최근 100턴 그리고 30일 보존(저장할 때마다 + 서버 시작 때와 하루 한 번 전체 정리).
 //  · 입력·결과·생각은 기록기에 넣을 때 가린다(maskSecrets) — 저장본·폴링·화면은 가린 값만 본다.
 //  · 폴링은 수정 번호(v)가 커진 단계의 보기(input 300자·결과 앞 20줄)만, 합계 32KB 상한. 전체는 펼칠 때 따로 받는다.
-import { readdir, rm, stat, mkdir, chmod } from 'node:fs/promises';
+import { readdir, rm, rmdir, stat, mkdir, chmod } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { paths } from './workspace.mjs';
@@ -31,7 +31,8 @@ const INPUT_STORE = 8000; // 단계 입력 저장 상한(Write 본문 같은 큰
 const RESULT_STORE = 16_000; // 단계 결과 저장 상한(글자)
 const RESULT_STORE_LINES = 400;
 const THINK_STORE = 4000;
-const MEM_BUDGET = 400_000; // 턴당 메모리 보관 글자 예산 — 넘으면 이후 결과는 앞 20줄만(병렬 회의 8명 × 긴 턴의 메모리 방어)
+const MEM_BUDGET = 400_000; // 턴당 메모리 보관 글자 예산 — 넘으면 이후 단계는 입력·생각 500자, 결과 앞 20줄만(병렬 회의 8명 × 긴 턴의 메모리 방어)
+const TIGHT_TEXT = 500; // 예산을 넘긴 뒤 입력·생각·요약 조각 상한(shrinkTrace의 500자와 같은 값)
 const VIEW_INPUT = 300;
 const VIEW_RESULT_CHARS = 1500;
 
@@ -84,10 +85,10 @@ function clipLines(s, maxLines, maxChars) {
   return { text: out, cut: out.length < s.length };
 }
 
-/** 도구 입력 → 가린 표시 글(저장 상한까지만 가린다). */
-function maskInput(name, input) {
+/** 도구 입력 → 가린 표시 글(가린 뒤 limit으로 자른다). */
+function maskInput(name, input, limit = INPUT_STORE) {
   const t = inputText(name, input);
-  return maskSecrets(t, INPUT_STORE) + (t.length > INPUT_STORE ? '…' : '');
+  return maskSecrets(t, limit) + (t.length > limit ? '…' : '');
 }
 
 /** 도구 입력 → 표시 글(순수). 셸 명령은 명령 그대로, 나머지는 '키: 값' 줄 — 명령·경로·인자를 전부 보인다. */
@@ -126,15 +127,16 @@ export function resultText(content) {
 /** 옛 단계 요약(상태 파일·활동 이벤트 — 이벤트는 기기 간 동기화된다)을 만들 입력 조각(순수). detailForTool이 보는 키만 골라 **가린 뒤** 넘긴다 —
     원문 그대로 만들면 명령 앞 48자에 든 Bearer·키·URL 비밀번호가 events.jsonl에 남는다(보안 검토 2026-10-09). 큰 본문(Write content)은 들고 있지 않는다. */
 const DETAIL_KEYS = ['file_path', 'pattern', 'command', 'description', 'url', 'query', 'to'];
-export function detailInput(input) {
+export function detailInput(input, cap = 2000) {
   if (!input || typeof input !== 'object') return {};
   const out = {};
   for (const k of DETAIL_KEYS) {
     const v = Array.isArray(input[k]) ? input[k].join(' ') : input[k];
-    if (typeof v === 'string') out[k] = maskSecrets(v, 2000); // 상한+여유로 자르고 가린 뒤 자른다(경계에 걸친 비밀이 남지 않게)
+    if (typeof v === 'string') out[k] = maskSecrets(v, cap); // 가린 뒤 자른다(경계에 걸친 비밀이 남지 않게)
   }
   return out;
 }
+const detSize = (det) => Object.values(det).reduce((n, v) => n + v.length, 0);
 /** 도구 한 줄 요약(가림 적용) — 상태 파일 detail·옛 단계 요약이 같은 함수를 쓴다. */
 export const safeDetail = (name, input, opts) => maskSecrets(detailForTool(name, detailInput(input), opts));
 
@@ -157,6 +159,10 @@ export function createTrace({ wsId, slug, source = 'chat', persist = PERSIST_SOU
   const at = () => now() - startedAt;
   const charge = (s) => { memUsed += s.length; };
   const overBudget = () => memUsed > MEM_BUDGET;
+  // 예산을 넘긴 뒤에는 결과만이 아니라 입력·생각·요약 조각도 줄인다(검수 2026-10-09: 13KB Write 1000개가 입력만으로 9.9MB를 들고 있었다)
+  const inputCap = () => (overBudget() ? TIGHT_TEXT : INPUT_STORE);
+  const detCap = () => (overBudget() ? TIGHT_TEXT : 2000);
+  const setInput = (st, nm, input) => { st.input = maskInput(nm, input, inputCap()); st._det = detailInput(input, detCap()); charge(st.input); memUsed += detSize(st._det); };
   const push = (st) => {
     if (steps.length >= MAX_STEPS) { dropped += 1; return null; }
     st.i = steps.length + dropped; st.v = ++rev;
@@ -182,17 +188,19 @@ export function createTrace({ wsId, slug, source = 'chat', persist = PERSIST_SOU
     think(text, { parent = null } = {}) {
       const s = String(text ?? '').trim();
       if (!s || ended) return null;
-      const body = maskSecrets(s, THINK_STORE) + (s.length > THINK_STORE ? '…' : ''); charge(body);
+      const lim = overBudget() ? TIGHT_TEXT : THINK_STORE;
+      const body = maskSecrets(s, lim) + (s.length > lim ? '…' : ''); charge(body);
       return push({ id: null, kind: 'think', name: '', input: '', result: body, lines: lineCount(body), cut: body.length < s.length, status: 'ok', t: at(), ms: 0, parent });
     },
     /** 도구(또는 하위 작업) 시작. 같은 id가 다시 오면 입력만 갱신한다(codex item.started → item.completed). */
     toolStart({ id: toolId = null, name, input, parent = null, kind = null } = {}) {
       if (ended) return null;
       const nm = String(name ?? 'tool');
-      if (toolId && byTool.has(toolId)) { const st = byTool.get(toolId); if (input !== undefined) { st.input = maskInput(nm, input); st._det = detailInput(input); touch(st); } return st; }
-      const body = maskInput(nm, input); charge(body);
-      const st = push({ id: toolId, kind: kind ?? kindOf(nm), name: nm, input: body, result: '', lines: 0, cut: false, status: 'run', t: at(), ms: 0, parent, _det: detailInput(input) }); // _det = 가린 요약용 조각(원문은 들고 있지 않는다)
-      if (st && toolId) byTool.set(toolId, st);
+      if (toolId && byTool.has(toolId)) { const st = byTool.get(toolId); if (input !== undefined) { setInput(st, nm, input); touch(st); } return st; }
+      if (steps.length >= MAX_STEPS) { dropped += 1; return null; } // 상한을 넘은 단계는 수만 센다 — 입력을 가리는 일도 하지 않는다
+      const st = push({ id: toolId, kind: kind ?? kindOf(nm), name: nm, input: '', result: '', lines: 0, cut: false, status: 'run', t: at(), ms: 0, parent, _det: {} }); // _det = 가린 요약용 조각(원문은 들고 있지 않는다)
+      setInput(st, nm, input);
+      if (toolId) byTool.set(toolId, st);
       return st;
     },
     /** 도구 끝 — 결과·오류를 짝지은 단계에 싣는다. 짝이 없으면(시작을 못 본 결과) 새 단계로. */
@@ -278,13 +286,15 @@ export function stepView(s) {
 export function liveTraces(wsId, slug) {
   return [...(LIVE.get(liveKey(wsId, slug))?.values() ?? [])].sort((a, b) => b.startedAt - a.startedAt);
 }
-/** 화면이 볼 trace 고르기 — 보고 있던 id(want)가 살아 있으면 그대로(두 턴이 번갈아 상태 파일을 써도 화면이 튀지 않게), 아니면 상태 파일이 가리키는 것(pointer), 그다음 최신. */
-export function pickLiveTrace(wsId, slug, { want = null, pointer = null } = {}) {
+/** 화면이 볼 trace 고르기 — 보고 있던 id(want)가 살아 있으면 그대로(두 턴이 번갈아 상태 파일을 써도 화면이 튀지 않게), 아니면 상태 파일이 가리키는 것(pointer), 그다음 최신.
+    source를 주면 그 출처의 기록만 고른다 — 1:1 화면에 같은 크루의 메신저·루틴 턴 단계가, 회의실 카드에 1:1 단계가 섞이지 않게. */
+export function pickLiveTrace(wsId, slug, { want = null, pointer = null, source = null } = {}) {
   const m = LIVE.get(liveKey(wsId, slug));
   if (!m?.size) return null;
-  if (want && m.has(want)) return m.get(want);
-  if (pointer && m.has(pointer)) return m.get(pointer);
-  return liveTraces(wsId, slug)[0] ?? null;
+  const fits = (t) => !!t && (!source || t.source === source);
+  if (want && fits(m.get(want))) return m.get(want);
+  if (pointer && fits(m.get(pointer))) return m.get(pointer);
+  return liveTraces(wsId, slug).find(fits) ?? null;
 }
 
 /* ─── 디스크(끝난 trace) ─── */
@@ -292,22 +302,38 @@ const dirOf = (wsId, slug) => join(paths(wsId).root, TRACE_DIR, sanitizeFileSlug
 const fileOf = (wsId, slug, id) => join(dirOf(wsId, slug), `${id}.json`);
 const indexOf = (wsId, slug) => join(dirOf(wsId, slug), 'index.json');
 
-/** 200KB 상한으로 줄이기(순수) — 오래된 결과부터 앞 20줄 → 입력 500자 → 생각 500자 → 본문 비우기 → 가운데 단계 제거. */
+/** 200KB 상한으로 줄이기(순수) — 오래된 결과부터 앞 20줄 → 입력 500자 → 생각 500자 → 본문 비우기 → 가운데 단계 제거.
+    크기는 저장할 때 쓰는 직렬화(압축 JSON — serializeTrace) 그대로 잰다. 전체를 한 번 재고, 단계별 바이트를 한 번씩 잰 뒤에는 바뀐 단계의 차이만 더하고 뺀다 —
+    단계마다 전체를 다시 직렬화하면 단계 수 × 크기라 1000단계 턴의 저장이 수십 초 서버를 멈췄다(검수 2026-10-09: 13KB Write 1000개 32.7초). */
+const jsonBytes = (x) => Buffer.byteLength(JSON.stringify(x));
+export const serializeTrace = (d) => JSON.stringify(d);
 export function shrinkTrace(data, cap = TRACE_CAP_BYTES) {
-  const size = (d) => Buffer.byteLength(JSON.stringify(d));
-  if (size(data) <= cap) return data;
+  if (jsonBytes(data) <= cap) return data;
   const d = { ...data, steps: data.steps.map((s) => ({ ...s })), capped: true };
+  // 압축 JSON에서 전체 = 단계 없는 머리 + 단계들 + 사이 쉼표(정확히 같다 — 머리의 "steps":[] 안에 단계가 그대로 들어간다)
+  let head = jsonBytes({ ...d, steps: [] });
+  const sz = d.steps.map(jsonBytes);
+  let sum = sz.reduce((a, b) => a + b, 0);
+  const total = () => head + sum + Math.max(0, d.steps.length - 1);
   const passes = [
-    (s) => { if (s.kind !== 'think' && s.result && lineCount(s.result) > PREVIEW_LINES) { s.result = previewLines(s.result, PREVIEW_LINES, VIEW_RESULT_CHARS).text; s.cut = true; } },
-    (s) => { if (s.input?.length > 500) s.input = `${s.input.slice(0, 500)}…`; },
-    (s) => { if (s.kind === 'think' && s.result?.length > 500) { s.result = `${s.result.slice(0, 500)}…`; s.cut = true; } },
-    (s) => { if (s.input || s.result) { s.input = ''; s.result = ''; s.cut = true; } },
+    (s) => { if (s.kind !== 'think' && s.result && lineCount(s.result) > PREVIEW_LINES) { s.result = previewLines(s.result, PREVIEW_LINES, VIEW_RESULT_CHARS).text; s.cut = true; return true; } return false; },
+    (s) => { if (s.input?.length > 500) { s.input = `${s.input.slice(0, 500)}…`; return true; } return false; },
+    (s) => { if (s.kind === 'think' && s.result?.length > 500) { s.result = `${s.result.slice(0, 500)}…`; s.cut = true; return true; } return false; },
+    (s) => { if (s.input || s.result) { s.input = ''; s.result = ''; s.cut = true; return true; } return false; },
   ];
   for (const pass of passes) {
-    for (const s of d.steps) { pass(s); if (size(d) <= cap) return d; }
+    for (let i = 0; i < d.steps.length; i += 1) {
+      if (!pass(d.steps[i])) continue;
+      const nb = jsonBytes(d.steps[i]); sum += nb - sz[i]; sz[i] = nb;
+      if (total() <= cap) return d;
+    }
   }
   // 그래도 넘으면(단계 제목만으로 상한을 넘는 극단) 가운데부터 뺀다 — 처음과 끝이 가장 쓸모 있다.
-  while (d.steps.length > 2 && size(d) > cap) { d.steps.splice(Math.floor(d.steps.length / 2), 1); d.dropped = (d.dropped ?? 0) + 1; }
+  while (d.steps.length > 2 && total() > cap) {
+    const mid = Math.floor(d.steps.length / 2);
+    d.steps.splice(mid, 1); sum -= sz.splice(mid, 1)[0];
+    d.dropped = (d.dropped ?? 0) + 1; head = jsonBytes({ ...d, steps: [] });
+  }
   return d;
 }
 
@@ -325,20 +351,19 @@ export async function saveTrace(wsId, slug, data, { now = Date.now } = {}) {
   if (!TRACE_ID_RE.test(String(data?.id ?? ''))) throw new Error('bad trace id');
   const body = shrinkTrace(data);
   await ensurePrivateDir(wsId, slug);
-  await writeJsonAtomic(fileOf(wsId, slug, data.id), body); // 파일 0600(writeJsonAtomic)
+  await writeJsonAtomic(fileOf(wsId, slug, data.id), serializeTrace(body)); // 상한을 잰 직렬화 그대로 쓴다(들여쓰기 2칸으로 쓰면 디스크 파일이 200KB를 넘었다). 파일 0600(writeJsonAtomic)
   await withLock(`trace-index:${wsId}:${sanitizeFileSlug(slug)}`, async () => {
     const idx = await readJsonLenient(indexOf(wsId, slug), null);
     const items = idx && typeof idx.items === 'object' && idx.items ? idx.items : {};
     items[data.id] = { n: body.n, ms: body.ms, ok: body.ok, at: body.endedAt ?? now(), source: body.source };
-    const kept = await pruneTraces(wsId, slug, items, { now });
+    const kept = await pruneTraces(dirOf(wsId, slug), items, { now });
     await writeJsonAtomic(indexOf(wsId, slug), { v: 1, items: kept });
   });
   return body;
 }
 
 /** 보존 정리 — 최근 100턴 그리고 30일. 파일 목록 기준(index에 없는 고아 파일도 같은 규칙). 반환: 남긴 index 항목. */
-async function pruneTraces(wsId, slug, items, { now = Date.now } = {}) {
-  const dir = dirOf(wsId, slug);
+async function pruneTraces(dir, items, { now = Date.now } = {}) {
   // 지우는 대상은 이 모듈이 만든 이름(trace id)만 — 폴더에 다른 파일이 있어도 건드리지 않는다
   const names = (await readdir(dir).catch(() => [])).filter((n) => n.endsWith('.json') && TRACE_ID_RE.test(n.slice(0, -5)));
   const rows = await Promise.all(names.map(async (n) => {
@@ -354,6 +379,37 @@ async function pruneTraces(wsId, slug, items, { now = Date.now } = {}) {
   }
   await Promise.all(drop.map((r) => rm(join(dir, r.n), { force: true }).catch(() => {})));
   return Object.fromEntries(Object.entries(items).filter(([id]) => keep.has(id)));
+}
+
+/** 전체 보존 정리 — 모든 회사의 모든 크루 기록 폴더에 같은 규칙(100턴·30일). 새 기록을 저장할 때만 정리하면 쉬는·해고한 크루의 기록이
+    30일을 넘어 남는다(검수 2026-10-09) — 서버 시작 때와 하루 한 번 돈다(instrumentation-node). 남은 기록이 없으면 index와 빈 폴더도 지운다.
+    지우는 것은 이 모듈이 만든 이름(trace id 파일·index.json)뿐이고, 폴더는 비었을 때만 지운다. 반환: 지운 기록 파일 수. */
+export async function pruneAllTraces({ now = Date.now } = {}) {
+  const { listCompanyIds } = await import('./hub.mjs'); // hub는 무거운 모듈이라 정리 때만 불러온다
+  let removed = 0;
+  for (const wsId of await listCompanyIds().catch(() => [])) {
+    const top = join(paths(wsId).root, TRACE_DIR);
+    const slugs = (await readdir(top, { withFileTypes: true }).catch(() => [])).filter((e) => e.isDirectory() && e.name === sanitizeFileSlug(e.name) && e.name);
+    for (const { name } of slugs) {
+      const dir = join(top, name);
+      await withLock(`trace-index:${wsId}:${name}`, async () => {
+        const before = (await readdir(dir).catch(() => [])).filter((n) => n.endsWith('.json') && TRACE_ID_RE.test(n.slice(0, -5))).length;
+        const idx = await readJsonLenient(join(dir, 'index.json'), null);
+        const items = idx && typeof idx.items === 'object' && idx.items ? idx.items : {};
+        const kept = await pruneTraces(dir, items, { now });
+        const after = (await readdir(dir).catch(() => [])).filter((n) => n.endsWith('.json') && TRACE_ID_RE.test(n.slice(0, -5))).length;
+        removed += before - after;
+        if (!after) {
+          await rm(join(dir, 'index.json'), { force: true }).catch(() => {});
+          IDX_CACHE.delete(join(dir, 'index.json'));
+          await rmdir(dir).catch(() => {}); // 다른 파일이 있으면 그대로 둔다
+        } else if (Object.keys(kept).length !== Object.keys(items).length) {
+          await writeJsonAtomic(join(dir, 'index.json'), { v: 1, items: kept });
+        }
+      }).catch(() => {});
+    }
+  }
+  return removed;
 }
 
 /** 끝난 trace 읽기(이 기기 파일). 없으면 null. */

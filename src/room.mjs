@@ -479,8 +479,8 @@ export async function getRoomTurn(wsId) {
 /** 발언 카드의 작업 과정 한눈 보기 — 회의실 턴(source 'room')의 기록에서 최근 6단계 제목만(입력 120자·결과 없음). 발언자 8명 × 약 1KB.
     펼치면 화면이 /trace로 전체를 받는다. 출처가 회의실이 아닌 기록(같은 크루의 1:1·루틴)은 싣지 않는다 — 남의 단계가 발언 카드에 섞이지 않게. */
 export function roomTraceGlance(wsId, slug, pointer) {
-  const t = pickLiveTrace(wsId, slug, { want: pointer });
-  if (!t || t.source !== 'room' || (pointer && t.id !== pointer)) return {};
+  const t = pickLiveTrace(wsId, slug, { want: pointer, source: 'room' });
+  if (!t || (pointer && t.id !== pointer)) return {}; // 출처는 pickLiveTrace가 거른다(source 'room')
   return { trace: { id: t.id, n: t.size, steps: t.tail(6).map((s) => ({ i: s.i, kind: s.kind, name: s.name, status: s.status, input: s.input.slice(0, 120), t: s.t, ms: s.ms, glance: true, ...(s.kind === 'think' ? { result: String(s.result ?? '').slice(0, 120) } : {}) })) } };
 }
 

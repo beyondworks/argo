@@ -42,6 +42,10 @@ ensureSync(); // C-1 기기 간 동기화 — env(서비스 키) 있을 때만 �
 setTimeout(() => { import('./src/orphan-turns.mjs').then((m) => m.sweepOrphanTurns()).catch(() => {}); }, 5000);
 // 세션 메시지 대기 기록 정리 — 이전 프로세스가 답을 기다리다 죽었으면 기다리던 크루의 방에 안내를 남기고 기록을 지운다(src/session-msg.mjs).
 setTimeout(() => { import('./src/session-msg.mjs').then((m) => m.sweepSessionMessages()).catch(() => {}); }, 5000);
+// 작업 과정 기록 보존 정리(100턴·30일) — 저장할 때만 정리하면 쉬는·해고한 크루의 기록이 30일을 넘어 남는다. 시작 때 한 번, 그 뒤 하루 한 번(src/turn-trace.mjs).
+const pruneTraces = () => import('./src/turn-trace.mjs').then((m) => m.pruneAllTraces()).catch(() => {});
+setTimeout(pruneTraces, 5000);
+setInterval(pruneTraces, 86_400_000).unref();
 
 // 러너 감지 예열 — 이건 CLI 4종을 **프로세스로 띄워** 버전을 묻는 작업이라 콜드가 2.7초다(실측
 // 2026-08-01). 화면은 페이지마다 러너 상태를 묻는데, 캐시가 비어 있으면 그 2.7초를 사용자가
