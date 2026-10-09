@@ -77,6 +77,10 @@ jobs:
 
       - name: Messenger regression tests
         shell: bash
+        # 윈도우는 test.yml과 같은 임시 폴더(RUNNER_TEMP, D:) — release.yml npm test 단계 주석 참고(0.1.100 run 37910750279)
+        env:
+          TEMP: ${{ runner.os == 'Windows' && runner.temp || env.TEMP }}
+          TMP: ${{ runner.os == 'Windows' && runner.temp || env.TMP }}
         run: cd ../.. && node --test test/msgr-*.test.mjs apps/messenger/test/*.test.mjs
 
       - name: Native external-agent tests (host OS)
