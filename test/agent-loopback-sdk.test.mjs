@@ -96,7 +96,7 @@ test('실제 SDK 턴: 쪼갠 주소로 부른 루틴 삭제·결재 자가 승�
 
 test('실제 SDK 턴: 재현과 같은 리터럴 curl은 실행 전에 권한 게이트가 거절하고 이유를 알린다', { skip: onWin, timeout: 120_000 }, async () => {
   const out = await agentRuns(`curl -s -X DELETE -H 'Cookie: argo-device=1' 'http://127.0.0.1:${PORT}/api/companies/agent-loopback/routines?id=r1'`);
-  assert.match(out, /Argo 앱의 API를 직접 부릅니다/, out.slice(0, 200));
+  assert.match(out, /루프백 주소가 들어 있습니다/, out.slice(0, 200));
   assert.deepEqual(reached, []);
 });
 
