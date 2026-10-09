@@ -19,7 +19,7 @@ const { Markdown } = await loadComponent(file('../app/ui.jsx'), {
     '@tauri-apps/api/core': 'export const invoke = async () => "";',
     '@tauri-apps/plugin-dialog': 'export const open = async () => null;',
   },
-  real: ['../app/tabs-state.mjs', '../app/md-table.mjs', '../src/vault-links.mjs', '../app/c/[ws]/zoom-math.mjs', '../app/apimsg.mjs', '../app/authmsg.mjs'].map(file),
+  real: ['../app/tabs-state.mjs', '../app/md-table.mjs', '../src/vault-links.mjs', '../src/deck-metrics.mjs', '../app/c/[ws]/zoom-math.mjs', '../app/apimsg.mjs', '../app/authmsg.mjs'].map(file),
 });
 const { rewriteVaultHref, vaultImageSrc, vaultFileRel } = await import('../src/vault-links.mjs').then((m) => ({ vaultImageSrc: () => null, vaultFileRel: () => null, ...m }));
 
