@@ -456,11 +456,11 @@ export function makeDb(client) {
       if (!crewIds.length) return [];
       return unwrap(await client.from('msgr_channels').select('id, personal_pair').in('personal_pair', crewIds.map((id) => `crew:${id}`))) ?? [];
     },
-    /** 그 방들에 그 크루가 쓴 비서 알림 글(client_msg_id 'as:' 접두 — src/assistant/deliver.mjs clientMsgId) — since 이후, 새 글부터 limit개. 지운 글도 센다(보낸 것은 보낸 것).
-        channel_id로 좁혀 (channel_id, id) 인덱스를 탄다 — 개인 1:1 방이라 행 수가 작다. */
-    async assistantNotices(channelIds, crewIds, sinceIso, limit) {
-      if (!channelIds.length || !crewIds.length) return [];
-      return unwrap(await client.from('msgr_messages').select('id, meta, created_at').in('channel_id', channelIds).eq('author_kind', 'crew').in('crew_id', crewIds)
+    /** 그 방에 그 크루가 쓴 비서 알림 글(client_msg_id 'as:' 접두 — src/assistant/deliver.mjs clientMsgId) — since 이후, 새 글부터 limit개. 지운 글도 센다(보낸 것은 보낸 것).
+        방 하나씩(channel_id 같음) — (channel_id, id) 인덱스를 거꾸로 타고 limit에서 멈춘다(contextOf와 같은 모양). 여러 방을 IN으로 묶고 id로 정렬하면
+        방 글이 limit보다 적을 때 기본 키 역순 전체 훑기를 고를 수 있어 쓰지 않는다. 개인 1:1 방이라 행 수가 작다. */
+    async assistantNotices(channelId, crewId, sinceIso, limit) {
+      return unwrap(await client.from('msgr_messages').select('id, meta, created_at').eq('channel_id', channelId).eq('author_kind', 'crew').eq('crew_id', crewId)
         .like('client_msg_id', 'as:%').gte('created_at', sinceIso).order('id', { ascending: false }).limit(limit)) ?? [];
     },
     async attachmentsOf(messageId) {

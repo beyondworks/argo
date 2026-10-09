@@ -140,24 +140,29 @@ test('R9: 방에서 복구 읽기 — 주인은 자기 개인 크루 행·이미
   assert.deepEqual(rooms.map((r) => r.id).sort(), [CH1, CH2].sort(), '방이 없는 크루(kim)는 빈칸 — 만들지 않는다');
   assert.equal(sql('select count(*) from public.msgr_channels'), channelsBefore, '방 찾기는 쓰기 0');
   const since = new Date(Date.now() - 14 * 86_400_000).toISOString();
-  const rows = await db.assistantNotices([CH1, CH2], [P1, W2], since, 300);
-  assert.equal(rows.length, 2, `as: 글 2건만(보통 답글·사람 글 제외): ${JSON.stringify(rows.map((r) => r.meta))}`);
+  const rows = await db.assistantNotices(CH1, P1, since, 300);
+  assert.equal(rows.length, 1, `방 1의 as: 글 1건만(보통 답글·사람 글 제외): ${JSON.stringify(rows.map((r) => r.meta))}`);
   assert.ok(rows.every((r) => r.meta?.notification === 'assistant' && Array.isArray(r.meta.assistant?.keys) && r.created_at));
-  assert.ok(rows[0].id > rows[1].id, '새 글부터');
-  assert.equal((await db.assistantNotices([CH1, CH2], [P1, W2], since, 1)).length, 1, 'limit');
-  assert.equal((await db.assistantNotices([CH1], [P1], new Date(Date.now() + 60_000).toISOString(), 300)).length, 0, 'since 뒤만');
+  assert.equal((await db.assistantNotices(CH2, W2, since, 300)).length, 1, '방 2의 as: 글');
+  assert.equal((await db.assistantNotices(CH1, W2, since, 300)).length, 0, '그 방의 그 크루 글만');
+  assert.ok(await db.insertMessage(notice(P1, CH1, key('e2'))));
+  const two = await db.assistantNotices(CH1, P1, since, 300);
+  assert.ok(two.length === 2 && two[0].id > two[1].id, '새 글부터');
+  assert.equal((await db.assistantNotices(CH1, P1, since, 1)).length, 1, 'limit');
+  assert.equal((await db.assistantNotices(CH1, P1, new Date(Date.now() + 60_000).toISOString(), 300)).length, 0, 'since 뒤만');
   // 다른 사람(b) — a의 행·방·글을 읽지 못한다(RLS)
   const dbB = dbAs(U.b);
   assert.deepEqual(await dbB.personalCrewsOf(U.a, [WS1, WS2]), []);
   assert.deepEqual(await dbB.personalRoomsOf([P1, W2]), []);
-  assert.deepEqual(await dbB.assistantNotices([CH1, CH2], [P1, W2], since, 300), []);
+  assert.deepEqual(await dbB.assistantNotices(CH1, P1, since, 300), []);
+  assert.deepEqual(await dbB.assistantNotices(CH2, W2, since, 300), []);
 });
 
 test('V4·R9: 엔진의 복구 읽기 그대로(readRoomNotices → foldNotices) — 지금 비서(회사 2 울프)와 꺼진 이전 비서(회사 1 페퍼)의 방을 합쳐 보낸 키를 얻는다', { skip }, async () => {
   const c = { uid: U.a, db: dbAs(U.a) };
   const now = Date.now();
-  const rows = await readRoomNotices(c, [{ ws: WS2, agent: 'wolff' }, { ws: WS1, agent: 'pepper' }, { ws: WS1, agent: 'kim' }], now);
+  const rows = await readRoomNotices(c, [{ ws: WS2, agent: 'wolff' }, { ws: WS1, agent: 'pepper' }, { ws: WS1, agent: 'kim' }], now - 14 * 86_400_000); // 처음 복구 = 14일
   const rec = foldNotices(rows, { now, tz: 'Asia/Seoul' });
-  assert.deepEqual(Object.keys(rec.sent), [key('e1')], '두 방의 같은 키 — 합집합 1개');
-  assert.equal(rec.instant, 1, '오늘 시작 전 알림 수는 키로 센다(두 방에 같은 키가 있어도 1)');
+  assert.deepEqual(Object.keys(rec.sent).sort(), [key('e1'), key('e2')], '두 방의 같은 키(e1)는 합집합 1개');
+  assert.equal(rec.instant, 2, '오늘 시작 전 알림 수는 키로 센다(두 방에 같은 e1이 있어도 1)');
 });

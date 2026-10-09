@@ -8,7 +8,7 @@
 // 읽는 방: 같은 주인의 회사들 중 비서 설정에 에이전트가 적힌 회사(켜짐·꺼짐 모두 — 비서를 다른 회사로 바꾸면 이전 회사는 꺼진 채 에이전트가 남는다)의
 // 그 에이전트 개인 1:1 방, 이미 있는 방만(만들지 않는다). 최근 14일(보낸 키 보관 기간과 같다)·300건(설계 7절).
 // 보류 목록은 넘겨받지 않는다(설계 7절) — 다른 기기가 모은 보류는 그 기기가 묶음에 넣거나, 이 기기가 자기 확인 범위로 다시 찾는다.
-// 호출: 복구 1번 = 크루 행 1 + 방 1 + 글 1(크루·방이 없으면 그 뒤는 0). 실패하면 5분 뒤 다시 — 매 틱 읽지 않는다.
+// 호출: 복구 1번 = 크루 행 1 + 방 1 + 방마다 글 1(보통 방 1~2개, 크루·방이 없으면 그 뒤는 0). 실패하면 5분 뒤 다시 — 매 틱 읽지 않는다.
 // 내려받는 양: 처음(이 기기에 기록 없음·읽는 방이 바뀜)만 14일, 그 뒤(잠자기·재시작)는 지난 복구에서 본 마지막 글 시각 − 10분과 오늘 0시 중 이른 쪽부터
 // (recoverSince) — 오늘 수는 늘 오늘 글 전부로 센다. 같은 글을 매번 다시 내려받지 않게(DB 위생 — 전송량).
 import { SENT_KEEP_MS } from './state.mjs';
@@ -52,8 +52,10 @@ export async function readRoomNotices(c, targets, sinceMs) {
   if (!crews.length) return [];
   const pairs = new Set(crews.map((r) => `crew:${r.id}`));
   const rooms = ((await c.db.personalRoomsOf(crews.map((r) => r.id))) ?? []).filter((r) => r?.id && pairs.has(r.personal_pair));
-  if (!rooms.length) return [];
-  return (await c.db.assistantNotices(rooms.map((r) => r.id), rooms.map((r) => r.personal_pair.slice('crew:'.length)), new Date(sinceMs).toISOString(), RECOVER_LIMIT)) ?? [];
+  const since = new Date(sinceMs).toISOString();
+  const out = [];
+  for (const r of rooms) out.push(...((await c.db.assistantNotices(r.id, r.personal_pair.slice('crew:'.length), since, RECOVER_LIMIT)) ?? [])); // 방 하나씩(인덱스 — msgr.mjs)
+  return out;
 }
 
 /** 글 → 복구 값(순수). 0.1.99(엔진 2)가 쓴 글도 같은 모양이다(meta.assistant.keys·kind). 반환:

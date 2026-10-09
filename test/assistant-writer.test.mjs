@@ -74,9 +74,9 @@ function fakeServer({ events = [], uid = 'u1', crews = [] } = {}) {
       },
       async personalCrewsOf(_u, wsIds) { call('personalCrewsOf'); if (env.failRecover) throw new Error('recover read failed'); return env.crews.filter((c) => c.org_id == null && wsIds.includes(c.ws_id)); },
       async personalRoomsOf(crewIds) { call('personalRoomsOf'); return crewIds.filter((id) => env.rooms.has(id)).map((id) => ({ id: `room-${id}`, personal_pair: `crew:${id}` })); },
-      async assistantNotices(chIds, crewIds, since, limit) {
+      async assistantNotices(ch, crewId, since, limit) {
         call('assistantNotices', { since, limit });
-        return env.inserts.filter((r) => chIds.includes(r.channel_id) && crewIds.includes(r.crew_id) && r.client_msg_id.startsWith('as:') && r.created_at >= since)
+        return env.inserts.filter((r) => r.channel_id === ch && r.crew_id === crewId && r.client_msg_id.startsWith('as:') && r.created_at >= since)
           .sort((a, b) => b.seq - a.seq).slice(0, limit).map((r) => ({ id: r.seq, meta: r.meta, created_at: r.created_at }));
       },
     },
@@ -339,9 +339,9 @@ test('R9(모양): 복구는 같은 주인의 비서 방만 — 꺼진 회사도 
   env.rooms.add('crew-w');
   const seen = [];
   const s0 = env.session;
-  env.session = { ...s0, db: { ...s0.db, async personalCrewsOf(u, wsIds) { seen.push(['crews', [...wsIds].sort()]); return s0.db.personalCrewsOf(u, wsIds); }, async personalRoomsOf(cids) { seen.push(['rooms', [...cids].sort()]); return s0.db.personalRoomsOf(cids); }, async assistantNotices(ch, cids, since, limit) { seen.push(['notices', [...ch].sort(), [...cids].sort(), limit]); return s0.db.assistantNotices(ch, cids, since, limit); } } };
+  env.session = { ...s0, db: { ...s0.db, async personalCrewsOf(u, wsIds) { seen.push(['crews', [...wsIds].sort()]); return s0.db.personalCrewsOf(u, wsIds); }, async personalRoomsOf(cids) { seen.push(['rooms', [...cids].sort()]); return s0.db.personalRoomsOf(cids); }, async assistantNotices(ch, cid, since, limit) { seen.push(['notices', ch, cid, limit]); return s0.db.assistantNotices(ch, cid, since, limit); } } };
   await run(ws1, env, at('10:00'), at('10:00'), { ids: [ws1, off, stranger] });
-  assert.deepEqual(seen, [['crews', [off, ws1].sort()], ['rooms', ['crew-p', 'crew-w']], ['notices', ['room-crew-w'], ['crew-w'], 300]]);
+  assert.deepEqual(seen, [['crews', [off, ws1].sort()], ['rooms', ['crew-p', 'crew-w']], ['notices', 'room-crew-w', 'crew-w', 300]], '방이 있는 크루만, 방 하나씩');
   assert.equal(env.calls.find((c) => c.name === 'assistantNotices').since, iso(at('10:00') - 14 * 86_400_000), '최근 14일');
 });
 
