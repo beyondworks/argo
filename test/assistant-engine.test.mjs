@@ -44,11 +44,13 @@ async function writeCfg(ws, obj) {
 }
 const ev = (id, start, end, extra = {}) => ({ id, org_id: null, owner: 'u1', title: `일정 ${id}`, location: '', all_day: false, starts_at: iso(start), ends_at: iso(end), rrule: null, exdates: [], attendees: [], ...extra });
 
-const ALLOWED_CALLS = new Set(['office_event_list', 'msgr_dm_personal_crew', 'myCrews', 'insertMessage']); // 설계 10절 — 감시기가 부를 수 있는 서버 호출(1단계 몫)
+// 설계 10절 — 감시기가 부를 수 있는 서버 호출. 3단계(방에서 복구 — src/assistant/recover.mjs)가 읽기 셋을 더했다: 내 개인 크루 행·이미 있는 1:1 방·비서 알림 글.
+const ALLOWED_CALLS = new Set(['office_event_list', 'msgr_dm_personal_crew', 'myCrews', 'insertMessage', 'personalCrewsOf', 'personalRoomsOf', 'assistantNotices']);
 const seenCalls = new Set();
-/** 가짜 서버 — office_event_list(서버처럼 기간에 걸치는 행), 개인 1:1 방 RPC, 내 크루 행, 글 넣기(client_msg_id 유니크 = 23505 → null). */
+/** 가짜 서버 — office_event_list(서버처럼 기간에 걸치는 행), 개인 1:1 방 RPC(처음 부를 때 방을 만든다), 내 크루 행, 글 넣기(client_msg_id 유니크 = 23505 → null),
+    방에서 복구 읽기 셋(이미 있는 방·그 방의 비서 글 — 실제 서버처럼 넣은 글을 돌려준다). 크루 행에 ws_id가 없으면 지금 회사의 행으로 본다. */
 function fakeServer({ events = [], uid = 'u1', crews = [{ id: 'crew-p', org_id: null, slug: 'pepper' }] } = {}) {
-  const env = { events, crews, calls: [], inserts: [], now: 0, failRead: false, failRoom: false, failInsert: false, ids: new Set(), session: null };
+  const env = { events, crews, calls: [], inserts: [], now: 0, failRead: false, failRoom: false, failInsert: false, ids: new Set(), rooms: new Set(), session: null };
   const overlaps = (e, from, to) => Date.parse(e.starts_at) < to && (e.rrule ? true : Date.parse(e.ends_at) > from);
   env.session = {
     uid,
@@ -60,7 +62,7 @@ function fakeServer({ events = [], uid = 'u1', crews = [{ id: 'crew-p', org_id: 
           const from = Date.parse(args.p_from); const to = Date.parse(args.p_to);
           return { data: { events: env.events.filter((e) => overlaps(e, from, to)).map((e) => ({ ...e })), orgs: [] }, error: null };
         }
-        if (name === 'msgr_dm_personal_crew') return env.failRoom ? { data: null, error: { message: 'msgr_not_allowed' } } : { data: `room-${args.crew}`, error: null };
+        if (name === 'msgr_dm_personal_crew') { if (env.failRoom) return { data: null, error: { message: 'msgr_not_allowed' } }; env.rooms.add(args.crew); return { data: `room-${args.crew}`, error: null }; }
         return { data: null, error: { message: `unexpected rpc ${name}` } };
       },
     },
@@ -71,8 +73,15 @@ function fakeServer({ events = [], uid = 'u1', crews = [{ id: 'crew-p', org_id: 
         if (env.failInsert) throw new Error('network down');
         if (env.ids.has(row.client_msg_id)) return null;
         env.ids.add(row.client_msg_id);
-        env.inserts.push({ ...row, at: env.now });
+        env.inserts.push({ ...row, at: env.now, created_at: iso(env.now) });
         return { id: `m${env.inserts.length}` };
+      },
+      async personalCrewsOf(_u, wsIds) { env.calls.push({ name: 'personalCrewsOf', at: env.now }); seenCalls.add('personalCrewsOf'); return env.crews.filter((c) => c.org_id == null).map((c) => ({ ...c, ws_id: c.ws_id ?? wsIds[0] })); },
+      async personalRoomsOf(ids) { env.calls.push({ name: 'personalRoomsOf', at: env.now }); seenCalls.add('personalRoomsOf'); return ids.filter((id) => env.rooms.has(id)).map((id) => ({ id: `room-${id}`, personal_pair: `crew:${id}` })); },
+      async assistantNotices(ch, crewId, { afterId = null, sinceIso, limit }) {
+        env.calls.push({ name: 'assistantNotices', at: env.now }); seenCalls.add('assistantNotices');
+        return env.inserts.map((r, i) => ({ ...r, seq: i + 1 })).filter((r) => r.channel_id === ch && r.crew_id === crewId && r.client_msg_id.startsWith('as:') && (afterId != null ? r.seq > afterId : r.created_at >= sinceIso))
+          .reverse().slice(0, limit).map((r) => ({ id: r.seq, author_kind: r.author_kind, client_msg_id: r.client_msg_id, meta: r.meta, created_at: r.created_at }));
       },
     },
   };
@@ -485,7 +494,7 @@ test('23505(같은 client_msg_id가 이미 있음) — 보낸 것으로 기록�
 
 /* ── 버전 섞임·DB D1~D4 ── */
 
-test('D1: 새 항목 0으로 1시간 — Supabase 쓰기 0(실제 supabase-js → 가짜 HTTP), 상태 파일은 동기화 제외, 대화 기록 쓰기 0', async () => {
+test('D1: 새 항목 0으로 1시간 — Supabase 쓰기 0(실제 supabase-js → 가짜 HTTP, 읽기는 일정 RPC와 처음 한 번의 방에서 복구), 상태 파일은 동기화 제외, 대화 기록 쓰기 0', async () => {
   const { startFakeSupabase } = await import('./helpers/fake-supabase-http.mjs');
   const { createClient } = await import('@supabase/supabase-js');
   const { makeDb } = await import('../src/gateway/msgr.mjs');
@@ -498,8 +507,10 @@ test('D1: 새 항목 0으로 1시간 — Supabase 쓰기 0(실제 supabase-js �
     const deps = depsFor({}, ws, { session: async () => session });
     for (let t = at('10:00'); t <= at('11:00'); t += MIN) await T.runAssistantTick(ws, { now: t, deps });
     const hits = fake.hits.map((h) => h.k);
-    assert.ok(hits.length >= 4 && hits.length <= 6, `읽기는 15분마다(${hits.length}회): ${hits.join(', ')}`);
-    assert.deepEqual([...new Set(hits)], ['POST /rest/v1/rpc/office_event_list'], '일정 읽기 RPC 말고는 아무 요청도 없다(글·방·저장소 쓰기 0)');
+    const calReads = hits.filter((k) => k === 'POST /rest/v1/rpc/office_event_list');
+    assert.ok(calReads.length >= 4 && calReads.length <= 6, `읽기는 15분마다(${calReads.length}회): ${hits.join(', ')}`);
+    // 3단계: 처음 맡는 틱에 방에서 복구 읽기 한 번(크루 행 → 행이 없으면 방·글 읽기 0). 그 밖의 요청은 없다(글·방·저장소 쓰기 0)
+    assert.deepEqual(hits.filter((k) => k !== 'POST /rest/v1/rpc/office_event_list'), ['GET /rest/v1/msgr_crews'], '일정 읽기 RPC와 방에서 복구 읽기(GET) 한 번 말고는 아무 요청도 없다');
     assert.equal(EXCLUDE('.assistant/state.json'), true, '상태 파일은 동기화 업로드 대상이 아니다');
     assert.equal(EXCLUDE('.assistant'), true);
     assert.deepEqual(await readdir(paths(ws).chats).catch(() => []), chatsBefore, '대화 기록 파일 변화 0');

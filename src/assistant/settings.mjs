@@ -6,13 +6,26 @@
 // 화면이 다루는 칸: 켜기·끄기(+ 어느 에이전트), 일정 알림 몇 분 전, 내일 일정 요약(저녁 묶음) 시각, 조용한 시간과 그 예외.
 // 아침 묶음 시각은 고르지 않는다 — 조용한 시간이 끝나는 시각이다(설계 13절 "조용한 시간 끝과 같게"). 고를 필요 없는 값은 제품이 정한다.
 // 볼 것은 일정 하나뿐이다(메일 4단계, 할 일·거래 5단계). 처음 켤 때 메일·할 일·거래는 false로 적는다 — 그 단계가 나와도 사용자가 따로 켜기 전에는
-// 읽지 않는다(설계 3.2 "동의 없이 메일을 읽지 않는다"). 하루 즉시 알림 상한은 3단계가 쓰는 값이라 이 화면에 없다(저장값·기본값 그대로).
+// 읽지 않는다(설계 3.2 "동의 없이 메일을 읽지 않는다"). 하루 즉시 알림 상한(dailyCap)은 제품이 정하는 값이라 고르는 칸이 없다(저장값·기본값 10 그대로 — 엔진이 쓰고 상태 칸에 "n/상한"으로 보인다).
 //
 // 화면 밖 칸 이어받기: 봉인이 맞는 파일이면 이 화면이 다루지 않는 칸(나중 단계의 칸, 볼 것)을 그대로 둔다 — 새 버전 기기가 저장한 칸을 옛 화면이 지우지 않게.
 // 봉인이 안 맞거나 없으면 처음 켜는 것처럼 기본값에서 시작한다 — 화면 밖에서 바뀐 값(예: 에이전트가 심은 watch.mail:true)을 다시 봉인하지 않게.
 //
 // 사용자당 비서 1명(설계 3.2): 켜거나 바꾸면 같은 주인의 다른 회사에서 켜져 있던(봉인이 맞는) 비서를 끈다. 다른 기기에서 거의 같은 때 켠 경우는
 // 엔진이 켠 시각이 늦은 쪽만 돌린다(rules.mjs assistantCompanyOf). 이 기기의 저장끼리는 한 줄로 세운다(SAVE_LOCK).
+// 다른 회사를 끌 때는 그 회사의 assistant.json만 꺼짐으로 쓰고 company.json(봉인)은 건드리지 않는다(H63, #865 3차 검수 R7) — 사용자가 손대지 않은 회사의
+// company.json을 다시 쓰면, 다른 기기에서 방금 보관한 그 회사가 동기화의 보관 마커 규칙(sync.mjs syncTombstones: company.json 수정 시각 ≥ 보관 시각이면
+// "보관 이후 수정" → 마커 철회)에 걸려 되살아났다. 꺼진 설정은 엔진이 봉인을 보지 않으므로(config.mjs) 모든 버전에서 꺼짐이고, 화면은 이 꺼짐을
+// "화면 밖 변경" 없이 꺼짐으로 보인다.
+// 끈 파일의 모양(offFile, #894 보안 검토 두 건): { enabled: false, agent }만 쓴다 — 봉인과 다시 맞춰질 수 없고, 이어받을 값도 담지 않는다.
+//  · company.json 봉인은 예전 '켜짐' 바이트를 가리키므로, 켜짐 파일에서 enabled만 false로 바꿔 두면(fd04f4a7) 회사 폴더에 쓸 수 있는 누구든(에이전트 파일 도구 포함)
+//    enabled를 true로 한 글자 바꿔 봉인이 맞는 켜짐을 만들 수 있었다 — 사용자가 지금 비서를 끄면 이전 회사 비서가 저절로 살아났다.
+//  · 이어받을 값을 봉인 안 된 칸(inherit)에 두고 다시 켤 때 쓰면(7251c8a9) 누구든 그 칸을 넣거나 고쳐 두었다가, 사용자가 '켜기'를 누르는 순간 그 값이 봉인됐다
+//    (값 세탁 — 비서를 켠 적 없는 회사에 손으로 만든 파일에도 걸렸다). 그래서 봉인이 안 맞는 파일은 어떤 칸이 있든 저장·화면 모두 기본값이다(이 PR 전과 같은 규칙).
+//    다시 켜면 설정은 기본값에서 시작한다 — 이어받기가 필요하면 지금 비서의 봉인 파일에 담아 오는 방식으로 후속.
+//  · agent는 남긴다 — 방에서 복구(recover.mjs recoveryTargets)가 이전 비서의 1:1 방을 읽어 두 방 알림을 막는 데 쓴다(읽기만). 이 값도 봉인 안 된 값이라 고쳐 두면
+//    같은 주인의 다른 개인 에이전트 방을 읽게 되지만, 세는 것은 그 주인의 개인 1:1 방에서 에이전트가 쓴 비서 알림 글(as: 표지 + meta.notification)뿐이라
+//    결과는 '그 사람에게 실제로 이미 보낸 알림'을 다시 보내지 않는 것까지다. 다시 켤 때는 카드의 에이전트를 쓴다(파일 값 아님).
 //
 // 보기 = 설정 + 지금 비서(회사·에이전트) + 상태. 전부 로컬 파일·메모리에서 읽는다 — Supabase 호출 0(리스 주인은 동기화가 이미 읽은 메모리 값, 로그인은 기기 세션 파일과
 // 사망 마커 — 회전을 일으키지 않는 읽기 전용 판정).
@@ -40,18 +53,26 @@ const lockAssistant = (wsId, fn) => withLock(`assistant:${wsId}`, fn, { file: fi
 const hostTz = () => { try { return new Intl.DateTimeFormat().resolvedOptions().timeZone || null; } catch { return null; } };
 
 /** assistant.json 원문 + 봉인 대조 — { text, obj, cfg, sealed } | null(파일 없음). 손상(JSON 아님)이면 obj·cfg null, sealed false. */
+const sealedText = (obj) => `${JSON.stringify(obj, null, 2)}\n`; // writeSealed와 같은 모양
 export async function readAssistantFile(wsId, company = null) {
   let text;
   try { text = await readFile(fileOf(wsId), 'utf8'); } catch (e) { if (e?.code === 'ENOENT') return null; throw e; }
   let obj = null;
   try { const v = JSON.parse(text); obj = v && typeof v === 'object' && !Array.isArray(v) ? v : null; } catch { /* 손상 */ }
   const co = company ?? (await loadCompany(wsId).catch(() => null));
-  return { text, obj, cfg: obj ? normalizeAssistantConfig(obj) : null, sealed: !!obj && co?.[SEAL_FIELD] === sealOf(text) };
+  const seal = co?.[SEAL_FIELD];
+  return { text, obj, cfg: obj ? normalizeAssistantConfig(obj) : null, sealed: !!obj && seal === sealOf(text) };
 }
 
 /** 봉인해서 쓰기 — 파일을 쓰고 그 바이트의 해시를 company.json에 적는다. 반드시 lockAssistant 안에서 부른다. */
+/** 다른 회사로 옮기며 끄는 파일(머리 주석) — 꺼짐과 에이전트(방에서 복구용)만. */
+function offFile(obj) {
+  const agent = normalizeAssistantConfig(obj).agent;
+  return { enabled: false, ...(agent ? { agent } : {}) };
+}
+
 async function writeSealed(wsId, obj) {
-  const text = `${JSON.stringify(obj, null, 2)}\n`;
+  const text = sealedText(obj);
   await writeJsonAtomic(fileOf(wsId), text);
   await updateCompany(wsId, () => ({ [SEAL_FIELD]: sealOf(text) }));
   return text;
@@ -103,7 +124,7 @@ async function saveInLine(wsId, input, { now = Date.now() } = {}) {
   await lockAssistant(wsId, async () => {
     const cur = await readAssistantFile(wsId, await loadCompany(wsId));
     const sealed = cur?.sealed === true;
-    const base = sealed ? cur.obj : {};
+    const base = sealed ? cur.obj : {}; // 봉인이 안 맞으면 어떤 칸이 있든 기본값(머리 주석 — 봉인 안 된 값을 봉인하지 않는다)
     const prev = normalizeAssistantConfig(base); // 봉인 안 맞음·없음 = 기본값(꺼짐)
     const q = inp.quiet && typeof inp.quiet === 'object' ? inp.quiet : {};
     // 보내지 않은 칸은 봉인된 저장값 그대로 — 이 버전이 모르는 값(새 버전의 선택지)을 기본값으로 덮지 않는다(#865 3차 검수 LOW). 봉인이 안 맞으면 base = {}라 기본값.
@@ -136,7 +157,7 @@ async function saveInLine(wsId, input, { now = Date.now() } = {}) {
       morningAt: next.quiet.to, // 아침 묶음 = 조용한 시간 끝
       eveningAt: next.eveningAt,
       quiet: next.quiet,
-      dailyCap: kept(base.dailyCap, prev.dailyCap), // 화면 밖 칸 — 3단계가 쓰는 값
+      dailyCap: kept(base.dailyCap, prev.dailyCap), // 화면 밖 칸 — 엔진의 하루 즉시 알림 상한(tick.mjs send)
       tz: (fresh ? normalizeTz(inp.tz) : null) ?? prev.tz ?? hostTz() ?? undefined,
     };
     if (!agent) delete out.agent;
@@ -158,8 +179,8 @@ async function saveInLine(wsId, input, { now = Date.now() } = {}) {
         await lockAssistant(id, async () => {
           const f = await readAssistantFile(id, await loadCompany(id));
           if (!f?.sealed || !f.cfg.enabled) return;
-          const { enabledAt: _drop, ...rest } = f.obj;
-          await writeSealed(id, { ...rest, enabled: false });
+          // 봉인과 다시 맞춰질 수 없는 꺼짐 — company.json(봉인)은 건드리지 않는다(머리 주석 H63·보안 검토)
+          await writeJsonAtomic(fileOf(id), sealedText(offFile(f.obj)));
           changedOthers.push(id);
         });
       } catch (e) { failOther(id, e); }
@@ -186,13 +207,13 @@ export const viewDeps = { lease: leaseCheck, deviceSession: () => loadDeviceSess
  *    unsealed,                         — 파일은 켜짐(enabled + 에이전트)인데 봉인이 안 맞음(설정 화면 밖에서 바뀜 → 엔진은 꺼짐)
  *    current: { ws, company, agent, name } | null,   — 지금 이 사용자의 비서(같은 주인의 회사들 중 봉인 맞는 켜짐, 켠 시각이 가장 늦은 쪽 — 엔진과 같은 판정)
  *    choices: { lead },
- *    status: { login, muted, runner, device, code, codeAt, readAt, instantToday } }
+ *    status: { login, muted, runner, device, code, codeAt, readAt, instantToday, instantSure, dailyCap } }   — dailyCap = 지금 비서 설정의 하루 즉시 알림 상한(화면 "n/상한")
  */
 export async function assistantSettingsView(wsId, { now = Date.now(), deps = viewDeps } = {}) {
   const company = await loadCompany(wsId);
   const owner = company.ownerId ?? null;
   const here = await readAssistantFile(wsId, company);
-  const cfg = here?.sealed ? here.cfg : normalizeAssistantConfig({});
+  const cfg = here?.sealed ? here.cfg : normalizeAssistantConfig({}); // 봉인 안 맞음 = 기본값(꺼짐)
   // 같은 주인의 회사들 — 봉인 맞는 켜짐만(엔진 pickCompany와 같은 재료)
   const peers = [];
   const names = new Map();
@@ -230,6 +251,8 @@ export async function assistantSettingsView(wsId, { now = Date.now(), deps = vie
       codeAt: st?.status?.at ?? 0,
       readAt: st?.cal?.readAt ?? 0,
       instantToday: st && st.day.date === dateIn(now, tz) ? st.day.instant : 0,
+      instantSure: !(st && st.day.date === dateIn(now, tz) && st.day.sure === false), // false = 방에서 복구가 실패해 다른 기기가 보낸 수를 아직 모른다(화면 "확인 중")
+      dailyCap: (curCfg ?? cfg).dailyCap,
     },
   };
 }

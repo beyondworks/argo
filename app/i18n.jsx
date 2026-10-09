@@ -546,7 +546,10 @@ const DICT = {
   'assistant.lastCheck': ['마지막 일정 확인', 'Last calendar check'],
   'assistant.lastCheckNone': ['아직 없음', 'Not yet'],
   'assistant.today': ['오늘 보낸 일정 알림', 'Reminders sent today'],
-  'assistant.todayN': ['{n}건', '{n}'],
+  // 오늘 보낸 일정 알림과 하루 즉시 알림 한도(설계 9·13절) — 한도를 넘어도 일정 알림은 나간다(엔진 tick.mjs). 넘은 수가 오류처럼 보이지 않게 말로(#894 분리 검수 L5)
+  'assistant.todayUnder': ['{n}건 (하루 한도 {cap}건)', '{n} (daily limit {cap})'],
+  'assistant.todayOver': ['{n}건 — 하루 한도 {cap}건 넘음', '{n} — over the daily limit of {cap}'],
+  'assistant.todayUnsure': ['{n}건 이상 — 다른 기기에서 보낸 알림 확인 중', '{n} or more — checking alerts sent from other devices'], // 방에서 복구가 실패한 동안
   'assistant.onRunner': ['실행 기기에서 볼 수 있습니다', 'Shown on the running device'],
   'assistant.loadErr': ['비서 설정을 불러오지 못했습니다', 'Could not load assistant settings'],
   'assistant.saveErr': ['저장하지 못했습니다 — 다시 시도해 주세요', 'Could not save — please try again'],
