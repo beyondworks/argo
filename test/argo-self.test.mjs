@@ -94,6 +94,9 @@ test('데크 화면·라우트가 같은 정본 함수를 쓴다 — 화면이 �
   assert.match(page, /const learned = learnedThisWeek\(docs\);/);
   assert.doesNotMatch(page, /stats\.linked \/ \(stats\.linked \+ stats\.isolated\)/, '화면에 셈 사본이 남으면 도구와 갈라진다');
   assert.match(route, /import \{ docStats \} from '\.\.\/\.\.\/\.\.\/\.\.\/src\/deck-metrics\.mjs';/);
+  const ui = readFileSync(new URL('../app/ui.jsx', import.meta.url), 'utf8');
+  assert.match(ui, /\{dialPercent\(v\)\}%<\/span>/, '다이얼 글자도 같은 반올림 함수(dialPercent)');
+  assert.doesNotMatch(ui, /Math\.round\(v\)\}%/);
   assert.doesNotMatch(route, /function docStats\(/, '라우트에 셈 사본 금지');
 });
 
@@ -458,4 +461,45 @@ test('다른 회사 지정 불가 — 도구 인자에 회사 id·슬러그·경
   assert.match(await spec('argo_settings').run({ action: 'set', key: 'assistant.agent', value: `../${b}/agents/bee` }), /에이전트 slug를 적어라/);
   assert.match(await spec('argo_settings').run({ action: 'set', key: 'routine.time', id: rb.id, value: '11:00', wsId: b }), /그런 루틴이 없다/);
   assert.equal((await loadRoutines(b))[0].schedule.time, '10:00', 'B 회사 루틴은 그대로');
+});
+
+/* ── ⑪ 다른 회사 비서(계정마다 한 명) — 분리 검수 MEDIUM 2026-10-09 ──────────────── */
+test('다른 회사 비서 — 에이전트 바꾸기는 꺼진 비서를 켜지 않고, 켜기는 다른 회사 비서가 꺼진다고 알린다', async () => {
+  const ca = await company('as-oa', { owner: 'u-x' });
+  const cb = await company('as-ob', { owner: 'u-x' });
+  await saveAssistantSettings(ca, { enabled: true, agent: 'pepper', tz: 'Asia/Seoul' });
+  const h = handlers(cb, { direct: true });
+  const swap = await h.call('argo_settings', { action: 'set', key: 'assistant.agent', value: 'pepper' });
+  assert.match(swap, /꺼져 있어 에이전트만 바꾸지 않았다/);
+  assert.equal((await assistantSettingsView(ca)).config.enabled, true, 'A 회사 비서는 그대로');
+  assert.equal((await assistantSettingsView(cb)).config.enabled, false, 'B 회사 비서를 켜지 않았다');
+  const on = await h.call('argo_settings', { action: 'set', key: 'assistant.enabled', value: 'true' });
+  assert.match(on, /다른 회사\(as-oa 회사\)의 비서는 꺼졌다/);
+  assert.equal((await assistantSettingsView(ca)).config.enabled, false);
+  assert.equal((await assistantSettingsView(cb)).config.enabled, true);
+});
+
+test('다른 회사 비서 — 결재 카드에 꺼짐을 적고, 승인 때 다시 대조해 달라졌으면 적용하지 않는다', async () => {
+  const ca = await company('as-pa', { owner: 'u-y' });
+  const cb = await company('as-pb', { owner: 'u-y' });
+  await saveAssistantSettings(ca, { enabled: true, agent: 'pepper', tz: 'Asia/Seoul' });
+  const h = handlers(cb, { origin: 'pepper' }); // 루틴 출처(범위 밖) — 메신저 맥락이면 후속 턴이 메신저 세션을 찾아 시험 밖이 된다
+  const out = await h.call('argo_settings', { action: 'set', key: 'assistant.enabled', value: 'true' });
+  assert.match(out, /다른 회사 비서가 꺼진다/);
+  assert.doesNotMatch(out, /as-pa/, '채널로 나갈 수 있는 결과에 다른 회사 이름은 싣지 않는다');
+  const [ap] = await pendingSettings(cb);
+  assert.equal(ap.action, '설정 변경 — 비서 켜기·끄기 → 켜짐 · 같은 계정의 다른 회사 비서가 꺼짐');
+  assert.equal(ap.payload.offWs, ca);
+  let seen = null; const runChat = async (_w, _s, msg) => { seen = msg; return { reply: 'ok', sessionId: null }; };
+  await saveAssistantSettings(ca, { enabled: false }); // 승인 전에 A 비서가 꺼짐 — 카드에 보인 일과 달라졌다
+  await _followUpForTest(cb, await resolveApproval(cb, ap.id, true), true, { runChat });
+  assert.match(seen, /적용 취소 — 결재를 올린 뒤 다른 회사의 비서 상태가 바뀌어/);
+  assert.equal((await assistantSettingsView(cb)).config.enabled, false);
+  await saveAssistantSettings(ca, { enabled: true, agent: 'pepper', tz: 'Asia/Seoul' });
+  await h.call('argo_settings', { action: 'set', key: 'assistant.enabled', value: 'true' });
+  const [ap2] = await pendingSettings(cb);
+  await _followUpForTest(cb, await resolveApproval(cb, ap2.id, true), true, { runChat });
+  assert.match(seen, /적용 완료 — 비서 켜기·끄기 → 켜짐[^]*다른 회사 비서는 꺼졌다/);
+  assert.equal((await assistantSettingsView(ca)).config.enabled, false);
+  assert.equal((await assistantSettingsView(cb)).config.enabled, true);
 });

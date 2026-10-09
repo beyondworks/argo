@@ -81,10 +81,9 @@ async function applyPayload(wsId, item, { session } = {}) {
   if (item.kind === 'setting') {
     // 에이전트가 올린 설정 변경(argo_settings — 주인의 1:1 직접 지시가 아닌 턴) — 서버가 허용 목록 키만 적용한다.
     // 카드에 보인 문구와 실제로 바뀌는 것이 같아야 한다(커넥터 결재와 같은 대조 — CLI 러너는 결재 파일을 직접 고칠 수 있다). 어긋나면 적용하지 않는다.
-    const { applySetting, settingActionText, appliedNote } = await import('./argo-self.mjs');
+    const { applyApprovedSetting, settingActionText } = await import('./argo-self.mjs');
     if (item.action !== settingActionText(p, p.lang)) return `적용 취소 — 결재 내용(${item.action})과 바꿀 값이 다르다. 사용자에게 다시 올려라.`;
-    const r = await applySetting(wsId, { key: p.key, id: p.id ?? null, value: p.value }, { slug: p.by ?? item.slug, lang: p.lang });
-    return appliedNote(p, r, p.lang); // 이전 값은 싣지 않는다 — 후속 보고는 결재를 올린 방(채널일 수 있다)으로 간다
+    return applyApprovedSetting(wsId, p, { slug: p.by ?? item.slug }); // 꺼질 다른 회사 비서를 다시 대조 — 이전 값은 싣지 않는다(후속 보고는 결재를 올린 방으로 간다)
   }
   if (item.kind === 'hire') {
     const { createAgentFromPrompt, updateAgentMeta } = await import('./persona.mjs');

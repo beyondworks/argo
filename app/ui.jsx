@@ -6,6 +6,7 @@ import { marked } from 'marked';
 import { labelTableCells } from './md-table.mjs';
 import { useLang } from './i18n';
 import { createPortal } from 'react-dom';
+import { dialPercent } from '../src/deck-metrics.mjs'; // 다이얼 글자 = 에이전트 상태 도구가 말하는 % — 한 함수(반올림·0~100 자르기)
 import { rewriteVaultHref, vaultImageSrc, vaultFileRel } from '../src/vault-links.mjs'; // 산출물 링크·그림 재작성(순수 — 테스트는 src 쪽)
 import { dropUpClamp } from './c/[ws]/zoom-math.mjs'; // 표시 배율(#334) 좌표 환산 계열 — DropUp 패널 클램프
 import { errorTextFor } from './apimsg.mjs'; // errorCode → 화면 언어 문구(F11)
@@ -243,7 +244,7 @@ export function Dial({ value, size = 120, label }) {
         <circle cx={cx} cy={cy} r="3" fill="var(--accent)" />
       </svg>
       <div style={{ position: 'absolute', left: 0, right: 0, bottom: 4, textAlign: 'center' }}>
-        <span className="mono" style={{ fontSize: 16, fontWeight: 600 }}>{Math.round(v)}%</span>
+        <span className="mono" style={{ fontSize: 16, fontWeight: 600 }}>{dialPercent(v)}%</span>
         {label && <span className="microlabel" style={{ display: 'block', marginTop: -2 }}>{label}</span>}
       </div>
     </div>
