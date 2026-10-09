@@ -10,6 +10,7 @@ import { mkdtemp } from './helpers/tmp.mjs';
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-trace-redos-'));
 const T = await import('../src/turn-trace.mjs');
 const { maskKeyLike } = await import('../src/runners/shared.mjs');
+const { maskSecrets: maskWhole } = await import('../src/secret-mask.mjs'); // 기준 — 원문 전체를 가린 것(상한·길이 묶음 없음)
 
 const N = 100_000;
 const ATTACKS = {
@@ -72,7 +73,7 @@ test('상한 경계 — 저장 상한 바로 앞에서 시작해 상한을 넘�
       const out = T.maskSecrets(text, limit);
       assert.ok(out.length <= limit, '상한 안');
       // 상한을 준 가림 = 전체를 가린 뒤 자른 것 — 경계에 걸친 비밀의 앞부분이 원문으로 남지 않는다
-      assert.equal(out, T.maskSecrets(text).slice(0, limit), `${secret.slice(0, 12)} back=${back}`);
+      assert.equal(out, maskWhole(text).slice(0, limit), `${secret.slice(0, 12)} back=${back}`);
     }
   }
   // 상한 앞에서 끝나는 평범한 글은 그대로, 가림 결과도 종전과 같다
@@ -169,7 +170,7 @@ test('경계 노출 대조 — 상한 가림 결과에 전체 가림 뒤 자르�
               const pad = Math.max(0, LIM - back - lead.length);
               const text = `${lead}${'y'.repeat(pad)}${body}${after}`;
               const cap = T.maskSecrets(text, LIM);
-              const full = T.maskSecrets(text).slice(0, LIM);
+              const full = maskWhole(text).slice(0, LIM);
               assert.ok(cap.length <= LIM);
               for (const k of [6, 12, 24]) {
                 const frag = sec.slice(0, k);
@@ -185,7 +186,7 @@ test('경계 노출 대조 — 상한 가림 결과에 전체 가림 뒤 자르�
   assert.ok(checked > 1000, `대조 칸 ${checked}`);
 });
 
-test('줄바꿈 없는 큰 글 — 상한+64KB 안의 마지막 공백에서 잘라 가리고, 경계 비밀 노출은 전체 가림 뒤 자르기와 같다', () => {
+test('64KB 넘는 글 — 64KB 앞 마지막 공백에서 잘라 가리고, 경계 비밀 노출은 전체 가림 뒤 자르기와 같다', () => {
   const tail = ' word'.repeat(30_000); // 줄바꿈 없는 150KB
   const sec = `ghp_${'d'.repeat(36)}`;
   for (const LIM of [4000, 16_000]) {
@@ -194,7 +195,7 @@ test('줄바꿈 없는 큰 글 — 상한+64KB 안의 마지막 공백에서 잘
       const t0 = performance.now();
       const cap = T.maskSecrets(text, LIM);
       assert.ok(performance.now() - t0 < 200, '상한 가림은 큰 글 전체를 훑지 않는다');
-      const full = T.maskSecrets(text).slice(0, LIM);
+      const full = maskWhole(text).slice(0, LIM);
       assert.ok(!cap.includes(sec.slice(0, 8)) || full.includes(sec.slice(0, 8)), `back=${back}`);
       assert.equal(cap.length, LIM);
     }

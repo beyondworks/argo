@@ -38,29 +38,24 @@ const VIEW_RESULT_CHARS = 1500;
 /* ─── 가림 ─── */
 // 규칙 본체는 main의 src/secret-mask.mjs(#904 — 이 기록의 첫 보안 반영 1e9333bd 규칙을 옮기고 선형으로 고친 것) 하나만 쓴다. 상태 파일 요약(turn-status)·작업 과정 기록이
 // 같은 함수를 지나 판정이 갈리지 않는다. 여기는 **상한 가림**만 더한다.
-// 상한 가림 = 줄 단위 창: 상한 자리가 든 줄의 끝까지 잘라 가린 뒤 상한으로 자른다. secret-mask 규칙 중 비밀이 줄을 넘는 것(PEM·따옴표 CLI 값)은 끝나지 않으면 입력 끝까지를
-// 값으로 보므로, 창 안의 모든 줄은 전체를 가렸을 때와 같거나 더 가려지고 출력은 그 줄들에서만 나온다 — "상한 가림 결과에 전체 가림 뒤 자르기보다 많은 원문 비밀이 나오지 않는다"
-// (2차 보안 검토: '상한+여유로 자르기'는 앞쪽 PEM이 줄면 창 끝의 잘린 조각을 상한 안으로 당겼다).
-// 그 줄이 상한 뒤로 64KB 넘게 이어지면 상한+64KB 안의 마지막 공백에서 자른다(secret-mask는 호출자가 길이를 묶는 것이 전제 — turn-status와 같은 방식: 공백에서 자르면 토큰은
-// 통째로 있거나 없다). 공백도 없는 64KB 넘는 한 덩어리는 상한+64KB에서 자른다 — 상한 앞 글이 줄어도 당겨지는 양은 상한 이하라 그 자리 조각은 출력에 닿지 않는다.
+// 상한 가림(3차 보안 검토 — 창 가림을 없앴다): 원문 전체를 secret-mask로 가린 뒤 상한으로 자른다. secret-mask는 호출자가 길이를 묶는 것이 전제라, 입력이 64KB를
+// 넘을 때만 64KB 앞의 마지막 공백에서 자르고 가린다(main turn-status masked()와 같은 방식 — 공백에서 자르면 토큰은 통째로 있거나 없고, 끝나지 않은 따옴표·PEM은 입력
+// 끝까지 가린다). 저장 상한(최대 16,000자)은 64KB보다 훨씬 작아, 앞 글이 가림으로 줄어도 잘린 자리 근처는 출력에 닿지 않는다(당겨지는 양 ≤ 상한).
 // 시험: test/turn-trace-redos.test.mjs(경계 노출 대조·옛 규칙 대조·공격 입력 200ms).
 export { isSecretName };
-const WINDOW_LINE_MAX = 65_536;
+const MASK_INPUT_MAX = 65_536;
 const WS_CH = /\s/;
-function windowEnd(str, limit) {
-  const nl = str.indexOf('\n', limit);
-  if (nl >= 0 && nl - limit <= WINDOW_LINE_MAX) return nl + 1;
-  const hard = Math.min(str.length, limit + WINDOW_LINE_MAX);
-  if (hard === str.length) return hard;
-  for (let i = hard - 1; i >= limit; i -= 1) if (WS_CH.test(str[i])) return i + 1;
-  return hard;
-}
-/** 단계 글 가리기 — limit을 주면 줄 단위 창으로 상한까지만(큰 외부 글 방어). limit 없이 부를 때는 호출자가 길이를 묶는다(secret-mask 전제). */
+/** 단계 글 가리기 — 전체를 가린 뒤 limit으로 자른다(입력은 64KB에서 공백 기준으로 묶는다). */
 export function maskSecrets(s, limit = Infinity) {
   if (s == null) return '';
-  const str = String(s);
-  if (!(Number.isFinite(limit) && str.length > limit)) return maskFull(str);
-  return maskFull(str.slice(0, windowEnd(str, limit))).slice(0, limit);
+  let str = String(s);
+  if (str.length > MASK_INPUT_MAX) {
+    let cut = MASK_INPUT_MAX;
+    while (cut > 0 && !WS_CH.test(str[cut])) cut -= 1;
+    str = str.slice(0, cut);
+  }
+  const out = maskFull(str);
+  return Number.isFinite(limit) ? out.slice(0, limit) : out;
 }
 
 /* ─── 글 다듬기 ─── */
@@ -107,14 +102,8 @@ export function inputText(name, input) {
   }
   return Object.entries(input).map(([k, v]) => `${k}: ${capVal(typeof v === 'string' ? v : JSON.stringify(v))}`).join('\n');
 }
-// 값 하나가 수 MB(Write 본문)여도 표시 글을 다 만들지 않는다 — maskSecrets가 쓸 줄 창(상한 자리가 든 줄의 끝)에서 자른다. 줄 중간에서 자르지 않으므로
-// 잘린 자리의 비밀 조각이 가림을 피하지 않는다. 그 줄이 64KB 넘게 이어지면 자르지 않는다(가림은 선형).
-const capVal = (v) => {
-  const t = String(v ?? '');
-  if (t.length <= INPUT_STORE) return t;
-  const nl = t.indexOf('\n', INPUT_STORE);
-  return nl >= 0 && nl - INPUT_STORE <= WINDOW_LINE_MAX ? t.slice(0, nl + 1) : t;
-};
+// 값 하나가 수 MB(Write 본문)여도 표시 글을 다 만들지 않는다 — maskSecrets가 어차피 64KB에서 묶으므로 그보다 조금 넉넉히(같은 공백 기준 자르기가 그 안에서 일어나게).
+const capVal = (v) => { const t = String(v ?? ''); return t.length > MASK_INPUT_MAX * 2 ? t.slice(0, MASK_INPUT_MAX * 2) : t; };
 
 /** 도구 결과(문자열 또는 블록 배열) → 글(순수). 이미지는 자리표시만. */
 export function resultText(content) {
