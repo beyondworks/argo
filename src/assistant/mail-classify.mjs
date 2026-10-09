@@ -14,21 +14,31 @@
 // 정규식은 비서 전용이다 — 성과 기록의 NEGATIVE(apps/office/server/mail-signals.js)는 "아직"·"빨리"처럼 거래처 스레드 안에서만 쓰려고 만든 넓은 규칙이라 쓰지 않는다.
 import { dateIn, addDays } from './rules.mjs';
 
-// 보안 알림을 비서 목소리로 즉시 알리는 보낸 주소 — 도메인이 아니라 정확한 주소만(10/9 분리 검수 MEDIUM 1). 같은 도메인에도 남이 쓴 글을 대신 보내 주는 주소가 있다
-// (notifications@github.com 이슈 제목, comments-noreply@docs.google.com 댓글, 캘린더 초대) — DMARC는 통과해도 제목은 남이 정한다. 그런 주소와 목록 밖 주소는 저녁 한 줄(security_other).
-// ponytail: 확인한 서비스 보안 알림 주소만 — 네이버·카카오처럼 주소를 아직 확인하지 못한 곳은 저녁 줄로 간다(안전한 쪽). 주소를 확인하면 여기에 더한다.
-export const SECURITY_SENDERS = Object.freeze([
-  'no-reply@accounts.google.com',                            // Google 계정 보안 알림
-  'noreply@github.com',                                      // GitHub 보안 알림(새 로그인·SSH 키 — notifications@는 알림 중계라 빼고)
-  'account-security-noreply@accountprotection.microsoft.com', // Microsoft 계정 보안
-  'appleid@id.apple.com',                                    // Apple 계정
-  'noreply@tm.openai.com',                                   // OpenAI 계정
-  'account-update@amazon.com',                               // Amazon 계정 변경
-]);
+// 보안 알림을 비서 목소리로 즉시 알리는 보낸 주소와 그 주소의 보안 알림 제목 형식 — 도메인이 아니라 정확한 주소만(10/9 분리 검수 MEDIUM 1). 같은 도메인에도 남이 쓴 글을
+// 대신 보내 주는 주소가 있다(notifications@github.com 이슈 제목, comments-noreply@docs.google.com 댓글, 캘린더 초대) — DMARC는 통과해도 제목은 남이 정한다.
+// 허용 주소에서도 남이 정한 글이 제목에 들어가는 메일(저장소 초대·조직 이름)이 있어, 그 서비스의 보안 알림 제목 형식(앞부분 고정)일 때만 보안(재검수 후속).
+// 형식 밖·목록 밖은 저녁 한 줄(security_other). 형식 정규식은 앞에 고정하고 반복 상한을 둔다(제목은 FIELD_CAP으로 자른 뒤 본다).
+// ponytail: 확인한 서비스·제목만 — 네이버·카카오처럼 주소를 아직 확인하지 못한 곳은 저녁 줄로 간다(안전한 쪽). 실제 메일로 주소·제목을 확인하면 여기에 더한다.
+export const SECURITY_SENDERS = Object.freeze({
+  // Google 계정 보안 알림 — "Security alert", "Critical security alert", "보안 알림", "중요 보안 알림"
+  'no-reply@accounts.google.com': /^(?:critical |중요 )?(?:security alert|보안 알림)/i,
+  // GitHub 보안 알림 — "[GitHub] A new SSH authentication public key was added…", "[GitHub] Please verify your device", "[GitHub] Your password was reset"
+  // 형식은 GitHub 문구 자체만 — 가운데에 남이 정한 이름(앱·저장소·조직)이 들어갈 자리를 두지 않는다(커밋 보안 검토)
+  'noreply@github.com': /^\[GitHub\] (?:A new (?:SSH authentication public key|SSH (?:signing )?key|GPG key|public key) was added to your account|A (?:fine-grained )?personal access token(?: \(classic\))? (?:was|has been) added to your account|A third-party OAuth application has been added to your account|Please verify your device|Your password (?:was|has been) (?:reset|changed)|Sudo email verification code|New sign-in to your account)/,
+  'account-security-noreply@accountprotection.microsoft.com': /^Microsoft (?:account|계정) /i, // Microsoft 계정 보안
+  'appleid@id.apple.com': /^(?:Your Apple (?:ID|Account) |Apple (?:ID|계정))/i,                 // Apple 계정
+  'noreply@tm.openai.com': /^(?:New (?:login|sign-in) to (?:your )?OpenAI|Your OpenAI password)/i,      // OpenAI 계정
+  'account-update@amazon.com': /^(?:Amazon security alert|Your Amazon password)/i,           // Amazon 계정 변경
+});
 export const DEADLINE_SOON_DAYS = 3;
 
 const OTP_RE = /인증 ?번호|verification code|\bOTP\b|일회용 ?비밀번호|one[- ]time (?:pass(?:code|word)|code)/i;
+// 보안 메일 제목 낱말(좁은 쪽) — 목록 밖 보낸 사람에게는 이 낱말만 "보안 알림처럼 보이는 메일"(저녁 줄)로 빼낸다. 넓히면 거래처·답장 필요 메일("login page"·"access token")을
+// 저녁 줄로 빼앗는다(커밋 보안 검토 — 통제 약화) — 그래서 #915 그대로 둔다.
 const SECURITY_RE = /로그인|새 기기|새로운 기기|비밀번호 재설정|보안 알림|sign[- ]?in|signed in|new device|password reset|security alert/i;
+// 허용 주소의 보안 알림 판정에만 쓰는 넓은 낱말 — 실제 서비스 보안 알림(GitHub 새 SSH 키·기기 확인, OpenAI 새 로그인)이 noreply 주소라 뉴스레터로 빠지지 않게(재검수 후속 1).
+// 허용 주소 + 그 주소의 제목 형식 + 보낸 곳 확인이 같이 맞을 때만 보안이므로 목록 밖 보낸 사람의 범주를 바꾸지 않는다
+const SECURITY_WIDE_RE = /로그인|새 기기|새로운 기기|기기 확인|비밀번호 (?:재설정|변경)|보안 알림|sign[- ]?in|signed in|\blog ?in\b|\blogged in\b|new device|verify your device|password (?:was |has been )?(?:reset|changed)|security alert|\bSSH\b[\w ]{0,30}\bkey\b|access token|GPG key|public key|OAuth application/i;
 const STRONG_RE = /follow(?:ing)?[ -]?up|checking in|just checking|gentle reminder|any updates?|still waiting|재촉|독촉|회신 부탁|답변 부탁|확인 부탁|언제쯤|언제 ?까지/i;
 const ETA_RE = /\bETA\b/; // 대문자 그대로·단어 경계 — beta·metadata에 걸리지 않게
 const WEAK_RE = /일정|날짜|기한|마감|전달일|납기|timeline|schedule|deadline|due date|delivery date|when (?:can|will) (?:you|we)/i;
@@ -87,16 +97,31 @@ export function needsThread(m, c = {}) {
 /** 보낸 곳이 확인된 메일인가(순수) — From은 보낸 사람이 마음대로 쓸 수 있다. Gmail이 받을 때 붙인 인증 결과(오피스 envelope auth — 첫 Authentication-Results가
     mx.google.com의 것)가 dmarc=pass이고, DMARC가 본 머리 From 도메인이 보낸 주소의 도메인과 같을 때만 확인된 것으로 본다. 결과가 없으면(옛 오피스·다른 서버) 확인 못 함. */
 export const verifiedSender = (m) => !!(m?.auth && m.auth.dmarc === 'pass' && m.auth.from && m.auth.from === domainOf(m.addr));
+/** 보낸 곳 믿음(순수) — 'verified'(위) | 'weak' | 'bad'.
+    weak = Gmail이 맨 위에 붙인 인증 결과(mx.google.com)에 dmarc 칸이 없다(오피스 authOf → dmarc 'none') — 그 도메인에 DMARC 기록이 없어 확인할 길이 없을 뿐(재검수 후속 3).
+    그 도메인에 기록이 있으면 Gmail은 pass·fail을 쓰므로, 보낸 쪽이 이 값을 만들려면 기록이 없는 도메인이어야 한다(그 경우 From 위조는 원래 막을 수 없다 — 그래서 표지).
+    bad = 그 밖 전부: 인증 결과가 아예 없음(옛 오피스·Gmail이 붙이지 않은 경로·맨 위가 다른 서버 — "기록 없음"과 구분), dmarc=fail(정책 p=none이어도)·unknown·그 밖의 값,
+    pass인데 도메인이 다름(커밋 보안 검토). */
+export function senderTrust(m) {
+  if (verifiedSender(m)) return 'verified';
+  if (m?.auth && m.auth.dmarc === 'none' && (!m.auth.from || m.auth.from === domainOf(m.addr))) return 'weak'; // DMARC가 본 도메인이 보낸 주소와 다르면 아님(#917 검수 LOW 3)
+  return 'bad';
+}
 
 /** 스레드 없이 끝나는 앞 범주 — 'mine' | 'otp' | 'security' | 'security_other' | null.
-    보안 메일을 비서 목소리로 즉시 알리는 것(security)은 주소가 엄격 파싱되고 · 허용 목록 도메인이고 · 보낸 곳이 확인된(verifiedSender) 때만. 그 밖은 저녁 한 줄(보낸 주소 그대로, 단정하지 않음). */
+    보안 메일을 비서 목소리로 즉시 알리는 것(security)은 주소가 엄격 파싱되고 · 허용 주소이고 · 제목이 그 주소의 보안 알림 형식이고 · 보낸 곳이 확인된(verifiedSender) 때만. 그 밖은 저녁 한 줄(보낸 주소 그대로, 단정하지 않음). */
 function earlyCategory(m, { accounts = [], allow = SECURITY_SENDERS } = {}) {
   const labels = m.labels ?? [];
   const mine = accounts.map((x) => addrOf(x)).filter(Boolean);
   if (labels.includes('SENT') || mine.includes(addrOf(m.addr))) return 'mine';
   if (OTP_RE.test(textOf(m))) return 'otp';
   const hasAddr = String(m.addr ?? '').includes('@'); // 이름뿐이면(인트라넷 등) 보안 범주를 쓰지 않는다(M30)
-  if (hasAddr && SECURITY_RE.test(cap(m.subject))) return allow.includes(addrOf(m.addr)) && verifiedSender(m) ? 'security' : 'security_other'; // 허용 목록을 바꾸는 설정은 다음 단계 — 지금은 기본값
+  if (hasAddr) { // 허용 목록을 바꾸는 설정은 다음 단계 — 지금은 기본값
+    const a = addrOf(m.addr), subj = cap(m.subject);
+    const form = a && Object.hasOwn(allow, a) ? allow[a] : null;
+    if (form && SECURITY_WIDE_RE.test(subj) && form.test(subj) && verifiedSender(m)) return 'security';
+    if (SECURITY_RE.test(subj) || (form && SECURITY_WIDE_RE.test(subj))) return 'security_other'; // 허용 주소의 형식 밖 보안 낱말도 저녁 줄(뉴스레터로 빼지 않는다)
+  }
   return null;
 }
 
@@ -152,14 +177,17 @@ export function classifyMail(m, c = {}) {
   const signal = newsLabel ? null : replySignal(m);
   // From은 위조할 수 있다 — 보낸 곳이 확인되지 않은 메일은 거래처로 보지 않고, 같은 사람 두 번(②′)만으로는 답장 필요가 아니다(위조 메일로 하루 준비·즉시 상한을
   // 다 쓰지 않게, 10/9 분리 검수 LOW 3). 내가 먼저 보낸 스레드(②)는 확인 못 해도 답장 필요 — 대신 글에 "보낸 곳 확인 못 함" 표지(unverified)
-  const verified = verifiedSender(m);
-  const customer = verified && typeof c.customer === 'function' ? c.customer(m.addr) : null;
+  // DMARC 기록이 없는 거래처 도메인(weak)은 거래처로 보되 "보낸 곳 확인 못 함" 표지(재검수 후속 3) — 위조 신호(bad: dmarc=fail 등)는 거래처로 보지 않는다
+  const trust = senderTrust(m);
+  const verified = trust === 'verified';
+  const mark = verified ? {} : { unverified: true };
+  const customer = trust !== 'bad' && typeof c.customer === 'function' ? c.customer(m.addr) : null;
   if (signal && Array.isArray(c.thread)) {
     const ts = threadState(m, c.thread, c.accounts ?? []);
     const waiting = !ts.repliedAfter && (ts.mineBefore || (verified && ts.nudge));
-    if (waiting || (customer && signal === 'strong' && !ts.repliedAfter)) return { cat: 'reply', lane: 'now', reply: true, signal, thread: ts, ...(verified ? {} : { unverified: true }) };
+    if (waiting || (customer && signal === 'strong' && !ts.repliedAfter)) return { cat: 'reply', lane: 'now', reply: true, signal, thread: ts, ...mark };
   }
-  if (customer) return { cat: 'customer', lane: 'now', reply: false };
+  if (customer) return { cat: 'customer', lane: 'now', reply: false, ...mark };
   const today = dateIn(c.now ?? Date.now(), c.tz ?? null);
   if (!newsLabel && DEADLINE_RE.test(textOf(m))) {
     const due = nearestDue(textOf(m), today);

@@ -163,12 +163,31 @@ test('인증 결과(authOf) — 첫 Authentication-Results가 mx.google.com의 �
     ['Authentication-Results', 'mx.google.com; dmarc=pass header.from=google.com'])), { dmarc: 'fail', from: 'evil.example' }, '보낸 쪽이 심은 pass(아래)·ARC(위)는 무시, Gmail 결과(fail)만');
   // 10/9 분리 검수 MEDIUM 2 — spf 칸의 따옴표 봉투 주소·괄호 주석은 보낸 쪽이 고른다. 그 안의 ';dmarc=pass …'로 Gmail의 dmarc=fail을 바꾸지 못한다
   const quoted = 'mx.google.com; dkim=fail header.i=@evil.example; spf=pass (google.com: domain of "x;dmarc=pass header.from=kakao.com;"@evil.example designates 1.2.3.4 as permitted sender) smtp.mailfrom="x;dmarc=pass header.from=kakao.com;"@evil.example; dmarc=fail (p=NONE sp=NONE dis=NONE) header.from=kakao.com';
-  assert.deepEqual(authOf(m(quoted)), { dmarc: 'fail', from: 'kakao.com' }, '따옴표 안 ;dmarc=pass는 칸이 아니다');
-  assert.deepEqual(authOf(m('mx.google.com; spf=pass (x;dmarc=pass header.from=kakao.com;) smtp.mailfrom=a@evil.example; dmarc=fail header.from=kakao.com')), { dmarc: 'fail', from: 'kakao.com' }, '괄호 주석 안도 칸이 아니다');
-  assert.deepEqual(authOf(m('mx.google.com; spf=pass smtp.mailfrom="a\\";dmarc=pass header.from=kakao.com;"@evil.example; dmarc=fail header.from=kakao.com')), { dmarc: 'fail', from: 'kakao.com' }, '따옴표 안 \\" 이스케이프');
+  assert.deepEqual(authOf(m(quoted)), { dmarc: 'unknown', from: '' }, '따옴표 안 ;dmarc=pass — 칸이 아니고, 심은 흔적이 있으니 믿지 않는다(unknown)');
+  assert.deepEqual(authOf(m('mx.google.com; spf=pass (x;dmarc=pass header.from=kakao.com;) smtp.mailfrom=a@evil.example; dmarc=fail header.from=kakao.com')), { dmarc: 'unknown', from: '' }, '괄호 주석 안도 칸이 아니다');
+  assert.deepEqual(authOf(m('mx.google.com; spf=pass smtp.mailfrom="a\\";dmarc=pass header.from=kakao.com;"@evil.example; dmarc=fail header.from=kakao.com')), { dmarc: 'unknown', from: '' }, '따옴표 안 \\" 이스케이프');
   assert.deepEqual(authOf(m('mx.google.com; dmarc=pass header.from=kakao.com; dmarc=fail header.from=kakao.com')), { dmarc: 'unknown', from: '' }, 'dmarc 칸이 둘 이상이면 믿지 않는다');
-  assert.deepEqual(authOf(m('mx.google.com; spf=pass smtp.mailfrom="x;dmarc=pass header.from=kakao.com')), { dmarc: 'none', from: '' }, '닫히지 않은 따옴표 — 뒤는 전부 글(칸 없음)');
-  assert.deepEqual(authOf(m('mx.google.com; spf=pass (a (b; dmarc=pass) c); dmarc=fail header.from=x.com')), { dmarc: 'fail', from: 'x.com' }, '괄호 주석은 겹칠 수 있다');
+  assert.deepEqual(authOf(m('mx.google.com; spf=pass smtp.mailfrom="x;dmarc=pass header.from=kakao.com')), { dmarc: 'unknown', from: '' }, '닫히지 않은 따옴표 — 뒤를 삼킨 머리는 믿지 않는다');
+  // #917 검수 MEDIUM 1 — 앞 칸(dkim header.s)을 늘려 상한에서 진짜 dmarc=fail을 잘라내면 'none'이 됐다 → 상한보다 긴 머리는 unknown
+  const padded = (pad) => 'mx.google.com;\r\n       dkim=neutral (body hash did not verify) header.i=@x.evil.example header.s=' + 's'.repeat(pad) + ' header.b=Ab;\r\n       spf=pass (google.com: domain of x@evil.example designates 1.2.3.4 as permitted sender) smtp.mailfrom=x@evil.example;\r\n       dmarc=fail (p=NONE sp=NONE dis=NONE) header.from=customer.example';
+  const truncNone = [];
+  for (let p = 0; p <= 12_000; p += 7) { const r = authOf(m(padded(p))).dmarc; if (r === 'none' || r === 'pass') truncNone.push(p); }
+  assert.deepEqual(truncNone, [], '어느 길이로 늘려도 none·pass가 되지 않는다');
+  assert.deepEqual(authOf(m(padded(0))), { dmarc: 'fail', from: 'customer.example' }, '보통 길이는 그대로 읽는다');
+  assert.equal(authOf(m(padded(20_000))).dmarc, 'unknown', '상한보다 길면 unknown');
+  // #917 검수 LOW 2 — 닫히지 않은 따옴표·괄호가 뒤(진짜 dmarc 칸)를 삼키면 'none'이 아니라 unknown
+  for (const v of ['mx.google.com; spf=pass (x smtp.mailfrom=a@b.c; dmarc=fail header.from=customer.example', 'mx.google.com; spf=pass smtp.mailfrom="a@b.c; dmarc=fail header.from=customer.example',
+    'mx.google.com; spf=pass (a (b) smtp.mailfrom=a@b.c; dmarc=fail header.from=customer.example']) {
+    assert.deepEqual(authOf(m(v)), { dmarc: 'unknown', from: '' }, v);
+  }
+  assert.deepEqual(authOf(m('mx.google.com; spf=pass (a (b; dmarc=pass) c); dmarc=fail header.from=x.com')), { dmarc: 'unknown', from: '' }, '괄호 주석은 겹칠 수 있다');
+  // 짝이 맞지 않는 따옴표·괄호로 Gmail의 진짜 dmarc 칸을 글 속에 삼키게 하는 봉투 주소(커밋 보안 검토 퍼즈 — 형식에 맞지 않는 주소 2,036가지에서 pass) — ';dmarc='가 원문에 둘 이상이면 믿지 않는다
+  const swallow = (lp) => `mx.google.com; dkim=fail header.i=@evil.example; spf=pass (google.com: domain of ${lp}@evil.example designates 1.2.3.4 as permitted sender) smtp.mailfrom=${lp}@evil.example; dmarc=fail (p=NONE sp=NONE dis=NONE) header.from=kakao.com`;
+  for (const lp of ['""");dmarc=pass header.from=kakao.com;(', '"")";dmarc=pass header.from=kakao.com;(', '"");dmarc=pass header.from=kakao.com;"(', '"");dmarc=pass header.from=kakao.com;\\"']) {
+    assert.notEqual(authOf(m(swallow(lp))).dmarc, 'pass', lp);
+  }
+  // Gmail이 전달 메일에 붙이는 arc 주석 안의 'dmarc=pass'(앞에 ;가 없다)는 그대로 둔다
+  assert.deepEqual(authOf(m('mx.google.com; dkim=pass header.i=@a.com; arc=pass (i=1 spf=pass spfdomain=a.com dkim=pass dkdomain=a.com dmarc=pass fromdomain=a.com); spf=pass smtp.mailfrom=x@a.com; dmarc=pass (p=NONE) header.from=a.com')), { dmarc: 'pass', from: 'a.com' });
   const e = envelope({ id: 'g1', threadId: 't', labelIds: ['INBOX'], internalDate: '1790000000000', payload: { headers: [{ name: 'From', value: 'Google <no-reply@accounts.google.com>' }, { name: 'Authentication-Results', value: gmailAR }] } }, 'acc');
   assert.deepEqual(e.auth, { dmarc: 'pass', from: 'accounts.google.com' });
   assert.equal(envelope({ id: 'g2', payload: { headers: [] } }, 'acc').auth, undefined, '없으면 칸이 없다(화면 목록 모양 그대로)');

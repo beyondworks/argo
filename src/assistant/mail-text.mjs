@@ -31,6 +31,7 @@ export const MAIL_TEXT = Object.freeze({
   'noprep.free': ['무료 AI 모델이라 메일 내용을 AI에게 보내지 않았어요 — 초안이 필요하면 "초안 만들어 줘"라고 답해 주세요.', 'This agent uses a free AI model, so mail text was not sent to the AI — reply "draft it" if you need a draft.'],
   'noprep.cli': ['이 에이전트의 AI({runner})는 파일·명령 도구를 끈 채 부를 수 없어 메일 글을 보내지 않았어요 — 초안이 필요하면 "초안 만들어 줘"라고 답해 주세요.', "This agent's AI ({runner}) can't be called with file and command tools turned off, so mail text was not sent to it — reply \"draft it\" if you need a draft."],
   'noprep.codex': ['이 에이전트의 AI({runner})에는 메일 글을 보내지 않아요 — Claude 로그인이나 API 키를 연결하면 초안까지 준비해요. 지금 초안이 필요하면 "초안 만들어 줘"라고 답해 주세요.', "Mail text isn't sent to this agent's AI ({runner}) — connect a Claude sign-in or API key and drafts will be prepared too. Reply \"draft it\" if you need one now."],
+  'noprep.unverified': ['보낸 곳을 확인하지 못해 초안은 만들지 않았어요 — 보낸 사람이 맞으면 "초안 만들어 줘"라고 답해 주세요.', "The sender couldn't be verified, so no draft was made — reply \"draft it\" if the sender is right."],
   // 보낸 곳이 확인되지 않은 답장 필요 메일(내가 먼저 보낸 스레드 ②) — From은 위조할 수 있다(10/9 분리 검수 LOW 3)
   'line.unverified': ['· 보낸 곳을 확인하지 못했어요 — 보낸 주소 {addr}가 맞는지 먼저 보세요.', '· The sender could not be verified — check that {addr} is right first.'],
   'noprep.runner': ['이 에이전트의 AI 연결이 없어 초안을 만들지 못했어요 — 설정 › AI 연결을 확인해 주세요.', "This agent has no working AI connection, so I couldn't draft — check Settings › AI connections."],
@@ -151,7 +152,7 @@ export function composeBatch(items, { lang = 'ko', now, tz, held = false }) {
     const v = { i: k + 1, sender: senderOf(m), addr: display(m.addr, 80), subject: cls.cat === 'security' ? scrubLine(m.subject, 80) || mt('untitled', lang) : subjectOf(m, lang), time: arrivedAt(Date.parse(m.at), { now, tz }) };
     if (cls.cat === 'security') lines.push(mt('item.security', lang, v));
     else if (cls.cat === 'deadline') lines.push(cls.due?.days === 0 ? mt('item.due.today', lang, v) : mt('item.due.days', lang, { ...v, n: cls.due?.days ?? '?', date: cls.due ? dateLabel(cls.due.date, lang) : '' }));
-    else if (cls.cat === 'customer') lines.push(mt('item.customer', lang, v));
+    else if (cls.cat === 'customer') lines.push(mt('item.customer', lang, v), ...(cls.unverified ? [`   ${mt('line.unverified', lang, { addr: display(m.addr, 80) }).replace(/^· /, '')}`] : []));
     else if (cls.cat === 'reply') lines.push(mt('item.reply', lang, v));
     else lines.push(mt('item.money', lang, v));
   });
