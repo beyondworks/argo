@@ -377,9 +377,19 @@ assert pick('![차트](attachment:' + str(png) + ')') == (['chart.png'], '차트
 assert pick('[실행 기록](attachment:' + str(log) + ')') == (['run.log'], '실행 기록'), '명시한 첨부는 확장자와 무관'
 assert pick('[' + str(pdf) + '](attachment:' + str(pdf) + ')') == (['report.pdf'], 'report.pdf'), '이름 자리가 경로면 파일 이름만'
 assert pick('[](attachment:' + str(pdf) + ')') == (['report.pdf'], 'report.pdf')
-home = os.path.expanduser('~')
-if str(pdf).startswith(home + os.sep):
-    assert pick('[보고서](attachment:~' + str(pdf)[len(home):] + ')') == (['report.pdf'], '보고서')
+# '~' 경로 — 홈을 작업 폴더 위로 정해 모든 OS에서 돈다(전에는 임시 폴더가 홈 아래일 때만 돌아 Windows의 '~\'는 릴리스 빌드에서야 드러났다, 10/9)
+saved = {k: os.environ.get(k) for k in ('HOME', 'USERPROFILE')}
+for k in saved: os.environ[k] = str(work.parent)
+try:
+    assert pick('[보고서](attachment:~' + os.sep + 'work' + os.sep + 'report.pdf)') == (['report.pdf'], '보고서'), 'OS 구분자'
+    assert pick('[보고서](attachment:~/work/report.pdf)') == (['report.pdf'], '보고서'), "'/'는 어느 OS에서나"
+    assert pick('첨부: attachment:~' + os.sep + 'work' + os.sep + 'report.pdf') == (['report.pdf'], '첨부: report.pdf'), '링크 없는 표기'
+    if os.sep == '/':   # POSIX에서 '\'는 이름 글자라 '~\'는 홈이 아니다
+        assert pick('[보고서](attachment:~\\work\\report.pdf)') == ([], '[보고서](attachment:~\\work\\report.pdf)')
+finally:
+    for k, v in saved.items():
+        if v is None: os.environ.pop(k, None)
+        else: os.environ[k] = v
 both = a.extract_local_files('[보고서](attachment:' + str(pdf) + ')\n원본: ' + str(pdf))
 assert len(both[0]) == 1, ('같은 파일은 한 번만', both)
 `));
