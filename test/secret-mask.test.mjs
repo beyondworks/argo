@@ -344,3 +344,20 @@ test('상한 자리가 토큰 한가운데면 그 토큰 앞 공백에서 자른
   assert.equal(detailForTool('Bash', { command: `${'word '.repeat(20_000)}tail` }), 'word '.repeat(20).slice(0, 48));
   assert.equal(detailForTool('Bash', { command: 'x'.repeat(100_000) }), ''); // 공백이 하나도 없으면 보여 줄 것이 없다(조각을 내지 않는다)
 });
+
+// #904 분리 검수(69502956) — MEDIUM 1·2, LOW 3·4
+test('검수: curl --user 뒤 = 반복은 선형(10만 자 200ms 안), 대문자 DB 도구 -p도 가림, 비밀 이름 검색 명령은 읽힘, .7z 확장자는 도구 아님', () => {
+  const t0 = Date.now();
+  maskSecrets('curl --user' + '='.repeat(100_000) + ' x');
+  assert.ok(Date.now() - t0 < 200, `curl --user= 반복 ${Date.now() - t0}ms`);
+  const pw = 'Xq7Zp2Lw' + 'Rt4Vb8N9';
+  assert.equal(maskSecrets(`MySQL -u root -p${pw} db`), 'MySQL -u root -p*** db');
+  assert.equal(maskSecrets(`/usr/local/MySQL/bin/MYSQL -p${pw}`), '/usr/local/MySQL/bin/MYSQL -p***');
+  assert.equal(maskSecrets(`.mariadb -p${pw}`), '.mariadb -p***');
+  assert.equal(maskSecrets('grep -rn "password: " src/ && npm test'), 'grep -rn "password: " src/ && npm test');
+  assert.equal(maskSecrets('rg "token=" .env.example'), 'rg "token=" .env.example');
+  assert.equal(maskSecrets('tar -xf backup.7z && mkdir -pv restore'), 'tar -xf backup.7z && mkdir -pv restore');
+  assert.equal(maskSecrets(`7z x a.7z -p${pw}`), '7z x a.7z -p***');
+  assert.equal(maskSecrets(`{"password": "${pw}`), '{"password": "***');
+  assert.equal(maskSecrets(`curl --user=admin:${pw} https://h`), 'curl --user=admin:*** https://h');
+});

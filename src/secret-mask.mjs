@@ -37,10 +37,12 @@ const FLAG_NAMES = '(?:(?:(?:http|ftp|proxy)-)?(?:password|passwd|pass)|pwd|toke
 const FLAG_RE = new RegExp(`(\\s--?${FLAG_NAMES}(?:=|\\s+))((?:"[^"]*(?:"|$)|'[^']*(?:'|$))\\S*|(?!--?${FLAG_NAMES}(?:=|\\s|$))\\S+)`, 'gi');
 const SSHPASS_RE = new RegExp(`\\b(sshpass\\s+-p\\s*)(${VALUE})`, 'g');
 // -p비밀번호 — 붙여 쓴 꼴은 도구마다 뜻이 달라(mkdir -pv·cp -pr) mysql 계열·7z에서만, 같은 줄의 도구 이름 뒤에서만 본다
-const DB_TOOL = /\b(?:mysql|mysqldump|mysqladmin|mariadb|mariadb-dump|7z|7za|7zr)\b/;
+// 대소문자 무관(옛 규칙 gim — 맥·윈도는 `MySQL`로도 실행된다), 7z는 앞이 `.`·단어 글자면 도구 이름이 아니다(`backup.7z` 확장자)
+const DB_TOOL = /(?:\b(?:mysql|mysqldump|mysqladmin|mariadb|mariadb-dump)|(?<![.\w])7z[ar]?)\b/i;
 const ATTACHED_P_RE = new RegExp(`(\\s-p)(?!\\s)(${VALUE})`, 'g');
 const CURL_TOOL = /\bcurl\b/;
-const CURL_USER_RE = /(\s(?:-u\s*|--user[\s=]+))(?:"([^":\s]+):[^"]*(?:"|$)|'([^':\s]+):[^']*(?:'|$)|([^\s:"']+):([^\s"']+))/g;
+// `--user` 뒤는 `=` 하나 또는 공백 — `[\s=]+`로 두면 뒤의 사용자 자리와 `=`를 나눠 먹어 `--user====…`에서 이차 시간이었다(#904 검수 MEDIUM 1)
+const CURL_USER_RE = /(\s(?:-u\s*|--user(?:=|\s+)))(?:"([^":\s]+):[^"]*(?:"|$)|'([^':\s]+):[^']*(?:'|$)|([^\s:"']+):([^\s"']+))/g;
 // URL 비밀번호 — `://사용자:비밀번호@`. 스킴은 보지 않는다(어떤 스킴이든). 비밀번호에 @가 든 꼴은 마지막 @까지.
 const URL_PASSWORD_RE = /(:\/\/[^/\s:@]*:)([^/\s]+)@/g;
 // 이름이 비밀인 KEY=VALUE — 머리(이름·구분)와 값을 따로 훑는다. 머리만 정규식으로 찾고, 이름이 비밀일 때만 그 자리에서 값을 읽는다(sticky). 이름이 비밀이 아닌 값을 통째로
@@ -48,7 +50,8 @@ const URL_PASSWORD_RE = /(:\/\/[^/\s:@]*:)([^/\s]+)@/g;
 // 값은 비밀 이름에서만 읽고, 비밀 값 속의 머리는 값 끝 100자만 다시 본다(값을 끝에서 끝나는 머리만 값이 끝 너머로 이어질 수 있다) — 전체가 선형이다. 따옴표 값이 입력 끝까지 닫히지 않으면 입력 끝까지(잘린 입력 대비), 중간의
 // 닫히지 않은 따옴표는 옛 규칙처럼 건너뛴다.
 const KV_HEAD_RE = /(["']?)([A-Za-z_][A-Za-z0-9_.-]{0,80})\1(\s*[:=]\s*)/g;
-const KV_VALUE_RE = /"[^"\n]*"|'[^'\n]*'|[^\s"',;&}\]]+|"[^"\n]*$|'[^'\n]*$/y;
+// 닫히지 않은 따옴표 값(입력 끝까지)은 여는 따옴표 바로 뒤가 공백·입력 끝이면 쓰지 않는다 — `grep -rn "password: " src/`·`rg "token=" .env`의 닫는 따옴표를 여는 것으로 읽어 명령 끝까지 가렸다(#904 검수 LOW 3)
+const KV_VALUE_RE = /"[^"\n]*"|'[^'\n]*'|[^\s"',;&}\]]+|"(?![\s]|$)[^"\n]*$|'(?![\s]|$)[^'\n]*$/y;
 const USERINFO_TAIL = /^[^/\s]*@/; // `://이름:` 뒤가 `비밀번호@`로 이어진다 = URL 사용자 정보
 const MASKED_VALUE = /^(["'])?(?:\*+|sk-\*\*\*)\1?$/; // 이미 가려진 값(옛 규칙과 같다 — `sk-***` 표지는 그대로 둔다)
 const SCHEME_WORD = /^(bearer|basic|token|digest|negotiate)$/i;
