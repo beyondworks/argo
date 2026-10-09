@@ -34,6 +34,8 @@ import { readdir, readFile, readlink } from 'node:fs/promises';
 import { networkInterfaces } from 'node:os';
 
 export const AGENT_MARK = 'ARGO_AGENT_PROC';
+// GET이지만 상태를 저장하는 라우트 — 변경처럼 fail-closed로 판정한다(검수 #4). OAuth 복귀 랜딩(브라우저 리다이렉트)이라 사람은 통과.
+export const WRITE_ON_GET = new Set(['/auth/callback', '/auth/confirm']);
 // 가드 제외 표시 — 같은 프로세스 안의 도구 중계 서버(src/engine/crew-mcp.mjs·browser-mcp.mjs)는 러너 CLI 자식(=서버 자손)이
 // 정당하게 부르는 곳이다. 이 심볼을 http.Server에 달면 가드가 그 서버의 요청은 판정하지 않는다(HIGH-1: 중계 서버까지 403나 도구 전멸).
 export const PEER_GUARD_EXEMPT = Symbol.for('argo.agentPeer.exempt');
@@ -285,7 +287,10 @@ const deny = (req, res, code, detail) => {
 export async function denyAgentPeer(req, res, opts = {}) {
   if (peerCheckExempt(req.url)) return false;
   if ((opts.platform ?? process.platform) === 'win32' && String(process.env.ARGO_AGENT_PEER_CHECK ?? '').toLowerCase() !== 'on') return false; // Windows는 옵트인(기본 꺼짐)
-  const write = !SAFE_METHODS.has(String(req.method ?? 'GET').toUpperCase());
+  // GET이지만 상태(기기 세션)를 저장하는 OAuth 복귀 경로는 변경으로 판정한다(fail-closed) — 사람 브라우저의 복귀(토큰이 유효)는 자손이 아니라 통과하고,
+  // 에이전트는 토큰을 위조 못 해도 이 경로를 GET으로 때릴 수 있으니 판정 대상에 넣는다. 데스크톱 앱 로그인은 다른 경로(/auth/paired·/api/auth/pair/*)라 영향 없다.
+  const path = String(req.url ?? '').split('?')[0];
+  const write = !SAFE_METHODS.has(String(req.method ?? 'GET').toUpperCase()) || WRITE_ON_GET.has(path);
   const s = req.socket;
   if (!s?.remotePort) return write ? deny(req, res, 'agent_check_failed', 'no-socket') : false;
   const peer = { addr: s.remoteAddress, port: s.remotePort, serverAddr: s.localAddress, serverPort: s.localPort };

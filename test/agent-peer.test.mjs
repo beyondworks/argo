@@ -117,29 +117,61 @@ test('판정 제외 — 신원 마커와 정적 자산만', () => {
 const fakeReq = (method, addr = '127.0.0.1') => ({ method, url: '/api/companies/w/approvals', headers: {}, socket: { remoteAddress: addr, remotePort: 51000 + Math.floor(Math.random() * 1000), localAddress: '127.0.0.1', localPort: 3001 }, resume() {} });
 const fakeRes = () => { const r = { status: 0, body: '', headersSent: false }; r.writeHead = (s) => { r.status = s; }; r.end = (b) => { r.body = String(b); }; return r; };
 const boom = async () => { throw Object.assign(new Error('lsof timed out'), { code: 'ETIMEDOUT' }); };
+// 단위 시험은 호스트 OS와 무관하게 판정 로직을 본다 — platform을 주입해 win32 옵트인 단락을 피한다(기본 linux).
+const dap = (req, res, opts = {}) => denyAgentPeer(req, res, { platform: 'linux', ...opts });
 
 test('fail-closed — 변경 요청의 판정이 실패(도구 오류·시간 초과·소유자 없음·소켓 정보 없음)하면 403 agent_check_failed', async () => {
   for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
     const res = fakeRes();
-    assert.equal(await denyAgentPeer(fakeReq(method), res, { classify: boom }), true, method);
+    assert.equal(await dap(fakeReq(method), res, { classify: boom }), true, method);
     assert.equal(res.status, 403);
     assert.equal(JSON.parse(res.body).errorCode, 'agent_check_failed');
   }
   const gone = fakeRes();
-  await denyAgentPeer(fakeReq('POST'), gone, { classify: async () => { throw Object.assign(new Error('x'), { code: 'PEER_UNKNOWN' }); } });
+  await dap(fakeReq('POST'), gone, { classify: async () => { throw Object.assign(new Error('x'), { code: 'PEER_UNKNOWN' }); } });
   assert.equal(JSON.parse(gone.body).errorCode, 'agent_check_failed', '소켓 소유자를 못 찾음');
   const noSock = fakeRes();
-  assert.equal(await denyAgentPeer({ method: 'POST', url: '/api/x', headers: {}, socket: {}, resume() {} }, noSock), true, '소켓 정보 없음');
+  assert.equal(await dap({ method: 'POST', url: '/api/x', headers: {}, socket: {}, resume() {} }, noSock), true, '소켓 정보 없음');
   assert.equal(JSON.parse(noSock.body).errorCode, 'agent_check_failed');
 });
 
 test('fail-closed 범위 — 읽기는 판정 실패여도 통과, 원격(이 컴퓨터 밖) 주소는 판정하지 않는다, 사람 판정은 통과', async () => {
-  assert.equal(await denyAgentPeer(fakeReq('GET'), fakeRes(), { descendant: boom }), false, '읽기');
-  assert.equal(await denyAgentPeer(fakeReq('POST', '203.0.113.9'), fakeRes(), { classify: boom }), false, '원격 사용자(클라우드·프록시 뒤)');
-  assert.equal(await denyAgentPeer(fakeReq('POST'), fakeRes(), { classify: async () => ({ agent: false, reason: 'human', pid: 9 }) }), false);
+  assert.equal(await dap(fakeReq('GET'), fakeRes(), { descendant: boom }), false, '읽기');
+  assert.equal(await dap(fakeReq('POST', '203.0.113.9'), fakeRes(), { classify: boom }), false, '원격 사용자(클라우드·프록시 뒤)');
+  assert.equal(await dap(fakeReq('POST'), fakeRes(), { classify: async () => ({ agent: false, reason: 'human', pid: 9 }) }), false);
   const res = fakeRes();
-  assert.equal(await denyAgentPeer(fakeReq('POST'), res, { classify: async () => ({ agent: true, reason: 'agent-group', pid: 9 }) }), true);
+  assert.equal(await dap(fakeReq('POST'), res, { classify: async () => ({ agent: true, reason: 'agent-group', pid: 9 }) }), true);
   assert.equal(JSON.parse(res.body).errorCode, 'agent_loopback');
+});
+
+test('Windows 옵트인 — win32 + 옵트인 없음 → 판정 안 함(통과), ARGO_AGENT_PEER_CHECK=on이면 판정(플랫폼 주입)', async () => {
+  const agentClassify = async () => ({ agent: true, reason: 'descendant', pid: 9 });
+  const prev = process.env.ARGO_AGENT_PEER_CHECK;
+  try {
+    delete process.env.ARGO_AGENT_PEER_CHECK;
+    assert.equal(await denyAgentPeer(fakeReq('POST'), fakeRes(), { platform: 'win32', classify: agentClassify }), false, 'win32 기본 꺼짐 → 에이전트라도 통과(의도된 완화)');
+    assert.equal(await denyAgentPeer(fakeReq('POST'), fakeRes(), { platform: 'linux', classify: agentClassify }), true, '맥·리눅스는 기본 켜짐 → 거절');
+    process.env.ARGO_AGENT_PEER_CHECK = 'on';
+    const res = fakeRes();
+    assert.equal(await denyAgentPeer(fakeReq('POST'), res, { platform: 'win32', classify: agentClassify }), true, 'win32 + on → 판정(거절)');
+    assert.equal(JSON.parse(res.body).errorCode, 'agent_loopback');
+  } finally { if (prev === undefined) delete process.env.ARGO_AGENT_PEER_CHECK; else process.env.ARGO_AGENT_PEER_CHECK = prev; }
+});
+
+test('OAuth 복귀 GET(/auth/callback·/auth/confirm)은 변경으로 판정(fail-closed) — 사람 브라우저(자손 아님)는 통과, 에이전트 자손은 거절', async () => {
+  const human = async () => ({ agent: false, reason: 'human', pid: 9 });
+  const agent = async () => ({ agent: true, reason: 'descendant', pid: 9 });
+  const getReq = (path) => ({ method: 'GET', url: `${path}?code=abc`, headers: {}, socket: { remoteAddress: '127.0.0.1', remotePort: 51000 + Math.floor(Math.random() * 1000), localAddress: '127.0.0.1', localPort: 3001 }, resume() {} });
+  for (const path of ['/auth/callback', '/auth/confirm']) {
+    // 사람 브라우저의 복귀(토큰 유효, 자손 아님) → 통과
+    assert.equal(await denyAgentPeer(getReq(path), fakeRes(), { platform: 'linux', classify: human, descendant: async () => { throw new Error('read 경로로 가면 안 된다'); } }), false, `${path} 사람 통과`);
+    // 에이전트 자손이 같은 GET을 때리면 변경으로 판정해 거절
+    const res = fakeRes();
+    assert.equal(await denyAgentPeer(getReq(path), res, { platform: 'linux', classify: agent }), true, `${path} 에이전트 거절`);
+    assert.equal(JSON.parse(res.body).errorCode, 'agent_loopback');
+  }
+  // 일반 GET(읽기)은 종전대로 자손이어도 읽기 경로(fail-open 아님 — 읽기는 자손이면 거절, 실패면 통과)
+  assert.equal(await denyAgentPeer(getReq('/api/companies/w/approvals'), fakeRes(), { platform: 'linux', classify: async () => { throw new Error('GET은 classify를 쓰면 안 된다'); }, descendant: async () => 0 }), false, '일반 GET은 읽기 경로');
 });
 
 // ── 실제 프로세스: 이 시험 프로세스 = 서버, 여기서 띄운 자식·고아 = 에이전트 셸 ──
@@ -255,12 +287,12 @@ test('PID 재사용·keep-alive 안전 — 판정은 연결(소켓)당 한 번, 
   let calls = 0; const classify = async () => { calls += 1; return { agent: false, reason: 'human', pid: 7 }; };
   const sock = { remoteAddress: '127.0.0.1', remotePort: 55999, localAddress: '127.0.0.1', localPort: 3001 };
   const mkReq = (method) => ({ method, url: '/api/companies/w/approvals', headers: {}, socket: sock, resume() {} });
-  await denyAgentPeer(mkReq('POST'), fakeRes(), { classify });
-  await denyAgentPeer(mkReq('PUT'), fakeRes(), { classify });
+  await dap(mkReq('POST'), fakeRes(), { classify });
+  await dap(mkReq('PUT'), fakeRes(), { classify });
   assert.equal(calls, 1, '같은 소켓(열려 있는 TCP 연결 = 같은 상대 프로세스) — 변경 판정은 한 번만, keep-alive 재사용');
-  await denyAgentPeer(mkReq('POST'), fakeRes(), { socket: { ...sock, remotePort: 56000 }, classify }); // 흉내용(실제로는 새 소켓 객체가 새 판정)
+  await dap(mkReq('POST'), fakeRes(), { socket: { ...sock, remotePort: 56000 }, classify }); // 흉내용(실제로는 새 소켓 객체가 새 판정)
   const other = { remoteAddress: '127.0.0.1', remotePort: 56001, localAddress: '127.0.0.1', localPort: 3001 };
-  await denyAgentPeer({ method: 'POST', url: '/api/x', headers: {}, socket: other, resume() {} }, fakeRes(), { classify });
+  await dap({ method: 'POST', url: '/api/x', headers: {}, socket: other, resume() {} }, fakeRes(), { classify });
   assert.equal(calls, 2, '새 소켓 객체(새 연결) — PID가 재사용됐어도 다시 판정한다(캐시는 소켓 객체 수명에 묶임)');
 });
 

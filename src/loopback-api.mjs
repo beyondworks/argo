@@ -42,18 +42,41 @@ export function probeArgoPort(port) {
   return argo;
 }
 
-// 네트워크 호출 도구가 명령에 쓰였는가 — 이게 있어야 "루프백 포트를 **부르는**" 것이다.
-// 이 조건이 없으면 `grep -rn "localhost:3001" src`·`echo "…http://localhost:3001…" >> README.md`처럼 주소를 **언급만** 하는 정상 명령이 오탐된다(검수 MED).
-// 도구: curl·wget·nc/ncat/netcat·httpie(http/https)·그리고 인터프리터(python/node/ruby/perl/php/deno/bun)의 http 호출 흔적(urllib·requests·http.client·fetch·net.·httplib·LWP·Net::HTTP 등).
-// httpie는 `http`/`https` 명령으로도 불린다 — 단, URL의 `http://`·`https://`는 도구가 아니므로 뒤에 `://`가 오면 제외한다(검수 MED 오탐).
-const NET_TOOL_RE = /(?:^|[\s;&|(`"'=])(?:sudo\s+)?(?:\\|(?:\/usr(?:\/local)?)?\/s?bin\/)?(?:curl|wget|nc|ncat|netcat|telnet|socat|xh|httpie|https?(?!:?\/\/))\b/i;
-const INTERP_HTTP_RE = /\b(?:python3?|node|nodejs|ruby|perl|php|deno|bun|osascript)\b[\s\S]*?(?:urllib|requests\.|http\.client|httplib|httpx|\bfetch\s*\(|net\.(?:connect|createConnection|Socket)|http\.(?:get|request)|https\.(?:get|request)|LWP|Net::HTTP|HTTParty|open-uri|URLSession|NSURL|curl)/i;
-const callsNetwork = (cmd) => NET_TOOL_RE.test(cmd) || INTERP_HTTP_RE.test(cmd);
+// 텍스트·파일 전용 도구(네트워크 능력 없음) — 이것들만 쓴 명령은 주소를 "언급"할 뿐 부르지 않는다. basename 기준, .exe 접미 무시.
+// 목록에 없는 실행 파일(curl·wget·nc·python·node·ruby·perl·php·pwsh·powershell·osascript·open·exec·swift·aria2c 등)은 네트워크로 본다(d462d74c 범위 회복).
+// 뒤집기 근거: 네트워크 도구 "목록"은 끝없이 샌다(/dev/tcp·소켓 라이브러리·경로 접두 curl·셸 알리아스). 안전한 쪽(텍스트) 목록이 짧고 안정적이라 Windows(게이트가 유일 방어)에서도 틈이 적다.
+const TEXT_TOOLS = new Set([
+  'grep', 'egrep', 'fgrep', 'rg', 'ag', 'ack', 'sed', 'awk', 'gawk', 'mawk', 'echo', 'printf', 'cat', 'bat', 'tac', 'nl', 'head', 'tail',
+  'less', 'more', 'cut', 'tr', 'wc', 'sort', 'uniq', 'comm', 'diff', 'join', 'paste', 'fold', 'column', 'tee', 'ls', 'find', 'fd', 'stat',
+  'file', 'basename', 'dirname', 'realpath', 'readlink', 'pwd', 'true', 'false', 'yes', 'seq', 'jq', 'yq', 'git', 'hexdump', 'xxd', 'strings',
+  'od', 'cmp', 'tree', 'date', 'env', 'which', 'type', 'man', 'cd', 'test', 'expr', 'tar', 'gzip', 'gunzip', 'zcat',
+]);
+const SEG_SPLIT = /\s*(?:&&|\|\||[;\n|&()`]|\$\()\s*/; // 단순 명령 경계(셸 연산자·치환)
+const SKIP_PREFIX = new Set(['sudo', 'command', 'nice', 'time', 'nohup', 'setsid', 'exec', 'builtin', 'stdbuf', 'caffeinate', 'xargs']); // 수식어는 지나서 실제 도구를 본다
+const toolBasename = (tok) => tok.replace(/^.*[\\/]/, '').replace(/\.exe$/i, '').toLowerCase();
+
+/** 명령의 모든 단순 명령이 텍스트·파일 전용 도구뿐인가(순수). 하나라도 아니면 false(= 네트워크 가능). /dev/tcp·/dev/udp 리다이렉트는 그 자체로 네트워크. */
+export function commandIsOnlyTextTools(command) {
+  const cmd = String(command ?? '');
+  if (/\/dev\/(?:tcp|udp)\//i.test(cmd)) return false; // echo x > /dev/tcp/… 리다이렉트 소켓
+  for (const rawSeg of cmd.split(SEG_SPLIT)) {
+    const seg = rawSeg.trim();
+    if (!seg) continue;
+    const tokens = seg.split(/\s+/);
+    let i = 0;
+    while (i < tokens.length && (/^[A-Za-z_][\w]*=/.test(tokens[i]) || SKIP_PREFIX.has(toolBasename(tokens[i])))) i += 1; // VAR=val·sudo·exec… 건너뛰기
+    const exe = tokens[i];
+    if (exe === undefined) continue; // 리다이렉트·대입만 있는 단락(위 /dev/tcp 검사가 소켓은 이미 잡음)
+    if (exe.startsWith('-') || exe.startsWith('<') || exe.startsWith('>')) continue; // 옵션·리다이렉트로 시작 = 앞 단락의 연속
+    if (!TEXT_TOOLS.has(toolBasename(exe))) return false;
+  }
+  return true;
+}
 
 /** 셸 명령이 Argo 루프백 API를 **부르는가**(언급만 하는 게 아니라). ownPort = 이 서버의 포트(Next가 listen 뒤 process.env.PORT에 적는다) — 같으면 탐침 없이 참. */
 export async function shellCallsArgoApi(command, { ownPort = Number(process.env.PORT) || 0, probe = probeArgoPort } = {}) {
   const cmd = String(command ?? '');
-  if (!callsNetwork(cmd)) return false; // 네트워크 도구가 없으면 호출이 아니다(grep·echo·주석 등 언급은 통과)
+  if (commandIsOnlyTextTools(cmd)) return false; // 텍스트 도구만 = 언급(grep·echo·cat|grep 등) — 부르지 않는다
   const ports = loopbackPortCandidates(cmd);
   if (!ports.length) return false;
   if (ownPort && ports.includes(ownPort)) return true;
