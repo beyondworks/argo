@@ -54,7 +54,8 @@ export async function readRoomNotices(c, targets, { now, after = {} }) {
   for (const r of rooms) { // 방 하나씩(인덱스 — msgr.mjs assistantNotices)
     const prev = Number.isFinite(Number(after[r.id])) && Number(after[r.id]) > 0 ? Number(after[r.id]) : null;
     const got = ((await c.db.assistantNotices(r.id, r.personal_pair.slice('crew:'.length), { afterId: prev, sinceIso, limit: RECOVER_LIMIT })) ?? [])
-      .filter((x) => x && x.author_kind === 'crew'); // 끝 기록 뒤 읽기는 작성자 종류를 서버에서 거르지 않는다(위 머리 주석)
+      // 그 방의 그 에이전트가 쓴 비서 알림 글만 — 작성자 종류(끝 기록 뒤 읽기는 서버에서 거르지 않는다, 위 머리 주석)·as: 표지를 받은 뒤에도 다시 본다
+      .filter((x) => x && x.author_kind === 'crew' && String(x.client_msg_id ?? '').startsWith('as:'));
     rows.push(...got);
     const top = Math.max(prev ?? 0, ...got.map((x) => Number(x.id) || 0));
     if (top > 0) last[r.id] = top;
@@ -70,7 +71,7 @@ export function foldNotices(rows, { now, tz }) {
   const sent = {}; const bundles = { am: '', pm: '' }; const pre = new Set(); let capNoted = false;
   for (const r of rows ?? []) {
     const a = r?.meta?.assistant;
-    if (!a || typeof a !== 'object' || !Array.isArray(a.keys)) continue;
+    if (r?.meta?.notification !== 'assistant' || !a || typeof a !== 'object' || !Array.isArray(a.keys)) continue; // 비서 알림 글 표지(deliver.mjs insertNotice)
     const t0 = Date.parse(r.created_at);
     const t = Number.isFinite(t0) ? Math.min(t0, now) : now;
     for (const k of a.keys) {

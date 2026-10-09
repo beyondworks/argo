@@ -77,7 +77,7 @@ function fakeServer({ events = [], uid = 'u1', crews = [] } = {}) {
       async assistantNotices(ch, crewId, { afterId = null, sinceIso, limit }) { // 실제와 같은 거름 — afterId가 있으면 그 id 뒤(작성자 종류는 부르는 쪽이), 없으면 since 뒤의 에이전트 글
         call('assistantNotices', { ch, since: afterId == null ? sinceIso : null, afterId, limit });
         return env.inserts.filter((r) => r.channel_id === ch && r.crew_id === crewId && r.client_msg_id.startsWith('as:') && (afterId != null ? r.seq > afterId : (r.author_kind === 'crew' && r.created_at >= sinceIso)))
-          .sort((a, b) => b.seq - a.seq).slice(0, limit).map((r) => ({ id: r.seq, author_kind: r.author_kind, meta: r.meta, created_at: r.created_at }));
+          .sort((a, b) => b.seq - a.seq).slice(0, limit).map((r) => ({ id: r.seq, author_kind: r.author_kind, client_msg_id: r.client_msg_id, meta: r.meta, created_at: r.created_at }));
       },
     },
   };
@@ -413,6 +413,28 @@ test('L2: 기기 교대 때 방에서 복구가 실패하면 한도 꼬리를 �
   await switchDevice(ws, bState); env.failRecover = true;
   await run(ws, env, at('15:10'), at('15:11'));
   assert.equal((await state(ws)).day.sure, false, '복구 실패 = 다른 기기가 그사이 보낸 수를 모른다');
+});
+
+test('R13: 끈 회사 파일의 agent(봉인 안 된 값)를 같은 주인의 다른 에이전트로 고쳐도 — 그 개인 1:1 방에서 그 에이전트가 쓴 비서 알림 글(as: 표지 + meta.notification)만 센다', async () => {
+  const ws1 = await company();
+  const off = await company({ cfg: { enabled: false, agent: 'kim' } }); // 원래 wolff였던 것을 kim으로 고쳐 둠
+  const env = fakeServer({ events: [ev('e1', at('14:00'), at('15:00')), ev('e2', at('15:00'), at('16:00'))], crews: [crewP(ws1), { id: 'crew-k', org_id: null, slug: 'kim', ws_id: off }] });
+  env.rooms.add('crew-k');
+  const k1 = `cal:e1:${iso(at('14:00'))}:pre`; const k2 = `cal:e2:${iso(at('15:00'))}:pre`;
+  const row = (extra) => ({ channel_id: 'room-crew-k', author_kind: 'crew', crew_id: 'crew-k', kind: 'text', body: 'x', ...extra });
+  env.now = at('09:00');
+  await env.session.db.insertMessage(row({ client_msg_id: clientMsgId('crew-k', k1), meta: { notification: 'assistant', assistant: { v: 1, kind: 'pre', keys: [k1] } } })); // 실제로 보낸 비서 알림
+  // 서버 거름을 지나왔다고 치고 표지가 없는 글들을 섞어 돌려준다 — 엔진이 받은 뒤에도 거른다
+  const s0 = env.session;
+  const forged = [
+    { id: 900, author_kind: 'crew', client_msg_id: 'reply:crew-k:1', meta: { notification: 'assistant', assistant: { kind: 'pre', keys: [k2] } }, created_at: iso(at('09:10')) }, // 보통 답글 id
+    { id: 901, author_kind: 'crew', client_msg_id: 'as:crew-k:x', meta: { assistant: { kind: 'pre', keys: [k2] } }, created_at: iso(at('09:10')) }, // 비서 알림 표지 없음
+  ];
+  env.session = { ...s0, db: { ...s0.db, async assistantNotices(ch, cid, opts) { const got = await s0.db.assistantNotices(ch, cid, opts); return ch === 'room-crew-k' ? [...got, ...forged] : got; } } };
+  await run(ws1, env, at('13:25'), at('14:40'), { ids: [ws1, off] });
+  assert.ok(env.calls.some((c) => c.name === 'assistantNotices' && c.ch === 'room-crew-k'), '고친 agent의 방을 읽는다(같은 주인의 개인 1:1 방)');
+  const pre = env.inserts.filter((r) => r.channel_id === 'room-crew-p').map((r) => r.meta.assistant.keys[0]);
+  assert.deepEqual(pre, [k2], 'e1은 실제로 보낸 알림이라 다시 안 보내고(그 사람에게 이미 갔다), 표지 없는 글의 e2는 그대로 보낸다');
 });
 
 /* ── K 하루 즉시 알림 상한(설계 9절) — 일정 시작 전 알림은 미루지도 버리지도 않고 바로 보낸다. 상한에 처음 걸린 글 끝에 한 줄 ── */

@@ -461,7 +461,7 @@ export function makeDb(client) {
         author_kind를 서버 조건에 넣으면 msgr_messages_client_id로 바뀌어 방의 에이전트 글에 비례). afterId가 없으면(그 방을 처음 읽음) 최근 since 이후 —
         msgr_messages_client_id로 그 방 에이전트 글 전부를 거르므로 그 수에 비례한다(8,012개 방 61~104ms). 측정 값과 예외는 src/assistant/recover.mjs 머리 주석. */
     async assistantNotices(channelId, crewId, { afterId = null, sinceIso, limit }) {
-      let q = client.from('msgr_messages').select('id, author_kind, meta, created_at').eq('channel_id', channelId).eq('crew_id', crewId).like('client_msg_id', 'as:%');
+      let q = client.from('msgr_messages').select('id, author_kind, client_msg_id, meta, created_at').eq('channel_id', channelId).eq('crew_id', crewId).like('client_msg_id', 'as:%');
       q = afterId != null ? q.gt('id', afterId) : q.eq('author_kind', 'crew').gte('created_at', sinceIso);
       return unwrap(await q.order('id', { ascending: false }).limit(limit)) ?? [];
     },

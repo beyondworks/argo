@@ -81,7 +81,7 @@ function fakeServer({ events = [], uid = 'u1', crews = [{ id: 'crew-p', org_id: 
       async assistantNotices(ch, crewId, { afterId = null, sinceIso, limit }) {
         env.calls.push({ name: 'assistantNotices', at: env.now }); seenCalls.add('assistantNotices');
         return env.inserts.map((r, i) => ({ ...r, seq: i + 1 })).filter((r) => r.channel_id === ch && r.crew_id === crewId && r.client_msg_id.startsWith('as:') && (afterId != null ? r.seq > afterId : r.created_at >= sinceIso))
-          .reverse().slice(0, limit).map((r) => ({ id: r.seq, author_kind: r.author_kind, meta: r.meta, created_at: r.created_at }));
+          .reverse().slice(0, limit).map((r) => ({ id: r.seq, author_kind: r.author_kind, client_msg_id: r.client_msg_id, meta: r.meta, created_at: r.created_at }));
       },
     },
   };
