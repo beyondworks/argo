@@ -16,7 +16,7 @@ import { paths } from './workspace.mjs';
 import { sanitizeFileSlug } from './slug.mjs';
 import { writeJsonAtomic, readJsonLenient } from './jsonstore.mjs';
 import { withLock } from './mutex.mjs';
-import { maskKeyLike } from './runners/shared.mjs';
+import { maskSecrets as maskFull, isSecretName } from './secret-mask.mjs';
 import { stageForTool, detailForTool } from './turn-status.mjs';
 
 export const TRACE_DIR = '.turn-traces'; // 회사 루트 직속 도트 — 권한 게이트 WS_DOT_FILES·sync EXCLUDE가 같은 이름을 본다
@@ -36,114 +36,31 @@ const VIEW_INPUT = 300;
 const VIEW_RESULT_CHARS = 1500;
 
 /* ─── 가림 ─── */
-// 이름이 비밀을 뜻하는 KEY=VALUE·KEY: VALUE(따옴표 JSON 키 포함)는 값만 가린다(무엇이 있었는지는 보이게). 이름 판정을 좁게 둔다 —
-// 'key'가 들어간 아무 이름(monkey·keyboard·primaryKey)까지 가리면 평범한 도구 출력이 읽히지 않는다.
-const SECRET_TAIL = /(?:^|[_.-])(?:api[_-]?key|apikey|secret|secret[_-]?key|secretkey|token|access[_-]?token|accesstoken|refresh[_-]?token|refreshtoken|id[_-]?token|auth[_-]?token|authtoken|bot[_-]?token|password|passwd|pwd|credentials?|authorization|auth|database[_-]?url|databaseurl|dsn|private[_-]?key|privatekey|access[_-]?key(?:[_-]?id)?|accesskey(?:id)?|cookie|session[_-]?token|sessiontoken|client[_-]?secret|clientsecret|webhook[_-]?secret|signing[_-]?secret)$/i;
-/** 이름이 비밀 자리인가(순수) — OPENAI_API_KEY·GITHUB_TOKEN·client_secret·apiKey·password·DATABASE_URL·SUPABASE_SERVICE_ROLE_KEY(대문자 *_KEY). */
-export const isSecretName = (name) => {
-  const n = String(name ?? '');
-  return SECRET_TAIL.test(n) || /(?:^|_)[A-Z0-9_]*KEY$/.test(n) || /^[A-Z0-9_]*(?:SECRET|PASSWORD|TOKEN)[A-Z0-9_]*$/.test(n);
-};
-// ─ 정규식 서비스 거부(ReDoS) 방어 + 상한 가림의 안전(보안 검토 2026-10-09, 두 번째 검토 반영) ─
-// 도구 결과에는 웹 페이지·파일처럼 외부가 만든 큰 글이 섞인다. 규칙:
-//   ① 가림 범위는 1e9333bd(첫 보안 반영)와 같다 — 그때 가리던 입력은 모두 가린다(시험: 옛 규칙 대조).
-//   ② 길이의 제곱으로 느려지던 자리만 고친다: URL 비밀번호는 정규식 대신 '://'를 indexOf로 찾아 그 앞뒤만 본다, JWT는 [\w.-] 덩어리를 한 번
-//      나눠 본다(maskKeyLike), mysql·curl 줄 조건은 줄을 한 번 나눠 그 줄에만, PEM은 indexOf로 한 번 훑는다, 결과 끝 공백은 trimEnd.
-//      KEY=VALUE는 이름 덩어리 시작에서만 시작한다(옛 규칙과 같은 이름을 고른다). 나머지(Bearer·쿠키·CLI 인자)는 시작 자리가 고정 단어라 한 번 훑기로 끝난다.
-//   ③ 상한이 있는 호출은 **줄 단위 창**으로 가린다: 상한 자리가 든 줄의 끝까지 잘라 가린 뒤 상한으로 자른다. 가림 규칙 중 비밀 부분이 줄을 넘는 것은
-//      PEM과 따옴표로 묶은 CLI 인자뿐이고, 창 모드에서는 둘 다 창 끝을 닫는 자리로 본다(끝까지 가린다). 그래서 창 안의 모든 줄은 전체를 가렸을 때와
-//      같거나 더 가려지고, 출력은 그 줄들에서만 나온다 — "상한 가림 결과에 전체 가림 뒤 자르기보다 많은 원문 비밀이 나오지 않는다".
-//      그 줄이 상한 뒤로 64KB 넘게 이어지면(줄바꿈 없는 큰 글) 전체를 가린 뒤 자른다(규칙이 모두 한 번 훑기라 선형).
-//   시험: test/turn-trace-redos.test.mjs(패턴마다 10만 반복 200ms 안 + 경계 노출 대조 + 옛 규칙 대조).
+// 규칙 본체는 main의 src/secret-mask.mjs(#904 — 이 기록의 첫 보안 반영 1e9333bd 규칙을 옮기고 선형으로 고친 것) 하나만 쓴다. 상태 파일 요약(turn-status)·작업 과정 기록이
+// 같은 함수를 지나 판정이 갈리지 않는다. 여기는 **상한 가림**만 더한다.
+// 상한 가림 = 줄 단위 창: 상한 자리가 든 줄의 끝까지 잘라 가린 뒤 상한으로 자른다. secret-mask 규칙 중 비밀이 줄을 넘는 것(PEM·따옴표 CLI 값)은 끝나지 않으면 입력 끝까지를
+// 값으로 보므로, 창 안의 모든 줄은 전체를 가렸을 때와 같거나 더 가려지고 출력은 그 줄들에서만 나온다 — "상한 가림 결과에 전체 가림 뒤 자르기보다 많은 원문 비밀이 나오지 않는다"
+// (2차 보안 검토: '상한+여유로 자르기'는 앞쪽 PEM이 줄면 창 끝의 잘린 조각을 상한 안으로 당겼다).
+// 그 줄이 상한 뒤로 64KB 넘게 이어지면 상한+64KB 안의 마지막 공백에서 자른다(secret-mask는 호출자가 길이를 묶는 것이 전제 — turn-status와 같은 방식: 공백에서 자르면 토큰은
+// 통째로 있거나 없다). 공백도 없는 64KB 넘는 한 덩어리는 상한+64KB에서 자른다 — 상한 앞 글이 줄어도 당겨지는 양은 상한 이하라 그 자리 조각은 출력에 닿지 않는다.
+// 시험: test/turn-trace-redos.test.mjs(경계 노출 대조·옛 규칙 대조·공격 입력 200ms).
+export { isSecretName };
 const WINDOW_LINE_MAX = 65_536;
-// KEY=VALUE — 이름 덩어리의 **시작 자리에서만** 시작한다(앞 고정). 옛 규칙(이름 {0,80}, 앞 고정 없음)은 덩어리 안 모든 자리에서 80자씩 되짚어 길이의 81배였다.
-// 옛 규칙과 같은 이름을 보도록, 덩어리가 81자를 넘으면 마지막 81자 안의 첫 영문자·밑줄부터를 이름으로 본다(옛 규칙이 고르던 가장 왼쪽 시작 자리와 같다).
-const KV_RE = /(?<![A-Za-z0-9_.-])(["']?)([A-Za-z0-9_.-]+)\1(\s*[:=]\s*)("[^"\n]*"|'[^'\n]*'|[^\s"',;&}\]]+)/g;
-/** 덩어리 → 옛 규칙이 보던 이름(없으면 ''). 따옴표로 묶인 이름은 덩어리 전체가 이름이어야 한다(옛 규칙의 \1 자리). */
-function kvName(run, quoted) {
-  if (quoted) return /^[A-Za-z_]/.test(run) && run.length <= 81 ? run : '';
-  const tail = run.length > 81 ? run.slice(-81) : run;
-  const i = tail.search(/[A-Za-z_]/);
-  return i < 0 ? '' : tail.slice(i);
+const WS_CH = /\s/;
+function windowEnd(str, limit) {
+  const nl = str.indexOf('\n', limit);
+  if (nl >= 0 && nl - limit <= WINDOW_LINE_MAX) return nl + 1;
+  const hard = Math.min(str.length, limit + WINDOW_LINE_MAX);
+  if (hard === str.length) return hard;
+  for (let i = hard - 1; i >= limit; i -= 1) if (WS_CH.test(str[i])) return i + 1;
+  return hard;
 }
-const isMaskedVal = (v) => { const x = String(v).replace(/^["']/, '').replace(/["']$/, ''); return x === 'sk-***' || /^\*+$/.test(x); };
-const PEM_HEAD = /-----BEGIN ([A-Z ]{0,64})PRIVATE KEY-----/g;
-const PEM_END = 'PRIVATE KEY-----';
-/** PEM 개인키 블록 가리기 — indexOf로 한 번 훑는다(닫히지 않으면 끝까지 — 옛 규칙의 `|$`와 같다). */
-function maskPem(s) {
-  if (!s.includes('-----BEGIN ')) return s;
-  let out = ''; let last = 0; let m;
-  PEM_HEAD.lastIndex = 0;
-  while ((m = PEM_HEAD.exec(s))) {
-    const kind = m[1] ?? '';
-    const endAt = s.indexOf(PEM_END, m.index + m[0].length);
-    const stop = endAt < 0 ? s.length : endAt + PEM_END.length;
-    out += `${s.slice(last, m.index)}-----BEGIN ${kind}PRIVATE KEY----- *** -----END ${kind}PRIVATE KEY-----`;
-    last = stop; PEM_HEAD.lastIndex = stop;
-  }
-  return out + s.slice(last);
-}
-/** 줄 조건 가림 — 그 줄에 trigger가 있을 때만 rule을 건다(줄을 한 번 나눈다 — `.*?` 끝까지 훑기 없음). */
-const byLine = (s, trigger, rule, repl) => (trigger.test(s) ? s.split('\n').map((l) => (trigger.test(l) ? l.replace(rule, repl) : l)).join('\n') : s);
-const MYSQL_LINE = /\b(?:mysql|mysqldump|mysqladmin|mariadb|mariadb-dump)\b/;
-const CURL_LINE = /\bcurl\b/;
-const SCHEME_CH = /[A-Za-z0-9+.-]/;
-const WORD_CH = /\w/;
-const URL_USERINFO = /([^/\s:@]+):([^/\s@]+)@/y;
-/** URL 사용자:비밀번호@ 가리기 — 옛 규칙 \b([a-z][a-z0-9+.-]*:\/\/)… 과 같은 입력을 가린다. '://'를 indexOf로 찾고 그 앞(스킴)과 뒤(사용자 정보)만 본다
-    — 정규식으로 두면 'a.a.a…'처럼 스킴 글자가 이어진 글에서 시작 자리마다 끝까지 훑었다. 스킴 길이 상한 없음(postgresql+asyncpg 같은 긴 스킴). */
-function maskUrlCreds(s) {
-  let i = s.indexOf('://');
-  if (i < 0) return s;
-  let out = ''; let last = 0;
-  while (i >= 0) {
-    let j = i; // 스킴 덩어리 시작 — 옛 규칙처럼 '\b + 영문자'로 시작하는 가장 왼쪽 자리가 있으면 스킴이다
-    while (j > last && SCHEME_CH.test(s[j - 1])) j -= 1;
-    let ok = false;
-    for (let k = j; k < i; k += 1) if (/[A-Za-z]/.test(s[k]) && (k === 0 || !WORD_CH.test(s[k - 1]))) { ok = true; break; }
-    const at = i + 3;
-    if (ok) {
-      URL_USERINFO.lastIndex = at;
-      const m = URL_USERINFO.exec(s);
-      if (m) { out += `${s.slice(last, at)}${m[1]}:***@`; last = at + m[0].length; i = s.indexOf('://', last); continue; }
-    }
-    i = s.indexOf('://', at);
-  }
-  return out + s.slice(last);
-}
-
-/** 가림 본체 — windowed = 줄 단위 창(끝이 원문 끝이 아니다): 줄을 넘는 비밀(PEM·따옴표 CLI 값)은 창 끝까지 가린다. */
-function maskAll(s, windowed) {
-  let out = maskPem(s);
-  out = maskKeyLike(out);
-  out = out.replace(/\b(Bearer|Basic|Token)\s+[A-Za-z0-9._~+/=-]{8,}/g, '$1 ***');
-  // 쿠키 헤더 — 값 전체(여러 쿠키·세션 id)를 가린다
-  out = out.replace(/\b((?:Set-)?Cookie)(\s*:\s*)[^\n]+/gi, '$1$2***');
-  // CLI 인자로 넘긴 비밀 — --password=x·--password x·--token x·--api-key x, mysql류 -pSECRET(붙여 쓴 꼴), sshpass -p x, curl -u user:pass
-  out = out.replace(windowed ? CLI_SECRET_WIN : CLI_SECRET, (m, head, val) => (isMaskedVal(val) ? m : `${head}***`));
-  out = byLine(out, MYSQL_LINE, /(\s-p)(?=\S)(\S+)/g, '$1***');
-  out = out.replace(/(\bsshpass\s+-p\s+)(\S+)/g, '$1***');
-  out = byLine(out, CURL_LINE, /(\s(?:-u|--user)\s+["']?)([^\s:"']+):([^\s"']+)/g, '$1$2:***');
-  out = maskUrlCreds(out);
-  out = out.replace(KV_RE, (m, q, run, sep, val) => {
-    const name = kvName(run, !!q);
-    if (!name || !isSecretName(name) || isMaskedVal(val) || /^(Bearer|Basic|Token)$/.test(val)) return m;
-    return `${q}${run}${q}${sep}${val.startsWith('"') ? '"***"' : val.startsWith("'") ? "'***'" : '***'}`;
-  });
-  return out;
-}
-const CLI_SECRET = /(\s--?(?:password|passwd|pass|token|api-?key|secret|client-secret|auth-token)(?:=|\s+))("[^"]*"|'[^']*'|\S+)/gi;
-const CLI_SECRET_WIN = /(\s--?(?:password|passwd|pass|token|api-?key|secret|client-secret|auth-token)(?:=|\s+))("[^"]*(?:"|$)|'[^']*(?:'|$)|\S+)/gi; // 창 끝 = 닫는 자리
-
-/** 화면·저장에 실리는 단계 글에서 비밀 모양을 가린다(순수). maskKeyLike(벤더 키 모양) 위에 PEM 개인키·Bearer·쿠키·CLI 비밀 인자·URL 비밀번호·이름이 비밀인 KEY=VALUE.
-    limit을 주면 상한 자리가 든 줄 끝까지만 가리고 상한으로 자른다(큰 외부 글 방어 — 위 ③). */
+/** 단계 글 가리기 — limit을 주면 줄 단위 창으로 상한까지만(큰 외부 글 방어). limit 없이 부를 때는 호출자가 길이를 묶는다(secret-mask 전제). */
 export function maskSecrets(s, limit = Infinity) {
   if (s == null) return '';
   const str = String(s);
-  if (!(Number.isFinite(limit) && str.length > limit)) return maskAll(str, false);
-  const nl = str.indexOf('\n', limit);
-  if (nl < 0 || nl - limit > WINDOW_LINE_MAX) return maskAll(str, false).slice(0, limit); // 줄바꿈 없는 큰 글 — 전체를 가린 뒤 자른다
-  return maskAll(str.slice(0, nl + 1), true).slice(0, limit);
+  if (!(Number.isFinite(limit) && str.length > limit)) return maskFull(str);
+  return maskFull(str.slice(0, windowEnd(str, limit))).slice(0, limit);
 }
 
 /* ─── 글 다듬기 ─── */

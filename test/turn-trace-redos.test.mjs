@@ -44,7 +44,8 @@ const ATTACKS = {
 for (const [name, input] of Object.entries(ATTACKS)) {
   test(`가림 200ms 안 — ${name} (${input.length.toLocaleString()}자)`, () => {
     const t0 = performance.now();
-    T.maskSecrets(input);
+    T.maskSecrets(input, 16_000); // 기록기가 쓰는 상한(결과 16,000자) — 상한 없는 전체 가림은 호출자가 길이를 묶는 것이 전제(secret-mask.mjs)
+    T.maskSecrets(input, 4000);
     maskKeyLike(input);
     const ms = performance.now() - t0;
     assert.ok(ms < 200, `${name}: ${ms.toFixed(0)}ms`);
@@ -182,4 +183,20 @@ test('경계 노출 대조 — 상한 가림 결과에 전체 가림 뒤 자르�
     }
   }
   assert.ok(checked > 1000, `대조 칸 ${checked}`);
+});
+
+test('줄바꿈 없는 큰 글 — 상한+64KB 안의 마지막 공백에서 잘라 가리고, 경계 비밀 노출은 전체 가림 뒤 자르기와 같다', () => {
+  const tail = ' word'.repeat(30_000); // 줄바꿈 없는 150KB
+  const sec = `ghp_${'d'.repeat(36)}`;
+  for (const LIM of [4000, 16_000]) {
+    for (const back of [-20, 0, 6, 30]) {
+      const text = `${'y'.repeat(LIM - back)} ${sec}${tail}`;
+      const t0 = performance.now();
+      const cap = T.maskSecrets(text, LIM);
+      assert.ok(performance.now() - t0 < 200, '상한 가림은 큰 글 전체를 훑지 않는다');
+      const full = T.maskSecrets(text).slice(0, LIM);
+      assert.ok(!cap.includes(sec.slice(0, 8)) || full.includes(sec.slice(0, 8)), `back=${back}`);
+      assert.equal(cap.length, LIM);
+    }
+  }
 });

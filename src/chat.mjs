@@ -2394,7 +2394,7 @@ ${lang === 'en'
       if (said) partial = partial ? `${partial}\n\n${said}` : said;
       // 사고 과정 — thinking 블록(SDK가 확장 사고를 켠 모델에서 싣는다)을 상태 파일 thought로 흘린다. 회의실·1:1 카드가
       // "무엇을 생각하며 이 답을 내는지"를 접이식으로 보인다(유건 요청 2026-09-06). 없으면 이전 값 유지(setTurnStatus).
-      const thoughtNow = maskSecrets((msg.message?.content ?? []).filter((b) => b.type === 'thinking' && typeof b.thinking === 'string').map((b) => b.thinking).join('\n').trim()); // 생각 글도 작업 과정과 같은 가림
+      const thoughtNow = maskSecrets((msg.message?.content ?? []).filter((b) => b.type === 'thinking' && typeof b.thinking === 'string').map((b) => b.thinking).join('\n').trim(), 65_536); // 생각 글도 작업 과정과 같은 가림(길이를 묶는다 — secret-mask 전제)
       if (thoughtNow) thought = thought ? `${thought}\n\n${thoughtNow}` : thoughtNow;
       const stage = tu ? stageForTool(tu.name) : 'think'; // 코드 — 클라가 번역(가장 흔한 상태라 누락 시 영어 회사에 한국어 노출)
       const detail = tu ? safeDetail(tu.name, tu.input, { display: true }) : ''; // 가린 입력으로 만든 한 줄(상태 파일 → 화면·회의실 발언 카드)
