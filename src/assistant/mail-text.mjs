@@ -151,7 +151,7 @@ export function composeBatch(items, { lang = 'ko', now, tz, held = false }) {
     const v = { i: k + 1, sender: senderOf(m), addr: display(m.addr, 80), subject: cls.cat === 'security' ? scrubLine(m.subject, 80) || mt('untitled', lang) : subjectOf(m, lang), time: arrivedAt(Date.parse(m.at), { now, tz }) };
     if (cls.cat === 'security') lines.push(mt('item.security', lang, v));
     else if (cls.cat === 'deadline') lines.push(cls.due?.days === 0 ? mt('item.due.today', lang, v) : mt('item.due.days', lang, { ...v, n: cls.due?.days ?? '?', date: cls.due ? dateLabel(cls.due.date, lang) : '' }));
-    else if (cls.cat === 'customer') lines.push(mt('item.customer', lang, v));
+    else if (cls.cat === 'customer') lines.push(mt('item.customer', lang, v), ...(cls.unverified ? [`   ${mt('line.unverified', lang, { addr: display(m.addr, 80) }).replace(/^· /, '')}`] : []));
     else if (cls.cat === 'reply') lines.push(mt('item.reply', lang, v));
     else lines.push(mt('item.money', lang, v));
   });

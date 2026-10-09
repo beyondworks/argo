@@ -53,7 +53,9 @@ test('M27·M21·M28·P9: 스레드 조건 — 내가 먼저 보낸 스레드(②
     const x = { ...m, subject: 'Any update?', ...(auth ? { auth } : {}) };
     assert.notEqual(C.classifyMail(x, { thread: nudge, now: at('08:00'), tz: 'Asia/Seoul' }).cat, 'reply', `②′ + ${why}`);
     const cus = C.classifyMail(x, { thread: [{ gid: 'm2', addr: m.addr, at: m.at, sent: false }], customer: (a) => a, now: at('08:00'), tz: 'Asia/Seoul' });
-    assert.ok(!['reply', 'customer'].includes(cus.cat), `거래처 주소 + ${why} → 거래처로 보지 않는다(${cus.cat})`);
+    // 재검수 후속 3 — DMARC 기록이 없을 뿐인 거래처(none·인증 결과 없음)는 거래처로 보되 표지, 위조 신호(fail)는 거래처가 아니다
+    if (auth?.dmarc === 'fail') assert.ok(!['reply', 'customer'].includes(cus.cat), `거래처 주소 + ${why} → 거래처로 보지 않는다(${cus.cat})`);
+    else assert.deepEqual([cus.cat, cus.unverified], ['reply', true], `거래처 주소 + ${why} → 거래처 재촉은 답장 필요 + 표지`);
     const r2 = C.classifyMail(x, { accounts: ['me@x.com'], thread: mineFirst, now: at('08:00'), tz: 'Asia/Seoul' });
     assert.deepEqual([r2.cat, r2.unverified], ['reply', true], `② 내가 먼저 보낸 스레드는 ${why}여도 답장 필요 — 대신 "보낸 곳 확인 못 함" 표지`);
   }
@@ -68,7 +70,7 @@ test('M27·M21·M28·P9: 스레드 조건 — 내가 먼저 보낸 스레드(②
 test('M23·M24·M25·I11·M30: 홍보는 뉴스레터, 허용 목록 보안 메일은 즉시, 인증 번호는 뺀다, 목록 밖 보안 메일은 저녁, 이름뿐인 보낸 사람은 보안 범주를 안 쓴다', () => {
   const k = (o) => C.classifyMail(mail('x', o), { now: at('10:00'), tz: 'Asia/Seoul' });
   assert.deepEqual([k({ subject: 'Still waiting for your order!', labels: ['INBOX', 'CATEGORY_PROMOTIONS'] }).cat, C.needsThread(mail('x', { subject: 'Still waiting for your order!', labels: ['INBOX', 'CATEGORY_PROMOTIONS'] }))], ['newsletter', false]);
-  assert.deepEqual(k({ subject: '새 기기에서 로그인했습니다', addr: 'no-reply@accounts.google.com', from: 'Google', extra: { auth: GOOGLE_PASS } }), { cat: 'security', lane: 'now', reply: false });
+  assert.deepEqual(k({ subject: '보안 알림: 새 기기에서 로그인했습니다', addr: 'no-reply@accounts.google.com', from: 'Google', extra: { auth: GOOGLE_PASS } }), { cat: 'security', lane: 'now', reply: false });
   assert.equal(k({ subject: 'Security alert: new sign-in', addr: 'alert@google.com.evil.io' }).cat, 'security_other');
   assert.equal(k({ subject: 'Security alert: new sign-in', addr: 'alert@google.com.evil.io' }).lane, 'pm');
   assert.equal(k({ subject: '인증번호 482913', addr: 'no-reply@accounts.google.com' }).lane, 'drop');
@@ -204,7 +206,7 @@ test('글: 사전의 모든 키에 ko·en, 답장 필요 글은 무엇이 왔나
 
 test('(b) 짧은 알림 묶음 — "확인할 것 2건: 1. … 2. …", 보안은 보낸 주소·링크 대신 직접 확인 안내·숫자 지움, 기한은 "오늘이 기한"', () => {
   const now = at('09:30');
-  const sec = mail('s1', { from: 'Google', addr: 'no-reply@accounts.google.com', subject: 'Seosan sign-in from Windows Chrome 4829 https://x.y', at: at('03:12'), extra: { auth: GOOGLE_PASS } });
+  const sec = mail('s1', { from: 'Google', addr: 'no-reply@accounts.google.com', subject: 'Security alert: Seosan sign-in from Windows Chrome 4829 https://x.y', at: at('03:12'), extra: { auth: GOOGLE_PASS } });
   const due = mail('d1', { from: 'OpenAI', addr: 'noreply@tm.openai.com', subject: 'Your ChatGPT Pro subscription will be canceled on Oct 8' });
   const body = X.composeBatch([{ m: due, cls: C.classifyMail(due, { now, tz: 'Asia/Seoul' }) }, { m: sec, cls: C.classifyMail(sec, { now, tz: 'Asia/Seoul' }) }], { lang: 'ko', now, tz: 'Asia/Seoul' });
   assert.match(body, /^\[비서\] 확인할 것 2건\n1\. 오늘이 기한이에요 — OpenAI/);
@@ -300,7 +302,7 @@ test('P1·P7: 밤 02:14 도착 — 밤에는 호출 0, 08:00 첫 확인이 커�
 test('N4·M26: 같은 메일이 다시 와도(라벨 변경) 한 번만, 10분 안의 두 번째 차례는 호출 0, 바뀐 것 없는 확인은 상태 쓰기 0', async () => {
   const w = world(); const st = { sent: {}, day: { date: D, instant: 0 } };
   await run(w, at('09:00'), { st });
-  const sec = mail('s1', { from: 'Google', addr: 'no-reply@accounts.google.com', subject: '새 기기에서 로그인했습니다', at: at('09:05'), extra: { auth: GOOGLE_PASS } });
+  const sec = mail('s1', { from: 'Google', addr: 'no-reply@accounts.google.com', subject: '보안 알림: 새 기기에서 로그인했습니다', at: at('09:05'), extra: { auth: GOOGLE_PASS } });
   w.results = [{ account: ACC, historyId: '110', changed: [sec] }];
   await run(w, at('09:10'), { st });
   assert.equal(w.inserts.length, 1);
@@ -543,8 +545,8 @@ test('보안 우회 — 여러 @·머리째 넘긴 표시 이름 위장·하위 
     const r = k(addr, auth);
     assert.deepEqual([r.cat, r.lane], ['security_other', 'pm'], why);
   }
-  for (const [addr, from] of [['noreply@github.com', 'github.com'], ['account-security-noreply@accountprotection.microsoft.com', 'accountprotection.microsoft.com']]) {
-    assert.equal(k(addr, { dmarc: 'pass', from }).cat, 'security', `실제 보안 알림 주소 ${addr}`);
+  for (const [addr, from, subject] of [['noreply@github.com', 'github.com', '[GitHub] New sign-in to your account'], ['account-security-noreply@accountprotection.microsoft.com', 'accountprotection.microsoft.com', 'Microsoft account security alert: new sign-in']]) {
+    assert.equal(C.classifyMail(mail('x', { subject, addr, extra: { auth: { dmarc: 'pass', from } } }), { now: at('10:00'), tz: 'Asia/Seoul' }).cat, 'security', `실제 보안 알림 주소 ${addr}`);
   }
   assert.equal(C.domainOf('x@google.com@evil.example'), '', '엄격 파싱 실패 = 도메인 없음(거래처 판정에도 안 걸린다)');
   assert.equal(C.addrOf(' A@Example.COM '), 'a@example.com');
@@ -630,6 +632,55 @@ test('I1(CLI·Codex): Codex 에이전트는 도구를 끌 수 있는 Claude로 �
   assert.match(w.inserts[0].body, /Claude 로그인이나 API 키를 연결하면 초안까지 준비해요/);
   assert.match(w.inserts[0].body, /\n· 보낸 곳을 확인하지 못했어요 — 보낸 주소 `vickie@luminary\.example`가 맞는지 먼저 보세요\.\n/, '인증 결과 없는 ② 답장 필요 메일은 표지');
   assert.match(w.inserts[0].body, /^\[비서\] 답장이 필요한 메일 — /, '초안 없이도 알림은 간다');
+});
+
+/* ── 10/9 재검수 후속 ── */
+test('보안 알림 제목 — 실제 서비스 보안 알림(새 SSH 키·기기 확인·새 로그인)은 뉴스레터가 아니라 보안(즉시), 허용 주소는 그 서비스의 제목 형식일 때만', () => {
+  const k = (addr, from, subject) => C.classifyMail(mail('x', { addr, from: 'Svc', subject, extra: { auth: { dmarc: 'pass', from } } }), { now: at('10:00'), tz: 'Asia/Seoul' });
+  const GH = ['noreply@github.com', 'github.com'];
+  for (const subj of ['[GitHub] A new SSH authentication public key was added to your account', '[GitHub] Please verify your device', '[GitHub] A personal access token (classic) was added to your account',
+    '[GitHub] A third-party OAuth application has been added to your account', '[GitHub] Your password was reset']) {
+    assert.deepEqual([k(...GH, subj).cat, k(...GH, subj).lane], ['security', 'now'], subj);
+  }
+  for (const [addr, from, subj] of [
+    ['noreply@tm.openai.com', 'tm.openai.com', 'New login to OpenAI'],
+    ['no-reply@accounts.google.com', 'accounts.google.com', 'Security alert'],
+    ['no-reply@accounts.google.com', 'accounts.google.com', '보안 알림'],
+    ['no-reply@accounts.google.com', 'accounts.google.com', 'Critical security alert'],
+    ['account-security-noreply@accountprotection.microsoft.com', 'accountprotection.microsoft.com', 'Microsoft account unusual sign-in activity'],
+    ['account-security-noreply@accountprotection.microsoft.com', 'accountprotection.microsoft.com', 'Microsoft 계정 보안 알림'],
+    ['appleid@id.apple.com', 'id.apple.com', 'Your Apple Account was used to sign in to iCloud via a web browser'],
+    ['account-update@amazon.com', 'amazon.com', 'Amazon security alert: Sign-in on a new device'],
+  ]) assert.equal(k(addr, from, subj).cat, 'security', `${addr} · ${subj}`);
+  // 같은 허용 주소라도 남이 정한 글이 제목에 들어가는 메일(초대·저장소 이름)은 보안이 아니다 — 저녁 줄
+  for (const subj of ['@mallory has invited you to collaborate on the mallory/security-alert-new-sign-in repository', 'mallory/login-verify-your-device: new issue', '[GitHub] You have been added to the login-security-alert organization']) {
+    assert.notEqual(k(...GH, subj).cat, 'security', subj);
+  }
+  assert.notEqual(k('no-reply@accounts.google.com', 'accounts.google.com', 'Mallory shared "보안 알림 확인" with you').cat, 'security', 'Google — 제목 형식 밖');
+  // 새 제목 낱말 — 목록 밖 주소는 저녁(보안처럼 보이는 메일), 정규식은 주석과 같이
+  for (const subj of ['New login detected', '새 로그인', '기기 확인이 필요합니다', 'Please verify your device', 'SSH key added', 'Someone tried to log in']) {
+    assert.equal(C.classifyMail(mail('y', { addr: 'alert@evil.example', subject: subj }), { now: at('10:00'), tz: 'Asia/Seoul' }).cat, 'security_other', subj);
+  }
+});
+
+test('거래처 보낸 곳 확인 — DMARC 기록이 없는 도메인(none·인증 결과 없음)의 거래처 메일은 즉시 + "보낸 곳 확인 못 함" 줄, dmarc=fail·unknown은 거래처로 보지 않는다', () => {
+  const cust = (a) => (a.endsWith('@abc.co.kr') ? a : null);
+  const k = (auth) => C.classifyMail(mail('c', { addr: 'kim@abc.co.kr', from: '김대리', subject: '미팅 자료 공유드립니다', ...(auth ? { extra: { auth } } : {}) }), { customer: cust, now: at('10:00'), tz: 'Asia/Seoul' });
+  assert.deepEqual(k({ dmarc: 'pass', from: 'abc.co.kr' }), { cat: 'customer', lane: 'now', reply: false });
+  for (const [auth, why] of [[{ dmarc: 'none', from: '' }, 'DMARC 기록 없음'], [undefined, '인증 결과 없음(옛 오피스)']]) {
+    assert.deepEqual(k(auth), { cat: 'customer', lane: 'now', reply: false, unverified: true }, why);
+  }
+  for (const [auth, why] of [[{ dmarc: 'fail', from: 'abc.co.kr' }, 'dmarc=fail(p=none여도)'], [{ dmarc: 'unknown', from: '' }, 'dmarc 칸이 여럿']]) {
+    assert.notEqual(k(auth).cat, 'customer', why);
+  }
+  const body = X.composeBatch([{ m: mail('c', { addr: 'kim@abc.co.kr', from: '김대리', subject: '미팅 자료 공유드립니다' }), cls: { cat: 'customer', lane: 'now', unverified: true } }], { lang: 'ko', now: at('10:00'), tz: 'Asia/Seoul' });
+  assert.match(body, /\n {3}보낸 곳을 확인하지 못했어요 — 보낸 주소 `kim@abc\.co\.kr`가 맞는지 먼저 보세요\./);
+  const ok = X.composeBatch([{ m: mail('c', { addr: 'kim@abc.co.kr', subject: '미팅' }), cls: { cat: 'customer', lane: 'now' } }], { lang: 'ko', now: at('10:00'), tz: 'Asia/Seoul' });
+  assert.doesNotMatch(ok, /확인하지 못했어요/);
+  // 거래처 + 강한 신호(재촉) — DMARC 기록 없는 거래처도 답장 필요(표지), fail은 아니다
+  const nudge = (auth) => C.classifyMail(mail('c2', { addr: 'kim@abc.co.kr', subject: 'Any update?', threadId: 'TC', ...(auth ? { extra: { auth } } : {}) }), { customer: cust, thread: [{ gid: 'c2', addr: 'kim@abc.co.kr', at: iso(at('10:00')), sent: false }], now: at('10:00'), tz: 'Asia/Seoul' });
+  assert.deepEqual([nudge({ dmarc: 'none', from: '' }).cat, nudge({ dmarc: 'none', from: '' }).unverified], ['reply', true]);
+  assert.notEqual(nudge({ dmarc: 'fail', from: 'abc.co.kr' }).cat, 'reply');
 });
 
 test('LOW 4(10/9 분리 검수): 들고 다니는 봉인 접근 토큰이 거절되면(expired) 기기가 그 토큰을 버린다 — sync 계정 오류·sync 전체 오류·list·thread 모두', async () => {
