@@ -164,3 +164,19 @@
   .cal-dt { grid-template-columns: minmax(0, 1fr) 104px; }
 }
 @media (prefers-reduced-motion: reduce) { .cal-rail { transition: none !important; } }
+
+/* 할 일 칩·하루 목록 줄의 끝내기 단추와 상태 색(유건 10/9) — 여는 단추(::after)가 칩·줄 전체를 덮고, 끝내기 단추만 그 위에 올라온다(단추 안에 단추를 둘 수 없다) */
+.cal-chip.task, .cal-row.task { position: relative; }
+.cal-chip-open, .cal-row-open { display: flex; align-items: center; flex: 1; min-width: 0; height: 100%; padding: 0; color: inherit; font: inherit; text-align: left; }
+.cal-chip-open::after, .cal-row-open::after { content: ''; position: absolute; inset: 0; border-radius: inherit; }
+.cal-chip-open:focus-visible, .cal-row-open:focus-visible { outline: none; }
+.cal-chip.task:has(.cal-chip-open:focus-visible), .cal-row.task:has(.cal-row-open:focus-visible) { outline: 2px solid var(--ring); outline-offset: -1px; }
+.cal-row-open { grid-column: 3 / -1; }
+.cal-tcheck { position: relative; z-index: 1; display: inline-grid; place-items: center; flex: none; width: 13px; height: 13px; border-radius: 50%; box-shadow: inset 0 0 0 1.25px var(--fg-3); color: transparent; }
+.cal-tcheck.on { background: var(--fg-3); box-shadow: none; color: var(--float); }
+.cal-row .cal-tcheck { width: 16px; height: 16px; }
+.cal-check-ico { color: var(--fg-3); flex: none; }
+.cal-chip.task.st-doing { background: var(--tk-info-soft); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tk-info) 35%, transparent); }
+.cal-chip.task.st-hold { background: var(--warn-soft); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 40%, transparent); }
+.cal-row.task.st-hold small, .cal-row.task.st-doing small { color: var(--fg-2); }
+@media (hover: hover) { .cal-tcheck:hover { box-shadow: inset 0 0 0 1.5px var(--fg-2); color: var(--fg-3); } .cal-tcheck.on:hover { color: var(--float); } .cal-row.task:hover { background: var(--primary-soft); } }

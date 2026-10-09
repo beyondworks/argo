@@ -2,7 +2,7 @@
 // 저장 단추가 없다: 고르는 칸은 고를 때, 글 칸(제목·메모)은 칸을 벗어날 때 바로 저장한다. 실패하면 화면을 되돌리고 이유를 알린다.
 // 권한은 서버 office_task_write와 같다(views/model.js taskCan) — 고칠 수 없는 칸은 잠그고, 왜 잠겼는지 한 줄로 알린다.
 // 바뀐 기록(office_task_events)은 이 패널 아래에서 본다. 부하: 열 때 기록 한 번, 고칠 때마다 쓰기 한 번 + 목록·기록 다시 읽기 한 번. 폴링 없음.
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { t, registerDict, useLang, getLang } from '../core/i18n.js';
 import { canManage, SPACES } from '../core/session.js';
 import { navigate } from '../core/router.jsx';
@@ -11,6 +11,7 @@ import { Panel } from '../ui/Panel.jsx';
 import { showToast } from '../ui/Overlay.jsx';
 import { Icon } from '../ui/Icon.jsx';
 import * as V from './model.js';
+import { noteHeight } from './cells.js';
 import { useViewTasks, usePeople, makeCtx, runWrites, useTaskCategories, categoriesOf, loadTaskHistory } from './data.js';
 import { kstDay } from '../core/task-model.js';
 import { TASK_DICT } from '../pages/task-i18n.js';
@@ -37,8 +38,31 @@ export function historyLine(h) {
   return t('task.h.change', { field: t(FIELD_OF[h.kind]), from: val(h.from), to: val(h.to) });
 }
 
-/** space: 보고 있는 공간(개인 공간이면 조직에서 맡겨진 일도 있다), id·taskSpace: 연 할 일. onManageCats가 있으면 분류 칸 옆에 '분류 관리' */
-export default function TaskPanel({ space, id, taskSpace, onClose, onManageCats }) {
+/** 메모 칸 높이를 글에 맞춘다(유건 10/9: 4줄쯤만 보이고 스크롤됐다) — 9줄에서 시작해 글만큼 자라고, 패널 폭이 바뀌어 줄바꿈이 달라지면 다시 잰다.
+ *  on: 칸이 그려져 있는가(할 일을 받기 전에는 칸이 없다). 재는 동안 높이를 잠깐 풀어도 패널 스크롤 자리는 그대로 둔다 */
+function useGrow(ref, value, on) {
+  const fit = () => {
+    const el = ref.current;
+    if (!el) return;
+    const box = el.closest('.sheet-body'), top = box?.scrollTop;
+    el.style.height = 'auto';
+    el.style.height = `${noteHeight(el.scrollHeight + 2, parseFloat(getComputedStyle(el).lineHeight))}px`;
+    if (box) box.scrollTop = top;
+  };
+  useLayoutEffect(fit, [value, on]);
+  useEffect(() => {
+    const el = ref.current;
+    if (!on || !el || typeof ResizeObserver === 'undefined') return;
+    let w = el.clientWidth;
+    const ro = new ResizeObserver(() => { if (el.clientWidth !== w) { w = el.clientWidth; fit(); } }); // 높이를 바꿔서 생긴 알림은 넘긴다(폭이 같으면 다시 재지 않는다)
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [on]);
+}
+
+/** space: 보고 있는 공간(개인 공간이면 조직에서 맡겨진 일도 있다), id·taskSpace: 연 할 일. onManageCats가 있으면 분류 칸 옆에 '분류 관리'.
+ *  focus 'reason': 표·캘린더에서 보류로 바꾼 뒤 '사유 적기'로 열었을 때 — 보류 사유 칸에 커서를 둔다(유건 10/9) */
+export default function TaskPanel({ space, id, taskSpace, onClose, onManageCats, focus }) {
   useLang();
   const tasks = useViewTasks(space), people = usePeople(space);
   const row = tasks.find((x) => x.id === id && (!taskSpace || x.space === taskSpace));
@@ -50,6 +74,8 @@ export default function TaskPanel({ space, id, taskSpace, onClose, onManageCats 
   const [saving, setSaving] = useState(0), [ask, setAsk] = useState(false);
   const [title, setTitle] = useState(row?.title ?? ''), [note, setNote] = useState(row?.note ?? ''), [reason, setReason] = useState(row?.hold_reason ?? '');
   const editing = useRef(new Set()); // 지금 고치는 글 칸 — 다시 읽은 값이 친 글자를 덮지 않게
+  const noteRef = useRef(null), reasonRef = useRef(null), focused = useRef(false);
+  useGrow(noteRef, note, !!row);
   const seen = useRef(false);
   useEffect(() => { let live = true; setHistFail(false); loadTaskHistory(ts, id).then((h) => { if (live) setHist(h); }, () => { if (live) setHistFail(true); }); return () => { live = false; }; }, [ts, id, rev]);
   useEffect(() => { if (row && !editing.current.has('title')) setTitle(row.title); }, [row?.title]);
@@ -65,6 +91,7 @@ export default function TaskPanel({ space, id, taskSpace, onClose, onManageCats 
     setReason(row?.hold_reason ?? '');
   }, [isHold]);
   useEffect(() => { if (row) seen.current = true; else if (seen.current) onClose(); }, [!!row]); // 취소하면 목록에서 빠진다 — 패널도 닫는다
+  useEffect(() => { if (focus === 'reason' && isHold && !focused.current && reasonRef.current) { focused.current = true; reasonRef.current.focus(); } }, [focus, isHold]); // 한 번만(그 뒤 다른 칸으로 옮겨도 다시 끌어오지 않는다)
   const latest = useRef(null);
   // 이 할 일의 쓰기는 한 줄로 이어 보낸다 — 사유 칸을 벗어나며 저장하는 것과 상태 단추가 겹쳐도 보낸 차례대로 처리돼 뒤 요청이 앞 요청을 되돌리지 않게
   const queue = useRef(Promise.resolve());
@@ -166,12 +193,12 @@ export default function TaskPanel({ space, id, taskSpace, onClose, onManageCats 
       {badDates && <p className="tk-hint" role="alert">{t('task.badDates')}</p>}
       {holding && <label className="field-block">
         <span className="label">{t('task.f.holdReason')}{row.held_at && <span className="dim"> · {t('task.heldAt', { d: stamp(row.held_at) })}</span>}</span>
-        <textarea className="input area tk-reason" rows={2} value={reason} maxLength={V.HOLD_REASON_MAX} placeholder={canStatus ? t('task.holdReasonPh') : ''} disabled={!canStatus}
+        <textarea ref={reasonRef} className="input area tk-reason" rows={2} value={reason} maxLength={V.HOLD_REASON_MAX} placeholder={canStatus ? t('task.holdReasonPh') : ''} disabled={!canStatus}
           onFocus={() => editing.current.add('reason')} onChange={(e) => setReason(e.target.value)} onBlur={saveReason} />
       </label>}
       <label className="field-block">
         <span className="label">{t('task.f.note')}</span>
-        <textarea className="input area tk-note" value={note} maxLength={4000} placeholder={canEdit('note') ? t('task.notePh') : ''} disabled={!canEdit('note')}
+        <textarea ref={noteRef} className="input area tk-note grow" value={note} maxLength={4000} placeholder={canEdit('note') ? t('task.notePh') : ''} disabled={!canEdit('note')}
           onFocus={() => editing.current.add('note')} onChange={(e) => setNote(e.target.value)} onBlur={text('note', note, setNote)} />
       </label>
       {page && <p className="tk-hint">{t('task.fromPage')} · <button type="button" className="link-btn" onClick={() => { onClose(); navigate(`${baseOf(ts)}/p/${page}`); }}>{t('task.openPage')}</button></p>}

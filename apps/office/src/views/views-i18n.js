@@ -48,6 +48,9 @@ export const VIEWS_DICT = {
   'tasks.sort.priority.asc': ['중요도 높은 순', 'Highest priority first'], 'tasks.sort.priority.desc': ['중요도 낮은 순', 'Lowest priority first'],
   'tasks.sort.created.desc': ['최근 만든 순', 'Newest first'], 'tasks.sort.created.asc': ['오래전에 만든 순', 'Oldest first'],
   'tasks.loading': ['할 일을 불러오는 중…', 'Loading to-dos…'],
+  // 표에서 바로 바꾸기·캘린더에서 바로 끝내기(유건 10/9)
+  'tasks.cell': ['{field}: {value} — 눌러서 바꾸기', '{field}: {value} — click to change'], 'tasks.clearDate': ['{field} 지우기', 'Clear {field}'],
+  'tasks.held': ['보류했습니다', 'Put on hold'], 'tasks.addReason': ['사유 적기', 'Add a reason'],
   // 홈 캘린더 모듈(유건 10/1 4차 B절) — 모듈에서만 쓰는 보기 이름·디자인·설정 창·다음 일정 글자
   'calw.v.mini': ['미니 달력', 'Mini calendar'], 'calw.v.day': ['오늘 시간표', 'Today’s schedule'], 'calw.v.next': ['다음 일정', 'Up next'],
   'calw.design': ['모양', 'Style'], 'calw.d.minimal': ['미니멀', 'Minimal'], 'calw.d.accent': ['강조', 'Bold date'], 'calw.d.basic': ['기본', 'Classic'],

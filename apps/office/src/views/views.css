@@ -79,6 +79,28 @@ body.vw-banding, body.vw-banding * { user-select: none; -webkit-user-select: non
 /* 할 일 속성(유건 10/4) — 상태·중요도는 글자 배지(카드·줄 한쪽 색 막대 없음), 묶음 머리에 끝낸 수/전체와 진행 막대 */
 .tk-badges { display: inline-flex; flex-wrap: wrap; gap: 4px; min-width: 0; flex: none; }
 .tk-badges .badge { height: 18px; padding: 0 6px; font-size: 11px; }
+/* 상태·중요도 뱃지 색(유건 10/9) — 상태: 할 일 회색·진행 중 파랑·보류 주황·끝냄 초록 / 중요도: 높음 빨강·보통 회색·낮음 흐린 회색. 표·목록·칸반·캘린더가 같이 쓴다(TaskCells.jsx Pill).
+   파랑은 테마의 --info. 다만 린넨은 다크에서도 라이트의 --info(#3a6ea5, base.css)라 어두운 바탕에서 글자가 묻힌다 — 다크 린넨만 그래파이트 다크의 --info 값으로(공용 뱃지 규칙이 합쳐지면 그쪽으로) */
+:root { --tk-info: var(--info); --tk-info-soft: var(--info-soft); }
+:root[data-theme='linen-dark'], :root[data-theme='linen'].dark-emul { --tk-info: #6f9fd0; --tk-info-soft: rgba(111, 159, 208, 0.14); }
+/* 회색(할 일·보통)은 .badge 기본(셸마다 회색 톤이 다르다). 색 있는 값은 셸의 .badge 덮기(:root[data-shell] .badge — 0,3,0)보다 한 칸 높게 */
+:root .badge.tk-pill.st-doing { background: var(--tk-info-soft); color: var(--tk-info); }
+:root .badge.tk-pill.st-hold { background: var(--warn-soft); color: var(--warn); }
+:root .badge.tk-pill.st-done { background: var(--ok-soft); color: var(--ok); }
+:root .badge.tk-pill.pr-1 { background: var(--danger-soft); color: var(--danger); }
+:root .badge.tk-pill.pr-3 { background: color-mix(in srgb, var(--secondary) 45%, transparent); color: var(--fg-3); }
+/* 할 일 표 칸에서 바로 바꾸기(유건 10/9) — 뱃지·글자 단추를 누르면 고르기 메뉴, 날짜는 날짜 고르기. 펼침 표시(⌄)는 줄에 마우스를 올리거나 초점이 오면 보인다 */
+.tk-cell-btn { display: inline-flex; align-items: center; gap: 3px; max-width: 100%; min-width: 0; margin: -3px -6px; padding: 3px 6px; border-radius: 6px; color: inherit; font: inherit; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tk-cell-btn.pill { margin: -2px -3px; padding: 2px 3px; }
+.tk-cell-btn:focus-visible { outline: 2px solid var(--ring); outline-offset: 0; }
+.tk-cell-text { display: inline-flex; align-items: center; max-width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tk-caret { opacity: 0; color: var(--fg-3); flex: none; }
+.vw-table tr:focus-within .tk-caret, .tk-cell-btn:focus-visible .tk-caret { opacity: 1; }
+.tk-dcell { position: relative; display: inline-flex; align-items: center; gap: 2px; max-width: calc(100% + 12px); margin: -3px -6px; }
+.tk-dcell > .tk-cell-btn { margin: 0; flex: none; } /* 음수 여백은 바깥 상자에 — 단추에 두면 inline-flex 폭이 12px 모자라 글자가 잘렸다 */
+.tk-dcell-in { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; pointer-events: none; border: 0; padding: 0; } /* 보이지 않는 날짜 칸 — 날짜 고르기가 이 칸 아래에 뜬다 */
+.tk-dcell-x { width: 20px; height: 20px; opacity: 0; color: var(--fg-3); }
+.tk-dcell:focus-within .tk-dcell-x { opacity: 1; }
 .vw-title-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .vw-title-row .clamp { min-width: 0; }
 .vw-group-head { gap: 10px; }
@@ -101,6 +123,7 @@ body.vw-banding, body.vw-banding * { user-select: none; -webkit-user-select: non
 .tk-value { font-size: 13px; }
 .tk-note { min-height: 140px; margin-top: 0; line-height: 1.5; }
 .tk-note.short { min-height: 84px; }
+.tk-note.grow { min-height: calc(1.5em * 9 + 18px); resize: none; overflow-y: hidden; } /* 할 일 패널 메모(유건 10/9) — 9줄에서 시작해 글만큼 자란다(TaskPanel useGrow). 손잡이는 뺐다 — 높이를 글이 정한다 */
 .tk-reason { min-height: 60px; margin-top: 0; line-height: 1.5; } /* 보류 사유(10/8) — 메모보다 짧게 */
 .tk-hint { margin: 0; font-size: 12px; color: var(--fg-3); }
 .tk-cancel { color: var(--danger); }
@@ -141,7 +164,11 @@ body.vw-banding, body.vw-banding * { user-select: none; -webkit-user-select: non
   .vw-card:hover, .vw-kcard:hover { background-image: linear-gradient(var(--wash), var(--wash)); }
   .vw-check:hover { box-shadow: inset 0 0 0 1.5px var(--fg-2); }
   .vw-check.on:hover { box-shadow: none; }
+  .vw-table tr:hover .tk-caret, .tk-dcell:hover .tk-dcell-x { opacity: 1; }
+  .tk-cell-btn:hover { background: var(--secondary); }
+  .tk-cell-btn.pill:hover { background: transparent; } .tk-cell-btn.pill:hover .tk-pill { filter: brightness(0.96); }
 }
+@media (hover: none) { .tk-caret, .tk-dcell-x { opacity: 0.7; } } /* 터치 — 마우스를 올릴 수 없으니 늘 보인다 */
 @media (max-width: 767px) {
   .vw { padding: 8px 8px 88px; }
   .vw-lane { flex-basis: min(78vw, 280px); }
