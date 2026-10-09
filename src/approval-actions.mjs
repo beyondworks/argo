@@ -7,7 +7,7 @@ import { loadCompany } from './workspace.mjs'; // 회사 주인 id — 메신저
 import { emitNotify } from './notify.mjs'; // 후속 턴 결과를 원 채널(메신저)로 — 카드 약속('이어서 보고합니다') 이행
 
 /** 상태 변경 + 후속 처리. kind:'tool'은 대기 중인 턴이 스스로 재개하므로 후속 턴이 없다.
-    kind:'profile'/'hire'는 승인 시 서버가 payload를 실행(카드 수정·영입)한 뒤 — 후속 턴이 결과를
+    kind:'profile'/'hire'/'setting'은 승인 시 서버가 payload를 실행(카드 수정·영입·허용 목록 설정 변경)한 뒤 — 후속 턴이 결과를
     사용자에게 보고한다.
     kind:'capability'는 없어졌다(2026-07-30) — 능력이 설치 시점부터 전권이라 켤 것이 없다
     (capabilities.mjs). 옛 결재함에 남은 capability 항목은 여기서 특별 처리 없이 그냥 해소된다. */
@@ -78,6 +78,13 @@ async function applyPayload(wsId, item, { session } = {}) {
     const text = (r.content ?? []).filter((c) => c?.type === 'text').map((c) => c.text).join('\n').slice(0, 600);
     return `실행 완료 — ${serverId}/${tool}${text ? `\n${text}` : ''}`;
   }
+  if (item.kind === 'setting') {
+    // 에이전트가 올린 설정 변경(argo_settings — 주인의 1:1 직접 지시가 아닌 턴) — 서버가 허용 목록 키만 적용한다.
+    // 카드에 보인 문구와 실제로 바뀌는 것이 같아야 한다(커넥터 결재와 같은 대조 — CLI 러너는 결재 파일을 직접 고칠 수 있다). 어긋나면 적용하지 않는다.
+    const { applyApprovedSetting, settingActionText } = await import('./argo-self.mjs');
+    if (item.action !== settingActionText(p, p.lang)) return `적용 취소 — 결재 내용(${item.action})과 바꿀 값이 다르다. 사용자에게 다시 올려라.`;
+    return applyApprovedSetting(wsId, p, { slug: p.by ?? item.slug }); // 꺼질 다른 회사 비서를 다시 대조 — 이전 값은 싣지 않는다(후속 보고는 결재를 올린 방으로 간다)
+  }
   if (item.kind === 'hire') {
     const { createAgentFromPrompt, updateAgentMeta } = await import('./persona.mjs');
     const agent = await createAgentFromPrompt(wsId, p.brief, { name: p.name, team: p.team });
@@ -100,7 +107,7 @@ async function followUp(wsId, item, approve, { runChat = chat, session } = {}) {
   const by = byUid && byUid !== ownerId ? 'admin' : 'owner';
   const actor = byUid ? { actor: { uid: byUid, relay: false } } : {};
   let msg;
-  if ((item.kind === 'profile' || item.kind === 'hire' || item.kind === 'mcp' || item.kind === 'connector') && approve) {
+  if ((item.kind === 'profile' || item.kind === 'hire' || item.kind === 'mcp' || item.kind === 'connector' || item.kind === 'setting') && approve) {
     // 서버가 payload를 먼저 적용하고, 결과를 크루가 사용자에게 보고한다(크루 재실행 금지 — 이중 적용 방지)
     let outcome;
     try {
@@ -147,7 +154,7 @@ async function followUp(wsId, item, approve, { runChat = chat, session } = {}) {
   } catch (e) {
     // 크루의 자연어 보고 턴이 실패해도(예산 초과·크루 삭제·모델 장애) 사용자는 결과를 알아야 한다.
     // profile/hire는 부작용이 이미 적용됐으므로, 최소한 처리 결과를 스레드에 남긴다(무통보 방지).
-    const note = (item.kind === 'profile' || item.kind === 'hire') && approve
+    const note = (item.kind === 'profile' || item.kind === 'hire' || item.kind === 'setting') && approve
       ? `${msg}\n\n(자동 보고 실패 — 하지만 위 처리는 완료되었습니다: ${String(e.message || e).slice(0, 120)})`
       : `${msg}\n\n(후속 실행 실패: ${String(e.message || e).slice(0, 160)})`;
     // A failed reauthorization may not return channel kind. Keep any Messenger failure audit scoped.

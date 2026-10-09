@@ -99,6 +99,17 @@ async function readGatewayStatus(wsId, kind) {
 /** 팀 메신저 상태는 connections.json을 읽지 않는다. */
 export function msgrGatewayStatus(wsId) { return readGatewayStatus(wsId, 'msgr'); }
 
+/** 설정 'Argo 메신저 연결' 카드의 "메신저 응답 상태"(순수) — 하트비트(msgrGatewayStatus) → alive·login·owner·company·offline·waiting.
+    카드(app/api/companies/[ws]/msgr/route.js)와 에이전트 상태 도구(argo-self.mjs)가 같은 판정을 쓴다. */
+export function msgrRuntimeState(gateway) {
+  if (gateway?.alive) return { state: 'alive', lastTs: gateway.lastTs };
+  const error = String(gateway?.error ?? '');
+  if (/기기 세션 없음/.test(error)) return { state: 'login' };
+  if (/소유자 계정이 아님/.test(error)) return { state: 'owner' };
+  if (/회사 설정을 읽지 못함/.test(error)) return { state: 'company' };
+  return { state: gateway?.lastTs ? 'offline' : 'waiting' };
+}
+
 /** 게이트웨이 폴러 하트비트 조회 — 40초 내 성공 비트가 있어야 "가동 중". */
 export async function gatewayStatus(wsId) {
   const out = { telegram: await readGatewayStatus(wsId, 'telegram'), slack: await readGatewayStatus(wsId, 'slack'), msgr: await msgrGatewayStatus(wsId), agents: {} };

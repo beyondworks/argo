@@ -72,7 +72,9 @@ export async function POST(req, { params }) {
       } else {
         // 위임 제한 스위치 — 이 대화(스레드)에서 사용자가 푼 상태를 서버가 저장값에서 읽는다(화면이 보내는 값을 믿지 않는다 — 켜짐이 기본이고 fail-closed).
         const relaxed = !(await getDelegationLimit(ws, slug));
-        t = await chat(ws, slug, message.trim(), sessionId || null, { attachments, ...(relaxed ? { delegationRelaxed: true } : {}), ...(turnId ? { abortTag: turnId } : {}) }); // abortTag — 바로 보내기(chat/steer)가 정확히 이 턴을 고른다
+        // ownerSeat — 이 라우트(데스크톱 1:1 대화, guardCompany가 회사 주인만 통과)에서 온 턴이라는 서버 표지. 에이전트가 설정을 바로 바꿀 수 있는 턴의 판정 재료다
+        // (msgr-handoff settingsDirectTurn). 요청 본문에서 받지 않는다 — 화면이 보내는 값이 아니다.
+        t = await chat(ws, slug, message.trim(), sessionId || null, { attachments, ownerSeat: 'desktop', ...(relaxed ? { delegationRelaxed: true } : {}), ...(turnId ? { abortTag: turnId } : {}) }); // abortTag — 바로 보내기(chat/steer)가 정확히 이 턴을 고른다
       }
     } catch (e) {
       // 실패·중단 턴도 스레드에 남긴다 — 성공 뒤에만 저장하면 지시문이 새로고침에 증발하고 비용만

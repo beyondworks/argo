@@ -71,6 +71,23 @@ export function ownerDirectTurn({ from = null, notOwnerDirect = null, mirrorCtx 
   return !from && !notOwnerDirect && fullAutoAllowed(mirrorCtx);
 }
 
+/**
+ * 설정을 바로 바꿔도 되는 턴인가(순수) — 회사 주인이 1:1로 직접 시킨 턴만 참.
+ *  - 데스크톱 1:1 대화: 대화 API 라우트(app/api/companies/[ws]/chat/route.js)만 ownerSeat:'desktop'을 붙인다. 그 화면은 이 회사 주인만 연다
+ *    (app/auth.mjs guardCompany — 로그인 모드에서 ownerId 대조, 로컬 모드는 이 기기 루프백만). 메신저 맥락·출처(source)·위임·쪽지·예약·작업 표지가 없어야 한다.
+ *    같은 모양(출처 없음·맥락 없음)의 다른 턴 — 결재 후속, argo CLI, 텔레그램·슬랙 1:1(source 'messenger') — 은 이 표지가 없어 빠진다.
+ *  - 메신저: 게이트웨이가 방 구성원을 조회해 붙인 "주인 혼자 1:1"(ownerSoloTurn — ctx.ownerSolo는 msgr.mjs가 office-audience ownerSoloRoom으로 확인한 뒤에만 붙는다).
+ *  - 나머지(회의실·루틴·장시간 작업·쪽지·세션 메시지·위임받은 턴·메신저 채널·손님·오피스에서 맡긴 글·결재 후속)는 거짓 → 결재 카드.
+ * 입력은 전부 runChat이 서버에서 정한 값이다 — 도구 인자에서 오지 않는다(에이전트가 출처를 적어 보내도 판정이 바뀌지 않는다).
+ */
+export function settingsDirectTurn({ ownerSeat = null, source = null, from = null, notOwnerDirect = null, hop = 0, chain = [], mirrorCtx = null } = {}) {
+  if (from || notOwnerDirect || hop > 0 || (Array.isArray(chain) && chain.length)) return false;
+  if (!ownerDirectTurn({ from, notOwnerDirect, mirrorCtx })) return false;
+  if (mirrorCtx == null) return ownerSeat === 'desktop' && source == null;
+  if (mirrorCtx.kind === 'msgr') return ownerSoloTurn(mirrorCtx, { hop, from, notOwnerDirect });
+  return false;
+}
+
 /** 손님 턴 판정 — 이 메신저 턴을 크루 주인이 아닌 사람이 시켰는가(규칙 7·9: 주인의 몸은 주인만, 주인의 개인 기억은 공유한 것만).
     origin = 권한 주체(사람 글이면 작성자, 크루 넘김이면 **넘긴 크루의 주인** — msgr.mjs drain), rootAuthor = 넘김 스레드의 뿌리 사람.
     그래서 origin만 보면 "손님 B → A의 크루 X → A의 크루 Y" 넘김에서 Y가 주인 턴이 된다 — 뿌리도 함께 본다.

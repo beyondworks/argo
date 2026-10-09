@@ -6,7 +6,7 @@ import { apiError } from '../../../../apimsg.mjs';
 import { sessionClient } from '../../../../../src/gateway/msgr.mjs';
 import { listAgents } from '../../../../../src/hub.mjs';
 import { loadCompany, updateCompany } from '../../../../../src/workspace.mjs';
-import { msgrGatewayStatus } from '../../../../../src/connections.mjs';
+import { msgrGatewayStatus, msgrRuntimeState } from '../../../../../src/connections.mjs';
 import { nudgeGateway } from '../../../../../src/gateway.mjs';
 import { splitCardRows } from './card-rows.mjs'; // 행 나누기 — 카드 판정과 같은 모양을 테스트가 잠근다(UL10)
 
@@ -14,14 +14,7 @@ const ALLOW = new Set(['all', 'list', 'owner']);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const upstream = (where, e, lang) => { console.error(`[argo] msgr ${where}:`, e?.message ?? e); return apiError('msgr_upstream', lang); }; // PG 원문은 화면이 아니라 로그로
 
-function runtimeState(gateway) {
-  if (gateway?.alive) return { state: 'alive', lastTs: gateway.lastTs };
-  const error = String(gateway?.error ?? '');
-  if (/기기 세션 없음/.test(error)) return { state: 'login' };
-  if (/소유자 계정이 아님/.test(error)) return { state: 'owner' };
-  if (/회사 설정을 읽지 못함/.test(error)) return { state: 'company' };
-  return { state: gateway?.lastTs ? 'offline' : 'waiting' };
-}
+const runtimeState = msgrRuntimeState; // 정본은 src/connections.mjs — 에이전트 상태 도구(argo_status messenger)가 같은 판정을 쓴다
 
 const REG_COLS = 'id, org_id, slug, display_name, hosting, status, allow, allow_users, last_seen_at, msgr_orgs(name, slug)';
 async function myRegistrations(c, ws) {
