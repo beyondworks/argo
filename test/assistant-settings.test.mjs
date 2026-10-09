@@ -475,3 +475,30 @@ test('K6(서버): 상태의 하루 즉시 알림 상한 = 지금 비서 설정�
   await put(ws, { leadMinutes: 15 });
   assert.equal((await cfgOf(ws)).dailyCap, 3, '다른 칸을 저장해도 상한은 그대로');
 });
+
+test('M1: 메일 보기 — 안 봄(false)·미리 보기(shadow)·알림(true)을 저장·봉인하고 보기(config.mail)가 off·shadow·live, 다른 값은 400·파일 그대로, 봉인이 안 맞는 파일에서 메일만 저장해도 심은 칸은 이어받지 않는다', async () => {
+  const ws = await mkCompany();
+  await put(ws, { enabled: true, agent: 'pepper', tz: 'Asia/Seoul' });
+  assert.equal((await get(ws)).data.config.mail, 'off', '처음 켜면 메일은 안 봄');
+  for (const [v, mode] of [['shadow', 'shadow'], [true, 'live'], [false, 'off']]) {
+    const { status, data } = await put(ws, { mail: v });
+    assert.equal(status, 200, JSON.stringify(data));
+    const c = await cfgOf(ws);
+    assert.equal(c.watch.mail, v);
+    assert.equal(c.watch.calendar, true, '일정 보기는 그대로');
+    assert.equal(data.config.mail, mode);
+    assert.equal((await company(ws)).assistantSeal, C.sealOf(await raw(ws)), '봉인 = 새 파일');
+  }
+  const text = await raw(ws);
+  for (const bad of ['live', 1, 'yes', null]) {
+    const { status, data } = await put(ws, { mail: bad });
+    assert.equal(status, 400, JSON.stringify(bad));
+    assert.equal(data.errorCode, 'assistant_mail_invalid');
+  }
+  assert.equal(await raw(ws), text, '파일 그대로');
+  await agentWrites(ws, { enabled: true, agent: 'pepper', watch: { calendar: false, mail: true }, quiet: { from: '00:00', to: '00:00' }, planted: 'x' });
+  await put(ws, { mail: 'shadow' });
+  const c = await cfgOf(ws);
+  assert.deepEqual(c.watch, { calendar: true, mail: 'shadow', tasks: false, deals: false }, '심은 watch는 버리고 기본값 + 고른 메일');
+  assert.equal('planted' in c, false);
+});

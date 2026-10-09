@@ -86,7 +86,8 @@ export function composePre(o, { now, lang = 'ko', tz = null }) {
 export function composeBundle(slot, parts, { lang = 'ko', tz = null }) {
   const ctx = { lang, tz, date: slot.date };
   const allDay = parts.allDay ?? []; const tomorrow = parts.tomorrow ?? []; const pending = parts.pending ?? [];
-  if (!allDay.length && !tomorrow.length && !pending.length) return null;
+  const mail = typeof parts.mail === 'string' && parts.mail ? parts.mail : null; // 메일 저녁 몫(src/assistant/mail.mjs takeSummary — 이미 만든 글)
+  if (!allDay.length && !tomorrow.length && !pending.length && !mail) return null;
   const quiet = pending.filter((p) => p.reason === 'quiet'); const gap = pending.filter((p) => p.reason !== 'quiet');
   const asOcc = (p) => ({ id: p.eventId, title: p.title, location: p.location, allDay: false, start: p.start });
   const next = slot.lane === 'pm' ? addDays(slot.date, 1) : null;
@@ -95,6 +96,7 @@ export function composeBundle(slot, parts, { lang = 'ko', tz = null }) {
     section(at('sec.missedQuiet', lang), quiet.map((p) => line(asOcc(p), ctx)), ctx),
     section(at('sec.missedGap', lang), gap.map((p) => line(asOcc(p), ctx)), ctx),
     section(at('sec.tomorrow', lang, { n: tomorrow.length, date: next ? dateLabel(next, lang) : '' }), tomorrow.map((o) => line(o, { ...ctx, date: next })), ctx),
+    mail,
   ].filter(Boolean);
   const itemKeys = [
     ...allDay.map((o) => [dayKey(o, slot.date), o]),
@@ -105,7 +107,8 @@ export function composeBundle(slot, parts, { lang = 'ko', tz = null }) {
   return {
     kind: slot.lane, basis: slot.key, keys,
     body: `${at(slot.lane === 'am' ? 'head.am' : 'head.pm', lang, { date: dateLabel(slot.date, lang) })}\n\n${blocks.join('\n\n')}`,
-    meta: { v: 1, kind: slot.lane, keys: keys.slice(0, META_ITEMS_MAX), items: itemKeys.slice(0, META_ITEMS_MAX).map(([k, o]) => metaItem(k, o)) },
+    // 메일 줄(보낸 사람·제목)이 든 정리 글은 바깥 글 표지 — 다음 대화 턴의 방 문맥에는 표지 줄로만(설계 4.9 규칙 2)
+    meta: { v: 1, kind: slot.lane, keys: keys.slice(0, META_ITEMS_MAX), items: itemKeys.slice(0, META_ITEMS_MAX).map(([k, o]) => metaItem(k, o)), ...(mail ? { outside: true } : {}) },
     items: pending,
   };
 }

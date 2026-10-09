@@ -190,3 +190,23 @@ test('i18n — 비서 탭 문구는 ko/en 둘 다 있고 한국어는 한글(고
     assert.doesNotMatch(ko.replace(/Argo/g, '').replace(/\{[a-z]+\}/g, ''), /[A-Za-z]{2,}/, `${k} 한국어 모드에 영어 낱말 없음`);
   }
 });
+
+test('U-f: 메일 보기 — 안 봄·미리 보기·알림 고르기 → PUT {mail:false|"shadow"|true}, 켠 동안 상태 칸에 마지막 메일 확인·미리 보기 기록 수·문제 문장(모르는 코드는 일반 문장), 끈 동안은 상태 칸 없음', async () => {
+  const off = await render(mineView({ config: { ...mineView().config, mail: 'off' } }), (body) => ({ status: 200, data: mineView({ config: { ...mineView().config, mail: body.mail === true ? 'live' : body.mail === false ? 'off' : 'shadow' } }) }));
+  assert.equal(byTest(off.out(), 'assistant-mail').props.value, 'off');
+  assert.equal(byTest(off.out(), 'assistant-mail-status'), undefined, '안 볼 때는 메일 상태 줄이 없다');
+  for (const [v, sent] of [['shadow', 'shadow'], ['live', true], ['off', false]]) {
+    byTest(off.out(), 'assistant-mail').props.onChange({ target: { value: v } }); await off.m.flush();
+    assert.deepEqual(off.calls.at(-1).body, { mail: sent });
+    assert.equal(byTest(off.out(), 'assistant-mail').props.value, v);
+  }
+  const st = (mail, cfgMail = 'shadow', runner = 'this_device') => render(mineView({ config: { ...mineView().config, mail: cfgMail }, status: { ...mineView().status, runner, mail } }));
+  const t1 = text(byTest((await st({ code: 'ok', checkedAt: 5, shadow: { days: 2, total: 7 } })).out(), 'assistant-mail-status'));
+  assert.equal(t1, 'T5 · assistant.mailShadow|{"days":2,"n":7}');
+  const t2 = text(byTest((await st({ code: 'mail_expired', checkedAt: 5, shadow: { days: 0, total: 0 } }, 'live')).out(), 'assistant-mail-status'));
+  assert.equal(t2, 'T5 · assistant.mailSt.mail_expired', '알림 모드에는 기록 수 없음, 문제 문장');
+  const t3 = text(byTest((await st({ code: 'weird_new_code', checkedAt: 0 }, 'live')).out(), 'assistant-mail-status'));
+  assert.equal(t3, 'assistant.mailSt.mail_error', '모르는 코드는 일반 문장(사전 키 그대로 보이지 않게)');
+  assert.equal(text(byTest((await st(null, 'live')).out(), 'assistant-mail-status')), 'assistant.lastCheckNone');
+  assert.equal(text(byTest((await st(null, 'live', 'other_device')).out(), 'assistant-mail-status')), 'assistant.onRunner');
+});

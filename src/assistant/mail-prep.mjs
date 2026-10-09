@@ -72,6 +72,19 @@ export function prepPlan({ used = 0, preps = 0, inChars = 0, cap = DAY_CAP_EQ })
 /** 메일 글을 원샷에 보내면 안 되는 러너·모델인가(순수) — OpenRouter 무료 단계(모델 없음 = 무료 온보딩 모델, ':free' 모델). */
 export const freeTier = (runner, model) => runner === 'openrouter' && (!model || /:free$/i.test(String(model)));
 
+/** 이 러너에 메일 글을 보내 초안을 만들어도 되는가 — 갈림은 이 함수 하나에만 둔다(순수). 반환 null = 된다, 아니면 이유 코드.
+    - 'free_model': OpenRouter 무료 단계(모델 없음·:free) — 메일 글을 무료 벤더에 보내지 않는다.
+    - 'codex_pending': Codex 에이전트 — 메일 초안 방식은 유건님 결정 대기(10/9 총괄). 결정 전에는 로그인(CLI)·API 키(네이티브) 상관없이 초안 없이 알림만(가장 안전).
+      결정이 나면 이 줄만 바꾼다(예: API 키 네이티브만 허용 → `runner === 'codex' && cli`).
+    - 'cli_tools': 그 밖의 외부 CLI(gemini 로그인·antigravity) — readOnly여도 디스크 읽기가 남아 도구를 끌 수 없다(10/9 보안 검토).
+    cli = 이번 실행이 외부 CLI 경로인가(판정 실패 = true로 넘긴다 — 보내지 않는 쪽). */
+export function prepRunnerBlock({ runner, model = null, cli = true }) {
+  if (freeTier(runner, model)) return 'free_model';
+  if (runner === 'codex') return 'codex_pending';
+  if (cli) return 'cli_tools';
+  return null;
+}
+
 const one = (s, n) => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
 const norm = (s) => String(s ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
 const URL_RE = /https?:\/\/[^\s)>\]"']+|www\.[^\s)>\]"']+/gi;
@@ -151,7 +164,7 @@ export const prepDeps = {
   readCard: async (ws, slug) => (await import('../persona.mjs')).readAgentCard(ws, slug),
 };
 
-/** 준비 하나 — { prep, why, runner }. why: 'ok' | 'no_runner' | 'free_model' | 'cli_tools'(도구를 끌 수 없는 CLI — 메일 글을 보내지 않음) | 'failed' | 'shape'.
+/** 준비 하나 — { prep, why, runner }. why: 'ok' | 'no_runner' | prepRunnerBlock의 이유('free_model'·'codex_pending'·'cli_tools' — 메일 글을 보내지 않음) | 'failed' | 'shape'.
     실행했으면(성공·실패 모두) 원장에 kind 'assistant'·work 'prep' 한 줄(실패 줄은 fail 칸 — 어림값으로 한도에 센다). */
 export async function runPrep({ wsId, agent, lang = 'ko', tz = null, now = Date.now(), ownerAddrs, target, mails, brief, ox, deps = prepDeps }) {
   const card = await deps.readCard(wsId, agent).catch(() => null);
@@ -159,8 +172,8 @@ export async function runPrep({ wsId, agent, lang = 'ko', tz = null, now = Date.
   const rr = await deps.resolveRunner(wsId, want, { forPick: true }).catch(() => null);
   if (!rr?.available || rr.fellBack) return { prep: null, why: 'no_runner' };
   const model = typeof card?.meta?.model === 'string' && card.meta.model.trim() ? card.meta.model.trim() : null;
-  if (freeTier(rr.runner, model)) return { prep: null, why: 'free_model', runner: rr.runner };
-  if (await deps.cliTurn(wsId, rr.runner).catch(() => true)) return { prep: null, why: 'cli_tools', runner: rr.runner };
+  const block = prepRunnerBlock({ runner: rr.runner, model, cli: await deps.cliTurn(wsId, rr.runner).catch(() => true) });
+  if (block) return { prep: null, why: block, runner: rr.runner };
   const today = dateIn(now, tz);
   const prompt = prepPrompt({ ox, lang, agentName: one(card?.meta?.name, 40) || agent, card: card?.md ?? '', ownerAddrs, target, mails, today, tz, brief });
   const t0 = Date.now();

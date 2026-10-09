@@ -116,8 +116,11 @@ export function customerMatch(list) {
 }
 
 function setStatus(s, code, now) { if (s.status?.code !== code) s.status = { code, at: now }; }
+/** 바뀐 때만 쓴다 — 다음 확인 시각(nextAt)·마지막 확인 시각(checkedAt)만 바뀐 차례(바뀐 메일 없음)는 쓰지 않는다(유휴 확인 쓰기 0, 기기 로컬 파일이지만 같은 원칙).
+    재시작하면 다음 확인 시각을 잃어 곧바로 한 번 확인한다 — 커서(historyId·기준선)는 남아 있어 메일을 다시 받지 않는다. */
+const sigOf = (s) => JSON.stringify({ ...s, nextAt: 0, checkedAt: 0 });
 async function save(cid, m, deps) {
-  const sig = JSON.stringify(m.s);
+  const sig = sigOf(m.s);
   if (sig === m.sig) return;
   await deps.writeState(cid, m.s);
   m.sig = sig;
@@ -147,7 +150,10 @@ async function flushOutbox({ cid, m, deps, c, cfg, now, st }) {
       } catch (e) { console.error(`[argo] 비서(${cid}): 자료 정리 첨부를 올리지 못했습니다: ${String(e?.message ?? e).slice(0, 160)}`); }
     }
     for (const k of ob.keys) { m.s.seen[k] = now; if (st?.sent) st.sent[k] = now; }
-    if (ob.instant && st?.day) st.day.instant += 1; // 즉시 알림 수(일정 시작 전 알림과 같은 상한 — 설계 9절)
+    if (ob.instant && st?.day) { // 즉시 알림 수(일정 시작 전 알림과 같은 상한 — 설계 9절). 키로 세어 방에서 복구할 때 겹쳐 세지 않는다(recover.mjs — meta.assistant.dayKey)
+      const keys = (st.day.keys ??= []);
+      if (!keys.includes(ob.basis)) { if (keys.length < 500) keys.push(ob.basis); st.day.instant += 1; }
+    }
     m.s.outbox = null;
     setStatus(m.s, 'ok', now);
     return true;
@@ -170,7 +176,7 @@ export async function runMailStep({ cid, cfg, company, st = null, c, now = Date.
   const mode = cfg?.mailMode ?? 'off';
   if (mode === 'off') { mems.delete(cid); return { ran: false, why: 'off' }; }
   let m = mems.get(cid);
-  if (!m) { const s = await deps.readState(cid); m = { s, sig: JSON.stringify(s), accounts: null, customers: null, room: null }; mems.set(cid, m); }
+  if (!m) { const s = await deps.readState(cid); m = { s, sig: sigOf(s), accounts: null, customers: null, room: null }; mems.set(cid, m); }
   const s = pruneMailState(m.s, now);
   const done = async (why, code = null) => { if (code) setStatus(s, code, now); await save(cid, m, deps); return { ran: true, why }; };
   const owner = company?.ownerId ?? null;
@@ -313,7 +319,7 @@ function batchOb(items, { lang, now, tz, held = false, instant = true }) {
   return {
     kind: 'mail_batch', basis: `mailbatch:${keys.join(',')}`, keys, instant,
     body: composeBatch(items, { lang, now, tz, held }),
-    meta: { v: 1, kind: 'mail_batch', keys, count: items.length, outside: true, ref: items.map((i) => mailRef(i.m)).slice(0, 3),
+    meta: { v: 1, kind: 'mail_batch', keys, count: items.length, outside: true, ...(instant ? { instant: true, dayKey: `mailbatch:${keys.join(',')}` } : {}), ref: items.map((i) => mailRef(i.m)).slice(0, 3),
       items: items.map((i) => ({ key: i.key, source: 'mail', cat: i.cls.cat, account: i.m.account, gid: i.m.gid, threadId: i.m.threadId ?? null, at: i.m.at })) },
   };
 }
@@ -361,7 +367,7 @@ async function replyOb(ctx, i, { lang, ownerWs }) {
     const r = await deps.prep({ wsId: cid, agent: cfg.agent, lang, tz: cfg.tz, now, ownerAddrs: (m.accounts?.list ?? []).map((a) => a.address), target: x, mails, brief: plan.brief, ox: outsideOf('mail', lang, deps.nonce?.()) })
       .catch(() => ({ prep: null, why: 'failed' }));
     prep = r.prep;
-    if (!prep) noPrep = r.why === 'free_model' ? 'free' : r.why === 'no_runner' ? 'runner' : r.why === 'cli_tools' ? 'cli' : 'failed';
+    if (!prep) noPrep = r.why === 'free_model' ? 'free' : r.why === 'no_runner' ? 'runner' : r.why === 'cli_tools' ? 'cli' : r.why === 'codex_pending' ? 'codex' : 'failed';
     runnerName = r.runner ?? '';
   }
   const briefName = prep?.brief ? mt('brief.file', lang, { topic: topicOf(x.subject, lang) }) : null;
@@ -370,7 +376,7 @@ async function replyOb(ctx, i, { lang, ownerWs }) {
     kind: 'mail_reply', basis: `mailreply:${i.key}`, keys, instant: true,
     body: composeReply(x, { prep, noPrep, briefName, briefSkipped: !!prep && !plan.brief, runnerName: RUNNER_NAMES[runnerName] ?? runnerName, lang, now, tz: cfg.tz }),
     ...(briefName ? { brief: { name: briefName, text: prep.brief } } : {}),
-    meta: { v: 1, kind: 'mail_reply', keys, outside: true, ref: [mailRef(x)], prep: prep ? (prep.brief ? 'brief' : 'draft') : noPrep,
+    meta: { v: 1, kind: 'mail_reply', keys, outside: true, instant: true, dayKey: `mailreply:${i.key}`, ref: [mailRef(x)], prep: prep ? (prep.brief ? 'brief' : 'draft') : noPrep,
       items: [{ key: i.key, source: 'mail', cat: 'reply', account: x.account, gid: x.gid, threadId: x.threadId ?? null, at: x.at }] },
   };
 }
@@ -384,6 +390,11 @@ export function takeSummary(cid, { lang = 'ko', consume = false } = {}) {
   const keys = m.s.evening.map((x) => x.key);
   if (consume) m.s.evening = [];
   return { text, keys };
+}
+/** 정리 글에 넣은 저녁 몫을 비운 상태를 파일에 — 엔진(tick)이 정리 글을 대기열에 넣은 뒤 부른다. 바뀐 것이 없으면 쓰기 0. */
+export async function persistMail(cid, deps = mailDeps) {
+  const m = mems.get(cid);
+  if (m) await save(cid, m, deps);
 }
 
 /** 설정 화면 상태 칸 — 이 기기의 메일 상태 파일에서(읽기만). { code, codeAt, checkedAt, shadow: { days, total, byCat } } | null */

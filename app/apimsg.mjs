@@ -57,6 +57,7 @@ export const API_MSG = {
   // 능동 비서 설정(app/api/companies/[ws]/assistant — src/assistant/settings.mjs). 화면(에이전트 카드 비서 탭)이 errorCode로 이 문구를 그린다
   assistant_bad_request: { status: 400, ko: '비서 설정 요청이 올바르지 않습니다', en: 'Bad assistant settings request' },
   assistant_agent_not_found: { status: 400, ko: '비서로 정할 에이전트를 찾을 수 없습니다', en: "Couldn't find the agent to use as the assistant" },
+  assistant_mail_invalid: { status: 400, ko: '메일은 안 봄·미리 보기·알림 중에서 고를 수 있어요', en: 'Mail can be off, preview, or notify' },
   assistant_lead_invalid: { status: 400, ko: '일정 알림은 10·15·30·60분 전 중에서 고를 수 있습니다', en: 'Event reminders can be 10, 15, 30 or 60 minutes before' },
   assistant_time_invalid: { status: 400, ko: '시각은 HH:MM 형식이어야 합니다', en: 'Times must be in HH:MM format' },
   assistant_quiet_empty: { status: 400, ko: '조용한 시간의 시작과 끝이 같습니다', en: 'Quiet hours start and end at the same time' },

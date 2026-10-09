@@ -45,6 +45,7 @@ import { ASSISTANT_FILE, SEAL_FIELD, LEAD_CHOICES, sealOf, normalizeAssistantCon
 import { normalizeState, stateFile } from './state.mjs';
 import { minuteInQuiet, dateIn, assistantCompanyOf, assistantMuted } from './rules.mjs';
 import { assistantRunnerStatus } from './tick.mjs';
+import { mailStatusView } from './mail.mjs';
 
 const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 const toMin = (hhmm) => { const [h, m] = hhmm.split(':').map(Number); return h * 60 + m; };
@@ -142,6 +143,9 @@ async function saveInLine(wsId, input, { now = Date.now() } = {}) {
     };
     const bad = settingsProblem(next, touched);
     if (bad) throw codedError(bad, `비서 설정 값이 올바르지 않습니다(${bad})`);
+    // 메일 — 화면이 보낸 때만 바꾼다(false 안 봄 · 'shadow' 미리 보기 · true 알림). 봉인이 안 맞는 파일에서는 base.watch를 버리므로(아래) 심은 메일 보기는 다시 봉인되지 않는다
+    if (inp.mail !== undefined && ![false, 'shadow', true].includes(inp.mail)) throw codedError('assistant_mail_invalid', '메일 보기 값이 올바르지 않습니다');
+    const baseWatch = sealed && base.watch && typeof base.watch === 'object' ? base.watch : { calendar: true, mail: false, tasks: false, deals: false };
     const enabled = enabledIn ?? prev.enabled;
     const agent = enabledIn === true ? inp.agent : prev.agent;
     // 켜기·바꾸기는 사용자의 마지막 선택 — 이미 켜져 있던 회사로 바꿔도 켠 시각을 지금으로 한다(이 기기에 없는 같은 주인의 회사가 다른 기기에서 더 늦게 켜졌어도 이 선택이 맡게 — rules.mjs assistantCompanyOf)
@@ -152,7 +156,7 @@ async function saveInLine(wsId, input, { now = Date.now() } = {}) {
       enabled,
       agent,
       enabledAt: enabledAtMs == null ? undefined : new Date(enabledAtMs).toISOString(),
-      watch: sealed && base.watch && typeof base.watch === 'object' ? base.watch : { calendar: true, mail: false, tasks: false, deals: false },
+      watch: inp.mail !== undefined ? { ...baseWatch, mail: inp.mail } : baseWatch,
       leadMinutes: next.leadMinutes,
       morningAt: next.quiet.to, // 아침 묶음 = 조용한 시간 끝
       eveningAt: next.eveningAt,
@@ -235,7 +239,7 @@ export async function assistantSettingsView(wsId, { now = Date.now(), deps = vie
   const st = runner === 'this_device' && current?.ws === wsId ? await readLocalState(wsId) : null;
   const tz = curCfg?.tz ?? cfg.tz;
   return {
-    config: { enabled: cfg.enabled, agent: cfg.agent, leadMinutes: cfg.leadMinutes, morningAt: cfg.morningAt, eveningAt: cfg.eveningAt, quiet: cfg.quiet, tz: cfg.tz },
+    config: { enabled: cfg.enabled, agent: cfg.agent, leadMinutes: cfg.leadMinutes, morningAt: cfg.morningAt, eveningAt: cfg.eveningAt, quiet: cfg.quiet, tz: cfg.tz, mail: cfg.mailMode },
     unsealed: !!(here && !here.sealed && here.cfg?.enabled && here.cfg.agent),
     current,
     choices: { lead: [...LEAD_CHOICES] },
@@ -253,6 +257,8 @@ export async function assistantSettingsView(wsId, { now = Date.now(), deps = vie
       instantToday: st && st.day.date === dateIn(now, tz) ? st.day.instant : 0,
       instantSure: !(st && st.day.date === dateIn(now, tz) && st.day.sure === false), // false = 방에서 복구가 실패해 다른 기기가 보낸 수를 아직 모른다(화면 "확인 중")
       dailyCap: (curCfg ?? cfg).dailyCap,
+      // 메일 확인 상태(이 기기가 실행 기기일 때만 — 상태 파일은 기기 로컬): 마지막 확인·오류 코드·미리 보기 기록 수
+      mail: runner === 'this_device' && current?.ws === wsId && cfg.mailMode !== 'off' ? await mailStatusView(wsId, { now }).catch(() => null) : null,
     },
   };
 }

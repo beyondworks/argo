@@ -82,6 +82,7 @@ export function foldNotices(rows, { now, tz }) {
     }
     if (dateIn(t, tz) === today) {
       if (a.kind === 'pre' && typeof a.keys[0] === 'string') pre.add(a.keys[0]);
+      else if (a.instant === true && typeof a.dayKey === 'string' && a.dayKey) pre.add(a.dayKey); // 메일 즉시 알림(src/assistant/mail.mjs) — 같은 하루 상한에 센다
       if (a.capNote === true) capNoted = true;
     }
   }

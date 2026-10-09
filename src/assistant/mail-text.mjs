@@ -30,6 +30,7 @@ export const MAIL_TEXT = Object.freeze({
   'noprep.failed': ['초안을 만들지 못했어요(AI가 제때 답하지 않았어요) — 필요하면 "초안 만들어 줘"라고 답해 주세요.', 'I couldn\'t draft a reply (the AI did not answer in time) — reply "draft it" if you need one.'],
   'noprep.free': ['무료 AI 모델이라 메일 내용을 AI에게 보내지 않았어요 — 초안이 필요하면 "초안 만들어 줘"라고 답해 주세요.', 'This agent uses a free AI model, so mail text was not sent to the AI — reply "draft it" if you need a draft.'],
   'noprep.cli': ['이 에이전트의 AI({runner})는 파일·명령 도구를 끈 채 부를 수 없어 메일 글을 보내지 않았어요 — 초안이 필요하면 "초안 만들어 줘"라고 답해 주세요.', "This agent's AI ({runner}) can't be called with file and command tools turned off, so mail text was not sent to it — reply \"draft it\" if you need a draft."],
+  'noprep.codex': ['이 에이전트의 AI({runner})로는 아직 메일 초안을 미리 만들지 않아요 — 초안이 필요하면 "초안 만들어 줘"라고 답해 주세요.', "This agent's AI ({runner}) doesn't prepare mail drafts ahead yet — reply \"draft it\" if you need a draft."],
   'noprep.runner': ['이 에이전트의 AI 연결이 없어 초안을 만들지 못했어요 — 설정 › AI 연결을 확인해 주세요.', "This agent has no working AI connection, so I couldn't draft — check Settings › AI connections."],
   'noprep.held': ['오늘 즉시 알림이 많아 초안 없이 목록으로만 보내요.', 'Many instant alerts today, so this comes as a plain list.'],
   'item.security': ['{i}. 보안 알림 — {sender} ({addr}) · {time}\n   "{subject}"\n   본인이 한 일이 맞나요? 아니라면 비밀번호부터 바꾸세요. 메일의 링크 말고 그 서비스에 직접 들어가 확인하세요.',

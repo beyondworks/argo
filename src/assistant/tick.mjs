@@ -7,6 +7,8 @@
 //  1. 리더 확인이 새것인가 — 동기화를 쓰는 기기면 리더 + 확인된 보유(ownedAt > 0) + 리스 확인 60초 안. 아니면 끝(호출 0).
 //  2. 사용자당 1명 — 같은 주인의 다른 회사에서 더 나중에 켠 비서가 있으면 이 회사는 쉰다(상태 "다른 회사의 비서가 맡고 있음").
 //  3. 조용한 시간(일정 예외 아니오)이면 확인도 배달도 하지 않는다 — 끝난 뒤 첫 확인이 밤사이를 읽어 아침 묶음에 넣는다.
+//  3c. 메일(볼 것에 메일을 고른 경우 — 미리 보기·알림, mail.mjs): 방에서 복구 뒤, 일정 단계 전에 한 차례. 자기 대기열·상태 파일(.assistant/mail.json)을 쓰고,
+//     보낸 키·오늘 즉시 알림 수는 이 상태(st.sent·st.day)와 같이 센다. 저녁 몫은 아침·저녁 묶음 글에 메일 칸으로 들어간다(일정을 안 보면 메일 칸만으로).
 //  3b. 방에서 복구(recover.mjs) — 새로 맡음·재시작·잠자기 뒤·쉬다가 다시 맡을 때 1:1 방의 비서 글로 보낸 키·묶음·오늘 수를 합친다. 실패하면 5분 뒤 다시.
 //  4. 대기열(보낼 글 1건 이하)이 있으면 같은 client_msg_id·같은 본문으로 먼저 다시 보낸다. 비지 않으면 새 글을 만들지 않는다.
 //     기한(시작 전 알림 = 회차 시작, 묶음 = rules.mjs bundleUntil)이 지난 글은 보내지 않고, 그 안의 지난 일정은 보류 목록으로 돌린다.
@@ -19,7 +21,8 @@
 //     상한에 처음 걸린 글(오늘 상한+1번째) 끝에만 한 줄을 붙인다. 이 단계의 글은 모두 템플릿이라 상한이 바꾸는 것은 그 한 줄과 화면의 n/상한이다
 //     (LLM 머리말을 쓰는 단계가 이 셈으로 머리말을 끈다).
 //     상태는 바뀐 때만 로컬 파일에(일정 확인 범위만 바뀐 경우는 15분에 한 번).
-import { loadEffectiveAssistantConfig, calendarActive } from './config.mjs';
+import { loadEffectiveAssistantConfig, calendarActive, mailActive } from './config.mjs';
+import { runMailStep, takeSummary, persistMail, mailDeps } from './mail.mjs';
 import { readState, pruneState, stateFile } from './state.mjs';
 import { GAP_MS, LEASE_FRESH_MS, dateIn, addDays, instantIn, inQuiet, bundleDue, bundleUntil, assistantMuted, assistantCompanyOf, retryDelayMs } from './rules.mjs';
 import { CAL_READ_MS, CAL_SPAN_MS, readCalendar, ownEvents, expand, planCalendar, confirmDue, preKey } from './calendar.mjs';
@@ -186,7 +189,8 @@ export async function runAssistantTick(cid, { now = Date.now(), deps = assistant
   if ((await pickCompany(cid, owner, cfg, now, deps)) !== cid) return rest('other_company', 'other_company');
   if (!(await deps.agentExists(cid, cfg.agent))) return rest('no_agent', 'no_agent');
   if (assistantMuted(company)) return rest('muted', 'muted'); // 메신저 알림 종류에서 비서를 껐다
-  if (!calendarActive(cfg)) return rest('idle'); // 이 단계는 일정만 본다
+  const calOn = calendarActive(cfg); const mailOn = mailActive(cfg);
+  if (!calOn && !mailOn) return rest('idle'); // 볼 것이 없다
   // 3. 조용한 시간 — 확인 범위를 옮기지 않는다(끝난 뒤 첫 확인이 그 사이를 읽는다)
   const quiet = inQuiet(now, cfg);
   if (quiet && !cfg.quiet.calendarAlerts) return done('quiet');
@@ -219,6 +223,33 @@ export async function runAssistantTick(cid, { now = Date.now(), deps = assistant
       m.recoverAt = now + RECOVER_RETRY_MS;
       logOnce(cid, `1:1 방에서 보낸 알림을 읽지 못했습니다(5분 뒤 다시): ${errText(e)}`);
     }
+  }
+
+  // 3c. 메일 — 실패해도 일정 단계는 이어 간다(메일 상태는 mail.json의 status)
+  if (mailOn) {
+    try { await runMailStep({ cid, cfg, company, st, c: await session(), now, lang, ownerWs: idsCache.ids.length ? idsCache.ids : [cid], deps: deps.mail ?? mailDeps }); }
+    catch (e) { logOnce(cid, `메일 확인 오류: ${errText(e)}`); }
+  }
+  const mailSum = () => (mailOn ? takeSummary(cid, { lang }) : null);
+  if (!calOn) { // 메일만 보는 비서 — 대기열(묶음 글) → 아침·저녁 묶음 차례에 메일 칸만으로
+    if (st.outbox) {
+      if (quiet || now < Number(st.outbox.nextAt || 0) || now >= Number(st.outbox.until)) { if (now >= Number(st.outbox.until)) st.outbox = null; return done('outbox_wait'); }
+      const s = await session();
+      if (!s) return done('login', 'login_required');
+      if ((await send(cid, m, s, cfg, now, lang)) === false) return done('outbox_failed');
+    }
+    const slot = !quiet ? bundleDue(now, cfg, st.bundles) : null;
+    if (!slot) return done('ok');
+    const sum = mailSum();
+    const ob = sum ? composeBundle(slot, { mail: sum.text }, { lang, tz: cfg.tz }) : null;
+    if (!ob) { st.bundles[slot.lane] = slot.date; return done('ok'); }
+    takeSummary(cid, { lang, consume: true }); await persistMail(cid, deps.mail ?? mailDeps);
+    st.outbox = { ...ob, date: slot.date, until: bundleUntil(slot, cfg), at: now, tries: 0, nextAt: 0 };
+    await save(cid, m, now, deps);
+    const s = await session();
+    if (!s) return done('login', 'login_required');
+    await send(cid, m, s, cfg, now, lang);
+    return done('ok');
   }
 
   // 4. 대기열 — 남은 글을 먼저. 비지 않으면 이번 틱에 새 글을 만들지 않는다(대기열은 늘 1건 이하).
@@ -303,9 +334,11 @@ export async function runAssistantTick(cid, { now = Date.now(), deps = assistant
   const bundleReady = covered && slot && (slot.lane !== 'pm' || m.snap.to >= pmTo); // 저녁 묶음은 내일 일정을 다 읽은 사본으로만
   if (bundleReady) {
     const pending = st.pending.slice();
-    const ob = composeBundle(slot, { allDay: plan.allDay, tomorrow: plan.tomorrow, pending }, { lang, tz: cfg.tz });
+    const sum = mailSum();
+    const ob = composeBundle(slot, { allDay: plan.allDay, tomorrow: plan.tomorrow, pending, mail: sum?.text }, { lang, tz: cfg.tz });
     if (ob) {
       st.pending = st.pending.filter((p) => !pending.includes(p)); // 보류 항목은 이제 대기열 글 안에 있다(기한이 지나 버리면 되돌린다)
+      if (sum) { takeSummary(cid, { lang, consume: true }); await persistMail(cid, deps.mail ?? mailDeps); } // 메일 저녁 몫도 이 글 안에 — 기한이 지나 버리면 그 줄은 사라진다(다시 알릴 만큼 급한 것은 즉시 몫)
       if (!(await deliverNew(ob, { date: slot.date, until: bundleUntil(slot, cfg) }))) return done('ok'); // 막히면 시작 전 알림은 대기열이 빈 뒤에
     } else {
       st.bundles[slot.lane] = slot.date; // 넣을 것이 없다 — 그날 이 묶음은 처리한 것으로(뒤에 생긴 지난 일정은 다음 묶음으로)

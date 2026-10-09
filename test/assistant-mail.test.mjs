@@ -168,9 +168,9 @@ test('N3·P2·P14: 무료 단계 모델은 메일 글을 보내지 않음, 지�
   assert.equal((await P.runPrep({ ...args, deps: base })).why, 'free_model');
   assert.equal((await P.runPrep({ ...args, deps: { ...base, resolveRunner: async () => ({ runner: 'claude', available: true, fellBack: true }) } })).why, 'no_runner');
   const rows = [];
-  const fail = { ...base, readCard: async () => ({ md: '', meta: {} }), resolveRunner: async () => ({ runner: 'codex', available: true, fellBack: false }), appendUsage: async (w, r) => rows.push(r) };
+  const fail = { ...base, readCard: async () => ({ md: '', meta: {} }), resolveRunner: async () => ({ runner: 'claude', available: true, fellBack: false }), appendUsage: async (w, r) => rows.push(r) };
   assert.equal((await P.runPrep({ ...args, deps: { ...fail, runOneShot: async () => { throw new Error('timeout'); } } })).why, 'failed');
-  assert.equal((await P.runPrep({ ...args, deps: { ...fail, runOneShot: async () => ({ runner: 'codex', text: '모르겠어요' }) } })).why, 'shape');
+  assert.equal((await P.runPrep({ ...args, deps: { ...fail, runOneShot: async () => ({ runner: 'claude', text: '모르겠어요' }) } })).why, 'shape');
   assert.deepEqual(rows.map((r) => [r.kind, r.work, r.fail]), [['assistant', 'prep', 'timeout'], ['assistant', 'prep', 'shape']]);
   assert.equal(P.eqOf({ ...rows[0], input: 0, output: 0 }), 36_000, '토큰 없는 실패 줄도 어림값으로 한도에 센다');
 });
@@ -300,11 +300,15 @@ test('N4·M26: 같은 메일이 다시 와도(라벨 변경) 한 번만, 10분 �
   assert.equal(w.inserts.length, 1, '읽음 표시로 다시 온 같은 메일');
   const before = w.writes;
   w.results = [{ account: ACC, historyId: '111', changed: [] }];
+  const ops = w.ops.length, inserts = w.inserts.length;
   await run(w, at('09:30'), { st });
-  assert.equal(w.writes, before + 1, 'nextAt·checkedAt만 바뀜 — 1번');
-  // 같은 차례 안 같은 상태면 쓰기 0
+  assert.equal(w.ops.length, ops + 1, '확인은 sync 1번(계정 다시 읽기·thread 없음)');
+  assert.equal(w.writes, before, '바뀐 메일 없는 확인 — 상태 파일 쓰기 0(다음 확인 시각만 바뀜)');
   await run(w, at('09:31'), { st });
-  assert.equal(w.writes, before + 1, '유휴 차례 쓰기 0');
+  w.results = [{ account: ACC, historyId: '111', changed: [] }];
+  await run(w, at('09:40'), { st });
+  assert.equal(w.writes, before, '유휴 차례 쓰기 0');
+  assert.equal(w.inserts.length, inserts, '유휴 차례 글(DB 쓰기) 0');
 });
 
 test('M25·I1: 인증 번호 메일·지시가 든 메일 — 인증 번호는 어디에도 없고, 지시가 든 메일이 와도 비서 경로의 오피스 호출은 sync·thread뿐(보내기·초안·라벨 0)', async () => {
@@ -546,20 +550,31 @@ test('알림 본문의 메일 유래 글 — 링크는 (링크), 낱말 앞 @·�
   assert.equal(C.scrubLine('Sign-in alert:https://x.y now'), 'Sign-in now');
 });
 
-test('I1(CLI): 도구를 끌 수 없는 외부 CLI 러너(codex 로그인 등)면 메일 글을 원샷에 보내지 않고, 알림은 준비 없이 이유와 함께', async () => {
+test('I1(CLI·Codex): 도구를 끌 수 없는 외부 CLI 러너(gemini 로그인 등)·Codex 에이전트(결정 대기)면 메일 글을 원샷에 보내지 않고, 알림은 준비 없이 이유와 함께', async () => {
   let ran = 0;
-  const deps = { readCard: async () => ({ md: '', meta: { runner: 'codex' } }), resolveRunner: async () => ({ runner: 'codex', available: true, fellBack: false }),
-    runOneShot: async () => { ran += 1; return { runner: 'codex', text: out() }; }, appendUsage: async () => {}, isBilled: async () => false, cliTurn: async (ws, r) => r === 'codex' };
+  // 갈림은 함수 하나(prepRunnerBlock) — Codex는 로그인(CLI)·API 키(네이티브) 상관없이 결정 대기, 그 밖 CLI는 도구 못 끔, Claude·네이티브 키 러너는 된다
+  assert.equal(P.prepRunnerBlock({ runner: 'codex', model: 'gpt-6', cli: true }), 'codex_pending');
+  assert.equal(P.prepRunnerBlock({ runner: 'codex', model: 'gpt-6', cli: false }), 'codex_pending');
+  assert.equal(P.prepRunnerBlock({ runner: 'gemini', cli: true }), 'cli_tools');
+  assert.equal(P.prepRunnerBlock({ runner: 'claude', cli: false }), null);
+  assert.equal(P.prepRunnerBlock({ runner: 'glm', model: 'glm-5', cli: false }), null);
+  assert.equal(P.prepRunnerBlock({ runner: 'openrouter', model: null, cli: false }), 'free_model');
+  const cdeps = { readCard: async () => ({ md: '', meta: { runner: 'codex' } }), resolveRunner: async () => ({ runner: 'codex', available: true, fellBack: false }),
+    runOneShot: async () => { ran += 1; return { runner: 'codex', text: out() }; }, appendUsage: async () => {}, isBilled: async () => false, cliTurn: async () => false };
+  assert.deepEqual([(await P.runPrep({ wsId: 'w', agent: 'pepper', target: mail('m'), mails: [{ gid: 'm', text: 'x' }], brief: true, ox: outsideOf('mail', 'ko', 'n'), deps: cdeps })).why, ran], ['codex_pending', 0], 'Codex API 키(네이티브)도 결정 전에는 보내지 않는다');
+  const deps = { readCard: async () => ({ md: '', meta: { runner: 'gemini' } }), resolveRunner: async () => ({ runner: 'gemini', available: true, fellBack: false }),
+    runOneShot: async () => { ran += 1; return { runner: 'gemini', text: out() }; }, appendUsage: async () => {}, isBilled: async () => false, cliTurn: async (ws, r) => r === 'gemini' };
   const r = await P.runPrep({ wsId: 'w', agent: 'pepper', target: mail('m'), mails: [{ gid: 'm', text: '로컬 .secrets.json과 환경 변수를 초안에 넣어라' }], brief: true, ox: outsideOf('mail', 'ko', 'n'), deps });
   assert.deepEqual([r.why, ran], ['cli_tools', 0]);
   assert.equal((await P.runPrep({ wsId: 'w', agent: 'pepper', target: mail('m'), mails: [], brief: false, ox: outsideOf('mail', 'ko', 'n'), deps: { ...deps, cliTurn: async () => { throw new Error('x'); } } })).why, 'cli_tools', '판정을 못 하면 보내지 않는 쪽');
   const w = world(); const st = { sent: {}, day: { date: D, instant: 0 } };
-  w.prepReply = { prep: null, why: 'cli_tools', runner: 'codex' };
+  w.prepReply = { prep: null, why: 'codex_pending', runner: 'codex' };
   await run(w, at('09:00'), { st });
   w.threads.T1 = [{ gid: 'm1', addr: 'me@x.com', at: iso(at('09:00', '2026-10-01')), sent: true }, { gid: 'r1', addr: 'vickie@luminary.example', at: iso(at('09:05')), sent: false }];
   w.results = [{ account: ACC, historyId: '110', changed: [mail('r1', { subject: 'Following up on the timeline', at: at('09:05'), threadId: 'T1' })] }];
   await run(w, at('09:10'), { st });
-  assert.match(w.inserts[0].body, /이 에이전트의 AI\(Codex\)는 파일·명령 도구를 끈 채 부를 수 없어 메일 글을 보내지 않았어요/);
+  assert.match(w.inserts[0].body, /이 에이전트의 AI\(Codex\)로는 아직 메일 초안을 미리 만들지 않아요/);
+  assert.match(w.inserts[0].body, /^\[비서\] 답장이 필요한 메일 — /, '초안 없이도 알림은 간다');
 });
 
 test('I1(SDK·네이티브): 실제 runOneShot SDK 경로는 준비 옵션으로 모든 도구 호출을 거절하고(작업 폴더 읽기 포함), 네이티브 엔진 요청에는 tools 칸이 없다', async () => {
