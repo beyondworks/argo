@@ -77,11 +77,15 @@ export function bareHeader(v) {
 export function authOf(msg) {
   const h = (msg.payload?.headers ?? []).find((x) => String(x?.name ?? '').toLowerCase() === 'authentication-results');
   if (!h) return null;
-  const parts = bareHeader(String(h.value ?? '').slice(0, HEADER_CAP)).split(';').map((x) => x.trim());
+  const raw = String(h.value ?? '').slice(0, HEADER_CAP);
+  // 원문에 ';dmarc='가 둘 이상이면 보낸 쪽이 봉투 주소·주석에 칸을 심은 것 — 짝이 맞지 않는 따옴표·괄호로 Gmail의 진짜 칸을 글 속에 삼키게 할 수 있어
+  // 지운 뒤 하나만 남아도 믿지 않는다(커밋 보안 검토 퍼즈). Gmail이 전달 메일에 붙이는 arc 주석 안의 'dmarc=pass'는 앞에 ;가 없어 세지 않는다
+  const injected = (raw.match(/;\s*dmarc=/gi) ?? []).length > 1;
+  const parts = bareHeader(raw).split(';').map((x) => x.trim());
   if (parts[0]?.toLowerCase() !== 'mx.google.com') return null;
   const ds = parts.filter((x) => /^dmarc=/i.test(x));
   if (!ds.length) return { dmarc: 'none', from: '' };
-  if (ds.length > 1) return { dmarc: 'unknown', from: '' }; // Gmail은 dmarc 칸을 하나만 쓴다 — 둘 이상이면 어느 것도 믿지 않는다(10/9 분리 검수 MEDIUM 2)
+  if (ds.length > 1 || injected) return { dmarc: 'unknown', from: '' }; // Gmail은 dmarc 칸을 하나만 쓴다 — 둘 이상이면 어느 것도 믿지 않는다(10/9 분리 검수 MEDIUM 2)
   const d = ds[0];
   const words = d.split(/\s+/);
   const result = words[0].slice(6).toLowerCase();

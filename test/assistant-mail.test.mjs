@@ -53,8 +53,8 @@ test('M27·M21·M28·P9: 스레드 조건 — 내가 먼저 보낸 스레드(②
     const x = { ...m, subject: 'Any update?', ...(auth ? { auth } : {}) };
     assert.notEqual(C.classifyMail(x, { thread: nudge, now: at('08:00'), tz: 'Asia/Seoul' }).cat, 'reply', `②′ + ${why}`);
     const cus = C.classifyMail(x, { thread: [{ gid: 'm2', addr: m.addr, at: m.at, sent: false }], customer: (a) => a, now: at('08:00'), tz: 'Asia/Seoul' });
-    // 재검수 후속 3 — DMARC 기록이 없을 뿐인 거래처(none·인증 결과 없음)는 거래처로 보되 표지, 위조 신호(fail)는 거래처가 아니다
-    if (auth?.dmarc === 'fail') assert.ok(!['reply', 'customer'].includes(cus.cat), `거래처 주소 + ${why} → 거래처로 보지 않는다(${cus.cat})`);
+    // 재검수 후속 3 — DMARC 기록이 없을 뿐인 거래처(Gmail 결과에 dmarc 칸 없음)는 거래처로 보되 표지, 위조 신호(fail)·인증 결과 없음은 거래처가 아니다
+    if (auth?.dmarc !== 'none') assert.ok(!['reply', 'customer'].includes(cus.cat), `거래처 주소 + ${why} → 거래처로 보지 않는다(${cus.cat}) — 인증 결과가 아예 없는 것도(커밋 보안 검토)`);
     else assert.deepEqual([cus.cat, cus.unverified], ['reply', true], `거래처 주소 + ${why} → 거래처 재촉은 답장 필요 + 표지`);
     const r2 = C.classifyMail(x, { accounts: ['me@x.com'], thread: mineFirst, now: at('08:00'), tz: 'Asia/Seoul' });
     assert.deepEqual([r2.cat, r2.unverified], ['reply', true], `② 내가 먼저 보낸 스레드는 ${why}여도 답장 필요 — 대신 "보낸 곳 확인 못 함" 표지`);
@@ -644,6 +644,7 @@ test('보안 알림 제목 — 실제 서비스 보안 알림(새 SSH 키·기�
   }
   for (const [addr, from, subj] of [
     ['noreply@tm.openai.com', 'tm.openai.com', 'New login to OpenAI'],
+    ['noreply@tm.openai.com', 'tm.openai.com', 'New login to your OpenAI account'],
     ['no-reply@accounts.google.com', 'accounts.google.com', 'Security alert'],
     ['no-reply@accounts.google.com', 'accounts.google.com', '보안 알림'],
     ['no-reply@accounts.google.com', 'accounts.google.com', 'Critical security alert'],
@@ -657,20 +658,28 @@ test('보안 알림 제목 — 실제 서비스 보안 알림(새 SSH 키·기�
     assert.notEqual(k(...GH, subj).cat, 'security', subj);
   }
   assert.notEqual(k('no-reply@accounts.google.com', 'accounts.google.com', 'Mallory shared "보안 알림 확인" with you').cat, 'security', 'Google — 제목 형식 밖');
-  // 새 제목 낱말 — 목록 밖 주소는 저녁(보안처럼 보이는 메일), 정규식은 주석과 같이
-  for (const subj of ['New login detected', '새 로그인', '기기 확인이 필요합니다', 'Please verify your device', 'SSH key added', 'Someone tried to log in']) {
-    assert.equal(C.classifyMail(mail('y', { addr: 'alert@evil.example', subject: subj }), { now: at('10:00'), tz: 'Asia/Seoul' }).cat, 'security_other', subj);
+  // 넓힌 낱말은 허용 주소의 제목 형식 판정에만 쓴다 — 목록 밖 보낸 사람의 범주(거래처·답장 필요·계약)를 바꾸지 않는다(커밋 보안 검토: 통제 약화 방지)
+  const cust = { customer: (a) => (a === 'kim@abc.co.kr' ? a : null), now: at('10:00'), tz: 'Asia/Seoul' };
+  const KIM = { addr: 'kim@abc.co.kr', extra: { auth: { dmarc: 'pass', from: 'abc.co.kr' } } };
+  for (const subj of ['Login page draft for review', 'API access token rotation plan', 'SSH key for the staging server', 'Please verify your device list in the contract']) {
+    assert.equal(C.classifyMail(mail('y', { ...KIM, subject: subj }), cust).cat, 'customer', `확인된 거래처 메일 "${subj}"은 그대로 거래처`);
+  }
+  assert.equal(C.classifyMail(mail('y', { ...KIM, subject: 'Re: login page timeline — any update?', threadId: 'TL' }), { ...cust, thread: [{ gid: 'y', addr: 'kim@abc.co.kr', at: iso(at('10:00')), sent: false }] }).cat, 'reply', '거래처 재촉은 답장 필요 그대로');
+  assert.equal(C.classifyMail(mail('y', { addr: 'alert@evil.example', subject: 'New login detected', extra: { auth: { dmarc: 'pass', from: 'evil.example' } } }), { now: at('10:00'), tz: 'Asia/Seoul' }).cat !== 'security', true, '목록 밖은 보안(즉시)이 아니다');
+  // GitHub 형식은 GitHub 문구 자체만 — 가운데에 남이 정한 이름(앱·저장소)이 들어갈 자리를 두지 않는다
+  for (const subj of ['[GitHub] A login security alert from mallory/repo was added', '[GitHub] A third-party OAuth application (Click here now) has been authorized', '[GitHub] A new deploy key was added to mallory/security-alert']) {
+    assert.notEqual(k(...GH, subj).cat, 'security', subj);
   }
 });
 
-test('거래처 보낸 곳 확인 — DMARC 기록이 없는 도메인(none·인증 결과 없음)의 거래처 메일은 즉시 + "보낸 곳 확인 못 함" 줄, dmarc=fail·unknown은 거래처로 보지 않는다', () => {
+test('거래처 보낸 곳 확인 — DMARC 기록이 없는 도메인(Gmail 결과에 dmarc 칸 없음)의 거래처 메일은 즉시 + "보낸 곳 확인 못 함" 줄, 인증 결과 없음·dmarc=fail·unknown은 거래처로 보지 않는다', () => {
   const cust = (a) => (a.endsWith('@abc.co.kr') ? a : null);
   const k = (auth) => C.classifyMail(mail('c', { addr: 'kim@abc.co.kr', from: '김대리', subject: '미팅 자료 공유드립니다', ...(auth ? { extra: { auth } } : {}) }), { customer: cust, now: at('10:00'), tz: 'Asia/Seoul' });
   assert.deepEqual(k({ dmarc: 'pass', from: 'abc.co.kr' }), { cat: 'customer', lane: 'now', reply: false });
-  for (const [auth, why] of [[{ dmarc: 'none', from: '' }, 'DMARC 기록 없음'], [undefined, '인증 결과 없음(옛 오피스)']]) {
-    assert.deepEqual(k(auth), { cat: 'customer', lane: 'now', reply: false, unverified: true }, why);
-  }
-  for (const [auth, why] of [[{ dmarc: 'fail', from: 'abc.co.kr' }, 'dmarc=fail(p=none여도)'], [{ dmarc: 'unknown', from: '' }, 'dmarc 칸이 여럿']]) {
+  assert.deepEqual(k({ dmarc: 'none', from: '' }), { cat: 'customer', lane: 'now', reply: false, unverified: true }, 'DMARC 기록 없음(Gmail 결과에 dmarc 칸 없음)');
+  // 인증 결과가 아예 없음(옛 오피스·Gmail이 붙이지 않은 경로·맨 위가 다른 서버)은 "기록 없음"과 다르다 — 확인할 근거가 없으니 거래처로 보지 않는다(커밋 보안 검토)
+  for (const [auth, why] of [[undefined, '인증 결과 없음'], [{ dmarc: 'fail', from: 'abc.co.kr' }, 'dmarc=fail(p=none여도)'], [{ dmarc: 'unknown', from: '' }, 'dmarc 칸이 여럿'],
+    [{ dmarc: 'pass', from: 'evil.example' }, 'pass인데 도메인이 다름'], [{ dmarc: 'temperror', from: '' }, '그 밖의 결과']]) {
     assert.notEqual(k(auth).cat, 'customer', why);
   }
   const body = X.composeBatch([{ m: mail('c', { addr: 'kim@abc.co.kr', from: '김대리', subject: '미팅 자료 공유드립니다' }), cls: { cat: 'customer', lane: 'now', unverified: true } }], { lang: 'ko', now: at('10:00'), tz: 'Asia/Seoul' });

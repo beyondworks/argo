@@ -23,18 +23,22 @@ export const SECURITY_SENDERS = Object.freeze({
   // Google 계정 보안 알림 — "Security alert", "Critical security alert", "보안 알림", "중요 보안 알림"
   'no-reply@accounts.google.com': /^(?:critical |중요 )?(?:security alert|보안 알림)/i,
   // GitHub 보안 알림 — "[GitHub] A new SSH authentication public key was added…", "[GitHub] Please verify your device", "[GitHub] Your password was reset"
-  'noreply@github.com': /^\[GitHub\] (?:A (?:new )?[\w ()-]{1,60} (?:was|has been) (?:added|authorized)|Please verify your device|Your password (?:was|has been) (?:reset|changed)|Sudo email verification code|New sign-in)/,
+  // 형식은 GitHub 문구 자체만 — 가운데에 남이 정한 이름(앱·저장소·조직)이 들어갈 자리를 두지 않는다(커밋 보안 검토)
+  'noreply@github.com': /^\[GitHub\] (?:A new (?:SSH authentication public key|SSH (?:signing )?key|GPG key|public key) was added to your account|A (?:fine-grained )?personal access token(?: \(classic\))? (?:was|has been) added to your account|A third-party OAuth application has been added to your account|Please verify your device|Your password (?:was|has been) (?:reset|changed)|Sudo email verification code|New sign-in to your account)/,
   'account-security-noreply@accountprotection.microsoft.com': /^Microsoft (?:account|계정) /i, // Microsoft 계정 보안
   'appleid@id.apple.com': /^(?:Your Apple (?:ID|Account) |Apple (?:ID|계정))/i,                 // Apple 계정
-  'noreply@tm.openai.com': /^(?:New (?:login|sign-in) to OpenAI|Your OpenAI password)/i,      // OpenAI 계정
+  'noreply@tm.openai.com': /^(?:New (?:login|sign-in) to (?:your )?OpenAI|Your OpenAI password)/i,      // OpenAI 계정
   'account-update@amazon.com': /^(?:Amazon security alert|Your Amazon password)/i,           // Amazon 계정 변경
 });
 export const DEADLINE_SOON_DAYS = 3;
 
 const OTP_RE = /인증 ?번호|verification code|\bOTP\b|일회용 ?비밀번호|one[- ]time (?:pass(?:code|word)|code)/i;
-// 보안 메일 제목 낱말 — 로그인·기기·비밀번호·키·토큰. 실제 서비스 보안 알림(GitHub 새 SSH 키·기기 확인, OpenAI 새 로그인)이 noreply 주소라 뉴스레터로 빠지지 않게
-// 이 낱말이 먼저 본다(재검수 후속 1). 목록 밖 주소는 저녁 "보안 알림처럼 보이는 메일" 줄이다
-const SECURITY_RE = /로그인|새 기기|새로운 기기|기기 확인|비밀번호 (?:재설정|변경)|보안 알림|sign[- ]?in|signed in|\blog ?in\b|\blogged in\b|new device|verify your device|password (?:was |has been )?(?:reset|changed)|security alert|\bSSH\b[\w ]{0,30}\bkey\b|access token|oauth application/i;
+// 보안 메일 제목 낱말(좁은 쪽) — 목록 밖 보낸 사람에게는 이 낱말만 "보안 알림처럼 보이는 메일"(저녁 줄)로 빼낸다. 넓히면 거래처·답장 필요 메일("login page"·"access token")을
+// 저녁 줄로 빼앗는다(커밋 보안 검토 — 통제 약화) — 그래서 #915 그대로 둔다.
+const SECURITY_RE = /로그인|새 기기|새로운 기기|비밀번호 재설정|보안 알림|sign[- ]?in|signed in|new device|password reset|security alert/i;
+// 허용 주소의 보안 알림 판정에만 쓰는 넓은 낱말 — 실제 서비스 보안 알림(GitHub 새 SSH 키·기기 확인, OpenAI 새 로그인)이 noreply 주소라 뉴스레터로 빠지지 않게(재검수 후속 1).
+// 허용 주소 + 그 주소의 제목 형식 + 보낸 곳 확인이 같이 맞을 때만 보안이므로 목록 밖 보낸 사람의 범주를 바꾸지 않는다
+const SECURITY_WIDE_RE = /로그인|새 기기|새로운 기기|기기 확인|비밀번호 (?:재설정|변경)|보안 알림|sign[- ]?in|signed in|\blog ?in\b|\blogged in\b|new device|verify your device|password (?:was |has been )?(?:reset|changed)|security alert|\bSSH\b[\w ]{0,30}\bkey\b|access token|GPG key|public key|OAuth application/i;
 const STRONG_RE = /follow(?:ing)?[ -]?up|checking in|just checking|gentle reminder|any updates?|still waiting|재촉|독촉|회신 부탁|답변 부탁|확인 부탁|언제쯤|언제 ?까지/i;
 const ETA_RE = /\bETA\b/; // 대문자 그대로·단어 경계 — beta·metadata에 걸리지 않게
 const WEAK_RE = /일정|날짜|기한|마감|전달일|납기|timeline|schedule|deadline|due date|delivery date|when (?:can|will) (?:you|we)/i;
@@ -93,11 +97,14 @@ export function needsThread(m, c = {}) {
 /** 보낸 곳이 확인된 메일인가(순수) — From은 보낸 사람이 마음대로 쓸 수 있다. Gmail이 받을 때 붙인 인증 결과(오피스 envelope auth — 첫 Authentication-Results가
     mx.google.com의 것)가 dmarc=pass이고, DMARC가 본 머리 From 도메인이 보낸 주소의 도메인과 같을 때만 확인된 것으로 본다. 결과가 없으면(옛 오피스·다른 서버) 확인 못 함. */
 export const verifiedSender = (m) => !!(m?.auth && m.auth.dmarc === 'pass' && m.auth.from && m.auth.from === domainOf(m.addr));
-/** 보낸 곳 믿음(순수) — 'verified'(위) | 'weak'(DMARC 기록 없음·인증 결과 없음 — 확인할 길이 없을 뿐) | 'bad'(dmarc=fail·unknown·그 밖, 또는 pass인데 도메인이 다름 — 위조 신호).
-    정책 p=none이어도 결과가 fail이면 'bad'다(재검수 후속 3). */
+/** 보낸 곳 믿음(순수) — 'verified'(위) | 'weak' | 'bad'.
+    weak = Gmail이 맨 위에 붙인 인증 결과(mx.google.com)에 dmarc 칸이 없다(오피스 authOf → dmarc 'none') — 그 도메인에 DMARC 기록이 없어 확인할 길이 없을 뿐(재검수 후속 3).
+    그 도메인에 기록이 있으면 Gmail은 pass·fail을 쓰므로, 보낸 쪽이 이 값을 만들려면 기록이 없는 도메인이어야 한다(그 경우 From 위조는 원래 막을 수 없다 — 그래서 표지).
+    bad = 그 밖 전부: 인증 결과가 아예 없음(옛 오피스·Gmail이 붙이지 않은 경로·맨 위가 다른 서버 — "기록 없음"과 구분), dmarc=fail(정책 p=none이어도)·unknown·그 밖의 값,
+    pass인데 도메인이 다름(커밋 보안 검토). */
 export function senderTrust(m) {
   if (verifiedSender(m)) return 'verified';
-  if (!m?.auth || m.auth.dmarc === 'none') return 'weak';
+  if (m?.auth && m.auth.dmarc === 'none') return 'weak';
   return 'bad';
 }
 
@@ -109,10 +116,11 @@ function earlyCategory(m, { accounts = [], allow = SECURITY_SENDERS } = {}) {
   if (labels.includes('SENT') || mine.includes(addrOf(m.addr))) return 'mine';
   if (OTP_RE.test(textOf(m))) return 'otp';
   const hasAddr = String(m.addr ?? '').includes('@'); // 이름뿐이면(인트라넷 등) 보안 범주를 쓰지 않는다(M30)
-  if (hasAddr && SECURITY_RE.test(cap(m.subject))) { // 허용 목록을 바꾸는 설정은 다음 단계 — 지금은 기본값
-    const a = addrOf(m.addr);
+  if (hasAddr) { // 허용 목록을 바꾸는 설정은 다음 단계 — 지금은 기본값
+    const a = addrOf(m.addr), subj = cap(m.subject);
     const form = a && Object.hasOwn(allow, a) ? allow[a] : null;
-    return form && form.test(cap(m.subject)) && verifiedSender(m) ? 'security' : 'security_other';
+    if (form && SECURITY_WIDE_RE.test(subj) && form.test(subj) && verifiedSender(m)) return 'security';
+    if (SECURITY_RE.test(subj) || (form && SECURITY_WIDE_RE.test(subj))) return 'security_other'; // 허용 주소의 형식 밖 보안 낱말도 저녁 줄(뉴스레터로 빼지 않는다)
   }
   return null;
 }
