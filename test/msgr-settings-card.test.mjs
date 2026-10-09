@@ -351,8 +351,8 @@ test('J-1 역할: 채널 관리자(admin_user_ids — 편집권·지정 토글·
   assert.match(app, /select\('id, kind, name, topic, crew_memory, personal_crews, created_by, admin_user_ids, excluded_user_ids, excluded_crew_ids'\)/, '채널 조회에 admin_user_ids');
   assert.match(app, /select\('allow_default, allow_locked, crew_memory_default, crew_memory_locked, approval_high_by, approver_user_ids, crew_create, crew_runner, crew_model, guest_seats'\)/, '정책 조회에 approver_user_ids');
   const ch = app.slice(app.indexOf('function ChannelSheet('), app.indexOf('function Settings('));
-  assert.match(ch, /const canEdit = isAdmin \|\| channel\.created_by === uid \|\| chAdmins\.includes\(uid\);/, '채널 관리자 편집권');
-  assert.match(ch, /const canAssignAdmins = \(isAdmin \|\| channel\.created_by === uid\) && channel\.kind !== 'dm';/, '지정은 조직 관리자·생성자만');
+  // 판정은 apps/messenger/src/channel-host.mjs 한 곳(서버 msgr_can_manage_channel과 같은 규칙 — 참여 중인 생성자·채널 관리자만, 단위 시험은 apps/messenger/test/channel-host.test.mjs)
+  assert.match(ch, /const \{ canEdit, canAssignAdmins, needsJoin \} = channelManage\(\{ channel, uid, isAdmin, joined \}\);/, '채널 관리자 편집권·지정은 조직 관리자·생성자만');
   const slip = app.slice(app.indexOf('function Slip('), app.indexOf('function Attachment('));
   assert.equal(approvalDecider({ ap: { risk: 'high' }, uid: 'me', crewOwnerId: 'x', isAdmin: false, policy: { approval_high_by: 'approvers', approver_user_ids: ['me'] } }).can, true, '슬립 확정권에 지정 결재권자');
   assert.match(slip, /approvalDecider\(/, '슬립은 공유 판정 함수를 쓴다');

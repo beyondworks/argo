@@ -1800,6 +1800,7 @@ export const DICT = {
   'ch.archive.confirm': ['이 채널을 보관할까요? 목록에서 사라지고 새 글을 쓸 수 없습니다. 기록은 남습니다.', 'Archive this channel? It leaves the list and accepts no new messages. History is kept.'],
   'ch.saved': ['채널 정보를 저장했습니다.', 'Channel saved.'],
   'ch.noEdit': ['채널 관리자나 조직 관리자만 바꿀 수 있습니다.', 'Only the channel creator or an organization admin can change this.'],
+  'ch.noEdit.join': ['이 채널에 참여하면 설정을 바꿀 수 있습니다.', 'Join this channel to change its settings.'], // 만든 사람·채널 관리자인데 아직 참여하지 않은 채널(미리보기) — 서버는 참여 중일 때만 관리를 허용한다
   'dm.with': ['{name}와의 1:1 대화', 'Direct message with {name}'],
   'dm.crewNote': ['에이전트와의 1:1 대화에서는 @ 없이 보내도 에이전트가 답합니다.', 'In a direct message with an agent, every message gets an answer — no @ needed.'],
   'role.owner': ['소유자', 'Owner'],
