@@ -14,7 +14,17 @@
 // 정규식은 비서 전용이다 — 성과 기록의 NEGATIVE(apps/office/server/mail-signals.js)는 "아직"·"빨리"처럼 거래처 스레드 안에서만 쓰려고 만든 넓은 규칙이라 쓰지 않는다.
 import { dateIn, addDays } from './rules.mjs';
 
-export const SECURITY_ALLOW = Object.freeze(['google.com', 'openai.com', 'apple.com', 'microsoft.com', 'github.com', 'naver.com', 'kakao.com', 'kakaocorp.com', 'amazon.com']);
+// 보안 알림을 비서 목소리로 즉시 알리는 보낸 주소 — 도메인이 아니라 정확한 주소만(10/9 분리 검수 MEDIUM 1). 같은 도메인에도 남이 쓴 글을 대신 보내 주는 주소가 있다
+// (notifications@github.com 이슈 제목, comments-noreply@docs.google.com 댓글, 캘린더 초대) — DMARC는 통과해도 제목은 남이 정한다. 그런 주소와 목록 밖 주소는 저녁 한 줄(security_other).
+// ponytail: 확인한 서비스 보안 알림 주소만 — 네이버·카카오처럼 주소를 아직 확인하지 못한 곳은 저녁 줄로 간다(안전한 쪽). 주소를 확인하면 여기에 더한다.
+export const SECURITY_SENDERS = Object.freeze([
+  'no-reply@accounts.google.com',                            // Google 계정 보안 알림
+  'noreply@github.com',                                      // GitHub 보안 알림(새 로그인·SSH 키 — notifications@는 알림 중계라 빼고)
+  'account-security-noreply@accountprotection.microsoft.com', // Microsoft 계정 보안
+  'appleid@id.apple.com',                                    // Apple 계정
+  'noreply@tm.openai.com',                                   // OpenAI 계정
+  'account-update@amazon.com',                               // Amazon 계정 변경
+]);
 export const DEADLINE_SOON_DAYS = 3;
 
 const OTP_RE = /인증 ?번호|verification code|\bOTP\b|일회용 ?비밀번호|one[- ]time (?:pass(?:code|word)|code)/i;
@@ -38,8 +48,6 @@ export function addrOf(addr) {
   return ADDR_RE.test(a) && a.length <= 254 ? a : null;
 }
 export const domainOf = (addr) => addrOf(addr)?.split('@')[1] ?? '';
-/** 주소의 도메인이 목록의 도메인과 같거나 그 하위 도메인인가(accounts.google.com → google.com). 비슷한 이름(google.com.evil.io·mygoogle.com)·엄격 파싱에 실패한 주소는 아니다 */
-export const domainIn = (addr, list) => { const d = domainOf(addr); return !!d && list.some((x) => d === x || d.endsWith(`.${x}`)); };
 const cap = (s) => String(s ?? '').slice(0, FIELD_CAP);
 const textOf = (m) => `${cap(m.subject)}\n${cap(m.snippet)}`;
 
@@ -82,13 +90,13 @@ export const verifiedSender = (m) => !!(m?.auth && m.auth.dmarc === 'pass' && m.
 
 /** 스레드 없이 끝나는 앞 범주 — 'mine' | 'otp' | 'security' | 'security_other' | null.
     보안 메일을 비서 목소리로 즉시 알리는 것(security)은 주소가 엄격 파싱되고 · 허용 목록 도메인이고 · 보낸 곳이 확인된(verifiedSender) 때만. 그 밖은 저녁 한 줄(보낸 주소 그대로, 단정하지 않음). */
-function earlyCategory(m, { accounts = [], allow = SECURITY_ALLOW } = {}) {
+function earlyCategory(m, { accounts = [], allow = SECURITY_SENDERS } = {}) {
   const labels = m.labels ?? [];
   const mine = accounts.map((x) => addrOf(x)).filter(Boolean);
   if (labels.includes('SENT') || mine.includes(addrOf(m.addr))) return 'mine';
   if (OTP_RE.test(textOf(m))) return 'otp';
   const hasAddr = String(m.addr ?? '').includes('@'); // 이름뿐이면(인트라넷 등) 보안 범주를 쓰지 않는다(M30)
-  if (hasAddr && SECURITY_RE.test(cap(m.subject))) return domainIn(m.addr, allow) && verifiedSender(m) ? 'security' : 'security_other'; // 허용 목록을 바꾸는 설정은 다음 단계 — 지금은 기본값
+  if (hasAddr && SECURITY_RE.test(cap(m.subject))) return allow.includes(addrOf(m.addr)) && verifiedSender(m) ? 'security' : 'security_other'; // 허용 목록을 바꾸는 설정은 다음 단계 — 지금은 기본값
   return null;
 }
 
@@ -142,10 +150,14 @@ export function classifyMail(m, c = {}) {
   const labels = m.labels ?? [];
   const newsLabel = labels.some((l) => NEWS_LABELS.includes(l));
   const signal = newsLabel ? null : replySignal(m);
-  const customer = typeof c.customer === 'function' ? c.customer(m.addr) : null;
+  // From은 위조할 수 있다 — 보낸 곳이 확인되지 않은 메일은 거래처로 보지 않고, 같은 사람 두 번(②′)만으로는 답장 필요가 아니다(위조 메일로 하루 준비·즉시 상한을
+  // 다 쓰지 않게, 10/9 분리 검수 LOW 3). 내가 먼저 보낸 스레드(②)는 확인 못 해도 답장 필요 — 대신 글에 "보낸 곳 확인 못 함" 표지(unverified)
+  const verified = verifiedSender(m);
+  const customer = verified && typeof c.customer === 'function' ? c.customer(m.addr) : null;
   if (signal && Array.isArray(c.thread)) {
     const ts = threadState(m, c.thread, c.accounts ?? []);
-    if (ts.waiting || (customer && signal === 'strong' && !ts.repliedAfter)) return { cat: 'reply', lane: 'now', reply: true, signal, thread: ts };
+    const waiting = !ts.repliedAfter && (ts.mineBefore || (verified && ts.nudge));
+    if (waiting || (customer && signal === 'strong' && !ts.repliedAfter)) return { cat: 'reply', lane: 'now', reply: true, signal, thread: ts, ...(verified ? {} : { unverified: true }) };
   }
   if (customer) return { cat: 'customer', lane: 'now', reply: false };
   const today = dateIn(c.now ?? Date.now(), c.tz ?? null);

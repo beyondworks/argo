@@ -161,6 +161,14 @@ test('인증 결과(authOf) — 첫 Authentication-Results가 mx.google.com의 �
     '맨 위 결과가 다른 서버의 것이면 아래의 mx.google.com 결과도 믿지 않는다(맨 위 것 하나만)');
   assert.deepEqual(authOf(hs(['ARC-Authentication-Results', 'i=1; mx.google.com; dmarc=pass header.from=google.com'], ['Authentication-Results', 'mx.google.com; dmarc=fail header.from=evil.example'],
     ['Authentication-Results', 'mx.google.com; dmarc=pass header.from=google.com'])), { dmarc: 'fail', from: 'evil.example' }, '보낸 쪽이 심은 pass(아래)·ARC(위)는 무시, Gmail 결과(fail)만');
+  // 10/9 분리 검수 MEDIUM 2 — spf 칸의 따옴표 봉투 주소·괄호 주석은 보낸 쪽이 고른다. 그 안의 ';dmarc=pass …'로 Gmail의 dmarc=fail을 바꾸지 못한다
+  const quoted = 'mx.google.com; dkim=fail header.i=@evil.example; spf=pass (google.com: domain of "x;dmarc=pass header.from=kakao.com;"@evil.example designates 1.2.3.4 as permitted sender) smtp.mailfrom="x;dmarc=pass header.from=kakao.com;"@evil.example; dmarc=fail (p=NONE sp=NONE dis=NONE) header.from=kakao.com';
+  assert.deepEqual(authOf(m(quoted)), { dmarc: 'fail', from: 'kakao.com' }, '따옴표 안 ;dmarc=pass는 칸이 아니다');
+  assert.deepEqual(authOf(m('mx.google.com; spf=pass (x;dmarc=pass header.from=kakao.com;) smtp.mailfrom=a@evil.example; dmarc=fail header.from=kakao.com')), { dmarc: 'fail', from: 'kakao.com' }, '괄호 주석 안도 칸이 아니다');
+  assert.deepEqual(authOf(m('mx.google.com; spf=pass smtp.mailfrom="a\\";dmarc=pass header.from=kakao.com;"@evil.example; dmarc=fail header.from=kakao.com')), { dmarc: 'fail', from: 'kakao.com' }, '따옴표 안 \\" 이스케이프');
+  assert.deepEqual(authOf(m('mx.google.com; dmarc=pass header.from=kakao.com; dmarc=fail header.from=kakao.com')), { dmarc: 'unknown', from: '' }, 'dmarc 칸이 둘 이상이면 믿지 않는다');
+  assert.deepEqual(authOf(m('mx.google.com; spf=pass smtp.mailfrom="x;dmarc=pass header.from=kakao.com')), { dmarc: 'none', from: '' }, '닫히지 않은 따옴표 — 뒤는 전부 글(칸 없음)');
+  assert.deepEqual(authOf(m('mx.google.com; spf=pass (a (b; dmarc=pass) c); dmarc=fail header.from=x.com')), { dmarc: 'fail', from: 'x.com' }, '괄호 주석은 겹칠 수 있다');
   const e = envelope({ id: 'g1', threadId: 't', labelIds: ['INBOX'], internalDate: '1790000000000', payload: { headers: [{ name: 'From', value: 'Google <no-reply@accounts.google.com>' }, { name: 'Authentication-Results', value: gmailAR }] } }, 'acc');
   assert.deepEqual(e.auth, { dmarc: 'pass', from: 'accounts.google.com' });
   assert.equal(envelope({ id: 'g2', payload: { headers: [] } }, 'acc').auth, undefined, '없으면 칸이 없다(화면 목록 모양 그대로)');

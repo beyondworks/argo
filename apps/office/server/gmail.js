@@ -60,13 +60,29 @@ export function envelope(msg, account) {
  *  보낸 사람은 From을 마음대로 쓸 수 있어, 본체 비서는 dmarc=pass이고 그 도메인이 보낸 주소와 같을 때만 "확인된 서비스의 보안 알림"으로 즉시 알린다
  *  (src/assistant/mail-classify.mjs). Gmail은 자기 결과를 맨 위에 붙이고, 보낸 쪽이 미리 심은 같은 이름 머리는 그 아래에 남는다 — 첫 것만 본다.
  *  없거나 다른 서버의 것이면 null(확인 못 함). 문자열 나누기만 쓴다(선형). */
+/** 머리 값에서 따옴표 글("…", \" 이스케이프 포함)과 괄호 주석((…), 겹침 가능)을 지운다(순수, 한 번 훑기 — 선형). spf 칸의 봉투 주소·주석은 보낸 쪽이 고르는 글이라
+ *  그 안의 ';dmarc=pass …'가 칸으로 나뉘면 Gmail의 결과를 바꿀 수 있다(10/9 분리 검수 MEDIUM 2). 닫히지 않은 따옴표·괄호는 끝까지 글로 본다(칸 없음 → 안전한 쪽) */
+export function bareHeader(v) {
+  let out = '', q = false, depth = 0;
+  for (let i = 0; i < v.length; i++) {
+    const c = v[i];
+    if (q) { if (c === '\\') i += 1; else if (c === '"') q = false; continue; }
+    if (c === '"') { q = true; continue; }
+    if (c === '(') { depth += 1; continue; }
+    if (depth) { if (c === '\\') i += 1; else if (c === ')') depth -= 1; continue; }
+    out += c;
+  }
+  return out;
+}
 export function authOf(msg) {
   const h = (msg.payload?.headers ?? []).find((x) => String(x?.name ?? '').toLowerCase() === 'authentication-results');
   if (!h) return null;
-  const parts = String(h.value ?? '').slice(0, HEADER_CAP).split(';').map((x) => x.trim());
+  const parts = bareHeader(String(h.value ?? '').slice(0, HEADER_CAP)).split(';').map((x) => x.trim());
   if (parts[0]?.toLowerCase() !== 'mx.google.com') return null;
-  const d = parts.find((x) => /^dmarc=/i.test(x));
-  if (!d) return { dmarc: 'none', from: '' };
+  const ds = parts.filter((x) => /^dmarc=/i.test(x));
+  if (!ds.length) return { dmarc: 'none', from: '' };
+  if (ds.length > 1) return { dmarc: 'unknown', from: '' }; // Gmail은 dmarc 칸을 하나만 쓴다 — 둘 이상이면 어느 것도 믿지 않는다(10/9 분리 검수 MEDIUM 2)
+  const d = ds[0];
   const words = d.split(/\s+/);
   const result = words[0].slice(6).toLowerCase();
   const from = (words.find((w) => /^header\.from=/i.test(w)) ?? '').slice(12).toLowerCase();

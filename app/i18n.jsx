@@ -537,7 +537,7 @@ const DICT = {
   'assistant.mail.off': ['안 봄', 'Off'],
   'assistant.mail.shadow': ['미리 보기(알리지 않고 기록만)', 'Preview (record only, no messages)'],
   'assistant.mail.live': ['알림', 'Notify'],
-  'assistant.mailHint': ['오피스에 연결한 메일함을 10분마다(업무 시간 밖에는 30분) 확인해 답장이 필요한 메일과 확인할 것을 1:1 방으로 알립니다. 답장 초안은 이 에이전트가 만들고, 코덱스·명령줄 실행기·무료 모델로 일하는 에이전트는 초안 없이 알림만 보냅니다. 메일을 보내지는 않습니다.', 'Checks the mailbox connected in Office every 10 minutes (30 outside work hours) and tells you in your 1:1 room about mail that needs a reply or a look. This agent writes reply drafts; agents on Codex, CLI runners or free models send the alert without a draft. It never sends mail.'],
+  'assistant.mailHint': ['오피스에 연결한 메일함을 10분마다(업무 시간 밖에는 30분) 확인해 답장이 필요한 메일과 확인할 것을 1:1 방으로 알립니다. 답장 초안은 이 에이전트가 만들고, 코덱스 에이전트는 클로드가 연결돼 있으면 클로드로 만듭니다. 명령줄 실행기·무료 모델로 일하는 에이전트는 초안 없이 알림만 보냅니다. 메일을 보내지는 않습니다.', 'Checks the mailbox connected in Office every 10 minutes (30 outside work hours) and tells you in your 1:1 room about mail that needs a reply or a look. This agent writes reply drafts; Codex agents use Claude when it is connected. Agents on CLI runners or free models send the alert without a draft. It never sends mail.'],
   'assistant.mailCheck': ['마지막 메일 확인', 'Last mail check'],
   'assistant.mailShadow': ['미리 보기 {days}일째 — 알렸을 메일 {n}건 기록', 'Preview day {days} — {n} mail(s) that would have been sent'],
   'assistant.mailSt.login_required': ['로그인이 필요합니다', 'Sign-in needed'],

@@ -115,6 +115,8 @@ export function customerMatch(list) {
   return (addr) => { const a = String(addr ?? '').trim().toLowerCase(); return emails.has(a) || domains.has(domainOf(a)) ? a : null; };
 }
 
+// 들고 다니는 봉인 접근 토큰이 거절되면(Gmail 401 → 오피스 'expired') 버린다 — 만료 시각 전이라도 같은 토큰을 계속 보내지 않게, 다음 호출은 서버가 갱신한다(10/9 분리 검수 LOW 4)
+const dropAccess = (a) => { if (a) a.access = null; };
 function setStatus(s, code, now) { if (s.status?.code !== code) s.status = { code, at: now }; }
 /** 바뀐 때만 쓴다 — 다음 확인 시각(nextAt)·마지막 확인 시각(checkedAt)만 바뀐 차례(바뀐 메일 없음)는 쓰지 않는다(유휴 확인 쓰기 0, 기기 로컬 파일이지만 같은 원칙).
     재시작하면 다음 확인 시각을 잃어 곧바로 한 번 확인한다 — 커서(historyId·기준선)는 남아 있어 메일을 다시 받지 않는다. */
@@ -225,6 +227,7 @@ export async function runMailStep({ cid, cfg, company, st = null, c, now = Date.
   } catch (e) {
     if (e?.code === 'rate_limited') s.nextAt = now + num(e.retryAfter) * 1000;
     if (e?.code === 'no_account') m.accounts = null;
+    if (e?.code === 'expired') for (const a of usable) dropAccess(s.accounts[a.id]);
     return done('sync_failed', SOURCE_STATUS[e?.code] ?? 'mail_error');
   }
   const fresh = [];
@@ -237,6 +240,7 @@ export async function runMailStep({ cid, cfg, company, st = null, c, now = Date.
       a.err = r.error; anyErr = r.error;
       if (r.error === 'rate_limited') a.retryAt = now + Math.max(1, num(r.retryAfter) || 60) * 1000;
       if (r.error === 'expired' || r.error === 'no_account') m.accounts = null; // 다음 차례에 계정 상태를 다시 읽는다
+      if (r.error === 'expired') dropAccess(a);
       continue;
     }
     a.err = null;
@@ -256,7 +260,7 @@ export async function runMailStep({ cid, cfg, company, st = null, c, now = Date.
         if (access) a.access = access;
         fresh.push(...items.slice(0, 100).filter((x) => x && typeof x === 'object').map(intake));
         a.fill = next ? { ...a.fill, page: next } : null;
-      } catch (e) { anyErr = e?.code ?? 'server'; if (e?.code === 'rate_limited') a.retryAt = now + num(e.retryAfter) * 1000; break; }
+      } catch (e) { anyErr = e?.code ?? 'server'; if (e?.code === 'rate_limited') a.retryAt = now + num(e.retryAfter) * 1000; if (e?.code === 'expired') dropAccess(a); break; }
     }
   }
 
@@ -294,7 +298,7 @@ export async function runMailStep({ cid, cfg, company, st = null, c, now = Date.
         const t = await deps.thread(x.account, x.threadId, s.accounts[x.account]?.access ?? null);
         if (t?.access) s.accounts[x.account].access = t.access;
         thread = intakeThread(Array.isArray(t) ? t : t?.messages);
-      } catch (e) { if (e?.code === 'office_outdated') outdated = true; else anyErr = e?.code ?? 'server'; }
+      } catch (e) { if (e?.code === 'office_outdated') outdated = true; else anyErr = e?.code ?? 'server'; if (e?.code === 'expired') dropAccess(s.accounts[x.account]); }
     }
     const cls = classifyMail(x, { ...base, thread });
     if (cls.cat === 'security') { const dk = securityDayKey(x, now, cfg.tz); if (s.seen[dk]) cls.lane = 'drop'; else s.seen[dk] = now; } // 같은 주소 하루 1건
@@ -367,14 +371,14 @@ async function replyOb(ctx, i, { lang, ownerWs }) {
     const r = await deps.prep({ wsId: cid, agent: cfg.agent, lang, tz: cfg.tz, now, ownerAddrs: (m.accounts?.list ?? []).map((a) => a.address), target: x, mails, brief: plan.brief, ox: outsideOf('mail', lang, deps.nonce?.()) })
       .catch(() => ({ prep: null, why: 'failed' }));
     prep = r.prep;
-    if (!prep) noPrep = r.why === 'free_model' ? 'free' : r.why === 'no_runner' ? 'runner' : r.why === 'cli_tools' ? 'cli' : r.why === 'codex_pending' ? 'codex' : 'failed';
+    if (!prep) noPrep = r.why === 'free_model' ? 'free' : r.why === 'no_runner' ? 'runner' : r.why === 'cli_tools' ? 'cli' : r.why === 'codex_no_claude' ? 'codex' : 'failed';
     runnerName = r.runner ?? '';
   }
   const briefName = prep?.brief ? mt('brief.file', lang, { topic: topicOf(x.subject, lang) }) : null;
   const keys = [i.key];
   return {
     kind: 'mail_reply', basis: `mailreply:${i.key}`, keys, instant: true,
-    body: composeReply(x, { prep, noPrep, briefName, briefSkipped: !!prep && !plan.brief, runnerName: RUNNER_NAMES[runnerName] ?? runnerName, lang, now, tz: cfg.tz }),
+    body: composeReply(x, { unverified: !!i.cls?.unverified, prep, noPrep, briefName, briefSkipped: !!prep && !plan.brief, runnerName: RUNNER_NAMES[runnerName] ?? runnerName, lang, now, tz: cfg.tz }),
     ...(briefName ? { brief: { name: briefName, text: prep.brief } } : {}),
     meta: { v: 1, kind: 'mail_reply', keys, outside: true, instant: true, dayKey: `mailreply:${i.key}`, ref: [mailRef(x)], prep: prep ? (prep.brief ? 'brief' : 'draft') : noPrep,
       items: [{ key: i.key, source: 'mail', cat: 'reply', account: x.account, gid: x.gid, threadId: x.threadId ?? null, at: x.at }] },

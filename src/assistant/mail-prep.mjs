@@ -72,17 +72,22 @@ export function prepPlan({ used = 0, preps = 0, inChars = 0, cap = DAY_CAP_EQ })
 /** 메일 글을 원샷에 보내면 안 되는 러너·모델인가(순수) — OpenRouter 무료 단계(모델 없음 = 무료 온보딩 모델, ':free' 모델). */
 export const freeTier = (runner, model) => runner === 'openrouter' && (!model || /:free$/i.test(String(model)));
 
-/** 이 러너에 메일 글을 보내 초안을 만들어도 되는가 — 갈림은 이 함수 하나에만 둔다(순수). 반환 null = 된다, 아니면 이유 코드.
+/** 메일 글로 초안을 만들 러너 — 갈림은 이 함수 하나에만 둔다(순수). 반환 { runner, model[, via] } = 그 러너에 고정해 원샷, { block } = 메일 글을 보내지 않는다(알림만).
     - 'free_model': OpenRouter 무료 단계(모델 없음·:free) — 메일 글을 무료 벤더에 보내지 않는다.
-    - 'codex_pending': Codex 에이전트 — 메일 초안 방식은 유건님 결정 대기(10/9 총괄). 결정 전에는 로그인(CLI)·API 키(네이티브) 상관없이 초안 없이 알림만(가장 안전).
-      결정이 나면 이 줄만 바꾼다(예: API 키 네이티브만 허용 → `runner === 'codex' && cli`).
+    - Codex 에이전트(로그인·API 키 모두) — 메일 글은 Codex에 보내지 않고, 도구를 끌 수 있는 Claude로 만든다: Claude 로그인 → Claude API 키 → 둘 다 없으면
+      'codex_no_claude'(알림만). 10/9 유건님 1번 승인. claude = { available, cli, type }(이 회사의 Claude 러너 — 고정 실행이 되는가·CLI 경로인가·자격 방식).
+      로그인과 키가 같이 있으면 실행이 구독(로그인)으로 정해진다(runners sdkEnvFor) — 그래서 순서는 자격 방식으로만 표시한다(via). 카드의 모델(gpt…)은 넘기지 않는다.
     - 'cli_tools': 그 밖의 외부 CLI(gemini 로그인·antigravity) — readOnly여도 디스크 읽기가 남아 도구를 끌 수 없다(10/9 보안 검토).
-    cli = 이번 실행이 외부 CLI 경로인가(판정 실패 = true로 넘긴다 — 보내지 않는 쪽). */
-export function prepRunnerBlock({ runner, model = null, cli = true }) {
-  if (freeTier(runner, model)) return 'free_model';
-  if (runner === 'codex') return 'codex_pending';
-  if (cli) return 'cli_tools';
-  return null;
+    cli = 이번 실행이 외부 CLI 경로인가(판정 실패 = true로 넘긴다 — 보내지 않는 쪽).
+    정책(바꾸지 않음): GLM·Kimi·Grok·OpenRouter 유료·Gemini API 키는 도구 없는 네이티브 호출이라 허용 — 메일 글이 그 벤더에 간다(PR 본문). */
+export function prepRunnerBlock({ runner, model = null, cli = true, claude = null }) {
+  if (runner === 'codex') {
+    if (!claude?.available || claude.cli !== false) return { block: 'codex_no_claude' };
+    return { runner: 'claude', model: null, via: claude.type === 'apikey' ? 'claude_key' : 'claude_login' };
+  }
+  if (freeTier(runner, model)) return { block: 'free_model' };
+  if (cli) return { block: 'cli_tools' };
+  return { runner, model };
 }
 
 const one = (s, n) => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
@@ -159,12 +164,13 @@ export const prepDeps = {
   resolveRunner: async (...a) => (await import('../runners.mjs')).resolveRunner(...a),
   // 이 러너가 이번에 외부 CLI로 도는가 — runOneShot과 같은 판정(isCliTurn + 자격 방식: gemini API 키는 네이티브, codex 로그인은 CLI). 판정을 못 하면 CLI로 본다(보내지 않는 쪽)
   cliTurn: async (wsId, runner) => { const r = await import('../runners.mjs'); return r.isCliTurn(runner, await r.runnerCredType(wsId, runner)); },
+  credType: async (wsId, runner) => (await import('../runners.mjs')).runnerCredType(wsId, runner),
   isBilled: async (...a) => (await import('../runners.mjs')).isBilledRunner(...a),
   appendUsage,
   readCard: async (ws, slug) => (await import('../persona.mjs')).readAgentCard(ws, slug),
 };
 
-/** 준비 하나 — { prep, why, runner }. why: 'ok' | 'no_runner' | prepRunnerBlock의 이유('free_model'·'codex_pending'·'cli_tools' — 메일 글을 보내지 않음) | 'failed' | 'shape'.
+/** 준비 하나 — { prep, why, runner }. why: 'ok' | 'no_runner' | prepRunnerBlock의 이유('free_model'·'codex_no_claude'·'cli_tools' — 메일 글을 보내지 않음) | 'failed' | 'shape'.
     실행했으면(성공·실패 모두) 원장에 kind 'assistant'·work 'prep' 한 줄(실패 줄은 fail 칸 — 어림값으로 한도에 센다). */
 export async function runPrep({ wsId, agent, lang = 'ko', tz = null, now = Date.now(), ownerAddrs, target, mails, brief, ox, deps = prepDeps }) {
   const card = await deps.readCard(wsId, agent).catch(() => null);
@@ -172,17 +178,23 @@ export async function runPrep({ wsId, agent, lang = 'ko', tz = null, now = Date.
   const rr = await deps.resolveRunner(wsId, want, { forPick: true }).catch(() => null);
   if (!rr?.available || rr.fellBack) return { prep: null, why: 'no_runner' };
   const model = typeof card?.meta?.model === 'string' && card.meta.model.trim() ? card.meta.model.trim() : null;
-  const block = prepRunnerBlock({ runner: rr.runner, model, cli: await deps.cliTurn(wsId, rr.runner).catch(() => true) });
-  if (block) return { prep: null, why: block, runner: rr.runner };
+  let claude = null;
+  if (rr.runner === 'codex') { // Codex 비서 — 도구를 끌 수 있는 Claude가 이 회사에 있는가(고정 실행 가능·CLI 아님·자격 방식)
+    const cr = await deps.resolveRunner(wsId, 'claude', { forPick: true }).catch(() => null);
+    claude = cr?.available && !cr.fellBack && cr.runner === 'claude'
+      ? { available: true, cli: await deps.cliTurn(wsId, 'claude').catch(() => true), type: await deps.credType(wsId, 'claude').catch(() => null) } : { available: false };
+  }
+  const pick = prepRunnerBlock({ runner: rr.runner, model, cli: rr.runner === 'codex' ? true : await deps.cliTurn(wsId, rr.runner).catch(() => true), claude });
+  if (pick.block) return { prep: null, why: pick.block, runner: rr.runner };
   const today = dateIn(now, tz);
   const prompt = prepPrompt({ ox, lang, agentName: one(card?.meta?.name, 40) || agent, card: card?.md ?? '', ownerAddrs, target, mails, today, tz, brief });
   const t0 = Date.now();
   let r = null, fail = null;
-  try { r = await deps.runOneShot(wsId, prompt, { ...PREP_OPTS, lang, pin: rr.runner, model }); }
+  try { r = await deps.runOneShot(wsId, prompt, { ...PREP_OPTS, lang, pin: pick.runner, model: pick.model }); }
   catch (e) { fail = /timeout|시간|aborted/i.test(String(e?.message ?? e)) ? 'timeout' : 'other'; }
   const prep = r ? parsePrep(r.text, { source: mails.map((m) => m.text ?? '').join('\n'), today, wantBrief: brief }) : null;
   if (r && !prep) fail = 'shape';
-  await deps.appendUsage(wsId, { kind: 'assistant', work: 'prep', slug: agent, runner: r?.runner ?? rr.runner, model, usage: r?.usage ?? {}, costUsd: r?.costUsd ?? null, ms: Date.now() - t0,
-    billed: await deps.isBilled(wsId, r?.runner ?? rr.runner).catch(() => undefined), ...(fail ? { fail } : {}) }).catch(() => {});
-  return { prep, why: prep ? 'ok' : fail === 'shape' ? 'shape' : 'failed', runner: r?.runner ?? rr.runner };
+  await deps.appendUsage(wsId, { kind: 'assistant', work: 'prep', slug: agent, runner: r?.runner ?? pick.runner, model: pick.model, usage: r?.usage ?? {}, costUsd: r?.costUsd ?? null, ms: Date.now() - t0,
+    billed: await deps.isBilled(wsId, r?.runner ?? pick.runner).catch(() => undefined), ...(fail ? { fail } : {}) }).catch(() => {});
+  return { prep, why: prep ? 'ok' : fail === 'shape' ? 'shape' : 'failed', runner: r?.runner ?? pick.runner };
 }
