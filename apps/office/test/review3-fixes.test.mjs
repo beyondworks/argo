@@ -96,7 +96,7 @@ function homeWith(state, live = true) {
   const deps = { useMemo: React.useMemo, Suspense: React.Suspense, lazy: React.lazy, useStore, useSession: () => (live ? 'signedIn' : 'sample'), LoadFail, pullBoard: async () => {},
     t: (k) => k, ago: () => 'ago', Link: ({ children }) => h('a', null, children), menuProps: () => ({}), mailMenu: () => [], looksLikeAddr: () => false,
     useTasks: () => ({ error: null }), useTaskRows: () => [], useTaskDay: () => '2026-10-05', approvalsIn: () => () => true, baseOf: () => '/me', crewsIn: () => [], ME: { id: 'u' },
-    groupTasks: () => ({ overdue: [], today: [], week: [], later: [], none: [] }), fmtBytes: () => '0' };
+    groupTasks: () => ({ overdue: [], today: [], week: [], later: [], none: [] }), dueCounts: () => ({ overdue: 0, today: 0 }), fmtBytes: () => '0' };
   return pick('pages/modules.jsx', ['Empty', 'wait', 'Mail', 'inSpace', 'WEEK', 'recent', 'useStatValues'], deps);
 }
 const blank = { approvals: [], work: [], mails: [], decisions: [], pages: [], todosDone: {}, crews: [], outputs: [], boardError: null };

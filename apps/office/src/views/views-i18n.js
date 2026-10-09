@@ -38,7 +38,7 @@ export const VIEWS_DICT = {
   'views.cmd.newEvent': ['새 일정 만들기', 'Create an event'], 'views.cmd.newTask': ['새 할 일 만들기', 'Create a to-do'], 'views.cmd.view': ['캘린더 보기: {name}', 'Calendar view: {name}'],
   // 할 일 속성(유건 10/4): 정렬 방향·중요도순, 상태·중요도 거르기, 목록 묶음과 진행률, 할 일 화면(메뉴 '할 일')
   'views.s.priority': ['중요도순', 'By priority'], 'views.dir.asc': ['오름차순', 'Ascending'], 'views.dir.desc': ['내림차순', 'Descending'],
-  'views.status': ['상태', 'Status'], 'views.st.open': ['끝내지 않은 일', 'Not done'], 'views.priority': ['중요도', 'Priority'],
+  'views.status': ['상태', 'Status'], 'views.st.open': ['끝내지 않은 일', 'Not done'], 'views.st.active': ['끝내지 않은 일(보류 제외)', 'Not done (excluding on hold)'], 'views.priority': ['중요도', 'Priority'],
   'views.lg.none': ['묶지 않음', 'No grouping'], 'views.progress': ['{done}/{total} 끝냄', '{done}/{total} done'],
   'views.progressNote': ['진행률은 지금 목록에 있는 할 일로 셉니다. 끝낸 일은 최근 30일에 끝낸 것만 목록에 남습니다.', 'Progress counts the to-dos in this list. Finished to-dos stay in the list for 30 days.'],
   'views.th.priority': ['중요도', 'Priority'], 'views.th.start': ['시작일', 'Start'], 'views.th.due': ['기한', 'Due'],

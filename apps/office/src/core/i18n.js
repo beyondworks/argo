@@ -50,7 +50,7 @@ const DICT = {
   'space.members': ['멤버 {n}명', '{n} members'],
   'space.role.owner': ['소유자', 'Owner'], 'space.role.admin': ['관리자', 'Admin'], 'space.role.member': ['멤버', 'Member'],
   'nav.search': ['검색 및 명령', 'Search and commands'],
-  'nav.home': ['홈', 'Home'], 'nav.files': ['문서함', 'Files'], 'nav.calendar': ['캘린더', 'Calendar'], 'nav.tasks': ['할 일', 'To-dos'], 'nav.tasksDue': ['기한 지남 {o} · 오늘 마감 {d}', '{o} overdue · {d} due today'], 'nav.status': ['업무 현황', 'Work status'], 'nav.mail': ['메일', 'Mail'], 'nav.briefings': ['브리핑', 'Briefings'], 'nav.shared': ['공유받은 항목', 'Shared with me'],
+  'nav.home': ['홈', 'Home'], 'nav.files': ['문서함', 'Files'], 'nav.calendar': ['캘린더', 'Calendar'], 'nav.tasks': ['할 일', 'To-dos'], 'nav.tasksDue': ['기한 지남 {o} · 오늘 마감 {d} (보류 제외)', '{o} overdue · {d} due today (excluding on hold)'], 'nav.status': ['업무 현황', 'Work status'], 'nav.mail': ['메일', 'Mail'], 'nav.briefings': ['브리핑', 'Briefings'], 'nav.shared': ['공유받은 항목', 'Shared with me'],
   'nav.work': ['에이전트 작업', 'Agent work'], 'nav.approvals': ['결재함', 'Approvals'], 'nav.decisions': ['결정 기록', 'Decisions'],
   'nav.outputs': ['산출물', 'Deliverables'], 'nav.journal': ['에이전트 일지', 'Agent journal'], 'nav.docs': ['공용 문서', 'Shared docs'], 'nav.perf': ['성과 기록', 'Performance record'], 'nav.people': ['직원', 'People'], 'nav.company': ['회사 정보', 'Company info'], 'nav.knowhow': ['스킬', 'Skills'],
   'nav.hide': ['메뉴에서 숨기기', 'Hide from menu'], 'nav.homeFixed': ['홈은 숨길 수 없습니다', 'Home can’t be hidden'], 'nav.hiddenN': ['숨긴 메뉴 {n}', '{n} hidden'], 'nav.hiddenHead': ['눌러서 다시 보이기', 'Click to show again'],

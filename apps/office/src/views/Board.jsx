@@ -78,7 +78,7 @@ export function viewMenu(cfg, set, views, label = (v) => t(`views.v.${v}`)) {
 /** 필터 메뉴 — 종류·기간·담당자·분류, tasks면 할 일 상태·중요도도. whoKeys/categories: 지금 항목에 있는 값 */
 export function filterMenu(cfg, set, { whoKeys, categories, people, kinds = true, tasks = false }) {
   const f = cfg.filter, put = (patch) => set({ filter: { ...f, ...patch } });
-  const stLabel = (s) => (s === 'all' ? t('views.all') : s === 'open' ? t('views.st.open') : t(`task.st.${s}`));
+  const stLabel = (s) => (s === 'all' ? t('views.all') : s === 'open' || s === 'active' ? t(`views.st.${s}`) : t(`task.st.${s}`));
   return [
     ...(kinds ? [{ heading: t('views.kind') }, ...V.KINDS.map((k) => ({ label: t(`views.k.${k}`), checked: f.kind === k, run: () => put({ kind: k }) }))] : []),
     ...(tasks ? [{ heading: t('views.status') }, ...V.STATUS_FILTERS.map((s) => ({ label: stLabel(s), checked: f.status === s, run: () => put({ status: s }) })),

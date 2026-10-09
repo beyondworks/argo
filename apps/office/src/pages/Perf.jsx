@@ -6,7 +6,7 @@ import { lazy, Suspense, useEffect, useId, useMemo, useState } from 'react';
 import { t, getLang, registerDict, useLang } from '../core/i18n.js';
 import { ME, canManage } from '../core/session.js';
 import { useTasks } from '../core/tasks.js';
-import { kstDay, groupTasks, dueInfo } from '../core/task-model.js';
+import { kstDay, groupTasks, dueInfo, dueable } from '../core/task-model.js';
 import { usePerfReport, usePerfTeam, perfWrite, perfManage } from '../core/perf.js';
 import { periodRange, shiftAnchor, groupByDay, groupByMonth, daySummary, rate, canShare } from '../core/perf-model.js';
 import { api as mailApi } from '../core/mail.js';
@@ -93,7 +93,7 @@ function Mine({ space, onEval }) {
 function Briefing({ space }) {
   const { rows } = useTasks(space);
   if (!rows) return null;
-  const today = kstDay(), g = groupTasks(rows, today, ME.id), list = [...g.overdue, ...g.today];
+  const today = kstDay(), g = groupTasks(rows.filter(dueable), today, ME.id), list = [...g.overdue, ...g.today];
   return <section className="module perf-brief" aria-label={t('perf.brief')}>
     <header className="module-head"><Icon name="check" size={15} /><h3>{t('perf.brief')}</h3><span className="dim small">{list.length}</span></header>
     {list.length ? <ul>{list.map((x) => { const info = dueInfo(x.due_on, today); return <li key={x.id} className="perf-item">
