@@ -146,6 +146,16 @@ input[type='date']::-webkit-calendar-picker-indicator, input[type='time']::-webk
 .badge.warn { background: var(--warn-soft); color: var(--warn); }
 .badge.ok { background: var(--ok-soft); color: var(--ok); }
 .badge.danger { background: var(--danger-soft); color: var(--danger); }
+/* 종류·분류·유형 뱃지(유건 10/9 "뱃지들은 종류별로 색을 다르게") — 값 → 색은 ui/badge-tone.js 하나가 정한다(위 warn·ok·danger 상태 뱃지와 따로).
+   색은 테마의 상태 색을 섞어 만든다(청록 = 정보+정상, 주황 = 주의+위험, 보라 = 정보+위험) — 어느 색 가족·모드에서도 그 가족의 톤을 따른다.
+   둘을 섞는 색은 oklch로 섞는다(srgb로 섞으면 채도가 빠져 회색으로 보였다 — 보라 #715870 → #875194).
+   글자는 색을 본문 글자색 쪽으로 당겨 대비 4.5:1(다크는 더 당긴다, test/themes.test.mjs) */
+.tone-blue { --tone: var(--info); } .tone-teal { --tone: color-mix(in oklch, var(--info) 50%, var(--ok)); } .tone-green { --tone: var(--ok); } .tone-amber { --tone: var(--warn); }
+.tone-orange { --tone: color-mix(in oklch, var(--warn) 50%, var(--danger)); } .tone-red { --tone: var(--danger); } .tone-violet { --tone: color-mix(in oklch, var(--info) 50%, var(--danger)); }
+.badge.tone { background: color-mix(in srgb, var(--tone) 18%, transparent); color: color-mix(in srgb, var(--tone) 66%, var(--fg)); }
+:root:is([data-theme$='-dark'], .dark-emul) .badge.tone { color: color-mix(in srgb, var(--tone) 45%, var(--fg)); }
+@media (prefers-color-scheme: dark) { :root[data-theme='graphite'] .badge.tone { color: color-mix(in srgb, var(--tone) 45%, var(--fg)); } }
+.dot.tone { background: var(--tone); }
 .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--fg-3); }
 .dot.work, .dot.ok { background: var(--ok); }
 .dot.ask { background: var(--warn); }

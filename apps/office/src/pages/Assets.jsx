@@ -7,6 +7,7 @@ import { Modal, showToast } from '../ui/Overlay.jsx';
 import { Icon } from '../ui/Icon.jsx';
 import { ASSET_DICT } from './assets-i18n.js';
 import { LoadFail } from '../ui/LoadFail.jsx';
+import { badgeTone } from '../ui/badge-tone.js';
 import './perf.css';
 
 registerDict(ASSET_DICT);
@@ -54,7 +55,7 @@ export default function Assets({ space }) {
       <section className="module"><header className="module-head"><Icon name="book" size={15} /><h3>{t(tab === 'company' ? 'asset.tab.company' : 'asset.tab.mine')}</h3></header>
         {!list.length ? <p className="mod-empty">{t(tab === 'company' ? 'asset.emptyCompany' : 'asset.emptyMine')}</p>
           : <ul className="perf-days">{list.map((a) => <li key={a.id} className="perf-item">
-            <span className="badge">{t(`asset.kind.${a.kind}`)}</span>
+            <span className={`badge ${badgeTone(a.kind)}`}>{t(`asset.kind.${a.kind}`)}</span>
             <button type="button" className="perf-item-main asset-open" onClick={() => open(a)}><strong>{a.title}</strong><br />
               <small className="dim">{[t('asset.uses', { n: a.uses }), `v${a.version}`, day(a.updated_at), a.promoted_from && t('asset.fromPersonal')].filter(Boolean).join(' · ')}</small></button>
             {org && a.scope === 'me' && a.kind === 'knowhow' && !data.promotions.some((p) => p.asset_id === a.id) && <button type="button" className="btn ghost sm" onClick={() => write('asset.promote', { id: crypto.randomUUID(), asset_id: a.id }).then(() => showToast(t('asset.promoteSent'))).catch(() => {})}>{t('asset.promote')}</button>}

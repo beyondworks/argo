@@ -124,7 +124,20 @@ function tokens(theme) {
 }
 // 맨 바깥 쉼표에서 둘로 나눈다(괄호 안 쉼표는 건너뛴다)
 const split2 = (x) => { let d = 0; for (let i = 0; i < x.length; i++) { const ch = x[i]; if (ch === '(') d++; else if (ch === ')') d--; else if (ch === ',' && !d) return [x.slice(0, i), x.slice(i + 1)]; } return null; };
-// 값 풀기 — #hex · rgba() · rgb(r g b / a) · var(--x) · light-dark(라이트, 다크) · color-mix(in srgb, A N%, B|transparent)(알파를 곱해 섞는다 = 브라우저와 같은 계산)
+// sRGB ⇄ OKLab/OKLCH(Björn Ottosson) — color-mix(in oklch, …) 풀기용
+const toLin = (c) => { c /= 255; return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+const fromLin = (v) => Math.min(255, Math.max(0, (v <= 0.0031308 ? 12.92 * v : 1.055 * v ** (1 / 2.4) - 0.055) * 255));
+function toOklch({ r, g, b }) {
+  const [R, G, B] = [toLin(r), toLin(g), toLin(b)];
+  const l = Math.cbrt(0.4122214708 * R + 0.5363325363 * G + 0.0514459929 * B), m = Math.cbrt(0.2119034982 * R + 0.6806995451 * G + 0.1073969566 * B), s = Math.cbrt(0.0883024619 * R + 0.2817188376 * G + 0.6299787005 * B);
+  const L = 0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s, A = 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s, Bb = 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s;
+  return [L, Math.hypot(A, Bb), ((Math.atan2(Bb, A) * 180) / Math.PI + 360) % 360];
+}
+function fromOklab(L, A, B) {
+  const l = (L + 0.3963377774 * A + 0.2158037573 * B) ** 3, m = (L - 0.1055613458 * A - 0.0638541728 * B) ** 3, s = (L - 0.0894841775 * A - 1.291485548 * B) ** 3;
+  return { r: fromLin(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s), g: fromLin(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s), b: fromLin(-0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s) };
+}
+// 값 풀기 — #hex · rgba() · rgb(r g b / a) · var(--x) · light-dark(라이트, 다크) · color-mix(in srgb, A N%, B|transparent)(알파를 곱해 섞는다 = 브라우저와 같은 계산) · color-mix(in oklch, A N%, B)
 function resolve(t, v, depth = 0) {
   v = (v ?? '').trim();
   assert.ok(depth < 12, `순환: ${v}`);
@@ -139,6 +152,16 @@ function resolve(t, v, depth = 0) {
   if (v === 'transparent') return { r: 0, g: 0, b: 0, a: 0 };
   const va = v.match(/^var\(--([a-z0-9-]+)\)$/);
   if (va) return resolve(t, t[va[1]], depth + 1);
+  // oklch 섞기(종류 뱃지의 청록·주황·보라) — 불투명한 두 색만, 색상(hue)은 짧은 쪽으로 돌고, 화면 밖 색은 0~255로 자른다
+  const mo = v.match(/^color-mix\(in oklch,\s*(.+?)\s+([\d.]+)%,\s*(.+)\)$/);
+  if (mo) {
+    const [x, y, p] = [resolve(t, mo[1], depth + 1), resolve(t, mo[3], depth + 1), +mo[2] / 100];
+    assert.ok(x.a === 1 && y.a === 1, `oklch 섞기는 불투명 색만: ${v}`);
+    const [L1, C1, H1] = toOklch(x), [L2, C2, H2] = toOklch(y);
+    let d = H2 - H1; if (d > 180) d -= 360; if (d < -180) d += 360;
+    const L = L1 * p + L2 * (1 - p), C = C1 * p + C2 * (1 - p), H = (H1 + d * (1 - p)) * Math.PI / 180;
+    return { ...fromOklab(L, C * Math.cos(H), C * Math.sin(H)), a: 1 };
+  }
   const m = v.match(/^color-mix\(in srgb,\s*(.+?)\s+([\d.]+)%,\s*(.+)\)$/);
   if (m) {
     const [x, y, p] = [resolve(t, m[1], depth + 1), resolve(t, m[3], depth + 1), +m[2] / 100];
@@ -201,6 +224,34 @@ test('린넨 라이트 미색: 카드는 따뜻한 아이보리, 표면은 더 �
   const rule = rulesOf(baseCss).find((r) => r.sel.includes("[data-theme='linen-light']") && /--card:/.test(r.decl));
   assert.match(rule.sel, /:root\[data-theme='linen'\]:not\(\.dark-emul\)/);
 });
+
+// 이유(유건 10/9 "뱃지들은 종류별로 색을 다르게"): 종류 뱃지(base.css .badge.tone)는 상태 색을 섞어 만든다 — 어떤 색 가족·모드에서도 글자가 읽혀야 한다.
+// 뱃지가 놓이는 면: 캔버스, 캔버스 위 카드·표, 카드 안 카드, 떠 있는 층(미리보기·패널). 칩의 작은 색 점은 글자가 아니라 재지 않는다.
+const toneRules = (() => {
+  const rs = rulesOf(baseCss);
+  const tones = Object.fromEntries(rs.filter((r) => /^\.tone-[a-z]+$/.test(r.sel.trim())).map((r) => [r.sel.trim().slice(6), r.decl.match(/--tone:\s*([^;]+);/)[1].trim()]));
+  const light = rs.find((r) => r.sel.trim() === '.badge.tone');
+  const dark = rs.find((r) => r.sel.includes('.dark-emul') && r.sel.includes('.badge.tone'));
+  const pick = (r, p) => r.decl.match(new RegExp(`(?:^|;)\\s*${p}:\\s*([^;]+);`))[1].trim();
+  return { tones, bg: pick(light, 'background'), fg: pick(light, 'color'), darkFg: pick(dark, 'color') };
+})();
+for (const fam of ['linen', 'graphite', ...NEW]) for (const mode of ['light', 'dark']) {
+  const theme = `${fam}-${mode}`;
+  test(`종류 뱃지 대비 4.5:1 — ${theme}`, () => {
+    assert.ok(Object.keys(toneRules.tones).length >= 7);
+    const t0 = tokens(theme);
+    const raw = (t, v) => { const c = resolve(t, v); assert.ok(c, `${theme}: ${v}`); return c; };
+    const bg = raw(t0, t0.bg), surface = over(raw(t0, t0.surface), bg);
+    const backs = { bg, surface, 'lift on surface': over(raw(t0, t0.lift), surface), float: raw(t0, t0.float) };
+    const bad = [];
+    for (const [name, v] of Object.entries(toneRules.tones)) {
+      const t = { ...t0, tone: v };
+      const ink = raw(t, mode === 'dark' ? toneRules.darkFg : toneRules.fg), wash = raw(t, toneRules.bg);
+      for (const [where, back] of Object.entries(backs)) { const r = ratio(ink.a < 1 ? over(ink, back) : ink, over(wash, back)); if (r < 4.5) bad.push(`${name} on ${where} ${r.toFixed(2)}`); }
+    }
+    assert.deepEqual(bad, []);
+  });
+}
 
 // 이유: 사이드바가 창 바탕에 녹는 셸(panel·pill·glass)은 사이드바 글자를 창 바탕(--bg) 위에 그린다.
 // 보정 목록(linen·cream처럼 어두운 사이드바)에 없는 색은 사이드바 글자가 --bg 위에서도 읽혀야 한다.
