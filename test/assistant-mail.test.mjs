@@ -686,10 +686,42 @@ test('거래처 보낸 곳 확인 — DMARC 기록이 없는 도메인(Gmail 결
   assert.match(body, /\n {3}보낸 곳을 확인하지 못했어요 — 보낸 주소 `kim@abc\.co\.kr`가 맞는지 먼저 보세요\./);
   const ok = X.composeBatch([{ m: mail('c', { addr: 'kim@abc.co.kr', subject: '미팅' }), cls: { cat: 'customer', lane: 'now' } }], { lang: 'ko', now: at('10:00'), tz: 'Asia/Seoul' });
   assert.doesNotMatch(ok, /확인하지 못했어요/);
+  // #917 검수 LOW 3 — DMARC가 본 머리 From 도메인이 보낸 주소와 다르면 'none'이어도 weak가 아니다
+  assert.notEqual(k({ dmarc: 'none', from: 'evil.example' }).cat, 'customer', 'dmarc=none header.from=다른 도메인');
+  assert.equal(C.senderTrust({ addr: 'kim@abc.co.kr', auth: { dmarc: 'none', from: 'evil.example' } }), 'bad');
+  assert.equal(C.senderTrust({ addr: 'kim@abc.co.kr', auth: { dmarc: 'none', from: 'abc.co.kr' } }), 'weak');
+  assert.equal(C.senderTrust({ addr: 'kim@abc.co.kr', auth: { dmarc: 'none', from: '' } }), 'weak', 'Gmail 결과에 dmarc 칸이 아예 없으면 header.from도 없다');
   // 거래처 + 강한 신호(재촉) — DMARC 기록 없는 거래처도 답장 필요(표지), fail은 아니다
   const nudge = (auth) => C.classifyMail(mail('c2', { addr: 'kim@abc.co.kr', subject: 'Any update?', threadId: 'TC', ...(auth ? { extra: { auth } } : {}) }), { customer: cust, thread: [{ gid: 'c2', addr: 'kim@abc.co.kr', at: iso(at('10:00')), sent: false }], now: at('10:00'), tz: 'Asia/Seoul' });
   assert.deepEqual([nudge({ dmarc: 'none', from: '' }).cat, nudge({ dmarc: 'none', from: '' }).unverified], ['reply', true]);
   assert.notEqual(nudge({ dmarc: 'fail', from: 'abc.co.kr' }).cat, 'reply');
+});
+
+test('#917 검수 LOW 4 — 보낸 곳 확인이 약한(weak) 거래처의 재촉은 즉시 알림 + 표지만, 준비 원샷은 확인된 보낸 곳이거나 내가 먼저 보낸 스레드(②)일 때만', async () => {
+  const w = world(); const st = { sent: {}, day: { date: D, instant: 0 } };
+  w.deps.customers = async () => [{ email: 'kim@abc.co.kr' }];
+  const NONE = { auth: { dmarc: 'none', from: '' } };
+  await run(w, at('09:00'), { st });
+  const a = mail('w1', { addr: 'kim@abc.co.kr', from: '김대리', subject: 'Any update on the quote?', at: at('09:02'), threadId: 'TW1', extra: NONE });
+  w.threads.TW1 = [{ gid: 'w1', addr: 'kim@abc.co.kr', at: a.at, sent: false }];
+  w.results = [{ account: ACC, historyId: '110', changed: [a] }];
+  await run(w, at('09:10'), { st });
+  assert.equal(w.preps.length, 0, 'weak + ②가 아님 → 준비 원샷 0(위조 메일로 하루 준비 3회를 쓰지 않게)');
+  assert.equal(w.inserts.length, 1, '알림은 즉시');
+  assert.match(w.inserts[0].body, /보낸 곳을 확인하지 못했어요/);
+  assert.match(w.inserts[0].body, /보낸 곳을 확인하지 못해 초안은 만들지 않았어요/);
+  // 같은 weak 거래처라도 내가 먼저 보낸 스레드(②)면 준비한다
+  const b = mail('w2', { addr: 'kim@abc.co.kr', from: '김대리', subject: 'Re: quote — any update?', at: at('09:12'), threadId: 'TW2', extra: NONE });
+  w.threads.TW2 = [{ gid: 'm0', addr: 'me@x.com', at: iso(at('09:00', '2026-10-01')), sent: true }, { gid: 'w2', addr: 'kim@abc.co.kr', at: b.at, sent: false }];
+  w.results = [{ account: ACC, historyId: '120', changed: [b] }];
+  await run(w, at('09:20'), { st });
+  assert.equal(w.preps.length, 1, 'weak + ② → 준비');
+  // 확인된 거래처는 그대로 준비
+  const c = mail('w3', { addr: 'kim@abc.co.kr', from: '김대리', subject: 'Any update on the contract?', at: at('09:22'), threadId: 'TW3', extra: { auth: { dmarc: 'pass', from: 'abc.co.kr' } } });
+  w.threads.TW3 = [{ gid: 'w3', addr: 'kim@abc.co.kr', at: c.at, sent: false }];
+  w.results = [{ account: ACC, historyId: '130', changed: [c] }];
+  await run(w, at('09:30'), { st });
+  assert.equal(w.preps.length, 2, 'verified 거래처 → 준비');
 });
 
 test('LOW 4(10/9 분리 검수): 들고 다니는 봉인 접근 토큰이 거절되면(expired) 기기가 그 토큰을 버린다 — sync 계정 오류·sync 전체 오류·list·thread 모두', async () => {

@@ -366,8 +366,10 @@ async function replyOb(ctx, i, { lang, ownerWs }) {
   const inChars = mails.reduce((n, y) => n + String(y.text ?? '').length, 0) + 3_000;
   const used = await deps.usage(ownerWs, { tz: cfg.tz, now }).catch(() => ({ eq: Infinity, preps: Infinity })); // 셈을 못 하면 쓰지 않는 쪽
   const plan = prepPlan({ used: used.eq, preps: used.preps, inChars });
-  let prep = null, noPrep = plan.prep ? null : plan.why === 'daily' ? 'daily' : 'cap', runnerName = '';
-  if (plan.prep) {
+  // 보낸 곳 확인이 약한 메일은 내가 먼저 보낸 스레드(②)일 때만 준비한다 — 위조 메일로 하루 준비 상한을 쓰지 않게(#917 검수 LOW 4). 알림은 즉시 + 표지
+  const prepAllowed = !i.cls?.unverified || i.cls?.thread?.mineBefore === true;
+  let prep = null, noPrep = !prepAllowed ? 'unverified' : plan.prep ? null : plan.why === 'daily' ? 'daily' : 'cap', runnerName = '';
+  if (prepAllowed && plan.prep) {
     const r = await deps.prep({ wsId: cid, agent: cfg.agent, lang, tz: cfg.tz, now, ownerAddrs: (m.accounts?.list ?? []).map((a) => a.address), target: x, mails, brief: plan.brief, ox: outsideOf('mail', lang, deps.nonce?.()) })
       .catch(() => ({ prep: null, why: 'failed' }));
     prep = r.prep;

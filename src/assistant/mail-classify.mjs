@@ -104,7 +104,7 @@ export const verifiedSender = (m) => !!(m?.auth && m.auth.dmarc === 'pass' && m.
     pass인데 도메인이 다름(커밋 보안 검토). */
 export function senderTrust(m) {
   if (verifiedSender(m)) return 'verified';
-  if (m?.auth && m.auth.dmarc === 'none') return 'weak';
+  if (m?.auth && m.auth.dmarc === 'none' && (!m.auth.from || m.auth.from === domainOf(m.addr))) return 'weak'; // DMARC가 본 도메인이 보낸 주소와 다르면 아님(#917 검수 LOW 3)
   return 'bad';
 }
 
