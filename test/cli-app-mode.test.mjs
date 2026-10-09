@@ -219,6 +219,36 @@ test('한 번 실행 — 턴이 실패하면 종료 코드 1(성공은 0), 대�
   } finally { bad.close(); }
 });
 
+// H22 ①: 이름을 틀리게 쓰면 '에이전트가 없습니다. /hire로 영입하세요'가 나와 에이전트가 있는데도 없다고 읽혔다 — 이름이 틀렸다고 알리고 비슷한 이름·목록 보는 법을 안내한다
+test('argo chat <없는 이름> — 이름이 틀렸다고 알리고 비슷한 이름과 목록 보는 법을 안내한다(ko·en), 종료 코드는 1, 에이전트가 있는데 "없습니다"라고 하지 않는다', { timeout: 180_000 }, async () => {
+  rmSync(join(ROOT, 'app-co', 'chats', 'nova.status.json'), { force: true });
+  const before = readFileSync(join(ROOT, 'app-co', 'chats', 'nova.json'), 'utf8');
+  const ko = await argo(['chat', 'nvoa', '안녕']);
+  assert.equal(ko.status, 1, `${ko.stdout}\n${ko.stderr}`);
+  const kText = ko.stderr + ko.stdout;
+  assert.match(kText, /'nvoa' 에이전트를 찾을 수 없습니다/, '입력한 이름을 그대로 보여 준다');
+  assert.match(kText, /nova/, '비슷한 이름 제안');
+  assert.match(kText, /\/agent/, '목록 보는 명령');
+  assert.doesNotMatch(kText, /에이전트가 없습니다/, '에이전트가 있으니 없다고 하지 않는다');
+  const none = await argo(['chat', 'zzzzzz', '안녕']);
+  assert.equal(none.status, 1);
+  assert.match(none.stderr + none.stdout, /'zzzzzz' 에이전트를 찾을 수 없습니다/);
+  assert.doesNotMatch(none.stderr + none.stdout, /혹시 이 에이전트인가요/, '비슷한 이름이 없으면 제안 줄이 없다');
+  assert.match(none.stderr + none.stdout, /\/agent/, '제안이 없어도 목록 보는 명령은 안내한다');
+  const noName = await argo(['chat']);
+  assert.equal(noName.status, 1);
+  assert.match(noName.stderr + noName.stdout, /argo chat <에이전트>/, '이름을 아예 안 썼을 때도 에이전트가 없다고 하지 않고 쓰는 법을 안내한다');
+  assert.doesNotMatch(noName.stderr + noName.stdout, /에이전트가 없습니다/);
+  const en = await argo(['chat', 'nvoa', 'hi'], { LANG: 'en_US.UTF-8', LC_ALL: 'en_US.UTF-8' });
+  assert.equal(en.status, 1);
+  const eText = en.stderr + en.stdout;
+  assert.match(eText, /No agent named 'nvoa'/);
+  assert.match(eText, /Did you mean[^\n]*nova/);
+  assert.match(eText, /\/agent/);
+  assert.doesNotMatch(eText, /No agents yet/);
+  assert.equal(readFileSync(join(ROOT, 'app-co', 'chats', 'nova.json'), 'utf8'), before, '턴을 시작하지 않았다(대화 파일 그대로)');
+});
+
 test('앱 모드에서 회사가 없으면 40초를 기다리거나 새 회사를 권하지 않고 앱을 먼저 열라고 안내한다 — 계정 세션이 있고 앱이 아직 회사를 받지 못한 경우(검토 L-h)', async () => {
   const home = join(base, 'home-nocompany'); mkdirSync(home, { recursive: true });
   const root = appDataRoot({ env: { HOME: home }, platform: process.platform, home });

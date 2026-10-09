@@ -3,7 +3,7 @@
 // 명령은 영어 /명령(한글 명령은 한영 전환이 번거롭다), 색은 graphite 흑백(굵게·흐리게만).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { banner, parseInput, visibleWidth } from '../src/cli/ui.mjs';
+import { banner, parseInput, visibleWidth, similarAgents } from '../src/cli/ui.mjs';
 
 test('나가기 — /quit·/exit·exit·quit(대소문자·앞뒤 공백 무관)만 종료로 읽는다', () => {
   for (const s of ['/quit', '/exit', 'exit', 'quit', '  EXIT ', '/Quit']) assert.deepEqual(parseInput(s), { kind: 'quit' }, s);
@@ -83,4 +83,24 @@ test('여러 줄 붙여넣기 — 붙여넣기 안의 줄바꿈은 ⏎로(한 �
   assert.equal(out, `a${PASTE_NL}b\r`, '표지가 조각으로 쪼개져도');
   assert.equal(pasteFilter()('타이핑\r'), '타이핑\r', '붙여넣기가 아니면 그대로');
   assert.equal(pasteFilter()('\x1b[A'), '\x1b[A', '방향키 같은 다른 ESC 시퀀스는 그대로');
+});
+
+// H22 ①: argo chat <이름>을 틀리게 쓰면 '에이전트가 없습니다'만 나와 이름이 틀린 건지 에이전트가 없는 건지 알 수 없었다 — 비슷한 이름을 제안한다
+test('비슷한 에이전트 이름 — 오타·대소문자·일부만 쓴 이름은 제안하고, 전혀 다른 이름·빈 입력은 제안하지 않는다(최대 3명, 가까운 순)', () => {
+  const crews = [{ slug: 'nova', name: '노바' }, { slug: 'pepper', name: '페퍼' }, { slug: 'marketer', name: 'Marketer' }, { slug: 'writer', name: '작가' }];
+  const slugs = (want, list = crews) => similarAgents(want, list).map((c) => c.slug);
+  assert.deepEqual(slugs('nvoa'), ['nova'], '글자 순서가 바뀐 오타');
+  assert.deepEqual(slugs('Nova'), ['nova'], '대소문자만 다름(argo chat은 정확히 같은 이름만 받는다)');
+  assert.deepEqual(slugs('nov'), ['nova'], '앞부분만 쓴 이름');
+  assert.deepEqual(slugs('노아'), ['nova'], '한글 표시 이름의 오타');
+  assert.deepEqual(slugs('market-er'), ['marketer'], '구분 문자 차이');
+  assert.deepEqual(slugs('pepr'), ['pepper'], '한 글자 빠짐');
+  assert.deepEqual(slugs('zzzzzz'), [], '비슷한 이름이 없으면 비운다');
+  assert.deepEqual(slugs(''), [], '빈 입력');
+  assert.deepEqual(slugs('  '), [], '공백뿐');
+  assert.deepEqual(slugs(undefined), [], '이름을 안 썼다');
+  assert.deepEqual(slugs('nova', []), [], '에이전트가 없으면 비운다');
+  const many = ['agent-a', 'agent-b', 'agent-c', 'agent-d', 'agent-e'].map((slug) => ({ slug, name: slug }));
+  assert.equal(similarAgents('agent', many).length, 3, '제안은 3명까지');
+  assert.deepEqual(similarAgents('agnt-b', many).map((c) => c.slug)[0], 'agent-b', '가까운 순');
 });
