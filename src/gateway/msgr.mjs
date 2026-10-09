@@ -222,7 +222,7 @@ const unwrap = ({ data, error }) => { if (error) throw Object.assign(new Error(`
     친구 글마다 거절 안내가 붙던 것(2026-09-30). 서버 msgr_delivery_target과 같은 규칙. crewChannels·crewMemberships가 같이 쓴다. */
 const deliveryDm = (ch) => ch?.kind === 'dm' && (ch.org_id !== null || String(ch.personal_pair ?? '').startsWith('crew:'));
 const ROOM_IDS_PER_REQUEST = 100; // 방 참여 일괄 조회의 크루 id 묶음 — in.(…) URL 약 4KB(운영 personalCrewsInRooms가 비슷한 크기로 매 틱 돈다)
-const ROOM_PAGE = 1000;           // PostgREST 최대 행(Supabase 기본 db-max-rows) — 이보다 적게 오면 끝. 서버 최대 행을 낮추면 이 값도 같이 낮춘다
+const ROOM_PAGE = 1000;           // 한 요청에 묻는 행 수(Supabase 기본 최대 행과 같다). 서버 최대 행이 더 작으면 그만큼 잘려 오는데, 끝은 빈 페이지로 정하므로 잘려도 빠지지 않는다
 export function makeDb(client) {
   return {
     ...executionDb(client),
@@ -395,16 +395,25 @@ export function makeDb(client) {
     /** 여러 크루의 방 참여를 한 번에 — Map(크루 id → { dm: crewChannels와 같은 집합, member: crewScope와 같은 집합 }). drain이 받은 글이 있는 크루만 모아
         틱당 한 번 부른다(2026-10-09 운영 실측: 크루마다 틱당 crewChannels·crewScope 2회 = msgr_channel_members 분당 약 4.5천 회, 받은 글 1회당 2회).
         채널은 inner가 아닌 왼쪽 결합이다 — crewScope는 결합 없이 참여 행 전부를 센다. 채널 행을 못 읽는 참여는 범위엔 들고 DM은 아니다(crewChannels의 inner와 같은 결과).
-        id는 묶음으로 나누고(URL 길이) 묶음마다 페이지를 끝까지 받는다(최대 행에 잘리면 그 크루의 DM·범위가 빠져 글이 조용히 지나간다). 실패는 던진다 — 호출부가 이 틱을 보류한다. */
+        id는 묶음으로 나누고(URL 길이) 묶음마다 끝까지 받는다 — 빠진 행이 있으면 그 크루의 DM·범위가 비어 글이 적재 없이 커서만 지나간다.
+        페이지는 (member_id, channel_id) 키 기준 이어 읽기다(분리 검수 #893): ① 서버 최대 행이 ROOM_PAGE보다 작으면 꽉 차지 않은 페이지도 끝이 아니라서
+        빈 페이지가 와야 끝낸다. ② offset이면 페이지 사이에 앞쪽 참여 행이 지워질 때 경계 행 하나를 건너뛴다 — 마지막 키 뒤만 묻는다.
+        실패는 던진다 — 호출부가 이 틱을 보류한다(앞 페이지·앞 묶음만으로 판정하지 않는다). */
     async crewMemberships(crewIds) {
       const out = new Map(crewIds.map((id) => [id, { dm: new Set(), member: new Set() }]));
       for (let i = 0; i < crewIds.length; i += ROOM_IDS_PER_REQUEST) {
         const ids = crewIds.slice(i, i + ROOM_IDS_PER_REQUEST);
-        for (let from = 0; ; from += ROOM_PAGE) {
-          const rows = unwrap(await client.from('msgr_channel_members').select('member_id, channel_id, msgr_channels(kind, org_id, personal_pair)')
-            .eq('member_kind', 'crew').in('member_id', ids).order('member_id').order('channel_id').range(from, from + ROOM_PAGE - 1)) ?? [];
+        let after = null; // 마지막으로 받은 키 — uuid라 필터 문법을 깨는 글자(,·()·.)가 없다
+        for (;;) {
+          let q = client.from('msgr_channel_members').select('member_id, channel_id, msgr_channels(kind, org_id, personal_pair)').eq('member_kind', 'crew').in('member_id', ids);
+          if (after) q = q.or(`member_id.gt.${after.m},and(member_id.eq.${after.m},channel_id.gt.${after.c})`);
+          const rows = unwrap(await q.order('member_id').order('channel_id').limit(ROOM_PAGE)) ?? [];
+          if (!rows.length) break;
           for (const r of rows) { const o = out.get(r.member_id); if (!o) continue; o.member.add(r.channel_id); if (deliveryDm(r.msgr_channels)) o.dm.add(r.channel_id); }
-          if (rows.length < ROOM_PAGE) break;
+          const last = rows[rows.length - 1];
+          // 같은 키를 다시 받으면(서버가 이어 읽기 조건을 무시) 끝없이 묻게 된다 — 멈추고 실패로(이 틱 보류). 소문자 정규형 uuid는 문자열 순서 = Postgres 순서
+          if (after && !(last.member_id > after.m || (last.member_id === after.m && last.channel_id > after.c))) throw new Error('msgr db: 방 참여 이어 읽기가 앞으로 가지 않음');
+          after = { m: last.member_id, c: last.channel_id };
         }
       }
       return out;

@@ -32,23 +32,45 @@ const userMsg = (id, channel, over = {}) => ({ id, channel_id: channel, author_k
   mentions: [], reply_to: null, thread_root: null, meta: {}, created_at: new Date().toISOString(), ...over });
 const to = (n) => ({ kind: 'crew', id: crewId(n), role: 'to' });
 
-/* ─── 가짜 PostgREST — msgr_channel_members만. 필터(eq·in)·select(왼쪽 결합 / !inner)·order·offset·limit, 최대 행 1000(db-max-rows). ─── */
-const MAX_ROWS = 1000;
-async function fakeRest({ members, channels, hidden = new Set() }) {
+/* ─── 가짜 PostgREST — msgr_channel_members만. 필터(eq·gt·in, or(…)/and(…) 중첩)·select(왼쪽 결합 / !inner)·order·offset·limit.
+   최대 행(db-max-rows, 기본 1000)은 실제 PostgREST처럼 limit보다 작으면 조용히 잘라 주고 Content-Range(0-499/*)만 단다 — 클라이언트는 잘렸는지 모른다.
+   order가 없으면 넣은 순서 그대로(실제 Postgres도 ORDER BY 없으면 순서를 보장하지 않는다). 훅: failOn·beforeRequest(방 목록 요청 순번 1부터). ─── */
+const splitTop = (s) => { const out = []; let depth = 0, cur = ''; for (const ch of s) { if (ch === '(') depth++; if (ch === ')') depth--; if (ch === ',' && depth === 0) { out.push(cur); cur = ''; } else cur += ch; } if (cur) out.push(cur); return out; };
+const opOk = (x, op, v) => {
+  const s = String(x);
+  if (op === 'eq') return s === v;
+  if (op === 'gt') return s > v; // 소문자 정규형 uuid는 문자열 순서 = Postgres uuid 순서
+  if (op === 'in') return v.slice(1, -1).split(',').map((t) => t.replace(/^"|"$/g, '')).includes(s);
+  throw new Error(`fake: 모르는 연산 ${op}`);
+};
+const condOk = (r, expr) => {
+  const m = /^(and|or)\((.*)\)$/.exec(expr);
+  if (m) { const parts = splitTop(m[2]); return m[1] === 'and' ? parts.every((x) => condOk(r, x)) : parts.some((x) => condOk(r, x)); }
+  const [col, op, ...rest] = expr.split('.');
+  return opOk(r[col], op, rest.join('.'));
+};
+async function fakeRest({ members, channels, hidden = new Set(), maxRows = 1000, failOn = () => false, beforeRequest = () => {}, ignoreKeyset = false }) {
   const hits = []; const state = { fail: false };
   const srv = createServer((req, res) => {
     const u = new URL(req.url, 'http://x');
-    const json = (s, o) => { res.writeHead(s, { 'content-type': 'application/json' }); res.end(JSON.stringify(o)); };
-    hits.push({ path: u.pathname, select: u.searchParams.get('select') ?? '', urlLength: req.url.length });
-    if (u.pathname !== '/rest/v1/msgr_channel_members') return json(404, { code: 'PGRST205', message: `no fake route ${u.pathname}` });
-    if (state.fail) return json(500, { code: 'XX000', message: 'fake outage' });
+    const json = (s, o, headers = {}) => { res.writeHead(s, { 'content-type': 'application/json', ...headers }); res.end(JSON.stringify(o)); };
     const q = u.searchParams;
-    let rows = members.filter((r) => [...q.entries()].every(([k, v]) => {
-      if (['select', 'order', 'offset', 'limit'].includes(k)) return true;
-      if (v.startsWith('eq.')) return String(r[k]) === v.slice(3);
-      if (v.startsWith('in.(')) return v.slice(4, -1).split(',').map((s) => s.replace(/^"|"$/g, '')).includes(String(r[k]));
-      throw new Error(`fake: 모르는 필터 ${k}=${v}`);
-    }));
+    const hit = { path: u.pathname, select: q.get('select') ?? '', urlLength: req.url.length, inIds: (q.get('member_id') ?? '').startsWith('in.(') ? q.get('member_id').slice(4, -1).split(',').length : 0, keyset: q.has('or') };
+    hits.push(hit);
+    if (u.pathname !== '/rest/v1/msgr_channel_members') return json(404, { code: 'PGRST205', message: `no fake route ${u.pathname}` });
+    const n = hit.select.includes('channel_id') ? hits.filter((h) => h.path === u.pathname && h.select.includes('channel_id')).length : 0;
+    beforeRequest(hit, n);
+    if (state.fail || failOn(hit, n)) return json(500, { code: 'XX000', message: 'fake outage' });
+    if (n > 50) return json(500, { code: 'XX000', message: 'fake: 방 목록 요청이 50회를 넘었다(끝없는 이어 읽기)' }); // 테스트가 멈추지 않게
+    let rows;
+    try {
+      rows = members.filter((r) => [...q.entries()].every(([k, v]) => {
+        if (['select', 'order', 'offset', 'limit'].includes(k)) return true;
+        if (k === 'or' || k === 'and') return ignoreKeyset || condOk(r, `${k}${v}`); // ignoreKeyset — 이어 읽기 조건을 무시하는 서버 흉내
+        const i = v.indexOf('.');
+        return opOk(r[k], v.slice(0, i), v.slice(i + 1));
+      }));
+    } catch (e) { return json(400, { code: 'PGRST100', message: e.message }); }
     for (const part of (q.get('order') ?? '').split(',').filter(Boolean).reverse()) {
       const [col, dir = 'asc'] = part.split('.');
       rows = [...rows].sort((a, b) => (String(a[col]) < String(b[col]) ? -1 : String(a[col]) > String(b[col]) ? 1 : 0) * (dir === 'desc' ? -1 : 1));
@@ -63,8 +85,9 @@ async function fakeRest({ members, channels, hidden = new Set() }) {
     });
     if (embed?.[1]) out = out.filter((o) => o.msgr_channels);
     const offset = Number(q.get('offset') ?? 0);
-    const limit = Math.min(q.has('limit') ? Number(q.get('limit')) : Infinity, MAX_ROWS);
-    json(200, out.slice(offset, offset + limit));
+    const limit = Math.min(q.has('limit') ? Number(q.get('limit')) : Infinity, maxRows);
+    const page = out.slice(offset, offset + limit);
+    json(200, page, { 'content-range': page.length ? `${offset}-${offset + page.length - 1}/*` : '*/*' });
   });
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   const client = createClient(`http://127.0.0.1:${srv.address().port}`, 'test-anon-key', { auth: { persistSession: false, autoRefreshToken: false } });
@@ -73,12 +96,13 @@ async function fakeRest({ members, channels, hidden = new Set() }) {
 }
 
 /** drain용 db — 방 목록 함수(crewChannels·crewScope·새 일괄 조회)는 makeDb 그대로(실제 supabase-js → 가짜 PostgREST), 나머지는 기록하는 가짜. */
-function drainDb(client, { crews, inbox, channels, personalInRooms = new Set() }) {
+function drainDb(client, { crews, inbox, channels, personalInRooms = new Set(), envelope = false }) {
   const calls = [];
   const db = {
     ...M.makeDb(client),
     calls,
-    crewContext: undefined, // 서버 봉투 없이 로컬 판정 경로 — 방 목록(dm·member)을 실제로 쓰는 쪽
+    // 기본은 서버 봉투 없는 로컬 판정 경로(dm·member 둘 다 쓴다). envelope:true = 운영 makeDb처럼 봉투가 있다 — 그러면 dm 집합(targetsCrew)이 대상 여부를 가른다
+    crewContext: envelope ? async (_ws, _crew, sourceId, channelId) => { const c = channels[channelId]; return { source: inbox(_crew).find((m) => m.id === sourceId), channel: { id: channelId, kind: c.kind, org_id: c.org_id, name: 'ch', crew_memory: true, archived_at: null, excluded_crew_ids: [] }, root: { id: sourceId }, delivery_role: 'to', auto_turns: 0, peers: [], settled_root: true, settled_root_before_source: true }; } : undefined,
     async myCrews() { return crews; },
     async personalCrewsInRooms(ids) { return new Set(ids.filter((id) => personalInRooms.has(id))); },
     async crewInbox(_ws, id, after) { calls.push(['crewInbox', id, after]); const m = inbox(id); if (m instanceof Error) throw m; return m.filter((x) => x.id > after); },
@@ -136,8 +160,8 @@ for (const n of [1, 3, 50]) {
   });
 }
 
-// ② 받은 글이 있는 틱 — 방 목록은 에이전트 수와 무관하게 한 번(에이전트 id 100명 단위 묶음마다 1회, 페이지는 최대 행 1000 단위)
-for (const [n, want] of [[1, 1], [3, 1], [50, 1], [200, 2]]) {
+// ② 받은 글이 있는 틱 — 방 목록은 에이전트 수와 무관하다: 에이전트 id 100명 묶음마다 (페이지 수 + 끝을 확인하는 빈 페이지 1회)
+for (const [n, want] of [[1, 2], [3, 2], [50, 2], [200, 4]]) {
   test(`받은 글이 있는 틱은 방 목록 조회 ${want}회 — 에이전트 ${n}명, 부른 에이전트만 적재하고 모두 커서 전진`, async () => {
     const f = orgFixture(n); const srv = await fakeRest(f);
     try {
@@ -180,7 +204,7 @@ test('일괄 조회의 DM 집합·참여 집합이 옛 crewChannels·crewScope�
     assert.equal(typeof db.crewMemberships, 'function', 'makeDb에 일괄 조회 함수가 있다');
     const ids = [f.C1, f.C2, f.CP];
     const got = await db.crewMemberships(ids);
-    assert.equal(srv.roomHits().length, 1, '세 에이전트 한 번');
+    assert.equal(srv.roomHits().length, 2, '세 에이전트 한 묶음 — 행 1페이지 + 빈 페이지');
     for (const id of ids) {
       const old = { dm: new Set(await db.crewChannels(id)), member: await db.crewScope(id) };
       assert.deepEqual([...got.get(id).dm].sort(), [...old.dm].sort(), `DM 집합(${id})`);
@@ -189,7 +213,7 @@ test('일괄 조회의 DM 집합·참여 집합이 옛 crewChannels·crewScope�
     assert.deepEqual([...got.get(f.CP).dm], [f.ch.P_CREW], '개인 방은 크루 1:1만 DM');
     assert.ok(got.get(f.C1).member.has(f.ch.HIDDEN) && !got.get(f.C1).dm.has(f.ch.HIDDEN), '채널 행을 못 읽는 참여 — 범위엔 있고 DM은 아니다(옛 방식과 같음)');
     assert.deepEqual(await db.crewMemberships([]), new Map(), '빈 목록은 조회하지 않는다');
-    assert.equal(srv.roomHits().length, 1 + 2 * ids.length);
+    assert.equal(srv.roomHits().length, 2 + 2 * ids.length);
   } finally { await srv.close(); }
 });
 
@@ -212,7 +236,7 @@ test('drain 결과(적재·커서·안내)가 일괄 경로와 옛 크루별 경
     const a = mk(); const { enq: ea } = await run(a);
     const roomsBatch = srv.roomHits().length;
     const b = legacy(mk()); const { enq: eb } = await run(b);
-    assert.equal(roomsBatch, 1, '일괄 경로는 방 목록 1회');
+    assert.equal(roomsBatch, 2, '일괄 경로는 방 목록 한 묶음(행 + 빈 페이지)');
     assert.equal(srv.roomHits().length - roomsBatch, 2 * f.crews.length, '옛 경로는 에이전트마다 2회');
     assert.deepEqual(jobs(ea), jobs(eb), '적재가 같다');
     assert.deepEqual(jobs(ea).sort(), [[101, 'c1'], [102, 'c1'], [104, 'c3'], [106, 'c3'], [108, 'c1'], [110, 'c2']].sort());
@@ -284,14 +308,118 @@ test('참여 행 2,500개(최대 행 1000)도 끝까지 받는다 — 마지막 
   try {
     const got = await M.makeDb(srv.client).crewMemberships(crews.map((c) => c.id));
     assert.equal([...got.values()].reduce((s, v) => s + v.member.size, 0), n * per, '참여 행 전부');
-    assert.equal(srv.roomHits().length, 3, '1000·1000·500 세 페이지');
+    assert.equal(srv.roomHits().length, 4, '1000·1000·500·빈 페이지');
     const lastDm = chId(10_000 + (n - 1) * per + per - 1);
     assert.ok(got.get(crewId(n - 1)).dm.has(lastDm), '마지막 페이지의 DM');
     const before = srv.roomHits().length;
     const db = drainDb(srv.client, { crews, channels, inbox: () => [userMsg(501, lastDm)] }); // 모두가 받은 글이 있다 → 2,500행을 한 틱에 받는다
     const { enq } = await run(db);
-    assert.equal(srv.roomHits().length - before, 3, 'drain도 세 페이지');
+    assert.equal(srv.roomHits().length - before, 4, 'drain도 네 요청');
     assert.deepEqual(jobs(enq), [[501, `c${n - 1}`]], '마지막 페이지에만 있는 1:1 방의 글에 답한다(잘리면 DM을 몰라 지나간다)');
     assert.equal(cursors(db).length, n);
+  } finally { await srv.close(); }
+});
+
+/* ─── 키 기준 이어 읽기 — 서버 최대 행이 1000보다 작아도, 페이지 사이에 앞쪽 행이 지워져도 잘리지 않는다(분리 검수 #893 MEDIUM-1·LOW-1·LOW-2) ─── */
+/** 에이전트 n명 × 방 per개(마지막 방이 그 에이전트의 조직 DM). 참여 행은 정렬 순서가 아닌 섞인 순서로 넣는다 — 서버에 order를 안 보내면 이어 읽기가 깨지게(순서 잠금). */
+function bigFixture(n, per) {
+  const channels = {}; const members = []; const crews = [];
+  for (let i = 0; i < n; i++) {
+    crews.push(orgCrew(i));
+    for (let j = 0; j < per; j++) {
+      const id = chId(10_000 + i * per + j);
+      channels[id] = { kind: j === per - 1 ? 'dm' : 'private', org_id: ORG, personal_pair: null };
+      members.push({ channel_id: id, member_kind: 'crew', member_id: crewId(i) });
+    }
+  }
+  let seed = 7; const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+  for (let k = members.length - 1; k > 0; k--) { const r = Math.floor(rnd() * (k + 1)); [members[k], members[r]] = [members[r], members[k]]; }
+  return { channels, members, crews, lastDmOf: (i) => chId(10_000 + i * per + per - 1) };
+}
+const byKey = (a, b) => (a.member_id < b.member_id ? -1 : a.member_id > b.member_id ? 1 : a.channel_id < b.channel_id ? -1 : a.channel_id > b.channel_id ? 1 : 0);
+const totalRows = (got) => [...got.values()].reduce((s, v) => s + v.member.size, 0);
+const slugOf = (id) => `c${Number(id.slice(-12))}`;
+
+for (const maxRows of [500, 999]) {
+  test(`서버 최대 행 ${maxRows}(1000보다 작음)에도 참여 1,500행을 끝까지 받고, 정렬 맨 뒤 에이전트의 멘션 없는 1:1 글에 답한다 — 빈 페이지가 와야 끝`, async () => {
+    const f = bigFixture(30, 50);
+    const srv = await fakeRest({ ...f, maxRows });
+    try {
+      const got = await M.makeDb(srv.client).crewMemberships(f.crews.map((c) => c.id));
+      assert.equal(totalRows(got), 1500, '참여 행 전부');
+      assert.equal(srv.roomHits().length, Math.ceil(1500 / maxRows) + 1, '잘린 페이지들 + 끝을 확인하는 빈 페이지');
+      assert.ok(got.get(crewId(29)).dm.has(f.lastDmOf(29)), '마지막 에이전트의 1:1 방');
+      const before = srv.roomHits().length;
+      const msg = userMsg(501, f.lastDmOf(29)); // 모두가 받는 조직 글 — 멘션 없는 c29의 1:1
+      const db = drainDb(srv.client, { ...f, inbox: () => [msg], envelope: true });
+      const { enq } = await run(db);
+      assert.deepEqual(jobs(enq), [[501, 'c29']], '잘린 집합으로 판정하면 이 글은 적재 없이 커서만 넘어간다');
+      assert.equal(cursors(db).length, 30);
+      assert.equal(srv.roomHits().length - before, Math.ceil(1500 / maxRows) + 1);
+    } finally { await srv.close(); }
+  });
+}
+
+test('페이지 사이에 앞쪽 참여 행이 지워져도 경계 행을 건너뛰지 않는다 — 마지막 키 뒤부터 이어 읽는다', async () => {
+  const f = bigFixture(26, 40); // 1,040행 — 1쪽 1000행, 경계 = 정렬 1000번째 행(2쪽 첫 행)
+  const boundary = [...f.members].sort(byKey)[1000];
+  f.channels[boundary.channel_id] = { kind: 'dm', org_id: ORG, personal_pair: null }; // 경계 행을 그 에이전트의 1:1 방으로
+  let removed = false;
+  const srv = await fakeRest({ ...f, beforeRequest: (_hit, n) => {
+    if (n === 2 && !removed) { f.members.splice(f.members.findIndex((r) => r.member_id === crewId(0)), 1); removed = true; } // 2쪽 직전 — 다른 기기에서 앞쪽(c0) 참여 하나가 빠졌다
+  } });
+  try {
+    const db = drainDb(srv.client, { ...f, inbox: () => [userMsg(601, boundary.channel_id)], envelope: true });
+    const { enq } = await run(db);
+    assert.ok(removed, '페이지 사이에 행이 지워졌다');
+    assert.deepEqual(jobs(enq), [[601, slugOf(boundary.member_id)]], 'offset 페이지면 경계 행이 빠져 이 글의 커서만 넘어간다');
+  } finally { await srv.close(); }
+});
+
+test('일괄 조회 도중 실패(둘째 페이지·둘째 id 묶음) — 받은 글 있는 에이전트 전원 보류(적재 0·커서 유지), 다음 틱 회복', async () => {
+  const cases = [
+    { label: '둘째 페이지', f: bigFixture(30, 50), failOn: (_h, n) => n === 2, last: 29 },
+    { label: '둘째 id 묶음', f: bigFixture(150, 2), failOn: (h) => h.inIds === 50, last: 149 },
+  ];
+  const ce = console.error; console.error = () => {};
+  try {
+    for (const { label, f, failOn, last } of cases) {
+      let fail = true;
+      const srv = await fakeRest({ ...f, failOn: (h, n) => fail && failOn(h, n) });
+      try {
+        const msgs = [userMsg(701, f.lastDmOf(0)), userMsg(702, f.lastDmOf(last))];
+        const a = drainDb(srv.client, { ...f, inbox: () => msgs, envelope: true });
+        const { enq } = await run(a);
+        assert.ok(srv.roomHits().length >= 2, `${label}: 실패 전에 받은 페이지가 있다`);
+        assert.deepEqual(jobs(enq), [], `${label}: 앞 페이지·앞 묶음만으로 처리하지 않는다`);
+        assert.deepEqual(cursors(a), [], `${label}: 커서 유지`);
+        fail = false;
+        const b = drainDb(srv.client, { ...f, inbox: () => msgs, envelope: true });
+        const { enq: e2 } = await run(b);
+        assert.deepEqual(jobs(e2).sort(), [[701, 'c0'], [702, `c${last}`]].sort(), `${label}: 회복 틱에 답한다`);
+      } finally { await srv.close(); }
+    }
+  } finally { console.error = ce; }
+});
+
+test('정확히 페이지 크기만큼이면 빈 페이지까지 읽고 끝난다 — 둘째 요청부터는 마지막 키 뒤만 묻는다(offset 아님)', async () => {
+  for (const [maxRows, want] of [[1000, 2], [500, 3]]) {
+    const f = bigFixture(20, 50); // 1,000행
+    const srv = await fakeRest({ ...f, maxRows });
+    try {
+      const got = await M.makeDb(srv.client).crewMemberships(f.crews.map((c) => c.id));
+      assert.equal(totalRows(got), 1000);
+      assert.equal(srv.roomHits().length, want, `최대 행 ${maxRows}: ${want}요청`);
+      assert.ok(!srv.roomHits()[0].keyset && srv.roomHits().slice(1).every((h) => h.keyset), '첫 요청만 키 조건 없음');
+    } finally { await srv.close(); }
+  }
+});
+
+test('서버가 이어 읽기 조건을 무시해 같은 행을 다시 주면 끝없이 묻지 않고 실패로 멈춘다 — 호출부는 이 틱을 보류', async () => {
+  const f = bigFixture(3, 5); // 15행, 최대 행 10
+  const srv = await fakeRest({ ...f, maxRows: 10, ignoreKeyset: true });
+  try {
+    await assert.rejects(M.makeDb(srv.client).crewMemberships(f.crews.map((c) => c.id)), /이어 읽기가 앞으로 가지 않음/);
+    assert.equal(srv.roomHits().length, 2, '둘째 요청에서 멈춘다');
   } finally { await srv.close(); }
 });
