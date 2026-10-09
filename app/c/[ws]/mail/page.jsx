@@ -4,6 +4,7 @@ import { use, useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Icon, Avatar, Spinner, Skeleton, ConfirmModal, DropUp, api, timeAgo } from '../../../ui';
 import { useLang } from '../../../i18n';
+import s from './mail.module.css'; // 좁은 폭(표가 카드에 안 들어가는 폭)에서 표 → 두 줄 카드 행
 
 const CC_MAX = 4; // src/crewmail.mjs CC_MAX와 같은 값 — 서버가 최종 강제, 여기선 안내·토글 상한
 
@@ -93,7 +94,7 @@ export default function Mail({ params }) {
        부푼다(#350 회의실·#357 경쟁에서 확립된 계열). 실측(배율 2·1280·en): 초장문 크루 이름(60자)
        칩의 nowrap min-content가 CC 그룹 → 작성 폼 → 페이지 열을 사슬로 부풀려 문서 sw 1832 > cw
        1264. 일반 폭·일반 이름 레이아웃은 종전과 동일(1fr 채움 동작 불변). */
-    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 14 }}>
+    <div className={s.page} style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 14 }}>
       {delTarget && (
         <ConfirmModal title={t('mail.deleteTitle')} description={t('mail.deleteConfirm')} confirmLabel={t('common.delete')} tone="danger"
           onConfirm={doDelete} onClose={() => setDelTarget(null)} />
@@ -164,23 +165,25 @@ export default function Mail({ params }) {
              넘는다. 카드 overflow:hidden이 가둬 문서 넘침은 아니지만, 취소 버튼이 잘려 조작 불가가
              된다(검수 실측: elementFromPoint 히트 null). 표 래퍼에 overflow-x:auto를 두어 카드
              안에서 가로 스크롤이 되게 하면 취소 버튼에 도달할 수 있다. 배율 1(표가 카드 안)에서는
-             스크롤바가 안 나타나 종전 불변. */
+             스크롤바가 안 나타나 종전 불변.
+             10/9부터 표가 안 들어가는 폭(내용 폭 60rem 미만 — 배율 2·폰 포함)은 두 줄 카드 행(mail.module.css)이 맡는다.
+             폰에서 가로 스크롤은 시간·버튼을 카드 밖에 숨겼다(H21). 래퍼는 표 모드의 안전망으로만 남는다. */
           <div style={{ overflowX: 'auto' }}>
-          <table className="table">
+          <table className={`table ${s.table}`}>
             <thead>
-              <tr><th style={{ width: 150 }}>{t('mail.to')}</th><th style={{ width: 130 }}>{t('mail.from')}</th><th>{t('mail.message')}</th><th style={{ width: 150 }} /><th style={{ width: 90 }} /></tr>
+              <tr><th className={s.wTo}>{t('mail.to')}</th><th className={s.wFrom}>{t('mail.from')}</th><th>{t('mail.message')}</th><th className={s.wWhen} /><th className={s.wAct} /></tr>
             </thead>
             <tbody>
               {pending.map((m) => (
                 <tr key={`${m.to}/${m.file}`} style={{ cursor: 'default' }}>
                   <td>{who(m.to)}</td>
                   <td style={{ fontSize: 12, color: 'var(--fg-2)' }}>{senderOf(m)} {kindChip(m.kind)}</td>
-                  <td><span style={{ fontSize: 12.5, display: 'block', maxWidth: 420, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }} title={m.message}>{m.message}</span></td>
-                  <td style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>
+                  <td className={s.body}><span style={{ fontSize: 12.5, display: 'block', maxWidth: 420, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }} title={m.message}>{m.message}</span></td>
+                  <td className={s.meta} style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>
                     {m.ts ? timeAgo(m.ts, lang) : '—'} · {t('mail.attempts', { n: m.attempts })}
                     {m.claimed && <span className="chip primary" style={{ marginLeft: 6, fontSize: 10.5 }}><span className="dot" />{Number.isFinite(Date.parse(m.claimedAt)) ? t('mail.claimedFor', { n: Math.max(1, Math.floor((Date.now() - Date.parse(m.claimedAt)) / 60_000)) }) : t('mail.claimed')}</span>}
                   </td>
-                  <td style={{ textAlign: 'right' }}>
+                  <td className={s.act} style={{ textAlign: 'right' }}>
                     <button className="btn sm" disabled={m.claimed || busy === `c:${m.to}:${m.id}`} onClick={() => cancel(m)}>{t('mail.cancel')}</button>
                   </td>
                 </tr>
@@ -203,21 +206,21 @@ export default function Mail({ params }) {
           <p style={{ padding: '2px 20px 18px', color: 'var(--fg-2)', fontSize: 13, margin: 0 }}>{t('mail.emptyLog')}</p>
         ) : (
           <div style={{ overflowX: 'auto' }}>
-          <table className="table">
+          <table className={`table ${s.table}`}>
             <tbody>
               {log.map((l, i) => (
                 <tr key={`${l.ts}-${l.id}-${i}`} style={{ cursor: 'default' }}>
-                  <td style={{ width: 24 }}>
+                  <td className={s.wDot}>
                     <span title={l.ok ? t('mail.ok') : (l.error === 'cancelled' ? t('mail.cancelled') : t('mail.fail'))}
                       style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 999, background: l.ok ? 'var(--primary)' : (l.error === 'cancelled' ? 'var(--fg-3)' : 'var(--danger)') }} />
                   </td>
-                  <td style={{ width: 150 }}>{who(l.to)}</td>
+                  <td className={s.wTo}>{who(l.to)}</td>
                   <td style={{ fontSize: 12, color: 'var(--fg-2)' }}>{senderOf(l)} {l.kind && kindChip(l.kind)}</td>
-                  <td style={{ fontSize: 11.5, color: l.ok ? 'var(--fg-2)' : 'var(--danger)' }}>
+                  <td className={s.note} style={{ fontSize: 11.5, color: l.ok ? 'var(--fg-2)' : 'var(--danger)' }}>
                     {l.ok ? t('mail.ok') : (l.error === 'cancelled' ? t('mail.cancelled') : `${t('mail.fail')} — ${l.error ?? ''}`)}
                   </td>
-                  <td style={{ width: 120, fontSize: 11.5, color: 'var(--fg-3)' }}>{timeAgo(l.ts, lang)}</td>
-                  <td style={{ width: 110, textAlign: 'right' }}>
+                  <td className={`${s.wTime} ${s.meta}`} style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{timeAgo(l.ts, lang)}</td>
+                  <td className={`${s.wOpen} ${s.act}`} style={{ textAlign: 'right' }}>
                     <Link className="btn sm" href={`/c/${ws}/crew/${l.to}`}>{t('mail.openChat')}</Link>
                   </td>
                 </tr>
@@ -241,13 +244,13 @@ export default function Mail({ params }) {
           <p style={{ padding: '2px 20px 18px', color: 'var(--fg-2)', fontSize: 13, margin: 0 }}>{t('mail.emptyDead')}</p>
         ) : (
           <div style={{ overflowX: 'auto' }}>
-          <table className="table">
+          <table className={`table ${s.table}`}>
             <tbody>
               {dead.map((d) => (
                 <tr key={d.file} style={{ cursor: 'default' }}>
-                  <td style={{ width: 150 }}>{d.corrupt ? <span className="mono" style={{ fontSize: 11 }}>{d.file}</span> : who(d.to)}</td>
+                  <td className={s.wTo}>{d.corrupt ? <span className="mono" style={{ fontSize: 11 }}>{d.file}</span> : who(d.to)}</td>
                   <td style={{ fontSize: 12, color: 'var(--fg-2)' }}>{d.corrupt ? '' : <>{senderOf(d)} {d.kind && kindChip(d.kind)}</>}</td>
-                  <td>
+                  <td className={s.body}>
                     {d.corrupt
                       ? <span style={{ fontSize: 12, color: 'var(--danger)' }}>{t('mail.corrupt')}</span>
                       : <>
@@ -255,7 +258,7 @@ export default function Mail({ params }) {
                         <span style={{ fontSize: 11, color: 'var(--danger)', display: 'block' }}>{t('mail.attempts', { n: d.attempts })} · {d.lastError}</span>
                       </>}
                   </td>
-                  <td style={{ width: 170, textAlign: 'right' }}>
+                  <td className={`${s.wDeadAct} ${s.act}`} style={{ textAlign: 'right' }}>
                     <span style={{ display: 'inline-flex', gap: 6 }}>
                       {!d.corrupt && <button className="btn sm" disabled={busy === `requeue:${d.file}`} onClick={() => patch('requeue', d.file)}><Icon name="play" size={12} /> {t('mail.requeue')}</button>}
                       <button className="btn sm btn-icon" style={{ width: 28 }} aria-label={t('mail.delete')} onClick={() => setDelTarget(d)}><Icon name="trash" size={13} /></button>
