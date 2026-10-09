@@ -651,6 +651,10 @@ assert [os.path.basename(f) for f in a.extract_local_files(text)[0]] == ['downlo
 for k in ('HOME', 'USERPROFILE'): os.environ[k] = str(other)
 tempfile.tempdir = saved
 assert [os.path.basename(f) for f in a.extract_local_files(text)[0]] == ['download-test-vps.md'], '임시 폴더 안'
+# #881 검수 LOW: 임시 폴더 안 파일은 TERMINAL_CWD가 다른 폴더여도 첨부된다(뒤 위치가 앞의 '임시 폴더 안'을 지우지 않는다 — tmp_only = inside 변이를 막음)
+os.environ['TERMINAL_CWD'] = str(other)
+assert [os.path.basename(f) for f in a.extract_local_files(text)[0]] == ['download-test-vps.md'], '임시 폴더 파일 + 작업 폴더는 다른 곳'
+os.environ.pop('TERMINAL_CWD')
 # 3차 검수 LOW: 공유 임시 폴더(/tmp)의 다른 사용자 파일 — 임시 폴더라서 허용될 때만 게이트웨이 사용자 소유 파일로 제한한다(Windows는 소유자 판정 없음)
 if hasattr(os, 'geteuid'):
     me = os.geteuid
