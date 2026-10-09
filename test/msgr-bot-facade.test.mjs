@@ -70,6 +70,72 @@ test('getUpdates: offset → after_id(offset-1) · 비어 있으면 timeout까�
   const rpc3 = fakeRpc({ msgr_bot_updates: [] }); await handle({ token: T, method: 'getUpdates' }, rpc3, clock); assert.equal(rpc3.calls.length, 1);
 });
 
+// 롱폴 간격 — 운영 실측(2026-10-09 10분): 1초 고정 간격에서 msgr_bot_updates_with_delivery가 분당 약 1,713회(대기 중인 봇 수 × 초당 1회).
+// 대기 시작 뒤 3초까지 1초, 9초까지 2초, 그 뒤 3초. 대기 상한 25초·반환 모양·timeout 0 즉시 반환은 그대로.
+// 가짜 시계: RPC는 시간이 안 걸리고, arriveAt(ms) 이후 첫 조회에서 글이 보인다.
+const pollClock = (arriveAt = Infinity) => {
+  let t = 0; const sleeps = [];
+  const up = { update_id: 9, message: { message_id: 9, text: 'hi' } };
+  const seen = () => (t >= arriveAt ? [up] : []);
+  const rpc = fakeRpc({ msgr_bot_updates_with_delivery: seen, msgr_bot_updates: seen });
+  return { rpc, sleeps, opts: { now: () => t, sleep: async (ms) => { sleeps.push(ms); t += ms; } }, now: () => t };
+};
+const poll = (c, params) => handle({ token: T, method: 'getUpdates', params: { delivery_protocol: 1, ...params } }, c.rpc, c.opts);
+
+test('getUpdates 롱폴 — 빈 채로 기다리면 처음 3초만 1초 간격, 그 뒤 2초·3초로 늘려 RPC를 줄인다(25초 26회 → 13회, 연결 도구의 20초 21회 → 11회)', async () => {
+  for (const [timeout, calls] of [[25, 13], [20, 11]]) {
+    const c = pollClock();
+    const r = await poll(c, { timeout });
+    assert.deepEqual(r.body, { ok: true, result: [] });
+    assert.equal(c.now(), timeout * 1000, '대기 상한까지 기다린다');
+    assert.equal(c.rpc.calls.length, calls, `timeout ${timeout}초 빈 대기의 RPC 수`);
+    assert.ok(c.sleeps.every((ms) => ms <= 3000), '간격은 3초를 넘지 않는다');
+  }
+  const c = pollClock();
+  await poll(c, { timeout: 25 });
+  assert.deepEqual(c.sleeps, [1000, 1000, 1000, 2000, 2000, 2000, 3000, 3000, 3000, 3000, 3000, 1000], '0·1·2·3 → 5·7·9 → 12…24 → 상한 25초에 마지막 조회');
+});
+
+test('getUpdates 롱폴 — 대기 시작 3초 안에 생긴 글은 1초 안에 돌려준다(연달아 오는 글의 반응 유지)', async () => {
+  for (let at = 0; at <= 3000; at += 100) {
+    const c = pollClock(at);
+    const r = await poll(c, { timeout: 20 });
+    assert.equal(r.body.result.length, 1, `${at}ms에 생긴 글`);
+    assert.ok(c.now() - at <= 1000, `${at}ms에 생긴 글을 ${c.now()}ms에 돌려줬다`);
+  }
+});
+
+test('getUpdates 롱폴 — 늦게 생긴 글도 3초 안에 돌려준다(9초 전에는 2초 안, 20초쯤 생긴 글 포함)', async () => {
+  for (let at = 0; at <= 25000; at += 100) {
+    const c = pollClock(at);
+    const r = await poll(c, { timeout: 25 });
+    assert.equal(r.body.result.length, 1, `${at}ms에 생긴 글`);
+    const cap = at <= 3000 ? 1000 : at <= 9000 ? 2000 : 3000;
+    assert.ok(c.now() - at <= cap, `${at}ms에 생긴 글을 ${c.now()}ms에 돌려줬다(상한 ${cap}ms)`);
+  }
+  const c = pollClock(20000);
+  await poll(c, { timeout: 20 });
+  assert.ok(c.now() <= 20000 + 3000 && c.now() >= 20000, `연결 도구 주기(20초) 끝에 생긴 글: ${c.now()}ms`);
+});
+
+test('getUpdates — timeout 0(또는 없음·음수·숫자 아님)은 RPC 1회로 바로 돌려준다(기다리지 않는다)', async () => {
+  for (const params of [{}, { timeout: 0 }, { timeout: '0' }, { timeout: -5 }, { timeout: 'x' }]) {
+    const c = pollClock();
+    const r = await poll(c, params);
+    assert.deepEqual(r.body, { ok: true, result: [] });
+    assert.equal(c.rpc.calls.length, 1, JSON.stringify(params));
+    assert.deepEqual(c.sleeps, [], JSON.stringify(params));
+  }
+});
+
+test('getUpdates — 대기는 25초를 넘지 않는다(timeout 99도 25초, 마지막 잠은 상한까지만)', async () => {
+  const c = pollClock();
+  const r = await poll(c, { timeout: 99 });
+  assert.deepEqual(r.body.result, []);
+  assert.equal(c.now(), 25000);
+  assert.equal(c.sleeps.reduce((a, b) => a + b, 0), 25000);
+});
+
 test('sendMessage: 인자 검증(400) · RPC 호출 모양 · 결과 봉투', async () => {
   const rpc = fakeRpc({ msgr_bot_send: 42 });
   assert.equal((await handle({ token: T, method: 'sendMessage', params: { chat_id: 'general', text: 'x' } }, rpc)).status, 400);
