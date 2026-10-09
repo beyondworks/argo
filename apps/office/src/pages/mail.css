@@ -5,8 +5,9 @@
 .mail-folders .nav-count.plain { background: transparent; color: var(--fg-3); }
 .mail-folders .mail-cal-btn { margin-top: 10px; }
 
-/* 목록 위 도구 줄 — 메일함 고르기(좁은 화면만)·검색·새로고침·일정 */
-.mail-tools { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 6px; padding: 8px 10px; background: var(--surface); border-bottom: 1px solid var(--border-soft); }
+/* 목록 위 도구 줄 — 메일함 고르기(좁은 화면만)·검색·새로고침·일정. 목록 위에 붙어 있어(sticky) 밑으로 메일 줄이 지나간다 —
+   반투명 --surface면 지나가는 줄이 비친다(린넨 라이트 72% 표면에서 28%). 떠 있는 층과 같은 단색(--float, 캔버스 위 --surface와 같은 색)을 쓴다 */
+.mail-tools { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 6px; padding: 8px 10px; background: var(--float); border-bottom: 1px solid var(--border-soft); }
 .mail-search { flex: 1; }
 .mail-search .input { height: 32px; padding-right: 30px; }
 .mail-search .icon-btn { position: absolute; right: 2px; }

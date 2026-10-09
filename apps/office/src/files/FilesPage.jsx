@@ -11,10 +11,12 @@ import { Icon } from '../ui/Icon.jsx';
 import { LoadFail } from '../ui/LoadFail.jsx';
 import { fmtBytes, dragHasFiles, filesFromTransfer } from '../core/files.js';
 import { FILES_DICT } from './files-i18n.js';
-import { usageInfo, fmtSize, CATEGORIES, pageMenuIds, kindOf, countBy, filterFiles, folderPath, childFolders, canMoveFolder, uploadSummary, daysLeft, missingBizcert } from './model.js';
+import { usageInfo, fmtSize, CATEGORIES, pageMenuIds, countBy, filterFiles, folderPath, childFolders, canMoveFolder, uploadSummary, daysLeft, missingBizcert } from './model.js';
 import { useFiles, uploadMany, trashFiles, restoreFiles, purgeFiles, purgeExpired, updateFile, downloadFile, createFolder, renameFolder, moveFolder, deleteFolder, loadCustomers, ocrPending, fileError } from './api.js';
 import { FIcon } from './FIcon.jsx';
 import { badgeTone } from '../ui/badge-tone.js';
+import { kindKey, tagTone } from './tones.js';
+export { kindKey, tagTone }; // 미리보기(Preview)는 이 화면 묶음에서 가져간다 — 첫 화면의 지연 로드 모양이 그대로다
 import { useSelection, selProps } from '../core/selection.js';
 import { CustomerFiles } from './CustomerFiles.jsx';
 import './files.css';
@@ -43,9 +45,6 @@ const go = (patch) => navigate(withQuery(patch));
 export const catLabel = (c) => t(`files.cat.${c ?? 'general'}`);
 export const day = (iso) => (iso ? new Date(iso).toLocaleDateString(getLang() === 'en' ? 'en-US' : 'ko-KR', { timeZone: 'Asia/Seoul', year: 'numeric', month: 'short', day: 'numeric' }) : '—');
 const useDebounced = (value, ms) => { const [v, setV] = useState(value); useEffect(() => { const id = setTimeout(() => setV(value), ms); return () => clearTimeout(id); }, [value, ms]); return v; };
-/** 태그 색 — 분류 이름과 같은 태그(만든 견적서에 붙는 '견적서' 등)는 그 분류와 같은 색, 나머지는 글자마다 정해진 색 */
-export const tagTone = (x) => badgeTone(CATEGORIES.find((c) => FILES_DICT[`files.cat.${c}`]?.includes(x)) ?? x);
-export const kindKey = (f) => (f.kind === 'link' ? 'link' : kindOf(f.filename || f.title, f.mime));
 export const ocrBadge = (f) => { const s = ocrPending(f.id) ? 'pending' : f.ocr_status ?? 'none'; return s === 'none' ? null : <span className={`badge${s === 'failed' ? ' danger' : s === 'done' ? ' ok' : s === 'pending' ? ' warn' : ''}`}>{t(`files.ocr.${s}`)}</span>; };
 
 export default function FilesPage({ space, query }) {

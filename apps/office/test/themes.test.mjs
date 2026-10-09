@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { THEMES, FAMILIES, EMUL, SHELLS, SHELL_OF } from '../src/core/theme.js';
 import { SWATCH, COLOR_GROUPS } from '../src/pages/theme-picks.js';
+import { TONES } from '../src/ui/badge-tone.js';
 
 const css = readFileSync(new URL('../src/themes.css', import.meta.url), 'utf8');
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
@@ -124,20 +125,15 @@ function tokens(theme) {
 }
 // 맨 바깥 쉼표에서 둘로 나눈다(괄호 안 쉼표는 건너뛴다)
 const split2 = (x) => { let d = 0; for (let i = 0; i < x.length; i++) { const ch = x[i]; if (ch === '(') d++; else if (ch === ')') d--; else if (ch === ',' && !d) return [x.slice(0, i), x.slice(i + 1)]; } return null; };
-// sRGB ⇄ OKLab/OKLCH(Björn Ottosson) — color-mix(in oklch, …) 풀기용
+// sRGB → OKLCH(Björn Ottosson) — 종류 색과 상태 색의 색조 거리용
 const toLin = (c) => { c /= 255; return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
-const fromLin = (v) => Math.min(255, Math.max(0, (v <= 0.0031308 ? 12.92 * v : 1.055 * v ** (1 / 2.4) - 0.055) * 255));
 function toOklch({ r, g, b }) {
   const [R, G, B] = [toLin(r), toLin(g), toLin(b)];
   const l = Math.cbrt(0.4122214708 * R + 0.5363325363 * G + 0.0514459929 * B), m = Math.cbrt(0.2119034982 * R + 0.6806995451 * G + 0.1073969566 * B), s = Math.cbrt(0.0883024619 * R + 0.2817188376 * G + 0.6299787005 * B);
   const L = 0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s, A = 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s, Bb = 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s;
   return [L, Math.hypot(A, Bb), ((Math.atan2(Bb, A) * 180) / Math.PI + 360) % 360];
 }
-function fromOklab(L, A, B) {
-  const l = (L + 0.3963377774 * A + 0.2158037573 * B) ** 3, m = (L - 0.1055613458 * A - 0.0638541728 * B) ** 3, s = (L - 0.0894841775 * A - 1.291485548 * B) ** 3;
-  return { r: fromLin(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s), g: fromLin(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s), b: fromLin(-0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s) };
-}
-// 값 풀기 — #hex · rgba() · rgb(r g b / a) · var(--x) · light-dark(라이트, 다크) · color-mix(in srgb, A N%, B|transparent)(알파를 곱해 섞는다 = 브라우저와 같은 계산) · color-mix(in oklch, A N%, B)
+// 값 풀기 — #hex · rgba() · rgb(r g b / a) · var(--x) · light-dark(라이트, 다크) · color-mix(in srgb, A N%, B|transparent)(알파를 곱해 섞는다 = 브라우저와 같은 계산)
 function resolve(t, v, depth = 0) {
   v = (v ?? '').trim();
   assert.ok(depth < 12, `순환: ${v}`);
@@ -152,16 +148,6 @@ function resolve(t, v, depth = 0) {
   if (v === 'transparent') return { r: 0, g: 0, b: 0, a: 0 };
   const va = v.match(/^var\(--([a-z0-9-]+)\)$/);
   if (va) return resolve(t, t[va[1]], depth + 1);
-  // oklch 섞기(종류 뱃지의 청록·주황·보라) — 불투명한 두 색만, 색상(hue)은 짧은 쪽으로 돌고, 화면 밖 색은 0~255로 자른다
-  const mo = v.match(/^color-mix\(in oklch,\s*(.+?)\s+([\d.]+)%,\s*(.+)\)$/);
-  if (mo) {
-    const [x, y, p] = [resolve(t, mo[1], depth + 1), resolve(t, mo[3], depth + 1), +mo[2] / 100];
-    assert.ok(x.a === 1 && y.a === 1, `oklch 섞기는 불투명 색만: ${v}`);
-    const [L1, C1, H1] = toOklch(x), [L2, C2, H2] = toOklch(y);
-    let d = H2 - H1; if (d > 180) d -= 360; if (d < -180) d += 360;
-    const L = L1 * p + L2 * (1 - p), C = C1 * p + C2 * (1 - p), H = (H1 + d * (1 - p)) * Math.PI / 180;
-    return { ...fromOklab(L, C * Math.cos(H), C * Math.sin(H)), a: 1 };
-  }
   const m = v.match(/^color-mix\(in srgb,\s*(.+?)\s+([\d.]+)%,\s*(.+)\)$/);
   if (m) {
     const [x, y, p] = [resolve(t, m[1], depth + 1), resolve(t, m[3], depth + 1), +m[2] / 100];
@@ -224,34 +210,6 @@ test('린넨 라이트 미색: 카드는 따뜻한 아이보리, 표면은 더 �
   const rule = rulesOf(baseCss).find((r) => r.sel.includes("[data-theme='linen-light']") && /--card:/.test(r.decl));
   assert.match(rule.sel, /:root\[data-theme='linen'\]:not\(\.dark-emul\)/);
 });
-
-// 이유(유건 10/9 "뱃지들은 종류별로 색을 다르게"): 종류 뱃지(base.css .badge.tone)는 상태 색을 섞어 만든다 — 어떤 색 가족·모드에서도 글자가 읽혀야 한다.
-// 뱃지가 놓이는 면: 캔버스, 캔버스 위 카드·표, 카드 안 카드, 떠 있는 층(미리보기·패널). 칩의 작은 색 점은 글자가 아니라 재지 않는다.
-const toneRules = (() => {
-  const rs = rulesOf(baseCss);
-  const tones = Object.fromEntries(rs.filter((r) => /^\.tone-[a-z]+$/.test(r.sel.trim())).map((r) => [r.sel.trim().slice(6), r.decl.match(/--tone:\s*([^;]+);/)[1].trim()]));
-  const light = rs.find((r) => r.sel.trim() === '.badge.tone');
-  const dark = rs.find((r) => r.sel.includes('.dark-emul') && r.sel.includes('.badge.tone'));
-  const pick = (r, p) => r.decl.match(new RegExp(`(?:^|;)\\s*${p}:\\s*([^;]+);`))[1].trim();
-  return { tones, bg: pick(light, 'background'), fg: pick(light, 'color'), darkFg: pick(dark, 'color') };
-})();
-for (const fam of ['linen', 'graphite', ...NEW]) for (const mode of ['light', 'dark']) {
-  const theme = `${fam}-${mode}`;
-  test(`종류 뱃지 대비 4.5:1 — ${theme}`, () => {
-    assert.ok(Object.keys(toneRules.tones).length >= 7);
-    const t0 = tokens(theme);
-    const raw = (t, v) => { const c = resolve(t, v); assert.ok(c, `${theme}: ${v}`); return c; };
-    const bg = raw(t0, t0.bg), surface = over(raw(t0, t0.surface), bg);
-    const backs = { bg, surface, 'lift on surface': over(raw(t0, t0.lift), surface), float: raw(t0, t0.float) };
-    const bad = [];
-    for (const [name, v] of Object.entries(toneRules.tones)) {
-      const t = { ...t0, tone: v };
-      const ink = raw(t, mode === 'dark' ? toneRules.darkFg : toneRules.fg), wash = raw(t, toneRules.bg);
-      for (const [where, back] of Object.entries(backs)) { const r = ratio(ink.a < 1 ? over(ink, back) : ink, over(wash, back)); if (r < 4.5) bad.push(`${name} on ${where} ${r.toFixed(2)}`); }
-    }
-    assert.deepEqual(bad, []);
-  });
-}
 
 // 이유: 사이드바가 창 바탕에 녹는 셸(panel·pill·glass)은 사이드바 글자를 창 바탕(--bg) 위에 그린다.
 // 보정 목록(linen·cream처럼 어두운 사이드바)에 없는 색은 사이드바 글자가 --bg 위에서도 읽혀야 한다.
@@ -472,4 +430,251 @@ test('OS 다크 공통 블록은 색 가족 다크 블록(:root[data-theme=\'x-d
   for (const r of rulesOf(body)) assert.ok(cmp(spec(r.sel), fam) < 0, `${r.sel} ${spec(r.sel)}`);
   assert.deepEqual(spec(":root[data-shell='neu'] :is(.nav-item.active, .tree-row.active)"), [0, 4, 0]);
   assert.deepEqual(spec(":root:where([data-theme]:not([data-theme$='-light']))"), [0, 1, 0]);
+});
+
+/* ── 실제로 이기는 규칙(검수 #908) — 셸·색·OS 다크까지 특이도·순서로 고른다 ──
+   토큰만 재면 셸 규칙이 뱃지 색을 덮어도 초록이었다(float 셸의 .badge (0,3,0)이 종류 색 (0,2,0)을 이겨 색이 전부 사라졌다).
+   불러오는 순서대로 규칙을 모아, 뿌리(html)의 상태(data-theme·data-shell·.dark-emul·OS 다크)와 요소 하나에 맞는 규칙 중 이기는 선언을 고른다.
+   화면 폭은 데스크톱(1280), :hover·:focus·::before는 쉬는 화면이 아니라 뺀다. 조상 조건은 '그런 조상이 하나라도 있다'로 본다(ANC). */
+const CASCADE_FILES = ['tokens.css', 'base.css', 'themes.css', 'files/files.css', 'docs/docs.css', 'pages/perf.css', 'pages/company.css', 'business/business.css', 'pages/mail.css'];
+function cascadeRules(files) {
+  const out = [];
+  for (const [file, src] of files) {
+    const stack = []; let buf = '';
+    for (const ch of strip(src)) {
+      if (ch === '{') { const pre = buf.trim(); stack.push(pre.startsWith('@') ? { at: pre } : { sel: pre }); buf = ''; continue; }
+      if (ch === '}') {
+        const top = stack.pop();
+        if (top && 'sel' in top && stack.every((x) => !x.at || x.at.startsWith('@media'))) out.push({ file, sel: top.sel, decl: buf, media: stack.filter((x) => x.at).map((x) => x.at) });
+        buf = ''; continue;
+      }
+      buf += ch;
+    }
+  }
+  return out;
+}
+const SRC = (f) => readFileSync(new URL(`../src/${f}`, import.meta.url), 'utf8');
+const RULES = cascadeRules(CASCADE_FILES.map((f) => [f, SRC(f)]));
+// 괄호·[] 밖에서만 나눈다
+function splitTop(s, isSep) {
+  const out = []; let d = 0, cur = '';
+  for (const ch of s) { if (ch === '(' || ch === '[') d++; else if (ch === ')' || ch === ']') d--; if (!d && isSep(ch)) { out.push(cur); cur = ''; } else cur += ch; }
+  out.push(cur);
+  return out.map((x) => x.trim()).filter(Boolean);
+}
+const selList = (sel) => splitTop(sel, (ch) => ch === ',');
+const compoundsOf = (one) => splitTop(one, (ch) => /[\s>+~]/.test(ch));
+const WIDTH = 1280;
+const mediaOk = (media, os) => media.every((at) => at.slice(6).split(',').some((q) => !/\b(print|not)\b/.test(q)
+  && [...q.matchAll(/\(\s*([a-z-]+)\s*:\s*([^)]+?)\s*\)/g)].every(([, k, v]) => (k === 'prefers-color-scheme' ? v === (os.dark ? 'dark' : 'light')
+    : k === 'max-width' ? WIDTH <= parseFloat(v) : k === 'min-width' ? WIDTH >= parseFloat(v) : k === 'hover' ? v === 'hover' : k === 'pointer' ? v === 'fine' : false))));
+const STRUCT = new Set(['first-child', 'last-child', 'only-child', 'nth-child', 'nth-last-child', 'first-of-type', 'last-of-type', 'nth-of-type']);
+// compound 하나(요소 하나에 붙는 조건)가 요소 el = { tag, cls, attrs, root }에 맞는가
+function matchCompound(c, el) {
+  let i = 0;
+  const tm = c.match(/^([a-z][a-z0-9-]*|\*)/i);
+  if (tm) { if (tm[1] !== '*' && tm[1].toLowerCase() !== el.tag) return false; i = tm[1].length; }
+  while (i < c.length) {
+    const rest = c.slice(i);
+    let m;
+    if ((m = rest.match(/^\.([\w-]+)/))) { if (!el.cls.has(m[1])) return false; }
+    else if ((m = rest.match(/^#[\w-]+/))) return false;
+    else if ((m = rest.match(/^\[([\w-]+)(?:([~^$*|]?=)\s*['"]?([^'"\]]*)['"]?)?\]/))) {
+      const v = el.attrs[m[1]];
+      if (v === undefined) return false;
+      if (m[2] && !{ '=': v === m[3], '^=': v.startsWith(m[3]), '$=': v.endsWith(m[3]), '*=': v.includes(m[3]), '~=': v.split(/\s+/).includes(m[3]), '|=': v === m[3] || v.startsWith(`${m[3]}-`) }[m[2]]) return false;
+    } else if ((m = rest.match(/^(::?)([\w-]+)(\()?/))) {
+      if (m[1] === '::') return false; // ::before·::placeholder — 요소 자신이 아니다
+      if (m[3]) {
+        let d = 0, j = m[0].length - 1;
+        for (; j < rest.length; j++) { if (rest[j] === '(') d++; else if (rest[j] === ')' && !--d) break; }
+        const any = () => selList(rest.slice(m[0].length, j)).some((x) => compoundsOf(x).length === 1 && matchCompound(x, el));
+        if (m[2] === 'is' || m[2] === 'where') { if (!any()) return false; } else if (m[2] === 'not') { if (any()) return false; } else if (!STRUCT.has(m[2])) return false; // :has() 등
+        i += j + 1; continue;
+      }
+      if (m[2] === 'root') { if (!el.root) return false; } else if (!STRUCT.has(m[2])) return false; // :hover·:focus·:checked — 쉬는 화면이 아니다
+    } else throw new Error(`모르는 선택자 조각: ${rest} — ${c}`);
+    i += m[0].length;
+  }
+  return true;
+}
+const elOf = (s) => { const [tag, ...cls] = s.split('.'); return { tag, cls: new Set(cls), attrs: {}, root: false }; };
+// 종류 뱃지가 놓이는 자리의 조상들(문서함 표·미리보기·도구·노하우·평가·거래·문서 목록) — 셸 규칙이 '.module .badge'처럼 조상을 걸어도 잡힌다
+const ANC = ['body', 'div.shell', 'main.main', 'div.content', 'div.page-wrap', 'div.perf', 'section.module', 'div.table-wrap', 'table.table.files-table.docs-table', 'tbody', 'tr.row-open', 'td.c-cat.c-kind.c-tags', 'span.files-tags',
+  'button.files-name', 'div.files-meta', 'div.files-preview', 'div.sheet', 'ul.perf-days', 'li.perf-item', 'button.ev-card', 'span.ev-meta', 'div.ev-detail', 'article.bizui-line', 'div.bizui-line-head', 'ul.deal-log', 'li',
+  'div.mail', 'div.mail-list'].map(elOf);
+const rootOf = (st) => ({ tag: 'html', cls: new Set(st.emul ? ['dark-emul'] : []), attrs: { 'data-theme': st.theme, 'data-shell': st.shell }, root: true });
+const declsOf = (decl) => [...decl.matchAll(/(?:^|;)\s*(--[\w-]+|[a-z-]+)\s*:\s*([^;]+)/g)].map(([, k, v]) => [k, v.trim()]);
+// 규칙마다 선언·선택자 조각을 한 번만 풀어 둔다. 요소 자신에 붙는 마지막 조각은 상태와 상관없어 (규칙 목록, 요소, 속성)마다 후보를 한 번 고른다
+const prepared = new WeakMap();
+const prep = (rules) => {
+  if (!prepared.has(rules)) prepared.set(rules, { cands: new Map(), list: rules.map((r, order) => ({ ...r, order, decls: declsOf(r.decl),
+    items: selList(r.sel).map((one) => { const cs = compoundsOf(one); return { one, last: cs.at(-1), rest: cs.slice(0, -1), spec: spec(one) }; }) })) });
+  return prepared.get(rules);
+};
+const propIs = (prop) => (k) => (prop === 'background' ? k === 'background' || k === 'background-color' : k === prop);
+function candidates(rules, prop, el) {
+  const p = prep(rules), key = `${prop}|${el.tag}.${[...el.cls].join('.')}`;
+  if (!p.cands.has(key)) p.cands.set(key, p.list.flatMap((r) => { const ds = r.decls.filter(([k]) => propIs(prop)(k)); return ds.length ? r.items.filter((it) => matchCompound(it.last, el)).map((it) => ({ r, it, ds })) : []; }));
+  return p.cands.get(key);
+}
+// 요소 el에서 속성 prop(background는 background-color 포함)에 이기는 선언 — { value, sel, file, spec }
+function winner(rules, prop, el, st) {
+  let best = null;
+  for (const { r, it, ds } of candidates(rules, prop, el)) {
+    if (!mediaOk(r.media, st.os) || !it.rest.every((c) => (c.includes(':root') || /^html\b/.test(c) ? matchCompound(c, rootOf(st)) : ANC.some((a) => matchCompound(c, a))))) continue; // :where(:root…)도 뿌리
+    for (const [, v0] of ds) {
+      const imp = /!important$/.test(v0), sp = imp ? [9, 9, 9] : it.spec;
+      if (!best || cmp(sp, best.spec) > 0 || (cmp(sp, best.spec) === 0 && r.order >= best.order)) best = { spec: sp, order: r.order, value: v0.replace(/\s*!important$/, ''), sel: it.one, file: r.file };
+    }
+  }
+  return best;
+}
+// 뿌리(html)에 걸리는 토큰 — 같은 토큰을 여러 규칙이 정하면 특이도·순서로 이기는 값
+const ROOT_RULES = RULES.filter((r) => /--[\w-]+\s*:/.test(r.decl) && selList(r.sel).some((one) => compoundsOf(one).length === 1));
+const tokenCache = new Map();
+function tokensAt(st) {
+  const key = JSON.stringify(st);
+  if (tokenCache.has(key)) return tokenCache.get(key);
+  const best = {};
+  ROOT_RULES.forEach((r, order) => {
+    if (!mediaOk(r.media, st.os)) return;
+    for (const one of selList(r.sel)) {
+      const cs = compoundsOf(one);
+      if (cs.length !== 1 || !matchCompound(cs[0], rootOf(st))) continue;
+      const sp = spec(one);
+      for (const [k, v] of declsOf(r.decl)) if (k.startsWith('--') && (!best[k] || cmp(sp, best[k].spec) > 0 || (cmp(sp, best[k].spec) === 0 && order >= best[k].order))) best[k] = { spec: sp, order, v };
+    }
+  });
+  const out = { __dark: /-dark$/.test(st.theme) || (!/-light$/.test(st.theme) && st.os.dark) };
+  for (const [k, b] of Object.entries(best)) out[k.slice(2)] = b.v;
+  tokenCache.set(key, out);
+  return out;
+}
+// 상태: 26테마(라이트·다크 고정) × 셸 8종 + 시스템 자동(OS 다크 — linen 등은 .dark-emul, graphite는 @media)
+const STATES = [
+  ...FAMILIES.flatMap((f) => ['light', 'dark'].flatMap((m) => SHELLS.map((shell) => ({ theme: `${f}-${m}`, shell, emul: false, os: { dark: false } })))),
+  ...FAMILIES.flatMap((f) => SHELLS.map((shell) => ({ theme: f, shell, emul: EMUL.includes(f), os: { dark: true } }))),
+];
+const stName = (st) => `${st.theme}${st.os.dark && !/-(light|dark)$/.test(st.theme) ? '(시스템 다크)' : ''}/${st.shell}`;
+// 그 상태에서 뱃지가 놓이는 면(보이는 색) — 캔버스, 캔버스 위 카드·표, 카드 안 카드, 떠 있는 층(미리보기), 본문 판 위 카드, 리퀴드 유리(빛 덩어리 위 최악 경우)
+function backsAt(t, label) {
+  const raw = (n) => { const v = resolve(t, t[n]); assert.ok(v, `${label}: --${n} = ${t[n]}`); return v; };
+  const bg = raw('bg'), surface = over(raw('surface'), bg), main = over(raw('t-main-bg'), bg);
+  const out = { bg, surface, 'lift on surface': over(raw('lift'), surface), float: raw('float'), 'surface on main': over(raw('surface'), main) };
+  if (t['t-lq-win']) for (const g of ['bg', 't-glow-1', 't-glow-2', 't-glow-3']) {
+    const win = over(raw('t-lq-win'), g === 'bg' ? bg : over(raw(g), bg));
+    out[`유리 카드 @${g}`] = over(raw('t-lq-card'), win); out[`유리 팝업 @${g}`] = over(raw('t-lq-pop'), win);
+  }
+  return out;
+}
+const KIND_TONES = TONES; // ui/badge-tone.js — 값 → 색 규칙이 쓰는 색 이름
+const BADGES = KIND_TONES.flatMap((n) => [`span.badge.tone.tone-${n}`, `button.badge.files-cat.tone.tone-${n}`]).map(elOf);
+// 종류 뱃지가 셸·색 어디서나 종류 색으로 그려지고 읽히는지 — 문제 목록을 돌려준다
+function toneProblems(rules) {
+  const bad = [];
+  for (const st of STATES) {
+    const t0 = tokensAt(st), backs = backsAt(t0, stName(st));
+    for (const el of BADGES) {
+      const name = [...el.cls].find((c) => c.startsWith('tone-'));
+      const [bgW, fgW, toneW] = ['background', 'color', '--tone'].map((p) => winner(rules, p, el, st));
+      if (!/var\(--tone\)/.test(bgW?.value) || !/var\(--tone\)/.test(fgW?.value)) { bad.push(`${stName(st)} ${el.tag}.${name}: 종류 색이 아니다 — 바탕 ${bgW?.sel} {${bgW?.value}} · 글자 ${fgW?.sel} {${fgW?.value}}`); continue; }
+      const t = { ...t0, tone: toneW?.value };
+      const safe = (v) => { try { return resolve(t, v); } catch { return null; } };
+      const ink = safe(fgW.value), wash = safe(bgW.value);
+      if (!ink || !wash) { bad.push(`${stName(st)} ${name}: 색을 풀 수 없다 — --tone ${toneW?.value}`); continue; }
+      for (const [where, back] of Object.entries(backs)) { const r = ratio(ink.a < 1 ? over(ink, back) : ink, over(wash, back)); if (r < 4.5) bad.push(`${stName(st)} ${name} on ${where} ${r.toFixed(2)}`); }
+    }
+  }
+  return [...new Set(bad)];
+}
+// 이유(검수 #908 MEDIUM): float 셸에서 종류 색이 전부 사라졌다 — 셸 규칙까지 넣고 실제로 이기는 선언으로 잰다(유건 10/9 "뱃지들은 종류별로 색을 다르게").
+test('종류 뱃지: 셸 8종 × 26테마(+시스템 자동 다크)에서 종류 색 규칙이 이기고, 뱃지가 놓이는 면 위 4.5:1', () => {
+  assert.deepEqual(toneProblems(RULES), []);
+  // 시험이 실제로 갈리는지 — 셸이 .badge 색을 덮는 규칙을 하나 넣으면 잡혀야 한다
+  const mutant = cascadeRules([['mutant', ":root[data-shell='float'] .badge.badge.badge { background: var(--tile-1); color: var(--fg); }"]]);
+  const caught = toneProblems([...RULES, ...mutant]);
+  assert.ok(caught.length && caught.every((x) => x.includes('/float')), `변이를 넣으면 float 셸에서만 잡혀야 한다: ${caught.slice(0, 2)}`);
+});
+
+// 이유(검수 #908 MEDIUM, 정한 방향): PDF가 '실패'와, 계약서·드라이브가 '읽음'과, 사업자등록증이 '읽는 중'과 같은 색이라 상태로 읽혔다.
+// 종류 색은 상태 토큰(--ok·--warn·--danger)을 참조하지 않는 종류 전용 토큰(--kind-*, 16진 값)이고, 26테마 어디서나 그 테마의 상태 색과 색조(OKLCH)가 30° 넘게 떨어진다.
+test('종류 색은 상태 색이 아니다 — 상태 토큰을 참조하지 않고, 26테마의 상태 색과 색조가 30° 넘게 떨어진다', () => {
+  const hueGap = (a, b) => { const d = Math.abs(a - b) % 360; return Math.min(d, 360 - d); };
+  const near = [];
+  let minGap = 360;
+  for (const st of STATES.filter((x) => x.shell === 'plain')) {
+    const t = tokensAt(st);
+    for (const name of KIND_TONES) {
+      const tone = winner(RULES, '--tone', elOf(`span.badge.tone.tone-${name}`), st)?.value;
+      assert.equal(tone, `var(--kind-${name})`, `${stName(st)} .tone-${name}`);
+      assert.match(t[`kind-${name}`], /^#[0-9a-f]{6}$/i, `--kind-${name}은 다른 토큰을 참조하지 않는 값`);
+      const [, C, H] = toOklch(resolve(t, tone));
+      assert.ok(C >= 0.06, `${stName(st)} ${name}: 색조가 보일 만큼 채도가 있다 (${C.toFixed(3)})`);
+      for (const k of ['ok', 'warn', 'danger']) {
+        const gap = hueGap(H, toOklch(resolve(t, t[k]))[2]);
+        minGap = Math.min(minGap, gap);
+        if (gap < 30) near.push(`${stName(st)} ${name} ~ ${k} ${gap.toFixed(0)}°`);
+      }
+    }
+  }
+  assert.deepEqual(near, []);
+  assert.ok(minGap >= 30, `가장 가까운 짝 ${minGap.toFixed(0)}°`);
+  for (const r of RULES.filter((x) => x.file === 'base.css' && /\.tone-[a-z]+|--kind-/.test(x.sel + x.decl))) assert.doesNotMatch(r.decl, /var\(--(ok|warn|danger|info)(-soft)?\)/, `${r.sel.slice(0, 60)}: 상태 토큰 참조`);
+});
+
+// 이유(검수 #908 LOW): 린넨 라이트의 상태 뱃지 글자(읽음·읽는 중·실패)가 미색·72% 표면에서 3.2~4.6으로 떨어졌다 — 린넨 라이트만 4.5:1, 다른 테마의 상태 뱃지는 그대로.
+test('상태 뱃지: 린넨 라이트(라이트 고정·시스템 라이트)에서 4.5:1, 다른 테마는 상태 토큰 그대로', () => {
+  const bad = [];
+  for (const st of STATES.filter((x) => (x.theme === 'linen-light' || (x.theme === 'linen' && !x.os.dark)) && x.shell !== 'float')) {
+    const t = tokensAt(st), backs = backsAt(t, stName(st));
+    for (const k of ['ok', 'warn', 'danger']) {
+      const el = elOf(`span.badge.${k}`), ink = resolve(t, winner(RULES, 'color', el, st).value), wash = resolve(t, winner(RULES, 'background', el, st).value);
+      for (const [where, back] of Object.entries(backs)) { const r = ratio(ink, over(wash, back)); if (r < 4.5) bad.push(`${stName(st)} ${k} on ${where} ${r.toFixed(2)}`); }
+    }
+  }
+  assert.deepEqual(bad, []);
+  for (const theme of ['linen-dark', 'graphite-light', 'graphite-dark', 'cream-light', 'mist-dark']) for (const k of ['ok', 'warn', 'danger']) {
+    assert.equal(winner(RULES, 'color', elOf(`span.badge.${k}`), { theme, shell: 'plain', emul: false, os: { dark: false } }).value, `var(--${k})`, `${theme} ${k}`);
+  }
+  assert.equal(winner(RULES, 'color', elOf('span.badge.ok'), { theme: 'linen', shell: 'plain', emul: true, os: { dark: true } }).value, 'var(--ok)', '시스템 다크의 린넨은 그대로');
+});
+
+// 이유(검수 #908 MEDIUM): window 셸의 공간 표시 알약(--t-space-bg = --surface)이 차콜 사이드바 위에 놓여, 72% 표면에서 차콜이 비쳐 '소유자 · 멤버 12명'이 3.69:1로 떨어졌다.
+test('window 셸 공간 표시: 알약 위 이름·보조 글자 4.5:1, 린넨 라이트 알약은 비치지 않는다, 다른 색은 셸 기본값 그대로', () => {
+  const bad = [];
+  for (const st of STATES.filter((x) => x.shell === 'window')) {
+    const t = tokensAt(st), raw = (n) => resolve(t, t[n]);
+    const side = raw('side-bg'), under = side.a < 1 ? over(side, raw('bg')) : side, pillTop = raw('t-space-bg'), pill = over(pillTop, under);
+    for (const k of ['t-space-fg', 't-space-fg-3']) { const r = ratio(raw(k), pill); if (r < 4.5) bad.push(`${stName(st)} --${k} ${r.toFixed(2)}`); }
+    if (/^linen(-light)?$/.test(st.theme) && !st.os.dark) assert.equal(pillTop.a, 1, `${stName(st)}: 알약이 비친다(${t['t-space-bg']})`);
+    else assert.equal(t['t-space-bg'], 'var(--surface)', `${stName(st)}: 셸 기본값 그대로`);
+  }
+  assert.deepEqual(bad, []);
+});
+
+// 이유(검수 #908 LOW): base.css가 '셸 버튼 hover(--card-2)의 면 구분·글자 대비는 시험이 잰다'고 적었는데 재는 시험이 없었다.
+// --card-2는 plain이 아닌 셸에서 버튼에 마우스를 올린 바탕(themes.css .btn:hover) — 린넨 라이트(10/9에 새로 정한 값)에서 카드·캔버스 위 버튼과 면으로 갈리고, 그 위 글자가 읽힌다.
+test('린넨 라이트 hover 면(--card-2): 카드와 면으로 갈리고, 캔버스 위 버튼의 쉬는 모습과 갈리고, 그 위 글자 4.5:1', () => {
+  for (const st of [{ theme: 'linen-light', shell: 'window', emul: false, os: { dark: false } }, { theme: 'linen', shell: 'window', emul: false, os: { dark: false } }]) {
+    const t = tokensAt(st), raw = (n) => resolve(t, t[n]);
+    assert.match(rulesOf(baseCss).find((r) => r.sel.includes("[data-theme='linen-light']") && /--card-2:/.test(r.decl)).decl, /--card-2:/, '린넨 라이트가 --card-2를 정한다');
+    assert.equal(t['card-2'], rulesOf(baseCss).find((r) => r.sel.includes("[data-theme='linen-light']") && /--card-2:/.test(r.decl)).decl.match(/--card-2:\s*([^;]+);/)[1].trim(), '그 값이 이긴다');
+    const bg = raw('bg'), card = over(raw('surface'), bg), hover = raw('card-2'), rest = over(raw('lift'), bg);
+    assert.equal(hover.a, 1, '불투명');
+    assert.ok(Math.abs(okL(hover) - okL(card)) >= EDGE_MIN.button, `카드와 ${(okL(hover) - okL(card)).toFixed(3)}`);
+    assert.ok(Math.abs(okL(hover) - okL(rest)) >= EDGE_MIN.button, `캔버스 위 버튼과 ${(okL(hover) - okL(rest)).toFixed(3)}`);
+    for (const k of ['fg', 'fg-2']) assert.ok(ratio(raw(k), hover) >= 4.5, `${k} on --card-2`);
+  }
+});
+
+// 이유(검수 #908 LOW): 메일 목록 위 도구 줄은 목록에 붙어 있어 밑으로 메일 줄이 지나간다 — 반투명이면 지나가는 글자가 비친다(린넨 라이트 72% 표면에서 28%).
+test('메일 도구 줄(sticky): 셸 8종 × 26테마에서 바탕이 비치지 않는다', () => {
+  const bad = [];
+  for (const st of STATES) {
+    const w = winner(RULES, 'background', elOf('div.mail-tools'), st);
+    const c = resolve(tokensAt(st), w?.value);
+    if (!c || c.a < 1) bad.push(`${stName(st)} ${w?.sel} {${w?.value}} a=${c?.a}`);
+  }
+  assert.deepEqual(bad, []);
 });
