@@ -618,7 +618,7 @@ export function Mail({ id }) {
     if (search) return search.ids.map((x) => mails.find((m) => m.id === x)).filter((m) => m && m.folder !== 'trash' && (pick === 'all' || m.account === pick)).sort(byDate);
     return mails.filter((m) => inView(m, view, pick)).sort(byDate);
   }, [mails, view, pick, search]);
-  const cur = mails.find((m) => m.id === id);
+  const cur = mails.find((m) => m.id === id && m.folder !== 'trash'); // 휴지통 메일 주소(뒤로 가기)는 열지 않는다(재검수 #899)
   useEffect(() => { if (cur?.unread) setMail(cur.id, { unread: false }); }, [cur?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const runSearch = async (raw) => {

@@ -200,6 +200,7 @@ export function toggleStar(m) {
 /** 휴지통(10/9) — 화면에서 먼저 빼고 보낼 목록으로(Gmail trash, 30일 뒤 Gmail이 지운다 — 영구 삭제는 하지 않는다). 되돌리면 원래 메일함으로(untrash).
  *  보낼 목록에 계정·Gmail id를 같이 싣는다 — 휴지통 메일은 동기화가 목록에서 치우므로, 그 뒤 되돌려도 메일을 다시 넣고 보낼 수 있게 */
 export function trashMail(m) {
+  if (m.folder === 'trash') return () => {}; // 이미 휴지통(뒤로 가기로 다시 연 경우) — 휴지통 전 메일함을 덮지 않게(재검수 #899)
   const key = `trash:${m.id}`, op = (on) => [key, { type: 'mail.trash', id: m.id, account: m.account, gid: m.gid, on }];
   // trashedFrom: 휴지통에 있는 동안 나가는 읽음·보관(mail.flag)이 휴지통 전 메일함으로 받은편지함 라벨을 정한다(검수 #899 — 보관 직후 #)
   update((s) => ({ mails: s.mails.map((x) => (x.id === m.id ? { ...x, folder: 'trash', trashedFrom: x.folder } : x)) }), m.account ? [op(true)] : []);
@@ -207,10 +208,9 @@ export function trashMail(m) {
     const { trashedFrom, ...back } = m;
     update((s) => ({ mails: s.mails.some((x) => x.id === m.id) ? s.mails.map((x) => (x.id === m.id ? ({ ...x, folder: m.folder, trashedFrom: undefined }) : x)) : [...s.mails, back] }));
     if (!m.account) return;
-    const waiting = outbox.has(key);
-    if (waiting) outbox.drop(key); // 아직 안 나갔으면 빼기만(보내는 중이면 남는다) — Gmail에 보낼 것이 없다
-    if (waiting && !outbox.has(key)) return;
-    update(() => ({}), [op(false), [`mail:${m.id}`, { type: 'mail.flag', id: m.id, patch: {} }]]); // untrash 뒤 원래 메일함도 다시(Gmail이 휴지통에서 받은편지함 라벨을 지워도 돌아오게)
+    // 늘 untrash — 보낼 목록에 남아 있어도 이미 Gmail에 갔을 수 있다(응답만 잃고 다시 보낼 차례, 재검수 #899). 아직 안 나갔으면 같은 키가 합쳐져 untrash 한 번.
+    // 받은편지함으로 돌아갈 때만 받은편지함 라벨도 다시(Gmail이 휴지통에서 그 라벨을 지워도 돌아오게) — 보관함·보낸편지함은 untrash만으로 같다
+    update(() => ({}), [op(false), ...(m.folder === 'inbox' ? [[`mail:${m.id}`, { type: 'mail.flag', id: m.id, patch: {} }]] : [])]);
   };
 }
 

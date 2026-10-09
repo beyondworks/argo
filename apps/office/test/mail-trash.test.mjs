@@ -40,11 +40,10 @@ test('휴지통: 화면에서 빼고 trash 하나, 되돌리기는 원래 메일
   assert.equal(state.mails[0].folder, 'trash');
   assert.equal(MM.inView(state.mails[0], 'archive', 'all'), false, '어느 메일함에도 안 보인다');
   assert.deepEqual(ops, [['trash:a1:g1', { type: 'mail.trash', id: 'a1:g1', account: 'a1', gid: 'g1', on: true }]]);
-  undo(); // 휴지통은 이미 나갔다(보낼 목록에 없음)
+  undo();
   assert.equal(state.mails[0].folder, 'archive', '보관함에서 지웠으면 보관함으로');
   assert.equal(state.mails[0].trashedFrom, undefined);
-  assert.deepEqual(ops.slice(1), [['trash:a1:g1', { type: 'mail.trash', id: 'a1:g1', account: 'a1', gid: 'g1', on: false }], ['mail:a1:g1', { type: 'mail.flag', id: 'a1:g1', patch: {} }]],
-    'untrash 뒤 원래 메일함도 다시(Gmail이 휴지통에서 받은편지함 라벨을 지워도 돌아오게)');
+  assert.deepEqual(ops.slice(1), [['trash:a1:g1', { type: 'mail.trash', id: 'a1:g1', account: 'a1', gid: 'g1', on: false }]], '보관함으로는 untrash만(받은편지함 라벨과 상관없이 결과가 같다)');
 });
 
 // 이유: 휴지통으로 간 메일은 동기화가 목록에서 치운다 — 그 뒤 되돌리기를 눌러도 메일이 돌아와야 한다(되돌리기가 조용히 아무 일도 안 하면 메일을 잃은 것처럼 보인다).
@@ -99,22 +98,24 @@ test('일괄 휴지통 대상: 초안 빼고 전부', () => {
   assert.deepEqual(bulkTargets([mail({ id: 'd', folder: 'drafts' })], 'drafts').trash, []);
 });
 
-// 이유(검수 #899 LOW): 아직 안 나간 휴지통을 되돌리면 빼기만 한다 — untrash·modify를 헛으로 보내지 않는다(일괄 N통이면 N회 서버 함수·DB 읽기·Gmail 호출).
-test('휴지통: 보내기 전 되돌리기 = 보낼 목록에서 빼기만', () => {
+// 이유(재검수 #899 MEDIUM): 보낼 목록에 있다 ≠ Gmail에 아직 안 갔다(응답만 잃고 다시 보낼 차례인 요청). 되돌리기는 늘 untrash를 보낸다 —
+// 아직 안 나간 휴지통이면 보낼 목록이 같은 키를 합쳐 untrash 한 번만 나간다(Gmail에 없는 휴지통을 되돌려도 결과는 같다).
+test('휴지통: 되돌리기는 보낼 목록에 남아 있어도 untrash를 보낸다(빼지 않는다)', () => {
   const state = { mails: [mail()], mailAccounts: [] }, pending = new Set();
   const { M, ops } = mailWith(state, { pending });
   const undo = M.trashMail(state.mails[0]);
-  pending.add('trash:a1:g1'); // 아직 대기 중
+  pending.add('trash:a1:g1'); // 한 번 보냈다가 일시 오류로 다시 기다리는 중일 수 있다
   undo();
-  assert.equal(ops.length, 1, '휴지통 하나뿐 — 되돌리기는 아무것도 보내지 않는다');
-  assert.equal(pending.has('trash:a1:g1'), false, '보낼 목록에서 뺐다');
-  assert.equal(state.mails[0].folder, 'inbox');
+  assert.equal(pending.has('trash:a1:g1'), true, '보낼 목록에서 빼지 않는다');
+  assert.deepEqual(ops.slice(1).map(([k, p]) => `${k}:${p.on ?? p.type}`), ['trash:a1:g1:false', 'mail:a1:g1:mail.flag'], '받은편지함으로는 untrash 뒤 받은편지함 라벨도');
 });
-test('휴지통: 보내는 중에 되돌리면 untrash를 보낸다(빼지 못했다)', () => {
-  const state = { mails: [mail()], mailAccounts: [] }, pending = new Set(['trash:a1:g1']);
-  const { M, ops } = mailWith(state, { pending, sending: new Set(['trash:a1:g1']) });
+// 이유(재검수 #899 LOW): 뒤로 가기로 휴지통 메일을 다시 열어 #를 누르면 휴지통 전 메일함이 'trash'로 덮였다 — 휴지통 메일은 다시 지우지 않는다.
+test('휴지통: 이미 휴지통인 메일은 다시 지우지 않는다', () => {
+  const state = { mails: [mail({ folder: 'trash', trashedFrom: 'inbox' })], mailAccounts: [] };
+  const { M, ops } = mailWith(state);
   M.trashMail(state.mails[0])();
-  assert.deepEqual(ops.slice(1).map(([k, p]) => `${k}:${p.on ?? p.type}`), ['trash:a1:g1:false', 'mail:a1:g1:mail.flag']);
+  assert.deepEqual(ops, []);
+  assert.deepEqual([state.mails[0].folder, state.mails[0].trashedFrom], ['trash', 'inbox']);
 });
 
 // 이유(검수 #899 MEDIUM): 전송이 끝난 휴지통 메일이 캐시에 남아 ⌘K 검색에 다시 나왔다 — 보낼 목록에 없는 휴지통 메일은 목록 합치기·바뀐 것 받기가 치운다.
