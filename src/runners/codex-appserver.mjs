@@ -97,7 +97,7 @@ export function mapTurnError(errParams) {
 /** app-server 1턴 세션(스트림 지향) — 프로세스와 분리해 가짜 스트림으로 행동 테스트가 가능한 이음매.
     input/output = 서버의 stdin(쓰기)/stdout(읽기) 스트림. judge = makeApprovalJudge 산출.
     반환: { reply }. 실패는 throw(mapTurnError·timedOut). (export: 테스트 이음매) */
-export function runAppServerSession({ input, output, prompt, model = '', unsetModel = '', effort = '', cwd, timeoutMs, judge, signal = null, onSteerable = null }) {
+export function runAppServerSession({ input, output, prompt, model = '', unsetModel = '', effort = '', cwd, timeoutMs, judge, signal = null, onSteerable = null, onEvent = null }) {
   return new Promise((resolveP, rejectP) => {
     let nextId = 1;
     const pending = new Map();
@@ -170,6 +170,8 @@ export function runAppServerSession({ input, output, prompt, model = '', unsetMo
       // 알림
       const item = m.params?.item;
       if (item?.id) items.set(item.id, item); // fileChange 경로 추적(승인 시점 참조)
+      // 작업 과정(turn-trace) — 항목 시작·끝 알림을 그대로 넘긴다(명령·파일 변경·MCP·추론 요약). 표시용이라 실패는 삼킨다.
+      if (onEvent && item && /^item\/(started|completed)$/.test(String(m.method))) { try { onEvent(m); } catch { /* 표시 실패 ≠ 턴 실패 */ } }
       if (m.method === 'item/completed' && item?.type === 'agentMessage' && typeof item.text === 'string') lastAgentText = item.text;
       if (m.method === 'error' && m.params && m.params.willRetry === false) fatal = mapTurnError(m.params);
       if (m.method === 'turn/completed') {
@@ -208,7 +210,7 @@ export function runAppServerSession({ input, output, prompt, model = '', unsetMo
 
 /** app-server 엔진 1턴 — externalExec의 codex 분기와 같은 인자 계약(홈 격리·auth 반입/회수·MCP 주입
     전부 동일 경로 재사용), 실행 방식만 exec→app-server. ARGO_CODEX_ENGINE=appserver일 때만 탄다. */
-export async function execCodexAppServer({ model, cwd, prompt, timeoutMs = 30 * 60_000, /* runners.mjs CLI_CHAT_TURN_TIMEOUT_MS와 같은 값 — 실사용은 externalExec가 항상 명시 전달(순환 임포트 회피로 리터럴) */ cred = null, signal = null, effort = '', workRoots = [], mcpServers = null, lang = 'ko', onSteerable = null }) {
+export async function execCodexAppServer({ model, cwd, prompt, timeoutMs = 30 * 60_000, /* runners.mjs CLI_CHAT_TURN_TIMEOUT_MS와 같은 값 — 실사용은 externalExec가 항상 명시 전달(순환 임포트 회피로 리터럴) */ cred = null, signal = null, effort = '', workRoots = [], mcpServers = null, lang = 'ko', onSteerable = null, onEvent = null }) {
   const dir = await mkdtemp(join(tmpdir(), 'argo-codex-as-'));
   let auth = null, child = null, ownership = null;
   let ownershipUnverified = false;
@@ -247,7 +249,7 @@ export async function execCodexAppServer({ model, cwd, prompt, timeoutMs = 30 * 
     const { reply } = await Promise.race([
       runAppServerSession({
         input: child.stdin, output: child.stdout,
-        prompt, model, unsetModel: codexUnsetModel(cmd), effort, cwd, timeoutMs, signal, onSteerable,
+        prompt, model, unsetModel: codexUnsetModel(cmd), effort, cwd, timeoutMs, signal, onSteerable, onEvent,
         judge: makeApprovalJudge(cwd, { workRoots, lang }),
       }),
       childFail,

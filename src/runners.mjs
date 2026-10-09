@@ -17,6 +17,7 @@ import { exec, exists, scrubServerSecrets } from './runners/shared.mjs';
 import { RUNNERS, RUNNER_AUTH, hostOptInAllowed, isCliRunner, isCliTurn, pickRunner, oauthFormatError, isHiddenRunner, isRetiredRunner } from './runners/catalog.mjs';
 import { codexHome, codexCmd, importCodexAuth, recoverCodexAuth, writeCodexTurnConfig, codexEffortArgs, CODEX_LOCKUP_RE, reprovisionCodexCli, codexOutdatedError, codexPinStale, codexUnsetModel } from './runners/codex.mjs';
 import { execCodexAppServer } from './runners/codex-appserver.mjs';
+import { createCodexJsonReader, humanizeCodexJsonError } from './runners/codex-json.mjs';
 import { geminiCmd, writeGeminiTurnSettings } from './runners/gemini.mjs';
 import { openRoots } from './workroots.mjs'; // 파일 반경 단일 진실(codex·gemini·antigravity 공유)
 
@@ -133,7 +134,13 @@ export function cliTurnFailure(e, runner, elapsedMs, timeoutMs, { stage = 'exec'
     cred = runnerCredEnv 결과({ env, home }) — 회사 자격이 있으면 그 env를 주입(API키/OAuth). 없으면 호스트 로그인.
     caps = 회사 로컬 능력({ fs, browser, shell }) — gemini 도구 게이팅·agy 반경 인자에 반영
     (codex는 2026-08-21부터 샌드박스 없음 — danger-full-access, 유건 지시 "샌드박스 없이"). */
-export async function externalExec({ runner, model, cwd, prompt, timeoutMs = CLI_CHAT_TURN_TIMEOUT_MS, cred = null, signal = null, caps = null, effort = '', workRoots = [], kind = 'chat', mcpServers = null, readOnly = false, onSteerable = null }) {
+/** codex exec을 `--json`(JSONL 이벤트)으로 돌릴지(순수) — 작업 과정 단계(명령·파일·MCP·추론 요약)를 받으려면 JSON 모드가 필요하다.
+    핀 관리본(실측한 버전)일 때만 켠다. PATH 설치본·옛 공용 관리본(버전 모름)은 사람 모드 그대로. ARGO_CODEX_JSON=0이면 끈다(되돌리기 길).
+    (export: 회귀 테스트용) */
+export const codexJsonMode = (cmd, env = process.env) => !!cmd?.pinned && env.ARGO_CODEX_JSON !== '0';
+
+export async function externalExec({ runner, model, cwd, prompt, timeoutMs = CLI_CHAT_TURN_TIMEOUT_MS, cred = null, signal = null, caps = null, effort = '', workRoots = [], kind = 'chat', mcpServers = null, readOnly = false, onSteerable = null, onEvent = null }) {
+  // onEvent — codex 이벤트(exec JSONL·app-server 알림)를 받는 쪽(chat.mjs 작업 과정). 표시용이라 실패해도 턴과 무관하다.
   await ensureCliPath(); // GUI 기동 PATH 보강 — 아래 env 스냅샷(scrubServerSecrets)보다 먼저
   // readOnly — 순수 텍스트 생성 턴(예: 마켓 "이게 뭐예요?" 설명)은 도구가 필요 없다. SDK 경로는 oneshot.mjs의
   // noToolHooks가 도구를 전부 거부한다(allowedTools:[]는 자동 허용 목록일 뿐 도구를 끄지 않는다 — 작업 폴더 안 읽기가
@@ -150,7 +157,7 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = CLI
     // 실패 번역은 exec 경로와 **같은 cliTurnFailure**를 태운다(분리 검수 MEDIUM-4: 안내가 러너
     // 경로별로 갈리지 않게). 한도(limitReached)·중단(aborted)은 이미 정직한 오류라 그대로 통과.
     try {
-      return await execCodexAppServer({ model, cwd, prompt, timeoutMs, cred, signal, effort, workRoots, mcpServers, onSteerable });
+      return await execCodexAppServer({ model, cwd, prompt, timeoutMs, cred, signal, effort, workRoots, mcpServers, onSteerable, onEvent });
     } catch (e) {
       if (e.limitReached || e.aborted) throw e;
       const t = cliTurnFailure(e, 'codex', Date.now() - t0, timeoutMs, { stage: e.stage ?? 'exec', kind });
@@ -179,7 +186,11 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = CLI
       // 모델을 비운 턴은 고정 모델로 — `-m` 없이 돌리면 서버 기본 모델이 바이너리 버전마다 바뀐다(codexUnsetModel, 검수 2026-10-08 HIGH).
       // 강도 인자는 크루가 준 모델로 계산한다(비운 모델 = 옛 사상 max→xhigh) — 0.1.97과 같은 인자에 -m만 더한다.
       const runModel = model || codexUnsetModel(cmd);
-      const run = await exec(cmd.file, [
+      // JSON 모드 — 단계가 stdout JSONL로 흐른다. 경고·실패 문구는 사람 모드와 같은 stderr 줄로 되살려 아래 판정(잠김·apiError·업데이트 안내)이
+      // 종전과 같은 글을 보게 한다(codex-json.mjs 머리 주석 — 실측). 명령 출력이 stdout으로 옮겨 오므로 stdout 버퍼는 사람 모드 stderr가 쓰던 만큼 넉넉히.
+      const json = codexJsonMode(cmd);
+      const reader = json ? createCodexJsonReader({ onEvent }) : null;
+      const proc = exec(cmd.file, [
         ...cmd.args,
         // danger-full-access — 유건 지시 2026-08-21 "샌드박스 없이". workspace-write + 홈 한정
         // writable_roots가 "사용 권한이 없다" 차단의 뿌리였다(윈도우 쓰기 전멸 클러스터 포함).
@@ -188,20 +199,25 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = CLI
         // readOnly면 read-only 샌드박스(순수 생성 — 파일·셸 불가). 기본은 전권(유건 지시 2026-08-21).
         'exec', '--sandbox', readOnly ? 'read-only' : 'danger-full-access', '--skip-git-repo-check',
         ...codexEffortArgs(effort, model), // Model-specific effort; legacy max still maps to xhigh.
+        ...(json ? ['--json'] : []),
         '--output-last-message', out,
         ...(runModel ? ['-m', runModel] : []),
         // 프롬프트는 표준 입력으로('-' = stdin에서 읽음, 핀 0.149.1 `codex exec --help`). 인자로 넘기면 Windows
         // 32,767자·Linux 인자당 128KB를 넘는 턴이 "spawn ENAMETOOLONG"으로 죽었다(사용자 실측 K01).
         '--', '-', // '--'는 유지 — 뒤 인자가 플래그로 해석되지 않게
-      ], { cwd, killTree: true, input: prompt, timeout: timeoutMs, maxBuffer: 32e6, ...(signal ? { signal } : {}), env: { ...scrubServerSecrets(process.env, 'codex'), ...(cred?.env ?? {}), CODEX_HOME } })
+      ], { cwd, killTree: true, input: prompt, timeout: timeoutMs, maxBuffer: json ? 64e6 : 32e6, ...(signal ? { signal } : {}), env: { ...scrubServerSecrets(process.env, 'codex'), ...(cred?.env ?? {}), CODEX_HOME } });
+      if (reader) proc.child?.stdout?.on('data', (d) => reader.push(d)); // execFile의 버퍼링 옆에 듣는 쪽만 하나 더 — 프로세스 관리(시간 초과·중단·트리 종료)는 그대로
+      const run = await proc
         .catch(async (e) => {
+          humanizeCodexJsonError(e, reader); // JSON 모드면 stderr를 사람 모드 글로(아래 판정이 같은 입력을 본다)
           const t = cliTurnFailure(e, 'codex', Date.now() - t0, timeoutMs, { stage: 'exec', kind });
           if (CODEX_LOCKUP_RE.test(String(e?.stderr ?? ''))) t.toolLockup = true; // 실패 턴에도 잠김 신호가 실리면 L2로
           throw codexOutdatedError(t?.message, await codexPinStale()) ?? t; // 낡은 관리본의 모델 거절 → 업데이트 대기 안내(ko/en)
         });
       // 도구 잠김은 "성공" 턴으로 위장한다 — 턴은 완주하고 모델이 "도구가 차단됐다"는 답만 남긴다
       // (2026-08-25 제보의 형태). stderr의 벤더 경고를 보고 잠김 턴을 실패로 승격해 자가치유(chat.mjs)에 넘긴다.
-      if (CODEX_LOCKUP_RE.test(String(run?.stderr ?? ''))) throw codexLockupError();
+      reader?.end();
+      if (CODEX_LOCKUP_RE.test(reader ? reader.stderr(run?.stderr) : String(run?.stderr ?? ''))) throw codexLockupError();
       // readFile까지 번역 — kill 후 last.txt가 없어 생 ENOENT가 사용자에게 노출되던 위장 경로(QA P1-2)
       return (await readFile(out, 'utf8').catch((e) => { throw cliTurnFailure(e, 'codex', Date.now() - t0, timeoutMs, { stage: 'read', kind }); })).trim();
     } finally {
