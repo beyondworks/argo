@@ -45,7 +45,7 @@ export const MAIL_DICT = {
   'mailx.calendar': ['일정', 'Calendar'], 'mailx.calClose': ['일정 닫기', 'Close calendar'], 'mailx.calNext': ['다음 일정', 'Upcoming'], 'mailx.calDay': ['오늘', 'Today'], 'mailx.calMini': ['달력', 'Month'],
   'mailx.star': ['별표', 'Star'], 'mailx.unstar': ['별표 빼기', 'Remove star'],
   'mailx.trash': ['휴지통으로', 'Move to trash'], 'mailx.trashed': ['휴지통으로 옮겼습니다', 'Moved to trash'], 'mailx.trashedN': ['메일 {n}개를 휴지통으로 옮겼습니다', 'Moved {n} emails to trash'],
-  'mail.trash': ['휴지통', 'Trash'], 'mailx.restore': ['휴지통에서 꺼내기', 'Restore'], 'mailx.restored': ['{box}으로 꺼냈습니다', 'Moved to {box}'], 'mailx.restoredN': ['메일 {n}개를 휴지통에서 꺼냈습니다', 'Restored {n} emails'],
+  'mail.trash': ['휴지통', 'Trash'], 'mailx.restore': ['휴지통에서 꺼내기', 'Restore'], 'mailx.restored': ['{box}으로 꺼냈습니다', 'Moved to {box}'], 'mailx.restoredN': ['메일 {n}개를 휴지통에서 꺼냈습니다', 'Restored {n} emails'], 'mailx.restoreBlocked': ['휴지통을 비우는 중이라 꺼낼 수 없습니다', "Can't restore while the trash is being emptied"],
   'mailx.emptyTrash': ['휴지통 비우기', 'Empty trash'], 'mailx.purge': ['영구 삭제', 'Delete forever'], 'mailx.purgePickedTitle': ['고른 메일 영구 삭제', 'Delete selected forever'],
   'mailx.purgeBody': ['아래 메일을 영구 삭제합니다. 되돌릴 수 없습니다.', 'These emails will be deleted forever. This cannot be undone.'],
   'mailx.purgeCount': ['{n}통', '{n}'], 'mailx.purgeTotal': ['모두 {n}통', '{n} in total'], 'mailx.purgeCounting': ['개수 확인 중…', 'Counting…'], 'mailx.purgeUnknown': ['개수를 확인하지 못했습니다', 'Could not count'],

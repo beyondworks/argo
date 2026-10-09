@@ -65,7 +65,7 @@ const unfocus = (e) => { if (e.nativeEvent.detail) e.currentTarget.blur(); };
 const touchy = () => matchMedia('(hover: none)').matches; // 터치 기기 — 고르는 중에는 줄을 눌러도 열지 않고 넣고 뺀다
 /** 휴지통으로 한 통(읽기 화면 단추·# 키·메뉴) — 되돌리기 알림. 열어 둔 메일을 지웠을 때만 목록으로(다른 줄을 메뉴로 지우면 그대로, 검수 #899) */
 /** 휴지통에서 꺼내기 한 통 — 어디로 갔는지 알림(되돌리기 = 다시 휴지통), 열어 둔 메일을 꺼냈을 때만 목록으로 */
-const restoreOne = (m) => { const to = restoredFolder(m), undo = restoreMail(m); showToast(t('mailx.restored', { box: viewName(to) }), { undo }); if (decodeURIComponent(location.pathname).endsWith(`/mail/${m.id}`)) navigate(mailHome()); };
+const restoreOne = (m) => { const to = restoredFolder(m), undo = restoreMail(m); if (!undo) return showToast(t('mailx.restoreBlocked')); showToast(t('mailx.restored', { box: viewName(to) }), { undo }); if (decodeURIComponent(location.pathname).endsWith(`/mail/${m.id}`)) navigate(mailHome()); };
 const trashOne = (m) => { const undo = trashMail(m); showToast(t('mailx.trashed'), { undo }); if (decodeURIComponent(location.pathname).endsWith(`/mail/${m.id}`)) navigate(mailHome()); };
 /** 메일 화면의 메뉴(우클릭·…) — 공용 메일 메뉴(첫 화면·홈 모듈) + 휴지통(메일 화면에서만, 첫 화면 150KB 상한) */
 const menuOf = (m) => (inTrash(m) ? [{ label: t('mailx.restore'), icon: 'refresh', run: () => restoreOne(m) }] : isDraft(m) ? mailMenu(m) : [...mailMenu(m), { sep: true }, { label: t('mailx.trash'), icon: 'trash', shortcut: '#', danger: true, run: () => trashOne(m) }]);
@@ -729,8 +729,8 @@ export function Mail({ id }) {
       b.unstar.length > 0 && { label: t('mailx.unstar'), icon: 'star', run: done(() => b.unstar.forEach((m) => toggleStar(m))) },
       b.archive.length > 0 && { label: t('mail.archiveIt'), icon: 'archive', run: done(() => { const undos = b.archive.map((m) => archiveMail(m.id)); showToast(t('sel.archived', { n: b.archive.length }), { undo: () => undos.forEach((u) => u?.()) }); if (b.archive.some((m) => m.id === id)) navigate(mailHome()); }) },
       box !== 'trash' && { label: t('crew.assign'), icon: 'hand', run: done(() => setUi({ assign: { space: 'me', items: mailItems(list) } })) },
-      b.restore.length > 0 && { label: t('mailx.restore'), icon: 'refresh', run: done(() => { const undos = b.restore.map((m) => restoreMail(m)); showToast(t('mailx.restoredN', { n: b.restore.length }), { undo: () => undos.forEach((u) => u()) }); if (b.restore.some((m) => m.id === id)) navigate(mailHome()); }) },
-      box === 'trash' && b.restore.length > 0 && { label: t('mailx.purge'), icon: 'trash', danger: true, run: () => setPurge({ picked: true, targets: purgeTargets({ picked: b.restore }) }) }, // 고른 메일 영구 삭제(확인 창 — 지운 줄은 목록에서 빠져 선택도 같이 빠진다)
+      b.restore.length > 0 && { label: t('mailx.restore'), icon: 'refresh', run: done(() => { const ok = b.restore.map((m) => [m, restoreMail(m)]).filter(([, u]) => u); if (!ok.length) return showToast(t('mailx.restoreBlocked')); showToast(t('mailx.restoredN', { n: ok.length }), { undo: () => ok.forEach(([, u]) => u()) }); if (ok.some(([m]) => m.id === id)) navigate(mailHome()); }) }, // 비우는 중인 계정 메일은 빠진다(4차 재검수 #905)
+      box === 'trash' && b.restore.length > 0 && { label: t('mailx.purge'), icon: 'trash', danger: true, run: done(() => setPurge({ picked: true, targets: purgeTargets({ picked: b.restore }) })) }, // 고른 메일 영구 삭제(확인 창). 선택은 바로 지운다 — 막대가 창 위에 남아 지우는 중에 꺼내기를 누를 수 있었다(4차 재검수 #905)
       b.trash.length > 0 && { label: t('mailx.trash'), icon: 'trash', danger: true, run: done(() => { const undos = b.trash.map((m) => trashMail(m)); showToast(t('mailx.trashedN', { n: b.trash.length }), { undo: () => undos.forEach((u) => u()) }); if (b.trash.some((m) => m.id === id)) navigate(mailHome()); }) },
     ];
   } });

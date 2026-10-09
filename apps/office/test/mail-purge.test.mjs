@@ -167,8 +167,9 @@ test('비우는 동안 그 계정의 꺼내기는 하지 않는다', async () =>
   globalThis.fetch = async (url, init) => { if (String(url).includes('/purge')) await gate; return realFetch(url, init); };
   const running = M.purgeMail({ account: 'a1' });
   await new Promise((r) => setTimeout(r, 0));
-  M.restoreMail(state.mails[0]);
-  M.restoreMail(state.mails[1]);
+  // 이유(4차 재검수 #905 LOW): 막힌 꺼내기는 null을 돌려준다 — 화면이 '꺼냈습니다' 대신 '비우는 중이라 꺼낼 수 없습니다'를 알린다
+  assert.equal(M.restoreMail(state.mails[0]), null, '막히면 null');
+  assert.equal(typeof M.restoreMail(state.mails[1]), 'function', '다른 계정은 꺼내고 되돌리기를 준다');
   assert.deepEqual(state.mails.map((m) => `${m.id}:${m.folder}`), ['a1.z:trash', 'a2.w:inbox'], '비우는 계정(a1)만 막힌다');
   release(); await running;
   M.restoreMail(state.mails[0]);

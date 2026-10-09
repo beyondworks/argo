@@ -213,11 +213,12 @@ export function trashMail(m) {
  *  늘 untrash — 보낼 목록에 남아 있어도 이미 Gmail에 갔을 수 있다(응답만 잃고 다시 보낼 차례, 재검수 #899). 아직 안 나갔으면 같은 키가 합쳐져 untrash 한 번.
  *  받은편지함으로 갈 때만 받은편지함 라벨도 다시(Gmail이 휴지통에서 그 라벨을 지워도 돌아오게) — 보관함·보낸편지함은 untrash만으로 같다 */
 function untrashTo(m, to) {
-  if (purging.has(m.account)) return; // 그 계정을 비우는 중 — 꺼낸 메일은 keep에 없어 같이 지워진다(재검수 #905). 화면은 지우는 동안 되돌리기 알림을 치운다
+  if (purging.has(m.account)) return false; // 그 계정을 비우는 중 — 꺼낸 메일은 keep에 없어 같이 지워진다(재검수 #905). 화면은 지우는 동안 되돌리기 알림을 치운다
   const back = { ...m, folder: to, trashedFrom: undefined };
   update((s) => ({ mails: s.mails.some((x) => x.id === m.id) ? s.mails.map((x) => (x.id === m.id ? { ...x, folder: to, trashedFrom: undefined } : x)) : [...s.mails, back] }));
-  if (!m.account) return;
+  if (!m.account) return true;
   update(() => ({}), [[`trash:${m.id}`, { type: 'mail.trash', id: m.id, account: m.account, gid: m.gid, on: false }], ...(to === 'inbox' ? [[`mail:${m.id}`, { type: 'mail.flag', id: m.id, patch: {} }]] : [])]);
+  return true;
 }
 
 /** 휴지통 개수(10/9 비우기 확인 창) — 계정마다 { account, total } 또는 { account, error }. 예시 모드는 이 기기의 예시 휴지통 */
@@ -268,11 +269,11 @@ export function restoredFolder(m) {
   const l = m.labels ?? [];
   return m.trashedFrom ?? (l.includes('DRAFT') ? 'drafts' : l.includes('INBOX') ? 'inbox' : l.includes('SENT') ? 'sent' : 'archive');
 }
-/** 휴지통에서 꺼내기 — 되돌리면 다시 휴지통 */
+/** 휴지통에서 꺼내기 — 되돌리면 다시 휴지통. 그 계정을 비우는 중이라 못 꺼냈으면 null(화면이 알린다, 4차 재검수 #905) */
 export function restoreMail(m) {
   if (m.folder !== 'trash') return () => {};
   const to = restoredFolder(m);
-  untrashTo(m, to);
+  if (untrashTo(m, to) === false) return null;
   return () => trashMail({ ...m, folder: to, trashedFrom: undefined });
 }
 
