@@ -44,6 +44,7 @@ export const MAIL_DICT = {
   'mailx.more': ['더 보기', 'Load more'], 'mailx.loadingMore': ['불러오는 중…', 'Loading…'],
   'mailx.calendar': ['일정', 'Calendar'], 'mailx.calClose': ['일정 닫기', 'Close calendar'], 'mailx.calNext': ['다음 일정', 'Upcoming'], 'mailx.calDay': ['오늘', 'Today'], 'mailx.calMini': ['달력', 'Month'],
   'mailx.star': ['별표', 'Star'], 'mailx.unstar': ['별표 빼기', 'Remove star'],
+  'mailx.selectAll': ['전체 선택', 'Select all'], 'mailx.selectNone': ['선택 해제', 'Clear selection'], 'mailx.pickOne': ['선택: {subject}', 'Select: {subject}'],
   // 읽기
   'mailx.noSubject': ['(제목 없음)', '(no subject)'], 'mailx.from': ['보낸 사람', 'From'], 'mailx.to': ['받는 사람', 'To'], 'mailx.cc': ['참조', 'Cc'],
   'mailx.replyAll': ['전체 회신', 'Reply all'], 'mailx.retry': ['다시 시도', 'Try again'],

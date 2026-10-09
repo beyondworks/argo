@@ -40,6 +40,14 @@
 .mail-item:focus-within .mail-star { opacity: 1; }
 @media (hover: hover) { .mail-item:hover .mail-star { opacity: 1; } .mail-star:hover { background: var(--card-2); color: var(--fg); } }
 @media (hover: none) { .mail-star { opacity: 1; } }
+/* 고르기(유건 10/9) — 아바타 자리의 체크박스. 마우스를 올리거나 하나라도 고르면 보인다. 터치는 보이지 않아도 아바타를 누르면 고른다(Gmail 관례) */
+.mail-check { position: absolute; z-index: 1; left: 16px; top: 12px; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; cursor: pointer; opacity: 0; }
+.mail-check input, .mail-check-all input { width: 16px; height: 16px; margin: 0; accent-color: var(--primary); cursor: pointer; }
+.mail-list.picking .mail-check, .mail-check:focus-within { opacity: 1; }
+.mail-list.picking .mail-av, .mail-item:has(.mail-check:focus-within) .mail-av { visibility: hidden; }
+@media (hover: hover) { .mail-item:hover .mail-check { opacity: 1; } .mail-item:hover .mail-av { visibility: hidden; } }
+.mail-check-all { display: inline-grid; place-items: center; flex: none; width: 26px; height: 32px; cursor: pointer; }
+@media (max-width: 1100px) { .mail-list:not(.picking) .mail-check-all { display: none; } } /* 메일함 칸이 숨는 폭·폰은 고르는 중에만 — 평소에는 검색칸 폭을 지킨다 */
 
 /* 읽기 — 보낸 사람·받는 사람·참조·정확한 날짜 */
 .mail-meta { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: start; }

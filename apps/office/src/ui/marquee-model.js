@@ -12,6 +12,14 @@ export const combine = (base, keys, mode) => {
 export const clampRect = (r, b) => ({ l: Math.max(r.l, b.left), t: Math.max(r.t, b.top), r: Math.min(r.r, b.right), b: Math.min(r.b, b.bottom) });
 /** ⇧ 클릭 범위 — 화면 순서 keys에서 from부터 to까지(어느 쪽이 먼저든) */
 export const rangeKeys = (keys, from, to) => { const a = keys.indexOf(from), b = keys.indexOf(to); return a < 0 || b < 0 ? [to] : keys.slice(Math.min(a, b), Math.max(a, b) + 1); };
+/** 체크박스로 고르기(10/9, 메일) — ⇧면 anchor부터 key까지를 key가 바뀔 상태로(Gmail 관례), 아니면 key 하나만 넣고 뺀다 */
+export const checkKeys = (sel, key, { keys, anchor, shift = false }) => {
+  const on = !sel.has(key), next = new Set(sel);
+  for (const k of shift && anchor != null ? rangeKeys(keys, anchor, key) : [key]) if (on) next.add(k); else next.delete(k);
+  return next;
+};
+/** 전체 선택 칸 — 지금 목록 keys 기준 'all' | 'some' | 'none' */
+export const checkState = (sel, keys) => { const n = keys.filter((k) => sel.has(k)).length; return !n ? 'none' : n === keys.length ? 'all' : 'some'; };
 export const sameSet = (a, b) => a.size === b.size && [...a].every((k) => b.has(k));
 /** 두 점이 만드는 사각형 */
 export const rectOf = (a, b) => ({ l: Math.min(a.x, b.x), t: Math.min(a.y, b.y), r: Math.max(a.x, b.x), b: Math.max(a.y, b.y) });
