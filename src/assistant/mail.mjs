@@ -20,7 +20,7 @@ import { STATE_DIR } from './state.mjs';
 import { dateIn, minuteIn, inQuiet } from './rules.mjs';
 import { outsideOf } from '../gateway/office-audience.mjs';
 import { clientMsgId, personalRoom, MSG_MAX } from './deliver.mjs';
-import { classifyMail, needsThread, securityDayKey, scrubLine, domainOf } from './mail-classify.mjs';
+import { classifyMail, needsThread, securityDayKey, scrubLine, domainOf, FIELD_CAP, ADDR_CAP } from './mail-classify.mjs';
 import { mailAccounts, syncMail, listWindow, readThread } from './mail-source.mjs';
 import { assistantUsageToday, prepPlan, runPrep } from './mail-prep.mjs';
 import { composeReply, composeBatch, composeSummary, topicOf, mt } from './mail-text.mjs';
@@ -35,6 +35,7 @@ export const ACCOUNTS_TTL_MS = 6 * 3_600_000;
 export const EVENING_MAX = 200, SHADOW_MAX = 500, HELD_EVERY_MS = 3_600_000;
 
 const MIN = 60_000;
+const RUNNER_NAMES = { codex: 'Codex', gemini: 'Gemini', antigravity: 'Antigravity', claude: 'Claude' };
 /** 확인 간격(순수, 설계 6.2 시작값 M26) — 조용한 시간 0(확인 안 함), 평일 09–19시 10분, 평일 그 밖·주말 30분. 요일·시각은 비서 시간대. */
 export function mailIntervalMs(now, cfg) {
   if (inQuiet(now, cfg)) return 0;
@@ -83,8 +84,8 @@ export const mailDeps = {
   writeState: (cid, s) => writeJsonAtomic(mailStateFile(cid), JSON.stringify(s)),
   accounts: mailAccounts,
   sync: (entries) => syncMail(entries),
-  list: (account, from, to, page) => listWindow(account, from, to, page),
-  thread: (account, threadId) => readThread(account, threadId),
+  list: (account, from, to, page, access) => listWindow(account, from, to, page, access),
+  thread: (account, threadId, access) => readThread(account, threadId, access),
   customers: async (c) => {
     const orgs = ((await c.db.myOrgIds(c.uid).catch(() => [])) ?? []).slice(0, 5);
     const out = [];
@@ -99,6 +100,13 @@ export const mailDeps = {
 
 const mems = new Map(); // 회사별 — { s, sig, accounts: { at, list }, customers: { date, match }, room }
 const keyOf = (m) => `mail:${m.account}:${m.gid}`;
+const str = (v, n) => String(v ?? '').slice(0, n);
+/** 오피스가 준 메일 메타(보낸 사람이 마음대로 만드는 칸)를 받는 자리에서 자른다 — 뒤의 정규식·글 만들기·상태 파일이 긴 값을 다루지 않게(10/9 보안 검토 ReDoS). */
+export const intake = (x) => ({ id: str(x.id, 300), gid: str(x.gid, 200), account: str(x.account, 64), threadId: x.threadId == null ? null : str(x.threadId, 200),
+  from: str(x.from, 200), addr: str(x.addr, ADDR_CAP), to: str(x.to, FIELD_CAP), subject: str(x.subject, FIELD_CAP), snippet: str(x.snippet, FIELD_CAP), at: str(x.at, 40),
+  labels: Array.isArray(x.labels) ? x.labels.slice(0, 30).map((l) => str(l, 60)) : [],
+  ...(x.auth && typeof x.auth === 'object' ? { auth: { dmarc: str(x.auth.dmarc, 20), from: str(x.auth.from, 253) } } : {}) });
+const intakeThread = (t) => (Array.isArray(t) ? t.slice(-10).map((y) => ({ gid: str(y.gid, 200), from: str(y.from, 200), addr: str(y.addr, ADDR_CAP), at: str(y.at, 40), sent: y.sent === true, text: str(y.text, 1_500) })) : t);
 const PUBLIC = new Set(['gmail.com', 'naver.com', 'daum.net', 'hanmail.net', 'kakao.com', 'nate.com', 'outlook.com', 'hotmail.com', 'live.com', 'icloud.com', 'me.com', 'yahoo.com', 'yahoo.co.kr', 'proton.me', 'protonmail.com']);
 /** 거래처 주소 판정(순수) — 이메일이 같거나, 공용 메일이 아닌 같은 회사 도메인(오피스 성과 기록 customerMatcher와 같은 규칙). */
 export function customerMatch(list) {
@@ -230,7 +238,7 @@ export async function runMailStep({ cid, cfg, company, st = null, c, now = Date.
     if (r.primed || !a.hist) { a.hist = hist; a.base = Math.max(a.base, cfg.enabledAt ?? 0, now); continue; } // 처음 — 지금부터(켠 시각 전 메일은 알리지 않는다)
     a.hist = hist;
     if (r.reset) a.fill = { from: Math.max(0, a.base - OVERLAP_MS), to: now, page: null };
-    for (const x of r.changed ?? []) fresh.push(x);
+    for (const x of (r.changed ?? []).slice(0, 100)) if (x && typeof x === 'object') fresh.push(intake(x));
   }
   // 메울 구간 — 한 차례 3번까지
   let reads = 0;
@@ -238,8 +246,9 @@ export async function runMailStep({ cid, cfg, company, st = null, c, now = Date.
     while (a.fill && reads < FILL_READS && usable.some((u) => u.id === id)) {
       reads += 1;
       try {
-        const { items, next } = await deps.list(id, a.fill.from, a.fill.to, a.fill.page);
-        fresh.push(...items);
+        const { items, next, access } = await deps.list(id, a.fill.from, a.fill.to, a.fill.page, a.access);
+        if (access) a.access = access;
+        fresh.push(...items.slice(0, 100).filter((x) => x && typeof x === 'object').map(intake));
         a.fill = next ? { ...a.fill, page: next } : null;
       } catch (e) { anyErr = e?.code ?? 'server'; if (e?.code === 'rate_limited') a.retryAt = now + num(e.retryAfter) * 1000; break; }
     }
@@ -275,7 +284,11 @@ export async function runMailStep({ cid, cfg, company, st = null, c, now = Date.
     let thread;
     if (!outdated && threadReads < THREAD_READS && x.threadId && needsThread(x, base)) {
       threadReads += 1;
-      try { thread = await deps.thread(x.account, x.threadId); } catch (e) { if (e?.code === 'office_outdated') outdated = true; else anyErr = e?.code ?? 'server'; }
+      try {
+        const t = await deps.thread(x.account, x.threadId, s.accounts[x.account]?.access ?? null);
+        if (t?.access) s.accounts[x.account].access = t.access;
+        thread = intakeThread(Array.isArray(t) ? t : t?.messages);
+      } catch (e) { if (e?.code === 'office_outdated') outdated = true; else anyErr = e?.code ?? 'server'; }
     }
     const cls = classifyMail(x, { ...base, thread });
     if (cls.cat === 'security') { const dk = securityDayKey(x, now, cfg.tz); if (s.seen[dk]) cls.lane = 'drop'; else s.seen[dk] = now; } // 같은 주소 하루 1건
@@ -343,18 +356,19 @@ async function replyOb(ctx, i, { lang, ownerWs }) {
   const inChars = mails.reduce((n, y) => n + String(y.text ?? '').length, 0) + 3_000;
   const used = await deps.usage(ownerWs, { tz: cfg.tz, now }).catch(() => ({ eq: Infinity, preps: Infinity })); // 셈을 못 하면 쓰지 않는 쪽
   const plan = prepPlan({ used: used.eq, preps: used.preps, inChars });
-  let prep = null, noPrep = plan.prep ? null : plan.why === 'daily' ? 'daily' : 'cap';
+  let prep = null, noPrep = plan.prep ? null : plan.why === 'daily' ? 'daily' : 'cap', runnerName = '';
   if (plan.prep) {
     const r = await deps.prep({ wsId: cid, agent: cfg.agent, lang, tz: cfg.tz, now, ownerAddrs: (m.accounts?.list ?? []).map((a) => a.address), target: x, mails, brief: plan.brief, ox: outsideOf('mail', lang, deps.nonce?.()) })
       .catch(() => ({ prep: null, why: 'failed' }));
     prep = r.prep;
-    if (!prep) noPrep = r.why === 'free_model' ? 'free' : r.why === 'no_runner' ? 'runner' : 'failed';
+    if (!prep) noPrep = r.why === 'free_model' ? 'free' : r.why === 'no_runner' ? 'runner' : r.why === 'cli_tools' ? 'cli' : 'failed';
+    runnerName = r.runner ?? '';
   }
   const briefName = prep?.brief ? mt('brief.file', lang, { topic: topicOf(x.subject, lang) }) : null;
   const keys = [i.key];
   return {
     kind: 'mail_reply', basis: `mailreply:${i.key}`, keys, instant: true,
-    body: composeReply(x, { prep, noPrep, briefName, briefSkipped: !!prep && !plan.brief, lang, now, tz: cfg.tz }),
+    body: composeReply(x, { prep, noPrep, briefName, briefSkipped: !!prep && !plan.brief, runnerName: RUNNER_NAMES[runnerName] ?? runnerName, lang, now, tz: cfg.tz }),
     ...(briefName ? { brief: { name: briefName, text: prep.brief } } : {}),
     meta: { v: 1, kind: 'mail_reply', keys, outside: true, ref: [mailRef(x)], prep: prep ? (prep.brief ? 'brief' : 'draft') : noPrep,
       items: [{ key: i.key, source: 'mail', cat: 'reply', account: x.account, gid: x.gid, threadId: x.threadId ?? null, at: x.at }] },

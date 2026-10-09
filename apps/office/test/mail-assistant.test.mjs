@@ -6,7 +6,7 @@ import test, { afterEach, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { seal, unseal } from '../server/seal.js';
-import { threadView, stripQuoted } from '../server/gmail.js';
+import { threadView, stripQuoted, authOf, envelope } from '../server/gmail.js';
 import { GET, POST } from '../api/mail/[op].js';
 
 const realFetch = globalThis.fetch;
@@ -138,4 +138,47 @@ test('thread: 메일마다 1,500자·합쳐 6,000자(최근 메일부터)·최�
   rows.a = row('a'); gmail = () => ok({ messages: [] });
   assert.equal((await post('thread', { account: 'a', id: '../x' })).status, 400);
   assert.equal((await GET(new Request('http://x/api/mail/thread?account=a&id=T1', { headers: { authorization: 'Bearer jwt' } }))).status, 405);
+});
+
+test('인증 결과(authOf) — 첫 Authentication-Results가 mx.google.com의 것일 때만, dmarc 결과와 DMARC가 본 머리 From 도메인 · 보낸 쪽이 심은 머리는 보지 않는다', () => {
+  const m = (...vals) => ({ payload: { headers: vals.map((value) => ({ name: 'Authentication-Results', value })) } });
+  const gmailAR = 'mx.google.com;\r\n       dkim=pass header.i=@accounts.google.com header.s=20230601 header.b=abc;\r\n       spf=pass (google.com: domain of x designates y) smtp.mailfrom=x@accounts.google.com;\r\n       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=accounts.google.com';
+  assert.deepEqual(authOf(m(gmailAR)), { dmarc: 'pass', from: 'accounts.google.com' });
+  assert.deepEqual(authOf(m(gmailAR.replace('dmarc=pass', 'dmarc=fail'))), { dmarc: 'fail', from: 'accounts.google.com' });
+  assert.deepEqual(authOf(m('mx.google.com; spf=pass')), { dmarc: 'none', from: '' });
+  assert.equal(authOf(m('evil.example; dmarc=pass header.from=google.com')), null, '다른 서버가 쓴 결과는 보지 않는다');
+  assert.deepEqual(authOf(m(gmailAR.replace('dmarc=pass', 'dmarc=fail'), 'mx.google.com; dmarc=pass header.from=google.com')), { dmarc: 'fail', from: 'accounts.google.com' }, '보낸 쪽이 아래에 심은 머리는 무시 — 첫 것(Gmail)만');
+  assert.equal(authOf({ payload: { headers: [] } }), null);
+  assert.deepEqual(authOf(m('mx.google.com; dmarc=pass header.from=<evil>')), { dmarc: 'pass', from: '' }, '도메인 모양이 아니면 비운다');
+  const e = envelope({ id: 'g1', threadId: 't', labelIds: ['INBOX'], internalDate: '1790000000000', payload: { headers: [{ name: 'From', value: 'Google <no-reply@accounts.google.com>' }, { name: 'Authentication-Results', value: gmailAR }] } }, 'acc');
+  assert.deepEqual(e.auth, { dmarc: 'pass', from: 'accounts.google.com' });
+  assert.equal(envelope({ id: 'g2', payload: { headers: [] } }, 'acc').auth, undefined, '없으면 칸이 없다(화면 목록 모양 그대로)');
+});
+
+test('sync 메타 읽기는 Authentication-Results 머리를 같은 호출에 함께 청한다(호출 수 그대로)', async () => {
+  rows.a = row('a');
+  gmail = (c) => (c.path === '/history' ? ok({ historyId: '120', history: [{ messagesAdded: [{ message: { id: 'n1', labelIds: ['INBOX'] } }] }] })
+    : c.path === '/messages/n1' ? ok({ id: 'n1', threadId: 't', labelIds: ['INBOX'], internalDate: '1790000000000', payload: { headers: [{ name: 'From', value: 'G <a@google.com>' }, { name: 'Authentication-Results', value: 'mx.google.com; dmarc=pass header.from=google.com' }] } })
+    : ok({}));
+  const r = await post('sync', { accounts: [{ account: 'a', since: '100', access: null }] });
+  const meta = gcalls.find((c) => c.path === '/messages/n1');
+  assert.ok(meta.q.getAll('metadataHeaders').includes('Authentication-Results'));
+  assert.equal(gcalls.length, 2, 'history 1 + 메타 1 — 머리를 더 청해도 호출은 늘지 않는다');
+  assert.deepEqual(r.body.results[0].changed[0].auth, { dmarc: 'pass', from: 'google.com' });
+});
+
+test('N15. 비서의 메울 구간 읽기(list)·스레드 읽기(thread)도 봉인 접근 토큰을 들고 오면 갱신해도 DB 쓰기 0 · 들고 오지 않는 화면 호출은 종전 그대로', async () => {
+  rows.a = row('a', { accessExpires: Date.now() - 1000 });
+  gmail = (c) => (c.path === '/messages' ? ok({ messages: [] }) : c.path === '/threads/T1' ? ok({ id: 'T1', messages: [msg('m1', { text: 'hi' })] }) : ok({}));
+  const l = await post('list', { account: 'a', q: 'in:inbox after:1 before:2', access: null });
+  const t = await post('thread', { account: 'a', id: 'T1', access: null });
+  assert.deepEqual(writes(), [], 'list·thread 왕복은 DB 쓰기 0');
+  assert.equal(unseal(KEY, l.body.access.sealed, aad('a')), 'NEWACCESS');
+  assert.equal(unseal(KEY, t.body.access.sealed, aad('a')), 'NEWACCESS');
+  tokenCalls = 0;
+  await post('thread', { account: 'a', id: 'T1', access: t.body.access });
+  assert.equal(tokenCalls, 0, '들고 온 값이 살아 있으면 갱신 0');
+  const screen = await post('list', { account: 'a', folder: 'inbox' });
+  assert.equal(screen.body.access, undefined);
+  assert.deepEqual(writes().map((w) => w.fn), ['office_mail_token_put'], '화면 호출은 종전대로 갱신을 DB에');
 });

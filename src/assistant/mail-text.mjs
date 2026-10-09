@@ -19,7 +19,7 @@ export const MAIL_TEXT = Object.freeze({
   'line.subject': ['· 제목: {v}', '· Subject: {v}'],
   'line.preview': ['· 미리보기: {v}', '· Preview: {v}'],
   'prep.title': ['준비한 것', 'Prepared'],
-  'prep.brief': ['· 자료 정리: 첨부한 "{name}"을 보세요', '· Brief: see the attached "{name}"'],
+  'prep.brief': ['· 자료 정리: 첨부 파일 "{name}"', '· Brief: attached file "{name}"'],
   'prep.briefSkip': ['· 자료 정리는 오늘 비서 AI 한도에 가까워 만들지 않았어요 — 필요하면 "자료 정리해 줘"라고 답해 주세요.', "· I skipped the brief because today's assistant AI limit is close — reply \"make a brief\" if you need one."],
   'prep.draft': ['· 회신 초안(메일함에는 넣지 않았어요)', '· Reply draft (not saved to your mailbox)'],
   'prep.newLink': ['※ 초안에 메일에 없던 링크·번호가 있어요 — 쓰기 전에 꼭 확인하세요.', '※ The draft has a link or number that was not in the mail — check it before using.'],
@@ -29,6 +29,7 @@ export const MAIL_TEXT = Object.freeze({
   'noprep.daily': ['오늘은 초안을 이미 세 번 만들어 이번에는 만들지 않았어요 — 필요하면 "초안 만들어 줘"라고 답해 주세요.', 'I already drafted three replies today, so not this one — reply "draft it" if you need one.'],
   'noprep.failed': ['초안을 만들지 못했어요(AI가 제때 답하지 않았어요) — 필요하면 "초안 만들어 줘"라고 답해 주세요.', 'I couldn\'t draft a reply (the AI did not answer in time) — reply "draft it" if you need one.'],
   'noprep.free': ['무료 AI 모델이라 메일 내용을 AI에게 보내지 않았어요 — 초안이 필요하면 "초안 만들어 줘"라고 답해 주세요.', 'This agent uses a free AI model, so mail text was not sent to the AI — reply "draft it" if you need a draft.'],
+  'noprep.cli': ['이 에이전트의 AI({runner})는 파일·명령 도구를 끈 채 부를 수 없어 메일 글을 보내지 않았어요 — 초안이 필요하면 "초안 만들어 줘"라고 답해 주세요.', "This agent's AI ({runner}) can't be called with file and command tools turned off, so mail text was not sent to it — reply \"draft it\" if you need a draft."],
   'noprep.runner': ['이 에이전트의 AI 연결이 없어 초안을 만들지 못했어요 — 설정 › AI 연결을 확인해 주세요.', "This agent has no working AI connection, so I couldn't draft — check Settings › AI connections."],
   'noprep.held': ['오늘 즉시 알림이 많아 초안 없이 목록으로만 보내요.', 'Many instant alerts today, so this comes as a plain list.'],
   'item.security': ['{i}. 보안 알림 — {sender} ({addr}) · {time}\n   "{subject}"\n   본인이 한 일이 맞나요? 아니라면 비밀번호부터 바꾸세요. 메일의 링크 말고 그 서비스에 직접 들어가 확인하세요.',
@@ -41,7 +42,7 @@ export const MAIL_TEXT = Object.freeze({
   'sum.title': ['메일', 'Mail'],
   'sum.other': ['· 그 밖의 새 메일 {n}건({who})', '· {n} other new mails ({who})'],
   'sum.news': ['· 뉴스레터 {n}건({who})', '· {n} newsletters ({who})'],
-  'sum.phish': ['· 보안 알림처럼 보이는 메일 — {addr}(확인된 서비스 주소가 아니에요). 메일의 링크는 누르지 마세요.', "· Looks like a security alert — {addr} (not a known service address). Don't use links in it."],
+  'sum.phish': ['· 보안 알림처럼 보이는 메일 — 보낸 주소 {addr}. 보낸 곳을 확인하지 못했어요 — 메일의 링크는 누르지 마세요.', "· Looks like a security alert — sent from {addr}. The sender could not be verified — don't use links in it."],
   'sum.due': ['· 기한 안내 — {sender} · "{subject}"{date}', '· Deadline notice — {sender} · "{subject}"{date}'],
   'sum.held': ['· 즉시 알림 한도로 모아 둔 메일 — {sender} · "{subject}"', '· Held by the daily alert limit — {sender} · "{subject}"'],
   'sum.more': ['  …외 {n}건', '  …and {n} more'],
@@ -59,10 +60,25 @@ export function mt(key, lang = 'ko', vars = {}) {
   return s.replace(/\{(\w+)\}/g, (m, k) => (vars[k] ?? m));
 }
 
-const one = (s, n) => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
+const one = (s, n) => String(s ?? '').slice(0, 4 * n).replace(/\s+/g, ' ').trim().slice(0, n);
+// 보이지 않는 글자·방향 바꾸는 글자·제어 문자(U+200B~U+200F 제로폭·LRM/RLM, U+202A~U+202E·U+2066~U+2069 방향, U+00AD, U+FEFF, U+2060, C0·C1 제어)
+const HIDDEN_RE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g;
+// 링크가 될 수 있는 낱말 — 메신저는 에이전트 글을 마크다운(marked, GFM 자동 링크)으로 그려 낱말 안 어디에 있든 http(s)://·www.를 누를 수 있는 링크로 만든다
+const LINKY_RE = /https?:\/\/|www\.|\]\(/i;
+/** 메일 쪽이 쓴 글을 알림 본문에 싣기 전에(순수, 10/9 보안 검토) — 숨은 글자를 지우고, 링크가 될 낱말은 '(링크)'로(비서 목소리로 남의 링크를 건네지 않게),
+    낱말 앞 @는 전각 ＠로(멘션처럼 보이거나 읽히지 않게), 줄 앞 /는 전각 ／로(명령처럼 보이지 않게). 한 줄로, n자까지. */
+export function display(s, n) {
+  return String(s ?? '').slice(0, 4 * n).replace(HIDDEN_RE, '').split(/\s+/).filter(Boolean)
+    .map((w) => (LINKY_RE.test(w) ? '(링크)' : w.replace(/^@/, '＠').replace(/^\//, '／')))
+    .join(' ').slice(0, n);
+}
+/** 초안처럼 줄을 살려야 하는 글 — 숨은 글자를 지우고, 링크가 될 낱말은 `인라인 코드`로 감싸 누를 수 없게(글자는 그대로 — 쓰기 전에 사람이 본다.
+    메일에 없던 링크는 parsePrep이 "새 링크·번호" 표시도 단다). 백틱은 'ˋ'로 바꿔 감싼 코드가 깨지지 않게. */
+export const plainLines = (s, n) => String(s ?? '').slice(0, n).replace(/\r\n/g, '\n').replace(HIDDEN_RE, '').replace(/`/g, 'ˋ')
+  .split('\n').map((line) => line.split(/( +)/).map((w) => (LINKY_RE.test(w) ? `\`${w}\`` : w)).join('')).join('\n');
 /** 보낸 사람 표시 — 이름(30자), 이름이 없거나 주소면 주소. */
-export const senderOf = (m) => one(m.from && m.from !== m.addr ? m.from : m.addr, 30) || '?';
-const subjectOf = (m, lang) => one(m.subject, 80) || mt('untitled', lang);
+export const senderOf = (m) => display(m.from && m.from !== m.addr ? m.from : m.addr, 30) || '?';
+const subjectOf = (m, lang) => display(m.subject, 80) || mt('untitled', lang);
 /** 받은 시각 — 오늘이면 HH:MM, 아니면 M/D HH:MM(회사 시간대). */
 export function arrivedAt(ms, { now, tz }) {
   const t = hhmmIn(ms, tz);
@@ -71,15 +87,16 @@ export function arrivedAt(ms, { now, tz }) {
 
 /** 자료 정리 파일 이름의 주제(순수) — 제목에서 Re:·Fwd:·회신: 머리를 떼고 URL·메일 주소·6자리 이상 숫자를 지우고 40자, 파일 이름에 못 쓰는 글자는 뺀다(설계 4.4-c 주제 줄). */
 export function topicOf(subject, lang = 'ko') {
-  let s = String(subject ?? '');
+  let s = String(subject ?? '').slice(0, 300).replace(HIDDEN_RE, ''); // 입력을 먼저 자르고 낱말 단위로(예전 주소 패턴은 긴 줄에서 제곱 이상 — 10/9 보안 검토 ReDoS)
   for (let i = 0; i < 4; i++) s = s.replace(/^\s*(?:re|fw|fwd|aw|sv|답장|회신|전달)\s*[:：]\s*/i, '');
-  s = s.replace(/https?:\/\/\S+|www\.\S+/gi, '').replace(/\S+@\S+\.\S+/g, '').replace(/\d{6,}/g, '').replace(/[\\/:*?"<>|\u0000-\u001f]/g, ' ');
+  s = s.split(/\s+/).filter((w) => w && !LINKY_RE.test(w) && !w.includes('@')).join(' ')
+    .replace(/\d{6,}/g, '').replace(/[\\/:*?"<>|]/g, ' ');
   return one(s, 40) || (lang === 'en' ? 'Mail' : '메일');
 }
 
 const dueLine = (d, lang) => {
   if (!d?.quote) return null;
-  const q = one(d.quote, 160);
+  const q = display(d.quote, 160);
   if (typeof d.days !== 'number') return mt('line.due.only', lang, { q });
   if (d.days < 0) return mt('line.due.past', lang, { q, n: -d.days });
   if (d.days === 0) return mt('line.due.today', lang, { q });
@@ -87,26 +104,26 @@ const dueLine = (d, lang) => {
 };
 
 /** 답장이 필요한 메일 한 통의 글(순수) — prep(검증된 준비) 또는 noPrep(준비하지 않은 이유 코드). briefName = 첨부한 자료 정리 파일 이름(없으면 null). */
-export function composeReply(m, { prep = null, noPrep = null, briefName = null, briefSkipped = false, lang = 'ko', now, tz }) {
+export function composeReply(m, { prep = null, noPrep = null, briefName = null, briefSkipped = false, runnerName = '', lang = 'ko', now, tz }) {
   const head = mt('head.reply', lang, { from: senderOf(m), time: arrivedAt(Date.parse(m.at), { now, tz }) });
   const out = [head];
   if (prep) {
-    out.push(...prep.situation);
-    if (prep.ask) out.push(mt('line.ask', lang, { v: prep.ask }));
+    out.push(...prep.situation.map((x) => display(x, 200)));
+    if (prep.ask) out.push(mt('line.ask', lang, { v: display(prep.ask, 200) }));
     const due = dueLine(prep.deadline, lang);
     if (due) out.push(due);
-    out.push(`${mt('line.noreply', lang)}${prep.advice ? ` ${prep.advice}` : ''}`);
+    out.push(`${mt('line.noreply', lang)}${prep.advice ? ` ${display(prep.advice, 160)}` : ''}`);
     out.push('', mt('prep.title', lang));
     if (briefName) out.push(mt('prep.brief', lang, { name: briefName }));
     else if (briefSkipped) out.push(mt('prep.briefSkip', lang));
-    out.push(mt('prep.draft', lang), '──────────', prep.draft, '──────────');
+    out.push(mt('prep.draft', lang), '──────────', plainLines(prep.draft, 3_000), '──────────');
     if (prep.newLink) out.push(mt('prep.newLink', lang));
-    if (prep.question) out.push('', `${mt('q', lang, { q: prep.question.q })}${prep.question.answers.length ? ` ${mt('q.answers', lang, { a: prep.question.answers.join(' / ') })}` : ''}`);
+    if (prep.question) out.push('', `${mt('q', lang, { q: display(prep.question.q, 200) })}${prep.question.answers.length ? ` ${mt('q.answers', lang, { a: prep.question.answers.map((a) => display(a, 60)).join(' / ') })}` : ''}`);
   } else {
     out.push(mt('line.subject', lang, { v: `"${subjectOf(m, lang)}"` }));
-    if (m.snippet) out.push(mt('line.preview', lang, { v: `"${one(m.snippet, 140)}"` }));
+    if (m.snippet) out.push(mt('line.preview', lang, { v: `"${display(m.snippet, 140)}"` }));
     out.push(mt('line.noreply', lang));
-    if (noPrep) out.push('', mt(`noprep.${noPrep}`, lang));
+    if (noPrep) out.push('', mt(`noprep.${noPrep}`, lang, { runner: display(runnerName, 30) }));
   }
   return out.join('\n');
 }
@@ -115,7 +132,7 @@ export function composeReply(m, { prep = null, noPrep = null, briefName = null, 
 export function composeBatch(items, { lang = 'ko', now, tz, held = false }) {
   const lines = [items.length === 1 ? mt('head.batch1', lang) : mt('head.batch', lang, { n: items.length })];
   items.forEach(({ m, cls }, k) => {
-    const v = { i: k + 1, sender: senderOf(m), addr: one(m.addr, 80), subject: cls.cat === 'security' ? scrubLine(m.subject, 80) || mt('untitled', lang) : subjectOf(m, lang), time: arrivedAt(Date.parse(m.at), { now, tz }) };
+    const v = { i: k + 1, sender: senderOf(m), addr: display(m.addr, 80), subject: cls.cat === 'security' ? scrubLine(m.subject, 80) || mt('untitled', lang) : subjectOf(m, lang), time: arrivedAt(Date.parse(m.at), { now, tz }) };
     if (cls.cat === 'security') lines.push(mt('item.security', lang, v));
     else if (cls.cat === 'deadline') lines.push(cls.due?.days === 0 ? mt('item.due.today', lang, v) : mt('item.due.days', lang, { ...v, n: cls.due?.days ?? '?', date: cls.due ? dateLabel(cls.due.date, lang) : '' }));
     else if (cls.cat === 'customer') lines.push(mt('item.customer', lang, v));
@@ -141,7 +158,7 @@ export function composeSummary(items, { lang = 'ko' } = {}) {
   const listed = (rows, fmt) => { rows.slice(0, MAX_LINES).forEach((x) => lines.push(fmt(x))); if (rows.length > MAX_LINES) lines.push(mt('sum.more', lang, { n: rows.length - MAX_LINES })); };
   listed(by('held'), (x) => mt('sum.held', lang, { sender: senderOf(x), subject: subjectOf(x, lang) }));
   listed(by('deadline'), (x) => mt('sum.due', lang, { sender: senderOf(x), subject: subjectOf(x, lang), date: x.due?.date ? ` · ${dateLabel(x.due.date, lang)}` : '' }));
-  listed(by('security_other'), (x) => mt('sum.phish', lang, { addr: one(x.addr, 80) }));
+  listed(by('security_other'), (x) => mt('sum.phish', lang, { addr: display(x.addr, 80) }));
   const news = by('newsletter'); if (news.length) lines.push(mt('sum.news', lang, { n: news.length, who: top(news) }));
   const other = by('other'); if (other.length) lines.push(mt('sum.other', lang, { n: other.length, who: top(other) }));
   return lines.length > 1 ? lines.join('\n') : null;
@@ -153,4 +170,12 @@ export function outsideMark(a, lang = 'ko') {
   const ids = (Array.isArray(a?.ref) ? a.ref : []).filter((x) => typeof x === 'string' && MAIL_ID_RE.test(x)).slice(0, 3);
   const what = a?.kind === 'mail_reply' ? mt('what.reply', lang) : a?.kind === 'mail_batch' ? mt('what.batch', lang, { n: Math.max(1, Number(a?.count) || ids.length || 1) }) : mt('what.sum', lang);
   return mt('mark', lang, { what, ids: ids.length ? mt('mark.ids', lang, { v: ids.join(', ') }) : '' });
+}
+
+/** 방 문맥·답장 대상 줄에서 이 글을 표지 줄로 바꿀까(순수) — 비서 에이전트 글이고 meta.assistant.outside이면 표지 줄, 아니면 null(본문 그대로).
+    r = 방 글 행(봉투 문맥은 meta 전체, contextOf는 assistant:meta->assistant 별칭). 사람 글의 meta는 보지 않는다(사람이 표지를 흉내 내 문맥을 지우지 못하게). */
+export function outsideContextLine(r, lang = 'ko') {
+  if (r?.author_kind !== 'crew') return null;
+  const a = r.meta?.assistant ?? r.assistant;
+  return a && typeof a === 'object' && a.outside === true ? outsideMark(a, lang) : null;
 }

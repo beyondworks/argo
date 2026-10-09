@@ -54,15 +54,17 @@ export async function syncMail(entries, opts) {
 }
 
 const sec = (ms) => Math.floor(ms / 1000);
-/** 메울 구간 읽기 — 받은편지함의 [from, to) (Gmail after:/before:는 초 단위). page = 다음 쪽 토큰. 반환 { items, next } */
-export async function listWindow(account, fromMs, toMs, page = null, opts) {
+const accessBack = (d) => (d?.access && typeof d.access.sealed === 'string' ? { sealed: d.access.sealed, expires: String(d.access.expires) } : null);
+/** 메울 구간 읽기 — 받은편지함의 [from, to) (Gmail after:/before:는 초 단위). page = 다음 쪽 토큰. access = 봉인 접근 토큰(sync와 같은 왕복 — 오피스가 DB에 쓰지 않는다).
+    반환 { items, next, access } */
+export async function listWindow(account, fromMs, toMs, page = null, access = null, opts) {
   const q = `in:inbox after:${sec(fromMs)} before:${Math.max(sec(fromMs) + 1, sec(toMs) + 1)}`;
-  const { data } = await officeMail('list', { account, q, ...(page ? { page } : {}) }, opts);
-  return { items: Array.isArray(data?.items) ? data.items : [], next: typeof data?.next === 'string' ? data.next : null };
+  const { data } = await officeMail('list', { account, q, access, ...(page ? { page } : {}) }, opts);
+  return { items: Array.isArray(data?.items) ? data.items : [], next: typeof data?.next === 'string' ? data.next : null, access: accessBack(data) };
 }
 
-/** 스레드 하나 — [{ gid, from, addr, at, sent, subject, messageId, references, text }](오래된 순). 옛 오피스면 code 'office_outdated'. */
-export async function readThread(account, threadId, opts) {
-  const { data } = await officeMail('thread', { account, id: threadId }, opts);
-  return Array.isArray(data?.messages) ? data.messages : [];
+/** 스레드 하나 — { messages: [{ gid, from, addr, at, sent, subject, messageId, references, text }](오래된 순), access }. 옛 오피스면 code 'office_outdated'. */
+export async function readThread(account, threadId, access = null, opts) {
+  const { data } = await officeMail('thread', { account, id: threadId, access }, opts);
+  return { messages: Array.isArray(data?.messages) ? data.messages : [], access: accessBack(data) };
 }

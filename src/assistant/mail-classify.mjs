@@ -28,10 +28,20 @@ const NEWS_LABELS = ['CATEGORY_PROMOTIONS', 'CATEGORY_SOCIAL', 'CATEGORY_FORUMS'
 const NOREPLY_RE = /^(?:no-?reply|do-?not-?reply|donotreply|newsletters?|news|mailer|marketing|notifications?|info)(?:[+.-][^@]*)?@/i;
 
 const lower = (s) => String(s ?? '').trim().toLowerCase();
-export const domainOf = (addr) => lower(addr).split('@')[1] ?? '';
-/** 주소의 도메인이 목록의 도메인과 같거나 그 하위 도메인인가(accounts.google.com → google.com). 비슷한 이름(google.com.evil.io·mygoogle.com)은 아니다 */
+// 메일 쪽 글은 보낸 사람이 마음대로 만든다 — 정규식에 넣기 전에 칸마다 자른다(10/9 보안 검토 ReDoS). 제목·앞부분은 보통 수십~200자.
+export const FIELD_CAP = 500, ADDR_CAP = 320;
+const ADDR_RE = /^[a-z0-9._%+-]{1,64}@[a-z0-9-]{1,63}(?:\.[a-z0-9-]{1,63})+$/;
+/** 보낸 주소를 엄격하게(순수) — 소문자 'local@domain' 또는 null. @가 하나이고, 따옴표·공백·꺾쇠·제어 문자·ASCII 밖 글자(IDN 혼동)가 없을 때만.
+    'x@google.com@evil.com'(메일 시스템은 마지막 @ 뒤를 도메인으로 본다)·'"security@google.com" <a@evil.com>'를 통째로 넘긴 값은 null이다(10/9 보안 검토 — 분류 우회). */
+export function addrOf(addr) {
+  const a = lower(String(addr ?? '').slice(0, ADDR_CAP));
+  return ADDR_RE.test(a) && a.length <= 254 ? a : null;
+}
+export const domainOf = (addr) => addrOf(addr)?.split('@')[1] ?? '';
+/** 주소의 도메인이 목록의 도메인과 같거나 그 하위 도메인인가(accounts.google.com → google.com). 비슷한 이름(google.com.evil.io·mygoogle.com)·엄격 파싱에 실패한 주소는 아니다 */
 export const domainIn = (addr, list) => { const d = domainOf(addr); return !!d && list.some((x) => d === x || d.endsWith(`.${x}`)); };
-const textOf = (m) => `${m.subject ?? ''}\n${m.snippet ?? ''}`;
+const cap = (s) => String(s ?? '').slice(0, FIELD_CAP);
+const textOf = (m) => `${cap(m.subject)}\n${cap(m.snippet)}`;
 
 /** 답장 신호(순수) — 'strong' | 'weak' | null. 오피스는 제목 + 앞부분을 본다. */
 export function replySignal(m) {
@@ -47,14 +57,14 @@ export function replySignal(m) {
     ②' 같은 보낸 사람이 내 답 없이 이 스레드에 두 번째 메일을 보냈다(nudge — 처음 받은 문의에 답 안 했는데 "Any update?")
     이 메일 뒤에 내가 보낸 메일이 이미 있으면(repliedAfter, P9) 답장 필요가 아니다. */
 export function threadState(m, thread, mine = []) {
-  const me = new Set(mine.map(lower));
+  const me = new Set(mine.map((x) => addrOf(x)).filter(Boolean));
   const t = Date.parse(m.at);
-  const list = (thread ?? []).map((x) => ({ ...x, t: Date.parse(x.at), isMine: x.sent === true || me.has(lower(x.addr)) }));
+  const list = (thread ?? []).map((x) => ({ ...x, t: Date.parse(x.at), isMine: x.sent === true || me.has(addrOf(x.addr)) }));
   const repliedAfter = list.some((x) => x.isMine && x.t > t);
   const mineBefore = list.some((x) => x.isMine && x.t < t);
-  const from = lower(m.addr);
+  const from = addrOf(m.addr) ?? `?${lower(m.addr)}`; // 엄격 파싱에 실패한 주소는 스레드 안 누구와도 같지 않게
   const lastMine = Math.max(-Infinity, ...list.filter((x) => x.isMine && x.t < t).map((x) => x.t));
-  const nudge = list.filter((x) => !x.isMine && lower(x.addr) === from && x.t < t && x.t > lastMine).length >= 1;
+  const nudge = list.filter((x) => !x.isMine && addrOf(x.addr) === from && x.t < t && x.t > lastMine).length >= 1;
   return { waiting: !repliedAfter && (mineBefore || nudge), mineBefore, nudge, repliedAfter };
 }
 
@@ -66,14 +76,19 @@ export function needsThread(m, c = {}) {
   return replySignal(m) != null;
 }
 
-/** 스레드 없이 끝나는 앞 범주 — 'mine' | 'otp' | 'security' | 'security_other' | null */
+/** 보낸 곳이 확인된 메일인가(순수) — From은 보낸 사람이 마음대로 쓸 수 있다. Gmail이 받을 때 붙인 인증 결과(오피스 envelope auth — 첫 Authentication-Results가
+    mx.google.com의 것)가 dmarc=pass이고, DMARC가 본 머리 From 도메인이 보낸 주소의 도메인과 같을 때만 확인된 것으로 본다. 결과가 없으면(옛 오피스·다른 서버) 확인 못 함. */
+export const verifiedSender = (m) => !!(m?.auth && m.auth.dmarc === 'pass' && m.auth.from && m.auth.from === domainOf(m.addr));
+
+/** 스레드 없이 끝나는 앞 범주 — 'mine' | 'otp' | 'security' | 'security_other' | null.
+    보안 메일을 비서 목소리로 즉시 알리는 것(security)은 주소가 엄격 파싱되고 · 허용 목록 도메인이고 · 보낸 곳이 확인된(verifiedSender) 때만. 그 밖은 저녁 한 줄(보낸 주소 그대로, 단정하지 않음). */
 function earlyCategory(m, { accounts = [], allow = SECURITY_ALLOW } = {}) {
   const labels = m.labels ?? [];
-  const mine = accounts.map(lower);
-  if (labels.includes('SENT') || mine.includes(lower(m.addr))) return 'mine';
+  const mine = accounts.map((x) => addrOf(x)).filter(Boolean);
+  if (labels.includes('SENT') || mine.includes(addrOf(m.addr))) return 'mine';
   if (OTP_RE.test(textOf(m))) return 'otp';
-  const hasAddr = /@/.test(String(m.addr ?? '')); // 이름뿐이면(인트라넷 등) 보안 범주를 쓰지 않는다(M30)
-  if (hasAddr && SECURITY_RE.test(String(m.subject ?? ''))) return domainIn(m.addr, allow) ? 'security' : 'security_other'; // 허용 목록을 바꾸는 설정은 다음 단계 — 지금은 기본값
+  const hasAddr = String(m.addr ?? '').includes('@'); // 이름뿐이면(인트라넷 등) 보안 범주를 쓰지 않는다(M30)
+  if (hasAddr && SECURITY_RE.test(cap(m.subject))) return domainIn(m.addr, allow) && verifiedSender(m) ? 'security' : 'security_other'; // 허용 목록을 바꾸는 설정은 다음 단계 — 지금은 기본값
   return null;
 }
 
@@ -83,7 +98,7 @@ const MON = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, se
 const pad = (n) => String(n).padStart(2, '0');
 const daysBetween = (a, b) => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000);
 export function findDates(text, today) {
-  const s = String(text ?? '');
+  const s = String(text ?? '').slice(0, 2 * FIELD_CAP); // 제목 + 앞부분(또는 기한 문장)까지만
   const year = Number(today.slice(0, 4));
   const out = [];
   const push = (y, mo, d) => {
@@ -143,12 +158,13 @@ export function classifyMail(m, c = {}) {
   return { cat: 'other', lane: 'pm', reply: false };
 }
 
-/** 보안 메일 줄에 실을 글(순수) — 4자리 이상 숫자를 지우고 링크·주소를 뺀다(설계 4.8 1.5: 인증 번호가 정리 글·잠금 화면에 가지 않게, 링크는 싣지 않음). */
-export const scrubLine = (s, max = 80) => String(s ?? '')
-  .replace(/https?:\/\/\S+|www\.\S+/gi, '')
-  .replace(/[^\s<>()"',;:]+@[^\s<>()"',;:]+\.[a-z]{2,}/gi, '')
-  .replace(/\d[\d\s-]{2,}\d/g, (x) => (x.replace(/\D/g, '').length >= 4 ? '…' : x))
-  .replace(/\s+/g, ' ').trim().slice(0, max);
+/** 보안 메일 줄에 실을 글(순수) — 4자리 이상 숫자를 지우고 링크·주소를 뺀다(설계 4.8 1.5: 인증 번호가 정리 글·잠금 화면에 가지 않게, 링크는 싣지 않음).
+    입력을 먼저 자르고, 링크·주소는 공백으로 나눈 낱말 단위로 뺀다(예전 정규식의 주소 패턴은 @·점이 많은 긴 줄에서 세제곱 시간이었다 — 10/9 보안 검토 ReDoS). */
+export const scrubLine = (s, max = 80) => String(s ?? '').slice(0, 4 * max).split(/\s+/)
+  .filter((w) => w && !/https?:\/\/|www\./i.test(w) && !w.includes('@')) // 낱말 안 어디든 링크가 될 수 있는 것은 뺀다(메신저 마크다운 자동 링크)
+  .join(' ')
+  .replace(/\d[\d -]{2,}\d/g, (x) => (x.replace(/\D/g, '').length >= 4 ? '…' : x))
+  .trim().slice(0, max);
 
 /** 같은 보낸 주소의 보안 메일은 하루 1건 — 키(순수) */
 export const securityDayKey = (m, now, tz) => `mailsec:${lower(m.addr)}:${dateIn(now, tz)}`;
