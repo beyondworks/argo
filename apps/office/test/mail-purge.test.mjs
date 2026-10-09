@@ -26,7 +26,7 @@ const mail = (id, o = {}) => ({ id, gid: id.split('.')[1], account: id.split('.'
 // 이유: 휴지통 비우기 = 그 계정의 Gmail 휴지통 전체 — 캐시에서는 그 계정의 휴지통 메일만 뺀다(다른 계정 휴지통·받은편지함은 그대로).
 test('휴지통 비우기: 그 계정의 휴지통 메일만 캐시에서 뺀다', async () => {
   const state = { mails: [mail('a1.g1'), mail('a1.g2'), mail('a1.i1', { folder: 'inbox' }), mail('a2.g3')] };
-  const { M, calls } = mailWith(state, { answer: () => [200, { deleted: 2 }] });
+  const { M, calls } = mailWith(state, { answer: () => [200, { deleted: 2, ids: ['g1', 'g2'] }] });
   assert.deepEqual(await M.purgeMail({ account: 'a1' }), { deleted: 2 });
   assert.deepEqual(calls, [['flush'], ['purge', { account: 'a1', confirm: 'purge' }]], '보낼 목록을 먼저 보낸다(꺼낸 메일의 untrash가 비우기보다 늦지 않게)');
   assert.deepEqual(state.mails.map((m) => m.id), ['a1.i1', 'a2.g3']);
@@ -99,7 +99,7 @@ test('비우기: 꺼낸 뒤 untrash 대기 중인 메일은 keep', async () => {
 // 이유(검수 #905 LOW): 전체 비우기 뒤 캐시 — 휴지통으로 보내는 중(아직 Gmail 휴지통에 없음)인 메일은 남긴다.
 test('비우기: 보내는 중인 휴지통 메일은 캐시에 남는다', async () => {
   const state = { mails: [mail('a1.g1'), mail('a1.z')] };
-  const { M } = mailWith(state, { answer: () => [200, { deleted: 1, more: false }], pending: new Set(['trash:a1.z']) });
+  const { M } = mailWith(state, { answer: () => [200, { deleted: 1, ids: ['g1'], more: false }], pending: new Set(['trash:a1.z']) });
   await M.purgeMail({ account: 'a1' });
   assert.deepEqual(state.mails.map((m) => m.id), ['a1.z']);
 });
@@ -107,7 +107,7 @@ test('비우기: 보내는 중인 휴지통 메일은 캐시에 남는다', asyn
 test('비우기: more면 다시 부른다', async () => {
   const state = { mails: [] };
   let n = 0;
-  const { M, calls } = mailWith(state, { answer: () => [200, n++ === 0 ? { deleted: 5000, more: true } : { deleted: 600, more: false }] });
+  const { M, calls } = mailWith(state, { answer: () => [200, n++ === 0 ? { deleted: 5000, ids: [], more: true } : { deleted: 600, ids: [], more: false }] });
   assert.deepEqual(await M.purgeMail({ account: 'a1' }), { deleted: 5600 });
   assert.equal(calls.filter(([op]) => op === 'purge').length, 2);
 });
@@ -125,4 +125,53 @@ test('지울 계정: 개수를 안 계정 중 1통 이상만', () => {
   assert.equal(purgeable({ total: 0 }), false);
   assert.equal(purgeable({ error: 'gmail' }), false);
   assert.equal(purgeable({}), false);
+});
+
+// 이유(재검수 #905 LOW): 전체 비우기도 서버가 지운 id만 캐시에서 뺀다 — 서버가 다 못 지웠는데(남은 휴지통) 화면이 비어 보이지 않게.
+test('비우기: 지운 id만 뺀다(남은 휴지통은 그대로)', async () => {
+  const state = { mails: [mail('a1.g1'), mail('a1.g2')] };
+  const { M } = mailWith(state, { answer: () => [200, { deleted: 1, ids: ['g1'], more: false }] });
+  await M.purgeMail({ account: 'a1' });
+  assert.deepEqual(state.mails.map((m) => m.id), ['a1.g2']);
+});
+// 이유(재검수 #905 LOW): 고른 메일은 100통씩 나눠 부른다(서버 함수 한 번의 시간·요청 한도 안), 지운 수는 더한다.
+test('고른 메일: 100통씩 나눠 부른다', async () => {
+  const picked = Array.from({ length: 230 }, (_, i) => mail(`a1.p${i}`));
+  const state = { mails: [...picked] };
+  const { M, calls } = mailWith(state, { answer: (op, b) => [200, { deleted: b.ids.length, ids: b.ids }] });
+  assert.deepEqual(await M.purgeMail({ account: 'a1', mails: picked }), { deleted: 230 });
+  assert.deepEqual(calls.filter(([op]) => op === 'purge').map(([, b]) => b.ids.length), [100, 100, 30]);
+  assert.equal(state.mails.length, 0);
+});
+// 이유(재검수 #905 LOW): 꺼낸 메일 중 untrash 대기가 1000통을 넘으면(서버가 받을 수 있는 keep 상한) 지우지 않고 이유를 알린다.
+test('비우기: 꺼낸 메일 대기가 너무 많으면 pending_many', async () => {
+  const many = Array.from({ length: 1001 }, (_, i) => mail(`a1.r${i}`, { folder: 'inbox' }));
+  const { M, calls } = mailWith({ mails: many }, { pending: new Set(many.map((m) => `trash:${m.id}`)) });
+  await assert.rejects(M.purgeMail({ account: 'a1' }), (e) => e.code === 'pending_many');
+  assert.ok(!calls.some(([op]) => op === 'purge'));
+});
+// 이유(재검수 #905 LOW): 서버가 more인데 한 통도 못 지웠으면(첫 쪽들이 전부 keep) 다시 부르며 맴돌지 않는다.
+test('비우기: more인데 0통이면 멈춘다', async () => {
+  const { M, calls } = mailWith({ mails: [] }, { answer: () => [200, { deleted: 0, ids: [], more: true }] });
+  await M.purgeMail({ account: 'a1' });
+  assert.equal(calls.filter(([op]) => op === 'purge').length, 1);
+});
+
+// 이유(재검수 #905 MEDIUM): 비우는 중에 그 계정 메일을 꺼내면(알림 되돌리기 등) keep에 없어 같이 지워진다 — 비우는 동안은 꺼내기를 하지 않는다(화면은 되돌리기 알림을 치운다).
+test('비우는 동안 그 계정의 꺼내기는 하지 않는다', async () => {
+  const z = mail('a1.z', { labels: ['TRASH', 'INBOX'] }), state = { mails: [z, mail('a2.w', { labels: ['TRASH', 'INBOX'] })] };
+  let release;
+  const { M, calls } = mailWith(state, { answer: (op) => (op === 'purge' ? [200, { deleted: 0, ids: [], more: false }] : [200, {}]) });
+  const gate = new Promise((r) => { release = r; });
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => { if (String(url).includes('/purge')) await gate; return realFetch(url, init); };
+  const running = M.purgeMail({ account: 'a1' });
+  await new Promise((r) => setTimeout(r, 0));
+  M.restoreMail(state.mails[0]);
+  M.restoreMail(state.mails[1]);
+  assert.deepEqual(state.mails.map((m) => `${m.id}:${m.folder}`), ['a1.z:trash', 'a2.w:inbox'], '비우는 계정(a1)만 막힌다');
+  release(); await running;
+  M.restoreMail(state.mails[0]);
+  assert.equal(state.mails[0].folder, 'inbox', '끝나면 다시 꺼낼 수 있다');
+  assert.ok(calls.length > 0);
 });

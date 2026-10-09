@@ -564,6 +564,7 @@ function PurgeModal({ spec, accounts, onClose }) {
   const total = rows.reduce((n, r) => n + (r.total ?? 0), 0);
   const go = async () => {
     setStep('busy');
+    showToast(t('mailx.purgeBusy')); // 떠 있던 '되돌리기' 알림을 바꾼다 — 지우는 중에 꺼낸 메일은 keep에 없어 같이 지워진다(재검수 #905). 지우기 전 확인 단계의 되돌리기는 purgeMail이 먼저 보낸다
     const out = [];
     for (const r of rows) {
       if (!purgeable(r)) { out.push(r.error ? r : { ...r, done: 0 }); continue; } // 빈 휴지통은 부르지 않고, 개수를 못 받은 계정은 지우지 않는다
@@ -576,7 +577,7 @@ function PurgeModal({ spec, accounts, onClose }) {
   };
   const line = (r) => (r.fail === 'scope_needed' ? <><span>{t('mailx.purgeScope')}</span>
       <button type="button" className="btn sm" onClick={() => connectGoogle(addr(r.account), { full: true }).catch(() => showToast(t('mailc.err.other')))}>{t('mailx.purgeGrant')}</button></>
-    : r.fail ? <span className="danger-text">{r.done ? t('mailx.purgePartial', { n: r.done }) : t('mailx.purgeFailed')}</span>
+    : r.fail ? <span className="danger-text">{r.done ? t('mailx.purgePartial', { n: r.done }) : t(r.fail === 'pending_many' ? 'mailx.purgePending' : 'mailx.purgeFailed')}</span>
       : r.done != null ? <span>{t('mailx.purgeDone', { n: r.done })}</span>
         : r.error ? <span className="dim">{t(step === 'done' ? 'mailx.purgeSkipped' : 'mailx.purgeUnknown')}</span>
           : r.total == null ? <span className="dim">{t('mailx.purgeCounting')}</span> : <b>{t('mailx.purgeCount', { n: r.total })}</b>);

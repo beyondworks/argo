@@ -304,13 +304,18 @@ const OPS = {
       for (let i = 0; i < doomed.length; i += 500) await del(doomed.slice(i, i + 500));
       return { deleted, ids: doomed };
     }
+    // 지운 id는 기억해 다시 지우지 않고(목록이 잠시 더 돌려줘도 맴돌지 않게), 걸러 낸 쪽이 비면 다음 쪽으로(첫 쪽이 전부 keep일 때). 지운 id를 돌려준다(화면이 그것만 뺀다)
+    const gone = new Set();
+    let page = null;
     for (let round = 0; round < 10; round++) {
-      const res = await gmail(token, `/messages?${new URLSearchParams({ labelIds: 'TRASH', includeSpamTrash: 'true', maxResults: '500' })}`);
-      const batch = (res?.messages ?? []).map((m) => m.id).filter((id) => !skip.has(id));
-      if (!batch.length) return { deleted, more: false };
+      const res = await gmail(token, `/messages?${new URLSearchParams({ labelIds: 'TRASH', includeSpamTrash: 'true', maxResults: '500', ...(page ? { pageToken: page } : {}) })}`);
+      const batch = (res?.messages ?? []).map((m) => m.id).filter((id) => !skip.has(id) && !gone.has(id));
+      if (!batch.length) { if ((page = res?.nextPageToken ?? null)) continue; return { deleted, ids: [...gone], more: false }; }
+      page = null;
       await del(batch);
+      batch.forEach((id) => gone.add(id));
     }
-    return { deleted, more: true };
+    return { deleted, ids: [...gone], more: true };
   },
 
   // 작성 중 초안(바뀔 때만 화면이 부른다) — 첫 저장은 만들고 그 뒤로는 같은 초안을 고친다. carry: 원문 첨부(전달·고치기) 다시 싣기
