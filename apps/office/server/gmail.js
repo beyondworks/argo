@@ -11,18 +11,22 @@ export function decodeWords(s) {
 }
 
 const ENT = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
-const entities = (s) => String(s ?? '').replace(/&(#\d+|#x[0-9a-f]+|\w+);/gi, (m, e) => (e[0] === '#' ? String.fromCodePoint(e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : +e.slice(1)) : ENT[e.toLowerCase()] ?? m));
+// 숫자 엔터티는 유니코드 범위 안일 때만 바꾼다 — &#99999999999; 같은 값은 String.fromCodePoint가 던져 그 메일의 변환(스레드 읽기)이 통째로 실패했다(10/9 보안 검토 중 재현)
+const codePoint = (n, m) => (Number.isInteger(n) && n >= 0 && n <= 0x10ffff ? String.fromCodePoint(n) : m);
+const entities = (s) => String(s ?? '').replace(/&(#\d{1,8}|#x[0-9a-f]{1,8}|\w{1,32});/gi, (m, e) => (e[0] === '#' ? codePoint(e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : +e.slice(1), m) : ENT[e.toLowerCase()] ?? m));
 
 /** 미리보기 채움 문자(뉴스레터가 요약 줄을 밀어내려고 넣는 U+034F·영폭 공백 반복)를 걷고 공백을 하나로 */
 export const tidy = (s) => String(s ?? '').replace(/[\u034f\u00ad\u200b-\u200f\u2060\ufeff]/g, '').replace(/\s+/g, ' ').trim();
 
-/** 'Kim <kim@x.com>' → { name, addr } */
+export const HEADER_CAP = 2_000; // 머리 한 칸 상한 — 보낸 사람·인증 결과는 보통 수백 자. 남이 마음대로 만드는 값이라 문자열 처리 전에 자른다(10/9 보안 검토 ReDoS)
+/** 'Kim <kim@x.com>' → { name, addr } — 끝의 <…>를 문자열 찾기로 한 번에. 예전 정규식(/^(.*?)\s*<([^>]+)>\s*$/)은 닫는 > 없는 긴 머리에서 제곱 시간이었다 */
 export function parseAddress(v) {
-  const s = decodeWords(v).trim();
-  const m = /^(.*?)\s*<([^>]+)>\s*$/.exec(s);
-  if (!m) return { name: s, addr: s };
-  const name = m[1].replace(/^"|"$/g, '').trim();
-  return { name: name || m[2], addr: m[2].trim() };
+  const s = decodeWords(String(v ?? '').slice(0, HEADER_CAP)).trim();
+  const lt = s.endsWith('>') ? s.lastIndexOf('<') : -1;
+  if (lt < 0 || lt >= s.length - 2) return { name: s, addr: s };
+  const addr = s.slice(lt + 1, -1).trim();
+  const name = s.slice(0, lt).trim().replace(/^"|"$/g, '').trim();
+  return { name: name || addr, addr };
 }
 
 const header = (msg, name) => (msg.payload?.headers ?? []).find((h) => h.name.toLowerCase() === name.toLowerCase())?.value ?? '';
@@ -48,7 +52,41 @@ export function envelope(msg, account) {
     from: from.name, addr: from.addr, to: decodeWords(header(msg, 'To')), subject: decodeWords(header(msg, 'Subject')),
     snippet: tidy(entities(msg.snippet)), at: new Date(Number(msg.internalDate) || Date.parse(header(msg, 'Date')) || 0).toISOString(),
     unread: labels.includes('UNREAD'), starred: labels.includes('STARRED'), folder: folderOf(labels), labels,
+    ...(authOf(msg) ? { auth: authOf(msg) } : {}),
   };
+}
+
+/** Gmail이 받을 때 붙인 인증 결과(순수) — 첫 Authentication-Results 머리가 mx.google.com의 것일 때만 { dmarc, from }(from = DMARC가 본 머리 From 도메인).
+ *  보낸 사람은 From을 마음대로 쓸 수 있어, 본체 비서는 dmarc=pass이고 그 도메인이 보낸 주소와 같을 때만 "확인된 서비스의 보안 알림"으로 즉시 알린다
+ *  (src/assistant/mail-classify.mjs). Gmail은 자기 결과를 맨 위에 붙이고, 보낸 쪽이 미리 심은 같은 이름 머리는 그 아래에 남는다 — 첫 것만 본다.
+ *  없거나 다른 서버의 것이면 null(확인 못 함). 문자열 나누기만 쓴다(선형). */
+/** 머리 값에서 따옴표 글("…", \" 이스케이프 포함)과 괄호 주석((…), 겹침 가능)을 지운다(순수, 한 번 훑기 — 선형). spf 칸의 봉투 주소·주석은 보낸 쪽이 고르는 글이라
+ *  그 안의 ';dmarc=pass …'가 칸으로 나뉘면 Gmail의 결과를 바꿀 수 있다(10/9 분리 검수 MEDIUM 2). 닫히지 않은 따옴표·괄호는 끝까지 글로 본다(칸 없음 → 안전한 쪽) */
+export function bareHeader(v) {
+  let out = '', q = false, depth = 0;
+  for (let i = 0; i < v.length; i++) {
+    const c = v[i];
+    if (q) { if (c === '\\') i += 1; else if (c === '"') q = false; continue; }
+    if (c === '"') { q = true; continue; }
+    if (c === '(') { depth += 1; continue; }
+    if (depth) { if (c === '\\') i += 1; else if (c === ')') depth -= 1; continue; }
+    out += c;
+  }
+  return out;
+}
+export function authOf(msg) {
+  const h = (msg.payload?.headers ?? []).find((x) => String(x?.name ?? '').toLowerCase() === 'authentication-results');
+  if (!h) return null;
+  const parts = bareHeader(String(h.value ?? '').slice(0, HEADER_CAP)).split(';').map((x) => x.trim());
+  if (parts[0]?.toLowerCase() !== 'mx.google.com') return null;
+  const ds = parts.filter((x) => /^dmarc=/i.test(x));
+  if (!ds.length) return { dmarc: 'none', from: '' };
+  if (ds.length > 1) return { dmarc: 'unknown', from: '' }; // Gmail은 dmarc 칸을 하나만 쓴다 — 둘 이상이면 어느 것도 믿지 않는다(10/9 분리 검수 MEDIUM 2)
+  const d = ds[0];
+  const words = d.split(/\s+/);
+  const result = words[0].slice(6).toLowerCase();
+  const from = (words.find((w) => /^header\.from=/i.test(w)) ?? '').slice(12).toLowerCase();
+  return { dmarc: /^[a-z]{1,20}$/.test(result) ? result : 'unknown', from: /^[a-z0-9.-]{1,253}$/.test(from) ? from : '' };
 }
 
 /** history.list 응답 → 바뀐 메일 id(새로 온 것·라벨이 바뀐 것)와 지워진 id. 초안은 자동 저장마다 새 메시지가 생기므로 빼고(임시 보관함은 열 때 다시 받는다),
@@ -111,6 +149,65 @@ export function content(msg) {
     cc: decodeWords(header(msg, 'Cc')), messageId: header(msg, 'Message-ID') || header(msg, 'Message-Id'),
     references: header(msg, 'References'), inReplyTo: header(msg, 'In-Reply-To'), // 초안을 다시 열어 고칠 때 답장 스레드를 잇는다
   };
+}
+
+export const BODY_CAP = 200_000; // 글자로 바꿀 본문 상한 — 보통 HTML 메일은 20~100KB이고 쓰는 것은 메일당 앞 1,500자뿐이다. 새 글이 위에 있어 앞부분이면 충분하다(넘으면 앞만)
+const BLOCK_END = new Set(['p', 'div', 'li', 'tr', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']);
+/** 메일 HTML → 글자(스크립트·스타일·head는 버리고 줄바꿈을 남긴다). 서버에는 DOM이 없다 — 한 번 훑는 상태 기계로(입력 길이에 선형).
+ *  예전 정규식(/<(script|style|head)[\s\S]*?<\/\1>/·/<[^>]+>/·/[ \t]+\n/)은 닫히지 않은 <script·> 없는 <·줄바꿈 없는 긴 공백에서 제곱 시간이었다(10/9 보안 검토 ReDoS).
+ *  닫는 짝이 없는 <script·<style·<head는 끝까지 버린다(브라우저도 그렇게 읽는다). 뒤에 >가 없는 <는 그 뒤를 글자로 둔다. */
+export function htmlToText(html) {
+  if (!html) return '';
+  const src = String(html).slice(0, BODY_CAP);
+  const low = src.toLowerCase();
+  let out = '', i = 0;
+  while (i < src.length) {
+    const lt = src.indexOf('<', i);
+    if (lt < 0) { out += src.slice(i); break; }
+    out += src.slice(i, lt);
+    const gt = src.indexOf('>', lt + 1);
+    if (gt < 0) { out += src.slice(lt); break; } // 뒤에 >가 하나도 없다 — 남은 것은 글자
+    const closing = low[lt + 1] === '/';
+    const name = /^[a-z][a-z0-9]{0,9}/.exec(low.slice(lt + (closing ? 2 : 1), Math.min(gt, lt + 13)))?.[0] ?? '';
+    if (!closing && (name === 'script' || name === 'style' || name === 'head')) {
+      const end = low.indexOf(`</${name}`, gt + 1);
+      if (end < 0) break; // 닫히지 않음 — 끝까지 버린다
+      const endGt = src.indexOf('>', end);
+      i = endGt < 0 ? src.length : endGt + 1;
+      continue;
+    }
+    if (name === 'br' || (closing && BLOCK_END.has(name))) out += '\n';
+    i = gt + 1;
+  }
+  return entities(out).split('\n').map((l) => l.replace(/[ \t ]+$/, '')).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+// 인용된 지난 글이 시작되는 줄 — 답장 메일은 지난 글 전체를 다시 싣는 일이 많아, 스레드로 받을 때는 각 메일의 새 글만 남긴다(지난 글은 그 메일이 따로 있다)
+const QUOTE_HEAD = /^(>|On .{4,200} wrote:\s*$|-{2,}\s*Original Message\s*-{2,}|-{5,}\s*Forwarded message|\d{4}[.년\-/ ].{2,120}(작성|wrote)[:：]?\s*$|.{1,120}님이 작성:\s*$|From: .+@.+$|보낸 사람: .+$)/i;
+/** 인용 앞까지(순수) — 인용 머리줄 앞의 글만. 남는 글이 없으면(전부 인용) 원문 그대로. 줄마다 앞 300자만 본다(머리줄은 짧다 — 긴 줄에서 정규식이 오래 돌지 않게) */
+export function stripQuoted(text) {
+  const src = String(text ?? '').slice(0, BODY_CAP);
+  const lines = src.replace(/\r\n/g, '\n').split('\n');
+  const cut = lines.findIndex((l) => QUOTE_HEAD.test(l.slice(0, 300).trim()));
+  const kept = (cut >= 0 ? lines.slice(0, cut) : lines).join('\n').trim();
+  return kept || src.trim();
+}
+
+/** 스레드(threads.get format=full) → 메일 목록(순수, 오래된 순) — 비서 메일 확인(본체 src/assistant/mail-source.mjs)이 답장 여부·준비 입력에 쓴다.
+ *  메일마다 새 글 앞 per자, 최근 메일부터 합쳐 total자까지(넘으면 오래된 메일은 글 없이 머리만), 최근 max통. 본문 전체·첨부·그림은 내려주지 않는다 */
+export function threadView(thread, account, { per = 1500, total = 6000, max = 10 } = {}) {
+  const msgs = (thread?.messages ?? []).filter((m) => !(m.labelIds ?? []).includes('DRAFT')).slice(-max);
+  let left = total;
+  const out = msgs.slice().reverse().map((m) => {
+    const e = envelope(m, account);
+    const c = content(m);
+    const body = stripQuoted(c.text ? c.text.slice(0, BODY_CAP) : htmlToText(c.html)).replace(/\n{3,}/g, '\n\n');
+    const text = left > 0 ? body.slice(0, Math.min(per, left)) : '';
+    left -= text.length;
+    return { gid: e.gid, threadId: e.threadId, from: e.from, addr: e.addr, to: e.to, subject: e.subject, at: e.at, labels: e.labels,
+      sent: e.labels.includes('SENT'), messageId: c.messageId || '', references: c.references || '', text, cut: text.length < body.length };
+  });
+  return out.reverse();
 }
 
 /** 원문 첨부 싣기(전달·초안 고치기) — 원본 메일의 첨부 중 keep(이름·크기)에 든 것만. keep이 없으면 전부 */

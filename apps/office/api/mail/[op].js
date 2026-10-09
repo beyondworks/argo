@@ -1,14 +1,16 @@
 // 메일 서버 함수(Vercel, 로컬은 vite.config.js가 같은 파일을 연결) — Gmail·Google Workspace. 요청자의 Supabase JWT로만 움직인다(서비스 키 없음).
 // env: OFFICE_GOOGLE_CLIENT_ID · OFFICE_GOOGLE_CLIENT_SECRET · OFFICE_MAIL_KEY · OFFICE_ORIGIN · VITE_SUPABASE_URL · VITE_SUPABASE_ANON_KEY
-// 크루는 이 함수로 보내지 않는다(초안까지 — P4/P5). 여기의 send·draftSend는 사람이 보내기를 누를 때만.
+// 크루는 이 함수로 보내지 않는다(초안까지 — P4/P5). 여기의 send·draftSend는 사람이 보내기를 누를 때만. 본체 비서는 sync·list·thread만 부른다(읽기만).
 // 메일 본문은 DB에 두지 않는다 — DB에는 계정과 봉인 토큰만(20260927171000_office_mail.sql). 변경 번호(historyId)도 화면이 그 기기에 둔다(15차, DB 쓰기 0).
 // Gmail 호출 조절(15차 B3): 한 요청 안에서 동시에 4~5개까지(mapLimit), 요청 제한(429·403 rateLimit)은 짧으면(≤2초) 읽기·라벨만 한 번 쉬고 다시,
 //   아니면 남은 초(retryAfter)를 화면에 넘긴다(Retry-After 헤더도). 보내기·초안 쓰기는 자동으로 다시 보내지 않는다(두 번 나가지 않게).
 // 부하(15차 자동 갱신): 화면이 sync를 30초(메일 화면)·60초(다른 화면, 새 메일 알림을 켠 경우)마다 부른다 — 숨긴 탭은 0.
 //   sync 한 번 = 서버 함수 1회 + 계정마다 DB 읽기 1(office_mail_secret, 쓰기 0 — 접근 토큰 갱신 때만 시간당 1번 쓴다) + Gmail history.list 1회
 //   (+ 바뀐 메일 수만큼 메타 읽기). 열린 탭 하나·계정 하나, 메일 화면: 분당 서버 함수 2·DB 읽기 2·Gmail 2(바뀐 게 없을 때).
+//   본체 비서의 메일 확인(src/assistant/mail-source.mjs): sync를 평일 업무 시간 10분·그 밖 30분(하루 70번)마다, 계정 전부를 한 번에, 봉인 접근 토큰을 들고 온다 —
+//   접근 토큰을 갱신해도 DB에 쓰지 않는다(accessFor carry). 답장 여부·준비가 필요한 메일만 thread(Gmail 1번).
 import { mailKey, seal, unseal, sealState, openState } from '../../server/seal.js';
-import { envelope, content, buildMime, inlineImages, VIEWABLE, FOLDER_QUERY, SCOPES, PURGE_SCOPE, missingScopes, MODIFY_LABELS, historyChanges, retryAfterSec, isRateLimited, mapLimit, pickCarry } from '../../server/gmail.js';
+import { envelope, content, buildMime, inlineImages, VIEWABLE, FOLDER_QUERY, SCOPES, PURGE_SCOPE, missingScopes, MODIFY_LABELS, historyChanges, retryAfterSec, isRateLimited, mapLimit, pickCarry, threadView } from '../../server/gmail.js';
 import { customerMatcher, gmailQuery, threadSignals } from '../../server/mail-signals.js';
 import { createHash, randomBytes } from 'node:crypto';
 
@@ -28,7 +30,8 @@ const fail = (status, code, message = code) => Object.assign(new Error(message),
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const PAGE = '30';                                       // 한 번에 받는 목록 수 — 더 보기는 다음 쪽 토큰으로
-const META = new URLSearchParams([['format', 'metadata'], ...['From', 'To', 'Cc', 'Subject', 'Date'].map((h) => ['metadataHeaders', h])]);
+// Authentication-Results — Gmail이 받을 때 붙인 DMARC 결과(envelope auth). 본체 비서가 보안 알림을 "확인된 서비스"로 알릴지 가른다. 같은 호출에 머리 하나 더(호출 수 그대로)
+const META = new URLSearchParams([['format', 'metadata'], ...['From', 'To', 'Cc', 'Subject', 'Date', 'Authentication-Results'].map((h) => ['metadataHeaders', h])]);
 const SMALL_RAW = 3 * 1024 * 1024;                       // 이보다 큰 메시지는 Gmail 올리기 주소(multipart)로 보낸다
 const CARRY_MAX = 20 * 1024 * 1024;                      // 전달·초안에 다시 싣는 원문 첨부 합계(Gmail 25MB 한도 안)
 const gid = (v) => { const s = String(v ?? ''); if (!/^[A-Za-z0-9_-]{1,200}$/.test(s)) throw fail(400, 'input'); return s; };
@@ -65,12 +68,28 @@ const aadOf = (row) => `${row.user_id}:${row.provider}:${row.address}`;
 
 /** 계정의 접근 토큰 — 남은 시간이 1분 넘으면 저장해 둔 것, 아니면 갱신해서 저장(바뀔 때만 쓴다) */
 async function accessToken(jwt, account) {
+  return (await accessFor(jwt, account)).token;
+}
+const fresh = (expires) => Date.parse(expires) - Date.now() > 60_000;
+/** 요청 본문에 access 칸이 있으면(값이 null이어도) 왕복 — 없으면 undefined(종전 경로: 갱신하면 DB에 쓴다) */
+const carryOf = (body) => (Object.hasOwn(body ?? {}, 'access') ? body.access ?? null : undefined);
+/** 접근 토큰 + (carry를 받았으면) 부르는 쪽이 다음에 들고 올 봉인 접근 토큰.
+ *  carry — 본체 비서의 메일 확인(sync, 평일 하루 70번)이 들고 오는 { sealed, expires }(이 서버가 준 봉인 값 그대로). carry를 받은 호출은 접근 토큰을 갱신해도
+ *  DB에 쓰지 않고 새 봉인 값을 응답으로 돌려준다 — 유휴 확인의 DB 쓰기 0(DB 위생 규칙. 쓰면 계정당 시간당 1행 — 설계 5.2 "쓰기 문제와 처방").
+ *  봉인 키는 서버에만 있어 기기는 풀 수 없고, 봉인은 사용자·계정 주소(aad)에 묶여 남의 계정 값을 들고 와도 풀리지 않는다(DB에 두는 값과 같은 보호).
+ *  갱신 토큰이 바뀌는 드문 경우·만료 표시는 지금처럼 쓴다(잃으면 다시 연결해야 하는 값). carry가 없는 호출(화면·도구)은 종전 그대로 */
+async function accessFor(jwt, account, carry) {
   const [row] = (await rpc(jwt, 'office_mail_secret', { p_account: account })) ?? [];
   if (!row) throw fail(404, 'no_account');
   const key = mailKey(), aad = aadOf(row);
-  if (row.access_sealed && Date.parse(row.access_expires) - Date.now() > 60_000) {
+  const roundTrip = carry !== undefined;
+  if (roundTrip && carry && typeof carry.sealed === 'string' && fresh(carry.expires)) {
+    const t = unseal(key, carry.sealed, aad);
+    if (t) return { token: t, access: { sealed: carry.sealed, expires: String(carry.expires) } };
+  }
+  if (row.access_sealed && fresh(row.access_expires)) {
     const t = unseal(key, row.access_sealed, aad);
-    if (t) return t;
+    if (t) return { token: t, ...(roundTrip ? { access: { sealed: row.access_sealed, expires: new Date(row.access_expires).toISOString() } } : {}) };
   }
   const refresh = unseal(key, row.sealed, aad);
   if (!refresh) throw fail(401, 'expired');
@@ -79,9 +98,11 @@ async function accessToken(jwt, account) {
     if (e.code === 'expired') await rpc(jwt, 'office_mail_mark', { p_account: account, p_status: 'expired' }); // 테스트 상태 앱은 7일 뒤 만료 — 화면이 "다시 연결"을 띄운다
     throw e;
   }
-  await rpc(jwt, 'office_mail_token_put', { p_account: account, p_access_sealed: seal(key, tok.access_token, aad), p_expires: new Date(Date.now() + (tok.expires_in ?? 3600) * 1000).toISOString(), p_sealed: tok.refresh_token ? seal(key, tok.refresh_token, aad) : null });
+  const access = { sealed: seal(key, tok.access_token, aad), expires: new Date(Date.now() + (tok.expires_in ?? 3600) * 1000).toISOString() };
+  if (!roundTrip) await rpc(jwt, 'office_mail_token_put', { p_account: account, p_access_sealed: access.sealed, p_expires: access.expires, p_sealed: tok.refresh_token ? seal(key, tok.refresh_token, aad) : null });
+  else if (tok.refresh_token) await rpc(jwt, 'office_mail_token_put', { p_account: account, p_access_sealed: row.access_sealed ?? access.sealed, p_expires: row.access_expires ?? access.expires, p_sealed: seal(key, tok.refresh_token, aad) }); // 갱신 토큰이 바뀌면 그것만은 남긴다
   if (row.status !== 'ok') await rpc(jwt, 'office_mail_mark', { p_account: account, p_status: 'ok' });
-  return tok.access_token;
+  return { token: tok.access_token, ...(roundTrip ? { access } : {}) };
 }
 
 /** Gmail 응답 하나를 판정 — 401 다시 연결 / 요청 제한(남은 초) / 404 / 그 밖 */
@@ -123,21 +144,23 @@ async function carried(token, carry, keep) {
 const message = (m, extra) => ({ from: m.from, to: m.to, cc: m.cc, subject: m.subject, text: m.text, html: typeof m.html === 'string' ? m.html : undefined, inReplyTo: m.inReplyTo, references: m.references,
   attachments: [...(Array.isArray(m.attachments) ? m.attachments.slice(0, 20) : []), ...extra] });
 
-/** 변경분 받기(계정 하나) — since가 없으면 지금 변경 번호만, 기록이 만료됐거나(404) 너무 많이 바뀌었으면 reset(화면이 목록을 새로 받는다) */
-async function syncOne(jwt, account, since) {
-  const token = await accessToken(jwt, account);
-  const profile = async (extra) => ({ historyId: String((await gmail(token, '/profile')).historyId ?? ''), ...extra });
+/** 변경분 받기(계정 하나) — since가 없으면 지금 변경 번호만, 기록이 만료됐거나(404) 너무 많이 바뀌었으면 reset(화면이 목록을 새로 받는다).
+ *  carry — 본체 비서가 들고 오는 봉인 접근 토큰(accessFor). 들고 온 호출에는 다음에 들고 올 값(access)을 결과에 싣는다 */
+async function syncOne(jwt, account, since, carry) {
+  const { token, access } = await accessFor(jwt, account, carry);
+  const out = (r) => (access ? { ...r, access } : r);
+  const profile = async (extra) => out({ historyId: String((await gmail(token, '/profile')).historyId ?? ''), ...extra });
   if (!/^\d{1,20}$/.test(String(since ?? ''))) return profile({ primed: true });
   const q = new URLSearchParams([['startHistoryId', String(since)], ['maxResults', '100'], ...['messageAdded', 'messageDeleted', 'labelAdded', 'labelRemoved'].map((x) => ['historyTypes', x])]);
   let h;
   try { h = await gmail(token, `/history?${q}`); } catch (e) { if (e.status === 404) return profile({ reset: true }); throw e; }
   const historyId = String(h?.historyId ?? since);
-  if (h?.nextPageToken) return { historyId, reset: true };
+  if (h?.nextPageToken) return out({ historyId, reset: true });
   const { touched, gone } = historyChanges(h);
-  if (touched.length > 30) return { historyId, reset: true };
+  if (touched.length > 30) return out({ historyId, reset: true });
   const missing = [];
   const changed = (await mapLimit(touched, 4, (id) => gmail(token, `/messages/${encodeURIComponent(id)}?${META}`).then((x) => envelope(x, account), (e) => { if (e.status === 404) { missing.push(id); return null; } throw e; }))).filter(Boolean);
-  return { historyId, changed, gone: [...gone, ...missing] };
+  return out({ historyId, changed, gone: [...gone, ...missing] });
 }
 
 /* ── 동작 ── */
@@ -217,31 +240,41 @@ const OPS = {
   },
 
   /** 목록 — 메일함(inbox·unread·starred·drafts·sent·archive) 또는 Gmail 검색어(q). page = 다음 쪽 토큰. 임시 보관함은 drafts.list(초안 id 포함) */
-  async list(jwt, { account, folder = 'inbox', page, q }) {
-    const token = await accessToken(jwt, account);
+  async list(jwt, { account, folder = 'inbox', page, q, ...rest }) {
+    const { token, access } = await accessFor(jwt, account, carryOf(rest)); // 본체 비서의 메울 구간 읽기는 봉인 접근 토큰을 들고 온다(sync와 같이 DB 쓰기 0)
+    const out = (r) => (access ? { ...r, access } : r);
     const search = typeof q === 'string' && q.trim() ? q.trim().slice(0, 300) : null;
     const more = page ? { pageToken: String(page).slice(0, 300) } : {};
     const meta = (id, extra) => gmail(token, `/messages/${encodeURIComponent(id)}?${META}`).then((x) => ({ ...envelope(x, account), ...extra }), (e) => { if (e.code === 'rate_limited' || e.code === 'expired') throw e; return null; }); // 지워진 메일 하나는 건너뛴다
     if (folder === 'drafts' && !search) {
       const res = await gmail(token, `/drafts?${new URLSearchParams({ maxResults: PAGE, ...more })}`);
       const items = await mapLimit((res.drafts ?? []).filter((d) => d.message?.id), 5, (d) => meta(d.message.id, { draftId: d.id }));
-      return { items: items.filter(Boolean), next: res.nextPageToken ?? null };
+      return out({ items: items.filter(Boolean), next: res.nextPageToken ?? null });
     }
     const res = await gmail(token, `/messages?${new URLSearchParams({ maxResults: PAGE, ...(search ? { q: search } : FOLDER_QUERY[folder] ?? FOLDER_QUERY.inbox), ...more })}`);
     const items = await mapLimit(res.messages ?? [], 5, (m) => meta(m.id));
-    return { items: items.filter(Boolean), next: res.nextPageToken ?? null };
+    return out({ items: items.filter(Boolean), next: res.nextPageToken ?? null });
   },
 
   /** 바뀐 것만 받기(15차) — accounts: [{ account, since }] 최대 10개를 한 번에. 계정마다 결과·오류를 따로 돌려준다(한 계정의 만료가 다른 계정을 막지 않게) */
   async sync(jwt, { accounts } = {}) {
     if (!Array.isArray(accounts) || !accounts.length || accounts.length > 10) throw fail(400, 'input');
-    const results = await mapLimit(accounts, 2, async ({ account, since } = {}) => {
-      try { return { account, ...(await syncOne(jwt, account, since)) }; } catch (e) {
+    const results = await mapLimit(accounts, 2, async (entry = {}) => {
+      const { account, since } = entry;
+      try { return { account, ...(await syncOne(jwt, account, since, carryOf(entry))) }; } catch (e) {
         if (e.code === 'signed_out') throw e;
         return { account, error: e.code ?? 'server', ...(e.retryAfter ? { retryAfter: e.retryAfter } : {}) };
       }
     });
     return { results };
+  },
+
+  /** 스레드 하나(본체 비서의 메일 확인 — 답장 여부·준비 입력) — 메일마다 새 글 앞 1,500자·합쳐 6,000자·최근 10통, 보낸편지 표지·Message-ID·References.
+   *  본문 전체·첨부·그림은 내려주지 않는다(threadView). Gmail 호출 1번(threads.get). 바꾸지 않는 읽기라 요청 제한이 짧으면 한 번 다시 */
+  async thread(jwt, { account, id, ...rest }) {
+    const { token, access } = await accessFor(jwt, account, carryOf(rest)); // 비서가 봉인 접근 토큰을 들고 오면 갱신해도 DB에 쓰지 않는다
+    const messages = threadView(await gmail(token, `/threads/${encodeURIComponent(gid(id))}?format=full`), account);
+    return access ? { messages, access } : { messages };
   },
 
   async read(jwt, { account, id }) {

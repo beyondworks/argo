@@ -50,13 +50,38 @@ function errText(code, lang, raw = '', retryAfter = null) {
   return pick(`오피스 메일 호출 실패: ${quoted(raw || code || '알 수 없는 오류', 200)}. 사용자에게 그대로 알려라.`, `Office mail call failed: ${quoted(raw || code || 'unknown', 200)}. Tell the user as is.`, lang);
 }
 
-/** 메일 HTML → 글자(스크립트·스타일은 버리고 줄바꿈을 남긴다) — 오피스 crew-assign.js htmlText와 같은 취지, 서버에는 DOM이 없어 정규식으로 */
+/** 메일 HTML → 글자(스크립트·스타일·head는 버리고 줄바꿈을 남긴다) — 오피스 crew-assign.js htmlText와 같은 취지. 서버에는 DOM이 없다 — 한 번 훑는 상태 기계로(입력 길이에 선형).
+    예전 정규식(/<(script|style|head)[\s\S]*?<\/\1>/·/<[^>]+>/·/[ \t]+\n/)은 닫히지 않은 <script·> 없는 <·줄바꿈 없는 긴 공백에서 제곱 시간이었다(10/9 보안 검토 ReDoS —
+    닫히지 않은 <script 8천 개에 4.6초, 이 기기에서 실측). 오피스 서버의 같은 변환(apps/office/server/gmail.js htmlToText)과 같은 규칙이다. 본문 앞 200KB까지만 바꾼다. */
+const HTML_CAP = 200_000;
+const BLOCK_END = new Set(['p', 'div', 'li', 'tr', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']);
+const ENT = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
+const codePoint = (n, m) => (Number.isInteger(n) && n >= 0 && n <= 0x10ffff ? String.fromCodePoint(n) : m); // 범위 밖 숫자 엔터티는 그대로(fromCodePoint가 던지지 않게)
 export function htmlText(html) {
   if (!html) return '';
-  const ENT = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
-  return String(html).replace(/<(script|style|head)[\s\S]*?<\/\1>/gi, '').replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|div|li|tr|h[1-6])>/gi, '\n')
-    .replace(/<img[^>]*>/gi, '').replace(/<[^>]+>/g, '').replace(/&(#\d+|#x[0-9a-f]+|\w+);/gi, (m, e) => (e[0] === '#' ? String.fromCodePoint(e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : +e.slice(1)) : ENT[e.toLowerCase()] ?? m))
-    .replace(/[ \t ]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  const src = String(html).slice(0, HTML_CAP);
+  const low = src.toLowerCase();
+  let out = '', i = 0;
+  while (i < src.length) {
+    const lt = src.indexOf('<', i);
+    if (lt < 0) { out += src.slice(i); break; }
+    out += src.slice(i, lt);
+    const gt = src.indexOf('>', lt + 1);
+    if (gt < 0) { out += src.slice(lt); break; } // 뒤에 >가 하나도 없다 — 남은 것은 글자
+    const closing = low[lt + 1] === '/';
+    const name = /^[a-z][a-z0-9]{0,9}/.exec(low.slice(lt + (closing ? 2 : 1), Math.min(gt, lt + 13)))?.[0] ?? '';
+    if (!closing && (name === 'script' || name === 'style' || name === 'head')) {
+      const end = low.indexOf(`</${name}`, gt + 1);
+      if (end < 0) break; // 닫히지 않음 — 끝까지 버린다
+      const endGt = src.indexOf('>', end);
+      i = endGt < 0 ? src.length : endGt + 1;
+      continue;
+    }
+    if (name === 'br' || (closing && BLOCK_END.has(name))) out += '\n';
+    i = gt + 1;
+  }
+  return out.replace(/&(#\d{1,8}|#x[0-9a-f]{1,8}|\w{1,32});/gi, (m, e) => (e[0] === '#' ? codePoint(e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : +e.slice(1), m) : ENT[e.toLowerCase()] ?? m))
+    .split('\n').map((l) => l.replace(/[ \t ]+$/, '')).join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 const addresses = (s) => String(s ?? '').split(/[,;]/).map((x) => x.trim()).filter(Boolean);
 const validList = (s) => addresses(s).every((x) => /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(x) || /^[^<>]*<[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+>$/.test(x));

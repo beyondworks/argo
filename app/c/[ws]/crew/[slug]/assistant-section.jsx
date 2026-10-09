@@ -10,6 +10,9 @@ import { useLang, fmtMsgTime } from '../../../../i18n';
 import { errorTextFor } from '../../../../apimsg.mjs';
 import { assistantRole, statusNotes, timeChoices } from './assistant-view.mjs';
 
+// 메일 보기 — 화면 값 → 저장 값(설정 API: false | 'shadow' | true). 미리 보기 = 알리지 않고 무엇을 알렸을지만 기록(설계 18절)
+const MAIL_VALUE = { off: false, shadow: 'shadow', live: true };
+const MAIL_CODES = new Set(['login_required', 'mail_no_origin', 'office_outdated', 'mail_rate_limited', 'mail_expired', 'mail_error', 'no_mail_account', 'deliver_failed', 'personal_room_unavailable']);
 const localTz = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || undefined; } catch { return undefined; } };
 const selectStyle = { height: 30, padding: '0 8px', background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 8, outline: 'none', fontSize: 12, color: 'var(--fg)', minWidth: 0 };
 
@@ -78,6 +81,13 @@ export function AssistantSection({ ws, slug }) {
   const todayText = s.instantSure === false ? t('assistant.todayUnsure', { n }) // 다른 기기가 보낸 수를 아직 모름(방에서 복구 실패)
     : n > s.dailyCap ? t('assistant.todayOver', { n, cap: s.dailyCap }) : t('assistant.todayUnder', { n, cap: s.dailyCap });
 
+  // 메일 확인 상태 — 마지막 확인 시각, 미리 보기면 기록한 수, 문제가 있으면 그 문장(src/assistant/mail.mjs mailStatusView)
+  const ms = s.mail;
+  const mailText = !ms?.checkedAt && !ms?.code ? t('assistant.lastCheckNone')
+    : [ms.checkedAt ? fmtMsgTime(lang, ms.checkedAt) : null,
+      c.mail === 'shadow' ? t('assistant.mailShadow', { days: ms.shadow?.days ?? 0, n: ms.shadow?.total ?? 0 }) : null,
+      ms.code && ms.code !== 'ok' ? t(`assistant.mailSt.${MAIL_CODES.has(ms.code) ? ms.code : 'mail_error'}`) : null].filter(Boolean).join(' · ');
+
   return (
     <div data-assistant-section="" style={{ display: 'grid', gap: 16, minWidth: 0 }}>
       <div style={{ display: 'grid', gap: 8, minWidth: 0 }}>
@@ -139,6 +149,13 @@ export function AssistantSection({ ws, slug }) {
             {t('assistant.quietAlerts')}
           </label>
           <Row label={t('assistant.watch')}>{t('assistant.watchCalendar')}</Row>
+          <Row label={t('assistant.mail')}>
+            <select aria-label={t('assistant.mail')} data-testid="assistant-mail" value={c.mail ?? 'off'} disabled={busy} style={selectStyle}
+              onChange={(e) => save({ mail: MAIL_VALUE[e.target.value] })}>
+              {Object.keys(MAIL_VALUE).map((v) => <option key={v} value={v}>{t(`assistant.mail.${v}`)}</option>)}
+            </select>
+          </Row>
+          <span style={{ fontSize: 11.5, color: 'var(--fg-3)', lineHeight: 1.6 }}>{t('assistant.mailHint')}</span>
           <Row label={t('assistant.dest')}>{t('assistant.destPersonal')}</Row>
           <Row label={t('assistant.perm')}>{t('assistant.permNotify')}</Row>
         </div>
@@ -150,6 +167,11 @@ export function AssistantSection({ ws, slug }) {
           <Row label={t('assistant.runner')}><span data-testid="assistant-runner" style={{ overflowWrap: 'anywhere' }}>{runnerText}</span></Row>
           <Row label={t('assistant.lastCheck')}>{!here ? t('assistant.onRunner') : s.readAt ? fmtMsgTime(lang, s.readAt) : t('assistant.lastCheckNone')}</Row>
           <Row label={t('assistant.today')}><span data-testid="assistant-today">{!here ? t('assistant.onRunner') : todayText}</span></Row>
+          {c.mail && c.mail !== 'off' && (
+            <Row label={t('assistant.mailCheck')}>
+              <span data-testid="assistant-mail-status" style={{ overflowWrap: 'anywhere' }}>{!here ? t('assistant.onRunner') : mailText}</span>
+            </Row>
+          )}
         </div>
       )}
     </div>
