@@ -44,32 +44,76 @@ export const isSecretName = (name) => {
   const n = String(name ?? '');
   return SECRET_TAIL.test(n) || /(?:^|_)[A-Z0-9_]*KEY$/.test(n) || /^[A-Z0-9_]*(?:SECRET|PASSWORD|TOKEN)[A-Z0-9_]*$/.test(n);
 };
-const KV_RE = /(["']?)([A-Za-z_][A-Za-z0-9_.-]{0,80})\1(\s*[:=]\s*)("[^"\n]*"|'[^'\n]*'|[^\s"',;&}\]]+)/g;
-const masked = (v) => /^(["'])?(?:\*+|sk-\*\*\*)\1?$/.test(v);
-/** 화면·저장에 실리는 단계 글에서 비밀 모양을 가린다(순수). maskKeyLike(벤더 키 모양) 위에 PEM 개인키·Bearer·URL 비밀번호·이름이 비밀인 KEY=VALUE. */
-export function maskSecrets(s) {
+// ─ 정규식 서비스 거부(ReDoS) 방어(보안 검토 2026-10-09) ─ 도구 결과에는 웹 페이지·파일처럼 외부가 만든 큰 글이 섞인다. 규칙:
+//   ① 상한이 있는 호출은 먼저 상한+MASK_MARGIN으로 자르고 가린 뒤 다시 상한으로 자른다(전체를 가리지 않는다).
+//   ② 겹치는 수량자·`.*?` 끝까지 훑기·백레퍼런스를 쓰지 않는다. 시작 위치가 많은 패턴은 앞을 고정(lookbehind)하거나 길이를 묶고,
+//      줄 단위 조건(mysql·curl)은 줄을 한 번 나눠 그 줄에만 건다. PEM은 정규식 대신 indexOf로 한 번 훑는다.
+//   시험: test/turn-trace-redos.test.mjs(패턴마다 10만 반복 공격 입력 200ms 안, 고치기 전 코드는 멈췄다).
+// MASK_MARGIN 근거: 상한 직전에 시작한 비밀이 잘린 채 가림 패턴에서 빠지지 않으려면, 그 비밀 전체(또는 패턴이 성립하는 최소 길이)가 창 안에 있어야 한다.
+// 규칙 중 최소 성립 길이가 가장 긴 것은 이름이 비밀인 KEY=VALUE(이름 상한 80 + 구분 10 + 값 1)와 GLM 키(32+1+16) — 256이면 모두 덮는다.
+// 그보다 긴 비밀(긴 토큰)은 앞부분만으로도 열린 수량자({16,}·+) 패턴이 성립해 창 안 부분이 가려진다. 닫히지 않은 PEM은 창 끝까지 가린다.
+const MASK_MARGIN = 256;
+// 이름 앞을 고정한다(이름 글자가 아닌 자리에서만 시작) — 'aaaa…'에서 위치마다 이름 80자를 되짚지 않게. 여는 따옴표는 일치 밖에 두고(앞 글자 그대로 남는다)
+// 닫는 따옴표만 선택으로 받는다 — 백레퍼런스 없이 "password": "x"와 password=x를 같이 문다.
+const KV_RE = /(?<![A-Za-z0-9_.-])([A-Za-z_][A-Za-z0-9_.-]{0,80})(["']?)([ \t]{0,10}[:=][ \t]{0,10})("[^"\n]{0,4000}"|'[^'\n]{0,4000}'|[^\s"',;&}\]]+)/g;
+const isMaskedVal = (v) => { const x = String(v).replace(/^["']/, '').replace(/["']$/, ''); return x === 'sk-***' || /^\*+$/.test(x); };
+const PEM_HEAD = /-----BEGIN ([A-Z]{1,12} ){0,3}PRIVATE KEY-----/g;
+const PEM_END = 'PRIVATE KEY-----';
+/** PEM 개인키 블록 가리기 — indexOf로 한 번 훑는다(닫히지 않으면 끝까지). */
+function maskPem(s) {
+  if (!s.includes('-----BEGIN ')) return s;
+  let out = ''; let last = 0; let m;
+  PEM_HEAD.lastIndex = 0;
+  while ((m = PEM_HEAD.exec(s))) {
+    const kind = m[1] ? m[0].slice('-----BEGIN '.length, -PEM_END.length) : '';
+    const body = m.index + m[0].length;
+    const endAt = s.indexOf(PEM_END, body);
+    const stop = endAt < 0 ? s.length : endAt + PEM_END.length;
+    out += `${s.slice(last, m.index)}-----BEGIN ${kind}PRIVATE KEY----- *** -----END ${kind}PRIVATE KEY-----`;
+    last = stop; PEM_HEAD.lastIndex = stop;
+  }
+  return out + s.slice(last);
+}
+/** 줄 조건 가림 — 그 줄에 trigger가 있을 때만 rule을 건다(줄을 한 번 나눈다 — `.*?` 끝까지 훑기 없음). */
+const byLine = (s, trigger, rule, repl) => (trigger.test(s) ? s.split('\n').map((l) => (trigger.test(l) ? l.replace(rule, repl) : l)).join('\n') : s);
+const MYSQL_LINE = /\b(?:mysql|mysqldump|mysqladmin|mariadb|mariadb-dump)\b/;
+const CURL_LINE = /\bcurl\b/;
+
+/** 화면·저장에 실리는 단계 글에서 비밀 모양을 가린다(순수). maskKeyLike(벤더 키 모양) 위에 PEM 개인키·Bearer·쿠키·CLI 비밀 인자·URL 비밀번호·이름이 비밀인 KEY=VALUE.
+    limit을 주면 상한+MASK_MARGIN까지만 가리고 상한으로 자른다(큰 외부 글 방어). */
+export function maskSecrets(s, limit = Infinity) {
   if (s == null) return '';
   let out = String(s);
-  out = out.replace(/-----BEGIN ([A-Z ]*)PRIVATE KEY-----[\s\S]*?(?:-----END \1PRIVATE KEY-----|$)/g, '-----BEGIN $1PRIVATE KEY----- *** -----END $1PRIVATE KEY-----');
+  const capped = Number.isFinite(limit) && out.length > limit;
+  if (capped) out = out.slice(0, limit + MASK_MARGIN);
+  out = maskPem(out);
   out = maskKeyLike(out);
-  out = out.replace(/\b(Bearer|Basic|Token)\s+[A-Za-z0-9._~+/=-]{8,}/g, '$1 ***');
+  out = out.replace(/\b(Bearer|Basic|Token)[ \t]{1,10}[A-Za-z0-9._~+/=-]{8,}/g, '$1 ***');
   // 쿠키 헤더 — 값 전체(여러 쿠키·세션 id)를 가린다
-  out = out.replace(/\b((?:Set-)?Cookie)(\s*:\s*)[^\n]+/gi, '$1$2***');
+  out = out.replace(/\b((?:Set-)?Cookie)([ \t]{0,10}:[ \t]{0,10})[^\n]+/gi, '$1$2***');
   // CLI 인자로 넘긴 비밀 — --password=x·--password x·--token x·--api-key x, mysql류 -pSECRET(붙여 쓴 꼴), sshpass -p x, curl -u user:pass
-  out = out.replace(/(\s--?(?:password|passwd|pass|token|api-?key|secret|client-secret|auth-token)(?:=|\s+))("[^"]*"|'[^']*'|\S+)/gi, (m, head, val) => (masked(val) ? m : `${head}***`));
-  out = out.replace(/^(.*\b(?:mysql|mysqldump|mysqladmin|mariadb|mariadb-dump)\b.*?\s-p)(?!\s)(\S+)/gim, '$1***');
-  out = out.replace(/(\bsshpass\s+-p\s+)(\S+)/g, '$1***');
-  out = out.replace(/(\bcurl\b[^\n]*?\s(?:-u|--user)\s+["']?)([^\s:"']+):([^\s"']+)/g, '$1$2:***');
-  out = out.replace(/\b([a-z][a-z0-9+.-]*:\/\/)([^/\s:@]+):([^/\s@]+)@/gi, '$1$2:***@');
-  out = out.replace(KV_RE, (m, q, name, sep, val) => {
-    if (!isSecretName(name) || masked(val) || /^(Bearer|Basic|Token)$/.test(val)) return m;
-    return `${q}${name}${q}${sep}${val.startsWith('"') ? '"***"' : val.startsWith("'") ? "'***'" : '***'}`;
+  out = out.replace(/(\s--?(?:password|passwd|pass|token|api-?key|secret|client-secret|auth-token)(?:=|[ \t]{1,10}))("[^"\n]{0,4000}"|'[^'\n]{0,4000}'|\S+)/gi, (m, head, val) => (isMaskedVal(val) ? m : `${head}***`));
+  out = byLine(out, MYSQL_LINE, /(\s-p)(?=\S)(\S+)/g, '$1***');
+  out = out.replace(/(\bsshpass[ \t]{1,10}-p[ \t]{1,10})(\S+)/g, '$1***');
+  out = byLine(out, CURL_LINE, /(\s(?:-u|--user)[ \t]{1,10}["']?)([^\s:"']{1,256}):([^\s"']+)/g, '$1$2:***');
+  // URL 사용자:비밀번호@ — 스킴 앞을 고정하고 길이를 묶는다('a.a.a…'처럼 시작 위치가 많은 글에서 위치마다 끝까지 훑지 않게)
+  out = out.replace(/(?<![A-Za-z0-9+.-])([a-z][a-z0-9+.-]{0,15}:\/\/)([^/\s:@]{1,256}):([^/\s@]+)@/gi, '$1$2:***@');
+  out = out.replace(KV_RE, (m, name, q, sep, val) => {
+    if (!isSecretName(name) || isMaskedVal(val) || /^(Bearer|Basic|Token)$/.test(val)) return m;
+    return `${name}${q}${sep}${val.startsWith('"') ? '"***"' : val.startsWith("'") ? "'***'" : '***'}`;
   });
-  return out;
+  return capped ? out.slice(0, limit) : out;
 }
 
 /* ─── 글 다듬기 ─── */
-const lineCount = (s) => (s ? String(s).split('\n').length : 0);
+/** 줄 수 — indexOf로 한 번 훑는다(큰 결과에서 split 배열을 만들지 않는다). */
+const lineCount = (s) => {
+  const t = String(s ?? '');
+  if (!t) return 0;
+  let n = 1; let i = -1;
+  while ((i = t.indexOf('\n', i + 1)) >= 0) n += 1;
+  return n;
+};
 /** 앞 n줄 미리보기(순수) — { text, lines(원래 줄 수), more(남은 줄 수) }. 300줄 → 20줄 + more 280. */
 export function previewLines(text, n = PREVIEW_LINES, maxChars = Infinity) {
   const s = String(text ?? '');
@@ -87,6 +131,12 @@ function clipLines(s, maxLines, maxChars) {
   return { text: out, cut: out.length < s.length };
 }
 
+/** 도구 입력 → 가린 표시 글(저장 상한까지만 가린다). */
+function maskInput(name, input) {
+  const t = inputText(name, input);
+  return maskSecrets(t, INPUT_STORE) + (t.length > INPUT_STORE ? '…' : '');
+}
+
 /** 도구 입력 → 표시 글(순수). 셸 명령은 명령 그대로, 나머지는 '키: 값' 줄 — 명령·경로·인자를 전부 보인다. */
 export function inputText(name, input) {
   if (input == null) return '';
@@ -95,10 +145,12 @@ export function inputText(name, input) {
   const cmd = typeof input.command === 'string' ? input.command : Array.isArray(input.command) ? input.command.join(' ') : null;
   if (cmd != null && /^(Bash|shell|exec)$/i.test(name)) {
     const rest = Object.entries(input).filter(([k]) => k !== 'command' && k !== 'description');
-    return [`$ ${cmd}`, ...rest.map(([k, v]) => `${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`)].join('\n');
+    return [`$ ${capVal(cmd)}`, ...rest.map(([k, v]) => `${k}: ${capVal(typeof v === 'string' ? v : JSON.stringify(v))}`)].join('\n');
   }
-  return Object.entries(input).map(([k, v]) => `${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`).join('\n');
+  return Object.entries(input).map(([k, v]) => `${k}: ${capVal(typeof v === 'string' ? v : JSON.stringify(v))}`).join('\n');
 }
+// 값 하나가 저장 상한보다 크게(수 MB Write 본문) 표시 글을 만들지 않게 — 상한+여유까지만(뒤는 어차피 저장하지 않는다)
+const capVal = (v) => { const t = String(v ?? ''); return t.length > INPUT_STORE + MASK_MARGIN ? t.slice(0, INPUT_STORE + MASK_MARGIN) : t; };
 
 /** 도구 결과(문자열 또는 블록 배열) → 글(순수). 이미지는 자리표시만. */
 export function resultText(content) {
@@ -126,7 +178,7 @@ export function detailInput(input) {
   const out = {};
   for (const k of DETAIL_KEYS) {
     const v = Array.isArray(input[k]) ? input[k].join(' ') : input[k];
-    if (typeof v === 'string') out[k] = maskSecrets(v.slice(0, 2000));
+    if (typeof v === 'string') out[k] = maskSecrets(v, 2000); // 상한+여유로 자르고 가린 뒤 자른다(경계에 걸친 비밀이 남지 않게)
   }
   return out;
 }
@@ -160,11 +212,13 @@ export function createTrace({ wsId, slug, source = 'chat', persist = PERSIST_SOU
   };
   const touch = (st) => { st.v = ++rev; };
   const storeResult = (st, raw, isError) => {
-    const masked = maskSecrets(raw).replace(/\s+$/, ''); // 끝 줄바꿈은 줄 수에 넣지 않는다(seq 300 → 300줄, 301줄 아님)
-    st.lines = lineCount(masked);
+    // 끝 줄바꿈은 줄 수에 넣지 않는다(seq 300 → 300줄, 301줄 아님). trimEnd는 한 번 훑기 — `\s+$` 정규식은 공백 덩어리 뒤 글자가 오면 제곱으로 느려진다.
+    const text = String(raw ?? '').trimEnd();
+    st.lines = lineCount(text); // 원래 줄 수(가림 전 글로 센다 — 줄 수는 비밀이 아니다)
     const lim = overBudget() ? { lines: PREVIEW_LINES, chars: VIEW_RESULT_CHARS } : { lines: RESULT_STORE_LINES, chars: RESULT_STORE };
+    const masked = maskSecrets(text, lim.chars); // 저장 상한까지만 가린다(큰 외부 글 방어)
     const c = clipLines(masked, lim.lines, lim.chars);
-    st.result = c.text; st.cut = c.cut;
+    st.result = c.text; st.cut = c.cut || text.length > lim.chars;
     charge(st.result);
     st.status = isError ? 'err' : 'ok';
   };
@@ -175,15 +229,15 @@ export function createTrace({ wsId, slug, source = 'chat', persist = PERSIST_SOU
     think(text, { parent = null } = {}) {
       const s = String(text ?? '').trim();
       if (!s || ended) return null;
-      const body = clip(maskSecrets(s), THINK_STORE); charge(body);
+      const body = maskSecrets(s, THINK_STORE) + (s.length > THINK_STORE ? '…' : ''); charge(body);
       return push({ id: null, kind: 'think', name: '', input: '', result: body, lines: lineCount(body), cut: body.length < s.length, status: 'ok', t: at(), ms: 0, parent });
     },
     /** 도구(또는 하위 작업) 시작. 같은 id가 다시 오면 입력만 갱신한다(codex item.started → item.completed). */
     toolStart({ id: toolId = null, name, input, parent = null, kind = null } = {}) {
       if (ended) return null;
       const nm = String(name ?? 'tool');
-      if (toolId && byTool.has(toolId)) { const st = byTool.get(toolId); if (input !== undefined) { st.input = clip(maskSecrets(inputText(nm, input)), INPUT_STORE); st._det = detailInput(input); touch(st); } return st; }
-      const body = clip(maskSecrets(inputText(nm, input)), INPUT_STORE); charge(body);
+      if (toolId && byTool.has(toolId)) { const st = byTool.get(toolId); if (input !== undefined) { st.input = maskInput(nm, input); st._det = detailInput(input); touch(st); } return st; }
+      const body = maskInput(nm, input); charge(body);
       const st = push({ id: toolId, kind: kind ?? kindOf(nm), name: nm, input: body, result: '', lines: 0, cut: false, status: 'run', t: at(), ms: 0, parent, _det: detailInput(input) }); // _det = 가린 요약용 조각(원문은 들고 있지 않는다)
       if (st && toolId) byTool.set(toolId, st);
       return st;
