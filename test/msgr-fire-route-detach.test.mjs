@@ -24,16 +24,26 @@ const dir = paths(WS).agents;
 await mkdir(dir, { recursive: true });
 const seed = async (slug) => writeFile(join(dir, `${slug}.md`), `---\nname: ${slug}\nslug: ${slug}\nrole: r\n---\n\n# ${slug}\n`);
 const fire = (slug) => DELETE(new Request('http://localhost/x', { method: 'DELETE' }), { params: Promise.resolve({ ws: WS, slug }) });
+// 라우트는 분리를 void import(...)로 띄우는데, 그 동적 임포트는 로더 훅(next-esm-resolve, 별도 스레드)을 거쳐 풀려 바퀴 수(settle)로는 기다릴 수 없다 —
+// 늦게 진입한 분리는 그때의 firedDeps를 읽어 다음 테스트의 가짜에 호출을 남긴다(CI macOS 2026-10-09: F3의 'fragile' 분리가 F4 기록에 찍힘).
+// 그래서 분리 진입(첫 단계 session 호출)을 세고, 성공한 해고마다 진입을 확인한 뒤 다음으로 넘어간다
+let entered = 0;
+const fired = async (slug) => { const before = entered; const res = await fire(slug); return { res, entered: () => until(() => entered > before) }; };
 /** 이벤트 루프를 몇 바퀴 돌려 남은 비동기 꼬리(마이크로태스크)가 끝나게 한다 — 시간이 아니라 바퀴 수라 부하와 무관 */
 const settle = async () => { for (let i = 0; i < 8; i++) await new Promise((r) => setImmediate(r)); };
 const until = async (fn) => { for (let i = 0; i < 100; i++) { if (fn()) return true; await new Promise((r) => setTimeout(r, 10)); } return false; };
-const wire = (db, over = {}) => Object.assign(M.firedDeps, { session: async () => ({ uid: UID, db }), load: async () => ({ ownerId: UID }), seen: new Map([[WS, new Map([['luna', null], ['jun', null]])]]), log: () => {}, ...over });
+const wire = (db, over = {}) => {
+  const deps = { session: async () => ({ uid: UID, db }), load: async () => ({ ownerId: UID }), seen: new Map([[WS, new Map([['luna', null], ['jun', null]])]]), log: () => {}, ...over };
+  const session = deps.session;
+  Object.assign(M.firedDeps, deps, { session: (...a) => { entered++; return session(...a); } });
+};
 
 test('F1. 해고하면 카드는 .archive로 가고, 그 slug의 파견 행 분리가 한 번 나가며 기준에서 slug가 빠진다', async () => {
   await seed('luna'); await seed('jun');
   const asked = []; wire({ async detachActiveCrews(...a) { asked.push(a); return ['a1', 'ap']; } });
-  const res = await fire('luna');
+  const { res, entered: detachStarted } = await fired('luna');
   assert.deepEqual(await res.json(), { ok: true });
+  assert.ok(await detachStarted(), '분리가 시작된다');
   assert.ok(!(await readdir(dir)).includes('luna.md'), '카드는 보관함으로');
   assert.ok(await until(() => asked.length >= 1), '분리 호출이 나간다');
   assert.ok(await until(() => !M.firedDeps.seen.get(WS).has('luna')), '분리 뒤 기준에서 slug가 빠진다(고정 대기가 아니라 조건 대기 — 카드 폴더를 한 번 더 읽는 시간은 부하에 따라 다르다, 4차 L-6)');
@@ -46,10 +56,11 @@ test('F2. 응답은 분리 호출을 기다리지 않는다 — 호출이 영영
   await seed('stuck');
   wire({ detachActiveCrews: () => new Promise(() => {}) });
   const started = Date.now();
-  const res = await fire('stuck');
+  const { res, entered: detachStarted } = await fired('stuck');
   assert.equal(res.status, 200);
   assert.ok(Date.now() - started < 1000);
   assert.ok(!(await readdir(dir)).includes('stuck.md'));
+  assert.ok(await detachStarted(), '분리는 시작된다(끝나지 않을 뿐) — 시작을 확인해야 다음 테스트의 가짜로 새지 않는다');
 });
 
 test('F3. 로그인이 없거나 DB가 실패하거나 소유자가 달라도 해고는 그대로 되고, 해고한 slug는 기준에 남아 다음 미러 틱이 처리한다(검수 2차 L-4a)', async () => {
@@ -59,8 +70,9 @@ test('F3. 로그인이 없거나 DB가 실패하거나 소유자가 달라도 �
     const asked = [];
     // 기준에 넣는 것은 해고하는 slug(fragile) — 분리가 안 됐는데 기준에서 빠지면(분리 전 삭제) 미러가 해고를 영영 못 본다
     wire({ async detachActiveCrews(...a) { asked.push(a); if (failing) throw new Error('boom'); return ['a1']; } }, { ...over, seen: new Map([[WS, new Map([['fragile', null], ['jun', null]])]]) });
-    const res = await fire('fragile');
+    const { res, entered: detachStarted } = await fired('fragile');
     assert.equal(res.status, 200, name);
+    assert.ok(await detachStarted(), `${name}: 분리가 시작된다(이 반복의 가짜로)`);
     assert.ok(!(await readdir(dir)).includes('fragile.md'), `${name}: 해고는 그대로 된다`);
     if (wantCalls) assert.ok(await until(() => asked.length >= wantCalls), `${name}: 분리 호출이 나간다`);
     await settle();
@@ -71,8 +83,10 @@ test('F3. 로그인이 없거나 DB가 실패하거나 소유자가 달라도 �
 
 test('F4. 없는 크루를 해고하면 오류 그대로이고 분리 호출은 나가지 않는다 — 상태 코드는 구현마다 달라도(400·404) 실패다', async () => {
   const asked = []; wire({ async detachActiveCrews(...a) { asked.push(a); return []; } });
+  const before = entered;
   const res = await fire('nobody');
   assert.ok(!res.ok, `실패 응답 ${res.status}`);
   await settle();
   assert.deepEqual(asked, []);
+  assert.equal(entered, before, '분리 경로에 들어가지도 않는다');
 });
