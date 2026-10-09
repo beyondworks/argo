@@ -229,6 +229,7 @@ const DICT = {
   'room.thought': ['생각', 'Thinking'],
   'room.noAdd': ['추가 의견 없음', 'Nothing to add'],
   'room.placeholder': ['@이름 을 붙여 안건을 던지세요 (여러 명 가능, 부른 에이전트 모두 발언) · / 명령·스킬', 'Mention @name(s) and drop a topic (everyone mentioned speaks) · / commands & skills'],
+  'room.placeholderShort': ['@이름 안건 · / 명령', '@name topic · / commands'], // 폰 폭처럼 긴 안내가 입력창 한 줄에 안 들어갈 때(회의실 화면이 재서 고른다)
   'room.mentionOnly': ['이름 뒤에 안건을 적어 주세요 — 이름만으로는 보내지 않습니다', 'Add the topic after the name — a mention alone is not sent'],
   'room.newMsgs': ['새 메시지 ↓', 'New messages ↓'],
   'room.hint': ['멘션이 없으면 첫 번째 에이전트가 답합니다. @all을 붙이면 모든 에이전트가 발언합니다. 회의 내용은 자동으로 회사 기억(일지)에 남습니다.', 'No mention → the first agent replies. @all calls everyone. Everything lands in company memory automatically.'],
