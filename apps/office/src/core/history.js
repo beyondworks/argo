@@ -21,7 +21,8 @@ export function record(key, before) {
 /** ⌘Z가 고칠 격자 — 화면에 있고 되돌릴(다시 할) 단계가 있는 것 중 마지막으로 바꾼 것 */
 export const target = (redo) => [...H.order].reverse().find((key) => H.grids.has(key) && H.stacks.get(key)?.[redo ? 'redo' : 'undo'].length);
 
-const typing = (el) => el?.isContentEditable || el?.tagName === 'TEXTAREA' || el?.tagName === 'SELECT' || (el?.tagName === 'INPUT' && !/^(checkbox|radio|button|submit|reset|range|color|file)$/.test(el.type));
+/** 글을 입력 중인 요소인가 — 체크박스·라디오·단추 등은 아니다(단축키·⌘A·Esc가 그대로 동작, 검수 #895) */
+export const typing = (el) => el?.isContentEditable || el?.tagName === 'TEXTAREA' || el?.tagName === 'SELECT' || (el?.tagName === 'INPUT' && !/^(checkbox|radio|button|submit|reset|range|color|file)$/.test(el.type));
 /** 키 → 'undo' | 'redo' | null. 끄는 중·글자 조합 중·입력칸에서는 null */
 export function keyAction(e) {
   const k = e.key?.toLowerCase();

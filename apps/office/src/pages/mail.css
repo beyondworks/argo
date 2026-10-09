@@ -43,9 +43,11 @@
 /* 고르기(유건 10/9) — 아바타 자리의 체크박스. 마우스를 올리거나 하나라도 고르면 보인다. 터치는 보이지 않아도 아바타를 누르면 고른다(Gmail 관례) */
 .mail-check { position: absolute; z-index: 1; left: 16px; top: 12px; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; cursor: pointer; opacity: 0; }
 .mail-check input, .mail-check-all input { width: 16px; height: 16px; margin: 0; accent-color: var(--primary); cursor: pointer; }
-.mail-list.picking .mail-check, .mail-check:focus-within { opacity: 1; }
-.mail-list.picking .mail-av, .mail-item:has(.mail-check:focus-within) .mail-av { visibility: hidden; }
-@media (hover: hover) { .mail-item:hover .mail-check { opacity: 1; } .mail-item:hover .mail-av { visibility: hidden; } }
+/* 키보드 초점만(:focus-visible) — 마우스로 누른 체크박스에 남는 초점으로 해제 뒤에도 보이지 않게(검수 #895) */
+.mail-list.picking .mail-check, .mail-check:has(:focus-visible) { opacity: 1; }
+.mail-list.picking .mail-av, .mail-item:has(.mail-check :focus-visible) .mail-av { visibility: hidden; }
+/* 체크박스는 줄 단추 위에 겹친 형제 — 그 위에서도 줄 배경을 준다(:where로 고른 줄 바탕보다 약하게) */
+@media (hover: hover) { .mail-item:hover .mail-check { opacity: 1; } .mail-item:hover .mail-av { visibility: hidden; } :where(.mail-item:hover) > .mail-row:not(.active) { background: var(--card-2); } }
 .mail-check-all { display: inline-grid; place-items: center; flex: none; width: 26px; height: 32px; cursor: pointer; }
 @media (max-width: 1100px) { .mail-list:not(.picking) .mail-check-all { display: none; } } /* 메일함 칸이 숨는 폭·폰은 고르는 중에만 — 평소에는 검색칸 폭을 지킨다 */
 

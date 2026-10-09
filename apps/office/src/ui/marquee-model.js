@@ -20,6 +20,8 @@ export const checkKeys = (sel, key, { keys, anchor, shift = false }) => {
 };
 /** 전체 선택 칸 — 지금 목록 keys 기준 'all' | 'some' | 'none' */
 export const checkState = (sel, keys) => { const n = keys.filter((k) => sel.has(k)).length; return !n ? 'none' : n === keys.length ? 'all' : 'some'; };
+/** 전체 선택 칸 누르기 — 없음·일부 → 전체, 전체 → 해제 */
+export const checkAll = (sel, keys) => new Set(checkState(sel, keys) === 'all' ? [] : keys);
 export const sameSet = (a, b) => a.size === b.size && [...a].every((k) => b.has(k));
 /** 두 점이 만드는 사각형 */
 export const rectOf = (a, b) => ({ l: Math.min(a.x, b.x), t: Math.min(a.y, b.y), r: Math.max(a.x, b.x), b: Math.max(a.y, b.y) });
