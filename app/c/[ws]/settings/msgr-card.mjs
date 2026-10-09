@@ -3,7 +3,6 @@
 // '연결 필요' + '조직을 만들거나 초대받으세요'를 보이고 연결 상태(실행기)를 숨겼다.
 
 export const MESSENGER_PAGE = 'https://argo.ceo/messenger'; // 맥·윈도우·iOS·Android 받기 안내(앱 스토어 포함) 한 곳
-export const OFFICE_URL = 'https://argo-office.vercel.app'; // 아르고 오피스(웹) — 설치를 전제하지 않는다(CX-13)
 
 /** 머리 칩 — 'connected'(조직에 등록됨) · 'personal'(조직은 없지만 개인 공간에 연결됨) · 'notConnected' */
 export function msgrConnectionChip({ regCount = 0, personalCount = 0 } = {}) {

@@ -13,8 +13,8 @@ import { MOVE_REQUIRED } from '../../../update-location.mjs';
 import LocalAssetImport from '../../../components/LocalAssetImport';
 import { accountPlan, trialBadgeState } from '../../../../src/entitlement.mjs';
 
-// Argo Messenger 받기 — 맥·윈도우 설치파일만 걸던 것을 앱 스토어·Play까지 있는 안내 페이지 한 곳으로(CX-12). 오피스는 웹 주소(CX-13).
-import { MESSENGER_PAGE, OFFICE_URL, msgrCardView, runtimeWaitingKey, runtimeAction } from './msgr-card.mjs';
+// Argo Messenger 받기 — 맥·윈도우 설치파일만 걸던 것을 앱 스토어·Play까지 있는 안내 페이지 한 곳으로(CX-12). 오피스 진입 버튼(CX-13)은 오피스가 비공개라 뺐다(유건 2026-10-10).
+import { MESSENGER_PAGE, msgrCardView, runtimeWaitingKey, runtimeAction } from './msgr-card.mjs';
 import ArchivedCompaniesCard from '../../../archived-companies'; // 보관한 회사 되돌리기 — 홈에도 같은 카드(UM3)
 import { trashFailKind } from './trash-fail.mjs'; // 보관함 항목이 이미 사라졌는지(2차 M3)
 import { saveWithRevert } from './save-revert.mjs'; // 저장 실패면 되돌린다(F9)
@@ -1051,11 +1051,6 @@ function MsgrCard({ ws, agents }) {
         </details>
       </>)}
       {err && <p style={{ fontSize: 11.5, color: 'var(--danger)', margin: 0 }}>{err}</p>}
-      {/* 아르고 오피스 — 본체 어디에도 오피스로 가는 길이 없었다(CX-13). 웹 주소라 다른 앱 설치를 전제하지 않는다 */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', borderTop: '1px solid var(--border-soft)', paddingTop: 12 }}>
-        <span style={{ fontSize: 12, color: 'var(--fg-2)', flex: '1 1 220px', minWidth: 0, lineHeight: 1.6 }}>{t('settings.office.desc')}</span>
-        <a className="btn sm" href={OFFICE_URL} target="_blank" rel="noopener noreferrer" style={{ flex: 'none' }}>{t('settings.office.open')} ↗</a>
-      </div>
     </div>
   );
 }
