@@ -9,11 +9,11 @@ export function dueInfo(due, today) {
   return n < 0 ? { key: 'overdue', n: -n } : n === 0 ? { key: 'today', n: 0 } : n === 1 ? { key: 'tomorrow', n: 1 } : { key: 'left', n };
 }
 
-/** 메뉴 배지·홈 '챙길 것'(18차)의 할 일 수 — 내가 맡은 일 중 안 끝낸·안 취소한 일의 기한 지남·오늘 마감. 아직 안 읽었으면(rows 없음) null — 배지를 0으로 보이지 않게.
+/** 메뉴 배지·홈 '챙길 것'(18차)의 할 일 수 — 내가 맡은 일 중 안 끝낸·안 취소한·보류 아닌(10/9 유건) 일의 기한 지남·오늘 마감. 아직 안 읽었으면(rows 없음) null — 배지를 0으로 보이지 않게.
  *  날짜는 한국 자정 기준(서버 기한 준수율·홈 현황 카드와 같은 날짜) — 브라우저 시간대가 달라도 같은 수. now = 시각(ms) 또는 한국 날짜 'YYYY-MM-DD' */
 export function dueCounts(rows, now, me) {
   if (!rows) return null;
-  const g = groupTasks(rows.filter((r) => !r.cancelled_at), typeof now === 'string' ? now : kstDay(new Date(now)), me);
+  const g = groupTasks(rows.filter((r) => !r.cancelled_at && r.status !== 'hold'), typeof now === 'string' ? now : kstDay(new Date(now)), me);
   return { overdue: g.overdue.length, today: g.today.length };
 }
 

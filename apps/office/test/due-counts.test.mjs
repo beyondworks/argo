@@ -51,3 +51,14 @@ test('안 읽음: null, 읽었는데 없음: 0', () => {
   assert.equal(dueCounts(null, Date.now(), ME), null);
   assert.deepEqual(dueCounts([], Date.now(), ME), { overdue: 0, today: 0 });
 });
+
+// 이유(유건 10/9 "할 일 목록 6개인데 뱃지 5" → 권장안): 보류한 일은 지금 할 일이 아니다 — 기한이 지났어도 배지·챙길 것 수에서 뺀다(할 일 화면 목록에는 그대로).
+test('보류한 일은 배지에서 뺀다', () => {
+  const rows = [
+    { id: 'a', assignee: ME, due_on: '2026-08-21', status: 'hold' },
+    { id: 'b', assignee: ME, due_on: '2026-10-02', status: 'doing' },
+    { id: 'c', assignee: ME, due_on: '2026-10-09', status: 'hold' },
+    { id: 'd', assignee: ME, due_on: '2026-10-09' },
+  ];
+  assert.deepEqual(dueCounts(rows, '2026-10-09', ME), { overdue: 1, today: 1 });
+});

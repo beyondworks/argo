@@ -44,10 +44,10 @@ function SpaceSwitcher({ space }) {
   );
 }
 
-function NavItem({ to, icon, label, count, active }) {
+function NavItem({ to, icon, label, count, hint, active }) {
   return (
     <Link to={to} className={`nav-item${active ? ' active' : ''}`} aria-current={active ? 'page' : undefined}>
-      <Icon name={icon} /><span className="nav-label">{label}</span>{count > 0 && <span className="nav-count">{count}</span>}
+      <Icon name={icon} /><span className="nav-label">{label}</span>{count > 0 && <span className="nav-count" title={hint}>{count}</span>}
     </Link>
   );
 }
@@ -261,7 +261,7 @@ export function Sidebar({ space, path }) {
     perf: { to: `${base}/perf`, icon: NAV_ICON.perf, label: t('nav.perf'), active: at(`${base}/perf`) },
     ...Object.fromEntries(['people', 'company', 'agents'].map((v) => [v, { to: `${base}/${v}`, icon: NAV_ICON[v], label: t(`nav.${v}`), active: at(`${base}/${v}`) }])),
     status: { to: `${base}/status`, icon: NAV_ICON.status, label: t('nav.status'), active: at(`${base}/status`) }, // 업무 현황(10/8) — 조직 공간에만
-    tasks: { to: `${base}/tasks`, icon: NAV_ICON.tasks, label: t('nav.tasks'), count: due && due.overdue + due.today, active: at(`${base}/tasks`) },
+    tasks: { to: `${base}/tasks`, icon: NAV_ICON.tasks, label: t('nav.tasks'), count: due && due.overdue + due.today, hint: due && t('nav.tasksDue', { o: due.overdue, d: due.today }), active: at(`${base}/tasks`) }, // 배지에 마우스 = 무엇을 센 수인지(10/9)
     shared: { to: '/me/shared', icon: NAV_ICON.shared, label: t('nav.shared'), active: at('/me/shared') },
     knowhow: { to: `${base}/knowhow`, icon: NAV_ICON.knowhow, label: t('nav.knowhow'), active: at(`${base}/knowhow`) },
     tools: { to: `${base}/tools`, icon: NAV_ICON.tools, label: t('nav.tools'), active: at(`${base}/tools`) },
