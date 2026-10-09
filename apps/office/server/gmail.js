@@ -173,4 +173,6 @@ export const MODIFY_LABELS = ['UNREAD', 'INBOX', 'STARRED'];
 
 /** 필요한 권한 — 사용자가 동의 화면에서 일부를 끄면 연결을 거절하고 다시 받게 한다 */
 export const SCOPES = ['https://www.googleapis.com/auth/gmail.modify', 'https://www.googleapis.com/auth/gmail.compose'];
+/** 영구 삭제(휴지통 비우기) 권한 — 평소 연결에는 넣지 않고 비우기를 처음 누를 때만 요청한다(유건 10/9) */
+export const PURGE_SCOPE = 'https://mail.google.com/';
 export const missingScopes = (granted) => SCOPES.filter((s) => !String(granted ?? '').split(/\s+/).includes(s));

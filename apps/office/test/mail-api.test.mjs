@@ -234,3 +234,53 @@ test('목록: 휴지통 메일함 = labelIds TRASH', async () => {
   assert.equal(calls.find((c) => c.path === '/messages').q.get('includeSpamTrash'), 'true');
   assert.equal(r.body.items[0].folder, 'trash');
 });
+
+// ── 휴지통 비우기·영구 삭제(유건 10/9 권장안: 처음 비울 때만 추가 권한, 휴지통 전체, 계정별 개수 확인 창, 고른 메일 영구 삭제) ──
+// 이유: 영구 삭제(messages.batchDelete)는 https://mail.google.com/ 권한이 있어야 한다 — 평소 연결은 지금 권한 그대로, 비우기를 처음 누를 때만 그 권한까지 요청한다.
+test('연결 시작: full이면 영구 삭제 권한까지, 아니면 지금 권한 그대로', async () => {
+  const scope = async (body) => new URL((await post('start', body)).body.url).searchParams.get('scope').split(' ');
+  globalThis.fetch = ((orig) => async (url, init) => (String(url).includes('/auth/v1/user') ? new Response(JSON.stringify({ id: 'u1' })) : orig(url, init)))(globalThis.fetch);
+  assert.ok(!(await scope({})).includes('https://mail.google.com/'));
+  assert.ok((await scope({ full: true })).includes('https://mail.google.com/'));
+  assert.ok(!(await scope({ full: 'true' })).includes('https://mail.google.com/'), 'true(불리언)만');
+});
+
+// 이유: 확인 창에 계정별 개수 — 휴지통 라벨의 전체 수(목록을 다 받지 않는다).
+test('휴지통 개수: labels/TRASH의 messagesTotal', async () => {
+  gmail = (c) => (c.path === '/labels/TRASH' ? ok({ id: 'TRASH', messagesTotal: 123 }) : new Response('{}', { status: 404 }));
+  assert.deepEqual((await post('trashCount', { account: 'acc' })).body, { total: 123 });
+});
+
+// 이유: 되돌릴 수 없는 동작 — 화면 확인을 거친 요청(confirm: 'purge')만, 그리고 Gmail 휴지통에 지금 있는 메일만 지운다(크루 도구는 이 동작을 부르지 않는다 — MAIL_CALLS).
+test('영구 삭제: confirm 없으면 400·Gmail 호출 0', async () => {
+  gmail = () => ok({});
+  for (const body of [{ account: 'acc' }, { account: 'acc', confirm: true }, { account: 'acc', confirm: 'yes' }]) assert.equal((await post('purge', body)).status, 400);
+  assert.deepEqual(calls, []);
+});
+test('휴지통 비우기: 휴지통 목록을 끝까지 받아 500개씩 batchDelete', async () => {
+  const page1 = Array.from({ length: 500 }, (_, i) => ({ id: `t${i}` })), page2 = Array.from({ length: 120 }, (_, i) => ({ id: `u${i}` }));
+  gmail = (c) => (c.path === '/messages' ? ok(c.q.get('pageToken') === 'P2' ? { messages: page2 } : { messages: page1, nextPageToken: 'P2' }) : c.path === '/messages/batchDelete' ? new Response(null, { status: 204 }) : new Response('{}', { status: 404 }));
+  const r = await post('purge', { account: 'acc', confirm: 'purge' });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.deleted, 620);
+  const lists = calls.filter((c) => c.path === '/messages');
+  assert.ok(lists.every((c) => c.q.get('labelIds') === 'TRASH' && c.q.get('includeSpamTrash') === 'true'), '휴지통 라벨만');
+  const dels = calls.filter((c) => c.path === '/messages/batchDelete').map((c) => JSON.parse(c.init.body).ids);
+  assert.deepEqual(dels.map((x) => x.length), [500, 120]);
+  assert.ok(calls.every((c) => c.method !== 'DELETE' && ['/messages', '/messages/batchDelete'].includes(c.path)), '목록 받기와 batchDelete뿐(한 통씩 지우는 호출 없음)');
+});
+test('고른 메일 영구 삭제: 그중 지금 휴지통에 있는 것만(그 사이 꺼낸 메일은 지우지 않는다)', async () => {
+  gmail = (c) => (c.path === '/messages' ? ok({ messages: [{ id: 'a' }, { id: 'b' }, { id: 'c' }] }) : c.path === '/messages/batchDelete' ? new Response(null, { status: 204 }) : new Response('{}', { status: 404 }));
+  const r = await post('purge', { account: 'acc', confirm: 'purge', ids: ['a', 'c', 'restored'] });
+  assert.deepEqual(r.body, { deleted: 2, ids: ['a', 'c'] });
+  assert.deepEqual(JSON.parse(calls.find((c) => c.path === '/messages/batchDelete').init.body), { ids: ['a', 'c'] });
+  calls = [];
+  for (const ids of [[], ['x/../y'], 'a', Array.from({ length: 1001 }, (_, i) => `m${i}`)]) assert.equal((await post('purge', { account: 'acc', confirm: 'purge', ids })).status, 400, JSON.stringify(ids).slice(0, 30));
+  assert.deepEqual(calls, [], '잘못된 입력은 Gmail을 부르지 않는다');
+});
+// 이유: 영구 삭제 권한이 없는 연결(지금 연결 전부) — 화면이 그 계정만 권한을 다시 받게 403 scope_needed로 알린다.
+test('영구 삭제: 권한이 없으면 403 scope_needed', async () => {
+  gmail = (c) => (c.path === '/messages' ? ok({ messages: [{ id: 'a' }] }) : new Response(JSON.stringify({ error: { code: 403, message: 'Request had insufficient authentication scopes.', status: 'PERMISSION_DENIED', details: [{ reason: 'ACCESS_TOKEN_SCOPE_INSUFFICIENT' }] } }), { status: 403 }));
+  const r = await post('purge', { account: 'acc', confirm: 'purge' });
+  assert.deepEqual([r.status, r.body.error], [403, 'scope_needed']);
+});

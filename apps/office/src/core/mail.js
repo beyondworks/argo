@@ -219,6 +219,22 @@ function untrashTo(m, to) {
   update(() => ({}), [[`trash:${m.id}`, { type: 'mail.trash', id: m.id, account: m.account, gid: m.gid, on: false }], ...(to === 'inbox' ? [[`mail:${m.id}`, { type: 'mail.flag', id: m.id, patch: {} }]] : [])]);
 }
 
+/** 휴지통 개수(10/9 비우기 확인 창) — 계정마다 { account, total } 또는 { account, error }. 예시 모드는 이 기기의 예시 휴지통 */
+export function trashCounts(accounts) {
+  if (!real()) return Promise.resolve(accounts.map((account) => ({ account, total: getState().mails.filter((m) => m.folder === 'trash' && m.account === account).length })));
+  return Promise.all(accounts.map((account) => api('trashCount', { account }).then((r) => ({ account, total: r.total }), (e) => ({ account, error: e.code }))));
+}
+/** 영구 삭제(10/9 휴지통 비우기·고른 메일) — 되돌릴 수 없다, 화면 확인 창 뒤에만. mails(고른 메일)가 없으면 그 계정의 Gmail 휴지통 전체.
+ *  서버가 지운 것만 캐시에서 뺀다(권한이 없으면 scope_needed — 아무것도 바꾸지 않는다). 예시 모드는 이 기기에서만(예시 메일은 Gmail id가 없어 메일 id로) */
+export async function purgeMail({ account, mails }) {
+  const r = real() ? await api('purge', { account, confirm: 'purge', ...(mails ? { ids: mails.map((m) => m.gid) } : {}) }) : null;
+  const picked = mails && new Set(mails.map((m) => m.id));
+  const gone = (m) => m.folder === 'trash' && m.account === account && (r?.ids ? r.ids.includes(m.gid) : !picked || picked.has(m.id));
+  const n = getState().mails.filter(gone).length;
+  update((s) => ({ mails: s.mails.filter((m) => !gone(m)) }));
+  return r ?? { deleted: n };
+}
+
 /** 꺼낼 곳(10/9 휴지통 메일함) — 이 기기에서 지운 메일은 지우기 전 메일함, 그 밖에는 Gmail 라벨(서버 folderOf와 같은 순서: 임시 보관함 > 받은편지함 > 보낸편지함 > 보관함) */
 export function restoredFolder(m) {
   const l = m.labels ?? [];
@@ -240,8 +256,9 @@ export function takeMailReturn() {
   return r;
 }
 /** Google 로그인 → 권한 승인 화면으로 보낸다(돌아오는 곳: /me/mail/connect) */
-export async function connectGoogle(hint) {
-  const { url } = await api('start', { hint, ...(isDesktop() ? { desktop: true } : {}) });
+/** full: 휴지통 비우기 권한(https://mail.google.com/)까지 — 비우기를 처음 누를 때만(10/9) */
+export async function connectGoogle(hint, { full = false } = {}) {
+  const { url } = await api('start', { hint, ...(full ? { full: true } : {}), ...(isDesktop() ? { desktop: true } : {}) });
   if (isDesktop()) {
     const { startDesktopMail } = await import('./desktop-auth.js'); // 데스크톱에서만 받는다
     const result = await startDesktopMail(url);

@@ -28,14 +28,14 @@ import { useSelection, selProps } from '../core/selection.js';
 import { checkKeys, checkState, checkAll } from '../ui/marquee-model.js';
 import { CELLS } from '../core/selection.js';
 import { typing } from '../core/history.js';
-import { bulkTargets, rowTapPicks } from './mail-bulk.js';
+import { bulkTargets, rowTapPicks, purgeTargets } from './mail-bulk.js';
 import { Hide, HideIn } from '../business/Redact.jsx';
 import { looksLikeAddr } from '../core/hide-all.js';
 /** 목록 줄의 주소(받는 사람·이름 없는 보낸 사람) — 화면 전체 가리기 중 흐린다(제목·요약과 같은 흐림, 18차 검수 M2) */
 const haAddr = (s) => <span className="ha">{s}</span>;
 import {
   loadAccounts, pullMail, syncMail, readMail, finishConnect, mailConfig, refreshMail, hasMore, wantSync, lastSynced, subscribeSync, limitLeft, subscribeLimit, getLimitUntil,
-  saveDraft, sendMail, sendDraft, deleteDraft, toggleStar, trashMail, restoreMail, restoredFolder, fileToPart, openAttachment, mailDoc, mailPaper, ATTACH_CAP,
+  saveDraft, sendMail, sendDraft, deleteDraft, toggleStar, trashMail, restoreMail, restoredFolder, purgeMail, trashCounts, connectGoogle, fileToPart, openAttachment, mailDoc, mailPaper, ATTACH_CAP,
   readSnap, saveSnap, clearSnap, readView, writeView, firstView, seedSample, notifyOn, subscribeNotify, hardFails, takeMailReturn } from '../core/mail.js';
 import {
   VIEWS, inView, byDate, replySubject, forwardSubject, replyTo, replyAll, fmtExact, linkify, quoteBlock, forwardBlock, htmlToText, escapeHtml,
@@ -549,6 +549,51 @@ export function MailConnect({ query }) {
   );
 }
 
+/** 휴지통 비우기·고른 메일 영구 삭제 확인 창(유건 10/9) — 계정별 개수를 보여 주고 한 번 확인받는다(되돌릴 수 없다).
+ *  처음 비우는 계정은 Gmail 영구 삭제 권한이 없어 scope_needed — 그 계정만 '권한 승인'(연결 다시, full)을 띄운다 */
+function PurgeModal({ spec, accounts, onClose }) {
+  const [rows, setRows] = useState(spec.targets);
+  const [step, setStep] = useState(spec.picked ? 'confirm' : 'counting'); // counting | confirm | busy | done
+  useEffect(() => {
+    if (spec.picked) return undefined;
+    let live = true;
+    trashCounts(spec.targets.map((x) => x.account)).then((cs) => { if (live) { setRows(spec.targets.map((x, i) => ({ ...x, ...cs[i] }))); setStep('confirm'); } });
+    return () => { live = false; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const addr = (id) => accounts.find((a) => a.id === id)?.address ?? ME.email;
+  const total = rows.reduce((n, r) => n + (r.total ?? 0), 0);
+  const go = async () => {
+    setStep('busy');
+    const out = [];
+    for (const r of rows) {
+      if (r.total === 0) { out.push({ ...r, done: 0 }); continue; } // 빈 휴지통은 부르지 않는다
+      try { out.push({ ...r, done: (await purgeMail({ account: r.account, mails: r.mails })).deleted }); } catch (e) { out.push({ ...r, fail: e.code ?? 'server' }); }
+    }
+    const deleted = out.reduce((n, r) => n + (r.done ?? 0), 0);
+    if (deleted) showToast(t('mailx.purged', { n: deleted }));
+    if (out.every((r) => !r.fail)) { onClose(); return; }
+    setRows(out); setStep('done');
+  };
+  const line = (r) => (r.fail === 'scope_needed' ? <><span>{t('mailx.purgeScope')}</span>
+      <button type="button" className="btn sm" onClick={() => connectGoogle(addr(r.account), { full: true }).catch(() => showToast(t('mailc.err.other')))}>{t('mailx.purgeGrant')}</button></>
+    : r.fail ? <span className="danger-text">{t('mailx.purgeFailed')}</span>
+      : r.done != null ? <span>{t('mailx.purgeDone', { n: r.done })}</span>
+        : r.error ? <span className="dim">{t('mailx.purgeUnknown')}</span>
+          : r.total == null ? <span className="dim">{t('mailx.purgeCounting')}</span> : <b>{t('mailx.purgeCount', { n: r.total })}</b>);
+  const footer = step === 'done' ? <button type="button" className="btn" onClick={onClose}>{t('close')}</button> : <>
+    <button type="button" className="btn" disabled={step === 'busy'} onClick={onClose}>{t('cancel')}</button>
+    <button type="button" className="btn danger" disabled={step !== 'confirm' || (total === 0 && rows.every((r) => !r.error))} onClick={go}><Icon name="trash" size={14} />{step === 'busy' ? t('mailx.purgeBusy') : t('mailx.purge')}</button>
+  </>;
+  return <Modal open onClose={() => step !== 'busy' && onClose()} title={t(spec.picked ? 'mailx.purgePickedTitle' : 'mailx.emptyTrash')} footer={footer}>
+    <div className="mail-purge">
+      {step !== 'done' && <p>{t('mailx.purgeBody')}</p>}
+      <ul className="mail-purge-list">{rows.map((r) => <li key={r.account ?? 'sample'}><span className="ellip"><Hide k={`mail:acct:${addr(r.account)}`} focusable={false}>{addr(r.account)}</Hide></span>{line(r)}</li>)}</ul>
+      {step === 'confirm' && (total > 0 ? <p><b>{t('mailx.purgeTotal', { n: total })}</b></p> : rows.every((r) => !r.error) && <p className="dim">{t('mailx.purgeEmpty')}</p>)}
+      {step === 'confirm' && !spec.picked && <p className="dim small">{t('mailx.purgeScopeHint')}</p>}
+    </div>
+  </Modal>;
+}
+
 function AccountList({ accounts, pick, setPick }) {
   const [bye, setBye] = useState(null);
   const menu = (a) => [
@@ -600,6 +645,7 @@ export function Mail({ id }) {
   const [loading, setLoading] = useState(false), [moreBusy, setMoreBusy] = useState(false), [refreshing, setRefreshing] = useState(false);
   const [qInput, setQInput] = useState(''), [search, setSearch] = useState(null); // search: { q, ids, busy, some(일부 실패) }
   const [cal, setCal] = useState(() => { try { return localStorage.getItem('argo-office-mail-cal-open') === '1'; } catch { return false; } });
+  const [purge, setPurge] = useState(null); // 휴지통 비우기·영구 삭제 확인 창 { picked, targets }
   const toggleCal = () => setCal((v) => { try { localStorage.setItem('argo-office-mail-cal-open', v ? '0' : '1'); } catch { /* 저장소 없음 */ } return !v; });
   const [listW, setListW] = useWidth('argo-office-mail-list', 360, 280, 560);
   const [ready, setReady] = useState(!real);
@@ -683,6 +729,7 @@ export function Mail({ id }) {
       b.archive.length > 0 && { label: t('mail.archiveIt'), icon: 'archive', run: done(() => { const undos = b.archive.map((m) => archiveMail(m.id)); showToast(t('sel.archived', { n: b.archive.length }), { undo: () => undos.forEach((u) => u?.()) }); if (b.archive.some((m) => m.id === id)) navigate(mailHome()); }) },
       box !== 'trash' && { label: t('crew.assign'), icon: 'hand', run: done(() => setUi({ assign: { space: 'me', items: mailItems(list) } })) },
       b.restore.length > 0 && { label: t('mailx.restore'), icon: 'refresh', run: done(() => { const undos = b.restore.map((m) => restoreMail(m)); showToast(t('mailx.restoredN', { n: b.restore.length }), { undo: () => undos.forEach((u) => u()) }); if (b.restore.some((m) => m.id === id)) navigate(mailHome()); }) },
+      box === 'trash' && b.restore.length > 0 && { label: t('mailx.purge'), icon: 'trash', danger: true, run: () => setPurge({ picked: true, targets: purgeTargets({ picked: b.restore }) }) }, // 고른 메일 영구 삭제(확인 창 — 지운 줄은 목록에서 빠져 선택도 같이 빠진다)
       b.trash.length > 0 && { label: t('mailx.trash'), icon: 'trash', danger: true, run: done(() => { const undos = b.trash.map((m) => trashMail(m)); showToast(t('mailx.trashedN', { n: b.trash.length }), { undo: () => undos.forEach((u) => u()) }); if (b.trash.some((m) => m.id === id)) navigate(mailHome()); }) },
     ];
   } });
@@ -732,7 +779,8 @@ export function Mail({ id }) {
         {expired.length > 0 && <div className="mail-banner"><span className="dot ask" />{t('mailc.expired')}<button type="button" className="btn sm" onClick={() => reconnect(expired[0])}>{t('mailc.reconnect')}</button></div>}
         {left > 0 && <div className="mail-banner" role="status">{t('mailx.wait', { n: left })}</div>}
         {failN > 0 && rows.length > 0 && <div className="mail-banner" role="alert"><span className="dot ask" />{t('mailx.someFail', { n: failN })}<button type="button" className="btn sm" onClick={() => setAgain((n) => n + 1)}>{t('desktop.retry')}</button></div>}
-        {view === 'trash' && !search && rows.length > 0 && <div className="mail-search-state">{t('mailx.trashNote')}</div>}
+        {view === 'trash' && !search && rows.length > 0 && <div className="mail-search-state mail-trash-bar"><span>{t('mailx.trashNote')}</span>
+          <button type="button" className="link-btn small danger-text" onClick={() => setPurge({ picked: false, targets: purgeTargets({ accounts: accounts.filter(ok), pick, sample: !real }) })}>{t('mailx.emptyTrash')}</button></div>}
         {search && <div className="mail-search-state" role="status">{search.busy ? t('mailx.searching') : t('mailx.results', { n: rows.length })}{search.some && !search.busy && <span className="dim"> · {t('mailx.searchSome')}</span>}</div>}
         {noAccounts ? <ConnectPanel />
           : rows.length ? rows.map((m) => <MailRow key={m.id} m={m} active={m.id === id} sel={sel} group={group} onPick={checkRow} tag={multi && pick === 'all' ? domain(accounts.find((a) => a.id === m.account)?.address) : null} />)
@@ -743,6 +791,7 @@ export function Mail({ id }) {
       <SplitHandle width={listW} onChange={setListW} label={t('mod.resize')} />
       <section className="mail-reader"><Reader m={cur} onBack={() => navigate(mailHome())} /></section>
       {cal && <CalendarAside onClose={toggleCal} />}
+      {purge && <PurgeModal spec={purge} accounts={accounts} onClose={() => setPurge(null)} />}
     </div>
   );
 }
