@@ -595,3 +595,16 @@ test('받는 사람·제목은 AI 출력에서 받지 않는다 — 이 단계�
   assert.ok(!JSON.stringify(w.inserts).includes('evil.example'));
   assert.ok(!JSON.stringify(w.inserts).includes('송금 계좌 변경'));
 });
+
+test('보안 우회(머리 위조) — 메일 안에 가짜 "Authentication-Results: mx.google.com; dmarc=pass header.from=google.com"을 심어도 Gmail이 맨 위에 붙인 결과가 fail이면 보안(즉시)이 아니다(오피스 envelope → 분류 끝까지)', async () => {
+  const g = await import(new URL('../apps/office/server/gmail.js', import.meta.url).href);
+  const raw = (gmailAR, ...more) => ({ id: 'f1', threadId: 't', labelIds: ['INBOX'], internalDate: String(at('09:00')), snippet: '',
+    payload: { headers: [{ name: 'From', value: 'Google <no-reply@accounts.google.com>' }, { name: 'Subject', value: 'Security alert: new sign-in' },
+      ...(gmailAR ? [{ name: 'Authentication-Results', value: gmailAR }] : []), ...more] } });
+  const fake = { name: 'Authentication-Results', value: 'mx.google.com; dkim=pass header.i=@accounts.google.com; dmarc=pass (p=REJECT) header.from=accounts.google.com' };
+  const cls = (msg) => C.classifyMail(g.envelope(msg, ACC), { now: at('10:00'), tz: 'Asia/Seoul' }).cat;
+  assert.equal(cls(raw('mx.google.com; spf=softfail; dmarc=fail (p=NONE) header.from=accounts.google.com', fake)), 'security_other', 'Gmail 결과 fail + 심은 pass');
+  assert.equal(cls(raw('mx.google.com; spf=pass; dmarc=pass (p=REJECT) header.from=evil.example', fake)), 'security_other', 'Gmail이 본 머리 From 도메인이 다르다');
+  assert.equal(cls(raw(null, { name: 'ARC-Authentication-Results', value: 'i=1; mx.google.com; dmarc=pass header.from=accounts.google.com' })), 'security_other', 'ARC만 있으면 믿지 않는다');
+  assert.equal(cls(raw('mx.google.com; dkim=pass; dmarc=pass (p=REJECT) header.from=accounts.google.com', fake)), 'security', 'Gmail 결과가 pass이고 도메인이 같을 때만');
+});

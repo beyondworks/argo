@@ -150,6 +150,17 @@ test('인증 결과(authOf) — 첫 Authentication-Results가 mx.google.com의 �
   assert.deepEqual(authOf(m(gmailAR.replace('dmarc=pass', 'dmarc=fail'), 'mx.google.com; dmarc=pass header.from=google.com')), { dmarc: 'fail', from: 'accounts.google.com' }, '보낸 쪽이 아래에 심은 머리는 무시 — 첫 것(Gmail)만');
   assert.equal(authOf({ payload: { headers: [] } }), null);
   assert.deepEqual(authOf(m('mx.google.com; dmarc=pass header.from=<evil>')), { dmarc: 'pass', from: '' }, '도메인 모양이 아니면 비운다');
+  // 10/9 보안 검토 ①(머리 신뢰) — 보낸 쪽이 메일 안에 심을 수 있는 비슷한 이름·다른 인증 서버·비슷한 서버 이름은 믿지 않는다
+  const hs = (...pairs) => ({ payload: { headers: pairs.map(([name, value]) => ({ name, value })) } });
+  assert.equal(authOf(hs(['ARC-Authentication-Results', 'i=1; mx.google.com; dmarc=pass header.from=google.com'])), null, 'ARC-Authentication-Results는 보지 않는다');
+  assert.equal(authOf(hs(['X-Original-Authentication-Results', 'mx.google.com; dmarc=pass header.from=google.com'])), null, 'X-Original-…은 보지 않는다');
+  assert.equal(authOf(hs(['Authentication-Results', 'mx.google.com.evil.example; dmarc=pass header.from=google.com'])), null, '비슷한 서버 이름');
+  assert.equal(authOf(hs(['Authentication-Results', 'mx.evilgoogle.com; dmarc=pass header.from=google.com'])), null, '끝이 google.com이어도 mx.google.com이 아니면');
+  assert.equal(authOf(hs(['Authentication-Results', 'dmarc=pass header.from=google.com; mx.google.com'])), null, '서버 이름은 첫 칸이어야 한다');
+  assert.equal(authOf(hs(['Authentication-Results', 'spf.evil.example; dmarc=pass header.from=google.com'], ['Authentication-Results', 'mx.google.com; dmarc=pass header.from=google.com'])), null,
+    '맨 위 결과가 다른 서버의 것이면 아래의 mx.google.com 결과도 믿지 않는다(맨 위 것 하나만)');
+  assert.deepEqual(authOf(hs(['ARC-Authentication-Results', 'i=1; mx.google.com; dmarc=pass header.from=google.com'], ['Authentication-Results', 'mx.google.com; dmarc=fail header.from=evil.example'],
+    ['Authentication-Results', 'mx.google.com; dmarc=pass header.from=google.com'])), { dmarc: 'fail', from: 'evil.example' }, '보낸 쪽이 심은 pass(아래)·ARC(위)는 무시, Gmail 결과(fail)만');
   const e = envelope({ id: 'g1', threadId: 't', labelIds: ['INBOX'], internalDate: '1790000000000', payload: { headers: [{ name: 'From', value: 'Google <no-reply@accounts.google.com>' }, { name: 'Authentication-Results', value: gmailAR }] } }, 'acc');
   assert.deepEqual(e.auth, { dmarc: 'pass', from: 'accounts.google.com' });
   assert.equal(envelope({ id: 'g2', payload: { headers: [] } }, 'acc').auth, undefined, '없으면 칸이 없다(화면 목록 모양 그대로)');
