@@ -95,7 +95,7 @@ export async function pullMail(view, { more = false, q = null, only = null } = {
   // 요청 제한(429)도 실패다 — 못 받았으니 '확인 못 함'(L7). 만료된 계정이 있으면 '다시 연결'(R3-L6 — 받지 못한 받은편지함을 '모두 확인'으로 보이지 않게).
   // mailError: undefined 확인 전 · null 받음 · 'expired' 다시 연결 · 시각 실패
   const err = inbox ? { mailError: failed.some((f) => f.code !== 'expired') ? Date.now() : needsLink() } : {};
-  update((s) => ({ mails: mergeList(s.mails, got, { view: q ? null : view, done, busy, append: more || !!q, hasMore: next }), ...err }));
+  update((s) => ({ mails: mergeList(s.mails, got, { view: q ? null : view, done, busy, append: more || !!q, hasMore: next, trash: trashOpen() }), ...err }));
   return { ids: got.sort(byDate).map((m) => m.id), failed, more: hasMore(key) };
 }
 /** 받은편지함 받기(앱을 열 때·홈 '다시 시도') — 계정 목록부터 못 받아도 실패 표시 */
@@ -128,7 +128,7 @@ async function runSync({ view = 'inbox' } = {}) {
     if (r.primed) continue;
     const changed = r.changed ?? [], gone = new Set((r.gone ?? []).map((g) => `${r.account}.${g}`));
     if (!first) arrivals.push(...newArrivals(getState().mails, changed));
-    update((s) => ({ mails: applySync(s.mails, changed, gone, busy) }));
+    update((s) => ({ mails: applySync(s.mails, changed, gone, busy, trashOpen()) })); // 휴지통 메일함을 보는 동안은 휴지통 메일을 둔다
   }
   persist(key, hist, 0);
   if (reset) await pullMail(view).catch(() => {}); // 변경 기록이 만료됐거나 한꺼번에 많이 바뀌면 보고 있는 목록을 새로 받는다
@@ -139,6 +139,8 @@ async function runSync({ view = 'inbox' } = {}) {
 
 /* ── 자동 갱신 — 화면이 보이는 동안만, 여러 곳이 원하면 가장 짧은 간격으로 하나만 ── */
 const wants = new Map();
+/** 휴지통 메일함 화면이 열려 있나 — 받는 메일함이 아니라 화면 기준(검수 #903: 받은편지함·보낸편지함 받기가 휴지통 목록을 비웠다) */
+const trashOpen = () => [...wants.values()].some((w) => w.view === 'trash');
 let timer = null, lastSync = 0;
 const listeners = new Set();
 export const lastSynced = () => lastSync;
@@ -204,14 +206,30 @@ export function trashMail(m) {
   const key = `trash:${m.id}`, op = (on) => [key, { type: 'mail.trash', id: m.id, account: m.account, gid: m.gid, on }];
   // trashedFrom: 휴지통에 있는 동안 나가는 읽음·보관(mail.flag)이 휴지통 전 메일함으로 받은편지함 라벨을 정한다(검수 #899 — 보관 직후 #)
   update((s) => ({ mails: s.mails.map((x) => (x.id === m.id ? { ...x, folder: 'trash', trashedFrom: x.folder } : x)) }), m.account ? [op(true)] : []);
-  return () => {
-    const { trashedFrom, ...back } = m;
-    update((s) => ({ mails: s.mails.some((x) => x.id === m.id) ? s.mails.map((x) => (x.id === m.id ? ({ ...x, folder: m.folder, trashedFrom: undefined }) : x)) : [...s.mails, back] }));
-    if (!m.account) return;
-    // 늘 untrash — 보낼 목록에 남아 있어도 이미 Gmail에 갔을 수 있다(응답만 잃고 다시 보낼 차례, 재검수 #899). 아직 안 나갔으면 같은 키가 합쳐져 untrash 한 번.
-    // 받은편지함으로 돌아갈 때만 받은편지함 라벨도 다시(Gmail이 휴지통에서 그 라벨을 지워도 돌아오게) — 보관함·보낸편지함은 untrash만으로 같다
-    update(() => ({}), [op(false), ...(m.folder === 'inbox' ? [[`mail:${m.id}`, { type: 'mail.flag', id: m.id, patch: {} }]] : [])]);
-  };
+  return () => untrashTo(m, m.folder);
+}
+
+/** 휴지통에서 to 메일함으로(되돌리기·꺼내기) — 동기화가 이미 치웠으면 다시 넣는다.
+ *  늘 untrash — 보낼 목록에 남아 있어도 이미 Gmail에 갔을 수 있다(응답만 잃고 다시 보낼 차례, 재검수 #899). 아직 안 나갔으면 같은 키가 합쳐져 untrash 한 번.
+ *  받은편지함으로 갈 때만 받은편지함 라벨도 다시(Gmail이 휴지통에서 그 라벨을 지워도 돌아오게) — 보관함·보낸편지함은 untrash만으로 같다 */
+function untrashTo(m, to) {
+  const back = { ...m, folder: to, trashedFrom: undefined };
+  update((s) => ({ mails: s.mails.some((x) => x.id === m.id) ? s.mails.map((x) => (x.id === m.id ? { ...x, folder: to, trashedFrom: undefined } : x)) : [...s.mails, back] }));
+  if (!m.account) return;
+  update(() => ({}), [[`trash:${m.id}`, { type: 'mail.trash', id: m.id, account: m.account, gid: m.gid, on: false }], ...(to === 'inbox' ? [[`mail:${m.id}`, { type: 'mail.flag', id: m.id, patch: {} }]] : [])]);
+}
+
+/** 꺼낼 곳(10/9 휴지통 메일함) — 이 기기에서 지운 메일은 지우기 전 메일함, 그 밖에는 Gmail 라벨(서버 folderOf와 같은 순서: 임시 보관함 > 받은편지함 > 보낸편지함 > 보관함) */
+export function restoredFolder(m) {
+  const l = m.labels ?? [];
+  return m.trashedFrom ?? (l.includes('DRAFT') ? 'drafts' : l.includes('INBOX') ? 'inbox' : l.includes('SENT') ? 'sent' : 'archive');
+}
+/** 휴지통에서 꺼내기 — 되돌리면 다시 휴지통 */
+export function restoreMail(m) {
+  if (m.folder !== 'trash') return () => {};
+  const to = restoredFolder(m);
+  untrashTo(m, to);
+  return () => trashMail({ ...m, folder: to, trashedFrom: undefined });
 }
 
 /** 연결을 시작한 메일함 주소 — Google은 등록된 /me/mail/connect로만 돌려보내므로, 조직 공간 메일에서 시작했으면 끝나고 그리로 돌아간다(10/8 검수) */

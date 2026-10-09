@@ -28,10 +28,11 @@ export function parseAddress(v) {
 const header = (msg, name) => (msg.payload?.headers ?? []).find((h) => h.name.toLowerCase() === name.toLowerCase())?.value ?? '';
 
 /** 라벨 → 오피스 메일함 하나(15차). 별표·안 읽음은 메일함이 아니라 보기(starred·unread 칸)라 여기서 정하지 않는다.
- *  휴지통·스팸은 'trash' — 화면은 그 메일을 목록에서 뺀다. 초안 > 받은편지함 > 보낸편지함 > 보관함 순.
+ *  휴지통은 'trash'(휴지통 메일함에만 보인다), 스팸은 'spam'(어디에도 안 보인다, 10/9). 초안 > 받은편지함 > 보낸편지함 > 보관함 순.
  *  나에게 보낸 메일(INBOX+SENT)은 'inbox' — 보낸편지함 보기는 이 값이 아니라 labels의 SENT로 판정한다(pages/mail-model.js inView) */
 export function folderOf(labels = []) {
-  if (labels.includes('TRASH') || labels.includes('SPAM')) return 'trash';
+  if (labels.includes('TRASH')) return 'trash';
+  if (labels.includes('SPAM')) return 'spam'; // 스팸은 휴지통 메일함에 섞지 않는다(10/9) — 화면은 어디에도 보이지 않는다
   if (labels.includes('DRAFT')) return 'drafts';
   if (labels.includes('INBOX')) return 'inbox';
   if (labels.includes('SENT')) return 'sent';
@@ -165,7 +166,7 @@ export function buildMime({ from, to, cc, subject, text, html, inReplyTo, refere
 export const FOLDER_QUERY = {
   inbox: { labelIds: 'INBOX' }, sent: { labelIds: 'SENT' }, drafts: { labelIds: 'DRAFT' },
   archive: { q: '-in:inbox -in:sent -in:drafts -in:spam -in:trash -in:chats' },
-  unread: { q: 'in:inbox is:unread' }, starred: { q: 'is:starred' },
+  unread: { q: 'in:inbox is:unread' }, starred: { q: 'is:starred' }, trash: { labelIds: 'TRASH', includeSpamTrash: 'true' }, // Gmail 기본값은 휴지통·스팸 제외 — 휴지통 라벨만 받되 제외되지 않게
 };
 /** 바꿀 수 있는 라벨 — 읽음·보관·별표(15차) */
 export const MODIFY_LABELS = ['UNREAD', 'INBOX', 'STARRED'];

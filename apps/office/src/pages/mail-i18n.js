@@ -45,6 +45,8 @@ export const MAIL_DICT = {
   'mailx.calendar': ['일정', 'Calendar'], 'mailx.calClose': ['일정 닫기', 'Close calendar'], 'mailx.calNext': ['다음 일정', 'Upcoming'], 'mailx.calDay': ['오늘', 'Today'], 'mailx.calMini': ['달력', 'Month'],
   'mailx.star': ['별표', 'Star'], 'mailx.unstar': ['별표 빼기', 'Remove star'],
   'mailx.trash': ['휴지통으로', 'Move to trash'], 'mailx.trashed': ['휴지통으로 옮겼습니다', 'Moved to trash'], 'mailx.trashedN': ['메일 {n}개를 휴지통으로 옮겼습니다', 'Moved {n} emails to trash'],
+  'mail.trash': ['휴지통', 'Trash'], 'mailx.restore': ['휴지통에서 꺼내기', 'Restore'], 'mailx.restored': ['{box}으로 꺼냈습니다', 'Moved to {box}'], 'mailx.restoredN': ['메일 {n}개를 휴지통에서 꺼냈습니다', 'Restored {n} emails'],
+  'mailx.trashNote': ['휴지통의 메일은 30일이 지나면 Gmail이 완전히 지웁니다', 'Gmail permanently deletes mail in Trash after 30 days'],
   'mailx.selectAll': ['전체 선택', 'Select all'], 'mailx.selectNone': ['선택 해제', 'Clear selection'], 'mailx.pickOne': ['선택: {subject}', 'Select: {subject}'],
   // 읽기
   'mailx.noSubject': ['(제목 없음)', '(no subject)'], 'mailx.from': ['보낸 사람', 'From'], 'mailx.to': ['받는 사람', 'To'], 'mailx.cc': ['참조', 'Cc'],
