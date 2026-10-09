@@ -61,6 +61,35 @@ export function fit(s, cols) {
   return out;
 }
 
+/** 에이전트 이름 비교용 모양 — 소문자, 글자·숫자만(대소문자·공백·-·_ 차이를 무시). */
+const nameKey = (s) => String(s ?? '').normalize('NFC').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+function editDistance(a, b) {
+  const x = [...a]; const y = [...b];
+  let prev = Array.from({ length: y.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= x.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= y.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (x[i - 1] === y[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[y.length];
+}
+/** argo chat <이름>에서 이름을 틀리게 쓴 경우 "혹시 이 에이전트?"로 보여 줄 후보 — 이름(slug)·표시 이름과 오타 한두 글자 이내이거나 앞뒤 일부만 쓴 에이전트를 가까운 순으로 최대 max명.
+    chat은 정확히 같은 이름만 받으니 대소문자만 다른 경우도 후보에 든다. 이름이 비었거나 비슷한 것이 없으면 빈 배열. */
+export function similarAgents(want, crews, max = 3) {
+  const w = nameKey(want); const len = [...w].length;
+  if (!len) return [];
+  const limit = Math.min(2, Math.max(1, Math.floor(len / 2)));
+  return (crews ?? []).map((c) => {
+    let best = Infinity;
+    for (const key of [nameKey(c.slug), nameKey(c.name)]) {
+      if (!key) continue;
+      const near = (len >= 2 && key.includes(w)) || (key.length >= 3 && w.includes(key)); // 일부만 쓴 이름(nov → nova)·덧붙인 이름
+      best = Math.min(best, key === w ? 0 : near ? 0.5 : editDistance(w, key));
+    }
+    return { c, best };
+  }).filter((x) => x.best <= limit).sort((a, b) => a.best - b.best || String(a.c.slug).localeCompare(String(b.c.slug))).slice(0, max).map((x) => x.c);
+}
+
 /** 코어 모듈의 진단 로그인가 — "[argo] 동기화…", "[sync] …" 처럼 대괄호 접두. 대화 화면에서는 파일로 보낸다. */
 export const isCoreLog = (first) => typeof first === 'string' && /^\[[a-z][\w-]*\]/i.test(first);
 /** 앱 기준 안내(설정 → AI 연결)를 CLI 명령으로 바꿔 보인다 — 원문(앱·기록)은 그대로. */

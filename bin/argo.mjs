@@ -21,7 +21,7 @@ import { StringDecoder } from 'node:string_decoder';
 import { applyCliEnv, writeConfig, cliHome, cliLang, cliMode, appDataRoot, accountRoot, isAppShared, readAppVersion, appVersionChanged } from '../src/cli/env.mjs';
 import { serverRunning } from '../src/server-presence.mjs';
 import { launchdPlist, systemdUnit, runArgs } from '../src/cli/service.mjs';
-import { banner, parseInput, style, fit, termWidth, isCoreLog, cliHintText, hostAutoConnect, pasteFilter, unpaste } from '../src/cli/ui.mjs';
+import { banner, parseInput, style, fit, termWidth, isCoreLog, cliHintText, hostAutoConnect, pasteFilter, unpaste, similarAgents } from '../src/cli/ui.mjs';
 
 // 사용자에게 필요 없는 경고는 숨긴다 — node:sqlite(기억 인덱스)의 ExperimentalWarning, SDK의 canUseTool 안내
 // (Argo는 도구 허용을 PreToolUse 훅으로 처리한다 — #587). 대화 중 진행 줄 사이에 끼어들었다(실측). 다른 경고는 그대로 보인다.
@@ -67,7 +67,9 @@ const T = {
     loginWait: '로그인을 기다리는 중… (Ctrl+C로 취소)', loginDone: (e) => `로그인했습니다: ${e}`, loginTimeout: '10분 안에 로그인하지 않아 취소했습니다.', loginConfirm: (e) => `이 계정으로 이 터미널을 로그인할까요? ${e} [y/N] `, loginDeclined: '취소했습니다. 브라우저에서 다시 시도하거나 Ctrl+C로 끝내세요.',
     needLogin: '먼저 로그인해야 합니다 — argo login', dead: '기기 세션이 만료·폐기됐습니다. 다시 로그인하세요 — argo login',
     finding: '클라우드에서 회사를 찾는 중…', noCompany: '이 계정의 회사가 없습니다.', newCompany: '새 회사 이름: ', pickCompany: '회사를 고르세요',
-    pick: '번호: ', crews: '대화할 에이전트를 고르세요', noCrew: '에이전트가 없습니다. /hire로 에이전트를 영입하세요.', chatHint: '(빈 줄이나 /quit로 끝냅니다)',
+    pick: '번호: ', crews: '대화할 에이전트를 고르세요', noCrew: '에이전트가 없습니다. /hire로 에이전트를 영입하세요.',
+    noSuchAgent: (n, sim) => `'${n}' 에이전트를 찾을 수 없습니다.${sim.length ? ` 혹시 이 에이전트인가요? ${sim.join(', ')}` : ''}`, chatNoName: 'argo chat 뒤에 에이전트 이름을 적으세요: argo chat <에이전트> [지시]',
+    agentListHint: '에이전트 목록은 argo를 실행한 뒤 /agent로 볼 수 있습니다.', chatHint: '(빈 줄이나 /quit로 끝냅니다)',
     working: '작업 중', stopHint: 'Ctrl+C로 멈춤', stopping: '멈추는 중…', stopped: '멈췄습니다.', queued: '답이 끝나면 보냅니다',
     talkingTo: (n) => `대화 상대: ${n}`, headHint: '/agent 에이전트 바꾸기  /help 명령 보기  /quit 나가기',
     quitHint: '나가려면 /quit 또는 exit를 입력하세요.', unknownCmd: (n) => `모르는 명령입니다: /${n} — /help로 명령을 볼 수 있습니다.`,
@@ -116,7 +118,9 @@ const T = {
     loginWait: 'Waiting for sign-in… (Ctrl+C to cancel)', loginDone: (e) => `Signed in: ${e}`, loginTimeout: 'Cancelled — no sign-in within 10 minutes.', loginConfirm: (e) => `Sign this terminal in as this account? ${e} [y/N] `, loginDeclined: 'Cancelled. Try again in the browser, or press Ctrl+C to quit.',
     needLogin: 'Sign in first — argo login', dead: 'This device session expired or was revoked. Sign in again — argo login',
     finding: 'Looking for your companies in the cloud…', noCompany: 'No company for this account yet.', newCompany: 'New company name: ', pickCompany: 'Choose a company',
-    pick: 'Number: ', crews: 'Choose an agent to talk to', noCrew: 'No agents yet. Hire one with /hire.', chatHint: '(empty line or /quit to leave)',
+    pick: 'Number: ', crews: 'Choose an agent to talk to', noCrew: 'No agents yet. Hire one with /hire.',
+    noSuchAgent: (n, sim) => `No agent named '${n}'.${sim.length ? ` Did you mean: ${sim.join(', ')}?` : ''}`, chatNoName: 'Add an agent name after argo chat: argo chat <agent> [message]',
+    agentListHint: 'To see your agents, run argo and type /agent.', chatHint: '(empty line or /quit to leave)',
     working: 'Working', stopHint: 'Ctrl+C to stop', stopping: 'Stopping…', stopped: 'Stopped.', queued: 'will send when the reply ends',
     talkingTo: (n) => `Talking to: ${n}`, headHint: '/agent switch agent  /help commands  /quit leave',
     quitHint: 'Type /quit or exit to leave.', unknownCmd: (n) => `Unknown command: /${n} — see /help.`,
@@ -648,8 +652,15 @@ try {
     const s = await identity({ interactive: false });
     const ws = await pickCompany(s.user.id, { interactive: !!rl });
     const { listAgents } = await import('../src/hub.mjs');
-    const want = rest[0]; const crew = (await listAgents(ws)).find((c) => c.slug === want || c.name === want);
-    if (!crew) { console.error(T.noCrew); process.exit(1); }
+    const want = rest[0]; const crews = await listAgents(ws); const crew = crews.find((c) => c.slug === want || c.name === want);
+    if (!crew) { // 이름을 틀리게 쓴 것과 에이전트가 아예 없는 것을 구분한다(전에는 둘 다 "에이전트가 없습니다"였다) — 종료 코드는 1 그대로
+      if (!crews.length) console.error(T.noCrew);
+      else {
+        console.error(want ? T.noSuchAgent(want, similarAgents(want, crews).map((c) => (c.name && c.name !== c.slug ? `${c.slug} (${c.name})` : c.slug))) : T.chatNoName);
+        console.error(T.agentListHint);
+      }
+      process.exit(1);
+    }
     await ensureRunners(ws).then((n) => n && console.error(n)).catch(() => {});
     await chatLoop(ws, crew, rest.slice(1).join(' '));
     process.exit(process.exitCode ?? 0);
