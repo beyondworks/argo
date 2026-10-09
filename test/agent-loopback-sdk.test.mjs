@@ -100,6 +100,30 @@ test('실제 SDK 턴: 재현과 같은 리터럴 curl은 실행 전에 권한 �
   assert.deepEqual(reached, []);
 });
 
+test('실제 SDK 턴: 부모를 끊고 나간 고아 curl(백그라운드 묶음)의 결재 승인도 403 — 핸들러에 닿지 않는다', { skip: onWin, timeout: 120_000 }, async () => {
+  const outFile = join(root, 'orphan.txt');
+  // 리터럴 주소는 권한 게이트가 먼저 막으므로 셸 산술로 포트를 만든다(게이트를 지나 서버 판정만 받는 모양)
+  const out = await agentRuns(`(curl -s -w ' %{http_code}' -X POST -H 'content-type: application/json' -d '{"id":"ap-1","approve":true}' http://127.0.0.$((0+1)):$((${PORT - 7}+7))/api/companies/agent-loopback/approvals > '${outFile}' 2>&1 &) ; for i in 1 2 3 4 5 6 7 8 9 10; do [ -s '${outFile}' ] && break; sleep 0.5; done; cat '${outFile}'`);
+  assert.match(out, /agent_loopback.* 403/, out.slice(0, 300));
+  assert.deepEqual(reached, []);
+});
+
+test('실제 SDK 턴: 세션을 새로 만들어 Bash 명령이 끝난 뒤에도 살아남는 고아(perl setsid → exec curl)의 루틴 삭제도 403', { skip: onWin, timeout: 120_000 }, async () => {
+  // Claude CLI는 Bash 명령이 끝나면 그 그룹을 정리한다(실측 — 같은 그룹 고아는 요청 전에 사라졌다). 살아남는 모양은 세션 분리뿐이다.
+  const outFile = join(root, 'orphan-setsid.txt');
+  const perl = `use POSIX; if (fork() == 0) { POSIX::setsid(); select(undef,undef,undef,1.5); open(STDOUT, q{>}, q{${outFile}}); exec(q{curl}, q{-s}, q{-w}, q{ %{http_code}}, q{-X}, q{DELETE}, q{http://127.0.0.} . (0+1) . q{:} . (${PORT - 7}+7) . q{/api/companies/agent-loopback/routines?id=r1}); } exit 0;`;
+  await agentRuns(`perl -e '${perl}' ; echo launched`);
+  let out = '';
+  for (let i = 0; i < 60 && !/\d{3}$/.test(out); i++) { await new Promise((r) => setTimeout(r, 250)); out = await readFile(outFile, 'utf8').catch(() => ''); }
+  assert.match(out, /agent_loopback.* 403$/, out.slice(0, 300));
+  assert.deepEqual(reached, []);
+});
+
+test('실제 SDK 턴: 에이전트 셸이 표지 env를 물려받는다(부모를 끊어도 남는 근거)', { skip: onWin, timeout: 120_000 }, async () => {
+  const out = await agentRuns('printenv ARGO_AGENT_PROC');
+  assert.equal(out.trim(), String(process.pid), out.slice(0, 200));
+});
+
 test('실제 SDK 턴: 루프백이 아닌 평범한 셸은 그대로 실행된다(회귀 없음)', { skip: onWin, timeout: 120_000 }, async () => {
   const out = await agentRuns('echo NORMAL-SHELL-7777');
   assert.match(out, /NORMAL-SHELL-7777/);

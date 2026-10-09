@@ -5,7 +5,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { mkdir } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { tmpdir, networkInterfaces } from 'node:os';
 import { join } from 'node:path';
 import { mkdtemp } from './helpers/tmp.mjs';
 
@@ -30,6 +30,9 @@ test('포트 후보 — 루프백 호스트가 있을 때만, URL·nc·python �
   assert.deepEqual(loopbackPortCandidates('printf x | nc 127.0.0.1 3001'), [3001], 'nc는 호스트와 포트가 떨어져 있다');
   assert.deepEqual(loopbackPortCandidates("python3 -c \"import http.client as h; c=h.HTTPConnection('localhost', 3001)\""), [3001]);
   assert.deepEqual(loopbackPortCandidates('curl https://example.com:3001/'), [], '루프백이 아니면 후보 없음');
+  const lan = Object.values(networkInterfaces()).flat().find((i) => i && !i.internal && i.family === 'IPv4')?.address;
+  if (lan) assert.deepEqual(loopbackPortCandidates(`curl -X DELETE http://${lan}:3001/api/x`), [3001], '이 컴퓨터의 LAN 주소(서버가 0.0.0.0일 때)');
+  assert.deepEqual(loopbackPortCandidates('curl http://10.255.255.254:3001/'), [], '이 컴퓨터가 아닌 사설 주소');
   assert.deepEqual(loopbackPortCandidates('ls -la'), []);
   assert.deepEqual(loopbackPortCandidates('echo x127.0.0.1y'), [], '단어 중간은 호스트가 아니다');
 });

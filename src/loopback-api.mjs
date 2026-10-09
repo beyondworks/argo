@@ -1,17 +1,25 @@
 // 권한 게이트의 2차 방어 — 셸 명령이 이 컴퓨터의 Argo API(루프백)를 부르면 실행 전에 거절한다.
 // 주 방어는 서버의 연결 상대 판정(src/agent-peer.mjs)이다. 이 판정은 그보다 앞에서 (1) 에이전트에게 왜 안 되는지 알려 우회 시도 대신
-// 사용자에게 요청하게 하고 (2) 서버 판정이 없는 Windows와 (3) 이 서버의 자손이 아닌 턴(터미널의 argo CLI 턴이 앱·상주 API를 부르는 경우)을 덮는다.
+// 사용자에게 요청하게 하고 (2) 서버 판정이 사람으로 볼 수밖에 없는 경로(사람 쪽 프록시를 거치는 요청 등)의 리터럴 명령을 앞에서 거른다.
 // ponytail: 정규식 판정이라 문자열을 쪼개 조립한 명령('127.0'+'.0.1')은 못 잡는다 — 그건 서버 판정이 받는다(재현 2026-10-09).
 // 결재로 올리지 않고 거절한다: 사람이 승인해도 서버 판정이 같은 요청을 다시 거절하고, "에이전트가 결재 API를 부르는 것"을 결재로 허용하는 것 자체가 우회다.
 
-/** 루프백 호스트 표기 — localhost·127/8·0.0.0.0·::1·IPv4 매핑·16진/10진/8진 표기. 단어 중간(예: x127.0.0.1y)은 제외. */
+import { networkInterfaces } from 'node:os';
+
+/** 루프백 호스트 표기 — localhost·127/8·0.0.0.0·::1·IPv4 매핑·16진/10진/8진 표기. 단어 중간(예: x127.0.0.1y)은 제외. 이 컴퓨터의 네트워크 카드 주소도 같이 본다(hasLocalHost). */
 const HOST_RE = /(?:^|[^\w.-])(?:localhost|127(?:\.\d{1,3}){1,3}|0\.0\.0\.0|0x7f[0-9a-f]{6}|2130706433|0177(?:\.\d{1,4}){1,3}|\[?::(?:ffff:127(?:\.\d{1,3}){3}|1)\]?)(?![\w-])/i;
+
+// 이 컴퓨터 네트워크 카드 주소(192.168.x 등) — 서버가 0.0.0.0에 묶이면 루프백 대신 이 주소로도 닿는다
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const localHostRes = () => Object.values(networkInterfaces()).flat().filter((i) => i && !i.internal && i.address)
+  .map((i) => new RegExp(`(?:^|[^\\w.:-])\\[?${escapeRe(i.address.replace(/%.*$/, ''))}\\]?(?![\\w.-])`, 'i'));
+const hasLocalHost = (cmd) => HOST_RE.test(cmd) || localHostRes().some((r) => r.test(cmd));
 
 /** 명령에 루프백 호스트가 있으면 포트 후보(정수, 중복 없음, 최대 8개), 없으면 빈 배열(순수). URL의 :포트, nc 127.0.0.1 3001,
     python ('127.0.0.1', 3001)처럼 호스트와 포트가 떨어진 표기까지 받으려고 명령 안의 2~5자리 수를 전부 후보로 본다. */
 export function loopbackPortCandidates(command) {
   const cmd = String(command ?? '');
-  if (!HOST_RE.test(cmd)) return [];
+  if (!hasLocalHost(cmd)) return [];
   const out = [];
   for (const m of cmd.matchAll(/(?<![\w.])(\d{2,5})(?![\w.])/g)) {
     const n = Number(m[1]);
