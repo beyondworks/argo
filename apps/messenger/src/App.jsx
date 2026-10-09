@@ -6746,14 +6746,14 @@ function Composer({ broadcast = null, onCrewJoined = null, outsideDmPersonal = n
   // '/' 커맨더(유건 지시 2026-09-14) — 채널 크루가 미러한 본체 명령(별칭·스킬, msgr_crews.commands). 팝업이 열리는 순간 최신 목록을
   // 한 번 다시 읽는다(본체에서 스킬·별칭이 바뀜 → 게이트웨이 폴이 행 갱신 → 여기). 실행은 본체 몫이고 여기서는 지시문을 입력창에 넣는다.
   const slashCrews = scopeCrews ?? crews;
-  const [freshCmds, setFreshCmds] = useState(null); // crewId → commands(팝업 열 때 재조회분). null = 아직 안 왔다 — 조직 목록(loadOrg)은 commands를 싣지 않으므로 그동안은 '불러오는 중'(H33)
+  const [freshCmds, setFreshCmds] = useState(null); // 팝업 열 때 재조회 결과 { ok, cmds }. null = 아직 안 왔다 — 조직 목록(loadOrg)은 commands를 싣지 않으므로 그동안은 '불러오는 중'(H33)
   const slashOpen = /^\/(\S*)$/.test(text);
   const slashIds = slashCrews.map((c) => c.id).join(',');
   useEffect(() => {
     if (!slashOpen) { setFreshCmds(null); return; }
     if (!slashIds) return;
     let alive = true;
-    readSlashCommands(supabase, slashIds.split(',')).then((cmds) => { if (alive) setFreshCmds(cmds); }); // 실패해도 던지지 않는다 — 조용히 끝나고 불러오는 중에서 벗어난다
+    readSlashCommands(supabase, slashIds.split(',')).then((res) => { if (alive) setFreshCmds(res); }); // 던지지 않는다 — 실패·시간 초과(8초)는 {ok:false}로 끝나 불러오는 중에서 벗어나고 실패 안내가 보인다
     return () => { alive = false; };
   }, [slashOpen, chId, slashIds]);
   // 1:1 방 수신·참조 = 입력창 명령(유건 결정 2026-09-14: 별도 패널 대신 "/to·/cc 치면 목록"). 서버는 역할 없는 @멘션을 to로 보므로 /to는 @ 삽입,
@@ -6772,7 +6772,7 @@ function Composer({ broadcast = null, onCrewJoined = null, outsideDmPersonal = n
   const [slashOff, setSlashOff] = useState(null); // Esc로 닫은 그 글자에서는 '/' 목록을 다시 띄우지 않는다(D18 S95) — 글자가 바뀌면 다시
   useEffect(() => { if (slashOff !== null && text !== slashOff) setSlashOff(null); }, [text]); // eslint-disable-line react-hooks/exhaustive-deps
   const slash = useMemo(() => rolePick || text === slashOff ? null : slashView(text, slashCrews, freshCmds, { skillPrefix: (title) => t('cmd.skillPrefix', { name: title }), builtins: [{ cmd: 'to', desc: t('cmd.to') }, { cmd: 'cc', desc: t('cmd.cc') }] }), [rolePick, text, slashOff, slashCrews, freshCmds, t]);
-  const slashCands = slash?.cands ?? null; const slashLoading = !!slash?.loading; // loading = 재조회 전이고 명령을 아직 모르는 에이전트가 있다
+  const slashCands = slash?.cands ?? null; const slashLoading = !!slash?.loading; const slashFailed = !!slash?.failed; // loading = 재조회 전이고 명령을 아직 모르는 에이전트가 있다, failed = 재조회가 실패했다
   const [slashSel, setSlashSel] = useState(0);
   useEffect(() => { setSlashSel(0); }, [text]);
   const pickSlash = (cand) => {
@@ -6868,6 +6868,7 @@ function Composer({ broadcast = null, onCrewJoined = null, outsideDmPersonal = n
       if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pickSlash(slashCands[Math.min(slashSel, slashCands.length - 1)]); return; }
       if (e.key === 'Escape') { e.preventDefault(); setSlashOff(text); return; } // 목록만 닫는다 — 쓴 글은 그대로
     }
+    if (slashLoading && e.key === 'Enter' && !e.shiftKey && !isMobilePlatform) { e.preventDefault(); return; } // 명령을 아직 읽는 중(후보가 비어 위 분기를 못 탄다) — '/보고'가 그대로 전송되지 않게(검수 #892). 폰은 원래 Enter로 보내지 않아 건드리지 않는다. 읽기가 끝나면(실패·8초 시간 초과 포함) 예전대로
     if (pop && candidates.length) {
       if (e.key === 'ArrowDown') { e.preventDefault(); setSel((s) => (s + 1) % candidates.length); return; }
       if (e.key === 'ArrowUp') { e.preventDefault(); setSel((s) => (s - 1 + candidates.length) % candidates.length); return; }
@@ -6897,11 +6898,12 @@ function Composer({ broadcast = null, onCrewJoined = null, outsideDmPersonal = n
       )}
       {slashCands && (
         <div className="msgr-pop msgr-slashpop" role="listbox" aria-label={t('cmd.title')}>
-          {slashCands.length === 0 && !slashLoading && <p className="empty">{t('cmd.empty')}</p>}
+          {slashCands.length === 0 && !slashLoading && !slashFailed && <p className="empty">{t('cmd.empty')}</p>}
           {slashCands.map((c, i) => <button key={c.key} type="button" role="option" aria-selected={i === slashSel} className={i === slashSel ? 'on' : ''} ref={i === slashSel ? (el) => el?.scrollIntoView?.({ block: 'nearest' }) : null} onMouseDown={(e) => e.preventDefault()} onClick={() => pickSlash(c)}>
             <span className="cmd">/{c.cmd}</span><span className="desc">{c.desc}</span>
           </button>)}
           {slashLoading && <p className="empty" role="status">{t('cmd.loading')}</p>}
+          {slashFailed && <p className="empty" role="alert">{t('cmd.loadFailed')}</p>}
         </div>
       )}
       {pop && candidates.length > 0 && (
