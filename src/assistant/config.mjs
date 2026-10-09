@@ -52,8 +52,10 @@ export function normalizeAssistantConfig(raw) {
     enabled: r.enabled === true,
     agent: agentOk(r.agent) ? r.agent : null,
     enabledAt: msOf(r.enabledAt), // 켠 시각 — 같은 사용자의 다른 회사와 겹치면 나중에 켠 쪽이 맡는다(C14), 다시 켰을 때 그 전 일은 지난 일로 알리지 않는다
-    // 볼 것 — 이 단계는 일정만 실제로 본다(메일 4단계, 할 일·거래 5단계). 기본은 전부 켬.
-    watch: { calendar: w.calendar !== false, mail: w.mail !== false, tasks: w.tasks !== false, deals: w.deals !== false },
+    // 볼 것 — 일정은 기본 켬. 메일은 사용자가 고른 때만 읽는다(설계 3.2 "동의 없이 메일을 읽지 않는다") — 칸이 없거나 모르는 값이면 안 봄.
+    // watch.mail: true = 알림, 'shadow' = 미리 보기(감지·분류·기록만, 글 0 — 설계 18절: 기존 메일 보고 루틴과 7일 대조한 뒤 알림으로), 그 밖 = 안 봄. 할 일·거래는 5단계.
+    watch: { calendar: w.calendar !== false, mail: w.mail === true || w.mail === 'shadow', tasks: w.tasks !== false, deals: w.deals !== false },
+    mailMode: w.mail === true ? 'live' : w.mail === 'shadow' ? 'shadow' : 'off',
     leadMinutes: LEAD_CHOICES.includes(Number(r.leadMinutes)) ? Number(r.leadMinutes) : DEFAULTS.leadMinutes,
     morningAt,
     eveningAt,
@@ -65,6 +67,8 @@ export function normalizeAssistantConfig(raw) {
 
 /** 이 단계에서 감시기가 할 일이 있는가 — 켜짐 + 비서 에이전트 지정 + 일정 보기. */
 export const calendarActive = (cfg) => !!(cfg?.enabled && cfg.agent && cfg.watch.calendar);
+/** 메일을 보나 — 켜짐 + 비서 에이전트 + 메일 모드(미리 보기·알림). */
+export const mailActive = (cfg) => !!(cfg?.enabled && cfg.agent && (cfg.mailMode === 'live' || cfg.mailMode === 'shadow'));
 
 const cache = new Map(); // wsId → { sig, cfg } — 파일 수정 시각·크기가 같으면 메모리 값을 다시 쓴다(사이 틱에 파일을 다시 파싱하지 않는다)
 const warned = new Set();
