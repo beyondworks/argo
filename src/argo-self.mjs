@@ -79,7 +79,7 @@ export const SETTINGS = Object.freeze([
     read: (v) => v.config.enabled,
     // 켤 때 에이전트 — 지정해 둔 비서가 있으면 그 에이전트, 없으면 이 도구를 부른 에이전트(write의 두 번째 인자)
     write: (value, { agent }) => (value ? { enabled: true, agent } : { enabled: false }),
-    turnsOn: (value) => value === true, // 켜면 같은 주인의 다른 회사 비서가 꺼진다(계정마다 한 명 — settings.mjs saveAssistantSettings)
+    ownerOnly: true, // 켜면 같은 계정의 다른 회사 비서가 꺼진다(계정마다 한 명) — 주인 1:1에서만, 결재 카드로도 올리지 않는다(카드는 채널에 보일 수 있어 다른 회사 사정을 적을 수 없다)
   },
   {
     key: 'assistant.agent', type: 'agent',
@@ -88,7 +88,7 @@ export const SETTINGS = Object.freeze([
     read: (v) => v.config.agent ?? '',
     // 바꾸기만 — 꺼진 비서를 켜지 않는다(켜기는 assistant.enabled로만, applySetting이 꺼짐이면 거절). 저장 함수가 에이전트 교체를 enabled:true로만 받아 켜진 상태에서만 부른다
     write: (value) => ({ enabled: true, agent: value }),
-    turnsOn: () => true, // 켜진 회사의 비서 교체도 "지금 비서"를 이 회사로 다시 정한다
+    ownerOnly: true, // 교체도 "지금 비서"를 이 회사로 다시 정한다 — 위와 같은 이유로 주인 1:1에서만
   },
   {
     key: 'routine.time', type: 'time', needsId: true,
@@ -154,19 +154,10 @@ export function normalizeSettingValue(def, raw, lang = 'ko') {
 const showVal = (v, lang) => (v === true ? pick(lang, '켜짐', 'on') : v === false ? pick(lang, '꺼짐', 'off') : v === '' || v == null ? pick(lang, '(없음)', '(none)') : String(v));
 
 /** 결재 카드 문구(순수) — 승인 때 payload와 다시 맞춰 보는 기준(카드에 보인 것 = 실제로 바뀌는 것). */
-export function settingActionText({ key, id = null, value, offWs = null }, lang = 'ko') {
+export function settingActionText({ key, id = null, value }, lang = 'ko') {
   const def = settingOf(key);
   const label = def ? def.label[ko(lang) ? 'ko' : 'en'] : key;
-  // 다른 회사 비서가 꺼지는 변경은 카드에 그 사실을 적는다(회사 이름은 싣지 않는다 — 카드는 채널에 보일 수 있다. 주인은 계정마다 비서 한 명이라 어느 회사인지 안다)
-  const off = offWs ? pick(lang, ' · 같은 계정의 다른 회사 비서가 꺼짐', " · turns off the assistant in this account's other company") : '';
-  return pick(lang, `설정 변경 — ${label}${id ? ` [${id}]` : ''} → ${showVal(value, lang)}${off}`, `Change setting — ${label}${id ? ` [${id}]` : ''} → ${showVal(value, lang)}${off}`);
-}
-
-/** 이 변경이 꺼뜨릴 다른 회사의 비서 — { ws, name } | null. 설정 화면과 같은 판정(assistantSettingsView current: 같은 주인의 켜진 비서 중 나중에 켠 쪽). */
-async function otherAssistantOff(wsId, def, value) {
-  if (!def.turnsOn?.(value)) return null;
-  const cur = (await assistantSettingsView(wsId)).current;
-  return cur && cur.ws !== wsId ? { ws: cur.ws, name: cur.company } : null;
+  return pick(lang, `설정 변경 — ${label}${id ? ` [${id}]` : ''} → ${showVal(value, lang)}`, `Change setting — ${label}${id ? ` [${id}]` : ''} → ${showVal(value, lang)}`);
 }
 
 /** 지금 값 읽기 — { value, view } | { error }. */
@@ -208,7 +199,7 @@ export async function applySetting(wsId, { key, id = null, value }, { slug = nul
     }
     let res;
     try { res = await saveAssistantSettings(wsId, def.write(norm.value, { agent })); }
-    catch (e) { return { ok: false, text: assistantErrorText(e, lang) }; }
+    catch (e) { return { ok: false, text: assistantErrorText(e, lang), raw: !ASSIST_ERR_CODES.has(e?.code) }; }
     const after = def.read(await assistantSettingsView(wsId));
     const offNames = await Promise.all((res?.changedOthers ?? []).map((id) => loadCompany(id).then((c) => c?.name ?? id, () => id)));
     const offText = offNames.length ? pick(lang, ` 계정마다 비서는 한 명이라 다른 회사(${offNames.join(', ')})의 비서는 꺼졌다 — 사용자에게 이것도 알려라.`, ` One assistant per account, so the assistant in ${offNames.join(', ')} was turned off — tell the user this too.`) : '';
@@ -217,39 +208,42 @@ export async function applySetting(wsId, { key, id = null, value }, { slug = nul
   if (def.key === 'routine.time') {
     const r = cur.routine;
     const sc = r.schedule ?? {};
-    await updateRoutine(wsId, r.id, { schedule: { ...sc, time: norm.value, times: [norm.value] } });
+    try { await updateRoutine(wsId, r.id, { schedule: { ...sc, time: norm.value, times: [norm.value] } }); }
+    catch (e) { return { ok: false, text: pick(lang, `바꾸지 못했다: ${String(e?.message ?? e).slice(0, 160)}`, `Not changed: ${String(e?.message ?? e).slice(0, 160)}`), raw: true }; }
     return { ok: true, before, after: norm.value, text: changedText(def, before, norm.value, lang, r.title) };
   }
   if (def.key === 'company.lang') {
     const { updateCompany } = await import('./workspace.mjs');
-    await updateCompany(wsId, { lang: norm.value });
+    try { await updateCompany(wsId, { lang: norm.value }); }
+    catch (e) { return { ok: false, text: pick(lang, `바꾸지 못했다: ${String(e?.message ?? e).slice(0, 160)}`, `Not changed: ${String(e?.message ?? e).slice(0, 160)}`), raw: true }; }
     return { ok: true, before, after: norm.value, text: changedText(def, before, norm.value, lang) };
   }
   return { ok: false, text: 'unsupported' };
 }
 
-/** 결재 승인 뒤 적용 — 카드를 올릴 때 계산한 "꺼질 다른 회사 비서"가 지금도 같은지 다시 본다. 다르면(그 사이 다른 회사에서 비서를 켜거나 끔) 카드에 보인 것과
-    실제로 일어날 일이 달라지므로 적용하지 않는다. 반환 = 후속 보고 문구(appliedNote). */
+/** 결재 승인 뒤 적용 — 반환 = 후속 보고 문구(appliedNote, 결재를 올린 방으로 간다). 주인 1:1 전용 키(비서 켜기·교체)는 결재로 적용하지 않는다(카드를 고쳐 넣은 경우 방어). */
 export async function applyApprovedSetting(wsId, p, { slug = null } = {}) {
   const lang = p.lang ?? 'ko';
   const def = settingOf(p.key);
-  if (def) {
-    const off = await otherAssistantOff(wsId, def, normalizeSettingValue(def, p.value, lang).value);
-    if ((off?.ws ?? null) !== (p.offWs ?? null)) return pick(lang, '적용 취소 — 결재를 올린 뒤 다른 회사의 비서 상태가 바뀌어, 카드에 보인 것과 실제로 일어날 일이 다르다. 사용자에게 다시 확인받아라.', "Not applied — another company's assistant changed after the card was filed, so the card no longer matches what would happen. Ask the user again.");
-  }
-  return appliedNote(p, await applySetting(wsId, { key: p.key, id: p.id ?? null, value: p.value }, { slug, lang }), lang);
+  if (def?.ownerOnly) return pick(lang, '적용 안 함 — 이 설정은 결재로 바꾸지 않는다(주인 1:1에서만).', "Not applied — this setting isn't changed through approvals (owner's 1:1 only).");
+  let r;
+  try { r = await applySetting(wsId, { key: p.key, id: p.id ?? null, value: p.value }, { slug, lang }); }
+  catch { r = { ok: false, raw: true }; }
+  return appliedNote(p, r, lang);
 }
 
 /** 결재 승인 뒤 적용 결과 문구(순수) — 후속 턴이 원래 방(채널일 수 있다)에 보고하므로 이전 값은 싣지 않는다. 새 값과 화면 위치만. */
 export function appliedNote({ key, value }, r, lang = 'ko') {
   const def = settingOf(key);
-  if (!r?.ok || !def) return pick(lang, `적용 실패 — ${r?.text ?? key}`, `Not applied — ${r?.text ?? key}`);
+  // 실패 이유는 이 모듈이 만든 문구만(화면 규칙 위반 등) — 원문 오류(경로·내부 메시지가 섞일 수 있다)는 방으로 내보내지 않는다
+  if (!r?.ok || !def) return r?.text && !r.raw ? pick(lang, `적용 실패 — ${r.text}`, `Not applied — ${r.text}`)
+    : pick(lang, `적용 실패 — ${def ? def.label.ko : '설정'}을(를) 바꾸지 못했다. 주인에게 화면에서 확인해 달라고 안내하라.`, `Not applied — couldn't change ${def ? def.label.en : 'the setting'}. Ask the owner to check it on screen.`);
   const L = ko(lang) ? 'ko' : 'en';
-  const off = r.offCompanies?.length ? pick(lang, ' 같은 계정의 다른 회사 비서는 꺼졌다(계정마다 한 명).', " The assistant in this account's other company was turned off (one per account).") : '';
-  return pick(lang, `적용 완료 — ${def.label.ko} → ${showVal(r.after ?? value, lang)}(화면: ${def.where.ko}).${off} 이전 값은 말하지 마라.`,
-    `Applied — ${def.label[L]} → ${showVal(r.after ?? value, lang)} (screen: ${def.where.en}).${off} Don't mention the previous value.`);
+  return pick(lang, `적용 완료 — ${def.label.ko} → ${showVal(r.after ?? value, lang)}(화면: ${def.where.ko}). 이전 값은 말하지 마라.`,
+    `Applied — ${def.label[L]} → ${showVal(r.after ?? value, lang)} (screen: ${def.where.en}). Don't mention the previous value.`);
 }
 
+const ASSIST_ERR_CODES = new Set(['assistant_quiet_empty', 'assistant_evening_in_quiet', 'assistant_evening_before_morning', 'assistant_time_invalid', 'assistant_lead_invalid', 'assistant_agent_not_found']);
 function assistantErrorText(e, lang) {
   const code = e?.code ?? '';
   const ko_ = {
@@ -294,10 +288,11 @@ export async function argoSettings(wsId, { action = 'list', key = '', id = null,
       `이 설정은 에이전트가 바꿀 수 없다(${f.why.ko}). 바꾸지 말고, 사용자가 직접 ${f.where.ko}에서 바꾸도록 안내하라.`,
       `Agents cannot change this setting (${f.why[L]}). Don't change it — tell the user to change it themselves at ${f.where.en}.`) };
   }
+  const keyShown = String(key ?? '').replace(/[\x00-\x1f\x7f]+/g, ' ').slice(0, 60);
   if (policy === 'unknown') {
     return { kind: 'text', text: pick(lang,
-      `"${key}"는 에이전트가 바꿀 수 있는 설정 목록에 없다. argo_settings action=list로 바꿀 수 있는 설정을 확인하라. 목록에 없는 설정은 사용자가 화면에서 바꾸도록 안내하라.`,
-      `"${key}" is not on the list of settings agents can change. Check the list with argo_settings action=list; for anything else, tell the user where to change it on screen.`) };
+      `"${keyShown}"는 에이전트가 바꿀 수 있는 설정 목록에 없다. argo_settings action=list로 바꿀 수 있는 설정을 확인하라. 목록에 없는 설정은 사용자가 화면에서 바꾸도록 안내하라.`,
+      `"${keyShown}" is not on the list of settings agents can change. Check the list with argo_settings action=list; for anything else, tell the user where to change it on screen.`) };
   }
   const def = settingOf(key);
   if (def.needsId && !id) return { kind: 'text', text: pick(lang, '이 설정은 id가 필요하다(루틴 id — argo_status section=routines).', 'This setting needs an id (routine id — argo_status section=routines).') };
@@ -310,15 +305,17 @@ export async function argoSettings(wsId, { action = 'list', key = '', id = null,
   }
   // 결재 — 주인의 1:1이 아닌 턴이다. 지금 값을 읽지도 알려 주지도 않는다(같다/다르다도 — 도구 결과는 그 방으로 나갈 수 있다).
   // 이미 같은 값이면 승인 뒤 적용 단계(applySetting)가 "이미 …"로 끝낸다. 사유는 에이전트가 쓴 글 — 키 모양 문자열을 가린다(maskKeyLike).
-  const off = await otherAssistantOff(wsId, def, norm.value);
-  const payload = { key: def.key, ...(id ? { id: String(id) } : {}), value: norm.value, lang: ko(lang) ? 'ko' : 'en', ...(slug ? { by: slug } : {}), ...(off ? { offWs: off.ws } : {}) };
+  if (def.ownerOnly) return { kind: 'text', text: pick(lang,
+    `${def.label.ko}은(는) 주인이 1:1에서 직접 시킬 때만 바꾼다 — 결재 카드로도 올리지 않았다(계정의 다른 비서 설정까지 바뀌는 일이라). 주인에게 1:1에서 말해 달라고 안내하라.`,
+    `${def.label.en} is changed only when the owner asks directly in a 1:1 — no approval card was filed (it affects the account's assistant elsewhere too). Suggest the owner ask in their 1:1.`) };
+  const payload = { key: def.key, ...(id ? { id: String(id) } : {}), value: norm.value, lang: ko(lang) ? 'ko' : 'en', ...(slug ? { by: slug } : {}) };
   const reason = maskKeyLike(String(why || '').replace(/[\r\n\t]+/g, ' ').trim()).slice(0, 500) || pick(lang, '에이전트가 올린 설정 변경 요청', 'Setting change requested by an agent');
   return {
     kind: 'approval',
     approval: { action: settingActionText(payload, lang), reason, payload },
     text: pick(lang,
-      `이 요청은 주인이 1:1에서 직접 시킨 것이 아니라서 바로 바꾸지 않고 주인 결재로 올렸다(${def.label.ko} → ${showVal(norm.value, lang)}${off ? ' · 승인되면 같은 계정의 다른 회사 비서가 꺼진다' : ''}). 승인되면 시스템이 바꾸고 결과가 이어서 온다 — 승인 전에는 바뀐 것처럼 말하지 마라. 지금 값은 이 방에 알리지 않는다.`,
-      `This request didn't come from the owner directly in a 1:1, so it was filed for the owner's approval instead of applied (${def.label.en} → ${showVal(norm.value, lang)}${off ? " · approving turns off the assistant in this account's other company" : ''}). Once approved the system applies it and reports back — don't say it changed before then. Don't share the current value here.`),
+      `이 요청은 주인이 1:1에서 직접 시킨 것이 아니라서 바로 바꾸지 않고 주인 결재로 올렸다(${def.label.ko} → ${showVal(norm.value, lang)}). 승인되면 시스템이 바꾸고 결과가 이어서 온다 — 승인 전에는 바뀐 것처럼 말하지 마라. 지금 값은 이 방에 알리지 않는다.`,
+      `This request didn't come from the owner directly in a 1:1, so it was filed for the owner's approval instead of applied (${def.label.en} → ${showVal(norm.value, lang)}). Once approved the system applies it and reports back — don't say it changed before then. Don't share the current value here.`),
   };
 }
 
@@ -528,7 +525,7 @@ async function syncSection(wsId, { lang, now }) {
     `- ${pick(lang, '실행 담당 기기', 'Running device')}: ${!li.syncOn || (li.leader && li.ownedAt > 0) ? pick(lang, '이 기기(폴러·루틴이 여기서 돈다)', 'this device (pollers and routines run here)') : li.holder?.deviceId ? pick(lang, `다른 기기(${deviceLabel(li.holder.deviceId)})`, `another device (${deviceLabel(li.holder.deviceId)})`) : pick(lang, '확인 중', 'checking')}`,
     `- ${pick(lang, '마지막 동기화', 'Last sync')}: ${lastAt ? `${fmtTime(lastAt, lang)}(${ago(lastAt, now, lang)})` : pick(lang, '이 실행에서는 아직 없음', 'none yet in this run')}${c?.skipped ? ` · ${skip[c.skipped] ?? c.skipped}` : ''}`,
     ...(c && !c.skipped ? [`- ${pick(lang, '이번 회차', 'Last cycle')}: ${pick(lang, '받음', 'pulled')} ${c.pulled ?? 0} · ${pick(lang, '올림', 'pushed')} ${c.pushed ?? 0} · ${pick(lang, '충돌', 'conflicts')} ${c.conflicts ?? 0} · ${pick(lang, '실패', 'failed')} ${c.failed ?? 0}`] : []),
-    ...(s.lastError ? [`- ${pick(lang, '마지막 오류', 'Last error')}: ${String(s.lastError).slice(0, 200)}`] : []),
+    ...(s.lastError ? [`- ${pick(lang, '마지막 오류', 'Last error')}: ${maskKeyLike(String(s.lastError)).slice(0, 200)}`] : []),
   ];
   return lines.join('\n');
 }

@@ -479,27 +479,63 @@ test('다른 회사 비서 — 에이전트 바꾸기는 꺼진 비서를 켜지
   assert.equal((await assistantSettingsView(cb)).config.enabled, true);
 });
 
-test('다른 회사 비서 — 결재 카드에 꺼짐을 적고, 승인 때 다시 대조해 달라졌으면 적용하지 않는다', async () => {
+test('다른 회사 비서 — 비서 켜기·교체는 주인 1:1에서만: 범위 밖에서는 결재 카드도 만들지 않고 다른 회사 사정을 말하지 않는다', async () => {
   const ca = await company('as-pa', { owner: 'u-y' });
   const cb = await company('as-pb', { owner: 'u-y' });
   await saveAssistantSettings(ca, { enabled: true, agent: 'pepper', tz: 'Asia/Seoul' });
-  const h = handlers(cb, { origin: 'pepper' }); // 루틴 출처(범위 밖) — 메신저 맥락이면 후속 턴이 메신저 세션을 찾아 시험 밖이 된다
-  const out = await h.call('argo_settings', { action: 'set', key: 'assistant.enabled', value: 'true' });
-  assert.match(out, /다른 회사 비서가 꺼진다/);
-  assert.doesNotMatch(out, /as-pa/, '채널로 나갈 수 있는 결과에 다른 회사 이름은 싣지 않는다');
-  const [ap] = await pendingSettings(cb);
-  assert.equal(ap.action, '설정 변경 — 비서 켜기·끄기 → 켜짐 · 같은 계정의 다른 회사 비서가 꺼짐');
-  assert.equal(ap.payload.offWs, ca);
-  let seen = null; const runChat = async (_w, _s, msg) => { seen = msg; return { reply: 'ok', sessionId: null }; };
-  await saveAssistantSettings(ca, { enabled: false }); // 승인 전에 A 비서가 꺼짐 — 카드에 보인 일과 달라졌다
-  await _followUpForTest(cb, await resolveApproval(cb, ap.id, true), true, { runChat });
-  assert.match(seen, /적용 취소 — 결재를 올린 뒤 다른 회사의 비서 상태가 바뀌어/);
+  for (const [label, o] of [['채널', { ctx: msgrCtx(cb) }], ['다른 사람', { ctx: msgrCtx(cb, { origin: 'u-other' }) }], ['루틴', { origin: 'pepper' }], ['위임', { chain: ['pepper'] }]]) {
+    const h = handlers(cb, o);
+    for (const [key, value] of [['assistant.enabled', 'true'], ['assistant.agent', 'pepper']]) {
+      const out = await h.call('argo_settings', { action: 'set', key, value });
+      assert.match(out, /주인이 1:1에서 직접 시킬 때만 바꾼다/, `${label} ${key}`);
+      assert.doesNotMatch(out, /as-pa|다른 회사\(/, `${label}: 다른 회사 이름·사정 없음`);
+    }
+  }
+  assert.equal((await pendingSettings(cb)).length, 0, '결재 카드 없음');
+  assert.equal((await assistantSettingsView(ca)).config.enabled, true, 'A 회사 비서 그대로');
+  // 카드를 고쳐 넣어도(결재 파일 직접 편집) 승인 단계가 적용하지 않는다
+  const { applyApprovedSetting } = self;
+  assert.match(await applyApprovedSetting(cb, { key: 'assistant.enabled', value: true, lang: 'ko' }), /결재로 바꾸지 않는다/);
   assert.equal((await assistantSettingsView(cb)).config.enabled, false);
+});
+
+/* ── ⑫ 비주인 문맥으로 나가는 값 전수(커밋 보안 검토 2026-10-09) ───────────────── */
+test('비주인 문맥 — 채널·다른 사람·게스트·루틴·위임에서 나가는 모든 도구 결과·결재 카드·후속 보고에 경로·이메일·계정 id·토큰·다른 회사·오류 원문이 없다', async () => {
+  const ca = await company('as-leak-a', { owner: 'u-leak' });
+  const cb = await company('as-leak-b', { owner: 'u-leak', agents: [['pepper', '페퍼', '비서'], ['mina', '미나', '리서처']] });
   await saveAssistantSettings(ca, { enabled: true, agent: 'pepper', tz: 'Asia/Seoul' });
-  await h.call('argo_settings', { action: 'set', key: 'assistant.enabled', value: 'true' });
-  const [ap2] = await pendingSettings(cb);
-  await _followUpForTest(cb, await resolveApproval(cb, ap2.id, true), true, { runChat });
-  assert.match(seen, /적용 완료 — 비서 켜기·끄기 → 켜짐[^]*다른 회사 비서는 꺼졌다/);
-  assert.equal((await assistantSettingsView(ca)).config.enabled, false);
-  assert.equal((await assistantSettingsView(cb)).config.enabled, true);
+  await addRoutine(cb, { agentSlug: 'mina', title: '사내 보고', prompt: 'p', schedule: { type: 'daily', time: '09:00', tz: 'Asia/Seoul' } });
+  const banned = [
+    [/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/, '이메일'], [new RegExp(process.env.ARGO_ROOT.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), '데이터 경로'],
+    [/\/Users\/|\/private\/|[A-Z]:\\/, '파일 경로'], [/u-leak|u-owner/, '계정 id'], [/sk-ant|eyJ[\w-]{10,}/, '토큰 꼴'], [/as-leak-a/, '다른 회사'],
+    [/사내 보고|09:00|08:00|21:00|23:00/, '주인의 지금 값·루틴'], [/ENOENT|EACCES|Error:/, '오류 원문'],
+  ];
+  const sweep = (label, text) => { for (const [re, what] of banned) assert.doesNotMatch(String(text), re, `${label}: ${what}`); };
+  const cells = [['채널', { ctx: msgrCtx(cb, { uid: 'u-leak', origin: 'u-leak' }) }], ['다른 사람', { ctx: msgrCtx(cb, { uid: 'u-leak', origin: 'u-other' }) }],
+    ['게스트', { ctx: msgrCtx(cb, { uid: 'u-leak', origin: 'u-leak', guest: true }) }], ['루틴', { origin: 'mina' }], ['위임', { chain: ['mina'] }]];
+  for (const [label, o] of cells) {
+    const h = handlers(cb, o);
+    for (const section of ['overview', 'deck', 'agents', 'me', 'routines', 'assistant', 'runners', 'sync', 'plan', 'messenger', 'approvals']) sweep(`${label} status ${section}`, await h.call('argo_status', { section }));
+    sweep(`${label} list`, await h.call('argo_settings', { action: 'list' }));
+    for (const args of [{ key: 'assistant.enabled', value: 'true' }, { key: 'theme', value: 'x' }, { key: 'company.fullAuto', value: 'true' }, { key: 'routine.time', id: 'rnope', value: '10:00' }, { key: 'assistant.evening', value: '01:00', why: '/Users/someone/secret.txt 참고 sk-ant-api03-zzzzzzzzzzzzzzzzzzzzzzzz' }]) {
+      const out = await h.call('argo_settings', { action: 'set', ...args });
+      sweep(`${label} set ${args.key}`, out.replace('/Users/someone/secret.txt', '')); // 에이전트가 쓴 사유 원문은 결과 문구에 다시 싣지 않는다 — 아래 카드에서 본다
+      assert.doesNotMatch(out, /secret\.txt/, `${label}: 사유를 결과에 되풀이하지 않는다`);
+    }
+  }
+  const cards = await pendingSettings(cb);
+  assert.ok(cards.length >= 5, '범위 밖 시각 변경은 카드로');
+  for (const c of cards) { sweep(`카드 ${c.id}`, `${c.action}\n${c.payload.key}${c.payload.value}`); assert.doesNotMatch(c.reason, /sk-ant-api03-z/, '사유의 키 꼴 가림'); }
+  // 후속 보고(결재를 올린 방으로 간다) — 화면 규칙 위반 실패와 없는 루틴 실패 모두 원문·경로 없이
+  let seen = []; const runChat = async (_w, _s, msg) => { seen.push(msg); return { reply: 'ok', sessionId: null }; };
+  for (const c of cards.filter((x) => !x.msgr).slice(0, 4)) await _followUpForTest(cb, await resolveApproval(cb, c.id, true), true, { runChat });
+  assert.ok(seen.length >= 2);
+  // 읽기 오류(손상된 루틴 파일 — 오류 원문에 파일 경로가 섞인다)도 후속 보고에 원문이 나가지 않는다
+  const rid = (await loadRoutines(cb))[0].id;
+  await handlers(cb, { origin: 'mina' }).call('argo_settings', { action: 'set', key: 'routine.time', id: rid, value: '10:30' });
+  const routineCard = (await pendingSettings(cb)).find((c) => c.payload.key === 'routine.time' && c.payload.id === rid);
+  await writeFile(paths(cb).routines, '{ 깨진 json');
+  await _followUpForTest(cb, await resolveApproval(cb, routineCard.id, true), true, { runChat });
+  assert.match(seen.at(-1), /적용 실패 — 루틴 실행 시각[^]*바꾸지 못했다/);
+  for (const m of seen) sweep('후속 보고', m);
 });

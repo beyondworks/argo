@@ -11,7 +11,7 @@ export default {
 - 상태와 설정 값은 회사 주인의 1:1(데스크톱 앱의 에이전트 대화, 메신저에서 주인과 그 에이전트만 있는 1:1 방)에서만 알려 줍니다. 조직 채널·회의실, 다른 사람이나 손님의 요청, 루틴·위임으로 온 일에서는 알려 주지 않습니다. 에이전트의 답이 그 방 사람들에게 보이기 때문입니다. 기능 설명은 어디서나 합니다.
 
 바꿀 수 있는 설정
-- 비서: 아침 정리 시각(= 조용한 시간 끝), 내일 일정 요약 시각, 조용한 시간 시작, 일정 알림(10·15·30·60분 전), 조용한 시간에도 일정 알림 보내기, 비서 켜기·끄기, 비서 에이전트 바꾸기(켜져 있을 때만 — 꺼진 비서를 켜지는 않습니다). 비서는 계정마다 한 명이라 켜면 같은 계정의 다른 회사 비서가 꺼지고, 에이전트가 그 사실을 함께 알려 줍니다.
+- 비서: 아침 정리 시각(= 조용한 시간 끝), 내일 일정 요약 시각, 조용한 시간 시작, 일정 알림(10·15·30·60분 전), 조용한 시간에도 일정 알림 보내기, 비서 켜기·끄기, 비서 에이전트 바꾸기(켜져 있을 때만 — 꺼진 비서를 켜지는 않습니다). 비서는 계정마다 한 명이라 켜면 같은 계정의 다른 회사 비서가 꺼지고, 에이전트가 그 사실을 함께 알려 줍니다. 비서 켜기·끄기와 비서 에이전트 바꾸기는 주인의 1:1에서만 하고, 다른 곳의 요청은 결재 카드로도 올리지 않습니다.
 - 루틴 실행 시각(시각이 하나인 1회·매일·매주 루틴).
 - 에이전트 응답 언어(한국어·영어).
 - 루틴 켜기·끄기는 예약 도구로, 에이전트 이름·역할·러너·모델은 프로필 변경 결재로 합니다.
@@ -38,7 +38,7 @@ What they can read (same values as the screens — only in the company owner's 1
 - State and setting values are shared only in the company owner's 1:1 (the agent chat in the desktop app, or a Messenger 1:1 room with just the owner and that agent). They are not shared in organization channels or the Meeting Room, for requests from other people or guests, or in work that came from routines or delegation — the agent's answer is visible to the people in that room. Feature explanations are available anywhere.
 
 Settings they can change
-- Assistant: morning summary time (= quiet hours end), tomorrow's summary time, quiet hours start, event reminder (10/15/30/60 min before), still send reminders during quiet hours, assistant on/off, which agent is the assistant (only while it is on — it never turns the assistant on). There is one assistant per account, so turning it on turns off the assistant in your other company, and the agent tells you so.
+- Assistant: morning summary time (= quiet hours end), tomorrow's summary time, quiet hours start, event reminder (10/15/30/60 min before), still send reminders during quiet hours, assistant on/off, which agent is the assistant (only while it is on — it never turns the assistant on). There is one assistant per account, so turning it on turns off the assistant in your other company, and the agent tells you so. Turning the assistant on/off and switching its agent happen only in the owner's 1:1; requests from elsewhere are not filed as approval cards either.
 - Routine time (once/daily/weekly routines with a single time).
 - Agent response language (Korean/English).
 - Routine on/off uses the scheduling tool; agent name/role/runner/model go through a profile-change approval.
