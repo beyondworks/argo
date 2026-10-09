@@ -101,6 +101,11 @@ body.vw-banding, body.vw-banding * { user-select: none; -webkit-user-select: non
 .tk-dcell-in { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; pointer-events: none; border: 0; padding: 0; } /* 보이지 않는 날짜 칸 — 날짜 고르기가 이 칸 아래에 뜬다 */
 .tk-dcell-x { width: 20px; height: 20px; opacity: 0; color: var(--fg-3); }
 .tk-dcell:focus-within .tk-dcell-x { opacity: 1; }
+/* 끝낸 일의 상태 칸을 바꾸는 동안(다시 열기 + 상태 두 쓰기, 10/9 검수) — 고른 값 뱃지를 흐리게, 옆에 작은 도는 원(칸반 카드가 새 칸에서 기다리는 것과 같은 뜻) */
+.tk-wait { gap: 5px; }
+.tk-wait > .tk-pill { opacity: 0.6; }
+.tk-wait::after { content: ''; flex: none; width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid var(--border); border-top-color: var(--fg-2); animation: boot-spin 0.9s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .tk-wait::after { animation-duration: 2.4s; } }
 .vw-title-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .vw-title-row .clamp { min-width: 0; }
 .vw-group-head { gap: 10px; }

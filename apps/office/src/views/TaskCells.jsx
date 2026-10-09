@@ -1,6 +1,8 @@
 // 할 일 표 칸(유건 10/9) — 상태·중요도는 값마다 색이 다른 뱃지, 분류·맡은 사람은 드롭다운, 시작일·기한은 날짜 고르기. 누르면 그 자리에서 바뀐다.
 // 바꿀 수 없는 칸(권한·끝낸 일·개인 할 일의 맡은 사람)은 글자로만 보이고, 마우스를 올리면 이유가 보인다(할 일 패널의 잠금과 같은 규칙).
-// 값 목록·권한·쓰기 계획은 cells.js(순수), 쓰기는 useItemActions의 setCell(Board.jsx — 한 건이라 먼저 화면에 반영하고 실패하면 되돌린다).
+// 화면 낭독기는 칸 안의 보이지 않는 글자(sr-only)로 같은 이유를 읽는다(10/9 검수 — title은 낭독기가 잘 읽지 않는다).
+// 값 목록·권한·쓰기 계획은 cells.js(순수), 쓰기는 useItemActions의 setCell(Board.jsx — 한 건이면 먼저 화면에 반영하고 실패하면 그 칸만 되돌린다.
+// 끝낸 일의 상태처럼 쓰기가 두 번이면 끝날 때까지 고른 값을 기다림 표시로 — actions.busy).
 // 부하: 사람이 고를 때만 쓰기 한 번 + 그 공간 할 일 목록 다시 읽기 한 번(할 일 패널과 같다). 폴링 없음.
 import { useRef } from 'react';
 import { t } from '../core/i18n.js';
@@ -18,16 +20,24 @@ export const Pill = ({ kind, value, children }) => <span className={`badge tk-pi
 
 const whoText = (it, people) => (!it.who ? t('views.none.who') : it.who === `p:${people.me}` ? t('views.me') : people.name(it.who));
 
-/** 표 한 칸. it: 할 일 보기 항목, cell: cells.js CELLS 하나, actions: useItemActions 결과(setCell·manageCats·space) */
+/** 바꿀 수 없는 칸 — 글자만, 이유는 마우스를 올리면(title)·화면 낭독기는 칸 안의 보이지 않는 글자로. 'input'(고를 것이 하나뿐)은 이유를 달지 않는다 */
+const Locked = ({ why, children }) => {
+  const tip = why === 'input' ? undefined : t(`views.why.${why}`);
+  return <span className="tk-cell-text" title={tip}>{children}{tip && <span className="sr-only">, {tip}</span>}</span>;
+};
+
+/** 표 한 칸. it: 할 일 보기 항목, cell: cells.js CELLS 하나, actions: useItemActions 결과(setCell·busy·manageCats·space) */
 export function TaskCell({ it, cell, ctx, people, actions }) {
   const field = t(LABEL[cell]);
+  const wait = actions.busy?.get(it.key);
+  if (wait?.cell === cell) return <span className="tk-cell-text tk-wait" aria-busy="true">{cell === 'status' || cell === 'priority' ? <Pill kind={cell} value={wait.value} /> : null}<span className="sr-only">{t('task.saving')}</span></span>;
   if (cell === 'starts_on' || cell === 'due_on') return <DateCell it={it} cell={cell} field={field} why={C.cellWhyNot(it, cell, ctx)} actions={actions} />;
   const opts = C.cellOptions(it, cell, { categories: categoriesOf(it.space), people: people.list(it.space), nameOf: (id) => people.name(`p:${id}`) });
   const manage = cell === 'category' && actions.manageCats && it.space === actions.space; // 분류 관리는 보고 있는 공간의 분류만(할 일 패널과 같다)
   const why = C.cellWhyNot(it, cell, ctx) ?? (opts.length < 2 && !manage ? 'input' : null); // 고를 것이 하나뿐이면(직원이 나 혼자·분류 없음) 글자로
   const shown = cell === 'status' || cell === 'priority' ? <Pill kind={cell} value={it[cell]} />
     : cell === 'category' ? (it.category || <span className="dim">{t('task.uncategorized')}</span>) : whoText(it, people);
-  if (why) return <span className="tk-cell-text" title={why === 'input' ? undefined : t(`views.why.${why}`)}>{shown}</span>;
+  if (why) return <Locked why={why}>{shown}</Locked>;
   const name = (o) => (cell === 'status' || cell === 'priority' ? <Pill kind={cell} value={o.value} />
     : cell === 'category' ? o.name || t('task.uncategorized') : o.value === people.me ? t('task.me') : o.name || '?');
   const open = (e) => openMenu(e, [{ heading: field },
@@ -47,7 +57,7 @@ function DateCell({ it, cell, field, why, actions }) {
   const value = cell === 'due_on' ? it.day : it.starts;
   const text = value ? fmtDay(value, DAY[cell]) : '';
   const shown = text || <span className="dim">—</span>;
-  if (why) return <span className="tk-cell-text" title={t(`views.why.${why}`)}>{shown}</span>;
+  if (why) return <Locked why={why}>{shown}</Locked>;
   const pick = (e) => {
     e.stopPropagation();
     const el = ref.current;

@@ -904,3 +904,5 @@ a.stat-card { transition: box-shadow 160ms cubic-bezier(.23, 1, .32, 1); }
 .nav-hidden { display: flex; align-items: center; gap: 6px; width: 100%; padding: 4px 10px; color: var(--side-fg-3); font-size: 12px; border-radius: var(--rc); }
 @media (hover: hover) { .nav-hidden:hover { background: var(--side-hover); color: var(--side-fg-2); } }
 .tabs .tab.dragging { opacity: 0.45; }
+/* 화면에는 안 보이고 화면 낭독기만 읽는 글자(10/9 #906 검수 — 할 일 표의 잠긴 칸 이유·저장 중 안내). 가리기 칸(business/redact.css)의 같은 이름 규칙과 같은 방식 */
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }

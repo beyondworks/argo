@@ -102,10 +102,13 @@ const eventAssign = (it) => ({ kind: 'event', id: it.id, label: it.title, text: 
 
 /* ── 항목 동작(우클릭·선택 막대·칸반·확인 창) ── */
 /** space: 보고 있는 공간, ctx: model.js 권한 문맥, onOpen(item), onNewEvent(). onManageCats: 할 일 패널의 '분류 관리'(할 일 화면만 준다).
- *  반환 { single, many, empty, apply, dialogs, newTask, openTask, setCell, check, manageCats } — openTask(item, focus)은 오른쪽 할 일 패널(focus 'reason'이면 보류 사유 칸에 커서),
- *  setCell(item, 칸, 값)은 표에서 바로 바꾸기, check { can, run }은 캘린더 할 일 칩의 끝내기 단추(유건 10/9) */
+ *  반환 { single, many, empty, apply, dialogs, newTask, openTask, setCell, busy, check, held, manageCats } — openTask(item, focus)은 오른쪽 할 일 패널(focus 'reason'이면 보류 사유 칸에 커서),
+ *  setCell(item, 칸, 값)은 표에서 바로 바꾸기(busy: 기다리는 칸 — 항목 키 → { cell, value }), check { can, run }은 캘린더 할 일 칩의 끝내기 단추,
+ *  held(item)은 보류로 바꾼 뒤의 '사유 적기' 알림(표·우클릭 메뉴·칸반이 같이 쓴다, 유건 10/9) */
 export function useItemActions({ space, ctx, people, onOpen, onNewEvent, categories = [], onManageCats }) {
   const [ask, setAsk] = useState(null);
+  // 표 칸에서 끝낸 일의 상태를 바꾸면 쓰기 두 번(다시 열기 + 상태)이라 먼저 화면에 반영하지 않는다 — 끝날 때까지 고른 값을 기다림 표시로(칸반의 setPending과 같다, 10/9 검수)
+  const [busy, setBusy] = useState(() => new Map());
   // 보류로 바꾸면 사유는 할 일 패널의 사유 칸에서 적는다(10/8 규칙 그대로) — 알림의 '사유 적기'가 그 칸을 바로 연다
   const held = (it) => showToast(t('tasks.held'), { action: { label: t('tasks.addReason'), run: () => setAsk({ kind: 'panel', item: it, focus: 'reason' }) } });
   const statusItems = (list, clear) => { // 상태 바꾸기(할 일만) — 하나면 지금 상태에 표시, 여럿이면 표시 없이
@@ -125,9 +128,11 @@ export function useItemActions({ space, ctx, people, onOpen, onNewEvent, categor
   const can = (it, op) => !V.whyNot(it, op, ctx);
   /** 표 칸에서 고른 값 쓰기 — 같은 값을 다시 고르면 조용히 넘어간다(할 일 패널처럼) */
   const setCell = async (it, cell, value) => {
-    const plan = C.planCell(it, cell, value, ctx, { categories: categoriesOf(it.space) });
-    if (!plan.reason && !V.writesOf(plan).length) return;
-    if (await apply([it], () => plan, { quiet: true }) && cell === 'status' && C.askHoldReason(it, value)) held(it);
+    const plan = C.planCell(it, cell, value, ctx, { categories: categoriesOf(it.space) }), n = V.writesOf(plan).length;
+    if (!plan.reason && !n) return;
+    if (n > 1) setBusy((m) => new Map(m).set(it.key, { cell, value }));
+    try { if (await apply([it], () => plan, { quiet: true }) && cell === 'status' && C.askHoldReason(it, value)) held(it); }
+    finally { if (n > 1) setBusy((m) => { const next = new Map(m); next.delete(it.key); return next; }); }
   };
   const check = { can: (it) => can(it, 'done'), run: (it) => apply([it], (x) => C.toggleDone(x, ctx), { quiet: true }) };
   const single = (it) => [
@@ -170,7 +175,7 @@ export function useItemActions({ space, ctx, people, onOpen, onNewEvent, categor
       : ask.kind === 'date' ? <DateAsk items={ask.items} onClose={close} onSave={(day) => apply(ask.items, (x) => V.planDate(x, day, ctx)).then(done)} />
         : ask.kind === 'category' ? <CategoryAsk items={ask.items} categories={categories} onClose={close} onSave={(c) => apply(ask.items.filter((x) => x.kind === 'event'), (x) => V.planCategory(x, c, ctx)).then(done)} />
           : <DeleteAsk items={ask.items} onClose={close} onSave={() => apply(ask.items, (x) => V.planDelete(x, ctx), { msg: (n) => t('views.deleted', { n }) }).then(done)} />);
-  return { space, single, many, empty, apply, dialogs, setCell, check, manageCats: onManageCats, newTask: (init) => setAsk({ kind: 'task', init }), openTask: (it, focus) => setAsk({ kind: 'panel', item: it, focus }) };
+  return { space, single, many, empty, apply, dialogs, setCell, busy, check, held, manageCats: onManageCats, newTask: (init) => setAsk({ kind: 'task', init }), openTask: (it, focus) => setAsk({ kind: 'panel', item: it, focus }) };
 }
 
 function DateAsk({ items, onClose, onSave }) {
@@ -334,7 +339,8 @@ function Kanban({ id, items, cfg, ctx, compact, itemProps, lead, meta, face, bad
       const writes = V.writesOf(plan); // 끝낸 일을 진행 중 칸으로 = 다시 열기 + 상태 바꾸기 두 번
       if (!writes.length) return;
       setPending((m) => new Map(m).set(it.key, o.col));
-      runWrites(writes, actions.space).then(({ failed }) => { if (failed) showToast(t(failed)); })
+      // 보류 칸에 놓으면 표·우클릭 메뉴처럼 '보류했습니다 · 사유 적기'(10/9 검수)
+      runWrites(writes, actions.space).then(({ failed }) => { if (failed) showToast(t(failed)); else if (cfg.group === 'status' && C.askHoldReason(it, o.col)) actions.held?.(it); })
         .finally(() => setPending((m) => { const n = new Map(m); n.delete(it.key); return n; }));
     },
   });

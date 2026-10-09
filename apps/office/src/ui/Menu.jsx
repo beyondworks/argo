@@ -38,6 +38,13 @@ export function closeMenu() {
 }
 
 const actionable = (it) => it && !it.sep && !it.heading && !it.disabled;
+/** 열 때 강조할 항목(10/9 검수: '낮음' 칸에서 ↓로 열고 ↓ Enter를 누르면 '보통'이 골라졌다) — 값 고르기 메뉴(맨 처음 고를 수 있는 항목이 표시(checked)를 가진 메뉴 —
+ *  표 칸·보기 드롭다운·공간 바꾸기·거르기)면 지금 값으로 표시된 항목, 아니면 지금처럼 맨 위. 동작 메뉴 중간에 섞인 표시(우클릭의 '상태 바꾸기', 페이지 메뉴의 '제한' 켜짐)는
+ *  고르지 않는다 — 열자마자 Enter를 눌렀을 때 켜 둔 것을 끄지 않게 */
+export const startIndex = (items) => {
+  const first = items.findIndex(actionable), on = items.findIndex((it) => actionable(it) && it.checked);
+  return first >= 0 && items[first].checked != null && on >= 0 ? on : first;
+};
 
 export function MenuHost() {
   const m = useSyncExternalStore((l) => { listeners.add(l); return () => listeners.delete(l); }, () => current);
@@ -56,7 +63,7 @@ export function MenuHost() {
     if (x + w > W - 8) x = Math.max(8, (m.anchorRect ? m.anchorRect.right : x) - w);
     if (y + h > H - 8) y = Math.max(8, (m.anchorRect ? m.anchorRect.top - 4 : y) - h);
     setPos({ x, y });
-    setIdx(m.items.findIndex(actionable));
+    setIdx(startIndex(m.items));
     ref.current.focus({ preventScroll: true });
   }, [m]);
 

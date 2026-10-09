@@ -219,7 +219,7 @@ function TaskCheck({ o, check, size = 11 }) {
   return <button type="button" className={`cal-tcheck${o.done ? ' on' : ''}`} role="checkbox" aria-checked={o.done} aria-label={o.title} title={t(o.done ? 'views.reopen' : 'views.done')}
     onClick={(e) => { e.stopPropagation(); check.run(o); }}><Icon name="check" size={size} /></button>;
 }
-function Chip({ o, colorBy, onOpen, onMenu, check, bar, compact }) {
+export function Chip({ o, colorBy, onOpen, onMenu, check, bar, compact }) { // 내보내기: 할 일 칩의 ✓ 단추를 노드에서 그려 보는 시험(test/task-ui-wiring.test.mjs)
   if (o.kind === 'task' && check) { // 끝내기 단추와 여는 단추를 나란히(단추 안에 단추를 둘 수 없다) — 여는 단추가 칩 전체를 덮고 끝내기 단추만 그 위에
     const label = taskLabel(o);
     return <span className={`cal-chip bar task st-${o.vi?.status ?? 'todo'}${o.done ? ' done' : ''}`} title={label} {...(onMenu ? menuProps(() => onMenu(o)) : {})}>
