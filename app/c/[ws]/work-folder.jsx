@@ -141,14 +141,26 @@ export function WorkFolderPopover({ wf, note = '' }) {
   );
 }
 
+const CUT = { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }; // 한 줄 말줄임(flex 자식 — 부모 .name이 flex라 각자 건다)
+
 /** 컴포저 스택(.composer-stack) 한 줄 — 고정된 폴더. 끝 두 조각만 보인다: 전체 경로는 폭을 다 먹고, CSS 말줄임
-    (direction:rtl)은 앞의 '/'를 끝으로 밀어 "…보고서-2026-07/"처럼 없는 슬래시를 만든다(실측). 전체는 title로. */
+    (direction:rtl)은 앞의 '/'를 끝으로 밀어 "…보고서-2026-07/"처럼 없는 슬래시를 만든다(실측). 전체는 title로.
+    두 조각은 따로 줄어든다 — 상위 칸만 말줄임으로 줄고, 폴더 이름(마지막 칸)은 줄지 않는다(flex none). 폴더 이름이 줄 전체보다
+    길 때만 그 칸이 줄 폭(max-width 100%)에서 말줄임된다. 비율로 같이 줄이면(flex-shrink 가중) 폴더 이름도 소수점만큼 줄어 끝이 말줄임됐다(10/9 실측).
+    한 덩어리로 말줄임하면 폰 폭(390)에서 폴더 이름이 통째로 잘려 상위 폴더만 보였다(10/6 실제 계정 점검, 10/9 재현). */
 export function WorkFolderRow({ wf }) {
   const { t } = useLang();
+  const segs = wf.pinned.split(/[\\/]/).filter(Boolean);
+  const leaf = segs.at(-1) ?? '';
+  const parent = segs.length > 1 ? segs.at(-2) : '';
   return (
     <div className="row" title={wf.pinned}>
       <span className="lead"><Icon name="folder" size={13} /></span>
-      <span className="name">…/{wf.pinned.split(/[\\/]/).filter(Boolean).slice(-2).join('/')}</span>
+      <span className="name" style={{ display: 'flex' }}>
+        {parent
+          ? <><span style={{ ...CUT, flex: '0 1 auto' }}>…/{parent}</span><span style={{ ...CUT, flex: 'none', maxWidth: '100%' }}>/{leaf}</span></>
+          : <span style={{ ...CUT, flex: 'none', maxWidth: '100%' }}>…/{leaf}</span>}
+      </span>
       <button type="button" className="act" onClick={() => wf.pin('')}
         aria-label={t('chat.workFolder.unpin')} title={t('chat.workFolder.unpin')}>✕</button>
     </div>
