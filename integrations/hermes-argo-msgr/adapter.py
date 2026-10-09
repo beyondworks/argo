@@ -130,14 +130,14 @@ def _upload_file(base: str, token: str, message_id: int, path: str, name: Option
 # 제목은 "…"·'…'·(…) 셋 다(검수 Cb-2 LOW). 이름·대상·제목·경로에 길이 상한 — 이 판정은 게이트웨이 이벤트 루프에서 동기로 돌아
 # ']' 없는 '['가 길게 이어진 줄이 길이의 제곱으로 느려지면 같은 Hermes의 다른 플랫폼도 멈춘다(20,000자 2.6초, 검수 Cb-2 LOW).
 # 맨 표기 갈래는 '](' 바로 뒤를 잡지 않는다 — 링크 갈래가 읽지 못한 모양(대괄호 중첩·상한 초과) 안의 경로만 바꿔 깨진 링크를 남기지 않게.
+_HOME_PREFIXES = tuple('~' + sep for sep in (os.sep, os.altsep) if sep)   # expanduser가 푸는 모양 — POSIX는 '~/'만, Windows는 '~\'·'~/' — 정규식도 이것으로 만들어 POSIX는 0.3.4와 글자 단위로 같다
 _FILE_LINK_RE = re.compile(
     r'(`[^`\n]+`)'
     r'|!?\[([^\[\]\n]{0,300})\]\(\s*(<[^>\n]{1,1024}>|[^\s()<>]{1,1024})'
     r'(?:\s+(?:"[^"\n]{0,300}"|\'[^\'\n]{0,300}\'|\([^()\n]{0,300}\)))?\s*\)'
-    r'|(?<![\w/:])(?<!\]\()((?:attachment:|sandbox:|file://)(?:~[/\\]|/|[A-Za-z]:[/\\])[^\s()<>\[\]`"\']{1,1024})')
+    r'|(?<![\w/:])(?<!\]\()((?:attachment:|sandbox:|file://)(?:' + '|'.join(map(re.escape, _HOME_PREFIXES)) + r'|/|[A-Za-z]:[/\\])[^\s()<>\[\]`"\']{1,1024})')
 _FILE_SCHEME_RE = re.compile(r'^(?:attachment:|sandbox:|file://(?:localhost)?)')
 _DRIVE_RE = re.compile(r'[A-Za-z]:[/\\]')
-_HOME_PREFIXES = tuple('~' + sep for sep in (os.sep, os.altsep) if sep)   # expanduser가 푸는 모양 — POSIX는 '~/'만, Windows는 '~\'·'~/'
 _FENCE_RE = re.compile(r'^\s*(`{3,}|~{3,})(.*)$')   # 목록 안에 4칸 넘게 들여 쓴 코드 블록도(코어 _FENCED_CODE_RE는 줄 시작에 묶이지 않는다)
 # 확장자와 무관하게 보내는 명시적 전달 표지. scheme 없는 링크·file:// 는 코드 답의 참조 링크([main.py](/…))가 흔해
 # 코어가 맨 경로를 자동 첨부하는 확장자(MEDIA_DELIVERY_EXTS)일 때만 보낸다(검수 Cb-1 MEDIUM).
