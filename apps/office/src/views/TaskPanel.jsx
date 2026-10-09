@@ -93,16 +93,14 @@ export default function TaskPanel({ space, id, taskSpace, onClose, onManageCats,
   useEffect(() => { if (row) seen.current = true; else if (seen.current) onClose(); }, [!!row]); // 취소하면 목록에서 빠진다 — 패널도 닫는다
   useEffect(() => { if (focus === 'reason' && isHold && !focused.current && reasonRef.current) { focused.current = true; reasonRef.current.focus(); } }, [focus, isHold]); // 한 번만(그 뒤 다른 칸으로 옮겨도 다시 끌어오지 않는다)
   const latest = useRef(null);
-  // 이 할 일의 쓰기는 한 줄로 이어 보낸다 — 사유 칸을 벗어나며 저장하는 것과 상태 단추가 겹쳐도 보낸 차례대로 처리돼 뒤 요청이 앞 요청을 되돌리지 않게
-  const queue = useRef(Promise.resolve());
-  const inLine = (job) => { const run = queue.current.then(job, job); queue.current = run.catch(() => {}); return run; };
+  // 이 할 일의 쓰기는 한 줄로 나간다(core/tasks.js taskAction — 표·캘린더·칸반과 같은 줄) — 사유 칸을 벗어나며 저장하는 것과 상태 단추가 겹쳐도 보낸 차례대로 처리돼 뒤 요청이 앞 요청을 되돌리지 않게
   useEffect(() => () => { // 글 칸에 커서를 둔 채 Esc·바깥 누르기로 닫으면 칸을 벗어나는 일이 생기지 않는다 — 닫을 때 남은 글을 저장한다
     const cur = latest.current;
     if (!cur) return;
     for (const [field, value] of [['title', cur.title], ['note', cur.note], ['reason', cur.reason]]) {
       if (!editing.current.has(field)) continue;
       const plan = field === 'reason' ? V.planHoldReason(cur.it, value, cur.ctx) : V.planField(cur.it, field, value, cur.ctx), writes = V.writesOf(plan);
-      if (!plan.reason && writes.length) inLine(() => runWrites(writes, space)).then(({ failed }) => { if (failed) showToast(t(failed)); });
+      if (!plan.reason && writes.length) runWrites(writes, space).then(({ failed }) => { if (failed) showToast(t(failed)); });
     }
   }, []);
 
@@ -123,7 +121,7 @@ export default function TaskPanel({ space, id, taskSpace, onClose, onManageCats,
     const writes = V.writesOf(plan);
     if (!writes.length) return true;
     setSaving((n) => n + 1);
-    const { failed } = await inLine(() => runWrites(writes, space));
+    const { failed } = await runWrites(writes, space);
     setSaving((n) => n - 1);
     if (failed) { showToast(t(failed)); if (failed === 'task.error.conflict') setRev((r) => r + 1); return false; } // 충돌이면 목록은 runWrites가 다시 읽는다 — 기록도 다시
     setRev((r) => r + 1);

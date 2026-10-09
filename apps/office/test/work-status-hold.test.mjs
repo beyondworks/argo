@@ -137,25 +137,8 @@ test('업무 현황 표시: 보류 카드 담당은 맡은 사람, 이름 없는
   assert.equal(F.label({ name: '오토', mine: true }), '오토');
 });
 
-// 보류 사유 저장과 상태 단추가 겹칠 때(검수 10/8) — 할 일 패널은 같은 할 일 쓰기를 한 줄로 이어 보낸다(views/TaskPanel.jsx inLine).
-// 앞 쓰기가 끝나기 전에 뒤 쓰기가 나가면 서버가 뒤 것을 먼저 처리해 상태가 되돌아갈 수 있다. 앞 쓰기가 실패해도 뒤 쓰기는 나간다
-test('할 일 패널 쓰기 줄: 앞 쓰기가 끝난 뒤에 다음 쓰기, 앞이 실패해도 다음은 나간다', async () => {
-  const src = readFileSync(new URL('../src/views/TaskPanel.jsx', import.meta.url), 'utf8');
-  const body = src.slice(src.indexOf('  const queue = useRef('), src.indexOf('  useEffect(() => () => {'));
-  assert.match(body, /const inLine = /);
-  const { inLine } = new Function('useRef', `${body}; return { inLine };`)((v) => ({ current: v }));
-  const log = [];
-  const slow = () => new Promise((ok) => setTimeout(() => { log.push('reason:end'); ok({ failed: 'task.error.conflict' }); }, 20));
-  const a = inLine(() => { log.push('reason:start'); return slow(); });
-  const b = inLine(() => { log.push('status:start'); return { failed: null }; });
-  const c = inLine(() => { log.push('boom'); throw new Error('x'); });
-  const d = inLine(() => { log.push('after'); return 1; });
-  assert.deepEqual(await a, { failed: 'task.error.conflict' });
-  assert.deepEqual(await b, { failed: null });
-  await assert.rejects(c);
-  assert.equal(await d, 1);
-  assert.deepEqual(log, ['reason:start', 'reason:end', 'status:start', 'boom', 'after']);
-});
+// 보류 사유 저장과 상태 단추가 겹칠 때(검수 10/8) — 같은 할 일 쓰기는 한 줄로 나간다. 10/9부터 할 일 패널만의 줄(TaskPanel inLine) 대신
+// 표·캘린더·칸반과 같은 core/tasks.js 줄을 쓴다 — 행동 시험은 test/task-write-lane.test.mjs('할 일 패널: 보류 사유 저장 뒤 상태 단추 …')
 
 // 서버가 task_conflict를 주면(그사이 남이 바꿈) 그 공간 목록을 다시 읽는다 — 한 건 쓰기는 먼저 화면에 반영했다가 되돌리므로, 다시 읽어야 지금 값이 보인다(views/data.js writeAll)
 test('쓰기 충돌이면 그 공간을 다시 읽는다(다른 실패는 그대로)', async () => {
