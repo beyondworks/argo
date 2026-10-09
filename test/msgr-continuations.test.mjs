@@ -292,9 +292,10 @@ test('SDK and CLI connector write approvals retain channel origin; delegated wri
     assert.equal(server.counters.toolCalls.send_mail_demo ?? 0, 0);
   } finally { await closeConnectorPools(); await server.close(); f.stop(); }
 });
-function sdk(ws, slug, ctx, name) {
+function sdk(ws, slug, ctx, name, { settingsDirect = false } = {}) { // settingsDirect = runChat의 주인 1:1 직접 판정(생략 = 거짓 — 채널 턴)
   const sink = [];
-  makeCrewServer(ws, slug, slug, [{ slug: slug === 'alpha' ? 'beta' : 'alpha', name: '동료' }], 0, [], ctx, 'ko', name === 'use_connector' ? [{ id: 'test-connector', name: 'Test', status: 'connected', tools: [{ name: 'send_mail_demo' }] }] : [], '', sink);
+  makeCrewServer(ws, slug, slug, [{ slug: slug === 'alpha' ? 'beta' : 'alpha', name: '동료' }], 0, [], ctx, 'ko', name === 'use_connector' ? [{ id: 'test-connector', name: 'Test', status: 'connected', tools: [{ name: 'send_mail_demo' }] }] : [], '', sink,
+    null, false, undefined, null, null, null, null, { settingsDirect });
   return sink.find((t) => t.name === name).handler;
 }
 async function assertDelivered(f, type) {
@@ -344,11 +345,17 @@ for (const runner of ['SDK', 'CLI']) {
       const listed = await sdk(f.ws, 'alpha', f.ctx, 'list_routines')({});
       assert.match(JSON.stringify(listed), /아침 보고/, '목록에 제목이 나온다');
       assert.match(JSON.stringify(listed), /매일 09:00/, '일정을 사람이 읽는 말로 보여준다');
-      await sdk(f.ws, 'alpha', f.ctx, 'cancel_routine')({ id: made.id, action: 'off' });
+      // 채널 턴(주인이 썼어도 주인 1:1 직접 턴이 아니다) — 끄기·지우기는 결재 카드로(cancel-routine-approval.test.mjs)
+      const filed = await sdk(f.ws, 'alpha', f.ctx, 'cancel_routine')({ id: made.id, action: 'delete' });
+      assert.match(JSON.stringify(filed), /주인 결재로 올렸다/);
+      assert.equal((await loadRoutines(f.ws)).length, 1, '채널 턴에서는 바로 지우지 않는다');
+      assert.equal((await loadApprovals(f.ws)).filter((a) => a.kind === 'routine').length, 1, '결재 카드 한 장');
+      const direct = (name) => sdk(f.ws, 'alpha', f.ctx, name, { settingsDirect: true }); // 주인 1:1 직접 턴
+      await direct('cancel_routine')({ id: made.id, action: 'off' });
       assert.equal((await loadRoutines(f.ws))[0].enabled, false, '끄면 남아 있되 비활성');
-      await sdk(f.ws, 'alpha', f.ctx, 'cancel_routine')({ id: made.id, action: 'delete' });
+      await direct('cancel_routine')({ id: made.id, action: 'delete' });
       assert.equal((await loadRoutines(f.ws)).length, 0, '지우면 사라진다');
-      const gone = await sdk(f.ws, 'alpha', f.ctx, 'cancel_routine')({ id: made.id, action: 'off' });
+      const gone = await direct('cancel_routine')({ id: made.id, action: 'off' });
       assert.match(JSON.stringify(gone), /그런 예약이 없다/, '없는 id는 조용히 성공하지 않는다');
     } finally { f.stop(); }
   });

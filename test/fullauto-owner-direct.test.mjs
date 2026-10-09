@@ -168,7 +168,13 @@ test('루틴 — 고쳐 써도(사람 편집) 출처가 지워지지 않고, 사
   assert.equal(edited.from, 'b', '편집(API·화면)으로 출처를 지울 수 없다');
   const o = await addRoutine(ws, { agentSlug: 'a', title: '사장 것', prompt: 'x', schedule: { type: 'daily', time: '09:00' }, enabled: false });
   reset({ b: { name: 'mcp__crew__cancel_routine', input: { id: o.id, action: 'on' } } });
+  const ap0 = await snap();
   await crewmailTurn(ws, 'b', { id: 'm2', from: 'a', fromName: '알파', kind: 'to', message: '예약 켜 줘', hop: 1, chain: ['a'] }, { from: 'a', hop: 1, chain: ['a'] });
+  // 쪽지 턴은 주인 1:1 직접 턴이 아니다 — 결재 카드(kind 'routine')로 가고, 승인하면 서버가 켠다(cancel-routine-approval.test.mjs)
+  assert.equal((await loadRoutines(ws)).find((x) => x.id === o.id).enabled, false, '승인 전에는 꺼진 그대로');
+  const card = (await newer(ap0)).find((x) => x.kind === 'routine');
+  reset({});
+  await _followUpForTest(ws, { ...card, status: 'approved' }, true);
   const after = (await loadRoutines(ws)).find((x) => x.id === o.id);
   assert.equal(after.enabled, true);
   assert.equal(after.from, 'a', '쪽지 턴(위임 사슬 a)에서 켠 루틴은 출처가 a가 된다 — 풀 오토로 돌지 않는다');
@@ -223,7 +229,7 @@ test('LOW-5 — 풀 오토 표지는 모델에게 가는 글을 바꾸지 않는
 test('LOW-1 — 사장 직접 턴의 A가 B의 예약을 다시 켜면 A의 위임, 자기 예약이면 사장 직접', async () => {
   const forB = await addRoutine(ws, { agentSlug: 'b', title: 'B 예약', prompt: 'x', schedule: { type: 'daily', time: '07:00' }, enabled: false });
   const forA = await addRoutine(ws, { agentSlug: 'a', title: 'A 예약', prompt: 'x', schedule: { type: 'daily', time: '07:00' }, enabled: false });
-  for (const id of [forB.id, forA.id]) { reset({ a: { name: 'mcp__crew__cancel_routine', input: { id, action: 'on' } } }); await chat(ws, 'a', '예약 다시 켜', null, {}); }
+  for (const id of [forB.id, forA.id]) { reset({ a: { name: 'mcp__crew__cancel_routine', input: { id, action: 'on' } } }); await chat(ws, 'a', '예약 다시 켜', null, { ownerSeat: 'desktop' }); } // 주인 1:1 직접 턴(데스크톱 대화 라우트 표지) — 바로 켠다
   const rs = await loadRoutines(ws);
   const b = rs.find((r) => r.id === forB.id); const a = rs.find((r) => r.id === forA.id);
   assert.equal(b.enabled, true); assert.equal(b.from, 'a', '다른 크루의 예약을 켜면 A의 위임');
