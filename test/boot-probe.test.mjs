@@ -10,15 +10,16 @@ import { fileURLToPath } from 'node:url';
 
 const BOOT = join(dirname(dirname(fileURLToPath(import.meta.url))), 'public', 'boot.js');
 
-function load({ fetchImpl, hasAC = true, now = null }) {
-  const el = () => ({ textContent: '', hidden: true, style: {} });
-  const els = { status: el(), fill: el(), logtail: el(), err: el() };
+function load({ fetchImpl, hasAC = true, now = null, navigator: nav = null, localStorage: ls = null }) {
+  const el = () => ({ textContent: '', hidden: true, style: {}, attrs: {}, setAttribute(k, v) { this.attrs[k] = v; } });
+  const els = { status: el(), fill: el(), logtail: el(), err: el(), title: el(), bar: el() };
+  const docEl = { lang: 'en' };
   const listeners = {};
   const timers = [];
   const intervals = []; // 진행률 크리프·느린 부팅 안내 틱(500ms) — 테스트가 직접 돌린다
   const ctx = {
     console,
-    document: { getElementById: (id) => els[id] },
+    document: { getElementById: (id) => els[id], documentElement: docEl },
     location: { search: '', replace: (u) => { ctx.__navigated = u; } },
     // 타이머 핸들은 1부터(0이면 boot.js의 `if (timer)` 진위 검사가 거짓 실패 — 검수 하네스 교훈)
     setTimeout: (fn, ms) => { const t = { fn, ms, id: timers.length + 1, cleared: false }; timers.push(t); return t.id; },
@@ -28,6 +29,8 @@ function load({ fetchImpl, hasAC = true, now = null }) {
     Date: now ? { now } : Date, Math, JSON, // now = 가짜 시계(1분 무응답 안내 판정용)
     __navigated: null,
   };
+  if (nav) ctx.navigator = nav; // 없으면 navigator가 아예 없는 환경 — 언어는 영어(이전과 같음)
+  if (ls) Object.defineProperty(ctx, 'localStorage', ls); // { value } 또는 { get } — 접근이 막힌 웹뷰도 흉내 낸다
   if (hasAC) {
     ctx.AbortController = class {
       constructor() { this.signal = { aborted: false, onabort: null }; }
@@ -38,7 +41,7 @@ function load({ fetchImpl, hasAC = true, now = null }) {
   ctx.window.__TAURI__ = { event: { listen: (n, cb) => { listeners[n] = cb; } } };
   vm.createContext(ctx);
   vm.runInContext(readFileSync(BOOT, 'utf8'), ctx);
-  return { ctx, listeners, timers, intervals };
+  return { ctx, listeners, timers, intervals, els, docEl };
 }
 
 const drain = () => new Promise((r) => setImmediate(r));
@@ -281,3 +284,137 @@ test('상주 대기 중에는 문구에 기다린 초가 붙는다 — 막대가
   assert.equal(status.textContent, 'Starting the local server…', '대기가 끝나면 초를 붙이지 않는다');
 });
 
+
+// ── 표시 언어(H22 ②) — 부트 화면 문구가 영어뿐이라 한국어 사용자에게도 영어가 떴다 ──
+// boot.js는 Next 밖의 정적 파일(Tauri frontendDist=public)이라 app/i18n.jsx(React 모듈)를 쓸 수 없다 — boot.js 안에 ko/en 두 벌을 둔다.
+const KO = {
+  title: 'Argo에 연결하는 중…',
+  bar: '시작 진행률',
+  shell: '앱을 준비하는 중…',
+  resident: 'Argo 백그라운드 서비스가 시작되기를 기다리는 중…',
+  starting: '이 컴퓨터의 서버를 시작하는 중…',
+  started: '서버를 준비하는 중…',
+  waiting: '서버가 응답하기를 기다리는 중…',
+  slow: '아직 준비 중입니다 — 처음 실행은 몇 분 걸릴 수 있습니다…',
+  ready: '준비됐습니다 — 화면을 엽니다…',
+};
+const EN = {
+  title: 'Connecting to Argo…',
+  bar: 'startup progress',
+  shell: 'Preparing the app shell…',
+  resident: 'Waiting for the Argo background service to start…',
+  starting: 'Starting the local server…',
+  started: 'Local server is warming up…',
+  waiting: 'Waiting for the server to respond…',
+  slow: 'Still working — first launch can take a couple of minutes…',
+  ready: 'Ready — opening your deck…',
+};
+const KO_NAV = { language: 'ko-KR', languages: ['ko-KR', 'en-US'] };
+const EN_NAV = { language: 'en-US', languages: ['en-US'] };
+
+/** 단계별 화면 문구를 실제 이벤트·타이머 경로로 모은다 — 한 언어의 shell·resident·starting·started·waiting·slow·ready. */
+async function collectStatus(opts) {
+  const seen = {};
+  let clock = 0;
+  const open = load({ fetchImpl: () => Promise.reject(new Error('refused')), now: () => clock, ...opts });
+  const { ctx, listeners, intervals, els } = open;
+  seen.title = els.title.textContent; seen.bar = els.bar.attrs['aria-label']; seen.shell = els.status.textContent;
+  for (let n = 0; n < 12; n++) await drain(); // 닫힌 후보를 먼저 다 돌아 waiting
+  seen.waiting = els.status.textContent;
+  listeners.boot({ payload: { phase: 'resident', port: null, version: '9.9.9' } });
+  seen.resident = els.status.textContent;
+  clock = 3_000; intervals.forEach((fn) => fn());
+  seen.residentSec = els.status.textContent;
+  listeners.boot({ payload: { phase: 'starting', port: 3011, version: '9.9.9' } });
+  seen.starting = els.status.textContent;
+  listeners.boot({ payload: { phase: 'started', port: 3011, version: '9.9.9' } });
+  seen.started = els.status.textContent;
+  clock = 20_000; intervals.forEach((fn) => fn());
+  seen.slow = els.status.textContent;
+  return { seen, ...open, ctx };
+}
+
+test('표시 언어: 웹뷰 언어가 한국어면 부트 화면의 제목·단계 문구·진행 막대 이름이 모두 한국어다(경과 초는 초 단위로)', async () => {
+  const { seen, docEl } = await collectStatus({ navigator: KO_NAV });
+  assert.deepEqual({ title: seen.title, bar: seen.bar, shell: seen.shell, waiting: seen.waiting, resident: seen.resident, starting: seen.starting, started: seen.started, slow: seen.slow },
+    { title: KO.title, bar: KO.bar, shell: KO.shell, waiting: KO.waiting, resident: KO.resident, starting: KO.starting, started: KO.started, slow: KO.slow });
+  assert.equal(seen.residentSec, `${KO.resident} 3초`, '상주 대기 경과 초 표시(#874)는 한국어에서도 유지');
+  assert.equal(docEl.lang, 'ko', '<html lang>도 표시 언어를 따른다');
+});
+
+test('표시 언어: 웹뷰 언어가 영어(또는 알 수 없음)면 이전과 같은 영어 — 경과 초는 s', async () => {
+  for (const [label, opts] of [['en-US', { navigator: EN_NAV }], ['일본어 등 한영 밖은 영어', { navigator: { language: 'ja-JP' } }], ['navigator 없음', {}]]) {
+    const { seen, docEl } = await collectStatus(opts);
+    assert.deepEqual({ title: seen.title, bar: seen.bar, shell: seen.shell, waiting: seen.waiting, resident: seen.resident, starting: seen.starting, started: seen.started, slow: seen.slow },
+      { title: EN.title, bar: EN.bar, shell: EN.shell, waiting: EN.waiting, resident: EN.resident, starting: EN.starting, started: EN.started, slow: EN.slow }, label);
+    assert.equal(seen.residentSec, `${EN.resident} 3s`, label);
+    assert.equal(docEl.lang, 'en', label);
+  }
+});
+
+test('표시 언어: 준비 완료 문구와 데모 꼬리말도 언어를 따른다', async () => {
+  for (const [label, nav, ready, demo] of [['ko', KO_NAV, KO.ready, ' (데모 — 이 화면에 머뭅니다)'], ['en', EN_NAV, EN.ready, ' (demo — staying here)']]) {
+    const ok = load({ navigator: nav, fetchImpl: () => Promise.resolve({ ok: true, json: () => Promise.resolve({ argo: true, version: '0.0.0', dockProtocol: 1 }) }) });
+    for (let n = 0; n < 4; n++) await drain();
+    assert.equal(ok.els.status.textContent, ready, `${label}: 이동 직전 문구`);
+    // 데모 모드(?demo) — 리다이렉트 없이 이 화면에 머문다. load()는 검색어를 못 바꾸므로 같은 스텁으로 따로 올린다.
+    const els = { status: { textContent: '', hidden: true, style: {} }, fill: { style: {} }, logtail: { hidden: true }, err: { hidden: true } };
+    const ctx = { console, document: { getElementById: (id) => els[id] }, location: { search: '?demo', replace() {} }, navigator: nav,
+      setTimeout: () => 1, clearTimeout() {}, setInterval: () => 1, fetch: () => new Promise(() => {}), Date, Math, JSON };
+    ctx.window = ctx; vm.createContext(ctx); vm.runInContext(readFileSync(BOOT, 'utf8'), ctx);
+    ctx.goto('http://localhost:3001');
+    assert.equal(els.status.textContent, ready + demo, `${label}: 데모 꼬리말`);
+  }
+});
+
+test('표시 언어: 오류·1분 무응답 안내도 언어를 따르고, 셸이 준 원인(detail)은 그대로 붙는다', async () => {
+  for (const [label, nav, expect] of [
+    ['ko', KO_NAV, {
+      terminal: '이 컴퓨터의 서버를 시작하지 못했습니다: port busy',
+      transient: '서버에 문제가 생겼습니다: port busy\n계속 다시 시도하는 중입니다 — 이 화면이 몇 분 넘게 그대로면 Argo를 종료했다가 다시 여세요.',
+      unknown: '이 컴퓨터의 서버를 시작하지 못했습니다: 알 수 없음',
+      minute: '서버가 1분 넘게 응답하지 않습니다. Argo를 종료했다가 다시 여세요. 그래도 같으면 다른 앱이 3001/3011/3021 포트를 쓰고 있을 수 있습니다.',
+    }],
+    ['en', EN_NAV, {
+      terminal: 'The local server could not start: port busy',
+      transient: 'The local server hit a problem: port busy\nStill retrying — if this screen stays for minutes, quit and reopen Argo.',
+      unknown: 'The local server could not start: unknown',
+      minute: 'The server has not responded for a minute. Quit and reopen Argo — if it persists, another app may be using ports 3001/3011/3021.',
+    }]]) {
+    let clock = 0;
+    const { listeners, els, timers } = load({ navigator: nav, fetchImpl: hangingFetch([]), now: () => clock });
+    listeners.boot({ payload: { phase: 'error', terminal: true, detail: 'port busy' } });
+    assert.equal(els.err.textContent, expect.terminal, `${label}: 종료된 실패`);
+    listeners.boot({ payload: { phase: 'error', detail: 'port busy' } });
+    assert.equal(els.err.textContent, expect.transient, `${label}: 재시도 중 실패`);
+    listeners.boot({ payload: { phase: 'error', terminal: true } });
+    assert.equal(els.err.textContent, expect.unknown, `${label}: 원인 없음`);
+    listeners.boot({ payload: { phase: 'starting', port: 3011, version: '9.9.9' } }); // 오류 배너를 걷고 1분 안내 판정으로
+    clock = 61_000;
+    await exhaustCycle(timers);
+    assert.equal(els.err.hidden, false, `${label}: 1분 무응답 안내가 뜬다`);
+    assert.equal(els.err.textContent, expect.minute, `${label}: 1분 무응답 안내`);
+  }
+});
+
+test('표시 언어 우선순위: 같은 출처의 argo-lang(ko|en)이 웹뷰 언어보다 먼저, 값이 이상하거나 저장소가 막혔으면 웹뷰 언어', async () => {
+  const kind = async (opts) => (await collectStatus(opts)).seen.shell === KO.shell ? 'ko' : 'en';
+  const store = (v) => ({ value: { getItem: (k) => (k === 'argo-lang' ? v : null) } });
+  assert.equal(await kind({ navigator: EN_NAV, localStorage: store('ko') }), 'ko', '앱에서 한국어를 골랐으면 OS가 영어여도 한국어');
+  assert.equal(await kind({ navigator: KO_NAV, localStorage: store('en') }), 'en', '앱에서 영어를 골랐으면 OS가 한국어여도 영어');
+  assert.equal(await kind({ navigator: KO_NAV, localStorage: store('fr') }), 'ko', 'ko·en 밖의 값은 무시하고 웹뷰 언어');
+  assert.equal(await kind({ navigator: KO_NAV, localStorage: store(null) }), 'ko', '저장값 없음');
+  assert.equal(await kind({ navigator: KO_NAV, localStorage: { get() { throw new Error('SecurityError'); } } }), 'ko', '저장소 접근이 막혀도 예외 없이 웹뷰 언어');
+});
+
+test('표시 언어: ko·en 사전은 같은 칸을 갖고, 옛 용어(크루·사장·선장, crew·captain·boss)가 없다', () => {
+  const { ctx } = load({ fetchImpl: () => new Promise(() => {}), navigator: KO_NAV });
+  const text = ctx.BOOT_TEXT;
+  const flat = (o, pre = '') => Object.entries(o).flatMap(([k, v]) => (typeof v === 'object' ? flat(v, `${pre}${k}.`) : [[`${pre}${k}`, v]]));
+  const ko = flat(text.ko); const en = flat(text.en);
+  assert.deepEqual(ko.map(([k]) => k), en.map(([k]) => k), '두 언어의 칸이 같다');
+  for (const [k, v] of ko) assert.match(v, /[가-힣]/, `ko ${k}에 한글이 있다: ${v}`);
+  for (const [k, v] of ko) assert.doesNotMatch(v, /크루|사장|선장/, `ko ${k}`);
+  for (const [k, v] of en) assert.doesNotMatch(v, /\b(crews?|captain|boss)\b/i, `en ${k}`);
+  for (const [k, v] of ko) assert.doesNotMatch(v.replace(/Argo/g, ''), /[A-Za-z]{2,}/, `ko ${k}에 영어 낱말이 남지 않았다(고유명사 Argo 제외): ${v}`);
+});
