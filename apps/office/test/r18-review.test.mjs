@@ -6,7 +6,7 @@ import { redactMenu, HIDE_ALL_NOTE, isMasked } from '../src/business/redact-rule
 import { redactHandlers } from '../src/business/cell-pick.js';
 import { looksLikeAddr } from '../src/core/hide-all.js';
 import { dueCounts, viewRows, taskOrgKeys } from '../src/core/task-model.js';
-import { mergeItems, filterItems, normalizeCfg, dueFilter } from '../src/views/model.js';
+import { mergeItems, filterItems, normalizeCfg, dueFilter, shownCfg } from '../src/views/model.js';
 import { HOME_DEFAULTS } from '../src/core/module-registry.js';
 import { notifyText } from '../src/pages/mail-model.js';
 import { keepResponse, cacheFresh, makeDayClock } from '../src/core/refetch.js';
@@ -49,9 +49,10 @@ test('M2: 이메일 모양 판정', () => {
 test('M4: 배지·챙길 것 수 = 할 일 화면 거르기 건수(같은 데이터, 같은 함수)', () => {
   const me = 'u-me', now = Date.parse('2026-10-04T03:00:00Z'), today = '2026-10-04';
   const row = (id, o) => ({ id, title: id, assignee: me, created_by: me, due_on: null, done_at: null, cancelled_at: null, created_at: '2026-09-01T00:00:00Z', ...o });
-  const own = [row('p1', { due_on: '2026-10-01' }), row('p2', { due_on: today }), row('p3', { due_on: '2026-10-09' })];
+  // 보류(p4·o5)는 배지에서 빠진다(10/9 #907) — ?due로 거른 할 일 화면에서도 빠져야 같은 건수(#907 검수 MEDIUM 1)
+  const own = [row('p1', { due_on: '2026-10-01' }), row('p2', { due_on: today }), row('p3', { due_on: '2026-10-09' }), row('p4', { due_on: '2026-10-01', status: 'hold' })];
   const orgRows = new Map([
-    ['acme', [row('o1', { due_on: '2026-10-02' }), row('o2', { due_on: today, assignee: 'u-kim' }), row('o3', { due_on: today, done_at: '2026-10-04T01:00:00Z' }), row('o4', { due_on: today })]],
+    ['acme', [row('o1', { due_on: '2026-10-02' }), row('o2', { due_on: today, assignee: 'u-kim' }), row('o3', { due_on: today, done_at: '2026-10-04T01:00:00Z' }), row('o4', { due_on: today }), row('o5', { due_on: today, status: 'hold' })]],
     ['guestorg', [row('g1', { due_on: '2026-10-01' })]],
   ]);
   const spaces = [{ key: 'me', kind: 'me' }, { key: 'acme', kind: 'org', role: 'member' }, { key: 'guestorg', kind: 'org', role: 'guest' }];
@@ -62,18 +63,19 @@ test('M4: 배지·챙길 것 수 = 할 일 화면 거르기 건수(같은 데이
   assert.deepEqual(badge, { overdue: 2, today: 2 }, '개인 p1·p2 + 조직 o1·o4');
   const items = mergeItems([], rows, { from: '0000-01-01', to: '9999-12-31', undated: true });
   const base = normalizeCfg({ filter: { kind: 'task', category: '분류A', priority: '1' } }, { filter: { kind: 'task' } });
-  for (const due of ['overdue', 'today']) assert.equal(filterItems(items, dueFilter(base.filter, due, me), today).length, badge[due], due);
+  // 화면과 같은 길(shownCfg → normalizeCfg)로 — 모르는 상태 값은 여기서 'all'로 바뀌어 보류가 다시 섞인다(#907 재검수 LOW 1)
+  for (const due of ['overdue', 'today']) assert.equal(filterItems(items, shownCfg(base, dueFilter(base.filter, due, me), { filter: { kind: 'task' } }).filter, today).length, badge[due], due);
   // 조직 행을 아직 안 읽었으면 개인 행만, 개인 행도 안 읽었으면 배지 숨김(null)
   assert.deepEqual(dueCounts(viewRows({ space: 'me', own, orgRows: new Map(), orgKeys, me }), now, me), { overdue: 1, today: 1 });
   assert.equal(dueCounts(viewRows({ space: 'me', own: undefined, orgRows, orgKeys, me }), now, me), null);
   // 조직 공간은 그 조직 행만(겹쳐 보기 없음)
-  assert.deepEqual(viewRows({ space: 'acme', own: orgRows.get('acme'), orgRows, orgKeys, me }).map((x) => x.space), ['acme', 'acme', 'acme', 'acme']);
+  assert.deepEqual(viewRows({ space: 'acme', own: orgRows.get('acme'), orgRows, orgKeys, me }).map((x) => x.space), ['acme', 'acme', 'acme', 'acme', 'acme']);
 });
 
 // 이유(검수 LOW 1): ?due로 들어오면 저장된 분류·중요도 거르기를 풀어야 배지 수와 같은 건수가 보인다(이 창에서만 — 저장하지 않는다)
 test('LOW1: ?due 거르기는 분류·중요도를 푼다', () => {
   const f = dueFilter({ kind: 'task', who: 'all', category: '분류A', period: 'all', status: 'all', priority: '1' }, 'today', 'u-me');
-  assert.deepEqual(f, { kind: 'task', who: 'p:u-me', category: 'all', period: 'today', status: 'open', priority: 'all' });
+  assert.deepEqual(f, { kind: 'task', who: 'p:u-me', category: 'all', period: 'today', status: 'active', priority: 'all' });
   assert.equal(dueFilter({ kind: 'task' }, 'nope', 'u-me'), null, '모르는 값은 거르지 않는다');
 });
 

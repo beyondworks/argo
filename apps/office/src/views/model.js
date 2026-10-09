@@ -13,7 +13,7 @@ export const KINDS = ['all', 'event', 'task'];
 export const PERIODS = ['all', 'today', 'week', 'month', 'overdue'];
 // 할 일 속성(유건 10/4 확정): 상태 할 일·진행 중·보류(+끝냄은 done_at), 중요도 1 높음·2 보통·3 낮음(기본 2). 서버 office_tasks 칸과 같은 값
 export const STATUSES = ['todo', 'doing', 'hold'];
-export const STATUS_FILTERS = ['all', 'open', 'todo', 'doing', 'hold', 'done'];
+export const STATUS_FILTERS = ['all', 'open', 'active', 'todo', 'doing', 'hold', 'done']; // active = 끝내지 않은 일 중 보류 빼고(배지 ?due와 같은 건수, #907 검수)
 export const PRIORITIES = [1, 2, 3];
 export const PRIORITY_FILTERS = ['all', '1', '2', '3'];
 // 목록 보기 묶음(할 일 화면) — 'none'이면 날짜순일 때 날짜별 머리
@@ -61,7 +61,7 @@ export function taskItem(x) {
   };
 }
 /** ?due(홈 '챙길 것'·메뉴 배지에서 온 주소) 거르기 — 내가 맡은·안 끝낸·그 기한 할 일만. 분류·중요도 거르기는 푼다(배지 수와 같은 건수가 보이게, 18차 검수 LOW 1). 모르는 값은 null */
-export const dueFilter = (filter, due, me) => (due === 'overdue' || due === 'today' ? { ...filter, period: due, who: `p:${me}`, status: 'open', category: 'all', priority: 'all' } : null);
+export const dueFilter = (filter, due, me) => (due === 'overdue' || due === 'today' ? { ...filter, period: due, who: `p:${me}`, status: 'active', category: 'all', priority: 'all' } : null);
 
 /** 보기 설정 바꾸기(OFC-15) — 홈 '챙길 것'에서 ?due로 온 임시 거르기(temp)는 이 창에서만 쓰고 저장하지 않는다.
  *  정렬·보기·묶기만 바꾸면 저장값(saved)에 임시 거르기가 섞이지 않고 임시는 그대로, 사람이 거르기를 바꾸면 그 거르기(임시 위에서 고친 것)가 저장되고 임시는 끝난다.
@@ -98,7 +98,7 @@ export function filterItems(items, f, today) {
     if (f.kind !== 'all' && it.kind !== f.kind) return false;
     if (f.who !== 'all' && (f.who === 'none' ? !!it.who : it.who !== f.who)) return false;
     if (f.category !== 'all' && (f.category === 'none' ? !!it.category : it.category !== f.category)) return false;
-    if (f.status && f.status !== 'all' && (it.kind !== 'task' || (f.status === 'open' ? it.done : it.status !== f.status))) return false;
+    if (f.status && f.status !== 'all' && (it.kind !== 'task' || (f.status === 'open' ? it.done : f.status === 'active' ? it.done || it.status === 'hold' : it.status !== f.status))) return false;
     if (f.priority && f.priority !== 'all' && (it.kind !== 'task' || String(it.priority) !== f.priority)) return false;
     if (f.period === 'today') return overlaps(it, today, today);
     if (f.period === 'week') return overlaps(it, today, M.addDays(today, 6));
