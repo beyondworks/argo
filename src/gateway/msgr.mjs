@@ -218,6 +218,11 @@ export const _autoLogForTest = autoLog;
 
 /* ─── DB 층 — supabase-js 체인은 여기에만. 반환은 평범한 값/예외. ─── */
 const unwrap = ({ data, error }) => { if (error) throw Object.assign(new Error(`msgr db: ${error.message}`), { code: error.code }); return data; }; // code — 큐 워커가 영구 오류(형식·권한)를 가려 재시도를 멈춘다(queue.mjs isPermanentQueueError)
+/** 크루가 멘션 없이도 모든 글을 받는 DM인가(채널 행 → bool). 개인 방(org 없음)은 크루 1:1만 — 친구가 있는 방에서 주인의 모든 글에 답하고
+    친구 글마다 거절 안내가 붙던 것(2026-09-30). 서버 msgr_delivery_target과 같은 규칙. crewChannels·crewMemberships가 같이 쓴다. */
+const deliveryDm = (ch) => ch?.kind === 'dm' && (ch.org_id !== null || String(ch.personal_pair ?? '').startsWith('crew:'));
+const ROOM_IDS_PER_REQUEST = 100; // 방 참여 일괄 조회의 크루 id 묶음 — in.(…) URL 약 4KB(운영 personalCrewsInRooms가 비슷한 크기로 매 틱 돈다)
+const ROOM_PAGE = 1000;           // PostgREST 최대 행(Supabase 기본 db-max-rows) — 이보다 적게 오면 끝. 서버 최대 행을 낮추면 이 값도 같이 낮춘다
 export function makeDb(client) {
   return {
     ...executionDb(client),
@@ -377,8 +382,7 @@ export function makeDb(client) {
         allow='owner'면 매 메시지마다 거절 안내가 채널을 도배). 이름 그대로 dmChannels다. */
     async crewChannels(crewId) {
       const rows = unwrap(await client.from('msgr_channel_members').select('channel_id, msgr_channels!inner(kind, org_id, personal_pair)').eq('member_kind', 'crew').eq('member_id', crewId)) ?? [];
-      // 개인 방(org 없음)은 크루 1:1만 모든 글을 받는다 — 친구가 있는 방에서 주인의 모든 글에 답하고 친구 글마다 거절 안내가 붙던 것(2026-09-30). 서버 msgr_delivery_target과 같은 규칙.
-      return rows.filter((r) => r.msgr_channels?.kind === 'dm' && (r.msgr_channels.org_id !== null || String(r.msgr_channels.personal_pair ?? '').startsWith('crew:'))).map((r) => r.channel_id);
+      return rows.filter((r) => deliveryDm(r.msgr_channels)).map((r) => r.channel_id); // 개인 방은 크루 1:1만(deliveryDm)
     },
     async channel(id) {
       return unwrap(await client.from('msgr_channels').select('id, org_id, kind, name, crew_memory, archived_at, excluded_crew_ids').eq('id', id).maybeSingle());
@@ -387,6 +391,23 @@ export function makeDb(client) {
     async crewScope(crewId) {
       const rows = unwrap(await client.from('msgr_channel_members').select('channel_id').eq('member_kind', 'crew').eq('member_id', crewId)) ?? [];
       return new Set(rows.map((r) => r.channel_id));
+    },
+    /** 여러 크루의 방 참여를 한 번에 — Map(크루 id → { dm: crewChannels와 같은 집합, member: crewScope와 같은 집합 }). drain이 받은 글이 있는 크루만 모아
+        틱당 한 번 부른다(2026-10-09 운영 실측: 크루마다 틱당 crewChannels·crewScope 2회 = msgr_channel_members 분당 약 4.5천 회, 받은 글 1회당 2회).
+        채널은 inner가 아닌 왼쪽 결합이다 — crewScope는 결합 없이 참여 행 전부를 센다. 채널 행을 못 읽는 참여는 범위엔 들고 DM은 아니다(crewChannels의 inner와 같은 결과).
+        id는 묶음으로 나누고(URL 길이) 묶음마다 페이지를 끝까지 받는다(최대 행에 잘리면 그 크루의 DM·범위가 빠져 글이 조용히 지나간다). 실패는 던진다 — 호출부가 이 틱을 보류한다. */
+    async crewMemberships(crewIds) {
+      const out = new Map(crewIds.map((id) => [id, { dm: new Set(), member: new Set() }]));
+      for (let i = 0; i < crewIds.length; i += ROOM_IDS_PER_REQUEST) {
+        const ids = crewIds.slice(i, i + ROOM_IDS_PER_REQUEST);
+        for (let from = 0; ; from += ROOM_PAGE) {
+          const rows = unwrap(await client.from('msgr_channel_members').select('member_id, channel_id, msgr_channels(kind, org_id, personal_pair)')
+            .eq('member_kind', 'crew').in('member_id', ids).order('member_id').order('channel_id').range(from, from + ROOM_PAGE - 1)) ?? [];
+          for (const r of rows) { const o = out.get(r.member_id); if (!o) continue; o.member.add(r.channel_id); if (deliveryDm(r.msgr_channels)) o.dm.add(r.channel_id); }
+          if (rows.length < ROOM_PAGE) break;
+        }
+      }
+      return out;
     },
     /** 채널의 크루 구성원 id 집합 — 넘김 후보를 채널 범위로 좁힐 때. RLS가 가린 행은 빠진다(후보가 줄 뿐, 최후 방어는 서버 트리거). */
     async channelCrewMembers(channelId) {
@@ -954,6 +975,30 @@ export async function mapLimited(items, limit, fn) {
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
   return out;
 }
+const CREW_FETCH_LIMIT = 8; // 크루별 조회의 순간 동시 요청 상한 — 크루 수에 비례해 폭발하지 않게(검수 L2)
+const ROOMS_DM_FAIL = '[argo] msgr DM 채널 조회 실패 — 이 에이전트는 이 틱에 답하지 않음(커서 보류):';
+/** drain의 방 참여 — Map(크루 id → { dm, member }). 모르는 크루는 빠진다(호출부가 그 크루를 이 틱 보류 — 커서 유지).
+    새 어댑터는 한 번에(crewMemberships), 일괄 함수가 없거나 Map을 돌려주지 않는 옛 어댑터·테스트 더블은 크루별 종전 경로(crewChannels → crewScope). */
+async function crewRoomsFor(db, crews) {
+  const out = new Map();
+  if (!crews.length) return out;
+  if (typeof db.crewMemberships === 'function') {
+    let got;
+    try { got = await db.crewMemberships(crews.map((c) => c.id)); } catch (e) {
+      for (let i = 0; i < crews.length; i++) console.error(ROOMS_DM_FAIL, e?.message ?? e); // 보류하는 크루마다 종전과 같은 문구(검수 2R MEDIUM-2: 조용히 삼키면 무증상)
+      return out;
+    }
+    if (got instanceof Map) { for (const c of crews) { const r = got.get(c.id); if (r?.dm && r?.member) out.set(c.id, r); } return out; }
+  }
+  await mapLimited(crews, CREW_FETCH_LIMIT, async (crew) => {
+    // DM 목록을 모르면 멘션 없는 1:1 글을 대상에서 빼고 커서만 지나간다 — 범위 조회 실패와 같게 이 크루를 이번 틱 보류(확인 검수 bed20860)
+    const dmList = await db.crewChannels(crew.id).catch((e) => { console.error(ROOMS_DM_FAIL, e?.message ?? e); return null; }); // 검수 2R MEDIUM-2: 조용히 삼키면 무증상
+    if (!dmList) return;
+    const member = await db.crewScope(crew.id).catch((e) => { console.error('[argo] msgr 채널 범위 조회 실패 — 이 에이전트는 이 틱에 답하지 않음(범위를 모르면 답하지 않는다):', e?.message ?? e); return null; });
+    if (member) out.set(crew.id, { dm: new Set(dmList), member });
+  });
+  return out;
+}
 
 /** 10분마다(회사별) 퇴장 회수 — 옛 채널 일지(주인 읽기 권한 기준)와 에이전트 기억(에이전트 소속 기준, 유건 결정 2026-10-03). */
 async function periodicRecall(wsId, { db, uid, inventory }) {
@@ -1028,22 +1073,21 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
   // H3: 확인 함수가 없거나 실패하면 열어 둔다(fail-open) — 1차 관문은 앱의 필수 동의 화면이고, 이 서버 확인은 옛 클라이언트·철회자 대상 보조 방어선이다.
   const consentCache = new Map();
   const orgConsentOk = async (orgId, userId, channelId = null) => { const key = orgId ? `${orgId}:${userId}` : `ch:${channelId}:${userId}`; if (!consentCache.has(key)) consentCache.set(key, await (async () => (orgId ? db.orgConsentOk(orgId, userId) : db.personalConsentOk(channelId, userId)))().catch((e) => { console.error('[argo] msgr AI 동의 확인 RPC 실패 — 이 틱은 열어 둡니다(fail-open):', e?.message ?? e); return true; })); return consentCache.get(key); }; // 개인 방(org 없음)은 방 기준 확인(2026-09-30) // 옛 db 어댑터(orgConsentOk 없음)의 동기 TypeError도 여기서 잡는다(entCache와 같은 요령)
-  // 크루별 읽기 3종(DM·범위·받은 글)은 크루끼리 동시에 받아 둔다 — 순서대로면 크루 12명에 36왕복이 쌓였다(2026-09-23 실측 픽업 4~7초).
+  // 받은 글은 크루끼리 동시에 먼저 받는다 — 순서대로면 크루 12명에 수십 왕복이 쌓였다(2026-09-23 실측 픽업 4~7초).
+  // 방 참여(DM 목록·채널 범위)는 받은 글이 있는 크루만 모아 한 번에 받는다(crewRoomsFor). 받은 글이 없는 크루는 대상 후보가 없어 방 목록을 쓸 데가 없다 —
+  // 종전에도 빈 목록이면 아래 루프가 돌지 않고 커서도 그대로였다. 2026-10-09 운영 실측: 크루마다 틱당 방 목록 2회(받은 글 1회당 2회, msgr_channel_members 분당 약 4.5천 회).
   // 처리(적재·커서)는 아래에서 크루 순서대로. 받은 글 조회 실패는 그 크루 차례에 던진다(앞 크루는 종전처럼 처리된 뒤 drain 실패).
-  const CREW_FETCH_LIMIT = 8; // 순간 동시 요청 상한 — 크루 수에 비례해 폭발하지 않게(검수 L2). 총량은 종전과 같다
   const pre = await mapLimited(crews, CREW_FETCH_LIMIT, async (crew) => {
-    // DM 목록을 모르면 멘션 없는 1:1 글을 대상에서 빼고 커서만 지나간다 — 범위 조회 실패와 같게 이 크루를 이번 틱 보류(확인 검수 bed20860). 실패가 이어져도 크루당 틱마다 이 조회 1건뿐
-    const dmList = await db.crewChannels(crew.id).catch((e) => { console.error('[argo] msgr DM 채널 조회 실패 — 이 에이전트는 이 틱에 답하지 않음(커서 보류):', e?.message ?? e); return null; }); // 검수 2R MEDIUM-2: 조용히 삼키면 무증상
-    if (!dmList) return { member: null };
-    const dm = new Set(dmList);
-    const member = await db.crewScope(crew.id).catch((e) => { console.error('[argo] msgr 채널 범위 조회 실패 — 이 에이전트는 이 틱에 답하지 않음(범위를 모르면 답하지 않는다):', e?.message ?? e); return null; });
-    if (!member) return { dm, member };
-    try { return { dm, member, msgs: db.crewInbox ? await db.crewInbox(wsId, crew.id, crew.cursor_msg_id ?? 0) : await db.messagesAfter(crew.org_id, crew.cursor_msg_id ?? 0) }; } catch (inboxError) { return { dm, member, inboxError }; }
+    try { return { msgs: db.crewInbox ? await db.crewInbox(wsId, crew.id, crew.cursor_msg_id ?? 0) : await db.messagesAfter(crew.org_id, crew.cursor_msg_id ?? 0) }; } catch (inboxError) { return { inboxError }; }
   });
+  const rooms = await crewRoomsFor(db, crews.filter((_, i) => pre[i].msgs?.length > 0));
   for (const [ci, crew] of crews.entries()) {
-    const { dm, member, msgs, inboxError } = pre[ci];
-    if (!member) continue; // 커서 유지 → 다음 틱 재시도
+    const { msgs, inboxError } = pre[ci];
     if (inboxError) throw inboxError;
+    if (!msgs?.length) continue; // 받은 글 없음 — 적재·커서 그대로(종전과 같은 결과)
+    const room = rooms.get(crew.id);
+    if (!room) continue; // 방 목록을 모름 → 커서 유지, 다음 틱 재시도
+    const { dm, member } = room;
     let max = crew.cursor_msg_id ?? 0;
     const ccOf = (m) => (m.mentions ?? []).some((x) => x?.kind === 'crew' && x.id === crew.id && x.role === 'cc');
     // 러너 양보(drain 단계, 2026-10-08 검수 HIGH) — 서버 커서(cursor_msg_id)는 같은 계정·회사의 모든 프로세스(상주·앱 사본·다른 기기)가 나눠 쓴다.
