@@ -17,3 +17,16 @@ export function bulkTargets(list, view) {
 
 /** 줄 누르기 — 터치 기기에서 한 통이라도 고른 동안은 열지 않고 넣고 뺀다(Gmail 앱 관례) */
 export const rowTapPicks = (picked, touch) => picked > 0 && touch;
+
+/** 휴지통 비우기 대상(10/9) — picked(고른 메일)가 있으면 그중 휴지통 메일을 계정별로 묶고, 없으면 지금 고른 계정(전체면 연결된 계정 모두). 예시 모드는 계정 없음 하나 */
+export function purgeTargets({ accounts = [], pick, picked, sample = false }) {
+  if (picked) {
+    const by = new Map();
+    for (const m of picked) if (m.folder === 'trash') { if (!by.has(m.account)) by.set(m.account, []); by.get(m.account).push(m); }
+    return [...by].map(([account, mails]) => ({ account, mails, total: mails.length }));
+  }
+  if (sample) return [{ account: undefined }];
+  return (pick === 'all' ? accounts : accounts.filter((a) => a.id === pick)).map((a) => ({ account: a.id }));
+}
+/** 확인 창에서 지울 계정 — 개수를 안 계정 중 1통 이상만(개수를 못 받은 계정은 몇 통인지 보여 주지 않은 채 지우지 않는다, 검수 #905) */
+export const purgeable = (r) => !r.error && (r.total ?? 0) > 0;

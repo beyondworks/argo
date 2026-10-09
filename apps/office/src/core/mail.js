@@ -43,7 +43,7 @@ export async function api(op, body, { method = body ? 'POST' : 'GET', query } = 
   if (op === 'attachment' && r.ok) return r.blob();
   const data = await r.json().catch(() => ({}));
   if (r.status === 429) noteLimit(data.retryAfter ?? r.headers.get('retry-after'));
-  if (!r.ok) throw Object.assign(new Error(data.error ?? 'mail'), { code: data.error ?? 'server', status: r.status, retryAfter: data.retryAfter, transient: r.status >= 500 && r.status !== 503 });
+  if (!r.ok) throw Object.assign(new Error(data.error ?? 'mail'), { code: data.error ?? 'server', status: r.status, retryAfter: data.retryAfter, transient: r.status >= 500 && r.status !== 503, deleted: data.deleted });
   return data;
 }
 
@@ -213,10 +213,55 @@ export function trashMail(m) {
  *  늘 untrash — 보낼 목록에 남아 있어도 이미 Gmail에 갔을 수 있다(응답만 잃고 다시 보낼 차례, 재검수 #899). 아직 안 나갔으면 같은 키가 합쳐져 untrash 한 번.
  *  받은편지함으로 갈 때만 받은편지함 라벨도 다시(Gmail이 휴지통에서 그 라벨을 지워도 돌아오게) — 보관함·보낸편지함은 untrash만으로 같다 */
 function untrashTo(m, to) {
+  if (purging.has(m.account)) return false; // 그 계정을 비우는 중 — 꺼낸 메일은 keep에 없어 같이 지워진다(재검수 #905). 화면은 지우는 동안 되돌리기 알림을 치운다
   const back = { ...m, folder: to, trashedFrom: undefined };
   update((s) => ({ mails: s.mails.some((x) => x.id === m.id) ? s.mails.map((x) => (x.id === m.id ? { ...x, folder: to, trashedFrom: undefined } : x)) : [...s.mails, back] }));
-  if (!m.account) return;
+  if (!m.account) return true;
   update(() => ({}), [[`trash:${m.id}`, { type: 'mail.trash', id: m.id, account: m.account, gid: m.gid, on: false }], ...(to === 'inbox' ? [[`mail:${m.id}`, { type: 'mail.flag', id: m.id, patch: {} }]] : [])]);
+  return true;
+}
+
+/** 휴지통 개수(10/9 비우기 확인 창) — 계정마다 { account, total } 또는 { account, error }. 예시 모드는 이 기기의 예시 휴지통 */
+export function trashCounts(accounts) {
+  if (!real()) return Promise.resolve(accounts.map((account) => ({ account, total: getState().mails.filter((m) => m.folder === 'trash' && m.account === account).length })));
+  return Promise.all(accounts.map((account) => api('trashCount', { account }).then((r) => ({ account, total: r.total }), (e) => ({ account, error: e.code }))));
+}
+/** 영구 삭제(10/9 휴지통 비우기·고른 메일) — 되돌릴 수 없다, 화면 확인 창 뒤에만. mails(고른 메일)가 없으면 그 계정의 Gmail 휴지통 전체.
+ *  서버가 지운 것만 캐시에서 뺀다(권한이 없으면 scope_needed — 아무것도 바꾸지 않는다). 예시 모드는 이 기기에서만(예시 메일은 Gmail id가 없어 메일 id로) */
+const purging = new Set(); // 지금 비우는 계정 — 그동안 꺼내기·되돌리기는 하지 않는다
+export async function purgeMail({ account, mails }) {
+  const picked = mails && new Set(mails.map((m) => m.id));
+  if (!real()) {
+    const gone = (m) => m.folder === 'trash' && m.account === account && (!picked || picked.has(m.id));
+    const n = getState().mails.filter(gone).length;
+    update((s) => ({ mails: s.mails.filter((m) => !gone(m)) }));
+    return { deleted: n };
+  }
+  // 보낼 목록을 먼저 보낸다 — 꺼낸 메일의 untrash가 비우기보다 늦으면 Gmail에선 아직 휴지통이라 같이 지워진다(검수 #905 HIGH). 그래도 남은 것은 keep으로 빼 달라고 한다
+  await outbox.flush().catch(() => {});
+  const keep = getState().mails.filter((m) => m.account === account && m.folder !== 'trash' && outbox.has(`trash:${m.id}`)).map((m) => m.gid);
+  if (keep.length > 1000) throw Object.assign(new Error('pending_many'), { code: 'pending_many' }); // 서버가 받는 keep 상한 — 보낼 변경이 다 나간 뒤 다시
+  // 고른 메일은 100통씩(서버 함수 한 번의 시간·요청 한도 안), 전체는 서버가 5천 통씩 지우고 more면 다시(한 통도 못 지웠으면 멈춘다)
+  const calls = mails ? Array.from({ length: Math.ceil(mails.length / 100) }, (_, i) => ({ ids: mails.slice(i * 100, i * 100 + 100).map((m) => m.gid) })) : [{}];
+  let deleted = 0;
+  const gone = new Set();
+  purging.add(account);
+  try {
+    for (const part of calls) {
+      for (let n = 0; n < 40; n++) {
+        const r = await api('purge', { account, confirm: 'purge', ...part, ...(keep.length ? { keep } : {}) });
+        deleted += r.deleted; (r.ids ?? []).forEach((id) => gone.add(id));
+        if (!r.more || !r.deleted) break;
+      }
+    }
+  } catch (e) {
+    if (deleted || e.deleted) pullMail('trash').catch(() => {}); // 일부를 지웠다 — 휴지통 목록을 다시 받아 화면을 맞춘다
+    throw Object.assign(e, { deleted: deleted + (e.deleted ?? 0) });
+  } finally {
+    purging.delete(account);
+    update((s) => ({ mails: s.mails.filter((m) => !(m.folder === 'trash' && m.account === account && gone.has(m.gid))) })); // 서버가 지운 것만 뺀다
+  }
+  return { deleted };
 }
 
 /** 꺼낼 곳(10/9 휴지통 메일함) — 이 기기에서 지운 메일은 지우기 전 메일함, 그 밖에는 Gmail 라벨(서버 folderOf와 같은 순서: 임시 보관함 > 받은편지함 > 보낸편지함 > 보관함) */
@@ -224,11 +269,11 @@ export function restoredFolder(m) {
   const l = m.labels ?? [];
   return m.trashedFrom ?? (l.includes('DRAFT') ? 'drafts' : l.includes('INBOX') ? 'inbox' : l.includes('SENT') ? 'sent' : 'archive');
 }
-/** 휴지통에서 꺼내기 — 되돌리면 다시 휴지통 */
+/** 휴지통에서 꺼내기 — 되돌리면 다시 휴지통. 그 계정을 비우는 중이라 못 꺼냈으면 null(화면이 알린다, 4차 재검수 #905) */
 export function restoreMail(m) {
   if (m.folder !== 'trash') return () => {};
   const to = restoredFolder(m);
-  untrashTo(m, to);
+  if (untrashTo(m, to) === false) return null;
   return () => trashMail({ ...m, folder: to, trashedFrom: undefined });
 }
 
@@ -240,8 +285,9 @@ export function takeMailReturn() {
   return r;
 }
 /** Google 로그인 → 권한 승인 화면으로 보낸다(돌아오는 곳: /me/mail/connect) */
-export async function connectGoogle(hint) {
-  const { url } = await api('start', { hint, ...(isDesktop() ? { desktop: true } : {}) });
+/** full: 휴지통 비우기 권한(https://mail.google.com/)까지 — 비우기를 처음 누를 때만(10/9) */
+export async function connectGoogle(hint, { full = false } = {}) {
+  const { url } = await api('start', { hint, ...(full ? { full: true } : {}), ...(isDesktop() ? { desktop: true } : {}) });
   if (isDesktop()) {
     const { startDesktopMail } = await import('./desktop-auth.js'); // 데스크톱에서만 받는다
     const result = await startDesktopMail(url);

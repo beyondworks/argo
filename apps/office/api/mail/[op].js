@@ -8,7 +8,7 @@
 //   sync 한 번 = 서버 함수 1회 + 계정마다 DB 읽기 1(office_mail_secret, 쓰기 0 — 접근 토큰 갱신 때만 시간당 1번 쓴다) + Gmail history.list 1회
 //   (+ 바뀐 메일 수만큼 메타 읽기). 열린 탭 하나·계정 하나, 메일 화면: 분당 서버 함수 2·DB 읽기 2·Gmail 2(바뀐 게 없을 때).
 import { mailKey, seal, unseal, sealState, openState } from '../../server/seal.js';
-import { envelope, content, buildMime, inlineImages, VIEWABLE, FOLDER_QUERY, SCOPES, missingScopes, MODIFY_LABELS, historyChanges, retryAfterSec, isRateLimited, mapLimit, pickCarry } from '../../server/gmail.js';
+import { envelope, content, buildMime, inlineImages, VIEWABLE, FOLDER_QUERY, SCOPES, PURGE_SCOPE, missingScopes, MODIFY_LABELS, historyChanges, retryAfterSec, isRateLimited, mapLimit, pickCarry } from '../../server/gmail.js';
 import { customerMatcher, gmailQuery, threadSignals } from '../../server/mail-signals.js';
 import { createHash, randomBytes } from 'node:crypto';
 
@@ -154,12 +154,12 @@ const OPS = {
     return { desktop: true, url: `argo-office://mail/callback?${q}` };
   },
 
-  async start(jwt, { hint, desktop } = {}) {
+  async start(jwt, { hint, desktop, full } = {}) {
     const { client_id } = client();
     const uid = await me(jwt);
     const verifier = randomBytes(32).toString('base64url');
     const q = new URLSearchParams({
-      client_id, redirect_uri: redirectUri(), response_type: 'code', scope: ['openid', 'email', 'profile', ...SCOPES].join(' '),
+      client_id, redirect_uri: redirectUri(), response_type: 'code', scope: ['openid', 'email', 'profile', ...SCOPES, ...(full === true ? [PURGE_SCOPE] : [])].join(' '), // full: 휴지통 비우기를 처음 누를 때만
       access_type: 'offline', prompt: 'consent', include_granted_scopes: 'true',               // consent: 다시 연결해도 갱신 토큰을 받는다
       state: sealState(mailKey(), { uid, v: verifier, ...(desktop === true ? { desktop: true } : {}) }), code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256',
     });
@@ -274,6 +274,50 @@ const OPS = {
     return { ok: true };
   },
 
+  // 휴지통 개수(10/9 휴지통 비우기 확인 창) — 휴지통 라벨의 전체 수(목록을 다 받지 않는다)
+  async trashCount(jwt, { account }) {
+    const token = await accessToken(jwt, account);
+    return { total: Number((await gmail(token, '/labels/TRASH'))?.messagesTotal ?? 0) };
+  },
+
+  // 영구 삭제(10/9 휴지통 비우기·고른 메일 영구 삭제) — 되돌릴 수 없다. 화면 확인 창을 거친 요청(confirm: 'purge')만, 크루 도구는 부르지 않는다(gateway MAIL_CALLS).
+  // Gmail 휴지통에 지금 있는 메일만 지운다. keep = 화면에서 꺼냈지만 untrash가 아직 안 나간 메일(지우지 않는다, 검수 #905 HIGH).
+  // ids(고른 메일)는 한 통씩 지금 라벨을 보고 휴지통일 때만. 전체는 휴지통 첫 쪽 받기 → 바로 지우기를 되풀이(받은 순간과 지우는 순간의 틈을 줄인다)하고,
+  // 한 번에 최대 10쪽(5천 통) — 남으면 more(화면이 다시 부른다, 서버 함수 시간 한도 안). 권한(PURGE_SCOPE)이 없으면 403 scope_needed, 중간 실패는 지운 수(deleted)와 함께
+  async purge(jwt, { account, ids, keep, confirm }) {
+    if (confirm !== 'purge') throw fail(400, 'input');
+    const set = (v) => { if (!Array.isArray(v) || v.length > 1000) throw fail(400, 'input'); return new Set(v.map(gid)); };
+    if (ids !== undefined && !(Array.isArray(ids) && ids.length)) throw fail(400, 'input');
+    const want = ids === undefined ? null : set(ids), skip = keep === undefined ? new Set() : set(keep);
+    const token = await accessToken(jwt, account);
+    let deleted = 0;
+    const del = async (batch) => {
+      try { await gmail(token, '/messages/batchDelete', { method: 'POST', body: JSON.stringify({ ids: batch }) }); } catch (e) {
+        throw Object.assign(/insufficient|SCOPE_INSUFFICIENT/i.test(e.message) ? fail(403, 'scope_needed') : e, { deleted });
+      }
+      deleted += batch.length;
+    };
+    if (want) {
+      const now = await mapLimit([...want].filter((id) => !skip.has(id)), 5, (id) => gmail(token, `/messages/${id}?format=minimal`)
+        .then((m) => (m?.labelIds?.includes('TRASH') ? id : null), (e) => { if (e.status === 404) return null; throw e; }));
+      const doomed = now.filter(Boolean);
+      for (let i = 0; i < doomed.length; i += 500) await del(doomed.slice(i, i + 500));
+      return { deleted, ids: doomed };
+    }
+    // 지운 id는 기억해 다시 지우지 않고(목록이 잠시 더 돌려줘도 맴돌지 않게), 걸러 낸 쪽이 비면 다음 쪽으로(첫 쪽이 전부 keep일 때). 지운 id를 돌려준다(화면이 그것만 뺀다)
+    const gone = new Set();
+    let page = null;
+    for (let round = 0; round < 10; round++) {
+      const res = await gmail(token, `/messages?${new URLSearchParams({ labelIds: 'TRASH', includeSpamTrash: 'true', maxResults: '500', ...(page ? { pageToken: page } : {}) })}`);
+      const batch = (res?.messages ?? []).map((m) => m.id).filter((id) => !skip.has(id) && !gone.has(id));
+      if (!batch.length) { if ((page = res?.nextPageToken ?? null)) continue; return { deleted, ids: [...gone], more: false }; }
+      page = null;
+      await del(batch);
+      batch.forEach((id) => gone.add(id));
+    }
+    return { deleted, ids: [...gone], more: true };
+  },
+
   // 작성 중 초안(바뀔 때만 화면이 부른다) — 첫 저장은 만들고 그 뒤로는 같은 초안을 고친다. carry: 원문 첨부(전달·고치기) 다시 싣기
   // Gmail은 초안 일부만 고칠 수 없어(drafts.update = 메시지 전체 바꾸기) 첨부가 있으면 매번 다시 실어야 한다. 그래서 화면은 첨부가 있는 초안을
   // 첨부가 바뀐 때·닫을 때만 여기로 보내고(글만 바뀐 자동 저장은 그 기기에만 — pages/mail-model.js draftSavePlan), 첨부 없는 초안만 멈출 때마다 보낸다(분리 검수 MEDIUM-2)
@@ -322,7 +366,7 @@ const OPS = {
 
 /** 오류 응답 — 구글·DB 원문은 화면에 보내지 않는다. 요청 제한이면 남은 초(본문 retryAfter + Retry-After 헤더) */
 function failure(e) {
-  const res = json({ error: e.code ?? 'server', ...(e.retryAfter ? { retryAfter: e.retryAfter } : {}) }, e.status ?? 500);
+  const res = json({ error: e.code ?? 'server', ...(e.retryAfter ? { retryAfter: e.retryAfter } : {}), ...(Number.isInteger(e.deleted) ? { deleted: e.deleted } : {}) }, e.status ?? 500); // deleted: 영구 삭제가 중간에 멈췄을 때 이미 지운 수
   if (e.retryAfter) res.headers.set('retry-after', String(e.retryAfter));
   return res;
 }

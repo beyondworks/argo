@@ -234,3 +234,101 @@ test('목록: 휴지통 메일함 = labelIds TRASH', async () => {
   assert.equal(calls.find((c) => c.path === '/messages').q.get('includeSpamTrash'), 'true');
   assert.equal(r.body.items[0].folder, 'trash');
 });
+
+// ── 휴지통 비우기·영구 삭제(유건 10/9 권장안: 처음 비울 때만 추가 권한, 휴지통 전체, 계정별 개수 확인 창, 고른 메일 영구 삭제) ──
+// 이유: 영구 삭제(messages.batchDelete)는 https://mail.google.com/ 권한이 있어야 한다 — 평소 연결은 지금 권한 그대로, 비우기를 처음 누를 때만 그 권한까지 요청한다.
+test('연결 시작: full이면 영구 삭제 권한까지, 아니면 지금 권한 그대로', async () => {
+  const scope = async (body) => new URL((await post('start', body)).body.url).searchParams.get('scope').split(' ');
+  globalThis.fetch = ((orig) => async (url, init) => (String(url).includes('/auth/v1/user') ? new Response(JSON.stringify({ id: 'u1' })) : orig(url, init)))(globalThis.fetch);
+  assert.ok(!(await scope({})).includes('https://mail.google.com/'));
+  assert.ok((await scope({ full: true })).includes('https://mail.google.com/'));
+  assert.ok(!(await scope({ full: 'true' })).includes('https://mail.google.com/'), 'true(불리언)만');
+});
+
+// 이유: 확인 창에 계정별 개수 — 휴지통 라벨의 전체 수(목록을 다 받지 않는다).
+test('휴지통 개수: labels/TRASH의 messagesTotal', async () => {
+  gmail = (c) => (c.path === '/labels/TRASH' ? ok({ id: 'TRASH', messagesTotal: 123 }) : new Response('{}', { status: 404 }));
+  assert.deepEqual((await post('trashCount', { account: 'acc' })).body, { total: 123 });
+});
+
+// 이유: 되돌릴 수 없는 동작 — 화면 확인을 거친 요청(confirm: 'purge')만, 그리고 Gmail 휴지통에 지금 있는 메일만 지운다(크루 도구는 이 동작을 부르지 않는다 — MAIL_CALLS).
+test('영구 삭제: confirm 없으면 400·Gmail 호출 0', async () => {
+  gmail = () => ok({});
+  for (const body of [{ account: 'acc' }, { account: 'acc', confirm: true }, { account: 'acc', confirm: 'yes' }]) assert.equal((await post('purge', body)).status, 400);
+  assert.deepEqual(calls, []);
+});
+// 가짜 Gmail 휴지통 — 목록(첫 쪽만, 지운 것은 빠진다)·한 통 라벨·batchDelete가 상태를 같이 본다
+function trashBox(ids, { inboxOnly = [], failAt = null, stale = false } = {}) {
+  const trash = new Set(ids), all = new Set([...ids, ...inboxOnly]), ghost = new Set();
+  let dels = 0;
+  gmail = (c) => {
+    if (c.path === '/messages') { const listed = [...ghost, ...trash], from = Number(c.q.get('pageToken') ?? 0), page = listed.slice(from, from + 500).map((id) => ({ id })); ghost.clear(); return ok({ messages: page, ...(listed.length > from + 500 ? { nextPageToken: String(from + 500) } : {}) }); }
+    const one = /^\/messages\/([^/]+)$/.exec(c.path)?.[1];
+    if (one && one !== 'batchDelete' && c.q.get('format') === 'minimal') return all.has(one) ? ok({ id: one, labelIds: trash.has(one) ? ['TRASH'] : ['INBOX'] }) : new Response('{}', { status: 404 });
+    if (c.path === '/messages/batchDelete') { if (failAt != null && dels++ === failAt) return new Response('{}', { status: 503 }); for (const id of JSON.parse(c.init.body).ids) { trash.delete(id); all.delete(id); if (stale) ghost.add(id); } return new Response(null, { status: 204 }); }
+    return new Response('{}', { status: 404 });
+  };
+  return trash;
+}
+// 이유(검수 #905 HIGH): 목록을 다 받은 뒤 지우면 그 사이 꺼낸 메일도 지운다 — 휴지통 첫 쪽을 받아 바로 지우기를 되풀이해 틈을 줄인다.
+// 한 번 부를 때 최대 10쪽(5천 통) — 남으면 more(화면이 다시 부른다, 서버 함수 시간 한도 안).
+test('휴지통 비우기: 첫 쪽 받기 → 바로 지우기를 되풀이, 10쪽 넘으면 more', async () => {
+  const trash = trashBox(Array.from({ length: 620 }, (_, i) => `t${i}`));
+  const r = await post('purge', { account: 'acc', confirm: 'purge' });
+  assert.deepEqual([r.status, r.body.deleted, r.body.more, r.body.ids.length], [200, 620, false, 620], '지운 id를 돌려준다(화면이 그것만 뺀다)');
+  assert.equal(trash.size, 0);
+  const seq = calls.map((c) => (c.path === '/messages' ? 'L' : c.path === '/messages/batchDelete' ? `D${JSON.parse(c.init.body).ids.length}` : c.path));
+  assert.deepEqual(seq, ['L', 'D500', 'L', 'D120', 'L'], '받고 지우고를 번갈아');
+  assert.ok(calls.filter((c) => c.path === '/messages').every((c) => c.q.get('labelIds') === 'TRASH' && !c.q.get('pageToken')), '휴지통 라벨, 늘 첫 쪽');
+  calls = [];
+  trashBox(Array.from({ length: 5600 }, (_, i) => `u${i}`));
+  const big = await post('purge', { account: 'acc', confirm: 'purge' });
+  assert.deepEqual([big.body.deleted, big.body.more], [5000, true]);
+});
+// 이유(검수 #905 HIGH): 화면에서 꺼냈지만 untrash가 아직 안 나간 메일(keep)은 Gmail 휴지통에 있어도 지우지 않는다.
+test('휴지통 비우기: keep(꺼낸 메일)은 남긴다', async () => {
+  const trash = trashBox(['a', 'b', 'x']);
+  const r = await post('purge', { account: 'acc', confirm: 'purge', keep: ['x'] });
+  assert.deepEqual([r.body.deleted, r.body.ids.sort()], [2, ['a', 'b']]);
+  assert.deepEqual([...trash], ['x']);
+});
+// 이유: 고른 메일은 한 통씩 지금 라벨을 보고 휴지통에 있을 때만 지운다(그 사이 꺼낸 메일·없는 메일·keep은 건너뛴다) — 휴지통 목록을 다 받지 않는다.
+test('고른 메일 영구 삭제: 지금 휴지통에 있는 것만(꺼낸 메일·없는 메일·keep은 건너뛴다)', async () => {
+  const trash = trashBox(['a', 'c', 'k'], { inboxOnly: ['restored'] });
+  const r = await post('purge', { account: 'acc', confirm: 'purge', ids: ['a', 'c', 'restored', 'gone', 'k'], keep: ['k'] });
+  assert.deepEqual(r.body, { deleted: 2, ids: ['a', 'c'] });
+  assert.deepEqual([...trash], ['k']);
+  assert.ok(!calls.some((c) => c.path === '/messages'), '휴지통 목록은 받지 않는다');
+  calls = [];
+  for (const ids of [[], ['x/../y'], 'a', Array.from({ length: 1001 }, (_, i) => `m${i}`)]) assert.equal((await post('purge', { account: 'acc', confirm: 'purge', ids })).status, 400, JSON.stringify(ids).slice(0, 30));
+  assert.equal((await post('purge', { account: 'acc', confirm: 'purge', keep: ['../x'] })).status, 400);
+  assert.deepEqual(calls, [], '잘못된 입력은 Gmail을 부르지 않는다');
+});
+// 이유(검수 #905 LOW): 묶음 중간에 실패하면 이미 지운 수를 같이 돌려준다(화면이 '못 지웠다'로만 보이지 않게, 목록을 다시 받게).
+test('휴지통 비우기: 중간 실패는 지운 수와 함께', async () => {
+  trashBox(Array.from({ length: 702 }, (_, i) => `t${i}`), { failAt: 1 });
+  const r = await post('purge', { account: 'acc', confirm: 'purge' });
+  assert.equal(r.status, 502);
+  assert.equal(r.body.deleted, 500);
+});
+// 이유: 영구 삭제 권한이 없는 연결(지금 연결 전부) — 화면이 그 계정만 권한을 다시 받게 403 scope_needed로 알린다.
+test('영구 삭제: 권한이 없으면 403 scope_needed', async () => {
+  gmail = (c) => (c.path === '/messages' ? ok({ messages: [{ id: 'a' }] }) : new Response(JSON.stringify({ error: { code: 403, message: 'Request had insufficient authentication scopes.', status: 'PERMISSION_DENIED', details: [{ reason: 'ACCESS_TOKEN_SCOPE_INSUFFICIENT' }] } }), { status: 403 }));
+  const r = await post('purge', { account: 'acc', confirm: 'purge' });
+  assert.deepEqual([r.status, r.body.error], [403, 'scope_needed']);
+});
+
+// 이유(재검수 #905 LOW): 휴지통 첫 쪽이 전부 keep(꺼낸 메일)이면 다음 쪽으로 — 0통으로 멈추지 않는다.
+test('휴지통 비우기: 첫 쪽이 전부 keep이면 다음 쪽', async () => {
+  const kept = Array.from({ length: 500 }, (_, i) => `k${i}`), trash = trashBox([...kept, 'o1', 'o2']);
+  const r = await post('purge', { account: 'acc', confirm: 'purge', keep: kept });
+  assert.deepEqual([r.body.deleted, r.body.more], [2, false]);
+  assert.equal(trash.size, 500);
+});
+// 이유(재검수 #905 LOW): 목록이 방금 지운 id를 잠시 더 돌려줘도 같은 id를 다시 지우며 맴돌지 않는다.
+test('휴지통 비우기: 이미 지운 id는 다시 지우지 않는다', async () => {
+  trashBox(['a', 'b'], { stale: true });
+  const r = await post('purge', { account: 'acc', confirm: 'purge' });
+  assert.deepEqual([r.body.deleted, r.body.more], [2, false]);
+  assert.equal(calls.filter((c) => c.path === '/messages/batchDelete').length, 1);
+});
