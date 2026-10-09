@@ -25,6 +25,7 @@ test('진입 링크는 https 고정 주소 — 메신저 받기 안내 한 곳',
 test('본체 화면(app/)과 에이전트 도움말(src/help)에 오피스로 가는 링크·버튼 안내가 없다', async () => {
   const { readdir, readFile } = await import('node:fs/promises');
   const { join } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
   const hits = [];
   const walk = async (d) => {
     for (const e of await readdir(d, { withFileTypes: true })) {
@@ -36,8 +37,8 @@ test('본체 화면(app/)과 에이전트 도움말(src/help)에 오피스로 �
       }
     }
   };
-  await walk(new URL('../app/', import.meta.url).pathname);
-  await walk(new URL('../src/help/', import.meta.url).pathname);
+  await walk(fileURLToPath(new URL('../app/', import.meta.url)));
+  await walk(fileURLToPath(new URL('../src/help/', import.meta.url)));
   assert.deepEqual(hits, []);
 });
 
