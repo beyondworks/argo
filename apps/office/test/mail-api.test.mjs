@@ -205,3 +205,23 @@ test('로그인 없이 부르면 401, 모르는 동작은 404, 바꾸는 동작�
   assert.equal((await get('sync', { accounts: '[]' })).status, 405);
   assert.equal((await get('draftDelete', { account: 'acc', draftId: 'D1' })).status, 405);
 });
+
+// 이유(유건 10/9 "휴지통 삭제도"): Gmail 휴지통(30일 뒤 Gmail이 지운다)으로 옮기기·되돌리기 — 영구 삭제는 하지 않는다. 같은 요청을 다시 보내도 결과가 같아 요청 제한 때 한 번 다시.
+// 이미 없는 메일(404)을 휴지통으로 = 성공(이미 사라졌다), 되돌리기 404는 실패(돌아오지 않았다).
+test('휴지통: on이면 messages/{id}/trash, 아니면 untrash — 영구 삭제(DELETE)는 부르지 않는다', async () => {
+  gmail = () => ok({});
+  assert.equal((await post('trash', { account: 'acc', id: 'm1', on: true })).status, 200);
+  assert.equal((await post('trash', { account: 'acc', id: 'm2', on: false })).status, 200);
+  assert.deepEqual(calls.map((c) => `${c.method} ${c.path}`), ['POST /messages/m1/trash', 'POST /messages/m2/untrash']);
+  assert.ok(calls.every((c) => c.method !== 'DELETE'));
+  calls = [];
+  gmail = () => new Response('{}', { status: 404 });
+  assert.equal((await post('trash', { account: 'acc', id: 'gone', on: true })).status, 200, '이미 없으면 성공');
+  assert.notEqual((await post('trash', { account: 'acc', id: 'gone', on: false })).status, 200, '되돌리기 404는 실패');
+  assert.equal((await post('trash', { account: 'acc', id: 'x/../y', on: true }, null)).status, 401, '로그인 없이는 못 부른다');
+  calls = [];
+  for (const bad of [{ id: '..', on: true }, { on: true }, { id: 'x/../y', on: true }, { id: 'm1', on: 'false' }, { id: 'm1', on: null }]) {
+    assert.equal((await post('trash', { account: 'acc', ...bad })).status, 400, `입력 검증(검수 #899): ${JSON.stringify(bad)}`);
+  }
+  assert.deepEqual(calls, [], '잘못된 입력은 Gmail을 부르지 않는다');
+});

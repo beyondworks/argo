@@ -28,7 +28,7 @@ export function Palette({ open, onClose, space }) {
     const cmds = [...globalCommands(space), ...more].filter((c) => hit(c.label)).slice(0, needle ? 8 : 6).map((c) => ({ ...c, group: 'commands' }));
     const pg = pages.filter((p) => !p.template && (p.space === space || space === 'me') && hit(p.title || t('page.untitled'))).slice(0, 6)
       .map((p) => ({ id: p.id, label: p.title || t('page.untitled'), icon: p.restricted ? 'lock' : 'doc', group: 'pages', run: () => navigate(`${baseOf(p.space)}/p/${p.id}`) }));
-    const ml = needle ? mails.filter((m) => hit(m.subject) || hit(m.from)).slice(0, 4) // 조직 공간도 내 개인 메일함(10/8)
+    const ml = needle ? mails.filter((m) => m.folder !== 'trash' && (hit(m.subject) || hit(m.from))).slice(0, 4) // 조직 공간도 내 개인 메일함(10/8)
       .map((m) => ({ id: m.id, label: m.subject, hint: m.from, icon: 'mail', group: 'mail', mask: true, run: () => navigate(`${baseOf(space)}/mail/${m.id}`) })) : []; // mask: 전체 가리기 중 흐림(유건 10/4)
     return [...pg, ...ml, ...cmds];
   }, [open, q, space, pages, mails, more]);

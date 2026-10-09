@@ -96,7 +96,8 @@ async function send(op) {
     case 'mail.flag': {                                                            // 합쳐진 변경이라 patch가 아니라 지금 상태(읽음·폴더)를 그대로 보낸다 — 여러 번 보내도 같다
       const m = getState().mails.find((x) => x.id === p.id);
       if (!m?.account) return;                                                     // 예시 메일
-      const inbox = m.folder === 'inbox' ? 'add' : m.folder === 'archive' ? 'remove' : null;
+      // 휴지통에 있는 동안은 받은편지함 라벨을 빼기만 한다(보관 직후 #), 붙이지 않는다(휴지통 메일이 Gmail 받은편지함으로 돌아가지 않게, 재검수 #899)
+      const inbox = m.folder === 'trash' ? (m.trashedFrom === 'archive' ? 'remove' : null) : m.folder === 'inbox' ? 'add' : m.folder === 'archive' ? 'remove' : null;
       assertOwner();
       const response = await fetch(apiUrl('/api/mail/modify'), { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ account: m.account, id: m.gid, add: [...(m.unread ? ['UNREAD'] : []), ...(inbox === 'add' ? ['INBOX'] : [])], remove: [...(m.unread ? [] : ['UNREAD']), ...(inbox === 'remove' ? ['INBOX'] : [])] }) });
       assertOwner();
@@ -108,6 +109,13 @@ async function send(op) {
       if (!m?.account) return;
       assertOwner();
       const response = await fetch(apiUrl('/api/mail/modify'), { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ account: m.account, id: m.gid, [m.starred ? 'add' : 'remove']: ['STARRED'] }) });
+      assertOwner();
+      if (!response.ok) { const failure = await response.json().catch(() => ({})); throw Object.assign(new Error('mail'), { code: failure.error, transient: response.status >= 500 || response.status === 429 }); }
+      return;
+    }
+    case 'mail.trash': {                                                           // 휴지통(10/9) — 옮기기·되돌리기. 메일이 목록에서 빠졌어도 보낼 목록의 계정·Gmail id로 보낸다(여러 번 보내도 같다)
+      assertOwner();
+      const response = await fetch(apiUrl('/api/mail/trash'), { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ account: p.account, id: p.gid, on: p.on }) });
       assertOwner();
       if (!response.ok) { const failure = await response.json().catch(() => ({})); throw Object.assign(new Error('mail'), { code: failure.error, transient: response.status >= 500 || response.status === 429 }); }
       return;
@@ -149,7 +157,7 @@ function rejected(op, err) {
     return;
   }
   if (op.payload.type === 'crew.assign') { import('./crew-assign.js').catch(() => {}).then(() => showToast(t(`crew.fail.${err?.assign ?? 'generic'}`))); return; } // 거절 사유 문구는 맡기기 조각의 사전
-  if (op.payload.type === 'mail.flag' || op.payload.type === 'mail.star') { showToast(t(err?.code === 'expired' ? 'mailc.expired' : 'sync.rejected')); import('./mail.js').then((m) => m.loadAccounts()).catch(() => {}); return; }
+  if (op.payload.type === 'mail.flag' || op.payload.type === 'mail.star' || op.payload.type === 'mail.trash') { showToast(t(err?.code === 'expired' ? 'mailc.expired' : 'sync.rejected')); import('./mail.js').then((m) => m.loadAccounts()).catch(() => {}); return; }
   showToast(t('sync.rejected'));
   import('./pull.js').then((m) => m.pullPages()).catch(() => {});                  // 서버 상태로 되돌린다
 }

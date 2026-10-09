@@ -52,7 +52,7 @@ let config = null;
 export const mailConfig = () => (config ??= api('config').catch(() => { config = null; return { google: null, failed: true }; }));
 const real = () => getMode() === 'signedIn';
 const okAccounts = () => (getState().mailAccounts ?? []).filter((a) => a.status === 'ok');
-const busy = (id) => outbox.has(`mail:${id}`) || outbox.has(`star:${id}`);
+const busy = (id) => outbox.has(`mail:${id}`) || outbox.has(`star:${id}`) || outbox.has(`trash:${id}`);
 const needsLink = () => ((getState().mailAccounts ?? []).some((a) => a.status !== 'ok') ? 'expired' : null); // 다시 연결해야 하는 계정이 있나
 const markExpired = (id) => update((s) => ({ mailAccounts: s.mailAccounts.map((a) => (a.id === id ? { ...a, status: 'expired' } : a)) }));
 
@@ -195,6 +195,23 @@ export const forgetBody = (id) => bodies.delete(id);
 export function toggleStar(m) {
   const on = !m.starred;
   update((s) => ({ mails: s.mails.map((x) => (x.id === m.id ? { ...x, starred: on } : x)) }), m.account ? [[`star:${m.id}`, { type: 'mail.star', id: m.id, on }]] : []);
+}
+
+/** 휴지통(10/9) — 화면에서 먼저 빼고 보낼 목록으로(Gmail trash, 30일 뒤 Gmail이 지운다 — 영구 삭제는 하지 않는다). 되돌리면 원래 메일함으로(untrash).
+ *  보낼 목록에 계정·Gmail id를 같이 싣는다 — 휴지통 메일은 동기화가 목록에서 치우므로, 그 뒤 되돌려도 메일을 다시 넣고 보낼 수 있게 */
+export function trashMail(m) {
+  if (m.folder === 'trash') return () => {}; // 이미 휴지통(뒤로 가기로 다시 연 경우) — 휴지통 전 메일함을 덮지 않게(재검수 #899)
+  const key = `trash:${m.id}`, op = (on) => [key, { type: 'mail.trash', id: m.id, account: m.account, gid: m.gid, on }];
+  // trashedFrom: 휴지통에 있는 동안 나가는 읽음·보관(mail.flag)이 휴지통 전 메일함으로 받은편지함 라벨을 정한다(검수 #899 — 보관 직후 #)
+  update((s) => ({ mails: s.mails.map((x) => (x.id === m.id ? { ...x, folder: 'trash', trashedFrom: x.folder } : x)) }), m.account ? [op(true)] : []);
+  return () => {
+    const { trashedFrom, ...back } = m;
+    update((s) => ({ mails: s.mails.some((x) => x.id === m.id) ? s.mails.map((x) => (x.id === m.id ? ({ ...x, folder: m.folder, trashedFrom: undefined }) : x)) : [...s.mails, back] }));
+    if (!m.account) return;
+    // 늘 untrash — 보낼 목록에 남아 있어도 이미 Gmail에 갔을 수 있다(응답만 잃고 다시 보낼 차례, 재검수 #899). 아직 안 나갔으면 같은 키가 합쳐져 untrash 한 번.
+    // 받은편지함으로 돌아갈 때만 받은편지함 라벨도 다시(Gmail이 휴지통에서 그 라벨을 지워도 돌아오게) — 보관함·보낸편지함은 untrash만으로 같다
+    update(() => ({}), [op(false), ...(m.folder === 'inbox' ? [[`mail:${m.id}`, { type: 'mail.flag', id: m.id, patch: {} }]] : [])]);
+  };
 }
 
 /** 연결을 시작한 메일함 주소 — Google은 등록된 /me/mail/connect로만 돌려보내므로, 조직 공간 메일에서 시작했으면 끝나고 그리로 돌아간다(10/8 검수) */
