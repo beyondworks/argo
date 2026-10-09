@@ -1274,7 +1274,8 @@ body.msgr-lock .msgr-thread { pointer-events: none; } /* 반응 피커가 열린
   .msgr-emojipop.phone .msgr-input.sm { height: 34px; font-size: 16px; }
   .msgr-emojipop.phone .body { gap: 4px; }
   .msgr-emojipop.phone .sec { gap: 0; }
-  .msgr-emojipop.phone .grid { grid-template-columns: repeat(auto-fill, minmax(40px, 1fr)); gap: 0; }
+  /* 칸 최소 폭은 단추 최소 폭(아래 44px 누름 크기 목록)과 같아야 한다 — 40px이면 390 폭에서 칸 42.5px 안에 단추 44px가 들어가 칸마다 1.5px씩 넘쳤다(H73). 단추를 줄이지 않고 칸 수를 줄인다(390: 8칸 → 7칸×48.6px) */
+  .msgr-emojipop.phone .grid { grid-template-columns: repeat(auto-fill, minmax(44px, 1fr)); gap: 0; }
   .msgr-emojipop.phone .grid button { width: 100%; height: 40px; font-size: 24px; border-radius: 9px; }
   .msgr-emojipop.phone .msgr-klabel { margin: 4px 2px 0; }
   .msgr-emojipop .grid { grid-template-columns: repeat(auto-fit, minmax(44px, 1fr)); }
