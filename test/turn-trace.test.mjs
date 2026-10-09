@@ -342,3 +342,83 @@ test('단계 0개 턴은 남기지 않는다 — 모델 호출 전 실패에 빈
   assert.equal(await tr.finish({ ok: false }), null);
   assert.equal(existsSync(join(traceDir(ws, 'z'), `${tr.id}.json`)), false);
 });
+
+// ─── 보안 검토 후속(2026-10-09) — 동기화되는 옛 단계 요약·가림 빈틈·저장 권한·다른 에이전트의 읽기 ───
+test('옛 단계 요약(상태 파일·활동 이벤트 — 이벤트는 동기화된다)도 가린 입력으로 만든다 — 명령 앞 48자의 비밀이 남지 않는다', () => {
+  const tr = T.createTrace({ wsId: 'det', slug: 'a', source: 'routine' });
+  const cmds = [
+    'curl -H "Authorization: Bearer abcdefghijklmnop1234" https://api.x',
+    'psql postgresql://app:Sup3rS3cret@db.local/x',
+    'OPENAI_API_KEY=sk-proj-abcdefghijklmnopqrst node run.js',
+    'mysql -uroot -pTopSecretPw db',
+  ];
+  cmds.push(`echo ${'a'.repeat(29)} Bearer tokABCDEFGHIJKLMNOP`); // 토큰이 요약 48자 경계에 걸린다 — 자른 뒤 가리면 앞 6자가 남는다(가린 뒤 자른다)
+  cmds.forEach((command, i) => tr.toolStart({ id: `c${i}`, name: 'Bash', input: { command } }));
+  tr.toolStart({ id: 'w', name: 'WebFetch', input: { url: 'https://user:pw999@example.com/p' } });
+  const blob = JSON.stringify(tr.compact(40));
+  for (const leak of [/abcdefghijklmnop1234/, /Sup3rS3cret/, /sk-proj-abcdefg/, /TopSecretPw/, /pw999/, /tokABC/]) assert.doesNotMatch(blob, leak, blob);
+  assert.match(blob, /curl -H/, '요약은 여전히 무엇을 했는지 보인다');
+  assert.doesNotMatch(JSON.stringify(tr.data()), /_det|_raw/, '저장본에 요약용 조각·원문이 없다');
+  assert.equal(T.safeDetail('Bash', { command: 'echo Bearer abcdefghijklmnop', description: 'x' }, { display: false }).includes('abcdefghijklmnop'), false, '상태 파일 detail도 같은 가림');
+  tr.finish();
+});
+
+test('가림 빈틈 — 접두사형 토큰·쿠키 헤더·CLI 비밀 인자·JSON password·줄바꿈 낀 PEM, 생각 글과 도구 결과도 같은 가림', () => {
+  const cases = [
+    ['glpat-abcdefghijklmnopqrstu', /glpat-abcdef/],
+    [`npm_${'a'.repeat(36)}`, /npm_aaaa/],
+    [`hf_${'b'.repeat(34)}`, /hf_bbbb/],
+    ['token eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghijklmnop', /eyJzdWIiOiIxMjM0/],
+    ['xoxp-1234567890-abcdefghij', /xoxp-1234567890/],
+    ['ASIAABCDEFGHIJKLMNOP', /ASIAABCDEFGHIJKLMNOP/],
+    ['Cookie: session=abc123; csrftoken=zzz', /abc123|zzz/],
+    ['Set-Cookie: sid=s3cr3t; Path=/', /s3cr3t/],
+    ['mysql -h db -u root -pTopSecretPw app', /TopSecretPw/],
+    ['sshpass -p hunter2 ssh me@host', /hunter2/],
+    ['curl -u admin:pw123 https://x', /pw123/],
+    ['deploy --password=abc123 --token zzz999', /abc123|zzz999/],
+    ['{"user": "u", "password": "pw-in-json"}', /pw-in-json/],
+    ['-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEA\nAAAA\n-----END OPENSSH PRIVATE KEY-----', /b3BlbnNzaC1rZXktdjEA/],
+  ];
+  for (const [raw, leak] of cases) assert.doesNotMatch(T.maskSecrets(raw), leak, raw);
+  for (const keep of ['mkdir -p build/out', 'npm install --save-dev x', 'ls -p', 'git log -p HEAD~1']) assert.equal(T.maskSecrets(keep), keep, `과하게 가리지 않는다: ${keep}`);
+  const tr = T.createTrace({ wsId: 'gap', slug: 'a', source: 'routine' });
+  tr.think('키를 써야 한다: GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz0123456789');
+  tr.toolStart({ id: 'r', name: 'Read', input: { file_path: '.env' } });
+  tr.toolEnd('r', { result: [{ type: 'text', text: 'Cookie: sid=zzz-cookie-value\nDB=postgresql://a:b-pass@h/x' }] });
+  const saved = JSON.stringify(tr.data());
+  for (const leak of [/ghp_abcdef/, /zzz-cookie-value/, /b-pass/]) assert.doesNotMatch(saved, leak, '생각·도구 결과 모두');
+  tr.finish();
+});
+
+test('저장 권한 — 기록 파일 0600, 폴더 0700(주인만)', { skip: process.platform === 'win32' }, async () => {
+  const ws = 'perm'; await mkdir(paths(ws).root, { recursive: true });
+  const tr = T.createTrace({ wsId: ws, slug: 'p', source: 'chat' });
+  tr.think('x'); await tr.finish();
+  const mode = async (f) => (await stat(f)).mode & 0o777;
+  assert.equal(await mode(join(traceDir(ws, 'p'), `${tr.id}.json`)), 0o600);
+  assert.equal(await mode(join(traceDir(ws, 'p'), 'index.json')), 0o600);
+  assert.equal(await mode(traceDir(ws, 'p')), 0o700);
+  assert.equal(await mode(join(paths(ws).root, T.TRACE_DIR)), 0o700);
+});
+
+test('다른 에이전트의 읽기 — 파일 도구·셸·codex app-server 승인 모두 .turn-traces를 막는다(SDK·네이티브·app-server 경로)', async () => {
+  const { makePermissionGate } = await import('../src/permission-gate.mjs');
+  const { makeApprovalJudge } = await import('../src/runners/codex-appserver.mjs');
+  const ws = 'readgate'; const root = paths(ws).root;
+  await mkdir(join(root, T.TRACE_DIR, 'other'), { recursive: true });
+  await mkdir(join(root, 'vault', 'notes'), { recursive: true });
+  await writeFile(join(root, T.TRACE_DIR, 'other', 'trabcdef0011223344.json'), '{}');
+  const gate = makePermissionGate(ws, 'me', root);
+  const deny = async (tool, input) => assert.equal((await gate(tool, input)).behavior, 'deny', `${tool} ${JSON.stringify(input)}`);
+  await deny('Read', { file_path: '.turn-traces/other/trabcdef0011223344.json' });
+  await deny('Read', { file_path: join(root, '.turn-traces', 'other', 'trabcdef0011223344.json') });
+  await deny('Grep', { pattern: 'x', path: '.turn-traces' });
+  await deny('Glob', { pattern: '**/*.json', path: '.turn-traces' });
+  await deny('Bash', { command: 'cat .turn-traces/other/*.json' });
+  await deny('Bash', { command: `grep -r token ${join(root, '.turn-traces')}` });
+  assert.equal((await gate('Bash', { command: "jq '.traces' data.json" })).behavior, 'allow', '이름이 비슷한 평범한 명령은 막지 않는다');
+  assert.equal((await gate('Read', { file_path: 'vault/notes/x.md' })).behavior, 'allow', '자기 책상은 그대로');
+  const judge = makeApprovalJudge(root);
+  assert.equal(await judge('exec', { command: 'cat .turn-traces/other/trabcdef0011223344.json' }), 'decline', 'codex app-server 승인도 같은 게이트');
+});

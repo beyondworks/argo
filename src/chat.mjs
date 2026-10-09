@@ -46,7 +46,7 @@ import { makePermissionGate, gateHooks } from './permission-gate.mjs';
 import { callConnectorTool, connectorBriefing } from './connectors.mjs'; // 커넥터 = 러너 무관 단일 실행 경로(설계서 §2-2)
 import { detectRunnerDenial, detectDenialNarration, denialNote } from './runner-denial.mjs';
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
-import { createTrace, recordSdkMessage, recordCodexEvent } from './turn-trace.mjs';
+import { createTrace, recordSdkMessage, recordCodexEvent, maskSecrets, safeDetail } from './turn-trace.mjs';
 import { registerTurn, withTurnControl, turnAbortedError } from './turn-abort.mjs';
 import { scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, loadRunnerCred, verifyRunnerCred, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply, isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice, isHiddenRunner, visibleRunnerIds, visibleRunnerNamesLine, onlyHiddenConnectedStatus, unsupportedMethodStatus, unsupportedMethodNotice, isCliTurn, GEMINI_DEFAULT_MODEL, runnerCredType, CODEX_DEFAULT_MODEL, CLI_CHAT_TURN_TIMEOUT_MS } from './runners.mjs';
 import { userAddressNote, turnUserName, userSetAddress } from './user-name.mjs'; // 에이전트가 사용자를 이름으로 부르기(T5) — 이름 출처·남의 이름 차단은 그 파일 한 곳
@@ -1747,8 +1747,7 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
       if (traceRec.rev !== before) cliStatus();
     } : null;
     const endRunnerTask = runner === 'codex' ? null : traceRec.task(RUNNERS[runner].name);
-    // 활동 이벤트(events.jsonl — 동기화 대상)의 단계 궤적 — codex 턴만 도구 단계가 있다. 크기는 SDK 갈래와 같은 마지막 40개.
-    const cliSteps = () => (runner === 'codex' && traceRec.toolCount ? { steps: traceRec.compact(40), stepsTotal: traceRec.toolCount } : {});
+    // 활동 이벤트(events.jsonl — 기기 간 동기화)에는 CLI 턴 단계를 싣지 않는다(종전 그대로) — 작업 과정은 이 기기 기록(.turn-traces)에만.
     // 중단 배선 — SDK 경로처럼 정지 버튼이 실제로 프로세스를 끊게 한다(외부 CLI는 signal로 자식 kill).
     const ac = new AbortController();
     const abortReg = registerTurn(wsId, agentSlug, () => ac.abort(), __turnControl);
@@ -1993,7 +1992,7 @@ ${lang === 'en'
       });
       await clearTurnStatus(wsId, agentSlug);
       const handover = await journalWrite(reply, meta.name || agentSlug);
-      await appendEvent(wsId, { ...evBase, ok: true, ms: Date.now() - t0, ...cliSteps(), ...(handover ? { journalRel: relative(p.vault, handover.file) } : {}), ...(usedModel !== effModel ? { downgradedFrom: effModel } : {}) });
+      await appendEvent(wsId, { ...evBase, ok: true, ms: Date.now() - t0, ...(handover ? { journalRel: relative(p.vault, handover.file) } : {}), ...(usedModel !== effModel ? { downgradedFrom: effModel } : {}) });
       // 산출물 diff — CLI 턴도 SDK와 같은 칩을 받는다(이전: "관측 불가"로 미수집 = 러너별 편파.
       // 검수 CRITICAL-2: 변이 복원 오타겟으로 이 줄이 예산 분기에 가 있었다 — 행동 테스트로 잠금).
       return { reply, sessionId: null, handover, artifacts: await artDiff(reply), ...(contextScope ? { contextScope } : {}), ...(steerFailed ? { steerFailed } : {}), ...fellBackInfo, ...modelFallbackInfo };
@@ -2052,7 +2051,7 @@ ${lang === 'en'
       if (!aborted && isProcessCrash(e?.message || e)) e = Object.assign(new Error(`${crashHint(lang)} (${String(e.message || e).slice(0, 120)})`), { cause: e });
       if (!aborted) { e = await surfaceRunnerFailure(e, { wsId, runner, lang }); prefixFallbackError(e); } // 구조화·출처·다음 턴 차단(불변식 A·C) → 대체 실행 실패 맥락 — 이벤트·사용자 에러 공통
       // 400자 — SDK 경로와 동일. 프리픽스(~45자)가 선점해도 진단 원인이 잘리지 않게(검수 LOW)
-      await appendEvent(wsId, { ...evBase, ok: false, ms: Date.now() - t0, ...cliSteps(), error: e?.cancellationIncomplete ? '자동 재개 차단됨; 일부 자식 작업 종료 확인 불가' : aborted ? USER_ABORT_ERROR : String(e.message || e).slice(0, 400), ...(aborted ? { aborted: true } : {}), ...(e?.cancellationIncomplete ? { cancellationIncomplete: true } : {}), ...(e?.failCode ? { failCode: e.failCode, failOrigin: e.failOrigin } : {}) }); // 중단은 필드로도(문자열 동등 비교 fail-open 방지 — 검수 관점3)
+      await appendEvent(wsId, { ...evBase, ok: false, ms: Date.now() - t0, error: e?.cancellationIncomplete ? '자동 재개 차단됨; 일부 자식 작업 종료 확인 불가' : aborted ? USER_ABORT_ERROR : String(e.message || e).slice(0, 400), ...(aborted ? { aborted: true } : {}), ...(e?.cancellationIncomplete ? { cancellationIncomplete: true } : {}), ...(e?.failCode ? { failCode: e.failCode, failOrigin: e.failOrigin } : {}) }); // 중단은 필드로도(문자열 동등 비교 fail-open 방지 — 검수 관점3)
       await clearTurnStatus(wsId, agentSlug);
       // cc 공유 노트 복원 — 소비(takeSharedNotes)가 러너 실행 전이라, 복원 없이는 실패한 턴이 동료가
       // 공유한 맥락을 영구 소실시킨다. 이 프레임이 직접 소비한 경우만(__seedNotes 재시도 프레임 제외).
@@ -2395,10 +2394,10 @@ ${lang === 'en'
       if (said) partial = partial ? `${partial}\n\n${said}` : said;
       // 사고 과정 — thinking 블록(SDK가 확장 사고를 켠 모델에서 싣는다)을 상태 파일 thought로 흘린다. 회의실·1:1 카드가
       // "무엇을 생각하며 이 답을 내는지"를 접이식으로 보인다(유건 요청 2026-09-06). 없으면 이전 값 유지(setTurnStatus).
-      const thoughtNow = (msg.message?.content ?? []).filter((b) => b.type === 'thinking' && typeof b.thinking === 'string').map((b) => b.thinking).join('\n').trim();
+      const thoughtNow = maskSecrets((msg.message?.content ?? []).filter((b) => b.type === 'thinking' && typeof b.thinking === 'string').map((b) => b.thinking).join('\n').trim()); // 생각 글도 작업 과정과 같은 가림
       if (thoughtNow) thought = thought ? `${thought}\n\n${thoughtNow}` : thoughtNow;
       const stage = tu ? stageForTool(tu.name) : 'think'; // 코드 — 클라가 번역(가장 흔한 상태라 누락 시 영어 회사에 한국어 노출)
-      const detail = tu ? detailForTool(tu.name, tu.input, { display: true }) : '';
+      const detail = tu ? safeDetail(tu.name, tu.input, { display: true }) : ''; // 가린 입력으로 만든 한 줄(상태 파일 → 화면·회의실 발언 카드)
       await setTurnStatus(wsId, agentSlug, stage, detail, partial, turnSource, thought, stepsNow(), traceRec.id); // 도구 하나 = 단계 하나(작업 과정 기록이 위 recordSdkMessage에서 쌓았다)
     }
     if (msg.type === 'result') {

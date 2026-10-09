@@ -122,7 +122,7 @@ export default function Room({ params }) {
     // 신고(2026-07-25 "크루들의 대화 내용이 사라지는 경우가 많습니다, 특히 회의실에서")의 원인.
     // 디스크의 회의록은 멀쩡한데 화면만 비는 케이스라, 실패는 에러로 드러내고 기존 표시를 유지한다.
     api(`/api/companies/${ws}/room`)
-      .then((d) => { setMessages(d.messages ?? []); setServerBusy(!!d.turn?.active); setTurn(d.turn ?? null); setTraceIdx(d.traces ?? {}); setError(''); setDelegLimited(d.delegationLimit !== false); })
+      .then((d) => { setMessages(d.messages ?? []); setServerBusy(!!d.turn?.active); setTurn(d.turn ?? null); setError(''); setDelegLimited(d.delegationLimit !== false); setTraceIdx(d.traces ?? {}); })
       .catch((e) => setError(String(e?.message || '') || t('room.loadFail')));
     api(`/api/companies/${ws}/agents`).then((d) => setAgents(d.agents ?? [])).catch(() => {});
   }
@@ -157,9 +157,9 @@ export default function Room({ params }) {
     const iv = setInterval(() => {
       api(`/api/companies/${ws}/room`).then((d) => {
         setTurn(d.turn ?? null); setServerBusy(!!d.turn?.active);
-        if (d.traces) setTraceIdx((cur) => ({ ...cur, ...d.traces }));
         const srv = d.messages ?? [];
         setMessages((cur) => (!busy || srv.length >= (cur?.length ?? 0)) ? srv : cur);
+        if (d.traces) setTraceIdx((cur) => ({ ...cur, ...d.traces })); // 끝난 발언의 작업 과정 요약(이 기기 기록만)
         if (Date.now() - delegSavedAt.current > 4000) setDelegLimited(d.delegationLimit !== false); // 다른 탭·기기에서 바꾼 값도 따라간다
       }).catch(() => {});
     }, live ? 2500 : 8000);

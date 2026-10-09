@@ -32,6 +32,11 @@ const srv = http.createServer((req, res) => {
     const reply = (content, stop = 'tool_use') => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ id: 'm', type: 'message', role: 'assistant', model: body.model, content, stop_reason: stop, usage: { input_tokens: 1, output_tokens: 1 } })); };
     if (!(body.tools ?? []).length) return reply([{ type: 'text', text: '요약' }], 'end_turn');
     const k = toolResults(body);
+    if (JSON.stringify(body.messages?.[0] ?? '').includes('TURN-S')) { // 비밀이 든 명령 — 동기화되는 기록에 남지 않는지
+      if (k === 0) return reply([{ type: 'thinking', thinking: '헤더는 Authorization: Bearer secrettoken1234567890 로 보낸다', signature: 's' }, { type: 'tool_use', id: 'ts0', name: 'Bash', input: { command: 'echo "Authorization: Bearer secrettoken1234567890" > /dev/null' } }]);
+      await new Promise((r) => setTimeout(r, 700)); // 도구 단계 상태(detail)가 상태 파일에 머무는 동안 폴이 보게
+      return reply([{ type: 'text', text: 'S 끝' }], 'end_turn');
+    }
     if (turnOf(body) === 'B') {
       if (k === 1 && mid.gate) await mid.gate; // A 턴이 도는 사이에 B가 끼도록 잠깐 붙든다
       if (k < 3) return reply([{ type: 'tool_use', id: `tb${k}`, name: 'Read', input: { file_path: 'vault/notes/b.md' } }]);
@@ -144,4 +149,25 @@ test('라우트 — 진행 폴은 늘어난 단계만, 끝난 대화는 이 기�
   assert.equal(done.body.live, false); assert.equal(done.body.trace.steps.length, 6);
   assert.equal((await get(traceRoute, `/api/companies/${ws}/trace?slug=r&id=trzzzzzz0000aaaa`)).status, 404);
   assert.equal((await get(traceRoute, `/api/companies/${ws}/trace?slug=r&id=..%2F..%2Fcompany`)).status, 400);
+});
+
+test('동기화되는 기록(활동 이벤트·대화)과 상태 파일에 명령 속 비밀이 남지 않는다 — 옛 단계 요약도 가린 입력으로(보안 검토 2026-10-09)', { timeout: 120_000 }, async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { appendTurn } = await import('../src/thread.mjs');
+  const seen = [];
+  const poll = setInterval(async () => { const st = await getTurnStatus(ws, 'r').catch(() => null); if (st) seen.push(JSON.stringify(st)); }, 30);
+  let r;
+  try { r = await chat(ws, 'r', 'TURN-S 비밀 명령'); } finally { clearInterval(poll); }
+  assert.equal(r.reply, 'S 끝');
+  await appendTurn(ws, 'r', { userMsg: 'TURN-S 비밀 명령', reply: r.reply, traceId: r.traceId });
+  const leak = /secrettoken1234567890|secrettoken1234/;
+  assert.doesNotMatch(await readFile(join(p.root, 'events.jsonl'), 'utf8'), leak, '활동 이벤트(동기화) steps');
+  assert.doesNotMatch(await readFile(join(p.chats, 'r.json'), 'utf8'), leak, '대화 줄(동기화)에는 traceId만');
+  assert.ok(seen.length > 0, '턴 도중 상태 파일을 봤다');
+  for (const st of seen) assert.doesNotMatch(st, leak, '상태 파일 detail·thought·steps');
+  assert.ok(seen.some((st) => /"stage":"shell"/.test(st)), '도구 단계의 상태(detail)를 실제로 봤다');
+  const saved = await T.readTrace(ws, 'r', r.traceId);
+  assert.doesNotMatch(JSON.stringify(saved), leak, '이 기기 기록도 가린 값만');
+  assert.match(JSON.stringify(saved), /Bearer \*\*\*/, '무엇을 했는지는 남는다');
+  assert.equal(r.trace.thought.includes('secrettoken'), false, '결과 객체의 생각 요약도');
 });

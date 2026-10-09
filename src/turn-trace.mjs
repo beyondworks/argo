@@ -9,7 +9,7 @@
 //  · 턴당 200KB 상한, 에이전트별 최근 100턴 그리고 30일 보존(저장할 때마다 정리).
 //  · 입력·결과·생각은 기록기에 넣을 때 가린다(maskSecrets) — 저장본·폴링·화면은 가린 값만 본다.
 //  · 폴링은 수정 번호(v)가 커진 단계의 보기(input 300자·결과 앞 20줄)만, 합계 32KB 상한. 전체는 펼칠 때 따로 받는다.
-import { readdir, rm, stat } from 'node:fs/promises';
+import { readdir, rm, stat, mkdir, chmod } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { paths } from './workspace.mjs';
@@ -53,6 +53,13 @@ export function maskSecrets(s) {
   out = out.replace(/-----BEGIN ([A-Z ]*)PRIVATE KEY-----[\s\S]*?(?:-----END \1PRIVATE KEY-----|$)/g, '-----BEGIN $1PRIVATE KEY----- *** -----END $1PRIVATE KEY-----');
   out = maskKeyLike(out);
   out = out.replace(/\b(Bearer|Basic|Token)\s+[A-Za-z0-9._~+/=-]{8,}/g, '$1 ***');
+  // 쿠키 헤더 — 값 전체(여러 쿠키·세션 id)를 가린다
+  out = out.replace(/\b((?:Set-)?Cookie)(\s*:\s*)[^\n]+/gi, '$1$2***');
+  // CLI 인자로 넘긴 비밀 — --password=x·--password x·--token x·--api-key x, mysql류 -pSECRET(붙여 쓴 꼴), sshpass -p x, curl -u user:pass
+  out = out.replace(/(\s--?(?:password|passwd|pass|token|api-?key|secret|client-secret|auth-token)(?:=|\s+))("[^"]*"|'[^']*'|\S+)/gi, (m, head, val) => (masked(val) ? m : `${head}***`));
+  out = out.replace(/^(.*\b(?:mysql|mysqldump|mysqladmin|mariadb|mariadb-dump)\b.*?\s-p)(?!\s)(\S+)/gim, '$1***');
+  out = out.replace(/(\bsshpass\s+-p\s+)(\S+)/g, '$1***');
+  out = out.replace(/(\bcurl\b[^\n]*?\s(?:-u|--user)\s+["']?)([^\s:"']+):([^\s"']+)/g, '$1$2:***');
   out = out.replace(/\b([a-z][a-z0-9+.-]*:\/\/)([^/\s:@]+):([^/\s@]+)@/gi, '$1$2:***@');
   out = out.replace(KV_RE, (m, q, name, sep, val) => {
     if (!isSecretName(name) || masked(val) || /^(Bearer|Basic|Token)$/.test(val)) return m;
@@ -111,6 +118,21 @@ export function resultText(content) {
   return JSON.stringify(content);
 }
 
+/** 옛 단계 요약(상태 파일·활동 이벤트 — 이벤트는 기기 간 동기화된다)을 만들 입력 조각(순수). detailForTool이 보는 키만 골라 **가린 뒤** 넘긴다 —
+    원문 그대로 만들면 명령 앞 48자에 든 Bearer·키·URL 비밀번호가 events.jsonl에 남는다(보안 검토 2026-10-09). 큰 본문(Write content)은 들고 있지 않는다. */
+const DETAIL_KEYS = ['file_path', 'pattern', 'command', 'description', 'url', 'query', 'to'];
+export function detailInput(input) {
+  if (!input || typeof input !== 'object') return {};
+  const out = {};
+  for (const k of DETAIL_KEYS) {
+    const v = Array.isArray(input[k]) ? input[k].join(' ') : input[k];
+    if (typeof v === 'string') out[k] = maskSecrets(v.slice(0, 2000));
+  }
+  return out;
+}
+/** 도구 한 줄 요약(가림 적용) — 상태 파일 detail·옛 단계 요약이 같은 함수를 쓴다. */
+export const safeDetail = (name, input, opts) => maskSecrets(detailForTool(name, detailInput(input), opts));
+
 const TASK_TOOLS = /^(Task|Agent|TodoWrite)$/;
 const kindOf = (name) => (TASK_TOOLS.test(name) ? 'task' : 'tool');
 
@@ -160,9 +182,9 @@ export function createTrace({ wsId, slug, source = 'chat', persist = PERSIST_SOU
     toolStart({ id: toolId = null, name, input, parent = null, kind = null } = {}) {
       if (ended) return null;
       const nm = String(name ?? 'tool');
-      if (toolId && byTool.has(toolId)) { const st = byTool.get(toolId); if (input !== undefined) { st.input = clip(maskSecrets(inputText(nm, input)), INPUT_STORE); touch(st); } return st; }
+      if (toolId && byTool.has(toolId)) { const st = byTool.get(toolId); if (input !== undefined) { st.input = clip(maskSecrets(inputText(nm, input)), INPUT_STORE); st._det = detailInput(input); touch(st); } return st; }
       const body = clip(maskSecrets(inputText(nm, input)), INPUT_STORE); charge(body);
-      const st = push({ id: toolId, kind: kind ?? kindOf(nm), name: nm, input: body, result: '', lines: 0, cut: false, status: 'run', t: at(), ms: 0, parent, _raw: input });
+      const st = push({ id: toolId, kind: kind ?? kindOf(nm), name: nm, input: body, result: '', lines: 0, cut: false, status: 'run', t: at(), ms: 0, parent, _det: detailInput(input) }); // _det = 가린 요약용 조각(원문은 들고 있지 않는다)
       if (st && toolId) byTool.set(toolId, st);
       return st;
     },
@@ -191,7 +213,7 @@ export function createTrace({ wsId, slug, source = 'chat', persist = PERSIST_SOU
     /** 옛 소비자(상태 파일·활동 이벤트)용 짧은 궤적 — 마지막 n개 도구 단계 { t, stage, detail }. 40개에서 멈추던 step()을 대신한다. */
     compact(n = 40) {
       const tools = steps.filter((s) => s.kind !== 'think');
-      return tools.slice(-n).map((s) => ({ t: s.t, stage: stageForTool(s.name), detail: detailForTool(s.name, s._raw ?? {}) }));
+      return tools.slice(-n).map((s) => ({ t: s.t, stage: stageForTool(s.name), detail: maskSecrets(detailForTool(s.name, s._det ?? {})) }));
     },
     get toolCount() { return steps.filter((s) => s.kind !== 'think').length + dropped; },
     /** 폴링 보기 — v > since인 단계만, 보기 합계 budget 바이트까지. rev는 실은 마지막 단계의 v(못 실은 것은 다음 폴). */
@@ -208,12 +230,12 @@ export function createTrace({ wsId, slug, source = 'chat', persist = PERSIST_SOU
     },
     /** 최근 n단계 보기(회의실 발언 카드 한눈 보기). */
     tail(n = 6) { return steps.slice(-n).map(stepView); },
-    /** 저장 모양(가린 값만 — _raw 제외). */
+    /** 저장 모양(가린 값만 — _det 제외). */
     data() {
       return {
         v: 1, id, slug, source, startedAt, endedAt: ended?.at ?? null, ms: ended ? ended.at - startedAt : at(), ok: ended ? ended.ok : null,
         aborted: !!ended?.aborted, model, rev, n: steps.length + dropped, dropped, capped: false,
-        steps: steps.map(({ _raw, v, ...s }) => s),
+        steps: steps.map(({ _det, v, ...s }) => s),
       };
     },
     /** 끝 — 돌던 단계를 닫고(중단이면 stop), 저장 대상이면 파일·index를 쓰고 보존 정리. 두 번 불러도 한 번만. */
@@ -282,11 +304,21 @@ export function shrinkTrace(data, cap = TRACE_CAP_BYTES) {
   return d;
 }
 
+/** 기록 폴더는 주인만(0700) — 다른 계정이 같은 기기를 쓰는 경우의 방어. 이미 있던 폴더도 맞춘다(Windows는 무시). */
+async function ensurePrivateDir(wsId, slug) {
+  const top = join(paths(wsId).root, TRACE_DIR);
+  for (const d of [top, dirOf(wsId, slug)]) {
+    await mkdir(d, { recursive: true, mode: 0o700 });
+    if (process.platform !== 'win32') await chmod(d, 0o700).catch(() => {});
+  }
+}
+
 /** 끝난 trace 저장 + index 한 줄 + 보존 정리. 같은 크루의 index 갱신은 프로세스 안에서 한 줄로 세운다. */
 export async function saveTrace(wsId, slug, data, { now = Date.now } = {}) {
   if (!TRACE_ID_RE.test(String(data?.id ?? ''))) throw new Error('bad trace id');
   const body = shrinkTrace(data);
-  await writeJsonAtomic(fileOf(wsId, slug, data.id), body);
+  await ensurePrivateDir(wsId, slug);
+  await writeJsonAtomic(fileOf(wsId, slug, data.id), body); // 파일 0600(writeJsonAtomic)
   await withLock(`trace-index:${wsId}:${sanitizeFileSlug(slug)}`, async () => {
     const idx = await readJsonLenient(indexOf(wsId, slug), null);
     const items = idx && typeof idx.items === 'object' && idx.items ? idx.items : {};
