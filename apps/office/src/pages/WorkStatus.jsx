@@ -17,6 +17,7 @@ import { kstDay } from '../core/task-model.js';
 import { Face } from '../ui/Face.jsx';
 import { LoadFail } from '../ui/LoadFail.jsx';
 import { WORK_STATUS_DICT } from './work-status-i18n.js';
+import '../views/views.css'; // 상태 뱃지 색(진행 중 파랑·보류 주황, 할 일 회색)은 할 일 표·목록·칸반과 같은 .tk-pill 규칙 하나를 쓴다(10/9 검수 — 진행 중이 초록이었다)
 import './work-status.css';
 
 registerDict(WORK_STATUS_DICT);
@@ -24,7 +25,6 @@ registerDict(WORK_STATUS_DICT);
 const locale = () => (getLang() === 'en' ? 'en-US' : 'ko-KR');
 const dayText = (d) => new Date(`${d}T00:00:00+09:00`).toLocaleDateString(locale(), { month: 'short', day: 'numeric', timeZone: 'Asia/Seoul' });
 const isoDay = (iso) => new Date(iso).toLocaleDateString(locale(), { month: 'short', day: 'numeric', timeZone: 'Asia/Seoul' });
-const TONE = { doing: 'ok', hold: 'warn' }; // 상태 배지 — 진행 중 초록·보류 노랑·시작 전 회색
 const TABS = ['all', 'doing', 'hold', 'overdue', 'now'];
 const UNOWNED = 'unowned'; // 왼쪽 목록의 '에이전트 없이 맡긴 일' 줄
 const lateDays = (due, today) => Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${due}T00:00:00Z`)) / 86400e3);
@@ -67,7 +67,7 @@ function TaskRow({ x, open, today, assignee = false }) {
     : [assignee && who(x), x.noteLine].filter(Boolean).join(' · ');
   const late = x.overdue ? lateDays(x.due_on, today) : 0;
   return <tr className="row-link" tabIndex={0} onClick={() => open(x.id)} onKeyDown={(e) => { if (e.key === 'Enter') open(x.id); }}>
-    <td className="ws-st"><span className={`badge ${TONE[x.status] ?? ''}`}>{t(x.status === 'doing' ? 'ws.doing' : x.status === 'hold' ? 'ws.hold' : 'ws.todo')}</span></td>
+    <td className="ws-st"><span className={`badge tk-pill st-${x.status}`}>{t(x.status === 'doing' ? 'ws.doing' : x.status === 'hold' ? 'ws.hold' : 'ws.todo')}</span></td>
     <td className="ws-title"><span className="strong">{x.title}</span>{sub && <small className="clamp">{sub}</small>}</td>
     <td className="ws-due">{x.due_on ? <>{late > 0 && <span className="ws-late">{t('ws.lateBy', { n: late })}</span>}<small className={late > 0 ? 'ws-late' : ''}>{dayText(x.due_on)}</small></> : <small className="dim">—</small>}</td>
   </tr>;

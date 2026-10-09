@@ -175,6 +175,12 @@
 .cal-tcheck { position: relative; z-index: 1; display: inline-grid; place-items: center; flex: none; width: 13px; height: 13px; border-radius: 50%; box-shadow: inset 0 0 0 1.25px var(--fg-3); color: transparent; }
 .cal-tcheck.on { background: var(--fg-3); box-shadow: none; color: var(--float); }
 .cal-row .cal-tcheck { width: 16px; height: 16px; }
+/* 터치(10/9 검수) — ✓는 보이는 크기(13·16px) 그대로, 누르는 넓이만 가운데 맞춘 24px 가상 요소로 넓힌다. ✓ 안(z-index 1)이라 칩·줄의 여는 단추(::after)보다 위.
+   칩은 overflow:hidden(높이 20px)이라 넓힌 자리가 잘린다 — 터치에서는 할 일 칩만 넘침을 보인다(제목 자르기는 제목 칸 .cal-chip-title이 한다) */
+@media (pointer: coarse) {
+  .cal-chip.task { overflow: visible; }
+  .cal-tcheck::before { content: ''; position: absolute; left: 50%; top: 50%; width: 24px; height: 24px; border-radius: 50%; transform: translate(-50%, -50%); }
+}
 .cal-check-ico { color: var(--fg-3); flex: none; }
 .cal-chip.task.st-doing { background: var(--tk-info-soft); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tk-info) 35%, transparent); }
 .cal-chip.task.st-hold { background: var(--warn-soft); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 40%, transparent); }
