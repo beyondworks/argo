@@ -443,7 +443,7 @@ test('journal 전파 핀: chat() 재귀 재시도 6곳·위임 1곳·makeCrewSer
   for (const l of calls) assert.match(l, /\bjournal\b/, `journal 미전달: ${l.trim().slice(0, 90)}`);
   assert.match(src, /makeCrewServer\(wsId, agentSlug, [^\n]*workFolder, crewSink, journal, fullAuto, lim, tree, turnCounters[,)]/, 'makeCrewServer 호출부(crewSink = 네이티브 엔진 도구 sink, 하네스 통일 P-A; fullAuto = 풀 오토 모드 2026-09-26)');
   assert.match(src, /addApproval\(wsId, \{ slug: fromSlug,[^\n]*action, reason,\n\s*\.\.\.\(\(purpose \|\| task \|\| need\) \? \{ plain: \{ purpose, task, need \} \} : \{\}\),\n\s*\.\.\.\(mirrorCtx \? \{ msgr: messengerOrigin\(mirrorCtx\)/, 'request_approval 각인(쉬운 문장화 plain 포함)');
-  assert.equal((src.match(/\.\.\.\(mirrorCtx \? \{ msgr: messengerOrigin\(mirrorCtx\)/g) ?? []).length, 5, '결재 등록 5곳(request_approval·profile·hire·손님 턴 도구 설치·argo_settings 설정 변경) 전부 각인');
+  assert.equal((src.match(/\.\.\.\(mirrorCtx \? \{ msgr: messengerOrigin\(mirrorCtx\)/g) ?? []).length, 6, '결재 등록 6곳(request_approval·profile·hire·손님 턴 도구 설치·argo_settings 설정 변경·cancel_routine 예약 변경) 전부 각인');
   const { isOrgTagged } = await import('../src/consolidate.mjs');
   assert.equal(isOrgTagged('2026-09-03-seoyun.org-abc-123.md'), true); assert.equal(isOrgTagged('2026-09-03-seoyun.md'), false);
   const cons = await readFile(new URL('../src/consolidate.mjs', import.meta.url), 'utf8');

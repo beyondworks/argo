@@ -13,7 +13,7 @@
 import { loadCompany } from './workspace.mjs';
 import { scanAgents, listDocs } from './hub.mjs';
 import { deckMetrics } from './deck-metrics.mjs';
-import { loadRoutines, updateRoutine } from './routines.mjs';
+import { loadRoutines, updateRoutine, removeRoutine } from './routines.mjs';
 import { loadApprovals } from './approvals.mjs';
 import { getTurnStatus } from './turn-status.mjs';
 import { assistantSettingsView, saveAssistantSettings } from './assistant/settings.mjs';
@@ -243,6 +243,55 @@ export function appliedNote({ key, value }, r, lang = 'ko') {
     `Applied — ${def.label[L]} → ${showVal(r.after ?? value, lang)} (screen: ${def.where.en}). Don't mention the previous value.`);
 }
 
+/* ─── 예약 끄기·켜기·지우기(cancel_routine) — 설정 바꾸기와 같은 권한 표 ─────────────────────────────
+ * 바로 하는 것은 주인이 1:1에서 직접 시킨 턴(settingsDirectTurn)뿐이다. 그 밖(루틴·장시간 작업·위임·쪽지·세션 메시지·메신저 채널·결재 후속 —
+ * 턴 안에서 읽은 웹·파일·메일 글이 이끈 호출 포함)은 결재 카드(kind 'routine')로 가고, 주인이 승인하면 서버가 적용한다. 손님은 처리기에서 거절(chat.mjs).
+ * 카드 문구는 서버가 아는 값(예약 id·제목·동작)으로만 만들고, 승인 뒤 적용 직전에 같은 문구를 다시 만들어 대조한다(설정 결재와 같은 방어). */
+const ROUTINE_ACTIONS = Object.freeze({
+  off: { ko: '예약 끄기', en: 'Turn off schedule' },
+  on: { ko: '예약 다시 켜기', en: 'Turn schedule back on' },
+  delete: { ko: '예약 삭제', en: 'Delete schedule' },
+});
+const ROUTINE_ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
+const routineTitle = (s) => String(s ?? '').replace(/[\x00-\x1f\x7f]+/g, ' ').trim().slice(0, 80);
+
+/** 예약 변경 결재 카드 문구(순수) — 등록·적용 대조 공용. */
+export function routineChangeText({ id, action, title }, lang = 'ko') {
+  const a = ROUTINE_ACTIONS[action];
+  if (!a) return '';
+  return `${a[ko(lang) ? 'ko' : 'en']} — "${routineTitle(title)}" [${id}]`;
+}
+
+/** 예약 변경 결재 재료(순수) — { action, reason, payload, text }. from = 다시 켤 때 예약에 남길 출처(사장 직접이 아닌 턴이 켠 예약은 풀 오토로 돌지 않는다). */
+export function routineChangeApproval({ routine, action, why = '', lang = 'ko', slug = null, from = null }) {
+  const payload = { id: String(routine.id), action, title: routineTitle(routine.title), lang: ko(lang) ? 'ko' : 'en', ...(slug ? { by: slug } : {}), ...(action === 'on' && from ? { from } : {}) };
+  const actionText = routineChangeText(payload, lang);
+  const reason = maskKeyLike(String(why || '').replace(/[\r\n\t]+/g, ' ').trim()).slice(0, 500) || pick(lang, '에이전트가 올린 예약 변경 요청', 'Schedule change requested by an agent');
+  return {
+    action: actionText, reason, payload,
+    text: pick(lang,
+      `이 요청은 주인이 1:1에서 직접 시킨 것이 아니라서 바로 처리하지 않고 주인 결재로 올렸다(${actionText}). 승인되면 시스템이 처리하고 결과가 이어서 온다 — 승인 전에는 끄거나 지운 것처럼 말하지 마라.`,
+      `This request didn't come from the owner directly in a 1:1, so it was filed for the owner's approval instead of being done (${actionText}). Once approved the system applies it and reports back — don't say it was turned off or deleted before then.`),
+  };
+}
+
+/** 결재 승인 뒤 예약 변경 적용 — 반환 = 후속 보고 문구. 카드 문구 대조는 호출부(approval-actions)가 먼저 한다. */
+export async function applyApprovedRoutineChange(wsId, p = {}) {
+  const lang = p.lang ?? 'ko';
+  if (!ROUTINE_ACTIONS[p.action] || !ROUTINE_ID_RE.test(String(p.id ?? ''))) return pick(lang, '적용 실패 — 결재 내용이 올바르지 않다. 사용자에게 다시 올려라.', 'Not applied — the approval is malformed. File it again.');
+  const r = (await loadRoutines(wsId)).find((x) => x.id === p.id);
+  const title = routineTitle(r?.title ?? p.title);
+  if (!r) return pick(lang, `적용 안 함 — 예약 "${title}"은(는) 이미 없다.`, `Not applied — the schedule "${title}" no longer exists.`);
+  if (p.action === 'delete') {
+    await removeRoutine(wsId, p.id);
+    return pick(lang, `적용 완료 — 예약 "${title}"을(를) 지웠다. 다시 필요하면 새로 걸어야 한다.`, `Applied — deleted the schedule "${title}". To bring it back, set it up again.`);
+  }
+  await updateRoutine(wsId, p.id, { enabled: p.action === 'on' }, p.action === 'on' && p.from ? { from: p.from } : {});
+  return p.action === 'on'
+    ? pick(lang, `적용 완료 — 예약 "${title}"을(를) 다시 켰다(루틴 화면에서 끌 수 있다).`, `Applied — turned the schedule "${title}" back on (you can turn it off on the Routines screen).`)
+    : pick(lang, `적용 완료 — 예약 "${title}"을(를) 껐다(루틴 화면에서 다시 켤 수 있다).`, `Applied — turned off the schedule "${title}" (you can turn it back on on the Routines screen).`);
+}
+
 const ASSIST_ERR_CODES = new Set(['assistant_quiet_empty', 'assistant_evening_in_quiet', 'assistant_evening_before_morning', 'assistant_time_invalid', 'assistant_lead_invalid', 'assistant_agent_not_found']);
 function assistantErrorText(e, lang) {
   const code = e?.code ?? '';
@@ -337,7 +386,7 @@ async function settingsList(wsId, { lang, direct, guest }) {
   const no = FORBIDDEN_SETTINGS.map((f) => `- ${f.why[L]} — ${f.where[L]}`);
   return [mode, pick(lang, '바꿀 수 있는 설정(key — 이름 · 지금 값 · 형식 · 화면 위치):', 'Changeable settings (key — name · now · format · screen):'), ...rows,
     pick(lang, '에이전트가 바꾸지 못하는 것(사용자가 화면에서 직접):', 'Agents cannot change (the user does it on screen):'), ...no,
-    pick(lang, '루틴 켜기·끄기는 cancel_routine, 에이전트 이름·역할·러너·모델은 update_profile(결재)로 한다.', 'Routine on/off uses cancel_routine; agent name/role/runner/model uses update_profile (approval).')].join('\n');
+    pick(lang, '루틴 켜기·끄기·지우기는 cancel_routine(주인 1:1이면 바로, 그 밖은 결재), 에이전트 이름·역할·러너·모델은 update_profile(결재)로 한다.', 'Routine on/off/delete uses cancel_routine (immediate in the owner\'s 1:1, otherwise an approval); agent name/role/runner/model uses update_profile (approval).')].join('\n');
 }
 
 /* ─── 상태 읽기 ─────────────────────────────────────────────────────────────── */

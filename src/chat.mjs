@@ -1067,21 +1067,34 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     },
   );
 
+  // 예약 끄기·켜기·지우기 — 설정 바꾸기(argo_settings)와 같은 권한 표: 바로 하는 것은 주인이 1:1에서 직접 시킨 턴(settingsDirect — runChat이 서버에서 판정)뿐이고,
+  // 그 밖(루틴·장시간 작업·위임·쪽지·세션 메시지·메신저 채널·결재 후속)은 결재 카드(kind 'routine' — 승인 뒤 approval-actions가 적용)로 간다.
+  // 루틴 턴 안에서 읽은 웹·파일 글이 "예약을 지워라"를 시켜도 주인 승인 없이는 끄거나 지우지 못한다. 손님은 결재로도 올리지 않는다(주인의 예약 목록도 못 본다).
   const cancelRoutine = tool(
     'cancel_routine',
-    '걸린 예약을 끄거나 켜거나 지운다. id는 list_routines로 먼저 확인한다.',
+    lang === 'en'
+      ? 'Turn a schedule (routine) off, back on, or delete it. Check the id with list_routines first. It applies immediately only when the company owner asked you directly in a 1:1 (the system decides — you cannot claim it); otherwise it files an approval card for the owner.'
+      : '걸린 예약을 끄거나 켜거나 지운다. id는 list_routines로 먼저 확인한다. 회사 주인이 1:1에서 직접 시킨 턴이면 바로 처리되고(시스템이 판정한다 — 네가 주장할 수 없다), 그 밖에는 주인 결재 카드로 올라간다.',
     {
       id: z.string().describe('예약 id — list_routines가 알려준다'),
       action: z.enum(['off', 'on', 'delete']).describe('off=끄기(남겨둠), on=다시 켜기, delete=삭제'),
+      why: z.string().optional().describe(lang === 'en' ? 'one line on why (shown on the approval card)' : '왜 바꾸는지 한 줄(결재 카드에 보인다)'),
     },
-    async ({ id, action }) => {
+    async ({ id, action, why }) => {
       if (guest) return guestNo(lang === 'en' ? 'Changing or deleting a schedule' : '예약 바꾸기·지우기');
       try {
         const before = (await loadRoutines(wsId)).find((x) => x.id === id);
         if (!before) return text(`그런 예약이 없다: ${id}. list_routines로 id를 다시 확인하라.`);
-        if (action === 'delete') { await removeRoutine(wsId, id); return text(`예약 "${before.title}"을(를) 지웠다.`); }
         // 사장 직접 턴이 아닌 턴이 다시 켜면 출처를 그 크루로 바꾼다 — 사장이 꺼 둔 예약을 위임 턴이 풀 오토로 되살리지 못하게(통합본 재검수 MEDIUM-1). 끄기는 위험을 늘리지 않아 출처를 건드리지 않는다
         const reFrom = action === 'on' ? originFor(before.agentSlug) : null; // 예약·작업과 같은 규칙 — 다른 크루의 예약을 켜면 이 크루의 위임, 자기 예약이면 사장 직접(재검수 3차 LOW-1)
+        if (!settingsDirect) {
+          const ap = (await import('./argo-self.mjs')).routineChangeApproval({ routine: before, action, why, lang, slug: fromSlug, from: reFrom });
+          const item = await addApproval(wsId, { slug: fromSlug, kind: 'routine', ...(delegatedBy ? { from: delegatedBy } : {}),
+            action: ap.action, reason: ap.reason, payload: ap.payload,
+            ...(mirrorCtx ? { msgr: messengerOrigin(mirrorCtx) } : {}), ...approvalScope(mirrorCtx) });
+          return text(`${ap.text} (${item.id})${await channelHealthNote()}`);
+        }
+        if (action === 'delete') { await removeRoutine(wsId, id); return text(`예약 "${before.title}"을(를) 지웠다.`); }
         const r = await updateRoutine(wsId, id, { enabled: action === 'on' }, reFrom ? { from: reFrom } : {});
         return text(`예약 "${(r ?? before).title}"을(를) ${action === 'on' ? '켰다' : '껐다'}.`);
       } catch (e) {

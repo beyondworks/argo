@@ -33,7 +33,8 @@ export default {
 - 지시에 특정 컴퓨터에만 있는 경로가 있으면 경고가 뜹니다. 회사 폴더 안 상대 경로를 권장합니다.
 
 **에이전트에게 예약 맡기기**
-- 대화에서 "내일 아침 9시에 이 보고서를 다시 정리해줘", "30분마다 가격을 확인해줘"처럼 말하면 에이전트가 예약을 겁니다. 건 예약은 루틴 목록에 나타나 언제든 끄거나 고칠 수 있습니다.`,
+- 대화에서 "내일 아침 9시에 이 보고서를 다시 정리해줘", "30분마다 가격을 확인해줘"처럼 말하면 에이전트가 예약을 겁니다. 건 예약은 루틴 목록에 나타나 언제든 끄거나 고칠 수 있습니다.
+- 에이전트가 예약을 끄거나 다시 켜거나 지우는 일은 주인이 1:1에서 직접 시켰을 때만 바로 합니다. 루틴 실행·다른 에이전트의 부탁·메신저 채널에서 나온 요청은 결재함에 올라오고, 승인해야 처리됩니다.`,
   },
   en: {
     title: 'Routines — scheduled runs',
@@ -67,6 +68,7 @@ export default {
 - An instruction that points to a path existing on only one computer triggers a warning; prefer paths inside the company folder.
 
 **Letting an agent schedule**
-- In chat, say something like "Tidy this report again tomorrow at 9am" or "Check the price every 30 minutes", and the agent sets up the schedule. It appears in the routine list, where you can turn it off or edit it anytime.`,
+- In chat, say something like "Tidy this report again tomorrow at 9am" or "Check the price every 30 minutes", and the agent sets up the schedule. It appears in the routine list, where you can turn it off or edit it anytime.
+- An agent turns a schedule off, back on, or deletes it right away only when the owner asks directly in a 1:1. Requests that come from a routine run, another agent, or a messenger channel go to the approval inbox and happen only after you approve.`,
   },
 };
