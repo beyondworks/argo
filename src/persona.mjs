@@ -8,7 +8,7 @@ import { paths, loadCompany } from './workspace.mjs';
 import { withLock } from './mutex.mjs';
 import { appendUsage } from './usage.mjs';
 import { isBilledRunner, visibleRunnerNamesLine } from './runners.mjs'; // billed 각인 — 순환 없음(2R 검수 확인)
-import { normalizeModelId } from './runners/catalog-remote.mjs'; // 모델 저장 시 alias 정규화(불변식 D)
+import { normalizeModelId, retiredModelEffort } from './runners/catalog-remote.mjs'; // 모델 저장 시 alias 정규화(불변식 D)·옮긴 카드의 빈 강도
 import { CLAUDE_EFFORTS, normalizeCrewEffort } from './model-effort.mjs';
 import { appendEvent } from './events.mjs';
 import { runOneShot } from './oneshot.mjs'; // 러너 독립 — Claude 없이 Codex/Gemini/GLM만 연결해도 영입 가능
@@ -365,6 +365,9 @@ export async function updateAgentMeta(wsId, slug, { name, role, team, model, run
       const rid = (runner !== undefined ? String(runner).trim() : String(before.runner ?? '').trim()) || null;
       const m = String(model).trim();
       model = rid ? normalizeModelId(rid, m) : m;
+      // 대체표로 옮겨 저장하면서 강도가 비어 있으면 옛 모델의 서버 기본 강도를 같이 저장한다 — 저장 뒤에는 원래 그 모델을 고른 카드와
+      // 구별되지 않아 다음 턴부터 대체 모델의 더 낮은 서버 기본으로 내려간다(gpt-5.5 medium → 5.6 Sol low, 분리 검수 MEDIUM 2026-10-09).
+      if (rid) effort = retiredModelEffort(rid, m, effort ?? before.effort) || effort;
     }
     if (model !== undefined) md = setFrontmatterKey(md, 'model', model.trim()); // 빈 값 = 기본 모델
     if (runner !== undefined) md = setFrontmatterKey(md, 'runner', runner.trim()); // 빈 값 = 회사 연결 러너(기본)

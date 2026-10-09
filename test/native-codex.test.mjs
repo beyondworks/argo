@@ -213,9 +213,35 @@ test('C9. 원샷 — 플래그 on + codex API 키 회사의 runOneShot이 가짜
     const b = JSON.parse(srv.calls[0].body); assert.equal('tools' in b, false); assert.equal(b.model, CODEX_DEFAULT_MODEL); assert.equal(srv.calls[0].headers.authorization, 'Bearer fake-openai-key-111111');
   } finally { await srv.close(); delete process.env.ARGO_OPENAI_BASE_URL; }
   const chat = await readFile(join(ROOT, 'src', 'chat.mjs'), 'utf8');
-  assert.match(chat, /runner === 'codex' \? \(effModel \|\| CODEX_DEFAULT_MODEL\)/); assert.match(chat, /codexModelEffort\(meta\.effort, sdkModel\)/);
+  assert.match(chat, /runner === 'codex' \? \(effModel \|\| CODEX_DEFAULT_MODEL\)/); assert.match(chat, /codexModelEffort\(turnEffort, sdkModel\)/); // 턴 강도 = CLI 경로와 같은 turnEffort(대체표로 옮긴 카드의 빈 강도 — C9-b가 행동으로 잠금)
   const creds = await readFile(join(ROOT, 'src', 'runners', 'creds.mjs'), 'utf8');
   assert.match(creds, /if \(runner === 'codex' && cred\.type !== 'host' && nativeRunnerEnabled\('codex'\)\) \{/);
+});
+
+// C9-b GPT-5.5 종료(분리 검수 MEDIUM, 2026-10-09) — 네이티브 Responses 턴도 CLI와 같은 강도: gpt-5.5 빈 강도 카드는 model=gpt-5.6-sol·reasoning medium
+// (옛 서버 기본 — 5.6 Sol 서버 기본은 low), 원래 5.6 Sol 빈 강도 카드는 reasoning 없음(서버 기본 그대로), 고른 강도는 그대로.
+test('C9-b. 네이티브 크루 턴 — gpt-5.5 카드는 gpt-5.6-sol로, 빈 강도는 reasoning medium, 원래 5.6 Sol 빈 강도는 reasoning 없음', async () => {
+  const { chat } = await import('../src/chat.mjs');
+  const ws = 'cx55'; await createCompany(ws, '코덱스55', '사장');
+  await mkdir(paths(ws).agents, { recursive: true });
+  const cards = { old55: ['gpt-5.5', '', 'medium'], old55high: ['gpt-5.5', 'high', 'high'], sol56: ['gpt-5.6-sol', '', undefined] };
+  for (const [slug, [model, effort]] of Object.entries(cards)) {
+    await writeFile(join(paths(ws).agents, `${slug}.md`), `---\nname: ${slug}\nrole: 일\nrunner: codex\nmodel: ${model}\n${effort ? `effort: ${effort}\n` : ''}---\n일한다.\n`);
+  }
+  await saveRunnerCred(ws, 'codex', 'apikey', 'fake-openai-key-555555');
+  const srv = await fakeServer((c, n, res) => respond(res, 200, sse([completed([{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'OK' }] }])])));
+  process.env.ARGO_OPENAI_BASE_URL = srv.base;
+  try {
+    for (const [slug, , ] of Object.entries(cards)) {
+      const from = srv.calls.length;
+      const r = await withFlag(() => chat(ws, slug, '안녕', null, {}));
+      assert.match(r.reply, /OK/, slug);
+      const bodies = srv.calls.slice(from).map((c) => JSON.parse(c.body)).filter((b) => Array.isArray(b.tools) && b.tools.length); // 크루 턴(도구 있음) — 제목 생성 같은 부수 호출 제외
+      assert.ok(bodies.length >= 1, `${slug}: 크루 턴 요청이 없다`);
+      assert.equal(bodies[0].model, 'gpt-5.6-sol', slug);
+      assert.equal(bodies[0].reasoning?.effort, cards[slug][2], slug);
+    }
+  } finally { await srv.close(); delete process.env.ARGO_OPENAI_BASE_URL; }
 });
 
 test('C10. 자격 유출 차단(검수 HIGH-1, 행동) — 크루 Bash 자식이 RESPONSES_TOKEN·RESPONSES_HEADERS·ARGO_WIRE를 상속하지 않는다(가짜 백엔드가 printenv 요청 — 전사·세션 파일·재전송에 토큰 없음), 호스트 셸의 RESPONSES_*는 다른 러너에 미상속(LOW-2)', async () => {

@@ -24,6 +24,9 @@ export function CrewEditModal({ ws, agent, teams: teamsProp = null, onClose, onS
   }, [ws, teamsProp]);
   const teams = teamsProp ?? teamsFetched;
   const curRunner = runners?.find((r) => r.id === form.runner);
+  // 종료된 모델(대체표·원격 alias — /api/runners aliases)이면 '목록에 없음(기본 모델)'이 아니라 실제로 도는 모델을 말한다(분리 검수 LOW, 2026-10-09)
+  const retiredId = form.model && curRunner?.aliases && Object.hasOwn(curRunner.aliases, form.model) ? curRunner.aliases[form.model] : null;
+  const retiredTo = retiredId ? (curRunner.models ?? []).find((m) => m.id === retiredId) : null;
   const runnerLabel = (r) => r.name + (r.retired ? ` — ${t('runner.retired')}` : r.hidden ? '' : r.authed ? '' : r.installed ? ` — ${t('runner.needLogin')}` : ` — ${t('runner.notInstalled')}`); // 제공 종료(retired)만 — 카드 전용 숨김(http)은 이름만
   // 숨김 러너(gemini)는 선택지에서 뺀다 — 현재 값일 때만 남겨 정직 표기(분리 검수 HIGH-2: 빠지면 브라우저가 첫 옵션 '자동'을 골라 오표시)
   const pickable = (runners ?? []).filter((r) => !r.hidden || r.id === form.runner);
@@ -104,7 +107,7 @@ export function CrewEditModal({ ws, agent, teams: teamsProp = null, onClose, onS
               {/* 현재 값 예외(분리 검수 HIGH-2): 목록에 없는 저장값(폐기·러너 불일치)을 첫 옵션으로 오표시하지 않고 그대로 보인다 —
                   숨김 러너와 같은 처방. 저장은 통과하고 실행 시 modelFallback 고지가 뜬다. */}
               {form.model && !(curRunner?.models ?? []).some((m) => m.id === form.model) && (
-                <option value={form.model}>{form.model} — {t('deck.modelNotInList')}</option>
+                <option value={form.model}>{form.model} — {retiredTo ? t('deck.modelRetired', { name: retiredTo.label }) : t('deck.modelNotInList')}</option>
               )}
               {(curRunner?.models ?? []).map((m) => (
                 <option key={m.id} value={m.id}>{m.label}{m.gated ? ` — ${t('runner.gatedBadge')}` : m.free ? ` — ${t('runner.freeBadge')}` : ''}</option>

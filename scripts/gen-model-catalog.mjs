@@ -20,6 +20,12 @@ export const LEGACY = {
     retire: ['minimax/minimax-m3:free', 'minimax/minimax-m2.7:free', 'deepseek/deepseek-v4-pro'],
     alias: { 'minimax/minimax-m3:free': 'nvidia/nemotron-3.5-lightning:free', 'minimax/minimax-m2.7:free': 'nvidia/nemotron-3.5-lightning:free' },
   },
+  // 2026-10-09: GPT-5.5 종료(Codex 서버 목록 retirement_at 2026-10-14T19:00Z). 목적지 5.6 Sol은 모든 옛 앱의 코드 목록에 있어 add가 필요 없다.
+  // 6.1 Sol로 보내지 않는다 — 핀 0.157.1 옛 앱에서 400. 새 앱은 catalog.mjs RETIRED_MODEL_ALIASES로 같은 목적지(test/model-catalog-legacy.test.mjs가 대조).
+  codex: {
+    retire: ['gpt-5.5'],
+    alias: { 'gpt-5.5': 'gpt-5.6-sol' },
+  },
 };
 const doc = {
   schema: SCHEMA,
