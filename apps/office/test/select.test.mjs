@@ -293,3 +293,81 @@ test('12차: 직원 선택 표시·체크박스·개수 일치', () => {
   assert.equal(s.all, true);
   assert.equal(selectable(list, new Set(['p1'])).all, false);
 });
+
+// ── 메일 체크박스 고르기(유건 10/9 "이메일 일괄 선택 기능 있어야겠다") ──
+import { checkKeys, checkState } from '../src/ui/marquee-model.js';
+
+// 이유: 숨은 손짓(⌘클릭·⌘A)만 있어 유건이 일괄 선택이 없다고 봤다 — 줄마다 보이는 체크박스. 누르면 그 줄 하나만 넣고 뺀다.
+test('메일 체크박스: 하나 넣고 빼기', () => {
+  const keys = ['a', 'b', 'c', 'd'];
+  assert.deepEqual([...checkKeys(new Set(), 'b', { keys })], ['b']);
+  assert.deepEqual([...checkKeys(new Set(['a', 'b']), 'b', { keys })], ['a']);
+  assert.deepEqual([...checkKeys(new Set(['a']), 'c', { keys, anchor: 'a' })].sort(), ['a', 'c']); // ⇧ 없이 누르면 범위가 아니다
+});
+
+// 이유: Gmail 관례 — ⇧ + 체크박스 = 마지막으로 누른 줄부터 여기까지를 누른 줄이 바뀔 상태로(넣기면 다 넣고, 빼기면 다 뺀다). 시작점이 목록에 없으면 하나만.
+test('메일 체크박스: ⇧ 범위는 누른 줄 상태를 따른다', () => {
+  const keys = ['a', 'b', 'c', 'd', 'e'];
+  assert.deepEqual([...checkKeys(new Set(['b']), 'd', { keys, anchor: 'b', shift: true })].sort(), ['b', 'c', 'd']);
+  assert.deepEqual([...checkKeys(new Set(['b']), 'a', { keys, anchor: 'd', shift: true })].sort(), ['a', 'b', 'c', 'd']); // 위로도
+  assert.deepEqual([...checkKeys(new Set(['a', 'b', 'c', 'd']), 'c', { keys, anchor: 'a', shift: true })], ['d']); // 고른 줄을 ⇧로 누르면 a~c를 뺀다
+  assert.deepEqual([...checkKeys(new Set(), 'c', { keys, anchor: 'gone', shift: true })], ['c']);
+});
+
+// 이유: 도구 줄 '전체 선택' — 지금 보이는 목록 기준. 일부만 골랐으면 반쯤(indeterminate), 다시 누르면 전체(앱의 다른 전체 선택 칸과 같은 동작). 사라진 메일은 세지 않는다.
+test('메일 전체 선택 칸 상태', () => {
+  const keys = ['a', 'b', 'c'];
+  assert.equal(checkState(new Set(), keys), 'none');
+  assert.equal(checkState(new Set(['a']), keys), 'some');
+  assert.equal(checkState(new Set(['a', 'b', 'c']), keys), 'all');
+  assert.equal(checkState(new Set(['x']), keys), 'none');
+  assert.equal(checkState(new Set(), []), 'none'); // 빈 목록은 '전체'가 아니다
+});
+
+// ── 검수 #895 반영(10/9) — 일괄 동작 대상·폰 탭·전체 선택 토글을 행동으로 잠근다 ──
+import { bulkTargets, rowTapPicks } from '../src/pages/mail-bulk.js';
+import { checkAll } from '../src/ui/marquee-model.js';
+
+const M = (id, o = {}) => ({ id, folder: 'inbox', unread: false, starred: false, ...o });
+// 이유(규칙 4, 검수 MEDIUM): 초안에는 별표·보관 단추가 없다(목록 줄·읽기 화면) — 일괄에서도 초안은 별표·별표 빼기·보관 대상이 아니다.
+test('일괄 동작: 초안은 별표·별표 빼기·보관에서 빠진다', () => {
+  const starredMail = M('m4', { starred: true }), draft = M('d1', { folder: 'drafts' });
+  const b = bulkTargets([starredMail, draft], 'inbox');
+  assert.deepEqual(b.unstar.map((m) => m.id), ['m4']); // 별표 메일 + 초안 → 별표 빼기는 메일만(전에는 아무것도 안 나왔다)
+  assert.deepEqual(b.star, []);
+  assert.deepEqual(b.archive.map((m) => m.id), ['m4']);
+  const onlyDrafts = bulkTargets([M('d2', { folder: 'drafts', starred: true })], 'drafts');
+  assert.deepEqual([onlyDrafts.star, onlyDrafts.unstar, onlyDrafts.archive], [[], [], []]); // Gmail에서 별표 붙은 초안도 건드리지 않는다
+});
+
+// 이유: 단일 'e'처럼 이미 보관한 메일은 다시 보관하지 않는다(검색 결과에 섞여 토스트 수가 틀렸다). 보관함 보기에서는 보관이 없다.
+test('일괄 동작: 보관 대상', () => {
+  const list = [M('a'), M('b', { folder: 'archive' }), M('c', { folder: 'sent' })];
+  assert.deepEqual(bulkTargets(list, 'inbox').archive.map((m) => m.id), ['a', 'c']);
+  assert.deepEqual(bulkTargets(list, 'archive').archive, []);
+});
+
+// 이유: 읽음·안 읽음·별표는 바뀔 메일만 — 안 읽은 것이 하나라도 있으면 '읽음', 모두 읽었으면 '안 읽음', 별표 안 붙은 메일이 있으면 그 메일만 '별표'.
+test('일괄 동작: 읽음·안 읽음·별표 대상', () => {
+  const b = bulkTargets([M('a', { unread: true }), M('b'), M('c', { starred: true })], 'inbox');
+  assert.deepEqual(b.read.map((m) => m.id), ['a']);
+  assert.deepEqual(b.unread, []);
+  assert.deepEqual(b.star.map((m) => m.id), ['a', 'b']);
+  assert.deepEqual(b.unstar, []);
+  assert.deepEqual(bulkTargets([M('a'), M('b')], 'inbox').unread.map((m) => m.id), ['a', 'b']);
+});
+
+// 이유(규칙 2): 폰(터치)은 한 통이라도 고른 동안 줄을 눌러도 열지 않고 넣고 뺀다. 마우스는 고른 채로도 연다(선택 유지).
+test('줄 누르기: 터치 + 고르는 중만 넣고 빼기', () => {
+  assert.equal(rowTapPicks(1, true), true);
+  assert.equal(rowTapPicks(0, true), false);
+  assert.equal(rowTapPicks(3, false), false);
+});
+
+// 이유(규칙 3): 전체 선택 칸 — 없음·일부 → 전체, 전체 → 해제.
+test('전체 선택 칸 누르기', () => {
+  const keys = ['a', 'b', 'c'];
+  assert.deepEqual([...checkAll(new Set(), keys)], keys);
+  assert.deepEqual([...checkAll(new Set(['a']), keys)], keys);
+  assert.deepEqual([...checkAll(new Set(keys), keys)], []);
+});

@@ -129,7 +129,7 @@ test('LOW-1(a): 메일 화면 — ?view=inbox가 마지막 메일함(sent)보다
   M.writeView('sent'); // 마지막에 본 메일함
   const code = pickCode('pages/Mail.jsx', ['ICON', 'viewName', 'Mail']);
   const deps = { ...MM, ok: (a) => a.status === 'ok', firstView: M.firstView, readView: M.readView, writeView: M.writeView, hardFails: M.hardFails, t: (k, v) => (v ? `${k}${JSON.stringify(v)}` : k), ago: () => '방금',
-    useLang() {}, useSession: () => 'signedIn', useStore: (sel) => sel(state), useLimit: () => 0, useWidth: () => [360, () => {}], useSelection: () => [new Set()], useUi: () => ({}), useDraggable: () => ({}),
+    useLang() {}, useSession: () => 'signedIn', useStore: (sel) => sel(state), useLimit: () => 0, useWidth: () => [360, () => {}], useSelection: () => [new Set(), () => {}], /* 실제 훅처럼 [고른 것, 바꾸기] — 메일함을 바꾸면 선택을 비우는 효과가 바꾸기를 부른다(#895) */ useUi: () => ({}), useDraggable: () => ({}),
     ME: { id: 'u', email: 'u@x' }, getState: () => state, getUi: () => ({}), setUi() {}, navigate() {}, showToast() {}, subscribeSync() {}, lastSynced: () => 0, subscribeLimit() {}, getLimitUntil: () => 0, limitLeft: () => 0,
     loadAccounts: async () => {}, seedSample() {}, wantSync: () => () => {}, hasMore: () => false, mailItems: () => [], desktopMailPending: () => false, subscribeMailPending() {},
     pullMail: async () => { calls.pull++; return { ids: ['m1'], failed: [{ account: { id: 'a1' }, code: 'gmail' }], more: false }; }, VIEWS: MM.VIEWS, inView: MM.inView, byDate: MM.byDate };

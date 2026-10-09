@@ -2,6 +2,7 @@
 // 화면마다 고를 수 있는 묶음(scope)을 등록하고(useSelection), 누른 채 4px 넘게 끌면 선택 상자 본체(ui/marquee.js)를 불러 넘긴다.
 // 표시: 묶음 뿌리 = [data-sel-scope="id"], 항목 = [data-sel="key"]. 고른 것이 있으면 화면 아래 선택 막대(ui/SelectionBar.jsx, 지연 로드).
 import { createElement, lazy, Suspense, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { typing } from './history.js';
 
 const NONE = new Set();
 /** id → { get(), set(Set), opts() } — 화면에 붙은 묶음만 */
@@ -75,7 +76,6 @@ export function clickItem(target) {
   return item && !editing(target) && !target.closest('.sel-bar') && !inner(target.closest(FORM), item) ? item : null;
 }
 const mods = (e) => e.shiftKey || e.metaKey || e.ctrlKey;
-const typing = (el) => el?.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el?.tagName ?? '');
 const wide = () => innerWidth > 720; // 좁은 폭·터치는 이번 범위 밖 — 기존 체크박스·메뉴 그대로
 
 let M = null, loading = null, grabbed = false;

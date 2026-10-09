@@ -11,6 +11,7 @@ import { showToast } from './Overlay.jsx';
 import { CELL_REG, cellPlan } from '../business/cell-pick.js';
 import { redactMenu } from '../business/redact-rule.js';
 import { hideAllOn } from '../core/hide-all.js';
+import { typing } from '../core/history.js';
 import { SELECT_DICT } from './select-i18n.js';
 import { hits, combine, sameSet, rectOf, pickRoot, clampRect, rangeKeys, dragMode } from './marquee-model.js';
 import './selection.css';
@@ -233,8 +234,7 @@ export function cellActions(keys, clear) {
 // Esc = 선택 해제(창·메뉴가 떠 있거나 입력 중이면 그쪽 차례). 끄는 중 Esc는 위 esc가 먼저 받는다(취소)
 addEventListener('keydown', (e) => {
   if (e.key !== 'Escape' || e.defaultPrevented || e.isComposing || !activeScope() || document.querySelector('[role="dialog"], .menu')) return;
-  const el = e.target;
-  if (el?.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el?.tagName ?? '')) return;
+  if (typing(e.target)) return; // 체크박스에 초점이 있어도 Esc는 선택 해제(검수 #895)
   clearAll();
 });
 // 고른 칸 위 우클릭 = 고른 칸 전체 가리기·가림 해제(값 하나 메뉴는 Redact가 이때 비켜 준다)

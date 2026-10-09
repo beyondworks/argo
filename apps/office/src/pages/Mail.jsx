@@ -25,6 +25,10 @@ import { imeGuardWith } from '../core/ime.js';
 import { ME, useSession } from '../core/session.js';
 import { crewName } from './modules.jsx';
 import { useSelection, selProps } from '../core/selection.js';
+import { checkKeys, checkState, checkAll } from '../ui/marquee-model.js';
+import { CELLS } from '../core/selection.js';
+import { typing } from '../core/history.js';
+import { bulkTargets, rowTapPicks } from './mail-bulk.js';
 import { Hide, HideIn } from '../business/Redact.jsx';
 import { looksLikeAddr } from '../core/hide-all.js';
 /** 목록 줄의 주소(받는 사람·이름 없는 보낸 사람) — 화면 전체 가리기 중 흐린다(제목·요약과 같은 흐림, 18차 검수 M2) */
@@ -55,6 +59,9 @@ const ICON = { inbox: 'inbox', unread: 'mail', starred: 'star', drafts: 'draft',
 const viewName = (v) => t(v === 'unread' || v === 'starred' ? `mailx.${v}` : `mail.${v}`);
 const subjectOf = (m) => (m?.subject?.trim() ? m.subject : t('mailx.noSubject'));
 const isDraft = (m) => m?.folder === 'drafts';
+/** 마우스·터치로 누른 체크박스는 초점을 놓는다 — 키 입력 뒤 :focus-visible이 켜져 고르지 않은 줄의 아바타가 사라지지 않게(재검수 #895). 키보드(스페이스, detail 0)는 그대로 */
+const unfocus = (e) => { if (e.nativeEvent.detail) e.currentTarget.blur(); };
+const touchy = () => matchMedia('(hover: none)').matches; // 터치 기기 — 고르는 중에는 줄을 눌러도 열지 않고 넣고 뺀다
 const clock = (ms) => new Date(ms).toLocaleTimeString(getLang() === 'en' ? 'en-US' : 'ko-KR', { hour: 'numeric', minute: '2-digit' });
 
 /** 요청 제한 남은 초 — 쉬는 동안만 1초마다 다시 그린다 */
@@ -70,7 +77,7 @@ function Avatar({ name, addr }) {
   return <span className={`avatar mail-av tone-${a.tone}`} aria-hidden="true">{a.letter}</span>;
 }
 
-function MailRow({ m, active, tag, sel, group }) {
+function MailRow({ m, active, tag, sel, group, onPick }) {
   // 고른 메일 중 하나를 끌면 고른 것 전부가 크루에게 간다(11차, items)
   const many = group.length > 1 && sel.has(m.id);
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: `mail:${m.id}`, data: { kind: 'mail', id: m.id, label: many ? t('sel.count', { n: group.length }) : m.subject, items: many ? group : undefined } });
@@ -78,11 +85,14 @@ function MailRow({ m, active, tag, sel, group }) {
   const draft = isDraft(m);
   const toLine = draft && m.to ? t('mailx.toLine', { to: '\n' }).split('\n') : null;
   const who = toLine ? <>{toLine[0]}{haAddr(m.to)}{toLine[1]}</> : draft ? t('mailx.toNone') : looksLikeAddr(m.from) ? haAddr(m.from) : m.from;
+  const on = sel.has(m.id);
   return (
     <div className={`mail-item${m.starred ? ' starred' : ''}`}>
+      {/* 고르기(유건 10/9 "이메일 일괄 선택") — 아바타 자리의 체크박스. ⇧ = 마지막으로 누른 줄부터 여기까지 */}
+      <label className="mail-check"><input type="checkbox" checked={on} aria-label={t('mailx.pickOne', { subject: subjectOf(m) })} onChange={(e) => { onPick(m.id, e.nativeEvent.shiftKey); unfocus(e); }} /></label>
       <button ref={setNodeRef} type="button" className={`mail-row${active ? ' active' : ''}${m.unread ? ' unread' : ''}${isDragging ? ' ghost' : ''}`}
         {...attributes} {...selProps(sel, m.id)} {...mergeHandlers(mouse, menuProps(() => mailMenu(m)))} role="option" aria-selected={active}
-        onClick={() => { navigate(`${mailHome()}/${m.id}`); if (m.unread) setMail(m.id, { unread: false }); }}>
+        onClick={() => { if (rowTapPicks(sel.size, touchy())) { onPick(m.id); return; } navigate(`${mailHome()}/${m.id}`); if (m.unread) setMail(m.id, { unread: false }); }}>
         <Avatar name={draft ? m.to : m.from} addr={draft ? parseAddrs(m.to)[0] : m.addr} />
         <span className="mail-from">{m.unread && <span className="dot mark" />}{who}{draft && <span className="badge">{t('mailx.draft')}</span>}</span>
         <span className="mail-time mono" title={fmtExact(m.at, getLang())}>{ago(m.at)}</span>
@@ -636,7 +646,7 @@ export function Mail({ id }) {
   // 목록 키보드: j/k 이동, e 보관, r 답장, s 별표, / 검색(입력 중이 아닐 때만)
   useEffect(() => {
     const onKey = (e) => {
-      if (e.metaKey || e.ctrlKey || e.altKey || /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName) || document.activeElement?.isContentEditable || getUi().compose) return;
+      if (e.metaKey || e.ctrlKey || e.altKey || typing(document.activeElement) || getUi().compose) return; // 체크박스에 초점이 있어도 단축키는 그대로(검수 #895)
       const i = rows.findIndex((m) => m.id === id);
       if (e.key === 'j' || e.key === 'k') { const next = rows[Math.max(0, Math.min(rows.length - 1, i + (e.key === 'j' ? 1 : -1)))]; if (next) { navigate(`${mailHome()}/${next.id}`); if (next.unread) setMail(next.id, { unread: false }); } }
       if (e.key === 'e' && cur && cur.folder !== 'archive' && !isDraft(cur)) { const undo = archiveMail(cur.id); showToast(t('mail.archived'), { undo }); }
@@ -649,18 +659,25 @@ export function Mail({ id }) {
   }, [rows, id, cur]);
   const counts = useMemo(() => Object.fromEntries(VIEWS.map((v) => [v, mails.filter((m) => inView(m, v, pick) && (v === 'drafts' || v === 'starred' ? true : m.unread)).length])), [mails, pick]);
   // 여러 개 고르기(11차) — 메일 메뉴의 단일 동작(읽음·안 읽음·보관·맡기기)을 고른 메일 전부에. 보관은 토스트 '되돌리기' 한 번으로 전부
-  const [sel] = useSelection('mail', { keys: rows.map((m) => m.id), actions: (keys) => {
-    const list = rows.filter((m) => keys.includes(m.id)), done = (fn) => (_, clear) => { fn(); clear(); };
+  const keys = useMemo(() => rows.map((m) => m.id), [rows]);
+  const [sel, setSel] = useSelection('mail', { keys, actions: (picked) => {
+    const list = rows.filter((m) => picked.includes(m.id)), b = bulkTargets(list, view), done = (fn) => (_, clear) => { fn(); clear(); };
     return [
-      list.some((m) => m.unread) && { label: t('mail.markRead'), icon: 'mail', run: done(() => list.forEach((m) => m.unread && setMail(m.id, { unread: false }))) },
-      list.every((m) => !m.unread) && { label: t('mail.markUnread'), icon: 'mail', run: done(() => list.forEach((m) => setMail(m.id, { unread: true }))) },
-      !list.every((m) => m.starred) && { label: t('mailx.star'), icon: 'star', run: done(() => list.forEach((m) => !m.starred && !isDraft(m) && toggleStar(m))) },
-      list.every((m) => m.starred) && { label: t('mailx.unstar'), icon: 'star', run: done(() => list.forEach((m) => toggleStar(m))) },
-      view !== 'archive' && { label: t('mail.archiveIt'), icon: 'archive', run: done(() => { const undos = list.map((m) => archiveMail(m.id)); showToast(t('sel.archived', { n: list.length }), { undo: () => undos.forEach((u) => u?.()) }); if (list.some((m) => m.id === id)) navigate(mailHome()); }) },
+      b.read.length > 0 && { label: t('mail.markRead'), icon: 'mail', run: done(() => b.read.forEach((m) => setMail(m.id, { unread: false }))) },
+      b.unread.length > 0 && { label: t('mail.markUnread'), icon: 'mail', run: done(() => b.unread.forEach((m) => setMail(m.id, { unread: true }))) },
+      b.star.length > 0 && { label: t('mailx.star'), icon: 'star', run: done(() => b.star.forEach((m) => toggleStar(m))) },
+      b.unstar.length > 0 && { label: t('mailx.unstar'), icon: 'star', run: done(() => b.unstar.forEach((m) => toggleStar(m))) },
+      b.archive.length > 0 && { label: t('mail.archiveIt'), icon: 'archive', run: done(() => { const undos = b.archive.map((m) => archiveMail(m.id)); showToast(t('sel.archived', { n: b.archive.length }), { undo: () => undos.forEach((u) => u?.()) }); if (b.archive.some((m) => m.id === id)) navigate(mailHome()); }) },
       { label: t('crew.assign'), icon: 'hand', run: done(() => setUi({ assign: { space: 'me', items: mailItems(list) } })) },
     ];
   } });
   const group = mailItems(rows.filter((m) => sel.has(m.id)));
+  const anchor = useRef(null); // ⇧ + 체크박스 범위의 시작점 — 마지막으로 누른 줄
+  const pickSet = (next) => { if (CELLS.keys.size) import('../ui/marquee.js').then((mq) => mq.setCells(new Set())); setSel(next); }; // 남은 칸 선택이 메일 막대를 가리지 않게(검수 #895)
+  const checkRow = (key, shift = false) => { pickSet(checkKeys(sel, key, { keys, anchor: anchor.current, shift })); anchor.current = key; };
+  // 메일함·계정·검색어를 바꾸면 선택을 비운다(Gmail 관례 — 숨었던 선택이 돌아와 폰이 고르는 중으로 바뀌지 않게)
+  useEffect(() => { setSel((s) => (s.size ? new Set() : s)); anchor.current = null; }, [view, pick, search?.q]); // eslint-disable-line react-hooks/exhaustive-deps
+  const all = checkState(sel, keys);
   const multi = accounts.length > 1;
   const noAccounts = real && ready && !accounts.length;
   const expired = accounts.filter((a) => !ok(a));
@@ -678,8 +695,10 @@ export function Mail({ id }) {
         ))}
         <button type="button" className={`nav-item mail-cal-btn${cal ? ' active' : ''}`} aria-pressed={cal} onClick={toggleCal}><Icon name="calendar" /><span className="nav-label">{t('mailx.calendar')}</span></button>
       </aside>
-      <section className="mail-list" role="listbox" aria-multiselectable="true" aria-label={search ? t('mailx.results', { n: rows.length }) : viewName(view)} data-sel-scope="mail">
+      <section className={`mail-list${sel.size ? ' picking' : ''}`} role="listbox" aria-multiselectable="true" aria-label={search ? t('mailx.results', { n: rows.length }) : viewName(view)} data-sel-scope="mail">
         <div className="mail-tools">
+          {rows.length > 0 && !noAccounts && <label className="mail-check-all" title={t(all === 'all' ? 'mailx.selectNone' : 'mailx.selectAll')}>
+            <input type="checkbox" checked={all === 'all'} ref={(el) => { if (el) el.indeterminate = all === 'some'; }} aria-label={t('mailx.selectAll')} onChange={(e) => { pickSet(checkAll(sel, keys)); unfocus(e); }} /></label>}
           <select className="input mail-view-pick" value={view} aria-label={t('mailx.folders')} onChange={(e) => pickView(e.target.value)}>{VIEWS.map((v) => <option key={v} value={v}>{viewName(v)}</option>)}</select>
           <form className="search-field mail-search" role="search" onSubmit={(e) => { e.preventDefault(); runSearch(qInput); }} title={t('mailx.searchHelp')}>
             <Icon name="search" size={14} />
@@ -700,7 +719,7 @@ export function Mail({ id }) {
         {failN > 0 && rows.length > 0 && <div className="mail-banner" role="alert"><span className="dot ask" />{t('mailx.someFail', { n: failN })}<button type="button" className="btn sm" onClick={() => setAgain((n) => n + 1)}>{t('desktop.retry')}</button></div>}
         {search && <div className="mail-search-state" role="status">{search.busy ? t('mailx.searching') : t('mailx.results', { n: rows.length })}{search.some && !search.busy && <span className="dim"> · {t('mailx.searchSome')}</span>}</div>}
         {noAccounts ? <ConnectPanel />
-          : rows.length ? rows.map((m) => <MailRow key={m.id} m={m} active={m.id === id} sel={sel} group={group} tag={multi && pick === 'all' ? domain(accounts.find((a) => a.id === m.account)?.address) : null} />)
+          : rows.length ? rows.map((m) => <MailRow key={m.id} m={m} active={m.id === id} sel={sel} group={group} onPick={checkRow} tag={multi && pick === 'all' ? domain(accounts.find((a) => a.id === m.account)?.address) : null} />)
             : failN > 0 && !search && !loading ? <LoadFail onRetry={() => setAgain((n) => n + 1)} />
             : <div className="empty-state"><p>{search ? (search.busy ? t('mailx.searching') : t('mailx.noResults')) : t(loading || (real && !ready) ? 'mailc.loading' : 'mail.empty')}</p></div>}
         {canMore && rows.length > 0 && <div className="mail-more"><button type="button" className="btn sm" disabled={moreBusy} onClick={more}>{moreBusy ? t('mailx.loadingMore') : t('mailx.more')}</button></div>}
