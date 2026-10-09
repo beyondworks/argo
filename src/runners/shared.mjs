@@ -144,7 +144,9 @@ export function crashHint(lang = 'ko') {
     chat.mjs SDK 실패 경로와 아래 apiError(외부 CLI 실패 경로)가 공유 — 한쪽만 마스킹하면
     CLI stderr의 키 조각이 동기화되는 이벤트 로그(events.jsonl)에 영속된다(감사 2026-07-20). */
 // 벤더별 키 형태를 각각 문다(패턴 하나로 '시크릿 없음' 선언 금지): sk-·sk-ant-(OpenAI·Anthropic·OpenRouter·Kimi)·AIza(Google)·xai-(Grok BYOK)·JWT 3분절(Grok BYOA 액세스 토큰)·<32hex>.<secret>(GLM). #445 2R N-MEDIUM-3
-export const maskKeyLike = (s) => String(s).replace(/\b(sk-ant-[\w-]+|sk-[\w-]{16,}|AIza[\w-]{20,}|xai-[\w-]{16,}|eyJ[\w-]{10,}\.[\w-]{10,}\.[\w-]{10,}|[0-9a-f]{32}\.[\w-]{16,})\b/g, 'sk-***');
+// JWT 세 토막은 \b 대신 앞을 고정한다(?<![\w-]) — \b로 두면 'eyJ-eyJ-…'처럼 시작 자리가 많은 글에서 자리마다 끝까지 훑고 '.'을 찾아 되짚어
+// 길이의 제곱으로 느려졌다(10만 반복 8초 넘게 — 정규식 서비스 거부 검토 2026-10-09). 다른 대안은 끝 \b가 바로 성립해 한 번 훑기로 끝난다.
+export const maskKeyLike = (s) => String(s).replace(/\b(sk-ant-[\w-]+|sk-[\w-]{16,}|AIza[\w-]{20,}|xai-[\w-]{16,}|[0-9a-f]{32}\.[\w-]{16,})\b|(?<![\w-])eyJ[\w-]{10,}\.[\w-]{10,}\.[\w-]{10,}\b/g, 'sk-***');
 
 /** 격리 홈 자격 파일 시드 — "어느 원본으로 시드했나"를 마커(.argo-seed-<name>)에 해시로 남겨,
     원본이 바뀌면(타 기기 재연결이 동기화로 도착, 호스트 재로그인 등) 파일을 재시드한다.
