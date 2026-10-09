@@ -318,6 +318,7 @@ const DICT = {
   'updates.note.chatImages': ["에이전트가 만든 그림이 대화창과 회의실에 바로 보입니다. 그림을 누르면 크게 보고 저장할 수 있습니다.", "Images an agent makes now appear right in the chat and in meeting rooms. Click an image to view it larger and save it."],
   'updates.note.macFirst': ["서버에도 같은 계정으로 로그인하고 AI를 연결한 뒤 argo service install --standby로 설치하면, 이 컴퓨터가 켜져 있을 때는 이 컴퓨터가, 꺼지면 서버가 메신저와 루틴을 실행합니다.", "Sign in to the same account on a server, connect an AI there, and install with argo service install --standby: Messenger and routines run on this computer while it's on, and on the server when it's off."],
   'updates.note.gpt55Retire': ["GPT-5.5 종료(10월 14일)에 맞춰 Codex 모델 목록에서 뺐습니다. GPT-5.5를 쓰던 에이전트는 GPT-5.6 Sol로 실행하고, 강도를 비워 뒀다면 예전과 같은 medium으로 실행합니다.", "With GPT-5.5 retiring on October 14, it has been removed from the Codex model list. Agents that used GPT-5.5 now run on GPT-5.6 Sol, at medium effort as before if the effort was left empty."],
+  'updates.note.assistantOnce': ["비서가 앱을 다시 켜거나 다른 기기가 실행을 맡아도 이미 보낸 일정 알림을 다시 보내지 않습니다. 비서 탭에서 오늘 보낸 알림 수와 하루 한도를 볼 수 있습니다.", "The assistant no longer re-sends calendar alerts it already sent when the app restarts or another device takes over. The Assistant tab now shows how many alerts went out today and the daily limit."],
   'topbar.monthCost': ['이번 달 사용액', 'This month'],
   'topbar.monthSubUse': ['이번 달 사용량 — 구독 연결이라 추가 청구가 없습니다', 'This month — on your subscription, no extra charge'],
   'topbar.monthTurns': ['{n}턴', '{n} turns'],
