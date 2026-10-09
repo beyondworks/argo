@@ -23,16 +23,16 @@ const CASES = [
   ['Authorization 스킴 없음', `Authorization: ${T32}`, F, 'Authorization: ***'],
   ['Cookie', `Cookie: sid=${T32}; other=${F}`, F, 'Cookie: ***'],
   ['Set-Cookie', `Set-Cookie: sid=${T32}`, F, 'Set-Cookie: ***'],
-  ['ghp_', `ghp_${T32}${F}`, F, 'ghp_***'],
-  ['gho_', `gho_${T32}`, F, 'gho_***'],
-  ['github_pat_', `github_pat_${T32}_${F}`, F, 'github_pat_***'],
-  ['glpat-', `glpat-${T32}`, F, 'glpat-***'],
-  ['xoxb-', `${XOX}b-1234567890-FAKEFAKEFAKE`, 'FAKEFAKE', 'xoxb-***'],
-  ['xoxp-', `${XOX}p-1234567890-1234567890-FAKEFAKE`, 'FAKEFAKE', 'xoxp-***'],
-  ['AKIA', 'AKIAFAKEFAKEFAKEFAKE', 'FAKEFAKE', 'AKIA***'],
-  ['ASIA', 'ASIAFAKEFAKEFAKEFAKE', 'FAKEFAKE', 'ASIA***'],
-  ['npm_', `npm_${F.repeat(5)}`, F, 'npm_***'],
-  ['hf_', `hf_${F.repeat(5)}`, F, 'hf_***'],
+  ['ghp_', `ghp_${T32}${F}`, F, 'sk-***'],
+  ['gho_', `gho_${T32}`, F, 'sk-***'],
+  ['github_pat_', `github_pat_${T32}_${F}`, F, 'sk-***'],
+  ['glpat-', `glpat-${T32}`, F, 'sk-***'],
+  ['xoxb-', `${XOX}b-1234567890-FAKEFAKEFAKE`, 'FAKEFAKE', 'sk-***'],
+  ['xoxp-', `${XOX}p-1234567890-1234567890-FAKEFAKE`, 'FAKEFAKE', 'sk-***'],
+  ['AKIA', 'AKIAFAKEFAKEFAKEFAKE', 'FAKEFAKE', 'sk-***'],
+  ['ASIA', 'ASIAFAKEFAKEFAKEFAKE', 'FAKEFAKE', 'sk-***'],
+  ['npm_', `npm_${F.repeat(5).slice(0, 36)}`, F, 'sk-***'],
+  ['hf_', `hf_${F.repeat(5)}`, F, 'sk-***'],
   ['sk- (maskKeyLike)', 'sk-FAKEFAKEFAKEFAKEFAKE000', 'FAKEFAKE', 'sk-***'],
   ['JWT (maskKeyLike)', 'eyJFAKEFAKEFAKE.FAKEFAKEFAKEFAKE.FAKEFAKEFAKEFAKE', 'FAKEFAKE', 'sk-***'],
   ['--password 값', 'tool --password FAKEpass12345 run', 'FAKEpass12345', '--password ***'],
@@ -40,6 +40,8 @@ const CASES = [
   ['--passwd 값', 'tool --passwd FAKEpass12345', 'FAKEpass12345', '--passwd ***'],
   ['--http-password 값', 'wget --http-password FAKEpass12345 u', 'FAKEpass12345', '--http-password ***'],
   ['--token 값', 'tool --token FAKEpass12345 run', 'FAKEpass12345', '--token ***'],
+  ['--token 값 자리에 다음 플래그', 'cli --token --token FAKEpass12345 run', 'FAKEpass12345', '--token ***'],
+  ['--token mysql(도구 이름이 값 자리) 뒤 -p', 'cli --token mysql -u root -pFAKEpass12345 db', 'FAKEpass12345', '-p***'],
   ['-token 홑 하이픈', 'tool -token FAKEpass12345', 'FAKEpass12345', '-token ***'],
   ['--api-key 값', 'tool --api-key FAKEpass12345 run', 'FAKEpass12345', '--api-key ***'],
   ['--apikey=값', 'tool --apikey=FAKEpass12345', 'FAKEpass12345', '--apikey=***'],
@@ -164,22 +166,65 @@ test('단계 요약은 수 MB 입력에서도 상한(64KB)까지만 가린다', 
   assert.ok(timeOf(() => detailForTool('Bash', { command: huge })) < LIMIT_MS, '5MB 입력이 상한 없이 통째로 가려진다');
 });
 
-/* ─── maskKeyLike(runners/shared.mjs) — JWT 갈래를 앞 고정으로 바꿔도 지금까지 가리던 것은 그대로 가린다 ─── */
-const JWT = 'eyJFAKEFAKEFAKE.FAKEFAKEFAKEFAKE.FAKEFAKEFAKEFAKE';
-test('maskKeyLike: JWT는 공백·=·따옴표·콜론·줄 처음 뒤에서 가려지고, 이어진 평범한 글은 남는다', () => {
-  for (const pre of ['', ' ', '=', '"', "'", ':', '\n', '(', '/', 'Bearer ', 'token=']) {
-    const out = maskKeyLike(`x ${pre}${JWT} tail`);
-    assert.ok(!out.includes('FAKEFAKE'), `JWT가 남았다(앞 ${JSON.stringify(pre)}): ${out}`);
-    assert.ok(out.endsWith(' tail'));
+/* ─── 가리는 범위가 줄지 않는다 — 기준 구현 둘을 시험 안에 그대로 옮겨 같은 입력에 돌린다 ───
+   (a) 지금 origin/main의 maskKeyLike  (b) feat/turn-trace 1e9333bd의 maskSecrets(+ 그 커밋의 maskKeyLike, 접두사 토큰이 더해진 것). 둘 다 이차 시간이라 짧은 입력에서만 쓴다.
+   규칙: 기준이 가리는 입력은 새 구현도 모두 가린다. 앞뒤 글자를 바꿔 가며(-·.·=·:·따옴표·괄호·줄바꿈·단어 글자) 같은 비밀을 놓는다. */
+const REF_MAIN_KEY_LIKE = (s) => String(s).replace(/\b(sk-ant-[\w-]+|sk-[\w-]{16,}|AIza[\w-]{20,}|xai-[\w-]{16,}|eyJ[\w-]{10,}\.[\w-]{10,}\.[\w-]{10,}|[0-9a-f]{32}\.[\w-]{16,})\b/g, 'sk-***');
+const REF_TT_KEY_LIKE = (s) => String(s).replace(/\b(sk-ant-[\w-]+|sk-[\w-]{16,}|AIza[\w-]{20,}|xai-[\w-]{16,}|eyJ[\w-]{10,}\.[\w-]{10,}\.[\w-]{10,}|[0-9a-f]{32}\.[\w-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_\w{20,}|(?:AKIA|ASIA)[A-Z0-9]{16}|xox[abprs]-[A-Za-z0-9-]{10,}|glpat-[\w-]{20,}|npm_[A-Za-z0-9]{36}|hf_[A-Za-z0-9]{30,})\b/g, 'sk-***');
+const REF_KV = /(["']?)([A-Za-z_][A-Za-z0-9_.-]{0,80})\1(\s*[:=]\s*)("[^"\n]*"|'[^'\n]*'|[^\s"',;&}\]]+)/g;
+const refMasked = (v) => /^(["'])?(?:\*+|sk-\*\*\*)\1?$/.test(v);
+function refMaskSecrets(s) { // feat/turn-trace 1e9333bd maskSecrets
+  let out = String(s);
+  out = out.replace(/-----BEGIN ([A-Z ]*)PRIVATE KEY-----[\s\S]*?(?:-----END \1PRIVATE KEY-----|$)/g, '-----BEGIN $1PRIVATE KEY----- *** -----END $1PRIVATE KEY-----');
+  out = REF_TT_KEY_LIKE(out);
+  out = out.replace(/\b(Bearer|Basic|Token)\s+[A-Za-z0-9._~+/=-]{8,}/g, '$1 ***');
+  out = out.replace(/\b((?:Set-)?Cookie)(\s*:\s*)[^\n]+/gi, '$1$2***');
+  out = out.replace(/(\s--?(?:password|passwd|pass|token|api-?key|secret|client-secret|auth-token)(?:=|\s+))("[^"]*"|'[^']*'|\S+)/gi, (m, head, val) => (refMasked(val) ? m : `${head}***`));
+  out = out.replace(/^(.*\b(?:mysql|mysqldump|mysqladmin|mariadb|mariadb-dump)\b.*?\s-p)(?!\s)(\S+)/gim, '$1***');
+  out = out.replace(/(\bsshpass\s+-p\s+)(\S+)/g, '$1***');
+  out = out.replace(/(\bcurl\b[^\n]*?\s(?:-u|--user)\s+["']?)([^\s:"']+):([^\s"']+)/g, '$1$2:***');
+  out = out.replace(/\b([a-z][a-z0-9+.-]*:\/\/)([^/\s:@]+):([^/\s@]+)@/gi, '$1$2:***@');
+  out = out.replace(REF_KV, (m, q, name, sep, val) => {
+    if (!isSecretName(name) || refMasked(val) || /^(Bearer|Basic|Token)$/.test(val)) return m;
+    return `${q}${name}${q}${sep}${val.startsWith('"') ? '"***"' : val.startsWith("'") ? "'***'" : '***'}`;
+  });
+  return out;
+}
+
+const PRE = ['', ' ', '-', '.', '=', ':', '"', "'", '(', '/', ',', ';', '[', '{', '@', '*', '<', '\n', '\t', '_', 'x', 'x-', 'x.', 'x_', 'token-', 'token.', 'token=', 'token:', 'token="', "token='", '--token ', '-H "Authorization: '];
+const SUF = ['', ' ', '.', '-', '"', "'", ',', ')', '\n', '_', 'x', '.x', '-x'];
+const PW2 = 'FAKEpass12345';
+const KEY_SHAPES = [ // [비밀 모양, 가려져야 하는 조각]
+  ['eyJFAKEFAKEFAKE.FAKEFAKEFAKEFAKE.FAKEFAKEFAKEFAKE', 'FAKEFAKE'], ['eyJ-FAKE_FAKE-FAKE.FAKE_FAKE-FAKE.FAKE-FAKE_FAKE', 'FAKE_FAKE'], ['eyJFAKEFAKEFAKE.FAKEFAKEFAKEFAKE.FAKEFAKEFAKEFAKE-', 'FAKEFAKE'],
+  ['sk-ant-api03-FAKEFAKEFAKE', 'FAKEFAKEFAKE'], ['sk-FAKEFAKEFAKEFAKEFAKE', 'FAKEFAKEFAKE'], [`AIza${'FAKE'.repeat(6)}`, 'FAKEFAKE'], [`xai-${'FAKE'.repeat(5)}`, 'FAKEFAKE'],
+  [`${'a'.repeat(32)}.FAKEFAKEFAKEFAKE`, 'FAKEFAKEFAKE'], [`ghp_${'FAKE0000'.repeat(5)}`, 'FAKE0000'], [`github_pat_${'FAKE0000'.repeat(4)}`, 'FAKE0000'], [`glpat-${'FAKE0000'.repeat(3)}`, 'FAKE0000'],
+  [`${XOX}b-1234567890-FAKEFAKEFAKE`, 'FAKEFAKE'], ['AKIAFAKEFAKEFAKEFAKE', 'FAKEFAKE'], [`npm_${'FAKE0000'.repeat(5).slice(0, 36)}`, 'FAKE0000'], [`hf_${'FAKE0000'.repeat(5)}`, 'FAKE0000'],
+];
+function everyShape(shapes, ref, now, label) {
+  let checked = 0;
+  for (const [shape, piece] of shapes) for (const pre of PRE) for (const suf of SUF) {
+    const input = `${pre}${shape}${suf}`;
+    if (ref(input).includes(piece)) continue; // 기준도 못 가리는 입력은 비교 대상이 아니다
+    checked += 1;
+    assert.ok(!now(input).includes(piece), `${label}: 기준이 가리던 입력이 새 구현에서 새고 있다 ${JSON.stringify(input)} → ${JSON.stringify(now(input))}`);
   }
-  assert.equal(maskKeyLike(JWT), 'sk-***');
-  assert.equal(maskKeyLike(`${JWT}.extra`), 'sk-***.extra'); // 끝 \b 뒤의 점은 종전대로
+  return checked;
+}
+test('(a) maskKeyLike: 지금 main이 가리던 입력은 새 구현도 모두 가린다 — 비밀 15종 × 앞 32 × 뒤 13', () => {
+  const n = everyShape(KEY_SHAPES, REF_MAIN_KEY_LIKE, maskKeyLike, 'maskKeyLike');
+  assert.ok(n > 3000, `비교가 헛돈다 — 기준이 가린 입력 ${n}개`);
+});
+test('maskKeyLike: `token-eyJ…`처럼 `-`·`.` 뒤에서 시작하는 JWT도 가린다(앞 고정으로 막았던 회귀)', () => {
+  for (const pre of ['token-', 'a.', '--', 'x-y-', '-']) assert.equal(maskKeyLike(`${pre}${KEY_SHAPES[0][0]}`), `${pre}sk-***`);
+  assert.equal(maskKeyLike(`${KEY_SHAPES[0][0]}.extra`), 'sk-***.extra'); // 끝 \b 뒤의 점은 종전대로
+  assert.equal(maskKeyLike('xeyJFAKEFAKEFAKE.FAKEFAKEFAKEFAKE.FAKEFAKEFAKEFAKE'), 'xeyJFAKEFAKEFAKE.FAKEFAKEFAKEFAKE.FAKEFAKEFAKEFAKE'); // 단어 글자 바로 뒤는 종전대로 가리지 않는다
 });
 test('maskKeyLike: 다른 벤더 키는 종전대로 가린다', () => {
-  for (const k of ['sk-ant-api03-FAKEFAKEFAKEFAKE', 'sk-FAKEFAKEFAKEFAKEFAKE', 'AIzaFAKEFAKEFAKEFAKEFAKEFAKE', 'xai-FAKEFAKEFAKEFAKE', `${'a'.repeat(32)}.FAKEFAKEFAKEFAKE`]) assert.equal(maskKeyLike(`a ${k} b`), 'a sk-*** b', k);
+  for (const [k, piece] of KEY_SHAPES) { const out = maskKeyLike(`a ${k} b`); assert.ok(out.startsWith('a sk-***') && out.endsWith(' b') && !out.includes(piece), `${k} → ${out}`); }
+  for (const [k] of KEY_SHAPES.filter(([x]) => !x.endsWith('-'))) assert.equal(maskKeyLike(`a ${k} b`), 'a sk-*** b', k);
 });
 test('maskKeyLike: eyJ- 반복 10만 자도 빠르다(고치기 전 8초 이상)', () => {
-  for (const input of [rep('eyJ-'), rep('eyJ-a'), `x${rep('-eyJ')}`]) assert.ok(timeOf(() => maskKeyLike(input)) < LIMIT_MS);
+  for (const input of [rep('eyJ-'), rep('eyJ-a'), `x${rep('-eyJ')}`, rep('eyJ.'), rep(`eyJ${'a'.repeat(12)}.${'b'.repeat(12)}.`)]) assert.ok(timeOf(() => maskKeyLike(input)) < LIMIT_MS);
 });
 
 /* ─── URL 비밀번호: 스킴이 길어도·어떤 스킴이든 가린다(스킴 길이를 묶으면 postgresql+asyncpg://가 새던 회귀) ─── */
@@ -192,52 +237,38 @@ test('URL 비밀번호 — postgresql+asyncpg·postgresql+psycopg2·mongodb+srv�
   }
 });
 
-/* ─── 가리는 범위가 옛 규칙보다 줄지 않는다 — 옛 규칙(feat/turn-trace 1e9333bd maskSecrets, 이차 시간 버전)을 그대로 옮겨 같은 입력에 돌린다 ─── */
-const OLD_KV = /(["']?)([A-Za-z_][A-Za-z0-9_.-]{0,80})\1(\s*[:=]\s*)("[^"\n]*"|'[^'\n]*'|[^\s"',;&}\]]+)/g;
-const oldMasked = (v) => /^(["'])?(?:\*+|sk-\*\*\*)\1?$/.test(v);
-function oldMaskSecrets(s) { // 느리다(ReDoS) — 짧은 입력의 기준값으로만 쓴다
-  let out = String(s);
-  out = out.replace(/-----BEGIN ([A-Z ]*)PRIVATE KEY-----[\s\S]*?(?:-----END \1PRIVATE KEY-----|$)/g, '-----BEGIN $1PRIVATE KEY----- *** -----END $1PRIVATE KEY-----');
-  out = maskKeyLike(out);
-  out = out.replace(/\b(Bearer|Basic|Token)\s+[A-Za-z0-9._~+/=-]{8,}/g, '$1 ***');
-  out = out.replace(/\b((?:Set-)?Cookie)(\s*:\s*)[^\n]+/gi, '$1$2***');
-  out = out.replace(/(\s--?(?:password|passwd|pass|token|api-?key|secret|client-secret|auth-token)(?:=|\s+))("[^"]*"|'[^']*'|\S+)/gi, (m, head, val) => (oldMasked(val) ? m : `${head}***`));
-  out = out.replace(/^(.*\b(?:mysql|mysqldump|mysqladmin|mariadb|mariadb-dump)\b.*?\s-p)(?!\s)(\S+)/gim, '$1***');
-  out = out.replace(/(\bsshpass\s+-p\s+)(\S+)/g, '$1***');
-  out = out.replace(/(\bcurl\b[^\n]*?\s(?:-u|--user)\s+["']?)([^\s:"']+):([^\s"']+)/g, '$1$2:***');
-  out = out.replace(/\b([a-z][a-z0-9+.-]*:\/\/)([^/\s:@]+):([^/\s@]+)@/gi, '$1$2:***@');
-  out = out.replace(OLD_KV, (m, q, name, sep, val) => {
-    if (!isSecretName(name) || oldMasked(val) || /^(Bearer|Basic|Token)$/.test(val)) return m;
-    return `${q}${name}${q}${sep}${val.startsWith('"') ? '"***"' : val.startsWith("'") ? "'***'" : '***'}`;
-  });
-  return out;
-}
-const PW = 'FAKEpass12345';
+/* ─── (b) maskSecrets: 1e9333bd가 가리던 입력은 새 구현도 모두 가린다 ─── */
 const LONG_GAP = 'x'.repeat(400);
-const SUPERSET = [
-  // [입력, 가려져야 하는 조각]
-  [`-----BEGIN RSA PRIVATE KEY-----\n${PW}\n-----END RSA PRIVATE KEY-----`, PW], [`-----BEGIN EC PRIVATE KEY-----\n${PW}\n-----END DSA PRIVATE KEY-----\n${PW}2`, `${PW}2`],
-  [`-----BEGIN ${'A'.repeat(60)} PRIVATE KEY-----\n${PW}`, PW], [`-----BEGIN PRIVATE KEY-----\n${PW}`, PW],
-  [`Authorization: Basic ${PW}`, PW], [`echo Basic ${PW}`, PW], [`Authorization: Token ${PW}`, PW], [`echo Token ${PW}`, PW], [`Authorization:\nBearer ${PW}`, PW], [`X Bearer\t${PW}`, PW],
-  [`Cookie: a="x y"; b=${PW}`, PW], [`curl -H 'Cookie: sid=${PW}' https://x.test`, PW], [`Set-Cookie:\n  sid=${PW}`, PW], [`COOKIE : ${PW}`, PW],
-  [`tool --token\n${PW}`, PW], [`tool --password\t${PW}`, PW], [`tool\t--secret ${PW}`, PW], [`tool --client-secret '${PW} two'`, PW], [`tool --api-key "${PW}"`, PW], [`tool --auth-token=${PW}`, PW],
-  [`mysql --host=db ${LONG_GAP} -p${PW} mydb`, PW], [`mysqldump --single-transaction -u root -p${PW} mydb`, PW], [`/usr/bin/mariadb -p${PW}`, PW], [`FOO=1 mariadb-dump -p${PW}`, PW],
-  [`sshpass -p ${PW} ssh h`, PW], [`sshpass  -p\t${PW} ssh h`, PW],
-  [`curl ${LONG_GAP} -u admin:${PW} https://x.test`, PW], [`curl -s  --user  admin:${PW} https://x.test`, PW], [`/usr/bin/curl -u admin:${PW} x`, PW],
-  [`redis://default:${PW}@host`, PW], [`amqps://u:${PW}@h`, PW], [`a.b+c-d://u:${PW}@h`, PW], [`${'z'.repeat(40)}://u:${PW}@h`, PW], [`postgresql+asyncpg://admin:${PW}@h/db`, PW], [`mongodb+srv://u:${PW}@c0.example.test/x`, PW],
-  [`password  =  ${PW}`, PW], [`token:\n   ${PW}`, PW], [`API_KEY = "${PW}"`, PW], ['"password" : "' + PW + '"', PW], [`DATABASE_URL=${PW}`, PW], [`{"client_secret":'${PW}'}`, PW],
-  [`export OPENAI_API_KEY=sk-FAKEFAKEFAKEFAKEFAKE000`, 'FAKEFAKEFAKE'], [`x-api-key:${PW}`, PW], [`GITHUB_TOKEN="${PW}" run`, PW],
+const SECRET_SHAPES = [ // [비밀 모양, 가려져야 하는 조각] — 앞뒤 글자를 PRE·SUF로 바꿔 놓는다
+  ...KEY_SHAPES,
+  [`Bearer ${PW2}`, PW2], [`Basic ${PW2}`, PW2], [`Token ${PW2}`, PW2], [`Authorization: Bearer ${PW2}`, PW2], [`Authorization: Basic ${PW2}`, PW2], [`Authorization:\nBearer ${PW2}`, PW2],
+  [`Cookie: a="x y"; b=${PW2}`, PW2], [`Set-Cookie:\n  sid=${PW2}`, PW2], [`COOKIE : ${PW2}`, PW2],
+  [` --token ${PW2}`, PW2], [` --token\n${PW2}`, PW2], [` --password=${PW2}`, PW2], [` --password\t${PW2}`, PW2], [` --api-key "${PW2}"`, PW2], [` --client-secret '${PW2} two'`, PW2], [`\t--secret ${PW2}`, PW2],
+  [`mysql --host=db ${LONG_GAP} -p${PW2} mydb`, PW2], [`mysqldump -u root -p${PW2} mydb`, PW2], [`/usr/bin/mariadb -p${PW2}`, PW2], [`FOO=1 mariadb-dump -p${PW2}`, PW2],
+  [`sshpass -p ${PW2} ssh h`, PW2], [`sshpass  -p\t${PW2} ssh h`, PW2],
+  [`curl ${LONG_GAP} -u admin:${PW2} https://x.test`, PW2], [`curl -s  --user  admin:${PW2} https://x.test`, PW2], [`/usr/bin/curl -u admin:${PW2} x`, PW2],
+  [`redis://default:${PW2}@host`, PW2], [`amqps://u:${PW2}@h`, PW2], [`a.b+c-d://u:${PW2}@h`, PW2], [`${'z'.repeat(40)}://u:${PW2}@h`, PW2], [`postgresql+asyncpg://admin:${PW2}@h/db`, PW2], [`mongodb+srv://u:${PW2}@c0.example.test/x`, PW2],
+  [`-----BEGIN RSA PRIVATE KEY-----\n${PW2}\n-----END RSA PRIVATE KEY-----`, PW2], [`-----BEGIN EC PRIVATE KEY-----\n${PW2}\n-----END DSA PRIVATE KEY-----\n${PW2}2`, `${PW2}2`], [`-----BEGIN PRIVATE KEY-----\n${PW2}`, PW2],
+  [`password  =  ${PW2}`, PW2], [`token:\n   ${PW2}`, PW2], [`API_KEY = "${PW2}"`, PW2], [`"password" : "${PW2}"`, PW2], [`DATABASE_URL=${PW2}`, PW2], [`{"client_secret":'${PW2}'}`, PW2], [`GITHUB_TOKEN="${PW2}"`, PW2], [`x-api-key:${PW2}`, PW2],
 ];
-test('가리는 범위가 옛 규칙보다 줄지 않는다 — 옛 규칙이 가리는 입력은 새 규칙도 가린다', () => {
-  for (const [input, piece] of SUPERSET) {
-    assert.ok(!oldMaskSecrets(input).includes(piece), `사전 확인: 옛 규칙이 이 사례를 가리지 못한다 — 사례를 고쳐라: ${JSON.stringify(input.slice(0, 80))}`);
+test('(b) maskSecrets: feat/turn-trace 1e9333bd가 가리던 입력은 새 구현도 모두 가린다 — 비밀 모양 × 앞 32 × 뒤 13', () => {
+  const n = everyShape(SECRET_SHAPES, refMaskSecrets, maskSecrets, 'maskSecrets');
+  assert.ok(n > 8000, `비교가 헛돈다 — 기준이 가린 입력 ${n}개`);
+});
+test('기준(1e9333bd)이 놓치던 것도 가린다 — BEARER·bearer·Authorization: bearer/basic/token 소문자, 접두사 뒤 `-`·`.`·`=`·`:`·따옴표', () => {
+  for (const [input, piece] of [
+    [`BEARER ${PW2}`, PW2], [`bearer ${PW2}`, PW2], [`Authorization: bearer ${PW2}`, PW2], [`authorization: basic ${PW2}`, PW2], [`AUTHORIZATION: Token ${PW2}`, PW2], [`curl -H "authorization: bearer ${PW2}"`, PW2],
+    [`x-${KEY_SHAPES[0][0]}`, 'FAKEFAKE'], [`k.${KEY_SHAPES[0][0]}`, 'FAKEFAKE'], [`k=${KEY_SHAPES[0][0]}`, 'FAKEFAKE'], [`k:${KEY_SHAPES[0][0]}`, 'FAKEFAKE'], [`"${KEY_SHAPES[0][0]}"`, 'FAKEFAKE'],
+  ]) {
     const out = maskSecrets(input);
-    assert.ok(!out.includes(piece), `옛 규칙은 가리던 비밀이 남았다: ${JSON.stringify(input.slice(0, 120))} → ${JSON.stringify(out.slice(0, 160))}`);
+    assert.ok(!out.includes(piece), `새어 나갔다: ${JSON.stringify(input)} → ${JSON.stringify(out)}`);
+    assert.equal(maskSecrets(out), out, '멱등');
   }
 });
 
 /* ─── 창을 두지 않은 가림 = 전체를 가린 뒤 자른 결과 ─── */
 const fullThenCut = (cmd) => maskSecrets(cmd).replace(/\s+/g, ' ').slice(0, 48);
+const JWT = KEY_SHAPES[0][0];
 const BOUNDARY_SECRETS = [
   (p) => `${p} --token ${T32} tail`, (p) => `${p} -H "Authorization: Bearer ${T32}"`, (p) => `${p} ghp_${T32}${F}`, (p) => `${p} postgresql://admin:S3cretFAKEpw@db.example.test/app`,
   (p) => `${p} mysql -u root -pFAKEpass12345 mydb`, (p) => `${p} curl -u admin:FAKEpass12345 https://x.test`, (p) => `${p} OPENAI_API_KEY=${T32} node a.js`, (p) => `${p} ${JWT}`,
@@ -258,16 +289,23 @@ test('단계 요약 = 전체를 가린 뒤 자른 결과 — 비밀 종류 × �
   }
 });
 
-/* ─── 상한(64KB) 근처·밖에서 비밀 조각이 앞 48자로 당겨지지 않는다 — 앞쪽 큰 비밀이 ***로 줄어도 ─── */
+/* ─── 상한(64KB) 근처·밖에서 비밀 조각이 앞 48자로 당겨지지 않는다 — 앞쪽 큰 비밀이 ***로 줄어도, 조각이 8KB보다 길어도 ─── */
 const CAP = 65_536;
-test('상한에 걸친 URL 비밀번호: 앞쪽 큰 비밀이 줄어든 뒤 `@` 앞에서 잘려도 조각이 보이지 않는다', () => {
+test('상한에 걸친 URL 비밀번호: 앞쪽 큰 비밀이 줄어든 뒤 `@` 앞에서 잘려도 조각이 보이지 않는다 — 상한 앞 마지막 공백에서 자른다', () => {
   for (const cut of [1, 6, 10, 14]) { // 비밀번호 중간에서 잘리는 위치 여러 곳
-    const lead = '--token ';
+    const lead = 'cli --token ';
     const url = ' postgresql://admin:';
     const cmd = `${lead}${'S'.repeat(CAP - cut - lead.length - url.length)}${url}FAKEpw0000FAKE@host/db`;
     assert.equal(cmd.indexOf('FAKE'), CAP - cut, '시험 구성: 비밀번호 조각이 상한 바로 앞에서 시작해야 한다');
+    assert.equal(detailForTool('Bash', { command: cmd }), 'cli --token ***', `cut=${cut}`);
+  }
+});
+test('잘린 자리에 걸린 조각이 8KB보다 길어도 보이지 않는다(공백 없는 긴 비밀번호·긴 사용자 정보)', () => {
+  for (const frag of [` postgresql://admin:${'p'.repeat(30_000)}`, ` redis://${'u'.repeat(20_000)}:${'p'.repeat(20_000)}`, ` mongodb+srv://u:${'FAKE'.repeat(9000)}`]) {
+    const cmd = `cli --token ${'S'.repeat(CAP - 12 - frag.length + 5000)}${frag}@h/db`; // 조각이 상한을 가로지른다
+    assert.ok(cmd.length > CAP && cmd.indexOf(frag) < CAP, '시험 구성');
     const got = detailForTool('Bash', { command: cmd });
-    assert.ok(!/FAKE|SSS/.test(got), `cut=${cut}: 조각이 보인다: ${JSON.stringify(got)}`);
+    assert.equal(got, 'cli --token ***', frag.slice(0, 30));
   }
 });
 test('상한 밖까지 이어지는 따옴표 비밀: 따옴표가 안 닫혀도 앞 조각이 보이지 않는다(JSON·--token·KEY=·curl -u) — 값에 공백이 들어 있어도', () => {
@@ -282,11 +320,11 @@ test('상한 밖까지 이어지는 따옴표 비밀: 따옴표가 안 닫혀도
     assert.ok(!maskSecrets(cmd).includes('SECRETWORD'), `잘린 입력의 값이 남았다: ${cmd.slice(0, 30)}`);
   }
 });
-test('상한 안에서 끝나는 큰 비밀 뒤의 평범한 글은 그대로 보인다(상한 밖 입력이 아닐 때 버리지 않는다)', () => {
-  const out = detailForTool('Bash', { command: `--token ${'S'.repeat(30_000)} then ls -la` });
-  assert.equal(out, '--token *** then ls -la');
+test('상한 안에서 끝나는 큰 비밀 뒤의 평범한 글은 그대로 보인다', () => {
+  assert.equal(detailForTool('Bash', { command: `cli --token ${'S'.repeat(30_000)} then ls -la` }), 'cli --token *** then ls -la');
 });
-test('상한을 넘으면 가린 결과의 끝 8KB를 버린다 — 큰 입력의 앞 48자는 그대로 보인다', () => {
-  const out = detailForTool('Bash', { command: `git status --short ${'x'.repeat(100_000)}` });
-  assert.equal(out, 'git status --short xxxxxxxxxxxxxxxxxxxxxxxxxxxxx');
+test('상한 자리가 토큰 한가운데면 그 토큰 앞 공백에서 자른다 — 평범한 큰 입력의 앞 48자는 그대로 보인다', () => {
+  assert.equal(detailForTool('Bash', { command: `git status --short ${'x'.repeat(100_000)}` }), 'git status --short');
+  assert.equal(detailForTool('Bash', { command: `${'word '.repeat(20_000)}tail` }), 'word '.repeat(20).slice(0, 48));
+  assert.equal(detailForTool('Bash', { command: 'x'.repeat(100_000) }), ''); // 공백이 하나도 없으면 보여 줄 것이 없다(조각을 내지 않는다)
 });

@@ -25,15 +25,19 @@ const base = (p) => String(p ?? '').split('/').pop();
 /* 요약은 **가린 뒤에 자른다** — 상태 파일과 활동 이벤트(events.jsonl: 기기 간 동기화·클라우드 저장소)에 실리는 값이라, 자른 원문을 가리면
    경계에 걸린 토큰의 앞 몇 글자가 남는다(0.1.99 이하: 명령 앞 48자 원문). 원문 **전체**를 가린 뒤 48·120자로 자른다.
    가림은 입력 길이에 선형이지만(secret-mask.mjs) 한 번의 도구 호출이 수 MB일 때를 막으려 64KB를 상한으로 둔다 — 모델 한 번의 출력은 그 안에 든다.
-   상한을 넘은 입력은 가린 결과의 **끝 8KB를 버린다**: 자른 자리에 걸린 비밀은 규칙이 끝까지 못 보고 조각으로 남을 수 있고(예: `://사용자:비밀번호`가
-   `@` 앞에서 잘림), 앞쪽 큰 비밀이 `***`로 줄어들면 그 조각이 앞 48자 안으로 당겨질 수 있다. 끝을 버리면 그 조각은 출력에 닿지 않는다. */
+   상한을 넘는 입력은 **상한 자리 앞의 마지막 공백에서** 자른다: 토큰 한가운데서 자르면 규칙이 끝까지 못 본 비밀이 조각으로 남고(`://사용자:비밀번호`가
+   `@` 앞에서 잘림), 앞쪽 큰 비밀이 `***`로 줄어들면 그 조각이 앞 48자로 당겨진다. 공백에서 자르면 모든 토큰이 통째로 있거나 아예 없다.
+   공백을 넘는 비밀(따옴표 값·PEM)은 끝나지 않은 채 잘려도 입력 끝까지를 값으로 보는 규칙이 가린다(secret-mask.mjs). */
 const DETAIL_MASK_CAP = 65_536;
-const DETAIL_MASK_TAIL_DROP = 8192;
+const WS = /\s/;
 const masked = (v) => {
-  const s = String(v ?? '');
-  if (s.length <= DETAIL_MASK_CAP) return maskSecrets(s);
-  const m = maskSecrets(s.slice(0, DETAIL_MASK_CAP));
-  return m.slice(0, Math.max(0, m.length - DETAIL_MASK_TAIL_DROP));
+  let s = String(v ?? '');
+  if (s.length > DETAIL_MASK_CAP) {
+    let cut = DETAIL_MASK_CAP;
+    while (cut > 0 && !WS.test(s[cut])) cut -= 1;
+    s = s.slice(0, cut);
+  }
+  return maskSecrets(s);
 };
 /** 도구 입력에서 "무엇을" 하는지 한 조각 — 클로드코드의 도구 라벨처럼. 비밀은 가린 값만 돌려준다. */
 export function detailForTool(toolName, input = {}, { display = false } = {}) {

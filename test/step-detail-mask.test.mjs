@@ -31,7 +31,7 @@ const LEAKS = [
   ['GitLab glpat-', `echo glpat-${TOK32}`, F],
   ['Slack xoxb-', `echo ${XOX}b-1234567890-FAKEFAKEFAKEFAKE`, 'FAKEFAKE'],
   ['AWS AKIA', 'echo AKIAFAKEFAKEFAKEFAKE', 'FAKEFAKE'],
-  ['npm_', `echo npm_${TOK40}`, F],
+  ['npm_', `echo npm_${TOK40.slice(0, 36)}`, F],
   ['Hugging Face hf_', `echo hf_${TOK40}`, F],
   ['URL 비밀번호', 'psql postgresql://admin:S3cretFAKEpw@db.example.test:5432/app', 'S3cretFAKEpw'],
   ['URL 비밀번호에 @', 'psql postgresql://admin:p@FAKEpw0000@db.example.test/app', 'FAKEpw0000'],

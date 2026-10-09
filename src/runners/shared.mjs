@@ -144,9 +144,37 @@ export function crashHint(lang = 'ko') {
     chat.mjs SDK 실패 경로와 아래 apiError(외부 CLI 실패 경로)가 공유 — 한쪽만 마스킹하면
     CLI stderr의 키 조각이 동기화되는 이벤트 로그(events.jsonl)에 영속된다(감사 2026-07-20). */
 // 벤더별 키 형태를 각각 문다(패턴 하나로 '시크릿 없음' 선언 금지): sk-·sk-ant-(OpenAI·Anthropic·OpenRouter·Kimi)·AIza(Google)·xai-(Grok BYOK)·JWT 3분절(Grok BYOA 액세스 토큰)·<32hex>.<secret>(GLM). #445 2R N-MEDIUM-3
-// JWT 세 토막은 \b 대신 앞을 고정한다(?<![\w-]) — \b로 두면 'eyJ-eyJ-…'처럼 시작 자리가 많은 글에서 자리마다 끝까지 훑고 '.'을 찾아 되짚어
-// 길이의 제곱으로 느려졌다(10만 반복 8초 넘게 — 정규식 서비스 거부 검토 2026-10-09). 다른 대안은 끝 \b가 바로 성립해 한 번 훑기로 끝난다.
-export const maskKeyLike = (s) => String(s).replace(/\b(sk-ant-[\w-]+|sk-[\w-]{16,}|AIza[\w-]{20,}|xai-[\w-]{16,}|[0-9a-f]{32}\.[\w-]{16,})\b|(?<![\w-])eyJ[\w-]{10,}\.[\w-]{10,}\.[\w-]{10,}\b/g, 'sk-***');
+// 2026-10-09 작업 과정 보이기: 크루 셸·도구 출력이 화면에 실리므로 흔한 개발 자격 모양도 더한다 — GitHub(ghp_·gho_·ghs_·ghu_·ghr_·github_pat_)·AWS 액세스 키 id(AKIA·ASIA)·Slack(xox?-)·GitLab(glpat-)·npm(npm_)·Hugging Face(hf_).
+// JWT 세 토막(eyJ….….…)은 정규식 하나로 두면 'eyJ-eyJ-…'처럼 시작 자리가 많은 글에서 자리마다 끝까지 훑고 '.'을 찾아 되짚어 길이의 제곱으로 느려졌다
+// (10만 반복 8초 넘게 — 작업 과정 ReDoS 검토 2026-10-09). 옛 규칙 \beyJ[\w-]{10,}\.[\w-]{10,}\.[\w-]{10,}\b와 같은 것을 가리되, [\w.-] 덩어리를 한 번 잡고
+// '.'으로 나눠 토막 단위로 본다(maskJwt). 나머지 대안은 끝 \b가 바로 성립해 한 번 훑기로 끝난다.
+const KEY_LIKE_RE = /\b(sk-ant-[\w-]+|sk-[\w-]{16,}|AIza[\w-]{20,}|xai-[\w-]{16,}|[0-9a-f]{32}\.[\w-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_\w{20,}|(?:AKIA|ASIA)[A-Z0-9]{16}|xox[abprs]-[A-Za-z0-9-]{10,}|glpat-[\w-]{20,}|npm_[A-Za-z0-9]{36}|hf_[A-Za-z0-9]{30,})\b/g;
+const isWordCh = (c) => /\w/.test(c);
+/** JWT 가리기(순수, 선형) — [\w.-] 덩어리마다 '.'으로 나눠, 'eyJ'로 시작하는 토막(앞이 덩어리 시작·'-'·'.' = \b 자리) + 10자 이상 토막 + 끝이 단어 글자인 10자 이상 토막이면 가린다. */
+function maskJwt(s) {
+  if (!s.includes('eyJ')) return s;
+  return s.replace(/[\w.-]+/g, (run) => {
+    if (!run.includes('eyJ')) return run;
+    const parts = run.split('.');
+    let out = ''; let k = 0;
+    while (k < parts.length) {
+      const p1 = parts[k];
+      let j = -1;
+      for (let from = 0; (from = p1.indexOf('eyJ', from)) >= 0; from += 1) { if (from === 0 || p1[from - 1] === '-') { j = from; break; } }
+      if (j >= 0 && p1.length - j >= 13 && k + 2 < parts.length && parts[k + 1].length >= 10) {
+        const p3 = parts[k + 2];
+        let end = p3.length; while (end > 0 && !isWordCh(p3[end - 1])) end -= 1; // 끝 \b — 마지막 단어 글자까지
+        if (end >= 10) {
+          out += `${k ? '.' : ''}${p1.slice(0, j)}sk-***${p3.slice(end)}`;
+          k += 3; continue;
+        }
+      }
+      out += `${k ? '.' : ''}${p1}`; k += 1;
+    }
+    return out;
+  });
+}
+export const maskKeyLike = (s) => maskJwt(String(s).replace(KEY_LIKE_RE, 'sk-***'));
 
 /** 격리 홈 자격 파일 시드 — "어느 원본으로 시드했나"를 마커(.argo-seed-<name>)에 해시로 남겨,
     원본이 바뀌면(타 기기 재연결이 동기화로 도착, 호스트 재로그인 등) 파일을 재시드한다.
