@@ -1007,11 +1007,12 @@ const CREW_FETCH_LIMIT = 8; // 크루별 조회의 순간 동시 요청 상한 �
 export const INBOX_BATCH = 100;
 let inboxManyMissing = false; // 서버에 일괄 함수가 없음(PGRST202·42883) — 이 프로세스 동안 에이전트별 옛 경로(옛 서버·운영 적용 전). 다시 확인하려면 프로세스를 다시 띄운다
 export const _resetInboxManyForTest = () => { inboxManyMissing = false; };
-/** drain의 받은 글 — 크루 순서대로 [{ msgs } | { inboxError }]. 새 서버는 묶음(INBOX_BATCH명)마다 한 번(crewInboxMany), 함수가 없으면 에이전트별(crewInbox, 동시 8).
+/** drain의 받은 글 — 크루 순서대로 [{ msgs } | { inboxError }]. 새 서버는 묶음(INBOX_BATCH명)마다 한 번(crewInboxMany), 함수가 없거나 에이전트가 하나면 에이전트별(crewInbox, 동시 8).
     실패 의미는 종전과 같다: 실패한 에이전트는 inboxError — drain이 그 에이전트 차례에 던진다(앞 에이전트는 처리, 커서 유지). 일괄 요청이 실패하면 그 묶음 에이전트 모두. */
 async function crewInboxes(db, wsId, crews) {
   const one = async (crew) => { try { return { msgs: db.crewInbox ? await db.crewInbox(wsId, crew.id, crew.cursor_msg_id ?? 0) : await db.messagesAfter(crew.org_id, crew.cursor_msg_id ?? 0) }; } catch (inboxError) { return { inboxError }; } };
-  if (typeof db.crewInboxMany !== 'function' || inboxManyMissing) return mapLimited(crews, CREW_FETCH_LIMIT, one);
+  // 에이전트가 하나면 묶을 것이 없다 — 요청 수는 같고, 새 글이 있는 틱은 옛 함수가 더 가볍다(임시 PG 측정: 버퍼 386 vs 688, 묶음은 받은 글을 기본키로 다시 읽어 JSON을 만든다)
+  if (crews.length < 2 || typeof db.crewInboxMany !== 'function' || inboxManyMissing) return mapLimited(crews, CREW_FETCH_LIMIT, one);
   const out = new Array(crews.length);
   for (let i = 0; i < crews.length; i += INBOX_BATCH) {
     const part = crews.slice(i, i + INBOX_BATCH);

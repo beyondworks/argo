@@ -261,3 +261,15 @@ test('일괄 함수가 Map을 돌려주지 않는 옛 어댑터·테스트 더�
   await run(mk());
   assert.equal(many, 2, '다음 틱에도 일괄을 다시 물어본다(옛 서버로 기억하지 않음)');
 });
+
+test('에이전트가 하나면 묶지 않고 옛 함수 한 번 — 요청 수는 같고 새 글 틱은 옛 함수가 더 가볍다(측정), 결과는 같다', async () => {
+  const f = fixture(1, ({ PUB }) => [userMsg(1001, PUB, { mentions: [to(0)] })]);
+  const one = { ...f, crews: f.crews.filter((c) => c.org_id != null), personalInRooms: new Set() };
+  const srv = fakeServer({ serverInbox: f.serverInbox });
+  const db = drainDb(srv, one); const { enq } = await run(db);
+  assert.equal(srv.manyCalls().length, 0); assert.equal(srv.inboxCalls().length, 1);
+  assert.deepEqual(jobs(enq), [[1001, 'c0']]); assert.deepEqual(cursors(db), [[crewId(0), 1001]]);
+  const two = fakeServer({ serverInbox: f.serverInbox });
+  await run(drainDb(two, f)); // 개인 에이전트 하나가 더 있으면(둘) 묶는다
+  assert.equal(two.manyCalls().length, 1); assert.equal(two.inboxCalls().length, 0);
+});
