@@ -31,7 +31,8 @@ const header = (msg, name) => (msg.payload?.headers ?? []).find((h) => h.name.to
  *  휴지통·스팸은 'trash' — 화면은 그 메일을 목록에서 뺀다. 초안 > 받은편지함 > 보낸편지함 > 보관함 순.
  *  나에게 보낸 메일(INBOX+SENT)은 'inbox' — 보낸편지함 보기는 이 값이 아니라 labels의 SENT로 판정한다(pages/mail-model.js inView) */
 export function folderOf(labels = []) {
-  if (labels.includes('TRASH') || labels.includes('SPAM')) return 'trash';
+  if (labels.includes('TRASH')) return 'trash';
+  if (labels.includes('SPAM')) return 'spam'; // 스팸은 휴지통 메일함에 섞지 않는다(10/9) — 화면은 어디에도 보이지 않는다
   if (labels.includes('DRAFT')) return 'drafts';
   if (labels.includes('INBOX')) return 'inbox';
   if (labels.includes('SENT')) return 'sent';
@@ -165,7 +166,7 @@ export function buildMime({ from, to, cc, subject, text, html, inReplyTo, refere
 export const FOLDER_QUERY = {
   inbox: { labelIds: 'INBOX' }, sent: { labelIds: 'SENT' }, drafts: { labelIds: 'DRAFT' },
   archive: { q: '-in:inbox -in:sent -in:drafts -in:spam -in:trash -in:chats' },
-  unread: { q: 'in:inbox is:unread' }, starred: { q: 'is:starred' },
+  unread: { q: 'in:inbox is:unread' }, starred: { q: 'is:starred' }, trash: { labelIds: 'TRASH' },
 };
 /** 바꿀 수 있는 라벨 — 읽음·보관·별표(15차) */
 export const MODIFY_LABELS = ['UNREAD', 'INBOX', 'STARRED'];

@@ -6,7 +6,7 @@ import { MAIL_DICT } from './mail-i18n.js';
 /** 사전 글 하나(언어를 받아서) */
 export const L = (key, lang = 'ko', vars) => { let s = MAIL_DICT[key]?.[lang === 'en' ? 1 : 0] ?? key; if (vars) for (const [k, v] of Object.entries(vars)) s = s.replaceAll(`{${k}}`, v); return s; };
 
-export const VIEWS = ['inbox', 'unread', 'starred', 'drafts', 'sent', 'archive']; // 왼쪽 메일함 순서 — 안 읽음·별표는 보기(메일은 제자리 메일함을 그대로 갖는다)
+export const VIEWS = ['inbox', 'unread', 'starred', 'drafts', 'sent', 'archive', 'trash']; // 왼쪽 메일함 순서 — 안 읽음·별표는 보기(메일은 제자리 메일함을 그대로 갖는다)
 export const ATTACH_CAP = 3 * 1024 * 1024;   // 메일에 바로 싣는 첨부 합계(서버 함수 요청 한도 4.5MB 안 — 유건 결정 5: 한도 유지, 넘는 파일은 문서함 링크)
 export const SYNC_MAIL_MS = 30_000;          // 메일 화면이 보이는 동안 바뀐 것 받기 간격
 export const SYNC_WATCH_MS = 60_000;         // 다른 화면에서 새 메일 알림을 켰을 때(오피스가 보이는 동안만)
@@ -15,7 +15,8 @@ export const NEW_WINDOW_MS = 30 * 60_000;    // 알림은 30분 안에 온 메�
 
 /** 보기에 드는가 — 휴지통·스팸은 어디에도 없다. 안 읽음 = 받은편지함의 안 읽은 메일, 별표 = 별표한 메일(초안 제외), 보낸편지함 = SENT 라벨(라벨을 모르는 예시 메일은 메일함) */
 export function inView(m, view, pick = 'all') {
-  if (!m || m.folder === 'trash' || (pick !== 'all' && m.account !== pick)) return false;
+  if (!m || m.folder === 'spam' || (pick !== 'all' && m.account !== pick)) return false;
+  if (view === 'trash' || m.folder === 'trash') return view === 'trash' && m.folder === 'trash'; // 휴지통 메일은 휴지통 메일함에만(10/9)
   if (view === 'unread') return m.folder === 'inbox' && !!m.unread;
   if (view === 'starred') return !!m.starred && m.folder !== 'drafts';
   if (view === 'sent' && m.labels) return m.labels.includes('SENT'); // 보낸편지함은 SENT 라벨로 — 나에게 보낸 메일(INBOX+SENT)은 받은편지함에도 같이 보인다(Gmail과 같다, 분리 검수 LOW-6)
@@ -27,6 +28,8 @@ export const byDate = (a, b) => Date.parse(b.at) - Date.parse(a.at);
 /** 보내는 중인 메일은 이 기기 값(읽음·메일함·별표)을 지킨다 — 서버가 아직 모르는 변경이 화면에서 되돌아가 보이지 않게 */
 /** 이 기기에서 휴지통으로 보냈고 전송도 끝난 메일 — 캐시에서 치운다(검색에 다시 나오지 않게, 검수 #899). 보내는 중이면 되돌리기를 위해 남긴다 */
 const trashed = (m, busy) => m.folder === 'trash' && !busy(m.id);
+/** 받은 메일 중 넣을 것 — 스팸은 넣지 않고, 휴지통 메일은 휴지통 메일함을 볼 때만(10/9) */
+const keep = (m, trash) => m.folder !== 'spam' && (m.folder !== 'trash' || trash);
 const keepLocal = (m, old) => ({ ...m, unread: old.unread, folder: old.folder, starred: old.starred ?? m.starred });
 
 /** 목록 한 쪽을 받은 뒤 합치기.
@@ -41,15 +44,15 @@ export function mergeList(cache, fresh, { view = null, done = new Set(), busy = 
   for (const m of got) oldest[m.account] = Math.min(oldest[m.account] ?? Infinity, Date.parse(m.at));
   const stale = (m) => !append && view && done.has(m.account) && inView(m, view) && !busy(m.id)
     && (!hasMore[m.account] || Date.parse(m.at) >= (oldest[m.account] ?? -Infinity));
-  return [...cache.filter((m) => !ids.has(m.id) && !stale(m) && !trashed(m, busy)), ...got.filter((m) => m.folder !== 'trash')];
+  return [...cache.filter((m) => !ids.has(m.id) && !stale(m) && !trashed(m, busy)), ...got.filter((m) => keep(m, view === 'trash'))];
 }
 
 /** 바뀐 것만 받기(계정 하나)의 결과 반영 — 바뀐 메일은 새 값(휴지통으로 간 것은 뺀다), 지워진 메일(gone: 오피스 id)은 뺀다 */
-export function applySync(cache, changed = [], gone = new Set(), busy = () => false) {
+export function applySync(cache, changed = [], gone = new Set(), busy = () => false, trash = false) {
   const local = new Map(cache.map((m) => [m.id, m]));
   const next = changed.map((m) => { const old = local.get(m.id); return old ? (busy(m.id) ? keepLocal({ ...old, ...m }, old) : { ...old, ...m }) : m; });
   const ids = new Set(next.map((m) => m.id));
-  return [...cache.filter((m) => !ids.has(m.id) && !gone.has(m.id) && !trashed(m, busy)), ...next.filter((m) => m.folder !== 'trash')];
+  return [...cache.filter((m) => !ids.has(m.id) && !gone.has(m.id) && (trash || !trashed(m, busy))), ...next.filter((m) => keep(m, trash))];
 }
 /** 새로 온 안 읽은 받은편지함 메일(알림 대상) — 이 기기가 처음 보는 메일 중 30분 안에 온 것 */
 export function newArrivals(cache, changed = [], now = Date.now()) {

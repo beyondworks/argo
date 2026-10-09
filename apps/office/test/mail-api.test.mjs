@@ -225,3 +225,11 @@ test('휴지통: on이면 messages/{id}/trash, 아니면 untrash — 영구 삭�
   }
   assert.deepEqual(calls, [], '잘못된 입력은 Gmail을 부르지 않는다');
 });
+
+// 이유(10/9 휴지통 메일함): 휴지통 목록은 TRASH 라벨로 받는다 — 받은 메일은 'trash'.
+test('목록: 휴지통 메일함 = labelIds TRASH', async () => {
+  gmail = (c) => (c.path === '/messages' ? ok({ messages: [{ id: 'm1' }] }) : c.q.get('format') === 'metadata' ? ok(meta('m1', ['TRASH', 'INBOX'])) : new Response('{}', { status: 404 }));
+  const r = await post('list', { account: 'acc', folder: 'trash' });
+  assert.equal(calls.find((c) => c.path === '/messages').q.get('labelIds'), 'TRASH');
+  assert.equal(r.body.items[0].folder, 'trash');
+});
