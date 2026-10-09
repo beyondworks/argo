@@ -26,3 +26,16 @@ export function channelManage({ channel, uid, isAdmin = false, joined = false })
  * 참여 전 공개 채널(previewChannels)은 넘기지 않는다. 조직 관리자는 이 집합이 아니라 isAdmin으로 따로 취급한다. 1:1은 채널이 아니다.
  */
 export const hostChannelIds = ({ channels, uid }) => new Set(!uid ? [] : (channels ?? []).filter((c) => c.kind !== 'dm' && (c.created_by === uid || (c.admin_user_ids ?? []).includes(uid))).map((c) => c.id));
+
+/**
+ * 폰 설정 > 에이전트 기억 카드의 채널 한 줄 — 켜고 끌 수 있는가, 못 하면 줄 옆에 보일 이유(i18n 키).
+ * hostIds는 위 hostChannelIds(참여 중인 채널 중 내가 만들었거나 관리자인 채널). 서버 갱신 정책(msgr_can_manage_channel)과 같은 규칙이다.
+ * 만들었거나 관리자인데 hostIds에 없으면 참여하지 않은 채널이다 — 채널 시트와 같게 '참여하면 바꿀 수 있음'으로 알려 준다(조직 정책 고정이 먼저).
+ * @returns {{ can: boolean, hintKey: string|null }}
+ */
+export function memoryToggle({ channel, uid, isAdmin = false, hostIds, locked = false }) {
+  if (locked) return { can: false, hintKey: 'phone.set.chMemory.lockedShort' };
+  if (isAdmin || hostIds?.has(channel?.id)) return { can: true, hintKey: null };
+  const { needsJoin } = channelManage({ channel, uid, isAdmin: false, joined: false });
+  return { can: false, hintKey: needsJoin ? 'phone.set.chMemory.needJoin' : 'phone.set.chMemory.hostOnly' };
+}

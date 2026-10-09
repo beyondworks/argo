@@ -35,7 +35,7 @@ test('조직 프로필 — 역할 표시와 본인 부서·직급(남의 것은 
   assert.match(card, /<MemberProfile org=\{org\} m=\{\{ user_id: uid \}\} uid=\{uid\}/);
   assert.match(src, /\{isAdmin && <div className="ph-setgroup">\{row\('admin', ic\('gear'\), t\('phone\.org\.settings'\)/);
   const mem = src.slice(src.indexOf('function MemoryChannelsCard('), src.indexOf("/* ─── 폰 조직 설정 '기록'"));
-  assert.match(mem, /const can = !locked && \(isAdmin \|\| hostIds\.has\(c\.id\)\);/, '조직 관리자나 참여 중인 채널의 생성자·채널 관리자만(hostChannels — channel-host.mjs), 정책 고정이면 잠금');
+  assert.match(mem, /const \{ can, hintKey \} = memoryToggle\(\{ channel: c, uid, isAdmin, hostIds, locked \}\);/, '조직 관리자나 참여 중인 채널의 생성자·채널 관리자만(hostChannels — channel-host.mjs), 정책 고정이면 잠금, 막힌 이유는 hintKey');
 });
 
 test('2차 피드백 — 이름(에이전트 연결·서버 연결), 결재 알림 줄 없음·알림 하나, 기억 정렬은 기억 탭으로', () => {
