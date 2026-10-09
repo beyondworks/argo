@@ -197,3 +197,28 @@ test('줄에서 기다리는 사이 계정을 바꾸면 그 쓰기는 나가지 
   await a;
   globalThis.__ME.id = 'u1';
 });
+
+// 이유(#906 재확인 MEDIUM): AbortSignal.timeout이 없는 오래된 웹뷰에서 할 일 쓰기가 전부 실패했다 — 없으면 제한 없이 보낸다
+test('AbortSignal.timeout이 없어도 쓰기는 나간다', async () => {
+  const keep = AbortSignal.timeout;
+  try {
+    AbortSignal.timeout = undefined;
+    const s = await setup();
+    const w = s.data.runWrites(V.writesOf(C.planCell(s.item(), 'priority', 1, ctx)));
+    await settle();
+    assert.equal(s.pending.length, 1, '쓰기가 서버로 나갔다');
+    s.pending[0].ok();
+    assert.equal((await w).failed, null);
+  } finally { AbortSignal.timeout = keep; }
+});
+
+// 이유(#906 재확인 LOW 2): 응답을 못 받은 실패(시간 초과·연결 끊김)는 서버엔 들어갔을 수 있다 — 되돌린 화면이 서버와 어긋난 채 남지 않게 다시 읽는다
+test('응답 없는 실패 뒤에는 그 공간을 다시 읽어 서버 값을 보인다', async () => {
+  const s = await setup();
+  const w = s.data.runWrites(V.writesOf(C.planCell(s.item(), 'priority', 1, ctx)));
+  await settle();
+  const p = s.pending[0]; s.db[0].priority = 1; p.fail('TimeoutError: signal timed out');
+  assert.equal((await w).failed, 'task.error.request');
+  await settle();
+  assert.equal(s.shown().priority, 1, '서버에 들어간 값');
+});

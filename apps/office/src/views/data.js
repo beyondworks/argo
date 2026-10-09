@@ -160,7 +160,7 @@ async function writeAll(writes) {
       ok++;
     } catch (e) {
       failed ??= e.message;
-      if (w.type === 'task' && e.message === 'task.error.conflict' && !sample()) stores.add(w.space); // 그사이 남이 바꿨다(예: 보류 사유만 고치는데 보류가 풀림) — 다시 읽어 지금 값을 보인다
+      if (w.type === 'task' && (e.message === 'task.error.conflict' || e.message === 'task.error.request') && !sample()) stores.add(w.space); // 그사이 남이 바꿨거나(예: 보류 사유만 고치는데 보류가 풀림), 응답을 못 받았다(시간 초과·연결 끊김 — 서버엔 들어갔을 수 있다, 재확인 #906) — 다시 읽어 지금 값을 보인다
     }
   }
   if (sample()) emit();

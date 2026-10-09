@@ -75,8 +75,8 @@ const edit = (space, id, patch) => { const rows = mine(space)?.rows; if (rows) s
 export const taskAction = (space, action, data, patch, again = true) => trackWrite(async () => {
   const id = data.id, row = patch && mine(space)?.rows?.find((r) => r.id === id), m = row && { patch, prev: {} };
   if (m) { for (const k in patch) m.prev[k] = row[k]; marks.set(id, [...(marks.get(id) ?? []), m]); edit(space, id, patch); }
-  // 끝나지 않는 요청 하나가 그 할 일의 뒤 쓰기를 영원히 막지 않게 30초 제한(#906 재검수 LOW 2) — 줄에서 차례가 왔을 때부터 잰다
-  const owner = ME.id, run = (lanes.get(id) ?? Promise.resolve()).then(() => rpc('office_task_write', { p_org: orgOf(space), p_action: action, p_data: data }, { owner, signal: AbortSignal.timeout(30e3) }));
+  // 끝나지 않는 요청 하나가 그 할 일의 뒤 쓰기를 영원히 막지 않게 30초 제한(#906 재검수 LOW 2) — 줄에서 차례가 왔을 때부터 잰다. AbortSignal.timeout이 없는 오래된 웹뷰(Safari 16 전)는 제한 없이(없다고 쓰기를 막지 않는다)
+  const owner = ME.id, run = (lanes.get(id) ?? Promise.resolve()).then(() => rpc('office_task_write', { p_org: orgOf(space), p_action: action, p_data: data }, { owner, signal: AbortSignal.timeout?.(30e3) }));
   const tail = run.catch(() => {});
   lanes.set(id, tail);
   const end = () => { const left = marks.get(id)?.filter((x) => x !== m) ?? []; if (left.length) marks.set(id, left); else marks.delete(id); if (lanes.get(id) === tail) lanes.delete(id); };
