@@ -6,6 +6,11 @@ import { ensureGateway } from './src/gateway.mjs';
 import { ensureSync } from './src/sync.mjs';
 import { WS_ROOT } from './src/workspace.mjs';
 import { writePresence, clearPresence } from './src/server-presence.mjs';
+import { installAgentPeerGuard } from './src/agent-peer.mjs';
+
+// 에이전트 프로세스의 로컬 API 직접 호출 차단 — 요청 상대가 이 서버의 자손(CLI 러너·Bash·curl·MCP)이면 403(src/agent-peer.mjs).
+// 스케줄러·게이트웨이보다 먼저 — 부팅 직후 도는 루틴 턴의 자손도 처음부터 덮는다.
+installAgentPeerGuard();
 
 // 부모(데스크톱 셸) 감시 — 앱이 넘긴 ARGO_PARENT_PID가 사라지면 서버도 종료한다.
 // Tauri 사이드카는 부모가 죽어도 자동 종료되지 않아(실측: macOS·Windows 공통) 고아 node가

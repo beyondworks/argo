@@ -14,6 +14,7 @@ import { realpath } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { fold, insideFold } from './pathcase.mjs';
 import { classifyShell, normalizeShell } from './risky-shell.mjs';
+import { shellCallsArgoApi, ARGO_API_SHELL_MSG } from './loopback-api.mjs';
 import { addApproval, loadApprovals, consumeShellApproval } from './approvals.mjs';
 
 // 홈은 env로만(HOME/USERPROFILE) — node:os homedir()를 **동적 join**(map/flatMap·slice 인자)에 쓰면
@@ -669,6 +670,9 @@ export function makePermissionGate(wsId, slug, wsRoot, from = null, lang = 'ko',
       // 게이트를 우회한다(실측). 오탐(그 이름을 언급한 정당한 명령 거절)은 fail-closed로 수용한다.
       // 폴딩은 위 줄과 동일 기준(대소문자 무시 FS에서 CAPABILITIES.JSON 우회 차단 — #145 계열).
       if (BASH_GUARDED.some((n) => fold(cmd).includes(fold(n))) || BASH_DIR_RE.test(cmd) || BASH_DOT_DIR_RE.test(cmd)) return denyHard();
+      // 이 컴퓨터의 Argo API(루프백)를 부르는 명령 — 결재 자가 승인·루틴 삭제·주인 직접 턴 열기의 통로였다(PR #916 분리 검수 재현).
+      // 모든 턴(주인 턴 포함)에서 거절한다. 주 방어는 서버의 연결 상대 판정(src/agent-peer.mjs) — 이 줄은 이유를 알려 주는 앞단이다.
+      if (await shellCallsArgoApi(cmd)) return { behavior: 'deny', message: ARGO_API_SHELL_MSG[lang === 'en' ? 'en' : 'ko'] };
       // 메신저 문맥 턴(주인 턴 포함)의 고위험 셸 명령은 결재를 거친다(D28) — 모델이 request_approval을 부르지 않아도 코드가 카드를 만든다.
       // 승인된 같은 명령(이 크루·이 채널)은 한 번 허용한다. 대기 중이면 새 카드를 만들지 않고 그 결재를 가리킨다.
       if (opts.msgr) {

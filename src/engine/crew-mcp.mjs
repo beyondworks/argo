@@ -4,6 +4,7 @@
 // 권한: 크루 도구는 SDK에서도 사전 승인(게이트 밖)이고 손님·주인 판정은 처리기 안에 있다 — 여기서도 게이트를 따로 태우지 않는다.
 import { createServer } from 'node:http';
 import { noDockMcpEnv } from '../no-dock.mjs';
+import { PEER_GUARD_EXEMPT } from '../agent-peer.mjs';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
@@ -51,6 +52,7 @@ export async function createCrewMcpBridge(specs = []) {
       send(200, { isError: true, content: [{ type: 'text', text: controller.signal.aborted ? 'Agent task closed' : String(e?.message || 'Agent tool failed').slice(0, 2000) }] });
     }
   });
+  server[PEER_GUARD_EXEMPT] = true; // 러너 CLI 자식(=서버 자손)이 정당하게 부르는 도구 중계 — 에이전트 프로세스 판정에서 제외(agent-peer.mjs)
   server.requestTimeout = 0; // 동기 위임은 동료 턴 끝까지 걸린다 — 상한은 자식(30분)이 쥔다
   await new Promise((resolveP, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolveP); });
   server.unref();
