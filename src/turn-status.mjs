@@ -5,6 +5,7 @@ import { sanitizeFileSlug } from './slug.mjs';
 import { join } from 'node:path';
 import { paths } from './workspace.mjs';
 import { writeJsonAtomic, readJsonLenient } from './jsonstore.mjs';
+import { maskSecrets } from './secret-mask.mjs';
 
 const file = (wsId, slug) => join(paths(wsId).chats, `${sanitizeFileSlug(slug)}.status.json`); // 세척 단일 원천(slug.mjs) — thread.mjs와 같은 규칙
 
@@ -21,18 +22,35 @@ const TOOL_STAGE = [
 ];
 
 const base = (p) => String(p ?? '').split('/').pop();
-/** 도구 입력에서 "무엇을" 하는지 한 조각 — 클로드코드의 도구 라벨처럼. */
+/* 요약은 **가린 뒤에 자른다** — 상태 파일과 활동 이벤트(events.jsonl: 기기 간 동기화·클라우드 저장소)에 실리는 값이라, 자른 원문을 가리면
+   경계에 걸린 토큰의 앞 몇 글자가 남는다(0.1.99 이하: 명령 앞 48자 원문). 원문 **전체**를 가린 뒤 48·120자로 자른다.
+   가림은 입력 길이에 선형이지만(secret-mask.mjs) 한 번의 도구 호출이 수 MB일 때를 막으려 64KB를 상한으로 둔다 — 모델 한 번의 출력은 그 안에 든다.
+   상한을 넘는 입력은 **상한 자리 앞의 마지막 공백에서** 자른다: 토큰 한가운데서 자르면 규칙이 끝까지 못 본 비밀이 조각으로 남고(`://사용자:비밀번호`가
+   `@` 앞에서 잘림), 앞쪽 큰 비밀이 `***`로 줄어들면 그 조각이 앞 48자로 당겨진다. 공백에서 자르면 모든 토큰이 통째로 있거나 아예 없다.
+   공백을 넘는 비밀(따옴표 값·PEM)은 끝나지 않은 채 잘려도 입력 끝까지를 값으로 보는 규칙이 가린다(secret-mask.mjs). */
+const DETAIL_MASK_CAP = 65_536;
+const WS = /\s/;
+const masked = (v) => {
+  let s = String(v ?? '');
+  if (s.length > DETAIL_MASK_CAP) {
+    let cut = DETAIL_MASK_CAP;
+    while (cut > 0 && !WS.test(s[cut])) cut -= 1;
+    s = s.slice(0, cut);
+  }
+  return maskSecrets(s);
+};
+/** 도구 입력에서 "무엇을" 하는지 한 조각 — 클로드코드의 도구 라벨처럼. 비밀은 가린 값만 돌려준다. */
 export function detailForTool(toolName, input = {}, { display = false } = {}) {
   try {
-    if (/^(Read|Write|Edit|NotebookEdit)$/.test(toolName)) return base(input.file_path);
-    if (toolName === 'Glob' || toolName === 'Grep') return input.pattern ?? '';
+    if (/^(Read|Write|Edit|NotebookEdit)$/.test(toolName)) return masked(base(input.file_path));
+    if (toolName === 'Glob' || toolName === 'Grep') return masked(input.pattern);
     if (toolName === 'Bash') {
       const description = display && typeof input.description === 'string' ? input.description.trim() : '';
-      return String(description || input.command || '').replace(/\s+/g, ' ').slice(0, description ? 120 : 48);
+      return masked(description || input.command || '').replace(/\s+/g, ' ').slice(0, description ? 120 : 48);
     }
     if (toolName === 'WebFetch') return new URL(input.url).hostname;
-    if (toolName === 'WebSearch') return String(input.query ?? '').slice(0, 48);
-    if (toolName === 'mcp__crew__delegate') return input.to ?? '';
+    if (toolName === 'WebSearch') return masked(input.query).slice(0, 48);
+    if (toolName === 'mcp__crew__delegate') return masked(input.to);
     if (toolName.startsWith('mcp__')) return toolName.replace(/^mcp__/, '').replace(/__/g, ' · ');
   } catch { /* 디테일은 장식 — 실패해도 단계는 남는다 */ }
   return '';
