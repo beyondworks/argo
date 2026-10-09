@@ -13,7 +13,9 @@ import { Icon } from '../ui/Icon.jsx';
 import { Face } from '../ui/Face.jsx';
 import { useSelection, selProps } from '../core/selection.js';
 import * as V from './model.js';
-import { runWrites } from './data.js';
+import { runWrites, categoriesOf } from './data.js';
+import * as C from './cells.js';
+import { TaskCell, Pill } from './TaskCells.jsx';
 import { NewTask } from './NewTask.jsx';
 import { colorOf, fmtDay, fmtTime, spaceOfOrg } from '../calendar/shared.js';
 import { setUi } from '../core/ui-state.js';
@@ -27,7 +29,7 @@ registerDict({ ...CAL_DICT, ...TASK_DICT, ...VIEWS_DICT });
 const newId = () => crypto.randomUUID();
 const TaskPanel = lazy(() => import('./TaskPanel.jsx'));
 
-/** 할 일 배지 — 진행 중·보류(끝내지 않은 일만), 중요도 높음·낮음(보통은 표시하지 않는다). noStatus: 상태 칸 칸반처럼 칸이 이미 상태를 말할 때 */
+/** 할 일 배지 — 진행 중·보류(끝내지 않은 일만), 중요도 높음·낮음(보통은 표시하지 않는다). 값마다 색이 다르다(표와 같은 TaskCells.jsx Pill, 유건 10/9). noStatus: 상태 칸 칸반처럼 칸이 이미 상태를 말할 때 */
 export function TaskBadges({ it, noStatus = false, today = null }) {
   if (it.kind !== 'task') return null;
   const st = !noStatus && !it.done && it.status !== 'todo' ? it.status : null, pr = it.priority !== 2 ? it.priority : null;
@@ -35,8 +37,8 @@ export function TaskBadges({ it, noStatus = false, today = null }) {
   if (!st && !pr && !late) return null;
   return <span className="tk-badges">
     {late && <span className="badge danger">{t('task.overdue')}</span>}
-    {st && <span className={`badge${st === 'hold' ? ' warn' : ''}`}>{t(`task.st.${st}`)}</span>}
-    {pr && <span className={`badge${pr === 1 ? ' danger' : ''}`}>{t('task.prBadge', { p: t(`task.pr.${pr}`) })}</span>}
+    {st && <Pill kind="status" value={st} />}
+    {pr && <Pill kind="priority" value={pr}>{t('task.prBadge', { p: t(`task.pr.${pr}`) })}</Pill>}
   </span>;
 }
 
@@ -100,14 +102,20 @@ const eventAssign = (it) => ({ kind: 'event', id: it.id, label: it.title, text: 
 
 /* ── 항목 동작(우클릭·선택 막대·칸반·확인 창) ── */
 /** space: 보고 있는 공간, ctx: model.js 권한 문맥, onOpen(item), onNewEvent(). onManageCats: 할 일 패널의 '분류 관리'(할 일 화면만 준다).
- *  반환 { single, many, empty, apply, dialogs, newTask, openTask } — openTask(item)은 오른쪽 할 일 패널 */
+ *  반환 { single, many, empty, apply, dialogs, newTask, openTask, setCell, busy, check, held, manageCats } — openTask(item, focus)은 오른쪽 할 일 패널(focus 'reason'이면 보류 사유 칸에 커서),
+ *  setCell(item, 칸, 값)은 표에서 바로 바꾸기(busy: 기다리는 칸 — 항목 키 → { cell, value }), check { can, run }은 캘린더 할 일 칩의 끝내기 단추,
+ *  held(item)은 보류로 바꾼 뒤의 '사유 적기' 알림(표·우클릭 메뉴·칸반이 같이 쓴다, 유건 10/9) */
 export function useItemActions({ space, ctx, people, onOpen, onNewEvent, categories = [], onManageCats }) {
   const [ask, setAsk] = useState(null);
+  // 표 칸에서 끝낸 일의 상태를 바꾸면 쓰기 두 번(다시 열기 + 상태)이라 먼저 화면에 반영하지 않는다 — 끝날 때까지 고른 값을 기다림 표시로(칸반의 setPending과 같다, 10/9 검수)
+  const [busy, setBusy] = useState(() => new Map());
+  // 보류로 바꾸면 사유는 할 일 패널의 사유 칸에서 적는다(10/8 규칙 그대로) — 알림의 '사유 적기'가 그 칸을 바로 연다
+  const held = (it) => showToast(t('tasks.held'), { action: { label: t('tasks.addReason'), run: () => setAsk({ kind: 'panel', item: it, focus: 'reason' }) } });
   const statusItems = (list, clear) => { // 상태 바꾸기(할 일만) — 하나면 지금 상태에 표시, 여럿이면 표시 없이
     const tasks = list.filter((x) => x.kind === 'task'), one = tasks.length === 1 ? tasks[0] : null;
     if (!tasks.length || !tasks.some((x) => !V.whyNot(x, 'status', ctx))) return [];
     return [{ heading: t('views.changeStatus') }, ...[...V.STATUSES, 'done'].map((s) => ({ label: t(`task.st.${s}`), checked: one ? one.status === s : undefined, menuOnly: true, // 아래 선택 막대에는 싣지 않는다(이름만으로는 무슨 단추인지 모른다)
-      run: () => apply(tasks, (x) => V.planStatus(x, s, ctx), { quiet: !!one }).then((ok) => ok && clear?.()) }))];
+      run: () => apply(tasks, (x) => V.planStatus(x, s, ctx), { quiet: !!one }).then((ok) => { if (ok && one && C.askHoldReason(one, s)) held(one); if (ok) clear?.(); }) }))];
   };
   const apply = async (items, plan, { quiet = false, msg } = {}) => {
     const { writes, skipped } = V.planMany(items, plan);
@@ -118,6 +126,15 @@ export function useItemActions({ space, ctx, people, onOpen, onNewEvent, categor
     return !failed;
   };
   const can = (it, op) => !V.whyNot(it, op, ctx);
+  /** 표 칸에서 고른 값 쓰기 — 같은 값을 다시 고르면 조용히 넘어간다(할 일 패널처럼) */
+  const setCell = async (it, cell, value) => {
+    const plan = C.planCell(it, cell, value, ctx, { categories: categoriesOf(it.space) }), n = V.writesOf(plan).length;
+    if (!plan.reason && !n) return;
+    if (n > 1) setBusy((m) => new Map(m).set(it.key, { cell, value }));
+    try { if (await apply([it], () => plan, { quiet: true }) && cell === 'status' && C.askHoldReason(it, value)) held(it); }
+    finally { if (n > 1) setBusy((m) => { const next = new Map(m); next.delete(it.key); return next; }); }
+  };
+  const check = { can: (it) => can(it, 'done'), run: (it) => apply([it], (x) => C.toggleDone(x, ctx), { quiet: true }) };
   const single = (it) => [
     { label: t('views.open'), icon: 'doc', run: () => onOpen(it) },
     it.kind === 'task' && can(it, 'done') && { label: t(it.done ? 'views.reopen' : 'views.done'), icon: 'check', run: () => apply([it], (x) => V.planDone(x, !it.done, ctx), { quiet: true }) },
@@ -154,11 +171,11 @@ export function useItemActions({ space, ctx, people, onOpen, onNewEvent, categor
   const close = () => setAsk(null);
   const done = (ok) => { if (ok) { ask?.clear?.(); close(); } };
   const dialogs = ask && (ask.kind === 'task' ? <NewTask space={space} people={people} init={ask.init} onClose={close} />
-    : ask.kind === 'panel' ? <Suspense fallback={null}><TaskPanel space={space} id={ask.item.id} taskSpace={ask.item.space} onClose={close} onManageCats={onManageCats && (() => { close(); onManageCats(); })} /></Suspense>
+    : ask.kind === 'panel' ? <Suspense fallback={null}><TaskPanel space={space} id={ask.item.id} taskSpace={ask.item.space} focus={ask.focus} onClose={close} onManageCats={onManageCats && (() => { close(); onManageCats(); })} /></Suspense>
       : ask.kind === 'date' ? <DateAsk items={ask.items} onClose={close} onSave={(day) => apply(ask.items, (x) => V.planDate(x, day, ctx)).then(done)} />
         : ask.kind === 'category' ? <CategoryAsk items={ask.items} categories={categories} onClose={close} onSave={(c) => apply(ask.items.filter((x) => x.kind === 'event'), (x) => V.planCategory(x, c, ctx)).then(done)} />
           : <DeleteAsk items={ask.items} onClose={close} onSave={() => apply(ask.items, (x) => V.planDelete(x, ctx), { msg: (n) => t('views.deleted', { n }) }).then(done)} />);
-  return { space, single, many, empty, apply, dialogs, newTask: (init) => setAsk({ kind: 'task', init }), openTask: (it) => setAsk({ kind: 'panel', item: it }) };
+  return { space, single, many, empty, apply, dialogs, setCell, busy, check, held, manageCats: onManageCats, newTask: (init) => setAsk({ kind: 'task', init }), openTask: (it, focus) => setAsk({ kind: 'panel', item: it, focus }) };
 }
 
 function DateAsk({ items, onClose, onSave }) {
@@ -235,7 +252,7 @@ export function ItemsView({ id, items, cfg, setCfg, views, label, today, ctx, pe
     'data-vkey': it.key, ...selProps(sel, it.key),
     'aria-selected': sel.has(it.key) || undefined,
     onClick: (e) => { // ⇧/⌘ 클릭은 공용 감지 코드가 먼저 받는다(하나 더하기·빼기)
-      if (e.target.closest('.vw-check') || e.shiftKey || e.metaKey || e.ctrlKey) return;
+      if (e.target.closest('.vw-check, .vw-ed') || e.shiftKey || e.metaKey || e.ctrlKey) return; // 동그라미·표 칸 단추는 그 자리의 일(열지 않는다)
       clear(); onOpen(it);
     },
     ...menuProps(() => (sel.has(it.key) && sel.size > 1 ? actions.many(selected, clear) : actions.single(it))),
@@ -266,9 +283,7 @@ export function ItemsView({ id, items, cfg, setCfg, views, label, today, ctx, pe
     <thead><tr><th>{t('views.th.title')}</th><th>{t('views.th.status')}</th><th>{t('views.th.priority')}</th><th>{t('views.category')}</th><th>{t('task.f.assignee')}</th><th>{t('views.th.start')}</th><th>{t('views.th.due')}</th></tr></thead>
     <tbody>{shown.slice(0, limit).map((it) => <tr key={it.key} tabIndex={0} className={it.done ? 'done' : ''} {...itemProps(it)}>
       <td><span className="vw-cell-title">{lead(it)}<span className="vw-title">{it.title}</span></span></td>
-      <td>{it.kind === 'task' ? t(`task.st.${it.status}`) : dash}</td><td>{it.kind === 'task' ? t(`task.pr.${it.priority}`) : dash}</td>
-      <td>{it.category || <span className="dim">{t('task.uncategorized')}</span>}</td><td>{colLabel('who', it.who || 'none', people)}</td>
-      <td className="vw-nowrap">{it.starts ? fmtDay(it.starts, { month: 'short', day: 'numeric' }) : dash}</td><td className="vw-nowrap">{it.day ? fmtDay(it.day, { month: 'short', day: 'numeric', weekday: 'short' }) : dash}</td></tr>)}</tbody></table>{more(shown.length - limit)}</div>;
+      {C.CELLS.map((c) => <td key={c} className={c.endsWith('_on') ? 'vw-nowrap' : undefined}>{it.kind === 'task' ? <TaskCell it={it} cell={c} ctx={ctx} people={people} actions={actions} /> : dash}</td>)}</tr>)}</tbody></table>{more(shown.length - limit)}</div>;
   else if (cfg.view === 'table') body = <div className="table-wrap vw-tablewrap"><table className="table vw-table">
     <thead><tr><th>{t('views.th.title')}</th><th>{t('views.th.kind')}</th><th>{t('views.th.date')}</th><th>{t('views.who')}</th><th>{t('views.category')}</th><th>{t('views.g.customer')}</th><th>{t('views.th.status')}</th></tr></thead>
     <tbody>{shown.slice(0, limit).map((it) => <tr key={it.key} tabIndex={0} className={it.done ? 'done' : ''} {...itemProps(it)}>
@@ -324,7 +339,8 @@ function Kanban({ id, items, cfg, ctx, compact, itemProps, lead, meta, face, bad
       const writes = V.writesOf(plan); // 끝낸 일을 진행 중 칸으로 = 다시 열기 + 상태 바꾸기 두 번
       if (!writes.length) return;
       setPending((m) => new Map(m).set(it.key, o.col));
-      runWrites(writes, actions.space).then(({ failed }) => { if (failed) showToast(t(failed)); })
+      // 보류 칸에 놓으면 표·우클릭 메뉴처럼 '보류했습니다 · 사유 적기'(10/9 검수)
+      runWrites(writes, actions.space).then(({ failed }) => { if (failed) showToast(t(failed)); else if (cfg.group === 'status' && C.askHoldReason(it, o.col)) actions.held?.(it); })
         .finally(() => setPending((m) => { const n = new Map(m); n.delete(it.key); return n; }));
     },
   });

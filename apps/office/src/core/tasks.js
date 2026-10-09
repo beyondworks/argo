@@ -19,11 +19,13 @@ const set = (space, patch) => { const prev = state[space]?.owner === ME.id ? sta
 const mine = (space) => (state[space]?.owner === ME.id ? state[space] : undefined);
 const subscribe = (fn) => { listeners.add(fn); return () => listeners.delete(fn); };
 
-export async function rpc(fn, args) { // 성과 기록(core/perf.js)도 같은 세션 확인으로 부른다
+export async function rpc(fn, args, { owner = ME.id, signal } = {}) { // 성과 기록(core/perf.js)도 같은 세션 확인으로 부른다
   const sb = await getClient();
   const session = sb ? (await sb.auth.getSession()).data?.session : null;
-  if (!session || session.user?.id !== ME.id) throw new Error('task_signin'); // 다른 계정 세션으로 쓰지 않는다
-  const { data, error } = await sb.rpc(fn, args).setHeader('Authorization', `Bearer ${session.access_token}`);
+  if (!session || session.user?.id !== ME.id || owner !== ME.id) throw new Error('task_signin'); // 다른 계정 세션으로 쓰지 않는다 — owner: 누른 때의 계정(줄에서 기다리는 사이 계정을 바꾸면 버린다, #906 재검수 LOW 3)
+  let q = sb.rpc(fn, args).setHeader('Authorization', `Bearer ${session.access_token}`);
+  if (signal && q.abortSignal) q = q.abortSignal(signal);
+  const { data, error } = await q;
   if (error) throw Object.assign(new Error(error.message), { code: error.code });
   return data;
 }
@@ -53,7 +55,7 @@ async function fetchTasks(space, quiet, again) {
       (quiet || again) && prev?.peopleOk ? prev.people : org ? rpc('office_org_people', { p_org: org }).then((p) => p ?? [], () => null) : []]);
     // 계정이 바뀌었거나(LOW 10), 더 늦게 시작한 읽기가 이미 적용됐거나, 탭 복귀 읽기 사이 쓰기가 시작됐거나 더 새 읽기가 먼저 끝났으면 이 응답은 옛것이다
     if (!keepResponse({ owner, nowOwner: ME.id, quiet, writing, started, newerAt: mine(space)?.at ?? 0, order, appliedOrder: mine(space)?.order ?? 0 })) return;
-    set(space, { rows: rows ?? [], people: got ?? prev?.people ?? [], peopleOk: got !== null, loading: false, error: null, at: Date.now(), order });
+    set(space, { rows: overlay(rows ?? []), people: got ?? prev?.people ?? [], peopleOk: got !== null, loading: false, error: null, at: Date.now(), order });
   } catch (e) { if (!quiet && owner === ME.id) set(space, { loading: false, error: readError(e) }); }
 }
 /** 읽기 실패 문구 — 쓰기 실패와 나눈다(OFC-08: 읽기 실패가 '저장하지 못했습니다'로 보였다). 권한·로그인처럼 사유가 있으면 그 사유 */
@@ -63,13 +65,32 @@ export const readError = (e) => { const k = taskError(e); return k === 'task.err
 let writing = 0;
 export async function trackWrite(job) { writing++; try { return await job(); } finally { writing--; } }
 
-/** 쓰기 — patch를 주면 먼저 화면에 반영하고, 실패하면 되돌린 뒤 사전 키를 담은 오류를 던진다 */
-export const taskAction = (space, action, data, patch) => trackWrite(async () => {
-  const before = mine(space)?.rows;
-  if (patch && before) set(space, { rows: before.map((r) => (r.id === data.id ? { ...r, ...patch } : r)) });
-  try { await rpc('office_task_write', { p_org: orgOf(space), p_action: action, p_data: data }); }
-  catch (e) { if (before) set(space, { rows: before }); throw new Error(taskError(e)); }
-  await loadTasks(space, true);
+/** 쓰기 — 할 일 하나마다 한 줄로 보낸다(10/9 검수: 칸 두 개를 연달아 바꾸거나 ✓를 두 번 누르면 동시에 나가 서버 도착 순서로 결과가 정해졌다).
+ *  할 일 모듈·할 일 패널·표·캘린더·칸반이 다 이 길이다(views/data.js runWrites → 여기). 실패하면 사전 키를 담은 오류를 던진다.
+ *  patch를 주면 먼저 화면에 반영하고, 실패하면 그 쓰기가 바꾼 칸만 쓰기 전 값으로 — 뒤 쓰기가 같은 칸을 이미 바꿨으면 그 칸은 두고 되돌릴 값을 뒤 쓰기에 넘긴다.
+ *  끝나지 않은 쓰기의 값은 다시 읽은 목록에도 얹는다(앞 쓰기 뒤 다시 읽기가 뒤 쓰기의 값을 지우지 않게). again: 끝나면 다시 읽기(여러 건 쓰기는 끝에 한 번 — data.js) */
+const lanes = new Map(), marks = new Map(); // 할 일 id → 마지막 쓰기 / 먼저 보인 채 끝나지 않은 쓰기 [{ patch, prev: 쓰기 전 값 }]
+const overlay = (rows) => rows.map((r) => (marks.get(r.id) ?? []).reduce((x, m) => { for (const k in m.patch) m.prev[k] = x[k]; return { ...x, ...m.patch }; }, r));
+const edit = (space, id, patch) => { const rows = mine(space)?.rows; if (rows) set(space, { rows: rows.map((r) => (r.id === id ? { ...r, ...patch } : r)) }); };
+export const taskAction = (space, action, data, patch, again = true) => trackWrite(async () => {
+  const id = data.id, row = patch && mine(space)?.rows?.find((r) => r.id === id), m = row && { patch, prev: {} };
+  if (m) { for (const k in patch) m.prev[k] = row[k]; marks.set(id, [...(marks.get(id) ?? []), m]); edit(space, id, patch); }
+  // 끝나지 않는 요청 하나가 그 할 일의 뒤 쓰기를 영원히 막지 않게 30초 제한(#906 재검수 LOW 2) — 줄에서 차례가 왔을 때부터 잰다. AbortSignal.timeout이 없는 오래된 웹뷰(Safari 16 전)는 제한 없이(없다고 쓰기를 막지 않는다)
+  const owner = ME.id, run = (lanes.get(id) ?? Promise.resolve()).then(() => rpc('office_task_write', { p_org: orgOf(space), p_action: action, p_data: data }, { owner, signal: AbortSignal.timeout?.(30e3) }));
+  const tail = run.catch(() => {});
+  lanes.set(id, tail);
+  const end = () => { const left = marks.get(id)?.filter((x) => x !== m) ?? []; if (left.length) marks.set(id, left); else marks.delete(id); if (lanes.get(id) === tail) lanes.delete(id); };
+  try { await run; } catch (e) {
+    if (m) {
+      const list = marks.get(id), back = {};
+      for (const k in patch) { const n = list.slice(list.indexOf(m) + 1).find((x) => k in x.patch); if (n) n.prev[k] = m.prev[k]; else back[k] = m.prev[k]; }
+      edit(space, id, back);
+    }
+    end();
+    throw new Error(taskError(e));
+  }
+  end(); // 서버에 들어갔다 — 다시 읽기 전에 내 자국을 지운다(다시 읽은 서버 값을 내 값으로 덮어 남기지 않게, #906 재검수 MEDIUM). 남은 뒤 쓰기의 자국은 그대로 얹힌다
+  if (again) await loadTasks(space, true);
 });
 
 // 탭 복귀 다시 읽기 — 할 일을 보여 주는 곳(할 일 화면·카드, 메뉴 배지 — 같은 공간 키라 한 번만)이 있는 공간을, 이미 받아 둔 것만 1분에 한 번까지.

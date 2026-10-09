@@ -116,7 +116,8 @@ export default function Calendar({ space, day }) {
   const monthVis = view === 'month' && vis ? `${vis}-01` : null;
   const actions = useItemActions({ space, ctx, people, categories, onOpen: openItem, onNewEvent: () => create() });
   const onMenu = (o) => actions.single(o.kind === 'task' ? o.vi : V.eventItem(o));
-  const props = { items, today, now, colorBy, holidays, phone, onOpen: open, onCreate: create, onMenu };
+  const check = { can: (o) => actions.check.can(o.vi), run: (o) => actions.check.run(o.vi) }; // 할 일 칩·하루 목록의 끝내기 단추(유건 10/9)
+  const props = { items, today, now, colorBy, holidays, phone, onOpen: open, onCreate: create, onMenu, check };
 
   // 주소로 온 요청 — ?view=(커맨더 보기 전환) · ?new=event|task(새 일정·새 할 일) · ?open=회차 키(홈 카드에서 연 일정). 처리하면 주소에서 뺀다
   const [path, qs] = useUrl().split('?');
@@ -210,7 +211,22 @@ function CalendarList({ space, off, toggle }) {
 }
 
 /* ── 칩 ── */
-function Chip({ o, colorBy, onOpen, onMenu, bar, compact }) {
+/** 할 일 칩 이름 — 진행 중·보류는 상태도 같이 읽힌다(칩 색만으로 알리지 않는다) */
+const taskLabel = (o) => [t('cal.taskDue', { title: o.title }), o.vi && !o.done && o.vi.status !== 'todo' ? t(`task.st.${o.vi.status}`) : ''].filter(Boolean).join(' · ');
+/** 할 일 끝내기 단추(유건 10/9) — 칩·하루 목록 앞의 ✓. 끝낼 수 없는 일(남이 맡은 일)이면 예전처럼 표시만 */
+function TaskCheck({ o, check, size = 11 }) {
+  if (!check?.can(o)) return <Icon name="check" size={size} className="cal-check-ico" />;
+  return <button type="button" className={`cal-tcheck${o.done ? ' on' : ''}`} role="checkbox" aria-checked={o.done} aria-label={o.title} title={t(o.done ? 'views.reopen' : 'views.done')}
+    onClick={(e) => { e.stopPropagation(); check.run(o); }}><Icon name="check" size={size} /></button>;
+}
+export function Chip({ o, colorBy, onOpen, onMenu, check, bar, compact }) { // 내보내기: 할 일 칩의 ✓ 단추를 노드에서 그려 보는 시험(test/task-ui-wiring.test.mjs)
+  if (o.kind === 'task' && check) { // 끝내기 단추와 여는 단추를 나란히(단추 안에 단추를 둘 수 없다) — 여는 단추가 칩 전체를 덮고 끝내기 단추만 그 위에
+    const label = taskLabel(o);
+    return <span className={`cal-chip bar task st-${o.vi?.status ?? 'todo'}${o.done ? ' done' : ''}`} title={label} {...(onMenu ? menuProps(() => onMenu(o)) : {})}>
+      <TaskCheck o={o} check={check} />
+      <button type="button" className="cal-chip-open" aria-label={label} onClick={(e) => { e.stopPropagation(); onOpen(o); }}><span className="cal-chip-title">{o.title}</span></button>
+    </span>;
+  }
   const color = o.kind === 'task' ? undefined : colorOf(o, colorBy);
   const label = o.kind === 'task' ? t('cal.taskDue', { title: o.title }) : `${o.title}, ${whenText(o)}`;
   return (
@@ -235,7 +251,7 @@ function DateHead({ day, today, holidays, onClick, small }) {
 
 /* ── 월 보기 ── */
 /** 한 주(7칸) — 배경 칸(누르면 만들기·폰은 하루 목록) + 날짜 머리 + 줄(lane)에 놓은 칩, 넘치면 '+n개 더'. cur: 진하게 보일 달 */
-function WeekRow({ week, cur, items, today, colorBy, holidays, phone, onOpen, onCreate, onDay, onMenu, style, firsts = false }) {
+function WeekRow({ week, cur, items, today, colorBy, holidays, phone, onOpen, onCreate, onDay, onMenu, check, style, firsts = false }) {
   const segs = [];
   for (const o of items) {
     const [a, b] = M.spanOf(o);
@@ -258,7 +274,7 @@ function WeekRow({ week, cur, items, today, colorBy, holidays, phone, onOpen, on
             {here.map((s) => <span key={s.key} className={`cal-dot${s.o.kind === 'task' ? ' task' : ''}`} style={s.o.kind === 'task' ? undefined : { '--ev': colorOf(s.o, colorBy) }} />)}
           </span>;
         }) : segs.filter((s) => lanes.get(s.key) < MAX_LANES).map((s) => (
-          <div key={s.key} className="cal-slot" style={{ gridColumn: `${s.a + 1} / ${s.b + 2}`, gridRow: lanes.get(s.key) + 2 }}><Chip o={s.o} bar={s.bar} colorBy={colorBy} onOpen={onOpen} onMenu={onMenu} /></div>
+          <div key={s.key} className="cal-slot" style={{ gridColumn: `${s.a + 1} / ${s.b + 2}`, gridRow: lanes.get(s.key) + 2 }}><Chip o={s.o} bar={s.bar} colorBy={colorBy} onOpen={onOpen} onMenu={onMenu} check={check} /></div>
         ))}
         {!phone && hidden.map((n, i) => n > 0 && <button key={i} type="button" className="cal-more" style={{ gridColumn: i + 1, gridRow: MAX_LANES + 2 }} onClick={() => onDay(week[i])}>{t('cal.more', { n })}</button>)}
       </div>
@@ -353,7 +369,7 @@ function ScrollMonth({ items, space, off, start, jump, onMonth, phone, ...props 
 }
 
 /* ── 주·일 보기 ── */
-export function TimeGrid({ days, items, today, now, colorBy, holidays, onOpen, onCreate, onDay, onMenu }) {
+export function TimeGrid({ days, items, today, now, colorBy, holidays, onOpen, onCreate, onDay, onMenu, check }) {
   const scroll = useRef(null);
   const cols = { gridTemplateColumns: `56px repeat(${days.length}, minmax(0, 1fr))` };
   useEffect(() => { if (scroll.current) scroll.current.scrollTop = Math.max(0, (new Date().getHours() - 1.5) * HOUR); }, [days.length]);
@@ -385,7 +401,7 @@ export function TimeGrid({ days, items, today, now, colorBy, holidays, onOpen, o
       <div className="cal-tg-all" style={{ ...cols, gridTemplateRows: `repeat(${laneN}, 24px)` }}>
         <small className="cal-tg-label" style={{ gridRow: `1 / ${laneN + 1}` }}>{t('cal.allDay')}</small>
         {days.map((d, i) => <button key={d} type="button" tabIndex={-1} aria-hidden="true" className="cal-cell" style={{ gridColumn: i + 2, gridRow: `1 / ${laneN + 1}` }} onClick={() => onCreate({ day: d, allDay: true })} />)}
-        {bars.map((s) => <div key={s.key} className="cal-slot" style={{ gridColumn: `${s.a + 2} / ${s.b + 3}`, gridRow: lanes.get(s.key) + 1 }}><Chip o={s.o} bar colorBy={colorBy} onOpen={onOpen} onMenu={onMenu} /></div>)}
+        {bars.map((s) => <div key={s.key} className="cal-slot" style={{ gridColumn: `${s.a + 2} / ${s.b + 3}`, gridRow: lanes.get(s.key) + 1 }}><Chip o={s.o} bar colorBy={colorBy} onOpen={onOpen} onMenu={onMenu} check={check} /></div>)}
       </div>
       <div ref={scroll} className="cal-tg-scroll">
         <div className="cal-tg-grid" style={{ ...cols, height: 24 * HOUR }}>
@@ -411,7 +427,12 @@ export function TimeGrid({ days, items, today, now, colorBy, holidays, onOpen, o
 }
 
 /* ── 목록·거래처·하루 목록 ── */
-function Row({ o, colorBy, onOpen, onMenu }) {
+function Row({ o, colorBy, onOpen, onMenu, check }) {
+  if (o.kind === 'task' && check) return <div className={`cal-row task st-${o.vi?.status ?? 'todo'}${o.done ? ' done' : ''}`} {...(onMenu ? menuProps(() => onMenu(o)) : {})}>
+    <span className="cal-row-when">{t('cal.due')}</span>
+    <TaskCheck o={o} check={check} size={12} />
+    <button type="button" className="cal-row-open" aria-label={taskLabel(o)} onClick={() => onOpen(o)}><span className="cal-row-main"><span className="clamp">{o.title}</span><small>{[o.vi && !o.done && o.vi.status !== 'todo' && t(`task.st.${o.vi.status}`), t('cal.taskRow')].filter(Boolean).join(' · ')}</small></span></button>
+  </div>;
   const color = o.kind === 'task' ? undefined : colorOf(o, colorBy);
   const where = o.kind === 'task' ? t('cal.taskRow') : [calName(o), o.location, o.customer_name].filter(Boolean).join(' · ');
   return (
@@ -434,13 +455,13 @@ function byDay(items, from, to) {
   return [...map.entries()].sort(([a], [b]) => a.localeCompare(b));
 }
 
-function DayModal({ day, items, colorBy, holidays, onOpen, onCreate, onClose, onMenu }) {
+function DayModal({ day, items, colorBy, holidays, onOpen, onCreate, onClose, onMenu, check }) {
   const list = byDay(items, day, M.addDays(day, 1))[0]?.[1] ?? [];
   const hs = holidays ? M.holidaysOn(day) : [];
   return <Modal open width={420} title={fmtDay(day, { month: 'long', day: 'numeric', weekday: 'long' })} onClose={onClose}
     footer={<><button type="button" className="btn" onClick={onClose}>{t('cal.close')}</button><button type="button" className="btn primary" onClick={() => { onClose(); onCreate({ day, allDay: false, min: 9 * 60 }); }}><Icon name="plus" size={13} />{t('cal.create')}</button></>}>
     {hs.length > 0 && <p className="cal-day-holi">{hs.map((h) => <span key={h.name} className={`cal-holi${h.off ? ' off' : ''}`}>{holidayName(h.name, t)}</span>)}</p>}
-    {list.length ? <div className="cal-list tight">{list.map((o) => <Row key={o.key} o={o} colorBy={colorBy} onOpen={onOpen} onMenu={onMenu} />)}</div> : <p className="cal-empty">{t('cal.dayEmpty')}</p>}
+    {list.length ? <div className="cal-list tight">{list.map((o) => <Row key={o.key} o={o} colorBy={colorBy} onOpen={onOpen} onMenu={onMenu} check={check} />)}</div> : <p className="cal-empty">{t('cal.dayEmpty')}</p>}
   </Modal>;
 }
 
