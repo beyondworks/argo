@@ -174,7 +174,9 @@ function maskJwt(s) {
     return out;
   });
 }
-export const maskKeyLike = (s) => maskJwt(String(s).replace(KEY_LIKE_RE, 'sk-***'));
+// JWT를 먼저 가린다 — 옛 정규식은 한 번에 훑어 왼쪽에서 시작하는 JWT가 안쪽의 sk-ant-… 조각까지 통째로 삼켰다. 키 모양을 먼저 가리면 JWT 속 조각이 `sk-***`가 돼
+// `*`가 JWT를 끊어 머리(eyJ…)와 일부가 그대로 남는다(차분 퍼즈에서 40만 건 중 3건).
+export const maskKeyLike = (s) => maskJwt(String(s)).replace(KEY_LIKE_RE, 'sk-***');
 
 /** 격리 홈 자격 파일 시드 — "어느 원본으로 시드했나"를 마커(.argo-seed-<name>)에 해시로 남겨,
     원본이 바뀌면(타 기기 재연결이 동기화로 도착, 호스트 재로그인 등) 파일을 재시드한다.

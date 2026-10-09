@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { maskSecrets, isSecretName } from '../src/secret-mask.mjs';
 import { maskKeyLike } from '../src/runners/shared.mjs';
+import { REF_MAIN_KEY_LIKE, refMaskSecrets } from './helpers/mask-reference.mjs';
 import { detailForTool } from '../src/turn-status.mjs';
 
 const F = 'FAKE0000';
@@ -87,7 +88,7 @@ test('평범한 명령·글은 한 글자도 바뀌지 않는다', () => {
     'mkdir -p /tmp/a/b', 'mkdir -pv /tmp/x', 'cp -pr src dst', 'ls -la /tmp', 'git status --short', 'git log --oneline -n 5', 'git config user.name',
     'npm test -- --grep "foo"', 'node --test test/chat.test.mjs', 'ssh -p 22 host.example.test', 'docker run -u 1000:1000 img', 'sort -b file.txt',
     'grep -rn "password" src/', 'echo "Basic setup is done"', 'git commit -m "fix: password reset flow"', 'curl -sS https://example.test/api/health',
-    'export NODE_ENV=production', 'KEYBOARD=us node a.js', 'MONKEY=1 TURKEY=2 run', 'primaryKey=id', 'echo token refreshed', 'Bearer token is required',
+    'export NODE_ENV=production', 'KEYBOARD=us node a.js', 'primaryKey=id', 'echo token refreshed', 'Bearer token is required',
     'https://example.test:8080/path?x=1', 'ssh://git@github.com:org/repo.git', 'postgresql://db.example.test:5432/app', 'npm_config_user_agent=npm/10',
     'tar -xzf a.tgz -C /tmp', 'python3 -c "print(1)"', 'mysql -u root -p mydb', 'mysql -h db --port 3306', 'unzip -P x', 'authorization is required',
     '한글 명령 실행해 줘 password 는 없다', '', '   ',
@@ -101,9 +102,9 @@ test('null·undefined·숫자도 던지지 않는다', () => {
   assert.equal(maskSecrets(42), '42');
 });
 
-test('isSecretName: 비밀 이름만 — monkey·keyboard·primaryKey·TURKEY는 아니다', () => {
-  for (const n of ['OPENAI_API_KEY', 'GITHUB_TOKEN', 'client_secret', 'apiKey', 'password', 'DATABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'x-api-key', 'AWS_ACCESS_KEY_ID', 'Authorization', 'DB_PASSWORD', 'KEY']) assert.equal(isSecretName(n), true, n);
-  for (const n of ['monkey', 'keyboard', 'primaryKey', 'TURKEY', 'KEYBOARD', 'NODE_ENV', 'PATH', 'user', 'name', '']) assert.equal(isSecretName(n), false, n);
+test('isSecretName: 옛 세 규칙 그대로 — 비밀 이름(소문자가 섞인 *_KEY 포함)만, monkey·keyboard·primaryKey는 아니다', () => {
+  for (const n of ['OPENAI_API_KEY', 'GITHUB_TOKEN', 'client_secret', 'apiKey', 'password', 'DATABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'x-api-key', 'AWS_ACCESS_KEY_ID', 'Authorization', 'DB_PASSWORD', 'KEY', 'next_public_supabase_anon_KEY', 'xSUPABASE_SERVICE_ROLE_KEY', 'token-SUPABASE_SERVICE_ROLE_KEY', 'MONKEY', 'TURKEY']) assert.equal(isSecretName(n), true, n); // MONKEY·TURKEY도 옛 규칙이 가리던 이름이다(줄이지 않는다)
+  for (const n of ['monkey', 'keyboard', 'primaryKey', 'KEYBOARD', 'NODE_ENV', 'PATH', 'user', 'name', '']) assert.equal(isSecretName(n), false, n);
 });
 
 /* ─── ④ 공격 입력 — 10만 자가 정해진 시간 안에 끝난다 ─── */
@@ -169,28 +170,6 @@ test('단계 요약은 수 MB 입력에서도 상한(64KB)까지만 가린다', 
 /* ─── 가리는 범위가 줄지 않는다 — 기준 구현 둘을 시험 안에 그대로 옮겨 같은 입력에 돌린다 ───
    (a) 지금 origin/main의 maskKeyLike  (b) feat/turn-trace 1e9333bd의 maskSecrets(+ 그 커밋의 maskKeyLike, 접두사 토큰이 더해진 것). 둘 다 이차 시간이라 짧은 입력에서만 쓴다.
    규칙: 기준이 가리는 입력은 새 구현도 모두 가린다. 앞뒤 글자를 바꿔 가며(-·.·=·:·따옴표·괄호·줄바꿈·단어 글자) 같은 비밀을 놓는다. */
-const REF_MAIN_KEY_LIKE = (s) => String(s).replace(/\b(sk-ant-[\w-]+|sk-[\w-]{16,}|AIza[\w-]{20,}|xai-[\w-]{16,}|eyJ[\w-]{10,}\.[\w-]{10,}\.[\w-]{10,}|[0-9a-f]{32}\.[\w-]{16,})\b/g, 'sk-***');
-const REF_TT_KEY_LIKE = (s) => String(s).replace(/\b(sk-ant-[\w-]+|sk-[\w-]{16,}|AIza[\w-]{20,}|xai-[\w-]{16,}|eyJ[\w-]{10,}\.[\w-]{10,}\.[\w-]{10,}|[0-9a-f]{32}\.[\w-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_\w{20,}|(?:AKIA|ASIA)[A-Z0-9]{16}|xox[abprs]-[A-Za-z0-9-]{10,}|glpat-[\w-]{20,}|npm_[A-Za-z0-9]{36}|hf_[A-Za-z0-9]{30,})\b/g, 'sk-***');
-const REF_KV = /(["']?)([A-Za-z_][A-Za-z0-9_.-]{0,80})\1(\s*[:=]\s*)("[^"\n]*"|'[^'\n]*'|[^\s"',;&}\]]+)/g;
-const refMasked = (v) => /^(["'])?(?:\*+|sk-\*\*\*)\1?$/.test(v);
-function refMaskSecrets(s) { // feat/turn-trace 1e9333bd maskSecrets
-  let out = String(s);
-  out = out.replace(/-----BEGIN ([A-Z ]*)PRIVATE KEY-----[\s\S]*?(?:-----END \1PRIVATE KEY-----|$)/g, '-----BEGIN $1PRIVATE KEY----- *** -----END $1PRIVATE KEY-----');
-  out = REF_TT_KEY_LIKE(out);
-  out = out.replace(/\b(Bearer|Basic|Token)\s+[A-Za-z0-9._~+/=-]{8,}/g, '$1 ***');
-  out = out.replace(/\b((?:Set-)?Cookie)(\s*:\s*)[^\n]+/gi, '$1$2***');
-  out = out.replace(/(\s--?(?:password|passwd|pass|token|api-?key|secret|client-secret|auth-token)(?:=|\s+))("[^"]*"|'[^']*'|\S+)/gi, (m, head, val) => (refMasked(val) ? m : `${head}***`));
-  out = out.replace(/^(.*\b(?:mysql|mysqldump|mysqladmin|mariadb|mariadb-dump)\b.*?\s-p)(?!\s)(\S+)/gim, '$1***');
-  out = out.replace(/(\bsshpass\s+-p\s+)(\S+)/g, '$1***');
-  out = out.replace(/(\bcurl\b[^\n]*?\s(?:-u|--user)\s+["']?)([^\s:"']+):([^\s"']+)/g, '$1$2:***');
-  out = out.replace(/\b([a-z][a-z0-9+.-]*:\/\/)([^/\s:@]+):([^/\s@]+)@/gi, '$1$2:***@');
-  out = out.replace(REF_KV, (m, q, name, sep, val) => {
-    if (!isSecretName(name) || refMasked(val) || /^(Bearer|Basic|Token)$/.test(val)) return m;
-    return `${q}${name}${q}${sep}${val.startsWith('"') ? '"***"' : val.startsWith("'") ? "'***'" : '***'}`;
-  });
-  return out;
-}
-
 const PRE = ['', ' ', '-', '.', '=', ':', '"', "'", '(', '/', ',', ';', '[', '{', '@', '*', '<', '\n', '\t', '_', 'x', 'x-', 'x.', 'x_', 'token-', 'token.', 'token=', 'token:', 'token="', "token='", '--token ', '-H "Authorization: '];
 const SUF = ['', ' ', '.', '-', '"', "'", ',', ')', '\n', '_', 'x', '.x', '-x'];
 const PW2 = 'FAKEpass12345';
@@ -225,6 +204,43 @@ test('maskKeyLike: 다른 벤더 키는 종전대로 가린다', () => {
 });
 test('maskKeyLike: eyJ- 반복 10만 자도 빠르다(고치기 전 8초 이상)', () => {
   for (const input of [rep('eyJ-'), rep('eyJ-a'), `x${rep('-eyJ')}`, rep('eyJ.'), rep(`eyJ${'a'.repeat(12)}.${'b'.repeat(12)}.`)]) assert.ok(timeOf(() => maskKeyLike(input)) < LIMIT_MS);
+});
+
+// 차분 퍼즈 — 무작위로 이어 붙인 글(JWT 머리·sk-·점·대시·밑줄·공백…) 40만 건에서, main이 가린 10자 조각은 새 maskKeyLike도 가린다.
+// 키 모양을 JWT보다 먼저 가리면 JWT 속 `sk-ant-…` 조각이 `sk-***`가 돼 `*`가 JWT를 끊고 머리(eyJ…)가 남는다 — 이 퍼즈가 그 순서 실수를 잡는다(고정 씨앗 12345에서 3건).
+test('maskKeyLike 차분 퍼즈: main이 가린 조각은 새 구현도 가린다 — 무작위 40만 건', () => {
+  let seed = 12345; const rnd = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296;
+  const pick = (a) => a[Math.floor(rnd() * a.length)];
+  const atoms = ['eyJ', 'eyJ', 'eyJ', 'sk-', 'sk-ant-', 'AIza', 'xai-', '-', '-', '.', '.', '_', ' ', '\n', '"', '=', ':', '/', 'a', 'Z', '0', '9', 'abcdefghij', 'ABCDEFGHIJKL', '0123456789', 'xxxxxxxxxxxxxxxxxxxx', 'f'.repeat(32), '--', '..', 'é', '+'];
+  const windows = (str) => { const out = new Set(); for (const run of str.match(/[\w-]{10,}/g) ?? []) for (let i = 0; i + 10 <= run.length; i += 1) out.add(run.slice(i, i + 10)); return out; };
+  const bad = [];
+  for (let n = 0; n < 400_000 && bad.length < 5; n += 1) {
+    let input = ''; const len = 1 + Math.floor(rnd() * 14);
+    for (let k = 0; k < len; k += 1) input += pick(atoms);
+    const ref = REF_MAIN_KEY_LIKE(input); const cur = maskKeyLike(input);
+    if (ref === cur) continue;
+    for (const w of windows(input)) if (!ref.includes(w) && cur.includes(w)) { bad.push(`${JSON.stringify(input)} → ref ${JSON.stringify(ref)} / new ${JSON.stringify(cur)}`); break; }
+  }
+  assert.deepEqual(bad, [], `main이 가리던 조각이 샌다:\n${bad.join('\n')}`);
+});
+
+// 한 규칙의 값이 다른 규칙의 머리 글자를 품는 입력 — 규칙을 차례로 적용하면 앞 규칙이 그 글자를 바꿔 뒤 규칙이 비밀을 놓친다(차분 퍼즈에서 찾음). 규칙마다 같은 글에서 자리를 모으므로 모두 가려야 한다.
+test('겹치고 붙은 모양: 한 규칙의 값이 다른 규칙의 머리를 품어도 비밀이 남지 않는다', () => {
+  const V = 'QZXWqxz12345'; // 키워드를 품지 않은 가짜 비밀
+  const JW = 'eyJFAKEFAKEFAKE.FAKEFAKEFAKEFAKE.FAKEFAKEFAKEFAKE';
+  for (const [input, piece] of [
+    [`${JW}-----BEGIN RSA PRIVATE KEY-----\nFAKEPEMBODYLINE12\n-----END RSA PRIVATE KEY-----`, 'FAKEPEMB'], // JWT 끝에 PEM 시작 표지가 붙음 — PEM이 먼저
+    [`Bearer ghp_${'FAKE0000'.repeat(3)}sk-FAKEFAKEFAKEFAKEFAKE`, 'FAKEFAKE'], // 키 모양이 토큰 앞쪽만 가림 — 남은 뒤쪽까지
+    [`x asyncpg://PASSWORD=@${V}`, V], [`ptoken='PASSWORD=${V} tail`, V], [`a:'next_public_KEY=${V}`, V], // 비밀이 아닌 이름의 값(닫히지 않은 따옴표 포함)이 안쪽 이름을 삼키지 않음
+    [`Token \ntoken=Token ${V}x`, V], [`Bearer Bearer ${V}${V}`, V], // 값이 다음 머리를 품음
+    [`sshpass -p 'abc'-x${V} ssh h`, V], [`mysql -u r -p'abc'-x${V} db`, V], [`cli --password "abc"${V}`, V], // 따옴표 값 바로 뒤에 붙은 글자도 같은 낱말
+    [`cli --token mysql -u root -p${V} db`, V], [`cli --token --token ${V}`, V], // 인자의 값 자리에 도구 이름·다음 플래그
+    [`apiKey: --password=\n${V}`, V], // 비밀 KEY의 값 끝에서 시작하는 다음 머리
+  ]) {
+    const out = maskSecrets(input);
+    assert.ok(!out.includes(piece), `새어 나갔다: ${JSON.stringify(input)} → ${JSON.stringify(out)}`);
+    assert.equal(maskSecrets(out), out, `멱등: ${JSON.stringify(out)}`);
+  }
 });
 
 /* ─── URL 비밀번호: 스킴이 길어도·어떤 스킴이든 가린다(스킴 길이를 묶으면 postgresql+asyncpg://가 새던 회귀) ─── */
