@@ -11,7 +11,8 @@ const bridge = read('src/gateway/msgr.mjs'); const chat = read('src/chat.mjs'); 
 
 test('서버: chat.mjs가 steps를 상태 파일에 싣고 trace를 반환(데스크톱용) · 브리지는 1.5초마다 확인하고 크루당 최소 4초 간격으로 progress를 반복 방송하며(화면 QA HIGH: 8초 뒤 카드 소실 방지, L-b: 방송 횟수 제한) 메신저 답글에는 궤적을 붙이지 않는다', () => {
   assert.match(ts, /steps: Array\.isArray\(steps\) \? steps\.slice\(-40\) : \(prev\.steps \?\? \[\]\)/, '상태 파일 steps(뒤 40)');
-  assert.match(chat, /const trace = \{ steps, thought: String\(thought \?\? ''\)\.slice\(-1500\), ms: Date\.now\(\) - t0, model: actualModel \|\| null, costUsd \};/, 'trace 조립');
+  // steps는 작업 과정 기록(turn-trace)의 마지막 40개 — 옛 step()이 40번째에서 멈추던 것을 고친 뒤 같은 모양을 기록에서 꺼낸다(2026-10-09)
+  assert.match(chat, /const trace = \{ steps: stepsNow\(\), thought: String\(thought \?\? ''\)\.slice\(-1500\), ms: Date\.now\(\) - t0, model: actualModel \|\| null, costUsd \};/, 'trace 조립');
   const ast=parse(chat,{ecmaVersion:'latest',sourceType:'module'});
   const turn=ast.body.find(n=>n.type==='FunctionDeclaration' && n.id?.name==='runChat');
   const result=turn.body.body.findLast(n=>n.type==='ReturnStatement').argument;

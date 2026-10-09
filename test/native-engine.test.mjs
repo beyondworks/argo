@@ -81,7 +81,9 @@ test('E2. 루프 — Read 왕복 → 금지 구역 Write는 게이트 deny → �
     const q = nativeQuery({ wsId: ws, slug: 'seoyun', prompt: '노트 읽고 시크릿에 써봐', cwd: root, systemPrompt: 'SYS', env: env(srv.base), model: 'fake-model',
       crewTools: sink, canUseTool: makePermissionGate(ws, 'seoyun', root, null, 'ko', []) });
     const out = await collect(q);
-    assert.deepEqual(out.map((m) => m.type), ['system', 'assistant', 'assistant', 'assistant', 'result'], 'SDK query()와 같은 스트림 형태');
+    // 도구 결과는 SDK query()처럼 type:'user'(tool_result) 메시지로도 나온다 — 작업 과정(turn-trace)이 결과를 짝짓는다(2026-10-09)
+    assert.deepEqual(out.map((m) => m.type), ['system', 'assistant', 'user', 'assistant', 'user', 'assistant', 'result'], 'SDK query()와 같은 스트림 형태');
+    assert.deepEqual(out[2].message.content.map((b) => [b.type, b.tool_use_id]), [['tool_result', 'tu1']], '도구 결과 메시지 = 그 단계의 tool_result');
     assert.equal(out[0].subtype, 'init'); assert.ok(out[0].session_id.startsWith('native-')); assert.deepEqual(out[0].mcp_servers, [{ name: 'crew', status: 'connected' }]);
     const r = out.at(-1); assert.equal(r.subtype, 'success'); assert.equal(r.result, '끝. 결재 올렸어.'); assert.equal(r.total_cost_usd, null); assert.equal(r.usage.input_tokens, 30); assert.equal(r.num_turns, 3);
     // 요청 본문 — 도구 사양(내장 7 + 크루), system, max_tokens 기본

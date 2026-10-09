@@ -9,6 +9,7 @@ import { uploadAttachments } from '../../../lib/upload-files.mjs';
 import { failureReason } from '../../../lib/error-text.mjs'; // 실패 이유 — 빈 이유·브라우저 원문 없이(UL5)
 import { dropUpClamp } from '../zoom-math.mjs';
 import { ArtifactChips } from '../artifact-chips';
+import { TraceSteps, TraceSummary } from '../turn-trace'; // 작업 과정 — 1:1 대화와 같은 컴포넌트(발언 카드의 최근 단계·말풍선 아래 접힌 기록)
 import { matchSlash, SLASH_TOKEN_RE } from '../slash-match.mjs';
 import { keepSide, sideParam, withSide } from '../split.mjs';
 import { useSplitAlive } from '../split-alive';
@@ -58,6 +59,7 @@ export default function Room({ params }) {
   // 서버 턴의 발언자·단계·부분 텍스트·다음 순서(GET turn). 발언이 끝나야 말풍선이 통째로 뜨던 방을,
   // 크루 채팅처럼 쓰는 중인 문장이 자라며 보이게(유건 2026-09-02 "보는 재미"). 진행 판정(serverBusy)과 분리.
   const [turn, setTurn] = useState(null);
+  const [traceIdx, setTraceIdx] = useState({}); // 이 기기에 저장된 발언별 작업 과정 요약({id: {n, ms, ok}}) — 다른 기기에서 온 발언은 없어 답만 보인다
   // 경과 시각 — 마커의 startedAt 기준(자기 탭 POST가 아니라 서버 회의 시작). 진행 줄에 붙어 "멈춘 게 아니라 오래 걸리는 것"을 보인다.
   const [elapsed, setElapsed] = useState(0);
   // startedAt은 ref로 — 자기 턴 종료 직후 setTurn(null)이 먼저 오고 serverBusy는 다음 폴까지 true라, 그 창에서 경과가
@@ -120,7 +122,7 @@ export default function Room({ params }) {
     // 신고(2026-07-25 "크루들의 대화 내용이 사라지는 경우가 많습니다, 특히 회의실에서")의 원인.
     // 디스크의 회의록은 멀쩡한데 화면만 비는 케이스라, 실패는 에러로 드러내고 기존 표시를 유지한다.
     api(`/api/companies/${ws}/room`)
-      .then((d) => { setMessages(d.messages ?? []); setServerBusy(!!d.turn?.active); setTurn(d.turn ?? null); setError(''); setDelegLimited(d.delegationLimit !== false); })
+      .then((d) => { setMessages(d.messages ?? []); setServerBusy(!!d.turn?.active); setTurn(d.turn ?? null); setError(''); setDelegLimited(d.delegationLimit !== false); setTraceIdx(d.traces ?? {}); })
       .catch((e) => setError(String(e?.message || '') || t('room.loadFail')));
     api(`/api/companies/${ws}/agents`).then((d) => setAgents(d.agents ?? [])).catch(() => {});
   }
@@ -157,6 +159,7 @@ export default function Room({ params }) {
         setTurn(d.turn ?? null); setServerBusy(!!d.turn?.active);
         const srv = d.messages ?? [];
         setMessages((cur) => (!busy || srv.length >= (cur?.length ?? 0)) ? srv : cur);
+        if (d.traces) setTraceIdx((cur) => ({ ...cur, ...d.traces })); // 끝난 발언의 작업 과정 요약(이 기기 기록만)
         if (Date.now() - delegSavedAt.current > 4000) setDelegLimited(d.delegationLimit !== false); // 다른 탭·기기에서 바꾼 값도 따라간다
       }).catch(() => {});
     }, live ? 2500 : 8000);
@@ -604,6 +607,8 @@ export default function Room({ params }) {
                   {/* 산출물 칩 — 크루 채팅과 같은 컴포넌트(바로 보기=눈 토글, 바로 가기=칩 클릭). 방 메시지의 artifacts는
                       room.mjs가 chat() 결과에서 실어 저장한다(개인 스레드에만 기록되던 비대칭 해소). 보관 회의 열람도 같은 경로. */}
                   {m.artifacts?.length > 0 && <ArtifactChips ws={ws} rels={m.artifacts} />}
+                  {/* 작업 과정 — 이 기기에 남은 발언 기록만 접힌 한 줄(펼치면 생각·도구·결과) */}
+                  {m.traceId && <TraceSummary ws={ws} slug={m.who} id={m.traceId} sum={traceIdx[m.traceId]} />}
                 </div>
               ))}
               {!viewing && (busy || serverBusy) && turn?.v === 2 && (
@@ -625,7 +630,11 @@ export default function Room({ params }) {
                         </div>
                         {/* 생각 — 모델의 사고(thinking) 뒤 1500자. 접이식·기본 펼침: "무엇을 생각하며 이 답을 내는지"가 요청의 핵심(유건 2026-09-06). */}
                         {/* 발언 중 카드가 2장 이하일 때만 펼침 — 8장 × 생각 1500자면 라이브 영역이 화면을 넘긴다(검수 LOW) */}
-                        {sp.thought && (
+                        {/* 작업 과정 — 이 발언의 최근 6단계 제목(누르면 전체를 받아 입력·결과를 펼친다). 기록이 있으면 생각도 그 단계로 보인다 */}
+                        {sp.trace?.steps?.length > 0 && (
+                          <div style={{ marginBottom: 6 }}><TraceSteps ws={ws} slug={sp.slug} traceId={sp.trace.id} steps={sp.trace.steps} dropped={0} /></div>
+                        )}
+                        {sp.thought && !sp.trace?.steps?.length && (
                           <details open={turn.speakers.filter((x) => x.state === 'speaking').length <= 2} style={{ marginBottom: 6 }}>
                             <summary style={{ fontSize: 11, color: 'var(--fg-3)', cursor: 'pointer' }}>{t('room.thought')}</summary>
                             <div style={{ fontSize: 12, color: 'var(--fg-3)', whiteSpace: 'pre-wrap', borderLeft: '2px solid var(--border)', paddingLeft: 8, marginTop: 4 }}>{sp.thought}</div>
@@ -670,6 +679,9 @@ export default function Room({ params }) {
                           {turn.stage !== 'runner' && turn.detail ? ` · ${String(turn.detail).slice(0, 60)}` : ''}
                         </span>
                       </div>
+                      {turn.trace?.steps?.length > 0 && (
+                        <div style={{ margin: '2px 0 6px' }}><TraceSteps ws={ws} slug={turn.slug} traceId={turn.trace.id} steps={turn.trace.steps} /></div>
+                      )}
                       {turn.partial && (
                         <div style={{ fontSize: 13.5, color: 'var(--fg-2)' }}><Markdown text={turn.partial} wsId={ws} /></div>
                       )}

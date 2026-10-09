@@ -96,6 +96,9 @@ const isLocalImportRel = (rel) => rel.split('/')[0] === '.local-assets';
     버전 섞임(#863 분리 검수 LOW): 옛 버전으로 내린 기기는 EXCLUDE에 이 줄이 없어 상태 파일을 올린다. EXCLUDE는 로컬 walk에만 걸려, 새 기기가 그 사본을 받아
     자기 상태를 덮고 다음 사이클에 '로컬 삭제'로 원격을 지우게 된다(.local-assets와 같은 계약). 기기 사이 이어받기는 알림 글 meta로 한다(설계 7절, 3단계). */
 const isAssistantStateRel = (rel) => rel.split('/')[0] === '.assistant';
+/** 작업 과정 기록(.turn-traces/ — src/turn-trace.mjs): 끝난 턴의 생각·도구 입력·결과. 이 기기에만 둔다(유건 확정 2026-10-09 — 다른 기기에서는 답만 보인다).
+    .assistant와 같은 계약 — 올리지 않고(EXCLUDE), 원격에 옛 사본이 있어도 diff 불가시(받기·삭제 전파·브레이크 집계 전부 건너뜀). */
+export const isTurnTraceRel = (rel) => rel.split('/')[0] === '.turn-traces';
 
 /** 개발 산출물 디렉터리(node_modules·.git·가상환경·크롬 프로필 등) — 라이브 실측(2026-09-14): companies 버킷
     25GB 중 이런 디렉터리가 약 7GB를 차지하고 매 사이클(8s) walk가 전부 읽고 해시했다. isRoomCardRel과 같은
@@ -146,6 +149,8 @@ export const EXCLUDE = (rel) => { // (export: 회귀 테스트용)
   if (rel.split('/')[0] === '.msgr-journal') return true;
   // 능동 비서 상태(.assistant/ — isAssistantStateRel 주석). 설정(assistant.json)은 동기화 대상이다.
   if (isAssistantStateRel(rel)) return true;
+  // 작업 과정 기록(.turn-traces/ — isTurnTraceRel 주석) — 기기 로컬, 턴마다 쌓인다.
+  if (isTurnTraceRel(rel)) return true;
   const base = rel.split('/').pop();
   if (
     base.startsWith('.gateway') || base.startsWith('.gw-offset') ||
@@ -745,6 +750,7 @@ async function walk(dir, base = dir, out = {}, failed = null) {
     const full = join(dir, e.name);
     const rel = full.slice(base.length + 1).split(sep).join('/');
     if (isLocalImportRel(rel)) continue; // source paths/consents/staging are private to this device
+    if (isTurnTraceRel(rel)) continue; // 작업 과정 기록 — 기기 로컬(EXCLUDE·diff 불가시). 턴마다 쌓이는 폴더라 8초 사이클이 내려가지도 않게
     if (e.isDirectory()) {
       // 개발 산출물 디렉터리는 내려가지 않는다(isDevArtifactRel 주석) — diff 쪽 불가시 가드가 원격 전용
       // 항목의 pull·삭제 전파를 이미 막아주므로, 여기서 스킵해도 안전하고 CPU·IO만 줄어든다.
@@ -1171,7 +1177,7 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
   }
 
   // 회의록 충돌 카드·기기 로컬 상태(.local-assets·.assistant)는 집합에서 빼 불가시 — 아래 브레이크 집계·전파 루프가 같은 집합을 돌므로 한 곳이면 된다(isRoomCardRel 주석).
-  const allRels = new Set([...Object.keys(local), ...Object.keys(remote.files), ...Object.keys(state)].filter((rel) => !isRoomCardRel(rel) && !isLocalImportRel(rel) && !isAssistantStateRel(rel)));
+  const allRels = new Set([...Object.keys(local), ...Object.keys(remote.files), ...Object.keys(state)].filter((rel) => !isRoomCardRel(rel) && !isLocalImportRel(rel) && !isAssistantStateRel(rel) && !isTurnTraceRel(rel)));
 
   const archMoves = archivalCreateNames(local, state); // .archive→.trash 이동의 목적지 basename
   // 로컬 손상(readJson이 .corrupt-로 치워둠)으로 '부재'가 된 삭제 후보 — 삭제가 아니라 self-heal 대상.

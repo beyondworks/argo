@@ -46,6 +46,7 @@ import { makePermissionGate, gateHooks } from './permission-gate.mjs';
 import { callConnectorTool, connectorBriefing } from './connectors.mjs'; // 커넥터 = 러너 무관 단일 실행 경로(설계서 §2-2)
 import { detectRunnerDenial, detectDenialNarration, denialNote } from './runner-denial.mjs';
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
+import { createTrace, recordSdkMessage, recordCodexEvent, maskSecrets, safeDetail } from './turn-trace.mjs';
 import { registerTurn, withTurnControl, turnAbortedError } from './turn-abort.mjs';
 import { scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, loadRunnerCred, verifyRunnerCred, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply, isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice, isHiddenRunner, visibleRunnerIds, visibleRunnerNamesLine, onlyHiddenConnectedStatus, unsupportedMethodStatus, unsupportedMethodNotice, isCliTurn, GEMINI_DEFAULT_MODEL, runnerCredType, CODEX_DEFAULT_MODEL, CLI_CHAT_TURN_TIMEOUT_MS } from './runners.mjs';
 import { userAddressNote, turnUserName, userSetAddress } from './user-name.mjs'; // 에이전트가 사용자를 이름으로 부르기(T5) — 이름 출처·남의 이름 차단은 그 파일 한 곳
@@ -1447,8 +1448,27 @@ export function cliSteerPrompt(prompt, reply, texts, lang = 'ko') {
 export async function chat(wsId, agentSlug, userMsg, sessionId = null, opts = {}) {
   // opts.abortTag: an id (e.g. a messenger source message id) that scopes interruptTurn() to this one execution —
   // without it, cancellation falls back to "the latest same-source turn" (crew stop 검수 2026-09-26 M-1).
-  return withTurnControl(wsId, agentSlug, opts.__turnControl, (control) =>
-    runChat(wsId, agentSlug, userMsg, sessionId, { ...opts, __turnControl: control }), { source: opts.source ?? (opts.from ? 'delegate' : 'chat'), tag: opts.abortTag ?? null });
+  const source = opts.source ?? (opts.from ? 'delegate' : 'chat');
+  return withTurnControl(wsId, agentSlug, opts.__turnControl, async (control) => {
+    // 작업 과정(turn-trace) — 논리 턴 하나에 하나. 재시도 프레임·커넥터 후속 턴은 같은 control을 물려받아 같은 기록에 이어 쌓고,
+    // 같은 크루의 다른 턴·위임받은 동료 턴은 control이 달라 따로 쌓인다(크루당 하나인 상태 파일이 섞이던 문제를 기록에서는 끊는다).
+    // 끝내기·저장은 기록을 만든 바깥 프레임만 한다. 저장 대상(1:1·회의실)이면 traceId를 결과·오류에 싣는다 — 대화 줄이 이 기기의 기록을 가리킨다.
+    const own = !control.trace;
+    if (own) control.trace = createTrace({ wsId, slug: agentSlug, source });
+    const trace = control.trace;
+    try {
+      const r = await runChat(wsId, agentSlug, userMsg, sessionId, { ...opts, __turnControl: control });
+      if (!own) return r;
+      await trace.finish({ ok: true });
+      return trace.kept && r && typeof r === 'object' ? { ...r, traceId: trace.id } : r;
+    } catch (e) {
+      if (own) {
+        await trace.finish({ ok: false, aborted: !!e?.aborted });
+        if (trace.kept && e && typeof e === 'object' && !e.traceId) { try { e.traceId = trace.id; } catch { /* 읽기 전용 오류 객체 — 표시만 못 한다 */ } }
+      }
+      throw e;
+    }
+  }, { source, tag: opts.abortTag ?? null });
 }
 
 async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnControl, from = null, source = null, attachments = [], hop = 0, chain = [], toolHop = 0, mirrorCtx = null, runnerOverride = null, modelOverride = null, journal = null, workFolder = '', delegationRelaxed = false, delegationTree = null, sessionChain = null, notOwnerDirect = null, runnerNote = '', __freshRetry = false, __seedNotes = null, __excludeRunners = null, __crashRetry = false, __lockupRetry = false, __downgradedFrom = null } = {}) {
@@ -1498,6 +1518,7 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
     : saveHandover(wsId, agentSlug, ownerSolo && typeof journal?.text === 'string' ? journal.text : userMsg, reply, label, { tag: ownerSolo ? (mirrorCtx.orgId ? msgrJournal(mirrorCtx.orgId, mirrorCtx.channelId).tag : '') : journal?.tag ?? '' }));
   // 상태 파일(chats/<slug>.status.json)에 남길 턴 출처 — 회의실은 source==='room'인 상태만 실시간 표시에 채택한다(#393 검수 MEDIUM-2)
   const turnSource = source ?? (from ? 'delegate' : 'chat');
+  const traceRec = __turnControl?.trace ?? createTrace({ wsId, slug: agentSlug, source: turnSource, persist: false }); // chat()이 늘 만든다 — 없으면 보기 전용(저장 안 함)
   const p = paths(wsId);
   // G-3 조직 규칙: 팀 메신저 조직 턴(mirrorCtx에 orgSlug)이면 미러의 규칙집(전사+그 채널)을 시스템 프롬프트에 항상 붙인다 — 정책 항목이라 끌 수 없고, 위임받은 동료 턴에도 이어진다(kind 'msgr-rules').
   // 서버 기억(msgr_crew_memory, 유건 결정 2026-09-24)이 있으면 그것으로 — 규칙·용어·프로젝트·이 채널 일지. 옛 서버면 undefined → 미러 규칙(G-3).
@@ -1712,7 +1733,21 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
     const t0 = Date.now();
     const gist = userMsg.replace(/\s+/g, ' ').trim().slice(0, 60);
     const evBase = { type: 'turn', slug: agentSlug, source: source ?? (from ? 'delegate' : 'deck'), ...evFrom, ...(resolved.fellBack ? { fellBackFrom: wantRunner } : {}), gist, runner };
-    await setTurnStatus(wsId, agentSlug, 'runner', RUNNERS[runner].name, undefined, turnSource); // 코드+러너명(detail) — 클라가 번역
+    await setTurnStatus(wsId, agentSlug, 'runner', RUNNERS[runner].name, undefined, turnSource, undefined, undefined, traceRec.id); // 코드+러너명(detail) — 클라가 번역
+    // 작업 과정 — codex(exec --json·app-server)는 항목마다 단계(명령·파일·MCP·검색·추론 요약), 텍스트 모드 러너(gemini·antigravity)는 '실행' 한 단계.
+    // 크루가 이미 말한 글(agent_message)은 상태 파일 partial로 흘린다(SDK 경로의 스트리밍 체감과 같게). 상태 쓰기는 단계가 바뀔 때만.
+    let cliPartial = '';
+    const cliStatus = () => {
+      const last = traceRec.compact(1)[0];
+      setTurnStatus(wsId, agentSlug, last ? last.stage : 'runner', last ? last.detail : RUNNERS[runner].name, cliPartial || undefined, turnSource, undefined, traceRec.compact(40), traceRec.id).catch(() => {});
+    };
+    const onCodexEvent = runner === 'codex' ? (ev) => {
+      const before = traceRec.rev;
+      recordCodexEvent(traceRec, ev, { onText: (text) => { cliPartial = cliPartial ? `${cliPartial}\n\n${text}` : text; } });
+      if (traceRec.rev !== before) cliStatus();
+    } : null;
+    const endRunnerTask = runner === 'codex' ? null : traceRec.task(RUNNERS[runner].name);
+    // 활동 이벤트(events.jsonl — 기기 간 동기화)에는 CLI 턴 단계를 싣지 않는다(종전 그대로) — 작업 과정은 이 기기 기록(.turn-traces)에만.
     // 중단 배선 — SDK 경로처럼 정지 버튼이 실제로 프로세스를 끊게 한다(외부 CLI는 signal로 자식 kill).
     const ac = new AbortController();
     const abortReg = registerTurn(wsId, agentSlug, () => ac.abort(), __turnControl);
@@ -1835,13 +1870,13 @@ ${lang === 'en'
       const runPrompt = promptFor(withEarly);
       try {
         __turnControl.check();
-        reply = await externalExec({ runner, model: effModel, cwd: p.root, prompt: runPrompt, cred, signal: ac.signal, caps: cliCaps, effort: turnEffort, workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers, onSteerable });
+        reply = await externalExec({ runner, model: effModel, cwd: p.root, prompt: runPrompt, cred, signal: ac.signal, caps: cliCaps, effort: turnEffort, workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers, onSteerable, onEvent: onCodexEvent });
       } catch (e) {
         const gated = !!(effModel && effectiveModels(runner).find((m) => m.id === effModel)?.gated); // 오버레이 반영(MEDIUM-3)
         if (abortReg.wasAborted() || !gated || !GATED_MODEL_ERR_RE.test(String(e.message || e))) throw e;
         console.warn(`[argo] ${runner} 게이트 모델 접근 불가(${effModel}) — 기본 모델로 강등 재시도(${wsId}/${agentSlug})`);
         usedModel = ''; // '' = 러너 기본 모델
-        reply = await externalExec({ runner, model: '', cwd: p.root, prompt: runPrompt, cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers, onSteerable });
+        reply = await externalExec({ runner, model: '', cwd: p.root, prompt: runPrompt, cred, signal: ac.signal, caps: cliCaps, effort: meta.effort ?? '', workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers, onSteerable, onEvent: onCodexEvent });
         if (reply) {
           reply = (lang === 'en'
             ? `(This account doesn't have access to ${effModel} — an Ultra/paid-only model — so I answered with the runner's default model.)`
@@ -1864,7 +1899,7 @@ ${lang === 'en'
         const segNotes = seg.directives.length || seg.bad.length ? await runDirectives(wsId, agentSlug, seg.directives, { lang, bad: seg.bad, hop, chain, toolHop, results: [], mirrorCtx, delegationRelaxed: lim.relaxed, delegationTree: tree, counters: turnCounters, fullAuto, origin: notOwnerDirect, turnControl: __turnControl, usedTools: crewBridge?.called ?? null }) : [];
         doneText = [doneText, seg.directives.length || seg.bad.length ? [seg.clean, segNotes.join('\n')].filter(Boolean).join('\n\n') : reply].filter(Boolean).join('\n\n');
         try {
-          reply = await externalExec({ runner, model: usedModel, cwd: p.root, prompt: promptFor((ctx) => cliSteerPrompt(withEarly(ctx), doneText, texts, lang)), cred, signal: ac.signal, caps: cliCaps, effort: usedModel ? turnEffort : (meta.effort ?? ''), workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers, onSteerable }) ?? '';
+          reply = await externalExec({ runner, model: usedModel, cwd: p.root, prompt: promptFor((ctx) => cliSteerPrompt(withEarly(ctx), doneText, texts, lang)), cred, signal: ac.signal, caps: cliCaps, effort: usedModel ? turnEffort : (meta.effort ?? ''), workRoots: cliWorkRoots, timeoutMs: cliTimeoutMs, kind: source === 'job' ? 'job' : 'chat', mcpServers: cliMcpServers, onSteerable, onEvent: onCodexEvent }) ?? '';
         } catch (e) {
           if (abortReg.wasAborted() || e?.aborted) throw e;
           steerFailed = { texts, reason: String(e?.message || e).slice(0, 400) };
@@ -1873,6 +1908,7 @@ ${lang === 'en'
         }
       }
       cliInbox.closed = true;
+      endRunnerTask?.(true);
       __turnControl.check();
       // emptyReply 표지 — 대화 턴의 문구·처리는 그대로 두고, 루틴(routines.mjs runTurn)만 이 표지를 보고 사용자가 알아듣는 문구로 바꾼다(빈 답은 실패 그대로)
       if (!reply && !doneText) throw Object.assign(new Error(lang === 'en' ? `The ${RUNNERS[runner].name} runner returned an empty response` : `${RUNNERS[runner].name} 러너가 빈 응답을 반환했습니다`), { emptyReply: true });
@@ -1961,6 +1997,7 @@ ${lang === 'en'
       // 검수 CRITICAL-2: 변이 복원 오타겟으로 이 줄이 예산 분기에 가 있었다 — 행동 테스트로 잠금).
       return { reply, sessionId: null, handover, artifacts: await artDiff(reply), ...(contextScope ? { contextScope } : {}), ...(steerFailed ? { steerFailed } : {}), ...fellBackInfo, ...modelFallbackInfo };
     } catch (e) {
+      endRunnerTask?.(false);
       abortReg.detachSteer(cliInbox.accepted); cliInbox.closed = true; // SDK 갈래 catch와 같은 이유(검수 1) — 재시도가 다시 넘겨받는다
       discardHandoffs();
       let aborted = abortReg.wasAborted() || !!e?.aborted;
@@ -2165,8 +2202,9 @@ ${lang === 'en'
     // runner — 설정 연결 카드의 "마지막 턴 상태" 원천(P1-1). CLI 갈래 evBase에는 이미 있었다(비대칭 봉합).
     ...evFrom, ...(resolved.fellBack ? { fellBackFrom: wantRunner } : {}), gist, runner, msg: userMsg.slice(0, 2000),
   };
-  const steps = [];
-  const step = (stage, detail = '') => { if (steps.length < 40) steps.push({ t: Date.now() - t0, stage, detail }); };
+  // 단계 궤적 — 작업 과정 기록(turn-trace)이 정본이다. 상태 파일·활동 이벤트에는 마지막 40개만 싣고 전체 수(stepsTotal)를 함께 둔다.
+  // 옛 step()은 40개째부터 기록을 멈춰 긴 턴의 진행 표시가 40번째 도구에서 굳었다(2026-10-09 수정).
+  const stepsNow = () => traceRec.compact(40);
   let stderrTail = ''; // CLI stderr 마지막 2KB — 실패 진단용(성공 시 미사용)
   let actualModel = null; // SDK가 실제로 사용한 모델 — 선택한 모델이 진짜 적용됐는지의 증거(요청값이 아닌 실사용값)
   // 이 턴에 만든/고친 vault 문서 — 답변에 링크 칩으로 붙는다("문서 만들었는데 어디 갔지"의 근본 대응,
@@ -2228,7 +2266,7 @@ ${lang === 'en'
   // 이 턴이 청구되는가 — 구독(OAuth)·호스트 로그인 턴은 SDK가 정가를 리포트해도 돈이 안 나간다.
   // 사용액 표시가 청구서로 오해되던 신고(2026-07-26)의 교정. 턴당 1회만 읽는다(파일 I/O).
   const billed = await isBilledRunner(wsId, runner);
-  await setTurnStatus(wsId, agentSlug, 'boot', '', undefined, turnSource); // 즉시 — SDK 부팅 전에도 살아있음을 보인다(클라가 번역)
+  await setTurnStatus(wsId, agentSlug, 'boot', '', undefined, turnSource, undefined, undefined, traceRec.id); // 즉시 — SDK 부팅 전에도 살아있음을 보인다(클라가 번역)
   // 시스템 프롬프트 꼬리·모델 선택은 SDK·네이티브 두 엔진이 **같은 값**을 쓴다(한 곳 정의 — 갈라지면 러너 차등).
   const sysTail = orgRules // 조직 규칙집(팀 메신저 채널 턴) — SDK·네이티브 두 엔진이 같은 꼬리를 쓴다
     + (mirrorCtx?.kind === 'msgr' ? rosterPrompt(messengerColleagues(mirrorCtx, hop), lang, true) : colleagues.length ? rosterPrompt(colleagues, lang, false, lim) : hopCapNote)
@@ -2301,6 +2339,8 @@ ${lang === 'en'
   try { // 이어진 실행 도중의 예외만 아래 catch가 받아 첫 답을 지킨다 — 그 밖의 예외는 그대로 다시 던진다
   for await (const msg of q) {
     __turnControl.check();
+    // 작업 과정 — 생각(thinking)·도구 시작(tool_use 입력 전부)·도구 결과(type:'user' tool_result). SDK와 네이티브 엔진이 같은 모양을 낸다.
+    if (msg.type === 'assistant' || msg.type === 'user') recordSdkMessage(traceRec, msg);
     if (msg.type === 'system' && msg.subtype === 'init') {
       sid = msg.session_id;
       // MCP 접속 실측 — 설정값(connectedMcp)만 믿고 "연결된 도구: X"라 단언하던 것 정직화
@@ -2354,12 +2394,11 @@ ${lang === 'en'
       if (said) partial = partial ? `${partial}\n\n${said}` : said;
       // 사고 과정 — thinking 블록(SDK가 확장 사고를 켠 모델에서 싣는다)을 상태 파일 thought로 흘린다. 회의실·1:1 카드가
       // "무엇을 생각하며 이 답을 내는지"를 접이식으로 보인다(유건 요청 2026-09-06). 없으면 이전 값 유지(setTurnStatus).
-      const thoughtNow = (msg.message?.content ?? []).filter((b) => b.type === 'thinking' && typeof b.thinking === 'string').map((b) => b.thinking).join('\n').trim();
+      const thoughtNow = maskSecrets((msg.message?.content ?? []).filter((b) => b.type === 'thinking' && typeof b.thinking === 'string').map((b) => b.thinking).join('\n').trim(), 65_536); // 생각 글도 작업 과정과 같은 가림(길이를 묶는다 — secret-mask 전제)
       if (thoughtNow) thought = thought ? `${thought}\n\n${thoughtNow}` : thoughtNow;
       const stage = tu ? stageForTool(tu.name) : 'think'; // 코드 — 클라가 번역(가장 흔한 상태라 누락 시 영어 회사에 한국어 노출)
-      const detail = tu ? detailForTool(tu.name, tu.input, { display: true }) : '';
-      for (const b of tus) step(stageForTool(b.name), detailForTool(b.name, b.input)); // 도구 하나 = 단계 하나
-      await setTurnStatus(wsId, agentSlug, stage, detail, partial, turnSource, thought, steps);
+      const detail = tu ? safeDetail(tu.name, tu.input, { display: true }) : ''; // 가린 입력으로 만든 한 줄(상태 파일 → 화면·회의실 발언 카드)
+      await setTurnStatus(wsId, agentSlug, stage, detail, partial, turnSource, thought, stepsNow(), traceRec.id); // 도구 하나 = 단계 하나(작업 과정 기록이 위 recordSdkMessage에서 쌓았다)
     }
     if (msg.type === 'result') {
       sid = msg.session_id ?? sid;
@@ -2526,7 +2565,7 @@ ${lang === 'en'
     if (!aborted) prefixFallbackError(e); // 대체 실행 실패 맥락 — 이벤트·사용자 에러 공통
     // 실패도 회사의 사건이다 — 활동 화면의 "오류" 필터가 이 기록을 먹는다
     await appendEvent(wsId, {
-      ...evBase, ok: false, ms: Date.now() - t0, steps,
+      ...evBase, ok: false, ms: Date.now() - t0, steps: stepsNow(), stepsTotal: traceRec.toolCount,
       error: e?.cancellationIncomplete ? '자동 재개 차단됨; 일부 자식 작업 종료 확인 불가' : aborted ? USER_ABORT_ERROR : String(e.message || e).slice(0, 400), // 진단 상세(errors[]/stderr 꼬리)까지 실리도록 400
       ...(aborted ? { aborted: true } : {}), ...(e?.cancellationIncomplete ? { cancellationIncomplete: true } : {}), // 중단 판정은 필드로(사유 문자열 동등 비교는 다국어화에 fail-open — 검수 관점3, thread aborted 필드 선례)
       ...(e?.failCode ? { failCode: e.failCode, failOrigin: e.failOrigin } : {}), // 실패 코드 표·출처(vendor/argo/probe)
@@ -2583,7 +2622,7 @@ ${lang === 'en'
   // 이 세션에 건넨 1:1 줄 — 세션과 짝으로 남긴다(바뀐 게 없으면 쓰지 않는다). 기록 실패는 턴을 막지 않는다(다음 턴이 같은 줄을 다시 건넬 뿐)
   if (soloSeenNext && sid && !sessionless) await noteSoloSeen(wsId, agentSlug, sid, soloSeenNext, soloLine).catch((e) => console.warn(`[argo] 1:1 건넴 기록 실패(${wsId}/${agentSlug}): ${String(e?.message ?? e).slice(0, 120)}`));
   await appendEvent(wsId, {
-    ...evBase, ok: true, ms: Date.now() - t0, steps, ...(__downgradedFrom ? { downgradedFrom: __downgradedFrom } : {}),
+    ...evBase, ok: true, ms: Date.now() - t0, steps: stepsNow(), stepsTotal: traceRec.toolCount, ...(__downgradedFrom ? { downgradedFrom: __downgradedFrom } : {}),
     ...(handover ? { journalRel: relative(p.vault, handover.file) } : {}), // 산출물 — 활동 행에서 일지 원문으로 드릴다운
   });
   // diff와 합집합 — 도구 관측(즉시성)과 파일시스템 diff(Bash·MCP 포함 완전성)를 합친다. 필터는
@@ -2592,6 +2631,6 @@ ${lang === 'en'
   // 맥락 요약 원샷 금액(다른 기기 이어받기) — 청구 턴이면 이 턴 금액에 더한다(루프 루틴 예산 routines.mjs spentUsd). openrouter는 금액 미기록 규칙 그대로(위 result 처리와 같다)
   if (Number.isFinite(ctxCostUsd) && runner !== 'openrouter' && await isBilledRunner(wsId, runner)) costUsd = (Number.isFinite(costUsd) ? costUsd : 0) + ctxCostUsd;
   // trace — 메신저 답글에 붙는 궤적(사고 과정·도구 단계·경과·실사용 모델). 다른 소비자(gateway·room·routine)는 무시해도 무해한 추가 필드.
-  const trace = { steps, thought: String(thought ?? '').slice(-1500), ms: Date.now() - t0, model: actualModel || null, costUsd };
+  const trace = { steps: stepsNow(), thought: String(thought ?? '').slice(-1500), ms: Date.now() - t0, model: actualModel || null, costUsd };
   return { reply, sessionId: sessionless ? null : sid, ...(contextScope ? { contextScope } : {}), ...(steerFailed ? { steerFailed } : {}), handover, costUsd, trace, artifacts: capLatest(artAfter, [...artifacts].filter(servableArtifact)), ...fellBackInfo, ...modelFallbackInfo }; // 합집합도 최신 우선 12(알파벳 컷이 최신을 떨구던 것 — 검수 LOW-2)
 }
