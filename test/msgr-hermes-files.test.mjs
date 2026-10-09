@@ -83,7 +83,8 @@ def post(params):
     N[0] += 1
     return {'message_id': N[0]}
 RESP['sendMessage'] = post
-work = Path(tmp.name) / 'work'; work.mkdir()
+# 실제 긴 경로로 푼다 — Windows 임시 폴더가 짧은 이름(C:\\Users\\RUNNER~1)이면 Hermes 코어 맨 경로 규칙([\\w.\\-]+)이 '~'에서 끊겨 경로를 못 찾는다(릴리스 빌드 TEMP, 10/9)
+work = Path(tmp.name).resolve() / 'work'; work.mkdir()
 pdf = work / 'report.pdf'; pdf.write_bytes(b'%PDF-1.4 hello')
 png = work / 'chart.png'; png.write_bytes(b'\x89PNG....')
 def sent(): return [p for meth, p in calls if meth == 'sendMessage']
