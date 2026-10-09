@@ -70,58 +70,68 @@ const readCfg = async (ws) => JSON.parse(await readFile(cfgFile(ws), 'utf8'));
 const sealedText = (obj) => `${JSON.stringify(obj, null, 2)}\n`; // 설정 API가 쓰는 모양(settings.mjs writeSealed)
 const CUSTOM = { leadMinutes: 15, eveningAt: '20:00', quiet: { from: '22:00', to: '07:00', calendarAlerts: true } };
 
-test('L3: 비서를 다른 회사로 옮겼다 되돌리면 알림 시각·내일 요약·조용한 시간·예외를 이어받는다(봉인된 꺼짐) — 끌 때 company.json은 그대로(H63 유지)', async () => {
+test('L3: 비서를 다른 회사로 옮겼다 되돌리면 알림 시각·내일 요약·조용한 시간·예외를 이어받는다(꺼진 파일의 inherit = 화면 초깃값) — 끌 때 company.json은 그대로(H63 유지)', async () => {
   _setSyncClientForTest(fakeStorage());
   await mkCompany('co-a'); await mkCompany('co-b');
   await S.saveAssistantSettings('co-a', { enabled: true, agent: 'pepper', tz: 'Asia/Seoul', ...CUSTOM });
   const companyA = await readFile(W.paths('co-a').company, 'utf8');
-  const onBytes = await readFile(cfgFile('co-a'), 'utf8');
   await S.saveAssistantSettings('co-b', { enabled: true, agent: 'wolff', tz: 'Asia/Seoul' });
   assert.equal(await readFile(W.paths('co-a').company, 'utf8'), companyA, '끌 때 company.json 그대로');
   const off = await readCfg('co-a');
-  assert.deepEqual(Object.keys(off), Object.keys(JSON.parse(onBytes)), '칸·순서 그대로(켠 시각도 남긴다) — enabled만 false');
-  assert.equal(sealedText({ ...off, enabled: true }), onBytes, 'enabled만 되돌리면 봉인된 바이트와 같다');
+  assert.deepEqual(Object.keys(off).sort(), ['agent', 'enabled', 'inherit'], '꺼짐·에이전트(방에서 복구용)·이어받을 값만 — 켠 시각·볼 것은 없다(봉인과 다시 맞춰질 수 없는 모양)');
+  assert.deepEqual([off.enabled, off.agent, off.inherit], [false, 'pepper', { leadMinutes: 15, eveningAt: '20:00', quiet: CUSTOM.quiet, dailyCap: 10, tz: 'Asia/Seoul' }]);
   const v = await S.assistantSettingsView('co-a', { deps: viewDeps });
-  assert.deepEqual([v.config.enabled, v.unsealed, v.config.leadMinutes, v.config.eveningAt, v.config.quiet], [false, false, 15, '20:00', CUSTOM.quiet], '꺼진 카드에도 저장한 값이 보인다');
-  await S.saveAssistantSettings('co-a', { enabled: true, agent: 'pepper', tz: 'Asia/Seoul' }); // 되돌림
+  assert.deepEqual([v.config.enabled, v.unsealed, v.config.leadMinutes, v.config.eveningAt, v.config.quiet], [false, false, 15, '20:00', CUSTOM.quiet], '꺼진 카드의 초깃값 = inherit');
+  await S.saveAssistantSettings('co-a', { enabled: true, agent: 'pepper', tz: 'Asia/Seoul' }); // 화면에서 되돌림
   const back = await readCfg('co-a');
-  assert.deepEqual([back.enabled, back.leadMinutes, back.eveningAt, back.morningAt, back.quiet], [true, 15, '20:00', '07:00', CUSTOM.quiet], '이어받는다(기본 30분·21:00·23~08 아님)');
+  assert.deepEqual([back.enabled, back.leadMinutes, back.eveningAt, back.morningAt, back.quiet, back.watch], [true, 15, '20:00', '07:00', CUSTOM.quiet, { calendar: true, mail: false, tasks: false, deals: false }], '이어받는다(기본 30분·21:00·23~08 아님), 볼 것은 처음처럼 일정만');
+  assert.equal('inherit' in back, false, '다시 켠 파일에는 inherit를 남기지 않는다');
   assert.equal(JSON.parse(await readFile(W.paths('co-a').company, 'utf8')).assistantSeal, C.sealOf(await readFile(cfgFile('co-a'), 'utf8')), '다시 켠 내용으로 새 봉인');
   assert.equal((await readCfg('co-b')).enabled, false, '이번엔 co-b가 꺼진다');
   C._resetAssistantConfigCacheForTest();
   assert.equal((await C.loadEffectiveAssistantConfig('co-a'))?.enabled, true);
 });
 
-test('L3 안전: 꺼진 파일을 바이트 그대로 켜짐으로 되살려도(옛 기기 에이전트) 예전 봉인된 켜짐(예전 켠 시각)일 뿐 — 엔진·화면은 켠 시각이 늦은 지금 비서를 고른다', async () => {
+test('L3 보안 ①④: 옮겨서 꺼진 이전 회사 파일의 enabled만 true로 바꿔도(에이전트 파일 도구) 봉인이 안 맞아 엔진·화면 모두 꺼짐 — 지금 비서를 꺼도 이전 회사가 저절로 켜지지 않는다', async () => {
   _setSyncClientForTest(fakeStorage());
   await mkCompany('co-c'); await mkCompany('co-d');
   await S.saveAssistantSettings('co-c', { enabled: true, agent: 'pepper', tz: 'Asia/Seoul', ...CUSTOM }, { now: Date.parse('2026-10-08T09:00:00+09:00') });
   await S.saveAssistantSettings('co-d', { enabled: true, agent: 'wolff', tz: 'Asia/Seoul' }, { now: Date.parse('2026-10-08T10:00:00+09:00') });
-  const off = await readCfg('co-c');
-  await writeFile(cfgFile('co-c'), sealedText({ ...off, enabled: true })); // 봉인 그대로, 파일만 켜짐으로
+  await writeFile(cfgFile('co-c'), sealedText({ ...(await readCfg('co-c')), enabled: true })); // 한 글자 바꾸기
   C._resetAssistantConfigCacheForTest();
-  assert.equal((await C.loadEffectiveAssistantConfig('co-c'))?.enabled, true, '봉인이 맞는 예전 켜짐이다');
+  assert.equal(await C.loadEffectiveAssistantConfig('co-c'), null, '① 엔진: 봉인이 안 맞는 켜짐 = 꺼짐');
+  let v = await S.assistantSettingsView('co-c', { deps: viewDeps });
+  assert.deepEqual([v.unsealed, v.config.enabled, v.current?.ws], [true, false, 'co-d'], '① 화면: "설정 화면 밖에서 바뀜", 지금 비서 = co-d');
+  await S.saveAssistantSettings('co-d', { enabled: false }); // 사용자가 지금 비서를 끔
+  C._resetAssistantConfigCacheForTest();
   const T = await import('../src/assistant/tick.mjs');
   T._resetAssistantForTest();
   const deps = { ...T.assistantDeps, lease: () => ({ syncOn: false }), companyIds: async () => ['co-c', 'co-d'], agentExists: async () => true, session: async () => { throw new Error('호출되면 안 된다'); } };
-  assert.deepEqual(await T.runAssistantTick('co-c', { now: Date.parse('2026-10-08T11:00:00+09:00'), deps }), { ran: true, why: 'other_company' }, '켠 시각이 늦은 co-d가 맡는다 — co-c는 쉰다(호출 0)');
-  assert.equal((await S.assistantSettingsView('co-c', { deps: viewDeps })).current?.ws, 'co-d');
+  assert.deepEqual(await T.runAssistantTick('co-c', { now: Date.parse('2026-10-08T11:00:00+09:00'), deps }), { ran: false, why: 'off' }, '④ 이전 회사 비서가 저절로 살아나지 않는다(호출 0)');
+  v = await S.assistantSettingsView('co-c', { deps: viewDeps });
+  assert.equal(v.current, null, '④ 화면: 지금 비서 없음');
 });
 
-test('L3 버전 섞임: 0.1.99가 끈 파일(켠 시각 지움 + 꺼짐으로 다시 봉인)도 다시 켜면 이어받는다 / 봉인과 무관하게 바뀐 꺼짐 파일은 기본값', async () => {
+test('L3 보안 ②③: inherit 칸을 고쳐도 엔진은 꺼짐·화면에서 켜기 전엔 효력 없음, 값 검증에 걸리면 통째로 기본값, 볼 것은 이어받지 않는다 / 0.1.99가 끈 파일(봉인 맞는 꺼짐)은 그대로 이어받는다', async () => {
   _setSyncClientForTest(fakeStorage());
   await mkCompany('co-e'); await mkCompany('co-f');
+  await S.saveAssistantSettings('co-f', { enabled: true, agent: 'wolff', tz: 'Asia/Seoul', ...CUSTOM });
+  await S.saveAssistantSettings('co-e', { enabled: true, agent: 'pepper', tz: 'Asia/Seoul' }); // co-f를 끈다
+  const off = await readCfg('co-f');
+  await writeFile(cfgFile('co-f'), sealedText({ ...off, watch: { calendar: true, mail: true }, inherit: { ...off.inherit, leadMinutes: 60, quiet: { from: '00:00', to: '00:00', calendarAlerts: true }, dailyCap: 99 } }));
+  C._resetAssistantConfigCacheForTest();
+  const cfgF = await C.loadEffectiveAssistantConfig('co-f');
+  assert.equal(cfgF?.enabled, false, '② 엔진: 꺼짐(inherit는 엔진이 보지 않는다)');
+  assert.equal((await S.assistantSettingsView('co-f', { deps: viewDeps })).current?.ws, 'co-e', '② 지금 비서는 그대로');
+  assert.deepEqual((await S.assistantSettingsView('co-f', { deps: viewDeps })).config.quiet, { from: '23:00', to: '08:00', calendarAlerts: false }, '② 값 검증에 걸린 inherit(조용한 시간 없앰)는 초깃값으로도 안 쓴다');
+  await S.saveAssistantSettings('co-f', { enabled: true, agent: 'wolff', tz: 'Asia/Seoul' }); // ③ 화면에서 켬
+  const f = await readCfg('co-f');
+  assert.deepEqual([f.leadMinutes, f.quiet.from, f.dailyCap, f.watch.mail], [30, '23:00', 10, false], '③ 검증에 걸린 inherit는 통째로 기본값, 볼 것은 일정만');
+  // 0.1.99가 끈 파일 — 켠 시각을 지우고 꺼짐으로 다시 봉인(0.1.99 settings.mjs 그대로) → 봉인 맞는 파일이라 그대로 이어받는다
   await S.saveAssistantSettings('co-e', { enabled: true, agent: 'pepper', tz: 'Asia/Seoul', ...CUSTOM });
-  const { enabledAt: _drop, ...rest } = await readCfg('co-e'); // 0.1.99 settings.mjs의 끄기 그대로
+  const { enabledAt: _drop, ...rest } = await readCfg('co-e');
   const text099 = sealedText({ ...rest, enabled: false });
   await writeFile(cfgFile('co-e'), text099); await W.updateCompany('co-e', () => ({ assistantSeal: C.sealOf(text099) }));
   await S.saveAssistantSettings('co-e', { enabled: true, agent: 'pepper', tz: 'Asia/Seoul' });
   assert.deepEqual([(await readCfg('co-e')).leadMinutes, (await readCfg('co-e')).quiet], [15, CUSTOM.quiet]);
-  // 꺼진 파일을 에이전트가 고침(값을 바꿈) — enabled를 되돌려도 봉인과 맞지 않는다 → 이어받지 않는다
-  await S.saveAssistantSettings('co-f', { enabled: true, agent: 'wolff', tz: 'Asia/Seoul', ...CUSTOM });
-  await S.saveAssistantSettings('co-e', { enabled: true, agent: 'pepper', tz: 'Asia/Seoul' }); // co-f를 끈다(봉인된 꺼짐)
-  await writeFile(cfgFile('co-f'), sealedText({ ...(await readCfg('co-f')), quiet: { from: '00:00', to: '00:00', calendarAlerts: true }, watch: { calendar: true, mail: true } }));
-  await S.saveAssistantSettings('co-f', { enabled: true, agent: 'wolff', tz: 'Asia/Seoul' });
-  const f = await readCfg('co-f');
-  assert.deepEqual([f.leadMinutes, f.quiet.from, f.watch.mail], [30, '23:00', false], '고친 꺼짐은 기본값에서 새로 봉인(A9와 같은 길)');
 });

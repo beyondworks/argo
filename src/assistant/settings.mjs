@@ -17,9 +17,12 @@
 // company.json을 다시 쓰면, 다른 기기에서 방금 보관한 그 회사가 동기화의 보관 마커 규칙(sync.mjs syncTombstones: company.json 수정 시각 ≥ 보관 시각이면
 // "보관 이후 수정" → 마커 철회)에 걸려 되살아났다. 꺼진 설정은 엔진이 봉인을 보지 않으므로(config.mjs) 모든 버전에서 꺼짐이고, 화면은 이 꺼짐을
 // "화면 밖 변경" 없이 꺼짐으로 보인다.
-// 봉인된 꺼짐(sealedOff, #894 분리 검수 L3): 끌 때는 켜짐 파일에서 enabled만 false로 바꿔 같은 모양(2칸 들여쓰기 + 줄바꿈)으로 쓴다. 그러면 enabled를 true로 되돌린
-// 바이트가 company.json에 남은 봉인과 정확히 같다 — 그 파일은 사용자가 이 화면에서 저장한 내용 그대로라 다시 켤 때 알림 시각·내일 요약·조용한 시간을 이어받는다.
-// 누가 그 바이트를 그대로 되살려 켜짐으로 돌려놓아도 그것은 예전에 봉인된 켜짐 그대로(예전 켠 시각)라, 엔진은 켠 시각이 늦은 지금 비서를 돌린다(assistantCompanyOf).
+// 끈 파일의 모양(offFile, #894 분리 검수 L3 + 보안 검토): 봉인과 다시 맞춰질 수 없게 { enabled: false, agent, inherit }만 쓴다 — 켠 시각·볼 것(watch)·그 밖 칸은 없다.
+// company.json 봉인은 예전 '켜짐' 바이트를 가리키므로, 켜짐 파일에서 enabled만 false로 바꿔 두면(fd04f4a7) 회사 폴더에 쓸 수 있는 누구든(에이전트 파일 도구 포함)
+// enabled를 true로 한 글자 바꿔 봉인이 맞는 켜짐을 만들 수 있었다 — 사용자가 지금 비서를 끄면 이전 회사 비서가 저절로 살아났다.
+// 이어받을 값(알림 시각·내일 요약·조용한 시간·하루 한도·시간대)은 inherit 칸에 담고, 봉인이 안 맞는 꺼짐 파일에서 **화면의 초깃값으로만** 쓴다(inheritBase —
+// 정규화·값 검증, 틀리면 통째로 기본값). 엔진은 보지 않고(꺼짐), 사용자가 이 화면에서 켤 때 그 값으로 저장·봉인된다. 볼 것·권한 성격 칸은 담지 않는다(처음 켜는 것처럼 일정만).
+// agent는 남긴다 — 방에서 복구(recover.mjs recoveryTargets)가 이전 비서의 1:1 방을 읽어 두 방 알림을 막는 데 쓰고(읽기만), 다시 켤 때는 카드의 에이전트를 쓴다(파일 값 아님).
 //
 // 보기 = 설정 + 지금 비서(회사·에이전트) + 상태. 전부 로컬 파일·메모리에서 읽는다 — Supabase 호출 0(리스 주인은 동기화가 이미 읽은 메모리 값, 로그인은 기기 세션 파일과
 // 사망 마커 — 회전을 일으키지 않는 읽기 전용 판정).
@@ -46,8 +49,7 @@ const fileOf = (wsId) => join(paths(wsId).root, ASSISTANT_FILE);
 const lockAssistant = (wsId, fn) => withLock(`assistant:${wsId}`, fn, { file: fileOf(wsId), mkParent: false }); // 동기화(isFileLockedRel)와 같은 파일 잠금
 const hostTz = () => { try { return new Intl.DateTimeFormat().resolvedOptions().timeZone || null; } catch { return null; } };
 
-/** assistant.json 원문 + 봉인 대조 — { text, obj, cfg, sealed, sealedOff } | null(파일 없음). 손상(JSON 아님)이면 obj·cfg null, sealed·sealedOff false.
-    sealedOff = 꺼짐이고, enabled만 true로 되돌린 바이트가 봉인과 같다(이 화면이 켰던 내용을 다른 회사로 바꾸며 끈 것 — 머리 주석). */
+/** assistant.json 원문 + 봉인 대조 — { text, obj, cfg, sealed } | null(파일 없음). 손상(JSON 아님)이면 obj·cfg null, sealed false. */
 const sealedText = (obj) => `${JSON.stringify(obj, null, 2)}\n`; // writeSealed와 같은 모양
 export async function readAssistantFile(wsId, company = null) {
   let text;
@@ -56,12 +58,29 @@ export async function readAssistantFile(wsId, company = null) {
   try { const v = JSON.parse(text); obj = v && typeof v === 'object' && !Array.isArray(v) ? v : null; } catch { /* 손상 */ }
   const co = company ?? (await loadCompany(wsId).catch(() => null));
   const seal = co?.[SEAL_FIELD];
-  const sealed = !!obj && seal === sealOf(text);
-  const sealedOff = !!obj && !sealed && obj.enabled === false && typeof seal === 'string' && seal === sealOf(sealedText({ ...obj, enabled: true }));
-  return { text, obj, cfg: obj ? normalizeAssistantConfig(obj) : null, sealed, sealedOff };
+  return { text, obj, cfg: obj ? normalizeAssistantConfig(obj) : null, sealed: !!obj && seal === sealOf(text) };
 }
 
 /** 봉인해서 쓰기 — 파일을 쓰고 그 바이트의 해시를 company.json에 적는다. 반드시 lockAssistant 안에서 부른다. */
+/** 다른 회사로 옮기며 끄는 파일(머리 주석) — 봉인 맞는 켜짐 내용 obj에서 이어받을 값만 inherit로. */
+function offFile(obj) {
+  const c = normalizeAssistantConfig(obj);
+  return {
+    enabled: false,
+    ...(c.agent ? { agent: c.agent } : {}),
+    inherit: { leadMinutes: c.leadMinutes, eveningAt: c.eveningAt, quiet: c.quiet, dailyCap: c.dailyCap, ...(c.tz ? { tz: c.tz } : {}) },
+  };
+}
+
+/** 봉인이 안 맞는 꺼짐 파일의 inherit → 화면 초깃값(저장 기본값). 정규화로 범위 밖 값은 기본값, 값 검증(settingsProblem)에 걸리면 통째로 버린다. 봉인 맞는 파일·켜짐·inherit 없음은 {}. */
+function inheritBase(f) {
+  const i = f?.obj?.inherit;
+  if (!f?.obj || f.sealed || f.obj.enabled !== false || !i || typeof i !== 'object' || Array.isArray(i)) return {};
+  const c = normalizeAssistantConfig(i);
+  const base = { leadMinutes: c.leadMinutes, eveningAt: c.eveningAt, quiet: c.quiet, dailyCap: c.dailyCap, ...(c.tz ? { tz: c.tz } : {}) };
+  return settingsProblem(base) ? {} : base;
+}
+
 async function writeSealed(wsId, obj) {
   const text = sealedText(obj);
   await writeJsonAtomic(fileOf(wsId), text);
@@ -114,8 +133,8 @@ async function saveInLine(wsId, input, { now = Date.now() } = {}) {
   const company = await loadCompany(wsId);
   await lockAssistant(wsId, async () => {
     const cur = await readAssistantFile(wsId, await loadCompany(wsId));
-    const sealed = cur?.sealed === true || cur?.sealedOff === true; // 봉인된 꺼짐도 이 화면이 저장한 내용 그대로다(머리 주석)
-    const base = sealed ? cur.obj : {};
+    const sealed = cur?.sealed === true;
+    const base = sealed ? cur.obj : inheritBase(cur); // 봉인이 안 맞으면 기본값 — 다른 회사로 옮기며 끈 파일이면 inherit를 초깃값으로(머리 주석)
     const prev = normalizeAssistantConfig(base); // 봉인 안 맞음·없음 = 기본값(꺼짐)
     const q = inp.quiet && typeof inp.quiet === 'object' ? inp.quiet : {};
     // 보내지 않은 칸은 봉인된 저장값 그대로 — 이 버전이 모르는 값(새 버전의 선택지)을 기본값으로 덮지 않는다(#865 3차 검수 LOW). 봉인이 안 맞으면 base = {}라 기본값.
@@ -170,8 +189,8 @@ async function saveInLine(wsId, input, { now = Date.now() } = {}) {
         await lockAssistant(id, async () => {
           const f = await readAssistantFile(id, await loadCompany(id));
           if (!f?.sealed || !f.cfg.enabled) return;
-          // enabled만 false로(켠 시각 등 나머지 칸·순서 그대로) — 봉인(company.json)은 그대로 두어 다시 켤 때 '봉인된 꺼짐'으로 이어받는다(머리 주석 H63·L3)
-          await writeJsonAtomic(fileOf(id), sealedText({ ...f.obj, enabled: false }));
+          // 봉인과 다시 맞춰질 수 없는 꺼짐 + 이어받을 값(inherit) — company.json(봉인)은 건드리지 않는다(머리 주석 H63·L3)
+          await writeJsonAtomic(fileOf(id), sealedText(offFile(f.obj)));
           changedOthers.push(id);
         });
       } catch (e) { failOther(id, e); }
@@ -204,7 +223,7 @@ export async function assistantSettingsView(wsId, { now = Date.now(), deps = vie
   const company = await loadCompany(wsId);
   const owner = company.ownerId ?? null;
   const here = await readAssistantFile(wsId, company);
-  const cfg = here?.sealed || here?.sealedOff ? here.cfg : normalizeAssistantConfig({});
+  const cfg = here?.sealed ? here.cfg : normalizeAssistantConfig(inheritBase(here)); // 봉인 안 맞음 = 꺼짐 — 옮기며 끈 파일이면 inherit가 초깃값
   // 같은 주인의 회사들 — 봉인 맞는 켜짐만(엔진 pickCompany와 같은 재료)
   const peers = [];
   const names = new Map();
