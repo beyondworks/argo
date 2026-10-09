@@ -226,7 +226,7 @@ test('로그인 없음 — 안내 한 줄과 종료 코드 2, 서버 호출 0(�
   for (const args of [['report', '--org', ORG, '--id', SID, '--name', 'x'], ['hold', '일', '--reason', 'r', '--source-name', 's'], ['tasks']]) {
     const r = await argo(root, args);
     assert.equal(r.code, 2, `${args[0]} → ${r.err}`);
-    assert.match(r.err, /argo login/);
+    assert.ok(r.err.includes(`'${join(REPO, 'bin', 'argo.mjs')}' login`), `이 저장소의 bin/argo.mjs로 로그인하라고 안내한다(설치된 argo는 예전 판일 수 있다): ${r.err}`);
     assert.equal(r.err.trim().split('\n').length, 1, '한 줄');
   }
   assert.equal(got().length, 0);
