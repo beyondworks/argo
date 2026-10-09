@@ -235,6 +235,8 @@ export default function Activity({ params }) {
                       <span className="microlabel">{t('activity.steps')}</span>
                       {e.steps?.length ? (
                         <div style={{ display: 'grid', gap: 3, marginTop: 4 }}>
+                          {/* 이벤트(동기화 대상)에는 마지막 40단계만 싣는다 — 전체 수가 더 크면 알린다(작업 과정 2026-10-09) */}
+                          {e.stepsTotal > e.steps.length && <span style={{ fontSize: 11, color: 'var(--fg-3)' }}>{t('activity.stepsOmitted', { n: e.steps.length, total: e.stepsTotal })}</span>}
                           {e.steps.map((s, j) => (
                             <div key={j} className="mono" style={{ fontSize: 11, color: 'var(--fg-2)', display: 'flex', gap: 10, minWidth: 0 }}>
                               <span style={{ color: 'var(--fg-3)', width: 42, flex: 'none', textAlign: 'right' }}>+{(s.t / 1000).toFixed(0)}s</span>

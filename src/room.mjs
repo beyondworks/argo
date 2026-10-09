@@ -8,6 +8,7 @@ import { userDisplayName } from './user-name.mjs'; // 회의실 참조 쪽지의
 import { listAgents } from './hub.mjs';
 import { chat } from './chat.mjs';
 import { setTurnStatus, clearTurnStatus, getTurnStatus } from './turn-status.mjs';
+import { pickLiveTrace, traceSummaries } from './turn-trace.mjs';
 import { maskKeyLike } from './runners/shared.mjs';
 import { updateIndex } from './memory.mjs';
 import { withLock } from './mutex.mjs';
@@ -470,8 +471,17 @@ export async function getRoomTurn(wsId) {
     active: true, slug: slug || null, startedAt: s.startedAt,
     queue: rest.split(',').filter(Boolean),
     stage: live?.stage ?? null, detail: live?.detail ?? '', partial: live?.partial ?? '',
+    ...(live ? roomTraceGlance(wsId, slug, live.traceId) : {}),
     total, // 발언 인원(마커 세 번째 구간) — done = total − 남은 큐 − 발언 중 1
   };
+}
+
+/** 발언 카드의 작업 과정 한눈 보기 — 회의실 턴(source 'room')의 기록에서 최근 6단계 제목만(입력 120자·결과 없음). 발언자 8명 × 약 1KB.
+    펼치면 화면이 /trace로 전체를 받는다. 출처가 회의실이 아닌 기록(같은 크루의 1:1·루틴)은 싣지 않는다 — 남의 단계가 발언 카드에 섞이지 않게. */
+export function roomTraceGlance(wsId, slug, pointer) {
+  const t = pickLiveTrace(wsId, slug, { want: pointer });
+  if (!t || t.source !== 'room' || (pointer && t.id !== pointer)) return {};
+  return { trace: { id: t.id, n: t.size, steps: t.tail(6).map((s) => ({ i: s.i, kind: s.kind, name: s.name, status: s.status, input: s.input.slice(0, 120), t: s.t, ms: s.ms, glance: true, ...(s.kind === 'think' ? { result: String(s.result ?? '').slice(0, 120) } : {}) })) } };
 }
 
 /** v2 마커 → 화면 계약. speakers[] = 발언자별 {slug, state, stage, detail, partial, thought, startedAt}. state: speaking|queued|failed(끝난 크루는 말풍선이 정본 — done은 수만).
@@ -485,7 +495,7 @@ async function roomTurnV2(wsId, s, m) {
   const live = await Promise.all(active.map(async (slug) => {
     const cur = await getTurnStatus(wsId, slug);
     const ok = cur?.source === 'room' ? cur : null;
-    return { slug, state: 'speaking', stage: ok?.stage ?? null, detail: ok?.detail ?? '', partial: ok?.partial ?? '', thought: ok?.thought ?? '', startedAt: ok?.startedAt ?? null };
+    return { slug, state: 'speaking', stage: ok?.stage ?? null, detail: ok?.detail ?? '', partial: ok?.partial ?? '', thought: ok?.thought ?? '', startedAt: ok?.startedAt ?? null, ...(ok ? roomTraceGlance(wsId, slug, ok.traceId) : {}) };
   }));
   const speakers = [
     ...live,
@@ -768,12 +778,13 @@ ${transcript}${folderLine}
     // round — 반응 라운드 발언은 화면이 "반응"으로 구분한다(1라운드는 필드 없음 — 구형 메시지와 같은 모양).
     // noAdd — 반응 라운드의 "추가 의견 없음"(프롬프트가 지정한 한 줄)은 말풍선 대신 접힌 칩으로(12명이면 같은 줄 12개 — 검수 LOW).
     const noAdd = round >= 2 && NO_ADD_RE.test(String(r.reply ?? ''));
-    const live = await pushRoomMsg(wsId, { who: a.slug, text: r.reply, ts: Date.now(), ...(round >= 2 ? { round } : {}), ...(noAdd ? { noAdd: true } : {}), ...(r.artifacts?.length ? { artifacts: r.artifacts } : {}) }, sid);
+    // traceId — 이 발언의 작업 과정(turn-trace, 이 기기에만 저장). 방 줄은 동기화되지만 다른 기기엔 기록 파일이 없어 답만 보인다.
+    const live = await pushRoomMsg(wsId, { who: a.slug, text: r.reply, ts: Date.now(), ...(round >= 2 ? { round } : {}), ...(noAdd ? { noAdd: true } : {}), ...(r.artifacts?.length ? { artifacts: r.artifacts } : {}), ...(r.traceId ? { traceId: r.traceId } : {}) }, sid);
     if (!live) return { live: false, reply: r.reply }; // 회의가 마쳐졌다 — 남은 발언을 빈 방에 남기지 않는다
     // ponytail: 회의실 턴을 크루 개인 스레드에 기록한다 — 마지막 남은 비대칭(루틴 #157 교훈).
     // 안 하면 회의에서 시킨 일이 개인 채팅에 안 보이고 이어가기가 안 된다(유건 제보 2026-08-08).
     const { appendTurn } = await import('./thread.mjs');
-    await appendTurn(wsId, a.slug, { userMsg: prompt, reply: r.reply, handover: r.handover, sessionId: null, via: 'room', artifacts: r.artifacts })
+    await appendTurn(wsId, a.slug, { userMsg: prompt, reply: r.reply, handover: r.handover, sessionId: null, via: 'room', artifacts: r.artifacts, traceId: r.traceId })
       .catch((e) => console.error(`[argo] 회의실 스레드 기록 실패(${wsId}/${a.slug}):`, e.message));
     replies.push({ slug: a.slug, name: a.name, reply: r.reply, ...(round >= 2 ? { round } : {}), ...(r.artifacts?.length ? { artifacts: r.artifacts } : {}) }); // 화면의 폴백 경로(room 스냅샷 부재)도 칩을 잃지 않게
     return { live: true, reply: r.reply, noAdd };

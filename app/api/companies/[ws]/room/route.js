@@ -1,15 +1,28 @@
 import { loadRoom, runRoomTurn, endMeeting, getRoomTurn } from '../../../../../src/room.mjs';
+import { traceSummaries } from '../../../../../src/turn-trace.mjs';
 import { guardCompany, requestLang } from '../../../../auth.mjs';
 import { apiError } from '../../../../apimsg.mjs';
 
 export const maxDuration = 800; // 여러 크루 발언 — 호스티드(Vercel Pro) 함수 상한 800(chat 라우트와 같은 값)
+
+/** 방 말풍선의 작업 과정 요약 — 발언 크루별 이 기기 기록 index에서 {n, ms, ok}만(다른 기기에서 온 발언은 빠진다 = 답만 보인다). 키는 `${slug}/${id}`. */
+async function roomTraces(ws, messages = []) {
+  const bySlug = new Map();
+  for (const m of messages ?? []) if (m?.traceId && m.who && m.who !== 'user') bySlug.set(m.who, [...(bySlug.get(m.who) ?? []), m.traceId]);
+  const out = {};
+  await Promise.all([...bySlug].map(async ([slug, ids]) => {
+    const got = await traceSummaries(ws, slug, ids).catch(() => ({}));
+    for (const [id, v] of Object.entries(got)) out[id] = v;
+  }));
+  return out;
+}
 
 export async function GET(_req, { params }) {
   const { ws } = await params;
   const denied = await guardCompany(ws); if (denied) return denied;
   // turn — 진행 중 마커(화면이 페이지 복귀 때 '회의 중' 표시를 복원). 없으면 null.
   const [room, turn] = await Promise.all([loadRoom(ws), getRoomTurn(ws)]);
-  return Response.json({ ...room, turn });
+  return Response.json({ ...room, turn, traces: await roomTraces(ws, room.messages) });
 }
 
 /** 회의 마치기 — 회의록을 vault 일지로 적재하고 방을 비운다(대화는 chats/.archive/에 보관).

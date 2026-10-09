@@ -29,6 +29,8 @@ import { mergePolledThread, makePollApplier, startThreadPolls } from './thread-p
 import { isNoRunnerFailure, failCodeKey } from './fail-display.mjs'; // '러너 없음' 실패 → 사전 문구 + 설정 링크(UX-A02)
 import { gistLabel } from '../../../../lib/gist-display.mjs'; // 메신저 머리말을 뗀 요약(UX-A08)
 import { AssistantSection } from './assistant-section.jsx'; // 능동 비서 켜기·기본값·상태(설계 13절) — 카드 "비서" 탭
+import { LiveTrace, TraceSummary } from '../../turn-trace'; // 작업 과정 — 진행 중 단계 목록·답 아래 접힌 기록(회의실과 같은 컴포넌트)
+import { mergeTraceDelta, traceQuery } from '../../../../lib/trace-view.mjs';
 
 // 러너 표시명(폴백 안내용) — runner-connect의 RUNNER_NAMES와 동일 값(서버 RUNNERS.name 준거)
 const RUNNER_LABELS = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', antigravity: 'Antigravity', glm: 'GLM', kimi: 'Kimi', openrouter: 'OpenRouter', grok: 'Grok' };
@@ -363,6 +365,14 @@ export default function CrewChat({ params, embedded = false, onClose }) {
   const startRef = useRef(0);
   // 실제 진행 단계 — "작성중" 대신 지금 무엇을 하는지 (기억 탐색/명령 실행/결재 대기)
   const [liveStage, setLiveStage] = useState(null);
+  // 작업 과정(turn-trace) — 진행 폴이 늘어난 단계만 보내면(tr·rev) 여기서 번호로 합친다. traceIdx = 이 기기에 저장된 끝난 기록 요약({id: {n, ms, ok}}).
+  const [liveTrace, setLiveTrace] = useState(null);
+  const liveTraceRef = useRef(null);
+  const [traceIdx, setTraceIdx] = useState({});
+  const applyStatus = useCallback((st) => {
+    const next = st?.trace ? mergeTraceDelta(liveTraceRef.current, st.trace) : null; // 상태가 없거나 기록이 없으면(옛 서버·다른 프로세스 턴) 비운다 — 이전 턴 목록이 남지 않게
+    liveTraceRef.current = next; setLiveTrace(next); setLiveStage(st ?? null);
+  }, []);
 
   // 러너 카탈로그 — 회사 자격 병합(?ws=). 회사 키가 있으면 호스트 로그인 없이도 authed=true.
   useEffect(() => { api(`/api/runners?ws=${ws}`).then((d) => { setRunners(d.runners); setAutoRunnerId(d.autoRunnerId ?? null); }).catch(() => setRunners([])); }, [ws]);
@@ -406,7 +416,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
       // status도 첫 로드에 반영 — 온보딩 직행 시 시운전 진행 카드가 8초 폴을 기다리지 않고 바로 보인다
       // 교체가 아니라 병합 — 이 응답보다 먼저 보낸 글(낙관 사본, 첫 로드 전이라 cur엔 그것뿐)이 있으면 지우지 않는다. 늦게 온 응답이
       // 통째로 덮어 보낸 지시가 답변 내내 화면에서 사라졌다(2026-09-29 격리 서버 실측, main도 같음). 서버가 이미 받아 둔 같은 글(awaiting)은 겹치지 않게 뺀다.
-      .then((t) => { if (!alive) return; mtimeRef.current = t.mtime ?? 0; setThread((cur) => { const server = t.messages ?? []; const local = cur ?? []; return local.length ? [...server.filter((s) => !(s.awaiting && local.some((l) => l.who === 'user' && l.text === s.text))), ...local] : server; }); sessionRef.current = t.sessionId ?? null; setLiveStage(t.status ?? null); setThreadTitle(t.title ?? null); setDelegLimited(t.delegationLimit !== false); })
+      .then((t) => { if (!alive) return; mtimeRef.current = t.mtime ?? 0; setThread((cur) => { const server = t.messages ?? []; const local = cur ?? []; return local.length ? [...server.filter((s) => !(s.awaiting && local.some((l) => l.who === 'user' && l.text === s.text))), ...local] : server; }); sessionRef.current = t.sessionId ?? null; applyStatus(t.status ?? null); setTraceIdx(t.traces ?? {}); setThreadTitle(t.title ?? null); setDelegLimited(t.delegationLimit !== false); })
       .catch(() => { if (alive) setThread([]); });
     return () => { alive = false; };
   }, [ws, slug]);
@@ -463,7 +473,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
     // atBottom=true가 되는데, 위로도 끌면 턴 갱신마다 핀이 풀려 화면이 위로 튄다(실측 -528px, 2026-07-21 신고 본체).
     if (atBottomRef.current) el.scrollTop = Math.max(el.scrollTop, contentBottom(el) - el.clientHeight);
     // working은 아래에서 선언되는 파생값(busy||liveStage)이라 deps에 못 쓴다(TDZ) — stage/partial이 같은 전환을 잡는다
-  }, [thread, busy, liveStage?.partial, liveStage?.stage, viewing, recalcSpacer]);
+  }, [thread, busy, liveStage?.partial, liveStage?.stage, liveTrace?.n, viewing, recalcSpacer]); // liveTrace.n — 작업 과정 단계가 늘어도 하단 추종
   // .thread 실제 크기 변화 관찰 — 컴포저(입력창 자동 크기·첨부 칩·대기열 스택)가 자라거나 줄면 그리드 1fr
   // 행인 .thread의 clientHeight가 바뀐다. 위 효과의 deps로는 못 잡는 변화라 별도로 감시한다.
   useEffect(() => {
@@ -493,16 +503,17 @@ export default function CrewChat({ params, embedded = false, onClose }) {
   const refetchRef = useRef(false); // 내 턴 중 본문을 버린 적이 있다 — 다음 유휴 폴은 mtime 없이 전체를 받는다
   const applyPoll = useMemo(() => makePollApplier({
     isBusy: () => busyRef.current, // 내 턴 중엔 본문을 반영하지 않는다(낙관 사본 보호)
-    setStatus: setLiveStage,
+    setStatus: applyStatus,
     setMtime: (m) => { mtimeRef.current = m; },
     setRefetch: (v) => { refetchRef.current = v; },
     mergeThread: (msgs) => setThread((cur) => mergePolledThread(cur, msgs)),
     onApplied: (r) => {
       if (r.sessionId) sessionRef.current = r.sessionId;
+      if (r.traces) setTraceIdx((cur) => ({ ...cur, ...r.traces })); // 끝난 턴의 작업 과정 요약 — 이 기기 기록만(다른 기기 답은 요약이 없어 접힌 줄을 그리지 않는다)
       setThreadTitle(r.title ?? null); // 다른 기기에서 바꾼 현재 대화명도 준실시간 반영(검수 LOW)
       if (Date.now() - delegSavedAt.current > 4000) setDelegLimited(r.delegationLimit !== false); // 다른 기기에서 바꾼 위임 제한도 같은 방식으로
     },
-  }), []);
+  }), [applyStatus]);
 
   // 이 크루의 대기 결재 — 대화창에서 바로 승인/거절 (데크 결재함은 백업 창구)
   const [pendings, setPendings] = useState([]);
@@ -559,7 +570,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
   const workingRef = useRef(false);
   workingRef.current = working;
   useEffect(() => startThreadPolls({
-    fetchThread: (mtime) => api(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}&mtime=${mtime}`),
+    fetchThread: (mtime) => api(`/api/companies/${ws}/chat?slug=${encodeURIComponent(slug)}&mtime=${mtime}${traceQuery(liveTraceRef.current)}`), // 보고 있는 작업 과정의 받은 번호 — 늘어난 단계만 받는다
     apply: applyPoll,
     isBusy: () => busyRef.current, isWorking: () => workingRef.current,
     getMtime: () => mtimeRef.current, shouldRefetch: () => refetchRef.current,
@@ -606,7 +617,8 @@ export default function CrewChat({ params, embedded = false, onClose }) {
       setTimeout(loadSuggestions, 4000); // 교정 감지는 응답 뒤 백그라운드로 돈다 — 잠시 후 제안을 당겨온다(검수 M2: 마운트 1회뿐이라 그 턴에 칩이 안 떴다)
       // steerFailed — 턴은 답했지만 끼워 넣은 것을 실은 이어진 실행이 실패했다(서버 appendTurn과 같은 규칙으로 그 줄만 실패 → 재전송 버튼)
       const steerMiss = (m) => m.steerOfMid === mid && r.steerFailed?.texts?.some((x) => String(x).startsWith(m.text));
-      setThread((t) => [...t.map((m) => (m.mid === mid ? { ...m, failed: undefined } : steerMiss(m) ? { ...m, failed: r.steerFailed.reason || 'failed' } : m)), { who: 'crew', text: r.reply, handover: r.handover, artifacts: r.artifacts, ts: Date.now(), ...(r.fellBack ? { fellBack: r.fellBack } : {}), ...(r.modelFallback ? { modelFallback: r.modelFallback } : {}) }]); // 폴백·모델 강등 안내 즉시 표시(검수 M1)
+      setThread((t) => [...t.map((m) => (m.mid === mid ? { ...m, failed: undefined } : steerMiss(m) ? { ...m, failed: r.steerFailed.reason || 'failed' } : m)), { who: 'crew', text: r.reply, handover: r.handover, artifacts: r.artifacts, ts: Date.now(), ...(r.fellBack ? { fellBack: r.fellBack } : {}), ...(r.modelFallback ? { modelFallback: r.modelFallback } : {}), ...(r.traceId ? { traceId: r.traceId } : {}) }]); // 폴백·모델 강등 안내 즉시 표시(검수 M1)
+      if (r.traces) setTraceIdx((cur) => ({ ...cur, ...r.traces })); // 방금 끝난 턴의 작업 과정 — 답 아래 접힌 줄을 바로
       window.dispatchEvent(new Event('argo:refresh'));
       return true;
     } catch (err) {
@@ -620,12 +632,14 @@ export default function CrewChat({ params, embedded = false, onClose }) {
       // 실패 코드·출처(route.js가 code/origin으로 응답) — 서버 보존분(failedCode)과 같은 필드명으로 로컬 사본에도(렌더 일치)
       const coded = err?.data?.code ? { failedCode: err.data.code, ...(err.data.origin ? { failedOrigin: err.data.origin } : {}) } : {};
       // 이 턴에 끼워 넣은 메시지(steerOfMid)도 같은 실패로 표시한다 — 서버(appendTurn)도 같이 표시한다
-      setThread((cur) => (cur ?? []).map((m) => (m.mid === mid || m.steerOfMid === mid ? { ...m, failed, ...coded, ...aborted, ...unsaved } : m)));
+      const traced = err?.data?.traceId ? { traceId: err.data.traceId } : {}; // 실패·중단 턴도 어디서 멈췄는지 작업 과정으로 본다
+      if (err?.data?.traces) setTraceIdx((cur) => ({ ...cur, ...err.data.traces }));
+      setThread((cur) => (cur ?? []).map((m) => (m.mid === mid ? { ...m, failed, ...coded, ...aborted, ...unsaved, ...traced } : m.steerOfMid === mid ? { ...m, failed, ...coded, ...aborted, ...unsaved } : m)));
       setQueueHeld(true); // 대기열 자동 전송 중지 — 남겨 두고 사장이 판단한다
       return false;
     } finally {
       setBusy(false);
-      setLiveStage(null); // 내 턴 종료 — 마지막 partial이 완성 답변과 겹쳐 보이지 않게 즉시 내린다
+      applyStatus(null); // 내 턴 종료 — 마지막 partial·진행 중 단계 목록이 완성 답변과 겹쳐 보이지 않게 즉시 내린다(끝난 기록은 답 아래 접힌 줄로)
     }
   }
 
@@ -1040,6 +1054,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
                     onClick={() => sendMessage(m.text, m.attachments ?? [])}>{t('chat.resend')}</button>
                 </div>
               )}
+              {m.failed && m.traceId && <TraceSummary ws={ws} slug={slug} id={m.traceId} sum={traceIdx[m.traceId]} />}
               {/* 보낸 시각 — 조용하게(작은 글씨·옅은 색), 오늘이면 시:분·이전 날짜면 날짜까지(유건 요청 2026-09-21) */}
               {m.ts && <span className="mono msg-time" style={{ fontSize: 10.5, color: 'var(--fg-3)', padding: '0 4px' }}>{fmtMsgTime(lang, m.ts)}</span>}
               <div className="msg-actions">
@@ -1090,6 +1105,8 @@ export default function CrewChat({ params, embedded = false, onClose }) {
                       눈 토글 = 인라인 미리보기(2026-07-31) — 채팅을 떠나지 않고 그 자리에서 본다. */}
                   {m.artifacts?.length > 0 && <ArtifactChips ws={ws} rels={m.artifacts} />}
                 </div>
+                {/* 작업 과정 — 이 기기에 남은 기록만(traceIdx에 있을 때) 접힌 한 줄. 다른 기기에서 온 답은 요약이 없어 그리지 않는다(답만) */}
+                {m.traceId && <TraceSummary ws={ws} slug={slug} id={m.traceId} sum={traceIdx[m.traceId]} />}
                 {/* 보낸 시각 — 조용하게, 크루 답변도 동일 규칙(오늘=시:분·이전=날짜 포함) */}
                 {m.ts && <span className="mono msg-time" style={{ fontSize: 10.5, color: 'var(--fg-3)', padding: '0 4px' }}>{fmtMsgTime(lang, m.ts)}</span>}
                 <div className="msg-actions">
@@ -1203,7 +1220,10 @@ export default function CrewChat({ params, embedded = false, onClose }) {
             <div className="card" style={{ padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 9, flex: 1, minWidth: 0 }}>
               {/* 크루가 이미 말한 부분 — 완료를 기다리지 않고 흘러 들어온다(스트리밍 체감) */}
               {/* 생각 — 모델 사고(thinking) 뒤 1500자, 접이식(회의실 발언 카드와 같은 계약 — turn-status thought) */}
-              {liveStage?.thought && (
+              {/* 작업 과정 — 생각·도구·실행 중인 작업이 차례로 쌓인다(Claude Code·Codex처럼). 누르면 입력·결과(앞 20줄 + 더 보기)가 펼쳐진다 */}
+              <LiveTrace ws={ws} slug={slug} trace={liveTrace} />
+              {/* 기록이 없을 때(옛 서버·다른 프로세스 턴)만 예전 '생각' 접이식 — 기록이 있으면 생각은 위 목록의 단계로 보인다 */}
+              {liveStage?.thought && !liveTrace?.steps?.length && (
                 <details style={{ marginBottom: 2 }}>
                   <summary style={{ fontSize: 11, color: 'var(--fg-3)', cursor: 'pointer' }}>{t('room.thought')}</summary>
                   <div style={{ fontSize: 12, color: 'var(--fg-3)', whiteSpace: 'pre-wrap', borderLeft: '2px solid var(--border)', paddingLeft: 8, marginTop: 4 }}>{liveStage.thought}</div>
