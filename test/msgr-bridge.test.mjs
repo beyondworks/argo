@@ -2361,7 +2361,10 @@ test('crewChannels 실패 — 이 크루는 이번 틱에 커서를 올리지 �
   try { await M.drain(WS, { db, uid: OWNER, enqueue: enq }); } finally { console.error = ce; }
   assert.equal(jobsOf(enq).length, 0, '실패 틱에는 적재하지 않는다');
   assert.deepEqual(db.calls.filter((c) => c[0] === 'setCursor'), [], '커서 보류(글이 지나가 버리지 않게)');
-  assert.equal(db.calls.some((c) => c[0] === 'crewScope' || c[0] === 'messagesAfter'), false, '보류할 크루의 범위·받은 글은 조회하지 않는다(부하는 실패 조회 1건)');
+  assert.equal(db.calls.some((c) => c[0] === 'crewScope'), false, '보류할 크루의 범위는 조회하지 않는다');
+  // 2026-10-09: 받은 글을 먼저 받고 방 목록은 받은 글이 있는 크루만 묻는다(test/msgr-room-batch.test.mjs) — 실패 틱 = 받은 글 1 + 실패한 DM 목록 1
+  // (종전 1건: 방 목록이 실패하면 받은 글을 묻지 않았다). 대신 정상 틱은 크루당 3건 → 받은 글 1건 + 틱당 방 목록 일괄 0~1건
+  assert.equal(db.calls.filter((c) => c[0] === 'messagesAfter').length, 1, '받은 글은 먼저 한 번');
   db.crewChannels = ok;
   await M.drain(WS, { db, uid: OWNER, enqueue: enq });
   assert.deepEqual(jobsOf(enq).map((j) => j.msgId), [81], '회복 틱에 그 글에 답한다');
