@@ -1,9 +1,9 @@
-// 도움말 — Argo 메신저 연결 카드(파견·응답 상태·다시 연결), 알림 받을 메신저, 텔레그램 연결(BotFather 토큰·연결 코드), 슬랙 연결, 텔레그램 직통 봇, Argo 오피스 열기
+// 도움말 — Argo 메신저 연결 카드(파견·응답 상태·다시 연결), 알림 받을 메신저, 텔레그램 연결(BotFather 토큰·연결 코드), 슬랙 연결, 텔레그램 직통 봇
 export default {
   id: 'messenger',
   ko: {
     title: '메신저 연결 — Argo 메신저·텔레그램·슬랙',
-    keywords: ['메신저', 'Argo 메신저', '텔레그램', '슬랙', '파견', '알림 받을 메신저', '연결 코드', '페어링', 'BotFather', '직통 봇', '다시 연결', 'Argo 오피스'],
+    keywords: ['메신저', 'Argo 메신저', '텔레그램', '슬랙', '파견', '알림 받을 메신저', '연결 코드', '페어링', 'BotFather', '직통 봇', '다시 연결'],
     body: `메신저를 연결하면 자리를 비운 동안에도 에이전트에게 일을 시키고 결과·결재 알림을 받습니다. 모두 설정 → 연결 탭에 있습니다. 에이전트는 내 컴퓨터(실행 담당 기기)에서 돌기 때문에, 그 기기가 켜져 있어야 메신저에 답합니다.
 
 **Argo 메신저 연결**
@@ -11,7 +11,6 @@ export default {
 - 팀과 쓰려면 메신저에서 조직을 만들거나 초대 링크로 들어온 뒤, 이 카드에서 조직을 고르고 "에이전트 n명 연결" 또는 "연결 안 된 에이전트 추가"를 누릅니다. 조직 채널에서 @로 부르면 연결한 에이전트가 답합니다.
 - 누가 시킬 수 있는지(허용 범위)·파견 해제·다시 파견은 메신저 앱의 에이전트 카드에서 바꿉니다.
 - "메신저 응답 상태"에 "정상 응답 중"이 보이면 연결된 것입니다. "이 기기의 Argo 로그인이 필요합니다"면 로그인하고, "이 회사를 만든 Argo 계정으로 로그인해야…"면 그 계정으로 로그인합니다. 응답이 없으면 "다시 연결"(또는 "다시 확인")을 누릅니다.
-- 카드 맨 아래 "Argo 오피스 열기"는 회사의 할 일·거래처·일정을 웹에서 함께 보는 Argo 오피스를 엽니다.
 
 **알림 받을 메신저**
 - 아르고 메신저·텔레그램·슬랙 중 체크한 곳으로 결재 요청·작업 완료·쪽지·루틴 결과가 갑니다. 여러 개를 켜면 모두에 갑니다.
@@ -35,7 +34,7 @@ export default {
   },
   en: {
     title: 'Messenger connections — Argo Messenger, Telegram, Slack',
-    keywords: ['messenger', 'Argo Messenger', 'Telegram', 'Slack', 'dispatch', 'notifications', 'pairing code', 'pair', 'BotFather', 'direct bot', 'reconnect', 'Argo Office'],
+    keywords: ['messenger', 'Argo Messenger', 'Telegram', 'Slack', 'dispatch', 'notifications', 'pairing code', 'pair', 'BotFather', 'direct bot', 'reconnect'],
     body: `Connect a messenger to give agents work and receive results and approval requests while you are away. Everything is under Settings → Connections. Agents run on your computer (the device that runs the agents), so it must be on for them to answer in a messenger.
 
 **Argo Messenger connection**
@@ -43,7 +42,6 @@ export default {
 - To work with a team, create an organization in the messenger or join with an invite link, then pick the organization on this card and press "Connect {n} agents" or "Add unconnected agents". Mention a connected agent with @ in an org channel and it replies there.
 - Who can task an agent (access scope), recalling and re-dispatching are changed on the agent card in the messenger app.
 - "Responding normally" under "Messenger response status" means it works. If it says this device needs an Argo login, sign in; if it says to sign in with the account that created this company, use that account. If there is no response, press "Reconnect" (or "Check again").
-- "Open Argo Office" at the bottom opens Argo Office, where you see company tasks, customers and calendar together on the web.
 
 **Where to receive agent notifications**
 - Approval requests, task results, agent mail and routine results go to whichever of Argo Messenger, Telegram and Slack you check; check several to receive on all.
