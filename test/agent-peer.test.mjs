@@ -193,13 +193,13 @@ const sh = (cmd, args, opts = {}) => new Promise((resolve) => execFile(cmd, args
 // 자식 node — 문자열을 쪼갠 주소로 부른다(셸 문자열 판정을 지나가는 모양, 재현의 python과 같은 계열)
 const childFetch = (path, method, { host = "['127','0','0','1'].join('.')", port = PORT } = {}) => sh(process.execPath, ['-e', `fetch('http://'+${host}+':'+${port}+'${path}',{method:'${method}',headers:{cookie:'argo-device=1','content-type':'application/json'},body:${method === 'GET' ? 'undefined' : '\'{"id":"r1","approve":true}\''}}).then(async r=>console.log(r.status, await r.text()))`]);
 
-test('표지 env — 서버 프로세스에 심고, 자식이 물려받는다', async () => {
+test('표지 env — 서버 프로세스에 심고, 자식이 물려받는다', { skip: onWin }, async () => {
   assert.equal(process.env[AGENT_MARK], String(process.pid));
   const { out } = await sh(process.execPath, ['-e', `console.log(process.env.${AGENT_MARK})`]);
   assert.equal(out.trim(), String(process.pid));
 });
 
-test('자손(에이전트 셸 자리)의 요청은 403 agent_loopback — 핸들러에 닿지 않는다: 루틴 삭제·결재 승인·대화 시작·루틴 수정·읽기', async () => {
+test('자손(에이전트 셸 자리)의 요청은 403 agent_loopback — 핸들러에 닿지 않는다: 루틴 삭제·결재 승인·대화 시작·루틴 수정·읽기', { skip: onWin }, async () => {
   reached.length = 0;
   for (const [path, method] of [['/api/companies/w/routines?id=r1', 'DELETE'], ['/api/companies/w/approvals', 'POST'], ['/api/companies/w/chat', 'POST'], ['/api/companies/w/routines', 'PUT'], ...(onWin ? [] : [['/api/companies/w/approvals', 'GET']])]) {
     const { out } = await childFetch(path, method);
@@ -211,7 +211,7 @@ test('자손(에이전트 셸 자리)의 요청은 403 agent_loopback — 핸들
 
 const hasCurl = !onWin && !(await sh('curl', ['--version'])).err;
 const hasPy = !onWin && !(await sh('python3', ['--version'])).err;
-test('자손 curl(재현과 같은 명령 모양)도 403', { skip: !hasCurl }, async () => {
+test('자손 curl(재현과 같은 명령 모양)도 403', { skip: onWin || !hasCurl }, async () => {
   reached.length = 0;
   const del = await sh('curl', ['-s', '-w', ' %{http_code}', '-X', 'DELETE', '-H', 'Cookie: argo-device=1', `http://127.0.0.1:${PORT}/api/companies/w/routines?id=r1`]);
   assert.match(del.out, /agent_loopback.* 403$/, del.out);
@@ -226,13 +226,13 @@ const orphanRun = async (inner, tag) => {
   for (let i = 0; i < 100; i++) { const t = await readFile(out, 'utf8').catch(() => ''); if (/\d{3}/.test(t)) { await rm(out, { force: true }); return t; } await new Promise((r) => setTimeout(r, 100)); }
   return 'timeout';
 };
-test('고아(부모가 먼저 끝난 curl — 맥에서는 시스템 실행 파일이라 env도 안 보인다)의 변경도 403 — 그룹 판정', { skip: !hasCurl }, async () => {
+test('고아(부모가 먼저 끝난 curl — 맥에서는 시스템 실행 파일이라 env도 안 보인다)의 변경도 403 — 그룹 판정', { skip: onWin || !hasCurl }, async () => {
   reached.length = 0;
   const t = await orphanRun(`curl -s -w ' %{http_code}' -X POST -H 'content-type: application/json' -d '{"id":"a1","approve":true}' http://127.0.0.1:${PORT}/api/companies/w/approvals`, 'orphan-curl');
   assert.match(t, /agent_loopback.* 403$/, t);
   assert.deepEqual(reached, []);
 });
-test('세션을 새로 만든 고아 python(setsid)도 표지 env로 403', { skip: !hasPy }, async () => {
+test('세션을 새로 만든 고아 python(setsid)도 표지 env로 403', { skip: onWin || !hasPy }, async () => {
   reached.length = 0;
   const py = `import os,urllib.request as u\nos.setsid()\nr=u.Request('http://127.0.0.1:${PORT}/api/companies/w/chat',data=b'{}',method='POST')\ntry: print(u.urlopen(r).status)\nexcept Exception as e: print(e.code, e.read().decode())`;
   const t = await orphanRun(`python3 -c "${py.replace(/"/g, '\\"')}"`, 'orphan-py');
@@ -241,7 +241,7 @@ test('세션을 새로 만든 고아 python(setsid)도 표지 env로 403', { ski
 });
 
 const hasPerl = !onWin && !(await sh('perl', ['-v'])).err;
-test('세션을 새로 만들고 시스템 curl로 바꾼 고아(perl setsid → exec curl)도 변경은 403', { skip: !hasPerl || !hasCurl }, async () => {
+test('세션을 새로 만들고 시스템 curl로 바꾼 고아(perl setsid → exec curl)도 변경은 403', { skip: onWin || !hasPerl || !hasCurl }, async () => {
   reached.length = 0;
   const out = join(tmpdir(), `argo-agent-peer-${process.pid}-setsid.txt`);
   await rm(out, { force: true });

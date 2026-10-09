@@ -37,33 +37,38 @@ test('포트 후보 — 루프백 호스트가 있을 때만, URL·nc·python �
   assert.deepEqual(loopbackPortCandidates('echo x127.0.0.1y'), [], '단어 중간은 호스트가 아니다');
 });
 
-test('판정 — 텍스트 도구만 쓴 "언급"은 통과, 그 밖에 루프백 Argo 주소·포트가 보이면 거절(d462d74c 범위 회복)', async () => {
+test('판정 — 루프백 Argo 주소·포트가 보이면 거절이 기본, 아주 좁은 "언급"만 통과(막는 쪽)', async () => {
   const noProbe = async () => { throw new Error('탐침하면 안 된다'); };
   const own = { ownPort: 3477, probe: noProbe };
+  const P = 3477;
   assert.equal(await shellCallsArgoApi('curl -X POST http://127.0.0.1:3477/api/companies/w/approvals', own), true);
   assert.equal(await shellCallsArgoApi('curl https://example.com/', own), false, '루프백 없으면 탐침도 없다');
   assert.equal(await shellCallsArgoApi(`curl -X DELETE http://localhost:${ARGO}/api/companies/w/routines?id=r`, { ownPort: 0 }), true, '다른 Argo(상주·앱)도 막는다');
   assert.equal(await shellCallsArgoApi(`curl http://127.0.0.1:${OTHER}/api/items`, { ownPort: 0 }), false, '사용자의 다른 로컬 서버는 그대로');
   assert.equal(await probeArgoPort(OTHER), false);
   assert.equal(await probeArgoPort(ARGO), true);
-  // 텍스트 도구만 = 언급 → 통과(오탐 제거)
+  // 아주 좁은 '언급'만 통과 — grep·rg·echo·printf·cat·head·tail·wc·sort·less 뿐이고 위험 구조·대입 접두 없음
   for (const c of [
-    'grep -rn "localhost:3477" src', 'echo "see http://localhost:3477 for dev" >> README.md', 'rg "127.0.0.1:3477" -l',
-    'cat notes.txt | grep 3477', 'sed -n "/3477/p" f', 'git log --oneline | grep 3477', 'awk "/3477/{print}" f',
-    'sort f | uniq | grep 3477', 'printf "%s\\n" http://localhost:3477', 'ls -la | grep 3477',
+    `grep -rn "127.0.0.1:${P}" src`, `rg "localhost:${P}" -l`, `echo "see http://localhost:${P} for dev" >> README.md`,
+    `cat notes.txt | grep 127.0.0.1:${P}`, `printf "%s\\n" http://localhost:${P}`, `head -n5 f | grep localhost:${P}`,
+    `sort f | grep 127.0.0.1:${P}`, `echo http://127.0.0.1:${P}`,
   ]) assert.equal(await shellCallsArgoApi(c, own), false, `언급 통과: ${c}`);
-  // 텍스트 아닌 실행 파일 + 루프백 Argo 포트 → 거절(d462d74c 범위 회복). ownPort와 같은 포트라 탐침 없이 참.
+  // 거절 — 이번 지적 계열(명령 치환·awk system·sed e·git -c·| sh·xargs·env·heredoc·대입 접두·실행도구·IP 표기) + 지난 목록. ownPort라 탐침 없이 참.
   for (const c of [
-    'exec 3<>/dev/tcp/127.0.0.1/3477', 'echo data > /dev/tcp/127.0.0.1/3477',
-    "python3 -c \"import socket; socket.socket().connect(('127.0.0.1',3477))\"",
-    "ruby -rsocket -e \"TCPSocket.new('127.0.0.1',3477)\"",
-    "perl -MIO::Socket::INET -e \"IO::Socket::INET->new('127.0.0.1:3477')\"",
-    "php -r \"fsockopen('127.0.0.1',3477);\"",
-    '/opt/homebrew/bin/curl http://127.0.0.1:3477/api/x', '~/bin/curl http://127.0.0.1:3477/api/x',
-    'pwsh -c "Invoke-RestMethod http://127.0.0.1:3477/api/x"', 'powershell -Command "iwr http://127.0.0.1:3477"',
-    'swift run foo 127.0.0.1 3477', 'aria2c http://127.0.0.1:3477/api/x', 'python3 req.py 127.0.0.1 3477',
-    "open -g 'http://127.0.0.1:3477/api/companies/w/approvals'", 'nohup curl http://127.0.0.1:3477/ &',
-    'wget -qO- http://127.0.0.1:3477/api/x', 'node -e "fetch(\'http://127.0.0.1:3477/api/x\')"', 'printf x | nc 127.0.0.1 3477',
+    `echo $(curl http://127.0.0.1:${P}/api/x)`, `X=$(cat f); grep 127.0.0.1:${P} f`,
+    `awk 'BEGIN{system("curl http://127.0.0.1:${P}")}'`, `sed 's/x/y/e' <<< 'curl http://127.0.0.1:${P}'`,
+    `git -c http.proxy=http://127.0.0.1:${P} fetch`, `grep x f | sh -c "curl http://127.0.0.1:${P}"`,
+    `echo http://127.0.0.1:${P} | xargs curl`, `env X=1 curl http://127.0.0.1:${P}`,
+    `cat <<EOF\ncurl http://127.0.0.1:${P}\nEOF`, `eval "curl http://127.0.0.1:${P}"`, `source ./x.sh # http://127.0.0.1:${P}`,
+    'grep foo `curl http://127.0.0.1:' + P + '`', `echo x > /dev/tcp/127.0.0.1/${P}`, `VAR=curl; $VAR http://127.0.0.1:${P}`,
+    `LC_ALL=C grep 127.0.0.1:${P} f`, `awk "/127.0.0.1:${P}/" f`, `sed -n /127.0.0.1:${P}/p f`, `find . -name 127.0.0.1:${P}`,
+    'curl http://127.1:' + P + '/', 'wget http://0x7f000001:' + P + '/', 'aria2c http://2130706433:' + P + '/', `wget http://[::1]:${P}/`, `curl http://0.0.0.0:${P}/`,
+    `exec 3<>/dev/tcp/127.0.0.1/${P}`, `python3 -c "import socket; socket.socket().connect(('127.0.0.1',${P}))"`,
+    `ruby -rsocket -e "TCPSocket.new('127.0.0.1',${P})"`, `perl -MIO::Socket::INET -e "IO::Socket::INET->new('127.0.0.1:${P}')"`,
+    '/opt/homebrew/bin/curl http://127.0.0.1:' + P + '/', '~/bin/curl http://127.0.0.1:' + P + '/',
+    `pwsh -c "Invoke-RestMethod http://127.0.0.1:${P}"`, `powershell -Command "iwr http://127.0.0.1:${P}"`,
+    `open -g http://127.0.0.1:${P}/`, `python3 req.py 127.0.0.1 ${P}`, `node -e "fetch('http://127.0.0.1:${P}/')"`, `printf x | nc 127.0.0.1 ${P}`,
+    `echo "http://127.0.0.1:${P}`, `grep '127.0.0.1:${P} f`, // 따옴표 불균형 — 확신 못 하면 거절
   ]) assert.equal(await shellCallsArgoApi(c, own), true, `거절 대상: ${c}`);
 });
 

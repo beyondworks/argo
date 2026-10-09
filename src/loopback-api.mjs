@@ -42,43 +42,57 @@ export function probeArgoPort(port) {
   return argo;
 }
 
-// 텍스트·파일 전용 도구(네트워크 능력 없음) — 이것들만 쓴 명령은 주소를 "언급"할 뿐 부르지 않는다. basename 기준, .exe 접미 무시.
-// 목록에 없는 실행 파일(curl·wget·nc·python·node·ruby·perl·php·pwsh·powershell·osascript·open·exec·swift·aria2c 등)은 네트워크로 본다(d462d74c 범위 회복).
-// 뒤집기 근거: 네트워크 도구 "목록"은 끝없이 샌다(/dev/tcp·소켓 라이브러리·경로 접두 curl·셸 알리아스). 안전한 쪽(텍스트) 목록이 짧고 안정적이라 Windows(게이트가 유일 방어)에서도 틈이 적다.
-const TEXT_TOOLS = new Set([
-  'grep', 'egrep', 'fgrep', 'rg', 'ag', 'ack', 'sed', 'awk', 'gawk', 'mawk', 'echo', 'printf', 'cat', 'bat', 'tac', 'nl', 'head', 'tail',
-  'less', 'more', 'cut', 'tr', 'wc', 'sort', 'uniq', 'comm', 'diff', 'join', 'paste', 'fold', 'column', 'tee', 'ls', 'find', 'fd', 'stat',
-  'file', 'basename', 'dirname', 'realpath', 'readlink', 'pwd', 'true', 'false', 'yes', 'seq', 'jq', 'yq', 'git', 'hexdump', 'xxd', 'strings',
-  'od', 'cmp', 'tree', 'date', 'env', 'which', 'type', 'man', 'cd', 'test', 'expr', 'tar', 'gzip', 'gunzip', 'zcat',
-]);
-const SEG_SPLIT = /\s*(?:&&|\|\||[;\n|&()`]|\$\()\s*/; // 단순 명령 경계(셸 연산자·치환)
-const SKIP_PREFIX = new Set(['sudo', 'command', 'nice', 'time', 'nohup', 'setsid', 'exec', 'builtin', 'stdbuf', 'caffeinate', 'xargs']); // 수식어는 지나서 실제 도구를 본다
+// 아주 좁은 "언급" 허용목록 — 실행 능력이 없는 순수 텍스트 도구만. awk(system)·sed(e)·git(-c/별칭)·find(-exec)·perl 등 실행 가능한 것은 **제외**.
+// 방침(재검수): 루프백 Argo 주소·포트가 보이면 **거절이 기본**. 아래 mention 규칙을 모두 만족할 때만 '언급'으로 통과한다. 확신 못 하면 거절(오탐은 안내로, 우회는 장치 붕괴).
+const MENTION_TOOLS = new Set(['grep', 'egrep', 'fgrep', 'rg', 'echo', 'printf', 'cat', 'head', 'tail', 'wc', 'sort', 'less']);
 const toolBasename = (tok) => tok.replace(/^.*[\\/]/, '').replace(/\.exe$/i, '').toLowerCase();
 
-/** 명령의 모든 단순 명령이 텍스트·파일 전용 도구뿐인가(순수). 하나라도 아니면 false(= 네트워크 가능). /dev/tcp·/dev/udp 리다이렉트는 그 자체로 네트워크. */
-export function commandIsOnlyTextTools(command) {
+// 셸처럼 확신 있게 분해 못 하게 하는 위험 구조 — 하나라도 있으면 mention 아님(거절 쪽).
+//  명령/프로세스 치환, 변수 확장(명령 이름 조립), heredoc, 주석, 줄 이음, fd/소켓 리다이렉트, eval/source/exec/.
+const DANGER_RE = /\$\(|`|\$\{|\$[A-Za-z_]|<\(|>\(|<<|\\\r?\n|(?:^|\s)#|[<>]&|&>|\/dev\/(?:tcp|udp)\//;
+const WORD_DANGER_RE = /(?:^|[\s;&|(])(?:eval|source|exec|\.|env|command|builtin|xargs)(?:$|[\s;&|)])/;
+
+/** 따옴표를 존중해 단순 명령으로 쪼갠다(순수). 따옴표가 안 맞으면(확신 불가) null. */
+export function splitSimpleCommands(command) {
   const cmd = String(command ?? '');
-  if (/\/dev\/(?:tcp|udp)\//i.test(cmd)) return false; // echo x > /dev/tcp/… 리다이렉트 소켓
-  for (const rawSeg of cmd.split(SEG_SPLIT)) {
-    const seg = rawSeg.trim();
-    if (!seg) continue;
-    const tokens = seg.split(/\s+/);
-    let i = 0;
-    while (i < tokens.length && (/^[A-Za-z_][\w]*=/.test(tokens[i]) || SKIP_PREFIX.has(toolBasename(tokens[i])))) i += 1; // VAR=val·sudo·exec… 건너뛰기
-    const exe = tokens[i];
-    if (exe === undefined) continue; // 리다이렉트·대입만 있는 단락(위 /dev/tcp 검사가 소켓은 이미 잡음)
-    if (exe.startsWith('-') || exe.startsWith('<') || exe.startsWith('>')) continue; // 옵션·리다이렉트로 시작 = 앞 단락의 연속
-    if (!TEXT_TOOLS.has(toolBasename(exe))) return false;
+  const segs = []; let cur = ''; let q = null; // q: 열린 따옴표(' 또는 ")
+  for (let i = 0; i < cmd.length; i += 1) {
+    const c = cmd[i];
+    if (q) { if (c === q) q = null; else if (c === '\\' && q === '"') { cur += c + (cmd[i + 1] ?? ''); i += 1; continue; } cur += c; continue; }
+    if (c === "'" || c === '"') { q = c; cur += c; continue; }
+    if (c === '\\') { cur += c + (cmd[i + 1] ?? ''); i += 1; continue; }
+    if (c === ';' || c === '\n' || c === '|' || c === '&' || c === '(' || c === ')') { segs.push(cur); cur = ''; continue; }
+    cur += c;
   }
-  return true;
+  if (q) return null; // 따옴표 안 맞음 — 확신 불가
+  segs.push(cur);
+  return segs.map((x) => x.trim()).filter(Boolean);
+}
+
+/** 명령이 "주소를 언급만 할 뿐 부르지 않는가"(순수). 규칙을 다 만족할 때만 true. */
+export function isMereMention(command) {
+  const cmd = String(command ?? '');
+  if (DANGER_RE.test(cmd) || WORD_DANGER_RE.test(cmd)) return false;
+  const segs = splitSimpleCommands(cmd);
+  if (segs === null) return false; // 따옴표 불균형
+  let sawTool = false;
+  for (const seg of segs) {
+    const first = seg.split(/\s+/)[0];
+    if (first === undefined) continue;
+    if (first.startsWith('>') || first.startsWith('<')) continue; // 리다이렉트만 있는 조각(앞 명령의 연속) — >,>> 파일 쓰기는 허용
+    if (/^[A-Za-z_]\w*=/.test(first)) return false; // 대입 접두(LC_ALL=… 등)는 통과시키지 않는다(범위 최소화)
+    if (!MENTION_TOOLS.has(toolBasename(first))) return false;
+    sawTool = true;
+  }
+  return sawTool; // 도구가 하나도 없으면(리다이렉트뿐 등) 통과시키지 않는다
 }
 
 /** 셸 명령이 Argo 루프백 API를 **부르는가**(언급만 하는 게 아니라). ownPort = 이 서버의 포트(Next가 listen 뒤 process.env.PORT에 적는다) — 같으면 탐침 없이 참. */
 export async function shellCallsArgoApi(command, { ownPort = Number(process.env.PORT) || 0, probe = probeArgoPort } = {}) {
   const cmd = String(command ?? '');
-  if (commandIsOnlyTextTools(cmd)) return false; // 텍스트 도구만 = 언급(grep·echo·cat|grep 등) — 부르지 않는다
   const ports = loopbackPortCandidates(cmd);
-  if (!ports.length) return false;
+  if (!ports.length) return false; // 루프백 주소 자체가 없음(그냥 숫자뿐 등)
+  if (isMereMention(cmd)) return false; // 아주 좁은 '언급'만 통과(grep·echo·cat|grep·echo >> file 등)
   if (ownPort && ports.includes(ownPort)) return true;
   const hits = await Promise.all(ports.filter((p) => p >= 1024).map((p) => probe(p)));
   return hits.some(Boolean);
