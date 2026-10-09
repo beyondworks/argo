@@ -1,6 +1,7 @@
 // 능동 비서 상태 — <회사>/.assistant/state.json(기기 로컬, 동기화 제외·원격 불가시: sync.mjs isAssistantStateRel, 에이전트 셸 방어: permission-gate BASH_DOT_DIR_RE).
 // 담는 것: 보낸 키(14일), 보류 목록(조용한 시간·잠든 사이 지난 일정), 대기열(보낼 글 1건 이하, 기한 있음), 일정 확인 범위, 아침·저녁 묶음을 처리한 날짜,
-// 오늘 보낸 즉시 알림 수와 하루 상한 꼬리를 붙였는지(day.capNoted), 방에서 복구한 글의 끝(rec — 다음 복구는 그 뒤만 읽는다), 마지막 상태.
+// 오늘 보낸 즉시 알림 수·그 키(day.keys — 기기 교대 때 합집합으로 센다)·하루 한도 꼬리를 붙였는지(day.capNoted)·오늘 수를 확신하는지(day.sure — 방에서 복구가
+// 실패해 다른 기기가 보낸 수를 모르는 동안 false), 방마다 복구에서 본 마지막 비서 글 id(rec.last — 다음 복구는 그 뒤만 읽는다), 마지막 상태.
 // 기기 로컬이라 실행 기기가 바뀌면 새 기기는 1:1 방의 비서 글로 보낸 키·묶음·오늘 수를 다시 맞춘다(recover.mjs).
 // 쓰기는 값이 바뀐 때만 — tick.mjs save가 직전에 쓴 내용과 비교한다(유휴 틱 쓰기 0).
 import { join } from 'node:path';
@@ -15,7 +16,7 @@ export const PENDING_KEEP_MS = 2 * 86_400_000; // 이틀 지난 "지난 일정" 
 export const stateFile = (wsId) => join(paths(wsId).root, STATE_DIR, 'state.json');
 
 export function emptyState() {
-  return { v: 1, sent: {}, pending: [], outbox: null, cal: { coveredUntil: 0, readAt: 0 }, bundles: { am: '', pm: '' }, day: { date: '', instant: 0, capNoted: false }, rec: { to: 0, sig: '' }, status: null };
+  return { v: 1, sent: {}, pending: [], outbox: null, cal: { coveredUntil: 0, readAt: 0 }, bundles: { am: '', pm: '' }, day: { date: '', instant: 0, capNoted: false, keys: [], sure: true }, rec: { last: {} }, status: null };
 }
 
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
@@ -30,8 +31,13 @@ export function normalizeState(raw) {
   if (o && typeof o === 'object' && typeof o.basis === 'string' && typeof o.body === 'string' && Array.isArray(o.keys) && Number.isFinite(Number(o.until))) s.outbox = o;
   s.cal = { coveredUntil: num(raw.cal?.coveredUntil), readAt: num(raw.cal?.readAt) };
   s.bundles = { am: typeof raw.bundles?.am === 'string' ? raw.bundles.am : '', pm: typeof raw.bundles?.pm === 'string' ? raw.bundles.pm : '' };
-  s.day = { date: typeof raw.day?.date === 'string' ? raw.day.date : '', instant: num(raw.day?.instant), capNoted: raw.day?.capNoted === true };
-  s.rec = { to: num(raw.rec?.to), sig: typeof raw.rec?.sig === 'string' ? raw.rec.sig : '' };
+  s.day = {
+    date: typeof raw.day?.date === 'string' ? raw.day.date : '', instant: num(raw.day?.instant), capNoted: raw.day?.capNoted === true,
+    keys: Array.isArray(raw.day?.keys) ? raw.day.keys.filter((k) => typeof k === 'string').slice(0, 500) : [], sure: raw.day?.sure !== false,
+  };
+  const last = {};
+  if (raw.rec?.last && typeof raw.rec.last === 'object') for (const [ch, id] of Object.entries(raw.rec.last)) if (Number.isFinite(Number(id)) && Number(id) > 0) last[ch] = Number(id);
+  s.rec = { last };
   s.status = raw.status && typeof raw.status.code === 'string' ? { code: raw.status.code, at: num(raw.status.at) } : null;
   return s;
 }

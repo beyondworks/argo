@@ -78,9 +78,10 @@ function fakeServer({ events = [], uid = 'u1', crews = [{ id: 'crew-p', org_id: 
       },
       async personalCrewsOf(_u, wsIds) { env.calls.push({ name: 'personalCrewsOf', at: env.now }); seenCalls.add('personalCrewsOf'); return env.crews.filter((c) => c.org_id == null).map((c) => ({ ...c, ws_id: c.ws_id ?? wsIds[0] })); },
       async personalRoomsOf(ids) { env.calls.push({ name: 'personalRoomsOf', at: env.now }); seenCalls.add('personalRoomsOf'); return ids.filter((id) => env.rooms.has(id)).map((id) => ({ id: `room-${id}`, personal_pair: `crew:${id}` })); },
-      async assistantNotices(ch, crewId, since, limit) {
+      async assistantNotices(ch, crewId, { afterId = null, sinceIso, limit }) {
         env.calls.push({ name: 'assistantNotices', at: env.now }); seenCalls.add('assistantNotices');
-        return env.inserts.filter((r) => r.channel_id === ch && r.crew_id === crewId && r.client_msg_id.startsWith('as:') && r.created_at >= since).reverse().slice(0, limit).map((r) => ({ meta: r.meta, created_at: r.created_at }));
+        return env.inserts.map((r, i) => ({ ...r, seq: i + 1 })).filter((r) => r.channel_id === ch && r.crew_id === crewId && r.client_msg_id.startsWith('as:') && (afterId != null ? r.seq > afterId : r.created_at >= sinceIso))
+          .reverse().slice(0, limit).map((r) => ({ id: r.seq, author_kind: r.author_kind, meta: r.meta, created_at: r.created_at }));
       },
     },
   };

@@ -70,7 +70,7 @@ function fakeServer(events) {
       // 방에서 복구 읽기(3단계 recover.mjs) — 실제 서버처럼 이 크루의 개인 행·이미 있는 방·넣은 글을 돌려준다
       async personalCrewsOf(_u, wsIds) { env.calls.push('personalCrewsOf'); return [{ id: 'crew-p', org_id: null, slug: 'pepper', ws_id: wsIds[0] }]; },
       async personalRoomsOf(ids) { env.calls.push('personalRoomsOf'); return ids.map((id) => ({ id: `room-${id}`, personal_pair: `crew:${id}` })); },
-      async assistantNotices(ch) { env.calls.push('assistantNotices'); return env.inserts.filter((r) => r.channel_id === ch).map((r) => ({ meta: r.meta, created_at: null })); },
+      async assistantNotices(ch) { env.calls.push('assistantNotices'); return env.inserts.filter((r) => r.channel_id === ch).map((r) => ({ author_kind: r.author_kind, meta: r.meta, created_at: null })); },
     },
   };
   return env;
@@ -467,6 +467,11 @@ test('K6(서버): 상태의 하루 즉시 알림 상한 = 지금 비서 설정�
   await writeFile(cfgPath(ws), text); await updateCompany(ws, () => ({ assistantSeal: C.sealOf(text) })); // 새 버전이 봉인해 저장한 값
   const deps = { lease: () => ({ syncOn: false }), deviceSession: () => null, sessionDead: () => false, deviceId: async () => 'dev' };
   assert.equal((await S.assistantSettingsView(ws, { now: NOW, deps })).status.dailyCap, 3);
+  // 오늘 수를 확신하지 못함(방에서 복구 실패) — 화면 "확인 중"(#894 분리 검수 L2). 다른 날의 상태 파일이면 그 표시를 끌어오지 않는다
+  await mkdir(join(paths(ws).root, '.assistant'), { recursive: true });
+  await writeFile(stateFile(ws), JSON.stringify({ v: 1, sent: {}, pending: [], outbox: null, cal: { coveredUntil: NOW, readAt: NOW }, bundles: { am: '', pm: '' }, day: { date: '2026-10-08', instant: 3, sure: false }, status: null }));
+  assert.deepEqual([(await S.assistantSettingsView(ws, { now: NOW, deps })).status.instantSure, (await S.assistantSettingsView(ws, { now: NOW, deps })).status.instantToday], [false, 3]);
+  assert.equal((await S.assistantSettingsView(ws, { now: Date.parse('2026-10-09T09:00:00+09:00'), deps })).status.instantSure, true, '날이 바뀌면 확인 중 아님(오늘 0건)');
   await put(ws, { leadMinutes: 15 });
   assert.equal((await cfgOf(ws)).dailyCap, 3, '다른 칸을 저장해도 상한은 그대로');
 });

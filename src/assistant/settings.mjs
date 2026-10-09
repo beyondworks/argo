@@ -15,8 +15,11 @@
 // 엔진이 켠 시각이 늦은 쪽만 돌린다(rules.mjs assistantCompanyOf). 이 기기의 저장끼리는 한 줄로 세운다(SAVE_LOCK).
 // 다른 회사를 끌 때는 그 회사의 assistant.json만 꺼짐으로 쓰고 company.json(봉인)은 건드리지 않는다(H63, #865 3차 검수 R7) — 사용자가 손대지 않은 회사의
 // company.json을 다시 쓰면, 다른 기기에서 방금 보관한 그 회사가 동기화의 보관 마커 규칙(sync.mjs syncTombstones: company.json 수정 시각 ≥ 보관 시각이면
-// "보관 이후 수정" → 마커 철회)에 걸려 되살아났다. 꺼진 설정은 엔진이 봉인을 보지 않으므로(config.mjs) 모든 버전에서 꺼짐이고, 화면은 봉인이 안 맞는 꺼짐을
-// "화면 밖 변경" 없이 꺼짐으로 보인다. 대신 그 회사를 다시 켜면 예전 설정값을 이어받지 않고 기본값에서 새로 봉인한다(봉인 안 맞는 파일 — A9와 같은 길).
+// "보관 이후 수정" → 마커 철회)에 걸려 되살아났다. 꺼진 설정은 엔진이 봉인을 보지 않으므로(config.mjs) 모든 버전에서 꺼짐이고, 화면은 이 꺼짐을
+// "화면 밖 변경" 없이 꺼짐으로 보인다.
+// 봉인된 꺼짐(sealedOff, #894 분리 검수 L3): 끌 때는 켜짐 파일에서 enabled만 false로 바꿔 같은 모양(2칸 들여쓰기 + 줄바꿈)으로 쓴다. 그러면 enabled를 true로 되돌린
+// 바이트가 company.json에 남은 봉인과 정확히 같다 — 그 파일은 사용자가 이 화면에서 저장한 내용 그대로라 다시 켤 때 알림 시각·내일 요약·조용한 시간을 이어받는다.
+// 누가 그 바이트를 그대로 되살려 켜짐으로 돌려놓아도 그것은 예전에 봉인된 켜짐 그대로(예전 켠 시각)라, 엔진은 켠 시각이 늦은 지금 비서를 돌린다(assistantCompanyOf).
 //
 // 보기 = 설정 + 지금 비서(회사·에이전트) + 상태. 전부 로컬 파일·메모리에서 읽는다 — Supabase 호출 0(리스 주인은 동기화가 이미 읽은 메모리 값, 로그인은 기기 세션 파일과
 // 사망 마커 — 회전을 일으키지 않는 읽기 전용 판정).
@@ -43,19 +46,24 @@ const fileOf = (wsId) => join(paths(wsId).root, ASSISTANT_FILE);
 const lockAssistant = (wsId, fn) => withLock(`assistant:${wsId}`, fn, { file: fileOf(wsId), mkParent: false }); // 동기화(isFileLockedRel)와 같은 파일 잠금
 const hostTz = () => { try { return new Intl.DateTimeFormat().resolvedOptions().timeZone || null; } catch { return null; } };
 
-/** assistant.json 원문 + 봉인 대조 — { text, obj, cfg, sealed } | null(파일 없음). 손상(JSON 아님)이면 obj·cfg null, sealed false. */
+/** assistant.json 원문 + 봉인 대조 — { text, obj, cfg, sealed, sealedOff } | null(파일 없음). 손상(JSON 아님)이면 obj·cfg null, sealed·sealedOff false.
+    sealedOff = 꺼짐이고, enabled만 true로 되돌린 바이트가 봉인과 같다(이 화면이 켰던 내용을 다른 회사로 바꾸며 끈 것 — 머리 주석). */
+const sealedText = (obj) => `${JSON.stringify(obj, null, 2)}\n`; // writeSealed와 같은 모양
 export async function readAssistantFile(wsId, company = null) {
   let text;
   try { text = await readFile(fileOf(wsId), 'utf8'); } catch (e) { if (e?.code === 'ENOENT') return null; throw e; }
   let obj = null;
   try { const v = JSON.parse(text); obj = v && typeof v === 'object' && !Array.isArray(v) ? v : null; } catch { /* 손상 */ }
   const co = company ?? (await loadCompany(wsId).catch(() => null));
-  return { text, obj, cfg: obj ? normalizeAssistantConfig(obj) : null, sealed: !!obj && co?.[SEAL_FIELD] === sealOf(text) };
+  const seal = co?.[SEAL_FIELD];
+  const sealed = !!obj && seal === sealOf(text);
+  const sealedOff = !!obj && !sealed && obj.enabled === false && typeof seal === 'string' && seal === sealOf(sealedText({ ...obj, enabled: true }));
+  return { text, obj, cfg: obj ? normalizeAssistantConfig(obj) : null, sealed, sealedOff };
 }
 
 /** 봉인해서 쓰기 — 파일을 쓰고 그 바이트의 해시를 company.json에 적는다. 반드시 lockAssistant 안에서 부른다. */
 async function writeSealed(wsId, obj) {
-  const text = `${JSON.stringify(obj, null, 2)}\n`;
+  const text = sealedText(obj);
   await writeJsonAtomic(fileOf(wsId), text);
   await updateCompany(wsId, () => ({ [SEAL_FIELD]: sealOf(text) }));
   return text;
@@ -106,7 +114,7 @@ async function saveInLine(wsId, input, { now = Date.now() } = {}) {
   const company = await loadCompany(wsId);
   await lockAssistant(wsId, async () => {
     const cur = await readAssistantFile(wsId, await loadCompany(wsId));
-    const sealed = cur?.sealed === true;
+    const sealed = cur?.sealed === true || cur?.sealedOff === true; // 봉인된 꺼짐도 이 화면이 저장한 내용 그대로다(머리 주석)
     const base = sealed ? cur.obj : {};
     const prev = normalizeAssistantConfig(base); // 봉인 안 맞음·없음 = 기본값(꺼짐)
     const q = inp.quiet && typeof inp.quiet === 'object' ? inp.quiet : {};
@@ -162,8 +170,8 @@ async function saveInLine(wsId, input, { now = Date.now() } = {}) {
         await lockAssistant(id, async () => {
           const f = await readAssistantFile(id, await loadCompany(id));
           if (!f?.sealed || !f.cfg.enabled) return;
-          const { enabledAt: _drop, ...rest } = f.obj;
-          await writeJsonAtomic(fileOf(id), `${JSON.stringify({ ...rest, enabled: false }, null, 2)}\n`); // 봉인(company.json)은 그대로 — 위 머리 주석(H63)
+          // enabled만 false로(켠 시각 등 나머지 칸·순서 그대로) — 봉인(company.json)은 그대로 두어 다시 켤 때 '봉인된 꺼짐'으로 이어받는다(머리 주석 H63·L3)
+          await writeJsonAtomic(fileOf(id), sealedText({ ...f.obj, enabled: false }));
           changedOthers.push(id);
         });
       } catch (e) { failOther(id, e); }
@@ -190,13 +198,13 @@ export const viewDeps = { lease: leaseCheck, deviceSession: () => loadDeviceSess
  *    unsealed,                         — 파일은 켜짐(enabled + 에이전트)인데 봉인이 안 맞음(설정 화면 밖에서 바뀜 → 엔진은 꺼짐)
  *    current: { ws, company, agent, name } | null,   — 지금 이 사용자의 비서(같은 주인의 회사들 중 봉인 맞는 켜짐, 켠 시각이 가장 늦은 쪽 — 엔진과 같은 판정)
  *    choices: { lead },
- *    status: { login, muted, runner, device, code, codeAt, readAt, instantToday, dailyCap } }   — dailyCap = 지금 비서 설정의 하루 즉시 알림 상한(화면 "n/상한")
+ *    status: { login, muted, runner, device, code, codeAt, readAt, instantToday, instantSure, dailyCap } }   — dailyCap = 지금 비서 설정의 하루 즉시 알림 상한(화면 "n/상한")
  */
 export async function assistantSettingsView(wsId, { now = Date.now(), deps = viewDeps } = {}) {
   const company = await loadCompany(wsId);
   const owner = company.ownerId ?? null;
   const here = await readAssistantFile(wsId, company);
-  const cfg = here?.sealed ? here.cfg : normalizeAssistantConfig({});
+  const cfg = here?.sealed || here?.sealedOff ? here.cfg : normalizeAssistantConfig({});
   // 같은 주인의 회사들 — 봉인 맞는 켜짐만(엔진 pickCompany와 같은 재료)
   const peers = [];
   const names = new Map();
@@ -234,6 +242,7 @@ export async function assistantSettingsView(wsId, { now = Date.now(), deps = vie
       codeAt: st?.status?.at ?? 0,
       readAt: st?.cal?.readAt ?? 0,
       instantToday: st && st.day.date === dateIn(now, tz) ? st.day.instant : 0,
+      instantSure: !(st && st.day.date === dateIn(now, tz) && st.day.sure === false), // false = 방에서 복구가 실패해 다른 기기가 보낸 수를 아직 모른다(화면 "확인 중")
       dailyCap: (curCfg ?? cfg).dailyCap,
     },
   };

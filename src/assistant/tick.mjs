@@ -23,7 +23,7 @@ import { loadEffectiveAssistantConfig, calendarActive } from './config.mjs';
 import { readState, pruneState, stateFile } from './state.mjs';
 import { GAP_MS, LEASE_FRESH_MS, dateIn, addDays, instantIn, inQuiet, bundleDue, bundleUntil, assistantMuted, assistantCompanyOf, retryDelayMs } from './rules.mjs';
 import { CAL_READ_MS, CAL_SPAN_MS, readCalendar, ownEvents, expand, planCalendar, confirmDue, preKey } from './calendar.mjs';
-import { RECOVER_RETRY_MS, recoveryTargets, targetsSig, recoverSince, readRoomNotices, foldNotices, mergeRecovered } from './recover.mjs';
+import { RECOVER_RETRY_MS, DAY_KEYS_MAX, recoveryTargets, readRoomNotices, foldNotices, mergeRecovered } from './recover.mjs';
 import { personalRoom, insertNotice, composePre, composeBundle, refreshPreBody } from './deliver.mjs';
 import { leaseCheck, LEASE_TTL_MS, LEASE_ASSISTANT_ENGINE } from '../sync.mjs';
 import { loadCompany } from '../workspace.mjs';
@@ -122,8 +122,9 @@ async function send(cid, m, c, cfg, now, lang, { recheck = false } = {}) {
     ob.occ = { ...ob.occ, title: live.title, location: live.location }; // 바뀐 제목·장소는 반영(같은 키·같은 client_msg_id)
   }
   if (ob.kind === 'pre') {
-    // 하루 즉시 알림 상한(설계 9절) — 오늘 이미 상한만큼 보냈고 아직 꼬리를 붙이지 않았으면 이 글(상한+1번째)에 한 줄. 보내는 순간 다시 정한다(복구로 바뀐 셈 반영).
-    const over = st.day.instant >= cfg.dailyCap && !st.day.capNoted;
+    // 하루 즉시 알림 한도(설계 9절) — 오늘 이미 한도만큼 보냈고 아직 꼬리를 붙이지 않았으면 이 글(한도+1번째)에 한 줄. 보내는 순간 다시 정한다(복구로 바뀐 셈 반영).
+    // 방에서 복구가 실패해 다른 기기가 보낸 수를 모르는 동안(day.sure false)은 붙이지 않는다 — 한도 문구가 하루 두 번 붙지 않게(#894 분리 검수 L2).
+    const over = st.day.sure && st.day.instant >= cfg.dailyCap && !st.day.capNoted;
     ob.capTail = over ? cfg.dailyCap : 0;
     ob.meta = { ...ob.meta, capNote: over || undefined }; // 다른 기기가 방에서 복구할 때 꼬리를 다시 붙이지 않게
   }
@@ -135,8 +136,8 @@ async function send(cid, m, c, cfg, now, lang, { recheck = false } = {}) {
     return retryLater('deliver_failed', '알림을 보내지 못해 대기열에 두었습니다', e);
   }
   for (const k of ob.keys) st.sent[k] = now;
-  if (ob.kind === 'pre') { // 즉시 알림 수(아침·저녁 묶음은 세지 않는다 — 설계 9절)
-    st.day.instant += 1;
+  if (ob.kind === 'pre') { // 즉시 알림 수(아침·저녁 묶음은 세지 않는다 — 설계 9절). 키로 세어 복구로 합칠 때 겹쳐 세지 않는다(recover.mjs mergeRecovered)
+    if (!st.day.keys.includes(ob.basis)) { if (st.day.keys.length < DAY_KEYS_MAX) st.day.keys.push(ob.basis); st.day.instant += 1; }
     if (ob.capTail) st.day.capNoted = true;
   }
   if (ob.kind === 'am' || ob.kind === 'pm') st.bundles[ob.kind] = ob.date;
@@ -175,7 +176,7 @@ export async function runAssistantTick(cid, { now = Date.now(), deps = assistant
   // 있으면 저장값과 켠 시각 중 늦은 쪽(다시 켰을 때 꺼져 있던 동안의 일은 알리지 않는다). 뒤로는 26시간까지만 본다.
   st.cal.coveredUntil = Math.min(now, Math.max(st.cal.coveredUntil || now, cfg.enabledAt ?? 0, now - CAL_SPAN_MS));
   const today = dateIn(now, cfg.tz);
-  if (st.day.date !== today) st.day = { date: today, instant: 0, capNoted: false };
+  if (st.day.date !== today) st.day = { date: today, instant: 0, capNoted: false, keys: [], sure: !m.recover }; // 복구할 차례면 그 전까지 오늘 수를 모른다
   pruneState(st, now);
 
   // 2. 사용자당 1명 · 비서 에이전트 · 끈 목록 · 볼 것 — 쉬는 동안은 글 0. 쉬는 동안의 일정은 나중에 "지난 일정"으로 알리지 않고(확인 범위를 지금으로),
@@ -206,13 +207,15 @@ export async function runAssistantTick(cid, { now = Date.now(), deps = assistant
     if (!s) return done('login', 'login_required');
     try {
       const targets = await recoveryTargets(cid, owner, cfg, idsCache.ids, deps); // 회사 목록은 바로 위 pickCompany가 30초 안에 읽은 것
-      const sig = targetsSig(targets);
-      const since = recoverSince(st.rec, sig, now, instantIn(today, '00:00', cfg.tz)); // 처음·방이 바뀜이면 14일, 아니면 지난 복구 뒤(오늘 글은 늘 전부)
-      const rec = foldNotices(await readRoomNotices(s, targets, since), { now, tz: cfg.tz });
-      mergeRecovered(st, rec);
-      st.rec = { to: Math.max(st.rec.sig === sig ? st.rec.to : 0, rec.latest), sig };
+      // 방마다 처음이면 14일, 아니면 지난번 끝 뒤만. 끝 기록은 방(= 그 개인 크루 1:1 방) 단위라 읽는 방이 바뀌어도 그대로 맞다 — 새로 읽는 방은 기록이 없어 14일,
+      // 빠진 방의 기록은 버린다(다시 읽게 되면 14일).
+      const { rows, last } = await readRoomNotices(s, targets, { now, after: st.rec.last });
+      mergeRecovered(st, foldNotices(rows, { now, tz: cfg.tz }));
+      st.rec = { last };
+      st.day.sure = true;
       m.recover = false; m.recoverAt = 0;
     } catch (e) {
+      st.day.sure = false; // 다른 기기가 보낸 수를 모른다 — 한도 꼬리를 붙이지 않고 화면은 "확인 중"
       m.recoverAt = now + RECOVER_RETRY_MS;
       logOnce(cid, `1:1 방에서 보낸 알림을 읽지 못했습니다(5분 뒤 다시): ${errText(e)}`);
     }

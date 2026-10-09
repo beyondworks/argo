@@ -14,8 +14,10 @@ export const ASSISTANT_TEXT = Object.freeze({
   'line.place': ['장소: {v}', 'at {v}'],
   'line.more': ['…외 {n}건', '…and {n} more'],
   'line.untitled': ['(제목 없음)', '(untitled)'],
-  // 하루 즉시 알림 상한(설계 9절) — 상한에 처음 걸린 글 끝에 한 줄. {n} = 상한(기본 10)
-  'tail.cap': ['오늘 즉시 알림이 {n}건을 넘어 이후는 목록으로만 보내요.', 'More than {n} instant alerts today — the rest come as a plain list.'],
+  // 하루 즉시 알림 한도(설계 9절) — 한도에 처음 걸린 글 끝에 한 줄. {n} = 한도(기본 10). 이 단계는 한도를 넘어도 일정 알림을 그대로 보내므로(글이 모두 템플릿)
+  // 한도를 넘었다는 사실과 줄이는 방법만 말한다(#894 분리 검수 L5). 한도 자체를 고르는 칸은 없다 — 줄이는 손잡이는 비서 탭의 조용한 시간·끄기다.
+  'tail.cap': ['오늘 즉시 알림이 하루 한도 {n}건을 넘었어요. 일정 알림은 계속 보내요 — 줄이려면 에이전트 카드 "비서" 탭에서 조용한 시간을 바꾸거나 비서를 끄세요.',
+    "Today's instant alerts passed the daily limit of {n}. Event reminders keep coming — to get fewer, change quiet hours or turn the assistant off in the agent card's Assistant tab."],
   'dow': ['일,월,화,수,목,금,토', 'Sun,Mon,Tue,Wed,Thu,Fri,Sat'],
   'months': ['1월,2월,3월,4월,5월,6월,7월,8월,9월,10월,11월,12월', 'Jan,Feb,Mar,Apr,May,Jun,Jul,Aug,Sep,Oct,Nov,Dec'],
 });

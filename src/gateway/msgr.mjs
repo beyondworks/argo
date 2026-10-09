@@ -456,12 +456,14 @@ export function makeDb(client) {
       if (!crewIds.length) return [];
       return unwrap(await client.from('msgr_channels').select('id, personal_pair').in('personal_pair', crewIds.map((id) => `crew:${id}`))) ?? [];
     },
-    /** 그 방에 그 크루가 쓴 비서 알림 글(client_msg_id 'as:' 접두 — src/assistant/deliver.mjs clientMsgId) — since 이후, 새 글부터 limit개. 지운 글도 센다(보낸 것은 보낸 것).
-        방 하나씩(channel_id 같음) — (channel_id, id) 인덱스를 거꾸로 타고 limit에서 멈춘다(contextOf와 같은 모양). 여러 방을 IN으로 묶고 id로 정렬하면
-        방 글이 limit보다 적을 때 기본 키 역순 전체 훑기를 고를 수 있어 쓰지 않는다. 개인 1:1 방이라 행 수가 작다. */
-    async assistantNotices(channelId, crewId, sinceIso, limit) {
-      return unwrap(await client.from('msgr_messages').select('id, meta, created_at').eq('channel_id', channelId).eq('author_kind', 'crew').eq('crew_id', crewId)
-        .like('client_msg_id', 'as:%').gte('created_at', sinceIso).order('id', { ascending: false }).limit(limit)) ?? [];
+    /** 그 방에 그 크루가 쓴 비서 알림 글(client_msg_id 'as:' 접두 — src/assistant/deliver.mjs clientMsgId), 새 글부터 limit개. 지운 글도 센다(보낸 것은 보낸 것). 방 하나씩.
+        afterId가 있으면 그 id보다 큰 글만(작성자 종류는 부르는 쪽이 거른다) — (channel_id, id) 인덱스 범위라 방 크기와 무관하다(PG 14 사용자 권한 EXPLAIN: 버퍼 397~409·약 1ms,
+        author_kind를 서버 조건에 넣으면 msgr_messages_client_id로 바뀌어 방의 에이전트 글에 비례). afterId가 없으면(그 방을 처음 읽음) 최근 since 이후 —
+        msgr_messages_client_id로 그 방 에이전트 글 전부를 거르므로 그 수에 비례한다(8,012개 방 61~104ms). 측정 값과 예외는 src/assistant/recover.mjs 머리 주석. */
+    async assistantNotices(channelId, crewId, { afterId = null, sinceIso, limit }) {
+      let q = client.from('msgr_messages').select('id, author_kind, meta, created_at').eq('channel_id', channelId).eq('crew_id', crewId).like('client_msg_id', 'as:%');
+      q = afterId != null ? q.gt('id', afterId) : q.eq('author_kind', 'crew').gte('created_at', sinceIso);
+      return unwrap(await q.order('id', { ascending: false }).limit(limit)) ?? [];
     },
     async attachmentsOf(messageId) {
       return unwrap(await client.from('msgr_attachments').select('storage_path, name, mime, bytes').eq('message_id', messageId)) ?? [];

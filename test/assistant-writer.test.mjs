@@ -74,10 +74,10 @@ function fakeServer({ events = [], uid = 'u1', crews = [] } = {}) {
       },
       async personalCrewsOf(_u, wsIds) { call('personalCrewsOf'); if (env.failRecover) throw new Error('recover read failed'); return env.crews.filter((c) => c.org_id == null && wsIds.includes(c.ws_id)); },
       async personalRoomsOf(crewIds) { call('personalRoomsOf'); return crewIds.filter((id) => env.rooms.has(id)).map((id) => ({ id: `room-${id}`, personal_pair: `crew:${id}` })); },
-      async assistantNotices(ch, crewId, since, limit) {
-        call('assistantNotices', { since, limit });
-        return env.inserts.filter((r) => r.channel_id === ch && r.crew_id === crewId && r.client_msg_id.startsWith('as:') && r.created_at >= since)
-          .sort((a, b) => b.seq - a.seq).slice(0, limit).map((r) => ({ id: r.seq, meta: r.meta, created_at: r.created_at }));
+      async assistantNotices(ch, crewId, { afterId = null, sinceIso, limit }) { // 실제와 같은 거름 — afterId가 있으면 그 id 뒤(작성자 종류는 부르는 쪽이), 없으면 since 뒤의 에이전트 글
+        call('assistantNotices', { ch, since: afterId == null ? sinceIso : null, afterId, limit });
+        return env.inserts.filter((r) => r.channel_id === ch && r.crew_id === crewId && r.client_msg_id.startsWith('as:') && (afterId != null ? r.seq > afterId : (r.author_kind === 'crew' && r.created_at >= sinceIso)))
+          .sort((a, b) => b.seq - a.seq).slice(0, limit).map((r) => ({ id: r.seq, author_kind: r.author_kind, meta: r.meta, created_at: r.created_at }));
       },
     },
   };
@@ -113,6 +113,8 @@ test('Q1: 배달이 막힌 사이 일정을 14:00 → 15:00으로 옮김 — 다
   await run(ws, env, at('13:32'), at('15:05'));
   assert.deepEqual(env.inserts.map((r) => [hhmm(r.at), r.body]), [['14:30', '[비서] 곧 시작하는 일정\n· 15:00 일정 e1 — 30분 뒤 시작']]);
   assert.ok(env.calls.some((c) => c.name === 'office_event_list' && c.at === at('13:33')), '13:33 다시 보내기 전에 확인 읽기');
+  // 버린 회차는 사본에서도 뺀다(m.skip) — 같은 틱·다음 틱들이 옛 회차를 다시 계산해 확인 읽기를 거듭하지 않게(#894 분리 검수 L4)
+  assert.deepEqual(env.calls.filter((c) => c.name === 'office_event_list' && c.at >= at('13:33') && c.at < at('13:44')).map((c) => hhmm(c.at)), ['13:33'], '13:33 확인 읽기 1번뿐, 13:44 전체 읽기까지 0');
 });
 
 test('Q2: 배달이 막힌 사이 일정을 지움 — 다시 보내지 않고, 저녁 묶음의 "지난 일정"에도 넣지 않는다', async () => {
@@ -335,42 +337,87 @@ test('R9(모양): 복구는 같은 주인의 비서 방만 — 꺼진 회사도 
   const ws1 = await company();
   const off = await company({ cfg: { enabled: false, agent: 'wolff' } });
   const stranger = await company({ ownerId: 'u9', cfg: { enabled: false, agent: 'kim' } });
-  const env = fakeServer({ events: [], crews: [crewP(ws1), { id: 'crew-w', org_id: null, slug: 'wolff', ws_id: off }, { id: 'crew-org', org_id: 'org-1', slug: 'pepper', ws_id: ws1 }] });
-  env.rooms.add('crew-w');
+  // 같은 회사의 다른 에이전트(kim)도 방이 있다 — 비서가 아니므로 읽지 않는다(#894 분리 검수 L4)
+  const env = fakeServer({ events: [], crews: [crewP(ws1), { id: 'crew-w', org_id: null, slug: 'wolff', ws_id: off }, { id: 'crew-org', org_id: 'org-1', slug: 'pepper', ws_id: ws1 }, { id: 'crew-k', org_id: null, slug: 'kim', ws_id: ws1 }] });
+  env.rooms.add('crew-w'); env.rooms.add('crew-k');
   const seen = [];
   const s0 = env.session;
-  env.session = { ...s0, db: { ...s0.db, async personalCrewsOf(u, wsIds) { seen.push(['crews', [...wsIds].sort()]); return s0.db.personalCrewsOf(u, wsIds); }, async personalRoomsOf(cids) { seen.push(['rooms', [...cids].sort()]); return s0.db.personalRoomsOf(cids); }, async assistantNotices(ch, cid, since, limit) { seen.push(['notices', ch, cid, limit]); return s0.db.assistantNotices(ch, cid, since, limit); } } };
+  env.session = { ...s0, db: { ...s0.db, async personalCrewsOf(u, wsIds) { seen.push(['crews', [...wsIds].sort()]); return s0.db.personalCrewsOf(u, wsIds); }, async personalRoomsOf(cids) { seen.push(['rooms', [...cids].sort()]); return s0.db.personalRoomsOf(cids); }, async assistantNotices(ch, cid, opts) { seen.push(['notices', ch, cid, opts.afterId, opts.limit]); return s0.db.assistantNotices(ch, cid, opts); } } };
   await run(ws1, env, at('10:00'), at('10:00'), { ids: [ws1, off, stranger] });
-  assert.deepEqual(seen, [['crews', [off, ws1].sort()], ['rooms', ['crew-p', 'crew-w']], ['notices', 'room-crew-w', 'crew-w', 300]], '방이 있는 크루만, 방 하나씩');
+  assert.deepEqual(seen, [['crews', [off, ws1].sort()], ['rooms', ['crew-p', 'crew-w']], ['notices', 'room-crew-w', 'crew-w', null, 300]], '비서 에이전트의 방만(같은 회사의 다른 에이전트 kim 제외), 방이 있는 것만, 방 하나씩, 처음이라 끝 기록 없음');
   assert.equal(env.calls.find((c) => c.name === 'assistantNotices').since, iso(at('10:00') - 14 * 86_400_000), '최근 14일');
 });
 
-test('R11: 잠자기·재시작 뒤 복구는 지난 복구 뒤(오늘 글은 전부)만 읽는다 — 같은 글을 매번 14일치 내려받지 않는다. 읽는 방이 바뀌면 다시 14일', async () => {
+test('R11: 잠자기·재시작 뒤 복구는 방마다 지난번에 본 마지막 비서 글 id 뒤만 읽는다(방 크기와 무관 — #894 분리 검수 M1). 처음 읽는 방·아직 글 없는 방은 14일', async () => {
   const ws = await company();
   const env = fakeServer({ events: [], crews: [crewP(ws)] });
   env.rooms.add('crew-p');
-  env.now = at('09:00');
-  await env.session.db.insertMessage({ channel_id: 'room-crew-p', author_kind: 'crew', crew_id: 'crew-p', client_msg_id: clientMsgId('crew-p', 'sum:am:2026-10-08'), body: 'x', meta: { notification: 'assistant', assistant: { v: 1, kind: 'am', keys: ['sum:am:2026-10-08'] } } });
-  const since = () => env.calls.filter((c) => c.name === 'assistantNotices').map((c) => c.since);
+  const notice = (k) => env.session.db.insertMessage({ channel_id: 'room-crew-p', author_kind: 'crew', crew_id: 'crew-p', client_msg_id: clientMsgId('crew-p', k), body: 'x', meta: { notification: 'assistant', assistant: { v: 1, kind: 'am', keys: [k] } } });
+  env.now = at('09:00'); await notice('sum:am:2026-10-08'); // seq 1
+  const reads = () => env.calls.filter((c) => c.name === 'assistantNotices').map((c) => (c.afterId != null ? `id>${c.afterId}` : `since ${c.since}`));
   await run(ws, env, at('10:00'), at('10:00')); // 처음 — 14일
-  await run(ws, env, at('11:00'), at('11:00')); // 잠자기 뒤 — 오늘 0시(지난 복구 끝 09:00 − 10분보다 이르다)
-  await run(ws, env, at('08:30', '2026-10-09'), at('08:30', '2026-10-09')); // 다음 날 — 지난 복구 끝 09:00 − 10분(오늘 0시보다 이르다)
-  assert.deepEqual(since(), [iso(at('10:00') - 14 * 86_400_000), iso(at('00:00')), iso(at('08:50'))]);
-  T._resetAssistantForTest(); _resetAssistantConfigCacheForTest(); // 재시작 — 상태 파일의 끝을 이어 쓴다
-  await run(ws, env, at('09:00', '2026-10-09'), at('09:00', '2026-10-09'));
-  assert.equal(since().at(-1), iso(at('08:50')));
+  await run(ws, env, at('11:00'), at('11:00')); // 잠자기 뒤 — 본 마지막 글(1) 뒤
+  env.now = at('11:30'); await notice('sum:pm:2026-10-08'); // 다른 기기가 보낸 글(seq 2)
+  await run(ws, env, at('12:00'), at('12:00')); // 1 뒤 → 2를 읽고 끝 기록 2
+  T._resetAssistantForTest(); _resetAssistantConfigCacheForTest(); // 재시작 — 상태 파일의 끝 기록을 이어 쓴다
+  await run(ws, env, at('13:00'), at('13:00'));
+  assert.deepEqual(reads(), [`since ${iso(at('10:00') - 14 * 86_400_000)}`, 'id>1', 'id>1', 'id>2']);
   const st = await state(ws);
-  assert.equal(st.rec.to, at('09:00'), '지난 복구에서 본 마지막 글(서버 시각)');
+  assert.deepEqual([st.rec.last, st.bundles.pm], [{ 'room-crew-p': 2 }, '2026-10-08'], '방마다 끝 기록, 끝 뒤에서 읽은 글도 합친다');
   await writeCfg(ws, { enabled: true, agent: 'wolff', enabledAt: '2026-10-01T00:00:00Z', tz: 'Asia/Seoul' }); // 에이전트를 바꿈 — 읽는 방이 바뀐다
   T._resetAssistantForTest(); _resetAssistantConfigCacheForTest();
   env.crews.push({ id: 'crew-w', org_id: null, slug: 'wolff', ws_id: ws }); env.rooms.add('crew-w');
-  await run(ws, env, at('09:30', '2026-10-09'), at('09:30', '2026-10-09'));
-  assert.equal(since().at(-1), iso(at('09:30', '2026-10-09') - 14 * 86_400_000), '방이 바뀌면 14일');
+  await run(ws, env, at('14:00'), at('14:00'));
+  assert.equal(reads().at(-1), `since ${iso(at('14:00') - 14 * 86_400_000)}`, '새로 읽는 방(울프)은 끝 기록이 없어 14일');
+  await run(ws, env, at('15:00'), at('15:00'));
+  assert.equal(reads().at(-1), `since ${iso(at('15:00') - 14 * 86_400_000)}`, '아직 비서 글이 없는 방은 끝 기록이 없어 다음에도 14일(방의 맨 끝 id를 따로 읽지 않는다)');
+});
+
+test('R12: 끝 기록 뒤 읽기는 작성자 종류를 서버에서 거르지 않으므로 받은 뒤 거른다 — 사람이 쓴 as: 글은 보낸 키가 되지 않는다', async () => {
+  const ws = await company();
+  const env = fakeServer({ events: [ev('e1', at('14:00'), at('15:00'))], crews: [crewP(ws)] });
+  await run(ws, env, at('12:00'), at('12:00'));
+  env.rooms.add('crew-p'); env.now = at('12:10');
+  await env.session.db.insertMessage({ channel_id: 'room-crew-p', author_kind: 'crew', crew_id: 'crew-p', client_msg_id: clientMsgId('crew-p', 'sum:am:2026-10-08'), body: 'x', meta: { notification: 'assistant', assistant: { v: 1, kind: 'am', keys: ['sum:am:2026-10-08'] } } });
+  await run(ws, env, at('12:20'), at('12:20')); // 끝 기록이 생긴다
+  const k = `cal:e1:${iso(at('14:00'))}:pre`;
+  env.now = at('12:30');
+  await env.session.db.insertMessage({ channel_id: 'room-crew-p', author_kind: 'user', crew_id: 'crew-p', client_msg_id: 'as:crew-p:forged', body: 'x', meta: { notification: 'assistant', assistant: { v: 1, kind: 'pre', keys: [k] } } });
+  await run(ws, env, at('12:40'), at('12:40')); // 끝 기록 뒤 읽기 — 사람 글은 버린다
+  await run(ws, env, at('13:29'), at('13:31'));
+  assert.ok(env.calls.some((c) => c.name === 'assistantNotices' && c.afterId != null && c.at === at('12:40')), '12:40은 끝 기록 뒤 읽기');
+  assert.equal(env.inserts.filter((r) => r.author_kind === 'crew' && r.meta.assistant.kind === 'pre').length, 1, '14:00 알림은 그대로 나간다');
+});
+
+test('L2: 기기 교대 때 방에서 복구가 실패하면 한도 꼬리를 붙이지 않고 오늘 수를 "확인 중"으로 둔다 — 복구되면 합쳐 정확한 수(한도 문구는 하루 한 번)', async () => {
+  const ws = await company({ cfg: { dailyCap: 2 } });
+  const hours = ['10:00', '11:00', '12:00', '13:00', '14:00', '15:00'];
+  const env = fakeServer({ events: hours.map((h, i) => ev(`k${i + 1}`, at(h), at(h) + 30 * MIN)), crews: [crewP(ws)] });
+  await run(ws, env, at('09:29'), at('11:31')); // A: 3건(한도 2 → 3번째에 꼬리)
+  await switchDevice(ws, null);
+  env.failRecover = true; // B의 복구 읽기가 계속 실패
+  await run(ws, env, at('12:00'), at('14:35'));
+  const tails = () => env.inserts.filter((r) => r.meta.assistant.capNote === true).map((r) => hhmm(r.at)); // 꼬리를 붙인 글(문구와 무관한 표시)
+  assert.deepEqual(env.inserts.map((r) => hhmm(r.at)), ['09:30', '10:30', '11:30', '12:30', '13:30', '14:30'], '알림은 그대로 나간다');
+  assert.deepEqual(tails(), ['11:30'], '한도 문구는 A의 한 번뿐 — B는 수를 모르는 동안 붙이지 않는다');
+  let st = await state(ws);
+  assert.deepEqual([st.day.instant, st.day.sure], [3, false], 'B가 아는 수는 3(자기 것)뿐 — 확인 중');
+  env.failRecover = false;
+  await run(ws, env, at('14:36'), at('14:45'));
+  st = await state(ws);
+  assert.deepEqual([st.day.instant, st.day.sure, st.day.keys.length], [6, true, 6], '복구되면 두 기기 합 6');
+  assert.deepEqual(tails(), ['11:30']);
+  // 오늘 수를 확신하던 기기(B — 방금 복구 성공)도 다시 교대되어 돌아올 때 복구가 실패하면 다시 "확인 중"
+  const bState = await readFile(stateFile(ws), 'utf8');
+  await switchDevice(ws, null); await run(ws, env, at('14:50'), at('14:51')); // 다른 기기가 잠깐 맡음
+  await switchDevice(ws, bState); env.failRecover = true;
+  await run(ws, env, at('15:10'), at('15:11'));
+  assert.equal((await state(ws)).day.sure, false, '복구 실패 = 다른 기기가 그사이 보낸 수를 모른다');
 });
 
 /* ── K 하루 즉시 알림 상한(설계 9절) — 일정 시작 전 알림은 미루지도 버리지도 않고 바로 보낸다. 상한에 처음 걸린 글 끝에 한 줄 ── */
 
-const tail = (n) => `\n오늘 즉시 알림이 ${n}건을 넘어 이후는 목록으로만 보내요.`;
+const tail = (n) => `\n오늘 즉시 알림이 하루 한도 ${n}건을 넘었어요. 일정 알림은 계속 보내요 — 줄이려면 에이전트 카드 "비서" 탭에서 조용한 시간을 바꾸거나 비서를 끄세요.`;
 
 test('K1·K7: 상한 3, 일정 5개 — 1~3번째(정확히 상한) 꼬리 없음, 4번째(상한+1) 꼬리 한 줄(대기열에서 다시 보내도 유지), 5번째 꼬리 없음, 모두 제때', async () => {
   const ws = await company({ cfg: { dailyCap: 3 } });
@@ -383,7 +430,7 @@ test('K1·K7: 상한 3, 일정 5개 — 1~3번째(정확히 상한) 꼬리 없�
   await run(ws, env, at('12:31'), at('13:31'));
   assert.deepEqual(env.inserts.map((r) => hhmm(r.at)), ['09:30', '10:30', '11:30', '12:31', '13:30'], '상한 뒤에도 미루거나 버리지 않고 바로');
   const bodies = env.inserts.map((r) => r.body);
-  for (const i of [0, 1, 2, 4]) assert.ok(!bodies[i].includes('오늘 즉시 알림이'), `${i + 1}번째: 꼬리 없음 — ${bodies[i]}`);
+  for (const i of [0, 1, 2, 4]) assert.ok(!bodies[i].includes('하루 한도'), `${i + 1}번째: 꼬리 없음 — ${bodies[i]}`);
   assert.equal(bodies[3], `[비서] 곧 시작하는 일정\n· 13:00 일정 k4 — 29분 뒤 시작${tail(3)}`);
   assert.equal(env.inserts[3].meta.assistant.capNote, true, '꼬리를 붙인 글이라는 표시(다른 기기가 방에서 복구할 때 다시 붙이지 않게)');
   const st = await state(ws);
@@ -397,7 +444,7 @@ test('K2·K4: 기본 상한 10 — 11번째에 꼬리, 날짜가 바뀌면 0부�
   const env = fakeServer({ events: [...mk(D), ...mk(D2)], crews: [crewP(ws)] });
   await run(ws, env, at('08:29'), at('19:31'), { step: MIN });
   await run(ws, env, at('08:29', D2), at('19:31', D2), { step: MIN });
-  const withTail = env.inserts.filter((r) => r.body.includes('오늘 즉시 알림이'));
+  const withTail = env.inserts.filter((r) => r.body.includes('하루 한도'));
   assert.deepEqual(withTail.map((r) => [new Date(r.at + 9 * 3600_000).toISOString().slice(0, 16), r.body.endsWith(tail(10))]), [[`${D}T18:30`, true], [`${D2}T18:30`, true]]);
   assert.equal(env.inserts.filter((r) => r.meta.assistant.kind === 'pre').length, 22);
 });
@@ -414,17 +461,18 @@ test('K3: 상한을 기기 교대에도 센다 — A가 3건(상한 3) 보낸 �
   await switchDevice(ws, null);
   await run(ws, env, at('13:00'), at('13:31'));
   assert.equal(env.inserts.length, 5);
-  assert.equal(env.inserts[4].body.includes('오늘 즉시 알림이'), false, 'C의 알림(5번째) — 꼬리는 하루 한 번');
+  assert.equal(env.inserts[4].body.includes('하루 한도'), false, 'C의 알림(5번째) — 꼬리는 하루 한 번');
 });
 
 test('K5: 꼬리 문구 ko/en — 영어 회사는 영어 꼬리', async () => {
-  assert.deepEqual(ASSISTANT_TEXT['tail.cap'], ['오늘 즉시 알림이 {n}건을 넘어 이후는 목록으로만 보내요.', 'More than {n} instant alerts today — the rest come as a plain list.']);
+  assert.equal(ASSISTANT_TEXT['tail.cap'][0], '오늘 즉시 알림이 하루 한도 {n}건을 넘었어요. 일정 알림은 계속 보내요 — 줄이려면 에이전트 카드 "비서" 탭에서 조용한 시간을 바꾸거나 비서를 끄세요.');
+  assert.doesNotMatch(ASSISTANT_TEXT['tail.cap'].join(' '), /크루|사장|목록으로만|list/i, '실제로 바뀌지 않는 "목록으로만"을 말하지 않는다, 용어 규칙');
   const ws = await company({ lang: 'en', cfg: { dailyCap: 1 } });
   const env = fakeServer({ events: [ev('x1', at('10:00'), at('10:30')), ev('x2', at('11:00'), at('11:30'))], crews: [crewP(ws)] });
   await run(ws, env, at('09:29'), at('10:31'));
   assert.deepEqual(env.inserts.map((r) => r.body), [
     '[Assistant] Starting soon\n· 10:00 일정 x1 — starts in 30 min',
-    '[Assistant] Starting soon\n· 11:00 일정 x2 — starts in 30 min\nMore than 1 instant alerts today — the rest come as a plain list.',
+    "[Assistant] Starting soon\n· 11:00 일정 x2 — starts in 30 min\nToday's instant alerts passed the daily limit of 1. Event reminders keep coming — to get fewer, change quiet hours or turn the assistant off in the agent card's Assistant tab.", // 한도 1이어도 복수형 어색함 없음
   ]);
 });
 
@@ -446,8 +494,25 @@ test('V4: 옛 버전(엔진 2, 0.1.99) 기기가 보낸 글 모양(meta.assistan
   assert.deepEqual([env.attempts.length, env.dups.length, env.inserts.length], [0, 0, 1]);
 });
 
-test('V5: 새 상태 칸(day.capNoted)은 정규화가 읽고, 옛 칸만 있는 상태 파일도 그대로 읽힌다', () => {
-  assert.deepEqual(normalizeState({ day: { date: D, instant: 4, capNoted: true } }).day, { date: D, instant: 4, capNoted: true });
-  assert.deepEqual(normalizeState({ day: { date: D, instant: 4 } }).day, { date: D, instant: 4, capNoted: false }, '0.1.99가 쓴 상태 파일');
+test('V5: 새 상태 칸(day.capNoted·keys·sure, rec.last)은 정규화가 읽고, 옛 칸만 있는 상태 파일도 그대로 읽힌다', () => {
+  assert.deepEqual(normalizeState({ day: { date: D, instant: 1, capNoted: true, keys: ['k1'], sure: false } }).day, { date: D, instant: 1, capNoted: true, keys: ['k1'], sure: false });
+  assert.deepEqual(normalizeState({ day: { date: D, instant: 4 } }).day, { date: D, instant: 4, capNoted: false, keys: [], sure: true }, '0.1.99가 쓴 상태 파일');
   assert.deepEqual(normalizeState({ day: { date: D, instant: 4, capNoted: 'yes' } }).day.capNoted, false);
+  assert.deepEqual(normalizeState({ rec: { last: { 'room-1': 7, bad: 'x', neg: -1 } } }).rec, { last: { 'room-1': 7 } });
+  assert.deepEqual(normalizeState({ rec: { to: 5, sig: 's' } }).rec, { last: {} }, '이 PR 앞 판의 rec.to·sig는 버린다(처음처럼 14일)');
+});
+
+test('V6: 키 없이 오늘 수만 적힌 옛 상태 파일(0.1.99)에서 복구 — 자기가 보낸 글을 두 번 세지 않는다', async () => {
+  const ws = await company({ cfg: { dailyCap: 5 } });
+  const env = fakeServer({ events: [ev('k1', at('10:00'), at('10:30')), ev('k2', at('11:00'), at('11:30'))], crews: [crewP(ws)] });
+  await run(ws, env, at('09:29'), at('10:31')); // 2건 보냄
+  const st0 = await state(ws);
+  await switchDevice(ws, JSON.stringify({ ...st0, day: { date: D, instant: 2 }, rec: undefined })); // 0.1.99 모양(키·끝 기록 없음)
+  await run(ws, env, at('10:40'), at('10:41'));
+  let st = await state(ws);
+  assert.deepEqual([st.day.instant, st.day.keys.length], [2, 2], '2 그대로(4 아님)');
+  await switchDevice(ws, JSON.stringify({ ...st0, day: { date: D, instant: 5 }, rec: undefined })); // 옛 수가 방에서 보이는 것보다 크다(예: 지운 방)
+  await run(ws, env, at('10:50'), at('10:51'));
+  st = await state(ws);
+  assert.deepEqual([st.day.instant, st.day.keys.length], [5, 2], '옛 상태의 수는 줄이지 않는다(큰 쪽)');
 });
