@@ -138,3 +138,17 @@ test('전송: 휴지통에 있는 동안 나간 읽음·보관은 휴지통 전 
   await send({ payload: { type: 'mail.flag', ownerUid: 'alice', id: 'a1:g1', patch: { folder: 'archive' } } });
   assert.deepEqual(calls, [['/api/mail/modify', { account: 'a1', id: 'g1', add: [], remove: ['UNREAD', 'INBOX'] }]]);
 });
+
+// 이유(재검수 3차 #899 LOW): 휴지통 → 되돌리기 → 다시 휴지통을 빠르게 누르면 되돌리기가 남긴 받은편지함 라벨 변경이 휴지통 상태에서 +INBOX로 나갔다
+// (Gmail이 휴지통 메일에 INBOX를 붙이면 꺼낸다면 화면은 휴지통·Gmail은 받은편지함). 휴지통에 있는 동안은 INBOX를 빼기만 하고 붙이지 않는다.
+test('전송: 휴지통에 있는 동안 읽음·보관은 받은편지함 라벨을 붙이지 않는다', async () => {
+  let send;
+  const calls = [];
+  globalThis.fetch = async (url, init) => { calls.push(JSON.parse(init.body)); return { ok: true, status: 200, json: async () => ({ ok: true }) }; };
+  const state = { mails: [mail({ folder: 'trash', trashedFrom: 'inbox', unread: true })] };
+  run('transport.js', { setTransport: (s) => { send = s; }, getState: () => state, update() {}, getMode: () => 'signedIn', SPACES: [], ME: { id: 'alice' }, getStorageScope: () => 'alice',
+    getClient: async () => ({ auth: { getSession: async () => ({ data: { session: { user: { id: 'alice' }, access_token: 'tok' } }, error: null }) } }),
+    classify: (e) => e, setUi() {}, getUi: () => ({}), showToast() {}, t: (k) => k, persist() {}, heldKey: (id) => id, scopedStorageKey: (k) => k, apiUrl: (u) => u, announce() {}, apStale() {}, openExternal() {}, FAMILY: {} });
+  await send({ payload: { type: 'mail.flag', ownerUid: 'alice', id: 'a1:g1', patch: {} } });
+  assert.deepEqual(calls, [{ account: 'a1', id: 'g1', add: ['UNREAD'], remove: [] }], '읽음만 — INBOX를 붙이지 않는다');
+});

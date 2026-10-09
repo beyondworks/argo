@@ -96,8 +96,8 @@ async function send(op) {
     case 'mail.flag': {                                                            // 합쳐진 변경이라 patch가 아니라 지금 상태(읽음·폴더)를 그대로 보낸다 — 여러 번 보내도 같다
       const m = getState().mails.find((x) => x.id === p.id);
       if (!m?.account) return;                                                     // 예시 메일
-      const folder = m.folder === 'trash' ? m.trashedFrom : m.folder;                 // 휴지통에 있는 동안은 휴지통 전 메일함(검수 #899)
-      const inbox = folder === 'inbox' ? 'add' : folder === 'archive' ? 'remove' : null;
+      // 휴지통에 있는 동안은 받은편지함 라벨을 빼기만 한다(보관 직후 #), 붙이지 않는다(휴지통 메일이 Gmail 받은편지함으로 돌아가지 않게, 재검수 #899)
+      const inbox = m.folder === 'trash' ? (m.trashedFrom === 'archive' ? 'remove' : null) : m.folder === 'inbox' ? 'add' : m.folder === 'archive' ? 'remove' : null;
       assertOwner();
       const response = await fetch(apiUrl('/api/mail/modify'), { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ account: m.account, id: m.gid, add: [...(m.unread ? ['UNREAD'] : []), ...(inbox === 'add' ? ['INBOX'] : [])], remove: [...(m.unread ? [] : ['UNREAD']), ...(inbox === 'remove' ? ['INBOX'] : [])] }) });
       assertOwner();
