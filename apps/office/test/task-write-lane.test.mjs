@@ -8,7 +8,7 @@ import { bundleSrc } from './helpers/src-bundle.mjs';
 
 const STUBS = {
   'core/supabase.js': 'export const getClient = async () => globalThis.__T.client; export const configured = true;',
-  'core/session.js': `export const ME = { id: 'u1', name: '나' }; export const SPACES = [{ key: 'me', kind: 'me', role: 'owner' }, { key: 'acme', id: 'org-1', kind: 'org', role: 'owner' }];
+  'core/session.js': `export const ME = (globalThis.__ME = { id: 'u1', name: '나' }); export const SPACES = [{ key: 'me', kind: 'me', role: 'owner' }, { key: 'acme', id: 'org-1', kind: 'org', role: 'owner' }];
     export const useSession = () => 'signedIn'; export const getMode = () => 'signedIn'; export const canManage = () => true; export const nameIn = () => '나';`,
   'calendar/api.js': 'export const writeEvent = async () => {}; export const refreshEvents = async () => {}; export const loadPeople = async () => [];',
   'calendar/shared.js': 'export const writableOrgs = () => []; export const idOf = (s) => s.id;',
@@ -44,7 +44,8 @@ async function setup(row = {}) {
       pending.push(p);
     });
   };
-  globalThis.__T = { client: { auth: { getSession: async () => ({ data: { session: { user: { id: 'u1' }, access_token: 't' } } }) }, rpc: (fn, args) => ({ setHeader: () => handle(fn, args) }) } };
+  if (globalThis.__ME) globalThis.__ME.id = 'u1';
+  globalThis.__T = { client: { auth: { getSession: async () => ({ data: { session: { user: { id: globalThis.__ME?.id ?? 'u1' }, access_token: 't' } } }) }, rpc: (fn, args) => ({ setHeader: () => handle(fn, args) }) } };
   const { tasks, data } = await load();
   await tasks.loadTasks('acme');
   const shown = (id = 'X') => tasks.rowsIn('acme').find((r) => r.id === id);
@@ -167,4 +168,32 @@ test('할 일 패널: 보류 사유 저장 뒤 상태 단추 — 사유 쓰기�
   assert.equal((await reason).failed, 'task.error.conflict');
   assert.equal((await status).failed, null);
   assert.deepEqual([s.shown().status, s.shown().hold_reason], ['doing', null], '화면 = 서버');
+});
+
+// 이유(#906 재검수 MEDIUM): 쓰기가 성공한 뒤 다시 읽어도 내 자국이 다시 읽은 목록에 얹힌 채 남아, 서버 값(끝낸 시각)이나 그사이 다른 기기가 바꾼 값이 다음 읽기까지 가려졌다
+test('쓰기 성공 뒤 다시 읽은 화면은 서버 값 — 내 시각·내 값으로 덮지 않는다', async () => {
+  const s = await setup();
+  const done = s.data.runWrites(V.writesOf(V.planDone(s.item(), true, ctx)));
+  await settle();
+  s.pending[0].ok(); await done; await settle();
+  assert.equal(s.shown().done_at, '2026-10-09T03:00:00Z', '끝낸 시각은 서버 값');
+  const pr = s.data.runWrites(V.writesOf(C.planCell(s.item('Y'), 'priority', 1, ctx)));
+  await settle();
+  s.pending[0].ok(); s.db[1].priority = 3; // 서버 반영 직후 다른 기기가 같은 칸을 3으로
+  await pr; await settle();
+  assert.equal(s.shown('Y').priority, 3, '다시 읽은 서버 값');
+});
+
+// 이유(#906 재검수 LOW 3): 줄에서 기다리던 쓰기가 계정을 바꾼 뒤 새 계정 세션으로 나갔다 — 누른 때의 계정과 다르면 버린다
+test('줄에서 기다리는 사이 계정을 바꾸면 그 쓰기는 나가지 않는다', async () => {
+  const s = await setup();
+  const a = s.data.runWrites(V.writesOf(C.planCell(s.item(), 'status', 'doing', ctx)));
+  const b = s.data.runWrites(V.writesOf(C.planCell(s.item(), 'priority', 1, ctx)));
+  await settle();
+  globalThis.__ME.id = 'u2';
+  s.pending[0].ok(); await settle();
+  assert.equal(s.pending.length, 0, '두 번째 쓰기는 나가지 않았다');
+  assert.equal((await b).failed, 'task.error.signin');
+  await a;
+  globalThis.__ME.id = 'u1';
 });

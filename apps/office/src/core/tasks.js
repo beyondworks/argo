@@ -19,11 +19,13 @@ const set = (space, patch) => { const prev = state[space]?.owner === ME.id ? sta
 const mine = (space) => (state[space]?.owner === ME.id ? state[space] : undefined);
 const subscribe = (fn) => { listeners.add(fn); return () => listeners.delete(fn); };
 
-export async function rpc(fn, args) { // 성과 기록(core/perf.js)도 같은 세션 확인으로 부른다
+export async function rpc(fn, args, { owner = ME.id, signal } = {}) { // 성과 기록(core/perf.js)도 같은 세션 확인으로 부른다
   const sb = await getClient();
   const session = sb ? (await sb.auth.getSession()).data?.session : null;
-  if (!session || session.user?.id !== ME.id) throw new Error('task_signin'); // 다른 계정 세션으로 쓰지 않는다
-  const { data, error } = await sb.rpc(fn, args).setHeader('Authorization', `Bearer ${session.access_token}`);
+  if (!session || session.user?.id !== ME.id || owner !== ME.id) throw new Error('task_signin'); // 다른 계정 세션으로 쓰지 않는다 — owner: 누른 때의 계정(줄에서 기다리는 사이 계정을 바꾸면 버린다, #906 재검수 LOW 3)
+  let q = sb.rpc(fn, args).setHeader('Authorization', `Bearer ${session.access_token}`);
+  if (signal && q.abortSignal) q = q.abortSignal(signal);
+  const { data, error } = await q;
   if (error) throw Object.assign(new Error(error.message), { code: error.code });
   return data;
 }
@@ -73,7 +75,8 @@ const edit = (space, id, patch) => { const rows = mine(space)?.rows; if (rows) s
 export const taskAction = (space, action, data, patch, again = true) => trackWrite(async () => {
   const id = data.id, row = patch && mine(space)?.rows?.find((r) => r.id === id), m = row && { patch, prev: {} };
   if (m) { for (const k in patch) m.prev[k] = row[k]; marks.set(id, [...(marks.get(id) ?? []), m]); edit(space, id, patch); }
-  const run = (lanes.get(id) ?? Promise.resolve()).then(() => rpc('office_task_write', { p_org: orgOf(space), p_action: action, p_data: data }));
+  // 끝나지 않는 요청 하나가 그 할 일의 뒤 쓰기를 영원히 막지 않게 30초 제한(#906 재검수 LOW 2) — 줄에서 차례가 왔을 때부터 잰다
+  const owner = ME.id, run = (lanes.get(id) ?? Promise.resolve()).then(() => rpc('office_task_write', { p_org: orgOf(space), p_action: action, p_data: data }, { owner, signal: AbortSignal.timeout(30e3) }));
   const tail = run.catch(() => {});
   lanes.set(id, tail);
   const end = () => { const left = marks.get(id)?.filter((x) => x !== m) ?? []; if (left.length) marks.set(id, left); else marks.delete(id); if (lanes.get(id) === tail) lanes.delete(id); };
@@ -86,7 +89,8 @@ export const taskAction = (space, action, data, patch, again = true) => trackWri
     end();
     throw new Error(taskError(e));
   }
-  try { if (again) await loadTasks(space, true); } finally { end(); }
+  end(); // 서버에 들어갔다 — 다시 읽기 전에 내 자국을 지운다(다시 읽은 서버 값을 내 값으로 덮어 남기지 않게, #906 재검수 MEDIUM). 남은 뒤 쓰기의 자국은 그대로 얹힌다
+  if (again) await loadTasks(space, true);
 });
 
 // 탭 복귀 다시 읽기 — 할 일을 보여 주는 곳(할 일 화면·카드, 메뉴 배지 — 같은 공간 키라 한 번만)이 있는 공간을, 이미 받아 둔 것만 1분에 한 번까지.
