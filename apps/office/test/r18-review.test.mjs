@@ -6,7 +6,7 @@ import { redactMenu, HIDE_ALL_NOTE, isMasked } from '../src/business/redact-rule
 import { redactHandlers } from '../src/business/cell-pick.js';
 import { looksLikeAddr } from '../src/core/hide-all.js';
 import { dueCounts, viewRows, taskOrgKeys } from '../src/core/task-model.js';
-import { mergeItems, filterItems, normalizeCfg, dueFilter } from '../src/views/model.js';
+import { mergeItems, filterItems, normalizeCfg, dueFilter, shownCfg } from '../src/views/model.js';
 import { HOME_DEFAULTS } from '../src/core/module-registry.js';
 import { notifyText } from '../src/pages/mail-model.js';
 import { keepResponse, cacheFresh, makeDayClock } from '../src/core/refetch.js';
@@ -63,7 +63,8 @@ test('M4: 배지·챙길 것 수 = 할 일 화면 거르기 건수(같은 데이
   assert.deepEqual(badge, { overdue: 2, today: 2 }, '개인 p1·p2 + 조직 o1·o4');
   const items = mergeItems([], rows, { from: '0000-01-01', to: '9999-12-31', undated: true });
   const base = normalizeCfg({ filter: { kind: 'task', category: '분류A', priority: '1' } }, { filter: { kind: 'task' } });
-  for (const due of ['overdue', 'today']) assert.equal(filterItems(items, dueFilter(base.filter, due, me), today).length, badge[due], due);
+  // 화면과 같은 길(shownCfg → normalizeCfg)로 — 모르는 상태 값은 여기서 'all'로 바뀌어 보류가 다시 섞인다(#907 재검수 LOW 1)
+  for (const due of ['overdue', 'today']) assert.equal(filterItems(items, shownCfg(base, dueFilter(base.filter, due, me), { filter: { kind: 'task' } }).filter, today).length, badge[due], due);
   // 조직 행을 아직 안 읽었으면 개인 행만, 개인 행도 안 읽었으면 배지 숨김(null)
   assert.deepEqual(dueCounts(viewRows({ space: 'me', own, orgRows: new Map(), orgKeys, me }), now, me), { overdue: 1, today: 1 });
   assert.equal(dueCounts(viewRows({ space: 'me', own: undefined, orgRows, orgKeys, me }), now, me), null);

@@ -90,13 +90,13 @@ test('M1: 홈·다시 시도의 받은편지함 받기 — 계정 목록부터 �
 });
 
 /* ── M2·M1 화면: 홈 '안 읽은 메일' 모듈과 현황 카드 ── */
-function homeWith(state, live = true) {
+function homeWith(state, live = true, over = {}) {
   const useStore = (sel) => sel(state);
   const LoadFail = ({ text }) => h('p', { className: 'load-fail' }, text ?? 'load.readFail');
   const deps = { useMemo: React.useMemo, Suspense: React.Suspense, lazy: React.lazy, useStore, useSession: () => (live ? 'signedIn' : 'sample'), LoadFail, pullBoard: async () => {},
     t: (k) => k, ago: () => 'ago', Link: ({ children }) => h('a', null, children), menuProps: () => ({}), mailMenu: () => [], looksLikeAddr: () => false,
     useTasks: () => ({ error: null }), useTaskRows: () => [], useTaskDay: () => '2026-10-05', approvalsIn: () => () => true, baseOf: () => '/me', crewsIn: () => [], ME: { id: 'u' },
-    groupTasks: () => ({ overdue: [], today: [], week: [], later: [], none: [] }), dueCounts: () => ({ overdue: 0, today: 0 }), fmtBytes: () => '0' };
+    groupTasks: () => ({ overdue: [], today: [], week: [], later: [], none: [] }), dueCounts: () => ({ overdue: 0, today: 0 }), fmtBytes: () => '0', ...over };
   return pick('pages/modules.jsx', ['Empty', 'wait', 'Mail', 'inSpace', 'WEEK', 'recent', 'useStatValues'], deps);
 }
 const blank = { approvals: [], work: [], mails: [], decisions: [], pages: [], todosDone: {}, crews: [], outputs: [], boardError: null };
@@ -272,4 +272,16 @@ test('L8: 기록판을 못 읽는 동안 에이전트 상태는 확인 못 함(�
   };
   assert.match(side(null), /class="dot idle"/);
   assert.match(side(Date.now()), /class="dot rest"/);
+});
+
+// 이유(#907 재검수 LOW 2): 홈 현황 할 일 카드의 기한 지남·오늘 수는 배지와 같은 수 — 보류는 빼고, 열린 일 수(n)에는 넣는다
+test('#907: 홈 현황 할 일 카드는 보류를 기한 지남으로 세지 않는다', async () => {
+  const TM = await import('../src/core/task-model.js');
+  const row = (id, o) => ({ id, title: id, assignee: 'u', created_by: 'u', due_on: '2026-10-01', done_at: null, cancelled_at: null, created_at: '2026-09-01T00:00:00Z', ...o });
+  const card = (rows) => { const H = homeWith(blank, true, { useTaskRows: () => rows, groupTasks: TM.groupTasks, dueCounts: TM.dueCounts, t: (k, v) => `${k}${v ? JSON.stringify(v) : ''}` }); let v; renderToStaticMarkup(h(() => { v = H.useStatValues('me'); return null; })); return v.todos; };
+  const held = card([row('h1', { status: 'hold' })]);
+  assert.equal(held.n, 1, '열린 일 수에는 보류도');
+  assert.equal(held.badge.tone, 'ok', '보류뿐이면 기한 지남 경고 없음');
+  assert.match(held.main, /"late":0/);
+  assert.equal(card([row('a1')]).badge.tone, 'warn', '보류가 아니면 경고');
 });
