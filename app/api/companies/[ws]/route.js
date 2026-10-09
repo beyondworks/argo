@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { loadCompany, updateCompany, archiveCompany, paths } from '../../../../src/workspace.mjs';
 import { scanAgents, listDocs } from '../../../../src/hub.mjs';
 import { linkStats } from '../../../c/[ws]/graph2d-core.mjs'; // 연결 지표는 기억 그래프와 같은 셈법
+import { docStats } from '../../../../src/deck-metrics.mjs'; // 데크 지표 — 화면·에이전트 상태 도구(argo_status)와 같은 함수
 import { readDelegations } from '../../../../src/usage.mjs';
 import { readUsageSummary } from '../../../../src/billing.mjs'; // 금액 집계는 billing 게이트로만
 import { readRunnerLimits } from '../../../../src/runner-limits.mjs'; // 구독 잔여 한도(K91 — 금액 표시 대신) · 크루 대화창 입력줄 게이지(K92)
@@ -15,24 +16,6 @@ import { userDisplayName } from '../../../../src/user-name.mjs'; // 명패 사�
 
 ensureScheduler(); // 앱 사용이 시작되면 루틴 스케줄러 상주
 ensureGateway(); // 메신저 게이트웨이(텔레그램/슬랙) 상주
-
-/** 대시보드 스탯 — 연결 지표(link = linkStats의 links·linked·isolated), 오늘 기록, 종류별 수. */
-function docStats(docs, link) {
-  const today = new Date().toISOString().slice(0, 10);
-  // 최근 14일 일별 적립 수 — 관제탑 바 차트용
-  const daily = [];
-  for (let i = 13; i >= 0; i--) {
-    const d = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10);
-    daily.push({ date: d.slice(5), count: docs.filter((x) => x.rel.includes(d)).length });
-  }
-  return {
-    ...link, // links(고유 쌍)·linked(링크 1개 이상인 기억)·isolated(고립, 안내 노트 제외)
-    today: docs.filter((d) => d.rel.includes(today)).length,
-    conversations: docs.filter((d) => d.dir !== 'notes').length, // 일지 + 구버전 기록
-    notes: docs.filter((d) => d.dir === 'notes').length,
-    daily,
-  };
-}
 
 export async function GET(req, { params }) {
   try {

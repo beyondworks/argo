@@ -85,7 +85,7 @@ test('연결 상태는 선택한 조직 기준으로 명시되고, 전체 크루
 test('메신저 응답 상태는 안전한 사유를 보이고, 끊겼을 때만 브리지를 다시 깨운다', () => {
   const src = page.slice(page.indexOf('function MsgrCard('), page.indexOf('function ConnectorsCard('));
   assert.match(route, /msgrGatewayStatus\(ws\)/, 'GET이 브리지 심박을 읽지 않는다');
-  assert.match(route, /function runtimeState\(gateway\)/, '원인을 안전한 상태로 분류하지 않는다');
+  assert.match(route, /const runtimeState = msgrRuntimeState;/, '원인을 안전한 상태로 분류하지 않는다'); // 판정 정본은 src/connections.mjs msgrRuntimeState(에이전트 상태 도구와 공용, 행동 테스트는 argo-self.test.mjs)
   assert.match(route, /if \(reconnect\) \{[\s\S]*?nudgeGateway\(ws\)/, '재연결 요청이 게이트웨이를 깨우지 않는다');
   assert.match(src, /async function reconnectBridge\(\)/, '카드에 재연결 동작이 없다');
   assert.match(src, /settings\.msgr\.runtime\.title/, '응답 상태 제목이 없다');

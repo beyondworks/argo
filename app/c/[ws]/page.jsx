@@ -14,6 +14,7 @@ import { approvalExpandDefault, approvalOwnerMayDecide } from '../../lib/approva
 import styles from './deck.module.css';
 import { gistLabel } from '../../lib/gist-display.mjs'; // 메신저 머리말을 뗀 요약(UX-A08)
 import { nameplateOwner } from '../../lib/nameplate-owner.mjs'; // 명패 사용자 줄 — 기본값 'captain'을 그대로 보이지 않는다(M10)
+import { linkedPercent, learnedThisWeek } from '../../../src/deck-metrics.mjs'; // 데크 지표 셈법 — 에이전트 상태 도구(argo_status)가 같은 함수로 같은 숫자를 낸다
 
 export default function Deck({ params }) {
   const { ws } = use(params);
@@ -100,10 +101,8 @@ export default function Deck({ params }) {
   );
   const memories = (data?.memories ?? []).filter((m) => !q || m.title.toLowerCase().includes(q));
   const lastTs = data?.memories?.[0] ? (tsFromRel(data.memories[0].rel) ?? data.memories[0].mtime) : null;
-  // 연결된 기억 비율 — 링크가 1개 이상인 기억 / (연결 + 고립). 100%면 정말 모든 기억이 엮인 것.
-  // 분모를 memoryCount가 아니라 linked+isolated로 두는 이유: 스캐폴드 안내 노트(링크 0)는 기억이 아니라서 빼야 신규 회사도 100%에 닿는다(검수 L-1).
-  // 예전 links/(n−1)은 쌍 수가 n−1(신장 트리)을 넘는 순간 100%로 포화해 정보가 0이었다(유건 제보 2026-09-02: 10,075쌍/2,263건 상시 100%).
-  const linkedPct = stats && stats.linked + stats.isolated > 0 ? (stats.linked / (stats.linked + stats.isolated)) * 100 : 0;
+  // 연결된 기억 비율 — 셈법 설명은 src/deck-metrics.mjs linkedPercent(에이전트 상태 도구와 같은 함수)
+  const linkedPct = linkedPercent(stats);
 
   return (
     <div className="deck-page" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 14 }}>
@@ -150,8 +149,7 @@ export default function Deck({ params }) {
                   <div className="metric-sub">{t('deck.notesJournal', { notes: stats.notes, conv: stats.conversations })}</div>
                   <div className="metric-sub2">
                     {(() => { // 복리 신호 — 쓸수록 회사가 배우고 있다는 걸 보여준다
-                      const week = Date.now() - 7 * 86400000;
-                      const learned = (docs ?? []).filter((d) => d.dir === 'notes' && d.mtime > week).length;
+                      const learned = learnedThisWeek(docs);
                       return learned > 0 ? t('deck.learnedTopics', { n: learned }) : (lastTs ? t('deck.lastRecorded', { t: timeAgo(lastTs, lang) }) : t('deck.noRecordYet'));
                     })()}
                   </div>

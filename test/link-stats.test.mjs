@@ -61,13 +61,20 @@ const stripComments = (src) => src
 const load = (rel) => stripComments(readFileSync(new URL(rel, import.meta.url), 'utf8'));
 
 test('데크 산식 핀 — linked/(linked+isolated)가 그대로 Dial에 닿는다, 옛 links/(n−1) 포화·memoryCount 분모 부재', () => {
+  // 산식 정본은 src/deck-metrics.mjs linkedPercent — 화면·에이전트 상태 도구(argo_status)가 같은 함수를 쓴다(2026-10-09 이동)
+  const metrics = load('../src/deck-metrics.mjs');
+  const fn = metrics.match(/export function linkedPercent\(stats\) \{[\s\S]*?\n\}/)?.[0];
+  assert.ok(fn, 'linkedPercent 함수 구간');
+  assert.match(fn, /return stats && stats\.linked \+ stats\.isolated > 0 \? \(stats\.linked \/ \(stats\.linked \+ stats\.isolated\)\) \* 100 : 0;/);
   const page = load('../app/c/[ws]/page.jsx');
   // 선언부터 Dial 소비까지 한 구간으로 — 선언만 남기고 다른 값을 넘기는 변이도 잡는다
-  assert.match(page, /const linkedPct = stats && stats\.linked \+ stats\.isolated > 0 \? \(stats\.linked \/ \(stats\.linked \+ stats\.isolated\)\) \* 100 : 0;[\s\S]*?<Dial value=\{linkedPct\} label=\{t\('deck\.linked'\)\} \/>/);
+  assert.match(page, /const linkedPct = linkedPercent\(stats\);[\s\S]*?<Dial value=\{linkedPct\} label=\{t\('deck\.linked'\)\} \/>/);
   assert.equal((page.match(/linkedPct/g) ?? []).length, 2, 'linkedPct는 선언 1 + Dial 소비 1뿐');
-  assert.doesNotMatch(page, /memoryCount - 1/);
-  assert.doesNotMatch(page, /stats\.links \//);
-  assert.doesNotMatch(page, /stats\.linked \/ data\.memoryCount/, '분모는 memoryCount가 아니다(안내 노트가 섞인다)');
+  for (const src of [page, metrics]) {
+    assert.doesNotMatch(src, /memoryCount - 1/);
+    assert.doesNotMatch(src, /stats\.links \//);
+    assert.doesNotMatch(src, /stats\.linked \/ data\.memoryCount/, '분모는 memoryCount가 아니다(안내 노트가 섞인다)');
+  }
 });
 
 test('데크 표 "연결" 열 핀 — 원시 links.length가 아니라 해석 후 차수 deg', () => {
@@ -84,7 +91,7 @@ test('데크 표 "연결" 열 핀 — 원시 links.length가 아니라 해석 �
 
 test('API 핀 — linkStats 1회 결과가 stats(덮어쓰기 없이)와 memories.deg 양쪽에 실린다', () => {
   const route = load('../app/api/companies/[ws]/route.js');
-  const fn = route.match(/function docStats\(docs, link\) \{[\s\S]*?\n\}/)?.[0];
+  const fn = load('../src/deck-metrics.mjs').match(/export function docStats\(docs, link, now = Date\.now\(\)\) \{[\s\S]*?\n\}/)?.[0]; // 정본 이동(2026-10-09) — 라우트는 임포트만
   assert.ok(fn, 'docStats 함수 구간');
   assert.match(fn, /return \{\n\s+\.\.\.link,/);
   assert.doesNotMatch(fn, /\b(links|linked|isolated)\s*:/, '스프레드 뒤 덮어쓰기 금지');
@@ -94,5 +101,6 @@ test('API 핀 — linkStats 1회 결과가 stats(덮어쓰기 없이)와 memorie
 });
 
 test('graph2d-core는 서버 라우트가 임포트하는 순수 모듈 — use client 유입 금지', () => {
-  assert.doesNotMatch(load('../app/c/[ws]/graph2d-core.mjs'), /'use client'/);
+  for (const f of ['../app/c/[ws]/graph2d-core.mjs', '../src/memory-graph.mjs', '../src/deck-metrics.mjs']) assert.doesNotMatch(load(f), /'use client'/, f);
+  assert.doesNotMatch(load('../src/deck-metrics.mjs'), /from 'node:/, '화면도 임포트한다 — node 전용 모듈 금지');
 });
