@@ -59,6 +59,8 @@ const ICON = { inbox: 'inbox', unread: 'mail', starred: 'star', drafts: 'draft',
 const viewName = (v) => t(v === 'unread' || v === 'starred' ? `mailx.${v}` : `mail.${v}`);
 const subjectOf = (m) => (m?.subject?.trim() ? m.subject : t('mailx.noSubject'));
 const isDraft = (m) => m?.folder === 'drafts';
+/** 마우스·터치로 누른 체크박스는 초점을 놓는다 — 키 입력 뒤 :focus-visible이 켜져 고르지 않은 줄의 아바타가 사라지지 않게(재검수 #895). 키보드(스페이스, detail 0)는 그대로 */
+const unfocus = (e) => { if (e.nativeEvent.detail) e.currentTarget.blur(); };
 const touchy = () => matchMedia('(hover: none)').matches; // 터치 기기 — 고르는 중에는 줄을 눌러도 열지 않고 넣고 뺀다
 const clock = (ms) => new Date(ms).toLocaleTimeString(getLang() === 'en' ? 'en-US' : 'ko-KR', { hour: 'numeric', minute: '2-digit' });
 
@@ -87,7 +89,7 @@ function MailRow({ m, active, tag, sel, group, onPick }) {
   return (
     <div className={`mail-item${m.starred ? ' starred' : ''}`}>
       {/* 고르기(유건 10/9 "이메일 일괄 선택") — 아바타 자리의 체크박스. ⇧ = 마지막으로 누른 줄부터 여기까지 */}
-      <label className="mail-check"><input type="checkbox" checked={on} aria-label={t('mailx.pickOne', { subject: subjectOf(m) })} onChange={(e) => onPick(m.id, e.nativeEvent.shiftKey)} /></label>
+      <label className="mail-check"><input type="checkbox" checked={on} aria-label={t('mailx.pickOne', { subject: subjectOf(m) })} onChange={(e) => { onPick(m.id, e.nativeEvent.shiftKey); unfocus(e); }} /></label>
       <button ref={setNodeRef} type="button" className={`mail-row${active ? ' active' : ''}${m.unread ? ' unread' : ''}${isDragging ? ' ghost' : ''}`}
         {...attributes} {...selProps(sel, m.id)} {...mergeHandlers(mouse, menuProps(() => mailMenu(m)))} role="option" aria-selected={active}
         onClick={() => { if (rowTapPicks(sel.size, touchy())) { onPick(m.id); return; } navigate(`${mailHome()}/${m.id}`); if (m.unread) setMail(m.id, { unread: false }); }}>
@@ -696,7 +698,7 @@ export function Mail({ id }) {
       <section className={`mail-list${sel.size ? ' picking' : ''}`} role="listbox" aria-multiselectable="true" aria-label={search ? t('mailx.results', { n: rows.length }) : viewName(view)} data-sel-scope="mail">
         <div className="mail-tools">
           {rows.length > 0 && !noAccounts && <label className="mail-check-all" title={t(all === 'all' ? 'mailx.selectNone' : 'mailx.selectAll')}>
-            <input type="checkbox" checked={all === 'all'} ref={(el) => { if (el) el.indeterminate = all === 'some'; }} aria-label={t('mailx.selectAll')} onChange={() => pickSet(checkAll(sel, keys))} /></label>}
+            <input type="checkbox" checked={all === 'all'} ref={(el) => { if (el) el.indeterminate = all === 'some'; }} aria-label={t('mailx.selectAll')} onChange={(e) => { pickSet(checkAll(sel, keys)); unfocus(e); }} /></label>}
           <select className="input mail-view-pick" value={view} aria-label={t('mailx.folders')} onChange={(e) => pickView(e.target.value)}>{VIEWS.map((v) => <option key={v} value={v}>{viewName(v)}</option>)}</select>
           <form className="search-field mail-search" role="search" onSubmit={(e) => { e.preventDefault(); runSearch(qInput); }} title={t('mailx.searchHelp')}>
             <Icon name="search" size={14} />

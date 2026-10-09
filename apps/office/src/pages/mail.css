@@ -38,7 +38,7 @@
 .mail-star.on .ico, .mail-star-btn.on .ico { font-variation-settings: 'FILL' 1; }
 .mail-star-btn.on { color: var(--fg); }
 .mail-item:focus-within .mail-star { opacity: 1; }
-@media (hover: hover) { .mail-item:hover .mail-star { opacity: 1; } .mail-star:hover { background: var(--card-2); color: var(--fg); } }
+@media (hover: hover) { .mail-item:hover .mail-star { opacity: 1; } .mail-star:hover { background: color-mix(in srgb, var(--fg) 8%, var(--card-2)); color: var(--fg); } } /* 줄 바탕(--card-2) 위에서도 단추가 보이게(재검수 #895) */
 @media (hover: none) { .mail-star { opacity: 1; } }
 /* 고르기(유건 10/9) — 아바타 자리의 체크박스. 마우스를 올리거나 하나라도 고르면 보인다. 터치는 보이지 않아도 아바타를 누르면 고른다(Gmail 관례) */
 .mail-check { position: absolute; z-index: 1; left: 16px; top: 12px; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; cursor: pointer; opacity: 0; }
