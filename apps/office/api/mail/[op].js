@@ -281,25 +281,36 @@ const OPS = {
   },
 
   // 영구 삭제(10/9 휴지통 비우기·고른 메일 영구 삭제) — 되돌릴 수 없다. 화면 확인 창을 거친 요청(confirm: 'purge')만, 크루 도구는 부르지 않는다(gateway MAIL_CALLS).
-  // Gmail 휴지통에 지금 있는 메일만 지운다 — ids를 주면 그중 휴지통에 있는 것만(그 사이 꺼낸 메일을 지우지 않게). 권한(PURGE_SCOPE)이 없으면 403 scope_needed
-  async purge(jwt, { account, ids, confirm }) {
+  // Gmail 휴지통에 지금 있는 메일만 지운다. keep = 화면에서 꺼냈지만 untrash가 아직 안 나간 메일(지우지 않는다, 검수 #905 HIGH).
+  // ids(고른 메일)는 한 통씩 지금 라벨을 보고 휴지통일 때만. 전체는 휴지통 첫 쪽 받기 → 바로 지우기를 되풀이(받은 순간과 지우는 순간의 틈을 줄인다)하고,
+  // 한 번에 최대 10쪽(5천 통) — 남으면 more(화면이 다시 부른다, 서버 함수 시간 한도 안). 권한(PURGE_SCOPE)이 없으면 403 scope_needed, 중간 실패는 지운 수(deleted)와 함께
+  async purge(jwt, { account, ids, keep, confirm }) {
     if (confirm !== 'purge') throw fail(400, 'input');
-    if (ids !== undefined && (!Array.isArray(ids) || !ids.length || ids.length > 1000)) throw fail(400, 'input');
-    const want = ids ? new Set(ids.map(gid)) : null;
+    const set = (v) => { if (!Array.isArray(v) || v.length > 1000) throw fail(400, 'input'); return new Set(v.map(gid)); };
+    if (ids !== undefined && !(Array.isArray(ids) && ids.length)) throw fail(400, 'input');
+    const want = ids === undefined ? null : set(ids), skip = keep === undefined ? new Set() : set(keep);
     const token = await accessToken(jwt, account);
-    const doomed = [];
-    for (let page = null, n = 0; n < 40; n++) { // ponytail: 휴지통 2만 통까지(500 × 40) — 넘으면 남은 것은 다음 비우기에서
-      const res = await gmail(token, `/messages?${new URLSearchParams({ labelIds: 'TRASH', includeSpamTrash: 'true', maxResults: '500', ...(page ? { pageToken: page } : {}) })}`);
-      for (const m of res?.messages ?? []) if (!want || want.has(m.id)) doomed.push(m.id);
-      if (!(page = res?.nextPageToken)) break;
-    }
-    for (let i = 0; i < doomed.length; i += 500) {
-      try { await gmail(token, '/messages/batchDelete', { method: 'POST', body: JSON.stringify({ ids: doomed.slice(i, i + 500) }) }); } catch (e) {
-        if (/insufficient|SCOPE_INSUFFICIENT/i.test(e.message)) throw Object.assign(fail(403, 'scope_needed'), { deleted: i });
-        throw e;
+    let deleted = 0;
+    const del = async (batch) => {
+      try { await gmail(token, '/messages/batchDelete', { method: 'POST', body: JSON.stringify({ ids: batch }) }); } catch (e) {
+        throw Object.assign(/insufficient|SCOPE_INSUFFICIENT/i.test(e.message) ? fail(403, 'scope_needed') : e, { deleted });
       }
+      deleted += batch.length;
+    };
+    if (want) {
+      const now = await mapLimit([...want].filter((id) => !skip.has(id)), 5, (id) => gmail(token, `/messages/${id}?format=minimal`)
+        .then((m) => (m?.labelIds?.includes('TRASH') ? id : null), (e) => { if (e.status === 404) return null; throw e; }));
+      const doomed = now.filter(Boolean);
+      for (let i = 0; i < doomed.length; i += 500) await del(doomed.slice(i, i + 500));
+      return { deleted, ids: doomed };
     }
-    return want ? { deleted: doomed.length, ids: doomed } : { deleted: doomed.length };
+    for (let round = 0; round < 10; round++) {
+      const res = await gmail(token, `/messages?${new URLSearchParams({ labelIds: 'TRASH', includeSpamTrash: 'true', maxResults: '500' })}`);
+      const batch = (res?.messages ?? []).map((m) => m.id).filter((id) => !skip.has(id));
+      if (!batch.length) return { deleted, more: false };
+      await del(batch);
+    }
+    return { deleted, more: true };
   },
 
   // 작성 중 초안(바뀔 때만 화면이 부른다) — 첫 저장은 만들고 그 뒤로는 같은 초안을 고친다. carry: 원문 첨부(전달·고치기) 다시 싣기
@@ -350,7 +361,7 @@ const OPS = {
 
 /** 오류 응답 — 구글·DB 원문은 화면에 보내지 않는다. 요청 제한이면 남은 초(본문 retryAfter + Retry-After 헤더) */
 function failure(e) {
-  const res = json({ error: e.code ?? 'server', ...(e.retryAfter ? { retryAfter: e.retryAfter } : {}) }, e.status ?? 500);
+  const res = json({ error: e.code ?? 'server', ...(e.retryAfter ? { retryAfter: e.retryAfter } : {}), ...(Number.isInteger(e.deleted) ? { deleted: e.deleted } : {}) }, e.status ?? 500); // deleted: 영구 삭제가 중간에 멈췄을 때 이미 지운 수
   if (e.retryAfter) res.headers.set('retry-after', String(e.retryAfter));
   return res;
 }

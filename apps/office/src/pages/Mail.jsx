@@ -28,7 +28,7 @@ import { useSelection, selProps } from '../core/selection.js';
 import { checkKeys, checkState, checkAll } from '../ui/marquee-model.js';
 import { CELLS } from '../core/selection.js';
 import { typing } from '../core/history.js';
-import { bulkTargets, rowTapPicks, purgeTargets } from './mail-bulk.js';
+import { bulkTargets, rowTapPicks, purgeTargets, purgeable } from './mail-bulk.js';
 import { Hide, HideIn } from '../business/Redact.jsx';
 import { looksLikeAddr } from '../core/hide-all.js';
 /** 목록 줄의 주소(받는 사람·이름 없는 보낸 사람) — 화면 전체 가리기 중 흐린다(제목·요약과 같은 흐림, 18차 검수 M2) */
@@ -566,23 +566,23 @@ function PurgeModal({ spec, accounts, onClose }) {
     setStep('busy');
     const out = [];
     for (const r of rows) {
-      if (r.total === 0) { out.push({ ...r, done: 0 }); continue; } // 빈 휴지통은 부르지 않는다
-      try { out.push({ ...r, done: (await purgeMail({ account: r.account, mails: r.mails })).deleted }); } catch (e) { out.push({ ...r, fail: e.code ?? 'server' }); }
+      if (!purgeable(r)) { out.push(r.error ? r : { ...r, done: 0 }); continue; } // 빈 휴지통은 부르지 않고, 개수를 못 받은 계정은 지우지 않는다
+      try { out.push({ ...r, done: (await purgeMail({ account: r.account, mails: r.mails })).deleted }); } catch (e) { out.push({ ...r, fail: e.code ?? 'server', done: e.deleted || undefined }); }
     }
     const deleted = out.reduce((n, r) => n + (r.done ?? 0), 0);
     if (deleted) showToast(t('mailx.purged', { n: deleted }));
-    if (out.every((r) => !r.fail)) { onClose(); return; }
+    if (out.every((r) => !r.fail && !r.error)) { onClose(); return; }
     setRows(out); setStep('done');
   };
   const line = (r) => (r.fail === 'scope_needed' ? <><span>{t('mailx.purgeScope')}</span>
       <button type="button" className="btn sm" onClick={() => connectGoogle(addr(r.account), { full: true }).catch(() => showToast(t('mailc.err.other')))}>{t('mailx.purgeGrant')}</button></>
-    : r.fail ? <span className="danger-text">{t('mailx.purgeFailed')}</span>
+    : r.fail ? <span className="danger-text">{r.done ? t('mailx.purgePartial', { n: r.done }) : t('mailx.purgeFailed')}</span>
       : r.done != null ? <span>{t('mailx.purgeDone', { n: r.done })}</span>
-        : r.error ? <span className="dim">{t('mailx.purgeUnknown')}</span>
+        : r.error ? <span className="dim">{t(step === 'done' ? 'mailx.purgeSkipped' : 'mailx.purgeUnknown')}</span>
           : r.total == null ? <span className="dim">{t('mailx.purgeCounting')}</span> : <b>{t('mailx.purgeCount', { n: r.total })}</b>);
   const footer = step === 'done' ? <button type="button" className="btn" onClick={onClose}>{t('close')}</button> : <>
     <button type="button" className="btn" disabled={step === 'busy'} onClick={onClose}>{t('cancel')}</button>
-    <button type="button" className="btn danger" disabled={step !== 'confirm' || (total === 0 && rows.every((r) => !r.error))} onClick={go}><Icon name="trash" size={14} />{step === 'busy' ? t('mailx.purgeBusy') : t('mailx.purge')}</button>
+    <button type="button" className="btn danger" disabled={step !== 'confirm' || !rows.some(purgeable)} onClick={go}><Icon name="trash" size={14} />{step === 'busy' ? t('mailx.purgeBusy') : t('mailx.purge')}</button>
   </>;
   return <Modal open onClose={() => step !== 'busy' && onClose()} title={t(spec.picked ? 'mailx.purgePickedTitle' : 'mailx.emptyTrash')} footer={footer}>
     <div className="mail-purge">

@@ -12,11 +12,11 @@ const run = (file, deps) => {
   new Function(...Object.keys(deps), 'module', 'exports', transformSync(source, { loader: 'js', format: 'cjs' }).code)(...Object.values(deps), module, module.exports);
   return module.exports;
 };
-function mailWith(state, { mode = 'signedIn', answer = () => [200, {}] } = {}) {
+function mailWith(state, { mode = 'signedIn', answer = () => [200, {}], pending = new Set() } = {}) {
   const calls = [];
   globalThis.fetch = async (url, init) => { const op = /\/api\/mail\/(\w+)/.exec(url)[1], body = init?.body ? JSON.parse(init.body) : null; calls.push([op, body]); const [status, data] = answer(op, body); return { ok: status < 400, status, json: async () => data, headers: { get: () => null } }; };
   const M = run('mail.js', { getClient: async () => ({ auth: { getSession: async () => ({ data: { session: { access_token: 'jwt' } } }) } }), getMode: () => mode, ME: { id: 'u' },
-    update: (fn) => Object.assign(state, fn(state)), getState: () => state, outbox: { has: () => false }, VIEWABLE: {}, isDesktop: () => false, apiUrl: (u) => u, saveAttachment() {},
+    update: (fn) => Object.assign(state, fn(state)), getState: () => state, outbox: { has: (k) => pending.has(k), flush: async () => { calls.push(['flush']); return true; } }, VIEWABLE: {}, isDesktop: () => false, apiUrl: (u) => u, saveAttachment() {},
     restore: (_k, d) => d, persist() {}, forget() {}, scopedStorageKey: (k) => k, getStorageScope: () => 'u', mergeList: MM.mergeList, applySync: MM.applySync, newArrivals: MM.newArrivals,
     byDate: MM.byDate, replySubject: MM.replySubject, CAP: 1, t: (k) => k, registerDict() {}, MAIL_DICT: {} });
   return { M, calls };
@@ -28,7 +28,7 @@ test('휴지통 비우기: 그 계정의 휴지통 메일만 캐시에서 뺀다
   const state = { mails: [mail('a1.g1'), mail('a1.g2'), mail('a1.i1', { folder: 'inbox' }), mail('a2.g3')] };
   const { M, calls } = mailWith(state, { answer: () => [200, { deleted: 2 }] });
   assert.deepEqual(await M.purgeMail({ account: 'a1' }), { deleted: 2 });
-  assert.deepEqual(calls, [['purge', { account: 'a1', confirm: 'purge' }]]);
+  assert.deepEqual(calls, [['flush'], ['purge', { account: 'a1', confirm: 'purge' }]], '보낼 목록을 먼저 보낸다(꺼낸 메일의 untrash가 비우기보다 늦지 않게)');
   assert.deepEqual(state.mails.map((m) => m.id), ['a1.i1', 'a2.g3']);
 });
 // 이유: 고른 메일 영구 삭제 — 서버가 실제로 지운 것(지금 휴지통에 있던 것)만 뺀다.
@@ -36,7 +36,7 @@ test('고른 메일 영구 삭제: 서버가 지운 것만 뺀다', async () => 
   const state = { mails: [mail('a1.g1'), mail('a1.g2'), mail('a1.g3')] };
   const { M, calls } = mailWith(state, { answer: () => [200, { deleted: 1, ids: ['g1'] }] });
   await M.purgeMail({ account: 'a1', mails: [state.mails[0], state.mails[1]] });
-  assert.deepEqual(calls[0][1], { account: 'a1', confirm: 'purge', ids: ['g1', 'g2'] });
+  assert.deepEqual(calls[1][1], { account: 'a1', confirm: 'purge', ids: ['g1', 'g2'] });
   assert.deepEqual(state.mails.map((m) => m.id), ['a1.g2', 'a1.g3'], 'g2는 그 사이 꺼냈다(서버가 안 지움)');
 });
 // 이유: 영구 삭제 권한이 없으면(지금 연결 전부) 아무것도 바꾸지 않고 scope_needed를 알린다 — 화면이 그 계정만 권한을 다시 받는다.
@@ -86,4 +86,43 @@ test('비우기 대상: 전체 = 연결된 계정 모두, 한 계정 = 그 계�
   assert.deepEqual(purgeTargets({ accounts: [], pick: 'all', sample: true }), [{ account: undefined }]);
   const picked = [mail('a1.g1'), mail('a2.g2'), mail('a1.g3'), mail('a1.i1', { folder: 'inbox' })];
   assert.deepEqual(purgeTargets({ picked }).map((t) => [t.account, t.mails.map((m) => m.id), t.total]), [['a1', ['a1.g1', 'a1.g3'], 2], ['a2', ['a2.g2'], 1]], '휴지통이 아닌 메일은 빠진다');
+});
+
+import { purgeable } from '../src/pages/mail-bulk.js';
+// 이유(검수 #905 HIGH): 화면에서 꺼냈지만 untrash가 아직 안 나간 메일은 Gmail에선 휴지통 — keep으로 넘겨 지우지 않게 한다.
+test('비우기: 꺼낸 뒤 untrash 대기 중인 메일은 keep', async () => {
+  const state = { mails: [mail('a1.x', { folder: 'inbox' }), mail('a1.y', { folder: 'inbox' }), mail('a1.t')] };
+  const { M, calls } = mailWith(state, { answer: () => [200, { deleted: 1, more: false }], pending: new Set(['trash:a1.x']) });
+  await M.purgeMail({ account: 'a1' });
+  assert.deepEqual(calls[1][1], { account: 'a1', confirm: 'purge', keep: ['x'] });
+});
+// 이유(검수 #905 LOW): 전체 비우기 뒤 캐시 — 휴지통으로 보내는 중(아직 Gmail 휴지통에 없음)인 메일은 남긴다.
+test('비우기: 보내는 중인 휴지통 메일은 캐시에 남는다', async () => {
+  const state = { mails: [mail('a1.g1'), mail('a1.z')] };
+  const { M } = mailWith(state, { answer: () => [200, { deleted: 1, more: false }], pending: new Set(['trash:a1.z']) });
+  await M.purgeMail({ account: 'a1' });
+  assert.deepEqual(state.mails.map((m) => m.id), ['a1.z']);
+});
+// 이유: 한 번에 최대 5천 통 — 서버가 more면 다시 부르고 지운 수를 더한다.
+test('비우기: more면 다시 부른다', async () => {
+  const state = { mails: [] };
+  let n = 0;
+  const { M, calls } = mailWith(state, { answer: () => [200, n++ === 0 ? { deleted: 5000, more: true } : { deleted: 600, more: false }] });
+  assert.deepEqual(await M.purgeMail({ account: 'a1' }), { deleted: 5600 });
+  assert.equal(calls.filter(([op]) => op === 'purge').length, 2);
+});
+// 이유(검수 #905 LOW): 중간에 실패하면 지운 수를 알리고(오류에 deleted), 휴지통 목록을 다시 받아 화면을 맞춘다.
+test('비우기: 중간 실패는 지운 수와 함께, 휴지통 목록 다시 받기', async () => {
+  const state = { mails: [mail('a1.g1')], mailAccounts: [{ id: 'a1', status: 'ok' }] };
+  const { M, calls } = mailWith(state, { answer: (op) => (op === 'purge' ? [502, { error: 'gmail', deleted: 500 }] : [200, { items: [], next: null }]) });
+  await assert.rejects(M.purgeMail({ account: 'a1' }), (e) => e.code === 'gmail' && e.deleted === 500);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.ok(calls.some(([op, b]) => op === 'list' && b.folder === 'trash'), '휴지통 목록을 다시 받는다');
+});
+// 이유(검수 #905 MEDIUM): 개수를 확인하지 못한 계정은 몇 통인지 보여 주지 않은 채 지우지 않는다. 빈 휴지통은 부르지 않는다.
+test('지울 계정: 개수를 안 계정 중 1통 이상만', () => {
+  assert.equal(purgeable({ total: 3 }), true);
+  assert.equal(purgeable({ total: 0 }), false);
+  assert.equal(purgeable({ error: 'gmail' }), false);
+  assert.equal(purgeable({}), false);
 });

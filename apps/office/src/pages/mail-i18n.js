@@ -50,7 +50,7 @@ export const MAIL_DICT = {
   'mailx.purgeBody': ['아래 메일을 영구 삭제합니다. 되돌릴 수 없습니다.', 'These emails will be deleted forever. This cannot be undone.'],
   'mailx.purgeCount': ['{n}통', '{n}'], 'mailx.purgeTotal': ['모두 {n}통', '{n} in total'], 'mailx.purgeCounting': ['개수 확인 중…', 'Counting…'], 'mailx.purgeUnknown': ['개수를 확인하지 못했습니다', 'Could not count'],
   'mailx.purgeEmpty': ['휴지통이 비어 있습니다', 'Trash is empty'], 'mailx.purgeBusy': ['지우는 중…', 'Deleting…'], 'mailx.purged': ['메일 {n}통을 영구 삭제했습니다', 'Deleted {n} emails forever'], 'mailx.purgeDone': ['{n}통 지움', '{n} deleted'],
-  'mailx.purgeScope': ['Gmail 영구 삭제 권한을 한 번 더 승인해야 합니다', 'Needs one more Gmail permission'], 'mailx.purgeGrant': ['권한 승인', 'Approve'], 'mailx.purgeFailed': ['지우지 못했습니다', 'Could not delete'],
+  'mailx.purgeScope': ['Gmail 영구 삭제 권한을 한 번 더 승인해야 합니다', 'Needs one more Gmail permission'], 'mailx.purgeGrant': ['권한 승인', 'Approve'], 'mailx.purgeFailed': ['지우지 못했습니다', 'Could not delete'], 'mailx.purgePartial': ['{n}통만 지우고 멈췄습니다', 'Stopped after {n}'], 'mailx.purgeSkipped': ['개수를 확인하지 못해 지우지 않았습니다', 'Not deleted (could not count)'],
   'mailx.purgeScopeHint': ['처음 비울 때는 Gmail 권한(영구 삭제)을 한 번 더 승인해야 할 수 있습니다.', 'The first time, Gmail may ask you to approve one more permission (permanent delete).'],
   'mailx.trashNote': ['휴지통의 메일은 30일이 지나면 Gmail이 완전히 지웁니다', 'Gmail permanently deletes mail in Trash after 30 days'],
   'mailx.selectAll': ['전체 선택', 'Select all'], 'mailx.selectNone': ['선택 해제', 'Clear selection'], 'mailx.pickOne': ['선택: {subject}', 'Select: {subject}'],

@@ -28,3 +28,5 @@ export function purgeTargets({ accounts = [], pick, picked, sample = false }) {
   if (sample) return [{ account: undefined }];
   return (pick === 'all' ? accounts : accounts.filter((a) => a.id === pick)).map((a) => ({ account: a.id }));
 }
+/** 확인 창에서 지울 계정 — 개수를 안 계정 중 1통 이상만(개수를 못 받은 계정은 몇 통인지 보여 주지 않은 채 지우지 않는다, 검수 #905) */
+export const purgeable = (r) => !r.error && (r.total ?? 0) > 0;
