@@ -88,12 +88,12 @@ export async function POST(req, { params }) {
       // 캐리오버한다. 안 실으면 서버 보존분과 사본이 라운드마다 복제 누적된다(분리 검수 HIGH 시뮬레이션).
       // 기록 실패는 무증상으로 삼키지 않는다(scheduler·routines와 같은 규칙 — 검수 LOW).
       const traceId = typeof e?.traceId === 'string' ? e.traceId : null; // 실패·중단 턴도 작업 과정을 실패 줄에서 본다(chat()이 오류에 싣는다)
-      const saved = await appendTurn(ws, slug, { turnId, userMsg: message.trim(), failed, failedCode, failedOrigin, aborted, cancellationIncomplete, attachments, traceId })
+      const saved = await appendTurn(ws, slug, { turnId, traceId, userMsg: message.trim(), failed, failedCode, failedOrigin, aborted, cancellationIncomplete, attachments })
         .then(() => true)
         .catch((err) => { console.error(`[argo] 실패 턴 기록 실패(${ws}/${slug}):`, err?.message ?? err); return false; });
       if (saved) nudgeSync();
-      const traces = traceId ? await traceSummaries(ws, slug, [traceId]).catch(() => ({})) : {};
-      return Response.json({ error: failed, code: failedCode, origin: failedOrigin, aborted, cancellationIncomplete, saved, ...(traceId ? { traceId, traces } : {}) }, { status: 500 });
+      // 작업 과정 요약은 실패 응답에 싣지 않는다 — 턴이 끝난 뒤 첫 폴(전체 다시 받기)이 실패 줄의 traceId와 이 기기 요약(traces)을 함께 가져온다
+      return Response.json({ error: failed, code: failedCode, origin: failedOrigin, aborted, cancellationIncomplete, saved }, { status: 500 });
     }
     // handover 없는 턴(예: 예산 초과 안내)도 안전하게 — null 접근 크래시 방지
     const handover = t.handover ? { rel: relative(paths(ws).vault, t.handover.file), linked: t.handover.linked } : null;
