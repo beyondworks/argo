@@ -72,13 +72,14 @@ export function planCalendar({ occs, now, coveredUntil, leadMs, sent = {}, skip 
   return { due, missed, allDay, tomorrow };
 }
 
-/** 확인 읽기(설계 5.1) — 보낼 시작 전 알림이 생긴 틱에서만, 그 회차들 시각 앞뒤 1분을 한 번 더 읽어 같은 일정 id·같은 회차 시작이 아직 있는 것만 돌려준다. */
+/** 확인 읽기(설계 5.1) — 보낼 시작 전 알림이 생긴 틱과 대기열의 시작 전 알림을 다시 보내기 직전에(tick.mjs), 그 회차들 시각 앞뒤 1분을 한 번 더 읽어
+    같은 일정 id·같은 회차 시작이 아직 있는 것만 돌려준다. kept는 방금 읽은 회차라 그사이 바뀐 제목·장소가 들어 있다(옮기거나 지운 회차는 gone). */
 export async function confirmDue(c, due, uid) {
   if (!due.length) return { kept: [], gone: [] };
   const from = Math.min(...due.map((o) => o.start)) - CONFIRM_PAD_MS;
   const to = Math.max(...due.map((o) => o.start)) + CONFIRM_PAD_MS;
   const { events } = await readCalendar(c, from, to);
-  const live = new Set(expand(ownEvents(events, uid), from, to).filter((o) => !o.allDay).map(preKey));
-  return { kept: due.filter((o) => live.has(preKey(o))), gone: due.filter((o) => !live.has(preKey(o))) };
+  const live = new Map(expand(ownEvents(events, uid), from, to).filter((o) => !o.allDay).map((o) => [preKey(o), o]));
+  return { kept: due.filter((o) => live.has(preKey(o))).map((o) => live.get(preKey(o))), gone: due.filter((o) => !live.has(preKey(o))) };
 }
 

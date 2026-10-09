@@ -14,7 +14,7 @@ const WS = 'co'; const SLUG = 'pepper';
 const baseView = (over = {}) => ({
   config: { enabled: false, agent: null, leadMinutes: 30, morningAt: '08:00', eveningAt: '21:00', quiet: { from: '23:00', to: '08:00', calendarAlerts: false }, tz: null },
   unsealed: false, current: null, choices: { lead: [10, 15, 30, 60] },
-  status: { login: true, muted: false, runner: 'this_device', device: 'Geony-Mac-Pro', code: null, codeAt: 0, readAt: 0, instantToday: 0 },
+  status: { login: true, muted: false, runner: 'this_device', device: 'Geony-Mac-Pro', code: null, codeAt: 0, readAt: 0, instantToday: 0, dailyCap: 10 },
   ...over,
 });
 const mineView = (over = {}) => baseView({ config: { ...baseView().config, enabled: true, agent: SLUG }, current: { ws: WS, company: '비서 회사', agent: SLUG, name: '페퍼' }, ...over });
@@ -105,10 +105,17 @@ test('U-a: 꺼짐 — 켜기 버튼 → PUT {enabled:true, agent, tz}, 응답(�
   assert.ok(byTest(out(), 'assistant-lead'), '켜지면 설정 칸');
   assert.ok(byTest(out(), 'assistant-off'));
   const all = text(out());
-  for (const k of ['assistant.watchCalendar', 'assistant.destPersonal', 'assistant.permNotify', 'assistant.runnerHere|{"device":"Geony-Mac-Pro"}', 'assistant.lastCheckNone', 'assistant.todayN|{"n":0}']) assert.ok(all.includes(k), k);
+  for (const k of ['assistant.watchCalendar', 'assistant.destPersonal', 'assistant.permNotify', 'assistant.runnerHere|{"device":"Geony-Mac-Pro"}', 'assistant.lastCheckNone', 'assistant.todayCap|{"n":0,"cap":10}']) assert.ok(all.includes(k), k);
   await new Promise((r) => setTimeout(r, 30));
   await m.flush();
   assert.equal(calls.length, 2, '그 뒤 저절로 다시 읽지 않는다');
+});
+
+test('K6(화면): 오늘 보낸 일정 알림 "n/상한" — 상한을 넘은 수도 그대로(12/10), 실행 기기가 다른 기기면 "실행 기기에서"', async () => {
+  const { out } = await render(mineView({ status: { ...mineView().status, instantToday: 12, dailyCap: 10 } }), () => ({ status: 200, data: {} }));
+  assert.equal(text(byTest(out(), 'assistant-today')), 'assistant.todayCap|{"n":12,"cap":10}');
+  const other = await render(mineView({ status: { ...mineView().status, runner: 'other_device', instantToday: 3, dailyCap: 10 } }), () => ({ status: 200, data: {} }));
+  assert.equal(text(byTest(other.out(), 'assistant-today')), 'assistant.onRunner');
 });
 
 test('U-b: 다른 비서가 있음 — "지금 비서: 회사 · 이름" + 바꾸기 → PUT {enabled:true, agent}', async () => {

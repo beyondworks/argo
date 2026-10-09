@@ -146,7 +146,7 @@ export function AssistantSection({ ws, slug }) {
           <span className="microlabel">{t('assistant.status')}</span>
           <Row label={t('assistant.runner')}><span data-testid="assistant-runner" style={{ overflowWrap: 'anywhere' }}>{runnerText}</span></Row>
           <Row label={t('assistant.lastCheck')}>{!here ? t('assistant.onRunner') : s.readAt ? fmtMsgTime(lang, s.readAt) : t('assistant.lastCheckNone')}</Row>
-          <Row label={t('assistant.today')}>{!here ? t('assistant.onRunner') : t('assistant.todayN', { n: s.instantToday ?? 0 })}</Row>
+          <Row label={t('assistant.today')}><span data-testid="assistant-today">{!here ? t('assistant.onRunner') : t('assistant.todayCap', { n: s.instantToday ?? 0, cap: s.dailyCap })}</span></Row>
         </div>
       )}
     </div>

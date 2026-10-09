@@ -53,6 +53,10 @@ function fakeServer(events) {
     db: {
       async myCrews() { env.calls.push('myCrews'); return [{ id: 'crew-p', org_id: null, slug: 'pepper' }]; },
       async insertMessage(row) { env.calls.push('insertMessage'); env.inserts.push(row); return { id: `m${env.inserts.length}` }; },
+      // 방에서 복구 읽기(3단계 recover.mjs) — 실제 서버처럼 이 크루의 개인 행·이미 있는 방·넣은 글을 돌려준다
+      async personalCrewsOf(_u, wsIds) { env.calls.push('personalCrewsOf'); return [{ id: 'crew-p', org_id: null, slug: 'pepper', ws_id: wsIds[0] }]; },
+      async personalRoomsOf(ids) { env.calls.push('personalRoomsOf'); return ids.map((id) => ({ id: `room-${id}`, personal_pair: `crew:${id}` })); },
+      async assistantNotices(chIds) { env.calls.push('assistantNotices'); return env.inserts.filter((r) => chIds.includes(r.channel_id)).map((r) => ({ meta: r.meta, created_at: null })); },
     },
   };
   return env;

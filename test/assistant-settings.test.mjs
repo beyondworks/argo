@@ -67,6 +67,10 @@ function fakeServer(events) {
     db: {
       async myCrews() { env.calls.push('myCrews'); return [{ id: 'crew-p', org_id: null, slug: 'pepper' }]; },
       async insertMessage(row) { env.calls.push('insertMessage'); env.inserts.push(row); return { id: `m${env.inserts.length}` }; },
+      // 방에서 복구 읽기(3단계 recover.mjs) — 실제 서버처럼 이 크루의 개인 행·이미 있는 방·넣은 글을 돌려준다
+      async personalCrewsOf(_u, wsIds) { env.calls.push('personalCrewsOf'); return [{ id: 'crew-p', org_id: null, slug: 'pepper', ws_id: wsIds[0] }]; },
+      async personalRoomsOf(ids) { env.calls.push('personalRoomsOf'); return ids.map((id) => ({ id: `room-${id}`, personal_pair: `crew:${id}` })); },
+      async assistantNotices(chIds) { env.calls.push('assistantNotices'); return env.inserts.filter((r) => chIds.includes(r.channel_id)).map((r) => ({ meta: r.meta, created_at: null })); },
     },
   };
   return env;
@@ -122,21 +126,23 @@ test('A2: 끄기 — 꺼짐·켠 시각 지움·봉인 갱신. 끈 뒤 옛 켜�
   assert.equal((await get(ws)).data.unsealed, true, '설정 화면: 설정 화면 밖에서 바뀜');
 });
 
-test('A3: 사용자당 1명 — 다른 회사(같은 주인)에서 켜면 이전 비서는 꺼지고(봉인 갱신) 다른 주인의 비서는 그대로', async () => {
+test('A3: 사용자당 1명 — 다른 회사(같은 주인)에서 켜면 이전 비서는 꺼지고(그 회사 company.json은 다시 쓰지 않는다 — H63) 다른 주인의 비서는 그대로', async () => {
   const a = await mkCompany({ name: '회사 A' });
   const b = await mkCompany({ name: '회사 B' });
   const other = await mkCompany({ ownerId: `${owner}-other`, name: '남의 회사' });
   await put(a, { enabled: true, agent: 'pepper', tz: 'Asia/Seoul' });
   await put(other, { enabled: true, agent: 'pepper', tz: 'Asia/Seoul' });
   assert.equal((await get(b)).data.current?.ws, a, '바꾸기 전: 지금 비서 = 회사 A');
+  const companyA = await readFile(paths(a).company, 'utf8');
   const { status, data } = await put(b, { enabled: true, agent: 'wolff', tz: 'Asia/Seoul' });
   assert.equal(status, 200);
   assert.deepEqual([data.current?.ws, data.current?.agent, data.current?.name], [b, 'wolff', '울프']);
   const ca = await cfgOf(a);
   assert.equal(ca.enabled, false, '이전 비서는 꺼진다');
   assert.equal(ca.agent, 'pepper', '에이전트는 적어 둔다');
-  assert.equal((await company(a)).assistantSeal, C.sealOf(await raw(a)), '꺼진 내용으로 봉인 — 꺼짐이 화면 밖 변경으로 보이지 않는다');
-  assert.equal((await get(a)).data.unsealed, false);
+  assert.equal(await readFile(paths(a).company, 'utf8'), companyA, '회사 A의 company.json(봉인)은 그대로 — 다른 기기에서 막 보관한 회사가 되살아나지 않게(H63)');
+  const va = (await get(a)).data;
+  assert.deepEqual([va.unsealed, va.config.enabled, va.current?.ws], [false, false, b], '꺼짐이 "화면 밖 변경"으로 보이지 않는다(꺼진 설정은 봉인을 보지 않는다)');
   assert.equal((await cfgOf(other)).enabled, true, '다른 주인의 회사는 손대지 않는다');
 });
 
@@ -220,7 +226,7 @@ test('A13: 다른 회사의 비서를 끄다가 한 회사에서 오류(그 회�
   assert.ok(logs.some((l) => l.includes(broken)), `실패한 회사를 기록: ${JSON.stringify(logs)}`);
 });
 
-test('R2: 같은 주인의 두 회사에 켜기 저장이 거의 동시에 옴 — 둘 다 200, 둘 다 꺼지지 않고 하나만 켜짐(봉인 맞음), 두 카드의 "지금 비서"가 같다(2차 검수 LOW)', async () => {
+test('R2: 같은 주인의 두 회사에 켜기 저장이 거의 동시에 옴 — 둘 다 200, 둘 다 꺼지지 않고 하나만 켜짐(봉인 맞음), 두 카드의 "지금 비서"가 같고 화면 밖 변경 0(2차 검수 LOW)', async () => {
   const all = [];
   for (let i = 0; i < 8; i++) {
     const a = await mkCompany({ name: `회사 A${i}` });
@@ -231,7 +237,8 @@ test('R2: 같은 주인의 두 회사에 켜기 저장이 거의 동시에 옴 �
     const on = [];
     for (const ws of all) {
       const c = await cfgOf(ws);
-      assert.equal((await company(ws)).assistantSeal, C.sealOf(await raw(ws)), `${i}회차 ${ws}: 봉인 맞음(화면 밖 변경으로 보이지 않는다)`);
+      if (c.enabled) assert.equal((await company(ws)).assistantSeal, C.sealOf(await raw(ws)), `${i}회차 ${ws}: 켜진 회사는 봉인 맞음`);
+      assert.equal((await get(ws)).data.unsealed, false, `${i}회차 ${ws}: 화면 밖 변경으로 보이지 않는다(끈 회사는 company.json을 다시 쓰지 않는다 — H63)`);
       if (c.enabled) on.push(ws);
     }
     assert.equal(on.length, 1, `${i}회차: 켜진 회사 하나 — ${JSON.stringify(on)}`);
@@ -392,6 +399,7 @@ test('S2(서버): 로그인·끈 목록·실행 기기·상태 파일 — 실행
   assert.equal('sent' in v.status, false, '보낸 키·대기열 본문은 내보내지 않는다');
   v = await S.assistantSettingsView(ws, { now: Date.parse('2026-10-09T09:00:00+09:00'), deps: deps() });
   assert.equal(v.status.instantToday, 0, '날이 바뀌면 0');
+  assert.equal(v.status.dailyCap, 10, '하루 즉시 알림 상한(기본 10) — 화면 "n/상한"(3단계)');
   // 다른 기기가 실행 / 옛 버전 기기가 실행 — 이 기기 상태 파일은 보이지 않는다
   const holder = (assistant) => ({ syncOn: true, leader: false, ownedAt: 0, checkedAt: NOW, holder: { deviceId: 'Office-PC-1a2b3c4d', assistant, ts: NOW - 10_000 } });
   v = await S.assistantSettingsView(ws, { now: NOW, deps: deps({ lease: () => holder(2) }) });
@@ -450,4 +458,15 @@ test('D7: 설정 화면 읽기·저장은 네트워크 호출 0(로컬 파일만
     await put(ws, { enabled: false });
   } finally { globalThis.fetch = realFetch; }
   assert.equal(n, 0);
+});
+
+test('K6(서버): 상태의 하루 즉시 알림 상한 = 지금 비서 설정의 dailyCap(봉인 맞는 저장값) — 고르는 칸은 없고 화면 밖 칸으로 이어받는다', async () => {
+  const ws = await mkCompany();
+  await put(ws, { enabled: true, agent: 'pepper', tz: 'Asia/Seoul' });
+  const text = JSON.stringify({ ...(await cfgOf(ws)), dailyCap: 3 });
+  await writeFile(cfgPath(ws), text); await updateCompany(ws, () => ({ assistantSeal: C.sealOf(text) })); // 새 버전이 봉인해 저장한 값
+  const deps = { lease: () => ({ syncOn: false }), deviceSession: () => null, sessionDead: () => false, deviceId: async () => 'dev' };
+  assert.equal((await S.assistantSettingsView(ws, { now: NOW, deps })).status.dailyCap, 3);
+  await put(ws, { leadMinutes: 15 });
+  assert.equal((await cfgOf(ws)).dailyCap, 3, '다른 칸을 저장해도 상한은 그대로');
 });

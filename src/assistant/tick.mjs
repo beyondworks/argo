@@ -7,17 +7,23 @@
 //  1. 리더 확인이 새것인가 — 동기화를 쓰는 기기면 리더 + 확인된 보유(ownedAt > 0) + 리스 확인 60초 안. 아니면 끝(호출 0).
 //  2. 사용자당 1명 — 같은 주인의 다른 회사에서 더 나중에 켠 비서가 있으면 이 회사는 쉰다(상태 "다른 회사의 비서가 맡고 있음").
 //  3. 조용한 시간(일정 예외 아니오)이면 확인도 배달도 하지 않는다 — 끝난 뒤 첫 확인이 밤사이를 읽어 아침 묶음에 넣는다.
+//  3b. 방에서 복구(recover.mjs) — 새로 맡음·재시작·잠자기 뒤·쉬다가 다시 맡을 때 1:1 방의 비서 글로 보낸 키·묶음·오늘 수를 합친다. 실패하면 5분 뒤 다시.
 //  4. 대기열(보낼 글 1건 이하)이 있으면 같은 client_msg_id·같은 본문으로 먼저 다시 보낸다. 비지 않으면 새 글을 만들지 않는다.
 //     기한(시작 전 알림 = 회차 시작, 묶음 = rules.mjs bundleUntil)이 지난 글은 보내지 않고, 그 안의 지난 일정은 보류 목록으로 돌린다.
+//     시작 전 알림은 다시 보내기 직전에 그 회차를 확인 읽기한다 — 배달이 막힌 사이 옮기거나 지운 일정이면 버린다(바뀐 제목·장소는 반영).
 //  5. 차례 판정 — 일정 읽기(15분)·잠자기 뒤·저녁 묶음 범위. 차례가 아니면 네트워크 호출 0, 메모리 사본으로 시작 전 시각만 계산한다.
 //     읽어야 할 차례에 읽지 못했으면(실패·실패 뒤 15분) 낡은 사본으로 지난 일정·묶음을 만들지 않고 확인 범위도 옮기지 않는다 — 다음 성공한 읽기가 그 사이를 다시 본다.
 //  6. 감지 → 시작 전 알림(확인 읽기 뒤) / 지난 일정(보류 목록) / 아침·저녁 묶음.
 //  7. 배달 → 묶음, 그다음 시작 전 알림을 하나씩(시작 전 알림은 늘 혼자 — 설계 7절). 성공한 뒤에만 보낸 키를 기록.
+//     하루 즉시 알림 상한(설정 dailyCap, 설계 9절): 시작 전 알림은 상한을 넘어도 미루거나 버리지 않고 바로 보낸다(시간이 지나면 쓸모가 없다).
+//     상한에 처음 걸린 글(오늘 상한+1번째) 끝에만 한 줄을 붙인다. 이 단계의 글은 모두 템플릿이라 상한이 바꾸는 것은 그 한 줄과 화면의 n/상한이다
+//     (LLM 머리말을 쓰는 단계가 이 셈으로 머리말을 끈다).
 //     상태는 바뀐 때만 로컬 파일에(일정 확인 범위만 바뀐 경우는 15분에 한 번).
 import { loadEffectiveAssistantConfig, calendarActive } from './config.mjs';
 import { readState, pruneState, stateFile } from './state.mjs';
 import { GAP_MS, LEASE_FRESH_MS, dateIn, addDays, instantIn, inQuiet, bundleDue, bundleUntil, assistantMuted, assistantCompanyOf, retryDelayMs } from './rules.mjs';
 import { CAL_READ_MS, CAL_SPAN_MS, readCalendar, ownEvents, expand, planCalendar, confirmDue, preKey } from './calendar.mjs';
+import { RECOVER_RETRY_MS, recoveryTargets, targetsSig, recoverSince, readRoomNotices, foldNotices, mergeRecovered } from './recover.mjs';
 import { personalRoom, insertNotice, composePre, composeBundle, refreshPreBody } from './deliver.mjs';
 import { leaseCheck, LEASE_TTL_MS, LEASE_ASSISTANT_ENGINE } from '../sync.mjs';
 import { loadCompany } from '../workspace.mjs';
@@ -38,10 +44,10 @@ export const assistantDeps = {
   writeState: (cid, st) => writeJsonAtomic(stateFile(cid), JSON.stringify(st)),
 };
 
-const mems = new Map(); // 회사별 메모리 — 지난 틱 리더 여부·시각, 상태, 일정 사본, 확인 읽기에서 사라진 키, 개인 1:1 방
+const mems = new Map(); // 회사별 메모리 — 지난 틱 리더 여부·시각, 상태, 일정 사본, 확인 읽기에서 사라진 키, 개인 1:1 방, 방에서 복구할 차례
 function mem(cid) {
   let m = mems.get(cid);
-  if (!m) mems.set(cid, (m = { wasLeader: false, lastTickAt: 0, state: null, sig: null, persistedCal: null, persistedAt: 0, snap: null, skip: new Set(), room: null, readFailedAt: 0 }));
+  if (!m) mems.set(cid, (m = { wasLeader: false, lastTickAt: 0, state: null, sig: null, persistedCal: null, persistedAt: 0, snap: null, skip: new Set(), room: null, readFailedAt: 0, recover: false, recoverAt: 0 }));
   return m;
 }
 const lastLog = new Map();
@@ -81,28 +87,62 @@ async function pickCompany(cid, owner, cfg, now, deps) {
   return assistantCompanyOf(peers, owner);
 }
 
-/** 대기열 글 하나 보내기 — 개인 공간 1:1 방(메모리 캐시) → 글 넣기. 성공(새 글·이미 있음)이면 키를 기록하고 대기열을 비운다. 실패면 대기열을 두고 재시도 시각을 미룬다. */
-async function send(cid, m, c, cfg, now, lang) {
+/** 대기열 글 하나 보내기 — 개인 공간 1:1 방(메모리 캐시) → (다시 보내는 시작 전 알림이면 확인 읽기) → 글 넣기.
+    반환: true = 보냄(새 글·이미 있음 — 키를 기록하고 대기열을 비운다), false = 실패(대기열을 두고 재시도 시각을 미룬다),
+    'gone' = 다시 보내려던 회차가 옮겨지거나 지워졌다(보내지 않고 대기열을 비운다 — 새 시각의 회차는 다음 계산이 새 키로 알린다). */
+async function send(cid, m, c, cfg, now, lang, { recheck = false } = {}) {
   const st = m.state; const ob = st.outbox;
-  try {
-    if (!m.room || m.room.slug !== cfg.agent) m.room = { slug: cfg.agent, ...(await personalRoom(c, cid, cfg.agent)) };
-    ob.body = refreshPreBody(ob, { now, lang, tz: cfg.tz });
-    await insertNotice(c, m.room, ob);
-    for (const k of ob.keys) st.sent[k] = now;
-    if (ob.kind === 'pre') st.day.instant += 1; // 즉시 알림 수(아침·저녁 묶음은 세지 않는다 — 설계 9절)
-    if (ob.kind === 'am' || ob.kind === 'pm') st.bundles[ob.kind] = ob.date;
-    st.outbox = null;
-    setStatus(st, 'ok', now);
-    return true;
-  } catch (e) {
-    m.room = null; // 방·행이 바뀌었을 수 있다 — 다음 시도에서 다시 찾는다
-    const code = e?.code === 'personal_room_unavailable' ? 'personal_room_unavailable' : 'deliver_failed';
+  const retryLater = (code, what, e) => {
     ob.tries = (ob.tries ?? 0) + 1;
     ob.nextAt = now + retryDelayMs(ob.tries);
     setStatus(st, code, now);
-    logOnce(cid, `알림을 보내지 못해 대기열에 두었습니다(${code}): ${errText(e)}`);
+    logOnce(cid, `${what}(${code}): ${errText(e)}`);
     return false;
+  };
+  try {
+    if (!m.room || m.room.slug !== cfg.agent) m.room = { slug: cfg.agent, ...(await personalRoom(c, cid, cfg.agent)) };
+  } catch (e) {
+    m.room = null; // 방·행이 바뀌었을 수 있다 — 다음 시도에서 다시 찾는다
+    return retryLater(e?.code === 'personal_room_unavailable' ? 'personal_room_unavailable' : 'deliver_failed', '알림을 보내지 못해 대기열에 두었습니다', e);
   }
+  if (recheck && ob.kind === 'pre') {
+    // 대기열의 시작 전 알림을 다시 보내기 직전 — 그 회차가 아직 있고 시각이 그대로인지 한 번 더 읽는다(#863 2차 검수 LOW: 배달이 막힌 사이 옮기거나 지운 일정에
+    // 옛 시각으로 알리지 않게). 방을 찾은 뒤에만 읽어 방이 없는 동안의 재시도에는 읽기가 붙지 않는다. 읽지 못하면 보내지 않고 같은 간격으로 다시 시도한다.
+    let live = null;
+    if (ob.occ?.id && Number.isFinite(Number(ob.occ.start))) {
+      try { live = (await confirmDue(c, [{ ...ob.occ, start: Number(ob.occ.start) }], c.uid)).kept[0] ?? null; }
+      catch (e) { return retryLater('calendar_error', '알림 전 일정 확인 읽기 실패 — 대기열에 두고 다시 시도합니다', e); }
+    }
+    if (!live) { // 옮겼거나 지웠다(회차 정보가 없는 글도 확인할 수 없으니 보내지 않는다)
+      m.skip.add(ob.basis); // 다음 전체 읽기까지 사본의 옛 회차를 다시 알리지 않게
+      st.outbox = null;
+      setStatus(st, 'ok', now);
+      return 'gone';
+    }
+    ob.occ = { ...ob.occ, title: live.title, location: live.location }; // 바뀐 제목·장소는 반영(같은 키·같은 client_msg_id)
+  }
+  if (ob.kind === 'pre') {
+    // 하루 즉시 알림 상한(설계 9절) — 오늘 이미 상한만큼 보냈고 아직 꼬리를 붙이지 않았으면 이 글(상한+1번째)에 한 줄. 보내는 순간 다시 정한다(복구로 바뀐 셈 반영).
+    const over = st.day.instant >= cfg.dailyCap && !st.day.capNoted;
+    ob.capTail = over ? cfg.dailyCap : 0;
+    ob.meta = { ...ob.meta, capNote: over || undefined }; // 다른 기기가 방에서 복구할 때 꼬리를 다시 붙이지 않게
+  }
+  try {
+    ob.body = refreshPreBody(ob, { now, lang, tz: cfg.tz });
+    await insertNotice(c, m.room, ob);
+  } catch (e) {
+    m.room = null;
+    return retryLater('deliver_failed', '알림을 보내지 못해 대기열에 두었습니다', e);
+  }
+  for (const k of ob.keys) st.sent[k] = now;
+  if (ob.kind === 'pre') { // 즉시 알림 수(아침·저녁 묶음은 세지 않는다 — 설계 9절)
+    st.day.instant += 1;
+    if (ob.capTail) st.day.capNoted = true;
+  }
+  if (ob.kind === 'am' || ob.kind === 'pm') st.bundles[ob.kind] = ob.date;
+  st.outbox = null;
+  setStatus(st, 'ok', now);
+  return true;
 }
 
 /**
@@ -128,18 +168,20 @@ export async function runAssistantTick(cid, { now = Date.now(), deps = assistant
   const st = m.state;
   const gap = !m.wasLeader || now - m.lastTickAt > GAP_MS; // 새로 리더가 됐거나·재시작했거나·잠자기·멈춤
   m.wasLeader = true; m.lastTickAt = now;
+  if (gap) m.recover = true; // 그사이 다른 기기가 보냈을 수 있다 — 감지·배달 전에 방에서 복구(3b)
   const done = async (why, code = null) => { if (code) setStatus(st, code, now); await save(cid, m, now, deps); return { ran: true, why }; };
 
   // 확인 범위 기준선 — 이 기기에 기록이 없으면 지금부터(다른 기기가 이미 알린 일을 "지난 일정"으로 다시 알리지 않는다),
   // 있으면 저장값과 켠 시각 중 늦은 쪽(다시 켰을 때 꺼져 있던 동안의 일은 알리지 않는다). 뒤로는 26시간까지만 본다.
   st.cal.coveredUntil = Math.min(now, Math.max(st.cal.coveredUntil || now, cfg.enabledAt ?? 0, now - CAL_SPAN_MS));
   const today = dateIn(now, cfg.tz);
-  if (st.day.date !== today) st.day = { date: today, instant: 0 };
+  if (st.day.date !== today) st.day = { date: today, instant: 0, capNoted: false };
   pruneState(st, now);
 
   // 2. 사용자당 1명 · 비서 에이전트 · 끈 목록 · 볼 것 — 쉬는 동안은 글 0. 쉬는 동안의 일정은 나중에 "지난 일정"으로 알리지 않고(확인 범위를 지금으로),
   //    쉬기 전 보류·대기열도 비운다 — 다시 맡는 순간 낡은 글이 가지 않게(다른 회사가 맡았으면 그쪽이 알린다). 이미 비어 있으면 쓰기 0(save 비교).
-  const rest = (why, code) => { st.cal.coveredUntil = now; st.pending = []; st.outbox = null; return done(why, code); };
+  // 쉬는 동안 다른 회사(다른 방)가 맡았을 수 있다 — 다시 맡으면 방에서 복구부터(3b).
+  const rest = (why, code) => { st.cal.coveredUntil = now; st.pending = []; st.outbox = null; m.recover = true; return done(why, code); };
   if ((await pickCompany(cid, owner, cfg, now, deps)) !== cid) return rest('other_company', 'other_company');
   if (!(await deps.agentExists(cid, cfg.agent))) return rest('no_agent', 'no_agent');
   if (assistantMuted(company)) return rest('muted', 'muted'); // 메신저 알림 종류에서 비서를 껐다
@@ -157,6 +199,25 @@ export async function runAssistantTick(cid, { now = Date.now(), deps = assistant
   };
   const lang = company.lang === 'en' ? 'en' : 'ko';
 
+  // 3b. 방에서 복구(설계 7절) — 감지·배달보다 먼저, 이 사람의 비서 1:1 방들에서 이미 보낸 키·묶음·오늘 즉시 알림 수를 읽어 합친다(recover.mjs).
+  //     실패하면 이 틱은 전처럼 진행하고(같은 방의 같은 글은 DB 유니크가 한 번만 넣는다) 5분 뒤 다시 읽는다 — 매 틱 읽지 않는다.
+  if (m.recover && now >= m.recoverAt) {
+    const s = await session();
+    if (!s) return done('login', 'login_required');
+    try {
+      const targets = await recoveryTargets(cid, owner, cfg, idsCache.ids, deps); // 회사 목록은 바로 위 pickCompany가 30초 안에 읽은 것
+      const sig = targetsSig(targets);
+      const since = recoverSince(st.rec, sig, now, instantIn(today, '00:00', cfg.tz)); // 처음·방이 바뀜이면 14일, 아니면 지난 복구 뒤(오늘 글은 늘 전부)
+      const rec = foldNotices(await readRoomNotices(s, targets, since), { now, tz: cfg.tz });
+      mergeRecovered(st, rec);
+      st.rec = { to: Math.max(st.rec.sig === sig ? st.rec.to : 0, rec.latest), sig };
+      m.recover = false; m.recoverAt = 0;
+    } catch (e) {
+      m.recoverAt = now + RECOVER_RETRY_MS;
+      logOnce(cid, `1:1 방에서 보낸 알림을 읽지 못했습니다(5분 뒤 다시): ${errText(e)}`);
+    }
+  }
+
   // 4. 대기열 — 남은 글을 먼저. 비지 않으면 이번 틱에 새 글을 만들지 않는다(대기열은 늘 1건 이하).
   if (st.outbox && now >= Number(st.outbox.until)) {
     // 기한이 지난 글 — 시작 전 알림은 "N분 뒤 시작"이, 묶음은 "오늘·내일"이 거짓이 된다. 보내지 않고, 그 안의 지난 일정(시작 전 알림의 회차 포함)은
@@ -170,7 +231,7 @@ export async function runAssistantTick(cid, { now = Date.now(), deps = assistant
     if (now < Number(st.outbox.nextAt || 0)) return done('outbox_wait');
     const s = await session();
     if (!s) return done('login', 'login_required');
-    if (!(await send(cid, m, s, cfg, now, lang))) return done('outbox_failed');
+    if ((await send(cid, m, s, cfg, now, lang, { recheck: true })) === false) return done('outbox_failed'); // 'gone'이면 대기열이 비었다 — 이번 틱에 새 계산을 이어 간다
   }
 
   // 5. 차례 — 읽을 때만 네트워크
