@@ -37,9 +37,10 @@ const DICT = {
     'PowerShell에 붙여넣으면 설치 프로그램을 받아 실행합니다.',
     'Paste into PowerShell — downloads and runs the installer.',
   ],
+  // 기본 실행(계정 모드)은 argo 명령만 설치한다 — 상주는 로그인 뒤 `argo service install`로 따로 등록(scripts/install.sh, test/landing-install-copy.test.mjs가 대조)
   'install.note.linux': [
-    '리눅스(x86_64) 서버에 상주 서비스로 설치됩니다. 업데이트는 같은 명령 재실행.',
-    'Installs as a self-healing service on Linux (x86_64). Re-run the same line to update.',
+    '리눅스(x86_64) 서버에 argo 명령을 설치합니다(Node.js 22 이상·systemd 필요). 설치 뒤 argo로 로그인하고, 서버에서 계속 실행하려면 argo service install을 실행하세요. 업데이트는 같은 명령 재실행.',
+    'Installs the argo command on a Linux (x86_64) server (needs Node.js 22+ and systemd). Sign in with argo, then run argo service install to keep it running on the server. Re-run the same line to update.',
   ],
 
   // Core Four — Argo만의 후킹 포인트 (2026-07-14 유건 지정: 최우선 강조 4개)
