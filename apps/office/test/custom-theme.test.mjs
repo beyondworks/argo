@@ -27,6 +27,22 @@ test('바탕·사이드바·카드를 무엇으로 골라도 그 위 글자는 4
   }
 });
 
+// 이유(검수 #908 LOW): 린넨 라이트의 표면은 카드 72%(다른 색은 85%)다 — 커스텀 테마는 고른 셸·색상 위에 만들어지므로(probe가 --surface 알파를 읽어 surfaceMix로 넘긴다)
+// 린넨 라이트 위에서 만들면 72%로 섞인 표면 위에서도 글자가 읽혀야 한다. (섞은 색의 대비는 바탕·카드 두 끝 사이라 85%로 재던 때와 고르는 글자 색은 같다 — 이 시험은 비율을 바꿔도 깨지지 않는지 잠근다)
+test('표면 비율: 린넨 라이트(카드 72% 표면) 위에서 만든 커스텀 테마도 그 표면 위 글자 4.5:1', () => {
+  const L72 = { ...LINEN, card: [250, 244, 230], surfaceMix: 0.72 };
+  for (const bg of PICKS) for (const card of PICKS) {
+    const { vars, flags } = buildVars(c({}), { bg, card }, L72);
+    const surfaces = [hex(bg), hex(card), mix(hex(card), hex(bg), 0.72)];
+    const worst = Math.min(...surfaces.map((s) => contrast(hex(vars['--fg']), s)));
+    if (worst < 4.5) { assert.match(flags, /warn/, `${bg}/${card}`); continue; }
+    for (const k of ['--fg-2', '--fg-3']) for (const s of surfaces) assert.ok(contrast(hex(vars[k]), s) >= 4.5, `${bg}/${card} ${k}`);
+  }
+  // 바탕만 바꾸면 카드는 지금 색(미색)을 72%로 섞은 표면 — 그 위에서도 읽힌다
+  const { vars } = buildVars(c({}), { bg: '#3a3a3a' }, L72);
+  assert.ok(contrast(hex(vars['--fg']), mix(L72.card, hex('#3a3a3a'), 0.72)) >= 4.5);
+});
+
 test('강조·배지: 선택된 메뉴 글자와 배지 글자가 그 색 위에서 4.5:1 이상, 호버 위 메뉴 글자도', () => {
   for (const x of PICKS) {
     const { vars, flags } = buildVars(c({}), { accent: x, badge: x }, LINEN);
