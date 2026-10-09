@@ -113,6 +113,40 @@ export function content(msg) {
   };
 }
 
+/** 메일 HTML → 글자(스크립트·스타일은 버리고 줄바꿈을 남긴다). 서버에는 DOM이 없어 정규식으로 — 본체 src/gateway/office-mail.mjs htmlText와 같은 규칙 */
+export function htmlToText(html) {
+  if (!html) return '';
+  return entities(String(html).replace(/<(script|style|head)[\s\S]*?<\/\1>/gi, '').replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|div|li|tr|h[1-6])>/gi, '\n')
+    .replace(/<img[^>]*>/gi, '').replace(/<[^>]+>/g, '')).replace(/[ \t ]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+// 인용된 지난 글이 시작되는 줄 — 답장 메일은 지난 글 전체를 다시 싣는 일이 많아, 스레드로 받을 때는 각 메일의 새 글만 남긴다(지난 글은 그 메일이 따로 있다)
+const QUOTE_HEAD = /^(>|On .{4,200} wrote:\s*$|-{2,}\s*Original Message\s*-{2,}|-{5,}\s*Forwarded message|\d{4}[.년\-/ ].{2,120}(작성|wrote)[:：]?\s*$|.{1,120}님이 작성:\s*$|From: .+@.+$|보낸 사람: .+$)/i;
+/** 인용 앞까지(순수) — 인용 머리줄 앞의 글만. 남는 글이 없으면(전부 인용) 원문 그대로 */
+export function stripQuoted(text) {
+  const lines = String(text ?? '').replace(/\r\n/g, '\n').split('\n');
+  const cut = lines.findIndex((l) => QUOTE_HEAD.test(l.trim()));
+  const kept = (cut >= 0 ? lines.slice(0, cut) : lines).join('\n').trim();
+  return kept || String(text ?? '').trim();
+}
+
+/** 스레드(threads.get format=full) → 메일 목록(순수, 오래된 순) — 비서 메일 확인(본체 src/assistant/mail-source.mjs)이 답장 여부·준비 입력에 쓴다.
+ *  메일마다 새 글 앞 per자, 최근 메일부터 합쳐 total자까지(넘으면 오래된 메일은 글 없이 머리만), 최근 max통. 본문 전체·첨부·그림은 내려주지 않는다 */
+export function threadView(thread, account, { per = 1500, total = 6000, max = 10 } = {}) {
+  const msgs = (thread?.messages ?? []).filter((m) => !(m.labelIds ?? []).includes('DRAFT')).slice(-max);
+  let left = total;
+  const out = msgs.slice().reverse().map((m) => {
+    const e = envelope(m, account);
+    const c = content(m);
+    const body = stripQuoted(c.text || htmlToText(c.html)).replace(/\n{3,}/g, '\n\n');
+    const text = left > 0 ? body.slice(0, Math.min(per, left)) : '';
+    left -= text.length;
+    return { gid: e.gid, threadId: e.threadId, from: e.from, addr: e.addr, to: e.to, subject: e.subject, at: e.at, labels: e.labels,
+      sent: e.labels.includes('SENT'), messageId: c.messageId || '', references: c.references || '', text, cut: text.length < body.length };
+  });
+  return out.reverse();
+}
+
 /** 원문 첨부 싣기(전달·초안 고치기) — 원본 메일의 첨부 중 keep(이름·크기)에 든 것만. keep이 없으면 전부 */
 export function pickCarry(attachments = [], keep) {
   if (!Array.isArray(keep)) return attachments;
