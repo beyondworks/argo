@@ -9,7 +9,12 @@ import { forceSimulation, forceManyBody, forceLink, forceX, forceY } from 'd3-fo
 import { useLang } from '../../i18n';
 import { buildGraph2D, stem } from './graph2d-core.mjs'; // 구성은 JSX 없는 코어(테스트가 직접 임포트)
 import { zoomedEvPos } from './zoom-math.mjs'; // 표시 배율 좌표 환산 — JSX 없는 코어(테스트가 직접 임포트)
+import { placeLabels, hubLabelCount } from './graph2d-labels.mjs'; // 라벨 자리(실제 글자 폭 기준) — JSX 없는 순수 함수(테스트가 직접 임포트)
 export { buildGraph2D };
+
+// 그래프 위에 겹쳐 놓은 조작 줄(오른쪽 위 칩)·안내 줄(왼쪽 아래) 자리 — 스타일과 라벨 회피가 같은 값을 쓴다
+const BAR = { top: 10, right: 12 };
+const HINT = { left: 14, bottom: 10 };
 
 // 성도(星圖) 문법 — 허브 기억 = 큰 별(십자 빛살), 일반 기억 = 작은 네 꼭지 별, 크루 = 다이아몬드(유건 승인 시안
 // 2026-08-21). 색·글꼴은 **테마를 따른다**: 배경·잉크 = --paper-rgb/--ink-rgb, 별 포인트 = --accent-rgb
@@ -84,6 +89,8 @@ function createSim2D({ nodes, edges }) {
 export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compact = false, height = '100%' }) {
   const { t } = useLang();
   const ref = useRef(null);
+  const barRef = useRef(null); // 오른쪽 위 칩 줄 — 라벨이 그 아래로 들어가 가려지지 않게 자리를 잰다
+  const hintRef = useRef(null); // 왼쪽 아래 조작 안내 — 같은 이유
   const cb = useRef({}); cb.current = { onSelectDoc };
   const [showCrew, setShowCrew] = useState(false);
   const [showOrphans, setShowOrphans] = useState(false);
@@ -206,6 +213,24 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
     // 라벨 — 허브(연결 상위)는 상시, 나머지는 줌인·호버·이웃일 때
     const degSorted = [...graph.nodes.keys()].sort((a, b) => graph.nodes[b].deg - graph.nodes[a].deg);
     const hubs = new Set(degSorted.slice(0, compact ? 4 : 14).filter((i) => graph.nodes[i].deg >= 2)); // 연결 1개짜리는 허브가 아니다(작은 회사에서 전부 골드가 되던 것)
+    // 늘 켜 두는 허브 라벨은 캔버스 면적만큼만(hubLabelCount) — 별(골드)은 그대로 두고 이름표만 연결 많은 순으로 줄인다
+    const hubRank = new Map(degSorted.filter((i) => hubs.has(i)).map((i, k) => [i, k]));
+    // 라벨 글자 폭 — 프레임마다 measureText를 다시 하지 않게 글꼴+문구로 기억한다(테마가 글꼴을 바꾸면 키가 달라진다)
+    const widths = new Map();
+    const textW = (s, font) => {
+      const k = `${font}\u0000${s}`;
+      let w = widths.get(k);
+      if (w === undefined) { ctx.font = font; w = ctx.measureText(s).width; widths.set(k, w); }
+      return w;
+    };
+    // 그래프 위에 겹친 칩 줄·안내 줄이 차지한 자리(캔버스 좌표) — 오프셋 크기만 읽는다(이벤트 좌표 아님 — evPos 불변식과 무관)
+    const overlays = () => {
+      const out = [];
+      const bar = barRef.current, hint = hintRef.current;
+      if (bar) out.push({ x: W - BAR.right - bar.offsetWidth, y: BAR.top, w: bar.offsetWidth, h: bar.offsetHeight });
+      if (hint) out.push({ x: HINT.left, y: H - HINT.bottom - hint.offsetHeight, w: hint.offsetWidth, h: hint.offsetHeight });
+      return out;
+    };
 
     const dashed = graph.edges.length <= 1500; // 점선은 엣지가 많으면 비싸다 — 큰 그래프는 실선 희미하게
     const draw = () => {
@@ -283,32 +308,41 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
         const sp = new Path2D(); star4(sp, q.x, q.y, r * (big ? 1.5 : 1.35)); ctx.fill(sp);
       }
       // 라벨 — 성도의 별 이름처럼 세리프. compact는 중심·호버만, 같은 제목 허브는 프레임당 한 번.
-      ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      // 자리는 placeLabels(graph2d-labels.mjs)가 실제 글자 폭으로 정한다 — 겹치면 건너뛰고, 오른쪽 끝을 넘으면 노드 왼쪽으로.
+      ctx.textBaseline = 'middle';
       const drawn = new Set();
-      const placed = []; // 라벨 충돌 회피 — 허브가 뭉친 실데이터(2,000건)에서 라벨끼리 겹쳐 못 읽던 것. 가까운 자리엔 안 쓴다
-      const crowded = (x, y, h) => placed.some((q) => Math.abs(q.y - y) < (h + q.h) / 2 && Math.abs(q.x - x) < 170);
+      const nHub = hubLabelCount(W, H);
+      const cands = new Map();
       for (let i = 0; i < graph.nodes.length; i++) {
         const n = graph.nodes[i];
         const isHover = i === hover, isNb = !compact && nbSet?.has(i);
-        const show = isHover || isNb || i === rootIdx || (!compact && !anyFocus && (hubs.has(i) || view.s > 2.6));
+        const hubLabel = hubs.has(i) && hubRank.get(i) < nHub;
+        const show = isHover || isNb || i === rootIdx || (!compact && !anyFocus && (hubLabel || view.s > 2.6));
         if (!show) continue;
         if (!isHover && i !== rootIdx) { if (drawn.has(n.label)) continue; drawn.add(n.label); }
         const q = P[i], r = nodeRadius(n) * rs;
         if (off(q)) continue;
         const em = isHover || i === rootIdx;
         const twoLine = !compact && !anyFocus && hubs.has(i) && !em; // 허브는 '연결 N' 둘째 줄까지 차지한다
-        const lh = twoLine ? 34 : 18;
-        if (!em && crowded(q.x + r * 2.6 + 6, q.y + (twoLine ? 8 : 0), lh)) continue;
-        placed.push({ x: q.x + r * 2.6 + 6, y: q.y + (twoLine ? 8 : 0), h: lh });
         const txt = n.label.length > 28 ? `${n.label.slice(0, 28)}…` : n.label;
-        ctx.font = `${em ? 600 : 500} ${compact ? 10.5 : em ? 13 : 12}px ${FONT}`;
-        const a = em || isNb ? 0.95 : Math.min(0.8, 0.45 + (view.s - 1) * 0.4);
-        const col = (hubs.has(i) || em) && n.type !== 'agent' ? LABEL_ACCENT : INK;
-        ctx.fillStyle = `rgba(${col}, ${a * (anyFocus && !isHover && !isNb ? 0.3 : 1)})`;
-        ctx.fillText(txt, q.x + r * 2.6 + 6, q.y + 1);
-        if (twoLine) { // 허브엔 연결 수 한 줄
-          ctx.font = `10.5px ${FONT}`; ctx.fillStyle = `rgba(${LABEL_ACCENT}, 0.8)`;
-          ctx.fillText(t('graph.linksN', { n: n.deg }), q.x + r * 2.6 + 6, q.y + 16);
+        const font = `${em ? 600 : 500} ${compact ? 10.5 : em ? 13 : 12}px ${FONT}`;
+        const sub = twoLine ? t('graph.linksN', { n: n.deg }) : '';
+        const subFont = `10.5px ${FONT}`;
+        const w = Math.max(textW(txt, font), sub ? textW(sub, subFont) : 0);
+        cands.set(i, { i, x: q.x, y: q.y + (twoLine ? 8 : 0), gap: r * 2.6 + 6, w, h: twoLine ? 34 : 18, em, ny: q.y, txt, font, sub, subFont, isHover, isNb });
+      }
+      for (const spot of placeLabels([...cands.values()], { W, H, avoid: compact ? [] : overlays() })) {
+        const c = cands.get(spot.i), n = graph.nodes[spot.i];
+        const tx = spot.side === 'left' ? spot.x + spot.w : spot.x; // 왼쪽에 놓인 라벨은 노드 쪽으로 붙게 오른쪽 정렬
+        ctx.textAlign = spot.side === 'left' ? 'right' : 'left';
+        ctx.font = c.font;
+        const a = c.em || c.isNb ? 0.95 : Math.min(0.8, 0.45 + (view.s - 1) * 0.4);
+        const col = (hubs.has(spot.i) || c.em) && n.type !== 'agent' ? LABEL_ACCENT : INK;
+        ctx.fillStyle = `rgba(${col}, ${a * (anyFocus && !c.isHover && !c.isNb ? 0.3 : 1)})`;
+        ctx.fillText(c.txt, tx, c.ny + 1);
+        if (c.sub) { // 허브엔 연결 수 한 줄
+          ctx.font = c.subFont; ctx.fillStyle = `rgba(${LABEL_ACCENT}, 0.8)`;
+          ctx.fillText(c.sub, tx, c.ny + 16);
         }
       }
     };
@@ -421,7 +455,7 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
         </div>
       )}
       {!compact && (
-        <div style={{ position: 'absolute', top: 10, right: 12, display: 'flex', gap: 6, alignItems: 'center' }}>
+        <div ref={barRef} style={{ position: 'absolute', top: BAR.top, right: BAR.right, display: 'flex', gap: 6, alignItems: 'center' }}>
           {localRoot && !focusRel && (
             <button className="chip" onClick={() => setLocalRoot(null)} style={{ cursor: 'pointer' }}>{t('graph.backToAll')}</button>
           )}
@@ -432,7 +466,7 @@ export function Graph2D({ docs, agents = [], onSelectDoc, focusRel = null, compa
         </div>
       )}
       {!compact && !emptySky && ( /* 빈 하늘엔 조작 힌트가 무의미 — 안내 문구만 남긴다 */
-        <span className="microlabel" style={{ position: 'absolute', left: 14, bottom: 10, opacity: 0.7 }}>{t('graph.hint2d')}</span>
+        <span ref={hintRef} className="microlabel" style={{ position: 'absolute', left: HINT.left, bottom: HINT.bottom, opacity: 0.7 }}>{t('graph.hint2d')}</span>
       )}
     </div>
   );

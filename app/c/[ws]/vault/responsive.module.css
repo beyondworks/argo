@@ -2,14 +2,17 @@
 :global(main.content):has(> .page) { padding: 0; max-width: none; }
 .workspace > .tree { width: min(var(--tree-width, 300px), 45%); }
 /* Keep the existing viewport stack consistent with the content-width stack. */
+/* 세로로 쌓이는 좁은 폭에서는 그래프 칸 높이가 정해지지 않는다(min-height뿐) — 그래프의 height:100%가 풀리지 않아 캔버스가
+   기본 비율(2:1)로 떨어졌고, 폰 390에서 195px만 썼다(10/9 실측). 그래프에만 높이를 준다(문서 탭은 내용 높이 그대로). */
 @media (max-width: 900px) {
   .workspace > .tree { width: 100%; }
   .workspace > :global(.vault-handle) { display: none; }
+  .documents { --vault-graph-h: 420px; }
 }
 @container vault (max-width: 44rem) {
   .workspace { flex-direction: column; min-height: 0; }
   .workspace > .tree { width: 100%; border-right: 0; border-bottom: 1px solid var(--border-soft); }
   .workspace > :global(.vault-handle) { display: none; }
-  .documents { flex-direction: column; }
+  .documents { flex-direction: column; --vault-graph-h: 420px; }
   .documents > .pane { min-height: 420px; }
 }
