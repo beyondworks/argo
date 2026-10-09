@@ -25,6 +25,8 @@ export function inView(m, view, pick = 'all') {
 export const byDate = (a, b) => Date.parse(b.at) - Date.parse(a.at);
 
 /** 보내는 중인 메일은 이 기기 값(읽음·메일함·별표)을 지킨다 — 서버가 아직 모르는 변경이 화면에서 되돌아가 보이지 않게 */
+/** 이 기기에서 휴지통으로 보냈고 전송도 끝난 메일 — 캐시에서 치운다(검색에 다시 나오지 않게, 검수 #899). 보내는 중이면 되돌리기를 위해 남긴다 */
+const trashed = (m, busy) => m.folder === 'trash' && !busy(m.id);
 const keepLocal = (m, old) => ({ ...m, unread: old.unread, folder: old.folder, starred: old.starred ?? m.starred });
 
 /** 목록 한 쪽을 받은 뒤 합치기.
@@ -39,7 +41,7 @@ export function mergeList(cache, fresh, { view = null, done = new Set(), busy = 
   for (const m of got) oldest[m.account] = Math.min(oldest[m.account] ?? Infinity, Date.parse(m.at));
   const stale = (m) => !append && view && done.has(m.account) && inView(m, view) && !busy(m.id)
     && (!hasMore[m.account] || Date.parse(m.at) >= (oldest[m.account] ?? -Infinity));
-  return [...cache.filter((m) => !ids.has(m.id) && !stale(m)), ...got.filter((m) => m.folder !== 'trash')];
+  return [...cache.filter((m) => !ids.has(m.id) && !stale(m) && !trashed(m, busy)), ...got.filter((m) => m.folder !== 'trash')];
 }
 
 /** 바뀐 것만 받기(계정 하나)의 결과 반영 — 바뀐 메일은 새 값(휴지통으로 간 것은 뺀다), 지워진 메일(gone: 오피스 id)은 뺀다 */
@@ -47,7 +49,7 @@ export function applySync(cache, changed = [], gone = new Set(), busy = () => fa
   const local = new Map(cache.map((m) => [m.id, m]));
   const next = changed.map((m) => { const old = local.get(m.id); return old ? (busy(m.id) ? keepLocal({ ...old, ...m }, old) : { ...old, ...m }) : m; });
   const ids = new Set(next.map((m) => m.id));
-  return [...cache.filter((m) => !ids.has(m.id) && !gone.has(m.id)), ...next.filter((m) => m.folder !== 'trash')];
+  return [...cache.filter((m) => !ids.has(m.id) && !gone.has(m.id) && !trashed(m, busy)), ...next.filter((m) => m.folder !== 'trash')];
 }
 /** 새로 온 안 읽은 받은편지함 메일(알림 대상) — 이 기기가 처음 보는 메일 중 30분 안에 온 것 */
 export function newArrivals(cache, changed = [], now = Date.now()) {

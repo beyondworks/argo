@@ -200,9 +200,18 @@ export function toggleStar(m) {
 /** 휴지통(10/9) — 화면에서 먼저 빼고 보낼 목록으로(Gmail trash, 30일 뒤 Gmail이 지운다 — 영구 삭제는 하지 않는다). 되돌리면 원래 메일함으로(untrash).
  *  보낼 목록에 계정·Gmail id를 같이 싣는다 — 휴지통 메일은 동기화가 목록에서 치우므로, 그 뒤 되돌려도 메일을 다시 넣고 보낼 수 있게 */
 export function trashMail(m) {
-  const op = (on) => (m.account ? [[`trash:${m.id}`, { type: 'mail.trash', id: m.id, account: m.account, gid: m.gid, on }]] : []);
-  update((s) => ({ mails: s.mails.map((x) => (x.id === m.id ? { ...x, folder: 'trash' } : x)) }), op(true));
-  return () => update((s) => ({ mails: s.mails.some((x) => x.id === m.id) ? s.mails.map((x) => (x.id === m.id ? { ...x, folder: m.folder } : x)) : [...s.mails, m] }), op(false));
+  const key = `trash:${m.id}`, op = (on) => [key, { type: 'mail.trash', id: m.id, account: m.account, gid: m.gid, on }];
+  // trashedFrom: 휴지통에 있는 동안 나가는 읽음·보관(mail.flag)이 휴지통 전 메일함으로 받은편지함 라벨을 정한다(검수 #899 — 보관 직후 #)
+  update((s) => ({ mails: s.mails.map((x) => (x.id === m.id ? { ...x, folder: 'trash', trashedFrom: x.folder } : x)) }), m.account ? [op(true)] : []);
+  return () => {
+    const { trashedFrom, ...back } = m;
+    update((s) => ({ mails: s.mails.some((x) => x.id === m.id) ? s.mails.map((x) => (x.id === m.id ? ({ ...x, folder: m.folder, trashedFrom: undefined }) : x)) : [...s.mails, back] }));
+    if (!m.account) return;
+    const waiting = outbox.has(key);
+    if (waiting) outbox.drop(key); // 아직 안 나갔으면 빼기만(보내는 중이면 남는다) — Gmail에 보낼 것이 없다
+    if (waiting && !outbox.has(key)) return;
+    update(() => ({}), [op(false), [`mail:${m.id}`, { type: 'mail.flag', id: m.id, patch: {} }]]); // untrash 뒤 원래 메일함도 다시(Gmail이 휴지통에서 받은편지함 라벨을 지워도 돌아오게)
+  };
 }
 
 /** 연결을 시작한 메일함 주소 — Google은 등록된 /me/mail/connect로만 돌려보내므로, 조직 공간 메일에서 시작했으면 끝나고 그리로 돌아간다(10/8 검수) */

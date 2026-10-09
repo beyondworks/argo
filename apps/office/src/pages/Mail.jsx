@@ -61,11 +61,11 @@ const subjectOf = (m) => (m?.subject?.trim() ? m.subject : t('mailx.noSubject'))
 const isDraft = (m) => m?.folder === 'drafts';
 /** 마우스·터치로 누른 체크박스는 초점을 놓는다 — 키 입력 뒤 :focus-visible이 켜져 고르지 않은 줄의 아바타가 사라지지 않게(재검수 #895). 키보드(스페이스, detail 0)는 그대로 */
 const unfocus = (e) => { if (e.nativeEvent.detail) e.currentTarget.blur(); };
-const touchy = () => matchMedia('(hover: none)').matches;
-/** 휴지통으로 한 통(읽기 화면 단추·# 키) — 되돌리기 알림, 목록으로 */
-const trashOne = (m) => { const undo = trashMail(m); showToast(t('mailx.trashed'), { undo }); navigate(mailHome()); };
+const touchy = () => matchMedia('(hover: none)').matches; // 터치 기기 — 고르는 중에는 줄을 눌러도 열지 않고 넣고 뺀다
+/** 휴지통으로 한 통(읽기 화면 단추·# 키·메뉴) — 되돌리기 알림. 열어 둔 메일을 지웠을 때만 목록으로(다른 줄을 메뉴로 지우면 그대로, 검수 #899) */
+const trashOne = (m) => { const undo = trashMail(m); showToast(t('mailx.trashed'), { undo }); if (decodeURIComponent(location.pathname).endsWith(`/mail/${m.id}`)) navigate(mailHome()); };
 /** 메일 화면의 메뉴(우클릭·…) — 공용 메일 메뉴(첫 화면·홈 모듈) + 휴지통(메일 화면에서만, 첫 화면 150KB 상한) */
-const menuOf = (m) => (isDraft(m) ? mailMenu(m) : [...mailMenu(m), { sep: true }, { label: t('mailx.trash'), icon: 'trash', shortcut: '#', danger: true, run: () => trashOne(m) }]); // 터치 기기 — 고르는 중에는 줄을 눌러도 열지 않고 넣고 뺀다
+const menuOf = (m) => (isDraft(m) ? mailMenu(m) : [...mailMenu(m), { sep: true }, { label: t('mailx.trash'), icon: 'trash', shortcut: '#', danger: true, run: () => trashOne(m) }]);
 const clock = (ms) => new Date(ms).toLocaleTimeString(getLang() === 'en' ? 'en-US' : 'ko-KR', { hour: 'numeric', minute: '2-digit' });
 
 /** 요청 제한 남은 초 — 쉬는 동안만 1초마다 다시 그린다 */

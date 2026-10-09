@@ -16,7 +16,7 @@ const run = (file, deps) => {
 };
 
 /** core/mail.js — update(fn, ops)의 ops를 모은다. pending = 보낼 목록에 있는 키 */
-function mailWith(state, { pending = new Set(), answer = () => [200, {}] } = {}) {
+function mailWith(state, { pending = new Set(), sending = new Set(), answer = () => [200, {}] } = {}) {
   const ops = [];
   globalThis.fetch = async (url, init) => {
     const op = /\/api\/mail\/(\w+)/.exec(url)[1], body = init?.body ? JSON.parse(init.body) : null;
@@ -25,7 +25,7 @@ function mailWith(state, { pending = new Set(), answer = () => [200, {}] } = {})
   };
   const sb = { auth: { getSession: async () => ({ data: { session: null } }) } };
   const M = run('mail.js', { getClient: async () => sb, getMode: () => 'signedIn', ME: { id: 'u' }, update: (fn, o = []) => { Object.assign(state, fn(state)); ops.push(...o); }, getState: () => state,
-    outbox: { has: (k) => pending.has(k) }, VIEWABLE: {}, isDesktop: () => false, apiUrl: (u) => `http://x${u}`, saveAttachment() {}, restore: (_k, d) => d, persist() {}, forget() {},
+    outbox: { has: (k) => pending.has(k), drop: (k) => { if (!sending.has(k)) pending.delete(k); return Promise.resolve(); } }, VIEWABLE: {}, isDesktop: () => false, apiUrl: (u) => `http://x${u}`, saveAttachment() {}, restore: (_k, d) => d, persist() {}, forget() {},
     scopedStorageKey: (k) => k, getStorageScope: () => 'u', mergeList: MM.mergeList, applySync: MM.applySync, newArrivals: MM.newArrivals, byDate: MM.byDate, replySubject: MM.replySubject, CAP: 1,
     t: (k) => k, registerDict() {}, MAIL_DICT: {} });
   return { M, ops };
@@ -40,9 +40,11 @@ test('휴지통: 화면에서 빼고 trash 하나, 되돌리기는 원래 메일
   assert.equal(state.mails[0].folder, 'trash');
   assert.equal(MM.inView(state.mails[0], 'archive', 'all'), false, '어느 메일함에도 안 보인다');
   assert.deepEqual(ops, [['trash:a1:g1', { type: 'mail.trash', id: 'a1:g1', account: 'a1', gid: 'g1', on: true }]]);
-  undo();
+  undo(); // 휴지통은 이미 나갔다(보낼 목록에 없음)
   assert.equal(state.mails[0].folder, 'archive', '보관함에서 지웠으면 보관함으로');
-  assert.deepEqual(ops[1], ['trash:a1:g1', { type: 'mail.trash', id: 'a1:g1', account: 'a1', gid: 'g1', on: false }]);
+  assert.equal(state.mails[0].trashedFrom, undefined);
+  assert.deepEqual(ops.slice(1), [['trash:a1:g1', { type: 'mail.trash', id: 'a1:g1', account: 'a1', gid: 'g1', on: false }], ['mail:a1:g1', { type: 'mail.flag', id: 'a1:g1', patch: {} }]],
+    'untrash 뒤 원래 메일함도 다시(Gmail이 휴지통에서 받은편지함 라벨을 지워도 돌아오게)');
 });
 
 // 이유: 휴지통으로 간 메일은 동기화가 목록에서 치운다 — 그 뒤 되돌리기를 눌러도 메일이 돌아와야 한다(되돌리기가 조용히 아무 일도 안 하면 메일을 잃은 것처럼 보인다).
@@ -95,4 +97,43 @@ test('일괄 휴지통 대상: 초안 빼고 전부', () => {
   assert.deepEqual(bulkTargets(list, 'inbox').trash.map((m) => m.id), ['a', 'b', 'c']);
   assert.deepEqual(bulkTargets(list, 'archive').trash.map((m) => m.id), ['a', 'b', 'c']);
   assert.deepEqual(bulkTargets([mail({ id: 'd', folder: 'drafts' })], 'drafts').trash, []);
+});
+
+// 이유(검수 #899 LOW): 아직 안 나간 휴지통을 되돌리면 빼기만 한다 — untrash·modify를 헛으로 보내지 않는다(일괄 N통이면 N회 서버 함수·DB 읽기·Gmail 호출).
+test('휴지통: 보내기 전 되돌리기 = 보낼 목록에서 빼기만', () => {
+  const state = { mails: [mail()], mailAccounts: [] }, pending = new Set();
+  const { M, ops } = mailWith(state, { pending });
+  const undo = M.trashMail(state.mails[0]);
+  pending.add('trash:a1:g1'); // 아직 대기 중
+  undo();
+  assert.equal(ops.length, 1, '휴지통 하나뿐 — 되돌리기는 아무것도 보내지 않는다');
+  assert.equal(pending.has('trash:a1:g1'), false, '보낼 목록에서 뺐다');
+  assert.equal(state.mails[0].folder, 'inbox');
+});
+test('휴지통: 보내는 중에 되돌리면 untrash를 보낸다(빼지 못했다)', () => {
+  const state = { mails: [mail()], mailAccounts: [] }, pending = new Set(['trash:a1:g1']);
+  const { M, ops } = mailWith(state, { pending, sending: new Set(['trash:a1:g1']) });
+  M.trashMail(state.mails[0])();
+  assert.deepEqual(ops.slice(1).map(([k, p]) => `${k}:${p.on ?? p.type}`), ['trash:a1:g1:false', 'mail:a1:g1:mail.flag']);
+});
+
+// 이유(검수 #899 MEDIUM): 전송이 끝난 휴지통 메일이 캐시에 남아 ⌘K 검색에 다시 나왔다 — 보낼 목록에 없는 휴지통 메일은 목록 합치기·바뀐 것 받기가 치운다.
+test('목록 합치기·바뀐 것 받기: 보내는 중이 아닌 휴지통 메일은 치운다', () => {
+  const cache = [mail({ id: 'x', folder: 'trash' }), mail({ id: 'y', folder: 'trash' }), mail({ id: 'z' })];
+  const busy = (id) => id === 'y';
+  assert.deepEqual(MM.mergeList(cache, [], { view: 'inbox', busy }).map((m) => m.id), ['y', 'z']);
+  assert.deepEqual(MM.applySync(cache, [], new Set(), busy).map((m) => m.id), ['y', 'z']);
+});
+
+// 이유(검수 #899 LOW): 보관(e) 직후 #로 휴지통에 넣으면, 보관 변경이 휴지통 상태에서 나가 받은편지함 라벨을 빼지 않았다 — 휴지통 전 메일함으로 보낸다.
+test('전송: 휴지통에 있는 동안 나간 읽음·보관은 휴지통 전 메일함 기준', async () => {
+  let send;
+  const calls = [];
+  globalThis.fetch = async (url, init) => { calls.push([url, JSON.parse(init.body)]); return { ok: true, status: 200, json: async () => ({ ok: true }) }; };
+  const state = { mails: [mail({ folder: 'trash', trashedFrom: 'archive' })] };
+  run('transport.js', { setTransport: (s) => { send = s; }, getState: () => state, update() {}, getMode: () => 'signedIn', SPACES: [], ME: { id: 'alice' }, getStorageScope: () => 'alice',
+    getClient: async () => ({ auth: { getSession: async () => ({ data: { session: { user: { id: 'alice' }, access_token: 'tok' } }, error: null }) } }),
+    classify: (e) => e, setUi() {}, getUi: () => ({}), showToast() {}, t: (k) => k, persist() {}, heldKey: (id) => id, scopedStorageKey: (k) => k, apiUrl: (u) => u, announce() {}, apStale() {}, openExternal() {}, FAMILY: {} });
+  await send({ payload: { type: 'mail.flag', ownerUid: 'alice', id: 'a1:g1', patch: { folder: 'archive' } } });
+  assert.deepEqual(calls, [['/api/mail/modify', { account: 'a1', id: 'g1', add: [], remove: ['UNREAD', 'INBOX'] }]]);
 });

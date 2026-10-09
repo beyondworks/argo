@@ -267,9 +267,10 @@ const OPS = {
 
   // 휴지통(10/9) — Gmail 휴지통으로 옮기기·되돌리기만(30일 뒤 Gmail이 지운다, 영구 삭제는 하지 않는다). 다시 보내도 결과가 같다.
   // 이미 없는 메일을 휴지통으로 = 성공, 되돌리기가 404면 실패(돌아오지 않았다)
-  async trash(jwt, { account, id, on = true }) {
+  async trash(jwt, { account, id, on }) {
+    if (typeof on !== 'boolean') throw fail(400, 'input');
     const token = await accessToken(jwt, account);
-    try { await gmail(token, `/messages/${encodeURIComponent(id)}/${on ? 'trash' : 'untrash'}`, { method: 'POST' }, { retry: true }); } catch (e) { if (!(on && e.status === 404)) throw e; }
+    try { await gmail(token, `/messages/${gid(id)}/${on ? 'trash' : 'untrash'}`, { method: 'POST' }, { retry: true }); } catch (e) { if (!(on && e.status === 404)) throw e; }
     return { ok: true };
   },
 

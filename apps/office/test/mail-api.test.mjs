@@ -219,4 +219,9 @@ test('휴지통: on이면 messages/{id}/trash, 아니면 untrash — 영구 삭�
   assert.equal((await post('trash', { account: 'acc', id: 'gone', on: true })).status, 200, '이미 없으면 성공');
   assert.notEqual((await post('trash', { account: 'acc', id: 'gone', on: false })).status, 200, '되돌리기 404는 실패');
   assert.equal((await post('trash', { account: 'acc', id: 'x/../y', on: true }, null)).status, 401, '로그인 없이는 못 부른다');
+  calls = [];
+  for (const bad of [{ id: '..', on: true }, { on: true }, { id: 'x/../y', on: true }, { id: 'm1', on: 'false' }, { id: 'm1', on: null }]) {
+    assert.equal((await post('trash', { account: 'acc', ...bad })).status, 400, `입력 검증(검수 #899): ${JSON.stringify(bad)}`);
+  }
+  assert.deepEqual(calls, [], '잘못된 입력은 Gmail을 부르지 않는다');
 });
