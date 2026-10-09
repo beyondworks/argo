@@ -355,6 +355,27 @@ test('⑩ 고정 모델도 원격 카탈로그 alias를 따른다(모델 폐기 
   }
 });
 
+// ⑬ GPT-5.5 종료(Codex 서버 목록 upgrade.retirement_at 2026-10-14T19:00Z) — 목록에서 뺀 뒤에도 이미 gpt-5.5를 고른 에이전트는 실패하지 않고
+// GPT-5.6 Sol로 돈다(원격 카탈로그 없이도 — catalog.mjs RETIRED_MODEL_ALIASES). 대체표가 없으면 목록 밖 모델이라 ⑦ codex-unknown처럼
+// 고정 모델(gpt-6-astra)로 강등되고 '모델 대체' 안내가 붙는다. 6.1 Sol로 보내지 않는 이유: 핀 0.157.1 옛 앱에서 400(catalog.mjs 주석).
+test('⑬ 실제 chat() — 옛 설정 gpt-5.5 에이전트는 -m gpt-5.6-sol로 실행, 강도는 카드 값 그대로, 모델 대체 안내 없음', { skip: process.platform === 'win32' }, async () => {
+  const { createCompany, paths } = await import('../src/workspace.mjs');
+  const { chat } = await import('../src/chat.mjs');
+  const ws = 'gpt55retire';
+  await createCompany(ws, 'GPT-5.5 종료', 'captain', null, 'ko');
+  await mkdir(paths(ws).agents, { recursive: true });
+  await writeFile(join(paths(ws).agents, 'old55.md'), '---\nname: 바\nrole: 일\nrunner: codex\nmodel: gpt-5.5\neffort: high\n---\n일한다.\n');
+  await saveRunnerCred(ws, 'codex', 'apikey', 'sk-test-fake');
+  await withManaged({ pin: CODEX_PIN }, async () => {
+    const r = await chat(ws, 'old55', '안녕', null, {});
+    assert.equal(r.reply, 'OK');
+    const argv = await lastArgv();
+    assert.equal(modelArg(argv), 'gpt-5.6-sol', '대체 모델로 실행');
+    assert.equal(effortArg(argv), 'model_reasoning_effort=high', '강도는 카드 값 그대로');
+    assert.equal(r.modelFallback, undefined, '대체표로 옮긴 모델은 목록 안 모델이라 강등 안내가 없다');
+  });
+});
+
 // ⑫ 검수(재검수 LOW) — 예전엔 내려받은 타르볼을 부팅·크기로만 봐서 손상·변조본도 부팅만 하면 채택됐다. 풀기 전에 핀 표의 sha256과 대조한다.
 // 윈도우에서도 돈다(가짜 실행 파일 없이 조달 함수만 부른다 — 해시 대조는 tar 전에 끝난다).
 test('⑫ 내려받은 자산의 해시가 표와 다르면 채택하지 않는다 — 이 핀 관리본이 생기지 않고 원인이 드러난다', async () => {

@@ -15,7 +15,7 @@
 import { readFile, mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { RUNNERS, OPENROUTER_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL } from './catalog.mjs';
+import { RUNNERS, OPENROUTER_DEFAULT_MODEL, OPENROUTER_ONBOARD_MODEL, RETIRED_MODEL_ALIASES } from './catalog.mjs';
 import { writeJsonAtomic } from '../jsonstore.mjs';
 import { DEFAULT_CONTEXT_TOKENS } from '../engine/compact.mjs';
 
@@ -67,11 +67,13 @@ export function contextWindowFor(runnerId, modelId, overlay = mem.overlay) {
   const n = Number(effectiveModels(runnerId, overlay).find((m) => m.id === modelId)?.ctx);
   return Number.isFinite(n) && n >= 8000 ? n : DEFAULT_CONTEXT_TOKENS;
 }
-/** 옛 id → 현행 id(순수). 매핑이 없으면 그대로. 체인은 1단만(a→b→c는 명시적으로 a→c로 쓰게 — 순환 방지). */
+/** 옛 id → 현행 id(순수). 원격 alias가 먼저, 없으면 코드 대체표(RETIRED_MODEL_ALIASES — 원격 없이도 폐기 모델을 옮긴다), 둘 다 없으면 그대로.
+    체인은 1단만(a→b→c는 명시적으로 a→c로 쓰게 — 순환 방지). 표 조회는 자기 속성만('toString' 같은 id가 객체 기본 속성을 받지 않게). */
+const ownGet = (o, k) => (o && typeof o === 'object' && Object.hasOwn(o, k) ? o[k] : undefined);
 export function normalizeModelId(runnerId, id, overlay = mem.overlay) {
   const s = typeof id === 'string' ? id.trim() : '';
   if (!s) return s;
-  return overlay?.runners?.[runnerId]?.alias?.[s] ?? s;
+  return ownGet(ownGet(overlay?.runners, runnerId)?.alias, s) ?? ownGet(ownGet(RETIRED_MODEL_ALIASES, runnerId), s) ?? s;
 }
 /** 카탈로그 밖 OpenRouter 모델의 강등 목적지 — chat(크루 턴)·oneshot(첫 영입·기억 정리)이 같은 관문을 쓴다(2차 검수 MEDIUM-2).
     무료(:free) id는 무료(온보딩 기본)로, 유료는 유료 기본으로 — 무료↔유료 티어 선을 코드가 넘지 않게(1차 검수 H-1: 죽은 무료 모델의
