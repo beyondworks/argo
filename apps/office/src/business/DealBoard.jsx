@@ -9,6 +9,7 @@ import { Modal, showToast } from '../ui/Overlay.jsx';
 import { Icon } from '../ui/Icon.jsx';
 import { menuProps } from '../ui/Menu.jsx';
 import { setUi } from '../core/ui-state.js';
+import { badgeTone } from '../ui/badge-tone.js';
 import { dealText } from '../core/crew-items.js';
 import { Redact, Hide } from './Redact.jsx';
 import { OwnerField } from './Owners.jsx';
@@ -221,7 +222,7 @@ export function DealDetail({ order, data, blocked, run, space, launch, refresh, 
       <button type="button" className="btn sm" onClick={() => navigate(`${baseOf(space)}/contracts?new=quote&order=${order.id}`)}><Icon name="doc" size={12} /> {label('makeQuote')}</button>
       <button type="button" className="btn sm" onClick={() => navigate(`${baseOf(space)}/contracts?new=contract&order=${order.id}`)}><Icon name="sign" size={12} /> {label('makeContract')}</button>
     </div>}
-    {lines.map((line) => <article className="bizui-line" key={line.id}><div className="bizui-line-head"><strong>{line.name}</strong><span className="badge">{label(`tax.${line.tax_type}`)}</span></div>
+    {lines.map((line) => <article className="bizui-line" key={line.id}><div className="bizui-line-head"><strong>{line.name}</strong><span className={`badge ${badgeTone(line.tax_type)}`}>{label(`tax.${line.tax_type}`)}</span></div>
       <p className="mono">{line.quantity} × <Redact {...orderRedact(order, 'amount', run, blocked)}>{money(line.unit_price)}</Redact> + {label('vat')} <Redact {...orderRedact(order, 'amount', run, blocked)}>{money(line.vat)}</Redact></p>
       {line.kind === 'product' && <p>{label('fulfilled')} <span className="mono">{line.fulfilled}</span> · {label('returned')} <span className="mono">{line.returned}</span></p>}
       {order.status === 'confirmed' && <div className="bizui-actions"><button className="btn sm" disabled={blocked || line.fulfilled >= line.quantity} onClick={() => launch('fulfill', { id: line.id, quantity: line.quantity - line.fulfilled, max: line.quantity - line.fulfilled, kind: line.kind })}>{label(line.kind === 'service' ? 'deliver' : 'ship')}</button>{line.kind === 'product' && <button className="btn sm" disabled={blocked || line.fulfilled <= line.returned} onClick={() => launch('return', { id: line.id, quantity: 1, max: line.fulfilled - line.returned })}>{label('return')}</button>}</div>}
@@ -230,7 +231,7 @@ export function DealDetail({ order, data, blocked, run, space, launch, refresh, 
     {links.length ? <ul className="deal-log">{links.map((l) => <li key={l.id}>
       {l.kind === 'page' ? <button className="bizui-link" onClick={() => navigate(`${baseOf(space)}/p/${l.ref}`)}><Icon name="doc" size={12} /> {pages.find((p) => p.id === l.ref)?.title || l.title || label('untitled')}</button>
         : l.kind === 'file' && l.ref.startsWith('office-doc:') ? <button className="bizui-link" onClick={() => navigate(`${baseOf(space)}/contracts?open=doc:${l.ref.slice(11)}`)}><Icon name="file" size={12} /> {l.title || label('untitled')}</button>
-        : <span className="badge">{label(`link.${l.kind}`)}</span>}
+        : <span className={`badge ${badgeTone(l.kind)}`}>{label(`link.${l.kind}`)}</span>}
       <span className="when">{day(l.created_at)}</span>
       <button type="button" className="btn sm ghost push" disabled={blocked} onClick={() => run('link.remove', { id: l.id }).catch(() => {})}>{label('remove')}</button>
       {l.kind === 'note' && <p><Redact kind="memo">{l.body}</Redact></p>}

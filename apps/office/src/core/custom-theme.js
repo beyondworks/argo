@@ -46,7 +46,8 @@ export function buildVars(c, m, base) {
   const side = hex(m.side) ?? base.side, accent = hex(m.accent), badge = hex(m.badge);
   // 투명도 — 카드·사이드바가 바탕을 a만큼 비친다. 글자 대비는 비친 뒤의 색으로 잰다
   const cardSeen = mix(card, bg, 1 - a), sideSeen = mix(side, bg, 1 - a);
-  const surface = hex(m.card) || hex(m.bg) ? mix(cardSeen, bg, 0.85) : base.surface; // base.css --surface(카드 85%)
+  // base.css --surface(카드 85%, 린넨 라이트는 72%) — 지금 셸·색상의 비율(probe가 읽는다)로 섞는다
+  const surface = hex(m.card) || hex(m.bg) ? mix(cardSeen, bg, base.surfaceMix ?? 0.85) : base.surface;
   if (hex(m.bg)) {
     v['--bg'] = toHex(bg);
     v['--frame'] = toHex(mix(bg, inkFor([bg]), 0.9));
@@ -104,9 +105,12 @@ function probe(theme) {
   const d = document.createElement('div'); d.style.cssText = 'position:absolute;visibility:hidden'; document.body.append(d);
   const read = (tok, prop = 'backgroundColor') => { d.style.background = ''; d.style.color = ''; d.style[prop === 'color' ? 'color' : 'background'] = `var(${tok})`; return parse(getComputedStyle(d)[prop]); };
   const out = { bg: read('--bg'), card: read('--card'), side: read('--side-bg'), surface: read('--float'), /* --surface는 반투명 — 캔버스 위에 보이는 색은 불투명한 --float에 가깝다(다크는 --float가 조금 더 밝다) */ fg: read('--fg', 'color'), sideFg: read('--side-fg', 'color') };
+  d.style.background = 'var(--surface)'; out.surfaceMix = alpha(getComputedStyle(d).backgroundColor); // 카드색을 몇 % 섞은 표면인지(기본 85%, 린넨 라이트 72%)
   d.remove(); el.dataset.theme = keep.th; el.classList.toggle('dark-emul', keep.emul);
   return out;
 }
+/** 계산된 색의 알파(rgba(…, a) · color(srgb … / a)) — 없으면 불투명 */
+const alpha = (s) => { const n = s.match(/[\d.]+/g) || []; return n.length > 3 ? +n[3] : 1; };
 function parse(s) {
   const n = (s.match(/[\d.]+/g) || []).map(Number);
   if (s.startsWith('color(')) return n.slice(0, 3).map((x) => x * 255);

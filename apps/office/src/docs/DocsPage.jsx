@@ -26,6 +26,7 @@ import { useSelection, selProps } from '../core/selection.js';
 import { Hide, Redact } from '../business/Redact.jsx';
 import { setUi } from '../core/ui-state.js';
 import { quoteText } from '../core/crew-items.js';
+import { badgeTone } from '../ui/badge-tone.js';
 
 const DocZoom = lazy(() => import('./DocZoom.jsx'));
 const when = (v) => (v ? new Date(v).toLocaleString(getLang() === 'en' ? 'en-US' : 'ko-KR', { dateStyle: 'medium', timeStyle: 'short' }) : '—');
@@ -254,7 +255,7 @@ export default function DocsPage({ space, params }) {
     {data && tab === 'docs' && (data.docs.length ? <div className="table-wrap" data-sel-scope="docs"><table className="table docs-table">
       <thead><tr><th>{t('docs.col.kind')}</th><th>{t('docs.col.title')}</th><th className="hide-sm">{t('docs.col.customer')}</th><th className="hide-sm">{t('docs.col.deal')}</th><th className="num">{t('docs.col.total')}</th><th className="hide-sm">{t('docs.col.created')}</th><th className="act" /></tr></thead>
       <tbody>{data.docs.map((d) => <tr key={d.id} className="row-open" {...selProps(docSel, d.id)} onClick={(e) => { if (!e.target.closest('button')) go({ open: `doc:${d.id}` }); }}>
-        <td><span className="badge">{t(`docs.kind.${d.kind}`)}</span></td>
+        <td><span className={`badge ${badgeTone(d.kind)}`}>{t(`docs.kind.${d.kind}`)}</span></td>
         <td className="docs-title-cell">{d.title}</td>
         <td className="hide-sm">{d.customer_name ? <Hide k={`doc:${d.id}:customer`} kind="name">{d.customer_name}</Hide> : '—'}</td>
         <td className="hide-sm">{d.order_id ? <button type="button" className="bizui-link" onClick={() => navigate(`${baseOf(space)}/business/orders?open=${d.order_id}`)}>{orderTitle(d.order_id) ?? t('docs.deal')}</button> : <span className="dim">—</span>}</td>
