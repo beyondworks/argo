@@ -66,6 +66,9 @@ export function isLocalAddr(addr, ifaces = networkInterfaces()) {
   return Object.values(ifaces).flat().some((i) => i && normAddr(i.address) === a);
 }
 
+// 파서 차이(parser-differential) 방어: 어느 프로세스인지의 **권위는 커널이 준 연결 4요소**(req.socket의 remote/local 주소·포트)다.
+// 아래 파서들은 그 4요소와 **정확히** 일치하는 소켓 줄만 pid로 매핑한다 — 출력이 로캘·공백·IPv6 표기·여러 줄·잘림으로 흔들려도
+// 일치가 안 되면 pid를 주지 않고(=0/null), 그러면 변경 라우트는 fail-closed로 거절한다. ephemeral 로컬 포트가 연결마다 달라 4요소는 유일하다.
 /** lsof -F 출력 → 이 소켓 쌍(상대 쪽 local = 요청자, remote = 서버)을 가진 pid(순수). 없으면 0. */
 export function lsofOwner(out, peer) {
   let pid = 0;
@@ -255,7 +258,9 @@ const MSG = {
   },
 };
 
-const verdicts = new WeakMap(); // socket → { read?: Promise, write?: Promise } — 연결의 상대 프로세스는 연결이 끝날 때까지 바뀌지 않는다
+// 판정 캐시는 **소켓 객체**(열려 있는 TCP 연결)에 묶는다. 한 연결이 사는 동안 상대 프로세스는 바뀌지 않으므로 keep-alive 재요청은 안전하게 재사용하고,
+// 연결이 닫히면 WeakMap 항목이 GC된다. 새 연결 = 새 소켓 객체 = 새 판정이라 PID 재사용(옛 pid를 다른 프로세스가 물려받음)에도 옛 판정을 쓰지 않는다.
+const verdicts = new WeakMap(); // socket → { read?: Promise, write?: Promise }
 const warned = new WeakSet();
 
 const deny = (req, res, code, detail) => {

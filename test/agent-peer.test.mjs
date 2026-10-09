@@ -47,6 +47,28 @@ test('소켓 소유자 대조(순수) — lsof·/proc·netstat 모두 요청자 
   assert.equal(netstatOwner(ns, { ...peer, addr: '::1', serverAddr: '::1' }), 5151);
 });
 
+test('파서 차이 공격(parser-differential) — 권위는 커널 4요소(req.socket)다, 출력은 그 튜플만 pid로 매핑', () => {
+  const peer = { addr: '127.0.0.1', port: 52344, serverAddr: '127.0.0.1', serverPort: 3001 };
+  // 같은 로컬 포트에 소켓 두 개(다른 원격) — 4요소로 갈라 정확히 하나
+  assert.equal(lsofOwner('p10\nn127.0.0.1:52344->127.0.0.1:9999\np11\nn127.0.0.1:52344->127.0.0.1:3001\n', peer), 11);
+  // 잘린 마지막 줄 — 매칭 실패(=0), 엉뚱한 pid를 주지 않는다
+  assert.equal(lsofOwner('p12\nn127.0.0.1:52344->127.0.0', peer), 0);
+  // UDP·listen 등 다른 줄이 섞여도 연결 줄만 본다
+  assert.equal(lsofOwner('p13\nn*:68\np14\nf3\nn127.0.0.1:52344->127.0.0.1:3001\n', peer), 14);
+  // IPv6 양쪽 대괄호·IPv4 매핑 한쪽 표기 — 정규화해 매칭
+  assert.equal(lsofOwner('p20\nn[::1]:52344->[::1]:3001\n', { ...peer, addr: '::1', serverAddr: '::1' }), 20);
+  assert.equal(lsofOwner('p21\nn[::ffff:127.0.0.1]:52344->[::ffff:127.0.0.1]:3001\n', peer), 21);
+  // 포트만 같고 다른 인터페이스 주소 — 속지 않는다(4요소 중 주소 불일치)
+  assert.equal(lsofOwner('p22\nn10.0.0.5:52344->10.0.0.5:3001\n', peer), 0);
+  // netstat: 상태 낱말이 로캘마다 달라도 위치로 걸러 마지막 칸을 pid로
+  assert.equal(netstatOwner('  TCP    127.0.0.1:52344   127.0.0.1:3001   LISTENING-??   77\n', peer), 77);
+  // /proc: 같은 포트 두 소켓, 요청자 쪽(remote=서버)만
+  const head = '  sl  local_address rem_address   st ... inode\n';
+  const table = `${head}   1: 0100007F:CC78 0100007F:270F 01 x x x 1000 0 55555 1 0 20 4 30 10 -1\n`
+    + `   2: 0100007F:CC78 0100007F:0BB9 01 x x x 1000 0 66666 1 0 20 4 30 10 -1\n`;
+  assert.deepEqual(procSocket(table, peer), { inode: '66666', uid: 1000 });
+});
+
 test('이 컴퓨터 주소 판정 — 루프백·자기 카드 주소는 판정 대상, 남의 주소는 아니다', () => {
   const ifaces = { en0: [{ address: '192.168.0.7', internal: false }, { address: 'fe80::abcd%en0', internal: false }] };
   for (const a of ['127.0.0.1', '::1', '::ffff:127.0.0.1', '192.168.0.7', '::ffff:192.168.0.7', 'fe80::abcd']) assert.equal(isLocalAddr(a, ifaces), true, a);
@@ -224,6 +246,19 @@ test('자손도 /api/ping(신원 마커)은 통과', async () => {
   const { out } = await childFetch('/api/ping', 'GET');
   assert.match(out, /^200 /, out);
   assert.equal(reached.length, 1);
+});
+
+test('PID 재사용·keep-alive 안전 — 판정은 연결(소켓)당 한 번, 같은 소켓의 다음 요청은 캐시, 새 소켓은 다시 판정', async () => {
+  let calls = 0; const classify = async () => { calls += 1; return { agent: false, reason: 'human', pid: 7 }; };
+  const sock = { remoteAddress: '127.0.0.1', remotePort: 55999, localAddress: '127.0.0.1', localPort: 3001 };
+  const mkReq = (method) => ({ method, url: '/api/companies/w/approvals', headers: {}, socket: sock, resume() {} });
+  await denyAgentPeer(mkReq('POST'), fakeRes(), { classify });
+  await denyAgentPeer(mkReq('PUT'), fakeRes(), { classify });
+  assert.equal(calls, 1, '같은 소켓(열려 있는 TCP 연결 = 같은 상대 프로세스) — 변경 판정은 한 번만, keep-alive 재사용');
+  await denyAgentPeer(mkReq('POST'), fakeRes(), { socket: { ...sock, remotePort: 56000 }, classify }); // 흉내용(실제로는 새 소켓 객체가 새 판정)
+  const other = { remoteAddress: '127.0.0.1', remotePort: 56001, localAddress: '127.0.0.1', localPort: 3001 };
+  await denyAgentPeer({ method: 'POST', url: '/api/x', headers: {}, socket: other, resume() {} }, fakeRes(), { classify });
+  assert.equal(calls, 2, '새 소켓 객체(새 연결) — PID가 재사용됐어도 다시 판정한다(캐시는 소켓 객체 수명에 묶임)');
 });
 
 test('에이전트가 아닌 상대(여기서는 서버 프로세스 자신)는 변경도 통과, 본문도 온전히 전달 — 자손이 살아 있는 동안에도', async () => {
