@@ -6,14 +6,14 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { execFile, spawn } from 'node:child_process';
+import { execFile, spawn, ChildProcess } from 'node:child_process';
 import { networkInterfaces, tmpdir } from 'node:os';
 import { readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   descendantsOf, normAddr, isLocalAddr, lsofOwner, procAddr, procSocket, netstatOwner, judgePeer, isInstalledAppExe, peerCheckExempt,
-  denyAgentPeer, installAgentPeerGuard, AGENT_MARK, PEER_GUARD_EXEMPT,
+  denyAgentPeer, installAgentPeerGuard, AGENT_MARK, PEER_GUARD_EXEMPT, liveChildCount,
 } from '../src/agent-peer.mjs';
 const MOD = fileURLToPath(new URL('../src/agent-peer.mjs', import.meta.url));
 
@@ -345,4 +345,28 @@ test('제외 표시(PEER_GUARD_EXEMPT)된 중계 서버는 자손 자식의 POST
   const out = await new Promise((resolve) => execFile(process.execPath, ['-e', `fetch('http://127.0.0.1:${rp}/',{method:'POST',body:'x'}).then(async r=>console.log(r.status, await r.text()))`], { timeout: 15000 }, (e, o) => resolve(String(o))));
   assert.match(out, /^200 /, `중계 서버가 자손 요청을 막았다(HIGH-1 회귀): ${out}`);
   assert.deepEqual(got, ['POST']);
+});
+
+// #918 후속 — 5초 keepAlive 뒤 새 연결마다 ps 한 번(이 맥 중앙값 50ms)이 첫 화면 병렬 요청마다 붙었다. 유휴 상주는 자손이 0개다(관찰 2026-10-10).
+// 자손은 살아 있는 자식 밑에만 있으므로 자식이 0이면 조회를 건너뛴다. 시간 캐시는 쓰지 않는다(표를 찍은 뒤 뜬 curl을 놓친다).
+test('읽기 비용 — 살아 있는 자식이 없으면 읽기는 프로세스 조회 없이 통과, 자식이 하나라도 있으면 다시 조회한다', { skip: onWin, timeout: 30_000 }, async () => {
+  for (let i = 0; i < 200 && liveChildCount() !== 0; i++) await new Promise((r) => setTimeout(r, 50));
+  assert.equal(liveChildCount(), 0, '앞 시험의 자식이 다 끝났다');
+  let spawned = 0; const orig = ChildProcess.prototype.spawn;
+  ChildProcess.prototype.spawn = function countSpawn(...a) { spawned += 1; return orig.apply(this, a); };
+  try {
+    assert.equal(await denyAgentPeer(fakeReq('GET'), fakeRes(), { platform: 'darwin' }), false);
+    assert.equal(spawned, 0, '유휴 — ps를 띄우지 않았다');
+    const alive = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 20000)']);
+    const exited = new Promise((r) => alive.once('exit', r));
+    try {
+      assert.equal(liveChildCount(), 1, '살아 있는 자식을 센다');
+      spawned = 0;
+      assert.equal(await denyAgentPeer(fakeReq('GET'), fakeRes(), { platform: 'darwin' }), false, '가짜 4요소라 주인은 자손이 아니다');
+      assert.ok(spawned >= 1, '자식이 있으면 자손 조회(ps)를 다시 한다');
+      assert.equal(liveChildCount(), 1, '판정의 ps·lsof는 끝나면 자식 수에서 빠진다');
+    } finally { alive.kill(); }
+    await exited;
+    assert.equal(liveChildCount(), 0, '끝난 자식은 뺀다');
+  } finally { ChildProcess.prototype.spawn = orig; }
 });
