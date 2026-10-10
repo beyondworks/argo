@@ -32,8 +32,9 @@ import { stripLoopVerdict } from '../loop-verdict.mjs'; // 루프 회차 채널 
 import { beatGateway } from './persist.mjs';
 import { chat, turnRunnerAvailable } from '../chat.mjs';
 import { shouldYieldAcquire, YIELD_GRACE_MS } from '../sync.mjs'; // 러너 없는 프로세스의 양보 기한 — 클라우드 리스의 '러너 없는 기기는 양보'와 같은 기준
-import { mirrorRoutines, applyRoutineEdits } from './msgr-routines.mjs'; // 업무 > 자동화 1단계 — Argo 루틴 ↔ msgr_crew_routines 양방향 미러
+import { mirrorRoutines, applyRoutineEdits, buildRoutineRows } from './msgr-routines.mjs'; // 업무 > 자동화 1단계 — Argo 루틴 ↔ msgr_crew_routines 양방향 미러
 import { loadThread, appendTurn, scopedSession, soloMsgIds } from '../thread.mjs';
+import { loadRoutines } from '../routines.mjs';
 import { isOrgCopy } from '../vaultdoc.mjs'; // 조직 태그 일지(볼트 밖으로 옮겨진다)는 화면의 '기억에 기록됨' 칩을 달지 않는다
 import { relocateOrgJournals, purgeDepartedJournals } from '../memory.mjs';
 import { isDeterministicDbError } from '../pg-error-class.mjs'; // 일시 오류만 좁게 나열 — 합친 뒤 queue.mjs 분류와 하나로(src/pg-error-class.mjs 머리말)
@@ -61,7 +62,13 @@ import { selfTag, selfReplyNote, recordSelfPost } from '../self-posts.mjs'; // �
 
 export const MSGR_KEY = 'msgr';
 export const HEARTBEAT_WRITE_MS = 30_000; // 심박 쓰기 최소 간격 — 행 나이 최대 45초 + 앱 재조회 30초 < 판정 90초(검수 #689 M3: 60초면 온라인 크루가 주기적으로 부재중)
-export const POLL_MS = 15_000;          // 폴 주기 = 하트비트 주기(같은 tick). 앱은 last_seen_at 90s 초과를 부재중으로 그린다
+export const POLL_MS = 15_000;          // 브리지 틱 주기. Realtime 구독이 끊겼거나 안 붙었으면 이 주기로 전체 조회(종전). 앱은 last_seen_at 90s 초과를 부재중으로 그린다
+/** Realtime 구독(조직 토픽 전부 + u:<uid>)이 모두 붙어 있는 동안의 예비 조회 간격(유건 2026-10-10 "메신저에 연결하면 무조건 DB를 쓰게 되어 있니?").
+    새 글·결재·크루 요청은 방송으로 바로 깨어나므로 15초 조회는 놓친 방송을 위한 예비였다 — 쉬는 동안 받은 글·미러·자동화 조회를 이 간격으로만 한다. */
+export const IDLE_POLL_MS = 120_000;
+/** 쉬는 동안 접속 심박 요청 간격 — 마지막 심박 요청 뒤 이만큼 지난 첫 15초 틱에 보낸다(간격 40~55초). 서버 기록 기한(msgr_device_beat 35초)보다 늘 길어
+    요청마다 기록되고, 최대 간격은 종전 15초 틱 실측(54.6초, 20261010120000 머리말)과 같다 — 옛 메신저의 행 나이 + 재조회 30초 < 부재중 90초. */
+export const BEAT_EVERY_MS = 40_000;
 export const STALE_MS = 24 * 3_600_000; // 이보다 오래 대기한 지시는 실행 대신 정직 폐기(queue.mjs LEGACY_JOB_MAX_AGE_MS 관례)
 export const AWAY_NOTE_MS = 90_000;     // 이보다 늦게 처리한 답글엔 "(부재중 대기분 · N분 전 지시)" 접두
 export const PAGE = 50;                 // 크루당 1회 drain 최대 메시지 — 비용 폭주 방지(나머지는 다음 tick)
@@ -1119,7 +1126,18 @@ async function periodicRecall(wsId, { db, uid, inventory }) {
   } catch (e) { console.error('[argo] msgr 에이전트 기억 회수 실패:', e?.message ?? e); }
 }
 
-export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, now = Date.now, nodeOrgId = null, ownerId = null, runnerInfo = nodeRunnerInfo, inventory = listAgentsForInventory, commandsFor = listCommandsForWs, housekeeping = true, runnerReady = null, deviceId = null } = {}) {
+/** 접속 심박 한 번(종전 drain 관리 틱의 심박 그대로) — 기기 심박 함수가 업무 기능 표시까지 했으면 workHeartbeat를 따로 보내지 않는다(옛 서버·기기 id 없음이면 보낸다).
+    workIds null = 업무 기능 표시 없음(조직 행이 없는 계정). 돌려주는 값: 심박 요청이 성공했나 — 호출부가 실패면 마지막 성공 시각을 옮기지 않는다. */
+async function beatCrews(db, { ids, workIds, beat }) {
+  let ok = true;
+  const beaten = await db.heartbeat(ids, beat).catch((e) => { console.error('[argo] msgr 하트비트 실패:', e.message); ok = false; return null; });
+  if (workIds && !beaten?.device) await db.workHeartbeat?.(workIds).catch((e) => console.warn('[argo] msgr work capability:', e.message)); // 업무 기능은 조직 전용 — 개인 행은 보내지 않는다(분리 검수 M3)
+  return ok;
+}
+
+export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, now = Date.now, nodeOrgId = null, ownerId = null, runnerInfo = nodeRunnerInfo, inventory = listAgentsForInventory, commandsFor = listCommandsForWs, housekeeping = true, runnerReady = null, deviceId = null, beatDue = true, report = {} } = {}) {
+  // report — 브리지가 다음 틱을 정하는 데 쓰는 기록(돌려주는 값의 모양은 그대로 둔다): beat(심박 대상)·beatAt(성공한 심박 요청 시각)·held(보류 — 다음 틱에 다시)
+  // beatDue — 관리 틱이라도 심박 기한 전이면 심박 요청을 보내지 않는다(브리지가 쉬는 주기에서 넘긴다 — 서버 기록 기한 35초보다 짧은 간격의 요청은 기록되지 않고 다음 기록만 늦춘다). 대상(report.beat)은 그대로 남긴다
   // deviceId — 이 기기의 id(workspace.mjs getDeviceId). 있으면 기기 단위 심박(아래 beat), 없으면(테스트·옛 호출) 종전 행 심박.
   // runnerReady(wsId, slug) — 이 프로세스가 그 크루의 턴을 돌릴 수 있나(운영은 startMsgrBridge가 chat()과 같은 판정 turnRunnerAvailable을 넘긴다). 없으면 보류 없음(종전).
   // housekeeping=false = 새 메시지 방송이 깨운 tick(2026-09-23 '입력 중' 5~10초 지연 실측): 미러·하트비트·조직 문서는 15초 주기 tick에만 돈다 — 깨우기는 턴 적재만
@@ -1155,10 +1173,12 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
   const idleBeat = orgCrewRows.length ? [] : allCrews.filter((c) => c.org_id == null && !inRooms.has(c.id));
   // 기기 단위 심박(유건 2026-10-10): 기기 id가 있으면 서버 함수 한 번이 기기 행·옛 읽기 호환 행·업무 기능 표시를 함께 쓴다(makeDb.heartbeat)
   const beat = deviceId ? { wsId, deviceId } : null;
-  if (!crews.length) { if (housekeeping && idleBeat.length) await db.heartbeat(idleBeat.filter(beatable).map((c) => c.id), beat).catch((e) => console.error('[argo] msgr 하트비트 실패:', e.message)); if (housekeeping) await periodicRecall(wsId, { db, uid, inventory }); return out; } // 회수는 활성 크루가 0이어도 — 모두 파견 해제된 뒤가 바로 회수할 때다
+  // 심박 대상은 report.beat로 남긴다 — 브리지가 쉬는 동안(예비 조회 사이) 같은 대상으로 심박만 따로 보낸다(startMsgrBridge). beatAt = 성공한 요청을 보낸 시각
+  if (!crews.length) { if (housekeeping && idleBeat.length) { report.beat = { ids: idleBeat.filter(beatable).map((c) => c.id), workIds: null, beat }; const at = now(); if (beatDue && await beatCrews(db, report.beat)) report.beatAt = at; } if (housekeeping) await periodicRecall(wsId, { db, uid, inventory }); return out; } // 회수는 활성 크루가 0이어도 — 모두 파견 해제된 뒤가 바로 회수할 때다
   if (housekeeping) {
-    const beaten = await db.heartbeat([...crews, ...idleBeat].filter(beatable).map((c) => c.id), beat).catch((e) => { console.error('[argo] msgr 하트비트 실패:', e.message); return null; });
-    if (!beaten?.device) await db.workHeartbeat?.(orgCrewRows.filter(beatable).map((c) => c.id)).catch((e) => console.warn('[argo] msgr work capability:', e.message)); // 업무 기능은 조직 전용 — 개인 행은 보내지 않는다(분리 검수 M3). 기기 심박 함수가 같은 일을 했으면 보내지 않는다
+    report.beat = { ids: [...crews, ...idleBeat].filter(beatable).map((c) => c.id), workIds: orgCrewRows.filter(beatable).map((c) => c.id), beat };
+    const at = now();
+    if (beatDue && await beatCrews(db, report.beat)) report.beatAt = at;
     // 채널·조직 기억은 서버에만(유건 결정 2026-09-24) — 서버가 턴마다 기억을 주면(msgr_crew_memory) PC 미러 vault/org/를 지우고 만들지 않는다.
     // 옛 서버(RPC 없음)면 종전 미러(G-2)로 물러난다. 판정 실패(네트워크)는 아무것도 지우지 않는다.
     const serverMemory = await serverMemoryAvailable(db, crews[0].id);
@@ -1193,7 +1213,7 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
     if (inboxError) throw inboxError;
     if (!msgs?.length) continue; // 받은 글 없음 — 적재·커서 그대로(종전과 같은 결과)
     const room = rooms.get(crew.id);
-    if (!room) continue; // 방 목록을 모름 → 커서 유지, 다음 틱 재시도
+    if (!room) { report.held = true; continue; } // 방 목록을 모름 → 커서 유지, 다음 틱 재시도(held — 브리지가 쉬는 주기로 넘기지 않고 15초 뒤 다시 본다)
     const { dm, member } = room;
     let max = crew.cursor_msg_id ?? 0;
     const ccOf = (m) => (m.mentions ?? []).some((x) => x?.kind === 'crew' && x.id === crew.id && x.role === 'cc');
@@ -1365,12 +1385,13 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
       out.queued++;
     };
     for (const m of msgs) { // holdFrom — 이 글부터 적재·커서 전진을 러너 있는 프로세스에 양보(위 주석)
-      try { if (await holdFrom(m)) break; await step(m); } catch (e) { const fk = `${wsId}:${crew.id}`; if (Date.now() - (failWarn.get(fk) ?? 0) > 300_000) { failWarn.set(fk, Date.now()); console.error(`[argo] msgr 메시지 처리 실패(${wsId}/${crew.slug}/${m.id}) — 이 에이전트 커서 보류, 다음 틱 재시도(같은 로그는 5분에 한 번):`, e?.message ?? e); } break; }
+      try { if (await holdFrom(m)) { report.held = true; break; } await step(m); } catch (e) { report.held = true; const fk = `${wsId}:${crew.id}`; if (Date.now() - (failWarn.get(fk) ?? 0) > 300_000) { failWarn.set(fk, Date.now()); console.error(`[argo] msgr 메시지 처리 실패(${wsId}/${crew.slug}/${m.id}) — 이 에이전트 커서 보류, 다음 틱 재시도(같은 로그는 5분에 한 번):`, e?.message ?? e); } break; }
       max = Math.max(max, m.id);
     }
     if (max > (crew.cursor_msg_id ?? 0)) await db.setCursor(crew.id, max); // 적재 후에만 전진(at-least-once)
+    if (msgs.length >= PAGE) report.held = true; // 한 번에 PAGE개를 꽉 채워 받았다 — 나머지는 다음 틱(15초)에
   }
-  await syncApprovals(wsId, { db, uid }).catch((e) => console.error('[argo] msgr 결재 동기화 실패:', e.message));
+  await syncApprovals(wsId, { db, uid }).catch((e) => { report.held = true; console.error('[argo] msgr 결재 동기화 실패:', e.message); });
   return out;
 }
 
@@ -2315,41 +2336,122 @@ export function coalesce(fn, merge = (a, b) => b ?? a) {
   return run;
 }
 
-export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_MS, runnerReady = turnRunnerAvailable } = {}) { // runnerReady — drain의 러너 양보 판정(chat()과 같은 판정, drain 주석)
+/** 브리지 15초 틱의 할 일(순수 — 시험용 export). 'poll' = 관리 작업 + 받은 글(종전 15초 틱) | 'wake' = 받은 글만 | 'idle' = DB 없이(상태 파일·심박 기한 확인).
+    구독이 하나라도 안 붙었거나 끊겼으면, 회사 노드면(비공개 채널 크루 요청 방송이 노드 계정에 닿지 않을 수 있다 — msgr_room_send는 방 사람·방에 든 크루 주인에게만),
+    잠자기에서 깨어났으면(틱 간격이 3배 넘게 벌어짐 — 소켓이 살아 보여도 그 사이 방송을 못 받았을 수 있다), 로컬 변경이 있으면, 예비 조회 간격이 지났으면 전체 조회.
+    처리 보류(방 목록 실패·러너 양보·한 번에 꽉 참·결재 동기화 실패 — drain의 held)와 재연결은 받은 글만 바로 다시 본다. */
+export function msgrTickPlan({ now, lastFireAt, lastHousekeeping, healthy, rejoined, held, nodeCompany, localChanged, pollMs = POLL_MS, idlePollMs = IDLE_POLL_MS }) {
+  if (!healthy || nodeCompany) return 'poll';
+  if (lastFireAt != null && now - lastFireAt > pollMs * 3) return 'poll';
+  if (localChanged || now - lastHousekeeping >= idlePollMs) return 'poll';
+  if (held || rejoined) return 'wake';
+  return 'idle';
+}
+/** 미러가 보는 로컬 상태의 지문 — 카드(이름·직무)·커맨더 목록·루틴(미러 행 모양). 쉬는 틱에 바뀐 것이 보이면 다음 예비 조회를 기다리지 않고 미러한다(종전처럼 15초 안). 로컬 파일만 읽는다. */
+async function msgrLocalState(wsId) {
+  const [cards, commands, routines] = await Promise.all([listAgentsForInventory(wsId), listCommandsForWs(wsId), loadRoutines(wsId)]);
+  return JSON.stringify([cards, commands, (Array.isArray(routines) ? routines : []).map((r) => [r.agentSlug ?? null, buildRoutineRows([r], r.agentSlug)])]);
+}
+
+export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_MS, idlePollMs = IDLE_POLL_MS, beatMs = BEAT_EVERY_MS, runnerReady = turnRunnerAvailable, localState = msgrLocalState } = {}) { // runnerReady — drain의 러너 양보 판정(chat()과 같은 판정, drain 주석)
   let stopped = false; let subscribedOrgs = new Set(); let lastHousekeeping = 0; let lastMirrorError = null; // 미러는 주기 tick에서만 돈다 — 깨우기 tick이 '연결됨'으로 덮어쓰지 않게 마지막 결과를 들고 있는다(검수 M1)
-  // kind: 'poll'(주기·첫 tick) | 'wake'(방송 깨우기). 깨우기는 턴 적재만 — 관리 작업은 주기 tick 또는 주기만큼 밀렸을 때만
+  // 쉬는 주기(유건 2026-10-10) — Realtime 구독이 모두 붙어 있는 동안 15초 틱은 DB를 부르지 않는다(msgrTickPlan). 구독 판정에 쓰는 상태:
+  let wantOrgs = null;       // 마지막 subscribe()가 구독해야 한다고 본 조직(지금 에이전트가 있는 조직 + 노드 조직). null = 아직 한 번도 조회하지 못함
+  let lastClient = null;     // 마지막 틱의 세션 클라이언트 — 채널이 이 클라이언트 것이어야 붙은 것으로 본다(토큰 회전으로 클라이언트가 바뀌면 다시 구독)
+  let wasHealthy = false;    // 직전 판정 — 안 붙음 → 붙음으로 바뀌는 순간 받은 글을 한 번 따라잡는다(끊긴 사이 방송은 다시 오지 않는다)
+  let held = true;           // 직전 drain이 보류·실패로 끝났다 — 다음 틱에 다시 본다(첫 조회 전에는 참)
+  let nodeCompany = false;   // 회사 노드(company.json msgr.nodeOrgId) — 늘 15초
+  let lastFireAt = null;     // 마지막 15초 틱 시각 — 간격이 크게 벌어지면 잠자기에서 깨어난 것
+  let localSeen = null;      // 마지막 관리 틱 직전에 본 로컬 상태 지문
+  let beatPlan = null;       // 마지막 관리 틱이 심박한 대상({ uid, ids, workIds, beat }) — 쉬는 틱이 같은 대상으로 심박만 보낸다
+  let lastBeatAt = -Infinity; // 마지막으로 성공한 심박 요청을 보낸 시각
+  let lastGw = null;         // 마지막으로 쓴 연결 상태([ok, error]) — 쉬는 틱이 다시 써서 설정 화면 40초 창(connections.mjs readGatewayStatus)을 지킨다
+  const gw = (ok, error = '') => { lastGw = [ok, error]; return beatGateway(wsId, MSGR_KEY, ok, error).catch(() => {}); };
+  const joined = (ch) => !!ch && ch.__client === lastClient && (typeof ch.state === 'string' ? ch.state === 'joined' : ch.__status === 'SUBSCRIBED'); // 같은 토픽을 여러 회사가 같이 쓰면 두 번째 subscribe의 콜백은 오지 않는다 — 채널 상태가 정본
+  const rtHealthy = () => !!lastClient && wantOrgs !== null && [...wantOrgs].every((o) => joined(rtChannels.get(`${wsId}:${o}`))) && joined(rtChannels.get(`${wsId}:u`));
+  const checkHealth = () => { const healthy = rtHealthy(); const rejoined = healthy && !wasHealthy; wasHealthy = healthy; return { healthy, rejoined }; };
+  // 구독 상태 콜백 — 끊기면(CHANNEL_ERROR·TIMED_OUT·CLOSED) 바로 '안 붙음'으로 적어 두고(다음 15초 틱 판정 전에 realtime-js가 다시 붙여도 따라잡기를 놓치지 않게),
+  // 붙는 순간(첫 구독 포함) 받은 글을 따라잡는다 — 조회와 구독 사이, 끊긴 사이에 온 글은 방송이 다시 오지 않는다
+  const onStatus = (status) => { if (stopped) return; if (status !== 'SUBSCRIBED') { wasHealthy = false; return; } if (checkHealth().rejoined) tick('wake').catch(() => {}); };
+  // 같은 토픽은 한 클라이언트에서 채널 객체 하나다(realtime-js channel()) — 같은 계정의 회사 여럿이 같이 쓰면 두 번째 subscribe의 콜백은 등록되지 않는다.
+  // 콜백을 채널에 하나 두고 회사마다 듣는 함수를 더한다(그래도 판정의 정본은 채널 상태 — joined)
+  const attach = (ch) => {
+    (ch.__watchers ??= new Set()).add(onStatus);
+    ch.__dispatch ??= (status) => { ch.__status = status; for (const f of ch.__watchers) f(status); };
+    ch.subscribe(ch.__dispatch);
+  };
+  // 쉬는 틱의 심박 — 마지막 관리 틱의 대상 그대로, 기한(beatMs)이 지났을 때만. 실패하면 시각을 옮기지 않아 다음 15초 틱에 다시 보낸다
+  const idleBeat = async (c, t) => {
+    if (!beatPlan || beatPlan.uid !== c.uid || !beatPlan.ids.length || t - lastBeatAt < beatMs) return;
+    const at = Date.now();
+    if (await beatCrews(c.db, beatPlan)) lastBeatAt = at;
+  };
+  const rank = (k) => ({ fire: 0, wake: 1, poll: 2 })[k ?? 'wake']; // 방송 처리기는 인자 없이 부른다 = 'wake'
+  // kind: 'poll'(첫 tick·수동 재연결) | 'wake'(방송 깨우기·재연결 따라잡기) | 'fire'(15초 타이머 — 할 일은 msgrTickPlan이 정한다)
   const tick = coalesce(async (kind = 'wake') => {
     if (stopped) return;
-    const housekeeping = kind === 'poll' || Date.now() - lastHousekeeping >= pollMs;
+    const t = Date.now();
     try {
       const c = await session();
-      if (!c) { await beatGateway(wsId, MSGR_KEY, false, '기기 세션 없음 — 로그인 필요').catch(() => {}); return; }
+      if (!c) { held = true; await beatGateway(wsId, MSGR_KEY, false, '기기 세션 없음 — 로그인 필요').catch(() => {}); return; }
       // 소유자가 이 계정일 때만 연다(실사고 2026-09-17 윈도우: 설정 읽기 실패·소유자 미기록이 '있을 때만 비교'하던 게이트를 통과해 다른 계정 회사의 크루 12명이 lean-win에 미러).
       // 설정을 못 읽으면 소유자를 모르는 것 — 이번 폴은 건너뛴다. drain 안의 게이트는 두 번째 방어선이다.
-      let company; try { company = await loadCompany(wsId); } catch (e) { await beatGateway(wsId, MSGR_KEY, false, `회사 설정을 읽지 못함 — ${String(e?.message ?? e).slice(0, 120)}`).catch(() => {}); return; }
+      let company; try { company = await loadCompany(wsId); } catch (e) { held = true; await beatGateway(wsId, MSGR_KEY, false, `회사 설정을 읽지 못함 — ${String(e?.message ?? e).slice(0, 120)}`).catch(() => {}); return; }
       const { lang = 'ko', msgr, ownerId = null } = company;
-      if (ownerId !== c.uid) { await beatGateway(wsId, MSGR_KEY, false, '이 회사의 소유자 계정이 아님 — 소유자로 로그인 필요').catch(() => {}); return { skipped: 'owner' }; }
-      if (housekeeping) { lastHousekeeping = Date.now(); await dispatchMessengerAutomations(c.client, wsId).catch((e) => console.warn('[argo] msgr automation:', e.message)); }
+      if (ownerId !== c.uid) { held = true; await beatGateway(wsId, MSGR_KEY, false, '이 회사의 소유자 계정이 아님 — 소유자로 로그인 필요').catch(() => {}); return { skipped: 'owner' }; }
+      nodeCompany = !!msgr?.nodeOrgId;
+      lastClient = c.client; // 클라이언트가 바뀌면(토큰 회전) 옛 채널은 붙은 것으로 보지 않는다(joined) — 전체 조회 뒤 subscribe가 새로 구독한다
+      let mode = kind;
+      if (kind === 'fire') {
+        const { healthy, rejoined } = checkHealth();
+        mode = msgrTickPlan({ now: t, lastFireAt, lastHousekeeping, healthy, rejoined, held, nodeCompany, pollMs, idlePollMs }); // 로컬 변경은 아래에서(파일 읽기라 'poll'이 아닐 때만)
+        lastFireAt = t;
+        if (mode !== 'poll' && localSeen !== null) { // 로컬 변경(에이전트 고용·직무·커맨더·루틴) — 다음 예비 조회까지 미루지 않는다
+          const sig = await localState(wsId).catch(() => null);
+          if (sig !== null && sig !== localSeen) mode = 'poll';
+        }
+      }
+      if (mode === 'idle') {
+        await idleBeat(c, t);
+        if (lastGw) await beatGateway(wsId, MSGR_KEY, ...lastGw).catch(() => {});
+        return { idle: true };
+      }
+      const housekeeping = mode === 'poll' || t - lastHousekeeping >= (wasHealthy && !nodeCompany ? idlePollMs : pollMs);
+      if (housekeeping) {
+        lastHousekeeping = t;
+        localSeen = await localState(wsId).catch(() => null); // 이번 미러가 볼 로컬 상태 — 쉬는 틱이 이것과 비교한다
+        await dispatchMessengerAutomations(c.client, wsId).catch((e) => console.warn('[argo] msgr automation:', e.message)); // 서버 크론(매분)도 같은 일을 한다 — 기기 쪽은 예비
+      } else await idleBeat(c, t); // 깨우기가 잦아 15초 틱이 합쳐져도 심박이 밀리지 않게
       const deviceId = housekeeping ? await getDeviceId().catch(() => null) : null; // 심박은 관리 틱에만 — 기기 id를 못 읽으면 종전 행 심박
-      const r = await drain(wsId, { db: c.db, uid: c.uid, lang, nodeOrgId: msgr?.nodeOrgId ?? null, ownerId, housekeeping, runnerReady, deviceId }); // I-4: 조직 회사(company.json.msgr.nodeOrgId)면 노드 하트비트
-      if (r.skipped === 'owner') { await beatGateway(wsId, MSGR_KEY, false, '이 회사의 소유자 계정이 아님 — 소유자로 로그인 필요').catch(() => {}); return r; }
-      if (housekeeping) lastMirrorError = r.mirrorError ?? null;
-      if (/msgr_ws_owned_by_other/.test((housekeeping ? r.mirrorError : lastMirrorError) ?? '')) await beatGateway(wsId, MSGR_KEY, false, '이 회사 에이전트는 다른 계정 소유로 이미 등록돼 있어 올리지 못함 — 이 회사를 만든 계정으로 로그인하세요').catch(() => {});
-      else await beatGateway(wsId, MSGR_KEY, true).catch(() => {});
+      const beatDue = !wasHealthy || nodeCompany || t - lastBeatAt >= beatMs; // 15초 조회 중에는 종전처럼 매번(서버가 35초 기한으로 거른다), 쉬는 주기에서는 심박 기한을 지킨다
+      const rep = {};
+      const r = await drain(wsId, { db: c.db, uid: c.uid, lang, nodeOrgId: msgr?.nodeOrgId ?? null, ownerId, housekeeping, runnerReady, deviceId, beatDue, report: rep }); // I-4: 조직 회사(company.json.msgr.nodeOrgId)면 노드 하트비트
+      if (r.skipped === 'owner') { held = true; await beatGateway(wsId, MSGR_KEY, false, '이 회사의 소유자 계정이 아님 — 소유자로 로그인 필요').catch(() => {}); return r; }
+      held = !!rep.held;
+      if (housekeeping) {
+        lastMirrorError = r.mirrorError ?? null;
+        beatPlan = rep.beat ? { uid: c.uid, ...rep.beat } : null;
+        if (rep.beatAt != null) lastBeatAt = rep.beatAt;
+      }
+      if (/msgr_ws_owned_by_other/.test((housekeeping ? r.mirrorError : lastMirrorError) ?? '')) await gw(false, '이 회사 에이전트는 다른 계정 소유로 이미 등록돼 있어 올리지 못함 — 이 회사를 만든 계정으로 로그인하세요');
+      else await gw(true);
       subscribe(c, r.list ?? [], msgr?.nodeOrgId ?? null); // I-5: 조직 회사는 크루 0명이어도 조직 토픽을 구독(크루 요청 신호)
       return r;
     } catch (e) {
+      held = true;
       console.error(`[argo] msgr drain 실패(${wsId}):`, e.message);
-      await beatGateway(wsId, MSGR_KEY, false, String(e.message).slice(0, 200)).catch(() => {});
+      await gw(false, String(e.message).slice(0, 200));
     }
-  }, (a, b) => (a === 'poll' || b === 'poll' ? 'poll' : 'wake'));
-  // Realtime = 깨우기 신호(정본은 커서 조회). 구독 실패해도 폴만으로 완결된다.
+  }, (a, b) => (rank(a) >= rank(b) ? a ?? 'wake' : b ?? 'wake')); // 합치면 더 큰 일 하나(poll > wake > fire) — 대기 중 깨우기가 15초 틱에 묻혀 사라지지 않게
+  // Realtime = 깨우기 신호(정본은 커서 조회). 구독이 모두 붙어 있는 동안만 예비 조회를 늦춘다 — 안 붙었으면 15초 조회만으로 완결된다.
+  const live = (ch) => ch?.__client === lastClient && ch?.state !== 'closed'; // 닫힌 채널(같은 토픽을 쓰던 다른 회사가 해제 등)은 다시 구독한다
   const subscribe = (c, crews, extraOrg = null) => {
     const orgs = new Set(crews.map((x) => x.org_id).filter(Boolean)); // 개인 행(org NULL)은 조직 토픽이 없다 — org:null 구독은 거절만 쌓인다
     if (extraOrg) orgs.add(extraOrg);
+    wantOrgs = orgs; // 구독 판정은 지금 필요한 조직만 — 빠진 조직의 끊긴 채널이 15초 조회를 붙잡지 않게
     for (const orgId of orgs) {
       const key = `${wsId}:${orgId}`;
-      if (subscribedOrgs.has(orgId) && rtChannels.get(key)?.__client === c.client) continue;
+      if (subscribedOrgs.has(orgId) && live(rtChannels.get(key))) continue;
       try {
         rtChannels.get(key)?.unsubscribe?.();
         const ch = c.client.channel(`org:${orgId}`, { config: { private: true } })
@@ -2359,7 +2461,7 @@ export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_M
           // stop_request는 여기 두지 않는다 — org:<조직>은 그 조직 멤버 누구나 msgr_realtime_send로 방송을 보낼 수 있어(RLS 발신 정책이 org:%를
           // 멤버에게 허용) 위조된 중단 요청으로 남의 크루 턴을 멈출 수 있었다(검수 2026-09-26 H-1). u:<owner> 구독 쪽으로 옮긴다(아래).
         ch.__client = c.client;
-        ch.subscribe();
+        attach(ch);
         rtChannels.set(key, ch);
         subscribedOrgs.add(orgId);
       } catch (e) { console.warn(`[argo] msgr realtime 구독 실패(org ${orgId}):`, e.message); }
@@ -2367,7 +2469,7 @@ export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_M
     // 비공개 방(조직 DM·비공개 채널·개인 공간) 글·결재·크루 요청은 서버가 조직 토픽이 아니라 방 사람·크루 소유자의 u:<uid>로만 보낸다
     // (20260918184500 — 조직 전원에게 비공개 방 메타데이터가 새던 것). 조직 토픽만 들으면 폴 주기만큼 늦게 깬다. 서버 적용 전에는 구독이 거절돼도 무해(폴로 완결).
     const ukey = `${wsId}:u`;
-    if (c.uid && rtChannels.get(ukey)?.__client !== c.client) {
+    if (c.uid && !live(rtChannels.get(ukey))) {
       try {
         rtChannels.get(ukey)?.unsubscribe?.();
         const uch = c.client.channel(`u:${c.uid}`, { config: { private: true } })
@@ -2377,19 +2479,21 @@ export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_M
           // u:<uid>는 본인만 받고 클라이언트는 여기로 보낼 수 없다(RLS 발신 정책 없음, 20260918184500) — 크루 중단 방송의 정본 토픽(H-1).
           .on('broadcast', { event: 'stop_request' }, (msg) => { handleStopRequest(wsId, msg?.payload, { session }).catch((e) => console.error('[argo] msgr 중단 방송 처리 실패:', e.message)); });
         uch.__client = c.client;
-        uch.subscribe();
+        attach(uch);
         rtChannels.set(ukey, uch);
       } catch (e) { console.warn('[argo] msgr realtime 구독 실패(u:):', e.message); }
     }
     // 오피스 메일 번역 — 본인만 보내고 받는 ot:<uid>(20260927174000). 주인 구독으로 번역해 같은 토픽으로 돌려준다(메일 내용은 DB를 거치지 않는다).
     // 통로는 사용자당 하나이고 회사들은 그 목록에 합류한다 — 연결을 같이 쓰므로 회사별로 구독·해제하면 서로 끊는다(office-translate.mjs joinTranslate).
     if (c.uid) try { joinTranslate(c.client, c.uid, wsId); } catch (e) { console.warn('[argo] msgr realtime 구독 실패(ot:):', e.message); }
+    if (checkHealth().rejoined) tick('wake').catch(() => {}); // 이미 붙어 있던 채널을 이어받은 경우(같은 토픽을 쓰는 다른 회사 — 콜백이 오지 않는다)
   };
-  const iv = setInterval(() => tick('poll').catch(() => {}), pollMs);
+  const iv = setInterval(() => tick('fire').catch(() => {}), pollMs);
   iv.unref?.();
   tick('poll').catch(() => {});
   const stop = () => {
     stopped = true; clearInterval(iv);
+    for (const ch of rtChannels.values()) ch?.__watchers?.delete(onStatus);
     for (const orgId of subscribedOrgs) { const key = `${wsId}:${orgId}`; try { rtChannels.get(key)?.unsubscribe?.(); } catch { /* 무해 */ } rtChannels.delete(key); }
     subscribedOrgs = new Set();
     try { rtChannels.get(`${wsId}:u`)?.unsubscribe?.(); } catch { /* 무해 */ } rtChannels.delete(`${wsId}:u`);
