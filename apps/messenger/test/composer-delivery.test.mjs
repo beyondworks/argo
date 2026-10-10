@@ -84,6 +84,35 @@ test('attachment-only: files uploaded but the attachment rows failed keeps the m
   assert.deepEqual(discards, [], '올라간 파일이 있으면 지우지 않는다 — 새 경로로 다시 올려야 하게 된다');
 });
 
+// 서버 정리 엣지(msgr-storage-sweep, 20261011150000)는 24시간 넘게 첨부 행이 없는 파일을 지운다. 업로드 끝 표시(item.uploaded)만 믿고 첨부 행을
+// 다시 넣으면 지워진 파일을 가리키는 깨진 첨부가 생기거나(한도 꺼짐) msgr_attach_upload_missing이 되풀이된다(한도 켜짐) — #946 재검수 L1.
+test('첨부 행이 msgr_attach_upload_missing으로 거절되면 다시 보내기는 파일부터 다시 올린다', async () => {
+  let fail = true; const log = [];
+  const session = createComposerDelivery(transport({
+    upload: async () => { log.push('upload'); },
+    attachment: async () => { log.push('attach'); if (fail) throw Error('msgr_attach_upload_missing'); },
+  }));
+  session.setText('본문'); session.setFiles([file('z.png')]);
+  assert.equal(await session.send([]), false); fail = false;
+  assert.equal(await session.retry(), true);
+  assert.deepEqual(log, ['upload', 'attach', 'upload', 'attach']);
+});
+
+test('올린 지 오래된(정리 엣지가 지웠을 수 있는) 파일은 첨부 행을 넣기 전에 다시 올린다 — 최근이면 그대로', async () => {
+  let t = 0; let fail = true; const log = [];
+  const session = createComposerDelivery(transport({
+    upload: async () => { log.push('upload'); },
+    attachment: async () => { log.push('attach'); if (fail) throw Error('metadata offline'); },
+  }), undefined, null, () => t);
+  session.setText('본문'); session.setFiles([file('z.png')]);
+  assert.equal(await session.send([]), false);
+  t = 60 * 60 * 1000; assert.equal(await session.retry(), false, '1시간 뒤 — 업로드 없이 첨부 행만');
+  assert.deepEqual(log, ['upload', 'attach', 'attach']);
+  fail = false; t = 21 * 60 * 60 * 1000;
+  assert.equal(await session.retry(), true);
+  assert.deepEqual(log, ['upload', 'attach', 'attach', 'upload', 'attach'], '21시간 뒤 — 다시 올린 뒤 첨부 행');
+});
+
 test('storage path 3rd segment is the message id — server functions msgr_bot_file and msgr_can_read_dm_attachment read it', async () => {
   const paths = [];
   const client = { storage: { from: () => ({ upload: async (path) => { paths.push(path); return { error: null }; } }) } };

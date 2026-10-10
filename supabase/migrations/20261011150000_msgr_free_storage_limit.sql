@@ -8,7 +8,8 @@
 --   ② 지운 방·등록 안 된 파일 정리(5절 — 개인 방 SQL 행 삭제 트리거를 떼고, 정리 엣지가 Storage API로 바이트까지 지운다). 나머지(판정·거절)는 꺼지면 모두 통과다.
 --
 -- 사용량 = 저장소에 지금 있는 내 msgr 객체 크기 합(storage.objects metadata.size — 실제 바이트). 첨부 행 크기(앱이 보낸 값)는 세지 않는다.
---   누구 몫인가: owner(storage-api가 JWT로 채운다 — 앱·게이트웨이 업로드한 사람), owner가 빈 객체(외부 봇 서명 업로드)는 경로 3번째 칸 글의 올린 사람
+--   지금 있는 객체 = 버전 관리 보관본(archived_at)·삭제 표시(is_delete_marker)를 뺀 것(1-b — 열이 있을 때만).
+--   누구 몫인가: owner(storage-api가 JWT로 채운다 — 앱·게이트웨이 업로드한 사람, owner가 비면 owner_id 문자열), owner가 빈 객체(외부 봇 서명 업로드)는 경로 3번째 칸 글의 올린 사람
 --   (사람 글 = 글쓴이, 에이전트 글 = 에이전트 주인). 둘 다 본인이 아닌 사람이 만들 수 없다 — 남이 내 사용량을 부풀릴 수 없다(quota-griefing):
 --   남이 내 글 폴더에 올린 파일은 owner가 그 사람이라 그 사람 몫, 봇 서명 경로는 봇 자기 글에만 나온다(msgr_bot_attach_prepare).
 --   같은 파일을 가리키는 첨부 행이 여럿이어도(게이트웨이 재사용) 객체는 하나라 한 번만 센다. 지우고 같은 경로에 더 큰 파일을 올려도(관리자·봇 서명 주소 재사용)
@@ -66,16 +67,46 @@ create or replace function public._msgr_path_uploader(p_name text) returns uuid
 $$;
 revoke all on function public._msgr_path_uploader(text) from public, anon, authenticated;
 
+-- 1-b) 지금 있는 msgr 객체(버전 관리 보관본·삭제 표시 제외)와 그 크기·주인 — 사용량·첨부 크기·정리 후보가 같이 쓴다.
+--      storage.objects 열은 storage-api 버전마다 다르다(운영 1.80.x = owner uuid·owner_id text·archived_at·is_delete_marker, 옛 버전·pg 시험 흉내 표는 일부 없음).
+--      적용할 때 있는 열만으로 함수 본문을 만든다 — 열이 없는 환경에서도 깨지지 않는다. 열이 나중에 생기면 이 파일을 다시 적용한다.
+--      (본문 끝의 두 따옴표 표시 사이는 띄어 쓴다 — 붙이면 바깥 DO 블록의 끝 표시로 읽힌다.)
+--      SQL 함수에 SET·security definer를 두지 않아 부르는 쪽 질의에 펼쳐진다((bucket_id, name) 색인을 그대로 쓴다). 부르는 쪽은 모두 정의자 함수다.
+do $$
+declare has text[]; sz text; own text; live text := ''; body text;
+begin
+  if to_regclass('storage.objects') is null then
+    body := 'select null::text, null::timestamptz, null::bigint, null::uuid where false';
+  else
+    select coalesce(array_agg(attname::text), '{}') into has from pg_attribute
+     where attrelid = 'storage.objects'::regclass and attnum > 0 and not attisdropped
+       and attname in ('metadata', 'owner', 'owner_id', 'archived_at', 'is_delete_marker', 'created_at');
+    sz := case when 'metadata' = any (has) then $s$(o.metadata->>'size')::bigint$s$ else 'null::bigint' end;
+    own := case when 'owner' = any (has) and 'owner_id' = any (has)
+                  then $s$coalesce(o.owner, case when o.owner_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then o.owner_id::uuid end)$s$
+                when 'owner' = any (has) then 'o.owner'
+                when 'owner_id' = any (has) then $s$case when o.owner_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then o.owner_id::uuid end$s$
+                else 'null::uuid' end;
+    if 'archived_at' = any (has) then live := live || ' and o.archived_at is null'; end if;
+    if 'is_delete_marker' = any (has) then live := live || ' and not coalesce(o.is_delete_marker, false)'; end if;
+    body := format($f$select o.name, %s, %s, %s from storage.objects o where o.bucket_id = 'msgr'%s$f$,
+                   case when 'created_at' = any (has) then 'o.created_at' else 'null::timestamptz' end, sz, own, live);
+  end if;
+  execute format($f$create or replace function public._msgr_live_objects() returns table (name text, created_at timestamptz, size bigint, owner_id uuid)
+    language sql stable as $b$ %s $b$ $f$, body);
+  execute 'revoke all on function public._msgr_live_objects() from public, anon, authenticated';
+end $$;
+
 -- 2) 사용량 — 지금 저장소에 있는 내 msgr 객체 크기 합. p_except = 지금 등록 중인 경로(트리거가 그 크기를 따로 더한다).
 --    plpgsql: storage.objects 열은 실행할 때 찾는다(켜져 있을 때만 부른다).
 create or replace function public._msgr_storage_used(p_uid uuid, p_except text default null) returns bigint
   language plpgsql stable security definer set search_path = public, pg_temp as $$
 declare n bigint := 0;
 begin
-  if p_uid is null or to_regclass('storage.objects') is null then return 0; end if;
-  select coalesce(sum((o.metadata->>'size')::bigint), 0) into n from storage.objects o
-   where o.bucket_id = 'msgr' and o.name is distinct from p_except
-     and case when o.owner is not null then o.owner = p_uid else coalesce(public._msgr_path_uploader(o.name) = p_uid, false) end;
+  if p_uid is null then return 0; end if;
+  select coalesce(sum(o.size), 0) into n from public._msgr_live_objects() o
+   where o.name is distinct from p_except
+     and case when o.owner_id is not null then o.owner_id = p_uid else coalesce(public._msgr_path_uploader(o.name) = p_uid, false) end;
   return n;
 end $$;
 revoke all on function public._msgr_storage_used(uuid, text) from public, anon, authenticated;
@@ -133,11 +164,8 @@ create or replace function public.msgr_attachment_storage_gate() returns trigger
   language plpgsql security definer set search_path = public, pg_temp as $$
 declare real_size bigint; found_obj boolean := false;
 begin
-  if to_regclass('storage.objects') is not null then
-    -- to_jsonb: 열 이름을 실행할 때 찾는다(metadata 열이 없는 Storage 흉내 표에서도 트리거가 깨지지 않게 — 운영 표에는 있다)
-    select true, (to_jsonb(o)->'metadata'->>'size')::bigint into found_obj, real_size from storage.objects o where o.bucket_id = 'msgr' and o.name = new.storage_path limit 1;
-    if real_size is not null then new.bytes := real_size; end if;
-  end if;
+  select true, o.size into found_obj, real_size from public._msgr_live_objects() o where o.name = new.storage_path limit 1; -- 지금 버전(보관본·삭제 표시 제외)
+  if real_size is not null then new.bytes := real_size; end if;
   if public._msgr_storage_limit() is null then return new; end if; -- 꺼짐 — 거절 없음
   if exists (select 1 from public.msgr_attachments a where a.storage_path = new.storage_path) then return new; end if; -- 같은 객체 재사용 — 새 저장 아님
   if not coalesce(found_obj, false) then raise exception 'msgr_attach_upload_missing' using detail = 'upload the file before adding its attachment row'; end if;
@@ -158,11 +186,9 @@ drop trigger if exists msgr_personal_files_purge on public.msgr_channels;
 create or replace function public.msgr_storage_sweep_list(p_limit int default 200) returns setof text
   language plpgsql stable security definer set search_path = public, pg_temp as $$
 begin
-  if to_regclass('storage.objects') is null then return; end if;
   return query
-    select o.name from storage.objects o
-     where o.bucket_id = 'msgr'
-       and (not exists (select 1 from public.msgr_channels c where c.id = public.msgr_uuid_or_null(split_part(o.name, '/', 2)))
+    select o.name from public._msgr_live_objects() o
+     where (not exists (select 1 from public.msgr_channels c where c.id = public.msgr_uuid_or_null(split_part(o.name, '/', 2)))
             or (o.created_at < now() - interval '24 hours'
                 and not exists (select 1 from public.msgr_attachments a where a.storage_path = o.name)))
      order by o.created_at

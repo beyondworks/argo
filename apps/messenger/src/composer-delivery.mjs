@@ -47,7 +47,10 @@ export function draftStore(storage, key) {
   };
 }
 
-export function createComposerDelivery(transport, uuid = () => crypto.randomUUID(), drafts = null) {
+// 서버 정리 엣지(msgr-storage-sweep, 20261011150000)는 24시간 넘게 첨부 행이 없는 파일을 지운다. 그보다 앞서(20시간) 다시 올린다 — 같은 경로라
+// 아직 남아 있으면 upload()가 '이미 있음'으로 끝내고, 지워졌으면 새로 올린다(#946 재검수 L1).
+const UPLOAD_STALE_MS = 20 * 60 * 60 * 1000;
+export function createComposerDelivery(transport, uuid = () => crypto.randomUUID(), drafts = null, now = () => Date.now()) {
   const saved = drafts?.load();
   let state = { text: saved?.text ?? '', mentions: saved?.mentions ?? [], recipients: saved?.recipients ?? [], files: [], replyTo: saved?.replyTo ?? null, job: null, busy: false, uploading: '' }; // replyTo = { id, who, body } — 답글 대상(D17)
   let disposed = false;
@@ -70,15 +73,20 @@ export function createComposerDelivery(transport, uuid = () => crypto.randomUUID
         if (item.done) continue;
         patch({ uploading: item.file.name });
         try {
+          if (item.uploaded && now() - (item.uploadedAt ?? 0) > UPLOAD_STALE_MS) item.uploaded = false; // 정리 엣지가 지웠을 수 있다
           if (!item.uploaded) {
             await transport.upload(job, item);
             item.uploaded = true;
+            item.uploadedAt = now();
           }
           if (disposed) return false;
           await transport.attachment(job, item);
           item.done = true;
           item.error = '';
-        } catch (error) { item.error = error.message; }
+        } catch (error) {
+          item.error = error.message;
+          if (/\bmsgr_attach_upload_missing\b/.test(error.message)) item.uploaded = false; // 서버에 파일이 없다 — 다시 보내기는 파일부터
+        }
       }
       const failed = job.files.filter((item) => !item.done);
       if (failed.length) {

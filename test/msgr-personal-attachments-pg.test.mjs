@@ -1,7 +1,7 @@
 // 개인 방 파일 첨부(20261002100000) — 유건 2026-10-02 "개인 채팅에도 파일 첨부".
 // 고정하는 것: 구성원은 올리고 읽는다 / 비구성원·나간 사람은 거절 / 1:1 차단이면 새 파일 못 올림(지난 파일은 읽음) /
 // 그룹은 차단 관계가 있어도 계속 / 에이전트 글은 주인만 붙인다 / 첨부 행은 객체가 있고 25MB 이하일 때만 /
-// 조직 경로 정책은 마이그레이션 전후 정의가 같다 / 개인 방이 지워지면 그 방 경로 객체도 지운다.
+// 조직 경로 정책은 마이그레이션 전후 정의가 같다 / 개인 방이 지워져도 그 방 파일 행은 SQL로 지우지 않는다(20261011150000 — 정리 엣지가 Storage API로 바이트까지 지운다).
 // 실행: bash scripts/billing-pg-drill.sh test/msgr-personal-attachments-pg.test.mjs
 import test, { before } from 'node:test';
 import assert from 'node:assert/strict';
@@ -33,7 +33,7 @@ const ORG_POLICIES = `select string_agg(tablename || '.' || policyname || ':' ||
   from pg_policies where (schemaname = 'storage' and tablename = 'objects' and policyname in ('msgr_files_select', 'msgr_files_insert', 'msgr_files_delete', 'msgr_dm_attachment_read', 'msgr_dm_output_insert'))
      or (schemaname = 'public' and tablename = 'msgr_attachments' and policyname in ('msgr_attachments_select', 'msgr_attachments_insert', 'msgr_dm_output_attachment'))`;
 
-let ORG, PUB, AB, AC, G, CREW, CREW_ROOM, before_policies;
+let ORG, PUB, AB, AC, G, CREW, CREW_ROOM, before_policies, after_mine_policies;
 before(() => {
   if (!DB) return;
   psql(['-c', `
@@ -65,9 +65,14 @@ before(() => {
   const dir = fileURLToPath(new URL('../supabase/migrations/', import.meta.url));
   const base = ['20260714150000_entitlements.sql', '20260724000100_trial_14d.sql', '20260728100000_entitlements_ls.sql', '20260728113000_billing_hardening.sql', '20260728150000_ls_reconcile_cooldown.sql', '20260929110000_plan_no_trial.sql'];
   const all = [...base, ...readdirSync(dir).filter((x) => /^\d+_msgr.*\.sql$/.test(x))].sort();
-  for (const f of all.filter((f) => f !== MINE)) psql(['-c', readFileSync(mig(f), 'utf8').replace(/^create extension if not exists pg_net;$/m, '')]);
+  // 실제 적용 순서 그대로 — 이 마이그레이션 앞 파일들 → 이 파일 → 뒤 파일들(20261011150000 등). 이 파일을 맨 뒤에 다시 적용하면
+  // 뒤 마이그레이션이 바꾼 것(개인 방 행 삭제 트리거 제거 등)이 되살아난 상태로 시험하게 된다(#946 재검수 L3).
+  const apply = (f) => psql(['-c', readFileSync(mig(f), 'utf8').replace(/^create extension if not exists pg_net;$/m, '')]);
+  for (const f of all.filter((f) => f < MINE)) apply(f);
   before_policies = sql(ORG_POLICIES); // 조직 경로 정책 — 이 마이그레이션 전
-  psql(['-c', readFileSync(mig(MINE), 'utf8')]);
+  apply(MINE);
+  after_mine_policies = sql(ORG_POLICIES); // 이 마이그레이션 직후(뒤 마이그레이션이 바꾼 것과 섞지 않는다)
+  for (const f of all.filter((f) => f > MINE)) apply(f);
   for (const [k, id] of Object.entries(U)) sql(`insert into auth.users (id, created_at, email) values ('${id}', now() - interval '30 days', '${k}@example.test') on conflict do nothing`);
   ORG = last(asUser(U.a, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('Lean', 'lean', '${U.a}') returning id`));
   sql(`update public.msgr_org_entitlements set plan = 'team', seats = 10 where org_id = '${ORG}'`);
@@ -91,7 +96,7 @@ test('스키마: org_id는 개인 첨부만 NULL — 경로 모양과 어긋나�
 });
 
 test('조직 경로 정책은 마이그레이션 전후 정의가 같고, 조직 업로드·읽기는 그대로', { skip }, () => {
-  assert.equal(sql(ORG_POLICIES), before_policies);
+  assert.equal(after_mine_policies, before_policies);
   const m = post(U.a, PUB, 'org');
   const p = `${ORG}/${PUB}/${m}/0-org.png`;
   upload(U.a, p);
@@ -186,13 +191,14 @@ test('에이전트 글 — 주인 기기(게이트웨이)만 붙이고, 친구�
   sql(`update public.msgr_crews set status = 'active' where id = '${CREW}'`);
 });
 
-test('개인 방이 지워지면 그 방 경로 객체도 지운다(조직 객체는 그대로)', { skip }, () => {
+test('개인 방이 지워져도 그 방 파일 행은 남아 정리 후보가 된다(20261011150000 — SQL 행 삭제는 바이트를 남겨서 뗐다), 조직 객체는 그대로', { skip }, () => {
   const solo = last(asUser(U.d, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name, hosting, status, allow) values (null, '${U.d}', 'ws-dddd', 'd1', 'D1', 'local', 'active', 'owner') returning id`));
   const room = last(asUser(U.d, `select public.msgr_dm_personal_crew('${solo}')`));
   const m = post(U.d, room);
   upload(U.d, `p/${room}/${m}/0-x.png`);
   const orgCount = sql(`select count(*) from storage.objects where name like '${ORG}/%'`);
   sql(`delete from public.msgr_channels where id = '${room}'`);
-  assert.equal(sql(`select count(*) from storage.objects where name like 'p/${room}/%'`), '0');
+  assert.equal(sql(`select count(*) from storage.objects where name like 'p/${room}/%'`), '1', '행은 남는다');
+  assert.equal(sql(`select count(*) from public.msgr_storage_sweep_list(1000) n where n like 'p/${room}/%'`), '1', '정리 엣지가 지울 후보');
   assert.equal(sql(`select count(*) from storage.objects where name like '${ORG}/%'`), orgCount);
 });

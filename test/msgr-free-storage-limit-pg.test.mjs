@@ -69,6 +69,9 @@ before(() => {
     create table if not exists storage.buckets (id text primary key, name text, public boolean not null default false);
     create or replace function storage.foldername(name text) returns text[] language sql immutable as $$ select (string_to_array(name, '/'))[1:array_length(string_to_array(name, '/'), 1) - 1] $$;
     alter table storage.objects enable row level security;
+    -- 운영 storage-api(마이그레이션 0072)의 버전 관리·소유자 열 — 다른 pg 시험의 흉내 표에는 없다(그쪽은 열 없는 환경을 확인한다)
+    alter table storage.objects add column if not exists owner_id text, add column if not exists archived_at timestamptz,
+      add column if not exists is_delete_marker boolean not null default false, add column if not exists is_versioned boolean not null default false;
     grant usage on schema storage to authenticated; grant select, insert, delete on storage.objects to authenticated;
     create schema if not exists realtime;
     create table if not exists realtime.messages (id bigint generated always as identity primary key, topic text, extension text, payload jsonb);
@@ -306,6 +309,27 @@ test('다른 버킷(아바타)은 한도와 무관 — Storage 한도 정책은 
     assert.equal(r.status, 0, r.stderr);
   } finally { setLimit(null); }
   assert.equal(sql(`select permissive || ':' || cmd || ':' || array_to_string(roles, ',') from pg_policies where schemaname = 'storage' and tablename = 'objects' and policyname = 'msgr_files_storage_limit'`), 'RESTRICTIVE:INSERT:authenticated');
+});
+
+test('저장소 버전 관리 열: 보관본·삭제 표시는 세지도 정리하지도 않고, owner가 비고 owner_id만 있으면 owner_id로 센다', { skip }, () => {
+  setLimit(null);
+  const u0 = used(U.h);
+  const m = post(U.h, DM.h);
+  const live = `p/${DM.h}/${m}/${++seq}-v.bin`;
+  sql(`insert into storage.objects (bucket_id, name, owner, metadata) values ('msgr', '${live}', '${U.h}', '{"size": 100}')`);
+  sql(`insert into storage.objects (bucket_id, name, owner, metadata, archived_at, created_at) values ('msgr', '${live}', '${U.h}', '{"size": 7000}', now(), now() - interval '30 hours')`); // 같은 경로의 보관본
+  const marker = `p/${DM.h}/${m}/${++seq}-d.bin`;
+  sql(`insert into storage.objects (bucket_id, name, owner, metadata, is_delete_marker, created_at) values ('msgr', '${marker}', '${U.h}', '{"size": 900}', true, now() - interval '30 hours')`);
+  assert.equal(used(U.h), u0 + 100, '보관본 7000·삭제 표시 900은 세지 않는다');
+  const xBefore = used(U.x);
+  const oid = `p/${DM.h}/${post(U.x, DM.h)}/${++seq}-oid.bin`; // 경로의 글은 x 것 — 경로로 추정하면 x 몫이 된다
+  sql(`insert into storage.objects (bucket_id, name, owner, owner_id, metadata) values ('msgr', '${oid}', null, '${U.h}', '{"size": 40}')`);
+  assert.equal(used(U.h), u0 + 140, 'owner가 비어도 owner_id(문자열)로 센다');
+  assert.equal(used(U.x), xBefore, '경로의 글 주인(x) 몫이 아니다');
+  const cand = sql(`set role service_role; select coalesce(string_agg(n, ','), '') from public.msgr_storage_sweep_list(1000) n`);
+  assert.ok(!cand.includes(marker), '삭제 표시는 정리 후보가 아니다(Storage가 관리)');
+  assert.equal(attachRaw(U.h, m, live).status, 0);
+  assert.equal(sql(`select bytes from public.msgr_attachments where storage_path = '${live}'`), '100', '첨부 행 크기도 지금 버전(보관본 아님)');
 });
 
 test('판정은 쓰기 0, 남의 사용량·플랜을 묻는 통로가 없다', { skip }, () => {
