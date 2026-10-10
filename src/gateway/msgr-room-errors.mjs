@@ -27,5 +27,7 @@ export function roomAttachReason(e, lang = 'ko') {
   const msg = String(e?.message ?? e ?? '');
   if (/ENOENT/.test(msg)) return pick('파일이 없습니다', 'file not found', lang);
   if (e?.roomSafe) return msg.slice(0, 80); // 게이트웨이가 직접 만든 사유(예: 25MB 초과)
+  // 무료 계정 첨부 저장 한도(20261011150000) — 업로드는 storage-api가 원문을 숨기고 SQLSTATE만('database error, code: PT402'), 첨부 행은 이름을 준다
+  if (/\bmsgr_storage_limit\b|\bcode: PT402\b/.test(msg)) return pick('첨부 저장 공간이 가득 차 올리지 못했습니다', 'attachment storage is full', lang);
   return pick('파일을 읽거나 올리지 못했습니다', 'could not read or upload the file', lang);
 }

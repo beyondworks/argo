@@ -75,6 +75,18 @@ test('deliveryCardView: 카드 제목과 오류 줄 — 보내는 중 / 연결 �
   assert.deepEqual([other.titleKey, other.errorLine], ['msg.delivery.failed', { key: null, raw: 'new row violates row-level security policy', files: [] }]);
 });
 
+// 무료 계정 첨부 저장 한도(20261011150000) — 업로드는 storage-api가 원문을 숨기고 'database error, code: PT402'만, 첨부 행은 'msgr_storage_limit'을 준다.
+// 원문 대신 안내 문구(err.storageLimit)와 못 올린 파일 이름. 다시 보내기는 그대로(Pro로 바꾸면 같은 카드에서 다시 보낸다)
+test('deliveryCardView: 무료 첨부 저장 한도 — 두 모양 모두 안내 문구 + 실패한 파일 이름, 다른 코드는 원문', () => {
+  const job = (o = {}) => ({ messageId: 9, body: '보고서', error: '', errorKey: '', files: [{ file: { name: 'a.pdf' }, done: false }, { file: { name: 'ok.png' }, done: true }], ...o });
+  for (const error of ['a.pdf: database error, code: PT402', 'a.pdf: msgr_storage_limit']) {
+    const v = deliveryCardView({ busy: false, job: job({ error }) });
+    assert.deepEqual([v.titleKey, v.errorLine, v.canRetry], ['msg.delivery.attachFailed', { key: 'err.storageLimit', raw: null, files: ['a.pdf'] }, true], error);
+  }
+  const other = deliveryCardView({ busy: false, job: job({ error: 'a.pdf: database error, code: PT4021' }) });
+  assert.equal(other.errorLine.key, null, '비슷한 다른 코드는 원문 그대로');
+});
+
 test('개인 공간 내 이름: 사람 이름 한 길(resolvePeopleNames, 조직 없음) — msgr_people_names를 한 번에 묻고, 나만 묻는 호출을 따로 두지 않는다', async () => {
   const calls = [];
   const sb = { rpc: async (fn, args) => { calls.push([fn, args]); return { data: [{ user_id: 'me', name: '유건' }, { user_id: 'f1', name: '하나' }], error: null }; } };

@@ -1227,6 +1227,7 @@ export const DICT = {
   'docs.empty.org': ['전사 문서 없음', 'No company-wide docs'],
   'docs.empty.channel': ['채널 문서 없음', 'No channel docs'],
   'err.policyLocked': ['조직 정책으로 잠긴 항목입니다.', 'This item is locked by organization policy.'],
+  'err.storageLimit': ['무료 계정은 첨부 1GB까지예요. 이미 올린 파일은 그대로 있어요.', 'Free accounts can store up to 1 GB of attachments. Files you already sent stay where they are.'],
   'err.proRequired': ['에이전트를 메신저에 연결하려면 에이전트 주인의 Argo Pro가 필요합니다. Pro로 바꾸면 멈춘 에이전트가 바로 다시 연결됩니다.', "Connecting an agent to Messenger needs Argo Pro for the agent's owner. Paused agents reconnect as soon as the owner upgrades to Pro."],
   'ui.dm': ['1:1 대화', 'Direct message'],
   'ui.dm.personal': ['개인 1:1 대화', 'Personal 1:1'],

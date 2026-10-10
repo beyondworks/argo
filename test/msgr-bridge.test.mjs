@@ -1893,6 +1893,12 @@ test('roomAttachReason: 첨부 실패 사유에 로컬 경로를 싣지 않는�
   assert.equal(roomAttachReason(new Error("ENOENT: no such file, open '/Users/owner/x'"), 'ko'), '파일이 없습니다');
   assert.equal(roomAttachReason(Object.assign(new Error('25MB 초과'), { roomSafe: true }), 'ko'), '25MB 초과');
   assert.match(roomAttachReason(new Error('storage 500 at https://abc.supabase.co/...'), 'en'), /^could not read or upload the file$/);
+  // 무료 첨부 저장 한도(20261011150000) — storage-api는 원문을 숨기고 SQLSTATE만('database error, code: PT402'), 첨부 행(PostgREST)은 원문 이름을 준다
+  for (const m of ['database error, code: PT402', 'msgr_storage_limit']) {
+    assert.equal(roomAttachReason(new Error(m), 'ko'), '첨부 저장 공간이 가득 차 올리지 못했습니다');
+    assert.equal(roomAttachReason(new Error(m), 'en'), 'attachment storage is full');
+  }
+  assert.match(roomAttachReason(new Error('database error, code: PT4021'), 'en'), /^could not read or upload the file$/, '다른 코드는 일반 사유');
 });
 
 // D38b: 사람이 비DM 채널에서 이 크루의 글에 [답글]만 달면(멘션 없음) 받는다 — 서버 msgr_delivery_target 셋째 규칙과 같게.

@@ -13,6 +13,9 @@ export function deliveryCardView({ busy, job, isDm = false }) {
   const keys = { retryKey: attachOnly ? 'msg.delivery.retryUpload' : 'msg.delivery.retry', dismissKey: attachOnly ? 'msg.delivery.discard' : canRetry ? 'msg.delivery.toComposer' : 'ui.close' };
   if (!job.error || (offline && !job.messageId)) return { titleKey, errorLine: null, canRetry, ...keys };
   const files = job.messageId ? (job.files ?? []).filter((f) => !f.done).map((f) => f.file.name) : [];
-  const key = job.errorKey === 'msg.delivery.rejected' && isDm ? 'msg.delivery.unreachable' : job.errorKey || (/msgr_runtime_update_required/.test(job.error) ? 'dm.delivery.blocked' : null);
-  return { titleKey, errorLine: { key, raw: key ? null : job.error, files: offline || job.errorKey ? files : [] }, canRetry, ...keys };
+  // 무료 첨부 저장 한도(서버 20261011150000) — 업로드는 storage-api가 원문을 숨겨 'database error, code: PT402', 첨부 행은 'msgr_storage_limit'.
+  // 후속(#944 병합 뒤): 플랜 카드로 잇는 목록 pro-checkout.mjs PRO_UPSELL에 msgr_storage_limit: 'err.storageLimit' 한 줄 + 이 카드 줄에서 플랜 카드 열기(iOS 제외)
+  const storageFull = /\bmsgr_storage_limit\b|\bcode: PT402\b/.test(job.error);
+  const key = job.errorKey === 'msg.delivery.rejected' && isDm ? 'msg.delivery.unreachable' : job.errorKey || (storageFull ? 'err.storageLimit' : /msgr_runtime_update_required/.test(job.error) ? 'dm.delivery.blocked' : null);
+  return { titleKey, errorLine: { key, raw: key ? null : job.error, files: offline || job.errorKey || storageFull ? files : [] }, canRetry, ...keys };
 }
