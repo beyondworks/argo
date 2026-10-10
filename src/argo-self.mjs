@@ -933,6 +933,7 @@ async function syncSection(wsId, { lang, now }) {
     `- ${pick(lang, '실행 담당 기기', 'Running device')}: ${!li.syncOn || (li.leader && li.ownedAt > 0) ? pick(lang, '이 기기(폴러·루틴이 여기서 돈다)', 'this device (pollers and routines run here)') : li.holder?.deviceId ? pick(lang, `다른 기기(${deviceLabel(li.holder.deviceId)})`, `another device (${deviceLabel(li.holder.deviceId)})`) : pick(lang, '확인 중', 'checking')}`,
     `- ${pick(lang, '마지막 동기화', 'Last sync')}: ${lastAt ? `${fmtTime(lastAt, lang)}(${ago(lastAt, now, lang)})` : pick(lang, '이 실행에서는 아직 없음', 'none yet in this run')}${c?.skipped ? ` · ${skip[c.skipped] ?? c.skipped}` : ''}`,
     ...(c && !c.skipped ? [`- ${pick(lang, '이번 회차', 'Last cycle')}: ${pick(lang, '받음', 'pulled')} ${c.pulled ?? 0} · ${pick(lang, '올림', 'pushed')} ${c.pushed ?? 0} · ${pick(lang, '충돌', 'conflicts')} ${c.conflicts ?? 0} · ${pick(lang, '실패', 'failed')} ${c.failed ?? 0}`] : []),
+    ...(c?.oversize ? [`- ${pick(lang, '동기화 제외(크기 초과)', 'Not synced (too large)')}: ${c.oversize}${pick(lang, '개', '')} — ${(c.oversizeRels ?? []).join(', ')}`] : []),
     ...(s.lastError ? [`- ${pick(lang, '마지막 오류', 'Last error')}: ${maskKeyLike(String(s.lastError)).slice(0, 200)}`] : []),
   ];
   return lines.join('\n');

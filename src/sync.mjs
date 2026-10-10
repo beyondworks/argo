@@ -37,6 +37,7 @@ import { resolveRunner } from './runners.mjs'; // 리더 양보 판단 — 이 �
 import { invalidatePath } from './memindex.mjs'; // 원격 mtime을 심는 수신 쓰기의 캐시 무효화
 import { holdsDaemonLease, daemonLeasesSettled } from './lock.mjs'; // 실행 리스(게이트웨이·스케줄러) 주인만 클라우드 리스에 참여 — leaseTick
 import { leaseRole, ROLE_RANK, docRank, roleMark } from './lease-role.mjs'; // 실행 담당 역할 순위(우선 > 일반 > 예비) — renewLease·standbyIdle
+import { createPrefetch } from './sync-prefetch.mjs'; // 원격 파일 받기만 동시에 — 쓰기·판정은 루프 순서 그대로
 
 const BUCKET = 'companies';
 // 준실시간 — 기본 8s(웹↔앱 지연 단축). ARGO_SYNC_CYCLE_MS로 조정(비용/지연 트레이드오프).
@@ -72,6 +73,50 @@ const IDLE_PROBE_MS = 60_000;
 const MISSING_RECHECK_MS = 60 * 60_000;
 const missingSeen = new Map(); // owner/ws/rel → { sig: 그때의 원격 메타, until }
 const noticeLog = new Map(); // 같은 실패·빈 항목 경고는 목록이 바뀔 때만 로그에 남긴다(재시도마다 같은 줄 반복 방지)
+// 받기 동시 실행(sync-prefetch.mjs) — 판정이 '원격 신규 → 받기'·'원격만 변경 → 받기'인 파일의 내려받기만 앞당긴다. 쓰기·판정·집계는 루프가 종전 순서 그대로.
+// 실측(2026-10-10 VPS 첫 동기화): 한 번에 하나씩 받아 분당 약 65개(파일당 왕복 약 0.9초) — 3,734개 회사가 1시간 가까이 걸렸다.
+// [규모] 요청 수·전송량은 그대로다(파일당 GET 1). 바뀌는 것은 받을 것이 많은 사이클의 순간 속도뿐 — 파일 받기 동시 최대 8(storage.objects 조회 8건),
+// 기기 전체로는 따로 도는 리스 타이머 요청 1을 더해 최대 9. 유휴·평소 사이클(받을 파일 0~몇 개)은 종전과 같다. 쓰기(PUT·DB 행) 0 추가.
+// 요청이 종전보다 느는 경우는 둘뿐이다: 사이클이 도중에 보류되면 앞서 받던 최대 16개를 멈추거나 버리고 다음 사이클이 다시 받는다 / 느린 회선에서 동시에 받다
+// 시간 초과가 나면 그때 함께 받던 것(최대 8)을 하나씩 다시 받는다(종전이라면 실패 사이클이 매니페스트 재읽기·쓰기와 재시도 대기를 불렀다).
+// 메모리: 앞서 받아 둔 내용 합 32MB(매니페스트 크기 기준) 상한, 그보다 큰 파일 하나는 혼자 받는다(종전과 같은 최대치). (export: 회귀 테스트용)
+export const PULL_CONCURRENCY = 8;
+export const PULL_AHEAD_MAX = 2 * PULL_CONCURRENCY;
+const PULL_AHEAD_BYTES = 32 * 2 ** 20;
+// 느린 회선(분리 검수 HIGH-1 재현: 3MB×8개·600KB/s에서 8개 모두 30초 시간 초과, 종전 하나씩은 42.9초에 다 받음) — 클라이언트 시간 초과(30초)는 본문을
+// 받는 시간까지 포함하므로 여러 개가 회선을 나눠 쓰면 하나씩이면 받았을 파일이 실패한다. 그래서 동시에 받는 것은 작은 파일만, 받는 중인 크기 합 1MB까지로 두고
+// 512KB보다 큰 파일은 혼자(종전과 같은 속도) 받는다. 그래도 시간 초과가 나면 그 사이클 남은 받기는 하나씩으로 바꾸고 회사별로 SLOW_LINK_MS 동안 기억한다.
+const PULL_INFLIGHT_BYTES = 2 ** 20;
+const PULL_SOLO_BYTES = 512 * 2 ** 10;
+const SLOW_LINK_MS = 60 * 60_000;
+const slowLinks = new Map(); // owner/ws → until(ms) — 이 회사는 하나씩 받는다
+/** 요청 시간 초과인가 — 헤더 전 초과는 storage-js가 { error: StorageUnknownError('The operation was aborted due to timeout') }로, 본문 중 초과는 .blob()이
+    던진 DOMException(TimeoutError)이 그대로 올라온다(storage-js 2.110.2 BlobDownloadBuilder). (export: 회귀 테스트용) */
+export const isTimeoutError = (e) => e?.name === 'TimeoutError' || /aborted due to timeout|signal timed out/i.test(String(e?.message ?? ''));
+const PULL_PROGRESS_MIN = 100; // 실제로 받으러 갈 파일이 이만큼 이상인 사이클(첫 동기화 등)만 진행을 로그로 남긴다
+const PULL_PROGRESS_MS = 30_000; // 진행 로그 간격 — 받는 동안 로그가 비어 멈춘 것처럼 보이지 않게(10/10 VPS: 14분간 로그 0줄)
+// 크기 제한 — Storage가 거절할 크기의 파일은 동기화에서 뺀다(diff 불가시, syncCompanyOnce의 oversize 주석).
+// 운영 사고(2026-10-10 edge_logs): 한 기기가 162MB PDF 하나를 10분마다 올리려다 매번 400 — 24시간 129회·20.9GB. 업로드 실패가 파일 실패로 세져
+// 회사 사이클이 재시도 대기(최대 10분)만 반복했다. companies 버킷은 file_size_limit가 없어(버킷 행 NULL) 프로젝트 전역 제한을 따른다 — 운영
+// storage.objects(companies) 146,834개 중 가장 큰 객체 52,068,488바이트, 50MiB(52,428,800) 초과 0개(10/10 조회)라 50MiB로 둔다.
+// 저장되는 것은 봉투를 씌운 크기(평문 + 42바이트, v2·v3 같음)라 평문 판정에 64바이트 여유를 둔다. 셀프호스트가 제한을 올렸으면 ARGO_SYNC_MAX_FILE_BYTES로 맞춘다.
+// (export: 회귀 테스트용)
+export const SYNC_MAX_OBJECT_BYTES = Number(process.env.ARGO_SYNC_MAX_FILE_BYTES) || 50 * 2 ** 20;
+export const tooBigToSync = (size) => Number(size) + 64 > SYNC_MAX_OBJECT_BYTES;
+/* 로컬 걷기 해시 캐시 — 8초마다(유휴 확인 전에도) 회사 폴더 전체를 읽고 해시하던 비용(lean-ax-wqou 3,928개·110.7MB에 0.6~1.2초, 10/10 측정)을
+   바뀐 파일만으로 줄인다. 파일마다 (크기, mtime, ctime, inode, 장치)가 해시할 때와 같으면 그 해시를 다시 쓴다(git 색인과 같은 방식). 기기 메모리만 쓴다(파일·DB 쓰기 0).
+   · 해상도가 낮은 파일 시스템(FAT 2초·HFS+ 1초·리눅스 굵은 시각)에서 같은 시각 칸 안의 두 번째 쓰기는 시각이 같다 — 걷기를 시작한 시각보다 WALK_RACY_MS 넘게
+     이전에 바뀐 파일만 캐시한다(git의 'racy' 규칙). 그 뒤의 쓰기는 반드시 다른 시각을 받는다. 미래 시각 파일도 같은 규칙으로 캐시하지 않는다.
+   · 동기화 자신이 원격 mtime을 심는다(writeLocal의 utimes — 아래 invalidatePath 주석 '심은 mtime과 크기가 이전 행과 우연히 일치하면 캐시가 변경을 못 본다'와
+     같은 함정). 키에 ctime·inode를 넣어 막는다 — ctime은 utimes로 되돌릴 수 없고, 원자 쓰기(tmp→rename)는 새 inode다.
+   · 시계가 되돌아가면(지난 걷기보다 지금이 이르면) 캐시를 통째로 버린다. 놓친 변경의 상한: 항목은 WALK_REHASH_MS가 지나면 다시 읽는다.
+   · 캐시에서 온 해시로는 로컬을 덮거나 지우지 않는다 — 그 쓰기 직전에 실제 내용을 다시 읽어 확인하고 다르면 미룬다(syncCompanyOnce의 guarded). */
+const WALK_RACY_MS = 3_000;
+const WALK_REHASH_MS = 10 * 60_000;
+const walkCache = { roots: new Map(), lastNow: 0 }; // root → Map<rel, { key, h, at }>
+const walkFromCache = new WeakMap(); // walk 결과 객체 → 캐시에서 해시를 가져온 rel 집합
+/** 테스트 전용 — 걷기 캐시를 비우거나 한 항목의 해시를 바꿔 '낡은 캐시'를 흉내 낸다(캐시 해시로 덮지 않는지 시험). */
+export function _walkCacheForTest() { return walkCache; }
 // 크로스 프로세스 락 스테일 판정 — CYCLE_MS와 분리한다. 주기 단축(45→8s)이 이중 동기화 방어막을
 // 좁히면(느린 사이클의 살아있는 리더를 오탈취) 삭제 피드백 루프=대형 유실이 날 수 있다(리뷰 H1).
 // 죽은 프로세스 락은 이 시간 내 회수하되, 살아있는 리더는 오탈취 안 되게 넉넉히.
@@ -171,7 +216,8 @@ export const EXCLUDE = (rel) => { // (export: 회귀 테스트용)
 const CLIENT_OPTS = {
   auth: { persistSession: false },
   // 타임아웃 필수 — 기본 fetch는 무한 대기라 요청 하나가 걸리면 동기화 전체가 영원히 멈춘다(실측)
-  global: { fetch: (url, opts) => fetch(url, { ...opts, signal: AbortSignal.timeout(30_000) }) },
+  // 호출부가 멈추기 신호를 넘기면(받기 미리 하기의 stop) 시간 초과와 함께 건다 — 넘기지 않는 요청은 종전과 같다.
+  global: { fetch: (url, opts) => fetch(url, { ...opts, signal: opts?.signal ? AbortSignal.any([opts.signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000) }) },
 };
 let sb = null, sbKey = '';
 
@@ -232,7 +278,7 @@ function resetDiscoverClock() { globalThis.__argoLastDiscover = 0; }
 const client = () => sb; // ensureClient() 성공 뒤에만 호출된다 (cycle/ensureSync 게이트)
 // 테스트 전용 — fake storage를 주입해 syncCompany를 실 Supabase 없이 실행 검증한다.
 // 프로덕션 경로는 절대 호출하지 않는다(ensureClient가 실 클라이언트를 세팅). (export: 통합 테스트용)
-export function _setSyncClientForTest(fake) { sb = fake; sbKey = '__test__'; companyRetry.clear(); companyIdle.clear(); missingSeen.clear(); noticeLog.clear(); }
+export function _setSyncClientForTest(fake) { sb = fake; sbKey = '__test__'; companyRetry.clear(); companyIdle.clear(); missingSeen.clear(); noticeLog.clear(); slowLinks.clear(); }
 
 // Supabase Storage는 인증 다운로드도 CDN(Cloudflare)에 캐시하고, 같은 키를 덮어쓴 직후에도 한동안 옛 사본(cf HIT)을 준다.
 // 라이브 실측(2026-09-26 03:05Z): 매니페스트를 올리고 10초 뒤 GET이 HIT로 이전 판을 받아 방금 지운 항목을 되살렸고(그 회사는 그 뒤
@@ -737,14 +783,22 @@ export async function renewTokenClaims(owner, { now = Date.now(), force = false 
 
 /* ─── 로컬 스캔 (내용 해시 포함 — 변경 판별의 진실) ─── */
 const hashBuf = (buf) => createHash('sha1').update(buf).digest('hex').slice(0, 16);
-async function walk(dir, base = dir, out = {}, failed = null) {
+async function walk(dir, base = dir, out = {}, failed = null, ctx = null) {
+  const top = !ctx;
+  if (top) {
+    const now = Date.now();
+    if (now < walkCache.lastNow) walkCache.roots.clear(); // 시계가 되돌아갔다 — 캐시의 시각 판정을 믿지 않는다(걷기 캐시 주석)
+    walkCache.lastNow = now;
+    ctx = { now, prev: walkCache.roots.get(base), next: new Map(), cached: new Set() };
+    walkFromCache.set(out, ctx.cached);
+  }
   let entries = [];
   try { entries = await readdir(dir, { withFileTypes: true }); }
   catch {
     // 이 디렉터리를 못 읽음(EMFILE·EIO·권한·레이스 등) — 하위 파일들의 '부재'는 삭제가 아니라 unknown.
     // subtree prefix를 기록해 삭제 전파·브레이크 집계에서 제외한다(walk 실패발 대량/피드백 유실 차단).
     if (failed) failed.add(dir === base ? '' : dir.slice(base.length + 1).split(sep).join('/'));
-    return out;
+    return out; // (루트를 못 읽었으면 캐시는 그대로 둔다)
   }
   for (const e of entries) {
     const full = join(dir, e.name);
@@ -755,17 +809,32 @@ async function walk(dir, base = dir, out = {}, failed = null) {
       // 개발 산출물 디렉터리는 내려가지 않는다(isDevArtifactRel 주석) — diff 쪽 불가시 가드가 원격 전용
       // 항목의 pull·삭제 전파를 이미 막아주므로, 여기서 스킵해도 안전하고 CPU·IO만 줄어든다.
       if (isDevArtifactSeg(e.name)) continue;
-      await walk(full, base, out, failed);
+      await walk(full, base, out, failed, ctx);
     }
     else if (!EXCLUDE(rel) && !isDevArtifactRel(rel)) {
-      try {
-        const buf = await readFile(full);
-        const st = await stat(full).catch(() => null);
-        out[rel] = { m: st ? Math.round(st.mtimeMs) : Date.now(), s: buf.length, h: hashBuf(buf) };
-      } catch { /* 읽는 중 사라진 파일 — 스킵 */ }
+      try { out[rel] = await fileMeta(full, rel, ctx); } catch { /* 읽는 중 사라진 파일 — 스킵 */ }
     }
   }
+  if (top) walkCache.roots.set(base, ctx.next); // 이번에 본 파일만 남긴다(지운 파일의 항목은 여기서 빠진다)
   return out;
+}
+/** 파일 하나의 { m, s, h } — 걷기 캐시(위 주석)가 맞으면 읽지 않는다. 동기화하지 않을 크기(tooBigToSync)는 읽지도 해시하지도 않는다(h 없음 —
+    diff에서 불가시라 해시를 쓰는 곳이 없다. 162MB 파일을 8초마다 메모리로 읽던 비용도 없앤다). */
+async function fileMeta(full, rel, ctx) {
+  const st = await stat(full);
+  const m = Math.round(st.mtimeMs);
+  if (tooBigToSync(st.size)) return { m, s: st.size };
+  const key = `${st.size}:${st.mtimeMs}:${st.ctimeMs}:${st.ino}:${st.dev}`;
+  const prev = ctx.prev?.get(rel);
+  if (prev && prev.key === key && ctx.now >= prev.at && ctx.now - prev.at < WALK_REHASH_MS) {
+    ctx.next.set(rel, prev); ctx.cached.add(rel);
+    return { m, s: st.size, h: prev.h };
+  }
+  const buf = await readFile(full);
+  const h = hashBuf(buf);
+  // 걷기를 시작하기 WALK_RACY_MS 전보다 나중에 바뀐 파일(그리고 미래 시각 파일)은 캐시하지 않는다 — 다음 걷기가 다시 읽는다
+  if (Math.max(st.mtimeMs, st.ctimeMs) < ctx.now - WALK_RACY_MS) ctx.next.set(rel, { key, h, at: ctx.now });
+  return { m, s: buf.length, h };
 }
 
 // 파일 종류 — 충돌 처리 전략이 갈린다. (export: 회귀 테스트용 순수 함수)
@@ -900,8 +969,8 @@ export async function syncStateExists(wsId) {
 }
 const loadState = (wsId) => readJsonLenient(stateFile(wsId), { files: {} });
 
-async function download(key) {
-  const { data, error } = await client().storage.from(BUCKET).download(key, fresh());
+async function download(key, signal) {
+  const { data, error } = await client().storage.from(BUCKET).download(key, fresh(), signal ? { signal } : undefined);
   if (error) throw Object.assign(new Error(error.message), { notFound: isNotFound(error) });
   return Buffer.from(await data.arrayBuffer());
 }
@@ -953,8 +1022,9 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
   const canIdle = !isRestore && !opts.reseal && !opts.freePlan;
   const idle = companyIdle.get(key);
   const beforeFingerprint = canIdle ? await fingerprint() : null;
+  // 유휴 확인으로 건너뛴 사이클도 마지막 전체 사이클의 크기 초과 목록을 그대로 싣는다 — 안 실으면 설정 화면의 '동기화 제외' 줄이 다음 사이클에 사라진다
   if (canIdle && idle && Date.now() - idle.at < IDLE_PROBE_MS && beforeFingerprint === idle.fingerprint) {
-    return { skipped: 'idle-probe', retryAt: idle.at + IDLE_PROBE_MS, pulled: 0, pushed: 0, deletedL: 0, deletedR: 0, failed: 0 };
+    return { skipped: 'idle-probe', retryAt: idle.at + IDLE_PROBE_MS, pulled: 0, pushed: 0, deletedL: 0, deletedR: 0, failed: 0, ...idle.excluded };
   }
   try {
     let revision = null;
@@ -967,18 +1037,19 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
       if (data?.version || data?.etag) revision = JSON.stringify([data.version, data.etag, data.lastModified, data.size]);
       if (revision && idle?.revision === revision && beforeFingerprint === idle.fingerprint) {
         companyIdle.set(key, { ...idle, at: Date.now() });
-        return { skipped: 'idle-probe', pulled: 0, pushed: 0, deletedL: 0, deletedR: 0, failed: 0 };
+        return { skipped: 'idle-probe', pulled: 0, pushed: 0, deletedL: 0, deletedR: 0, failed: 0, ...idle.excluded };
       }
     }
     const result = await syncCompanyOnce(wsId, owner, isRestore, opts);
     // 실패 파일·빈 항목은 이름까지 로그에 남긴다(~/Library/Logs/argo.err.log) — 목록이 바뀔 때만 한 줄
     noteOnce(`${key}:fail`, result.failed ? `[argo] 동기화(${wsId}): 파일 ${result.failed}건 실패 — ${(result.failures ?? []).map((f) => `${f.rel}: ${f.reason}`).join(' | ')}` : '');
     noteOnce(`${key}:missing`, result.missing ? `[argo] 동기화(${wsId}): 매니페스트에만 있고 객체가 없는 항목 ${result.missing}개 — 건너뜀(항목 보존): ${result.missingRels.join(', ')}` : '');
+    noteOnce(`${key}:oversize`, result.oversize ? `[argo] 동기화(${wsId}): ${Math.floor(SYNC_MAX_OBJECT_BYTES / 2 ** 20)}MB를 넘는 파일 ${result.oversize}개는 동기화하지 않습니다(이 기기에만 둠): ${result.oversizeRels.join(', ')}` : '');
     if (result.failed > 0) { deferFailure(result.failures); return result; }
     companyRetry.delete(key);
     if (canIdle && !result.failed && !result.held && !result.deferred) {
       const stamp = await fingerprint();
-      if (stamp !== null && stamp === beforeFingerprint) companyIdle.set(key, { at: Date.now(), fingerprint: stamp, revision });
+      if (stamp !== null && stamp === beforeFingerprint) companyIdle.set(key, { at: Date.now(), fingerprint: stamp, revision, excluded: result.oversize ? { oversize: result.oversize, oversizeRels: result.oversizeRels, oversizeLimit: result.oversizeLimit } : undefined });
       else companyIdle.delete(key);
     } else companyIdle.delete(key);
     return result;
@@ -1069,17 +1140,26 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
   // 엄격 openSecret 유지(무결성 검증 유지, 검수 LOW-5). rel별로 개봉기를 가른다.
   // 읽기는 스위치와 무관하게 항상 봉투 개봉 가능 — 2단계 롤아웃의 핵심(다른 기기가 먼저 sealing을 켜도 안전).
   // 태생부터 봉투인 크레덴셜 2종만 엄격(깨진 평문 수용 금지), 그 외는 관용 개봉(기존 평문 그대로 통과 → 전환 무중단).
-  const pullBuf = async (rel) => {
+  /** 최근 객체 없음으로 확인한 항목(같은 원격 메타) — 다시 받으러 가지 않는다(GET 0). 진행 로그도 이 판정으로 '실제로 받으러 갈 파일'을 센다. */
+  const missingFresh = (rel) => {
+    const r0 = remote.files[rel], seen = missingSeen.get(`${owner}/${wsId}/${rel}`);
+    return seen?.sig === (r0?.h ?? `${r0?.m}:${r0?.s}`) && Date.now() < seen.until;
+  };
+  /** 받기(네트워크)만 — 봉투 그대로 돌려준다. 받기 미리 하기는 이것만 앞당기고, 여는 것(openPulled)은 루프가 그 파일의 차례에 한다. */
+  const pullRaw = async (rel, signal) => {
     // 최근 객체 없음으로 확인한 항목(같은 원격 메타)은 다시 받으러 가지 않는다 — 메타가 바뀌면(누가 다시 올림) 바로 다시 받는다.
     // 객체 없음은 어느 분기에서도 쓰기로 이어지지 않으므로(아래 catch가 missing으로 건너뜀) 기억이 낡아도 늦어질 뿐 덮어쓰지 않는다.
     const seenKey = `${owner}/${wsId}/${rel}`, r0 = remote.files[rel], sig = r0?.h ?? `${r0?.m}:${r0?.s}`;
-    const seen = missingSeen.get(seenKey);
-    if (seen?.sig === sig && Date.now() < seen.until) throw Object.assign(new Error('Object not found(최근 확인)'), { notFound: true });
-    const b = await download(remoteKey(rel)).catch((e) => {
+    if (missingFresh(rel)) throw Object.assign(new Error('Object not found(최근 확인)'), { notFound: true });
+    const b = await download(remoteKey(rel), signal).catch((e) => {
       if (e.notFound) missingSeen.set(seenKey, { sig, until: Date.now() + MISSING_RECHECK_MS });
       throw e;
     });
     missingSeen.delete(seenKey); // 받았으면 더는 빈 항목이 아니다
+    return b;
+  };
+  /** 받은 봉투 열기 — 그 파일의 차례에 한다(미리 받은 파일도). 사이클 도중 열쇠(DEK)가 도착하면 종전처럼 그 뒤 차례의 파일부터 바로 열린다(분리 검수 26번). */
+  const openPulled = (rel, b) => {
     // 회수 마커 — 다른 기기가 credSync를 껐다. throw → per-file catch가 failed로 보류하고, 이 기기도
     // 곧 company.json 동기화로 토글을 받아 불가시가 된다(로컬 자격은 그동안 그대로).
     // 안전성 자체는 마커 형식(무효 봉투 — openSecret이 어차피 throw)이 담보하므로 이 가드는 현재
@@ -1087,6 +1167,7 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
     if (isSecretRel(rel) && isCredWithdrawn(b)) throw new Error('자격 동기화 꺼짐(다른 기기에서 회수) — pull 보류');
     return (rel === 'connections.json' || rel === '.secrets.json') ? openSecret(b) : openSecretCompat(b);
   };
+  const pullBuf = async (rel) => openPulled(rel, await pullRaw(rel));
   /** 업로드 직전 봉투 — 모든 업로드 경로가 이걸 거쳐야 평문이 새지 않는다(병합 분기 포함). */
   // E2EE 활성(이 기기가 DEK 보유) = 동기 대상 **전량**을 v3로 봉인 — 별도 스위치가 없다:
   // DEK 보유가 곧 스위치(디스크 사실에서 파생 원칙). 미보유 기기는 v2/평문 기존 동작 그대로(단계 0 불변).
@@ -1112,10 +1193,13 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
     try { cur = hashBuf(await readFile(relFull(rel))); } catch (e) { if (e.code !== 'ENOENT') throw e; }
     if (cur !== basedOn) throw Object.assign(new Error(`로컬 파일이 사이클 도중 바뀌었다 — 이번엔 건너뜀(다음 사이클 병합): ${rel}`), { deferred: true });
   };
+  const cachedRels = walkFromCache.get(local) ?? new Set(); // 이번 걷기에서 해시를 캐시로 가져온 파일(내용을 이번에 읽지 않았다)
   const guarded = (rel, basedOn, fn) => {
     const run = async () => { await recheck(rel, basedOn); return fn(); };
     if (isThread(rel)) return withLock(threadLockKey(wsId, rel), run, { file: relFull(rel), mkParent: false });
     if (isFileLockedRel(rel)) return withFileLock(relFull(rel), run, { mkParent: false });
+    // 판단 근거가 걷기 캐시의 해시면 덮거나 지우기 직전에 실제 내용으로 확인한다(잠금 없이 — 다르면 미룸, 걷기 캐시 주석). 캐시 없이 읽은 파일은 종전대로.
+    if (basedOn != null && cachedRels.has(rel)) return run();
     return fn(); // 그 밖의 파일(원장 .jsonl·노트 등)은 종전대로 — **basedOn을 넘겨도 무시한다**(잠금·재확인은 스레드와 isFileLockedRel 파일뿐, 독립 검수 #800 LOW-7)
   };
   const writeLocal = async (rel, buf, mtime, basedOn) => {
@@ -1178,6 +1262,10 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
 
   // 회의록 충돌 카드·기기 로컬 상태(.local-assets·.assistant)는 집합에서 빼 불가시 — 아래 브레이크 집계·전파 루프가 같은 집합을 돌므로 한 곳이면 된다(isRoomCardRel 주석).
   const allRels = new Set([...Object.keys(local), ...Object.keys(remote.files), ...Object.keys(state)].filter((rel) => !isRoomCardRel(rel) && !isLocalImportRel(rel) && !isAssistantStateRel(rel) && !isTurnTraceRel(rel)));
+  // 크기 제한을 넘는 파일(SYNC_MAX_OBJECT_BYTES 주석) — 개발 산출물과 같은 diff 불가시: 올리기·받기·삭제 전파·브레이크 집계·사전 확인 전부 건너뛰고 실패로 세지 않는다.
+  // 로컬이든 원격 항목이든 한쪽이 크면 그렇다 — 원격에 예전 작은 판이 있던 파일이 커져도 원격을 덮거나 지우지 않고(다른 기기는 작은 판 그대로),
+  // 로컬의 큰 파일도 원격 변경·삭제로 덮거나 지우지 않는다. base(state)는 아래 nextFiles 규칙대로 종전 값이 남는다. 단일 출처 — 아래 모든 자리가 이 집합을 본다.
+  const oversize = new Set([...allRels].filter((rel) => !(noSecrets && isSecretRel(rel)) && !isDevArtifactRel(rel) && [local[rel], remote.files[rel]].some((x) => x && tooBigToSync(x.s))));
 
   const archMoves = archivalCreateNames(local, state); // .archive→.trash 이동의 목적지 basename
   // 로컬 손상(readJson이 .corrupt-로 치워둠)으로 '부재'가 된 삭제 후보 — 삭제가 아니라 self-heal 대상.
@@ -1194,6 +1282,7 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
   const isRealDelete = (rel, l, r, base, side) => {
     if (isEncRel(rel) && !cryptoOn()) return false;
     if (isDevArtifactRel(rel)) return false; // 개발 산출물 — diff 불가시(isDevArtifactRel 주석), 브레이크 집계 제외
+    if (oversize.has(rel)) return false; // 크기 제한 초과 — diff 불가시(oversize 주석), 브레이크 집계 제외
 
     // credSync off — 자격은 diff 루프가 스킵하므로 삭제가 실행되지 않는다. 집계도 같은 규칙(단일 출처):
     // 마커 upsert 실패로 항목이 남은 사이클에 브레이크가 "삭제 예정"으로 오집계해 보류되는 것 방지.
@@ -1234,7 +1323,7 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
   const blobProbe = new Map();
   if (!manifestExists) {
     for (const rel of allRels) {
-      if ((noSecrets && isSecretRel(rel)) || isDevArtifactRel(rel) || (isEncRel(rel) && !cryptoOn())) continue; // 아래 루프와 같은 불가시
+      if ((noSecrets && isSecretRel(rel)) || isDevArtifactRel(rel) || oversize.has(rel) || (isEncRel(rel) && !cryptoOn())) continue; // 아래 루프와 같은 불가시
       const l = local[rel], base = state[rel];
       if (!(l && !remote.files[rel] && base && !changed(base, l))) continue;
       const probe = blobExists(remoteKey(rel));
@@ -1245,12 +1334,50 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
     }
   }
 
+  // 받기 미리 하기(PULL_CONCURRENCY 주석) — 판정이 '원격 신규 → 받기'(로컬·기록 없음, walk 실패 subtree 아님)·'원격만 변경 → 받기'(양쪽 있음, 원격만 기록과 다름)인
+  // 파일의 pullBuf(같은 개봉·같은 오류)를 아래 루프 순서대로 상한 있는 동시 실행으로 앞당긴다. 대상 조건은 루프의 불가시 가드·분기 조건 그대로다.
+  // 쓰기·판정·카운터·충돌 처리는 루프가 종전 순서대로 하고, 쓰기 직전 재확인(recheck·withMcpSnapshot)도 쓰는 그 순간에 한다 — 미리 받은 뒤 로컬이 바뀌면 종전처럼 미루거나 실패.
+  // 받기 실패는 그 파일의 차례에 같은 오류 객체로 던져져 아래 catch가 종전처럼 나눈다(객체 없음 = missing, 만료 토큰·5xx = failed, 업로드 태그 없음).
+  // 브레이크·사전 확인(위)이 사이클을 멈출 수 있는 판정을 모두 끝낸 뒤에 시작한다 — 멈출 사이클의 받기를 미리 하지 않는다.
+  const pullRels = [];
+  for (const rel of allRels) {
+    if ((noSecrets && isSecretRel(rel)) || isDevArtifactRel(rel) || oversize.has(rel) || (isEncRel(rel) && !cryptoOn())) continue; // 아래 루프와 같은 불가시
+    const l = local[rel], r = remote.files[rel], base = state[rel];
+    if (!r) continue;
+    if (l ? (changed(base, r) && !changed(base, l)) : (!base && !isUnderFailed(rel, failedDirs))) pullRels.push(rel);
+  }
+  const linkKey = `${owner}/${wsId}`;
+  const slowLink = (slowLinks.get(linkKey) ?? 0) > Date.now(); // 최근 이 회사에서 동시 받기가 시간 초과를 냈다 — 하나씩 받는다
+  const ahead = createPrefetch(pullRels, pullRaw, { // 받기만 앞당긴다 — 여는 것은 그 파일의 차례에(openPulled)
+    concurrency: slowLink ? 1 : PULL_CONCURRENCY, maxAhead: PULL_AHEAD_MAX, maxBytes: PULL_AHEAD_BYTES,
+    maxInflightBytes: PULL_INFLIGHT_BYTES, soloBytes: PULL_SOLO_BYTES, isSlow: isTimeoutError,
+    sizeOf: (rel) => { const s = Number(remote.files[rel]?.s); return Number.isFinite(s) && s >= 0 ? s : PULL_AHEAD_BYTES; }, // 크기 모름 = 혼자 받는다
+  });
+  // 진행 로그 — 받을 것이 많은 사이클(첫 동기화)은 끝날 때까지 다른 로그가 없어 멈춘 것처럼 보인다. 시작·몇십 초마다·끝에 한 줄.
+  // 수는 '실제로 받으러 갈 파일'(최근 객체 없음으로 확인한 항목 제외 — GET이 안 나간다)만 세고, 받음·실패·없음을 따로 센다(분리 검수 MEDIUM-1).
+  const getting = new Set(pullRels.filter((rel) => !missingFresh(rel)));
+  const showProgress = getting.size >= PULL_PROGRESS_MIN;
+  const tally = { got: 0, failed: 0, gone: 0 };
+  let progressAt = 0;
+  const progressLine = () => `받음 ${tally.got} · 실패 ${tally.failed} · 없음 ${tally.gone}`;
+  const noteProgress = () => { progressAt = Date.now(); console.log(`[argo] 동기화(${wsId}): 파일 ${getting.size}개 받는 중 (${tally.got + tally.failed + tally.gone}/${getting.size} — ${progressLine()})`); };
+  if (showProgress) noteProgress();
+  const pullAhead = async (rel) => {
+    let outcome = 'failed';
+    try { const b = openPulled(rel, await ahead.take(rel)); outcome = 'got'; return b; } // 열기까지 돼야 '받음' — 못 열면 루프 catch와 같이 실패
+    catch (e) { outcome = e?.notFound ? 'gone' : 'failed'; throw e; }
+    finally {
+      if (getting.has(rel)) { tally[outcome]++; if (showProgress && Date.now() - progressAt >= PULL_PROGRESS_MS) noteProgress(); }
+    }
+  };
+
   for (const rel of allRels) {
     // credSync off — 자격 3종은 push/pull/삭제 전파 전부 불가시. 회수(마커 upsert)는 위 단계가 전담하고,
     // 여기서 real-delete로 흐르면 blob remove가 나가 미반영 기기의 로컬 자격 오삭제로 이어진다(가드 필수).
     // held 집계보다 앞에 둔다 — 어차피 안 올라가는 자격이 키 미확보 사이클에 "보류 1개"로 거짓 표시되던 것(#436 2차 검수 LOW-B).
     if (noSecrets && isSecretRel(rel)) continue;
     if (isDevArtifactRel(rel)) continue; // 개발 산출물 — diff 불가시(isDevArtifactRel 주석): push·pull·삭제 전파 전부 스킵, held 미집계(키 미확보와 다른 성격)
+    if (oversize.has(rel)) continue; // 크기 제한 초과 — diff 불가시(oversize 주석): 실패로 세지 않는다(같은 거절을 매 사이클 다시 시도하지 않는다). 결과의 oversize로 알린다
     if (isEncRel(rel) && !cryptoOn()) { held++; continue; } // 키 미확보 사이클 — 암호화 대상은 diff 자체에서 불가시(삭제 오인 차단). held로 표면화(#436 HIGH-2)
     const l = local[rel], r = remote.files[rel], base = state[rel];
     if (!l && !r) continue; // state에만 남은 항목(EXCLUDE 전환·타기기 선정리) — 사이클 말미 state 갱신이 정리한다
@@ -1270,8 +1397,8 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
             if (rmErr) throw new Error(`원격 blob 삭제 실패 — 보류: ${String(rmErr.message || rmErr).slice(0, 80)}`);
             delete remote.files[rel]; deletedR++; deletedRels.add(rel); // 매니페스트 병합에서 재추가 금지
           }
-        } else if (!base) { // 원격 신규 → 받기
-          await writeLocal(rel, await pullBuf(rel), r.m, null); local[rel] = r; pulled++; revived = true;
+        } else if (!base) { // 원격 신규 → 받기(미리 받아 둔 것)
+          await writeLocal(rel, await pullAhead(rel), r.m, null); local[rel] = r; pulled++; revived = true;
         } else { // 내가 지웠지만 원격도 바뀜 = 충돌 → 원격 부활본을 받아 유실 방지
           await writeLocal(rel, await pullBuf(rel), r.m, null); local[rel] = r; pulled++; conflicts++; revived = true;
         }
@@ -1301,8 +1428,8 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
         if (opts.reseal) { await upload(remoteKey(rel), await pushBuf(rel)); pushed++; }
         continue;
       }
-      if (remoteChg && !localChg) { // 원격만 변경 → 받기
-        await writeLocal(rel, await pullBuf(rel), r.m, l.h); local[rel] = r; pulled++; continue;
+      if (remoteChg && !localChg) { // 원격만 변경 → 받기(미리 받아 둔 것)
+        await writeLocal(rel, await pullAhead(rel), r.m, l.h); local[rel] = r; pulled++; continue;
       }
       if (localChg && !remoteChg) { // 로컬만 변경 → 밀기
         await upload(remoteKey(rel), await pushBuf(rel)); remote.files[rel] = l; pushed++; continue;
@@ -1345,7 +1472,7 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
         conflicts++;
       }
     } catch (e) {
-      if (e?.holdCycle) throw e; // 삭제 근거를 확인 못 함 — 이 사이클 전체 보류(매니페스트·state 쓰기 없음)
+      if (e?.holdCycle) { await ahead.stop(); throw e; } // 삭제 근거를 확인 못 함 — 이 사이클 전체 보류(매니페스트·state 쓰기 없음). 미리 받던 요청은 멈추고(abort) 끝나기를 기다린다
       if (e?.deferred) { deferred++; continue; } // 로컬이 사이클 도중 바뀜 — 실패가 아니라 미룸(base 그대로라 다음 사이클이 양쪽 변경으로 병합·재판정)
       // 매니페스트에는 있는데 객체가 없다(받을 내용이 없음) — 실패가 아니다. 항목은 지우지 않는다: 그 파일을 가진 기기는 항목이 빠지는 순간
       // '다른 기기가 지웠다'로 읽어 로컬 사본을 지운다(2026-09-15 Storage 정리가 객체만 지우고 매니페스트를 남긴 이유). 건너뛰고 상태에만 남긴다.
@@ -1374,6 +1501,9 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
       if (!(e?.uploadFailed && opts.freePlan) && failures.length < 5) failures.push({ rel, reason: String(e?.message ?? e).split(root + sep).join('').replace(/(\.tmp-[^'"]*)-\d+-[0-9a-z]+-\d+(?=['"])/g, '$1').slice(0, 120) });
     }
   }
+  await ahead.stop(); // 보통은 모두 꺼내 가서 할 일이 없다 — 꺼내 가지 않은 결과가 남았으면 버린다(요청이 사이클 밖으로 새지 않게)
+  if (ahead.degraded) { slowLinks.set(linkKey, Date.now() + SLOW_LINK_MS); console.warn(`[argo] 동기화(${wsId}): 여러 파일을 함께 받다 시간 초과 — 이 회사는 ${SLOW_LINK_MS / 60_000}분 동안 하나씩 받습니다`); }
+  if (showProgress) console.log(`[argo] 동기화(${wsId}): 파일 ${getting.size}개 받기 끝 — ${progressLine()}`);
 
   // 매니페스트 재읽기 병합 — 매니페스트는 whole-file 덮어쓰기(LWW)라, diff를 도는 동안 다른 기기가
   // 올린 신규 항목을 병합 없이 덮으면 그 항목이 유실되고, 그 기기의 base에는 남아 다음 사이클에
@@ -1456,8 +1586,10 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
     if (local[rel] && !changed(local[rel], m)) nextFiles[rel] = m;
     else if (state[rel]) nextFiles[rel] = state[rel];
   }
-  await writeJsonAtomic(stateFile(wsId), { files: nextFiles, ts: Date.now() });
-  return { pulled, pushed, deletedL, deletedR, merged, conflicts, failed, healed, denied, uploadDenied, ...(deferred ? { deferred } : {}), ...(held ? { held } : {}), ...(withdrawn ? { withdrawn } : {}), ...(manifestDenied ? { manifestDenied: true } : {}), ...(failures.length ? { failures } : {}), ...(missing ? { missing, missingRels } : {}) };
+  // 크기 초과 목록은 state에도 남긴다 — 상주와 다른 프로세스인 `argo status`가 읽는다(옛 버전은 files만 읽으므로 무해, .sync-state.json은 모든 버전에서 동기화 제외).
+  const oversizeRels = [...oversize].slice(0, 5);
+  await writeJsonAtomic(stateFile(wsId), { files: nextFiles, ts: Date.now(), ...(oversize.size ? { oversize: { n: oversize.size, rels: oversizeRels, limit: SYNC_MAX_OBJECT_BYTES } } : {}) });
+  return { pulled, pushed, deletedL, deletedR, merged, conflicts, failed, healed, denied, uploadDenied, ...(deferred ? { deferred } : {}), ...(held ? { held } : {}), ...(withdrawn ? { withdrawn } : {}), ...(manifestDenied ? { manifestDenied: true } : {}), ...(failures.length ? { failures } : {}), ...(missing ? { missing, missingRels } : {}), ...(oversize.size ? { oversize: oversize.size, oversizeRels, oversizeLimit: SYNC_MAX_OBJECT_BYTES } : {}) };
 }
 
 // 이 인스턴스가 책임지는 오너(들) — 테넌트 격리의 핵심.
