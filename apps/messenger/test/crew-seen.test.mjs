@@ -64,3 +64,12 @@ test('실제 loadOrg: 새 서버는 크루 조회 1건으로 기기 심박 시�
   assert.equal(crewSelects.length, 1, '기억하는 동안은 바로 행 시각(실패할 요청 0)');
   assert.doesNotMatch(crewSelects[0], /msgr_crew_seen/);
 });
+
+// 재검수 LOW-3: 함수 이름이 들어 있어도 '열 없음'이 아닌 오류는 옛 서버로 보지 않는다(3단계에서 10분 동안 전원 '꺼짐'이 되는 오판).
+test('seenMissing — 열 없음·스키마 캐시만 옛 서버, 권한 오류는 아니다', async () => {
+  const { seenMissing } = await import('../src/crew-seen.mjs');
+  assert.equal(seenMissing(new Error(MISSING)), true);
+  assert.equal(seenMissing(new Error("Could not find the 'msgr_crew_seen' column of 'msgr_crews' in the schema cache")), true);
+  assert.equal(seenMissing(new Error('permission denied for function msgr_crew_seen')), false);
+  assert.equal(seenMissing(new Error('canceling statement due to statement timeout')), false);
+});

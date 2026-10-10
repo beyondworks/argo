@@ -479,7 +479,7 @@ export function makeDb(client) {
       if (Date.now() - deviceBeatRpc.seenMissingAt > DEVICE_BEAT_RECHECK_MS) {
         const { data, error } = await client.from('msgr_crews').select('id, last_seen_at:msgr_crew_seen').in('id', ids);
         if (!error) rows = data ?? [];
-        else if (/msgr_crew_seen/.test(error.message ?? '')) deviceBeatRpc.seenMissingAt = Date.now();
+        else if (error.code === '42703' || (/msgr_crew_seen/.test(error.message ?? '') && /does not exist|schema cache|could not find/i.test(error.message ?? ''))) deviceBeatRpc.seenMissingAt = Date.now(); // 열 없음만 옛 서버(권한 오류 등은 그대로 던짐)
         else throw new Error(`msgr db: ${error.message}`);
       }
       rows ??= unwrap(await client.from('msgr_crews').select('id, last_seen_at').in('id', ids)) ?? [];

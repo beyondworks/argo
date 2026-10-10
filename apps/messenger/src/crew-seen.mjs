@@ -7,7 +7,8 @@ export const seenCol = { missingAt: 0 };
 export const SEEN_SELECT = 'last_seen_at:msgr_crew_seen';
 const RECHECK_MS = 600_000;
 export const withSeenCols = (cols, now = Date.now()) => (now - seenCol.missingAt > RECHECK_MS ? cols.replace(/\blast_seen_at\b/, SEEN_SELECT) : cols);
-export const seenMissing = (err) => /msgr_crew_seen/.test(String(err?.message ?? err ?? ''));
+// '열이 없다'(42703)·스키마 캐시에 없음만 옛 서버다 — 이름이 든 권한 오류 등을 옛 서버로 보면 10분 동안 행 시각만 읽는다(3단계에서는 전원 '꺼짐').
+export const seenMissing = (err) => { const m = String(err?.message ?? err ?? ''); return err?.code === '42703' || (/msgr_crew_seen/.test(m) && /does not exist|schema cache|could not find/i.test(m)); };
 /** run(cols) — 계산 열로 먼저 읽고, 옛 서버면 행 시각으로 한 번 더. 다른 오류는 그대로 던진다. */
 export async function readWithSeen(cols, run, now = Date.now) {
   const sel = withSeenCols(cols, now());

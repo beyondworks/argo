@@ -91,4 +91,9 @@ test('넘김 부재중 표시(crewSeen)는 기기 심박을 합친 계산 열로
   assert.equal(c2.reqs.length, 3, '두 번째는 계산 열을 다시 시도하지 않는다');
   const c3 = client({ select: () => ({ data: null, error: { code: '57014', message: 'canceling statement due to statement timeout' } }) });
   await assert.rejects(makeDb(c3).crewSeen(['c1']), /statement timeout/, '다른 오류는 옛 서버로 오인하지 않는다');
+  // 재검수 LOW-3: 이름이 들어 있어도 '열 없음'이 아닌 오류(권한 등)는 옛 서버가 아니다 — 3단계(행 쓰기 0)에서 10분 동안 전원 '꺼짐'이 되는 오판
+  deviceBeatRpc.seenMissingAt = 0;
+  const c4 = client({ select: () => ({ data: null, error: { code: '42501', message: 'permission denied for function msgr_crew_seen' } }) });
+  await assert.rejects(makeDb(c4).crewSeen(['c1']), /permission denied/);
+  assert.equal(deviceBeatRpc.seenMissingAt, 0, '권한 오류로 옛 서버 기억을 켜지 않는다');
 });
