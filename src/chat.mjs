@@ -1,12 +1,6 @@
 import { selfPostsSection } from './self-posts.mjs';
 import { stageMessengerHandoff, messengerOrigin, messengerHandoffHint, parseMessengerDisposition, isGuestCtx, ownerDirectTurn, ownerSoloTurn, settingsDirectTurn, msgrJournal } from './gateway/msgr-handoff.mjs';
-import { calendarTool, calendarDescription } from './gateway/office-calendar.mjs'; // 에이전트 일정 도구(주인의 오피스 일정 — 명세 2026-09-30 규칙 9·10)
-import { companyTool, companyDescription } from './gateway/office-company.mjs'; // 에이전트 회사 도구(오피스 회사 정보·직원·평가 — 트랙 C 2026-10-02)
-import { filesTool, filesDescription } from './gateway/office-files.mjs'; // 에이전트 문서함·드라이브 도구(오피스 문서함 검색·읽기·거래처 첨부·드라이브 — 분리 검수 MEDIUM 4)
-import { workTool, workDescription } from './gateway/office-work.mjs'; // 에이전트 할 일·페이지 도구(오피스 17차 B-6)
-import { dealsTool, dealsDescription } from './gateway/office-deals.mjs'; // 에이전트 거래처·거래 도구(오피스 17차 B-7)
-import { mailTool, mailDescription } from './gateway/office-mail.mjs';
-import { briefingTool, briefingDescription } from './gateway/office-briefing.mjs'; // 에이전트 브리핑 도구(오피스 내 공간 브리핑 — 유건 10/5) // 에이전트 메일 도구 — 목록·읽기·초안·별표, 보내기 없음(오피스 17차 B-8)
+import { officeToolSpecs } from './gateway/office-tools.mjs'; // 오피스 도구 7종 정의(일정·회사·문서함·할 일·페이지·거래·메일·브리핑) — CLI·MCP와 같은 한 곳
 import { createBrowserMcpBridge, browserMcpDirective } from './engine/browser-mcp.mjs';
 // 대화 계층 — 페르소나 카드 + 회사 스킬 + vault 사용법을 시스템 프롬프트로, Agent SDK가 루프·도구를 담당.
 // 도구는 워크스페이스 안 파일 읽기/쓰기/검색만 — 폴더 전체가 잠재 컨텍스트, 링크가 탐색 경로.
@@ -1140,189 +1134,15 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     },
   );
 
-  // 주인의 일정(아르고 오피스 달력) — 개인 일정과 조직에 있는 주인 소유 일정만 만들고 고친다. 남의 일정은 읽기만.
-  // 손님 턴은 읽기까지 막는다(주인의 일정이 손님에게 새면 안 된다). 세션 없음·RPC 오류는 처리기가 원인을 한 줄로 돌려준다.
-  const calendar = tool(
-    'calendar',
-    calendarDescription(lang),
-    {
-      action: z.enum(['list', 'create', 'update', 'delete']),
-      from: z.string().optional().describe('list: 시작 날짜 YYYY-MM-DD(한국 날짜)'),
-      to: z.string().optional().describe('list: 끝 날짜 YYYY-MM-DD(포함, from부터 최대 62일)'),
-      id: z.string().optional().describe('update·delete: list가 보여 준 일정 id'),
-      day: z.string().optional().describe('update·delete: list가 보여 준 그 줄의 날짜 YYYY-MM-DD(반복이면 회차 날짜)'),
-      scope: z.enum(['this', 'following', 'all']).optional().describe('반복 일정 update·delete: this=이 회차만, following=이 회차 및 이후, all=모든 회차'),
-      calendar: z.enum(['personal', 'org']).optional().describe('personal=개인(기본), org=지금 메신저 조직'),
-      visibility: z.enum(['org', 'private']).optional().describe('조직 일정의 공개 범위: org=조직 전체(기본), private=나만'),
-      title: z.string().optional(),
-      start: z.string().optional().describe('YYYY-MM-DD(종일) · YYYY-MM-DDTHH:MM(한국 시간) · 시간대 포함 ISO'),
-      end: z.string().optional().describe('종일이면 끝날 YYYY-MM-DD(포함), 시간 일정이면 YYYY-MM-DDTHH:MM·ISO·HH:MM'),
-      all_day: z.boolean().optional(),
-      note: z.string().optional(), location: z.string().optional(), category: z.string().optional(),
-      repeat: z.enum(['none', 'daily', 'weekly', 'monthly']).optional().describe('반복: 매주는 시작 요일, 매월은 시작 날짜'),
-      repeat_interval: z.number().optional().describe('반복 간격 1~99(기본 1)'),
-      repeat_until: z.string().optional().describe('반복 종료일 YYYY-MM-DD(포함)'),
-    },
-    async (args) => {
-      if (guest) return guestNo(lang === 'en' ? 'Reading or changing the owner\'s calendar' : '주인의 일정 보기·고치기');
-      const ownerId = (await loadCompany(wsId).catch(() => ({}))).ownerId ?? null;
-      return text(await calendarTool(args, { ctx: mirrorCtx, crew: fromSlug, lang, ownerId }));
-    },
-  );
-
-  // 오피스 회사 기록(인트라넷 company_*·employees_list·report_* 도구를 옮김) — 메신저 조직 채널의 그 조직만. 손님 턴은 읽기까지 막는다
-  const office = tool(
-    'office',
-    companyDescription(lang),
-    {
-      action: z.enum(['company', 'company_set', 'people', 'evals', 'eval_add']),
-      id: z.string().optional().describe('company_set: 고칠 항목 id(company가 보여 준 것)'),
-      label: z.string().optional(), value: z.string().optional(), notes: z.string().optional(),
-      category: z.enum(['basic', 'bank', 'contact', 'tax', 'other']).optional(),
-      key: z.string().optional().describe('서식 칸: name·reg_name·ceo·biz_no·corp_no·open_date·address·biz_type·biz_item·manager·phone·fax·email·tax_email·website'),
-      status: z.enum(['active', 'left', 'all']).optional().describe('people: 재직(기본)·퇴사·전체'),
-      scope: z.enum(['week', 'month', 'year']).optional(), subject: z.string().optional().describe('evals: 대상 이름으로 거르기'),
-      period_day: z.string().optional().describe('eval_add: 그 기간 안의 아무 날 YYYY-MM-DD(비우면 오늘)'),
-      subject_kind: z.enum(['person', 'crew']).optional(), subject_user: z.string().optional(), subject_name: z.string().optional(), subject_type: z.enum(['ceo', 'staff']).optional(),
-      title: z.string().optional(), performance: z.number().optional(), quality: z.number().optional(), productivity: z.number().optional(), expertise: z.number().optional(), collaboration: z.number().optional(), total: z.number().optional(),
-      review: z.string().optional(), work: z.string().optional(), achievements: z.string().optional(),
-    },
-    async (args) => {
-      if (guest) return guestNo(lang === 'en' ? 'Reading or changing company records' : '회사 기록 보기·고치기');
-      const ownerId = (await loadCompany(wsId).catch(() => ({}))).ownerId ?? null;
-      return text(await companyTool(args, { ctx: mirrorCtx, crew: fromSlug, lang, ownerId }));
-    },
-  );
-
-  // 오피스 문서함·드라이브(인트라넷 docs_*·customers_attach·drive_* 도구를 옮김) — 메신저 조직 채널의 그 조직만. 손님 턴은 읽기까지 막는다
-  const officeFiles = tool(
-    'office_files',
-    filesDescription(lang),
-    {
-      action: z.enum(['files', 'file_read', 'attach', 'drive', 'drive_import', 'drive_mkdir', 'drive_export']),
-      q: z.string().optional().describe('files: 제목·파일명·읽은 글자·태그 검색 / drive: 드라이브 이름 검색'),
-      id: z.string().optional().describe('file_read·drive_export: 문서함 파일 id(files가 보여 준 것)'),
-      customer_id: z.string().optional().describe('files: 그 거래처 파일만 / attach·drive_import: 붙일 거래처 id(업무 › 거래처)'),
-      path: z.string().optional().describe('attach: 올릴 파일 경로(작업 공간 안 — 예: vault/files/명함.png)'),
-      title: z.string().optional().describe('attach: 문서함에 보일 이름(비우면 파일 이름)'),
-      category: z.enum(['quote', 'contract', 'bizcert', 'card', 'bankbook', 'evidence', 'archive', 'general']).optional(),
-      drive_id: z.string().optional().describe('drive_import: drive가 보여 준 드라이브 파일 id'),
-      folder: z.string().optional().describe('drive: 볼 드라이브 폴더 id / drive_mkdir: 부모 폴더 id / drive_export: 보낼 드라이브 폴더 id'),
-      view: z.enum(['home', 'mydrive', 'shared', 'drives', 'starred']).optional(),
-      name: z.string().optional().describe('drive_mkdir: 새 폴더 이름'),
-    },
-    async (args) => {
-      if (guest) return guestNo(lang === 'en' ? 'Reading or changing Office files' : '오피스 문서함 보기·올리기');
-      const ownerId = (await loadCompany(wsId).catch(() => ({}))).ownerId ?? null;
-      return text(await filesTool(args, { ctx: mirrorCtx, crew: fromSlug, lang, ownerId }));
-    },
-  );
-
-  // 오피스 할 일·페이지(인트라넷 tasks_*·categories_list·workboard_* 도구를 옮김) — 메신저 조직 채널의 그 조직만. 손님 턴은 읽기까지 막는다
-  const officeWork = tool(
-    'office_work',
-    workDescription(lang),
-    {
-      action: z.enum(['tasks', 'task_add', 'task_set', 'categories', 'pages', 'page_read', 'page_add', 'page_edit']),
-      id: z.string().optional().describe('task_set: 할 일 id / page_read·page_edit: 페이지 id(tasks·pages가 보여 준 것)'),
-      who: z.enum(['me', 'all']).optional().describe('tasks: me=주인이 맡은 일(기본), all=주인이 볼 수 있는 모든 일(1:1에서만)'),
-      status: z.enum(['todo', 'doing', 'hold', 'done']).optional().describe('tasks: 거르기 / task_add·task_set: todo 할 일 · doing 진행 중 · hold 보류 · done 끝내기(task_set)'),
-      overdue: z.boolean().optional().describe('tasks: 기한 지난 일만'),
-      category: z.string().optional().describe('분류 이름 또는 id(categories가 보여 준 것), none=미분류'),
-      q: z.string().optional().describe('tasks: 제목·메모 검색 / pages: 제목 검색'),
-      title: z.string().optional(),
-      priority: z.enum(['high', 'normal', 'low']).optional(),
-      due_on: z.string().optional().describe('기한 YYYY-MM-DD(task_set에서 none=지우기)'),
-      starts_on: z.string().optional().describe('시작일 YYYY-MM-DD(기한보다 늦을 수 없다, task_set에서 none=지우기)'),
-      note: z.string().optional().describe('할 일 메모 — task_set은 기존 메모 뒤에 덧붙인다'),
-      note_mode: z.enum(['append', 'replace']).optional().describe('task_set 메모: append 덧붙이기(기본) · replace 통째로 바꾸기'),
-      parent_id: z.string().optional().describe('page_add: 상위 페이지 id(비우면 최상위 — 관리자만)'),
-      text: z.string().optional().describe('page_add·page_edit 본문: # 제목, - 목록, 1. 번호, - [ ] 체크, > 인용, --- 구분선, 나머지 줄은 문단'),
-      mode: z.enum(['append', 'replace']).optional().describe('page_edit: append 끝에 덧붙이기(기본) · replace 본문 바꾸기'),
-    },
-    async (args) => {
-      if (guest) return guestNo(lang === 'en' ? 'Reading or changing Office tasks and pages' : '오피스 할 일·페이지 보기·고치기');
-      const ownerId = (await loadCompany(wsId).catch(() => ({}))).ownerId ?? null;
-      return text(await workTool(args, { ctx: mirrorCtx, crew: fromSlug, crewName: fromName, lang, ownerId }));
-    },
-  );
-
-  // 오피스 거래처·거래(인트라넷 customers_list·add·update·deals_list·add·update 도구를 옮김) — 메신저 조직 채널의 그 조직만. 손님 턴은 읽기까지 막는다
-  const officeDeals = tool(
-    'office_deals',
-    dealsDescription(lang),
-    {
-      action: z.enum(['customers', 'customer_add', 'customer_set', 'deals', 'deal_add', 'deal_next', 'deal_due']),
-      id: z.string().optional().describe('customers: 그 거래처 자세히 / customer_set: 거래처 id / deal_next·deal_due: 거래 id'),
-      q: z.string().optional().describe('customers: 이름·담당·메일·전화·대표·사업자번호 검색 / deals: 건명 검색'),
-      archived: z.boolean().optional().describe('customers: 보관함 보기'),
-      name: z.string().optional(), manager: z.string().optional(), phone: z.string().optional(), email: z.string().optional(),
-      ceo: z.string().optional(), biz_no: z.string().optional(), address: z.string().optional(), account: z.string().optional().describe('거래처 계좌(1:1에서만)'),
-      category: z.enum(['customer', 'partner', 'supplier', 'other']).optional(),
-      status: z.enum(['active', 'hold', 'closed']).optional().describe('거래처 상태'),
-      notes: z.string().optional().describe('거래처 메모 — customer_set은 기존 메모 뒤에 덧붙인다. 출처(명함·계약서 등)를 남겨라'),
-      customer_id: z.string().optional().describe('deals: 그 거래처 거래만 / deal_add: 거래처 id'),
-      stage: z.enum(['quote', 'contract', 'invoice', 'paid', 'cancelled', 'open']).optional().describe('deals 거르기: open=입금 완료·취소 전'),
-      overdue: z.boolean().optional().describe('deals: 입금 지연만'),
-      title: z.string().optional().describe('deal_add: 건명'),
-      lines: z.array(z.object({
-        item: z.string().describe('품목 이름(없으면 서비스 품목으로 만든다) 또는 품목 id'),
-        unit_price: z.number().describe('단가(원, 부가세 별도, 정수)'),
-        quantity: z.number().optional().describe('수량(기본 1)'),
-        tax_type: z.enum(['taxable', 'zero', 'exempt']).optional().describe('과세(기본)·영세율·면세'),
-      })).optional().describe('deal_add: 품목 줄 — 금액은 견적서·계약서 같은 실제 근거로만'),
-      due_on: z.string().optional().describe('입금 예정일 YYYY-MM-DD(deal_due에서 none=지우기)'),
-      date: z.string().optional().describe('deal_add: 견적일 / deal_next: 그 단계 날짜 YYYY-MM-DD(비우면 지금)'),
-      to: z.enum(['contract', 'invoice', 'paid', 'cancel']).optional().describe('deal_next: contract 계약 확정 · invoice 계산서 발행 기록 · paid 입금 기록 · cancel 취소'),
-      amount: z.number().optional().describe('deal_next invoice·paid: 금액(원, 부가세 포함, 비우면 남은 전부)'),
-      note: z.string().optional().describe('deal_next: 기록에 남길 메모'),
-      confirm_duplicate: z.boolean().optional().describe('customer_add·deal_add: 비슷한 것이 있다는 안내를 확인하고도 새로 만들 때만 true'),
-    },
-    async (args) => {
-      if (guest) return guestNo(lang === 'en' ? 'Reading or changing Office customers and deals' : '오피스 거래처·거래 보기·고치기');
-      const ownerId = (await loadCompany(wsId).catch(() => ({}))).ownerId ?? null;
-      return text(await dealsTool(args, { ctx: mirrorCtx, lang, ownerId }));
-    },
-  );
-
-  // 오피스 메일(인트라넷 mail_list·read·draft·star 도구를 옮김) — 주인 개인 메일함이라 1:1 턴에만 싣는다. 보내기는 없다(크루는 초안까지)
-  const officeMail = tool(
-    'office_mail',
-    mailDescription(lang),
-    {
-      action: z.enum(['mails', 'mail_read', 'mail_draft', 'mail_star']),
-      account: z.string().optional().describe('메일 계정 주소(여럿 연결했을 때, 비우면 첫 계정)'),
-      folder: z.enum(['inbox', 'unread', 'starred', 'sent', 'drafts', 'archive']).optional(),
-      q: z.string().optional().describe('mails: Gmail 검색어(예: from:kim@x.com 세금계산서)'),
-      id: z.string().optional().describe('mail_read·mail_star: mails가 보여 준 메일 id'),
-      reply_to: z.string().optional().describe('mail_draft: 답장할 메일 id(받는 사람·제목·스레드를 원문에서)'),
-      to: z.string().optional(), cc: z.string().optional(), subject: z.string().optional(),
-      text: z.string().optional().describe('mail_draft: 본문(글자)'),
-      starred: z.boolean().optional().describe('mail_star: false면 별표 떼기'),
-    },
-    async (args) => {
-      if (guest) return guestNo(lang === 'en' ? 'Reading the owner\'s mail or writing drafts' : '주인의 메일 보기·초안 쓰기');
-      const ownerId = (await loadCompany(wsId).catch(() => ({}))).ownerId ?? null;
-      return text(await mailTool(args, { ctx: mirrorCtx, lang, ownerId }));
-    },
-  );
-
-  const officeBriefing = tool(
-    'office_briefing',
-    briefingDescription(lang),
-    {
-      action: z.enum(['brief_add', 'briefs', 'brief_read']),
-      title: z.string().optional(), body: z.string().optional().describe('brief_add: 마크다운 본문(32KB까지)'),
-      kind: z.enum(['daily', 'weekly', 'custom']).optional(), period: z.string().optional().describe('brief_add: 기간 표시(예: 2026-10-05, 이번 주)'),
-      recipient: z.enum(['owner', 'org']).optional().describe('brief_add: owner(기본, 주인) 또는 org(조직 전체 — 관리자만)'),
-      q: z.string().optional().describe('briefs: 제목·본문에서 찾을 글자'), id: z.string().optional().describe('brief_read: briefs가 보여 준 id'),
-    },
-    async (args) => {
-      if (guest) return guestNo(lang === 'en' ? 'Reading or writing the owner\'s briefings' : '주인의 브리핑 읽기·쓰기');
-      const ownerId = (await loadCompany(wsId).catch(() => ({}))).ownerId ?? null;
-      return text(await briefingTool(args, { ctx: mirrorCtx, crew: fromName || fromSlug, lang, ownerId })); // 작성자 = 화면에 보이는 에이전트 이름
-    },
-  );
+  // 오피스 도구 7종(일정·회사·문서함·할 일·페이지·거래·메일·브리핑) — 정의는 gateway/office-tools.mjs 한 곳(argo office CLI·MCP와 같다, 10/10).
+  // 손님 턴은 읽기까지 막는다. 세션 없음·RPC 오류·방 판정은 처리기가 한 줄로 돌려준다. 어떤 턴에 싣는지는 아래 tools 배열이 정한다
+  const officeTool = (spec) => tool(spec.name, spec.description, spec.shape, async (args) => {
+    if (guest) return guestNo(lang === 'en' ? spec.guest.en : spec.guest.ko);
+    const ownerId = (await loadCompany(wsId).catch(() => ({}))).ownerId ?? null;
+    return text(await spec.run(args, { ctx: mirrorCtx, crew: fromSlug, crewName: fromName, lang, ownerId }));
+  });
+  const officeTools = Object.fromEntries(officeToolSpecs(lang).map((spec) => [spec.name, officeTool(spec)]));
+  const { calendar, office, office_files: officeFiles, office_work: officeWork, office_deals: officeDeals, office_mail: officeMail, office_briefing: officeBriefing } = officeTools;
 
   // 커넥터 표면 — 실행은 코어의 callConnectorTool 단일 경로다(러너 무관, 설계서 §1·§2-2).
   // 여기서 원격 MCP 클라이언트를 새로 만들지 않는다: SDK 턴 안에서 직결하면 토큰 갱신·OAuth 챌린지가

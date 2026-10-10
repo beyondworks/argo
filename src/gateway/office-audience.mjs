@@ -7,7 +7,19 @@
 import { randomBytes } from 'node:crypto';
 import { outsideBlock, outsideLine, outsideText, outsideBody, jsonText, cutPrefix, OUTSIDE_BLOCK_MAX } from '../inbound-marks.mjs';
 
+/* ── CLI 문맥(10/10 — argo office CLI·MCP) — 주인이 자기 터미널에서 자기 에이전트(Claude Code·Codex 등)로 부른다 = 주인 혼자 보는 자리.
+   메신저 1:1과 같은 관문을 지나게 kind는 'msgr'로 두되, 이 모듈이 만든 객체만 알아본다(WeakSet) — 메시지·메타 값으로는 흉내 낼 수 없다.
+   source = 쓰기 기록에 남는 출처({ kind: 'session', name }) — 오피스 업무 현황이 그 세션 카드에 묶는다(argo office hold와 같다). */
+const CLI_CTX = new WeakSet();
+export function cliContext({ uid, orgId = null, source = null }) {
+  const c = { kind: 'msgr', uid, orgId, channelKind: 'dm', source };
+  CLI_CTX.add(c);
+  return c;
+}
+export const isCliCtx = (ctx) => !!ctx && typeof ctx === 'object' && CLI_CTX.has(ctx);
+
 export async function audienceOf(client, ctx, ownerId) {
+  if (isCliCtx(ctx)) return 'owner';
   if (ctx?.channelKind === 'public') return ctx?.orgId ? 'org' : 'mixed';
   if (!ctx?.channelId) return 'mixed';
   let users;

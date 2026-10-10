@@ -12,7 +12,7 @@
 // 부하: 사람이 시킬 때만 부른다(폴링 없음). 목록은 호출 1, 할 일 고치기는 목록 1 + 바뀐 칸마다 쓰기 1(같은 값이면 부르지 않는다), 페이지 고치기는 목록 1 + 읽기 1 + 저장 1.
 // 바깥 글(S1): 할 일 제목·메모·분류·사람 이름, 페이지 제목·본문은 남이 쓴 글이다 — 목록·읽기 결과는 경계 블록으로 감싼다(office-audience.mjs outsideOf).
 import { randomUUID } from 'node:crypto';
-import { officeTurn, ONLY_DM, refusalText, outsideOf, quoted, OUTSIDE_RULE } from './office-audience.mjs';
+import { officeTurn, ONLY_DM, refusalText, outsideOf, quoted, OUTSIDE_RULE, isCliCtx } from './office-audience.mjs';
 import { jsonText } from '../inbound-marks.mjs';
 
 export const workDeps = {
@@ -235,7 +235,7 @@ export async function workTool(args, { ctx = null, crew = null, crewName = null,
         if (!hit) return noCategory(cats);
         if (!hit.none) { categoryId = hit.id; categoryName = hit.name; }
       }
-      const source = Object.fromEntries(Object.entries({ kind: 'crew', crew: ctx.crewId ?? null, slug: crew, name: crewName }).filter(([, v]) => v)); // 오피스 화면이 크루별로 묶는다
+      const source = isCliCtx(ctx) && ctx.source ? ctx.source : Object.fromEntries(Object.entries({ kind: 'crew', crew: ctx.crewId ?? null, slug: crew, name: crewName }).filter(([, v]) => v)); // 오피스 화면이 크루별로 묶는다(CLI는 그 세션 카드에)
       const data = { id: workDeps.newId(), title, note, due_on: due ?? null, starts_on: start ?? null, status: a.status ?? 'todo', priority: PRIORITY[a.priority] ?? 2, category_id: categoryId, source };
       const r = unwrap(await c.client.rpc('office_task_write', { p_org: org, p_action: 'task.create', p_data: data })); // 맡은 사람은 비운다 = 주인(서버 기본값)
       return `${pick('할 일을 만들었다(주인이 맡음)', 'Created the task (assigned to the owner)', lang)}:\n${ox.block([line({ ...data, ...r, category: categoryName })], TASK_TEXT)}`;
