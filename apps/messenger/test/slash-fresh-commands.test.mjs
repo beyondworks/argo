@@ -9,7 +9,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { transformSync } from 'esbuild';
 import { createRequestGate } from '../src/rail-state.mjs';
-import { stampFetched } from '../src/presence-clock.mjs';
+import { stampFetched } from '../src/presence-clock.mjs'; import { readWithSeen } from '../src/crew-seen.mjs'; // loadOrg의 접속 시각 읽기(기기 단위 심박)
 import { crewOrder, withoutCopies } from '../src/mention-candidates.mjs';
 import * as slash from '../src/slash-commands.mjs';
 import { crewCommands, fitCommands } from '../../../src/gateway/msgr.mjs'; // 본체 게이트웨이가 msgr_crews.commands에 올리는 모양 그대로
@@ -46,7 +46,7 @@ function orgHarness({ rows, faceInDb = true }) {
         return Promise.resolve({ data: null }).then(res, rej); } }; } };
   const setters = Object.fromEntries(['Channels', 'PreviewChannels', 'Members', 'Crews', 'MyAvailable', 'Ent', 'Policy', 'DmMembers'].map((k) => [`set${k}`, (v) => { state[k] = v; }]));
   const activeOrg = { current: 'A' };
-  const deps = { stampFetched, crewOrder, withoutCopies, joinedRef: { current: new Set() }, supabase, q: async (x) => await x, uid: 'me', activeOrg, loadedOrg: { current: null }, orgRequests: { current: createRequestGate(() => activeOrg.current) }, orgs: [{ id: 'A' }], crewTier: () => '', readLastCh: () => null, faceCol: { missingAt: 0 }, ...setters, setChId: () => {} };
+  const deps = { stampFetched, crewOrder, withoutCopies, readWithSeen, joinedRef: { current: new Set() }, supabase, q: async (x) => await x, uid: 'me', activeOrg, loadedOrg: { current: null }, orgRequests: { current: createRequestGate(() => activeOrg.current) }, orgs: [{ id: 'A' }], crewTier: () => '', readLastCh: () => null, faceCol: { missingAt: 0 }, ...setters, setChId: () => {} };
   const loadOrg = new Function(...Object.keys(deps), `return (${app.slice(start, end)});`)(...Object.values(deps));
   return { loadOrg, state, crewSelects, crewBytes: () => crewBytes };
 }
