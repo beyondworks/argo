@@ -69,14 +69,14 @@ import { writeScreenSnapshot, consumeScreenSnapshot } from './phone-screen-snaps
 import { mentionCandidates, mentionsFromBody, ambiguousMentions, ALL_RE, outsideCrewMentions, canInstructCrew, crewOrder, withoutCopies, outsideAddDone, outsideRowView } from './mention-candidates.mjs';
 import { OutsideRow } from './outside-row.mjs';
 import { dmMentionCrews, mentionPopupCrews, setDmRecipient, dmDeliveryMentions, dmUnavailableRecipients, relayCaptionKey, relayToLabel, relayToNames, relayNoticeView } from './dm-delivery.mjs';
-import { acceptFiles, withoutFile } from './attach-files.mjs';
+import { acceptFiles, withoutFile, chipSize } from './attach-files.mjs';
 import { MediaAttachments, LinkCard, linkify, onLinkClick } from './media.jsx'; // 첨부 말풍선·크게 보기·링크 카드(2026-10-02)
 import { slashView, readSlashCommands, slashInsert, rolePickCandidates, ROLE_PICK_RE } from './slash-commands.mjs';
 import { getComposerSession, bindComposerSession, clearComposerSessions, composerTransport, setDeliveryReporter } from './composer-delivery.mjs';
 import { fetchSearchRows } from './search-rows.mjs';
 import { memberRows, memberPerms, MEMBER_CHIPS } from './phone-members.mjs';
 import { Seg } from './seg.mjs'; // 세그먼트 토글 하나(5차 피드백 3)
-import { planOf, purchaseChannel, proCheckoutUrl, planView, recheckUntilPro, returnRecheck, isProUpsell, proRequiredFor, iosKey, LS_BILLING } from './pro-checkout.mjs'; // Pro 결제 — 본체·랜딩과 같은 결제·같은 판정(2026-10-11)
+import { planOf, purchaseChannel, proCheckoutUrl, planView, recheckUntilPro, returnRecheck, roundTracker, isProUpsell, proRequiredFor, iosKey, LS_BILLING } from './pro-checkout.mjs'; // Pro 결제 — 본체·랜딩과 같은 결제·같은 판정(2026-10-11)
 import { searchView } from './search-view.mjs';
 import { deliveryCardView } from './delivery-card.mjs';
 import { friendlyErr, toastError } from './error-toast.mjs'; // 아는 서버 코드 → 문구, 토스트는 원문을 거른다(UXM-05)
@@ -3691,7 +3691,7 @@ function PlanCard({ uid, email }) {
   const channel = purchaseChannel({ ios: isIos, customServer }); // 회사 서버도 구매 경로 없음(분리 검수 #944 MEDIUM-1)
   const [st, setSt] = useState({ loading: true, plan: null, row: null });
   const [checking, setChecking] = useState(false); const [notYet, setNotYet] = useState(false);
-  const gate = useRef(null); if (!gate.current) gate.current = returnRecheck(); const live = useRef(true); // 복귀 재확인 관문 — 누른 뒤 한 라운드만(#944 LOW-3)
+  const gate = useRef(null); if (!gate.current) gate.current = returnRecheck(); const rounds = useRef(null); if (!rounds.current) rounds.current = roundTracker(); const live = useRef(true); // 복귀 재확인 관문 — 누른 뒤 한 라운드만(#944 LOW-3)
   const readPlan = useCallback(async () => planOf(await q(supabase.rpc('my_plan'))), []);
   const load = useCallback(async () => {
     const [plan, row] = await Promise.all([
@@ -3704,8 +3704,9 @@ function PlanCard({ uid, email }) {
   useEffect(() => { live.current = true; load(); return () => { live.current = false; }; }, [load]);
   const recheck = useCallback(async (once = false) => { // 복귀 = 한 라운드(최대 5회, 시작할 때 무장 해제), '다시 확인' 버튼 = 1회
     if (!(once ? gate.current.startManual() : gate.current.start())) return;
-    setChecking(true); setNotYet(false);
-    const { plan } = await recheckUntilPro(readPlan, { alive: () => live.current, ...(once ? { delays: [0] } : {}) });
+    const mine = rounds.current.begin(); setChecking(true); setNotYet(false);
+    const { plan } = await recheckUntilPro(readPlan, { alive: () => live.current && rounds.current.isCurrent(mine), sleep: rounds.current.sleep, ...(once ? { delays: [0] } : {}) });
+    if (!rounds.current.isCurrent(mine)) return; // 업그레이드를 다시 눌러 정리된 라운드 — 관문·표시는 그 클릭이 이미 정리했다
     gate.current.end();
     if (!live.current) return;
     setChecking(false);
@@ -3717,7 +3718,7 @@ function PlanCard({ uid, email }) {
     return () => { window.removeEventListener('focus', back); document.removeEventListener('visibilitychange', back); };
   }, [recheck]);
   const view = planView({ plan: st.plan, row: st.row, channel, loading: st.loading });
-  const upgrade = (cadence) => { const url = proCheckoutUrl({ plan: st.plan, user: { id: uid, email }, cadence }); if (!url) return; gate.current.arm(); setNotYet(false); openExternal(url); };
+  const upgrade = (cadence) => { const url = proCheckoutUrl({ plan: st.plan, user: { id: uid, email }, cadence }); if (!url) return; rounds.current.cancel(); gate.current.end(); gate.current.arm(); setChecking(false); setNotYet(false); openExternal(url); }; // 결제창을 닫고 다른 주기로 다시 누를 수 있다 — 돌던 재확인(쉬는 타이머까지)을 정리하고 새로 무장한다(복귀 때 새 라운드 0·3·5·10·20초)
   const portal = async () => { // 클릭할 때 발급(24시간 서명 링크라 저장하지 않는다) — ls-portal이 못 주면(CORS 반영 전 배포본·네트워크) 가게 고객 포털(이메일 로그인)
     const { data } = await supabase.functions.invoke('ls-portal', { method: 'POST' }).catch(() => ({ data: null }));
     openExternal(typeof data?.url === 'string' && /^https:\/\//.test(data.url) ? data.url : LS_BILLING); // 열기는 openExternal 한 곳(Tauri 오프너·브라우저 분기)
@@ -3741,8 +3742,8 @@ function PlanCard({ uid, email }) {
       {view.buy && <p className="note">{t('plan.benefits')}</p>}{/* iOS(구매 경로 없음)는 혜택 안내도 없이 아래 한 줄만 */}
       {view.buy && (<>
         <div className="row msgr-planbuy">
-          <button type="button" className="btn btn-primary sm" disabled={checking || notYet} onClick={() => upgrade('monthly')}>{ta('billing.upgradeMonthly')}</button>
-          <button type="button" className="btn sm" disabled={checking || notYet} onClick={() => upgrade('yearly')}>{ta('billing.upgradeYearly')}</button>
+          <button type="button" className="btn btn-primary sm" onClick={() => upgrade('monthly')}>{ta('billing.upgradeMonthly')}</button>
+          <button type="button" className="btn sm" onClick={() => upgrade('yearly')}>{ta('billing.upgradeYearly')}</button>
         </div>
         <p className="note">{t('plan.sameAccount')}</p>
         {(checking || notYet) && <div className="row" role="status"><span className="sub">{checking ? t('plan.checking') : t('plan.notYet')}</span>{!checking && <button type="button" className="btn sm" onClick={() => recheck(true)}>{t('plan.recheck')}</button>}</div>}
@@ -6962,7 +6963,7 @@ function Composer({ broadcast = null, onCrewJoined = null, outsideDmPersonal = n
     if (e.key === 'Enter' && !e.shiftKey && !isMobilePlatform) { e.preventDefault(); send(); }
   };
   // 첨부 칩 — 폰은 알약 위 자기 줄(흐름 안, 멘션 후보창과 같은 쌓임)로, 데스크톱은 기존처럼 툴바 줄 안에(유건 2026-09-27 재검수)
-  const fileChipsNode = files.length > 0 && <span className="msgr-filechips">{files.map((f) => <span key={`${f.name}:${f.size}`} className={`filechip${uploading === f.name ? ' busy' : ''}`}><I name="doc" size={12} /><span className="filechip-name">{f.name}</span><span className="msgr-klabel">{uploading === f.name ? t('att.uploading') : `${Math.max(1, Math.round(f.size / 1024))}KB`}</span>
+  const fileChipsNode = files.length > 0 && <span className="msgr-filechips">{files.map((f) => <span key={`${f.name}:${f.size}`} className={`filechip${uploading === f.name ? ' busy' : ''}`}><I name="doc" size={12} /><span className="filechip-name">{f.name}</span><span className="msgr-klabel">{uploading === f.name ? t('att.uploading') : chipSize(f)}</span>
     {uploading !== f.name && <button type="button" className="x" onMouseDown={(e) => e.preventDefault()} onClick={() => setFiles((cur) => withoutFile(cur, f))} disabled={busy} aria-label={t('att.remove', { name: f.name })} title={t('att.remove', { name: f.name })}>×</button>}</span>)}</span>;
   const card = job ? deliveryCardView({ busy, job, isDm }) : null; // 카드 제목·오류 줄 선택은 delivery-card.mjs(행동 테스트가 잠근다)
   return (

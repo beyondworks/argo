@@ -80,6 +80,20 @@ export async function recheckUntilPro(readPlan, { delays = RECHECK_DELAYS_MS, sl
   return { plan, tries };
 }
 
+/** 재확인 라운드 추적(검수 화면 확인 2026-10-11) — 라운드는 한 번에 하나. begin()은 이전 라운드를 끝내고(쉬는 중인 타이머도 바로 지워 깨운다) 새 번호를 준다.
+ *  cancel()은 새 라운드 없이 정리만(업그레이드 버튼을 다시 누를 때). isCurrent(번호)가 거짓이면 그 라운드는 더 읽지 않고, 뒷정리도 하지 않는다.
+ *  setTimer·clearTimer는 시험용. 읽기 횟수는 늘지 않는다 — 정리된 라운드는 읽지 않고 새 라운드는 처음부터 0·3·5·10·20초 */
+export function roundTracker({ setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
+  let cur = 0; let wake = null;
+  const stop = () => { cur += 1; if (wake) wake(); };
+  return {
+    begin() { stop(); return cur; },
+    cancel: stop,
+    isCurrent: (n) => n === cur,
+    sleep: (ms) => new Promise((resolve) => { const id = setTimer(() => { wake = null; resolve(); }, ms); wake = () => { clearTimer(id); wake = null; resolve(); }; }),
+  };
+}
+
 /** 복귀 재확인 관문(분리 검수 #944 LOW-3). arm = 업그레이드를 누름, start = 앱 복귀 때 라운드 시작 여부(시작하면 무장을 푼다 —
  *  라운드가 끝난 뒤 15분 안의 포커스마다 새 라운드가 돌지 않게), startManual = '다시 확인' 1회(무장과 무관), end = 라운드 끝. now는 시험용 */
 export function returnRecheck({ now = Date.now } = {}) {
