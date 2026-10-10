@@ -15,6 +15,7 @@ process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-msgr-idle-')); // 격
 process.env.ARGO_ENC_VAULT = '0';
 const M = await import('../src/gateway/msgr.mjs');
 const { createCompany, paths, updateCompany } = await import('../src/workspace.mjs');
+const { createAgentCard } = await import('../src/persona.mjs');
 
 const UID = '11111111-1111-4111-8111-111111111111';
 const ORG = 'aaaaaaaa-0000-4000-8000-000000000001', CH = 'bbbbbbbb-0000-4000-8000-000000000001';
@@ -25,10 +26,11 @@ let wsN = 0;
 afterEach(() => { mock.timers.reset(); });
 
 /** 실제 브리지 + 가짜 클라이언트. 호출은 이름으로 센다(db 메서드, client.rpc는 'rpc:<이름>'). */
-async function harness({ inbox = () => [], local = async () => 'L0', node = false, failRooms = false, crews = () => [CREW] } = {}) {
+async function harness({ inbox = () => [], local = async () => 'L0', node = false, failRooms = false, crews = () => [CREW], extra = {}, card = false } = {}) {
   const ws = `idle-${++wsN}`;
   await createCompany(ws, '회사', 'x', UID);
   if (node) await updateCompany(ws, { msgr: { enabled: true, nodeOrgId: ORG } });
+  if (card) await createAgentCard(ws, { name: 'newcrew', role: '시험', prompt: '시험용 에이전트' }); // 미러가 새 행을 넣게(인벤토리는 실제 카드 목록)
   const calls = []; const at = (name) => calls.filter((c) => c.name === name);
   const impl = {
     myCrews: async () => crews(),
@@ -38,6 +40,7 @@ async function harness({ inbox = () => [], local = async () => 'L0', node = fals
     crewPresence: async () => new Map(),
     crewMemberships: async () => { if (failRooms) throw new Error('rooms down'); return new Map([[CREW.id, { dm: new Set(), member: new Set([CH]) }]]); },
     nodeHeartbeat: async () => true,
+    ...extra,
   };
   const db = new Proxy({}, { get: (_, k) => (typeof k !== 'string' || k === 'then') ? undefined : async (...a) => { calls.push({ name: k, t: Date.now(), a }); return impl[k] ? impl[k](...a) : []; } });
   const chans = new Map();
@@ -50,13 +53,14 @@ async function harness({ inbox = () => [], local = async () => 'L0', node = fals
       chans.set(topic, ch); return ch;
     },
     rpc: async (name) => { calls.push({ name: `rpc:${name}`, t: Date.now() }); return { data: [], error: null }; },
-    realtime: { up: true, kicks: 0, isConnected() { return this.up; }, async disconnect() { this.kicks++; }, connect() {} },
+    realtime: { up: true, kicks: 0, connects: 0, kickAt: [], isConnected() { return this.up; }, async disconnect() { this.kicks++; this.kickAt.push(Date.now()); }, connect() { this.connects++; } },
   };
   const join = (topic, { callback = true } = {}) => { const ch = chans.get(topic); assert.ok(ch, `구독 안 됨: ${topic}`); ch.state = 'joined'; if (callback) ch.cb?.('SUBSCRIBED'); };
   const drop = (topic, status = 'CHANNEL_ERROR') => { const ch = chans.get(topic); ch.state = 'errored'; ch.cb?.(status); };
-  const stop = M.startMsgrBridge(ws, { session: async () => ({ uid: UID, db, client }), pollMs: POLL, runnerReady: null, localState: local });
+  let cur = client;
+  const stop = M.startMsgrBridge(ws, { session: async () => ({ uid: UID, db, client: cur }), pollMs: POLL, runnerReady: null, localState: local });
   current = { calls };
-  return { ws, calls, at, chans, join, drop, stop, client, rt: client.realtime };
+  return { ws, calls, at, chans, join, drop, stop, client, db, rt: client.realtime, setClient: (c) => { cur = c; } };
 }
 let current = null; // 지금 시험의 하네스 — settle이 호출 수가 멈출 때까지 기다린다
 // 틱 하나가 끝날 때까지(실제 시간) — 호출 수가 30ms씩 세 번 연속 그대로면 끝난 것으로 본다(붐비는 러너에서 고정 대기는 덜 끝난 틱을 세어 흔들렸다)
@@ -254,9 +258,166 @@ test('⑪ Realtime 소켓이 1분 넘게 끊겨 있으면(스스로 다시 붙�
     assert.equal(h.rt.kicks, 0, '1분 전에는 기다린다');
     await advance(30_000);
     assert.equal(h.rt.kicks, 1, '1분 넘게 끊기면 한 번 다시 연결');
+    assert.equal(h.rt.connects, 1, '끊은 뒤 다시 연결한다(disconnect만으로는 붙지 않는다)');
     await advance(30_000);
     assert.equal(h.rt.kicks, 1, '다음 시도는 1분 뒤');
   } finally { h.stop(); }
+});
+
+test('⑫ 미러가 이번 틱에 새 조직 행을 넣으면(새 에이전트 첫 파견·되살림) 그 조직 토픽을 구독하기 전에 쉬지 않는다 — 다음 받은 글 조회까지 15초 이내(검수 MEDIUM-1)', async () => {
+  let list = [], sig = 'L0';
+  const h = await start({ crews: () => list, local: async () => sig, extra: {
+    myOrgIds: async () => [ORG], myCrewRows: async () => [], canInsertCrews: async () => true,
+    upsertAvailable: async (rows) => { list = [CREW]; return rows; }, insertPersonal: async (rows) => rows,
+  } });
+  try {
+    h.join(`u:${UID}`); await settle(); await advance(30_000); // 에이전트 0명 — u:만 붙어 쉬는 중
+    assert.equal(h.at('upsertAvailable').length, 0, '전제: 아직 넣은 행 없음');
+    await createAgentCard(h.ws, { name: 'newcrew', role: '시험', prompt: '시험용 에이전트' }); sig = 'L1'; // 에이전트 고용 → 다음 틱 관리 작업이 새 조직 행을 넣는다
+    await advance(15_000);
+    assert.ok(h.at('upsertAvailable').length >= 1, '전제: 관리 틱이 새 조직 행을 넣었다');
+    const t0 = Date.now(), d = drains(h);
+    await advance(15_000);
+    assert.ok(drains(h) > d, `행을 넣은 뒤 ${Date.now() - t0}ms 안에 받은 글 조회가 없었다(조직 토픽 없이 쉬는 주기로 넘어감)`);
+    assert.ok(h.chans.has(`org:${ORG}`), '새 조직 토픽을 구독');
+  } finally { h.stop(); }
+});
+
+test('⑫ 에이전트 목록의 조직 집합이 바뀐 틱(서버 쪽 재개·파견 — 방송 없음)은 쉬는 판정에서 뺀다 — 새 조직 토픽이 붙을 때까지 15초', async () => {
+  let list = [];
+  const h = await start({ crews: () => list });
+  try {
+    h.join(`u:${UID}`); await settle(); await advance(30_000);
+    list = [CREW]; // 서버가 이 에이전트를 재개(paused → active) — 방송은 오지 않는다. 다음 예비 조회(2분 안)에서 본다
+    await advance(120_000);
+    assert.ok(h.chans.has(`org:${ORG}`), '예비 조회가 새 조직을 보고 구독');
+    const d = drains(h);
+    await advance(30_000);
+    assert.ok(drains(h) - d >= 2, '새 조직 토픽이 붙기 전에는 15초 조회');
+  } finally { h.stop(); }
+});
+
+test('⑬ 다시 연결해도 계속 안 붙으면(Realtime이 없는 환경) 간격을 1분 → 2분 → 4분 → 8분 → 10분으로 늘리고, 붙으면 처음으로(검수 LOW-4)', async () => {
+  const h = await start();
+  try {
+    joinAll(h); await settle();
+    h.rt.up = false; h.drop(`org:${ORG}`); h.drop(`u:${UID}`);
+    await advance(30 * 60_000);
+    const gaps = h.rt.kickAt.slice(1).map((t, i) => Math.round((t - h.rt.kickAt[i]) / 1000));
+    assert.ok(h.rt.kicks >= 5 && h.rt.kicks <= 8, `30분 동안 다시 연결 ${h.rt.kicks}회(1분마다면 29회) — 간격 ${gaps}`);
+    assert.ok(gaps.every((g, i) => i === 0 || g >= gaps[i - 1]), `간격이 줄지 않는다 ${gaps}`);
+    assert.ok(Math.max(...gaps) <= 615, `최대 10분 ${gaps}`);
+    h.rt.up = true; joinAll(h); await advance(30_000);
+    h.rt.up = false; h.drop(`org:${ORG}`); h.drop(`u:${UID}`);
+    const k = h.rt.kicks;
+    await advance(90_000);
+    assert.equal(h.rt.kicks, k + 1, '붙었다 다시 끊기면 1분 뒤부터 다시');
+  } finally { h.stop(); }
+});
+
+test('⑭ 같은 클라이언트(같은 계정)를 쓰는 회사 둘이 같이 끊김을 봐도 다시 연결은 클라이언트당 한 번', async () => {
+  const h = await start();
+  const ws2 = `idle-${++wsN}`; await createCompany(ws2, '회사2', 'x', UID);
+  const stop2 = M.startMsgrBridge(ws2, { session: async () => ({ uid: UID, db: h.db, client: h.client }), pollMs: POLL, runnerReady: null, localState: async () => 'L0' });
+  try {
+    for (let i = 0; i < 400 && !h.chans.has(`u:${UID}`); i++) await new Promise((r) => setTimeout(r, 25));
+    joinAll(h); await settle(); await advance(30_000);
+    h.rt.up = false; h.drop(`org:${ORG}`); h.drop(`u:${UID}`);
+    await advance(75_000);
+    assert.equal(h.rt.kicks, 1, `두 회사가 각자 다시 연결했다(${h.rt.kicks}회) — 같은 소켓을 연달아 끊는다`);
+  } finally { h.stop(); stop2(); }
+});
+
+test('⑮ 실행 중에 깨우기가 기다리는 동안 15초 틱이 와도 깨우기는 사라지지 않는다(합치기는 더 큰 일 — poll > wake > fire)', async () => {
+  let gate = null;
+  const h = await start({ extra: { myCrews: async () => { if (gate) await gate.p; return [CREW]; } } });
+  try {
+    joinAll(h); await settle(); await advance(30_000);
+    let open; gate = { p: new Promise((r) => { open = r; }) };
+    const d = drains(h);
+    h.chans.get(`u:${UID}`).handlers.message({ payload: {} }); await settle(); // 첫 깨우기 — drain이 에이전트 목록에서 멈춤
+    h.chans.get(`u:${UID}`).handlers.message({ payload: {} }); // 실행 중 도착한 두 번째 깨우기(대기)
+    mock.timers.tick(POLL); // 15초 틱도 대기에 합쳐진다
+    gate = null; open(); await settle();
+    assert.equal(drains(h), d + 2, '대기 중이던 깨우기가 15초 틱(쉬는 판정)에 묻혀 사라졌다');
+  } finally { h.stop(); }
+});
+
+test('⑯ 토큰 회전으로 세션 클라이언트가 바뀌면 옛 클라이언트의 채널은 붙은 것으로 보지 않는다 — 다음 틱 전체 조회로 새 클라이언트에 다시 구독', async () => {
+  const h = await start();
+  try {
+    joinAll(h); await settle(); await advance(30_000);
+    const fresh = { ...h.client, channel: h.client.channel.bind(h.client), realtime: h.client.realtime };
+    h.setClient(fresh);
+    const d = drains(h), old = h.chans.get(`u:${UID}`);
+    await advance(15_000);
+    assert.equal(drains(h), d + 1, '새 클라이언트로 바뀐 틱에 쉬었다(옛 채널을 붙은 것으로 봄)');
+    assert.notEqual(h.chans.get(`u:${UID}`), old, '새 클라이언트로 다시 구독');
+  } finally { h.stop(); }
+});
+
+test('⑰ 미러가 실패하면 로컬 상태 기준을 옮기지 않는다 — 바뀐 로컬 상태는 다음 15초 틱에 다시 미러(검수 LOW-3)', async () => {
+  let sig = 'L0', fail = false;
+  const h = await start({ local: async () => sig, extra: { myOrgIds: async () => [ORG], myCrewRows: async () => { if (fail) { fail = false; throw new Error('network'); } return []; } } });
+  try {
+    joinAll(h); await settle(); await advance(30_000);
+    sig = 'L1'; fail = true;
+    await advance(15_000);
+    const n = h.at('myCrewRows').length;
+    await advance(15_000);
+    assert.equal(h.at('myCrewRows').length, n + 1, '실패한 미러를 다음 틱에 다시 하지 않았다(예비 조회 2분까지 밀림)');
+    await advance(30_000);
+    assert.equal(h.at('myCrewRows').length, n + 1, '성공한 뒤에는 다시 쉰다');
+  } finally { h.stop(); }
+});
+
+test('⑱ 쉬는 주기의 예비 조회가 깨우기 없이 새 글을 찾으면 한 줄 로그 — 같은 채널이면 한 번만(검수 LOW-2)', async () => {
+  let give = false;
+  const msg = { id: 99, channel_id: CH, author_kind: 'user', author_user_id: UID, crew_id: null, kind: 'text', body: '잡담', mentions: [], reply_to: null, thread_root: null, created_at: new Date().toISOString() };
+  const h = await start({ inbox: () => (give ? [msg] : []) });
+  const warn = mock.method(console, 'warn', () => {});
+  try {
+    joinAll(h); await settle(); await advance(30_000);
+    const lines = () => warn.mock.calls.map((c) => String(c.arguments[0])).filter((l) => l.includes('깨우기 방송 없이'));
+    give = true; await advance(120_000); give = false;
+    assert.equal(lines().length, 1, `예비 조회가 방송 없이 찾은 글 로그 ${lines().length}줄`);
+    assert.match(lines()[0], new RegExp(CH));
+    give = true; await advance(120_000); give = false;
+    assert.equal(lines().length, 1, '같은 원인은 한 번만');
+    h.chans.get(`u:${UID}`).handlers.message({ payload: {} }); give = true; await settle(); give = false;
+    assert.equal(lines().length, 1, '방송이 깨운 조회는 로그 없음');
+  } finally { warn.mock.restore(); h.stop(); }
+});
+
+test('⑫ 조직 집합이 바뀐 틱(빠졌던 조직의 에이전트가 서버에서 재개 — 채널은 남아 있어 붙은 상태)은 쉬는 판정에서 빼고 15초 뒤 한 번 더 조회', async () => {
+  let list = [CREW];
+  const h = await start({ crews: () => list });
+  try {
+    joinAll(h); await settle(); await advance(30_000);
+    list = []; await advance(120_000); // 예비 조회가 에이전트 0명을 본다(조직 채널은 그대로 붙어 있다)
+    list = [CREW]; // 서버가 재개 — 방송 없음. 다음 예비 조회가 다시 그 조직을 본다
+    const d0 = drains(h);
+    for (let i = 0; i < 10 && drains(h) === d0; i++) await advance(15_000); // 그 예비 조회가 나간 틱까지
+    assert.equal(drains(h), d0 + 1, '전제: 예비 조회 한 번');
+    const d = drains(h);
+    await advance(15_000);
+    assert.equal(drains(h), d + 1, '조직 집합이 바뀐 다음 틱에 다시 조회하지 않았다');
+  } finally { h.stop(); }
+});
+
+test('⑱ 예비 조회 도중 온 방송이 그 조회와 같은 글을 가리키면 놓친 방송 로그를 남기지 않는다', async () => {
+  let give = false, gate = null;
+  const msg = { id: 77, channel_id: CH, author_kind: 'user', author_user_id: UID, crew_id: null, kind: 'text', body: '잡담', mentions: [], reply_to: null, thread_root: null, created_at: new Date().toISOString() };
+  const h = await start({ inbox: () => (give ? [msg] : []), extra: { myCrews: async () => { if (gate) await gate.p; return [CREW]; } } });
+  const warn = mock.method(console, 'warn', () => {});
+  try {
+    joinAll(h); await settle(); await advance(30_000);
+    let open; gate = { p: new Promise((r) => { open = r; }) };
+    await advance(90_000); // 2분 예비 조회가 에이전트 목록에서 멈춘다
+    give = true; h.chans.get(`u:${UID}`).handlers.message({ payload: {} }); // 그 사이 새 글과 방송
+    gate = null; open(); await settle(); give = false; await settle();
+    assert.equal(warn.mock.calls.filter((c) => String(c.arguments[0]).includes('깨우기 방송 없이')).length, 0, '방송이 왔는데 놓친 방송으로 적었다');
+  } finally { warn.mock.restore(); h.stop(); }
 });
 
 test('⑩ 회사 노드(msgr.nodeOrgId)는 구독이 정상이어도 15초 — 비공개 채널 크루 요청 방송이 노드 계정에 닿지 않을 수 있다', async () => {

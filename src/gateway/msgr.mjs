@@ -72,6 +72,7 @@ export const BEAT_EVERY_MS = 40_000;
 /** Realtime 소켓이 이만큼 계속 끊겨 있으면 다시 연결한다. 실측(2026-10-10, 로컬 Supabase, realtime-js 2.110.2·Node): Realtime 서버가 잠깐 내려갔다 올라오면
     소켓이 'connecting'에 멈춰 스스로 다시 붙지 않는다(새 채널 구독·connect()도 안 됨, disconnect() 뒤 connect()는 1.5초 만에 다시 붙음). 안 붙은 동안은 15초 조회로 완결된다. */
 export const RT_STUCK_MS = 60_000;
+export const RT_KICK_MAX_MS = 600_000; // 다시 연결해도 안 붙을 때 늘려 가는 간격의 상한(1분 → 2분 → 4분 → 8분 → 10분)
 export const STALE_MS = 24 * 3_600_000; // 이보다 오래 대기한 지시는 실행 대신 정직 폐기(queue.mjs LEGACY_JOB_MAX_AGE_MS 관례)
 export const AWAY_NOTE_MS = 90_000;     // 이보다 늦게 처리한 답글엔 "(부재중 대기분 · N분 전 지시)" 접두
 export const PAGE = 50;                 // 크루당 1회 drain 최대 메시지 — 비용 폭주 방지(나머지는 다음 tick)
@@ -1139,7 +1140,7 @@ async function beatCrews(db, { ids, workIds, beat }) {
 }
 
 export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, now = Date.now, nodeOrgId = null, ownerId = null, runnerInfo = nodeRunnerInfo, inventory = listAgentsForInventory, commandsFor = listCommandsForWs, housekeeping = true, runnerReady = null, deviceId = null, beatDue = true, report = {} } = {}) {
-  // report — 브리지가 다음 틱을 정하는 데 쓰는 기록(돌려주는 값의 모양은 그대로 둔다): beat(심박 대상)·beatAt(성공한 심박 요청 시각)·held(보류 — 다음 틱에 다시)
+  // report — 브리지가 다음 틱을 정하는 데 쓰는 기록(돌려주는 값의 모양은 그대로 둔다): beat(심박 대상)·beatAt(성공한 심박 요청 시각)·held(보류 — 다음 틱에 다시)·mirrorFailed(커맨더·루틴 미러 실패 — 인벤토리 실패는 out.mirrorError)
   // beatDue — 관리 틱이라도 심박 기한 전이면 심박 요청을 보내지 않는다(브리지가 쉬는 주기에서 넘긴다 — 서버 기록 기한 35초보다 짧은 간격의 요청은 기록되지 않고 다음 기록만 늦춘다). 대상(report.beat)은 그대로 남긴다
   // deviceId — 이 기기의 id(workspace.mjs getDeviceId). 있으면 기기 단위 심박(아래 beat), 없으면(테스트·옛 호출) 종전 행 심박.
   // runnerReady(wsId, slug) — 이 프로세스가 그 크루의 턴을 돌릴 수 있나(운영은 startMsgrBridge가 chat()과 같은 판정 turnRunnerAvailable을 넘긴다). 없으면 보류 없음(종전).
@@ -1162,16 +1163,21 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
   // 카드 목록 — 미러와 심박이 같은 목록을 쓴다(하우스키핑 틱만 읽는다). 읽기 실패도 미러 실패로 드러내고 드레인은 계속한다(종전엔 여기서 던지면 드레인 전체가 멈췄다)
   const mirrorFail = (e) => { out.mirrorError = String(e?.message ?? e); console.error('[argo] msgr 에이전트 인벤토리 미러 실패:', out.mirrorError); };
   const cards = housekeeping && !nodeOrgId && inventory ? await (async () => inventory(wsId))().catch((e) => { mirrorFail(e); return null; }) : null; // 동기로 던지는 주입 함수도 여기서 잡는다
-  if (cards) await mirrorInventory(wsId, { db, uid, agents: cards }).catch(mirrorFail); // 브리지가 상태로 드러낸다(검수 MEDIUM-A: 로그만 남기고 '연결됨'이던 것)
+  if (cards) { // 브리지가 상태로 드러낸다(검수 MEDIUM-A: 로그만 남기고 '연결됨'이던 것)
+    const m = await mirrorInventory(wsId, { db, uid, agents: cards }).catch((e) => { mirrorFail(e); return null; });
+    // 행을 넣거나 바꿨다(새 에이전트 첫 파견·되살림·새 조직) — 이번 틱의 에이전트 목록(맨 앞 myCrews)에는 없으니 그 조직 토픽을 아직 구독하지 않았다.
+    // 다음 15초 틱에 다시 drain해 목록·구독을 맞춘다(쉬는 주기로 넘어가면 그 조직 공개 채널 글이 예비 조회까지 늦는다 — #943 검수 MEDIUM-1)
+    if (m && (m.inserted || m.updated || m.removed)) report.held = true;
+  }
   // 심박은 카드가 있는 행만(CX-14) — 해고를 이 프로세스가 못 본 경우(꺼져 있던 사이 동기화로 카드가 사라짐)에도 메신저·오피스에서 접속 중으로 남지 않게.
   // 상태는 바꾸지 않는다(그건 해고를 본 틱의 미러 몫). 카드 목록을 못 읽었거나 비었으면 종전대로 전부 — 폴더 읽기 실패가 크루 전원을 부재중으로 만들지 않게.
   const carded = cards?.length ? new Set(cards.map((a) => a.slug)) : null;
   const beatable = (c) => !carded || carded.has(c.slug);
-  if (housekeeping && commandsFor) await mirrorCommands(wsId, { db, uid, commands: await commandsFor(wsId) }).catch((e) => console.error('[argo] msgr 커맨더 목록 미러 실패:', e.message)); // 부록 M: 파견 전 크루도 메신저에 보이게
+  if (housekeeping && commandsFor) await mirrorCommands(wsId, { db, uid, commands: await commandsFor(wsId) }).catch((e) => { report.mirrorFailed = true; console.error('[argo] msgr 커맨더 목록 미러 실패:', e.message); }); // 부록 M: 파견 전 크루도 메신저에 보이게
   // 업무 > 자동화 1단계: 편집을 먼저 반영(대기 → 로컬)한 뒤 그 결과를 포함한 현재 상태를 미러(로컬 → 서버) — 순서를 바꾸면 방금 반영한 편집이 한 틱 늦게 보인다.
   // 자동화는 조직 기능이다 — 개인 행은 넘기지 않는다(서버 msgr_crew_routines_sync가 org로 거른다)
   if (housekeeping && !nodeOrgId && orgCrewRows.length) await applyRoutineEdits(wsId, { db, crews: orgCrewRows }).catch((e) => console.error('[argo] msgr 루틴 편집 반영 실패:', e.message));
-  if (housekeeping && !nodeOrgId && orgCrewRows.length) await mirrorRoutines(wsId, { db, crews: orgCrewRows }).catch((e) => console.error('[argo] msgr 루틴 미러 실패:', e.message));
+  if (housekeeping && !nodeOrgId && orgCrewRows.length) { const rr = await mirrorRoutines(wsId, { db, crews: orgCrewRows }).catch((e) => { console.error('[argo] msgr 루틴 미러 실패:', e.message); return { failed: 1 }; }); if (rr?.failed) report.mirrorFailed = true; }
   // 접속 표시: 조직 행 + 방에 든 개인 행. 조직 행이 없는 계정은 개인 행 전부(방 없는 개인 크루는 msgr_personal_room_crews가 같은 크루의 조직 행 시각을 쓴다 — 쓰기 0)
   const idleBeat = orgCrewRows.length ? [] : allCrews.filter((c) => c.org_id == null && !inRooms.has(c.id));
   // 기기 단위 심박(유건 2026-10-10): 기기 id가 있으면 서버 함수 한 번이 기기 행·옛 읽기 호환 행·업무 기능 표시를 함께 쓴다(makeDb.heartbeat)
@@ -1215,6 +1221,7 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
     const { msgs, inboxError } = pre[ci];
     if (inboxError) throw inboxError;
     if (!msgs?.length) continue; // 받은 글 없음 — 적재·커서 그대로(종전과 같은 결과)
+    report.found = (report.found ?? 0) + msgs.length; for (const m of msgs) (report.foundChannels ??= new Set()).add(m.channel_id); // 브리지가 '깨우기 없이 예비 조회가 찾은 글'을 기록한다
     const room = rooms.get(crew.id);
     if (!room) { report.held = true; continue; } // 방 목록을 모름 → 커서 유지, 다음 틱 재시도(held — 브리지가 쉬는 주기로 넘기지 않고 15초 뒤 다시 본다)
     const { dm, member } = room;
@@ -2369,6 +2376,10 @@ export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_M
   let beatPlan = null;       // 마지막 관리 틱이 심박한 대상({ uid, ids, workIds, beat }) — 쉬는 틱이 같은 대상으로 심박만 보낸다
   let lastBeatAt = -Infinity; // 마지막으로 성공한 심박 요청을 보낸 시각
   let rtDownSince = null;    // Realtime 소켓이 끊겨 있는 것을 처음 본 시각(RT_STUCK_MS)
+  let wokeAt = -Infinity;    // 마지막 방송 깨우기 시각
+  let lastDrainAt = -Infinity; // 마지막으로 끝까지 간 drain을 시작한 시각
+  const missNote = new Map(); // 같은 원인(채널 묶음)의 '깨우기 없이 찾은 글' 로그는 한 번만(sync.mjs noteOnce와 같은 모양)
+  const wake = () => { wokeAt = Date.now(); tick().catch(() => {}); };
   let lastGw = null;         // 마지막으로 쓴 연결 상태([ok, error]) — 쉬는 틱이 다시 써서 설정 화면 40초 창(connections.mjs readGatewayStatus)을 지킨다
   const gw = (ok, error = '') => { lastGw = [ok, error]; return beatGateway(wsId, MSGR_KEY, ok, error).catch(() => {}); };
   const joined = (ch) => !!ch && ch.__client === lastClient && (typeof ch.state === 'string' ? ch.state === 'joined' : ch.__status === 'SUBSCRIBED'); // 같은 토픽을 여러 회사가 같이 쓰면 두 번째 subscribe의 콜백은 오지 않는다 — 채널 상태가 정본
@@ -2406,19 +2417,22 @@ export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_M
       nodeCompany = !!msgr?.nodeOrgId;
       lastClient = c.client; // 클라이언트가 바뀌면(토큰 회전) 옛 채널은 붙은 것으로 보지 않는다(joined) — 전체 조회 뒤 subscribe가 새로 구독한다
       // 멈춘 소켓 다시 연결 — 클라이언트(=소켓)는 같은 계정의 회사들이 같이 쓰므로 클라이언트 단위로 RT_STUCK_MS에 한 번만
+      // 다시 연결해도 계속 안 붙으면(Realtime이 아예 없는 환경·서버 장애) 간격을 두 배씩 늘린다(최대 RT_KICK_MAX_MS) — 끊김을 보는 동안은 15초 조회로 완결된다(#943 검수 LOW-4)
       const rt = wantOrgs !== null ? c.client?.realtime : null;
       if (rt && typeof rt.isConnected === 'function' && !rt.isConnected()) {
         rtDownSince ??= t;
-        if (t - rtDownSince >= RT_STUCK_MS && t - (c.client.__rtKickAt ?? -Infinity) >= RT_STUCK_MS) {
-          c.client.__rtKickAt = t; rtDownSince = null;
-          console.warn(`[argo] msgr realtime 연결이 ${Math.round(RT_STUCK_MS / 1000)}초 넘게 끊겨 다시 연결합니다(${wsId})`);
+        const gap = Math.min(RT_STUCK_MS * 2 ** Math.max(0, (c.client.__rtKicks ?? 0) - 1), RT_KICK_MAX_MS);
+        if (t - rtDownSince >= RT_STUCK_MS && t - (c.client.__rtKickAt ?? -Infinity) >= gap) {
+          c.client.__rtKickAt = t; c.client.__rtKicks = (c.client.__rtKicks ?? 0) + 1;
+          if (c.client.__rtKicks <= 3 || c.client.__rtKicks % 10 === 0) console.warn(`[argo] msgr realtime 연결이 끊겨 다시 연결합니다(${wsId}, ${c.client.__rtKicks}번째 — 다음은 ${Math.round(Math.min(gap * 2, RT_KICK_MAX_MS) / 1000)}초 뒤)`);
           try { await rt.disconnect(); } catch { /* 무해 */ }
           try { rt.connect(); } catch (e) { console.warn('[argo] msgr realtime 다시 연결 실패:', e?.message ?? e); }
         }
-      } else rtDownSince = null;
-      let mode = kind;
+      } else { rtDownSince = null; if (rt && c.client.__rtKicks) c.client.__rtKicks = 0; } // 붙어 있으면 간격을 처음으로
+      let mode = kind; let idleWas = false; const heldBefore = held;
       if (kind === 'fire') {
         const { healthy, rejoined } = checkHealth();
+        idleWas = healthy && !nodeCompany && !rejoined; // 쉬는 주기의 예비 조회인가(끊김·재연결 따라잡기는 아니다)
         mode = msgrTickPlan({ now: t, lastFireAt, lastHousekeeping, healthy, rejoined, held, nodeCompany, pollMs, idlePollMs }); // 로컬 변경은 아래에서(파일 읽기라 'poll'이 아닐 때만)
         lastFireAt = t;
         if (mode !== 'poll' && localSeen !== null) { // 로컬 변경(에이전트 고용·직무·커맨더·루틴) — 다음 예비 조회까지 미루지 않는다
@@ -2431,10 +2445,11 @@ export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_M
         if (lastGw) await beatGateway(wsId, MSGR_KEY, ...lastGw).catch(() => {});
         return { idle: true };
       }
+      let localNow = null;
       const housekeeping = mode === 'poll' || t - lastHousekeeping >= (wasHealthy && !nodeCompany ? idlePollMs : pollMs);
       if (housekeeping) {
         lastHousekeeping = t;
-        localSeen = await localState(wsId).catch(() => null); // 이번 미러가 볼 로컬 상태 — 쉬는 틱이 이것과 비교한다
+        localNow = await localState(wsId).catch(() => null); // 이번 미러가 볼 로컬 상태 — 미러가 성공하면 쉬는 틱이 이것과 비교한다
         await dispatchMessengerAutomations(c.client, wsId).catch((e) => console.warn('[argo] msgr automation:', e.message)); // 서버 크론(매분)도 같은 일을 한다 — 기기 쪽은 예비
       } else await idleBeat(c, t); // 깨우기가 잦아 15초 틱이 합쳐져도 심박이 밀리지 않게
       const deviceId = housekeeping ? await getDeviceId().catch(() => null) : null; // 심박은 관리 틱에만 — 기기 id를 못 읽으면 종전 행 심박
@@ -2443,8 +2458,15 @@ export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_M
       const r = await drain(wsId, { db: c.db, uid: c.uid, lang, nodeOrgId: msgr?.nodeOrgId ?? null, ownerId, housekeeping, runnerReady, deviceId, beatDue, report: rep }); // I-4: 조직 회사(company.json.msgr.nodeOrgId)면 노드 하트비트
       if (r.skipped === 'owner') { held = true; await beatGateway(wsId, MSGR_KEY, false, '이 회사의 소유자 계정이 아님 — 소유자로 로그인 필요').catch(() => {}); return r; }
       held = !!rep.held;
+      // 방송 경로 결함이 2분 지연 뒤에 숨지 않게(#943 검수 LOW-2): 쉬는 주기의 예비 조회가 새 글을 찾았는데 그 사이 깨우기가 없었다 — 그 방의 방송이 이 기기에 닿지 않았다
+      if (idleWas && !heldBefore && rep.found > 0 && wokeAt < lastDrainAt) {
+        const line = `[argo] msgr 예비 조회가 깨우기 방송 없이 새 글을 찾았습니다(${wsId}, 채널 ${[...rep.foundChannels].sort().join(',').slice(0, 300)}) — Realtime 방송 경로를 확인하세요(이 글들은 최대 ${Math.round(idlePollMs / 1000)}초 늦게 처리)`;
+        if (missNote.get('miss') !== line) { missNote.set('miss', line); console.warn(line); }
+      }
+      lastDrainAt = t;
       if (housekeeping) {
         lastMirrorError = r.mirrorError ?? null;
+        if (!r.mirrorError && !rep.mirrorFailed) localSeen = localNow; // 미러가 실패하면 기준을 옮기지 않는다 — 바뀐 로컬 상태가 다음 15초 틱에 다시 미러된다(#943 검수 LOW-3)
         beatPlan = rep.beat ? { uid: c.uid, ...rep.beat } : null;
         if (rep.beatAt != null) lastBeatAt = rep.beatAt;
       }
@@ -2463,6 +2485,8 @@ export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_M
   const subscribe = (c, crews, extraOrg = null) => {
     const orgs = new Set(crews.map((x) => x.org_id).filter(Boolean)); // 개인 행(org NULL)은 조직 토픽이 없다 — org:null 구독은 거절만 쌓인다
     if (extraOrg) orgs.add(extraOrg);
+    // 조직 집합이 바뀐 틱(서버 쪽 재개·파견·조직 탈퇴 — 방송이 없다)은 쉬는 판정에서 뺀다: 다음 15초 틱에 다시 drain해 목록·구독을 맞춘다(#943 검수 MEDIUM-1)
+    if (wantOrgs !== null && (wantOrgs.size !== orgs.size || [...orgs].some((o) => !wantOrgs.has(o)))) held = true;
     wantOrgs = orgs; // 구독 판정은 지금 필요한 조직만 — 빠진 조직의 끊긴 채널이 15초 조회를 붙잡지 않게
     for (const orgId of orgs) {
       const key = `${wsId}:${orgId}`;
@@ -2470,9 +2494,9 @@ export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_M
       try {
         rtChannels.get(key)?.unsubscribe?.();
         const ch = c.client.channel(`org:${orgId}`, { config: { private: true } })
-          .on('broadcast', { event: 'message' }, () => { tick().catch(() => {}); })
-          .on('broadcast', { event: 'approval' }, () => { tick().catch(() => {}); })
-          .on('broadcast', { event: 'crew_request' }, () => { tick().catch(() => {}); }); // I-5: 요청 즉시 깨어난다(정본은 pending 조회)
+          .on('broadcast', { event: 'message' }, wake)
+          .on('broadcast', { event: 'approval' }, wake)
+          .on('broadcast', { event: 'crew_request' }, wake); // I-5: 요청 즉시 깨어난다(정본은 pending 조회)
           // stop_request는 여기 두지 않는다 — org:<조직>은 그 조직 멤버 누구나 msgr_realtime_send로 방송을 보낼 수 있어(RLS 발신 정책이 org:%를
           // 멤버에게 허용) 위조된 중단 요청으로 남의 크루 턴을 멈출 수 있었다(검수 2026-09-26 H-1). u:<owner> 구독 쪽으로 옮긴다(아래).
         ch.__client = c.client;
@@ -2488,9 +2512,9 @@ export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_M
       try {
         rtChannels.get(ukey)?.unsubscribe?.();
         const uch = c.client.channel(`u:${c.uid}`, { config: { private: true } })
-          .on('broadcast', { event: 'message' }, () => { tick().catch(() => {}); })
-          .on('broadcast', { event: 'approval' }, () => { tick().catch(() => {}); })
-          .on('broadcast', { event: 'crew_request' }, () => { tick().catch(() => {}); })
+          .on('broadcast', { event: 'message' }, wake)
+          .on('broadcast', { event: 'approval' }, wake)
+          .on('broadcast', { event: 'crew_request' }, wake)
           // u:<uid>는 본인만 받고 클라이언트는 여기로 보낼 수 없다(RLS 발신 정책 없음, 20260918184500) — 크루 중단 방송의 정본 토픽(H-1).
           .on('broadcast', { event: 'stop_request' }, (msg) => { handleStopRequest(wsId, msg?.payload, { session }).catch((e) => console.error('[argo] msgr 중단 방송 처리 실패:', e.message)); });
         uch.__client = c.client;
