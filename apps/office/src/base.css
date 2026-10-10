@@ -76,8 +76,9 @@
 * { box-sizing: border-box; }
 /* 스크롤 바 — 레일 없이 얇은 선만(유건 2026-09-26). 선 색은 놓인 영역의 글자색에서 만들어
    차콜 사이드바에서는 밝게, 밝은 본문에서는 어둡게 — 두 톤이 스크롤 바 때문에 깨지지 않는다. */
-:root { --scroll: color-mix(in srgb, var(--fg) 20%, transparent); --scroll-hover: color-mix(in srgb, var(--fg) 38%, transparent); }
-.side { --scroll: color-mix(in srgb, var(--side-fg) 22%, transparent); --scroll-hover: color-mix(in srgb, var(--side-fg) 40%, transparent); }
+/* 스크롤 막대(유건 10/10 "백그라운드 컬러랑 거의 차이 없게 — 바탕이 바뀌어도 눈으로 구분만 될 정도, 같은 톤") — 바탕 위에 글자색을 아주 조금 섞어 테마를 따라간다(20% → 9%, 누르거나 올리면 18%) */
+:root { --scroll: color-mix(in srgb, var(--fg) 9%, transparent); --scroll-hover: color-mix(in srgb, var(--fg) 18%, transparent); }
+.side { --scroll: color-mix(in srgb, var(--side-fg) 10%, transparent); --scroll-hover: color-mix(in srgb, var(--side-fg) 20%, transparent); }
 ::-webkit-scrollbar { width: 10px; height: 10px; background: transparent; }
 ::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--scroll); background-clip: padding-box; border: 3px solid transparent; border-radius: 999px; min-height: 32px; }
