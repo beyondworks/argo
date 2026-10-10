@@ -192,39 +192,99 @@ test('LOW-3 복귀 재확인 — 한 번 누르면 라운드 한 번(라운드�
   assert.equal(g.start(), false, '15분 뒤는 끝');
 });
 
-test('결제창을 닫고 다른 주기로 다시 누를 수 있다 — 버튼은 확인 중·미확인에도 막지 않고, 새 클릭은 이전 라운드와 타이머를 정리한다', async () => {
+// 가짜 타이머 — setTimer가 만든 타이머를 모아 두고 시험이 하나씩 터뜨린다
+function fakeTimers() {
+  const timers = new Map(); let next = 1; let cleared = 0;
+  return {
+    timers, get cleared() { return cleared; },
+    setTimer: (fn, ms) => { timers.set(next, { fn, ms }); return next++; },
+    clearTimer: (id) => { if (timers.delete(id)) cleared += 1; },
+    async fire() { for (let i = 0; i < 50 && timers.size === 0; i += 1) await new Promise((r) => setImmediate(r)); const [id, t] = [...timers.entries()][0]; timers.delete(id); t.fn(); return t.ms; },
+  };
+}
+const tick = () => new Promise((r) => setImmediate(r));
+
+test('M-3 업그레이드 버튼 — 확인 중에는 막고(웹훅이 늦는 구간의 이중 구독 방지), 미확인 표시가 뜬 뒤에는 다시 누를 수 있다', () => {
   const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
   const card = app.slice(app.indexOf('function PlanCard('), app.indexOf('async function planRow('));
-  assert.doesNotMatch(card, /disabled=\{checking/, '확인 중에 업그레이드 버튼을 막지 않는다(검수 화면 확인: 38초 뒤 월간·연간 둘 다 막혀 설정을 닫았다 열어야 풀렸다)');
-  assert.doesNotMatch(card, /disabled=\{[^}]*notYet/, '"아직 결제가 확인되지 않았습니다" 뒤에도 막지 않는다');
-  assert.match(card, /onClick=\{\(\) => upgrade\('monthly'\)\}/); assert.match(card, /onClick=\{\(\) => upgrade\('yearly'\)\}/);
-  assert.match(card, /const upgrade = [^\n]*rounds\.current\.cancel\(\)/, '새 클릭 = 돌고 있던 라운드 정리');
-  assert.match(card, /alive: \(\) => live\.current && rounds\.current\.isCurrent\(mine\), sleep: rounds\.current\.sleep/, '복귀 라운드가 같은 추적기의 대기·번호를 쓴다(정리가 실제 라운드에 닿는다)');
-  assert.match(card, /if \(!rounds\.current\.isCurrent\(mine\)\) return;[^\n]*\n\s*gate\.current\.end\(\);/, '정리된 라운드는 관문을 해제하지 않는다(새 라운드의 무장·실행 표시를 지우지 않게)');
-  // 행동: 가짜 타이머로 라운드 진행. 1라운드가 3초 쉬는 중에 새로 누르면 → 타이머가 지워지고 1라운드는 더 읽지 않는다
-  const timers = new Map(); let nextId = 1; let cleared = 0;
-  const rounds = pro.roundTracker({ setTimer: (fn, ms) => { timers.set(nextId, { fn, ms }); return nextId++; }, clearTimer: (id) => { if (timers.delete(id)) cleared += 1; } });
-  let reads = 0; const readPlan = async () => { reads += 1; return 'free'; };
-  const run = async () => { const mine = rounds.begin(); const r = await pro.recheckUntilPro(readPlan, { alive: () => rounds.isCurrent(mine), sleep: rounds.sleep }); return { mine, ...r }; };
-  const first = run();
-  await new Promise((r) => setImmediate(r));
-  assert.equal(reads, 1, '첫 읽기는 바로'); assert.equal(timers.size, 1, '3초 대기 타이머 하나'); assert.equal([...timers.values()][0].ms, 3000);
-  rounds.cancel(); // 사용자가 다른 주기 버튼을 다시 누름
-  assert.equal(cleared, 1, '이전 라운드의 대기 타이머를 지웠다'); assert.equal(timers.size, 0);
-  const r1 = await first;
-  assert.equal(r1.tries, 1, '정리된 라운드는 더 읽지 않는다'); assert.equal(reads, 1);
-  assert.equal(rounds.isCurrent(r1.mine), false, '끝난 라운드의 뒷정리(관문 해제·표시)는 새 라운드를 건드리지 않는다');
-  // 새 클릭 뒤 복귀 → 새 라운드: 0·3·5·10·20초 일정 그대로 5회, 이전 라운드 몫이 더해지지 않는다
-  reads = 0; const waits = [];
-  const fire = async () => { for (let i = 0; i < 50 && timers.size === 0; i += 1) await new Promise((r) => setImmediate(r)); const [id, t] = [...timers.entries()][0]; waits.push(t.ms); timers.delete(id); t.fn(); };
-  const second = run();
-  for (let i = 0; i < 4; i += 1) await fire();
-  const r2 = await second;
-  assert.deepEqual(waits, [3000, 5000, 10000, 20000], '새 라운드도 0·3·5·10·20초'); assert.equal(r2.tries, 5); assert.equal(reads, 5, '새 클릭 때문에 읽기 횟수가 늘지 않는다');
-  assert.equal(rounds.isCurrent(r2.mine), true, '정리되지 않은 라운드는 정상 마무리');
-  // 라운드가 새로 시작해도 이전 라운드를 같은 방식으로 정리한다(begin = 이전 것 cancel)
-  const a = rounds.begin(); const b = rounds.begin();
-  assert.equal(rounds.isCurrent(a), false); assert.equal(rounds.isCurrent(b), true);
+  assert.match(card, /disabled=\{checking\} onClick=\{\(\) => upgrade\('monthly'\)\}/, '월간: 확인 중에만 막는다');
+  assert.match(card, /disabled=\{checking\} onClick=\{\(\) => upgrade\('yearly'\)\}/, '연간도');
+  assert.doesNotMatch(card, /disabled=\{[^}]*notYet/, '"아직 결제가 확인되지 않았습니다" 뒤에는 막지 않는다(검수 화면 확인: 38초 뒤 설정을 닫았다 열어야 풀렸다)');
+});
+
+test('M-2 화면 연결 — 화면은 recheckFlow 하나로만 재확인한다(관문·라운드 따로 쥐지 않음), 클릭·이탈이 그 정리를 부른다', () => {
+  const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
+  const card = app.slice(app.indexOf('function PlanCard('), app.indexOf('async function planRow('));
+  assert.match(card, /recheckFlow\(\{ readPlan, alive: \(\) => live\.current, onChecking: setChecking, onNotYet: setNotYet, onPro: \(\) => latest\.current\.load\(\) \}\)/, '표시·Pro 반영을 흐름에 연결');
+  assert.match(card, /const upgrade = [^\n]*flow\.current\.upgraded\(\); openExternal\(url\)/, '새 클릭 = 흐름 정리·무장(결제창은 그 뒤)');
+  assert.match(card, /return \(\) => \{ live\.current = false; flow\.current\.dispose\(\); \}/, 'L-2 화면을 떠나면 라운드·타이머 정리');
+  assert.match(card, /flow\.current\.recheck\(once\)/, '복귀·다시 확인은 흐름의 recheck');
+  assert.doesNotMatch(card, /returnRecheck\(|roundTracker\(|recheckUntilPro\(/, '화면이 관문·라운드를 직접 쥐지 않는다 — 한 곳(recheckFlow)');
+});
+
+test('L-1·정리 — roundTracker: 정리된 라운드가 읽기 중에 건 다음 대기는 타이머를 만들지 않고, cancel은 쉬는 타이머를 지운다', async () => {
+  const f = fakeTimers(); const rounds = pro.roundTracker({ setTimer: f.setTimer, clearTimer: f.clearTimer });
+  const a = rounds.begin(); const sleepA = rounds.sleepFor(a);
+  const slept = sleepA(3000); assert.equal(f.timers.size, 1);
+  rounds.cancel(); assert.equal(f.cleared, 1, 'cancel이 쉬는 타이머를 지웠다'); assert.equal(f.timers.size, 0); await slept;
+  await sleepA(5000); assert.equal(f.timers.size, 0, '정리된 라운드의 뒤늦은 대기는 타이머 없이 바로 끝'); assert.equal(rounds.isCurrent(a), false);
+  const b = rounds.begin(); const c = rounds.begin();
+  assert.equal(rounds.isCurrent(b), false); assert.equal(rounds.isCurrent(c), true, 'begin은 이전 라운드를 정리');
+  const sb = rounds.sleepFor(b)(1000); assert.equal(f.timers.size, 0, '옛 라운드 b는 타이머를 못 만든다'); await sb;
+  const pending = rounds.sleepFor(c)(1000); rounds.begin(); assert.equal(f.timers.size, 0, 'begin이 현재 라운드 타이머도 지운다'); await pending;
+});
+
+test('M-1 라운드 결말 판정 — 정리된 라운드가 Pro를 읽었으면 버리지 않는다(이중 구독 방지), 미확인 표시는 현재 라운드만', () => {
+  const v = pro.roundVerdict;
+  assert.deepEqual(v({ current: true, alive: true, plan: 'free' }), { end: true, settle: true, load: false, notYet: true });
+  assert.deepEqual(v({ current: true, alive: true, plan: 'pro' }), { end: true, settle: true, load: true, notYet: false });
+  assert.deepEqual(v({ current: false, alive: true, plan: 'pro' }), { end: false, settle: false, load: true, notYet: false }, '정리된 라운드의 Pro는 반영, 관문·표시는 건드리지 않음');
+  assert.deepEqual(v({ current: false, alive: true, plan: 'free' }), { end: false, settle: false, load: false, notYet: false });
+  assert.deepEqual(v({ current: true, alive: false, plan: 'pro' }), { end: true, settle: false, load: false, notYet: false }, '화면을 떠났으면 아무것도 그리지 않는다');
+});
+
+function flowHarness(readPlan, opts = {}) {
+  const f = fakeTimers(); let clock = 1_000_000; const log = []; let pros = 0;
+  const flow = pro.recheckFlow({ readPlan, setTimer: f.setTimer, clearTimer: f.clearTimer, now: () => clock, alive: () => !opts.gone, onChecking: (x) => log.push(`checking:${x}`), onNotYet: (x) => log.push(`notYet:${x}`), onPro: async () => { pros += 1; } });
+  return { f, flow, log, get pros() { return pros; }, advance: (ms) => { clock += ms; } };
+}
+
+test('M-2 재클릭 뒤 복귀하면 새 라운드가 시작되고(0·3·5·10·20초 5회), 재클릭 전 라운드는 더 읽지 않는다', async () => {
+  let reads = 0; const h = flowHarness(async () => { reads += 1; return 'free'; });
+  h.flow.upgraded(); h.advance(1000);
+  const first = h.flow.recheck(); await tick();
+  assert.equal(reads, 1, '복귀 = 첫 읽기'); assert.equal(h.f.timers.size, 1);
+  assert.equal(h.flow.gate.running, true);
+  h.flow.upgraded(); // 확인 중에 새로 누름(화면은 막지만, 흐름은 정리·무장이 확실해야 한다)
+  assert.equal(h.f.timers.size, 0, '쉬던 타이머 정리'); assert.equal(h.flow.gate.running, false, 'upgraded가 관문을 해제(안 하면 새 복귀가 겹침으로 거절됨)');
+  await first; assert.equal(reads, 1, '정리된 라운드는 더 읽지 않는다');
+  assert.equal(h.log.at(-1), 'notYet:false', '재클릭이 표시를 초기화(확인 중·미확인 둘 다 끔)'); assert.ok(h.log.includes('checking:false'));
+  assert.ok(!h.log.includes('notYet:true'), '정리된 라운드는 미확인을 띄우지 않는다');
+  h.advance(5000); reads = 0; h.log.length = 0;
+  const second = h.flow.recheck(); await tick();
+  assert.equal(reads, 1, '재클릭 뒤 복귀 — 새 라운드 시작');
+  const waits = []; for (let i = 0; i < 4; i += 1) waits.push(await h.f.fire());
+  await second;
+  assert.deepEqual(waits, [3000, 5000, 10000, 20000]); assert.equal(reads, 5, '읽기 횟수는 라운드당 5회 그대로');
+  assert.deepEqual(h.log, ['checking:true', 'notYet:false', 'checking:false', 'notYet:true'], '끝나면 미확인 표시');
+  assert.equal(h.flow.gate.running, false);
+  h.advance(1000); assert.equal(await h.flow.recheck(), false, '라운드가 끝난 뒤 포커스마다 새 라운드가 돌지 않는다');
+});
+
+test('M-1 정리된 라운드가 읽던 중 Pro로 끝나면 반영한다(재현: 읽기 중 cancel → pro)', async () => {
+  let release; const gateRead = new Promise((r) => { release = r; });
+  const h = flowHarness(async () => { await gateRead; return 'pro'; });
+  h.flow.upgraded(); const run = h.flow.recheck(); await tick();
+  h.flow.upgraded(); release(); await run; // 읽는 중에 새 클릭 → 그 읽기는 'pro'
+  assert.equal(h.pros, 1, 'Pro 반영(load)이 불렸다 — 버려지지 않음');
+  assert.ok(!h.log.includes('notYet:true'));
+});
+
+test('L-2 dispose — 화면을 떠나면 쉬는 타이머를 지우고 더 읽지 않는다', async () => {
+  let reads = 0; const h = flowHarness(async () => { reads += 1; return 'free'; });
+  h.flow.upgraded(); const run = h.flow.recheck(); await tick(); assert.equal(h.f.timers.size, 1);
+  h.flow.dispose(); assert.equal(h.f.timers.size, 0); await run; assert.equal(reads, 1);
+  assert.ok(!h.log.includes('notYet:true'));
 });
 
 test('LOW-5 iOS에서도 보이는 폰 설정 줄은 중립 문구, en 토스트 안내는 Tap', () => {

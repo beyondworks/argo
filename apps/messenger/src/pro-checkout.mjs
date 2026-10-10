@@ -80,20 +80,6 @@ export async function recheckUntilPro(readPlan, { delays = RECHECK_DELAYS_MS, sl
   return { plan, tries };
 }
 
-/** 재확인 라운드 추적(검수 화면 확인 2026-10-11) — 라운드는 한 번에 하나. begin()은 이전 라운드를 끝내고(쉬는 중인 타이머도 바로 지워 깨운다) 새 번호를 준다.
- *  cancel()은 새 라운드 없이 정리만(업그레이드 버튼을 다시 누를 때). isCurrent(번호)가 거짓이면 그 라운드는 더 읽지 않고, 뒷정리도 하지 않는다.
- *  setTimer·clearTimer는 시험용. 읽기 횟수는 늘지 않는다 — 정리된 라운드는 읽지 않고 새 라운드는 처음부터 0·3·5·10·20초 */
-export function roundTracker({ setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
-  let cur = 0; let wake = null;
-  const stop = () => { cur += 1; if (wake) wake(); };
-  return {
-    begin() { stop(); return cur; },
-    cancel: stop,
-    isCurrent: (n) => n === cur,
-    sleep: (ms) => new Promise((resolve) => { const id = setTimer(() => { wake = null; resolve(); }, ms); wake = () => { clearTimer(id); wake = null; resolve(); }; }),
-  };
-}
-
 /** 복귀 재확인 관문(분리 검수 #944 LOW-3). arm = 업그레이드를 누름, start = 앱 복귀 때 라운드 시작 여부(시작하면 무장을 푼다 —
  *  라운드가 끝난 뒤 15분 안의 포커스마다 새 라운드가 돌지 않게), startManual = '다시 확인' 1회(무장과 무관), end = 라운드 끝. now는 시험용 */
 export function returnRecheck({ now = Date.now } = {}) {
@@ -107,6 +93,55 @@ export function returnRecheck({ now = Date.now } = {}) {
     startManual() { if (running) return false; running = true; return true; },
     end() { running = false; },
     get running() { return running; },
+  };
+}
+
+/** 재확인 라운드 추적(검수 화면 확인 2026-10-11) — 라운드는 한 번에 하나. begin()은 이전 라운드를 끝내고(쉬는 중인 타이머도 바로 지워 깨운다) 새 번호를 준다.
+ *  cancel()은 새 라운드 없이 정리만(업그레이드 버튼을 다시 누를 때·화면을 떠날 때). isCurrent(번호)가 거짓이면 그 라운드는 더 읽지 않는다.
+ *  sleepFor(번호)는 그 라운드가 쓰는 대기 — 이미 정리된 라운드가 읽기 중에 다음 대기를 걸어도 타이머를 만들지 않고 바로 끝낸다(검수 #944 L-1).
+ *  setTimer·clearTimer는 시험용 */
+export function roundTracker({ setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
+  let cur = 0; const wakes = new Set();
+  const stop = () => { cur += 1; for (const w of [...wakes]) w(); };
+  return {
+    begin() { stop(); return cur; },
+    cancel: stop,
+    isCurrent: (n) => n === cur,
+    sleepFor: (n) => (ms) => (n !== cur ? Promise.resolve() : new Promise((resolve) => {
+      const wake = () => { clearTimer(id); wakes.delete(wake); resolve(); };
+      const id = setTimer(wake, ms); wakes.add(wake);
+    })),
+  };
+}
+
+/** 라운드가 끝났을 때 할 일(검수 #944 M-1) — 정리된(옛) 라운드가 'pro'를 읽었으면 버리지 않고 반영한다(이미 결제됐는데 버튼이 남아 이중 구독이 되지 않게).
+ *  end = 관문 해제(현재 라운드만), settle = 확인 중 표시 끄기(현재 라운드만), load = Pro 반영, notYet = "아직 결제가 확인되지 않았습니다"(현재 라운드가 Pro 못 찾았을 때만) */
+export function roundVerdict({ current, alive, plan }) {
+  return { end: current, settle: alive && current, load: alive && plan === 'pro', notYet: alive && current && plan !== 'pro' };
+}
+
+/** 결제 뒤 재확인 흐름 한 덩어리 — 관문(returnRecheck)과 라운드 추적(roundTracker)을 묶어 화면은 얇게, 행동은 시험으로 잠근다(검수 #944 M-2).
+ *  recheck(once)  = 앱 복귀(once=false: 업그레이드를 누른 뒤 15분 안·라운드 한 번) 또는 '다시 확인'(once=true: 1회)
+ *  upgraded()     = 업그레이드 버튼을 눌렀을 때 — 돌던 라운드·타이머를 정리하고 관문을 새로 무장해 이후 복귀에서 새 라운드가 시작되게
+ *  dispose()      = 화면을 떠날 때 — 라운드와 타이머 정리
+ *  onChecking/onNotYet = 화면 표시, onPro = Pro가 확인됐을 때 다시 읽기 */
+export function recheckFlow({ readPlan, alive = () => true, onChecking = () => {}, onNotYet = () => {}, onPro = async () => {}, now, setTimer, clearTimer, delays } = {}) {
+  const gate = returnRecheck({ ...(now ? { now } : {}) }); const rounds = roundTracker({ ...(setTimer ? { setTimer } : {}), ...(clearTimer ? { clearTimer } : {}) });
+  return {
+    gate,
+    async recheck(once = false) {
+      if (!(once ? gate.startManual() : gate.start())) return false;
+      const mine = rounds.begin(); onChecking(true); onNotYet(false);
+      const { plan } = await recheckUntilPro(readPlan, { alive: () => alive() && rounds.isCurrent(mine), sleep: rounds.sleepFor(mine), ...(once ? { delays: [0] } : delays ? { delays } : {}) });
+      const v = roundVerdict({ current: rounds.isCurrent(mine), alive: alive(), plan });
+      if (v.end) gate.end();
+      if (v.settle) onChecking(false);
+      if (v.load) await onPro();
+      if (v.notYet) onNotYet(true);
+      return true;
+    },
+    upgraded() { rounds.cancel(); gate.end(); gate.arm(); onChecking(false); onNotYet(false); },
+    dispose() { rounds.cancel(); },
   };
 }
 
