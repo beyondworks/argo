@@ -6,7 +6,7 @@
 // 호출 인증: Authorization: Bearer LS_RECONCILE_SECRET(엣지 시크릿 = msgr_settings.ls_reconcile_secret). 시크릿이 없으면 500(닫힘).
 // 엣지 시크릿: LS_RECONCILE_SECRET, LEMONSQUEEZY_API_KEY(ls-portal과 같은 이름), 선택 LEMONSQUEEZY_PRO_VARIANT_IDS·LS_ALLOW_TEST.
 // 배포: verify_jwt 끔(pg_cron은 사용자 JWT가 없다 — 위 비밀로 막는다). 테스트: test/ls-reconcile.test.mjs(이 파일을 타입만 지워 vm에서 실행).
-import { fetchAllSubscriptions, findDiscrepancies, implausiblyEmpty } from './core.js';
+import { MAX_FINDINGS, fetchAllSubscriptions, findDiscrepancies, implausiblyEmpty } from './core.js';
 
 const enc = new TextEncoder();
 async function sameSecret(a: string, b: string) {
@@ -48,7 +48,7 @@ Deno.serve(async (req: Request) => {
   }
   try {
     const ents = await restAll('entitlements?select=user_id,plan,ends_at,ls_subscription_id,ls_customer_id,granted&or=(plan.eq.pro,ls_subscription_id.not.is.null)&order=user_id');
-    const openRows = await restAll('billing_unmatched?resolved_at=is.null&select=ls_subscription_id,reason&order=id');
+    const openRows = await restAll('billing_unmatched?resolved_at=is.null&select=ls_subscription_id,reason,plan&order=id');
     if (implausiblyEmpty(subs, ents, Date.now())) {
       console.error('[ls-reconcile] LS 구독 목록이 비었는데 우리 쪽 결제 Pro가 있다 — API 키·스토어를 확인할 때까지 대사를 멈춘다(쓰기 없음)');
       return new Response('ls list empty', { status: 502 });
@@ -57,18 +57,23 @@ Deno.serve(async (req: Request) => {
       subs, ents, openRows, nowMs: Date.now(),
       allowTest: Deno.env.get('LS_ALLOW_TEST') === '1', allowedVariants: variants.size ? variants : null,
     });
-    if (findings.length) {
+    // 한 번에 MAX_FINDINGS건까지만 적는다 — 적힌 건은 미해결이 되어 다음 날 건너뛰므로 나머지가 차례로 올라온다
+    const toWrite = findings.slice(0, MAX_FINDINGS);
+    if (findings.length > toWrite.length) {
+      console.error(`[ls-reconcile] 불일치 ${findings.length}건 — 오늘은 ${toWrite.length}건만 적는다. 이렇게 많으면 API 키·스토어·LEMONSQUEEZY_PRO_VARIANT_IDS 설정부터 확인`);
+    }
+    if (toWrite.length) {
       // 같은 (구독, 사유)의 미해결 행은 findDiscrepancies가 이미 뺐다 — 여기서 충돌하는 것은 처리된 행뿐이다.
       // 처리된 불일치가 다시 생기면 그 행을 다시 연다(resolved_at·notified_at을 비움 → 트리거가 다시 알린다, 분리 검수 MEDIUM-2).
       await rest('billing_unmatched?on_conflict=ls_subscription_id,reason', {
         method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
-        body: JSON.stringify(findings.map((f) => ({ ...f, resolved_at: null, notified_at: null }))),
+        body: JSON.stringify(toWrite.map((f) => ({ ...f, resolved_at: null, notified_at: null }))),
       });
     }
     // 로그에는 구독 번호와 사유만 — 이메일은 남기지 않는다
     console.log(`[ls-reconcile] LS 구독 ${subs.length}개 · 우리 쪽 행 ${ents.length}개 · 불일치 ${findings.length}건`,
-      findings.map((f) => `${f.ls_subscription_id}:${f.reason}`));
-    return Response.json({ ok: true, subscriptions: subs.length, findings: findings.length });
+      toWrite.map((f) => `${f.ls_subscription_id}:${f.reason}`));
+    return Response.json({ ok: true, subscriptions: subs.length, findings: findings.length, written: toWrite.length });
   } catch (e) {
     console.error(`[ls-reconcile] DB 실패: ${String((e as Error)?.message ?? e).slice(0, 200)}`);
     return new Response('db error', { status: 500 });

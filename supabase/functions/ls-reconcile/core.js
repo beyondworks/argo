@@ -4,6 +4,7 @@
 // 운영자 부여(granted). 구독 번호가 빈 행(그랜드파더링·운영자 부여)은 LS와 대조하지 않는다.
 
 export const PRO_STATUSES = new Set(['active', 'on_trial', 'past_due', 'cancelled']);
+export const MAX_FINDINGS = 20; // 한 번에 적는 불일치 상한 — 설정 실수(변형 목록 등)·다시 열기 폭주가 알림 폭주가 되지 않게. 나머지는 다음 날
 export const MAX_PAGES = 50; // 100개 × 50쪽 = 5,000 구독 — 넘으면 멈추고 알린다(무한 반복 방지)
 
 /** LS 구독 하나가 지금 Pro로 인정되는가 */
@@ -35,13 +36,17 @@ const lsState = (s) => ({ ls_status: s?.attributes?.status ?? null, ls_updated_a
  *  · reconcile-pro-not-in-ls: 우리 쪽은 그 구독 번호로 결제 Pro인데(운영자 부여 제외), LS에 그 구독이 없거나 Pro가 아니다.
  * 건너뛰는 것(openRows = 아직 처리되지 않은 billing_unmatched 행의 { ls_subscription_id, reason }):
  *  · 같은 구독·같은 사유의 미해결 행 — 이미 알린 불일치다.
- *  · 미해결 no-user 행이 있는 구독 — 결제 먼저·가입 나중 자동 연결(#933 ls_link_late_signups)이 같은 구독의 더 최신 다른 사유 행을
- *    보면 멈추므로, 그 연결을 기다리는 동안은 대사 행을 더하지 않는다(그 연결이 10분마다 돈다).
+ *  · #933이 아직 연결할 수 있는 미해결 no-user 행(plan='pro'로 기록됐고 그 구독이 아직 어느 계정에도 연결되지 않음)이 있는 구독 —
+ *    결제 먼저·가입 나중 자동 연결(ls_link_late_signups, 10분마다)이 같은 구독의 더 최신 다른 사유 행을 보면 멈추므로 그동안 더하지 않는다.
+ *    그 no-user 행이 생길 때 이미 알렸다. #933 전 옛 행(plan 없음)·이미 손으로 연결한 구독의 행은 기다리지 않는다(재검수 MEDIUM).
  * 다른 사유의 미해결 행이 있어도 대조는 한다(분리 검수 MEDIUM-2 — 옛 행 하나가 그 구독을 대사에서 영구히 빼지 않게).
  */
 export function findDiscrepancies({ subs = [], ents = [], openRows = [], nowMs = Date.now(), allowTest = false, allowedVariants = null }) {
   const openKey = new Set(openRows.map((o) => `${String(o?.ls_subscription_id ?? '')}|${String(o?.reason ?? '')}`));
-  const awaitingLateLink = new Set(openRows.filter((o) => o?.reason === 'no-user').map((o) => String(o.ls_subscription_id ?? '')));
+  const linkedSubs = new Set(ents.map((r) => String(r?.ls_subscription_id ?? '')).filter(Boolean));
+  const awaitingLateLink = new Set(openRows
+    .filter((o) => o?.reason === 'no-user' && o?.plan === 'pro' && !linkedSubs.has(String(o.ls_subscription_id ?? '')))
+    .map((o) => String(o.ls_subscription_id ?? '')));
   const opts = { nowMs, allowTest, allowedVariants };
   const byId = new Map(subs.map((s) => [String(s?.id ?? ''), s]));
   const entsBySub = new Map();

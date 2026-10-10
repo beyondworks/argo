@@ -70,14 +70,17 @@ test('불일치 — 양방향을 찾고, 맞는 건·운영자 부여·그랜드
 });
 
 test('미해결 행 — 같은 구독·같은 사유, no-user(나중 가입 연결 대기)만 건너뛰고 다른 사유 행은 대조를 막지 않는다', () => {
-  const subs = [sub(201), sub(202), sub(203)];
+  const subs = [sub(201), sub(202), sub(203), sub(204), sub(205, { status: 'expired' })];
   const open = [
     { ls_subscription_id: '201', reason: 'reconcile-ls-pro-not-linked' }, // 이미 알림
-    { ls_subscription_id: '202', reason: 'no-user' },                     // #933 연결 대기
+    { ls_subscription_id: '202', reason: 'no-user', plan: 'pro' },        // #933 연결 대기
+    { ls_subscription_id: '204', reason: 'no-user', plan: null },         // #933 전 옛 행 — #933이 못 잇는다 → 대조한다
+    { ls_subscription_id: '205', reason: 'no-user', plan: 'pro' },        // 이미 손으로 다른 계정에 연결 — 기다리지 않는다
     { ls_subscription_id: '203', reason: 'email-account-has-subscription' }, // 다른 사유 — 그래도 대조한다
   ];
-  const got = core.findDiscrepancies({ subs, ents: [], openRows: open, nowMs: NOW }).map((r) => r.ls_subscription_id);
-  assert.deepEqual(got, ['203']);
+  const ents = [ent(205)]; // 205: 손으로 연결됐고 우리 쪽 Pro인데 LS는 끝남 → pro-not-in-ls가 잡혀야 한다
+  const got = core.findDiscrepancies({ subs, ents, openRows: open, nowMs: NOW }).map((r) => `${r.ls_subscription_id}:${r.reason}`).sort();
+  assert.deepEqual(got, ['203:reconcile-ls-pro-not-linked', '204:reconcile-ls-pro-not-linked', '205:reconcile-pro-not-in-ls']);
 });
 
 test('LS 목록이 비었는데 우리 쪽 결제 Pro가 있으면 대조하지 않는다(키 교체 실수 등)', () => {
@@ -157,7 +160,7 @@ test('엣지 — 불일치만 billing_unmatched에 넣고(중복 무시), 맞으
   const e = edge();
   const res = await e.call();
   assert.equal(res.status, 200);
-  assert.deepEqual(await res.json(), { ok: true, subscriptions: 2, findings: 1 });
+  assert.deepEqual(await res.json(), { ok: true, subscriptions: 2, findings: 1, written: 1 });
   assert.deepEqual(e.inserts, [{ event_name: 'reconcile-daily', reason: 'reconcile-ls-pro-not-linked', ls_subscription_id: '2', ls_customer_id: '902', user_email: 'u2@example.com', ls_status: 'active', ls_updated_at: '2026-10-09T21:00:00Z',
     resolved_at: null, notified_at: null }], '처리된 같은 불일치가 있으면 다시 연다(트리거가 다시 알림)');
   assert.ok(e.logs.some((l) => /불일치 1건/.test(l) && /2:reconcile-ls-pro-not-linked/.test(l)));
@@ -188,4 +191,13 @@ test('엣지 — PostgREST 행 상한을 넘는 표도 끝까지 읽고, LS 빈 
   assert.equal((await empty.call()).status, 502);
   assert.equal(empty.inserts.length, 0);
   assert.ok(empty.errors.some((l) => /목록이 비었는데/.test(l)));
+});
+
+test('엣지 — 불일치가 상한(20)을 넘으면 20건만 적고 나머지는 다음 날, 설정 확인을 로그로 남긴다', async () => {
+  const many = Array.from({ length: 30 }, (_, i) => sub(300 + i));
+  const e = edge({ lsSubs: many, ents: [] });
+  const res = await e.call();
+  assert.deepEqual(await res.json(), { ok: true, subscriptions: 30, findings: 30, written: 20 });
+  assert.equal(e.inserts.length, 20);
+  assert.ok(e.errors.some((l) => /불일치 30건/.test(l) && /VARIANT_IDS/.test(l)));
 });
