@@ -587,11 +587,12 @@ assert len(files) == 1 and body == 'a b download-test-vps.md', (files, body)
 
 // 검수 Cb-2 LOW: 링크 판정은 게이트웨이 이벤트 루프에서 동기로 돈다. ']' 없는 '['가 한 줄에 길게 이어지면 길이의 제곱으로 느려졌다
 // (20,000자 2.6초, 50,000자 17.6초 — 그동안 같은 Hermes의 다른 플랫폼도 멈춤). 이름·대상·제목·맨 표기 경로에 길이 상한을 둔다.
-test('긴 줄 — "[" 반복·닫히지 않은 <·제목·긴 경로도 1초 안에 끝난다', () => runCore(String.raw`
+// 상한 3초: 결함(제곱)은 50,000자 17.6초라 그대로 잡고, 붐비는 CI 러너(macos-15-intel 1.09초 실측, 10/10 메신저 릴리스 빌드)의 흔들림은 넘긴다.
+test('긴 줄 — "[" 반복·닫히지 않은 <·제목·긴 경로도 3초 안에 끝난다', () => runCore(String.raw`
 import time
 for line in ['[' * 50000, '[a](<' * 10000, '[a](/b "' * 6000, "[a](/b '" * 6000, 'attachment:/' + 'a' * 50000, '[' + 'x' * 50000 + '](/b)']:
     t = time.perf_counter(); files, body = m.pick_linked_files(line); dt = time.perf_counter() - t
-    assert dt < 1.0 and files == [] and body == line, (line[:12], round(dt, 3))
+    assert dt < 3.0 and files == [] and body == line, (line[:12], round(dt, 3))
 `));
 
 // 커밋 보안 검토(2026-10-09): 비밀 이름 목록이 SSH·서명 키, 비밀번호 금고, 클라우드·OAuth 인증 파일, 브라우저 로그인 저장소를 빠뜨렸다.
