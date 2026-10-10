@@ -342,3 +342,69 @@ test('[심박 분리] 심박은 재개를 직접 돌리지 않고 신호(resume)
   assert.ok(Number(sql(`select extract(epoch from now() - app_seen_at)::int from public.msgr_device_beats where owner_user_id = '${K}'`)) <= 2, '심박 기록은 남았다');
   fails(psqlRaw(['-A', '-t', '-c', 'set role anon; select public.msgr_free_resume()']), /permission denied/, '익명 재개');
 });
+
+// ── 보안 점검(커밋 자동 점검 'authorization' 1건, 10/11) — 남의 것을 건드리는 길이 없는지 ──
+const M = 'f7777777-7777-4777-8777-777777777777';
+test('[보안 ②] 남의 회사·남의 에이전트 id로 심박을 보내도 남의 기기 행·판정·상태는 그대로 — 버전은 내 기기 행에만 쓰인다', { skip }, () => {
+  sql(`update public.msgr_device_beats set app_seen_at = now() - interval '31 minutes' where owner_user_id = '${U.h}'`); sweep(U.h);
+  const before = sql(`select string_agg(device_id || ':' || xmin::text, ',' order by device_id) from public.msgr_device_beats where owner_user_id = '${U.h}'`);
+  const hStatus = sql(`select string_agg(id::text || ':' || status, ',' order by id) from public.msgr_crews where owner_user_id = '${U.h}'`);
+  const hIds = ids(U.h, 'paused');
+  const r = JSON.parse(last(asUser(K, `select public.msgr_device_beat('${WS}', 'atk', ${arr(hIds)}, '9.9.9')`)));
+  assert.deepEqual(r, {}, '남의 행으로는 재개 신호도 없다');
+  assert.equal(sql(`select count(*) from public.msgr_device_beats where device_id = 'atk'`), '0', '내 행이 없는 목록이면 기기 행도 만들지 않는다');
+  asUser(K, 'select public.msgr_free_resume()');
+  assert.equal(sql(`select string_agg(device_id || ':' || xmin::text, ',' order by device_id) from public.msgr_device_beats where owner_user_id = '${U.h}'`), before);
+  assert.equal(sql(`select string_agg(id::text || ':' || status, ',' order by id) from public.msgr_crews where owner_user_id = '${U.h}'`), hStatus);
+  assert.equal(reason(U.h).reason, 'off', '남의 심박으로 새 앱 판정이 되지 않는다');
+});
+
+test('[보안 ③④] 조직 관리자가 남(무료)의 에이전트를 연결해도 한도를 넘지 못하고 교체도 일어나지 않는다 — 멈춘 행은 주인·서버만 재개, 교체는 언제나 같은 주인의 에이전트', { skip }, () => {
+  sql(`insert into auth.users (id, created_at, email) values ('${M}', now() - interval '30 days', 'm@example.test') on conflict do nothing`);
+  sql(`update public.msgr_org_entitlements set plan = 'team', seats = 10 where org_id = '${OF}'`);
+  const code = last(asUser(U.f, `insert into public.msgr_invites (org_id, role, created_by) values ('${OF}', 'member', '${U.f}') returning code`));
+  asUser(M, `select public.msgr_accept_invite('${code}')`);
+  const m = {}; for (const sl of ['m1', 'm2', 'm3', 'm4']) m[sl] = insOff(M, OF, sl, 'active');
+  m.m5 = insOff(M, OF, 'm5', 'available'); m.m6 = insOff(M, OF, 'm6', 'paused');
+  sql(`insert into public.msgr_device_beats (owner_user_id, ws_id, device_id, slugs, app_version, app_seen_at) values ('${M}', '${WS}', 'm-mac', array['m1'], '${NEW}', now())`);
+  const fActive = slugsOf(U.f, 'active');
+  // 관리자(f — 조직 주인)가 4명이 찬 M의 에이전트를 연결: 교체 없이 한도 오류
+  fails(asUserRaw(U.f, `update public.msgr_crews set status = 'active' where id = '${m.m5}'`), /msgr_free_agent_limit/, '관리자의 다섯 번째 연결');
+  assert.equal(slugsOf(M, 'active'), 'm1,m2,m3,m4', '관리자 행동으로 주인의 에이전트가 멈추지 않는다');
+  // 관리자의 paused→active: 주인·서버만 재개 — 조용히 그대로(커서·기록 손대지 않음)
+  const cur6 = cursorOf(m.m6);
+  asUser(U.f, `update public.msgr_crews set status = 'active' where id = '${m.m6}'`);
+  assert.equal(statusOf(m.m6), 'paused'); assert.equal(cursorOf(m.m6), cur6);
+  assert.equal(sql(`select count(*) from public.msgr_free_choices where owner_user_id = '${M}'`), '0', '관리자 행동은 주인의 선택으로 기록되지 않는다');
+  // 자리가 나면 관리자 연결은 한도 안에서 허용(교체·선택 기록 없이)
+  asUser(M, `update public.msgr_crews set status = 'available' where id = '${m.m4}'`);
+  asUser(U.f, `update public.msgr_crews set status = 'active' where id = '${m.m6}'`); // 자리가 있어도 관리자는 멈춘 행을 재개하지 못한다(오류 없이 그대로)
+  assert.equal(statusOf(m.m6), 'paused'); assert.equal(cursorOf(m.m6), cur6);
+  asUser(U.f, `update public.msgr_crews set status = 'active' where id = '${m.m5}'`);
+  assert.equal(statusOf(m.m5), 'active');
+  assert.equal(sql(`select count(*) from public.msgr_free_choices where owner_user_id = '${M}'`), '0');
+  // 주인이 고른 다섯 번째 → 교체 대상은 M의 에이전트만, 관리자(f)의 에이전트는 그대로
+  asUser(M, `update public.msgr_crews set status = 'active' where id = '${m.m6}'`);
+  assert.equal(statusOf(m.m6), 'active');
+  assert.equal(Number(sql(`select count(distinct slug) from public.msgr_crews where owner_user_id = '${M}' and status = 'active'`)), 4);
+  assert.equal(sql(`select v.owner_user_id from public.msgr_free_choices ch join public.msgr_crews v on v.id = ch.swapped_out where ch.crew_id = '${m.m6}'`), M, '교체 대상은 같은 주인');
+  assert.equal(slugsOf(U.f, 'active'), fActive, '다른 주인의 에이전트는 그대로');
+  assert.equal(swapNotes(U.f, [m.m6]), '', '교체 안내는 주인에게만');
+});
+
+test('[보안 ⑤①] 이유 조회는 내 것만, 교체 기록 표는 직접 못 읽고, 새 정의자 함수는 search_path 고정 + 클라이언트가 못 부르는 내부 함수', { skip }, () => {
+  const mine = reason(K); const theirs = reason(M);
+  assert.notDeepEqual(mine, theirs);
+  assert.deepEqual(Object.keys(mine).sort(), ['active', 'limit', 'min_app', 'paused', 'reason'], '목록·이름·남의 id 없이 수와 이유만');
+  fails(asUserRaw(M, 'select * from public.msgr_free_choices'), /permission denied/, '교체 기록 표 직접 읽기');
+  fails(asUserRaw(M, `insert into public.msgr_free_choices (crew_id, owner_user_id) values ('${F.f1}', '${M}')`), /permission denied/, '교체 기록 표 직접 쓰기');
+  for (const call of [`public._msgr_crew_resume_side('${F.f1}', 0)`, `public._msgr_crew_plan_resume('${F.f1}', 0)`, `public.msgr_crews_plan_sweep('${U.f}')`, `public._msgr_free_active_agents('${U.f}')`, `public._msgr_free_app_ok('${U.f}')`])
+    fails(asUserRaw(M, `select ${call}`), /permission denied/, call);
+  const bad = sql(`select coalesce(string_agg(p.proname, ','), '') from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname in ('msgr_device_beat','msgr_free_resume','msgr_my_agent_pause','msgr_agent_swap_notes','msgr_crews_pro_gate','msgr_crews_resume_side',
+      '_msgr_crew_resume_side','_msgr_crew_plan_resume','msgr_crews_plan_sweep','_msgr_free_app_ok','_msgr_free_active_agents','_msgr_free_agent_policy')
+      and not (p.prosecdef and exists (select 1 from unnest(p.proconfig) c where c like 'search_path=%'))`);
+  assert.equal(bad, '', '정의자 + search_path 고정이 아닌 함수');
+  for (const fn of ['msgr_device_beat(text,text,uuid[],text)', 'msgr_free_resume()', 'msgr_my_agent_pause()', 'msgr_agent_swap_notes(uuid[])'])
+    assert.equal(sql(`select has_function_privilege('anon', 'public.${fn}', 'EXECUTE')`), 'f', `anon ${fn}`);
+});

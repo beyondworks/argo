@@ -8,10 +8,11 @@ export async function readAgentPause(db) {
   } catch { return null; }
 }
 
-/** 안내 한 줄 — { key, vars } 또는 null. 이유: app(옛 앱 — 업데이트 안내) · off(최신 앱이 꺼져 있음) · limit(4명 다 참 — Pro 안내). 멈춘 에이전트가 없으면 안내하지 않는다 */
-export function agentPauseNote(info) {
+/** 안내 한 줄 — { key, vars } 또는 null. 이유: app(옛 앱 — 업데이트 안내) · off(최신 앱이 꺼져 있음) · limit(4명 다 참 — Pro 안내, iOS는 사실만). 멈춘 에이전트가 없으면 안내하지 않는다.
+    ios — iOS 빌드(platform.js isIos): 결제를 권하는 문장을 뺀 문구(App Store 3.1.1, #944와 같은 원칙) */
+export function agentPauseNote(info, { ios = false } = {}) {
   if (!info || !(Number(info.paused) > 0)) return null;
-  const key = { app: 'agents.pause.app', off: 'agents.pause.off', limit: 'agents.pause.limit' }[info.reason];
+  const key = { app: 'agents.pause.app', off: 'agents.pause.off', limit: ios ? 'agents.pause.limit.ios' : 'agents.pause.limit' }[info.reason];
   return key ? { key, vars: { n: Number(info.paused), limit: Number(info.limit) || 4 } } : null;
 }
 

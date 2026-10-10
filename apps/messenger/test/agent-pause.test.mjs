@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { readAgentPause, agentPauseNote, readSwapNames } from '../src/agent-pause.mjs';
 import { t as tm } from '../src/i18n.js';
-import { toastError } from '../src/error-toast.mjs';
+import { toastError, setIosCopy } from '../src/error-toast.mjs';
 
 test('① 이유별 문구 키 + 수', () => {
   assert.deepEqual(agentPauseNote({ paused: 3, active: 0, limit: 4, reason: 'app' }), { key: 'agents.pause.app', vars: { n: 3, limit: 4 } });
@@ -69,4 +69,21 @@ test('⑦ 교체 안내(검수 #945 MEDIUM-1) — 이름 목록(중복 없이), 
   for (const k of ['err.freeAgentLimit', 'agents.swap', 'agents.pause.limit']) assert.doesNotMatch(tm(k, 'ko'), /해제/, `${k}: 해제(채널 참여 삭제)로 안내하지 않는다`);
   const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
   assert.equal((app.match(/readSwapNames\(supabase, \[crew\.id\]\)/g) ?? []).length, 2);
+});
+
+test('⑧ iOS 빌드는 무료 한도·교체 안내에서 결제 권유를 뺀다(App Store 3.1.1, #944와 같은 원칙) — 사실만 남기고, 고르는 곳은 isIos 하나', () => {
+  assert.equal(agentPauseNote({ paused: 3, active: 4, limit: 4, reason: 'limit' }, { ios: true }).key, 'agents.pause.limit.ios');
+  assert.equal(agentPauseNote({ paused: 3, reason: 'app' }, { ios: true }).key, 'agents.pause.app', 'app·off 문구에는 결제 권유가 없다');
+  for (const lang of ['ko', 'en']) {
+    for (const k of ['agents.pause.limit.ios', 'agents.swap.ios', 'err.freeAgentLimit.ios', 'agents.pause.app', 'agents.pause.off', 'err.appUpdateRequired'])
+      assert.doesNotMatch(tm(k, lang, { n: 3, limit: 4, names: 'Jun' }), /Pro|결제|업그레이드|upgrade/i, `${k} ${lang}`);
+    assert.match(tm('agents.pause.limit', lang, { n: 3, limit: 4 }), /Pro/, 'iOS 밖은 그대로');
+  }
+  assert.equal(tm('agents.pause.limit.ios', 'ko', { n: 3, limit: 4 }), '무료 계정은 에이전트 4명까지 연결돼요. 나머지 3명은 멈춰 있어요.');
+  const t = (k, v) => tm(k, 'ko', v);
+  setIosCopy(true); try { assert.equal(toastError('msgr_free_agent_limit msgr_pro_required', { t }), t('err.freeAgentLimit.ios')); } finally { setIosCopy(false); }
+  assert.equal(toastError('msgr_free_agent_limit msgr_pro_required', { t }), t('err.freeAgentLimit'));
+  const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
+  assert.match(app, /agentPauseNote\(agentPause, \{ ios: isIos \}\)/); assert.match(app, /setIosCopy\(isIos\);/);
+  assert.equal((app.match(/t\(isIos \? 'agents\.swap\.ios' : 'agents\.swap'/g) ?? []).length, 2, '교체 안내 두 자리');
 });

@@ -78,7 +78,7 @@ import { memberRows, memberPerms, MEMBER_CHIPS } from './phone-members.mjs';
 import { Seg } from './seg.mjs'; // 세그먼트 토글 하나(5차 피드백 3)
 import { searchView } from './search-view.mjs';
 import { deliveryCardView } from './delivery-card.mjs';
-import { friendlyErr, toastError } from './error-toast.mjs'; // 아는 서버 코드 → 문구, 토스트는 원문을 거른다(UXM-05)
+import { friendlyErr, toastError, setIosCopy } from './error-toast.mjs'; // 아는 서버 코드 → 문구, 토스트는 원문을 거른다(UXM-05)
 import { messageShape } from './attach-only.mjs';
 import { createLateAttach, mergeAttachments } from './late-attach.mjs'; // 놓친 'attach' 방송 되찾기(C-a 인접 경로)
 import { appBackStack, rootBackAction } from './back-stack.mjs'; import { useBackClose } from './use-back-close.js'; // Android 뒤로 — 열린 시트·팝업부터 닫기(MSG-10) // 첨부만 보낸 글 — 올리는 중 자리표시·거둔 글 숨김(MSG-06)
@@ -101,6 +101,7 @@ import { startPresence } from './presence.mjs';
 import { observeMobileResume } from './mobile-lifecycle.mjs';
 import { registerPush, activatePush, deactivatePush, detachPush, mountPush } from './push.js';
 import { pushDiag, readDiag, clearDiag } from './diag.jsx';
+setIosCopy(isIos); // iOS 빌드는 무료 한도 오류에서 결제 권유를 뺀다(App Store 3.1.1 — error-toast.mjs)
 setDeliveryReporter((kind, message) => pushDiag(kind, message)); // 전송 실패의 영어 원문은 카드에 보이지 않고 진단 기록(설정 > 진단)으로만 간다(검수 E, 2026-10-01)
 import { docSlug, insertWithFreePath, isPathTaken } from './doc-path.mjs';
 import { authErrorText } from './auth-errors.mjs';
@@ -1256,7 +1257,7 @@ function Shell({ session }) {
   const dispatchCrew = useCallback(async (crew, channelId = null) => {
     const up = await supabase.from('msgr_crews').update({ status: 'active' }).eq('id', crew.id).select('id');
     if (up.error) throw new Error(up.error.message);
-    readSwapNames(supabase, [crew.id]).then((names) => { if (names.length) { setNote(t('agents.swap', { names: names.join(', ') })); readAgentPause(supabase).then(setAgentPause); } }); // 무료 4명 교체 안내(검수 #945)
+    readSwapNames(supabase, [crew.id]).then((names) => { if (names.length) { setNote(t(isIos ? 'agents.swap.ios' : 'agents.swap', { names: names.join(', ') })); readAgentPause(supabase).then(setAgentPause); } }); // 무료 4명 교체 안내(검수 #945)
     // 채널에 넣는 것은 서버 규칙 한 곳(msgr_crew_join)으로 — 방장이면 바로, 참여자는 채널 정책대로(바로/방장 승인), 채팅은 결재자면 바로·아니면 요청.
     let joined = null;
     if (channelId) {
@@ -1464,7 +1465,7 @@ function Shell({ session }) {
   // 무료 계정 에이전트가 멈춘 이유(2026-10-11, agent-pause.mjs) — 로그인·재연결 때 1건, 폰 에이전트 탭에 들어갈 때 1건(아래 effect). 멈춘 에이전트가 없으면 안내 없음
   const [agentPause, setAgentPause] = useState(null);
   useEffect(() => { if (!uid) { setAgentPause(null); return undefined; } let live = true; readAgentPause(supabase).then((v) => { if (live) setAgentPause(v); }); return () => { live = false; }; }, [uid, syncEpoch]);
-  const pauseNote = agentPauseNote(agentPause);
+  const pauseNote = agentPauseNote(agentPause, { ios: isIos });
   const pauseNoteEl = pauseNote && <div className="msgr-rail-empty msgr-pausenote" role="status">{t(pauseNote.key, pauseNote.vars)}{pauseNote.key !== 'agents.pause.limit' && <div><RunnerButton /></div>}</div>; // 데스크톱 레일 — 무료 계정 에이전트가 멈춘 이유
   const approvalsTimer = useRef(null);
   // 넣기 요청 카드의 이름(기능 점검 D6) — 에이전트 이름: 조직 에이전트는 조직 행, 개인 에이전트는 160000의 대기 에이전트 이름(msgr_personal_room_crews).
@@ -3238,7 +3239,7 @@ function CrewSheet({ crew, org, uid, me, members, policy, channelId, channelName
     if (res.error) return onError(res.error.message);
     if (!res.data?.length) return onError(t('crew.allow.readonly', { name: nameOfUser(crew.owner_user_id) }));
     const swapped = next ? await readSwapNames(supabase, [crew.id]) : []; // 무료 4명 교체 안내(검수 #945)
-    onNote(swapped.length ? t('agents.swap', { names: swapped.join(', ') }) : t(next ? 'crew.dispatch.done' : 'crew.recall.done', { name: crew.display_name })); onChanged();
+    onNote(swapped.length ? t(isIos ? 'agents.swap.ios' : 'agents.swap', { names: swapped.join(', ') }) : t(next ? 'crew.dispatch.done' : 'crew.recall.done', { name: crew.display_name })); onChanged();
   };
   const [confirmOut, setConfirmOut] = useState(false);
   const leaveHere = async () => { // 규칙 14: 데려온 것이 동의라면 빼는 것은 동의 철회 — 주인은 방장 동의 없이 이 방에서만 뺄 수 있다

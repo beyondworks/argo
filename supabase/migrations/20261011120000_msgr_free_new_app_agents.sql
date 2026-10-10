@@ -207,7 +207,11 @@ begin
   end if;
   if new.status <> 'active' then return new; end if;
   if tg_op = 'UPDATE' and old.status = 'active' then return new; end if; -- 이미 active인 행(상태를 그대로 다시 쓰는 갱신)은 sweep이 정리한다
-  human := tg_op = 'UPDATE' and old.status in ('available', 'paused');
+  -- 사람의 연결 = 그 에이전트 주인 자신의 쓰기만(보안 점검 10/11). 조직 관리자(msgr_crews_update_admin)가 남의 에이전트를 연결하는 쓰기는
+  -- 주인의 선택으로 기록하지 않고 교체도 하지 않는다(관리자 행동으로 주인의 다른 에이전트가 멈추지 않게) — 한도 안이면 허용, 넘으면 msgr_free_agent_limit.
+  -- 멈춘 행의 재개(paused→active)는 주인과 서버(sweep — 이 관문을 끈다)만: 주인이 아닌 쓰기는 조용히 그대로 둔다(커서·기록도 손대지 않는다).
+  if tg_op = 'UPDATE' and old.status = 'paused' and auth.uid() is distinct from new.owner_user_id then new.status := 'paused'; return new; end if;
+  human := tg_op = 'UPDATE' and old.status in ('available', 'paused') and auth.uid() = new.owner_user_id;
   if public.is_pro_for(new.owner_user_id) then
     if tg_op = 'UPDATE' and old.status = 'paused' then new.cursor_msg_id := greatest(coalesce(old.cursor_msg_id, 0), (select coalesce(max(m.id), 0) from public.msgr_messages m)); end if;
     return new;
@@ -224,8 +228,13 @@ begin
     if not (exists (select 1 from public.msgr_crews c where c.owner_user_id = new.owner_user_id and c.ws_id = new.ws_id and c.slug = new.slug
                       and c.hosting <> 'bot' and c.status = 'active' and c.id is distinct from new.id) -- 이미 연결된 에이전트의 다른 행 — 한 명으로 센다
             or public._msgr_free_active_agents(new.owner_user_id) < (select agent_limit from public._msgr_free_agent_policy())) then
-      if not human then new.status := 'paused'; return new; end if; -- 사람의 연결이 아닌 쓰기는 교체하지 않는다
-      -- 교체 대상: 연결된 에이전트 중 점수가 가장 낮은 것(대화도 선택도 없던 것 먼저)
+      if not human then
+        if tg_op = 'UPDATE' and old.status = 'available' then -- 관리자가 남의 에이전트를 연결 — 교체하지 않고 이유를 보인다
+          raise exception 'msgr_free_agent_limit msgr_pro_required' using errcode = 'P0001', detail = 'Free accounts can connect up to 4 agents to Messenger';
+        end if;
+        new.status := 'paused'; return new; -- 미러 insert·되살리기는 교체하지 않는다
+      end if;
+      -- 교체 대상: 같은 주인(new.owner_user_id = 연결을 누른 사람 자신)의 연결된 에이전트 중 점수가 가장 낮은 것(대화도 선택도 없던 것 먼저)
       select c.ws_id, c.slug, min(c.id::text)::uuid any_id into victim
         from public.msgr_crews c left join public.msgr_free_choices ch on ch.crew_id = c.id
        where c.owner_user_id = new.owner_user_id and c.hosting <> 'bot' and c.status = 'active' and not (c.ws_id = new.ws_id and c.slug = new.slug)
