@@ -43,13 +43,17 @@
   --side-line: var(--dark-line); --side-hover: var(--dark-hover); --side-active: var(--dark-active); --side-mark: var(--mark);
   --info: #3a6ea5; --info-soft: rgba(58, 110, 165, 0.1); --overlay: rgba(20, 19, 17, 0.42);
 }
-/* 린넨 라이트 미색(유건 10/9 "기본 린넨 테마에서는 흰색 대신 미색, 투명도 더") — 오피스만. 메신저 정본(tokens.css의 --card #fbfaf7)은 그대로 두고 여기서 덮는다.
-   카드색을 아이보리로, 표면은 바탕이 더 비치게(85% → 72%). 떠 있는 층(--float)은 같은 비율을 --bg 위에 섞은 단색 — 불투명이고 캔버스 위 --surface와 같은 색.
-   셸 버튼 hover(--card-2)는 미색 카드보다 한 단계 짙게 — 카드와의 면 차이·그 위 글자 대비는 test/themes.test.mjs '린넨 라이트 hover 면'이 잰다. 시스템 다크(.dark-emul)·린넨 다크는 그대로 */
+/* 린넨 라이트 표면(유건 10/9 미색 → 10/10 "다시 흰색 계열로, 투명도를 더 올려 배경과 구분은 되지만 너무 두드러지지 않게") — 오피스만.
+   카드색은 메신저 정본(tokens.css --card #fbfaf7·--card-2)을 그대로 쓰고, 표면만 바탕이 더 비치게(85% → 56%). 떠 있는 층(--float)은 같은 비율을 --bg 위에 섞은 단색 — 불투명이고 캔버스 위 --surface와 같은 색.
+   셸 버튼 hover(--card-2)는 불투명 카드 면 — 면 차이·글자 대비는 test/themes.test.mjs '린넨 라이트 hover 면'이 잰다. 시스템 다크(.dark-emul)·린넨 다크는 그대로 */
 :root[data-theme='linen-light'], :root[data-theme='linen']:not(.dark-emul) {
-  --card: #faf4e6; --card-2: #ede6d6;
-  --surface: color-mix(in srgb, var(--card) 72%, transparent); --float: color-mix(in srgb, var(--card) 72%, var(--bg));
+  --surface: color-mix(in srgb, var(--card) 56%, transparent); --float: color-mix(in srgb, var(--card) 56%, var(--bg));
+  --t-on-bg: color-mix(in srgb, var(--card) 92%, var(--bg)); /* 고른 자리 바탕(아래) — 비치지 않는 흰 면 */
+  --card-2: var(--card); /* 셸 버튼 hover — 56% 카드 위에서는 정본 hover(#f1efe9)가 묻힌다. 비치지 않는 흰 면으로 한 단계 밝힌다 */
 }
+/* 고른 자리(10/10 "활성화 영역 색이 배경과 너무 겹친다") — 폴더 줄의 고른 항목(--secondary)·가로 탭의 고른 칸(--surface)이 린넨 바탕과 거의 같은 색이었다.
+   린넨 라이트만 비치지 않는 카드 면 + 옅은 그림자로 띄운다(다른 색·셸은 그대로) */
+:is(:root[data-theme='linen-light'], :root[data-theme='linen']:not(.dark-emul)) :is(.fold-item.on, .seg-btn.on) { /* (0,5,0) — 아래 .fold-item.on·.seg-btn.on·셸 규칙보다 높게 */ background: var(--t-on-bg); box-shadow: 0 1px 2px rgba(38, 36, 31, 0.1), 0 0 0 1px var(--border-soft); }
 /* window 셸의 공간 표시 알약(--t-space-bg, themes.css는 --surface)은 차콜 사이드바 위에 놓인다 — 72% 표면이면 차콜이 비쳐 보조 글자가 3.7:1로 떨어진다.
    이 자리만 비치지 않는 단색(예전 85% 표면이 차콜 위에서 보이던 색)으로. 특이도 (0,4,0)이라 themes.css의 셸 기본값(0,2,0)을 이긴다. 다른 색·셸은 그대로 */
 :root[data-shell='window']:is([data-theme='linen-light'], [data-theme='linen']:not(.dark-emul)) { --t-space-bg: color-mix(in srgb, var(--card) 85%, var(--side-bg)); }
