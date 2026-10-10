@@ -102,10 +102,21 @@ test('판정 — 루프백 호스트와 포트 환경 변수 참조($PORT·${POR
     `python3 -c "import os,urllib.request as u; u.urlopen('http://127.0.0.1:'+os.environ['PORT']+'/api/x')"`, `node -e "fetch('http://localhost:'+process.env.PORT+'/api/x')"`,
     `ruby -e "require 'net/http'; Net::HTTP.get(URI('http://127.0.0.1:'+ENV['PORT']+'/api/x'))"`, 'curl http://[::1]:$(printenv PORT)/api/x',
     'curl $__NEXT_PRIVATE_ORIGIN/api/companies/w/approvals', `node -e "fetch(process.env.__NEXT_PRIVATE_ORIGIN+'/api/x')"`,
+    // 검수 #920이 찾은 누락 표기
+    'iwr "http://127.0.0.1:${env:PORT}/api/x"', 'iwr ("http://127.0.0.1:" + (Get-ChildItem env:PORT).Value)', 'iwr ("http://127.0.0.1:" + (gci Env:PORT).Value)',
+    `perl -MLWP::Simple -e 'get("http://127.0.0.1:$ENV{PORT}/api/x")'`, `node -e "fetch('http://localhost:'+process.env?.PORT)"`, 'node -e "fetch(\'http://localhost:\'+process.env[`PORT`])"',
+    `python3 -c "import os; print('http://127.0.0.1:'+os.environ.get('PORT'))"`, `[Environment]::GetEnvironmentVariable('PORT') ; iwr http://127.0.0.1:1/`,
   ]) assert.equal(await shellCallsArgoApi(c, own), true, `거절 대상: ${c}`);
   for (const c of [
     'echo $PORT', 'PORT=5173 npm run dev', 'grep -rn PORT src', // 루프백 호스트 없음
     'PORT=5173 npm run dev & sleep 2; curl http://localhost:5173/', // 포트 대입만 있고 참조 없음 — 사용자의 개발 서버
     'curl http://127.0.0.1:5173/api/report', 'curl https://example.com:$PORT/', // 다른 로컬 포트 / 원격
+    // 검수 #920: 에이전트가 같은 명령에서 PORT를 직접 정한 개발 작업 — env를 지웠으니 그 $PORT는 에이전트 값이다
+    'export PORT=5173; npm run dev & sleep 3; curl http://localhost:$PORT/', 'set PORT=5173 && npm run dev & curl http://localhost:%PORT%/',
+    '$env:PORT = 5173; npm run dev; iwr http://localhost:$env:PORT/', 'docker run -e "PORT=8080" -p 8080:8080 img && curl localhost:8080/health',
+    `node -e "require('http').createServer().listen(process.env.PORT||4000)" & PORT=4000 curl localhost:4000`,
+    'grep -n "PORT" .env.example && curl http://localhost:5173/', 'echo "PORT=3000" >> .env && npm run dev -- --hostname 127.0.0.1',
+    'grep -rn __NEXT_PRIVATE_ORIGIN node_modules/next/dist/server/lib', // 이름 검색 — 참조가 아니다
   ]) assert.equal(await shellCallsArgoApi(c, own), false, `통과 대상: ${c}`);
+  assert.equal(await shellCallsArgoApi('export PORT=3477; curl http://127.0.0.1:$PORT/api/x', own), true, '대입값이 리터럴 Argo 포트면 ownPort 판정이 잡는다');
 });

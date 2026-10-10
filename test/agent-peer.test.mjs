@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   descendantsOf, normAddr, isLocalAddr, lsofOwner, procAddr, procSocket, netstatOwner, judgePeer, isInstalledAppExe, peerCheckExempt,
-  denyAgentPeer, installAgentPeerGuard, AGENT_MARK, PEER_GUARD_EXEMPT, liveChildCount,
+  denyAgentPeer, installAgentPeerGuard, AGENT_MARK, PEER_GUARD_EXEMPT, liveChildCount, readSkipOk,
 } from '../src/agent-peer.mjs';
 const MOD = fileURLToPath(new URL('../src/agent-peer.mjs', import.meta.url));
 
@@ -369,4 +369,11 @@ test('읽기 비용 — 살아 있는 자식이 없으면 읽기는 프로세스
     await exited;
     assert.equal(liveChildCount(), 0, '끝난 자식은 뺀다');
   } finally { ChildProcess.prototype.spawn = orig; }
+});
+
+test('읽기 생략 조건(순수) — 추적 중·자식 0·서버가 PID 1이 아닐 때만. PID 1이면 입양된 고아 손주가 자식 수 밖의 자손이다', () => {
+  assert.equal(readSkipOk({ tracking: true, live: 0, pid: 4321 }), true);
+  assert.equal(readSkipOk({ tracking: true, live: 1, pid: 4321 }), false, '살아 있는 자식');
+  assert.equal(readSkipOk({ tracking: false, live: 0, pid: 4321 }), false, '추적 전(가드 미설치)');
+  assert.equal(readSkipOk({ tracking: true, live: 0, pid: 1 }), false, '컨테이너 PID 1 — 재현: init 없는 node:22 컨테이너에서 고아 GET 200');
 });

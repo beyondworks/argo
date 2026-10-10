@@ -48,19 +48,27 @@ export function probeArgoPort(port) {
 // 정상 작업은 셸이 아니라 에이전트의 파일 도구(Read·Grep)로 하면 된다 — 그쪽은 셸 실행이 아니라 별도 게이트를 지난다.
 // 오탐(주소를 담은 정상 셸 명령 거절)은 수용한다: 거절 문구가 대안을 안내하고, 우회 하나가 결재 장치 전체를 무너뜨리는 것보다 낫다.
 
-// 포트를 환경 변수로 받아 조립하는 표기(#918 Windows 한계 ①) — Windows는 서버 판정이 기본 꺼짐이라 이 게이트가 유일한 방어다.
-// 셸 $PORT·${PORT…}·따옴표 'PORT'(os.environ·ENV·getenv)·printenv PORT는 대소문자 그대로, Windows env는 대소문자를 안 가려 %PORT%·!PORT!·$env:PORT·process.env.PORT는 무시.
-// 근본은 에이전트 자식 env에서 PORT를 빼는 것이다(src/runners/shared.mjs SERVER_ORIGIN_KEYS) — 이 판정은 그 앞의 방지턱이다.
-const PORT_ENV_RE = /(?:\$\{?|['"]|\bprintenv\s+)PORT\b/;
-const PORT_ENV_RE_I = /(?:%|!|\$env:|\benv\.)port\b/i;
-// Next가 listen 뒤 적는 서버 주소(http://localhost:<포트>) — 변수 이름만으로 루프백 주소가 되므로 호스트가 안 보여도 거절한다.
-const ORIGIN_ENV_RE = /__NEXT_PRIVATE_ORIGIN/i;
+// 포트를 환경 변수로 받아 조립하는 표기(#918 Windows 한계 ①) — Windows는 서버 판정이 기본 꺼짐이라 이 게이트가 Bash 도구의 유일한 방어다.
+// 1차는 에이전트 자식 env에서 PORT·__NEXT_PRIVATE_ORIGIN을 빼는 것이고(src/runners/shared.mjs SERVER_ORIGIN_KEYS), 이 판정은 세척이 빠진 경로를 위한 방지턱이다.
+// 둘 다 방지턱이다: 포트는 앱 상수(3001/3011/3021)라 netstat·추측으로도 알 수 있다.
+// 참조 표기: 셸 $X·${X…}·printenv X·perl $ENV{X}·python os.environ[…]/.get(…)·getenv(…)·ruby ENV[…]·.NET GetEnvironmentVariable(…)은 대소문자 그대로,
+// Windows env는 대소문자를 안 가려 %X%·!X!·$env:X·${env:X}·env:X(gci)·process.env.X·env?.X·env['X']는 무시.
+const envRefRes = (name) => [
+  new RegExp(String.raw`(?:\$\{?|\$ENV\{|\bprintenv\s+|(?:\benviron(?:\.get)?\s*[[(]|\bgetenv\s*\(|\bENV\s*\[|GetEnvironmentVariable\s*\()\s*['"\x60]?)${name}\b`),
+  new RegExp(String.raw`(?:%|!|\benv:|\benv\??\.|\benv\s*\[\s*['"\x60])${name}\b`, 'i'),
+];
+const refers = (res, cmd) => res.some((r) => r.test(cmd));
+const PORT_REFS = envRefRes('PORT');
+const ORIGIN_REFS = envRefRes('__NEXT_PRIVATE_ORIGIN'); // Next가 listen 뒤 적는 서버 주소 — 변수 자체가 루프백 주소라 호스트가 안 보여도 거절
+// 같은 명령에서 PORT를 직접 대입하면(export PORT=5173; npm run dev & curl localhost:$PORT) 그 $PORT는 에이전트가 넣은 값이다 — 상속분은 세척으로 없다.
+// 이때는 참조 판정을 건너뛴다(검수 #920: 개발 서버 명령 오거절). 대입값이 리터럴 Argo 포트면 아래 ownPort 판정이 잡는다.
+const PORT_ASSIGN_RE = /(?:^|[\s;&|(`"'])(?:export\s+|set\s+["']?)?PORT\s*=|\$env:PORT\s*=/i;
 
 /** 셸 명령에 Argo 루프백 주소·포트가 보이는가 → 그러면 거절 대상. ownPort = 이 서버의 포트(Next가 listen 뒤 process.env.PORT에 적는다). */
 export async function shellCallsArgoApi(command, { ownPort = Number(process.env.PORT) || 0, probe = probeArgoPort } = {}) {
   const cmd = String(command ?? '');
-  if (ORIGIN_ENV_RE.test(cmd)) return true;
-  if (hasLocalHost(cmd) && (PORT_ENV_RE.test(cmd) || PORT_ENV_RE_I.test(cmd))) return true;
+  if (refers(ORIGIN_REFS, cmd)) return true;
+  if (hasLocalHost(cmd) && refers(PORT_REFS, cmd) && !PORT_ASSIGN_RE.test(cmd)) return true;
   const ports = loopbackPortCandidates(cmd);
   if (!ports.length) return false; // 루프백 주소가 명령에 없음 — 포트 숫자만 있어도(호스트 없으면) 통과
   if (ownPort && ports.includes(ownPort)) return true; // 이 서버의 포트가 루프백 주소와 함께 보이면 거절

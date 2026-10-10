@@ -69,6 +69,9 @@ function trackChildren() {
     return r;
   };
 }
+/** 읽기 조회를 건너뛰어도 되는가(순수). 서버가 PID 1(컨테이너에서 `node server.js`를 init 없이)이면 부모가 끝난 손주가 서버 밑으로
+    입양돼 자식 수 밖의 자손이 된다 — 그때는 건너뛰지 않는다(검수 #920 재현: node:22 컨테이너에서 고아 GET 200). */
+export const readSkipOk = ({ tracking, live, pid }) => tracking && live === 0 && pid !== 1;
 /** 판정이 센 살아 있는 자식 수(시험·진단용). 추적 전이면 null. */
 export const liveChildCount = () => (kids.tracking ? kids.live : null);
 
@@ -317,7 +320,7 @@ export async function denyAgentPeer(req, res, opts = {}) {
   if (!isLocalAddr(peer.addr)) return false; // 원격(클라우드·리버스 프록시 뒤 사용자) — 이 컴퓨터의 프로세스가 아니다
   let slot = verdicts.get(s); if (!slot) { slot = {}; verdicts.set(s, slot); }
   if (!write) {
-    if (!opts.descendant && kids.tracking && kids.live === 0) return false; // 자식이 없으면 자손도 없다 — ps 없이 통과(판정을 소켓에 묶지 않는다: 같은 연결의 다음 요청 때 자식이 생겼을 수 있다)
+    if (!opts.descendant && readSkipOk({ ...kids, pid: process.pid })) return false; // 자식이 없으면 자손도 없다 — ps 없이 통과(판정을 소켓에 묶지 않는다: 같은 연결의 다음 요청 때 자식이 생겼을 수 있다)
     slot.read ??= (opts.descendant ?? descendantPeerPid)(peer, opts)
       .catch((e) => { console.warn('[argo] 요청 상대 프로세스 판정 실패(읽기 — 통과):', e?.code ?? e?.message ?? e); return 0; });
     const pid = await slot.read;
