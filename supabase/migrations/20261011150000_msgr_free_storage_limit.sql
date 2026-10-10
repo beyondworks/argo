@@ -3,62 +3,55 @@
 -- (msgr_free_grace 유예는 방 인원 한도용이라 쓰지 않는다 — 20261010200000과 같다).
 --
 -- 켜고 끄기: msgr_settings 'free_storage_limit_bytes' = 한도 바이트(1GB = 1073741824). 행이 없거나 숫자가 아니거나 0 이하면 꺼짐(기본).
---   결제 경로(PR #944)가 열리는 발행 날 값을 넣어 켠다. 이 마이그레이션만으로는 아무것도 막지 않는다(꺼져 있으면 판정·M1 검사가 모두 통과).
+--   결제 경로(PR #944)가 열리는 발행 날 값을 넣어 켠다.
+--   스위치와 무관하게 동작하는 것(꺼도 남는다): ① 첨부 행 bytes를 저장소 실제 크기로 채우기(데이터 정정만, 거절 없음)
+--   ② 지운 방·등록 안 된 파일 정리(5절 — 개인 방 SQL 행 삭제 트리거를 떼고, 정리 엣지가 Storage API로 바이트까지 지운다). 나머지(판정·거절)는 꺼지면 모두 통과다.
 --
--- 누구 몫인가: 첨부를 올린 사람 = 사람 글이면 글쓴이, 에이전트 글(앱·게이트웨이·외부 봇)이면 에이전트 주인. 첨부 행에 uploader_id로 남긴다(트리거가 채운다 —
---   앱이 보낸 값은 믿지 않는다). 크기도 앱이 보낸 bytes가 아니라 저장소 객체의 실제 크기로 채운다(조직 첨부 행 정책은 객체·크기를 보지 않는다).
---   10/2 결정(개인 공간·개인 대화 = 올린 사람, 조직 공간 = 조직 풀) 중 조직 풀 계산은 이번 범위 밖이다 — 지금은 조직 공간 파일도 올린 사람 몫이고,
---   유료 좌석 조직의 멤버는 is_pro_for가 참이라 걸리지 않는다(좌석이 아닌 손님은 무료와 같다).
+-- 사용량 = 저장소에 지금 있는 내 msgr 객체 크기 합(storage.objects metadata.size — 실제 바이트). 첨부 행 크기(앱이 보낸 값)는 세지 않는다.
+--   누구 몫인가: owner(storage-api가 JWT로 채운다 — 앱·게이트웨이 업로드한 사람), owner가 빈 객체(외부 봇 서명 업로드)는 경로 3번째 칸 글의 올린 사람
+--   (사람 글 = 글쓴이, 에이전트 글 = 에이전트 주인). 둘 다 본인이 아닌 사람이 만들 수 없다 — 남이 내 사용량을 부풀릴 수 없다(quota-griefing):
+--   남이 내 글 폴더에 올린 파일은 owner가 그 사람이라 그 사람 몫, 봇 서명 경로는 봇 자기 글에만 나온다(msgr_bot_attach_prepare).
+--   같은 파일을 가리키는 첨부 행이 여럿이어도(게이트웨이 재사용) 객체는 하나라 한 번만 센다. 지우고 같은 경로에 더 큰 파일을 올려도(관리자·봇 서명 주소 재사용)
+--   지금 있는 객체 크기로 센다. 10/2 결정의 조직 풀 계산은 범위 밖 — 지금은 조직 공간 파일도 올린 사람 몫이고, 유료 좌석 조직 멤버는 is_pro_for가 참이다.
+--   비용: owner 색인을 붙일 수 없어(storage.objects는 supabase_storage_admin 소유) msgr 버킷 범위((bucket_id, name) 색인)를 훑는다 — 운영 실측(2026-10-11, 객체 484개)
+--   약 0.6ms(데운 상태). 버킷 객체 수에 비례하므로 수만 개 전에 다시 잰다. 켜져 있을 때만, 업로드·첨부 등록마다 1회.
 --
--- 사용량 = ① 내가 올린 첨부 행의 경로별 크기(같은 경로는 한 번 — 게이트웨이 재사용 행) + ② 첨부 행이 없는 내 소유 msgr 객체(storage.objects owner = 나)의 크기.
---   ②가 없으면 첨부 행 없이 업로드만 반복해 한도를 피할 수 있다(분리 검수 M2). 정리 경로(2시간 지난 미등록 객체를 Storage API로 지우기)를 앱 업로드에 새로 붙이는
---   대신 ②를 고른 이유: 정리는 주기 실행(크론 + 엣지 + 서비스 키)이 새로 필요하고 실패하면 다시 새는데, ②는 판정 한 곳에서 끝난다. 미등록 객체는 지워질 때까지 내 몫이다.
---   ②의 비용: storage.objects에 owner 색인을 붙일 수 없어(supabase_storage_admin 소유) msgr 버킷 범위((bucket_id, name) 색인)를 훑는다 — 운영 실측(2026-10-11,
---   msgr 객체 484개) 0.6ms + 첨부 경로 확인 219회 1ms. 버킷 크기에 비례하므로 객체가 수만 개가 되면 다시 잰다(켜져 있을 때 업로드마다 1회, 하루 평균 17건).
---   봇이 서명 주소로 올린 객체는 owner가 비어 있어 ②에 들지 않는다 — 그쪽은 기존 정리(msgr_bot_attach_prepare purge, 2시간)가 지운다.
+-- 판정 규칙(하나): 쓴 양 + 이번 크기 ≤ 한도이면 받는다(Pro면 언제나). 이번 크기: 앱 업로드는 storage-api가 정책 판정용 행에 싣는 신고 크기
+--   metadata.contentLength(supabase/storage #825, 2026-03 — 운영 Storage는 마이그레이션 0072(2026-09)까지 적용된 버전). 신고 크기는 클라이언트 값이라
+--   최소 1바이트로 보고(0 신고로 한도에서 통과 금지), 속인 만큼은 올린 뒤 실제 크기로 사용량에 들어가 다음 업로드가 막힌다(넘을 수 있는 양 = 파일 하나).
+--   첨부 행은 저장소 객체의 실제 크기, 봇 준비는 봇이 신고한 크기. 신고 크기가 없는 옛 storage-api면 1바이트로 보고 받는다.
+-- 판정 자리(모두 public._msgr_upload_gate):
+--   1) 앱·게이트웨이 업로드 — storage.objects 제한(RESTRICTIVE) 정책 msgr_files_storage_limit(msgr 버킷 insert 전부, 다른 버킷은 CASE로 건너뜀).
+--   2) 첨부 행 — msgr_attachments BEFORE INSERT. 켜져 있으면 객체가 없는 새 경로는 거절(msgr_attach_upload_missing — 정상 흐름은 업로드가 먼저).
+--      같은 객체를 이미 가리키는 행이 있으면 새 저장이 아니라 판정하지 않는다.
+--   3) 외부 봇 준비(msgr_bot_attach_prepare) — 서명 업로드 주소를 주기 전에. 등록은 2)가 막는다.
+--   아바타(msgr-avatars)는 프로필 사진 한 장이라 제외.
+-- 오류: 'msgr_storage_limit' (SQLSTATE PT402). PostgREST는 402와 이 문구를, storage-api는 'database error, code: PT402'를 돌려준다 — 앱은 둘 다 본다.
+--   엣지 msgr-bot ERR(403)에 같은 이름이 있다. 문구에 결제 유도는 넣지 않는다(봇 원문이 방에 실린다).
 --
--- 판정 규칙(하나): 쓴 양 + 이번 크기 ≤ 한도이면 받는다(Pro면 언제나).
---   이번 크기: 앱 업로드는 storage-api가 정책 판정용 행에 싣는 신고 크기 metadata.contentLength(supabase/storage #825, 2026-03 — 운영은 Storage 마이그레이션
---   0072(2026-09)까지 적용된 버전이라 들어 있다. 실제 크기는 올린 뒤 슈퍼유저로 채우므로 정책은 볼 수 없다), 첨부 행은 저장소 객체의 실제 크기,
---   봇 준비는 봇이 신고한 크기. 신고 크기가 없으면(옛 storage-api) 0으로 보고 "쓴 양 ≤ 한도"로 받는다 — 그때 첨부 행이 실제 크기로 막으면 그 객체는 ②로 내 몫에 남는다.
--- 판정 자리(모두 public._msgr_upload_gate 하나를 지난다):
---   1) 앱·게이트웨이 업로드 — storage.objects 제한(RESTRICTIVE) 정책 msgr_files_storage_limit. msgr 버킷의 세 허용 정책(msgr_files_insert·
---      msgr_personal_files_insert·msgr_dm_output_insert)과 앞으로 생길 허용 정책에 모두 걸린다. 다른 버킷(아바타·companies)은 CASE로 건너뛴다.
---   2) 첨부 행 — msgr_attachments BEFORE INSERT 트리거(올린 사람·크기 채우기 + 판정). 켜져 있으면 객체가 없는 새 경로는 거절한다(먼저 행 bytes=0, 나중 업로드로
---      사용량 0을 만드는 길 — 분리 검수 M1. 앱·게이트웨이·봇 모두 업로드가 먼저라 정상 흐름은 영향 없음). 같은 객체를 다시 가리키는 행은 새 저장이 아니라 판정하지 않는다.
---   3) 외부 봇 준비(msgr_bot_attach_prepare) — 서명 업로드 주소를 주기 전에. 등록(msgr_bot_attach_commit)은 2)가 막는다.
---   아바타(msgr-avatars)는 사람마다 한 장을 덮어쓰는 프로필 사진이라 첨부 저장 공간이 아니다 — 제외.
--- 오류: 'msgr_storage_limit' (SQLSTATE PT402). PostgREST는 402와 이 문구를, storage-api는 'database error, code: PT402'를 돌려준다(원문을 숨긴다) —
---   앱은 둘 다 본다. 엣지 msgr-bot ERR 표에 같은 이름(403)이 있다. 문구에는 결제 유도를 넣지 않는다(봇 원문이 방에 실린다 — iOS 규정).
+-- 방을 지워도 한도는 초기화되지 않는다: 방을 지우면 첨부 행은 cascade로 사라지지만 객체는 남아 owner 몫으로 계속 센다. 정리 엣지(5절)가 Storage API로
+--   바이트까지 지운 뒤에야 준다(그때는 파일이 실제로 없어진 것). 방이 남아 있는 동안 파일 삭제 권한은 종전 그대로(msgr_files_delete = 조직 관리자).
+--   이를 위해 개인 방의 SQL 행 삭제 트리거(msgr_personal_files_purge, 20261002100000)를 뗀다 — SQL로 행만 지우면 바이트는 저장소에 남는데 사용량은 0이 됐다.
+-- 남는 우회(PR '남은 것'): 조직 영구 삭제(msgr_purge_orgs, 보관 30일 뒤)와 계정 삭제(msgr_delete_me)는 지금처럼 객체 행을 SQL로 지운다(바이트는 남는 알려진 한계).
+--   보관 중 30일은 사용량에 그대로 들어 있어 계정당 30일에 한도만큼까지. 외부 봇 객체(owner 없음)는 방이 지워지면 글이 없어 정리 전(최대 1시간)까지 세지 않는다.
 --
--- 조직 채널 삭제(분리 검수 M3): 관리자가 아닌 채널 만든 사람이 지우면 앱의 Storage 삭제는 0건(msgr_files_delete는 관리자만)인데 첨부 행은 cascade로 사라져
---   객체가 주인 없이 남았다. 개인 방(msgr_personal_files_purge, 20261002100000)과 같은 방법으로 그 채널 폴더 <org>/<channel>/의 객체 행을 같이 지운다.
---   (Storage 백엔드 바이트는 개인 방·계정 삭제와 같은 알려진 한계 — 행이 없으면 서명 URL을 만들 수 없다.) 운영에 다른 방 폴더를 가리키는 첨부 0건(2026-10-11).
---
--- 보안 점검 quota-bypass(#946 2차) 반영: 신고 크기는 클라이언트 값이라 최소 1바이트로 보고(넘을 수 있는 양 = 파일 하나), 첨부로 등록된 경로에는 다시 올리지 못하며,
---   파일을 두고 방만 지우면 남은 크기를 msgr_storage_purged에 올린 사람 몫으로 남긴다(6-b). 방을 지울 수 있는 사람은 그 방 파일을 Storage로 지울 수 있다(6-c).
 -- 기존 파일: 지우지 않는다. 이미 한도를 넘은 무료 사용자는 새로 올릴 때만 막힌다(읽기·내려받기 그대로).
--- 운영 분포(2026-10-11 읽기): 첨부가 있는 사용자 16명(무료 13·Pro 3), 무료 합계 270MB·최대 127MB — 1GB를 넘은 사람 0명, 100MB 넘은 무료 1명. 미등록 객체 0개.
+-- 운영 분포(2026-10-11 읽기): 첨부가 있는 사용자 16명(무료 13·Pro 3), 무료 합계 270MB·최대 127MB — 1GB를 넘은 사람 0명. 미등록·방 없는 객체 0개.
 --
--- 부하(DB 위생): 주기 작업·폴링·캐시 표 없음. 판정은 읽기만 한다(쓰기 0).
---   업로드 한 번 = Storage 정책 1회: 설정 PK 1회(꺼져 있으면 여기서 끝) + 켜져 있으면 ① 색인 합계 + ② msgr 버킷 범위 1회 + 한도에 닿은 사람만 is_pro_for 1회.
---   첨부 행 한 줄 = 트리거 1회: 글 PK + (에이전트 글) 크루 PK + 저장소 객체 (bucket_id, name) 색인 + 설정 PK. 켜져 있으면 + 같은 경로 존재(색인) + 판정. 추가 쓰기 0.
---   ①은 msgr_attachments(uploader_id, storage_path) INCLUDE (bytes) 색인 — 그 사람 행 수에만 비례(로컬 20.5만 행 중 5,000행 사용자 1.4ms).
---   캐시 표(사용자별 합계를 트리거로 갱신)를 쓰지 않은 이유: 첨부마다 한 행을 다시 쓰고(죽은 행), 삭제·재사용·cascade마다 어긋날 수 있다.
+-- 부하(DB 위생): 판정은 읽기만(쓰기 0). 업로드 1회 = 설정 PK 1회(꺼져 있으면 끝) + 켜져 있으면 버킷 범위 합계 1회 + 한도에 닿은 사람만 is_pro_for.
+--   첨부 행 1줄 = 객체 (bucket_id, name) 색인 1회 + 같은 경로 존재 1회 + 설정 PK + (켜짐) 합계. 추가 쓰기 0.
+--   정리(5절): pg_cron 1시간에 1번 후보가 있는지 읽기 1회(유휴 시 엣지 호출 0). 후보가 있을 때만 엣지 1회(최대 10번 × 200개 삭제).
 --
--- 적용: bash scripts/msgr-live-apply.sh 20261011150000_msgr_free_storage_limit — storage.objects 정책 생성이 있다(#872 선잠금 대상).
---   msgr_attachments에 열 추가(메타데이터만) + 기존 행 채우기(운영 521행) + 색인 + msgr_channels 삭제 트리거.
+-- 적용: bash scripts/msgr-live-apply.sh 20261011150000_msgr_free_storage_limit — storage.objects 정책 생성·msgr_channels 트리거 제거가 있다(#872 선잠금 대상).
+-- 정리 켜기(엣지 msgr-storage-sweep 배포 뒤): msgr_settings storage_sweep_url·storage_sweep_secret(엣지 시크릿 MSGR_STORAGE_SWEEP_SECRET와 같은 값) — 없으면 정리는 아무것도 안 한다.
 -- 켜기(발행 날, 엣지 msgr-bot 재배포 뒤): insert into public.msgr_settings(key, value) values ('free_storage_limit_bytes', '1073741824') on conflict (key) do update set value = excluded.value;
--- 끄기: delete from public.msgr_settings where key = 'free_storage_limit_bytes';
--- 되돌리기: 끄기만으로 충분하다 — 꺼져 있으면 판정 함수는 항상 참이고 M1 검사도 하지 않아, 정책·트리거·봇 준비가 남아 있어도 종전과 같게 동작한다.
---   (함수를 옛 파일 정의로 다시 적용하지 않는다 — 나중 정의를 덮어쓰는 2026-09-23 사고 모양.) 채널 삭제 정리 트리거는 스위치와 무관하게 남는다
---   (지우려면 drop trigger msgr_org_channel_files_purge on public.msgr_channels). uploader_id 열·색인은 남겨도 무해.
+-- 끄기: delete from public.msgr_settings where key = 'free_storage_limit_bytes';  — 판정·거절이 모두 꺼진다(위 "스위치와 무관" 두 가지는 남는다).
+-- 되돌리기(전부): 끄기 → drop policy msgr_files_storage_limit on storage.objects; drop trigger msgr_attachment_storage_gate on public.msgr_attachments;
+--   select cron.unschedule('msgr-storage-sweep'); 정리 설정 두 행 삭제; 개인 방 행 삭제를 되살리려면 create trigger msgr_personal_files_purge after delete on public.msgr_channels
+--   for each row when (old.org_id is null) execute function public.msgr_personal_files_purge();(함수는 지우지 않았다). 봇 준비의 판정 한 줄은 꺼져 있으면 항상 통과라 둔다.
+--   (함수를 옛 파일 정의로 다시 적용하지 않는다 — 나중 정의를 덮어쓰는 2026-09-23 사고 모양.)
 
--- 1) 올린 사람 열 + 사용량 색인
-alter table public.msgr_attachments add column if not exists uploader_id uuid;
-create index if not exists msgr_attachments_uploader on public.msgr_attachments (uploader_id, storage_path) include (bytes) where uploader_id is not null;
-
--- 첨부 행 → 올린 사람(사람 글 = 글쓴이, 에이전트 글 = 에이전트 주인). 알 수 없으면(주인 없는 크루 등) NULL — 세지도 막지도 않는다.
+-- 1) 누구 몫인가
 create or replace function public._msgr_attachment_uploader(p_message bigint) returns uuid
   language sql stable security definer set search_path = public, pg_temp as $$
   select case when m.author_kind = 'user' then m.author_user_id
@@ -67,40 +60,23 @@ create or replace function public._msgr_attachment_uploader(p_message bigint) re
 $$;
 revoke all on function public._msgr_attachment_uploader(bigint) from public, anon, authenticated;
 
--- 기존 행 채우기(비어 있는 것만 — 다시 적용해도 같다)
-update public.msgr_attachments a set uploader_id = public._msgr_attachment_uploader(a.message_id)
- where a.uploader_id is null and public._msgr_attachment_uploader(a.message_id) is not null;
-
--- 2) 사용량 — ① 내가 올린 첨부 행(경로당 한 번) + ② 첨부 행이 없는 내 msgr 객체 + ③ 파일을 두고 지운 방에서 정리된 크기(msgr_storage_purged).
---    ② 누구 객체인가: owner(앱·게이트웨이 = 업로드한 사람), owner가 빈 객체(봇 서명 업로드)는 경로 3번째 칸 글의 올린 사람(에이전트 주인).
---    p_except = 지금 등록 중인 경로(②에서 뺀다 — 트리거가 그 크기를 따로 더한다). plpgsql: storage.objects 열은 실행할 때 찾는다.
-create table if not exists public.msgr_storage_purged (
-  user_id uuid primary key references auth.users (id) on delete cascade,
-  bytes bigint not null default 0,
-  updated_at timestamptz not null default now()
-);
-alter table public.msgr_storage_purged enable row level security; -- 정책 없음 = 서버 함수만(security definer)
-revoke all on public.msgr_storage_purged from anon, authenticated;
-
 create or replace function public._msgr_path_uploader(p_name text) returns uuid
   language sql stable security definer set search_path = public, pg_temp as $$
   select case when split_part(p_name, '/', 3) ~ '^[0-9]{1,18}$' then public._msgr_attachment_uploader(split_part(p_name, '/', 3)::bigint) end
 $$;
 revoke all on function public._msgr_path_uploader(text) from public, anon, authenticated;
 
+-- 2) 사용량 — 지금 저장소에 있는 내 msgr 객체 크기 합. p_except = 지금 등록 중인 경로(트리거가 그 크기를 따로 더한다).
+--    plpgsql: storage.objects 열은 실행할 때 찾는다(켜져 있을 때만 부른다).
 create or replace function public._msgr_storage_used(p_uid uuid, p_except text default null) returns bigint
   language plpgsql stable security definer set search_path = public, pg_temp as $$
-declare reg bigint; unreg bigint := 0; purged bigint;
+declare n bigint := 0;
 begin
-  select coalesce(sum(b), 0) into reg from (select max(a.bytes) b from public.msgr_attachments a where a.uploader_id = p_uid group by a.storage_path) x;
-  if p_uid is not null and to_regclass('storage.objects') is not null then
-    select coalesce(sum((o.metadata->>'size')::bigint), 0) into unreg from storage.objects o
-     where o.bucket_id = 'msgr' and o.name is distinct from p_except
-       and case when o.owner is not null then o.owner = p_uid else coalesce(public._msgr_path_uploader(o.name) = p_uid, false) end
-       and not exists (select 1 from public.msgr_attachments a where a.storage_path = o.name);
-  end if;
-  select coalesce((select k.bytes from public.msgr_storage_purged k where k.user_id = p_uid), 0) into purged;
-  return reg + unreg + purged;
+  if p_uid is null or to_regclass('storage.objects') is null then return 0; end if;
+  select coalesce(sum((o.metadata->>'size')::bigint), 0) into n from storage.objects o
+   where o.bucket_id = 'msgr' and o.name is distinct from p_except
+     and case when o.owner is not null then o.owner = p_uid else coalesce(public._msgr_path_uploader(o.name) = p_uid, false) end;
+  return n;
 end $$;
 revoke all on function public._msgr_storage_used(uuid, text) from public, anon, authenticated;
 
@@ -136,16 +112,12 @@ begin
 end $$;
 revoke all on function public._msgr_upload_gate(uuid, bigint, text) from public, anon, authenticated;
 
--- Storage 정책용 — 호출한 사람 자신만 판정한다(남의 사용량·플랜을 묻는 통로가 되지 않게 uid를 받지 않는다).
+-- Storage 정책용 — 호출한 사람 자신만 판정한다(uid를 받지 않는다 — 남의 사용량·플랜을 묻는 통로가 되지 않게).
 -- p_row = 넣으려는 행 전체(to_jsonb) — metadata 열 이름을 정책 정의에 박지 않아 metadata 열이 없는 Storage 흉내 표에서도 정책이 만들어진다.
 create or replace function public.msgr_upload_check(p_row jsonb) returns boolean
   language plpgsql stable security definer set search_path = public, pg_temp as $$
 declare n text := p_row->'metadata'->>'contentLength';
 begin
-  -- 이미 첨부로 등록된 경로에 다시 올리기 — 첨부 행 크기는 처음 값이라 지우고 더 큰 파일을 올리면 덜 센다(보안 점검 #946). 정상 흐름은 파일마다 새 경로라 없다
-  if public._msgr_storage_limit() is not null and exists (select 1 from public.msgr_attachments a where a.storage_path = p_row->>'name') then
-    raise exception 'msgr_storage_limit' using errcode = 'PT402', detail = 'this path already belongs to an attachment', hint = 'free_storage_limit_bytes';
-  end if;
   return public._msgr_upload_gate(auth.uid(), case when n ~ '^[0-9]{1,18}$' then n::bigint else 0 end);
 end $$;
 revoke all on function public.msgr_upload_check(jsonb) from public, anon;
@@ -156,80 +128,74 @@ drop policy if exists msgr_files_storage_limit on storage.objects;
 create policy msgr_files_storage_limit on storage.objects as restrictive for insert to authenticated
   with check (case when bucket_id = 'msgr' then public.msgr_upload_check(to_jsonb(objects)) else true end);
 
--- 5) 첨부 행 — 올린 사람·실제 크기를 채우고, 새 저장이면 판정한다.
-create or replace function public.msgr_attachments_fill_uploader() returns trigger
+-- 4-b) 첨부 행 — bytes를 실제 크기로 채우고, 켜져 있으면 새 저장을 판정한다.
+create or replace function public.msgr_attachment_storage_gate() returns trigger
   language plpgsql security definer set search_path = public, pg_temp as $$
 declare real_size bigint; found_obj boolean := false;
 begin
-  new.uploader_id := public._msgr_attachment_uploader(new.message_id);
   if to_regclass('storage.objects') is not null then
     -- to_jsonb: 열 이름을 실행할 때 찾는다(metadata 열이 없는 Storage 흉내 표에서도 트리거가 깨지지 않게 — 운영 표에는 있다)
     select true, (to_jsonb(o)->'metadata'->>'size')::bigint into found_obj, real_size from storage.objects o where o.bucket_id = 'msgr' and o.name = new.storage_path limit 1;
     if real_size is not null then new.bytes := real_size; end if;
   end if;
-  -- 같은 객체를 이미 가리키는 행이 있으면 새 저장이 아니다(재사용) — 판정하지 않는다
-  if exists (select 1 from public.msgr_attachments a where a.storage_path = new.storage_path) then return new; end if;
-  if public._msgr_storage_limit() is null then return new; end if; -- 꺼짐 — 종전 동작 그대로
-  if not coalesce(found_obj, false) then raise exception 'msgr_attach_upload_missing' using detail = 'upload the file before adding its attachment row'; end if; -- M1
-  perform public._msgr_upload_gate(new.uploader_id, new.bytes, new.storage_path);
+  if public._msgr_storage_limit() is null then return new; end if; -- 꺼짐 — 거절 없음
+  if exists (select 1 from public.msgr_attachments a where a.storage_path = new.storage_path) then return new; end if; -- 같은 객체 재사용 — 새 저장 아님
+  if not coalesce(found_obj, false) then raise exception 'msgr_attach_upload_missing' using detail = 'upload the file before adding its attachment row'; end if;
+  perform public._msgr_upload_gate(public._msgr_attachment_uploader(new.message_id), new.bytes, new.storage_path);
   return new;
 end $$;
-revoke all on function public.msgr_attachments_fill_uploader() from public, anon, authenticated;
-drop trigger if exists msgr_attachments_fill_uploader on public.msgr_attachments;
-create trigger msgr_attachments_fill_uploader before insert on public.msgr_attachments for each row execute function public.msgr_attachments_fill_uploader();
+revoke all on function public.msgr_attachment_storage_gate() from public, anon, authenticated;
+drop trigger if exists msgr_attachment_storage_gate on public.msgr_attachments;
+create trigger msgr_attachment_storage_gate before insert on public.msgr_attachments for each row execute function public.msgr_attachment_storage_gate();
 
--- 6) 조직 채널 삭제 — 그 채널 폴더 <org>/<channel>/의 객체 행을 같이 지운다(개인 방 msgr_personal_files_purge와 같은 방법). 다른 채널·조직·개인 방 폴더는 건드리지 않는다.
-create or replace function public.msgr_org_channel_files_purge() returns trigger
-  language plpgsql security definer set search_path = public, pg_temp as $$
+-- 5) 정리 — 방이 없는 msgr 객체(방이 지워짐)와 24시간 넘게 첨부 행이 없는 객체(등록 실패·거절)를 정리 엣지(msgr-storage-sweep)가 Storage API로 지운다
+--    (SQL로 행만 지우면 저장소 바이트가 남는다 — storage.allow_delete_query 경로를 쓰지 않는다). 첨부 행이 있는 파일·방이 있는 파일은 건드리지 않는다.
+--    게이트웨이 재사용 기억(src/gateway/msgr.mjs uploadedOnce)의 "방이 있으면 객체도 있다" 전제는 그대로다(재사용 경로는 등록된 파일).
+--    개인 방 SQL 행 삭제 트리거는 뗀다(함수는 둔다 — 되돌리기는 머리 주석).
+drop trigger if exists msgr_personal_files_purge on public.msgr_channels;
+
+-- 정리 후보 — 서비스 역할(엣지)만. 오래된 것부터 p_limit개.
+create or replace function public.msgr_storage_sweep_list(p_limit int default 200) returns setof text
+  language plpgsql stable security definer set search_path = public, pg_temp as $$
 begin
-  if old.org_id is not null and to_regclass('storage.objects') is not null then
-    perform set_config('storage.allow_delete_query', 'true', true); -- storage-api 직접 삭제 가드 통과(트랜잭션 지역) — msgr_personal_files_purge와 같다
-    delete from storage.objects where bucket_id = 'msgr' and name like old.org_id::text || '/' || old.id::text || '/%';
+  if to_regclass('storage.objects') is null then return; end if;
+  return query
+    select o.name from storage.objects o
+     where o.bucket_id = 'msgr'
+       and (not exists (select 1 from public.msgr_channels c where c.id = public.msgr_uuid_or_null(split_part(o.name, '/', 2)))
+            or (o.created_at < now() - interval '24 hours'
+                and not exists (select 1 from public.msgr_attachments a where a.storage_path = o.name)))
+     order by o.created_at
+     limit greatest(1, least(coalesce(p_limit, 200), 1000));
+end $$;
+revoke all on function public.msgr_storage_sweep_list(int) from public, anon, authenticated;
+grant execute on function public.msgr_storage_sweep_list(int) to service_role;
+
+-- 1시간마다 — 후보가 있고 주소·비밀이 둘 다 있을 때만 엣지를 부른다(유휴 시 호출 0). 응답은 기다리지 않는다(pg_net 비동기).
+create or replace function public.msgr_storage_sweep_kick() returns boolean
+  language plpgsql security definer set search_path = public, pg_temp as $$
+declare url text; sec text;
+begin
+  select value into url from public.msgr_settings where key = 'storage_sweep_url';
+  select value into sec from public.msgr_settings where key = 'storage_sweep_secret';
+  if coalesce(url, '') = '' or coalesce(sec, '') = '' then return false; end if;
+  if not exists (select 1 from public.msgr_storage_sweep_list(1)) then return false; end if;
+  perform net.http_post(url := url,
+    headers := jsonb_build_object('Content-Type', 'application/json', 'Authorization', 'Bearer ' || sec),
+    body := '{}'::jsonb, timeout_milliseconds := 60000);
+  return true;
+end $$;
+revoke all on function public.msgr_storage_sweep_kick() from public, anon, authenticated;
+
+-- pg_cron이 없는 환경(로컬 PG 테스트)에서는 등록하지 않는다. 같은 이름이면 갱신이라 다시 적용해도 하나다.
+do $$
+begin
+  if exists (select 1 from pg_extension where extname = 'pg_cron') then
+    perform cron.schedule('msgr-storage-sweep', '17 * * * *', $c$select public.msgr_storage_sweep_kick()$c$);
   end if;
-  return old;
 end $$;
-revoke all on function public.msgr_org_channel_files_purge() from public, anon, authenticated;
-drop trigger if exists msgr_org_channel_files_purge on public.msgr_channels;
-create trigger msgr_org_channel_files_purge after delete on public.msgr_channels
-  for each row when (old.org_id is not null) execute function public.msgr_org_channel_files_purge();
 
--- 6-b) 지운 방에 남은 파일 크기는 올린 사람 몫으로 남긴다 — 파일을 Storage로 지우지 않고 방만 지우면 객체 행은 정리되지만(6, 개인 방은 20261002100000)
---      저장소 바이트는 남는다. 기록 없이 두면 "올리고 방 지우기"를 되풀이해 한도를 피한다(보안 점검 quota-bypass). 방 행이 지워지기 전(BEFORE)에 센다 —
---      그때는 글·첨부 행이 아직 있어 봇 객체(owner 없음)의 주인도 찾는다. 앱은 방을 지우기 전에 첨부를 Storage로 지우므로(아래 6-c 정책) 보통 남는 것이 없다.
---      쓰기: 남은 파일이 있을 때만 사람당 한 행 upsert(방 삭제는 드물다). 보존: 계정 삭제 때 cascade. 저장소를 따로 비운 뒤에는 운영자가 행을 지운다.
-create or replace function public.msgr_channel_files_charge() returns trigger
-  language plpgsql security definer set search_path = public, pg_temp as $$
-begin
-  if to_regclass('storage.objects') is null then return old; end if;
-  insert into public.msgr_storage_purged as k (user_id, bytes)
-  select u, sum(sz) from (
-    select coalesce(nullif(j->>'owner', '')::uuid, public._msgr_path_uploader(j->>'name')) u, coalesce((j->'metadata'->>'size')::bigint, 0) sz
-      from (select to_jsonb(o) j from storage.objects o where o.bucket_id = 'msgr' and o.name like coalesce(old.org_id::text, 'p') || '/' || old.id::text || '/%') r
-  ) x where u is not null and exists (select 1 from auth.users au where au.id = x.u)
-  group by u having sum(sz) > 0
-  on conflict (user_id) do update set bytes = k.bytes + excluded.bytes, updated_at = now();
-  return old;
-end $$;
-revoke all on function public.msgr_channel_files_charge() from public, anon, authenticated;
-drop trigger if exists msgr_channel_files_charge on public.msgr_channels;
-create trigger msgr_channel_files_charge before delete on public.msgr_channels for each row execute function public.msgr_channel_files_charge();
-
--- 6-c) 방을 지울 수 있는 사람은 그 방 파일도 Storage로 지울 수 있다 — 앱 deleteChannel은 방을 지우기 전에 첨부를 Storage API로 지우는데(바이트까지 삭제),
---      종전 정책(msgr_files_delete)은 조직 관리자만이라 채널 만든 사람·개인 방에서는 0건이었다. 판정은 방 삭제 정책과 같은 msgr_can_delete_channel,
---      경로 1번째 칸이 그 방의 공간(조직 id 또는 p)과 같을 때만. 방을 지우면 어차피 모두가 파일을 못 보므로 권한이 넓어지지 않는다.
-create or replace function public.msgr_can_delete_channel_file(p_name text) returns boolean
-  language sql stable security definer set search_path = public, pg_temp as $$
-  select exists (select 1 from public.msgr_channels c where c.id = public.msgr_uuid_or_null(split_part(p_name, '/', 2))
-                   and split_part(p_name, '/', 1) = coalesce(c.org_id::text, 'p'))
-     and public.msgr_can_delete_channel(public.msgr_uuid_or_null(split_part(p_name, '/', 2)))
-$$;
-revoke all on function public.msgr_can_delete_channel_file(text) from public, anon;
-grant execute on function public.msgr_can_delete_channel_file(text) to authenticated;
-drop policy if exists msgr_files_delete_channel on storage.objects;
-create policy msgr_files_delete_channel on storage.objects for delete to authenticated
-  using (bucket_id = 'msgr' and public.msgr_can_delete_channel_file(name));
-
--- 7) 외부 봇 준비 — 20261002140000 본문 그대로 + 대상 글을 찾은 뒤 에이전트 주인 판정 한 줄(서명 업로드 주소를 주기 전에 거절).
+-- 6) 외부 봇 준비 — 20261002140000 본문 그대로 + 대상 글을 찾은 뒤 에이전트 주인 판정 한 줄(서명 업로드 주소를 주기 전에 거절).
 create or replace function public.msgr_bot_attach_prepare(token text, p_message bigint, p_name text, p_bytes bigint) returns jsonb
 language plpgsql security definer set search_path = public, pg_temp as $$
 declare b public.msgr_bots; m public.msgr_messages; raw text := btrim(coalesce(p_name, '')); dot int; stem text; ext text; purge jsonb; space text; tw uuid;
@@ -240,7 +206,7 @@ begin
   if p_bytes is null or p_bytes < 1 then raise exception 'msgr_bot_bad_file_size'; end if;
   if p_bytes > 26214400 then raise exception 'msgr_bot_file_too_large'; end if;
   m := public._msgr_bot_attach_target(b, p_message);
-  perform public._msgr_upload_gate(public._msgr_attachment_uploader(m.id), p_bytes); -- 무료 첨부 한도(20261011150000) — 에이전트 주인 몫, 봇이 신고한 크기
+  perform public._msgr_upload_gate(public._msgr_attachment_uploader(m.id), p_bytes); -- 무료 첨부 한도(20261011150000) — 에이전트 주인 몫, 봇이 신고한 크기(최소 1바이트)
   space := coalesce(m.org_id::text, 'p');
   tw := public._msgr_bot_twin(b.id);
   if (select count(*) from storage.objects o where o.bucket_id = 'msgr' and o.name like space || '/' || m.channel_id::text || '/' || m.id::text || '/bot-%') >= 10
