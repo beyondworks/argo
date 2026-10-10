@@ -88,7 +88,7 @@ import { crewRowMenuKeys, crewOpeners, creatorTagVisible } from './crew-row-menu
 import { crewAwayNotice } from './crew-dm-notice.mjs';
 import { crewListEmptyKey } from './crews-empty.mjs';
 import { runnerOptions, RUNNER_INSTALL } from './runner-sheet.mjs';
-import { seenWithin, stampFetched, markSeen } from './presence-clock.mjs'; // 접속 판정 = 받아 온 때 기준(기능 점검 D2) // '실행기 연결' 시트(아르고 패밀리 구조, 2026-10-02)
+import { seenWithin, stampFetched, markSeen } from './presence-clock.mjs'; import { readWithSeen } from './crew-seen.mjs'; // 접속 판정 = 받아 온 때 기준(기능 점검 D2) // '실행기 연결' 시트(아르고 패밀리 구조, 2026-10-02)
 import { shortcutLabel } from './shortcut.mjs';
 import { koJosa } from './ko-josa.mjs';
 import { reconcilePending, messageEvent, broadcastEvent, onForeground } from './instant-delivery.mjs';
@@ -1144,9 +1144,9 @@ function Shell({ session }) {
       (async () => {
         // commands('/' 명령 목록, 행당 최대 64KB)는 읽지 않는다 — 조직 에이전트 전원분이 조직을 열 때마다 따라왔다(H33). '/' 팝업이 열릴 때 그 방 에이전트만 따로 읽는다(slash-commands.mjs readSlashCommands).
         const cols = 'id, owner_user_id, slug, display_name, role_text, hosting, status, allow, allow_users, last_seen_at, folder, created_at, avatar_url, bio';
-        if (Date.now() - faceCol.missingAt > 600_000) try { const rows = await q(supabase.from('msgr_crews').select(`${cols}, face`).eq('org_id', id).in('status', ['active', 'available'])); return rows.map((r) => ('face' in r ? r : { ...r, face: null })); }
+        if (Date.now() - faceCol.missingAt > 600_000) try { const rows = await readWithSeen(`${cols}, face`, (c) => q(supabase.from('msgr_crews').select(c).eq('org_id', id).in('status', ['active', 'available']))); return rows.map((r) => ('face' in r ? r : { ...r, face: null })); }
         catch (err) { const msg = err?.message ?? ''; if (!/face/i.test(msg) || !/schema cache|does not exist|could not find/i.test(msg)) throw err; faceCol.missingAt = Date.now(); } // 한 번 확인하면 기억 — 15초 재조회마다 실패할 요청을 다시 보내지 않는다(검수 #704 L-3, DB 위생)
-        const rows = await q(supabase.from('msgr_crews').select(cols).eq('org_id', id).in('status', ['active', 'available'])); return rows.map((r) => ({ ...r, face: null }));
+        const rows = await readWithSeen(cols, (c) => q(supabase.from('msgr_crews').select(c).eq('org_id', id).in('status', ['active', 'available']))); return rows.map((r) => ({ ...r, face: null })); // 접속 시각 = 기기 심박을 합친 계산 열(crew-seen.mjs)
       })(),
       supabase.from('msgr_org_entitlements').select('plan, seats, ls_status, trial_ends_at, paid_until').eq('org_id', id).maybeSingle().then((r) => r.data ?? null),
       supabase.from('msgr_org_policies').select('allow_default, allow_locked, crew_memory_default, crew_memory_locked, approval_high_by, approver_user_ids, crew_create, crew_runner, crew_model, guest_seats').eq('org_id', id).maybeSingle().then((r) => r.data ?? null), // H-0 조직 정책(없으면 null = 잠금 없음),
@@ -1447,8 +1447,8 @@ function Shell({ session }) {
   const syncEpochRef = useRef(syncEpoch); syncEpochRef.current = syncEpoch;
   const readOwnCrews = useMemo(() => ownRowsReader(async () => {
     const cols = 'id, org_id, owner_user_id, ws_id, slug, display_name, role_text, hosting, status, last_seen_at, avatar_url, created_at';
-    if (Date.now() - faceCol.missingAt > 600_000) try { return await q(supabase.from('msgr_crews').select(`${cols}, face`).eq('owner_user_id', uid).in('status', ['active', 'available'])); } catch { /* 옛 서버(face 열 없음) */ }
-    return q(supabase.from('msgr_crews').select(cols).eq('owner_user_id', uid).in('status', ['active', 'available']));
+    if (Date.now() - faceCol.missingAt > 600_000) try { return await readWithSeen(`${cols}, face`, (c) => q(supabase.from('msgr_crews').select(c).eq('owner_user_id', uid).in('status', ['active', 'available']))); } catch { /* 옛 서버(face 열 없음) */ }
+    return readWithSeen(cols, (c) => q(supabase.from('msgr_crews').select(c).eq('owner_user_id', uid).in('status', ['active', 'available']))); // 접속 시각 = 기기 심박을 합친 계산 열(crew-seen.mjs)
   }), [uid]);
   const newerOwn = (own) => (cur) => (cur && cur.at >= own.at ? cur : own);
   // 얼굴·사진 채우기(분리 검수 2026-10-05 #3) — 로그인 뒤 첫 읽기로 한 번만(agent-groups.mjs fillAgentLooks: 저장한 적 없는 열만, 실패는 다음 로그인 때). 추가 읽기 0,
