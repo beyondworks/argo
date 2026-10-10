@@ -268,12 +268,13 @@ test('C12. MCP 형식 검사는 엄격(모르는 인자 거절), Claude Code MCP
   const mcp = officeMcp({ root: process.env.ARGO_ROOT, _fresh: f._fresh, _mkClient: f._mkClient });
   assert.equal((await mcp.call('office_work', { action: 'tasks', org: ORG, sneaky: 1 })).isError, true);
   const { writeFile } = await import('node:fs/promises');
-  const home = await mkdtemp(join(tmpdir(), 'argo-office-home-')), keep = process.env.HOME;
+  // homedir()는 맥·리눅스 HOME, Windows USERPROFILE을 읽는다 — 둘 다 바꾼다(Windows CI에서 HOME만 바꿔 설정을 못 찾았다)
+  const home = await mkdtemp(join(tmpdir(), 'argo-office-home-')), keep = process.env.HOME, keepWin = process.env.USERPROFILE;
   await writeFile(join(home, '.claude.json'), JSON.stringify({ mcpServers: { 'argo-office': { command: 'node', args: ['/x/bin/argo.mjs', 'office', 'mcp'] }, other: { command: 'argo', args: ['office', 'mcp'] } } }));
-  process.env.HOME = home;
+  process.env.HOME = home; process.env.USERPROFILE = home;
   try {
     const { importHostMcp } = await import('../src/market.mjs');
     await assert.rejects(importHostMcp('w-test', 'argo-office'), /오피스 MCP는 가져오지 않습니다/);
     await assert.rejects(importHostMcp('w-test', 'other'), /오피스 MCP는 가져오지 않습니다/);
-  } finally { process.env.HOME = keep; }
+  } finally { process.env.HOME = keep; if (keepWin === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = keepWin; }
 });
