@@ -227,7 +227,7 @@ test('봇: 주인이 무료이고 한도에 닿았으면 준비(createUpload)를
   const r = prepare(mid); assert.equal(r.status, 0, r.stderr);
   const path = JSON.parse(last(r.stdout)).storage_path;
   sql(`insert into storage.objects (bucket_id, name, metadata) values ('msgr', '${path}', '{"size": 3000}')`); // 서명 주소 PUT — 정책 밖(슈퍼유저)
-  setLimit(used(U.f)); // 준비와 등록 사이에 주인이 한도에 닿았다
+  setLimit(used(U.f) - 1); // 준비와 등록 사이에 주인이 한도를 넘었다(올린 봇 객체 3000은 등록 전에도 주인 몫으로 이미 센다)
   try {
     fails(commit(mid, path), LIMIT, '등록');
     fails(prepare(say()), LIMIT, '준비');
@@ -263,6 +263,123 @@ test('판정은 쓰기 0, 남의 사용량·플랜을 묻는 통로가 없다', 
       fails(asAnonRaw(`select ${fn}`), /permission denied/, `anon → ${fn}`);
     }
     fails(asAnonRaw(`select public.msgr_upload_check('{}'::jsonb)`), /permission denied/, 'anon → msgr_upload_check');
+  } finally { setLimit(null); }
+});
+
+// ── 커밋 보안 점검 "quota-bypass" 재현(#946 2차) — 신고 크기·owner 빈 객체·지우고 다시 쓰기·스위치 틈·여러 행 한 번에 ──
+const ledger = (uid) => sql(`select coalesce((select bytes from public.msgr_storage_purged where user_id = '${uid}'), 0)`);
+
+test('신고 크기는 믿지 않는다: 0을 신고하고 큰 파일을 올려도 실제 크기가 내 사용량에 들어가 다음 업로드가 막히고, 한도에 닿은 뒤에는 0 신고도 막힌다', { skip }, () => {
+  const base = used(U.x);
+  setLimit(base + 5000);
+  try {
+    const m = post(U.x, DM.f); const p = `p/${DM.f}/${m}/${++seq}-lie.bin`;
+    const up = uploadRaw(U.x, p, 'msgr', 0);
+    assert.equal(up.status, 0, '쓴 양 < 한도면 신고 0은 받는다(실제 크기는 정책이 모른다)');
+    fill(p, 8000);
+    assert.equal(used(U.x), base + 8000, '등록하지 않아도 실제 크기가 내 몫');
+    fails(uploadRaw(U.x, `p/${DM.f}/${post(U.x, DM.f)}/${++seq}-lie.bin`, 'msgr', 0), LIMIT, '그 뒤 0 신고');
+    fails(attachRaw(U.x, m, p), LIMIT, '그 객체 등록도 실제 크기로 막힌다');
+    setLimit(used(U.x));
+    fails(uploadRaw(U.x, `p/${DM.f}/${post(U.x, DM.f)}/${++seq}-lie.bin`, 'msgr', 0), LIMIT, '쓴 양 = 한도에서 0 신고(최소 1바이트로 본다)');
+  } finally { setLimit(null); }
+});
+
+test('owner가 빈 봇 업로드(서명 주소)도 등록 없이 남으면 에이전트 주인 몫 — 다음 준비가 막힌다', { skip }, () => {
+  setLimit(null);
+  const bot = JSON.parse(last(asUser(U.f, `select msgr_bot_create('${ORG}','openclaw','claw2','peer')`)));
+  sql(`update msgr_crews set allow='all', last_seen_at=now(), dm_delivery_protocol=1 where id='${bot.crew_id}'`);
+  sql(`insert into msgr_channel_members(channel_id, member_kind, member_id) values ('${PUB}','crew','${bot.crew_id}') on conflict do nothing`);
+  const say = () => last(sql(`set role anon; select public.msgr_bot_send('${bot.token}', '${PUB}', 'r')`));
+  const before = used(U.f);
+  const mid = say();
+  const r = asAnonRaw(`select public.msgr_bot_attach_prepare('${bot.token}', ${mid}, 'r.pdf', 1)`); assert.equal(r.status, 0, r.stderr);
+  const path = JSON.parse(last(r.stdout)).storage_path;
+  sql(`insert into storage.objects (bucket_id, name, metadata) values ('msgr', '${path}', '{"size": 9000}')`); // 신고는 1, 실제 PUT은 9000 — owner 없음
+  assert.equal(used(U.f), before + 9000, '등록 안 한 봇 객체도 주인 몫');
+  setLimit(before + 5000);
+  try { fails(asAnonRaw(`select public.msgr_bot_attach_prepare('${bot.token}', ${say()}, 'r.pdf', 1)`), LIMIT, '다음 준비'); } finally { setLimit(null); }
+});
+
+test('지우고 다시 쓰기: 글 지우기·첨부 행 지우기·남의 글에 붙이기는 사용량을 줄이지 못하고, 남의 글 폴더에 올린 객체도 내 몫', { skip }, () => {
+  setLimit(null);
+  const a = sendOk(U.g, PUB, 700, { org: ORG });
+  const u0 = used(U.g);
+  sql(`set role authenticated; select set_config('argo.uid', '${U.g}', false); update public.msgr_messages set deleted_at = now() where id = ${a.m}`);
+  assert.equal(sql(`select deleted_at is not null from public.msgr_messages where id = ${a.m}`), 't');
+  assert.equal(used(U.g), u0, '글을 지워도(삭제 표시) 첨부 행·객체가 남아 그대로 센다');
+  assert.equal(asUser(U.g, `with d as (delete from public.msgr_attachments where storage_path = '${a.path}' returning 1) select count(*) from d`), '0', '첨부 행은 지울 수 없다');
+  const theirs = post(U.f, PUB);
+  fails(attachRaw(U.g, theirs, a.path, ORG), /row-level security/, '남의 글에 내 파일 붙이기');
+  const p = `${ORG}/${PUB}/${theirs}/${++seq}-mine.bin`; // 경로는 f의 글 폴더, 올린 사람은 g
+  assert.equal(uploadRaw(U.g, p, 'msgr', 300).status, 0); fill(p, 300);
+  assert.equal(used(U.g), u0 + 300, 'owner = 나 — 경로가 남의 글 폴더여도 내 몫');
+  assert.equal(used(U.f) >= 0, true);
+});
+
+test('채널을 지워 사용량 줄이기: 앱 순서(파일을 Storage로 먼저 지움)는 실제로 줄고, 파일을 두고 채널만 지우면 남은 크기가 내 몫으로 남는다', { skip }, () => {
+  setLimit(null);
+  // 앱 순서 — 채널을 지울 수 있는 사람(만든 사람)은 그 채널 파일도 지울 수 있다(msgr_files_delete는 조직 관리자만이었다)
+  const ch1 = last(asUser(U.g, `select msgr_create_channel('${ORG}','public','del-a-${seq}','[]')`));
+  const f1 = sendOk(U.g, ch1, 1000, { org: ORG });
+  const l1 = Number(ledger(U.g));
+  assert.equal(asUser(U.g, `with d as (delete from storage.objects where bucket_id = 'msgr' and name = '${f1.path}' returning 1) select count(*) from d`), '1', '만든 사람이 그 채널 파일을 지운다');
+  const keep = sendOk(U.g, PUB, 10, { org: ORG }).path;
+  assert.equal(asUser(U.x, `with d as (delete from storage.objects where bucket_id = 'msgr' and name = '${keep}' returning 1) select count(*) from d`), '0', '채널을 못 지우는 사람은 파일도 못 지운다');
+  const u1 = used(U.g);
+  assert.equal(asUserRaw(U.g, `delete from public.msgr_channels where id = '${ch1}'`).status, 0);
+  assert.equal(used(U.g), u1 - 1000, '파일을 먼저 지우면 채널 삭제로 등록분(1000)까지 실제로 준다');
+  assert.equal(Number(ledger(U.g)), l1, '남은 파일이 없으면 기록 없음');
+  // 파일을 두고 채널만 지우는 직접 호출 — 객체 행은 정리되지만(바이트는 저장소에 남는다) 크기는 내 몫으로 남긴다
+  const ch2 = last(asUser(U.g, `select msgr_create_channel('${ORG}','public','del-b-${seq}','[]')`));
+  sendOk(U.g, ch2, 2000, { org: ORG });
+  const m2 = post(U.g, ch2); const orphan = `${ORG}/${ch2}/${m2}/${++seq}-o.bin`; assert.equal(uploadRaw(U.g, orphan, 'msgr', 500).status, 0); fill(orphan, 500);
+  const u2 = used(U.g);
+  assert.equal(asUserRaw(U.g, `delete from public.msgr_channels where id = '${ch2}'`).status, 0);
+  assert.equal(sql(`select count(*) from storage.objects where name like '${ORG}/${ch2}/%'`), '0', '객체 행 정리(M3)');
+  assert.equal(used(U.g), u2, '사용량은 그대로(등록 2000 + 미등록 500 → 기록 2500)');
+  assert.equal(Number(ledger(U.g)), l1 + 2500);
+  // 개인 방도 같다(기존 msgr_personal_files_purge 앞에서 기록)
+  befriend(U.g, U.h);
+  const grp = last(asUser(U.g, `select public.msgr_dm_personal_group(array['${U.x}','${U.h}']::uuid[], 'tmp')`));
+  sendOk(U.g, grp, 300);
+  const u3 = used(U.g);
+  sql(`delete from public.msgr_channels where id = '${grp}'`);
+  assert.equal(used(U.g), u3, '개인 방을 지워도 남은 파일 크기는 내 몫');
+});
+
+test('등록된 경로의 파일을 지우고 같은 경로에 더 큰 파일을 다시 올리지 못한다(첨부 행 크기는 처음 값이라 덜 센다) — 꺼져 있으면 종전대로', { skip }, () => {
+  setLimit(null);
+  const ch = last(asUser(U.g, `select msgr_create_channel('${ORG}','public','re-${seq}','[]')`));
+  const a = sendOk(U.g, ch, 100, { org: ORG });
+  assert.equal(asUser(U.g, `with d as (delete from storage.objects where bucket_id = 'msgr' and name = '${a.path}' returning 1) select count(*) from d`), '1');
+  setLimit(used(U.g) + 1000000);
+  try { fails(uploadRaw(U.g, a.path, 'msgr', 5000), LIMIT, '등록된 경로에 다시 올리기'); } finally { setLimit(null); }
+  assert.equal(uploadRaw(U.g, a.path, 'msgr', 5000).status, 0, '꺼짐 — 종전 동작');
+});
+
+test('스위치는 판정마다 읽는다 — 같은 연결에서 켜기·끄기·켜기가 바로 반영된다', { skip }, () => {
+  const r = psqlRaw(['-A', '-t', '-c', `do $$ declare r text := ''; u uuid := '${U.g}'; begin
+    insert into public.msgr_settings (key, value) values ('free_storage_limit_bytes', '1') on conflict (key) do update set value = excluded.value;
+    r := r || public._msgr_upload_allowed(u, 1)::text;
+    delete from public.msgr_settings where key = 'free_storage_limit_bytes';
+    r := r || ',' || public._msgr_upload_allowed(u, 1)::text;
+    insert into public.msgr_settings (key, value) values ('free_storage_limit_bytes', '1');
+    r := r || ',' || public._msgr_upload_allowed(u, 1)::text;
+    raise exception 'seq=%', r; end $$`]); // 끝에서 raise — 결과를 돌려받고 설정 변경은 되돌린다
+  assert.match(r.stderr, /seq=false,true,false/);
+  assert.equal(sql(`select count(*) from public.msgr_settings where key = 'free_storage_limit_bytes'`), '0');
+});
+
+test('여러 첨부 행을 한 문장으로 넣어도 행마다 판정 — 한도를 넘으면 전부 거절(0행)', { skip }, () => {
+  setLimit(null);
+  const m = post(U.g, PUB); const ps = [1, 2, 3].map(() => `${ORG}/${PUB}/${m}/${++seq}-b.bin`);
+  for (const p of ps) { assert.equal(uploadRaw(U.g, p, 'msgr', 100).status, 0); fill(p, 100); }
+  setLimit(used(U.g) - 1);
+  try {
+    const vals = ps.map((p) => `(${m}, '${ORG}', '${p}', 'b', null, 1)`).join(',');
+    fails(asUserRaw(U.g, `insert into public.msgr_attachments (message_id, org_id, storage_path, name, mime, bytes) values ${vals}`), LIMIT, '한 문장 세 행');
+    assert.equal(sql(`select count(*) from public.msgr_attachments where message_id = ${m}`), '0');
   } finally { setLimit(null); }
 });
 
