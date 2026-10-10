@@ -123,7 +123,7 @@ export function roundVerdict({ current, alive, plan }) {
 /** 결제 뒤 재확인 흐름 한 덩어리 — 관문(returnRecheck)과 라운드 추적(roundTracker)을 묶어 화면은 얇게, 행동은 시험으로 잠근다(검수 #944 M-2).
  *  recheck(once)  = 앱 복귀(once=false: 업그레이드를 누른 뒤 15분 안·라운드 한 번) 또는 '다시 확인'(once=true: 1회)
  *  upgraded()     = 업그레이드 버튼을 눌렀을 때 — 돌던 라운드·타이머를 정리하고 관문을 새로 무장해 이후 복귀에서 새 라운드가 시작되게
- *  dispose()      = 화면을 떠날 때 — 라운드와 타이머 정리
+ *  dispose()      = 화면을 떠날 때·계정이 바뀔 때 — 라운드와 타이머 정리, 관문·확인 중 표시 되돌림
  *  onChecking/onNotYet = 화면 표시, onPro = Pro가 확인됐을 때 다시 읽기 */
 export function recheckFlow({ readPlan, alive = () => true, onChecking = () => {}, onNotYet = () => {}, onPro = async () => {}, now, setTimer, clearTimer, delays } = {}) {
   const gate = returnRecheck({ ...(now ? { now } : {}) }); const rounds = roundTracker({ ...(setTimer ? { setTimer } : {}), ...(clearTimer ? { clearTimer } : {}) });
@@ -135,13 +135,12 @@ export function recheckFlow({ readPlan, alive = () => true, onChecking = () => {
       const { plan } = await recheckUntilPro(readPlan, { alive: () => alive() && rounds.isCurrent(mine), sleep: rounds.sleepFor(mine), ...(once ? { delays: [0] } : delays ? { delays } : {}) });
       const v = roundVerdict({ current: rounds.isCurrent(mine), alive: alive(), plan });
       if (v.end) gate.end();
-      if (v.settle) onChecking(false);
-      if (v.load) await onPro();
+      try { if (v.load) await onPro(); } finally { if (v.settle) onChecking(false); } // Pro 반영(load 왕복)이 끝난 뒤에 확인 중 표시를 끈다 — 그 사이 버튼이 풀리면 아직 free 화면에서 또 결제할 수 있다(검수 #944 L-4)
       if (v.notYet) onNotYet(true);
       return true;
     },
     upgraded() { rounds.cancel(); gate.end(); gate.arm(); onChecking(false); onNotYet(false); },
-    dispose() { rounds.cancel(); },
+    dispose() { rounds.cancel(); gate.end(); if (alive()) onChecking(false); }, // 라운드 중 정리돼도(uid 바뀜) 확인 중 표시·관문이 남아 버튼이 영구히 막히지 않게(검수 #944 L-3). 호출 쪽은 alive를 끄기 전에 부른다
   };
 }
 

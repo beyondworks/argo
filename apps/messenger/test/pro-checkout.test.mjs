@@ -217,7 +217,7 @@ test('M-2 화면 연결 — 화면은 recheckFlow 하나로만 재확인한다(�
   const card = app.slice(app.indexOf('function PlanCard('), app.indexOf('async function planRow('));
   assert.match(card, /recheckFlow\(\{ readPlan, alive: \(\) => live\.current, onChecking: setChecking, onNotYet: setNotYet, onPro: \(\) => latest\.current\.load\(\) \}\)/, '표시·Pro 반영을 흐름에 연결');
   assert.match(card, /const upgrade = [^\n]*flow\.current\.upgraded\(\); openExternal\(url\)/, '새 클릭 = 흐름 정리·무장(결제창은 그 뒤)');
-  assert.match(card, /return \(\) => \{ live\.current = false; flow\.current\.dispose\(\); \}/, 'L-2 화면을 떠나면 라운드·타이머 정리');
+  assert.match(card, /return \(\) => \{ flow\.current\.dispose\(\); live\.current = false; \}/, 'L-2 화면을 떠나면 라운드·타이머 정리(L-3: 살아 있을 때 불러 확인 중 표시도 되돌림)');
   assert.match(card, /flow\.current\.recheck\(once\)/, '복귀·다시 확인은 흐름의 recheck');
   assert.doesNotMatch(card, /returnRecheck\(|roundTracker\(|recheckUntilPro\(/, '화면이 관문·라운드를 직접 쥐지 않는다 — 한 곳(recheckFlow)');
 });
@@ -304,4 +304,32 @@ test('iOS는 Pro 필요 오류에서 결제 권유를 뺀다(App Store 3.1.1) �
   }
   const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
   assert.match(app, /function useT\(\) \{ const \{ lang, setLang, t: ta \} = useLang\(\); return \{ lang, setLang, ta, t: \(k, vars\) => tm\(iosKey\(k, isIos\), lang, vars\) \}; \}/, '메신저 사전 읽기 한 곳에서 가른다(friendlyErr·토스트가 이 t를 쓴다)');
+});
+
+test('L-3 uid가 바뀌어(정리 함수 실행) 라운드 중 dispose돼도 확인 중 표시·관문이 남지 않는다 — 버튼이 영구히 막히지 않고 다음 클릭 뒤 복귀 재확인이 시작된다', async () => {
+  let reads = 0; const h = flowHarness(async () => { reads += 1; return 'free'; });
+  h.flow.upgraded(); const run = h.flow.recheck(); await tick();
+  assert.equal(h.flow.gate.running, true); assert.equal(h.log.at(-1), 'notYet:false'); assert.ok(h.log.includes('checking:true'));
+  h.flow.dispose(); // 라운드 중 정리(React effect cleanup — uid 변경)
+  assert.equal(h.log.filter((x) => x.startsWith('checking:')).at(-1), 'checking:false', '확인 중 표시를 되돌린다(안 하면 disabled={checking}로 영구히 막힘)');
+  assert.equal(h.flow.gate.running, false, '관문 해제 — 안 하면 다음 복귀 재확인이 겹침으로 거절됨');
+  await run; assert.equal(h.log.filter((x) => x.startsWith('checking:')).at(-1), 'checking:false'); assert.ok(!h.log.includes('notYet:true'));
+  h.flow.upgraded(); h.advance(1000); reads = 0;
+  const next = h.flow.recheck(); await tick();
+  assert.equal(reads, 1, '다시 누른 뒤 복귀하면 새 라운드가 시작된다'); h.flow.dispose(); await next;
+  const gone = flowHarness(async () => 'free', { gone: true }); gone.flow.dispose();
+  assert.deepEqual(gone.log, [], '이미 떠난 화면에는 아무것도 그리지 않는다');
+});
+
+test('L-4 Pro를 읽으면 load(Pro 반영)가 끝난 뒤에 확인 중 표시를 끈다 — 그 사이 버튼이 풀려 free 화면에서 또 결제하지 않게', async () => {
+  let release; const loading = new Promise((r) => { release = r; }); const order = [];
+  const h = flowHarness(async () => 'pro');
+  const flow = pro.recheckFlow({ readPlan: async () => 'pro', setTimer: h.f.setTimer, clearTimer: h.f.clearTimer, onChecking: (x) => order.push(`checking:${x}`), onNotYet: (x) => order.push(`notYet:${x}`), onPro: async () => { order.push('load:start'); await loading; order.push('load:done'); } });
+  flow.upgraded(); order.length = 0;
+  const run = flow.recheck(); for (let i = 0; i < 10; i += 1) await tick();
+  assert.deepEqual(order, ['checking:true', 'notYet:false', 'load:start'], 'load가 끝나기 전에는 확인 중 그대로(버튼 막힘)');
+  release(); await run;
+  assert.deepEqual(order, ['checking:true', 'notYet:false', 'load:start', 'load:done', 'checking:false']);
+  const bad = pro.recheckFlow({ readPlan: async () => 'pro', onChecking: (x) => order.push(`bad:${x}`), onPro: async () => { throw new Error('net'); } });
+  bad.upgraded(); await assert.rejects(bad.recheck(), /net/); assert.equal(order.at(-1), 'bad:false', 'load가 실패해도 확인 중이 남지 않는다');
 });

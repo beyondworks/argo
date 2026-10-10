@@ -3703,7 +3703,7 @@ function PlanCard({ uid, email }) {
   }, [readPlan, uid]);
   latest.current = { load };
   if (!flow.current) flow.current = recheckFlow({ readPlan, alive: () => live.current, onChecking: setChecking, onNotYet: setNotYet, onPro: () => latest.current.load() }); // 복귀 재확인 — 누른 뒤 한 라운드만(#944 LOW-3), 관문·라운드·타이머는 한 덩어리(pro-checkout.mjs recheckFlow)
-  useEffect(() => { live.current = true; load(); return () => { live.current = false; flow.current.dispose(); }; }, [load]); // 화면을 떠나면 돌던 라운드의 쉬는 타이머까지 정리
+  useEffect(() => { live.current = true; load(); return () => { flow.current.dispose(); live.current = false; }; }, [load]); // 화면을 떠나면 돌던 라운드의 쉬는 타이머까지 정리
   const recheck = useCallback((once = false) => flow.current.recheck(once), []); // 복귀 = 한 라운드(최대 5회, 시작할 때 무장 해제), '다시 확인' 버튼 = 1회
   useEffect(() => { // 결제하고 앱으로 돌아왔을 때(데스크톱 포커스·폰 화면 복귀) — 업그레이드를 누른 뒤 15분 안일 때만
     const back = () => { if (document.visibilityState === 'hidden') return; recheck(); }; // 무장·겹침 판정은 관문이 한다
