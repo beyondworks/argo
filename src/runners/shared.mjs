@@ -70,6 +70,10 @@ function exec(cmd, args, opts) {
 const EXPLICIT_SERVER_SECRETS = new Set(['SUPABASE_SERVICE_ROLE_KEY']);
 const SERVER_SECRET_RE = /(SERVICE_ROLE|_SECRET$|_SECRET_|DATABASE_URL|PRIVATE_KEY|WEBHOOK_SECRET|SESSION_SECRET|JWT_SECRET)/i;
 export const isServerSecretKey = (k) => EXPLICIT_SERVER_SECRETS.has(k) || SERVER_SECRET_RE.test(k);
+/** 이 서버의 포트·주소 — Next가 listen 뒤 process.env에 적는다(next/dist/server/lib/start-server.js). 에이전트 셸이 물려받으면
+    `curl 127.0.0.1:$PORT/…` 한 줄로 리터럴 주소를 피해 로컬 API를 부른다(#918 Windows 한계 ① — Windows는 서버 판정이 기본 꺼짐).
+    러너·셸·MCP는 이 값을 쓰지 않는다(grep 2026-10-10). 덤으로 에이전트가 띄운 개발 서버가 Argo 포트를 물려받아 충돌하던 것도 사라진다. */
+export const SERVER_ORIGIN_KEYS = new Set(['PORT', '__NEXT_PRIVATE_ORIGIN']);
 /** 제공사 인증 변수 소유권 — 어느 러너가 어떤 인증 env를 정당하게 쓰는가.
     실행 러너 외 제공사 키가 자식(외부 CLI·SDK가 띄우는 Bash/MCP)에 상속되면, 러너 하나가 프롬프트
     인젝션에 뚫릴 때 printenv 한 번으로 '다른' 제공사 자격까지 한꺼번에 유출된다(감사 2026-07-20 —
@@ -95,7 +99,7 @@ const PROVIDER_AUTH_OWNERS = {
 export function scrubServerSecrets(env = process.env, runner = null) {
   const out = {};
   for (const [k, v] of Object.entries(env)) {
-    if (isServerSecretKey(k)) continue;
+    if (isServerSecretKey(k) || SERVER_ORIGIN_KEYS.has(k)) continue;
     if (runner && PROVIDER_AUTH_OWNERS[k] && !PROVIDER_AUTH_OWNERS[k].includes(runner)) continue;
     out[k] = v;
   }

@@ -88,6 +88,37 @@ test('권한 게이트 배선 — 모든 턴(주인 턴 포함)에서 Argo API �
       assert.equal((await g('Bash', { command: 'ls -la' })).behavior, 'allow');
     }
     const en = makePermissionGate('gateco', 'x', ROOT, null, 'en');
-    assert.match((await en('Bash', { command: `curl http://127.0.0.1:${ARGO}/api/x` })).message, /cannot call this API/);
+    assert.match((await en('Bash', { command: `curl http://127.0.0.1:${ARGO}/api/x` })).message, /cannot call this API.*write its port number/);
   } finally { if (prev === undefined) delete process.env.PORT; else process.env.PORT = prev; }
+});
+
+// #918 후속(Windows 한계 ①) — Windows는 서버 판정이 기본 꺼짐이라 이 게이트가 유일한 방어인데, 포트를 환경 변수로 조립하면 리터럴 포트가 없어 통과했다(재현 2026-10-10).
+test('판정 — 루프백 호스트와 포트 환경 변수 참조($PORT·${PORT}·%PORT%·$env:PORT 등)가 함께 보이면 거절, Next 서버 주소 변수는 호스트 없이도 거절', async () => {
+  const own = { ownPort: 3477, probe: async () => false };
+  for (const c of [
+    'curl -X DELETE http://127.0.0.1:$PORT/api/companies/w/routines?id=r', 'curl "http://localhost:${PORT}/api/x"', 'curl http://localhost:${PORT:-3001}/api/x',
+    'curl http://127.0.0.1:%PORT%/api/x', 'curl http://127.0.0.1:%port%/api/x', 'curl http://127.0.0.1:!PORT!/api/x',
+    'iwr http://localhost:$env:PORT/api/x', 'Invoke-RestMethod "http://127.0.0.1:$Env:port/api/x" -Method Post',
+    `python3 -c "import os,urllib.request as u; u.urlopen('http://127.0.0.1:'+os.environ['PORT']+'/api/x')"`, `node -e "fetch('http://localhost:'+process.env.PORT+'/api/x')"`,
+    `ruby -e "require 'net/http'; Net::HTTP.get(URI('http://127.0.0.1:'+ENV['PORT']+'/api/x'))"`, 'curl http://[::1]:$(printenv PORT)/api/x',
+    'curl $__NEXT_PRIVATE_ORIGIN/api/companies/w/approvals', `node -e "fetch(process.env.__NEXT_PRIVATE_ORIGIN+'/api/x')"`,
+    // 검수 #920이 찾은 누락 표기
+    'iwr "http://127.0.0.1:${env:PORT}/api/x"', 'iwr ("http://127.0.0.1:" + (Get-ChildItem env:PORT).Value)', 'iwr ("http://127.0.0.1:" + (gci Env:PORT).Value)',
+    `perl -MLWP::Simple -e 'get("http://127.0.0.1:$ENV{PORT}/api/x")'`, `node -e "fetch('http://localhost:'+process.env?.PORT)"`, 'node -e "fetch(\'http://localhost:\'+process.env[`PORT`])"',
+    `python3 -c "import os; print('http://127.0.0.1:'+os.environ.get('PORT'))"`, `[Environment]::GetEnvironmentVariable('PORT') ; iwr http://127.0.0.1:1/`,
+    `go run - <<< 'http.Get("http://127.0.0.1:"+os.Getenv("PORT"))'`, `php -r 'file_get_contents("http://127.0.0.1:".$_ENV["PORT"]);'`, `deno eval 'fetch("http://127.0.0.1:"+Deno.env.get("PORT"))'`,
+    // 커밋 보안 검토(dfa3a3d9): 대입처럼 보이는 글자로 면제를 켜는 우회, 이름으로 값을 꺼내는 우회 — 면제를 없애 막는다
+    'echo PORT=1; curl http://127.0.0.1:$PORT/api/x', 'curl http://127.0.0.1:$PORT/api/x # PORT=1', ': PORT=; curl http://localhost:${PORT}/api/x',
+    'curl $(env | grep __NEXT_PRIVATE_ORIGIN | cut -d= -f2)/api/x',
+    // 오탐 수용(#918 방침): 에이전트가 직접 정한 PORT로 개발 서버를 불러도 거절 — 거절 문구가 "포트 번호를 직접 적으라"고 안내한다
+    'export PORT=5173; npm run dev & sleep 3; curl http://localhost:$PORT/', 'grep -n "PORT" .env.example && curl http://localhost:5173/', 'grep -rn __NEXT_PRIVATE_ORIGIN node_modules',
+  ]) assert.equal(await shellCallsArgoApi(c, own), true, `거절 대상: ${c}`);
+  for (const c of [
+    'echo $PORT', 'PORT=5173 npm run dev', 'grep -rn PORT src', // 루프백 호스트 없음
+    'PORT=5173 npm run dev & sleep 2; curl http://localhost:5173/', // 포트 대입만 있고 참조 없음 — 사용자의 개발 서버
+    'curl http://127.0.0.1:5173/api/report', 'curl https://example.com:$PORT/', // 다른 로컬 포트 / 원격
+    // 다른 포트를 대입하는 글자일 뿐 env를 읽지 않는다(1c0a5a88은 거절하던 의도한 완화 — 따옴표는 'PORT'처럼 닫혀야 참조로 본다)
+    'docker run -e "PORT=8080" -p 8080:8080 img && curl localhost:8080/health', 'echo "PORT=3000" >> .env && npm run dev -- --hostname 127.0.0.1',
+    'export PORT=5173; npm run dev & sleep 3; curl http://localhost:5173/', // 대안 안내대로 포트 번호를 직접 적으면 통과
+  ]) assert.equal(await shellCallsArgoApi(c, own), false, `통과 대상: ${c}`);
 });

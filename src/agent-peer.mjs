@@ -27,9 +27,10 @@
 // WKWebView를 몰아 호출, 리눅스에서 세션을 새로 만들고 표지 env까지 지운 고아(setsid + env -i). 근본 대책은 기동 비밀·OS 샌드박스(후속).
 // 운영자 끄기: ARGO_AGENT_PEER_CHECK=off(부팅 때 읽음). Windows는 반대로 ARGO_AGENT_PEER_CHECK=on이어야 켜진다.
 // 비용: 연결(소켓)·종류(읽기/변경)당 한 번 판정하고 소켓에 묶는다(keep-alive 재사용). 변경 판정은 새 연결마다 lsof·ps 각 1~2회(실측 median 107ms),
-//   읽기 판정은 자손만 조회(실측 새 연결 +88ms, 캐시 히트는 0).
+//   읽기 판정은 자손만 조회(실측 새 연결 +88ms, 캐시 히트는 0). 살아 있는 자식이 하나도 없으면(유휴) 읽기는 조회 없이 통과한다(trackChildren).
+//   시간 캐시(1~2초)는 쓰지 않는다 — 표를 찍은 뒤 뜬 curl은 그 표에 없어서, 캐시가 사는 동안 그 curl의 읽기가 통과한다.
 import http from 'node:http';
-import { execFile } from 'node:child_process';
+import { execFile, ChildProcess } from 'node:child_process';
 import { readdir, readFile, readlink } from 'node:fs/promises';
 import { networkInterfaces } from 'node:os';
 
@@ -51,6 +52,28 @@ const run = (cmd, args) => new Promise((resolve, reject) => {
     resolve(String(stdout ?? ''));
   });
 });
+
+// 살아 있는 자식 프로세스 수 — 자손은 살아 있는 자식 밑에만 있으므로(부모가 죽은 손주는 launchd·init에 입양돼 자손이 아니다) 0이면 읽기 판정의
+// ps 조회(실측 중앙값 50ms, 새 연결마다)를 건너뛴다. 유휴 상주는 자손 0(관찰 2026-10-10, :3001). child_process의 spawn·exec·execFile·fork는
+// 모두 ChildProcess.prototype.spawn을 지나 여기서 센다. spawnSync는 끝날 때까지 이벤트 루프를 막아 그동안 요청이 없다.
+// 판정 자신의 ps·lsof도 끝날 때까지는 센다 — 그동안 들어온 읽기가 조회를 한 번 더 할 뿐이다.
+// ponytail: worker_threads 안에서 띄운 자식과 네이티브 애드온(node-pty 등)의 fork는 못 센다 — 지금 그런 경로 없음(grep). 놓쳐도 읽기만 통과(읽기는 원래 fail-open), 변경은 아래 classifyPeer 그대로.
+const kids = { tracking: false, live: 0 };
+function trackChildren() {
+  if (kids.tracking) return;
+  kids.tracking = true;
+  const spawn = ChildProcess.prototype.spawn;
+  ChildProcess.prototype.spawn = function trackedSpawn(...args) {
+    const r = spawn.apply(this, args);
+    if (this.pid) { kids.live++; this.once('exit', () => { kids.live--; }); }
+    return r;
+  };
+}
+/** 읽기 조회를 건너뛰어도 되는가(순수). 서버가 PID 1(컨테이너에서 `node server.js`를 init 없이)이면 부모가 끝난 손주가 서버 밑으로
+    입양돼 자식 수 밖의 자손이 된다 — 그때는 건너뛰지 않는다(검수 #920 재현: node:22 컨테이너에서 고아 GET 200). */
+export const readSkipOk = ({ tracking, live, pid }) => tracking && live === 0 && pid !== 1;
+/** 판정이 센 살아 있는 자식 수(시험·진단용). 추적 전이면 null. */
+export const liveChildCount = () => (kids.tracking ? kids.live : null);
 
 /* ─── 순수 판정 재료 ─────────────────────────────────────────────────────── */
 
@@ -297,6 +320,7 @@ export async function denyAgentPeer(req, res, opts = {}) {
   if (!isLocalAddr(peer.addr)) return false; // 원격(클라우드·리버스 프록시 뒤 사용자) — 이 컴퓨터의 프로세스가 아니다
   let slot = verdicts.get(s); if (!slot) { slot = {}; verdicts.set(s, slot); }
   if (!write) {
+    if (!opts.descendant && readSkipOk({ ...kids, pid: process.pid })) return false; // 자식이 없으면 자손도 없다 — ps 없이 통과(판정을 소켓에 묶지 않는다: 같은 연결의 다음 요청 때 자식이 생겼을 수 있다)
     slot.read ??= (opts.descendant ?? descendantPeerPid)(peer, opts)
       .catch((e) => { console.warn('[argo] 요청 상대 프로세스 판정 실패(읽기 — 통과):', e?.code ?? e?.message ?? e); return 0; });
     const pid = await slot.read;
@@ -319,6 +343,7 @@ export function installAgentPeerGuard(env = process.env) {
   if (flag === 'off') { console.warn('[argo] ARGO_AGENT_PEER_CHECK=off — 에이전트 프로세스의 로컬 API 호출 판정을 끔'); return; }
   if (process.platform === 'win32' && flag !== 'on') { console.warn('[argo] Windows에서는 에이전트 프로세스 판정이 기본 꺼짐 — 켜려면 ARGO_AGENT_PEER_CHECK=on'); return; } // 요청마다 async 훅을 걸지 않는다
   env[AGENT_MARK] = String(process.pid);
+  trackChildren();
   const emit = http.Server.prototype.emit;
   http.Server.prototype.emit = function guardedEmit(ev, req, res, ...rest) {
     if (ev !== 'request' || !req || !res || this[PEER_GUARD_EXEMPT]) return emit.call(this, ev, req, res, ...rest); // 중계 서버(crew/browser MCP)는 제외

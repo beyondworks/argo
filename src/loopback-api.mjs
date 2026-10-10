@@ -48,9 +48,25 @@ export function probeArgoPort(port) {
 // 정상 작업은 셸이 아니라 에이전트의 파일 도구(Read·Grep)로 하면 된다 — 그쪽은 셸 실행이 아니라 별도 게이트를 지난다.
 // 오탐(주소를 담은 정상 셸 명령 거절)은 수용한다: 거절 문구가 대안을 안내하고, 우회 하나가 결재 장치 전체를 무너뜨리는 것보다 낫다.
 
+// 포트를 환경 변수로 받아 조립하는 표기(#918 Windows 한계 ①) — Windows는 서버 판정이 기본 꺼짐이라 이 게이트가 Bash 도구의 유일한 방어다.
+// 1차는 에이전트 자식 env에서 PORT·__NEXT_PRIVATE_ORIGIN을 빼는 것이고(src/runners/shared.mjs SERVER_ORIGIN_KEYS), 이 판정은 세척이 빠진 경로를 위한 방지턱이다.
+// 둘 다 방지턱이다: 포트는 앱 상수(3001/3011/3021)라 netstat·추측으로도 알 수 있다.
+// 참조 표기: 셸 $PORT·${PORT…}·printenv PORT·perl $ENV{PORT}·os.environ[…]/.get(…)·getenv(…)·ENV[…]·GetEnvironmentVariable(…)·정확히 따옴표로 감싼 'PORT'(Go Getenv·PHP $_ENV 등)는
+// 대소문자 그대로, Windows env는 대소문자를 안 가려 %PORT%·!PORT!·$env:PORT·${env:PORT}·env:PORT(gci)·process.env.PORT·env?.PORT·env['PORT']는 무시.
+// 대입 면제(같은 명령에 PORT=가 있으면 통과)는 두지 않는다 — `echo PORT=1; curl …:$PORT`처럼 대입이 아닌 글자로도 켜져 우회가 된다(커밋 보안 검토 dfa3a3d9).
+// 오탐(에이전트가 직접 정한 PORT로 개발 서버를 부르는 명령)은 거절 문구가 "포트 번호를 직접 적으라"고 안내해 비용을 낮춘다.
+const PORT_REFS = [
+  /(?:\$\{?|\$ENV\{|\bprintenv\s+|(?:\benviron(?:\.get)?\s*[[(]|\bgetenv\s*\(|\bENV\s*\[|GetEnvironmentVariable\s*\()\s*['"`]?)PORT\b|['"`]PORT['"`]/,
+  /(?:%|!|\benv:|\benv\??\.|\benv\s*\[\s*['"`])port\b/i,
+];
+// Next가 listen 뒤 적는 서버 주소 — 변수 자체가 루프백 주소라 호스트가 안 보여도, 참조든 이름이든 보이면 거절(`env | grep …ORIGIN | cut`도 값을 꺼낸다)
+const ORIGIN_ENV_RE = /__NEXT_PRIVATE_ORIGIN/i;
+
 /** 셸 명령에 Argo 루프백 주소·포트가 보이는가 → 그러면 거절 대상. ownPort = 이 서버의 포트(Next가 listen 뒤 process.env.PORT에 적는다). */
 export async function shellCallsArgoApi(command, { ownPort = Number(process.env.PORT) || 0, probe = probeArgoPort } = {}) {
   const cmd = String(command ?? '');
+  if (ORIGIN_ENV_RE.test(cmd)) return true;
+  if (hasLocalHost(cmd) && PORT_REFS.some((r) => r.test(cmd))) return true;
   const ports = loopbackPortCandidates(cmd);
   if (!ports.length) return false; // 루프백 주소가 명령에 없음 — 포트 숫자만 있어도(호스트 없으면) 통과
   if (ownPort && ports.includes(ownPort)) return true; // 이 서버의 포트가 루프백 주소와 함께 보이면 거절
@@ -59,6 +75,6 @@ export async function shellCallsArgoApi(command, { ownPort = Number(process.env.
 }
 
 export const ARGO_API_SHELL_MSG = {
-  ko: '이 명령에 이 컴퓨터 Argo 앱의 루프백 주소가 들어 있습니다. 결재 승인·루틴·설정·대화 시작은 사람이 화면에서 하는 일이라 에이전트는 이 API를 셸로 부를 수 없습니다. 주소를 문자열로 다뤄야 하면 셸 대신 파일 도구(Read·Grep)를 쓰고, 그 밖의 필요한 일은 사용자에게 요청하세요.',
-  en: 'This command contains this computer\'s Argo loopback address. Approvals, routines, settings and new chats are for a person using the app, so agents cannot call this API from the shell. If you need to handle the address as text, use the file tools (Read/Grep) instead of the shell; otherwise ask the user.',
+  ko: '이 명령에 이 컴퓨터 Argo 앱의 루프백 주소가 들어 있습니다. 결재 승인·루틴·설정·대화 시작은 사람이 화면에서 하는 일이라 에이전트는 이 API를 셸로 부를 수 없습니다. 주소를 문자열로 다뤄야 하면 셸 대신 파일 도구(Read·Grep)를 쓰고, 사용자가 맡긴 다른 로컬 서버를 부르는 것이면 환경 변수 대신 포트 번호를 직접 적으세요. 그 밖의 필요한 일은 사용자에게 요청하세요.',
+  en: 'This command contains this computer\'s Argo loopback address. Approvals, routines, settings and new chats are for a person using the app, so agents cannot call this API from the shell. If you need to handle the address as text, use the file tools (Read/Grep) instead of the shell; if you are calling another local server for the user\'s task, write its port number instead of an environment variable; otherwise ask the user.',
 };

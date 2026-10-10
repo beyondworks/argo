@@ -72,3 +72,13 @@ test('sdkEnvFor(glm): 회사 자격 턴 env에 CLAUDE_CODE_OAUTH_TOKEN이 남지
     if (saved === undefined) delete process.env.CLAUDE_CODE_OAUTH_TOKEN; else process.env.CLAUDE_CODE_OAUTH_TOKEN = saved;
   }
 });
+
+// #918 후속 — Next가 listen 뒤 process.env에 적는 이 서버의 포트·주소가 에이전트 셸에 상속되면 `curl 127.0.0.1:$PORT/…` 한 줄로 리터럴 주소 판정을 피한다.
+test('scrubServerSecrets·shellEnv: 이 서버의 포트·주소(PORT·__NEXT_PRIVATE_ORIGIN)는 러너·셸·MCP 자식 env에서 뺀다', async () => {
+  const { shellEnv } = await import('../src/engine/builtin-tools.mjs');
+  const env = { PATH: '/bin', HOME: '/h', PORT: '3001', __NEXT_PRIVATE_ORIGIN: 'http://localhost:3001', HOSTNAME: '127.0.0.1', ARGO_ROOT: '/r' };
+  for (const out of [scrubServerSecrets(env), scrubServerSecrets(env, 'claude'), scrubServerSecrets(env, 'codex'), shellEnv(env)]) {
+    assert.equal(out.PORT, undefined); assert.equal(out.__NEXT_PRIVATE_ORIGIN, undefined);
+    assert.equal(out.PATH, '/bin'); assert.equal(out.HOME, '/h'); assert.equal(out.HOSTNAME, '127.0.0.1'); assert.equal(out.ARGO_ROOT, '/r');
+  }
+});

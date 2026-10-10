@@ -61,6 +61,8 @@ const srv = http.createServer((req, res) => {
 await new Promise((r) => srv.listen(0, '127.0.0.1', r));
 after(() => srv.close());
 const PORT = srv.address().port;
+// Next가 listen 뒤 서버 프로세스 env에 적는 값과 같은 모양(next/dist/server/lib/start-server.js) — 러너 env는 이 env의 사본에서 만든다
+Object.assign(process.env, { PORT: String(PORT), __NEXT_PRIVATE_ORIGIN: `http://localhost:${PORT}` });
 
 const { createCompany, paths } = await import('../src/workspace.mjs');
 const { saveRunnerCred } = await import('../src/runners/creds.mjs');
@@ -127,4 +129,16 @@ test('실제 SDK 턴: 에이전트 셸이 표지 env를 물려받는다(부모�
 test('실제 SDK 턴: 루프백이 아닌 평범한 셸은 그대로 실행된다(회귀 없음)', { skip: onWin, timeout: 120_000 }, async () => {
   const out = await agentRuns('echo NORMAL-SHELL-7777');
   assert.match(out, /NORMAL-SHELL-7777/);
+});
+
+// #918 후속(Windows 한계 ①) — 서버 env의 PORT를 물려받은 에이전트 셸은 `curl 127.0.0.1:$PORT/…`로 리터럴 포트를 피했다. Windows는 서버 판정이 기본 꺼짐이라 그대로 닿는다.
+test('실제 SDK 턴: 에이전트 셸은 이 서버의 포트·주소 env를 물려받지 않는다', { skip: onWin, timeout: 120_000 }, async () => {
+  const out = await agentRuns(`env | grep -E '^(PORT|__NEXT_PRIVATE_ORIG)' ; env | grep -cF ':${PORT}' ; echo END`);
+  assert.equal(out.trim(), '0\nEND', out.slice(0, 300));
+});
+
+test('실제 SDK 턴: $PORT로 조립한 루프백 호출은 실행 전에 권한 게이트가 거절한다', { skip: onWin, timeout: 120_000 }, async () => {
+  const out = await agentRuns("curl -s -X DELETE 'http://127.0.0.1:'$PORT'/api/companies/agent-loopback/routines?id=r1'");
+  assert.match(out, /루프백 주소가 들어 있습니다/, out.slice(0, 200));
+  assert.deepEqual(reached, []);
 });
