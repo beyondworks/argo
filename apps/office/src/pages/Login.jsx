@@ -19,7 +19,7 @@ export function Login() {
   return (
     <main className="login">
       <div className="login-card">
-        <span className="space-mark login-mark">A</span>
+        <img className="login-mark" src="/icon-192.png" alt="" /> {/* 오피스 로고(포스트잇 + 연필, 유건 10/10) — 제목이 이름을 말하므로 장식 */}
         <h1>{t('login.title')}</h1>
         <p className="dim">{t('login.sub')}</p>
         <div className="login-buttons">
