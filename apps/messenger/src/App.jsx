@@ -3730,7 +3730,7 @@ function PlanCard({ uid, email }) {
         <span className="msgr-klabel">{t('plan.current')}</span>
         {view.kind === 'loading' ? <span className="sub">{t('ui.loading')}</span>
           : view.kind === 'unavailable' ? <><span className="sub">{t('plan.unavailable')}</span><button type="button" className="btn sm" onClick={() => { setSt((x) => ({ ...x, loading: true })); load(); }}>{t('plan.retry')}</button></>
-          : <span className={`msgr-tag${isPro ? ' on' : ''}`}>{isPro ? ta('billing.plan.pro') : view.kind === 'trial' ? ta('billing.plan.trial') : ta('billing.plan.free')}</span>}
+          : <span className={`msgr-tag${isPro ? ' on' : ''}`}>{isPro ? ta('billing.plan.pro') : view.kind === 'trial' ? ta('billing.plan.trial') : t('plan.badge.free')}</span>}
       </div>
       {view.kind === 'pro-sub' && <p className="note">{t('plan.sub')}</p>}
       {view.kind === 'pro-cancelled' && <p className="note">{ta('billing.cancelledUntil', { date: day(view.endsAt) })}</p>}

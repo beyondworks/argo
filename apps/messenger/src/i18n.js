@@ -1833,7 +1833,8 @@ export const DICT = {
   'plan.current': ['지금 플랜', 'Current plan'],
   'plan.unavailable': ['플랜을 불러오지 못했습니다.', "Couldn't load your plan."],
   'plan.retry': ['다시 시도', 'Retry'],
-  'plan.benefits': ['Pro: 대화방 4명 한도 없음 · 에이전트를 메신저에 연결 · 여러 기기 동기화', 'Pro: no 4-member limit in chats · connect agents to Messenger · sync across devices'],
+  'plan.benefits': ['Pro: 에이전트 수 제한 없음 · 서버 에이전트(봇) 연결 · 여러 기기 동기화 · 대화방 인원 제한 없음', 'Pro: unlimited agents · server agents (bots) · sync across devices · no room size limit'],
+  'plan.badge.free': ['무료', 'Free'], // 플랜 배지 — 한국어 모드는 고유명사(Pro) 외 한글(본체 billing.plan.free는 두 언어 모두 'Free')
   'plan.sameAccount': ['같은 Argo 계정이면 어디서 결제해도 같은 Pro입니다. 결제는 브라우저에서 열리고, 끝나면 이 앱으로 돌아오세요.', 'One Pro per Argo account, wherever you pay. Checkout opens in your browser — come back here when you are done.'],
   'plan.sub': ['Pro 구독 중입니다. 같은 Argo 계정이면 어디서나 적용됩니다.', "You're subscribed to Pro. It applies wherever you use this Argo account."],
   'plan.pastDue': ['결제가 확인되지 않았습니다. 구독 관리에서 결제 수단을 확인해 주세요.', "Your payment didn't go through. Check your payment method in Manage subscription."],
