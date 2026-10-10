@@ -152,7 +152,9 @@ SHIM
       say "PATH에 $shim_dir 이 없습니다 — $rc 에 이 줄을 추가한 뒤 터미널을 다시 여세요: export PATH=\"\$PATH:\$HOME/.local/bin\"" ;;
     esac
   fi
-  say "다음: $run_cmd  (로그인 — 브라우저가 열립니다)"
+  # 상주 중이던 설치의 업데이트 — 로그인·상주 등록은 이미 끝났으니 새 설치용 다음 단계를 다시 내지 않는다(VPS 0.1.101 제보)
+  if [ "$svc_on" = 1 ]; then say "로그인과 상주 등록은 그대로입니다 — 상주 argo가 이어서 실행합니다"
+  else say "다음: $run_cmd  (로그인 — 브라우저가 열립니다)"; fi
   say "업데이트: 설치 명령을 다시 실행   제거: argo uninstall (데이터 ~/.argo는 남습니다)"
 }
 if [ "$(uname -s)" = Darwin ]; then install_macos; exit 0; fi
@@ -310,10 +312,16 @@ SHIM
     [ -z "$IN_PATH" ] || say "PATH에 다른 프로그램의 argo도 있습니다: $IN_PATH — PATH에서 먼저 나오는 쪽이 실행됩니다"
     case ":$PATH:" in *":$SHIM_DIR:"*) ;; *) say "PATH에 $SHIM_DIR 이 없습니다 — ~/.bashrc 등에 추가하세요: export PATH=\"\$PATH:\$HOME/.local/bin\"" ;; esac
   fi
-  say "다음: $RUN_CMD  (로그인 — 서버에 브라우저가 없으면 안내에 나오는 ssh -L 명령을 내 PC에서 먼저 실행)"
-  # 상주(argo service install)는 사용자 서비스다 — linger가 꺼져 있으면 로그아웃하는 순간 꺼지고, user bus가 없는 셸에서는 등록도 못 한다.
-  ensure_linger || say "service install 전에 관리자 권한으로 한 번 실행하세요: sudo loginctl enable-linger $ME  (로그아웃·재부팅 뒤에도 상주가 켜져 있게 합니다)"
-  say "그다음: $RUN_CMD service install  (재부팅에도 켜져 메신저·예약 작업에 에이전트가 답합니다)"
+  if [ "$CLI_ACTIVE" = 1 ]; then
+    # 상주 중이던 설치의 업데이트 — 로그인·service install은 이미 끝났다(VPS 0.1.101 제보). linger가 꺼져 있으면 그것만 알린다.
+    say "로그인과 상주 등록은 그대로입니다 — 상주 argo가 이어서 실행합니다"
+    ensure_linger || say "로그아웃·재부팅 뒤에도 상주가 켜져 있게 하려면 관리자 권한으로 한 번 실행하세요: sudo loginctl enable-linger $ME"
+  else
+    say "다음: $RUN_CMD  (로그인 — 서버에 브라우저가 없으면 안내에 나오는 ssh -L 명령을 내 PC에서 먼저 실행)"
+    # 상주(argo service install)는 사용자 서비스다 — linger가 꺼져 있으면 로그아웃하는 순간 꺼지고, user bus가 없는 셸에서는 등록도 못 한다.
+    ensure_linger || say "service install 전에 관리자 권한으로 한 번 실행하세요: sudo loginctl enable-linger $ME  (로그아웃·재부팅 뒤에도 상주가 켜져 있게 합니다)"
+    say "그다음: $RUN_CMD service install  (재부팅에도 켜져 메신저·예약 작업에 에이전트가 답합니다)"
+  fi
   say "로그인 없는 로컬 웹 서버가 필요하면: 이 스크립트를 --local로 실행"
   exit 0
 fi

@@ -135,6 +135,8 @@ test('A13 argo service install(launchd) 상주 — 교체 전에 멈추고 교�
   assert.equal(r.status, 0, r.stderr + r.stdout);
   assert.equal(await f.launchLog(), 'print 1.0.0\nbootout 1.0.0\nbootstrap 2.0.0\n', '멈춘 뒤 교체하고 새 버전으로 다시 시작');
   assert.match(r.stdout, /새 버전으로 다시 시작/);
+  assert.doesNotMatch(r.stdout, /다음: .*로그인/, '상주 중인 업데이트에는 로그인 안내를 다시 내지 않는다(VPS 0.1.101 제보와 같은 규칙)');
+  assert.match(r.stdout, /이어서 실행/);
   const bad = await fixture(t, { oldApp: true, svc: true }), r2 = bad.run({ CLI_STATUS_FAIL: '1' });
   assert.equal(r2.status, 1);
   assert.equal(await bad.launchLog(), 'print 1.0.0\nbootout 1.0.0\nbootstrap 1.0.0\n', '복구한 이전 앱으로 다시 시작');
@@ -144,7 +146,8 @@ test('A13 argo service install(launchd) 상주 — 교체 전에 멈추고 교�
   assert.equal(await stuck.launchLog(), 'print 1.0.0\nbootout 1.0.0\nprint 1.0.0\nbootstrap 1.0.0\n');
   assert.equal(JSON.parse(await readFile(join(stuck.base, 'app/package.json'), 'utf8')).version, '1.0.0');
   const none = await fixture(t, { oldApp: true });
-  assert.equal(none.run().status, 0); assert.equal(await none.launchLog(), '', '상주가 없으면 launchctl을 부르지 않는다');
+  const rn = none.run(); assert.equal(rn.status, 0); assert.equal(await none.launchLog(), '', '상주가 없으면 launchctl을 부르지 않는다');
+  assert.match(rn.stdout, /다음: .*로그인/, '상주가 없으면 로그인 안내는 그대로');
 });
 
 test('A10 남의 argo는 덮지도 가리지도 않고 직접 실행 명령을 안내, 우리 shim은 갱신', { skip: !available }, async (t) => {
