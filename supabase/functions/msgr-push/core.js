@@ -28,6 +28,41 @@ export function reportPushText({ body, reason, personal }) {
   return { title: personal ? '신고 접수 · 개인 대화' : '신고 접수', body: excerpt.slice(0, 140) || '(내용 없음)' };
 }
 
+/** 결제 미연결 알림(운영자용) — 대상 판정. SQL billing_unmatched_alertable과 같은 규칙(test/billing-alert-pg.test.mjs가 대조).
+ *  연결 실패·대사 불일치 사유이고, 구독 번호가 LS 실번호(숫자)이며, 시험 결제·probe가 아니고, 아직 처리되지 않은 행. */
+export const BILLING_ALERT_REASONS = {
+  'no-user': '결제 이메일과 같은 계정 없음',
+  'duplicate-attribution': '이미 다른 계정에 연결된 구독',
+  'email-account-has-subscription': '그 계정에 다른 유효 구독 있음',
+  'reconcile-ls-pro-not-linked': 'LS는 결제 중인데 Pro가 아님',
+  'reconcile-pro-not-in-ls': 'Pro인데 LS에 유효 구독 없음',
+};
+export function billingAlertable(r) {
+  if (!r || r.resolved_at) return false;
+  if (!Object.hasOwn(BILLING_ALERT_REASONS, String(r.reason ?? ''))) return false;
+  if (!/^[0-9]+$/.test(String(r.ls_subscription_id ?? ''))) return false;
+  if (/(probe|test)/i.test(String(r.event_name ?? ''))) return false;
+  return r.test_mode !== true;
+}
+
+/** 결제 이메일 가리기 — 첫 글자와 도메인만(pay@example.com → p***@example.com). ls-webhook maskEmail과 같은 모양. */
+export function maskEmail(email) {
+  const e = String(email ?? '').trim();
+  const at = e.lastIndexOf('@');
+  if (at < 1) return e ? '***' : '?';
+  return `${e[0]}***${e.slice(at)}`;
+}
+
+/** 결제 미연결 알림 문구 — 구독 번호·가린 이메일·사유만. 이메일 전체·고객 id·포털 주소는 싣지 않는다. */
+export function billingPushText({ reason, ls_subscription_id, user_email }) {
+  const reconcile = String(reason ?? '').startsWith('reconcile-');
+  const label = BILLING_ALERT_REASONS[reason] ?? String(reason ?? '');
+  return {
+    title: reconcile ? '결제 대사 불일치' : '결제 미연결',
+    body: `구독 ${ls_subscription_id} · ${maskEmail(user_email)} · ${label}`.slice(0, 140),
+  };
+}
+
 export function apnsPayload({ title, body, channelId, messageId, sound = 'wood-knock', badge = null }) {
   // sound = 기기가 고른 소리(msgr_push_tokens.sound) → 앱 번들의 <이름>.caf. 번들에 없으면 iOS가 기본음으로 대체한다. badge = 수신자의 안읽음 총계(아이콘 숫자)
   const file = `${String(sound || 'wood-knock').replace(/[^a-z0-9-]/g, '') || 'wood-knock'}.caf`;

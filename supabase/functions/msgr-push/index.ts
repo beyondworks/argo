@@ -3,7 +3,7 @@
 // 재생·위조 호출이 추가 알림을 만들지 못한다(verify_jwt=false, 배포: config.toml [functions.msgr-push]).
 // 비밀은 전부 엣지 시크릿: APNS_KEY_P8(.p8 PEM 본문)·APNS_KEY_ID·APNS_TEAM_ID·APNS_TOPIC(번들 id)·APNS_SANDBOX('1'이면 개발 서버)
 //   ·FCM_SERVICE_ACCOUNT(서비스 계정 JSON 문자열). 없는 플랫폼은 건너뛴다.
-import { apnsJwt, apnsPayload, fcmMessage, googleAssertion, personName, pushText, reportPushText, shouldDropToken } from './core.js';
+import { apnsJwt, apnsPayload, billingAlertable, billingPushText, fcmMessage, googleAssertion, personName, pushText, reportPushText, shouldDropToken } from './core.js';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -113,6 +113,25 @@ async function reportPush(rid: string) {
   return Response.json({ ok: sent === results.length, sent });
 }
 
+// 결제 미연결 → 운영자 기기 푸시(트리거 billing_unmatched_notify, 2026-10-10). 신고 알림과 같은 운영자·토큰·선점 방식.
+// notified_at null→now 선점으로 행당 한 번만. 선점한 뒤에도 대상 규칙(billingAlertable)을 다시 본다 — 트리거 밖에서 온 호출이
+// 시험 결제·처리된 행으로 알림을 만들지 못하게. channel_id 'billing'은 앱이 모르는 값이라 탭하면 앱만 열린다(notif-nav invalid → 조용히 버림).
+async function billingPush(bid: number) {
+  const claimed = await rest(`billing_unmatched?id=eq.${bid}&notified_at=is.null&select=*`,
+    { method: 'PATCH', headers: { Prefer: 'return=representation' }, body: JSON.stringify({ notified_at: new Date(Date.now()).toISOString() }) });
+  const b = claimed?.[0]; if (!b) return Response.json({ ok: true, dup: true });
+  if (!billingAlertable(b)) return Response.json({ ok: true, sent: 0, skip: 'not-alertable' });
+  const ops: string[] = ((await rest(`msgr_report_operators?select=user_id`)) ?? []).map((o: { user_id: string }) => o.user_id);
+  if (!ops.length) return Response.json({ ok: true, sent: 0 });
+  const toks: { token: string; platform: string; user_id: string; sound?: string }[] = await rest(`msgr_push_tokens?user_id=in.(${ops.join(',')})&select=token,platform,user_id,sound`);
+  const text = billingPushText(b);
+  const results = await Promise.all(toks.map((t) => sendOne(t, text, 'billing', 0, `billing-${bid}`).catch((e) => `err ${String(e?.message ?? e).slice(0, 120)}`)));
+  const sent = results.filter((x) => x === 'ok').length;
+  // 로그에는 행 번호·사유·토큰 수만 — 이메일은 남기지 않는다
+  console.log(`[msgr-push] billing ${bid} ${b.reason} → ${toks.length} operator tokens, sent ${sent}`, results.filter((x) => x !== 'ok'));
+  return Response.json({ ok: sent === results.length, sent });
+}
+
 // 보안 감사 HIGH-1(2026-09-14): 이 함수는 verify_jwt=false 공개 엔드포인트였다 → 트리거(pg_net)가 msgr_settings.push_secret 을
 // Authorization: Bearer 로 싣고, 여기서 PUSH_FN_SECRET 과 상수시간 비교한다. 시크릿이 아직 없으면(점진 도입) 예전처럼 통과.
 const enc = new TextEncoder();
@@ -124,10 +143,14 @@ Deno.serve(async (req: Request) => {
   if (req.method !== 'POST') return new Response('method', { status: 405 });
   const secret = Deno.env.get('PUSH_FN_SECRET');
   if (secret && !(await sameSecret(req.headers.get('authorization') ?? '', `Bearer ${secret}`))) return new Response('unauthorized', { status: 401 });
-  let id: number; let body: { message_id?: unknown; badge_user?: unknown; report_id?: unknown };
+  let id: number; let body: { message_id?: unknown; badge_user?: unknown; report_id?: unknown; billing_unmatched_id?: unknown };
   try { body = await req.json(); } catch { return new Response('bad json', { status: 400 }); }
   if (typeof body?.badge_user === 'string' && /^[0-9a-f-]{36}$/i.test(body.badge_user)) return badgeOnly(body.badge_user);
   if (typeof body?.report_id === 'string' && /^[0-9a-f-]{36}$/i.test(body.report_id)) return reportPush(body.report_id);
+  if (body?.billing_unmatched_id !== undefined) {
+    const bid = Number(body.billing_unmatched_id);
+    return Number.isInteger(bid) && bid > 0 ? billingPush(bid) : new Response('bad billing_unmatched_id', { status: 400 });
+  }
   id = Number(body?.message_id);
   if (!Number.isInteger(id) || id <= 0) return new Response('bad message_id', { status: 400 });
   // 메시지당 한 번 — 먼저 표를 잡는다(경합·재생 방지)
