@@ -107,7 +107,10 @@ test('개인 공간 줄 — 에이전트마다 개인 행 상태(연결·멈춤+
   const st = { signedIn: true, orgs: [], ...splitCardRows([row({ id: '1', org_id: null, slug: 'a' }), row({ id: '2', org_id: null, slug: 'b', status: 'paused' }), row({ id: '3', org_id: null, slug: 'c', status: 'available' }), row({ id: '9', org_id: 'o1', slug: 'd', status: 'paused' })]), pauseReason: 'limit' };
   const v = personalCardView({ st, agents });
   assert.deepEqual(v.rows.map((r) => [r.slug, r.labelKey]), [['a', 'settings.msgr.connection.personal'], ['b', 'settings.msgr.paused.limit'], ['c', 'settings.msgr.notRegistered'], ['d', 'settings.msgr.notInMessenger']], '조직 행(d)은 개인 줄에 쓰지 않는다');
-  assert.deepEqual(v.missing, ['b', 'c']); assert.equal(v.connected, 1); assert.equal(v.show, true);
+  assert.deepEqual(v.missing, ['b'], '연결할 것은 멈춘 행만 — 메신저에서 사람이 해제한(available) c는 묶지 않는다(재검수 LOW-1: 다시 켜지며 다른 에이전트를 교체)');
+  assert.equal(v.connected, 1); assert.equal(v.show, true);
+  assert.equal(personalCardView({ st: { ...st, pauseReason: null }, agents }).show, false, 'Pro(이유 없음)는 종전 카드 그대로(재검수 LOW-2)');
+  assert.equal(personalCardView({ st: { signedIn: true, orgs: [], pauseReason: 'limit', ...splitCardRows([row({ org_id: null, slug: 'a' }), row({ id: '3', org_id: null, slug: 'c', status: 'available' })]) }, agents }).show, false, '해제한 행만 있으면 영역 없음');
   const all = personalCardView({ st: { signedIn: true, orgs: [], ...splitCardRows([row({ org_id: null, slug: 'a' })]) }, agents: [{ slug: 'a' }] });
   assert.equal(all.show, false, '다 연결돼 있으면(Pro·4명 이하) 종전 카드 그대로');
   assert.equal(personalCardView({ st: { ...st, orgs: [{ id: 'o1' }] }, agents }).show, false, '조직이 있으면 조직 줄을 쓴다(그대로)');

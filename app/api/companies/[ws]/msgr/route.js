@@ -131,7 +131,7 @@ export async function POST(req, { params }) {
     const { data, error } = await c.client.rpc('msgr_free_swap_preview', { p_ws: ws, p_slugs: known });
     return Response.json({ ok: true, victims: error ? [] : [...new Set((data ?? []).filter(Boolean))] });
   }
-  // 개인 공간 연결(조직이 없는 사용자 — 검수 스택 화면 4차): 게이트웨이(미러)가 넣은 개인 행 중 멈춤·해제 행을 사람의 연결(→active)로 — 관문·sweep·교체 안내가
+  // 개인 공간 연결(조직이 없는 사용자 — 검수 스택 화면 4차): 게이트웨이(미러)가 넣은 개인 행 중 멈춘 행을 사람의 연결(→active)로 — 관문·sweep·교체 안내가
   //   조직 행과 같은 길(PG 시험 [4차]). 행을 새로 넣지 않는다(개인 행은 미러가 만든다). 상태만 바꿔 허용 범위·이름은 그대로.
   if (activate && personal) {
     if (!wanted.length) return apiError('msgr_bad_request', lang);
@@ -143,7 +143,7 @@ export async function POST(req, { params }) {
     if ((info?.reason === 'app' || info?.reason === 'off') && appMeetsMin(info.min_app)) await beatNow(c, ws).catch((e) => console.warn('[argo] msgr 새 앱 심박 실패:', e?.message ?? e));
     const mine = (rows) => rows.filter((r) => wanted.includes(r.slug));
     for (const r of mine(await myPersonalRows(c, ws))) {
-      if (!['paused', 'available'].includes(r.status)) continue;
+      if (r.status !== 'paused') continue; // 멈춘 행만 — 메신저에서 사람이 해제한(available) 개인 에이전트는 그 사람이 다시 켠다(재검수 LOW-1: 묶어 켜면 다른 에이전트를 교체)
       const { error } = await c.client.from('msgr_crews').update({ status: 'active' }).eq('id', r.id);
       if (error) return upstream('POST personal activate', error, lang);
     }

@@ -94,7 +94,8 @@ test('⑧ 검수 스택 화면 4차 — 개인 공간 연결(조직 없음)·교
   assert.ok(per.length > 0, '개인 공간 연결 갈래');
   assert.doesNotMatch(per, /\.insert\(/, '개인 행은 미러(게이트웨이)가 만든다 — 여기서 넣지 않는다');
   assert.match(per, /\.update\(\{ status: 'active' \}\)/, '상태만 바꾼다(허용 범위·이름 보존)');
-  assert.match(per, /\['paused', 'available'\]\.includes\(r\.status\)/, '멈춤·해제 행만');
+  assert.match(per, /if \(r\.status !== 'paused'\) continue;/, '멈춘 행만 — 사람이 해제한(available) 개인 에이전트를 다시 켜지 않는다(재검수 LOW-1)');
+  assert.doesNotMatch(per, /'available'/);
   assert.match(route, /async function myPersonalRows\(c, ws\)[\s\S]{0,400}\.is\('org_id', null\)/, '개인 행 = org_id NULL');
   assert.match(route, /if \(preview\) \{[\s\S]{0,600}rpc\('msgr_free_swap_preview', \{ p_ws: ws, p_slugs: known \}\)/, '미리 알림은 서버가 관문과 같은 순서로');
   const page = readFileSync(new URL('../app/c/[ws]/settings/page.jsx', import.meta.url), 'utf8');

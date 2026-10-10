@@ -619,6 +619,9 @@ test('[4차] 교체 미리 알림 — 여러 개를 고르면 필요한 수만�
   asUser(T, `update public.msgr_crews set status = 'active' where id in ('${t.t4}', '${t.t5}')`); // 실제로 둘 연결
   assert.equal(slugsOf(T, 'active'), 't1,t2,t4,t5', '미리 알린 대로 t3만 멈춘다');
   assert.equal(preview(T, WS, ['t1', 't3']), 't2', '고른 에이전트는 후보에서 뺀다 — 이미 연결된 t1이 순서상 첫 후보(대화가 가장 오래됨)여도 건너뛰고 t2');
-  assert.equal(preview(P, WS, ['p1']), '', 'Pro는 교체가 없다');
+  for (const s of ['p3', 'p4', 'p5']) insOff(P, null, s); insOff(P, null, 'p6', 'paused'); // Pro도 연결 4명 이상 + 새 앱 켜짐 — Pro 확인이 빠지면 이름이 나오는 상태(재검수 LOW-3)
+  sql(`insert into public.msgr_device_beats (owner_user_id, ws_id, device_id, slugs, app_version, app_seen_at) values ('${P}', '${WS}', 'p-mac', array['p1'], '${NEW}', now())`);
+  assert.ok(Number(sql(`select count(distinct slug) from public.msgr_crews where owner_user_id = '${P}' and status = 'active'`)) >= 4);
+  assert.equal(preview(P, WS, ['p6']), '', 'Pro는 교체가 없다');
   fails(psqlRaw(['-A', '-t', '-c', `set role anon; select public.msgr_free_swap_preview('${WS}', array['t1'])`]), /permission denied/, '익명 미리 알림');
 });
