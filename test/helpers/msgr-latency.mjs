@@ -7,19 +7,19 @@
 // realtime-js처럼 스스로 다시 붙지 않는다(disconnect → connect를 불러야 붙는다 — 2026-10-10 실측).
 
 export const KINDS = ['공개 채널', '비공개 방', 'DM', '개인 공간', '에이전트 1:1', '결재', '크루 요청', '중단'];
-export const STATES = ['정상 연결', '새 조직 직후', '재개 직후', '토큰 회전 직후', '끊김 중', '끊김→복구 직후'];
+export const STATES = ['정상 연결', '새 조직 직후', '재개 직후', '토큰 회전 직후', '끊김 중', '끊김→복구 직후', '소켓이 응답 없이 죽음'];
 const UID = '11111111-1111-4111-8111-111111111111';
 const ORG = 'aaaaaaaa-0000-4000-8000-000000000001', ORG2 = 'aaaaaaaa-0000-4000-8000-000000000002';
 const crewRow = (n, org, slug) => ({ id: `cccccccc-0000-4000-8000-00000000000${n}`, org_id: org, slug, display_name: slug, role_text: null, allow: 'all', allow_users: [], cursor_msg_id: 0, hosting: 'local', status: 'active' });
 const POLL = 15_000;
 
 /** 한 칸 — 걸린 시간(ms). M = msgr 모듈, mock = node:test mock, ws = 이미 만든 회사(카드 'c1' 있음), serverWakes = 서버가 crew_sync를 보내나 */
-export async function latencyCell(M, { kind, state, offset, mock, ws, serverWakes = true }) {
+export async function latencyCell(M, { kind, state, offset, mock, ws, serverWakes = true, deathShift = 5_000 }) {
   const CREW = crewRow(1, ORG, 'c1'), CREW2 = crewRow(2, ORG2, 'c1');
   const S = { up: true, members: [ORG], rows: [CREW], active: new Set([CREW.id]), inbox: [], seen: new Map(), stopSeen: null, drains: [], nextId: 100, clients: [] };
   const crews = () => S.rows.filter((r) => S.active.has(r.id));
   const now = () => Date.now();
-  const deliver = (topic, event, payload = {}) => { for (const cl of S.clients) for (const ch of cl.chans) if (ch.topic === topic && ch.state === 'joined') ch.handlers[event]?.({ payload }); };
+  const deliver = (topic, event, payload = {}) => { if (S.silentAt != null) return; for (const cl of S.clients) for (const ch of cl.chans) if (ch.topic === topic && ch.state === 'joined') ch.handlers[event]?.({ payload }); };
   const wakeOwner = () => { if (serverWakes) deliver(`u:${UID}`, 'crew_sync'); };
   const impl = {
     myCrews: async () => { S.drains.push(now()); return crews(); },
@@ -50,16 +50,20 @@ export async function latencyCell(M, { kind, state, offset, mock, ws, serverWake
   let client = newClient();
   const stop = M.startMsgrBridge(ws, { session: async () => ({ uid: UID, db, client }), pollMs: POLL, runnerReady: null, localState: async () => 'L0' });
   const settle = async () => { for (let i = 0; i < 12; i++) { await new Promise((r) => setTimeout(r, 8)); await new Promise((r) => setImmediate(r)); } };
-  const tick = async (ms, unit = 1000) => { for (let t = 0; t < ms;) { const step = Math.min(unit, ms - t); mock.timers.tick(step); t += step; await settle(); } };
+  // 응답 없이 죽은 소켓: 방송이 오지 않고 콜백도 없다. realtime-js(@supabase/phoenix)는 하트비트를 보내고 다음 간격 안에 답이 없으면 채널마다 CHANNEL_ERROR —
+  // 가장 나쁜 경우(정상 응답 바로 뒤에 죽음) 하트비트 간격 × 2 뒤. 간격은 그 모듈이 클라이언트에 주는 값(RT_HEARTBEAT_MS, 없으면 realtime-js 기본 25초)
+  const hbMs = M.RT_HEARTBEAT_MS ?? 25_000;
+  const down = () => { S.up = false; for (const cl of S.clients) { cl.sockUp = false; for (const ch of cl.chans) if (ch.state === 'joined' || ch.state === 'joining') { ch.state = 'errored'; ch.cb?.('CHANNEL_ERROR'); } } };
+  const tick = async (ms, unit = 1000) => { for (let t = 0; t < ms;) { const step = Math.min(unit, ms - t); mock.timers.tick(step); t += step; if (S.silentAt != null && !S.silentSeen && now() >= S.silentAt + 2 * hbMs) { S.silentSeen = true; down(); } await settle(); } };
   try {
     for (let i = 0; i < 400 && !client.chans.some((c) => c.topic === `u:${UID}`); i++) await new Promise((r) => setTimeout(r, 25));
     await settle(); await tick(60_000, POLL); // 시작·구독·쉬는 주기 진입
-    const down = () => { S.up = false; for (const cl of S.clients) { cl.sockUp = false; for (const ch of cl.chans) if (ch.state === 'joined' || ch.state === 'joining') { ch.state = 'errored'; ch.cb?.('CHANNEL_ERROR'); } } };
     let target = { crew: CREW.id, org: ORG };
     if (state === '새 조직 직후') { S.members = [ORG, ORG2]; wakeOwner(); target = { crew: CREW2.id, org: ORG2 }; await tick(1_000); } // 초대 수락 → 미러가 새 조직에 파견해야 받는다
     else if (state === '재개 직후') { S.rows.push(CREW2); await tick(0); S.active.add(CREW2.id); wakeOwner(); target = { crew: CREW2.id, org: ORG2 }; await tick(1_000); } // paused → active(서버)
     else if (state === '토큰 회전 직후') { for (const ch of client.chans) ch.state = 'closed'; client = newClient(); await tick(1_000); }
     else if (state === '끊김 중') { down(); await tick(5_000); }
+    else if (state === '소켓이 응답 없이 죽음') { await tick(deathShift); S.silentAt = now(); } // 15초 틱 사이 어디서 죽는지(기본 틱 5초 뒤) // 서버 멈춤(docker pause) — 끊김을 안 뒤에도 다시 붙지 못한다(down이 S.up을 내린다)
     else if (state === '끊김→복구 직후') { down(); await tick(45_000, POLL); S.up = true; await tick(1_000); }
     await tick(offset);
     const t0 = now(); const id = S.nextId++;

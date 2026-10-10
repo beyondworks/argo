@@ -612,15 +612,25 @@ export function makeDb(client) {
 
 /* ─── 세션 클라이언트 — 기기 세션 JWT(회전은 devicesession이 담당). 토큰이 바뀌면 재생성(sync.mjs ensureClient 관례). ─── */
 let cached = null; // { key, client, db, uid }
+/** Realtime 하트비트 간격(유건 10/11 "어떤 경우에도 지금보다 답이 늦으면 안 된다", #943). realtime-js(@supabase/phoenix 0.4.4)는 하트비트를 보내고
+    다음 간격 안에 답이 없으면 연결을 끊고 채널마다 CHANNEL_ERROR를 낸다 — 응답 없이 죽은 소켓을 아는 데 최대 간격 × 2. 기본 25초면 최대 50초라
+    그 사이 온 글이 종전 15초 조회보다 늦었다. 7.5초면 최대 15초 — 게이트웨이는 끊김을 본 순간 받은 글을 한 번 보고 15초 조회로 내려간다.
+    하트비트·응답은 Phoenix 제어 프레임이라 Realtime 메시지 수에 들지 않는다(Realtime Egress만 — 연결 하나에 하루 약 1MB 이하, 계산). */
+export const RT_HEARTBEAT_MS = 7_500;
+/** sessionClient가 만드는 Supabase 클라이언트 옵션(시험이 같은 옵션으로 실제 realtime-js를 돌린다) */
+export function msgrClientOptions(accessToken) {
+  return {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+    realtime: { heartbeatIntervalMs: RT_HEARTBEAT_MS },
+  };
+}
 export async function sessionClient() {
   const sess = await getFreshDeviceSession();
   if (!sess) return null;
   const key = sess.access_token.slice(-24);
   if (cached?.key !== key) {
-    const client = createClient(sess.url, sess.anonKey, {
-      auth: { persistSession: false, autoRefreshToken: false },
-      global: { headers: { Authorization: `Bearer ${sess.access_token}` } },
-    });
+    const client = createClient(sess.url, sess.anonKey, msgrClientOptions(sess.access_token));
     try { await client.realtime.setAuth(sess.access_token); } catch { /* realtime 미가용 — 폴만으로도 완결 */ }
     cached = { key, client, db: makeDb(client), uid: sess.user.id };
   }

@@ -1,6 +1,7 @@
 // 게이트 B(#943, 유건 10/11 "어떤 경우에도 지금보다 답이 늦으면 안 된다") — 글 종류 8 × 상태 6마다 "생긴 때 → 게이트웨이가 처음 읽은 때"를 가짜 시계로 잰다.
 // 종전(main) 게이트웨이는 15초마다 조회하므로 방송이 닿지 않는 칸도 최대 15초(새 조직·재개는 미러·목록 두 틱이라 더 길다 — PR 본문 비교표).
-// 잠그는 것: 방송이 닿는 칸은 즉시(0ms), 닿지 않는 칸(토큰 회전·끊김)도 15초 이내 — 쉬는 주기(2분)로 밀리는 칸이 하나도 없다.
+// 잠그는 것: 방송이 닿는 칸은 즉시(0ms), 닿지 않는 칸(토큰 회전·끊김·소켓이 응답 없이 죽음)도 15초 이내 — 쉬는 주기(2분)로 밀리는 칸이 하나도 없다.
+// 응답 없이 죽은 소켓은 realtime-js 하트비트(RT_HEARTBEAT_MS 7.5초 × 2) 안에 끊김을 알고 그 순간 받은 글을 본다(test/msgr-realtime-heartbeat.test.mjs가 실제 realtime-js로 잰다).
 // 같은 시나리오를 main 사본에 돌린 나란히 비교는 PR 본문(test/helpers/msgr-latency.mjs의 latencyCell을 두 모듈에).
 import { test, mock, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
