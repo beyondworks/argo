@@ -53,3 +53,57 @@ test('cli.json — 이미 느슨한 권한(0644)으로 있던 파일도 쓰면 0
   writeConfig({ ws: 'x' }, env);
   if (process.platform !== 'win32') assert.equal(statSync(join(home, 'cli.json')).mode & 0o777, 0o600); // win32: POSIX 모드 미지원
 });
+
+// ─── 리눅스 사용자 서비스 등록 — linger·user bus(헤드리스 서버 VPS 0.1.100 제보, 2026-10-10) ───
+import { installLinuxUserService, userBusEnv } from '../src/cli/service.mjs';
+// 가짜 loginctl·systemctl — linger: 처음 상태, allow: enable-linger 권한, bus: 이 env로 사용자 systemd에 닿는가
+function fakeHost({ linger = false, allow = false, bus = (env) => !!env.XDG_RUNTIME_DIR, busFile = false } = {}) {
+  const calls = [];
+  const state = { linger };
+  const sh = (cmd, args, opts = {}) => {
+    calls.push({ cmd, args, env: opts.env });
+    if (cmd === 'loginctl' && args.includes('show-user')) return { status: 0, stdout: `Linger=${state.linger ? 'yes' : 'no'}\n` };
+    if (cmd === 'loginctl' && args.includes('enable-linger')) { if (allow) { state.linger = true; return { status: 0 }; } return { status: 1, stderr: 'Access denied' }; }
+    if (cmd === 'systemctl') return { status: bus(opts.env ?? {}) ? 0 : 1, stderr: 'Failed to connect to bus: No such file or directory' };
+    return { status: 0 };
+  };
+  const exists = (p) => (typeof busFile === 'function' ? busFile(state) : busFile) && p === '/run/user/1001/bus';
+  return { sh, exists, calls, state, sleep: () => {} };
+}
+const run = (h, env = {}) => installLinuxUserService({ user: 'crew', uid: 1001, env, sh: h.sh, exists: h.exists, sleep: h.sleep });
+
+test('service install(리눅스) — linger가 꺼져 있고 켤 권한이 없으며 user bus도 없으면 등록하지 않고 needLinger로 알린다', () => {
+  const h = fakeHost();
+  const r = run(h);
+  assert.deepEqual(r, { ok: false, linger: false });
+  const enable = h.calls.find((c) => c.args.includes('enable-linger'));
+  assert.deepEqual(enable.args, ['--no-ask-password', 'enable-linger', 'crew'], '암호를 묻는 창 없이 한 번 켜 본다');
+  assert.ok(!h.calls.some((c) => c.cmd === 'sudo'), 'sudo는 부르지 않는다');
+  assert.ok(!h.calls.some((c) => c.args.includes('restart')), '등록·시작은 하지 않는다');
+});
+test('service install(리눅스) — su로 바꾼 셸(XDG_RUNTIME_DIR 없음)이라도 linger가 켜져 있어 /run/user/<uid>/bus가 있으면 그 bus로 등록한다', () => {
+  const h = fakeHost({ linger: true, busFile: true });
+  const r = run(h, { PATH: '/usr/bin' });
+  assert.deepEqual(r, { ok: true, linger: true });
+  const restart = h.calls.find((c) => c.args.includes('restart'));
+  assert.equal(restart.env.XDG_RUNTIME_DIR, '/run/user/1001');
+  assert.ok(!h.calls.some((c) => c.args.includes('enable-linger')), '이미 켜져 있으면 다시 켜지 않는다');
+});
+test('service install(리눅스) — 권한이 있어 linger를 방금 켰으면 사용자 systemd가 뜰 때까지 잠깐 기다려 등록한다', () => {
+  let polls = 0;
+  const h = fakeHost({ allow: true, busFile: (s) => s.linger && ++polls > 3 }); // 켠 뒤 몇 번 확인해야 bus가 생긴다
+  const r = run(h);
+  assert.deepEqual(r, { ok: true, linger: true });
+  assert.ok(h.calls.some((c) => c.args.includes('restart')));
+});
+test('service install(리눅스) — linger가 꺼져 있어도 지금 셸에 user bus가 있으면 등록하고, 결과에 linger 꺼짐을 남긴다(안내용)', () => {
+  const h = fakeHost({ bus: () => true });
+  assert.deepEqual(run(h, { XDG_RUNTIME_DIR: '/run/user/1001' }), { ok: true, linger: false });
+});
+test('userBusEnv — 이미 bus 주소가 있으면 그대로, 없을 때만 /run/user/<uid>를 채운다', () => {
+  const env = { XDG_RUNTIME_DIR: '/custom' };
+  assert.equal(userBusEnv(env, 5, () => true), env);
+  assert.deepEqual(userBusEnv({}, 5, (p) => p === '/run/user/5/bus'), { XDG_RUNTIME_DIR: '/run/user/5' });
+  assert.deepEqual(userBusEnv({}, 5, () => false), {});
+  assert.deepEqual(userBusEnv({}, 5, (p) => p === '/run/user/5/systemd/private'), { XDG_RUNTIME_DIR: '/run/user/5' }, 'dbus-user-session이 없는 서버도 systemd 개인 소켓으로 닿는다(컨테이너 실측)');
+});

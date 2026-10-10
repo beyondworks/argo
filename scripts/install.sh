@@ -188,8 +188,19 @@ UNIT="$UNIT_DIR/argo.service"
 HAD_APP=0; HAD_UNIT=0; WAS_ACTIVE=0; WAS_ENABLED=0; CHANGED=0; SUCCESS=0; CLI_ACTIVE=0
 [ ! -d "$APP_DIR" ] || HAD_APP=1
 if [ -f "$UNIT" ]; then cp -p "$UNIT" "$TMP/argo.service.old"; HAD_UNIT=1; fi
-systemctl --user is-active --quiet argo.service && WAS_ACTIVE=1
-systemctl --user is-enabled --quiet argo.service && WAS_ENABLED=1
+ME=$(id -un)
+# 사용자 systemd(user bus) — 헤드리스 서버에서 linger가 꺼져 있거나 su·sudo로 바꾼 셸이면 없다. 없으면 상주 확인을 건너뛴다
+# (없는 bus에는 돌고 있는 상주도 없다). 그대로 부르면 "Failed to connect to bus"가 줄마다 찍혀 설치 실패처럼 보였다(VPS 실측 2026-10-10).
+# su·sudo로 바꾼 셸에는 XDG_RUNTIME_DIR이 없다 — linger로 떠 있는 사용자 systemd가 있으면 그 자리를 쓴다(argo service install과 같은 규칙, src/cli/service.mjs userBusEnv).
+if [ -z "${XDG_RUNTIME_DIR:-}" ] && [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] && { [ -S "/run/user/$(id -u)/bus" ] || [ -S "/run/user/$(id -u)/systemd/private" ]; }; then export XDG_RUNTIME_DIR="/run/user/$(id -u)"; fi
+USER_BUS=0; systemctl --user show-environment >/dev/null 2>&1 && USER_BUS=1
+usys() { [ "$USER_BUS" = 1 ] && systemctl --user "$@"; }
+# linger — 로그아웃·재부팅 뒤에도 사용자 서비스를 유지한다. 권한이 있으면 켜고(암호를 묻지 않는다), 없으면 관리자 명령을 한 줄로 안내한다.
+# 루트 권한을 몰래 요구하지 않는다 — sudo는 부르지 않는다. 로컬·계정 모드가 같이 쓴다.
+linger_on() { loginctl show-user "$ME" --property=Linger 2>/dev/null | grep -qx 'Linger=yes'; }
+ensure_linger() { linger_on || { loginctl --no-ask-password enable-linger "$ME" >/dev/null 2>&1 && linger_on && say "linger를 켰습니다 — 로그아웃·재부팅 뒤에도 이 계정($ME)의 사용자 서비스가 켜져 있습니다"; }; }
+usys is-active --quiet argo.service && WAS_ACTIVE=1
+usys is-enabled --quiet argo.service && WAS_ENABLED=1
 # 이미 로컬 웹 서버를 쓰던 서버는 그대로 로컬로 업데이트한다 — 업데이트가 기존 사용 방식을 바꾸지 않게
 if [ "$HAD_UNIT" = 1 ] && [ "$LOCAL" = 0 ]; then LOCAL=1; say "기존 로컬 웹 서버가 있어 로컬 모드로 업데이트합니다(argo 명령 계정 모드는 설치하지 않습니다)"; fi
 health() {
@@ -202,17 +213,17 @@ cleanup() {
   trap - EXIT
   if [ "$CHANGED" = 1 ] && [ "$SUCCESS" = 0 ]; then
     say "새 서버 검증 실패 — 이전 설치를 복구합니다"
-    systemctl --user stop argo.service || true
+    usys stop argo.service || true
     if [ -d "$TMP/previous-app" ] || [ "$HAD_APP" = 0 ]; then
       if [ -d "$APP_DIR" ]; then mv "$APP_DIR" "$TMP/failed-app"; fi
       if [ "$HAD_APP" = 1 ]; then mv "$TMP/previous-app" "$APP_DIR"; fi
     fi
-    if [ "$CLI_ACTIVE" = 1 ]; then systemctl --user start argo-cli.service || true; fi # 계정 모드 교체 전에 멈춘 상주 argo를 이전 앱으로 되살린다
+    if [ "$CLI_ACTIVE" = 1 ]; then usys start argo-cli.service || true; fi # 계정 모드 교체 전에 멈춘 상주 argo를 이전 앱으로 되살린다
     if [ "$HAD_UNIT" = 1 ]; then cp -p "$TMP/argo.service.old" "$UNIT"; else rm -f "$UNIT"; fi
-    if [ "$WAS_ENABLED" = 0 ]; then systemctl --user disable argo.service >/dev/null 2>&1 || true; fi
-    systemctl --user daemon-reload || true
+    if [ "$WAS_ENABLED" = 0 ]; then usys disable argo.service >/dev/null 2>&1 || true; fi
+    usys daemon-reload || true
     if [ "$WAS_ACTIVE" = 1 ]; then
-      systemctl --user start argo.service || true
+      usys start argo.service || true
       restored=0
       for i in $(seq 1 20); do
         if health "$OLD_VERSION" "$OLD_BUILD"; then restored=1; break; fi
@@ -243,7 +254,7 @@ EXPECTED_BUILD=$(cat "$CANDIDATE/.next/BUILD_ID")
 if [ "$LOCAL" = 0 ]; then
   [ "$NODE_MAJOR" -ge 22 ] || die "argo 명령은 Node.js 22 이상이 필요합니다(기억 색인이 내장 SQLite를 쓴다) — 현재: $(node -v)"
   [ -f "$CANDIDATE/bin/argo.mjs" ] || die "타르볼에 argo 명령이 없습니다(argo-server/bin/argo.mjs 부재) — 이 릴리스는 --local로만 설치할 수 있습니다"
-  systemctl --user is-active --quiet argo-cli.service && CLI_ACTIVE=1
+  usys is-active --quiet argo-cli.service && CLI_ACTIVE=1
   # 상주 중인 CLI가 답하는 중이면 교체하지 않는다(로컬 흐름과 같은 규칙 — 실행 중 턴을 죽이지 않는다)
   node - "${ARGO_CLI_HOME:-$HOME/.argo}/cli-workspaces" <<'NODE'
 const fs = require('fs'), path = require('path');
@@ -300,11 +311,26 @@ SHIM
     case ":$PATH:" in *":$SHIM_DIR:"*) ;; *) say "PATH에 $SHIM_DIR 이 없습니다 — ~/.bashrc 등에 추가하세요: export PATH=\"\$PATH:\$HOME/.local/bin\"" ;; esac
   fi
   say "다음: $RUN_CMD  (로그인 — 서버에 브라우저가 없으면 안내에 나오는 ssh -L 명령을 내 PC에서 먼저 실행)"
+  # 상주(argo service install)는 사용자 서비스다 — linger가 꺼져 있으면 로그아웃하는 순간 꺼지고, user bus가 없는 셸에서는 등록도 못 한다.
+  ensure_linger || say "service install 전에 관리자 권한으로 한 번 실행하세요: sudo loginctl enable-linger $ME  (로그아웃·재부팅 뒤에도 상주가 켜져 있게 합니다)"
   say "그다음: $RUN_CMD service install  (재부팅에도 켜져 메신저·예약 작업에 에이전트가 답합니다)"
   say "로그인 없는 로컬 웹 서버가 필요하면: 이 스크립트를 --local로 실행"
   exit 0
 fi
 
+# 로컬 모드는 사용자 서비스로 돈다 — user bus가 없으면 아무것도 바꾸기 전에 멈춘다(교체 뒤 daemon-reload에서 실패하면 잡음과 복구만 남는다).
+if [ "$USER_BUS" = 0 ]; then
+  ensure_linger || die "사용자 systemd에 연결하지 못했습니다. 관리자 권한으로 sudo loginctl enable-linger $ME 를 한 번 실행한 뒤, 이 계정($ME)으로 SSH에 직접 로그인한 셸에서 다시 설치하세요"
+  # 방금 linger를 켰으면 logind가 사용자 systemd를 띄우는 데 잠깐 걸린다 — 최대 5초 다시 본다(argo service install과 같은 규칙)
+  for i in $(seq 1 10); do
+    if [ -z "${XDG_RUNTIME_DIR:-}" ] && { [ -S "/run/user/$(id -u)/bus" ] || [ -S "/run/user/$(id -u)/systemd/private" ]; }; then export XDG_RUNTIME_DIR="/run/user/$(id -u)"; fi
+    if systemctl --user show-environment >/dev/null 2>&1; then USER_BUS=1; break; fi
+    sleep 0.5
+  done
+fi
+if [ "$USER_BUS" = 0 ]; then
+  die "사용자 systemd에 연결하지 못했습니다. 이 계정($ME)으로 SSH에 직접 로그인한 셸에서 다시 설치하세요(su·sudo로 바꾼 셸이면 export XDG_RUNTIME_DIR=/run/user/\$(id -u) 뒤 다시 실행)"
+fi
 # 로컬 런타임 설정은 그대로 복사하며 값은 출력하지 않는다.
 for name in .env .env.local .env.production .env.production.local; do
   if [ -f "$APP_DIR/$name" ]; then cp -p "$APP_DIR/$name" "$CANDIDATE/$name"; fi
@@ -388,8 +414,7 @@ say "기동 검증 중…"
 for i in $(seq 1 20); do
   if health "$EXPECTED_VERSION" "$EXPECTED_BUILD"; then
     SUCCESS=1
-    ME=$(id -un)
-    loginctl enable-linger "$ME" 2>/dev/null || say "linger 설정 실패 — 로그아웃 중에도 돌리려면 sudo loginctl enable-linger $ME"
+    ensure_linger || say "linger 설정 실패 — 로그아웃 중에도 돌리려면 sudo loginctl enable-linger $ME"
     say "설치 완료 — http://127.0.0.1:$PORT (버전: $EXPECTED_VERSION)"
     say "원격에서 쓰려면: ssh -L $PORT:127.0.0.1:$PORT $ME@이서버"
     say "업데이트: 이 스크립트 재실행. 로그: journalctl --user -u argo -f"
