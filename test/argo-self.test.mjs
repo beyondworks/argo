@@ -148,7 +148,7 @@ test('권한 표 — 주인 1:1(서버 판정 direct)이면 바로 바꾸고 이
   assert.equal(await morning(ws), '07:00', '실제 저장(설정 화면과 같은 봉인 쓰기)');
   assert.match(out, /바꿨다 — 하트비트 아침 정리 시각\(= 조용한 시간 끝\): 08:00 → 07:00/);
   assert.match(out, /되돌리는 법: "08:00\(으\)로 되돌려 줘"/);
-  assert.match(out, /에이전트 카드 → 하트비트 탭 → 조용한 시간 끝/);
+  assert.match(out, /루틴 → 내 하트비트 → 언제 알려 줄까요 → 아침 정리/, '관리 화면 = 루틴 → 내 하트비트(유건 10/10)');
   assert.equal((await pendingSettings(ws)).length, 0);
   const same = await handlers(ws, { direct: true }).call('argo_settings', { action: 'set', key: 'assistant.morning', value: '07:00' });
   assert.match(same, /이미 07:00\(으\)로 되어 있다 — 바꾸지 않았다/, '같은 값이면 쓰지 않는다(쓰기 0)');
@@ -212,6 +212,43 @@ test('손님(주인이 아닌 사람) — 주인의 상태는 읽지 않는다, 
   const list = await h.call('argo_settings', { action: 'list' });
   assert.doesNotMatch(list, /지금: 08:00/, '주인의 설정 값도 보여 주지 않는다');
   assert.match(list, /assistant\.morning — 하트비트 아침 정리 시각/, '키와 화면 위치는 안내한다');
+});
+
+test('확인 주기(assistant.interval) — 주인 1:1이면 바로(이전 → 새 값·화면 위치), 10분 미만·목록 밖은 거절, 같은 값은 쓰지 않는다', async () => {
+  const ws = await company('as-interval-direct');
+  const interval = async () => (await assistantSettingsView(ws)).config.intervalMinutes;
+  assert.equal(await interval(), 15, '기본 15분');
+  const h = handlers(ws, { direct: true });
+  const out = await h.call('argo_settings', { action: 'set', key: 'assistant.interval', value: '30' });
+  assert.equal(await interval(), 30, '실제 저장(설정 화면과 같은 봉인 쓰기)');
+  assert.match(out, /하트비트 확인 주기\(몇 분마다 일정을 확인하나\): 15 → 30/);
+  assert.match(out, /루틴 → 내 하트비트 → 얼마나 자주 확인할까요/);
+  for (const bad of ['5', '20', '0', 'x']) {
+    assert.match(await h.call('argo_settings', { action: 'set', key: 'assistant.interval', value: bad }), /가능한 값: 10, 15, 30, 60/, bad);
+  }
+  assert.equal(await interval(), 30);
+  assert.match(await h.call('argo_settings', { action: 'set', key: 'assistant.interval', value: '30' }), /이미 30\(으\)로 되어 있다/);
+  assert.equal((await pendingSettings(ws)).length, 0, '주인 1:1 — 결재 없음');
+});
+
+test('확인 주기(assistant.interval) — 채널·다른 에이전트의 요청은 결재 카드, 승인 뒤 시스템이 적용', async () => {
+  const ws = await company('as-interval-approve', { agents: [['pepper', '페퍼', '비서'], ['mina', '미나', '리서처']] });
+  const before = (await assistantSettingsView(ws)).config.intervalMinutes;
+  const h = handlers(ws, { origin: 'mina' });
+  await h.call('argo_settings', { action: 'set', key: 'assistant.interval', value: '60' });
+  assert.equal((await assistantSettingsView(ws)).config.intervalMinutes, before, '결재 전에는 그대로');
+  const [ap] = await pendingSettings(ws);
+  assert.ok(ap, '결재 카드');
+  assert.equal(ap.payload.key, 'assistant.interval');
+  const runChat = async () => ({ reply: 'ok', sessionId: null });
+  const item = await resolveApproval(ws, ap.id, true);
+  await _followUpForTest(ws, item, true, { runChat });
+  assert.equal((await assistantSettingsView(ws)).config.intervalMinutes, 60, '승인 뒤 적용');
+  // 채널(다른 사람이 보는 방)에서도 결재
+  const ch = handlers(ws, { ctx: msgrCtx(ws) });
+  await ch.call('argo_settings', { action: 'set', key: 'assistant.interval', value: '10' });
+  assert.equal((await assistantSettingsView(ws)).config.intervalMinutes, 60);
+  assert.equal((await pendingSettings(ws)).length, 1);
 });
 
 /* ── ⑤ 결재 승인 → 시스템 적용 ───────────────────────────────────────── */

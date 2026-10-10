@@ -1,11 +1,13 @@
-// 능동 비서 설정 쓰기·보기(2단계) — 설정 API(app/api/companies/[ws]/assistant/route.js)가 부른다. 화면은 에이전트 카드 "비서" 탭.
+// 능동 비서(하트비트) 설정 쓰기·보기(2단계) — 설정 API(app/api/companies/[ws]/assistant/route.js)가 부른다. 관리 화면은 루틴 화면의 하트비트 칸
+// (app/c/[ws]/routines/heartbeat-card.jsx — 유건 10/10), 에이전트 카드 하트비트 탭은 보기 전용이다.
 //
 // 쓰기 = assistant.json + company.json 봉인(config.mjs 머리 주석). 둘은 assistant.json의 프로세스 간 잠금 안에서 파일 → 봉인 순서로 쓴다.
 // 그 사이에 엔진 틱이 끼면 둘이 어긋나 그 틱은 꺼짐(쓰기·호출 0)이다 — 켜진 쪽으로 잘못 가는 순서는 없다.
 //
-// 화면이 다루는 칸: 켜기·끄기(+ 어느 에이전트), 일정 알림 몇 분 전, 내일 일정 요약(저녁 묶음) 시각, 조용한 시간과 그 예외.
+// 화면이 다루는 칸: 켜기·일시 정지(+ 어느 에이전트), 확인 주기(일정 전체 읽기 간격), 일정 알림 몇 분 전, 내일 일정 요약(저녁 묶음) 시각, 조용한 시간과 그 예외, 메일.
+// 끄기(삭제)는 removeAssistantSettings — 다른 회사를 끌 때와 같은 offFile이라 봉인과 다시 맞춰질 수 없고, 다시 만들면 기본값에서 시작한다.
 // 아침 묶음 시각은 고르지 않는다 — 조용한 시간이 끝나는 시각이다(설계 13절 "조용한 시간 끝과 같게"). 고를 필요 없는 값은 제품이 정한다.
-// 볼 것은 일정 하나뿐이다(메일 4단계, 할 일·거래 5단계). 처음 켤 때 메일·할 일·거래는 false로 적는다 — 그 단계가 나와도 사용자가 따로 켜기 전에는
+// 볼 것은 일정·메일(할 일·거래 5단계). 처음 켤 때 메일은 사용자가 "무엇을 알려 줄까요 → 메일"을 고른 때만 켜고, 할 일·거래는 false로 적는다 — 사용자가 따로 켜기 전에는
 // 읽지 않는다(설계 3.2 "동의 없이 메일을 읽지 않는다"). 하루 즉시 알림 상한(dailyCap)은 제품이 정하는 값이라 고르는 칸이 없다(저장값·기본값 10 그대로 — 엔진이 쓰고 상태 칸에 "n/상한"으로 보인다).
 //
 // 화면 밖 칸 이어받기: 봉인이 맞는 파일이면 이 화면이 다루지 않는 칸(나중 단계의 칸, 볼 것)을 그대로 둔다 — 새 버전 기기가 저장한 칸을 옛 화면이 지우지 않게.
@@ -41,7 +43,7 @@ import { loadDeviceSession, deviceSessionDead } from '../devicesession.mjs';
 import { leaseCheck, deviceLabel } from '../sync.mjs';
 import { normalizeTz } from '../routine-time.mjs';
 import { codedError } from '../coded-error.mjs';
-import { ASSISTANT_FILE, SEAL_FIELD, LEAD_CHOICES, sealOf, normalizeAssistantConfig } from './config.mjs';
+import { ASSISTANT_FILE, SEAL_FIELD, LEAD_CHOICES, INTERVAL_CHOICES, sealOf, normalizeAssistantConfig } from './config.mjs';
 import { normalizeState, stateFile } from './state.mjs';
 import { minuteInQuiet, dateIn, assistantCompanyOf, assistantMuted } from './rules.mjs';
 import { assistantRunnerStatus } from './tick.mjs';
@@ -80,13 +82,14 @@ async function writeSealed(wsId, obj) {
 }
 
 /** 입력 검증(순수) — 문제 있으면 errorCode, 없으면 null. 아침 묶음 = 조용한 시간 끝.
-    touched(Set: lead·evening·from·to)를 주면 보낸 칸이 걸린 규칙만 본다 — 새 버전이 봉인해 저장한 값을 이 버전이 받지 않아도
+    touched(Set: lead·interval·evening·from·to)를 주면 보낸 칸이 걸린 규칙만 본다 — 새 버전이 봉인해 저장한 값을 이 버전이 받지 않아도
     끄기·다른 칸 저장이 막히지 않게(#865 3차 검수 LOW). 두 칸 이상 걸린 규칙은 걸린 칸이 모두 시각 모양일 때만 본다. */
-export function settingsProblem({ leadMinutes, eveningAt, quiet }, touched = null) {
+export function settingsProblem({ leadMinutes, intervalMinutes, eveningAt, quiet }, touched = null) {
   const t = (k) => !touched || touched.has(k);
   const times = { evening: eveningAt, from: quiet.from, to: quiet.to };
   const isTime = (k) => HHMM_RE.test(String(times[k]));
   if (t('lead') && !LEAD_CHOICES.includes(leadMinutes)) return 'assistant_lead_invalid';
+  if (t('interval') && !INTERVAL_CHOICES.includes(intervalMinutes)) return 'assistant_interval_invalid'; // 10분 미만 없음(DB 조회 부하 — config.mjs INTERVAL_CHOICES)
   if (Object.keys(times).some((k) => t(k) && !isTime(k))) return 'assistant_time_invalid';
   const rule = (...ks) => ks.some(t) && ks.every(isTime);
   if (rule('from', 'to') && quiet.from === quiet.to) return 'assistant_quiet_empty';
@@ -106,9 +109,10 @@ const bool = (v) => (typeof v === 'boolean' ? v : undefined);
 const SAVE_LOCK = 'assistant-settings-save';
 
 /**
- * 설정 저장. input(전부 선택) = { enabled, agent, leadMinutes, eveningAt, quiet: { from, to, calendarAlerts }, tz }.
- *  - enabled: true  → 켜기(또는 이 에이전트로 바꾸기). agent 필수·이 회사에 있어야 한다. 켠 시각을 지금으로, tz는 화면(브라우저) 값.
- *  - enabled: false → 끄기(에이전트는 그대로 적어 둔다).
+ * 설정 저장. input(전부 선택) = { enabled, agent, intervalMinutes, leadMinutes, eveningAt, quiet: { from, to, calendarAlerts }, calendar, mail, tz }.
+ *  - enabled: true  → 켜기(또는 이 에이전트로 바꾸기·다시 켜기). agent 필수·이 회사에 있어야 한다. 켠 시각을 지금으로, tz는 화면(브라우저) 값.
+ *  - enabled: false → 일시 정지(에이전트·값은 그대로 적어 둔다 — 다시 켜면 그 값으로).
+ *  - agent만(enabled 없이) → 담당 에이전트만 바꾼다(켜짐·꺼짐·켠 시각 그대로 — 일시 정지 중 담당 바꾸기). 이 회사에 있어야 한다.
  *  - 그 밖 칸만 → 값만 바꾼다(켜짐·에이전트·켠 시각 그대로).
  * 반환 = { changedOthers: [wsId] }(이 저장으로 꺼진 다른 회사).
  */
@@ -121,6 +125,8 @@ async function saveInLine(wsId, input, { now = Date.now() } = {}) {
   const enabledIn = bool(inp.enabled);
   if (enabledIn === true && !SLUG_OK(inp.agent)) throw codedError('assistant_agent_not_found', '하트비트로 정할 에이전트가 필요합니다');
   if (enabledIn === true && !(await agentExists(wsId, inp.agent))) throw codedError('assistant_agent_not_found', `에이전트를 찾을 수 없습니다: ${inp.agent}`);
+  const agentOnly = enabledIn === undefined && inp.agent !== undefined; // 담당만 바꾸기
+  if (agentOnly && !(SLUG_OK(inp.agent) && (await agentExists(wsId, inp.agent)))) throw codedError('assistant_agent_not_found', `에이전트를 찾을 수 없습니다: ${String(inp.agent).slice(0, 100)}`);
   const company = await loadCompany(wsId);
   await lockAssistant(wsId, async () => {
     const cur = await readAssistantFile(wsId, await loadCompany(wsId));
@@ -131,9 +137,11 @@ async function saveInLine(wsId, input, { now = Date.now() } = {}) {
     // 보내지 않은 칸은 봉인된 저장값 그대로 — 이 버전이 모르는 값(새 버전의 선택지)을 기본값으로 덮지 않는다(#865 3차 검수 LOW). 봉인이 안 맞으면 base = {}라 기본값.
     const bq = base.quiet && typeof base.quiet === 'object' ? base.quiet : {};
     const kept = (v, d) => (v !== undefined ? v : d);
-    const touched = new Set([['lead', inp.leadMinutes], ['evening', inp.eveningAt], ['from', q.from], ['to', q.to]].filter(([, v]) => v !== undefined).map(([k]) => k));
+    const touched = new Set([['lead', inp.leadMinutes], ['interval', inp.intervalMinutes], ['evening', inp.eveningAt], ['from', q.from], ['to', q.to]].filter(([, v]) => v !== undefined).map(([k]) => k));
     const next = {
       leadMinutes: touched.has('lead') ? Number(inp.leadMinutes) : kept(base.leadMinutes, prev.leadMinutes),
+      // 확인 주기 — 칸이 없는 옛 파일(0.1.100 이하가 쓴 것)은 기본 15분을 적는다(엔진 정규화와 같은 값 — 동작은 그대로)
+      intervalMinutes: touched.has('interval') ? Number(inp.intervalMinutes) : kept(base.intervalMinutes, prev.intervalMinutes),
       eveningAt: touched.has('evening') ? String(inp.eveningAt) : kept(base.eveningAt, prev.eveningAt),
       quiet: {
         from: touched.has('from') ? String(q.from) : kept(bq.from, prev.quiet.from),
@@ -145,9 +153,11 @@ async function saveInLine(wsId, input, { now = Date.now() } = {}) {
     if (bad) throw codedError(bad, `하트비트 설정 값이 올바르지 않습니다(${bad})`);
     // 메일 — 화면이 보낸 때만 바꾼다(false 안 봄 · 'shadow' 미리 보기 · true 알림). 봉인이 안 맞는 파일에서는 base.watch를 버리므로(아래) 심은 메일 보기는 다시 봉인되지 않는다
     if (inp.mail !== undefined && ![false, 'shadow', true].includes(inp.mail)) throw codedError('assistant_mail_invalid', '메일 보기 값이 올바르지 않습니다');
+    // 일정 — 화면의 "무엇을 알려 줄까요 → 일정" 칸이 보낸 때만 바꾼다(true·false). 일정·메일 둘 다 끄면 엔진은 쉰다(tick.mjs 'idle' — 호출 0)
+    if (inp.calendar !== undefined && typeof inp.calendar !== 'boolean') throw codedError('assistant_bad_request', '일정 보기 값이 올바르지 않습니다');
     const baseWatch = sealed && base.watch && typeof base.watch === 'object' ? base.watch : { calendar: true, mail: false, tasks: false, deals: false };
     const enabled = enabledIn ?? prev.enabled;
-    const agent = enabledIn === true ? inp.agent : prev.agent;
+    const agent = enabledIn === true || agentOnly ? inp.agent : prev.agent;
     // 켜기·바꾸기는 사용자의 마지막 선택 — 이미 켜져 있던 회사로 바꿔도 켠 시각을 지금으로 한다(이 기기에 없는 같은 주인의 회사가 다른 기기에서 더 늦게 켜졌어도 이 선택이 맡게 — rules.mjs assistantCompanyOf)
     const fresh = enabledIn === true;
     const enabledAtMs = !enabled ? null : fresh ? now : (prev.enabledAt ?? now);
@@ -156,8 +166,9 @@ async function saveInLine(wsId, input, { now = Date.now() } = {}) {
       enabled,
       agent,
       enabledAt: enabledAtMs == null ? undefined : new Date(enabledAtMs).toISOString(),
-      watch: inp.mail !== undefined ? { ...baseWatch, mail: inp.mail } : baseWatch,
+      watch: { ...baseWatch, ...(inp.calendar !== undefined ? { calendar: inp.calendar } : {}), ...(inp.mail !== undefined ? { mail: inp.mail } : {}) },
       leadMinutes: next.leadMinutes,
+      intervalMinutes: next.intervalMinutes,
       morningAt: next.quiet.to, // 아침 묶음 = 조용한 시간 끝
       eveningAt: next.eveningAt,
       quiet: next.quiet,
@@ -193,6 +204,28 @@ async function saveInLine(wsId, input, { now = Date.now() } = {}) {
   return { changedOthers };
 }
 
+/**
+ * 설정 지우기 — 루틴 → 내 하트비트 → 고급 '설정 지우기'(확인 창 뒤). 이 회사의 assistant.json을 offFile({ enabled: false, agent })로 쓰고, 이어서 company.json 봉인을 비운다.
+ * 봉인을 비우는 이유(#분리 검수 M1): 봉인이 지우기 직전 '켜짐' 바이트를 가리킨 채면, 그 바이트를 그대로 되돌려 쓰는 것(옛 버전 기기의 에이전트 파일 쓰기)만으로 하트비트가 다시 켜졌다.
+ * 파일 → 봉인 순서라 사이에 엔진 틱이 끼어도 꺼진 쪽이다. 사용자가 지금 손대는 회사라 company.json을 써도 H63(손대지 않은 회사의 보관 마커 되살림)에 걸리지 않는다(PUT도 같은 파일을 쓴다).
+ * 보기는 '없음'이 되고, 다시 만들면 기본값에서 시작한다.
+ * agent를 남기는 이유도 같다 — 방에서 복구가 이전 하트비트의 1:1 방을 읽어 같은 날 다시 만들어도 이미 보낸 알림을 다시 보내지 않는다.
+ * 파일이 없으면 쓰지 않는다(쓰기 0). 반환 = { removed }.
+ */
+export function removeAssistantSettings(wsId) {
+  return withLock(SAVE_LOCK, () => lockAssistant(wsId, async () => {
+    const cur = await readAssistantFile(wsId, await loadCompany(wsId));
+    if (!cur) return { removed: false };
+    const off = offFile(cur.obj ?? {});
+    const text = sealedText(off);
+    const co = await loadCompany(wsId);
+    if (text === cur.text && co?.[SEAL_FIELD] == null) return { removed: false }; // 이미 지운 모양 — 다시 쓰지 않는다(쓰기 0)
+    if (text !== cur.text) await writeJsonAtomic(fileOf(wsId), text);
+    if (co?.[SEAL_FIELD] != null) await updateCompany(wsId, () => ({ [SEAL_FIELD]: null }));
+    return { removed: true };
+  }));
+}
+
 /** 이 기기의 상태 파일 읽기(부작용 없음 — 손상 파일을 옮기지 않는다). 없거나 손상이면 null. */
 async function readLocalState(wsId) {
   try { return normalizeState(JSON.parse(await readFile(stateFile(wsId), 'utf8'))); } catch { return null; }
@@ -207,10 +240,10 @@ export const viewDeps = { lease: leaseCheck, deviceSession: () => loadDeviceSess
 
 /**
  * 설정 화면이 그리는 값. 반환:
- *  { config: { enabled, agent, leadMinutes, morningAt, eveningAt, quiet, tz },   — 봉인이 맞으면 파일 값, 아니면 기본값(꺼짐)
+ *  { config: { enabled, agent, agentName, intervalMinutes, leadMinutes, morningAt, eveningAt, quiet, tz, calendar, mail },   — 봉인이 맞으면 파일 값, 아니면 기본값(꺼짐)
  *    unsealed,                         — 파일은 켜짐(enabled + 에이전트)인데 봉인이 안 맞음(설정 화면 밖에서 바뀜 → 엔진은 꺼짐)
  *    current: { ws, company, agent, name } | null,   — 지금 이 사용자의 비서(같은 주인의 회사들 중 봉인 맞는 켜짐, 켠 시각이 가장 늦은 쪽 — 엔진과 같은 판정)
- *    choices: { lead },
+ *    choices: { lead, interval },
  *    status: { login, muted, runner, device, code, codeAt, readAt, instantToday, instantSure, dailyCap } }   — dailyCap = 지금 비서 설정의 하루 즉시 알림 상한(화면 "n/상한")
  */
 export async function assistantSettingsView(wsId, { now = Date.now(), deps = viewDeps } = {}) {
@@ -239,10 +272,10 @@ export async function assistantSettingsView(wsId, { now = Date.now(), deps = vie
   const st = runner === 'this_device' && current?.ws === wsId ? await readLocalState(wsId) : null;
   const tz = curCfg?.tz ?? cfg.tz;
   return {
-    config: { enabled: cfg.enabled, agent: cfg.agent, leadMinutes: cfg.leadMinutes, morningAt: cfg.morningAt, eveningAt: cfg.eveningAt, quiet: cfg.quiet, tz: cfg.tz, mail: cfg.mailMode },
+    config: { enabled: cfg.enabled, agent: cfg.agent, agentName: cfg.agent ? await agentName(wsId, cfg.agent) : null, intervalMinutes: cfg.intervalMinutes, leadMinutes: cfg.leadMinutes, morningAt: cfg.morningAt, eveningAt: cfg.eveningAt, quiet: cfg.quiet, tz: cfg.tz, calendar: cfg.watch.calendar, mail: cfg.mailMode },
     unsealed: !!(here && !here.sealed && here.cfg?.enabled && here.cfg.agent),
     current,
-    choices: { lead: [...LEAD_CHOICES] },
+    choices: { lead: [...LEAD_CHOICES], interval: [...INTERVAL_CHOICES] },
     status: {
       // 엔진과 같은 판정 — 엔진은 getFreshDeviceSession(msgr.sessionClient)이 돌려준 세션의 계정이 회사 주인일 때만 일정을 읽는다(tick.mjs session).
       // 갱신이 거절돼 죽은 세션(만료 + 사망 마커)은 파일이 남아 있어도 엔진에게는 null이다 — 회전을 일으키지 않는 deviceSessionDead로 같은 결과를 본다.

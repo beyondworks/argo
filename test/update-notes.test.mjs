@@ -202,7 +202,7 @@ test('UpdateNotes renders through updateNotesView and its show gate receives the
 
 // 비서 → 하트비트 이름 변경(10/10) — 0.1.101 업데이트 안내에 옛 이름과 새 이름이 같이 있어야 옛 이름으로 알던 사용자가 같은 기능임을 안다.
 test('0.1.101 안내 — 비서가 하트비트로 이름이 바뀐 항목이 ko·en 사전에 있다', () => {
-  assert.deepEqual([...updateNotesFor('0.1.101', '0.1.101')], ['updates.note.heartbeatName']);
+  assert.deepEqual([...updateNotesFor('0.1.101', '0.1.101')], ['updates.note.heartbeatName', 'updates.note.heartbeatRoutine']); // heartbeatRoutine — 하트비트 관리가 루틴 '내 하트비트'로(같은 발행)
   const src = readFileSync(new URL('../app/i18n.jsx', import.meta.url), 'utf8');
   const line = src.split('\n').find((l) => l.includes("'updates.note.heartbeatName'"));
   assert.ok(line && line.includes('비서') && line.includes('하트비트') && line.includes('Assistant') && line.includes('Heartbeat'), '옛 이름·새 이름이 ko·en 모두에 적혀 있다');

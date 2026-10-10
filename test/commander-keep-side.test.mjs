@@ -164,6 +164,7 @@ const ALLOW = { // 회사(/c/[ws]) 밖으로 나가는 경로 — side 문맥이
 const EXPECTED = {
   'app/page.jsx': 1, 'app/c/[ws]/layout.jsx': 2 /* 업데이트 뱃지 → 설정 카드(앱을 옮겨야 할 때, L 경유) */, 'app/c/[ws]/page.jsx': 5 /* +1: 검색 결과 크루 링크(UL8) — keepSide를 거친다 */, 'app/c/[ws]/settings/page.jsx': 1,
   'app/c/[ws]/crew/[slug]/page.jsx': 4, 'app/c/[ws]/room/page.jsx': 2,
+  'app/c/[ws]/crew/[slug]/assistant-section.jsx': 1 /* 카드 하트비트 탭 '루틴에서 관리' → 루틴#heartbeat — keepSide(현재 search)로 보조 패널 유지 */,
 };
 
 test('스위프: app/ 전역의 router.push 계열(옵셔널 체이닝·공백·대괄호 호출 정규화)은 search를 넘기는 keepSide·keepSideExcept, 레이아웃의 L 경유이거나 허용 목록(회사 밖 이동)뿐 — 파일별 개수 고정', async () => {

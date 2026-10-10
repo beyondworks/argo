@@ -76,7 +76,7 @@ test('me 구획 — 에이전트 카드 화면(개요·능력·방식·하트비
   assert.match(out, /사용 플러그인\(MCP\) 지정 목록: notion, figma/);
   const rules = await rulesOf(ws);
   assert.match(out, new RegExp(`일하는 방식 규칙 ${rules.length}개: ${rules.map((r, i) => `${i + 1}\\) ${r}`).join(' / ')}`), '규칙 = 화면 파싱 그대로');
-  assert.match(out, /하트비트 탭: 나는 이 회사의 하트비트 에이전트다\(켜짐\) — 일정 알림 30분 전 · 아침 정리 08:00/);
+  assert.match(out, /하트비트\(카드 탭은 보기, 관리는 루틴 → 내 하트비트\): 나는 이 회사의 하트비트 에이전트다\(켜짐\) — 확인 주기 15분 · 일정 알림 30분 전 · 아침 정리 08:00/);
   assert.match(out, new RegExp(`텔레그램 직통 봇: ${ko('chat.tg.waiting')} · ${ko('chat.tg.paired')} \\(@pepper_bot\\)`));
   assert.doesNotMatch(out, /123:fake/, '봇 토큰은 싣지 않는다');
   assert.match(out, /아르고 메신저: 회사 에이전트가 메신저에 연결됨/);

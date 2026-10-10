@@ -1,4 +1,5 @@
-// 능동 비서 2단계 — 에이전트 카드 "비서" 탭(app/c/[ws]/crew/[slug]/assistant-section.jsx)과 표시 판정(assistant-view.mjs).
+// 하트비트(능동 비서) — 에이전트 카드 "하트비트" 탭(app/c/[ws]/crew/[slug]/assistant-section.jsx — 보기 전용, 유건 10/10)과 표시 판정(assistant-view.mjs).
+// 켜기·끄기·값 바꾸기 테스트(U-a~U-f)는 관리 화면과 함께 test/heartbeat-card.test.mjs(루틴 → 내 하트비트)로 옮겼다.
 // 경우 표: S2(상태 문구 — 로그인 필요·옛 버전·다른 회사·화면 밖 변경), U-a~U-e(켜기·바꾸기·끄기·값 저장·저장 실패). 화면 그림(S1)은 격리 dev 서버 스크린샷.
 // 컴포넌트는 mini-react(test/helpers/mini-react.mjs) 위에서 실제 코드 그대로 돌린다 — fetch만 가짜(요청 기록·응답 주입).
 import { test } from 'node:test';
@@ -49,17 +50,21 @@ test('시각 선택지 — 30분 간격 48개, 칸 밖 저장값은 선택지에
   assert.ok(V.timeChoices('08:15').includes('08:15'));
 });
 
-/* ── 컴포넌트 ── */
+/* ── 컴포넌트(보기 전용) ── */
 
 const { loadComponent } = await import('./helpers/load-component.mjs');
 const { mount } = await import('./helpers/mini-react.mjs');
+const pushed = [];
 const stubs = {
-  '../../../../ui': 'export const Skeleton = () => null; export const Spinner = () => null;',
+  '../../../../ui': 'export const Skeleton = () => null;',
   '../../../../i18n': "export const useLang = () => ({ lang: 'ko', t: (k, v) => (v ? k + '|' + JSON.stringify(v) : k) }); export const fmtMsgTime = (lang, ts) => 'T' + ts;",
+  'next/navigation': 'export const useRouter = () => ({ push: (h) => globalThis.__hbPushed.push(h) });',
 };
-const { AssistantSection } = await loadComponent(file('../app/c/[ws]/crew/[slug]/assistant-section.jsx'), {
-  stubs, real: [file('../app/apimsg.mjs'), file('../app/c/[ws]/crew/[slug]/assistant-view.mjs')],
+globalThis.__hbPushed = pushed;
+const SEC = await loadComponent(file('../app/c/[ws]/crew/[slug]/assistant-section.jsx'), {
+  stubs, real: [file('../app/apimsg.mjs'), file('../app/c/[ws]/crew/[slug]/assistant-view.mjs'), file('../app/c/[ws]/split.mjs')],
 });
+const { AssistantSection } = SEC;
 const find = (node, pred, out = []) => {
   if (!node || typeof node !== 'object') return out;
   if (Array.isArray(node)) { node.forEach((n) => find(n, pred, out)); return out; }
@@ -70,118 +75,88 @@ const find = (node, pred, out = []) => {
 const byTest = (out, id) => find(out, (n) => n.props['data-testid'] === id)[0];
 const text = (node) => { const acc = []; const walk = (n) => { if (n == null || n === false) return; if (typeof n === 'string' || typeof n === 'number') { acc.push(String(n)); return; } if (Array.isArray(n)) { n.forEach(walk); return; } if (n.props) walk(n.props.children); }; walk(node); return acc.join(' '); };
 
-/** fetch 가짜 — GET은 view, PUT은 reply(body) 결과. 요청을 기록한다. */
-function fakeFetch(view, reply) {
+function fakeFetch(view) {
   const calls = [];
-  globalThis.fetch = async (url, opts = {}) => {
-    const method = opts.method ?? 'GET';
-    const body = opts.body ? JSON.parse(opts.body) : undefined;
-    calls.push({ url, method, body });
-    const r = method === 'GET' ? { status: 200, data: view } : reply(body);
-    return { ok: r.status < 400, status: r.status, json: async () => r.data };
-  };
+  globalThis.fetch = async (url, opts = {}) => { calls.push({ url, method: opts.method ?? 'GET' }); return { ok: true, status: 200, json: async () => view }; };
   return calls;
 }
-async function render(view, reply = () => ({ status: 200, data: view })) {
-  const calls = fakeFetch(view, reply);
-  const m = mount(AssistantSection, { ws: WS, slug: SLUG });
+async function render(view, slug = SLUG) {
+  const calls = fakeFetch(view);
+  const m = mount(AssistantSection, { ws: WS, slug });
   await m.flush();
   return { m, calls, out: () => m.state.out };
 }
+const controls = (out) => find(out, (n) => ['select', 'input'].includes(n.type) || (n.type === 'button' && n.props['data-testid'] !== 'assistant-manage'));
 
-test('U-a: 꺼짐 — 켜기 버튼 → PUT {enabled:true, agent, tz}, 응답(보기)으로 켜짐·설정 칸·상태가 그려진다. 탭을 열 때 GET 1번, 주기 호출 없음', async () => {
-  const { m, calls, out } = await render(baseView(), () => ({ status: 200, data: mineView() }));
-  assert.deepEqual(calls.map((c) => [c.method, c.url]), [['GET', '/api/companies/co/assistant']]);
-  assert.equal(text(byTest(out(), 'assistant-state')), 'assistant.off');
-  assert.equal(byTest(out(), 'assistant-lead'), undefined, '꺼진 동안은 설정 칸을 보이지 않는다(가장 단순하게)');
-  byTest(out(), 'assistant-on').props.onClick();
-  await m.flush();
-  assert.equal(calls.length, 2);
-  assert.equal(calls[1].method, 'PUT');
-  assert.equal(calls[1].body.enabled, true);
-  assert.equal(calls[1].body.agent, SLUG);
-  assert.ok('tz' in calls[1].body, '처음 켤 때 화면 시간대를 보낸다');
+test('V1: 이 에이전트가 하트비트 — 켜짐·확인 주기·알림 설정 요약·메일·실행 기기·마지막 확인·오늘 보낸 알림/한도. 고르는 칸·켜기/끄기 버튼은 없고 GET 1번뿐', async () => {
+  const v = mineView({ config: { ...mineView().config, intervalMinutes: 30, mail: 'shadow', calendar: true, agentName: '페퍼' }, status: { ...mineView().status, readAt: 7, instantToday: 2, mail: { code: 'ok', checkedAt: 9, shadow: { days: 1, total: 3 } } } });
+  const { calls, out } = await render(v);
+  assert.deepEqual(calls.map((c) => c.method), ['GET']);
   assert.equal(text(byTest(out(), 'assistant-state')), 'assistant.on');
-  assert.ok(byTest(out(), 'assistant-lead'), '켜지면 설정 칸');
-  assert.ok(byTest(out(), 'assistant-off'));
+  assert.equal(text(byTest(out(), 'assistant-line')), 'assistant.card.mine');
+  assert.equal(text(byTest(out(), 'assistant-interval')), 'assistant.intervalOpt|{"n":30}');
   const all = text(out());
-  for (const k of ['assistant.watchCalendar', 'assistant.destPersonal', 'assistant.permNotify', 'assistant.runnerHere|{"device":"Geony-Mac-Pro"}', 'assistant.lastCheckNone', 'assistant.todayUnder|{"n":0,"cap":10}']) assert.ok(all.includes(k), k);
-  await new Promise((r) => setTimeout(r, 30));
-  await m.flush();
-  assert.equal(calls.length, 2, '그 뒤 저절로 다시 읽지 않는다');
+  for (const k of ['assistant.watchCalendar', 'assistant.mail (assistant.hb.previewShort)', 'assistant.leadOpt|{"n":30}', '21:00', '23:00 ~ 08:00', '페퍼', 'assistant.destPersonal', 'assistant.runnerHere|{"device":"Geony-Mac-Pro"}', 'T7', 'assistant.todayUnder|{"n":2,"cap":10}', 'T9 · assistant.mailShadow|{"days":1,"n":3}', 'assistant.card.viewOnly']) assert.ok(all.includes(k), k);
+  assert.deepEqual(controls(out()), [], '보기 전용 — 고르는 칸·켜기/끄기 버튼 없음');
+  assert.ok(byTest(out(), 'assistant-manage'), '루틴에서 관리');
 });
 
-test('K6(화면): 오늘 보낸 일정 알림과 하루 한도 — 정확히 한도는 "n건 (하루 한도)", 넘으면 "n건 — 한도 넘음"(오류처럼 보이는 12/10 아님), 복구 실패 중 "확인 중", 다른 기기면 "실행 기기에서"', async () => {
-  const at = async (st) => text(byTest((await render(mineView({ status: { ...mineView().status, ...st } }), () => ({ status: 200, data: {} }))).out(), 'assistant-today'));
-  assert.equal(await at({ instantToday: 10, dailyCap: 10 }), 'assistant.todayUnder|{"n":10,"cap":10}', '정확히 한도');
-  assert.equal(await at({ instantToday: 11, dailyCap: 10 }), 'assistant.todayOver|{"n":11,"cap":10}', '한도+1');
-  assert.equal(await at({ instantToday: 3, dailyCap: 10, instantSure: false }), 'assistant.todayUnsure|{"n":3}', '다른 기기가 보낸 수를 아직 모름');
-  const { out } = await render(mineView({ status: { ...mineView().status, instantToday: 12, dailyCap: 10 } }), () => ({ status: 200, data: {} }));
-  assert.equal(text(byTest(out(), 'assistant-today')), 'assistant.todayOver|{"n":12,"cap":10}');
-  const other = await render(mineView({ status: { ...mineView().status, runner: 'other_device', instantToday: 3, dailyCap: 10 } }), () => ({ status: 200, data: {} }));
-  assert.equal(text(byTest(other.out(), 'assistant-today')), 'assistant.onRunner');
+test('V2: 다른 에이전트·다른 회사가 맡음 — "지금 하트비트: 회사 · 이름" + 루틴에서 관리, 요약·상태 칸 없음', async () => {
+  const { out } = await render(baseView({ current: { ws: 'co-b', company: '회사 B', agent: 'wolff', name: '울프' } }));
+  assert.equal(text(byTest(out(), 'assistant-line')), 'assistant.current|{"company":"회사 B","name":"울프"}');
+  assert.equal(byTest(out(), 'assistant-summary'), undefined);
+  assert.equal(byTest(out(), 'assistant-runner'), undefined);
+  assert.ok(byTest(out(), 'assistant-manage'));
+  const same = await render(mineView(), 'wolff');
+  assert.equal(text(byTest(same.out(), 'assistant-line')), 'assistant.current|{"company":"비서 회사","name":"페퍼"}', '같은 회사의 다른 에이전트가 맡음');
 });
 
-test('U-b: 다른 비서가 있음 — "지금 비서: 회사 · 이름" + 바꾸기 → PUT {enabled:true, agent}', async () => {
-  const other = baseView({ current: { ws: 'co-b', company: '회사 B', agent: 'wolff', name: '울프' } });
-  const { m, calls, out } = await render(other, () => ({ status: 200, data: mineView() }));
-  assert.equal(byTest(out(), 'assistant-on'), undefined, '켜기 대신 바꾸기');
-  assert.ok(text(out()).includes('assistant.current|{"company":"회사 B","name":"울프"}'));
-  assert.ok(text(out()).includes('assistant.switchHint'));
-  byTest(out(), 'assistant-switch').props.onClick();
-  await m.flush();
-  assert.deepEqual([calls[1].method, calls[1].body.enabled, calls[1].body.agent], ['PUT', true, SLUG]);
-  assert.equal(text(byTest(out(), 'assistant-state')), 'assistant.on');
+test('V3·V4: 꺼 둠(설정 남음)·없음 — 꺼 둔 담당이면 설정 요약, 아니면 꺼짐 한 줄', async () => {
+  const paused = baseView({ config: { ...baseView().config, enabled: false, agent: SLUG, agentName: '페퍼', intervalMinutes: 60 } });
+  const p = await render(paused);
+  assert.equal(text(byTest(p.out(), 'assistant-state')), 'assistant.off');
+  assert.equal(text(byTest(p.out(), 'assistant-line')), 'assistant.card.paused|{"name":"페퍼"}');
+  assert.equal(text(byTest(p.out(), 'assistant-interval')), 'assistant.intervalOpt|{"n":60}');
+  assert.equal(byTest(p.out(), 'assistant-runner'), undefined, '꺼 둔 동안 상태 칸 없음');
+  const other = await render(paused, 'wolff');
+  assert.equal(byTest(other.out(), 'assistant-summary'), undefined, '다른 에이전트 카드에는 요약 없음');
+  const n = await render(baseView());
+  assert.equal(text(byTest(n.out(), 'assistant-line')), 'assistant.card.none');
+  assert.equal(byTest(n.out(), 'assistant-summary'), undefined);
 });
 
-test('U-c: 비서 상태 문구(S2) — 로그인 필요·옛 버전 실행 기기·화면 밖 변경이 사전 키로 그려진다', async () => {
-  const r0 = await render(mineView({ status: { ...mineView().status, login: false, muted: true } }));
-  assert.deepEqual(find(r0.out(), (n) => n.props['data-note']).map((n) => [n.props['data-note'], text(n)]),
-    [['login_required', 'assistant.st.login_required'], ['muted', 'assistant.st.muted']], '이 기기가 실행 기기 — 로그인 필요');
-  const v = mineView({ unsealed: false, status: { ...mineView().status, login: false, runner: 'runner_outdated', device: 'Old-Mac' } });
-  const { out } = await render(v);
-  const notes = find(out(), (n) => n.props['data-note']).map((n) => [n.props['data-note'], text(n)]);
-  assert.deepEqual(notes, [['runner_outdated', 'assistant.st.runner_outdated']], '옛 버전 기기가 실행 중 — 이 기기의 로그인 문구는 보이지 않는다');
-  assert.equal(text(byTest(out(), 'assistant-runner')), 'assistant.runnerOld|{"device":"Old-Mac"}');
-  assert.ok(text(out()).includes('assistant.onRunner'), '실행 기기가 이 기기가 아니면 마지막 확인은 그 기기에서');
-  const r2 = await render(baseView({ unsealed: true }));
-  assert.deepEqual(find(r2.out(), (n) => n.props['data-note']).map((n) => text(n)), ['assistant.st.unsealed']);
-  assert.ok(byTest(r2.out(), 'assistant-on'), '다시 켜기로 새로 봉인');
-  const r3 = await render(baseView({ config: { ...baseView().config, enabled: true, agent: SLUG }, current: { ws: 'co-b', company: '회사 B', agent: 'wolff', name: '울프' } }));
-  assert.deepEqual(find(r3.out(), (n) => n.props['data-note']).map((n) => text(n)), ['assistant.st.other_company']);
+test('V5: 루틴에서 관리 — /c/[ws]/routines#heartbeat로, 열어 둔 보조 패널(?side=)은 그대로', async () => {
+  assert.equal(SEC.manageHref('co', '?side=crew:pepper'), '/c/co/routines?side=crew%3Apepper#heartbeat');
+  assert.equal(SEC.manageHref('co', ''), '/c/co/routines#heartbeat');
+  const { out } = await render(mineView());
+  pushed.length = 0;
+  globalThis.window = { location: { search: '?side=crew:pepper' } };
+  try { byTest(out(), 'assistant-manage').props.onClick(); } finally { delete globalThis.window; }
+  assert.deepEqual(pushed, ['/c/co/routines?side=crew%3Apepper#heartbeat']);
 });
 
-test('U-d: 값 바꾸기 — 칸마다 바로 저장(바뀐 칸만), 끄기 → PUT {enabled:false}', async () => {
-  const replies = [];
-  const { m, calls, out } = await render(mineView(), (body) => { replies.push(body); const v = mineView(); if (body.leadMinutes) v.config.leadMinutes = body.leadMinutes; return { status: 200, data: v }; });
-  byTest(out(), 'assistant-lead').props.onChange({ target: { value: '15' } });
-  await m.flush();
-  assert.equal(byTest(out(), 'assistant-lead').props.value, 15);
-  byTest(out(), 'assistant-evening').props.onChange({ target: { value: '20:30' } }); await m.flush();
-  byTest(out(), 'assistant-quiet-from').props.onChange({ target: { value: '22:00' } }); await m.flush();
-  byTest(out(), 'assistant-quiet-to').props.onChange({ target: { value: '07:00' } }); await m.flush();
-  byTest(out(), 'assistant-quiet-alerts').props.onChange({ target: { checked: true } }); await m.flush();
-  byTest(out(), 'assistant-off').props.onClick(); await m.flush();
-  assert.deepEqual(calls.slice(1).map((c) => c.body), [
-    { leadMinutes: 15 }, { eveningAt: '20:30' }, { quiet: { from: '22:00' } }, { quiet: { to: '07:00' } }, { quiet: { calendarAlerts: true } }, { enabled: false },
-  ]);
-  assert.ok(calls.slice(1).every((c) => c.method === 'PUT'));
+test('K6·S2(카드): 오늘 보낸 알림 수·상태 문구 — 정확히 한도·넘음·확인 중·다른 기기, 로그인·옛 버전·화면 밖 변경', async () => {
+  const today = async (st) => text(byTest((await render(mineView({ status: { ...mineView().status, ...st } }))).out(), 'assistant-today'));
+  assert.equal(await today({ instantToday: 10, dailyCap: 10 }), 'assistant.todayUnder|{"n":10,"cap":10}');
+  assert.equal(await today({ instantToday: 11, dailyCap: 10 }), 'assistant.todayOver|{"n":11,"cap":10}');
+  assert.equal(await today({ instantToday: 3, instantSure: false }), 'assistant.todayUnsure|{"n":3}');
+  assert.equal(await today({ runner: 'other_device' }), 'assistant.onRunner');
+  const notes = async (v) => find((await render(v)).out(), (n) => n.props['data-note']).map((n) => text(n));
+  assert.deepEqual(await notes(mineView({ status: { ...mineView().status, login: false } })), ['assistant.st.login_required']);
+  assert.deepEqual(await notes(mineView({ status: { ...mineView().status, login: false, runner: 'runner_outdated' } })), ['assistant.st.runner_outdated']);
+  assert.deepEqual(await notes(baseView({ unsealed: true })), ['assistant.st.unsealed']);
 });
 
-test('U-e: 저장 실패 — 서버 문구(errorCode → API_MSG, 화면 언어)를 보이고 보기는 그대로(고른 값이 저장 전 값으로 돌아간다)', async () => {
-  const { m, out } = await render(mineView(), () => ({ status: 400, data: { error: 'x', errorCode: 'assistant_evening_in_quiet' } }));
-  byTest(out(), 'assistant-evening').props.onChange({ target: { value: '23:30' } });
-  await m.flush();
-  const alert = find(out(), (n) => n.props.role === 'alert')[0];
-  assert.equal(text(alert), API_MSG.assistant_evening_in_quiet.ko);
-  assert.equal(byTest(out(), 'assistant-evening').props.value, '21:00');
+test('보기 전용 — 카드 탭 소스에 쓰기 요청(PUT·DELETE)이 없다', () => {
+  const src = readFileSync(file('../app/c/[ws]/crew/[slug]/assistant-section.jsx'), 'utf8');
+  assert.doesNotMatch(src, /method:\s*'(PUT|DELETE|POST)'/);
 });
 
 test('i18n — 비서 탭 문구는 ko/en 둘 다 있고 한국어는 한글(고유명사 Argo 제외)', () => {
   const src = readFileSync(file('../app/i18n.jsx'), 'utf8');
   const keys = [...src.matchAll(/^\s*'(assistant\.[^']+|chat\.card\.tab\.assistant)':\s*\[('(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"),\s*('(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*")\]/gm)];
   assert.ok(keys.length >= 40, `키 ${keys.length}개`);
-  const used = new Set([...readFileSync(file('../app/c/[ws]/crew/[slug]/assistant-section.jsx'), 'utf8').matchAll(/\bt\('([^']+)'/g)].map((x) => x[1]));
+  const used = new Set(['../app/c/[ws]/crew/[slug]/assistant-section.jsx', '../app/c/[ws]/routines/heartbeat-card.jsx', '../app/c/[ws]/crew/[slug]/assistant-view.mjs'].flatMap((f) => [...readFileSync(file(f), 'utf8').matchAll(/\bt\('([^']+)'/g)].map((x) => x[1])));
   const have = new Set(keys.map((k) => k[1]));
   for (const k of used) assert.ok(have.has(k), `사전에 ${k}`);
   for (const [, k, ko, en] of keys) {
@@ -191,22 +166,3 @@ test('i18n — 비서 탭 문구는 ko/en 둘 다 있고 한국어는 한글(고
   }
 });
 
-test('U-f: 메일 보기 — 안 봄·미리 보기·알림 고르기 → PUT {mail:false|"shadow"|true}, 켠 동안 상태 칸에 마지막 메일 확인·미리 보기 기록 수·문제 문장(모르는 코드는 일반 문장), 끈 동안은 상태 칸 없음', async () => {
-  const off = await render(mineView({ config: { ...mineView().config, mail: 'off' } }), (body) => ({ status: 200, data: mineView({ config: { ...mineView().config, mail: body.mail === true ? 'live' : body.mail === false ? 'off' : 'shadow' } }) }));
-  assert.equal(byTest(off.out(), 'assistant-mail').props.value, 'off');
-  assert.equal(byTest(off.out(), 'assistant-mail-status'), undefined, '안 볼 때는 메일 상태 줄이 없다');
-  for (const [v, sent] of [['shadow', 'shadow'], ['live', true], ['off', false]]) {
-    byTest(off.out(), 'assistant-mail').props.onChange({ target: { value: v } }); await off.m.flush();
-    assert.deepEqual(off.calls.at(-1).body, { mail: sent });
-    assert.equal(byTest(off.out(), 'assistant-mail').props.value, v);
-  }
-  const st = (mail, cfgMail = 'shadow', runner = 'this_device') => render(mineView({ config: { ...mineView().config, mail: cfgMail }, status: { ...mineView().status, runner, mail } }));
-  const t1 = text(byTest((await st({ code: 'ok', checkedAt: 5, shadow: { days: 2, total: 7 } })).out(), 'assistant-mail-status'));
-  assert.equal(t1, 'T5 · assistant.mailShadow|{"days":2,"n":7}');
-  const t2 = text(byTest((await st({ code: 'mail_expired', checkedAt: 5, shadow: { days: 0, total: 0 } }, 'live')).out(), 'assistant-mail-status'));
-  assert.equal(t2, 'T5 · assistant.mailSt.mail_expired', '알림 모드에는 기록 수 없음, 문제 문장');
-  const t3 = text(byTest((await st({ code: 'weird_new_code', checkedAt: 0 }, 'live')).out(), 'assistant-mail-status'));
-  assert.equal(t3, 'assistant.mailSt.mail_error', '모르는 코드는 일반 문장(사전 키 그대로 보이지 않게)');
-  assert.equal(text(byTest((await st(null, 'live')).out(), 'assistant-mail-status')), 'assistant.lastCheckNone');
-  assert.equal(text(byTest((await st(null, 'live', 'other_device')).out(), 'assistant-mail-status')), 'assistant.onRunner');
-});

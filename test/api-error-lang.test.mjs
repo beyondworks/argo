@@ -97,6 +97,7 @@ const EXPECT = {
   // 능동 비서 설정(app/api/companies/[ws]/assistant — src/assistant/settings.mjs, 2단계 신규 코드)
   assistant_bad_request: { status: 400, ko: '하트비트 설정 요청이 올바르지 않습니다', en: 'Bad heartbeat settings request' },
   assistant_agent_not_found: { status: 400, ko: '하트비트로 정할 에이전트를 찾을 수 없습니다', en: "Couldn't find the agent to use for heartbeat" },
+  assistant_interval_invalid: { status: 400, ko: '확인 주기는 10·15·30·60분 중에서 고를 수 있습니다', en: 'The check interval can be 10, 15, 30 or 60 minutes' },
   assistant_lead_invalid: { status: 400, ko: '일정 알림은 10·15·30·60분 전 중에서 고를 수 있습니다', en: 'Event reminders can be 10, 15, 30 or 60 minutes before' },
   assistant_mail_invalid: { status: 400, ko: '메일은 안 봄·미리 보기·알림 중에서 고를 수 있습니다', en: 'Mail can be off, preview, or notify' },
   assistant_time_invalid: { status: 400, ko: '시각은 HH:MM 형식이어야 합니다', en: 'Times must be in HH:MM format' },

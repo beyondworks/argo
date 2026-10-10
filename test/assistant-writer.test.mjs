@@ -439,7 +439,7 @@ test('R13: 끈 회사 파일의 agent(봉인 안 된 값)를 같은 주인의 �
 
 /* ── K 하루 즉시 알림 상한(설계 9절) — 일정 시작 전 알림은 미루지도 버리지도 않고 바로 보낸다. 상한에 처음 걸린 글 끝에 한 줄 ── */
 
-const tail = (n) => `\n오늘 즉시 알림이 하루 한도 ${n}건을 넘었어요. 일정 알림은 계속 보내요 — 줄이려면 에이전트 카드 "하트비트" 탭에서 조용한 시간을 바꾸거나 하트비트를 끄세요.`;
+const tail = (n) => `\n오늘 즉시 알림이 하루 한도 ${n}건을 넘었어요. 일정 알림은 계속 보내요 — 줄이려면 루틴 화면의 "내 하트비트"에서 방해 금지 시간을 바꾸거나 하트비트를 끄세요.`;
 
 test('K1·K7: 상한 3, 일정 5개 — 1~3번째(정확히 상한) 꼬리 없음, 4번째(상한+1) 꼬리 한 줄(대기열에서 다시 보내도 유지), 5번째 꼬리 없음, 모두 제때', async () => {
   const ws = await company({ cfg: { dailyCap: 3 } });
@@ -487,14 +487,14 @@ test('K3: 상한을 기기 교대에도 센다 — A가 3건(상한 3) 보낸 �
 });
 
 test('K5: 꼬리 문구 ko/en — 영어 회사는 영어 꼬리', async () => {
-  assert.equal(ASSISTANT_TEXT['tail.cap'][0], '오늘 즉시 알림이 하루 한도 {n}건을 넘었어요. 일정 알림은 계속 보내요 — 줄이려면 에이전트 카드 "하트비트" 탭에서 조용한 시간을 바꾸거나 하트비트를 끄세요.');
+  assert.equal(ASSISTANT_TEXT['tail.cap'][0], '오늘 즉시 알림이 하루 한도 {n}건을 넘었어요. 일정 알림은 계속 보내요 — 줄이려면 루틴 화면의 "내 하트비트"에서 방해 금지 시간을 바꾸거나 하트비트를 끄세요.');
   assert.doesNotMatch(ASSISTANT_TEXT['tail.cap'].join(' '), /크루|사장|목록으로만|list/i, '실제로 바뀌지 않는 "목록으로만"을 말하지 않는다, 용어 규칙');
   const ws = await company({ lang: 'en', cfg: { dailyCap: 1 } });
   const env = fakeServer({ events: [ev('x1', at('10:00'), at('10:30')), ev('x2', at('11:00'), at('11:30'))], crews: [crewP(ws)] });
   await run(ws, env, at('09:29'), at('10:31'));
   assert.deepEqual(env.inserts.map((r) => r.body), [
     '[Heartbeat] Starting soon\n· 10:00 일정 x1 — starts in 30 min',
-    "[Heartbeat] Starting soon\n· 11:00 일정 x2 — starts in 30 min\nToday's instant alerts passed the daily limit of 1. Event reminders keep coming — to get fewer, change quiet hours or turn heartbeat off in the agent card's Heartbeat tab.", // 한도 1이어도 복수형 어색함 없음
+    "[Heartbeat] Starting soon\n· 11:00 일정 x2 — starts in 30 min\nToday's instant alerts passed the daily limit of 1. Event reminders keep coming — to get fewer, change Do not disturb or turn heartbeat off in Routines → My heartbeat.", // 한도 1이어도 복수형 어색함 없음
   ]);
 });
 
