@@ -44,9 +44,18 @@ async function fixture(t, { existing = false, mismatch = '', busy = false, custo
   const runner = `#!${process.execPath}\n`;
   await put(join(bin, 'uname'), runner + `console.log(process.argv.includes('-m')?'x86_64':'Linux');`, 0o755);
   await put(join(bin, 'sleep'), '#!/bin/sh\nexit 0\n', 0o755);
-  await put(join(bin, 'loginctl'), '#!/bin/sh\nexit 0\n', 0o755);
+  // loginctl — LINGER(yes|no, 기본 no) 상태를 흉내. enable-linger는 LINGER_ALLOW일 때만 성공(SSH 셸의 일반 계정은 보통 polkit 권한이 없다). 호출은 loginctl.log에.
+  await put(join(bin, 'loginctl'), runner + `
+const fs=require('fs'),path=require('path'),root=process.env.FIXTURE_ROOT,args=process.argv.slice(2),f=path.join(root,'linger');
+fs.appendFileSync(path.join(root,'loginctl.log'),args.join(' ')+'\\n');
+const on=()=>fs.existsSync(f)||process.env.LINGER==='yes';
+if(args.includes('show-user')){console.log('Linger='+(on()?'yes':'no'));process.exit(0);}
+if(args.includes('enable-linger')){if(process.env.LINGER_ALLOW){fs.writeFileSync(f,'');process.exit(0);}console.error('Could not enable linger: Access denied');process.exit(1);}
+`, 0o755);
   await put(join(bin, 'systemctl'), runner + `
 const fs=require('fs'),path=require('path'),root=process.env.FIXTURE_ROOT,base=process.env.ARGO_HOME;
+// NO_BUS — user bus가 없는 헤드리스 서버(linger 꺼짐·su로 바꾼 셸): systemctl --user가 모두 이 줄을 stderr에 쓰고 실패한다(VPS 실측 2026-10-10)
+if(process.env.NO_BUS&&process.argv.includes('--user')){fs.appendFileSync(path.join(root,'calls.log'),'NOBUS '+process.argv.slice(2).join(' ')+'\\n');console.error('Failed to connect to bus: No such file or directory');process.exit(1);}
 const args=process.argv.slice(2).filter(x=>x!=='--user'&&x!=='--quiet');
 const stateFile=path.join(root,'state.json'),s=JSON.parse(fs.readFileSync(stateFile));
 fs.appendFileSync(path.join(root,'calls.log'),args.join(' ')+'\\n');
@@ -212,4 +221,53 @@ test('계정 모드 — 우리가 만든 argo는 갱신하고, node·HOME 경로
   ok({ PATH: `${dirname(process.execPath)}:/usr/bin:/bin` });
   const none = spawnSync(shim, ['status'], { encoding: 'utf8', env: { ...process.env, PATH: join(f.root, 'no-node') } }); // sh 내장 명령만으로 판정한다
   assert.equal(none.status, 127); assert.match(none.stderr, /Node\.js/, 'node가 없으면 무엇이 없는지 알려 준다');
+});
+
+// ─── 헤드리스 서버(user bus 없음·linger 꺼짐) — VPS 0.1.100 설치 제보(2026-10-10) ───
+test('계정 모드 — user bus가 없는 서버에서는 상주 확인을 건너뛰고 "Failed to connect to bus" 잡음 없이 설치를 끝낸다', { skip: !available }, async t => {
+  const f = await fixture(t), r = f.run([], { NO_BUS: '1' });
+  assert.equal(r.status, 0, r.stderr + r.stdout);
+  assert.doesNotMatch(r.stdout + r.stderr, /Failed to connect to bus/);
+  assert.equal(JSON.parse(await readFile(join(f.base, 'app/package.json'), 'utf8')).version, '2.0.0');
+  assert.doesNotMatch(await f.calls().catch(() => ''), /is-active|is-enabled/, 'bus가 없으면 상주 확인을 부르지 않는다(없는 bus에는 돌고 있는 상주도 없다)');
+  assert.match(r.stdout, /argo service install/);
+});
+test('계정 모드 — linger가 꺼져 있고 켤 권한이 없으면 service install 전에 실행할 관리자 명령을 한 줄로 알린다(sudo를 직접 부르지 않는다)', { skip: !available }, async t => {
+  const f = await fixture(t), r = f.run([], { NO_BUS: '1' });
+  assert.equal(r.status, 0, r.stderr + r.stdout);
+  const me = spawnSync('id', ['-un'], { encoding: 'utf8' }).stdout.trim();
+  const lines = r.stdout.split('\n');
+  const linger = lines.findIndex(l => l.includes(`sudo loginctl enable-linger ${me}`));
+  assert.ok(linger >= 0, r.stdout);
+  assert.ok(linger < lines.findIndex(l => l.includes('그다음:') && l.includes('service install')), '그다음(argo service install) 안내보다 먼저');
+  const log = await readFile(join(f.root, 'loginctl.log'), 'utf8');
+  assert.match(log, /--no-ask-password enable-linger/, '권한이 있으면 켜 본다 — 암호를 묻는 창은 띄우지 않는다');
+});
+test('계정 모드 — linger를 켤 권한이 있으면 켜고 관리자 명령 안내는 내지 않는다', { skip: !available }, async t => {
+  const f = await fixture(t), r = f.run([], { LINGER_ALLOW: '1' });
+  assert.equal(r.status, 0, r.stderr + r.stdout);
+  assert.doesNotMatch(r.stdout, /sudo loginctl enable-linger/);
+  assert.match(await readFile(join(f.root, 'loginctl.log'), 'utf8'), /enable-linger/);
+});
+test('계정 모드 — linger가 이미 켜져 있으면 다시 켜지 않고 안내도 없다', { skip: !available }, async t => {
+  const f = await fixture(t), r = f.run([], { LINGER: 'yes' });
+  assert.equal(r.status, 0, r.stderr + r.stdout);
+  assert.doesNotMatch(r.stdout, /sudo loginctl enable-linger/);
+  assert.doesNotMatch(await readFile(join(f.root, 'loginctl.log'), 'utf8'), /enable-linger/);
+});
+test('로컬 모드 — user bus가 없으면 바꾸기 전에 멈추고 linger·로그인 셸 안내를 한다(잡음·반쯤 설치 없음)', { skip: !available }, async t => {
+  const f = await fixture(t), r = f.run(['--local'], { NO_BUS: '1' });
+  assert.equal(r.status, 1);
+  assert.doesNotMatch(r.stdout + r.stderr, /Failed to connect to bus/);
+  assert.match(r.stderr, /sudo loginctl enable-linger/);
+  await assert.rejects(readFile(join(f.base, 'app/package.json')), { code: 'ENOENT' }, '앱을 바꾸지 않았다');
+  await assert.rejects(readFile(f.unit), { code: 'ENOENT' });
+});
+test('로컬 모드 — linger를 켤 수 있으면 켜고 사용자 systemd를 잠깐 다시 본 뒤, 그래도 닿지 않으면 SSH 로그인 셸 안내로 멈춘다', { skip: !available }, async t => {
+  const f = await fixture(t), r = f.run(['--local'], { NO_BUS: '1', LINGER_ALLOW: '1' });
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /linger를 켰습니다/);
+  assert.match(r.stderr, /SSH에 직접 로그인한 셸/);
+  assert.match(await f.calls(), /NOBUS --user show-environment\n(?:NOBUS --user show-environment\n){10}/, '켠 뒤 다시 확인한다');
+  await assert.rejects(readFile(join(f.base, 'app/package.json')), { code: 'ENOENT' });
 });

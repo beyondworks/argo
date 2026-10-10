@@ -20,7 +20,7 @@ import { Writable, Transform } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
 import { applyCliEnv, writeConfig, cliHome, cliLang, cliMode, appDataRoot, accountRoot, isAppShared, readAppVersion, appVersionChanged } from '../src/cli/env.mjs';
 import { serverRunning } from '../src/server-presence.mjs';
-import { launchdPlist, systemdUnit, runArgs } from '../src/cli/service.mjs';
+import { launchdPlist, systemdUnit, runArgs, installLinuxUserService, userBusEnv } from '../src/cli/service.mjs';
 import { banner, parseInput, style, fit, termWidth, isCoreLog, cliHintText, hostAutoConnect, pasteFilter, unpaste, similarAgents } from '../src/cli/ui.mjs';
 
 // 사용자에게 필요 없는 경고는 숨긴다 — node:sqlite(기억 인덱스)의 ExperimentalWarning, SDK의 canUseTool 안내
@@ -87,15 +87,20 @@ const T = {
       ['Ctrl+C', '답하는 중이면 멈추기, 입력 중이면 지우기']], failed: (m) => `실패: ${m}`, oneLiner: '에이전트를 한 줄로 설명하세요(예: 쇼핑몰 광고 카피를 쓰는 마케터): ', crewName: '이름(비우면 자동): ', created: (n) => `영입했습니다: ${n}`,
     runners: 'AI 연결', connected: '연결됨', notConnected: '미연결', runnerPick: '연결할 AI 번호: ', method: '방식', secret: '키/토큰(입력은 보이지 않습니다): ',
     verifying: '확인 중…', saved: '연결했습니다.', invalid: '확인에 실패했습니다 — 키를 다시 확인하세요.', hostLogin: '이 컴퓨터 로그인 사용',
-    running: (ws, role = 'preferred') => `상주 중 — 회사 ${ws} · 메신저·루틴·쪽지·동기화. ${{ preferred: '실행 담당을 우선 맡습니다', normal: '실행 담당은 먼저 잡은 기기가 맡습니다', standby: '예비 기기입니다 — 다른 기기가 담당하는 동안은 기다리고, 그 기기가 꺼지거나 연결이 끊기면 약 2분 뒤 이어받습니다' }[role]}(Ctrl+C로 종료).`,
+    // 시작 줄은 설정(역할)만 말하고, 회사·실행 담당은 동기화·리스 판정 뒤 실제 결과로 따로 알린다(src/cli/run-notice.mjs, VPS 제보 2026-10-10)
+    running: (role = 'preferred') => `상주를 시작했습니다 — 메신저·루틴·쪽지·동기화(Ctrl+C로 종료). 역할: ${{ preferred: '우선 — 이 기기가 실행 담당을 먼저 맡도록 설정됨', normal: '일반 — 실행 담당은 먼저 잡은 기기가 맡음', standby: '예비 — 다른 기기가 담당하는 동안은 기다리고, 그 기기가 꺼지거나 연결이 끊기면 약 2분 뒤 이어받음' }[role]}.`,
+    runCompanies: (ws) => `회사: ${ws}`, runLoading: '회사를 불러오는 중입니다(동기화 중) — 실행 담당은 확인한 뒤 알려 드립니다.', runLoaded: (ws) => `회사를 불러왔습니다: ${ws}`,
+    runRole: { leader: '실행 담당: 이 기기가 맡았습니다 — 메신저·예약 작업을 이 기기가 실행합니다.', other: (h) => `실행 담당: 다른 기기(${h})가 맡고 있어 이 기기는 대기합니다 — 담당이 바뀌면 다시 알려 드립니다.`, waiting: '실행 담당: 아직 정해지지 않았습니다 — 정해지면 알려 드립니다.' },
+    statusNoCompany: '- (이 기기에 아직 없습니다 — argo run이 켜져 있으면 동기화로 불러오는 중일 수 있습니다)',
     browserFound: (p) => `에이전트 브라우저: ${p}`, browserNone: '에이전트 브라우저로 쓸 Chrome/Chromium이 없습니다.', browserInstall: '헤드리스 Chrome을 ~/.argo/browsers에 설치할까요? (y/N) ',
     browserInstalling: '설치 중… (약 100MB)', browserInstalled: (p) => `설치했습니다: ${p}`, browserFail: (m) => `설치 실패: ${m}`,
     egoSeen: 'ego 브라우저 감지됨 — 에이전트별 로그인 격리가 보장되지 않아 에이전트 브라우저로 쓰지 않습니다(에이전트마다 전용 프로필을 씁니다).',
     asideSeen: 'Aside 감지됨 — 에이전트별 로그인 격리가 보장되지 않아 에이전트 브라우저로 쓰지 않습니다.',
     headless: '화면이 없는 환경이라 에이전트 브라우저는 헤드리스로 돕니다(사람이 대신 로그인해 주는 기능은 쓸 수 없습니다).',
     svcDone: (f) => `등록했습니다: ${f} — 재부팅·크래시에도 자동으로 다시 켜집니다.`, svcRemoved: '등록을 해제했습니다.', svcNone: '등록된 서비스가 없습니다.', svcWin: 'Windows 서비스 등록은 아직 지원하지 않습니다 — argo run을 직접 실행하세요.',
-    svcRole: { preferred: '이 기기가 늘 실행 담당을 맡습니다. 다른 기기(맥 등)가 켜져 있어도 이 기기가 맡게 하려면 그대로 두고, 다른 기기가 꺼졌을 때만 맡게 하려면 argo service install --standby로 다시 등록하세요.', normal: '실행 담당은 먼저 잡은 기기가 맡습니다.', standby: '예비 상주입니다 — 다른 기기(맥 등)가 켜져 있는 동안은 그 기기가 메신저·예약 작업을 맡고, 그 기기가 꺼지거나 연결이 끊기면 약 2분 뒤 이 서버가 이어받습니다. 그 기기가 다시 켜지면 그 기기가 되찾습니다(맥 앱도 이 버전 이상이어야 되찾습니다).' },
+    svcRole: { preferred: '이 기기가 실행 담당을 우선 맡습니다 — 다른 기기(맥 등)가 맡고 있으면 이 기기에 AI가 연결돼 있을 때 잠시 뒤 넘겨받습니다(실제 담당은 argo run 로그의 "실행 담당:" 줄에 나옵니다). 다른 기기가 꺼졌을 때만 맡게 하려면 argo service install --standby로 다시 등록하세요.', normal: '실행 담당은 먼저 잡은 기기가 맡습니다.', standby: '예비 상주입니다 — 다른 기기(맥 등)가 켜져 있는 동안은 그 기기가 메신저·예약 작업을 맡고, 그 기기가 꺼지거나 연결이 끊기면 약 2분 뒤 이 서버가 이어받습니다. 그 기기가 다시 켜지면 그 기기가 되찾습니다(맥 앱도 이 버전 이상이어야 되찾습니다).' },
     svcLinger: (u) => `로그아웃·재부팅 뒤에도 계속 돌게 하려면 관리자 권한으로 한 번 실행하세요: sudo loginctl enable-linger ${u}`,
+    svcNeedLinger: (u) => `사용자 서비스를 등록하려면 먼저 관리자 권한으로 한 번 실행하세요: sudo loginctl enable-linger ${u} — 그다음 argo service install을 다시 실행하세요(로그아웃·재부팅 뒤에도 상주가 켜져 있게 됩니다).`,
     svcNoBus: (u) => `사용자 systemd에 연결하지 못했습니다(systemctl --user). 이 계정(${u})으로 SSH에 직접 로그인한 셸에서 다시 실행하세요. su·sudo로 바꾼 셸이면 먼저 관리자 권한으로 sudo loginctl enable-linger ${u}를 실행하고, 그 셸에서 export XDG_RUNTIME_DIR=/run/user/$(id -u) 뒤 다시 실행하세요.`,
     appNoRun: 'Argo 앱이 이미 이 컴퓨터에서 실행을 맡습니다(메신저·루틴·쪽지·동기화). 같은 데이터 폴더에서 상주를 하나 더 켜면 둘 다 실행 담당이 됩니다. 서버에서 상주하려면 서버 설치(install.sh)의 argo를 쓰세요.',
     appRunningLogin: (f) => `Argo 앱이 실행 중입니다. 앱을 켜 둔 채 터미널에서 로그인하면 계정이 섞입니다 — 앱에서 로그인하세요.\n(앱이 꺼져 있는데 이 안내가 나오면 ${f} 파일을 지우고 다시 시도하세요.)`,
@@ -138,15 +143,19 @@ const T = {
       ['Ctrl+C', 'stop the reply, or clear the line']], failed: (m) => `Failed: ${m}`, oneLiner: 'Describe the agent in one line (e.g. a marketer who writes ad copy): ', crewName: 'Name (blank = auto): ', created: (n) => `Hired: ${n}`,
     runners: 'AI connections', connected: 'connected', notConnected: 'not connected', runnerPick: 'AI to connect (number): ', method: 'Method', secret: 'Key/token (input hidden): ',
     verifying: 'Checking…', saved: 'Connected.', invalid: 'Check failed — verify the key.', hostLogin: "Use this computer's login",
-    running: (ws, role = 'preferred') => `Running — company ${ws} · messenger, routines, agent mail, sync. ${{ preferred: 'This device takes the execution role first', normal: 'The device that takes the execution role first keeps it', standby: 'This is a standby device — it waits while another device runs things and takes over about 2 minutes after that device turns off or loses its connection' }[role]} (Ctrl+C to stop).`,
+    running: (role = 'preferred') => `Started — messenger, routines, agent mail, sync (Ctrl+C to stop). Role: ${{ preferred: 'preferred — set to take the execution role first', normal: 'normal — the device that takes the execution role first keeps it', standby: 'standby — waits while another device runs things and takes over about 2 minutes after that device turns off or loses its connection' }[role]}.`,
+    runCompanies: (ws) => `Companies: ${ws}`, runLoading: 'Loading your companies (syncing) — the execution role will be shown once it is decided.', runLoaded: (ws) => `Companies loaded: ${ws}`,
+    runRole: { leader: 'Execution role: this device has it — it runs the messenger and scheduled work.', other: (h) => `Execution role: another device (${h}) has it, so this device is waiting — you'll see a new line if that changes.`, waiting: 'Execution role: not decided yet — you\'ll see a line once it is.' },
+    statusNoCompany: "- (none on this device yet — if argo run is on, it may still be syncing them)",
     browserFound: (p) => `Agent browser: ${p}`, browserNone: 'No Chrome/Chromium available for the agent browser.', browserInstall: 'Install headless Chrome into ~/.argo/browsers? (y/N) ',
     browserInstalling: 'Installing… (about 100MB)', browserInstalled: (p) => `Installed: ${p}`, browserFail: (m) => `Install failed: ${m}`,
     egoSeen: 'ego browser detected — not used for agents because per-agent login isolation is not guaranteed (each agent keeps its own profile).',
     asideSeen: 'Aside detected — not used for agents because per-agent login isolation is not guaranteed.',
     headless: 'No display here, so the agent browser runs headless (handing a login to a person is unavailable).',
     svcDone: (f) => `Registered: ${f} — restarts automatically after reboots and crashes.`, svcRemoved: 'Unregistered.', svcNone: 'No service registered.', svcWin: 'Windows service registration is not supported yet — run argo run directly.',
-    svcRole: { preferred: 'This device always takes the execution role. To have it run things only while your other device (a Mac, say) is off, register again with argo service install --standby.', normal: 'The device that takes the execution role first keeps it.', standby: 'Standby service — while another device (a Mac, say) is on, that device handles the messenger and scheduled work; about 2 minutes after it turns off or loses its connection, this server takes over. When that device comes back, it takes the role back (its Argo app needs this version or later).' },
+    svcRole: { preferred: 'This device takes the execution role first — if another device (a Mac, say) has it, this device takes it over shortly when an AI is connected here (the actual holder shows in the argo run log as an "Execution role:" line). To have it run things only while your other device is off, register again with argo service install --standby.', normal: 'The device that takes the execution role first keeps it.', standby: 'Standby service — while another device (a Mac, say) is on, that device handles the messenger and scheduled work; about 2 minutes after it turns off or loses its connection, this server takes over. When that device comes back, it takes the role back (its Argo app needs this version or later).' },
     svcLinger: (u) => `To keep it running after you log out or reboot, run this once with admin rights: sudo loginctl enable-linger ${u}`,
+    svcNeedLinger: (u) => `To register the background service, first run this once with admin rights: sudo loginctl enable-linger ${u} — then run argo service install again (it also keeps the service running after you log out or reboot).`,
     svcNoBus: (u) => `Couldn't reach the user systemd (systemctl --user). Run this again from a shell where you logged in over SSH as ${u}. If you switched users with su or sudo, first run sudo loginctl enable-linger ${u} with admin rights, then export XDG_RUNTIME_DIR=/run/user/$(id -u) in that shell and run it again.`,
     appNoRun: 'The Argo app already handles background work on this computer (messenger, routines, agent mail, sync). A second resident on the same data folder would make both think they own the work. To run a resident on a server, use the argo from the server install (install.sh).',
     appRunningLogin: (f) => `The Argo app is running. Signing in from the terminal while the app is open would mix accounts — sign in from the app.\n(If the app is closed but you still see this, delete ${f} and try again.)`,
@@ -477,7 +486,26 @@ async function runResident({ prefer = true, standby = false } = {}) {
   // 회사를 고르지 않는다 — 없으면 동기화가 클라우드에서 찾아오고, 게이트웨이는 이 계정의 모든 회사를 맡는다(앱 서버와 같다)
   const ws = (await ownCompanies(s.user.id)).map((c) => c.name).join(', ');
   await import('../instrumentation-node.mjs'); // 앱 서버가 켜질 때와 같은 순서 — 스케줄러·게이트웨이(메신저·텔레그램·스캐폴드 백필)·동기화·고아 턴 정리
-  console.log(T.running(ws || '-', standby ? 'standby' : prefer ? 'preferred' : 'normal'));
+  console.log(T.running(standby ? 'standby' : prefer ? 'preferred' : 'normal'));
+  console.log(ws ? T.runCompanies(ws) : T.runLoading);
+  // 회사·실행 담당은 동기화·리스 판정 뒤의 실제 결과로 알린다 — 메모리 값(leaseCheck)과 이 기기 폴더의 회사 목록만 읽는다(요청·쓰기 없음).
+  // 회사는 처음 보일 때 한 번, 실행 담당은 처음 정해질 때와 바뀔 때만 한 줄씩.
+  const { leaseCheck, isCloudLeader, LEASE_TTL_MS } = await import('../src/sync.mjs');
+  const { getDeviceId } = await import('../src/workspace.mjs');
+  const { runRoleState, roleChanged } = await import('../src/cli/run-notice.mjs');
+  let me = null; let shownWs = !!ws; let shownRole = null; let busy = false; let wsTries = 0;
+  const watch = setInterval(async () => {
+    if (busy) return; busy = true;
+    try {
+      me ??= await getDeviceId();
+      // 회사 목록은 이 기기 폴더만 읽는다 — 10분(300번) 안에 안 보이면 더 보지 않는다(회사가 없는 계정이 상주 내내 폴더를 읽지 않게, 분리 검수 L5)
+      if (!shownWs && wsTries++ < 300) { const names = (await ownCompanies(s.user.id)).map((c) => c.name).join(', '); if (names) { shownWs = true; console.log(T.runLoaded(names)); } }
+      const now = Date.now();
+      const next = runRoleState({ ...leaseCheck(), active: isCloudLeader(now) }, me, now, LEASE_TTL_MS);
+      if (roleChanged(shownRole, next)) { shownRole = next; console.log(next.kind === 'other' ? T.runRole.other(next.holder) : T.runRole[next.kind]); }
+    } catch { /* 안내만 — 실패해도 상주에는 영향 없음 */ } finally { busy = false; }
+  }, 2000);
+  watch.unref?.();
   const stop = () => process.exit(0);
   process.on('SIGINT', stop); process.on('SIGTERM', stop);
 }
@@ -491,25 +519,22 @@ function service(action, flags = []) {
   const env = { ARGO_ROOT: process.env.ARGO_ROOT ?? '', ...(cfg.lang ? { LANG: cfg.lang === 'en' ? 'en_US.UTF-8' : 'ko_KR.UTF-8' } : {}) };
   if (process.platform === 'linux') {
     const f = join(homedir(), '.config', 'systemd', 'user', 'argo-cli.service');
+    const user = process.env.USER || userInfo().username;
     if (action === 'install') {
       mkdirSync(dirname(f), { recursive: true });
       writeFileSync(f, systemdUnit({ node, bin, env, args }));
       // linger — 로그아웃·재부팅 뒤에도 사용자 서비스를 유지한다. 내 계정이라도 SSH 셸에서는 보통 관리자 권한(polkit)이 필요해 실패한다:
-      // 조용히 넘어가면 로그아웃하는 순간 상주가 꺼진다(VPS crew 계정 실측 2026-10-08: linger 꺼짐). 상태를 다시 읽어 꺼져 있으면 관리자 명령을 안내한다.
-      const user = process.env.USER || userInfo().username;
-      const lingerOn = () => /Linger=yes/.test(spawnSync('loginctl', ['show-user', user, '--property=Linger'], { encoding: 'utf8' }).stdout ?? '');
-      if (!lingerOn()) spawnSync('loginctl', ['enable-linger', user], { stdio: 'ignore' });
-      if (spawnSync('systemctl', ['--user', 'daemon-reload']).status !== 0) { console.error(T.svcNoBus(user)); return false; }
-      // enable --now는 이미 돌고 있는 상주를 다시 시작하지 않는다 — 역할을 바꿔 다시 등록해도(argo service install --standby) 옛 실행 인자로 계속 돌았다(D 1차 검수).
-      // restart는 멈춰 있으면 시작하고 돌고 있으면 새 유닛으로 다시 시작한다(macOS는 아래 bootout → bootstrap이 같은 일을 한다).
-      spawnSync('systemctl', ['--user', 'enable', 'argo-cli.service'], { stdio: 'inherit' });
-      spawnSync('systemctl', ['--user', 'restart', 'argo-cli.service'], { stdio: 'inherit' });
+      // 조용히 넘어가면 로그아웃하는 순간 상주가 꺼진다(VPS crew 계정 실측 2026-10-08: linger 꺼짐). 꺼져 있고 켤 수 없으면 관리자 명령을 안내한다.
+      // linger가 꺼진 헤드리스 셸에는 user bus도 없어 등록 자체가 안 된다(VPS 0.1.100 설치 2026-10-10) — 그때는 linger 명령 한 줄로 안내한다(src/cli/service.mjs).
+      const r = installLinuxUserService({ user, uid: process.getuid(), sh: (c, a, o = {}) => spawnSync(c, a, { encoding: 'utf8', ...o }), exists: existsSync });
+      if (!r.ok) { console.error(r.linger ? T.svcNoBus(user) : T.svcNeedLinger(user)); return false; }
       console.log(T.svcDone(f)); console.log(T.svcRole[role]);
-      if (!lingerOn()) console.log(T.svcLinger(user));
+      if (!r.linger) console.log(T.svcLinger(user));
       return;
     }
-    if (action === 'uninstall') { spawnSync('systemctl', ['--user', 'disable', '--now', 'argo-cli.service'], { stdio: 'inherit' }); rmSync(f, { force: true }); return console.log(T.svcRemoved); }
-    return existsSync(f) ? spawnSync('systemctl', ['--user', 'status', '--no-pager', 'argo-cli.service'], { stdio: 'inherit' }) : console.log(T.svcNone);
+    const busEnv = userBusEnv(process.env, process.getuid(), existsSync); // su·sudo 셸에서도 linger로 떠 있는 사용자 systemd에 닿게
+    if (action === 'uninstall') { spawnSync('systemctl', ['--user', 'disable', '--now', 'argo-cli.service'], { stdio: 'inherit', env: busEnv }); rmSync(f, { force: true }); return console.log(T.svcRemoved); }
+    return existsSync(f) ? spawnSync('systemctl', ['--user', 'status', '--no-pager', 'argo-cli.service'], { stdio: 'inherit', env: busEnv }) : console.log(T.svcNone);
   }
   if (process.platform === 'darwin') {
     const label = 'com.beyondworks.argo-cli'; const f = join(homedir(), 'Library', 'LaunchAgents', `${label}.plist`);
@@ -529,7 +554,7 @@ function service(action, flags = []) {
 async function status() {
   const s = localMode ? { user: { id: 'local', email: T.localLabel } } : await currentSession();
   const { getDeviceId } = await import('../src/workspace.mjs');
-  const companies = s ? (await ownCompanies(s.user.id)).map((c) => `${c.name} (${c.id})`).join(', ') || '-' : '-';
+  const companies = s ? (await ownCompanies(s.user.id)).map((c) => `${c.name} (${c.id})`).join(', ') || (localMode ? '-' : T.statusNoCompany) : '-';
   console.log(T.status({ email: s?.user?.email, root: process.env.ARGO_ROOT, companies, device: await getDeviceId() }).split('\n').map((l) => `  ${l}`).join('\n')); // 대화 화면 줄과 같은 들여쓰기
 }
 

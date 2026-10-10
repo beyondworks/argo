@@ -32,3 +32,37 @@ export function systemdUnit({ node, bin, env, args = ['run'] }) {
   });
   return `[Unit]\nDescription=Argo (argo run)\nAfter=network-online.target\n\n[Service]\nExecStart=${q(node)} ${q(bin)} ${safeArgs(args).join(' ')}\n${envLines.join('\n')}\nRestart=always\nRestartSec=10\n\n[Install]\nWantedBy=default.target\n`;
 }
+
+/** 사용자 systemd bus 주소 — su·sudo로 바꾼 셸에는 XDG_RUNTIME_DIR이 없어 systemctl --user가 "Failed to connect to bus"로 실패한다.
+    linger가 켜져 있으면 사용자 systemd가 /run/user/<uid>에 떠 있으니(dbus-user-session이 있으면 bus, 없어도 systemd/private — systemctl --user는 둘 다 쓴다),
+    주소가 없을 때만 그 자리를 채운다(있는 값은 건드리지 않는다). */
+export function userBusEnv(env, uid, exists) {
+  if (env.XDG_RUNTIME_DIR || env.DBUS_SESSION_BUS_ADDRESS) return env;
+  const dir = `/run/user/${uid}`;
+  return exists(`${dir}/bus`) || exists(`${dir}/systemd/private`) ? { ...env, XDG_RUNTIME_DIR: dir } : env;
+}
+
+/** 리눅스 `argo service install` — linger를 먼저 확인하고(꺼져 있으면 권한이 있을 때만 켠다, 암호를 묻지 않고 sudo도 부르지 않는다),
+    사용자 systemd에 유닛을 등록·(재)시작한다. 반환 { ok, linger } — ok=false는 user bus에 닿지 못해 등록하지 못함, linger=false면 호출자가 관리자 명령을 안내한다.
+    헤드리스 서버(VPS 0.1.100 설치, 2026-10-10): linger가 꺼진 계정은 user bus가 없어 등록 자체가 실패했고, 안내는 끝에만 있었다.
+    sh(cmd, args, { env, stdio }) → { status, stdout }, exists(path), sleep(ms)는 주입한다(시험). */
+const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+export function installLinuxUserService({ user, uid, env = process.env, sh, exists, sleep = sleepSync }) {
+  const lingerOn = () => /Linger=yes/.test(sh('loginctl', ['show-user', user, '--property=Linger']).stdout ?? '');
+  let linger = lingerOn(); let turnedOn = false;
+  if (!linger) { sh('loginctl', ['--no-ask-password', 'enable-linger', user]); linger = turnedOn = lingerOn(); }
+  let busEnv = userBusEnv(env, uid, exists);
+  let reload = sh('systemctl', ['--user', 'daemon-reload'], { env: busEnv });
+  // 방금 linger를 켰으면 logind가 사용자 systemd를 띄우는 데 잠깐 걸린다 — 최대 5초 기다린다(그 밖에는 기다리지 않는다)
+  for (let i = 0; reload.status !== 0 && turnedOn && i < 10; i++) {
+    sleep(500);
+    busEnv = userBusEnv(env, uid, exists);
+    reload = sh('systemctl', ['--user', 'daemon-reload'], { env: busEnv });
+  }
+  if (reload.status !== 0) return { ok: false, linger };
+  // enable --now는 이미 돌고 있는 상주를 다시 시작하지 않는다 — 역할을 바꿔 다시 등록해도(argo service install --standby) 옛 실행 인자로 계속 돌았다(D 1차 검수).
+  // restart는 멈춰 있으면 시작하고 돌고 있으면 새 유닛으로 다시 시작한다.
+  sh('systemctl', ['--user', 'enable', 'argo-cli.service'], { env: busEnv, stdio: 'inherit' });
+  sh('systemctl', ['--user', 'restart', 'argo-cli.service'], { env: busEnv, stdio: 'inherit' });
+  return { ok: true, linger };
+}
