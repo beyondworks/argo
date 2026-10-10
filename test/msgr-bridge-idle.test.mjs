@@ -55,9 +55,12 @@ async function harness({ inbox = () => [], local = async () => 'L0', node = fals
   const join = (topic, { callback = true } = {}) => { const ch = chans.get(topic); assert.ok(ch, `구독 안 됨: ${topic}`); ch.state = 'joined'; if (callback) ch.cb?.('SUBSCRIBED'); };
   const drop = (topic, status = 'CHANNEL_ERROR') => { const ch = chans.get(topic); ch.state = 'errored'; ch.cb?.(status); };
   const stop = M.startMsgrBridge(ws, { session: async () => ({ uid: UID, db, client }), pollMs: POLL, runnerReady: null, localState: local });
+  current = { calls };
   return { ws, calls, at, chans, join, drop, stop, client, rt: client.realtime };
 }
-const settle = async () => { for (let i = 0; i < 6; i++) { await new Promise((r) => setTimeout(r, 5)); await new Promise((r) => setImmediate(r)); } };
+let current = null; // 지금 시험의 하네스 — settle이 호출 수가 멈출 때까지 기다린다
+// 틱 하나가 끝날 때까지(실제 시간) — 호출 수가 30ms씩 세 번 연속 그대로면 끝난 것으로 본다(붐비는 러너에서 고정 대기는 덜 끝난 틱을 세어 흔들렸다)
+const settle = async () => { let last = -1, still = 0; for (let i = 0; i < 100 && still < 3; i++) { await new Promise((r) => setTimeout(r, 30)); await new Promise((r) => setImmediate(r)); const n = current?.calls.length ?? 0; still = n === last ? still + 1 : 0; last = n; } };
 async function advance(ms) { for (let t = 0; t < ms; t += POLL) { mock.timers.tick(POLL); await settle(); } }
 const drains = (h) => h.at('myCrews').length; // drain은 매번 에이전트 목록부터 읽는다 = 받은 글 조회 1회
 const joinAll = (h) => { h.join(`org:${ORG}`); h.join(`u:${UID}`); };
@@ -65,7 +68,9 @@ const joinAll = (h) => { h.join(`org:${ORG}`); h.join(`u:${UID}`); };
 async function start(opts) {
   mock.timers.enable({ apis: ['setInterval', 'Date'], now: 1_000_000 });
   const h = await harness(opts);
-  await settle(); // 첫 조회(전체)와 구독
+  // 첫 조회(전체)와 구독 — 붐비는 러너에서는 파일 읽기가 늦다(전체 시험 동시 실행에서 60ms로는 모자랐다). 구독이 생길 때까지 실제 시간으로 최대 10초
+  for (let i = 0; i < 400 && !h.chans.has(`u:${UID}`); i++) await new Promise((r) => setTimeout(r, 25));
+  await settle();
   return h;
 }
 
