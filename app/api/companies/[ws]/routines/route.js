@@ -6,7 +6,7 @@ export async function GET(_req, { params }) {
   const { ws } = await params;
   const denied = await guardCompany(ws); if (denied) return denied;
   try {
-    return Response.json({ routines: await loadRoutines(ws) });
+    return Response.json({ routines: (await loadRoutines(ws)).filter((r) => r.kind !== 'goal') }); // 목표 하트비트는 /goals가 따로 준다(루틴 목록·가동 수·편집 칸에 섞이지 않게)
   } catch (e) {
     // 손상(readJson throw) — 조용히 빈 목록으로 붕괴시키지 않는다(디스크엔 루틴이 존재).
     return Response.json({ error: String(e.message || e), code: 'ROUTINES_CORRUPT' }, { status: 500 });
@@ -42,6 +42,7 @@ export async function DELETE(req, { params }) {
   const denied = await guardCompany(ws); if (denied) return denied;
   const id = new URL(req.url).searchParams.get('id');
   if (!id) return Response.json({ error: 'id가 필요합니다' }, { status: 400 });
-  await removeRoutine(ws, id);
+  try { await removeRoutine(ws, id); }
+  catch (e) { return apiErrorFrom(e, await requestLang(), 400); } // 목표 하트비트는 이 경로로 지우지 않는다(routine_is_goal)
   return Response.json({ ok: true });
 }

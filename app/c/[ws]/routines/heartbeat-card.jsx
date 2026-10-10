@@ -54,7 +54,7 @@ function valuesOf(view, agents) {
 }
 const MAIL_SAVE = { off: false, shadow: 'shadow', live: true };
 
-export function HeartbeatCard({ ws, agents = [], agentsLoaded = true }) {
+export function HeartbeatCard({ ws, agents = [], agentsLoaded = true, children = null }) { // children = 이 섹션 아래에 붙는 목표형 하트비트 목록(goal-list.jsx — 루틴 화면이 넘긴다)
   const { t, lang } = useLang();
   const [view, setView] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -108,6 +108,7 @@ export function HeartbeatCard({ ws, agents = [], agentsLoaded = true }) {
     return (
       <section id="heartbeat" data-my-heartbeat="" style={{ display: 'grid', gap: 12, scrollMarginTop: 72 /* 붙어 있는 상단 바(56px) 아래로 */ }}>
         <div className="card">{head(null)}<div style={{ padding: '0 20px 18px' }}>{err ? <span role="alert" style={{ fontSize: 12, color: 'var(--danger)' }}>{err}</span> : <Skeleton h={80} />}</div></div>
+        {children}
       </section>
     );
   }
@@ -271,7 +272,7 @@ export function HeartbeatCard({ ws, agents = [], agentsLoaded = true }) {
           </details>
         </div>
       </div>
-      {/* 목표형 하트비트 목록(feat/goal-heartbeat)이 이 섹션의 다음 자식으로 붙는다 */}
+      {children /* 목표형 하트비트 목록(goal-list.jsx) — 알림형 칸 바로 아래, 같은 섹션 */}
     </section>
   );
 }

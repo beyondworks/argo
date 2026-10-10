@@ -104,6 +104,14 @@ const EXPECT = {
   assistant_quiet_empty: { status: 400, ko: '조용한 시간의 시작과 끝이 같습니다', en: 'Quiet hours start and end at the same time' },
   assistant_evening_in_quiet: { status: 400, ko: '내일 일정 요약 시각이 조용한 시간 안에 있습니다 — 조용한 시간 밖으로 정해 주세요', en: 'The summary time for tomorrow falls in quiet hours — pick a time outside them' },
   assistant_evening_before_morning: { status: 400, ko: '내일 일정 요약은 아침 정리(조용한 시간이 끝나는 시각)보다 늦어야 합니다', en: 'The summary for tomorrow must come after the morning summary (when quiet hours end)' },
+  // 목표 하트비트(src/goal-heartbeat.mjs·/api/companies/[ws]/goals) — 루틴 편집 경로로 목표를 바꾸려 할 때와 목표 목록의 상태 바꾸기
+  routine_is_goal: { status: 400, ko: '목표 하트비트는 루틴 화면의 목표 목록에서 바꿉니다', en: 'Goal heartbeats are changed in the Goals list on the Routines screen' },
+  goal_not_found: { status: 404, ko: '목표 하트비트를 찾을 수 없습니다', en: 'Goal heartbeat not found' },
+  goal_ended: { status: 409, ko: '이미 끝난 목표입니다', en: 'This goal has already ended' },
+  goal_max_active: { status: 409, ko: '목표 하트비트는 동시에 5개까지 켤 수 있습니다', en: 'Up to 5 goal heartbeats can run at once' },
+  goal_deadline_past: { status: 409, ko: '기한이 지난 목표는 다시 켤 수 없습니다', en: 'A goal past its deadline cannot be resumed' },
+  goal_op_invalid: { status: 400, ko: '알 수 없는 동작입니다', en: 'Unknown action' },
+  goal_run_now: { status: 400, ko: '목표 하트비트는 다음 확인 시각에 돕니다 — 바로 확인하려면 에이전트에게 말해 주세요', en: 'Goal heartbeats run at their next check time — to check now, ask the agent' },
 };
 
 test('apiError — ko 문구는 기존 프로덕션 문자열 그대로 + 상태코드 + errorCode 동봉', async () => {
