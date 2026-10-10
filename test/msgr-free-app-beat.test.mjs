@@ -78,7 +78,9 @@ test('③ myCrews: 기본은 활성 행만(다른 호출부 그대로), withPaus
   const db = makeDb(c);
   await db.myCrews(UID, WS);
   await db.myCrews(UID, WS, { withPaused: true });
-  assert.deepEqual(c.reqs.map((r) => r.in), [[['status', ['active']]], [['status', ['active', 'paused']]]]);
+  assert.deepEqual(c.reqs[0].eq, [['owner_user_id', UID], ['ws_id', WS], ['status', 'active']], '기본은 종전 요청 그대로');
+  assert.equal(c.reqs[0].in, undefined);
+  assert.deepEqual(c.reqs[1].in, [['status', ['active', 'paused']]]);
   assert.doesNotMatch(c.reqs[0].select, /status/); assert.match(c.reqs[1].select, /, status$/);
 });
 

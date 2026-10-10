@@ -242,8 +242,8 @@ export function makeDb(client) {
     /** 이 회사의 내 활성 행(개인·조직). withPaused — drain만: 같은 한 번의 조회로 멈춘 행(status 'paused' — 무료 계정 일시 중지 #941)도 받아 상태를 붙여 돌려준다.
         멈춘 행은 받은 글·턴을 돌리지 않고 기기 심박에만 싣는다(서버가 이 기기의 새 앱을 알아야 재개한다 — 20261011120000). 요청 수는 그대로 1건. */
     async myCrews(uid, wsId, { withPaused = false } = {}) {
-      const rows = unwrap(await client.from('msgr_crews').select(`id, org_id, slug, display_name, allow, allow_users, cursor_msg_id, hosting${withPaused ? ', status' : ''}`)
-        .eq('owner_user_id', uid).eq('ws_id', wsId).in('status', withPaused ? ['active', 'paused'] : ['active'])) ?? [];
+      const q = client.from('msgr_crews').select(`id, org_id, slug, display_name, allow, allow_users, cursor_msg_id, hosting${withPaused ? ', status' : ''}`).eq('owner_user_id', uid).eq('ws_id', wsId);
+      const rows = unwrap(await (withPaused ? q.in('status', ['active', 'paused']) : q.eq('status', 'active'))) ?? []; // 기본은 종전 요청 그대로
       if (withPaused) for (const r of rows) { if (r.status === 'paused') pausedIds.add(r.id); else pausedIds.delete(r.id); }
       return rows;
     },
