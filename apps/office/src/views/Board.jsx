@@ -103,7 +103,7 @@ const eventAssign = (it) => ({ kind: 'event', id: it.id, label: it.title, text: 
 /* ── 항목 동작(우클릭·선택 막대·칸반·확인 창) ── */
 /** space: 보고 있는 공간, ctx: model.js 권한 문맥, onOpen(item), onNewEvent(). onManageCats: 할 일 패널의 '분류 관리'(할 일 화면만 준다).
  *  반환 { single, many, empty, apply, dialogs, newTask, openTask, setCell, busy, check, held, manageCats } — openTask(item, focus)은 오른쪽 할 일 패널(focus 'reason'이면 보류 사유 칸에 커서),
- *  setCell(item, 칸, 값)은 표에서 바로 바꾸기(busy: 기다리는 칸 — 항목 키 → { cell, value }), check { can, run }은 캘린더 할 일 칩의 끝내기 단추,
+ *  setCell(item, 칸, 값)은 표에서 바로 바꾸기(busy: 기다리는 칸 — 항목 키 → { cell, value }), check { why, menu }는 캘린더 할 일 칩·하루 목록의 동그라미(상태 메뉴),
  *  held(item)은 보류로 바꾼 뒤의 '사유 적기' 알림(표·우클릭 메뉴·칸반이 같이 쓴다, 유건 10/9) */
 export function useItemActions({ space, ctx, people, onOpen, onNewEvent, categories = [], onManageCats }) {
   const [ask, setAsk] = useState(null);
@@ -134,7 +134,12 @@ export function useItemActions({ space, ctx, people, onOpen, onNewEvent, categor
     try { if (await apply([it], () => plan, { quiet: true }) && cell === 'status' && C.askHoldReason(it, value)) held(it); }
     finally { if (n > 1) setBusy((m) => { const next = new Map(m); next.delete(it.key); return next; }); }
   };
-  const check = { can: (it) => can(it, 'done'), run: (it) => apply([it], (x) => C.toggleDone(x, ctx), { quiet: true }) };
+  /** 캘린더 할 일 칩·하루 목록의 동그라미 = 상태 메뉴(유건 10/10) — 표 상태 칸과 같은 값·같은 쓰기(setCell: 보류면 사유 적기 알림, 끝낸 일은 다시 열기 + 상태).
+   *  why(item): 상태를 못 바꾸는 이유 글(되면 null — 표 칸 잠금과 같은 cellWhyNot), menu(item): 메뉴 항목(머리 + 할 일·진행 중·보류·끝냄, 지금 상태에 체크) */
+  const check = {
+    why: (it) => { const w = C.cellWhyNot(it, 'status', ctx); return w && t(`views.why.${w}`); },
+    menu: (it) => [{ heading: t('views.th.status') }, ...C.cellOptions(it, 'status').map((o) => ({ label: <Pill kind="status" value={o.value} />, checked: o.checked, run: () => setCell(it, 'status', o.value) }))],
+  };
   const single = (it) => [
     { label: t('views.open'), icon: 'doc', run: () => onOpen(it) },
     it.kind === 'task' && can(it, 'done') && { label: t(it.done ? 'views.reopen' : 'views.done'), icon: 'check', run: () => apply([it], (x) => V.planDone(x, !it.done, ctx), { quiet: true }) },
@@ -289,7 +294,7 @@ export function ItemsView({ id, items, cfg, setCfg, views, label, today, ctx, pe
     <tbody>{shown.slice(0, limit).map((it) => <tr key={it.key} tabIndex={0} className={it.done ? 'done' : ''} {...itemProps(it)}>
       <td><span className="vw-cell-title">{lead(it)}<span className="vw-title">{it.title}</span></span></td><td className="dim">{t(`views.kind.${it.kind}`)}</td>
       <td className="vw-nowrap">{whenText(it)}</td><td>{colLabel('who', it.who || 'none', people)}</td><td>{it.category || dash}</td><td>{it.customerName || dash}</td>
-      <td>{t(`views.col.${V.keyOf(it, 'status', today)}`)}</td></tr>)}</tbody></table>{more(shown.length - limit)}</div>;
+      <td>{it.kind === 'task' ? <TaskCell it={it} cell="status" ctx={ctx} people={people} actions={actions} /> : t(`views.col.${V.keyOf(it, 'status', today)}`)}</td></tr>)}</tbody></table>{more(shown.length - limit)}</div>;
   else if (tasks && cfg.listGroup !== 'none') { // 묶음 목록 — 묶음 머리에 끝낸 수/전체와 진행 막대(전체 기준), 줄은 앞에서부터 limit개까지
     // 진행률은 목록에 있는 할 일로 센다 — 서버 목록(office_task_list)은 끝낸 일을 최근 30일 것만 주므로 그 기준을 글로 같이 보인다(분리 검수 LOW-5: 전체 기간 진행률로 착각하지 않게)
     let left = limit;

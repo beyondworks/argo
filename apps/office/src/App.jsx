@@ -25,11 +25,11 @@ import { SPACES, ME, useSession, canManage } from './core/session.js';
 import { pullLayouts, pullPages, pullBoard } from './core/pull.js';
 import { flushNow } from './core/sync.js';
 import { refetchDue } from './core/refetch.js';
-import { Login } from './pages/Login.jsx';
 import { reloadOnce } from './core/chunk-reload.js';
 import { SelectionHost } from './core/selection.js'; // 여러 개 고르기(11차) — 감지 코드만 첫 화면, 선택 상자·막대는 쓸 때 받는다
 
 const BusinessPage = lazy(() => import('./business/BusinessPage.jsx'));
+const Login = lazy(() => import('./pages/Login.jsx').then((m) => ({ default: m.Login }))); // 로그인한 사람의 첫 화면에는 필요 없다 — 첫 화면 JS 상한(150,000B) 자리(10/10)
 // ⌘K 창은 열 때만 받는다(첫 화면 150KB 상한 — 9/30 오른쪽 패널·결재 카드 버튼을 붙이며 옮김)
 const Palette = lazy(() => import('./ui/Palette.jsx').then((m) => ({ default: m.Palette })));
 // 공유·맡기기·이력 창은 첫 화면 묶음에서 떼어 첫 화면 뒤에 따로 받는다(9/30 크루 목록 정리로 150KB 초과분 회수)
@@ -88,7 +88,7 @@ function Boot({ screen = false }) {
   const [slow, setSlow] = useState(false);
   useEffect(() => { const id = setTimeout(() => setSlow(true), 8000); return () => clearTimeout(id); }, []);
   return <div className={screen ? 'boot screen' : 'boot'} role="status" aria-busy="true" aria-label={t('login.loading')}>
-    {!screen && <span className="space-mark login-mark">A</span>}<span className="boot-spin" />
+    {!screen && <img className="login-mark" src="/icon-192.png" alt="" />}<span className="boot-spin" />
     {slow && <p className="dim small">{t('boot.slow')} <button type="button" className="link-btn" onClick={() => location.reload()}>{t('desktop.retry')}</button></p>}
   </div>;
 }
@@ -249,7 +249,7 @@ export default function App() {
   if (r.view === 'sign') return <><Lazy fallback={<Boot />}><SignPage token={r.token} /></Lazy><ToastHost /></>;
   if (r.view === 'fileLink') return <><Lazy fallback={<Boot />}><FileLink /></Lazy><ToastHost /></>;
   if (mode === 'loading') return <Boot />;
-  if (mode === 'signedOut') return <Login />;
+  if (mode === 'signedOut') return <Lazy fallback={<Boot />}><Login /></Lazy>;
   if (r.redirect) return null;
 
   const onDragEnd = ({ active, over }) => {

@@ -12,6 +12,7 @@
 .ws-rail-face { position: relative; flex: none; display: inline-grid; }
 .ws-rail-face > .dot { position: absolute; right: -2px; bottom: -2px; width: 7px; height: 7px; box-shadow: 0 0 0 2px var(--bg); }
 .ws-hidden { margin: 8px 10px 0; font-size: 11.5px; color: var(--fg-3); }
+.ws-more { color: var(--fg-3); } .ws-less { transform: rotate(180deg); } /* 더보기는 아래 화살표(caret 그대로), 접기는 위 화살표 */
 
 /* 고른 사람 한 줄 — 얼굴·이름·자리·마지막 보고, 지금 하는 일 */
 .ws-sel { display: grid; gap: 4px; margin-bottom: 12px; }
@@ -31,9 +32,11 @@
 .ws-due { width: 1%; text-align: right; white-space: nowrap; }
 .ws-due small { display: block; font-size: 12px; color: var(--fg-3); font-variant-numeric: tabular-nums; }
 .ws-late { color: var(--danger) !important; font-size: 12.5px; font-weight: 560; }
-.ws-grp td { padding: 8px 14px; background: var(--lift); }
+/* 묶음 머리 줄(사람·에이전트 없이 맡긴 일) — 회색 띠(--lift)는 표 카드 위에서 페이지 바탕과 같은 색이 돼 카드에 구멍 난 듯 보였다(유건 10/10, mist·linen 등). 띠 없이 표와 같은 면, 위·아래 선과 진한 글자로 가른다 */
+.ws-grp td { padding: 12px 14px 8px; background: none; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border-soft); }
+.ws-grp:first-child td { border-top: 0; }
 .ws-grp-in { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; min-width: 0; font-size: 13px; }
-.ws-grp-in b { font-weight: 600; }
+.ws-grp-in b { font-weight: 680; }
 
 @media (max-width: 767px) {
   .fold-item.ws-rail-item { min-height: 34px; max-width: 200px; padding: 0 12px; }

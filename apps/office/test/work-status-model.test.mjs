@@ -1,7 +1,7 @@
 // 업무 현황(유건 10/8 확정) — 맥 세션·VPS 봇·아르고 크루를 이름으로 한 사람에 묶고, 연결·지금 하는 일·할 일을 사람별로 놓는 규칙.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { personKey, cardKey, buildStatus, firstLine, sourceOf, CREW_ONLINE_MS, SESSION_ONLINE_MS, IDLE_MS } from '../src/core/work-status-model.js';
+import { personKey, cardKey, buildStatus, firstLine, sourceOf, CREW_ONLINE_MS, SESSION_ONLINE_MS, IDLE_MS, railShown } from '../src/core/work-status-model.js';
 
 const NOW = Date.parse('2026-10-08T03:00:00Z'); // 한국 2026-10-08 12:00
 const iso = (agoMs) => new Date(NOW - agoMs).toISOString();
@@ -260,4 +260,16 @@ test('지금 하는 일만 있는 사람(끊김·열린 일 없음)도 숨기지
   assert.deepEqual(keys(r), [K('루나')]);
   assert.equal(r.hidden, 0); assert.equal(r.idle.length, 0);
   assert.equal(card(r, '루나').now[0].text, '결재 기다리는 작업');
+});
+
+// 이유(10/10 유건 "왼쪽 목록은 일정 부분에서 '더보기'로 늘려서"): 처음 8명만, 고른 사람은 접혀도 보이고, 더보기를 누르면 전부
+test('왼쪽 목록 접기: 처음 8명 + 고른 사람, 나머지 수, 더보기면 전부', () => {
+  const rail = Array.from({ length: 12 }, (_, i) => ({ key: `p${i}` }));
+  const keys = (r) => r.shown.map((p) => p.key);
+  assert.deepEqual([keys(railShown(rail, 'all', false)).length, railShown(rail, 'all', false).rest], [8, 4]);
+  assert.deepEqual(keys(railShown(rail, 'p10', false)).slice(-1), ['p10'], '9번째 뒤의 고른 사람도 보인다');
+  assert.equal(railShown(rail, 'p10', false).rest, 3);
+  assert.equal(railShown(rail, 'p3', false).rest, 4, '앞 8명 안의 고른 사람은 한 번만');
+  assert.deepEqual([railShown(rail, 'all', true).shown.length, railShown(rail, 'all', true).rest], [12, 0]);
+  assert.deepEqual([railShown(rail.slice(0, 8), 'all', false).shown.length, railShown(rail.slice(0, 8), 'all', false).rest], [8, 0], '8명 이하면 더보기 없음');
 });

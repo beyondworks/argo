@@ -144,3 +144,11 @@ export function buildStatus(data, { me = null, now } = {}) {
   held.sort((a, b) => (ms(a.held_at) ?? Infinity) - (ms(b.held_at) ?? Infinity) || byDue(a, b));
   return { summary, held, people, idle, hidden, unowned };
 }
+
+/** 왼쪽 목록 접기(10/10 유건 "일정 부분에서 '더보기'로 늘려서") — 처음 n명만, 고른 사람은 그 뒤에 있어도 보인다. rest = 접혀서 안 보이는 사람 수 */
+export const RAIL_N = 8;
+export function railShown(rail, cur, more, n = RAIL_N) {
+  if (more || rail.length <= n) return { shown: rail, rest: 0 };
+  const top = rail.slice(0, n), picked = rail.slice(n).find((p) => p.key === cur);
+  return { shown: picked ? [...top, picked] : top, rest: rail.length - n - (picked ? 1 : 0) };
+}

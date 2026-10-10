@@ -10,7 +10,7 @@ import { navigate } from '../core/router.jsx';
 import { baseOf } from '../core/commands.js';
 import { refetchDue } from '../core/refetch.js';
 import { loadWorkStatus, statusError, POLL_MS } from '../core/work-status.js';
-import { buildStatus, sourceOf, PLACES } from '../core/work-status-model.js';
+import { buildStatus, sourceOf, PLACES, railShown, RAIL_N } from '../core/work-status-model.js';
 import { Icon } from '../ui/Icon.jsx';
 import { pickFolder } from '../ui/FolderView.jsx';
 import { kstDay } from '../core/task-model.js';
@@ -107,7 +107,7 @@ export default function WorkStatus({ space, folder }) {
   useLang();
   const { data, error, busy, retry } = useWorkStatus(space);
   const view = useMemo(() => (data ? buildStatus(data, { me: ME.id }) : null), [data]);
-  const [tab, setTab] = useState('all');
+  const [tab, setTab] = useState('all'), [more, setMore] = useState(false);
   const head = (sub, right) => <div className="page-title-row"><div><h1 className="page-h1">{t('nav.status')}</h1>{sub && <p className="dim">{sub}</p>}</div>{right}</div>;
   if (space === 'me') return <div className="page-wrap wide ws">{head(null)}<div className="empty-state"><Icon name="layout" size={20} /><p>{t('ws.orgOnly')}</p></div></div>;
   const open = (id) => navigate(`${baseOf(space)}/tasks?open=${encodeURIComponent(id)}`);
@@ -122,6 +122,7 @@ export default function WorkStatus({ space, folder }) {
   const rail = [...people, ...idle];
   const cur = folder === UNOWNED && unownedRows.length ? UNOWNED : rail.find((p) => p.key === folder) ? folder : 'all';
   const sel = rail.find((p) => p.key === cur) ?? null;
+  const fold = railShown(rail, cur, more); // 처음 8명 + 고른 사람, 나머지는 더보기(10/10)
   // 지금 보는 범위(전체·한 사람·에이전트 없이 맡긴 일)의 업무 — 탭 건수도 이 범위에서 센다
   const groups = cur === 'all' ? [...people.map((p) => ({ p, rows: openOf(p) })), ...(unownedRows.length ? [{ p: null, rows: unownedRows }] : [])]
     : cur === UNOWNED ? [{ p: null, rows: unownedRows }] : [{ p: sel, rows: openOf(sel) }];
@@ -162,8 +163,10 @@ export default function WorkStatus({ space, folder }) {
     {empty ? <div className="empty-state"><Icon name="layout" size={20} /><p>{t('ws.empty')}</p></div> : <div className="fold ws-fold">
       <nav className="fold-nav" aria-label={t('ws.people')}>
         {railItem('all', <span className="fold-ico"><Icon name="layout" size={14} /></span>, t('fold.all'), t('ws.railAll', { n: s.online, m: s.people }), rail.reduce((n, p) => n + openOf(p).length, 0) + unownedRows.length, cur === 'all')}
-        {rail.map((p) => railItem(p.key, <span className="ws-rail-face">{faceOf(p) ? <Face id={faceOf(p)} size={20} dim={!p.online} /> : <span className="fold-ico"><Icon name="person" size={13} /></span>}<span className={`dot ${p.online ? 'ok' : 'off'}`} /></span>,
+        {fold.shown.map((p) => railItem(p.key, <span className="ws-rail-face">{faceOf(p) ? <Face id={faceOf(p)} size={20} dim={!p.online} /> : <span className="fold-ico"><Icon name="person" size={13} /></span>}<span className={`dot ${p.online ? 'ok' : 'off'}`} /></span>,
           label(p), seenText(p), openOf(p).length, cur === p.key))}
+        {fold.rest > 0 ? <button type="button" className="fold-item ws-more" onClick={() => setMore(true)}><span className="fold-ico"><Icon name="caret" size={13} /></span><span className="fold-name">{t('ws.moreN', { n: fold.rest })}</span></button>
+          : more && rail.length > RAIL_N ? <button type="button" className="fold-item ws-more" onClick={() => setMore(false)}><span className="fold-ico ws-less"><Icon name="caret" size={13} /></span><span className="fold-name">{t('ws.less')}</span></button> : null}
         {unownedRows.length > 0 && railItem(UNOWNED, <span className="fold-ico"><Icon name="person" size={13} /></span>, t('ws.unowned'), t('ws.unownedSub'), unownedRows.length, cur === UNOWNED)}
         {hidden > 0 && <p className="ws-hidden">{t('ws.hiddenN', { n: hidden })}</p>}
       </nav>

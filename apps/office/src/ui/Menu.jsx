@@ -87,7 +87,7 @@ export function MenuHost() {
     if (e.key === 'ArrowDown') { e.preventDefault(); step(1); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); step(-1); }
     else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (actionable(m.items[idx])) run(m.items[idx]); }
-    else if (e.key === 'Escape' || e.key === 'Tab') { e.preventDefault(); closeMenu(); }
+    else if (e.key === 'Escape' || e.key === 'Tab') { e.preventDefault(); e.stopPropagation(); closeMenu(); } // Esc는 메뉴만 닫는다 — 하루 목록 창 같은 바깥 창까지 닫지 않게(#925 검수)
   };
   return createPortal(
     <div ref={ref} className="menu" role="menu" tabIndex={-1} onKeyDown={onKeyDown} onContextMenu={(e) => e.preventDefault()}
