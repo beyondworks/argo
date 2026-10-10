@@ -193,17 +193,44 @@ test('C13. 러너 아래 셸에서 표지를 지워도 CLI가 조상 표지를 �
   const { fileURLToPath } = await import('node:url');
   const argo = fileURLToPath(new URL('../bin/argo.mjs', import.meta.url));
   const root = join(await mkdtemp(join(tmpdir(), 'argo-office-chain-')), 'r');
-  const runner = `const { spawnSync } = require('node:child_process'); const r = spawnSync('/bin/sh', ['-c', 'unset ARGO_AGENT_TURN ARGO_AGENT_PROC; exec ' + JSON.stringify(process.execPath) + ' ' + JSON.stringify(process.argv[1]) + ' office work tasks'], { encoding: 'utf8' }); process.stdout.write(JSON.stringify({ code: r.status, out: r.stderr + r.stdout }));`;
+  // 셸은 exec하지 않고 사슬에 남긴다 — 셸 명령줄에 표지 글자가 있어도(사람이 grep ARGO_AGENT_TURN= …) 표지로 보지 않아야 한다(분리 검수 L1)
+  const runner = `const { spawnSync } = require('node:child_process'); const r = spawnSync('/bin/sh', ['-c', 'echo ARGO_AGENT_TURN=1 >/dev/null; unset ARGO_AGENT_TURN ARGO_AGENT_PROC; ' + JSON.stringify(process.execPath) + ' ' + JSON.stringify(process.argv[1]) + ' office work tasks'], { encoding: 'utf8' }); process.stdout.write(JSON.stringify({ code: r.status, out: r.stderr + r.stdout }));`;
   const chain = (mark) => {
     const env = { PATH: process.env.PATH, HOME: process.env.HOME, ARGO_ROOT: root, ...(mark ? { ARGO_AGENT_TURN: '1' } : {}) };
     return JSON.parse(spawnSync(process.execPath, ['-e', runner, argo], { env, encoding: 'utf8' }).stdout);
   };
   const agent = chain(true);
   assert.equal(agent.code, 1, agent.out);
-  assert.match(agent.out, /에이전트 턴 안/);
+  assert.match(agent.out, /에이전트 턴 안입니다/);
   const human = chain(false);
-  assert.equal(human.code, 2, human.out); // 로그인 필요 — 판정은 통과했다
+  assert.equal(human.code, 2, human.out); // 로그인 필요 — 판정은 통과했다(명령줄의 표지 글자는 표지가 아니다)
   assert.match(human.out, /로그인/);
+});
+
+// 이유(분리 검수 H2·M3·L2·M1): 판정 실패는 거절하되 이유를 따로 말하고(샌드박스 셸의 사람), MCP는 실패를 담아 두지 않으며, 예전 하위 명령(tasks·hold·report)도 같은 판정을 받는다
+test('C14. 판정 실패=거절(다른 문구), MCP는 실패를 담아 두지 않음, 예전 하위 명령도 판정', async () => {
+  const f = fake();
+  const boom = async () => { throw Object.assign(new Error('spawn /bin/ps EPERM'), { code: 'EPERM' }); };
+  const r = await run(['work', 'tasks', '--org', ORG], { _fresh: f._fresh, _mkClient: f._mkClient, _ancestor: boom });
+  assert.equal(r.code, 1);
+  assert.match(r.err, /확인하지 못해 거절/);
+  assert.doesNotMatch(r.err, /에이전트 턴 안입니다/);
+  let n = 0;
+  const flaky = async () => { n += 1; if (n === 1) throw new Error('ps timeout'); return 0; };
+  const mcp = officeMcp({ root: process.env.ARGO_ROOT, _fresh: f._fresh, _mkClient: f._mkClient, _ancestor: flaky });
+  const first = await mcp.call('office_orgs', {});
+  assert.equal(first.isError, true);
+  assert.match(first.content[0].text, /확인하지 못해/);
+  const second = await mcp.call('office_orgs', {});
+  assert.notEqual(second.isError, true, second.content[0].text); // 두 번째는 다시 판정해 사람 — 진행
+  await mcp.call('office_orgs', {});
+  assert.equal(n, 2, '사람 판정은 한 번 담아 둔다');
+  for (const sub of ['tasks', 'hold', 'report']) {
+    const legacy = await run([sub], { _fresh: f._fresh, _mkClient: f._mkClient, _ancestor: async () => 4242 });
+    assert.equal(legacy.code, 1, sub);
+    assert.match(legacy.err, /에이전트 턴 안입니다/, sub);
+  }
+  assert.equal((await run(['tasks', '--help'], { _ancestor: async () => 4242 })).code, 0, '도움말은 판정 전');
 });
 
 // 이유(분리 검수 MEDIUM-2): 본체 판정은 회사 폴더 전제라 작업 폴더 아래 깊은 .env·홈 폴더의 키체인을 막지 못했다

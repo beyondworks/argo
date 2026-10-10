@@ -25,7 +25,7 @@ import { addApproval, loadApprovals, consumeShellApproval } from './approvals.mj
 // 그래도 비면 틸드 확장을 fail-closed(deny)로 보수화한다(아래 isForbidden).
 /** argo office CLI·MCP를 부르는 셸 명령(10/10 분리 검수 MEDIUM-1) — 명령 자리의 argo(·argo.mjs) office, 또는 그 모듈 파일.
     따옴표·역슬래시를 지운 뒤 본다(보안 리뷰 10/10: `sh -c "argo office …"`·`node "$P/bin/argo.mjs" office`·`ar""go`가 통과했다) — 그래서 `grep "argo office"`도 거절된다(fail-closed 오탐 수용).
-    여전히 1차 방어다(변수 간접 `a=office; argo $a`는 못 본다). 주 판정은 CLI·MCP가 스스로 하는 조상 프로세스 표지 확인(office-tools-cli inAgentTurnDeep). */
+    여전히 1차 방어다(변수 간접 `a=office; argo $a`는 못 본다). 주 판정은 CLI·MCP가 스스로 하는 조상 프로세스 표지 확인(office-tools-cli agentTurnState — 그것도 방지턱이다. 한계는 agent-peer markedAncestor 주석). */
 export const ARGO_OFFICE_SHELL_RE = /(^|[\s;&|(`])(\S*\/)?argo(\.mjs)?\s+office\b|office-(tools-cli|mcp|cli)\.mjs/;
 export const shellCallsArgoOffice = (cmd) => ARGO_OFFICE_SHELL_RE.test(String(cmd ?? '').replace(/["'\\]/g, ''));
 const homeDir = () => process.env.HOME ?? process.env.USERPROFILE ?? '';

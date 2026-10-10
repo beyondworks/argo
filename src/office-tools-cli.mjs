@@ -103,12 +103,16 @@ export async function resolveOrg(c, want, fallback = null) {
 
 /** 아르고 에이전트 턴 안(셸·MCP 자식)인가 — 러너 환경(scrubServerSecrets)이 붙이는 표지. 에이전트는 자기 오피스 도구(방을 누가 보는지 판정)를 쓴다(분리 검수 MEDIUM-1) */
 export const inAgentTurn = (env = process.env) => !!env.ARGO_AGENT_TURN;
-/** 아르고 에이전트 턴 안인가 — 자기 env 표지(지울 수 있다) 또는 조상 프로세스(러너·서버)의 표지(agent-peer markedAncestor — 셸에서 지울 수 없다).
-    판정 실패는 true(fail-closed). 보안 리뷰(10/10): 셸 문자열 게이트는 따옴표·sh -c, env 표지는 unset으로 넘을 수 있었다 */
-export async function inAgentTurnDeep({ env = process.env, _ancestor = markedAncestor } = {}) {
-  if (inAgentTurn(env)) return true;
-  try { return (await _ancestor()) > 0; } catch { return true; }
+/** 아르고 에이전트 턴 판정 — 'agent'(자기 env 표지 또는 조상 프로세스 표지) | 'unknown'(판정 실패 — 호출부가 거절, fail-closed) | null(사람).
+    자기 env 표지는 셸에서 지울 수 있어 조상(러너 CLI)의 표지를 같이 본다(agent-peer markedAncestor — 방지턱이고 한계는 그 주석). 보안 리뷰(10/10) */
+export async function agentTurnState({ env = process.env, _ancestor = markedAncestor } = {}) {
+  if (inAgentTurn(env)) return 'agent';
+  try { return (await _ancestor()) > 0 ? 'agent' : null; } catch { return 'unknown'; }
 }
+/** 거절 문장 — 'unknown'은 이유가 다르다(분리 검수 M3: Codex 샌드박스 셸은 /bin/ps를 못 띄워 사람도 여기 걸린다) */
+export const agentTurnRefusal = (state, lang = 'ko') => state === 'unknown'
+  ? (lang === 'en' ? 'Could not check whether this runs inside an Argo agent turn (ps unavailable — e.g. a sandboxed shell), so it was refused. Connect argo office mcp instead, or run it from a normal terminal.' : '아르고 에이전트 턴 안인지 확인하지 못해 거절했습니다(ps를 실행할 수 없음 — 샌드박스 셸 등). argo office mcp로 붙이거나 일반 터미널에서 실행하세요.')
+  : (lang === 'en' ? 'Inside an Argo agent turn — use your own Office tools (office_work, office_deals, calendar…), not the argo office CLI/MCP.' : '아르고 에이전트 턴 안입니다 — argo office CLI·MCP 대신 이 대화의 오피스 도구(office_work·office_deals·calendar 등)를 쓰세요.');
 const SECRET_NAME = /^(id_[a-z0-9_]+|.*\.(pem|key|p12|pfx|keychain|keychain-db|kdbx)|credentials(\..*)?|secrets?(\..*)?|.*token.*\.json)$/i;
 /** 문서함에 올릴 파일(files attach --path) — 지금 작업 폴더 안의 보통 파일만. 작업 폴더가 홈이거나 그 위면 거절, 경로 어느 자리든 점으로 시작하는 이름(.env·.ssh·.git…)·비밀 파일 이름은 거절,
     심볼릭 링크는 실제 위치로 다시 본다(분리 검수 MEDIUM-2 — 본체 판정은 회사 폴더 전제라 깊은 .env를 막지 못했다). 반환 null(통과) | 거절 문장 */
@@ -168,7 +172,7 @@ export async function toolsMain(sub, argv, { root, lang = 'ko', out = (s) => con
     else out(usage(specs, L));
     return 0;
   }
-  if (sub !== 'tools' && await inAgentTurnDeep({ _ancestor })) { err(L === 'en' ? 'Inside an Argo agent turn — use your own Office tools (office_work, office_deals, calendar…), not the argo office CLI/MCP.' : '아르고 에이전트 턴 안입니다 — argo office CLI·MCP 대신 이 대화의 오피스 도구(office_work·office_deals·calendar 등)를 쓰세요.'); return 1; }
+  if (sub !== 'tools') { const st = await agentTurnState({ _ancestor }); if (st) { err(agentTurnRefusal(st, L)); return 1; } }
   if (sub === 'mcp' && help) { out(L === 'en' ? 'argo office mcp — MCP server on stdio. Claude Code: claude mcp add argo-office -- node <argo>/bin/argo.mjs office mcp' : 'argo office mcp — 표준 입출력 MCP 서버. Claude Code: claude mcp add argo-office -- node <argo>/bin/argo.mjs office mcp'); return 0; }
   if (sub === 'mcp') return (await import('./office-mcp.mjs')).serveMcp({ root, lang: L, cfgOrg, _fresh, _mkClient, _ancestor });
   const spec = specs.find((s) => s.name === AREAS[sub]);
