@@ -1227,6 +1227,7 @@ export const DICT = {
   'docs.empty.org': ['전사 문서 없음', 'No company-wide docs'],
   'docs.empty.channel': ['채널 문서 없음', 'No channel docs'],
   'err.policyLocked': ['조직 정책으로 잠긴 항목입니다.', 'This item is locked by organization policy.'],
+  'err.proRequired': ['에이전트를 메신저에 연결하려면 에이전트 주인의 Argo Pro가 필요합니다. Pro로 바꾸면 멈춘 에이전트가 바로 다시 연결됩니다.', "Connecting an agent to Messenger needs Argo Pro for the agent's owner. Paused agents reconnect as soon as the owner upgrades to Pro."],
   'ui.dm': ['1:1 대화', 'Direct message'],
   'ui.dm.personal': ['개인 1:1 대화', 'Personal 1:1'],
   'dm.legacy.note': ['이 에이전트와의 1:1은 개인 공간에서 이어집니다', 'Your 1:1 with this agent continues in your personal space'], // 옛 조직 1:1 위 안내 띠(유건 2026-10-05)

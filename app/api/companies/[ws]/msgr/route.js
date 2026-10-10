@@ -12,7 +12,10 @@ import { splitCardRows } from './card-rows.mjs'; // 행 나누기 — 카드 판
 
 const ALLOW = new Set(['all', 'list', 'owner']);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const upstream = (where, e, lang) => { console.error(`[argo] msgr ${where}:`, e?.message ?? e); return apiError('msgr_upstream', lang); }; // PG 원문은 화면이 아니라 로그로
+const upstream = (where, e, lang) => {
+  if (/msgr_pro_required/.test(String(e?.message ?? ''))) return apiError('msgr_pro_required', lang); // 무료 계정이 파견 해제한 에이전트를 다시 파견(서버 관문 msgr_crews_pro_gate)
+  console.error(`[argo] msgr ${where}:`, e?.message ?? e); return apiError('msgr_upstream', lang); // PG 원문은 화면이 아니라 로그로
+};
 
 const runtimeState = msgrRuntimeState; // 정본은 src/connections.mjs — 에이전트 상태 도구(argo_status messenger)가 같은 판정을 쓴다
 
@@ -110,6 +113,8 @@ export async function POST(req, { params }) {
       }
     }
     const crews = await syncEnabled(ws, c);
+    // 무료 계정은 서버 관문이 행을 조용히 paused로 둔다(옛 미러가 같은 쓰기를 되풀이하지 않게) — 사람이 누른 연결이면 이유를 보인다
+    if (crews.some((r) => r.org_id === orgId && wanted.includes(r.slug) && r.status === 'paused')) return apiError('msgr_pro_required', lang);
     return Response.json({ ok: true, crews });
   }
   if (!UUID.test(String(orgId ?? '')) || !slug || !ALLOW.has(allow) || !users.every((u) => UUID.test(String(u)))) return apiError('msgr_bad_request', lang);
@@ -122,9 +127,10 @@ export async function POST(req, { params }) {
     hosting: process.env.ARGO_TENANT_OWNER ? 'resident' : 'local', status: 'active', allow,
     allow_users: users.slice(0, 200),
   };
-  const { data, error } = await c.client.from('msgr_crews').upsert(row, { onConflict: 'org_id,owner_user_id,ws_id,slug' }).select('id').single();
+  const { data, error } = await c.client.from('msgr_crews').upsert(row, { onConflict: 'org_id,owner_user_id,ws_id,slug' }).select('id, status').single();
   if (error) return upstream('POST', error, lang);
   const crews = await syncEnabled(ws, c);
+  if (data.status === 'paused') return apiError('msgr_pro_required', lang); // 무료 계정 — 행은 남고 연결은 Pro 뒤(위 activate와 같다)
   return Response.json({ ok: true, id: data.id, crews });
 }
 

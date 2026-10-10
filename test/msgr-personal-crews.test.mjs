@@ -117,7 +117,7 @@ test('새 행 얼굴 재료 — 개인 행을 읽는다(조직 행 필터 없음
   const { log, client } = chainClient({ data: [], error: null });
   await M.makeDb(client).crewLooks(UID, WS, ['jun']);
   assert.deepEqual(log.filter(([k, col]) => k === 'not' && col === 'org_id'), [], '개인 행(org NULL)을 거르지 않는다');
-  assert.ok(log.some(([k, col, vals]) => k === 'in' && col === 'status' && vals.join() === 'active,available'), '살아 있는 행만');
+  assert.ok(log.some(([k, col, vals]) => k === 'in' && col === 'status' && vals.join() === 'active,available,paused'), '살아 있는 행만(무료 계정 일시 중지 paused 포함)');
   const d = invDb({ orgs: [ORG], rows: [{ id: 'p1', org_id: null, slug: 'jun', display_name: '준', role_text: null, status: 'active' }] });
   d.crewLooks = async () => [{ id: 'p1', org_id: null, slug: 'jun', status: 'active', face: { v: 2, shape: 3, color: 4 }, avatar_url: 'https://x/p.jpg', created_at: '2026-09-01T00:00:00+00:00' }];
   await M.mirrorInventory(WS, { blocked: new Map(), db: d, uid: UID, agents: [{ slug: 'jun', name: '준', role: null }], seen: new Map() });

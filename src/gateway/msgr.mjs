@@ -292,7 +292,7 @@ export function makeDb(client) {
     /** 새 행(개인·조직)에 복사할 얼굴·사진 재료 — 이 회사(ws)·이 slug들의 내 살아 있는 행(조직 + 개인). 대표 행은 조직 행 기준이지만(repLooks) 개인 행에만 얼굴이 있는
         에이전트도 첫 조직 합류 때 그 얼굴을 받아야 해서 개인 행도 읽는다(검수 #fix-cross L1 — 메신저 agentLooks도 개인 행을 얼굴·사진 대체 경로에 쓴다). 넣을 행이 있는 틱에만 한 번 부른다. */
     async crewLooks(uid, wsId, slugs) {
-      return unwrap(await client.from('msgr_crews').select('id, org_id, slug, status, face, avatar_url, created_at').eq('owner_user_id', uid).eq('ws_id', wsId).in('slug', slugs).in('status', ['active', 'available'])) ?? [];
+      return unwrap(await client.from('msgr_crews').select('id, org_id, slug, status, face, avatar_url, created_at').eq('owner_user_id', uid).eq('ws_id', wsId).in('slug', slugs).in('status', ['active', 'available', 'paused'])) ?? []; // paused = 무료 계정 일시 중지(20261010200000) — 얼굴 재료는 그대로 쓴다
     },
     /** 이 조직에 내 크루 행을 넣을 수 있나 — msgr_crews_insert 정책과 같은 판정(내 역할 owner·admin·member + 잠기지 않은 조직)을 그 함수 그대로 부른다.
         손님으로만 든 조직·잠긴(구독 연체) 조직은 insert가 RLS에 막혀 매 틱 실패 쓰기가 되던 것을 미리 거른다(검수 2차 M-2). 조직이 있고 넣을 행이 있을 때만 호출(mirrorInventory insertableOrgs). */
@@ -332,9 +332,9 @@ export function makeDb(client) {
     /** '/' 커맨더 목록 — 이 회사(ws)의 내 크루 행 전부에 같은 목록(회사 단위 별칭·스킬). */
     async setCommands(uid, wsId, commands) { unwrap(await client.from('msgr_crews').update({ commands }).eq('owner_user_id', uid).eq('ws_id', wsId)); },
     async deleteCrews(ids) { if (ids.length) unwrap(await client.from('msgr_crews').delete().in('id', ids)); },
-    /** 해고한 에이전트의 파견 행(조직·개인) 분리 — 해고 라우트가 카드를 .archive로 옮긴 직후 부른다(detachFiredCrew). status='active'만 쓰므로 이미 분리·해제된 행은 다시 쓰지 않는다. 바뀐 행 id 목록. */
+    /** 해고한 에이전트의 파견 행(조직·개인) 분리 — 해고 라우트가 카드를 .archive로 옮긴 직후 부른다(detachFiredCrew). status가 active·paused(무료 계정 일시 중지)인 행만 쓰므로 이미 분리·해제된 행은 다시 쓰지 않는다. 바뀐 행 id 목록. */
     async detachActiveCrews(uid, wsId, slug) {
-      return (unwrap(await client.from('msgr_crews').update({ status: 'detached' }).eq('owner_user_id', uid).eq('ws_id', wsId).eq('slug', slug).eq('status', 'active').select('id')) ?? []).map((r) => r.id);
+      return (unwrap(await client.from('msgr_crews').update({ status: 'detached' }).eq('owner_user_id', uid).eq('ws_id', wsId).eq('slug', slug).in('status', ['active', 'paused']).select('id')) ?? []).map((r) => r.id);
     },
     /** 업무·자동화 1단계 — 이 크루의 Argo 루틴 스냅샷을 서버에 미러(RPC가 바뀐 것만 쓴다). 옛 서버(RPC 없음)면
         undefined → 호출부(mirrorRoutines)가 옛 서버로 취급해 조용히 물러난다(M4, crewMemory와 같은 신호). */
@@ -830,7 +830,8 @@ function rowPatch(r, a, edges) {
   return patch;
 }
 /** 카드가 사라진 행 — 해고를 본 틱의 파견 행만 분리 */
-const firedPatch = (r, edges) => (edges.fired.has(r.slug) && r.status === 'active' ? { status: 'detached' } : {});
+// paused(무료 계정 일시 중지, 20261010200000)도 분리한다 — 그대로 두면 Pro 재개 때 해고한 에이전트가 active로 되살아난다
+const firedPatch = (r, edges) => (edges.fired.has(r.slug) && (r.status === 'active' || r.status === 'paused') ? { status: 'detached' } : {});
 async function applyPatch(db, r, patch, edges, log, what) {
   if (!Object.keys(patch).length) return false;
   await db.updateCrewInfo(r.id, patch).catch((e) => { edges.failed.add(r.slug); log(`[argo] msgr ${what} 실패:`, e?.message ?? e); });
@@ -901,7 +902,7 @@ async function withLooks(inserts, looksOf) {
 export function repLooks(rows) {
   const at = (r) => { const t = Date.parse(r.created_at ?? ''); return Number.isFinite(t) ? t : Infinity; };
   const bySlug = new Map();
-  for (const r of rows ?? []) { if (!r?.slug || !['active', 'available'].includes(r.status)) continue; if (!bySlug.has(r.slug)) bySlug.set(r.slug, []); bySlug.get(r.slug).push(r); }
+  for (const r of rows ?? []) { if (!r?.slug || !['active', 'available', 'paused'].includes(r.status)) continue; if (!bySlug.has(r.slug)) bySlug.set(r.slug, []); bySlug.get(r.slug).push(r); }
   const out = new Map();
   for (const [slug, list] of bySlug) {
     const byAge = list.slice().sort((a, b) => at(a) - at(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));

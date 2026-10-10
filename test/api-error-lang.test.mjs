@@ -51,6 +51,7 @@ const EXPECT = {
   msgr_notify_bad_request: { status: 400, ko: '알림 설정 요청이 올바르지 않습니다 — 켜기/끄기 값만 받습니다', en: 'Bad notification setting request — only an on/off value is accepted' },
   msgr_bad_request: { status: 400, ko: '조직 id·에이전트·허용 범위(all|list|owner)를 확인해 주세요', en: 'Check the organization id, agent, and allow scope (all|list|owner)' },
   msgr_crew_not_found: { status: 404, ko: '에이전트가 없습니다', en: 'Agent not found' },
+  msgr_pro_required: { status: 403, ko: '에이전트를 메신저에 연결하려면 Argo Pro가 필요합니다. Pro로 바꾸면 멈춘 에이전트가 바로 다시 연결됩니다.', en: 'Connecting agents to Messenger needs Argo Pro. Paused agents reconnect as soon as you upgrade to Pro.' },
   msgr_upstream: { status: 502, ko: '조직 서버 응답 오류 — 잠시 후 다시 시도해 주세요', en: 'Organization server error — please try again shortly' },
   // 회사 정보 읽기 실패(F3, 2026-10-05) — 없음(404 company_not_found)과 갈라 화면이 '찾을 수 없음'으로 바뀌지 않게
   // 엔진 오류 코드(F11) — ko는 엔진이 던지던 문장 그대로

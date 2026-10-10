@@ -571,3 +571,18 @@ test('E24c(5차). 틱 도중 되살릴 기록에 더해진 slug는 그 틱의 do
   await mirrorInventory(WS, { db: d, uid: UID, agents, seen, revive, log: () => {} });
   assert.deepEqual(['b1', 'bp'].map((id) => d.state.rows.find((r) => r.id === id).status), ['active', 'active'], '다음 틱이 b를 되살린다'); assert.equal(revive.size, 0, '되살린 뒤 기록을 비운다');
 });
+
+test('E-paused(2026-10-10). 무료 계정 일시 중지(paused) 행도 해고를 본 틱에 detached로 — 그대로 두면 Pro 재개 때 해고한 에이전트가 되살아난다. 유휴 틱·카드가 있는 paused 행은 쓰기 0', async () => {
+  const d = db({ rows: [
+    { id: 'r1', org_id: O1, slug: 'gone', display_name: 'gone', role_text: null, status: 'paused' },
+    { id: 'p1', org_id: null, slug: 'gone', display_name: 'gone', role_text: null, status: 'paused' },
+    { id: 'r2', org_id: O1, slug: 'stay', display_name: 'stay', role_text: null, status: 'paused' },
+    { id: 'p2', org_id: null, slug: 'stay', display_name: 'stay', role_text: null, status: 'paused' }] });
+  const seen = new Map();
+  await mirrorInventory(WS, { db: d, uid: UID, agents: [card('gone', null), card('stay', null)], seen });
+  await mirrorInventory(WS, { db: d, uid: UID, agents: [card('stay', null)], seen });
+  assert.deepEqual(writes(d).map(([, id, p]) => [id, p]).sort(), [['p1', { status: 'detached' }], ['r1', { status: 'detached' }]]);
+  d.calls.length = 0;
+  await mirrorInventory(WS, { db: d, uid: UID, agents: [card('stay', null)], seen });
+  assert.deepEqual(writes(d), [], 'paused 행을 되살리거나 다시 쓰지 않는다');
+});

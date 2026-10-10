@@ -3,7 +3,7 @@
 import { isNetworkFailure } from './net-errors.mjs';
 import { DICT } from './i18n.js';
 
-export const friendlyErr = (msg, t) => /msgr_session_refreshing/.test(msg) ? t('err.sessionRefreshing') : /msgr_crew_remove_owner_only/.test(msg) ? t('err.crewRemoveOwnerOnly') : /row-level security/.test(msg) ? t('err.denied') : /_check\b|violates check constraint/.test(msg) ? t('err.invalid') : /msgr_seat_limit/.test(msg) ? t('seat.limit') : /msgr_approver_not_member/.test(msg) ? t('set.policy.approverNotMember') : /msgr_org_locked|read-only/.test(msg) ? t('org.locked.short') : /msgr_room_limit/.test(msg) ? t('room.limit') : msg; // 무료 인원 한도(개인 공간 2026-09-30)
+export const friendlyErr = (msg, t) => /msgr_session_refreshing/.test(msg) ? t('err.sessionRefreshing') : /msgr_pro_required/.test(msg) ? t('err.proRequired') /* 무료 계정 에이전트 파견(2026-10-10) */ : /msgr_crew_remove_owner_only/.test(msg) ? t('err.crewRemoveOwnerOnly') : /row-level security/.test(msg) ? t('err.denied') : /_check\b|violates check constraint/.test(msg) ? t('err.invalid') : /msgr_seat_limit/.test(msg) ? t('seat.limit') : /msgr_approver_not_member/.test(msg) ? t('set.policy.approverNotMember') : /msgr_org_locked|read-only/.test(msg) ? t('org.locked.short') : /msgr_room_limit/.test(msg) ? t('room.limit') : msg; // 무료 인원 한도(개인 공간 2026-09-30)
 
 /** 기계가 낸 원문의 모양 — 서버 예외 코드(msgr_…)·Postgres·PostgREST·JS 오류. 사전 문구에는 없는 모양만(테스트가 사전 전체로 잠근다) */
 export const MACHINE_ERROR = /\bmsgr_[a-z_]+|PGRST\d|\bviolates\b|duplicate key|\bJWT\b|(?:Type|Reference|Syntax|Range)Error|is not a function|Cannot read propert|null value in column|permission denied for|relation "|column "|non-2xx|status code \d|\bHTTP \d{3}\b|\bErr(?:or)?:/;
