@@ -16,8 +16,8 @@ export function agentPauseNote(info, { ios = false } = {}) {
   return key ? { key, vars: { n: Number(info.paused), limit: Number(info.limit) || 4 } } : null;
 }
 
-/** 교체 안내(검수 #945 MEDIUM-1) — 무료 계정 4명이 찬 상태에서 연결하면 서버가 가장 오래 대화하지 않은 에이전트를 쉬게 하고 연결한다.
-    방금 연결한 에이전트 때문에 쉬게 된 에이전트 이름들(서버 msgr_agent_swap_notes, 5분 안). 연결 직후 한 번만 부른다. 옛 서버·오류면 빈 목록. */
+/** 교체 안내(검수 #945 MEDIUM-1) — 무료 계정 4명이 찬 상태에서 연결하면 서버가 가장 오래 대화하지 않은 에이전트를 멈추고 연결한다.
+    방금 연결한 에이전트 때문에 멈춘 에이전트 이름들(서버 msgr_agent_swap_notes, 5분 안). 연결 직후 한 번만 부른다. 옛 서버·오류면 빈 목록. */
 export async function readSwapNames(db, crewIds) {
   try {
     if (!crewIds?.length) return [];

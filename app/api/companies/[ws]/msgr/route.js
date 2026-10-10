@@ -88,7 +88,9 @@ export async function GET(_req, { params }) {
   if (!c) return Response.json({ signedIn: false, orgs: [], crews: [] });
   try {
     const [orgs, { crews, personalCount }, gateway] = await Promise.all([myOrgs(c), myCardRows(c, ws), msgrGatewayStatus(ws)]);
-    return Response.json({ signedIn: true, uid: c.uid, orgs, crews, personalCount, runtime: runtimeState(gateway) });
+    // 멈춘 행(무료 계정 한도)의 이유 — 카드 줄 문구(msgr-card.mjs pausedLabelKey). 멈춘 행이 있을 때만 읽는다(카드의 8초 폴에 호출을 늘리지 않게, 화면 검수 B)
+    const pauseReason = crews.some((r) => r.status === 'paused') ? (await readAgentPause(c.client).catch(() => null))?.reason ?? null : null;
+    return Response.json({ signedIn: true, uid: c.uid, orgs, crews, personalCount, pauseReason, runtime: runtimeState(gateway) });
   } catch (e) { return upstream('GET', e, await requestLang()); }
 }
 
@@ -142,7 +144,7 @@ export async function POST(req, { params }) {
       if (error) return upstream('POST activate update', error, lang);
     }
     let crews = await syncEnabled(ws, c);
-    // 4) 무료 계정 4명이 차 있어 다른 에이전트를 쉬게 했으면 알린다(교체 — 서버 msgr_agent_swap_notes)
+    // 4) 무료 계정 4명이 차 있어 다른 에이전트를 멈췄으면 알린다(교체 — 서버 msgr_agent_swap_notes)
     const swapped = await swapNotes(c.client, crews.filter((r) => r.org_id === orgId && wanted.includes(r.slug)).map((r) => r.id)).catch(() => []);
     // 새 앱이 없을 때의 paused→active는 서버 관문이 행을 조용히 paused로 둔다(옛 미러가 같은 쓰기를 되풀이하지 않게) — 사람이 누른 연결이면 이유를 보인다
     if (crews.some((r) => r.org_id === orgId && wanted.includes(r.slug) && r.status === 'paused')) {

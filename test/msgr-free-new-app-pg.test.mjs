@@ -398,13 +398,125 @@ test('[보안 ⑤①] 이유 조회는 내 것만, 교체 기록 표는 직접 �
   assert.deepEqual(Object.keys(mine).sort(), ['active', 'limit', 'min_app', 'paused', 'reason'], '목록·이름·남의 id 없이 수와 이유만');
   fails(asUserRaw(M, 'select * from public.msgr_free_choices'), /permission denied/, '교체 기록 표 직접 읽기');
   fails(asUserRaw(M, `insert into public.msgr_free_choices (crew_id, owner_user_id) values ('${F.f1}', '${M}')`), /permission denied/, '교체 기록 표 직접 쓰기');
-  for (const call of [`public._msgr_crew_resume_side('${F.f1}', 0)`, `public._msgr_crew_plan_resume('${F.f1}', 0)`, `public.msgr_crews_plan_sweep('${U.f}')`, `public._msgr_free_active_agents('${U.f}')`, `public._msgr_free_app_ok('${U.f}')`])
+  for (const call of [`public._msgr_crew_resume_side('${F.f1}', 0)`, `public._msgr_crew_plan_resume('${F.f1}', 0)`, `public.msgr_crews_plan_sweep('${U.f}')`, `public._msgr_free_active_agents('${U.f}')`, `public._msgr_free_app_ok('${U.f}')`, `public._msgr_free_benched('${U.f}', 'ws-f', 'f1', null)`])
     fails(asUserRaw(M, `select ${call}`), /permission denied/, call);
   const bad = sql(`select coalesce(string_agg(p.proname, ','), '') from pg_proc p join pg_namespace n on n.oid = p.pronamespace
     where n.nspname = 'public' and p.proname in ('msgr_device_beat','msgr_free_resume','msgr_my_agent_pause','msgr_agent_swap_notes','msgr_crews_pro_gate','msgr_crews_resume_side',
-      '_msgr_crew_resume_side','_msgr_crew_plan_resume','msgr_crews_plan_sweep','_msgr_free_app_ok','_msgr_free_active_agents','_msgr_free_agent_policy')
+      '_msgr_crew_resume_side','_msgr_crew_plan_resume','msgr_crews_plan_sweep','_msgr_free_app_ok','_msgr_free_active_agents','_msgr_free_agent_policy','_msgr_free_benched')
       and not (p.prosecdef and exists (select 1 from unnest(p.proconfig) c where c like 'search_path=%'))`);
   assert.equal(bad, '', '정의자 + search_path 고정이 아닌 함수');
   for (const fn of ['msgr_device_beat(text,text,uuid[],text)', 'msgr_free_resume()', 'msgr_my_agent_pause()', 'msgr_agent_swap_notes(uuid[])'])
     assert.equal(sql(`select has_function_privilege('anon', 'public.${fn}', 'EXECUTE')`), 'f', `anon ${fn}`);
+});
+
+// ── 화면 검수 반영(10/11 2차) — 검수 스택에서 본 A(연결이 반쯤만 반영)·C(동점 순서) ──
+// A: 설정 '연결 안 된 에이전트 추가'로 다섯 번째(서린)를 연결하면 고른 조직 행만 active, 같은 에이전트의 다른 공간 행은 paused로 남아 10분 크론을 기다렸다
+//    (그동안 메신저 개인 공간 '에이전트 · 3' vs 안내 '4명까지 … 1명 멈춤'). 사람의 연결 직후 그 주인 하나를 크론과 같은 판정으로 같은 트랜잭션에서 맞춘다.
+// C: 대화 기록이 없는 두 에이전트 중 교체로 멈춘 쪽이 Pro 재개(커서를 끝으로)를 거치면 Pro→무료 때 '최근'으로 잡혀 남았다 — 재개가 옮긴 커서는 순위에 쓰지 않고,
+//    교체로 멈춘 뒤 대화가 없는 에이전트를 동점 안에서 뒤로 둔다.
+const Q = 'a8888888-8888-4888-8888-888888888888', Z = 'a9999999-9999-4999-8999-999999999999';
+const xminOf = (list) => sql(`select string_agg(id::text || ':' || xmin::text, ',' order by id) from public.msgr_crews where id in (${list.map((x) => `'${x}'`).join(',')})`);
+const postAs = (uid, ch, body) => last(asUser(uid, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, kind, body, mentions, client_msg_id) values ('${ch}', 'user', '${uid}', 'text', ${q(body)}, '[]'::jsonb, gen_random_uuid()::text) returning id`));
+const execOn = (crew, msg) => sql(`insert into public.msgr_executions (crew_id, source_msg_id, attempt, state) values ('${crew}', ${msg}, gen_random_uuid(), 'completed')`);
+
+test('[화면 A] 사람이 다섯 번째를 연결한 그 순간 같은 에이전트의 다른 공간 행이 함께 연결되고 교체된 에이전트는 모든 행이 멈춘다 — 크론이 할 일 0, 관계없는 행은 쓰지 않는다', { skip }, () => {
+  sql(`insert into auth.users (id, created_at, email) values ('${Q}', now() - interval '30 days', 'q@example.test') on conflict do nothing`);
+  const O1 = last(asUser(Q, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('Q1', 'q-one', '${Q}') returning id`));
+  const O2 = last(asUser(Q, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('Q2', 'q-two', '${Q}') returning id`));
+  const r = {};
+  for (const s of ['q1', 'q2', 'q3', 'q4']) { r[s] = insOff(Q, O1, s); r[`${s}p`] = insOff(Q, null, s); } // 연결된 넷 — 조직 행 + 개인 행
+  r.q5p = insOff(Q, null, 'q5', 'paused'); r.q5o2 = insOff(Q, O2, 'q5', 'paused'); // 서린 — 다른 두 공간에서 멈춘 채(교체·한도로)
+  const ch = last(asUser(Q, `select public.msgr_create_channel('${O1}', 'public', 'Work')`));
+  for (const crew of [r.q3, r.q2, r.q1]) execOn(crew, postAs(Q, ch, `일 ${crew}`)); // 최근 대화 q1 > q2 > q3, q4 없음
+  sql(`insert into public.msgr_device_beats (owner_user_id, ws_id, device_id, slugs, app_version, app_seen_at) values ('${Q}', '${WS}', 'q-mac', array['q1'], '${NEW}', now())`);
+  assert.equal(sql(`select count(*) from public.msgr_crew_pauses where crew_id in ('${r.q5p}', '${r.q5o2}') and resumed_at is null`), '2');
+  // 설정 카드: 이 조직의 행을 available로 넣고 available→active(route.js activate)
+  r.q5 = last(asUser(Q, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name, hosting, status, allow) values ('${O1}', '${Q}', '${WS}', 'q5', 'q5', 'local', 'available', 'owner') returning id`));
+  const keep = [r.q1, r.q1p, r.q2, r.q2p, r.q3, r.q3p]; const keep0 = xminOf(keep);
+  const top = topMsg();
+  asUser(Q, `update public.msgr_crews set status = 'active' where id = '${r.q5}'`);
+  assert.deepEqual([r.q5, r.q5p, r.q5o2].map(statusOf), ['active', 'active', 'active'], '같은 에이전트의 다른 공간 행도 그 자리에서 연결(크론을 기다리지 않는다)');
+  assert.deepEqual([r.q4, r.q4p].map(statusOf), ['paused', 'paused'], '교체된 에이전트는 모든 행');
+  assert.equal(slugsOf(Q, 'active'), 'q1,q2,q3,q5'); assert.equal(slugsOf(Q, 'paused'), 'q4');
+  for (const id of [r.q5p, r.q5o2]) assert.ok(cursorOf(id) >= top, '다른 행도 재개 처리 — 커서 끝');
+  assert.equal(sql(`select count(*) from public.msgr_crew_pauses where crew_id in ('${r.q5p}', '${r.q5o2}') and resumed_at is null`), '0', '다른 행의 중지 기록도 닫는다');
+  assert.deepEqual(reason(Q), { paused: 1, active: 4, limit: 4, reason: 'limit', min_app: NEW }, '안내 수와 목록 수가 같다');
+  assert.equal(swapNotes(Q, [r.q5]), 'q4');
+  assert.equal(xminOf(keep), keep0, '그대로 연결된 행은 쓰지 않는다');
+  const s0 = snap(Q);
+  assert.deepEqual(sweep(Q), { paused: 0, resumed: 0, failed: 0 }, '크론이 할 일이 남지 않는다');
+  assert.equal(snap(Q), s0, '쓰기 0');
+  // 멈춘 행을 직접(paused→active) — 교체된 q4의 조직 행을 다시 고르면 q4의 개인 행도 함께, 이번에는 대화가 가장 오래된 q3가 모든 행째 멈춘다
+  asUser(Q, `update public.msgr_crews set status = 'active' where id = '${r.q4}'`);
+  assert.deepEqual([r.q4, r.q4p].map(statusOf), ['active', 'active']);
+  assert.deepEqual([r.q3, r.q3p].map(statusOf), ['paused', 'paused']);
+  assert.equal(slugsOf(Q, 'active'), 'q1,q2,q4,q5');
+  const s1 = snap(Q);
+  assert.deepEqual(sweep(Q), { paused: 0, resumed: 0, failed: 0 }); assert.equal(snap(Q), s1);
+});
+
+test('[화면 A] Pro — 멈춘 행 하나를 사람이 연결하면 같은 에이전트의 다른 멈춘 행도 그 자리에서(크론의 Pro 재개와 같은 판정)', { skip }, () => {
+  const OP = last(asUser(P, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('P1', 'p-one', '${P}') returning id`));
+  const a = insOff(P, null, 'p2', 'paused'); const b = insOff(P, OP, 'p2', 'paused');
+  asUser(P, `update public.msgr_crews set status = 'active' where id = '${a}'`);
+  assert.deepEqual([a, b].map(statusOf), ['active', 'active']);
+  assert.equal(sql(`select count(*) from public.msgr_crew_pauses where crew_id in ('${a}', '${b}') and resumed_at is null`), '0');
+});
+
+test('[화면 C] 대화 기록이 없는 동점 — 교체로 멈춘 에이전트는 Pro 재개가 옮긴 커서로 앞서지 않는다(Pro→무료면 그 에이전트가 다시 멈춤), 그 뒤 대화했으면 대화 순', { skip }, () => {
+  sql(`insert into auth.users (id, created_at, email) values ('${Z}', now() - interval '30 days', 'z@example.test') on conflict do nothing`);
+  const z = {}; for (const s of ['z1', 'z2', 'z3', 'z4']) z[s] = insOff(Z, null, s); z.z5 = insOff(Z, null, 'z5', 'available');
+  sql(`insert into public.msgr_device_beats (owner_user_id, ws_id, device_id, slugs, app_version, app_seen_at) values ('${Z}', '${WS}', 'z-mac', array['z1'], '${NEW}', now())`);
+  asUser(Z, `update public.msgr_crews set status = 'active' where id = '${z.z5}'`); // 다섯 번째 — 넷 다 기록이 없으니 가장 나중에 만든 z4가 교체
+  assert.equal(statusOf(z.z4), 'paused'); assert.equal(swapNotes(Z, [z.z5]), 'z4');
+  sql(`insert into public.entitlements (user_id, plan) values ('${Z}', 'pro')`);
+  assert.equal(slugsOf(Z, 'paused'), '', 'Pro — 전부 재개');
+  assert.ok(cursorOf(z.z4) >= topMsg(), '재개가 z4의 커서를 끝으로 옮겼다(다른 셋은 커서 없음)');
+  sql(`update public.entitlements set plan = 'free' where user_id = '${Z}'`);
+  assert.equal(slugsOf(Z, 'active'), 'z1,z2,z3,z5', '교체로 멈췄던 z4가 다시 멈춘다 — 재개가 옮긴 커서는 최근 대화가 아니다');
+  assert.equal(slugsOf(Z, 'paused'), 'z4');
+  // 교체 뒤 z4와 대화했으면 대화 순(교체 표시는 그 뒤 대화가 없을 때만)
+  sql(`update public.entitlements set plan = 'pro' where user_id = '${Z}'`);
+  execOn(z.z4, postAs(U.f, CHF, 'z4와 다시 대화'));
+  sql(`update public.entitlements set plan = 'free' where user_id = '${Z}'`);
+  assert.equal(slugsOf(Z, 'active'), 'z1,z2,z4,z5', '대화한 z4가 남고 동점 셋 중 가장 나중에 만든 z3가 멈춘다');
+});
+
+test('[화면 C] 관문의 교체 대상도 같은 순서 — 대화 기록이 같으면(없음) 교체로 멈췄다 다시 켜진 에이전트를 먼저 멈춘다(만든 순보다 앞)', { skip }, () => {
+  const Y = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
+  sql(`insert into auth.users (id, created_at, email) values ('${Y}', now() - interval '30 days', 'y@example.test') on conflict do nothing`);
+  const y = {}; for (const s of ['ya', 'yb', 'yc', 'yd']) y[s] = insOff(Y, null, s); for (const s of ['ye', 'yf']) y[s] = insOff(Y, null, s, 'available');
+  for (const s of ['yb', 'yc', 'yd']) execOn(y[s], postAs(U.f, CHF, `일 ${s}`)); // ya만 기록 없음
+  sql(`insert into public.msgr_device_beats (owner_user_id, ws_id, device_id, slugs, app_version, app_seen_at) values ('${Y}', '${WS}', 'y-mac', array['ya'], '${NEW}', now())`);
+  asUser(Y, `update public.msgr_crews set status = 'active' where id = '${y.ye}'`);
+  assert.equal(statusOf(y.ya), 'paused', 'ya 교체(기록 없음)');
+  sql(`delete from public.msgr_executions where crew_id = '${y.yd}'`); // yd도 기록 없음 — ya와 동점, yd가 더 나중에 만듦
+  asUser(Y, `update public.msgr_crews set status = 'available' where id = '${y.ye}'`);
+  sql(`update public.msgr_device_beats set app_seen_at = now() - interval '31 minutes' where owner_user_id = '${Y}'`); sweep(Y); // 앱 꺼짐 → 전부 멈춤
+  assert.ok(beatV(Y, 'y-mac', ids(Y, 'paused'))); // 다시 켜짐 → 멈춘 넷(ya·yb·yc·yd) 재개
+  assert.equal(slugsOf(Y, 'active'), 'ya,yb,yc,yd');
+  asUser(Y, `update public.msgr_crews set status = 'active' where id = '${y.yf}'`); // 다른 에이전트(yf)를 연결 — ya의 교체 기록(ye가 고를 때)은 그대로
+  assert.equal(statusOf(y.ya), 'paused', '동점(기록 없음)이면 교체로 멈췄던 ya가 먼저 — 만든 순으로는 yd였다');
+  assert.equal(statusOf(y.yd), 'active');
+  assert.equal(swapNotes(Y, [y.yf]), 'ya');
+  // sweep도 같은 순서 — Pro(전부 재개, ya 커서가 가장 나중에 끝으로) → 무료: 동점이면 교체로 멈췄던 ya가 먼저 멈춘다(만든 순·커서로는 yd)
+  sql(`insert into public.entitlements (user_id, plan) values ('${Y}', 'pro')`);
+  assert.equal(slugsOf(Y, 'paused'), '');
+  sql(`update public.entitlements set plan = 'free' where user_id = '${Y}'`);
+  assert.equal(slugsOf(Y, 'active'), 'yb,yc,yd,yf');
+});
+
+test('[화면 C] 교체로 멈췄다가 사람이 다시 고른 에이전트는 교체 표시가 풀린다 — 같은 순간에 고른 둘이 경계에서 동점이면 나중에 고른 쪽이 남는다', { skip }, () => {
+  const X = 'abbbbbbb-2222-4222-8222-bbbbbbbbbbbb';
+  sql(`insert into auth.users (id, created_at, email) values ('${X}', now() - interval '30 days', 'x@example.test') on conflict do nothing`);
+  const x = {}; for (const s of ['xa', 'xb', 'xc', 'xd']) x[s] = insOff(X, null, s); x.xe = insOff(X, null, 'xe', 'available');
+  sql(`insert into public.msgr_device_beats (owner_user_id, ws_id, device_id, slugs, app_version, app_seen_at) values ('${X}', '${WS}', 'x-mac', array['xa'], '${NEW}', now())`);
+  asUser(X, `update public.msgr_crews set status = 'active' where id = '${x.xe}'`); // xe를 고름 → 기록 없는 넷 중 가장 나중에 만든 xd가 교체
+  assert.equal(statusOf(x.xd), 'paused');
+  asUser(X, `update public.msgr_crews set status = 'active' where id = '${x.xd}'`); // 곧바로(새 글 없이) xd를 다시 고름 → xc가 교체
+  assert.equal(statusOf(x.xc), 'paused'); assert.equal(statusOf(x.xd), 'active');
+  sql(`insert into public.entitlements (user_id, plan) values ('${X}', 'pro')`);
+  for (const s of ['xa', 'xb', 'xc']) execOn(x[s], postAs(U.f, CHF, `일 ${s}`)); // 셋은 그 뒤 대화 — xd·xe는 고른 순간(같은 글 번호)만
+  sql(`update public.entitlements set plan = 'free' where user_id = '${X}'`);
+  assert.equal(slugsOf(X, 'active'), 'xa,xb,xc,xd', 'xd는 다시 골랐으니 교체 표시가 풀려 나중에 고른 순서대로 남고, 경계의 xe가 멈춘다');
 });

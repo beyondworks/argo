@@ -23,7 +23,7 @@ export async function readAgentPause(client) {
   return error ? null : (data ?? null);
 }
 
-/** 교체 안내(검수 #945 MEDIUM-1) — 방금 연결한 행 때문에 쉬게 된 에이전트 이름들(서버 msgr_agent_swap_notes, 5분 안). 옛 서버·오류면 빈 목록. */
+/** 교체 안내(검수 #945 MEDIUM-1) — 방금 연결한 행 때문에 멈춘 에이전트 이름들(서버 msgr_agent_swap_notes, 5분 안). 옛 서버·오류면 빈 목록. */
 export async function swapNotes(client, crewIds) {
   if (!crewIds?.length) return [];
   const { data, error } = await client.rpc('msgr_agent_swap_notes', { p_crews: crewIds });

@@ -14,7 +14,7 @@ import LocalAssetImport from '../../../components/LocalAssetImport';
 import { accountPlan, trialBadgeState } from '../../../../src/entitlement.mjs';
 
 // Argo Messenger 받기 — 맥·윈도우 설치파일만 걸던 것을 앱 스토어·Play까지 있는 안내 페이지 한 곳으로(CX-12). 오피스 진입 버튼(CX-13)은 오피스가 비공개라 뺐다(유건 2026-10-10).
-import { MESSENGER_PAGE, msgrCardView, runtimeWaitingKey, runtimeAction } from './msgr-card.mjs';
+import { MESSENGER_PAGE, msgrCardView, runtimeWaitingKey, runtimeAction, pausedLabelKey } from './msgr-card.mjs';
 import ArchivedCompaniesCard from '../../../archived-companies'; // 보관한 회사 되돌리기 — 홈에도 같은 카드(UM3)
 import { trashFailKind } from './trash-fail.mjs'; // 보관함 항목이 이미 사라졌는지(2차 M3)
 import { saveWithRevert } from './save-revert.mjs'; // 저장 실패면 되돌린다(F9)
@@ -1030,7 +1030,7 @@ function MsgrCard({ ws, agents }) {
               <span className="chip">{t('settings.msgr.count', { n: regCount, total: agents.length })}</span>
             </div>
             <ul className="msgr-crews" role="list">
-              {agents.map((a) => { const reg = regOf(a.slug); const off = t(rowOf(a.slug) ? 'settings.msgr.notRegistered' : 'settings.msgr.notInMessenger'); return (
+              {agents.map((a) => { const reg = regOf(a.slug); const row = rowOf(a.slug); const off = row?.status === 'paused' ? t(pausedLabelKey(st?.pauseReason)) : t(row ? 'settings.msgr.notRegistered' : 'settings.msgr.notInMessenger'); /* 멈춤(무료 한도)은 해제와 다르게(화면 검수 B) */ return (
                 <li key={a.slug} className={`msgr-crew${reg ? ' on' : ''}`}>
                   <div className="row">
                     <Avatar name={a.name} sm />

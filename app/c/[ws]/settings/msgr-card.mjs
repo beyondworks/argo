@@ -31,6 +31,14 @@ export function msgrCardView({ st, orgId = '', agents = [] } = {}) {
   };
 }
 
+/** 무료 계정 한도로 서버가 멈춘 행(status paused)의 줄 문구 — 사람이 해제한 '파견 해제됨'과 구별한다(화면 검수 B, 2026-10-11).
+    reason = GET 응답 pauseReason(서버 msgr_my_agent_pause의 이유): limit 4명 한도 · app/off 최신 앱이 켜져 있지 않음 · 그 밖(모름·Pro로 바뀌는 중) 멈춤만 */
+export function pausedLabelKey(reason) {
+  if (reason === 'limit') return 'settings.msgr.paused.limit';
+  if (reason === 'app' || reason === 'off') return 'settings.msgr.paused.app';
+  return 'settings.msgr.paused';
+}
+
 /** 첫 응답 대기 문구 — 폴이 도는 때만 "자동으로 다시 확인"을 말한다. 안 돌면 사용자가 '다시 확인'을 누르라고 한다(폴을 늘리지 않는다 — DB·서버 부하). */
 export function runtimeWaitingKey(polling) {
   return polling ? 'settings.msgr.runtime.waiting' : 'settings.msgr.runtime.waitingManual';

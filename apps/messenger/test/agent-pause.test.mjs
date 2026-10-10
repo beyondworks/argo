@@ -87,3 +87,15 @@ test('⑧ iOS 빌드는 무료 한도·교체 안내에서 결제 권유를 뺀�
   assert.match(app, /agentPauseNote\(agentPause, \{ ios: isIos \}\)/); assert.match(app, /setIosCopy\(isIos\);/);
   assert.equal((app.match(/t\(isIos \? 'agents\.swap\.ios' : 'agents\.swap'/g) ?? []).length, 2, '교체 안내 두 자리');
 });
+
+test('⑨ 화면 검수 B(10/11) — 교체·한도 문구는 "멈춤" 말(폰 대기 표시 "쉬는 중"과 겹치지 않게), ko·en·iOS', () => {
+  const idle = tm('phone.agent.idle', 'ko');
+  for (const k of ['agents.swap', 'agents.swap.ios', 'err.freeAgentLimit', 'err.freeAgentLimit.ios']) {
+    const ko = tm(k, 'ko', { names: '세온' });
+    assert.doesNotMatch(ko, /쉬/, `${k}: 대기 표시(${idle})와 같은 말 금지`);
+    assert.match(ko, /멈/);
+    assert.match(tm(k, 'en', { names: 'Seon' }), /paus/i);
+  }
+  assert.equal(tm('agents.swap', 'ko', { names: '세온' }), '무료 계정은 에이전트 4명까지라서 세온 에이전트를 멈췄어요. Pro면 제한이 없어요.');
+  assert.equal(tm('agents.swap.ios', 'ko', { names: '세온' }), '무료 계정은 에이전트 4명까지라서 세온 에이전트를 멈췄어요.');
+});

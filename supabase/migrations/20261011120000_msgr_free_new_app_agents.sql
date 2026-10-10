@@ -17,8 +17,10 @@
 -- 반영 시점:
 --   · 새 앱 심박이 처음 들어오면(이 주인이 새 앱 판정이 아니었다가 이 심박으로 바뀌면) 심박 함수 안에서 그 주인만 바로 sweep — 10분 기다리지 않는다.
 --   · 그 밖(새 앱이 30분 넘게 없음 → 멈춤, 설정 값 변경 등)은 기존 10분 크론 msgr_crews_plan_sweep.
+--   · 사람의 연결(설정 카드·메신저 파견 — available·paused→active)은 그 자리에서 그 주인만 sweep(4-1) — 같은 에이전트의 다른 공간 행이 함께 연결된다(화면 검수 A).
 --   · 재개·정지는 #941 경로 그대로: 멈춤 = status 'paused'(기록은 msgr_crews_pro_gate_log), 재개 = _msgr_crew_plan_resume(커서 끝으로·기록 닫기·밀린 자동화 정리). 데이터는 지우지 않는다.
--- 누구를 재개하나: 그 주인의 에이전트가 전부 멈춘 상태(active 0명)일 때만 최근 대화 순(실행 기록 msgr_executions의 마지막 글 → 커서 → 만든 순) 4명.
+-- 누구를 재개하나: 그 주인의 에이전트가 전부 멈춘 상태(active 0명)일 때만 최근 대화 순 4명 — 실행 기록 msgr_executions의 마지막 글·사람이 고른 순간 중 늦은 것 →
+--   (동점이면) 교체로 멈춘 뒤 대화가 없는 에이전트는 뒤로 → 고른 순간 → 만든 순. 커서는 쓰지 않는다 — 재개가 커서를 끝으로 옮기므로 대화가 아니다(화면 검수 C, 10/11).
 --   연결된 에이전트가 하나라도 있으면 빈자리를 자동으로 채우지 않는다 — 사람이 해제해 비운 자리에 다른 에이전트가 끼어들지 않게. 사람이 고른 에이전트를 연결하는 것
 --   (설정의 연결·메신저의 파견)은 한도 안에서 허용하고, 한도를 넘는 사람의 연결(available→active)은 msgr_free_agent_limit으로 거절한다.
 --   active가 4명을 넘으면(Pro→무료 전환 등) 최근 대화가 적은 쪽부터 멈춘다.
@@ -91,6 +93,18 @@ create table if not exists public.msgr_free_choices (
 );
 alter table public.msgr_free_choices enable row level security; -- 정책 없음 = 클라이언트 접근 0 (정의자 함수만)
 revoke all on public.msgr_free_choices from public, anon, authenticated;
+create index if not exists msgr_free_choices_owner_idx on public.msgr_free_choices (owner_user_id); -- 주인 하나의 교체 기록(아래 _msgr_free_benched — sweep·관문)
+
+-- 2-1-1) 교체로 멈춘 뒤 대화가 없는 에이전트(화면 검수 C, 10/11) — 순위 동점에서 뒤로 둔다(sweep은 남길 순서의 뒤, 관문은 교체 대상의 앞).
+--        사람이 다른 에이전트를 고르며 이 에이전트를 멈췄고(swapped_out), 그 순간의 마지막 글(chosen_msg) 뒤로 이 에이전트의 대화·선택이 없으면 true.
+--        Pro 재개가 커서를 끝으로 옮겨도 '최근 대화'로 앞서지 않게 하려는 것 — 그 뒤 실제로 대화하거나 사람이 다시 고르면 점수가 chosen_msg 이상이 되어 풀린다.
+create or replace function public._msgr_free_benched(p_uid uuid, p_ws text, p_slug text, p_score bigint) returns boolean
+  language sql stable security definer set search_path = public, pg_temp as $$
+  select exists (select 1 from public.msgr_free_choices ch join public.msgr_crews v on v.id = ch.swapped_out
+                  where ch.owner_user_id = p_uid and v.owner_user_id = p_uid and v.ws_id = p_ws and v.slug = p_slug
+                    and (p_score is null or p_score < ch.chosen_msg))
+$$;
+revoke all on function public._msgr_free_benched(uuid, text, text, bigint) from public, anon, authenticated;
 
 -- 2-2) 재개 처리(커서 밖의 일) — #941 _msgr_crew_plan_resume에서 떼어 냈다. 중지 기록 닫기·멈추기 전에 줄 선 자동화 실행 닫기·지난 예정 시각 옮기기.
 --      sweep 재개와 사람의 직접 연결(paused→active, 관문 뒤 AFTER 트리거)이 같은 함수를 쓴다(검수 #945 HIGH-1).
@@ -235,12 +249,15 @@ begin
         new.status := 'paused'; return new; -- 미러 insert·되살리기는 교체하지 않는다
       end if;
       -- 교체 대상: 같은 주인(new.owner_user_id = 연결을 누른 사람 자신)의 연결된 에이전트 중 점수가 가장 낮은 것(대화도 선택도 없던 것 먼저)
-      select c.ws_id, c.slug, min(c.id::text)::uuid any_id into victim
-        from public.msgr_crews c left join public.msgr_free_choices ch on ch.crew_id = c.id
-       where c.owner_user_id = new.owner_user_id and c.hosting <> 'bot' and c.status = 'active' and not (c.ws_id = new.ws_id and c.slug = new.slug)
-       group by c.ws_id, c.slug
-       order by greatest(max((select max(e.source_msg_id) from public.msgr_executions e where e.crew_id = c.id)), max(ch.chosen_msg)) asc nulls first,
-                max(ch.chosen_at) asc nulls first, min(c.created_at) desc, c.ws_id, c.slug
+      -- 순서는 sweep이 남길 순서(5)의 거꾸로 — 점수 → 교체로 멈춘 뒤 대화 없음(2-1-1) → 고른 순간 → 만든 순
+      select a.ws_id, a.slug, a.any_id into victim
+        from (select c.ws_id, c.slug, min(c.id::text)::uuid any_id, max(ch.chosen_at) chosen_at, min(c.created_at) born,
+                     greatest(max((select max(e.source_msg_id) from public.msgr_executions e where e.crew_id = c.id)), max(ch.chosen_msg)) score
+                from public.msgr_crews c left join public.msgr_free_choices ch on ch.crew_id = c.id
+               where c.owner_user_id = new.owner_user_id and c.hosting <> 'bot' and c.status = 'active' and not (c.ws_id = new.ws_id and c.slug = new.slug)
+               group by c.ws_id, c.slug) a
+       order by a.score asc nulls first, public._msgr_free_benched(new.owner_user_id, a.ws_id, a.slug, a.score) desc,
+                a.chosen_at asc nulls first, a.born desc, a.ws_id, a.slug
        limit 1;
       if victim.slug is null then
         raise exception 'msgr_free_agent_limit msgr_pro_required' using errcode = 'P0001', detail = 'Free accounts can connect up to 4 agents to Messenger';
@@ -269,19 +286,30 @@ begin
 end $$;
 revoke all on function public.msgr_crews_pro_gate() from public, anon, authenticated;
 
--- 4-1) 사람의 직접 재개(관문이 paused→active를 허용) 뒤 처리 — 커서는 관문이 NEW에 옮겼다. sweep(관문 끔)은 _msgr_crew_plan_resume가 같은 일을 하므로 건너뛴다.
+-- 4-1) 관문이 연결(available·paused·detached→active)을 허용한 뒤 처리 — sweep(관문 끔)이 바꾼 행은 건너뛴다(sweep이 같은 일을 한다).
+--   ① 멈춘 행을 직접 연결했으면 재개 처리(커서는 관문이 NEW에 옮겼다).
+--   ② 그 주인 하나를 크론과 같은 판정(msgr_crews_plan_sweep)으로 같은 트랜잭션에서 맞춘다(화면 검수 A, 10/11) — 연결한 에이전트의 다른 공간 행(무료: 한도 안의
+--      '연결된 에이전트의 멈춘 다른 행', Pro: 멈춘 것 전부)을 크론까지 기다리지 않는다. 고른 행만 active이고 다른 행은 10분 동안 paused라 메신저 목록 수와
+--      안내 수가 어긋났다. 교체된 에이전트의 행은 관문이 이미 전부 멈췄다. sweep은 바뀌는 행만 쓰고(유휴 0), 관문과 같은 주인 잠금을 다시 잡는다(같은 트랜잭션 — 재진입),
+--      자기 쓰기에는 관문을 꺼서(msgr.pro_gate=off) 이 트리거로 다시 들어오지 않는다. 실패해도 연결은 그대로 두고(경고만) 10분 크론이 맞춘다.
+--   부하: 사람·관리자의 연결과 미러의 되살리기(detached→active)에서만, 주인 하나 질의 1번 + 바뀐 행 쓰기. insert(미러가 새 행을 넣음)는 부르지 않는다 — 크론이 맞춘다.
 create or replace function public.msgr_crews_resume_side() returns trigger
   language plpgsql security definer set search_path = public, pg_temp as $$
 begin
   if coalesce(current_setting('msgr.pro_gate', true), '') = 'off' then return new; end if;
   if to_regprocedure('public.is_pro_for(uuid)') is null then return new; end if;
-  perform public._msgr_crew_resume_side(new.id, coalesce(new.cursor_msg_id, 0));
+  if old.status = 'paused' then perform public._msgr_crew_resume_side(new.id, coalesce(new.cursor_msg_id, 0)); end if;
+  begin
+    perform public.msgr_crews_plan_sweep(new.owner_user_id);
+  exception when others then
+    raise warning 'msgr_crews_resume_side: owner % sweep skipped (%: %)', new.owner_user_id, sqlstate, sqlerrm;
+  end;
   return new;
 end $$;
 revoke all on function public.msgr_crews_resume_side() from public, anon, authenticated;
 drop trigger if exists msgr_crews_resume_side on public.msgr_crews;
 create trigger msgr_crews_resume_side after update of status on public.msgr_crews
-  for each row when (old.status = 'paused' and new.status = 'active' and new.hosting <> 'bot') execute function public.msgr_crews_resume_side();
+  for each row when (new.status = 'active' and old.status is distinct from 'active' and new.hosting <> 'bot') execute function public.msgr_crews_resume_side();
 
 -- 4-2) 교체 안내 — 방금 연결한 내 에이전트 때문에 쉬게 된 에이전트 이름(5분 안). 본체 설정·메신저가 연결 직후 한 번 부른다.
 create or replace function public.msgr_agent_swap_notes(p_crews uuid[]) returns table(crew_id uuid, victim_name text)
@@ -316,19 +344,20 @@ begin
     if not pro then perform pg_advisory_xact_lock(hashtext('msgr_free_agents:' || o.uid::text)); end if;
     for r in
       with mine as (
-        select c.id, c.hosting, c.status, c.ws_id, c.slug, c.created_at, c.cursor_msg_id, ch.chosen_msg, ch.chosen_at,
+        select c.id, c.hosting, c.status, c.ws_id, c.slug, c.created_at, ch.chosen_msg, ch.chosen_at,
                exists (select 1 from public.msgr_crew_pauses k where k.crew_id = c.id and k.resumed_at is null) open_pause
           from public.msgr_crews c left join public.msgr_free_choices ch on ch.crew_id = c.id
          where c.owner_user_id = o.uid
            and (c.status in ('active', 'paused') or exists (select 1 from public.msgr_crew_pauses k where k.crew_id = c.id and k.resumed_at is null))
-      ), ident as ( -- 무료 사람 에이전트 = (회사, 이름) 한 명. 점수 = 실행 기록의 마지막 글(기본 키 색인 거꾸로 1행)·사람이 고른 순간 중 늦은 것 → 커서 → 만든 순
+      ), ident as ( -- 무료 사람 에이전트 = (회사, 이름) 한 명. 점수 = 실행 기록의 마지막 글(기본 키 색인 거꾸로 1행)·사람이 고른 순간 중 늦은 것
         select m.ws_id, m.slug, bool_or(m.status = 'active') act,
                greatest(max((select max(e.source_msg_id) from public.msgr_executions e where e.crew_id = m.id)), max(m.chosen_msg)) score,
-               max(m.chosen_at) chosen_at, max(m.cursor_msg_id) last_cursor, min(m.created_at) born
+               max(m.chosen_at) chosen_at, min(m.created_at) born
           from mine m where not pro and m.hosting <> 'bot' and m.status in ('active', 'paused') group by m.ws_id, m.slug
-      ), ranked as (
+      ), ranked as ( -- 점수 → 교체로 멈춘 뒤 대화 없음은 뒤로(2-1-1) → 고른 순간 → 만든 순. 커서는 쓰지 않는다(재개가 끝으로 옮긴다 — 화면 검수 C)
         select i.ws_id, i.slug, i.act,
-               row_number() over (partition by i.act order by i.score desc nulls last, i.chosen_at desc nulls last, i.last_cursor desc nulls last, i.born, i.ws_id, i.slug) rk,
+               row_number() over (partition by i.act order by i.score desc nulls last, public._msgr_free_benched(o.uid, i.ws_id, i.slug, i.score),
+                                  i.chosen_at desc nulls last, i.born, i.ws_id, i.slug) rk,
                count(*) filter (where i.act) over () n_act
           from ident i
       )

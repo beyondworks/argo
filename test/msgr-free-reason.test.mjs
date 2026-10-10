@@ -6,7 +6,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { freeAgentReason, swapNotes, readAgentPause } from '../app/api/companies/[ws]/msgr/free-reason.mjs';
-const { apiError } = await import('../app/apimsg.mjs');
+import { pausedLabelKey } from '../app/c/[ws]/settings/msgr-card.mjs';
+const { apiError, API_MSG } = await import('../app/apimsg.mjs');
 
 const client = (seq, pro = false) => { const calls = []; return { calls, rpc: async (name) => { calls.push(name); if (name === 'is_pro') return { data: pro, error: null }; const next = seq.shift(); return next instanceof Error ? { data: null, error: { code: 'PGRST202', message: next.message } } : { data: next, error: null }; } }; };
 
@@ -59,4 +60,24 @@ test('⑥ 라우트 배선(검수 #945) — 새 행은 연결 해제로 먼저 �
   assert.doesNotMatch(act, /status: 'active', allow: 'owner'/, 'active로 바로 넣지 않는다(미러 insert와 구별되지 않는다)');
   assert.ok(act.indexOf("insert(row)") < act.indexOf('beatNow(c, ws)') && act.indexOf('beatNow(c, ws)') < act.indexOf("update({ ...base, status: 'active' })"), '넣기 → 새 앱 심박 → 연결 순서');
   assert.match(route, /let enabled = regs\.some\(\(r\) => r\.status === 'active'\);\n\s+if \(!enabled && regs\.some\(\(r\) => r\.status === 'paused'\)\) enabled = appMeetsMin\(/);
+});
+
+test('⑦ 화면 검수 B(10/11) — 연결 카드의 멈춘 행은 "파견 해제됨"이 아니라 멈춤 + 이유, 교체 안내는 대기 표시와 다른 말(멈췄어요), 이유 읽기는 멈춘 행이 있을 때만', () => {
+  assert.equal(pausedLabelKey('limit'), 'settings.msgr.paused.limit');
+  for (const r of ['app', 'off']) assert.equal(pausedLabelKey(r), 'settings.msgr.paused.app');
+  for (const r of [null, undefined, 'weird']) assert.equal(pausedLabelKey(r), 'settings.msgr.paused', '이유를 모르면(Pro로 바뀌는 중·옛 서버) 멈춤만');
+  const dict = readFileSync(new URL('../app/i18n.jsx', import.meta.url), 'utf8');
+  const entry = (k) => { const m = dict.match(new RegExp(`'${k.replace(/\./g, '\\.')}': \\['([^']*)', '([^']*)'\\]`)); return m ? { ko: m[1], en: m[2] } : null; };
+  assert.deepEqual(entry('settings.msgr.paused.limit'), { ko: '멈춤 · 무료 4명 한도', en: 'Paused · Free plan limit of 4' });
+  for (const k of ['settings.msgr.paused', 'settings.msgr.paused.app']) { const e = entry(k); assert.match(e.ko, /^멈춤/); assert.match(e.en, /^Paused/); }
+  for (const k of ['settings.msgr.paused', 'settings.msgr.paused.limit', 'settings.msgr.paused.app']) assert.doesNotMatch(entry(k).ko, /해제/, `${k}: 사용자가 해제한 것처럼 읽히지 않게`);
+  assert.equal(entry('settings.msgr.notRegistered').ko, '파견 해제됨', '사람이 해제한 행(available)은 그대로');
+  const sw = entry('settings.msgr.swapped');
+  assert.match(sw.ko, /멈췄어요/); assert.doesNotMatch(sw.ko, /쉬/, '교체 안내는 대기 표시(쉬는 중)와 겹치지 않는 말'); assert.match(sw.en, /paused/);
+  assert.doesNotMatch(API_MSG.msgr_free_agent_limit.ko, /쉬/);
+  const page = readFileSync(new URL('../app/c/[ws]/settings/page.jsx', import.meta.url), 'utf8');
+  assert.match(page, /row\?\.status === 'paused' \? t\(pausedLabelKey\(st\?\.pauseReason\)\)/, '카드 줄: 멈춘 행이면 멈춤 문구');
+  const route = readFileSync(new URL('../app/api/companies/[ws]/msgr/route.js', import.meta.url), 'utf8');
+  const get = route.slice(route.indexOf('export async function GET'), route.indexOf('export async function POST'));
+  assert.match(get, /crews\.some\(\(r\) => r\.status === 'paused'\) \? \(await readAgentPause\(c\.client\)\.catch\(\(\) => null\)\)\?\.reason \?\? null : null/, '이유 읽기는 멈춘 행이 있을 때만(8초 폴에 호출을 늘리지 않게)');
 });
