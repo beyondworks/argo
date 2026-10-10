@@ -18,7 +18,7 @@ export default {
 - 개요: 최근 자주 한 일, "엔진 — 러너·모델"과 추론 강도, 상세 정보(처리한 턴·읽은 맥락/생성·평균 턴 시간·많이 쓴 도구).
 - 능력: 설치된 스킬·플러그인(MCP)을 칩으로 켜고 끕니다. 전부 켜면 "전체 사용"이라 새로 설치한 것도 자동 적용되고, 일부만 켜면 새 설치는 자동 적용되지 않습니다.
 - 방식: "일하는 방식 — 규칙"을 추가·수정·순서 변경·삭제합니다. 아래 "회사가 아는 사용자 — 기억 카드"에는 에이전트가 대화에서 기록한 취향·결정·금지가 모이고, "잊기"로 지우거나 직접 추가합니다. 이 카드는 회사의 모든 에이전트가 같이 봅니다.
-- 비서: 이 에이전트를 비서로 쓰는 설정입니다(비서 주제 참고).
+- 하트비트: 이 에이전트를 하트비트로 쓰는 설정입니다(하트비트 주제 참고).
 - 연결·원문: 텔레그램 직통 봇 연결과 "카드 원문 — 시스템 프롬프트 그대로" 편집. 원문은 "원문 저장"을 눌러야 저장됩니다.
 - 카드의 변경은 다음 턴부터 반영됩니다.
 
@@ -49,7 +49,7 @@ export default {
 - Overview: recent work, "Engine — runner & model" with reasoning effort, and details (turns, context/output, avg turn time, top tools).
 - Abilities: toggle installed skills and plugins (MCP) as chips. With everything on ("all"), new installs apply automatically; with a partial list, new installs are not added.
 - Working style: add, edit, reorder or delete "Working rules". Below it, "What the company knows about you" collects the preferences, decisions and no-gos agents recorded; "Forget" removes an item, or add one yourself. Every agent in the company sees this card.
-- Assistant: settings for using this agent as your assistant (see the assistant topic).
+- Heartbeat: settings for making this agent your heartbeat agent (see the heartbeat topic).
 - Links & raw: the direct Telegram bot, and "Raw card — the system prompt itself". Raw edits are saved only with "Save raw card".
 - Card changes apply from the next turn.
 

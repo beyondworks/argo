@@ -847,10 +847,10 @@ test('비서 메일 알림(바깥 글 표지)은 방 문맥·답장 대상 줄�
   await say(ws, r, '2번으로 보내');
   const p = lastPrompt();
   assert.doesNotMatch(p, /MAIL_SECRET_TEXT|DRAFT_TEXT|x@evil\.example/);
-  assert.match(p, new RegExp(`\\[비서 알림 · 답장이 필요한 메일 · 메일에서 나온 글이라 문맥에서 뺐어요 · 메일 id ${ACC}\\.m2`));
+  assert.match(p, new RegExp(`\\[하트비트 알림 · 답장이 필요한 메일 · 메일에서 나온 글이라 문맥에서 뺐어요 · 메일 id ${ACC}\\.m2`));
   assert.match(p, /HUMAN_TEXT_STAYS/, '사람 글은 표지를 흉내 내도 본문 그대로');
   await say(ws, room({ pair: `crew:${CREW}`, context: [notice] }), '이거 초안 고쳐 줘', { replyTo: 140 });
   const q = lastPrompt();
   assert.doesNotMatch(q, /MAIL_SECRET_TEXT|DRAFT_TEXT/, '답장 대상 줄도 표지 줄');
-  assert.ok((q.match(/\[비서 알림 · 답장이 필요한 메일/g) ?? []).length >= 2, '방 문맥 줄과 답장 대상 줄 둘 다 표지');
+  assert.ok((q.match(/\[하트비트 알림 · 답장이 필요한 메일/g) ?? []).length >= 2, '방 문맥 줄과 답장 대상 줄 둘 다 표지');
 });

@@ -53,7 +53,7 @@ for (const envelope of [false, true]) {
     let prompt = '';
     await M.runMessengerContinuation(f.ws, 'alpha', f.origin, '이어서', null, { session: f.session, runChat: async (_ws, _slug, msg) => { prompt = msg; return { reply: '네', sessionId: null }; } });
     assert.doesNotMatch(prompt, /MAIL_SECRET_TEXT|DRAFT_TEXT|x@evil\.example/);
-    assert.match(prompt, new RegExp(`\\[비서 알림 · 답장이 필요한 메일 · 메일에서 나온 글이라 문맥에서 뺐어요 · 메일 id ${ACC}\\.m2`));
+    assert.match(prompt, new RegExp(`\\[하트비트 알림 · 답장이 필요한 메일 · 메일에서 나온 글이라 문맥에서 뺐어요 · 메일 id ${ACC}\\.m2`));
     assert.match(prompt, /HUMAN_TEXT_STAYS/);
   });
 }

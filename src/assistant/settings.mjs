@@ -119,7 +119,7 @@ export function saveAssistantSettings(wsId, input = {}, opts = {}) {
 async function saveInLine(wsId, input, { now = Date.now() } = {}) {
   const inp = input && typeof input === 'object' ? input : {};
   const enabledIn = bool(inp.enabled);
-  if (enabledIn === true && !SLUG_OK(inp.agent)) throw codedError('assistant_agent_not_found', '비서로 정할 에이전트가 필요합니다');
+  if (enabledIn === true && !SLUG_OK(inp.agent)) throw codedError('assistant_agent_not_found', '하트비트로 정할 에이전트가 필요합니다');
   if (enabledIn === true && !(await agentExists(wsId, inp.agent))) throw codedError('assistant_agent_not_found', `에이전트를 찾을 수 없습니다: ${inp.agent}`);
   const company = await loadCompany(wsId);
   await lockAssistant(wsId, async () => {
@@ -142,7 +142,7 @@ async function saveInLine(wsId, input, { now = Date.now() } = {}) {
       },
     };
     const bad = settingsProblem(next, touched);
-    if (bad) throw codedError(bad, `비서 설정 값이 올바르지 않습니다(${bad})`);
+    if (bad) throw codedError(bad, `하트비트 설정 값이 올바르지 않습니다(${bad})`);
     // 메일 — 화면이 보낸 때만 바꾼다(false 안 봄 · 'shadow' 미리 보기 · true 알림). 봉인이 안 맞는 파일에서는 base.watch를 버리므로(아래) 심은 메일 보기는 다시 봉인되지 않는다
     if (inp.mail !== undefined && ![false, 'shadow', true].includes(inp.mail)) throw codedError('assistant_mail_invalid', '메일 보기 값이 올바르지 않습니다');
     const baseWatch = sealed && base.watch && typeof base.watch === 'object' ? base.watch : { calendar: true, mail: false, tasks: false, deals: false };

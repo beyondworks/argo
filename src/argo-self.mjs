@@ -33,34 +33,34 @@ export { settingsDirectTurn };
 
 /* ─── 설정 목록 ─────────────────────────────────────────────────────────────── */
 
-const ASSIST_WHERE = { ko: '에이전트 카드 → 비서 탭', en: 'Agent card → Assistant tab' };
+const ASSIST_WHERE = { ko: '에이전트 카드 → 하트비트 탭', en: 'Agent card → Heartbeat tab' };
 
 /** 에이전트가 바꿀 수 있는 설정(허용 목록). read(view) = 지금 값(비서 설정 화면 값), write(value, {agent}) = saveAssistantSettings 입력. 값 검증은 normalizeSettingValue + 저장 함수의 화면 규칙. */
 export const SETTINGS = Object.freeze([
   {
     key: 'assistant.morning', type: 'time',
-    label: { ko: '비서 아침 정리 시각(= 조용한 시간 끝)', en: 'Assistant morning summary time (= quiet hours end)' },
+    label: { ko: '하트비트 아침 정리 시각(= 조용한 시간 끝)', en: 'Heartbeat morning summary time (= quiet hours end)' },
     where: { ko: `${ASSIST_WHERE.ko} → 조용한 시간 끝`, en: `${ASSIST_WHERE.en} → Quiet hours end` },
     read: (v) => v.config.quiet.to,
     write: (value) => ({ quiet: { to: value } }),
   },
   {
     key: 'assistant.evening', type: 'time',
-    label: { ko: '비서 내일 일정 요약 시각', en: "Assistant tomorrow's summary time" },
+    label: { ko: '하트비트 내일 일정 요약 시각', en: "Heartbeat tomorrow's summary time" },
     where: { ko: `${ASSIST_WHERE.ko} → 내일 일정 요약`, en: `${ASSIST_WHERE.en} → Tomorrow's summary` },
     read: (v) => v.config.eveningAt,
     write: (value) => ({ eveningAt: value }),
   },
   {
     key: 'assistant.quietFrom', type: 'time',
-    label: { ko: '비서 조용한 시간 시작', en: 'Assistant quiet hours start' },
+    label: { ko: '하트비트 조용한 시간 시작', en: 'Heartbeat quiet hours start' },
     where: { ko: `${ASSIST_WHERE.ko} → 조용한 시간 시작`, en: `${ASSIST_WHERE.en} → Quiet hours start` },
     read: (v) => v.config.quiet.from,
     write: (value) => ({ quiet: { from: value } }),
   },
   {
     key: 'assistant.lead', type: 'choice', choices: [...LEAD_CHOICES],
-    label: { ko: '비서 일정 알림(몇 분 전)', en: 'Assistant event reminder (minutes before)' },
+    label: { ko: '하트비트 일정 알림(몇 분 전)', en: 'Heartbeat event reminder (minutes before)' },
     where: { ko: `${ASSIST_WHERE.ko} → 일정 알림`, en: `${ASSIST_WHERE.en} → Event reminder` },
     read: (v) => v.config.leadMinutes,
     write: (value) => ({ leadMinutes: value }),
@@ -74,8 +74,8 @@ export const SETTINGS = Object.freeze([
   },
   {
     key: 'assistant.enabled', type: 'bool',
-    label: { ko: '비서 켜기·끄기', en: 'Assistant on/off' },
-    where: { ko: `${ASSIST_WHERE.ko} → 비서 켜기 / 비서 끄기`, en: `${ASSIST_WHERE.en} → Turn on / Turn off assistant` },
+    label: { ko: '하트비트(예전 이름 비서) 켜기·끄기', en: 'Heartbeat (formerly Assistant) on/off' },
+    where: { ko: `${ASSIST_WHERE.ko} → 하트비트 켜기 / 하트비트 끄기`, en: `${ASSIST_WHERE.en} → Turn on / Turn off heartbeat` },
     read: (v) => v.config.enabled,
     // 켤 때 에이전트 — 지정해 둔 비서가 있으면 그 에이전트, 없으면 이 도구를 부른 에이전트(write의 두 번째 인자)
     write: (value, { agent }) => (value ? { enabled: true, agent } : { enabled: false }),
@@ -83,7 +83,7 @@ export const SETTINGS = Object.freeze([
   },
   {
     key: 'assistant.agent', type: 'agent',
-    label: { ko: '비서 에이전트(누가 비서인가)', en: 'Assistant agent (who the assistant is)' },
+    label: { ko: '하트비트 에이전트(어느 에이전트가 맡는가)', en: 'Heartbeat agent (which agent runs it)' },
     where: { ko: `${ASSIST_WHERE.ko} → 이 에이전트로 바꾸기`, en: `${ASSIST_WHERE.en} → Use this agent instead` },
     read: (v) => v.config.agent ?? '',
     // 바꾸기만 — 꺼진 비서를 켜지 않는다(켜기는 assistant.enabled로만, applySetting이 꺼짐이면 거절). 저장 함수가 에이전트 교체를 enabled:true로만 받아 켜진 상태에서만 부른다
@@ -195,14 +195,14 @@ export async function applySetting(wsId, { key, id = null, value }, { slug = nul
       return { ok: false, text: pick(lang, `이 회사에 없는 에이전트: ${agent}`, `No such agent in this company: ${agent}`) };
     }
     if (def.key === 'assistant.agent' && !cur.view.config.enabled) {
-      return { ok: false, text: pick(lang, '이 회사 비서가 꺼져 있어 에이전트만 바꾸지 않았다 — 켜려면 assistant.enabled를 true로(비서를 켜는 일이라 따로 확인받는다).', "This company's assistant is off, so the agent was not changed — to turn it on use assistant.enabled=true (a separate step).") };
+      return { ok: false, text: pick(lang, '이 회사 하트비트가 꺼져 있어 에이전트만 바꾸지 않았다 — 켜려면 assistant.enabled를 true로(하트비트를 켜는 일이라 따로 확인받는다).', "This company's heartbeat is off, so the agent was not changed — to turn it on use assistant.enabled=true (a separate step).") };
     }
     let res;
     try { res = await saveAssistantSettings(wsId, def.write(norm.value, { agent })); }
     catch (e) { return { ok: false, text: assistantErrorText(e, lang), raw: !ASSIST_ERR_CODES.has(e?.code) }; }
     const after = def.read(await assistantSettingsView(wsId));
     const offNames = await Promise.all((res?.changedOthers ?? []).map((id) => loadCompany(id).then((c) => c?.name ?? id, () => id)));
-    const offText = offNames.length ? pick(lang, ` 계정마다 비서는 한 명이라 다른 회사(${offNames.join(', ')})의 비서는 꺼졌다 — 사용자에게 이것도 알려라.`, ` One assistant per account, so the assistant in ${offNames.join(', ')} was turned off — tell the user this too.`) : '';
+    const offText = offNames.length ? pick(lang, ` 하트비트는 계정마다 한 곳에서만 켜져서 다른 회사(${offNames.join(', ')})의 하트비트는 꺼졌다 — 사용자에게 이것도 알려라.`, ` Heartbeat runs in one place per account, so the heartbeat in ${offNames.join(', ')} was turned off — tell the user this too.`) : '';
     return { ok: true, before, after, offCompanies: res?.changedOthers ?? [], text: `${changedText(def, before, after, lang)}${offText}` };
   }
   if (def.key === 'routine.time') {
@@ -301,7 +301,7 @@ function assistantErrorText(e, lang) {
     assistant_evening_before_morning: '아침 정리(조용한 시간 끝)는 내일 일정 요약보다 앞이어야 한다.',
     assistant_time_invalid: '시각 형식이 맞지 않는다(HH:MM).',
     assistant_lead_invalid: `일정 알림은 ${LEAD_CHOICES.join('·')}분 전 중 하나다.`,
-    assistant_agent_not_found: '비서로 정할 에이전트를 찾지 못했다.',
+    assistant_agent_not_found: '하트비트로 정할 에이전트를 찾지 못했다.',
   };
   const en_ = {
     assistant_quiet_empty: 'Quiet hours start and end cannot be the same.',
@@ -309,7 +309,7 @@ function assistantErrorText(e, lang) {
     assistant_evening_before_morning: "The morning summary (quiet hours end) must be earlier than tomorrow's summary.",
     assistant_time_invalid: 'Time must be HH:MM.',
     assistant_lead_invalid: `Event reminder must be one of ${LEAD_CHOICES.join('/')} minutes.`,
-    assistant_agent_not_found: 'Could not find the agent to make the assistant.',
+    assistant_agent_not_found: 'Could not find the agent to use for heartbeat.',
   };
   const msg = (ko(lang) ? ko_ : en_)[code];
   return `${pick(lang, '바꾸지 못했다', 'Not changed')}: ${msg ?? String(e?.message ?? e).slice(0, 160)}`;
@@ -355,8 +355,8 @@ export async function argoSettings(wsId, { action = 'list', key = '', id = null,
   // 결재 — 주인의 1:1이 아닌 턴이다. 지금 값을 읽지도 알려 주지도 않는다(같다/다르다도 — 도구 결과는 그 방으로 나갈 수 있다).
   // 이미 같은 값이면 승인 뒤 적용 단계(applySetting)가 "이미 …"로 끝낸다. 사유는 에이전트가 쓴 글 — 키 모양 문자열을 가린다(maskKeyLike).
   if (def.ownerOnly) return { kind: 'text', text: pick(lang,
-    `${def.label.ko}은(는) 주인이 1:1에서 직접 시킬 때만 바꾼다 — 결재 카드로도 올리지 않았다(계정의 다른 비서 설정까지 바뀌는 일이라). 주인에게 1:1에서 말해 달라고 안내하라.`,
-    `${def.label.en} is changed only when the owner asks directly in a 1:1 — no approval card was filed (it affects the account's assistant elsewhere too). Suggest the owner ask in their 1:1.`) };
+    `${def.label.ko}은(는) 주인이 1:1에서 직접 시킬 때만 바꾼다 — 결재 카드로도 올리지 않았다(계정의 다른 하트비트 설정까지 바뀌는 일이라). 주인에게 1:1에서 말해 달라고 안내하라.`,
+    `${def.label.en} is changed only when the owner asks directly in a 1:1 — no approval card was filed (it affects the account's heartbeat elsewhere too). Suggest the owner ask in their 1:1.`) };
   const payload = { key: def.key, ...(id ? { id: String(id) } : {}), value: norm.value, lang: ko(lang) ? 'ko' : 'en', ...(slug ? { by: slug } : {}) };
   const reason = maskKeyLike(String(why || '').replace(/[\r\n\t]+/g, ' ').trim()).slice(0, 500) || pick(lang, '에이전트가 올린 설정 변경 요청', 'Setting change requested by an agent');
   return {
@@ -484,9 +484,9 @@ async function routinesSection(wsId, { lang, slug, now, mine = false }) {
 
 const ASSIST_CODE = {
   ok: ['정상', 'normal'],
-  other_company: ['다른 회사의 비서가 맡고 있음', "another company's assistant is handling it"],
+  other_company: ['다른 회사의 하트비트가 맡고 있음', "another company's heartbeat is handling it"],
   login_required: ['로그인 필요', 'sign-in needed'],
-  muted: ['메신저 알림 종류에서 비서 알림이 꺼짐', 'assistant notifications muted in messenger'],
+  muted: ['메신저 알림 종류에서 하트비트 알림이 꺼짐', 'heartbeat notifications muted in messenger'],
   runner_outdated: ['실행 기기가 옛 버전', 'running device is outdated'],
   calendar_error: ['일정을 읽지 못함 — 다음 확인 때 다시 읽음', "couldn't read the calendar — retries at next check"],
   deliver_failed: ['알림을 보내지 못해 다시 보내는 중', "couldn't send — retrying"],
@@ -500,10 +500,10 @@ async function assistantSection(wsId, { lang, slug, now }) {
   const runner = { this_device: pick(lang, `이 기기${s.device ? `(${s.device})` : ''}`, `this device${s.device ? ` (${s.device})` : ''}`), other_device: pick(lang, `다른 기기${s.device ? `(${s.device})` : ''}`, `another device${s.device ? ` (${s.device})` : ''}`), runner_outdated: pick(lang, `옛 버전 기기${s.device ? `(${s.device})` : ''} — 그 기기 업데이트 필요`, `old-version device${s.device ? ` (${s.device})` : ''} — update it`), no_runner: pick(lang, '지금 실행 중인 기기 없음', 'no device running it') }[s.runner] ?? s.runner;
   const here = s.runner === 'this_device' && v.current?.ws === wsId;
   const lines = [
-    pick(lang, '비서(능동 알림) — 설정 화면(에이전트 카드 → 비서 탭)과 같은 값', 'Assistant (proactive alerts) — same values as Agent card → Assistant tab'),
-    `- ${pick(lang, '이 회사 비서', 'This company')}: ${c.enabled ? pick(lang, '켜짐', 'on') : pick(lang, '꺼짐', 'off')}${c.agent ? ` · ${pick(lang, '비서 에이전트', 'assistant agent')} ${c.agent}${c.agent === slug ? pick(lang, '(나)', ' (me)') : ''}` : ''}`,
-    `- ${pick(lang, '지금 비서(계정마다 한 명)', 'Current assistant (one per account)')}: ${v.current ? `${v.current.company} · ${v.current.name}` : pick(lang, '없음', 'none')}`,
-    ...(v.unsealed ? [pick(lang, '- 설정 파일이 설정 화면 밖에서 바뀌어 멈춤 — 비서 탭에서 다시 켜면 돈다', '- Stopped: the settings file was changed outside the settings screen — turn it on again in the Assistant tab')] : []),
+    pick(lang, '하트비트(능동 알림) — 설정 화면(에이전트 카드 → 하트비트 탭)과 같은 값', 'Heartbeat (proactive alerts) — same values as Agent card → Heartbeat tab'),
+    `- ${pick(lang, '이 회사 하트비트', 'This company')}: ${c.enabled ? pick(lang, '켜짐', 'on') : pick(lang, '꺼짐', 'off')}${c.agent ? ` · ${pick(lang, '하트비트 에이전트', 'heartbeat agent')} ${c.agent}${c.agent === slug ? pick(lang, '(나)', ' (me)') : ''}` : ''}`,
+    `- ${pick(lang, '지금 하트비트(계정마다 하나)', 'Current heartbeat (one per account)')}: ${v.current ? `${v.current.company} · ${v.current.name}` : pick(lang, '없음', 'none')}`,
+    ...(v.unsealed ? [pick(lang, '- 설정 파일이 설정 화면 밖에서 바뀌어 멈춤 — 하트비트 탭에서 다시 켜면 돈다', '- Stopped: the settings file was changed outside the settings screen — turn it on again in the Heartbeat tab')] : []),
     `- ${pick(lang, '보는 것', 'Watches')}: ${pick(lang, '일정(읽기만)', 'calendar (read only)')} · ${pick(lang, '받는 곳', 'delivered to')}: ${pick(lang, '개인 공간 1:1 방', 'personal 1:1 room')} · ${pick(lang, '권한', 'permission')}: ${pick(lang, '알림만', 'notify only')}`,
     `- ${pick(lang, '일정 알림', 'Event reminder')}: ${c.leadMinutes}${pick(lang, '분 전', ' min before')} · ${pick(lang, '아침 정리(조용한 시간 끝)', 'Morning summary (quiet hours end)')}: ${c.quiet.to} · ${pick(lang, '내일 일정 요약', "Tomorrow's summary")}: ${c.eveningAt} · ${pick(lang, '조용한 시간', 'Quiet hours')}: ${c.quiet.from}~${c.quiet.to}${c.quiet.calendarAlerts ? pick(lang, '(일정 알림은 보냄)', ' (reminders still sent)') : ''}${c.tz ? ` · ${c.tz}` : ''}`,
     `- ${pick(lang, '실행 기기', 'Running on')}: ${runner}`,
@@ -511,7 +511,7 @@ async function assistantSection(wsId, { lang, slug, now }) {
     here
       ? `- ${pick(lang, '마지막 일정 확인', 'Last calendar check')}: ${s.readAt ? `${fmtTime(s.readAt, lang)}(${ago(s.readAt, now, lang)})` : pick(lang, '아직 없음', 'not yet')} · ${pick(lang, '오늘 보낸 일정 알림', 'reminders sent today')}: ${s.instantToday}${pick(lang, '건', '')} · ${pick(lang, '상태', 'status')}: ${s.code ? (ASSIST_CODE[s.code]?.[L] ?? s.code) : pick(lang, '기록 없음', 'no record')}`
       : `- ${pick(lang, '마지막 일정 확인·오늘 보낸 알림 수는 실행 기기에만 기록된다 — 이 기기에서는 볼 수 없다', 'Last check and today\'s count are recorded only on the running device — not visible from this device')}`,
-    `- ${pick(lang, '로그인', 'Sign-in')}: ${s.login ? pick(lang, '됨', 'ok') : pick(lang, '필요 — 이 기기에서 회사를 만든 계정으로 로그인', 'needed — sign in on this device with the account that created this company')}${s.muted ? pick(lang, ' · 메신저 알림 종류에서 비서 알림이 꺼져 있어 보내지 않음', ' · assistant notifications are muted in messenger') : ''}`,
+    `- ${pick(lang, '로그인', 'Sign-in')}: ${s.login ? pick(lang, '됨', 'ok') : pick(lang, '필요 — 이 기기에서 회사를 만든 계정으로 로그인', 'needed — sign in on this device with the account that created this company')}${s.muted ? pick(lang, ' · 메신저 알림 종류에서 하트비트 알림이 꺼져 있어 보내지 않음', ' · heartbeat notifications are muted in messenger') : ''}`,
   ];
   return lines.join('\n');
 }
@@ -532,7 +532,7 @@ async function meSection(wsId, { lang, slug, now }) {
   const amAssistant = assistant?.config?.enabled && assistant.config.agent === slug;
   const mine = approvals.filter((a) => a.status === 'pending' && a.slug === slug);
   return [head, routines,
-    amAssistant ? pick(lang, '나는 이 회사의 비서다 — 자세한 상태는 argo_status section=assistant', 'I am this company\'s assistant — details: argo_status section=assistant') : pick(lang, '나는 이 회사의 비서가 아니다.', "I am not this company's assistant."),
+    amAssistant ? pick(lang, '나는 이 회사의 하트비트 에이전트다 — 자세한 상태는 argo_status section=assistant', 'I am this company\'s heartbeat agent — details: argo_status section=assistant') : pick(lang, '나는 이 회사의 하트비트 에이전트가 아니다.', "I am not this company's heartbeat agent."),
     pick(lang, `내가 올린 결재 중 대기 ${mine.length}건${mine.length ? `: ${mine.slice(0, 5).map((a) => a.action).join(' / ')}` : ''}`, `Pending approvals I filed: ${mine.length}${mine.length ? `: ${mine.slice(0, 5).map((a) => a.action).join(' / ')}` : ''}`),
   ].join('\n');
 }
@@ -627,8 +627,8 @@ async function messengerSection(wsId, { lang, now }) {
 /** 상태 읽기(도구 처리기 본체) — 반환 문자열. guest(주인이 아닌 사람이 시킨 턴)는 주인의 상태를 보지 않는다. */
 export async function argoStatus(wsId, { section = 'overview', slug = null, lang = 'ko', full = false, now = Date.now() } = {}) {
   // full = 주인 1:1(runChat의 settingsDirect — 서버 판정). 아니면 주인의 상태를 하나도 읽지 않는다(손님·채널·회의실·루틴·위임 전부)
-  if (!full) return pick(lang, '아르고 상태(데크 숫자·에이전트·루틴·비서·러너·동기화·요금제·메신저 연결·결재)는 주인의 1:1에서만 보여 준다 — 이 대화는 주인의 1:1이 아니다(다른 사람이 보는 방이거나, 루틴·위임으로 온 턴). 상태를 말하지 말고, 필요하면 주인에게 1:1에서 물어보라고 안내하라. 기능 설명은 argo_help로 할 수 있다.',
-    "Argo status (Deck numbers, agents, routines, assistant, runners, sync, plan, messenger connections, approvals) is shared only in the owner's 1:1 — this conversation is not (others may see this room, or it came from a routine or delegation). Don't state any of it; suggest asking in the owner's 1:1 if needed. Feature explanations are available via argo_help.");
+  if (!full) return pick(lang, '아르고 상태(데크 숫자·에이전트·루틴·하트비트·러너·동기화·요금제·메신저 연결·결재)는 주인의 1:1에서만 보여 준다 — 이 대화는 주인의 1:1이 아니다(다른 사람이 보는 방이거나, 루틴·위임으로 온 턴). 상태를 말하지 말고, 필요하면 주인에게 1:1에서 물어보라고 안내하라. 기능 설명은 argo_help로 할 수 있다.',
+    "Argo status (Deck numbers, agents, routines, heartbeat, runners, sync, plan, messenger connections, approvals) is shared only in the owner's 1:1 — this conversation is not (others may see this room, or it came from a routine or delegation). Don't state any of it; suggest asking in the owner's 1:1 if needed. Feature explanations are available via argo_help.");
   const sec = STATUS_SECTIONS.includes(section) ? section : 'overview';
   const opts = { lang, slug, now };
   const safe = async (fn, name) => { try { return await fn(); } catch (e) { return pick(lang, `${name}: 읽지 못했다(${String(e?.message ?? e).slice(0, 120)}) — 추측하지 말고 읽지 못했다고 말하라.`, `${name}: could not read (${String(e?.message ?? e).slice(0, 120)}) — say so instead of guessing.`); } };
