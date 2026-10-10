@@ -76,15 +76,10 @@
 * { box-sizing: border-box; }
 /* 스크롤 바 — 레일 없이 얇은 선만(유건 2026-09-26). 선 색은 놓인 영역의 글자색에서 만들어
    차콜 사이드바에서는 밝게, 밝은 본문에서는 어둡게 — 두 톤이 스크롤 바 때문에 깨지지 않는다. */
-/* 스크롤 막대(유건 10/10 "백그라운드 컬러랑 거의 차이 없게 — 바탕이 바뀌어도 눈으로 구분만 될 정도, 같은 톤") — 바탕 위에 글자색을 아주 조금 섞어 테마를 따라간다(20% → 9%, 누르거나 올리면 18%) */
-:root { --scroll: color-mix(in srgb, var(--fg) 9%, transparent); --scroll-hover: color-mix(in srgb, var(--fg) 18%, transparent); }
-.side { --scroll: color-mix(in srgb, var(--side-fg) 10%, transparent); --scroll-hover: color-mix(in srgb, var(--side-fg) 20%, transparent); }
-::-webkit-scrollbar { width: 10px; height: 10px; background: transparent; }
-::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--scroll); background-clip: padding-box; border: 3px solid transparent; border-radius: 999px; min-height: 32px; }
-::-webkit-scrollbar-thumb:active { background: var(--scroll-hover); background-clip: padding-box; }
-@media (hover: hover) { ::-webkit-scrollbar-thumb:hover { background: var(--scroll-hover); background-clip: padding-box; } }
-@supports not selector(::-webkit-scrollbar) { * { scrollbar-width: thin; scrollbar-color: var(--scroll) transparent; } }
+/* 스크롤 막대 없음(유건 10/10 "스크롤바리스로 가보자") — 막대만 숨기고 스크롤(휠·트랙패드·키보드·터치)은 그대로. 본문·사이드바·모달·표의 가로 스크롤 모두 같은 규칙
+   (같은 날 앞선 '바탕과 같은 톤으로 옅게' 단계 다음). scrollbar-width는 Firefox·Chrome 121+, ::-webkit-scrollbar는 Safari·Tauri 웹뷰 */
+* { scrollbar-width: none; }
+::-webkit-scrollbar { display: none; }
 html, body, #root { height: 100%; }
 html.scroll-locked { overflow: hidden; }
 body {
@@ -207,9 +202,8 @@ html.nav-collapsed .side { visibility: hidden; }
 .search-btn span { flex: 1; }
 .search-btn kbd { color: var(--side-fg-3); box-shadow: inset 0 0 0 1px var(--side-line); }
 @media (hover: none) { .search-btn kbd { display: none; } } /* 손가락 기기에는 누를 수 없는 ⌘K 표시를 두지 않는다(UX-O07) */
-.side-scroll { flex: 1; overflow-x: hidden; overflow-y: auto; padding: 4px 0 20px 8px; overscroll-behavior: contain; scrollbar-gutter: stable; -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 20px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 20px), transparent); } /* 모듈 보관함 구분선 위는 은은하게 사라진다(유건 10/2) — 끝까지 내리면 마지막 줄이 페이드 위로 */ /* 가로 스크롤 금지(9/30) — 긴 이름은 줄임표 */
+.side-scroll { flex: 1; overflow-x: hidden; overflow-y: auto; padding: 4px 8px 20px; overscroll-behavior: contain; /* 오른쪽 여백은 예전엔 스크롤 막대 자리(gutter)였다 — 막대가 없으니 직접(10/10) */ -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 20px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 20px), transparent); } /* 모듈 보관함 구분선 위는 은은하게 사라진다(유건 10/2) — 끝까지 내리면 마지막 줄이 페이드 위로 */ /* 가로 스크롤 금지(9/30) — 긴 이름은 줄임표 */
 /* 오른쪽 여백 = 스크롤 막대 자리(8px)를 늘 비워 둔다 — 막대가 생겨도 없어도 메뉴 줄 오른쪽 끝이 같다(유건 10/1 밤 6차). 막대가 겹쳐 뜨는 터치 기기는 여백 8px */
-.side-scroll::-webkit-scrollbar { width: 8px; } .side-scroll::-webkit-scrollbar-thumb { border-width: 2px; }
 @media (hover: none) { .side-scroll { padding-right: 8px; scrollbar-gutter: auto; } }
 .nav-group { display: grid; gap: 1px; }
 .nav-item { display: flex; align-items: center; gap: 9px; height: var(--ctl); padding: 0 9px; border-radius: var(--rs); color: var(--side-fg-2); width: 100%; text-align: left; }

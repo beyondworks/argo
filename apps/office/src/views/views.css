@@ -282,7 +282,7 @@ body.vw-banding, body.vw-banding * { user-select: none; -webkit-user-select: non
 .calw-whead.red small, .calw-whead.red .calw-num { color: var(--danger); }
 .calw-wcol.today .calw-whead .calw-num { background: var(--primary); color: var(--primary-fg); font-weight: 650; }
 .calw.d-accent .calw-wcol.today .calw-whead .calw-num { border-radius: 7px; }
-.calw-wlist { display: grid; align-content: start; gap: 4px; overflow-y: auto; min-height: 0; padding: 0 1px 2px; scrollbar-width: thin; }
+.calw-wlist { display: grid; align-content: start; gap: 4px; overflow-y: auto; min-height: 0; padding: 0 1px 2px; }
 .calw-card { display: grid; gap: 1px; width: 100%; padding: 5px 7px 6px; border-radius: var(--rc); text-align: left; color: var(--fg); background: color-mix(in srgb, var(--ev) 14%, var(--surface)); min-width: 0; transition: transform 140ms var(--ease-out); }
 .calw-card.neutral, .calw-card.task { background: var(--wash); }
 .calw-card:active { transform: scale(0.97); }
