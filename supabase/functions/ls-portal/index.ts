@@ -15,10 +15,19 @@
 // 토큰에서 얻은 user_id로 우리가 조회한다.
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
+// CORS(2026-10-11) — 메신저 앱(웹뷰 tauri://localhost·http://tauri.localhost·브라우저)이 사용자 토큰으로 이 함수를 직접 부른다.
+// Authorization 헤더 때문에 브라우저가 사전 요청(OPTIONS)을 보내는데, 예전엔 405·허용 헤더 없음이라 메신저에서 호출이 막혔다(실측 10/11).
+// 인증은 Bearer 토큰(쿠키 아님)이라 출처 '*'가 권한을 넓히지 않는다 — 토큰 없는 출처는 1단계에서 401. msgr-link-preview와 같은 모양.
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
+};
 const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+  new Response(JSON.stringify(body), { status, headers: { ...CORS, 'content-type': 'application/json' } });
 
 Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   if (req.method !== 'POST' && req.method !== 'GET') return json({ error: 'method not allowed' }, 405);
 
   const url = Deno.env.get('SUPABASE_URL');
