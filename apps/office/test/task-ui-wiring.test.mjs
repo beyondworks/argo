@@ -244,7 +244,7 @@ test('캘린더 칩·하루 목록 동그라미: 누르면 상태 메뉴(4개, �
     assert.equal(dot.length, 1);
     assert.equal(dot[0].type, 'button', 'Enter·Space로 열리는 진짜 단추');
     assert.equal(dot[0].props['aria-haspopup'], 'menu');
-    assert.equal(dot[0].props['aria-label'], ko('cal.statusMenu'));
+    assert.ok(dot[0].props['aria-label'].includes(o.title) && dot[0].props['aria-label'] !== ko('cal.statusMenu'), '이름에 할 일 제목·지금 상태(#925 검수 LOW)');
     T.menus = [];
     dot[0].props.onClick({ stopPropagation() {}, currentTarget: {} });
     const items = T.menus.at(-1);

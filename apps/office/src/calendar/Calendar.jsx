@@ -218,7 +218,8 @@ function TaskCheck({ o, check, size = 11 }) {
   const why = check.why(o.vi);
   if (why) return <><Icon name="check" size={size} className="cal-check-ico" /><span className="sr-only">{why}</span></>;
   const open = (e) => { e.stopPropagation(); openMenu(e, check.menu(o.vi), { anchor: e.currentTarget }); };
-  return <button type="button" className={`cal-tcheck${o.done ? ' on' : ''}`} aria-haspopup="menu" aria-label={t('cal.statusMenu')} title={t('cal.statusMenu')}
+  const name = t('cal.statusOf', { title: o.title, status: t(`task.st.${o.done ? 'done' : o.vi?.status ?? 'todo'}`) }); // 어느 할 일·지금 상태인지 들리게(#925 검수 LOW)
+  return <button type="button" className={`cal-tcheck${o.done ? ' on' : ''}`} aria-haspopup="menu" aria-label={name} title={t('cal.statusMenu')}
     onClick={open} onKeyDown={(e) => { if (e.key === 'ArrowDown') open(e); }}><Icon name="check" size={size} /></button>;
 }
 export function Chip({ o, colorBy, onOpen, onMenu, check, bar, compact }) { // 내보내기: 할 일 칩의 동그라미(상태 메뉴)를 노드에서 그려 보는 시험(test/task-ui-wiring.test.mjs)

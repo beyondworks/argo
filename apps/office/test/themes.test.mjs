@@ -436,7 +436,7 @@ test('OS 다크 공통 블록은 색 가족 다크 블록(:root[data-theme=\'x-d
    토큰만 재면 셸 규칙이 뱃지 색을 덮어도 초록이었다(float 셸의 .badge (0,3,0)이 종류 색 (0,2,0)을 이겨 색이 전부 사라졌다).
    불러오는 순서대로 규칙을 모아, 뿌리(html)의 상태(data-theme·data-shell·.dark-emul·OS 다크)와 요소 하나에 맞는 규칙 중 이기는 선언을 고른다.
    화면 폭은 데스크톱(1280), :hover·:focus·::before는 쉬는 화면이 아니라 뺀다. 조상 조건은 '그런 조상이 하나라도 있다'로 본다(ANC). */
-const CASCADE_FILES = ['tokens.css', 'base.css', 'themes.css', 'files/files.css', 'docs/docs.css', 'pages/perf.css', 'pages/company.css', 'business/business.css', 'pages/mail.css'];
+const CASCADE_FILES = ['tokens.css', 'base.css', 'themes.css', 'views/views.css', 'files/files.css', 'docs/docs.css', 'pages/perf.css', 'pages/company.css', 'business/business.css', 'pages/mail.css'];
 function cascadeRules(files) {
   const out = [];
   for (const [file, src] of files) {
@@ -628,7 +628,8 @@ test('상태 뱃지: 린넨 라이트(라이트 고정·시스템 라이트)에�
   const bad = [];
   for (const st of STATES.filter((x) => (x.theme === 'linen-light' || (x.theme === 'linen' && !x.os.dark)) && x.shell !== 'float')) {
     const t = tokensAt(st), backs = backsAt(t, stName(st));
-    for (const k of ['ok', 'warn', 'danger']) {
+    // 할 일 상태·중요도 뱃지(tk-pill)도 같은 기준 — 표·캘린더·업무 현황에 같이 나온다(#925 검수 MEDIUM: 보류 3.17·진행 중 3.78)
+    for (const k of ['ok', 'warn', 'danger', 'tk-pill.st-doing', 'tk-pill.st-hold', 'tk-pill.st-done', 'tk-pill.pr-1']) {
       const el = elOf(`span.badge.${k}`), ink = resolve(t, winner(RULES, 'color', el, st).value), wash = resolve(t, winner(RULES, 'background', el, st).value);
       for (const [where, back] of Object.entries(backs)) { const r = ratio(ink, over(wash, back)); if (r < 4.5) bad.push(`${stName(st)} ${k} on ${where} ${r.toFixed(2)}`); }
     }
@@ -668,6 +669,17 @@ test('린넨 라이트 hover 면(--card-2): 카드와 면으로 갈리고, 캔�
 
 // 이유(유건 10/10 "활성화 영역 색상이 배경 컬러와 너무 겹친다"): 폴더 줄의 고른 항목(--secondary)·가로 탭의 고른 칸(--surface)이 린넨 바탕과 거의 같았다 —
 // 린넨 라이트는 비치지 않는 카드 면으로, 캔버스·표면과 눈에 띄게 갈린다. 다른 테마의 규칙은 그대로
+// 이유(#925 검수 HIGH): 바탕만 덮는 린넨 규칙이 float 셸의 반전(글자 --bg)과 섞여 고른 탭 글자가 1.1:1이 됐다 — 린넨 라이트 셸 8종에서 고른 자리 글자가 읽힌다
+test('고른 자리 글자: 린넨 라이트 셸 8종에서 4.5:1', () => {
+  const bad = [];
+  for (const st of STATES.filter((x) => x.theme === 'linen-light')) for (const sel of ['button.fold-item.on', 'button.seg-btn.on']) {
+    const t = tokensAt(st), el = elOf(sel), ink = resolve(t, winner(RULES, 'color', el, st)?.value ?? 'var(--fg)'), w = resolve(t, winner(RULES, 'background', el, st)?.value), bg = resolve(t, t.bg);
+    if (!ink || !w || !bg) continue;
+    const r = ratio(ink, over(w, bg)); if (r < 4.5) bad.push(`${stName(st)} ${sel} ${r.toFixed(2)}`);
+  }
+  assert.deepEqual(bad, []);
+});
+
 test('고른 자리(폴더 줄·가로 탭): 린넨 라이트는 불투명 카드 면으로 바탕과 갈린다', () => {
   for (const sel of ['button.fold-item.on', 'button.seg-btn.on']) {
     const st = { theme: 'linen-light', shell: 'plain', emul: false, os: { dark: false } };

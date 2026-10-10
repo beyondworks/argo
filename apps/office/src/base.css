@@ -52,9 +52,9 @@
   --card-2: var(--card); /* 셸 버튼 hover — 56% 카드 위에서는 정본 hover(#f1efe9)가 묻힌다. 비치지 않는 흰 면으로 한 단계 밝힌다 */
 }
 /* 고른 자리(10/10 "활성화 영역 색이 배경과 너무 겹친다") — 폴더 줄의 고른 항목(--secondary)·가로 탭의 고른 칸(--surface)이 린넨 바탕과 거의 같은 색이었다.
-   린넨 라이트만 비치지 않는 카드 면 + 옅은 그림자로 띄운다(다른 색·셸은 그대로) */
-:is(:root[data-theme='linen-light'], :root[data-theme='linen']:not(.dark-emul)) :is(.fold-item.on, .seg-btn.on) { /* (0,5,0) — 아래 .fold-item.on·.seg-btn.on·셸 규칙보다 높게 */ background: var(--t-on-bg); box-shadow: 0 1px 2px rgba(38, 36, 31, 0.1), 0 0 0 1px var(--border-soft); }
-/* window 셸의 공간 표시 알약(--t-space-bg, themes.css는 --surface)은 차콜 사이드바 위에 놓인다 — 72% 표면이면 차콜이 비쳐 보조 글자가 3.7:1로 떨어진다.
+   린넨 라이트 + plain 셸만 비치지 않는 카드 면 + 옅은 그림자로 띄운다(다른 색·셸은 각자의 활성 모양 그대로) */
+:is(:root[data-shell='plain']:is([data-theme='linen-light'], [data-theme='linen']:not(.dark-emul))) :is(.fold-item.on, .seg-btn.on) { /* plain 셸만(#925 검수 HIGH — float 셸은 고른 탭을 반전(글자 --bg)하는데 바탕만 덮어 글자가 안 보였다, 리퀴드·글래스의 고유 활성 모양도 지웠다). 아래 .fold-item.on·.seg-btn.on보다 높게 */ background: var(--t-on-bg); box-shadow: 0 1px 2px rgba(38, 36, 31, 0.1), 0 0 0 1px var(--border-soft); }
+/* window 셸의 공간 표시 알약(--t-space-bg, themes.css는 --surface)은 차콜 사이드바 위에 놓인다 — 반투명 표면이면 차콜이 비쳐 보조 글자가 3.7:1로 떨어진다(72%에서 잰 값).
    이 자리만 비치지 않는 단색(예전 85% 표면이 차콜 위에서 보이던 색)으로. 특이도 (0,4,0)이라 themes.css의 셸 기본값(0,2,0)을 이긴다. 다른 색·셸은 그대로 */
 :root[data-shell='window']:is([data-theme='linen-light'], [data-theme='linen']:not(.dark-emul)) { --t-space-bg: color-mix(in srgb, var(--card) 85%, var(--side-bg)); }
 :root[data-theme='graphite'], :root[data-theme='graphite-light'] {

@@ -89,6 +89,11 @@ body.vw-banding, body.vw-banding * { user-select: none; -webkit-user-select: non
 :root .badge.tk-pill.st-done { background: var(--ok-soft); color: var(--ok); }
 :root .badge.tk-pill.pr-1 { background: var(--danger-soft); color: var(--danger); }
 :root .badge.tk-pill.pr-3 { background: color-mix(in srgb, var(--secondary) 45%, transparent); color: var(--fg-3); }
+/* 린넨 라이트는 반투명 표면(56%) 위라 상태 토큰 그대로면 보류 3.2·진행 중 3.8로 떨어진다(#925 검수) — base.css .badge.ok·warn·danger와 같은 비율로 글자만 진하게. 다른 테마는 그대로 */
+:is(:root[data-theme='linen-light'], :root[data-theme='linen']:not(.dark-emul)) .badge.tk-pill.st-doing { color: color-mix(in srgb, var(--tk-info) 80%, var(--fg)); }
+:is(:root[data-theme='linen-light'], :root[data-theme='linen']:not(.dark-emul)) .badge.tk-pill.st-hold { color: color-mix(in srgb, var(--warn) 68%, var(--fg)); }
+:is(:root[data-theme='linen-light'], :root[data-theme='linen']:not(.dark-emul)) .badge.tk-pill.st-done { color: color-mix(in srgb, var(--ok) 76%, var(--fg)); }
+:is(:root[data-theme='linen-light'], :root[data-theme='linen']:not(.dark-emul)) .badge.tk-pill.pr-1 { color: color-mix(in srgb, var(--danger) 90%, var(--fg)); }
 /* 할 일 표 칸에서 바로 바꾸기(유건 10/9) — 뱃지·글자 단추를 누르면 고르기 메뉴, 날짜는 날짜 고르기. 펼침 표시(⌄)는 줄에 마우스를 올리거나 초점이 오면 보인다 */
 .tk-cell-btn { display: inline-flex; align-items: center; gap: 3px; max-width: 100%; min-width: 0; margin: -3px -6px; padding: 3px 6px; border-radius: 6px; color: inherit; font: inherit; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tk-cell-btn.pill { margin: -2px -3px; padding: 2px 3px; }

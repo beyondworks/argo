@@ -6,7 +6,7 @@ export const CAL_DICT = {
   'cal.calendars': ['캘린더', 'Calendars'], 'cal.overlays': ['함께 보기', 'Also show'], 'cal.cal.me': ['내 일정', 'My calendar'], 'cal.cal.org': ['조직 일정', 'Team calendar'], 'cal.cal.mine': ['내 일정(주인·참석)', 'Mine (owner or attending)'],
   'cal.tasks': ['할 일 기한', 'To-do due dates'], 'cal.holidays': ['공휴일', 'Holidays'],
   'cal.allDay': ['종일', 'All day'], 'cal.more': ['+{n}개 더', '+{n} more'], 'cal.nItems': ['{n}건', '{n} items'],
-  'cal.taskDue': ['할 일 기한: {title}', 'To-do due: {title}'], 'cal.taskRow': ['할 일 기한 — 눌러서 할 일 보기', 'To-do due date — open the to-do'], 'cal.due': ['기한', 'Due'], 'cal.statusMenu': ['상태 바꾸기', 'Change status'],
+  'cal.taskDue': ['할 일 기한: {title}', 'To-do due: {title}'], 'cal.taskRow': ['할 일 기한 — 눌러서 할 일 보기', 'To-do due date — open the to-do'], 'cal.due': ['기한', 'Due'], 'cal.statusMenu': ['상태 바꾸기', 'Change status'], 'cal.statusOf': ['{title} 상태: {status} — 눌러서 바꾸기', '{title} status: {status} — click to change'],
   'cal.dayEmpty': ['이날 일정이 없습니다', 'Nothing on this day'],
   'cal.custUnknown': ['거래처', 'Customer'],
   'cal.quick': ['새 일정', 'New event'], 'cal.new': ['새 일정', 'New event'], 'cal.edit': ['일정 수정', 'Edit event'], 'cal.view.title': ['일정', 'Event'],
