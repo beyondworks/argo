@@ -19,6 +19,7 @@
 // DB 접근은 makeDb(client) 한 층에 모은다 — 단위 테스트는 가짜 db를 주입하고(test/msgr-bridge.test.mjs), 실제
 // supabase-js 체인 호출·RLS 왕복은 로컬 Supabase 스택 E2E(scripts/e2e-msgr-bridge.mjs)가 검증한다.
 import { createClient } from '@supabase/supabase-js';
+import { createRequire } from 'node:module';
 import { chmod, mkdir, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
 import { getFreshDeviceSession } from '../devicesession.mjs';
@@ -128,7 +129,12 @@ export async function crewMemoryForMail(crewId, channelId) {
 }
 // 기기 단위 심박(20261010120000) — 서버에 함수·계산 열이 없다고 본 시각. 10분 뒤 다시 본다(운영 적용 전에 켜진 앱이 재시작 없이 넘어가게). (export: 테스트 초기화용)
 const DEVICE_BEAT_RECHECK_MS = 10 * 60_000;
-export const deviceBeatRpc = { missingAt: 0, seenMissingAt: 0 };
+export const deviceBeatRpc = { missingAt: 0, seenMissingAt: 0, versionMissingAt: 0 }; // versionMissingAt — 함수는 있으나 앱 버전 인자가 없는 서버(20261011120000 적용 전)
+/** 이 앱의 버전 — 기기 심박에 실어 보낸다(무료 계정 에이전트 재개 판정, 20261011120000). 번들(Next 서버 — 앱·CLI·상주) 안에서는 next.config가 빌드 때
+    package.json에서 넣는 NEXT_PUBLIC_APP_VERSION(상단바 버전 표시와 같은 값)이 글자로 박힌다. 번들 밖(node로 src를 바로 실행 — 시험·도구)은 package.json을 직접 읽는다.
+    createRequire만 쓰지 않는 이유: 번들에서는 경로가 빌드 기기 경로(file:///Users/runner/…)로 굳어 사용자 기기에서 읽지 못한다(설치본 0.1.101 청크 실측 — runner-health의 같은 코드는 '0.0.0'). */
+export const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION || (() => { try { return createRequire(import.meta.url)('../../package.json').version ?? null; } catch { return null; } })();
+const rpcMissing = (e) => ['PGRST202', '42883'].includes(e?.code);
 const purgeAt = new Map(); const PURGE_MS = 10 * 60_000; // wsId → 마지막 회수 판정. 회사마다 10분에 한 번(검수 #691 LOW-2 — 15초 틱마다 부르던 것, 재검 MEDIUM — 전역 하나면 첫 회사만 돌았다)
 export async function syncOrgDocs(wsId, orgId, { db, log = console.error } = {}) {
   const org = await db.org(orgId); if (!org) return { skipped: 'no-org' };
@@ -229,12 +235,17 @@ const deliveryDm = (ch) => ch?.kind === 'dm' && (ch.org_id !== null || String(ch
 const ROOM_IDS_PER_REQUEST = 100; // 방 참여 일괄 조회의 크루 id 묶음 — in.(…) URL 약 4KB(운영 personalCrewsInRooms가 비슷한 크기로 매 틱 돈다)
 const ROOM_PAGE = 1000;           // 한 요청에 묻는 행 수(Supabase 기본 최대 행과 같다). 서버 최대 행이 더 작으면 그만큼 잘려 오는데, 끝은 빈 페이지로 정하므로 잘려도 빠지지 않는다
 export function makeDb(client) {
+  const pausedIds = new Set(); // 마지막 myCrews(withPaused)가 본 멈춘 행 — 옛 서버 경로(버전 인자 없음·PATCH)로는 보내지 않는다(종전 함수는 받은 행의 last_seen_at을 쓴다)
   return {
     ...executionDb(client),
     ...workDb(client),
-    async myCrews(uid, wsId) {
-      return unwrap(await client.from('msgr_crews').select('id, org_id, slug, display_name, allow, allow_users, cursor_msg_id, hosting')
-        .eq('owner_user_id', uid).eq('ws_id', wsId).eq('status', 'active')) ?? [];
+    /** 이 회사의 내 활성 행(개인·조직). withPaused — drain만: 같은 한 번의 조회로 멈춘 행(status 'paused' — 무료 계정 일시 중지 #941)도 받아 상태를 붙여 돌려준다.
+        멈춘 행은 받은 글·턴을 돌리지 않고 기기 심박에만 싣는다(서버가 이 기기의 새 앱을 알아야 재개한다 — 20261011120000). 요청 수는 그대로 1건. */
+    async myCrews(uid, wsId, { withPaused = false } = {}) {
+      const rows = unwrap(await client.from('msgr_crews').select(`id, org_id, slug, display_name, allow, allow_users, cursor_msg_id, hosting${withPaused ? ', status' : ''}`)
+        .eq('owner_user_id', uid).eq('ws_id', wsId).in('status', withPaused ? ['active', 'paused'] : ['active'])) ?? [];
+      if (withPaused) for (const r of rows) { if (r.status === 'paused') pausedIds.add(r.id); else pausedIds.delete(r.id); }
+      return rows;
     },
     async crewBySlug(uid, wsId, slug, orgId) { // orgId 필수에 가깝다 — 인벤토리 미러가 내가 속한 조직마다 같은 slug 행을 만들어 두 조직이면 maybeSingle이 PGRST116(검수 3R M-2)
       let q = client.from('msgr_crews').select('id, org_id, slug, display_name').eq('owner_user_id', uid).eq('ws_id', wsId).eq('slug', slug).eq('status', 'active');
@@ -264,15 +275,25 @@ export function makeDb(client) {
         (호출부는 그때 workHeartbeat를 따로 보내지 않는다). 옛 서버(함수 없음)면 10분 동안 종전 경로 — 행마다 PATCH. */
     async heartbeat(ids, beat = null) {
       if (!ids.length) return undefined;
+      const live = ids.filter((id) => !pausedIds.has(id)); // 옛 서버 경로용 — 멈춘 행을 빼면 종전과 같은 요청
       if (beat?.wsId && beat?.deviceId && String(beat.deviceId).length <= 200 && Date.now() - deviceBeatRpc.missingAt > DEVICE_BEAT_RECHECK_MS) { // 200자 넘는 .device-id(손으로 고친 경우)는 서버가 거절한다 — 매 틱 실패 대신 종전 경로(검수 L4)
-        const { error } = await client.rpc('msgr_device_beat', { p_ws: beat.wsId, p_device: beat.deviceId, p_crews: ids });
+        // 앱 버전을 싣는다(20261011120000 — 무료 계정은 최신 앱 기기가 켜져 있을 때 에이전트 4명까지). 인자가 없는 서버면 한 번 버전 없이 다시 보내고 10분 기억한다
+        if (APP_VERSION && Date.now() - deviceBeatRpc.versionMissingAt > DEVICE_BEAT_RECHECK_MS) {
+          const { error } = await client.rpc('msgr_device_beat', { p_ws: beat.wsId, p_device: beat.deviceId, p_crews: ids, p_app_version: APP_VERSION });
+          if (!error) return { device: true };
+          if (!rpcMissing(error)) throw new Error(`msgr db: ${error.message}`);
+          deviceBeatRpc.versionMissingAt = Date.now();
+        }
+        if (!live.length) return undefined; // 멈춘 행뿐 — 옛 서버에는 보낼 심박이 없다(새 앱 판정이 없는 서버라 보내도 재개되지 않는다)
+        const { error } = await client.rpc('msgr_device_beat', { p_ws: beat.wsId, p_device: beat.deviceId, p_crews: live });
         if (!error) return { device: true };
-        if (!['PGRST202', '42883'].includes(error.code)) throw new Error(`msgr db: ${error.message}`);
+        if (!rpcMissing(error)) throw new Error(`msgr db: ${error.message}`);
         deviceBeatRpc.missingAt = Date.now(); // 운영 적용 전 서버 — 틱마다 실패할 요청을 다시 보내지 않는다(DB 위생)
       }
+      if (!live.length) return undefined;
       // 종전 경로: HEARTBEAT_WRITE_MS(30초) 넘게 지난 행만 쓴다 — 15초 틱마다 모든 크루 행을 갱신해 msgr_crews가 분당 1,335행씩 다시 써졌다(2026-09-23 DB 점검).
       // 부재중 판정은 전부 90초(앱 AWAY_MS·work_runs·handoff) — 행 나이 최대 45초에 앱 재조회 30초를 더해도 안쪽.
-      unwrap(await client.from('msgr_crews').update({ last_seen_at: new Date().toISOString() }).in('id', ids)
+      unwrap(await client.from('msgr_crews').update({ last_seen_at: new Date().toISOString() }).in('id', live)
         .or(`last_seen_at.is.null,last_seen_at.lt.${new Date(Date.now() - HEARTBEAT_WRITE_MS).toISOString()}`));
       return undefined;
     },
@@ -284,6 +305,10 @@ export function makeDb(client) {
         외부 봇(Hermes·OpenClaw, hosting='bot')은 세지 않는다 — 봇을 먼저 연결한 계정의 본체 크루가 영영 안 올라갔다(2026-09-30). */
     async hasAnyCrew(uid) {
       return ((unwrap(await client.from('msgr_crews').select('id').eq('owner_user_id', uid).neq('hosting', 'bot').limit(1))) ?? []).length > 0;
+    },
+    /** 이 회사(ws)에 멈춘(무료 계정 일시 중지 #941) 내 에이전트 행이 있나 — 자동 켜기가 '멈춘 동안 꺼진 브리지'를 다시 켤 때만 본다(10분에 한 번, 꺼진 회사만). */
+    async hasPausedCrew(uid, wsId) {
+      return ((unwrap(await client.from('msgr_crews').select('id').eq('owner_user_id', uid).eq('ws_id', wsId).eq('status', 'paused').neq('hosting', 'bot').limit(1))) ?? []).length > 0;
     },
     /** 이 회사(ws)의 내 크루 행 전부(상태 무관) — 미러 diff의 기준. */
     async myCrewRows(uid, wsId) {
@@ -639,7 +664,11 @@ export async function autoEnableMsgr(wsId, { company, session = sessionClient, l
     finally { clearTimeout(timer); }
     orgCache.set(c.uid, probe);
   }
-  if ((!probe.orgs.length && !probe.personal) || probe.hasCrew) return false; // 조직이 없어도 메신저를 쓰는 계정이면 개인 공간 크루를 올린다(2026-09-30)
+  if (probe.hasCrew) {
+    // 무료 계정 일시 중지(#941)로 멈춘 에이전트만 남은 회사는 옛 설정 화면이 브리지를 껐다(syncEnabled). 최신 앱은 브리지가 돌아야 기기 심박(앱 버전)이 나가고
+    // 서버가 에이전트를 재개한다(20261011120000) — 이 회사에 멈춘 행이 있으면 다시 켠다. 사람이 해제한 회사(행 없음·available)는 그대로 둔다.
+    if (!c.db.hasPausedCrew || !(await c.db.hasPausedCrew(c.uid, wsId).catch(() => false))) return false;
+  } else if (!probe.orgs.length && !probe.personal) return false; // 조직이 없어도 메신저를 쓰는 계정이면 개인 공간 크루를 올린다(2026-09-30)
   const fresh = await load(wsId).catch(() => company); // 이미 켜졌으면 쓰지 않는다(판정용 재읽기)
   if (fresh.msgr?.enabled) return true;
   // 병합은 잠금 안의 최신 값으로(함수 patch) — 재읽기와 쓰기 사이에 저장된 notify·mutedEvents를 덮지 않는다
@@ -1126,7 +1155,9 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
   // 회사 소유자 게이트(실사고 2026-09-11): 같은 PC에서 다른 계정으로 로그인하면 기기 세션(uid)이 바뀌는데, 로컬 회사 폴더는 그대로라
   // 브리지가 남의 회사 크루를 그 계정의 조직에 미러·실행했다(lean-win에 Lean-AX 13명). 회사 목록 API(ownerId === user.id)와 같은 규칙으로 DB에 손대기 전에 끊는다.
   if (ownerId && ownerId !== uid) return { crews: 0, queued: 0, denied: 0, stale: 0, list: [], skipped: 'owner' };
-  const allCrews = await db.myCrews(uid, wsId);
+  const mineRows = await db.myCrews(uid, wsId, { withPaused: true }); // 멈춘 행(무료 계정 일시 중지)은 심박에만 — 받은 글·턴은 활성 행만(20261011120000)
+  const allCrews = mineRows.filter((c) => (c.status ?? 'active') === 'active');
+  const pausedRows = mineRows.filter((c) => c.status === 'paused');
   // 개인 크루(org NULL)는 개인 방에 들어간 것만 이번 틱에 받은 글을 본다 — 방이 없는 개인 크루까지 크루마다 3조회를 돌리면 폴링이 두 배가 된다(DB 위생, 2026-09-30). 조회 한 번.
   const personalIds = allCrews.filter((c) => c.org_id == null).map((c) => c.id);
   const inRooms = personalIds.length && db.personalCrewsInRooms ? await db.personalCrewsInRooms(personalIds).catch((e) => { console.error('[argo] msgr 개인 방 에이전트 조회 실패 — 이 틱은 개인 에이전트를 건너뜁니다:', e?.message ?? e); return new Set(); }) : new Set();
@@ -1152,7 +1183,8 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
   if (housekeeping && !nodeOrgId && orgCrewRows.length) await applyRoutineEdits(wsId, { db, crews: orgCrewRows }).catch((e) => console.error('[argo] msgr 루틴 편집 반영 실패:', e.message));
   if (housekeeping && !nodeOrgId && orgCrewRows.length) await mirrorRoutines(wsId, { db, crews: orgCrewRows }).catch((e) => console.error('[argo] msgr 루틴 미러 실패:', e.message));
   // 접속 표시: 조직 행 + 방에 든 개인 행. 조직 행이 없는 계정은 개인 행 전부(방 없는 개인 크루는 msgr_personal_room_crews가 같은 크루의 조직 행 시각을 쓴다 — 쓰기 0)
-  const idleBeat = orgCrewRows.length ? [] : allCrews.filter((c) => c.org_id == null && !inRooms.has(c.id));
+  // 멈춘 행만 있는 회사도 심박은 나간다 — 서버가 이 기기의 새 앱(버전)을 봐야 무료 계정 에이전트를 재개한다(20261011120000). 옛 서버로는 보내지 않는다(makeDb.heartbeat)
+  const idleBeat = orgCrewRows.length ? [] : [...allCrews.filter((c) => c.org_id == null && !inRooms.has(c.id)), ...pausedRows];
   // 기기 단위 심박(유건 2026-10-10): 기기 id가 있으면 서버 함수 한 번이 기기 행·옛 읽기 호환 행·업무 기능 표시를 함께 쓴다(makeDb.heartbeat)
   const beat = deviceId ? { wsId, deviceId } : null;
   if (!crews.length) { if (housekeeping && idleBeat.length) await db.heartbeat(idleBeat.filter(beatable).map((c) => c.id), beat).catch((e) => console.error('[argo] msgr 하트비트 실패:', e.message)); if (housekeeping) await periodicRecall(wsId, { db, uid, inventory }); return out; } // 회수는 활성 크루가 0이어도 — 모두 파견 해제된 뒤가 바로 회수할 때다

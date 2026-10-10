@@ -87,6 +87,7 @@ import { selfMember, personalSelfName } from './self-member.mjs';
 import { crewRowMenuKeys, crewOpeners, creatorTagVisible } from './crew-row-menu.mjs';
 import { crewAwayNotice } from './crew-dm-notice.mjs';
 import { crewListEmptyKey } from './crews-empty.mjs';
+import { readAgentPause, agentPauseNote } from './agent-pause.mjs'; // 무료 계정 에이전트가 멈춘 이유(2026-10-11)
 import { runnerOptions, RUNNER_INSTALL } from './runner-sheet.mjs';
 import { seenWithin, stampFetched, markSeen } from './presence-clock.mjs'; import { readWithSeen } from './crew-seen.mjs'; // 접속 판정 = 받아 온 때 기준(기능 점검 D2) // '실행기 연결' 시트(아르고 패밀리 구조, 2026-10-02)
 import { shortcutLabel } from './shortcut.mjs';
@@ -1459,6 +1460,10 @@ function Shell({ session }) {
     if (looksFilled.current) return; looksFilled.current = true;
     fillAgentLooks(supabase, own.rows).then((done) => { if (done.length) setOwnCrews((cur) => (cur ? { ...cur, rows: cur.rows.map((x) => done.reduce((r, d) => (d.ids.includes(r.id) ? { ...r, ...d.patch } : r), x)) } : cur)); });
   }).catch(() => {}); return () => { live = false; }; }, [uid, syncEpoch, readOwnCrews]); // eslint-disable-line react-hooks/exhaustive-deps -- newerOwn은 순수
+  // 무료 계정 에이전트가 멈춘 이유(2026-10-11, agent-pause.mjs) — 로그인·재연결 때 1건, 폰 에이전트 탭에 들어갈 때 1건(아래 effect). 멈춘 에이전트가 없으면 안내 없음
+  const [agentPause, setAgentPause] = useState(null);
+  useEffect(() => { if (!uid) { setAgentPause(null); return undefined; } let live = true; readAgentPause(supabase).then((v) => { if (live) setAgentPause(v); }); return () => { live = false; }; }, [uid, syncEpoch]);
+  const pauseNote = agentPauseNote(agentPause);
   const approvalsTimer = useRef(null);
   // 넣기 요청 카드의 이름(기능 점검 D6) — 에이전트 이름: 조직 에이전트는 조직 행, 개인 에이전트는 160000의 대기 에이전트 이름(msgr_personal_room_crews).
   // 방 이름: 채널·이름 붙은 그룹방은 그 이름, 대화방은 나를 뺀 사람 이름(조직 표시명 → 프로필). 요청이 있을 때만 부른다.
@@ -2213,6 +2218,7 @@ function Shell({ session }) {
     try { await prefQueue.current.enqueue(() => q(supabase.from('msgr_target_prefs').upsert(ch.server.map((p) => ({ ...p, user_id: uid }))))); if (ch.server.some((p) => p.org_id === orgId)) bumpPrefs(); }
     catch (e) { setErr(friendlyErr(e.message, t)); loadMyAgents({ favs: true }).catch(() => {}); }
   };
+  useEffect(() => { if (uid && isPhone && page === 'agents') readAgentPause(supabase).then(setAgentPause); }, [isPhone, page, resumeEpoch]); // eslint-disable-line react-hooks/exhaustive-deps -- 탭에 들어갈 때만(멈춘 이유)
   useEffect(() => { if (isPhone && page === 'agents') { loadMyAgents({ favs: true }).catch(() => {}); loadApprovals().catch(() => {}); } if (isPhone && page === 'set-agents') loadMyAgents().catch(() => {}); if (isPhone && page === 'approvals') loadApprovals().catch(() => {}); }, [isPhone, page, resumeEpoch]); // eslint-disable-line react-hooks/exhaustive-deps
   // 버튼 이름(개인 1:1 대화) 판정 재료 — 폰 에이전트 탭을 아직 안 열었거나 데스크톱(myAgents를 읽지 않는다)이면, 조직 화면에 내 에이전트가 보일 때 세션에 한 번만 읽는다
   // (요청 2건, 주기 호출 없음 — 실패해도 다시 묻지 않고 지금 문구). 그 뒤 폰은 종전대로 에이전트 탭에서 새로 읽는다.
@@ -2878,6 +2884,7 @@ function Shell({ session }) {
               {approvalItems.length > 3 && <span className="ph-apmore">{t('phone.agents.approvals.more', { n: approvalItems.length - 3 })}</span>}
             </button>
           </div>}
+          {pauseNote && !tabQText.trim() && <div className="msgr-hint ph-pausenote" role="status">{t(pauseNote.key, pauseNote.vars)}{pauseNote.key !== 'agents.pause.limit' && <div className="ph-emptyacts"><RunnerButton /></div>}</div>}{/* 무료 계정 — 목록이 비거나 줄어든 이유(2026-10-11) */}
           {agentGroups.length > 0 && <div className="ph-chiprow">
             <div className="ph-chips" role="radiogroup" aria-label={t('phone.agents.filter')}>{AGENT_FILTERS.map((k) => <button key={k} type="button" role="radio" aria-checked={agentFilter === k} className={agentFilter === k ? 'active' : ''} onClick={() => setAgentFilter(k)}>{k === 'all' ? t('phone.chip.all') : t(`phone.agents.chip.${k}`)}</button>)}</div>
           </div>}
@@ -2987,6 +2994,7 @@ function Shell({ session }) {
               </button>))}
           </div>
         </RailSection>)}
+        {!isPhone && pauseNote && <p className="msgr-rail-empty msgr-pausenote" role="status">{t(pauseNote.key, pauseNote.vars)}{pauseNote.key !== 'agents.pause.limit' && <> <RunnerButton /></>}</p>}{/* 무료 계정 — 내 에이전트 구역이 비거나 줄어든 이유(2026-10-11). 개인 공간에서 구역이 숨어도 보이게 구역 밖에 */}
         {(isPersonal ? railVisible.length > 0 : !orgBlocked && org) && (<RailSection id="mine" label={`${t('rail.agents')} · ${railVisible.length}`} right={<span className="right">{railVisible.length > 0 && <span className="msgr-sortwrap msgr-railsort"><button type="button" className={`msgr-sortbtn${sortMenu ? ' on' : ''}`} onClick={() => setSortMenu((v) => !v)} title={t('rail.sort')} aria-label={t('rail.sort')} aria-haspopup="menu" aria-expanded={sortMenu}><I name="sort" size={14} /></button>{sortMenu && <div className="msgr-rowmenu" role="menu" onMouseLeave={() => setSortMenu(false)}>{['name', 'added', 'custom'].map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={railSort === v} onClick={() => { pickSort(v); setSortMenu(false); }}>{railSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`rail.sort.${v}`)}</button>)}</div>}</span>}{myAvailable.length > 0 && <span className="msgr-klabel">{myCrews.length}/{myCrews.length + myAvailable.length}</span>}</span>}>
           <div className="msgr-list mine">
             {!isPersonal && !myAvailable.length && !railVisible.length && <p className="msgr-rail-empty">{t('phone.agents.none')} <RunnerButton /></p>}{/* 비어도 구역과 연결 단추를 둔다 — 통째로 사라져 에이전트를 붙일 곳이 안 보였다(UXM-08) */}
