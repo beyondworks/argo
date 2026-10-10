@@ -1,6 +1,6 @@
 // 기기 단위 심박(유건 2026-10-10, 20261010120000_msgr_device_heartbeat) — 실제 Postgres에서 본다.
 // ① 쉬는 동안(같은 목록·기한 안) 심박 요청은 쓰기 0 — 트랜잭션 번호도 안 생기고 기기 행·에이전트 행 xmin 그대로
-// ② 옛 읽기(표의 last_seen_at 직접 — 설치된 메신저)로 새 심박을 읽어도 접속(90초 안). 조직 행·개인 행 모두 35초 넘을 때만 다시 쓴다(개인 행 50초 → 35초, 20261010231700)
+// ② 옛 읽기(표의 last_seen_at 직접 — 설치된 메신저)로 새 심박을 읽어도 접속(90초 안). 조직 행은 35초, 개인 행은 50초 넘을 때만 다시 쓴다
 // ③ 옛 Argo(0.1.100 이하)가 행에 쓴 심박만 있어도 새 읽기(계산 열·서버 함수)가 접속으로 본다
 // ④ 기기가 꺼지면 기존과 같은 시간 안에 부재중 — 기기 행 기한 35초 = 종전 조직 행과 같은 최악 나이(요청 지연 10초 모의에서 둘 다 약 54초)
 // ⑤ 기기 이동(맥 → 서버 예비)·여러 기기·목록 변경(해고)·남의 행·다른 회사 행·권한
@@ -96,24 +96,18 @@ test('첫 심박: 기기 행 1개(맡은 에이전트 이름) + 옛 읽기 호�
   assert.deepEqual(after, before, '기기 행·에이전트 행 xmin 그대로');
 });
 
-test('기한: 기기 행·조직 행·개인 행 모두 35초 넘을 때만 다시 쓴다(20261010231700 — 개인 행 50초 → 35초) — 그 안은 쓰기 0', { skip }, () => {
-  setAge('msgr_device_beats', 'seen_at', `device_id = 'mac-1'`, 30); setAge('msgr_crews', 'last_seen_at', `id in ('${C_ORG}', '${C_TWO}', '${C_PER}')`, 30);
-  assert.equal(beat(U.owner, 'lean', 'mac-1', [C_ORG, C_PER, C_TWO]), false, '30초 = 기한 안 → 쓰기 0');
-  setAge('msgr_device_beats', 'seen_at', `device_id = 'mac-1'`, 36); setAge('msgr_crews', 'last_seen_at', `id in ('${C_ORG}', '${C_TWO}', '${C_PER}')`, 36);
+test('기한: 기기 행·조직 행은 35초, 개인 행은 50초 넘을 때만 다시 쓴다(15초 틱이면 대개 45초·60초마다) — 그 안은 쓰기 0', { skip }, () => {
+  setAge('msgr_device_beats', 'seen_at', `device_id = 'mac-1'`, 30); setAge('msgr_crews', 'last_seen_at', `id in ('${C_ORG}', '${C_TWO}')`, 30); setAge('msgr_crews', 'last_seen_at', `id = '${C_PER}'`, 45);
+  assert.equal(beat(U.owner, 'lean', 'mac-1', [C_ORG, C_PER, C_TWO]), false, '30초·45초 = 기한 안 → 쓰기 0(15초 틱의 두 번째·세 번째 틱)');
+  setAge('msgr_device_beats', 'seen_at', `device_id = 'mac-1'`, 36); setAge('msgr_crews', 'last_seen_at', `id in ('${C_ORG}', '${C_TWO}')`, 36);
+  const per0 = xmin('msgr_crews', `id = '${C_PER}'`);
   assert.equal(beat(U.owner, 'lean', 'mac-1', [C_ORG, C_PER, C_TWO]), true);
   assert.ok(age(`select seen_at from public.msgr_device_beats where device_id = 'mac-1'`) <= 1, '기기 행 36초 → 다시 씀');
   assert.ok(Number(oldRead(U.owner, C_ORG)) <= 1, '조직 행 36초 → 다시 씀');
-  assert.ok(Number(oldRead(U.owner, C_PER)) <= 1, '개인 행 36초 → 다시 씀');
-});
-
-test('쉬는 게이트웨이의 약 45초 심박(#943 BEAT_EVERY_MS 40초 기준, 간격 40~55초)이면 개인 행도 심박마다 써진다 — 부재중 90초와 여유가 남는다(#943 검수 LOW-1)', { skip }, () => {
-  for (const gap of [40, 45, 55]) {
-    setAge('msgr_device_beats', 'seen_at', `device_id = 'mac-1'`, gap); setAge('msgr_crews', 'last_seen_at', `id in ('${C_ORG}', '${C_TWO}', '${C_PER}')`, gap);
-    const per0 = xmin('msgr_crews', `id = '${C_PER}'`);
-    assert.equal(beat(U.owner, 'lean', 'mac-1', [C_ORG, C_PER, C_TWO]), true, `${gap}초 간격 심박`);
-    assert.notEqual(xmin('msgr_crews', `id = '${C_PER}'`), per0, `개인 행 ${gap}초 → 다시 씀(50초 기한이면 40·45초 심박은 건너뛰어 약 90초마다 써졌다)`);
-    assert.ok(Number(oldRead(U.owner, C_PER)) <= 1);
-  }
+  assert.equal(xmin('msgr_crews', `id = '${C_PER}'`), per0, '개인 행 45초 → 그대로(50초 기한)');
+  setAge('msgr_crews', 'last_seen_at', `id = '${C_PER}'`, 51);
+  beat(U.owner, 'lean', 'mac-1', [C_ORG, C_PER, C_TWO]);
+  assert.ok(Number(oldRead(U.owner, C_PER)) <= 1, '개인 행 51초 → 다시 씀');
 });
 
 test('옛 읽기(표의 last_seen_at 직접 — 설치된 메신저): 새 심박만 받는 에이전트도 조직 멤버에게 접속으로 보인다', { skip }, () => {

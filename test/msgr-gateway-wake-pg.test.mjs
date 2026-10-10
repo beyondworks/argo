@@ -70,8 +70,7 @@ test('새 파견(active insert)은 주인 u:로 crew_sync 한 건 — 페이로�
 
 test('심박·이름 바꾸기·active → 다른 상태는 방송 0, 다시 active가 되면(다시 파견·되살림·#941 재개) 한 건씩', { skip }, () => {
   reset();
-  asUser(U.owner, `select public.msgr_device_beat('lean', 'mac-1', array['${C1}']::uuid[])`);
-  sql(`update public.msgr_crews set last_seen_at = now() where id = '${C1}'`);
+  sql(`update public.msgr_crews set last_seen_at = now(), work_protocol = 1 where id = '${C1}'`); // 심박이 쓰는 열(msgr_device_beat의 옛 읽기 호환·업무 기능 표시) — 함수 모양은 #945가 맡아 여기서는 열 쓰기로 본다
   sql(`update public.msgr_crews set display_name = 'mine2' where id = '${C1}'`);
   sql(`update public.msgr_crews set status = 'available' where id = '${C1}'`);
   assert.equal(wakes(), '', '심박·이름·파견 해제는 방송 없음');
