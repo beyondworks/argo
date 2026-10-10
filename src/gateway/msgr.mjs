@@ -2037,7 +2037,7 @@ export async function msgrNotifyPush(event, _target = null, { session = sessionC
     if (room) {
       const ins = await post(personal, room); // 중복(같은 이벤트 재배달)이면 null → false. 글 넣기 실패는 던진다(조직 방으로 다시 보내지 않는다)
       // 개인 공간 1:1에 올린 자기 글 — 주인 1:1 턴 맥락의 '대화 밖에서 보낸 최근 글'(self-posts.mjs). 조직 1:1(아래)은 적지 않는다 — 조직 기록은 조직 단위로 거둔다
-      if (ins) await recordSelfPost(event.wsId, slug, { body, meta: { notification: event.type } }, { id: ins.id ?? null, personal: true, lang: company.lang });
+      if (ins) await recordSelfPost(event.wsId, slug, { body, meta: { notification: event.type } }, { id: ins.id ?? null, personal: true, lang: company.lang, title: event.routine?.title ?? '' }); // 루틴 결과는 제목만 남는다(본문 원문은 루틴 턴 기록에)
       return !!ins;
     }
   }
@@ -2109,7 +2109,7 @@ export async function msgrPush(event, { session = sessionClient } = {}) {
         `[Routine] ${event.routine.title}${routineNoticeTail(event, 'en')}\n\n${plan.body}`, company.lang).slice(0, MSG_MAX),
       mentions: [], meta: { disposition: 'done', notification: 'routine', routine_id: event.routine.id } });
     // 개인 공간 1:1(조직 없는 방)로 지정한 루틴 결과만 자기 글 기록에(self-posts.mjs) — 조직 채널·조직 1:1은 그 방 턴의 방 문맥 표지로 알아본다
-    if (posted && target.orgId == null) await recordSelfPost(event.wsId, event.routine.agentSlug, { body: `[${pick('루틴', 'Routine', company.lang)}] ${event.routine.title}${routineNoticeTail(event, company.lang)}\n\n${plan.body}`, meta: { notification: 'routine' } }, { id: posted.id ?? null, personal: true, lang: company.lang });
+    if (posted && target.orgId == null) await recordSelfPost(event.wsId, event.routine.agentSlug, { body: `[${pick('루틴', 'Routine', company.lang)}] ${event.routine.title}${routineNoticeTail(event, company.lang)}\n\n${plan.body}`, meta: { notification: 'routine' } }, { id: posted.id ?? null, personal: true, lang: company.lang, title: event.routine.title });
     const targetKind = available.find((r) => r.orgId === target.orgId && r.channelId === target.channelId)?.kind ?? null;
     if (posted) await deliverReplyFiles(event.wsId, c.db, { orgId: target.orgId, channelId: target.channelId, channelKind: targetKind, crewId: crew.id, threadRoot: null, failKey: `attfail:rn:${crew.id}:${digest}` }, posted, plan, company.lang);
     return true;

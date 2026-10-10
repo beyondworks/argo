@@ -123,6 +123,7 @@ async function send(cid, m, c, cfg, now, lang, { recheck = false } = {}) {
       return 'gone';
     }
     ob.occ = { ...ob.occ, title: live.title, location: live.location }; // 바뀐 제목·장소는 반영(같은 키·같은 client_msg_id)
+    if (live.own !== true && ob.meta?.own) ob.meta = { ...ob.meta, own: undefined }; // 주인 일정이 아니게 됐으면 자기 글 기록은 표지 줄로
   }
   if (ob.kind === 'pre') {
     // 하루 즉시 알림 한도(설계 9절) — 오늘 이미 한도만큼 보냈고 아직 꼬리를 붙이지 않았으면 이 글(한도+1번째)에 한 줄. 보내는 순간 다시 정한다(복구로 바뀐 셈 반영).
@@ -282,7 +283,7 @@ export async function runAssistantTick(cid, { now = Date.now(), deps = assistant
       const from = coveredUntil; const to = Math.max(now + CAL_SPAN_MS, pmTo);
       try {
         const { events } = await readCalendar(s, from, to);
-        m.snap = { readAt: now, from, to, occs: expand(ownEvents(events, s.uid), from, to) };
+        m.snap = { readAt: now, from, to, occs: expand(ownEvents(events, s.uid), from, to, s.uid) }; // own — 주인이 만든 일정인가(자기 글 기록의 본문 판정)
         m.skip = new Set(); m.readFailedAt = 0; readNow = true;
         st.cal.readAt = now;
         setStatus(st, 'ok', now);
@@ -305,7 +306,7 @@ export async function runAssistantTick(cid, { now = Date.now(), deps = assistant
     const have = new Set(st.pending.map((p) => p.key));
     for (const o of plan.missed) {
       const key = preKey(o);
-      if (!have.has(key)) st.pending.push({ key, source: 'calendar', reason: inQuiet(o.start, cfg) ? 'quiet' : 'gap', eventId: o.id, start: o.start, title: o.title, location: o.location });
+      if (!have.has(key)) st.pending.push({ key, source: 'calendar', reason: inQuiet(o.start, cfg) ? 'quiet' : 'gap', eventId: o.id, start: o.start, title: o.title, location: o.location, ...(o.own === true ? { own: true } : {}) });
     }
     st.cal.coveredUntil = now;
   }

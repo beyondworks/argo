@@ -143,7 +143,8 @@ export const SETTINGS = Object.freeze([
     where: { ko: '루틴 화면 → 그 루틴 편집 → 제목', en: 'Routines → edit the routine → Title' },
   },
   {
-    key: 'routine.prompt', type: 'text', max: 2000, needsId: true,
+    // 오래 남아 자동으로 실행되는 지시라 지시문 규칙과 같이 주인 1:1에서도 결재 카드. 결재 카드 사유 칸에 새 글 전체가 보이는 길이(380자)까지만 — 더 긴 내용은 루틴 화면에서
+    key: 'routine.prompt', type: 'text', max: 380, needsId: true, approvalAlways: true,
     label: { ko: '루틴 내용(매번 할 일)', en: 'Routine instruction (what to do each run)' },
     where: { ko: '루틴 화면 → 그 루틴 편집 → 내용', en: 'Routines → edit the routine → Instruction' },
   },
@@ -264,11 +265,13 @@ function showSetting(def, v, lang) {
 }
 
 /** 결재 카드 문구(순수) — 승인 때 payload와 다시 맞춰 보는 기준(카드에 보인 것 = 실제로 바뀌는 것). */
-export function settingActionText({ key, id = null, value, model }, lang = 'ko') {
+export function settingActionText({ key, id = null, value, model, index, o1 }, lang = 'ko') {
   const def = settingOf(key);
   const label = def ? def.label[ko(lang) ? 'ko' : 'en'] : key;
-  const extra = def?.type === 'runner' && model !== undefined ? pick(lang, ` (모델 ${model || '—'})`, ` (model ${model || '—'})`) : ''; // 러너를 바꾸면 화면처럼 그 러너의 첫 모델로 — 카드에 같이 보인다
-  return pick(lang, `설정 변경 — ${label}${id ? ` [${id}]` : ''} → ${showSetting(def, value, lang)}${extra}`, `Change setting — ${label}${id ? ` [${id}]` : ''} → ${showSetting(def, value, lang)}${extra}`);
+  const extra = (def?.type === 'runner' && model !== undefined ? pick(lang, ` (모델 ${model || '—'})`, ` (model ${model || '—'})`) : '') // 러너를 바꾸면 화면처럼 그 러너의 첫 모델로 — 카드에 같이 보인다
+    + (o1 ? pick(lang, ' · 주인 1:1에서 요청', " · requested in the owner's 1:1") : '');
+  const shown = index ? pick(lang, `규칙 ${index}번`, `rule #${index}`) : showSetting(def, value, lang); // 남이 보는 방의 규칙 삭제는 번호만
+  return pick(lang, `설정 변경 — ${label}${id ? ` [${id}]` : ''} → ${shown}${extra}`, `Change setting — ${label}${id ? ` [${id}]` : ''} → ${shown}${extra}`);
 }
 
 /** 지금 값 읽기 — { value, view } | { error }. */
@@ -320,10 +323,10 @@ async function prepareSetting(wsId, def, value, { id = null, lang = 'ko', full =
     await loadRemoteCatalog({ timeoutMs: 2000 }).catch(() => null); // 카드 화면 목록(app/api/runners)과 같은 원격 오버레이 — TTL 캐시라 대개 호출 0
     const runner = def.key === 'agent.runner' ? value : String(cur.meta.runner ?? '');
     if (!full && def.key === 'agent.model') return { value };
-    if (!full) return RUNNERS[runner] && !isHiddenRunner(runner) ? { value: runner, extra: { model: effectiveModels(runner)[0]?.id ?? '' } } : { error: 'runner' };
+    if (!full) return Object.hasOwn(RUNNERS, runner) && !isHiddenRunner(runner) ? { value: runner, extra: { model: effectiveModels(runner)[0]?.id ?? '' } } : { error: 'runner' };
     if (def.key === 'agent.model' && !runner) return { error: pick(lang, '러너가 자동이라 모델을 고를 수 없다(카드 화면도 같다) — agent.runner로 러너를 먼저 정하라.', 'The runner is Auto, so a model cannot be picked (same on the card screen) — set agent.runner first.') };
     if (!runner) return { value: '', extra: { model: '' } };
-    if (!RUNNERS[runner]) return { error: pick(lang, `없는 러너: ${runner}. 가능한 값: ${Object.keys(RUNNERS).filter((r) => !isHiddenRunner(r)).join(', ')}, auto`, `Unknown runner: ${runner}. Options: ${Object.keys(RUNNERS).filter((r) => !isHiddenRunner(r)).join(', ')}, auto`) };
+    if (!Object.hasOwn(RUNNERS, runner)) return { error: pick(lang, `없는 러너: ${runner}. 가능한 값: ${Object.keys(RUNNERS).filter((r) => !isHiddenRunner(r)).join(', ')}, auto`, `Unknown runner: ${runner}. Options: ${Object.keys(RUNNERS).filter((r) => !isHiddenRunner(r)).join(', ')}, auto`) };
     if (isHiddenRunner(runner) && runner !== cur.meta.runner) return { error: pick(lang, `${RUNNERS[runner].name} 러너는 새로 고를 수 없다.`, `${RUNNERS[runner].name} can no longer be chosen.`) };
     const st = (await runnerStatus(wsId, { forPick: true }).catch(() => ({})))?.[runner]?.company ?? {};
     if (!st.connected || st.invalid) return { error: pick(lang, `${RUNNERS[runner].name} 러너가 연결돼 있지 않다(또는 재연결 필요) — 사용자에게 설정 → AI 연결에서 연결해 달라고 안내하라.`, `${RUNNERS[runner].name} isn't connected (or needs reconnecting) — ask the user to connect it in Settings → AI connection.`) };
@@ -345,6 +348,8 @@ async function prepareSetting(wsId, def, value, { id = null, lang = 'ko', full =
     return { value, extra: { before: cur.rules, after: [...cur.rules, value] } };
   }
   if (def.key === 'agent.rules.remove') {
+    // 주인 1:1이 아니면 번호로만 받고 규칙 원문을 읽어 싣지 않는다 — 승인 때 그때의 규칙에서 그 번호 문장을 확정한다(applyCardSetting)
+    if (!full) return /^\d{1,3}$/.test(value) && Number(value) >= 1 ? { value: String(Number(value)), extra: { index: Number(value) } } : { error: 'rule-number' };
     const i = /^\d+$/.test(value) ? Number(value) - 1 : cur.rules.indexOf(value);
     if (!(i >= 0 && i < cur.rules.length)) return { error: pick(lang, `그런 규칙이 없다. 지금 규칙: ${cur.rules.map((r, n) => `${n + 1}) ${clip(r, 60)}`).join(' / ') || '(없음)'}`, `No such rule. Current rules: ${cur.rules.map((r, n) => `${n + 1}) ${clip(r, 60)}`).join(' / ') || '(none)'}`) };
     return { value: cur.rules[i], extra: { before: cur.rules, after: cur.rules.filter((_, n) => n !== i) } };
@@ -362,13 +367,13 @@ export function rulesDiffText(before = [], after = [], lang = 'ko') {
  * 설정 적용(바로 바꾸기·결재 승인 공용) — { ok, before, after, text } | { ok:false, text }.
  * slug = 이 도구를 부른 에이전트(비서를 켤 때 지정된 비서가 없으면 이 에이전트).
  */
-export async function applySetting(wsId, { key, id = null, value, model, before: rulesBefore, after: rulesAfter, from = null }, { slug = null, lang = 'ko' } = {}) {
+export async function applySetting(wsId, { key, id = null, value, model, before: rulesBefore, after: rulesAfter, index, from = null }, { slug = null, lang = 'ko' } = {}) {
   const def = settingOf(key);
   if (!def || forbiddenOf(key)) return { ok: false, text: pick(lang, `바꿀 수 없는 설정: ${key}`, `Not a changeable setting: ${key}`) };
   const norm = normalizeSettingValue(def, value, lang);
   if (norm.error) return { ok: false, text: norm.error };
   if (def.card) {
-    const r = await applyCardSetting(wsId, def, { slug: id ?? slug, value: norm.value, model, rulesBefore, rulesAfter, lang });
+    const r = await applyCardSetting(wsId, def, { slug: id ?? slug, value: norm.value, model, rulesBefore, rulesAfter, index, lang });
     return r;
   }
   const cur = await currentValue(wsId, def, { id, lang });
@@ -411,7 +416,17 @@ export async function applySetting(wsId, { key, id = null, value, model, before:
 const sameList = (a, b) => Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((x, i) => x === b[i]);
 
 /** 내 카드 설정 적용 — 카드 화면과 같은 저장 함수. 규칙은 결재 때 본 before가 지금 규칙과 같을 때만 after로 바꾼다(그 사이 바뀌었으면 적용 안 함). */
-async function applyCardSetting(wsId, def, { slug, value, model, rulesBefore, rulesAfter, lang }) {
+async function applyCardSetting(wsId, def, { slug, value, model, rulesBefore, rulesAfter, index, lang }) {
+  if (def.key === 'agent.rules.remove' && index) { // 번호로 올린 규칙 삭제 — 승인 때의 규칙에서 그 번호를 확정(번호가 범위 밖이면 적용 안 함)
+    const cur = await currentValue(wsId, def, { id: slug, lang });
+    if (cur.error) return { ok: false, text: cur.error, raw: true };
+    const i = Number(index) - 1;
+    if (!Number.isInteger(i) || i < 0 || i >= cur.rules.length || String(Number(index)) !== String(value)) return { ok: false, text: pick(lang, `승인할 때 규칙 ${index}번이 없어 적용하지 않았다.`, `Not applied — there was no rule #${index} at approval time.`) };
+    const after = cur.rules.filter((_, n) => n !== i);
+    try { await setAgentRules(wsId, slug, after); }
+    catch (e) { return { ok: false, text: pick(lang, '바꾸지 못했다.', 'Not changed.'), raw: true, err: e }; }
+    return { ok: true, before: cur.rules, after, text: pick(lang, `바꿨다 — 규칙 ${index}번을 지웠다.`, `Changed — removed rule #${index}.`) };
+  }
   // raw — 준비 오류(지금 규칙·연결 상태·모델 목록이 든 글)는 결재 후속 보고(원래 방으로 간다)에 싣지 않는다(appliedNote). 바로 바꾸기에서는 그대로 보인다
   const prep = await prepareSetting(wsId, def, value, { id: slug, lang });
   if (prep.error) return { ok: false, text: prep.error, raw: true };
@@ -426,7 +441,8 @@ async function applyCardSetting(wsId, def, { slug, value, model, rulesBefore, ru
   const next = prep.value;
   const nextModel = def.key === 'agent.runner' ? (model !== undefined ? model : prep.extra?.model ?? '') : undefined;
   if (def.key === 'agent.runner' && model !== undefined && model !== (prep.extra?.model ?? '')) return { ok: false, text: pick(lang, '결재를 올린 뒤 그 러너의 모델 목록이 바뀌어 적용하지 않았다 — 다시 올려라.', "The runner's model list changed after filing, so it was not applied — file it again.") };
-  if (cur.value === next && (def.key !== 'agent.runner' || (cur.meta.model ?? '') === nextModel)) return { ok: true, before: cur.value, after: next, unchanged: true, text: pick(lang, `이미 ${showSetting(def, next, lang)}(으)로 되어 있다 — 바꾸지 않았다(${def.label.ko}).`, `Already ${showSetting(def, next, lang)} — nothing changed (${def.label.en}).`) };
+  // 같은 값(같은 러너를 다시 고른 경우 포함 — 모델 유지)이면 쓰지 않는다
+  if (cur.value === next) return { ok: true, before: cur.value, after: next, unchanged: true, text: pick(lang, `이미 ${showSetting(def, next, lang)}(으)로 되어 있다 — 바꾸지 않았다(${def.label.ko}).`, `Already ${showSetting(def, next, lang)} — nothing changed (${def.label.en}).`) };
   const patch = { 'agent.role': { role: next }, 'agent.runner': { runner: next, model: nextModel }, 'agent.model': { model: next }, 'agent.effort': { effort: next } }[def.key];
   let after;
   try { after = await updateAgentMeta(wsId, slug, patch); }
@@ -450,7 +466,7 @@ async function applyRoutineSetting(wsId, def, { cur, value, slug, lang, from = n
   // 출처(from)가 있는 루틴은 풀 오토로 돌지 않는다. 결재로 고친 루틴(주인 1:1이 아닌 턴의 요청)은 늘 출처를 남기고(끄기 제외),
   // 주인 1:1에서는 다른 에이전트의 루틴을 다시 켤 때만 남긴다(cancel_routine의 다시 켜기와 같은 규칙)
   const disabling = def.key === 'routine.enabled' && value === false;
-  const reFrom = disabling ? null : from ?? (def.key === 'routine.enabled' && value === true && r.agentSlug !== slug ? slug : null);
+  const reFrom = disabling ? null : from ?? (r.agentSlug !== slug ? slug : null); // originFor와 같다 — 다른 에이전트의 루틴을 고치면(제목·내용·요일·간격·다시 켜기) 지금 에이전트를 출처로
   try { await updateRoutine(wsId, r.id, patch, reFrom ? { from: reFrom } : {}); }
   catch (e) { return { ok: false, text: pick(lang, `바꾸지 못했다: ${String(e?.message ?? e).slice(0, 160)}`, `Not changed: ${String(e?.message ?? e).slice(0, 160)}`), raw: true }; }
   return { ok: true, before: cur.value, after: value, text: changedText(def, cur.value, value, lang, r.title) };
@@ -463,19 +479,21 @@ export async function applyApprovedSetting(wsId, p, { slug = null } = {}) {
   if (def?.ownerOnly) return pick(lang, '적용 안 함 — 이 설정은 결재로 바꾸지 않는다(주인 1:1에서만).', "Not applied — this setting isn't changed through approvals (owner's 1:1 only).");
   let r;
   if (def?.card && (!p.id || p.id !== (p.by ?? slug))) return pick(lang, '적용 안 함 — 에이전트는 자기 카드만 바꾼다.', 'Not applied — agents change only their own card.'); // 결재 파일을 고쳐 남의 카드를 가리키게 해도
-  try { r = await applySetting(wsId, { key: p.key, id: p.id ?? null, value: p.value, ...(p.model !== undefined ? { model: p.model } : {}), ...(p.before ? { before: p.before, after: p.after } : {}), ...(def?.key?.startsWith('routine.') ? { from: p.from ?? p.by ?? slug } : {}) }, { slug, lang }); } // 결재로 고친 루틴은 결재 파일이 출처를 잃어도 올린 에이전트를 출처로
+  try { r = await applySetting(wsId, { key: p.key, id: p.id ?? null, value: p.value, ...(p.model !== undefined ? { model: p.model } : {}), ...(p.before ? { before: p.before, after: p.after } : {}), ...(p.index ? { index: p.index } : {}),
+    // 결재로 고친 루틴은 결재 파일이 출처를 잃어도 올린 에이전트를 출처로. 주인 1:1에서 올린 카드(o1 — 카드 문구에 보여 대조된다)는 originFor 규칙(applyRoutineSetting)
+    ...(def?.key?.startsWith('routine.') && !p.o1 ? { from: p.from ?? p.by ?? slug } : {}) }, { slug: p.o1 ? (p.by ?? slug) : slug, lang }); }
   catch { r = { ok: false, raw: true }; }
   return appliedNote(p, r, lang);
 }
 
 /** 결재 승인 뒤 적용 결과 문구(순수) — 후속 턴이 원래 방(채널일 수 있다)에 보고하므로 이전 값은 싣지 않는다. 새 값과 화면 위치만. */
-export function appliedNote({ key, value }, r, lang = 'ko') {
+export function appliedNote({ key, value, index }, r, lang = 'ko') {
   const def = settingOf(key);
   // 실패 이유는 이 모듈이 만든 문구만(화면 규칙 위반 등) — 원문 오류(경로·내부 메시지가 섞일 수 있다)는 방으로 내보내지 않는다
   if (!r?.ok || !def) return r?.text && !r.raw ? pick(lang, `적용 실패 — ${r.text}`, `Not applied — ${r.text}`)
     : pick(lang, `적용 실패 — ${def ? def.label.ko : '설정'}을(를) 바꾸지 못했다. 주인에게 화면에서 확인해 달라고 안내하라.`, `Not applied — couldn't change ${def ? def.label.en : 'the setting'}. Ask the owner to check it on screen.`);
   const L = ko(lang) ? 'ko' : 'en';
-  const shown = def.key.startsWith('agent.rules.') ? showSetting(def, value, lang) : showSetting(def, r.after ?? value, lang); // 규칙은 이번 한 줄만(전체 목록은 원래 방으로 보내지 않는다)
+  const shown = index ? pick(lang, `규칙 ${index}번 삭제`, `rule #${index} removed`) : def.key.startsWith('agent.rules.') ? showSetting(def, value, lang) : showSetting(def, r.after ?? value, lang); // 규칙은 이번 한 줄만(전체 목록은 원래 방으로 보내지 않는다)
   return pick(lang, `적용 완료 — ${def.label.ko} → ${shown}(화면: ${def.where.ko}). 이전 값은 말하지 마라.`,
     `Applied — ${def.label[L]} → ${shown} (screen: ${def.where.en}). Don't mention the previous value.`);
 }
@@ -592,8 +610,8 @@ export async function argoSettings(wsId, { action = 'list', key = '', id = null,
   const reveal = direct && !guest;
   // 루틴 고치기는 손님이 결재로도 올리지 못한다 — cancel_routine(#916)과 같은 규칙(루틴은 주인의 몸으로 미래 턴을 돈다)
   if (guest && def.key.startsWith('routine.')) return { kind: 'text', text: pick(lang, '루틴은 이 에이전트의 주인만 바꿀 수 있다 — 주인에게 직접 요청하라고 안내하라.', "Only this agent's owner can change routines — suggest asking the owner directly.") };
-  // 결재로 올리는 루틴 내용은 카드 사유 칸에 전부 보이는 길이까지만 — 주인이 보지 못한 글이 승인되지 않게
-  if (!reveal && def.key === 'routine.prompt' && String(norm.value).length > 380) return { kind: 'text', text: pick(lang, '주인 1:1이 아닌 곳에서 결재로 올리는 루틴 내용은 380자까지다(카드에 전부 보이게) — 줄이거나 주인의 1:1에서 바꾸라고 안내하라.', "A routine instruction filed for approval outside the owner's 1:1 is limited to 380 characters (so the card shows all of it) — shorten it or ask in the owner's 1:1.") };
+  // 지시문 규칙도 손님은 결재로도 올리지 못한다 — 오래 남는 지시를 남이 제안하게 두지 않는다(루틴과 같은 거절)
+  if (guest && def.key.startsWith('agent.rules.')) return { kind: 'text', text: pick(lang, '일하는 방식 규칙은 이 에이전트의 주인만 바꿀 수 있다 — 주인에게 직접 요청하라고 안내하라.', "Only this agent's owner can change working rules — suggest asking the owner directly.") };
   // 화면과 같은 선택지 규칙으로 값을 확정(러너 연결·모델 목록·강도 단계·규칙 번호) — 바로 바꾸기·결재 공용. 주인 1:1이 아니면 연결·목록 대조는 승인 때 한다
   const prep = await prepareSetting(wsId, def, norm.value, { id, lang, full: reveal });
   // 주인 1:1이 아니면 오류에 카드·러너 연결 상태(지금 규칙·연결된 러너·모델 목록)를 싣지 않는다 — 도구 결과는 그 방으로 나갈 수 있다
@@ -610,22 +628,26 @@ export async function argoSettings(wsId, { action = 'list', key = '', id = null,
   const payload = { key: def.key, ...(id ? { id: String(id) } : {}), value: prep.value, lang: ko(lang) ? 'ko' : 'en', ...(slug ? { by: slug } : {}),
     ...(def.key === 'agent.runner' ? { model: prep.extra?.model ?? '' } : {}),
     ...(prep.extra?.before ? { before: prep.extra.before, after: prep.extra.after } : {}),
-    // 루틴을 고친 출처 — 주인 1:1이 아닌 턴이 고친 루틴은 이후 풀 오토로 돌지 않는다(다시 켜기·내용·시각 모두, 승인 뒤에도 — 손님 결재 후속과 같은 원칙)
-    ...(def.key.startsWith('routine.') && def.key !== 'routine.time' && (def.key !== 'routine.enabled' || prep.value === true) ? { from: via ?? slug } : {}) };
+    ...(prep.extra?.index ? { index: prep.extra.index } : {}), // 남이 보는 방의 규칙 삭제 — 번호만(승인 때 지금 규칙에서 그 번호 문장을 확정)
+    ...(def.approvalAlways && reveal ? { o1: true } : {}), // 주인 1:1에서 올린 늘-결재 카드(카드 문구에 보인다 — 루틴 출처 판정에 쓴다)
+    // 루틴을 고친 출처 — 주인 1:1이 아닌 턴이 고친 루틴은 이후 풀 오토로 돌지 않는다(다시 켜기·내용·시각 모두, 승인 뒤에도 — 손님 결재 후속과 같은 원칙).
+    // 주인 1:1에서 올린 카드는 originFor 규칙(다른 에이전트의 루틴이면 지금 에이전트)으로 승인 때 정한다
+    ...(!reveal && def.key.startsWith('routine.') && def.key !== 'routine.time' && (def.key !== 'routine.enabled' || prep.value === true) ? { from: via ?? slug } : {}) };
   const why_ = maskKeyLike(String(why || '').replace(/[\r\n\t]+/g, ' ').trim());
   // 규칙 결재 — 카드에 바뀌기 전·후 규칙(주인 1:1에서 올린 카드). 남이 보는 방에서 올린 카드는 개수와 이번 한 줄만(지시문 전체를 그 방에 싣지 않는다)
-  const diff = prep.extra?.before ? (reveal ? rulesDiffText(prep.extra.before, prep.extra.after, lang)
+  const diff = prep.extra?.index ? pick(lang, `규칙 ${prep.extra.index}번 삭제 — 승인할 때 그때의 규칙 ${prep.extra.index}번 문장을 지운다(그 번호가 없으면 적용하지 않는다)`, `Remove rule #${prep.extra.index} — on approval the rule at #${prep.extra.index} at that time is removed (not applied if there is no such number)`)
+    : prep.extra?.before ? (reveal ? rulesDiffText(prep.extra.before, prep.extra.after, lang)
     : pick(lang, `규칙 ${prep.extra.before.length}개 → ${prep.extra.after.length}개(전·후 전체는 승인할 때 데크 결재함·주인 1:1에서 확인)`, `Rules ${prep.extra.before.length} → ${prep.extra.after.length} (full before/after: check in the Deck approvals or the owner's 1:1)`)) : '';
   // 긴 글(루틴 내용)은 카드 문구에 앞 120자만 보이므로, 주인이 무엇을 승인하는지 사유 칸에 새 글 전체를 싣는다(넘치면 앞부분)
-  const full = def.type === 'text' && (def.max ?? 0) > 200 ? pick(lang, `새 내용 전체: ${clip(prep.value, 380)}`, `New text in full: ${clip(prep.value, 380)}`) : '';
+  const full = def.key === 'routine.prompt' ? pick(lang, `새 내용 전체: ${prep.value}`, `New text in full: ${prep.value}`) : ''; // 380자 상한이라 사유 칸에 늘 전부 들어간다
   const reason = [diff, full, why_].filter(Boolean).join(' · ').slice(0, 500) || pick(lang, '에이전트가 올린 설정 변경 요청', 'Setting change requested by an agent');
-  const shown = showSetting(def, prep.value, lang);
+  const shown = prep.extra?.index ? pick(lang, `규칙 ${prep.extra.index}번`, `rule #${prep.extra.index}`) : showSetting(def, prep.value, lang);
   return {
     kind: 'approval',
     approval: { action: settingActionText(payload, lang), reason, payload },
     text: def.approvalAlways && reveal ? pick(lang,
-      `지시문(일하는 방식 규칙)은 주인 1:1에서도 바로 바꾸지 않고 결재 카드로 올렸다(${def.label.ko}: ${shown}) — 카드에 바뀌기 전·후 규칙이 보인다. 승인되면 시스템이 바꾸고 결과가 이어서 온다 — 승인 전에는 바뀐 것처럼 말하지 마라.`,
-      `Working rules are filed as an approval card even in the owner's 1:1 (${def.label.en}: ${shown}) — the card shows the rules before and after. Once approved the system applies it and reports back — don't say it changed before then.`)
+      `오래 남아 계속 실행되는 지시(일하는 방식 규칙·루틴 내용)는 주인 1:1에서도 바로 바꾸지 않고 결재 카드로 올렸다(${def.label.ko}: ${shown}) — 카드에 바뀌기 전·후가 보인다. 승인되면 시스템이 바꾸고 결과가 이어서 온다 — 승인 전에는 바뀐 것처럼 말하지 마라.`,
+      `Standing instructions (working rules, routine instructions) are filed as an approval card even in the owner's 1:1 (${def.label.en}: ${shown}) — the card shows before and after. Once approved the system applies it and reports back — don't say it changed before then.`)
       : pick(lang,
         `이 요청은 주인이 1:1에서 직접 시킨 것이 아니라서 바로 바꾸지 않고 주인 결재로 올렸다(${def.label.ko} → ${shown}). 승인되면 시스템이 바꾸고 결과가 이어서 온다 — 승인 전에는 바뀐 것처럼 말하지 마라. 지금 값은 이 방에 알리지 않는다.`,
         `This request didn't come from the owner directly in a 1:1, so it was filed for the owner's approval instead of applied (${def.label.en} → ${shown}). Once approved the system applies it and reports back — don't say it changed before then. Don't share the current value here.`),
@@ -659,7 +681,7 @@ async function settingsList(wsId, { lang, direct, guest, slug = null }) {
     if (!reveal && (d.type === 'runner' || d.type === 'model' || d.type === 'effort')) return pick(lang, ' · 가능한 값은 주인의 1:1에서 보여 준다', " · allowed values shown only in the owner's 1:1"); // 연결된 러너·내 러너는 주인 상태
     if (d.choices) return ` · ${pick(lang, '가능한 값', 'values')}: ${d.choices.join(', ')}`;
     if (d.type === 'runner') return ` · ${pick(lang, '가능한 값', 'values')}: ${[...usable, 'auto'].join(', ')}`;
-    if (d.type === 'model') return myRunner && RUNNERS[myRunner] ? ` · ${pick(lang, '가능한 값', 'values')}: ${effectiveModels(myRunner).map((m) => m.id).join(', ')}` : pick(lang, ' · 러너가 자동이면 고를 수 없다(agent.runner 먼저)', ' · not selectable while the runner is Auto (set agent.runner first)');
+    if (d.type === 'model') return myRunner && Object.hasOwn(RUNNERS, myRunner) ? ` · ${pick(lang, '가능한 값', 'values')}: ${effectiveModels(myRunner).map((m) => m.id).join(', ')}` : pick(lang, ' · 러너가 자동이면 고를 수 없다(agent.runner 먼저)', ' · not selectable while the runner is Auto (set agent.runner first)');
     if (d.type === 'effort') return ` · ${pick(lang, '가능한 값', 'values')}: ${[...effortLevels(myRunner, card?.meta?.model), 'default'].join(', ')}`;
     if (d.type === 'days') return pick(lang, ' · 요일(예: 1,3,5 또는 월,수,금)', ' · weekdays (e.g. 1,3,5 or mon,wed,fri)');
     if (d.type === 'interval') return pick(lang, ' · 분(10~1440)', ' · minutes (10–1440)');
@@ -821,7 +843,7 @@ async function meSection(wsId, { lang, slug, now }) {
   const [{ runnerStatus, autoRunnerOf, RUNNERS }, conn] = await Promise.all([import('./runners.mjs'), import('./connections.mjs')]);
   const st = await runnerStatus(wsId, { forPick: true }).catch(() => null);
   const auto = st ? autoRunnerOf(st, company.defaultRunner ?? null) : null;
-  const runner = m.runner ? (RUNNERS[m.runner]?.name ? `${RUNNERS[m.runner].name} [${m.runner}]` : m.runner)
+  const runner = m.runner ? (Object.hasOwn(RUNNERS, m.runner) ? `${RUNNERS[m.runner].name} [${m.runner}]` : m.runner)
     : `${pick(lang, '자동 — 첫 연결 러너', 'Auto — first connected runner')}${auto ? pick(lang, `(지금은 ${auto})`, ` (now ${auto})`) : ''}`;
   const showEffort = !m.runner || m.runner === 'claude' || m.runner === 'codex'; // 카드 화면도 이 러너들에만 강도 칸을 보인다
   const effort = m.effort ? (EFFORT_LABEL[m.effort]?.[L] ?? m.effort) : pick(lang, '강도 기본', 'Default effort');

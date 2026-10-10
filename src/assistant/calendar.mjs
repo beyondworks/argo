@@ -21,12 +21,13 @@ export const ownEvents = (events, uid) => (events ?? []).filter((ev) => ev && ev
 
 const one = (s, n) => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
 
-/** 일정 → 회차 목록(순수, 시작 순). [fromMs, toMs)에 걸치는 회차만. */
-export function expand(events, fromMs, toMs) {
+/** 일정 → 회차 목록(순수, 시작 순). [fromMs, toMs)에 걸치는 회차만. uid를 주면 own = 주인이 만든 일정인가(제목·장소를 주인이 썼다 — 참석자로 받은 남의 일정은 false).
+    own은 자기 글 기록(self-posts.mjs)이 하트비트 글 본문을 남길지 정하는 근거다 — 남이 쓴 제목은 주인 1:1 맥락에 본문으로 넣지 않는다. */
+export function expand(events, fromMs, toMs, uid = null) {
   const out = [];
   for (const ev of events) {
     for (const o of occurrences(ev, fromMs, toMs)) {
-      out.push({ id: String(ev.id), title: one(ev.title, 120), location: one(ev.location, 80), allDay: !!ev.all_day, start: o.start, end: o.end });
+      out.push({ id: String(ev.id), title: one(ev.title, 120), location: one(ev.location, 80), allDay: !!ev.all_day, start: o.start, end: o.end, ...(uid != null ? { own: ev.owner === uid } : {}) });
     }
   }
   return out.sort((a, b) => a.start - b.start || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
@@ -79,7 +80,7 @@ export async function confirmDue(c, due, uid) {
   const from = Math.min(...due.map((o) => o.start)) - CONFIRM_PAD_MS;
   const to = Math.max(...due.map((o) => o.start)) + CONFIRM_PAD_MS;
   const { events } = await readCalendar(c, from, to);
-  const live = new Map(expand(ownEvents(events, uid), from, to).filter((o) => !o.allDay).map((o) => [preKey(o), o]));
+  const live = new Map(expand(ownEvents(events, uid), from, to, uid).filter((o) => !o.allDay).map((o) => [preKey(o), o]));
   return { kept: due.filter((o) => live.has(preKey(o))).map((o) => live.get(preKey(o))), gone: due.filter((o) => !live.has(preKey(o))) };
 }
 
