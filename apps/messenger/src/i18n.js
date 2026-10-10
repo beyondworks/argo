@@ -1498,6 +1498,8 @@ export const DICT = {
   'phone.set.friends': ['친구 관리', 'Manage friends'],
   'phone.set.privacy': ['개인정보', 'Privacy'],
   'phone.set.about': ['정보·약관', 'About & terms'],
+  'phone.set.plan': ['내 플랜', 'My plan'],
+  'phone.set.plan.sub': ['Free·Pro · Argo 계정 하나에 구독 하나', 'Free or Pro · one plan per Argo account'],
   'set.version': ['버전 {v}', 'Version {v}'],
   'phone.agents.joinReq': ['대화방에 에이전트를 넣어 달라는 요청', 'Request to add an agent to a conversation'],
   'phone.agents.joinReq.named': ["'{crew}'을(를) '{room}' 방에 넣어 달라는 요청", "Request to add '{crew}' to '{room}'"],
@@ -1826,6 +1828,23 @@ export const DICT = {
   'personal.badge': ['개인', 'Personal'],
   'org.badge': ['{name}', '{name}'],
   'friends.dm': ['대화하기', 'Chat'],
+  // ── 내 플랜(Pro 결제 — 본체·랜딩과 같은 결제, 2026-10-11). 가격·구독 관리 문구는 본체 사전(billing.*)을 ta로 쓴다 ──
+  'plan.title': ['내 플랜', 'My plan'],
+  'plan.current': ['지금 플랜', 'Current plan'],
+  'plan.unavailable': ['플랜을 불러오지 못했습니다.', "Couldn't load your plan."],
+  'plan.retry': ['다시 시도', 'Retry'],
+  'plan.benefits': ['Pro: 대화방 4명 한도 없음 · 에이전트를 메신저에 연결 · 여러 기기 동기화', 'Pro: no 4-member limit in chats · connect agents to Messenger · sync across devices'],
+  'plan.sameAccount': ['같은 Argo 계정이면 어디서 결제해도 같은 Pro입니다. 결제는 브라우저에서 열리고, 끝나면 이 앱으로 돌아오세요.', 'One Pro per Argo account, wherever you pay. Checkout opens in your browser — come back here when you are done.'],
+  'plan.sub': ['Pro 구독 중입니다. 같은 Argo 계정이면 어디서나 적용됩니다.', "You're subscribed to Pro. It applies wherever you use this Argo account."],
+  'plan.pastDue': ['결제가 확인되지 않았습니다. 구독 관리에서 결제 수단을 확인해 주세요.', "Your payment didn't go through. Check your payment method in Manage subscription."],
+  'plan.pastDue.short': ['결제가 확인되지 않았습니다.', "Your payment didn't go through."],
+  'plan.granted': ['Pro가 무료로 제공되고 있습니다.', 'Pro is granted to you at no charge.'],
+  'plan.grantedUntil': ['Pro가 {date}까지 무료로 제공됩니다.', 'Pro is granted to you at no charge until {date}.'],
+  'plan.checking': ['결제를 확인하는 중입니다…', 'Checking your payment…'],
+  'plan.notYet': ['아직 결제가 확인되지 않았습니다. 결제를 마쳤다면 잠시 뒤 다시 확인해 주세요.', "Payment isn't confirmed yet. If you finished checkout, check again in a moment."],
+  'plan.recheck': ['다시 확인', 'Check again'],
+  'plan.ios.note': ['이 계정이 Pro면 자동으로 적용됩니다.', 'If this account has Pro, it applies automatically.'],
+  'plan.toast.cta': ['눌러서 Pro 보기', 'Open to see Pro'],
 };
 export const LANGS = ['ko', 'en'];
 export function readLang() { try { const v = localStorage.getItem('argo-lang'); return LANGS.includes(v) ? v : 'ko'; } catch { return 'ko'; } }
