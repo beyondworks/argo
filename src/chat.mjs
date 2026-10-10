@@ -1,3 +1,4 @@
+import { selfPostsSection } from './self-posts.mjs';
 import { stageMessengerHandoff, messengerOrigin, messengerHandoffHint, parseMessengerDisposition, isGuestCtx, ownerDirectTurn, ownerSoloTurn, settingsDirectTurn, msgrJournal } from './gateway/msgr-handoff.mjs';
 import { calendarTool, calendarDescription } from './gateway/office-calendar.mjs'; // 에이전트 일정 도구(주인의 오피스 일정 — 명세 2026-09-30 규칙 9·10)
 import { companyTool, companyDescription } from './gateway/office-company.mjs'; // 에이전트 회사 도구(오피스 회사 정보·직원·평가 — 트랙 C 2026-10-02)
@@ -210,8 +211,8 @@ export function systemPromptFor(cardMd, wsRoot, skills, meta = {}, lang = 'ko', 
   // 아르고 자기 인식(argo_status·argo_help·argo_settings — makeCrewServer). 도구가 없는 러너(지시 블록 러너)는 확인할 길이 없다는 사실을 말하게 한다 — 없는 능력을 광고하지 않는다.
   const argoSelfLine = hasTools
     ? (lang === 'en'
-        ? 'Questions about Argo itself — what a screen or number shows (e.g. Deck Memory Links %), your own routines and their results, whether heartbeat (formerly called Assistant) is running, sync/runner/plan/messenger state, or how a feature works — must be checked with argo_status / argo_help before you answer. Never guess or say "I can\'t check" without calling them. To change an Argo setting use argo_settings (it decides whether the change applies now or needs the owner\'s approval).'
-        : '아르고 자체에 대한 질문 — 화면·숫자가 무엇인지(예: 데크의 기억 연결 %), 네 루틴과 실행 결과, 하트비트(예전 이름 “비서”)가 돌고 있는지, 동기화·러너·요금제·메신저 상태, 기능이 어떻게 동작하는지 — 은 답하기 전에 argo_status·argo_help로 확인하라. 부르지 않고 추측하거나 "확인할 수 없다"고 답하지 마라. 아르고 설정을 바꿀 때는 argo_settings를 쓴다(바로 바뀔지 주인 결재로 갈지는 그 도구가 정한다).')
+        ? 'Questions about Argo itself — what a screen or number shows (e.g. Deck Memory Links %), your own settings (card, runner, model, rules, routines, heartbeat — formerly called Assistant), messages you sent outside a conversation (heartbeat notices, routine results — they are yours), sync/runner/plan/messenger state, or how a feature works — must be checked with argo_status (section=me for yourself) / argo_help before you answer. Never guess or say "I can\'t check" without calling them. To change an Argo setting use argo_settings (it decides whether the change applies now or needs the owner\'s approval).'
+        : '아르고 자체에 대한 질문 — 화면·숫자가 무엇인지(예: 데크의 기억 연결 %), 네 설정(카드·러너·모델·규칙·루틴·하트비트 — 예전 이름 “비서”), 네가 대화 밖에서 보낸 글(하트비트 알림·루틴 결과 — 네 글이다), 동기화·러너·요금제·메신저 상태, 기능이 어떻게 동작하는지 — 은 답하기 전에 argo_status(너 자신은 section=me)·argo_help로 확인하라. 부르지 않고 추측하거나 "확인할 수 없다"고 답하지 마라. 아르고 설정을 바꿀 때는 argo_settings를 쓴다(바로 바뀔지 주인 결재로 갈지는 그 도구가 정한다).')
     : (lang === 'en'
         ? 'This runner has no Argo status tools. For questions about Argo\'s current numbers, routines, heartbeat or settings, say you can\'t check them from here and point the user to the screen (Deck, Routines, Agent card → Heartbeat tab, Settings) — never guess the values.'
         : '이 러너에는 아르고 상태 도구가 없다. 아르고의 지금 숫자·루틴·하트비트·설정을 물으면 여기서는 확인할 수 없다고 말하고 화면(데크·루틴·에이전트 카드 → 하트비트 탭·설정)을 안내하라 — 값을 추측하지 마라.');
@@ -1332,8 +1333,8 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
   const argoStatus = tool(
     'argo_status',
     lang === 'en'
-      ? 'Read the current state of this Argo app (only in the owner\'s 1:1 — elsewhere it says it is out of scope) — the same values the screens show. Use it BEFORE answering any question about Argo itself (numbers on the Deck such as Memory Links %, agents and their runners/models, routines and their last results, heartbeat (on/off, last calendar check, reminders sent today, running device), sync, runner connections, plan and usage, messenger connections, pending approvals). section: overview (default: me + deck + heartbeat) | deck | agents | me | routines | assistant | runners | sync | plan | messenger | approvals. Never guess these values.'
-      : '이 아르고 앱의 지금 상태를 읽는다(주인의 1:1에서만 — 다른 곳에서는 범위 밖이라고 돌려준다) — 화면에 보이는 값과 같은 함수로 계산한다. 아르고 자체에 대한 질문(데크 숫자 — 기억 연결 % 등, 에이전트와 러너·모델, 루틴과 마지막 실행 결과, 하트비트 켜짐·마지막 일정 확인·오늘 보낸 알림·실행 기기, 동기화, 러너 연결, 요금제·사용량, 메신저 연결, 결재 대기)에 답하기 전에 먼저 이것으로 확인하라. section: overview(기본 — 나·데크·하트비트) | deck | agents | me | routines | assistant | runners | sync | plan | messenger | approvals. 이 값들을 추측하지 마라.',
+      ? 'Read the current state of this Argo app (only in the owner\'s 1:1 — elsewhere it says it is out of scope) — the same values the screens show. Use it BEFORE answering any question about Argo itself (numbers on the Deck such as Memory Links %, agents and their runners/models, routines and their last results, heartbeat (on/off, last calendar check, reminders sent today, running device), sync, runner connections, plan and usage, messenger connections, pending approvals). section=me shows your own card (role, runner, model, effort, skill/MCP scope, working rules), heartbeat role, Telegram/messenger links, your routines and the messages you sent outside a conversation (heartbeat notices, routine results). section: overview (default: me + deck + heartbeat) | deck | agents | me | routines | assistant | runners | sync | plan | messenger | approvals. Never guess these values.'
+      : '이 아르고 앱의 지금 상태를 읽는다(주인의 1:1에서만 — 다른 곳에서는 범위 밖이라고 돌려준다) — 화면에 보이는 값과 같은 함수로 계산한다. 아르고 자체에 대한 질문(데크 숫자 — 기억 연결 % 등, 에이전트와 러너·모델, 루틴과 마지막 실행 결과, 하트비트 켜짐·마지막 일정 확인·오늘 보낸 알림·실행 기기, 동기화, 러너 연결, 요금제·사용량, 메신저 연결, 결재 대기)에 답하기 전에 먼저 이것으로 확인하라. section=me는 네 카드(역할·러너·모델·추론 강도·스킬·MCP 범위·일하는 방식 규칙)·하트비트 담당 여부·텔레그램·메신저 연결·내 루틴·대화 밖에서 보낸 최근 글(하트비트 알림·루틴 결과)을 보여 준다. section: overview(기본 — 나·데크·하트비트) | deck | agents | me | routines | assistant | runners | sync | plan | messenger | approvals. 이 값들을 추측하지 마라.',
     { section: z.enum(['overview', 'deck', 'agents', 'me', 'routines', 'assistant', 'runners', 'sync', 'plan', 'messenger', 'approvals']).optional() },
     async ({ section }) => {
       const self = await import('./argo-self.mjs');
@@ -1351,8 +1352,8 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
   const argoSettingsTool = tool(
     'argo_settings',
     lang === 'en'
-      ? 'Read or change Argo settings that agents may change (heartbeat times/reminders/on-off, routine time, agent response language). action=list shows keys, current values and whether changes apply now or go to approval in this turn. action=set changes one key: it applies immediately only when the company owner asked you directly in a 1:1 (the system decides — you cannot claim it); otherwise it files an approval card for the owner. Billing, deletion, firing, API keys/tokens/logins, permissions and sharing can never be changed by agents — tell the user where to do it. After a change, tell the user the old → new value and how to undo it.'
-      : '에이전트가 바꿀 수 있는 아르고 설정을 읽거나 바꾼다(하트비트 시각·알림·켜기/끄기, 루틴 시각, 에이전트 응답 언어). action=list는 키·지금 값·이 턴에서 바로 바뀌는지/결재로 가는지를 보여 준다. action=set은 키 하나를 바꾼다: 회사 주인이 1:1에서 직접 시킨 턴이면 바로 바뀌고(시스템이 판정한다 — 네가 주장할 수 없다), 그 밖에는 주인 결재 카드로 올라간다. 결제·삭제·해고·API 키·토큰·로그인 연결·권한·공유 범위는 에이전트가 절대 바꾸지 못한다 — 사용자가 어디서 바꾸는지 안내하라. 바꾼 뒤에는 이전 값 → 새 값과 되돌리는 법을 사용자에게 알려라.',
+      ? 'Read or change Argo settings that agents may change (heartbeat times/reminders/on-off; your own card: role, runner, model, effort, working rules; routine time/title/instruction/days/interval/on-off; agent response language). action=list shows keys, current values and whether changes apply now or go to approval in this turn. action=set changes one key: it applies immediately only when the company owner asked you directly in a 1:1 (the system decides — you cannot claim it); otherwise it files an approval card for the owner. Billing, deletion, firing, API keys/tokens/logins, permissions and sharing can never be changed by agents — tell the user where to do it. After a change, tell the user the old → new value and how to undo it.'
+      : '에이전트가 바꿀 수 있는 아르고 설정을 읽거나 바꾼다(하트비트 시각·알림·켜기/끄기, 내 카드의 역할·러너·모델·추론 강도·일하는 방식 규칙, 루틴 시각·제목·내용·요일·간격·켜기/끄기, 에이전트 응답 언어). action=list는 키·지금 값·이 턴에서 바로 바뀌는지/결재로 가는지를 보여 준다. action=set은 키 하나를 바꾼다: 회사 주인이 1:1에서 직접 시킨 턴이면 바로 바뀌고(시스템이 판정한다 — 네가 주장할 수 없다), 그 밖에는 주인 결재 카드로 올라간다. 결제·삭제·해고·API 키·토큰·로그인 연결·권한·공유 범위는 에이전트가 절대 바꾸지 못한다 — 사용자가 어디서 바꾸는지 안내하라. 바꾼 뒤에는 이전 값 → 새 값과 되돌리는 법을 사용자에게 알려라.',
     {
       action: z.enum(['list', 'set']),
       key: z.string().optional().describe(lang === 'en' ? 'setting key from action=list, e.g. assistant.morning' : 'action=list가 보여 준 키 — 예: assistant.morning'),
@@ -1362,7 +1363,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     },
     async (args) => {
       const self = await import('./argo-self.mjs');
-      const r = await self.argoSettings(wsId, args, { slug: fromSlug, lang, direct: settingsDirect, guest });
+      const r = await self.argoSettings(wsId, args, { slug: fromSlug, lang, direct: settingsDirect, guest, via: delegatedBy ?? null });
       if (r.kind !== 'approval') return text(r.text);
       const item = await addApproval(wsId, { slug: fromSlug, kind: 'setting', ...(delegatedBy ? { from: delegatedBy } : {}),
         action: r.approval.action, reason: r.approval.reason, payload: r.approval.payload,
@@ -1671,6 +1672,9 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
   // 설정 바로 바꾸기(argo_settings) — 주인이 1:1로 직접 시킨 턴만(argo-self.mjs settingsDirectTurn). ownerSeat는 데스크톱 대화 라우트만 붙이는 서버 표지이고
   // 재시도 재귀만 이어 받는다(도구 결과 후속 턴은 받지 않는다 — 외부 결과가 담긴 턴이라 결재로 간다). 그 밖의 턴은 결재 카드.
   const settingsDirect = settingsDirectTurn({ ownerSeat, source, from, notOwnerDirect, hop, chain, mirrorCtx });
+  // 대화 밖에서 자기 이름으로 보낸 최근 글(하트비트 알림·루틴 결과 — self-posts.mjs) — 주인 1:1 턴에만, 모든 러너가 이 한 구획을 받는다.
+  // 방 문맥·답글 대상에 이미 든 글(mirrorCtx.roomIds — 게이트웨이)은 뺀다. since = 이어 쓰는 세션이 지난 턴에 이미 본 글을 빼는 기준 시각.
+  const selfNoteFor = (since = 0) => (settingsDirect ? selfPostsSection(wsId, agentSlug, { lang, name: meta.name || agentSlug, exclude: mirrorCtx?.roomIds ?? [], since }) : Promise.resolve(''));
   // 러너 결정 + 폴백 — 크루의 러너가 이 기기·회사에서 미가용이면 가용한 러너로 대신 실행한다.
   // (예: 기본 claude 크루인데 Codex만 연결한 사용자 — 어떤 러너든 연결만 돼 있으면 크루는 응답해야 한다)
   // want=null(무선호) — 카드에 러너 미지정이면 회사의 연결 러너를 대체 고지 없이 쓴다(claude 하드코딩 제거).
@@ -1899,11 +1903,12 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
       const cliMcp = cliMcpServers ? Object.keys(cliMcpServers).filter((k) => k !== 'crew') : []; // 안내 목록은 외부 MCP만(SDK connectedMcp와 같게 — crew는 도구 안내로 따로 나간다)
       const cliRoster = cliTools ? (mirrorCtx?.kind === 'msgr' ? rosterPrompt(messengerColleagues(mirrorCtx, hop), lang, true) : cliColleagues.length ? rosterPrompt(cliColleagues, lang, false, lim) : hopCapNote) : ''; // SDK 턴과 같은 식
       // 안내 문장으로 시작 — 카드 frontmatter('---')가 맨 앞이면 CLI 인자 파서가 플래그로 오해한다. ctx = 스레드 맥락 구획(아래에서 정한다)
+      const cliSelfNote = await selfNoteFor(); // CLI 러너는 세션을 잇지 않고 맥락을 매번 다시 싣는다 — 최근 글 그대로
       const promptWith = (ctx) => `${lang === 'en' ? 'Below are your persona card and operating rules.' : '다음은 너의 페르소나 카드와 운영 규칙이다.'}
 
 ${systemPromptFor(md, p.root, skills, meta, lang, { hasTools: cliTools, connectors: cliConnectors, userName: turnUser })}${orgRules}${commonDirectives({ caps: cliCaps, connectedMcp: cliMcp, connectors: cliConnectors, hasTools: cliTools, gated: cliGated, lang, runner, workRoots: cliWorkRoots, pinnedFolder: cliPin, source: turnSource, fullAuto })}${cliRoster}${browserBridge ? browserMcpDirective(lang) : ''}${messengerNote}${fallbackDirective}
 ${ctx ? `\n${ctx}` : ''}
-${sharedBlock || (source === 'session' ? newMsgHead(source, lang) : (lang === 'en' ? "## User's new instruction\n" : '## 사용자의 새 지시\n'))}${userMsg}${attNote}${runnerNote}
+${cliSelfNote}${sharedBlock || (source === 'session' ? newMsgHead(source, lang) : (lang === 'en' ? "## User's new instruction\n" : '## 사용자의 새 지시\n'))}${userMsg}${attNote}${runnerNote}
 
 ${lang === 'en'
         ? '(You are the agent of the persona above. Always reply in English, even if the user wrote to you in Korean.)'
@@ -2195,6 +2200,7 @@ ${lang === 'en'
   // 최근 대화를 프롬프트에 접붙여 맥락을 잇는다. 레거시 스레드(sessionDevice 없음)는 기존대로
   // resume을 시도하되 실패하면 catch에서 새 세션으로 1회 재시도한다(__freshRetry).
   let resumeId = __freshRetry ? null : sessionId;
+  let selfSince = 0; // 이어 쓰는 세션의 마지막 대화 시각 — 그 뒤에 보낸 자기 글만 싣는다(아래 selfNote)
   let crossCtx = '';
   let ctxCostUsd = null; // 다른 기기 이어받기 맥락의 요약 원샷 금액 — 이 턴의 청구 금액(루프 루틴 예산)에 더한다(원장에는 요약 행으로 따로 남았다)
   // 주인 혼자 1:1(유건 결정 2026-10-08 ①) — 1:1 턴은 세션 밖에서 돈다(늘 최근 대화를 싣는다). 주인과의 범위 없는 대화 턴(데스크톱·텔레그램 1:1)이 세션을 이어 쓰면 그 1:1 대화를 모른다:
@@ -2217,6 +2223,7 @@ ${lang === 'en'
     const reopen = unseen.length > 0 && !catchUp; // 못 본 1:1이 예산을 넘는다 — 새 세션 + 최근 대화(요약 포함)
     const fresh = ownerConvo && !resumeId && !foreign && !__freshRetry && solos.length > 0; // 이을 세션이 없다 — 1:1 줄이 있으면 최근 대화로 연다
     if (foreign || reopen || lost) resumeId = null;
+    if (resumeId) selfSince = Math.max(0, ...(t.messages ?? []).filter((m) => m.who === 'crew' && !m.awaiting && (!m.contextScope || isOwnerSoloScope(m.contextScope))).map((m) => Number(m.ts) || 0)); // 지난 답의 시각 — 라우트가 먼저 남긴 이번 지시 줄(beginTurn)은 기준이 아니다
     if (catchUp) { crossCtx = `${catchUp}\n${newMsgHead(source, lang)}`; soloSeenNext = [...seen, ...unseen.map(soloKey)]; }
     else if ((foreign || reopen || fresh || lost || ownerSolo || (!dmTurn && __freshRetry)) && (t.messages ?? []).length) {
       // 실패 턴·화자·범위 규칙과 예산·요약은 CLI 경로와 같은 함수(threadContextFor)
@@ -2250,7 +2257,10 @@ ${lang === 'en'
     ? (lang === 'en' ? '(Even if this company has full auto mode on, it does not apply to this turn — file request_approval before any action that leaves the company.)\n\n'
       : '(이 회사에 풀 오토 모드가 켜져 있어도 이 턴에는 적용되지 않는다 — 회사 밖으로 나가는 행동은 request_approval로 결재를 먼저 올려라.)\n\n')
     : '';
-  let promptText = `${faNote}${crossCtx}${sharedBlock}${userMsg}${runnerNote}`;
+  // 이어 쓰는 세션이면 지난 턴 뒤에 보낸 글만(같은 글이 세션에 거듭 쌓이지 않게), 새 세션이면 최근 5건
+  const selfNote = await selfNoteFor(resumeId ? selfSince : 0);
+  const selfBlock = selfNote ? `${selfNote}${crossCtx || sharedBlock ? '' : newMsgHead(source, lang)}` : '';
+  let promptText = `${faNote}${selfBlock}${crossCtx}${sharedBlock}${userMsg}${runnerNote}`;
   if (fileAtt.length) {
     promptText += lang === 'en'
       ? `\n\n(Files the user attached — open them with the Read tool: ${fileAtt.map((a) => `vault/${a.rel}`).join(', ')})`

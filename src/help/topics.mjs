@@ -17,5 +17,13 @@ import settings from './topics/settings.mjs';
 import sync from './topics/sync.mjs';
 import messenger from './topics/messenger.mjs';
 import plan from './topics/plan.mjs';
+import agentPosts from './topics/agent-posts.mjs';
+import trace from './topics/trace.mjs';
+import split from './topics/split.mjs';
+import home from './topics/home.mjs';
+import feedback from './topics/feedback.mjs';
+import chatCards from './topics/chat-cards.mjs';
+import sidebar from './topics/sidebar.mjs';
+import heartbeatMail from './topics/heartbeat-mail.mjs';
 
-export const TOPICS = Object.freeze([deck, agents, chat, room, compete, mail, activity, memory, routines, assistant, approvals, market, runners, settings, sync, messenger, plan, agentSettings]);
+export const TOPICS = Object.freeze([deck, agents, chat, room, compete, mail, activity, memory, routines, assistant, approvals, market, runners, settings, sync, messenger, plan, agentSettings, agentPosts, trace, split, home, feedback, chatCards, sidebar, heartbeatMail]);

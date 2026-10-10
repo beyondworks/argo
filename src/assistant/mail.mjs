@@ -20,6 +20,7 @@ import { STATE_DIR } from './state.mjs';
 import { dateIn, minuteIn, inQuiet } from './rules.mjs';
 import { outsideOf } from '../gateway/office-audience.mjs';
 import { clientMsgId, personalRoom, MSG_MAX } from './deliver.mjs';
+import { recordSelfPost } from '../self-posts.mjs';
 import { classifyMail, needsThread, securityDayKey, scrubLine, domainOf, FIELD_CAP, ADDR_CAP } from './mail-classify.mjs';
 import { mailAccounts, syncMail, listWindow, readThread } from './mail-source.mjs';
 import { assistantUsageToday, prepPlan, runPrep } from './mail-prep.mjs';
@@ -135,7 +136,7 @@ async function deliver(ctx, ob) {
   await save(cid, m, deps);
   return flushOutbox(ctx);
 }
-async function flushOutbox({ cid, m, deps, c, cfg, now, st }) {
+async function flushOutbox({ cid, m, deps, c, cfg, now, st, lang = 'ko' }) {
   const ob = m.s.outbox;
   if (!ob) return true;
   try {
@@ -143,6 +144,7 @@ async function flushOutbox({ cid, m, deps, c, cfg, now, st }) {
     const row = { channel_id: m.room.channelId, author_kind: 'crew', crew_id: m.room.crewId, kind: 'text', reply_to: null, thread_root: null,
       client_msg_id: clientMsgId(m.room.crewId, ob.basis), body: ob.body.slice(0, MSG_MAX), mentions: [], meta: { disposition: 'done', notification: 'assistant', assistant: ob.meta } };
     const ins = await c.db.insertMessage(row);
+    if (ins) await recordSelfPost(cid, m.room.slug, row, { id: ins.id ?? null, personal: true, lang }); // 자기 글 기록 — 메일 글은 표지 줄만 남는다(self-posts.mjs selfPostEntry → outsideContextLine)
     if (ins?.id && ob.brief) { // 자료 정리 첨부 — 기기 메모리에서 바로 올린다(vault에 쓰지 않는다 — 동기화 업로드 0). 실패는 글을 막지 않는다(본문은 이미 나갔다)
       try {
         const buf = Buffer.from(ob.brief.text, 'utf8');
@@ -184,7 +186,7 @@ export async function runMailStep({ cid, cfg, company, st = null, c, now = Date.
   const owner = company?.ownerId ?? null;
   const live = mode === 'live';
   const sess = c && c.uid && c.uid === owner ? c : null;
-  const ctx = { cid, m, deps, c: sess, cfg, now, st };
+  const ctx = { cid, m, deps, c: sess, cfg, now, st, lang };
 
   // 1. 대기열 — 남은 글을 먼저(조용한 시간에는 보내지 않는다)
   if (s.outbox) {

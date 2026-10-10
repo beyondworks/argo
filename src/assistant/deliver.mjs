@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import { at, dateLabel } from './text.mjs';
 import { hhmmIn, dateIn, addDays } from './rules.mjs';
 import { preKey, eveKey, dayKey } from './calendar.mjs';
+import { recordSelfPost } from '../self-posts.mjs';
 
 export const MSG_MAX = 20_000;   // msgr_messages.body check 제약과 같다(gateway/msgr.mjs MSG_MAX)
 export const SECTION_MAX = 30;   // 한 칸에 보이는 줄 상한 — 넘으면 "…외 N건"
@@ -34,7 +35,11 @@ export async function insertNotice(c, room, ob) {
     client_msg_id: clientMsgId(room.crewId, ob.basis), body: String(ob.body).slice(0, MSG_MAX), mentions: [],
     meta: { disposition: 'done', notification: 'assistant', assistant: ob.meta },
   };
-  return (await c.db.insertMessage(row)) ? 'sent' : 'dup';
+  const ins = await c.db.insertMessage(row);
+  if (!ins) return 'dup';
+  // 개인 공간 1:1에 올린 자기 글 기록(self-posts.mjs) — 에이전트가 다음 주인 1:1 턴에서 '내가 보낸 하트비트 알림'으로 알아본다. room.ws·room.slug가 있을 때만(tick.mjs가 싣는다)
+  if (room.ws && room.slug) await recordSelfPost(room.ws, room.slug, row, { id: ins.id ?? null, personal: true, lang: room.lang ?? 'ko' });
+  return 'sent';
 }
 
 /* ── 글 만들기(템플릿) ── */
@@ -74,7 +79,7 @@ export function composePre(o, { now, lang = 'ko', tz = null }) {
     kind: 'pre', basis: key, keys: [key], until: o.start, // until — 시작이 지나면 "N분 뒤 시작"이 거짓이 되므로 대기열에서 다시 보내지 않는다(tick.mjs)
     occ: { id: o.id, title: o.title, location: o.location, allDay: false, start: o.start }, // 다시 보낼 때 "N분 뒤"를 보내는 순간 기준으로 다시 쓴다(prebody)
     body: prebody(o, now, ctx),
-    meta: { v: 1, kind: 'pre', keys: [key], items: [metaItem(key, o)] },
+    meta: { v: 1, kind: 'pre', keys: [key], items: [metaItem(key, o)], ...(o.own === true ? { own: true } : {}) }, // own — 주인이 만든 일정만(자기 글 기록이 본문을 남기는 근거, self-posts.mjs)
     items: [{ key, source: 'calendar', reason: 'gap', eventId: o.id, start: o.start, title: o.title, location: o.location }],
   };
 }
@@ -108,7 +113,8 @@ export function composeBundle(slot, parts, { lang = 'ko', tz = null }) {
     kind: slot.lane, basis: slot.key, keys,
     body: `${at(slot.lane === 'am' ? 'head.am' : 'head.pm', lang, { date: dateLabel(slot.date, lang) })}\n\n${blocks.join('\n\n')}`,
     // 메일 줄(보낸 사람·제목)이 든 정리 글은 바깥 글 표지 — 다음 대화 턴의 방 문맥에는 표지 줄로만(설계 4.9 규칙 2)
-    meta: { v: 1, kind: slot.lane, keys: keys.slice(0, META_ITEMS_MAX), items: itemKeys.slice(0, META_ITEMS_MAX).map(([k, o]) => metaItem(k, o)), ...(mail ? { outside: true } : {}) },
+    meta: { v: 1, kind: slot.lane, keys: keys.slice(0, META_ITEMS_MAX), items: itemKeys.slice(0, META_ITEMS_MAX).map(([k, o]) => metaItem(k, o)), ...(mail ? { outside: true } : {}),
+      ...(!mail && [...allDay, ...tomorrow, ...pending].every((o) => o.own === true) ? { own: true } : {}) }, // 묶음 안 일정이 전부 주인이 만든 것일 때만(자기 글 기록의 본문 근거)
     items: pending,
   };
 }

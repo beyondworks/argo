@@ -359,7 +359,7 @@ test('상태 구획 — 러너는 키 값을 싣지 않고, 메신저·동기화
   assert.match(await call('argo_status', { section: 'plan' }), /요금제·사용량/);
   assert.match(await call('argo_status', { section: 'approvals' }), /결재 대기 0건/);
   const overview = await call('argo_status', {});
-  assert.match(overview, /나: 페퍼 \[pepper\]/);
+  assert.match(overview, /나 — 에이전트 카드와 같은 값\n- 이름: 페퍼 \[pepper\]/); // me 구획 — 카드 화면과 같은 칸(argo-self-card.test.mjs가 칸별로 잠근다)
   assert.match(overview, /데크 계기판/);
   assert.match(overview, /하트비트\(능동 알림\)/);
 });
@@ -377,11 +377,12 @@ test('설정 목록 — 이 턴이 바로 바뀌는 턴인지와 허용 키·지
 
 test('지시문 — 도구가 있는 러너는 아르고 질문을 도구로 확인하라, 없는 러너는 확인할 수 없다고 말하라', () => {
   const withTools = systemPromptFor('# 페퍼', '/tmp/x', '', { name: '페퍼' }, 'ko', { hasTools: true });
-  assert.match(withTools, /argo_status·argo_help로 확인하라/);
+  assert.match(withTools, /argo_status\(너 자신은 section=me\)·argo_help로 확인하라/);
+  assert.match(withTools, /네가 대화 밖에서 보낸 글\(하트비트 알림·루틴 결과 — 네 글이다\)/);
   const noTools = systemPromptFor('# 페퍼', '/tmp/x', '', { name: '페퍼' }, 'ko', { hasTools: false });
   assert.match(noTools, /이 러너에는 아르고 상태 도구가 없다/);
   const en = systemPromptFor('# Pepper', '/tmp/x', '', { name: 'Pepper' }, 'en', { hasTools: true });
-  assert.match(en, /checked with argo_status \/ argo_help before you answer/);
+  assert.match(en, /checked with argo_status \(section=me for yourself\) \/ argo_help before you answer/);
 });
 
 test('언어 설정 — 주인 1:1에서 바꾸면 회사 언어가 바뀐다(updateCompany에는 lang 하나만)', async () => {
