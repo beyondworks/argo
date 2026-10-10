@@ -234,6 +234,44 @@ async function markedAmong(platform, pids) {
   return out;
 }
 
+/** 이 프로세스의 조상 중 에이전트 표지 env(AGENT_MARK·ARGO_AGENT_TURN)가 보이는 프로세스의 pid, 없으면 0 — argo office CLI·MCP의 자기 판정.
+    에이전트 셸은 자기 env의 표지를 지울 수 있지만(unset·env -u) 이미 떠 있는 조상(SDK·Codex·Gemini 러너 CLI)의 처음 env는 못 바꾼다.
+    판정 실패(ps 실행 불가·출력 초과·environ 읽기 오류)는 던진다 — 호출부가 거절한다(fail-closed, 분리 검수 H2: 출력 초과를 '표지 없음'으로 삼키던 것).
+    env만 본다(분리 검수 L1): macOS ps -E 줄은 "명령줄 + env"라 명령줄 글자(grep ARGO_AGENT_TURN= …)를 표지로 착각하지 않게 ps(−E 없이) 줄만큼 앞을 잘라 낸다.
+    ⚠ 방지턱이다 — 같은 OS 계정의 에이전트가 사람용 CLI를 부르는 것을 어렵게 할 뿐, 막지 못하는 경우(정직 표기):
+      ① 고아 프로세스 — `( cmd & )`·별도 tmux·launchctl submit처럼 조상 사슬을 끊는 한 줄(분리 검수 M2)
+      ② 네이티브 러너(openrouter·glm·kimi·grok·gemini 네이티브) — 서버가 /bin/sh를 바로 띄우는데, macOS에서 /bin/sh의 env는 안 보이고
+         서버는 표지를 실행 중에 심어(installAgentPeerGuard) ps -E의 처음 env에 없다(분리 검수 H1)
+    근본 대책은 에이전트 셸의 OS 샌드박스(후속)다. Windows는 판정하지 않는다(0). */
+export async function markedAncestor({ pid = process.pid, platform = process.platform, keys = [AGENT_MARK, 'ARGO_AGENT_TURN'] } = {}) {
+  if (platform === 'win32') return 0;
+  const table = platform === 'linux' ? await procTable() : parseTable(await run('ps', MAC_PS));
+  if (!table.has(pid)) throw Object.assign(new Error('self not in process table'), { code: 'SELF_GONE' });
+  const chain = [];
+  for (let p = table.get(pid).ppid; p > 1 && table.has(p) && !chain.includes(p); p = table.get(p).ppid) chain.push(p);
+  if (!chain.length) return 0;
+  const hasKey = (pairs) => pairs.some((kv) => keys.some((k) => kv.startsWith(`${k}=`)));
+  if (platform === 'linux') {
+    for (const p of chain) {
+      let raw;
+      try { raw = await readFile(`/proc/${p}/environ`, 'utf8'); }
+      catch (e) { if (e?.code === 'EACCES' || e?.code === 'EPERM') continue; throw e; } // 다른 계정(sshd 등)의 프로세스는 위협 모델 밖
+      if (hasKey(raw.split('\0'))) return p;
+    }
+    return 0;
+  }
+  const ids = chain.join(',');
+  const rows = (out) => new Map(out.split('\n').map((l) => /^\s*(\d+)\s(.*)$/.exec(l)).filter(Boolean).map((m) => [Number(m[1]), m[2]]));
+  const [full, bare] = (await Promise.all([run('ps', ['-E', '-ww', '-o', 'pid=,command=', '-p', ids]), run('ps', ['-ww', '-o', 'pid=,command=', '-p', ids])])).map(rows);
+  for (const p of chain) {
+    const line = full.get(p); if (line == null) continue; // 그 사이 끝난 조상
+    const cmd = bare.get(p) ?? '';
+    const envPart = line.startsWith(cmd) ? line.slice(cmd.length) : line;
+    if (hasKey(envPart.trim().split(/\s+/))) return p;
+  }
+  return 0;
+}
+
 /** 읽기용 가벼운 판정 — 상대가 이 서버의 자손이면 그 pid, 아니면 0. 실패는 0(읽기는 fail-open). */
 export async function descendantPeerPid(peer, { platform = process.platform } = {}) {
   if (platform === 'win32') return 0;

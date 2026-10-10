@@ -601,6 +601,8 @@ export async function importHostMcp(wsId, name) {
   catch { throw new Error('이 컴퓨터의 Claude Code 설정(~/.claude.json)을 읽을 수 없습니다'); }
   const src = cfg.mcpServers?.[name];
   if (!src || typeof src !== 'object') throw new Error(`이 컴퓨터의 Claude Code에 "${name}" MCP가 없습니다`);
+  // 아르고 오피스 MCP(argo office mcp)는 가져오지 않는다 — 에이전트는 자기 오피스 도구를 쓴다(그 도구가 방을 누가 보는지 판정한다. 10/10 분리 검수 MEDIUM-1)
+  if ([src.command, ...(Array.isArray(src.args) ? src.args : [])].join(' ').match(/argo(\.mjs)?\s+office\s+mcp|office-mcp\.mjs/)) throw new Error('아르고 오피스 MCP는 가져오지 않습니다 — 에이전트는 아르고 안의 오피스 도구를 씁니다');
   const safe = String(name).toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '').slice(0, 32);
   if (!NAME_RE.test(safe)) throw new Error('가져올 수 없는 이름입니다');
   // 설정 원형 보존(command/args/env/type/url/headers) — SDK mcpServers가 그대로 먹는 형태

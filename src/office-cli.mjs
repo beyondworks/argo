@@ -138,7 +138,7 @@ async function call(client, fn, args, timeoutMs) {
 }
 
 /** 세션 상태 보고 — 반환 { ok, written, task } | { login: true } | { error }. task=false: 보낸 할 일이 내 일이 아니라(그사이 남에게 다시 맡겨짐 등) 서버가 붙이지 않았다 */
-export async function reportSession({ root, org = null, id, name, project = null, task = null, timeoutMs = 15_000, _mkClient, _fresh } = {}) {
+export async function reportSession({ root, org = null, id, name, project = null, task = null, timeoutMs = 15_000, _mkClient, _fresh, _ancestor } = {}) {
   const client = await sessionClient(root, { _mkClient, _fresh });
   if (!client) return { login: true };
   const r = await call(client, 'office_session_report', { p_id: id, p_org: org, p_name: name, p_project: project, p_task: task }, timeoutMs);
@@ -167,6 +167,8 @@ const T = {
       '  argo office hold "<제목>" --reason "<사유>" --source-name "<세션 제목>" [--org <조직 id>]',
       '  argo office hold --task <할 일 id> --reason "<사유>" [--org <조직 id>]',
       '  argo office tasks [--org <조직 id>] [--json]',
+      '  argo office <영역> <동작> [--옵션 값 …]   영역: work deals calendar company files mail briefing (argo office tools)',
+      '  argo office orgs · argo office mcp (Claude Code·Codex가 붙는 MCP 서버)',
       '조직 id를 비우면 데이터 폴더(ARGO_ROOT)의 config.json {"org":"…"}을 씁니다.',
     ].join('\n'),
     needLogin: `먼저 로그인해야 합니다 — ${LOGIN}`,
@@ -197,6 +199,8 @@ const T = {
       '  argo office hold "<title>" --reason "<reason>" --source-name "<session title>" [--org <org id>]',
       '  argo office hold --task <task id> --reason "<reason>" [--org <org id>]',
       '  argo office tasks [--org <org id>] [--json]',
+      '  argo office <area> <action> [--option value …]   areas: work deals calendar company files mail briefing (argo office tools)',
+      '  argo office orgs · argo office mcp (MCP server for Claude Code·Codex)',
       'Without an org id, config.json {"org":"…"} in the data folder (ARGO_ROOT) is used.',
     ].join('\n'),
     needLogin: `Sign in first — ${LOGIN}`,
@@ -222,6 +226,7 @@ const T = {
 };
 const errText = (t, msg) => t.err[Object.keys(t.err).find((k) => String(msg).includes(k))] ?? String(msg).slice(0, 300);
 
+export const TOOL_SUBS = ['work', 'deals', 'calendar', 'company', 'files', 'mail', 'briefing', 'orgs', 'tools', 'mcp'];
 const OPTIONS = {
   org: { type: 'string' }, id: { type: 'string' }, name: { type: 'string' }, project: { type: 'string' }, task: { type: 'string' },
   reason: { type: 'string' }, 'source-name': { type: 'string' }, json: { type: 'boolean' }, help: { type: 'boolean', short: 'h' },
@@ -231,13 +236,26 @@ const OPTIONS = {
  * argo office <하위 명령> — 종료 코드를 돌려준다(0 성공, 1 입력·서버 오류, 2 로그인 필요).
  * deps: { root, lang, out, err, newId, now, timeoutMs, _mkClient, _fresh } — 테스트가 주입한다.
  */
-export async function officeMain(argv, { root = process.env.ARGO_ROOT, lang = 'ko', out = (s) => console.log(s), err = (s) => console.error(s), newId = randomUUID, now = Date.now, timeoutMs = 15_000, _mkClient, _fresh } = {}) {
+export async function officeMain(argv, { root = process.env.ARGO_ROOT, lang = 'ko', out = (s) => console.log(s), err = (s) => console.error(s), newId = randomUUID, now = Date.now, timeoutMs = 15_000, _mkClient, _fresh, _ancestor } = {}) {
   const t = T[lang] ?? T.ko;
   const [sub, ...rest] = argv;
+  // 영역 명령(10/10 — 할 일·페이지·거래·일정·회사·문서함·메일·브리핑 읽기·쓰기, 조직 목록, MCP 서버) — 옵션이 영역마다 달라 여기 parseArgs를 거치지 않는다.
+  // 맨 위 import에 싣지 않는다(훅이 report만 부를 때 zod·도구 처리기를 싣지 않게)
+  if (TOOL_SUBS.includes(sub)) {
+    const { toolsMain } = await import('./office-tools-cli.mjs');
+    return toolsMain(sub, rest, { root, lang, out, err, cfgOrg: (await readOfficeConfig(root)).org, needLogin: t.needLogin, _fresh, _mkClient, _ancestor });
+  }
   let v, pos;
   try { ({ values: v, positionals: pos } = parseArgs({ args: rest, options: OPTIONS, allowPositionals: true, strict: true })); }
   catch (e) { err(`${t.failed(e.message)}\n${t.usage}`); return 1; }
   if (v.help || !['report', 'hold', 'tasks'].includes(sub)) { (v.help || sub === 'help' ? out : err)(t.usage); return v.help || sub === 'help' ? 0 : 1; }
+  // 예전 하위 명령(tasks·hold·report — Claude Code 훅이 부른다)도 같은 판정(분리 검수 M1: 할 일 읽기·쓰기가 판정 없이 열려 있었다).
+  // 도움말 판단은 인자 글자가 아니라 parseArgs 결과로 한다(보안 리뷰: `hold … -- --help`처럼 해석기와 다른 판단으로 판정을 건너뛰지 않게)
+  {
+    const { agentTurnState, agentTurnRefusal } = await import('./office-tools-cli.mjs');
+    const st = await agentTurnState({ _ancestor });
+    if (st) { err(agentTurnRefusal(st, lang)); return 1; }
+  }
 
   const cfgOrg = (await readOfficeConfig(root)).org;
   const org = v.org != null ? v.org.trim() : cfgOrg;

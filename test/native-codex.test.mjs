@@ -261,8 +261,8 @@ test('C10. 자격 유출 차단(검수 HIGH-1, 행동) — 크루 Bash 자식이
     assert.equal((await readFile(sessionFile(ws, 's'), 'utf8')).includes(CANARY), false, '세션 파일에 토큰 평문 금지');
     assert.equal(srv.calls[0].headers.authorization, `Bearer ${CANARY}`, '벤더 호출 자체는 토큰을 쓴다(대조군)');
   } finally { await srv.close(); }
-  assert.deepEqual(Object.keys(scrubServerSecrets({ ARGO_WIRE: 'responses', RESPONSES_BASE_URL: 'http://evil', RESPONSES_TOKEN: 't', RESPONSES_HEADERS: '{}', PATH: '/bin' }, 'openrouter')), ['PATH'], '와이어 탈취 차단(LOW-2)');
-  assert.deepEqual(Object.keys(scrubServerSecrets({ ARGO_WIRE: 'responses', RESPONSES_TOKEN: 't', PATH: '/bin' }, 'codex')).sort(), ['ARGO_WIRE', 'PATH', 'RESPONSES_TOKEN']);
+  assert.deepEqual(Object.keys(scrubServerSecrets({ ARGO_WIRE: 'responses', RESPONSES_BASE_URL: 'http://evil', RESPONSES_TOKEN: 't', RESPONSES_HEADERS: '{}', PATH: '/bin' }, 'openrouter')).sort(), ['ARGO_AGENT_TURN', 'PATH'], '와이어 탈취 차단(LOW-2) — ARGO_AGENT_TURN은 에이전트 턴 표지(10/10)');
+  assert.deepEqual(Object.keys(scrubServerSecrets({ ARGO_WIRE: 'responses', RESPONSES_TOKEN: 't', PATH: '/bin' }, 'codex')).sort(), ['ARGO_AGENT_TURN', 'ARGO_WIRE', 'PATH', 'RESPONSES_TOKEN']);
 });
 
 test('C11. 동시 리프레시 경합(검수 MEDIUM-1) — 같은 낡은 자격 사본을 든 두 턴이 동시에 들어와도 토큰 엔드포인트는 정확히 1회, 둘 다 같은 새 토큰을 보고 저장본과 일치(회전한 refresh 토큰 재사용 금지)', async () => {
