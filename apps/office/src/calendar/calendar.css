@@ -165,7 +165,7 @@
 }
 @media (prefers-reduced-motion: reduce) { .cal-rail { transition: none !important; } }
 
-/* 할 일 칩·하루 목록 줄의 끝내기 단추와 상태 색(유건 10/9) — 여는 단추(::after)가 칩·줄 전체를 덮고, 끝내기 단추만 그 위에 올라온다(단추 안에 단추를 둘 수 없다) */
+/* 할 일 칩·하루 목록 줄의 동그라미(누르면 상태 메뉴, 유건 10/10)와 상태 색(10/9) — 여는 단추(::after)가 칩·줄 전체를 덮고, 동그라미만 그 위에 올라온다(단추 안에 단추를 둘 수 없다) */
 .cal-chip.task, .cal-row.task { position: relative; }
 .cal-chip-open, .cal-row-open { display: flex; align-items: center; flex: 1; min-width: 0; height: 100%; padding: 0; color: inherit; font: inherit; text-align: left; }
 .cal-chip-open::after, .cal-row-open::after { content: ''; position: absolute; inset: 0; border-radius: inherit; }

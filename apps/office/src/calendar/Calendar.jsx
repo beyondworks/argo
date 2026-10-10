@@ -116,8 +116,7 @@ export default function Calendar({ space, day }) {
   const monthVis = view === 'month' && vis ? `${vis}-01` : null;
   const actions = useItemActions({ space, ctx, people, categories, onOpen: openItem, onNewEvent: () => create() });
   const onMenu = (o) => actions.single(o.kind === 'task' ? o.vi : V.eventItem(o));
-  const check = { can: (o) => actions.check.can(o.vi), run: (o) => actions.check.run(o.vi) }; // 할 일 칩·하루 목록의 끝내기 단추(유건 10/9)
-  const props = { items, today, now, colorBy, holidays, phone, onOpen: open, onCreate: create, onMenu, check };
+  const props = { items, today, now, colorBy, holidays, phone, onOpen: open, onCreate: create, onMenu, check: actions.check }; // check: 할 일 칩·하루 목록의 동그라미(상태 메뉴, 유건 10/10)
 
   // 주소로 온 요청 — ?view=(커맨더 보기 전환) · ?new=event|task(새 일정·새 할 일) · ?open=회차 키(홈 카드에서 연 일정). 처리하면 주소에서 뺀다
   const [path, qs] = useUrl().split('?');
@@ -213,14 +212,17 @@ function CalendarList({ space, off, toggle }) {
 /* ── 칩 ── */
 /** 할 일 칩 이름 — 진행 중·보류는 상태도 같이 읽힌다(칩 색만으로 알리지 않는다) */
 const taskLabel = (o) => [t('cal.taskDue', { title: o.title }), o.vi && !o.done && o.vi.status !== 'todo' ? t(`task.st.${o.vi.status}`) : ''].filter(Boolean).join(' · ');
-/** 할 일 끝내기 단추(유건 10/9) — 칩·하루 목록 앞의 ✓. 끝낼 수 없는 일(남이 맡은 일)이면 예전처럼 표시만 */
+/** 할 일 동그라미(유건 10/10) — 칩·하루 목록 앞. 누르면(Enter·Space·↓도) 상태 메뉴(할 일·진행 중·보류·끝냄 — 할 일 표 상태 칸과 같은 쓰기, Board.jsx check).
+ *  상태를 못 바꾸는 일(남이 맡은 일)이면 ✓ 표시만, 이유는 화면 낭독기 글자로 */
 function TaskCheck({ o, check, size = 11 }) {
-  if (!check?.can(o)) return <Icon name="check" size={size} className="cal-check-ico" />;
-  return <button type="button" className={`cal-tcheck${o.done ? ' on' : ''}`} role="checkbox" aria-checked={o.done} aria-label={o.title} title={t(o.done ? 'views.reopen' : 'views.done')}
-    onClick={(e) => { e.stopPropagation(); check.run(o); }}><Icon name="check" size={size} /></button>;
+  const why = check.why(o.vi);
+  if (why) return <><Icon name="check" size={size} className="cal-check-ico" /><span className="sr-only">{why}</span></>;
+  const open = (e) => { e.stopPropagation(); openMenu(e, check.menu(o.vi), { anchor: e.currentTarget }); };
+  return <button type="button" className={`cal-tcheck${o.done ? ' on' : ''}`} aria-haspopup="menu" aria-label={t('cal.statusMenu')} title={t('cal.statusMenu')}
+    onClick={open} onKeyDown={(e) => { if (e.key === 'ArrowDown') open(e); }}><Icon name="check" size={size} /></button>;
 }
-export function Chip({ o, colorBy, onOpen, onMenu, check, bar, compact }) { // 내보내기: 할 일 칩의 ✓ 단추를 노드에서 그려 보는 시험(test/task-ui-wiring.test.mjs)
-  if (o.kind === 'task' && check) { // 끝내기 단추와 여는 단추를 나란히(단추 안에 단추를 둘 수 없다) — 여는 단추가 칩 전체를 덮고 끝내기 단추만 그 위에
+export function Chip({ o, colorBy, onOpen, onMenu, check, bar, compact }) { // 내보내기: 할 일 칩의 동그라미(상태 메뉴)를 노드에서 그려 보는 시험(test/task-ui-wiring.test.mjs)
+  if (o.kind === 'task' && check) { // 동그라미(상태 메뉴)와 여는 단추를 나란히(단추 안에 단추를 둘 수 없다) — 여는 단추가 칩 전체를 덮고 동그라미만 그 위에
     const label = taskLabel(o);
     return <span className={`cal-chip bar task st-${o.vi?.status ?? 'todo'}${o.done ? ' done' : ''}`} title={label} {...(onMenu ? menuProps(() => onMenu(o)) : {})}>
       <TaskCheck o={o} check={check} />
@@ -427,7 +429,7 @@ export function TimeGrid({ days, items, today, now, colorBy, holidays, onOpen, o
 }
 
 /* ── 목록·거래처·하루 목록 ── */
-function Row({ o, colorBy, onOpen, onMenu, check }) {
+export function Row({ o, colorBy, onOpen, onMenu, check }) { // 내보내기: 하루 목록 줄의 동그라미 시험
   if (o.kind === 'task' && check) return <div className={`cal-row task st-${o.vi?.status ?? 'todo'}${o.done ? ' done' : ''}`} {...(onMenu ? menuProps(() => onMenu(o)) : {})}>
     <span className="cal-row-when">{t('cal.due')}</span>
     <TaskCheck o={o} check={check} size={12} />

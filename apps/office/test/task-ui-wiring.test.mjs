@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import * as V from '../src/views/model.js';
 import { TASK_DICT } from '../src/pages/task-i18n.js';
 import { VIEWS_DICT } from '../src/views/views-i18n.js';
+import { CAL_DICT } from '../src/calendar/calendar-i18n.js';
 import { bundleSrc, render, reset, flush, findAll, textOf, hasClass } from './helpers/src-bundle.mjs';
 
 globalThis.localStorage = { getItem: (k) => (k === 'argo-lang' ? 'ko' : null), setItem() {}, removeItem() {} };
@@ -12,7 +13,7 @@ globalThis.document = { activeElement: null, addEventListener() {}, removeEventL
 globalThis.window = { addEventListener() {}, removeEventListener() {} };
 globalThis.innerWidth = 1280; globalThis.innerHeight = 800;
 const T = (globalThis.__T = { toasts: [], writes: [], menus: [], cats: {}, runWrites: async () => ({ ok: 1, failed: null }) });
-const ko = (k, v = {}) => ({ ...TASK_DICT, ...VIEWS_DICT })[k][0].replace(/\{(\w+)\}/g, (_, n) => v[n]);
+const ko = (k, v = {}) => ({ ...TASK_DICT, ...VIEWS_DICT, ...CAL_DICT })[k][0].replace(/\{(\w+)\}/g, (_, n) => v[n]);
 
 const STUB = {
   session: `export const ME = { id: 'u1', name: '나' };
@@ -142,18 +143,24 @@ test('setCell: 끝낸 일의 상태를 바꾸는 동안만 기다림, 끝나면 
   } finally { release({ ok: 1, failed: null }); T.runWrites = async () => ({ ok: 1, failed: null }); } // 실패해도 다음 시험이 멈춘 쓰기를 기다리지 않게
 });
 
-// 이유(검수 화면 연결 — check.can): 캘린더 칩의 ✓는 끝낼 수 있는 일(맡은 사람·관리자)에만 단추. 남이 맡은 일·일정이 단추가 되면 눌러도 거절된다
-test('useItemActions check: 내 할 일만 끝내기 단추, 남이 맡은 일·일정은 아니다 — 누르면 끝내기 쓰기', async () => {
+// 이유(유건 10/10 "캘린더에서도 완료, 보류 등 상태 변경 가능해야함"): 캘린더 칩의 동그라미는 상태 메뉴 — 상태를 바꿀 수 있는 일(맡은 사람·관리자)에만.
+// 남이 맡은 일·일정이 메뉴가 되면 골라도 거절된다. 메뉴는 할 일 표 상태 칸과 같은 값·같은 쓰기(setCell)
+test('useItemActions check: 상태를 바꿀 수 있는 할 일만 메뉴(할 일·진행 중·보류·끝냄, 지금 상태 체크) — 못 바꾸면 이유 글', async () => {
   const { board } = await boardB();
   const A = actionsOf(board).get();
-  assert.equal(A.check.can(tk()), true);
-  assert.equal(A.check.can(tk({ id: 'a1', space: 'acme', assignee: 'u2', created_by: 'u2' })), false, '남이 맡은 조직 할 일');
-  assert.equal(A.check.can(V.eventItem({ key: 'e1', id: 'e1', title: '회의', start: Date.parse('2026-10-09T01:00:00Z'), end: Date.parse('2026-10-09T02:00:00Z'), can_edit: true })), false, '일정');
+  assert.equal(A.check.why(tk()), null);
+  assert.equal(A.check.why(tk({ id: 'a1', space: 'acme', assignee: 'u2', created_by: 'u2' })), ko('views.why.taskPerm'), '남이 맡은 조직 할 일');
+  assert.equal(A.check.why(V.eventItem({ key: 'e1', id: 'e1', title: '회의', start: Date.parse('2026-10-09T01:00:00Z'), end: Date.parse('2026-10-09T02:00:00Z'), can_edit: true })), ko('views.why.eventPerm'), '일정(표 칸 잠금과 같은 cellWhyNot)');
+  const items = A.check.menu(tk({ status: 'doing' })).filter((x) => x.run);
+  assert.deepEqual(items.map((x) => x.label.props.value), ['todo', 'doing', 'hold', 'done']);
+  assert.deepEqual(items.map((x) => x.checked), [false, true, false, false], '지금 상태(진행 중)에 체크');
   T.writes = [];
-  await A.check.run(tk());
-  assert.deepEqual(T.writes.at(-1).map((w) => [w.action, w.data.id]), [['task.done', 'p1']]);
-  await A.check.run(tk(DONE));
-  assert.deepEqual(T.writes.at(-1).map((w) => w.action), ['task.reopen']);
+  items.find((x) => x.label.props.value === 'done').run();
+  await settle();
+  assert.deepEqual(T.writes.at(-1).map((w) => [w.action, w.data.id]), [['task.done', 'p1']], '끝냄 = 끝내기');
+  A.check.menu(tk(DONE)).find((x) => x.run && x.label.props.value === 'doing').run();
+  await settle();
+  assert.deepEqual(T.writes.at(-1).map((w) => w.action), ['task.reopen', 'task.status'], '끝낸 일 → 진행 중 = 다시 열기 + 상태');
 });
 
 // 이유(검수 화면 연결 — setCell의 상태 칸 조건): '보류했습니다 · 사유 적기'는 상태 칸에서 보류로 바꿀 때만. 다른 칸의 값이 우연히 'hold'(분류 id 등)여도 뜨지 않는다
@@ -205,23 +212,91 @@ test('칸반: 보류 칸에 놓으면 사유 적기 알림, 진행 중 칸은 �
   } finally { T.runWrites = async () => ({ ok: 1, failed: null }); }
 });
 
-// 이유(검수 화면 연결 — Chip의 할 일 조건): 끝내기 ✓는 할 일 칩에만. 일정 칩에 ✓가 붙으면 일정에는 완료가 없어 누를 때 오류가 난다
-test('캘린더 칩: 일정 칩에는 ✓ 단추가 없고, 할 일 칩은 끝낼 수 있을 때만 ✓ 단추(누르면 끝내기)', async () => {
+// 이유(검수 화면 연결 — Chip의 할 일 조건): 동그라미는 할 일 칩에만. 일정 칩에 붙으면 일정에는 상태가 없어 고를 때 오류가 난다
+test('캘린더 칩: 일정 칩에는 동그라미 단추가 없고, 상태를 못 바꾸는 할 일은 표시만 + 이유는 화면 낭독기 글자', async () => {
   const cal = await calB();
-  const ran = [], check = { can: () => true, run: (o) => ran.push(o.id) };
+  const check = { why: () => null, menu: () => [] };
   const ev = { key: 'e1', kind: 'event', id: 'e1', title: '회의', start: Date.parse('2026-10-09T01:00:00Z'), end: Date.parse('2026-10-09T02:00:00Z'), all_day: false, category: '' };
   reset();
-  assert.equal(findAll(render(cal.Chip, { o: ev, check, onOpen() {}, colorBy: 'category', bar: true }), (n) => n.props.role === 'checkbox').length, 0, '일정 칩');
+  const evTree = render(cal.Chip, { o: ev, check, onOpen() {}, colorBy: 'category', bar: true });
+  assert.equal(findAll(evTree, (n) => hasClass(n, 'cal-tcheck') || n.props['aria-haspopup']).length, 0, '일정 칩');
   const o = { key: 't:x', kind: 'task', id: 'x', title: '보고서', done: false, vi: tk({ id: 'x' }) };
   reset();
-  const box = findAll(render(cal.Chip, { o, check, onOpen() {}, bar: true }), (n) => n.props.role === 'checkbox');
-  assert.equal(box.length, 1, '할 일 칩');
-  box[0].props.onClick({ stopPropagation() {} });
-  assert.deepEqual(ran, ['x']);
-  reset();
-  const view = render(cal.Chip, { o, check: { ...check, can: () => false }, onOpen() {}, bar: true });
-  assert.equal(findAll(view, (n) => n.props.role === 'checkbox').length, 0, '끝낼 수 없으면 단추 없음');
+  const view = render(cal.Chip, { o, check: { ...check, why: () => '권한 없음' }, onOpen() {}, bar: true });
+  assert.equal(findAll(view, (n) => hasClass(n, 'cal-tcheck')).length, 0, '못 바꾸면 단추 없음');
   assert.equal(findAll(view, (n) => hasClass(n, 'cal-check-ico')).length, 1, '✓ 표시만');
+  assert.equal(textOf(findAll(view, (n) => hasClass(n, 'sr-only'))), '권한 없음', '이유는 화면 낭독기 글자');
+});
+
+// 이유(유건 10/10): 동그라미가 끝내기·다시 열기만 해서 보류·진행 중은 우클릭이나 패널을 열어야 했다(숨은 손짓만 있는 기능은 없는 기능).
+// 진짜 useItemActions의 check를 진짜 칩·하루 목록 줄에 넣고 눌러, 메뉴·강조 시작·고른 뒤의 쓰기와 알림까지 본다
+test('캘린더 칩·하루 목록 동그라미: 누르면 상태 메뉴(4개, 지금 상태 체크·강조), 보류를 고르면 사유 적기 알림, 칩 이름은 패널', async () => {
+  const cal = await calB();
+  const { board } = await boardB();
+  const { menu } = await menuB();
+  const A = actionsOf(board).get();
+  const o = { key: 't:p1', kind: 'task', id: 'p1', title: '보고서', done: false, vi: tk({ status: 'doing' }) };
+  const opened = [];
+  for (const [Comp, props] of [[cal.Chip, { bar: true }], [cal.Row, {}]]) {
+    reset();
+    const tree = render(Comp, { o, check: A.check, onOpen: (x) => opened.push(x.id), colorBy: 'category', ...props });
+    const dot = findAll(tree, (n) => hasClass(n, 'cal-tcheck'));
+    assert.equal(dot.length, 1);
+    assert.equal(dot[0].type, 'button', 'Enter·Space로 열리는 진짜 단추');
+    assert.equal(dot[0].props['aria-haspopup'], 'menu');
+    assert.equal(dot[0].props['aria-label'], ko('cal.statusMenu'));
+    T.menus = [];
+    dot[0].props.onClick({ stopPropagation() {}, currentTarget: {} });
+    const items = T.menus.at(-1);
+    assert.deepEqual(items.filter((x) => x.run).map((x) => x.label.props.value), ['todo', 'doing', 'hold', 'done'], '할 일·진행 중·보류·끝냄');
+    assert.equal(items[menu.startIndex(items)].label.props.value, 'doing', '강조는 지금 상태에서 시작');
+    assert.equal(items[menu.startIndex(items)].checked, true, '지금 상태에 체크');
+    T.toasts = []; T.writes = [];
+    items.find((x) => x.run && x.label.props.value === 'hold').run();
+    await settle();
+    assert.deepEqual(T.writes.at(-1).map((w) => [w.action, w.data.status]), [['task.status', 'hold']]);
+    const held = T.toasts.find(([msg]) => msg === ko('tasks.held'));
+    assert.ok(held, '보류했습니다 알림');
+    assert.equal(held[1].action.label, ko('tasks.addReason'), '사유 적기');
+    const name = findAll(tree, (n) => n.type === 'button' && (hasClass(n, 'cal-chip-open') || hasClass(n, 'cal-row-open')))[0];
+    name.props.onClick({ stopPropagation() {} });
+  }
+  assert.deepEqual(opened, ['p1', 'p1'], '칩·줄 이름을 누르면 지금처럼 패널');
+});
+
+// 이유(유건 10/10 "모듈에서도 할 일 표에 뱃지 형식으로 표시 되어야함"): 홈 '할 일 · 표'(일정·할 일이 섞이는 표)는 상태가 글자로만 나왔다.
+// 할 일 화면 표와 같은 TaskCell(뱃지 단추 → 같은 메뉴 → 같은 setCell 쓰기)과 같은 잠금. 일정 줄은 상태가 없어 그대로
+test('홈 표 상태 칸: 할 일은 뱃지 단추(누르면 상태 메뉴, 고르면 쓰기), 못 바꾸는 일은 뱃지 글자 + 이유, 일정 줄은 글자', async () => {
+  const { board } = await boardB();
+  const A = actionsOf(board).get();
+  const cfg = { view: 'table', group: 'status', sort: 'title', dir: 'asc', listGroup: 'none', filter: { kind: 'all', who: 'all', category: 'all', period: 'all', status: 'all', priority: 'all' } };
+  const ev = V.eventItem({ key: 'e1', id: 'e1', title: '가 회의', start: Date.parse('2026-10-09T01:00:00Z'), end: Date.parse('2026-10-09T02:00:00Z'), can_edit: true });
+  const mine = tk({ title: '나 보고서', status: 'hold' }), other = tk({ id: 'a1', title: '다 남의 일', space: 'acme', assignee: 'u2', created_by: 'u2' });
+  reset();
+  const tree = render(board.ItemsView, { id: 'h', items: [mine, ev, other], cfg, setCfg() {}, views: V.VIEWS, today: TODAY, ctx, people, actions: A, onOpen() {}, compact: true });
+  const head = findAll(tree, (n) => n.type === 'th').map(textOf);
+  const col = head.indexOf(ko('views.th.status'));
+  const cellOf = (title) => findAll(findAll(tree, (n) => n.type === 'tr' && textOf(n).includes(title))[0], (n) => n.type === 'td')[col];
+  const st = cellOf('나 보고서'), btn = buttons(st);
+  assert.equal(btn.length, 1, '할 일 상태 칸은 단추');
+  assert.equal(btn[0].props['aria-haspopup'], 'menu');
+  assert.ok(hasClass(btn[0], 'vw-ed'), '줄 누르기(패널 열기)와 겹치지 않는 표 칸 단추');
+  assert.equal(findAll(st, (n) => hasClass(n, 'tk-pill') && hasClass(n, 'st-hold')).length, 1, '보류 뱃지');
+  T.menus = [];
+  btn[0].props.onClick({ currentTarget: {} });
+  const items = T.menus.at(-1).filter((x) => x.run);
+  assert.deepEqual(items.map((x) => [x.label.props.value, x.checked]), [['todo', false], ['doing', false], ['hold', true], ['done', false]]);
+  T.writes = [];
+  items[1].run();
+  await settle();
+  assert.deepEqual(T.writes.at(-1).map((w) => [w.action, w.data.status]), [['task.status', 'doing']]);
+  const locked = cellOf('다 남의 일');
+  assert.equal(buttons(locked).length, 0, '못 바꾸는 일은 단추 없음');
+  assert.equal(findAll(locked, (n) => hasClass(n, 'tk-pill') && hasClass(n, 'st-todo')).length, 1, '뱃지는 보인다');
+  assert.equal(textOf(findAll(locked, (n) => hasClass(n, 'sr-only'))), `, ${ko('views.why.taskPerm')}`);
+  const evCell = cellOf('가 회의');
+  assert.equal(buttons(evCell).length, 0);
+  assert.equal(textOf(evCell), ko('views.col.event'), '일정 줄은 지금처럼 글자');
 });
 
 // 이유(검수 화면 연결 — useGrow): 메모 칸은 9줄에서 시작해 글만큼 자란다(유건 10/9: 4줄쯤만 보이고 스크롤됐다). 패널이 그 높이를 실제로 칸에 넣는지 본다
