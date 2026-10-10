@@ -200,3 +200,17 @@ test('LOW-5 iOS에서도 보이는 폰 설정 줄은 중립 문구, en 토스트
   for (const lang of ['ko', 'en']) assert.doesNotMatch(tr('phone.set.plan.sub', lang), /Pro|구독|subscription|Free|무료/i, lang);
   assert.equal(tr('plan.toast.cta', 'en'), 'Tap to see Pro');
 });
+
+test('iOS는 Pro 필요 오류에서 결제 권유를 뺀다(App Store 3.1.1) — 메신저 t가 iOS면 사실만 있는 키로 읽는다', () => {
+  assert.equal(pro.iosKey('err.proRequired', true), 'err.proRequired.ios');
+  assert.equal(pro.iosKey('err.proRequired', false), 'err.proRequired');
+  assert.equal(pro.iosKey('room.limit', true), 'room.limit', '다른 키는 그대로');
+  for (const lang of ['ko', 'en']) {
+    const ios = tr('err.proRequired.ios', lang);
+    assert.notEqual(ios, 'err.proRequired.ios', `사전 문구(${lang})`);
+    assert.doesNotMatch(ios, /바꾸면|업그레이드|upgrade|구독|subscri|결제|purchase/i, `iOS 문구에 Pro 권유 없음(${lang})`);
+    assert.match(ios, /Pro/, '사실(주인의 Pro가 필요하다)은 남긴다');
+  }
+  const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
+  assert.match(app, /function useT\(\) \{ const \{ lang, setLang, t: ta \} = useLang\(\); return \{ lang, setLang, ta, t: \(k, vars\) => tm\(iosKey\(k, isIos\), lang, vars\) \}; \}/, '메신저 사전 읽기 한 곳에서 가른다(friendlyErr·토스트가 이 t를 쓴다)');
+});

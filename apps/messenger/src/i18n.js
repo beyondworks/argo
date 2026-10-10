@@ -1227,6 +1227,7 @@ export const DICT = {
   'docs.empty.org': ['전사 문서 없음', 'No company-wide docs'],
   'docs.empty.channel': ['채널 문서 없음', 'No channel docs'],
   'err.policyLocked': ['조직 정책으로 잠긴 항목입니다.', 'This item is locked by organization policy.'],
+  'err.proRequired.ios': ['에이전트를 메신저에 연결하려면 에이전트 주인의 Argo Pro가 필요합니다.', "Connecting an agent to Messenger needs Argo Pro for the agent's owner."], // iOS — 결제 권유 없이 사실만(App Store 3.1.1, pro-checkout.mjs IOS_COPY)
   'err.proRequired.owner': ['이 에이전트는 주인의 Argo Pro가 있어야 메신저에 연결됩니다. 에이전트 주인에게 알려 주세요.', "This agent needs its owner's Argo Pro to connect to Messenger. Let the owner know."],
   'err.proRequired': ['에이전트를 메신저에 연결하려면 에이전트 주인의 Argo Pro가 필요합니다. Pro로 바꾸면 멈춘 에이전트가 바로 다시 연결됩니다.', "Connecting an agent to Messenger needs Argo Pro for the agent's owner. Paused agents reconnect as soon as the owner upgrades to Pro."],
   'ui.dm': ['1:1 대화', 'Direct message'],

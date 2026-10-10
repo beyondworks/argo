@@ -104,6 +104,11 @@ export function proRequiredFor(msg, { ownerId, uid, t }) {
   return t('err.proRequired.owner');
 }
 
+/** iOS 빌드에서 결제 권유를 뺀 문구로 읽을 사전 키(App Store 3.1.1 — 사실만). 메신저 useT의 t가 이 함수를 거쳐 읽으므로
+ *  friendlyErr·토스트·화면 어디서 부르든 같은 문구가 된다. 새 권유 문구는 여기에 한 줄('키': '키.ios') 더한다 */
+export const IOS_COPY = { 'err.proRequired': 'err.proRequired.ios' };
+export const iosKey = (k, ios) => (ios && IOS_COPY[k]) || k;
+
 /** 'Pro로 바꾸면 풀리는' 서버 오류 코드 → 그 안내의 사전 키. 안내 토스트를 플랜 카드로 잇는 판정의 유일한 목록이다.
  *  msgr_pro_required = 무료 계정 에이전트 메신저 연결(#941), msgr_room_limit = 대화방 4명 한도(개인 공간 2026-09-30).
  *  msgr_seat_limit(조직 좌석)은 넣지 않는다 — 개인 Pro로 풀리지 않는다. 새 무료 한도 코드는 여기에 한 줄(코드: 사전 키) 더한다. */
