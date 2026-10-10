@@ -198,7 +198,7 @@ test('권한: 기기 행은 직접 못 읽고, 계산 열은 그 행을 읽을 �
   assert.equal(last(asUser(U.member, `select coalesce(public.msgr_crew_seen(c)::text, 'null') from public.msgr_crews c where c.id = '${C_PER}'`)), '', '남의 개인 행은 표 읽기 정책에서 이미 안 보인다');
   fails(psqlRaw(['-A', '-t', '-c', `set role authenticated; select public.msgr_device_beat('lean', 'mac-1', ${arr([C_ORG])})`]), /msgr_device_beat_forbidden/, '로그인 없음');
   fails(asUserRaw(U.owner, `select public.msgr_device_beat('lean', '', ${arr([C_ORG])})`), /msgr_device_beat_invalid/, '빈 기기 id');
-  assert.equal(sql(`select has_function_privilege('anon', 'public.msgr_device_beat(text,text,uuid[])', 'EXECUTE')`), 'f');
+  assert.equal(sql(`select has_function_privilege('anon', 'public.msgr_device_beat(text,text,uuid[],text)', 'EXECUTE')`), 'f'); // 20261011120000부터 앱 버전 인자(기본값 null — 옛 3인자 호출도 이 함수로 온다)
   assert.equal(sql(`select has_function_privilege('anon', 'public.msgr_crew_seen(public.msgr_crews)', 'EXECUTE')`), 'f');
 });
 

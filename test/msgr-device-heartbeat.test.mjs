@@ -9,10 +9,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-msgr-devbeat-'));
-const { makeDb, drain, deviceBeatRpc } = await import('../src/gateway/msgr.mjs');
+const { makeDb, drain, deviceBeatRpc, APP_VERSION } = await import('../src/gateway/msgr.mjs');
 const UID = '11111111-1111-4111-8111-111111111111', O1 = 'aaaaaaaa-0000-4000-8000-000000000001', WS = 'ws-devbeat', DEV = 'mac-1234abcd';
 
-beforeEach(() => { deviceBeatRpc.missingAt = 0; deviceBeatRpc.seenMissingAt = 0; });
+beforeEach(() => { deviceBeatRpc.missingAt = 0; deviceBeatRpc.seenMissingAt = 0; deviceBeatRpc.versionMissingAt = 0; });
 
 /** supabase-js 흉내 — 요청마다 기록한다. rpc 결과·select 결과를 주입한다 */
 function client({ rpc = () => ({ data: null, error: null }), select = () => ({ data: [], error: null }) } = {}) {
@@ -26,19 +26,19 @@ test('기기 id가 있으면 심박은 msgr_device_beat 요청 1건 — 행 PATC
   const c = client();
   const r = await makeDb(c).heartbeat(['c1', 'c2'], { wsId: WS, deviceId: DEV });
   assert.deepEqual(r, { device: true });
-  assert.deepEqual(c.reqs, [{ rpc: 'msgr_device_beat', args: { p_ws: WS, p_device: DEV, p_crews: ['c1', 'c2'] } }]);
+  assert.deepEqual(c.reqs, [{ rpc: 'msgr_device_beat', args: { p_ws: WS, p_device: DEV, p_crews: ['c1', 'c2'], p_app_version: APP_VERSION } }]); // 앱 버전(20261011120000 — test/msgr-free-app-beat.test.mjs)
 });
 
 test('옛 서버(함수 없음 PGRST202·42883)면 종전 PATCH로 물러나고, 10분 동안 함수를 다시 부르지 않는다', async () => {
   for (const code of ['PGRST202', '42883']) {
-    deviceBeatRpc.missingAt = 0;
+    deviceBeatRpc.missingAt = 0; deviceBeatRpc.versionMissingAt = 0;
     const c = client({ rpc: () => ({ data: null, error: { code, message: 'Could not find the function public.msgr_device_beat' } }) });
     const db = makeDb(c);
     assert.equal(await db.heartbeat(['c1'], { wsId: WS, deviceId: DEV }), undefined, '종전 경로는 device 표시 없음 — 호출부가 업무 심박을 따로 보낸다');
-    assert.equal(c.reqs.length, 2);
-    assert.equal(c.reqs[1].from, 'msgr_crews'); assert.ok(c.reqs[1].update.last_seen_at); assert.match(c.reqs[1].or, /^last_seen_at\.is\.null,last_seen_at\.lt\./);
+    assert.equal(c.reqs.length, 3, '버전 실은 호출 → 버전 없는 호출 → 종전 PATCH');
+    assert.equal(c.reqs[2].from, 'msgr_crews'); assert.ok(c.reqs[2].update.last_seen_at); assert.match(c.reqs[2].or, /^last_seen_at\.is\.null,last_seen_at\.lt\./);
     await db.heartbeat(['c1'], { wsId: WS, deviceId: DEV });
-    assert.equal(c.reqs.filter((x) => x.rpc).length, 1, `${code}: 두 번째 틱은 함수를 다시 부르지 않는다(틱마다 실패할 요청 0)`);
+    assert.equal(c.reqs.filter((x) => x.rpc).length, 2, `${code}: 두 번째 틱은 함수를 다시 부르지 않는다(틱마다 실패할 요청 0)`);
   }
 });
 

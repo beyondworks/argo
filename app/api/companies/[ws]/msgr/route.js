@@ -5,15 +5,20 @@ import { guardCompany, csrfDenied, authError, requestLang } from '../../../../au
 import { apiError } from '../../../../apimsg.mjs';
 import { sessionClient } from '../../../../../src/gateway/msgr.mjs';
 import { listAgents } from '../../../../../src/hub.mjs';
-import { loadCompany, updateCompany } from '../../../../../src/workspace.mjs';
+import { loadCompany, updateCompany, getDeviceId } from '../../../../../src/workspace.mjs';
 import { msgrGatewayStatus, msgrRuntimeState } from '../../../../../src/connections.mjs';
 import { nudgeGateway } from '../../../../../src/gateway.mjs';
 import { splitCardRows } from './card-rows.mjs'; // 행 나누기 — 카드 판정과 같은 모양을 테스트가 잠근다(UL10)
+import { freeAgentReason } from './free-reason.mjs'; // 무료 계정 연결이 멈춘 이유(2026-10-11)
 
 const ALLOW = new Set(['all', 'list', 'owner']);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const upstream = (where, e, lang) => {
-  if (/msgr_pro_required/.test(String(e?.message ?? ''))) return apiError('msgr_pro_required', lang); // 무료 계정이 파견 해제한 에이전트를 다시 파견(서버 관문 msgr_crews_pro_gate)
+  const m = String(e?.message ?? '');
+  // 무료 계정이 파견 해제한 에이전트를 다시 파견(서버 관문 msgr_crews_pro_gate) — 앞 코드가 이유(20261011120000), 뒤의 msgr_pro_required는 옛 앱용
+  if (/msgr_free_agent_limit/.test(m)) return apiError('msgr_free_agent_limit', lang);
+  if (/msgr_app_update_required/.test(m)) return apiError('msgr_app_update_required', lang);
+  if (/msgr_pro_required/.test(m)) return apiError('msgr_pro_required', lang);
   console.error(`[argo] msgr ${where}:`, e?.message ?? e); return apiError('msgr_upstream', lang); // PG 원문은 화면이 아니라 로그로
 };
 
@@ -53,13 +58,25 @@ async function myOrgs(c) {
 async function syncEnabled(ws, c) {
   let regs;
   try { regs = await myRegistrations(c, ws); } catch (e) { console.error('[argo] msgr 등록 조회 실패 — enabled 유지:', e.message); return []; } // 일시 오류로 브리지를 끄지 않는다
-  // paused(무료 계정 일시 중지)만 남으면 꺼진다 — 켜 두면 Pro 재개 뒤 다음 틱에 바로 붙지만, 무료인 동안에도 브리지가 15초마다
-  // myCrews·인벤토리 미러·커맨더 미러·기억 회수 조회를 계속 보낸다(drain의 하우스키핑은 활성 행 0이어도 돈다). 호출을 줄이려는 일시 중지라 끄는 쪽을 둔다.
-  // 재개 뒤에는 설정의 연결을 한 번 더 누르면 켜진다(2026-10-10 #941 검수 LOW-3 판단).
-  const enabled = regs.some((r) => r.status === 'active');
+  // paused(무료 계정 일시 중지 #941)도 켠다(2026-10-11) — 최신 앱은 브리지가 돌아야 기기 심박(앱 버전)이 나가고, 서버가 그 심박을 보고 무료 계정 에이전트를
+  // 4명까지 재개한다(20261011120000). 종전(#941)에는 호출을 줄이려 껐지만, 이 앱(#943 포함)은 쉬는 동안 회사당 분당 약 4건이다.
+  const enabled = regs.some((r) => r.status === 'active' || r.status === 'paused');
   const company = await loadCompany(ws);
   if (!!company.msgr?.enabled !== enabled) await updateCompany(ws, (c) => ({ msgr: { ...(c.msgr ?? {}), enabled } }));
   return regs;
+}
+
+/** 무료 계정의 연결이 멈춘 채 남았을 때 이유(free-reason.mjs) — 서버가 이 기기의 새 앱을 아직 모르면 심박 한 번(앱 버전)을 보낸다. → { code, crews? } */
+async function freeAgentReasonFor(c, ws) {
+  const beatNow = async () => {
+    const deviceId = await getDeviceId().catch(() => null);
+    const ids = (await myRegistrations(c, ws).catch(() => [])).filter((r) => r.status === 'active' || r.status === 'paused').map((r) => r.id);
+    if (!deviceId || !ids.length) return false;
+    await c.db.heartbeat(ids, { wsId: ws, deviceId });
+    return true;
+  };
+  const { code, beaten } = await freeAgentReason(c.client, { beatNow });
+  return { code, crews: beaten ? await syncEnabled(ws, c) : undefined };
 }
 
 export async function GET(_req, { params }) {
@@ -89,7 +106,7 @@ export async function POST(req, { params }) {
     const company = await loadCompany(ws);
     if (company.ownerId !== c.uid) return Response.json({ ok: false, runtime: { state: 'owner' } });
     const crews = await myRegistrations(c, ws);
-    if (!crews.some((crew) => crew.status === 'active')) return Response.json({ ok: false, runtime: { state: 'noCrews' } });
+    if (!crews.some((crew) => crew.status === 'active' || crew.status === 'paused')) return Response.json({ ok: false, runtime: { state: 'noCrews' } }); // paused = 무료 계정 — 브리지가 돌아야 재개된다(syncEnabled)
     nudgeGateway(ws);
     return Response.json({ ok: true, runtime: { state: 'reconnecting' } });
   }
@@ -115,9 +132,13 @@ export async function POST(req, { params }) {
         if (error && error.code !== '23505') return upstream('POST activate insert', error, lang);
       }
     }
-    const crews = await syncEnabled(ws, c);
+    let crews = await syncEnabled(ws, c);
     // 무료 계정은 서버 관문이 행을 조용히 paused로 둔다(옛 미러가 같은 쓰기를 되풀이하지 않게) — 사람이 누른 연결이면 이유를 보인다
-    if (crews.some((r) => r.org_id === orgId && wanted.includes(r.slug) && r.status === 'paused')) return apiError('msgr_pro_required', lang);
+    if (crews.some((r) => r.org_id === orgId && wanted.includes(r.slug) && r.status === 'paused')) {
+      const why = await freeAgentReasonFor(c, ws);
+      if (why.crews) crews = why.crews;
+      if (why.code && crews.some((r) => r.org_id === orgId && wanted.includes(r.slug) && r.status === 'paused')) return apiError(why.code, lang);
+    }
     return Response.json({ ok: true, crews });
   }
   if (!UUID.test(String(orgId ?? '')) || !slug || !ALLOW.has(allow) || !users.every((u) => UUID.test(String(u)))) return apiError('msgr_bad_request', lang);
@@ -132,12 +153,14 @@ export async function POST(req, { params }) {
   };
   const { data, error } = await c.client.from('msgr_crews').upsert(row, { onConflict: 'org_id,owner_user_id,ws_id,slug' }).select('id, status').single();
   if (error) return upstream('POST', error, lang);
-  const crews = await syncEnabled(ws, c);
-  // 무료 계정 — 서버 관문이 상태를 paused(새 행·멈춘 행)로 두거나 원래 상태(available·detached)로 유지한다. 행·허용 범위는 저장되고 연결만 Pro 뒤.
+  let crews = await syncEnabled(ws, c);
+  // 무료 계정 — 서버 관문이 상태를 paused(새 행·멈춘 행)로 두거나 원래 상태(available·detached)로 유지한다. 행·허용 범위는 저장되고 연결은 최신 앱 4명 안에서.
   // 'active'로 올렸는데 active가 아니면 관문 말고는 그렇게 되는 길이 없지만, 요금제 판정을 한 번 더 확인해 다른 사유를 요금제로 안내하지 않는다.
   if (data.status !== 'active') {
-    const { data: pro, error: proErr } = await c.client.rpc('is_pro');
-    if (!proErr && pro === false) return apiError('msgr_pro_required', lang);
+    const why = await freeAgentReasonFor(c, ws);
+    if (why.crews) crews = why.crews;
+    const now = crews.find((r) => r.id === data.id);
+    if (why.code && now?.status !== 'active') return apiError(why.code, lang);
   }
   return Response.json({ ok: true, id: data.id, crews });
 }

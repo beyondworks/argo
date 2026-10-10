@@ -2239,6 +2239,8 @@ html { -webkit-tap-highlight-color: transparent; }
   .msgr-phone .ph-arow .ph-kl2 .snip { -webkit-line-clamp: 1; }
   /* 결재 대기 카드 = 버튼 하나 — 누르면 결재 페이지(유건 2026-10-02) */
   .msgr-phone button.ph-apcard { width: 100%; padding: 0; font: inherit; text-align: left; cursor: pointer; }
+  /* 무료 계정 에이전트가 멈춘 이유(2026-10-11, agent-pause.mjs) — 결재 카드 아래·목록 위 한 줄 */
+  .msgr-phone.phone-home .msgr-side .ph-pausenote, .msgr-phone .ph-pausenote { margin: 10px var(--ph-pad) 2px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--card-2); font-size: 13px; line-height: 1.5; color: var(--fg-2); }
   .msgr-phone button.ph-apcard:disabled { opacity: 1; cursor: default; }
   .msgr-phone button.ph-apcard:not(:disabled):active { background: var(--border-soft); }
   .msgr-phone .ph-apcard .ph-aphead .ph-kbody { flex: 1 1 auto; }
@@ -2423,6 +2425,7 @@ html { -webkit-tap-highlight-color: transparent; }
 /* 데스크톱 에이전트 구역이 비었을 때(UXM-08) — 구역을 두고 안내 + [실행기 연결] */
 .msgr-side .msgr-rail-empty { margin: 2px 12px 8px; font-size: 12px; line-height: 1.45; color: var(--fg-3); }
 .msgr-side .msgr-rail-empty .btn { margin-top: 6px; }
+.msgr-side .msgr-pausenote { margin: 6px 12px 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card-2); color: var(--fg-2); } /* 무료 계정 멈춘 이유 — 내 에이전트 구역 위 */
 /* 데스크톱 검색 — 입력했지만 아직 찾지 않았을 때 Enter 힌트(UXM-21) */
 .msgr-search .msgr-search-enter { flex: none; font-size: 11px; color: var(--fg-3); white-space: nowrap; }
 /* 앱 버전(UXM-26) */
