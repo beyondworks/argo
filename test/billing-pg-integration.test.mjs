@@ -6,15 +6,14 @@
 import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
 import { APPLY_CASES, T_OLD, T_NEW } from './helpers/ls-apply-cases.mjs';
 import { psqlSpawn } from './helpers/pg.mjs';
 import { loadLsWebhook } from './helpers/ls-webhook-edge.mjs';
+import { prepareBillingSchema, pgSb as pgSbFor } from './helpers/ls-pg-sb.mjs';
 
 const DB = process.env.ARGO_PG_TEST_URL;
 const skip = !DB && 'ARGO_PG_TEST_URL 미설정 — npm run test:pg로 실행';
 const UID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
-const mig = (f) => fileURLToPath(new URL(`../supabase/migrations/${f}`, import.meta.url));
 
 function psqlRaw(args) {
   return psqlSpawn(DB, args);
@@ -34,36 +33,8 @@ let T = null; // R1 기준 시각(T) — 20260929110000 적용 순간에 함수 
 
 before(() => {
   if (!DB) return;
-  // 실 Supabase에만 있는 전제(roles·auth 스키마)를 스텁으로 — 마이그레이션이 그대로 적용되게 한다.
-  psql(['-c', `
-    do $$ begin
-      if not exists (select from pg_roles where rolname = 'anon') then create role anon nologin; end if;
-      if not exists (select from pg_roles where rolname = 'authenticated') then create role authenticated nologin; end if;
-      if not exists (select from pg_roles where rolname = 'service_role') then create role service_role nologin; end if;
-    end $$;
-    create schema if not exists auth;
-    -- Supabase는 public의 새 함수에 anon·authenticated 실행권을 기본으로 준다 — 같게 걸어야 마이그레이션의
-    -- "revoke ... from anon, authenticated" 줄이 실제로 효과가 있는지 아래 권한 테스트가 가려낸다(없으면 지워도 초록).
-    alter default privileges in schema public grant execute on functions to anon, authenticated, service_role;
-    -- created_at: is_pro(trial_14d·ends_at)의 language sql 본문이 CREATE 시점에 파싱된다 — 없으면 적용 자체가 실패
-    -- email·email_confirmed_at: ls_user_by_email(20261005130000)이 같은 이유로 필요하다(Supabase auth.users와 같은 이름·타입)
-    create table if not exists auth.users (id uuid primary key, created_at timestamptz not null default now(), email text, email_confirmed_at timestamptz);
-    create or replace function auth.uid() returns uuid language sql stable as 'select null::uuid';
-    -- msgr 스키마 스텁(20260929110000의 entitled_pro_for가 join) — 900줄짜리 20260903120000_msgr.sql 전체를
-    -- 로드하지 않고, is_pro()가 실제로 참조하는 3표만 auth.users와 같은 방식으로 최소 재현한다.
-    create table if not exists public.msgr_orgs (id uuid primary key, deleted_at timestamptz);
-    create table if not exists public.msgr_org_members (org_id uuid, user_id uuid, removed_at timestamptz, role text);
-    create table if not exists public.msgr_org_entitlements (org_id uuid primary key, paid_until timestamptz);
-  `]);
-  // 실 마이그레이션 파일을 그대로 적용 — 테스트용 사본 SQL이 아니라 배포될 그 파일이 검증 대상이다.
-  psql(['-f', mig('20260714150000_entitlements.sql')]);
-  psql(['-f', mig('20260724000100_trial_14d.sql')]);
-  psql(['-f', mig('20260728100000_entitlements_ls.sql')]);
-  psql(['-f', mig('20260728113000_billing_hardening.sql')]);
-  psql(['-f', mig('20260728150000_ls_reconcile_cooldown.sql')]);
-  psql(['-f', mig('20260730050000_is_pro_ends_at.sql')]);
-  psql(['-f', mig('20260929110000_plan_no_trial.sql')]);
-  psql(['-f', mig('20261005130000_ls_user_by_email.sql')]);
+  // 실 Supabase 전제 스텁 + 배포될 결제 마이그레이션 파일 그대로(test/helpers/ls-pg-sb.mjs — 늦은 가입 드릴과 같은 준비).
+  prepareBillingSchema(DB);
   psql(['-c', `insert into auth.users (id) values ('${UID}') on conflict do nothing`]);
   // T를 trial_end_for의 CREATE 문 텍스트에서 역추출 — 이 테스트가 만든 값이 아니라 마이그레이션이
   // 실제로 굳힌 리터럴이라는 근거(재현: 코드가 아니라 DB에 실제로 박힌 값을 본다).
@@ -339,50 +310,9 @@ test('ls_user_by_email 권한: anon·authenticated·PUBLIC은 실행 불가(이�
   assert.equal(psql(['-A', '-t', '-c', `set role service_role; select public.ls_user_by_email('buyer@example.test')`]).trim(), ACC.buyer);
 });
 
-// 엣지 수신자 → 실제 SQL. 진입점 index.ts를 node vm에서 실행하고(test/helpers/ls-webhook-edge.mjs), 함수가 쓰는 supabase-js 호출
-// 네 가지(rpc·select().eq().neq().limit()·upsert)를 Postgres 문장으로 바꿔 끼운다(PostgREST 대신). RPC는 service_role로 실행해
-// 실행 권한·인자 이름까지 운영과 같은 조건으로 본다. 표 조회·기록은 슈퍼유저로(운영의 서비스 롤처럼 RLS를 거치지 않는다).
-const ident = (s) => { if (!/^[a-z_][a-z0-9_]*$/.test(s)) throw new Error(`이름이 아니다: ${s}`); return s; };
-const qlit = (v) => (v === null || v === undefined ? 'null' : `'${String(v).replace(/'/g, "''")}'`);
-function pgSb() {
-  const run = (q) => {
-    const r = psqlRaw(['-A', '-t', '-c', q]);
-    return r.status === 0 ? { out: r.stdout.trim(), error: null } : { out: '', error: { message: r.stderr.trim() } };
-  };
-  return {
-    async rpc(fn, args) {
-      const named = Object.entries(args).map(([k, v]) => `${ident(k)} => ${qlit(v)}`).join(', ');
-      const { out, error } = run(`set role service_role; select coalesce(to_json(public.${ident(fn)}(${named})), 'null'::json)`);
-      return error ? { data: null, error } : { data: JSON.parse(out), error: null };
-    },
-    from(table) {
-      return {
-        select(cols) {
-          const where = [];
-          const q = {
-            eq(c, v) { where.push(`${ident(c)} = ${qlit(v)}`); return q; },
-            neq(c, v) { where.push(`${ident(c)} <> ${qlit(v)}`); return q; },
-            async limit(n) {
-              const list = String(cols).split(',').map((c) => ident(c.trim())).join(', '); // 'a, b, c' — PostgREST select 목록과 같은 모양
-              const { out, error } = run(`select coalesce(json_agg(t), '[]'::json) from (select ${list} from public.${ident(table)}
-                where ${where.join(' and ') || 'true'} limit ${Number(n)}) t`);
-              return error ? { data: null, error } : { data: JSON.parse(out), error: null };
-            },
-          };
-          return q;
-        },
-        async upsert(row, opts) {
-          if (!opts?.ignoreDuplicates) throw new Error('엣지 함수는 ignoreDuplicates upsert만 쓴다 — 다른 모양이면 이 가짜를 넓힌다');
-          const cols = Object.keys(row).map(ident);
-          const conflict = String(opts.onConflict).split(',').map((c) => ident(c.trim())).join(', ');
-          const { error } = run(`insert into public.${ident(table)} (${cols.join(', ')}) values (${cols.map((c) => qlit(row[c])).join(', ')})
-            on conflict (${conflict}) do nothing`);
-          return { error };
-        },
-      };
-    },
-  };
-}
+// 엣지 수신자 → 실제 SQL. 진입점 index.ts를 node vm에서 실행하고(test/helpers/ls-webhook-edge.mjs), supabase-js 호출을
+// Postgres 문장으로 바꿔 끼운다(test/helpers/ls-pg-sb.mjs — RPC는 service_role로 실행).
+const pgSb = () => pgSbFor(DB);
 const lsEvent = ({ name = 'subscription_created', userId, sub, email, status = 'active', updatedAt = '2026-10-03T12:24:00Z', endsAt = null }) => ({
   meta: { event_name: name, ...(userId ? { custom_data: { user_id: userId } } : {}) },
   data: { id: sub, attributes: { status, customer_id: 7001, user_email: email, updated_at: updatedAt, ends_at: endsAt, test_mode: false, urls: { customer_portal: null } } },

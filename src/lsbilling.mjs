@@ -123,17 +123,69 @@ export async function applyLsEvent(sb, mapped) {
   return data;
 }
 
-/** [M4] 귀속 실패 이벤트 → billing_unmatched 적재 행. 수동 귀속에 필요한 최소 식별자만
-    (구독 id·customer id·결제 이메일·이벤트명·사유) — raw payload 전체는 PII 과잉이라 싣지 않는다. */
-export function unmatchedRow(eventName, reason, payload) {
+/** [M4] 귀속 실패 이벤트 → billing_unmatched 적재 행. 수동 귀속에 필요한 식별자(구독 id·customer id·결제 이메일·이벤트명·사유)와,
+    나중 가입 연결(크론 ls_link_late_signups, 20261010150000)이 apply_ls_event에 넘길 상태(plan·ls_status·ls_updated_at·ends_at·
+    portal_url·test_mode) — raw payload 전체는 PII 과잉이라 싣지 않는다.
+    plan은 이 이벤트가 사용자만 정해지면 적용될 수 있을 때만 채운다 — 구독 라이프사이클 이벤트이고, 상품이 허용목록에 있고(opts.allowedVariants),
+    상태를 안다. 아니면 null(크론이 적용하지 않는다). 시험 결제는 test_mode로 남겨 크론이 거른다(수용 여부와 무관). */
+export function unmatchedRow(eventName, reason, payload, opts = {}) {
   const attrs = payload?.data?.attributes ?? {};
+  const name = String(eventName ?? '');
+  const status = typeof attrs.status === 'string' && attrs.status ? attrs.status : null;
+  const lifecycle = name.startsWith('subscription_') && !name.startsWith('subscription_payment_');
+  const variantOk = !opts.allowedVariants?.size || opts.allowedVariants.has(String(attrs.variant_id));
+  const plan = !lifecycle || !variantOk || !status ? null
+    : PRO_STATUSES.has(status) ? 'pro' : FREE_STATUSES.has(status) ? 'free' : null;
   return {
-    event_name: String(eventName ?? ''),
+    event_name: name,
     reason: String(reason ?? ''),
     ls_subscription_id: String(payload?.data?.id ?? ''),
     ls_customer_id: String(attrs.customer_id ?? ''),
     user_email: String(attrs.user_email ?? ''),
+    plan,
+    ls_status: status,
+    ls_updated_at: attrs.updated_at ?? null,
+    ends_at: attrs.ends_at ?? null,
+    portal_url: attrs?.urls?.customer_portal ?? null,
+    test_mode: Boolean(attrs.test_mode),
   };
+}
+
+/** 마이그레이션 20261010150000 전 billing_unmatched에 있던 열만 — 그 함수가 없을 때의 기록과 대사(duplicate-attribution) 기록 모양. */
+export function legacyUnmatchedRow(row) {
+  return {
+    event_name: row.event_name, reason: row.reason, ls_subscription_id: row.ls_subscription_id,
+    ls_customer_id: row.ls_customer_id, user_email: row.user_email,
+  };
+}
+
+/** unmatchedRow → DB 함수 record_ls_unmatched 인자. 엣지 수신자(supabase/functions/ls-webhook)도 같은 인자를 보낸다. */
+export function unmatchedRecordArgs(row) {
+  return {
+    p_event_name: row.event_name,
+    p_reason: row.reason,
+    p_sub_id: row.ls_subscription_id,
+    p_customer_id: row.ls_customer_id,
+    p_email: row.user_email,
+    p_plan: row.plan,
+    p_status: row.ls_status,
+    p_updated_at: row.ls_updated_at,
+    p_ends_at: row.ends_at,
+    p_portal_url: row.portal_url,
+    p_test_mode: row.test_mode,
+  };
+}
+
+/** 미연결 기록 — record_ls_unmatched(같은 (구독, 사유) 1행, LS updated_at 최신 상태 유지, 해결된 행은 그대로).
+    그 함수가 아직 없으면(PostgREST PGRST202 — 마이그레이션 전) 예전 모양으로 첫 기록만 남긴다. 반환: { error } */
+export async function recordUnmatched(sb, row) {
+  const { error } = await sb.rpc('record_ls_unmatched', unmatchedRecordArgs(row));
+  if (error?.code !== 'PGRST202') return { error: error ?? null };
+  // 인자 이름이 어긋나도 같은 코드가 나오므로 조용히 넘기지 않는다 — 이 경로의 기록은 나중 가입 자동 연결 대상이 아니다.
+  console.warn(`[argo] billing record_ls_unmatched 없음(PGRST202) — 예전 모양으로 기록 sub=${row.ls_subscription_id || '?'}`);
+  const { error: legacyErr } = await sb.from('billing_unmatched')
+    .upsert(legacyUnmatchedRow(row), { onConflict: 'ls_subscription_id,reason', ignoreDuplicates: true });
+  return { error: legacyErr ?? null };
 }
 
 /** [O2] 대사(reconcile) 후보 선별 — LS 구독 목록 API(data[])에서 Pro로 인정할 활성 구독을 고른다.
