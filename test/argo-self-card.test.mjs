@@ -346,7 +346,7 @@ test('손님 — 일하는 방식 규칙은 추가·삭제 결재도 올리지 �
   assert.equal((await loadApprovals(ws)).length, 0);
 });
 
-test('주인 1:1이 아닌 규칙 삭제 — 번호로만 받고 카드·결과에 규칙 원문이 없다, 승인 때 그때의 N번을 지우고 번호가 없으면 적용 안 함', async () => {
+test('주인 1:1이 아닌 규칙 삭제 — 번호로만 받고 카드·결과에 규칙 원문이 없다, 승인 때 N번이 올린 때와 같은 문장일 때만 지우고(재검수 2차 M) 번호가 없으면 적용 안 함', async () => {
   const ws = await company();
   const c = handlers(ws, { chain: ['mina'] });
   assert.match(await c.call('argo_settings', { action: 'set', key: 'agent.rules.remove', value: '숫자는 출처와 함께' }), /그 값으로는 바꿀 수 없다/, '문장으로는 받지 않는다');
@@ -357,14 +357,21 @@ test('주인 1:1이 아닌 규칙 삭제 — 번호로만 받고 카드·결과�
   assert.equal(ap.action, '설정 변경 — 일하는 방식 규칙 삭제 [pepper] → 규칙 2번');
   assert.doesNotMatch(`${ap.reason} ${JSON.stringify(ap.payload)}`, /숫자는 출처와 함께|결론부터/);
   const { setAgentRules } = await import('../src/persona.mjs');
-  await setAgentRules(ws, 'pepper', ['새 규칙 A', '결론부터 말한다', '숫자는 출처와 함께']); // 승인 전에 규칙이 바뀌어도 승인 때의 2번을 지운다
-  const note = await approve(ws, ap);
+  await setAgentRules(ws, 'pepper', ['새 규칙 A', '결론부터 말한다', '숫자는 출처와 함께']); // 승인 전에 주인이 앞에 규칙을 넣으면 2번이 다른 문장이 된다 — 엉뚱한 규칙을 지우지 않는다
+  const noteMoved = await approve(ws, ap);
+  assert.match(noteMoved, /규칙이 바뀌어 적용하지 않았다/);
+  assert.deepEqual(await rulesOf(ws), ['새 규칙 A', '결론부터 말한다', '숫자는 출처와 함께']);
+  await setAgentRules(ws, 'pepper', ['결론부터 말한다', '숫자는 출처와 함께']);
+  await c.call('argo_settings', { action: 'set', key: 'agent.rules.remove', value: '2' });
+  const apSame = (await pending(ws))[0];
+  assert.doesNotMatch(JSON.stringify(apSame.payload), /숫자는 출처와 함께/, '대조용 값은 원문이 아니다');
+  const note = await approve(ws, apSame);
   assert.match(note, /적용 완료 — 일하는 방식 규칙 삭제 → 규칙 2번 삭제/);
-  assert.deepEqual(await rulesOf(ws), ['새 규칙 A', '숫자는 출처와 함께']);
+  assert.deepEqual(await rulesOf(ws), ['결론부터 말한다'], '그대로면 올린 때 지목한 문장을 지운다');
   await c.call('argo_settings', { action: 'set', key: 'agent.rules.remove', value: '9' });
   const note2 = await approve(ws, (await pending(ws))[0]);
   assert.match(note2, /승인할 때 규칙 9번이 없어 적용하지 않았다/);
-  assert.equal((await rulesOf(ws)).length, 2);
+  assert.equal((await rulesOf(ws)).length, 1);
 });
 
 test('같은 러너를 다시 고르면 아무것도 바꾸지 않는다(모델 유지·쓰기 0), 이상한 러너 이름(constructor·__proto__)은 거절', async () => {

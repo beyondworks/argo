@@ -16,6 +16,7 @@ import { readAgentCard, updateAgentMeta, cardRules, setAgentRules } from './pers
 import { effortLevels } from './model-effort.mjs';
 import { recentSelfPosts, selfKindLabel } from './self-posts.mjs';
 import { deckMetrics } from './deck-metrics.mjs';
+import { createHash } from 'node:crypto';
 import { loadRoutines, updateRoutine, removeRoutine } from './routines.mjs';
 import { loadApprovals } from './approvals.mjs';
 import { getTurnStatus } from './turn-status.mjs';
@@ -349,7 +350,8 @@ async function prepareSetting(wsId, def, value, { id = null, lang = 'ko', full =
   }
   if (def.key === 'agent.rules.remove') {
     // 주인 1:1이 아니면 번호로만 받고 규칙 원문을 읽어 싣지 않는다 — 승인 때 그때의 규칙에서 그 번호 문장을 확정한다(applyCardSetting)
-    if (!full) return /^\d{1,3}$/.test(value) && Number(value) >= 1 ? { value: String(Number(value)), extra: { index: Number(value) } } : { error: 'rule-number' };
+    // h = 올린 때 그 번호 문장의 대조값(원문 아님) — 승인 전에 규칙 순서가 바뀌면 엉뚱한 규칙을 지우지 않게(재검수 2차 M)
+    if (!full) return /^\d{1,3}$/.test(value) && Number(value) >= 1 ? { value: String(Number(value)), extra: { index: Number(value), h: ruleHash(cur.rules[Number(value) - 1]) } } : { error: 'rule-number' };
     const i = /^\d+$/.test(value) ? Number(value) - 1 : cur.rules.indexOf(value);
     if (!(i >= 0 && i < cur.rules.length)) return { error: pick(lang, `그런 규칙이 없다. 지금 규칙: ${cur.rules.map((r, n) => `${n + 1}) ${clip(r, 60)}`).join(' / ') || '(없음)'}`, `No such rule. Current rules: ${cur.rules.map((r, n) => `${n + 1}) ${clip(r, 60)}`).join(' / ') || '(none)'}`) };
     return { value: cur.rules[i], extra: { before: cur.rules, after: cur.rules.filter((_, n) => n !== i) } };
@@ -367,13 +369,13 @@ export function rulesDiffText(before = [], after = [], lang = 'ko') {
  * 설정 적용(바로 바꾸기·결재 승인 공용) — { ok, before, after, text } | { ok:false, text }.
  * slug = 이 도구를 부른 에이전트(비서를 켤 때 지정된 비서가 없으면 이 에이전트).
  */
-export async function applySetting(wsId, { key, id = null, value, model, before: rulesBefore, after: rulesAfter, index, from = null }, { slug = null, lang = 'ko' } = {}) {
+export async function applySetting(wsId, { key, id = null, value, model, before: rulesBefore, after: rulesAfter, index, h, from = null }, { slug = null, lang = 'ko' } = {}) {
   const def = settingOf(key);
   if (!def || forbiddenOf(key)) return { ok: false, text: pick(lang, `바꿀 수 없는 설정: ${key}`, `Not a changeable setting: ${key}`) };
   const norm = normalizeSettingValue(def, value, lang);
   if (norm.error) return { ok: false, text: norm.error };
   if (def.card) {
-    const r = await applyCardSetting(wsId, def, { slug: id ?? slug, value: norm.value, model, rulesBefore, rulesAfter, index, lang });
+    const r = await applyCardSetting(wsId, def, { slug: id ?? slug, value: norm.value, model, rulesBefore, rulesAfter, index, h, lang });
     return r;
   }
   const cur = await currentValue(wsId, def, { id, lang });
@@ -416,12 +418,14 @@ export async function applySetting(wsId, { key, id = null, value, model, before:
 const sameList = (a, b) => Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((x, i) => x === b[i]);
 
 /** 내 카드 설정 적용 — 카드 화면과 같은 저장 함수. 규칙은 결재 때 본 before가 지금 규칙과 같을 때만 after로 바꾼다(그 사이 바뀌었으면 적용 안 함). */
-async function applyCardSetting(wsId, def, { slug, value, model, rulesBefore, rulesAfter, index, lang }) {
+const ruleHash = (s) => (s == null ? '' : createHash('sha256').update(String(s)).digest('hex').slice(0, 16));
+async function applyCardSetting(wsId, def, { slug, value, model, rulesBefore, rulesAfter, index, h, lang }) {
   if (def.key === 'agent.rules.remove' && index) { // 번호로 올린 규칙 삭제 — 승인 때의 규칙에서 그 번호를 확정(번호가 범위 밖이면 적용 안 함)
     const cur = await currentValue(wsId, def, { id: slug, lang });
     if (cur.error) return { ok: false, text: cur.error, raw: true };
     const i = Number(index) - 1;
     if (!Number.isInteger(i) || i < 0 || i >= cur.rules.length || String(Number(index)) !== String(value)) return { ok: false, text: pick(lang, `승인할 때 규칙 ${index}번이 없어 적용하지 않았다.`, `Not applied — there was no rule #${index} at approval time.`) };
+    if (!h || ruleHash(cur.rules[i]) !== h) return { ok: false, text: pick(lang, `규칙이 바뀌어 적용하지 않았다 — 지금 규칙 ${index}번은 올린 때의 그 규칙이 아니다.`, `Not applied — the rules changed; rule #${index} is no longer the one requested.`) };
     const after = cur.rules.filter((_, n) => n !== i);
     try { await setAgentRules(wsId, slug, after); }
     catch (e) { return { ok: false, text: pick(lang, '바꾸지 못했다.', 'Not changed.'), raw: true, err: e }; }
@@ -479,7 +483,7 @@ export async function applyApprovedSetting(wsId, p, { slug = null } = {}) {
   if (def?.ownerOnly) return pick(lang, '적용 안 함 — 이 설정은 결재로 바꾸지 않는다(주인 1:1에서만).', "Not applied — this setting isn't changed through approvals (owner's 1:1 only).");
   let r;
   if (def?.card && (!p.id || p.id !== (p.by ?? slug))) return pick(lang, '적용 안 함 — 에이전트는 자기 카드만 바꾼다.', 'Not applied — agents change only their own card.'); // 결재 파일을 고쳐 남의 카드를 가리키게 해도
-  try { r = await applySetting(wsId, { key: p.key, id: p.id ?? null, value: p.value, ...(p.model !== undefined ? { model: p.model } : {}), ...(p.before ? { before: p.before, after: p.after } : {}), ...(p.index ? { index: p.index } : {}),
+  try { r = await applySetting(wsId, { key: p.key, id: p.id ?? null, value: p.value, ...(p.model !== undefined ? { model: p.model } : {}), ...(p.before ? { before: p.before, after: p.after } : {}), ...(p.index ? { index: p.index, h: p.h } : {}),
     // 결재로 고친 루틴은 결재 파일이 출처를 잃어도 올린 에이전트를 출처로. 주인 1:1에서 올린 카드(o1 — 카드 문구에 보여 대조된다)는 originFor 규칙(applyRoutineSetting)
     ...(def?.key?.startsWith('routine.') && !p.o1 ? { from: p.from ?? p.by ?? slug } : {}) }, { slug: p.o1 ? (p.by ?? slug) : slug, lang }); }
   catch { r = { ok: false, raw: true }; }
@@ -628,7 +632,7 @@ export async function argoSettings(wsId, { action = 'list', key = '', id = null,
   const payload = { key: def.key, ...(id ? { id: String(id) } : {}), value: prep.value, lang: ko(lang) ? 'ko' : 'en', ...(slug ? { by: slug } : {}),
     ...(def.key === 'agent.runner' ? { model: prep.extra?.model ?? '' } : {}),
     ...(prep.extra?.before ? { before: prep.extra.before, after: prep.extra.after } : {}),
-    ...(prep.extra?.index ? { index: prep.extra.index } : {}), // 남이 보는 방의 규칙 삭제 — 번호만(승인 때 지금 규칙에서 그 번호 문장을 확정)
+    ...(prep.extra?.index ? { index: prep.extra.index, h: prep.extra.h } : {}), // 남이 보는 방의 규칙 삭제 — 번호만(승인 때 지금 규칙에서 그 번호 문장을 확정)
     ...(def.approvalAlways && reveal ? { o1: true } : {}), // 주인 1:1에서 올린 늘-결재 카드(카드 문구에 보인다 — 루틴 출처 판정에 쓴다)
     // 루틴을 고친 출처 — 주인 1:1이 아닌 턴이 고친 루틴은 이후 풀 오토로 돌지 않는다(다시 켜기·내용·시각 모두, 승인 뒤에도 — 손님 결재 후속과 같은 원칙).
     // 주인 1:1에서 올린 카드는 originFor 규칙(다른 에이전트의 루틴이면 지금 에이전트)으로 승인 때 정한다
