@@ -23,6 +23,12 @@ export function entPaidPro(row, nowMs = Date.now()) {
   return row.ends_at == null || Date.parse(row.ends_at) > nowMs;
 }
 
+// 행에 LS가 본 상태·시각을 같이 남긴다(#933 열). ls_link_late_signups는 같은 구독의 다른 사유 행이 "더 최신이거나 시각을 모르면"
+// 나중 가입 자동 연결을 멈춘다 — 시각을 채워 두면 그 뒤에 온 웹훅 기록(no-user)이 대사 행에 막히지 않는다.
+// test_mode는 넣지 않는다(기본 false) — 시험 구독으로 Pro가 된 계정(9/1 사고 모양)도 알림 대상이어야 한다.
+// PostgREST 일괄 넣기는 모든 행의 키가 같아야 해서 LS에 없는 구독도 null로 채운다.
+const lsState = (s) => ({ ls_status: s?.attributes?.status ?? null, ls_updated_at: s?.attributes?.updated_at ?? null });
+
 /**
  * 불일치 찾기 — 자동 수정은 하지 않는다. 반환: billing_unmatched에 넣을 행 목록.
  *  · reconcile-ls-pro-not-linked: LS는 Pro로 인정하는 구독인데, 그 구독 번호에 연결된 우리 쪽 Pro 계정이 없다.
@@ -48,7 +54,7 @@ export function findDiscrepancies({ subs = [], ents = [], knownSubIds = new Set(
     const rows = entsBySub.get(sid) ?? [];
     if (rows.some((r) => entPaidPro(r, nowMs) || r.granted === true)) continue;
     add({ event_name: 'reconcile-daily', reason: 'reconcile-ls-pro-not-linked', ls_subscription_id: sid,
-      ls_customer_id: String(s.attributes?.customer_id ?? ''), user_email: String(s.attributes?.user_email ?? '') });
+      ls_customer_id: String(s.attributes?.customer_id ?? ''), user_email: String(s.attributes?.user_email ?? ''), ...lsState(s) });
   }
   for (const r of ents) {
     const sid = String(r?.ls_subscription_id ?? '');
@@ -56,7 +62,7 @@ export function findDiscrepancies({ subs = [], ents = [], knownSubIds = new Set(
     const s = byId.get(sid);
     if (s && lsCountsAsPro(s, opts)) continue;
     add({ event_name: 'reconcile-daily', reason: 'reconcile-pro-not-in-ls', ls_subscription_id: sid,
-      ls_customer_id: String(s?.attributes?.customer_id ?? r.ls_customer_id ?? ''), user_email: String(s?.attributes?.user_email ?? '') });
+      ls_customer_id: String(s?.attributes?.customer_id ?? r.ls_customer_id ?? ''), user_email: String(s?.attributes?.user_email ?? ''), ...lsState(s) });
   }
   return [...out.values()].filter((row) => !knownSubIds.has(row.ls_subscription_id));
 }

@@ -10,7 +10,7 @@ import * as core from '../supabase/functions/ls-reconcile/core.js';
 const NOW = Date.parse('2026-10-10T12:00:00Z');
 const FUTURE = '2026-11-09T21:00:00Z';
 const PAST = '2026-10-01T00:00:00Z';
-const sub = (id, attrs = {}) => ({ id: String(id), attributes: { status: 'active', test_mode: false, variant_id: 1, customer_id: 900 + Number(id) % 100, user_email: `u${id}@example.com`, ends_at: null, ...attrs } });
+const sub = (id, attrs = {}) => ({ id: String(id), attributes: { status: 'active', test_mode: false, variant_id: 1, customer_id: 900 + Number(id) % 100, user_email: `u${id}@example.com`, ends_at: null, updated_at: '2026-10-09T21:00:00Z', ...attrs } });
 const ent = (sid, row = {}) => ({ user_id: `user-${sid}`, plan: 'pro', ends_at: null, ls_subscription_id: String(sid), ls_customer_id: 'c', granted: false, ...row });
 
 test('LS Pro 판정 — 웹훅과 같은 상태 집합, 시험 결제·다른 변형·기한 지난 cancelled는 아니다', () => {
@@ -53,9 +53,16 @@ test('불일치 — 양방향을 찾고, 맞는 건·운영자 부여·그랜드
   assert.deepEqual(got, ['102:reconcile-ls-pro-not-linked', '103:reconcile-ls-pro-not-linked', '105:reconcile-pro-not-in-ls',
     '106:reconcile-pro-not-in-ls', '109:reconcile-pro-not-in-ls']);
   const r102 = out.find((r) => r.ls_subscription_id === '102');
-  assert.deepEqual(r102, { event_name: 'reconcile-daily', reason: 'reconcile-ls-pro-not-linked', ls_subscription_id: '102', ls_customer_id: '902', user_email: 'u102@example.com' });
+  assert.deepEqual(r102, { event_name: 'reconcile-daily', reason: 'reconcile-ls-pro-not-linked', ls_subscription_id: '102', ls_customer_id: '902', user_email: 'u102@example.com',
+    ls_status: 'active', ls_updated_at: '2026-10-09T21:00:00Z' });
   const r109 = out.find((r) => r.ls_subscription_id === '109');
   assert.equal(r109.user_email, '', 'LS에 없는 구독은 이메일을 모른다');
+  assert.equal(r109.ls_status, null);
+  assert.equal(r109.ls_updated_at, null);
+  assert.equal(out.find((r) => r.ls_subscription_id === '106').test_mode, undefined, '시험 구독 불일치도 test_mode를 싣지 않는다 — 알림 대상');
+  // PostgREST 일괄 넣기 — 모든 행의 키가 같다
+  const keySets = new Set(out.map((r) => Object.keys(r).sort().join(',')));
+  assert.equal(keySets.size, 1, [...keySets].join(' | '));
   // 같은 구독에 계정 행이 둘이어도 한 번만
   const dup = core.findDiscrepancies({ subs: [], ents: [ent(120), { ...ent(120), user_id: 'other' }], nowMs: NOW });
   assert.equal(dup.length, 1);
@@ -131,7 +138,7 @@ test('엣지 — 불일치만 billing_unmatched에 넣고(중복 무시), 맞으
   const res = await e.call();
   assert.equal(res.status, 200);
   assert.deepEqual(await res.json(), { ok: true, subscriptions: 2, findings: 1 });
-  assert.deepEqual(e.inserts, [{ event_name: 'reconcile-daily', reason: 'reconcile-ls-pro-not-linked', ls_subscription_id: '2', ls_customer_id: '902', user_email: 'u2@example.com' }]);
+  assert.deepEqual(e.inserts, [{ event_name: 'reconcile-daily', reason: 'reconcile-ls-pro-not-linked', ls_subscription_id: '2', ls_customer_id: '902', user_email: 'u2@example.com', ls_status: 'active', ls_updated_at: '2026-10-09T21:00:00Z' }]);
   assert.ok(e.logs.some((l) => /불일치 1건/.test(l) && /2:reconcile-ls-pro-not-linked/.test(l)));
   assert.ok(!e.logs.join('\n').includes('@'), '로그에 이메일이 없다');
 

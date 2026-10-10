@@ -132,6 +132,33 @@ test('PR #933 열(test_mode)이 생겨도 같은 트리거로 시험 결제를 �
   assert.equal(calls(), 1);
 });
 
+test('#933 기록 함수(record_ls_unmatched) — 새 행이면 한 번 알리고, 같은 구독의 다음 이벤트(갱신)·시험 결제는 알리지 않는다', { skip }, () => {
+  sql('truncate net.calls');
+  const sid = String(seq++);
+  const rec = (status, at, test = false) => sql(`select public.record_ls_unmatched('subscription_updated', 'no-user', '${sid}', '7', 'late@example.com',
+    'pro', '${status}', '${at}', null, null, ${test})`);
+  assert.equal(rec('active', '2026-10-09T21:00:00Z'), 'inserted');
+  assert.equal(calls(), 1);
+  assert.equal(rec('past_due', '2026-10-09T22:00:00Z'), 'updated');
+  assert.equal(calls(), 1, '갱신은 다시 알리지 않는다');
+  const tsid = String(seq++);
+  sql(`select public.record_ls_unmatched('subscription_created', 'no-user', '${tsid}', '7', 't@example.com', 'pro', 'active', now(), null, null, true)`);
+  assert.equal(calls(), 1, '시험 결제 기록은 알리지 않는다');
+});
+
+test('대사 행이 시각을 남기면 그 뒤 웹훅 기록(no-user)의 나중 가입 자동 연결(#933)을 막지 않는다', { skip }, () => {
+  const uid = '22222222-2222-4222-8222-222222222222';
+  const sid = String(seq++);
+  // 대사가 먼저 적은 행(LS updated_at = 10:00) → 웹훅 no-user 기록(11:00) → 같은 이메일로 인증된 계정
+  sql(`insert into public.billing_unmatched(event_name, reason, ls_subscription_id, ls_customer_id, user_email, ls_status, ls_updated_at)
+    values ('reconcile-daily', 'reconcile-ls-pro-not-linked', '${sid}', '7', 'late2@example.com', 'active', '2026-10-09T10:00:00Z')`);
+  sql(`select public.record_ls_unmatched('subscription_updated', 'no-user', '${sid}', '7', 'late2@example.com', 'pro', 'active', '2026-10-09T11:00:00Z', null, null, false)`);
+  sql(`insert into auth.users(id, email, email_confirmed_at) values ('${uid}', 'late2@example.com', now()) on conflict do nothing`);
+  sql('select public.ls_link_late_signups()');
+  assert.equal(sql(`select plan || '|' || ls_subscription_id from public.entitlements where user_id = '${uid}'`), `pro|${sid}`, '연결됐다');
+  // 시각을 모르는 대사 행이었다면 #933 규칙상 멈췄을 것 — 그래서 ls-reconcile이 ls_updated_at을 채운다(test/ls-reconcile.test.mjs)
+});
+
 test('한 시간에 20행이 넘으면 푸시는 건너뛴다(행은 남는다) — 마지막에 돈다', { skip }, () => {
   const before = Number(sql(`select count(*) from public.billing_unmatched where created_at > now() - interval '1 hour'`));
   sql('truncate net.calls');
