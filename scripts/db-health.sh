@@ -33,6 +33,11 @@ select 'commit='||xact_commit, 'rollback='||xact_rollback, 'deadlocks='||deadloc
 select '# unused_indexes(>1MB)';
 select s.schemaname||'.'||s.indexrelname, pg_size_pretty(pg_relation_size(s.indexrelid)), 'scans='||s.idx_scan from pg_stat_user_indexes s join pg_index i on i.indexrelid=s.indexrelid
  where s.idx_scan=0 and not i.indisunique and not i.indisprimary and pg_relation_size(s.indexrelid)>1048576 order by pg_relation_size(s.indexrelid) desc limit 15;
+select '# msgr_live_objects_columns';  -- 20261011150000 _msgr_live_objects()는 적용할 때 있던 storage.objects 열로 본문을 만든다. 열이 새로 생겼는데 본문에 없으면 MISSING → 그 마이그레이션을 다시 적용
+select a.attname, case when to_regprocedure('public._msgr_live_objects()') is null then 'no function'
+                       when position(a.attname in pg_get_functiondef(to_regprocedure('public._msgr_live_objects()'))) > 0 then 'ok' else 'MISSING' end
+  from pg_attribute a where a.attrelid = 'storage.objects'::regclass and not a.attisdropped
+   and a.attname in ('metadata', 'owner', 'owner_id', 'archived_at', 'is_delete_marker', 'created_at') order by 1;
 select '# cron_jobs';
 select jobid, schedule, left(command,90), active from cron.job order by jobid;
 SQL

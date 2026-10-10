@@ -113,6 +113,41 @@ test('올린 지 오래된(정리 엣지가 지웠을 수 있는) 파일은 첨�
   assert.deepEqual(log, ['upload', 'attach', 'attach', 'upload', 'attach'], '21시간 뒤 — 다시 올린 뒤 첨부 행');
 });
 
+// 재검수 #946(47cda061) LOW-1: '이미 있음'(업로드 응답 유실 뒤 목록으로 찾음)은 파일이 생긴 시각이 아니다 — 그 시각으로 갱신하면 정리 엣지가
+// 이미 지웠을 파일에 첨부 행만 넣는다. 처음 시각이 없으면 오래된 것으로 보고 다음 다시 보내기에서 다시 올린다.
+test("'이미 있음'은 올린 시각을 갱신하지 않는다 — 0시간 응답 유실 → 23시간 이미 있음·행 실패 → 25시간은 다시 올린 뒤 첨부 행", async () => {
+  let t = 0; const log = [];
+  const session = createComposerDelivery(transport({
+    upload: async () => { log.push(`up@${t / 3600000}`); if (t === 0) throw Error('TypeError: Failed to fetch'); return { existed: true }; },
+    attachment: async () => { log.push(`att@${t / 3600000}`); if (t < 25 * 3600000) throw Error('metadata offline'); },
+  }), undefined, null, () => t);
+  session.setText('본문'); session.setFiles([file('z.png')]);
+  assert.equal(await session.send([]), false);
+  t = 23 * 3600000; assert.equal(await session.retry(), false);
+  t = 25 * 3600000; assert.equal(await session.retry(), true);
+  assert.deepEqual(log, ['up@0', 'up@23', 'att@23', 'up@25', 'att@25']);
+});
+
+test("새로 올린 경우는 그 시각을 남긴다 — 1시간 뒤 다시 보내기는 첨부 행만", async () => {
+  let t = 0; const log = []; let fail = true;
+  const session = createComposerDelivery(transport({
+    upload: async () => { log.push('up'); return { existed: false }; },
+    attachment: async () => { log.push('att'); if (fail) throw Error('metadata offline'); },
+  }), undefined, null, () => t);
+  session.setText('본문'); session.setFiles([file('z.png')]);
+  assert.equal(await session.send([]), false); fail = false; t = 3600000;
+  assert.equal(await session.retry(), true);
+  assert.deepEqual(log, ['up', 'att', 'att']);
+});
+
+test("transport.upload는 새로 올렸는지 '이미 있음'인지 알려 준다", async () => {
+  const mk = (uploadError, listed) => composerTransport({ storage: { from: () => ({
+    upload: async () => ({ error: uploadError }), list: async () => ({ data: listed, error: null }) }) } }, { orgId: 'o', chId: 'c', uid: 'u' });
+  const item = { id: 'a', key: '0-a.png', file: file('a.png') };
+  assert.deepEqual(await mk(null, []).upload({ messageId: 1 }, item), { existed: false });
+  assert.deepEqual(await mk({ message: 'The resource already exists' }, [{ name: 'a-0-a.png' }]).upload({ messageId: 1 }, item), { existed: true });
+});
+
 test('storage path 3rd segment is the message id — server functions msgr_bot_file and msgr_can_read_dm_attachment read it', async () => {
   const paths = [];
   const client = { storage: { from: () => ({ upload: async (path) => { paths.push(path); return { error: null }; } }) } };
