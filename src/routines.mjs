@@ -15,6 +15,7 @@ import { LOOP_VERDICT_RE, parseLoopVerdict, loopVerdictLine, stripLoopVerdict } 
 // 쓰기 위한 분리. 기존 소비자를 위해 그대로 재수출한다(임포트 경로 하위호환).
 import { normalizeTz, zonedParts, onceSpent, CATCHUP_MS, missedSlots, formatMissedSlots, MISSED_LOOKBACK_DAYS } from './routine-time.mjs';
 import { codedError } from './coded-error.mjs'; // 화면 문구 코드(F11)
+import { isGoal, goalMode } from './goal-time.mjs'; // 목표 하트비트 = 루틴 한 종류(kind 'goal') — 판정은 순수 모듈 하나(스케줄러 선점과 같은 규칙)
 export { normalizeTz, zonedParts, onceSpent, onceExpired } from './routine-time.mjs';
 
 const lockKey = (wsId) => `routines:${wsId}`;
@@ -43,6 +44,17 @@ export async function loadRoutines(wsId) {
 
 async function saveRoutines(wsId, routines) {
   await writeJsonAtomic(paths(wsId).routines, routines);
+}
+
+/** 잠금 안에서 목록을 읽고 fn(list)로 고친다 — fn이 { save: true, value }를 돌려주면 저장하고 value를 돌려준다(저장 안 하면 쓰기 0).
+    목표 하트비트(goal-heartbeat.mjs)가 만들기·상태 바꾸기·정리를 한 잠금 안에서 하려고 쓴다(루틴과 같은 파일·같은 잠금). */
+export async function editRoutines(wsId, fn) {
+  return lockRoutines(wsId, async () => {
+    const routines = await loadRoutines(wsId);
+    const r = await fn(routines);
+    if (r?.save) await saveRoutines(wsId, routines);
+    return r?.value;
+  });
 }
 
 /** Delivery status is separate from execution success, and never overwrites a newer run. */
@@ -449,6 +461,8 @@ export function sanitizeRoutinePatch(patch = {}) {
 /** opts.from — 사장 직접 턴이 아닌 턴이 고칠 때(cancel_routine의 다시 켜기) 그 크루로 출처를 바꾼다. 사람 편집(API·화면)은 출처를 지우거나 바꾸지 않는다(화이트리스트 밖). */
 export async function updateRoutine(wsId, id, patch, { from = null } = {}) {
   const clean = sanitizeRoutinePatch(patch);
+  // 목표 하트비트는 루틴 편집 경로(화면·API·메신저 편집·cancel_routine)로 바꾸지 않는다 — 켜고 끄기도 목표의 상태(일시 정지·끝)와 같이 움직여야 해서 goal-heartbeat.mjs만 쓴다
+  if (isGoal((await loadRoutines(wsId)).find((r) => r.id === id))) throw codedError('routine_is_goal', '목표 하트비트는 루틴 화면의 목표 목록에서 바꿉니다');
   if ('notifications' in clean || 'agentSlug' in clean) {
     const before = (await loadRoutines(wsId)).find((r) => r.id === id);
     if (!before) throw codedError('routine_not_found', '루틴을 찾을 수 없습니다');
@@ -491,9 +505,10 @@ export async function disableRoutinesForCrew(wsId, slug) {
     const at = new Date().toISOString();
     let n = 0;
     for (const r of routines) {
-      if (r.agentSlug !== slug || !r.enabled) continue;
+      if (r.agentSlug !== slug || (!r.enabled && !(isGoal(r) && r.goal.status === 'paused'))) continue; // 일시 정지한 목표 하트비트도 끝낸다(남으면 동시 개수 자리를 차지한다)
       r.enabled = false; r.editedAt = at; n += 1;
       if (r.loop) r.loop = { ...r.loop, stoppedReason: r.loop.stoppedReason ?? 'manual' }; // 루프 정지 사유(수동)와 같은 표시
+      if (isGoal(r) && !['done', 'blocked', 'expired', 'failed'].includes(r.goal.status)) r.goal = { ...r.goal, status: 'stopped', endedAt: at, outbox: null, claim: null }; // 해고한 에이전트의 목표 하트비트는 끝(남은 알림도 보내지 않는다 — 보낼 에이전트가 없다)
     }
     if (n) await saveRoutines(wsId, routines);
     return n;
@@ -511,6 +526,8 @@ export async function removeRoutine(wsId, id) {
     chat()은 수 분 걸리므로 락 밖에서 돌리고, 결과 기록만 락 안에서 해당 루틴 필드에 반영한다
     — 실행 도중 사용자가 다른 루틴을 지우거나 이 루틴을 꺼도 낡은 전체 스냅샷으로 되돌리지 않는다. */
 export async function runRoutine(wsId, id, { chatFn = null, startAt = null, session } = {}) {
+  // 목표 하트비트 — 같은 스케줄러 선점(lastRun)을 거쳐 왔다. 실행은 목표 엔진이 한다(동적 임포트 — chat과 같은 순환 차단 이유)
+  if (isGoal((await loadRoutines(wsId)).find((r) => r.id === id))) return (await import('./goal-heartbeat.mjs')).runGoal(wsId, id, { chatFn });
   // startAt = 테스트 전용(시작 시각 주입) — "시작이 예약 시각을 가로지르는 실행"은 실제 분 경계를
   // 기다리지 않고는 재현할 수 없다(catch의 once 끄기 판정 시계가 이 각인을 쓴다).
   // 시작 각인과 함께 놓친 회차 표지(missed — 스케줄러 recordMissedSlots)를 꺼내 비운다: 이번 실행이 대화 기록에 한 줄로 남긴다(같은 회차를 두 번 남기지 않게).
@@ -706,6 +723,7 @@ export async function runRoutine(wsId, id, { chatFn = null, startAt = null, sess
 /** 스케줄러용 — 이 분(minute)에 실행해야 하나. catch-up 정책·시간대 판정(CATCHUP_MS·zonedParts·
     normalizeTz·onceSpent)은 routine-time.mjs가 원천이다. */
 export function isDue(routine, now = new Date()) {
+  if (routine?.kind === 'goal') return !!goalMode(routine, now); // 목표 하트비트 — 다음 확인 시각·기한·하루 상한·못 보낸 알림(goal-time.mjs)
   if (!routine.enabled) return false;
   const s = routine.schedule ?? {};
   // interval — 마지막 실행에서 everyMinutes 경과 시 due. lastRun 선점(claimRoutine)이 그대로

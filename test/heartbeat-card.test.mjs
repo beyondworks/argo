@@ -240,3 +240,14 @@ test('i18n — 루틴 화면 하트비트 칸 문구는 사전에 ko/en 둘 다 
     assert.doesNotMatch(en, /\bOffice\b/, `${k} 영어에 'Office' 없음`);
   }
 });
+
+// 목표 하트비트(#926) — 목표 목록은 '내 하트비트' 칸 바로 아래, 같은 섹션의 다음 자식으로 붙는다(불러오는 중·불러온 뒤 모두)
+test('목표 목록 자리 — 알림형 칸 다음, 같은 <section id="heartbeat"> 안', async () => {
+  const marker = { type: 'div', props: { 'data-testid': 'goal-slot', children: 'goals' } };
+  const { out } = await render(mineView(), undefined, { children: marker });
+  const section = find(out(), (n) => n.props.id === 'heartbeat')[0];
+  const kids = [section.props.children].flat(Infinity).filter((n) => n && typeof n === 'object' && n.props);
+  const iCard = kids.findIndex((n) => n.props['data-heartbeat-card'] !== undefined);
+  const iGoal = kids.findIndex((n) => n.props['data-testid'] === 'goal-slot');
+  assert.ok(iCard >= 0 && iGoal === iCard + 1, `칸 다음 자식: ${iCard} → ${iGoal}`);
+});

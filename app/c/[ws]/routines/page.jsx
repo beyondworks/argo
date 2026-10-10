@@ -9,6 +9,7 @@ import { useLang } from '../../../i18n';
 import { detectDevicePaths } from '../../../../src/device-paths.mjs'; // 기기 종속 경로 안내 — 노드 의존 0 순수 모듈
 import { onceExpired } from '../../../../src/routine-time.mjs'; // '만료' 판정 — 노드 의존 0 순수 모듈(표시 전용, 상태 쓰기 없음)
 import { HeartbeatCard } from './heartbeat-card.jsx'; // 내 하트비트(개인 기능) — 회사 루틴 목록과 따로 맨 위
+import GoalList from './goal-list.jsx'; // 내 하트비트 → 목표 하트비트(목표 하트비트 — 만들기는 에이전트가 대화에서)
 import { routineCrewMissing, applyRoutineToggle, routineStateKind, activeRoutineCount, routineFailKind, routinePillView } from './routine-row.mjs';
 
 function scheduleLabel(s, t, DOW) {
@@ -305,7 +306,9 @@ export default function Routines({ params }) {
       )}
       <div className={styles.content}>
       {/* 내 하트비트 — 개인 기능이라 회사 루틴(아래 툴바·템플릿·표)과 섞지 않고 맨 위에 따로. 목표형 하트비트 목록은 이 섹션 안 아래에 붙는다 */}
-      <HeartbeatCard ws={ws} agents={agents} agentsLoaded={agentsLoaded} />
+      <HeartbeatCard ws={ws} agents={agents} agentsLoaded={agentsLoaded}>
+        <GoalList ws={ws} nameOf={nameOf} /> {/* 내 하트비트 → 목표 하트비트 — 알림형 칸 바로 아래 같은 섹션에(목표 하트비트: 이룰 때까지 확인하고 이루면 꺼짐) */}
+      </HeartbeatCard>
       <div className={styles.toolbar}>
         <span className="microlabel">{t('routines.header')}</span>
         <button className="btn sm" onClick={() => openForm()}>

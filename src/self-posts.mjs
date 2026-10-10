@@ -56,6 +56,10 @@ const oneLine = (s, max) => {
   return t.length > max ? `${t.slice(0, max - 1)}…` : t;
 };
 
+const GOAL_STATUS = { progress: ['진행 알림', 'progress'], done: ['달성', 'reached'], blocked: ['멈춤', 'blocked'], expired: ['기한이 지나 꺼짐', 'deadline passed'], failed: ['연속 실패로 꺼짐', 'stopped after failures'] };
+/** 목표 하트비트 알림의 자기 글 줄 — 제목(주인이 정한 목표 이름)·상태만. 자세한 내용은 argo_status section=goals */
+const goalPostLine = (a, lang) => pick(lang, `[목표 하트비트 · ${oneLine(a?.title, 60) || '(제목 없음)'} · ${GOAL_STATUS[a?.status]?.[0] ?? '알림'}] 자세한 내용은 argo_status section=goals`,
+  `[Goal heartbeat · ${oneLine(a?.title, 60) || '(untitled)'} · ${GOAL_STATUS[a?.status]?.[1] ?? 'notice'}] details: argo_status section=goals`);
 const HB_KIND = { pre: ['곧 시작하는 일정 알림', 'upcoming event reminder'], am: ['아침 정리', 'morning summary'], pm: ['내일 일정 요약', "tomorrow's summary"] };
 /**
  * 기록 한 줄(순수) — 남이 쓴 글이 주인 1:1 맥락(설정을 바로 바꿀 수 있는 턴)에 들어가지 않게 본문을 고른다:
@@ -69,6 +73,7 @@ export function selfPostEntry(row, { id = null, now = Date.now(), lang = 'ko', t
   if (!AUTO_KINDS.has(kind)) return null;
   let text;
   if (kind === 'routine') text = oneLine(title, 80) || pick(lang, '(제목 없는 루틴)', '(untitled routine)'); // 구획·me가 앞에 '루틴 결과'를 붙인다
+  else if (row.meta?.assistant?.kind === 'goal') text = goalPostLine(row.meta.assistant, lang); // 목표 하트비트 알림 — 본문(회차가 읽은 바깥 글 요약)은 싣지 않고 목표 제목·상태만(루틴 결과와 같은 원칙, goal-heartbeat.mjs)
   else {
     const a = row.meta?.assistant;
     const outside = outsideContextLine({ ...row, author_kind: 'crew' }, lang);
