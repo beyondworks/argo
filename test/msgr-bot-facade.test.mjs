@@ -336,3 +336,42 @@ test('sendMessage 본문의 넘김 표지는 서버가 뗀다 — 문장 끝·�
   assert.equal(rpc.calls.at(-1)[1].p_body, '집행했습니다.');
   assert.equal((await handle({ token: T, method: 'sendMessage', params: { chat_id: CH, text: 'MSGR: done' } }, rpc)).status, 400, '표지뿐이면 빈 글');
 });
+
+// 무료 계정 봇 수신 중지(2026-10-10, 판정 msgr_bot_gate) — 403을 롱폴 시간만큼 붙잡았다가 준다(401은 연결 도구가 영구 중지로 읽는다).
+// 판정 1회 뒤에는 DB 조회 0. 판정 실패(옛 DB에 함수 없음 등)는 막지 않고, 토큰 오류는 종전처럼 401.
+test('getUpdates 요금제 관문 — plan_required면 롱폴 시간만큼 DB 조회 없이 기다린 뒤 403, ok면 종전과 같다', async () => {
+  const gateCalls = [];
+  const gate = (verdict) => async (token) => { gateCalls.push(token); if (verdict instanceof Error) throw verdict; return verdict; };
+  // 무료: 403 + 이유, 업데이트 조회 0회, 대기 = timeout
+  let c = pollClock(0);
+  let r = await handle({ token: T, method: 'getUpdates', params: { delivery_protocol: 1, timeout: 20 } }, c.rpc, { ...c.opts, planGate: gate('plan_required') });
+  assert.equal(r.status, 403);
+  assert.equal(r.body.ok, false); assert.equal(r.body.error_code, 403); assert.match(r.body.description, /Argo Pro/);
+  assert.equal(c.rpc.calls.length, 0, '막힌 요청은 업데이트 RPC를 부르지 않는다');
+  assert.equal(c.now(), 20000, '롱폴 시간만큼 붙잡는다(연결 도구의 재시도 간격 = 대기 + 사다리)');
+  assert.deepEqual(gateCalls, [T], '판정은 요청당 1회');
+  // timeout 0 = 바로 403(기다리지 않는다)
+  c = pollClock(0);
+  r = await handle({ token: T, method: 'getUpdates', params: {} }, c.rpc, { ...c.opts, planGate: gate('plan_required') });
+  assert.equal(r.status, 403); assert.equal(c.now(), 0);
+  // Pro(ok) = 종전과 같다
+  c = pollClock(0);
+  r = await handle({ token: T, method: 'getUpdates', params: { delivery_protocol: 1, timeout: 20 } }, c.rpc, { ...c.opts, planGate: gate('ok') });
+  assert.equal(r.status, 200); assert.equal(r.body.result.length, 1);
+  // 판정 실패(함수 없음·시간 초과) = 막지 않는다(5xx를 주면 Hermes가 3초 간격으로 다시 온다)
+  c = pollClock(0);
+  r = await handle({ token: T, method: 'getUpdates', params: { delivery_protocol: 1, timeout: 20 } }, c.rpc, { ...c.opts, planGate: gate(new Error('Could not find the function public.msgr_bot_gate(token) in the schema cache')) });
+  assert.equal(r.status, 200); assert.equal(r.body.result.length, 1);
+  // 토큰 오류 = 401(종전 그대로)
+  c = pollClock(0);
+  r = await handle({ token: T, method: 'getUpdates', params: { timeout: 20 } }, c.rpc, { ...c.opts, planGate: gate(pgErr('msgr_bot_unauthorized')) });
+  assert.equal(r.status, 401);
+  // 관문이 없는 호출(테스트·옛 배포) = 종전 그대로
+  c = pollClock(0);
+  r = await handle({ token: T, method: 'getUpdates', params: { delivery_protocol: 1, timeout: 20 } }, c.rpc, c.opts);
+  assert.equal(r.status, 200);
+  // 다른 메서드는 관문을 보지 않는다(보낼 글·결재 회신은 막지 않는다)
+  gateCalls.length = 0;
+  await handle({ token: T, method: 'getMe' }, fakeRpc({ msgr_bot_me: { bot_id: 'b1' } }), { planGate: gate('plan_required') });
+  assert.deepEqual(gateCalls, []);
+});

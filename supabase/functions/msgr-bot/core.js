@@ -33,6 +33,8 @@ const ERR = {
   msgr_bot_bad_body: [400, 'Bad Request: body must contain 1 to 20000 characters'],
   msgr_bot_handoff_limit: [409, 'Conflict: conversation handoff limit reached'],
   msgr_bot_unauthorized: [401, 'Unauthorized: bad or revoked bot token'],
+  // 2026-10-10 에이전트 주인이 Pro가 아니면 외부 봇 수신 중지(판정 msgr_bot_gate). 401 금지 — 연결 도구(Hermes·OpenClaw)가 401만 '영구 중지·토큰 회전'으로 읽는다.
+  msgr_bot_plan_required: [403, 'Forbidden: external agent connections need Argo Pro for the agent owner — upgrade in Argo Messenger'],
   msgr_org_unentitled: [403, 'Forbidden: this organization free period has ended, crew work is paused'], // 2026-09-27 M3 — DB 트리거(msgr_message_entitlement_gate)가 막을 때 500이 아니라 의미 있는 응답
   msgr_not_allowed: [403, 'Forbidden: crew allow policy or channel policy rejects this author'],
   msgr_bot_not_member: [403, 'Forbidden: add the bot to this channel first'],
@@ -107,7 +109,7 @@ const reply = (status, result) => ({ status, body: { ok: true, result } });
 const fail = (status, description) => ({ status, body: { ok: false, error_code: status, description } });
 
 // rpc(fn, args) → JSON. PostgREST 오류는 {message, code, details}를 throw.
-export async function handle({ token, method, params = {} }, rpc, { sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = Date.now, maxWaitMs = MAX_WAIT_MS, sign = null, signUpload = null, purgeUploads = null } = {}) {
+export async function handle({ token, method, params = {} }, rpc, { sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = Date.now, maxWaitMs = MAX_WAIT_MS, sign = null, signUpload = null, purgeUploads = null, planGate = null } = {}) {
   if (!token) return fail(401, 'Unauthorized: token missing (use /bot<token>/<method> or Authorization: Bearer)');
   if (!METHODS.includes(method)) return fail(404, `Not Found: method ${method || '(none)'} — supported: ${METHODS.join(', ')}`);
   try {
@@ -121,6 +123,16 @@ export async function handle({ token, method, params = {} }, rpc, { sleep = (ms)
       const waitMs = Math.min(maxWaitMs, Math.max(0, Number(params.timeout) || 0) * 1000);
       const start = now();
       const deadline = start + waitMs;
+      // 무료 계정 봇(2026-10-10): 판정 1회 → 롱폴 시간만큼 DB 조회 없이 붙잡았다가 403. 연결 도구는 403을 1→30초 사다리로 다시 오므로 간격 = 대기 + 사다리.
+      // 판정 실패(옛 DB에 함수 없음·시간 초과)는 막지 않는다 — 5xx를 주면 Hermes가 3초 간격으로 다시 온다. 토큰 오류는 종전처럼 401.
+      if (planGate) {
+        const verdict = await planGate(token).catch((e) => {
+          if (/msgr_bot_unauthorized/.test(String(e?.message ?? ''))) throw e;
+          console.warn('[msgr-bot] plan gate skipped:', String(e?.message ?? '').slice(0, 200));
+          return 'ok';
+        });
+        if (verdict === 'plan_required') { await sleep(Math.max(0, deadline - now())); return fail(...ERR.msgr_bot_plan_required); }
+      }
       // 이벤트(루틴 편집·결재 결정)는 옵트인(events=1)한 어댑터에게만, 요청당 한 번 조회한다. update_id·offset과 무관하고
       // 서버가 60초 임대로 중복을 막는다. 이벤트 조회는 선택 기능 — 어떤 오류든(옛 서버의 RPC 없음, 시간 초과, 교착) 메시지 수신을
       // 막지 않게 빈 목록으로 넘긴다(검수 M-5). 서버가 닫힐 때까지 다시 보내므로 유실은 없다. 토큰 오류는 아래 메시지 조회가 401로 알린다.

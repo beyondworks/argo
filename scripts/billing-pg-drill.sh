@@ -42,6 +42,9 @@ FAILED=()
 for f in "${FILES[@]}"; do
   i=$((i + 1)); db="argo_drill_$i"
   psql "postgresql://postgres@127.0.0.1:$PORT/postgres" -X -q -c "create database $db"
+  # 무료 계정 에이전트 일시 중지(20261010200000) 끄기 — 다른 pg 테스트의 사용자는 Pro를 전제로 쓰였다(결제 행 없이 에이전트를 active로 넣는다).
+  # 이 기능 시험(test/msgr-crews-pro-pause-pg.test.mjs)은 자기 DB에서 on으로 되돌린다.
+  psql "postgresql://postgres@127.0.0.1:$PORT/postgres" -X -q -c "alter database $db set msgr.pro_gate = 'off'"
   echo "[drill] $f → $db"
   # 실패해도 멈추지 않고 끝까지 돈다 — 첫 실패에서 서면 뒤 파일이 안 보여 "전부 통과"로 오독한다(실측 2026-09-16).
   out="$DIR/out_$i.tap"

@@ -62,6 +62,7 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify(out), { status, headers: { 'Content-Type': 'application/json' } });
   }
   const parsed = parseRequest(req.url, Object.fromEntries(req.headers), body);
-  const { status, body: out } = await handle(parsed, rpc, { sign, signUpload, purgeUploads });
+  // planGate: 에이전트 주인이 Pro가 아니면 getUpdates를 403으로(20261010200100 msgr_bot_gate). 요청당 RPC 1회.
+  const { status, body: out } = await handle(parsed, rpc, { sign, signUpload, purgeUploads, planGate: (token: string) => rpc('msgr_bot_gate', { token }) });
   return new Response(JSON.stringify(out), { status, headers: { 'Content-Type': 'application/json' } });
 });

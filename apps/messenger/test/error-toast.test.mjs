@@ -13,6 +13,8 @@ for (const lang of ['ko', 'en']) {
     assert.equal(toastError('Load failed', { t }), t('err.offline'));
     assert.equal(toastError('new row violates row-level security policy for table "msgr_channels"', { t }), t('err.denied'));
     assert.equal(toastError('msgr_room_limit', { t }), t('room.limit'));
+    assert.equal(toastError('msgr_pro_required', { t }), t('err.proRequired')); // 무료 계정 에이전트 파견(2026-10-10 서버 관문)
+    assert.notEqual(t('err.proRequired'), 'err.proRequired');
     for (const raw of ['duplicate key value violates unique constraint "msgr_channels_org_id_name_key"', "TypeError: Cannot read properties of undefined (reading 'id')", 'JWT expired', 'PGRST116: JSON object requested, multiple (or no) rows returned', 'Edge Function returned a non-2xx status code'])
       assert.equal(toastError(raw, { t }), t('err.raw'), raw);
     assert.notEqual(t('err.raw'), 'err.raw'); assert.notEqual(t('err.offline'), 'err.offline');
