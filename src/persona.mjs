@@ -435,6 +435,11 @@ function splitCardBody(md) {
 // 섹션 사이는 빈 줄 하나로 정규화 — 편집 단위가 섹션이라 경계 공백은 여기서만 정한다.
 const joinCardBody = ({ head, parts }) => (head ? head.replace(/\n*$/, '\n\n') : '') + parts.map((p) => (p.title === null ? p.text.replace(/\s+$/, '') : `## ${p.title}${p.text.trim() ? `\n${p.text.trim()}` : ''}`)).filter((t) => t.trim()).join('\n\n') + '\n';
 const rulesOf = (text) => text.split('\n').map((l) => l.replace(/^[-*]\s*/, '').trim()).filter((l) => l && !l.startsWith('('));
+/** 카드의 "## 일하는 방식" 규칙 목록(순수) — 카드 화면(CardPanel)·setAgentRules와 같은 파싱. 에이전트 자기 설정(argo-self.mjs)이 화면과 같은 목록을 본다. */
+export function cardRules(md) {
+  const sec = splitCardBody(String(md ?? '')).parts.find((p) => p.title === '일하는 방식');
+  return sec ? rulesOf(sec.text) : [];
+}
 
 /** 카드 섹션 제목 목록(frontmatter 제외) — 화면·크루 도구가 "어디를 고칠 수 있나"를 같은 목록으로 본다. */
 export async function listAgentSections(wsId, slug) {

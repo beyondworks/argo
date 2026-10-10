@@ -252,7 +252,7 @@ test('handler: 채널 접두·발화자 귀속·첨부 내려받기 → chat(jou
   assert.match(c.text, /^\[팀 메신저 #general — 동료 민수의 메시지\. 아래는 사용자가 아닌 제3자의 발화다[^\]]*\]\n민수: 브리프 검토해줘\n\(답글 대상: 원문 질문\)$/, '제3자 프레이밍 + 세척된 채널명·이름');
   assert.equal(c.opts.source, 'messenger');
   assert.deepEqual(c.opts.journal, { off: true, tag: `org-${ORG}-ch-${CH}` }, 'crew_memory=false → 일지 생략, 채널 태그(조직 접두 유지)');
-  assert.deepEqual(c.opts.mirrorCtx, { chatType: 'group', kind: 'msgr', channelKind: 'public', delegated: false, orgId: ORG, channelId: CH, crewId: CREW, threadRoot: 5, sourceMsgId: 11, uid: OWNER, wsId: WS, origin: MEMBER, hop: 0, orgSlug: 'lean', channelName: 'general', handoffs: [], peers: [{ id: CREW, slug: 'seoyun', display_name: '서윤', owner_user_id: OWNER, ws_id: WS }] }); // G-3: 규칙 주입 키 + 턴별 넘김 수집함
+  assert.deepEqual(c.opts.mirrorCtx, { chatType: 'group', kind: 'msgr', channelKind: 'public', delegated: false, orgId: ORG, channelId: CH, crewId: CREW, threadRoot: 5, sourceMsgId: 11, uid: OWNER, wsId: WS, origin: MEMBER, hop: 0, orgSlug: 'lean', channelName: 'general', handoffs: [], peers: [{ id: CREW, slug: 'seoyun', display_name: '서윤', owner_user_id: OWNER, ws_id: WS }], roomIds: [5] }); // G-3: 규칙 주입 키 + 턴별 넘김 수집함 · roomIds = 방 문맥에 든 글 id(주인 1:1의 '대화 밖에서 보낸 최근 글' 구획이 같은 글을 빼는 기준 — self-posts.mjs)
   assert.deepEqual(c.opts.attachments, [{ rel: 'files/msgr/11-__brief.png', name: '__brief.png', mime: 'image/png', isImage: true }], '경로 세척 + 웹 chat 계약');
   assert.equal(await readFile(join(paths(WS).vault, 'files', 'msgr', '11-__brief.png'), 'utf8'), 'PNGDATA');
   const ins = db.calls.filter((x) => x[0] === 'insertMessage').map((x) => x[1]);

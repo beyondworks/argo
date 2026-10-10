@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import { at, dateLabel } from './text.mjs';
 import { hhmmIn, dateIn, addDays } from './rules.mjs';
 import { preKey, eveKey, dayKey } from './calendar.mjs';
+import { recordSelfPost } from '../self-posts.mjs';
 
 export const MSG_MAX = 20_000;   // msgr_messages.body check 제약과 같다(gateway/msgr.mjs MSG_MAX)
 export const SECTION_MAX = 30;   // 한 칸에 보이는 줄 상한 — 넘으면 "…외 N건"
@@ -34,7 +35,11 @@ export async function insertNotice(c, room, ob) {
     client_msg_id: clientMsgId(room.crewId, ob.basis), body: String(ob.body).slice(0, MSG_MAX), mentions: [],
     meta: { disposition: 'done', notification: 'assistant', assistant: ob.meta },
   };
-  return (await c.db.insertMessage(row)) ? 'sent' : 'dup';
+  const ins = await c.db.insertMessage(row);
+  if (!ins) return 'dup';
+  // 개인 공간 1:1에 올린 자기 글 기록(self-posts.mjs) — 에이전트가 다음 주인 1:1 턴에서 '내가 보낸 하트비트 알림'으로 알아본다. room.ws·room.slug가 있을 때만(tick.mjs가 싣는다)
+  if (room.ws && room.slug) await recordSelfPost(room.ws, room.slug, row, { id: ins.id ?? null, personal: true, lang: room.lang ?? 'ko' });
+  return 'sent';
 }
 
 /* ── 글 만들기(템플릿) ── */

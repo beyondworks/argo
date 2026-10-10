@@ -133,7 +133,7 @@ async function send(cid, m, c, cfg, now, lang, { recheck = false } = {}) {
   }
   try {
     ob.body = refreshPreBody(ob, { now, lang, tz: cfg.tz });
-    await insertNotice(c, m.room, ob);
+    await insertNotice(c, { ...m.room, ws: cid, lang }, ob); // ws·lang — 보낸 글을 자기 글 기록에 남긴다(deliver.mjs insertNotice → self-posts.mjs)
   } catch (e) {
     m.room = null;
     return retryLater('deliver_failed', '알림을 보내지 못해 대기열에 두었습니다', e);
