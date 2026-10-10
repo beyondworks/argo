@@ -775,7 +775,7 @@ input[role='switch']:checked::after { transform: translateX(14px); background: v
 .login { min-height: 100dvh; display: grid; place-items: center; padding: 24px 16px; background: var(--bg); }
 .login-card { width: min(380px, 100%); display: grid; gap: 10px; padding: 28px 24px; border-radius: var(--rs); background: var(--surface); }
 .login-card h1 { font-size: 20px; font-weight: 680; letter-spacing: -0.02em; }
-.login-mark { width: 34px; height: 34px; font-size: 15px; background: var(--primary); color: var(--primary-fg); border-radius: var(--rc); }
+.login-mark { width: 44px; height: 44px; border-radius: 22%; } /* 오피스 로고(public/icon-192.png — scripts/office-icon.mjs 원본, 유건 10/10 'A' 대신 로고) */
 .login-buttons { display: grid; gap: 8px; margin-top: 8px; }
 .login-buttons .btn { height: 40px; }
 .login-dev { display: grid; gap: 8px; margin-top: 12px; padding-top: 14px; border-top: 1px solid var(--border-soft); }

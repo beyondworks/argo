@@ -88,7 +88,7 @@ function Boot({ screen = false }) {
   const [slow, setSlow] = useState(false);
   useEffect(() => { const id = setTimeout(() => setSlow(true), 8000); return () => clearTimeout(id); }, []);
   return <div className={screen ? 'boot screen' : 'boot'} role="status" aria-busy="true" aria-label={t('login.loading')}>
-    {!screen && <span className="space-mark login-mark">A</span>}<span className="boot-spin" />
+    {!screen && <img className="login-mark" src="/icon-192.png" alt="" />}<span className="boot-spin" />
     {slow && <p className="dim small">{t('boot.slow')} <button type="button" className="link-btn" onClick={() => location.reload()}>{t('desktop.retry')}</button></p>}
   </div>;
 }
