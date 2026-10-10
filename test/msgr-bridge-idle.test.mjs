@@ -50,11 +50,12 @@ async function harness({ inbox = () => [], local = async () => 'L0', node = fals
       chans.set(topic, ch); return ch;
     },
     rpc: async (name) => { calls.push({ name: `rpc:${name}`, t: Date.now() }); return { data: [], error: null }; },
+    realtime: { up: true, kicks: 0, isConnected() { return this.up; }, async disconnect() { this.kicks++; }, connect() {} },
   };
   const join = (topic, { callback = true } = {}) => { const ch = chans.get(topic); assert.ok(ch, `구독 안 됨: ${topic}`); ch.state = 'joined'; if (callback) ch.cb?.('SUBSCRIBED'); };
   const drop = (topic, status = 'CHANNEL_ERROR') => { const ch = chans.get(topic); ch.state = 'errored'; ch.cb?.(status); };
   const stop = M.startMsgrBridge(ws, { session: async () => ({ uid: UID, db, client }), pollMs: POLL, runnerReady: null, localState: local });
-  return { ws, calls, at, chans, join, drop, stop, client };
+  return { ws, calls, at, chans, join, drop, stop, client, rt: client.realtime };
 }
 const settle = async () => { for (let i = 0; i < 6; i++) { await new Promise((r) => setTimeout(r, 5)); await new Promise((r) => setImmediate(r)); } };
 async function advance(ms) { for (let t = 0; t < ms; t += POLL) { mock.timers.tick(POLL); await settle(); } }
@@ -235,6 +236,21 @@ test('⑨ 닫힌 채널(같은 토픽을 쓰던 다른 회사가 해제)은 다�
     const d2 = drains(h);
     await advance(60_000);
     assert.equal(drains(h), d2, '다시 붙은 뒤 쉬는 주기');
+  } finally { h.stop(); }
+});
+
+test('⑪ Realtime 소켓이 1분 넘게 끊겨 있으면(스스로 다시 붙지 않는 realtime-js) 끊었다 다시 연결한다 — 붙어 있으면 건드리지 않는다', async () => {
+  const h = await start();
+  try {
+    joinAll(h); await settle(); await advance(120_000);
+    assert.equal(h.rt.kicks, 0, '붙어 있는 동안 다시 연결하지 않는다');
+    h.rt.up = false; h.drop(`org:${ORG}`); h.drop(`u:${UID}`);
+    await advance(45_000);
+    assert.equal(h.rt.kicks, 0, '1분 전에는 기다린다');
+    await advance(30_000);
+    assert.equal(h.rt.kicks, 1, '1분 넘게 끊기면 한 번 다시 연결');
+    await advance(30_000);
+    assert.equal(h.rt.kicks, 1, '다음 시도는 1분 뒤');
   } finally { h.stop(); }
 });
 

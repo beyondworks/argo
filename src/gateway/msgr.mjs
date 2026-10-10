@@ -69,6 +69,9 @@ export const IDLE_POLL_MS = 120_000;
 /** 쉬는 동안 접속 심박 요청 간격 — 마지막 심박 요청 뒤 이만큼 지난 첫 15초 틱에 보낸다(간격 40~55초). 서버 기록 기한(msgr_device_beat 35초)보다 늘 길어
     요청마다 기록되고, 최대 간격은 종전 15초 틱 실측(54.6초, 20261010120000 머리말)과 같다 — 옛 메신저의 행 나이 + 재조회 30초 < 부재중 90초. */
 export const BEAT_EVERY_MS = 40_000;
+/** Realtime 소켓이 이만큼 계속 끊겨 있으면 다시 연결한다. 실측(2026-10-10, 로컬 Supabase, realtime-js 2.110.2·Node): Realtime 서버가 잠깐 내려갔다 올라오면
+    소켓이 'connecting'에 멈춰 스스로 다시 붙지 않는다(새 채널 구독·connect()도 안 됨, disconnect() 뒤 connect()는 1.5초 만에 다시 붙음). 안 붙은 동안은 15초 조회로 완결된다. */
+export const RT_STUCK_MS = 60_000;
 export const STALE_MS = 24 * 3_600_000; // 이보다 오래 대기한 지시는 실행 대신 정직 폐기(queue.mjs LEGACY_JOB_MAX_AGE_MS 관례)
 export const AWAY_NOTE_MS = 90_000;     // 이보다 늦게 처리한 답글엔 "(부재중 대기분 · N분 전 지시)" 접두
 export const PAGE = 50;                 // 크루당 1회 drain 최대 메시지 — 비용 폭주 방지(나머지는 다음 tick)
@@ -2365,6 +2368,7 @@ export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_M
   let localSeen = null;      // 마지막 관리 틱 직전에 본 로컬 상태 지문
   let beatPlan = null;       // 마지막 관리 틱이 심박한 대상({ uid, ids, workIds, beat }) — 쉬는 틱이 같은 대상으로 심박만 보낸다
   let lastBeatAt = -Infinity; // 마지막으로 성공한 심박 요청을 보낸 시각
+  let rtDownSince = null;    // Realtime 소켓이 끊겨 있는 것을 처음 본 시각(RT_STUCK_MS)
   let lastGw = null;         // 마지막으로 쓴 연결 상태([ok, error]) — 쉬는 틱이 다시 써서 설정 화면 40초 창(connections.mjs readGatewayStatus)을 지킨다
   const gw = (ok, error = '') => { lastGw = [ok, error]; return beatGateway(wsId, MSGR_KEY, ok, error).catch(() => {}); };
   const joined = (ch) => !!ch && ch.__client === lastClient && (typeof ch.state === 'string' ? ch.state === 'joined' : ch.__status === 'SUBSCRIBED'); // 같은 토픽을 여러 회사가 같이 쓰면 두 번째 subscribe의 콜백은 오지 않는다 — 채널 상태가 정본
@@ -2401,6 +2405,17 @@ export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_M
       if (ownerId !== c.uid) { held = true; await beatGateway(wsId, MSGR_KEY, false, '이 회사의 소유자 계정이 아님 — 소유자로 로그인 필요').catch(() => {}); return { skipped: 'owner' }; }
       nodeCompany = !!msgr?.nodeOrgId;
       lastClient = c.client; // 클라이언트가 바뀌면(토큰 회전) 옛 채널은 붙은 것으로 보지 않는다(joined) — 전체 조회 뒤 subscribe가 새로 구독한다
+      // 멈춘 소켓 다시 연결 — 클라이언트(=소켓)는 같은 계정의 회사들이 같이 쓰므로 클라이언트 단위로 RT_STUCK_MS에 한 번만
+      const rt = wantOrgs !== null ? c.client?.realtime : null;
+      if (rt && typeof rt.isConnected === 'function' && !rt.isConnected()) {
+        rtDownSince ??= t;
+        if (t - rtDownSince >= RT_STUCK_MS && t - (c.client.__rtKickAt ?? -Infinity) >= RT_STUCK_MS) {
+          c.client.__rtKickAt = t; rtDownSince = null;
+          console.warn(`[argo] msgr realtime 연결이 ${Math.round(RT_STUCK_MS / 1000)}초 넘게 끊겨 다시 연결합니다(${wsId})`);
+          try { await rt.disconnect(); } catch { /* 무해 */ }
+          try { rt.connect(); } catch (e) { console.warn('[argo] msgr realtime 다시 연결 실패:', e?.message ?? e); }
+        }
+      } else rtDownSince = null;
       let mode = kind;
       if (kind === 'fire') {
         const { healthy, rejoined } = checkHealth();
