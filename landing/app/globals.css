@@ -1170,6 +1170,44 @@ video {
   color: var(--fg-3);
 }
 
+/* 결제 전 로그인(/checkout, 2026-10-10) — 요금제 카드의 price-cta를 그대로 쓴다. 버튼 요소일 때만 기본 모양을 지운다 */
+.checkout-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 360px;
+  margin: 26px 0 14px;
+}
+button.price-cta {
+  width: 100%;
+  background: transparent;
+  cursor: pointer;
+  font-family: var(--mono);
+}
+button.price-cta:disabled {
+  opacity: 0.55;
+  cursor: progress;
+}
+.checkout-plan {
+  color: var(--gold);
+  margin-bottom: 18px;
+}
+.checkout-status,
+.checkout-fine {
+  color: var(--fg-3);
+  font-size: 14px;
+}
+.checkout-error {
+  color: #f0a59a;
+}
+.checkout-account {
+  margin-top: 14px;
+  font-family: var(--mono);
+  font-size: 15px;
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+
 /* ── FAQ — 컨텍트 아래 Q&A(2026-08-06). 네이티브 details 아코디언 ── */
 .faq-section {
   padding: clamp(60px, 11svh, 120px) var(--pad-x);
