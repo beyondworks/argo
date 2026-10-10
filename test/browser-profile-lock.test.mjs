@@ -61,6 +61,25 @@ test('killWithLadder: SIGTERM을 먼저 보내고, 안 죽을 때만 SIGKILL', a
   assert.deepEqual(gone.filter((s) => !s.endsWith(':0')), ['7:SIGTERM'], 'SIGTERM으로 죽으면 SIGKILL을 보내지 않는다');
 });
 
+// 윈도우 크롬은 강제 종료 뒤에도 실제로 끝날 때까지 몇 초간 프로필 lockfile을 쥔다(10/10 winpc 실측 6.4초). kill()이 그 전에 돌아오면
+// 같은 프로필의 다음 기동이 'Lock file can not be created'(code 21)로 죽었다 — 기동이 멈춘 뒤 다시 띄우는 경로(#916 CI)가 복구되지 않던 원인.
+test('BrowserSession.kill: SIGTERM에 안 끝나면 SIGKILL을 보내고, 자식이 실제로 끝날 때까지 기다린다', async () => {
+  const { EventEmitter } = await import('node:events');
+  const signals = [];
+  const child = Object.assign(new EventEmitter(), { exitCode: null, signalCode: null, kill(sig = 'SIGTERM') {
+    signals.push(sig);
+    if (sig === 'SIGKILL') setTimeout(() => { child.signalCode = 'SIGKILL'; child.emit('exit', null, 'SIGKILL'); }, 300); // 강제 종료도 끝나는 데 시간이 걸린다
+  } });
+  const s = new BrowserSession('w', { env: {}, headless: true }); s.child = child;
+  const hold = setInterval(() => {}, 1000); // kill()의 대기 타이머는 unref다 — 실제 자식 대신 가짜라 루프를 붙잡아 둔다
+  try { await s.kill(); } finally { clearInterval(hold); }
+  assert.deepEqual(signals, ['SIGTERM', 'SIGKILL']);
+  assert.equal(child.signalCode, 'SIGKILL', 'kill()은 자식의 exit를 본 뒤에 돌아온다');
+  const quick = Object.assign(new EventEmitter(), { exitCode: null, signalCode: null, kill(sig = 'SIGTERM') { signals.push(`quick:${sig}`); setImmediate(() => { quick.exitCode = 0; quick.emit('exit', 0, null); }); } });
+  s.child = quick; await s.kill();
+  assert.deepEqual(signals.slice(2), ['quick:SIGTERM'], 'SIGTERM에 끝나면 SIGKILL은 보내지 않는다');
+});
+
 test('devToolsUrlFromFile: 스폰 이전에 쓰인 포트 파일은 채택하지 않는다(남의 크롬 것)', async () => {
   const profile = await mkdtemp(join(tmpdir(), 'argo-portfile-'));
   const file = join(profile, 'DevToolsActivePort');

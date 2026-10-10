@@ -61,7 +61,7 @@ class Cdp {
   send(method, params = {}, sessionId) {
     const id = ++this.id;
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error('Browser command timed out')); }, 30_000); timer.unref?.();
+      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error(`Browser command timed out (${method})`)); }, 30_000); // 명령 이름 — 어느 단계가 멈췄는지 실패 기록만으로 보이게(10/9 #916 CI) timer.unref?.();
       const res = (value) => { clearTimeout(timer); resolve(value); }; const rej = (error) => { clearTimeout(timer); reject(error); };
       this.pending.set(id, { res, rej, sessionId });
       try { this.ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) })); } catch (e) { this.pending.delete(id); rej(e); }
@@ -275,9 +275,14 @@ export class BrowserSession {
   /** 자식 종료 — SIGTERM 뒤 최대 1.5초 기다렸다가 살아 있으면 SIGKILL(await — unref 타이머는 프로세스가 먼저 끝나면 안 발화해 고아를 남겼다, 4R MEDIUM). */
   async kill() {
     const c = this.child; if (!c || c.exitCode !== null || c.signalCode !== null) return;
+    const exited = new Promise((r) => c.once('exit', r));
+    const exitWithin = async (ms) => { let t; await Promise.race([exited, new Promise((r) => { t = setTimeout(r, ms); t.unref?.(); })]); clearTimeout(t); return c.exitCode !== null || c.signalCode !== null; }; // 타이머가 프로세스 종료를 붙잡지 않게(5R LOW)
     try { c.kill(); } catch { /* */ }
-    let t; await Promise.race([new Promise((r) => c.once('exit', r)), new Promise((r) => { t = setTimeout(r, 1500); t.unref?.(); })]); clearTimeout(t); // 타이머가 프로세스 종료를 붙잡지 않게(5R LOW)
-    if (c.exitCode === null && c.signalCode === null) { try { c.kill('SIGKILL'); } catch { /* */ } }
+    if (await exitWithin(1500)) return;
+    try { c.kill('SIGKILL'); } catch { /* */ }
+    // 강제 종료도 바로 끝나지 않는다 — 윈도우 크롬은 실제로 끝날 때까지 프로필 lockfile을 쥐고 있어, 기다리지 않고 돌아가면 같은 프로필의 다음 기동이
+    // 'Lock file can not be created'(code 21)로 죽었다(10/10 winpc 실측: close() 뒤 6.4초 동안 잠김 — 기동이 멈춘 뒤의 재시도·K58 복구가 실패하던 원인).
+    await exitWithin(10_000);
   }
   async close() {
     if (this.closing) return this.closing;
