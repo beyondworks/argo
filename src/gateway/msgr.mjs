@@ -24,7 +24,7 @@ import { dirname, join, relative } from 'node:path';
 import { getFreshDeviceSession } from '../devicesession.mjs';
 import { interruptTurn } from '../turn-abort.mjs';
 import { createAgentCard } from '../persona.mjs'; // I-5: 회사 노드가 요청 행으로 카드를 쓴다(모델 호출 없음)
-import { paths, loadCompany, updateCompany } from '../workspace.mjs';
+import { paths, loadCompany, updateCompany, getDeviceId } from '../workspace.mjs';
 import { enqueueJob, DEFER } from './queue.mjs';
 import { pick } from './protocol.mjs';
 import { msgrHead, MSGR_NOW, msgrContextHead, msgrReplyLine, MSGR_ATTACH_FAIL, routineNoticeTail } from '../inbound-marks.mjs';
@@ -125,6 +125,9 @@ export async function crewMemoryForMail(crewId, channelId) {
   const c = await sessionClient().catch(() => null);
   return c ? crewMemoryCached(c.db, crewId, channelId) : undefined;
 }
+// 기기 단위 심박(20261010120000) — 서버에 함수·계산 열이 없다고 본 시각. 10분 뒤 다시 본다(운영 적용 전에 켜진 앱이 재시작 없이 넘어가게). (export: 테스트 초기화용)
+const DEVICE_BEAT_RECHECK_MS = 10 * 60_000;
+export const deviceBeatRpc = { missingAt: 0, seenMissingAt: 0 };
 const purgeAt = new Map(); const PURGE_MS = 10 * 60_000; // wsId → 마지막 회수 판정. 회사마다 10분에 한 번(검수 #691 LOW-2 — 15초 틱마다 부르던 것, 재검 MEDIUM — 전역 하나면 첫 회사만 돌았다)
 export async function syncOrgDocs(wsId, orgId, { db, log = console.error } = {}) {
   const org = await db.org(orgId); if (!org) return { skipped: 'no-org' };
@@ -256,11 +259,21 @@ export function makeDb(client) {
       if (error) { if (['PGRST202', '42883'].includes(error.code)) return null; throw new Error(`msgr db: ${error.message}`); }
       return new Map((data ?? []).filter((r) => typeof r.present === 'boolean').map((r) => [`${r.slug}:${String(r.id).toLowerCase()}`, r.present])); // present null = 판정 없음(이 계정에 이 회사 에이전트 행이 없음) — 지우지 않는다
     },
-    async heartbeat(ids) {
-      // HEARTBEAT_WRITE_MS(30초) 넘게 지난 행만 쓴다 — 15초 틱마다 모든 크루 행을 갱신해 msgr_crews가 분당 1,335행씩 다시 써졌다(2026-09-23 DB 점검).
+    /** 접속 심박. beat = { wsId, deviceId }가 있으면 기기 단위 심박 RPC 한 번(20261010120000 — 기기 행 + 옛 읽기 호환 행 + 업무 기능 표시)을 쓰고 { device: true }를 돌려준다
+        (호출부는 그때 workHeartbeat를 따로 보내지 않는다). 옛 서버(함수 없음)면 10분 동안 종전 경로 — 행마다 PATCH. */
+    async heartbeat(ids, beat = null) {
+      if (!ids.length) return undefined;
+      if (beat?.wsId && beat?.deviceId && String(beat.deviceId).length <= 200 && Date.now() - deviceBeatRpc.missingAt > DEVICE_BEAT_RECHECK_MS) { // 200자 넘는 .device-id(손으로 고친 경우)는 서버가 거절한다 — 매 틱 실패 대신 종전 경로(검수 L4)
+        const { error } = await client.rpc('msgr_device_beat', { p_ws: beat.wsId, p_device: beat.deviceId, p_crews: ids });
+        if (!error) return { device: true };
+        if (!['PGRST202', '42883'].includes(error.code)) throw new Error(`msgr db: ${error.message}`);
+        deviceBeatRpc.missingAt = Date.now(); // 운영 적용 전 서버 — 틱마다 실패할 요청을 다시 보내지 않는다(DB 위생)
+      }
+      // 종전 경로: HEARTBEAT_WRITE_MS(30초) 넘게 지난 행만 쓴다 — 15초 틱마다 모든 크루 행을 갱신해 msgr_crews가 분당 1,335행씩 다시 써졌다(2026-09-23 DB 점검).
       // 부재중 판정은 전부 90초(앱 AWAY_MS·work_runs·handoff) — 행 나이 최대 45초에 앱 재조회 30초를 더해도 안쪽.
-      if (ids.length) unwrap(await client.from('msgr_crews').update({ last_seen_at: new Date().toISOString() }).in('id', ids)
+      unwrap(await client.from('msgr_crews').update({ last_seen_at: new Date().toISOString() }).in('id', ids)
         .or(`last_seen_at.is.null,last_seen_at.lt.${new Date(Date.now() - HEARTBEAT_WRITE_MS).toISOString()}`));
+      return undefined;
     },
     /** 크루 인벤토리(2026-09-07 유건 지시 "슬랙처럼 내 에이전트 목록"): 내가 활성 멤버인 조직 목록. */
     async myOrgIds(uid) {
@@ -461,7 +474,15 @@ export function makeDb(client) {
     /** 넘김 대상의 마지막 심박 — { id: last_seen_at|null }. 부재중 표시용(msgr-handoff.mjs renderMessengerHandoffs). */
     async crewSeen(ids) {
       if (!ids.length) return {};
-      const rows = unwrap(await client.from('msgr_crews').select('id, last_seen_at').in('id', ids)) ?? [];
+      // 기기 단위 심박을 합친 계산 열(msgr_crew_seen)로 읽는다 — 상대 에이전트의 행은 덜 자주 고쳐 쓰인다(20261010120000). 옛 서버(함수 없음)면 행 시각 그대로.
+      let rows;
+      if (Date.now() - deviceBeatRpc.seenMissingAt > DEVICE_BEAT_RECHECK_MS) {
+        const { data, error } = await client.from('msgr_crews').select('id, last_seen_at:msgr_crew_seen').in('id', ids);
+        if (!error) rows = data ?? [];
+        else if (/msgr_crew_seen/.test(error.message ?? '')) deviceBeatRpc.seenMissingAt = Date.now();
+        else throw new Error(`msgr db: ${error.message}`);
+      }
+      rows ??= unwrap(await client.from('msgr_crews').select('id, last_seen_at').in('id', ids)) ?? [];
       return Object.fromEntries(rows.map((r) => [r.id, r.last_seen_at ?? null]));
     },
     /** 조직의 활성 크루 전부(남의 것 포함) — @넘김 후보·이름 표시. RLS: 조직 멤버면 읽힌다. */
@@ -1096,7 +1117,8 @@ async function periodicRecall(wsId, { db, uid, inventory }) {
   } catch (e) { console.error('[argo] msgr 에이전트 기억 회수 실패:', e?.message ?? e); }
 }
 
-export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, now = Date.now, nodeOrgId = null, ownerId = null, runnerInfo = nodeRunnerInfo, inventory = listAgentsForInventory, commandsFor = listCommandsForWs, housekeeping = true, runnerReady = null } = {}) {
+export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, now = Date.now, nodeOrgId = null, ownerId = null, runnerInfo = nodeRunnerInfo, inventory = listAgentsForInventory, commandsFor = listCommandsForWs, housekeeping = true, runnerReady = null, deviceId = null } = {}) {
+  // deviceId — 이 기기의 id(workspace.mjs getDeviceId). 있으면 기기 단위 심박(아래 beat), 없으면(테스트·옛 호출) 종전 행 심박.
   // runnerReady(wsId, slug) — 이 프로세스가 그 크루의 턴을 돌릴 수 있나(운영은 startMsgrBridge가 chat()과 같은 판정 turnRunnerAvailable을 넘긴다). 없으면 보류 없음(종전).
   // housekeeping=false = 새 메시지 방송이 깨운 tick(2026-09-23 '입력 중' 5~10초 지연 실측): 미러·하트비트·조직 문서는 15초 주기 tick에만 돈다 — 깨우기는 턴 적재만
   // 회사 소유자 게이트(실사고 2026-09-11): 같은 PC에서 다른 계정으로 로그인하면 기기 세션(uid)이 바뀌는데, 로컬 회사 폴더는 그대로라
@@ -1129,10 +1151,12 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
   if (housekeeping && !nodeOrgId && orgCrewRows.length) await mirrorRoutines(wsId, { db, crews: orgCrewRows }).catch((e) => console.error('[argo] msgr 루틴 미러 실패:', e.message));
   // 접속 표시: 조직 행 + 방에 든 개인 행. 조직 행이 없는 계정은 개인 행 전부(방 없는 개인 크루는 msgr_personal_room_crews가 같은 크루의 조직 행 시각을 쓴다 — 쓰기 0)
   const idleBeat = orgCrewRows.length ? [] : allCrews.filter((c) => c.org_id == null && !inRooms.has(c.id));
-  if (!crews.length) { if (housekeeping && idleBeat.length) await db.heartbeat(idleBeat.filter(beatable).map((c) => c.id)).catch((e) => console.error('[argo] msgr 하트비트 실패:', e.message)); if (housekeeping) await periodicRecall(wsId, { db, uid, inventory }); return out; } // 회수는 활성 크루가 0이어도 — 모두 파견 해제된 뒤가 바로 회수할 때다
+  // 기기 단위 심박(유건 2026-10-10): 기기 id가 있으면 서버 함수 한 번이 기기 행·옛 읽기 호환 행·업무 기능 표시를 함께 쓴다(makeDb.heartbeat)
+  const beat = deviceId ? { wsId, deviceId } : null;
+  if (!crews.length) { if (housekeeping && idleBeat.length) await db.heartbeat(idleBeat.filter(beatable).map((c) => c.id), beat).catch((e) => console.error('[argo] msgr 하트비트 실패:', e.message)); if (housekeeping) await periodicRecall(wsId, { db, uid, inventory }); return out; } // 회수는 활성 크루가 0이어도 — 모두 파견 해제된 뒤가 바로 회수할 때다
   if (housekeeping) {
-    await db.heartbeat([...crews, ...idleBeat].filter(beatable).map((c) => c.id)).catch((e) => console.error('[argo] msgr 하트비트 실패:', e.message));
-    await db.workHeartbeat?.(orgCrewRows.filter(beatable).map((c) => c.id)).catch((e) => console.warn('[argo] msgr work capability:', e.message)); // 업무 기능은 조직 전용 — 개인 행은 보내지 않는다(분리 검수 M3)
+    const beaten = await db.heartbeat([...crews, ...idleBeat].filter(beatable).map((c) => c.id), beat).catch((e) => { console.error('[argo] msgr 하트비트 실패:', e.message); return null; });
+    if (!beaten?.device) await db.workHeartbeat?.(orgCrewRows.filter(beatable).map((c) => c.id)).catch((e) => console.warn('[argo] msgr work capability:', e.message)); // 업무 기능은 조직 전용 — 개인 행은 보내지 않는다(분리 검수 M3). 기기 심박 함수가 같은 일을 했으면 보내지 않는다
     // 채널·조직 기억은 서버에만(유건 결정 2026-09-24) — 서버가 턴마다 기억을 주면(msgr_crew_memory) PC 미러 vault/org/를 지우고 만들지 않는다.
     // 옛 서버(RPC 없음)면 종전 미러(G-2)로 물러난다. 판정 실패(네트워크)는 아무것도 지우지 않는다.
     const serverMemory = await serverMemoryAvailable(db, crews[0].id);
@@ -2296,7 +2320,8 @@ export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_M
       const { lang = 'ko', msgr, ownerId = null } = company;
       if (ownerId !== c.uid) { await beatGateway(wsId, MSGR_KEY, false, '이 회사의 소유자 계정이 아님 — 소유자로 로그인 필요').catch(() => {}); return { skipped: 'owner' }; }
       if (housekeeping) { lastHousekeeping = Date.now(); await dispatchMessengerAutomations(c.client, wsId).catch((e) => console.warn('[argo] msgr automation:', e.message)); }
-      const r = await drain(wsId, { db: c.db, uid: c.uid, lang, nodeOrgId: msgr?.nodeOrgId ?? null, ownerId, housekeeping, runnerReady }); // I-4: 조직 회사(company.json.msgr.nodeOrgId)면 노드 하트비트
+      const deviceId = housekeeping ? await getDeviceId().catch(() => null) : null; // 심박은 관리 틱에만 — 기기 id를 못 읽으면 종전 행 심박
+      const r = await drain(wsId, { db: c.db, uid: c.uid, lang, nodeOrgId: msgr?.nodeOrgId ?? null, ownerId, housekeeping, runnerReady, deviceId }); // I-4: 조직 회사(company.json.msgr.nodeOrgId)면 노드 하트비트
       if (r.skipped === 'owner') { await beatGateway(wsId, MSGR_KEY, false, '이 회사의 소유자 계정이 아님 — 소유자로 로그인 필요').catch(() => {}); return r; }
       if (housekeeping) lastMirrorError = r.mirrorError ?? null;
       if (/msgr_ws_owned_by_other/.test((housekeeping ? r.mirrorError : lastMirrorError) ?? '')) await beatGateway(wsId, MSGR_KEY, false, '이 회사 에이전트는 다른 계정 소유로 이미 등록돼 있어 올리지 못함 — 이 회사를 만든 계정으로 로그인하세요').catch(() => {});

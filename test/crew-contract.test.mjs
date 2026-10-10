@@ -20,6 +20,7 @@ const CONTRACT = {
   msgr_channel_members: { bot: ['msgr_bot_updates'] },
   msgr_channel_access: { bot: ['msgr_bot_updates'] },
   msgr_crews: { bot: ['msgr_bot_create', 'msgr_bot_me'] },
+  msgr_device_beat: { bot: ['msgr_bot_updates'] }, // 접속 심박(기기 단위, 2026-10-10) — 봇은 getUpdates가 자기 에이전트 행의 접속 시각을 찍는다(봇 하나 = 에이전트 하나, 기기 개념 없음)
   msgr_attachments: { bot: ['msgr_bot_file', 'msgr_bot_attach_prepare', 'msgr_bot_attach_commit'] }, // 받기(getFile)·보내기(createUpload·attachFile, 20260930160000)
   msgr_execution_finish: { bot: ['msgr_bot_finish'] },
   msgr_execution_heartbeat: { pending: '2단계 — 긴 실행의 진행 신호(지금 봇은 결재 대기 중에만 msgr_bot_events가 심박을 올린다)' },
