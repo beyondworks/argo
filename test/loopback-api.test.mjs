@@ -91,3 +91,21 @@ test('권한 게이트 배선 — 모든 턴(주인 턴 포함)에서 Argo API �
     assert.match((await en('Bash', { command: `curl http://127.0.0.1:${ARGO}/api/x` })).message, /cannot call this API/);
   } finally { if (prev === undefined) delete process.env.PORT; else process.env.PORT = prev; }
 });
+
+// #918 후속(Windows 한계 ①) — Windows는 서버 판정이 기본 꺼짐이라 이 게이트가 유일한 방어인데, 포트를 환경 변수로 조립하면 리터럴 포트가 없어 통과했다(재현 2026-10-10).
+test('판정 — 루프백 호스트와 포트 환경 변수 참조($PORT·${PORT}·%PORT%·$env:PORT 등)가 함께 보이면 거절, Next 서버 주소 변수는 호스트 없이도 거절', async () => {
+  const own = { ownPort: 3477, probe: async () => false };
+  for (const c of [
+    'curl -X DELETE http://127.0.0.1:$PORT/api/companies/w/routines?id=r', 'curl "http://localhost:${PORT}/api/x"', 'curl http://localhost:${PORT:-3001}/api/x',
+    'curl http://127.0.0.1:%PORT%/api/x', 'curl http://127.0.0.1:%port%/api/x', 'curl http://127.0.0.1:!PORT!/api/x',
+    'iwr http://localhost:$env:PORT/api/x', 'Invoke-RestMethod "http://127.0.0.1:$Env:port/api/x" -Method Post',
+    `python3 -c "import os,urllib.request as u; u.urlopen('http://127.0.0.1:'+os.environ['PORT']+'/api/x')"`, `node -e "fetch('http://localhost:'+process.env.PORT+'/api/x')"`,
+    `ruby -e "require 'net/http'; Net::HTTP.get(URI('http://127.0.0.1:'+ENV['PORT']+'/api/x'))"`, 'curl http://[::1]:$(printenv PORT)/api/x',
+    'curl $__NEXT_PRIVATE_ORIGIN/api/companies/w/approvals', `node -e "fetch(process.env.__NEXT_PRIVATE_ORIGIN+'/api/x')"`,
+  ]) assert.equal(await shellCallsArgoApi(c, own), true, `거절 대상: ${c}`);
+  for (const c of [
+    'echo $PORT', 'PORT=5173 npm run dev', 'grep -rn PORT src', // 루프백 호스트 없음
+    'PORT=5173 npm run dev & sleep 2; curl http://localhost:5173/', // 포트 대입만 있고 참조 없음 — 사용자의 개발 서버
+    'curl http://127.0.0.1:5173/api/report', 'curl https://example.com:$PORT/', // 다른 로컬 포트 / 원격
+  ]) assert.equal(await shellCallsArgoApi(c, own), false, `통과 대상: ${c}`);
+});

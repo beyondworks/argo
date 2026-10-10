@@ -11,6 +11,7 @@ import { Worker } from 'node:worker_threads';
 import { fileURLToPath } from 'node:url';
 import { resolve, dirname, isAbsolute, sep } from 'node:path';
 import { planShellRun, normalizeMsysPaths } from './shell-backend.mjs';
+import { SERVER_ORIGIN_KEYS } from '../runners/shared.mjs';
 
 const OUT_CAP = 30_000; // 도구 출력 상한(문자) — 모델 문맥 보호
 const READ_LINE_CAP = 2000;
@@ -60,11 +61,11 @@ export function grepWorkerPath({ env = process.env, cwd = process.cwd(), argv1 =
 }
 
 /** 셸·MCP 자식 env — 러너 자격(ANTHROPIC_*·OAuth·와이어 자격 WIRE_ENV_KEYS)은 크루 명령에 필요 없다. SDK 경로는 상속시켰지만 여기서는 뺀다(시크릿 규칙 —
-    분리 검수 HIGH-1: GEMINI_API_KEY·RESPONSES_TOKEN이 Bash printenv로 전사·세션 파일에 평문으로 남았다). */
+    분리 검수 HIGH-1: GEMINI_API_KEY·RESPONSES_TOKEN이 Bash printenv로 전사·세션 파일에 평문으로 남았다). 이 서버의 포트·주소(SERVER_ORIGIN_KEYS)도 뺀다(#918 후속). */
 const WIRE_ENV = new Set(WIRE_ENV_KEYS);
 export function shellEnv(env = process.env) {
   const out = {};
-  for (const [k, v] of Object.entries(env)) if (!/^(ANTHROPIC_|CLAUDE_CODE_OAUTH_TOKEN$|CLAUDE_CONFIG_DIR$)/.test(k) && !WIRE_ENV.has(k)) out[k] = v;
+  for (const [k, v] of Object.entries(env)) if (!/^(ANTHROPIC_|CLAUDE_CODE_OAUTH_TOKEN$|CLAUDE_CONFIG_DIR$)/.test(k) && !WIRE_ENV.has(k) && !SERVER_ORIGIN_KEYS.has(k)) out[k] = v;
   return out;
 }
 
