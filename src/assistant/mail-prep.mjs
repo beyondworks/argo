@@ -110,8 +110,8 @@ export function prepPrompt({ ox, lang = 'ko', agentName, card, ownerAddrs = [], 
     return `- ${m.at ?? ''} · ${who}${m.gid === target.gid ? (en ? ' · ← the mail to answer' : ' · ← 답할 메일') : ''}\n  ${ox.line(body, 2 * MAIL_CHARS)}`;
   });
   const head = en
-    ? `You are ${agentName}, the owner's heartbeat agent. Use the tone and form of address in your card below.\n## Your card (tone reference, first part)\n${String(card ?? '').slice(0, CARD_CHARS)}\n`
-    : `너는 ${agentName}, 주인의 하트비트 에이전트다. 아래 카드의 말투·호칭으로 쓴다.\n## 너의 카드(말투 참고, 앞부분)\n${String(card ?? '').slice(0, CARD_CHARS)}\n`;
+    ? `You are ${agentName}, the owner's assistant agent. Use the tone and form of address in your card below.\n## Your card (tone reference, first part)\n${String(card ?? '').slice(0, CARD_CHARS)}\n`
+    : `너는 ${agentName}, 주인의 비서 에이전트다. 아래 카드의 말투·호칭으로 쓴다.\n## 너의 카드(말투 참고, 앞부분)\n${String(card ?? '').slice(0, CARD_CHARS)}\n`;
   const fields = en
     ? `{"situation": ["1-3 short lines: who sent what and what state it is in"], "ask": "what they want, one line", "deadline": {"quote": "the exact sentence from the mail text that states a due date or promise (copy it as is), or empty", "date": "YYYY-MM-DD or empty"}, "advice": "when to reply, one line", "draft": "full reply draft (greeting and sign-off; unknown values as {{date}} or {{status}})", "question": {"q": "the ONE thing to confirm with the owner", "answers": ["answer 1", "answer 2"]}${brief ? ', "brief": "research brief in markdown"' : ''}}`
     : `{"situation": ["무엇이 왔나 1~3줄(누가·무엇을·지금 상태)"], "ask": "상대가 원하는 것 한 줄", "deadline": {"quote": "기한·약속이 적힌 문장을 메일 글에서 그대로 옮김(없으면 빈 글)", "date": "YYYY-MM-DD 또는 빈 글"}, "advice": "언제 답하면 좋은지 한 줄", "draft": "회신 초안 전문(인사·서명 포함, 모르는 값은 {{date}}·{{status}} 자리표시)", "question": {"q": "주인에게 확인할 것 하나", "answers": ["답 1", "답 2"]}${brief ? ', "brief": "자료 정리 markdown"' : ''}}`;

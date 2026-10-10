@@ -74,7 +74,7 @@ export const SETTINGS = Object.freeze([
   },
   {
     key: 'assistant.enabled', type: 'bool',
-    label: { ko: '하트비트 켜기·끄기', en: 'Heartbeat on/off' },
+    label: { ko: '하트비트(예전 이름 비서) 켜기·끄기', en: 'Heartbeat (formerly Assistant) on/off' },
     where: { ko: `${ASSIST_WHERE.ko} → 하트비트 켜기 / 하트비트 끄기`, en: `${ASSIST_WHERE.en} → Turn on / Turn off heartbeat` },
     read: (v) => v.config.enabled,
     // 켤 때 에이전트 — 지정해 둔 비서가 있으면 그 에이전트, 없으면 이 도구를 부른 에이전트(write의 두 번째 인자)

@@ -49,7 +49,7 @@ export default {
 - Overview: recent work, "Engine — runner & model" with reasoning effort, and details (turns, context/output, avg turn time, top tools).
 - Abilities: toggle installed skills and plugins (MCP) as chips. With everything on ("all"), new installs apply automatically; with a partial list, new installs are not added.
 - Working style: add, edit, reorder or delete "Working rules". Below it, "What the company knows about you" collects the preferences, decisions and no-gos agents recorded; "Forget" removes an item, or add one yourself. Every agent in the company sees this card.
-- Heartbeat: settings for using this agent for heartbeat (see the heartbeat topic).
+- Heartbeat: settings for making this agent your heartbeat agent (see the heartbeat topic).
 - Links & raw: the direct Telegram bot, and "Raw card — the system prompt itself". Raw edits are saved only with "Save raw card".
 - Card changes apply from the next turn.
 
