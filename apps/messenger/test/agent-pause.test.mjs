@@ -20,6 +20,7 @@ test('② 멈춘 에이전트가 없거나 이유가 없으면(Pro·관문 꺼�
   assert.equal(agentPauseNote({ paused: 2, active: 0, limit: 4, reason: null }), null);
   assert.equal(agentPauseNote(null), null);
   assert.equal(agentPauseNote({ paused: 2, reason: 'weird' }), null);
+  assert.equal(agentPauseNote({ paused: 1, active: 2, limit: 4, reason: 'room' }), null, 'room(자리 남음 — 본체 카드에서 지금 연결) — 메신저 안내는 없다(옛 메신저와 같음)');
 });
 
 test('③ 읽기: 옛 서버(함수 없음)·오류·던짐이면 null — 화면은 안내 없이 지금과 같다', async () => {

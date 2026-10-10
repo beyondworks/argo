@@ -293,17 +293,27 @@ revoke all on function public.msgr_crews_pro_gate() from public, anon, authentic
 --      안내 수가 어긋났다. 교체된 에이전트의 행은 관문이 이미 전부 멈췄다. sweep은 바뀌는 행만 쓰고(유휴 0), 관문과 같은 주인 잠금을 다시 잡는다(같은 트랜잭션 — 재진입),
 --      자기 쓰기에는 관문을 꺼서(msgr.pro_gate=off) 이 트리거로 다시 들어오지 않는다. 실패해도 연결은 그대로 두고(경고만) 10분 크론이 맞춘다.
 --   부하: 사람·관리자의 연결과 미러의 되살리기(detached→active)에서만, 주인 하나 질의 1번 + 바뀐 행 쓰기. insert(미러가 새 행을 넣음)는 부르지 않는다 — 크론이 맞춘다.
+--   ③ 지금도 active인 행만 재개 처리한다(분리 검수 P3) — 한 문장이 여러 행을 연결하면 AFTER는 문장 끝에 몰려 오는데, 그사이 뒤 행의 교체로 다시 멈춘 행의
+--      중지 기록을 닫으면 멈춘 행에 열린 기록이 없어진다.
+--   ④ 여기서 부르는 sweep은 남이 잠근 행을 건너뛴다(msgr.sweep_skip_locked — 분리 검수 P2). 같은 에이전트의 다른 행을 다른 연결이 BEFORE에서 잠근 채 주인 잠금을
+--      기다리면, 주인 잠금을 쥔 이쪽이 그 행을 기다려 교착이 났다. 건너뛴 행은 그 연결이 스스로 맞추거나 10분 크론이 맞춘다.
 create or replace function public.msgr_crews_resume_side() returns trigger
   language plpgsql security definer set search_path = public, pg_temp as $$
+declare prev text;
 begin
   if coalesce(current_setting('msgr.pro_gate', true), '') = 'off' then return new; end if;
   if to_regprocedure('public.is_pro_for(uuid)') is null then return new; end if;
-  if old.status = 'paused' then perform public._msgr_crew_resume_side(new.id, coalesce(new.cursor_msg_id, 0)); end if;
+  if old.status = 'paused' and exists (select 1 from public.msgr_crews c where c.id = new.id and c.status = 'active') then
+    perform public._msgr_crew_resume_side(new.id, coalesce(new.cursor_msg_id, 0));
+  end if;
+  prev := current_setting('msgr.sweep_skip_locked', true);
+  perform set_config('msgr.sweep_skip_locked', 'on', true);
   begin
     perform public.msgr_crews_plan_sweep(new.owner_user_id);
   exception when others then
     raise warning 'msgr_crews_resume_side: owner % sweep skipped (%: %)', new.owner_user_id, sqlstate, sqlerrm;
   end;
+  perform set_config('msgr.sweep_skip_locked', coalesce(prev, ''), true);
   return new;
 end $$;
 revoke all on function public.msgr_crews_resume_side() from public, anon, authenticated;
@@ -328,7 +338,8 @@ create or replace function public.msgr_crews_plan_sweep(p_uid uuid default null)
   language plpgsql security definer set search_path = public, pg_temp as $$
 declare
   o record; r record; top bigint; prev text := current_setting('msgr.pro_gate', true);
-  n_paused int := 0; n_resumed int := 0; n_failed int := 0; pro boolean; ok boolean; lim int;
+  n_paused int := 0; n_resumed int := 0; n_failed int := 0; n_skipped int := 0; pro boolean; ok boolean; lim int;
+  skip_locked boolean := coalesce(current_setting('msgr.sweep_skip_locked', true), '') = 'on'; -- 연결 트리거에서 부를 때만(4-1 ④)
 begin
   if coalesce(prev, '') = 'off' then return jsonb_build_object('skipped', 'msgr.pro_gate=off'); end if; -- 전체 끄기
   perform set_config('msgr.pro_gate', 'off', true); -- 재개 update가 관문에 다시 걸리지 않게(판정은 아래 조건이 한다). 끝에서 되돌린다.
@@ -373,6 +384,10 @@ begin
        order by m.id
     loop
       continue when r.act is null;
+      if skip_locked and r.hosting <> 'bot' then -- 남이 잠근 행은 건너뛴다(교착 방지 — 그 쓰기가 끝나면 그쪽 트리거·크론이 맞춘다)
+        perform 1 from public.msgr_crews where id = r.id for update skip locked;
+        if not found then n_skipped := n_skipped + 1; continue; end if;
+      end if;
       begin
         if r.act = 'pause' then
           if r.hosting <> 'bot' then
@@ -400,14 +415,16 @@ begin
      and exists (select 1 from public.msgr_crews c where c.id = k.crew_id and c.hosting <> 'bot' and c.status <> 'paused');
   if p_uid is null then delete from public.msgr_crew_pauses where resumed_at < now() - interval '30 days'; end if; -- 보존 기간
   perform set_config('msgr.pro_gate', coalesce(prev, ''), true);
-  return jsonb_build_object('paused', n_paused, 'resumed', n_resumed, 'failed', n_failed);
+  return jsonb_build_object('paused', n_paused, 'resumed', n_resumed, 'failed', n_failed) || case when n_skipped > 0 then jsonb_build_object('skipped', n_skipped) else '{}'::jsonb end;
 end $$;
 revoke all on function public.msgr_crews_plan_sweep(uuid) from public, anon, authenticated;
 
 -- 6) 메신저·본체 안내 — 로그인한 사람의 멈춘 에이전트와 이유. 읽기만. 메신저가 로그인·재연결·에이전트 탭 진입 때 한 번 부른다(주기 호출 없음).
 --    paused = 멈춘 에이전트 수(같은 회사·이름 = 한 명, 연결된 행이 있는 에이전트는 빼고), active = 연결된 에이전트 수, limit = 4, min_app = 최소 버전
 --    (본체가 자기 버전과 비교해 '이 앱이 새 앱인가'를 안다 — 멈춘 회사의 브리지를 켤지 정할 때, 검수 #945 MEDIUM-2),
---    reason = null(Pro·관문 꺼짐) | 'app'(최소 버전 이상 앱 기기가 없음 — 업데이트 안내) | 'off'(새 앱은 있었지만 30분 넘게 꺼짐) | 'limit'(새 앱 켜짐 + 4명 다 참).
+--    reason = null(Pro·관문 꺼짐·멈춘 에이전트 없음) | 'app'(최소 버전 이상 앱 기기가 없음 — 업데이트 안내) | 'off'(새 앱은 있었지만 30분 넘게 꺼짐)
+--      | 'limit'(새 앱 켜짐 + 4명 다 참) | 'room'(새 앱 켜짐 + 자리 남음 + 멈춘 에이전트 있음 — 지금 연결할 수 있다, 분리 검수 3차 LOW).
+--    옛 메신저·본체는 모르는 이유를 안내 없음으로 읽는다(agentPauseNote·FREE_REASON_CODE 표에 없음).
 create or replace function public.msgr_my_agent_pause() returns jsonb
   language plpgsql stable security definer set search_path = public, pg_temp as $$
 declare me uuid := auth.uid(); n_act int; n_paused int; pol record; why text;
@@ -423,6 +440,7 @@ begin
     why := case when exists (select 1 from public.msgr_device_beats d where d.owner_user_id = me
                                and public._msgr_app_ver(d.app_version) >= public._msgr_app_ver(pol.min_app)) then 'off' else 'app' end;
   elsif n_act >= pol.agent_limit then why := 'limit';
+  elsif n_paused > 0 then why := 'room';
   end if;
   return jsonb_build_object('paused', n_paused, 'active', n_act, 'limit', pol.agent_limit, 'reason', why, 'min_app', pol.min_app);
 end $$;

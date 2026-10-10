@@ -930,6 +930,7 @@ function MsgrCard({ ws, agents }) {
       window.dispatchEvent(new Event('argo:refresh'));
     } catch (e) {
       setErr(e.message || t('settings.msgr.err.activate'));
+      load().catch(() => {}); // 거절돼도 넣은 행은 멈춤으로 남는다 — 줄 표기('멈춤 · …')를 서버 상태로(#945 분리 검수 3차)
     } finally { setActivating(false); }
   }
 

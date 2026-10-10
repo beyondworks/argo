@@ -520,3 +520,70 @@ test('[화면 C] 교체로 멈췄다가 사람이 다시 고른 에이전트는 
   sql(`update public.entitlements set plan = 'free' where user_id = '${X}'`);
   assert.equal(slugsOf(X, 'active'), 'xa,xb,xc,xd', 'xd는 다시 골랐으니 교체 표시가 풀려 나중에 고른 순서대로 남고, 경계의 xe가 멈춘다');
 });
+
+// ── 분리 검수 ebf78b7e 반영(10/11 3차) — 재현 시험 scratchpad/probe-945(P2·P3·P5)를 옮겨 고정 ──
+const mkUser = (id, tag) => sql(`insert into auth.users (id, created_at, email) values ('${id}', now() - interval '30 days', '${tag}@example.test') on conflict do nothing`);
+const openPause = (id) => sql(`select count(*) from public.msgr_crew_pauses where crew_id = '${id}' and resumed_at is null`);
+
+test('[3차 ①] 설정 카드 연결 순서(새 행은 paused로 넣기 → active로 바꾸기)에서 새 앱이 없으면 행은 paused로 남고(파견 해제가 아님), 새 앱 심박 뒤 재개 — 이미 available로 남은 행은 새 앱에서 연결을 누르면 회복', { skip }, () => {
+  const R = 'ac000011-0000-4000-8000-000000000011'; mkUser(R, 'r');
+  const OR = last(asUser(R, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('R1', 'r-one', '${R}') returning id`));
+  const ins = (slug, status) => last(asUser(R, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name, hosting, status, allow) values ('${OR}', '${R}', '${WS}', '${slug}', '${slug}', 'local', '${status}', 'owner') returning id`));
+  // 새 앱 없음(개발 빌드 :3001은 직전 발행 번호라 심박을 보내지 않는다 · beatNow 실패도 같은 상태): 새 행 넣기 → 연결
+  const r1 = ins('r1', 'paused');
+  assert.equal(statusOf(r1), 'paused'); assert.equal(openPause(r1), '1', '멈춘 행으로 들어가며 중지 기록');
+  const up = asUserRaw(R, `update public.msgr_crews set status = 'active' where id = '${r1}'`);
+  assert.equal(up.status, 0, '새 앱이 없어도 오류 없이(조용히 paused) — 라우트가 이유(app)를 보인다');
+  assert.equal(statusOf(r1), 'paused', '파견 해제(available)로 남지 않는다');
+  assert.equal(reason(R).reason, 'app');
+  // 9cbc1f2e 경로로 이미 available로 남은 행(새 행을 available로 넣은 뒤 연결이 거절됨)
+  const r2 = ins('r2', 'available');
+  fails(asUserRaw(R, `update public.msgr_crews set status = 'active' where id = '${r2}'`), /msgr_app_update_required/, '새 앱 없이 연결');
+  assert.equal(statusOf(r2), 'available');
+  // 새 앱 심박 → 재개 신호 → 멈춘 r1은 자동 재개(사람이 고른 순간이 기록돼 순위 맨 앞), available r2는 사람이 해제한 행과 같아 그대로
+  assert.ok(beatV(R, 'r-mac', [r1, r2]));
+  assert.equal(statusOf(r1), 'active', '새 앱이 오면 재개');
+  assert.equal(statusOf(r2), 'available', 'available은 sweep이 건드리지 않는다(사람이 해제한 행과 구별할 수 없다)');
+  asUser(R, `update public.msgr_crews set status = 'active' where id = '${r2}'`); // 새 앱의 설정 카드에서 연결을 다시 누름
+  assert.equal(statusOf(r2), 'active', '새 앱에서 연결을 누르면 회복');
+});
+
+test('[3차 ②] 잠금 순서 — 주인 잠금을 다른 트랜잭션이 잡은 사이 같은 에이전트의 두 멈춘 행을 동시에 연결해도 교착 없이 둘 다 연결(트리거의 sweep은 남이 잠근 행을 건너뛴다)', { skip }, async () => {
+  const D = 'ac000002-0000-4000-8000-000000000002'; mkUser(D, 'd');
+  const OD = last(asUser(D, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('D1', 'd-one', '${D}') returning id`));
+  const A = insOff(D, null, 'dx', 'paused'); const B = insOff(D, OD, 'dx', 'paused');
+  sql(`insert into public.msgr_device_beats (owner_user_id, ws_id, device_id, slugs, app_version, app_seen_at) values ('${D}', '${WS}', 'd-mac', array['dx'], '${NEW}', now())`);
+  const as = (q2) => `set role authenticated; select set_config('argo.uid', '${D}', false); ${q2}`;
+  const t0 = psqlAsync(`begin; select pg_advisory_xact_lock(hashtext('msgr_free_agents:${D}')); select pg_sleep(1.0); commit;`);
+  await sleep(200);
+  const t2 = psqlAsync(as(`update public.msgr_crews set status = 'active' where id = '${B}'`));
+  await sleep(200);
+  const t1 = psqlAsync(as(`update public.msgr_crews set status = 'active' where id = '${A}'`));
+  const [, r2, r1] = await Promise.all([t0, t2, t1]);
+  assert.ok(r1.code === 0 && r2.code === 0, `교착 오류: A ${r1.err.trim()} / B ${r2.err.trim()}`);
+  assert.deepEqual([A, B].map(statusOf), ['active', 'active']);
+  assert.deepEqual([openPause(A), openPause(B)], ['0', '0'], '둘 다 재개 처리');
+  assert.deepEqual(sweep(D), { paused: 0, resumed: 0, failed: 0 }, '크론이 할 일 없음');
+});
+
+test('[3차 ④] 주인이 한 문장으로 멈춘 행 여럿을 active로(PostgREST 직접 PATCH) — 4명, 교체로 다시 멈춘 행은 중지 기록이 열린 채', { skip }, () => {
+  const E = 'ac000003-0000-4000-8000-000000000003'; mkUser(E, 'e');
+  const e = {}; for (const s of ['e1', 'e2', 'e3', 'e4', 'e5', 'e6']) e[s] = insOff(E, null, s, 'paused');
+  sql(`insert into public.msgr_device_beats (owner_user_id, ws_id, device_id, slugs, app_version, app_seen_at) values ('${E}', '${WS}', 'e-mac', array['e1'], '${NEW}', now())`);
+  asUser(E, `update public.msgr_crews set status = 'active' where owner_user_id = '${E}' and status = 'paused'`);
+  assert.equal(Number(sql(`select count(distinct slug) from public.msgr_crews where owner_user_id = '${E}' and status = 'active'`)), 4);
+  const bad = sql(`select coalesce(string_agg(c.slug, ',' order by c.slug), '') from public.msgr_crews c where c.owner_user_id = '${E}' and c.status = 'paused' and not exists (select 1 from public.msgr_crew_pauses k where k.crew_id = c.id and k.resumed_at is null)`);
+  assert.equal(bad, '', '멈춘 행은 모두 열린 중지 기록(다시 재개될 때 커서·자동화 정리의 근거)');
+  const good = sql(`select coalesce(string_agg(c.slug, ',' order by c.slug), '') from public.msgr_crews c where c.owner_user_id = '${E}' and c.status = 'active' and exists (select 1 from public.msgr_crew_pauses k where k.crew_id = c.id and k.resumed_at is null)`);
+  assert.equal(good, '', '연결된 행은 기록이 닫혔다');
+});
+
+test('[3차 ③] 무료 + 새 앱 + 자리가 남았는데 멈춘 에이전트가 있으면 이유 room(지금 연결할 수 있음) — 4명이 차면 limit', { skip }, () => {
+  const W = 'ac000013-0000-4000-8000-000000000013'; mkUser(W, 'w');
+  const w1 = insOff(W, null, 'w1'); insOff(W, null, 'w2', 'paused');
+  sql(`insert into public.msgr_device_beats (owner_user_id, ws_id, device_id, slugs, app_version, app_seen_at) values ('${W}', '${WS}', 'w-mac', array['w1'], '${NEW}', now())`);
+  assert.deepEqual(reason(W), { paused: 1, active: 1, limit: 4, reason: 'room', min_app: NEW });
+  asUser(W, `update public.msgr_crews set status = 'available' where id = '${w1}'`);
+  assert.equal(reason(W).reason, 'room', '연결된 에이전트가 없어도(자리 4) 새 앱이 켜져 있으면 room');
+  assert.equal(reason(P).reason, null, 'Pro는 이유 없음 그대로');
+});

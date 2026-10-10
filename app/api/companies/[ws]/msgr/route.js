@@ -123,10 +123,12 @@ export async function POST(req, { params }) {
     if (!c) return authError('auth_required', lang);
     const existing = new Map((await myRegistrations(c, ws)).filter((r) => r.org_id === orgId).map((r) => [r.slug, r]));
     const baseOf = (wantedSlug) => { const agent = bySlug.get(wantedSlug); return { display_name: agent.name || wantedSlug, role_text: agent.role || null, hosting: process.env.ARGO_TENANT_OWNER ? 'resident' : 'local' }; };
-    // 1) 없는 행은 연결 해제(available)로 먼저 넣는다 — 아래 연결(available→active)이 서버 관문에서 '사람의 연결'로 판정되게(무료 계정: 고른 순간 기록·4명이면 교체, 검수 #945)
+    // 1) 없는 행은 멈춘 행(paused)으로 먼저 넣는다 — 아래 연결(paused→active)이 서버 관문에서 '사람의 연결'로 판정되게(무료 계정: 고른 순간 기록·4명이면 교체, 검수 #945).
+    //    available(연결 해제)로 넣으면 새 앱이 없어 연결이 거절될 때 사람이 해제한 행으로 남아 카드가 '파견 해제됨', 새 앱이 와도 재개되지 않았다(분리 검수 3차 ①).
+    //    paused면 거절돼도 멈춘 채 남고(이유 app·off — 카드 '멈춤 · …'), 새 앱 심박 뒤 sweep이 고른 순서대로 재개한다. Pro는 관문이 그대로 연결(재개 처리 포함).
     for (const wantedSlug of wanted) {
       if (existing.has(wantedSlug)) continue;
-      const row = { org_id: orgId, owner_user_id: c.uid, ws_id: ws, slug: wantedSlug, ...baseOf(wantedSlug), status: 'available', allow: 'owner', allow_users: [] };
+      const row = { org_id: orgId, owner_user_id: c.uid, ws_id: ws, slug: wantedSlug, ...baseOf(wantedSlug), status: 'paused', allow: 'owner', allow_users: [] };
       const { error } = await c.client.from('msgr_crews').insert(row);
       if (error && error.code !== '23505') return upstream('POST activate insert', error, lang);
     }

@@ -1013,6 +1013,7 @@ const DICT = {
   'settings.msgr.paused': ['멈춤', 'Paused'],
   'settings.msgr.paused.limit': ['멈춤 · 무료 4명 한도', 'Paused · Free plan limit of 4'],
   'settings.msgr.paused.app': ['멈춤 · 무료 계정 최신 앱 필요', 'Paused · Free plan needs the latest app'],
+  'settings.msgr.paused.room': ['멈춤 · 지금 연결할 수 있어요', 'Paused · You can connect it now'],
   'settings.msgr.manage': ['허용 범위(누가 시킬 수 있나)·파견 해제·다시 파견은 팀 메신저 앱의 에이전트 카드에서 합니다.', 'Access scope (who can task it), recall and re-dispatch are done on the agent card in the team messenger app.'],
   'settings.msgr.register': ['등록', 'Register'],
   'settings.msgr.unregister': ['해제', 'Unregister'],

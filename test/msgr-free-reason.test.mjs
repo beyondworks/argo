@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { freeAgentReason, swapNotes, readAgentPause } from '../app/api/companies/[ws]/msgr/free-reason.mjs';
+import { freeAgentReason, swapNotes, readAgentPause, FREE_REASON_CODE } from '../app/api/companies/[ws]/msgr/free-reason.mjs';
 import { pausedLabelKey } from '../app/c/[ws]/settings/msgr-card.mjs';
 const { apiError, API_MSG } = await import('../app/apimsg.mjs');
 
@@ -56,19 +56,23 @@ test('⑤ 교체 안내·이유 읽기(검수 #945) — 이름은 중복 없이,
 test('⑥ 라우트 배선(검수 #945) — 새 행은 연결 해제로 먼저 넣고 연결(사람의 연결 판정), 교체 안내를 응답에, 멈춘 회사 브리지는 최소 버전 이상일 때만', () => {
   const route = readFileSync(new URL('../app/api/companies/[ws]/msgr/route.js', import.meta.url), 'utf8');
   const act = route.slice(route.indexOf('if (activate) {'), route.indexOf('return Response.json({ ok: true, crews, swapped });'));
-  assert.match(act, /status: 'available', allow: 'owner'/, '새 행은 available로 insert');
+  assert.match(act, /status: 'paused', allow: 'owner'/, '새 행은 paused로 insert — 새 앱이 없어 연결이 거절돼도 파견 해제(available)로 남지 않고, 새 앱 심박 뒤 재개(분리 검수 3차 ①)');
+  assert.doesNotMatch(act, /status: 'available', allow: 'owner'/, 'available로 넣으면 거절 때 해제된 행으로 남는다(9cbc1f2e)');
   assert.doesNotMatch(act, /status: 'active', allow: 'owner'/, 'active로 바로 넣지 않는다(미러 insert와 구별되지 않는다)');
   assert.ok(act.indexOf("insert(row)") < act.indexOf('beatNow(c, ws)') && act.indexOf('beatNow(c, ws)') < act.indexOf("update({ ...base, status: 'active' })"), '넣기 → 새 앱 심박 → 연결 순서');
+  assert.equal(FREE_REASON_CODE.room, undefined, "room(자리 남음)은 오류가 아니다 — 연결 결과에 오류 코드를 붙이지 않는다");
   assert.match(route, /let enabled = regs\.some\(\(r\) => r\.status === 'active'\);\n\s+if \(!enabled && regs\.some\(\(r\) => r\.status === 'paused'\)\) enabled = appMeetsMin\(/);
 });
 
 test('⑦ 화면 검수 B(10/11) — 연결 카드의 멈춘 행은 "파견 해제됨"이 아니라 멈춤 + 이유, 교체 안내는 대기 표시와 다른 말(멈췄어요), 이유 읽기는 멈춘 행이 있을 때만', () => {
   assert.equal(pausedLabelKey('limit'), 'settings.msgr.paused.limit');
   for (const r of ['app', 'off']) assert.equal(pausedLabelKey(r), 'settings.msgr.paused.app');
+  assert.equal(pausedLabelKey('room'), 'settings.msgr.paused.room', '새 앱 켜짐 + 자리 남음(분리 검수 3차 ③)');
   for (const r of [null, undefined, 'weird']) assert.equal(pausedLabelKey(r), 'settings.msgr.paused', '이유를 모르면(Pro로 바뀌는 중·옛 서버) 멈춤만');
   const dict = readFileSync(new URL('../app/i18n.jsx', import.meta.url), 'utf8');
   const entry = (k) => { const m = dict.match(new RegExp(`'${k.replace(/\./g, '\\.')}': \\['([^']*)', '([^']*)'\\]`)); return m ? { ko: m[1], en: m[2] } : null; };
   assert.deepEqual(entry('settings.msgr.paused.limit'), { ko: '멈춤 · 무료 4명 한도', en: 'Paused · Free plan limit of 4' });
+  assert.deepEqual(entry('settings.msgr.paused.room'), { ko: '멈춤 · 지금 연결할 수 있어요', en: 'Paused · You can connect it now' });
   for (const k of ['settings.msgr.paused', 'settings.msgr.paused.app']) { const e = entry(k); assert.match(e.ko, /^멈춤/); assert.match(e.en, /^Paused/); }
   for (const k of ['settings.msgr.paused', 'settings.msgr.paused.limit', 'settings.msgr.paused.app']) assert.doesNotMatch(entry(k).ko, /해제/, `${k}: 사용자가 해제한 것처럼 읽히지 않게`);
   assert.equal(entry('settings.msgr.notRegistered').ko, '파견 해제됨', '사람이 해제한 행(available)은 그대로');
@@ -77,6 +81,8 @@ test('⑦ 화면 검수 B(10/11) — 연결 카드의 멈춘 행은 "파견 해�
   assert.doesNotMatch(API_MSG.msgr_free_agent_limit.ko, /쉬/);
   const page = readFileSync(new URL('../app/c/[ws]/settings/page.jsx', import.meta.url), 'utf8');
   assert.match(page, /row\?\.status === 'paused' \? t\(pausedLabelKey\(st\?\.pauseReason\)\)/, '카드 줄: 멈춘 행이면 멈춤 문구');
+  const act = page.slice(page.indexOf('async function activateOrg()'), page.indexOf('finally { setActivating(false); }', page.indexOf('async function activateOrg()')));
+  assert.match(act.slice(act.indexOf('catch (e)')), /load\(\)/, '연결이 거절돼도 다시 읽는다 — 행은 멈춤으로 들어갔으니 "메신저에 아직 없음"으로 남지 않게(분리 검수 3차 화면 확인)');
   const route = readFileSync(new URL('../app/api/companies/[ws]/msgr/route.js', import.meta.url), 'utf8');
   const get = route.slice(route.indexOf('export async function GET'), route.indexOf('export async function POST'));
   assert.match(get, /crews\.some\(\(r\) => r\.status === 'paused'\) \? \(await readAgentPause\(c\.client\)\.catch\(\(\) => null\)\)\?\.reason \?\? null : null/, '이유 읽기는 멈춘 행이 있을 때만(8초 폴에 호출을 늘리지 않게)');
