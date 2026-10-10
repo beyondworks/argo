@@ -93,6 +93,7 @@ const CONTRACT = {
   msgr_role: { argoOnly: 'Argo PC 크루 미러가 조직에 행을 넣기 전 확인(msgr_crews_insert 정책과 같은 함수, 2차 검수 M-2) — 외부 에이전트는 서버 연결(connect) 절차로 추가해 이 확인이 필요 없다' },
   msgr_org_locked: { argoOnly: 'Argo PC 크루 미러가 조직에 행을 넣기 전 확인 — 구독이 연체돼 잠긴 조직은 msgr_crews_insert가 거절한다. 외부 에이전트는 서버 연결 절차로 추가한다' },
   msgr_node_heartbeat: { argoOnly: '상주 노드 심박 — 봇 가용성은 getUpdates의 last_seen_at' },
+  msgr_gateway_wake_protocol: { argoOnly: 'Argo PC 게이트웨이가 쉬는 주기(Realtime 깨우기만으로 처리)를 써도 되는지 서버 깨우기 방송(crew_sync) 표지를 묻는다(#943) — 봇은 getUpdates 롱폴이라 쉬는 주기가 없다' },
   msgr_notification_routes_sync: { argoOnly: 'Argo 데스크톱 알림 경로 — 외부 에이전트는 예약 작업 deliver=argo_msgr' },
   msgr_notification_authorize: { argoOnly: 'Argo 데스크톱 알림 경로' },
   msgr_notification_claim: { argoOnly: 'Argo 데스크톱 알림 경로' },
