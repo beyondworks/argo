@@ -132,6 +132,22 @@ test('PR #933 열(test_mode)이 생겨도 같은 트리거로 시험 결제를 �
   assert.equal(calls(), 1);
 });
 
+test('처리된 행이 다시 열리면(대사 merge) 한 번 더 알리고, 처리 표시·다른 열 갱신은 알리지 않는다', { skip }, () => {
+  const id = ins({ reason: 'reconcile-pro-not-in-ls', event_name: 'reconcile-daily' });
+  sql(`update public.billing_unmatched set resolved_at = now(), notified_at = now() where id = ${id}`);
+  sql('truncate net.calls');
+  sql(`update public.billing_unmatched set user_email = 'z@z.z' where id = ${id}`);
+  assert.equal(calls(), 0, '처리된 행의 다른 열 갱신은 알리지 않는다');
+  // ls-reconcile과 같은 upsert(on conflict do update — resolved_at·notified_at을 비움)
+  const sid = sql(`select ls_subscription_id from public.billing_unmatched where id = ${id}`);
+  sql(`insert into public.billing_unmatched(event_name, reason, ls_subscription_id, resolved_at, notified_at) values ('reconcile-daily', 'reconcile-pro-not-in-ls', '${sid}', null, null)
+    on conflict (ls_subscription_id, reason) do update set resolved_at = excluded.resolved_at, notified_at = excluded.notified_at`);
+  assert.equal(calls(), 1, '다시 열림 → 알림');
+  assert.equal(sql(`select body::text from net.calls`), `{"billing_unmatched_id": ${id}}`);
+  sql(`update public.billing_unmatched set resolved_at = now() where id = ${id}`);
+  assert.equal(calls(), 1, '처리 표시는 알리지 않는다');
+});
+
 test('#933 기록 함수(record_ls_unmatched) — 새 행이면 한 번 알리고, 같은 구독의 다음 이벤트(갱신)·시험 결제는 알리지 않는다', { skip }, () => {
   sql('truncate net.calls');
   const sid = String(seq++);
@@ -160,11 +176,11 @@ test('대사 행이 시각을 남기면 그 뒤 웹훅 기록(no-user)의 나중
 });
 
 test('한 시간에 20행이 넘으면 푸시는 건너뛴다(행은 남는다) — 마지막에 돈다', { skip }, () => {
-  const before = Number(sql(`select count(*) from public.billing_unmatched where created_at > now() - interval '1 hour'`));
+  const before = Number(sql(`select count(*) from public.billing_unmatched b where created_at > now() - interval '1 hour' and public.billing_unmatched_alertable(b)`));
   sql('truncate net.calls');
   const n = Math.max(0, 25 - before);
   for (let i = 0; i < n; i++) ins();
-  const total = Number(sql(`select count(*) from public.billing_unmatched where created_at > now() - interval '1 hour'`));
+  const total = Number(sql(`select count(*) from public.billing_unmatched b where created_at > now() - interval '1 hour' and public.billing_unmatched_alertable(b)`));
   assert.ok(total >= 25);
-  assert.equal(calls(), Math.max(0, 20 - before), '20행까지만 알린다');
+  assert.equal(calls(), Math.max(0, 20 - before), '알림 대상 20행까지만 알린다');
 });

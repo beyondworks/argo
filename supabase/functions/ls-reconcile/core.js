@@ -33,10 +33,15 @@ const lsState = (s) => ({ ls_status: s?.attributes?.status ?? null, ls_updated_a
  * 불일치 찾기 — 자동 수정은 하지 않는다. 반환: billing_unmatched에 넣을 행 목록.
  *  · reconcile-ls-pro-not-linked: LS는 Pro로 인정하는 구독인데, 그 구독 번호에 연결된 우리 쪽 Pro 계정이 없다.
  *  · reconcile-pro-not-in-ls: 우리 쪽은 그 구독 번호로 결제 Pro인데(운영자 부여 제외), LS에 그 구독이 없거나 Pro가 아니다.
- * knownSubIds(아직 처리되지 않은 billing_unmatched 행의 구독 번호)는 건너뛴다 — 이미 알린 건이고, 결제 먼저·가입 나중
- * 자동 연결(PR #933 ls_link_late_signups)이 같은 구독의 다른 사유 행을 보고 멈추지 않게.
+ * 건너뛰는 것(openRows = 아직 처리되지 않은 billing_unmatched 행의 { ls_subscription_id, reason }):
+ *  · 같은 구독·같은 사유의 미해결 행 — 이미 알린 불일치다.
+ *  · 미해결 no-user 행이 있는 구독 — 결제 먼저·가입 나중 자동 연결(#933 ls_link_late_signups)이 같은 구독의 더 최신 다른 사유 행을
+ *    보면 멈추므로, 그 연결을 기다리는 동안은 대사 행을 더하지 않는다(그 연결이 10분마다 돈다).
+ * 다른 사유의 미해결 행이 있어도 대조는 한다(분리 검수 MEDIUM-2 — 옛 행 하나가 그 구독을 대사에서 영구히 빼지 않게).
  */
-export function findDiscrepancies({ subs = [], ents = [], knownSubIds = new Set(), nowMs = Date.now(), allowTest = false, allowedVariants = null }) {
+export function findDiscrepancies({ subs = [], ents = [], openRows = [], nowMs = Date.now(), allowTest = false, allowedVariants = null }) {
+  const openKey = new Set(openRows.map((o) => `${String(o?.ls_subscription_id ?? '')}|${String(o?.reason ?? '')}`));
+  const awaitingLateLink = new Set(openRows.filter((o) => o?.reason === 'no-user').map((o) => String(o.ls_subscription_id ?? '')));
   const opts = { nowMs, allowTest, allowedVariants };
   const byId = new Map(subs.map((s) => [String(s?.id ?? ''), s]));
   const entsBySub = new Map();
@@ -64,7 +69,14 @@ export function findDiscrepancies({ subs = [], ents = [], knownSubIds = new Set(
     add({ event_name: 'reconcile-daily', reason: 'reconcile-pro-not-in-ls', ls_subscription_id: sid,
       ls_customer_id: String(s?.attributes?.customer_id ?? r.ls_customer_id ?? ''), user_email: String(s?.attributes?.user_email ?? ''), ...lsState(s) });
   }
-  return [...out.values()].filter((row) => !knownSubIds.has(row.ls_subscription_id));
+  return [...out.values()].filter((row) => !openKey.has(`${row.ls_subscription_id}|${row.reason}`) && !awaitingLateLink.has(row.ls_subscription_id));
+}
+
+/** LS 목록이 비었는데 우리 쪽에 LS 구독으로 결제 Pro인 행이 있으면 대조하지 않는다 — 키 교체 실수·다른 스토어 키처럼 200 + 빈 목록이 오면
+ *  결제 Pro 전부를 불일치로 적게 된다(분리 검수 LOW-1). */
+export function implausiblyEmpty(subs, ents, nowMs = Date.now()) {
+  if (subs.length) return false;
+  return ents.some((r) => String(r?.ls_subscription_id ?? '') && r.granted !== true && entPaidPro(r, nowMs));
 }
 
 /** LS 구독 전체 목록 — 쪽마다 100개, links.next가 없을 때까지. 오류는 throw(호출부가 502로 끝내고 아무것도 쓰지 않는다). */

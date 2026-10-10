@@ -48,7 +48,7 @@ test('불일치 — 양방향을 찾고, 맞는 건·운영자 부여·그랜드
     { user_id: 'grandfathered', plan: 'pro', ends_at: null, ls_subscription_id: '', granted: false }, // 구독 번호 없음 — 대조 안 함
     { user_id: 'null-sub', plan: 'pro', ends_at: null, ls_subscription_id: null, granted: false },
   ];
-  const out = core.findDiscrepancies({ subs, ents, knownSubIds: new Set(['107']), nowMs: NOW });
+  const out = core.findDiscrepancies({ subs, ents, openRows: [{ ls_subscription_id: '107', reason: 'reconcile-ls-pro-not-linked' }], nowMs: NOW });
   const got = out.map((r) => `${r.ls_subscription_id}:${r.reason}`).sort();
   assert.deepEqual(got, ['102:reconcile-ls-pro-not-linked', '103:reconcile-ls-pro-not-linked', '105:reconcile-pro-not-in-ls',
     '106:reconcile-pro-not-in-ls', '109:reconcile-pro-not-in-ls']);
@@ -67,6 +67,25 @@ test('불일치 — 양방향을 찾고, 맞는 건·운영자 부여·그랜드
   const dup = core.findDiscrepancies({ subs: [], ents: [ent(120), { ...ent(120), user_id: 'other' }], nowMs: NOW });
   assert.equal(dup.length, 1);
   assert.deepEqual(core.findDiscrepancies({ subs: [sub(1)], ents: [ent(1)], nowMs: NOW }), [], '맞으면 0건');
+});
+
+test('미해결 행 — 같은 구독·같은 사유, no-user(나중 가입 연결 대기)만 건너뛰고 다른 사유 행은 대조를 막지 않는다', () => {
+  const subs = [sub(201), sub(202), sub(203)];
+  const open = [
+    { ls_subscription_id: '201', reason: 'reconcile-ls-pro-not-linked' }, // 이미 알림
+    { ls_subscription_id: '202', reason: 'no-user' },                     // #933 연결 대기
+    { ls_subscription_id: '203', reason: 'email-account-has-subscription' }, // 다른 사유 — 그래도 대조한다
+  ];
+  const got = core.findDiscrepancies({ subs, ents: [], openRows: open, nowMs: NOW }).map((r) => r.ls_subscription_id);
+  assert.deepEqual(got, ['203']);
+});
+
+test('LS 목록이 비었는데 우리 쪽 결제 Pro가 있으면 대조하지 않는다(키 교체 실수 등)', () => {
+  assert.equal(core.implausiblyEmpty([], [ent(1)], NOW), true);
+  assert.equal(core.implausiblyEmpty([], [ent(1, { granted: true })], NOW), false, '운영자 부여만 있으면 빈 목록이 정상일 수 있다');
+  assert.equal(core.implausiblyEmpty([], [ent(1, { plan: 'free' })], NOW), false);
+  assert.equal(core.implausiblyEmpty([], [], NOW), false);
+  assert.equal(core.implausiblyEmpty([sub(1)], [ent(1)], NOW), false);
 });
 
 test('LS 목록 — links.next를 따라 전부 읽고, 오류·LS 밖 주소·끝없는 쪽은 throw', async () => {
@@ -91,9 +110,9 @@ test('LS 목록 — links.next를 따라 전부 읽고, 오류·LS 밖 주소·�
 const source = stripTypeScriptTypes(await readFile(new URL('../supabase/functions/ls-reconcile/index.ts', import.meta.url), 'utf8'))
   .replace(/^import .* from .*;$/gm, '');
 
-function edge({ env = {}, lsSubs = [sub(1), sub(2)], ents = [ent(1)], open = [], lsFail = false } = {}) {
+function edge({ env = {}, lsSubs = [sub(1), sub(2)], ents = [ent(1)], open = [], lsFail = false, maxRows = 1000 } = {}) {
   const config = { SUPABASE_URL: 'https://db.test', SUPABASE_SERVICE_ROLE_KEY: 'svc', LS_RECONCILE_SECRET: 'rec-secret', LEMONSQUEEZY_API_KEY: 'ls-key', ...env };
-  const inserts = [], logs = [], errors = [], lsCalls = [];
+  const inserts = [], logs = [], errors = [], lsCalls = [], reads = [];
   let handler;
   const fetch = async (input, init = {}) => {
     const url = new URL(input);
@@ -101,11 +120,12 @@ function edge({ env = {}, lsSubs = [sub(1), sub(2)], ents = [ent(1)], open = [],
     assert.equal(url.hostname, 'db.test');
     assert.equal(init.headers.Authorization, 'Bearer svc');
     const path = url.pathname.replace('/rest/v1/', '');
-    if (path === 'entitlements') { assert.equal(url.searchParams.get('or'), '(plan.eq.pro,ls_subscription_id.not.is.null)'); return Response.json(ents); }
-    if (path === 'billing_unmatched' && (init.method ?? 'GET') === 'GET') { assert.equal(url.searchParams.get('resolved_at'), 'is.null'); return Response.json(open); }
+    const page = (rows) => { const off = Number(url.searchParams.get('offset') ?? 0); reads.push(`${path}@${off}`); return Response.json(rows.slice(off, off + maxRows)); };
+    if (path === 'entitlements') { assert.equal(url.searchParams.get('or'), '(plan.eq.pro,ls_subscription_id.not.is.null)'); return page(ents); }
+    if (path === 'billing_unmatched' && (init.method ?? 'GET') === 'GET') { assert.equal(url.searchParams.get('resolved_at'), 'is.null'); return page(open); }
     if (path === 'billing_unmatched' && init.method === 'POST') {
       assert.equal(url.searchParams.get('on_conflict'), 'ls_subscription_id,reason');
-      assert.match(init.headers.Prefer, /resolution=ignore-duplicates/);
+      assert.match(init.headers.Prefer, /resolution=merge-duplicates/);
       inserts.push(...JSON.parse(init.body)); return new Response(null, { status: 201 });
     }
     throw new Error(`unexpected ${path}`);
@@ -116,7 +136,7 @@ function edge({ env = {}, lsSubs = [sub(1), sub(2)], ents = [ent(1)], open = [],
     console: { log: (...a) => logs.push(a.map(String).join(' ')), error: (...a) => errors.push(a.map(String).join(' ')) },
   });
   const call = (auth = 'Bearer rec-secret', method = 'POST') => handler(new Request('https://edge.test', { method, headers: auth ? { authorization: auth } : {}, body: method === 'POST' ? '{}' : undefined }));
-  return { call, inserts, logs, errors, lsCalls };
+  return { call, inserts, logs, errors, lsCalls, reads };
 }
 
 test('엣지 — 비밀 없으면 닫힘(500), 틀린 비밀 401, GET 405, 어느 경우에도 LS·DB를 부르지 않는다', async () => {
@@ -138,7 +158,8 @@ test('엣지 — 불일치만 billing_unmatched에 넣고(중복 무시), 맞으
   const res = await e.call();
   assert.equal(res.status, 200);
   assert.deepEqual(await res.json(), { ok: true, subscriptions: 2, findings: 1 });
-  assert.deepEqual(e.inserts, [{ event_name: 'reconcile-daily', reason: 'reconcile-ls-pro-not-linked', ls_subscription_id: '2', ls_customer_id: '902', user_email: 'u2@example.com', ls_status: 'active', ls_updated_at: '2026-10-09T21:00:00Z' }]);
+  assert.deepEqual(e.inserts, [{ event_name: 'reconcile-daily', reason: 'reconcile-ls-pro-not-linked', ls_subscription_id: '2', ls_customer_id: '902', user_email: 'u2@example.com', ls_status: 'active', ls_updated_at: '2026-10-09T21:00:00Z',
+    resolved_at: null, notified_at: null }], '처리된 같은 불일치가 있으면 다시 연다(트리거가 다시 알림)');
   assert.ok(e.logs.some((l) => /불일치 1건/.test(l) && /2:reconcile-ls-pro-not-linked/.test(l)));
   assert.ok(!e.logs.join('\n').includes('@'), '로그에 이메일이 없다');
 
@@ -146,7 +167,7 @@ test('엣지 — 불일치만 billing_unmatched에 넣고(중복 무시), 맞으
   assert.equal((await clean.call()).status, 200);
   assert.equal(clean.inserts.length, 0, '불일치가 없으면 쓰기 0');
 
-  const known = edge({ open: [{ ls_subscription_id: '2' }] });
+  const known = edge({ open: [{ ls_subscription_id: '2', reason: 'reconcile-ls-pro-not-linked' }] });
   await known.call();
   assert.equal(known.inserts.length, 0, '이미 미해결 행이 있는 구독은 다시 적지 않는다');
 
@@ -154,4 +175,17 @@ test('엣지 — 불일치만 billing_unmatched에 넣고(중복 무시), 맞으
   assert.equal((await down.call()).status, 502);
   assert.equal(down.inserts.length, 0, 'LS를 못 읽으면 아무것도 쓰지 않는다(빈 목록으로 오판해 전부 불일치로 적지 않게)');
   assert.ok(down.errors.some((l) => /LS 조회 실패/.test(l)));
+});
+
+test('엣지 — PostgREST 행 상한을 넘는 표도 끝까지 읽고, LS 빈 목록 + 결제 Pro면 쓰지 않는다', async () => {
+  // 행 상한 2로 줄여 entitlements 5행을 3쪽에 걸쳐 읽게 한다 — 끝까지 못 읽으면 연결된 구독을 "연결 없음"으로 잘못 적는다
+  const subs = [1, 2, 3, 4, 5].map((i) => sub(i));
+  const paged = edge({ lsSubs: subs, ents: [1, 2, 3, 4, 5].map((i) => ent(i)), maxRows: 2 });
+  assert.equal((await paged.call()).status, 200);
+  assert.equal(paged.inserts.length, 0, '전부 읽었으면 불일치 0');
+  assert.deepEqual(paged.reads.filter((r) => r.startsWith('entitlements')), ['entitlements@0', 'entitlements@2', 'entitlements@4', 'entitlements@5']);
+  const empty = edge({ lsSubs: [], ents: [ent(1)] });
+  assert.equal((await empty.call()).status, 502);
+  assert.equal(empty.inserts.length, 0);
+  assert.ok(empty.errors.some((l) => /목록이 비었는데/.test(l)));
 });
