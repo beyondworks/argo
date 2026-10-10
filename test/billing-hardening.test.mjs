@@ -7,7 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { applyLsEvent, unmatchedRow, pickProSubscription, lsGateOpts, shouldApplyLsEvent } from '../src/lsbilling.mjs';
+import { applyLsEvent, unmatchedRow, legacyUnmatchedRow, unmatchedRecordArgs, recordUnmatched, pickProSubscription, lsGateOpts, shouldApplyLsEvent } from '../src/lsbilling.mjs';
 import {
   reconcileDueFromRow, claimReconcile, clearReconcileEmpty, markReconcileEmpty, reconcileEntitlement, COOLDOWN_MS, EMPTY_COOLDOWN_MS,
 } from '../src/lsreconcile.mjs';
@@ -70,22 +70,63 @@ test('마이그레이션 불변식(F7): 쿨다운 컬럼 2종 — 시도·부정
   assert.match(sql, /add column if not exists ls_reconcile_empty_at timestamptz not null default 'epoch'/);
 });
 
-// ── [M4] unmatchedRow — 수동 귀속에 필요한 최소 식별자만
-test('unmatchedRow: 구독id·customer·이메일·이벤트·사유를 싣고, raw payload 전체는 싣지 않는다', () => {
+// ── [M4] unmatchedRow — 수동 귀속에 필요한 식별자 + 나중 가입 연결이 적용할 상태(20261010150000)
+test('unmatchedRow: 구독id·customer·이메일·이벤트·사유와 적용할 상태를 싣고, raw payload 전체는 싣지 않는다', () => {
   const payload = {
     meta: { event_name: 'subscription_created' },
-    data: { id: 999, attributes: { customer_id: 77, user_email: 'pay@example.com', card_last_four: '4242' } },
+    data: { id: 999, attributes: { status: 'active', customer_id: 77, user_email: 'pay@example.com', card_last_four: '4242',
+      updated_at: '2026-10-09T21:00:17Z', ends_at: null, test_mode: false, urls: { customer_portal: 'https://ls.example/p' } } },
   };
   const row = unmatchedRow('subscription_created', 'no-user', payload);
   assert.deepEqual(row, {
     event_name: 'subscription_created', reason: 'no-user',
     ls_subscription_id: '999', ls_customer_id: '77', user_email: 'pay@example.com',
+    plan: 'pro', ls_status: 'active', ls_updated_at: '2026-10-09T21:00:17Z', ends_at: null, portal_url: 'https://ls.example/p', test_mode: false,
   }); // deepEqual = 여분 필드(카드번호 등 PII)가 끼면 실패
+  assert.deepEqual(legacyUnmatchedRow(row), {
+    event_name: 'subscription_created', reason: 'no-user', ls_subscription_id: '999', ls_customer_id: '77', user_email: 'pay@example.com',
+  }, '마이그레이션 전 표의 열 다섯 개');
 });
 
-test('unmatchedRow: 필드 부재는 빈 문자열 — dedup 유니크 인덱스(not null) 계약 유지', () => {
+test('unmatchedRow: 필드 부재는 빈 문자열·null — dedup 유니크 인덱스(not null) 계약 유지, 적용할 것이 없으면 plan null', () => {
   const row = unmatchedRow(undefined, undefined, {});
-  assert.deepEqual(row, { event_name: '', reason: '', ls_subscription_id: '', ls_customer_id: '', user_email: '' });
+  assert.deepEqual(row, { event_name: '', reason: '', ls_subscription_id: '', ls_customer_id: '', user_email: '',
+    plan: null, ls_status: null, ls_updated_at: null, ends_at: null, portal_url: null, test_mode: false });
+});
+
+test('unmatchedRow: plan은 사용자만 정해지면 적용될 이벤트에만 — 허용목록 밖 상품·인보이스·대사·모르는 상태는 null, 시험 결제는 test_mode', () => {
+  const p = (attrs) => ({ data: { id: 's', attributes: { status: 'active', variant_id: 111, ...attrs } } });
+  const allowed = { allowedVariants: new Set(['111']) };
+  assert.equal(unmatchedRow('subscription_created', 'no-user', p({}), allowed).plan, 'pro');
+  assert.equal(unmatchedRow('subscription_expired', 'no-user', p({ status: 'expired' }), allowed).plan, 'free');
+  assert.equal(unmatchedRow('subscription_created', 'no-user', p({ variant_id: 222 }), allowed).plan, null, '다른 상품 — 크론이 Pro를 주면 안 된다');
+  assert.equal(unmatchedRow('subscription_created', 'no-user', p({ variant_id: 222 })).plan, 'pro', '허용목록이 없으면 웹훅과 같이 전부');
+  assert.equal(unmatchedRow('subscription_payment_success', 'no-user', p({ status: 'paid' })).plan, null);
+  assert.equal(unmatchedRow('reconcile', 'duplicate-attribution', {}).plan, null);
+  assert.equal(unmatchedRow('subscription_updated', 'no-user', p({ status: 'brand_new' })).plan, null);
+  assert.equal(unmatchedRow('subscription_created', 'no-user', p({ test_mode: true })).test_mode, true);
+});
+
+test('recordUnmatched: record_ls_unmatched 하나로 쓰고, 함수가 없을 때(PGRST202)만 예전 열 upsert — 다른 오류는 그대로 돌려준다', async () => {
+  const row = unmatchedRow('subscription_created', 'no-user', { data: { id: 's1', attributes: { status: 'active', user_email: 'a@b.c' } } });
+  const mk = (rpcError, upsertError = null) => {
+    const calls = { rpc: [], upserts: [] };
+    const sb = {
+      rpc: async (fn, args) => { calls.rpc.push([fn, args]); return { data: rpcError ? null : 'inserted', error: rpcError }; },
+      from: (table) => ({ upsert: async (r, o) => { calls.upserts.push([table, r, o]); return { error: upsertError }; } }),
+    };
+    return { sb, calls };
+  };
+  const ok = mk(null);
+  assert.deepEqual(await recordUnmatched(ok.sb, row), { error: null });
+  assert.deepEqual(ok.calls.rpc, [['record_ls_unmatched', unmatchedRecordArgs(row)]]);
+  assert.equal(ok.calls.upserts.length, 0);
+  const missing = mk({ code: 'PGRST202', message: 'not found' });
+  assert.deepEqual(await recordUnmatched(missing.sb, row), { error: null });
+  assert.deepEqual(missing.calls.upserts, [['billing_unmatched', legacyUnmatchedRow(row), { onConflict: 'ls_subscription_id,reason', ignoreDuplicates: true }]]);
+  const denied = mk({ code: '42501', message: 'permission denied' });
+  assert.equal((await recordUnmatched(denied.sb, row)).error.message, 'permission denied');
+  assert.equal(denied.calls.upserts.length, 0, '함수가 있는데 실패한 것은 우회하지 않는다');
 });
 
 // ── [O2] pickProSubscription — 대사 후보 선별

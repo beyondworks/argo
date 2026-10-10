@@ -7,7 +7,7 @@
 // 그래서 5xx 경로는 [유실 위험] 접두 로그로 크게 남긴다. 유실 시 최후 방어는 /api/me/billing의
 // 대사(src/lsreconcile.mjs, O2)가 LS API 대조로 복구한다.
 import { createClient } from '@supabase/supabase-js';
-import { verifyLsSignature, mapSubscriptionEvent, applyLsEvent, unmatchedRow, lsGateOpts } from '../../../../src/lsbilling.mjs';
+import { verifyLsSignature, mapSubscriptionEvent, applyLsEvent, unmatchedRow, recordUnmatched, lsGateOpts } from '../../../../src/lsbilling.mjs';
 
 export async function POST(req) {
   const secret = process.env.LEMONSQUEEZY_WEBHOOK_SECRET;
@@ -30,7 +30,8 @@ export async function POST(req) {
   try { payload = JSON.parse(raw); } catch { return Response.json({ error: 'bad json' }, { status: 400 }); }
 
   const eventName = payload?.meta?.event_name ?? req.headers.get('x-event-name') ?? '';
-  const mapped = mapSubscriptionEvent(eventName, payload, lsGateOpts());
+  const gate = lsGateOpts();
+  const mapped = mapSubscriptionEvent(eventName, payload, gate);
   if (!mapped) return Response.json({ ok: true, ignored: eventName }); // 미처리 이벤트 — 200(재시도 방지)
 
   const sb = createClient(url, serviceKey, { auth: { persistSession: false } });
@@ -39,10 +40,10 @@ export async function POST(req) {
     // other-product는 특히 오설정(PRO_VARIANT_IDS에 월간·연간 중 하나 누락)일 가능성이 높아 [유실 위험]으로.
     console.error('[argo] billing webhook [유실 위험] 귀속 실패:', eventName, mapped.error,
       'sub=', payload?.data?.id, 'email=', payload?.data?.attributes?.user_email ?? '?');
-    // M4: billing_unmatched 적재 — 수동 귀속의 근거. 같은 (구독,사유)는 1행(dedup 인덱스).
+    // M4: billing_unmatched 적재 — 수동 귀속과 나중 가입 연결(크론 ls_link_late_signups)의 근거. 같은 (구독,사유)는 1행,
+    // LS updated_at이 가장 최근인 상태가 남는다(record_ls_unmatched). 상품 허용목록 밖이면 plan을 비워 크론이 적용하지 않는다.
     // 적재 실패는 로그만 — 여기서 5xx를 주면 정상 웹훅 흐름까지 LS 재시도에 말려든다.
-    const { error: insErr } = await sb.from('billing_unmatched')
-      .upsert(unmatchedRow(eventName, mapped.error, payload), { onConflict: 'ls_subscription_id,reason', ignoreDuplicates: true });
+    const { error: insErr } = await recordUnmatched(sb, unmatchedRow(eventName, mapped.error, payload, gate));
     if (insErr) console.error('[argo] billing webhook 미귀속 적재 실패(수동 귀속 근거 유실):', insErr.message);
     return Response.json({ ok: true, unmatched: mapped.error });
   }

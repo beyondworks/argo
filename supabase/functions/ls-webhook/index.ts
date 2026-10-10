@@ -18,6 +18,10 @@
 //   결제한 구독이나 같은 사람의 옛 구독 이벤트가 지금 쓰는 구독 연결을 덮어쓰지 못하게(분리 검수 HIGH-1).
 //   못 찾았거나 연결하지 않은 건은 billing_unmatched에 남기고 200 — LS가 재시도해도 결과가 같다. 기록이 실패하면 500.
 //   로그에는 구독 번호와 가린 이메일만 남긴다.
+// 나중 가입(2026-10-10): 결제 시각에 계정이 없던 no-user 기록은 pg_cron ls_link_late_signups가 10분마다 다시 본다.
+//   그래서 기록에 적용할 값(plan·상태·LS updated_at·ends_at·포털·test_mode)을 함께 남긴다 — record_ls_unmatched 한 함수로,
+//   같은 구독에 이벤트가 여러 번 오면 LS updated_at이 가장 최근인 상태가 남는다(20261010150000).
+//   그 함수가 아직 없으면(마이그레이션 전 배포) 예전 모양으로 남긴다 — 배포 순서가 바뀌어도 기록을 잃지 않게.
 // 응답: stale·other_subscription은 셀프호스트 수신자(app/api/billing/webhook/route.js)와 같은 200 본문.
 //       DB 오류는 500 — LS 재시도(3회·약 155초)로 한 번 더 기회를 준다.
 // 테스트: test/ls-webhook-edge.test.mjs(이 파일을 타입만 지워 node vm에서 실행),
@@ -125,17 +129,36 @@ Deno.serve(async (req) => {
     console.error(`[ls-webhook] [유실 위험] ${what} 실패 ${tag}: ${message}`);
     return new Response('db error', { status: 500 });
   };
-  // 연결하지 못한 결제 — 수동 연결의 근거로 billing_unmatched에 남긴다(src/lsbilling.mjs unmatchedRow와 같은 필드).
-  // 같은 (구독, 사유)는 1행. 기록이 실패하면 500 — ignoreDuplicates라 재시도해도 중복 행이 생기지 않고, LS 대시보드에
+  // 연결하지 못한 결제 — 나중 가입 연결(크론)과 수동 연결의 근거로 billing_unmatched에 남긴다. 인자는 정본
+  // src/lsbilling.mjs unmatchedRecordArgs(unmatchedRow(...))와 같다(test/ls-webhook-edge.test.mjs가 대조한다).
+  // 같은 (구독, 사유)는 1행. 기록이 실패하면 500 — 같은 이벤트를 다시 받아도 행이 늘지 않고, LS 대시보드에
   // 실패로 남아 다시 보낼 수 있다(분리 검수 LOW-1). 실패했을 때는 "남겼다" 로그를 찍지 않는다.
   const unmatched = async (reason: string) => {
-    const { error } = await sb.from('billing_unmatched').upsert({
-      event_name: name,
-      reason,
-      ls_subscription_id: subId,
-      ls_customer_id: String(a.customer_id ?? ''),
-      user_email: String(a.user_email ?? ''),
-    }, { onConflict: 'ls_subscription_id,reason', ignoreDuplicates: true });
+    let { error } = await sb.rpc('record_ls_unmatched', {
+      p_event_name: name,
+      p_reason: reason,
+      p_sub_id: subId,
+      p_customer_id: String(a.customer_id ?? ''),
+      p_email: String(a.user_email ?? ''),
+      p_plan: plan,
+      p_status: status,
+      p_updated_at: a.updated_at ?? null,
+      p_ends_at: a.ends_at ?? null,
+      p_portal_url: a.urls?.customer_portal ?? null,
+      p_test_mode: Boolean(a.test_mode),
+    });
+    if (error?.code === 'PGRST202') {
+      // 마이그레이션 20261010150000 전 — 예전 열만, 첫 기록 유지(ignoreDuplicates). 나중 가입 연결 대상은 아니고 수동 연결 근거로 남는다.
+      // 인자 이름이 어긋나도 같은 코드가 나오므로 조용히 넘기지 않고 경고를 남긴다.
+      console.warn(`[ls-webhook] record_ls_unmatched 없음(PGRST202) — 예전 모양으로 기록, 나중 가입 자동 연결 대상 아님 ${tag}`);
+      ({ error } = await sb.from('billing_unmatched').upsert({
+        event_name: name,
+        reason,
+        ls_subscription_id: subId,
+        ls_customer_id: String(a.customer_id ?? ''),
+        user_email: String(a.user_email ?? ''),
+      }, { onConflict: 'ls_subscription_id,reason', ignoreDuplicates: true }));
+    }
     if (error) return dbError(`미연결 기록(${reason})`, error.message);
     console.warn(`[ls-webhook] 연결 안 함(${reason}) — billing_unmatched ${tag}`);
     return json({ ok: true, unmatched: reason });

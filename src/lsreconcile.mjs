@@ -12,7 +12,7 @@
 //    이 게이트만 해제한다 — "설정 열기(empty 확정) → 곧장 업그레이드 클릭 → 결제 → 웹훅 유실"이
 //    기본 동선이라, 해제 없이는 복구가 24시간 잠긴다(2차 검수 HIGH). 시도 10분 게이트는 의사
 //    신호로도 안 풀린다 — intent 연타가 LS 호출 증폭이 되지 않게.
-import { applyLsEvent, pickProSubscription, unmatchedRow } from './lsbilling.mjs';
+import { applyLsEvent, pickProSubscription, unmatchedRow, legacyUnmatchedRow } from './lsbilling.mjs';
 
 export const COOLDOWN_MS = 10 * 60_000; // 대사 시도 간격 — 설정 화면 재방문마다 LS API를 때리지 않는다
 export const EMPTY_COOLDOWN_MS = 24 * 60 * 60_000; // "활성 구독 없음" 확정 후 재확인 간격
@@ -120,7 +120,7 @@ export async function reconcileEntitlement({
   if (dupErr) throw new Error(dupErr.message);
   if (dupes?.length) {
     console.error(`[argo] billing 대사 중단: 구독 ${picked.ls_subscription_id}이 이미 다른 계정에 귀속 — duplicate-attribution 적재(수동 판단 대상)`);
-    const row = { ...unmatchedRow('reconcile', 'duplicate-attribution', {}), ls_subscription_id: picked.ls_subscription_id, ls_customer_id: picked.ls_customer_id, user_email: email };
+    const row = { ...legacyUnmatchedRow(unmatchedRow('reconcile', 'duplicate-attribution', {})), ls_subscription_id: picked.ls_subscription_id, ls_customer_id: picked.ls_customer_id, user_email: email };
     const { error: insErr } = await sb.from('billing_unmatched')
       .upsert(row, { onConflict: 'ls_subscription_id,reason', ignoreDuplicates: true });
     if (insErr) console.error('[argo] billing 대사 duplicate-attribution 적재 실패:', insErr.message);
