@@ -3,8 +3,9 @@
 // 새 파일을 받는다(앱 업로드 = Storage 정책, 첨부 행 = 트리거, 봇 = 준비·등록 — 모두 _msgr_upload_gate 하나) / Pro·운영자 부여·체험·유료 조직 좌석은
 // 한도 밖(is_pro_for) / 이미 넘은 사람의 파일은 지우지 않는다 / 같은 객체를 다시 가리키는 행은 새 저장이 아니다 / 다른 버킷은 무관 /
 // 판정은 쓰기 0 / 남의 사용량을 묻는 통로가 없다.
-// Storage 흉내: 실제 storage-api(v1.41.8 uploader.canUpload)는 크기 없이 사용자 권한으로 행 넣기를 시험하고(정책 판정), 올린 뒤 슈퍼유저로
-// 크기를 채운다 — 아래 uploadRaw(정책 판정, metadata 없음) + fill(서비스가 크기 채움)이 그 두 단계다.
+// Storage 흉내: storage-api(2026-03 #825 이후 — 운영은 2026-09 이후 버전)는 사용자 권한으로 행 넣기를 시험하며(정책 판정) metadata.contentLength에
+// 신고 크기를 싣고, 올린 뒤 슈퍼유저로 실제 크기(metadata.size)를 채운다 — uploadRaw(정책 판정, 신고 크기) + fill(서비스가 크기 채움)이 그 두 단계다.
+// 신고 크기가 없는 옛 storage-api(v1.41.8 등)는 declared=null로 흉내 낸다.
 // 실행: bash scripts/billing-pg-drill.sh test/msgr-free-storage-limit-pg.test.mjs
 import test, { before } from 'node:test';
 import assert from 'node:assert/strict';
@@ -34,15 +35,15 @@ const setLimit = (v) => v == null ? sql(`delete from public.msgr_settings where 
   : sql(`insert into public.msgr_settings (key, value) values ('free_storage_limit_bytes', '${v}') on conflict (key) do update set value = excluded.value`);
 const post = (uid, ch, body = 'x') => last(asUser(uid, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, kind, body, client_msg_id) values ('${ch}', 'user', '${uid}', 'text', '${body}', gen_random_uuid()::text) returning id`));
 const befriend = (a, b) => { asUser(a, `select public.msgr_friend_request('${b}')`); asUser(b, `select public.msgr_friend_decide('${a}', true)`); };
-const uploadRaw = (uid, path, bucket = 'msgr') => asUserRaw(uid, `insert into storage.objects (bucket_id, name, owner) values ('${bucket}', '${path}', '${uid}')`);
+const uploadRaw = (uid, path, bucket = 'msgr', declared = null) => asUserRaw(uid, `insert into storage.objects (bucket_id, name, owner, metadata) values ('${bucket}', '${path}', '${uid}', ${declared == null ? 'null' : `'{"contentLength": ${declared}}'`})`);
 const fill = (path, size) => sql(`update storage.objects set metadata = jsonb_build_object('size', ${size}, 'mimetype', 'application/octet-stream') where bucket_id = 'msgr' and name = '${path}'`);
 const attachRaw = (uid, mid, path, org = null, bytes = 1) => asUserRaw(uid, `insert into public.msgr_attachments (message_id, org_id, storage_path, name, mime, bytes) values (${mid}, ${org ? `'${org}'` : 'null'}, '${path}', 'a.bin', 'application/octet-stream', ${bytes})`);
 let seq = 0;
 // 앱 한 파일 전송 = 업로드(정책) → 크기 채움(서비스) → 첨부 행(정책 + 트리거). 단계별 결과를 돌려준다
-function send(uid, ch, size, { org = null, mid = null } = {}) {
+function send(uid, ch, size, { org = null, mid = null, declared = size } = {}) {
   const m = mid ?? post(uid, ch);
   const path = `${org ?? 'p'}/${ch}/${m}/${++seq}-f.bin`;
-  const up = uploadRaw(uid, path);
+  const up = uploadRaw(uid, path, 'msgr', declared);
   if (up.status !== 0) return { m, path, up };
   fill(path, size);
   return { m, path, up, att: attachRaw(uid, m, path, org) };
@@ -110,22 +111,21 @@ test('기본(스위치 없음)은 한도 없음 — 무료 계정도 계속 올�
   setLimit(null);
 });
 
-test('켜면: 쓴 양이 한도 미만이면 받고(넘기는 한 파일까지), 한도에 닿으면 새 업로드·새 첨부 행을 msgr_storage_limit로 거절', { skip }, () => {
+test('켜면: 쓴 양 + 이번 크기가 한도 안이면 받고, 넘으면 업로드 전에 msgr_storage_limit로 거절 — 첨부 행도 같은 판정', { skip }, () => {
   setLimit(10000);
   try {
     const a = sendOk(U.f, DM.f, 4000);
     sendOk(U.f, DM.f, 4000);
-    sendOk(U.f, DM.f, 4000); // 8000 < 10000 → 받는다(Storage 정책은 크기를 모른다 — 넘기는 파일 하나까지)
-    assert.equal(used(U.f), 12000);
-    const blocked = send(U.f, DM.f, 4000);
-    fails(blocked.up, LIMIT, '한도에 닿은 뒤 개인 방 업로드');
-    assert.match(blocked.up.stderr, /PT402|msgr_storage_limit/);
-    // 업로드를 건너뛴 첨부 행(정책 밖에서 넣은 객체를 가리키는 새 경로)도 같은 판정
-    const m = post(U.f, DM.f); const p = `p/${DM.f}/${m}/svc-f.bin`;
-    sql(`insert into storage.objects (bucket_id, name, owner, metadata) values ('msgr', '${p}', '${U.f}', '{"size": 10}')`);
-    fails(attachRaw(U.f, m, p), LIMIT, '한도에 닿은 뒤 새 첨부 행');
-    // 조직 경로(msgr_files_insert)도 같다
-    fails(uploadRaw(U.f, `${ORG}/${PUB}/${post(U.f, PUB)}/x.bin`), LIMIT, '조직 방 업로드');
+    const over = send(U.f, DM.f, 4000); // 8000 + 4000 > 10000 — 신고 크기로 올리기 전에 막는다(남는 객체 없음)
+    fails(over.up, LIMIT, '한도를 넘길 파일');
+    // SQLSTATE PT402 — storage-api는 원문 대신 'database error, code: PT402'를 돌려주므로 앱·게이트웨이가 이 코드로 알아본다
+    const st = asUserRaw(U.f, `do $$ begin perform public.msgr_upload_check('{"metadata": {"contentLength": 4000}}'::jsonb); exception when others then raise exception 'state=%', sqlstate; end $$`);
+    assert.match(st.stderr, /state=PT402/);
+    assert.equal(sql(`select count(*) from storage.objects where name = '${over.path}'`), '0', '거절된 업로드는 객체를 남기지 않는다');
+    sendOk(U.f, DM.f, 2000); // 정확히 10000 — 한도까지는 된다
+    assert.equal(used(U.f), 10000);
+    fails(send(U.f, DM.f, 1).up, LIMIT, '한도에 닿은 뒤 1바이트');
+    fails(uploadRaw(U.f, `${ORG}/${PUB}/${post(U.f, PUB)}/x.bin`, 'msgr', 1), LIMIT, '조직 방 업로드(msgr_files_insert)도 같다');
     // 기존 파일은 그대로 — 지우지 않고 읽힌다
     assert.equal(sql(`select count(*) from public.msgr_attachments where uploader_id = '${U.f}'`), '3');
     assert.equal(asUser(U.x, `select count(*) from storage.objects where bucket_id = 'msgr' and name = '${a.path}'`), '1', '상대는 지난 파일을 그대로 읽는다');
@@ -133,6 +133,59 @@ test('켜면: 쓴 양이 한도 미만이면 받고(넘기는 한 파일까지),
     setLimit(20000);
     sendOk(U.f, DM.f, 100);
   } finally { setLimit(null); }
+});
+
+test('신고 크기가 없는 옛 storage-api: 업로드는 쓴 양 ≤ 한도로 받고, 첨부 행이 실제 크기로 막으면 그 객체는 사용량에 남는다', { skip }, () => {
+  sendOk(U.g, DM.g, 9000);
+  setLimit(10000);
+  try {
+    const r = send(U.g, DM.g, 2000, { declared: null });
+    assert.equal(r.up.status, 0, '크기를 모르면 9000 ≤ 10000으로 받는다');
+    fails(r.att, LIMIT, '첨부 행은 실제 크기(9000 + 2000 > 10000)로 막는다');
+    assert.equal(used(U.g), 11000, '등록 못 한 내 객체도 내 사용량');
+    fails(send(U.g, DM.g, 1, { declared: null }).up, LIMIT, '그 뒤 업로드');
+  } finally { setLimit(null); }
+});
+
+test('M2: 첨부 행 없이 업로드만 반복해도 내 미등록 객체가 사용량에 들어 한도에서 멈춘다(남의 객체는 안 셈)', { skip }, () => {
+  const reg = (uid) => Number(sql(`select coalesce(sum(b),0) from (select max(bytes) b from public.msgr_attachments where uploader_id = '${uid}' group by storage_path) x`));
+  const base = reg(U.h);
+  setLimit(base + 10000);
+  try {
+    const paths = [];
+    for (let i = 0; i < 2; i++) { const m = post(U.h, DM.h); const p = `p/${DM.h}/${m}/${++seq}-u.bin`; const r = uploadRaw(U.h, p, 'msgr', 4000); assert.equal(r.status, 0, r.stderr); fill(p, 4000); paths.push(p); }
+    assert.equal(used(U.h), base + 8000, '미등록 객체 2개(8000)가 더해진다');
+    fails(uploadRaw(U.h, `p/${DM.h}/${post(U.h, DM.h)}/${++seq}-u.bin`, 'msgr', 4000), LIMIT, '세 번째 미등록 업로드(8000 + 4000 > 10000)');
+    assert.equal(used(U.x), reg(U.x), '친구 x에게는 h의 객체가 안 들어간다');
+    setLimit(null);
+    assert.equal(attachRaw(U.h, paths[0].split('/')[2], paths[0]).status, 0);
+    assert.equal(used(U.h), base + 8000, '등록하면 미등록 → 등록으로 옮겨질 뿐 한 번만 센다');
+  } finally { setLimit(null); }
+});
+
+test('M1: 켜져 있으면 객체 없는 첨부 행(먼저 행, 나중 업로드)은 거절 — 꺼져 있으면 종전대로', { skip }, () => {
+  const m = post(U.g, PUB);
+  setLimit(1000000);
+  try {
+    fails(attachRaw(U.g, m, `${ORG}/${PUB}/${m}/ghost.bin`, ORG), /msgr_attach_upload_missing/, '켜짐 — 객체 없는 새 경로');
+    sendOk(U.g, PUB, 10, { org: ORG, mid: m }); // 정상 순서(업로드 → 행)는 된다
+  } finally { setLimit(null); }
+  assert.equal(attachRaw(U.g, m, `${ORG}/${PUB}/${m}/ghost2.bin`, ORG).status, 0, '꺼짐 — 종전 동작 그대로');
+});
+
+test('M3: 조직 채널을 지우면 그 채널 폴더의 객체 행만 지운다 — 다른 채널·다른 조직·개인 방은 0건 영향', { skip }, () => {
+  const ch = last(asUser(U.g, `select msgr_create_channel('${ORG}','public','tmp-${seq}','[]')`)); // 관리자가 아닌 멤버가 만든 채널
+  const keepCh = sendOk(U.g, PUB, 10, { org: ORG }).path;
+  const gone = [sendOk(U.g, ch, 10, { org: ORG }).path, sendOk(U.g, ch, 20, { org: ORG }).path];
+  const keepPaid = sendOk(U.s, PAID_CH, 10, { org: PAID }).path;
+  const keepDm = sendOk(U.g, DM.g, 10).path;
+  const before = Number(sql(`select count(*) from storage.objects`));
+  const del = asUserRaw(U.g, `delete from public.msgr_channels where id = '${ch}' returning id`);
+  assert.equal(del.status, 0, del.stderr);
+  assert.match(del.stdout, new RegExp(ch), '만든 사람이 지웠다');
+  assert.equal(sql(`select count(*) from storage.objects where name in ('${gone.join("','")}')`), '0', '그 채널 파일 행은 지운다');
+  assert.equal(Number(sql(`select count(*) from storage.objects`)), before - 2, '정확히 2건');
+  for (const p of [keepCh, keepPaid, keepDm]) assert.equal(sql(`select count(*) from storage.objects where name = '${p}'`), '1', `남는다: ${p}`);
 });
 
 test('같은 객체를 다시 가리키는 첨부 행(게이트웨이 재사용)은 새 저장이 아니다 — 한도에 걸리지 않고 한 번만 센다', { skip }, () => {
@@ -149,7 +202,7 @@ test('같은 객체를 다시 가리키는 첨부 행(게이트웨이 재사용)
 });
 
 test('Pro 결제·운영자 부여·체험·유료 조직 좌석은 한도를 넘어도 올리고, 유료 조직 손님은 무료와 같다', { skip }, () => {
-  setLimit(1);
+  setLimit(6000);
   try {
     for (const k of ['p', 'r', 't', 's']) {
       assert.equal(sql(`select public.is_pro_for('${U[k]}')`), 't', `${k}는 Pro 판정`);
@@ -157,7 +210,7 @@ test('Pro 결제·운영자 부여·체험·유료 조직 좌석은 한도를 �
     }
     sendOk(U.s, PAID_CH, 5000, { org: PAID }); // 조직 공간 — 유료 좌석 멤버
     assert.equal(sql(`select public.is_pro_for('${U.q}')`), 'f');
-    sendOk(U.q, DM.q, 5000); // 0 < 1 → 첫 파일은 받는다
+    sendOk(U.q, DM.q, 5000); // 0 + 5000 ≤ 6000 → 첫 파일은 받는다
     fails(send(U.q, DM.q, 5000).up, LIMIT, '유료 조직 손님(좌석 아님)');
   } finally { setLimit(null); }
 });
@@ -202,14 +255,14 @@ test('판정은 쓰기 0, 남의 사용량·플랜을 묻는 통로가 없다', 
   try {
     // 통과·거절 모두 트랜잭션 번호를 받지 않는다(= 어떤 행도 쓰지 않는다)
     // psql -c 한 번 = 한 트랜잭션 — 판정 뒤 트랜잭션 번호가 아직 없으면 그 사이에 쓴 행이 없다
-    assert.equal(last(asUser(U.x, `select public.msgr_upload_check(); select coalesce(txid_current_if_assigned()::text, 'none')`)), 'none');
-    const r = asUserRaw(U.f, `select public.msgr_upload_check()`);
+    assert.equal(last(asUser(U.x, `select public.msgr_upload_check('{}'::jsonb); select coalesce(txid_current_if_assigned()::text, 'none')`)), 'none');
+    const r = asUserRaw(U.f, `select public.msgr_upload_check('{"metadata": {"contentLength": 1}}'::jsonb)`);
     fails(r, LIMIT, '본인 판정만 — 넘은 사람은 오류');
-    for (const fn of [`public._msgr_upload_gate('${U.p}')`, `public._msgr_storage_used('${U.p}')`, `public._msgr_upload_allowed('${U.p}')`]) {
+    for (const fn of [`public._msgr_upload_gate('${U.p}', 0)`, `public._msgr_storage_used('${U.p}')`, `public._msgr_upload_allowed('${U.p}', 0)`]) {
       fails(asUserRaw(U.f, `select ${fn}`), /permission denied/, `authenticated → ${fn}`);
       fails(asAnonRaw(`select ${fn}`), /permission denied/, `anon → ${fn}`);
     }
-    fails(asAnonRaw(`select public.msgr_upload_check()`), /permission denied/, 'anon → msgr_upload_check');
+    fails(asAnonRaw(`select public.msgr_upload_check('{}'::jsonb)`), /permission denied/, 'anon → msgr_upload_check');
   } finally { setLimit(null); }
 });
 

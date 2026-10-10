@@ -64,3 +64,14 @@ test('봇 RPC(전이 포함)와 봇 글 삽입 트리거가 raise하는 이름�
   }
   assert.deepEqual([...new Set(missing)].sort(), [], 'ERR에 없는 이름은 엣지에서 500 → 봇 outbox 정지');
 });
+
+// 무료 첨부 저장 한도(20261011150000) — 413은 설치된 연결 도구(Hermes adapter·OpenClaw api)가 '25MB를 넘어'로 바꿔 안내한다(분리 검수 #946 M4).
+// 403 + 원문 사유. 봇 원문은 방에 실리므로 결제 유도 문구를 넣지 않는다(iOS 규정).
+test('msgr_storage_limit은 403 + 중립 사유(25MB·결제 유도 없음)', () => {
+  const line = core.split('\n').find((l) => /^\s*msgr_storage_limit:/.test(l)) ?? '';
+  const m = line.match(/\[(\d{3}),\s*'(.*)'\]/);
+  assert.ok(m, line);
+  assert.equal(m[1], '403');
+  assert.match(m[2], /^Forbidden: /);
+  assert.doesNotMatch(m[2], /25 ?MB|Payload Too Large|upgrade|Pro\b|pay/i);
+});
