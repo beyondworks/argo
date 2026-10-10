@@ -17,7 +17,7 @@ const { officeToolSpecs } = await import('../src/gateway/office-tools.mjs');
 const { cliContext, isCliCtx, audienceOf } = await import('../src/gateway/office-audience.mjs');
 const { officeMain } = await import('../src/office-cli.mjs');
 const { attachPathRefusal, inAgentTurn } = await import('../src/office-tools-cli.mjs');
-const { ARGO_OFFICE_SHELL_RE } = await import('../src/permission-gate.mjs');
+const { shellCallsArgoOffice } = await import('../src/permission-gate.mjs');
 const { scrubServerSecrets } = await import('../src/runners/shared.mjs');
 const { workDeps } = await import('../src/gateway/office-work.mjs');
 
@@ -180,8 +180,30 @@ test('C9. 에이전트 턴 안(ARGO_AGENT_TURN)에서는 CLI·MCP 거절, 러너
     assert.equal((await mcp.call('office_work', { action: 'tasks', org: ORG })).isError, true);
     assert.equal(f.calls.length, 0, '서버를 부르지 않는다');
   } finally { delete process.env.ARGO_AGENT_TURN; }
-  for (const cmd of ['argo office mail mails', 'node bin/argo.mjs office work tasks', 'cd x && argo office tools', 'ARGO_AGENT_TURN= argo office deals customers', 'node /x/src/office-mcp.mjs']) assert.ok(ARGO_OFFICE_SHELL_RE.test(cmd), cmd);
-  for (const cmd of ['grep -r "argo office" docs', 'echo argonaut office', 'ls office']) assert.ok(!ARGO_OFFICE_SHELL_RE.test(cmd), cmd);
+  // 보안 리뷰(10/10): 따옴표·sh -c 모양도 막는다(따옴표를 지우고 본다 — grep "argo office"는 fail-closed 오탐으로 수용)
+  for (const cmd of ['argo office mail mails', 'node bin/argo.mjs office work tasks', 'cd x && argo office tools', 'ARGO_AGENT_TURN= argo office deals customers', 'node /x/src/office-mcp.mjs',
+    'bash -c "argo office work tasks"', "sh -c 'argo office work task_add --title x'", 'node "$P/bin/argo.mjs" office work', 'ar""go office work', 'argo "office" work', 'grep -r "argo office" docs']) assert.ok(shellCallsArgoOffice(cmd), cmd);
+  for (const cmd of ['echo argonaut office', 'ls office', 'node bin/argo.mjs login']) assert.ok(!shellCallsArgoOffice(cmd), cmd);
+});
+
+// 이유(보안 리뷰 10/10): 셸 문자열 게이트와 자기 env 표지는 넘을 수 있었다(`sh -c 'unset ARGO_AGENT_TURN; node "$P/bin/argo.mjs" office …'`).
+// CLI가 조상 프로세스(러너)의 env 표지를 스스로 본다 — 실제 프로세스 사슬(러너 흉내 node → /bin/sh unset → argo office)로 재현한다.
+test('C13. 러너 아래 셸에서 표지를 지워도 CLI가 조상 표지를 보고 거절, 표지 없는 사람 실행은 그대로', { skip: process.platform === 'win32' && 'Windows는 조상 판정 없음' }, async () => {
+  const { spawnSync } = await import('node:child_process');
+  const { fileURLToPath } = await import('node:url');
+  const argo = fileURLToPath(new URL('../bin/argo.mjs', import.meta.url));
+  const root = join(await mkdtemp(join(tmpdir(), 'argo-office-chain-')), 'r');
+  const runner = `const { spawnSync } = require('node:child_process'); const r = spawnSync('/bin/sh', ['-c', 'unset ARGO_AGENT_TURN ARGO_AGENT_PROC; exec ' + JSON.stringify(process.execPath) + ' ' + JSON.stringify(process.argv[1]) + ' office work tasks'], { encoding: 'utf8' }); process.stdout.write(JSON.stringify({ code: r.status, out: r.stderr + r.stdout }));`;
+  const chain = (mark) => {
+    const env = { PATH: process.env.PATH, HOME: process.env.HOME, ARGO_ROOT: root, ...(mark ? { ARGO_AGENT_TURN: '1' } : {}) };
+    return JSON.parse(spawnSync(process.execPath, ['-e', runner, argo], { env, encoding: 'utf8' }).stdout);
+  };
+  const agent = chain(true);
+  assert.equal(agent.code, 1, agent.out);
+  assert.match(agent.out, /에이전트 턴 안/);
+  const human = chain(false);
+  assert.equal(human.code, 2, human.out); // 로그인 필요 — 판정은 통과했다
+  assert.match(human.out, /로그인/);
 });
 
 // 이유(분리 검수 MEDIUM-2): 본체 판정은 회사 폴더 전제라 작업 폴더 아래 깊은 .env·홈 폴더의 키체인을 막지 못했다

@@ -219,19 +219,35 @@ async function procOwner(peer, pids) {
   return { pid: 0 };
 }
 
-const markLine = (s) => s.includes(`${AGENT_MARK}=`);
-async function markedAmong(platform, pids) {
+const markLine = (s, keys = [AGENT_MARK]) => keys.some((k) => s.includes(`${k}=`));
+async function markedAmong(platform, pids, keys = [AGENT_MARK]) {
   const out = new Set();
   const list = [...new Set(pids.filter((p) => p > 0))];
   if (!list.length) return out;
   if (platform === 'linux') {
-    for (const p of list) if (markLine((await readFile(`/proc/${p}/environ`, 'utf8').catch(() => '')).split('\0').join(' '))) out.add(p);
+    for (const p of list) if (markLine((await readFile(`/proc/${p}/environ`, 'utf8').catch(() => '')).split('\0').join(' '), keys)) out.add(p);
     return out;
   }
   // macOS: 같은 계정 프로세스의 env는 ps -E로 보인다. 시스템 실행 파일(/usr/bin/curl 등)은 env가 가려진다(실측) — 그래서 표지는 여러 근거 중 하나다.
   const res = await run('ps', ['-E', '-ww', '-o', 'pid=,command=', '-p', list.join(',')]).catch(() => '');
-  for (const l of res.split('\n')) { const m = /^\s*(\d+)\s(.*)$/.exec(l); if (m && markLine(m[2])) out.add(Number(m[1])); }
+  for (const l of res.split('\n')) { const m = /^\s*(\d+)\s(.*)$/.exec(l); if (m && markLine(m[2], keys)) out.add(Number(m[1])); }
   return out;
+}
+
+/** 이 프로세스의 조상 중 에이전트 표지 env(AGENT_MARK·ARGO_AGENT_TURN)가 보이는 프로세스의 pid, 없으면 0 — argo office CLI·MCP의 자기 판정.
+    에이전트 셸은 자기 env의 표지를 지울 수 있지만(unset·env -u) 이미 떠 있는 조상(러너·서버)의 env는 못 바꾼다. 셸 문자열 판정(따옴표·sh -c로 우회)보다 한 겹 더 단단하다.
+    macOS는 시스템 실행 파일(/bin/sh 등)의 env가 ps -E에 안 보이지만, 그 위의 러너(node·claude·codex)와 서버는 보인다.
+    남은 우회(정직 표기): 조상과의 연결을 끊은 고아(이중 fork 뒤 부모 종료 → ppid 1) — agent-peer 머리말의 같은 한계, 근본 대책은 OS 샌드박스(후속).
+    Windows는 판정하지 않는다(0). 판정 실패는 던진다 — 호출부가 거절한다(fail-closed). */
+export async function markedAncestor({ pid = process.pid, platform = process.platform, keys = [AGENT_MARK, 'ARGO_AGENT_TURN'] } = {}) {
+  if (platform === 'win32') return 0;
+  const table = platform === 'linux' ? await procTable() : parseTable(await run('ps', MAC_PS));
+  if (!table.has(pid)) throw Object.assign(new Error('self not in process table'), { code: 'SELF_GONE' });
+  const chain = [];
+  for (let p = table.get(pid).ppid; p > 1 && table.has(p) && !chain.includes(p); p = table.get(p).ppid) chain.push(p);
+  if (!chain.length) return 0;
+  const marked = await markedAmong(platform, chain, keys);
+  return chain.find((p) => marked.has(p)) ?? 0;
 }
 
 /** 읽기용 가벼운 판정 — 상대가 이 서버의 자손이면 그 pid, 아니면 0. 실패는 0(읽기는 fail-open). */

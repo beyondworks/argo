@@ -19,6 +19,7 @@ import { companyDeps } from './gateway/office-company.mjs';
 import { filesDeps } from './gateway/office-files.mjs';
 import { mailDeps } from './gateway/office-mail.mjs';
 import { briefingDeps } from './gateway/office-briefing.mjs';
+import { markedAncestor } from './agent-peer.mjs';
 
 /** CLI 영역 이름 → 도구 이름 */
 export const AREAS = { work: 'office_work', deals: 'office_deals', calendar: 'calendar', company: 'office', files: 'office_files', mail: 'office_mail', briefing: 'office_briefing' };
@@ -102,6 +103,12 @@ export async function resolveOrg(c, want, fallback = null) {
 
 /** 아르고 에이전트 턴 안(셸·MCP 자식)인가 — 러너 환경(scrubServerSecrets)이 붙이는 표지. 에이전트는 자기 오피스 도구(방을 누가 보는지 판정)를 쓴다(분리 검수 MEDIUM-1) */
 export const inAgentTurn = (env = process.env) => !!env.ARGO_AGENT_TURN;
+/** 아르고 에이전트 턴 안인가 — 자기 env 표지(지울 수 있다) 또는 조상 프로세스(러너·서버)의 표지(agent-peer markedAncestor — 셸에서 지울 수 없다).
+    판정 실패는 true(fail-closed). 보안 리뷰(10/10): 셸 문자열 게이트는 따옴표·sh -c, env 표지는 unset으로 넘을 수 있었다 */
+export async function inAgentTurnDeep({ env = process.env, _ancestor = markedAncestor } = {}) {
+  if (inAgentTurn(env)) return true;
+  try { return (await _ancestor()) > 0; } catch { return true; }
+}
 const SECRET_NAME = /^(id_[a-z0-9_]+|.*\.(pem|key|p12|pfx|keychain|keychain-db|kdbx)|credentials(\..*)?|secrets?(\..*)?|.*token.*\.json)$/i;
 /** 문서함에 올릴 파일(files attach --path) — 지금 작업 폴더 안의 보통 파일만. 작업 폴더가 홈이거나 그 위면 거절, 경로 어느 자리든 점으로 시작하는 이름(.env·.ssh·.git…)·비밀 파일 이름은 거절,
     심볼릭 링크는 실제 위치로 다시 본다(분리 검수 MEDIUM-2 — 본체 판정은 회사 폴더 전제라 깊은 .env를 막지 못했다). 반환 null(통과) | 거절 문장 */
@@ -148,7 +155,7 @@ function areaHelp(spec, lang) {
  * argo office <영역>|orgs|tools|mcp … — 종료 코드(0 성공, 1 입력·서버 오류, 2 로그인 필요).
  * 처리기의 거절(권한·없는 id 등)도 글로 오므로 0 — 에이전트가 그 글을 읽고 다음을 정한다.
  */
-export async function toolsMain(sub, argv, { root, lang = 'ko', out = (s) => console.log(s), err = (s) => console.error(s), cfgOrg = null, needLogin = '', _fresh, _mkClient, cwd } = {}) {
+export async function toolsMain(sub, argv, { root, lang = 'ko', out = (s) => console.log(s), err = (s) => console.error(s), cfgOrg = null, needLogin = '', _fresh, _mkClient, _ancestor, cwd } = {}) {
   const pull = (name, flag = false) => { const i = argv.findIndex((x) => x === `--${name}` || x.startsWith(`--${name}=`)); if (i < 0) return undefined; const t = argv[i]; if (flag) { argv.splice(i, 1); return true; } const v = t.includes('=') ? t.slice(t.indexOf('=') + 1) : argv[i + 1]; argv.splice(i, t.includes('=') ? 1 : 2); return v; };
   const hi = argv.indexOf('-h'); if (hi >= 0) argv.splice(hi, 1, '--help');
   const json = !!pull('json', true), help = !!pull('help', true);
@@ -161,9 +168,9 @@ export async function toolsMain(sub, argv, { root, lang = 'ko', out = (s) => con
     else out(usage(specs, L));
     return 0;
   }
-  if (sub !== 'tools' && inAgentTurn()) { err(L === 'en' ? 'Inside an Argo agent turn — use your own Office tools (office_work, office_deals, calendar…), not the argo office CLI/MCP.' : '아르고 에이전트 턴 안입니다 — argo office CLI·MCP 대신 이 대화의 오피스 도구(office_work·office_deals·calendar 등)를 쓰세요.'); return 1; }
+  if (sub !== 'tools' && await inAgentTurnDeep({ _ancestor })) { err(L === 'en' ? 'Inside an Argo agent turn — use your own Office tools (office_work, office_deals, calendar…), not the argo office CLI/MCP.' : '아르고 에이전트 턴 안입니다 — argo office CLI·MCP 대신 이 대화의 오피스 도구(office_work·office_deals·calendar 등)를 쓰세요.'); return 1; }
   if (sub === 'mcp' && help) { out(L === 'en' ? 'argo office mcp — MCP server on stdio. Claude Code: claude mcp add argo-office -- node <argo>/bin/argo.mjs office mcp' : 'argo office mcp — 표준 입출력 MCP 서버. Claude Code: claude mcp add argo-office -- node <argo>/bin/argo.mjs office mcp'); return 0; }
-  if (sub === 'mcp') return (await import('./office-mcp.mjs')).serveMcp({ root, lang: L, cfgOrg, _fresh, _mkClient });
+  if (sub === 'mcp') return (await import('./office-mcp.mjs')).serveMcp({ root, lang: L, cfgOrg, _fresh, _mkClient, _ancestor });
   const spec = specs.find((s) => s.name === AREAS[sub]);
   if (sub !== 'orgs' && !spec) { err(usage(specs, L)); return 1; }
   if (help) { out(spec ? areaHelp(spec, L) : usage(specs, L)); return 0; }

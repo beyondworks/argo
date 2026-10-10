@@ -8,13 +8,13 @@ import { z } from 'zod';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { cliSpecs, checkArgs, bindSession, myOrgs, resolveOrg, runTool, inAgentTurn } from './office-tools-cli.mjs';
+import { cliSpecs, checkArgs, bindSession, myOrgs, resolveOrg, runTool, inAgentTurn, inAgentTurnDeep } from './office-tools-cli.mjs';
 
 const ORG_ARG = z.string().optional().describe('조직 id·slug·이름(office_orgs가 보여 준 것). 비우면 기본 조직. 일정·메일·브리핑은 비우면 개인 공간');
 const CLIENT_NAMES = { 'claude-code': 'Claude Code', codex: 'Codex', 'codex-mcp-client': 'Codex' };
 
 /** 도구 목록(JSON 스키마)과 실행기 — 서버 없이 시험할 수 있게 나눈다. send = 실행 결과 { content, isError? } */
-export function officeMcp({ root, lang = 'ko', cfgOrg = null, clientName = () => null, _fresh, _mkClient } = {}) {
+export function officeMcp({ root, lang = 'ko', cfgOrg = null, clientName = () => null, _fresh, _mkClient, _ancestor } = {}) {
   const specs = cliSpecs(lang);
   const tools = [
     ...specs.map((s) => ({ name: s.name, description: s.description, inputSchema: z.toJSONSchema(z.object({ ...s.shape, org: ORG_ARG })) })),
@@ -22,8 +22,10 @@ export function officeMcp({ root, lang = 'ko', cfgOrg = null, clientName = () =>
   ];
   const textOf = (t, isError = false) => ({ content: [{ type: 'text', text: t }], ...(isError ? { isError: true } : {}) });
   const needLogin = lang === 'en' ? 'Not signed in to Argo Office — run: ARGO_ROOT=<data folder> argo login' : '아르고 오피스에 로그인돼 있지 않습니다 — ARGO_ROOT=<데이터 폴더> argo login 을 실행하세요.';
+  let ancestry = null; // 조상 판정은 한 번(ps 1~2회) — 떠 있는 동안 조상은 바뀌지 않는다. env 표지는 부를 때마다 본다
   async function call(name, rawArgs = {}) {
-    if (inAgentTurn()) return textOf(lang === 'en' ? 'Inside an Argo agent turn — use your own Office tools, not this MCP.' : '아르고 에이전트 턴 안입니다 — 이 MCP 대신 대화의 오피스 도구를 쓰세요.', true); // 아르고 크루가 띄운 MCP 자식(분리 검수 MEDIUM-1)
+    ancestry ??= inAgentTurnDeep({ env: {}, _ancestor });
+    if (inAgentTurn() || await ancestry) return textOf(lang === 'en' ? 'Inside an Argo agent turn — use your own Office tools, not this MCP.' : '아르고 에이전트 턴 안입니다 — 이 MCP 대신 대화의 오피스 도구를 쓰세요.', true); // 아르고 크루가 띄운 MCP 자식(분리 검수 MEDIUM-1)
     const c = await bindSession(root, { _fresh, _mkClient });
     if (!c) return textOf(needLogin, true);
     if (name === 'office_orgs') {
