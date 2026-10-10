@@ -1556,6 +1556,12 @@ function SyncCard({ ws }) {
             {/* 자격 회수 실행 관측(분리 검수 HIGH-2) — "회수됩니다" 단정 대신 실제 실행된 사이클에 사실 표시 */}
             {mine?.withdrawn ? ` · ${t('settings.sync.credWithdrawn', { n: mine.withdrawn })}` : ''}
           </span>
+          {/* 크기 제한을 넘어 동기화하지 않는 파일(src/sync.mjs SYNC_MAX_OBJECT_BYTES) — 실패가 아니라 제외라 빨간 오류 줄이 아니라 안내 줄로 */}
+          {mine?.oversize ? (
+            <span title={(mine.oversizeRels ?? []).join('\n')} style={{ fontSize: 12, color: 'var(--fg-2)', lineHeight: 1.6 }}>
+              {t('settings.sync.oversize', { n: mine.oversize, names: (mine.oversizeRels ?? []).join(', ') + (mine.oversize > (mine.oversizeRels ?? []).length ? ' …' : ''), mb: Math.floor((mine.oversizeLimit ?? 50 * 2 ** 20) / 2 ** 20) })}
+            </span>
+          ) : null}
           {sync.paywalled ? (
             // "고장"(lastError)과 "페이월"은 다른 상태 — 여기선 빨간 에러 줄 대신 안내+업그레이드를 보인다.
             <div style={{ display: 'grid', gap: 6, marginTop: 4 }}>

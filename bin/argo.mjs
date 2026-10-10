@@ -13,7 +13,7 @@
 import { fileURLToPath } from 'node:url';
 import { dirname, join, relative } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { homedir, hostname, userInfo } from 'node:os';
 import { createInterface } from 'node:readline/promises';
 import { Writable, Transform } from 'node:stream';
@@ -116,6 +116,7 @@ const T = {
     uninstallManual: (f) => `argo가 실행 중이라 이 명령 안에서는 지울 수 없습니다. 이 창에서 다음을 실행하면 제거됩니다:\n  powershell -NoProfile -ExecutionPolicy Bypass -File "${f}"`,
     usage: '사용법: argo [run [--standby]|chat <에이전트> [지시]|login|status|browser|service install [--standby]|service uninstall|service status|office report|office hold|office tasks|uninstall]  (--standby = 다른 기기가 꺼졌을 때만 실행을 맡는 예비 서버, office = 오피스 업무 현황에 세션·보류한 일 남기기 — argo office help, uninstall = 설치 명령으로 넣은 argo 제거, 데이터는 남김)',
     status: (s) => `계정: ${s.email || '(로그인 안 됨)'}\n데이터: ${s.root}\n회사: ${s.companies}\n기기: ${s.device}`,
+    statusOversize: (name, n, names, mb) => `동기화 제외(크기 초과) — ${name}: ${n}개 (${names}) · ${mb}MB를 넘는 파일은 기기 간에 주고받지 않습니다`,
   },
   en: {
     noConfig: 'Missing Supabase public config. Put {"supabase":{"url":"…","anonKey":"…"}} in ~/.argo/cli.json or set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.',
@@ -171,6 +172,7 @@ const T = {
     uninstallManual: (f) => `argo is running, so it can't remove itself from inside this command. Run this in this window to remove it:\n  powershell -NoProfile -ExecutionPolicy Bypass -File "${f}"`,
     usage: 'Usage: argo [run [--standby]|chat <agent> [message]|login|status|browser|service install [--standby]|service uninstall|service status|office report|office hold|office tasks|uninstall]  (--standby = a standby server that runs things only while your other device is off; office = leave this session and on-hold tasks in Office Work status — argo office help; uninstall = remove an argo installed with the install command; data is kept)',
     status: (s) => `Account: ${s.email || '(not signed in)'}\nData: ${s.root}\nCompanies: ${s.companies}\nDevice: ${s.device}`,
+    statusOversize: (name, n, names, mb) => `Not synced (too large) — ${name}: ${n} (${names}) · files over ${mb} MB aren't synced between devices`,
   },
 }[lang];
 // src를 불러오기 전 — 로컬인데 앱 폴더에 로그인이 있으면 계정 모드로. office는 건너뛴다: 훅 폴더(ARGO_ROOT=~/.argo/office-hook)의 로그인을
@@ -553,9 +555,17 @@ function service(action, flags = []) {
 
 async function status() {
   const s = localMode ? { user: { id: 'local', email: T.localLabel } } : await currentSession();
-  const { getDeviceId } = await import('../src/workspace.mjs');
-  const companies = s ? (await ownCompanies(s.user.id)).map((c) => `${c.name} (${c.id})`).join(', ') || (localMode ? '-' : T.statusNoCompany) : '-';
-  console.log(T.status({ email: s?.user?.email, root: process.env.ARGO_ROOT, companies, device: await getDeviceId() }).split('\n').map((l) => `  ${l}`).join('\n')); // 대화 화면 줄과 같은 들여쓰기
+  const { getDeviceId, paths } = await import('../src/workspace.mjs');
+  const list = s ? await ownCompanies(s.user.id) : [];
+  const companies = s ? list.map((c) => `${c.name} (${c.id})`).join(', ') || (localMode ? '-' : T.statusNoCompany) : '-';
+  // 크기 초과로 동기화하지 않는 파일 — 상주(argo run·앱)와 다른 프로세스라 메모리 상태를 못 본다. 마지막 사이클이 남긴 .sync-state.json의 oversize를 읽는다(src/sync.mjs SYNC_MAX_OBJECT_BYTES)
+  const oversize = list.flatMap((c) => {
+    try {
+      const o = JSON.parse(readFileSync(join(paths(c.id).root, '.sync-state.json'), 'utf8'))?.oversize;
+      return o?.n ? [T.statusOversize(c.name, o.n, (o.rels ?? []).join(', ') + (o.n > (o.rels ?? []).length ? ' …' : ''), Math.floor((o.limit ?? 50 * 2 ** 20) / 2 ** 20))] : [];
+    } catch { return []; } // 동기화한 적 없음·읽기 실패 — 줄 없음
+  });
+  console.log([T.status({ email: s?.user?.email, root: process.env.ARGO_ROOT, companies, device: await getDeviceId() }), ...oversize].join('\n').split('\n').map((l) => `  ${l}`).join('\n')); // 대화 화면 줄과 같은 들여쓰기
 }
 
 /* ─── 입구 — 대화 화면 ─── */
