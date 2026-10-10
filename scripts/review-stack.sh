@@ -121,11 +121,22 @@ sb_check_functions() { # 마이그레이션 기록과 함께 '함수가 실제�
 }
 
 # ── 코드 작업 공간 ──
+# 브랜치 이름이면 로컬과 origin 중 앞선 쪽을 고른다 — 원격을 무조건 앞세우면 아직 푸시 안 한 로컬 커밋을 버리고 옛 원격으로 띄운다(10/10 실사고).
+pick_sha() { # pick_sha <저장소> <커밋|브랜치>
+  local repo="$1" ref="$2" l o
+  l=$(git -C "$repo" rev-parse -q --verify "$ref^{commit}" 2>/dev/null || true)
+  o=$(git -C "$repo" rev-parse -q --verify "origin/$ref^{commit}" 2>/dev/null || true)
+  if [ -n "$l" ] && [ -n "$o" ]; then
+    if git -C "$repo" merge-base --is-ancestor "$o" "$l"; then echo "$l"      # 로컬이 같거나 앞섬
+    elif git -C "$repo" merge-base --is-ancestor "$l" "$o"; then echo "$o"    # 로컬이 뒤처짐
+    else say "로컬 $ref와 origin/$ref가 갈라졌습니다 — 로컬로 띄웁니다" >&2; echo "$l"; fi
+  elif [ -n "$l" ] || [ -n "$o" ]; then echo "${l:-$o}"
+  else return 1; fi
+}
 checkout() {
   local ref="${1:-origin/main}" sha
   git -C "$MAIN" fetch -q origin || say "origin을 가져오지 못했습니다 — 로컬에 있는 것으로 진행"
-  if git -C "$MAIN" rev-parse -q --verify "origin/$ref^{commit}" >/dev/null; then sha=$(git -C "$MAIN" rev-parse "origin/$ref^{commit}")
-  else sha=$(git -C "$MAIN" rev-parse -q --verify "$ref^{commit}") || die "찾을 수 없는 커밋·브랜치: $ref"; fi
+  sha=$(pick_sha "$MAIN" "$ref") || die "찾을 수 없는 커밋·브랜치: $ref"
   if [ ! -e "$WT/.git" ]; then
     git -C "$MAIN" worktree add -q --detach "$WT" "$sha"
   else
@@ -214,6 +225,7 @@ status() {
   egress_summary
 }
 
+[ "${REVIEW_STACK_SOURCE:-}" = 1 ] && return 0 # 시험이 함수만 불러 쓸 때
 mkdir -p "$RUN" "$LOGS"
 guard_paths
 cmd="${1:-status}"; shift || true
