@@ -8,7 +8,7 @@
 // 순수 모듈(React·Supabase 없음) — test/pro-checkout.test.mjs가 잠근다.
 import { checkoutUrl } from '../../../app/c/[ws]/settings/checkout-link.mjs';
 import { LS_MONTHLY, LS_YEARLY } from '../../../landing/lib/checkout.js';
-import { effectivePlanOf, proRowActive } from '../../../src/entitlement.mjs';
+import { effectivePlanOf } from '../../../src/entitlement.mjs';
 
 export const PLAN_BASE = { monthly: LS_MONTHLY, yearly: LS_YEARLY };
 /** LS 고객 포털(이메일 로그인) — ls-portal 엣지 함수가 서명 링크를 못 줄 때(CORS 반영 전 배포본·네트워크)의 대체 길. 상품 주소와 같은 가게 */
@@ -22,8 +22,10 @@ export const planOf = (myPlan) => effectivePlanOf(myPlan);
  *  'none' = iOS. App Store 심사 지침 3.1.1: 앱 안 디지털 구독은 Apple 인앱 결제여야 하고 외부 결제 링크·버튼은 지역에 따라 금지된다.
  *           iOS 인앱 결제는 만들지 않기로 확정(유건 2026-10-11) — 업그레이드 버튼·구독 관리 링크·외부 결제 안내를 모두 숨기고
  *           "이 계정이 Pro면 자동으로 적용됩니다"만 보인다. 나중에 구매 경로가 생기면 여기서 다른 값을 돌려주는 것으로 붙인다. */
-export function purchaseChannel({ ios = false } = {}) {
-  return ios ? 'none' : 'web';
+export function purchaseChannel({ ios = false, customServer = false } = {}) {
+  // 회사 서버(supabase.js customServer, 분리 검수 #944 MEDIUM-1): 결제는 Argo 클라우드 계정에 귀속된다. 회사 서버 uid를 custom user_id로 보내면
+  // 클라우드 ls-webhook이 entitlements FK에서 실패해 돈만 나가고 Pro는 어디에도 생기지 않는다 — 구매 표면을 모두 숨긴다.
+  return ios || customServer ? 'none' : 'web';
 }
 
 /** 업그레이드 체크아웃 주소. 이미 Pro이거나 판정을 모르면 null — 이중 구독 방지(#934: 이미 Pro면 체크아웃을 만들지 않는다).
@@ -41,11 +43,13 @@ export function planView({ plan, row = null, channel = 'web', loading = false, n
   if (plan == null) return { kind: 'unavailable', buy: false, portal: false };
   const web = channel === 'web';
   if (plan !== 'pro') return { kind: plan === 'trial' ? 'trial' : 'free', buy: web, portal: false };
-  const hasSub = !!row?.ls_subscription_id;
   const endsAt = row?.ends_at && Date.parse(row.ends_at) > now ? row.ends_at : null;
-  if (!hasSub) return { kind: 'pro-granted', buy: false, portal: false, endsAt };
-  if (row?.ls_status === 'past_due') return { kind: 'pro-pastdue', buy: false, portal: web };
-  if (endsAt && proRowActive(row)) return { kind: 'pro-cancelled', buy: false, portal: web, endsAt };
+  // 구독 갈래는 그 구독 행이 지금 Pro를 주고 있을 때만(분리 검수 #944 LOW-1) — 부여·조직 좌석 Pro인데 옛 구독 행(만료 등)이 남아 있으면
+  // '구독 중'·구독 관리가 보였다. 규칙은 본체 proRowActive(src/entitlement.mjs)와 같다(plan 'pro'이고 ends_at이 지나지 않음) — 시계만 now로 받는다
+  const subActive = !!row?.ls_subscription_id && row.plan === 'pro' && !(row.ends_at && Date.parse(row.ends_at) <= now);
+  if (!subActive) return { kind: 'pro-granted', buy: false, portal: false, endsAt };
+  if (row.ls_status === 'past_due') return { kind: 'pro-pastdue', buy: false, portal: web };
+  if (endsAt) return { kind: 'pro-cancelled', buy: false, portal: web, endsAt };
   return { kind: 'pro-sub', buy: false, portal: web };
 }
 
@@ -74,6 +78,30 @@ export async function recheckUntilPro(readPlan, { delays = RECHECK_DELAYS_MS, sl
     if (plan === 'pro') break;
   }
   return { plan, tries };
+}
+
+/** 복귀 재확인 관문(분리 검수 #944 LOW-3). arm = 업그레이드를 누름, start = 앱 복귀 때 라운드 시작 여부(시작하면 무장을 푼다 —
+ *  라운드가 끝난 뒤 15분 안의 포커스마다 새 라운드가 돌지 않게), startManual = '다시 확인' 1회(무장과 무관), end = 라운드 끝. now는 시험용 */
+export function returnRecheck({ now = Date.now } = {}) {
+  let armedAt = null; let running = false;
+  return {
+    arm() { armedAt = now(); },
+    start() {
+      if (!shouldRecheckOnReturn({ armedAt, now: now(), running })) return false;
+      armedAt = null; running = true; return true;
+    },
+    startManual() { if (running) return false; running = true; return true; },
+    end() { running = false; },
+    get running() { return running; },
+  };
+}
+
+/** 'Pro 필요' 거절(msgr_pro_required)은 에이전트 주인의 플랜으로 판정된다(#941). 남의 에이전트를 파견하다 받았으면 내 Pro로 풀리지 않으니
+ *  플랜 카드로 잇지 않는 문구로 바꾼다(분리 검수 #944 LOW-2). 내 에이전트이거나 다른 오류면 원문 그대로 */
+export function proRequiredFor(msg, { ownerId, uid, t }) {
+  const s = String(msg ?? '');
+  if (!/\bmsgr_pro_required\b/.test(s) || !ownerId || ownerId === uid) return s;
+  return t('err.proRequired.owner');
 }
 
 /** 'Pro로 바꾸면 풀리는' 서버 오류 코드 → 그 안내의 사전 키. 안내 토스트를 플랜 카드로 잇는 판정의 유일한 목록이다.

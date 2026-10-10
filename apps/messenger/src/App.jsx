@@ -78,7 +78,7 @@ import { memberRows, memberPerms, MEMBER_CHIPS } from './phone-members.mjs';
 import { Seg } from './seg.mjs'; // 세그먼트 토글 하나(5차 피드백 3)
 import { searchView } from './search-view.mjs';
 import { deliveryCardView } from './delivery-card.mjs';
-import { planOf, purchaseChannel, proCheckoutUrl, planView, recheckUntilPro, shouldRecheckOnReturn, isProUpsell, LS_BILLING } from './pro-checkout.mjs'; // Pro 결제 — 본체·랜딩과 같은 결제·같은 판정(2026-10-11)
+import { planOf, purchaseChannel, proCheckoutUrl, planView, recheckUntilPro, returnRecheck, isProUpsell, proRequiredFor, LS_BILLING } from './pro-checkout.mjs'; // Pro 결제 — 본체·랜딩과 같은 결제·같은 판정(2026-10-11)
 import { friendlyErr, toastError } from './error-toast.mjs'; // 아는 서버 코드 → 문구, 토스트는 원문을 거른다(UXM-05)
 import { messageShape } from './attach-only.mjs';
 import { createLateAttach, mergeAttachments } from './late-attach.mjs'; // 놓친 'attach' 방송 되찾기(C-a 인접 경로)
@@ -1255,7 +1255,7 @@ function Shell({ session }) {
   // 조직 기본값으로 바뀌었다). 잠금 정책이면 서버 게이트(msgr_crew_policy_gate)와 잠글 때의 일괄 맞춤이 기본값을 보장한다.
   const dispatchCrew = useCallback(async (crew, channelId = null) => {
     const up = await supabase.from('msgr_crews').update({ status: 'active' }).eq('id', crew.id).select('id');
-    if (up.error) throw new Error(up.error.message);
+    if (up.error) throw new Error(proRequiredFor(up.error.message, { ownerId: crew.owner_user_id, uid, t })); // 남의 에이전트면 내 Pro로 풀리지 않는다(#944 LOW-2)
     // 채널에 넣는 것은 서버 규칙 한 곳(msgr_crew_join)으로 — 방장이면 바로, 참여자는 채널 정책대로(바로/방장 승인), 채팅은 결재자면 바로·아니면 요청.
     let joined = null;
     if (channelId) {
@@ -2226,7 +2226,7 @@ function Shell({ session }) {
   useEffect(() => { const a = afterSpace.current; if (!a || a.space !== orgId || loadedOrg.current !== orgId) return; afterSpace.current = null; a.run(latestOpen.current); }, [orgId, channels, crews]); // eslint-disable-line react-hooks/exhaustive-deps
   // 토스트를 누르면 — 언제나 바로 닫는다. 공간 전환 안내가 떠 있으면 직전 조직으로 돌아간다(공간 전환 = runInSpace, 떠날 때 남긴 공간 저장본이 그 조직의 목록·보던 채널을 바로 연다)
   // Pro로 풀리는 안내(에이전트 연결·대화방 4명 한도 — 판정 목록은 pro-checkout.mjs PRO_UPSELL 한 곳)는 누르면 내 플랜 카드로. iOS는 구매 경로가 없어 잇지 않는다(App Store 3.1.1)
-  const proUpsell = !!err && purchaseChannel({ ios: isIos }) === 'web' && isProUpsell(err, t);
+  const proUpsell = !!err && purchaseChannel({ ios: isIos, customServer }) === 'web' && isProUpsell(err, t);
   const tapToast = () => { const back = !err && moveNote?.text === note ? spaceMoveBack(moveNote, orgs) : null; clearToast(); if (back) runInSpace(back.space, () => { if (back.ch) setChId(back.ch); setPage('chat'); setRail(false); }); };
   const openPlanCard = () => { if (isPhone) setPage('set-plan'); else { setSettingsTab('me'); setPage('settings'); } setRail(false); }; // 토스트 클릭의 캡처 단계에서 먼저 — 닫기는 tapToast가 그대로 한다
   // 그룹 대화 만들기(유건 2026-09-15): 사람·크루를 여럿 골라 dm 채널 하나로. 서버 msgr_create_channel은 others 여러 명을 받는다(크루는 소유자 동반 규칙 그대로).
@@ -3228,7 +3228,7 @@ function CrewSheet({ crew, org, uid, me, members, policy, channelId, channelName
     setBusy(true); setConfirmRecall(false);
     const res = await supabase.from('msgr_crews').update({ status: next ? 'active' : 'available' }).eq('id', crew.id).select('id'); // 다시 파견은 복귀 — 허용 범위 유지(D31, dispatchCrew 주석)
     setBusy(false);
-    if (res.error) return onError(res.error.message);
+    if (res.error) return onError(proRequiredFor(res.error.message, { ownerId: crew.owner_user_id, uid, t })); // 남의 에이전트면 내 Pro로 풀리지 않는다(#944 LOW-2)
     if (!res.data?.length) return onError(t('crew.allow.readonly', { name: nameOfUser(crew.owner_user_id) }));
     onNote(t(next ? 'crew.dispatch.done' : 'crew.recall.done', { name: crew.display_name })); onChanged();
   };
@@ -3687,10 +3687,10 @@ function writeInboxSeen(v) { try { localStorage.setItem(INBOX_SEEN_KEY, JSON.str
    읽기: 카드를 열 때 my_plan 1회 + 본인 entitlements 행 1회. 업그레이드를 누른 뒤 15분 안에 앱으로 돌아오면 최대 5회(0·3·5·10·20초) 다시 읽는다. */
 function PlanCard({ uid, email }) {
   const { t, ta, lang } = useT();
-  const channel = purchaseChannel({ ios: isIos });
+  const channel = purchaseChannel({ ios: isIos, customServer }); // 회사 서버도 구매 경로 없음(분리 검수 #944 MEDIUM-1)
   const [st, setSt] = useState({ loading: true, plan: null, row: null });
   const [checking, setChecking] = useState(false); const [notYet, setNotYet] = useState(false);
-  const armedAt = useRef(null); const running = useRef(false); const live = useRef(true);
+  const gate = useRef(null); if (!gate.current) gate.current = returnRecheck(); const live = useRef(true); // 복귀 재확인 관문 — 누른 뒤 한 라운드만(#944 LOW-3)
   const readPlan = useCallback(async () => planOf(await q(supabase.rpc('my_plan'))), []);
   const load = useCallback(async () => {
     const [plan, row] = await Promise.all([
@@ -3701,22 +3701,22 @@ function PlanCard({ uid, email }) {
     return plan;
   }, [readPlan, uid]);
   useEffect(() => { live.current = true; load(); return () => { live.current = false; }; }, [load]);
-  const recheck = useCallback(async (once = false) => { // 복귀 = 한 라운드(최대 5회), '다시 확인' 버튼 = 1회
-    if (running.current) return;
-    running.current = true; setChecking(true); setNotYet(false);
+  const recheck = useCallback(async (once = false) => { // 복귀 = 한 라운드(최대 5회, 시작할 때 무장 해제), '다시 확인' 버튼 = 1회
+    if (!(once ? gate.current.startManual() : gate.current.start())) return;
+    setChecking(true); setNotYet(false);
     const { plan } = await recheckUntilPro(readPlan, { alive: () => live.current, ...(once ? { delays: [0] } : {}) });
-    running.current = false;
+    gate.current.end();
     if (!live.current) return;
     setChecking(false);
-    if (plan === 'pro') { armedAt.current = null; await load(); } else setNotYet(true);
+    if (plan === 'pro') await load(); else setNotYet(true);
   }, [readPlan, load]);
   useEffect(() => { // 결제하고 앱으로 돌아왔을 때(데스크톱 포커스·폰 화면 복귀) — 업그레이드를 누른 뒤 15분 안일 때만
-    const back = () => { if (document.visibilityState === 'hidden') return; if (shouldRecheckOnReturn({ armedAt: armedAt.current, running: running.current })) recheck(); };
+    const back = () => { if (document.visibilityState === 'hidden') return; recheck(); }; // 무장·겹침 판정은 관문이 한다
     window.addEventListener('focus', back); document.addEventListener('visibilitychange', back);
     return () => { window.removeEventListener('focus', back); document.removeEventListener('visibilitychange', back); };
   }, [recheck]);
   const view = planView({ plan: st.plan, row: st.row, channel, loading: st.loading });
-  const upgrade = (cadence) => { const url = proCheckoutUrl({ plan: st.plan, user: { id: uid, email }, cadence }); if (!url) return; armedAt.current = Date.now(); setNotYet(false); openExternal(url); };
+  const upgrade = (cadence) => { const url = proCheckoutUrl({ plan: st.plan, user: { id: uid, email }, cadence }); if (!url) return; gate.current.arm(); setNotYet(false); openExternal(url); };
   const portal = async () => { // 클릭할 때 발급(24시간 서명 링크라 저장하지 않는다) — ls-portal이 못 주면(CORS 반영 전 배포본·네트워크) 가게 고객 포털(이메일 로그인)
     const { data } = await supabase.functions.invoke('ls-portal', { method: 'POST' }).catch(() => ({ data: null }));
     openExternal(typeof data?.url === 'string' && /^https:\/\//.test(data.url) ? data.url : LS_BILLING); // 열기는 openExternal 한 곳(Tauri 오프너·브라우저 분기)
@@ -3740,13 +3740,13 @@ function PlanCard({ uid, email }) {
       {view.buy && <p className="note">{t('plan.benefits')}</p>}{/* iOS(구매 경로 없음)는 혜택 안내도 없이 아래 한 줄만 */}
       {view.buy && (<>
         <div className="row msgr-planbuy">
-          <button type="button" className="btn btn-primary sm" onClick={() => upgrade('monthly')}>{ta('billing.upgradeMonthly')}</button>
-          <button type="button" className="btn sm" onClick={() => upgrade('yearly')}>{ta('billing.upgradeYearly')}</button>
+          <button type="button" className="btn btn-primary sm" disabled={checking || notYet} onClick={() => upgrade('monthly')}>{ta('billing.upgradeMonthly')}</button>
+          <button type="button" className="btn sm" disabled={checking || notYet} onClick={() => upgrade('yearly')}>{ta('billing.upgradeYearly')}</button>
         </div>
         <p className="note">{t('plan.sameAccount')}</p>
         {(checking || notYet) && <div className="row" role="status"><span className="sub">{checking ? t('plan.checking') : t('plan.notYet')}</span>{!checking && <button type="button" className="btn sm" onClick={() => recheck(true)}>{t('plan.recheck')}</button>}</div>}
       </>)}
-      {channel === 'none' && !isPro && view.kind !== 'loading' && view.kind !== 'unavailable' && <p className="note">{t('plan.ios.note')}</p>}
+      {channel === 'none' && isIos && !isPro && view.kind !== 'loading' && view.kind !== 'unavailable' && <p className="note">{t('plan.ios.note')}</p>}
     </section>
   );
 }

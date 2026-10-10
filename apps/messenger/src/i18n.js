@@ -1227,6 +1227,7 @@ export const DICT = {
   'docs.empty.org': ['전사 문서 없음', 'No company-wide docs'],
   'docs.empty.channel': ['채널 문서 없음', 'No channel docs'],
   'err.policyLocked': ['조직 정책으로 잠긴 항목입니다.', 'This item is locked by organization policy.'],
+  'err.proRequired.owner': ['이 에이전트는 주인의 Argo Pro가 있어야 메신저에 연결됩니다. 에이전트 주인에게 알려 주세요.', "This agent needs its owner's Argo Pro to connect to Messenger. Let the owner know."],
   'err.proRequired': ['에이전트를 메신저에 연결하려면 에이전트 주인의 Argo Pro가 필요합니다. Pro로 바꾸면 멈춘 에이전트가 바로 다시 연결됩니다.', "Connecting an agent to Messenger needs Argo Pro for the agent's owner. Paused agents reconnect as soon as the owner upgrades to Pro."],
   'ui.dm': ['1:1 대화', 'Direct message'],
   'ui.dm.personal': ['개인 1:1 대화', 'Personal 1:1'],
@@ -1499,7 +1500,7 @@ export const DICT = {
   'phone.set.privacy': ['개인정보', 'Privacy'],
   'phone.set.about': ['정보·약관', 'About & terms'],
   'phone.set.plan': ['내 플랜', 'My plan'],
-  'phone.set.plan.sub': ['Free·Pro · Argo 계정 하나에 구독 하나', 'Free or Pro · one plan per Argo account'],
+  'phone.set.plan.sub': ['지금 플랜 보기', 'See your plan'],
   'set.version': ['버전 {v}', 'Version {v}'],
   'phone.agents.joinReq': ['대화방에 에이전트를 넣어 달라는 요청', 'Request to add an agent to a conversation'],
   'phone.agents.joinReq.named': ["'{crew}'을(를) '{room}' 방에 넣어 달라는 요청", "Request to add '{crew}' to '{room}'"],
@@ -1845,7 +1846,7 @@ export const DICT = {
   'plan.notYet': ['아직 결제가 확인되지 않았습니다. 결제를 마쳤다면 잠시 뒤 다시 확인해 주세요.', "Payment isn't confirmed yet. If you finished checkout, check again in a moment."],
   'plan.recheck': ['다시 확인', 'Check again'],
   'plan.ios.note': ['이 계정이 Pro면 자동으로 적용됩니다.', 'If this account has Pro, it applies automatically.'],
-  'plan.toast.cta': ['눌러서 Pro 보기', 'Open to see Pro'],
+  'plan.toast.cta': ['눌러서 Pro 보기', 'Tap to see Pro'],
 };
 export const LANGS = ['ko', 'en'];
 export function readLang() { try { const v = localStorage.getItem('argo-lang'); return LANGS.includes(v) ? v : 'ko'; } catch { return 'ko'; } }

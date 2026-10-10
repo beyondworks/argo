@@ -125,11 +125,78 @@ test('모듈은 새 가격 숫자·새 LS 주소를 두지 않는다(본체·랜
 test('화면 연결 — 카드는 iOS 판정으로 구매 경로를 고르고, 버튼·구독 관리는 planView가 허락할 때만 그린다', () => {
   const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
   const card = app.slice(app.indexOf('function PlanCard('), app.indexOf('async function planRow('));
-  assert.match(card, /purchaseChannel\(\{ ios: isIos \}\)/, '메신저의 iOS 판정(platform.js) 재사용');
+  assert.match(card, /purchaseChannel\(\{ ios: isIos, customServer \}\)/, '메신저의 iOS 판정(platform.js)·회사 서버 판정(supabase.js) 재사용');
   assert.match(card, /\{view\.buy && \(/, '업그레이드 버튼은 view.buy일 때만');
   assert.match(card, /\{view\.portal && /, '구독 관리는 view.portal일 때만');
   assert.match(card, /ta\('billing\.upgradeMonthly'\)/); assert.match(card, /ta\('billing\.upgradeYearly'\)/);
   assert.match(card, /supabase\.rpc\('my_plan'\)/, '판정은 my_plan');
   assert.doesNotMatch(card, /setInterval/, '폴링 없음');
-  assert.match(app, /const proUpsell = !!err && purchaseChannel\(\{ ios: isIos \}\) === 'web' && isProUpsell\(err, t\);/, 'iOS는 안내를 플랜으로 잇지 않는다');
+  assert.match(app, /const proUpsell = !!err && purchaseChannel\(\{ ios: isIos, customServer \}\) === 'web' && isProUpsell\(err, t\);/, 'iOS·회사 서버는 안내를 플랜으로 잇지 않는다');
+});
+
+// ── 분리 검수 #944 반영(2026-10-11) ──
+test('MEDIUM-1 회사 서버 — 구매 경로 없음(그 서버 uid로 클라우드 결제를 만들면 웹훅이 FK에서 실패해 돈만 나간다)', () => {
+  assert.equal(pro.purchaseChannel({ customServer: true }), 'none');
+  assert.equal(pro.purchaseChannel({ ios: false, customServer: true }), 'none');
+  assert.equal(pro.purchaseChannel({ ios: false, customServer: false }), 'web');
+  for (const plan of ['free', 'trial']) assert.deepEqual(pro.planView({ plan, channel: pro.purchaseChannel({ customServer: true }) }), { kind: plan, buy: false, portal: false });
+  const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
+  const card = app.slice(app.indexOf('function PlanCard('), app.indexOf('async function planRow('));
+  assert.match(card, /purchaseChannel\(\{ ios: isIos, customServer \}\)/, '카드도 같은 판정');
+  assert.match(card, /channel === 'none' && isIos && !isPro/, "'Pro면 자동 적용' 안내는 iOS에서만 — 회사 서버는 플랜 표시만");
+});
+
+test('LOW-1 구독 행이 살아 있을 때만 구독 갈래 — 옛 구독 행이 남은 부여·좌석 Pro는 pro-granted(구독 관리 없음)', () => {
+  const now = Date.parse('2026-10-11T00:00:00Z');
+  const past = '2026-09-01T00:00:00Z'; const future = '2026-12-01T00:00:00Z';
+  const v = (row) => pro.planView({ plan: 'pro', row, now });
+  for (const row of [
+    { plan: 'free', ls_subscription_id: 'old', ls_status: 'expired', ends_at: past },
+    { plan: 'pro', ls_subscription_id: 'old', ls_status: 'expired', ends_at: past },
+    { plan: 'free', ls_subscription_id: 'old', ls_status: 'past_due', ends_at: null },
+  ]) {
+    const got = v(row);
+    assert.equal(got.kind, 'pro-granted', JSON.stringify(row)); assert.equal(got.portal, false); assert.equal(got.buy, false);
+  }
+  assert.equal(v({ plan: 'pro', ls_subscription_id: 's', ls_status: 'active', ends_at: null }).kind, 'pro-sub');
+  assert.equal(v({ plan: 'pro', ls_subscription_id: 's', ls_status: 'cancelled', ends_at: future }).kind, 'pro-cancelled');
+  assert.equal(v({ plan: 'pro', ls_subscription_id: 's', ls_status: 'past_due', ends_at: null }).kind, 'pro-pastdue');
+});
+
+test('LOW-2 Pro 필요 거절은 내 에이전트일 때만 플랜으로 잇는다 — 남의 에이전트면 주인에게 알리라는 문구', () => {
+  for (const lang of ['ko', 'en']) {
+    const t = (k) => tr(k, lang);
+    const msg = 'new row violates: msgr_pro_required';
+    assert.equal(pro.proRequiredFor(msg, { ownerId: 'me', uid: 'me', t }), msg, '내 에이전트 — 원문 그대로(토스트가 플랜으로 잇는다)');
+    const other = pro.proRequiredFor(msg, { ownerId: 'someone', uid: 'me', t });
+    assert.equal(other, t('err.proRequired.owner'));
+    assert.notEqual(t('err.proRequired.owner'), 'err.proRequired.owner', `사전 문구(${lang})`);
+    assert.equal(pro.isProUpsell(other, t), false, '플랜 카드로 잇지 않는다');
+    assert.equal(pro.proRequiredFor('msgr_room_limit', { ownerId: 'someone', uid: 'me', t }), 'msgr_room_limit', '다른 오류는 그대로');
+  }
+  const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
+  assert.match(app, /if \(up\.error\) throw new Error\(proRequiredFor\(up\.error\.message, \{ ownerId: crew\.owner_user_id, uid, t \}\)\);/, '그 자리 파견');
+  assert.match(app, /if \(res\.error\) return onError\(proRequiredFor\(res\.error\.message, \{ ownerId: crew\.owner_user_id, uid, t \}\)\);/, '에이전트 카드 파견');
+});
+
+test('LOW-3 복귀 재확인 — 한 번 누르면 라운드 한 번(라운드가 시작되면 무장 해제), 겹치지 않음, 수동 1회는 언제나', () => {
+  let clock = 1_000_000; const g = pro.returnRecheck({ now: () => clock });
+  assert.equal(g.start(), false, '누르지 않았으면 시작하지 않는다');
+  g.arm(); clock += 60_000;
+  assert.equal(g.start(), true);
+  assert.equal(g.start(), false, '돌고 있으면 겹치지 않는다');
+  g.end(); clock += 1000;
+  assert.equal(g.start(), false, '라운드가 끝나면 15분 안이어도 포커스마다 새 라운드를 시작하지 않는다');
+  assert.equal(g.startManual(), true, "'다시 확인' 1회는 된다"); assert.equal(g.startManual(), false, '돌고 있으면 겹치지 않는다'); g.end();
+  g.arm(); clock += pro.ARM_MS;
+  assert.equal(g.start(), false, '15분 뒤는 끝');
+  const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
+  const card = app.slice(app.indexOf('function PlanCard('), app.indexOf('async function planRow('));
+  assert.match(card, /disabled=\{checking \|\| notYet\} onClick=\{\(\) => upgrade\('monthly'\)\}/, '확인 중·미확인이면 월간 버튼을 끈다(이중 구독 방지)');
+  assert.match(card, /disabled=\{checking \|\| notYet\} onClick=\{\(\) => upgrade\('yearly'\)\}/, '연간도');
+});
+
+test('LOW-5 iOS에서도 보이는 폰 설정 줄은 중립 문구, en 토스트 안내는 Tap', () => {
+  for (const lang of ['ko', 'en']) assert.doesNotMatch(tr('phone.set.plan.sub', lang), /Pro|구독|subscription|Free|무료/i, lang);
+  assert.equal(tr('plan.toast.cta', 'en'), 'Tap to see Pro');
 });
