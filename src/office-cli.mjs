@@ -167,6 +167,8 @@ const T = {
       '  argo office hold "<제목>" --reason "<사유>" --source-name "<세션 제목>" [--org <조직 id>]',
       '  argo office hold --task <할 일 id> --reason "<사유>" [--org <조직 id>]',
       '  argo office tasks [--org <조직 id>] [--json]',
+      '  argo office <영역> <동작> [--옵션 값 …]   영역: work deals calendar company files mail briefing (argo office tools)',
+      '  argo office orgs · argo office mcp (Claude Code·Codex가 붙는 MCP 서버)',
       '조직 id를 비우면 데이터 폴더(ARGO_ROOT)의 config.json {"org":"…"}을 씁니다.',
     ].join('\n'),
     needLogin: `먼저 로그인해야 합니다 — ${LOGIN}`,
@@ -197,6 +199,8 @@ const T = {
       '  argo office hold "<title>" --reason "<reason>" --source-name "<session title>" [--org <org id>]',
       '  argo office hold --task <task id> --reason "<reason>" [--org <org id>]',
       '  argo office tasks [--org <org id>] [--json]',
+      '  argo office <area> <action> [--option value …]   areas: work deals calendar company files mail briefing (argo office tools)',
+      '  argo office orgs · argo office mcp (MCP server for Claude Code·Codex)',
       'Without an org id, config.json {"org":"…"} in the data folder (ARGO_ROOT) is used.',
     ].join('\n'),
     needLogin: `Sign in first — ${LOGIN}`,
@@ -222,6 +226,7 @@ const T = {
 };
 const errText = (t, msg) => t.err[Object.keys(t.err).find((k) => String(msg).includes(k))] ?? String(msg).slice(0, 300);
 
+export const TOOL_SUBS = ['work', 'deals', 'calendar', 'company', 'files', 'mail', 'briefing', 'orgs', 'tools', 'mcp'];
 const OPTIONS = {
   org: { type: 'string' }, id: { type: 'string' }, name: { type: 'string' }, project: { type: 'string' }, task: { type: 'string' },
   reason: { type: 'string' }, 'source-name': { type: 'string' }, json: { type: 'boolean' }, help: { type: 'boolean', short: 'h' },
@@ -234,6 +239,12 @@ const OPTIONS = {
 export async function officeMain(argv, { root = process.env.ARGO_ROOT, lang = 'ko', out = (s) => console.log(s), err = (s) => console.error(s), newId = randomUUID, now = Date.now, timeoutMs = 15_000, _mkClient, _fresh } = {}) {
   const t = T[lang] ?? T.ko;
   const [sub, ...rest] = argv;
+  // 영역 명령(10/10 — 할 일·페이지·거래·일정·회사·문서함·메일·브리핑 읽기·쓰기, 조직 목록, MCP 서버) — 옵션이 영역마다 달라 여기 parseArgs를 거치지 않는다.
+  // 맨 위 import에 싣지 않는다(훅이 report만 부를 때 zod·도구 처리기를 싣지 않게)
+  if (TOOL_SUBS.includes(sub)) {
+    const { toolsMain } = await import('./office-tools-cli.mjs');
+    return toolsMain(sub, rest, { root, lang, out, err, cfgOrg: (await readOfficeConfig(root)).org, needLogin: t.needLogin, _fresh, _mkClient });
+  }
   let v, pos;
   try { ({ values: v, positionals: pos } = parseArgs({ args: rest, options: OPTIONS, allowPositionals: true, strict: true })); }
   catch (e) { err(`${t.failed(e.message)}\n${t.usage}`); return 1; }
