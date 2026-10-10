@@ -2,7 +2,7 @@
 // 보이고 실행기 연결 상태를 숨겼다. 본체 어디에도 오피스로 가는 길이 없었다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { msgrConnectionChip, msgrShowRuntime, OFFICE_URL, MESSENGER_PAGE } from '../app/c/[ws]/settings/msgr-card.mjs';
+import { msgrConnectionChip, msgrShowRuntime, MESSENGER_PAGE } from '../app/c/[ws]/settings/msgr-card.mjs';
 
 test('조직이 없어도 개인 공간에 연결된 크루가 있으면 "개인 공간 연결됨" — 연결 필요로 보이지 않는다', () => {
   assert.equal(msgrConnectionChip({ regCount: 0, personalCount: 3 }), 'personal');
@@ -16,9 +16,30 @@ test('실행기 연결 상태는 조직 여부와 상관없이 보인다(로그�
   assert.equal(msgrShowRuntime({ signedIn: false, agentCount: 2 }), false);
 });
 
-test('진입 링크는 https 고정 주소 — 오피스(웹)·메신저 받기 안내 한 곳', () => {
-  assert.equal(new URL(OFFICE_URL).protocol, 'https:');
+test('진입 링크는 https 고정 주소 — 메신저 받기 안내 한 곳', () => {
   assert.equal(new URL(MESSENGER_PAGE).protocol, 'https:');
+});
+
+// 오피스는 아직 비공개 — 본체 앱 화면에서 오피스로 바로 가는 링크·버튼을 두지 않는다(유건 2026-10-10).
+// 에이전트 도구가 서버 쪽에서 부르는 주소(src/gateway/office-files.mjs)는 화면 링크가 아니라 대상 밖.
+test('본체 화면(app/)과 에이전트 도움말(src/help)에 오피스로 가는 링크·버튼 안내가 없다', async () => {
+  const { readdir, readFile } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const hits = [];
+  const walk = async (d) => {
+    for (const e of await readdir(d, { withFileTypes: true })) {
+      const p = join(d, e.name);
+      if (e.isDirectory()) { if (e.name !== 'node_modules' && e.name !== 'api') await walk(p); }
+      else if (/\.(jsx?|mjs)$/.test(e.name)) {
+        const s = await readFile(p, 'utf8');
+        if (/argo-office\.vercel\.app|argo\.ceo\/office|OFFICE_URL|settings\.office\.|오피스 열기|Open Argo Office/.test(s)) hits.push(p);
+      }
+    }
+  };
+  await walk(fileURLToPath(new URL('../app/', import.meta.url)));
+  await walk(fileURLToPath(new URL('../src/help/', import.meta.url)));
+  assert.deepEqual(hits, []);
 });
 
 // UL10·UL7(2026-10-05 분리 검수): 위 테스트는 순수 함수 입력만 만들어 넣었다 — 서버가 실제로 내리는 응답(personalCount 필드)을 카드가 읽는 연결은 안 잠겼다.

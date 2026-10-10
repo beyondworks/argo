@@ -21,7 +21,7 @@ export default {
 
 **연결**
 - 알림 받을 메신저: 결재 요청·작업 완료·쪽지·루틴 결과를 받을 곳(아르고 메신저·텔레그램·슬랙)을 체크합니다.
-- Argo 메신저 연결: 에이전트를 메신저에 파견하고 메신저 응답 상태를 봅니다. 아래에 Argo 오피스 열기가 있습니다.
+- Argo 메신저 연결: 에이전트를 메신저에 파견하고 메신저 응답 상태를 봅니다.
 - 텔레그램 연결·슬랙 연결: 봇 토큰을 넣고 연결 코드로 내 계정을 고정합니다.
 - 외부 서비스 연결: 구글 계정처럼 로그인만으로 붙는 서비스를 연결합니다.
 
@@ -63,7 +63,7 @@ export default {
 
 **Connections**
 - Where to receive agent notifications: check where approval requests, task results, agent mail and routine results go (Argo Messenger, Telegram, Slack).
-- Argo Messenger connection: dispatch agents to the messenger and see the messenger response status. "Open Argo Office" is at the bottom.
+- Argo Messenger connection: dispatch agents to the messenger and see the messenger response status.
 - Telegram / Slack: add a bot token and lock in your account with the pairing code.
 - Connected services: connect services you join just by signing in, such as with Google.
 
