@@ -245,16 +245,17 @@ export async function officeMain(argv, { root = process.env.ARGO_ROOT, lang = 'k
     const { toolsMain } = await import('./office-tools-cli.mjs');
     return toolsMain(sub, rest, { root, lang, out, err, cfgOrg: (await readOfficeConfig(root)).org, needLogin: t.needLogin, _fresh, _mkClient, _ancestor });
   }
-  // 예전 하위 명령(tasks·hold·report — Claude Code 훅이 부른다)도 같은 판정(분리 검수 M1: 할 일 읽기·쓰기가 판정 없이 열려 있었다). 도움말·사용법은 판정 전
-  if (['report', 'hold', 'tasks'].includes(sub) && !rest.includes('--help') && !rest.includes('-h')) {
-    const { agentTurnState, agentTurnRefusal } = await import('./office-tools-cli.mjs');
-    const st = await agentTurnState({ _ancestor });
-    if (st) { err(agentTurnRefusal(st, lang)); return 1; }
-  }
   let v, pos;
   try { ({ values: v, positionals: pos } = parseArgs({ args: rest, options: OPTIONS, allowPositionals: true, strict: true })); }
   catch (e) { err(`${t.failed(e.message)}\n${t.usage}`); return 1; }
   if (v.help || !['report', 'hold', 'tasks'].includes(sub)) { (v.help || sub === 'help' ? out : err)(t.usage); return v.help || sub === 'help' ? 0 : 1; }
+  // 예전 하위 명령(tasks·hold·report — Claude Code 훅이 부른다)도 같은 판정(분리 검수 M1: 할 일 읽기·쓰기가 판정 없이 열려 있었다).
+  // 도움말 판단은 인자 글자가 아니라 parseArgs 결과로 한다(보안 리뷰: `hold … -- --help`처럼 해석기와 다른 판단으로 판정을 건너뛰지 않게)
+  {
+    const { agentTurnState, agentTurnRefusal } = await import('./office-tools-cli.mjs');
+    const st = await agentTurnState({ _ancestor });
+    if (st) { err(agentTurnRefusal(st, lang)); return 1; }
+  }
 
   const cfgOrg = (await readOfficeConfig(root)).org;
   const org = v.org != null ? v.org.trim() : cfgOrg;

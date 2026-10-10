@@ -231,6 +231,11 @@ test('C14. 판정 실패=거절(다른 문구), MCP는 실패를 담아 두지 �
     assert.match(legacy.err, /에이전트 턴 안입니다/, sub);
   }
   assert.equal((await run(['tasks', '--help'], { _ancestor: async () => 4242 })).code, 0, '도움말은 판정 전');
+  for (const argv of [['hold', '--', '--help'], ['report', '--name', 'x', '--', '-h'], ['tasks', '--org', ORG, '--', '--help']]) { // 해석기가 도움말로 보지 않는 '--help' 글자는 판정을 건너뛰지 못한다
+    const r2 = await run(argv, { _fresh: f._fresh, _mkClient: f._mkClient, _ancestor: async () => 4242 });
+    assert.equal(r2.code, 1, argv.join(' '));
+    assert.match(r2.err, /에이전트 턴 안입니다/, argv.join(' '));
+  }
 });
 
 // 이유(분리 검수 MEDIUM-2): 본체 판정은 회사 폴더 전제라 작업 폴더 아래 깊은 .env·홈 폴더의 키체인을 막지 못했다
