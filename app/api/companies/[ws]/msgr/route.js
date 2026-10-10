@@ -53,6 +53,9 @@ async function myOrgs(c) {
 async function syncEnabled(ws, c) {
   let regs;
   try { regs = await myRegistrations(c, ws); } catch (e) { console.error('[argo] msgr 등록 조회 실패 — enabled 유지:', e.message); return []; } // 일시 오류로 브리지를 끄지 않는다
+  // paused(무료 계정 일시 중지)만 남으면 꺼진다 — 켜 두면 Pro 재개 뒤 다음 틱에 바로 붙지만, 무료인 동안에도 브리지가 15초마다
+  // myCrews·인벤토리 미러·커맨더 미러·기억 회수 조회를 계속 보낸다(drain의 하우스키핑은 활성 행 0이어도 돈다). 호출을 줄이려는 일시 중지라 끄는 쪽을 둔다.
+  // 재개 뒤에는 설정의 연결을 한 번 더 누르면 켜진다(2026-10-10 #941 검수 LOW-3 판단).
   const enabled = regs.some((r) => r.status === 'active');
   const company = await loadCompany(ws);
   if (!!company.msgr?.enabled !== enabled) await updateCompany(ws, (c) => ({ msgr: { ...(c.msgr ?? {}), enabled } }));
@@ -130,7 +133,12 @@ export async function POST(req, { params }) {
   const { data, error } = await c.client.from('msgr_crews').upsert(row, { onConflict: 'org_id,owner_user_id,ws_id,slug' }).select('id, status').single();
   if (error) return upstream('POST', error, lang);
   const crews = await syncEnabled(ws, c);
-  if (data.status === 'paused') return apiError('msgr_pro_required', lang); // 무료 계정 — 행은 남고 연결은 Pro 뒤(위 activate와 같다)
+  // 무료 계정 — 서버 관문이 상태를 paused(새 행·멈춘 행)로 두거나 원래 상태(available·detached)로 유지한다. 행·허용 범위는 저장되고 연결만 Pro 뒤.
+  // 'active'로 올렸는데 active가 아니면 관문 말고는 그렇게 되는 길이 없지만, 요금제 판정을 한 번 더 확인해 다른 사유를 요금제로 안내하지 않는다.
+  if (data.status !== 'active') {
+    const { data: pro, error: proErr } = await c.client.rpc('is_pro');
+    if (!proErr && pro === false) return apiError('msgr_pro_required', lang);
+  }
   return Response.json({ ok: true, id: data.id, crews });
 }
 

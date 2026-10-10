@@ -188,13 +188,18 @@ test('⑥ 봇 관문: 무료 주인 plan_required, 스위치 off면 ok, 토큰 �
   fails(psqlRaw(['-A', '-t', '-c', `set role anon; select public.msgr_bot_gate('argo_bot_${'z'.repeat(48)}')`]), /msgr_bot_unauthorized/, '없는 토큰');
 });
 
+let QRUN;
 test('⑦ 자동화 발송: 멈춘 에이전트의 자동화는 보내지도 끄지도 않는다(쓰기 0) — 그대로 두면 권한 철회로 보고 enabled=false가 됐다', { skip }, () => {
+  // 멈추기 전에 줄 서 있던 실행(실행 기록 없음) — 발송 첫 반복(줄 선 실행 정리)이 권한 철회로 보고 막음 + enabled=false로 만들던 갈래
+  const qm = post(U.a, CH, '@a1 자동화 실행', C.A1);
+  QRUN = last(sql(`insert into public.msgr_automation_runs (automation_id, scheduled_for, trigger, status, message_id) values ('${AUTO}', now() - interval '2 minutes', 'schedule', 'queued', ${qm}) returning id`));
   sql(`update public.msgr_automations set next_run_at = now() - interval '1 minute' where id = '${AUTO}'`);
   const before = sql(`select xmin::text || ':' || enabled from public.msgr_automations where id = '${AUTO}'`);
   const runs0 = sql(`select count(*) from public.msgr_automation_runs where automation_id = '${AUTO}'`);
   sql(`select public.msgr_automation_dispatch_cloud()`);
   assert.equal(sql(`select xmin::text || ':' || enabled from public.msgr_automations where id = '${AUTO}'`), before, '건너뛴다 — 끄지 않고 쓰지도 않는다');
   assert.equal(sql(`select count(*) from public.msgr_automation_runs where automation_id = '${AUTO}'`), runs0, '실행 행 0');
+  assert.equal(sql(`select status from public.msgr_automation_runs where id = '${QRUN}'`), 'queued', '줄 선 실행을 권한 철회로 막지 않는다');
 });
 
 test('③ 재개(결제): entitlements 삽입이 그 사용자를 바로 active로 — 커서는 지금 끝, 밀린 자동화는 다음 시각으로, 봇도 커서를 끝으로 옮긴 뒤 ok', { skip }, () => {
@@ -212,6 +217,8 @@ test('③ 재개(결제): entitlements 삽입이 그 사용자를 바로 active�
   assert.equal(sql(`select resume_after from public.msgr_crew_pauses where crew_id = '${C.A1}'`), String(top));
   // 자동화: 켜짐 그대로, 지난 예정 시각은 미래로(재개하자마자 밀린 실행 없음)
   assert.equal(sql(`select enabled and next_run_at > now() from public.msgr_automations where id = '${AUTO}'`), 't');
+  // 멈추기 전에 줄 서 있던 실행은 막힘(paused)으로 닫는다 — 그 글은 커서 뒤로 넘어가 다시 읽히지 않고, 열린 채면 새 실행을 영영 막는다
+  assert.equal(sql(`select status || ':' || error from public.msgr_automation_runs where id = '${QRUN}'`), 'blocked:paused');
   // 보존 — 글 2개만 늘었다
   assert.deepEqual({ ...keep(), msgs: '-' }, { ...KEEP0, msgs: '-' });
 });
@@ -261,4 +268,34 @@ test('전체 끄기: msgr.pro_gate=off면 관문·sweep·봇 관문이 아무것
   assert.equal(sql(`select set_config('msgr.pro_gate', 'off', false); select public.msgr_bot_gate('${TOKEN_D}')`).split('\n').pop(), 'ok');
   const n = last(sql(`select set_config('msgr.pro_gate', 'off', false); insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name, hosting, status, allow) values ('${O2}', '${U.d}', '${WS}', 'd-off', 'd-off', 'local', 'active', 'all') returning id`));
   assert.equal(statusOf(n), 'active');
+});
+
+test('보존 기간: 재개한 중지 기록은 30일 지나면 sweep이 지우고, 그 전은 남긴다', { skip }, () => {
+  sql(`insert into public.msgr_crew_pauses (crew_id, owner_user_id, paused_at, resumed_at) values
+    ('${C.AV}', '${U.a}', now() - interval '40 days', now() - interval '31 days'),
+    ('${C.B1}', '${U.b}', now() - interval '40 days', now() - interval '29 days')
+    on conflict (crew_id) do update set paused_at = excluded.paused_at, resumed_at = excluded.resumed_at`);
+  sweep();
+  assert.equal(sql(`select count(*) from public.msgr_crew_pauses where crew_id = '${C.AV}'`), '0', '31일 지난 기록은 지운다');
+  assert.equal(sql(`select count(*) from public.msgr_crew_pauses where crew_id = '${C.B1}'`), '1', '29일 된 기록은 남긴다');
+});
+
+test('되돌리기 msgr_crews_plan_unpause_all: 재개와 같은 경로 — 사람 paused·봇 기록 전부, 커서를 끝으로, 기록 닫기. service_role 전용', { skip }, () => {
+  fails(asUserRaw(U.a, 'select public.msgr_crews_plan_unpause_all()'), /permission denied/, 'authenticated 실행');
+  // 되돌리기 순서: 관문·결제 트리거를 내리고 봇 스위치를 끈 뒤 부른다(마이그레이션 머리 주석)
+  sql('drop trigger msgr_crews_plan_sweep_ent on public.entitlements; drop trigger msgr_crews_pro_gate on public.msgr_crews');
+  sql(`insert into public.msgr_settings (key, value) values ('bot_plan_gate', 'off') on conflict (key) do update set value = 'off'`);
+  const pausedIds = sql(`select string_agg(id::text, ',' order by id) from public.msgr_crews where status = 'paused'`).split(',');
+  assert.ok(pausedIds.includes(C.D1) && pausedIds.includes(C.C1), pausedIds.join());
+  assert.equal(sql(`select count(*) from public.msgr_crew_pauses where crew_id = '${BOT_D}' and resumed_at is null`), '1', '무료 주인 봇의 열린 기록');
+  post(U.d, CH2, '@d1 되돌리기 전에 온 글', C.D1);
+  const top = topMsg();
+  const r = JSON.parse(sql('select public.msgr_crews_plan_unpause_all()'));
+  assert.equal(r.failed, 0); assert.ok(r.resumed >= pausedIds.length, JSON.stringify(r));
+  assert.equal(sql(`select count(*) from public.msgr_crews where status = 'paused'`), '0');
+  for (const id of [...pausedIds, BOT_D]) assert.ok(cursorOf(id) >= top, `${id} 커서 ${cursorOf(id)} ≥ 끝 ${top}`);
+  assert.equal(sql(`select count(*) from public.msgr_crew_pauses where resumed_at is null`), '0', '열린 기록 0');
+  assert.equal(statusOf(C.D1), 'active'); assert.equal(statusOf(C.AV), 'available', '파견 해제는 그대로'); assert.equal(statusOf(C.E1), 'detached');
+  assert.equal(asAnon(`select public.msgr_bot_gate('${TOKEN_D}')`), 'ok');
+  assert.deepEqual(JSON.parse(sql('select public.msgr_crews_plan_unpause_all()')), { resumed: 0, failed: 0, cursor: top }, '두 번째는 할 일 없음');
 });

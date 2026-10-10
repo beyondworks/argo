@@ -27,8 +27,8 @@
 -- 되돌리기(데이터를 지우지 않는다):
 --   select cron.unschedule('msgr-crews-plan-sweep');
 --   drop trigger msgr_crews_plan_sweep_ent on public.entitlements; drop trigger msgr_crews_pro_gate on public.msgr_crews;
---   update public.msgr_crews set status = 'active' where status = 'paused';   -- paused는 이 마이그레이션만 만든다
---   (봇은 엣지 스위치: msgr_settings bot_plan_gate = 'off')
+--   insert into public.msgr_settings(key, value) values ('bot_plan_gate', 'off') on conflict (key) do update set value = 'off';  -- 봇
+--   select public.msgr_crews_plan_unpause_all();   -- 사람 paused·봇 기록 전부 재개 경로로(커서를 끝으로). status만 바꾸는 update는 쓰지 않는다
 --   상태 제약은 paused 행이 0이 된 뒤에만 원래 세 값으로.
 --   함께 바꾼 함수(msgr_crew_routines_offboard·msgr_automation_dispatch_internal·msgr_member_offboard)는 paused 행이 없으면 원래 정의와 같게 동작해
 --   되돌리지 않아도 된다(되돌리려면 각 함수의 원래 파일 20260924160000·20260913110000·20260924100000 정의를 다시 적용).
@@ -106,6 +106,28 @@ drop trigger if exists msgr_crews_pro_gate_log on public.msgr_crews;
 create trigger msgr_crews_pro_gate_log after insert or update of status on public.msgr_crews
   for each row when (new.status = 'paused') execute function public.msgr_crews_pro_gate_log();
 
+-- 5-0) 한 에이전트 재개 — sweep의 Pro 재개와 되돌리기(msgr_crews_plan_unpause_all)가 같은 경로를 쓴다.
+--      멈춘 동안 쌓인 글은 처리하지 않는다(커서를 지금 끝 p_top으로) — 몇 주 전 글에 한꺼번에 답하거나 24시간 넘은 글마다 안내를 쓰지 않게. 글 자체는 그대로 남는다.
+--      부르는 쪽이 msgr.pro_gate=off로 관문을 비켜 둔다(이 함수는 판정하지 않는다).
+create or replace function public._msgr_crew_plan_resume(p_crew uuid, p_top bigint) returns void
+  language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  update public.msgr_crews
+     set status = case when status = 'paused' then 'active' else status end,
+         cursor_msg_id = greatest(coalesce(cursor_msg_id, 0), p_top)
+   where id = p_crew;
+  update public.msgr_crew_pauses set resumed_at = now(), resume_after = p_top where crew_id = p_crew and resumed_at is null;
+  -- 자동화도 같은 규칙: 멈추기 전에 줄 서 있던 실행(커서 뒤로 넘어가 게이트웨이가 다시 읽지 않는다)은 막힘으로 닫고,
+  -- 멈춘 동안 지난 예정 시각은 다음 시각으로 옮긴다 — 재개하자마자 밀린 실행을 보내지 않는다. 행·설정(enabled)은 그대로.
+  update public.msgr_automation_runs ru set status = 'blocked', error = 'paused', finished_at = now()
+    from public.msgr_automations au
+   where au.id = ru.automation_id and au.crew_id = p_crew and ru.status = 'queued' and ru.message_id <= p_top
+     and not exists (select 1 from public.msgr_executions e where e.source_msg_id = ru.message_id);
+  update public.msgr_automations set next_run_at = public.msgr_automation_next(schedule, now()), updated_at = now()
+   where crew_id = p_crew and enabled and deleted_at is null and next_run_at <= now();
+end $$;
+revoke all on function public._msgr_crew_plan_resume(uuid, bigint) from public, anon, authenticated;
+
 -- 5) 정리 함수: 무료 → 중지, Pro → 재개. 바뀌어야 하는 행만 고르고 그 행만 쓴다(유휴 쓰기 0). 10분마다 + 결제 반영 즉시(p_uid).
 --    행마다 따로 처리한다 — 한 행이 다른 트리거(예: 잠긴 조직 정책 msgr_crew_policy_gate)에 걸려도 나머지는 계속 간다.
 create or replace function public.msgr_crews_plan_sweep(p_uid uuid default null) returns jsonb
@@ -141,21 +163,8 @@ begin
         end if;
         n_paused := n_paused + 1;
       else
-        -- 재개: 멈춘 동안 쌓인 글은 처리하지 않는다(커서를 지금 끝으로) — 몇 주 전 글에 한꺼번에 답하지 않게. 글 자체는 그대로 남는다.
         if top is null then select coalesce(max(id), 0) into top from public.msgr_messages; end if;
-        update public.msgr_crews
-           set status = case when status = 'paused' then 'active' else status end,
-               cursor_msg_id = greatest(coalesce(cursor_msg_id, 0), top)
-         where id = r.id;
-        update public.msgr_crew_pauses set resumed_at = now(), resume_after = top where crew_id = r.id and resumed_at is null;
-        -- 자동화도 같은 규칙: 멈추기 전에 줄 서 있던 실행(커서 뒤로 넘어가 게이트웨이가 다시 읽지 않는다)은 막힘으로 닫고,
-        -- 멈춘 동안 지난 예정 시각은 다음 시각으로 옮긴다 — 재개하자마자 밀린 실행을 보내지 않는다. 행·설정(enabled)은 그대로.
-        update public.msgr_automation_runs ru set status = 'blocked', error = 'paused', finished_at = now()
-          from public.msgr_automations au
-         where au.id = ru.automation_id and au.crew_id = r.id and ru.status = 'queued' and ru.message_id <= top
-           and not exists (select 1 from public.msgr_executions e where e.source_msg_id = ru.message_id);
-        update public.msgr_automations set next_run_at = public.msgr_automation_next(schedule, now()), updated_at = now()
-         where crew_id = r.id and enabled and deleted_at is null and next_run_at <= now();
+        perform public._msgr_crew_plan_resume(r.id, top);
         n_resumed := n_resumed + 1;
       end if;
     exception when others then
@@ -172,6 +181,32 @@ begin
   return jsonb_build_object('paused', n_paused, 'resumed', n_resumed, 'failed', n_failed);
 end $$;
 revoke all on function public.msgr_crews_plan_sweep(uuid) from public, anon, authenticated;
+
+-- 5-1) 되돌리기 — 멈춘 에이전트 전부(사람 paused + 봇 열린 기록)를 재개와 같은 경로로 되살린다(커서를 끝으로·기록 닫기·자동화 정리, 봇 커서 포함).
+--      그냥 update … set status='active'로 되돌리면 커서가 그대로라 옛 게이트웨이가 멈춘 동안 온 글을 처리하고, 24시간 넘은 글마다 안내를 쓴다.
+--      먼저 크론·관문 트리거를 내린 뒤 부른다(머리 주석 '되돌리기'). service_role 전용. 행 단위 예외 처리.
+create or replace function public.msgr_crews_plan_unpause_all() returns jsonb
+  language plpgsql security definer set search_path = public, pg_temp as $$
+declare r record; top bigint; prev text := current_setting('msgr.pro_gate', true); n int := 0; n_failed int := 0;
+begin
+  perform set_config('msgr.pro_gate', 'off', true);
+  select coalesce(max(id), 0) into top from public.msgr_messages;
+  for r in select c.id from public.msgr_crews c
+            where c.status = 'paused' or exists (select 1 from public.msgr_crew_pauses k where k.crew_id = c.id and k.resumed_at is null)
+            order by c.id loop
+    begin
+      perform public._msgr_crew_plan_resume(r.id, top);
+      n := n + 1;
+    exception when others then
+      n_failed := n_failed + 1;
+      raise warning 'msgr_crews_plan_unpause_all: crew % skipped (%: %)', r.id, sqlstate, sqlerrm;
+    end;
+  end loop;
+  perform set_config('msgr.pro_gate', coalesce(prev, ''), true);
+  return jsonb_build_object('resumed', n, 'failed', n_failed, 'cursor', top);
+end $$;
+revoke all on function public.msgr_crews_plan_unpause_all() from public, anon, authenticated;
+grant execute on function public.msgr_crews_plan_unpause_all() to service_role;
 
 -- 결제·부여가 바뀌면 그 사용자만 바로 재개/중지(10분 기다리지 않게). 결제 웹훅(apply_ls_event)의 트랜잭션 안에서 돌므로 어떤 오류도 밖으로 던지지 않는다 —
 -- 여기서 실패해 결제 반영이 되돌려지면 안 된다(다음 10분 크론이 같은 판정을 다시 한다).
