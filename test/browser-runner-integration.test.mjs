@@ -119,19 +119,33 @@ for (const selected of ['codex', 'gemini', 'claude']) {
   }
 }
 
-test('native loop gives browser the actual company, agent and work run then closes that tab', {skip:!findChrome() && 'Chromium unavailable'}, async () => {
-  runner = 'claude'; const ws = await setup(); let calls = 0;
+// 실제 Chromium이 가끔 명령에 30초 넘게 답하지 않거나 60초 안에 뜨지 않는다(Windows CI 러너: #916 이 시험, 9/29·10/1 browser-isolation — winpc 부하 32회는 0).
+// 그건 이 시험이 보는 것(회사·에이전트·실행 id로 탭을 열고 끝나면 닫는다)이 아니라 환경이다. 그 두 문구로 끝난 시도만 새 실행 id로 다시 하고(최대 3번),
+// 다른 결과는 바로 실패다. 관찰은 fetchImpl 밖에서 단언한다 — 안에서 던지면 callMessages가 네트워크 오류로 보고 재전송해 원인이 '호출 3 !== 2'로 가려졌다.
+const CHROME_STALL = /Browser command timed out|안에 뜨지 않았습니다/;
+test('native loop gives browser the actual company, agent and work run then closes that tab', {skip:!findChrome() && 'Chromium unavailable'}, async (t) => {
+  runner = 'claude'; const ws = await setup();
   const profile = BrowserSession.profileDir(ws, process.env, 'alpha');
-  const q = nativeQuery({wsId:ws,slug:'alpha',browserRunId:'native-scope-fixture',cwd:paths(ws).root,prompt:'fixture',
-    env:{...process.env,ANTHROPIC_API_KEY:'fixture-only',ANTHROPIC_BASE_URL:'http://127.0.0.1:1'},model:'fixture',saveSession:false,
-    canUseTool:async (_,input)=>({behavior:'allow',updatedInput:input}),
-    fetchImpl:async () => {
-      const first = ++calls === 1;
-      if (!first) { const session = _sessionsForTest().get(profile); assert.ok(session); assert.ok(session.pages.has('native-scope-fixture')); }
-      return new Response(JSON.stringify({id:'fixture',role:'assistant',type:'message',content:first
-        ? [{type:'tool_use',id:'b1',name:'browser_navigate',input:{url:'about:blank'}}]
-        : [{type:'text',text:'done'}],stop_reason:first?'tool_use':'end_turn',usage:{input_tokens:1,output_tokens:1}}),{headers:{'content-type':'application/json'}});
-    }});
-  for await (const _ of q) { /* consume the real native tool loop */ }
-  assert.equal(calls,2); assert.equal(_sessionsForTest().get(profile)?.pages.has('native-scope-fixture'),false);
+  for (let attempt = 1; ; attempt++) {
+    const runId = `native-scope-fixture-${attempt}`; const seen = [];
+    const q = nativeQuery({wsId:ws,slug:'alpha',browserRunId:runId,cwd:paths(ws).root,prompt:'fixture',
+      env:{...process.env,ANTHROPIC_API_KEY:'fixture-only',ANTHROPIC_BASE_URL:'http://127.0.0.1:1'},model:'fixture',saveSession:false,
+      canUseTool:async (_,input)=>({behavior:'allow',updatedInput:input}),
+      fetchImpl:async (_url, init) => {
+        const first = seen.push({tabOpen:_sessionsForTest().get(profile)?.pages.has(runId) === true, last:JSON.parse(init.body).messages.at(-1)}) === 1;
+        return new Response(JSON.stringify({id:'fixture',role:'assistant',type:'message',content:first
+          ? [{type:'tool_use',id:'b1',name:'browser_navigate',input:{url:'about:blank'}}]
+          : [{type:'text',text:'done'}],stop_reason:first?'tool_use':'end_turn',usage:{input_tokens:1,output_tokens:1}}),{headers:{'content-type':'application/json'}});
+      }});
+    const results = []; for await (const m of q) if (m.type === 'result') results.push(m);
+    const toolResult = seen[1]?.last?.content?.find((b) => b.type === 'tool_result');
+    const text = String(toolResult?.content ?? '');
+    if (CHROME_STALL.test(text) && attempt < 3) { t.diagnostic(`Chromium stalled on attempt ${attempt}: ${text.slice(0, 200)}`); continue; }
+    assert.equal(seen.length, 2, `two model calls, results ${JSON.stringify(results).slice(0, 300)}`);
+    assert.deepEqual(results.map((r) => r.subtype), ['success']);
+    // 도구 결과 문구(about:blank 이동 실패)는 크롬 판마다 달라 판정에 쓰지 않는다 — 탭은 이동 전에 열리므로 다음 모델 호출 때 탭이 있으면 된다
+    assert.equal(seen[1].tabOpen, true, `during the run the browser has a tab for this company, agent and run (tool result: ${text.slice(0, 200)})`);
+    assert.equal(_sessionsForTest().get(profile)?.pages.has(runId), false, 'the run closes its tab');
+    return;
+  }
 });
