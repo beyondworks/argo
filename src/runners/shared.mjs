@@ -103,6 +103,7 @@ export function scrubServerSecrets(env = process.env, runner = null) {
     if (runner && PROVIDER_AUTH_OWNERS[k] && !PROVIDER_AUTH_OWNERS[k].includes(runner)) continue;
     out[k] = v;
   }
+  out.ARGO_AGENT_TURN = '1'; // 에이전트 턴의 자식(셸·MCP) 표지 — argo office 영역 명령·MCP가 스스로 거절한다(10/10 분리 검수 MEDIUM-1: 크루가 셸로 1:1 규칙을 넘지 않게)
   return out;
 }
 

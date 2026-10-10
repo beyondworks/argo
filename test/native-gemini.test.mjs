@@ -339,8 +339,8 @@ test('G14. 자격 유출 차단(검수 HIGH-1) — 크루 Bash 자식이 GEMINI_
     assert.equal(srv.calls[0].headers['x-goog-api-key'], CANARY, '벤더 호출 자체는 키를 쓴다(대조군)');
   } finally { await srv.close(); }
   const other = scrubServerSecrets({ ARGO_WIRE: 'gemini', GEMINI_API_KEY: 'k', GEMINI_BASE_URL: 'u', RESPONSES_TOKEN: 't', PATH: '/bin' }, 'openrouter');
-  assert.deepEqual(Object.keys(other), ['PATH'], '호스트 셸의 와이어 env는 다른 러너에 상속되지 않는다');
-  assert.deepEqual(Object.keys(scrubServerSecrets({ ARGO_WIRE: 'gemini', GEMINI_API_KEY: 'k', PATH: '/bin' }, 'gemini')).sort(), ['ARGO_WIRE', 'GEMINI_API_KEY', 'PATH']);
+  assert.deepEqual(Object.keys(other).sort(), ['ARGO_AGENT_TURN', 'PATH'], '호스트 셸의 와이어 env는 다른 러너에 상속되지 않는다(ARGO_AGENT_TURN = 에이전트 턴 표지, 10/10)');
+  assert.deepEqual(Object.keys(scrubServerSecrets({ ARGO_WIRE: 'gemini', GEMINI_API_KEY: 'k', PATH: '/bin' }, 'gemini')).sort(), ['ARGO_AGENT_TURN', 'ARGO_WIRE', 'GEMINI_API_KEY', 'PATH']);
 });
 
 test('G15. 검진 목적지(L3)·카드 표기(M2 핀) — verifyRunnerCred(gemini)가 GEMINI_BASE_URL을 따르고, 설정 카드는 제공되지 않는 연결 방식(oauth)을 첫 제공 방식으로 보인다', async () => {
