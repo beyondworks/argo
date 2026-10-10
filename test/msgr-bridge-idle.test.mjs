@@ -23,7 +23,7 @@ const CREW = { id: 'cccccccc-0000-4000-8000-000000000001', org_id: ORG, slug: 'c
 const POLL = 15_000;
 
 let wsN = 0;
-afterEach(() => { mock.timers.reset(); });
+afterEach(() => { mock.timers.reset(); M.wakeProtocolCache.at = -Infinity; });
 
 /** 실제 브리지 + 가짜 클라이언트. 호출은 이름으로 센다(db 메서드, client.rpc는 'rpc:<이름>'). */
 async function harness({ inbox = () => [], local = async () => 'L0', node = false, failRooms = false, crews = () => [CREW], extra = {}, card = false } = {}) {
@@ -40,6 +40,7 @@ async function harness({ inbox = () => [], local = async () => 'L0', node = fals
     crewPresence: async () => new Map(),
     crewMemberships: async () => { if (failRooms) throw new Error('rooms down'); return new Map([[CREW.id, { dm: new Set(), member: new Set([CH]) }]]); },
     nodeHeartbeat: async () => true,
+    wakeProtocol: async () => 1, // 서버가 깨우기 방송(crew_sync)을 보낸다(20261010232100)
     ...extra,
   };
   const db = new Proxy({}, { get: (_, k) => (typeof k !== 'string' || k === 'then') ? undefined : async (...a) => { calls.push({ name: k, t: Date.now(), a }); return impl[k] ? impl[k](...a) : []; } });
@@ -117,12 +118,13 @@ test('② 아직 붙지 않았거나 끊기면 15초 전체 조회(종전) — �
     assert.ok(d1 - d0 >= 5, '붙는 순간 따라잡기 조회가 틱을 기다리지 않고 나간다');
     await advance(60_000);
     assert.equal(drains(h), d1, '붙은 뒤 1분은 조회 없음');
-    h.drop(`u:${UID}`, 'CHANNEL_ERROR');
+    h.drop(`u:${UID}`, 'CHANNEL_ERROR'); await settle();
+    assert.equal(drains(h) - d1, 1, '끊김을 본 순간 한 번(죽은 소켓을 알기 전 온 글의 방송은 오지 않았다)');
     await advance(45_000);
-    assert.equal(drains(h) - d1, 3, '끊기면 다음 틱부터 15초마다');
+    assert.equal(drains(h) - d1, 4, '끊긴 동안 15초마다');
     h.join(`u:${UID}`); await settle();
     const d2 = drains(h);
-    assert.equal(d2 - d1, 4, '다시 붙으면 즉시 1번 따라잡기');
+    assert.equal(d2 - d1, 5, '다시 붙으면 즉시 1번 따라잡기');
     await advance(60_000);
     assert.equal(drains(h), d2, '다시 쉬는 주기');
   } finally { h.stop(); }
@@ -134,8 +136,9 @@ test('② 짧게 끊겼다 15초 틱 전에 다시 붙어도(realtime-js 자동 
     joinAll(h); await settle(); await advance(30_000);
     const d = drains(h);
     h.drop(`org:${ORG}`, 'CHANNEL_ERROR'); await settle();
+    assert.equal(drains(h), d + 1, '끊김을 본 순간 한 번 조회');
     h.join(`org:${ORG}`); await settle();
-    assert.equal(drains(h), d + 1, '다시 붙는 순간 한 번 조회');
+    assert.equal(drains(h), d + 2, '다시 붙는 순간 한 번 더 조회(끊긴 사이 방송은 다시 오지 않는다)');
   } finally { h.stop(); }
 });
 

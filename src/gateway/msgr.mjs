@@ -273,6 +273,12 @@ export function makeDb(client) {
     },
     /** 접속 심박. beat = { wsId, deviceId }가 있으면 기기 단위 심박 RPC 한 번(20261010120000 — 기기 행 + 옛 읽기 호환 행 + 업무 기능 표시)을 쓰고 { device: true }를 돌려준다
         (호출부는 그때 workHeartbeat를 따로 보내지 않는다). 옛 서버(함수 없음)면 10분 동안 종전 경로 — 행마다 PATCH. */
+    /** 서버가 게이트웨이 깨우기 방송(crew_sync — 에이전트 active 전환·조직 가입, 20261010232100)을 보내는가. 옛 서버(함수 없음)면 0 — 브리지는 쉬는 주기를 쓰지 않는다. */
+    async wakeProtocol() {
+      const { data, error } = await client.rpc('msgr_gateway_wake_protocol');
+      if (error) { if (['PGRST202', '42883'].includes(error.code)) return 0; throw new Error(`msgr db: ${error.message}`); }
+      return Number(data) || 0;
+    },
     async heartbeat(ids, beat = null) {
       if (!ids.length) return undefined;
       if (beat?.wsId && beat?.deviceId && String(beat.deviceId).length <= 200 && Date.now() - deviceBeatRpc.missingAt > DEVICE_BEAT_RECHECK_MS) { // 200자 넘는 .device-id(손으로 고친 경우)는 서버가 거절한다 — 매 틱 실패 대신 종전 경로(검수 L4)
@@ -2346,6 +2352,16 @@ export function coalesce(fn, merge = (a, b) => b ?? a) {
   return run;
 }
 
+/** 서버 깨우기 방송 판정 — 프로세스 단위로 10분 기억(같은 세션이 붙는 같은 서버). 실패(네트워크)는 기억하지 않고 '아니오'(이번 틱은 15초 조회). */
+export const wakeProtocolCache = { at: -Infinity, ok: false };
+const WAKE_PROTOCOL_RECHECK_MS = 10 * 60_000;
+async function serverWakes(db, t) {
+  if (t - wakeProtocolCache.at < WAKE_PROTOCOL_RECHECK_MS) return wakeProtocolCache.ok;
+  if (typeof db.wakeProtocol !== 'function') return false;
+  try { const v = await db.wakeProtocol(); Object.assign(wakeProtocolCache, { at: t, ok: Number(v) >= 1 }); } catch { return false; }
+  return wakeProtocolCache.ok;
+}
+
 /** 브리지 15초 틱의 할 일(순수 — 시험용 export). 'poll' = 관리 작업 + 받은 글(종전 15초 틱) | 'wake' = 받은 글만 | 'idle' = DB 없이(상태 파일·심박 기한 확인).
     구독이 하나라도 안 붙었거나 끊겼으면, 회사 노드면(비공개 채널 크루 요청 방송이 노드 계정에 닿지 않을 수 있다 — msgr_room_send는 방 사람·방에 든 크루 주인에게만),
     잠자기에서 깨어났으면(틱 간격이 3배 넘게 벌어짐 — 소켓이 살아 보여도 그 사이 방송을 못 받았을 수 있다), 로컬 변경이 있으면, 예비 조회 간격이 지났으면 전체 조회.
@@ -2387,7 +2403,8 @@ export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_M
   const checkHealth = () => { const healthy = rtHealthy(); const rejoined = healthy && !wasHealthy; wasHealthy = healthy; return { healthy, rejoined }; };
   // 구독 상태 콜백 — 끊기면(CHANNEL_ERROR·TIMED_OUT·CLOSED) 바로 '안 붙음'으로 적어 두고(다음 15초 틱 판정 전에 realtime-js가 다시 붙여도 따라잡기를 놓치지 않게),
   // 붙는 순간(첫 구독 포함) 받은 글을 따라잡는다 — 조회와 구독 사이, 끊긴 사이에 온 글은 방송이 다시 오지 않는다
-  const onStatus = (status) => { if (stopped) return; if (status !== 'SUBSCRIBED') { wasHealthy = false; return; } if (checkHealth().rejoined) tick('wake').catch(() => {}); };
+  // 끊김을 본 순간에도 받은 글을 한 번 본다 — 소켓이 죽은 뒤 끊김을 알기까지(realtime-js 심박 최대 약 50초) 온 글의 방송은 오지 않았다. 그 뒤로는 15초 조회
+  const onStatus = (status) => { if (stopped) return; if (status !== 'SUBSCRIBED') { const was = wasHealthy; wasHealthy = false; if (was) tick('wake').catch(() => {}); return; } if (checkHealth().rejoined) tick('wake').catch(() => {}); };
   // 같은 토픽은 한 클라이언트에서 채널 객체 하나다(realtime-js channel()) — 같은 계정의 회사 여럿이 같이 쓰면 두 번째 subscribe의 콜백은 등록되지 않는다.
   // 콜백을 채널에 하나 두고 회사마다 듣는 함수를 더한다(그래도 판정의 정본은 채널 상태 — joined)
   const attach = (ch) => {
@@ -2431,7 +2448,9 @@ export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_M
       } else { rtDownSince = null; if (rt && c.client.__rtKicks) c.client.__rtKicks = 0; } // 붙어 있으면 간격을 처음으로
       let mode = kind; let idleWas = false; const heldBefore = held;
       if (kind === 'fire') {
-        const { healthy, rejoined } = checkHealth();
+        const h = checkHealth();
+        // 쉬는 주기는 서버가 깨우기 방송(crew_sync)을 보낼 때만 — 옛 서버면 새 파견·재개·조직 가입을 알 길이 15초 조회뿐이다(어떤 경우에도 종전보다 늦지 않게)
+        const healthy = h.healthy && await serverWakes(c.db, t), rejoined = h.rejoined;
         idleWas = healthy && !nodeCompany && !rejoined; // 쉬는 주기의 예비 조회인가(끊김·재연결 따라잡기는 아니다)
         mode = msgrTickPlan({ now: t, lastFireAt, lastHousekeeping, healthy, rejoined, held, nodeCompany, pollMs, idlePollMs }); // 로컬 변경은 아래에서(파일 읽기라 'poll'이 아닐 때만)
         lastFireAt = t;
@@ -2515,6 +2534,8 @@ export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_M
           .on('broadcast', { event: 'message' }, wake)
           .on('broadcast', { event: 'approval' }, wake)
           .on('broadcast', { event: 'crew_request' }, wake)
+          // 서버 깨우기(20261010232100): 내 에이전트가 active가 됐거나(새 파견·재개·다시 파견) 내가 조직에 들어왔다 — 바로 전체 조회(미러 파견·에이전트 목록·구독 갱신)
+          .on('broadcast', { event: 'crew_sync' }, () => { wokeAt = Date.now(); tick('poll').catch(() => {}); })
           // u:<uid>는 본인만 받고 클라이언트는 여기로 보낼 수 없다(RLS 발신 정책 없음, 20260918184500) — 크루 중단 방송의 정본 토픽(H-1).
           .on('broadcast', { event: 'stop_request' }, (msg) => { handleStopRequest(wsId, msg?.payload, { session }).catch((e) => console.error('[argo] msgr 중단 방송 처리 실패:', e.message)); });
         uch.__client = c.client;
