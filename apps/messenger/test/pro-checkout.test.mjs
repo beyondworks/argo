@@ -175,7 +175,7 @@ test('LOW-2 Pro 필요 거절은 내 에이전트일 때만 플랜으로 잇는�
     assert.equal(pro.proRequiredFor('msgr_room_limit', { ownerId: 'someone', uid: 'me', t }), 'msgr_room_limit', '다른 오류는 그대로');
   }
   const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
-  assert.match(app, /if \(up\.error\) throw new Error\(proRequiredFor\(up\.error\.message, \{ ownerId: crew\.owner_user_id, uid, t \}\)\);/, '그 자리 파견');
+  assert.match(app, /if \(up\.error\) up\.error\.message = proRequiredFor\(up\.error\.message, \{ ownerId: crew\.owner_user_id, uid, t \}\);[^\n]*\n\s*if \(up\.error\) throw new Error\(up\.error\.message\);/, '그 자리 파견(바꾼 문구를 다음 줄이 던진다 — #945와 같은 줄을 고치지 않는다)');
   assert.match(app, /if \(res\.error\) return onError\(proRequiredFor\(res\.error\.message, \{ ownerId: crew\.owner_user_id, uid, t \}\)\);/, '에이전트 카드 파견');
 });
 

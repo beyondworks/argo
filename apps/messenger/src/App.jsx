@@ -76,9 +76,9 @@ import { getComposerSession, bindComposerSession, clearComposerSessions, compose
 import { fetchSearchRows } from './search-rows.mjs';
 import { memberRows, memberPerms, MEMBER_CHIPS } from './phone-members.mjs';
 import { Seg } from './seg.mjs'; // 세그먼트 토글 하나(5차 피드백 3)
+import { planOf, purchaseChannel, proCheckoutUrl, planView, recheckUntilPro, returnRecheck, isProUpsell, proRequiredFor, iosKey, LS_BILLING } from './pro-checkout.mjs'; // Pro 결제 — 본체·랜딩과 같은 결제·같은 판정(2026-10-11)
 import { searchView } from './search-view.mjs';
 import { deliveryCardView } from './delivery-card.mjs';
-import { planOf, purchaseChannel, proCheckoutUrl, planView, recheckUntilPro, returnRecheck, isProUpsell, proRequiredFor, iosKey, LS_BILLING } from './pro-checkout.mjs'; // Pro 결제 — 본체·랜딩과 같은 결제·같은 판정(2026-10-11)
 import { friendlyErr, toastError } from './error-toast.mjs'; // 아는 서버 코드 → 문구, 토스트는 원문을 거른다(UXM-05)
 import { messageShape } from './attach-only.mjs';
 import { createLateAttach, mergeAttachments } from './late-attach.mjs'; // 놓친 'attach' 방송 되찾기(C-a 인접 경로)
@@ -1255,7 +1255,8 @@ function Shell({ session }) {
   // 조직 기본값으로 바뀌었다). 잠금 정책이면 서버 게이트(msgr_crew_policy_gate)와 잠글 때의 일괄 맞춤이 기본값을 보장한다.
   const dispatchCrew = useCallback(async (crew, channelId = null) => {
     const up = await supabase.from('msgr_crews').update({ status: 'active' }).eq('id', crew.id).select('id');
-    if (up.error) throw new Error(proRequiredFor(up.error.message, { ownerId: crew.owner_user_id, uid, t })); // 남의 에이전트면 내 Pro로 풀리지 않는다(#944 LOW-2)
+    if (up.error) up.error.message = proRequiredFor(up.error.message, { ownerId: crew.owner_user_id, uid, t }); // 남의 에이전트면 내 Pro로 풀리지 않는다(#944 LOW-2) — 다음 줄(종전 그대로)이 던진다
+    if (up.error) throw new Error(up.error.message);
     // 채널에 넣는 것은 서버 규칙 한 곳(msgr_crew_join)으로 — 방장이면 바로, 참여자는 채널 정책대로(바로/방장 승인), 채팅은 결재자면 바로·아니면 요청.
     let joined = null;
     if (channelId) {
