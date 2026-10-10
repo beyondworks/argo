@@ -349,7 +349,7 @@ async function prepareSetting(wsId, def, value, { id = null, lang = 'ko', full =
     return { value, extra: { before: cur.rules, after: [...cur.rules, value] } };
   }
   if (def.key === 'agent.rules.remove') {
-    // 주인 1:1이 아니면 번호로만 받고 규칙 원문을 읽어 싣지 않는다 — 승인 때 그때의 규칙에서 그 번호 문장을 확정한다(applyCardSetting)
+    // 주인 1:1이 아니면 번호로만 받고 규칙 원문을 읽어 싣지 않는다 — 승인 때 그 번호 문장이 올린 때와 같을 때만 지운다(대조값 h, applyCardSetting)
     // h = 올린 때 그 번호 문장의 대조값(원문 아님) — 승인 전에 규칙 순서가 바뀌면 엉뚱한 규칙을 지우지 않게(재검수 2차 M)
     if (!full) return /^\d{1,3}$/.test(value) && Number(value) >= 1 ? { value: String(Number(value)), extra: { index: Number(value), h: ruleHash(cur.rules[Number(value) - 1]) } } : { error: 'rule-number' };
     const i = /^\d+$/.test(value) ? Number(value) - 1 : cur.rules.indexOf(value);
@@ -639,7 +639,7 @@ export async function argoSettings(wsId, { action = 'list', key = '', id = null,
     ...(!reveal && def.key.startsWith('routine.') && def.key !== 'routine.time' && (def.key !== 'routine.enabled' || prep.value === true) ? { from: via ?? slug } : {}) };
   const why_ = maskKeyLike(String(why || '').replace(/[\r\n\t]+/g, ' ').trim());
   // 규칙 결재 — 카드에 바뀌기 전·후 규칙(주인 1:1에서 올린 카드). 남이 보는 방에서 올린 카드는 개수와 이번 한 줄만(지시문 전체를 그 방에 싣지 않는다)
-  const diff = prep.extra?.index ? pick(lang, `규칙 ${prep.extra.index}번 삭제 — 승인할 때 그때의 규칙 ${prep.extra.index}번 문장을 지운다(그 번호가 없으면 적용하지 않는다)`, `Remove rule #${prep.extra.index} — on approval the rule at #${prep.extra.index} at that time is removed (not applied if there is no such number)`)
+  const diff = prep.extra?.index ? pick(lang, `규칙 ${prep.extra.index}번 삭제 — 승인할 때 규칙 ${prep.extra.index}번이 요청한 때와 같은 문장이면 지운다(그 사이 규칙이 바뀌었거나 번호가 없으면 적용하지 않는다)`, `Remove rule #${prep.extra.index} — on approval it is removed only if rule #${prep.extra.index} is still the one requested (not applied if the rules changed or the number is gone)`)
     : prep.extra?.before ? (reveal ? rulesDiffText(prep.extra.before, prep.extra.after, lang)
     : pick(lang, `규칙 ${prep.extra.before.length}개 → ${prep.extra.after.length}개(전·후 전체는 승인할 때 데크 결재함·주인 1:1에서 확인)`, `Rules ${prep.extra.before.length} → ${prep.extra.after.length} (full before/after: check in the Deck approvals or the owner's 1:1)`)) : '';
   // 긴 글(루틴 내용)은 카드 문구에 앞 120자만 보이므로, 주인이 무엇을 승인하는지 사유 칸에 새 글 전체를 싣는다(넘치면 앞부분)
