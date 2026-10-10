@@ -657,7 +657,7 @@ async function sessionToolFor(wsId, agentSlug, mirrorCtx, source, sessCtx, hop) 
 /** 크루 도구 서버 — request_approval(항상) + delegate(hop 2단계까지 연쇄 허용, 순환 차단).
     connectors = 이 턴의 커넥터 요약(connectorBriefing). 비어 있으면 use_connector를 **등재하지 않는다**.
     (export: 행동 테스트용 — 등재 조건·수렴 경로를 인메모리 MCP 클라이언트로 실제로 돌려 확인한다) */
-export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [], mirrorCtx = null, lang = 'ko', connectors = [], workFolder = '', sink = null, journal = null, fullAuto = false, limits = DELEGATION_LIMITS.on, tree = null, counters = null, session = null, origin = null, { settingsDirect = false } = {}) { // settingsDirect = 이 턴이 주인의 1:1 직접 지시인가(runChat이 settingsDirectTurn으로 정한다 — 생략 = 거짓 = 결재 카드) // session = 세션 메시지 문맥 {peers, chain, child} — runChat이 sessionToolFor로 만든다(peers가 비면 도구 없음). origin = 이 턴의 notOwnerDirect(사장 직접 턴이 아닌 시작점의 크루) // sink = 네이티브 엔진 도구 정의 수집(P-A), journal = 팀 메신저 일지 정책(위임 턴에 전달), fullAuto = 풀 오토(회사 단위 스위치, 주인 직접 턴에만 true — 호출부가 guest 판정까지 끝내 넘긴다), limits = 위임 제한 표(delegation-limits.mjs — 생략·메신저 맥락은 켜짐), tree = 풀림의 합계 예산 객체(사용자 메시지 하나에서 이어지는 크루 턴 총량 — 없으면 이 서버 단독 임시 예산), counters = 이 턴의 위임·쪽지 횟수 {delegate, mail}(CLI 지시 블록과 같은 카운터를 쓰려고 runChat이 만들어 넘긴다)
+export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, chain = [], mirrorCtx = null, lang = 'ko', connectors = [], workFolder = '', sink = null, journal = null, fullAuto = false, limits = DELEGATION_LIMITS.on, tree = null, counters = null, session = null, origin = null, { settingsDirect = false, goalTurn = null, autoTurn = false } = {}) { // goalTurn = 목표 하트비트 회차의 보고 자리({id, outcome} — goal_checkin이 채운다), autoTurn = 회차·루틴·작업 턴(새 목표 하트비트를 만들지 못한다) // settingsDirect = 이 턴이 주인의 1:1 직접 지시인가(runChat이 settingsDirectTurn으로 정한다 — 생략 = 거짓 = 결재 카드) // session = 세션 메시지 문맥 {peers, chain, child} — runChat이 sessionToolFor로 만든다(peers가 비면 도구 없음). origin = 이 턴의 notOwnerDirect(사장 직접 턴이 아닌 시작점의 크루) // sink = 네이티브 엔진 도구 정의 수집(P-A), journal = 팀 메신저 일지 정책(위임 턴에 전달), fullAuto = 풀 오토(회사 단위 스위치, 주인 직접 턴에만 true — 호출부가 guest 판정까지 끝내 넘긴다), limits = 위임 제한 표(delegation-limits.mjs — 생략·메신저 맥락은 켜짐), tree = 풀림의 합계 예산 객체(사용자 메시지 하나에서 이어지는 크루 턴 총량 — 없으면 이 서버 단독 임시 예산), counters = 이 턴의 위임·쪽지 횟수 {delegate, mail}(CLI 지시 블록과 같은 카운터를 쓰려고 runChat이 만들어 넘긴다)
   const lim = isMessengerCtx(mirrorCtx) ? DELEGATION_LIMITS.on : limits; // 메신저 턴은 스위치 밖 — 호출부가 무엇을 넘겨도 종전 2회·2단계(방어)
   const budget = lim.relaxed ? (tree ?? newTree({ kind: 'turn' })) : null; // 풀림은 합계 예산 없이 돌지 않는다 — 못 받았으면 이 서버 단독의 임시 예산
   const cnt = counters ?? { delegate: 0, mail: 0 };
@@ -669,6 +669,10 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
   // 크루 도구는 SDK·네이티브 모두 권한 게이트를 건너뛴다(사전 승인·gated:false) — 손님 판정은 **처리기 안이 유일한 자리**다.
   // 그래서 러너와 무관하게 걸린다. 주인의 비용·설정을 직접 바꾸는 도구(예약·장기 작업·도구 설치)만 막고, 결재·넘김은 그대로 둔다.
   const guest = isGuestCtx(mirrorCtx);
+  // 목표 하트비트 회차(goalTurn) 안에서 막는 일 — 예약·장기 작업·위임·쪽지(회차가 회차 밖 턴을 낳지 않게, 폭주 방지). 결재(request_approval)는 그대로다
+  const goalTurnNo = (what) => (lang === 'en'
+    ? `Not available inside a heartbeat check: ${what}. Do this check yourself; if more is needed, say so in your result and let the owner decide.`
+    : `하트비트 회차 안에서는 할 수 없다: ${what}. 이번 확인은 직접 하고, 더 필요한 일은 결과에 적어 주인이 정하게 하라.`);
   const guestNo = (what) => text(lang === 'en'
     ? `Not available here: ${what} changes the owner's own setup or spends the owner's budget, and this request came from someone other than the owner. Tell them so in one line and suggest asking the owner directly; do not promise to do it yourself.`
     : `여기서는 쓸 수 없다: ${what}은(는) 주인의 설정을 바꾸거나 주인의 비용을 쓰는 일인데, 이 요청은 주인이 아닌 사람이 했다. 그 사실을 한 줄로 알리고 주인에게 직접 부탁하라고 안내하라 — 네가 대신 해 주겠다고 약속하지 마라.`);
@@ -779,6 +783,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     '동료 에이전트에게 하위 작업을 위임하고 결과를 받는다. to는 동료의 slug(메신저에서는 정확한 id 권장), task는 그 동료가 단독으로 수행할 수 있는 구체적 지시.',
     { to: z.string(), task: z.string() },
     async ({ to, task }) => {
+      if (goalTurn) return text(goalTurnNo(lang === 'en' ? 'Delegating' : '위임')); // 목표 하트비트 회차는 혼자 확인한다 — 동료 턴은 회차 표지를 잇지 않아 예약·작업을 만들 수 있다(분리 검수 MEDIUM-1)
       if (cnt.delegate >= lim.delegate) {
         if (!lim.relaxed) return text('위임 한도 초과 — 이번 턴은 남은 작업을 직접 마무리하라.');
         // 풀린 대화방의 상한 — 조용히 직접 마무리하게 두지 않고 사장에게 알려 이어갈지 묻게 한다(사장의 다음 메시지 = 새 턴, 새 카운터)
@@ -834,6 +839,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     '동료 에이전트에게 비동기 쪽지를 보낸다(결과를 기다리지 않음 — 지금 턴은 바로 끝난다). 상대는 잠시 뒤 자기 턴에서 읽고 처리하며, 필요하면 나에게 답장을 보낸다. to는 수신 동료 slug(메신저에서는 정확한 id 권장), cc는 참조로 사본을 받을 동료 slug 목록(선택), message는 상대가 단독으로 이해할 수 있는 내용. 즉시 결과가 필요한 하위 작업은 이 도구가 아니라 delegate를 써라.',
     { to: z.string(), cc: z.array(z.string()).optional(), message: z.string() },
     async ({ to, cc, message }) => {
+      if (goalTurn) return text(goalTurnNo(lang === 'en' ? 'Sending notes to colleagues' : '동료에게 쪽지 보내기'));
       if (cnt.mail >= lim.mail) {
         if (!lim.relaxed) return text('쪽지 한도 초과 — 이번 턴은 이미 보낸 쪽지로 충분하다. 남은 작업을 직접 마무리하라.');
         return text(lang === 'en'
@@ -1036,6 +1042,8 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     },
     async ({ title, prompt, type, time, date, dows, everyMinutes, agentSlug, maxRuns, maxUsd }) => {
       if (guest) return guestNo(lang === 'en' ? 'Scheduling a task' : '예약 만들기');
+      // 목표 하트비트 회차 안에서는 예약을 새로 걸지 않는다(폭주 방지 — 회차가 회차를 낳지 않게). 필요하면 결과에 적어 주인이 정한다
+      if (goalTurn) return text(goalTurnNo(lang === 'en' ? 'Creating schedules' : '예약 만들기'));
       try {
         const r = await addRoutine(wsId, {
           agentSlug: agentSlug || fromSlug, title, prompt, msgr: messengerOrigin(mirrorCtx, agentSlug || fromSlug),
@@ -1059,7 +1067,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     async () => {
       if (guest) return guestNo(lang === 'en' ? 'Listing the owner\'s schedules' : '예약 목록 보기');
       try {
-        const rs = await loadRoutines(wsId);
+        const rs = (await loadRoutines(wsId)).filter((r) => r.kind !== 'goal'); // 목표 하트비트는 goal_heartbeat action=list로 따로 본다
         if (!rs.length) return text('걸린 예약이 없다.');
         return text(rs.map((r) => `- ${r.title} (id ${r.id}) — ${scheduleText(r.schedule ?? {}, r.loop)} · 담당 ${r.agentSlug} · ${r.enabled === false ? '꺼짐' : '켜짐'}${r.lastRunAt ? ` · 마지막 실행 ${r.lastRunAt}` : ' · 아직 실행 전'}`).join('\n'));
       } catch (e) {
@@ -1086,6 +1094,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
       try {
         const before = (await loadRoutines(wsId)).find((x) => x.id === id);
         if (!before) return text(`그런 예약이 없다: ${id}. list_routines로 id를 다시 확인하라.`);
+        if (before.kind === 'goal') return text(lang === 'en' ? 'That is a goal heartbeat — pause, resume or turn it off with goal_heartbeat (action pause/resume/stop).' : '그것은 목표 하트비트다 — goal_heartbeat(action pause·resume·stop)로 멈추거나 다시 켜거나 끈다.');
         // 사장 직접 턴이 아닌 턴이 다시 켜면 출처를 그 크루로 바꾼다 — 사장이 꺼 둔 예약을 위임 턴이 풀 오토로 되살리지 못하게(통합본 재검수 MEDIUM-1). 끄기는 위험을 늘리지 않아 출처를 건드리지 않는다
         const reFrom = action === 'on' ? originFor(before.agentSlug) : null; // 예약·작업과 같은 규칙 — 다른 크루의 예약을 켜면 이 크루의 위임, 자기 예약이면 사장 직접(재검수 3차 LOW-1)
         if (!settingsDirect) {
@@ -1116,6 +1125,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     },
     async ({ title, prompt, agentSlug }) => {
       if (guest) return guestNo(lang === 'en' ? 'Starting a long task' : '장기 작업 시작');
+      if (goalTurn) return text(goalTurnNo(lang === 'en' ? 'Starting a long task' : '장기 작업 걸기'));
       try {
         const { enqueueLongJob } = await import('./gateway.mjs'); // 동적 — gateway가 chat을 import하므로 순환 회피
         // 사장 직접 턴이 아닌 턴(위임·쪽지·세션 메시지)에서 건 작업, 또는 다른 크루에게 시킨 작업은 그 크루를 from으로 남긴다 — 작업 턴도 풀 오토가 아니다
@@ -1333,9 +1343,9 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
   const argoStatus = tool(
     'argo_status',
     lang === 'en'
-      ? 'Read the current state of this Argo app (only in the owner\'s 1:1 — elsewhere it says it is out of scope) — the same values the screens show. Use it BEFORE answering any question about Argo itself (numbers on the Deck such as Memory Links %, agents and their runners/models, routines and their last results, heartbeat (on/off, last calendar check, reminders sent today, running device), sync, runner connections, plan and usage, messenger connections, pending approvals). section=me shows your own card (role, runner, model, effort, skill/MCP scope, working rules), heartbeat role, Telegram/messenger links, your routines and the messages you sent outside a conversation (heartbeat notices, routine results). section: overview (default: me + deck + heartbeat) | deck | agents | me | routines | assistant | runners | sync | plan | messenger | approvals. Never guess these values.'
-      : '이 아르고 앱의 지금 상태를 읽는다(주인의 1:1에서만 — 다른 곳에서는 범위 밖이라고 돌려준다) — 화면에 보이는 값과 같은 함수로 계산한다. 아르고 자체에 대한 질문(데크 숫자 — 기억 연결 % 등, 에이전트와 러너·모델, 루틴과 마지막 실행 결과, 하트비트 켜짐·마지막 일정 확인·오늘 보낸 알림·실행 기기, 동기화, 러너 연결, 요금제·사용량, 메신저 연결, 결재 대기)에 답하기 전에 먼저 이것으로 확인하라. section=me는 네 카드(역할·러너·모델·추론 강도·스킬·MCP 범위·일하는 방식 규칙)·하트비트 담당 여부·텔레그램·메신저 연결·내 루틴·대화 밖에서 보낸 최근 글(하트비트 알림·루틴 결과)을 보여 준다. section: overview(기본 — 나·데크·하트비트) | deck | agents | me | routines | assistant | runners | sync | plan | messenger | approvals. 이 값들을 추측하지 마라.',
-    { section: z.enum(['overview', 'deck', 'agents', 'me', 'routines', 'assistant', 'runners', 'sync', 'plan', 'messenger', 'approvals']).optional() },
+      ? 'Read the current state of this Argo app (only in the owner\'s 1:1 — elsewhere it says it is out of scope) — the same values the screens show. Use it BEFORE answering any question about Argo itself (numbers on the Deck such as Memory Links %, agents and their runners/models, routines and their last results, heartbeat (on/off, last calendar check, reminders sent today, running device), sync, runner connections, plan and usage, messenger connections, pending approvals). section=me shows your own card (role, runner, model, effort, skill/MCP scope, working rules), heartbeat role, Telegram/messenger links, your routines and the messages you sent outside a conversation (heartbeat notices, routine results). section: overview (default: me + deck + heartbeat) | deck | agents | me | routines | assistant | runners | sync | plan | messenger | approvals | goals (goal heartbeats). Never guess these values.'
+      : '이 아르고 앱의 지금 상태를 읽는다(주인의 1:1에서만 — 다른 곳에서는 범위 밖이라고 돌려준다) — 화면에 보이는 값과 같은 함수로 계산한다. 아르고 자체에 대한 질문(데크 숫자 — 기억 연결 % 등, 에이전트와 러너·모델, 루틴과 마지막 실행 결과, 하트비트 켜짐·마지막 일정 확인·오늘 보낸 알림·실행 기기, 동기화, 러너 연결, 요금제·사용량, 메신저 연결, 결재 대기)에 답하기 전에 먼저 이것으로 확인하라. section=me는 네 카드(역할·러너·모델·추론 강도·스킬·MCP 범위·일하는 방식 규칙)·하트비트 담당 여부·텔레그램·메신저 연결·내 루틴·대화 밖에서 보낸 최근 글(하트비트 알림·루틴 결과)을 보여 준다. section: overview(기본 — 나·데크·하트비트) | deck | agents | me | routines | assistant | runners | sync | plan | messenger | approvals | goals(목표 하트비트). 이 값들을 추측하지 마라.',
+    { section: z.enum(['overview', 'deck', 'agents', 'me', 'routines', 'assistant', 'runners', 'sync', 'plan', 'messenger', 'approvals', 'goals']).optional() },
     async ({ section }) => {
       const self = await import('./argo-self.mjs');
       return text(await self.argoStatus(wsId, { section: section ?? 'overview', slug: fromSlug, lang, full: settingsDirect })); // 주인 1:1만 전체 상태(손님은 settingsDirect가 늘 거짓)
@@ -1372,10 +1382,58 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     },
   );
 
+  // 목표 하트비트(유건 지시 2026-10-10 — "목적 달성하고 달성하면 꺼지게") — 처리기 본체는 src/goal-heartbeat.mjs. 권한 표는 cancel_routine·argo_settings와 같다:
+  // 바로 하는 것은 주인의 1:1 직접 지시 턴(settingsDirect)뿐이고, 그 밖은 결재 카드(kind 'goal'), 손님은 거절. 회차·루틴·작업 턴 안에서는 만들지 못한다(autoTurn).
+  const goalHeartbeat = tool(
+    'goal_heartbeat',
+    lang === 'en'
+      ? 'Goal heartbeat — when the owner asks you to keep at something until it is achieved (e.g. "find out when the concert tickets open and book them"), start one: you check it periodically, message the owner\'s personal 1:1 room only when there is news, and it turns itself off when the goal is reached or the deadline passes. action=start needs goal (one sentence), doneWhen (one line: what confirms it is done), everyMinutes (10–1440, choose for the goal — default 60), deadline (YYYY-MM-DD or YYYY-MM-DD HH:MM; default 7 days, max 30). action=list shows them (owner 1:1 only); pause/resume/stop take id. Applies immediately only when the owner asked you directly in a 1:1 (the system decides); otherwise it files an approval card. Only start one when the owner explicitly asked — never infer one from conversation.'
+      : '목표 하트비트 — 주인이 무엇을 이룰 때까지 계속 챙겨 달라고 하면(예: "○○ 공연 티켓 오픈 시간 확인해서 예매해 줘") 만든다: 주기적으로 확인하고, 알릴 것이 생길 때만 주인 개인 1:1 방으로 알리고, 목표를 이루거나 기한이 지나면 스스로 꺼진다. action=start는 goal(목표 한 문장)·doneWhen(무엇을 확인하면 끝인지 한 줄)·everyMinutes(10~1440, 목표에 맞게 — 기본 60)·deadline(YYYY-MM-DD 또는 YYYY-MM-DD HH:MM, 기본 7일·최대 30일). action=list는 목록(주인 1:1에서만), pause·resume·stop은 id로. 주인이 1:1에서 직접 시킨 턴이면 바로 되고(시스템이 판정한다), 그 밖에는 결재 카드로 올라간다. 주인이 분명히 부탁했을 때만 만든다 — 대화에서 짐작해 만들지 마라.',
+    {
+      action: z.enum(['start', 'list', 'pause', 'resume', 'stop']),
+      goal: z.string().optional().describe(lang === 'en' ? 'start: the goal in one sentence' : 'start: 목표 한 문장'),
+      doneWhen: z.string().optional().describe(lang === 'en' ? 'start: what confirms the goal is done (one line)' : 'start: 무엇을 확인하면 끝인지 한 줄'),
+      everyMinutes: z.number().optional().describe(lang === 'en' ? 'start: check interval in minutes (10–1440)' : 'start: 확인 간격(분, 10~1440)'),
+      deadline: z.string().optional().describe(lang === 'en' ? 'start: YYYY-MM-DD or YYYY-MM-DD HH:MM (Korea time) — default 7 days, max 30' : 'start: YYYY-MM-DD 또는 YYYY-MM-DD HH:MM(한국 시간) — 기본 7일, 최대 30일'),
+      title: z.string().optional().describe(lang === 'en' ? 'start: short name for the list (optional)' : 'start: 목록에 보일 짧은 이름(선택)'),
+      id: z.string().optional().describe(lang === 'en' ? 'pause/resume/stop: goal id from action=list' : 'pause·resume·stop: action=list가 알려 준 id'),
+      why: z.string().optional().describe(lang === 'en' ? 'one line on why (shown on the approval card)' : '왜 하는지 한 줄(결재 카드에 보인다)'),
+    },
+    async (args) => {
+      const gh = await import('./goal-heartbeat.mjs');
+      let msgr = null;
+      try { msgr = mirrorCtx?.kind === 'msgr' && !mirrorCtx.orgId ? messengerOrigin(mirrorCtx) : null; } catch { msgr = null; } // 개인 1:1 방 출처만 — 회차 결재 카드가 그 방으로 간다
+      const r = await gh.goalTool(wsId, args, { slug: fromSlug, lang, direct: settingsDirect, guest, autoTurn: autoTurn || !!goalTurn, from: delegatedBy, msgr, orgChannel: mirrorCtx?.kind === 'msgr' && !!mirrorCtx.orgId });
+      if (r.kind !== 'approval') return text(r.text);
+      const item = await addApproval(wsId, { slug: fromSlug, kind: 'goal', ...(delegatedBy ? { from: delegatedBy } : {}),
+        action: r.approval.action, reason: r.approval.reason, payload: r.approval.payload,
+        ...(mirrorCtx ? { msgr: messengerOrigin(mirrorCtx) } : {}), ...approvalScope(mirrorCtx) });
+      return text(`${r.text} (${item.id})${await channelHealthNote()}`);
+    },
+  );
+  // 목표 하트비트 회차의 보고 — 이 턴(goalTurn)에만 등재. 결과는 엔진(runCheck)이 읽는다 — 인자로 다른 목표를 가리킬 수 없다(묶인 목표 하나).
+  const goalCheckin = goalTurn ? tool(
+    'goal_checkin',
+    lang === 'en'
+      ? 'Report this goal heartbeat check (call once, at the end). status: continue (keep watching) | done (you confirmed the done condition yourself) | blocked (cannot be achieved or needs the owner). notify: false when there is nothing new for the owner; message: the short news for the owner (≤3 lines). note: one-line memo for the next check. nextCheckAt (YYYY-MM-DD HH:MM, Korea time) or nextInMinutes to move the next check (kept between 10 min from now and the deadline). result: the outcome for done/blocked.'
+      : '이번 목표 하트비트 회차를 보고한다(끝에 한 번). status: continue(계속 지켜봄) | done(끝나는 조건을 직접 확인함) | blocked(이룰 수 없거나 주인이 정해야 함). notify: 주인에게 새로 알릴 것이 없으면 false, message: 주인에게 갈 짧은 소식(3줄 이내). note: 다음 회차가 읽을 한 줄 메모. nextCheckAt(YYYY-MM-DD HH:MM, 한국 시간) 또는 nextInMinutes로 다음 확인을 옮긴다(지금부터 10분 뒤 ~ 기한 사이로 맞춘다). result: done·blocked일 때의 결과.',
+    {
+      status: z.enum(['continue', 'done', 'blocked']),
+      note: z.string().describe(lang === 'en' ? 'one-line memo for the next check' : '다음 회차가 읽을 한 줄 메모'),
+      notify: z.boolean().optional(),
+      message: z.string().optional(),
+      nextCheckAt: z.string().optional(),
+      nextInMinutes: z.number().optional(),
+      result: z.string().optional(),
+    },
+    async (args) => text((await import('./goal-heartbeat.mjs')).goalCheckin(goalTurn, args, lang)),
+  ) : null;
+
   const tools = [
     requestApproval, requestToolInstall, updateProfile, hireCrew, scheduleTask, listRoutines, cancelRoutine, startLongTask,
     ...(mirrorCtx?.kind === 'msgr' ? [proposeOrgDoc] : []), // 팀 메신저 채널 턴에만 — 조직 문서 제안(G-4). sink(네이티브 엔진)도 같은 배열을 받는다
     argoStatus, argoHelp, argoSettingsTool, // 아르고 자기 인식 — 모든 턴(손님·설정 판정은 처리기 안)
+    goalHeartbeat, ...(goalCheckin ? [goalCheckin] : []), // 목표 하트비트 — 만들기·목록·멈춤(모든 턴, 판정은 처리기 안), 회차 보고(회차 턴에만)
     calendar, // 주인의 일정 — 항상 등재(세션 없음·손님은 처리기가 한 줄로 알린다)
     ...(mirrorCtx?.kind === 'msgr' && mirrorCtx.orgId ? [office, officeFiles, officeWork, officeDeals] : []), // 오피스 회사 기록·문서함·드라이브·할 일·페이지·거래 — 메신저 조직 채널 턴에만(그 조직). 개인 공간 턴에는 늘 거절할 도구라 싣지 않는다
     ...(mirrorCtx?.kind === 'msgr' && mirrorCtx.channelKind === 'dm' ? [officeBriefing] : []), // 오피스 브리핑 — 주인 1:1 턴에만(주인 계정으로 쓰므로 여럿 있는 방에서 남의 부탁을 주인 권한으로 실행하지 않게)
@@ -1525,6 +1583,7 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, opts = {}
     // 끝내기·저장은 기록을 만든 바깥 프레임만 한다. 저장 대상(1:1·회의실)이면 traceId를 결과·오류에 싣는다 — 대화 줄이 이 기기의 기록을 가리킨다.
     const own = !control.trace;
     if (own) control.trace = createTrace({ wsId, slug: agentSlug, source });
+    if (opts.goalTurn && !control.goalTurn) control.goalTurn = opts.goalTurn; // 목표 하트비트 회차(goal-heartbeat.mjs runCheck) — goal_checkin이 결과를 적는 자리
     const trace = control.trace;
     try {
       const r = await runChat(wsId, agentSlug, userMsg, sessionId, { ...opts, __turnControl: control });
@@ -1675,6 +1734,8 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
   // 대화 밖에서 자기 이름으로 보낸 최근 글(하트비트 알림·루틴 결과 — self-posts.mjs) — 주인 1:1 턴에만, 모든 러너가 이 한 구획을 받는다.
   // 방 문맥·답글 대상에 이미 든 글(mirrorCtx.roomIds — 게이트웨이)은 뺀다. since = 이어 쓰는 세션이 지난 턴에 이미 본 글을 빼는 기준 시각.
   const selfNoteFor = (since = 0) => (settingsDirect ? selfPostsSection(wsId, agentSlug, { lang, name: meta.name || agentSlug, exclude: mirrorCtx?.roomIds ?? [], since }) : Promise.resolve(''));
+  // 목표 하트비트 회차의 보고 자리 — chat()이 이 턴의 control에 실어 둔다(재시도 프레임·도구 후속 턴이 같은 control을 이어 받는다. 위임받은 동료 턴은 control이 달라 받지 않는다)
+  const goalTurn = __turnControl?.goalTurn ?? null;
   // 러너 결정 + 폴백 — 크루의 러너가 이 기기·회사에서 미가용이면 가용한 러너로 대신 실행한다.
   // (예: 기본 claude 크루인데 Codex만 연결한 사용자 — 어떤 러너든 연결만 돼 있으면 크루는 응답해야 한다)
   // want=null(무선호) — 카드에 러너 미지정이면 회사의 연결 러너를 대체 고지 없이 쓴다(claude 하드코딩 제거).
@@ -1892,7 +1953,7 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
       const cliColleagues = bridgeable ? await turnColleagues(wsId, agentSlug, hop, chain, mirrorCtx, lim) : [];
       if (bridgeable) {
         const sink = [];
-        makeCrewServer(wsId, agentSlug, meta.name || agentSlug, cliColleagues, hop, chain, mirrorCtx, lang, cliConnectors, workFolder, sink, journal, fullAuto, lim, tree, turnCounters, await sessionToolFor(wsId, agentSlug, mirrorCtx, source, sessCtx, hop), notOwnerDirect, { settingsDirect });
+        makeCrewServer(wsId, agentSlug, meta.name || agentSlug, cliColleagues, hop, chain, mirrorCtx, lang, cliConnectors, workFolder, sink, journal, fullAuto, lim, tree, turnCounters, await sessionToolFor(wsId, agentSlug, mirrorCtx, source, sessCtx, hop), notOwnerDirect, { settingsDirect, goalTurn, autoTurn: goalTurn != null || source === 'routine' || source === 'job' });
         // 자식 파일이 없는 산출물(셀프호스트 등)이면 크루 도구 없이 진행한다 — 도구 부재가 턴 사망이 되면 안 된다(분리 검수 LOW-7)
         crewBridge = await createCrewMcpBridge(crewToolSpecs(sink)).catch((e) => { console.warn(`[argo] 에이전트 도구 다리 생략(지시 블록으로 진행): ${e?.message ?? e}`); return null; });
       }
@@ -2173,7 +2234,7 @@ ${lang === 'en'
   // 하네스 통일(P-A): 플래그 러너(ARGO_NATIVE_RUNNERS)는 Argo 소유 루프(nativeQuery)로 — 크루 도구 정의를 sink로 받아 같은 핸들러를 실행한다.
   const nativeOn = nativeRunnerEnabled(runner);
   const crewSink = nativeOn ? [] : null;
-  const crewServer = makeCrewServer(wsId, agentSlug, meta.name || agentSlug, colleagues, hop, chain, mirrorCtx, lang, connectors, workFolder, crewSink, journal, fullAuto, lim, tree, turnCounters, await sessionToolFor(wsId, agentSlug, mirrorCtx, source, sessCtx, hop), notOwnerDirect, { settingsDirect });
+  const crewServer = makeCrewServer(wsId, agentSlug, meta.name || agentSlug, colleagues, hop, chain, mirrorCtx, lang, connectors, workFolder, crewSink, journal, fullAuto, lim, tree, turnCounters, await sessionToolFor(wsId, agentSlug, mirrorCtx, source, sessCtx, hop), notOwnerDirect, { settingsDirect, goalTurn, autoTurn: goalTurn != null || source === 'routine' || source === 'job' });
 
   // 로컬 능력 — 전권(capabilities.mjs). 파일·셸 부작용 도구는 사전 승인 목록에서 빼고 canUseTool
   // 게이트로 보낸다 — 게이트가 금지 구역(앱 코드·타사 데이터·자격, 2026-07-22 크리티컬)을 판정한다.

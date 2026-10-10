@@ -140,6 +140,8 @@ export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', b
     }
     try {
       if (action === 'schedule') {
+        // 목표 하트비트 회차 안에서는 예약을 새로 걸지 않는다 — SDK 도구(schedule_task)와 같은 규칙(폭주 방지, chat.mjs control.goalTurn)
+        if (turnControl?.goalTurn) throw new Error(en ? "schedules can't be created inside a heartbeat check" : '하트비트 회차 안에서는 예약을 만들지 않습니다');
         const prompt = String(d.prompt ?? '').trim();
         if (!prompt) throw new Error(en ? 'prompt is required' : 'prompt가 필요합니다');
         const target = d.crew ? find(d.crew) : null;
@@ -158,6 +160,7 @@ export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', b
           : (r.schedule.times ?? []).join('·');
         notes.push(en ? `✓ Routine registered — ${r.title} (${when})` : `✓ 루틴 등록됨 — ${r.title} (${when})`);
       } else if (action === 'mail') {
+        if (turnControl?.goalTurn) throw new Error(en ? "notes to colleagues can't be sent inside a heartbeat check" : '하트비트 회차 안에서는 동료에게 쪽지를 보내지 않습니다'); // SDK send_to_crew와 같은 규칙
         // SDK 경로는 hop>=2면 쪽지 도구 자체가 등록되지 않는다(chat.mjs colleagues). 러너 패리티 —
         // 같은 지점에서 같은 상한을 건다. 조용히 무시하지 않고 사유 줄로 남긴다(이 파일의 계약).
         if (mirrorCtx?.kind !== 'msgr' && hop >= lim.hop) throw new Error(en ? `note relay limit reached (${lim.hop} hops)` : `쪽지 연쇄 상한(${lim.hop}단계)에 도달했다`);

@@ -8,6 +8,7 @@ import { Icon, Avatar, Spinner, Skeleton, useScrollLock, ConfirmModal, DropUp, a
 import { useLang } from '../../../i18n';
 import { detectDevicePaths } from '../../../../src/device-paths.mjs'; // 기기 종속 경로 안내 — 노드 의존 0 순수 모듈
 import { onceExpired } from '../../../../src/routine-time.mjs'; // '만료' 판정 — 노드 의존 0 순수 모듈(표시 전용, 상태 쓰기 없음)
+import GoalList from './goal-list.jsx'; // 내 하트비트 → 목표(목표 하트비트 — 만들기는 에이전트가 대화에서)
 import { routineCrewMissing, applyRoutineToggle, routineStateKind, activeRoutineCount, routineFailKind, routinePillView } from './routine-row.mjs';
 
 function scheduleLabel(s, t, DOW) {
@@ -495,6 +496,9 @@ export default function Routines({ params }) {
           </div>
         </form>
       )}
+
+      {/* 내 하트비트 → 목표 — 목표 하트비트(이룰 때까지 확인하고 이루면 꺼짐) */}
+      <GoalList ws={ws} nameOf={nameOf} />
 
       {/* 루틴 표 */}
       <div className={`card ${styles.list}`}>

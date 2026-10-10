@@ -269,7 +269,7 @@ test('데스크톱 표지는 대화 라우트만 붙이고(요청 본문에서 �
   assert.doesNotMatch(chatSrc.match(/chatOpts: \{[^}]*\}/)[0], /ownerSeat/, '도구 결과 후속 턴은 잇지 않는다(외부 결과가 담긴 턴)');
   // runChat의 두 크루 서버 생성(Codex 다리 갈래·SDK/네이티브 갈래)이 모두 서버 판정값을 싣는다 — SDK 갈래의 행동은 argo-self-sdk.test.mjs가 잠근다
   assert.match(chatSrc, /const settingsDirect = settingsDirectTurn\(\{ ownerSeat, source, from, notOwnerDirect, hop, chain, mirrorCtx \}\);/);
-  assert.equal((chatSrc.match(/makeCrewServer\(wsId, agentSlug, meta\.name \|\| agentSlug, \w+, hop, chain, mirrorCtx, lang, \w+, workFolder, \w+, journal, fullAuto, lim, tree, turnCounters, await sessionToolFor\([^)]*\), notOwnerDirect, \{ settingsDirect \}\)/g) ?? []).length, 2);
+  assert.equal((chatSrc.match(/makeCrewServer\(wsId, agentSlug, meta\.name \|\| agentSlug, \w+, hop, chain, mirrorCtx, lang, \w+, workFolder, \w+, journal, fullAuto, lim, tree, turnCounters, await sessionToolFor\([^)]*\), notOwnerDirect, \{ settingsDirect, goalTurn, autoTurn: [^}]*\}\)/g) ?? []).length, 2); // 목표 하트비트 회차 자리(goalTurn)·회차/루틴/작업 턴 표지(autoTurn)도 같은 두 곳이 싣는다
 });
 
 /* ── ⑦ 러너별 부착 ──────────────────────────────────────────────────── */

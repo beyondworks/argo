@@ -3,6 +3,7 @@
 import { listCompanyIds } from './hub.mjs';
 import { loadRoutines, runRoutine, isDue, recordMissedSlots } from './routines.mjs';
 import { CATCHUP_MS } from './routine-time.mjs';
+import { isGoal, claimGoal } from './goal-time.mjs'; // 목표 하트비트 선점 — 다음 확인 시각을 실행 전에 옮긴다
 import { deliverCrewMail, mailPrompt } from './crewmail.mjs';
 import { emitNotify } from './notify.mjs';
 import { chat } from './chat.mjs';
@@ -106,7 +107,7 @@ export async function markConsolidateDone(wsId, today) { // export: 회귀 테�
 // 같은 루틴을 각자 실행(이중 과금)하는 것을 막는다. withLock으로 같은 프로세스의 동시 클레임을 직렬화하고,
 // 락 안에서 isDue를 재확인해 이미 이 분에 선점된 루틴이면 스킵한다. writeJsonAtomic으로 부분 쓰기 오염을 막는다.
 // (기기 간 완전 상호배제는 sync.mjs의 클라우드 리스 CAS 몫 — 여기선 "실행 직전 lastRun 선점"으로 방어한다.)
-async function claimRoutine(wsId, routineId, now) {
+export async function claimRoutine(wsId, routineId, now) { // export: 회귀 테스트용(두 기기가 같은 파일을 볼 때 한 번만 선점 — goal-heartbeat 시험)
   return withLock(`routines:${wsId}`, async () => {
     const file = paths(wsId).routines;
     let routines;
@@ -117,7 +118,8 @@ async function claimRoutine(wsId, routineId, now) {
     }
     const r = routines.find((x) => x.id === routineId);
     if (!r || !isDue(r, now)) return false; // 락 안 재확인 — 다른 워커가 이미 lastRun을 선점했으면 isDue=false
-    r.lastRun = now.toISOString(); // 선점 마킹 — 경쟁 워커가 이 파일을 다시 읽으면 isDue=false로 걸러진다
+    if (isGoal(r)) { if (!claimGoal(r, now)) return false; } // 목표 하트비트 — lastRun과 함께 다음 확인 시각·하루 회차·할 일(claim)을 먼저 적는다(같은 회차 두 번 방지)
+    else r.lastRun = now.toISOString(); // 선점 마킹 — 경쟁 워커가 이 파일을 다시 읽으면 isDue=false로 걸러진다
     await writeJsonAtomic(file, routines);
     return true;
   }, { file: paths(wsId).routines }); // 프로세스 간 잠금 — routines.mjs(addRoutine·patchRoutine…)와 같은 `<routines.json>.lockd`. 없으면 앱 스케줄러의 선점 쓰기가 CLI가 추가한 루틴을 낡은 목록으로 덮었다(독립 검수 #800 MEDIUM-1)

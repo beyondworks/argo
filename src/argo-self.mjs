@@ -705,7 +705,7 @@ async function settingsList(wsId, { lang, direct, guest, slug = null }) {
 
 /* ─── 상태 읽기 ─────────────────────────────────────────────────────────────── */
 
-export const STATUS_SECTIONS = Object.freeze(['overview', 'deck', 'agents', 'me', 'routines', 'assistant', 'runners', 'sync', 'plan', 'messenger', 'approvals']);
+export const STATUS_SECTIONS = Object.freeze(['overview', 'deck', 'agents', 'me', 'routines', 'assistant', 'runners', 'sync', 'plan', 'messenger', 'approvals', 'goals']);
 
 const fmtTime = (ms, lang) => {
   if (!ms) return pick(lang, '없음', 'none');
@@ -790,7 +790,7 @@ function routineLines(rs, { lang, now }) {
 }
 
 async function routinesSection(wsId, { lang, slug, now, mine = false }) {
-  const all = await loadRoutines(wsId);
+  const all = (await loadRoutines(wsId)).filter((r) => r.kind !== 'goal'); // 목표 하트비트는 goals 구획(루틴 화면 목록과 같은 기준)
   const rs = mine ? all.filter((r) => r.agentSlug === slug) : all;
   if (!rs.length) return mine ? pick(lang, '내가 맡은 루틴이 없다.', 'No routines assigned to me.') : pick(lang, '이 회사에 루틴이 없다.', 'This company has no routines.');
   return [mine ? pick(lang, `내 루틴 ${rs.length}개`, `My routines: ${rs.length}`) : pick(lang, `루틴 ${rs.length}개(루틴 화면과 같은 목록)`, `${rs.length} routines (same list as the Routines screen)`), ...routineLines(rs, { lang, now })].join('\n');
@@ -858,11 +858,12 @@ async function meSection(wsId, { lang, slug, now }) {
   const g = gw?.agents?.[slug];
   const tg = !bot?.token ? pick(lang, '연결 안 됨', 'not connected')
     : `${g?.alive ? pick(lang, '가동 중', 'Live') : g?.holder === 'other' ? pick(lang, `다른 기기(${g.holderDevice ?? ''})에서 수신 중`, `Receiving on ${g.holderDevice ?? 'another device'}`) : pick(lang, '폴러 대기 중', 'Poller pending')}${bot.ownerId ? pick(lang, ' · 페어링됨', ' · paired') : pick(lang, ' · 페어링 전(카드의 연결 코드를 봇에게 DM)', ' · not paired yet (DM the pairing code on the card to the bot)')}`;
-  const [routines, assistant, approvals, posts] = await Promise.all([
+  const [routines, assistant, approvals, posts, goals] = await Promise.all([
     routinesSection(wsId, { lang, slug, now, mine: true }),
     assistantSettingsView(wsId, { now }).catch(() => null),
     loadApprovals(wsId).catch(() => []),
     recentSelfPosts(wsId, slug, { now }).catch(() => []),
+    import('./goal-heartbeat.mjs').then((gh) => gh.goalsText(wsId, { lang, slug, mine: true, now })).catch(() => ''), // 내가 맡은 목표 하트비트(goals 구획과 같은 값)
   ]);
   const c = assistant?.config;
   const amAssistant = c?.enabled && c.agent === slug;
@@ -878,6 +879,7 @@ async function meSection(wsId, { lang, slug, now }) {
     `- ${pick(lang, '연결 탭 — 텔레그램 직통 봇', 'Links tab — Direct Telegram bot')}: ${tg}${bot?.botUsername ? ` (${bot.botUsername})` : ''}`,
     `- ${pick(lang, '아르고 메신저', 'Argo Messenger')}: ${company.msgr?.enabled ? pick(lang, '회사 에이전트가 메신저에 연결됨 — 개인 1:1 방에서 대화·알림', 'company agents are connected — chats and notices in the personal 1:1 room') : pick(lang, '연결 안 됨(설정 → 연결 → Argo 메신저 연결)', 'not connected (Settings → Connections → Argo Messenger)')}`,
     routines,
+    ...(goals ? [goals] : []),
     posts.length ? [pick(lang, `내가 대화 밖에서 보낸 최근 글 ${posts.length}건(개인 1:1 방 — 하트비트 알림·루틴 결과)`, `Recent messages I sent outside a conversation: ${posts.length} (personal 1:1 room — heartbeat notices, routine results)`),
       ...posts.map((p) => `- ${fmtTime(Number(p.at), lang)} · ${selfKindLabel(p.kind, lang)}: ${p.text}`)].join('\n')
       : pick(lang, '내가 대화 밖에서 보낸 최근 글: 이 기기 기록에는 없다(7일 안·개인 1:1 방 기준).', 'Recent messages I sent outside a conversation: none recorded on this device (last 7 days, personal 1:1 room).'),
@@ -989,6 +991,7 @@ export async function argoStatus(wsId, { section = 'overview', slug = null, lang
     routines: () => routinesSection(wsId, opts),
     assistant: () => assistantSection(wsId, opts),
     approvals: () => approvalsSection(wsId, opts),
+    goals: async () => (await import('./goal-heartbeat.mjs')).goalsText(wsId, { lang, slug, now }), // 목표 하트비트 — 루틴 화면 "내 하트비트 → 목표"와 같은 값
     runners: () => runnersSection(wsId, opts),
     sync: () => syncSection(wsId, opts),
     plan: () => planSection(wsId, opts),

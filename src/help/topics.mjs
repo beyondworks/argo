@@ -25,5 +25,6 @@ import feedback from './topics/feedback.mjs';
 import chatCards from './topics/chat-cards.mjs';
 import sidebar from './topics/sidebar.mjs';
 import heartbeatMail from './topics/heartbeat-mail.mjs';
+import heartbeatGoal from './topics/heartbeat-goal.mjs';
 
-export const TOPICS = Object.freeze([deck, agents, chat, room, compete, mail, activity, memory, routines, assistant, approvals, market, runners, settings, sync, messenger, plan, agentSettings, agentPosts, trace, split, home, feedback, chatCards, sidebar, heartbeatMail]);
+export const TOPICS = Object.freeze([deck, agents, chat, room, compete, mail, activity, memory, routines, assistant, heartbeatGoal, approvals, market, runners, settings, sync, messenger, plan, agentSettings, agentPosts, trace, split, home, feedback, chatCards, sidebar, heartbeatMail]);
