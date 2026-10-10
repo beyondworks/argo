@@ -12,6 +12,7 @@
 .ws-rail-face { position: relative; flex: none; display: inline-grid; }
 .ws-rail-face > .dot { position: absolute; right: -2px; bottom: -2px; width: 7px; height: 7px; box-shadow: 0 0 0 2px var(--bg); }
 .ws-hidden { margin: 8px 10px 0; font-size: 11.5px; color: var(--fg-3); }
+.ws-more { color: var(--fg-3); } .ws-less { transform: rotate(180deg); } /* 더보기는 아래 화살표(caret 그대로), 접기는 위 화살표 */
 
 /* 고른 사람 한 줄 — 얼굴·이름·자리·마지막 보고, 지금 하는 일 */
 .ws-sel { display: grid; gap: 4px; margin-bottom: 12px; }
