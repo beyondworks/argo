@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { freeAgentReason } from '../app/api/companies/[ws]/msgr/free-reason.mjs';
+import { freeAgentReason, swapNotes, readAgentPause } from '../app/api/companies/[ws]/msgr/free-reason.mjs';
 const { apiError } = await import('../app/apimsg.mjs');
 
 const client = (seq, pro = false) => { const calls = []; return { calls, rpc: async (name) => { calls.push(name); if (name === 'is_pro') return { data: pro, error: null }; const next = seq.shift(); return next instanceof Error ? { data: null, error: { code: 'PGRST202', message: next.message } } : { data: next, error: null }; } }; };
@@ -39,4 +39,24 @@ test('④ 라우트 배선 + 코드가 ko·en 사전에 있다', () => {
   assert.ok(route.indexOf('/msgr_free_agent_limit/.test(m)') < route.indexOf('/msgr_pro_required/.test(m)'), '앞 코드(이유)를 먼저 본다');
   assert.ok(route.indexOf('/msgr_app_update_required/.test(m)') < route.indexOf('/msgr_pro_required/.test(m)'));
   for (const code of ['msgr_free_agent_limit', 'msgr_app_update_required']) for (const lang of ['ko', 'en']) assert.equal(apiError(code, lang).status, 403);
+});
+
+test('⑤ 교체 안내·이유 읽기(검수 #945) — 이름은 중복 없이, 옛 서버면 빈 목록·null, 행이 없으면 요청 0', async () => {
+  const calls = [];
+  const c = { rpc: async (name, args) => { calls.push([name, args]); return name === 'msgr_agent_swap_notes' ? { data: [{ crew_id: 'a', victim_name: '준' }, { crew_id: 'b', victim_name: '준' }, { crew_id: 'c', victim_name: '미아' }], error: null } : { data: { reason: 'limit', min_app: '0.1.102' }, error: null }; } };
+  assert.deepEqual(await swapNotes(c, ['a', 'b', 'c']), ['준', '미아']);
+  assert.deepEqual(calls[0], ['msgr_agent_swap_notes', { p_crews: ['a', 'b', 'c'] }]);
+  assert.deepEqual(await swapNotes(c, []), []); assert.equal(calls.length, 1);
+  assert.deepEqual(await swapNotes({ rpc: async () => ({ data: null, error: { code: 'PGRST202' } }) }, ['a']), []);
+  assert.deepEqual(await readAgentPause(c), { reason: 'limit', min_app: '0.1.102' });
+  assert.equal(await readAgentPause({ rpc: async () => ({ data: null, error: { code: 'PGRST202' } }) }), null);
+});
+
+test('⑥ 라우트 배선(검수 #945) — 새 행은 연결 해제로 먼저 넣고 연결(사람의 연결 판정), 교체 안내를 응답에, 멈춘 회사 브리지는 최소 버전 이상일 때만', () => {
+  const route = readFileSync(new URL('../app/api/companies/[ws]/msgr/route.js', import.meta.url), 'utf8');
+  const act = route.slice(route.indexOf('if (activate) {'), route.indexOf('return Response.json({ ok: true, crews, swapped });'));
+  assert.match(act, /status: 'available', allow: 'owner'/, '새 행은 available로 insert');
+  assert.doesNotMatch(act, /status: 'active', allow: 'owner'/, 'active로 바로 넣지 않는다(미러 insert와 구별되지 않는다)');
+  assert.ok(act.indexOf("insert(row)") < act.indexOf('beatNow(c, ws)') && act.indexOf('beatNow(c, ws)') < act.indexOf("update({ ...base, status: 'active' })"), '넣기 → 새 앱 심박 → 연결 순서');
+  assert.match(route, /let enabled = regs\.some\(\(r\) => r\.status === 'active'\);\n\s+if \(!enabled && regs\.some\(\(r\) => r\.status === 'paused'\)\) enabled = appMeetsMin\(/);
 });

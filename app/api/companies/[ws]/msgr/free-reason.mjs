@@ -16,3 +16,17 @@ export async function freeAgentReason(client, { beatNow = async () => false } = 
   }
   return { code: FREE_REASON_CODE[info.reason] ?? null, beaten };
 }
+
+/** 무료 계정 에이전트가 멈춘 이유·최소 앱 버전(msgr_my_agent_pause). 옛 서버(함수 없음)·오류면 null. */
+export async function readAgentPause(client) {
+  const { data, error } = await client.rpc('msgr_my_agent_pause');
+  return error ? null : (data ?? null);
+}
+
+/** 교체 안내(검수 #945 MEDIUM-1) — 방금 연결한 행 때문에 쉬게 된 에이전트 이름들(서버 msgr_agent_swap_notes, 5분 안). 옛 서버·오류면 빈 목록. */
+export async function swapNotes(client, crewIds) {
+  if (!crewIds?.length) return [];
+  const { data, error } = await client.rpc('msgr_agent_swap_notes', { p_crews: crewIds });
+  if (error) return [];
+  return [...new Set((data ?? []).map((r) => r.victim_name).filter(Boolean))];
+}

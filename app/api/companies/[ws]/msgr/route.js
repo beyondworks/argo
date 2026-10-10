@@ -3,13 +3,13 @@
 // 등록이 하나라도 있으면 company.json.msgr.enabled=true → 게이트웨이 매니저가 브리지(폴러)·드레인 워커를 켠다(src/gateway.mjs).
 import { guardCompany, csrfDenied, authError, requestLang } from '../../../../auth.mjs';
 import { apiError } from '../../../../apimsg.mjs';
-import { sessionClient } from '../../../../../src/gateway/msgr.mjs';
+import { sessionClient, appMeetsMin } from '../../../../../src/gateway/msgr.mjs';
 import { listAgents } from '../../../../../src/hub.mjs';
 import { loadCompany, updateCompany, getDeviceId } from '../../../../../src/workspace.mjs';
 import { msgrGatewayStatus, msgrRuntimeState } from '../../../../../src/connections.mjs';
 import { nudgeGateway } from '../../../../../src/gateway.mjs';
 import { splitCardRows } from './card-rows.mjs'; // 행 나누기 — 카드 판정과 같은 모양을 테스트가 잠근다(UL10)
-import { freeAgentReason } from './free-reason.mjs'; // 무료 계정 연결이 멈춘 이유(2026-10-11)
+import { freeAgentReason, readAgentPause, swapNotes } from './free-reason.mjs'; // 무료 계정 연결이 멈춘 이유·교체 안내(2026-10-11)
 
 const ALLOW = new Set(['all', 'list', 'owner']);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -58,24 +58,26 @@ async function myOrgs(c) {
 async function syncEnabled(ws, c) {
   let regs;
   try { regs = await myRegistrations(c, ws); } catch (e) { console.error('[argo] msgr 등록 조회 실패 — enabled 유지:', e.message); return []; } // 일시 오류로 브리지를 끄지 않는다
-  // paused(무료 계정 일시 중지 #941)도 켠다(2026-10-11) — 최신 앱은 브리지가 돌아야 기기 심박(앱 버전)이 나가고, 서버가 그 심박을 보고 무료 계정 에이전트를
-  // 4명까지 재개한다(20261011120000). 종전(#941)에는 호출을 줄이려 껐지만, 이 앱(#943 포함)은 쉬는 동안 회사당 분당 약 4건이다.
-  const enabled = regs.some((r) => r.status === 'active' || r.status === 'paused');
+  // paused(무료 계정 일시 중지 #941)만 남은 회사도 켠다(2026-10-11) — 최신 앱은 브리지가 돌아야 기기 심박(앱 버전)이 나가고, 서버가 그 심박을 보고 무료 계정
+  // 에이전트를 4명까지 재개한다(20261011120000). 단 이 앱이 서버가 정한 최소 버전(#943 실시간 방식 포함 발행) 이상일 때만 — 아니면 #941처럼 꺼 둔다(검수 #945 MEDIUM-2).
+  let enabled = regs.some((r) => r.status === 'active');
+  if (!enabled && regs.some((r) => r.status === 'paused')) enabled = appMeetsMin((await readAgentPause(c.client).catch(() => null))?.min_app);
   const company = await loadCompany(ws);
   if (!!company.msgr?.enabled !== enabled) await updateCompany(ws, (c) => ({ msgr: { ...(c.msgr ?? {}), enabled } }));
   return regs;
 }
 
+/** 이 기기의 새 앱 심박 한 번(앱 버전) — 이 회사의 내 조직 행(상태 무관 — 기기 행이 서려면 행이 있어야 한다)으로. 서버가 재개 신호를 주면 makeDb.heartbeat가 재개까지 부른다. */
+async function beatNow(c, ws) {
+  const deviceId = await getDeviceId().catch(() => null);
+  const ids = (await myRegistrations(c, ws).catch(() => [])).map((r) => r.id);
+  if (!deviceId || !ids.length) return false;
+  await c.db.heartbeat(ids, { wsId: ws, deviceId });
+  return true;
+}
 /** 무료 계정의 연결이 멈춘 채 남았을 때 이유(free-reason.mjs) — 서버가 이 기기의 새 앱을 아직 모르면 심박 한 번(앱 버전)을 보낸다. → { code, crews? } */
 async function freeAgentReasonFor(c, ws) {
-  const beatNow = async () => {
-    const deviceId = await getDeviceId().catch(() => null);
-    const ids = (await myRegistrations(c, ws).catch(() => [])).filter((r) => r.status === 'active' || r.status === 'paused').map((r) => r.id);
-    if (!deviceId || !ids.length) return false;
-    await c.db.heartbeat(ids, { wsId: ws, deviceId });
-    return true;
-  };
-  const { code, beaten } = await freeAgentReason(c.client, { beatNow });
+  const { code, beaten } = await freeAgentReason(c.client, { beatNow: () => beatNow(c, ws) });
   return { code, crews: beaten ? await syncEnabled(ws, c) : undefined };
 }
 
@@ -118,28 +120,37 @@ export async function POST(req, { params }) {
     const c = await sessionClient().catch(() => null);
     if (!c) return authError('auth_required', lang);
     const existing = new Map((await myRegistrations(c, ws)).filter((r) => r.org_id === orgId).map((r) => [r.slug, r]));
+    const baseOf = (wantedSlug) => { const agent = bySlug.get(wantedSlug); return { display_name: agent.name || wantedSlug, role_text: agent.role || null, hosting: process.env.ARGO_TENANT_OWNER ? 'resident' : 'local' }; };
+    // 1) 없는 행은 연결 해제(available)로 먼저 넣는다 — 아래 연결(available→active)이 서버 관문에서 '사람의 연결'로 판정되게(무료 계정: 고른 순간 기록·4명이면 교체, 검수 #945)
     for (const wantedSlug of wanted) {
-      const prior = existing.get(wantedSlug);
+      if (existing.has(wantedSlug)) continue;
+      const row = { org_id: orgId, owner_user_id: c.uid, ws_id: ws, slug: wantedSlug, ...baseOf(wantedSlug), status: 'available', allow: 'owner', allow_users: [] };
+      const { error } = await c.client.from('msgr_crews').insert(row);
+      if (error && error.code !== '23505') return upstream('POST activate insert', error, lang);
+    }
+    // 2) 무료 계정이고 서버가 이 기기의 새 앱을 아직 모르면(브리지가 꺼져 있었음) 심박 한 번 — 이 화면 자신이 최신 앱이다(최소 버전 이상일 때만)
+    const info = await readAgentPause(c.client).catch(() => null);
+    if ((info?.reason === 'app' || info?.reason === 'off') && appMeetsMin(info.min_app)) await beatNow(c, ws).catch((e) => console.warn('[argo] msgr 새 앱 심박 실패:', e?.message ?? e));
+    // 3) 연결
+    const rows = new Map((await myRegistrations(c, ws)).filter((r) => r.org_id === orgId).map((r) => [r.slug, r]));
+    for (const wantedSlug of wanted) {
+      const prior = rows.get(wantedSlug);
       if (prior?.status === 'active') continue;
-      const agent = bySlug.get(wantedSlug);
-      const base = { display_name: agent.name || wantedSlug, role_text: agent.role || null, hosting: process.env.ARGO_TENANT_OWNER ? 'resident' : 'local' };
-      if (prior) {
-        const { error } = await c.client.from('msgr_crews').update({ ...base, status: 'active' }).eq('id', prior.id);
-        if (error) return upstream('POST activate update', error, lang);
-      } else {
-        const row = { org_id: orgId, owner_user_id: c.uid, ws_id: ws, slug: wantedSlug, ...base, status: 'active', allow: 'owner', allow_users: [] };
-        const { error } = await c.client.from('msgr_crews').insert(row);
-        if (error && error.code !== '23505') return upstream('POST activate insert', error, lang);
-      }
+      if (!prior) continue; // 넣기가 실패하지 않았는데 행이 없으면(동시 삭제) 건너뛴다
+      const base = baseOf(wantedSlug); // 되살린 크루는 기존 허용 범위를 보존 — 이름·역할·실행 위치만 다시 쓴다
+      const { error } = await c.client.from('msgr_crews').update({ ...base, status: 'active' }).eq('id', prior.id);
+      if (error) return upstream('POST activate update', error, lang);
     }
     let crews = await syncEnabled(ws, c);
-    // 무료 계정은 서버 관문이 행을 조용히 paused로 둔다(옛 미러가 같은 쓰기를 되풀이하지 않게) — 사람이 누른 연결이면 이유를 보인다
+    // 4) 무료 계정 4명이 차 있어 다른 에이전트를 쉬게 했으면 알린다(교체 — 서버 msgr_agent_swap_notes)
+    const swapped = await swapNotes(c.client, crews.filter((r) => r.org_id === orgId && wanted.includes(r.slug)).map((r) => r.id)).catch(() => []);
+    // 새 앱이 없을 때의 paused→active는 서버 관문이 행을 조용히 paused로 둔다(옛 미러가 같은 쓰기를 되풀이하지 않게) — 사람이 누른 연결이면 이유를 보인다
     if (crews.some((r) => r.org_id === orgId && wanted.includes(r.slug) && r.status === 'paused')) {
       const why = await freeAgentReasonFor(c, ws);
       if (why.crews) crews = why.crews;
       if (why.code && crews.some((r) => r.org_id === orgId && wanted.includes(r.slug) && r.status === 'paused')) return apiError(why.code, lang);
     }
-    return Response.json({ ok: true, crews });
+    return Response.json({ ok: true, crews, swapped });
   }
   if (!UUID.test(String(orgId ?? '')) || !slug || !ALLOW.has(allow) || !users.every((u) => UUID.test(String(u)))) return apiError('msgr_bad_request', lang);
   const agent = (await listAgents(ws)).find((a) => a.slug === slug);

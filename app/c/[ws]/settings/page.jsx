@@ -902,6 +902,7 @@ function MsgrCard({ ws, agents }) {
   const [activating, setActivating] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
   const [err, setErr] = useState('');
+  const [note, setNote] = useState(''); // 무료 4명 교체 안내(연결 결과)
   const load = useCallback(() => api(`/api/companies/${ws}/msgr`)
     .then((d) => { setSt(d); setOrgId((cur) => cur && d.orgs?.some((o) => o.id === cur) ? cur : (d.orgs?.[0]?.id ?? '')); })
     .catch(() => { setSt({ signedIn: false, orgs: [], crews: [] }); setErr(t('settings.msgr.err.load')); }), [ws, t]);
@@ -921,9 +922,10 @@ function MsgrCard({ ws, agents }) {
 
   async function activateOrg() {
     if (!orgId || !missing.length || activating) return;
-    setActivating(true); setErr('');
+    setActivating(true); setErr(''); setNote('');
     try {
-      await api(`/api/companies/${ws}/msgr`, { orgId, activate: true, slugs: missing.map((agent) => agent.slug) });
+      const r = await api(`/api/companies/${ws}/msgr`, { orgId, activate: true, slugs: missing.map((agent) => agent.slug) });
+      if (r?.swapped?.length) setNote(t('settings.msgr.swapped', { names: r.swapped.join(', ') }));
       await load();
       window.dispatchEvent(new Event('argo:refresh'));
     } catch (e) {
@@ -1050,6 +1052,7 @@ function MsgrCard({ ws, agents }) {
           <p>{t('settings.msgr.policyNote')}</p>
         </details>
       </>)}
+      {note && <p role="status" style={{ fontSize: 11.5, color: 'var(--fg-2)', margin: 0 }}>{note}</p>}
       {err && <p style={{ fontSize: 11.5, color: 'var(--danger)', margin: 0 }}>{err}</p>}
     </div>
   );

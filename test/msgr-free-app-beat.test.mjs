@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-msgr-freebeat-'));
-const { makeDb, drain, deviceBeatRpc, APP_VERSION, autoEnableMsgr } = await import('../src/gateway/msgr.mjs');
+const { makeDb, drain, deviceBeatRpc, APP_VERSION, autoEnableMsgr, appMeetsMin } = await import('../src/gateway/msgr.mjs');
 const UID = '11111111-1111-4111-8111-111111111111', O1 = 'aaaaaaaa-0000-4000-8000-000000000001', WS = 'ws-freebeat', DEV = 'mac-1234abcd';
 const PKG = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 
@@ -111,9 +111,9 @@ test('③ drain: 활성 행이 있으면 지금과 같다 — 멈춘 행은 턴 
 });
 
 test('④ 자동 켜기: 멈춘 행만 남아 꺼진 회사는 다시 켠다 — 행이 있어도 멈춘 행이 없으면(사람이 해제) 그대로', async () => {
-  const mk = (paused) => { const calls = { updates: [], pausedAsked: 0 }; return { calls, deps: {
+  const mk = (paused, minApp = PKG) => { const calls = { updates: [], pausedAsked: 0 }; return { calls, deps: {
     probes: new Map(), orgCache: new Map(), now: () => 1_000_000, timeoutMs: 50, log: () => {},
-    session: async () => ({ uid: 'u1', db: { myOrgIds: async () => ['org-1'], hasAnyCrew: async () => true, hasPausedCrew: async (uid, ws) => { calls.pausedAsked += 1; assert.equal(ws, 'ws-a'); return paused; } } }),
+    session: async () => ({ uid: 'u1', db: { myOrgIds: async () => ['org-1'], hasAnyCrew: async () => true, hasPausedCrew: async (uid, ws) => { calls.pausedAsked += 1; assert.equal(ws, 'ws-a'); return paused; }, myAgentPause: async () => (minApp === null ? null : { min_app: minApp }) } }),
     load: async (ws) => ({ id: ws, msgr: { enabled: false } }),
     update: async (ws, patch) => { calls.updates.push(typeof patch === 'function' ? patch({ msgr: { enabled: false } }) : patch); } } }; };
   const on = mk(true);
@@ -128,4 +128,26 @@ test('④ hasPausedCrew: 이 회사의 내 멈춘 사람 에이전트 행 1건 �
   const c = client({ select: () => ({ data: [{ id: 'p1' }], error: null }) });
   assert.equal(await makeDb(c).hasPausedCrew(UID, WS), true);
   assert.deepEqual(c.reqs[0].eq, [['owner_user_id', UID], ['ws_id', WS], ['status', 'paused']]);
+});
+
+test('⑤ 심박이 재개 신호(resume)를 주면 msgr_free_resume을 따로 부른다 — 재개가 실패해도 심박은 성공(검수 #945 LOW-6)', async () => {
+  for (const resumeErr of [null, { code: '57014', message: 'canceling statement due to statement timeout' }]) {
+    const c = client({ rpc: (name) => (name === 'msgr_device_beat' ? { data: { resume: true }, error: null } : { data: null, error: resumeErr }) });
+    assert.deepEqual(await makeDb(c).heartbeat(['p1'], { wsId: WS, deviceId: DEV }), { device: true });
+    assert.deepEqual(c.reqs.map((r) => r.rpc), ['msgr_device_beat', 'msgr_free_resume']);
+  }
+  const quiet = client({ rpc: () => ({ data: {}, error: null }) });
+  await makeDb(quiet).heartbeat(['a1'], { wsId: WS, deviceId: DEV });
+  assert.deepEqual(quiet.reqs.map((r) => r.rpc), ['msgr_device_beat'], '신호가 없으면 요청 1건 그대로');
+});
+
+test('⑥ 이 앱이 서버의 무료 최소 버전 이상일 때만 멈춘 회사의 브리지를 켠다(검수 #945 MEDIUM-2) — 옛 서버(값 없음)는 꺼 둔다', async () => {
+  assert.equal(appMeetsMin('0.1.102', '0.1.102'), true); assert.equal(appMeetsMin('0.1.102', '0.1.110'), true);
+  assert.equal(appMeetsMin('0.1.110', '0.1.102'), false); assert.equal(appMeetsMin(null, '0.1.102'), false); assert.equal(appMeetsMin('0.1.102', null), false);
+  const run2 = async (minApp) => { const calls = []; const ok = await autoEnableMsgr('ws-a', { company: { id: 'ws-a', ownerId: 'u1', msgr: { enabled: false } }, probes: new Map(), orgCache: new Map(), now: () => 1, timeoutMs: 50, log: () => {},
+    session: async () => ({ uid: 'u1', db: { myOrgIds: async () => ['o'], hasAnyCrew: async () => true, hasPausedCrew: async () => true, myAgentPause: async () => (minApp === null ? null : { min_app: minApp }) } }),
+    load: async (ws) => ({ id: ws, msgr: {} }), update: async (ws, patch) => { calls.push(patch); } }); return { ok, calls }; };
+  assert.equal((await run2('999.0.0')).ok, false, '이 앱이 최소 버전보다 낮다');
+  assert.equal((await run2(null)).ok, false, '옛 서버');
+  assert.equal((await run2('0.0.1')).ok, true);
 });

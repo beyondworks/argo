@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { readAgentPause, agentPauseNote } from '../src/agent-pause.mjs';
+import { readAgentPause, agentPauseNote, readSwapNames } from '../src/agent-pause.mjs';
 import { t as tm } from '../src/i18n.js';
 import { toastError } from '../src/error-toast.mjs';
 
@@ -53,7 +53,20 @@ test('⑥ 서버 오류: 앞 코드(이유)가 먼저 — 옛 메신저용 뒤 �
 test('⑤ 화면 두 자리 — 폰 에이전트 탭(목록 위)·데스크톱 레일(내 에이전트 구역 위, 개인 공간에서도) + 읽기는 로그인·재연결·탭 진입 때만', () => {
   const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
   assert.match(app, /\{pauseNote && !tabQText\.trim\(\) && <div className="msgr-hint ph-pausenote" role="status">\{t\(pauseNote\.key, pauseNote\.vars\)\}\{pauseNote\.key !== 'agents\.pause\.limit' && <div className="ph-emptyacts"><RunnerButton \/><\/div>\}<\/div>\}/, '폰: 업데이트·꺼짐이면 실행기 연결 단추');
-  assert.match(app, /\{!isPhone && pauseNote && <div className="msgr-rail-empty msgr-pausenote" role="status">\{t\(pauseNote\.key, pauseNote\.vars\)\}\{pauseNote\.key !== 'agents\.pause\.limit' && <div><RunnerButton \/><\/div>\}<\/div>\}/, '데스크톱 레일');
-  assert.equal((app.match(/readAgentPause\(supabase\)/g) ?? []).length, 2, '주기 호출 없음 — 두 곳(로그인·재연결, 폰 에이전트 탭)만');
+  assert.match(app, /const pauseNoteEl = pauseNote && <div className="msgr-rail-empty msgr-pausenote" role="status">\{t\(pauseNote\.key, pauseNote\.vars\)\}\{pauseNote\.key !== 'agents\.pause\.limit' && <div><RunnerButton \/><\/div>\}<\/div>;/, '데스크톱 레일 안내');
+  assert.match(app, /<div className="msgr-list mine">\n\s+\{!isPhone && pauseNote && pauseNoteEl\}/, '내 에이전트 구역 안 맨 위(검수 #945 LOW-4)');
+  assert.match(app, /\{!isPhone && pauseNote && !\(isPersonal \? railVisible\.length > 0 : !orgBlocked && org\) && pauseNoteEl\}/, '구역이 숨을 때만 밖');
+  assert.equal((app.match(/readAgentPause\(supabase\)/g) ?? []).length, 3, '주기 호출 없음 — 로그인·재연결, 폰 에이전트 탭, 교체가 일어난 직후 세 곳만');
   assert.match(app, /readAgentPause\(supabase\)\.then\(\(v\) => \{ if \(live\) setAgentPause\(v\); \}\); return \(\) => \{ live = false; \}; \}, \[uid, syncEpoch\]\);/);
+});
+
+test('⑦ 교체 안내(검수 #945 MEDIUM-1) — 이름 목록(중복 없이), 옛 서버·오류·던짐이면 빈 목록, 연결 직후 두 자리(파견·시트)에서 부른다, 해제 안내 문구 없음', async () => {
+  assert.deepEqual(await readSwapNames({ rpc: async (name, args) => { assert.equal(name, 'msgr_agent_swap_notes'); assert.deepEqual(args, { p_crews: ['c1'] }); return { data: [{ crew_id: 'c1', victim_name: '준' }, { crew_id: 'c1', victim_name: '준' }], error: null }; } }, ['c1']), ['준']);
+  assert.deepEqual(await readSwapNames({ rpc: async () => ({ data: null, error: { code: 'PGRST202' } }) }, ['c1']), []);
+  assert.deepEqual(await readSwapNames({ rpc: async () => { throw new Error('x'); } }, ['c1']), []);
+  assert.deepEqual(await readSwapNames({ rpc: async () => { throw new Error('호출하면 안 됨'); } }, []), []);
+  for (const lang of ['ko', 'en']) { const v = tm('agents.swap', lang, { names: 'Jun' }); assert.match(v, /Jun/); assert.match(v, /Pro/); }
+  for (const k of ['err.freeAgentLimit', 'agents.swap', 'agents.pause.limit']) assert.doesNotMatch(tm(k, 'ko'), /해제/, `${k}: 해제(채널 참여 삭제)로 안내하지 않는다`);
+  const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
+  assert.equal((app.match(/readSwapNames\(supabase, \[crew\.id\]\)/g) ?? []).length, 2);
 });

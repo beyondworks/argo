@@ -96,18 +96,18 @@ test('첫 심박: 기기 행 1개(맡은 에이전트 이름) + 옛 읽기 호�
   assert.deepEqual(after, before, '기기 행·에이전트 행 xmin 그대로');
 });
 
-test('기한: 기기 행·조직 행은 35초, 개인 행은 50초 넘을 때만 다시 쓴다(15초 틱이면 대개 45초·60초마다) — 그 안은 쓰기 0', { skip }, () => {
-  setAge('msgr_device_beats', 'seen_at', `device_id = 'mac-1'`, 30); setAge('msgr_crews', 'last_seen_at', `id in ('${C_ORG}', '${C_TWO}')`, 30); setAge('msgr_crews', 'last_seen_at', `id = '${C_PER}'`, 45);
-  assert.equal(beat(U.owner, 'lean', 'mac-1', [C_ORG, C_PER, C_TWO]), false, '30초·45초 = 기한 안 → 쓰기 0(15초 틱의 두 번째·세 번째 틱)');
-  setAge('msgr_device_beats', 'seen_at', `device_id = 'mac-1'`, 36); setAge('msgr_crews', 'last_seen_at', `id in ('${C_ORG}', '${C_TWO}')`, 36);
+test('기한: 기기 행·조직 행·개인 행 모두 35초 넘을 때만 다시 쓴다(20261011120000 — 45초 심박이면 50초 기한에서 개인 행이 90초마다 써져 부재중 판정과 여유가 없었다, #943 검수 LOW-1) — 그 안은 쓰기 0', { skip }, () => {
+  setAge('msgr_device_beats', 'seen_at', `device_id = 'mac-1'`, 30); setAge('msgr_crews', 'last_seen_at', `id in ('${C_ORG}', '${C_TWO}', '${C_PER}')`, 30);
+  assert.equal(beat(U.owner, 'lean', 'mac-1', [C_ORG, C_PER, C_TWO]), false, '30초 = 기한 안 → 쓰기 0');
+  setAge('msgr_device_beats', 'seen_at', `device_id = 'mac-1'`, 36); setAge('msgr_crews', 'last_seen_at', `id in ('${C_ORG}', '${C_TWO}')`, 36); setAge('msgr_crews', 'last_seen_at', `id = '${C_PER}'`, 34);
   const per0 = xmin('msgr_crews', `id = '${C_PER}'`);
   assert.equal(beat(U.owner, 'lean', 'mac-1', [C_ORG, C_PER, C_TWO]), true);
   assert.ok(age(`select seen_at from public.msgr_device_beats where device_id = 'mac-1'`) <= 1, '기기 행 36초 → 다시 씀');
   assert.ok(Number(oldRead(U.owner, C_ORG)) <= 1, '조직 행 36초 → 다시 씀');
-  assert.equal(xmin('msgr_crews', `id = '${C_PER}'`), per0, '개인 행 45초 → 그대로(50초 기한)');
-  setAge('msgr_crews', 'last_seen_at', `id = '${C_PER}'`, 51);
+  assert.equal(xmin('msgr_crews', `id = '${C_PER}'`), per0, '개인 행 34초 → 그대로');
+  setAge('msgr_crews', 'last_seen_at', `id = '${C_PER}'`, 36);
   beat(U.owner, 'lean', 'mac-1', [C_ORG, C_PER, C_TWO]);
-  assert.ok(Number(oldRead(U.owner, C_PER)) <= 1, '개인 행 51초 → 다시 씀');
+  assert.ok(Number(oldRead(U.owner, C_PER)) <= 1, '개인 행 36초 → 다시 씀(종전 50초)');
 });
 
 test('옛 읽기(표의 last_seen_at 직접 — 설치된 메신저): 새 심박만 받는 에이전트도 조직 멤버에게 접속으로 보인다', { skip }, () => {

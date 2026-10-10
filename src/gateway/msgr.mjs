@@ -20,6 +20,7 @@
 // supabase-js 체인 호출·RLS 왕복은 로컬 Supabase 스택 E2E(scripts/e2e-msgr-bridge.mjs)가 검증한다.
 import { createClient } from '@supabase/supabase-js';
 import { createRequire } from 'node:module';
+import { cmpVersion } from '../version-compare.mjs';
 import { chmod, mkdir, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
 import { getFreshDeviceSession } from '../devicesession.mjs';
@@ -135,6 +136,9 @@ export const deviceBeatRpc = { missingAt: 0, seenMissingAt: 0, versionMissingAt:
     createRequire만 쓰지 않는 이유: 번들에서는 경로가 빌드 기기 경로(file:///Users/runner/…)로 굳어 사용자 기기에서 읽지 못한다(설치본 0.1.101 청크 실측 — runner-health의 같은 코드는 '0.0.0'). */
 export const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION || (() => { try { return createRequire(import.meta.url)('../../package.json').version ?? null; } catch { return null; } })();
 const rpcMissing = (e) => ['PGRST202', '42883'].includes(e?.code);
+/** 이 앱이 서버가 정한 무료 계정 최소 버전(msgr_my_agent_pause.min_app) 이상인가 — 멈춘 에이전트만 있는 회사의 브리지를 켤지 정한다(검수 #945 MEDIUM-2:
+    #943 실시간 방식이 없는 앱이 무료 계정의 15초 조회를 다시 켜지 않게). 서버 값이 없으면(옛 서버) false = #941처럼 꺼 둔다. */
+export const appMeetsMin = (minApp, version = APP_VERSION) => !!minApp && !!version && cmpVersion(version, minApp) >= 0;
 const purgeAt = new Map(); const PURGE_MS = 10 * 60_000; // wsId → 마지막 회수 판정. 회사마다 10분에 한 번(검수 #691 LOW-2 — 15초 틱마다 부르던 것, 재검 MEDIUM — 전역 하나면 첫 회사만 돌았다)
 export async function syncOrgDocs(wsId, orgId, { db, log = console.error } = {}) {
   const org = await db.org(orgId); if (!org) return { skipped: 'no-org' };
@@ -279,8 +283,12 @@ export function makeDb(client) {
       if (beat?.wsId && beat?.deviceId && String(beat.deviceId).length <= 200 && Date.now() - deviceBeatRpc.missingAt > DEVICE_BEAT_RECHECK_MS) { // 200자 넘는 .device-id(손으로 고친 경우)는 서버가 거절한다 — 매 틱 실패 대신 종전 경로(검수 L4)
         // 앱 버전을 싣는다(20261011120000 — 무료 계정은 최신 앱 기기가 켜져 있을 때 에이전트 4명까지). 인자가 없는 서버면 한 번 버전 없이 다시 보내고 10분 기억한다
         if (APP_VERSION && Date.now() - deviceBeatRpc.versionMissingAt > DEVICE_BEAT_RECHECK_MS) {
-          const { error } = await client.rpc('msgr_device_beat', { p_ws: beat.wsId, p_device: beat.deviceId, p_crews: ids, p_app_version: APP_VERSION });
-          if (!error) return { device: true };
+          const { data, error } = await client.rpc('msgr_device_beat', { p_ws: beat.wsId, p_device: beat.deviceId, p_crews: ids, p_app_version: APP_VERSION });
+          if (!error) {
+            // 처음 들어온 새 앱 심박이면 서버가 재개 신호를 준다 — 재개는 따로 부른다(실패·시간 초과가 심박을 실패시키지 않게, 검수 #945 LOW-6). 놓쳐도 10분 크론이 한다
+            if (data?.resume) await client.rpc('msgr_free_resume').then(({ error: e }) => { if (e) console.warn('[argo] msgr 무료 에이전트 재개 실패 — 크론이 다시 합니다:', e.message); }, (e) => console.warn('[argo] msgr 무료 에이전트 재개 실패 — 크론이 다시 합니다:', e?.message ?? e));
+            return { device: true };
+          }
           if (!rpcMissing(error)) throw new Error(`msgr db: ${error.message}`);
           deviceBeatRpc.versionMissingAt = Date.now();
         }
@@ -307,6 +315,11 @@ export function makeDb(client) {
       return ((unwrap(await client.from('msgr_crews').select('id').eq('owner_user_id', uid).neq('hosting', 'bot').limit(1))) ?? []).length > 0;
     },
     /** 이 회사(ws)에 멈춘(무료 계정 일시 중지 #941) 내 에이전트 행이 있나 — 자동 켜기가 '멈춘 동안 꺼진 브리지'를 다시 켤 때만 본다(10분에 한 번, 꺼진 회사만). */
+    /** 무료 계정 에이전트가 멈춘 이유·최소 앱 버전(msgr_my_agent_pause, 20261011120000). 옛 서버(함수 없음)·오류면 null. */
+    async myAgentPause() {
+      const { data, error } = await client.rpc('msgr_my_agent_pause');
+      return error ? null : (data ?? null);
+    },
     async hasPausedCrew(uid, wsId) {
       return ((unwrap(await client.from('msgr_crews').select('id').eq('owner_user_id', uid).eq('ws_id', wsId).eq('status', 'paused').neq('hosting', 'bot').limit(1))) ?? []).length > 0;
     },
@@ -668,6 +681,7 @@ export async function autoEnableMsgr(wsId, { company, session = sessionClient, l
     // 무료 계정 일시 중지(#941)로 멈춘 에이전트만 남은 회사는 옛 설정 화면이 브리지를 껐다(syncEnabled). 최신 앱은 브리지가 돌아야 기기 심박(앱 버전)이 나가고
     // 서버가 에이전트를 재개한다(20261011120000) — 이 회사에 멈춘 행이 있으면 다시 켠다. 사람이 해제한 회사(행 없음·available)는 그대로 둔다.
     if (!c.db.hasPausedCrew || !(await c.db.hasPausedCrew(c.uid, wsId).catch(() => false))) return false;
+    if (!appMeetsMin((await c.db.myAgentPause?.().catch(() => null))?.min_app)) return false; // 이 앱이 무료 계정 최소 버전 미만이면 #941처럼 꺼 둔다(MEDIUM-2)
   } else if (!probe.orgs.length && !probe.personal) return false; // 조직이 없어도 메신저를 쓰는 계정이면 개인 공간 크루를 올린다(2026-09-30)
   const fresh = await load(wsId).catch(() => company); // 이미 켜졌으면 쓰지 않는다(판정용 재읽기)
   if (fresh.msgr?.enabled) return true;

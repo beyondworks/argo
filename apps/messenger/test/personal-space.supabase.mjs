@@ -13,7 +13,7 @@ const state = window.__psFixture = { calls: [], failNext: null, aiConsent: local
     { channel_id: 'org-dm', member_kind: 'user', member_id: 'user-colleague' },
   ],
   msgr_messages: [],
-  msgr_channel_crew_requests: [{ id: 'req-alice', channel_id: 'pdm-alice', crew_id: 'pcrew-alice2', requested_by: 'user-alice', status: 'pending' }], // 친구가 자기 에이전트를 1:1에 넣겠다고 요청(승인자 = 방을 연 나)
+  msgr_channel_crew_requests: [{ id: 'req-alice', channel_id: 'pdm-alice', crew_id: 'pcrew-alice2', requested_by: 'user-alice', status: 'pending', created_at: now }], // created_at — 결재 카드 시각('Invalid Date' 없게, 검수 #945 LOW-5) // 친구가 자기 에이전트를 1:1에 넣겠다고 요청(승인자 = 방을 연 나)
   msgr_target_prefs: [], msgr_channel_prefs: [],
   // Friends fixture
   msgr_friends: [

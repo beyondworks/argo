@@ -1046,6 +1046,7 @@ const DICT = {
   'settings.msgr.roster.title': ['연결된 에이전트 보기', 'View connected agents'],
   'settings.msgr.roster.help': ['이 컴퓨터의 에이전트와 조직 연결 상태를 한눈에 확인합니다.', 'Review each agent on this computer and its connection state for this organization.'],
   'settings.msgr.err.activate': ['에이전트를 연결하지 못했습니다. 잠시 뒤 다시 시도하세요.', 'Could not connect agents. Try again shortly.'],
+  'settings.msgr.swapped': ['무료 계정은 에이전트 4명까지라서 {names} 에이전트를 쉬게 했어요. Pro면 제한이 없어요.', 'Free accounts can use up to 4 agents, so {names} is now paused. Pro has no limit.'], // 무료 4명 교체 안내(2026-10-11, 서버 msgr_agent_swap_notes)
   'settings.msgr.err.reconnect': ['메신저 재연결을 시작하지 못했습니다. 잠시 뒤 다시 시도하세요.', 'Could not start reconnecting Messenger. Try again shortly.'],
   'settings.msgr.runtime.title': ['메신저 응답 상태', 'Messenger response status'],
   'settings.msgr.runtime.alive': ['정상 응답 중 · {s}초 전에 확인', 'Responding normally · checked {s}s ago'],

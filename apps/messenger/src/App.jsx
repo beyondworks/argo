@@ -87,7 +87,7 @@ import { selfMember, personalSelfName } from './self-member.mjs';
 import { crewRowMenuKeys, crewOpeners, creatorTagVisible } from './crew-row-menu.mjs';
 import { crewAwayNotice } from './crew-dm-notice.mjs';
 import { crewListEmptyKey } from './crews-empty.mjs';
-import { readAgentPause, agentPauseNote } from './agent-pause.mjs'; // 무료 계정 에이전트가 멈춘 이유(2026-10-11)
+import { readAgentPause, agentPauseNote, readSwapNames } from './agent-pause.mjs'; // 무료 계정 에이전트가 멈춘 이유(2026-10-11)
 import { runnerOptions, RUNNER_INSTALL } from './runner-sheet.mjs';
 import { seenWithin, stampFetched, markSeen } from './presence-clock.mjs'; import { readWithSeen } from './crew-seen.mjs'; // 접속 판정 = 받아 온 때 기준(기능 점검 D2) // '실행기 연결' 시트(아르고 패밀리 구조, 2026-10-02)
 import { shortcutLabel } from './shortcut.mjs';
@@ -1256,6 +1256,7 @@ function Shell({ session }) {
   const dispatchCrew = useCallback(async (crew, channelId = null) => {
     const up = await supabase.from('msgr_crews').update({ status: 'active' }).eq('id', crew.id).select('id');
     if (up.error) throw new Error(up.error.message);
+    readSwapNames(supabase, [crew.id]).then((names) => { if (names.length) { setNote(t('agents.swap', { names: names.join(', ') })); readAgentPause(supabase).then(setAgentPause); } }); // 무료 4명 교체 안내(검수 #945)
     // 채널에 넣는 것은 서버 규칙 한 곳(msgr_crew_join)으로 — 방장이면 바로, 참여자는 채널 정책대로(바로/방장 승인), 채팅은 결재자면 바로·아니면 요청.
     let joined = null;
     if (channelId) {
@@ -1464,6 +1465,7 @@ function Shell({ session }) {
   const [agentPause, setAgentPause] = useState(null);
   useEffect(() => { if (!uid) { setAgentPause(null); return undefined; } let live = true; readAgentPause(supabase).then((v) => { if (live) setAgentPause(v); }); return () => { live = false; }; }, [uid, syncEpoch]);
   const pauseNote = agentPauseNote(agentPause);
+  const pauseNoteEl = pauseNote && <div className="msgr-rail-empty msgr-pausenote" role="status">{t(pauseNote.key, pauseNote.vars)}{pauseNote.key !== 'agents.pause.limit' && <div><RunnerButton /></div>}</div>; // 데스크톱 레일 — 무료 계정 에이전트가 멈춘 이유
   const approvalsTimer = useRef(null);
   // 넣기 요청 카드의 이름(기능 점검 D6) — 에이전트 이름: 조직 에이전트는 조직 행, 개인 에이전트는 160000의 대기 에이전트 이름(msgr_personal_room_crews).
   // 방 이름: 채널·이름 붙은 그룹방은 그 이름, 대화방은 나를 뺀 사람 이름(조직 표시명 → 프로필). 요청이 있을 때만 부른다.
@@ -2994,9 +2996,10 @@ function Shell({ session }) {
               </button>))}
           </div>
         </RailSection>)}
-        {!isPhone && pauseNote && <div className="msgr-rail-empty msgr-pausenote" role="status">{t(pauseNote.key, pauseNote.vars)}{pauseNote.key !== 'agents.pause.limit' && <div><RunnerButton /></div>}</div>}{/* 무료 계정 — 내 에이전트 구역이 비거나 줄어든 이유(2026-10-11). 개인 공간에서 구역이 숨어도 보이게 구역 밖에 */}
+        {!isPhone && pauseNote && !(isPersonal ? railVisible.length > 0 : !orgBlocked && org) && pauseNoteEl}{/* 무료 계정 — 내 에이전트 구역이 숨을 때(개인 공간에 연결된 에이전트 0)만 구역 밖에. 구역이 있으면 그 안 맨 위(검수 #945 LOW-4) */}
         {(isPersonal ? railVisible.length > 0 : !orgBlocked && org) && (<RailSection id="mine" label={`${t('rail.agents')} · ${railVisible.length}`} right={<span className="right">{railVisible.length > 0 && <span className="msgr-sortwrap msgr-railsort"><button type="button" className={`msgr-sortbtn${sortMenu ? ' on' : ''}`} onClick={() => setSortMenu((v) => !v)} title={t('rail.sort')} aria-label={t('rail.sort')} aria-haspopup="menu" aria-expanded={sortMenu}><I name="sort" size={14} /></button>{sortMenu && <div className="msgr-rowmenu" role="menu" onMouseLeave={() => setSortMenu(false)}>{['name', 'added', 'custom'].map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={railSort === v} onClick={() => { pickSort(v); setSortMenu(false); }}>{railSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`rail.sort.${v}`)}</button>)}</div>}</span>}{myAvailable.length > 0 && <span className="msgr-klabel">{myCrews.length}/{myCrews.length + myAvailable.length}</span>}</span>}>
           <div className="msgr-list mine">
+            {!isPhone && pauseNote && pauseNoteEl}
             {!isPersonal && !myAvailable.length && !railVisible.length && <p className="msgr-rail-empty">{t('phone.agents.none')} <RunnerButton /></p>}{/* 비어도 구역과 연결 단추를 둔다 — 통째로 사라져 에이전트를 붙일 곳이 안 보였다(UXM-08) */}
             {/* 묶음마다 접었다 편다(유건 2026-09-16) — 조직의 다른 에이전트는 한 절에서(유건 제보 2026-09-12: 절이 둘로 중복) */}
             {[['mine.argo', 'rail.agents.mine', railArgo], ['mine.ext', 'rail.src.custom', railExt], ['mine.company', 'rail.agents.company', railCompany]]
@@ -3234,7 +3237,8 @@ function CrewSheet({ crew, org, uid, me, members, policy, channelId, channelName
     setBusy(false);
     if (res.error) return onError(res.error.message);
     if (!res.data?.length) return onError(t('crew.allow.readonly', { name: nameOfUser(crew.owner_user_id) }));
-    onNote(t(next ? 'crew.dispatch.done' : 'crew.recall.done', { name: crew.display_name })); onChanged();
+    const swapped = next ? await readSwapNames(supabase, [crew.id]) : []; // 무료 4명 교체 안내(검수 #945)
+    onNote(swapped.length ? t('agents.swap', { names: swapped.join(', ') }) : t(next ? 'crew.dispatch.done' : 'crew.recall.done', { name: crew.display_name })); onChanged();
   };
   const [confirmOut, setConfirmOut] = useState(false);
   const leaveHere = async () => { // 규칙 14: 데려온 것이 동의라면 빼는 것은 동의 철회 — 주인은 방장 동의 없이 이 방에서만 뺄 수 있다

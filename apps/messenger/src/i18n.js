@@ -1229,7 +1229,8 @@ export const DICT = {
   'err.policyLocked': ['조직 정책으로 잠긴 항목입니다.', 'This item is locked by organization policy.'],
   'err.proRequired': ['에이전트를 메신저에 연결하려면 에이전트 주인의 Argo Pro가 필요합니다. Pro로 바꾸면 멈춘 에이전트가 바로 다시 연결됩니다.', "Connecting an agent to Messenger needs Argo Pro for the agent's owner. Paused agents reconnect as soon as the owner upgrades to Pro."],
   // 무료 계정도 최신 앱이면 에이전트 4명까지(2026-10-11, 서버 관문 20261011120000) — 서버 오류의 앞 코드(뒤의 msgr_pro_required는 옛 메신저용)
-  'err.freeAgentLimit': ['무료 계정은 메신저에 에이전트를 4명까지 연결할 수 있습니다. 다른 에이전트의 연결을 해제하거나 Pro로 바꾸면 더 연결할 수 있습니다.', 'Free accounts can connect up to 4 agents to Messenger. Disconnect another agent or upgrade to Pro to connect more.'],
+  'err.freeAgentLimit': ['무료 계정은 메신저에 에이전트를 4명까지 연결할 수 있는데, 대신 쉬게 할 에이전트가 없어 연결하지 못했습니다. Pro면 제한이 없습니다.', 'Free accounts can connect up to 4 agents to Messenger, and there was no agent to pause in its place. Pro has no limit.'],
+  'agents.swap': ['무료 계정은 에이전트 4명까지라서 {names} 에이전트를 쉬게 했어요. Pro면 제한이 없어요.', 'Free accounts can use up to 4 agents, so {names} is now paused. Pro has no limit.'], // 교체 안내(검수 #945 MEDIUM-1)
   'err.appUpdateRequired': ['무료 계정의 에이전트는 최신 실행기(argo)가 켜져 있을 때 메신저에 연결됩니다. 실행기를 최신 버전으로 업데이트하면 에이전트가 다시 연결됩니다.', 'On a free account, agents connect to Messenger while an up-to-date runner (argo) is on. Update the runner and your agents reconnect.'],
   // 멈춘 에이전트 안내(에이전트 목록 위 — agent-pause.mjs). 메신저는 다른 앱 설치를 전제하지 않는다(runner-sheet.test.mjs, 2026-10-02) — 'Argo 앱' 대신 실행기(argo)
   'agents.pause.app': ['에이전트 {n}명이 멈춰 있어요. 실행기(argo)를 최신 버전으로 업데이트하면 에이전트가 다시 연결됩니다. 무료 계정은 최신 실행기가 켜져 있는 동안 {limit}명까지 쓸 수 있어요.', 'Paused agents: {n}. Update your runner (argo) and your agents reconnect. On a free account, up to {limit} agents work while an up-to-date runner is on.'],

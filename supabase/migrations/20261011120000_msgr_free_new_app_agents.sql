@@ -77,11 +77,56 @@ create or replace function public._msgr_free_active_agents(p_uid uuid) returns i
 $$;
 revoke all on function public._msgr_free_active_agents(uuid) from public, anon, authenticated;
 
--- 3) 기기 심박 — 20261010120000 정의 + 버전 인자(기본값 null: 옛 앱의 3인자 호출이 그대로 이 함수로 온다).
---    3인자 함수를 지우고 만든다 — 둘이 함께 있으면 3인자 이름 호출이 두 함수에 다 맞아 PostgREST가 고르지 못한다(PGRST203).
---    바뀐 곳: 버전 칸 쓰기(같은 문장), 옛 읽기 호환을 active 행만, 끝의 '처음 들어온 새 앱 심박이면 그 주인 sweep'.
+-- 2-1) 사람이 고른 에이전트(검수 #945 MEDIUM-1·LOW-3) — 무료 계정의 사람이 연결을 누른 순간을 '지금 대화한 것'으로 센다(chosen_msg = 그때의 마지막 글 id —
+--      실행 기록의 글 id와 같은 축). 자동 재개·한도 초과 정리·교체 대상 고르기가 모두 이 점수(실행 기록과 고른 순간 중 늦은 것)를 쓴다 —
+--      설정에서 연결한 에이전트가 뒤이은 심박 재개나 크론에 밀려나지 않게. swapped_out = 이 연결로 쉬게 된 에이전트(교체 안내).
+--      보존: 에이전트 행 하나에 한 줄(행이 지워지면 함께), 사람이 연결을 누를 때만 쓴다.
+create table if not exists public.msgr_free_choices (
+  crew_id uuid primary key references public.msgr_crews(id) on delete cascade,
+  owner_user_id uuid not null,
+  chosen_msg bigint not null default 0,
+  chosen_at timestamptz not null default now(),
+  swapped_out uuid,
+  swapped_at timestamptz
+);
+alter table public.msgr_free_choices enable row level security; -- 정책 없음 = 클라이언트 접근 0 (정의자 함수만)
+revoke all on public.msgr_free_choices from public, anon, authenticated;
+
+-- 2-2) 재개 처리(커서 밖의 일) — #941 _msgr_crew_plan_resume에서 떼어 냈다. 중지 기록 닫기·멈추기 전에 줄 선 자동화 실행 닫기·지난 예정 시각 옮기기.
+--      sweep 재개와 사람의 직접 연결(paused→active, 관문 뒤 AFTER 트리거)이 같은 함수를 쓴다(검수 #945 HIGH-1).
+create or replace function public._msgr_crew_resume_side(p_crew uuid, p_top bigint) returns void
+  language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  update public.msgr_crew_pauses set resumed_at = now(), resume_after = p_top where crew_id = p_crew and resumed_at is null;
+  update public.msgr_automation_runs ru set status = 'blocked', error = 'paused', finished_at = now()
+    from public.msgr_automations au
+   where au.id = ru.automation_id and au.crew_id = p_crew and ru.status = 'queued' and ru.message_id <= p_top
+     and not exists (select 1 from public.msgr_executions e where e.source_msg_id = ru.message_id);
+  update public.msgr_automations set next_run_at = public.msgr_automation_next(schedule, now()), updated_at = now()
+   where crew_id = p_crew and enabled and deleted_at is null and next_run_at <= now();
+end $$;
+revoke all on function public._msgr_crew_resume_side(uuid, bigint) from public, anon, authenticated;
+
+create or replace function public._msgr_crew_plan_resume(p_crew uuid, p_top bigint) returns void
+  language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  update public.msgr_crews
+     set status = case when status = 'paused' then 'active' else status end,
+         cursor_msg_id = greatest(coalesce(cursor_msg_id, 0), p_top)
+   where id = p_crew;
+  perform public._msgr_crew_resume_side(p_crew, p_top);
+end $$;
+revoke all on function public._msgr_crew_plan_resume(uuid, bigint) from public, anon, authenticated;
+
+-- 3) 기기 심박 — 20261010120000 정의 + 버전 인자(기본값 null: 옛 앱의 3인자 호출이 그대로 이 함수로 온다). 이 PR이 이 함수의 유일한 정의다(#943은 정의하지 않는다).
+--    3인자 함수를 지우고 만든다 — 둘이 함께 있으면 3인자 이름 호출이 두 함수에 다 맞아 PostgREST가 고르지 못한다(PGRST203). 시험이 함수 1개를 잠근다.
+--    바뀐 곳: 버전 칸 쓰기(같은 문장), 옛 읽기 호환을 active 행만·개인 행 기한도 35초(#943 검수 LOW-1: 쉬는 동안 심박이 45초 간격이면 50초 기한에서 개인 행이
+--    90초마다 써져 부재중 판정(90초)과 여유가 없다), 돌려주는 값 { resume: true } = 처음 들어온 새 앱 심박이고 멈춘 사람 에이전트가 있음.
+--    재개는 여기서 돌리지 않는다(검수 #945 LOW-6) — 게이트웨이가 신호를 보고 msgr_free_resume()을 따로 부른다. 재개가 느리거나 실패해도 심박은 성공한다.
+--    부르는 쪽이 신호를 놓쳐도 10분 크론이 같은 재개를 한다.
 drop function if exists public.msgr_device_beat(text, text, uuid[]);
-create or replace function public.msgr_device_beat(p_ws text, p_device text, p_crews uuid[], p_app_version text default null) returns void
+drop function if exists public.msgr_device_beat(text, text, uuid[], text);
+create function public.msgr_device_beat(p_ws text, p_device text, p_crews uuid[], p_app_version text default null) returns jsonb
 language plpgsql security definer set search_path = public, pg_temp as $$
 declare me uuid := auth.uid(); s text[]; v text; was_ok boolean := true;
 begin
@@ -90,7 +135,7 @@ begin
      or coalesce(cardinality(p_crews), 0) > 2000 then raise exception 'msgr_device_beat_invalid' using errcode = '22023'; end if; -- 회사 id 규칙 = workspace.mjs WS_ID_RE
   -- 앱 버전 — 형식이 맞는 것만(아니면 옛 앱처럼 버전 없음). 심박 자체는 실패시키지 않는다
   v := case when length(p_app_version) <= 40 and public._msgr_app_ver(p_app_version) is not null then p_app_version end;
-  if v is not null then was_ok := public._msgr_free_app_ok(me); end if; -- 이 심박 전에 이미 새 앱 판정이었나(아래 즉시 재개는 바뀐 때만)
+  if v is not null then was_ok := public._msgr_free_app_ok(me); end if; -- 이 심박 전에 이미 새 앱 판정이었나(재개 신호는 바뀐 때만)
   -- 이 기기가 맡은 에이전트 = 받은 행 중 내 행·이 회사 행의 slug(남의 에이전트·다른 회사를 '접속'으로 만들 수 없다). 상태는 보지 않는다 —
   -- 새 앱은 멈춘 행도 싣는다(멈춘 에이전트만 있는 회사도 기기 행이 있어야 새 앱이 켜진 것을 안다). 접속 표시는 읽는 쪽이 active 행만 본다(_msgr_device_seen 호출부).
   select coalesce(array_agg(distinct c.slug order by c.slug), '{}') into s
@@ -110,32 +155,51 @@ begin
     insert into public.msgr_device_beats (owner_user_id, ws_id, device_id, slugs, app_version, app_seen_at)
       values (me, p_ws, p_device, s, v, case when v is not null then now() end) on conflict do nothing;
   end if;
-  -- 옛 읽기 호환(20261010120000 머리말) — 기한이 지난 active 행만(멈춘 행은 접속으로 보이지 않게, 쓰지도 않는다)
+  -- 옛 읽기 호환(20261010120000 머리말) — 기한(35초)이 지난 active 행만(멈춘 행은 접속으로 보이지 않게, 쓰지도 않는다)
   update public.msgr_crews c set last_seen_at = now()
    where c.id = any(p_crews) and c.owner_user_id = me and c.ws_id = p_ws and c.status = 'active'
-     and (c.last_seen_at is null or c.last_seen_at < now() - case when c.org_id is null then interval '50 seconds' else interval '35 seconds' end);
+     and (c.last_seen_at is null or c.last_seen_at < now() - interval '35 seconds');
   -- 업무 기능 표시 — msgr_work_heartbeat와 같은 일(조직 행만, 같은 값은 쓰지 않는다)
   update public.msgr_crews set work_protocol = 1
    where id = any(p_crews) and owner_user_id = me and ws_id = p_ws and org_id is not null and status = 'active' and work_protocol is distinct from 1;
-  -- 처음 들어온 새 앱 심박 — 무료 계정의 멈춘 에이전트를 10분 크론을 기다리지 않고 바로 재개(누구를: sweep 규칙). 심박은 실패시키지 않는다(크론이 다시 한다).
+  -- 처음 들어온 새 앱 심박 + 멈춘 사람 에이전트 있음 → 재개 신호(재개는 msgr_free_resume — 위 머리말)
   if not was_ok and public._msgr_free_app_ok(me)
      and exists (select 1 from public.msgr_crews c where c.owner_user_id = me and c.status = 'paused' and c.hosting <> 'bot') then
-    begin
-      perform public.msgr_crews_plan_sweep(me);
-    exception when others then
-      raise warning 'msgr_device_beat: free resume for % skipped (%: %)', me, sqlstate, sqlerrm;
-    end;
+    return jsonb_build_object('resume', true);
   end if;
+  return '{}'::jsonb;
 end $$;
 revoke all on function public.msgr_device_beat(text, text, uuid[], text) from public, anon;
 grant execute on function public.msgr_device_beat(text, text, uuid[], text) to authenticated;
 
--- 4) 쓰기 관문 — 20261010200000 정의 + 무료 계정의 새 앱·4명 갈래. 나머지(봇·끄기·paused 직접 쓰기·이미 active)는 그대로.
+-- 3-1) 재개 — 로그인한 사람 자신만(그 주인 하나의 sweep). 게이트웨이가 심박의 재개 신호를 받았을 때, 본체 설정이 연결 결과를 다시 볼 때 부른다.
+--      멈춘 사람 에이전트가 없으면 아무것도 하지 않는다(쓰기 0). 비용: 그 주인 행 한 번 훑기 + 바뀐 행만 쓰기 — 운영 무료 주인 최대 259명 에이전트(10/11) 기준
+--      바뀌는 행은 에이전트 4명의 행과 중지 기록. 실패(시간 초과 포함)해도 심박에는 영향이 없다(따로 부른다).
+create or replace function public.msgr_free_resume() returns jsonb
+  language plpgsql security definer set search_path = public, pg_temp as $$
+declare me uuid := auth.uid();
+begin
+  if me is null then raise exception 'msgr_free_resume_forbidden' using errcode = '42501'; end if;
+  if not exists (select 1 from public.msgr_crews c where c.owner_user_id = me and c.status = 'paused' and c.hosting <> 'bot') then
+    return jsonb_build_object('resumed', 0);
+  end if;
+  return public.msgr_crews_plan_sweep(me);
+end $$;
+revoke all on function public.msgr_free_resume() from public, anon;
+grant execute on function public.msgr_free_resume() to authenticated;
+
+-- 4) 쓰기 관문 — 20261010200000 정의 + 무료 계정의 새 앱·4명 갈래 + 사람의 직접 재개 처리. 나머지(봇·끄기·paused 직접 쓰기·이미 active)는 그대로.
+--    사람의 연결 = UPDATE available→active(메신저 파견·설정 연결) 또는 paused→active(설정 연결). 미러는 insert와 detached→active만 쓴다(#941 소비자 표).
+--    paused→active를 허용할 때는 무료·Pro 상관없이 커서를 지금 끝으로(BEFORE에서 NEW에), 나머지 재개 처리는 AFTER 트리거(msgr_crews_resume_side) —
+--    sweep 재개와 같은 결과(검수 #945 HIGH-1: 설정의 연결로 바로 active가 되면 멈춘 동안의 글에 몰아 답했다).
+--    무료 + 새 앱 + 4명이 찬 상태의 사람 연결: 오류 대신 가장 오래 대화하지 않은 에이전트(점수 = 실행 기록·사람이 고른 순간 중 늦은 것)를 멈추고 연결한다
+--    (교체 — 채널 참여·기록은 그대로, msgr_free_choices.swapped_out으로 안내). 교체할 수 없을 때만 msgr_free_agent_limit(검수 #945 MEDIUM-1 총괄 결정).
 create or replace function public.msgr_crews_pro_gate() returns trigger
   language plpgsql security definer set search_path = public, pg_temp as $$
+declare human boolean; victim record; prev text;
 begin
   if new.hosting = 'bot' then return new; end if; -- 봇은 엣지 관문(msgr_bot_gate)
-  if coalesce(current_setting('msgr.pro_gate', true), '') = 'off' then return new; end if; -- sweep 자신의 재개·중지, 그리고 전체 끄기
+  if coalesce(current_setting('msgr.pro_gate', true), '') = 'off' then return new; end if; -- sweep 자신의 재개·중지·교체, 그리고 전체 끄기
   if to_regprocedure('public.is_pro_for(uuid)') is null then return new; end if; -- 요금제 함수가 없는 DB(요금제 마이그레이션을 안 태운 테스트)
   if tg_op = 'UPDATE' and new.status = 'paused' and old.status is distinct from 'paused' then
     new.status := old.status;
@@ -143,30 +207,85 @@ begin
   end if;
   if new.status <> 'active' then return new; end if;
   if tg_op = 'UPDATE' and old.status = 'active' then return new; end if; -- 이미 active인 행(상태를 그대로 다시 쓰는 갱신)은 sweep이 정리한다
-  if public.is_pro_for(new.owner_user_id) then return new; end if;
-  -- 무료 계정(2026-10-11): 주인의 최신 앱이 켜져 있으면 4명까지. 같은 주인의 동시 연결(두 기기·한 문장의 여러 행)이 한도를 넘지 않게 주인 단위로 줄 세운다.
+  human := tg_op = 'UPDATE' and old.status in ('available', 'paused');
+  if public.is_pro_for(new.owner_user_id) then
+    if tg_op = 'UPDATE' and old.status = 'paused' then new.cursor_msg_id := greatest(coalesce(old.cursor_msg_id, 0), (select coalesce(max(m.id), 0) from public.msgr_messages m)); end if;
+    return new;
+  end if;
+  -- 무료 계정(2026-10-11): 사람이 누른 연결은 '지금 대화한 것'으로 기록(자동 재개·교체 순위 — 2-1). 아래에서 거절되면 함께 되돌려진다.
+  if human then
+    insert into public.msgr_free_choices (crew_id, owner_user_id, chosen_msg, chosen_at)
+      values (new.id, new.owner_user_id, (select coalesce(max(m.id), 0) from public.msgr_messages m), now())
+    on conflict (crew_id) do update set chosen_msg = excluded.chosen_msg, chosen_at = now(), swapped_out = null, swapped_at = null;
+  end if;
+  -- 최신 앱이 켜져 있으면 4명까지. 같은 주인의 동시 연결·sweep은 주인 단위 잠금으로 줄 세운다(sweep도 같은 잠금 — 검수 #945 LOW-1).
   if public._msgr_free_app_ok(new.owner_user_id) then
     perform pg_advisory_xact_lock(hashtext('msgr_free_agents:' || new.owner_user_id::text));
-    if exists (select 1 from public.msgr_crews c where c.owner_user_id = new.owner_user_id and c.ws_id = new.ws_id and c.slug = new.slug
-                 and c.hosting <> 'bot' and c.status = 'active' and c.id is distinct from new.id) -- 이미 연결된 에이전트의 다른 행(조직 합류·개인 행) — 한 명으로 센다
-       or public._msgr_free_active_agents(new.owner_user_id) < (select agent_limit from public._msgr_free_agent_policy()) then
-      return new;
+    if not (exists (select 1 from public.msgr_crews c where c.owner_user_id = new.owner_user_id and c.ws_id = new.ws_id and c.slug = new.slug
+                      and c.hosting <> 'bot' and c.status = 'active' and c.id is distinct from new.id) -- 이미 연결된 에이전트의 다른 행 — 한 명으로 센다
+            or public._msgr_free_active_agents(new.owner_user_id) < (select agent_limit from public._msgr_free_agent_policy())) then
+      if not human then new.status := 'paused'; return new; end if; -- 사람의 연결이 아닌 쓰기는 교체하지 않는다
+      -- 교체 대상: 연결된 에이전트 중 점수가 가장 낮은 것(대화도 선택도 없던 것 먼저)
+      select c.ws_id, c.slug, min(c.id::text)::uuid any_id into victim
+        from public.msgr_crews c left join public.msgr_free_choices ch on ch.crew_id = c.id
+       where c.owner_user_id = new.owner_user_id and c.hosting <> 'bot' and c.status = 'active' and not (c.ws_id = new.ws_id and c.slug = new.slug)
+       group by c.ws_id, c.slug
+       order by greatest(max((select max(e.source_msg_id) from public.msgr_executions e where e.crew_id = c.id)), max(ch.chosen_msg)) asc nulls first,
+                max(ch.chosen_at) asc nulls first, min(c.created_at) desc, c.ws_id, c.slug
+       limit 1;
+      if victim.slug is null then
+        raise exception 'msgr_free_agent_limit msgr_pro_required' using errcode = 'P0001', detail = 'Free accounts can connect up to 4 agents to Messenger';
+      end if;
+      prev := current_setting('msgr.pro_gate', true);
+      perform set_config('msgr.pro_gate', 'off', true); -- 교체 대상의 active→paused가 이 관문에 되돌려지지 않게(기록은 msgr_crews_pro_gate_log)
+      begin
+        update public.msgr_crews set status = 'paused'
+         where owner_user_id = new.owner_user_id and ws_id = victim.ws_id and slug = victim.slug and hosting <> 'bot' and status = 'active';
+      exception when others then
+        perform set_config('msgr.pro_gate', coalesce(prev, ''), true);
+        raise exception 'msgr_free_agent_limit msgr_pro_required' using errcode = 'P0001', detail = 'Free accounts can connect up to 4 agents to Messenger';
+      end;
+      perform set_config('msgr.pro_gate', coalesce(prev, ''), true);
+      update public.msgr_free_choices set swapped_out = victim.any_id, swapped_at = now() where crew_id = new.id;
     end if;
-    if tg_op = 'UPDATE' and old.status = 'available' then
-      raise exception 'msgr_free_agent_limit msgr_pro_required' using errcode = 'P0001',
-        detail = 'Free accounts can connect up to 4 agents to Messenger';
-    end if;
+    if tg_op = 'UPDATE' and old.status = 'paused' then new.cursor_msg_id := greatest(coalesce(old.cursor_msg_id, 0), (select coalesce(max(m.id), 0) from public.msgr_messages m)); end if;
+    return new;
   elsif tg_op = 'UPDATE' and old.status = 'available' then
     raise exception 'msgr_app_update_required msgr_pro_required' using errcode = 'P0001',
       detail = 'Free accounts need the latest Argo app running to connect agents to Messenger';
   end if;
-  -- 사람이 누른 연결이 아닌 쓰기(미러 insert·되살리기·paused→active·업서트 충돌)는 조용히 paused — 오류로 던지면 옛 미러가 15초마다 같은 쓰기를 다시 보낸다(#941)
+  -- 사람이 누른 연결이 아닌 쓰기(미러 insert·되살리기·업서트 충돌)와 새 앱이 없을 때의 paused→active는 조용히 paused — 오류로 던지면 옛 미러가 15초마다 같은 쓰기를 다시 보낸다(#941)
   new.status := 'paused';
   return new;
 end $$;
 revoke all on function public.msgr_crews_pro_gate() from public, anon, authenticated;
 
+-- 4-1) 사람의 직접 재개(관문이 paused→active를 허용) 뒤 처리 — 커서는 관문이 NEW에 옮겼다. sweep(관문 끔)은 _msgr_crew_plan_resume가 같은 일을 하므로 건너뛴다.
+create or replace function public.msgr_crews_resume_side() returns trigger
+  language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  if coalesce(current_setting('msgr.pro_gate', true), '') = 'off' then return new; end if;
+  if to_regprocedure('public.is_pro_for(uuid)') is null then return new; end if;
+  perform public._msgr_crew_resume_side(new.id, coalesce(new.cursor_msg_id, 0));
+  return new;
+end $$;
+revoke all on function public.msgr_crews_resume_side() from public, anon, authenticated;
+drop trigger if exists msgr_crews_resume_side on public.msgr_crews;
+create trigger msgr_crews_resume_side after update of status on public.msgr_crews
+  for each row when (old.status = 'paused' and new.status = 'active' and new.hosting <> 'bot') execute function public.msgr_crews_resume_side();
+
+-- 4-2) 교체 안내 — 방금 연결한 내 에이전트 때문에 쉬게 된 에이전트 이름(5분 안). 본체 설정·메신저가 연결 직후 한 번 부른다.
+create or replace function public.msgr_agent_swap_notes(p_crews uuid[]) returns table(crew_id uuid, victim_name text)
+  language sql stable security definer set search_path = public, pg_temp as $$
+  select ch.crew_id, v.display_name
+    from public.msgr_free_choices ch join public.msgr_crews v on v.id = ch.swapped_out
+   where ch.crew_id = any(coalesce(p_crews, '{}')) and ch.owner_user_id = auth.uid() and ch.swapped_at > now() - interval '5 minutes'
+$$;
+revoke all on function public.msgr_agent_swap_notes(uuid[]) from public, anon;
+grant execute on function public.msgr_agent_swap_notes(uuid[]) to authenticated;
+
 -- 5) 정리 함수 — 20261010200000 정의를 주인 단위로. Pro·봇 갈래는 그대로, 무료 사람 에이전트만 새 규칙(머리말 '누구를 재개하나').
+--    주인마다 관문과 같은 잠금을 잡는다(검수 #945 LOW-1 — 사람의 연결과 겹쳐 5명이 되던 경합). 순위 점수 = 실행 기록·사람이 고른 순간 중 늦은 것(2-1).
 --    바뀌어야 하는 행만 쓴다(유휴 쓰기 0). 행마다 따로 처리한다(한 행이 다른 트리거에 걸려도 나머지는 계속).
 create or replace function public.msgr_crews_plan_sweep(p_uid uuid default null) returns jsonb
   language plpgsql security definer set search_path = public, pg_temp as $$
@@ -185,21 +304,22 @@ begin
   loop
     pro := public.is_pro_for(o.uid);
     ok := not pro and public._msgr_free_app_ok(o.uid);
+    if not pro then perform pg_advisory_xact_lock(hashtext('msgr_free_agents:' || o.uid::text)); end if;
     for r in
       with mine as (
-        select c.id, c.hosting, c.status, c.ws_id, c.slug, c.created_at, c.cursor_msg_id,
+        select c.id, c.hosting, c.status, c.ws_id, c.slug, c.created_at, c.cursor_msg_id, ch.chosen_msg, ch.chosen_at,
                exists (select 1 from public.msgr_crew_pauses k where k.crew_id = c.id and k.resumed_at is null) open_pause
-          from public.msgr_crews c
+          from public.msgr_crews c left join public.msgr_free_choices ch on ch.crew_id = c.id
          where c.owner_user_id = o.uid
            and (c.status in ('active', 'paused') or exists (select 1 from public.msgr_crew_pauses k where k.crew_id = c.id and k.resumed_at is null))
-      ), ident as ( -- 무료 사람 에이전트 = (회사, 이름) 한 명. 최근 대화 = 실행 기록의 마지막 글(기본 키 색인 거꾸로 1행) → 커서 → 만든 순
+      ), ident as ( -- 무료 사람 에이전트 = (회사, 이름) 한 명. 점수 = 실행 기록의 마지막 글(기본 키 색인 거꾸로 1행)·사람이 고른 순간 중 늦은 것 → 커서 → 만든 순
         select m.ws_id, m.slug, bool_or(m.status = 'active') act,
-               max((select max(e.source_msg_id) from public.msgr_executions e where e.crew_id = m.id)) last_exec,
-               max(m.cursor_msg_id) last_cursor, min(m.created_at) born
+               greatest(max((select max(e.source_msg_id) from public.msgr_executions e where e.crew_id = m.id)), max(m.chosen_msg)) score,
+               max(m.chosen_at) chosen_at, max(m.cursor_msg_id) last_cursor, min(m.created_at) born
           from mine m where not pro and m.hosting <> 'bot' and m.status in ('active', 'paused') group by m.ws_id, m.slug
       ), ranked as (
         select i.ws_id, i.slug, i.act,
-               row_number() over (partition by i.act order by i.last_exec desc nulls last, i.last_cursor desc nulls last, i.born, i.ws_id, i.slug) rk,
+               row_number() over (partition by i.act order by i.score desc nulls last, i.chosen_at desc nulls last, i.last_cursor desc nulls last, i.born, i.ws_id, i.slug) rk,
                count(*) filter (where i.act) over () n_act
           from ident i
       )
@@ -207,9 +327,9 @@ begin
           when pro then case when m.status = 'paused' or m.open_pause then 'resume' end                       -- Pro: 멈춘 것 전부(#941)
           when m.hosting = 'bot' then case when m.status = 'active' and not m.open_pause then 'pause' end      -- 무료 봇: 중지 기록만(#941)
           when not ok then case when m.status = 'active' then 'pause' end                                      -- 무료 + 새 앱 없음: 전부 멈춤
-          when m.status = 'active' and k.rk > lim then 'pause'                                                 -- 4명 넘는 active — 최근 대화가 적은 쪽부터
+          when m.status = 'active' and k.rk > lim then 'pause'                                                 -- 4명 넘는 active — 점수가 낮은 쪽부터
           when m.status = 'paused' and k.act and k.rk <= lim then 'resume'                                     -- 연결된 에이전트의 멈춘 다른 행
-          when m.status = 'paused' and not k.act and k.n_act = 0 and k.rk <= lim then 'resume'                 -- 전부 멈춘 상태 → 최근 대화 순 4명
+          when m.status = 'paused' and not k.act and k.n_act = 0 and k.rk <= lim then 'resume'                 -- 전부 멈춘 상태 → 점수 순 4명
         end act
         from mine m left join ranked k on k.ws_id = m.ws_id and k.slug = m.slug
        order by m.id
@@ -246,10 +366,10 @@ begin
 end $$;
 revoke all on function public.msgr_crews_plan_sweep(uuid) from public, anon, authenticated;
 
--- 6) 메신저 안내 — 로그인한 사람의 멈춘 에이전트와 이유. 읽기만. 메신저가 로그인·재연결·에이전트 탭 진입 때 한 번 부른다(주기 호출 없음).
---    paused = 멈춘 에이전트 수(같은 회사·이름 = 한 명, 연결된 행이 있는 에이전트는 빼고), active = 연결된 에이전트 수, limit = 4,
+-- 6) 메신저·본체 안내 — 로그인한 사람의 멈춘 에이전트와 이유. 읽기만. 메신저가 로그인·재연결·에이전트 탭 진입 때 한 번 부른다(주기 호출 없음).
+--    paused = 멈춘 에이전트 수(같은 회사·이름 = 한 명, 연결된 행이 있는 에이전트는 빼고), active = 연결된 에이전트 수, limit = 4, min_app = 최소 버전
+--    (본체가 자기 버전과 비교해 '이 앱이 새 앱인가'를 안다 — 멈춘 회사의 브리지를 켤지 정할 때, 검수 #945 MEDIUM-2),
 --    reason = null(Pro·관문 꺼짐) | 'app'(최소 버전 이상 앱 기기가 없음 — 업데이트 안내) | 'off'(새 앱은 있었지만 30분 넘게 꺼짐) | 'limit'(새 앱 켜짐 + 4명 다 참).
---    멈춘 에이전트가 없어도 이유는 돌려준다 — 본체 설정이 연결을 누른 결과를 설명할 때 쓴다(사람이 누른 연결이 한도에 걸린 경우).
 create or replace function public.msgr_my_agent_pause() returns jsonb
   language plpgsql stable security definer set search_path = public, pg_temp as $$
 declare me uuid := auth.uid(); n_act int; n_paused int; pol record; why text;
@@ -266,7 +386,7 @@ begin
                                and public._msgr_app_ver(d.app_version) >= public._msgr_app_ver(pol.min_app)) then 'off' else 'app' end;
   elsif n_act >= pol.agent_limit then why := 'limit';
   end if;
-  return jsonb_build_object('paused', n_paused, 'active', n_act, 'limit', pol.agent_limit, 'reason', why);
+  return jsonb_build_object('paused', n_paused, 'active', n_act, 'limit', pol.agent_limit, 'reason', why, 'min_app', pol.min_app);
 end $$;
 revoke all on function public.msgr_my_agent_pause() from public, anon;
 grant execute on function public.msgr_my_agent_pause() to authenticated;
