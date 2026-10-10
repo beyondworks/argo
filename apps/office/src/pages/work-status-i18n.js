@@ -7,7 +7,7 @@ export const WORK_STATUS_DICT = {
   'ws.online': ['연결됨', 'Online'], 'ws.offline': ['끊김', 'Offline'], 'ws.lastSeen': ['마지막 {t}', 'Last seen {t}'],
   'ws.now.run': ['작업', 'Run'], 'ws.now.blocked': ['멈춘 작업', 'Blocked run'], 'ws.now.session': ['맡은 일', 'Working on'], 'ws.now.exec': ['답하는 중', 'Replying'],
   'ws.doing': ['진행 중', 'In progress'], 'ws.hold': ['보류', 'On hold'], 'ws.todo': ['시작 전', 'Not started'],
-  'ws.overdueN': ['기한 지남 {n}', '{n} overdue'], 'ws.hiddenN': ['7일 넘게 안 보인 {n}명은 숨겼습니다', '{n} not seen for over 7 days are hidden'],
+  'ws.overdueN': ['기한 지남 {n}', '{n} overdue'], 'ws.hiddenN': ['7일 넘게 안 보인 {n}명은 숨겼습니다', '{n} not seen for over 7 days are hidden'], 'ws.moreN': ['더보기 · {n}명', 'Show {n} more'], 'ws.less': ['접기', 'Show less'],
   'ws.unowned': ['에이전트 없이 맡긴 일', 'Assigned without an agent'], 'ws.left': ['나간 사람', 'Former member'],
   'ws.from.session': ['세션 {name}', 'Session {name}'], 'ws.from.crew': ['에이전트 {name}', 'Agent {name}'], 'ws.from.person': ['사람이 맡김', 'Assigned by a person'],
   'ws.from.sessionAnon': ['세션', 'Session'], 'ws.from.crewAnon': ['에이전트', 'Agent'], 'ws.otherOwner': ['다른 사람', 'Someone else'],

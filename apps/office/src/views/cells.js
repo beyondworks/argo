@@ -1,4 +1,4 @@
-// 할 일 표에서 바로 바꾸기·캘린더에서 바로 끝내기(유건 10/9) 순수 계산 — 화면은 TaskCells.jsx·Calendar.jsx.
+// 할 일 표에서 바로 바꾸기·캘린더에서 바로 상태 바꾸기(유건 10/9·10/10) 순수 계산 — 화면은 TaskCells.jsx·Calendar.jsx.
 // 칸마다 바꿀 수 있는지(서버 office_task_write와 같은 판정, model.js whyNot), 고를 값 목록, 고른 값의 쓰기 계획만 정한다.
 // 쓰기 계획은 할 일 패널과 같은 함수(planStatus·planField·planTaskCategory·planAssign)라 서버로 가는 요청 모양·기록·충돌 처리가 패널과 같다.
 import * as V from './model.js';
@@ -48,7 +48,7 @@ export function planCell(it, cell, value, ctx, { categories = [] } = {}) {
 /** 보류로 바꾼 뒤 사유를 적게 안내할까 — 보류가 아니던 일(끝낸 일 포함)을 보류로 바꿀 때만. 이미 보류면 사유는 패널에 그대로 있다 */
 export const askHoldReason = (it, status) => it.kind === 'task' && status === 'hold' && it.status !== 'hold';
 
-/** 캘린더 할 일 칩·하루 목록의 끝내기 단추 — 열린 일은 끝내기, 끝낸 일은 다시 열기(목록·표의 동그라미와 같은 계획) */
+/** 끝내기 뒤집기 — 열린 일은 끝내기, 끝낸 일은 다시 열기(목록·표의 동그라미와 같은 계획). 캘린더 동그라미는 10/10부터 상태 메뉴(Board.jsx check) */
 export const toggleDone = (it, ctx) => V.planDone(it, !it.done, ctx);
 
 /** 할 일 패널 메모 칸 높이(px) — 처음 9줄 높이에서 시작해 글이 길면 글 높이만큼(유건 10/9: 4줄쯤만 보이고 스크롤됐다).
