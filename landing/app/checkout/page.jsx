@@ -20,7 +20,7 @@ const writeStore = (v) => { try { if (v) sessionStorage.setItem(STORE, JSON.stri
 export default function CheckoutPage() {
   const { t } = useLang();
   const [plan, setPlan] = useState('monthly');
-  const [state, setState] = useState('loading'); // loading | login | working | ready | error | unconfigured
+  const [state, setState] = useState('loading'); // loading | login | working | ready | already | error | unconfigured
   const [account, setAccount] = useState(null); // { id, email, url }
   const [busy, setBusy] = useState(false);
   const [switching, setSwitching] = useState(false); // "다른 계정으로" — Google이 마지막 계정을 자동으로 고르지 않게
@@ -43,7 +43,7 @@ export default function CheckoutPage() {
         const url = checkoutUrl(PLAN_BASE[p], user);
         if (!url) throw new Error('no checkout url');
         setAccount({ ...user, url });
-        setState('ready');
+        setState(user.pro ? 'already' : 'ready');
       })
       .catch(() => setState('error'));
   }, []);
@@ -63,7 +63,7 @@ export default function CheckoutPage() {
 
   const price = t(`checkout.plan.${plan}`);
   return (
-    <DocShell kicker={t('checkout.kicker')} title={t(state === 'ready' ? 'checkout.readyTitle' : 'checkout.title')}>
+    <DocShell kicker={t('checkout.kicker')} title={t(state === 'ready' ? 'checkout.readyTitle' : state === 'already' ? 'checkout.alreadyTitle' : 'checkout.title')}>
       <p className="checkout-plan mono-label">{t('checkout.planLabel')} · {price}</p>
       {state === 'loading' && <p className="checkout-status">{t('checkout.loading')}</p>}
       {state === 'working' && <p className="checkout-status" role="status">{t('checkout.working')}</p>}
@@ -81,6 +81,16 @@ export default function CheckoutPage() {
             <button type="button" className="price-cta" onClick={() => login('github')} disabled={busy}>{t('checkout.github')}</button>
           </div>
           <p className="checkout-fine">{t('checkout.signupNote')}</p>
+        </>
+      )}
+      {state === 'already' && account && (
+        <>
+          <p>{t('checkout.alreadyBody')}</p>
+          <p className="checkout-account">{account.email || t('checkout.noEmail')}</p>
+          <div className="checkout-actions">
+            <a className="price-cta" href="/#download">{t('checkout.openApp')}</a>
+            <button type="button" className="price-cta ghost" onClick={() => { setAccount(null); setSwitching(true); setState('login'); }}>{t('checkout.switch')}</button>
+          </div>
         </>
       )}
       {state === 'ready' && account && (

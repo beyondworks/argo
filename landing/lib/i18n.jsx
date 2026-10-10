@@ -274,6 +274,9 @@ const DICT = {
   'checkout.continue.yearly': ['결제 계속 — $120/년', 'Continue to checkout — $120/yr'],
   'checkout.switch': ['다른 계정으로 로그인', 'Use a different account'],
   'checkout.readyNote': ['결제 화면의 이메일을 바꿔도 Pro는 이 계정에 연결됩니다.', 'Even if you change the email on the checkout page, Pro stays linked to this account.'],
+  'checkout.alreadyTitle': ['이미 Pro인 계정입니다', 'This account is already Pro'],
+  'checkout.alreadyBody': ['아래 계정은 이미 Pro라서 결제하지 않아도 됩니다. 한 번 더 결제하면 구독이 두 개가 됩니다. 구독 관리는 앱 설정에서 할 수 있습니다.', 'The account below is already Pro, so there is nothing to pay. Paying again would create a second subscription. Manage your subscription in the app settings.'],
+  'checkout.openApp': ['앱 받기', 'Get the app'],
   'checkout.unconfigured': ['지금은 웹 결제를 준비하고 있어요. 앱을 설치하고 로그인한 뒤 앱의 Pro 업그레이드 버튼으로 결제해 주세요.', 'Web checkout is being set up. Install the app, sign in, and use the Upgrade to Pro button in the app.'],
   'checkout.download': ['앱 다운로드', 'Download the app'],
 

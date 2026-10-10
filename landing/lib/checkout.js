@@ -42,7 +42,10 @@ export function authorizeUrl({ supabaseUrl, provider, redirectTo, challenge, sel
   return `${supabaseUrl}/auth/v1/authorize?${q}`;
 }
 
-/** code → { id, email }. 실패는 throw. 받은 세션은 저장하지 않고 끊는다(끊기 실패는 무시 — 토큰은 이 함수 밖으로 나가지 않는다). */
+/** code → { id, email, pro }. 실패는 throw. 받은 세션은 저장하지 않고 끊는다(끊기 실패는 무시 — 토큰은 이 함수 밖으로 나가지 않는다).
+ *  pro = 이미 Pro인가(my_plan — 앱과 같은 판정: 결제·운영자 부여·조직). 이미 Pro인 계정이 한 번 더 결제하면 구독이 둘이 되고,
+ *  웹훅은 마지막 구독을 연결하므로 그 구독이 먼저 끝나면 남은 구독이 결제 중인데도 Pro가 꺼질 수 있다(분리 검수 MEDIUM-1) →
+ *  화면이 결제 대신 "이미 Pro"를 보인다. 판정을 못 읽으면 null — 결제를 막지 않는다. */
 export async function exchangeCode({ supabaseUrl, anonKey, code, verifier, fetchImpl = fetch }) {
   const res = await fetchImpl(`${supabaseUrl}/auth/v1/token?grant_type=pkce`, {
     method: 'POST',
@@ -53,10 +56,17 @@ export async function exchangeCode({ supabaseUrl, anonKey, code, verifier, fetch
   const data = await res.json();
   const id = data?.user?.id;
   if (typeof id !== 'string' || !id) throw new Error('auth: no user');
+  let pro = null;
   if (data.access_token) {
+    try {
+      const r = await fetchImpl(`${supabaseUrl}/rest/v1/rpc/my_plan`, {
+        method: 'POST', headers: { apikey: anonKey, Authorization: `Bearer ${data.access_token}`, 'Content-Type': 'application/json' }, body: '{}',
+      });
+      if (r.ok) { const plan = (await r.json())?.plan; if (typeof plan === 'string') pro = plan === 'pro'; }
+    } catch { /* 판정 실패 — 결제를 막지 않는다 */ }
     await fetchImpl(`${supabaseUrl}/auth/v1/logout?scope=local`, {
       method: 'POST', headers: { apikey: anonKey, Authorization: `Bearer ${data.access_token}` },
     }).catch(() => null);
   }
-  return { id, email: typeof data.user.email === 'string' ? data.user.email : '' };
+  return { id, email: typeof data.user.email === 'string' ? data.user.email : '', pro };
 }

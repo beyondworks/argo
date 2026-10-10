@@ -80,17 +80,28 @@ test('코드 교환 — token?grant_type=pkce로 계정 id·이메일만 받고 
   const fetchImpl = async (url, init) => {
     calls.push({ url, init });
     if (url.includes('/token?grant_type=pkce')) return Response.json({ access_token: 'AT', refresh_token: 'RT', user: { id: USER.id, email: USER.email } });
+    if (url.includes('/rpc/my_plan')) return plan === 'error' ? new Response('x', { status: 500 }) : Response.json({ plan });
     if (url.includes('/logout')) return new Response(null, { status: 204 });
     throw new Error(url);
   };
+  let plan = 'free';
   const user = await landing.exchangeCode({ supabaseUrl: 'https://p', anonKey: 'anon', code: 'CODE', verifier: 'VER', fetchImpl });
-  assert.deepEqual(user, { id: USER.id, email: USER.email }, '토큰은 돌려주지 않는다');
+  assert.deepEqual(user, { id: USER.id, email: USER.email, pro: false }, '토큰은 돌려주지 않는다');
   assert.equal(calls[0].url, 'https://p/auth/v1/token?grant_type=pkce');
   assert.equal(calls[0].init.method, 'POST');
   assert.equal(calls[0].init.headers.apikey, 'anon');
   assert.deepEqual(JSON.parse(calls[0].init.body), { auth_code: 'CODE', code_verifier: 'VER' });
-  assert.equal(calls[1].url, 'https://p/auth/v1/logout?scope=local');
+  assert.equal(calls[1].url, 'https://p/rest/v1/rpc/my_plan', '앱과 같은 판정으로 이미 Pro인지 본다');
   assert.equal(calls[1].init.headers.Authorization, 'Bearer AT');
+  assert.equal(calls[2].url, 'https://p/auth/v1/logout?scope=local', '판정 뒤 세션을 끊는다');
+  assert.equal(calls[2].init.headers.Authorization, 'Bearer AT');
+  plan = 'pro';
+  assert.equal((await landing.exchangeCode({ supabaseUrl: 'https://p', anonKey: 'anon', code: 'C', verifier: 'V', fetchImpl })).pro, true);
+  plan = 'trial';
+  assert.equal((await landing.exchangeCode({ supabaseUrl: 'https://p', anonKey: 'anon', code: 'C', verifier: 'V', fetchImpl })).pro, false);
+  plan = 'error';
+  assert.equal((await landing.exchangeCode({ supabaseUrl: 'https://p', anonKey: 'anon', code: 'C', verifier: 'V', fetchImpl })).pro, null, '판정 실패는 결제를 막지 않는다');
+  assert.ok(calls.at(-1).url.endsWith('/logout?scope=local'), '판정이 실패해도 세션은 끊는다');
   // 실패는 throw — 계정 없이 결제로 넘어가지 않는다
   await assert.rejects(landing.exchangeCode({ supabaseUrl: 'https://p', anonKey: 'a', code: 'x', verifier: 'y', fetchImpl: async () => new Response('bad', { status: 400 }) }), /auth 400/);
   await assert.rejects(landing.exchangeCode({ supabaseUrl: 'https://p', anonKey: 'a', code: 'x', verifier: 'y', fetchImpl: async () => Response.json({ user: null }) }), /no user/);
@@ -103,6 +114,7 @@ test('결제 화면 — 코드는 이 탭의 검증값으로만 교환하고 주
   assert.doesNotMatch(src, /localStorage/, '오래 남는 저장소에 넣지 않는다');
   assert.doesNotMatch(src, /access_token|refresh_token/, '토큰을 다루지 않는다(lib/checkout.js 안에서 끝난다)');
   assert.match(src, /checkoutUrl\(PLAN_BASE\[p\], user\)/, '로그인한 계정으로만 체크아웃 주소를 만든다');
+  assert.match(src, /setState\(user\.pro \? 'already' : 'ready'\)/, '이미 Pro면 결제 대신 안내(구독 두 개 방지)');
   assert.match(src, /redirectTo: `\$\{window\.location\.origin\}\/checkout`/, '돌아올 주소는 /checkout 하나(허용 목록 한 줄)');
 });
 
@@ -115,7 +127,7 @@ test('문구 — 로그인 먼저를 말하고, "결제 이메일로 로그인�
   const src = read('landing/app/checkout/page.jsx');
   const keys = [...new Set([...src.matchAll(/t\('(checkout\.[a-zA-Z.]+)'\)/g)].map((m) => m[1]))];
   for (const p of ['monthly', 'yearly']) keys.push(`checkout.plan.${p}`, `checkout.continue.${p}`);
-  keys.push('checkout.readyTitle', 'checkout.title');
+  keys.push('checkout.readyTitle', 'checkout.title', 'checkout.alreadyTitle');
   assert.ok(keys.length >= 15, `결제 화면 문구 키 ${keys.length}개`);
   for (const k of keys) { const e = dictEntry(k); assert.ok(e.ko && e.en, `${k} ko·en`); }
 });
