@@ -146,6 +146,11 @@ test('계정 모드 업데이트 — 상주 중인 argo-cli 서비스를 새 버
   assert.equal((await f.state()).cliActive, true);
   assert.equal((await f.state()).appAtCliStop, '1.0.0', '멈춘 순간의 앱은 아직 옛 버전이어야 한다(교체 전 정지)');
   assert.equal(JSON.parse(await readFile(join(f.base, 'app/package.json'), 'utf8')).version, '2.0.0');
+  // 이미 로그인해 상주 중인 서버의 업데이트에는 새 설치용 다음 단계(로그인·service install)를 다시 내지 않는다(VPS 0.1.101 제보, 2026-10-10)
+  assert.doesNotMatch(r.stdout, /다음: .*로그인|그다음: .*service install/, r.stdout);
+  assert.match(r.stdout, /이어서 실행/);
+  const fresh = await fixture(t), r2 = fresh.run();
+  assert.match(r2.stdout, /그다음: .*service install/, '새 설치에는 그대로 안내한다');
 });
 test('계정 모드 — 상주 argo를 멈추지 못하면 교체하지 않고 다시 켜 둔 채 안내한다', { skip: !available }, async t => {
   const f = await fixture(t, { oldApp: true, cliActive: true }), r = f.run([], { CLI_STOP_FAIL: '1' });
