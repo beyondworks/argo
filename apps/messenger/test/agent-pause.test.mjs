@@ -53,7 +53,7 @@ test('⑥ 서버 오류: 앞 코드(이유)가 먼저 — 옛 메신저용 뒤 �
 test('⑤ 화면 두 자리 — 폰 에이전트 탭(목록 위)·데스크톱 레일(내 에이전트 구역 위, 개인 공간에서도) + 읽기는 로그인·재연결·탭 진입 때만', () => {
   const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
   assert.match(app, /\{pauseNote && !tabQText\.trim\(\) && <div className="msgr-hint ph-pausenote" role="status">\{t\(pauseNote\.key, pauseNote\.vars\)\}\{pauseNote\.key !== 'agents\.pause\.limit' && <div className="ph-emptyacts"><RunnerButton \/><\/div>\}<\/div>\}/, '폰: 업데이트·꺼짐이면 실행기 연결 단추');
-  assert.match(app, /\{!isPhone && pauseNote && <p className="msgr-rail-empty msgr-pausenote" role="status">\{t\(pauseNote\.key, pauseNote\.vars\)\}\{pauseNote\.key !== 'agents\.pause\.limit' && <> <RunnerButton \/><\/>\}<\/p>\}/, '데스크톱 레일');
+  assert.match(app, /\{!isPhone && pauseNote && <div className="msgr-rail-empty msgr-pausenote" role="status">\{t\(pauseNote\.key, pauseNote\.vars\)\}\{pauseNote\.key !== 'agents\.pause\.limit' && <div><RunnerButton \/><\/div>\}<\/div>\}/, '데스크톱 레일');
   assert.equal((app.match(/readAgentPause\(supabase\)/g) ?? []).length, 2, '주기 호출 없음 — 두 곳(로그인·재연결, 폰 에이전트 탭)만');
   assert.match(app, /readAgentPause\(supabase\)\.then\(\(v\) => \{ if \(live\) setAgentPause\(v\); \}\); return \(\) => \{ live = false; \}; \}, \[uid, syncEpoch\]\);/);
 });
