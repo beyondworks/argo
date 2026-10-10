@@ -23,7 +23,7 @@ export default {
 - 회사 주인이 1:1로 직접 시킨 경우만 바로 바뀝니다: 데스크톱 앱의 에이전트 대화, 메신저에서 주인과 그 에이전트만 있는 1:1 방.
 - 그 밖에서 온 요청은 주인에게 결재 카드로 올라가고, 주인이 승인하면 시스템이 바꿉니다: 조직 채널·회의실, 다른 사람의 요청, 루틴·장시간 작업, 다른 에이전트의 위임·쪽지, 텔레그램·슬랙, 터미널(argo) 대화.
 - 어느 쪽인지는 앱이 판정합니다. 에이전트가 "주인이 시켰다"고 적어도 판정은 바뀌지 않습니다.
-- 바로 바꾼 뒤에는 이전 값 → 새 값과 되돌리는 법을 알려 줍니다(예: "08:00 → 07:00으로 바꿨습니다. 되돌리려면 8시로 되돌려 달라고 하시거나 에이전트 카드 → 하트비트 탭에서 바꾸세요").
+- 바로 바꾼 뒤에는 이전 값 → 새 값과 되돌리는 법을 알려 줍니다(예: "08:00 → 07:00으로 바꿨습니다. 되돌리려면 8시로 되돌려 달라고 하시거나 루틴 → 내 하트비트에서 바꾸세요").
 
 에이전트가 바꾸지 못하는 것(사용자가 화면에서 직접)
 - 결제·요금제·지출 한도, 풀 오토 모드, 컴퓨터 유즈, 자격 증명 동기화.
@@ -53,7 +53,7 @@ When a change applies immediately vs. goes to approval
 - Only when the company owner asked directly in a 1:1: the agent chat in the desktop app, or a Messenger 1:1 room with just the owner and that agent.
 - Requests from anywhere else go to the owner as an approval card, and the system applies the change once approved: organization channels and the Meeting Room, other people's requests, routines and long tasks, delegation or mail from other agents, Telegram/Slack, and terminal (argo) chats.
 - The app decides which case applies. An agent writing "the owner asked" does not change the decision.
-- After an immediate change, the agent tells you old value → new value and how to undo it (e.g. "Changed 08:00 → 07:00. To undo, ask me to set it back to 8:00, or change it in Agent card → Heartbeat tab").
+- After an immediate change, the agent tells you old value → new value and how to undo it (e.g. "Changed 08:00 → 07:00. To undo, ask me to set it back to 8:00, or change it in Routines → My heartbeat").
 
 What agents can never change (the user does it on screen)
 - Billing, plan, and spending limit; Full auto mode; computer use; credential sync.

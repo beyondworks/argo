@@ -54,10 +54,11 @@ export const API_MSG = {
   routine_verify_files_max: { status: 400, ko: '완료 조건 파일은 5개까지', en: 'At most 5 completion-check files' },
   // 크루 영입 — 이름이 회의실 내부 이름(room-)과 겹침(app/api/companies/[ws]/agents POST). 라우트는 이름이 든 문장도 error로 함께 내린다
   crew_slug_reserved: { status: 400, ko: '에이전트 이름이 회의실 내부 이름(room-)과 겹칩니다 — 다른 이름으로 영입해 주세요', en: "That agent name collides with the meeting room's internal name (room-) — please hire with a different name" },
-  // 능동 비서 설정(app/api/companies/[ws]/assistant — src/assistant/settings.mjs). 화면(에이전트 카드 비서 탭)이 errorCode로 이 문구를 그린다
+  // 능동 비서 설정(app/api/companies/[ws]/assistant — src/assistant/settings.mjs). 화면(루틴 → 내 하트비트)이 errorCode로 이 문구를 그린다
   assistant_bad_request: { status: 400, ko: '하트비트 설정 요청이 올바르지 않습니다', en: 'Bad heartbeat settings request' },
   assistant_agent_not_found: { status: 400, ko: '하트비트로 정할 에이전트를 찾을 수 없습니다', en: "Couldn't find the agent to use for heartbeat" },
   assistant_mail_invalid: { status: 400, ko: '메일은 안 봄·미리 보기·알림 중에서 고를 수 있습니다', en: 'Mail can be off, preview, or notify' },
+  assistant_interval_invalid: { status: 400, ko: '확인 주기는 10·15·30·60분 중에서 고를 수 있습니다', en: 'The check interval can be 10, 15, 30 or 60 minutes' },
   assistant_lead_invalid: { status: 400, ko: '일정 알림은 10·15·30·60분 전 중에서 고를 수 있습니다', en: 'Event reminders can be 10, 15, 30 or 60 minutes before' },
   assistant_time_invalid: { status: 400, ko: '시각은 HH:MM 형식이어야 합니다', en: 'Times must be in HH:MM format' },
   assistant_quiet_empty: { status: 400, ko: '조용한 시간의 시작과 끝이 같습니다', en: 'Quiet hours start and end at the same time' },

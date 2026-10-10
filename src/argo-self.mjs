@@ -21,8 +21,7 @@ import { loadRoutines, updateRoutine, removeRoutine } from './routines.mjs';
 import { loadApprovals } from './approvals.mjs';
 import { getTurnStatus } from './turn-status.mjs';
 import { assistantSettingsView, saveAssistantSettings } from './assistant/settings.mjs';
-import { LEAD_CHOICES } from './assistant/config.mjs';
-import { CAL_READ_MS } from './assistant/calendar.mjs';
+import { LEAD_CHOICES, INTERVAL_CHOICES } from './assistant/config.mjs';
 import { settingsDirectTurn } from './gateway/msgr-handoff.mjs';
 import { maskKeyLike } from './runners/shared.mjs';
 
@@ -37,49 +36,57 @@ export { settingsDirectTurn };
 
 /* ─── 설정 목록 ─────────────────────────────────────────────────────────────── */
 
-const ASSIST_WHERE = { ko: '에이전트 카드 → 하트비트 탭', en: 'Agent card → Heartbeat tab' };
+const ASSIST_WHERE = { ko: '루틴 → 내 하트비트', en: 'Routines → My heartbeat' }; // 관리 화면(유건 10/10) — 에이전트 카드 하트비트 탭은 보기 전용
 
 /** 에이전트가 바꿀 수 있는 설정(허용 목록). read(view) = 지금 값(비서 설정 화면 값), write(value, {agent}) = saveAssistantSettings 입력. 값 검증은 normalizeSettingValue + 저장 함수의 화면 규칙. */
 export const SETTINGS = Object.freeze([
   {
     key: 'assistant.morning', type: 'time',
     label: { ko: '하트비트 아침 정리 시각(= 조용한 시간 끝)', en: 'Heartbeat morning summary time (= quiet hours end)' },
-    where: { ko: `${ASSIST_WHERE.ko} → 조용한 시간 끝`, en: `${ASSIST_WHERE.en} → Quiet hours end` },
+    where: { ko: `${ASSIST_WHERE.ko} → 언제 알려 줄까요 → 아침 정리`, en: `${ASSIST_WHERE.en} → When should it tell you? → Morning summary` },
     read: (v) => v.config.quiet.to,
     write: (value) => ({ quiet: { to: value } }),
   },
   {
     key: 'assistant.evening', type: 'time',
     label: { ko: '하트비트 내일 일정 요약 시각', en: "Heartbeat tomorrow's summary time" },
-    where: { ko: `${ASSIST_WHERE.ko} → 내일 일정 요약`, en: `${ASSIST_WHERE.en} → Tomorrow's summary` },
+    where: { ko: `${ASSIST_WHERE.ko} → 언제 알려 줄까요 → 내일 일정 요약`, en: `${ASSIST_WHERE.en} → When should it tell you? → Tomorrow's summary` },
     read: (v) => v.config.eveningAt,
     write: (value) => ({ eveningAt: value }),
   },
   {
     key: 'assistant.quietFrom', type: 'time',
-    label: { ko: '하트비트 조용한 시간 시작', en: 'Heartbeat quiet hours start' },
-    where: { ko: `${ASSIST_WHERE.ko} → 조용한 시간 시작`, en: `${ASSIST_WHERE.en} → Quiet hours start` },
+    label: { ko: '하트비트 방해 금지 시간(조용한 시간) 시작', en: 'Heartbeat do-not-disturb (quiet hours) start' },
+    where: { ko: `${ASSIST_WHERE.ko} → 방해 금지 시간`, en: `${ASSIST_WHERE.en} → Do not disturb` },
     read: (v) => v.config.quiet.from,
     write: (value) => ({ quiet: { from: value } }),
   },
   {
     key: 'assistant.lead', type: 'choice', choices: [...LEAD_CHOICES],
     label: { ko: '하트비트 일정 알림(몇 분 전)', en: 'Heartbeat event reminder (minutes before)' },
-    where: { ko: `${ASSIST_WHERE.ko} → 일정 알림`, en: `${ASSIST_WHERE.en} → Event reminder` },
+    where: { ko: `${ASSIST_WHERE.ko} → 언제 알려 줄까요 → 일정 알림`, en: `${ASSIST_WHERE.en} → When should it tell you? → Event reminder` },
     read: (v) => v.config.leadMinutes,
     write: (value) => ({ leadMinutes: value }),
   },
   {
+    // 확인 주기(일정 전체 읽기 간격) — 다른 하트비트 값과 같은 등급(주인 1:1 바로, 그 밖 결재). 10분 미만 없음(DB 조회 부하 — config.mjs INTERVAL_CHOICES)
+    key: 'assistant.interval', type: 'choice', choices: [...INTERVAL_CHOICES],
+    label: { ko: '하트비트 확인 주기(몇 분마다 일정을 확인하나)', en: 'Heartbeat check interval (minutes between calendar checks)' },
+    where: { ko: `${ASSIST_WHERE.ko} → 얼마나 자주 확인할까요`, en: `${ASSIST_WHERE.en} → How often should it check?` },
+    read: (v) => v.config.intervalMinutes ?? 15,
+    write: (value) => ({ intervalMinutes: value }),
+  },
+  {
     key: 'assistant.quietAlerts', type: 'bool',
-    label: { ko: '조용한 시간에도 일정 알림은 보내기', en: 'Still send event reminders during quiet hours' },
-    where: { ko: `${ASSIST_WHERE.ko} → 조용한 시간에도 일정 알림은 보내기`, en: `${ASSIST_WHERE.en} → Still send event reminders during quiet hours` },
+    label: { ko: '방해 금지 시간(조용한 시간)에도 일정 알림은 보내기', en: 'Still send event reminders during do-not-disturb (quiet hours)' },
+    where: { ko: `${ASSIST_WHERE.ko} → 방해 금지 시간 → 이 시간에도 일정 알림은 보내기`, en: `${ASSIST_WHERE.en} → Do not disturb → Still send event reminders during these hours` },
     read: (v) => v.config.quiet.calendarAlerts,
     write: (value) => ({ quiet: { calendarAlerts: value } }),
   },
   {
     key: 'assistant.enabled', type: 'bool',
     label: { ko: '하트비트(예전 이름 비서) 켜기·끄기', en: 'Heartbeat (formerly Assistant) on/off' },
-    where: { ko: `${ASSIST_WHERE.ko} → 하트비트 켜기 / 하트비트 끄기`, en: `${ASSIST_WHERE.en} → Turn on / Turn off heartbeat` },
+    where: { ko: `${ASSIST_WHERE.ko} → 켜기·끄기 스위치`, en: `${ASSIST_WHERE.en} → on/off switch` },
     read: (v) => v.config.enabled,
     // 켤 때 에이전트 — 지정해 둔 비서가 있으면 그 에이전트, 없으면 이 도구를 부른 에이전트(write의 두 번째 인자)
     write: (value, { agent }) => (value ? { enabled: true, agent } : { enabled: false }),
@@ -88,7 +95,7 @@ export const SETTINGS = Object.freeze([
   {
     key: 'assistant.agent', type: 'agent',
     label: { ko: '하트비트 에이전트(어느 에이전트가 맡는가)', en: 'Heartbeat agent (which agent runs it)' },
-    where: { ko: `${ASSIST_WHERE.ko} → 이 에이전트로 바꾸기`, en: `${ASSIST_WHERE.en} → Use this agent instead` },
+    where: { ko: `${ASSIST_WHERE.ko} → 누가 알려 줄까요`, en: `${ASSIST_WHERE.en} → Who should tell you?` },
     read: (v) => v.config.agent ?? '',
     // 바꾸기만 — 꺼진 비서를 켜지 않는다(켜기는 assistant.enabled로만, applySetting이 꺼짐이면 거절). 저장 함수가 에이전트 교체를 enabled:true로만 받아 켜진 상태에서만 부른다
     write: (value) => ({ enabled: true, agent: value }),
@@ -814,14 +821,14 @@ async function assistantSection(wsId, { lang, slug, now }) {
   const runner = { this_device: pick(lang, `이 기기${s.device ? `(${s.device})` : ''}`, `this device${s.device ? ` (${s.device})` : ''}`), other_device: pick(lang, `다른 기기${s.device ? `(${s.device})` : ''}`, `another device${s.device ? ` (${s.device})` : ''}`), runner_outdated: pick(lang, `옛 버전 기기${s.device ? `(${s.device})` : ''} — 그 기기 업데이트 필요`, `old-version device${s.device ? ` (${s.device})` : ''} — update it`), no_runner: pick(lang, '지금 실행 중인 기기 없음', 'no device running it') }[s.runner] ?? s.runner;
   const here = s.runner === 'this_device' && v.current?.ws === wsId;
   const lines = [
-    pick(lang, '하트비트(능동 알림) — 설정 화면(에이전트 카드 → 하트비트 탭)과 같은 값', 'Heartbeat (proactive alerts) — same values as Agent card → Heartbeat tab'),
+    pick(lang, '하트비트(능동 알림) — 설정 화면(루틴 → 내 하트비트)과 같은 값', 'Heartbeat (proactive alerts) — same values as Routines → My heartbeat'),
     `- ${pick(lang, '이 회사 하트비트', 'This company')}: ${c.enabled ? pick(lang, '켜짐', 'on') : pick(lang, '꺼짐', 'off')}${c.agent ? ` · ${pick(lang, '하트비트 에이전트', 'heartbeat agent')} ${c.agent}${c.agent === slug ? pick(lang, '(나)', ' (me)') : ''}` : ''}`,
     `- ${pick(lang, '지금 하트비트(계정마다 하나)', 'Current heartbeat (one per account)')}: ${v.current ? `${v.current.company} · ${v.current.name}` : pick(lang, '없음', 'none')}`,
-    ...(v.unsealed ? [pick(lang, '- 설정 파일이 설정 화면 밖에서 바뀌어 멈춤 — 하트비트 탭에서 다시 켜면 돈다', '- Stopped: the settings file was changed outside the settings screen — turn it on again in the Heartbeat tab')] : []),
+    ...(v.unsealed ? [pick(lang, '- 설정 파일이 설정 화면 밖에서 바뀌어 멈춤 — 루틴 → 내 하트비트에서 다시 켜면 돈다', '- Stopped: the settings file was changed outside the settings screen — turn it on again in Routines → My heartbeat')] : []),
     `- ${pick(lang, '보는 것', 'Watches')}: ${pick(lang, '일정(읽기만)', 'calendar (read only)')} · ${pick(lang, '받는 곳', 'delivered to')}: ${pick(lang, '개인 공간 1:1 방', 'personal 1:1 room')} · ${pick(lang, '권한', 'permission')}: ${pick(lang, '알림만', 'notify only')}`,
     `- ${pick(lang, '일정 알림', 'Event reminder')}: ${c.leadMinutes}${pick(lang, '분 전', ' min before')} · ${pick(lang, '아침 정리(조용한 시간 끝)', 'Morning summary (quiet hours end)')}: ${c.quiet.to} · ${pick(lang, '내일 일정 요약', "Tomorrow's summary")}: ${c.eveningAt} · ${pick(lang, '조용한 시간', 'Quiet hours')}: ${c.quiet.from}~${c.quiet.to}${c.quiet.calendarAlerts ? pick(lang, '(일정 알림은 보냄)', ' (reminders still sent)') : ''}${c.tz ? ` · ${c.tz}` : ''}`,
     `- ${pick(lang, '실행 기기', 'Running on')}: ${runner}`,
-    `- ${pick(lang, '확인 주기', 'Check cadence')}: ${pick(lang, `켜져 있으면 1분마다 차례를 보고, 일정은 ${CAL_READ_MS / 60_000}분마다 읽는다(조용한 시간에는 쉬었다가 끝나면 밤사이를 모아 아침 정리로 보낸다)`, `when on it checks every minute and reads the calendar every ${CAL_READ_MS / 60_000} min (rests during quiet hours, then sends the night's items in the morning summary)`)}`,
+    `- ${pick(lang, '확인 주기', 'Check cadence')}: ${pick(lang, `켜져 있으면 1분마다 차례를 보고, 일정은 ${c.intervalMinutes ?? 15}분마다 읽는다(assistant.interval — 10·15·30·60분. 조용한 시간에는 쉬었다가 끝나면 밤사이를 모아 아침 정리로 보낸다. 0.1.100 이하 기기가 실행 기기면 15분)`, `when on it checks every minute and reads the calendar every ${c.intervalMinutes ?? 15} min (assistant.interval — 10/15/30/60. Rests during quiet hours, then sends the night's items in the morning summary. A 0.1.100-or-older running device uses 15)`)}`,
     here
       ? `- ${pick(lang, '마지막 일정 확인', 'Last calendar check')}: ${s.readAt ? `${fmtTime(s.readAt, lang)}(${ago(s.readAt, now, lang)})` : pick(lang, '아직 없음', 'not yet')} · ${pick(lang, '오늘 보낸 일정 알림', 'reminders sent today')}: ${s.instantToday}${pick(lang, '건', '')} · ${pick(lang, '상태', 'status')}: ${s.code ? (ASSIST_CODE[s.code]?.[L] ?? s.code) : pick(lang, '기록 없음', 'no record')}`
       : `- ${pick(lang, '마지막 일정 확인·오늘 보낸 알림 수는 실행 기기에만 기록된다 — 이 기기에서는 볼 수 없다', 'Last check and today\'s count are recorded only on the running device — not visible from this device')}`,
@@ -873,7 +880,7 @@ async function meSection(wsId, { lang, slug, now }) {
     `- ${pick(lang, '엔진(개요 탭)', 'Engine (Overview tab)')}: ${pick(lang, '러너', 'runner')} ${runner} · ${pick(lang, '모델', 'model')} ${m.model || '—'}${showEffort ? ` · ${pick(lang, '추론 강도', 'effort')} ${effort}` : ''}`,
     `- ${pick(lang, '능력 탭', 'Abilities tab')}: ${pick(lang, '사용 스킬', 'Skills')} ${scopeText(m.skills, '', lang)} · ${pick(lang, '사용 플러그인(MCP)', 'Plugins (MCP)')} ${scopeText(m.mcp, '', lang)}`,
     `- ${pick(lang, '방식 탭 — 일하는 방식 규칙', 'Working style tab — rules')} ${rules.length}${pick(lang, '개', '')}${rules.length ? `: ${rules.slice(0, 15).map((r, i) => `${i + 1}) ${clip(r, 120)}`).join(' / ')}${rules.length > 15 ? pick(lang, ` …외 ${rules.length - 15}개`, ` …and ${rules.length - 15} more`) : ''}` : ''}`,
-    `- ${pick(lang, '하트비트 탭', 'Heartbeat tab')}: ${amAssistant ? pick(lang, `나는 이 회사의 하트비트 에이전트다(켜짐) — 일정 알림 ${c.leadMinutes}분 전 · 아침 정리 ${c.quiet.to} · 내일 일정 요약 ${c.eveningAt} · 조용한 시간 ${c.quiet.from}~${c.quiet.to}. 자세한 상태는 argo_status section=assistant`, `I am this company's heartbeat agent (on) — reminders ${c.leadMinutes} min before · morning ${c.quiet.to} · tomorrow's summary ${c.eveningAt} · quiet ${c.quiet.from}–${c.quiet.to}. Details: argo_status section=assistant`)
+    `- ${pick(lang, '하트비트(카드 탭은 보기, 관리는 루틴 → 내 하트비트)', 'Heartbeat (card tab is view-only; manage in Routines → My heartbeat)')}: ${amAssistant ? pick(lang, `나는 이 회사의 하트비트 에이전트다(켜짐) — 확인 주기 ${c.intervalMinutes ?? 15}분 · 일정 알림 ${c.leadMinutes}분 전 · 아침 정리 ${c.quiet.to} · 내일 일정 요약 ${c.eveningAt} · 조용한 시간 ${c.quiet.from}~${c.quiet.to}. 자세한 상태는 argo_status section=assistant`, `I am this company's heartbeat agent (on) — check every ${c.intervalMinutes ?? 15} min · reminders ${c.leadMinutes} min before · morning ${c.quiet.to} · tomorrow's summary ${c.eveningAt} · quiet ${c.quiet.from}–${c.quiet.to}. Details: argo_status section=assistant`)
       : c?.enabled ? pick(lang, `하트비트는 켜져 있고 담당은 ${c.agent}다(나 아님).`, `Heartbeat is on, handled by ${c.agent} (not me).`) : pick(lang, '이 회사 하트비트는 꺼져 있다.', "This company's heartbeat is off.")}`,
     `- ${pick(lang, '연결 탭 — 텔레그램 직통 봇', 'Links tab — Direct Telegram bot')}: ${tg}${bot?.botUsername ? ` (${bot.botUsername})` : ''}`,
     `- ${pick(lang, '아르고 메신저', 'Argo Messenger')}: ${company.msgr?.enabled ? pick(lang, '회사 에이전트가 메신저에 연결됨 — 개인 1:1 방에서 대화·알림', 'company agents are connected — chats and notices in the personal 1:1 room') : pick(lang, '연결 안 됨(설정 → 연결 → Argo 메신저 연결)', 'not connected (Settings → Connections → Argo Messenger)')}`,

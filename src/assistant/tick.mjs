@@ -13,15 +13,15 @@
 //  4. 대기열(보낼 글 1건 이하)이 있으면 같은 client_msg_id·같은 본문으로 먼저 다시 보낸다. 비지 않으면 새 글을 만들지 않는다.
 //     기한(시작 전 알림 = 회차 시작, 묶음 = rules.mjs bundleUntil)이 지난 글은 보내지 않고, 그 안의 지난 일정은 보류 목록으로 돌린다.
 //     시작 전 알림은 다시 보내기 직전에 그 회차를 확인 읽기한다 — 배달이 막힌 사이 옮기거나 지운 일정이면 버린다(바뀐 제목·장소는 반영).
-//  5. 차례 판정 — 일정 읽기(15분)·잠자기 뒤·저녁 묶음 범위. 차례가 아니면 네트워크 호출 0, 메모리 사본으로 시작 전 시각만 계산한다.
-//     읽어야 할 차례에 읽지 못했으면(실패·실패 뒤 15분) 낡은 사본으로 지난 일정·묶음을 만들지 않고 확인 범위도 옮기지 않는다 — 다음 성공한 읽기가 그 사이를 다시 본다.
+//  5. 차례 판정 — 일정 읽기(확인 주기 — 설정 intervalMinutes 10·15·30·60분, 없으면 15분)·잠자기 뒤·저녁 묶음 범위. 차례가 아니면 네트워크 호출 0, 메모리 사본으로 시작 전 시각만 계산한다.
+//     읽어야 할 차례에 읽지 못했으면(실패·실패 뒤 확인 주기와 15분 중 짧은 쪽) 낡은 사본으로 지난 일정·묶음을 만들지 않고 확인 범위도 옮기지 않는다 — 다음 성공한 읽기가 그 사이를 다시 본다.
 //  6. 감지 → 시작 전 알림(확인 읽기 뒤) / 지난 일정(보류 목록) / 아침·저녁 묶음.
 //  7. 배달 → 묶음, 그다음 시작 전 알림을 하나씩(시작 전 알림은 늘 혼자 — 설계 7절). 성공한 뒤에만 보낸 키를 기록.
 //     하루 즉시 알림 상한(설정 dailyCap, 설계 9절): 시작 전 알림은 상한을 넘어도 미루거나 버리지 않고 바로 보낸다(시간이 지나면 쓸모가 없다).
 //     상한에 처음 걸린 글(오늘 상한+1번째) 끝에만 한 줄을 붙인다. 이 단계의 글은 모두 템플릿이라 상한이 바꾸는 것은 그 한 줄과 화면의 n/상한이다
 //     (LLM 머리말을 쓰는 단계가 이 셈으로 머리말을 끈다).
-//     상태는 바뀐 때만 로컬 파일에(일정 확인 범위만 바뀐 경우는 15분에 한 번).
-import { loadEffectiveAssistantConfig, calendarActive, mailActive } from './config.mjs';
+//     상태는 바뀐 때만 로컬 파일에(일정 확인 범위만 바뀐 경우는 확인 주기에 한 번).
+import { loadEffectiveAssistantConfig, calendarActive, mailActive, readIntervalMs } from './config.mjs';
 import { runMailStep, takeSummary, persistMail, mailDeps } from './mail.mjs';
 import { readState, pruneState, stateFile } from './state.mjs';
 import { GAP_MS, LEASE_FRESH_MS, dateIn, addDays, instantIn, inQuiet, bundleDue, bundleUntil, assistantMuted, assistantCompanyOf, retryDelayMs } from './rules.mjs';
@@ -65,12 +65,12 @@ function setStatus(st, code, now) {
   if (st.status?.code !== code) st.status = { code, at: now }; // 같은 상태가 이어지면 시각을 바꾸지 않는다(쓰기 0)
 }
 
-/** 바뀐 때만 쓴다. 일정 확인 범위(cal)만 바뀌었으면 15분에 한 번만 — 확인 범위는 매 틱 바뀌는 값이라 매분 쓰지 않는다(재시작 뒤엔 최대 15분 앞부터 다시 본다). */
+/** 바뀐 때만 쓴다. 일정 확인 범위(cal)만 바뀌었으면 확인 주기에 한 번만 — 확인 범위는 매 틱 바뀌는 값이라 매분 쓰지 않는다(재시작 뒤엔 최대 확인 주기 앞부터 다시 본다). */
 async function save(cid, m, now, deps) {
   const st = m.state;
   const sig = JSON.stringify({ ...st, cal: null });
   const cal = JSON.stringify(st.cal);
-  if (sig === m.sig && (cal === m.persistedCal || now - m.persistedAt < CAL_READ_MS)) return;
+  if (sig === m.sig && (cal === m.persistedCal || now - m.persistedAt < m.readMs)) return;
   await deps.writeState(cid, st);
   m.sig = sig; m.persistedCal = cal; m.persistedAt = now;
 }
@@ -159,6 +159,7 @@ export async function runAssistantTick(cid, { now = Date.now(), deps = assistant
   const cfg = await deps.config(cid);
   if (!cfg?.enabled || !cfg.agent) { mems.delete(cid); return { ran: false, why: 'off' }; }
   const m = mem(cid);
+  m.readMs = readIntervalMs(cfg); // 확인 주기(일정 전체 읽기 간격) — 설정에서 바꾸면 다음 틱부터(config.mjs 수정 시각 캐시)
   // 1. 리더 확인이 새것인가 — isCloudLeader()의 기본값(leader:true)은 획득한 리더십이 아니다
   const li = deps.lease();
   if (li.syncOn && !(li.leader && li.ownedAt > 0 && now - li.checkedAt <= LEASE_FRESH_MS)) { m.wasLeader = false; return { ran: false, why: 'lease' }; }
@@ -273,10 +274,12 @@ export async function runAssistantTick(cid, { now = Date.now(), deps = assistant
   const slot = bundleDue(now, cfg, st.bundles);
   const pmTo = slot?.lane === 'pm' ? instantIn(addDays(slot.date, 2), '00:00', cfg.tz) : 0; // 저녁 묶음은 모레 00:00까지(내일 일정)
   const coveredUntil = st.cal.coveredUntil;
-  const needRead = gap || !m.snap || now - m.snap.readAt >= CAL_READ_MS || m.snap.from > coveredUntil || (pmTo > 0 && m.snap.to < pmTo);
+  const needRead = gap || !m.snap || now - m.snap.readAt >= m.readMs || m.snap.from > coveredUntil || (pmTo > 0 && m.snap.to < pmTo);
   let readNow = false;
   if (needRead) {
-    const throttled = m.readFailedAt > 0 && now - m.readFailedAt < CAL_READ_MS; // 읽기 실패 뒤엔 다음 15분 차례까지 다시 부르지 않는다
+    // 읽기 실패 뒤엔 확인 주기와 15분 중 짧은 쪽이 지날 때까지 다시 부르지 않는다 — 60분 주기에서 일시 실패 한 번으로 새 일정을 두 시간 가까이 못 보지 않게(분리 검수 L3).
+    // 실패 중 부하는 지금(15분 고정)과 같거나 적다.
+    const throttled = m.readFailedAt > 0 && now - m.readFailedAt < Math.min(m.readMs, CAL_READ_MS);
     if (!throttled) {
       const s = await session();
       if (!s) return done('login', 'login_required');
@@ -297,7 +300,7 @@ export async function runAssistantTick(cid, { now = Date.now(), deps = assistant
   }
 
   // 6. 판정 — covered = 지난 일정을 가르고 확인 범위를 옮기고 묶음을 만들어도 되는 사본인가: 사본이 확인 범위 시작부터 덮고, 읽어야 할 차례에 읽지
-  //    못한(stale — 실패·실패 뒤 15분) 사본이 아니어야 한다. 낡은 사본으로 하면 그 사이 새로 생긴 회차는 영영 안 보이고, 지운 회차는 "이미 시작한 일정"으로
+  //    못한(stale — 실패·실패 뒤 확인 주기) 사본이 아니어야 한다. 낡은 사본으로 하면 그 사이 새로 생긴 회차는 영영 안 보이고, 지운 회차는 "이미 시작한 일정"으로
   //    나간다(#863 분리 검수). 시작 전 알림은 확인 읽기를 거치므로 낡은 사본으로도 계산한다.
   const stale = needRead && !readNow;
   const covered = !stale && m.snap.from <= coveredUntil;
@@ -311,7 +314,7 @@ export async function runAssistantTick(cid, { now = Date.now(), deps = assistant
     st.cal.coveredUntil = now;
   }
   let due = plan.due;
-  if (due.length && !readNow) { // 확인 읽기 — 마지막 읽기(최대 15분 전) 뒤에 옮기거나 지운 일정에 옛 시각으로 알리지 않게
+  if (due.length && !readNow) { // 확인 읽기 — 마지막 읽기(최대 확인 주기 전) 뒤에 옮기거나 지운 일정에 옛 시각으로 알리지 않게
     const s = await session();
     if (!s) return done('login', 'login_required');
     try {

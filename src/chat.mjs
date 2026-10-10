@@ -214,8 +214,8 @@ export function systemPromptFor(cardMd, wsRoot, skills, meta = {}, lang = 'ko', 
         ? 'Questions about Argo itself — what a screen or number shows (e.g. Deck Memory Links %), your own settings (card, runner, model, rules, routines, heartbeat — formerly called Assistant), messages you sent outside a conversation (heartbeat notices, routine results — they are yours), sync/runner/plan/messenger state, or how a feature works — must be checked with argo_status (section=me for yourself) / argo_help before you answer. Never guess or say "I can\'t check" without calling them. To change an Argo setting use argo_settings (it decides whether the change applies now or needs the owner\'s approval).'
         : '아르고 자체에 대한 질문 — 화면·숫자가 무엇인지(예: 데크의 기억 연결 %), 네 설정(카드·러너·모델·규칙·루틴·하트비트 — 예전 이름 “비서”), 네가 대화 밖에서 보낸 글(하트비트 알림·루틴 결과 — 네 글이다), 동기화·러너·요금제·메신저 상태, 기능이 어떻게 동작하는지 — 은 답하기 전에 argo_status(너 자신은 section=me)·argo_help로 확인하라. 부르지 않고 추측하거나 "확인할 수 없다"고 답하지 마라. 아르고 설정을 바꿀 때는 argo_settings를 쓴다(바로 바뀔지 주인 결재로 갈지는 그 도구가 정한다).')
     : (lang === 'en'
-        ? 'This runner has no Argo status tools. For questions about Argo\'s current numbers, routines, heartbeat or settings, say you can\'t check them from here and point the user to the screen (Deck, Routines, Agent card → Heartbeat tab, Settings) — never guess the values.'
-        : '이 러너에는 아르고 상태 도구가 없다. 아르고의 지금 숫자·루틴·하트비트·설정을 물으면 여기서는 확인할 수 없다고 말하고 화면(데크·루틴·에이전트 카드 → 하트비트 탭·설정)을 안내하라 — 값을 추측하지 마라.');
+        ? 'This runner has no Argo status tools. For questions about Argo\'s current numbers, routines, heartbeat or settings, say you can\'t check them from here and point the user to the screen (Deck, Routines (My heartbeat at the top), Settings) — never guess the values.'
+        : '이 러너에는 아르고 상태 도구가 없다. 아르고의 지금 숫자·루틴·하트비트·설정을 물으면 여기서는 확인할 수 없다고 말하고 화면(데크·루틴(맨 위 내 하트비트)·설정)을 안내하라 — 값을 추측하지 마라.');
   const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Seoul' }); // YYYY-MM-DD
   // 현재 시각 — 크루에겐 시계가 없다(셸 능력이 꺼져 있으면 date조차 못 친다). 시각을 안 주면
   // "지금 몇 시인지 확인할 도구가 없다"며 예약·마감 계산을 거절한다(실사용 신고 2026-07-26).

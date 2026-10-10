@@ -8,6 +8,7 @@ import { Icon, Avatar, Spinner, Skeleton, useScrollLock, ConfirmModal, DropUp, a
 import { useLang } from '../../../i18n';
 import { detectDevicePaths } from '../../../../src/device-paths.mjs'; // 기기 종속 경로 안내 — 노드 의존 0 순수 모듈
 import { onceExpired } from '../../../../src/routine-time.mjs'; // '만료' 판정 — 노드 의존 0 순수 모듈(표시 전용, 상태 쓰기 없음)
+import { HeartbeatCard } from './heartbeat-card.jsx'; // 내 하트비트(개인 기능) — 회사 루틴 목록과 따로 맨 위
 import { routineCrewMissing, applyRoutineToggle, routineStateKind, activeRoutineCount, routineFailKind, routinePillView } from './routine-row.mjs';
 
 function scheduleLabel(s, t, DOW) {
@@ -303,6 +304,8 @@ export default function Routines({ params }) {
         />
       )}
       <div className={styles.content}>
+      {/* 내 하트비트 — 개인 기능이라 회사 루틴(아래 툴바·템플릿·표)과 섞지 않고 맨 위에 따로. 목표형 하트비트 목록은 이 섹션 안 아래에 붙는다 */}
+      <HeartbeatCard ws={ws} agents={agents} agentsLoaded={agentsLoaded} />
       <div className={styles.toolbar}>
         <span className="microlabel">{t('routines.header')}</span>
         <button className="btn sm" onClick={() => openForm()}>

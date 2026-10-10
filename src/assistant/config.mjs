@@ -24,9 +24,13 @@ export const SEAL_FIELD = 'assistantSeal'; // company.json 칸 이름
 /** 봉인 값 — assistant.json 파일 내용(문자열 그대로)의 sha256 hex. */
 export const sealOf = (text) => createHash('sha256').update(String(text), 'utf8').digest('hex');
 export const LEAD_CHOICES = Object.freeze([10, 15, 30, 60]);
+/** 확인 주기(일정 전체 읽기 간격, 분) — 루틴 화면 하트비트 칸에서 고른다(유건 10/10). 10분 미만은 두지 않는다(DB 조회 부하 — 계정당 분당 1/주기번 office_event_list).
+    칸이 없거나 모르는 값이면 15분(이 칸이 생기기 전과 같은 값 — 0.1.100 이하 기기는 이 칸을 모르고 늘 15분이다). */
+export const INTERVAL_CHOICES = Object.freeze([10, 15, 30, 60]);
 export const DAILY_CAP_RANGE = Object.freeze([1, 30]);
 export const DEFAULTS = Object.freeze({
   leadMinutes: 30,
+  intervalMinutes: 15,
   morningAt: '08:00',
   eveningAt: '21:00',
   quiet: Object.freeze({ from: '23:00', to: '08:00', calendarAlerts: false }),
@@ -57,6 +61,7 @@ export function normalizeAssistantConfig(raw) {
     watch: { calendar: w.calendar !== false, mail: w.mail === true || w.mail === 'shadow', tasks: w.tasks !== false, deals: w.deals !== false },
     mailMode: w.mail === true ? 'live' : w.mail === 'shadow' ? 'shadow' : 'off',
     leadMinutes: LEAD_CHOICES.includes(Number(r.leadMinutes)) ? Number(r.leadMinutes) : DEFAULTS.leadMinutes,
+    intervalMinutes: INTERVAL_CHOICES.includes(Number(r.intervalMinutes)) ? Number(r.intervalMinutes) : DEFAULTS.intervalMinutes,
     morningAt,
     eveningAt,
     quiet: { from: hhmm(q.from, DEFAULTS.quiet.from), to: hhmm(q.to, DEFAULTS.quiet.to), calendarAlerts: q.calendarAlerts === true },
@@ -64,6 +69,9 @@ export function normalizeAssistantConfig(raw) {
     tz: normalizeTz(r.tz), // null = 기기 로컬(루틴과 같은 폴백)
   };
 }
+
+/** 일정 전체 읽기 간격(ms) — 엔진(tick.mjs)이 쓴다. 정규화되지 않은 값(테스트가 넘긴 손 설정 등)도 기본 15분으로. */
+export const readIntervalMs = (cfg) => (INTERVAL_CHOICES.includes(Number(cfg?.intervalMinutes)) ? Number(cfg.intervalMinutes) : DEFAULTS.intervalMinutes) * 60_000;
 
 /** 이 단계에서 감시기가 할 일이 있는가 — 켜짐 + 비서 에이전트 지정 + 일정 보기. */
 export const calendarActive = (cfg) => !!(cfg?.enabled && cfg.agent && cfg.watch.calendar);
