@@ -884,6 +884,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     `동료 에이전트가 이어 가던 대화 세션에 메시지를 보낸다. 상대는 자기 맥락(그동안의 대화)에서 답하고, 답이 오면 알림으로 네 세션에 들어와 네가 다시 깨어난다 — 그러니 보낸 뒤 결과를 기다리지 말고 지금 턴을 마무리하라. 같은 상대의 답을 기다리는 동안에는 다시 보낼 수 없다. 즉시 결과가 필요한 하위 작업은 delegate를 써라. to=동료 slug 또는 이름(${session.peers.map((a) => `${a.slug}(${a.name})`).join(', ')}), message=상대가 단독으로 이해할 수 있는 내용.`,
     { to: z.string(), message: z.string() },
     async ({ to, message }) => {
+      if (goalTurn) return text(goalTurnNo(lang === 'en' ? 'Sending session messages to colleagues' : '동료에게 세션 메시지 보내기')); // 받는 턴·깨움 턴은 회차 표지를 잇지 않아 예약·작업을 만들 수 있다(재검수 M-1)
       if ((cnt.session ?? 0) >= lim.mail) return text(lang === 'en' ? `Session message limit (${lim.mail} per turn) reached — wrap up this turn.` : `세션 메시지 한도(턴당 ${lim.mail}회)에 닿았다 — 이번 턴은 더 보내지 말고 마무리하라.`);
       try {
         const { sendSessionMessage } = await import('./session-msg.mjs');
@@ -1953,7 +1954,7 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
       const cliColleagues = bridgeable ? await turnColleagues(wsId, agentSlug, hop, chain, mirrorCtx, lim) : [];
       if (bridgeable) {
         const sink = [];
-        makeCrewServer(wsId, agentSlug, meta.name || agentSlug, cliColleagues, hop, chain, mirrorCtx, lang, cliConnectors, workFolder, sink, journal, fullAuto, lim, tree, turnCounters, await sessionToolFor(wsId, agentSlug, mirrorCtx, source, sessCtx, hop), notOwnerDirect, { settingsDirect, goalTurn, autoTurn: goalTurn != null || source === 'routine' || source === 'job' });
+        makeCrewServer(wsId, agentSlug, meta.name || agentSlug, cliColleagues, hop, chain, mirrorCtx, lang, cliConnectors, workFolder, sink, journal, fullAuto, lim, tree, turnCounters, await sessionToolFor(wsId, agentSlug, mirrorCtx, source, sessCtx, hop), notOwnerDirect, { settingsDirect, goalTurn, autoTurn: goalTurn != null || source === 'routine' || source === 'job' || ['routine', 'job'].includes(mirrorCtx?.continuation?.kind) });
         // 자식 파일이 없는 산출물(셀프호스트 등)이면 크루 도구 없이 진행한다 — 도구 부재가 턴 사망이 되면 안 된다(분리 검수 LOW-7)
         crewBridge = await createCrewMcpBridge(crewToolSpecs(sink)).catch((e) => { console.warn(`[argo] 에이전트 도구 다리 생략(지시 블록으로 진행): ${e?.message ?? e}`); return null; });
       }
@@ -2234,7 +2235,7 @@ ${lang === 'en'
   // 하네스 통일(P-A): 플래그 러너(ARGO_NATIVE_RUNNERS)는 Argo 소유 루프(nativeQuery)로 — 크루 도구 정의를 sink로 받아 같은 핸들러를 실행한다.
   const nativeOn = nativeRunnerEnabled(runner);
   const crewSink = nativeOn ? [] : null;
-  const crewServer = makeCrewServer(wsId, agentSlug, meta.name || agentSlug, colleagues, hop, chain, mirrorCtx, lang, connectors, workFolder, crewSink, journal, fullAuto, lim, tree, turnCounters, await sessionToolFor(wsId, agentSlug, mirrorCtx, source, sessCtx, hop), notOwnerDirect, { settingsDirect, goalTurn, autoTurn: goalTurn != null || source === 'routine' || source === 'job' });
+  const crewServer = makeCrewServer(wsId, agentSlug, meta.name || agentSlug, colleagues, hop, chain, mirrorCtx, lang, connectors, workFolder, crewSink, journal, fullAuto, lim, tree, turnCounters, await sessionToolFor(wsId, agentSlug, mirrorCtx, source, sessCtx, hop), notOwnerDirect, { settingsDirect, goalTurn, autoTurn: goalTurn != null || source === 'routine' || source === 'job' || ['routine', 'job'].includes(mirrorCtx?.continuation?.kind) });
 
   // 로컬 능력 — 전권(capabilities.mjs). 파일·셸 부작용 도구는 사전 승인 목록에서 빼고 canUseTool
   // 게이트로 보낸다 — 게이트가 금지 구역(앱 코드·타사 데이터·자격, 2026-07-22 크리티컬)을 판정한다.

@@ -515,9 +515,10 @@ export async function disableRoutinesForCrew(wsId, slug) {
   });
 }
 
-export async function removeRoutine(wsId, id) {
+export async function removeRoutine(wsId, id, { goal = false } = {}) { // goal = 목표 하트비트도 지우는가 — 루틴 경로(화면·API·메신저 편집·cancel_routine)는 목표를 지우지 않는다(재검수 LOW-7)
   return lockRoutines(wsId, async () => {
     const routines = await loadRoutines(wsId);
+    if (!goal && isGoal(routines.find((r) => r.id === id))) throw codedError('routine_is_goal', '목표 하트비트는 루틴 화면의 목표 목록에서 바꿉니다');
     await saveRoutines(wsId, routines.filter((x) => x.id !== id));
   });
 }

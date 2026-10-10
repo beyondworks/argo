@@ -159,6 +159,8 @@ export async function applyRoutineEdits(wsId, { db, crews, load = loadRoutines, 
     try {
       if (decision === 'superseded') { await finish(edit.edit_id, 'superseded'); out.superseded++; continue; }
       if (decision === 'notfound') { await finish(edit.edit_id, 'failed', 'routine_not_found'); out.failed++; continue; } // M3/H2: noop을 조용히 applied로 덮지 않는다
+      // 목표 하트비트는 메신저 편집으로 지우거나 바꾸지 않는다 — 옛 본체(0.1.100 이하)가 자동화 행으로 올린 목표를 메신저에서 지워도 이 기기의 목표는 남는다(재검수 LOW-7)
+      if (local?.kind === 'goal') { await finish(edit.edit_id, 'failed', 'routine_is_goal'); out.failed++; continue; }
       if (edit.op === 'delete') await remove(wsId, edit.ext_id);
       else await update(wsId, edit.ext_id, pickEditable(edit.patch)); // M1: 화이트리스트 밖 필드는 로컬에도 안 넣는다
       await finish(edit.edit_id, 'applied');

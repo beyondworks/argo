@@ -91,7 +91,7 @@ const goalErr = (code, ko) => codedError(code, ko);
 
 /* ─── 저장(만들기·상태 바꾸기) — routines.json 잠금 안 ─── */
 
-const activeCount = (list) => list.filter((r) => isGoal(r) && r.enabled && r.goal.status === GOAL_ACTIVE).length;
+const activeCount = (list, except = null) => list.filter((r) => isGoal(r) && r.id !== except && (r.goal.status === GOAL_ACTIVE || r.goal.status === GOAL_PAUSED)).length; // 동시 상한은 일시 정지도 센다(재검수 LOW-4)
 /** 끝난 목표 기록이 상한을 넘으면 오래된 것부터 정리(쌓이기만 하는 데이터의 보존 한도) — 반환 = 지운 수 */
 function pruneFinished(list) {
   const ended = list.filter((r) => isGoal(r) && GOAL_ENDED.includes(r.goal.status) && !r.goal.outbox)
@@ -137,7 +137,7 @@ export async function setGoalState(wsId, id, op, { now = Date.now(), from = null
     } else if (op === 'resume') {
       if (g.status === GOAL_ACTIVE && r.enabled) return { value: { ok: true, unchanged: true, routine: { ...r } } };
       if (!(now < Date.parse(g.deadline))) return { value: { ok: false, code: 'goal_deadline_past', routine: { ...r } } };
-      if (activeCount(list) >= GOAL.maxActive) return { value: { ok: false, code: 'goal_max_active', routine: { ...r } } };
+      if (activeCount(list, r.id) >= GOAL.maxActive) return { value: { ok: false, code: 'goal_max_active', routine: { ...r } } };
       // 다시 켜면 곧바로 한 번 확인 — 단 도는 중인 회차(선점이 15분 안)가 있으면 그 선점이 정한 다음 확인을 둔다(다른 프로세스가 겹쳐 돌지 않게, 분리 검수 LOW-3)
       const running = g.claim?.at && now - Date.parse(g.claim.at) < 15 * 60_000;
       r.enabled = true; r.goal = { ...g, status: GOAL_ACTIVE, ...(running ? {} : { nextAt: iso }), failStreak: 0 };
@@ -157,7 +157,7 @@ export async function listGoals(wsId) {
 /* ─── 회차 결과 해석 ─── */
 
 export const HEARTBEAT_OK = 'HEARTBEAT_OK';
-const MARK_RE = /^[\s>*_`"'-]*GOAL\s*:\s*(done|blocked|next|note|continue)\b[\s:：-]*(.*?)[*_`"'\s]*$/i;
+const MARK_RE = /^[ \t]*GOAL[ \t]*:[ \t]*(done|blocked|next|note|continue)\b[ \t:：-]*(.*?)[ \t]*$/; // 끝줄이 정확히 'GOAL:'로 시작할 때만(앞 공백만) — 인용(>)·따옴표·목록 기호로 시작하는 바깥 글 줄은 표지가 아니다(재검수 LOW-2)
 /** 마지막 줄 표지(도구가 없는 러너) 걷어내기(순수) — { text, outcome | null }. 표지는 답 **끝의 연속된 줄**에서만 읽는다(빈 줄은 건너뜀) — 본문 중간에 인용된 바깥 글의
     'GOAL: done' 줄이 거짓 완료가 되지 않게(분리 검수 LOW-4). 걷어낸 줄은 화면·알림에 싣지 않는다. */
 export function parseGoalMarkers(raw) {
@@ -267,6 +267,7 @@ export const goalDeps = {
   personalRoom: async (...a) => (await import('./assistant/deliver.mjs')).personalRoom(...a),
   insertNotice: async (...a) => (await import('./assistant/deliver.mjs')).insertNotice(...a),
   muted: async (company) => (await import('./assistant/rules.mjs')).assistantMuted(company),
+  continuation: async (...a) => (await import('./gateway/msgr.mjs')).runMessengerContinuation(...a), // 메신저 출처 목표의 회차(개인 1:1 방 문맥)
 };
 
 /** 알림 한 건 보내기 — 'sent' | 'dup' | 'muted'. 실패는 던진다(code 'login_required'·'personal_room_unavailable' 등). 하트비트 알림과 같은 방·같은 표지(meta.notification 'assistant'). */
@@ -296,9 +297,10 @@ async function flushOutbox(wsId, id, { lang, deps, now }) {
     const cur = list.find((x) => x.id === id);
     if (!isGoal(cur) || cur.goal.outbox?.basis !== ob.basis) return { save: false }; // 그 사이 다른 글로 바뀌었거나 지워졌다
     const tries = (Number(cur.goal.outbox.tries) || 0) + 1;
-    if (outcome === 'retry') cur.goal = { ...cur.goal, outbox: { ...cur.goal.outbox, tries, nextAt: new Date(now + retryMs(tries)).toISOString() }, claim: null, deliverError: String(err?.code ?? 'deliver_failed').slice(0, 60) };
+    const failSince = cur.goal.deliverFailSince ?? new Date(now).toISOString(); // 첫 실패 시각 — 포기 기한(24시간)의 기준. 다시 잡지 않는다(재검수 LOW-3)
+    if (outcome === 'retry') cur.goal = { ...cur.goal, outbox: { ...cur.goal.outbox, tries, nextAt: new Date(now + retryMs(tries)).toISOString() }, claim: null, deliverFailSince: failSince, deliverError: String(err?.code ?? 'deliver_failed').slice(0, 60) };
     else {
-      cur.goal = { ...cur.goal, outbox: null, claim: null, ...(outcome === 'gave_up' ? { undelivered: ob.kind } : { deliverError: null }), ...(outcome === 'muted' ? { muted: true } : {}) };
+      cur.goal = { ...cur.goal, outbox: null, claim: null, ...(outcome === 'gave_up' ? { undelivered: ob.kind, deliverFailSince: failSince } : { deliverError: null, deliverFailSince: null }), ...(outcome === 'muted' ? { muted: true } : {}) };
       if (ended) cur.enabled = false;
     }
     return { save: true };
@@ -331,8 +333,8 @@ async function runCheck(wsId, r, { lang, chatFn, deps, now }) {
   let t; let failure = null;
   try {
     t = r.msgr
-      ? await (await import('./gateway/msgr.mjs')).runMessengerContinuation(wsId, r.agentSlug, r.msgr, prompt, null, {
-        runChat: (ws, slug, msg, sid, o) => chat(ws, slug, msg, sid, { ...o, goalTurn, journal: { off: true } }), continuation: { kind: 'routine' }, notOwnerDirect: nod })
+      ? await deps.continuation(wsId, r.agentSlug, r.msgr, prompt, null, {
+        runChat: (ws, slug, msg, sid, o) => chat(ws, slug, msg, sid, { ...o, goalTurn, journal: { off: true } }), continuation: { kind: 'routine' }, notOwnerDirect: nod }) // 일지 끔 — 이어 실행이 넘기는 채널 일지 정책을 덮는다(데스크톱 경로와 같다)
       : await chat(wsId, r.agentSlug, prompt, null, { source: 'routine', journal: { off: true }, notOwnerDirect: nod, goalTurn });
     if (!String(t?.reply ?? '').trim() && !String(t?.replyForChecks ?? '').trim() && !goalTurn.outcome) failure = new Error(pick(lang, '에이전트가 아무 답도 내지 않았습니다', 'The agent returned no answer at all'));
   } catch (e) { failure = e; }
@@ -359,19 +361,29 @@ async function runCheck(wsId, r, { lang, chatFn, deps, now }) {
     if (nextAt != null && g.status === GOAL_ACTIVE) g.nextAt = new Date(nextAt).toISOString();
     const live = g.status === GOAL_ACTIVE || g.status === GOAL_PAUSED; // 그 사이 주인이 끈 목표(stopped)는 결과·메모만 적고 알리지 않는다. 일시 정지 중 달성·멈춤은 끝으로 적고 알린다
     if (terminal && live) { g.status = terminal; g.endedAt = iso; g.result = line(out.result || shown, 500); cur.enabled = true; }
-    if (ob && (terminal ? live : g.status === GOAL_ACTIVE)) {
-      // 아직 못 보낸 진행 알림이 있으면 새 글에 붙여 한 번에 보낸다(덮어써 잃지 않게 — 분리 검수 LOW-8). 끝 알림은 진행 알림을 대신한다
-      const carry = !terminal && g.outbox?.kind === 'progress' && g.outbox.text ? `${g.outbox.text}\n` : '';
-      g.outbox = { kind: ob.kind, text: block(`${carry}${ob.text}`, 1500), basis, tries: 0, nextAt: new Date(now + retryMs(0)).toISOString(), until: new Date(now + GOAL.deliverGiveUpMs).toISOString() };
+    // 알림 대기열 — 못 보낸 글은 최신 1건만(진행 알림은 새 글이 대신하고, 끝 알림은 진행 알림을 대신한다). 포기 기한은 첫 실패 시각 + 24시간에 묶어 다시 잡지 않는다.
+    // 그 기한이 이미 지났으면(메신저가 막힌 회사) 진행 알림은 대기열에 두지 않는다 — 회차마다 대기열을 다시 써 쓰기가 늘던 것(재검수 LOW-3). 끝 알림은 한 번 시도하고 그만둔다.
+    const failSince = Date.parse(g.deliverFailSince ?? '');
+    const giveUpAt = Number.isFinite(failSince) ? failSince + GOAL.deliverGiveUpMs : now + GOAL.deliverGiveUpMs;
+    const gaveUp = Number.isFinite(failSince) && now >= giveUpAt;
+    if (ob && (terminal ? live : g.status === GOAL_ACTIVE) && !(gaveUp && !terminal)) {
+      const keepRetry = g.outbox && Number.isFinite(failSince); // 이미 실패 중 — 다시 보낼 시각(백오프)을 그대로 둔다
+      g.outbox = { kind: ob.kind, text: block(ob.text, 1500), basis, tries: keepRetry ? g.outbox.tries ?? 0 : 0,
+        nextAt: keepRetry ? g.outbox.nextAt : new Date(now + retryMs(0)).toISOString(), until: new Date(giveUpAt).toISOString() };
     }
-    cur.goal = g; cur.lastOk = true; cur.lastResult = line(quiet ? pick(lang, '알릴 것 없음', 'Nothing new') : shown || out.result, 160);
+    const lastResult = line(quiet ? pick(lang, '알릴 것 없음', 'Nothing new') : shown || out.result, 160);
+    // 바뀐 것이 없으면 쓰지 않는다 — 조용한 회차는 선점 쓰기 1번으로 끝난다(선점 기록은 다음 선점이 덮는다)
+    const same = JSON.stringify({ ...g, claim: cur.goal.claim }) === JSON.stringify(cur.goal) && cur.lastOk === true && cur.lastResult === lastResult; // 끝·알림·메모·다음 확인·실패 수가 그대로
+    if (same) return { value: { ...cur, goal: { ...cur.goal }, unchanged: true } };
+    cur.goal = g; cur.lastOk = true; cur.lastResult = lastResult;
     return { save: true, value: { ...cur, goal: { ...g } } };
   });
   if (!saved) return { ok: true, discarded: true };
-  if (saved.goal.outbox) {
+  if (ob && saved.goal.outbox?.basis === basis) {
     await recordThread(wsId, saved, saved.goal.outbox, lang);
-    await flushOutbox(wsId, r.id, { lang, deps, now }); // 바로 한 번 보낸다 — 실패하면 대기열이 다음 틱부터 다시 보낸다
-  }
+    // 바로 한 번 보낸다(이미 실패 중이면 다시 보낼 시각이 됐을 때만) — 실패하면 대기열이 다음 틱부터 다시 보낸다
+    if (!(now < Date.parse(saved.goal.outbox.nextAt)) || !saved.goal.deliverFailSince) await flushOutbox(wsId, r.id, { lang, deps, now });
+  } else if (ob && !quiet && !saved.unchanged) await recordThread(wsId, saved, { ...ob }, lang); // 메신저를 포기한 뒤의 진행 알림 — 데스크톱 대화에만 남긴다(같은 결과가 되풀이되면 다시 남기지 않는다)
   return { ok: true, quiet, status: terminal ?? 'continue', nextAt: saved.goal.nextAt };
 }
 
@@ -408,10 +420,10 @@ const OPS = Object.freeze({ start: ['목표 하트비트 시작', 'Start goal he
 const ID_RE = /^g[a-z0-9]{4,20}$/;
 
 /** 만들기 결재 카드의 사유 칸(순수) — 끝나는 조건을 먼저, 목표는 남는 길이만큼. 올릴 때·승인할 때 payload로 다시 만들어 대조한다(목표 글 바꿔치기 방어 — 분리 검수 LOW-1). */
-export function goalReasonText(p = {}, lang = 'ko') {
-  const head = pick(lang, `끝나는 조건: ${line(p.doneWhen, 200)} · 목표: `, `Done when: ${line(p.doneWhen, 200)} · Goal: `);
+export const REASON_MAX = 500; // 결재 사유 칸 상한(approvals.mjs) — 목표·끝나는 조건 전문이 이 안에 들어갈 때만 결재로 올린다
+export function goalReasonText(p = {}, lang = 'ko') { // 자르지 않는다 — 넘치면 호출부가 결재로 올리지 않는다(재검수 LOW-1: 잘린 글로 대조가 통과)
   const tail = p.why ? ` · ${line(maskKeyLike(String(p.why)), 120)}` : '';
-  return `${head}${line(p.goal, Math.max(40, 500 - head.length - tail.length))}${tail}`.slice(0, 500);
+  return `${pick(lang, `끝나는 조건: ${line(p.doneWhen, 200)} · 목표: `, `Done when: ${line(p.doneWhen, 200)} · Goal: `)}${line(p.goal, 500)}${tail}`;
 }
 /** 결재 카드 문구(순수) — 올릴 때·승인할 때 같은 함수로 만들어 대조한다(카드에 보인 것 = 실제로 일어나는 것). */
 export function goalActionText(p = {}, lang = 'ko') {
@@ -481,6 +493,7 @@ export async function goalTool(wsId, args = {}, { slug, lang = 'ko', direct = fa
     }
     const payload = { op: 'start', ...v, tz, lang: L(lang), ...(slug ? { by: slug } : {}), ...(from ? { from } : {}), ...(args.why ? { why: line(maskKeyLike(String(args.why)), 120) } : {}) };
     const reason = goalReasonText(payload, lang);
+    if (reason.length > REASON_MAX) return { kind: 'text', text: pick(lang, `결재 카드에 목표·끝나는 조건을 다 보여 줄 수 없을 만큼 길다(${reason.length}자, ${REASON_MAX}자까지) — 목표·끝나는 조건·이유를 줄여서 다시 올려라.`, `The goal and done condition are too long to show in full on the approval card (${reason.length} chars, max ${REASON_MAX}) — shorten the goal, done condition, or reason and try again.`) };
     return { kind: 'approval', approval: { action: goalActionText(payload, lang), reason, payload },
       text: pick(lang, `이 요청은 주인이 1:1에서 직접 시킨 것이 아니라서 바로 만들지 않고 주인 결재로 올렸다 — 카드에 목표·끝나는 조건·기한이 보인다. 승인되면 시스템이 만들고 결과가 이어서 온다. 승인 전에는 만든 것처럼 말하지 마라.`,
         "This request didn't come from the owner directly in a 1:1, so it was filed for the owner's approval instead of created — the card shows the goal, done condition and deadline. Once approved the system creates it and reports back. Don't say it was created before then.") };

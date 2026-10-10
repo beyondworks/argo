@@ -40,8 +40,10 @@ export const runsToday = (r, now) => (r.goal?.day?.date === goalDate(now, r.sche
 /** 지금 이 목표에 할 일(순수) — 'deliver'(못 보낸 알림 다시 보내기) | 'expire'(기한 지남 — 모델 턴 없이 끄고 알림) | 'check'(회차 — 모델 턴 1번) | null.
     할 일이 없으면 null — 스케줄러 틱은 이 판정만 하고 쓰기·호출 0이다. */
 export function goalMode(r, now = new Date()) {
-  if (!isGoal(r) || !r.enabled) return null;
+  if (!isGoal(r)) return null;
   const g = r.goal; const t = now.getTime();
+  // 일시 정지한 목표도 기한이 지나면 끝낸다('기한 지나 끝남' 알림 1회) — 남으면 정리되지 않고 개수 자리를 차지한다(재검수 LOW-4)
+  if (!r.enabled) return g.status === GOAL_PAUSED && !(t < ms(g.deadline)) ? 'expire' : null;
   if (g.outbox && !(t < ms(g.outbox.nextAt))) return 'deliver';
   if (g.status !== GOAL_ACTIVE) return null;
   if (!(t < ms(g.deadline))) return 'expire';
@@ -61,7 +63,7 @@ export function claimGoal(r, now = new Date()) {
     g.outbox = { ...g.outbox, nextAt: new Date(t + retryMs(g.outbox.tries ?? 0)).toISOString() };
   } else if (mode === 'expire') {
     // 기한 지남 — 상태를 여기서 바꾸고 알림을 대기열에 둔다(실행이 죽어도 다음 틱이 그 알림을 보낸다). 모델 턴 없음.
-    g.status = 'expired'; g.endedAt = iso;
+    g.status = 'expired'; g.endedAt = iso; r.enabled = true; // 알림을 보내는 동안 켜 둔다(보낸 뒤·포기한 뒤 꺼진다) — 일시 정지에서 온 경우도
     g.outbox = { kind: 'expired', basis: `goal:${r.id}:expired`, tries: 0, nextAt: new Date(t + retryMs(0)).toISOString(), until: new Date(t + GOAL.deliverGiveUpMs).toISOString() };
     g.claim = { mode: 'deliver', at: iso };
     return 'deliver';

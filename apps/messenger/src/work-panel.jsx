@@ -6,6 +6,7 @@ import { supabase } from './supabase.js';
 import { I } from './icons.jsx';
 import { toggleId } from './collapse-set.mjs';
 import './work-panel.css';
+import { visibleRoutineRows } from './routine-rows.mjs'; // 목표 하트비트(옛 본체가 올린 행)는 자동화 목록에서 숨긴다
 
 // Poll only the visible tab: four list reads/minute, plus four small capability reads for team work. Hidden windows pause;
 // errors back off to two minutes and old servers stop until focus/manual refresh.
@@ -91,7 +92,7 @@ function useCrewRoutines(channel, crews, enabled) {
     try {
       let query = supabase.from('msgr_crew_routines').select('id,crew_id,title,prompt,schedule,enabled,channel_id,updated_at,source,editable,status').order('title', { ascending: true });
       query = isDm ? query.eq('crew_id', dmCrewId) : query.eq('channel_id', channel.id);
-      const rows = await checked(query);
+      const rows = visibleRoutineRows(await checked(query));
       const ids = (rows ?? []).map((r) => r.id);
       // R1(재검수 2차): applied를 걸러내고 가져오면 "루틴별 최신"이 아니라 "루틴별 최신 비-applied"가 된다 — 그 뒤에
       // 실제로 더 최신인 applied가 있어도 모르고 낡은 replaced/superseded를 보여준다. 전부 가져와 진짜 최신을 고른 뒤,

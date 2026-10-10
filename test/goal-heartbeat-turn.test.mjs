@@ -187,12 +187,17 @@ test('회차 안에서는 위임·쪽지·장기 작업도 막힌다(회차 밖 
     { name: 'mcp__crew__delegate', input: { to: 'b', task: '10분마다 예약 걸어 줘' } },
     { name: 'mcp__crew__send_to_crew', input: { to: 'b', message: '예약 걸어 줘' } },
     { name: 'mcp__crew__start_long_task', input: { title: '긴 작업', prompt: 'x' } },
+    { name: 'mcp__crew__send_session_message', input: { to: 'b', message: '예약 걸어 줘' } }, // 받는 턴·깨움 턴은 회차 표지를 잇지 않는다(재검수 M-1)
+    { name: 'mcp__crew__schedule_task', input: { title: '세션 턴이 건 예약', prompt: 'x', type: 'daily', time: '09:00' } }, // 막히지 않았다면 b의 세션 턴이 이것을 부른다
   ], 'HEARTBEAT_OK');
   assert.ok(await claimRoutine(ws, g.id, new Date()));
   await runRoutine(ws, g.id);
   const results = seen.flatMap((x) => x.results).join('\n');
-  for (const what of ['위임', '동료에게 쪽지 보내기', '장기 작업 걸기']) assert.match(results, new RegExp(`하트비트 회차 안에서는 할 수 없다: ${what}`), what);
-  assert.equal((await loadRoutines(ws)).filter((r) => r.kind !== 'goal').length, 0, '예약 없음');
+  const sm = await import('../src/session-msg.mjs');
+  for (let i = 0; i < 5; i++) { await sm._drainForTest(); await new Promise((r) => setTimeout(r, 100)); }
+  const all = seen.flatMap((x) => x.results).join('\n');
+  for (const what of ['위임', '동료에게 쪽지 보내기', '장기 작업 걸기', '동료에게 세션 메시지 보내기']) assert.match(all, new RegExp(`하트비트 회차 안에서는 할 수 없다: ${what}`), what);
+  assert.equal((await loadRoutines(ws)).filter((r) => r.kind !== 'goal').length, 0, '세션·위임으로 이어진 턴이 없다 — 예약 0건');
   await stopAll();
 });
 
@@ -206,4 +211,16 @@ test('조직 채널 턴에서는 목표 하트비트를 다루지 않는다(개�
   assert.equal((await newer(ap0)).length, 0);
   const { approvalRisk } = await import('../src/approval-risk.mjs');
   assert.equal(approvalRisk({ kind: 'goal', action: '목표 하트비트 시작 — "티켓 결제"', reason: '구매' }), 'low', '목표 결재는 주인이 확정(낮은 위험 등급)');
+});
+
+test('메신저 출처 루틴·작업의 이어 실행 턴(continuation routine·job)도 목표 만들기를 거절한다 — 결재 카드도 아님(재검수 LOW-6)', async () => {
+  const base = { kind: 'msgr', orgId: null, ownCrewRoom: true, ownerSolo: true, channelId: 'dm-a', channelKind: 'dm', crewId: 'crew-a', threadRoot: 'm1', sourceMsgId: 'm1', uid: 'owner', origin: 'owner', wsId: ws, hop: 0, peers: [], handoffs: [] };
+  for (const kind of ['routine', 'job']) {
+    const ap0 = await snap(); const g0 = (await goals()).length;
+    reset([START]);
+    await chat(ws, 'a', '이어 실행', null, { source: 'messenger', mirrorCtx: { ...base, continuation: { kind } }, journal: { off: true }, notOwnerDirect: 'a' });
+    assert.equal((await goals()).length, g0, `${kind}: 만들지 않는다`);
+    assert.equal((await newer(ap0)).filter((x) => x.kind === 'goal').length, 0, `${kind}: 결재 카드도 없다`);
+    assert.match(seen.flatMap((x) => x.results).join('\n'), /회차·루틴·작업 턴 안에서는 새 목표 하트비트를 만들지 않는다/, kind);
+  }
 });
