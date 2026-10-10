@@ -374,16 +374,27 @@ async function runCheck(wsId, r, { lang, chatFn, deps, now }) {
     const lastResult = line(quiet ? pick(lang, '알릴 것 없음', 'Nothing new') : shown || out.result, 160);
     // 바뀐 것이 없으면 쓰지 않는다 — 조용한 회차는 선점 쓰기 1번으로 끝난다(선점 기록은 다음 선점이 덮는다)
     const same = JSON.stringify({ ...g, claim: cur.goal.claim }) === JSON.stringify(cur.goal) && cur.lastOk === true && cur.lastResult === lastResult; // 끝·알림·메모·다음 확인·실패 수가 그대로
-    if (same) return { value: { ...cur, goal: { ...cur.goal }, unchanged: true } };
+    if (same) return { value: { ...cur, goal: { ...cur.goal }, unchanged: true, gaveUp } };
     cur.goal = g; cur.lastOk = true; cur.lastResult = lastResult;
-    return { save: true, value: { ...cur, goal: { ...g } } };
+    return { save: true, value: { ...cur, goal: { ...g }, gaveUp } };
   });
   if (!saved) return { ok: true, discarded: true };
   if (ob && saved.goal.outbox?.basis === basis) {
     await recordThread(wsId, saved, saved.goal.outbox, lang);
     // 바로 한 번 보낸다(이미 실패 중이면 다시 보낼 시각이 됐을 때만) — 실패하면 대기열이 다음 틱부터 다시 보낸다
     if (!(now < Date.parse(saved.goal.outbox.nextAt)) || !saved.goal.deliverFailSince) await flushOutbox(wsId, r.id, { lang, deps, now });
-  } else if (ob && !quiet && !saved.unchanged) await recordThread(wsId, saved, { ...ob }, lang); // 메신저를 포기한 뒤의 진행 알림 — 데스크톱 대화에만 남긴다(같은 결과가 되풀이되면 다시 남기지 않는다)
+  } else if (ob && !quiet && saved.gaveUp && !terminal) {
+    // 메신저를 포기한 뒤의 진행 알림 — 대기열에 두지 않고(쓰기 0) 한 번만 보내 본다. 한 번이라도 가면 포기 표지를 지워 대기열 재시도로 돌아간다(재검수 2차 2: 회복돼도 다시 안 오던 것)
+    if (!saved.unchanged) await recordThread(wsId, saved, { ...ob }, lang); // 데스크톱 대화에는 남긴다(같은 결과의 되풀이는 다시 남기지 않는다)
+    let res = null;
+    try { res = await deliverGoalNotice(wsId, saved, { kind: 'progress', text: block(ob.text, 1500), basis }, { lang, deps }); } catch { /* 아직 막혀 있다 — 쓰기 없이 다음 회차에 다시 */ }
+    if (res === 'sent' || res === 'dup' || res === 'muted') await editRoutines(wsId, (list) => {
+      const cur = list.find((x) => x.id === r.id);
+      if (!isGoal(cur) || !cur.goal.deliverFailSince) return { save: false };
+      cur.goal = { ...cur.goal, deliverFailSince: null, undelivered: null, deliverError: null };
+      return { save: true };
+    });
+  }
   return { ok: true, quiet, status: terminal ?? 'continue', nextAt: saved.goal.nextAt };
 }
 

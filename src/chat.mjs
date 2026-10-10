@@ -752,6 +752,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     '작업에 필요한 외부 도구(MCP)가 이 회사에 없을 때 설치한다(준비 작업 자동 승인 — 결재 없이 즉시 설치되고 활동에 기록된다). source=catalog는 검증된 카탈로그의 id, source=host는 이 컴퓨터의 Claude Code에 이미 등록된 MCP 이름을 env까지 그대로 가져온다. why에는 어떤 작업에 왜 필요한지 한 문장.',
     { source: z.enum(['catalog', 'host']), id: z.string(), why: z.string() },
     async ({ source, id, why }) => {
+      if (goalTurn) return text(goalTurnNo(lang === 'en' ? 'Installing tools' : '도구 설치')); // 설치한 도구는 다음 회차부터 결재 없이 쓸 수 있다 — 회차가 능력을 넓히지 않게(재검수 2차 3)
       // 결재 카드 문구 조작(개행·제어문자 주입으로 사장 기만) 방어 — id를 한 줄로 살균한다.
       const cleanId = String(id).replace(/[\r\n\t\x00-\x1f]+/g, ' ').trim().slice(0, 64);
       if (guest) {

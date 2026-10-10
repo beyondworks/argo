@@ -199,7 +199,7 @@ export async function runDueRoutines(wsId, now, { runFn = runRoutine, awakeSince
     console.log(`[argo] 루틴 실행: ${wsId}/${r.title}`);
     const stamp = now.getTime();
     routineRunning.set(key, stamp);
-    runFn(wsId, r.id)
+    runFn(wsId, r.id, { scheduled: true }) // scheduled — 선점을 거친 실행이라는 표지(목표 하트비트는 이 길로만 돈다)
       .catch((e) => console.error(`[argo] 루틴 실패 ${r.id}:`, e.message))
       // CAS 삭제 — stale 무시 후 새 실행이 시작된 상태에서 옛 실행이 뒤늦게 끝나며 새 항목을 지우면
       // 그 새 실행이 무방비가 된다. 자기 스탬프일 때만 지운다.

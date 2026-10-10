@@ -128,7 +128,7 @@ test('회차 턴 — goal_checkin이 있고 결과가 엔진으로 간다, 풀 �
   assert.match(seen[0].system, /풀 오토 모드가 켜져 있다/);
   reset([{ name: 'mcp__crew__goal_checkin', input: { status: 'done', note: '결재 올림', result: '예매 결재를 올렸습니다.' } }], '예매 결재를 올렸습니다.');
   assert.ok(await claimRoutine(ws, g.id, new Date()));
-  const out = await runRoutine(ws, g.id);
+  const out = await runRoutine(ws, g.id, { scheduled: true });
   assert.equal(out.status, 'done');
   // 등재 확인 = 위 done — 답 글('예매 결재를 올렸습니다.')에는 표지가 없어 done은 goal_checkin 도구로만 올 수 있다(SDK는 MCP 도구를 지연 등재할 수 있어 요청의 도구 목록으로는 보지 않는다)
   assert.doesNotMatch(seen[0].system, /풀 오토 모드가 켜져 있다/, '회차 턴은 주인 직접 턴이 아니다');
@@ -152,7 +152,7 @@ test('회차 안에서는 새 목표 하트비트·예약을 만들지 못하고
     { name: 'mcp__crew__goal_checkin', input: { status: 'continue', notify: true, message: '예매가 열려 결제 결재를 올렸어요.', note: '결제 결재 대기' } },
   ], '예매가 열려 결제 결재를 올렸어요.');
   assert.ok(await claimRoutine(ws, g.id, new Date()));
-  await runRoutine(ws, g.id);
+  await runRoutine(ws, g.id, { scheduled: true });
   assert.equal((await goals()).length, g0, '새 목표 하트비트 없음');
   assert.equal((await loadRoutines(ws)).length, r0, '새 예약 없음');
   const results = seen.flatMap((x) => x.results).join('\n');
@@ -172,7 +172,7 @@ test('회차 턴에서 goal_heartbeat로 목록·끄기를 하려 해도 주인 
   const ap0 = await snap();
   reset([{ name: 'mcp__crew__goal_heartbeat', input: { action: 'stop', id: g.id } }], 'HEARTBEAT_OK');
   assert.ok(await claimRoutine(ws, g.id, new Date()));
-  await runRoutine(ws, g.id);
+  await runRoutine(ws, g.id, { scheduled: true });
   assert.equal((await goals()).find((x) => x.id === g.id).goal.status, 'active');
   const [card] = (await newer(ap0)).filter((x) => x.kind === 'goal');
   assert.equal(card.payload.op, 'stop');
@@ -188,16 +188,19 @@ test('회차 안에서는 위임·쪽지·장기 작업도 막힌다(회차 밖 
     { name: 'mcp__crew__send_to_crew', input: { to: 'b', message: '예약 걸어 줘' } },
     { name: 'mcp__crew__start_long_task', input: { title: '긴 작업', prompt: 'x' } },
     { name: 'mcp__crew__send_session_message', input: { to: 'b', message: '예약 걸어 줘' } }, // 받는 턴·깨움 턴은 회차 표지를 잇지 않는다(재검수 M-1)
+    { name: 'mcp__crew__request_tool_install', input: { source: 'catalog', id: 'gmail', why: '결제 메일 보내기' } }, // 설치한 도구는 다음 회차부터 결재 없이 쓸 수 있다(재검수 2차 3)
     { name: 'mcp__crew__schedule_task', input: { title: '세션 턴이 건 예약', prompt: 'x', type: 'daily', time: '09:00' } }, // 막히지 않았다면 b의 세션 턴이 이것을 부른다
   ], 'HEARTBEAT_OK');
   assert.ok(await claimRoutine(ws, g.id, new Date()));
-  await runRoutine(ws, g.id);
+  await runRoutine(ws, g.id, { scheduled: true });
   const results = seen.flatMap((x) => x.results).join('\n');
   const sm = await import('../src/session-msg.mjs');
   for (let i = 0; i < 5; i++) { await sm._drainForTest(); await new Promise((r) => setTimeout(r, 100)); }
   const all = seen.flatMap((x) => x.results).join('\n');
-  for (const what of ['위임', '동료에게 쪽지 보내기', '장기 작업 걸기', '동료에게 세션 메시지 보내기']) assert.match(all, new RegExp(`하트비트 회차 안에서는 할 수 없다: ${what}`), what);
+  for (const what of ['위임', '동료에게 쪽지 보내기', '장기 작업 걸기', '동료에게 세션 메시지 보내기', '도구 설치']) assert.match(all, new RegExp(`하트비트 회차 안에서는 할 수 없다: ${what}`), what);
   assert.equal((await loadRoutines(ws)).filter((r) => r.kind !== 'goal').length, 0, '세션·위임으로 이어진 턴이 없다 — 예약 0건');
+  const mcp = JSON.parse(await (await import('node:fs/promises')).readFile(join(p.root, 'mcp.json'), 'utf8').catch(() => '{}'));
+  assert.equal(JSON.stringify(mcp).includes('gmail'), false, '도구가 설치되지 않았다');
   await stopAll();
 });
 

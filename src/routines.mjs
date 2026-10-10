@@ -526,9 +526,13 @@ export async function removeRoutine(wsId, id, { goal = false } = {}) { // goal =
 /** 루틴 실행 — 새 세션 1턴. 결과 요약을 루틴에 기록(전체는 vault 핸드오버에).
     chat()은 수 분 걸리므로 락 밖에서 돌리고, 결과 기록만 락 안에서 해당 루틴 필드에 반영한다
     — 실행 도중 사용자가 다른 루틴을 지우거나 이 루틴을 꺼도 낡은 전체 스냅샷으로 되돌리지 않는다. */
-export async function runRoutine(wsId, id, { chatFn = null, startAt = null, session } = {}) {
+export async function runRoutine(wsId, id, { chatFn = null, startAt = null, session, scheduled = false } = {}) { // scheduled = 스케줄러 틱이 선점한 실행(목표 하트비트는 이 길로만 돈다)
   // 목표 하트비트 — 같은 스케줄러 선점(lastRun)을 거쳐 왔다. 실행은 목표 엔진이 한다(동적 임포트 — chat과 같은 순환 차단 이유)
-  if (isGoal((await loadRoutines(wsId)).find((r) => r.id === id))) return (await import('./goal-heartbeat.mjs')).runGoal(wsId, id, { chatFn });
+  if (isGoal((await loadRoutines(wsId)).find((r) => r.id === id))) {
+    // '지금 실행'(화면·API)으로는 돌리지 않는다 — 남은 선점 기록으로 모델 턴을 하루 상한 밖에서 몇 번이든 다시 돌릴 수 있었다(재검수 2차 1)
+    if (!scheduled) throw codedError('goal_run_now', '목표 하트비트는 다음 확인 시각에 돕니다 — 바로 확인하려면 에이전트에게 말해 주세요');
+    return (await import('./goal-heartbeat.mjs')).runGoal(wsId, id, { chatFn });
+  }
   // startAt = 테스트 전용(시작 시각 주입) — "시작이 예약 시각을 가로지르는 실행"은 실제 분 경계를
   // 기다리지 않고는 재현할 수 없다(catch의 once 끄기 판정 시계가 이 각인을 쓴다).
   // 시작 각인과 함께 놓친 회차 표지(missed — 스케줄러 recordMissedSlots)를 꺼내 비운다: 이번 실행이 대화 기록에 한 줄로 남긴다(같은 회차를 두 번 남기지 않게).

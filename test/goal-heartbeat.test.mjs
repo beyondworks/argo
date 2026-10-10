@@ -53,7 +53,7 @@ const fakeChat = (replies) => {
 const tick = async (id, chatFn, at = new Date()) => {
   const claimed = await claimRoutine(WS, id, at);
   if (!claimed) return null;
-  return runRoutine(WS, id, { chatFn });
+  return runRoutine(WS, id, { chatFn, scheduled: true });
 };
 
 test('만들기 — 진행 중·곧 첫 확인·스케줄 종류 goal(옛 기기는 발화하지 않는 모양)·기본 기한 7일', async () => {
@@ -419,6 +419,8 @@ test('화면 목록(goal-list.jsx) — 진행 중·일시 정지·끝난 목표,
 test('메신저가 24시간 넘게 막힌 회사 — 진행 알림은 대기열에 다시 쌓지 않고, 조용한 회차는 선점 쓰기 1번뿐(재검수 LOW-3)', async () => {
   const { readFile } = await import('node:fs/promises');
   const r = await make({ title: '막힌 방' });
+  const real = gh.goalDeps.personalRoom;
+  gh.goalDeps.personalRoom = async () => { throw Object.assign(new Error('no room'), { code: 'personal_room_unavailable' }); }; // 메신저가 계속 막혀 있다
   await patchGoal(r.id, (x) => { x.goal.deliverFailSince = new Date(Date.now() - 25 * H).toISOString(); x.goal.undelivered = 'progress'; });
   await tick(r.id, fakeChat([{ reply: '소식' }]));
   let cur = await byId(r.id);
@@ -431,12 +433,13 @@ test('메신저가 24시간 넘게 막힌 회사 — 진행 알림은 대기열�
   const at = new Date();
   assert.ok(await claimRoutine(WS, r.id, at));
   const afterClaim = await readFile(file, 'utf8');
-  await runRoutine(WS, r.id, { chatFn: fakeChat([{ reply: '소식' }]) });
+  await runRoutine(WS, r.id, { chatFn: fakeChat([{ reply: '소식' }]), scheduled: true });
   assert.equal(await readFile(file, 'utf8'), afterClaim, '바뀐 것이 없는 회차 — routines.json 그대로');
   const lines = (await loadThread(WS, 'alpha')).messages.filter((m) => /막힌 방/.test(m.text ?? '')).length;
   assert.equal(lines, 2, '같은 결과의 되풀이는 대화에 다시 남기지 않는다(지시·답 한 쌍)');
   cur = await byId(r.id);
   assert.equal(cur.goal.outbox, null);
+  gh.goalDeps.personalRoom = real;
   await gh.setGoalState(WS, r.id, 'stop');
 });
 
@@ -515,5 +518,64 @@ test('루틴 경로로는 목표를 지우지 않는다 — 루틴 삭제·메�
   const cur = await byId(r.id);
   assert.ok(cur, '목표가 남는다'); assert.equal(cur.prompt, r.prompt, '내용도 그대로');
   assert.ok(done.every(([, st, err]) => st !== 'applied' && (st === 'superseded' || err === 'routine_is_goal')), JSON.stringify(done));
+  await gh.setGoalState(WS, r.id, 'stop');
+});
+
+test('지금 실행(화면·API의 runRoutine)으로는 목표를 돌리지 않는다 — 남은 선점으로 하루 상한 밖 재실행 금지(재검수 2차 1)', async () => {
+  const r = await make({ title: '지금 실행 금지' });
+  await tick(r.id, fakeChat([{ reply: 'HEARTBEAT_OK' }]));
+  await patchGoal(r.id, (x) => { x.goal.nextAt = new Date(Date.now() - 1000).toISOString(); });
+  await tick(r.id, fakeChat([{ reply: 'HEARTBEAT_OK' }])); // 두 번째 조용한 회차 — 바뀐 것이 없어 결과 쓰기 생략, 선점 기록이 남는다
+  assert.ok((await byId(r.id)).goal.claim, '전제: 선점 기록이 남아 있다');
+  const chatFn = fakeChat([{ reply: 'HEARTBEAT_OK' }]);
+  for (let i = 0; i < 3; i++) await assert.rejects(runRoutine(WS, r.id, { chatFn }), (e) => e.errorCode === 'goal_run_now');
+  assert.equal(chatFn.calls.length, 0, '모델 턴 0');
+  const { API_MSG } = await import('../app/apimsg.mjs');
+  assert.equal(API_MSG.goal_run_now.status, 400);
+  await gh.setGoalState(WS, r.id, 'stop');
+});
+
+test('포기 기한은 첫 실패 시각에 고정 — 다시 보내다 또 실패해도 기한·기준이 밀리지 않는다(재검수 2차 4)', async () => {
+  const r = await make({ title: '기한 고정' });
+  const real = gh.goalDeps.personalRoom;
+  gh.goalDeps.personalRoom = async () => { throw Object.assign(new Error('no room'), { code: 'personal_room_unavailable' }); };
+  await tick(r.id, fakeChat([{ reply: '첫 소식' }]));
+  const first = await byId(r.id);
+  await new Promise((res) => setTimeout(res, 20));
+  await patchGoal(r.id, (x) => { x.goal.outbox.nextAt = new Date(Date.now() - 1000).toISOString(); });
+  await tick(r.id, fakeChat([]), new Date(Date.now() + 60_000)); // 대기열 다시 보내기 — 또 실패
+  gh.goalDeps.personalRoom = real;
+  const cur = await byId(r.id);
+  assert.equal(cur.goal.outbox.tries, 2, '두 번째 실패가 적혔다');
+  assert.equal(cur.goal.deliverFailSince, first.goal.deliverFailSince, '첫 실패 시각 그대로');
+  assert.equal(cur.goal.outbox.until, first.goal.outbox.until, '포기 기한 그대로');
+  await gh.setGoalState(WS, r.id, 'stop');
+});
+
+test('24시간 포기 뒤에도 새 진행 알림은 한 번씩 보내 보고, 가면 포기 표지를 지운다 / 아직 막혔으면 쓰기 0(재검수 2차 2)', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const file = join(process.env.ARGO_ROOT, WS, 'routines.json');
+  const r = await make({ title: '회복' });
+  await patchGoal(r.id, (x) => { x.goal.deliverFailSince = new Date(Date.now() - 25 * H).toISOString(); x.goal.undelivered = 'progress'; });
+  // 아직 막힘 — 보내 보지만 실패, 대기열·쓰기 없음
+  const real = gh.goalDeps.personalRoom;
+  gh.goalDeps.personalRoom = async () => { throw Object.assign(new Error('no room'), { code: 'personal_room_unavailable' }); };
+  await tick(r.id, fakeChat([{ reply: '막힌 동안 소식' }]));
+  let cur = await byId(r.id);
+  assert.equal(cur.goal.outbox, null); assert.ok(cur.goal.deliverFailSince, '아직 포기 상태');
+  // 같은 결과로 한 번 더 — 회차 결과 쓰기도 보내기 쓰기도 없다
+  await patchGoal(r.id, (x) => { x.goal.nextAt = new Date(Date.now() - 1000).toISOString(); });
+  assert.ok(await claimRoutine(WS, r.id, new Date()));
+  const afterClaim = await readFile(file, 'utf8');
+  await runRoutine(WS, r.id, { chatFn: fakeChat([{ reply: '막힌 동안 소식' }]), scheduled: true });
+  assert.equal(await readFile(file, 'utf8'), afterClaim, '막힌 채 같은 결과 — routines.json 그대로');
+  // 회복 — 새 진행 알림이 가고 포기 표지가 지워진다
+  gh.goalDeps.personalRoom = real;
+  const n0 = sent.length;
+  await patchGoal(r.id, (x) => { x.goal.nextAt = new Date(Date.now() - 1000).toISOString(); });
+  await tick(r.id, fakeChat([{ reply: '회복 뒤 소식' }]));
+  assert.equal(sent.length, n0 + 1); assert.match(sent.at(-1).ob.body, /회복 뒤 소식/);
+  cur = await byId(r.id);
+  assert.equal(cur.goal.deliverFailSince, null, '포기 표지 지움 — 이후는 대기열 재시도로');
   await gh.setGoalState(WS, r.id, 'stop');
 });

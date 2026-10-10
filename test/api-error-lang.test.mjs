@@ -111,6 +111,7 @@ const EXPECT = {
   goal_max_active: { status: 409, ko: '목표 하트비트는 동시에 5개까지 켤 수 있습니다', en: 'Up to 5 goal heartbeats can run at once' },
   goal_deadline_past: { status: 409, ko: '기한이 지난 목표는 다시 켤 수 없습니다', en: 'A goal past its deadline cannot be resumed' },
   goal_op_invalid: { status: 400, ko: '알 수 없는 동작입니다', en: 'Unknown action' },
+  goal_run_now: { status: 400, ko: '목표 하트비트는 다음 확인 시각에 돕니다 — 바로 확인하려면 에이전트에게 말해 주세요', en: 'Goal heartbeats run at their next check time — to check now, ask the agent' },
 };
 
 test('apiError — ko 문구는 기존 프로덕션 문자열 그대로 + 상태코드 + errorCode 동봉', async () => {
