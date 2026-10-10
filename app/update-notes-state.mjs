@@ -22,6 +22,8 @@ export const UPDATE_NOTES = Object.freeze({
   // 근거 PR — contextBudget: #880 / chatImages: #882 / macFirst: #884 / gpt55Retire: #887
   // #874(재시동 직후 앱이 상주 자리를 먼저 차지)는 소스 설치 상주(LaunchAgent next start)에만 생겨 일반 사용자 안내에서 뺐다(분리 검수 2026-10-09)
   '0.1.100': Object.freeze(['updates.note.contextBudget', 'updates.note.chatImages', 'updates.note.macFirst', 'updates.note.gpt55Retire', 'updates.note.assistantOnce']),
+  // 0.1.101 발행에 들어가는 안내 — heartbeatName: 비서 → 하트비트 이름 변경(화면·에이전트 안내·알림 글 머리). 같은 버전의 다른 안내는 각 PR이 이 줄에 더한다
+  '0.1.101': Object.freeze(['updates.note.heartbeatName']),
 });
 
 export function stableVersion(value) {

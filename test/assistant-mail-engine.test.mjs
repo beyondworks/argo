@@ -75,7 +75,7 @@ test('메일만 보는 비서(일정 끔) — 즉시 몫은 1:1 방 묶음 글, 
   env.results = [{ account: ACC, historyId: '110', changed: [mail('a', { subject: '세금계산서 발행 요청' }), mail('n', { from: 'Stripe', addr: 'news@stripe.com', subject: 'Weekly', labels: ['INBOX', 'CATEGORY_PROMOTIONS'] })] }];
   await run(ws, env, at('09:10'), at('09:10'));
   assert.equal(env.inserts.length, 1);
-  assert.match(env.inserts[0].body, /^\[비서\] 확인할 것 하나\n1\. 계약·입금 메일 — 김대리/);
+  assert.match(env.inserts[0].body, /^\[하트비트\] 확인할 것 하나\n1\. 계약·입금 메일 — 김대리/);
   assert.equal(env.inserts[0].channel_id, 'room-crew-p');
   assert.equal(env.inserts[0].meta.assistant.outside, true);
   const st = JSON.parse(await readFile(stateFile(ws), 'utf8'));
@@ -84,7 +84,7 @@ test('메일만 보는 비서(일정 끔) — 즉시 몫은 1:1 방 묶음 글, 
   assert.ok(st.sent[`mail:${ACC}:a`] > 0, '보낸 키는 엔진 상태에도(방에서 복구와 같이)');
   await run(ws, env, at('21:00'), at('21:00'));
   const pm = env.inserts.at(-1);
-  assert.match(pm.body, /^\[비서\] 저녁 정리 — 10월 8일\(목\)\n\n메일\n· 뉴스레터 1건\(Stripe\)/);
+  assert.match(pm.body, /^\[하트비트\] 저녁 정리 — 10월 8일\(목\)\n\n메일\n· 뉴스레터 1건\(Stripe\)/);
   assert.equal(pm.meta.assistant.kind, 'pm');
   assert.equal(pm.meta.assistant.outside, true, '메일 줄이 든 정리 글 — 방 문맥에는 표지 줄');
   assert.deepEqual(env.mailState.evening, [], '넣은 저녁 몫은 비운다(파일에도)');

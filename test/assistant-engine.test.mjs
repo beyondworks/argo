@@ -113,7 +113,7 @@ test('C1·C2: 14:00 일정 — 13:30 틱에 시작 전 알림 1건(개인 1:1 �
   assert.equal(r.crew_id, 'crew-p');
   assert.equal(r.client_msg_id, clientMsgId('crew-p', `cal:e1:${iso(at('14:00'))}:pre`), '기준 = 그 키 하나');
   assert.match(r.client_msg_id, /^as:crew-p:[0-9a-f]{32}$/);
-  assert.equal(r.body, '[비서] 곧 시작하는 일정\n· 14:00 일정 e1 — 30분 뒤 시작 · 장소: 본사 3층');
+  assert.equal(r.body, '[하트비트] 곧 시작하는 일정\n· 14:00 일정 e1 — 30분 뒤 시작 · 장소: 본사 3층');
   assert.deepEqual(r.meta.assistant.keys, [`cal:e1:${iso(at('14:00'))}:pre`]);
   assert.equal(r.meta.notification, 'assistant');
   assert.equal((await state(ws)).day.instant, 1, '오늘 즉시 알림 수');
@@ -174,7 +174,7 @@ test('C7: 종일 일정 — 시작 전 알림 0, 아침 묶음에 "오늘 종일
   const r = env.inserts[0];
   assert.equal(hhmm(r.at), '08:00');
   assert.equal(r.meta.assistant.kind, 'am');
-  assert.equal(r.body, '[비서] 아침 정리 — 10월 8일(목)\n\n오늘 종일\n· 종일 워크숍');
+  assert.equal(r.body, '[하트비트] 아침 정리 — 10월 8일(목)\n\n오늘 종일\n· 종일 워크숍');
   assert.equal(r.client_msg_id, clientMsgId('crew-p', `sum:am:${D}`), '묶음 기준 = 그 키 하나');
 });
 
@@ -186,7 +186,7 @@ test('C8: 21:00 — 내일 일정 3건이면 저녁 묶음에 3줄 / 0건이고 
   assert.equal(env.inserts.length, 1);
   const r = env.inserts[0];
   assert.equal(hhmm(r.at), '21:00');
-  assert.equal(r.body, '[비서] 저녁 정리 — 10월 8일(목)\n\n내일 일정 3건 — 10월 9일(금)\n· 종일 휴가\n· 09:00 일정 t1\n· 13:00 일정 t2');
+  assert.equal(r.body, '[하트비트] 저녁 정리 — 10월 8일(목)\n\n내일 일정 3건 — 10월 9일(금)\n· 종일 휴가\n· 09:00 일정 t1\n· 13:00 일정 t2');
   const ws0 = await company();
   const env0 = fakeServer({ events: [] });
   await run(ws0, env0, at('20:58'), at('21:30'));
@@ -383,9 +383,9 @@ test('시작 전 알림은 묶음 차례에도 혼자 보낸다(설계 7절 — 
   const env = fakeServer({ events: [ev('s1', at('08:20'), at('09:00'), { title: '스탠드업' }), ev('d1', at('00:00'), at('00:00', '2026-10-09'), { all_day: true, title: '워크숍' })] });
   await run(ws, env, at('07:59'), at('08:01'));
   assert.deepEqual(env.inserts.map((r) => [hhmm(r.at), r.meta.assistant.kind]), [['08:00', 'am'], ['08:00', 'pre']]);
-  assert.equal(env.inserts[0].body, '[비서] 아침 정리 — 10월 8일(목)\n\n오늘 종일\n· 종일 워크숍', '묶음에는 곧 시작 줄이 없다 — 늦게 나가도 거짓 "N분 뒤"가 생기지 않는다');
+  assert.equal(env.inserts[0].body, '[하트비트] 아침 정리 — 10월 8일(목)\n\n오늘 종일\n· 종일 워크숍', '묶음에는 곧 시작 줄이 없다 — 늦게 나가도 거짓 "N분 뒤"가 생기지 않는다');
   assert.equal(env.inserts[1].client_msg_id, clientMsgId('crew-p', `cal:s1:${iso(at('08:20'))}:pre`));
-  assert.equal(env.inserts[1].body, '[비서] 곧 시작하는 일정\n· 08:20 스탠드업 — 20분 뒤 시작');
+  assert.equal(env.inserts[1].body, '[하트비트] 곧 시작하는 일정\n· 08:20 스탠드업 — 20분 뒤 시작');
   // 리더 교체 — 기기 A가 13:30에 14:00 알림을 보낸 뒤, 이 회사 상태가 없는 기기 B가 13:31에 리더가 된다(낮의 아침 묶음 차례에 그 회차를 다시 넣지 않는다)
   const ws2 = await company();
   const env2 = fakeServer({ events: [ev('m1', at('14:00'), at('15:00'), { title: '미팅' })] });
@@ -407,7 +407,7 @@ test('묶음 기한 — 저녁 묶음 시각까지 못 보낸 아침 묶음은 �
   await run(ws, env, at('21:00'), at('21:02'));
   const today = env.inserts.filter((r) => r.at >= at('08:00'));
   assert.deepEqual(today.map((r) => [hhmm(r.at), r.meta.assistant.kind]), [['21:00', 'pm']], '기한 지난 아침 묶음은 보내지 않는다');
-  assert.match(today[0].body, /^\[비서\] 저녁 정리 — 10월 8일\(목\)/);
+  assert.match(today[0].body, /^\[하트비트\] 저녁 정리 — 10월 8일\(목\)/);
   assert.match(today[0].body, /이미 시작한 일정\(조용한 시간 동안\)\n· 07:30 조찬/, '아침 묶음 안의 지난 일정은 보류 목록으로 돌아와 저녁 묶음에');
   assert.doesNotMatch(today[0].body, /오늘 종일/, '"오늘 종일"은 아침 묶음 몫 — 저녁에 옮겨 쓰지 않는다');
   // 아침 묶음이 대기열에 있는 채 끄고, 이틀 뒤 다시 켬 — 꺼짐은 파일을 열지 않으므로(D2) 기한이 지난 글을 버린다
@@ -579,7 +579,7 @@ test('템플릿 문구 — 모든 키에 한국어·영어가 다 있다, 영어
   const ws = await company({ lang: 'en' });
   const env = fakeServer({ events: [ev('e1', at('14:00'), at('15:00'), { title: 'Client call', location: 'HQ' })] });
   await run(ws, env, at('13:29'), at('13:31'));
-  assert.equal(env.inserts[0].body, '[Assistant] Starting soon\n· 14:00 Client call — starts in 30 min · at HQ');
+  assert.equal(env.inserts[0].body, '[Heartbeat] Starting soon\n· 14:00 Client call — starts in 30 min · at HQ');
 });
 
 test('메신저 알림 종류에 assistant — 이 채널이 보내는 전부를 열거한다(끄면 감시기가 글을 만들지 않는다)', () => {

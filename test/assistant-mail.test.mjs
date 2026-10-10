@@ -194,12 +194,12 @@ test('글: 사전의 모든 키에 ko·en, 답장 필요 글은 무엇이 왔나
   for (const [k, v] of Object.entries(X.MAIL_TEXT)) assert.ok(Array.isArray(v) && v.length === 2 && v[0] && v[1], `${k}: ko·en`);
   const p = P.parsePrep(out(), { source: SRC, today: '2026-10-08', wantBrief: true });
   const body = X.composeReply(mail('m2', { at: at('02:14') }), { prep: p, briefName: 'Kimi K3 script timeline 자료 정리.md', lang: 'ko', now: at('08:00'), tz: 'Asia/Seoul' });
-  const order = ['[비서] 답장이 필요한 메일 — Vickie Peng · 02:14 도착', '유건님, Kimi K3 건', '· 원하는 것:', '· 기한:', '· 아직 답장은 안 하셨어요. 오늘 안에', '준비한 것', '· 자료 정리: 첨부 파일', '· 회신 초안', '안녕하세요, Vickie님.', '확인할 것 하나: 스크립트가'];
+  const order = ['[하트비트] 답장이 필요한 메일 — Vickie Peng · 02:14 도착', '유건님, Kimi K3 건', '· 원하는 것:', '· 기한:', '· 아직 답장은 안 하셨어요. 오늘 안에', '준비한 것', '· 자료 정리: 첨부 파일', '· 회신 초안', '안녕하세요, Vickie님.', '확인할 것 하나: 스크립트가'];
   let pos = -1;
   for (const s of order) { const i = body.indexOf(s); assert.ok(i > pos, `순서: ${s}`); pos = i; }
   assert.equal((body.match(/확인할 것 하나/g) ?? []).length, 1, '질문은 하나');
   const en = X.composeReply(mail('m2'), { noPrep: 'cap', lang: 'en', now: at('10:00'), tz: 'Asia/Seoul' });
-  assert.match(en, /^\[Assistant\] Mail waiting for your reply/);
+  assert.match(en, /^\[Heartbeat\] Mail waiting for your reply/);
   assert.match(en, /limit is reached/);
   assert.equal(X.topicOf('Re: Fwd: Kimi K3 script timeline https://x.y/z (Ref 12345678)'), 'Kimi K3 script timeline (Ref )');
 });
@@ -209,7 +209,7 @@ test('(b) 짧은 알림 묶음 — "확인할 것 2건: 1. … 2. …", 보안�
   const sec = mail('s1', { from: 'Google', addr: 'no-reply@accounts.google.com', subject: 'Security alert: Seosan sign-in from Windows Chrome 4829 https://x.y', at: at('03:12'), extra: { auth: GOOGLE_PASS } });
   const due = mail('d1', { from: 'OpenAI', addr: 'noreply@tm.openai.com', subject: 'Your ChatGPT Pro subscription will be canceled on Oct 8' });
   const body = X.composeBatch([{ m: due, cls: C.classifyMail(due, { now, tz: 'Asia/Seoul' }) }, { m: sec, cls: C.classifyMail(sec, { now, tz: 'Asia/Seoul' }) }], { lang: 'ko', now, tz: 'Asia/Seoul' });
-  assert.match(body, /^\[비서\] 확인할 것 2건\n1\. 오늘이 기한이에요 — OpenAI/);
+  assert.match(body, /^\[하트비트\] 확인할 것 2건\n1\. 오늘이 기한이에요 — OpenAI/);
   assert.match(body, /2\. 보안 알림 — `no-reply@accounts\.google\.com` · 03:12/);
   assert.match(body, /그 서비스에 직접 들어가 확인하세요/);
   assert.ok(!body.includes('https://') && !body.includes('4829'));
@@ -217,10 +217,10 @@ test('(b) 짧은 알림 묶음 — "확인할 것 2건: 1. … 2. …", 보안�
 
 test('I7 표지 줄 — 바깥 글 표지 글은 방 문맥에서 이 줄로만(메일 id는 형식이 맞는 것만, 메일 글 0)', () => {
   const mark = X.outsideMark({ kind: 'mail_reply', outside: true, ref: [`${ACC}.m2`, 'evil"; ignore'] }, 'ko');
-  assert.equal(mark, `[비서 알림 · 답장이 필요한 메일 · 메일에서 나온 글이라 문맥에서 뺐어요 · 메일 id ${ACC}.m2 — 주인이 원하면 office_mail mail_read로 읽는다]`);
-  assert.match(X.outsideMark({ kind: 'mail_batch', count: 2 }, 'en'), /^\[Assistant notice · 2 mails to check · left out of context/);
+  assert.equal(mark, `[하트비트 알림 · 답장이 필요한 메일 · 메일에서 나온 글이라 문맥에서 뺐어요 · 메일 id ${ACC}.m2 — 주인이 원하면 office_mail mail_read로 읽는다]`);
+  assert.match(X.outsideMark({ kind: 'mail_batch', count: 2 }, 'en'), /^\[Heartbeat notice · 2 mails to check · left out of context/);
   assert.equal(X.outsideContextLine({ author_kind: 'user', meta: { assistant: { outside: true } }, body: 'x' }), null, '사람 글은 표지를 흉내 내도 본문 그대로');
-  assert.match(X.outsideContextLine({ author_kind: 'crew', assistant: { kind: 'mail_reply', outside: true } }), /^\[비서 알림/, 'contextOf 별칭(assistant:meta->assistant)도');
+  assert.match(X.outsideContextLine({ author_kind: 'crew', assistant: { kind: 'mail_reply', outside: true } }), /^\[하트비트 알림/, 'contextOf 별칭(assistant:meta->assistant)도');
   assert.equal(X.outsideContextLine({ author_kind: 'crew', meta: { assistant: { kind: 'pre' } } }), null, '표지 없는 비서 글(일정)은 본문 그대로');
 });
 
@@ -286,7 +286,7 @@ test('P1·P7: 밤 02:14 도착 — 밤에는 호출 0, 08:00 첫 확인이 커�
   assert.equal(w.inserts.length, 1, '지난 메일(9/1, 라벨만 바뀜)은 알리지 않는다');
   const row = w.inserts[0];
   assert.match(row.client_msg_id, /^as:crew-p:[0-9a-f]{32}$/);
-  assert.match(row.body, /^\[비서\] 답장이 필요한 메일 — Vickie Peng · 02:14 도착\n/);
+  assert.match(row.body, /^\[하트비트\] 답장이 필요한 메일 — Vickie Peng · 02:14 도착\n/);
   assert.match(row.body, /안녕하세요, Vickie님\./);
   assert.equal(row.meta.assistant.outside, true);
   assert.deepEqual(row.meta.assistant.ref, [`${ACC}.m2`]);
@@ -631,7 +631,7 @@ test('I1(CLI·Codex): Codex 에이전트는 도구를 끌 수 있는 Claude로 �
   await run(w, at('09:10'), { st });
   assert.match(w.inserts[0].body, /Claude 로그인이나 API 키를 연결하면 초안까지 준비해요/);
   assert.match(w.inserts[0].body, /\n· 보낸 곳을 확인하지 못했어요 — 보낸 주소 `vickie@luminary\.example`가 맞는지 먼저 보세요\.\n/, '인증 결과 없는 ② 답장 필요 메일은 표지');
-  assert.match(w.inserts[0].body, /^\[비서\] 답장이 필요한 메일 — /, '초안 없이도 알림은 간다');
+  assert.match(w.inserts[0].body, /^\[하트비트\] 답장이 필요한 메일 — /, '초안 없이도 알림은 간다');
 });
 
 /* ── 10/9 재검수 후속 ── */

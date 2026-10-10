@@ -111,7 +111,7 @@ test('Q1: 배달이 막힌 사이 일정을 14:00 → 15:00으로 옮김 — 다
   assert.equal((await state(ws)).outbox?.basis, `cal:e1:${iso(at('14:00'))}:pre`, '13:30·13:31 실패 — 대기열에 있다');
   env.events = [ev('e1', at('15:00'), at('16:00'))]; env.failInsert = false;
   await run(ws, env, at('13:32'), at('15:05'));
-  assert.deepEqual(env.inserts.map((r) => [hhmm(r.at), r.body]), [['14:30', '[비서] 곧 시작하는 일정\n· 15:00 일정 e1 — 30분 뒤 시작']]);
+  assert.deepEqual(env.inserts.map((r) => [hhmm(r.at), r.body]), [['14:30', '[하트비트] 곧 시작하는 일정\n· 15:00 일정 e1 — 30분 뒤 시작']]);
   assert.ok(env.calls.some((c) => c.name === 'office_event_list' && c.at === at('13:33')), '13:33 다시 보내기 전에 확인 읽기');
   // 버린 회차는 사본에서도 뺀다(m.skip) — 같은 틱·다음 틱들이 옛 회차를 다시 계산해 확인 읽기를 거듭하지 않게(#894 분리 검수 L4)
   assert.deepEqual(env.calls.filter((c) => c.name === 'office_event_list' && c.at >= at('13:33') && c.at < at('13:44')).map((c) => hhmm(c.at)), ['13:33'], '13:33 확인 읽기 1번뿐, 13:44 전체 읽기까지 0');
@@ -137,7 +137,7 @@ test('Q3: 배달이 막힌 사이 제목·장소만 바뀜 — 다시 보낼 때
   env.events = [ev('e1', at('14:00'), at('15:00'), { title: '거래처 미팅', location: '본사 2층' })]; env.failInsert = false;
   await run(ws, env, at('13:32'), at('13:40'));
   assert.equal(env.inserts.length, 1);
-  assert.equal(env.inserts[0].body, '[비서] 곧 시작하는 일정\n· 14:00 거래처 미팅 — 27분 뒤 시작 · 장소: 본사 2층');
+  assert.equal(env.inserts[0].body, '[하트비트] 곧 시작하는 일정\n· 14:00 거래처 미팅 — 27분 뒤 시작 · 장소: 본사 2층');
   assert.equal(env.inserts[0].client_msg_id, preId('crew-p', 'e1', at('14:00')));
 });
 
@@ -439,7 +439,7 @@ test('R13: 끈 회사 파일의 agent(봉인 안 된 값)를 같은 주인의 �
 
 /* ── K 하루 즉시 알림 상한(설계 9절) — 일정 시작 전 알림은 미루지도 버리지도 않고 바로 보낸다. 상한에 처음 걸린 글 끝에 한 줄 ── */
 
-const tail = (n) => `\n오늘 즉시 알림이 하루 한도 ${n}건을 넘었어요. 일정 알림은 계속 보내요 — 줄이려면 에이전트 카드 "비서" 탭에서 조용한 시간을 바꾸거나 비서를 끄세요.`;
+const tail = (n) => `\n오늘 즉시 알림이 하루 한도 ${n}건을 넘었어요. 일정 알림은 계속 보내요 — 줄이려면 에이전트 카드 "하트비트" 탭에서 조용한 시간을 바꾸거나 하트비트를 끄세요.`;
 
 test('K1·K7: 상한 3, 일정 5개 — 1~3번째(정확히 상한) 꼬리 없음, 4번째(상한+1) 꼬리 한 줄(대기열에서 다시 보내도 유지), 5번째 꼬리 없음, 모두 제때', async () => {
   const ws = await company({ cfg: { dailyCap: 3 } });
@@ -453,7 +453,7 @@ test('K1·K7: 상한 3, 일정 5개 — 1~3번째(정확히 상한) 꼬리 없�
   assert.deepEqual(env.inserts.map((r) => hhmm(r.at)), ['09:30', '10:30', '11:30', '12:31', '13:30'], '상한 뒤에도 미루거나 버리지 않고 바로');
   const bodies = env.inserts.map((r) => r.body);
   for (const i of [0, 1, 2, 4]) assert.ok(!bodies[i].includes('하루 한도'), `${i + 1}번째: 꼬리 없음 — ${bodies[i]}`);
-  assert.equal(bodies[3], `[비서] 곧 시작하는 일정\n· 13:00 일정 k4 — 29분 뒤 시작${tail(3)}`);
+  assert.equal(bodies[3], `[하트비트] 곧 시작하는 일정\n· 13:00 일정 k4 — 29분 뒤 시작${tail(3)}`);
   assert.equal(env.inserts[3].meta.assistant.capNote, true, '꼬리를 붙인 글이라는 표시(다른 기기가 방에서 복구할 때 다시 붙이지 않게)');
   const st = await state(ws);
   assert.deepEqual([st.day.date, st.day.instant, st.day.capNoted], [D, 5, true]);
@@ -487,14 +487,14 @@ test('K3: 상한을 기기 교대에도 센다 — A가 3건(상한 3) 보낸 �
 });
 
 test('K5: 꼬리 문구 ko/en — 영어 회사는 영어 꼬리', async () => {
-  assert.equal(ASSISTANT_TEXT['tail.cap'][0], '오늘 즉시 알림이 하루 한도 {n}건을 넘었어요. 일정 알림은 계속 보내요 — 줄이려면 에이전트 카드 "비서" 탭에서 조용한 시간을 바꾸거나 비서를 끄세요.');
+  assert.equal(ASSISTANT_TEXT['tail.cap'][0], '오늘 즉시 알림이 하루 한도 {n}건을 넘었어요. 일정 알림은 계속 보내요 — 줄이려면 에이전트 카드 "하트비트" 탭에서 조용한 시간을 바꾸거나 하트비트를 끄세요.');
   assert.doesNotMatch(ASSISTANT_TEXT['tail.cap'].join(' '), /크루|사장|목록으로만|list/i, '실제로 바뀌지 않는 "목록으로만"을 말하지 않는다, 용어 규칙');
   const ws = await company({ lang: 'en', cfg: { dailyCap: 1 } });
   const env = fakeServer({ events: [ev('x1', at('10:00'), at('10:30')), ev('x2', at('11:00'), at('11:30'))], crews: [crewP(ws)] });
   await run(ws, env, at('09:29'), at('10:31'));
   assert.deepEqual(env.inserts.map((r) => r.body), [
-    '[Assistant] Starting soon\n· 10:00 일정 x1 — starts in 30 min',
-    "[Assistant] Starting soon\n· 11:00 일정 x2 — starts in 30 min\nToday's instant alerts passed the daily limit of 1. Event reminders keep coming — to get fewer, change quiet hours or turn the assistant off in the agent card's Assistant tab.", // 한도 1이어도 복수형 어색함 없음
+    '[Heartbeat] Starting soon\n· 10:00 일정 x1 — starts in 30 min',
+    "[Heartbeat] Starting soon\n· 11:00 일정 x2 — starts in 30 min\nToday's instant alerts passed the daily limit of 1. Event reminders keep coming — to get fewer, change quiet hours or turn heartbeat off in the agent card's Heartbeat tab.", // 한도 1이어도 복수형 어색함 없음
   ]);
 });
 
@@ -514,6 +514,36 @@ test('V4: 옛 버전(엔진 2, 0.1.99) 기기가 보낸 글 모양(meta.assistan
   env.attempts.length = 0;
   await run(ws, env, at('13:31'), at('13:59'));
   assert.deepEqual([env.attempts.length, env.dups.length, env.inserts.length], [0, 0, 1]);
+});
+
+// 이름 변경(비서 → 하트비트, 10/10): 이미 방에 있는 글은 머리글이 [비서]이고 새로 쓰는 글은 [하트비트]다. 복구·중복 판정은 머리글이 아니라
+// client_msg_id(as: 접두)와 meta(notification·assistant.keys)로만 한다 — 업데이트 직후 옛 머리글 글 때문에 같은 알림을 다시 보내면 안 된다.
+test('V4b: 옛 머리글([비서])로 보낸 글과 새 머리글([하트비트])로 보낸 글이 한 방에 섞여 있어도 둘 다 복구된다 — 업데이트 직후 이미 보낸 알림 재전송 0', async () => {
+  const ws = await company();
+  const env = fakeServer({ events: [ev('e1', at('14:00'), at('15:00')), ev('e2', at('14:20'), at('15:20'))], crews: [crewP(ws)] });
+  env.rooms.add('crew-p');
+  const notice = (key, at0, eventId, body) => ({
+    channel_id: 'room-crew-p', author_kind: 'crew', crew_id: 'crew-p', kind: 'text', reply_to: null, thread_root: null,
+    client_msg_id: clientMsgId('crew-p', key), body, mentions: [],
+    meta: { disposition: 'done', notification: 'assistant', assistant: { v: 1, kind: 'pre', keys: [key], items: [{ key, source: 'calendar', eventId, at: iso(at0) }] } },
+  });
+  const k1 = `cal:e1:${iso(at('14:00'))}:pre`; const k2 = `cal:e2:${iso(at('14:20'))}:pre`;
+  env.now = at('13:30');
+  await env.session.db.insertMessage(notice(k1, at('14:00'), 'e1', '[비서] 곧 시작하는 일정\n· 14:00 일정 e1 — 30분 뒤 시작')); // 옛 이름으로 보낸 글
+  await env.session.db.insertMessage(notice(k2, at('14:20'), 'e2', '[하트비트] 곧 시작하는 일정\n· 14:20 일정 e2 — 30분 뒤 시작')); // 새 이름으로 보낸 글
+  env.attempts.length = 0;
+  await run(ws, env, at('13:31'), at('14:25'));
+  assert.deepEqual([env.attempts.length, env.dups.length, env.inserts.length], [0, 0, 2], '두 글 모두 이미 보낸 것으로 복구 — 다시 넣으려는 시도 0');
+});
+
+test('V4c: foldNotices는 머리글을 보지 않는다 — [비서]·[하트비트]·본문 없음이 같은 키를 같은 시각으로 복구한다', async () => {
+  const { foldNotices } = await import('../src/assistant/recover.mjs');
+  const now = at('12:00'); const key = (n) => `cal:e${n}:${iso(at('14:00'))}:pre`;
+  const row = (n, body) => ({ id: n, body, created_at: iso(at('09:00')), meta: { notification: 'assistant', assistant: { v: 1, kind: 'pre', keys: [key(n)] } } });
+  const rec = foldNotices([row(1, '[비서] 곧 시작하는 일정\n· 14:00 일정 e1'), row(2, '[하트비트] 곧 시작하는 일정\n· 14:00 일정 e2'), row(3, undefined)], { now, tz: 'Asia/Seoul' });
+  assert.deepEqual(Object.keys(rec.sent).sort(), [key(1), key(2), key(3)]);
+  assert.deepEqual(new Set(Object.values(rec.sent)).size, 1, '시각도 글 시각 그대로 — 머리글과 무관');
+  assert.equal(rec.todayPre.length, 3);
 });
 
 test('V5: 새 상태 칸(day.capNoted·keys·sure, rec.last)은 정규화가 읽고, 옛 칸만 있는 상태 파일도 그대로 읽힌다', () => {

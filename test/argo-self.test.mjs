@@ -101,7 +101,7 @@ test('데크 화면·라우트가 같은 정본 함수를 쓴다 — 화면이 �
 });
 
 /* ── ② 비서 상태 ────────────────────────────────────────────────────── */
-test('비서 상태 — 켜짐·비서 에이전트·마지막 일정 확인·오늘 보낸 알림 수·확인 주기를 설정 화면과 같은 값으로', async () => {
+test('하트비트 상태 — 켜짐·하트비트 에이전트·마지막 일정 확인·오늘 보낸 알림 수·확인 주기를 설정 화면과 같은 값으로', async () => {
   const ws = await company('as-asst', { owner: 'owner-asst' });
   await saveAssistantSettings(ws, { enabled: true, agent: 'pepper', tz: 'Asia/Seoul' });
   const now = Date.now();
@@ -110,7 +110,7 @@ test('비서 상태 — 켜짐·비서 에이전트·마지막 일정 확인·�
   const view = await assistantSettingsView(ws);
   assert.equal(view.status.instantToday, 2, '화면 값(전제)');
   const out = await handlers(ws, { direct: true }).call('argo_status', { section: 'assistant' });
-  assert.match(out, /이 회사 비서: 켜짐 · 비서 에이전트 pepper\(나\)/);
+  assert.match(out, /이 회사 하트비트: 켜짐 · 하트비트 에이전트 pepper\(나\)/);
   assert.match(out, /마지막 일정 확인: .+\(4분 전\)/);
   assert.match(out, /오늘 보낸 일정 알림: 2건/);
   assert.match(out, /상태: 정상/);
@@ -146,9 +146,9 @@ test('권한 표 — 주인 1:1(서버 판정 direct)이면 바로 바꾸고 이
   assert.equal(await morning(ws), '08:00');
   const out = await handlers(ws, { direct: true }).call('argo_settings', { action: 'set', key: 'assistant.morning', value: '7:00' });
   assert.equal(await morning(ws), '07:00', '실제 저장(설정 화면과 같은 봉인 쓰기)');
-  assert.match(out, /바꿨다 — 비서 아침 정리 시각\(= 조용한 시간 끝\): 08:00 → 07:00/);
+  assert.match(out, /바꿨다 — 하트비트 아침 정리 시각\(= 조용한 시간 끝\): 08:00 → 07:00/);
   assert.match(out, /되돌리는 법: "08:00\(으\)로 되돌려 줘"/);
-  assert.match(out, /에이전트 카드 → 비서 탭 → 조용한 시간 끝/);
+  assert.match(out, /에이전트 카드 → 하트비트 탭 → 조용한 시간 끝/);
   assert.equal((await pendingSettings(ws)).length, 0);
   const same = await handlers(ws, { direct: true }).call('argo_settings', { action: 'set', key: 'assistant.morning', value: '07:00' });
   assert.match(same, /이미 07:00\(으\)로 되어 있다 — 바꾸지 않았다/, '같은 값이면 쓰지 않는다(쓰기 0)');
@@ -173,7 +173,7 @@ test('권한 표 — 채널(주인이 써도 1:1 아님)·다른 사람·루틴�
     assert.equal(await morning(ws), '08:00', `${label}: 결재 전에는 바뀌지 않는다`);
     const [ap] = await pendingSettings(ws);
     assert.ok(ap, `${label}: 결재 카드`);
-    assert.equal(ap.action, '설정 변경 — 비서 아침 정리 시각(= 조용한 시간 끝) → 07:00');
+    assert.equal(ap.action, '설정 변경 — 하트비트 아침 정리 시각(= 조용한 시간 끝) → 07:00');
     assert.deepEqual({ key: ap.payload.key, value: ap.payload.value }, { key: 'assistant.morning', value: '07:00' });
     if (o.ctx) assert.equal(ap.msgr?.channelId, 'ch-1', `${label}: 메신저 카드 목적지`);
     if (o.origin || o.chain) assert.equal(ap.from, 'mina', `${label}: 누구의 위임·예약에서 왔는지`);
@@ -211,7 +211,7 @@ test('손님(주인이 아닌 사람) — 주인의 상태는 읽지 않는다, 
   assert.match(await h.call('argo_help', { q: '회의실' }), /회의실/);
   const list = await h.call('argo_settings', { action: 'list' });
   assert.doesNotMatch(list, /지금: 08:00/, '주인의 설정 값도 보여 주지 않는다');
-  assert.match(list, /assistant\.morning — 비서 아침 정리 시각/, '키와 화면 위치는 안내한다');
+  assert.match(list, /assistant\.morning — 하트비트 아침 정리 시각/, '키와 화면 위치는 안내한다');
 });
 
 /* ── ⑤ 결재 승인 → 시스템 적용 ───────────────────────────────────────── */
@@ -225,7 +225,7 @@ test('결재 승인 — 서버가 허용 목록 설정을 적용하고 후속 �
   const item = await resolveApproval(ws, ap.id, true);
   await _followUpForTest(ws, item, true, { runChat });
   assert.equal((await assistantSettingsView(ws)).config.eveningAt, '20:30');
-  assert.match(seen.msg, /적용 완료 — 비서 내일 일정 요약 시각 → 20:30/);
+  assert.match(seen.msg, /적용 완료 — 하트비트 내일 일정 요약 시각 → 20:30/);
   assert.doesNotMatch(seen.msg, /21:00/, '후속 보고(원래 방으로 간다)에 이전 값을 싣지 않는다');
   assert.equal(seen.opts.notOwnerDirect, 'mina', '후속 턴도 주인 직접 턴이 아니다');
   // 문구 조작 — 카드에는 20:00으로 보였는데 payload가 23:00이면 적용하지 않는다
@@ -305,8 +305,8 @@ test('러너별 부착 — SDK 크루 서버·네이티브 sink·Codex 다리(�
 /* ── ⑧ 도움말 ──────────────────────────────────────────────────────── */
 test('도움말 검색 — 사용자 말투로 물어도 맞는 주제가 먼저 온다', () => {
   assert.match(searchHelp('지금 연결 밀도가 몇%지?'), /^# 데크 — 회사 계기판/);
-  assert.match(searchHelp('비서 돌고 있어? 하트비트'), /^# 비서/);
-  assert.match(searchHelp('아침 정리 7시로 바꿔줘'), /^# (비서|에이전트에게 아르고 상태를 묻고 설정을 맡기기)/);
+  assert.match(searchHelp('하트비트 돌고 있어?'), /^# 하트비트/); assert.match(searchHelp('비서 돌고 있어?'), /^# 하트비트/);
+  assert.match(searchHelp('아침 정리 7시로 바꿔줘'), /^# (하트비트|에이전트에게 아르고 상태를 묻고 설정을 맡기기)/);
   assert.match(searchHelp('Memory Links', { lang: 'en' }), /^# Deck/);
   assert.match(searchHelp(''), /아르고 도움말 주제/);
   assert.match(searchHelp('zzqq없는말'), /맞는 도움말이 없다/);
@@ -361,14 +361,14 @@ test('상태 구획 — 러너는 키 값을 싣지 않고, 메신저·동기화
   const overview = await call('argo_status', {});
   assert.match(overview, /나: 페퍼 \[pepper\]/);
   assert.match(overview, /데크 계기판/);
-  assert.match(overview, /비서\(능동 알림\)/);
+  assert.match(overview, /하트비트\(능동 알림\)/);
 });
 
 test('설정 목록 — 이 턴이 바로 바뀌는 턴인지와 허용 키·지금 값·화면 위치를 보여 준다', async () => {
   const ws = await company('as-list');
   const direct = await handlers(ws, { direct: true }).call('argo_settings', { action: 'list' });
   assert.match(direct, /이 턴은 주인이 1:1에서 직접 시킨 턴이다/);
-  assert.match(direct, /assistant\.morning — 비서 아침 정리 시각\(= 조용한 시간 끝\) · 지금: 08:00/);
+  assert.match(direct, /assistant\.morning — 하트비트 아침 정리 시각\(= 조용한 시간 끝\) · 지금: 08:00/);
   assert.match(direct, /company\.lang — 에이전트 응답 언어 · 지금: ko/);
   assert.match(direct, /풀 오토/);
   const viaApproval = await handlers(ws, { ctx: msgrCtx(ws) }).call('argo_settings', { action: 'list' });
@@ -418,14 +418,14 @@ test('범위 표 — 칸마다 돌려주는 것: 주인 1:1만 전체 상태·�
     const help = await h.call('argo_help', { q: '회의실' });
     assert.match(help, /회의실/, `${label}: 도움말은 누구에게나`);
     if (full) {
-      assert.match(overview, /데크 계기판/, label); assert.match(overview, /비서\(능동 알림\)/, label);
+      assert.match(overview, /데크 계기판/, label); assert.match(overview, /하트비트\(능동 알림\)/, label);
       assert.match(plan, /요금제·사용량/, label);
       assert.match(routines, /비밀 보고/, label);
       assert.match(list, /지금: 08:00/, label);
     } else {
       for (const [name, out] of [['overview', overview], ['plan', plan], ['routines', routines]]) {
         assert.match(out, /주인의 1:1에서만/, `${label} ${name}: 범위 밖 안내`);
-        assert.doesNotMatch(out, /데크 계기판|요금제·사용량|비밀 보고|비서\(능동 알림\)|러너 연결|기기 간 동기화|결재 대기 \d/, `${label} ${name}: 주인 상태가 새지 않는다`);
+        assert.doesNotMatch(out, /데크 계기판|요금제·사용량|비밀 보고|하트비트\(능동 알림\)|러너 연결|기기 간 동기화|결재 대기 \d/, `${label} ${name}: 주인 상태가 새지 않는다`);
       }
       assert.doesNotMatch(list, /지금: 08:00|지금: ko/, `${label}: 설정 값 없음`);
     }
@@ -464,7 +464,7 @@ test('다른 회사 지정 불가 — 도구 인자에 회사 id·슬러그·경
 });
 
 /* ── ⑪ 다른 회사 비서(계정마다 한 명) — 분리 검수 MEDIUM 2026-10-09 ──────────────── */
-test('다른 회사 비서 — 에이전트 바꾸기는 꺼진 비서를 켜지 않고, 켜기는 다른 회사 비서가 꺼진다고 알린다', async () => {
+test('다른 회사 하트비트 — 에이전트 바꾸기는 꺼진 하트비트를 켜지 않고, 켜기는 다른 회사 하트비트가 꺼진다고 알린다', async () => {
   const ca = await company('as-oa', { owner: 'u-x' });
   const cb = await company('as-ob', { owner: 'u-x' });
   await saveAssistantSettings(ca, { enabled: true, agent: 'pepper', tz: 'Asia/Seoul' });
@@ -474,12 +474,12 @@ test('다른 회사 비서 — 에이전트 바꾸기는 꺼진 비서를 켜지
   assert.equal((await assistantSettingsView(ca)).config.enabled, true, 'A 회사 비서는 그대로');
   assert.equal((await assistantSettingsView(cb)).config.enabled, false, 'B 회사 비서를 켜지 않았다');
   const on = await h.call('argo_settings', { action: 'set', key: 'assistant.enabled', value: 'true' });
-  assert.match(on, /다른 회사\(as-oa 회사\)의 비서는 꺼졌다/);
+  assert.match(on, /다른 회사\(as-oa 회사\)의 하트비트는 꺼졌다/);
   assert.equal((await assistantSettingsView(ca)).config.enabled, false);
   assert.equal((await assistantSettingsView(cb)).config.enabled, true);
 });
 
-test('다른 회사 비서 — 비서 켜기·교체는 주인 1:1에서만: 범위 밖에서는 결재 카드도 만들지 않고 다른 회사 사정을 말하지 않는다', async () => {
+test('다른 회사 하트비트 — 하트비트 켜기·교체는 주인 1:1에서만: 범위 밖에서는 결재 카드도 만들지 않고 다른 회사 사정을 말하지 않는다', async () => {
   const ca = await company('as-pa', { owner: 'u-y' });
   const cb = await company('as-pb', { owner: 'u-y' });
   await saveAssistantSettings(ca, { enabled: true, agent: 'pepper', tz: 'Asia/Seoul' });
