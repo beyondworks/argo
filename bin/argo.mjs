@@ -116,7 +116,7 @@ const T = {
     uninstallManual: (f) => `argo가 실행 중이라 이 명령 안에서는 지울 수 없습니다. 이 창에서 다음을 실행하면 제거됩니다:\n  powershell -NoProfile -ExecutionPolicy Bypass -File "${f}"`,
     usage: '사용법: argo [run [--standby]|chat <에이전트> [지시]|login|status|browser|service install [--standby]|service uninstall|service status|office report|office hold|office tasks|uninstall]  (--standby = 다른 기기가 꺼졌을 때만 실행을 맡는 예비 서버, office = 오피스 업무 현황에 세션·보류한 일 남기기 — argo office help, uninstall = 설치 명령으로 넣은 argo 제거, 데이터는 남김)',
     status: (s) => `계정: ${s.email || '(로그인 안 됨)'}\n데이터: ${s.root}\n회사: ${s.companies}\n기기: ${s.device}`,
-    statusOversize: (name, n, names, mb) => `동기화 제외(크기 초과) — ${name}: ${n}개 (${names}) · ${mb}MB를 넘는 파일은 이 기기에만 남습니다`,
+    statusOversize: (name, n, names, mb) => `동기화 제외(크기 초과) — ${name}: ${n}개 (${names}) · ${mb}MB를 넘는 파일은 기기 간에 주고받지 않습니다`,
   },
   en: {
     noConfig: 'Missing Supabase public config. Put {"supabase":{"url":"…","anonKey":"…"}} in ~/.argo/cli.json or set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.',
@@ -172,7 +172,7 @@ const T = {
     uninstallManual: (f) => `argo is running, so it can't remove itself from inside this command. Run this in this window to remove it:\n  powershell -NoProfile -ExecutionPolicy Bypass -File "${f}"`,
     usage: 'Usage: argo [run [--standby]|chat <agent> [message]|login|status|browser|service install [--standby]|service uninstall|service status|office report|office hold|office tasks|uninstall]  (--standby = a standby server that runs things only while your other device is off; office = leave this session and on-hold tasks in Office Work status — argo office help; uninstall = remove an argo installed with the install command; data is kept)',
     status: (s) => `Account: ${s.email || '(not signed in)'}\nData: ${s.root}\nCompanies: ${s.companies}\nDevice: ${s.device}`,
-    statusOversize: (name, n, names, mb) => `Not synced (too large) — ${name}: ${n} (${names}) · files over ${mb} MB stay on this device only`,
+    statusOversize: (name, n, names, mb) => `Not synced (too large) — ${name}: ${n} (${names}) · files over ${mb} MB aren't synced between devices`,
   },
 }[lang];
 // src를 불러오기 전 — 로컬인데 앱 폴더에 로그인이 있으면 계정 모드로. office는 건너뛴다: 훅 폴더(ARGO_ROOT=~/.argo/office-hook)의 로그인을

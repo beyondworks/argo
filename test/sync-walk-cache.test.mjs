@@ -147,8 +147,11 @@ test('캐시에서 온 해시로는 로컬을 덮지 않는다 — 캐시가 낡
   const r = await cycle(st, ws);
   assert.equal(await readFile(f, 'utf8'), '사용자가 고친 판', '사용자 편집을 원격본으로 덮으면 안 된다');
   assert.equal(r.deferred, 1); assert.equal(r.pulled, 0); assert.equal(r.failed, 0);
-  later(11 * 60_000); // 캐시가 풀리면(10분) 양쪽 변경으로 보고 충돌 처리 — 사용자 편집은 사본으로 남는다
+  // 확인에서 다른 걸 본 파일은 캐시에서 뺀다 — 10분을 기다리지 않고 다음 사이클이 다시 읽어 양쪽 변경(충돌)으로 처리한다.
+  // 종전에는 10분 동안 매 사이클 같은 파일을 다시 받고 미뤘다(검수 #938 LOW-5). 사용자 편집은 사본으로 남는다
+  later(10_000);
   const r2 = await cycle(st, ws);
+  assert.equal(r2.deferred ?? 0, 0, '같은 낡은 캐시로 다시 미루지 않는다');
   assert.equal(r2.conflicts, 1);
 });
 

@@ -99,6 +99,18 @@ test('대조 — 재시도 대기 없이 유휴 확인으로 들어간다(실패
   assert.equal([...st.puts.values()].reduce((a, b) => a + b, 0), 1, '쓰기는 첫 사이클 매니페스트 1건뿐');
 });
 
+// 검수 #938 LOW-3: 다른 파일 실패로 재시도 대기에 들어가도 크기 초과 표시가 사라지지 않는다(설정 화면 줄이 대기 동안 빠지던 것)
+test('다른 파일이 실패해 재시도 대기 중이어도 크기 초과 목록을 싣는다', async () => {
+  const ws = 'ov-backoff';
+  const { st } = await setup(ws, { local: { 'big.bin': big(), 'fail.md': small('올리기 실패') } });
+  const bucket = st.client.storage.from(), up = bucket.upload;
+  bucket.upload = async (key, blob) => (key.endsWith('/fail.md') ? { error: { statusCode: '500', message: 'Internal' } } : up(key, blob));
+  const r1 = await syncCompany(ws, OWNER);
+  assert.equal(r1.failed, 1); assert.equal(r1.oversize, 1);
+  const r2 = await syncCompany(ws, OWNER);
+  assert.equal(r2.skipped, 'retry-backoff');
+  assert.equal(r2.oversize, 1, '재시도 대기 결과도 크기 초과를 싣는다'); assert.deepEqual(r2.oversizeRels, ['big.bin']);
+});
 test('원격에 예전 작은 판이 있던 파일이 로컬에서 커졌다 — 원격을 덮거나 지우지 않고 base도 작은 판 그대로, 다른 기기의 원격 변경도 받지 않는다', async () => {
   const ws = 'ov-grew';
   const rel = 'vault/report.md';

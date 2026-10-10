@@ -1008,11 +1008,11 @@ async function upload(key, buf) {
 export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
   const key = `${client().storage.url ?? 'test'}/${owner}/${wsId}`;
   const prior = companyRetry.get(key);
-  if (prior && Date.now() < prior.until) return { skipped: 'retry-backoff', retryAt: prior.until, ...(prior.lastFailures ? { failures: prior.lastFailures } : {}) };
-  const deferFailure = (lastFailures) => {
+  if (prior && Date.now() < prior.until) return { skipped: 'retry-backoff', retryAt: prior.until, ...(prior.lastFailures ? { failures: prior.lastFailures } : {}), ...prior.excluded }; // 크기 초과 표시는 대기 중에도 유지(검수 #938 LOW-3)
+  const deferFailure = (lastFailures, excluded) => {
     companyIdle.delete(key);
     const failures = Math.min((prior?.failures ?? 0) + 1, 6);
-    companyRetry.set(key, { failures, until: Date.now() + Math.min(600_000, 30_000 * 2 ** (failures - 1)), lastFailures });
+    companyRetry.set(key, { failures, until: Date.now() + Math.min(600_000, 30_000 * 2 ** (failures - 1)), lastFailures, excluded });
   };
   const fingerprint = async () => {
     const failed = new Set();
@@ -1044,8 +1044,8 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
     // 실패 파일·빈 항목은 이름까지 로그에 남긴다(~/Library/Logs/argo.err.log) — 목록이 바뀔 때만 한 줄
     noteOnce(`${key}:fail`, result.failed ? `[argo] 동기화(${wsId}): 파일 ${result.failed}건 실패 — ${(result.failures ?? []).map((f) => `${f.rel}: ${f.reason}`).join(' | ')}` : '');
     noteOnce(`${key}:missing`, result.missing ? `[argo] 동기화(${wsId}): 매니페스트에만 있고 객체가 없는 항목 ${result.missing}개 — 건너뜀(항목 보존): ${result.missingRels.join(', ')}` : '');
-    noteOnce(`${key}:oversize`, result.oversize ? `[argo] 동기화(${wsId}): ${Math.floor(SYNC_MAX_OBJECT_BYTES / 2 ** 20)}MB를 넘는 파일 ${result.oversize}개는 동기화하지 않습니다(이 기기에만 둠): ${result.oversizeRels.join(', ')}` : '');
-    if (result.failed > 0) { deferFailure(result.failures); return result; }
+    noteOnce(`${key}:oversize`, result.oversize ? `[argo] 동기화(${wsId}): ${Math.floor(SYNC_MAX_OBJECT_BYTES / 2 ** 20)}MB를 넘는 파일 ${result.oversize}개는 기기 간에 주고받지 않습니다: ${result.oversizeRels.join(', ')}` : '');
+    if (result.failed > 0) { deferFailure(result.failures, result.oversize ? { oversize: result.oversize, oversizeRels: result.oversizeRels, oversizeLimit: result.oversizeLimit } : undefined); return result; }
     companyRetry.delete(key);
     if (canIdle && !result.failed && !result.held && !result.deferred) {
       const stamp = await fingerprint();
@@ -1191,6 +1191,7 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
     if (basedOn === undefined) return;
     let cur = null;
     try { cur = hashBuf(await readFile(relFull(rel))); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+    if (cur !== basedOn) walkCache.roots.get(root)?.delete(rel); // 캐시 해시가 실제와 다르면 다음 걷기에서 다시 읽게(검수 #938 LOW-5 — 10분 동안 같은 파일을 매 사이클 다시 받지 않게)
     if (cur !== basedOn) throw Object.assign(new Error(`로컬 파일이 사이클 도중 바뀌었다 — 이번엔 건너뜀(다음 사이클 병합): ${rel}`), { deferred: true });
   };
   const cachedRels = walkFromCache.get(local) ?? new Set(); // 이번 걷기에서 해시를 캐시로 가져온 파일(내용을 이번에 읽지 않았다)
