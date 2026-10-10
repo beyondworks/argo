@@ -1014,6 +1014,13 @@ const DICT = {
   'settings.msgr.paused.limit': ['멈춤 · 무료 4명 한도', 'Paused · Free plan limit of 4'],
   'settings.msgr.paused.app': ['멈춤 · 무료 계정 최신 앱 필요', 'Paused · Free plan needs the latest app'],
   'settings.msgr.paused.room': ['멈춤 · 지금 연결할 수 있어요', 'Paused · You can connect it now'],
+  // 개인 공간만 쓰는 사용자의 연결 줄·교체 미리 알림(검수 스택 화면 4차, 2026-10-11)
+  'settings.msgr.personal.title': ['개인 공간 연결', 'Personal space connection'],
+  'settings.msgr.personal.status': ['에이전트 {n}명이 개인 공간에 연결되어 있고, {m}명은 연결되지 않았습니다.', '{n} agents are connected to your personal space and {m} are not.'],
+  'settings.msgr.personal.rosterHelp': ['이 컴퓨터의 에이전트와 개인 공간 연결 상태를 한눈에 확인합니다.', 'Review each agent on this computer and its personal space connection.'],
+  'settings.msgr.personal.count': ['{n} / {total} 연결', '{n} / {total} connected'],
+  'settings.msgr.swap.confirm': ['무료 계정은 에이전트 4명까지라서, 연결하면 {names} 에이전트를 멈춰요. 연결할까요?', 'Free accounts can use up to 4 agents, so connecting will pause {names}. Connect anyway?'],
+  'settings.msgr.swap.go': ['멈추고 연결', 'Pause and connect'],
   'settings.msgr.manage': ['허용 범위(누가 시킬 수 있나)·파견 해제·다시 파견은 팀 메신저 앱의 에이전트 카드에서 합니다.', 'Access scope (who can task it), recall and re-dispatch are done on the agent card in the team messenger app.'],
   'settings.msgr.register': ['등록', 'Register'],
   'settings.msgr.unregister': ['해제', 'Unregister'],

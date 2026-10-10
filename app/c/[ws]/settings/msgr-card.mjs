@@ -41,6 +41,21 @@ export function pausedLabelKey(reason) {
   return 'settings.msgr.paused';
 }
 
+/** 조직이 없는(개인 공간만 쓰는) 사용자의 개인 공간 줄(검수 스택 화면 4차, 2026-10-11) — 무료 4명 한도로 멈춘 다섯 번째를 켤 곳이 없었다.
+    rows = 에이전트마다 개인 행 상태 문구 키(연결 'settings.msgr.connection.personal' · 멈춤 pausedLabelKey · 해제 notRegistered · 행 없음 notInMessenger),
+    missing = 연결할 수 있는 것(멈춤·해제 개인 행 — 행이 없으면 게이트웨이가 만든다), show = 조직이 없고 연결 안 된 개인 행이 있을 때만(다 연결된 카드·Pro는 종전 그대로). */
+export function personalCardView({ st, agents = [] } = {}) {
+  const rowsAll = Array.isArray(st?.personal) ? st.personal : [];
+  const rows = agents.map((a) => {
+    const row = rowsAll.find((r) => r.slug === a.slug) ?? null;
+    const labelKey = !row ? 'settings.msgr.notInMessenger' : row.status === 'active' ? 'settings.msgr.connection.personal'
+      : row.status === 'paused' ? pausedLabelKey(st?.pauseReason) : 'settings.msgr.notRegistered';
+    return { slug: a.slug, row, labelKey };
+  });
+  const missing = rows.filter((r) => r.row && ['paused', 'available'].includes(r.row.status)).map((r) => r.slug);
+  return { rows, missing, connected: rows.filter((r) => r.row?.status === 'active').length, show: !!st?.signedIn && !st?.orgs?.length && missing.length > 0 };
+}
+
 /** 첫 응답 대기 문구 — 폴이 도는 때만 "자동으로 다시 확인"을 말한다. 안 돌면 사용자가 '다시 확인'을 누르라고 한다(폴을 늘리지 않는다 — DB·서버 부하). */
 export function runtimeWaitingKey(polling) {
   return polling ? 'settings.msgr.runtime.waiting' : 'settings.msgr.runtime.waitingManual';

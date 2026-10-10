@@ -36,7 +36,7 @@ test('③ 옛 서버(msgr_my_agent_pause 없음) — 종전 is_pro 판정', asyn
 
 test('④ 라우트 배선 + 코드가 ko·en 사전에 있다', () => {
   const route = readFileSync(new URL('../app/api/companies/[ws]/msgr/route.js', import.meta.url), 'utf8');
-  assert.equal((route.match(/await freeAgentReasonFor\(c, ws\)/g) ?? []).length, 2, '연결 두 갈래(일괄 activate·단일 POST)');
+  assert.equal((route.match(/await freeAgentReasonFor\(c, ws\)/g) ?? []).length, 3, '연결 세 갈래(일괄 activate·개인 공간 activate·단일 POST)');
   assert.ok(route.indexOf('/msgr_free_agent_limit/.test(m)') < route.indexOf('/msgr_pro_required/.test(m)'), '앞 코드(이유)를 먼저 본다');
   assert.ok(route.indexOf('/msgr_app_update_required/.test(m)') < route.indexOf('/msgr_pro_required/.test(m)'));
   for (const code of ['msgr_free_agent_limit', 'msgr_app_update_required']) for (const lang of ['ko', 'en']) assert.equal(apiError(code, lang).status, 403);
@@ -81,9 +81,30 @@ test('⑦ 화면 검수 B(10/11) — 연결 카드의 멈춘 행은 "파견 해�
   assert.doesNotMatch(API_MSG.msgr_free_agent_limit.ko, /쉬/);
   const page = readFileSync(new URL('../app/c/[ws]/settings/page.jsx', import.meta.url), 'utf8');
   assert.match(page, /row\?\.status === 'paused' \? t\(pausedLabelKey\(st\?\.pauseReason\)\)/, '카드 줄: 멈춘 행이면 멈춤 문구');
-  const act = page.slice(page.indexOf('async function activateOrg()'), page.indexOf('finally { setActivating(false); }', page.indexOf('async function activateOrg()')));
+  const act = page.slice(page.indexOf('async function connectAgents('), page.indexOf('finally { setActivating(false); }', page.indexOf('async function connectAgents(')));
   assert.match(act.slice(act.indexOf('catch (e)')), /load\(\)/, '연결이 거절돼도 다시 읽는다 — 행은 멈춤으로 들어갔으니 "메신저에 아직 없음"으로 남지 않게(분리 검수 3차 화면 확인)');
   const route = readFileSync(new URL('../app/api/companies/[ws]/msgr/route.js', import.meta.url), 'utf8');
   const get = route.slice(route.indexOf('export async function GET'), route.indexOf('export async function POST'));
-  assert.match(get, /crews\.some\(\(r\) => r\.status === 'paused'\) \? \(await readAgentPause\(c\.client\)\.catch\(\(\) => null\)\)\?\.reason \?\? null : null/, '이유 읽기는 멈춘 행이 있을 때만(8초 폴에 호출을 늘리지 않게)');
+  assert.match(get, /\[\.\.\.crews, \.\.\.personal\]\.some\(\(r\) => r\.status === 'paused'\) \? \(await readAgentPause\(c\.client\)\.catch\(\(\) => null\)\)\?\.reason \?\? null : null/, '이유 읽기는 멈춘 행(조직·개인)이 있을 때만(8초 폴에 호출을 늘리지 않게)');
+});
+
+test('⑧ 검수 스택 화면 4차 — 개인 공간 연결(조직 없음)·교체 미리 알림: 라우트는 개인 행을 넣지 않고 멈춤·해제 행만 연결, 미리 알림은 서버 RPC, 카드는 미리 알림 뒤 확인을 받고 연결', () => {
+  const route = readFileSync(new URL('../app/api/companies/[ws]/msgr/route.js', import.meta.url), 'utf8');
+  const per = route.slice(route.indexOf('if (activate && personal) {'), route.indexOf('return Response.json({ ok: true, personal'));
+  assert.ok(per.length > 0, '개인 공간 연결 갈래');
+  assert.doesNotMatch(per, /\.insert\(/, '개인 행은 미러(게이트웨이)가 만든다 — 여기서 넣지 않는다');
+  assert.match(per, /\.update\(\{ status: 'active' \}\)/, '상태만 바꾼다(허용 범위·이름 보존)');
+  assert.match(per, /\['paused', 'available'\]\.includes\(r\.status\)/, '멈춤·해제 행만');
+  assert.match(route, /async function myPersonalRows\(c, ws\)[\s\S]{0,400}\.is\('org_id', null\)/, '개인 행 = org_id NULL');
+  assert.match(route, /if \(preview\) \{[\s\S]{0,600}rpc\('msgr_free_swap_preview', \{ p_ws: ws, p_slugs: known \}\)/, '미리 알림은 서버가 관문과 같은 순서로');
+  const page = readFileSync(new URL('../app/c/[ws]/settings/page.jsx', import.meta.url), 'utf8');
+  const fn = page.slice(page.indexOf('async function connectAgents('), page.indexOf('finally { setActivating(false); }', page.indexOf('async function connectAgents(')));
+  assert.ok(fn.indexOf('preview: true') > 0 && fn.indexOf('preview: true') < fn.indexOf('activate: true'), '연결 전에 미리 알림');
+  assert.match(fn, /if \(!confirmed\) \{\s*const p = await api\(`\/api\/companies\/\$\{ws\}\/msgr`, \{ preview: true, slugs \}\)/, '확인 전에는 늘 미리 알림을 묻는다');
+  assert.match(fn, /if \(p\?\.victims\?\.length\) \{ setConfirm\(/, '멈출 에이전트가 있으면 확인부터');
+  assert.match(page, /connectAgents\(\{ personal: true \}, personalView\.missing\)/, '개인 공간 카드의 연결');
+  assert.match(page, /connectAgents\(\{ orgId \}, missing\.map\(\(agent\) => agent\.slug\)\)/, '조직 카드의 연결도 같은 길');
+  const dict = readFileSync(new URL('../app/i18n.jsx', import.meta.url), 'utf8');
+  for (const k of ['settings.msgr.swap.confirm', 'settings.msgr.swap.go', 'settings.msgr.personal.title', 'settings.msgr.personal.status', 'settings.msgr.personal.rosterHelp', 'settings.msgr.personal.count'])
+    assert.match(dict, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
 });

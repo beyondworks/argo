@@ -106,6 +106,24 @@ create or replace function public._msgr_free_benched(p_uid uuid, p_ws text, p_sl
 $$;
 revoke all on function public._msgr_free_benched(uuid, text, text, bigint) from public, anon, authenticated;
 
+-- 2-1-2) 교체 대상 순서 한 곳 — 관문의 교체(4)와 설정 카드의 미리 알림(4-3)이 같은 순서를 쓴다. sweep이 남길 순서(5)의 거꾸로:
+--        점수 낮은 것 → 교체로 멈춘 뒤 대화 없음(2-1-1) → 고른 순간이 오래된 것 → 나중에 만든 것. p_keep = 대상에서 뺄 에이전트('회사:이름'), p_n = 몇 명.
+create or replace function public._msgr_free_victims(p_uid uuid, p_keep text[], p_n int)
+  returns table(ws_id text, slug text, any_id uuid, display_name text)
+  language sql stable security definer set search_path = public, pg_temp as $$
+  select a.ws_id, a.slug, a.any_id, a.name
+    from (select c.ws_id, c.slug, min(c.id::text)::uuid any_id, max(ch.chosen_at) chosen_at, min(c.created_at) born, min(c.display_name) name,
+                 greatest(max((select max(e.source_msg_id) from public.msgr_executions e where e.crew_id = c.id)), max(ch.chosen_msg)) score
+            from public.msgr_crews c left join public.msgr_free_choices ch on ch.crew_id = c.id
+           where c.owner_user_id = p_uid and c.hosting <> 'bot' and c.status = 'active'
+             and not ((c.ws_id || ':' || c.slug) = any(coalesce(p_keep, '{}'::text[])))
+           group by c.ws_id, c.slug) a
+   order by a.score asc nulls first, public._msgr_free_benched(p_uid, a.ws_id, a.slug, a.score) desc,
+            a.chosen_at asc nulls first, a.born desc, a.ws_id, a.slug
+   limit greatest(coalesce(p_n, 0), 0)
+$$;
+revoke all on function public._msgr_free_victims(uuid, text[], int) from public, anon, authenticated;
+
 -- 2-2) 재개 처리(커서 밖의 일) — #941 _msgr_crew_plan_resume에서 떼어 냈다. 중지 기록 닫기·멈추기 전에 줄 선 자동화 실행 닫기·지난 예정 시각 옮기기.
 --      sweep 재개와 사람의 직접 연결(paused→active, 관문 뒤 AFTER 트리거)이 같은 함수를 쓴다(검수 #945 HIGH-1).
 create or replace function public._msgr_crew_resume_side(p_crew uuid, p_top bigint) returns void
@@ -249,16 +267,8 @@ begin
         new.status := 'paused'; return new; -- 미러 insert·되살리기는 교체하지 않는다
       end if;
       -- 교체 대상: 같은 주인(new.owner_user_id = 연결을 누른 사람 자신)의 연결된 에이전트 중 점수가 가장 낮은 것(대화도 선택도 없던 것 먼저)
-      -- 순서는 sweep이 남길 순서(5)의 거꾸로 — 점수 → 교체로 멈춘 뒤 대화 없음(2-1-1) → 고른 순간 → 만든 순
-      select a.ws_id, a.slug, a.any_id into victim
-        from (select c.ws_id, c.slug, min(c.id::text)::uuid any_id, max(ch.chosen_at) chosen_at, min(c.created_at) born,
-                     greatest(max((select max(e.source_msg_id) from public.msgr_executions e where e.crew_id = c.id)), max(ch.chosen_msg)) score
-                from public.msgr_crews c left join public.msgr_free_choices ch on ch.crew_id = c.id
-               where c.owner_user_id = new.owner_user_id and c.hosting <> 'bot' and c.status = 'active' and not (c.ws_id = new.ws_id and c.slug = new.slug)
-               group by c.ws_id, c.slug) a
-       order by a.score asc nulls first, public._msgr_free_benched(new.owner_user_id, a.ws_id, a.slug, a.score) desc,
-                a.chosen_at asc nulls first, a.born desc, a.ws_id, a.slug
-       limit 1;
+      -- 순서는 한 곳(2-1-2 _msgr_free_victims) — 설정 카드의 미리 알림(4-3)과 같은 결과
+      select v.ws_id, v.slug, v.any_id into victim from public._msgr_free_victims(new.owner_user_id, array[new.ws_id || ':' || new.slug], 1) v;
       if victim.slug is null then
         raise exception 'msgr_free_agent_limit msgr_pro_required' using errcode = 'P0001', detail = 'Free accounts can connect up to 4 agents to Messenger';
       end if;
@@ -330,6 +340,25 @@ create or replace function public.msgr_agent_swap_notes(p_crews uuid[]) returns 
 $$;
 revoke all on function public.msgr_agent_swap_notes(uuid[]) from public, anon;
 grant execute on function public.msgr_agent_swap_notes(uuid[]) to authenticated;
+
+-- 4-3) 교체 미리 알림(검수 스택 화면 4차, 10/11) — 설정 카드에서 이 회사(p_ws)의 에이전트들(p_slugs)을 연결하면 무료 4명 한도 때문에 멈출 에이전트 이름.
+--      관문과 같은 순서(_msgr_free_victims)로, 필요한 수(연결된 수 + 새로 연결될 수 − 4)만큼. 고른 에이전트는 후보에서 뺀다.
+--      Pro·새 앱 없음(연결이 멈춘 채 남아 교체가 일어나지 않음)·자리 남음이면 빈 목록. 읽기만 — 연결을 누를 때 한 번.
+create or replace function public.msgr_free_swap_preview(p_ws text, p_slugs text[]) returns text[]
+  language plpgsql stable security definer set search_path = public, pg_temp as $$
+declare me uuid := auth.uid(); n_new int; n_over int;
+begin
+  if me is null or p_ws is null or coalesce(cardinality(p_slugs), 0) = 0 or cardinality(p_slugs) > 200 then return '{}'; end if;
+  if coalesce(current_setting('msgr.pro_gate', true), '') = 'off' or to_regprocedure('public.is_pro_for(uuid)') is null
+     or public.is_pro_for(me) or not public._msgr_free_app_ok(me) then return '{}'; end if;
+  select count(distinct s) into n_new from unnest(p_slugs) s
+   where not exists (select 1 from public.msgr_crews c where c.owner_user_id = me and c.ws_id = p_ws and c.slug = s and c.hosting <> 'bot' and c.status = 'active');
+  n_over := public._msgr_free_active_agents(me) + n_new - (select agent_limit from public._msgr_free_agent_policy());
+  if n_over <= 0 then return '{}'; end if;
+  return array(select v.display_name from public._msgr_free_victims(me, array(select p_ws || ':' || s from unnest(p_slugs) s), n_over) v);
+end $$;
+revoke all on function public.msgr_free_swap_preview(text, text[]) from public, anon;
+grant execute on function public.msgr_free_swap_preview(text, text[]) to authenticated;
 
 -- 5) 정리 함수 — 20261010200000 정의를 주인 단위로. Pro·봇 갈래는 그대로, 무료 사람 에이전트만 새 규칙(머리말 '누구를 재개하나').
 --    주인마다 관문과 같은 잠금을 잡는다(검수 #945 LOW-1 — 사람의 연결과 겹쳐 5명이 되던 경합). 순위 점수 = 실행 기록·사람이 고른 순간 중 늦은 것(2-1).

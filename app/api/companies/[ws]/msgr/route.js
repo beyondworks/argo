@@ -41,6 +41,13 @@ async function myCardRows(c, ws) {
   if (error) throw new Error(error.message);
   return splitCardRows(data);
 }
+/** 이 회사의 내 개인 공간 행(org_id NULL) — 조직이 없는 사용자의 개인 공간 연결(검수 스택 화면 4차). 행은 게이트웨이(미러)가 만든다. */
+async function myPersonalRows(c, ws) {
+  const { data, error } = await c.client.from('msgr_crews').select('id, org_id, slug, display_name, hosting, status, allow, allow_users')
+    .eq('owner_user_id', c.uid).eq('ws_id', ws).is('org_id', null);
+  if (error) throw new Error(error.message);
+  return data ?? [];
+}
 async function myOrgs(c) {
   const { data, error } = await c.client.from('msgr_org_members').select('org_id, role, msgr_orgs(id, name, slug)').eq('user_id', c.uid).is('removed_at', null); // 본인 행만(멤버 select 정책은 조직 전원 행을 준다 — 검수 MEDIUM-2)
   if (error) throw new Error(error.message);
@@ -70,7 +77,7 @@ async function syncEnabled(ws, c) {
 /** 이 기기의 새 앱 심박 한 번(앱 버전) — 이 회사의 내 조직 행(상태 무관 — 기기 행이 서려면 행이 있어야 한다)으로. 서버가 재개 신호를 주면 makeDb.heartbeat가 재개까지 부른다. */
 async function beatNow(c, ws) {
   const deviceId = await getDeviceId().catch(() => null);
-  const ids = (await myRegistrations(c, ws).catch(() => [])).map((r) => r.id);
+  const ids = [...(await myRegistrations(c, ws).catch(() => [])), ...(await myPersonalRows(c, ws).catch(() => []))].map((r) => r.id); // 개인 공간만 쓰는 사용자도(4차)
   if (!deviceId || !ids.length) return false;
   await c.db.heartbeat(ids, { wsId: ws, deviceId });
   return true;
@@ -87,10 +94,10 @@ export async function GET(_req, { params }) {
   const c = await sessionClient().catch(() => null);
   if (!c) return Response.json({ signedIn: false, orgs: [], crews: [] });
   try {
-    const [orgs, { crews, personalCount }, gateway] = await Promise.all([myOrgs(c), myCardRows(c, ws), msgrGatewayStatus(ws)]);
+    const [orgs, { crews, personalCount, personal }, gateway] = await Promise.all([myOrgs(c), myCardRows(c, ws), msgrGatewayStatus(ws)]);
     // 멈춘 행(무료 계정 한도)의 이유 — 카드 줄 문구(msgr-card.mjs pausedLabelKey). 멈춘 행이 있을 때만 읽는다(카드의 8초 폴에 호출을 늘리지 않게, 화면 검수 B)
-    const pauseReason = crews.some((r) => r.status === 'paused') ? (await readAgentPause(c.client).catch(() => null))?.reason ?? null : null;
-    return Response.json({ signedIn: true, uid: c.uid, orgs, crews, personalCount, pauseReason, runtime: runtimeState(gateway) });
+    const pauseReason = [...crews, ...personal].some((r) => r.status === 'paused') ? (await readAgentPause(c.client).catch(() => null))?.reason ?? null : null;
+    return Response.json({ signedIn: true, uid: c.uid, orgs, crews, personalCount, personal, pauseReason, runtime: runtimeState(gateway) });
   } catch (e) { return upstream('GET', e, await requestLang()); }
 }
 
@@ -101,7 +108,7 @@ export async function POST(req, { params }) {
   const cs = await csrfDenied(req); if (cs) return cs;
   const lang = await requestLang();
   // 기본 'owner' — 조직 정책 테이블(부록 H-0) 전까지는 가장 좁게 시작하고 크루 시트/카드에서 연다(유건 결정 2026-09-03)
-  const { orgId, slug, allow = 'owner', allowUsers = [], activate = false, reconnect = false, slugs = [] } = await req.json().catch(() => ({}));
+  const { orgId, slug, allow = 'owner', allowUsers = [], activate = false, reconnect = false, slugs = [], personal = false, preview = false } = await req.json().catch(() => ({}));
   const users = Array.isArray(allowUsers) ? allowUsers : [];
   const wanted = Array.isArray(slugs) ? [...new Set(slugs.filter((v) => typeof v === 'string' && v))] : [];
   if (reconnect) {
@@ -113,6 +120,41 @@ export async function POST(req, { params }) {
     if (!crews.some((crew) => crew.status === 'active' || crew.status === 'paused')) return Response.json({ ok: false, runtime: { state: 'noCrews' } }); // paused = 무료 계정 — 브리지가 돌아야 재개된다(syncEnabled)
     nudgeGateway(ws);
     return Response.json({ ok: true, runtime: { state: 'reconnecting' } });
+  }
+  // 교체 미리 알림(검수 스택 화면 4차 — 연결을 누르면 무엇이 멈추는지) — 관문과 같은 순서의 서버 판정(msgr_free_swap_preview). 읽기 1건, 연결을 누를 때만.
+  //   Pro·새 앱 없음·자리 남음·옛 서버(함수 없음)·오류는 빈 목록(확인 없이 종전대로 연결).
+  if (preview) {
+    const agents = await listAgents(ws);
+    const known = wanted.filter((s) => agents.some((a) => a.slug === s));
+    const c = await sessionClient().catch(() => null);
+    if (!c || !known.length) return Response.json({ ok: true, victims: [] });
+    const { data, error } = await c.client.rpc('msgr_free_swap_preview', { p_ws: ws, p_slugs: known });
+    return Response.json({ ok: true, victims: error ? [] : [...new Set((data ?? []).filter(Boolean))] });
+  }
+  // 개인 공간 연결(조직이 없는 사용자 — 검수 스택 화면 4차): 게이트웨이(미러)가 넣은 개인 행 중 멈춤·해제 행을 사람의 연결(→active)로 — 관문·sweep·교체 안내가
+  //   조직 행과 같은 길(PG 시험 [4차]). 행을 새로 넣지 않는다(개인 행은 미러가 만든다). 상태만 바꿔 허용 범위·이름은 그대로.
+  if (activate && personal) {
+    if (!wanted.length) return apiError('msgr_bad_request', lang);
+    const agents = await listAgents(ws);
+    if (wanted.some((s) => !agents.some((a) => a.slug === s))) return apiError('msgr_crew_not_found', lang);
+    const c = await sessionClient().catch(() => null);
+    if (!c) return authError('auth_required', lang);
+    const info = await readAgentPause(c.client).catch(() => null); // 조직 갈래 2)와 같다 — 서버가 이 기기의 새 앱을 모르면 심박 한 번
+    if ((info?.reason === 'app' || info?.reason === 'off') && appMeetsMin(info.min_app)) await beatNow(c, ws).catch((e) => console.warn('[argo] msgr 새 앱 심박 실패:', e?.message ?? e));
+    const mine = (rows) => rows.filter((r) => wanted.includes(r.slug));
+    for (const r of mine(await myPersonalRows(c, ws))) {
+      if (!['paused', 'available'].includes(r.status)) continue;
+      const { error } = await c.client.from('msgr_crews').update({ status: 'active' }).eq('id', r.id);
+      if (error) return upstream('POST personal activate', error, lang);
+    }
+    let rows = await myPersonalRows(c, ws);
+    const swapped = await swapNotes(c.client, mine(rows).map((r) => r.id)).catch(() => []);
+    if (mine(rows).some((r) => r.status === 'paused')) { // 새 앱이 없으면 관문이 조용히 멈춘 채 둔다 — 이유를 보인다(조직 갈래와 같다)
+      const why = await freeAgentReasonFor(c, ws);
+      if (why.crews) rows = await myPersonalRows(c, ws);
+      if (why.code && mine(rows).some((r) => r.status === 'paused')) return apiError(why.code, lang);
+    }
+    return Response.json({ ok: true, personal: rows, swapped });
   }
   if (activate) {
     if (!UUID.test(String(orgId ?? '')) || !wanted.length) return apiError('msgr_bad_request', lang);

@@ -398,14 +398,14 @@ test('[보안 ⑤①] 이유 조회는 내 것만, 교체 기록 표는 직접 �
   assert.deepEqual(Object.keys(mine).sort(), ['active', 'limit', 'min_app', 'paused', 'reason'], '목록·이름·남의 id 없이 수와 이유만');
   fails(asUserRaw(M, 'select * from public.msgr_free_choices'), /permission denied/, '교체 기록 표 직접 읽기');
   fails(asUserRaw(M, `insert into public.msgr_free_choices (crew_id, owner_user_id) values ('${F.f1}', '${M}')`), /permission denied/, '교체 기록 표 직접 쓰기');
-  for (const call of [`public._msgr_crew_resume_side('${F.f1}', 0)`, `public._msgr_crew_plan_resume('${F.f1}', 0)`, `public.msgr_crews_plan_sweep('${U.f}')`, `public._msgr_free_active_agents('${U.f}')`, `public._msgr_free_app_ok('${U.f}')`, `public._msgr_free_benched('${U.f}', 'ws-f', 'f1', null)`])
+  for (const call of [`public._msgr_crew_resume_side('${F.f1}', 0)`, `public._msgr_crew_plan_resume('${F.f1}', 0)`, `public.msgr_crews_plan_sweep('${U.f}')`, `public._msgr_free_active_agents('${U.f}')`, `public._msgr_free_app_ok('${U.f}')`, `public._msgr_free_benched('${U.f}', 'ws-f', 'f1', null)`, `public._msgr_free_victims('${U.f}', null, 1)`])
     fails(asUserRaw(M, `select ${call}`), /permission denied/, call);
   const bad = sql(`select coalesce(string_agg(p.proname, ','), '') from pg_proc p join pg_namespace n on n.oid = p.pronamespace
     where n.nspname = 'public' and p.proname in ('msgr_device_beat','msgr_free_resume','msgr_my_agent_pause','msgr_agent_swap_notes','msgr_crews_pro_gate','msgr_crews_resume_side',
-      '_msgr_crew_resume_side','_msgr_crew_plan_resume','msgr_crews_plan_sweep','_msgr_free_app_ok','_msgr_free_active_agents','_msgr_free_agent_policy','_msgr_free_benched')
+      '_msgr_crew_resume_side','_msgr_crew_plan_resume','msgr_crews_plan_sweep','_msgr_free_app_ok','_msgr_free_active_agents','_msgr_free_agent_policy','_msgr_free_benched','_msgr_free_victims','msgr_free_swap_preview')
       and not (p.prosecdef and exists (select 1 from unnest(p.proconfig) c where c like 'search_path=%'))`);
   assert.equal(bad, '', '정의자 + search_path 고정이 아닌 함수');
-  for (const fn of ['msgr_device_beat(text,text,uuid[],text)', 'msgr_free_resume()', 'msgr_my_agent_pause()', 'msgr_agent_swap_notes(uuid[])'])
+  for (const fn of ['msgr_device_beat(text,text,uuid[],text)', 'msgr_free_resume()', 'msgr_my_agent_pause()', 'msgr_agent_swap_notes(uuid[])', 'msgr_free_swap_preview(text,text[])'])
     assert.equal(sql(`select has_function_privilege('anon', 'public.${fn}', 'EXECUTE')`), 'f', `anon ${fn}`);
 });
 
@@ -586,4 +586,39 @@ test('[3차 ③] 무료 + 새 앱 + 자리가 남았는데 멈춘 에이전트�
   asUser(W, `update public.msgr_crews set status = 'available' where id = '${w1}'`);
   assert.equal(reason(W).reason, 'room', '연결된 에이전트가 없어도(자리 4) 새 앱이 켜져 있으면 room');
   assert.equal(reason(P).reason, null, 'Pro는 이유 없음 그대로');
+});
+
+// ── 검수 스택 화면 4차(10/11) — 개인 공간만 쓰는 무료 사용자·교체 미리 알림 ──
+const preview = (uid, ws, slugs) => last(asUser(uid, `select coalesce(array_to_string(public.msgr_free_swap_preview('${ws}', array[${slugs.map((s) => q(s)).join(',')}]::text[]), ','), '')`));
+test('[4차] 개인 공간만(조직 없음) — 미러가 넣은 다섯 번째(멈춤) 개인 행을 주인이 연결하면 조직 행과 같은 결과: 교체·교체 안내·이유 limit·크론 할 일 0', { skip }, () => {
+  const V = 'ac000021-0000-4000-8000-000000000021'; mkUser(V, 'v');
+  sql(`insert into public.msgr_device_beats (owner_user_id, ws_id, device_id, slugs, app_version, app_seen_at) values ('${V}', '${WS}', 'v-mac', array['v1'], '${NEW}', now())`);
+  const v = {}; // 미러 insert(로그인하면 내 에이전트가 개인 공간에 바로 연결) — 다섯 번째는 관문이 조용히 paused
+  for (const s of ['v1', 'v2', 'v3', 'v4', 'v5']) v[s] = last(asUser(V, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name, hosting, status, allow) values (null, '${V}', '${WS}', '${s}', '${s}', 'local', 'active', 'owner') returning id`));
+  assert.equal(slugsOf(V, 'active'), 'v1,v2,v3,v4'); assert.equal(statusOf(v.v5), 'paused');
+  assert.deepEqual(reason(V), { paused: 1, active: 4, limit: 4, reason: 'limit', min_app: NEW });
+  assert.equal(preview(V, WS, ['v5']), 'v4', '미리 알림 — 연결하면 멈출 에이전트(기록이 없으면 가장 나중에 만든 것)');
+  asUser(V, `update public.msgr_crews set status = 'active' where id = '${v.v5}'`); // 설정 카드(개인 공간)의 연결
+  assert.equal(statusOf(v.v5), 'active'); assert.equal(statusOf(v.v4), 'paused', '미리 알린 에이전트가 실제로 멈춘다');
+  assert.equal(swapNotes(V, [v.v5]), 'v4');
+  assert.equal(openPause(v.v4), '1'); assert.equal(openPause(v.v5), '0');
+  const s0 = snap(V); assert.deepEqual(sweep(V), { paused: 0, resumed: 0, failed: 0 }); assert.equal(snap(V), s0);
+  assert.equal(preview(V, WS, ['v4']), 'v3', '다시 v4를 고르면 — v5는 방금 고른 순간이 있어 남고, 기록 없는 나머지 중 가장 나중에 만든 v3(v4는 고른 것이라 빠짐)');
+});
+
+test('[4차] 교체 미리 알림 — 여러 개를 고르면 필요한 수만큼, 이미 연결된 것·고른 것은 제외, 자리 남음·새 앱 없음·Pro·로그인 없음은 빈 목록', { skip }, () => {
+  const T = 'ac000022-0000-4000-8000-000000000022'; mkUser(T, 't');
+  const t = {}; for (const s of ['t1', 't2', 't3']) t[s] = insOff(T, null, s); for (const s of ['t4', 't5', 't6']) t[s] = insOff(T, null, s, 'paused');
+  execOn(t.t1, postAs(U.f, CHF, 't1')); execOn(t.t2, postAs(U.f, CHF, 't2')); // t3 기록 없음 — 가장 먼저 멈출 후보
+  assert.equal(preview(T, WS, ['t4']), '', '새 앱이 없으면 교체가 일어나지 않는다(연결은 멈춘 채)');
+  sql(`insert into public.msgr_device_beats (owner_user_id, ws_id, device_id, slugs, app_version, app_seen_at) values ('${T}', '${WS}', 't-mac', array['t1'], '${NEW}', now())`);
+  assert.equal(preview(T, WS, ['t4']), '', '자리 남음(3명) — 하나는 그냥 연결');
+  assert.equal(preview(T, WS, ['t4', 't5']), 't3', '둘을 고르면 하나만 넘친다 — 기록 없는 t3');
+  assert.equal(preview(T, WS, ['t4', 't5', 't6']), 't3,t1', '셋이면 둘 — 다음은 대화가 오래된 t1');
+  assert.equal(preview(T, WS, ['t1', 't4', 't5']), 't3', '이미 연결된 t1을 고르면 새로 느는 것은 둘 — 그리고 t1은 멈출 후보에서 빠진다');
+  asUser(T, `update public.msgr_crews set status = 'active' where id in ('${t.t4}', '${t.t5}')`); // 실제로 둘 연결
+  assert.equal(slugsOf(T, 'active'), 't1,t2,t4,t5', '미리 알린 대로 t3만 멈춘다');
+  assert.equal(preview(T, WS, ['t1', 't3']), 't2', '고른 에이전트는 후보에서 뺀다 — 이미 연결된 t1이 순서상 첫 후보(대화가 가장 오래됨)여도 건너뛰고 t2');
+  assert.equal(preview(P, WS, ['p1']), '', 'Pro는 교체가 없다');
+  fails(psqlRaw(['-A', '-t', '-c', `set role anon; select public.msgr_free_swap_preview('${WS}', array['t1'])`]), /permission denied/, '익명 미리 알림');
 });
