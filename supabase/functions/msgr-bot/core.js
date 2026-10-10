@@ -55,6 +55,8 @@ const ERR = {
   msgr_bot_too_many_files: [409, 'Conflict: at most 10 files per message'],
   msgr_bot_bad_attach_path: [400, 'Bad Request: storage_path must come from createUpload for this message'],
   msgr_bot_upload_missing: [409, 'Conflict: upload the file to upload_url before attachFile'],
+  // 20261011150000 — 무료 계정 첨부 저장 한도(에이전트 주인 몫). 413 = 같은 메서드의 25MB 초과와 같은 분류(연결 도구가 재시도하지 않는다)
+  msgr_storage_limit: [413, 'Payload Too Large: the agent owner\'s free plan attachment storage is full — existing files stay; upgrade to Pro to send more'],
   msgr_approval_conflict: [409, 'Conflict: this approval_id already exists with a different command or source'],
 };
 
