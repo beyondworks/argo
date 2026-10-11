@@ -134,7 +134,28 @@ end $$;
 revoke all on function public.msgr_personal_attachment_ok(text, bigint) from public, anon, authenticated;
 grant execute on function public.msgr_personal_attachment_ok(text, bigint) to authenticated;
 
--- 9) 버킷 전역 상한을 큰 쪽(500MB)으로 — 플랜별 상한은 5) 게이트가 한다. 열이 없는 환경(시험 흉내 표)에서는 건너뛴다
+-- 9) 첨부 행 트리거(20261011150000 정의) — 조기 반환이 무료 키만 보던 것을 두 키 모두로(분리 검수 M1: 무료 꺼짐 + Pro 켜짐이면
+--    신고 크기만으로 Pro 총량을 우회했다). 파일 하나 상한은 한도 키와 무관하게 실제 크기로 항상 본다 — 버킷은 전역 천장만 알고,
+--    신고 크기를 속인 업로드는 여기서 걸린다(개인 방은 msgr_personal_attachment_ok가 같은 판정을 한다)
+create or replace function public.msgr_attachment_storage_gate() returns trigger
+  language plpgsql security definer set search_path = public, pg_temp as $$
+declare real_size bigint; found_obj boolean := false;
+begin
+  select true, o.size into found_obj, real_size from public._msgr_live_objects() o where o.name = new.storage_path limit 1; -- 지금 버전(보관본·삭제 표시 제외)
+  if real_size is not null then new.bytes := real_size; end if;
+  if new.bytes > public._msgr_file_max(public._msgr_attachment_uploader(new.message_id)) then
+    raise exception 'msgr_file_too_large' using errcode = 'PT413',
+      detail = 'file exceeds the per-file limit for this plan', hint = 'file_max_bytes';
+  end if;
+  if public._msgr_storage_limit() is null and public._msgr_pro_storage_limit() is null then return new; end if; -- 총량 두 키 모두 꺼짐 — 거절 없음
+  if exists (select 1 from public.msgr_attachments a where a.storage_path = new.storage_path) then return new; end if; -- 같은 객체 재사용 — 새 저장 아님
+  if not coalesce(found_obj, false) then raise exception 'msgr_attach_upload_missing' using detail = 'upload the file before adding its attachment row'; end if;
+  perform public._msgr_upload_gate(public._msgr_attachment_uploader(new.message_id), new.bytes, new.storage_path);
+  return new;
+end $$;
+revoke all on function public.msgr_attachment_storage_gate() from public, anon, authenticated;
+
+-- 10) 버킷 전역 상한을 큰 쪽(500MB)으로 — 플랜별 상한은 5)·9)가 한다. 열이 없는 환경(시험 흉내 표)에서는 건너뛴다
 do $$
 begin
   if to_regclass('storage.buckets') is not null

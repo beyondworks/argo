@@ -136,7 +136,7 @@ test('첨부 행 — 객체가 없거나 25MB를 넘거나 글 번호가 경로�
   fails(attachRaw(U.a, m, `p/${AB}/${m}/none-0-x.png`), /row-level security/, '올리지 않은 객체');
   const big = `p/${AB}/${m}/big-0-x.bin`;
   upload(U.a, big, 26214401);
-  fails(attachRaw(U.a, m, big), /row-level security/, '25MB 초과');
+  fails(attachRaw(U.a, m, big), /msgr_file_too_large|row-level security/, '25MB 초과 — 20261012120000부터는 행 트리거(PT413)가 정책보다 먼저 거절한다');
   const ok = `p/${AB}/${m}/ok-0-x.png`;
   upload(U.a, ok, 26214400);
   fails(attachRaw(U.a, m2, ok), /row-level security/, '글 번호가 경로와 다름');

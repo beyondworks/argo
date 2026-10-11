@@ -33,10 +33,10 @@ const uploadRaw = (uid, path, declared) => asUserRaw(uid, `insert into storage.o
 const fill = (path, size) => sql(`update storage.objects set metadata = jsonb_build_object('size', ${size}, 'mimetype', 'application/octet-stream') where bucket_id = 'msgr' and name = '${path}'`);
 const attachRaw = (uid, mid, path, bytes = 1) => asUserRaw(uid, `insert into public.msgr_attachments (message_id, org_id, storage_path, name, mime, bytes) values (${mid}, null, '${path}', 'a.bin', 'application/octet-stream', ${bytes})`);
 let seq = 0;
-function send(uid, ch, size) { // 앱 한 파일 전송 = 업로드(정책·신고 크기) → 크기 채움 → 첨부 행(트리거·실제 크기)
+function send(uid, ch, size, { declared = size } = {}) { // 앱 한 파일 전송 = 업로드(정책·신고 크기) → 크기 채움 → 첨부 행(트리거·실제 크기)
   const m = post(uid, ch);
   const path = `p/${ch}/${m}/${++seq}-f.bin`;
-  const up = uploadRaw(uid, path, size);
+  const up = uploadRaw(uid, path, declared);
   if (up.status !== 0) return { m, path, up };
   fill(path, size);
   return { m, path, up, att: attachRaw(uid, m, path) };
@@ -119,6 +119,24 @@ test('파일 하나 상한은 플랜별 — 무료 25MB+1은 PT413으로 거절,
   sendOk(U.p, DM.p, 524288000); // Pro는 500MB
   fails(send(U.p, DM.p, 524288001).up, /msgr_file_too_large/, 'Pro도 500MB+1은 거절');
   sendOk(U.t, DM.t, 100000000); // 체험 중은 Pro와 같다
+});
+
+test('첨부 행 트리거는 두 키를 모두 본다 — 무료 꺼짐 + Pro 켜짐에서 과소 신고한 Pro는 실제 크기로 막힌다(분리 검수 M1)', { skip }, () => {
+  setFree(null);
+  const u0 = Number(sql(`select public._msgr_storage_used('${U.p}')`));
+  setPro(u0 + 10000000);
+  try {
+    const r = send(U.p, DM.p, 12000000, { declared: 1000 }); // 1KB라고 신고 — 업로드 정책은 통과(실제 12MB > 한도 여유 10MB)
+    assert.equal(r.up.status, 0, `신고 크기로는 올라간다: ${r.up.stderr}`);
+    fails(r.att, /msgr_storage_limit/, '첨부 행은 실제 크기로 Pro 총량에 막는다');
+  } finally { setPro(null); }
+});
+
+test('파일 하나 상한은 총량 키와 무관하게 실제 크기로 항상 본다 — 무료가 25MB로 속여 26MB를 올려도 첨부 행에서 PT413', { skip }, () => {
+  setFree(null); setPro(null); // 총량은 둘 다 꺼짐
+  const r = send(U.f, DM.f, 26214401, { declared: 1000000 });
+  assert.equal(r.up.status, 0, `신고 크기로는 올라간다: ${r.up.stderr}`);
+  fails(r.att, /msgr_file_too_large/, '실제 크기 26MB는 무료 파일 상한 초과 — 트리거가 막는다');
 });
 
 test('유료 조직 손님(좌석 없음)은 무료와 같은 파일 상한 — L7 현재 동작 고정', { skip }, () => {

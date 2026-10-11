@@ -52,7 +52,7 @@ const ERR = {
   msgr_bot_bad_file_name: [400, 'Bad Request: file_name must contain 1 to 200 characters'],
   msgr_bot_bad_file_size: [400, 'Bad Request: file_size must be a positive byte count'],
   msgr_bot_file_too_large: [413, 'Payload Too Large: file exceeds the per-file limit for the owner plan (25 MB free, 500 MB Pro)'],
-  msgr_file_too_large: [413, 'Payload Too Large: file exceeds the per-file limit for the owner plan (25 MB free, 500 MB Pro)'],
+  msgr_file_too_large: [413, 'Payload Too Large: file exceeds the per-file limit for the owner plan (25 MB free, 500 MB Pro)'], // 게이트(_msgr_upload_gate) 이름 — 봇 경로는 prepare가 msgr_bot_file_too_large로 먼저 내므로 여기서는 방어용
   msgr_bot_too_many_files: [409, 'Conflict: at most 10 files per message'],
   msgr_bot_bad_attach_path: [400, 'Bad Request: storage_path must come from createUpload for this message'],
   msgr_bot_upload_missing: [409, 'Conflict: upload the file to upload_url before attachFile'],
