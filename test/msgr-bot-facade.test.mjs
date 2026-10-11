@@ -305,7 +305,7 @@ test('createUpload: 서버 판정 경로 → 서명 업로드 주소, 서명 불
   const signed = []; const signUpload = async (path) => { signed.push(path); return `https://x.supabase.co/storage/v1/object/upload/sign/msgr/${path}?token=t`; };
   const r = await handle({ token: T, method: 'createUpload', params: { message_id: '7', file_name: '보고서.pdf', file_size: 1234 } }, rpc, { signUpload });
   assert.equal(r.status, 200);
-  assert.deepEqual(r.body.result, { storage_path: PATH, upload_url: `https://x.supabase.co/storage/v1/object/upload/sign/msgr/${PATH}?token=t`, method: 'PUT', max_bytes: 26214400 });
+  assert.deepEqual(r.body.result, { storage_path: PATH, upload_url: `https://x.supabase.co/storage/v1/object/upload/sign/msgr/${PATH}?token=t`, method: 'PUT', max_bytes: 524288000 });
   assert.deepEqual(rpc.calls[0], ['msgr_bot_attach_prepare', { token: T, p_message: 7, p_name: '보고서.pdf', p_bytes: 1234 }]);
   assert.deepEqual(signed, [PATH], '서버가 정한 경로만 서명한다');
   assert.equal((await handle({ token: T, method: 'createUpload', params: { message_id: 7, file_name: 'a', file_size: 1 } }, rpc)).status, 500, '서명 불가 → 500');

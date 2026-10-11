@@ -30,7 +30,7 @@ import { SERVE_PREFIXES } from '../artifact-zones.mjs';
 import { ATTACH_EXT, extractFileRefs } from '../tg-format.mjs';
 import { pick } from './protocol.mjs';
 
-export const ATTACH_MAX = 25 * 1024 * 1024; // 첨부 상한 — 앱 업로드·DB 정책(26214400)과 같은 값
+export const ATTACH_MAX = 500 * 1024 * 1024; // 에이전트 답장 파일의 전역 천장 — 플랜별 상한(무료 25MB · Pro 500MB)은 서버가 판정한다(20261012120000, 주인 기준). 미리 거절하지 않으면 Pro 주인의 큰 파일이 여기서 막힌다
 export const REPLY_FILES_MAX = 10;          // 한 답에 붙이는 파일 수 상한(Storage 업로드·첨부 행 폭주 방지)
 export const ROUTINE_FILES_MAX = 3;         // 루틴 결과 글 상한 — 일정마다 반복되는 글이라 더 낮게(분리 검수 M-5)
 
@@ -138,7 +138,7 @@ const reasonText = (kind, lang, max = REPLY_FILES_MAX) => ({
   secret: pick('비밀 정보가 담긴 이름으로 보여 보내지 않았습니다(이름을 바꾸면 보낼 수 있습니다)', 'name looks like it holds secrets — not sent (rename it to send)', lang), // 낱말 오탐이면 이름만 바꿔 다시 보낸다(F-4)
   hardlink: pick('하드 링크라서 보내지 않았습니다', 'hard link — not sent', lang),
   type: pick('첨부하지 않는 파일 형식입니다', 'file type not attached', lang),
-  big: pick('25MB 초과', 'over 25MB', lang),
+  big: pick('500MB 초과', 'over 500MB', lang), // 전역 천장 — 플랜별 상한(무료 25MB)은 서버가 거절한다
   many: pick(`한 답에 최대 ${max}개까지 첨부합니다`, `at most ${max} files per reply`, lang),
 }[kind]);
 
