@@ -91,6 +91,13 @@ test('⑦ readPausedCrewNames — 표시 열만, 멈춘 행만, 옛 서버(face 
   assert.deepEqual(await readPausedCrewNames(db([{ data: null, error: { message: 'permission denied' } }]), ['p']), []);
   assert.deepEqual(await readPausedCrewNames({ from() { throw new TypeError('Failed to fetch'); } }, ['p']), []);
   assert.deepEqual(await readPausedCrewNames(db([]), []), [], '물을 id가 없으면 요청 0');
+  calls.length = 0;
+  const many = Array.from({ length: 250 }, (_, i) => `id${i}`);
+  const answers = [0, 1, 2].map(() => ({ data: [], error: null }));
+  answers[1] = { data: null, error: { message: 'timeout' } };
+  answers[2] = { data: [{ id: 'id249', status: 'paused' }], error: null };
+  assert.deepEqual((await readPausedCrewNames(db(answers), many)).map((r) => r.id), ['id249'], '한 묶음이 실패해도 다른 묶음은 받는다');
+  assert.deepEqual(calls.map((c) => c[2].length), [100, 100, 50], 'id는 100개씩 나눠 묻는다(URL 길이 한도)');
 });
 
 test('⑥ 화면 배선 — 조직 목록 조회는 그대로, 표시 자리는 표시용 찾기, 목록 숫자는 연결 기준', () => {

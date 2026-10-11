@@ -53,13 +53,19 @@ export function withPaused(crewOf, paused, onMiss = null) {
 /** 이름 조회 열 — 계산 열(접속 시각 msgr_crew_seen)·명령 목록 없이 표시에 필요한 것만 */
 export const CREW_NAME_COLS = 'id, owner_user_id, display_name, role_text, status, face, avatar_url';
 /** 모르는 크루 id의 표시용 행 — 멈춘(paused) 행만 돌려준다(빠진 detached 등은 종전대로 대체 문구). 옛 서버(face 열 없음)면 face 없이 한 번 더. 오류·던짐이면 [] */
+/** 한 요청에 싣는 id 수 — uuid 100개 ≈ URL 4KB(서버 URL 한도 8~16KB 안쪽) */
+export const CREW_NAME_CHUNK = 100;
 export async function readPausedCrewNames(db, ids) {
-  try {
-    if (!ids?.length) return [];
-    let r = await db.from('msgr_crews').select(CREW_NAME_COLS).in('id', ids);
-    if (r.error && /face/i.test(r.error.message ?? '')) r = await db.from('msgr_crews').select(CREW_NAME_COLS.replace(', face', '')).in('id', ids);
-    return r.error ? [] : (r.data ?? []).filter((c) => c?.status === 'paused');
-  } catch { return []; }
+  const out = [];
+  for (let i = 0; i < (ids?.length ?? 0); i += CREW_NAME_CHUNK) {
+    const part = ids.slice(i, i + CREW_NAME_CHUNK);
+    try {
+      let r = await db.from('msgr_crews').select(CREW_NAME_COLS).in('id', part);
+      if (r.error && /face/i.test(r.error.message ?? '')) r = await db.from('msgr_crews').select(CREW_NAME_COLS.replace(', face', '')).in('id', part);
+      if (!r.error) out.push(...(r.data ?? []).filter((c) => c?.status === 'paused'));
+    } catch { /* 이 묶음만 건너뛴다 */ }
+  }
+  return out;
 }
 /** 모르는 크루 id를 모아 한 번에 묻는다 — 같은 id는 세션 동안 다시 묻지 않는다(답이 비거나 실패해도). schedule은 다음 틱에 flush를 부른다 */
 export function crewNameAsker(read, onRows, schedule = (f) => setTimeout(f, 0)) {

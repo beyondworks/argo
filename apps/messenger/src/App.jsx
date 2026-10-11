@@ -1857,7 +1857,8 @@ function Shell({ session }) {
   }, [avatars, crews, myAvailable, pausedKnown, myAgents, looks, typing, inbox, approvals, doneAt, surprisedAt, erroredAt, tick]); // eslint-disable-line react-hooks/exhaustive-deps
   const crewOf = (id) => crews.find((c) => c.id === id) ?? myAvailable.find((c) => c.id === id);
   // 표시용(이름·얼굴·글쓴이·주인) — 멈춘 에이전트도 그 이름으로('?' 제보 2026-10-11). 연결 판단(시트 열기·1:1 만들기·멘션·초대·턴)은 위 crewOf 그대로
-  const crewShown = withPaused(crewOf, pausedKnown, isPersonal ? null : (id) => { if (loadedOrg.current === orgId) crewAsker.ask(id); }); // 이 조직 목록을 다 읽은 뒤에만 묻는다(읽는 중에 모르는 연결 크루까지 묻지 않게) const shownCrews = useMemo(() => (pausedKnown.length ? [...crews, ...pausedKnown] : crews), [crews, pausedKnown]); // 알림함·검색·활동의 이름 찾기
+  const crewShown = withPaused(crewOf, pausedKnown, isPersonal ? null : (id) => { if (loadedOrg.current === orgId) crewAsker.ask(id); }); // 이 조직 목록을 다 읽은 뒤에만 묻는다(읽는 중에 모르는 연결 크루까지 묻지 않게)
+  const shownCrews = useMemo(() => (pausedKnown.length ? [...crews, ...pausedKnown] : crews), [crews, pausedKnown]); // 알림함·검색·활동의 이름 찾기
   const [newOrg, setNewOrg] = useState(null);
   const [joinCode, setJoinCode] = useState(null); // 초대 코드로 가입 — 앱에는 링크가 열릴 오리진이 없어 코드를 직접 붙여 넣는다(invite.mjs)
   const inviteErr = (e) => { const k = inviteErrorKey(e?.message); return k ? t(k) : friendlyErr(e?.message ?? String(e), t); };
