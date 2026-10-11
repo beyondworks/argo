@@ -1,8 +1,8 @@
 // UI 점검 E·F(2026-10-01) — 연결이 끊겼을 때: 전송 실패 카드는 원문 없이 쉬운 문구만, 검색은 실패를 빈 결과로 삼키지 않고, 연결 끊김 막대는 offline/online 이벤트를 따라간다.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createComposerDelivery, setDeliveryReporter } from '../src/composer-delivery.mjs';
-import { isNetworkFailure } from '../src/net-errors.mjs';
+import { createComposerDelivery, setDeliveryReporter } from '../../../src/composer-delivery.mjs';
+import { isNetworkFailure } from '../../../src/net-errors.mjs';
 import { fetchSearchRows } from '../src/search-rows.mjs';
 import { watchOnline } from '../src/connection.mjs';
 

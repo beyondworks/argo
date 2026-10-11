@@ -1,6 +1,6 @@
 // 오류 문구 판정부. friendlyErr = 아는 서버 코드 → 사전 문구(모르면 원문 그대로 — 부르는 쪽이 원문을 쓰던 곳과 같게).
 // toastError = 오류 토스트 한 곳에서 원문을 거른다(UX 판독 UXM-05, 2026-10-05: 원문을 넘기는 호출이 60곳이 넘었다 — 서버·JS 원문이 그대로 보이고 다음 행동이 없었다).
-import { isNetworkFailure } from './net-errors.mjs';
+import { isNetworkFailure } from '../../../src/net-errors.mjs';
 import { DICT } from './i18n.js';
 
 // iOS 빌드는 결제를 권하는 문구를 빼고 사실만(App Store 3.1.1) — 이 모듈은 노드 시험에서도 돌아 platform.js(import.meta.env)를 직접 읽지 않고, App이 시작할 때 한 번 정한다

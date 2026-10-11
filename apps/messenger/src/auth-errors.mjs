@@ -1,6 +1,6 @@
 // 로그인 화면 오류 — GoTrue(서버)·브라우저가 돌려주는 영어 원문을 사전 키로(검수 D9: ko 화면에 "Invalid login credentials"가 그대로 떴다).
 // 모르는 문구는 원문 그대로 둔다(정직 — friendlyErr와 같은 원칙). 순서가 곧 우선순위다.
-import { NETWORK_FAILURE } from './net-errors.mjs';
+import { NETWORK_FAILURE } from '../../../src/net-errors.mjs';
 const TABLE = [
   [/invalid login credentials/i, 'auth.err.credentials'],
   [/email not confirmed/i, 'auth.err.unconfirmed'],

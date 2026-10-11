@@ -1509,7 +1509,7 @@ export const _activeCtxForTest = activeCtx;
 const rtChannels = new Map(); // `${wsId}:${orgId}` → realtime channel(타이핑 방송용, start()가 채움 — 회사별로 분리, 같은 조직에 두 회사가 등록돼도 서로 해제하지 않는다)
 export const _rtChannelsForTest = rtChannels;
 const safeName = (n) => String(n ?? 'file').replace(/[\\/]/g, '_').replace(/\.\./g, '_').slice(0, 80) || 'file';
-// Storage 객체 키 — 앱 attach-files.mjs storageKey와 같은 규칙(ASCII만, 순번 접두로 겹침 방지). 한글 이름은 Storage가 'Invalid key'로 거부했다(라이브 2026-09-23). 표시 이름은 첨부 행 name에 원래대로
+// Storage 객체 키 — src/storage-key.mjs storageKey와 같은 규칙(ASCII만, 순번 접두로 겹침 방지). 한글 이름은 Storage가 'Invalid key'로 거부했다(라이브 2026-09-23). 표시 이름은 첨부 행 name에 원래대로
 export const storageKey = (name, index = 0) => { // export: 앱 규칙과의 교차 테스트용(검수 L5)
   const raw = String(name ?? ''); const dot = raw.lastIndexOf('.');
   const ext = dot > 0 ? raw.slice(dot + 1).replace(/[^A-Za-z0-9]/g, '').slice(0, 12) : '';

@@ -13,7 +13,7 @@ test('엣지 함수 사본은 정본과 같다 — 다르면 사람 글과 에�
 
 test('본체(src)와 앱은 정본을, 엣지 함수는 사본을 부른다 — src 밖을 부르면 설치본 서버 트리에서 깨진다', () => {
   assert.match(read('src/gateway/link-preview-node.mjs'), /from '\.\.\/link-preview\.mjs'/);
-  assert.match(read('apps/messenger/src/media-actions.mjs'), /from '\.\.\/\.\.\/\.\.\/src\/link-preview\.mjs'/);
+  assert.match(read('src/composer-delivery.mjs'), /from '\.\/link-preview\.mjs'/, '보낼 때의 미리보기 요청 판정(shouldRequestPreview)은 공용 전송 모듈이 정본을 부른다 — media-actions에서 이동(2026-10-11)');
   assert.match(read('apps/messenger/src/media.jsx'), /from '\.\.\/\.\.\/\.\.\/src\/link-preview\.mjs'/);
   assert.match(read('supabase/functions/msgr-link-preview/core.js'), /from '\.\.\/_shared\/link-preview\.js'/);
 });

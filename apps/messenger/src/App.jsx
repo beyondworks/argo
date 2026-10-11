@@ -72,7 +72,7 @@ import { dmMentionCrews, mentionPopupCrews, setDmRecipient, dmDeliveryMentions, 
 import { acceptFiles, withoutFile, chipSize } from './attach-files.mjs';
 import { MediaAttachments, LinkCard, linkify, onLinkClick } from './media.jsx'; // 첨부 말풍선·크게 보기·링크 카드(2026-10-02)
 import { slashView, readSlashCommands, slashInsert, rolePickCandidates, ROLE_PICK_RE } from './slash-commands.mjs';
-import { getComposerSession, bindComposerSession, clearComposerSessions, composerTransport, setDeliveryReporter } from './composer-delivery.mjs';
+import { getComposerSession, bindComposerSession, clearComposerSessions, composerTransport, setDeliveryReporter } from '../../../src/composer-delivery.mjs';
 import { fetchSearchRows } from './search-rows.mjs';
 import { memberRows, memberPerms, MEMBER_CHIPS } from './phone-members.mjs';
 import { Seg } from './seg.mjs'; // 세그먼트 토글 하나(5차 피드백 3)

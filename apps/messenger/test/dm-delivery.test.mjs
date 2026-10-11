@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { dmMentionCrews, mentionPopupCrews, setDmRecipient, dmDeliveryMentions, dmUnavailableRecipients, relayCaptionKey, relayToLabel, relayToNames } from '../src/dm-delivery.mjs';
 import { mentionsFromBody } from '../src/mention-candidates.mjs';
-import { createComposerDelivery } from '../src/composer-delivery.mjs';
+import { createComposerDelivery } from '../../../src/composer-delivery.mjs';
 
 test('delegation scope is separate from participants and all stays inside DM', () => {
   const participants = [{ id: 'p', display_name: 'Pepper' }];

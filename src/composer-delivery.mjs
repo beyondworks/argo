@@ -1,6 +1,11 @@
-import { storageKey } from './attach-files.mjs';
-import { shouldRequestPreview } from './media-actions.mjs';
+// 메신저·오피스 공용 첨부 전송 모듈(2026-10-11 apps/messenger/src에서 이동) — 두 앱이 같은 업로드·등록·거두기·재시도 규칙을 쓴다.
+// 서버 규칙(무료 저장 한도 관문 20261011150000 등)이 바뀌어도 한쪽만 따라가는 일이 없게 여기 한 곳만 둔다.
+import { storageKey } from './storage-key.mjs';
+import { firstUrl, canPreview } from './link-preview.mjs';
 import { isNetworkFailure } from './net-errors.mjs';
+
+/** 보낸 글에 미리보기를 한 번 요청할지 — 글 번호가 있고 본문(코드 밖)에 http(s) 링크가 있을 때만. */
+export const shouldRequestPreview = ({ body, messageId }) => !!messageId && canPreview(firstUrl(body)); // 일회용 링크(token·code·auth 쿼리)는 엣지 함수도 부르지 않는다
 
 // 전송 실패의 영어 원문은 카드에 보이지 않는다(검수 E: 'TypeError: Failed to fetch'가 빨간 글씨로 나왔다). 앱이 진단 기록(설정 > 진단)으로 보내는 통로.
 let reporter = null;

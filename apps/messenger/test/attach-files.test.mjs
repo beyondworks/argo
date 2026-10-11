@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { acceptFiles, withoutFile, storageKey, chipSize } from '../src/attach-files.mjs';
+import { acceptFiles, withoutFile, chipSize } from '../src/attach-files.mjs';
+import { storageKey } from '../../../src/storage-key.mjs';
 import { fileView } from '../src/media-actions.mjs';
 
 const f = (name, size) => ({ name, size });
