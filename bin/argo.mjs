@@ -21,7 +21,7 @@ import { StringDecoder } from 'node:string_decoder';
 import { applyCliEnv, writeConfig, cliHome, cliLang, cliMode, appDataRoot, accountRoot, isAppShared, readAppVersion, appVersionChanged } from '../src/cli/env.mjs';
 import { serverRunning } from '../src/server-presence.mjs';
 import { launchdPlist, systemdUnit, runArgs, installLinuxUserService, userBusEnv } from '../src/cli/service.mjs';
-import { banner, parseInput, style, fit, termWidth, isCoreLog, cliHintText, hostAutoConnect, pasteFilter, unpaste, similarAgents } from '../src/cli/ui.mjs';
+import { banner, parseInput, style, fit, termWidth, isCoreLog, cliHintText, hostAutoConnect, pasteFilter, unpaste, similarAgents, termSafe } from '../src/cli/ui.mjs';
 
 // 사용자에게 필요 없는 경고는 숨긴다 — node:sqlite(기억 인덱스)의 ExperimentalWarning, SDK의 canUseTool 안내
 // (Argo는 도구 허용을 PreToolUse 훅으로 처리한다 — #587). 대화 중 진행 줄 사이에 끼어들었다(실측). 다른 경고는 그대로 보인다.
@@ -71,6 +71,8 @@ const T = {
     newCompanyDefault: (n) => `새 회사 이름 [${n}]: `, newCompanyPick: '새 회사 이름 — 메신저 조직과 같은 이름을 고르거나 직접 입력하세요', newCompanyOther: '직접 입력',
     orgLinked: (s) => `메신저 조직: ${s}`, orgMismatch: '회사 이름과 메신저 조직 이름이 다릅니다 — argo rename <새 이름>으로 회사 이름을 맞출 수 있어요(메신저 조직 이름은 메신저 설정에서 바꿉니다).',
     renameUsage: '사용법: argo rename <새 이름> — 이 컴퓨터의 회사 이름을 바꿉니다(대화 중에는 /rename <새 이름>).', renamed: (a, b) => `회사 이름을 바꿨습니다: ${a} → ${b}`,
+    renameSame: (n) => `이미 같은 이름입니다: ${n} — 바꾸지 않았습니다.`, renameInvalid: '회사 이름에 제어 문자·줄바꿈은 쓸 수 없습니다.', renameTooLong: (n) => `회사 이름은 ${n}자까지입니다.`,
+    renamePick: '회사가 여러 개라 어느 회사의 이름을 바꿀지 고를 수 없습니다 — 터미널에서 argo를 실행해 회사를 먼저 고른 뒤 다시 실행하세요.',
     pick: '번호: ', crews: '대화할 에이전트를 고르세요', noCrew: '에이전트가 없습니다. /hire로 에이전트를 영입하세요.',
     noSuchAgent: (n, sim) => `'${n}' 에이전트를 찾을 수 없습니다.${sim.length ? ` 혹시 이 에이전트인가요? ${sim.join(', ')}` : ''}`, chatNoName: 'argo chat 뒤에 에이전트 이름을 적으세요: argo chat <에이전트> [지시]',
     agentListHint: '에이전트 목록은 argo를 실행한 뒤 /agent로 볼 수 있습니다.', chatHint: '(빈 줄이나 /quit로 끝냅니다)',
@@ -131,6 +133,8 @@ const T = {
     newCompanyDefault: (n) => `New company name [${n}]: `, newCompanyPick: 'New company name — pick your messenger organization\'s name or type your own', newCompanyOther: 'Type a name',
     orgLinked: (s) => `Messenger organization: ${s}`, orgMismatch: 'Your company name differs from your messenger organization name — run argo rename <new name> to match it (rename the organization in messenger settings).',
     renameUsage: 'Usage: argo rename <new name> — renames the company on this computer (/rename <new name> while chatting).', renamed: (a, b) => `Renamed the company: ${a} → ${b}`,
+    renameSame: (n) => `Already named ${n} — nothing changed.`, renameInvalid: 'Company names can\'t contain control characters or line breaks.', renameTooLong: (n) => `Company names can be up to ${n} characters.`,
+    renamePick: 'You have several companies, so argo can\'t tell which one to rename — run argo in a terminal and choose a company first, then run this again.',
     pick: 'Number: ', crews: 'Choose an agent to talk to', noCrew: 'No agents yet. Hire one with /hire.',
     noSuchAgent: (n, sim) => `No agent named '${n}'.${sim.length ? ` Did you mean: ${sim.join(', ')}?` : ''}`, chatNoName: 'Add an agent name after argo chat: argo chat <agent> [message]',
     agentListHint: 'To see your agents, run argo and type /agent.', chatHint: '(empty line or /quit to leave)',
@@ -311,7 +315,7 @@ async function pickCompany(uid, { interactive }) {
   const saved = list.find((c) => c.id === cfg.ws);
   if (saved) return saved.id;
   if (list.length === 1) return list[0].id;
-  if (list.length > 1 && interactive) { const i = await choose(T.pickCompany, list.map((c) => `${c.name} (${c.id})`)); if (i >= 0) { writeConfig({ ws: list[i].id }); return list[i].id; } }
+  if (list.length > 1 && interactive) { const i = await choose(T.pickCompany, list.map((c) => `${termSafe(c.name)} (${c.id})`)); if (i >= 0) { writeConfig({ ws: list[i].id }); return list[i].id; } }
   if (!interactive) { console.error(T.noCompany); process.exit(1); }
   console.log(T.noCompany);
   const name = await newCompanyName(uid); if (!name) process.exit(0);
@@ -340,20 +344,28 @@ async function orgLines(list) {
     return orgNoticeLines(list, await linkedOrgNames(c, list.map((x) => x.id)), T);
   } catch { return []; }
 }
-/** 회사 이름 바꾸기 — company.json만(DB 쓰기 없음). 동기화를 쓰는 계정은 상주(argo run·앱)가 파일 변경을 다음 주기에 올린다. */
+/** 회사 이름 바꾸기 — company.json만(DB 쓰기 없음). 같은 이름이면 쓰지 않는다. 동기화를 쓰는 계정은 상주(argo run·앱)가 파일 변경을 다음 주기에 올린다. */
 async function renameCmd(ws, name) {
   if (!String(name ?? '').trim()) { console.error(T.renameUsage); return false; }
-  const { renameCompany } = await import('../src/cli/company-name.mjs');
-  const r = await renameCompany(ws, name);
-  console.log(T.renamed(r.from, r.to)); return true;
+  const { renameCompany, COMPANY_NAME_MAX } = await import('../src/cli/company-name.mjs');
+  try {
+    const r = await renameCompany(ws, name);
+    console.log(r.changed ? T.renamed(r.from, r.to) : T.renameSame(r.to)); return true;
+  } catch (e) {
+    if (e?.code === 'invalid') { console.error(T.renameInvalid); return false; }
+    if (e?.code === 'long') { console.error(T.renameTooLong(COMPANY_NAME_MAX)); return false; }
+    if (e?.code === 'empty') { console.error(T.renameUsage); return false; }
+    throw e;
+  }
 }
-/** 이름을 바꿀 회사 — 고른 회사(cli.json ws) → 하나뿐이면 그 회사 → 대화형이면 고르기. 새로 만들지 않는다. */
+/** 이름을 바꿀 회사 — 고른 회사(cli.json ws) → 하나뿐이면 그 회사 → 대화형이면 고르기. 새로 만들지 않는다. → { id } | { reason: 'none'|'ambiguous' } */
 async function existingCompany(uid) {
   const list = await ownCompanies(uid);
   const hit = list.find((c) => c.id === cfg.ws) ?? (list.length === 1 ? list[0] : null);
-  if (hit) return hit.id;
-  if (list.length > 1 && rl && process.stdin.isTTY) { const i = await choose(T.pickCompany, list.map((c) => `${c.name} (${c.id})`)); if (i >= 0) return list[i].id; }
-  return null;
+  if (hit) return { id: hit.id };
+  if (!list.length) return { reason: 'none' };
+  if (rl && process.stdin.isTTY) { const i = await choose(T.pickCompany, list.map((c) => `${termSafe(c.name)} (${c.id})`)); if (i >= 0) return { id: list[i].id }; }
+  return { reason: 'ambiguous' };
 }
 
 /* ─── 크루와 대화 — 앱 채팅 라우트와 같은 기록 순서(beginTurn → chat → appendTurn)라 앱에서도 같은 대화가 보인다 ─── */
@@ -528,11 +540,11 @@ async function runResident({ prefer = true, standby = false } = {}) {
   delete process.env.ARGO_NO_LEADER;
   // 회사를 고르지 않는다 — 없으면 동기화가 클라우드에서 찾아오고, 게이트웨이는 이 계정의 모든 회사를 맡는다(앱 서버와 같다)
   const startList = await ownCompanies(s.user.id);
-  const ws = startList.map((c) => c.name).join(', ');
+  const ws = startList.map((c) => termSafe(c.name)).join(', '); // 회사 이름은 다른 기기에서 올 수 있다 — 제어 문자 제거
   await import('../instrumentation-node.mjs'); // 앱 서버가 켜질 때와 같은 순서 — 스케줄러·게이트웨이(메신저·텔레그램·스캐폴드 백필)·동기화·고아 턴 정리
   console.log(T.running(standby ? 'standby' : prefer ? 'preferred' : 'normal'));
   console.log(ws ? T.runCompanies(ws) : T.runLoading);
-  if (ws) for (const l of await orgLines(startList)) console.log(l); // 회사가 보일 때 한 번만(읽기 1건) — 주기 호출 없음
+  if (ws) void orgLines(startList).then((ls) => ls.forEach((l) => console.log(l))); // 회사가 보일 때 한 번만(읽기 1건, 3초 상한) — 기다리지 않는다(감시·종료 처리 등록을 막지 않게)
   // 회사·실행 담당은 동기화·리스 판정 뒤의 실제 결과로 알린다 — 메모리 값(leaseCheck)과 이 기기 폴더의 회사 목록만 읽는다(요청·쓰기 없음).
   // 회사는 처음 보일 때 한 번, 실행 담당은 처음 정해질 때와 바뀔 때만 한 줄씩.
   const { leaseCheck, isCloudLeader, LEASE_TTL_MS } = await import('../src/sync.mjs');
@@ -544,7 +556,7 @@ async function runResident({ prefer = true, standby = false } = {}) {
     try {
       me ??= await getDeviceId();
       // 회사 목록은 이 기기 폴더만 읽는다 — 10분(300번) 안에 안 보이면 더 보지 않는다(회사가 없는 계정이 상주 내내 폴더를 읽지 않게, 분리 검수 L5)
-      if (!shownWs && wsTries++ < 300) { const got = await ownCompanies(s.user.id); const names = got.map((c) => c.name).join(', '); if (names) { shownWs = true; console.log(T.runLoaded(names)); for (const l of await orgLines(got)) console.log(l); } }
+      if (!shownWs && wsTries++ < 300) { const got = await ownCompanies(s.user.id); const names = got.map((c) => termSafe(c.name)).join(', '); if (names) { shownWs = true; console.log(T.runLoaded(names)); for (const l of await orgLines(got)) console.log(l); } }
       const now = Date.now();
       const next = runRoleState({ ...leaseCheck(), active: isCloudLeader(now) }, me, now, LEASE_TTL_MS);
       if (roleChanged(shownRole, next)) { shownRole = next; console.log(next.kind === 'other' ? T.runRole.other(next.holder) : T.runRole[next.kind]); }
@@ -600,7 +612,7 @@ async function status() {
   const s = localMode ? { user: { id: 'local', email: T.localLabel } } : await currentSession();
   const { getDeviceId, paths } = await import('../src/workspace.mjs');
   const list = s ? await ownCompanies(s.user.id) : [];
-  const companies = s ? list.map((c) => `${c.name} (${c.id})`).join(', ') || (localMode ? '-' : T.statusNoCompany) : '-';
+  const companies = s ? list.map((c) => `${termSafe(c.name)} (${c.id})`).join(', ') || (localMode ? '-' : T.statusNoCompany) : '-';
   // 크기 초과로 동기화하지 않는 파일 — 상주(argo run·앱)와 다른 프로세스라 메모리 상태를 못 본다. 마지막 사이클이 남긴 .sync-state.json의 oversize를 읽는다(src/sync.mjs SYNC_MAX_OBJECT_BYTES)
   const oversize = list.flatMap((c) => {
     try {
@@ -641,7 +653,7 @@ async function interactive() {
   const version = JSON.parse(readFileSync(join(REPO, 'package.json'), 'utf8')).version;
   const company = (await ownCompanies(s.user.id)).find((c) => c.id === ws);
   console.log(`\n${banner({ cols: cols(), version, color }).join('\n')}\n`);
-  console.log(dim(`  ${localMode ? T.localLabel : s.user.email ?? ''} · ${company?.name ?? ws}`));
+  console.log(dim(`  ${localMode ? T.localLabel : s.user.email ?? ''} · ${termSafe(company?.name ?? ws)}`));
   // 이 기기에 연결된 AI가 없으면 먼저 알린다 — 연결 정보는 기기마다 따로(클라우드 미동기, 유건 지시 2026-08-29)
   try { const note = await ensureRunners(ws); if (note) console.log(`  ${dim(note)}\n`); }
   catch { /* 안내일 뿐 — 실패해도 대화는 연다(턴이 /ai를 안내한다) */ }
@@ -682,7 +694,7 @@ async function interactive() {
       else if (p.name === 'ai') await runnersMenu(ws);
       else if (p.name === 'browser') await browserMenu({ interactive: true });
       else if (p.name === 'status') await status();
-      else if (p.name === 'rename') { await renameCmd(ws, p.arg); console.log(''); }
+      else if (p.name === 'rename') { await renameCmd(ws, p.arg).catch((e) => console.log(`  ${T.failed(String(e?.message || e).slice(0, 300))}`)); console.log(''); } // 실패해도 대화는 이어 간다
       else if (p.name === 'serve' && appShared) console.log(`  ${T.appNoRun}\n`);
       else if (p.name === 'serve' && localMode) console.log(`  ${T.localNoServe}\n`);
       else if (p.name === 'serve') { console.log(T.serveStart); onSigint = null; onQueuedLine = null; rl?.close(); rl = null; await runResident(); return; }
@@ -713,9 +725,9 @@ try {
     const name = rest.join(' ').trim();
     if (!name) { console.error(T.renameUsage); process.exit(1); }
     const s = await identity({ interactive: false });
-    const ws = await existingCompany(s.user.id);
-    if (!ws) { console.error(T.noCompany); process.exit(1); }
-    process.exit((await renameCmd(ws, name)) ? 0 : 1);
+    const co = await existingCompany(s.user.id);
+    if (!co.id) { console.error(co.reason === 'ambiguous' ? T.renamePick : T.noCompany); process.exit(1); }
+    process.exit((await renameCmd(co.id, name)) ? 0 : 1);
   }
   else if (cmd === 'browser') { await browserMenu({ interactive: !!rl }); process.exit(0); }
   else if (cmd === 'service') { process.exit(service(rest[0] ?? 'status', rest.slice(1)) === false ? 1 : 0); }

@@ -22,6 +22,13 @@ const WORD = [
 ];
 const SMALL = ['  ▄██▄', ' ▀▀▄▄▀▀', '   ▀▀'];
 
+/** 남이 정할 수 있는 문자열(메신저 조직 이름·다른 기기에서 온 회사 이름 등)을 터미널에 내기 전에 — ESC로 시작하는 시퀀스 전체(CSI·OSC·DCS 등,
+    BEL·ST 끝이나 끝 표시가 없으면 줄 끝까지), C0 제어 문자(탭 제외)·DEL·C1·글자 방향 바꾸기(U+202A-202E·2066-2069)를 지운다. 화면 지우기·링크·창 제목
+    바꾸기·줄 덮어쓰기로 출력을 속이지 못하게(보안 점검 #952). 보이는 글자는 그대로 둔다. */
+const TERM_ESC_SEQ = /\x1b(?:\[[0-?]*[ -/]*[@-~]?|[\]PX^_][\s\S]*?(?:\x07|\x1b\\|$)|[\s\S]?)/g;
+const TERM_CTRL = /[\x00-\x08\x0a-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g;
+export const termSafe = (s) => String(s ?? '').replace(TERM_ESC_SEQ, '').replace(TERM_CTRL, '');
+
 export const COMMANDS = ['help', 'agent', 'new', 'hire', 'ai', 'serve', 'browser', 'rename', 'status', 'quit', 'exit'];
 const ESC = /\x1b\[[0-9;]*m/g;
 export const visibleWidth = (s) => [...String(s).replace(ESC, '')].length;
