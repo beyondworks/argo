@@ -6,7 +6,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { openSync, writeSync, closeSync } from 'node:fs'; // setup-token 코드 왕복 fifo(동기 fd — 이벤트 핸들러에서 사용)
 import { spawn } from 'node:child_process';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { exec, execP, exists, maskKeyLike, mergePath } from './shared.mjs';
 import { RUNNER_AUTH } from './catalog.mjs';
 import { codexInstalledBin } from './codex.mjs';
@@ -227,14 +227,21 @@ export function extractSetupAuthUrl(text) {
 /** 내장 SDK 네이티브 claude CLI 경로 — 앱/서버가 이미 품고 있는 바이너리(stage-sidecar 3.4가 보장).
     실측: setup-token 서브커맨드 지원. 터미널 무경험 초보자도 설치 0으로 원클릭(브라우저 승인) 연결이
     되게 하는 핵심 폴백이다(유건 지시 2026-07-19: 초보자 여정에서 터미널 요구 제거).
+    런타임 위치에서 찾는다: ① cwd(사이드카 server/, 상주 레포 루트) ② 실행 파일(server.js·bin/argo.mjs·next) 기준으로 위로.
+    import.meta.url은 쓰지 않는다 — Next 번들이 빌드 기기 경로(file:///Users/runner/…)로 굳혀 설치본에서 항상 null이었다(0.1.101 청크 실측 2026-10-11).
+    Windows 패키지 안 파일은 claude.exe다(winpc 설치본 실측) — 패키지 위치를 package.json으로 찾고 파일 이름은 플랫폼별로 붙인다.
     (export: 회귀 테스트용) */
-export async function bundledClaudeCli() {
-  try {
-    const { createRequire } = await import('node:module');
-    const req = createRequire(import.meta.url);
-    const p = req.resolve(`@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}/claude`);
-    if (await exists(p)) return p;
-  } catch { /* 플랫폼 패키지 미포함 — 아래 null */ }
+export async function bundledClaudeCli({ cwd = process.cwd(), argv1 = process.argv[1], platform = process.platform, arch = process.arch } = {}) {
+  const pkg = `@anthropic-ai/claude-agent-sdk-${platform}-${arch}/package.json`;
+  const bin = platform === 'win32' ? 'claude.exe' : 'claude';
+  const { createRequire } = await import('node:module');
+  for (const dir of [cwd, argv1 ? dirname(resolve(argv1)) : null]) {
+    if (!dir) continue;
+    try {
+      const p = join(dirname(createRequire(join(resolve(dir), 'noop.js')).resolve(pkg)), bin);
+      if (await exists(p)) return p;
+    } catch { /* 이 위치에 플랫폼 패키지 없음 — 다음 후보 */ }
+  }
   return null;
 }
 

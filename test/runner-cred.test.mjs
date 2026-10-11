@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { mkdtemp, stubRunnerToolDirs } from './helpers/tmp.mjs';
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -111,6 +111,36 @@ test('bundledClaudeCli: 내장 SDK CLI 폴백 — 초보자 원클릭의 전제(
   } else {
     assert.ok(p === null || typeof p === 'string', '타 플랫폼 — null 허용(수동 붙여넣기 안내로 폴백)');
   }
+});
+
+// 설치본 배치 — 서버 루트(server/)의 node_modules에 플랫폼 패키지가 있고 모듈 자기 위치(import.meta.url)는 쓸 수 없다.
+// Next 번들이 import.meta.url을 빌드 기기 경로(file:///Users/runner/work/…)로 굳혀 설치본 0.1.101에서 이 폴백이 항상 null이었다(실측 2026-10-11).
+async function fakeServer(platform, arch, bin) {
+  const root = realpathSync(await mkdtemp(join(tmpdir(), 'argo-bundledcli-'))); // 해석기는 실제 경로를 돌려준다(맥 /var → /private/var)
+  const pkg = join(root, 'server', 'node_modules', '@anthropic-ai', `claude-agent-sdk-${platform}-${arch}`);
+  await mkdir(pkg, { recursive: true });
+  await writeFile(join(pkg, 'package.json'), JSON.stringify({ name: `@anthropic-ai/claude-agent-sdk-${platform}-${arch}`, version: '0.0.0' }));
+  await writeFile(join(pkg, bin), '');
+  return { root, server: join(root, 'server'), bin: join(pkg, bin) };
+}
+
+test('bundledClaudeCli: 런타임 위치(cwd·실행 파일) 기준 — 사이드카·상주·CLI·Windows', async () => {
+  const { bundledClaudeCli } = await import('../src/runners.mjs');
+  const mac = await fakeServer('darwin', 'arm64', 'claude');
+  // 사이드카 — Tauri가 cwd=server, node server.js로 띄운다
+  assert.equal(await bundledClaudeCli({ cwd: mac.server, argv1: join(mac.server, 'server.js'), platform: 'darwin', arch: 'arm64' }), mac.bin, '사이드카: 서버 루트 node_modules');
+  // 헤드리스 CLI — cwd는 사용자가 아무 데나 둔다, 실행 파일은 server/bin/argo.mjs
+  const elsewhere = await mkdtemp(join(tmpdir(), 'argo-bundledcli-cwd-'));
+  assert.equal(await bundledClaudeCli({ cwd: elsewhere, argv1: join(mac.server, 'bin', 'argo.mjs'), platform: 'darwin', arch: 'arm64' }), mac.bin, 'CLI: 실행 파일 기준으로 위로 찾는다');
+  // 상주 — cwd=레포 루트, 실행 파일은 node_modules/next/dist/bin/next
+  assert.equal(await bundledClaudeCli({ cwd: mac.server, argv1: join(mac.server, 'node_modules', 'next', 'dist', 'bin', 'next'), platform: 'darwin', arch: 'arm64' }), mac.bin, '상주: cwd 기준');
+  // Windows — 패키지 안 파일은 claude.exe(winpc 설치본 실측 2026-10-11)
+  const win = await fakeServer('win32', 'x64', 'claude.exe');
+  assert.equal(await bundledClaudeCli({ cwd: win.server, argv1: join(win.server, 'server.js'), platform: 'win32', arch: 'x64' }), win.bin, 'Windows: claude.exe');
+  // 패키지는 있는데 바이너리가 없으면(다른 플랫폼 이름) null — 존재하지 않는 경로를 넘기지 않는다
+  assert.equal(await bundledClaudeCli({ cwd: win.server, argv1: join(win.server, 'server.js'), platform: 'win32', arch: 'arm64' }), null, '플랫폼 패키지 없음 = null');
+  // 어디에도 없으면 null(수동 붙여넣기 안내)
+  assert.equal(await bundledClaudeCli({ cwd: elsewhere, argv1: join(elsewhere, 'x.js'), platform: 'darwin', arch: 'arm64' }), null, '없음 = null');
 });
 
 test('startClaudeSetupToken: 원클릭은 데스크톱 번들(ARGO_STANDALONE)에서만 — 상주/웹은 manual', async () => {
