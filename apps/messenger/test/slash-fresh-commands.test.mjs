@@ -4,6 +4,7 @@
 // 재조회가 실패하거나 시간이 지나도 오지 않으면 '불러오지 못했습니다'(cmd.loadFailed)를 보이고 불러오는 중을 푼다(실패와 '명령 없음'을 구분).
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { SPACE_CREW_STATUSES, splitSpaceCrews } from '../src/agent-pause.mjs'; // loadOrg의 크루 나누기(멈춘 에이전트는 이름 표시에만, 2026-10-11)
 import { readFileSync } from 'node:fs';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -44,9 +45,9 @@ function orgHarness({ rows, faceInDb = true }) {
         if (table === 'msgr_channels') return Promise.resolve([{ id: 'ch', kind: 'public' }]).then(res, rej);
         if (table === 'msgr_org_members' || table === 'msgr_channel_members') return Promise.resolve([]).then(res, rej);
         return Promise.resolve({ data: null }).then(res, rej); } }; } };
-  const setters = Object.fromEntries(['Channels', 'PreviewChannels', 'Members', 'Crews', 'MyAvailable', 'Ent', 'Policy', 'DmMembers'].map((k) => [`set${k}`, (v) => { state[k] = v; }]));
+  const setters = Object.fromEntries(['Channels', 'PreviewChannels', 'Members', 'Crews', 'MyAvailable', 'PausedCrews', 'Ent', 'Policy', 'DmMembers'].map((k) => [`set${k}`, (v) => { state[k] = v; }]));
   const activeOrg = { current: 'A' };
-  const deps = { stampFetched, crewOrder, withoutCopies, readWithSeen, joinedRef: { current: new Set() }, supabase, q: async (x) => await x, uid: 'me', activeOrg, loadedOrg: { current: null }, orgRequests: { current: createRequestGate(() => activeOrg.current) }, orgs: [{ id: 'A' }], crewTier: () => '', readLastCh: () => null, faceCol: { missingAt: 0 }, ...setters, setChId: () => {} };
+  const deps = { stampFetched, crewOrder, withoutCopies, readWithSeen, SPACE_CREW_STATUSES, splitSpaceCrews, joinedRef: { current: new Set() }, supabase, q: async (x) => await x, uid: 'me', activeOrg, loadedOrg: { current: null }, orgRequests: { current: createRequestGate(() => activeOrg.current) }, orgs: [{ id: 'A' }], crewTier: () => '', readLastCh: () => null, faceCol: { missingAt: 0 }, ...setters, setChId: () => {} };
   const loadOrg = new Function(...Object.keys(deps), `return (${app.slice(start, end)});`)(...Object.values(deps));
   return { loadOrg, state, crewSelects, crewBytes: () => crewBytes };
 }

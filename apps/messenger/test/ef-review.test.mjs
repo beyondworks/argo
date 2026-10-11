@@ -167,8 +167,9 @@ test('App 배선 — 개인 공간: 에이전트 카드 열기·방장 표식·�
   has(/const openers = crewOpeners\(\{ isPersonal, openSheet: setSheet, openDm: dmWithCrew \}\);/, '열기 규칙은 순수 함수');
   has(/onCrew=\{openers\.channel\} onTitle=/, '대화방 메시지의 에이전트 버튼');
   has(/onCrew=\{openers\.search\} onDm=/, '검색 결과의 에이전트');
-  has(/isCrew && crew && onCrew \? <button type="button" className="msgr-avbtn" onClick=\{\(\) => onCrew\(crew\.id\)\}/, 'onCrew가 없으면 아바타 버튼을 그리지 않는다');
-  has(/isCrew && crew && onCrew \? <button type="button" className="msgr-namebtn" onClick=\{\(\) => onCrew\(crew\.id\)\}>/, 'onCrew가 없으면 이름 버튼을 그리지 않는다');
+  has(/const crewBtn = !!\(crew && onCrew && crew\.status !== 'paused'\);/, 'onCrew가 없으면(또는 멈춘 에이전트면 — 2026-10-11) 아바타 버튼을 그리지 않는다');
+  has(/isCrew && crewBtn \? <button type="button" className="msgr-avbtn" onClick=\{\(\) => onCrew\(crew\.id\)\}/, 'onCrew가 없으면 아바타 버튼을 그리지 않는다');
+  has(/isCrew && crewBtn \? <button type="button" className="msgr-namebtn" onClick=\{\(\) => onCrew\(crew\.id\)\}>/, 'onCrew가 없으면 이름 버튼을 그리지 않는다');
   has(/const isCreator = creatorTagVisible\(\{ isCreator: channel\.created_by === m\.user_id, isPersonal, isGroup: !!channel\._personal_group \}\);/, '방장 표식 규칙');
   has(/\{\(isChAdmin \|\| isCreator\) && <span className="msgr-tag">\{isCreator \? t\('ch\.admin\.creator'\) : t\('ch\.admin'\)\}<\/span>\}/, '표식은 isCreator로 그린다');
   has(/const askName = \(id, force = false\) => \{/, '이름은 한 묶음 조회 길(askName → flushNames)로만 묻는다');

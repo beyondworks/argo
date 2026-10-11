@@ -4,6 +4,7 @@
 // ④ 실제 loadOrg(App.jsx 원문)가 이 경로를 쓴다 — 행 시각이 오래돼도 기기 심박이 새로우면 접속.
 import test, { beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { SPACE_CREW_STATUSES, splitSpaceCrews } from '../src/agent-pause.mjs'; // loadOrg의 크루 나누기(멈춘 에이전트는 이름 표시에만, 2026-10-11)
 import { readFileSync } from 'node:fs';
 import { seenCol, withSeenCols, readWithSeen, SEEN_SELECT } from '../src/crew-seen.mjs';
 import { createRequestGate } from '../src/rail-state.mjs';
@@ -46,9 +47,9 @@ test('실제 loadOrg: 새 서버는 크루 조회 1건으로 기기 심박 시�
         if (table === 'msgr_channels') return Promise.resolve([{ id: 'ch', kind: 'public' }]).then(res, rej);
         if (table === 'msgr_org_members' || table === 'msgr_channel_members') return Promise.resolve([]).then(res, rej);
         return Promise.resolve({ data: null }).then(res, rej); } }; } };
-  const setters = Object.fromEntries(['Channels', 'PreviewChannels', 'Members', 'Crews', 'MyAvailable', 'Ent', 'Policy', 'DmMembers'].map((k) => [`set${k}`, (v) => { state[k] = v; }]));
+  const setters = Object.fromEntries(['Channels', 'PreviewChannels', 'Members', 'Crews', 'MyAvailable', 'PausedCrews', 'Ent', 'Policy', 'DmMembers'].map((k) => [`set${k}`, (v) => { state[k] = v; }]));
   const activeOrg = { current: 'A' };
-  const deps = { stampFetched, crewOrder, withoutCopies, readWithSeen, joinedRef: { current: new Set() }, supabase, q: async (x) => await x, uid: 'me', activeOrg, loadedOrg: { current: null }, orgRequests: { current: createRequestGate(() => activeOrg.current) }, orgs: [{ id: 'A' }], crewTier: () => '', readLastCh: () => null, faceCol: { missingAt: 0 }, ...setters, setChId: () => {} };
+  const deps = { stampFetched, crewOrder, withoutCopies, readWithSeen, SPACE_CREW_STATUSES, splitSpaceCrews, joinedRef: { current: new Set() }, supabase, q: async (x) => await x, uid: 'me', activeOrg, loadedOrg: { current: null }, orgRequests: { current: createRequestGate(() => activeOrg.current) }, orgs: [{ id: 'A' }], crewTier: () => '', readLastCh: () => null, faceCol: { missingAt: 0 }, ...setters, setChId: () => {} };
   const loadOrg = new Function(...Object.keys(deps), `return (${app.slice(start, end)});`)(...Object.values(deps));
 
   await loadOrg('A');

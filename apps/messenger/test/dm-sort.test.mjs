@@ -36,7 +36,7 @@ test('배선 — 폰 채팅 탭: 고정한 방이 맨 위 + 정렬 메뉴 + 칩,
   assert.match(src, /localStorage\.setItem\('argo-msgr-dm-sort', v\)/, '정렬은 기기에 기억');
   assert.match(src, /DM_SORTS\.map\(\(v\) => <button key=\{v\} type="button" role="menuitemradio" aria-checked=\{dmSort === v\}/, '정렬 메뉴');
   assert.doesNotMatch(src, /msgr-dmpin/, '고정 별 아이콘 없음(유건 2026-09-15: 즐겨찾기 별 아이콘 쓰지 마)');
-  assert.match(src, /const traitsOf = \(c\) => roomTraits\(\{ c, members: dmMembers\[c\.id\] \?\? \[\], uid, ownerOf: \(id\) => crewOf\(id\)\?\.owner_user_id \?\? null \}\);/, '그룹 판정 정본: roomTraits(나 뺀 참가자 2 이상, 남의 크루 1:1은 예외)');
+  assert.match(src, /const traitsOf = \(c\) => roomTraits\(\{ c, members: dmMembers\[c\.id\] \?\? \[\], uid, ownerOf: \(id\) => crewShown\(id\)\?\.owner_user_id \?\? null \}\);/, '그룹 판정 정본: roomTraits(나 뺀 참가자 2 이상, 남의 크루 1:1은 예외)');
   assert.match(src, /const dmIsGroup = \(c\) => traitsOf\(c\)\.group;/);
   assert.match(src, /if \(dmIsGroup\(c\)\) \{ const names = \[\.\.\.crewsIn\.map/, 'dmName은 같은 판정을 쓴다(검수 HIGH-2)');
   assert.match(src, /\{r\.muted && <I name="belloff" size=\{13\} className="ph-kic" \/>\}/, '폰 줄 알림 끔 표시(검수 HIGH-1 회귀 방지)');
