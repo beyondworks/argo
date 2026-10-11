@@ -92,7 +92,9 @@ test('마이그레이션 핀: available 상태·채널 멤버는 active만·오�
   assert.match(sql, /'crew\.dispatch'/); assert.match(sql, /'crew\.recall'/);
   const app = readFileSync(new URL('../apps/messenger/src/App.jsx', import.meta.url), 'utf8');
   assert.match(app, /\.in\('status', \['active', 'available'\]\)/);
-  assert.match(app, /r\.status === 'available' && r\.owner_user_id === uid/, 'available은 내 것만 보인다');
+  const pause = readFileSync(new URL('../apps/messenger/src/agent-pause.mjs', import.meta.url), 'utf8'); // 나누기는 splitSpaceCrews로 옮겼다(#950)
+  assert.match(pause, /available: list\.filter\(\(r\) => r\?\.status === 'available' && r\.owner_user_id === uid\)/, 'available은 내 것만 보인다');
+  assert.match(app, /setMyAvailable\(split\.available/, '앱은 그 나누기 결과를 쓴다');
   assert.match(app, /update\(\{ status: 'active' \}\)\.eq\('id', crew\.id\)/, '파견 = active 전이(허용 범위는 유지 — D31, 행동은 dminvite redispatch-keeps-allow)');
   const i18n = readFileSync(new URL('../apps/messenger/src/i18n.js', import.meta.url), 'utf8');
   for (const k of ['rail.mine', 'rail.mine.on', 'rail.mine.off', 'rail.mine.offShort', 'rail.hint.mine', 'ch.add.mine', 'ch.add.mine.note', 'ch.add.mine.done', 'ch.add.crew.none']) assert.ok(i18n.includes(`'${k}': ['`), `${k} ko/en`);
