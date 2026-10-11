@@ -32,6 +32,7 @@ const BusinessPage = lazy(() => import('./business/BusinessPage.jsx'));
 const Login = lazy(() => import('./pages/Login.jsx').then((m) => ({ default: m.Login }))); // 로그인한 사람의 첫 화면에는 필요 없다 — 첫 화면 JS 상한(150,000B) 자리(10/10)
 // ⌘K 창은 열 때만 받는다(첫 화면 150KB 상한 — 9/30 오른쪽 패널·결재 카드 버튼을 붙이며 옮김)
 const Palette = lazy(() => import('./ui/Palette.jsx').then((m) => ({ default: m.Palette })));
+const AgentPanel = lazy(() => import('./ui/AgentPanel.jsx'));
 // 공유·맡기기·이력 창은 첫 화면 묶음에서 떼어 첫 화면 뒤에 따로 받는다(9/30 크루 목록 정리로 150KB 초과분 회수)
 const ShareDialog = lazy(() => import('./ui/Dialogs.jsx').then((m) => ({ default: m.ShareDialog })));
 const AssignSheet = lazy(() => import('./ui/Dialogs.jsx').then((m) => ({ default: m.AssignSheet })));
@@ -166,6 +167,7 @@ function Header({ r, page, path, missing }) {
         {mode === 'sample' && <span className="draft-badge">{t('draft.badge')}</span>}
         {!gone && <SaveStatus />}
         <HideAllToggle />
+        <button type="button" className="icon-btn" aria-label={t('crew.assign')} title={`${t('crew.assign')} (⌘J)`} onClick={() => setUi((u) => ({ agent: !u.agent }))}><Icon name="hand" /></button>
         {!gone && <FavToggle path={path} page={page} />}
         {!['settings', 'trash', 'mail', 'mailConnect'].includes(r.view) && r.tab !== 'library' && <WidthToggle />}
         {r.view === 'page' && page && !gone && <>
@@ -229,11 +231,13 @@ export default function App() {
     return () => { document.removeEventListener('visibilitychange', onShow); removeEventListener('focus', onShow); };
   }, [mode]);
   useEffect(() => { setUi({ navOpen: false }); }, [path]);
+  useEffect(() => { document.documentElement.classList.toggle('agent-open', !!ui.agent); }, [ui.agent]);
   useEffect(() => {
     const onKey = (e) => {
       if (e.isComposing) return;
       const cmd = e.metaKey || e.ctrlKey;
       if (cmd && e.key.toLowerCase() === 'k') { e.preventDefault(); setUi((u) => ({ palette: !u.palette })); }
+      else if (cmd && e.key.toLowerCase() === 'j') { e.preventDefault(); setUi((u) => ({ agent: !u.agent })); }
       else if (cmd && e.key === '\\') { e.preventDefault(); document.documentElement.classList.toggle('nav-collapsed'); }
       else if (cmd && e.key === '/') { e.preventDefault(); setLang(getLang() === 'ko' ? 'en' : 'ko'); }
       // 화면 전체 가리기 ⌘⇧H(Ctrl+Shift+H) — 입력칸·편집기 안에서도(가려야 할 순간에 손이 거기 있다). 크롬의 ⌘⇧H(홈)는 예약 단축키가 아니라 여기서 막힌다.
@@ -285,6 +289,7 @@ export default function App() {
       </div>
       <DragOverlay dropAnimation={null}>{dragging ? <DragChip data={dragging} /> : null}</DragOverlay>
       {ui.palette && <Lazy fallback={null} quiet><Palette open onClose={() => setUi({ palette: false })} space={r.space} /></Lazy>}
+      {ui.agent && <Lazy fallback={null} quiet><AgentPanel path={path} space={r.space} onClose={() => setUi({ agent: false })} /></Lazy>}
       {ui.crew && <Lazy fallback={null} quiet><CrewSheet /></Lazy>}
       <Lazy fallback={null} quiet><ShareDialog /><AssignSheet /><HistorySheet /></Lazy>
       <Lazy fallback={null} quiet><Compose /></Lazy>

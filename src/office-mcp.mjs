@@ -8,13 +8,14 @@ import { z } from 'zod';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { cliSpecs, checkArgs, bindSession, myOrgs, resolveOrg, runTool, inAgentTurn, agentTurnState, agentTurnRefusal } from './office-tools-cli.mjs';
+import { cliSpecs, checkArgs, bindSession, myOrgs, resolveOrg, runTool, inAgentTurn, agentTurnState, agentTurnRefusal, confirmNeeded, confirmRefusal } from './office-tools-cli.mjs';
 
 const ORG_ARG = z.string().optional().describe('조직 id·slug·이름(office_orgs가 보여 준 것). 비우면 기본 조직. 일정·메일·브리핑은 비우면 개인 공간');
 const CLIENT_NAMES = { 'claude-code': 'Claude Code', codex: 'Codex', 'codex-mcp-client': 'Codex' };
 
-/** 도구 목록(JSON 스키마)과 실행기 — 서버 없이 시험할 수 있게 나눈다. send = 실행 결과 { content, isError? } */
-export function officeMcp({ root, lang = 'ko', cfgOrg = null, clientName = () => null, _fresh, _mkClient, _ancestor } = {}) {
+/** 도구 목록(JSON 스키마)과 실행기 — 서버 없이 시험할 수 있게 나눈다. send = 실행 결과 { content, isError? }.
+    confirm(문장) = 되돌리기 어려운 동작의 사용자 확인 — true 승인 | false 거절 | null 확인 창을 띄울 수 없음(serveMcp가 elicitation으로 채운다, 없으면 실행하지 않는다) */
+export function officeMcp({ root, lang = 'ko', cfgOrg = null, clientName = () => null, confirm = async () => null, _fresh, _mkClient, _ancestor } = {}) {
   const specs = cliSpecs(lang);
   const tools = [
     ...specs.map((s) => ({ name: s.name, description: s.description, inputSchema: z.toJSONSchema(z.object({ ...s.shape, org: ORG_ARG })) })),
@@ -45,6 +46,11 @@ export function officeMcp({ root, lang = 'ko', cfgOrg = null, clientName = () =>
     if (!checked.ok) return textOf(checked.issues.join('\n'), true);
     const o = await resolveOrg(c, orgWant, cfgOrg);
     if (o.error) return textOf(o.error, true);
+    const question = confirmNeeded(spec.name, checked.args, lang);
+    if (question) {
+      const answer = await confirm(question).catch(() => null);
+      if (answer !== true) return textOf(confirmRefusal(answer, question, lang, 'mcp'), true);
+    }
     const source = String(process.env.ARGO_OFFICE_SOURCE ?? '').trim() || CLIENT_NAMES[clientName()] || clientName() || 'MCP';
     return textOf(await runTool(spec, checked.args, { c, org: o.org, sourceName: source.slice(0, 120), lang }));
   }
@@ -53,7 +59,15 @@ export function officeMcp({ root, lang = 'ko', cfgOrg = null, clientName = () =>
 
 export async function serveMcp(opts = {}) {
   const server = new Server({ name: 'argo-office', version: '1.0.0' }, { capabilities: { tools: {} } });
-  const mcp = officeMcp({ ...opts, clientName: () => server.getClientVersion()?.name ?? null });
+  // 확인 창(MCP elicitation) — 클라이언트가 지원한다고 알린 때만. 사람이 '승인' 칸을 켜고 보내야 실행한다.
+  // accept만 보고 넘기지 않는다: Codex 비대화 실행(승인 정책 never)은 사람에게 보이지 않고 내용 없는 accept를 돌려줬다(10/11 실측) — 필수 칸 approve=true가 사람 손을 거친 표지다
+  const confirm = async (message) => {
+    if (!server.getClientCapabilities()?.elicitation) return null;
+    const label = opts.lang === 'en' ? 'Approve this change' : '이 변경을 승인합니다';
+    const r = await server.elicitInput({ message, requestedSchema: { type: 'object', properties: { approve: { type: 'boolean', title: label, description: label } }, required: ['approve'] } });
+    return r.action === 'accept' && r.content?.approve === true;
+  };
+  const mcp = officeMcp({ ...opts, confirm, clientName: () => server.getClientVersion()?.name ?? null });
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: mcp.tools }));
   server.setRequestHandler(CallToolRequestSchema, async ({ params }) => {
     try { return await mcp.call(params.name, params.arguments ?? {}); }

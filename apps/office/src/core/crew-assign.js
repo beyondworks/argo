@@ -133,19 +133,24 @@ const deny = (code) => Object.assign(new Error(`assign_${code}`), { transient: f
     개인 방은 조직 잠금·자격과 상관없어 그 확인은 하지 않는다(메신저 개인 방과 같다).
     반환: 'sent'(조직 1:1) | 'personal'(개인 1:1) | 'already'(같은 client_msg_id가 이미 들어감 — 앞선 시도가 응답만 잃었다). 거절은 { assign: 사유, transient: false }로 던진다 */
 export async function deliverToCrew(db, { owner, orgId, crewId, personalId = null, personalBot = false, crewName, body, meta, clientId }) {
+  const room = await crewRoom(db, { owner, orgId, crewId, personalId, personalBot, crewName });
+  try { await db.insert({ channel_id: room.channel, author_kind: 'user', author_user_id: owner, body, meta, client_msg_id: clientId }); }
+  catch (e) { if (e?.code === '23505') return 'already'; refused(e); }
+  return room.personal ? 'personal' : 'sent';
+}
+
+// 서버 함수 거절(msgr_forbidden·msgr_bad_member·msgr_not_allowed, 권한 42501·입력 22023) — 다시 보내도 같다
+const refused = (e) => { if (['P0001', '22023', '42501'].includes(e?.code)) throw deny('not_allowed'); throw e; };
+
+/** 맡길 방 찾기 — 보내기 전 거절(잠김·자격·권한·AI 동의)까지. 맡기기(deliverToCrew)와 에이전트 패널(core/agent-chat.js)이 같이 쓴다.
+    반환 { channel, personal }(personal = 내 개인 1:1, 조직 1:1이면 false). 거절은 { assign: 사유, transient: false } */
+export async function crewRoom(db, { owner, orgId, crewId, personalId = null, personalBot = false, crewName }) {
   const gone = (e) => { throw e?.code === 'PGRST202' ? deny('unavailable') : e; }; // 확인 함수가 서버에 없다 — 다시 보내도 같으니 무한 재시도로 조용히 사라지지 않게 끝낸다
-  // 서버 함수 거절(msgr_forbidden·msgr_bad_member·msgr_not_allowed, 권한 42501·입력 22023) — 다시 보내도 같다
-  const refused = (e) => { if (['P0001', '22023', '42501'].includes(e?.code)) throw deny('not_allowed'); throw e; };
-  const put = async (channel, done) => {
-    try { await db.insert({ channel_id: channel, author_kind: 'user', author_user_id: owner, body, meta, client_msg_id: clientId }); }
-    catch (e) { if (e?.code === '23505') return 'already'; refused(e); }
-    return done;
-  };
   if (personalId && (!personalBot || (await db.rpc('msgr_personal_room_crews', {}).catch(() => null))?.find?.((r) => r.id === personalId)?.ready === true)) {
     const [check, consent] = await Promise.all([db.rpc('msgr_instruct_check', { crew: personalId, author: owner, channel: null }), db.rpc('msgr_my_ai_consent', {})]).catch(gone);
     if (check !== 'ok') throw deny('not_allowed');
     if (!consent) throw deny('consent');
-    return put(await db.rpc('msgr_dm_personal_crew', { crew: personalId }).catch(refused), 'personal');
+    return { channel: await db.rpc('msgr_dm_personal_crew', { crew: personalId }).catch(refused), personal: true };
   }
   if (!orgId || !crewId) throw deny(personalId ? 'unavailable' : 'no_crew'); // 개인 행뿐인데 1:1을 열 수 없다(봇 다시 연결 필요 등)
   const [locked, entitled, check, consent] = await Promise.all([
@@ -164,5 +169,5 @@ export async function deliverToCrew(db, { owner, orgId, crewId, personalId = nul
     return users.length === 1 && users[0].member_id === owner && crews.length === 1 && crews[0].member_id === crewId;
   });
   if (!channel) channel = await db.rpc('msgr_create_channel', { org: orgId, kind: 'dm', name: `dm:${crewName ?? ''}`, others: [{ kind: 'crew', id: crewId }] }).catch(refused);
-  return put(channel, 'sent');
+  return { channel, personal: false };
 }

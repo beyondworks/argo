@@ -283,3 +283,46 @@ test('C12. MCP 형식 검사는 엄격(모르는 인자 거절), Claude Code MCP
     await assert.rejects(importHostMcp('w-test', 'other'), /오피스 MCP는 가져오지 않습니다/);
   } finally { process.env.HOME = keep; if (keepWin === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = keepWin; }
 });
+
+// 이유(유건 10/11 "밖에서 조작하는 도구도 승인 받고 진행"): 되돌리기 어려운 동작은 사람이 승인해야 서버를 부른다 — 거절·물을 수 없음이면 서버 호출 0
+test('C14. 되돌리기 어려운 동작은 승인 뒤에만 — CLI 확인 질문, MCP 확인 창, 못 물으면 실행 안 함', async () => {
+  const { confirmNeeded } = await import('../src/office-tools-cli.mjs');
+  assert.match(confirmNeeded('office_deals', { action: 'deal_next', to: 'contract', id: 'd1' }), /계약 확정/);
+  assert.match(confirmNeeded('office_deals', { action: 'deal_next', to: 'cancel' }), /취소/);
+  assert.equal(confirmNeeded('office_deals', { action: 'deal_next', to: 'paid' }), null);
+  assert.ok(confirmNeeded('office', { action: 'eval_add', subject_name: '루나' }));
+  assert.ok(confirmNeeded('office_briefing', { action: 'brief_add', recipient: 'org' }));
+  assert.equal(confirmNeeded('office_briefing', { action: 'brief_add' }), null, '주인에게 보내는 브리핑은 그대로');
+  assert.ok(confirmNeeded('office_work', { action: 'page_edit', mode: 'replace' }));
+  assert.equal(confirmNeeded('office_work', { action: 'page_edit' }), null, '덧붙이기(기본)는 그대로');
+  assert.ok(confirmNeeded('office_work', { action: 'task_set', note_mode: 'replace', note: 'x' }));
+  assert.ok(confirmNeeded('office_files', { action: 'drive_export', id: 'f1' }));
+  assert.equal(confirmNeeded('office_work', { action: 'task_add', title: 'x' }), null);
+
+  const rpcs = (f) => f.calls.filter((c) => !c.name.startsWith('from:'));
+  const argv = ['work', 'page_edit', '--id', NEW, '--mode', 'replace', '--text', '새 본문', '--org', ORG];
+  for (const [answer, why] of [[false, /승인하지 않아/], [null, /터미널에서 직접 실행/]]) {
+    const f = fake(); const asked = [];
+    const r = await run(argv, { _fresh: f._fresh, _mkClient: f._mkClient, _confirm: async (q) => { asked.push(q); return answer; } });
+    assert.equal(r.code, 1); assert.match(r.err, why); assert.match(asked[0], /통째로/);
+    assert.equal(rpcs(f).length, 0, '승인 전 서버 호출 0');
+  }
+  const yes = fake();
+  const ok = await run(argv, { _fresh: yes._fresh, _mkClient: yes._mkClient, _confirm: async () => true });
+  assert.equal(ok.code, 0); assert.ok(rpcs(yes).length > 0, '승인하면 처리기로 간다');
+  const plain = fake(); let askedPlain = 0;
+  await run(['work', 'task_add', '--title', '그냥 할 일', '--org', ORG], { _fresh: plain._fresh, _mkClient: plain._mkClient, _confirm: async () => { askedPlain++; return false; } });
+  assert.equal(askedPlain, 0, '보통 쓰기는 묻지 않는다');
+
+  const args = { action: 'deal_next', to: 'cancel', id: NEW, org: ORG };
+  const none = fake();
+  const r1 = await officeMcp({ root: process.env.ARGO_ROOT, _fresh: none._fresh, _mkClient: none._mkClient }).call('office_deals', args);
+  assert.equal(r1.isError, true); assert.match(r1.content[0].text, /확인 창을 띄우지 못해/); assert.equal(rpcs(none).length, 0);
+  const deny = fake();
+  const r2 = await officeMcp({ root: process.env.ARGO_ROOT, confirm: async () => false, _fresh: deny._fresh, _mkClient: deny._mkClient }).call('office_deals', args);
+  assert.equal(r2.isError, true); assert.equal(rpcs(deny).length, 0);
+  const allow = fake();
+  const r3 = await officeMcp({ root: process.env.ARGO_ROOT, confirm: async () => true, _fresh: allow._fresh, _mkClient: allow._mkClient }).call('office_deals', args);
+  assert.ok(!r3.isError || rpcs(allow).length > 0); assert.ok(rpcs(allow).length > 0, '승인하면 처리기로 간다');
+});
+

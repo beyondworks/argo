@@ -27,6 +27,34 @@ export const AREAS = { work: 'office_work', deals: 'office_deals', calendar: 'ca
 export const BLOCKED = { calendar: ['delete'] };
 /** 조직 없이(개인 공간) 쓰는 도구 — 나머지는 조직이 있어야 한다 */
 export const PERSONAL = new Set(['calendar', 'office_mail', 'office_briefing']);
+/** 되돌리기 어려운 동작 — 바깥(CLI·MCP)에서는 사람이 승인한 뒤에만 실행한다(유건 10/11 "승인 받고 진행").
+    CLI는 터미널 확인 질문, MCP는 붙은 클라이언트의 확인 창(elicitation). 둘 다 못 하면 실행하지 않는다. 아르고 본체 에이전트는 이 규칙 밖(자기 결재 흐름).
+    반환: 무엇을 바꾸는지 한 문장 | null(확인 없이 실행) */
+export function confirmNeeded(name, a = {}, lang = 'ko') {
+  const say = (ko, en) => (lang === 'en' ? en : ko);
+  const id = a.id ? ` (id ${a.id})` : '';
+  if (name === 'office_deals' && a.action === 'deal_next' && a.to === 'contract') return say(`거래를 계약 확정으로 넘깁니다${id}.`, `Moves the deal to a confirmed contract${id}.`);
+  if (name === 'office_deals' && a.action === 'deal_next' && a.to === 'cancel') return say(`거래를 취소합니다${id}.`, `Cancels the deal${id}.`);
+  if (name === 'office' && a.action === 'eval_add') return say(`평가를 기록합니다(대상: ${a.subject_name || a.subject_user || '?'}).`, `Records an evaluation (subject: ${a.subject_name || a.subject_user || '?'}).`);
+  if (name === 'office_briefing' && a.action === 'brief_add' && a.recipient === 'org') return say('조직 전체에 브리핑을 보냅니다.', 'Sends a briefing to the whole organization.');
+  if (name === 'office_work' && a.action === 'page_edit' && a.mode === 'replace') return say(`페이지 본문을 통째로 바꿉니다${id}.`, `Replaces the whole page body${id}.`);
+  if (name === 'office_work' && a.action === 'task_set' && a.note_mode === 'replace' && a.note != null) return say(`할 일 메모를 통째로 바꿉니다${id}.`, `Replaces the whole task note${id}.`);
+  if (name === 'office_files' && a.action === 'drive_export') return say(`문서함 파일을 구글 드라이브로 내보냅니다${id}.`, `Exports the Office file to Google Drive${id}.`);
+  return null;
+}
+/** 터미널 확인 — 표준 입력이 터미널일 때만 묻는다. 반환 true(예) | false(아니오) | null(물을 수 없음: 파이프·에이전트 셸) */
+export async function ttyConfirm(question, lang = 'ko', { input = process.stdin, output = process.stderr } = {}) {
+  if (!input.isTTY) return null;
+  const { createInterface } = await import('node:readline/promises');
+  const rl = createInterface({ input, output });
+  try { return /^(y|yes|네|예|ㅇ)$/i.test((await rl.question(`${question}\n${lang === 'en' ? 'Proceed? [y/N] ' : '진행할까요? [y/N] '}`)).trim()); } finally { rl.close(); }
+}
+/** 승인 못 받은 이유 문장 — null = 물을 수 없음, false = 거절 */
+export const confirmRefusal = (answer, question, lang = 'ko', where = 'cli') => (answer === false
+  ? (lang === 'en' ? `Not approved — nothing was changed. (${question})` : `승인하지 않아 바꾸지 않았습니다. (${question})`)
+  : where === 'mcp'
+    ? (lang === 'en' ? `Needs the user's approval: ${question} This client cannot show an MCP confirmation dialog, so nothing was changed — do it in Argo Office, or run the argo office command in a terminal.` : `사용자 승인이 필요한 동작입니다: ${question} 이 클라이언트는 MCP 확인 창을 띄우지 못해 바꾸지 않았습니다 — 아르고 오피스 화면에서 하거나 터미널에서 argo office 명령으로 실행하세요.`)
+    : (lang === 'en' ? `Needs a person's approval: ${question} Run it in a terminal to answer the confirmation (not from a pipe or an agent shell), or connect argo office mcp to a client that shows confirmation dialogs.` : `사람의 승인이 필요한 동작입니다: ${question} 터미널에서 직접 실행해 확인 질문에 답하세요(파이프·에이전트 셸에서는 묻지 못함). 또는 확인 창을 띄우는 클라이언트에 argo office mcp를 붙이세요.`));
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const inner = (s) => { let t = s; while (t?.def && ['optional', 'default', 'nullable'].includes(t.def.type)) t = t.def.innerType; return t; };
@@ -36,8 +64,8 @@ export function cliSpecs(lang = 'ko') {
   return officeToolSpecs(lang).map((spec) => {
     const blocked = BLOCKED[spec.name] ?? [];
     const actions = inner(spec.shape.action).options.filter((x) => !blocked.includes(x));
-    const note = lang === 'en' ? `\n[argo office CLI·MCP] Called by the signed-in owner from their own terminal (owner-only view). The org comes from the org argument or the default org; without one, only the personal space.${blocked.length ? ` Not available here: ${blocked.join(', ')} (cannot be undone — do it in Argo Office).` : ''}`
-      : `\n[argo office CLI·MCP] 로그인한 주인이 자기 터미널에서 부른다(주인 혼자 보는 자리). 조직은 org 인자나 기본 조직, 없으면 개인 공간만.${blocked.length ? ` 여기서는 열지 않음: ${blocked.join(', ')}(되돌릴 수 없음 — 아르고 오피스 화면에서).` : ''}`;
+    const note = lang === 'en' ? `\n[argo office CLI·MCP] Called by the signed-in owner from their own terminal (owner-only view). The org comes from the org argument or the default org; without one, only the personal space. Hard-to-undo actions (deal contract/cancel, eval_add, org briefing, replace modes, drive_export) run only after the user approves a confirmation.${blocked.length ? ` Not available here: ${blocked.join(', ')} (cannot be undone — do it in Argo Office).` : ''}`
+      : `\n[argo office CLI·MCP] 로그인한 주인이 자기 터미널에서 부른다(주인 혼자 보는 자리). 조직은 org 인자나 기본 조직, 없으면 개인 공간만. 되돌리기 어려운 동작(거래 계약 확정·취소, eval_add, 조직 브리핑, replace 모드, drive_export)은 사용자가 확인 창에서 승인해야 실행된다.${blocked.length ? ` 여기서는 열지 않음: ${blocked.join(', ')}(되돌릴 수 없음 — 아르고 오피스 화면에서).` : ''}`;
     return { ...spec, description: spec.description + note, actions, blocked, shape: { ...spec.shape, action: z.enum(actions) } };
   });
 }
@@ -159,7 +187,7 @@ function areaHelp(spec, lang) {
  * argo office <영역>|orgs|tools|mcp … — 종료 코드(0 성공, 1 입력·서버 오류, 2 로그인 필요).
  * 처리기의 거절(권한·없는 id 등)도 글로 오므로 0 — 에이전트가 그 글을 읽고 다음을 정한다.
  */
-export async function toolsMain(sub, argv, { root, lang = 'ko', out = (s) => console.log(s), err = (s) => console.error(s), cfgOrg = null, needLogin = '', _fresh, _mkClient, _ancestor, cwd } = {}) {
+export async function toolsMain(sub, argv, { root, lang = 'ko', out = (s) => console.log(s), err = (s) => console.error(s), cfgOrg = null, needLogin = '', _fresh, _mkClient, _ancestor, _confirm, cwd } = {}) {
   const pull = (name, flag = false) => { const i = argv.findIndex((x) => x === `--${name}` || x.startsWith(`--${name}=`)); if (i < 0) return undefined; const t = argv[i]; if (flag) { argv.splice(i, 1); return true; } const v = t.includes('=') ? t.slice(t.indexOf('=') + 1) : argv[i + 1]; argv.splice(i, t.includes('=') ? 1 : 2); return v; };
   const hi = argv.indexOf('-h'); if (hi >= 0) argv.splice(hi, 1, '--help');
   const json = !!pull('json', true), help = !!pull('help', true);
@@ -196,6 +224,11 @@ export async function toolsMain(sub, argv, { root, lang = 'ko', out = (s) => con
   if (!checked.ok) { err(checked.issues.join('\n')); return 1; }
   const o = await resolveOrg(c, orgWant, cfgOrg).catch((e) => ({ error: String(e.message ?? e) }));
   if (o.error) { err(o.error); return 1; }
+  const question = confirmNeeded(spec.name, checked.args, L);
+  if (question) {
+    const answer = await (_confirm ?? ttyConfirm)(question, L);
+    if (answer !== true) { err(confirmRefusal(answer, question, L)); return 1; }
+  }
   const text = await runTool(spec, checked.args, { c, org: o.org, sourceName, lang: L, filesCwd: cwd ?? process.cwd() });
   out(json ? JSON.stringify({ area: sub, tool: spec.name, action, org: o.org, text }) : text);
   return 0;

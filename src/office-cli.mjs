@@ -236,14 +236,14 @@ const OPTIONS = {
  * argo office <하위 명령> — 종료 코드를 돌려준다(0 성공, 1 입력·서버 오류, 2 로그인 필요).
  * deps: { root, lang, out, err, newId, now, timeoutMs, _mkClient, _fresh } — 테스트가 주입한다.
  */
-export async function officeMain(argv, { root = process.env.ARGO_ROOT, lang = 'ko', out = (s) => console.log(s), err = (s) => console.error(s), newId = randomUUID, now = Date.now, timeoutMs = 15_000, _mkClient, _fresh, _ancestor } = {}) {
+export async function officeMain(argv, { root = process.env.ARGO_ROOT, lang = 'ko', out = (s) => console.log(s), err = (s) => console.error(s), newId = randomUUID, now = Date.now, timeoutMs = 15_000, _mkClient, _fresh, _ancestor, _confirm } = {}) {
   const t = T[lang] ?? T.ko;
   const [sub, ...rest] = argv;
   // 영역 명령(10/10 — 할 일·페이지·거래·일정·회사·문서함·메일·브리핑 읽기·쓰기, 조직 목록, MCP 서버) — 옵션이 영역마다 달라 여기 parseArgs를 거치지 않는다.
   // 맨 위 import에 싣지 않는다(훅이 report만 부를 때 zod·도구 처리기를 싣지 않게)
   if (TOOL_SUBS.includes(sub)) {
     const { toolsMain } = await import('./office-tools-cli.mjs');
-    return toolsMain(sub, rest, { root, lang, out, err, cfgOrg: (await readOfficeConfig(root)).org, needLogin: t.needLogin, _fresh, _mkClient, _ancestor });
+    return toolsMain(sub, rest, { root, lang, out, err, cfgOrg: (await readOfficeConfig(root)).org, needLogin: t.needLogin, _fresh, _mkClient, _ancestor, _confirm });
   }
   let v, pos;
   try { ({ values: v, positionals: pos } = parseArgs({ args: rest, options: OPTIONS, allowPositionals: true, strict: true })); }
