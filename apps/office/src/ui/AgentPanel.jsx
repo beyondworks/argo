@@ -14,7 +14,7 @@ import { loadPageContent } from '../core/pull.js';
 import { rpc } from '../core/tasks.js';
 import { imeGuardWith } from '../core/ime.js';
 import { openExternal } from '../core/platform.js';
-import { createComposerDelivery } from '../../../messenger/src/composer-delivery.mjs';
+import { createComposerDelivery } from '../../../../src/composer-delivery.mjs';
 import { acceptFiles, withoutFile, chipSize } from '../../../messenger/src/attach-files.mjs';
 import { previewFor } from '../../../messenger/src/media-actions.mjs';
 import { PANEL_SOURCE, conversations, threadOf, shownBody, seeingItem, waiting, openRoom, loadRoom, loadRow, loadSince, loadFiles, fileUrl, stopTurn, listen, panelTransport } from '../core/agent-chat.js';
