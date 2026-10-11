@@ -67,6 +67,10 @@ const T = {
     loginWait: '로그인을 기다리는 중… (Ctrl+C로 취소)', loginDone: (e) => `로그인했습니다: ${e}`, loginTimeout: '10분 안에 로그인하지 않아 취소했습니다.', loginConfirm: (e) => `이 계정으로 이 터미널을 로그인할까요? ${e} [y/N] `, loginDeclined: '취소했습니다. 브라우저에서 다시 시도하거나 Ctrl+C로 끝내세요.',
     needLogin: '먼저 로그인해야 합니다 — argo login', dead: '기기 세션이 만료·폐기됐습니다. 다시 로그인하세요 — argo login',
     finding: '클라우드에서 회사를 찾는 중…', noCompany: '이 계정의 회사가 없습니다.', newCompany: '새 회사 이름: ', pickCompany: '회사를 고르세요',
+    // 회사 이름 ↔ 메신저 조직 이름(src/cli/company-name.mjs, 사용자 제보 2026-10-11)
+    newCompanyDefault: (n) => `새 회사 이름 [${n}]: `, newCompanyPick: '새 회사 이름 — 메신저 조직과 같은 이름을 고르거나 직접 입력하세요', newCompanyOther: '직접 입력',
+    orgLinked: (s) => `메신저 조직: ${s}`, orgMismatch: '회사 이름과 메신저 조직 이름이 다릅니다 — argo rename <새 이름>으로 회사 이름을 맞출 수 있어요(메신저 조직 이름은 메신저 설정에서 바꿉니다).',
+    renameUsage: '사용법: argo rename <새 이름> — 이 컴퓨터의 회사 이름을 바꿉니다(대화 중에는 /rename <새 이름>).', renamed: (a, b) => `회사 이름을 바꿨습니다: ${a} → ${b}`,
     pick: '번호: ', crews: '대화할 에이전트를 고르세요', noCrew: '에이전트가 없습니다. /hire로 에이전트를 영입하세요.',
     noSuchAgent: (n, sim) => `'${n}' 에이전트를 찾을 수 없습니다.${sim.length ? ` 혹시 이 에이전트인가요? ${sim.join(', ')}` : ''}`, chatNoName: 'argo chat 뒤에 에이전트 이름을 적으세요: argo chat <에이전트> [지시]',
     agentListHint: '에이전트 목록은 argo를 실행한 뒤 /agent로 볼 수 있습니다.', chatHint: '(빈 줄이나 /quit로 끝냅니다)',
@@ -83,7 +87,7 @@ const T = {
     noRunner: '이 기기에는 아직 AI가 연결되지 않았습니다. /ai로 연결하세요(연결 정보는 기기마다 따로 두고 클라우드로 보내지 않습니다).',
     hostAuto: (names) => `이 컴퓨터에 로그인된 AI(${names})로 연결했습니다. 바꾸려면 /ai를 쓰세요.`,
     help: [['/agent [이름]', '대화할 에이전트 바꾸기'], ['/new', '새 대화 시작(지금 대화는 보관)'], ['/hire', '에이전트 영입'], ['/ai', 'AI 연결'],
-      ['/serve', '이 터미널에서 메신저 대기(상주)'], ['/browser', '에이전트 브라우저 준비'], ['/status', '계정·회사·기기 상태'], ['/quit, exit', '나가기'],
+      ['/serve', '이 터미널에서 메신저 대기(상주)'], ['/browser', '에이전트 브라우저 준비'], ['/rename <이름>', '회사 이름 바꾸기'], ['/status', '계정·회사·기기 상태'], ['/quit, exit', '나가기'],
       ['Ctrl+C', '답하는 중이면 멈추기, 입력 중이면 지우기']], failed: (m) => `실패: ${m}`, oneLiner: '에이전트를 한 줄로 설명하세요(예: 쇼핑몰 광고 카피를 쓰는 마케터): ', crewName: '이름(비우면 자동): ', created: (n) => `영입했습니다: ${n}`,
     runners: 'AI 연결', connected: '연결됨', notConnected: '미연결', runnerPick: '연결할 AI 번호: ', method: '방식', secret: '키/토큰(입력은 보이지 않습니다): ',
     verifying: '확인 중…', saved: '연결했습니다.', invalid: '확인에 실패했습니다 — 키를 다시 확인하세요.', hostLogin: '이 컴퓨터 로그인 사용',
@@ -114,7 +118,7 @@ const T = {
     uninstalled: (l) => `argo를 제거했습니다: ${l.join(', ')}\n데이터(회사·대화·로그인)는 ${cliHome()}에 남아 있습니다 — 필요 없으면 직접 지우세요.`,
     uninstallPending: (l) => `argo를 제거합니다: ${l.join(', ')}\n데이터(회사·대화·로그인)는 ${cliHome()}에 남아 있습니다 — 필요 없으면 직접 지우세요.`,
     uninstallManual: (f) => `argo가 실행 중이라 이 명령 안에서는 지울 수 없습니다. 이 창에서 다음을 실행하면 제거됩니다:\n  powershell -NoProfile -ExecutionPolicy Bypass -File "${f}"`,
-    usage: '사용법: argo [run [--standby]|chat <에이전트> [지시]|login|status|browser|service install [--standby]|service uninstall|service status|office report|office hold|office tasks|uninstall]  (--standby = 다른 기기가 꺼졌을 때만 실행을 맡는 예비 서버, office = 오피스 업무 현황에 세션·보류한 일 남기기 — argo office help, uninstall = 설치 명령으로 넣은 argo 제거, 데이터는 남김)',
+    usage: '사용법: argo [run [--standby]|chat <에이전트> [지시]|login|status|rename <새 이름>|browser|service install [--standby]|service uninstall|service status|office report|office hold|office tasks|uninstall]  (--standby = 다른 기기가 꺼졌을 때만 실행을 맡는 예비 서버, office = 오피스 업무 현황에 세션·보류한 일 남기기 — argo office help, uninstall = 설치 명령으로 넣은 argo 제거, 데이터는 남김)',
     status: (s) => `계정: ${s.email || '(로그인 안 됨)'}\n데이터: ${s.root}\n회사: ${s.companies}\n기기: ${s.device}`,
     statusOversize: (name, n, names, mb) => `동기화 제외(크기 초과) — ${name}: ${n}개 (${names}) · ${mb}MB를 넘는 파일은 기기 간에 주고받지 않습니다`,
   },
@@ -124,6 +128,9 @@ const T = {
     loginWait: 'Waiting for sign-in… (Ctrl+C to cancel)', loginDone: (e) => `Signed in: ${e}`, loginTimeout: 'Cancelled — no sign-in within 10 minutes.', loginConfirm: (e) => `Sign this terminal in as this account? ${e} [y/N] `, loginDeclined: 'Cancelled. Try again in the browser, or press Ctrl+C to quit.',
     needLogin: 'Sign in first — argo login', dead: 'This device session expired or was revoked. Sign in again — argo login',
     finding: 'Looking for your companies in the cloud…', noCompany: 'No company for this account yet.', newCompany: 'New company name: ', pickCompany: 'Choose a company',
+    newCompanyDefault: (n) => `New company name [${n}]: `, newCompanyPick: 'New company name — pick your messenger organization\'s name or type your own', newCompanyOther: 'Type a name',
+    orgLinked: (s) => `Messenger organization: ${s}`, orgMismatch: 'Your company name differs from your messenger organization name — run argo rename <new name> to match it (rename the organization in messenger settings).',
+    renameUsage: 'Usage: argo rename <new name> — renames the company on this computer (/rename <new name> while chatting).', renamed: (a, b) => `Renamed the company: ${a} → ${b}`,
     pick: 'Number: ', crews: 'Choose an agent to talk to', noCrew: 'No agents yet. Hire one with /hire.',
     noSuchAgent: (n, sim) => `No agent named '${n}'.${sim.length ? ` Did you mean: ${sim.join(', ')}?` : ''}`, chatNoName: 'Add an agent name after argo chat: argo chat <agent> [message]',
     agentListHint: 'To see your agents, run argo and type /agent.', chatHint: '(empty line or /quit to leave)',
@@ -140,7 +147,7 @@ const T = {
     noRunner: 'No AI is connected on this device yet. Connect one with /ai (connection details stay on each device and never go to the cloud).',
     hostAuto: (names) => `Connected with the AI signed in on this computer (${names}). Use /ai to change.`,
     help: [['/agent [name]', 'switch agent'], ['/new', 'start a new conversation (current one is kept)'], ['/hire', 'hire an agent'], ['/ai', 'AI connections'],
-      ['/serve', 'messenger standby in this terminal'], ['/browser', 'prepare the agent browser'], ['/status', 'account, company, device'], ['/quit, exit', 'leave'],
+      ['/serve', 'messenger standby in this terminal'], ['/browser', 'prepare the agent browser'], ['/rename <name>', 'rename the company'], ['/status', 'account, company, device'], ['/quit, exit', 'leave'],
       ['Ctrl+C', 'stop the reply, or clear the line']], failed: (m) => `Failed: ${m}`, oneLiner: 'Describe the agent in one line (e.g. a marketer who writes ad copy): ', crewName: 'Name (blank = auto): ', created: (n) => `Hired: ${n}`,
     runners: 'AI connections', connected: 'connected', notConnected: 'not connected', runnerPick: 'AI to connect (number): ', method: 'Method', secret: 'Key/token (input hidden): ',
     verifying: 'Checking…', saved: 'Connected.', invalid: 'Check failed — verify the key.', hostLogin: "Use this computer's login",
@@ -170,7 +177,7 @@ const T = {
     uninstalled: (l) => `Removed argo: ${l.join(', ')}\nYour data (companies, chats, sign-in) stays in ${cliHome()} — delete it yourself if you don't need it.`,
     uninstallPending: (l) => `Removing argo: ${l.join(', ')}\nYour data (companies, chats, sign-in) stays in ${cliHome()} — delete it yourself if you don't need it.`,
     uninstallManual: (f) => `argo is running, so it can't remove itself from inside this command. Run this in this window to remove it:\n  powershell -NoProfile -ExecutionPolicy Bypass -File "${f}"`,
-    usage: 'Usage: argo [run [--standby]|chat <agent> [message]|login|status|browser|service install [--standby]|service uninstall|service status|office report|office hold|office tasks|uninstall]  (--standby = a standby server that runs things only while your other device is off; office = leave this session and on-hold tasks in Office Work status — argo office help; uninstall = remove an argo installed with the install command; data is kept)',
+    usage: 'Usage: argo [run [--standby]|chat <agent> [message]|login|status|rename <new name>|browser|service install [--standby]|service uninstall|service status|office report|office hold|office tasks|uninstall]  (--standby = a standby server that runs things only while your other device is off; office = leave this session and on-hold tasks in Office Work status — argo office help; uninstall = remove an argo installed with the install command; data is kept)',
     status: (s) => `Account: ${s.email || '(not signed in)'}\nData: ${s.root}\nCompanies: ${s.companies}\nDevice: ${s.device}`,
     statusOversize: (name, n, names, mb) => `Not synced (too large) — ${name}: ${n} (${names}) · files over ${mb} MB aren't synced between devices`,
   },
@@ -307,12 +314,46 @@ async function pickCompany(uid, { interactive }) {
   if (list.length > 1 && interactive) { const i = await choose(T.pickCompany, list.map((c) => `${c.name} (${c.id})`)); if (i >= 0) { writeConfig({ ws: list[i].id }); return list[i].id; } }
   if (!interactive) { console.error(T.noCompany); process.exit(1); }
   console.log(T.noCompany);
-  const name = await ask(T.newCompany); if (!name) process.exit(0);
+  const name = await newCompanyName(uid); if (!name) process.exit(0);
   const { createCompany } = await import('../src/workspace.mjs');
   const base = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''); // 앱과 같은 규칙(app/api/companies/route.js)
   const ws = `${base || 'co'}-${Date.now().toString(36).slice(-4)}`;
   await createCompany(ws, name, 'captain', uid === 'local' ? null : uid, lang); // 표준 스캐폴드를 앱과 같은 함수로 — 로컬은 주인 없음(나중에 로그인하면 앱에서 클레임)
   writeConfig({ ws }); return ws;
+}
+
+/** 새 회사 이름 — 계정이면 내 메신저 조직 이름을 기본값으로(읽기 1건, src/cli/company-name.mjs). 로컬·조회 실패·조직 없음은 종전 질문 그대로. */
+async function newCompanyName(uid) {
+  const { readerSession, myOrgNames, chooseNewCompanyName } = await import('../src/cli/company-name.mjs');
+  let orgs = [];
+  if (uid !== 'local') {
+    try { const c = await readerSession(); orgs = c ? await myOrgNames(c) : []; } catch { orgs = []; } // 안내용 — 실패해도 회사 만들기는 막지 않는다
+  }
+  return chooseNewCompanyName({ orgs, ask, choose, T });
+}
+/** 회사 옆 메신저 조직 안내 줄(status·run) — 계정일 때 읽기 1건. 실패·연결 없음이면 빈 목록(안내만이라 조용히). */
+async function orgLines(list) {
+  if (localMode || !list.length) return [];
+  try {
+    const { readerSession, linkedOrgNames, orgNoticeLines } = await import('../src/cli/company-name.mjs');
+    const c = await readerSession(); if (!c) return [];
+    return orgNoticeLines(list, await linkedOrgNames(c, list.map((x) => x.id)), T);
+  } catch { return []; }
+}
+/** 회사 이름 바꾸기 — company.json만(DB 쓰기 없음). 동기화를 쓰는 계정은 상주(argo run·앱)가 파일 변경을 다음 주기에 올린다. */
+async function renameCmd(ws, name) {
+  if (!String(name ?? '').trim()) { console.error(T.renameUsage); return false; }
+  const { renameCompany } = await import('../src/cli/company-name.mjs');
+  const r = await renameCompany(ws, name);
+  console.log(T.renamed(r.from, r.to)); return true;
+}
+/** 이름을 바꿀 회사 — 고른 회사(cli.json ws) → 하나뿐이면 그 회사 → 대화형이면 고르기. 새로 만들지 않는다. */
+async function existingCompany(uid) {
+  const list = await ownCompanies(uid);
+  const hit = list.find((c) => c.id === cfg.ws) ?? (list.length === 1 ? list[0] : null);
+  if (hit) return hit.id;
+  if (list.length > 1 && rl && process.stdin.isTTY) { const i = await choose(T.pickCompany, list.map((c) => `${c.name} (${c.id})`)); if (i >= 0) return list[i].id; }
+  return null;
 }
 
 /* ─── 크루와 대화 — 앱 채팅 라우트와 같은 기록 순서(beginTurn → chat → appendTurn)라 앱에서도 같은 대화가 보인다 ─── */
@@ -486,10 +527,12 @@ async function runResident({ prefer = true, standby = false } = {}) {
   else { delete process.env.ARGO_STANDBY_LEADER; if (prefer) process.env.ARGO_PREFER_LEADER = '1'; else delete process.env.ARGO_PREFER_LEADER; }
   delete process.env.ARGO_NO_LEADER;
   // 회사를 고르지 않는다 — 없으면 동기화가 클라우드에서 찾아오고, 게이트웨이는 이 계정의 모든 회사를 맡는다(앱 서버와 같다)
-  const ws = (await ownCompanies(s.user.id)).map((c) => c.name).join(', ');
+  const startList = await ownCompanies(s.user.id);
+  const ws = startList.map((c) => c.name).join(', ');
   await import('../instrumentation-node.mjs'); // 앱 서버가 켜질 때와 같은 순서 — 스케줄러·게이트웨이(메신저·텔레그램·스캐폴드 백필)·동기화·고아 턴 정리
   console.log(T.running(standby ? 'standby' : prefer ? 'preferred' : 'normal'));
   console.log(ws ? T.runCompanies(ws) : T.runLoading);
+  if (ws) for (const l of await orgLines(startList)) console.log(l); // 회사가 보일 때 한 번만(읽기 1건) — 주기 호출 없음
   // 회사·실행 담당은 동기화·리스 판정 뒤의 실제 결과로 알린다 — 메모리 값(leaseCheck)과 이 기기 폴더의 회사 목록만 읽는다(요청·쓰기 없음).
   // 회사는 처음 보일 때 한 번, 실행 담당은 처음 정해질 때와 바뀔 때만 한 줄씩.
   const { leaseCheck, isCloudLeader, LEASE_TTL_MS } = await import('../src/sync.mjs');
@@ -501,7 +544,7 @@ async function runResident({ prefer = true, standby = false } = {}) {
     try {
       me ??= await getDeviceId();
       // 회사 목록은 이 기기 폴더만 읽는다 — 10분(300번) 안에 안 보이면 더 보지 않는다(회사가 없는 계정이 상주 내내 폴더를 읽지 않게, 분리 검수 L5)
-      if (!shownWs && wsTries++ < 300) { const names = (await ownCompanies(s.user.id)).map((c) => c.name).join(', '); if (names) { shownWs = true; console.log(T.runLoaded(names)); } }
+      if (!shownWs && wsTries++ < 300) { const got = await ownCompanies(s.user.id); const names = got.map((c) => c.name).join(', '); if (names) { shownWs = true; console.log(T.runLoaded(names)); for (const l of await orgLines(got)) console.log(l); } }
       const now = Date.now();
       const next = runRoleState({ ...leaseCheck(), active: isCloudLeader(now) }, me, now, LEASE_TTL_MS);
       if (roleChanged(shownRole, next)) { shownRole = next; console.log(next.kind === 'other' ? T.runRole.other(next.holder) : T.runRole[next.kind]); }
@@ -565,7 +608,8 @@ async function status() {
       return o?.n ? [T.statusOversize(c.name, o.n, (o.rels ?? []).join(', ') + (o.n > (o.rels ?? []).length ? ' …' : ''), Math.floor((o.limit ?? 50 * 2 ** 20) / 2 ** 20))] : [];
     } catch { return []; } // 동기화한 적 없음·읽기 실패 — 줄 없음
   });
-  console.log([T.status({ email: s?.user?.email, root: process.env.ARGO_ROOT, companies, device: await getDeviceId() }), ...oversize].join('\n').split('\n').map((l) => `  ${l}`).join('\n')); // 대화 화면 줄과 같은 들여쓰기
+  const orgs = s ? await orgLines(list) : []; // 회사 옆 메신저 조직(읽기 1건) — 이름이 다르면 rename 안내
+  console.log([T.status({ email: s?.user?.email, root: process.env.ARGO_ROOT, companies, device: await getDeviceId() }), ...orgs, ...oversize].join('\n').split('\n').map((l) => `  ${l}`).join('\n')); // 대화 화면 줄과 같은 들여쓰기
 }
 
 /* ─── 입구 — 대화 화면 ─── */
@@ -638,6 +682,7 @@ async function interactive() {
       else if (p.name === 'ai') await runnersMenu(ws);
       else if (p.name === 'browser') await browserMenu({ interactive: true });
       else if (p.name === 'status') await status();
+      else if (p.name === 'rename') { await renameCmd(ws, p.arg); console.log(''); }
       else if (p.name === 'serve' && appShared) console.log(`  ${T.appNoRun}\n`);
       else if (p.name === 'serve' && localMode) console.log(`  ${T.localNoServe}\n`);
       else if (p.name === 'serve') { console.log(T.serveStart); onSigint = null; onQueuedLine = null; rl?.close(); rl = null; await runResident(); return; }
@@ -664,6 +709,14 @@ try {
   }
   else if (cmd === '--version' || cmd === '-v' || cmd === 'version') { console.log(`argo ${readAppVersion(REPO) ?? '?'}`); process.exit(0); }
   else if (cmd === 'status') { await status(); process.exit(0); }
+  else if (cmd === 'rename') { // 회사 이름 바꾸기 — company.json만(src/cli/company-name.mjs). 회사를 새로 만들지 않는다
+    const name = rest.join(' ').trim();
+    if (!name) { console.error(T.renameUsage); process.exit(1); }
+    const s = await identity({ interactive: false });
+    const ws = await existingCompany(s.user.id);
+    if (!ws) { console.error(T.noCompany); process.exit(1); }
+    process.exit((await renameCmd(ws, name)) ? 0 : 1);
+  }
   else if (cmd === 'browser') { await browserMenu({ interactive: !!rl }); process.exit(0); }
   else if (cmd === 'service') { process.exit(service(rest[0] ?? 'status', rest.slice(1)) === false ? 1 : 0); }
   else if (cmd === 'office') { // 오피스 업무 현황 — 세션 보고·보류한 일(src/office-cli.mjs). 모드(cli.json)는 읽지도 바꾸지도 않는다.

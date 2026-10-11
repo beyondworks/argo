@@ -22,7 +22,7 @@ const WORD = [
 ];
 const SMALL = ['  ▄██▄', ' ▀▀▄▄▀▀', '   ▀▀'];
 
-export const COMMANDS = ['help', 'agent', 'new', 'hire', 'ai', 'serve', 'browser', 'status', 'quit', 'exit'];
+export const COMMANDS = ['help', 'agent', 'new', 'hire', 'ai', 'serve', 'browser', 'rename', 'status', 'quit', 'exit'];
 const ESC = /\x1b\[[0-9;]*m/g;
 export const visibleWidth = (s) => [...String(s).replace(ESC, '')].length;
 export const style = (color) => ({ bold: (s) => (color ? `\x1b[1m${s}\x1b[22m` : s), dim: (s) => (color ? `\x1b[2m${s}\x1b[22m` : s) });
