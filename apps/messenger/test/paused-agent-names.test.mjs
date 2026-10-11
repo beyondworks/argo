@@ -1,6 +1,7 @@
 // 멈춘(paused) 에이전트가 '?'로 보이던 제보(2026-10-11, 메신저 0.1.57) — 무료 계정 에이전트가 #941로 status='paused'가 되면
 // 메신저가 크루 행을 active·available만 읽어 1:1 방 이름이 'dm:?', 방 머리가 '?', 글쓴이가 '에이전트'로 떴다(로컬 검수 스택 재현).
-// 잠그는 것: ① 공간 크루 조회는 같은 조회에 paused만 더한다(요청 수 그대로, detached는 읽지 않음)
+// 잠그는 것: ① 나누기 기준 상태(active·available·paused, detached 없음). 조직 목록 조회는 active·available 그대로(전송량 — #950 분리 검수, rail-state.test.mjs가 실제 loadOrg로 잠근다)
+// ⑦ 조직의 모르는 크루 id만 따로 한 번(표시 열만, 같은 id 재조회 0)
 // ② 나누기 — 연결(목록·숫자·멘션·초대·턴)은 active만, 내 꺼 둔 에이전트는 available만, 이름·얼굴·글쓴이는 paused까지
 // ③ 이름 찾기 — 연결된 행이 먼저, 없으면 멈춘 행(멈춘 1:1 방 이름·글쓴이가 '?'·'에이전트'가 아니다)
 // ④ 1:1 방 머리의 '멈춤' 표시 — 방의 에이전트 한 명이 멈췄고 연결된 에이전트가 없을 때만(그룹·채널·연결된 방은 없음)
@@ -8,14 +9,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { SPACE_CREW_STATUSES, splitSpaceCrews, withPaused, pausedRoomCrew } from '../src/agent-pause.mjs';
+import { SPACE_CREW_STATUSES, splitSpaceCrews, withPaused, pausedRoomCrew, crewNameAsker, readPausedCrewNames } from '../src/agent-pause.mjs';
 import { t as tm } from '../src/i18n.js';
 
 const ME = 'u-me'; const OTHER = 'u-other';
 const row = (id, status, extra = {}) => ({ id, status, owner_user_id: ME, display_name: id.toUpperCase(), ...extra });
 const rows = [row('a1', 'active'), row('p1', 'paused'), row('v1', 'available'), row('v2', 'available', { owner_user_id: OTHER }), row('p2', 'paused', { owner_user_id: OTHER }), row('d1', 'detached')];
 
-test('① 조직 크루 조회 상태 — active·available에 paused만 더한다(detached는 읽지 않는다)', () => {
+test('① 나누기 기준 상태 — active·available·paused(detached는 표시하지 않는다)', () => {
   assert.deepEqual([...SPACE_CREW_STATUSES].sort(), ['active', 'available', 'paused']);
 });
 
@@ -65,18 +66,46 @@ test('⑤ 문구 — ko·en, 기존 멈춤 안내 말투, 결제 권유 없음',
   for (const lang of ['ko', 'en']) assert.doesNotMatch(tm('agents.paused.tag', lang), /Pro|결제|업그레이드|Upgrade/i);
 });
 
-test('⑥ 화면 배선 — 같은 조회에 paused를 더하고, 표시 자리는 표시용 찾기, 목록 숫자는 연결 기준', () => {
+test('⑦ 조직의 모르는 크루 이름 — 모아서 한 번, 같은 id는 세션 동안 다시 읽지 않는다(빈 답·실패도)', async () => {
+  const reads = []; let tick = null; const got = [];
+  const asker = crewNameAsker(async (ids) => { reads.push(ids); if (ids.includes('boom')) throw new Error('net'); return ids.filter((id) => id.startsWith('p')).map((id) => ({ id, status: 'paused' })); }, (rows) => got.push(...rows), (f) => { tick = f; });
+  asker.ask('p1'); asker.ask('p1'); asker.ask('x1'); asker.ask(null);
+  tick(); await new Promise((r) => setImmediate(r));
+  assert.deepEqual(reads, [['p1', 'x1']], '한 틱에 모은 id를 한 번에');
+  assert.deepEqual(got.map((r) => r.id), ['p1']);
+  tick = null; asker.ask('p1'); asker.ask('x1');
+  assert.equal(tick, null, '이미 물은 id(답이 없던 x1 포함)는 다시 예약하지 않는다');
+  asker.ask('boom'); tick(); await new Promise((r) => setImmediate(r)); tick = null; asker.ask('boom');
+  assert.equal(tick, null, '실패한 id도 다시 묻지 않는다(재시도 폭주 없음)'); assert.equal(reads.length, 2);
+});
+
+test('⑦ readPausedCrewNames — 표시 열만, 멈춘 행만, 옛 서버(face 없음)는 face 없이 한 번 더, 오류는 []', async () => {
+  const calls = [];
+  const db = (answers) => ({ from(t) { assert.equal(t, 'msgr_crews'); return { select(c) { this.c = c; return this; }, in(col, ids) { calls.push([this.c, col, ids]); return Promise.resolve(answers.shift()); } }; } });
+  const rows = [{ id: 'p', status: 'paused', display_name: '도윤' }, { id: 'd', status: 'detached', display_name: 'x' }, { id: 'a', status: 'active', display_name: 'y' }];
+  assert.deepEqual((await readPausedCrewNames(db([{ data: rows, error: null }]), ['p', 'd', 'a'])).map((r) => r.id), ['p']);
+  assert.deepEqual(calls[0], ['id, owner_user_id, display_name, role_text, status, face, avatar_url', 'id', ['p', 'd', 'a']], '계산 열(msgr_crew_seen)·commands 없음');
+  calls.length = 0;
+  assert.deepEqual((await readPausedCrewNames(db([{ data: null, error: { message: 'column msgr_crews.face does not exist' } }, { data: rows, error: null }]), ['p'])).map((r) => r.id), ['p']);
+  assert.equal(calls[1][0], 'id, owner_user_id, display_name, role_text, status, avatar_url');
+  assert.deepEqual(await readPausedCrewNames(db([{ data: null, error: { message: 'permission denied' } }]), ['p']), []);
+  assert.deepEqual(await readPausedCrewNames({ from() { throw new TypeError('Failed to fetch'); } }, ['p']), []);
+  assert.deepEqual(await readPausedCrewNames(db([]), []), [], '물을 id가 없으면 요청 0');
+});
+
+test('⑥ 화면 배선 — 조직 목록 조회는 그대로, 표시 자리는 표시용 찾기, 목록 숫자는 연결 기준', () => {
   const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
-  assert.doesNotMatch(app, /\.from\('msgr_crews'\)\.select\(c\)\.eq\('org_id', id\)\.in\('status', \['active', 'available'\]\)/, '조직 조회가 paused를 빼고 읽지 않는다');
-  assert.equal((app.match(/\.eq\('org_id', id\)\.in\('status', SPACE_CREW_STATUSES\)/g) ?? []).length, 2, '조직 조회 두 갈래(face 있음·없음) 모두 — 요청 수는 그대로');
+  assert.equal((app.match(/\.eq\('org_id', id\)\.in\('status', \['active', 'available'\]\)/g) ?? []).length, 2, '조직 목록 조회 두 갈래(face 있음·없음) 모두 active·available 그대로 — 전송량');
+  assert.doesNotMatch(app, /SPACE_CREW_STATUSES/, '조직 목록 조회에 paused를 더하지 않는다');
   assert.match(app, /const split = splitSpaceCrews\(fetchedCrews, uid\);/);
   assert.match(app, /const crs = split\.connected;/, '연결 목록(레일 "에이전트 · N"·멘션·초대) = active만');
   assert.match(app, /const roomCrews = withoutCopies\(roomSplit\.connected\);/, '개인 공간 고르기·멘션 후보 = active만');
   assert.match(app, /dm:\$\{roomSplit\.shown\.find\(\(c\) => c\.id === r\.crew_dm\)\?\.display_name \|\| '\?'\}/, '개인 1:1 방 이름 = 멈춘 에이전트도');
-  assert.match(app, /const crewShown = withPaused\(crewOf, pausedCrews\);/);
+  assert.match(app, /const crewAsker = useMemo\(\(\) => crewNameAsker\(\(ids\) => readPausedCrewNames\(supabase, ids\),/, '조직의 모르는 id는 따로 한 번');
+  assert.match(app, /const crewShown = withPaused\(crewOf, pausedKnown, isPersonal \? null : \(id\) => \{ if \(loadedOrg\.current === orgId\) crewAsker\.ask\(id\); \}\);/, '개인 공간은 묻지 않고, 조직은 목록을 다 읽은 뒤에만');
   assert.match(app, /<Channel key=\{chId\}[^\n]*crewOf=\{crewShown\}/, '대화창 글쓴이·인용·수신 표시');
   assert.match(app, /<Inbox [^\n]*crews=\{shownCrews\}/); assert.match(app, /<SearchPage [^\n]*crews=\{shownCrews\}/);
-  assert.match(app, /const byId = new Map\(\[\.\.\.\(myAgents \?\? \[\]\), \.\.\.crews, \.\.\.myAvailable, \.\.\.pausedCrews\]/, '얼굴 — 저장한 얼굴로');
+  assert.match(app, /const byId = new Map\(\[\.\.\.\(myAgents \?\? \[\]\), \.\.\.crews, \.\.\.myAvailable, \.\.\.pausedKnown\]/, '얼굴 — 저장한 얼굴로');
   assert.match(app, /spaceSnap\.current = \{[^}]*pausedCrews[^}]*\}/, '공간 전환 저장본');
   assert.match(app, /setPausedCrews\(d\.pausedCrews \?\? \[\]\)/, '공간 전환 복원·비우기');
 });
