@@ -1009,6 +1009,18 @@ const DICT = {
   'settings.msgr.registered': ['파견 중', 'Dispatched'],
   'settings.msgr.notRegistered': ['파견 해제됨', 'Recalled'],
   'settings.msgr.notInMessenger': ['메신저에 아직 없음', 'Not in Messenger yet'],
+  // 무료 계정 한도로 서버가 멈춘 행(status paused, 2026-10-11) — 사람이 해제한 '파견 해제됨'과 구별(화면 검수 B). 고르는 곳: settings/msgr-card.mjs pausedLabelKey
+  'settings.msgr.paused': ['멈춤', 'Paused'],
+  'settings.msgr.paused.limit': ['멈춤 · 무료 4명 한도', 'Paused · Free plan limit of 4'],
+  'settings.msgr.paused.app': ['멈춤 · 무료 계정 최신 앱 필요', 'Paused · Free plan needs the latest app'],
+  'settings.msgr.paused.room': ['멈춤 · 지금 연결할 수 있어요', 'Paused · You can connect it now'],
+  // 개인 공간만 쓰는 사용자의 연결 줄·교체 미리 알림(검수 스택 화면 4차, 2026-10-11)
+  'settings.msgr.personal.title': ['개인 공간 연결', 'Personal space connection'],
+  'settings.msgr.personal.status': ['에이전트 {n}명이 개인 공간에 연결되어 있고, {m}명은 연결되지 않았습니다.', '{n} agents are connected to your personal space and {m} are not.'],
+  'settings.msgr.personal.rosterHelp': ['이 컴퓨터의 에이전트와 개인 공간 연결 상태를 한눈에 확인합니다.', 'Review each agent on this computer and its personal space connection.'],
+  'settings.msgr.personal.count': ['{n} / {total} 연결', '{n} / {total} connected'],
+  'settings.msgr.swap.confirm': ['무료 계정은 에이전트 4명까지라서, 연결하면 {names} 에이전트를 멈춰요. 연결할까요?', 'Free accounts can use up to 4 agents, so connecting will pause {names}. Connect anyway?'],
+  'settings.msgr.swap.go': ['멈추고 연결', 'Pause and connect'],
   'settings.msgr.manage': ['허용 범위(누가 시킬 수 있나)·파견 해제·다시 파견은 팀 메신저 앱의 에이전트 카드에서 합니다.', 'Access scope (who can task it), recall and re-dispatch are done on the agent card in the team messenger app.'],
   'settings.msgr.register': ['등록', 'Register'],
   'settings.msgr.unregister': ['해제', 'Unregister'],
@@ -1046,6 +1058,7 @@ const DICT = {
   'settings.msgr.roster.title': ['연결된 에이전트 보기', 'View connected agents'],
   'settings.msgr.roster.help': ['이 컴퓨터의 에이전트와 조직 연결 상태를 한눈에 확인합니다.', 'Review each agent on this computer and its connection state for this organization.'],
   'settings.msgr.err.activate': ['에이전트를 연결하지 못했습니다. 잠시 뒤 다시 시도하세요.', 'Could not connect agents. Try again shortly.'],
+  'settings.msgr.swapped': ['무료 계정은 에이전트 4명까지라서 {names} 에이전트를 멈췄어요. Pro면 제한이 없어요.', 'Free accounts can use up to 4 agents, so {names} is now paused. Pro has no limit.'], // 무료 4명 교체 안내(2026-10-11, 서버 msgr_agent_swap_notes)
   'settings.msgr.err.reconnect': ['메신저 재연결을 시작하지 못했습니다. 잠시 뒤 다시 시도하세요.', 'Could not start reconnecting Messenger. Try again shortly.'],
   'settings.msgr.runtime.title': ['메신저 응답 상태', 'Messenger response status'],
   'settings.msgr.runtime.alive': ['정상 응답 중 · {s}초 전에 확인', 'Responding normally · checked {s}s ago'],

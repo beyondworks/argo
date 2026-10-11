@@ -13,7 +13,7 @@ const state = window.__psFixture = { calls: [], failNext: null, aiConsent: local
     { channel_id: 'org-dm', member_kind: 'user', member_id: 'user-colleague' },
   ],
   msgr_messages: [],
-  msgr_channel_crew_requests: [{ id: 'req-alice', channel_id: 'pdm-alice', crew_id: 'pcrew-alice2', requested_by: 'user-alice', status: 'pending' }], // 친구가 자기 에이전트를 1:1에 넣겠다고 요청(승인자 = 방을 연 나)
+  msgr_channel_crew_requests: [{ id: 'req-alice', channel_id: 'pdm-alice', crew_id: 'pcrew-alice2', requested_by: 'user-alice', status: 'pending', created_at: now }], // created_at — 결재 카드 시각('Invalid Date' 없게, 검수 #945 LOW-5) // 친구가 자기 에이전트를 1:1에 넣겠다고 요청(승인자 = 방을 연 나)
   msgr_target_prefs: [], msgr_channel_prefs: [],
   // Friends fixture
   msgr_friends: [
@@ -48,6 +48,15 @@ if (favCrewDm) {
   state.tables.msgr_personal_channels.push(channel('pcdm-pcrew-mine', 'dm', 'dm:My Agent', null));
   state.tables.msgr_channel_prefs.push({ user_id: uid, channel_id: 'pcdm-pcrew-mine', muted: false, pinned: true, pin_pos: 0, sort_pos: null });
 }
+
+// 무료 계정 에이전트 멈춤 안내(2026-10-11 — agent-pause.mjs). 주소에 ?agentPause=app|off|limit을 붙이면 그 이유로 연다.
+// app·off = 내 에이전트가 전부 멈춤(목록에서 빠짐 — 서버는 paused 행을 주지 않는다), limit = 4명 연결 + 나머지 멈춤. 없으면 안내 없음(기존 시나리오 그대로).
+const agentPause = new URLSearchParams(location.search).get('agentPause');
+if (agentPause === 'app' || agentPause === 'off') {
+  state.tables.msgr_crews = state.tables.msgr_crews.filter((c) => c.owner_user_id !== uid);
+  state.tables.msgr_personal_room_crews = state.tables.msgr_personal_room_crews.filter((c) => c.owner_user_id !== uid || c.hosting === 'bot');
+}
+const pauseInfo = agentPause ? { paused: agentPause === 'limit' ? 3 : 7, active: agentPause === 'limit' ? 4 : 0, limit: 4, reason: agentPause } : { paused: 0, active: 1, limit: 4, reason: null };
 
 function result(call, action) {
   state.calls.push(structuredClone(call));
@@ -120,6 +129,7 @@ export const supabase = {
       return id;
     }
     if (name === 'msgr_personal_room_crews') return structuredClone(state.tables.msgr_personal_room_crews);
+    if (name === 'msgr_my_agent_pause') return structuredClone(pauseInfo);
     if (name === 'msgr_my_ai_consent') return state.aiConsent === undefined ? now : state.aiConsent; // 기본 동의함 — 시나리오가 null로 바꿔 동의 요청을 본다
     if (name === 'msgr_set_ai_consent') { state.aiConsent = args.consent ? now : null; return state.aiConsent; }
     if (name === 'msgr_dm_approver') return uid;

@@ -21,6 +21,8 @@ const CONTRACT = {
   msgr_channel_access: { bot: ['msgr_bot_updates'] },
   msgr_crews: { bot: ['msgr_bot_create', 'msgr_bot_me'] },
   msgr_device_beat: { bot: ['msgr_bot_updates'] }, // 접속 심박(기기 단위, 2026-10-10) — 봇은 getUpdates가 자기 에이전트 행의 접속 시각을 찍는다(봇 하나 = 에이전트 하나, 기기 개념 없음)
+  msgr_free_resume: { server: '무료 계정 사람 에이전트 재개(20261011120000) — 외부 봇 연결은 Pro 전용(msgr_bot_gate)이라 봇 쪽 호출 없음' },
+  msgr_my_agent_pause: { server: '무료 계정 에이전트가 멈춘 이유·최소 앱 버전(20261011120000) — 앱 버전으로 정하는 본체 브리지 판정이라 봇 쪽 호출 없음' },
   msgr_attachments: { bot: ['msgr_bot_file', 'msgr_bot_attach_prepare', 'msgr_bot_attach_commit'] }, // 받기(getFile)·보내기(createUpload·attachFile, 20260930160000)
   msgr_execution_finish: { bot: ['msgr_bot_finish'] },
   msgr_execution_heartbeat: { pending: '2단계 — 긴 실행의 진행 신호(지금 봇은 결재 대기 중에만 msgr_bot_events가 심박을 올린다)' },
@@ -93,6 +95,7 @@ const CONTRACT = {
   msgr_role: { argoOnly: 'Argo PC 크루 미러가 조직에 행을 넣기 전 확인(msgr_crews_insert 정책과 같은 함수, 2차 검수 M-2) — 외부 에이전트는 서버 연결(connect) 절차로 추가해 이 확인이 필요 없다' },
   msgr_org_locked: { argoOnly: 'Argo PC 크루 미러가 조직에 행을 넣기 전 확인 — 구독이 연체돼 잠긴 조직은 msgr_crews_insert가 거절한다. 외부 에이전트는 서버 연결 절차로 추가한다' },
   msgr_node_heartbeat: { argoOnly: '상주 노드 심박 — 봇 가용성은 getUpdates의 last_seen_at' },
+  msgr_gateway_wake_protocol: { argoOnly: 'Argo PC 게이트웨이가 쉬는 주기(Realtime 깨우기만으로 처리)를 써도 되는지 서버 깨우기 방송(crew_sync) 표지를 묻는다(#943) — 봇은 getUpdates 롱폴이라 쉬는 주기가 없다' },
   msgr_notification_routes_sync: { argoOnly: 'Argo 데스크톱 알림 경로 — 외부 에이전트는 예약 작업 deliver=argo_msgr' },
   msgr_notification_authorize: { argoOnly: 'Argo 데스크톱 알림 경로' },
   msgr_notification_claim: { argoOnly: 'Argo 데스크톱 알림 경로' },

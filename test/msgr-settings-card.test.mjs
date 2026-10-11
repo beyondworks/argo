@@ -58,14 +58,15 @@ test('H-0: 라우트가 조직별 policy를 싣고, 카드는 첫 연결만 시�
   const src = page.slice(page.indexOf('function MsgrCard('), page.indexOf('function ConnectorsCard('));
   assert.match(src, /async function activateOrg\(\)/, '첫 연결을 시작하는 명시적 동작이 없다');
   assert.match(src, /const missing = agents\.filter\(\(a\) => !regOf\(a\.slug\)\)/, '이미 연결된 크루까지 다시 연결하려 한다');
-  assert.match(src, /api\(`\/api\/companies\/\$\{ws\}\/msgr`, \{ orgId, activate: true, slugs: missing\.map\(\(agent\) => agent\.slug\) \}\)/, '첫 연결이 전용 활성화 요청을 쓰지 않는다');
+  assert.match(src, /connectAgents\(\{ orgId \}, missing\.map\(\(agent\) => agent\.slug\)\)/, '첫 연결이 전용 활성화 요청을 쓰지 않는다');
+  assert.match(src, /api\(`\/api\/companies\/\$\{ws\}\/msgr`, \{ \.\.\.scope, activate: true, slugs \}\)/, '연결 요청(조직·개인 공간 같은 길 — #945 4차)');
   assert.match(route, /if \(activate\) \{[\s\S]*?prior\?\.status === 'active'\) continue/, '활성화 요청이 이미 활성인 크루를 건너뛰지 않는다');
   assert.match(route, /\.update\(\{ \.\.\.base, status: 'active' \}\)/, '되살린 크루가 기존 허용 범위를 보존하지 않는다');
   assert.match(route, /\.insert\(row\)/, '없는 크루만 새 기본 허용 범위로 만들지 않는다');
   assert.doesNotMatch(src, /register\(|unregister\(|role="radio"|method: 'DELETE'/, '아르고 카드에 해제·허용 범위 조작이 남아 있다');
   assert.match(src, /window\.dispatchEvent\(new Event\('argo:refresh'\)\)/, '연결 뒤 알림 카드가 상태를 갱신하지 않는다');
   assert.match(src, /\{reg \? `\$\{t\('settings\.msgr\.registered'\)\} · \$\{t\(`settings\.msgr\.allow\.\$\{reg\.allow\}`\)\}` : off\}/, '행은 파견 상태·허용 범위를 읽기 전용으로 보인다');
-  assert.match(src, /const off = t\(rowOf\(a\.slug\) \? 'settings\.msgr\.notRegistered' : 'settings\.msgr\.notInMessenger'\)/, "행이 없으면 '파견 해제됨'이 아니라 '메신저에 아직 없음'(유건 제보 2026-09-17)");
+  assert.match(src, /const row = rowOf\(a\.slug\); const off = row\?\.status === 'paused' \? t\(pausedLabelKey\(st\?\.pauseReason\)\) : t\(row \? 'settings\.msgr\.notRegistered' : 'settings\.msgr\.notInMessenger'\)/, "행이 없으면 '파견 해제됨'이 아니라 '메신저에 아직 없음'(유건 제보 2026-09-17), 무료 한도로 멈춘 행은 '멈춤'(#945 화면 검수 B)");
   assert.match(src, /t\('settings\.msgr\.manage'\)/, '메신저에서 관리한다는 안내가 없다');
   assert.match(i18n, /'settings\.msgr\.allow\.locked': \['[^']+', '[^']+'\]/, 'settings.msgr.allow.locked ko/en');
 });

@@ -14,7 +14,7 @@ import LocalAssetImport from '../../../components/LocalAssetImport';
 import { accountPlan, trialBadgeState } from '../../../../src/entitlement.mjs';
 
 // Argo Messenger 받기 — 맥·윈도우 설치파일만 걸던 것을 앱 스토어·Play까지 있는 안내 페이지 한 곳으로(CX-12). 오피스 진입 버튼(CX-13)은 오피스가 비공개라 뺐다(유건 2026-10-10).
-import { MESSENGER_PAGE, msgrCardView, runtimeWaitingKey, runtimeAction } from './msgr-card.mjs';
+import { MESSENGER_PAGE, msgrCardView, runtimeWaitingKey, runtimeAction, pausedLabelKey, personalCardView } from './msgr-card.mjs';
 import ArchivedCompaniesCard from '../../../archived-companies'; // 보관한 회사 되돌리기 — 홈에도 같은 카드(UM3)
 import { trashFailKind } from './trash-fail.mjs'; // 보관함 항목이 이미 사라졌는지(2차 M3)
 import { saveWithRevert } from './save-revert.mjs'; // 저장 실패면 되돌린다(F9)
@@ -902,6 +902,8 @@ function MsgrCard({ ws, agents }) {
   const [activating, setActivating] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
   const [err, setErr] = useState('');
+  const [note, setNote] = useState(''); // 무료 4명 교체 안내(연결 결과)
+  const [confirm, setConfirm] = useState(null); // 교체 미리 알림 { scope, slugs, victims } — 연결하면 멈출 에이전트를 먼저 보이고 확인(검수 스택 화면 4차)
   const load = useCallback(() => api(`/api/companies/${ws}/msgr`)
     .then((d) => { setSt(d); setOrgId((cur) => cur && d.orgs?.some((o) => o.id === cur) ? cur : (d.orgs?.[0]?.id ?? '')); })
     .catch(() => { setSt({ signedIn: false, orgs: [], crews: [] }); setErr(t('settings.msgr.err.load')); }), [ws, t]);
@@ -919,17 +921,39 @@ function MsgrCard({ ws, agents }) {
   const org = st?.orgs?.find((o) => o.id === orgId);
   const policyLine = org?.policy ? t('settings.msgr.policy.summary', { allow: t(`settings.msgr.allow.${org.policy.allow_default}`) + (org.policy.allow_locked ? t('settings.msgr.policy.locked') : ''), approver: t(`settings.msgr.policy.approver.${org.policy.approval_high_by ?? 'admin'}`), memory: (org.policy.crew_memory_default === false ? t('settings.msgr.policy.memory.off') : t('settings.msgr.policy.memory.on')) + (org.policy.crew_memory_locked ? t('settings.msgr.policy.locked') : '') }) : '';
 
-  async function activateOrg() {
-    if (!orgId || !missing.length || activating) return;
-    setActivating(true); setErr('');
+  const personalView = personalCardView({ st, agents }); // 조직이 없는 사용자의 개인 공간 줄(검수 스택 화면 4차)
+  // 연결 한 곳 — 조직 카드(scope { orgId })와 개인 공간 카드(scope { personal: true })가 같은 길. 무료 4명이 차 있으면 서버가 미리 알린 멈출 에이전트를
+  // 먼저 보이고 확인을 받는다(교체 뒤 같은 단추를 다시 누르면 방금 멈춘 에이전트와 다시 바뀌는 것을 미리 알 수 있게). 미리 알림 실패·빈 목록이면 종전대로 바로 연결.
+  async function connectAgents(scope, slugs, confirmed = false) {
+    if (!slugs.length || activating) return;
+    setActivating(true); setErr(''); setNote('');
     try {
-      await api(`/api/companies/${ws}/msgr`, { orgId, activate: true, slugs: missing.map((agent) => agent.slug) });
+      if (!confirmed) {
+        const p = await api(`/api/companies/${ws}/msgr`, { preview: true, slugs }).catch(() => null);
+        if (p?.victims?.length) { setConfirm({ scope, slugs, victims: p.victims }); return; }
+      }
+      setConfirm(null);
+      const r = await api(`/api/companies/${ws}/msgr`, { ...scope, activate: true, slugs });
+      if (r?.swapped?.length) setNote(t('settings.msgr.swapped', { names: r.swapped.join(', ') }));
       await load();
       window.dispatchEvent(new Event('argo:refresh'));
     } catch (e) {
+      setConfirm(null);
       setErr(e.message || t('settings.msgr.err.activate'));
+      load().catch(() => {}); // 거절돼도 넣은 행은 멈춤으로 남는다 — 줄 표기('멈춤 · …')를 서버 상태로(#945 분리 검수 3차)
     } finally { setActivating(false); }
   }
+  async function activateOrg() {
+    if (!orgId || !missing.length) return;
+    return connectAgents({ orgId }, missing.map((agent) => agent.slug));
+  }
+  const swapConfirmEl = confirm && (
+    <div className="msgr-swapconfirm" role="alertdialog" aria-live="polite" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+      <p style={{ fontSize: 12, color: 'var(--fg-1)', margin: 0, flex: '1 1 240px', lineHeight: 1.6 }}>{t('settings.msgr.swap.confirm', { names: confirm.victims.join(', ') })}</p>
+      <button type="button" className="btn btn-primary sm" disabled={activating} onClick={() => connectAgents(confirm.scope, confirm.slugs, true)}>{t('settings.msgr.swap.go')}</button>
+      <button type="button" className="btn sm" disabled={activating} onClick={() => setConfirm(null)}>{t('common.cancel')}</button>
+    </div>
+  );
 
   async function reconnectBridge() {
     if (reconnecting) return;
@@ -990,6 +1014,39 @@ function MsgrCard({ ws, agents }) {
           {runtimeButton}
         </section>
       )}
+      {/* 개인 공간만 쓰는 사용자 — 연결 안 된(멈춤·해제) 개인 행이 있을 때만 줄과 연결(조직 카드와 같은 줄·단추·연결 길, 검수 스택 화면 4차) */}
+      {personalView.show && (<>
+        <section className="msgr-connection" aria-labelledby="msgr-personal-title">
+          <div>
+            <span className="microlabel" id="msgr-personal-title">{t('settings.msgr.personal.title')}</span>
+            <p>{t('settings.msgr.personal.status', { n: personalView.connected, m: personalView.missing.length })}</p>
+          </div>
+          <button type="button" className="btn btn-primary sm" disabled={activating} onClick={() => connectAgents({ personal: true }, personalView.missing)}>
+            {activating ? <Spinner size={12} /> : t('settings.msgr.connection.addMissing', { n: personalView.missing.length })}
+          </button>
+        </section>
+        {swapConfirmEl}
+        <section className="msgr-roster" aria-labelledby="msgr-personal-roster-title">
+          <div className="msgr-roster-head">
+            <div>
+              <span className="microlabel" id="msgr-personal-roster-title">{t('settings.msgr.roster.title')}</span>
+              <p>{t('settings.msgr.personal.rosterHelp')}</p>
+            </div>
+            <span className="chip">{t('settings.msgr.personal.count', { n: personalView.connected, total: agents.length })}</span>
+          </div>
+          <ul className="msgr-crews" role="list">
+            {personalView.rows.map(({ slug, row, labelKey }) => { const a = agents.find((x) => x.slug === slug); const on = row?.status === 'active'; return (
+              <li key={slug} className={`msgr-crew${on ? ' on' : ''}`}>
+                <div className="row">
+                  <Avatar name={a.name} sm />
+                  <span className="who"><span className="name">{a.name}</span><span className="role">{a.role}</span></span>
+                  <span className="state" title={t(labelKey)}><span className="dot" aria-hidden="true" />{t(labelKey)}</span>
+                </div>
+              </li>
+            ); })}
+          </ul>
+        </section>
+      </>)}
       {st?.signedIn && !!st.orgs?.length && (<>
         <div className="msgr-orgbar">
           <label>
@@ -1019,6 +1076,7 @@ function MsgrCard({ ws, agents }) {
               {activating ? <Spinner size={12} /> : t(regCount ? 'settings.msgr.connection.addMissing' : 'settings.msgr.connection.activate', { n: missing.length })}
             </button>}
           </section>
+          {swapConfirmEl}
           <section className="msgr-roster" aria-labelledby="msgr-roster-title">
             <div className="msgr-roster-head">
               <div>
@@ -1028,7 +1086,7 @@ function MsgrCard({ ws, agents }) {
               <span className="chip">{t('settings.msgr.count', { n: regCount, total: agents.length })}</span>
             </div>
             <ul className="msgr-crews" role="list">
-              {agents.map((a) => { const reg = regOf(a.slug); const off = t(rowOf(a.slug) ? 'settings.msgr.notRegistered' : 'settings.msgr.notInMessenger'); return (
+              {agents.map((a) => { const reg = regOf(a.slug); const row = rowOf(a.slug); const off = row?.status === 'paused' ? t(pausedLabelKey(st?.pauseReason)) : t(row ? 'settings.msgr.notRegistered' : 'settings.msgr.notInMessenger'); /* 멈춤(무료 한도)은 해제와 다르게(화면 검수 B) */ return (
                 <li key={a.slug} className={`msgr-crew${reg ? ' on' : ''}`}>
                   <div className="row">
                     <Avatar name={a.name} sm />
@@ -1050,6 +1108,7 @@ function MsgrCard({ ws, agents }) {
           <p>{t('settings.msgr.policyNote')}</p>
         </details>
       </>)}
+      {note && <p role="status" style={{ fontSize: 11.5, color: 'var(--fg-2)', margin: 0 }}>{note}</p>}
       {err && <p style={{ fontSize: 11.5, color: 'var(--danger)', margin: 0 }}>{err}</p>}
     </div>
   );

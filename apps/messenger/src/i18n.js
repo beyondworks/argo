@@ -1228,7 +1228,21 @@ export const DICT = {
   'docs.empty.channel': ['채널 문서 없음', 'No channel docs'],
   'err.policyLocked': ['조직 정책으로 잠긴 항목입니다.', 'This item is locked by organization policy.'],
   'err.storageLimit': ['무료 계정은 첨부 1GB까지예요. 이미 올린 파일은 그대로 있어요.', 'Free accounts can store up to 1 GB of attachments. Files you already sent stay where they are.'],
+  'err.proRequired.ios': ['에이전트를 메신저에 연결하려면 에이전트 주인의 Argo Pro가 필요합니다.', "Connecting an agent to Messenger needs Argo Pro for the agent's owner."], // iOS — 결제 권유 없이 사실만(App Store 3.1.1, pro-checkout.mjs IOS_COPY)
+  'err.proRequired.owner': ['이 에이전트는 주인의 Argo Pro가 있어야 메신저에 연결됩니다. 에이전트 주인에게 알려 주세요.', "This agent needs its owner's Argo Pro to connect to Messenger. Let the owner know."],
   'err.proRequired': ['에이전트를 메신저에 연결하려면 에이전트 주인의 Argo Pro가 필요합니다. Pro로 바꾸면 멈춘 에이전트가 바로 다시 연결됩니다.', "Connecting an agent to Messenger needs Argo Pro for the agent's owner. Paused agents reconnect as soon as the owner upgrades to Pro."],
+  // 무료 계정도 최신 앱이면 에이전트 4명까지(2026-10-11, 서버 관문 20261011120000) — 서버 오류의 앞 코드(뒤의 msgr_pro_required는 옛 메신저용)
+  'err.freeAgentLimit': ['무료 계정은 메신저에 에이전트를 4명까지 연결할 수 있는데, 대신 멈출 에이전트가 없어 연결하지 못했습니다. Pro면 제한이 없습니다.', 'Free accounts can connect up to 4 agents to Messenger, and there was no agent to pause in its place. Pro has no limit.'],
+  'agents.swap': ['무료 계정은 에이전트 4명까지라서 {names} 에이전트를 멈췄어요. Pro면 제한이 없어요.', 'Free accounts can use up to 4 agents, so {names} is now paused. Pro has no limit.'], // 교체 안내(검수 #945 MEDIUM-1)
+  // iOS 빌드 — 결제를 권하지 않고 사실만(App Store 3.1.1, #944와 같은 원칙). 고르는 곳: agent-pause.mjs(isIos)·error-toast.mjs(setIosCopy)
+  'agents.swap.ios': ['무료 계정은 에이전트 4명까지라서 {names} 에이전트를 멈췄어요.', 'Free accounts can use up to 4 agents, so {names} is now paused.'],
+  'agents.pause.limit.ios': ['무료 계정은 에이전트 {limit}명까지 연결돼요. 나머지 {n}명은 멈춰 있어요.', 'Free accounts connect up to {limit} agents, so {n} more are paused.'],
+  'err.freeAgentLimit.ios': ['무료 계정은 메신저에 에이전트를 4명까지 연결할 수 있는데, 대신 멈출 에이전트가 없어 연결하지 못했습니다.', 'Free accounts can connect up to 4 agents to Messenger, and there was no agent to pause in its place.'],
+  'err.appUpdateRequired': ['무료 계정의 에이전트는 최신 실행기(argo)가 켜져 있을 때 메신저에 연결됩니다. 실행기를 최신 버전으로 업데이트하면 에이전트가 다시 연결됩니다.', 'On a free account, agents connect to Messenger while an up-to-date runner (argo) is on. Update the runner and your agents reconnect.'],
+  // 멈춘 에이전트 안내(에이전트 목록 위 — agent-pause.mjs). 메신저는 다른 앱 설치를 전제하지 않는다(runner-sheet.test.mjs, 2026-10-02) — 'Argo 앱' 대신 실행기(argo)
+  'agents.pause.app': ['에이전트 {n}명이 멈춰 있어요. 실행기(argo)를 최신 버전으로 업데이트하면 에이전트가 다시 연결됩니다. 무료 계정은 최신 실행기가 켜져 있는 동안 {limit}명까지 쓸 수 있어요.', 'Paused agents: {n}. Update your runner (argo) and your agents reconnect. On a free account, up to {limit} agents work while an up-to-date runner is on.'],
+  'agents.pause.off': ['실행기가 꺼져 있어 에이전트 {n}명이 멈춰 있어요. 실행기를 다시 켜면 연결됩니다(무료 계정).', 'Paused agents: {n}, because your runner is off. Turn the runner back on and they reconnect (free account).'],
+  'agents.pause.limit': ['무료 계정은 에이전트 {limit}명까지 연결돼요. 나머지 {n}명은 멈춰 있어요. Pro로 바꾸면 모두 연결됩니다.', 'Free accounts connect up to {limit} agents, so {n} more are paused. Upgrade to Pro to connect them all.'],
   'ui.dm': ['1:1 대화', 'Direct message'],
   'ui.dm.personal': ['개인 1:1 대화', 'Personal 1:1'],
   'dm.legacy.note': ['이 에이전트와의 1:1은 개인 공간에서 이어집니다', 'Your 1:1 with this agent continues in your personal space'], // 옛 조직 1:1 위 안내 띠(유건 2026-10-05)
@@ -1499,6 +1513,8 @@ export const DICT = {
   'phone.set.friends': ['친구 관리', 'Manage friends'],
   'phone.set.privacy': ['개인정보', 'Privacy'],
   'phone.set.about': ['정보·약관', 'About & terms'],
+  'phone.set.plan': ['내 플랜', 'My plan'],
+  'phone.set.plan.sub': ['지금 플랜 보기', 'See your plan'],
   'set.version': ['버전 {v}', 'Version {v}'],
   'phone.agents.joinReq': ['대화방에 에이전트를 넣어 달라는 요청', 'Request to add an agent to a conversation'],
   'phone.agents.joinReq.named': ["'{crew}'을(를) '{room}' 방에 넣어 달라는 요청", "Request to add '{crew}' to '{room}'"],
@@ -1827,6 +1843,24 @@ export const DICT = {
   'personal.badge': ['개인', 'Personal'],
   'org.badge': ['{name}', '{name}'],
   'friends.dm': ['대화하기', 'Chat'],
+  // ── 내 플랜(Pro 결제 — 본체·랜딩과 같은 결제, 2026-10-11). 가격·구독 관리 문구는 본체 사전(billing.*)을 ta로 쓴다 ──
+  'plan.title': ['내 플랜', 'My plan'],
+  'plan.current': ['지금 플랜', 'Current plan'],
+  'plan.unavailable': ['플랜을 불러오지 못했습니다.', "Couldn't load your plan."],
+  'plan.retry': ['다시 시도', 'Retry'],
+  'plan.benefits': ['Pro: 에이전트 수 제한 없음 · 서버 에이전트(봇) 연결 · 여러 기기 동기화 · 대화방 인원 제한 없음', 'Pro: unlimited agents · server agents (bots) · sync across devices · no room size limit'],
+  'plan.badge.free': ['무료', 'Free'], // 플랜 배지 — 한국어 모드는 고유명사(Pro) 외 한글(본체 billing.plan.free는 두 언어 모두 'Free')
+  'plan.sameAccount': ['같은 Argo 계정이면 어디서 결제해도 같은 Pro입니다. 결제는 브라우저에서 열리고, 끝나면 이 앱으로 돌아오세요.', 'One Pro per Argo account, wherever you pay. Checkout opens in your browser — come back here when you are done.'],
+  'plan.sub': ['Pro 구독 중입니다. 같은 Argo 계정이면 어디서나 적용됩니다.', "You're subscribed to Pro. It applies wherever you use this Argo account."],
+  'plan.pastDue': ['결제가 확인되지 않았습니다. 구독 관리에서 결제 수단을 확인해 주세요.', "Your payment didn't go through. Check your payment method in Manage subscription."],
+  'plan.pastDue.short': ['결제가 확인되지 않았습니다.', "Your payment didn't go through."],
+  'plan.granted': ['Pro가 무료로 제공되고 있습니다.', 'Pro is granted to you at no charge.'],
+  'plan.grantedUntil': ['Pro가 {date}까지 무료로 제공됩니다.', 'Pro is granted to you at no charge until {date}.'],
+  'plan.checking': ['결제를 확인하는 중입니다…', 'Checking your payment…'],
+  'plan.notYet': ['아직 결제가 확인되지 않았습니다. 결제를 마쳤다면 잠시 뒤 다시 확인해 주세요.', "Payment isn't confirmed yet. If you finished checkout, check again in a moment."],
+  'plan.recheck': ['다시 확인', 'Check again'],
+  'plan.ios.note': ['이 계정이 Pro면 자동으로 적용됩니다.', 'If this account has Pro, it applies automatically.'],
+  'plan.toast.cta': ['눌러서 Pro 보기', 'Tap to see Pro'],
 };
 export const LANGS = ['ko', 'en'];
 export function readLang() { try { const v = localStorage.getItem('argo-lang'); return LANGS.includes(v) ? v : 'ko'; } catch { return 'ko'; } }
