@@ -617,7 +617,7 @@ async function status() {
   const oversize = list.flatMap((c) => {
     try {
       const o = JSON.parse(readFileSync(join(paths(c.id).root, '.sync-state.json'), 'utf8'))?.oversize;
-      return o?.n ? [T.statusOversize(c.name, o.n, (o.rels ?? []).join(', ') + (o.n > (o.rels ?? []).length ? ' …' : ''), Math.floor((o.limit ?? 50 * 2 ** 20) / 2 ** 20))] : [];
+      return o?.n ? [T.statusOversize(termSafe(c.name), o.n, (o.rels ?? []).map(termSafe).join(', ') + (o.n > (o.rels ?? []).length ? ' …' : ''), Math.floor((o.limit ?? 50 * 2 ** 20) / 2 ** 20))] : [];
     } catch { return []; } // 동기화한 적 없음·읽기 실패 — 줄 없음
   });
   const orgs = s ? await orgLines(list) : []; // 회사 옆 메신저 조직(읽기 1건) — 이름이 다르면 rename 안내
