@@ -19,7 +19,7 @@
 // DB 접근은 makeDb(client) 한 층에 모은다 — 단위 테스트는 가짜 db를 주입하고(test/msgr-bridge.test.mjs), 실제
 // supabase-js 체인 호출·RLS 왕복은 로컬 Supabase 스택 E2E(scripts/e2e-msgr-bridge.mjs)가 검증한다.
 import { createClient } from '@supabase/supabase-js';
-import { createRequire } from 'node:module';
+import { APP_VERSION } from '../app-version.mjs';
 import { cmpVersion } from '../version-compare.mjs';
 import { chmod, mkdir, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
@@ -142,10 +142,8 @@ export async function crewMemoryForMail(crewId, channelId) {
 // 기기 단위 심박(20261010120000) — 서버에 함수·계산 열이 없다고 본 시각. 10분 뒤 다시 본다(운영 적용 전에 켜진 앱이 재시작 없이 넘어가게). (export: 테스트 초기화용)
 const DEVICE_BEAT_RECHECK_MS = 10 * 60_000;
 export const deviceBeatRpc = { missingAt: 0, seenMissingAt: 0, versionMissingAt: 0 }; // versionMissingAt — 함수는 있으나 앱 버전 인자가 없는 서버(20261011120000 적용 전)
-/** 이 앱의 버전 — 기기 심박에 실어 보낸다(무료 계정 에이전트 재개 판정, 20261011120000). 번들(Next 서버 — 앱·CLI·상주) 안에서는 next.config가 빌드 때
-    package.json에서 넣는 NEXT_PUBLIC_APP_VERSION(상단바 버전 표시와 같은 값)이 글자로 박힌다. 번들 밖(node로 src를 바로 실행 — 시험·도구)은 package.json을 직접 읽는다.
-    createRequire만 쓰지 않는 이유: 번들에서는 경로가 빌드 기기 경로(file:///Users/runner/…)로 굳어 사용자 기기에서 읽지 못한다(설치본 0.1.101 청크 실측 — runner-health의 같은 코드는 '0.0.0'). */
-export const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION || (() => { try { return createRequire(import.meta.url)('../../package.json').version ?? null; } catch { return null; } })();
+/** 이 앱의 버전 — 기기 심박에 실어 보낸다(무료 계정 에이전트 재개 판정, 20261011120000). 읽는 방법은 src/app-version.mjs 한 곳(번들·번들 밖 차이 설명도 거기). */
+export { APP_VERSION };
 const rpcMissing = (e) => ['PGRST202', '42883'].includes(e?.code);
 /** 이 앱이 서버가 정한 무료 계정 최소 버전(msgr_my_agent_pause.min_app) 이상인가 — 멈춘 에이전트만 있는 회사의 브리지를 켤지 정한다(검수 #945 MEDIUM-2:
     #943 실시간 방식이 없는 앱이 무료 계정의 15초 조회를 다시 켜지 않게). 서버 값이 없으면(옛 서버) false = #941처럼 꺼 둔다. */

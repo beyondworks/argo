@@ -17,7 +17,7 @@ import { readJson, writeJsonAtomic } from './jsonstore.mjs';
 import { withDirLock } from './mutex.mjs';
 import { appendEvent, readEvents } from './events.mjs';
 import { createHash } from 'node:crypto';
-import { createRequire } from 'node:module';
+import { APP_VERSION } from './app-version.mjs';
 import { RUNNER_AUTH, loadRunnerCred, verifyRunnerCred, runnerCredEnv, isCliTurn } from './runners.mjs';
 import { GEMINI_DEFAULT_MODEL, CODEX_DEFAULT_MODEL, GLM_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, GROK_DEFAULT_MODEL } from './runners/catalog.mjs';
 import { grokExpired } from './runners/grok.mjs';
@@ -50,7 +50,6 @@ export const HEALTH_PROBE_PER_RUN = 1;
 /** gemini 프로브의 출력 상한(사고 토큰 포함) — 엔진 기본 하한 16384 대신(1R MEDIUM-1). 사고가 이걸 넘기면 합성 오류 → 판정 불가(거짓 경보 없음). */
 export const PROBE_MIN_OUTPUT_TOKENS = 1024;
 const PROBE_MODEL = { openrouter: OPENROUTER_DEFAULT_MODEL, glm: GLM_DEFAULT_MODEL, kimi: KIMI_DEFAULT_MODEL, grok: GROK_DEFAULT_MODEL, gemini: GEMINI_DEFAULT_MODEL, codex: CODEX_DEFAULT_MODEL };
-const APP_VERSION = (() => { try { return createRequire(import.meta.url)('../package.json').version; } catch { return '0.0.0'; } })();
 let probeSpecsCache = null;
 /** 프로브에 싣는 도구 정의 — 실제 네이티브 턴과 같은 내장·브라우저·컴퓨터 스펙(같은 정규화 관문). 크루·MCP 도구는 회사 문맥이라 제외. */
 export function probeToolSpecs() {
@@ -58,7 +57,7 @@ export function probeToolSpecs() {
   return probeSpecsCache;
 }
 /** 프로브 지문 — 앱 버전 + 도구 정의 전체. 바뀌면(업데이트·도구 추가) 다음 검진에서 즉시 다시 쏜다. */
-export function turnProbeHash(specs = probeToolSpecs(), version = APP_VERSION) {
+export function turnProbeHash(specs = probeToolSpecs(), version = APP_VERSION ?? '0.0.0') {
   return createHash('sha256').update(`${version}\n${JSON.stringify(specs)}`).digest('hex').slice(0, 16);
 }
 /** 프로브 차례인가(순수) — 지문이 다르거나 마지막 프로브가 intervalMs 이전. */
