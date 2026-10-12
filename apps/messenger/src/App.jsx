@@ -1278,17 +1278,25 @@ function Shell({ session }) {
     setVictimPick({ target: full, channelId, slots: slotState(rows, uid).slots.filter((s) => s.active) });
     return true;
   }, [uid, t]);
-  useEffect(() => { if (!victimPick) return undefined; const on = (e) => { if (e.key === 'Escape') setVictimPick(null); }; window.addEventListener('keydown', on); return () => window.removeEventListener('keydown', on); }, [victimPick]);
+  useEffect(() => { if (!victimPick) return undefined; const on = (e) => { if (e.key === 'Escape') { e.stopImmediatePropagation(); setVictimPick(null); } }; window.addEventListener('keydown', on, true); return () => window.removeEventListener('keydown', on, true); }, [victimPick]); // 먼저 잡아(캡처) 뒤의 에이전트 카드까지 닫히지 않게
   const victimBusy = useRef(false); // 연타로 교체가 두 번 나가지 않게(재검수 LOW-1)
   const applyVictimPick = useCallback(async (victim) => { // 멈출 것을 골랐다 — 끊고(→available) 연결. 실패하면 멈춘 것을 되돌린다(agent-pick.mjs)
     if (victimBusy.current) return;
     const target = victimPick?.target; const channelId = victimPick?.channelId ?? null; setVictimPick(null);
     if (!target) return;
     victimBusy.current = true;
-    const r = await swapConnect(supabase, victim, target).finally(() => { victimBusy.current = false; });
+    let r;
+    try { r = await swapConnect(supabase, victim, target); } catch (e) { r = { ok: false, error: e?.message }; } finally { victimBusy.current = false; }
     if (!r.ok) return setErr(r.rolledBack === false ? t('agents.slot.rollbackFailed', { name: victim.name }) : r.rowCount ? t('err.denied') : friendlyErr(String(r.error ?? ''), t)); // 문구는 사전으로(재검수 MEDIUM-2)
-    if (channelId) { const j = await supabase.rpc('msgr_crew_join', { ch: channelId, crew: target.id }); if (j.error) setErr(joinErr(j.error.message, t)); else if (j.data === 'joined' || j.data === 'already') bumpMembers(); }
-    setNote(t('agents.slot.swapped', { off: victim.name, on: target.display_name }));
+    const done = t('agents.slot.swapped', { off: victim.name, on: target.display_name });
+    let joinNote = null; let joinFail = null;
+    if (channelId) { // 원래 넣으려던 채널 — 결과를 교체 안내와 한 알림에(오류가 안내에 덮여 사라지지 않게)
+      const j = await supabase.rpc('msgr_crew_join', { ch: channelId, crew: target.id }).catch((e) => ({ error: e }));
+      if (j.error) joinFail = joinErr(String(j.error.message ?? ''), t);
+      else if (j.data === 'requested') joinNote = t('ch.crew.join.requested', { name: target.display_name });
+      else if (j.data === 'joined' || j.data === 'already') bumpMembers();
+    }
+    if (joinFail) setErr(`${done} ${joinFail}`); else setNote(joinNote ? `${done} ${joinNote}` : done);
     (isPersonal ? loadPersonal() : loadOrg(orgId)).catch(() => {});
     loadMyAgents({ favs: true }).catch(() => {});
     readAgentPause(supabase).then(setAgentPause);
@@ -1897,7 +1905,7 @@ function Shell({ session }) {
   const [joinCode, setJoinCode] = useState(null); // 초대 코드로 가입 — 앱에는 링크가 열릴 오리진이 없어 코드를 직접 붙여 넣는다(invite.mjs)
   const inviteErr = (e) => { const k = inviteErrorKey(e?.message); return k ? t(k) : friendlyErr(e?.message ?? String(e), t); };
   const [joinPreview, setJoinPreview] = useState(null); // { code, ...msgr_invite_preview } — 받는 쪽 미리보기 카드(설계서 2-2)
-  const [joinBusy, setJoinBusy] = useState(false); const [joinErr, setJoinErr] = useState(null);
+  const [joinBusy, setJoinBusy] = useState(false); const [joinPreviewErr, setJoinPreviewErr] = useState(null); // 이름이 모듈 함수 joinErr를 가리지 않게(재검수 2026-10-12 — 파견·채널 만들기·교체의 참여 실패가 TypeError로 사라졌다)
   const [joinHint, setJoinHint] = useState(null); // 입력이 초대 코드가 아닐 때 입력 아래에 보일 이유 문구 키(버튼을 막지 않고 눌렀을 때 알린다)
   const acceptCode = async (code, preview = null) => { // 참여 → 조직 전환 → 첫 채널(v2 channel_id, 옛 서버면 미리보기의 첫 채널) — 열기 요청(requestNav)이 조직을 바꾼 뒤 연다
     const r = await acceptInvite(supabase, code);
@@ -1915,12 +1923,12 @@ function Shell({ session }) {
     try {
       const p = await previewInvite(supabase, code);
       if (!p) return await acceptCode(code); // 옛 서버: 미리보기 RPC가 없다 → 예전처럼 바로 수락
-      setJoinCode(null); setOrgMenu(false); setJoinErr(null); setJoinPreview({ code, ...p });
+      setJoinCode(null); setOrgMenu(false); setJoinPreviewErr(null); setJoinPreview({ code, ...p });
     } catch (e) { setErr(inviteErr(e)); }
   };
   const joinFromPreview = async () => {
-    setJoinBusy(true); setJoinErr(null);
-    try { await acceptCode(joinPreview.code, joinPreview); } catch (e) { setJoinErr(inviteErr(e)); } finally { setJoinBusy(false); }
+    setJoinBusy(true); setJoinPreviewErr(null);
+    try { await acceptCode(joinPreview.code, joinPreview); } catch (e) { setJoinPreviewErr(inviteErr(e)); } finally { setJoinBusy(false); }
   }; // 인라인 폼 상태(문자열) — 네이티브 prompt 금지(QA: 사용성·룩 불일치)
   const [joinable, setJoinable] = useState([]); // J-3 도메인 자동 가입 후보
   const [railAction, setRailAction] = useState(null); const [actionBusy, setActionBusy] = useState(false); const [actionError, setActionError] = useState(''); const actionLock = useRef(false);
@@ -3100,7 +3108,7 @@ function Shell({ session }) {
           </aside>
         </div>)}
         {inviteFor && org && !isPersonal && <InviteDialog org={org} channels={inviteChannels} isAdmin={!!isAdmin} hostOf={hostChannels} initialChannelIds={inviteFor.channelIds} initialRole={inviteFor.role} create={createInviteCode} loadCurrent={isAdmin ? currentMemberLink : null} confirmReplace={confirmReplace} discard={async (id) => { inviteSync.current.start(); let gone = 0; try { const r = await discardInvite(supabase, id); gone = r ? -1 : 0; return r; } finally { inviteSync.current.finish(gone); } }} shareText={inviteShare} linkOf={inviteLinkOf} errorText={inviteErr} onClose={() => setInviteFor(null)} onManage={isAdmin ? manageInvites : null} t={t} phone={isPhone} />}
-        {joinPreview && <InvitePreview p={joinPreview} avatar={<Av name={joinPreview.org_name} size="lg" />} busy={joinBusy} err={joinErr} onJoin={joinFromPreview} onOpen={() => { const p = joinPreview; setJoinPreview(null); if (p.org_id) setOrgId(p.org_id); if (p.channels?.[0]) requestNav(p.channels[0].id, 'invite'); }} onClose={() => setJoinPreview(null)} fmtWhen={(iso) => fmtWhen(iso, lang)} t={t} phone={isPhone} />}
+        {joinPreview && <InvitePreview p={joinPreview} avatar={<Av name={joinPreview.org_name} size="lg" />} busy={joinBusy} err={joinPreviewErr} onJoin={joinFromPreview} onOpen={() => { const p = joinPreview; setJoinPreview(null); if (p.org_id) setOrgId(p.org_id); if (p.channels?.[0]) requestNav(p.channels[0].id, 'invite'); }} onClose={() => setJoinPreview(null)} fmtWhen={(iso) => fmtWhen(iso, lang)} t={t} phone={isPhone} />}
         {orgLocked && <div className="msgr-notice locked"><span>{t(isAdmin ? 'org.locked.admin' : 'org.locked')}</span></div>}
         {pushCard && createPortal(<button type="button" className="msgr-pushcard" onClick={() => { if (pushCard.channel_id) requestNav(pushCard.channel_id, 'card'); setPushCard(null); }}><span className="t">{pushCard.title}</span><span className="b">{pushCard.body}</span></button>, document.body)}
         {(err || note) && createPortal( /* 토스트 — 상단 바는 레이아웃을 밀었다(유건 2026-09-09). 자동 소멸(안내 4초·오류 8초), 클릭하면 즉시 */

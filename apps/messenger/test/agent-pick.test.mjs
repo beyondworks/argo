@@ -57,9 +57,11 @@ test('배선 핀(분리 검수 HIGH-1) — 모든 연결 경로가 needVictimPic
   assert.match(app, /if \(await needVictimPick\(crew, channelId\)\) return 'picking';/, 'dispatchCrew(레일·채널 추가)가 쓰기 전에 묻는다');
   assert.match(app, /if \(res === 'picking'\) \{ later\.push\(/, '채널 추가는 선택지가 열린 에이전트를 "추가됨"으로 세지 않고, 첫 선택지에서 멈춰 남은 것을 안내한다');
   assert.ok(app.indexOf('{victimPick && (') > app.indexOf('{chSheet && channel && !orgBlocked && <ChannelSheet'), '선택 창은 채널 시트보다 뒤에 그려 위에 보인다');
+  assert.doesNotMatch(app, /const \[joinErr, /, '상태 이름이 모듈 함수 joinErr를 가리지 않는다 — 가리면 참여 실패가 TypeError로 사라진다');
+  assert.match(app, /if \(joinFail\) setErr\(`\$\{done\} \$\{joinFail\}`\)/, '교체 뒤 참여 실패는 교체 안내와 한 알림에');
   assert.doesNotMatch(readFileSync(new URL('../src/agent-pick.mjs', import.meta.url), 'utf8'), /되돌리기도 실패|'row count'/, '사용자에게 보일 문구를 모듈에 고정하지 않는다(다국어)');
   assert.match(app, /if \(r === 'picking'\) return;/, '레일은 선택지가 열리면 "연결했어요" 안내를 띄우지 않는다');
-  assert.match(app, /if \(channelId\) \{ const j = await supabase\.rpc\('msgr_crew_join', \{ ch: channelId, crew: target\.id \}\)/, '고른 뒤 교체하면 원래 넣으려던 채널에도 넣는다');
+  assert.match(app, /const j = await supabase\.rpc\('msgr_crew_join', \{ ch: channelId, crew: target\.id \}\)/, '고른 뒤 교체하면 원래 넣으려던 채널에도 넣는다');
   assert.match(app, /if \(next && onNeedVictimPick && await onNeedVictimPick\(crew\)\)/, '에이전트 카드가 쓰기 전에 묻는다');
   assert.match(app, /if \(!row\?\.ws_id \|\| !row\?\.slug\)/, 'ws_id·slug가 없는 행을 가려 낸다');
   assert.match(app, /supabase\.from\('msgr_crews'\)\.select\('id, ws_id, slug, display_name'\)\.eq\('id', row\.id\)/, '없으면 1건 읽어 채운다 — p_ws undefined로 미리 보기가 죽는 일이 없게');
