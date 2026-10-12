@@ -53,11 +53,14 @@ test('swapConnect — 멈춤 먼저, 연결 실패 시 멈춤을 되돌린다(�
 });
 
 test('배선 핀(분리 검수 HIGH-1) — 모든 연결 경로가 needVictimPick을 지난다: ws_id·slug 없는 행은 1건 읽어 채우고, 선택지는 App이 띄운다', () => {
-  assert.match(app, /if \(await needVictimPick\(crew\)\) return null;/, 'dispatchCrew(레일·채널 추가)가 쓰기 전에 묻는다');
+  assert.match(app, /if \(await needVictimPick\(crew, channelId\)\) return 'picking';/, 'dispatchCrew(레일·채널 추가)가 쓰기 전에 묻는다');
+  assert.match(app, /if \(res === 'picking'\) continue;/, '채널 추가는 선택지가 열린 에이전트를 "추가됨"으로 세지 않는다');
+  assert.match(app, /if \(r === 'picking'\) return;/, '레일은 선택지가 열리면 "연결했어요" 안내를 띄우지 않는다');
+  assert.match(app, /if \(channelId\) \{ const j = await supabase\.rpc\('msgr_crew_join', \{ ch: channelId, crew: target\.id \}\)/, '고른 뒤 교체하면 원래 넣으려던 채널에도 넣는다');
   assert.match(app, /if \(next && onNeedVictimPick && await onNeedVictimPick\(crew\)\)/, '에이전트 카드가 쓰기 전에 묻는다');
   assert.match(app, /if \(!row\?\.ws_id \|\| !row\?\.slug\)/, 'ws_id·slug가 없는 행을 가려 낸다');
   assert.match(app, /supabase\.from\('msgr_crews'\)\.select\('id, ws_id, slug, display_name'\)\.eq\('id', row\.id\)/, '없으면 1건 읽어 채운다 — p_ws undefined로 미리 보기가 죽는 일이 없게');
-  assert.match(app, /setVictimPick\(\{ target: full, slots: slotState\(rows, uid\)\.slots\.filter/, '선택지는 연결된 슬롯으로 채운다');
+  assert.match(app, /setVictimPick\(\{ target: full, channelId, slots: slotState\(rows, uid\)\.slots\.filter/, '선택지는 연결된 슬롯으로 채운다(넣으려던 채널을 기억)');
   assert.match(app, /\{victimPick && \(/, '선택지는 App이 띄운다(모든 경로 공용)');
 });
 

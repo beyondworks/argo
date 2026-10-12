@@ -1265,7 +1265,7 @@ function Shell({ session }) {
   // 무료 연결 4명이 찼을 때 멈출 에이전트를 사용자가 고른다(2026-10-12, 유건) — 모든 연결 경로(에이전트 카드·레일·채널 추가)가 여기를 지난다.
   // 서버 자동 교체(20261011120000)는 미리 보기가 []인 경로(Pro·자리 있음·옛 서버)에서만 일어난다. 읽기: 행에 ws_id·slug가 없으면 1건 + 선택지를 열 때 연결된 목록 1건.
   const [victimPick, setVictimPick] = useState(null); // { target: {id, ws_id, slug, display_name}, slots: 연결된 슬롯들 }
-  const needVictimPick = useCallback(async (row) => {
+  const needVictimPick = useCallback(async (row, channelId = null) => {
     let full = row;
     if (!row?.ws_id || !row?.slug) { // 조직 목록·개인 방 행에는 ws_id가 없다(loadMyAgents의 wsOf 덧대기가 그 사내 증거) — 1건 읽어 채운다
       full = await q(supabase.from('msgr_crews').select('id, ws_id, slug, display_name').eq('id', row.id).maybeSingle()).catch(() => null);
@@ -1275,14 +1275,15 @@ function Shell({ session }) {
     if (!victims.length) return false;
     const rows = await q(supabase.from('msgr_crews').select('id, ws_id, slug, display_name, status, hosting, owner_user_id, org_id').eq('owner_user_id', uid).eq('status', 'active')).catch(() => null);
     if (!rows) { setErr(t('ui.error')); return true; }
-    setVictimPick({ target: full, slots: slotState(rows, uid).slots.filter((s) => s.active) });
+    setVictimPick({ target: full, channelId, slots: slotState(rows, uid).slots.filter((s) => s.active) });
     return true;
   }, [uid, t]);
   const applyVictimPick = useCallback(async (victim) => { // 멈출 것을 골랐다 — 끊고(→available) 연결. 실패하면 멈춘 것을 되돌린다(agent-pick.mjs)
-    const target = victimPick?.target; setVictimPick(null);
+    const target = victimPick?.target; const channelId = victimPick?.channelId ?? null; setVictimPick(null);
     if (!target) return;
     const r = await swapConnect(supabase, victim, target);
     if (!r.ok) return setErr(friendlyErr(String(r.error ?? ''), t));
+    if (channelId) { const j = await supabase.rpc('msgr_crew_join', { ch: channelId, crew: target.id }); if (j.error) setErr(joinErr(j.error.message, t)); else if (j.data === 'joined' || j.data === 'already') bumpMembers(); }
     setNote(t('agents.slot.swapped', { off: victim.name, on: target.display_name }));
     (isPersonal ? loadPersonal() : loadOrg(orgId)).catch(() => {});
     loadMyAgents({ favs: true }).catch(() => {});
@@ -1290,7 +1291,7 @@ function Shell({ session }) {
   }, [victimPick, isPersonal, loadPersonal, loadOrg, orgId, loadMyAgents, t]);
 
   const dispatchCrew = useCallback(async (crew, channelId = null) => {
-    if (await needVictimPick(crew)) return null; // 자리 참 — 선택지를 띄우고 쓰지 않는다(2026-10-12). 고르면 applyVictimPick이 교체한다
+    if (await needVictimPick(crew, channelId)) return 'picking'; // 자리 참 — 선택지를 띄우고 쓰지 않는다(2026-10-12). 고르면 applyVictimPick이 교체하고 채널에도 넣는다
     const up = await supabase.from('msgr_crews').update({ status: 'active' }).eq('id', crew.id).select('id');
     if (up.error) up.error.message = proRequiredFor(up.error.message, { ownerId: crew.owner_user_id, uid, t }); // 남의 에이전트면 내 Pro로 풀리지 않는다(#944 LOW-2) — 다음 줄(종전 그대로)이 던진다
     if (up.error) throw new Error(up.error.message);
@@ -3050,7 +3051,7 @@ function Shell({ session }) {
               .map(([id, k, list]) => list.length > 0 && <RailFold key={id} id={id} label={t(k)} count={list.length}>{list.map(railRow)}</RailFold>)}
             {myAvailable.map((c) => { // 목록에서 그 자리 파견(유건 지시 2026-09-08) — 채널을 보고 있으면 그 채널까지(DM은 조직만), 아니면 조직만
               const target = channel && (channel.personal_crews ?? 'approval') !== 'blocked' ? channel : null; // 대화방도 그 자리 파견 대상이다(유건 2026-09-16)
-              const go = async () => { if (railBusy) return; setRailBusy(c.id); try { const r = await dispatchCrew(c, target?.id ?? null); if (target && (r === 'joined' || r === 'already')) bumpMembers(); /* 넣은 직후 @이름이 '없어요'로 나가지 않게(검수 #826 LOW-4) */ setNote(t(r === 'requested' ? 'ch.crew.join.requested' : target ? 'ch.add.mine.done' : 'rail.mine.dispatched', { name: c.display_name })); } catch (e) { setErr(e.message); } finally { setRailBusy(null); } };
+              const go = async () => { if (railBusy) return; setRailBusy(c.id); try { const r = await dispatchCrew(c, target?.id ?? null); if (r === 'picking') return; if (target && (r === 'joined' || r === 'already')) bumpMembers(); /* 넣은 직후 @이름이 '없어요'로 나가지 않게(검수 #826 LOW-4) */ setNote(t(r === 'requested' ? 'ch.crew.join.requested' : target ? 'ch.add.mine.done' : 'rail.mine.dispatched', { name: c.display_name })); } catch (e) { setErr(e.message); } finally { setRailBusy(null); } };
               return (
                 <div key={c.id} className="msgr-railrow dim">
                   <button type="button" className="item dim" onClick={() => setSheet(c.id)} onContextMenu={(e) => openCtx(e, [{ icon: 'gear', label: t('ctx.crew.card'), run: () => setSheet(c.id) }, { icon: 'plus', label: t('rail.mine.dispatch'), run: go }])} disabled={railBusy === c.id} title={t('rail.mine.off')}><Av name={c.display_name} crew size="xs" crewId={c.id} /><span className="name">{c.display_name}</span><span className="msgr-klabel">{t('rail.mine.offShort')}</span></button>
@@ -3433,7 +3434,7 @@ function ChannelSheet({ channel, joined = false, muted = false, onToggleMute, dm
     if (needConsent?.()) { onClose(); return; } // 개인 공간 — AI 이용 동의 전이면 동의부터(2026-09-30)
     setBusy(true); let joined = 0; const asked = []; const already = []; const fails = [];
     for (const r of picked) { // 순서대로 — 파견은 브리지 미러를 기다리고, 한 명이 실패해도 나머지는 들어간다
-      try { const res = r.dispatch ? await onDispatch(r.c, channel.id) : await joinCrew(r.c.id); if (res === 'requested') asked.push(r.c.display_name); else if (res === 'already') already.push(r.c.display_name); else joined++; }
+      try { const res = r.dispatch ? await onDispatch(r.c, channel.id) : await joinCrew(r.c.id); if (res === 'picking') continue; if (res === 'requested') asked.push(r.c.display_name); else if (res === 'already') already.push(r.c.display_name); else joined++; }
       catch (e) { fails.push(`${r.c.display_name}: ${e.message}`); }
     }
     setBusy(false); setAdd(null); setCrewPicks(new Set());
