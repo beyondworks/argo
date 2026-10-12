@@ -1235,14 +1235,12 @@ export const DICT = {
   // 무료 계정도 최신 앱이면 에이전트 4명까지(2026-10-11, 서버 관문 20261011120000) — 서버 오류의 앞 코드(뒤의 msgr_pro_required는 옛 메신저용)
   'err.freeAgentLimit': ['무료 계정은 메신저에 에이전트를 4명까지 연결할 수 있는데, 대신 멈출 에이전트가 없어 연결하지 못했습니다. Pro면 제한이 없습니다.', 'Free accounts can connect up to 4 agents to Messenger, and there was no agent to pause in its place. Pro has no limit.'],
   'agents.swap': ['무료 계정은 에이전트 4명까지라서 {names} 에이전트를 멈췄어요. Pro면 제한이 없어요.', 'Free accounts can use up to 4 agents, so {names} is now paused. Pro has no limit.'], // 교체 안내(검수 #945 MEDIUM-1)
-  'agents.slot.full': ['무료 계정의 메신저 연결은 {limit}명까지예요. 멈출 에이전트를 골라 주세요.', 'Free accounts can connect up to {limit} agents. Choose which one to pause.'], // 사용자가 멈출 것을 고른다(2026-10-12) — 서버 자동 교체 대신
-  'agents.slot.pause': ['멈추기', 'Pause'],
-  'agents.slot.rollbackFailed': ['연결하지 못했고, {name}도 다시 켜지 못해 멈춘 채로 남았어요. 설정 › 내 에이전트에서 다시 연결해 주세요.', "Couldn't connect, and {name} couldn't be turned back on, so it stays paused. Reconnect it in Settings › My agents."],
-  'agents.slot.later': ['자리가 차서 {names}은(는) 넣지 않았어요. 멈출 에이전트를 고른 뒤 다시 추가해 주세요.', 'No free slot, so {names} was not added. Choose an agent to pause, then add again.'],
-  'agents.slot.swapped': ['{off}을(를) 멈추고 {on}을(를) 연결했습니다.', 'Paused {off} and connected {on}.'],
-  'agents.slot.count': ['메신저 연결 {n}/{limit}명', '{n} of {limit} connected'],
-  'agents.slot.on': ['연결', 'Connect'],
-  'agents.slot.off': ['끊기', 'Disconnect'],
+  'agents.slot.full': ['유지할 {limit}명의 에이전트를 선택해주세요', 'Choose the {limit} agents to keep'], // 무료 연결 한도에서 사람이 고른다(2026-10-12 유건 문구) — 서버 msgr_free_keep
+  'agents.slot.picked': ['{n}/{limit}명 선택', '{n} of {limit} selected'],
+  'agents.slot.save': ['저장', 'Save'],
+  'agents.slot.over': ['{n}명을 빼 주세요', 'Remove {n} more'],
+  'agents.slot.kept': ['유지할 에이전트를 바꿨습니다. 고르지 않은 에이전트는 멈추고 대화 기록은 그대로 둡니다.', 'Updated the agents to keep. Agents you didn’t choose are paused and their history stays.'],
+  'agents.slot.later': ['자리가 차서 {names}은(는) 넣지 않았어요. 유지할 에이전트를 고른 뒤 다시 추가해 주세요.', 'No free slot, so {names} was not added. Choose the agents to keep, then add again.'],
   // iOS 빌드 — 결제를 권하지 않고 사실만(App Store 3.1.1, #944와 같은 원칙). 고르는 곳: agent-pause.mjs(isIos)·error-toast.mjs(setIosCopy)
   'agents.swap.ios': ['무료 계정은 에이전트 4명까지라서 {names} 에이전트를 멈췄어요.', 'Free accounts can use up to 4 agents, so {names} is now paused.'],
   'agents.pause.limit.ios': ['무료 계정은 에이전트 {limit}명까지 연결돼요. 나머지 {n}명은 멈춰 있어요.', 'Free accounts connect up to {limit} agents, so {n} more are paused.'],

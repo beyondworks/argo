@@ -625,3 +625,55 @@ test('[4차] 교체 미리 알림 — 여러 개를 고르면 필요한 수만�
   assert.equal(preview(P, WS, ['p6']), '', 'Pro는 교체가 없다');
   fails(psqlRaw(['-A', '-t', '-c', `set role anon; select public.msgr_free_swap_preview('${WS}', array['t1'])`]), /permission denied/, '익명 미리 알림');
 });
+
+// [유지 선택] 유건 2026-10-12 "유지할 4명의 에이전트를 선택해주세요"·"4명 한도 내에서는 무제한으로 변경" — 20261012130000_msgr_free_keep.sql
+const keep = (uid, slugs, act = []) => last(asUser(uid, `select public.msgr_free_keep(array[${slugs.map((s) => q(`${WS}:${s}`)).join(',')}]::text[], ${act.length ? arr(act) : "'{}'::uuid[]"})`));
+const keepRaw = (uid, slugs, act = []) => asUserRaw(uid, `select public.msgr_free_keep(array[${slugs.map((s) => q(s.includes(':') ? s : `${WS}:${s}`)).join(',')}]::text[], ${act.length ? arr(act) : "'{}'::uuid[]"})`);
+
+test('[유지 선택] 고른 4명만 연결·나머지는 멈춤(파견 해제 아님 — 채널 참여 보존), 몇 번이고 다시 고를 수 있고, sweep이 선택을 뒤집지 않는다', { skip }, () => {
+  // 앞 시험이 f를 결제 Pro·유료 조직 좌석으로 만들어 두었다 — 무료로 되돌린다(해지 트리거가 4명만 남긴다)
+  sql(`update public.entitlements set plan = 'free' where user_id = '${U.f}'`);
+  sql(`update public.msgr_org_entitlements set plan = 'free' where org_id = '${OF}'`);
+  assert.equal(sql(`select public.is_pro_for('${U.f}')`), 'f', '무료 계정으로 시험');
+  beatV(U.f, 'mac-keep', Object.values(F));
+  sql(`insert into public.msgr_channel_members (channel_id, member_kind, member_id) values ('${CHF}', 'crew', '${F.f2}') on conflict do nothing`);
+  assert.equal(statusOf(F.f5), 'available', '앞 시험이 f5를 파견 해제해 두었다 — 아래에서 함께 연결 행으로 쓴다');
+  fails(keepRaw(U.f, ['f5']), /msgr_bad_member/, '파견 해제 행만 있는 에이전트는 함께 연결 행 없이 고를 수 없다');
+  const r1 = JSON.parse(keep(U.f, ['f1', 'f3', 'f4', 'f6']));
+  assert.equal(slugsOf(U.f, 'active'), 'f1,f3,f4,f6', '고른 4명');
+  assert.equal(statusOf(F.f2), 'paused', '고르지 않은 것은 멈춤(데이터 보존)');
+  assert.equal(statusOf(F.f2p), 'paused', '같은 에이전트의 개인 행도');
+  assert.equal(sql(`select count(*) from public.msgr_channel_members where channel_id = '${CHF}' and member_kind = 'crew' and member_id = '${F.f2}'`), '1', '채널 참여는 그대로(파견 해제가 아니다)');
+  assert.equal(sql(`select count(*) from public.msgr_crews where owner_user_id = '${U.f}' and status = 'available' and slug in ('f1','f2','f3','f4','f6')`), '0', '파견 해제(기억 삭제) 상태를 만들지 않는다');
+  assert.ok(r1.paused >= 0 && r1.resumed >= 0);
+  sweep(); sweep(U.f);
+  assert.equal(slugsOf(U.f, 'active'), 'f1,f3,f4,f6', 'sweep이 사람의 선택을 뒤집지 않는다');
+  // 다시 고름(무제한) — 멈춘 f2를 되살리고 파견 해제였던 f5를 함께 연결
+  keep(U.f, ['f2', 'f5', 'f1', 'f3'], [F.f5]);
+  assert.equal(slugsOf(U.f, 'active'), 'f1,f2,f3,f5', '두 번째 선택');
+  assert.equal(statusOf(F.f2p), 'active', '되살린 에이전트의 다른 행도 함께');
+  assert.equal(sql(`select resumed_at is not null from public.msgr_crew_pauses where crew_id = '${F.f2}'`), 't', '중지 기록 닫기');
+  sweep(U.f);
+  assert.equal(slugsOf(U.f, 'active'), 'f1,f2,f3,f5');
+  keep(U.f, ['f3', 'f4', 'f6', 'f1']);
+  assert.equal(slugsOf(U.f, 'active'), 'f1,f3,f4,f6', '세 번째 선택 — 횟수 제한 없음');
+  // 같은 묶음을 다시 보내면 에이전트 행·기기·중지 기록 쓰기 0
+  const before = snap(U.f);
+  keep(U.f, ['f3', 'f4', 'f6', 'f1']);
+  assert.equal(snap(U.f), before, '같은 선택은 쓰기 0');
+});
+
+test('[유지 선택] 거절 — 한도 넘는 개수·중복·모르는 에이전트·남의 에이전트·고른 묶음 밖의 연결 행·로그인 없음, Pro는 할 일 없음', { skip }, () => {
+  fails(keepRaw(U.f, ['f1', 'f2', 'f3', 'f4', 'f5']), /msgr_bad_member/, '5명');
+  fails(keepRaw(U.f, ['f1', 'f1']), /msgr_bad_member/, '중복');
+  fails(keepRaw(U.f, ['nope']), /msgr_bad_member/, '모르는 에이전트');
+  fails(keepRaw(U.f, ['b1']), /msgr_bad_member/, '남의 회사·에이전트');
+  fails(keepRaw(U.f, ['f1'], [F.f3]), /msgr_bad_member/, '고른 묶음 밖의 행은 연결하지 않는다');
+  fails(keepRaw(U.f, [`${WS}:hermes`]), /msgr_bad_member/, '봇은 대상이 아니다');
+  const anon = psqlRaw(['-A', '-t', '-c', `set role anon; select public.msgr_free_keep(array['${WS}:f1']::text[])`]);
+  assert.notEqual(anon.status, 0, '로그인 없이는 부를 수 없다');
+  const PRO = 'c5555555-5555-4555-8555-555555555555';
+  sql(`insert into auth.users (id, created_at, email) values ('${PRO}', now() - interval '30 days', 'pro-keep@example.test') on conflict do nothing`);
+  sql(`insert into public.entitlements (user_id, plan) values ('${PRO}', 'pro') on conflict (user_id) do update set plan = 'pro'`);
+  assert.equal(JSON.parse(last(asUser(PRO, `select public.msgr_free_keep(array['${WS}:x1']::text[])`))).pro, true, 'Pro는 한도가 없어 할 일 없음');
+});

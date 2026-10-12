@@ -2442,3 +2442,14 @@ html { -webkit-tap-highlight-color: transparent; }
 .argo-messenger .vault-toolbar .tb.label { width: auto; padding: 0 8px; font-size: 12px; font-weight: 600; }
 /* 창 자체에 준 초점(터치 — focus-entry.mjs, UL8)은 링을 그리지 않는다. 안쪽 단추의 링은 그대로 */
 .msgr-crewsheet.msgr-worksheet:focus, .msgr-work-panel:focus, .inv-dialog:focus { outline: none; }
+
+/* 유지할 에이전트 고르기(2026-10-12) — 선택 창·설정 › 내 에이전트 공용 */
+.msgr-keeplist label.ph-setrow { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 6px 14px; cursor: pointer; }
+.msgr-keeplist label.ph-setrow.dim { opacity: .5; cursor: default; }
+.msgr-keeplist label.ph-setrow + label.ph-setrow { border-top: 1px solid var(--border-soft); }
+.msgr-keepfoot { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 14px; }
+.msgr-keeppick > .name { font-weight: 600; margin: 4px 0 6px; }
+.msgr-keeppick .head { grid-template-columns: minmax(0, 1fr) auto; }
+.msgr-keeplist .ph-kbody { flex: 1 1 auto; min-width: 0; display: flex; align-items: baseline; gap: 8px; }
+.msgr-keeplist .ph-kbody .snip { font-size: 12px; color: var(--fg-3); }
+.msgr-keepfoot .note.warn { color: var(--danger, #c0392b); }
