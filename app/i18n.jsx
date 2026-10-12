@@ -326,6 +326,8 @@ const DICT = {
   'updates.note.freeAgents': ["무료 계정도 이 버전부터 메신저에서 에이전트 4명까지 쓸 수 있습니다. 최근에 대화한 에이전트부터 다시 연결되고, 다른 에이전트를 쓰려면 설정 → 메신저 연결에서 바꿉니다(무엇이 멈추는지 먼저 알려 줍니다). Pro는 제한이 없습니다.", "Free accounts can now use up to 4 agents in Messenger with this version. Your most recently used agents reconnect first; to use a different one, switch it in Settings → Messenger connection (you'll see which agent pauses first). Pro has no limit."],
   'updates.note.msgrPro': ["메신저 설정의 '내 플랜'에서도 Argo Pro로 바꿀 수 있습니다. 본체와 같은 결제라 어디서 결제해도 같은 Pro입니다.", "You can now upgrade to Argo Pro from 'My plan' in Messenger settings. It's the same payment as the desktop app, so Pro is the same wherever you pay."],
   'updates.note.attachLimit': ["무료 계정의 메신저 첨부는 합계 1GB까지 저장됩니다. 이미 올린 파일은 그대로 있고, 파일 하나는 지금처럼 25MB까지입니다.", "Messenger attachments on free accounts can total up to 1 GB. Files you already sent stay, and each file is still limited to 25 MB."],
+  'updates.note.agentConnect': ["설치한 앱에서 에이전트 원클릭 연결이 동작하지 않던 문제를 고쳤습니다. 터미널 없이도 에이전트 연결이 됩니다.", "Fixed agent one-click connect not working in the installed app. Agents now connect without a terminal."],
+  'updates.note.versionStamp': ["앱이 자기 버전을 올바르게 알립니다(일부에서 0.0.0으로 표시되던 문제).", "The app now reports its own version correctly (some installs showed 0.0.0)."],
   'updates.note.msgrQuiet': ["에이전트가 쉬는 동안 서버에 보내는 확인을 크게 줄였습니다. 새 조직·채널에 올라온 글에는 더 빨리 반응합니다.", "Agents now check the server far less while idle, and respond faster to messages in new organizations and channels."],
   'updates.note.syncFaster': ["기기 사이 동기화가 빨라졌습니다. 50MB가 넘는 파일은 동기화하지 않고 이 기기에만 둡니다.", "Syncing between devices is faster. Files over 50 MB are no longer synced and stay on this device."],
   'updates.note.heartbeatName': ["'비서' 기능의 이름이 '하트비트'로 바뀌었습니다. 에이전트 카드의 '비서' 탭은 '하트비트' 탭이 됐고, 일정·메일 알림 글 머리도 [하트비트]로 나옵니다. 하트비트 탭은 지금 현황을 보여 주고, 켜고 끄기와 설정은 루틴 화면에서 합니다.", "The 'Assistant' feature is now called 'Heartbeat'. The Assistant tab on agent cards is now the Heartbeat tab, and its calendar and mail messages start with [Heartbeat]. The Heartbeat tab shows the current status; turning it on or off and its settings are on the Routines screen."],
@@ -2177,4 +2179,3 @@ export function stageLabel(t, stage, detail = '') {
   if (!stage) return '';
   if (!STAGE_CODES.has(stage)) return stage; // 레거시/미지 — 원문 표시
   return stage === 'runner' ? t('chat.stage.runner', { name: detail || '' }) : t(`chat.stage.${stage}`);
-}
