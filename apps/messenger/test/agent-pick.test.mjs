@@ -1,7 +1,10 @@
 // agent-pick.mjs — 슬롯 셈(서버 count distinct (ws_id, slug)과 같은 규칙)·선택 교체(멈춤 → 연결, 실패 시 되돌리기)
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { slotState, slotKey, swapPreview, swapConnect, writeStatus, FREE_AGENT_LIMIT, readMyPlan } from '../src/agent-pick.mjs';
+
+const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8'); // 배선 핀 — 선택지가 실제 경로에 연결돼 있는지(분리 검수 HIGH-1: crew 행에 ws_id가 없어 미리 보기가 죽던 것)
 
 const me = 'u1';
 const row = (id, ws, slug, status, over = {}) => ({ id, ws_id: ws, slug, status, owner_user_id: me, hosting: 'local', display_name: slug, ...over });
@@ -35,7 +38,7 @@ test('writeStatus — RLS가 일부만 바꾸면(0행·일부 행) 오류로 본
   assert.equal((await writeStatus(partial, ['a', 'b'], 'available')).ok, false);
 });
 
-test('swapConnect — 멈춤 먼저, 연결 실패 시 멈춤을 되돌린다', async () => {
+test('swapConnect — 멈춤 먼저, 연결 실패 시 멈춤을 되돌린다(되돌리기 실패는 오류 문구에)', async () => {
   const ok = fakeDb();
   const victim = { name: 'dale', rows: [row('b1', 'w1', 'dale', 'active'), row('b2', 'w1', 'dale', 'active', { org_id: 'o' })] };
   const target = row('a1', 'w1', 'pepper', 'available');
@@ -47,6 +50,15 @@ test('swapConnect — 멈춤 먼저, 연결 실패 시 멈춤을 되돌린다', 
   assert.equal(r.ok, false);
   assert.equal(r.stage, 'connect');
   assert.deepEqual(fail.calls[2], ['active', ['b1', 'b2']], '멈춘 행을 되돌린다');
+});
+
+test('배선 핀(분리 검수 HIGH-1) — 모든 연결 경로가 needVictimPick을 지난다: ws_id·slug 없는 행은 1건 읽어 채우고, 선택지는 App이 띄운다', () => {
+  assert.match(app, /if \(await needVictimPick\(crew\)\) return null;/, 'dispatchCrew(레일·채널 추가)가 쓰기 전에 묻는다');
+  assert.match(app, /if \(next && onNeedVictimPick && await onNeedVictimPick\(crew\)\)/, '에이전트 카드가 쓰기 전에 묻는다');
+  assert.match(app, /if \(!row\?\.ws_id \|\| !row\?\.slug\)/, 'ws_id·slug가 없는 행을 가려 낸다');
+  assert.match(app, /supabase\.from\('msgr_crews'\)\.select\('id, ws_id, slug, display_name'\)\.eq\('id', row\.id\)/, '없으면 1건 읽어 채운다 — p_ws undefined로 미리 보기가 죽는 일이 없게');
+  assert.match(app, /setVictimPick\(\{ target: full, slots: slotState\(rows, uid\)\.slots\.filter/, '선택지는 연결된 슬롯으로 채운다');
+  assert.match(app, /\{victimPick && \(/, '선택지는 App이 띄운다(모든 경로 공용)');
 });
 
 test('readMyPlan — pro/trial/free만 값으로, 실패·모름은 이전 값(초기 null)', async () => {

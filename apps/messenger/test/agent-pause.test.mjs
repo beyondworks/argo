@@ -57,7 +57,7 @@ test('⑤ 화면 두 자리 — 폰 에이전트 탭(목록 위)·데스크톱 �
   assert.match(app, /const pauseNoteEl = pauseNote && <div className="msgr-rail-empty msgr-pausenote" role="status">\{t\(pauseNote\.key, pauseNote\.vars\)\}\{pauseNote\.key !== 'agents\.pause\.limit' && <div><RunnerButton \/><\/div>\}<\/div>;/, '데스크톱 레일 안내');
   assert.match(app, /<div className="msgr-list mine">\n\s+\{!isPhone && pauseNote && pauseNoteEl\}/, '내 에이전트 구역 안 맨 위(검수 #945 LOW-4)');
   assert.match(app, /\{!isPhone && pauseNote && !\(isPersonal \? railVisible\.length > 0 : !orgBlocked && org\) && pauseNoteEl\}/, '구역이 숨을 때만 밖');
-  assert.equal((app.match(/readAgentPause\(supabase\)/g) ?? []).length, 3, '주기 호출 없음 — 로그인·재연결, 폰 에이전트 탭, 교체가 일어난 직후 세 곳만');
+  assert.equal((app.match(/readAgentPause\(supabase\)/g) ?? []).length, 4, '주기 호출 없음 — 로그인·재연결, 폰 에이전트 탭, 교체가 일어난 직후(서버 자동 교체·사용자 선택 교체) 네 곳만');
   assert.match(app, /readAgentPause\(supabase\)\.then\(\(v\) => \{ if \(live\) setAgentPause\(v\); \}\); return \(\) => \{ live = false; \}; \}, \[uid, syncEpoch\]\);/);
 });
 

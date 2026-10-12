@@ -1262,7 +1262,35 @@ function Shell({ session }) {
   // 부록 M: 그 자리 파견 — available → active → 채널 멤버(+소유자 동반). 채널 없이 부르면 조직에만 파견.
   // available은 소유자가 파견을 해제한 상태(20260908140000)라 다시 파견은 복귀다 — 허용 범위는 건드리지 않는다(D31: 「모두」가 조용히
   // 조직 기본값으로 바뀌었다). 잠금 정책이면 서버 게이트(msgr_crew_policy_gate)와 잠글 때의 일괄 맞춤이 기본값을 보장한다.
+  // 무료 연결 4명이 찼을 때 멈출 에이전트를 사용자가 고른다(2026-10-12, 유건) — 모든 연결 경로(에이전트 카드·레일·채널 추가)가 여기를 지난다.
+  // 서버 자동 교체(20261011120000)는 미리 보기가 []인 경로(Pro·자리 있음·옛 서버)에서만 일어난다. 읽기: 행에 ws_id·slug가 없으면 1건 + 선택지를 열 때 연결된 목록 1건.
+  const [victimPick, setVictimPick] = useState(null); // { target: {id, ws_id, slug, display_name}, slots: 연결된 슬롯들 }
+  const needVictimPick = useCallback(async (row) => {
+    let full = row;
+    if (!row?.ws_id || !row?.slug) { // 조직 목록·개인 방 행에는 ws_id가 없다(loadMyAgents의 wsOf 덧대기가 그 사내 증거) — 1건 읽어 채운다
+      full = await q(supabase.from('msgr_crews').select('id, ws_id, slug, display_name').eq('id', row.id).maybeSingle()).catch(() => null);
+      if (!full) { setErr(t('ui.error')); return true; } // 판정할 수 없으면 쓰지 않는다(자동 교체로 흐르지 않게)
+    }
+    const victims = await swapPreview(supabase, full).catch(() => []);
+    if (!victims.length) return false;
+    const rows = await q(supabase.from('msgr_crews').select('id, ws_id, slug, display_name, status, hosting, owner_user_id, org_id').eq('owner_user_id', uid).eq('status', 'active')).catch(() => null);
+    if (!rows) { setErr(t('ui.error')); return true; }
+    setVictimPick({ target: full, slots: slotState(rows, uid).slots.filter((s) => s.active) });
+    return true;
+  }, [uid, t]);
+  const applyVictimPick = useCallback(async (victim) => { // 멈출 것을 골랐다 — 끊고(→available) 연결. 실패하면 멈춘 것을 되돌린다(agent-pick.mjs)
+    const target = victimPick?.target; setVictimPick(null);
+    if (!target) return;
+    const r = await swapConnect(supabase, victim, target);
+    if (!r.ok) return setErr(friendlyErr(String(r.error ?? ''), t));
+    setNote(t('agents.slot.swapped', { off: victim.name, on: target.display_name }));
+    (isPersonal ? loadPersonal() : loadOrg(orgId)).catch(() => {});
+    loadMyAgents({ favs: true }).catch(() => {});
+    readAgentPause(supabase).then(setAgentPause);
+  }, [victimPick, isPersonal, loadPersonal, loadOrg, orgId, loadMyAgents, t]);
+
   const dispatchCrew = useCallback(async (crew, channelId = null) => {
+    if (await needVictimPick(crew)) return null; // 자리 참 — 선택지를 띄우고 쓰지 않는다(2026-10-12). 고르면 applyVictimPick이 교체한다
     const up = await supabase.from('msgr_crews').update({ status: 'active' }).eq('id', crew.id).select('id');
     if (up.error) up.error.message = proRequiredFor(up.error.message, { ownerId: crew.owner_user_id, uid, t }); // 남의 에이전트면 내 Pro로 풀리지 않는다(#944 LOW-2) — 다음 줄(종전 그대로)이 던진다
     if (up.error) throw new Error(up.error.message);
@@ -1276,7 +1304,7 @@ function Shell({ session }) {
     }
     await loadOrg(orgId);
     return joined; // 'joined' | 'requested' | 'already' | null(조직에만 파견)
-  }, [uid, orgId, loadOrg, t]);
+  }, [uid, orgId, loadOrg, t, needVictimPick]);
   const loadChMembers = useCallback(async (id) => { if (id !== activeChannel.current) return; const current = memberRequests.current.begin(`${activeOrg.current}:${id}`); if (!id) { setChMembers([]); return; } try { const rows = await q(supabase.from('msgr_channel_members').select('member_kind, member_id, added_by').eq('channel_id', id)); if (current()) setChMembers(rows); } catch { if (current()) setChMembers([]); } }, []);
   const chMembersWanted = !isPhone || page === 'chat'; // 폰 목록 뒤에는 대화방을 그리지 않는다 — 구성원도 방을 열 때 읽는다(기능 점검 D3)
   useEffect(() => { if (!chMembersWanted) return; loadChMembers(chId).catch(() => setChMembers([])); }, [chId, loadChMembers, syncEpoch, membersEpoch, chMembersWanted]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -3057,7 +3085,14 @@ function Shell({ session }) {
       </aside>
       <main className="msgr-main" {...edgeBack}>
         {personalCard && <PersonalAgentCard crewId={personalCard} uid={uid} saveLook={saveLook} onClose={() => setPersonalCard(null)} onNote={setNote} onError={setErr} onChanged={() => { loadMyAgents().catch(() => {}); if (isPersonal) loadPersonal().catch(() => {}); }} />}
-        {sheet && crewOf(sheet) && !orgBlocked && !isPersonal && <CrewSheet crew={crewOf(sheet)} saveLook={saveLook} org={org} uid={uid} me={me} members={members} policy={policy} channelId={chId} channelName={channel?.kind === 'dm' ? null : channel?.name} nameOfUser={nameOfUser} onClose={() => setSheet(null)} onChanged={() => loadOrg(orgId).catch(() => {})} onPosted={() => setEvent({ kind: 'message', channel_id: chId, at: Date.now() })} onNote={setNote} onError={setErr} onDm={() => dmWithCrew(sheet)} dmPersonal={dmGoesPersonal(crewOf(sheet))} />}
+        {sheet && crewOf(sheet) && !orgBlocked && !isPersonal && <CrewSheet crew={crewOf(sheet)} saveLook={saveLook} org={org} uid={uid} me={me} members={members} policy={policy} channelId={chId} channelName={channel?.kind === 'dm' ? null : channel?.name} nameOfUser={nameOfUser} onClose={() => setSheet(null)} onNeedVictimPick={needVictimPick} onChanged={() => loadOrg(orgId).catch(() => {})} onPosted={() => setEvent({ kind: 'message', channel_id: chId, at: Date.now() })} onNote={setNote} onError={setErr} onDm={() => dmWithCrew(sheet)} dmPersonal={dmGoesPersonal(crewOf(sheet))} />}
+        {victimPick && (<div className="msgr-sheetwrap" role="dialog" aria-label={t('agents.slot.full', { limit: FREE_AGENT_LIMIT })}>
+          <div className="msgr-scrim clear" onClick={() => setVictimPick(null)} />
+          <aside className="msgr-crewsheet">
+            <div className="head"><div style={{ minWidth: 0 }}><div className="name">{t('agents.slot.full', { limit: FREE_AGENT_LIMIT })}</div></div><button type="button" className="btn ghost" onClick={() => setVictimPick(null)} aria-label={t('ui.close')}><I name="x" size={15} /></button></div>
+            {(victimPick.slots ?? []).map((s) => (<div key={s.key} className="ph-setrow"><span className="ph-kbody"><span className="name">{s.name}</span></span><button type="button" className="btn sm" onClick={() => applyVictimPick(s)}>{t('agents.slot.pause')}</button></div>))}
+          </aside>
+        </div>)}
         {chSheet && channel && !orgBlocked && <ChannelSheet joined={!previewing} muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} myAvailable={myAvailable} onDispatch={dispatchCrew} channel={channel} dmName={dmName} org={org} uid={uid} isAdmin={isAdmin} policy={policy} members={members} crews={crews} chMembers={chMembers} people={chPeople} chCrews={chCrews} ent={ent} onInvite={isAdmin ? orgInvite : null} onInviteHere={(role) => setInviteFor({ channelIds: [channel.id], role })} askAdmin={askAdmin} onCrew={(id) => { setChSheet(false); setSheet(id); }} onDm={(id) => openDm('user', id)} onWiden={widenDm} isPersonal={isPersonal} needConsent={isPersonal ? needPersonalConsent : null} refreshKey={`${membersEpoch}:${sheetReqTick}`} nameOfUser={nameOfUser} initialAdd={chSheetAdd} onMention={(c) => { setChSheet(false); setChSheetAdd(null); setMentionReq(c); }} onClose={() => { setChSheet(false); setChSheetAdd(null); }} onChanged={async () => { await (isPersonal ? loadPersonal() : loadOrg(orgId)).catch(() => {}); await loadChMembers(chId).catch(() => {}); }} onArchived={() => { setChSheet(false); setChId(null); loadOrg(orgId).catch(() => {}); }} onNote={setNote} onError={setErr} />}
         {inviteFor && org && !isPersonal && <InviteDialog org={org} channels={inviteChannels} isAdmin={!!isAdmin} hostOf={hostChannels} initialChannelIds={inviteFor.channelIds} initialRole={inviteFor.role} create={createInviteCode} loadCurrent={isAdmin ? currentMemberLink : null} confirmReplace={confirmReplace} discard={async (id) => { inviteSync.current.start(); let gone = 0; try { const r = await discardInvite(supabase, id); gone = r ? -1 : 0; return r; } finally { inviteSync.current.finish(gone); } }} shareText={inviteShare} linkOf={inviteLinkOf} errorText={inviteErr} onClose={() => setInviteFor(null)} onManage={isAdmin ? manageInvites : null} t={t} phone={isPhone} />}
         {joinPreview && <InvitePreview p={joinPreview} avatar={<Av name={joinPreview.org_name} size="lg" />} busy={joinBusy} err={joinErr} onJoin={joinFromPreview} onOpen={() => { const p = joinPreview; setJoinPreview(null); if (p.org_id) setOrgId(p.org_id); if (p.channels?.[0]) requestNav(p.channels[0].id, 'invite'); }} onClose={() => setJoinPreview(null)} fmtWhen={(iso) => fmtWhen(iso, lang)} t={t} phone={isPhone} />}
@@ -3235,7 +3270,7 @@ function ChannelGroupSheet({ mode, id = null, channelId = null, groups, links, c
     </div>
   );
 }
-function CrewSheet({ crew, org, uid, me, members, policy, channelId, channelName = null, nameOfUser, onClose, onChanged, onPosted, onNote, onError, onDm, dmPersonal = false, saveLook = null }) {
+function CrewSheet({ crew, org, uid, me, members, policy, channelId, channelName = null, nameOfUser, onClose, onChanged, onPosted, onNote, onError, onDm, dmPersonal = false, saveLook = null, onNeedVictimPick = null }) {
   const { t, lang } = useT();
   const owner = crew.owner_user_id === uid;
   const tier = crewTier(crew, org); // H-3: 회사 크루 / 개인(파견) 크루 — 판정 정본은 서버 msgr_crew_tier
@@ -3247,25 +3282,9 @@ function CrewSheet({ crew, org, uid, me, members, policy, channelId, channelName
   const canMe = owner || crew.allow === 'all' || (crew.allow === 'list' && (crew.allow_users ?? []).includes(uid));
   // 파견·해제는 메신저에서(유건 지시 2026-09-08). 서버는 status만 본다: available = 지시·답글·채널 멤버 불가(20260907120000 게이트), active = 파견 중.
   const dispatched = crew.status !== 'available'; const [confirmRecall, setConfirmRecall] = useState(false);
-  const [pickVictim, setPickVictim] = useState(null); // 무료 자리가 다 찼을 때 멈출 에이전트를 고르는 중 — { slots: 연결된 슬롯들 } (2026-10-12, 서버 자동 교체 대신 사용자 선택)
-  const openVictimPick = async () => { // 연결된 내 에이전트를 읽는다 — 이 경로로만(자리가 찼을 때 1건)
-    const rows = await q(supabase.from('msgr_crews').select('id, ws_id, slug, display_name, status, hosting, owner_user_id, org_id').eq('owner_user_id', uid).eq('status', 'active')).catch(() => null);
-    if (!rows) return onError(t('ui.error'));
-    setPickVictim({ slots: slotState(rows, uid).slots.filter((s) => s.active) });
-  };
-  const applyVictim = async (victim) => { // 멈출 것을 골랐다 — 끊고(→available) 연결. 실패하면 멈춘 것을 되돌린다(agent-pick.mjs)
-    setBusy(true);
-    const r = await swapConnect(supabase, victim, crew);
-    setBusy(false); setPickVictim(null);
-    if (!r.ok) return onError(friendlyErr(String(r.error ?? ''), t));
-    onNote(t('agents.slot.swapped', { off: victim.name, on: crew.display_name })); onChanged();
-  };
   const setDispatch = async (next) => {
     setBusy(true); setConfirmRecall(false);
-    if (next) { // 자리가 찼는지 먼저 묻는다(Pro·자리 있음·옛 서버는 []로 그대로 진행) — 찼으면 서버가 고르기 전에 사용자가 고른다
-      const victims = await swapPreview(supabase, crew).catch(() => []);
-      if (victims.length) { setBusy(false); openVictimPick(); return; }
-    }
+    if (next && onNeedVictimPick && await onNeedVictimPick(crew)) { setBusy(false); return; } // 자리가 참 — 선택지는 App이 띄운다(2026-10-12)
     const res = await supabase.from('msgr_crews').update({ status: next ? 'active' : 'available' }).eq('id', crew.id).select('id'); // 다시 파견은 복귀 — 허용 범위 유지(D31, dispatchCrew 주석)
     setBusy(false);
     if (res.error) return onError(proRequiredFor(res.error.message, { ownerId: crew.owner_user_id, uid, t })); // 남의 에이전트면 내 Pro로 풀리지 않는다(#944 LOW-2)
@@ -3326,7 +3345,6 @@ function CrewSheet({ crew, org, uid, me, members, policy, channelId, channelName
           {owner && channelId && channelName && !confirmOut && <div><span className="msgr-klabel">{t('crew.leaveHere.label')}</span><span><button type="button" className="btn sm ghost text" disabled={busy} onClick={() => setConfirmOut(true)}>{t('crew.leaveHere', { channel: channelName })}</button></span></div>}
           {confirmOut && <div className="confirm-row"><span className="confirm-inline"><span>{t('crew.leaveHere.confirm', { channel: channelName })}</span><button type="button" className="btn btn-primary sm danger" disabled={busy} onClick={leaveHere}>{t('crew.leaveHere', { channel: channelName })}</button><button type="button" className="btn sm" onClick={() => setConfirmOut(false)}>{t('ui.cancel')}</button></span></div>}
           {confirmRecall && <div className="confirm-row"><span className="confirm-inline"><span>{t('crew.recall.confirm')}</span><button type="button" className="btn btn-primary sm danger" disabled={busy} onClick={() => setDispatch(false)}>{t('crew.recall')}</button><button type="button" className="btn sm ghost text" onClick={() => setConfirmRecall(false)}>{t('ui.cancel')}</button></span></div>}
-          {pickVictim && <div className="confirm-row"><span className="confirm-inline col"><span>{t(isIos ? 'agents.slot.full.ios' : 'agents.slot.full', { limit: FREE_AGENT_LIMIT })}</span>{(pickVictim.slots ?? []).map((s) => <button key={s.key} type="button" className="btn sm" disabled={busy} onClick={() => applyVictim(s)}>{s.name} · {t('agents.slot.pause')}</button>)}<button type="button" className="btn sm ghost text" disabled={busy} onClick={() => setPickVictim(null)}>{t('ui.cancel')}</button></span></div>}
         </div>
         <p className="note tier">{tier === 'company' ? t('crew.tier.company.note', { org: org?.name ?? '' }) : t('crew.tier.personal.note', { name: nameOfUser(crew.owner_user_id) })}</p>
         {owner && (<section className="msgr-crewprofile">

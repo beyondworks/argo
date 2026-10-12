@@ -61,7 +61,10 @@ export async function swapConnect(db, victim, target) {
   const v = await writeStatus(db, victim.rows.map((r) => r.id), 'available');
   if (!v.ok) return { ok: false, error: v.error, stage: 'pause' };
   const t = await writeStatus(db, [target.id], 'active');
-  if (!t.ok) { await writeStatus(db, victim.rows.map((r) => r.id), 'active').catch(() => {}); return { ok: false, error: t.error, stage: 'connect' }; }
+  if (!t.ok) {
+    const back = await writeStatus(db, victim.rows.map((r) => r.id), 'active').catch(() => ({ ok: false }));
+    return { ok: false, error: back.ok === false ? `${t.error} · 되돌리기도 실패(${victim.name}은 멈춘 채)` : t.error, stage: 'connect' };
+  }
   return { ok: true };
 }
 

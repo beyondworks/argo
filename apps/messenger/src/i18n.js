@@ -1235,7 +1235,6 @@ export const DICT = {
   'err.freeAgentLimit': ['무료 계정은 메신저에 에이전트를 4명까지 연결할 수 있는데, 대신 멈출 에이전트가 없어 연결하지 못했습니다. Pro면 제한이 없습니다.', 'Free accounts can connect up to 4 agents to Messenger, and there was no agent to pause in its place. Pro has no limit.'],
   'agents.swap': ['무료 계정은 에이전트 4명까지라서 {names} 에이전트를 멈췄어요. Pro면 제한이 없어요.', 'Free accounts can use up to 4 agents, so {names} is now paused. Pro has no limit.'], // 교체 안내(검수 #945 MEDIUM-1)
   'agents.slot.full': ['무료 계정의 메신저 연결은 {limit}명까지예요. 멈출 에이전트를 골라 주세요.', 'Free accounts can connect up to {limit} agents. Choose which one to pause.'], // 사용자가 멈출 것을 고른다(2026-10-12) — 서버 자동 교체 대신
-  'agents.slot.full.ios': ['무료 계정의 메신저 연결은 {limit}명까지예요. 멈출 에이전트를 골라 주세요.', 'Free accounts can connect up to {limit} agents. Choose which one to pause.'],
   'agents.slot.pause': ['멈추기', 'Pause'],
   'agents.slot.swapped': ['{off}을(를) 멈추고 {on}을(를) 연결했습니다.', 'Paused {off} and connected {on}.'],
   'agents.slot.count': ['메신저 연결 {n}/{limit}명', '{n} of {limit} connected'],
