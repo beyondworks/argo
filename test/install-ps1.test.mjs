@@ -1,4 +1,4 @@
-// install.ps1 — 윈도우 argo 명령 단독 설치(2026-10-06 유건 승인). 경우 표 W1~W6·U2.
+// install.ps1 — 윈도우 argo 명령 단독 설치(2026-10-06 유건 승인). 경우 표 W1~W7·U2.
 // 배포본은 원본(install.src.ps1)에서 만든 ASCII 파일이어야 한다(PowerShell 5.1이 irm으로 받은 UTF-8을 잘못 읽는다) — 모든 플랫폼에서 본다.
 // 실제 설치는 윈도우에서만: 로컬 가짜 릴리스 서버에서 사용자 명령과 같은 `irm … | iex`로 실행한다. PATH는 테스트용 레지스트리 키(ARGO_INSTALL_ENV_KEY)에 쓴다.
 import test from 'node:test';
@@ -44,6 +44,7 @@ async function fixture(t, { badSum = false, app = false, foreign = false } = {})
   // status가 stderr에 경고를 써도(손상된 기기 세션 등) 종료 코드 0이면 설치는 성공해야 한다(검수 #843 M2)
   const uninstallUrl = pathToFileURL(join(ROOT, 'src/cli/uninstall.mjs')).href; // argo uninstall 분기는 bin/argo.mjs와 같게(실제 제거 모듈)
   await writeFile(join(pkg, 'bin/argo.mjs'), `import { dirname } from 'node:path'; import { fileURLToPath } from 'node:url';
+if(process.argv[2]==='status'&&process.env.ARGO_TEST_STATUS_FAIL){const {spawn}=await import('node:child_process');spawn(process.execPath,['-e','setTimeout(()=>{},'+process.env.ARGO_TEST_STATUS_FAIL+')'],{detached:true,stdio:'ignore'}).unref();console.error('[argo] status failed');process.exit(1)}
 if(process.argv[2]==='status'){console.error('[argo] warning');process.exit(process.env.ARGO_CLI_APP==='0'?0:2)}
 if(process.argv[2]==='uninstall'){const m=await import(${JSON.stringify(uninstallUrl)});const r=m.uninstallStandalone({appDir:dirname(dirname(fileURLToPath(import.meta.url)))});console.log('stub-uninstall '+JSON.stringify({ok:r.ok,pending:r.pending,script:r.script,reason:r.reason,shim:process.env.ARGO_CLI_SHIM,temp:process.env.TEMP}));if(!r.ok)process.exit(1);if(r.pending&&process.env.ARGO_CLI_SHIM==='cmd')process.exit(m.WIN_UNINSTALL_EXIT);process.exit(0)}
 console.log('args:'+process.argv.slice(2).join(' '))`);
@@ -63,8 +64,8 @@ console.log('args:'+process.argv.slice(2).join(' '))`);
   const env = { ...process.env, LOCALAPPDATA: local, USERPROFILE: profile, ARGO_INSTALL_API: `http://127.0.0.1:${server.address().port}/api`, ARGO_INSTALL_ENV_KEY: envKey, PATH: foreign ? `${other};${process.env.PATH}` : process.env.PATH };
   // 일반 윈도우 PC의 기본 실행 정책(Restricted)과 같은 조건 — 스크립트 모듈 자동 로드가 막혀도 설치돼야 한다(재검수 #843)
   // 비동기로 실행한다 — 가짜 릴리스 서버가 이 프로세스 안에 있어 spawnSync로 막으면 irm 요청에 응답하지 못하고 시간 초과까지 멈춘다(CI 첫 실행 실측)
-  const run = () => new Promise((resolve) => {
-    const p = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Restricted', '-Command', `[Console]::OutputEncoding = [Text.Encoding]::UTF8; irm http://127.0.0.1:${server.address().port}/install.ps1 | iex`], { env });
+  const run = (extra = {}) => new Promise((resolve) => {
+    const p = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Restricted', '-Command', `[Console]::OutputEncoding = [Text.Encoding]::UTF8; irm http://127.0.0.1:${server.address().port}/install.ps1 | iex`], { env: { ...env, ...extra } });
     let stdout = '', stderr = ''; p.stdout.on('data', (d) => (stdout += d)); p.stderr.on('data', (d) => (stderr += d));
     const timer = setTimeout(() => p.kill(), 170_000);
     p.on('close', (status) => { clearTimeout(timer); resolve({ status, stdout, stderr }); });
@@ -112,4 +113,18 @@ test('W6 PATH에 남의 argo가 있으면 PATH에 넣지 않고 직접 실행 �
   const f = await fixture(t, { foreign: true }), r = await f.run();
   assert.equal(r.status, 0, r.stdout + r.stderr); assert.ok(existsSync(f.shim)); assert.equal(f.pathValue(), '');
   assert.equal(JSON.parse(await readFile(join(f.app, '.argo-install.json'), 'utf8')).pathEntry, null);
+});
+
+// W7 업데이트의 새 설치 확인이 실패하면 이전 설치로 되돌린다. 확인 단계의 node.exe를 잠깐 잡고 있는 프로세스(하위 프로세스·백신 검사)가 있어도
+// 복구 옮기기가 다시 시도해 이전 설치가 살아난다(CI windows-latest W6에서 'being used by another process'로 복구까지 실패한 경로).
+test('W7 업데이트 확인 실패 → 새 node.exe가 1.5초 잠겨 있어도 다시 시도해 이전 설치를 되살린다', { skip: !win, timeout: 300_000 }, async (t) => {
+  const f = await fixture(t);
+  assert.equal((await f.run()).status, 0, '첫 설치');
+  await writeFile(join(f.app, 'previous-marker.txt'), 'old');
+  const r = await f.run({ ARGO_TEST_STATUS_FAIL: '1500' });
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.ok(texts(r).includes('이전 설치를 복구합니다'), r.stdout + r.stderr);
+  assert.doesNotMatch(texts(r), /되돌리지 못했습니다/, r.stdout + r.stderr);
+  assert.ok(existsSync(join(f.app, 'previous-marker.txt')), '이전 설치가 제자리에 돌아왔다');
+  assert.ok(existsSync(join(f.app, 'node.exe')));
 });
