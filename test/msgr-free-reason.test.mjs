@@ -102,7 +102,7 @@ test('⑧ 검수 스택 화면 4차 — 개인 공간 연결(조직 없음)·교
   const fn = page.slice(page.indexOf('async function connectAgents('), page.indexOf('finally { setActivating(false); }', page.indexOf('async function connectAgents(')));
   assert.ok(fn.indexOf('preview: true') > 0 && fn.indexOf('preview: true') < fn.indexOf('activate: true'), '연결 전에 미리 알림');
   assert.match(fn, /if \(!confirmed\) \{\s*const p = await api\(`\/api\/companies\/\$\{ws\}\/msgr`, \{ preview: true, slugs \}\)/, '확인 전에는 늘 미리 알림을 묻는다');
-  assert.match(fn, /if \(p\?\.victims\?\.length\) \{ setConfirm\(/, '멈출 에이전트가 있으면 확인부터');
+  assert.match(fn, /if \(p\?\.victims\?\.length\) \{[^\n]*\n\s*if \(await openKeep\(scope, slugs\)\) return;\s*\n\s*setConfirm\(/, '멈출 에이전트가 있으면 유지할 에이전트 고르기부터, 못 열면 종전 확인(2026-10-12 — 일괄 연결이 목록 끝 4명만 남기던 제보)');
   assert.match(page, /connectAgents\(\{ personal: true \}, personalView\.missing\)/, '개인 공간 카드의 연결');
   assert.match(page, /connectAgents\(\{ orgId \}, missing\.map\(\(agent\) => agent\.slug\)\)/, '조직 카드의 연결도 같은 길');
   const dict = readFileSync(new URL('../app/i18n.jsx', import.meta.url), 'utf8');

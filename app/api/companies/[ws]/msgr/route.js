@@ -9,8 +9,8 @@ import { loadCompany, updateCompany, getDeviceId } from '../../../../../src/work
 import { msgrGatewayStatus, msgrRuntimeState } from '../../../../../src/connections.mjs';
 import { nudgeGateway } from '../../../../../src/gateway.mjs';
 import { splitCardRows } from './card-rows.mjs'; // 행 나누기 — 카드 판정과 같은 모양을 테스트가 잠근다(UL10)
-import { freeAgentReason, readAgentPause, swapNotes } from './free-reason.mjs';
-import { keepPlan } from './keep-plan.mjs'; // 유지할 에이전트 적용 판정(새로 넣을 행·함께 연결할 행·거절) — 행동 시험이 잠근다 // 무료 계정 연결이 멈춘 이유·교체 안내(2026-10-11)
+import { freeAgentReason, readAgentPause, swapNotes } from './free-reason.mjs'; // 무료 계정 연결이 멈춘 이유·교체 안내(2026-10-11)
+import { keepPlan } from './keep-plan.mjs'; // 유지할 에이전트 적용 판정(새로 넣을 행·함께 연결할 행·거절) — 행동 시험이 잠근다
 
 const ALLOW = new Set(['all', 'list', 'owner']);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
