@@ -175,3 +175,24 @@ test('[조직 할당량] 남의 사용량을 묻는 통로가 없다 — 새 판
     assert.equal(sql(`select has_function_privilege('authenticated', 'public.${fn}', 'execute')`), 'f', fn);
   }
 });
+
+test('[조직 할당량] 첨부 행 트리거는 저장 경로 첫 칸으로 조직을 판단한다(행의 org_id와 어긋날 수 없다) · 기한이 지난 손님은 조직 할당량을 쓰지 못한다', { skip }, () => {
+  joinPaid();
+  setLimit(1000); setKey('org_storage_seat_bytes', 100000);
+  try {
+    const m = post(U.q, GCH);
+    const path = PAID + '/' + GCH + '/' + m + '/' + (++seq) + '-ctx.bin';
+    assert.equal(uploadRaw(U.q, path, 'msgr', 5000).status, 0, '조직 경로 업로드');
+    fill(path, 5000);
+    // 서비스 권한으로 org_id 없이 행을 넣어도 트리거는 경로의 조직(유료 조직 손님)으로 판단한다 — 본인 한도(1000)였다면 거절
+    const r = psqlRaw(['-A', '-t', '-c', "insert into public.msgr_attachments (message_id, org_id, storage_path, name, mime, bytes) values (" + m + ", null, '" + path + "', 'a.bin', 'application/octet-stream', 1)"]);
+    assert.match(r.stderr, /msgr_attachments_space_path/, '행의 조직과 경로의 조직은 어긋날 수 없다(제약) — 트리거의 경로 기준 판정과 같은 조직');
+    sendOk(U.q, GCH, 5000, { org: PAID }); // 맞는 행은 본인 한도(1000)가 아닌 조직 할당량으로 통과
+    sql("update public.msgr_org_members set expires_at = now() - interval '1 minute' where org_id = '" + PAID + "' and user_id = '" + U.q + "'");
+    try {
+      assert.equal(sql("select public._msgr_org_guest_pool('" + U.q + "', '" + PAID + "')"), 'f', '기한이 지난 손님은 조직 할당량 대상이 아니다');
+      assert.equal(used(U.q) < 1000, true, '기한이 지나도 조직 폴더 파일은 본인 사용량으로 돌아오지 않는다(조직 사용량에서만 센다)');
+    } finally { sql("update public.msgr_org_members set expires_at = null where org_id = '" + PAID + "' and user_id = '" + U.q + "'"); }
+  } finally { allOff(); }
+});
+

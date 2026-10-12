@@ -6,7 +6,7 @@
 --   · 조직 사용량 = 그 조직 폴더(<org>/…)에 지금 있는 객체 전부(멤버·손님·에이전트 파일) — 조직이 낸 좌석만큼의 묶음을 함께 쓴다.
 --   · 그 파일은 손님 본인 사용량(무료 1GB)에서 뺀다. 파일 하나 상한은 조직 플랜(Pro)과 같은 500MB.
 --   좌석 멤버(is_pro_for 참)는 종전대로 본인 Pro 한도로 판정한다. 손님의 개인 공간·무료 조직 공간은 종전대로 본인 한도.
--- 판정 자리(종전과 같다): 앱·게이트웨이 업로드 정책(msgr_upload_check — 경로에서 조직), 첨부 행 트리거(new.org_id), 봇 준비·등록(글의 조직).
+-- 판정 자리(종전과 같다): 앱·게이트웨이 업로드 정책(msgr_upload_check — 경로에서 조직), 첨부 행 트리거(저장 경로 첫 칸), 봇 준비·등록(글의 조직).
 -- 함수 모양: 종전 _msgr_upload_gate(uuid, bigint, text)는 그대로 두고 조직 문맥을 받는 _msgr_upload_gate_in을 더한다(인자를 바꾸면 옛 정의와 겹친다).
 -- 부하: 손님이 유료 조직 공간에 올릴 때만 조직 폴더 범위 합계 1회(버킷 (bucket_id, name) 색인 앞부분). 그 밖은 종전과 같다. 쓰기 0.
 -- 켜기 예: insert into public.msgr_settings(key, value) values ('org_storage_seat_bytes', '21474836480') on conflict (key) do update set value = excluded.value;
@@ -19,7 +19,8 @@ create or replace function public._msgr_org_guest_pool(p_uid uuid, p_org uuid) r
     select 1 from public.msgr_org_members m
       join public.msgr_org_entitlements e on e.org_id = m.org_id
       join public.msgr_orgs o on o.id = m.org_id and o.deleted_at is null
-     where m.org_id = p_org and m.user_id = p_uid and m.removed_at is null and m.role = 'guest' and e.paid_until > now())
+     where m.org_id = p_org and m.user_id = p_uid and m.removed_at is null and m.role = 'guest'
+       and (m.expires_at is null or m.expires_at > now()) and e.paid_until > now())
 $$;
 revoke all on function public._msgr_org_guest_pool(uuid, uuid) from public, anon, authenticated;
 
@@ -64,7 +65,7 @@ begin
     from public.msgr_org_members m
     join public.msgr_org_entitlements e on e.org_id = m.org_id
     join public.msgr_orgs o on o.id = m.org_id and o.deleted_at is null
-   where m.user_id = p_uid and m.removed_at is null and m.role = 'guest' and e.paid_until > now();
+   where m.user_id = p_uid and m.removed_at is null and m.role = 'guest' and e.paid_until > now(); -- 손님 기한(expires_at)은 보지 않는다: 기한이 지나도 파일은 조직 폴더에 남아 조직 사용량에 잡히므로 본인 사용량으로 되돌리면 두 번 센다
   select coalesce(sum(o.size), 0) into n from public._msgr_live_objects() o
    where o.name is distinct from p_except
      and not (split_part(o.name, '/', 1) = any(pools))
@@ -109,21 +110,21 @@ end $$;
 revoke all on function public.msgr_upload_check(jsonb) from public, anon;
 grant execute on function public.msgr_upload_check(jsonb) to authenticated;
 
--- 9) 첨부 행 트리거(20261012120000 정의) — 조직 문맥(new.org_id)으로 파일 상한·총량, 조직 할당량 스위치도 조기 반환에 넣는다
+-- 9) 첨부 행 트리거(20261012120000 정의) — 조직 문맥(저장 경로 첫 칸 = 업로드 정책과 같은 기준)으로 파일 상한·총량, 조직 할당량 스위치도 조기 반환에 넣는다
 create or replace function public.msgr_attachment_storage_gate() returns trigger
   language plpgsql security definer set search_path = public, pg_temp as $$
-declare real_size bigint; found_obj boolean := false; who uuid;
+declare real_size bigint; found_obj boolean := false; who uuid; ctx uuid := public.msgr_uuid_or_null(split_part(coalesce(new.storage_path, ''), '/', 1));
 begin
   select true, o.size into found_obj, real_size from public._msgr_live_objects() o where o.name = new.storage_path limit 1; -- 지금 버전(보관본·삭제 표시 제외)
   if real_size is not null then new.bytes := real_size; end if;
   who := public._msgr_attachment_uploader(new.message_id);
-  if new.bytes > public._msgr_file_max_in(who, new.org_id) then
+  if new.bytes > public._msgr_file_max_in(who, ctx) then
     raise exception 'msgr_file_too_large' using errcode = 'PT413', detail = 'file exceeds the per-file limit for this plan', hint = 'file_max_bytes';
   end if;
   if public._msgr_storage_limit() is null and public._msgr_org_seat_bytes() is null then return new; end if; -- 총량 키 모두 꺼짐(좌석당 용량은 Pro 키를 따르므로 셋 다 꺼짐) — 거절 없음
   if exists (select 1 from public.msgr_attachments a where a.storage_path = new.storage_path) then return new; end if; -- 같은 객체 재사용 — 새 저장 아님
   if not coalesce(found_obj, false) then raise exception 'msgr_attach_upload_missing' using detail = 'upload the file before adding its attachment row'; end if;
-  perform public._msgr_upload_gate_in(who, new.bytes, new.storage_path, new.org_id);
+  perform public._msgr_upload_gate_in(who, new.bytes, new.storage_path, ctx);
   return new;
 end $$;
 revoke all on function public.msgr_attachment_storage_gate() from public, anon, authenticated;
