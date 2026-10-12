@@ -1,7 +1,7 @@
 import { selfPostsSection } from './self-posts.mjs';
 import { stageMessengerHandoff, messengerOrigin, messengerHandoffHint, parseMessengerDisposition, isGuestCtx, ownerDirectTurn, ownerSoloTurn, settingsDirectTurn, msgrJournal } from './gateway/msgr-handoff.mjs';
 import { officeToolSpecs } from './gateway/office-tools.mjs'; // 오피스 도구 7종 정의(일정·회사·문서함·할 일·페이지·거래·메일·브리핑) — CLI·MCP와 같은 한 곳
-import { panelWriteGate, panelLaterNo } from './gateway/office-proposals.mjs'; // 오피스 패널 턴의 쓰기 확인 카드 관문 · 예약·긴 작업 거절 문구
+import { panelWriteGate, panelLaterNo, panelNoExternalMcp, panelMcpNote } from './gateway/office-proposals.mjs'; // 오피스 패널 턴의 쓰기 확인 카드 관문 · 예약·긴 작업 거절 문구
 import { trackPanelChild, panelChildTag } from './panel-children.mjs'; // 패널 동기 위임 동료 턴 등록부(중단 전파)
 import { createBrowserMcpBridge, browserMcpDirective } from './engine/browser-mcp.mjs';
 // 대화 계층 — 페르소나 카드 + 회사 스킬 + vault 사용법을 시스템 프롬프트로, Agent SDK가 루프·도구를 담당.
@@ -143,7 +143,7 @@ export function shellGateMsgr(mirrorCtx) {
 export function delegateRulesCtx(rulesCtx, mirrorCtx) {
   if (mirrorCtx?.kind !== 'msgr' || mirrorCtx.officePanelSolo !== true) return rulesCtx;
   // 결재로 올리면 승인해도 이어 실행할 길이 없다(동료는 이 방의 메신저 에이전트가 아니다 — 재검수 M-A). 고위험 셸은 거절하고 조율자에게 돌려주게 한다
-  return { ...rulesCtx, shellGate: { deny: true } };
+  return { ...rulesCtx, shellGate: { deny: true }, ...(panelNoExternalMcp(mirrorCtx) ? { panelNoMcp: true } : {}) }; // 조율자가 외부 MCP를 못 쓰는 패널 턴이면 동료 턴도(위임으로 돌아가지 못하게, 0.1.105)
 }
 
 /** 동료 명단 + 위임 규칙 — 위임 도구가 붙는 턴에만 주입한다. */
@@ -1665,7 +1665,8 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
     ? (lang === 'en'
         ? `\n## Messenger turn — sending files to the user\n- To hand over a file, save it inside the company work folder under vault/projects/, vault/files/ or vault/_imported/, and reference it in your reply as a markdown image or link with that vault-relative path (e.g. ![draft](projects/20261002_x/draft.png), [report.pdf](projects/20261002_x/report.pdf)).\n- Argo Messenger attaches those files automatically (up to 10 per reply): images appear in the message bubble and other files as download cards, and the local path is removed from the message. On Telegram, vault-relative paths are attached automatically (up to 3 per reply); on other channels the user downloads them from the web/app chat chips.\n- Files outside those folders — other folders on this computer, other companies, settings, journal/notes, vault/_imported/unsorted/, hidden files and .env — are never attached, and only deliverable formats are attached (images, pdf, docx, xlsx, pptx, csv, md, zip — not json, yaml, keys or databases). Save deliverables in those folders.\n- Do not hand over a file as an external link instead (GitHub, cloud storage, etc.) — the recipient may not be able to open it. Save it in those folders and send it as an attachment.\n- Replying to the user is NOT an external send — no approval needed.`
         : `\n## 메신저 턴 — 사용자에게 파일 보내기\n- 파일을 건네려면 회사 작업 폴더의 vault/projects/·vault/files/·vault/_imported/ 안에 저장하고, 답변 본문에 그 vault 기준 경로로 마크다운 이미지·링크를 적어라(예: ![시안](projects/20261002_x/시안.png), [보고서.pdf](projects/20261002_x/보고서.pdf)).\n- 아르고 메신저에서는 그 파일이 자동 첨부된다(답변당 최대 10개) — 이미지는 말풍선에 바로 보이고 다른 파일은 내려받기 카드로 나오며, 본문의 로컬 경로는 지워진다. 텔레그램이면 vault 기준 경로가 자동 첨부되고(답변당 최대 3개), 다른 채널이면 사용자가 웹·앱 채팅의 다운로드 칩으로 받는다.\n- 그 구역 밖 파일(이 컴퓨터의 다른 폴더·다른 회사·설정·일지/노트·vault/_imported/unsorted/·숨김 파일·.env)은 붙지 않고, 결과물 형식(그림·pdf·docx·xlsx·pptx·csv·md·zip)만 붙는다 — json·yaml·키·DB 파일은 붙지 않는다. 결과물은 반드시 그 구역에 저장하라.\n- 파일을 GitHub·클라우드 저장소 같은 외부 링크로 대신 주지 마라 — 받는 사람이 열 수 없을 수 있다. 위 구역에 저장해 첨부로 보내라.\n- **사용자에게 답하는 것은 외부 발송이 아니다 — 결재 불필요.**`)
-    : '') + (mirrorCtx?.kind === 'msgr' && mirrorCtx.officePanelSolo !== true ? messengerHandoffHint(lang) : ''); // 패널 턴은 넘김·DM 전달 안내 없음(검수 M1)
+    : '') + (mirrorCtx?.kind === 'msgr' && mirrorCtx.officePanelSolo !== true ? messengerHandoffHint(lang) : '') // 패널 턴은 넘김·DM 전달 안내 없음(검수 M1)
+    + (panelNoExternalMcp(mirrorCtx) ? panelMcpNote(lang) : ''); // 외부 MCP를 붙이지 않은 패널 턴 — 다른 서비스 일은 메신저 1:1로(SDK·CLI 공통 꼬리)
   // 대체 실행이 '실패'하면 위 자가 고지가 나올 수 없다 — 에러 메시지 자체에 대체 사실을 붙인다
   // (턴 실패 표시·이벤트 기록·메신저 회신 전 표면 공통).
   const prefixFallbackError = (e) => {
@@ -1776,7 +1777,8 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
       // materialize는 **범위 필터 뒤** — node→우리 노드, npm 없는 기기의 npx→조달(npx.mjs).
       // 순서가 반대면 크루 카드 `mcp:` 범위로 곧 버려질 서버 때문에도 네트워크 조달(최대 195s)이
       // 턴 선두에 붙는다(분리 검수 2026-08-21 MED-3). SDK 경로와 같은 순서.
-      const scoped = await materializeMcpServers(scopeServers(allMcp, mcpScope));
+      // 오피스 패널 턴은 외부 MCP를 붙이지 않는다(office-proposals.mjs panelNoExternalMcp, 0.1.105) — CLI 설정으로 바로 붙어 확인 카드로 가로챌 수 없다
+      const scoped = panelNoExternalMcp(mirrorCtx) ? {} : await materializeMcpServers(scopeServers(allMcp, mcpScope));
       // MCP를 실제로 받는 CLI = codex(config.toml)·gemini(settings.json, 2026-08-21). antigravity는 설정이
       // 호스트 HOME 전용(~/.gemini/config/mcp_config.json, 격리 홈 없음)이라 회사별 주입이 사용자 본인
       // 설정을 덮어쓴다 — 주입하지 않고 프롬프트에도 목록을 알리지 않는다(없는 도구 안내 금지).
@@ -2060,7 +2062,7 @@ ${lang === 'en'
   // 크루별 MCP 범위 — 지정된 크루는 그 서버만 스폰·허용(불필요한 프로세스·권한 축소).
   // materialize는 범위 필터 **뒤**(CLI 경로와 같은 순서 — 분리 검수 MED-3: 버려질 서버 때문에
   // 네트워크 조달이 턴 선두에 붙지 않게): node→우리 노드, npm 없는 기기의 npx→조달본(npx.mjs).
-  servers = await materializeMcpServers(scopeServers(servers, mcpScope));
+  servers = panelNoExternalMcp(mirrorCtx) ? {} : await materializeMcpServers(scopeServers(servers, mcpScope)); // 오피스 패널 턴은 외부 MCP 없음(CLI 경로와 같은 판정, 0.1.105)
   // ⚠ 설치된 MCP 서버를 allowedTools에 bare `mcp__<서버>`로 넣지 않는다 — SDK는 괄호 없는 bare
   // 항목을 canUseTool 상담 **전에** 자동 승인한다(벤더 sdk.mjs 원문·CLAUDE_SDK_CAN_USE_TOOL_SHADOWED).
   // 외부 MCP는 게이트(argPathsForbidden)를 지나야 한다. 죽은 mcpAllow 변수는 되돌리기 쉬운 형태라

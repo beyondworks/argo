@@ -99,6 +99,14 @@ export function panelWriteGate(ctx, name, args, lang = 'ko') {
     `Not executed — posted as confirmation card ${p.pid}: ${p.summary}\nIt runs when the user presses Run in the Office agent panel. Do not say it was done; briefly say you posted a confirmation card.`);
 }
 
+/** 이 턴에 회사 외부 MCP(mcp.json)를 붙이지 않는가(0.1.105, 총괄 정책 결정 2026-10-13 — 패널은 오피스 작업 전용, '쓰기 기본값: 늘 확인 카드'를 러너와 관계없이 지킨다).
+    확인 카드 관문은 오피스 도구만 거른다 — 외부 MCP는 SDK에선 권한 게이트 mcp 분기(금지 경로만 막음), codex·gemini에선 CLI 설정으로 바로 붙어 도구별로 가로챌 수 없다.
+    패널 턴(바로 실행 꺼짐)·패널 사슬 턴(넘김·예약·결재 후속)·패널 조율자의 동기 위임 동료 턴(panelNoMcp — chat.mjs delegateRulesCtx)이 대상. 일반 메신저·데스크톱 턴은 지금 그대로 */
+export const panelNoExternalMcp = (ctx) => (ctx?.officePanel === true && ctx.officeAuto !== true) || ctx?.officePanelChain === true || ctx?.panelNoMcp === true;
+export const panelMcpNote = (lang = 'ko') => (lang === 'en'
+  ? '\n## Office agent panel\n- External tools (MCP) connected to the company are not available in the Office agent panel. If the user asks for work in another service (e.g. the intranet), do not try it — tell them to ask for it in the 1:1 chat with you in Messenger.'
+  : '\n## 오피스 에이전트 창\n- 회사에 연결된 외부 도구(MCP)는 오피스 에이전트 창에서 쓰지 않는다. 다른 서비스(인트라넷 등)의 일을 부탁받으면 시도하지 말고, 외부 도구 작업은 메신저의 이 에이전트 1:1 대화에서 요청해 달라고 알려라.');
+
 /** 오피스 패널 턴에서 예약·긴 작업을 거절하는 문구 — 그 나중 턴은 패널 사슬이라 오피스 쓰기를 못 해(위 관문) 매번 실패할 예약이 생긴다(검수 M-a).
     메신저 1:1에서 요청하면 지금처럼 만든다 */
 export const panelLaterNo = (lang = 'ko') => (lang === 'en'
