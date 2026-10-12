@@ -44,7 +44,7 @@ async function fixture(t, { badSum = false, app = false, foreign = false } = {})
   // status가 stderr에 경고를 써도(손상된 기기 세션 등) 종료 코드 0이면 설치는 성공해야 한다(검수 #843 M2)
   const uninstallUrl = pathToFileURL(join(ROOT, 'src/cli/uninstall.mjs')).href; // argo uninstall 분기는 bin/argo.mjs와 같게(실제 제거 모듈)
   await writeFile(join(pkg, 'bin/argo.mjs'), `import { dirname } from 'node:path'; import { fileURLToPath } from 'node:url';
-if(process.argv[2]==='status'&&process.env.ARGO_TEST_STATUS_FAIL){const {spawn}=await import('node:child_process');spawn(process.execPath,['-e','setTimeout(()=>{},'+process.env.ARGO_TEST_STATUS_FAIL+')'],{detached:true,stdio:'ignore'}).unref();console.error('[argo] status failed');process.exit(1)}
+if(process.argv[2]==='status'&&process.env.ARGO_TEST_STATUS_FAIL){const {spawn}=await import('node:child_process');const fs=await import('node:fs');const exe=process.execPath,mark=exe+'.locked';spawn('powershell.exe',['-NoProfile','-Command',"$f=[IO.File]::Open('"+exe+"','Open','Read','None'); New-Item -ItemType File -Path '"+mark+"' | Out-Null; Start-Sleep -Milliseconds "+process.env.ARGO_TEST_STATUS_FAIL+"; $f.Close()"],{detached:true,stdio:'ignore'}).unref();const until=Date.now()+90000;while(!fs.existsSync(mark)&&Date.now()<until)Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,100);console.error('[argo] status failed');process.exit(1)}
 if(process.argv[2]==='status'){console.error('[argo] warning');process.exit(process.env.ARGO_CLI_APP==='0'?0:2)}
 if(process.argv[2]==='uninstall'){const m=await import(${JSON.stringify(uninstallUrl)});const r=m.uninstallStandalone({appDir:dirname(dirname(fileURLToPath(import.meta.url)))});console.log('stub-uninstall '+JSON.stringify({ok:r.ok,pending:r.pending,script:r.script,reason:r.reason,shim:process.env.ARGO_CLI_SHIM,temp:process.env.TEMP}));if(!r.ok)process.exit(1);if(r.pending&&process.env.ARGO_CLI_SHIM==='cmd')process.exit(m.WIN_UNINSTALL_EXIT);process.exit(0)}
 console.log('args:'+process.argv.slice(2).join(' '))`);
@@ -117,6 +117,8 @@ test('W6 PATH에 남의 argo가 있으면 PATH에 넣지 않고 직접 실행 �
 
 // W7 업데이트의 새 설치 확인이 실패하면 이전 설치로 되돌린다. 확인 단계의 node.exe를 잠깐 잡고 있는 프로세스(하위 프로세스·백신 검사)가 있어도
 // 복구 옮기기가 다시 시도해 이전 설치가 살아난다(CI windows-latest W6에서 'being used by another process'로 복구까지 실패한 경로).
+// 잠금은 백신 검사처럼 공유 없이(FileShare None) 연 핸들로 만든다 — 실행 중인 node.exe만으로는 폴더 옮기기가 막히지 않는다(530d5614 CI에서 수정 없이 통과).
+// status는 잠금이 걸린 것(표지 파일)을 본 뒤에 실패로 끝난다 — PowerShell 기동이 느려도 복구보다 잠금이 먼저다.
 test('W7 업데이트 확인 실패 → 새 node.exe가 1.5초 잠겨 있어도 다시 시도해 이전 설치를 되살린다', { skip: !win, timeout: 300_000 }, async (t) => {
   const f = await fixture(t);
   assert.equal((await f.run()).status, 0, '첫 설치');
