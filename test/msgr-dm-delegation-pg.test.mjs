@@ -59,7 +59,7 @@ before(() => {
   for (const f of ['20260714150000_entitlements.sql', '20260724000100_trial_14d.sql', '20260728100000_entitlements_ls.sql',
     '20260728113000_billing_hardening.sql', '20260728150000_ls_reconcile_cooldown.sql', '20260730050000_is_pro_ends_at.sql']) psql(['-f', mig(f)]);
   const migrationDir=fileURLToPath(new URL('../supabase/migrations/',import.meta.url));
-  for(const f of readdirSync(migrationDir).filter(f=>/^\d+_msgr.*\.sql$/.test(f)).sort()) {
+  for(const f of readdirSync(migrationDir).filter(f=>/^(?:\d+_msgr.*|20260929110000_plan_no_trial)\.sql$/.test(f)).sort()) {
     const source=readFileSync(mig(f),'utf8');
     psql(['-c',source.replace(/^create extension if not exists pg_net;$/m,'')]);
   }

@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { storageKey as serverKey } from '../src/gateway/msgr.mjs';
-import { storageKey as appKey } from '../apps/messenger/src/attach-files.mjs';
+import { storageKey as appKey } from '../src/storage-key.mjs';
 
 const NAMES = ['out.pdf', 'Kimi-K3-브리프-전문.md', '보고서.md', '.hidden', 'no-ext', 'a'.repeat(120) + '.TXT', '한글 이름 (사본).png', 'weird…name?.jpeg', ''];
 

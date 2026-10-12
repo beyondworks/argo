@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createComposerDelivery, composerTransport, getComposerSession, clearComposerSessions, draftStore } from '../src/composer-delivery.mjs';
+import { createComposerDelivery, composerTransport, getComposerSession, clearComposerSessions, draftStore } from '../../../src/composer-delivery.mjs';
 
 const deferred = () => { let resolve; const promise = new Promise((r) => { resolve = r; }); return { promise, resolve }; };
 const file = (name) => ({ name, size: 4, type: 'text/plain' });

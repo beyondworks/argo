@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { messageShape, isDiscardedUpload, UPLOAD_GRACE_MS } from '../src/attach-only.mjs';
 import { decideApproval, singleFlight } from '../src/approval-display.js';
-import { createComposerDelivery, composerTransport } from '../src/composer-delivery.mjs';
+import { createComposerDelivery, composerTransport } from '../../../src/composer-delivery.mjs';
 import { deliveryCardView } from '../src/delivery-card.mjs';
 
 const T = Date.parse('2026-10-05T05:00:00Z');

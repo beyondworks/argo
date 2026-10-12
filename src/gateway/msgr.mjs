@@ -45,7 +45,7 @@ import { loadApprovals, setApprovalMeta, approvalPlainText, approvalCommandLabel
 import { approvalRisk } from '../approval-risk.mjs';
 import { resolveWithFollowUp } from '../approval-actions.mjs';
 import { attachFailureNote, isImagePath } from '../tg-format.mjs';
-import { ATTACH_MAX, ROUTINE_FILES_MAX, planReplyFiles, readReplyFile } from './msgr-reply-files.mjs';
+import { ROUTINE_FILES_MAX, planReplyFiles, readReplyFile } from './msgr-reply-files.mjs';
 import { mimeOf } from '../media-kind.mjs';
 import { replyLinkPreview } from './link-preview-node.mjs';
 import { createHash } from 'node:crypto';
@@ -1507,7 +1507,7 @@ export const _activeCtxForTest = activeCtx;
 const rtChannels = new Map(); // `${wsId}:${orgId}` → realtime channel(타이핑 방송용, start()가 채움 — 회사별로 분리, 같은 조직에 두 회사가 등록돼도 서로 해제하지 않는다)
 export const _rtChannelsForTest = rtChannels;
 const safeName = (n) => String(n ?? 'file').replace(/[\\/]/g, '_').replace(/\.\./g, '_').slice(0, 80) || 'file';
-// Storage 객체 키 — 앱 attach-files.mjs storageKey와 같은 규칙(ASCII만, 순번 접두로 겹침 방지). 한글 이름은 Storage가 'Invalid key'로 거부했다(라이브 2026-09-23). 표시 이름은 첨부 행 name에 원래대로
+// Storage 객체 키 — src/storage-key.mjs storageKey와 같은 규칙(ASCII만, 순번 접두로 겹침 방지). 한글 이름은 Storage가 'Invalid key'로 거부했다(라이브 2026-09-23). 표시 이름은 첨부 행 name에 원래대로
 export const storageKey = (name, index = 0) => { // export: 앱 규칙과의 교차 테스트용(검수 L5)
   const raw = String(name ?? ''); const dot = raw.lastIndexOf('.');
   const ext = dot > 0 ? raw.slice(dot + 1).replace(/[^A-Za-z0-9]/g, '').slice(0, 12) : '';
@@ -1903,13 +1903,15 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
       const parent = envelope ? [envelope.root, ...envelope.context].find((r) => r.id === job.replyTo) : await db.message(job.replyTo);
       if (parent?.body) text += msgrReplyLine(outsideContextLine(parent, lang) ?? clean(parent.body, 300), lang) + selfReplyNote(parent, job.crewId, clean(crewName(job.crewId), 40), lang); // 비서 메일 글에 답장하면 그 글 대신 표지 줄. 답글 대상이 이 에이전트의 글이면 그다음 줄에 "네가 보낸 글"(답글 대상 줄 형식은 그대로 — 저장 기록 파서 호환)
     }
-    // 첨부 — Storage에서 vault/files/msgr/로 내려 웹 chat 라우트와 같은 {rel,name,mime,isImage} 계약으로(상한 ATTACH_MAX)
+    // 첨부 — Storage에서 vault/files/msgr/로 내려 웹 chat 라우트와 같은 {rel,name,mime,isImage} 계약으로(상한 CONTEXT_FILE_MAX)
+    // 턴 문맥으로 읽는 상한은 25MB 그대로 — 20261012120000로 Pro는 500MB 파일을 보낼 수 있지만, 문맥에 싣는 읽기 예산은 별도다(큰 파일 읽기는 후속 과제)
+    const CONTEXT_FILE_MAX = 25 * 1024 * 1024;
     const attachments = [];
     for (const a of envelope?.attachments ?? await db.attachmentsOf(job.msgId)) {
       try {
-        if ((a.bytes ?? 0) > ATTACH_MAX) throw new Error(pick('25MB 초과', 'over 25MB', lang));
+        if ((a.bytes ?? 0) > CONTEXT_FILE_MAX) throw new Error(pick('25MB 초과', 'over 25MB', lang));
         const buf = await db.download(a.storage_path);
-        if (buf.length > ATTACH_MAX) throw new Error(pick('25MB 초과', 'over 25MB', lang));
+        if (buf.length > CONTEXT_FILE_MAX) throw new Error(pick('25MB 초과', 'over 25MB', lang));
         const rel = `files/msgr/${job.msgId}-${safeName(a.name)}`;
         await mkdir(join(paths(wsId).vault, 'files', 'msgr'), { recursive: true });
         await writeFile(join(paths(wsId).vault, rel), buf);

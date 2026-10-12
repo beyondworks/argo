@@ -637,7 +637,7 @@ test('컴포저 첨부: 드래그앤드롭 수용·칩마다 취소 단추·선�
   assert.match(comp, /onDrop=\{\(e\) => \{ e\.preventDefault\(\); setDragging\(false\); if \(!busy\) addFiles\(e\.dataTransfer\?\.files\); \}\}/, '드롭 → addFiles(2026-10-02부터 개인 공간도 — 저장 경로 p/<방>/<글>/<파일>)');
   assert.match(comp, /onDragOver=\{\(e\) => \{ if \(e\.dataTransfer\?\.types\?\.includes\('Files'\)\) \{ e\.preventDefault\(\); setDragging\(true\); \}/, '파일 드래그만 강조(텍스트 드래그는 무시)');
   assert.match(comp, /onChange=\{\(e\) => \{ addFiles\(e\.target\.files\); e\.target\.value = ''; \}\}/, '선택창도 같은 addFiles');
-  assert.match(comp, /setFiles\(\(cur\) => acceptFiles\(cur, incoming, ATTACH_MAX\)\.files\)/, '누적·중복 제거·상한은 acceptFiles 한 곳');
+  assert.match(comp, /setFiles\(\(cur\) => acceptFiles\(cur, incoming, attachMax\)\.files\)/, '누적·중복 제거·상한은 acceptFiles 한 곳');
   assert.match(comp, /uploading !== f\.name && <button type="button" className="x"[\s\S]{0,140}?onClick=\{\(\) => setFiles\(\(cur\) => withoutFile\(cur, f\)\)\}/, '칩 취소 단추(업로드 중엔 없음)');
   assert.match(read('apps/messenger/src/styles.css'), /\.msgr-composer\.drop \{/, '드롭 강조 CSS');
 });

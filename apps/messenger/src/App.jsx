@@ -70,9 +70,10 @@ import { mentionCandidates, mentionsFromBody, ambiguousMentions, ALL_RE, outside
 import { OutsideRow } from './outside-row.mjs';
 import { dmMentionCrews, mentionPopupCrews, setDmRecipient, dmDeliveryMentions, dmUnavailableRecipients, relayCaptionKey, relayToLabel, relayToNames, relayNoticeView } from './dm-delivery.mjs';
 import { acceptFiles, withoutFile, chipSize } from './attach-files.mjs';
+import { formatBytes } from '../../../src/media-kind.mjs';
 import { MediaAttachments, LinkCard, linkify, onLinkClick } from './media.jsx'; // 첨부 말풍선·크게 보기·링크 카드(2026-10-02)
 import { slashView, readSlashCommands, slashInsert, rolePickCandidates, ROLE_PICK_RE } from './slash-commands.mjs';
-import { getComposerSession, bindComposerSession, clearComposerSessions, composerTransport, setDeliveryReporter } from './composer-delivery.mjs';
+import { getComposerSession, bindComposerSession, clearComposerSessions, composerTransport, setDeliveryReporter } from '../../../src/composer-delivery.mjs';
 import { fetchSearchRows } from './search-rows.mjs';
 import { memberRows, memberPerms, MEMBER_CHIPS } from './phone-members.mjs';
 import { Seg } from './seg.mjs'; // 세그먼트 토글 하나(5차 피드백 3)
@@ -171,7 +172,11 @@ export const limitsPersonal = (channel) => channel?.personal_crews === 'read_onl
 export const crewTier = (crew, org) => (org?.service_user_id && crew?.owner_user_id === org.service_user_id && crew?.hosting === 'resident') ? 'company' : 'personal'; // 외부 에이전트(봇)도 개인 등급 — Argo 에이전트처럼 소유자가 초대한 곳에서만(유건 2026-09-24). 서버 msgr_crew_tier와 같은 규칙
 const PAGE = 100;
 const CATCHUP_PAGES = 5; // 따라잡기 상한 — 이보다 많이 밀렸으면 최신 쪽으로 옮긴다(MSG-02, readMissed)
-const ATTACH_MAX = 25 * 1024 * 1024; // 브리지 ATTACH_MAX(src/gateway/msgr.mjs)와 같은 값 — 받는 쪽에서만 거절하면 보낸 사람은 이유를 모른다
+// 첨부 파일 하나 상한은 플랜에 따라 다르다(무료 25MB · Pro·체험 500MB — 최종 판정은 서버 _msgr_file_max, 20261012120000).
+// 앱이 먼저 거절해야 보낸 사람이 이유를 안다. 플랜은 5분 캐시(세션 내 my_plan 1~2회) — 모르는 동안은 무료 상한으로 안내하고 서버가 막는다.
+const ATTACH_MAX_FREE = 25 * 1024 * 1024, ATTACH_MAX_PRO = 500 * 1024 * 1024;
+const attachMaxFor = (plan) => (plan === 'pro' || plan === 'trial' ? ATTACH_MAX_PRO : ATTACH_MAX_FREE);
+let attachPlanCache = { at: 0, plan: null };
 const fmtTs = (iso, lang) => new Date(iso).toLocaleTimeString(lang === 'en' ? 'en-US' : 'ko-KR', { hour: '2-digit', minute: '2-digit' });
 // 데스크톱: 마우스를 올린 글이 속한 턴의 마지막 행에 data-turn-hover를 단다 — 턴 끝 아이콘 줄은 이 표시가 있을 때만 보인다(유건 2026-10-02).
 // 턴 = notail로 이어진 행들. 말풍선 사이 틈(척추 자체)에 올라가면 표시를 그대로 두어 깜빡이지 않게 하고, 척추를 벗어날 때만 지운다.
@@ -7022,11 +7027,18 @@ function Composer({ broadcast = null, onCrewJoined = null, outsideDmPersonal = n
     requestAnimationFrame(() => { ta.current?.focus(); ta.current?.setSelectionRange(next.length, next.length); autosize(ta.current); });
   };
   useEffect(() => { if (!mentionReq) return; mentionCrew(mentionReq); onMentionDone?.(); }, [mentionReq]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [attachMax, setAttachMax] = useState(() => attachMaxFor(attachPlanCache.plan));
+  useEffect(() => { // 내 플랜의 첨부 상한(5분 캐시). 실패·지연은 무료 상한 안내를 유지한다
+    let live = true;
+    if (Date.now() - attachPlanCache.at > 300_000) q(supabase.rpc('my_plan')).then((r) => { attachPlanCache = { at: Date.now(), plan: planOf(r) }; if (live) setAttachMax(attachMaxFor(attachPlanCache.plan)); }).catch(() => {});
+    else setAttachMax(attachMaxFor(attachPlanCache.plan));
+    return () => { live = false; };
+  }, []);
   const addFiles = (list) => { // 선택창·드래그앤드롭 공용 — 상한 초과는 이유를 알리고, 같은 파일은 한 번만, 기존 첨부에 누적(유건 제보 2026-09-11 밤)
     const incoming = [...(list ?? [])];
-    const { rejected } = acceptFiles([], incoming, ATTACH_MAX);
-    if (rejected.length) onError(rejected.map((f) => t('att.tooBig', { name: f.name })).join(' '));
-    setFiles((cur) => acceptFiles(cur, incoming, ATTACH_MAX).files);
+    const { rejected } = acceptFiles([], incoming, attachMax);
+    if (rejected.length) onError(rejected.map((f) => t('att.tooBig', { name: f.name, max: formatBytes(attachMax) })).join(' '));
+    setFiles((cur) => acceptFiles(cur, incoming, attachMax).files);
   };
   const send = async () => {
     if (locked || busy || deliveryBlocked || rolePick) return; // 명령(/to·/cc)만 있는 글은 보내지 않는다 — 폰은 전송 버튼이 유일한 경로(검수 M-1)

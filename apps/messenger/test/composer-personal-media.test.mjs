@@ -3,7 +3,7 @@
 // 글이 다 올라간 뒤 링크가 있으면 엣지 함수(msgr-link-preview)를 한 번만 부른다 — 실패해도 전송은 성공으로 둔다.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createComposerDelivery, composerTransport, getComposerSession, bindComposerSession, clearComposerSessions } from '../src/composer-delivery.mjs';
+import { createComposerDelivery, composerTransport, getComposerSession, bindComposerSession, clearComposerSessions } from '../../../src/composer-delivery.mjs';
 
 const file = (name, type = 'image/png') => ({ name, size: 3, type });
 function client() {

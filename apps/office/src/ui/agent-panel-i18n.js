@@ -23,7 +23,7 @@ export const AGENT_DICT = {
   'agent.dismiss': ['그만두기', 'Discard'],
   'agent.sendFail': ['보내지 못했습니다.', 'Could not send.'],
   'agent.uploading': ['{name} 올리는 중…', 'Uploading {name}…'],
-  'agent.tooBig': ['25MB를 넘는 파일은 보낼 수 없습니다: {names}', 'Files over 25MB cannot be sent: {names}'],
+  'agent.tooBig': ['{max}를 넘는 파일은 보낼 수 없습니다: {names}', 'Files over {max} cannot be sent: {names}'],
   'agent.signIn': ['로그인하면 에이전트에게 일을 맡길 수 있습니다.', 'Sign in to hand work to an agent.'],
   'agent.context': ['같은 에이전트와의 최근 대화는 참고 맥락으로 함께 전달됩니다.', 'Recent messages with this agent are shared as context.'],
   'agent.filesOnly': ['첨부한 파일을 확인해 줘.', 'Please look at the attached files.'],

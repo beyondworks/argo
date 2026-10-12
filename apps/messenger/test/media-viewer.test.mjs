@@ -4,7 +4,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { clampZoom, zoomAt, clampPan, swipeDecision, dismissDecision, isDoubleTap, ZOOM_MAX, wheelZoom } from '../src/lightbox-gesture.mjs';
-import { mediaCaps, fileView, shouldRequestPreview, splitAttachments, previewFor } from '../src/media-actions.mjs';
+import { mediaCaps, fileView, splitAttachments, previewFor } from '../src/media-actions.mjs';
+import { shouldRequestPreview } from '../../../src/composer-delivery.mjs';
 
 test('clampZoom — 1~최대, 숫자 아님은 1', () => {
   assert.equal(clampZoom(0.3), 1);

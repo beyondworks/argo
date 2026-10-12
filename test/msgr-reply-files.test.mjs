@@ -42,7 +42,7 @@ await writeFile(join(PROJ, '.hidden', 'a.png'), 'HIDDEN');
 await symlink(join(OUTSIDE, 'secret.pdf'), join(PROJ, 'link.pdf')); // 파일 심링크 탈출
 await symlink(OUTSIDE, join(PROJ, 'escape')); // 폴더 심링크 탈출
 await writeFile(join(PROJ, 'big.pdf'), '');
-await truncate(join(PROJ, 'big.pdf'), 25 * 1024 * 1024 + 1); // 25MB 초과(희소 파일 — 디스크를 쓰지 않는다)
+await truncate(join(PROJ, 'big.pdf'), 500 * 1024 * 1024 + 1); // 전역 천장 500MB 초과(희소 파일 — 디스크를 쓰지 않는다). 플랜별 25MB는 서버 판정
 
 const AVATAR = join(PROJ, '페퍼-아바타.png');
 beforeEach(() => M._uploadedOnceForTest.clear()); // 같은 방·같은 내용 재사용 기억(M-5)은 시험마다 비운다 — 시험끼리 업로드 수가 섞이지 않게
@@ -155,10 +155,10 @@ test('.env·숨김 파일·숨김 폴더 거부', async () => {
   assert.ok(r.note);
 });
 
-test('크기 초과(25MB) 거부·구역 안 없는 파일은 "파일이 없습니다" — 경로는 본문·안내 어디에도 없다', async () => {
+test('크기 초과(500MB 천장) 거부·구역 안 없는 파일은 "파일이 없습니다" — 경로는 본문·안내 어디에도 없다', async () => {
   const r = await runTurn(`[큰 파일](${join(PROJ, 'big.pdf')}) ![없음](${join(PROJ, 'none.png')})`);
   assert.equal(r.uploads.length, 0);
-  assert.match(r.note.body, /big\.pdf.*25MB 초과/s);
+  assert.match(r.note.body, /big\.pdf.*500MB 초과/s);
   assert.match(r.note.body, /none\.png.*파일이 없습니다/s);
   noLocalPath(r.reply.body); noLocalPath(r.note.body);
   // 구역 밖은 있든 없든 같은 사유 하나 — 존재 여부를 방에 흘리지 않는다(N-5)

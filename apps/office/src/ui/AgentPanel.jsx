@@ -14,8 +14,9 @@ import { loadPageContent } from '../core/pull.js';
 import { rpc } from '../core/tasks.js';
 import { imeGuardWith } from '../core/ime.js';
 import { openExternal } from '../core/platform.js';
-import { createComposerDelivery } from '../../../messenger/src/composer-delivery.mjs';
+import { createComposerDelivery } from '../../../../src/composer-delivery.mjs';
 import { acceptFiles, withoutFile, chipSize } from '../../../messenger/src/attach-files.mjs';
+import { formatBytes } from '../../../../src/media-kind.mjs';
 import { previewFor } from '../../../messenger/src/media-actions.mjs';
 import { PANEL_SOURCE, conversations, threadOf, shownBody, seeingItem, waiting, openRoom, loadRoom, loadRow, loadSince, loadFiles, fileUrl, stopTurn, listen, panelTransport } from '../core/agent-chat.js';
 import { AGENT_DICT } from './agent-panel-i18n.js';
@@ -23,7 +24,11 @@ import './agent-panel.css';
 
 registerDict(AGENT_DICT);
 
-const ATTACH_MAX = 25 * 1024 * 1024; // 메신저·게이트웨이 ATTACH_MAX와 같은 값
+// 첨부 파일 하나 상한은 플랜에 따라 다르다(무료 25MB · Pro·체험 500MB — 서버 _msgr_file_max가 최종 판정, 20261012120000).
+// 메신저 입력창과 같은 5분 모듈 캐시로 my_plan을 읽는다 — 모르는 동안은 무료 상한으로 안내하고 서버가 막는다.
+const ATTACH_MAX_FREE = 25 * 1024 * 1024, ATTACH_MAX_PRO = 500 * 1024 * 1024;
+const attachMaxFor = (plan) => (plan === 'pro' || plan === 'trial' ? ATTACH_MAX_PRO : ATTACH_MAX_FREE);
+let attachPlanCache = { at: 0, plan: null };
 const SILENT_MS = 120_000;
 const pickKey = (space) => `argo-office-agent:${ME.id}:${space}`;
 const ITEM_ICON = { mail: 'mail', page: 'doc' };
@@ -103,6 +108,13 @@ export default function AgentPanel({ path, space, onClose }) {
   const [root, setRoot] = useState(null), [view, setView] = useState('chat');
   const [progress, setProgress] = useState(null), [sentAt, setSentAt] = useState(null), [now, setNow] = useState(() => Date.now());
   const [again, setAgain] = useState(0), [dropped, setDropped] = useState(null), [tooBig, setTooBig] = useState([]);
+  const [attachMax, setAttachMax] = useState(() => attachMaxFor(attachPlanCache.plan));
+  useEffect(() => { // 내 플랜의 첨부 상한(5분 모듈 캐시 — 메신저 입력창과 같은 규칙). 실패·지연은 무료 상한 안내 유지
+    let live = true;
+    if (Date.now() - attachPlanCache.at > 300_000) rpc('my_plan').then((d) => { attachPlanCache = { at: Date.now(), plan: d?.plan ?? null }; if (live) setAttachMax(attachMaxFor(attachPlanCache.plan)); }).catch(() => {});
+    else setAttachMax(attachMaxFor(attachPlanCache.plan));
+    return () => { live = false; };
+  }, []);
   const sbRef = useRef(null), rootRef = useRef(null), prepRef = useRef(null), fileIn = useRef(null), box = useRef(null);
   rootRef.current = root;
   const maxIdRef = useRef(0);
@@ -171,7 +183,7 @@ export default function AgentPanel({ path, space, onClose }) {
   };
   const addFiles = (list) => {
     if (!composer || !list?.length) return;
-    const { files: next, rejected } = acceptFiles(cs.files, [...list], ATTACH_MAX);
+    const { files: next, rejected } = acceptFiles(cs.files, [...list], attachMax);
     composer.setFiles(next); setTooBig(rejected.map((f) => f.name));
   };
   const onKey = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } };
@@ -226,7 +238,7 @@ export default function AgentPanel({ path, space, onClose }) {
       {ready && <footer className="agent-comp">
         {cs.job?.error && <div className="data-note agent-fail"><span>{t('agent.sendFail')}</span><button type="button" className="link-btn small" onClick={() => composer.retry()}>{t('agent.resend')}</button><button type="button" className="link-btn small" onClick={() => composer.dismiss()}>{t('agent.dismiss')}</button></div>}
         {cs.uploading && <p className="dim small">{t('agent.uploading', { name: cs.uploading })}</p>}
-        {tooBig.length > 0 && <p className="data-note">{t('agent.tooBig', { names: tooBig.join(', ') })}</p>}
+        {tooBig.length > 0 && <p className="data-note">{t('agent.tooBig', { names: tooBig.join(', '), max: formatBytes(attachMax) })}</p>}
         {(seeing || cs.files.length > 0) && <div className="agent-chips">
           {seeing && <span className="chip"><Icon name={ITEM_ICON[seeing.kind]} size={12} />{t('agent.seeing', { label: seeing.label })}<button type="button" className="chip-x" aria-label={t('close')} onClick={() => setDropped(`${seeing.kind}:${seeing.id}`)}><Icon name="x" size={12} /></button></span>}
           {cs.files.map((f) => <span key={`${f.name}-${f.size}`} className="chip"><Icon name="attach" size={12} />{f.name} · {chipSize(f)}<button type="button" className="chip-x" aria-label={t('close')} onClick={() => composer.setFiles(withoutFile(cs.files, f))}><Icon name="x" size={12} /></button></span>)}

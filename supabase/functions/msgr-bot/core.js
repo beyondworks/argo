@@ -51,7 +51,8 @@ const ERR = {
   msgr_bot_attach_expired: [409, 'Conflict: attach files within 1 hour of posting the message'],
   msgr_bot_bad_file_name: [400, 'Bad Request: file_name must contain 1 to 200 characters'],
   msgr_bot_bad_file_size: [400, 'Bad Request: file_size must be a positive byte count'],
-  msgr_bot_file_too_large: [413, 'Payload Too Large: files are limited to 25 MB'],
+  msgr_bot_file_too_large: [413, 'Payload Too Large: file exceeds the per-file limit for the owner plan (25 MB free, 500 MB Pro)'],
+  msgr_file_too_large: [413, 'Payload Too Large: file exceeds the per-file limit for the owner plan (25 MB free, 500 MB Pro)'], // 게이트(_msgr_upload_gate) 이름 — 봇 경로는 prepare가 msgr_bot_file_too_large로 먼저 내므로 여기서는 방어용
   msgr_bot_too_many_files: [409, 'Conflict: at most 10 files per message'],
   msgr_bot_bad_attach_path: [400, 'Bad Request: storage_path must come from createUpload for this message'],
   msgr_bot_upload_missing: [409, 'Conflict: upload the file to upload_url before attachFile'],
@@ -166,7 +167,7 @@ export async function handle({ token, method, params = {} }, rpc, { sleep = (ms)
         if (purgeUploads && Array.isArray(up.purge) && up.purge.length) await purgeUploads(up.purge).catch((e) => console.warn('[msgr-bot] purge skipped:', String(e?.message ?? e).slice(0, 200)));
         const url = signUpload ? await signUpload(up.storage_path) : null;
         if (!url) return fail(500, 'Internal: upload signing unavailable');
-        return reply(200, { storage_path: up.storage_path, upload_url: url, method: 'PUT', max_bytes: 26214400 });
+        return reply(200, { storage_path: up.storage_path, upload_url: url, method: 'PUT', max_bytes: 524288000 }); // 전역 천장 — 플랜별 상한은 prepare RPC가 거절한다(20261012120000)
       }
       const id = await rpc('msgr_bot_attach_commit', { token, p_message: mid, p_path: String(params.storage_path ?? ''), p_name: String(params.file_name ?? ''),
         p_mime: params.mime_type == null ? null : String(params.mime_type) });

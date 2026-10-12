@@ -260,7 +260,7 @@ test('handler: 채널 접두·발화자 귀속·첨부 내려받기 → chat(jou
   assert.equal(ins[0].reply_to, 11); assert.equal(ins[0].thread_root, 5, '스레드 뿌리를 명시(트리거가 크루 글로 채우면 넘김 연쇄가 끊긴다)'); assert.equal(ins[0].author_kind, 'crew'); assert.equal(ins[0].crew_id, CREW);
   assert.match(ins[0].body, /^보고서입니다/);
   const up = db.calls.find((x) => x[0] === 'upload');
-  assert.equal(up[1], `${ORG}/${CH}/${ins[0].id ?? '?'}/0-out.pdf`.replace('/?/', `/${900 + db.calls.findIndex((x) => x[0] === 'insertMessage') + 1}/`), '업로드 경로 = <org>/<channel>/<replyId>/<순번>-<ASCII 이름>(앱 storageKey와 같은 규칙)');
+  assert.equal(up[1], `${ORG}/${CH}/${ins[0].id ?? '?'}/0-out.pdf`.replace('/?/', `/${900 + db.calls.findIndex((x) => x[0] === 'insertMessage') + 1}/`), '업로드 경로 = <org>/<channel>/<replyId>/<순번>-<ASCII 이름>(공용 src/storage-key.mjs와 같은 규칙)');
   assert.equal(db.calls.some((x) => x[0] === 'insertAttachment' && x[1].name === 'out.pdf'), true);
   assert.equal(ins[1].kind, 'system'); assert.match(ins[1].body, /missing\.png.*파일이 없습니다/s); // 침묵 실패 금지
   const t = await loadThread(WS, 'seoyun');
@@ -269,7 +269,7 @@ test('handler: 채널 접두·발화자 귀속·첨부 내려받기 → chat(jou
   assert.equal(M._activeCtxForTest.size, 0, '턴 문맥은 턴이 끝나면 지운다');
 });
 
-test('handler: 한글 파일명 산출물도 전달된다 — Storage 키는 ASCII(앱 storageKey 규칙), 표시 이름은 원래 이름(라이브 실사고 2026-09-23 Invalid key)', async () => {
+test('handler: 한글 파일명 산출물도 전달된다 — Storage 키는 ASCII(공용 src/storage-key.mjs 규칙), 표시 이름은 원래 이름(라이브 실사고 2026-09-23 Invalid key)', async () => {
   const db = fakeDb({ parent: { id: 5, body: '질문' } });
   await mkdir(join(paths(WS).vault, 'files'), { recursive: true });
   await writeFile(join(paths(WS).vault, 'files', 'Kimi-K3-브리프-전문.md'), '# 브리프');

@@ -1,7 +1,7 @@
 // 에이전트 패널(⌘J, 1단계). 대화 = 내 에이전트와의 1:1 방 안에서 패널이 보낸 첫 글(meta.source = office_panel, thread_root 없음)과 그 답글 묶음 — 게이트웨이 답도 reply_to·thread_root를 단다(msgr.mjs).
 // 방 찾기·보내기 전 거절은 맡기기와 같은 crewRoom, 첨부 업로드·등록·빈 글 거두기는 메신저 composerTransport를 그대로 쓰고 글 쓰기만 바꿔 meta를 싣는다.
 // 부하: 패널을 열 때 방 찾기 RPC 2~4건 + 글 1회(최근 150개) + 첨부 1회. 그 뒤로는 비공개 토픽 구독(폴링 없음) — 새 글·첨부 방송마다 그 한 줄만 읽는다. 진행 신호는 방송만(DB 0).
-import { composerTransport } from '../../../messenger/src/composer-delivery.mjs';
+import { composerTransport } from '../../../../src/composer-delivery.mjs';
 import { crewRoom } from './crew-assign.js';
 
 export const PANEL_SOURCE = 'office_panel';

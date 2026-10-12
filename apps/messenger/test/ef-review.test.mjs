@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { createComposerDelivery, setDeliveryReporter } from '../src/composer-delivery.mjs';
+import { createComposerDelivery, setDeliveryReporter } from '../../../src/composer-delivery.mjs';
 import { fetchSearchRows } from '../src/search-rows.mjs';
 import { searchView } from '../src/search-view.mjs';
 import { deliveryCardView } from '../src/delivery-card.mjs';
