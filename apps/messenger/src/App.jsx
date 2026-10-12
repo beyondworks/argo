@@ -1278,11 +1278,15 @@ function Shell({ session }) {
     setVictimPick({ target: full, channelId, slots: slotState(rows, uid).slots.filter((s) => s.active) });
     return true;
   }, [uid, t]);
+  useEffect(() => { if (!victimPick) return undefined; const on = (e) => { if (e.key === 'Escape') setVictimPick(null); }; window.addEventListener('keydown', on); return () => window.removeEventListener('keydown', on); }, [victimPick]);
+  const victimBusy = useRef(false); // 연타로 교체가 두 번 나가지 않게(재검수 LOW-1)
   const applyVictimPick = useCallback(async (victim) => { // 멈출 것을 골랐다 — 끊고(→available) 연결. 실패하면 멈춘 것을 되돌린다(agent-pick.mjs)
+    if (victimBusy.current) return;
     const target = victimPick?.target; const channelId = victimPick?.channelId ?? null; setVictimPick(null);
     if (!target) return;
-    const r = await swapConnect(supabase, victim, target);
-    if (!r.ok) return setErr(friendlyErr(String(r.error ?? ''), t));
+    victimBusy.current = true;
+    const r = await swapConnect(supabase, victim, target).finally(() => { victimBusy.current = false; });
+    if (!r.ok) return setErr(r.rolledBack === false ? t('agents.slot.rollbackFailed', { name: victim.name }) : r.rowCount ? t('err.denied') : friendlyErr(String(r.error ?? ''), t)); // 문구는 사전으로(재검수 MEDIUM-2)
     if (channelId) { const j = await supabase.rpc('msgr_crew_join', { ch: channelId, crew: target.id }); if (j.error) setErr(joinErr(j.error.message, t)); else if (j.data === 'joined' || j.data === 'already') bumpMembers(); }
     setNote(t('agents.slot.swapped', { off: victim.name, on: target.display_name }));
     (isPersonal ? loadPersonal() : loadOrg(orgId)).catch(() => {});
@@ -3087,6 +3091,7 @@ function Shell({ session }) {
       <main className="msgr-main" {...edgeBack}>
         {personalCard && <PersonalAgentCard crewId={personalCard} uid={uid} saveLook={saveLook} onClose={() => setPersonalCard(null)} onNote={setNote} onError={setErr} onChanged={() => { loadMyAgents().catch(() => {}); if (isPersonal) loadPersonal().catch(() => {}); }} />}
         {sheet && crewOf(sheet) && !orgBlocked && !isPersonal && <CrewSheet crew={crewOf(sheet)} saveLook={saveLook} org={org} uid={uid} me={me} members={members} policy={policy} channelId={chId} channelName={channel?.kind === 'dm' ? null : channel?.name} nameOfUser={nameOfUser} onClose={() => setSheet(null)} onNeedVictimPick={needVictimPick} onChanged={() => loadOrg(orgId).catch(() => {})} onPosted={() => setEvent({ kind: 'message', channel_id: chId, at: Date.now() })} onNote={setNote} onError={setErr} onDm={() => dmWithCrew(sheet)} dmPersonal={dmGoesPersonal(crewOf(sheet))} />}
+        {chSheet && channel && !orgBlocked && <ChannelSheet joined={!previewing} muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} myAvailable={myAvailable} onDispatch={dispatchCrew} channel={channel} dmName={dmName} org={org} uid={uid} isAdmin={isAdmin} policy={policy} members={members} crews={crews} chMembers={chMembers} people={chPeople} chCrews={chCrews} ent={ent} onInvite={isAdmin ? orgInvite : null} onInviteHere={(role) => setInviteFor({ channelIds: [channel.id], role })} askAdmin={askAdmin} onCrew={(id) => { setChSheet(false); setSheet(id); }} onDm={(id) => openDm('user', id)} onWiden={widenDm} isPersonal={isPersonal} needConsent={isPersonal ? needPersonalConsent : null} refreshKey={`${membersEpoch}:${sheetReqTick}`} nameOfUser={nameOfUser} initialAdd={chSheetAdd} onMention={(c) => { setChSheet(false); setChSheetAdd(null); setMentionReq(c); }} onClose={() => { setChSheet(false); setChSheetAdd(null); }} onChanged={async () => { await (isPersonal ? loadPersonal() : loadOrg(orgId)).catch(() => {}); await loadChMembers(chId).catch(() => {}); }} onArchived={() => { setChSheet(false); setChId(null); loadOrg(orgId).catch(() => {}); }} onNote={setNote} onError={setErr} />}
         {victimPick && (<div className="msgr-sheetwrap" role="dialog" aria-label={t('agents.slot.full', { limit: FREE_AGENT_LIMIT })}>
           <div className="msgr-scrim clear" onClick={() => setVictimPick(null)} />
           <aside className="msgr-crewsheet">
@@ -3094,7 +3099,6 @@ function Shell({ session }) {
             {(victimPick.slots ?? []).map((s) => (<div key={s.key} className="ph-setrow"><span className="ph-kbody"><span className="name">{s.name}</span></span><button type="button" className="btn sm" onClick={() => applyVictimPick(s)}>{t('agents.slot.pause')}</button></div>))}
           </aside>
         </div>)}
-        {chSheet && channel && !orgBlocked && <ChannelSheet joined={!previewing} muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} myAvailable={myAvailable} onDispatch={dispatchCrew} channel={channel} dmName={dmName} org={org} uid={uid} isAdmin={isAdmin} policy={policy} members={members} crews={crews} chMembers={chMembers} people={chPeople} chCrews={chCrews} ent={ent} onInvite={isAdmin ? orgInvite : null} onInviteHere={(role) => setInviteFor({ channelIds: [channel.id], role })} askAdmin={askAdmin} onCrew={(id) => { setChSheet(false); setSheet(id); }} onDm={(id) => openDm('user', id)} onWiden={widenDm} isPersonal={isPersonal} needConsent={isPersonal ? needPersonalConsent : null} refreshKey={`${membersEpoch}:${sheetReqTick}`} nameOfUser={nameOfUser} initialAdd={chSheetAdd} onMention={(c) => { setChSheet(false); setChSheetAdd(null); setMentionReq(c); }} onClose={() => { setChSheet(false); setChSheetAdd(null); }} onChanged={async () => { await (isPersonal ? loadPersonal() : loadOrg(orgId)).catch(() => {}); await loadChMembers(chId).catch(() => {}); }} onArchived={() => { setChSheet(false); setChId(null); loadOrg(orgId).catch(() => {}); }} onNote={setNote} onError={setErr} />}
         {inviteFor && org && !isPersonal && <InviteDialog org={org} channels={inviteChannels} isAdmin={!!isAdmin} hostOf={hostChannels} initialChannelIds={inviteFor.channelIds} initialRole={inviteFor.role} create={createInviteCode} loadCurrent={isAdmin ? currentMemberLink : null} confirmReplace={confirmReplace} discard={async (id) => { inviteSync.current.start(); let gone = 0; try { const r = await discardInvite(supabase, id); gone = r ? -1 : 0; return r; } finally { inviteSync.current.finish(gone); } }} shareText={inviteShare} linkOf={inviteLinkOf} errorText={inviteErr} onClose={() => setInviteFor(null)} onManage={isAdmin ? manageInvites : null} t={t} phone={isPhone} />}
         {joinPreview && <InvitePreview p={joinPreview} avatar={<Av name={joinPreview.org_name} size="lg" />} busy={joinBusy} err={joinErr} onJoin={joinFromPreview} onOpen={() => { const p = joinPreview; setJoinPreview(null); if (p.org_id) setOrgId(p.org_id); if (p.channels?.[0]) requestNav(p.channels[0].id, 'invite'); }} onClose={() => setJoinPreview(null)} fmtWhen={(iso) => fmtWhen(iso, lang)} t={t} phone={isPhone} />}
         {orgLocked && <div className="msgr-notice locked"><span>{t(isAdmin ? 'org.locked.admin' : 'org.locked')}</span></div>}
@@ -3432,16 +3436,16 @@ function ChannelSheet({ channel, joined = false, muted = false, onToggleMute, dm
   const addCrews = async (rows) => {
     const picked = rows.filter((r) => crewPicks.has(r.c.id)); if (!picked.length) return;
     if (needConsent?.()) { onClose(); return; } // 개인 공간 — AI 이용 동의 전이면 동의부터(2026-09-30)
-    setBusy(true); let joined = 0; const asked = []; const already = []; const fails = [];
+    setBusy(true); let joined = 0; const asked = []; const already = []; const fails = []; const later = []; // later: 선택지가 열린 뒤 남은 에이전트(재검수 MEDIUM-1 — 선택지가 서로 덮지 않게 첫 번째에서 멈춘다)
     for (const r of picked) { // 순서대로 — 파견은 브리지 미러를 기다리고, 한 명이 실패해도 나머지는 들어간다
-      try { const res = r.dispatch ? await onDispatch(r.c, channel.id) : await joinCrew(r.c.id); if (res === 'picking') continue; if (res === 'requested') asked.push(r.c.display_name); else if (res === 'already') already.push(r.c.display_name); else joined++; }
+      try { const res = r.dispatch ? await onDispatch(r.c, channel.id) : await joinCrew(r.c.id); if (res === 'picking') { later.push(...picked.slice(picked.indexOf(r) + 1).map((x) => x.c.display_name)); onClose(); break; } if (res === 'requested') asked.push(r.c.display_name); else if (res === 'already') already.push(r.c.display_name); else joined++; }
       catch (e) { fails.push(`${r.c.display_name}: ${e.message}`); }
     }
     setBusy(false); setAdd(null); setCrewPicks(new Set());
     if (joined || already.length) await onChanged(); // 이미 있던 에이전트(다른 기기에서 넣음)도 다시 읽어야 추가 후보에서 빠지고 @이름이 닿는다(검수 #826 LOW-4)
     if (asked.length) loadJoinReqs();
     // 한 알림에 모은다 — 오류와 안내를 따로 띄우면 오류가 성공 안내를 덮어 "넣었는지"를 알 수 없었다(검수 MEDIUM-2)
-    const notes = [joined && t('ch.add.crew.added', { n: joined }), already.length && t('ch.crew.join.already', { name: already.join(', ') }), asked.length && t('ch.crew.join.requested', { name: asked.join(', ') })].filter(Boolean);
+    const notes = [joined && t('ch.add.crew.added', { n: joined }), already.length && t('ch.crew.join.already', { name: already.join(', ') }), asked.length && t('ch.crew.join.requested', { name: asked.join(', ') }), later.length && t('agents.slot.later', { names: later.join(', ') })].filter(Boolean);
     if (fails.length) onError([...notes, t('ch.add.crew.failed', { list: fails.join(' · ') })].join(' '));
     else if (notes.length) onNote(notes.join(' '));
   };

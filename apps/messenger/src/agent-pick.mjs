@@ -52,18 +52,18 @@ export async function swapPreview(db, row) {
 export async function writeStatus(db, ids, status) {
   const res = await db.from('msgr_crews').update({ status }).in('id', ids).select('id');
   if (res.error) return { ok: false, error: res.error.message };
-  if ((res.data?.length ?? 0) !== ids.length) return { ok: false, error: 'row count' };
+  if ((res.data?.length ?? 0) !== ids.length) return { ok: false, rowCount: true };
   return { ok: true };
 }
 
 /** 선택 교체 — 멈출 슬롯의 모든 행을 끊고(→available) 대상 행을 연결한다. 대상 연결이 실패하면 멈춘 행을 되돌린다(빈 자리로 남지 않게) */
 export async function swapConnect(db, victim, target) {
   const v = await writeStatus(db, victim.rows.map((r) => r.id), 'available');
-  if (!v.ok) return { ok: false, error: v.error, stage: 'pause' };
+  if (!v.ok) return { ...v, stage: 'pause' };
   const t = await writeStatus(db, [target.id], 'active');
   if (!t.ok) {
     const back = await writeStatus(db, victim.rows.map((r) => r.id), 'active').catch(() => ({ ok: false }));
-    return { ok: false, error: back.ok === false ? `${t.error} · 되돌리기도 실패(${victim.name}은 멈춘 채)` : t.error, stage: 'connect' };
+    return { ...t, stage: 'connect', rolledBack: back.ok }; // 문구는 부르는 쪽이 사전으로(rolledBack === false → 멈춘 채 남음)
   }
   return { ok: true };
 }

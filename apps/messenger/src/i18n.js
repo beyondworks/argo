@@ -1236,6 +1236,8 @@ export const DICT = {
   'agents.swap': ['무료 계정은 에이전트 4명까지라서 {names} 에이전트를 멈췄어요. Pro면 제한이 없어요.', 'Free accounts can use up to 4 agents, so {names} is now paused. Pro has no limit.'], // 교체 안내(검수 #945 MEDIUM-1)
   'agents.slot.full': ['무료 계정의 메신저 연결은 {limit}명까지예요. 멈출 에이전트를 골라 주세요.', 'Free accounts can connect up to {limit} agents. Choose which one to pause.'], // 사용자가 멈출 것을 고른다(2026-10-12) — 서버 자동 교체 대신
   'agents.slot.pause': ['멈추기', 'Pause'],
+  'agents.slot.rollbackFailed': ['연결하지 못했고, {name}도 다시 켜지 못해 멈춘 채로 남았어요. 설정 › 내 에이전트에서 다시 연결해 주세요.', "Couldn't connect, and {name} couldn't be turned back on, so it stays paused. Reconnect it in Settings › My agents."],
+  'agents.slot.later': ['자리가 차서 {names}은(는) 넣지 않았어요. 멈출 에이전트를 고른 뒤 다시 추가해 주세요.', 'No free slot, so {names} was not added. Choose an agent to pause, then add again.'],
   'agents.slot.swapped': ['{off}을(를) 멈추고 {on}을(를) 연결했습니다.', 'Paused {off} and connected {on}.'],
   'agents.slot.count': ['메신저 연결 {n}/{limit}명', '{n} of {limit} connected'],
   'agents.slot.on': ['연결', 'Connect'],
