@@ -2178,4 +2178,4 @@ const STAGE_CODES = new Set(['boot', 'memory', 'write', 'shell', 'web', 'delegat
 export function stageLabel(t, stage, detail = '') {
   if (!stage) return '';
   if (!STAGE_CODES.has(stage)) return stage; // 레거시/미지 — 원문 표시
-  return stage === 'runner' ? t('chat.stage.runner', { name: detail || '' }) : t(`chat.stage.${stage}`);
+}
