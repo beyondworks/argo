@@ -677,3 +677,29 @@ test('[유지 선택] 거절 — 한도 넘는 개수·중복·모르는 에이�
   sql(`insert into public.entitlements (user_id, plan) values ('${PRO}', 'pro') on conflict (user_id) do update set plan = 'pro'`);
   assert.equal(JSON.parse(last(asUser(PRO, `select public.msgr_free_keep(array['${WS}:x1']::text[])`))).pro, true, 'Pro는 한도가 없어 할 일 없음');
 });
+
+// [제보 12명] 유건 2026-10-12 사용자 제보 — 설정 › 메신저 연결의 '연결 안 된 에이전트 추가'(빠진 에이전트를 목록 순서대로 paused→active 한 줄씩)를
+// 누를 때마다 5~8번과 9~12번만 번갈아 연결되고 1~4번은 다시 연결되지 않았다. 관문이 한 줄 연결마다 가장 오래 고르지 않은 것을 멈추므로 매번 목록 끝 4명만 남는다.
+// 설정 카드는 이제 자리가 모자라면 유지할 묶음을 고르게 하고 msgr_free_keep 한 번으로 적용한다(app/c/[ws]/settings/keep-choices.mjs).
+test('[제보 12명] 종전 일괄 연결을 되풀이하면 5~8·9~12번만 번갈아 남는다 — 유지 선택은 고른 4명(1·2·7·12번)을 그대로 남긴다', { skip }, () => {
+  const Z = 'ac000012-0000-4000-8000-000000000012'; mkUser(Z, 'z12');
+  const OZ = last(asUser(Z, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('Z12', 'z-twelve', '${Z}') returning id`));
+  const slugs = Array.from({ length: 12 }, (_, i) => `z${String(i + 1).padStart(2, '0')}`);
+  const id = {};
+  for (const s of slugs) id[s] = last(asUser(Z, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name, hosting, status, allow) values ('${OZ}', '${Z}', '${WS}', '${s}', '${s}', 'local', 'paused', 'owner') returning id`));
+  assert.equal(sql(`select public.is_pro_for('${Z}')`), 'f', '무료 계정');
+  beatV(Z, 'z-mac', Object.values(id)); // 새 앱 — 최근 대화 순 4명 재개(대화 기록이 없으면 만든 순)
+  keep(Z, slugs.slice(0, 4)); // 시작 상태: 1~4번 연결
+  assert.equal(slugsOf(Z, 'active'), 'z01,z02,z03,z04');
+  // 종전 '연결 안 된 에이전트 추가' — route.js 3) 연결: 빠진 slug를 카드 순서대로 한 줄씩 active로
+  const bulk = () => { const act = slugsOf(Z, 'active').split(','); for (const s of slugs) if (!act.includes(s)) asUser(Z, `update public.msgr_crews set status = 'active' where id = '${id[s]}' and status <> 'active'`); return slugsOf(Z, 'active'); };
+  assert.equal(bulk(), 'z09,z10,z11,z12', '첫 번째: 끝 4명');
+  assert.equal(bulk(), 'z05,z06,z07,z08', '두 번째: 1~8 중 끝 4명');
+  assert.equal(bulk(), 'z09,z10,z11,z12', '세 번째: 다시 9~12 — 1~4번은 영영 남지 못한다(제보 그대로)');
+  // 유지 선택 — 사람이 고른 4명이 그대로 남고, 나머지는 멈춤(파견 해제 아님)
+  keep(Z, ['z01', 'z02', 'z07', 'z12']);
+  assert.equal(slugsOf(Z, 'active'), 'z01,z02,z07,z12');
+  assert.equal(sql(`select count(*) from public.msgr_crews where owner_user_id = '${Z}' and status = 'available'`), '0', '고르지 않은 것은 멈춤 — 기억을 지우는 파견 해제가 아니다');
+  sweep(Z);
+  assert.equal(slugsOf(Z, 'active'), 'z01,z02,z07,z12', 'sweep이 선택을 뒤집지 않는다');
+});

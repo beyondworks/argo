@@ -15,6 +15,7 @@ import { accountPlan, trialBadgeState } from '../../../../src/entitlement.mjs';
 
 // Argo Messenger 받기 — 맥·윈도우 설치파일만 걸던 것을 앱 스토어·Play까지 있는 안내 페이지 한 곳으로(CX-12). 오피스 진입 버튼(CX-13)은 오피스가 비공개라 뺐다(유건 2026-10-10).
 import { MESSENGER_PAGE, msgrCardView, runtimeWaitingKey, runtimeAction, pausedLabelKey, personalCardView } from './msgr-card.mjs';
+import { keepChoices, togglePick, pickReady, hereSlugs, sameAsActive, FREE_AGENT_LIMIT } from './keep-choices.mjs'; // 무료 계정이 유지할 에이전트를 고른다(2026-10-12 제보)
 import ArchivedCompaniesCard from '../../../archived-companies'; // 보관한 회사 되돌리기 — 홈에도 같은 카드(UM3)
 import { trashFailKind } from './trash-fail.mjs'; // 보관함 항목이 이미 사라졌는지(2차 M3)
 import { saveWithRevert } from './save-revert.mjs'; // 저장 실패면 되돌린다(F9)
@@ -903,7 +904,8 @@ function MsgrCard({ ws, agents }) {
   const [reconnecting, setReconnecting] = useState(false);
   const [err, setErr] = useState('');
   const [note, setNote] = useState(''); // 무료 4명 교체 안내(연결 결과)
-  const [confirm, setConfirm] = useState(null); // 교체 미리 알림 { scope, slugs, victims } — 연결하면 멈출 에이전트를 먼저 보이고 확인(검수 스택 화면 4차)
+  const [confirm, setConfirm] = useState(null); // 교체 미리 알림 { scope, slugs, victims } — 유지할 에이전트 고르기를 못 쓸 때(옛 서버·Pro 판정 실패)만의 종전 확인
+  const [keep, setKeep] = useState(null); // 유지할 에이전트 고르기 { scope, slots, picked, victims } — 무료 한도에서 사람이 고른다(2026-10-12)
   const load = useCallback(() => api(`/api/companies/${ws}/msgr`)
     .then((d) => { setSt(d); setOrgId((cur) => cur && d.orgs?.some((o) => o.id === cur) ? cur : (d.orgs?.[0]?.id ?? '')); })
     .catch(() => { setSt({ signedIn: false, orgs: [], crews: [] }); setErr(t('settings.msgr.err.load')); }), [ws, t]);
@@ -930,9 +932,12 @@ function MsgrCard({ ws, agents }) {
     try {
       if (!confirmed) {
         const p = await api(`/api/companies/${ws}/msgr`, { preview: true, slugs }).catch(() => null);
-        if (p?.victims?.length) { setConfirm({ scope, slugs, victims: p.victims }); return; }
+        if (p?.victims?.length) { // 자리가 모자라다 — 하나씩 연결하며 서버가 교체하게 두면 매번 목록 끝 4명만 남는다(제보). 사람이 유지할 묶음을 고른다
+          if (await openKeep(scope, slugs)) return;
+          setConfirm({ scope, slugs, victims: p.victims }); return; // 고르기를 못 열면(옛 서버·조회 실패) 종전 확인
+        }
       }
-      setConfirm(null);
+      setConfirm(null); setKeep(null);
       const r = await api(`/api/companies/${ws}/msgr`, { ...scope, activate: true, slugs });
       if (r?.swapped?.length) setNote(t('settings.msgr.swapped', { names: r.swapped.join(', ') }));
       await load();
@@ -942,6 +947,39 @@ function MsgrCard({ ws, agents }) {
       setErr(e.message || t('settings.msgr.err.activate'));
       load().catch(() => {}); // 거절돼도 넣은 행은 멈춤으로 남는다 — 줄 표기('멈춤 · …')를 서버 상태로(#945 분리 검수 3차)
     } finally { setActivating(false); }
+  }
+  // 유지할 에이전트 고르기 열기 — 이 범위(조직 카드 = 이 회사 에이전트 전부, 개인 공간 = 개인 행이 있는 에이전트)와 내 다른 회사 에이전트. 열었으면 true
+  async function openKeep(scope, wanted = []) {
+    const d = await api(`/api/companies/${ws}/msgr`, { keepList: true }).catch(() => null);
+    if (!d?.ok || d.plan === 'pro' || d.plan === 'trial') return false; // Pro는 한도가 없다 — 종전 연결
+    // 개인 공간은 행을 새로 넣지 않는다(미러가 만든다) — 연결·멈춤 개인 행이 있는 에이전트만 연결하려는 대상이 된다(분리 검수 M1, 사람이 해제한 available은 묶어 켜지 않는다)
+    const add = scope.personal ? wanted.filter((s) => personalView.rows.some((r) => r.slug === s && (r.row?.status === 'active' || r.row?.status === 'paused'))) : wanted;
+    const { slots, picked } = keepChoices({ rows: d.rows, uid: d.uid, ws, wanted: add, agents, limit: FREE_AGENT_LIMIT });
+    setConfirm(null); setKeep({ scope, slots, picked, add });
+    return true;
+  }
+  async function saveKeep() {
+    if (!keep || activating || !pickReady(keep.picked, keep.slots)) return;
+    setActivating(true); setErr(''); setNote('');
+    try {
+      const r = await api(`/api/companies/${ws}/msgr`, { ...keep.scope, keep: [...keep.picked], add: keep.add ?? [] }); // add = 이 조직에 행을 새로 만들 대상(연결 흐름에서만 — '바꾸기'는 새 등록을 만들지 않는다, 분리 검수 L2)
+      if (r?.unavailable) { // 서버에 아직 고르기 함수가 없다 — 종전 확인으로(고른 이 회사 에이전트를 연결)
+        const slugs = hereSlugs(keep.picked, ws).filter((s) => !keep.slots.find((x) => x.key === `${ws}:${s}`)?.active);
+        setKeep(null);
+        if (slugs.length) await connectAgents(keep.scope, slugs, true);
+        return;
+      }
+      setKeep(null); if (!r?.result?.pro) setNote(t('settings.msgr.keep.saved')); // Pro면 서버가 할 일 없음({pro:true}) — 바꿨다고 말하지 않는다(분리 검수 L4)
+      await load();
+      window.dispatchEvent(new Event('argo:refresh'));
+    } catch (e) {
+      setErr(e.message || t('settings.msgr.err.activate'));
+    } finally { setActivating(false); }
+  }
+  async function openKeepNow(scope) {
+    if (activating) return;
+    setActivating(true); setErr(''); setNote('');
+    try { if (!(await openKeep(scope))) { await load(); setErr(t('settings.msgr.keep.err.load')); } } finally { setActivating(false); }
   }
   async function activateOrg() {
     if (!orgId || !missing.length) return;
@@ -954,6 +992,33 @@ function MsgrCard({ ws, agents }) {
       <button type="button" className="btn sm" disabled={activating} onClick={() => setConfirm(null)}>{t('common.cancel')}</button>
     </div>
   );
+
+  const keepEl = keep && (
+    <section className="msgr-keep" role="group" aria-labelledby="msgr-keep-title">
+      <div>
+        <span className="card-title" id="msgr-keep-title" style={{ fontSize: 13 }}>{t('settings.msgr.keep.title', { limit: Math.min(FREE_AGENT_LIMIT, keep.slots.length) })}</span>
+        <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: '4px 0 0', lineHeight: 1.6 }}>{t('settings.msgr.keep.help', { limit: FREE_AGENT_LIMIT })}</p>
+      </div>
+      <ul className="msgr-crews" role="list">
+        {keep.slots.map((s) => { const on = keep.picked.has(s.key); const full = !on && keep.picked.size >= FREE_AGENT_LIMIT; return (
+          <li key={s.key} className={`msgr-crew${on ? ' on' : ''}`}>
+            <label className="row" style={{ cursor: full ? 'not-allowed' : 'pointer', opacity: full ? 0.55 : 1 }}>
+              <input type="checkbox" checked={on} disabled={activating || full} onChange={() => setKeep((k) => k && { ...k, picked: togglePick(k.picked, s.key, FREE_AGENT_LIMIT) })} />
+              <span className="who"><span className="name">{s.name}</span>{!s.here && <span className="role">{t('settings.msgr.keep.other', { ws: s.ws })}</span>}</span>
+              {s.paused && <span className="state"><span className="dot" aria-hidden="true" />{t('settings.msgr.keep.paused')}</span>}
+            </label>
+          </li>); })}
+      </ul>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <span className="mono" style={{ fontSize: 11, color: 'var(--fg-3)', flex: '1 1 auto' }}>{t('settings.msgr.keep.picked', { n: keep.picked.size, limit: Math.min(FREE_AGENT_LIMIT, keep.slots.length) })}</span>
+        <button type="button" className="btn btn-primary sm" disabled={activating || !pickReady(keep.picked, keep.slots) || sameAsActive(keep.picked, keep.slots)} onClick={saveKeep}>{activating ? <Spinner size={12} /> : t('common.save')}</button>
+        <button type="button" className="btn sm" disabled={activating} onClick={() => setKeep(null)}>{t('common.cancel')}</button>
+      </div>
+    </section>
+  );
+  const keepOpenBtn = (scope) => st?.pauseReason === 'limit' && !keep && (
+    <div style={{ display: 'flex' }}><button type="button" className="btn sm" disabled={activating} onClick={() => openKeepNow(scope)}>{t('settings.msgr.keep.open')}</button></div>
+  ); // 무료 한도로 멈춘 에이전트가 있으면 언제든 다시 고른다(4명 안에서 몇 번이든)
 
   async function reconnectBridge() {
     if (reconnecting) return;
@@ -1026,6 +1091,8 @@ function MsgrCard({ ws, agents }) {
           </button>
         </section>
         {swapConfirmEl}
+        {keepEl}
+        {keepOpenBtn({ personal: true })}
         <section className="msgr-roster" aria-labelledby="msgr-personal-roster-title">
           <div className="msgr-roster-head">
             <div>
@@ -1051,7 +1118,7 @@ function MsgrCard({ ws, agents }) {
         <div className="msgr-orgbar">
           <label>
             <span className="microlabel">{t('settings.msgr.org')}</span>
-            <select className="input" value={orgId} onChange={(e) => setOrgId(e.target.value)}>
+            <select className="input" value={orgId} onChange={(e) => { setOrgId(e.target.value); setKeep(null); setConfirm(null); }}>
               {st.orgs.map((o) => <option key={o.id} value={o.id}>{o.name} · {t(`role.${o.role}`)}</option>)}
             </select>
           </label>
@@ -1077,6 +1144,8 @@ function MsgrCard({ ws, agents }) {
             </button>}
           </section>
           {swapConfirmEl}
+          {keepEl}
+          {keepOpenBtn({ orgId })}
           <section className="msgr-roster" aria-labelledby="msgr-roster-title">
             <div className="msgr-roster-head">
               <div>

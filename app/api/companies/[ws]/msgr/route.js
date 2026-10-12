@@ -9,7 +9,8 @@ import { loadCompany, updateCompany, getDeviceId } from '../../../../../src/work
 import { msgrGatewayStatus, msgrRuntimeState } from '../../../../../src/connections.mjs';
 import { nudgeGateway } from '../../../../../src/gateway.mjs';
 import { splitCardRows } from './card-rows.mjs'; // 행 나누기 — 카드 판정과 같은 모양을 테스트가 잠근다(UL10)
-import { freeAgentReason, readAgentPause, swapNotes } from './free-reason.mjs'; // 무료 계정 연결이 멈춘 이유·교체 안내(2026-10-11)
+import { freeAgentReason, readAgentPause, swapNotes } from './free-reason.mjs';
+import { keepPlan } from './keep-plan.mjs'; // 유지할 에이전트 적용 판정(새로 넣을 행·함께 연결할 행·거절) — 행동 시험이 잠근다 // 무료 계정 연결이 멈춘 이유·교체 안내(2026-10-11)
 
 const ALLOW = new Set(['all', 'list', 'owner']);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -108,7 +109,7 @@ export async function POST(req, { params }) {
   const cs = await csrfDenied(req); if (cs) return cs;
   const lang = await requestLang();
   // 기본 'owner' — 조직 정책 테이블(부록 H-0) 전까지는 가장 좁게 시작하고 크루 시트/카드에서 연다(유건 결정 2026-09-03)
-  const { orgId, slug, allow = 'owner', allowUsers = [], activate = false, reconnect = false, slugs = [], personal = false, preview = false } = await req.json().catch(() => ({}));
+  const { orgId, slug, allow = 'owner', allowUsers = [], activate = false, reconnect = false, slugs = [], personal = false, preview = false, keepList = false, keep = null, add = [] } = await req.json().catch(() => ({}));
   const users = Array.isArray(allowUsers) ? allowUsers : [];
   const wanted = Array.isArray(slugs) ? [...new Set(slugs.filter((v) => typeof v === 'string' && v))] : [];
   if (reconnect) {
@@ -130,6 +131,48 @@ export async function POST(req, { params }) {
     if (!c || !known.length) return Response.json({ ok: true, victims: [] });
     const { data, error } = await c.client.rpc('msgr_free_swap_preview', { p_ws: ws, p_slugs: known });
     return Response.json({ ok: true, victims: error ? [] : [...new Set((data ?? []).filter(Boolean))] });
+  }
+  // 무료 계정이 유지할 에이전트 고르기(유건 2026-10-12, 제보 "12명 중 5~8·9~12번만 번갈아 연결") — 종전 일괄 연결은 빠진 에이전트를 하나씩 연결해
+  //   한도가 차 있으면 연결할 때마다 서버가 가장 오래 고르지 않은 것을 멈췄고, 매번 목록의 마지막 4명만 남았다. 이제 자리가 모자라면 사람이 고른다.
+  // 1) 고를 거리 — 내 사람 에이전트 전체(한도는 계정 전체라 다른 회사 것도) + 플랜. 읽기 2건, 사람이 연결을 누를 때·고르기를 열 때만(카드 폴과 무관).
+  if (keepList) {
+    const c = await sessionClient().catch(() => null);
+    if (!c) return authError('auth_required', lang);
+    const [rows, plan] = await Promise.all([
+      c.client.from('msgr_crews').select('id, ws_id, slug, display_name, status, hosting, owner_user_id').eq('owner_user_id', c.uid).neq('hosting', 'bot').in('status', ['active', 'paused']),
+      c.client.rpc('my_plan'),
+    ]);
+    if (rows.error) return upstream('POST keepList', rows.error, lang);
+    return Response.json({ ok: true, uid: c.uid, plan: plan.error ? null : (plan.data?.plan ?? null), rows: rows.data ?? [] });
+  }
+  // 2) 적용 { keep: ['회사:이름', …], orgId? | personal? } — 서버 함수 msgr_free_keep 한 번(고르지 않은 것은 멈춤 — 채널 참여·기억 보존, 고른 멈춘 것은 재개).
+  //    이 회사에서 고른 에이전트에 조직 행이 없으면 멈춘 행으로 먼저 넣는다(연결 단추와 같은 1단계). 파견 해제(available) 행은 함께 연결할 행으로 넘긴다.
+  if (Array.isArray(keep)) {
+    if (!personal && !UUID.test(String(orgId ?? ''))) return apiError('msgr_bad_request', lang);
+    const agents = await listAgents(ws);
+    const c = await sessionClient().catch(() => null);
+    if (!c) return authError('auth_required', lang);
+    const orgRows = personal ? [] : (await myRegistrations(c, ws)).filter((r) => r.org_id === orgId);
+    const plan = keepPlan({ keep, add, ws, personal, orgId, agents, existing: new Set(orgRows.map((r) => r.slug)), scope: personal ? await myPersonalRows(c, ws) : orgRows });
+    if (plan.error) return apiError(plan.error, lang);
+    const bySlug = new Map(agents.map((agent) => [agent.slug, agent]));
+    for (const s of plan.inserts) {
+      const a = bySlug.get(s);
+      const { error } = await c.client.from('msgr_crews').insert({ org_id: orgId, owner_user_id: c.uid, ws_id: ws, slug: s, display_name: a.name || s, role_text: a.role || null,
+        hosting: process.env.ARGO_TENANT_OWNER ? 'resident' : 'local', status: 'paused', allow: 'owner', allow_users: [] });
+      if (error && error.code !== '23505') return upstream('POST keep insert', error, lang);
+    }
+    const info = await readAgentPause(c.client).catch(() => null); // 연결 갈래와 같다 — 서버가 이 기기의 새 앱을 모르면 심박 한 번(관문이 새 앱을 요구)
+    if ((info?.reason === 'app' || info?.reason === 'off') && appMeetsMin(info.min_app)) await beatNow(c, ws).catch((e) => console.warn('[argo] msgr 새 앱 심박 실패:', e?.message ?? e));
+    const { keys, act } = plan;
+    const { data, error } = await c.client.rpc('msgr_free_keep', { p_keep: keys, p_activate: act });
+    if (error) {
+      if (error.code === 'PGRST202') return Response.json({ ok: false, unavailable: true }); // 옛 서버(함수 없음) — 화면이 종전 '멈추고 연결'로 돌아간다
+      if (/msgr_bad_member/.test(String(error.message ?? ''))) return apiError('msgr_bad_request', lang);
+      return upstream('POST keep', error, lang);
+    }
+    const crews = await syncEnabled(ws, c);
+    return Response.json({ ok: true, crews, personal: personal ? await myPersonalRows(c, ws) : undefined, result: data ?? null });
   }
   // 개인 공간 연결(조직이 없는 사용자 — 검수 스택 화면 4차): 게이트웨이(미러)가 넣은 개인 행 중 멈춘 행을 사람의 연결(→active)로 — 관문·sweep·교체 안내가
   //   조직 행과 같은 길(PG 시험 [4차]). 행을 새로 넣지 않는다(개인 행은 미러가 만든다). 상태만 바꿔 허용 범위·이름은 그대로.

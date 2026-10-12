@@ -2540,6 +2540,7 @@ html[data-os='win'] .table th { letter-spacing: 0.06em; }
 .msgr-orgbar select.input { height: 30px; font-size: 12.5px; max-width: 260px; }
 .msgr-crews { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border-soft); border-radius: calc(var(--r) - 4px); overflow: hidden; }
 .msgr-crew + .msgr-crew { border-top: 1px solid var(--border-soft); }
+.msgr-keep { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid var(--border); border-radius: calc(var(--r) - 4px); } /* 유지할 에이전트 고르기(무료 한도) — 줄은 .msgr-crew 그대로, 첫 칸이 체크 */
 .msgr-connection { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px; border: 1px solid var(--border-soft); border-radius: calc(var(--r) - 4px); background: color-mix(in srgb, var(--card-2) 55%, transparent); }
 .msgr-runtime { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 10px 12px; border: 1px solid var(--border-soft); border-radius: calc(var(--r) - 4px); background: color-mix(in srgb, var(--warn) 6%, var(--card-2)); }
 .msgr-runtime.on { background: color-mix(in srgb, var(--ok) 7%, var(--card-2)); }
