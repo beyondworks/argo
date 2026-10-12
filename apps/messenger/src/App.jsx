@@ -89,6 +89,7 @@ import { crewRowMenuKeys, crewOpeners, creatorTagVisible } from './crew-row-menu
 import { crewAwayNotice } from './crew-dm-notice.mjs';
 import { crewListEmptyKey } from './crews-empty.mjs';
 import { readAgentPause, agentPauseNote, readSwapNames, splitSpaceCrews, withPaused, pausedRoomCrew, readPausedCrewNames, crewNameAsker } from './agent-pause.mjs'; // 무료 계정 에이전트가 멈춘 이유(2026-10-11)
+import { slotState, slotKey, swapPreview, swapConnect, writeStatus, readMyPlan, FREE_AGENT_LIMIT } from './agent-pick.mjs'; // 무료 4명을 사용자가 고른다(2026-10-12)
 import { runnerOptions, RUNNER_INSTALL } from './runner-sheet.mjs';
 import { seenWithin, stampFetched, markSeen } from './presence-clock.mjs'; import { readWithSeen } from './crew-seen.mjs'; // 접속 판정 = 받아 온 때 기준(기능 점검 D2) // '실행기 연결' 시트(아르고 패밀리 구조, 2026-10-02)
 import { shortcutLabel } from './shortcut.mjs';
@@ -3086,7 +3087,7 @@ function Shell({ session }) {
         ) : page === 'inbox' && org ? (
           <Inbox items={inbox} prevSeen={inboxPrev} initialKind={inboxKind} onReadAll={() => { const now = Date.now(); setInboxPrev(now); const next = { ...inboxSeen, [org.id]: now }; setInboxSeen(next); writeInboxSeen(next); const dmIds = new Set(channels.filter((c) => c.kind === 'dm').map((c) => c.id)); const top = new Map(); for (const it of inbox) { const mid = Number(it.key.split(':')[1]); if (it.channel_id && dmIds.has(it.channel_id) && it.kind !== 'approval' && it.kind !== 'friend' && Number.isInteger(mid) && mid > (top.get(it.channel_id) ?? 0)) top.set(it.channel_id, mid); } for (const [cid, mid] of top) markRead(cid, mid); resyncBadge(); }} channels={channels} crews={shownCrews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id, it) => { if (!id) { if (it?.kind === 'system') { if (isAdmin) { setPage('settings'); setSettingsTab('org'); } return; } setPage('settings'); setSettingsTab('friends'); return; } if (!it?.joinReq && openAgentDmInstead(id, 'inbox')) return; if (it?.joinReq) { if (id === chId) { setChSheet(true); setSheetReqTick((x) => x + 1); } else sheetAfterNav.current = true; } setChId(id); setPage('chat'); }} onBack={backFromPage} onMenu={openNav} />
         ) : page === 'settings' || page === 'orgsettings' || (isPhone && page.startsWith('set-')) ? (
-          <Settings phoneView={isPhone ? (page === 'settings' ? 'list' : page === 'orgsettings' ? 'orgadmin' : page.slice(4)) : null} onSub={(k) => setPage(`set-${k}`)} crews={crews} myName={profileName} myAgents={myAgents} onOpenAgent={(g) => openAgentCard(rowForSpace(g, orgId, PERSONAL))} onOrgSub={openOrgSub} onPickOrg={pickSettingsOrg} onOrgAdmin={() => setPage('orgsettings')} hostIds={hostChannels} onToggleMemory={toggleMemory} spaceReady={loadedOrg.current === orgId} memSort={memSort} onMemSort={pickMemSort} focusGroup={settingsFocus} onFocusUsed={() => setSettingsFocus(null)} chOrgId={chOrg} session={session} me={me} uid={uid} onAvatar={() => { avatarAsked.current.delete(uid); loadAvatars(); }} onProfileSaved={() => { askName(uid, true); setProfileTick((x) => x + 1); }} invitesTick={invitesTick} org={isPersonal ? null : org} orgs={orgs} isAdmin={!!isAdmin} gated={orgBlocked} policy={policy} ent={isPersonal ? null : ent} members={isPersonal ? [] : members} nameOfUser={nameOfUser} onOpenCrew={setSheet} friends={friends} onFriendsChanged={onFriendsChanged} onDm={(id) => openDm('user', id)} onPersonalDm={openPersonalDm} channels={inviteChannels} onInvite={isAdmin && !isPersonal ? orgInvite : null} initialTab={settingsTab} onTabUsed={() => setSettingsTab(null)} onChanged={() => (isPersonal ? loadPersonal() : loadOrg(orgId)).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={backFromPage} onMenu={openNav} />
+          <Settings phoneView={isPhone ? (page === 'settings' ? 'list' : page === 'orgsettings' ? 'orgadmin' : page.slice(4)) : null} onSub={(k) => setPage(`set-${k}`)} crews={crews} myName={profileName} myAgents={myAgents} onOpenAgent={(g) => openAgentCard(rowForSpace(g, orgId, PERSONAL))} onAgentsChanged={() => loadMyAgents({ favs: true }).catch(() => {})} onOrgSub={openOrgSub} onPickOrg={pickSettingsOrg} onOrgAdmin={() => setPage('orgsettings')} hostIds={hostChannels} onToggleMemory={toggleMemory} spaceReady={loadedOrg.current === orgId} memSort={memSort} onMemSort={pickMemSort} focusGroup={settingsFocus} onFocusUsed={() => setSettingsFocus(null)} chOrgId={chOrg} session={session} me={me} uid={uid} onAvatar={() => { avatarAsked.current.delete(uid); loadAvatars(); }} onProfileSaved={() => { askName(uid, true); setProfileTick((x) => x + 1); }} invitesTick={invitesTick} org={isPersonal ? null : org} orgs={orgs} isAdmin={!!isAdmin} gated={orgBlocked} policy={policy} ent={isPersonal ? null : ent} members={isPersonal ? [] : members} nameOfUser={nameOfUser} onOpenCrew={setSheet} friends={friends} onFriendsChanged={onFriendsChanged} onDm={(id) => openDm('user', id)} onPersonalDm={openPersonalDm} channels={inviteChannels} onInvite={isAdmin && !isPersonal ? orgInvite : null} initialTab={settingsTab} onTabUsed={() => setSettingsTab(null)} onChanged={() => (isPersonal ? loadPersonal() : loadOrg(orgId)).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={backFromPage} onMenu={openNav} />
         ) : dmDraft && isPersonal && page === 'chat' ? (
           <DmDraft key={dmDraft.userId} userId={dmDraft.userId} name={nameOfUser(dmDraft.userId)} initialText={dmDraft.text} onSend={(body) => sendFirstDm(dmDraft.userId, body)} onMenu={openNav} />
         ) : isPhone && page !== 'chat' ? null /* 폰 목록·설정 뒤에 숨은 대화방을 그리지 않는다 — 공간을 바꿀 때마다 보이지 않는 방의 글·첨부·반응을 읽던 것(기능 점검 D3) */ : channel ? (
@@ -3246,8 +3247,25 @@ function CrewSheet({ crew, org, uid, me, members, policy, channelId, channelName
   const canMe = owner || crew.allow === 'all' || (crew.allow === 'list' && (crew.allow_users ?? []).includes(uid));
   // 파견·해제는 메신저에서(유건 지시 2026-09-08). 서버는 status만 본다: available = 지시·답글·채널 멤버 불가(20260907120000 게이트), active = 파견 중.
   const dispatched = crew.status !== 'available'; const [confirmRecall, setConfirmRecall] = useState(false);
+  const [pickVictim, setPickVictim] = useState(null); // 무료 자리가 다 찼을 때 멈출 에이전트를 고르는 중 — { slots: 연결된 슬롯들 } (2026-10-12, 서버 자동 교체 대신 사용자 선택)
+  const openVictimPick = async () => { // 연결된 내 에이전트를 읽는다 — 이 경로로만(자리가 찼을 때 1건)
+    const rows = await q(supabase.from('msgr_crews').select('id, ws_id, slug, display_name, status, hosting, owner_user_id, org_id').eq('owner_user_id', uid).eq('status', 'active')).catch(() => null);
+    if (!rows) return onError(t('ui.error'));
+    setPickVictim({ slots: slotState(rows, uid).slots.filter((s) => s.active) });
+  };
+  const applyVictim = async (victim) => { // 멈출 것을 골랐다 — 끊고(→available) 연결. 실패하면 멈춘 것을 되돌린다(agent-pick.mjs)
+    setBusy(true);
+    const r = await swapConnect(supabase, victim, crew);
+    setBusy(false); setPickVictim(null);
+    if (!r.ok) return onError(friendlyErr(String(r.error ?? ''), t));
+    onNote(t('agents.slot.swapped', { off: victim.name, on: crew.display_name })); onChanged();
+  };
   const setDispatch = async (next) => {
     setBusy(true); setConfirmRecall(false);
+    if (next) { // 자리가 찼는지 먼저 묻는다(Pro·자리 있음·옛 서버는 []로 그대로 진행) — 찼으면 서버가 고르기 전에 사용자가 고른다
+      const victims = await swapPreview(supabase, crew).catch(() => []);
+      if (victims.length) { setBusy(false); openVictimPick(); return; }
+    }
     const res = await supabase.from('msgr_crews').update({ status: next ? 'active' : 'available' }).eq('id', crew.id).select('id'); // 다시 파견은 복귀 — 허용 범위 유지(D31, dispatchCrew 주석)
     setBusy(false);
     if (res.error) return onError(proRequiredFor(res.error.message, { ownerId: crew.owner_user_id, uid, t })); // 남의 에이전트면 내 Pro로 풀리지 않는다(#944 LOW-2)
@@ -3308,6 +3326,7 @@ function CrewSheet({ crew, org, uid, me, members, policy, channelId, channelName
           {owner && channelId && channelName && !confirmOut && <div><span className="msgr-klabel">{t('crew.leaveHere.label')}</span><span><button type="button" className="btn sm ghost text" disabled={busy} onClick={() => setConfirmOut(true)}>{t('crew.leaveHere', { channel: channelName })}</button></span></div>}
           {confirmOut && <div className="confirm-row"><span className="confirm-inline"><span>{t('crew.leaveHere.confirm', { channel: channelName })}</span><button type="button" className="btn btn-primary sm danger" disabled={busy} onClick={leaveHere}>{t('crew.leaveHere', { channel: channelName })}</button><button type="button" className="btn sm" onClick={() => setConfirmOut(false)}>{t('ui.cancel')}</button></span></div>}
           {confirmRecall && <div className="confirm-row"><span className="confirm-inline"><span>{t('crew.recall.confirm')}</span><button type="button" className="btn btn-primary sm danger" disabled={busy} onClick={() => setDispatch(false)}>{t('crew.recall')}</button><button type="button" className="btn sm ghost text" onClick={() => setConfirmRecall(false)}>{t('ui.cancel')}</button></span></div>}
+          {pickVictim && <div className="confirm-row"><span className="confirm-inline col"><span>{t(isIos ? 'agents.slot.full.ios' : 'agents.slot.full', { limit: FREE_AGENT_LIMIT })}</span>{(pickVictim.slots ?? []).map((s) => <button key={s.key} type="button" className="btn sm" disabled={busy} onClick={() => applyVictim(s)}>{s.name} · {t('agents.slot.pause')}</button>)}<button type="button" className="btn sm ghost text" disabled={busy} onClick={() => setPickVictim(null)}>{t('ui.cancel')}</button></span></div>}
         </div>
         <p className="note tier">{tier === 'company' ? t('crew.tier.company.note', { org: org?.name ?? '' }) : t('crew.tier.personal.note', { name: nameOfUser(crew.owner_user_id) })}</p>
         {owner && (<section className="msgr-crewprofile">
@@ -4179,7 +4198,76 @@ function Inbox({ items, prevSeen = 0, initialKind = 'all', channels, crews, name
   </>);
 }
 
-function Settings({ session, me, uid, invitesTick = 0, org, orgs = [], isAdmin, gated = false, policy, ent = null, members = [], nameOfUser, onOpenCrew, onAvatar, onProfileSaved, friends = [], onFriendsChanged, onDm, onPersonalDm, channels = [], onInvite = null, initialTab = null, onTabUsed, onChanged, onOrgsChanged, onNote, onError, onBack, onMenu, phoneView = null, onSub = null, crews = [], myName: myProfileName = null, myAgents = null, onOpenAgent = null, onOrgSub = null, onPickOrg = null, onOrgAdmin = null, hostIds = new Set(), onToggleMemory = null, spaceReady = true, memSort = 'recent', onMemSort = null, focusGroup = null, onFocusUsed = null, chOrgId = null }) { // phoneView(폰만): 'list' = 내 설정 줄 목록, 'profile'|'notify'|'display'|'friends'|'privacy'|'about' = 하위 화면, 'org' = 조직 설정
+
+/* 무료 계정의 메신저 연결 4명을 고르는 곳(유건 2026-10-12 "4명의 에이전트는 사용자가 선택 가능하도록") — 설정 › 내 에이전트.
+   에이전트 카드(CrewSheet)의 연결도 같은 판정(agent-pick.mjs)을 쓴다. 읽기: 이 화면을 열 때 내 크루 행(paused 포함) 1건 + 플랜(5분 캐시),
+   자리가 찼을 때만 미리 보기(swapPreview) 1건. Pro·조회 실패는 토글 없이 종전 목록 그대로. */
+function AgentSlotPicker({ uid, myAgents, org, onOpenAgent, onChanged, onNote, onError, onAgentsChanged }) {
+  const { t } = useT();
+  const avLooks = useContext(AvatarCtx).looks;
+  const [rows, setRows] = useState(null);
+  const [plan, setPlan] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [choose, setChoose] = useState(null); // { target, name } — 멈출 슬롯을 고르는 중
+  const reload = useCallback(async () => {
+    const got = await q(supabase.from('msgr_crews').select('id, ws_id, slug, display_name, status, hosting, owner_user_id, org_id, avatar_url').eq('owner_user_id', uid).in('status', ['active', 'available', 'paused'])).catch(() => null);
+    if (got) setRows(got);
+    setPlan(await readMyPlan(supabase));
+  }, [uid]);
+  useEffect(() => { reload().catch(() => {}); }, [reload]);
+  const st = slotState(rows ?? [], uid);
+  const free = plan === 'free';
+  const toggle = async (slot, row, name) => {
+    if (busy || !slot) return;
+    setBusy(true);
+    try {
+      if (slot.active) {
+        const r = await writeStatus(supabase, slot.rows.map((x) => x.id), 'available');
+        if (!r.ok) return onError(friendlyErr(r.error, t));
+        onNote(t('crew.recall.done', { name }));
+      } else {
+        const victims = await swapPreview(supabase, row).catch(() => []);
+        if (victims.length) { setChoose({ target: row, name }); return; } // 자리가 다 참 — 멈출 것을 고른다
+        const r = await writeStatus(supabase, [row.id], 'active');
+        if (!r.ok) return onError(friendlyErr(r.error, t));
+        onNote(t('crew.dispatch.done', { name }));
+      }
+      await reload(); onChanged(); onAgentsChanged?.();
+    } finally { setBusy(false); }
+  };
+  const pick = async (victim) => {
+    const target = choose?.target; const name = choose?.name; setChoose(null);
+    if (!target) return;
+    setBusy(true);
+    try {
+      const r = await swapConnect(supabase, victim, target);
+      if (!r.ok) return onError(friendlyErr(String(r.error ?? ''), t));
+      onNote(t('agents.slot.swapped', { off: victim.name, on: name }));
+      await reload(); onChanged(); onAgentsChanged?.();
+    } finally { setBusy(false); }
+  };
+  if (myAgents === null) return <section className="msgr-setcard"><p className="note" role="status">{t('ui.loading')}</p></section>;
+  const groups = groupAgents(myAgents, { orgOrder: org ? [org.id] : [] });
+  const shown = new Set(groups.map((g) => slotKey(rowForSpace(g, org?.id ?? PERSONAL, PERSONAL))));
+  const pausedOnly = st.slots.filter((s) => !shown.has(s.key)); // 목록에 없는 멈춘 에이전트(다시 연결 후보)
+  if (!groups.length && !pausedOnly.length) return <section className="msgr-setcard"><p>{t('phone.set.myAgents.desc')}</p><p className="empty">{t('phone.agents.none')} <RunnerButton /></p></section>;
+  if (choose) return (<section className="msgr-setcard"><p>{t('agents.slot.full', { limit: FREE_AGENT_LIMIT })}</p>
+    <div className="ph-setgroup">
+      {st.slots.filter((s) => s.active).map((s) => (<button key={s.key} type="button" className="ph-setrow" disabled={busy} onClick={() => pick(s)}><span className="ph-kbody"><span className="name">{s.name}</span></span><span className="btn sm">{t('agents.slot.pause')}</span></button>))}
+      <button type="button" className="ph-setrow" disabled={busy} onClick={() => setChoose(null)}><span className="ph-kbody"><span className="name">{t('ui.cancel')}</span></span></button>
+    </div></section>);
+  return (<section className="msgr-setcard"><p>{t('phone.set.myAgents.desc')}</p>
+    {free && <p className="note">{t('agents.slot.count', { n: st.used, limit: FREE_AGENT_LIMIT })}</p>}
+    <div className="ph-setgroup">
+      {groups.map((g) => { const row = rowForSpace(g, org?.id ?? PERSONAL, PERSONAL); const slot = st.slots.find((s) => s.key === slotKey(row)); return (
+        <div key={g.key} className="ph-setrow">
+          <button type="button" className="ph-setrow-main" onClick={() => onOpenAgent?.(g)}><Av name={g.display_name} crew size="sm" crewId={g.id} src={agentLook(g.id, avLooks, null, g.avatar_url ?? null).photo ?? null} /><span className="ph-kbody"><span className="name">{g.display_name}</span>{g.ext && <span className="snip">{t('agentcard.ext')}</span>}</span><I name="caret" size={14} className="ph-chev" /></button>
+          {free && slot && <button type="button" className={slot.active ? 'btn sm ghost text' : 'btn btn-primary sm'} disabled={busy} onClick={() => toggle(slot, row, g.display_name)}>{slot.active ? t('agents.slot.off') : t('agents.slot.on')}</button>}
+        </div>); })}
+      {pausedOnly.map((s) => (<div key={s.key} className="ph-setrow"><span className="ph-kbody"><span className="name">{s.name}</span><span className="snip">{t('agents.paused.tag')}</span></span><button type="button" className="btn btn-primary sm" disabled={busy} onClick={() => toggle(s, s.rows[0], s.name)}>{t('agents.slot.on')}</button></div>))}
+    </div></section>);
+}
+function Settings({ session, me, uid, invitesTick = 0, org, orgs = [], isAdmin, gated = false, policy, ent = null, members = [], nameOfUser, onOpenCrew, onAvatar, onProfileSaved, friends = [], onFriendsChanged, onDm, onPersonalDm, channels = [], onInvite = null, initialTab = null, onTabUsed, onChanged, onOrgsChanged, onNote, onError, onBack, onMenu, phoneView = null, onSub = null, crews = [], myName: myProfileName = null, myAgents = null, onOpenAgent = null, onOrgSub = null, onPickOrg = null, onOrgAdmin = null, hostIds = new Set(), onToggleMemory = null, spaceReady = true, memSort = 'recent', onMemSort = null, focusGroup = null, onFocusUsed = null, chOrgId = null, onAgentsChanged = null }) { // phoneView(폰만): 'list' = 내 설정 줄 목록, 'profile'|'notify'|'display'|'friends'|'privacy'|'about' = 하위 화면, 'org' = 조직 설정
   const { signOut, signingOut, accountDeleted } = useContext(SignOutContext);
   const avLooks = useContext(AvatarCtx).looks; // 내 에이전트 목록의 사진 — 같은 에이전트 기준(유건 2026-10-05)
   const { t, ta, lang, setLang } = useT();
@@ -4266,13 +4354,7 @@ function Settings({ session, me, uid, invitesTick = 0, org, orgs = [], isAdmin, 
       <MemoryChannelsCard channels={channels} uid={uid} hostIds={hostIds} isAdmin={!!isAdmin} locked={!!policy?.crew_memory_locked} onToggle={onToggleMemory} />
       {policy && <PolicyCard part="memory" org={org} isAdmin={isAdmin} policy={policy} members={members} onChanged={onChanged} onNote={onNote} onError={onError} />}
     </div>)}</>);
-    if (view === 'agents') return body(t('phone.set.myAgents'), (<div className="msgr-setbody">
-      <section className="msgr-setcard"><p>{t('phone.set.myAgents.desc')}</p>
-        {myAgents === null ? <p className="note" role="status">{t('ui.loading')}</p> : !myAgents.length ? <p className="empty">{t('phone.agents.none')} <RunnerButton /></p> : (
-          <div className="ph-setgroup">{groupAgents(myAgents, { orgOrder: orgs.map((o) => o.id) }).map((g) => (/* 같은 에이전트는 한 줄(에이전트 탭과 같은 판정 — agent-groups.mjs). 에이전트 = 한 사람(2026-10-03): 공간 글자·공간 고르기 없음, 줄 = 지금 공간(없으면 첫 공간)의 카드 */
-            <button key={g.key} type="button" className="ph-setrow" onClick={() => onOpenAgent?.(g)}><Av name={g.display_name} crew size="sm" crewId={g.id} src={agentLook(g.id, avLooks, null, g.avatar_url ?? null).photo ?? null} /><span className="ph-kbody"><span className="name">{g.display_name}</span>{g.ext && <span className="snip">{t('agentcard.ext')}</span>}</span>{chev}</button>))}</div>)}
-      </section>
-    </div>));
+    if (view === 'agents') return body(t('phone.set.myAgents'), (<div className="msgr-setbody"><AgentSlotPicker uid={uid} myAgents={myAgents} org={org} onOpenAgent={onOpenAgent} onChanged={onChanged} onNote={onNote} onError={onError} onAgentsChanged={onAgentsChanged} /></div>));
     const sub = view === 'list' ? null : view;
     const myName = myProfileName || session.user.email; // 개인 프로필 이름 — 지금 공간(조직 표시명)에 따라 바뀌지 않게
     const orow = settingsOrgRows(orgs); // 조직이 몇 개든 네 가지는 각각 한 줄 — 조직은 들어간 화면의 '조직 이름 ▾'로 고른다(4차 피드백)

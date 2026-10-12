@@ -70,7 +70,7 @@ test('버튼 이름 — 조직 화면의 레일 메뉴·즐겨찾기 줄·크루
 
 test('설정 > 내 에이전트 — 공간 글자 없이 줄 하나, 외부 표시는 유지, 누르면 종전대로 지금 공간의 카드', () => {
   assert.match(app, /onOpenAgent=\{\(g\) => openAgentCard\(rowForSpace\(g, orgId, PERSONAL\)\)\}/);
-  assert.match(app, /\{g\.ext && <span className="snip">\{t\('agentcard\.ext'\)\}<\/span>\}<\/span>\{chev\}<\/button>/);
+  assert.match(app, /\{g\.ext && <span className="snip">\{t\('agentcard\.ext'\)\}<\/span>\}<\/span><I name="caret" size=\{14\} className="ph-chev" \/><\/button>/, '줄 끝 ›는 그대로(누르면 지금 공간의 카드) — 무료면 그 옆에 연결 토글(2026-10-12)');
 });
 
 test('파견 해제 확인 문구 — 조직 채널 기억이 10분 안에 PC에서 지워지고 다시 파견해도 돌아오지 않는다(P1 #816)', () => {

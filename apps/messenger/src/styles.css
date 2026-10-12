@@ -2305,6 +2305,7 @@ html { -webkit-tap-highlight-color: transparent; }
   .msgr-phone .ph-setme .snip { font-size: 13px; color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .msgr-phone .ph-setgroup { display: grid; border-radius: 16px; background: var(--card-2); overflow: hidden; }
   .msgr-phone .ph-setrow { min-height: 52px; padding: 4px 14px; font-size: 15px; }
+  .msgr-phone .ph-setrow-main { display: flex; align-items: center; gap: 12px; flex: 1 1 auto; min-width: 0; border: 0; background: none; color: var(--fg); text-align: left; cursor: pointer; padding: 0; font: inherit; }
   .msgr-phone .ph-setrow + .ph-setrow { border-top: 1px solid var(--border-soft); }
   .msgr-phone .ph-setrow .name { flex: 1 1 auto; min-width: 0; }
   .msgr-phone .ph-setrow:active, .msgr-phone .ph-setme:active { background: var(--border-soft); }
