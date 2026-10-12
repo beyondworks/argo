@@ -1156,12 +1156,17 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
 
   // 오피스 도구 7종(일정·회사·문서함·할 일·페이지·거래·메일·브리핑) — 정의는 gateway/office-tools.mjs 한 곳(argo office CLI·MCP와 같다, 10/10).
   // 손님 턴은 읽기까지 막는다. 세션 없음·RPC 오류·방 판정은 처리기가 한 줄로 돌려준다. 어떤 턴에 싣는지는 아래 tools 배열이 정한다
+  // 개인 1:1 패널 턴(방에 조직 없음)의 오피스 조직 — 게이트웨이가 주인 혼자 1:1 + 주인이 그 조직 구성원인지 확인한 때만 둔다(msgr.mjs panelOfficeOrg, 0.1.105).
+  // 조직 기록 도구(회사·문서함·할 일·거래)는 이 조직을 방의 조직처럼 쓴다. 조직 방 턴은 방의 조직 그대로
+  const panelOrg = mirrorCtx?.kind === 'msgr' && !mirrorCtx.orgId && mirrorCtx.officePanel === true && typeof mirrorCtx.officeOrgId === 'string' ? mirrorCtx.officeOrgId : null;
+  const ORG_TOOLS = new Set(['office', 'office_files', 'office_work', 'office_deals']);
   const officeTool = (spec) => tool(spec.name, spec.description, spec.shape, async (args) => {
     if (guest) return guestNo(lang === 'en' ? spec.guest.en : spec.guest.ko);
     const staged = panelWriteGate(mirrorCtx, spec.name, args, lang); // 오피스 패널 턴의 쓰기는 실행하지 않고 확인 카드로 모은다(office-proposals.mjs, 2단계 PR1)
     if (staged) return text(staged);
     const ownerId = (await loadCompany(wsId).catch(() => ({}))).ownerId ?? null;
-    return text(await spec.run(args, { ctx: mirrorCtx, crew: fromSlug, crewName: fromName, lang, ownerId }));
+    const ctx = panelOrg && ORG_TOOLS.has(spec.name) ? { ...mirrorCtx, orgId: panelOrg } : mirrorCtx;
+    return text(await spec.run(args, { ctx, crew: fromSlug, crewName: fromName, lang, ownerId }));
   });
   const officeTools = Object.fromEntries(officeToolSpecs(lang).map((spec) => [spec.name, officeTool(spec)]));
   const { calendar, office, office_files: officeFiles, office_work: officeWork, office_deals: officeDeals, office_mail: officeMail, office_briefing: officeBriefing } = officeTools;
@@ -1279,7 +1284,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     argoStatus, argoHelp, argoSettingsTool, // 아르고 자기 인식 — 모든 턴(손님·설정 판정은 처리기 안)
     goalHeartbeat, ...(goalCheckin ? [goalCheckin] : []), // 목표 하트비트 — 만들기·목록·멈춤(모든 턴, 판정은 처리기 안), 회차 보고(회차 턴에만)
     calendar, // 주인의 일정 — 항상 등재(세션 없음·손님은 처리기가 한 줄로 알린다)
-    ...(mirrorCtx?.kind === 'msgr' && mirrorCtx.orgId ? [office, officeFiles, officeWork, officeDeals] : []), // 오피스 회사 기록·문서함·드라이브·할 일·페이지·거래 — 메신저 조직 채널 턴에만(그 조직). 개인 공간 턴에는 늘 거절할 도구라 싣지 않는다
+    ...(mirrorCtx?.kind === 'msgr' && (mirrorCtx.orgId || panelOrg) ? [office, officeFiles, officeWork, officeDeals] : []), // 오피스 회사 기록·문서함·드라이브·할 일·페이지·거래 — 메신저 조직 채널 턴(그 조직)과 확인된 오피스 조직이 있는 개인 1:1 패널 턴(panelOrg)에만. 그 밖의 개인 공간 턴에는 늘 거절할 도구라 싣지 않는다
     ...(mirrorCtx?.kind === 'msgr' && mirrorCtx.channelKind === 'dm' ? [officeBriefing] : []), // 오피스 브리핑 — 주인 1:1 턴에만(주인 계정으로 쓰므로 여럿 있는 방에서 남의 부탁을 주인 권한으로 실행하지 않게)
     ...(mirrorCtx?.kind === 'msgr' && mirrorCtx.channelKind === 'dm' ? [officeMail] : []), // 오피스 메일 — 주인 개인 메일함이라 1:1 턴에만(사람이 둘인 1:1은 처리기가 거절)
     ...(handoffColleagues.length ? [delegate, ...(mirrorCtx?.officePanelSolo === true ? [] : [sendToCrew])] : []), // 패널 턴은 동기 위임만 — 쪽지(비동기 넘김)는 결과가 패널로 오지 않는다(검수 M1)

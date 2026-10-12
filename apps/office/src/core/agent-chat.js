@@ -5,6 +5,11 @@ import { composerTransport } from '../../../../src/composer-delivery.mjs';
 import { crewRoom } from './crew-assign.js';
 
 export const PANEL_SOURCE = 'office_panel';
+/** 패널 글 meta — 개인 1:1(조직 없는 방)로 가는 글은 보고 있는 오피스 조직(office_org)을 싣는다. 게이트웨이가 구성원인지 확인한 뒤에만 그 조직의 할 일·페이지·거래 도구를 싣는다(msgr.mjs panelOfficeOrg) */
+export const panelMeta = (meta, { items = [], auto = false, personal = false, orgId = null } = {}) => ({
+  ...meta, source: PANEL_SOURCE, office_items: items.map(({ kind, label }) => ({ kind, label })),
+  ...(auto ? { office_auto: true } : {}), ...(personal && orgId ? { office_org: orgId } : {}),
+});
 const ROW = 'id, author_kind, author_user_id, crew_id, kind, body, meta, reply_to, thread_root, created_at, deleted_at';
 const ATTACH = 'id, message_id, name, mime, bytes, storage_path';
 export const RECENT_N = 150;

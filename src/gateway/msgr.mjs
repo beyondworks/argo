@@ -59,7 +59,7 @@ import { workDb, workCanContinue, workPrompt, parseWorkReply, workPeers } from '
 import { dispatchMessengerAutomations } from './msgr-automations.mjs';
 import { joinTranslate, leaveTranslate } from './office-translate.mjs';
 import { ownerSoloRoom } from './office-audience.mjs'; // 주인 혼자 1:1 판정(유건 결정 2026-10-08 ①) — 오피스 도구의 'owner' 판정과 같은 사람 규칙
-import { isPanelSource, confirmOf, proposalsMeta, findProposal, proposalSummary } from './office-proposals.mjs'; // 오피스 패널 턴의 쓰기 확인 카드(2단계 PR1)
+import { isPanelSource, confirmOf, officeOrgOf, proposalsMeta, findProposal, proposalSummary } from './office-proposals.mjs'; // 오피스 패널 턴의 쓰기 확인 카드(2단계 PR1)
 import { liveSteps, stepsMeta } from './office-steps.mjs'; // 오피스 패널 단계 보기(2단계 PR2)
 import { routeOf, panelCoordinatorHint } from './office-route.mjs';
 import { stopPanelChildren } from '../panel-children.mjs'; // 패널 중단을 동기 위임 동료 턴까지(검수 M2) // 오피스 패널 조율자·다른 에이전트에게 맡기기(2단계 PR3)
@@ -327,6 +327,11 @@ export function makeDb(client) {
     /** 크루 인벤토리(2026-09-07 유건 지시 "슬랙처럼 내 에이전트 목록"): 내가 활성 멤버인 조직 목록. */
     async myOrgIds(uid) {
       return (unwrap(await client.from('msgr_org_members').select('org_id').eq('user_id', uid).is('removed_at', null)) ?? []).map((r) => r.org_id);
+    },
+    /** 오피스 패널(개인 1:1)이 보고 있는 조직의 손님 아닌 활성 구성원인가 — panelOfficeOrg·카드 [실행]이 쓴다. 조회 1건 */
+    async officeMember(orgId, uid) {
+      const r = unwrap(await client.from('msgr_org_members').select('role').eq('org_id', orgId).eq('user_id', uid).is('removed_at', null).maybeSingle());
+      return !!r && r.role !== 'guest';
     },
     /** 이 계정이 어느 회사·조직에든 Argo 크루 행을 가진 적이 있나(상태 무관) — 자동 켜기의 "이미 파견 중인 계정은 손대지 않는다" 게이트.
         외부 봇(Hermes·OpenClaw, hosting='bot')은 세지 않는다 — 봇을 먼저 연결한 계정의 본체 크루가 영영 안 올라갔다(2026-09-30). */
@@ -1460,7 +1465,7 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
         hop, origin, rootAuthor, fromCrewId: fromCrew ? m.crew_id : null, ...(relayVia ? { relayVia, ...(relayViaName ? { relayViaName } : {}) } : {}), after, ...(coMentioned ? { coMentioned } : {}), ...(guestChain ? { guest: true } : {}), ...(officeChain ? { office: true } : {}),
         ...(work ? { workRunId: work.id } : {}),
         // 오피스 패널에서 사람이 보낸 글 — 쓰기 확인 카드 관문(office-proposals.mjs). 바로 실행·확인 표지는 패널 글에서만 읽는다(크루 글·넘김은 대상 아님)
-        ...(!fromCrew && isPanelSource(m) ? { panel: true, ...(m.meta?.office_auto === true ? { officeAuto: true } : {}), ...(confirmOf(m) ? { officeConfirm: confirmOf(m) } : {}), ...(routeOf(m) ? { officeRoute: routeOf(m) } : {}) } : panelChain ? { panelChain: true } : {}),
+        ...(!fromCrew && isPanelSource(m) ? { panel: true, ...(m.meta?.office_auto === true ? { officeAuto: true } : {}), ...(officeOrgOf(m) ? { officeOrg: officeOrgOf(m) } : {}), ...(confirmOf(m) ? { officeConfirm: confirmOf(m) } : {}), ...(routeOf(m) ? { officeRoute: routeOf(m) } : {}) } : panelChain ? { panelChain: true } : {}),
       });
       out.queued++;
     };
@@ -1574,6 +1579,14 @@ async function deliverReplyFiles(wsId, db, { orgId, channelId, channelKind = nul
 const planOrRaw = (wsId, text, lang, max) => planReplyFiles(wsId, text, { lang, ...(max ? { max } : {}) })
   .catch((e) => { console.error(`[argo] msgr 첨부 계획 실패(${wsId}):`, e?.message ?? e); return { body: String(text ?? ''), files: [], fails: [] }; });
 
+/** 개인 1:1 패널 턴이 쓸 오피스 조직(0.1.105) — 개인 공간 쌍둥이가 있는 에이전트는 패널 글이 개인 1:1로 와서 방에 조직이 없다(오피스 crew-assign.js crewRoom).
+    패널 글의 보고 있는 조직(meta.office_org)을 주인 혼자 1:1 + 주인이 보낸 패널 글 + 주인이 그 조직의 손님 아닌 구성원일 때만 쓴다. 모르면(오류·확인 수단 없음) null — 도구를 싣지 않는다.
+    조직 방은 방의 조직 그대로라 보지 않는다. 비용: 패널 턴에서 조회 1건 */
+export async function panelOfficeOrg(db, { job, ch, uid, solo }) {
+  if (job?.panel !== true || !job.officeOrg || job.orgId || ch?.org_id || !solo || !uid || job.authorId !== uid || typeof db?.officeMember !== 'function') return null;
+  try { return (await db.officeMember(job.officeOrg, uid)) === true ? job.officeOrg : null; } catch { return null; }
+}
+
 /** 오피스 패널 확인 카드 [실행] — 확인 글이 가리키는 답 글을 DB에서 다시 읽어(같은 방·이 에이전트의 답·그 pid) 제안 인자 그대로 오피스 도구를 한 번 실행한다.
     주인 본인이 보낸 확인 글만(손님·넘김은 job 단계에서 이미 빠진다). 반환: { result: 실행했으면 도구 결과 글, note: 이 턴 지시에 덧붙일 줄 }. 조회 1건 + 도구 실행 1회. */
 export async function runOfficeConfirm(db, { wsId, job, ctx, uid, lang = 'ko', crewName = '' }, deps = { specs: async (lang) => (await import('./office-tools.mjs')).officeToolSpecs(lang), owner: async (ws) => (await loadCompany(ws).catch(() => ({}))).ownerId ?? null }) {
@@ -1584,10 +1597,17 @@ export async function runOfficeConfirm(db, { wsId, job, ctx, uid, lang = 'ko', c
   catch { return { result: null, status: 'error', note: `\n${say('[사용자가 확인 카드에서 [실행]을 눌렀지만 제안을 읽지 못해 아무것도 실행하지 않았다. 잠시 뒤 다시 눌러 달라고 짧게 알려라]', '[The user pressed Run on a confirmation card, but the proposal could not be read, so nothing ran. Briefly ask them to try again shortly]')}` }; } // 조회 순단 — 카드가 '실행 요청함'에 멈추지 않게(검수 L-a)
   const p = findProposal(row, { channelId: job.channelId, crewId: job.crewId, pid: c.pid });
   if (!p) return { result: null, status: 'not_found', note: `\n${say('[사용자가 확인 카드에서 [실행]을 눌렀지만 그 제안을 찾지 못해 아무것도 실행하지 않았다. 다시 요청해 달라고 짧게 알려라]', '[The user pressed Run on a confirmation card, but the proposal was not found, so nothing ran. Briefly ask them to request it again]')}` };
+  // 개인 1:1 패널의 제안은 제안에 붙은 오피스 조직으로 실행한다 — 지금도 그 조직 구성원인지 다시 확인한다(모르면 실행하지 않음). 조직 방은 방의 조직 그대로
+  let runCtx = ctx;
+  if (!ctx?.orgId && typeof p.org === 'string') {
+    const member = typeof db?.officeMember === 'function' ? await db.officeMember(p.org, uid).then((v) => v === true, () => false) : false;
+    if (!member) return { result: null, status: 'error', note: `\n${say('[사용자가 확인 카드에서 [실행]을 눌렀지만 그 오피스 조직의 구성원인지 확인하지 못해 아무것도 실행하지 않았다. 오피스에서 그 조직을 연 채로 다시 요청해 달라고 짧게 알려라]', '[The user pressed Run on a confirmation card, but membership in that Office organization could not be confirmed, so nothing ran. Briefly ask them to request it again with that organization open in Office]')}` };
+    runCtx = { ...ctx, orgId: p.org };
+  }
   const spec = (await deps.specs(lang)).find((x) => x.name === p.tool); // 도구 정의는 실행할 때만 불러온다 — msgr.mjs를 가볍게(해고 라우트가 동적으로 가져온다)
   const summary = proposalSummary(p.tool, p.args, lang); // 저장된 문구가 아니라 실행할 인자로 다시 만든다(검수 L3)
   let result; let status = 'ran'; // ran = 처리기가 돌았다(성공인지 거절인지는 결과 글 — 에이전트가 알린다), error = 던짐
-  try { result = String(await spec.run(p.args, { ctx: { ...ctx, officePanel: false }, crew: job.slug, crewName, lang, ownerId: await deps.owner(wsId) })); } // 관문(officeTurn — 방·주인 세션)은 처리기가 그대로 본다
+  try { result = String(await spec.run(p.args, { ctx: { ...runCtx, officePanel: false }, crew: job.slug, crewName, lang, ownerId: await deps.owner(wsId) })); } // 관문(officeTurn — 방·주인 세션)은 처리기가 그대로 본다
   catch (e) { status = 'error'; result = say(`실행 중 오류: ${String(e?.message ?? e).slice(0, 200)}`, `Error while running: ${String(e?.message ?? e).slice(0, 200)}`); }
   return { result, status, note: `\n${say(`[사용자가 확인 카드 ${p.pid}에서 [실행]을 눌러 아래 동작을 게이트웨이가 이미 한 번 실행했다: ${summary}\n도구 결과(바깥 글 표지는 그대로 바깥 글이다):\n${result}\n결과를 사용자에게 한두 문장으로 알려라. 같은 동작을 다시 부르지 마라]`,
     `[The user pressed Run on confirmation card ${p.pid}, and the gateway already ran this action once: ${summary}\nTool result (outside-text markers still mark outside text):\n${result}\nTell the user the outcome in one or two sentences. Do not call the same action again]`)}` };
@@ -2003,6 +2023,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
       const solo = soloCandidate && await ownerSoloRoom(c.client, { channelKind: ch.kind, channelId: job.channelId }, uid, job.crewId);
       if (ctx.officePanel === true) panelTrace.solo = await ownerSoloRoom(c.client, { channelKind: ch.kind, channelId: job.channelId }, uid, job.crewId); // 패널 턴만(패널 턴은 soloCandidate가 아니라 위와 겹치지 않는다 — 검수 L3)
       if (panelTrace.solo) ctx.officePanelSolo = true;
+      if (ctx.officePanel === true) { const org = await panelOfficeOrg(db, { job, ch, uid, solo: panelTrace.solo }); if (org) ctx.officeOrgId = org; } // 개인 1:1 패널 턴의 오피스 조직(구성원 확인 뒤에만 — chat.mjs가 조직 기록 도구를 싣는다)
       if (panelTrace.solo && envelope && panelThread != null) { // 봉투는 방 전체 최근 12건이라 옛 대화로 돌아오면 비었다(검수 M3). 사람이 주인뿐인 방이라 동의 거르기가 필요 없다 — 그 대화를 따로 읽는다(조회 1건)
         ctxRows = await db.contextOf(job.channelId, job.msgId, CONTEXT_N, job.after ?? [], { threadRoot: panelThread });
         ctx.roomIds = [...ctxRows.map((r) => r.id), ...(job.replyTo ? [job.replyTo] : [])];

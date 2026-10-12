@@ -18,7 +18,7 @@ import { createComposerDelivery } from '../../../../src/composer-delivery.mjs';
 import { acceptFiles, withoutFile, chipSize } from '../../../messenger/src/attach-files.mjs';
 import { formatBytes } from '../../../../src/media-kind.mjs';
 import { previewFor } from '../../../messenger/src/media-actions.mjs';
-import { PANEL_SOURCE, conversations, threadOf, shownBody, seeingItem, waiting, openRoom, loadRoom, loadRow, loadSince, loadFiles, fileUrl, stopTurn, listen, panelTransport, proposalsOf, proposalState, proposalFields, fieldLabelKey, sendConfirm, liveSteps, keptSteps, delegatedTo, sendRoute } from '../core/agent-chat.js';
+import { panelMeta, conversations, threadOf, shownBody, seeingItem, waiting, openRoom, loadRoom, loadRow, loadSince, loadFiles, fileUrl, stopTurn, listen, panelTransport, proposalsOf, proposalState, proposalFields, fieldLabelKey, sendConfirm, liveSteps, keptSteps, delegatedTo, sendRoute } from '../core/agent-chat.js';
 import { AGENT_DICT } from './agent-panel-i18n.js';
 import './agent-panel.css';
 
@@ -233,7 +233,7 @@ export default function AgentPanel({ path, space, onClose }) {
   prepRef.current = async (job) => {
     const items = seeing ? await withText([seeing]) : [];
     const { body, meta } = composeAssign({ instruction: job.body || t('agent.filesOnly'), items, t });
-    return { body, meta: { ...meta, source: PANEL_SOURCE, office_items: items.map(({ kind, label }) => ({ kind, label })), ...(auto ? { office_auto: true } : {}) }, replyTo: rootRef.current };
+    return { body, meta: panelMeta(meta, { items, auto, personal: room?.personal === true, orgId: target?.orgId ?? null }), replyTo: rootRef.current };
   };
 
   const send = async () => {

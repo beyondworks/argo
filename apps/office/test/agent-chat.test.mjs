@@ -178,3 +178,14 @@ test('맡길 동료 글 — 대화 뿌리에 붙이고 meta에 동료 이름', a
   assert.equal(await sendRoute(sb, args), 77, '같은 요청·같은 동료를 다시 골라도 한 건');
   assert.deepEqual(inserted[0], { channel_id: 'ch', author_kind: 'user', author_user_id: 'u1', body: '루나에게 맡겨 줘: 견적', client_msg_id: 'or:5:루나', meta: { source: PANEL_SOURCE, office_route: '루나' }, reply_to: 10, thread_root: 10 });
 });
+
+// 0.1.105 — 개인 1:1로 가는 패널 글은 보고 있는 오피스 조직을 싣는다(게이트웨이가 구성원 확인 뒤 할 일·페이지·거래 도구를 싣는다 — msgr.mjs panelOfficeOrg)
+import { panelMeta } from '../src/core/agent-chat.js';
+test('panelMeta — personal room carries the viewed org; org room and no-org do not', () => {
+  const items = [{ kind: 'page', label: 'P', text: 'x' }];
+  const org = '11111111-1111-4111-8111-111111111111';
+  assert.deepEqual(panelMeta({ a: 1 }, { items, auto: true, personal: true, orgId: org }), { a: 1, source: PANEL_SOURCE, office_items: [{ kind: 'page', label: 'P' }], office_auto: true, office_org: org });
+  assert.equal(panelMeta({}, { items: [], personal: false, orgId: org }).office_org, undefined, 'org room uses its own org');
+  assert.equal(panelMeta({}, { items: [], personal: true, orgId: null }).office_org, undefined, 'personal space view has no org');
+  assert.equal(panelMeta({}, { items: [] }).office_auto, undefined);
+});

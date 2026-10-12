@@ -29,6 +29,13 @@ export const alwaysConfirm = (name, a) => !!confirmNeeded(name, a)
 
 export const isPanelSource = (message) => message?.meta?.source === PANEL_SOURCE;
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** 패널 글이 보고 있는 오피스 조직(meta.office_org) — uuid 모양만. 멤버가 쓸 수 있는 값이라 게이트웨이가 구성원인지 확인한 뒤에만 쓴다(msgr.mjs panelOfficeOrg) */
+export function officeOrgOf(message) {
+  const v = message?.meta?.office_org;
+  return typeof v === 'string' && UUID_RE.test(v) ? v : null;
+}
+
 /** 확인 글의 표지 — { reply: 답 글 id, pid } | null. 멤버가 쓸 수 있는 값이라 실행 전에 게이트웨이가 답 글을 DB에서 다시 읽어 맞춰 본다 */
 export function confirmOf(message) {
   const c = message?.meta?.office_confirm;
@@ -93,7 +100,9 @@ export function panelWriteGate(ctx, name, args, lang = 'ko') {
   if (list.length >= PROPOSAL_MAX) return say(`한 답에 확인 카드는 ${PROPOSAL_MAX}개까지다 — 이 동작은 올리지 않았다. 나머지는 사용자가 카드를 처리한 뒤 다음 요청에서 하겠다고 알려라.`,
     `At most ${PROPOSAL_MAX} confirmation cards per reply — this one was not posted. Say the rest can follow after the user handles the cards.`);
   if (bytes(a) > ARGS_MAX || list.reduce((n, p) => n + bytes(p.args), bytes(a)) > ALL_MAX) return say('인자가 너무 커서 확인 카드로 올리지 못했다 — 나눠서 다시 제안하라.', 'The arguments are too large for a confirmation card — split it and propose again.');
-  const p = { pid: `p${list.length + 1}`, tool: name, args: a, summary: proposalSummary(name, a, lang) };
+  // 개인 1:1 패널 턴(방에 조직 없음)은 게이트웨이가 확인한 오피스 조직으로 실행한다 — [실행] 때 같은 조직을 쓰게 제안에 붙인다(조직 방은 방의 조직 그대로라 붙이지 않는다)
+  const org = !ctx.orgId && typeof ctx.officeOrgId === 'string' ? ctx.officeOrgId : null;
+  const p = { pid: `p${list.length + 1}`, tool: name, args: a, summary: proposalSummary(name, a, lang), ...(org ? { org } : {}) };
   list.push(p);
   return say(`실행하지 않고 확인 카드(${p.pid})로 올렸다: ${p.summary}\n사용자가 오피스 에이전트 창에서 [실행]을 누르면 그때 실행된다. 실행했다고 말하지 말고, 확인 카드를 올렸다고 짧게 알려라.`,
     `Not executed — posted as confirmation card ${p.pid}: ${p.summary}\nIt runs when the user presses Run in the Office agent panel. Do not say it was done; briefly say you posted a confirmation card.`);
@@ -107,7 +116,7 @@ export const panelLaterNo = (lang = 'ko') => (lang === 'en'
 
 /** 답 글 meta에 실을 제안 목록(검증된 모양만) */
 export const proposalsMeta = (ctx) => (Array.isArray(ctx?.proposals) && ctx.proposals.length
-  ? { office_proposals: ctx.proposals.slice(0, PROPOSAL_MAX).map(({ pid, tool, args, summary }) => ({ pid, tool, args, summary })) } : {});
+  ? { office_proposals: ctx.proposals.slice(0, PROPOSAL_MAX).map(({ pid, tool, args, summary, org }) => ({ pid, tool, args, summary, ...(org ? { org } : {}) })) } : {});
 
 /** 확인 글이 가리키는 제안을 답 글에서 찾는다 — 같은 방·같은 에이전트의 답이고 그 pid가 있어야 한다. 반환: 제안 | null */
 export function findProposal(row, { channelId, crewId, pid }) {
