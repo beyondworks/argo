@@ -2247,12 +2247,13 @@ function Shell({ session }) {
   }, [uid]); // eslint-disable-line react-hooks/exhaustive-deps -- readOwnCrews는 uid로만 바뀐다
   // 유지할 에이전트 적용 — loadMyAgents 선언 뒤에 둔다(의존성 목록이 그리는 순간 읽힌다 — 앞에 두면 TDZ로 앱이 그려지지 않았다, 화면 확인 2026-10-12)
   const victimBusy = useRef(false); // 연타로 두 번 나가지 않게
+  const [victimSaving, setVictimSaving] = useState(false); // 저장하는 동안 체크 칸·저장 버튼을 잠근다(분리 검수 LOW)
   const applyVictimPick = useCallback(async () => { // 유지할 에이전트를 골랐다 — 서버 함수 한 번(고르지 않은 것은 멈춤·고른 멈춘 것은 재개·연결하려던 행은 함께 연결)
     const pick = victimPick;
     if (victimBusy.current || !pick || !pickReady(pick.picked, pick.slots)) return;
-    victimBusy.current = true;
+    victimBusy.current = true; setVictimSaving(true);
     const targetKept = pick.picked.has(slotKey(pick.target));
-    const r = await keepAgents(supabase, pick.picked, targetKept ? pick.activate : []).finally(() => { victimBusy.current = false; });
+    const r = await keepAgents(supabase, pick.picked, targetKept ? pick.activate : []).finally(() => { victimBusy.current = false; setVictimSaving(false); });
     if (!r.ok) return setErr(joinErr(String(r.error ?? ''), t));
     setVictimPick(null);
     const done = t('agents.slot.kept');
@@ -3110,7 +3111,7 @@ function Shell({ session }) {
           <div className="msgr-scrim clear" onClick={() => setVictimPick(null)} />
           <aside className="msgr-crewsheet msgr-keeppick">
             <div className="head"><div style={{ minWidth: 0 }}><div className="name">{t('agents.slot.full', { limit: FREE_AGENT_LIMIT })}</div></div><button type="button" className="btn ghost" onClick={() => setVictimPick(null)} aria-label={t('ui.close')}><I name="x" size={15} /></button></div>
-            <KeepPickList slots={victimPick.slots} picked={victimPick.picked} onToggle={(k) => setVictimPick((p) => (p ? { ...p, picked: togglePick(p.picked, k) } : p))} onSave={applyVictimPick} t={t} />
+            <KeepPickList slots={victimPick.slots} picked={victimPick.picked} onToggle={(k) => setVictimPick((p) => (p ? { ...p, picked: togglePick(p.picked, k) } : p))} onSave={applyVictimPick} busy={victimSaving} t={t} />
           </aside>
         </div>)}
         {inviteFor && org && !isPersonal && <InviteDialog org={org} channels={inviteChannels} isAdmin={!!isAdmin} hostOf={hostChannels} initialChannelIds={inviteFor.channelIds} initialRole={inviteFor.role} create={createInviteCode} loadCurrent={isAdmin ? currentMemberLink : null} confirmReplace={confirmReplace} discard={async (id) => { inviteSync.current.start(); let gone = 0; try { const r = await discardInvite(supabase, id); gone = r ? -1 : 0; return r; } finally { inviteSync.current.finish(gone); } }} shareText={inviteShare} linkOf={inviteLinkOf} errorText={inviteErr} onClose={() => setInviteFor(null)} onManage={isAdmin ? manageInvites : null} t={t} phone={isPhone} />}

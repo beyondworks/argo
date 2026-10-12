@@ -18,6 +18,7 @@ declare me uuid := auth.uid(); lim int; prev text := current_setting('msgr.pro_g
 begin
   if me is null then raise exception 'msgr_forbidden' using errcode = '42501'; end if;
   if to_regprocedure('public.is_pro_for(uuid)') is not null and public.is_pro_for(me) then return jsonb_build_object('pro', true); end if;
+  perform pg_advisory_xact_lock(hashtext('msgr_free_agents:' || me::text)); -- 관문·sweep과 같은 주인 잠금 — 검사보다 먼저(검사한 상태가 쓰기 전에 바뀌지 않게)
   select agent_limit into lim from public._msgr_free_agent_policy();
   if p_keep is null or cardinality(p_keep) = 0 or cardinality(p_keep) > lim or cardinality(act) > lim
      or (select count(distinct k) from unnest(p_keep) k) <> cardinality(p_keep) then
@@ -37,7 +38,6 @@ begin
   if not public._msgr_free_app_ok(me) then
     raise exception 'msgr_app_update_required' using errcode = 'P0001', detail = 'Free accounts need the latest Argo app running to connect agents to Messenger';
   end if;
-  perform pg_advisory_xact_lock(hashtext('msgr_free_agents:' || me::text)); -- 관문·sweep과 같은 주인 잠금
   perform set_config('msgr.pro_gate', 'off', true); -- 아래 쓰기가 관문에 되돌려지지 않게(판정은 이 함수가 했다). 끝에서 되돌린다
   select coalesce(max(id), 0) into top from public.msgr_messages;
   -- 1) 고르지 않은 연결된 에이전트 → 멈춤(바뀌는 행만)
