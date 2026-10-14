@@ -317,6 +317,8 @@ function getPooled(wsId, serverId, url) {
 
 /* 크루·UI가 읽는 문구는 ko/en 둘 다(다국어 상시 규칙). 코드(error)는 안정 식별자로 고정하고
    사람 문구만 언어별로 — 소비자(SDK 표면·CLI 표면·설정 카드)가 회사 언어를 넘긴다. */
+/** 구글 검수 전 커넥터(testUsersOnly)의 테스트 사용자 등록 요청 연락처 — 유건 지정(2026-10-14). 안내 문구가 이 상수만 쓴다. */
+export const CONNECTOR_REGISTER_EMAIL = 'yg@leankim.xyz';
 const MSG = {
   not_connected: {
     ko: (s) => `커넥터 '${s}'가 연결되어 있지 않습니다 — 설정에서 연결해 주세요`,
@@ -347,9 +349,10 @@ const MSG = {
   auth_denied: { ko: (d) => `인가가 거부되었습니다(${d})`, en: (d) => `Authorization was denied (${d})` },
   // 구글 '제한' 범위 커넥터(카탈로그 testUsersOnly) — 구글 검수(CASA) 전에는 콘솔의 테스트 사용자만 로그인된다. 그 밖의 계정은 구글이 403 access_denied로
   // 막고(돌아오면 error=access_denied, 구글 화면에서 멈추면 시간 초과), 사용자는 이유를 모른 채 실패만 본다 — 원인과 할 일을 숨기지 않는다(검수 1, 2026-10-14).
+  // 등록 요청 연락처(유건 지정 2026-10-14)는 CONNECTOR_REGISTER_EMAIL 한 곳에만 둔다. 설정 카드가 오류 문구 안의 주소를 mailto 링크로 그린다.
   test_users_only: {
-    ko: (d) => `${/^\d+$/.test(String(d)) ? `브라우저 인가가 ${d}초 안에 끝나지 않았습니다. 구글 화면에 'Error 403: access_denied'가 보였다면, ` : '연결이 거부되었습니다(access_denied). '}구글 검수 전이라 등록된 사용자만 연결할 수 있습니다 — 관리자에게 등록을 요청하세요`,
-    en: (d) => `${/^\d+$/.test(String(d)) ? `Authorization did not finish within ${d}s. If Google showed 'Error 403: access_denied', this` : 'The connection was denied (access_denied). This'} app is awaiting Google's review, so only registered users can connect — ask your admin to register you`,
+    ko: (d) => `${/^\d+$/.test(String(d)) ? `브라우저 인가가 ${d}초 안에 끝나지 않았습니다. 구글 화면에 'Error 403: access_denied'가 보였다면, ` : '연결이 거부되었습니다(access_denied). '}구글 검수 전이라 등록된 사용자만 연결할 수 있습니다 — 연결할 Gmail 주소를 ${CONNECTOR_REGISTER_EMAIL}로 보내 등록을 요청하세요`,
+    en: (d) => `${/^\d+$/.test(String(d)) ? `Authorization did not finish within ${d}s. If Google showed 'Error 403: access_denied', this` : 'The connection was denied (access_denied). This'} app is awaiting Google's review, so only registered users can connect — email the Gmail address you want to connect to ${CONNECTOR_REGISTER_EMAIL} to request registration`,
   },
   no_code: { ko: () => '콜백에 인가 코드가 없습니다', en: () => 'The callback did not carry an authorization code' },
   exchange_failed: { ko: (d) => `토큰 교환에 실패했습니다: ${d}`, en: (d) => `Token exchange failed: ${d}` },

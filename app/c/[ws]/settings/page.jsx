@@ -1204,6 +1204,15 @@ function MsgrCard({ ws, agents }) {
   );
 }
 
+// 오류 문구 안의 이메일 주소를 mailto 링크로 — 구글 검수 전 커넥터의 등록 요청 연락처(서버 문구 connectors.mjs CONNECTOR_REGISTER_EMAIL)를 눌러 바로 메일을 쓰게 한다.
+// 주소를 여기 다시 적지 않는다(한 곳에만). 다른 오류 문구는 주소가 없어 글 그대로다.
+const EMAIL_IN_TEXT = /([\w.+-]+@[\w-]+(?:\.[\w-]+)+)/;
+function withMailto(text) {
+  return String(text).split(EMAIL_IN_TEXT).map((part, i) => (i % 2
+    ? <a key={i} href={`mailto:${part}`} style={{ color: 'inherit', textDecoration: 'underline' }}>{part}</a>
+    : part));
+}
+
 function ConnectorsCard({ ws }) {
   const { t, lang } = useLang();
   const [rows, setRows] = useState(null);
@@ -1267,7 +1276,7 @@ function ConnectorsCard({ ws }) {
                 {t('settings.connectors.approvalNote', { n: r.dangerous.length })}
               </p>
             )}
-            {r.error && <p style={{ fontSize: 11.5, color: 'var(--danger)', margin: '3px 0 0' }}>{r.error}</p>}
+            {r.error && <p style={{ fontSize: 11.5, color: 'var(--danger)', margin: '3px 0 0' }}>{withMailto(r.error)}</p>}
           </div>
           {r.notReady ? (
             /* 이 빌드에 연결 자격이 안 실렸다 — 버튼을 그리면 눌렀을 때 개발자용 오류가 뜬다.

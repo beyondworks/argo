@@ -127,9 +127,9 @@ async function deny(serverDef, { timeoutMs } = {}) {
 test('⑥ 테스트 사용자 한정 — 구글이 access_denied로 돌려보내면 등록 안내(ko·en), 원래 사유는 errorDetail에 남는다', async () => {
   const out = await deny({ id: 'gmail-deny', url: srv.mcpUrl, scopes: ['spike.read'], testUsersOnly: true });
   assert.equal(out.errorCode, 'test_users_only');
-  assert.match(out.error, /구글 검수 전이라 등록된 사용자만 연결할 수 있습니다 — 관리자에게 등록을 요청하세요/);
+  assert.equal(out.error, '연결이 거부되었습니다(access_denied). 구글 검수 전이라 등록된 사용자만 연결할 수 있습니다 — 연결할 Gmail 주소를 yg@leankim.xyz로 보내 등록을 요청하세요');
   const en = (await listConnections(WS2, { lang: 'en' })).find((c) => c.id === 'gmail-deny');
-  assert.equal(en.error, 'The connection was denied (access_denied). This app is awaiting Google\'s review, so only registered users can connect — ask your admin to register you');
+  assert.equal(en.error, 'The connection was denied (access_denied). This app is awaiting Google\'s review, so only registered users can connect — email the Gmail address you want to connect to yg@leankim.xyz to request registration');
   assert.equal(en.errorDetail, 'access_denied');
 });
 
@@ -137,6 +137,7 @@ test('⑥ 테스트 사용자 한정 — 구글 화면에서 멈춰 시간이 �
   const out = await deny({ id: 'gmail-timeout', url: srv.mcpUrl, scopes: ['spike.read'], testUsersOnly: true }, { timeoutMs: 300 });
   assert.equal(out.errorCode, 'test_users_only');
   assert.match(out.error, /Error 403: access_denied.*등록된 사용자만/);
+  assert.match(out.error, /yg@leankim\.xyz로 보내 등록을 요청하세요$/, '시간 초과 안내에도 등록 요청 연락처');
 });
 
 test('⑥ 대조 — testUsersOnly가 없는 항목(캘린더 등)은 종전 auth_denied 그대로', async () => {
@@ -145,4 +146,13 @@ test('⑥ 대조 — testUsersOnly가 없는 항목(캘린더 등)은 종전 aut
   assert.doesNotMatch(out.error, /등록된 사용자만/);
   assert.equal(CONNECTOR_CATALOG.find((c) => c.id === 'google-calendar').testUsersOnly, undefined);
   assert.equal(ko.testUsersOnly, true); assert.equal(en.testUsersOnly, true);
+});
+
+test('⑦ 등록 요청 연락처 — 유건 지정 주소가 상수 한 곳에만 있고(src·app 전체 1회), ko·en 안내가 그 상수를 쓴다', async () => {
+  const { CONNECTOR_REGISTER_EMAIL, connectorMessage } = await import('../src/connectors.mjs');
+  assert.equal(CONNECTOR_REGISTER_EMAIL, 'yg@leankim.xyz');
+  for (const lang of ['ko', 'en']) for (const d of ['access_denied', 120]) assert.ok(connectorMessage('test_users_only', lang, d).includes(CONNECTOR_REGISTER_EMAIL), `${lang}/${d}`);
+  const { execFileSync } = await import('node:child_process');
+  const hits = execFileSync('git', ['grep', '-c', 'yg@leankim.xyz', '--', 'src', 'app'], { cwd: new URL('..', import.meta.url), encoding: 'utf8' }).trim().split('\n');
+  assert.deepEqual(hits, ['src/connectors.mjs:1'], '연락처를 다른 곳에 다시 적었다 — 상수 하나만 쓴다');
 });
