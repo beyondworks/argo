@@ -259,6 +259,35 @@ test('④-1 기록에 secret이 없으면 카탈로그의 환경변수 이름으
   finally { if (prev === undefined) delete process.env.ARGO_CONNECTOR_GOOGLE_CLIENT_SECRET; else process.env.ARGO_CONNECTOR_GOOGLE_CLIENT_SECRET = prev; }
 });
 
+test('④-1b 기록에 secret이 없고 실행 환경에도 없으면 — 서버 트리 루트에 구운 값(argo-server-config.json)으로 갱신한다(앱 번들·셀프호스트)', async () => {
+  const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
+  const { BAKED_ENV_FILE, _resetBakedEnvForTest } = await import('../src/server-baked-env.mjs');
+  const r0 = rec('https://gmailmcp.googleapis.com/mcp/v1'); delete r0.client.client_secret;
+  await seed({ gmail: r0 });
+  valid = new Set();
+  const prev = process.env.ARGO_CONNECTOR_GOOGLE_CLIENT_SECRET; delete process.env.ARGO_CONNECTOR_GOOGLE_CLIENT_SECRET;
+  const cwd0 = process.cwd(); const tree = mkdtempSync(join(tmpdir(), 'argo-grest-tree-'));
+  try {
+    process.chdir(tree); _resetBakedEnvForTest();
+    // 구운 파일이 없으면 secret 없이 갱신을 보내 invalid_client — 종전에 앱 번들이 떨어지던 모양
+    const none = await callConnectorTool(WS, 'gmail', 'list_labels', {});
+    assert.equal(none.ok, false);
+    assert.equal(reqs.filter((q) => q.path === '/token').at(-1)?.body.includes('client_secret'), false);
+    writeFileSync(join(tree, BAKED_ENV_FILE), JSON.stringify({ ARGO_CONNECTOR_GOOGLE_CLIENT_SECRET: SECRET })); _resetBakedEnvForTest();
+    await seed({ gmail: r0 }); valid = new Set();
+    const r = await callConnectorTool(WS, 'gmail', 'list_labels', {});
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.equal(new URLSearchParams(reqs.filter((q) => q.path === '/token').at(-1).body).get('client_secret'), SECRET, '갱신 요청에 구운 secret이 실린다');
+    assert.equal(process.env.ARGO_CONNECTOR_GOOGLE_CLIENT_SECRET, undefined, '구운 값을 process.env에 옮기지 않는다');
+    const saved = (await readJson(store)).servers.gmail;
+    assert.equal(saved.client?.client_secret, undefined, '갱신이 기록에 secret을 새로 쓰지 않는다');
+    assert.doesNotMatch(text(r), SECRETS_RE);
+  } finally {
+    process.chdir(cwd0); _resetBakedEnvForTest(); rmSync(tree, { recursive: true, force: true });
+    if (prev === undefined) delete process.env.ARGO_CONNECTOR_GOOGLE_CLIENT_SECRET; else process.env.ARGO_CONNECTOR_GOOGLE_CLIENT_SECRET = prev;
+  }
+});
+
 test('④-2 invalid_grant — 재연결 필요(reauth)로 강등하고 토큰을 지운다, 문구에 토큰 없음', async () => {
   await seed({ gmail: rec('https://gmailmcp.googleapis.com/mcp/v1', '1//revoked') });
   valid = new Set();

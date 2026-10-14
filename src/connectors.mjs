@@ -18,6 +18,7 @@ import { readJson, writeJsonAtomic } from './jsonstore.mjs';
 import { withLock } from './mutex.mjs';
 import { appendEvent } from './events.mjs';
 import { googleRestKind, googleRestTools, callGoogleRest } from './google-rest.mjs';
+import { serverEnv } from './server-baked-env.mjs';
 
 /* ─── 토큰 보관 — 커넥터 전용 네임스페이스 (설계서 §2-1·§2-4) ───
    회사 루트 직속 도트파일 = 기존 4중 계약에 자동 편입된다(불변식 전수 수색 2026-07-31):
@@ -467,13 +468,13 @@ async function callViaPool(wsId, serverId, url, tool, args, retryLeft, lang) {
 }
 
 /** 구글 REST 백엔드 실행 — 토큰 갱신은 저장소(이 파일의 patchServer)에 저장하고, invalid_grant는 풀 경로와 같은 'reauth' 강등으로 바꾼다.
-    client secret은 연결 때 기록에 저장된 값을 쓰고, 없으면(옛 기록·다른 전달 경로) 카탈로그의 환경변수 이름으로 실행 환경에서 읽는다. */
+    client secret은 연결 때 기록에 저장된 값을 쓰고, 없으면(옛 기록·다른 전달 경로) 카탈로그의 환경변수 이름으로 serverEnv(src/server-baked-env.mjs)에서 읽는다. */
 async function callViaGoogleRest(wsId, serverId, rec, tool, args, lang) {
   const client = { ...(rec.client ?? {}) };
   if (!client.client_secret) {
     const { connectorCatalogFor } = await import('./market.mjs'); // 동적 — market→connectors 순환 방지
     const name = connectorCatalogFor('ko').find((c) => c.id === serverId)?.oauth?.client_secret_env;
-    const v = name ? process.env[name]?.trim() : '';
+    const v = name ? serverEnv(name) : ''; // market.mjs connectorReady·resolveClientSecret과 같은 해석 — 실행 환경 먼저, 없으면 빌드 때 구운 서버 전용 값(앱 번들·셀프호스트)
     if (v) client.client_secret = v;
   }
   const r = await callGoogleRest(googleRestKind(rec.url), tool, args, {
