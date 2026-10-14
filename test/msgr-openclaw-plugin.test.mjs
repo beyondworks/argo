@@ -15,7 +15,7 @@ test('주소는 /bot<token>/<method>, GET 쿼리·POST JSON, {ok,result} 풀기,
   const api = makeApi({ url: 'https://x.supabase.co/functions/v1/msgr-bot/', token: T, fetchImpl: f });
   assert.deepEqual(await api.getMe(), { id: 'b1' });
   assert.equal(f.calls[0][0], `https://x.supabase.co/functions/v1/msgr-bot/bot${T}/getMe`);
-  await api.getUpdates(5); assert.match(f.calls[1][0], /getUpdates\?offset=5&limit=1&timeout=20&delivery_protocol=1&events=1$/);
+  await api.getUpdates(5); assert.match(f.calls[1][0], /getUpdates\?offset=5&limit=1&timeout=50&delivery_protocol=1&events=1$/);
   assert.equal((await api.sendMessage('c1', '네', 3)).message_id, 7);
   assert.deepEqual(JSON.parse(f.calls[2][1].body), { chat_id: 'c1', text: '네', reply_to_message_id: 3 }); assert.equal(f.calls[2][1].method, 'POST');
   await api.sendMessage('c1', '평문'); assert.equal('reply_to_message_id' in JSON.parse(f.calls[3][1].body), false);

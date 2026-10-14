@@ -1047,7 +1047,7 @@ export const DICT = {
   'org.agents.setup.openclaw.2': ['위 두 줄을 `~/.openclaw/.env` 파일에 붙여 넣습니다(또는 `openclaw.json`의 `channels["argo-msgr"].accounts.default`에 url·token으로).', 'Paste the two lines above into the file `~/.openclaw/.env` (or set url/token under `channels["argo-msgr"].accounts.default` in `openclaw.json`).'],
   'org.agents.setup.openclaw.3': ['`openclaw gateway`를 다시 시작합니다. 이 카드가 "오픈클로 에이전트 연결됨"으로 바뀝니다.', 'Restart `openclaw gateway`. This card switches to "OpenClaw agent connected".'],
   'org.agents.setup.custom.1': ['두 줄은 봇 API 주소와 토큰입니다(텔레그램 봇 API와 같은 모양).', 'The two lines are the bot API address and token (same shape as the Telegram Bot API).'],
-  'org.agents.setup.custom.2': ['받기: `GET {URL}/bot{TOKEN}/getUpdates?offset=&timeout=20` (멘션·DM·답글만 옵니다).', 'Receive: `GET {URL}/bot{TOKEN}/getUpdates?offset=&timeout=20` (mentions, DMs and replies only).'],
+  'org.agents.setup.custom.2': ['받기: `GET {URL}/bot{TOKEN}/getUpdates?offset=&timeout=50` (멘션·DM·답글만 옵니다).', 'Receive: `GET {URL}/bot{TOKEN}/getUpdates?offset=&timeout=50` (mentions, DMs and replies only).'],
   'org.agents.setup.custom.3': ['답하기: `POST {URL}/bot{TOKEN}/sendMessage {chat_id, text, reply_to_message_id}`. 접속 확인은 `getMe`.', 'Answer: `POST {URL}/bot{TOKEN}/sendMessage {chat_id, text, reply_to_message_id}`. Check the connection with `getMe`.'],
   'org.agents.rotate': ['토큰 다시 만들기', 'Rotate token'],
   'org.agents.rotate.confirm': ['새 토큰을 만들면 지금 토큰은 바로 끊깁니다. 이 기기 밖(서버·다른 컴퓨터)에서 쓰는 봇은 새 토큰으로 다시 연결해야 합니다.', 'Rotating cuts off the current token right away. Bots running elsewhere (a server or another computer) must be reconnected with the new token.'],

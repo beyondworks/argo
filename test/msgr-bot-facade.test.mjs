@@ -93,7 +93,25 @@ test('getUpdates 롱폴 — 빈 채로 기다리면 대기 시작에 1회, 그 �
   }
   const c = pollClock();
   await poll(c, { timeout: 25 });
-  assert.deepEqual(c.sleeps, [5000, 5000, 5000, 5000, 5000], '0·5·10·15·20 → 상한 25초에 마지막 조회');
+  assert.deepEqual(c.sleeps, [5000, 5000, 5000, 5000, 5000], '0·5·10·15·20 → 25초에 마지막 조회');
+});
+
+// 2026-10-14 엣지 호출 축소 — 대기 상한 25초 → 50초(텔레그램과 같음). 새 연결 도구(timeout=50)는 롱폴 한 번이 두 배 이상 길고,
+// 옛 도구(timeout=20)는 종전과 똑같이 20초에 돌아간다(배포본 대비 회귀 없음). 조회 간격 5초·수신 지연 상한 5초는 그대로.
+test('getUpdates 롱폴 상한 50초 — timeout=50은 50초(RPC 11회), 옛 도구 timeout=20은 종전 그대로 20초(5회), 그 이상은 50초로 자른다', async () => {
+  for (const [timeout, ms, calls] of [[50, 50_000, 11], [20, 20_000, 5], [99, 50_000, 11], [60, 50_000, 11]]) {
+    const c = pollClock();
+    const r = await poll(c, { timeout });
+    assert.deepEqual(r.body, { ok: true, result: [] });
+    assert.equal(c.now(), ms, `timeout ${timeout} → ${ms}ms 대기`);
+    assert.equal(c.rpc.calls.length, calls, `timeout ${timeout} RPC 수`);
+    assert.ok(c.sleeps.every((x) => x <= 5000), '간격은 5초를 넘지 않는다(수신 지연 상한 그대로)');
+  }
+  // 50초 대기 중 30초에 온 글 — 다음 5초 조회에서 받는다(지연 ≤ 5초), 남은 대기를 채우지 않는다
+  const c = pollClock(30_000);
+  const r = await poll(c, { timeout: 50 });
+  assert.equal(r.body.result.length, 1);
+  assert.equal(c.now(), 30_000);
 });
 
 test('getUpdates 롱폴 — 대기 시작 전에 쌓인 글은 기다리지 않고 바로 돌려준다(첫 조회 즉시)', async () => {
@@ -126,12 +144,12 @@ test('getUpdates — timeout 0(또는 없음·음수·숫자 아님)은 RPC 1회
   }
 });
 
-test('getUpdates — 대기는 25초를 넘지 않는다(timeout 99도 25초, 마지막 잠은 상한까지만)', async () => {
+test('getUpdates — 대기는 50초를 넘지 않는다(timeout 99도 50초, 마지막 잠은 상한까지만 — 2026-10-14 종전 25초)', async () => {
   const c = pollClock();
   const r = await poll(c, { timeout: 99 });
   assert.deepEqual(r.body.result, []);
-  assert.equal(c.now(), 25000);
-  assert.equal(c.sleeps.reduce((a, b) => a + b, 0), 25000);
+  assert.equal(c.now(), 50000);
+  assert.equal(c.sleeps.reduce((a, b) => a + b, 0), 50000);
 });
 
 test('sendMessage: 인자 검증(400) · RPC 호출 모양 · 결과 봉투', async () => {

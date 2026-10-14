@@ -12,7 +12,11 @@ export const METHODS = ['getMe', 'getUpdates', 'sendMessage', 'sendChatAction', 
   'createUpload', 'attachFile'];
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const FILE_URL_TTL_S = 600; // getFile 서명 URL 수명 — 봇은 즉시 내려받는다
-const MAX_WAIT_MS = 25_000; // 텔레그램은 ~50초, 엣지 펑션 벽시계 안에서 여유 있게
+// 롱폴 대기 상한 — 텔레그램과 같은 50초(2026-10-14: 엣지 호출 월 약 200만 = 한도, 대부분이 연결 도구의 20초 빈 롱폴).
+// 엣지 한도 안이다: 응답 대기 150초·유료 벽시계 400초·CPU 2초(대기는 CPU가 아님 — supabase.com/docs/guides/functions/limits, 2026-10-14 확인).
+// 클라이언트가 요청한 timeout만큼만 기다린다 — 옛 연결 도구(timeout=20)는 종전과 같은 20초, 새 도구(Hermes 0.3.8·OpenClaw 0.3.5, timeout=50)는 50초.
+// 종전 25초. 대기 중 조회 간격(아래 5초)과 쉬던 봇의 수신 지연(최대 5초)은 바뀌지 않는다.
+const MAX_WAIT_MS = 50_000;
 // 롱폴 간격 [대기 시작 뒤 경과 ms 미만, 간격 ms] — 대기 시작에 1회(쌓인 글은 바로), 그 뒤 5초 간격.
 // 운영 실측(2026-10-09 10분): 1초 고정일 때 msgr_bot_updates_with_delivery가 분당 약 1,713회(대기 중인 봇 수 × 초당 1회) → 1·2·3초 사다리로 20초 빈 대기 11회.
 // 2026-10-13 로그 수집 과금(한도 20GB의 28배) — 사다리에서도 이 RPC 하나가 하루 32만 건(롱폴 2시간 2,818회 × 10.5회)이라 5초 간격으로 늘린다:

@@ -16,7 +16,7 @@ export class ArgoMsgrError extends Error {
   constructor(status, description, retryAfter = null) { super(`${status}: ${description}`); this.status = status; this.description = description; this.retryAfter = retryAfter; }
 }
 export const MAX_LEN = 20000;                 // 서버 본문 상한(msgr_messages.body)
-export const POLL_TIMEOUT_S = 20;             // 서버 상한 25초
+export const POLL_TIMEOUT_S = 50;             // 서버 상한 50초(2026-10-14, 종전 20초 요청·서버 25초) — 옛 서버(상한 25초)는 더 일찍 답할 뿐 동작은 같다. 받는 지연은 서버 조회 간격(5초) 그대로
 export const MAX_FILE_BYTES = 26_214_400;     // 받기(사람이 올린 첨부 내려받기) 파일당 25MB
 export const MAX_UPLOAD_BYTES = 524_288_000;  // 보내기 전역 천장 500MB(저장소 버킷 한도) — 플랜별 상한(무료 25MB · Pro 500MB)은 서버(msgr_bot_attach_prepare)가 주인 기준으로 판정한다(20261012120000). 25MB로 미리 거절하면 Pro 주인의 큰 파일이 여기서 막힌다
 export const MAX_FILES_PER_MESSAGE = 10;      // 글당 첨부 수(서버 상한)
