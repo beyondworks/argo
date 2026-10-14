@@ -41,7 +41,7 @@ const invite = (org, ownerId, memberId) => { const r = accept(memberId, makeInvi
 const expireTrial = (org) => sql(`update public.msgr_org_entitlements set trial_ends_at = now() - interval '1 day' where org_id = '${org}'`);
 const trialEndsAt = (org) => sql(`select trial_ends_at from public.msgr_org_entitlements where org_id = '${org}'`);
 const activeCount = (org) => Number(sql(`select count(*) from public.msgr_org_members where org_id = '${org}' and removed_at is null`));
-const ageScan = (crewId) => sql(`update public.msgr_bots set last_seen_at = now() - interval '1 minute' where crew_id = '${crewId}'`); // 유휴 게이트를 넘겨 강제로 다시 스캔시킨다(2026-10-14: 재스캔 시계 = 봇별 6초 구간 또는 접속 45초)
+const ageScan = (crewId) => sql(`update public.msgr_bots set scan_at = now() - interval '1 minute' where crew_id = '${crewId}'`); // 유휴 게이트(30초)를 넘겨 강제로 다시 스캔시킨다
 
 // 20260926115000의 판정(무료 기간 OR 결제 OR team). 20261001100000이 '무료도 자격'으로 바꿔 라이브에서는 false가 나오지 않지만,
 // 게이트 장치(트리거·자동화·알림 미러 예외)는 남아 있어 유료 판정이 다시 생길 때를 위해 이 정의를 깔고 계속 검사한다.

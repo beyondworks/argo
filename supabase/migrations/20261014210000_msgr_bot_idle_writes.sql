@@ -1,18 +1,13 @@
--- 봇 getUpdates 유휴 쓰기 줄이기(2026-10-14, 총괄 배정 — DB 위생 2·3). 유휴 게이트가 30초 기한(scan_at)을 재스캔 시계로 쓰느라,
--- 바뀐 것이 없어도 30초마다 msgr_bots(last_seen_at·scan_key·scan_at)·msgr_crews(last_seen_at·cursor_msg_id) 2행을 다시 썼다(봇 9개 × 분당 4행).
+-- 봇 getUpdates 유휴 쓰기 줄이기(2026-10-14, 총괄 배정 — DB 위생 2·3). 유휴 게이트가 재스캔(30초 기한, scan_at)마다
+-- msgr_bots(last_seen_at·scan_key·scan_at)와 msgr_crews(last_seen_at·cursor_msg_id) 2행을 다시 썼다 — 크루 행은 바뀐 것이 없어도(봇 9개 × 분당 4행).
 -- 바꾼 것(msgr_bot_updates_before_work 첫머리만 — 본문은 라이브 정의(prosrc md5 4e52080e…, 저장소 20261006100000과 같음) 그대로):
---   · 재스캔 시계를 쓰기 없는 시각 구간으로: 30초마다 봇별 6초 구간(_msgr_bot_rescan_slot) 또는 접속 시각 45초 경과. 지문 변화·ack는 종전처럼 즉시.
---   · 쓰기는 바뀐 것만: 접속 시각(두 표)은 45초가 지났을 때만(읽는 곳은 전부 90초 판정 — PR 본문 전수 목록), 지문은 달라졌을 때만, 커서는 ack가 앞설 때만.
---   · 재스캔 주기·지문·커서 전진 규칙·배달 판정은 그대로다(지문 만료 30 → 60초 안은 권한 반영 지연이라 쓰지 않는다 — 총괄 10/14).
+--   · 재스캔 시계(scan_at 30초 기한)는 배포본 그대로 — 호출 빈도와 상관없이 봇당 30초에 전체 스캔 1회가 구조로 보장된다(재스캔 때 msgr_bots 1행이 그 기록).
+--   · msgr_crews는 바뀐 것만 쓴다: 접속 시각은 45초가 지났을 때만(읽는 곳 전부 90초 판정 — PR 본문 전수 목록), 커서는 ack가 앞설 때만.
+--     크루 접속 시각이 45초 지났으면 게이트에 막힌 호출에서도 그 1행만 쓴다(스캔 없이).
+--   · 재스캔 주기·지문·커서 전진 규칙·배달 판정은 그대로다.
+-- 검수 1(10/14) 반영: 첫 판(봇별 6초 구간 시계)은 구간 안 호출마다 전체 스캔해 재스캔 상한이 없었다(timeout=0 매초 호출이면 배포본의 6배) — 시계를 배포본으로 되돌렸다.
 -- 개인 쌍둥이 게이트(_msgr_bot_personal_updates)는 이미 지문이 같고 보류가 없으면 읽기·쓰기 없이 끝나 바꾸지 않는다.
--- 되돌리기: 20261006100000_msgr_terms_agent.sql의 msgr_bot_updates_before_work 정의를 다시 적용하고 drop function public._msgr_bot_rescan_slot(uuid, timestamptz).
-
--- 재스캔 구간 — 30초 주기 안에서 봇마다 다른 6초(봇 id 해시로 흩는다). 롱폴은 5초 간격으로 부르므로 주기마다 한 번 이상 이 구간에 든다.
-create or replace function public._msgr_bot_rescan_slot(p_bot uuid, p_at timestamptz) returns boolean
-  language sql immutable set search_path = public, pg_temp as $$
-    select mod(floor(extract(epoch from p_at))::bigint + mod(abs(hashtext(p_bot::text))::bigint, 30), 30) < 6
-$$;
-revoke all on function public._msgr_bot_rescan_slot(uuid, timestamptz) from public, anon, authenticated;
+-- 되돌리기: 20261006100000_msgr_terms_agent.sql의 msgr_bot_updates_before_work 정의를 다시 적용한다.
 
 CREATE OR REPLACE FUNCTION public.msgr_bot_updates_before_work(token text, after_id bigint DEFAULT 0, lim integer DEFAULT 50)
  RETURNS SETOF jsonb
@@ -21,27 +16,25 @@ CREATE OR REPLACE FUNCTION public.msgr_bot_updates_before_work(token text, after
  SET search_path TO 'public', 'pg_temp'
 AS $function$
 declare b msgr_bots; s msgr_messages; r msgr_messages; a uuid; won uuid; peers jsonb; ctx jsonb; n int:=0; lo bigint; actor uuid; ch msgr_channels; key text; cur bigint;
-        crew_seen timestamptz; seen_due boolean; crew_due boolean; -- 2026-10-14 유휴 쓰기 줄이기(아래 게이트 주석)
+        crew_seen timestamptz; crew_due boolean; -- 2026-10-14 유휴 쓰기 줄이기(아래 게이트 주석)
         entitled boolean; ent_marker timestamptz; r_json jsonb; -- 2026-09-27 최종 합본(H1) — 무료 기간 자격(M3) + AI 동의(H2) 둘 다
 begin
  b:=msgr_bot_auth(token); if b.id is null then raise exception 'msgr_bot_unauthorized'; end if;
  -- 유휴 게이트(2026-09-14 라이브 실측: 봇 11개가 매초 커서 뒤 글 84건을 권한 함수로 재평가 → CPU 96%·회당 0.9초).
- -- 배달 판정에 들어오는 상태의 지문이 지난 전체 스캔과 같고 ack(after_id)도 새것이 아니고 재스캔 때가 아니면 빈 결과로 즉시 끝낸다.
- -- 재스캔 때(2026-10-14 유휴 쓰기 줄이기 — 종전에는 scan_at 30초 기한을 시계로 써서 30초마다 msgr_bots·msgr_crews 2행을 다시 썼다):
- --   ① 30초마다 이 봇의 6초 구간(_msgr_bot_rescan_slot — 봇 id로 흩어 모든 봇이 같은 순간에 몰리지 않게) — 지문 밖의 변화(멤버 만료·잠금·심박 10분 경과 등)는 종전처럼 최대 약 30초 늦게 반영된다
- --   ② 접속 시각이 45초 지났을 때(접속 판정 90초의 1/2 — 드물게 부르는 클라이언트도 이때 다시 훑는다)
- -- 재스캔해도 바뀐 것만 쓴다: 접속 시각은 45초가 지났을 때만, 지문은 달라졌을 때만, 커서는 ack가 앞설 때만(유휴 폴링 쓰기 0 — DB 위생 2·3).
+ -- 배달 판정에 들어오는 상태의 지문이 지난 전체 스캔과 같고 30초가 안 지났고 ack(after_id)도 새것이 아니면 빈 결과로 즉시 끝낸다.
+ -- 지문 밖의 변화(멤버 만료·잠금·심박 10분 경과 등)는 최대 30초 늦게 반영된다 — 그 안에 반드시 전체 스캔이 한 번 돈다(호출이 아무리 잦아도 30초에 1회).
+ -- 2026-10-14 유휴 쓰기 줄이기: 크루 행(msgr_crews)은 바뀐 것만 쓴다 — 접속 시각은 45초가 지났을 때만(접속 판정 90초의 1/2), 커서는 ack가 앞설 때만.
  select cursor_msg_id, last_seen_at into cur, crew_seen from msgr_crews where id=b.crew_id;
  -- max(id)만으로는 id가 작은 글이 늦게 커밋되는 순서 역전 때 지문이 안 바뀐다(검수 MEDIUM-1) → 커서 뒤 글 수를 함께 넣는다(둘 다 (org_id,id) 인덱스 전용 스캔).
  key:=(select coalesce(max(id),0)||':'||count(*) from msgr_messages where org_id=b.org_id and id>coalesce(cur,0))
    ||':'||(select count(*) from msgr_executions where crew_id=b.crew_id)||':'||(select count(*) from msgr_channel_members where member_kind='crew' and member_id=b.crew_id)
    ||':'||coalesce(current_setting('argo.msgr_delivery_protocol',true),'');
- seen_due := b.last_seen_at is null or b.last_seen_at < now() - interval '45 seconds';
  crew_due := crew_seen is null or crew_seen < now() - interval '45 seconds';
- if b.scan_key=key and coalesce(after_id,0)<=coalesce(cur,0) and not seen_due and not crew_due and not public._msgr_bot_rescan_slot(b.id, now()) then return; end if;
- if seen_due or b.scan_key is distinct from key then
-   update msgr_bots set last_seen_at=case when seen_due then now() else last_seen_at end,scan_key=key,scan_at=now() where id=b.id;
+ if b.scan_key=key and b.scan_at>now()-interval '30 seconds' and coalesce(after_id,0)<=coalesce(cur,0) then
+   if crew_due then update msgr_crews set last_seen_at=now() where id=b.crew_id; end if; -- 막힌 호출에서도 크루 접속 시각만(스캔 없이, 45초에 1행)
+   return;
  end if;
+ update msgr_bots set last_seen_at=now(),scan_key=key,scan_at=now() where id=b.id; -- 재스캔 기록(배포본 그대로) — 이 기록이 30초 상한이다
  lo := greatest(coalesce(cur,0), coalesce(after_id,0));
  if crew_due or lo > coalesce(cur,0) then
    update msgr_crews set last_seen_at=case when crew_due then now() else last_seen_at end,cursor_msg_id=greatest(cursor_msg_id,coalesce(after_id,0)) where id=b.crew_id returning cursor_msg_id into lo;
