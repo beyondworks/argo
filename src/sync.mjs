@@ -742,7 +742,7 @@ export function tokenOwnership(token) {
   return { mine: st.mine, holder: st.holder, pending: false };
 }
 export function _setTokenClaimForTest(token, state) { claimState.byHash.set(tokenClaimHash(token), state); }
-export function _resetTokenClaimsForTest(bootAt = Date.now()) { claimState.tokens = new Set(); claimState.byHash.clear(); claimState.removed = new Set(); claimState.renewedAt = CLAIM_NEVER; claimState.bootAt = bootAt; try { unlinkSync(claimStateFile()); } catch { /* 없음 */ } }
+export function _resetTokenClaimsForTest(bootAt = Date.now()) { claimSeen.clear(); claimListState.offUntil = -Infinity; claimState.tokens = new Set(); claimState.byHash.clear(); claimState.removed = new Set(); claimState.renewedAt = CLAIM_NEVER; claimState.bootAt = bootAt; try { unlinkSync(claimStateFile()); } catch { /* 없음 */ } }
 export const _claimStateForTest = () => Object.fromEntries(claimState.byHash);
 export const CLAIM_ARBITRATION_GRACE = CLAIM_ARBITRATION_GRACE_MS;
 /** 원격 클레임 1건 읽기(캐시버스터) — { doc, error }. 없음('Object not found')·손상(JSON 아님)은 doc null·error null이고,
@@ -758,6 +758,43 @@ async function readRemoteClaim(key) {
     try { return { doc: JSON.parse(text), error: null }; } catch { return { doc: null, error: null }; } // 깨진 글 — 없음으로(종전)
   } catch (e) { return { doc: null, error: e }; } // 응답을 받다 끊김 등 — 던져진 것도 읽지 못함이다
 }
+/* ─── 클레임 목록 1회로 토큰별 읽기 줄이기(2026-10-14, 총괄 배정 — 토큰 20개 기기 하나가 판정마다 GET 20건: 시간당 약 2,400 + 쓰기 1,200) ───
+   판정마다 <owner>/.tg-claims 폴더 목록을 한 번 읽는다(storage.objects 표 — CDN을 지나지 않는다). 목록의 eTag(S3 = 본문 MD5)로 토큰마다 판단한다:
+     · 목록에 없음 → 종전처럼 내려받는다(목록만 보고 '없음'으로 단정하면 순간 불일치 때 남의 클레임을 덮을 수 있다)
+     · eTag가 지난번에 내려받은(또는 내가 쓴) 본문의 것과 같음 → 같은 본문 — 내려받지 않고 그 본문으로 판정
+     · 그 밖(바뀜·처음 봄·eTag 없음) → 종전처럼 내려받는다
+   판정 주기(30초)·다시 쓰기 간격·TTL·시각 상한·읽기 실패 탈출은 그대로다 — 남의 쓰기는 다음 판정의 목록에서 eTag가 바뀌어 보인다(탈취 감지 30초 그대로).
+   목록 실패·한도 도달·모양 이상이면 이번 판정은 종전(토큰별 내려받기). eTag가 MD5가 아니면(멀티파트 등) 내 글도 내려받을 뿐 판정은 같다.
+   기억은 메모리만(토큰 지문 → { eTag, doc }). 경우 표·게이트 B: artifacts/tg-claims/case-table.md */
+const CLAIM_LIST_LIMIT = 1000;
+const CLAIM_LIST_BACKOFF_MS = 10 * 60_000; // 목록이 실패하면 10분 동안 목록 없이(종전 경로) — 목록이 계속 실패하는 환경에서 판정마다 실패할 요청을 더하지 않는다(게이트 B C6)
+const claimSeen = (globalThis.__argoTgClaimList ??= new Map()); // 지문 → { eTag, doc }
+const claimListState = (globalThis.__argoTgClaimListState ??= { offUntil: -Infinity });
+const etagOf = (meta) => { const e = meta?.eTag ?? meta?.etag; return typeof e === 'string' && e ? e.replace(/^W\//, '').replace(/"/g, '') : null; };
+const bodyEtag = (text) => createHash('md5').update(text).digest('hex');
+/** <owner>/.tg-claims 목록 → Map(파일 이름 → eTag|null), 쓸 수 없으면 null(종전 경로). */
+async function listRemoteClaims(owner, now = Date.now()) {
+  if (now < claimListState.offUntil) return null;
+  try {
+    const { data, error } = await client().storage.from(BUCKET).list(skey(owner, CLAIM_DIR), { limit: CLAIM_LIST_LIMIT });
+    if (error || !Array.isArray(data)) { claimListState.offUntil = now + CLAIM_LIST_BACKOFF_MS; return null; }
+    if (data.length >= CLAIM_LIST_LIMIT) return null; // 한도를 채운 목록은 빠진 이름이 있을 수 있다 — 믿지 않는다
+    const m = new Map();
+    for (const o of data) if (typeof o?.name === 'string') m.set(o.name, etagOf(o.metadata));
+    return m;
+  } catch { claimListState.offUntil = now + CLAIM_LIST_BACKOFF_MS; return null; }
+}
+/** 목록으로 판정할 수 있으면 { doc, error:null }, 아니면 null(내려받아야 한다). */
+function claimFromList(listing, hash) {
+  if (!listing) return null;
+  const name = `${hash}.json`;
+  if (!listing.has(name)) return null; // 목록에 없음 — '없음'으로 단정하지 않고 종전처럼 내려받아 본다(목록·객체의 순간 불일치로 남의 살아 있는 클레임을 덮지 않게. 새 토큰처럼 드문 경우만 GET 1건)
+  const e = listing.get(name); const seen = claimSeen.get(hash);
+  return e && seen && seen.eTag === e ? { doc: seen.doc, error: null } : null;
+}
+/** 내려받은 본문(또는 내가 쓴 본문)을 기억한다 — 다음 판정의 목록 eTag와 맞춰 본다. eTag를 모르면 본문 MD5(내가 쓴 글). */
+function rememberClaim(hash, doc, eTag) { if (doc && eTag) claimSeen.set(hash, { eTag, doc }); else claimSeen.delete(hash); }
+
 /** 토큰별 읽기 실패 시작 시각·마지막 자가 복구 시각 — TTL 넘게 한 번도 못 읽으면 '없음'으로 보고 한 번 써 본다(리스의 자가 복구와 같은 규칙:
     읽을 수 없는 클레임 객체가 그 토큰을 영영 막지 않게, TTL에 한 번만). 메모리만. */
 const claimReadFail = (globalThis.__argoTgClaimReadFail ??= new Map());
@@ -774,13 +811,19 @@ export async function renewTokenClaims(owner, { now = Date.now(), force = false 
     const key = skey(owner, CLAIM_DIR, `${h}.json`);
     const { doc: cur } = await readRemoteClaim(key); // 읽지 못하면 지우지 않는다(내 것인지 모른다)
     if (cur?.deviceId === me) await client().storage.from(BUCKET).remove([key]).catch(() => {});
-    claimState.removed.delete(h);
+    claimState.removed.delete(h); claimSeen.delete(h);
   }
+  const listing = claimState.tokens.size ? await listRemoteClaims(owner, now) : null; // 판정당 1회(위 '클레임 목록' 주석) — null이면 토큰별 내려받기
   for (const token of claimState.tokens) {
     const hash = tokenClaimHash(token);
     const key = skey(owner, CLAIM_DIR, `${hash}.json`);
     const prev = claimState.byHash.get(hash);
-    const { doc: cur, error: readErr } = await readRemoteClaim(key);
+    let got = claimFromList(listing, hash);
+    if (!got) {
+      got = await readRemoteClaim(key);
+      if (!got.error) rememberClaim(hash, got.doc, listing?.get(`${hash}.json`) ?? null); // 이번 목록의 eTag로 기억(목록 없음·eTag 없음이면 잊는다)
+    }
+    const { doc: cur, error: readErr } = got;
     if (readErr) {
       // 읽지 못함 — 이번 판정은 보류하고 쓰지 않는다. 확인된 보유자이고 내 글이 TTL 안이면 유지(리스의 holdsLeaseOnWriteFailure와 같은 절충), 아니면 미보유.
       // 예외: TTL 넘게 한 번도 읽지 못했으면 '없음'으로 보고 TTL에 한 번 써 본다(아래로 흘려보낸다 — 쓰기 뒤 확인 읽기가 승자를 가린다).
@@ -807,9 +850,11 @@ export async function renewTokenClaims(owner, { now = Date.now(), force = false 
       continue;
     }
     const nonce = randomUUID();
+    const mine = { deviceId: me, nonce, ts: now }; const body = JSON.stringify(mine);
     const { error: upErr } = await client().storage.from(BUCKET).upload(
-      key, new Blob([JSON.stringify({ deviceId: me, nonce, ts: now })]), { upsert: true, contentType: 'application/json' },
+      key, new Blob([body]), { upsert: true, contentType: 'application/json' },
     );
+    rememberClaim(hash, upErr ? null : mine, upErr ? null : bodyEtag(body)); // 다음 목록의 eTag가 이 본문의 MD5면 내 글 그대로 — 내려받지 않는다(남이 덮으면 eTag가 달라 내려받는다)
     if (upErr) { // 판정 불가 — 이미 확인된 보유자이고 TTL 내면 유지, 아니면 미보유
       const keep = !!(prev?.mine && prev.ownedAt > 0 && now - prev.ownedAt < TG_CLAIM_TTL_MS);
       claimState.byHash.set(hash, { mine: keep, holder: keep ? me : null, ts: now, ownedAt: keep ? prev.ownedAt : 0 });

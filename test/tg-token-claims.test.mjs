@@ -267,3 +267,91 @@ test('④ 화면 — 사이드바 점·설정 카드·크루 칩이 초록(이 �
     assert.ok(m && /[가-힣]/.test(m[1]) && !/[가-힣]/.test(m[2]), `${k} ko/en 등록`);
   }
 });
+
+// ── 클레임 목록 1회 + 바뀐 객체만 내려받기(2026-10-14 — 토큰 20개 기기가 판정마다 GET 20건) ──
+// 판정·소유는 배포본과 같아야 하고(게이트 B: artifacts/tg-claims/case-table.md), 줄어드는 것은 GET뿐이다.
+const { createHash: _md5h } = await import('node:crypto');
+function listingStorage({ etag = 'md5', listFails = false } = {}) {
+  const store = new Map(); const calls = { get: 0, post: 0, list: 0 };
+  const tag = (body) => (etag === 'md5' ? _md5h('md5').update(body).digest('hex') : `${_md5h('md5').update(body).digest('hex')}-2`); // '-2' = 멀티파트 모양(본문 MD5가 아님)
+  const bucket = {
+    async download(key) { calls.get++; const v = store.get(key.split('?')[0]); return v ? { data: new Blob([v.body]) } : { data: null, error: { message: 'Object not found' } }; },
+    async upload(key, blob) { calls.post++; const body = await blob.text(); store.set(key, { body, eTag: tag(body) }); return { error: null }; },
+    async remove(keys) { for (const k of keys) store.delete(k); return { error: null }; },
+    async list(prefix) { calls.list++; if (listFails) return { data: null, error: { message: 'fetch failed' } };
+      const p = `${prefix}/`; return { data: [...store.entries()].filter(([k]) => k.startsWith(p)).map(([k, v]) => ({ name: k.slice(p.length), metadata: { eTag: `"${v.eTag}"` } })), error: null }; },
+  };
+  return { client: { storage: { from: () => bucket } }, store, calls, put: (key, doc) => { const body = JSON.stringify(doc); store.set(key, { body, eTag: tag(body) }); } };
+}
+const t0 = Date.now();
+
+test('목록 — 확인된 보유자의 다음 판정은 목록 1회로 끝난다(내 글은 eTag = 본문 MD5라 내려받지 않는다), 판정은 그대로 mine', async () => {
+  _resetTokenClaimsForTest();
+  const s = listingStorage(); _setSyncClientForTest(s.client);
+  setClaimTokens(['L1', 'L2', 'L3']);
+  await renewTokenClaims('owner2', { force: true, now: t0 }); // 첫 판정: 목록에 없음 → 내려받기 3 → 쓰기 3 → 확인 읽기 3
+  assert.equal(s.calls.list, 1);
+  for (const t of ['L1', 'L2', 'L3']) assert.equal(tokenOwnership(t).mine, true);
+  const before = { ...s.calls };
+  await renewTokenClaims('owner2', { force: true, now: t0 + 31_000 }); // 갱신 생략 구간(40초 안) — 목록만
+  assert.deepEqual({ get: s.calls.get - before.get, post: s.calls.post - before.post, list: s.calls.list - before.list }, { get: 0, post: 0, list: 1 });
+  await renewTokenClaims('owner2', { force: true, now: t0 + 62_000 }); // 다시 쓰기(40초 넘음) — 쓰기 3, 내려받기 없음
+  assert.equal(s.calls.get - before.get, 0, '내 글의 eTag가 맞으면 내려받지 않는다');
+  assert.equal(s.calls.post - before.post, 3);
+  for (const t of ['L1', 'L2', 'L3']) assert.equal(tokenOwnership(t).mine, true);
+});
+
+test('목록 — 남이 내 클레임을 덮으면 eTag가 달라 다음 판정에서 내려받아 알아채고 양보한다(탈취 감지 주기 그대로)', async () => {
+  _resetTokenClaimsForTest();
+  const s = listingStorage(); _setSyncClientForTest(s.client);
+  setClaimTokens(['L4']);
+  await renewTokenClaims('owner2', { force: true, now: t0 });
+  assert.equal(tokenOwnership('L4').mine, true);
+  s.put(keyOf('owner2', 'L4'), { deviceId: 'Thief-PC-11111111', nonce: 'z', ts: t0 + 10_000 }); // 읽기 실패 탈출 등으로 남이 쓴 글
+  const g = s.calls.get;
+  await renewTokenClaims('owner2', { force: true, now: t0 + 31_000 });
+  assert.equal(s.calls.get - g, 1, '바뀐 객체만 내려받는다');
+  assert.deepEqual({ mine: tokenOwnership('L4').mine, holder: tokenOwnership('L4').holder }, { mine: false, holder: 'Thief-PC-11111111' });
+  assert.equal(JSON.parse(s.store.get(keyOf('owner2', 'L4')).body).deviceId, 'Thief-PC-11111111', '남의 살아 있는 클레임을 덮지 않았다');
+});
+
+test('목록 실패 — 이번 판정은 토큰별 내려받기(종전과 같은 판정), 10분 동안은 목록을 다시 부르지 않는다', async () => {
+  _resetTokenClaimsForTest();
+  const s = listingStorage({ listFails: true }); _setSyncClientForTest(s.client);
+  setClaimTokens(['L5', 'L6']);
+  await renewTokenClaims('owner2', { force: true, now: t0 });
+  assert.equal(s.calls.list, 1);
+  assert.equal(tokenOwnership('L5').mine, true); assert.equal(tokenOwnership('L6').mine, true);
+  const g = s.calls.get;
+  await renewTokenClaims('owner2', { force: true, now: t0 + 31_000 });
+  assert.equal(s.calls.list, 1, '쉬는 동안 목록 요청 없음');
+  assert.equal(s.calls.get - g, 2, '토큰마다 내려받기(종전)');
+  await renewTokenClaims('owner2', { force: true, now: t0 + 10 * 60_000 + 1 });
+  assert.equal(s.calls.list, 2, '10분 뒤 다시 시도');
+});
+
+test('eTag가 본문 MD5가 아니면(멀티파트 모양) 내 글도 매번 내려받는다 — 요청만 덜 줄고 판정은 같다', async () => {
+  _resetTokenClaimsForTest();
+  const s = listingStorage({ etag: 'multipart' }); _setSyncClientForTest(s.client);
+  setClaimTokens(['L7']);
+  await renewTokenClaims('owner2', { force: true, now: t0 });
+  const g = s.calls.get;
+  await renewTokenClaims('owner2', { force: true, now: t0 + 31_000 });
+  assert.equal(s.calls.get - g, 1, '내 글인지 eTag로 알 수 없으니 내려받는다');
+  await renewTokenClaims('owner2', { force: true, now: t0 + 62_000 });
+  assert.equal(s.calls.get - g, 1, '한 번 내려받은 본문은 eTag가 같으면 다시 받지 않는다');
+  assert.equal(tokenOwnership('L7').mine, true);
+});
+
+test('목록에 이름이 없으면 없다고 단정하지 않고 내려받아 본다 — 목록에 안 보인 남의 살아 있는 클레임을 덮지 않는다', async () => {
+  _resetTokenClaimsForTest();
+  const s = listingStorage(); _setSyncClientForTest(s.client);
+  const realList = s.client.storage.from().list;
+  s.client.storage.from().list = async () => ({ data: [], error: null }); // 목록과 객체의 순간 불일치
+  s.put(keyOf('owner2', 'L8'), { deviceId: 'Other-PC-22222222', nonce: 'w', ts: t0 });
+  setClaimTokens(['L8']);
+  await renewTokenClaims('owner2', { force: true, now: t0 + 1000 });
+  assert.deepEqual({ mine: tokenOwnership('L8').mine, holder: tokenOwnership('L8').holder }, { mine: false, holder: 'Other-PC-22222222' });
+  assert.equal(JSON.parse(s.store.get(keyOf('owner2', 'L8')).body).deviceId, 'Other-PC-22222222');
+  s.client.storage.from().list = realList;
+});
