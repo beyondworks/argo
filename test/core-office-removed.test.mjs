@@ -11,6 +11,8 @@ import { fileURLToPath } from 'node:url';
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const MS_OFFICE = /officedocument|openxmlformats|office-export|오피스 형식|오피스 내보내기|officeholders/i;
 const HIT = /office|오피스/i;
+// 구글 캘린더 일정 종류 '부재중'(OUT_OF_OFFICE·outOfOffice — 구글 API 고유 값, src/google-rest.mjs)도 Argo 오피스와 다른 뜻이라 뺀다.
+const GCAL_OOO = /OUT_OF_OFFICE|outOfOffice/;
 
 /** 남겨도 되는 곳과 그 줄 수 — 이유. */
 const ALLOWED = {
@@ -36,7 +38,7 @@ const ALLOWED = {
 
 function scan() {
   const out = {};
-  const count = (p) => readFileSync(p, 'utf8').split('\n').filter((l) => HIT.test(l) && !MS_OFFICE.test(l)).length;
+  const count = (p) => readFileSync(p, 'utf8').split('\n').filter((l) => HIT.test(l) && !MS_OFFICE.test(l) && !GCAL_OOO.test(l)).length;
   const walk = (d) => {
     if (!existsSync(d)) return;
     for (const e of readdirSync(d)) {
