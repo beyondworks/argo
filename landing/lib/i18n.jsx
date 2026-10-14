@@ -822,7 +822,7 @@ const DICT = {
 
   // legal (약관·개인정보)
   'legal.kicker': ['정책', 'Legal'],
-  'legal.updated': ['시행일 2026-07-15 · 개정 2026-10-05', 'Effective 2026-07-15 · Revised 2026-10-05'],
+  'legal.updated': ['시행일 2026-07-15 · 개정 2026-10-14', 'Effective 2026-07-15 · Revised 2026-10-14'],
   'legal.terms': ['이용약관', 'Terms of Service'],
   'legal.privacy': ['개인정보처리방침', 'Privacy Policy'],
   'terms.title': ['이용약관', 'Terms of Service'],

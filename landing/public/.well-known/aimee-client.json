@@ -1,0 +1,16 @@
+{
+  "client_id": "https://argo.ceo/.well-known/aimee-client.json",
+  "client_name": "Aimee",
+  "client_uri": "https://argo.ceo/aimee",
+  "policy_uri": "https://argo.ceo/privacy",
+  "tos_uri": "https://argo.ceo/terms",
+  "contacts": ["yg@leankim.xyz"],
+  "application_type": "native",
+  "redirect_uris": [
+    "http://127.0.0.1/oauth/callback",
+    "http://127.0.0.1:53682/oauth/callback"
+  ],
+  "grant_types": ["authorization_code", "refresh_token"],
+  "response_types": ["code"],
+  "token_endpoint_auth_method": "none"
+}

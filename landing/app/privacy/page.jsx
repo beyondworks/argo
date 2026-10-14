@@ -76,6 +76,31 @@ const SECTIONS = [
     ],
   },
   {
+    h: { ko: '2-2. Aimee 데스크톱 앱', en: '2-2. Aimee desktop app' },
+    p: [
+      {
+        ko: 'Aimee는 사용자의 맥에서 동작하는 데스크톱 앱입니다. 대화 기록, 기억 노트, 에이전트 설정, 작업 폴더 경로, 연결 정보는 모두 사용자의 기기에 저장되며 운영자의 서버로 보내지 않습니다. 사용자가 넣은 API 키와 서비스 로그인으로 받은 인증 토큰은 macOS 키체인 기반 암호화(Electron safeStorage)로 기기에 저장되고, 연결을 끊거나 앱에서 지우면 삭제됩니다.',
+        en: 'Aimee is a desktop app that runs on the user’s Mac. Conversation history, memory notes, agent settings, work folder paths and connection data are stored on the user’s device and are not sent to the operator’s servers. API keys the user enters and authentication tokens obtained by signing in to services are stored on the device, encrypted with macOS Keychain-backed storage (Electron safeStorage), and are deleted when the user disconnects or removes them in the app.',
+      },
+      {
+        ko: '사용자가 AI 제공자나 업무 서비스(예: Notion, GitHub, Google)를 연결하면, Aimee는 사용자가 요청한 작업을 하기 위해 사용자의 키나 로그인으로 그 서비스와 직접 통신합니다. 보내는 내용은 해당 서비스의 개인정보처리방침을 따릅니다. 메일 발송·게시·삭제처럼 외부에 영향을 주는 동작은 매번 사용자의 승인을 받은 뒤에만 합니다. 운영자는 Aimee에서 다룬 데이터를 모델 학습에 사용하지 않습니다.',
+        en: 'When the user connects an AI provider or a work service (such as Notion, GitHub or Google), Aimee communicates directly with that service using the user’s own key or sign-in to perform tasks the user requests. What is sent is governed by that service’s privacy policy. Actions with external effects — such as sending email, posting or deleting — are performed only after the user approves each one. The operator does not use data handled in Aimee to train models.',
+      },
+      {
+        ko: 'Google 사용자 데이터: Aimee는 사용자가 “Google 연결”을 허락한 경우에만 다음 권한을 씁니다 — 사용자가 승인한 메일 보내기(gmail.send), 사용자가 고른 캘린더의 일정 만들기·수정(calendar.events), 사용자가 고르거나 Aimee가 만든 Drive 파일만 읽고 쓰기(drive.file). 이 권한으로 받은 정보는 사용자의 맥에서 사용자가 요청한 작업을 하는 데에만 쓰며, 운영자의 서버로 보내지 않고, 광고·판매·제3자 제공에 쓰지 않으며, AI 모델 학습에 쓰지 않습니다. 사용자는 Google 계정의 “서드파티 앱 및 서비스”에서도 언제든 접근 권한을 취소할 수 있습니다.',
+        en: 'Google user data: Aimee requests the following Google permissions only when the user chooses to connect Google — sending emails the user approves (gmail.send), creating and updating events on calendars the user selects (calendar.events), and reading and writing only Drive files the user picks or that Aimee creates (drive.file). Information obtained through these permissions is used only on the user’s Mac to perform tasks the user requests. It is not sent to the operator’s servers, not used for advertising, not sold or shared with third parties, and not used to train AI models. Users can also revoke access at any time from “Third-party apps & services” in their Google Account.',
+      },
+      {
+        ko: 'Aimee가 Google API로부터 받은 정보의 사용과 다른 앱으로의 전송은 Google API 서비스 사용자 데이터 정책(https://developers.google.com/terms/api-services-user-data-policy)의 제한적 사용(Limited Use) 요구 사항을 준수합니다.',
+        en: 'Aimee’s use and transfer to any other app of information received from Google APIs will adhere to the Google API Services User Data Policy (https://developers.google.com/terms/api-services-user-data-policy), including the Limited Use requirements.',
+      },
+      {
+        ko: 'Aimee 관련 문의: yg@leankim.xyz',
+        en: 'Questions about Aimee: yg@leankim.xyz',
+      },
+    ],
+  },
+  {
     h: { ko: '3. 정보의 이용·공유', en: '3. How we use and share information' },
     p: [
       {
