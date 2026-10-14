@@ -147,20 +147,20 @@ test('조직 비공개 채널 — 방장이 에이전트를 둔 멤버를 옛 �
 test('조직 공개 채널 — 옛 앱 내보내기(에이전트 빼기 → 제외 목록에 사람)로 그 사람의 에이전트도 빠진다', { skip }, () => {
   if (!inRoom(PUB, D1)) { assert.equal(join(U.d, PUB, D1), 'requested'); decideAll(U.a, PUB); }
   assert.equal(inRoom(PUB, D1), true);
-  assert.equal(last(asUser(U.a, `select public.msgr_crew_leave_channel('${PUB}', '${D1}')`)), 'owner_only', '방장이 남의 에이전트를 빼려 하면 그대로 두고 정상 반환');
+  // 0.1.108 U2(20261014200000): 조직 공개·비공개 채널의 방장은 남의 개인 에이전트도 뺀다(G3) — 옛 앱 순서의 첫 단계가 이제 실제로 뺀다(오류 없음)
+  assert.equal(last(asUser(U.a, `select public.msgr_crew_leave_channel('${PUB}', '${D1}')`)), 'removed', '방장이 남의 에이전트를 빼면 빠진다(조직 채널 — U2)');
   asUser(U.a, `update public.msgr_channels set excluded_user_ids = array['${U.d}']::uuid[] where id = '${PUB}'`);
   assert.equal(inRoom(PUB, D1), false, '제외 목록에 든 사람의 에이전트도 빠진다(규칙 14 제외 트리거)');
   asUser(U.a, `update public.msgr_channels set excluded_user_ids = '{}' where id = '${PUB}'`);
 });
 
-test('방장이 남의 에이전트만 단독으로 빼는 것은 여전히 막힌다 — RPC는 그대로 두고, 직접 삭제도 막힌다', { skip }, () => {
+test('조직 비공개 채널 — 방장은 남의 개인 에이전트를 RPC로 뺀다(U2 G3), 직접 삭제(RLS)는 여전히 막힌다(기록·1시간 막기를 건너뛰지 않게)', { skip }, () => {
   const priv = last(asUser(U.a, `select public.msgr_create_channel('${ORG}','private','Secret2')`));
   asUser(U.a, `insert into public.msgr_channel_members (channel_id, member_kind, member_id, added_by) values ('${priv}', 'user', '${U.d}', '${U.a}')`);
   assert.equal(join(U.d, priv, D1), 'requested'); decideAll(U.a, priv);
-  assert.equal(last(asUser(U.a, `select public.msgr_crew_leave_channel('${priv}', '${D1}')`)), 'owner_only');
   asUser(U.a, `delete from public.msgr_channel_members where channel_id = '${priv}' and member_kind = 'crew' and member_id = '${D1}'`);
-  assert.equal(inRoom(priv, D1), true, '사람은 남아 있고 에이전트만 빼는 것은 안 된다');
-  assert.equal(userIn(priv, U.d), true);
-  assert.equal(sql(`select count(*) from public.msgr_audit_log where action = 'crew_removed_from_channel' and meta->>'channel_id' = '${priv}'`), '0', '빼지 않았으니 감사 기록도 없다');
-  assert.equal(last(asUser(U.d, `select public.msgr_crew_leave_channel('${priv}', '${D1}')`)), 'removed', '주인은 언제든 뺀다');
+  assert.equal(inRoom(priv, D1), true, '방장의 직접 삭제(RLS)는 막힌다 — 관리자 내보냄은 RPC 한 길');
+  assert.equal(last(asUser(U.a, `select public.msgr_crew_leave_channel('${priv}', '${D1}')`)), 'removed', '방장의 RPC는 뺀다(U2)');
+  assert.equal(inRoom(priv, D1), false); assert.equal(userIn(priv, U.d), true, '사람(주인)은 그대로');
+  assert.equal(sql(`select count(*) from public.msgr_audit_log where action = 'crew_removed_from_channel' and meta->>'channel_id' = '${priv}' and meta->>'by' = 'host'`), '1', '감사 기록(방장)');
 });
