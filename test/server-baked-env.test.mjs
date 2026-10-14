@@ -91,7 +91,7 @@ test('스테이징 유출 가드의 시크릿 파일 패턴에 걸리지 않는 
   assert.doesNotMatch(BAKED_ENV_FILE, /\.env(\..+)?$/);
   for (const f of ['scripts/stage-sidecar.mjs', 'scripts/stage-server.mjs']) {
     const s = readFileSync(join(repo, f), 'utf8');
-    assert.ok(s.indexOf('bakeServerEnv') > s.indexOf("시크릿 파일 잔존 — 배포 차단"), `${f}: 굽기는 유출 가드 뒤`);
+    assert.ok(s.indexOf('bakeServerEnv({') > s.indexOf("시크릿 파일 잔존 — 배포 차단"), `${f}: 굽기는 유출 가드 뒤`);
   }
 });
 

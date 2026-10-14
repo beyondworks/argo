@@ -7,6 +7,7 @@ import vm from 'node:vm';
 import { execFileSync } from 'node:child_process';
 import { SHIM_SRC } from '../src/no-dock.mjs';
 import { stageCli } from '../scripts/stage-cli.mjs';
+import { bakeServerEnv } from '../scripts/bake-server-env.mjs';
 
 // Run the full staging scripts against disposable trees; build/archive/service
 // commands and the runtime copy never touch the host installation.
@@ -29,7 +30,7 @@ function stage(kind, { esm = true, type = 'module', env = {} } = {}) {
   const source = fs.readFileSync(new URL(`../scripts/stage-${kind}.mjs`, import.meta.url), 'utf8')
     .replace(/^#!.*\n/, '').replace(/^import .* from .*;\n/gm, '').replaceAll('import.meta.url', "'file:///fixture'");
   const sandbox = {
-    ...fs, SHIM_SRC, stageCli, dirname, join, fileURLToPath: () => join(root, 'scripts', `stage-${kind}.mjs`),
+    ...fs, SHIM_SRC, stageCli, bakeServerEnv, dirname, join, fileURLToPath: () => join(root, 'scripts', `stage-${kind}.mjs`),
     process: { platform: 'darwin', arch: 'arm64', execPath: '/fixture/node', env, exit(code) { throw new Error(`exit:${code}`); } },
     copyFileSync: (from, to) => from === '/fixture/node' ? put(to, 'runtime fixture') : fs.copyFileSync(from, to),
     execFileSync: (file, args) => { commands.push([file, ...args]); if (file === 'rustc') return 'host: aarch64-apple-darwin\n'; if (file !== 'tar') throw new Error(`unexpected command: ${file}`); return ''; },
@@ -112,5 +113,17 @@ for (const [kind, names, other] of [['server', ['ARGO_CLI_SUPABASE_URL', 'ARGO_C
     await mine.run; await foreign.run;
     assert.deepEqual(JSON.parse(fs.readFileSync(join(mine.tree, 'bin/argo-public.json'), 'utf8')), { url: 'https://sb.example', anonKey: 'anon-public' });
     assert.equal(fs.existsSync(join(foreign.tree, 'bin/argo-public.json')), false);
+  });
+}
+
+// 구글 커넥터 client secret(서버 전용) — CI 시크릿이 있을 때만 두 트리 루트에 argo-server-config.json을 굽고, 없으면 만들지 않는다(그 빌드는 '준비 중').
+for (const kind of ['server', 'sidecar']) {
+  test(`${kind}: 서버 전용 값은 시크릿이 있을 때만 트리 루트에 굽는다`, async t => {
+    const withSecret = stage(kind, { env: { ARGO_CONNECTOR_GOOGLE_CLIENT_SECRET: 'GOCSPX-fake-stage' } });
+    const without = stage(kind, { env: {} });
+    t.after(() => { fs.rmSync(withSecret.root, { recursive: true, force: true }); fs.rmSync(without.root, { recursive: true, force: true }); });
+    await withSecret.run; await without.run;
+    assert.deepEqual(JSON.parse(fs.readFileSync(join(withSecret.tree, 'argo-server-config.json'), 'utf8')), { ARGO_CONNECTOR_GOOGLE_CLIENT_SECRET: 'GOCSPX-fake-stage' });
+    assert.equal(fs.existsSync(join(without.tree, 'argo-server-config.json')), false);
   });
 }
