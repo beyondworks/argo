@@ -9,16 +9,23 @@ import { test, beforeEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 
 const realFetch = globalThis.fetch;
-let mode = 'ok'; // ok | down | slowStars
+let mode = 'ok'; // ok | down | starsFail | hang
 const calls = [];
 let inflight = 0, maxInflight = 0; // 실측: 동시 3개 이상이면 503이 섞인다
 function fakeSkills(page, n, prefix) {
   return Array.from({ length: n }, (_, i) => ({ id: `${prefix}-${page}-${i}`, name: `${prefix}${page}-${i}`, author: `author-${prefix}-${page}-${i}`, description: 'd', stars: 100000 - page * 100 - i, githubUrl: 'https://github.com/a/b' }));
 }
+const hang = (opts) => new Promise((_, reject) => { // 원격이 매달림 — 중단 신호가 와야만 끝난다
+  const sig = opts?.signal; if (sig?.aborted) return reject(sig.reason);
+  sig?.addEventListener('abort', () => reject(sig.reason), { once: true });
+});
+let npmCalls = 0;
 globalThis.fetch = async (url, opts) => {
   const u = new URL(String(url));
+  if (u.hostname === 'api.npmjs.org') { npmCalls++; if (mode === 'hang') return hang(opts); return Response.json({ downloads: 1000 + npmCalls }); }
   if (u.hostname !== 'skillsmp.com') return realFetch(url, opts);
   calls.push(u.search);
+  if (mode === 'hang') return hang(opts);
   inflight++; maxInflight = Math.max(maxInflight, inflight);
   try {
   await new Promise((r) => setTimeout(r, 5));
@@ -37,7 +44,9 @@ globalThis.fetch = async (url, opts) => {
 
 const M = await import('../src/remote-market.mjs');
 const TTL = 10 * 60 * 1000;
-beforeEach(() => { mode = 'ok'; calls.length = 0; maxInflight = 0; M._resetRemoteMarketCache?.(); });
+beforeEach(() => { mode = 'ok'; calls.length = 0; maxInflight = 0; npmCalls = 0; M._resetRemoteMarketCache?.(); M._setRemoteMarketTiming?.({ batchDeadlineMs: 20_000, failCooldownMs: 90_000 }); });
+const COOLDOWN = 90_000;
+const later = (ms) => mock.timers.enable({ apis: ['Date'], now: Date.now() + ms });
 
 test('① 추천 — limit ≤ 48로만 부르고 20개를 채운다(스타순 풀 약 200행)', async () => {
   const r = await M.topRemoteSkills();
@@ -62,11 +71,12 @@ test('② 옛 결과도 없으면 오류를 던진다(라우트가 오류 문구
   await assert.rejects(M.topRemoteSkills(), /원격|fetch|연결|불러오지/);
 });
 
-test('③ 실패는 캐시에 넣지 않는다 — 회복하면 다음 요청이 바로 채운다', async () => {
+test('③ 실패는 캐시에 넣지 않는다 — 회복하면 쿨다운 뒤 다음 요청이 채운다', async () => {
   mode = 'down';
   await assert.rejects(M.topRemoteSkills());
   mode = 'ok';
-  assert.equal((await M.topRemoteSkills()).length, 20, '실패가 캐시에 고정됐다');
+  later(COOLDOWN + 1000);
+  try { assert.equal((await M.topRemoteSkills()).length, 20, '실패가 캐시에 고정됐다'); } finally { mock.timers.reset(); }
 });
 
 test('④ 검색 — 같은 질의의 옛 성공 결과를 오류 때 재사용, 없으면 오류', async () => {
@@ -86,8 +96,9 @@ test('③ 일부 실패(스타순만 400) — 받은 만큼 보여 주되 캐시
   assert.ok(part.length > 0, '일부 결과도 버렸다');
   assert.ok(part.every((s) => !s.id.startsWith('star-')), '스타순 실패인데 스타순 결과가 섞였다');
   mode = 'ok';
+  later(COOLDOWN + 1000);
   const before = calls.length;
-  const full = await M.topRemoteSkills();
+  let full; try { full = await M.topRemoteSkills(); } finally { mock.timers.reset(); }
   assert.ok(calls.slice(before).some((q) => q.includes('sortBy=stars') && !q.includes('search=')), '일부 결과가 캐시에 고정돼 다시 부르지 않았다');
   assert.ok(full.some((s) => s.id.startsWith('star-')), '회복 뒤에도 스타순 결과가 없다');
 });
@@ -96,4 +107,48 @@ test('⑤ 동시 요청은 2개까지 — 3개 이상이면 503을 섞는 서버
   const r = await M.topRemoteSkills();
   assert.ok(maxInflight <= 2, `동시 ${maxInflight}개를 보냈다`);
   assert.equal(r.length, 20);
+});
+
+test('⑥ 원격이 매달려도 묶음 마감 안에 끝난다 — 스킬 추천(옛 결과 없으면 오류, 있으면 옛 결과)·MCP 추천', async () => {
+  M._setRemoteMarketTiming({ batchDeadlineMs: 300 });
+  mode = 'hang';
+  let t0 = Date.now();
+  await assert.rejects(M.topRemoteSkills(), /초 안에 끝나지 않았습니다|시작하지 못했습니다/);
+  assert.ok(Date.now() - t0 < 2000, `스킬 추천이 ${Date.now() - t0}ms 걸렸다 — 마감이 없다`);
+  t0 = Date.now();
+  await assert.rejects(M.topRemoteMcp());
+  assert.ok(Date.now() - t0 < 2000, `MCP 추천이 ${Date.now() - t0}ms 걸렸다`);
+  // 옛 결과가 있으면 마감 뒤 그것을 돌려준다
+  M._resetRemoteMarketCache(); mode = 'ok';
+  const good = await M.topRemoteSkills();
+  later(10 * 60 * 1000 + 1000);
+  try { mode = 'hang'; t0 = Date.now(); assert.deepEqual(await M.topRemoteSkills(), good); assert.ok(Date.now() - t0 < 2000); } finally { mock.timers.reset(); }
+});
+
+test('⑦ 실패 쿨다운 — 실패 뒤 쿨다운 동안은 원격 호출 0건(옛 결과 없으면 같은 오류, 있으면 옛 결과), 쿨다운 뒤에는 다시 부른다', async () => {
+  mode = 'down';
+  await assert.rejects(M.topRemoteSkills());
+  const n = calls.length;
+  await assert.rejects(M.topRemoteSkills());
+  await assert.rejects(M.topRemoteSkills());
+  assert.equal(calls.length, n, '쿨다운 중에 원격을 다시 불렀다');
+  later(COOLDOWN + 1000);
+  try { await assert.rejects(M.topRemoteSkills()); assert.ok(calls.length > n, '쿨다운 뒤에도 다시 부르지 않는다'); } finally { mock.timers.reset(); }
+  // 옛 결과가 있는 경우
+  M._resetRemoteMarketCache(); mode = 'ok';
+  const good = await M.topRemoteSkills();
+  later(10 * 60 * 1000 + 1000);
+  try {
+    mode = 'down';
+    assert.deepEqual(await M.topRemoteSkills(), good);
+    const m = calls.length;
+    assert.deepEqual(await M.topRemoteSkills(), good);
+    assert.equal(calls.length, m, '옛 결과가 있어도 쿨다운 중 원격을 다시 불렀다');
+  } finally { mock.timers.reset(); }
+});
+
+test('⑧ 같은 키 동시 요청은 한 묶음만 원격으로 보낸다', async () => {
+  const [a, b, c] = await Promise.all([M.topRemoteSkills(), M.topRemoteSkills(), M.topRemoteSkills()]);
+  assert.deepEqual(a, b); assert.deepEqual(b, c);
+  assert.equal(calls.length, 14, `요청 ${calls.length}건 — 묶음(스타순 4 + 카테고리 10)이 겹쳐 나갔다`);
 });

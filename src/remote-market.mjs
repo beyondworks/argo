@@ -15,17 +15,28 @@ const REMOTE_TIMEOUT_MS = 15_000;
 // skillsmp는 요청을 동시에 3개 이상 보내면 503을 섞어 돌려준다(2026-10-14 실측: 카테고리 검색 10개 동시 → 8개 503, 동시 2개 → 10/10 200·약 2.6초).
 // 추천 요청(스타순 4페이지 + 카테고리 10개)은 이 수만큼씩 나눠 보낸다.
 const SKILLSMP_CONCURRENCY = 2;
+// 추천 묶음 전체 마감 — 요청마다 15초에 동시 2개면 원격이 매달릴 때 ?top=skills가 최대 약 105초까지 늦어진다(배포본은 약 8초). 마감이 지나면 남은 요청을 끊고
+// 그때까지 받은 것으로 부분 결과를 낸다(검수 1, 2026-10-14). MCP 추천도 같은 마감.
+// 실패 쿨다운 — 오류·부분 결과 뒤 이 시간 동안은 원격을 부르지 않고 옛 결과(없으면 직전 부분 결과·오류)를 바로 돌려준다. 장애 중 페이지를 열 때마다 묶음을 다시 보내던 것을 막는다.
+const timing = { batchDeadlineMs: 20_000, failCooldownMs: 90_000 };
+/** 시험용 — 마감·쿨다운을 짧게. */
+export function _setRemoteMarketTiming(t) { Object.assign(timing, t); }
 
-/** allSettled와 같은 결과를 내되 동시에 limit개까지만 돌린다(순서 보존). */
-async function settledWithLimit(tasks, limit) {
-  const out = new Array(tasks.length);
+/** allSettled와 같은 결과를 내되 동시에 limit개까지만 돌리고(순서 보존), 묶음 마감이 지나면 진행 중 요청을 끊고 남은 작업은 시작하지 않는다.
+    각 작업은 마감 신호(signal)를 받아 fetch에 넘긴다. 끊긴·시작 못 한 작업은 rejected다. */
+async function settledWithLimit(tasks, limit, deadlineMs = timing.batchDeadlineMs) {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(new Error(`원격 마켓 응답이 ${Math.round(deadlineMs / 1000)}초 안에 끝나지 않았습니다`)), deadlineMs);
+  const out = tasks.map(() => ({ status: 'rejected', reason: new Error('마감 전에 시작하지 못했습니다') }));
   let next = 0;
-  await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, async () => {
-    while (next < tasks.length) {
-      const i = next++;
-      try { out[i] = { status: 'fulfilled', value: await tasks[i]() }; } catch (reason) { out[i] = { status: 'rejected', reason }; }
-    }
-  }));
+  try {
+    await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, async () => {
+      while (next < tasks.length && !ac.signal.aborted) {
+        const i = next++;
+        try { out[i] = { status: 'fulfilled', value: await tasks[i](ac.signal) }; } catch (reason) { out[i] = { status: 'rejected', reason }; }
+      }
+    }));
+  } finally { clearTimeout(timer); }
   return out;
 }
 
@@ -34,24 +45,40 @@ class Partial extends Error { constructor(data) { super('partial'); this.data = 
 
 /** 성공 결과만 캐시한다. 오류(400·시간 초과·망 오류)나 일부 결과면 마지막 성공 결과를 TTL과 상관없이 다시 쓴다 —
     실패를 10분 캐시에 고정해 빈 목록이 계속 보이던 것을 막는다(2026-10-14). 옛 결과도 없으면 오류를 그대로 던진다(라우트가 오류 문구). */
+const failures = new Map(); // key → { at, error, partial } — 실패 쿨다운
+const inflight = new Map(); // key → Promise — 같은 키 동시 요청은 한 번만 원격으로
 async function cached(key, fn) {
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < TTL) return hit.data;
-  try {
-    const data = await fn();
-    cache.set(key, { at: Date.now(), data });
-    return data;
-  } catch (e) {
+  const fail = failures.get(key);
+  if (fail && Date.now() - fail.at < timing.failCooldownMs) { // 쿨다운 — 원격을 부르지 않는다
     if (hit) return hit.data;
-    if (e instanceof Partial) return e.data;
-    throw e;
+    if (fail.partial) return fail.partial;
+    throw fail.error;
   }
+  if (inflight.has(key)) return inflight.get(key);
+  const run = (async () => {
+    try {
+      const data = await fn();
+      cache.set(key, { at: Date.now(), data });
+      failures.delete(key);
+      return data;
+    } catch (e) {
+      failures.set(key, { at: Date.now(), error: e, partial: e instanceof Partial ? e.data : null });
+      if (hit) return hit.data;
+      if (e instanceof Partial) return e.data;
+      throw e;
+    } finally { inflight.delete(key); }
+  })();
+  inflight.set(key, run);
+  return run;
 }
-/** 시험용 — 모듈 캐시 비우기. */
-export function _resetRemoteMarketCache() { cache.clear(); }
+/** 시험용 — 모듈 캐시·쿨다운 비우기. */
+export function _resetRemoteMarketCache() { cache.clear(); failures.clear(); inflight.clear(); }
 
-async function fetchJson(url) {
-  const res = await fetch(url, { headers: { 'user-agent': 'argo-market/0.1' }, signal: AbortSignal.timeout(REMOTE_TIMEOUT_MS) });
+async function fetchJson(url, batchSignal = null) {
+  const timeout = AbortSignal.timeout(REMOTE_TIMEOUT_MS);
+  const res = await fetch(url, { headers: { 'user-agent': 'argo-market/0.1' }, signal: batchSignal ? AbortSignal.any([timeout, batchSignal]) : timeout });
   if (!res.ok) throw new Error(`원격 응답 ${res.status}`);
   return res.json();
 }
@@ -160,8 +187,8 @@ export async function topRemoteSkills() {
     // 스타순 풀은 종전(100×2=200행)과 같은 규모로 48×4=192행을 받는다.
     const STAR_PAGES = [1, 2, 3, 4];
     const settledAll = await settledWithLimit([
-      ...STAR_PAGES.map((p) => () => fetchJson(`https://skillsmp.com/api/skills?sortBy=stars&limit=${SKILLSMP_MAX_LIMIT}&page=${p}`)),
-      ...TERMS.map((t) => () => fetchJson(`https://skillsmp.com/api/skills?search=${t}&sortBy=stars&limit=6`)),
+      ...STAR_PAGES.map((p) => (signal) => fetchJson(`https://skillsmp.com/api/skills?sortBy=stars&limit=${SKILLSMP_MAX_LIMIT}&page=${p}`, signal)),
+      ...TERMS.map((t) => (signal) => fetchJson(`https://skillsmp.com/api/skills?search=${t}&sortBy=stars&limit=6`, signal)),
     ], SKILLSMP_CONCURRENCY);
     const starPages = settledAll.slice(0, STAR_PAGES.length);
     const termResults = settledAll.slice(STAR_PAGES.length);
@@ -224,12 +251,11 @@ const MCP_TOP_CANDIDATES = [
 /** MCP TOP 20 — npm 주간 다운로드로 실측 랭킹. */
 export async function topRemoteMcp() {
   return cached('top:mcp', async () => {
-    const results = await Promise.allSettled(
-      MCP_TOP_CANDIDATES.map(async (c) => {
-        const d = await fetchJson(`https://api.npmjs.org/downloads/point/last-week/${encodeURIComponent(c.pkg)}`);
-        return { ...c, downloads: d.downloads ?? 0 };
-      })
-    );
+    // 동시 수 제한 없이(종전과 같은 한꺼번에) 보내되, 묶음 마감으로 전체가 20초를 넘지 않게 한다.
+    const results = await settledWithLimit(MCP_TOP_CANDIDATES.map((c) => async (signal) => {
+      const d = await fetchJson(`https://api.npmjs.org/downloads/point/last-week/${encodeURIComponent(c.pkg)}`, signal);
+      return { ...c, downloads: d.downloads ?? 0 };
+    }), MCP_TOP_CANDIDATES.length);
     if (!results.some((r) => r.status === 'fulfilled')) throw results[0]?.reason ?? new Error('추천 목록을 불러오지 못했습니다');
     const partial = results.some((r) => r.status === 'rejected');
     const out = results
