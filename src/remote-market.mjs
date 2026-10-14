@@ -8,17 +8,50 @@ import { updateMcp, assertArbitraryMcpAllowed } from './market.mjs';
 
 const TTL = 10 * 60 * 1000;
 const cache = new Map(); // key → {at, data}
+// skillsmp.com/api/skills는 limit 1~48만 받는다(그 밖은 400 INVALID_LIMIT, 2026-10-14 실측 — 예전 limit=100이 매번 400이라 추천이 비거나 몇 개만 나왔다).
+export const SKILLSMP_MAX_LIMIT = 48;
+// 원격 마켓 요청만의 시간 한도 — skillsmp 첫 검색이 5.8초까지 걸렸다(실측). 느린 망에서 8초는 빠듯해 15초로 둔다. 이 모듈 밖 fetch는 그대로.
+const REMOTE_TIMEOUT_MS = 15_000;
+// skillsmp는 요청을 동시에 3개 이상 보내면 503을 섞어 돌려준다(2026-10-14 실측: 카테고리 검색 10개 동시 → 8개 503, 동시 2개 → 10/10 200·약 2.6초).
+// 추천 요청(스타순 4페이지 + 카테고리 10개)은 이 수만큼씩 나눠 보낸다.
+const SKILLSMP_CONCURRENCY = 2;
 
+/** allSettled와 같은 결과를 내되 동시에 limit개까지만 돌린다(순서 보존). */
+async function settledWithLimit(tasks, limit) {
+  const out = new Array(tasks.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, async () => {
+    while (next < tasks.length) {
+      const i = next++;
+      try { out[i] = { status: 'fulfilled', value: await tasks[i]() }; } catch (reason) { out[i] = { status: 'rejected', reason }; }
+    }
+  }));
+  return out;
+}
+
+/** 일부만 받아 온 결과 — 캐시에 넣지 않는다. 옛 성공 결과가 있으면 그것을 쓰고, 없으면 이 일부를 보여 준다. */
+class Partial extends Error { constructor(data) { super('partial'); this.data = data; } }
+
+/** 성공 결과만 캐시한다. 오류(400·시간 초과·망 오류)나 일부 결과면 마지막 성공 결과를 TTL과 상관없이 다시 쓴다 —
+    실패를 10분 캐시에 고정해 빈 목록이 계속 보이던 것을 막는다(2026-10-14). 옛 결과도 없으면 오류를 그대로 던진다(라우트가 오류 문구). */
 async function cached(key, fn) {
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < TTL) return hit.data;
-  const data = await fn();
-  cache.set(key, { at: Date.now(), data });
-  return data;
+  try {
+    const data = await fn();
+    cache.set(key, { at: Date.now(), data });
+    return data;
+  } catch (e) {
+    if (hit) return hit.data;
+    if (e instanceof Partial) return e.data;
+    throw e;
+  }
 }
+/** 시험용 — 모듈 캐시 비우기. */
+export function _resetRemoteMarketCache() { cache.clear(); }
 
 async function fetchJson(url) {
-  const res = await fetch(url, { headers: { 'user-agent': 'argo-market/0.1' }, signal: AbortSignal.timeout(8000) });
+  const res = await fetch(url, { headers: { 'user-agent': 'argo-market/0.1' }, signal: AbortSignal.timeout(REMOTE_TIMEOUT_MS) });
   if (!res.ok) throw new Error(`원격 응답 ${res.status}`);
   return res.json();
 }
@@ -124,10 +157,16 @@ export async function topRemoteSkills() {
     // 스타순 상위 수천 행이 소수 메가 저장소 소속이라(실측 6팀), 하이브리드로 다양화한다:
     // ① 스타순 풀(저자당 2개) ② 인기 카테고리 검색의 상위 스타 결과로 나머지를 채움
     const TERMS = ['writing', 'marketing', 'seo', 'research', 'automation', 'design', 'data', 'email', 'video', 'review'];
-    const [starPages, termResults] = await Promise.all([
-      Promise.allSettled([1, 2].map((p) => fetchJson(`https://skillsmp.com/api/skills?sortBy=stars&limit=100&page=${p}`))),
-      Promise.allSettled(TERMS.map((t) => fetchJson(`https://skillsmp.com/api/skills?search=${t}&sortBy=stars&limit=6`))),
-    ]);
+    // 스타순 풀은 종전(100×2=200행)과 같은 규모로 48×4=192행을 받는다.
+    const STAR_PAGES = [1, 2, 3, 4];
+    const settledAll = await settledWithLimit([
+      ...STAR_PAGES.map((p) => () => fetchJson(`https://skillsmp.com/api/skills?sortBy=stars&limit=${SKILLSMP_MAX_LIMIT}&page=${p}`)),
+      ...TERMS.map((t) => () => fetchJson(`https://skillsmp.com/api/skills?search=${t}&sortBy=stars&limit=6`)),
+    ], SKILLSMP_CONCURRENCY);
+    const starPages = settledAll.slice(0, STAR_PAGES.length);
+    const termResults = settledAll.slice(STAR_PAGES.length);
+    const settled = [...starPages, ...termResults];
+    if (!settled.some((p) => p.status === 'fulfilled')) throw settled[0].reason ?? new Error('추천 목록을 불러오지 못했습니다');
     const pool = [
       ...starPages.flatMap((p) => (p.status === 'fulfilled' ? p.value.skills ?? [] : [])),
       ...termResults.flatMap((p) => (p.status === 'fulfilled' ? p.value.skills ?? [] : [])),
@@ -149,6 +188,7 @@ export async function topRemoteSkills() {
       });
       if (out.length >= 20) break;
     }
+    if (settled.some((p) => p.status === 'rejected')) throw new Partial(out); // 일부 실패 — 캐시하지 않는다(옛 성공 결과가 있으면 그쪽)
     return out;
   });
 }
@@ -190,7 +230,9 @@ export async function topRemoteMcp() {
         return { ...c, downloads: d.downloads ?? 0 };
       })
     );
-    return results
+    if (!results.some((r) => r.status === 'fulfilled')) throw results[0]?.reason ?? new Error('추천 목록을 불러오지 못했습니다');
+    const partial = results.some((r) => r.status === 'rejected');
+    const out = results
       .filter((r) => r.status === 'fulfilled')
       .map((r) => r.value)
       .sort((a, b) => b.downloads - a.downloads)
@@ -200,6 +242,8 @@ export async function topRemoteMcp() {
         title: c.title, desc: c.desc, downloads: c.downloads, needsKey: !!c.needsKey,
         install: { kind: 'npm', pkg: c.pkg },
       }));
+    if (partial) throw new Partial(out); // 일부 실패 — 캐시하지 않는다
+    return out;
   });
 }
 
