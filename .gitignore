@@ -51,3 +51,6 @@ apps/messenger/test/scrollback.local.json
 # Apple 키(Sign in with Apple·APNs) — 절대 커밋 금지
 *.p8
 AuthKey_*
+
+# 서버 전용 빌드 값(스테이징 산출물 — 레포 루트에 생기면 커밋하지 않는다, src/server-baked-env.mjs)
+/argo-server-config.json

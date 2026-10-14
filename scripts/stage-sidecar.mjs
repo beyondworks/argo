@@ -112,6 +112,14 @@ const leaks = [];
 })(serverDest);
 if (leaks.length) { console.error('[stage] 시크릿 파일 잔존 — 배포 차단:\n' + leaks.join('\n')); process.exit(1); }
 
+// 3.6) 서버 전용 빌드 값(구글 커넥터 OAuth client secret) — CI 시크릿이 있을 때만 서버 트리 루트에 굽는다(scripts/bake-server-env.mjs).
+//      유출 가드 뒤에 둔다: 이 파일은 의도한 산출물이다. 클라이언트 번들(.next/static)에는 들어가지 않는다 — 발행 잡이 assert-not-in-client로 확인한다.
+{
+  const { bakeServerEnv } = await import('./bake-server-env.mjs');
+  const r = bakeServerEnv({ tree: serverDest, env: process.env });
+  console.log(r.names.length ? `[stage] 서버 전용 값 구움: ${r.names.join(', ')}` : '[stage] 서버 전용 값 없음 — 이 빌드의 구글 커넥터는 준비 중으로 보인다');
+}
+
 // 3.5) 윈도우: POSIX 셸 동봉 — busybox-w32 UTF-8 빌드를 해시 고정으로 resources/server/bin/에(Bash 도구의 기본 실행기, src/engine/shell-backend.mjs).
 //      cmd.exe는 모델의 bash 문법을 못 받는다(2026-09-06 윈도우 CI 실측: 표준 명령 14/30, 따옴표 손상, 한글 0/4). 실패는 빌드 중단.
 if (process.platform === 'win32') {

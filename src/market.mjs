@@ -1,5 +1,6 @@
 // 스킬·MCP 마켓 — 카탈로그 + 원클릭 설치/제거. 설치는 워크스페이스 파일에 남아
 // 스킬은 다음 턴 시스템 프롬프트에, MCP는 다음 턴 mcpServers에 자동 반영된다.
+import { serverEnv } from './server-baked-env.mjs';
 import { mkdir, readFile, writeFile, readdir, rm, stat, lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -364,7 +365,7 @@ export function connectorServerDef(item) {
 function resolveClientSecret(oauth) {
   const name = oauth.client_secret_env;
   if (!name) return {};
-  const value = process.env[name]?.trim();
+  const value = serverEnv(name); // 실행 환경 먼저, 없으면 빌드 때 구운 서버 전용 값(src/server-baked-env.mjs — 앱 번들·셀프호스트)
   if (!value) throw new Error(`커넥터 client secret 환경변수 ${name}가 설정되지 않았습니다`);
   return { client_secret: value };
 }
@@ -376,7 +377,7 @@ function resolveClientSecret(oauth) {
     미리 실으면 연결 버튼이 거짓말이 된다"(분리 검수 실측 2026-08-01: 어떤 빌드에서도 반드시 실패). */
 export function connectorReady(item) {
   const name = item?.oauth?.client_secret_env;
-  return !name || !!process.env[name]?.trim();
+  return !name || !!serverEnv(name); // resolveClientSecret과 같은 판정(구운 값 포함) — 둘이 갈라지면 버튼은 보이는데 누르면 실패한다
 }
 
 /** 카탈로그 × 회사 연결 상태 병합(순수) — 설정 카드(US-6)가 그대로 그리는 목록. 시크릿은 애초에

@@ -10,6 +10,9 @@
 #   NEXT_PUBLIC_SUPABASE_ANON_KEY   (공개값 — anon 키. 서비스키는 절대 넣지 말 것)
 #   NEXT_PUBLIC_LS_CHECKOUT_MONTHLY (공개값 — Lemon Squeezy 월간 체크아웃 링크. 없으면 앱에 '곧 제공'만 뜬다)
 #   NEXT_PUBLIC_LS_CHECKOUT_YEARLY  (공개값 — 연간 체크아웃 링크. 위와 같음)
+#   ARGO_CONNECTOR_GOOGLE_CLIENT_SECRET (구글 커넥터 OAuth '데스크톱 앱' 클라이언트 secret — 서버 전용. 스테이징이 서버 트리 루트
+#                                    argo-server-config.json에 굽는다(scripts/bake-server-env.mjs). NEXT_PUBLIC_로 넘기지 말 것.
+#                                    없으면 구글 캘린더·Gmail 커넥터가 '준비 중'인 발행본이 된다 — 경고만, 실패하지 않음)
 #   RELEASE_TOKEN                   (공개 배포 repo beyondworks/argo-agent에 릴리스 발행용 PAT — contents:write)
 #   APPLE_CERTIFICATE               (Developer ID Application .p12의 base64 — 맥 서명·공증용)
 #   APPLE_CERTIFICATE_PASSWORD      (.p12 비밀번호)
@@ -144,11 +147,21 @@ jobs:
           # 인앱 업데이터 서명 — 키는 ~/.tauri/argo-updater.key에서 생성(비밀번호 없음 → 빈 문자열 고정)
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+          # 구글 커넥터 client secret — 서버 전용. stage-sidecar가 resources/server/argo-server-config.json에 굽는다(next build는 이 이름을 클라이언트에 인라인하지 않는다 — NEXT_PUBLIC_ 아님).
+          ARGO_CONNECTOR_GOOGLE_CLIENT_SECRET: ${{ secrets.ARGO_CONNECTOR_GOOGLE_CLIENT_SECRET }}
         run: |
           for required in NEXT_PUBLIC_SUPABASE_URL NEXT_PUBLIC_SUPABASE_ANON_KEY TAURI_SIGNING_PRIVATE_KEY; do
             [ -n "${!required:-}" ] || { echo "::error::Required release variable missing: $required"; exit 1; }
           done
+          [ -n "${ARGO_CONNECTOR_GOOGLE_CLIENT_SECRET:-}" ] || echo "::warning::ARGO_CONNECTOR_GOOGLE_CLIENT_SECRET 없음 — 이 발행본의 구글 캘린더·Gmail 커넥터는 '준비 중'으로 보인다"
           npm run app:build
+
+      # 서버 전용 값이 클라이언트 번들(브라우저로 가는 .next/static)에 새지 않았는지 — 값 그대로 grep(출력은 파일 경로뿐).
+      - name: Gate — server-only values not in client bundle
+        shell: bash
+        env:
+          ARGO_CONNECTOR_GOOGLE_CLIENT_SECRET: ${{ secrets.ARGO_CONNECTOR_GOOGLE_CLIENT_SECRET }}
+        run: node scripts/assert-not-in-client.mjs src-tauri/resources/server/.next/static
 
       # 결제 링크 게이트 — 체크아웃 URL은 빌드 시점 인라인이라 CI secrets가 낡으면 발행본이 조용히
       # 옛 테스트 체크아웃을 연다(실사고 2026-09-01: 상주 .env.local만 라이브로 갱신되고 secrets가
@@ -396,7 +409,13 @@ jobs:
         env:
           ARGO_CLI_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           ARGO_CLI_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          # 구글 커넥터 client secret — 서버 전용(argo-server/argo-server-config.json). 위 데스크톱 잡과 같은 이름·같은 굽기 함수.
+          ARGO_CONNECTOR_GOOGLE_CLIENT_SECRET: ${{ secrets.ARGO_CONNECTOR_GOOGLE_CLIENT_SECRET }}
         run: node scripts/stage-server.mjs
+      - name: Gate — server-only values not in client bundle (tarball)
+        env:
+          ARGO_CONNECTOR_GOOGLE_CLIENT_SECRET: ${{ secrets.ARGO_CONNECTOR_GOOGLE_CLIENT_SECRET }}
+        run: node scripts/assert-not-in-client.mjs dist-server/argo-server/.next/static
       - name: Fresh-home tarball HTTP, auth, local import and argo CLI smoke
         shell: bash
         env:
