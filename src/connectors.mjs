@@ -17,6 +17,7 @@ import { paths, loadCompany } from './workspace.mjs';
 import { readJson, writeJsonAtomic } from './jsonstore.mjs';
 import { withLock } from './mutex.mjs';
 import { appendEvent } from './events.mjs';
+import { googleRestKind, googleRestTools, callGoogleRest } from './google-rest.mjs';
 
 /* ─── 토큰 보관 — 커넥터 전용 네임스페이스 (설계서 §2-1·§2-4) ───
    회사 루트 직속 도트파일 = 기존 4중 계약에 자동 편입된다(불변식 전수 수색 2026-07-31):
@@ -465,6 +466,27 @@ async function callViaPool(wsId, serverId, url, tool, args, retryLeft, lang) {
   }
 }
 
+/** 구글 REST 백엔드 실행 — 토큰 갱신은 저장소(이 파일의 patchServer)에 저장하고, invalid_grant는 풀 경로와 같은 'reauth' 강등으로 바꾼다.
+    client secret은 연결 때 기록에 저장된 값을 쓰고, 없으면(옛 기록·다른 전달 경로) 카탈로그의 환경변수 이름으로 실행 환경에서 읽는다. */
+async function callViaGoogleRest(wsId, serverId, rec, tool, args, lang) {
+  const client = { ...(rec.client ?? {}) };
+  if (!client.client_secret) {
+    const { connectorCatalogFor } = await import('./market.mjs'); // 동적 — market→connectors 순환 방지
+    const name = connectorCatalogFor('ko').find((c) => c.id === serverId)?.oauth?.client_secret_env;
+    const v = name ? process.env[name]?.trim() : '';
+    if (v) client.client_secret = v;
+  }
+  const r = await callGoogleRest(googleRestKind(rec.url), tool, args, {
+    key: `${wsId}:${serverId}`, tokens: rec.tokens, client, lang,
+    saveTokens: (t) => patchServer(wsId, serverId, { tokens: t, status: 'connected', error: null, errorCode: null }),
+  });
+  if (r.reauth) {
+    await patchServer(wsId, serverId, { tokens: null, verifier: null, status: 'reauth', errorCode: 'reauth_required', error: connectorMessage('reauth_required', 'ko', serverId) });
+    return fail('reauth_required', connectorMessage('reauth_required', lang, serverId));
+  }
+  return r;
+}
+
 /** 이 호출이 지금 결재를 받아야 하는가 — 도구 목록(풀 캐시)과 카탈로그 보완 목록을 함께 본다.
     **목록 조회 실패를 "모른다"로 취급하지 않는다.** 처음엔 그렇게 두고 결재로 기울였는데, access
     토큰이 만료된 순간 목록 조회부터 401이 나서 **조회 도구까지 결재로 갔다**(테스트가 잡았다: 만료 후
@@ -552,7 +574,11 @@ export async function callConnectorTool(wsId, serverId, tool, args = {}, { lang 
       });
       result = fail('approval_pending', connectorMessage('approval_pending', lang, tool));
     } else {
-      result = await callViaPool(wsId, serverId, rec.url, tool, args, 1, lang);
+      // 구글 Gmail·캘린더는 원격 MCP 대신 정식 REST로 실행한다(google-rest.mjs — 원격 MCP tools/call은 Developer Preview 등록 프로젝트만 받는다).
+      // 결재·손님·상태 게이트는 위에서 이미 지났다 — 실행 경로만 갈린다.
+      result = googleRestKind(rec.url)
+        ? await callViaGoogleRest(wsId, serverId, rec, tool, args, lang)
+        : await callViaPool(wsId, serverId, rec.url, tool, args, 1, lang);
       // 풀 오토가 원래 결재를 걸었을 쓰기를 건너뛴 경우만 표시한다 — needsApprovalNow(fullAuto:false)로
       // "풀 오토가 없었다면 결재가 걸렸을까"를 다시 물어본다(listConnectorTools는 풀 캐시라 추가 호출이 아니다).
       if (fullAuto && !approved && await needsApprovalNow(wsId, serverId, tool, { fullAuto: false })) {
@@ -577,6 +603,8 @@ export async function callConnectorTool(wsId, serverId, tool, args = {}, { lang 
 export async function listConnectorTools(wsId, serverId) {
   const rec = (await loadStore(wsId).catch(() => ({ servers: {} }))).servers[serverId];
   if (!rec?.url || liveStatus(rec) !== 'connected') return { ok: false, error: 'not_connected', tools: [] };
+  const restKind = googleRestKind(rec.url);
+  if (restKind) return { ok: true, tools: googleRestTools(restKind) }; // REST 백엔드 — 정적 정의(네트워크 없음), 이름·읽기 여부는 원격 MCP 실측과 같다
   try {
     const { entry } = getPooled(wsId, serverId, rec.url);
     await entry.ready;
