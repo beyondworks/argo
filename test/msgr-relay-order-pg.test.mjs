@@ -90,15 +90,15 @@ test('릴레이(@A > @B) — 뒤 크루는 앞 크루를 기다리고, 2분이 �
   const m = post('@에이 > @비 이어서 다듬어');
   assert.ok(!got('b').includes(m), '앞 크루(에이) 답 전에는 비에게 오지 않는다');
   sql(`update public.msgr_messages set created_at = now() - interval '90 seconds' where id = ${m}`);
-  sql(`update public.msgr_bots set scan_at = now() - interval '31 seconds'`);
+  sql(`update public.msgr_bots set last_seen_at = now() - interval '46 seconds'`);
   assert.ok(!got('b').includes(m), '90초는 아직 대기');
   sql(`update public.msgr_messages set created_at = now() - interval '3 minutes' where id = ${m}`);
-  sql(`update public.msgr_bots set scan_at = now() - interval '31 seconds'`);
+  sql(`update public.msgr_bots set last_seen_at = now() - interval '46 seconds'`);
   assert.ok(got('b').includes(m), '2분 상한이 지나면 받는다 — 옛 정의(10분)면 red');
 });
 
 test('동시 답변 중 앞 봇의 @넘김 — 뒤 봇의 뿌리 턴이 진행 중이어도 넘김이 배달된다(분리 검수 H-1)', { skip }, () => {
-  const ups = (key) => { sql(`update public.msgr_bots set scan_at = now() - interval '31 seconds'`); return asAnon(`select public.msgr_bot_updates_with_delivery('${BOTS[key].token}', 0)`).split('\n').filter(Boolean).map((l) => JSON.parse(l)); };
+  const ups = (key) => { sql(`update public.msgr_bots set last_seen_at = now() - interval '46 seconds'`); return asAnon(`select public.msgr_bot_updates_with_delivery('${BOTS[key].token}', 0)`).split('\n').filter(Boolean).map((l) => JSON.parse(l)); };
   const root = post('@에이 @비 둘 다 의견');
   const a = ups('a').find((u) => String(u.update_id) === root)?.message; assert.ok(a, '에이가 뿌리를 받았다');
   assert.ok(ups('b').some((u) => String(u.update_id) === root), '비도 동시에 뿌리를 받았다(턴 진행 중)');
