@@ -21,3 +21,13 @@ export function rememberPlan(key, ent, now = Date.now()) {
 export function invalidatePlanCache() {
   state.key = ''; state.at = 0; state.ent = null;
 }
+
+// 업로드 보류를 푸는 때(2026-10-14 무료 계정 POST 400 폭주 후속) — 거절 뒤 걸린 10분 보류·회사 재시도 대기는 플랜이 Pro·체험으로
+// 올라가거나 계정이 바뀌면 바로 풀어야 한다(결제하고 돌아왔는데 최대 10분 안 올라가던 것). 같은 판정이 10분마다 다시 와도 풀지 않는다.
+// seen = 마지막으로 실제 조회한 { key, plan } — 캐시와 같은 globalThis에 둔다(라우트·동기화 번들 공유).
+export const lastPlanSeen = () => state.seen ?? null;
+export const notePlanSeen = (seen) => { state.seen = seen; };
+export function planResumes(prev, next) {
+  if (!prev || prev.key !== next.key) return true;
+  return (next.plan === 'pro' || next.plan === 'trial') && prev.plan !== next.plan;
+}
