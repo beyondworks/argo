@@ -37,6 +37,7 @@ export const UPDATE_NOTES = Object.freeze({
   // 0.1.107 — appGate: 지원이 끝난 옛 버전은 일시 정지 화면 + [지금 업데이트](#1000) · officeSplit: 아르고 오피스 분리 — 오피스 연결·내 하트비트(오피스 일정·메일) 알림 제거, 목표 하트비트 유지(#1001·#1002)
   '0.1.107': Object.freeze(['updates.note.appGate', 'updates.note.officeSplit']),
   '0.1.108': Object.freeze(['updates.note.googleConnect', 'updates.note.skillsMarket', 'updates.note.geminiDefault']),
+  '0.1.109': Object.freeze(['updates.note.syncFix']),
 });
 
 export function stableVersion(value) {
