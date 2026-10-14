@@ -27,7 +27,9 @@ import { z } from 'zod';
 export const UPDATE_NOTE_DEMO = Object.freeze({ name: 'update_note_demo', description: '데모 메모 수정(일반 쓰기) — annotations.readOnlyHint=false',
   inputSchema: { to: z.string().optional(), body: z.string().optional() }, annotations: { readOnlyHint: false } });
 
-export async function startOauthTestServer({ accessTtlMs = 3_600_000, extraTools = [] } = {}) {
+// publicMethods — 이 JSON-RPC 메서드는 토큰 없이 받는다(구글 원격 MCP 실측 2026-10-14: initialize·tools/list는 무인증 200, tools/call만 401).
+// '*'면 모든 메서드를 무인증으로 받는다(진짜 무보호 서버 대역). 기본 []은 종전 그대로 전부 Bearer 필수.
+export async function startOauthTestServer({ accessTtlMs = 3_600_000, extraTools = [], publicMethods = [] } = {}) {
   // 포트 0 임의 배정 — BASE(issuerUrl)가 라우터 구성보다 먼저 필요하므로, http 서버를 먼저 listen하고
   // 실제 포트를 안 뒤 express 앱을 request 핸들러로 붙인다(선점 경쟁 없음).
   const srv = http.createServer();
@@ -129,7 +131,9 @@ export async function startOauthTestServer({ accessTtlMs = 3_600_000, extraTools
     scopesSupported: ['spike.read', 'spike.write'],
     resourceName: 'oauth-test-server',
   }));
-  app.post('/mcp', requireBearerAuth({ verifier: provider }), async (req, res) => {
+  const bearer = requireBearerAuth({ verifier: provider });
+  const open = (m) => publicMethods.includes('*') || publicMethods.includes(m);
+  app.post('/mcp', (req, res, next) => (open(req.body?.method) ? next() : bearer(req, res, next)), async (req, res) => {
     // tools/list만 골라 5xx로 떨어뜨리는 노브 — "connect는 성공했는데 tools/list가 실패"하는 경로
     // (구글류: 401이 tools/call에서야 뜬다)의 자원 회수를 테스트가 관측하기 위한 것.
     if (knobs.failToolsList && req.body?.method === 'tools/list') {

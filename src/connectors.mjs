@@ -12,7 +12,7 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js';
+import { UnauthorizedError, auth as sdkAuth } from '@modelcontextprotocol/sdk/client/auth.js';
 import { paths, loadCompany } from './workspace.mjs';
 import { readJson, writeJsonAtomic } from './jsonstore.mjs';
 import { withLock } from './mutex.mjs';
@@ -35,6 +35,15 @@ import { appendEvent } from './events.mjs';
 export const CONNECTOR_SECRETS_BASE = '.connector-secrets.json';
 const storeFile = (wsId) => join(paths(wsId).root, CONNECTOR_SECRETS_BASE);
 const lockStore = (wsId, fn) => withLock(`connector:${wsId}`, fn, { file: storeFile(wsId) }); // OAuth 토큰 회전 저장 — 프로세스 간 잠금 포함(M-b)
+
+/** 인증이 필요한 커넥터인가 — 고정 client_id(구글류) 또는 scopes가 있는 정의. 이런 항목은 토큰 없이 connected가 될 수 없다. */
+const defNeedsAuth = (def) => !!(def?.oauth?.client_id || def?.scopes?.length);
+/** 저장된 기록이 인증 필요 항목인가 — 새 기록은 authRequired, 옛 기록은 고정 client(startConnect가 선기입)·DCR로 받은 client로 안다.
+    진짜 무보호 서버의 기록에는 둘 다 없다. */
+const recNeedsAuth = (rec) => !!(rec?.authRequired || rec?.client?.client_id);
+/** 판정용 상태 — 인증 필요 기록인데 토큰 없이 'connected'면(옛 버전이 initialize 무인증 통과를 연결 완료로 저장한 것, 2026-10-14) 재연결 필요로 본다.
+    읽기·판정만 하고 저장소는 고치지 않는다(다음 [다시 연결]이 고쳐 쓴다). */
+const liveStatus = (rec) => (rec?.status === 'connected' && recNeedsAuth(rec) && !rec?.tokens?.access_token ? 'reauth' : rec?.status);
 
 async function loadStore(wsId) {
   // 손상 시 readJson이 .corrupt 백업 후 throw — 조용한 폴백 없이 1회 명시 실패, 다음 로드는 빈 상태로
@@ -143,6 +152,7 @@ export async function startConnect(wsId, serverDef, { timeoutMs = CONNECT_TIMEOU
   dropPool(wsId, id); // 재연결 시 옛 토큰을 문 풀 클라이언트가 살아남지 않게
   await patchServer(wsId, id, {
     url, status: 'connecting', error: null, errorCode: null, verifier: null,
+    ...(defNeedsAuth(serverDef) ? { authRequired: true } : {}),
     ...(serverDef.oauth?.client_id
       ? { client: { client_id: serverDef.oauth.client_id, ...(serverDef.oauth.client_secret ? { client_secret: serverDef.oauth.client_secret } : {}) } }
       : {}),
@@ -201,9 +211,18 @@ export async function startConnect(wsId, serverDef, { timeoutMs = CONNECT_TIMEOU
     // 하다(구글류: 401이 tools/call에서야 뜨는 서버도 여기서 auth를 유발 — 스파이크 §② 특이점 1).
     await probe.connect(new StreamableHTTPClientTransport(new URL(url), { authProvider: provider }));
     await probe.close().catch(() => {});
+    // initialize가 무인증으로 통과했다. 진짜 무보호 서버면 여기서 끝이지만, 구글 원격 MCP(Gmail·Calendar)는 initialize·tools/list를 무인증으로 받고
+    // tools/call에서만 401을 낸다(2026-10-14 실측) — 인증이 필요한 정의(고정 client·scopes)인데 토큰이 없으면 connected로 저장하지 않고 동의 흐름을 직접 시작한다.
+    // scope는 카탈로그 값을 넘긴다: 비우면 SDK가 PRM scopes_supported 전체(구글은 mail.google.com 전권 포함)를 요청한다(SDK auth.js resolvedScope).
+    const hasTokens = !!(await loadStore(wsId)).servers[id]?.tokens?.access_token;
+    if (defNeedsAuth(serverDef) && !hasTokens) {
+      const r = await sdkAuth(provider, { serverUrl: new URL(url), ...(serverDef.scopes?.length ? { scope: serverDef.scopes.join(' ') } : {}) });
+      if (r !== 'REDIRECT' || !authUrl) throw new Error(`인가를 시작하지 못했습니다(${r})`);
+      throw new UnauthorizedError('initialize는 무인증 통과 — 동의가 필요합니다'); // 아래 catch가 401 경로와 같은 동의 흐름으로 잇는다
+    }
     cb.close();
     await patchServer(wsId, id, { status: 'connected', error: null, errorCode: null });
-    return { authUrl: null, callbackAddress: bound.address, done: Promise.resolve({ ok: true, serverId: id }) }; // 무보호 서버 — 인가 불요
+    return { authUrl: null, callbackAddress: bound.address, done: Promise.resolve({ ok: true, serverId: id }) }; // 무보호 서버(또는 이미 토큰이 있는 재연결) — 인가 불요
   } catch (e) {
     await probe.close().catch(() => {});
     if (!(e instanceof UnauthorizedError) || !authUrl) {
@@ -494,7 +513,7 @@ export async function callConnectorTool(wsId, serverId, tool, args = {}, { lang 
       result = fail('guest_blocked', connectorMessage('guest_blocked', lang, serverId));
     } else if (!rec?.url || rec.status === 'connecting') {
       result = fail('not_connected', connectorMessage('not_connected', lang, serverId));
-    } else if (rec.status === 'reauth') {
+    } else if (liveStatus(rec) === 'reauth') { // 토큰 없는 connected(옛 기록)도 여기 — 토큰 없이 서버로 나가지 않는다
       result = fail('reauth_required', connectorMessage('reauth_required', lang, serverId));
     } else if (rec.status !== 'connected') {
       // 저장된 ko 문구를 그대로 끼워 넣으면 영어 모드에 한국어가 샌다 — 코드가 있으면 요청 언어로 다시 그린다.
@@ -554,7 +573,7 @@ export async function callConnectorTool(wsId, serverId, tool, args = {}, { lang 
     결재 분류)의 원료. 실패는 { ok:false, error }로 정직 반환. */
 export async function listConnectorTools(wsId, serverId) {
   const rec = (await loadStore(wsId).catch(() => ({ servers: {} }))).servers[serverId];
-  if (!rec?.url || rec.status !== 'connected') return { ok: false, error: 'not_connected', tools: [] };
+  if (!rec?.url || liveStatus(rec) !== 'connected') return { ok: false, error: 'not_connected', tools: [] };
   try {
     const { entry } = getPooled(wsId, serverId, rec.url);
     await entry.ready;
@@ -608,7 +627,10 @@ export async function disconnectConnector(wsId, serverId) {
     "다시 그릴 안정 코드" 약속을 이 함수가 실제로 이행하는 것. lang 미지정 소비자는 종전 그대로(원문). */
 export async function listConnections(wsId, { lang = null } = {}) {
   const s = await loadStore(wsId).catch(() => ({ servers: {} }));
-  return Object.entries(s.servers).map(([id, r]) => {
+  return Object.entries(s.servers).map(([id, stored]) => {
+    // 토큰 없는 connected(인증 필요 기록)는 재연결 필요로 내보낸다 — 코드·문구도 그에 맞춘다(저장소는 그대로).
+    const r = liveStatus(stored) === stored.status ? stored
+      : { ...stored, status: 'reauth', errorCode: 'reauth_required', errorDetail: null, error: connectorMessage('reauth_required', 'ko', id) };
     const rendered = lang && r.errorCode && MSG[r.errorCode]
       ? connectorMessage(r.errorCode, lang, r.errorDetail ?? id) // detail 없는 코드(reauth 등)는 서버 id가 인자
       : r.error;
