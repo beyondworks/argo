@@ -64,6 +64,7 @@ const DISCOVER_MS = Number(process.env.ARGO_SYNC_DISCOVER_MS) || 300_000;
 const ownerPrefixOk = (o) => typeof o === 'string' && /^[^\s/]+$/.test(o) && o !== 'undefined' && o !== 'null';
 const UPLOAD_BACKOFF_MS = 10 * 60_000; // 업로드가 전부 거절된 회사(플랜 미확인·무자격)는 이만큼 쉰다 — 8초마다 재시도하던 폭풍(30분 1만 건 RLS 거절) 차단
 const uploadBackoff = new Map(); // wsId → until(ms)
+const denialStrikes = new Map(); // wsId → 연속 권한 거절 수(throw 경로) — noteUploadDenial
 const companyRetry = new Map(); // owner/ws → bounded failure cooldown; local nudge cannot bypass it
 const companyIdle = new Map();
 const IDLE_PROBE_MS = 60_000;
@@ -1053,9 +1054,22 @@ function freePlanUpload() {
   e.localOnly = true;
   throw e;
 }
-/** 바깥 루프가 throw한 회사에 10분 업로드 보류를 걸 것인가(순수, export: 회귀 테스트용). 서버가 쓰기를 **거절**(400·401·403)한 경우만 —
-    네트워크 오류(상태 없음)는 회사 재시도 대기(30초부터)에 맡겨 오프라인→온라인 복구를 늦추지 않는다. 확정 free는 이미 건너뜀 경로다. */
-export const denialBackoffDue = (e, freePlan) => !freePlan && !!e?.uploadFailed && !e.localOnly && [400, 401, 403].includes(e.status);
+/** 이 쓰기 실패가 **권한 거절(RLS)**인가(순수, export: 회귀 테스트용). 400·403만 — 401과, 400이어도 토큰 문제처럼 보이는 문구
+    (JWT·만료·Bucket not found 등)는 뺀다: 이 스토리지는 만료 토큰에도 400 'Bucket not found'를 돌려준다(#835 실측). 그건 토큰 갱신 뒤
+    다음 사이클에 바로 풀려야 하는 일이라 10분 보류 대상이 아니다(검수 1 #1020). 네트워크 오류(상태 없음)·확정 free도 아니다. */
+const AUTH_LIKE = /jwt|expired|token|bucket not found|unauthori[sz]ed|invalid signature|invalid compact/i;
+export const isUploadDenial = (e, freePlan) => !freePlan && !!e?.uploadFailed && !e.localOnly && [400, 403].includes(e.status) && !AUTH_LIKE.test(String(e.message ?? ''));
+export const DENIAL_STRIKES = 2;
+/** 회사 루프가 throw를 받았을 때 10분 업로드 보류를 걸 것인가(순수 — strikes Map만 바꾼다, export: 회귀 테스트용).
+    권한 거절이 **같은 회사에서 연달아 DENIAL_STRIKES번**일 때만 건다 — 문구로 못 가른 일시 오류가 한 번 섞여도 Pro 동기화를 10분 세우지 않는다.
+    거절이 아닌 실패(토큰 만료·네트워크)는 연속을 끊는다. 성공 사이클은 호출부가 strikes.delete로 끊는다. */
+export function noteUploadDenial(strikes, wsId, e, freePlan) {
+  if (!isUploadDenial(e, freePlan)) { strikes.delete(wsId); return false; }
+  const n = (strikes.get(wsId) ?? 0) + 1;
+  if (n < DENIAL_STRIKES) { strikes.set(wsId, n); return false; }
+  strikes.delete(wsId);
+  return true;
+}
 
 /* ─── 회사 1개 동기화 — base(마지막 동기화 상태) 대비 3-way 병합.
    "누가 바꿨나"를 해시로 판별해, 한쪽만 바뀌면 그쪽을 반영하고, 양쪽이 바뀌면 파일 종류별로
@@ -2126,7 +2140,7 @@ async function cycleOnce() {
       if (!ent) {
         ent = await syncEntitled(client(), planOwner); rememberPlan(planKey, ent);
         // 무료→Pro·체험, 계정 전환이면 거절 보류를 바로 푼다 — 결제하고 돌아온 사용자가 10분을 기다리지 않게(결제 화면 조회가 캐시를 비워 여기로 온다)
-        if (planResumes(lastPlanSeen(), { key: planKey, plan: ent.plan })) { uploadBackoff.clear(); companyRetry.clear(); }
+        if (planResumes(lastPlanSeen(), { key: planKey, plan: ent.plan })) { uploadBackoff.clear(); companyRetry.clear(); denialStrikes.clear(); }
         notePlanSeen({ key: planKey, plan: ent.plan });
       }
       status.plan = ent.plan; // 차단/통과 무관 — 조회했으면 기록 (globalThis 경유로 라우트 번들에서도 보임)
@@ -2195,6 +2209,7 @@ async function cycleOnce() {
     try {
       const reseal = !!resealSet[wsId];
       const r = await syncCompany(wsId, owner, restoring, { freePlan, noSecrets: noSecretsWs.has(wsId), reseal });
+      if (r.skipped !== 'retry-backoff') denialStrikes.delete(wsId); // 결과를 돌려줬다 = throw 거절 연속이 끊김(재시도 대기 중 건너뜀은 새 정보가 아니다)
       if (r.skipped === 'retry-backoff') { // 대기 중에도 이 회사 오류(회사 화면용, syncStatusFor)는 유지한다
         const error = status.companies[wsId]?.error;
         status.companies[wsId] = { ts: Date.now(), ...r, ...(error ? { error } : {}) }; companyFailed++; continue;
@@ -2218,7 +2233,7 @@ async function cycleOnce() {
       // 매니페스트 업로드 거절은 여기로 온다(pro·미확인 경로는 관용 없이 throw) — 파일 거절과 같이 요금제 캐시를 버린다
       if (!freePlan && e?.uploadFailed) invalidatePlanCache();
       // 거절로 throw한 회사도 10분 쉰다 — 결과를 돌려준 경우(위)만 보류하던 빈틈으로 옛 클라이언트가 매 사이클 파일 전체를 다시 올렸다(v0.1.84 재현, 운영 co-0nly)
-      if (denialBackoffDue(e, freePlan)) { uploadBackoff.set(wsId, Date.now() + UPLOAD_BACKOFF_MS); console.warn(`[argo] 동기화(${wsId}): 쓰기 거절(${e.status}) — ${UPLOAD_BACKOFF_MS / 60_000}분 보류`); }
+      if (noteUploadDenial(denialStrikes, wsId, e, freePlan)) { uploadBackoff.set(wsId, Date.now() + UPLOAD_BACKOFF_MS); console.warn(`[argo] 동기화(${wsId}): 쓰기 거절(${e.status}) ${DENIAL_STRIKES}회 연속 — ${UPLOAD_BACKOFF_MS / 60_000}분 보류`); }
       // 이번 시도의 결과가 없으니 새 항목으로 — 이전 주기의 failures·↑↓를 이어받으면 지금 오류와 무관한 옛 파일 이름이 같이 보인다(3차 LOW-1)
       status.companies[wsId] = { ts: Date.now() };
       setCompanyError(wsId, `${wsId}: ${String(e.message).slice(0, 120)}`); // 첫 주기에 throw해도 회사로 등록된다(2차 LOW-1)
