@@ -71,7 +71,16 @@ const IDLE_PROBE_MS = 60_000;
 // [규모] 빈 항목 1개당 기기·회사마다 시간당 GET 최대 1회(응답 88바이트). 이전에는 같은 GET이 실패로 세져 재시도(최대 10분)마다
 // 매니페스트 GET 2회·PUT 1회(각 424KB, lean-ax-wqou 10/4 실측 하루 GET 214회 90.7MB·PUT 109회)를 끌고 왔다.
 const MISSING_RECHECK_MS = 60 * 60_000;
-const missingSeen = new Map(); // owner/ws/rel → { sig: 그때의 원격 메타, until }
+// 계속 없으면 재확인 간격을 늘린다(2026-10-14 Pro 제보 "하루 종일 동기화가 안 된다" — 운영 edge_logs에서 같은 빈 항목 GET 400이 항목마다 하루 14~18회).
+// 1시간 → 4시간 → 이후 하루 한 번. 세 번째 확인부터는 '복구 필요'로 표시한다(그 파일을 가진 기기가 다시 올리거나 고쳐야 객체가 생긴다).
+// 항목은 지우지 않는다 — 지우면 그 파일을 가진 기기가 '다른 기기가 지웠다'로 읽어 로컬 사본을 지운다(#832·#835·2026-09-15 정리와 같은 이유).
+// 메타가 바뀌면(누가 다시 올림) 간격과 상관없이 바로 받는다. [규모] 빈 항목 1개당 기기·회사마다 첫날 GET 최대 4회(0·1·5·29시간), 그 뒤 하루 1회.
+const MISSING_RECHECK_STEPS_MS = [MISSING_RECHECK_MS, 4 * 60 * 60_000, 24 * 60 * 60_000];
+const missingRecheckMs = (n) => MISSING_RECHECK_STEPS_MS[Math.min(Math.max(n, 1), MISSING_RECHECK_STEPS_MS.length) - 1];
+export const MISSING_RECOVERY_AFTER = 3; // 이만큼 연속으로 없으면 '복구 필요' (export: 회귀 테스트용)
+// 기억은 회사의 .sync-state.json(기기 로컬·동기화 제외)에도 남긴다 — 메모리만 쓰면 앱·상주가 재시작할 때마다 처음(1시간)부터 다시 받으러 갔다.
+const MISSING_STATE_MAX = 500; // state 파일 크기 보호 — 넘는 항목은 메모리 기억만(종전과 같음)
+const missingSeen = new Map(); // owner/ws/rel → { sig: 그때의 원격 메타, until, n: 연속으로 없음을 확인한 횟수 }
 const noticeLog = new Map(); // 같은 실패·빈 항목 경고는 목록이 바뀔 때만 로그에 남긴다(재시도마다 같은 줄 반복 방지)
 // 받기 동시 실행(sync-prefetch.mjs) — 판정이 '원격 신규 → 받기'·'원격만 변경 → 받기'인 파일의 내려받기만 앞당긴다. 쓰기·판정·집계는 루프가 종전 순서 그대로.
 // 실측(2026-10-10 VPS 첫 동기화): 한 번에 하나씩 받아 분당 약 65개(파일당 왕복 약 0.9초) — 3,734개 회사가 1시간 가까이 걸렸다.
@@ -162,9 +171,22 @@ const DEV_ARTIFACT_SEGS = new Set([
   '.cache', '.parcel-cache', '.pytest_cache', '.mypy_cache', '.playwright-mcp', 'DerivedData',
 ]);
 export const isDevArtifactSeg = (name) => DEV_ARTIFACT_SEGS.has(name) || name.startsWith('chrome_profile');
+/** 에이전트 작업용 임시 파일 — isDevArtifactRel과 같은 **diff 불가시**(올리기·받기·삭제 전파·브레이크 집계 전부 건너뜀).
+    EXCLUDE(walk 전용)로 하지 않는 이유도 같다: 옛 앱이 올린 원격 사본을 새 앱이 받아 온 뒤 '로컬 삭제'로 읽어 원격·그 기기 로컬을 지우게 된다.
+    실제 경로로 확인된 것만 넣는다(운영 edge_logs GET 400, 2026-10-14 — 에이전트가 만들고 지운 뒤 매니페스트에 빈 항목으로 남아 매시간 다시 받으러 갔다):
+      ① 회사 루트의 tmp_work/ — xlsx 압축 해제(tmp_work/extracted/xl/*.xml 등)·분석 스크립트(tmp_work/parse.js). 루트가 아닌 tmp_work/는 사용자 폴더일 수 있어 넣지 않는다
+      ② 이름이 _tmp_로 시작하는 파일 — vault/files/_tmp_row0.txt·_tmp_header.txt·_tmp_sbe.txt 등
+      ③ 이름이 _build_tmp.로 시작하는 파일 — vault/projects/<폴더>/_build_tmp.pdf·_build_tmp.docx
+    (export: 회귀 테스트용) */
+export const isAgentScratchRel = (rel) => {
+  const parts = String(rel).split('/');
+  const base = parts[parts.length - 1];
+  return (parts[0] === 'tmp_work' && parts.length > 1) || base.startsWith('_tmp_') || base.startsWith('_build_tmp.');
+};
 export const isDevArtifactRel = (rel) => {
   const parts = rel.split('/');
   if (parts.some(isDevArtifactSeg)) return true;
+  if (isAgentScratchRel(rel)) return true;
   // Chromium disk-cache signatures, not arbitrary documents named Default/Cache.
   // Profile directory names may be user-chosen/Unicode; the cache layout is stable.
   return /(?:^|\/)(?:Cache\/Cache_Data|GPUCache|ShaderCache|GrShaderCache)\/(?:data_\d+|index|f_[0-9a-f]+)$/.test(rel)
@@ -859,6 +881,7 @@ async function walk(dir, base = dir, out = {}, failed = null, ctx = null) {
       // 개발 산출물 디렉터리는 내려가지 않는다(isDevArtifactRel 주석) — diff 쪽 불가시 가드가 원격 전용
       // 항목의 pull·삭제 전파를 이미 막아주므로, 여기서 스킵해도 안전하고 CPU·IO만 줄어든다.
       if (isDevArtifactSeg(e.name)) continue;
+      if (rel === 'tmp_work') continue; // 에이전트 임시 폴더(isAgentScratchRel ①) — 안의 파일은 어차피 diff 불가시라 내려가지 않는다
       await walk(full, base, out, failed, ctx);
     }
     else if (!EXCLUDE(rel) && !isDevArtifactRel(rel)) {
@@ -1093,7 +1116,7 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
     const result = await syncCompanyOnce(wsId, owner, isRestore, opts);
     // 실패 파일·빈 항목은 이름까지 로그에 남긴다(~/Library/Logs/argo.err.log) — 목록이 바뀔 때만 한 줄
     noteOnce(`${key}:fail`, result.failed ? `[argo] 동기화(${wsId}): 파일 ${result.failed}건 실패 — ${(result.failures ?? []).map((f) => `${f.rel}: ${f.reason}`).join(' | ')}` : '');
-    noteOnce(`${key}:missing`, result.missing ? `[argo] 동기화(${wsId}): 매니페스트에만 있고 객체가 없는 항목 ${result.missing}개 — 건너뜀(항목 보존): ${result.missingRels.join(', ')}` : '');
+    noteOnce(`${key}:missing`, result.missing ? `[argo] 동기화(${wsId}): 매니페스트에만 있고 객체가 없는 항목 ${result.missing}개 — 건너뜀(항목 보존): ${result.missingRels.join(', ')}${result.needsRecovery ? ` · 복구 필요 ${result.needsRecovery}개(하루 한 번만 다시 확인 — 그 파일을 가진 기기에서 다시 저장하면 복구): ${result.needsRecoveryRels.join(', ')}` : ''}` : '');
     noteOnce(`${key}:oversize`, result.oversize ? `[argo] 동기화(${wsId}): ${Math.floor(SYNC_MAX_OBJECT_BYTES / 2 ** 20)}MB를 넘는 파일 ${result.oversize}개는 기기 간에 주고받지 않습니다: ${result.oversizeRels.join(', ')}` : '');
     if (result.failed > 0) { deferFailure(result.failures, result.oversize ? { oversize: result.oversize, oversizeRels: result.oversizeRels, oversizeLimit: result.oversizeLimit } : undefined); return result; }
     companyRetry.delete(key);
@@ -1151,7 +1174,17 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
   if (isRestore) await mkdir(root, { recursive: true });
   const failedDirs = new Set();
   const local = await walk(root, root, {}, failedDirs); // 자격 3종은 diff 루프의 불가시 가드가 단일 게이트(walk 중복 게이트 금지 — 등가 변이 실증)
-  const state = (await loadState(wsId)).files ?? {};
+  const stateDoc = await loadState(wsId);
+  const state = stateDoc.files ?? {};
+  // 빈 항목 기억 이어 받기(MISSING_RECHECK_STEPS_MS 주석) — 메모리에 없을 때만(재시작 직후). 모양이 이상한 줄은 버리고, 남은 시간은 가장 긴 간격으로 자른다(시계·손상 방어).
+  if (stateDoc.missing && typeof stateDoc.missing === 'object') {
+    const cap = Date.now() + MISSING_RECHECK_STEPS_MS[MISSING_RECHECK_STEPS_MS.length - 1];
+    for (const [rel, v] of Object.entries(stateDoc.missing)) {
+      const k = `${owner}/${wsId}/${rel}`;
+      if (missingSeen.has(k) || !safeRel(rel) || typeof v?.sig !== 'string' || !Number.isFinite(v?.until) || !Number.isInteger(v?.n) || v.n < 1) continue;
+      missingSeen.set(k, { sig: v.sig, until: Math.min(v.until, cap), n: v.n });
+    }
+  }
   // 신규 복원 가드 — 이 회사가 원격에서만 발견됐고(isRestore: 로컬에 company.json조차 없음) 로컬이
   // 통째로 비었는데 base(.sync-state)만 남아 있으면, 삭제 의도가 아니라 복원이다(재설치·루트 리셋·과거
   // 쓰기 실패 잔재). base를 비워 전체를 새로 pull한다 — 원격은 온전하니 유실 위험 없음.
@@ -1166,6 +1199,7 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
   let uploadDenied = 0; // 쓰기 시도에서 난 실패 수(플랜 무관) — cycle이 전부 거절이면 회사 단위 백오프
   let held = 0; // 계정 키 미확보로 이번 사이클 불가시 보류된 암호화 대상 파일 수
   let missing = 0; const missingRels = []; // 매니페스트에만 있고 객체가 없는 항목(받을 내용 없음) — 실패가 아니라 건너뜀
+  let needsRecovery = 0; const needsRecoveryRels = []; // 그중 MISSING_RECOVERY_AFTER번 넘게 없음을 확인한 항목 — 하루 한 번만 다시 본다
   const failures = []; // 실패한 파일 이름·사유(앞 5개) — 상태·lastError·로그용
   const deletedRels = new Set(); // 이번 사이클에 내가 원격 삭제한 rel — 매니페스트 병합에서 재추가 금지
   // blob 실존 검사 — 매니페스트 항목 부재가 "삭제"인지 "동시 쓰기로 항목만 유실"인지 가르는 판별자.
@@ -1202,7 +1236,10 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
     const seenKey = `${owner}/${wsId}/${rel}`, r0 = remote.files[rel], sig = r0?.h ?? `${r0?.m}:${r0?.s}`;
     if (missingFresh(rel)) throw Object.assign(new Error('Object not found(최근 확인)'), { notFound: true });
     const b = await download(remoteKey(rel), signal).catch((e) => {
-      if (e.notFound) missingSeen.set(seenKey, { sig, until: Date.now() + MISSING_RECHECK_MS });
+      if (e.notFound) {
+        const prev = missingSeen.get(seenKey), n = prev?.sig === sig ? (prev.n ?? 1) + 1 : 1; // 같은 메타로 또 없다 — 간격을 늘린다
+        missingSeen.set(seenKey, { sig, n, until: Date.now() + missingRecheckMs(n) });
+      }
       throw e;
     });
     missingSeen.delete(seenKey); // 받았으면 더는 빈 항목이 아니다
@@ -1530,7 +1567,11 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
       // 충돌(양쪽 변경)이어도 내 편집본을 밀지 않는다 — 항목이 내 base보다 새롭다는 건 더 새 판을 가진 기기가 있을 수 있다는 뜻이고, 밀면 그 기기가
       // 내 판을 받아 자기 최신본을 조용히 잃는다(분리 검수 2차 HIGH-1). 편집본은 로컬에 남고, 누가 그 파일을 다시 올리면 종전 충돌 처리로 수렴한다.
       // 항목이 내 base 그대로인 파일을 고친 경우는 위 '로컬만 변경 → 밀기'가 객체를 되살린다(기록된 새 판이 없으니 안전).
-      if (e?.notFound) { missing++; if (missingRels.length < 5) missingRels.push(rel); continue; }
+      if (e?.notFound) {
+        missing++; if (missingRels.length < 5) missingRels.push(rel);
+        if ((missingSeen.get(`${owner}/${wsId}/${rel}`)?.n ?? 0) >= MISSING_RECOVERY_AFTER) { needsRecovery++; if (needsRecoveryRels.length < 5) needsRecoveryRels.push(rel); }
+        continue;
+      }
       // free의 **쓰기 실패는 실패가 아니라 이 플랜의 정상 결과**다(클라우드 쓰기 자체가 금지) — 분리 집계한다.
       // 뭉뚱그리면(전부 failed) 한 번도 성공 동기화한 적 없는 free 회사(체험 만료 후 첫 동기화·state
       // 유실·손상)가 영구 미완에 고착한다: 로컬 전용 파일 하나만 있어도 failed>0 → 아래 매니페스트
@@ -1564,6 +1605,7 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
   // "로컬에 없는데 base에 있음 = 내가 지움"으로 오판해 다음 사이클에 원격 삭제를 전파해 버린다.
   // base에 없으니 다음 사이클에 '원격 신규 → 받기'로 정상 pull된다.
   let manifestDenied = false;
+  let concurrentDeletes = 0; // 사이클 도중 다른 기기가 끝낸 삭제라 되살리지 않은 항목 수(아래 재읽기 주석)
   // Unchanged remote probe: one full GET, zero PUTs. The outer 60s idle gate bounds
   // steady-state to 1,440 manifests/day/device/company; 100 × 420KB ≈ 60.5GB/day.
   // This is a bound, not a scalable replacement for a revision/conditional index.
@@ -1594,6 +1636,18 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
           throw new Error(`매니페스트 세대 상승 감지(다른 기기가 암호화를 켬) — 이번 사이클 보류: ${String(e.message).slice(0, 60)}`);
         }
         /* 평문 손상 등 — 기존 관용: 병합 없이 진행 */
+      }
+      // 사이클 도중 다른 기기가 끝낸 삭제를 되살리지 않는다(2026-10-14 재현: 기기 A가 임시 파일의 객체를 지우고 항목을 뺀 매니페스트를 쓴 직후,
+      // 사이클 시작 때 읽은 옛 목록을 가진 기기 B가 매니페스트를 통째로 덮어 항목만 되살렸다 → 객체 없는 빈 항목이 생겨 모든 기기가 매시간 GET 400).
+      // 좁게만 뺀다: 방금 다시 읽은 매니페스트에 없고 + 사이클 시작 때 읽은 항목 그대로(이 기기가 이번에 올리거나 고치지 않음) + 객체가 정말 없음(Object not found).
+      // 재읽기 실패·열 수 없는 봉투(fresh 없음)·객체 확인 실패(만료 토큰 Bucket not found·5xx — blobExists가 throw)면 종전처럼 그대로 쓴다.
+      // base(state)는 건드리지 않는다 — 이 기기에 사본이 있으면 다음 사이클이 '다른 기기가 지웠다'(매니페스트 재확인 뒤)로 정상 처리한다(겹치지 않았을 때와 같은 결과).
+      if (fresh?.files && typeof fresh.files === 'object') {
+        const orig = JSON.parse(originalFiles ?? '{}') ?? {};
+        for (const rel of Object.keys(uploadFiles)) {
+          if (rel in fresh.files || !(rel in orig) || JSON.stringify(uploadFiles[rel]) !== JSON.stringify(orig[rel])) continue;
+          try { if ((await blobExists(remoteKey(rel))) === false) { delete uploadFiles[rel]; concurrentDeletes++; } } catch { /* 확인 불가 — 그대로 둔다 */ }
+        }
       }
       for (const [rel, meta] of Object.entries(fresh?.files ?? {})) {
         if (!(rel in uploadFiles) && !deletedRels.has(rel) && safeRel(rel)) {
@@ -1639,8 +1693,17 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
   }
   // 크기 초과 목록은 state에도 남긴다 — 상주와 다른 프로세스인 `argo status`가 읽는다(옛 버전은 files만 읽으므로 무해, .sync-state.json은 모든 버전에서 동기화 제외).
   const oversizeRels = [...oversize].slice(0, 5);
-  await writeJsonAtomic(stateFile(wsId), { files: nextFiles, ts: Date.now(), ...(oversize.size ? { oversize: { n: oversize.size, rels: oversizeRels, limit: SYNC_MAX_OBJECT_BYTES } } : {}) });
-  return { pulled, pushed, deletedL, deletedR, merged, conflicts, failed, healed, denied, uploadDenied, ...(deferred ? { deferred } : {}), ...(held ? { held } : {}), ...(withdrawn ? { withdrawn } : {}), ...(manifestDenied ? { manifestDenied: true } : {}), ...(failures.length ? { failures } : {}), ...(missing ? { missing, missingRels } : {}), ...(oversize.size ? { oversize: oversize.size, oversizeRels, oversizeLimit: SYNC_MAX_OBJECT_BYTES } : {}) };
+  // 빈 항목 기억 — 매니페스트에 아직 있는 항목만 남기고(빠진 항목은 메모리에서도 지운다), 상한까지 state에 적는다(재시작 뒤 이어 받기).
+  const missingOut = {};
+  { const prefix = `${owner}/${wsId}/`; let kept = 0;
+    for (const [k, v] of missingSeen) {
+      if (!k.startsWith(prefix)) continue;
+      const rel = k.slice(prefix.length);
+      if (!(rel in remote.files) || isDevArtifactRel(rel)) { missingSeen.delete(k); continue; } // 빠진 항목·이제 불가시인 임시 파일은 잊는다
+      if (kept < MISSING_STATE_MAX) { missingOut[rel] = { sig: v.sig, until: v.until, n: v.n ?? 1 }; kept++; }
+    } }
+  await writeJsonAtomic(stateFile(wsId), { files: nextFiles, ts: Date.now(), ...(oversize.size ? { oversize: { n: oversize.size, rels: oversizeRels, limit: SYNC_MAX_OBJECT_BYTES } } : {}), ...(Object.keys(missingOut).length ? { missing: missingOut } : {}) });
+  return { pulled, pushed, deletedL, deletedR, merged, conflicts, failed, healed, denied, uploadDenied, ...(deferred ? { deferred } : {}), ...(held ? { held } : {}), ...(withdrawn ? { withdrawn } : {}), ...(manifestDenied ? { manifestDenied: true } : {}), ...(failures.length ? { failures } : {}), ...(missing ? { missing, missingRels } : {}), ...(needsRecovery ? { needsRecovery, needsRecoveryRels } : {}), ...(concurrentDeletes ? { concurrentDeletes } : {}), ...(oversize.size ? { oversize: oversize.size, oversizeRels, oversizeLimit: SYNC_MAX_OBJECT_BYTES } : {}) };
 }
 
 // 이 인스턴스가 책임지는 오너(들) — 테넌트 격리의 핵심.
