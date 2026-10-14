@@ -4,13 +4,17 @@
 // 채널 행을 직접 지우면 서버가 "채널 관리자나 조직 관리자만 바꿀 수 있습니다"로 거절했다(실측 2026-10-01, QA 스택).
 // 빼기는 주인만(유건 결정 2026-10-02, 기능 점검 D8 — 서버 20261002120000이 같은 규칙으로 막는다). 남에게는 '숨기기'(글 접힘, 스스로 가린다).
 // 회사 에이전트(company — 사람 주인 없음)는 방장이 종전대로 뺀다. canHide = 숨길 수 있음(내 에이전트가 아니고 아직 숨기지 않음).
-export function crewRowMenuKeys({ isPersonal, isDm, canKickCrew, ownedByMe, company = false, canHide = false }) {
+// adminEject(U2 G3, 2026-10-14) = 조직 공개·비공개 채널의 방장 — 남의 개인 에이전트·외부 봇을 '내보내기'(서버 msgr_crew_leave_channel 관리자 갈래,
+// 판정 정본 msgr_crew_admin_removable). 개인 공간·대화방은 D8대로 주인만이라 부르는 쪽이 adminEject를 넘기지 않는다.
+export function crewRowMenuKeys({ isPersonal, isDm, canKickCrew, ownedByMe, company = false, canHide = false, adminEject = false }) {
   const viaLeave = ownedByMe && (isPersonal || !canKickCrew);
+  const eject = adminEject && !isPersonal && !isDm && !ownedByMe && !company;
   return [
     !isPersonal && 'manage',
     !isDm && 'call',
     canKickCrew && (ownedByMe || company) && !viaLeave && 'remove',
     viaLeave && 'leave',
+    eject && 'eject',
     !ownedByMe && canHide && 'hide',
   ].filter(Boolean);
 }

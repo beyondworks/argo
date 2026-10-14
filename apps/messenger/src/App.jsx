@@ -87,6 +87,7 @@ import { appBackStack, rootBackAction } from './back-stack.mjs'; import { useBac
 import { watchOnline } from './connection.mjs';
 import { selfMember, personalSelfName } from './self-member.mjs';
 import { crewRowMenuKeys, crewOpeners, creatorTagVisible } from './crew-row-menu.mjs';
+import { adminRemovedNotice, readAdminRemoved } from './dispatch-notice.mjs';
 import { crewAwayNotice } from './crew-dm-notice.mjs';
 import { crewListEmptyKey } from './crews-empty.mjs';
 import { readAgentPause, agentPauseNote, readSwapNames, splitSpaceCrews, withPaused, pausedRoomCrew, readPausedCrewNames, crewNameAsker } from './agent-pause.mjs'; // 무료 계정 에이전트가 멈춘 이유(2026-10-11)
@@ -3335,6 +3336,8 @@ function CrewSheet({ crew, org, uid, me, members, policy, channelId, channelName
   const [allow, setAllow] = useState(crew.allow); const [list, setList] = useState(crew.allow_users ?? []); const [busy, setBusy] = useState(false);
   useEffect(() => { setAllow(crew.allow); setList(crew.allow_users ?? []); }, [crew.id, crew.allow, crew.allow_users]);
   useEffect(() => { const on = (e) => { if (e.key === 'Escape') onClose(); }; window.addEventListener('keydown', on); return () => window.removeEventListener('keydown', on); }, [onClose]);
+  const [removed, setRemoved] = useState(null); // U2: 관리자가 내 에이전트를 내보냈으면 주인에게 한 줄(최근 7일, 카드를 열 때 한 번 읽기 — 주기 조회 없음)
+  useEffect(() => { if (!owner) return undefined; let live = true; readAdminRemoved(supabase, crew.id).then((r) => { if (live) setRemoved(r && adminRemovedNotice(r.row, { channelName: r.channelName })); }).catch(() => {}); return () => { live = false; }; }, [crew.id, owner]);
   const avail = crewAvailability(crew, { awayMs: AWAY_MS }); // 파견 여부와 접속 여부를 합친 한 줄 상태 — 지금 대화할 수 있는지(crew-status.mjs)
   const canMe = owner || crew.allow === 'all' || (crew.allow === 'list' && (crew.allow_users ?? []).includes(uid));
   // 파견·해제는 메신저에서(유건 지시 2026-09-08). 서버는 status만 본다: available = 지시·답글·채널 멤버 불가(20260907120000 게이트), active = 파견 중.
@@ -3403,6 +3406,7 @@ function CrewSheet({ crew, org, uid, me, members, policy, channelId, channelName
           {confirmOut && <div className="confirm-row"><span className="confirm-inline"><span>{t('crew.leaveHere.confirm', { channel: channelName })}</span><button type="button" className="btn btn-primary sm danger" disabled={busy} onClick={leaveHere}>{t('crew.leaveHere', { channel: channelName })}</button><button type="button" className="btn sm" onClick={() => setConfirmOut(false)}>{t('ui.cancel')}</button></span></div>}
           {confirmRecall && <div className="confirm-row"><span className="confirm-inline"><span>{t('crew.recall.confirm')}</span><button type="button" className="btn btn-primary sm danger" disabled={busy} onClick={() => setDispatch(false)}>{t('crew.recall')}</button><button type="button" className="btn sm ghost text" onClick={() => setConfirmRecall(false)}>{t('ui.cancel')}</button></span></div>}
         </div>
+        {removed && <p className="note" role="status">{t(removed.key, { channel: removed.channel, when: fmtWhen(removed.at, lang) })}</p>}
         <p className="note tier">{tier === 'company' ? t('crew.tier.company.note', { org: org?.name ?? '' }) : t('crew.tier.personal.note', { name: nameOfUser(crew.owner_user_id) })}</p>
         {owner && (<section className="msgr-crewprofile">
           <h3>{t('crew.profile')}</h3>
@@ -3526,6 +3530,14 @@ function ChannelSheet({ channel, joined = false, muted = false, onToggleMute, dm
     if (err) return onError(err === 'old' ? t('crew.leaveHere.upgrade') : err);
     await onChanged();
   };
+  const ejectAgent = async (c) => { // U2 G3: 방장이 남의 개인 에이전트를 내보낸다 — 기록(removed_by_admin)과 1시간 재가입 막기는 서버가 같은 호출에서 한다
+    setBusy(true);
+    const r = await supabase.rpc('msgr_crew_leave_channel', { ch: channel.id, crew: c.id });
+    setBusy(false); setEjectCrew(null);
+    if (r.error) return onError(missingSchema(r.error) ? t('crew.leaveHere.upgrade') : friendlyErr(r.error.message, t));
+    if (r.data === 'owner_only') return onError(t('err.crewRemoveOwnerOnly')); // 아직 U2가 없는 서버
+    onNote(koJosa(t('ch.crew.eject.done', { name: c.display_name }))); await onChanged();
+  };
   const removeMember = async (kind, id) => {
     const owned = kind === 'user' ? myCrewsHere(id, (cid) => chMembers.some((m) => m.member_kind === 'crew' && m.member_id === cid)) : [];
     if (owned.length) { setBusy(true); const err = await dropCrews(owned); setBusy(false); if (err) return onError(err === 'old' ? t('ch.remove.ownerBlocked') : err); }
@@ -3573,6 +3585,7 @@ function ChannelSheet({ channel, joined = false, muted = false, onToggleMute, dm
   const crewIds = new Set(chMembers.filter((m) => m.member_kind === 'crew').map((m) => m.member_id));
   const safety = useContext(SafetyCtx); const { hiddenUserIds } = safety;
   const [hideCrew, setHideCrew] = useState(null); // 남의 에이전트 숨기기 확인 창(D8)
+  const [ejectCrew, setEjectCrew] = useState(null); // 방장이 남의 개인 에이전트를 내보내는 확인 창(U2 G3) — 한 번 확인(되돌릴 수 있는 일이라 이름 입력 없음)
   const addableUsers = withoutHidden(members.filter((m) => !userIds.has(m.user_id) && m.user_id !== org?.service_user_id && addableToChannel(channel, m, excludedUsers)), isPersonal ? hiddenUserIds : null); // 공개 채널은 내보낸 사람·게스트가 후보가 아니다(서버가 거절한다) // 회사 크루 서버(기계 계정)는 사람 후보가 아니다(실측: 첫 칩이 '회사 노드')
   // 누가 무엇을 데려오나 — 추가 후보는 방장이어도 **내 에이전트와 회사 에이전트만**(유건 2026-09-17: 친구·동료 에이전트까지 전부 보여 목록이 두 배로 늘었다).
   // 남의 에이전트는 그 주인이 데려오고(참여자면 방장 승인), 방장은 요청을 허락한다. 방장도 남의 개인 에이전트를 바로 넣지 못한다(서버 msgr_crew_join·msgr_channel_member_ok가 막는다, 2026-09-18). /
@@ -3618,11 +3631,12 @@ function ChannelSheet({ channel, joined = false, muted = false, onToggleMute, dm
   const personalLabel = (v) => t(`ch.personal.${v}`);
   const pendingReqs = requests.filter((r) => r.status !== 'done' || Date.now() - Date.parse(r.done_at ?? r.created_at) < 120_000);
   // 에이전트 행 메뉴 — 항목 규칙은 crew-row-menu.mjs(개인 공간은 에이전트 관리를 그리지 않으므로 메뉴에도 없다, 검수 F)
-  const crewMenu = (c) => crewRowMenuKeys({ isPersonal, isDm: channel.kind === 'dm', canKickCrew, ownedByMe: c.owner_user_id === uid, company: crewTier(c, org) === 'company' && c.hosting === 'resident', canHide: !!safety.muteCrew && !safety.mutedCrewIds.has(c.id) }).map((k) => ({
+  const crewMenu = (c) => crewRowMenuKeys({ isPersonal, isDm: channel.kind === 'dm', canKickCrew, ownedByMe: c.owner_user_id === uid, company: crewTier(c, org) === 'company' && c.hosting === 'resident', canHide: !!safety.muteCrew && !safety.mutedCrewIds.has(c.id), adminEject: isHost && !isPersonal && (channel.kind === 'public' || channel.kind === 'private') }).map((k) => ({
     manage: { icon: 'star', label: t('ch.open.crew'), run: () => onCrew?.(c.id) },
     call: { icon: 'at', label: t('ch.add.crew.call'), run: () => onMention?.(c) },
     remove: { icon: 'x', label: t(isDmRoom ? 'dm.remove.crew' : 'ch.remove.crew'), danger: true, disabled: busy, run: () => kick('crew', c.id) },
     leave: { icon: 'out', label: isDmRoom ? t('dm.remove.crew') : t('crew.leaveHere', { channel: channel.name }), danger: true, disabled: busy, run: () => leaveCrew(c.id) },
+    eject: { icon: 'out', label: t('ch.crew.eject'), danger: true, disabled: busy, run: () => setEjectCrew(c) }, // 최종 판정은 서버 msgr_crew_admin_removable
     hide: { icon: 'eyeoff', label: t('fm.hideAgent.title'), run: () => setHideCrew(c) }, // 남의 에이전트 — 내보내기 대신 숨기기(확인 창에 안내 한 줄, D8)
   }[k]));
   return (
@@ -3632,6 +3646,10 @@ function ChannelSheet({ channel, joined = false, muted = false, onToggleMute, dm
       {hideCrew && createPortal(<div className="shell" style={{ display: 'contents' }} role="dialog" aria-modal="true" aria-label={t('fm.hideAgent.title')}>
         <ConfirmModal tone="primary" title={t('fm.hideAgent.title')} description={t('fm.hideAgent.note')} confirmLabel={t('fm.hide')} busy={busy}
           onConfirm={async () => { const c = hideCrew; setBusy(true); try { await safety.muteCrew(c.id); setHideCrew(null); } catch { onError(t('crew.mute.failed')); } finally { setBusy(false); } }} onClose={() => { if (!busy) setHideCrew(null); }} />
+      </div>, document.body)}
+      {ejectCrew && createPortal(<div className="shell" style={{ display: 'contents' }} role="dialog" aria-modal="true" aria-label={t('ch.crew.eject')}>
+        <ConfirmModal title={koJosa(t('ch.crew.eject.title', { name: ejectCrew.display_name }))} description={t('ch.crew.eject.note', { owner: nameOfUser(ejectCrew.owner_user_id) })} confirmLabel={t('ch.crew.eject')} busy={busy}
+          onConfirm={() => ejectAgent(ejectCrew)} onClose={() => { if (!busy) setEjectCrew(null); }} />
       </div>, document.body)}
       <aside className="msgr-crewsheet" role="dialog" aria-label={t('ch.sheet')}>
         <div className="head">
