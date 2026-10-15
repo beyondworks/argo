@@ -896,35 +896,49 @@ test('D6-3. 방 문구 표 — 주인 요청의 원인별(러너 없음·멈춤)
 });
 
 // 앱↔메신저 연결 감사 D5(2026-10-15, 재현 1-8): 러너 없는 기기는 넘겨받을 다른 기기가 없어도 첫 멘션을 160초(YIELD_GRACE_MS) 양보했다 — 기기 1대면 실패 안내까지 2분 40초.
-// 고친 뒤: 양보하려는 그 글에서만 서버에 한 번 묻는다(msgr_runner_peer_alive — 무료 계정이면 '내 다른 기기의 기기 심박 행(7일 보존)·옛 앱 흔적', Pro·판정 불가면 늘 있음).
-// '없음'이면 양보하지 않고 바로 처리(실패 안내 — D6 문구). '있음'·오류·옛 서버(함수 없음)면 종전 160초. 글마다 1회(drain·핸들러가 같은 결과를 쓴다), 주기 호출 0.
-const peerServer = (msgs, verdict) => { const srv = inboxServer(msgs); srv.peerCalls = []; const base = srv.forProc;
-  srv.forProc = (who) => Object.assign(base(who), { async runnerPeerAlive(device) { srv.peerCalls.push([who, device]); if (verdict instanceof Error) throw verdict; return verdict; } });
+// 고친 뒤: 양보하려는 그 글에서 서버에 묻는다(msgr_runner_peer_alive — 무료 계정이면 '내 다른 기기의 기기 심박 행(7일 보존)·옛 앱 흔적', Pro·판정 불가면 늘 있음).
+// 첫 답이 '없음'이면 PEER_RECHECK_MS(50초) 뒤 한 번 더 묻고(옛 앱 흔적이 그 순간 덮였을 수 있다 — 재검수 B2), 두 번 다 없음이면 더 기다리지 않고 처리(실패 안내 — D6 문구).
+// '있음'·오류·옛 서버(함수 없음)가 한 번이라도 나오면 종전 160초. 글당 최대 2회(drain·핸들러가 같은 판정), 주기 호출 0.
+const { PEER_RECHECK_MS } = M;
+const peerServer = (msgs, verdicts) => { const srv = inboxServer(msgs); srv.peerCalls = []; const base = srv.forProc;
+  const seq = Array.isArray(verdicts) ? verdicts : [verdicts, verdicts];
+  srv.forProc = (who) => Object.assign(base(who), { async runnerPeerAlive(device) { const v = seq[Math.min(srv.peerCalls.length, seq.length - 1)]; srv.peerCalls.push([who, device]); if (v instanceof Error) throw v; return v; } });
   return srv; };
 
-test('D5-1. 넘겨받을 다른 기기가 없으면(서버 판정 없음) 양보하지 않는다 — drain이 바로 적재, 핸들러가 바로 실패 안내, 서버 판정은 글당 1회', async () => {
+test('D5-0. 두 번째 질문 간격 = 옛 앱 행 다시 쓰기 최대 간격(30초 기한 + 15초 틱) + 여유 5초, 160초 양보 기한보다 짧다', () => {
+  assert.equal(PEER_RECHECK_MS, M.HEARTBEAT_WRITE_MS + M.POLL_MS + 5_000);
+  assert.equal(PEER_RECHECK_MS, 50_000);
+  assert.ok(PEER_RECHECK_MS < YIELD_GRACE_MS);
+});
+
+test('D5-1. 넘겨받을 다른 기기가 없으면(두 번 다 없음) 50초 뒤 양보를 그만둔다 — drain이 적재, 핸들러가 바로 실패 안내(D6 문구), 서버 판정은 글당 2회', async () => {
   const ws = await seed('d5-solo');
-  let clock = Date.now(); const now = () => clock;
-  const srv = peerServer([inboxMsg(11, clock)], false);
+  let clock = Date.now(); const now = () => clock; const born = clock;
+  const srv = peerServer([inboxMsg(11, born)], false);
   const enq = collector();
   await drainAs(ws, srv, 'A', enq, now);
-  assert.deepEqual(enq.jobs.map((j) => j.msgId), [11], '기다리지 않고 적재');
+  assert.equal(enq.jobs.length, 0, '첫 답이 없음이어도 바로는 그만두지 않는다(옛 앱 흔적을 한 번 더 본다)');
+  clock = born + PEER_RECHECK_MS - 1000; await drainAs(ws, srv, 'A', enq, now);
+  assert.equal(enq.jobs.length, 0); assert.equal(srv.peerCalls.length, 1, '기다리는 동안 다시 묻지 않는다');
+  clock = born + PEER_RECHECK_MS; await drainAs(ws, srv, 'A', enq, now);
+  assert.deepEqual(enq.jobs.map((j) => j.msgId), [11], '두 번째도 없음 → 적재(160초를 다 기다리지 않는다)');
   assert.equal(srv.cursor, 11);
   const A = M.makeMsgrHandler(ws, { session: async () => ({ db: srv.forProc('A'), uid: OWNER }), now, linkPreview: noPreview });
-  assert.notEqual(await A(enq.jobs[0]), DEFER, '핸들러도 양보하지 않는다');
+  assert.notEqual(await A(enq.jobs[0]), DEFER, '핸들러는 drain의 두 번째 답을 함께 쓴다(같은 글 키)');
   const [r] = srv.messages.filter((m) => m.client_msg_id === `reply:${CREW}:11`);
   assert.equal(r?.meta?.failed, true);
   assert.match(r.body, /연결된 AI가 없어/, '주인 요청 — D6 원인 문구');
-  assert.equal(srv.peerCalls.length, 1, '서버 판정은 글당 한 번(drain과 핸들러가 같은 결과)');
+  assert.equal(srv.peerCalls.length, 2, '서버 판정은 글당 최대 2회(drain과 핸들러가 같은 답)');
   assert.equal(typeof srv.peerCalls[0][1], 'string', '이 기기 id를 넘긴다(자기 심박은 다른 기기로 세지 않게)');
 });
 
-test('D5-2. 인접 핀 — 다른 기기가 있으면(서버 판정 있음) 종전대로 160초 양보, 판정은 글당 1회(drain을 여러 번 돌아도)', async () => {
+test('D5-2. 인접 핀 — 다른 기기가 있으면(첫 답 있음) 종전대로 160초 양보, 두 번째는 묻지 않는다', async () => {
   const ws = await seed('d5-peer');
   let clock = Date.now(); const now = () => clock; const born = clock;
   const srv = peerServer([inboxMsg(11, born)], true);
   const enq = collector();
   await drainAs(ws, srv, 'A', enq, now);
+  clock = born + PEER_RECHECK_MS + 1000; await drainAs(ws, srv, 'A', enq, now);
   clock = born + YIELD_GRACE_MS - 1000; await drainAs(ws, srv, 'A', enq, now);
   assert.equal(enq.jobs.length, 0); assert.equal(srv.cursor, 10);
   assert.equal(srv.peerCalls.length, 1);
@@ -932,28 +946,50 @@ test('D5-2. 인접 핀 — 다른 기기가 있으면(서버 판정 있음) 종�
   assert.deepEqual(enq.jobs.map((j) => j.msgId), [11], '기한 뒤 종전대로');
 });
 
-test('D5-3. 인접 핀 — 서버 판정 오류·옛 서버(함수 없음 = null)면 종전 160초 양보(배포본보다 나빠지지 않는다)', async () => {
-  for (const [name, verdict] of [['d5-err', new Error('msgr db: timeout')], ['d5-old', null]]) {
+test('D5-3. 인접 핀 — 첫 답 없음 + 두 번째 있음(옛 앱 흔적이 다시 보임)·오류·옛 서버(null)면 종전 160초 양보(배포본보다 나빠지지 않는다)', async () => {
+  for (const [name, seq] of [['d5-second-true', [false, true]], ['d5-second-err', [false, new Error('msgr db: timeout')]], ['d5-err', [new Error('x'), new Error('x')]], ['d5-old', [null, null]]]) {
     const ws = await seed(name);
-    let clock = Date.now(); const now = () => clock;
-    const srv = peerServer([inboxMsg(11, clock)], verdict);
+    let clock = Date.now(); const now = () => clock; const born = clock;
+    const srv = peerServer([inboxMsg(11, born)], seq);
     const enq = collector();
     await drainAs(ws, srv, 'A', enq, now);
-    assert.equal(enq.jobs.length, 0, `${name}: 양보`);
+    clock = born + PEER_RECHECK_MS + 1; await drainAs(ws, srv, 'A', enq, now);
+    clock = born + YIELD_GRACE_MS - 1000; await drainAs(ws, srv, 'A', enq, now);
+    assert.equal(enq.jobs.length, 0, `${name}: 160초 양보`);
     const A = M.makeMsgrHandler(ws, { session: async () => ({ db: srv.forProc('A'), uid: OWNER }), now, linkPreview: noPreview });
-    assert.equal(await A(jobAt(clock)), DEFER, `${name}: 핸들러도 양보`);
+    assert.equal(await A({ ...jobAt(born), msgId: 11 }), DEFER, `${name}: 핸들러도 양보(같은 글 — drain의 판정을 함께 쓴다)`);
+    assert.ok(srv.peerCalls.length <= 2, `${name}: 글당 최대 2회 (${srv.peerCalls.length})`);
   }
 });
 
-test('D5-4. 큐에 이미 있던 잡(drain을 거치지 않음)도 핸들러가 한 번 묻고, 다른 기기가 없으면 바로 처리 — 러너가 있으면 묻지 않는다', async () => {
+test('D5-4. 두 번째 질문을 기다리는 동안 러너 있는 다른 기기가 실행권을 잡으면 이쪽은 실패 안내를 올리지 않는다(이미 답함)', async () => {
+  const ws = await seed('d5-wait-other');
+  const srv = peerServer([], false);
+  let clock = Date.now(); const now = () => clock;
+  const job = jobAt(clock);
+  const A = M.makeMsgrHandler(ws, { session: async () => ({ db: srv.forProc('A'), uid: OWNER }), now, linkPreview: noPreview });
+  const B = M.makeMsgrHandler(ws, { session: async () => ({ db: srv.forProc('B'), uid: OWNER }), now, linkPreview: noPreview, runChat: okTurn('B가 답합니다') });
+  const jobA = structuredClone(job), jobB = structuredClone(job);
+  assert.equal(await A(jobA), DEFER, '첫 답 없음 — 그래도 50초 기다린다');
+  clock += 20_000; await B(jobB);
+  clock += PEER_RECHECK_MS; assert.notEqual(await A(jobA), DEFER, '두 번째도 없음 — 더 양보하지 않는다');
+  const replies = replyOf(srv, job);
+  assert.equal(replies.length, 1); assert.equal(replies[0].body, 'B가 답합니다');
+  assert.equal(replies[0].meta?.failed, undefined, '실패 안내를 올리지 않는다');
+  assert.equal(srv.callsOf('A', 'claimExecution').length, 0);
+});
+
+test('D5-5. 큐에 이미 있던 잡(drain을 거치지 않음)도 핸들러가 같은 규칙(50초 뒤 두 번째) — 러너가 있으면 묻지 않는다', async () => {
   const ws = await seed('d5-handler');
   let clock = Date.now(); const now = () => clock;
   const srv = peerServer([], false);
   const A = M.makeMsgrHandler(ws, { session: async () => ({ db: srv.forProc('A'), uid: OWNER }), now, linkPreview: noPreview });
   const job = jobAt(clock);
+  assert.equal(await A(job), DEFER);
+  clock += PEER_RECHECK_MS;
   assert.notEqual(await A(job), DEFER);
   assert.equal(replyOf(srv, job)[0]?.meta?.failed, true);
-  assert.equal(srv.peerCalls.length, 1);
+  assert.equal(srv.peerCalls.length, 2);
   const ws2 = await seed('d5-has-runner', { cred: true });
   const srv2 = peerServer([], false);
   const B = M.makeMsgrHandler(ws2, { session: async () => ({ db: srv2.forProc('B'), uid: OWNER }), now, linkPreview: noPreview, runChat: okTurn('답') });

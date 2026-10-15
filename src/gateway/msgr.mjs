@@ -1322,8 +1322,8 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
       if (!runnerReady || !candidate(m) || !withinRunnerYield(yieldKey(wsId, crew.id, m.id), m.created_at, now())) return false;
       ready ??= await (async () => runnerReady(wsId, crew.slug))().catch(() => false) === true;
       if (ready) return false;
-      // 넘겨받을 다른 기기가 없으면(D5) 기다리지 않는다 — 글당 한 번 묻는다(peerVerdict). 모르면 종전 양보
-      if (await peerVerdict(yieldKey(wsId, crew.id, m.id), async () => db.runnerPeerAlive?.(deviceId ?? await getDeviceId().catch(() => null))) === false) return false;
+      // 넘겨받을 다른 기기가 없으면(D5) 더 기다리지 않는다 — 글당 최대 두 번 묻는다(peerGone, 두 번째는 PEER_RECHECK_MS 뒤). 모르면 종전 양보
+      if (await peerGone(yieldKey(wsId, crew.id, m.id), now(), async () => db.runnerPeerAlive?.(deviceId ?? await getDeviceId().catch(() => null)))) return false;
       const k = `${crew.id}:${m.id}`;
       if (!heldLogged.has(k)) { heldLogged.add(k); if (heldLogged.size > 500) heldLogged.delete(heldLogged.values().next().value); console.log(`[argo] msgr ${crew.slug}: 이 프로세스엔 이 에이전트를 실행할 러너가 없어 메시지 ${m.id}부터 적재를 러너 있는 Argo에 양보합니다(처음 본 뒤 최대 ${Math.round(YIELD_GRACE_MS / 1000)}초)`); }
       return true;
@@ -1785,17 +1785,33 @@ const yieldSeenAt = new Map(); // (회사:크루:글) → 이 프로세스가 �
 export const _runnerYieldSeenForTest = yieldSeenAt;
 const YIELD_CLOCK_AHEAD_MS = 60_000; // 글 시각(created_at)이 이 기기 시계보다 이만큼 넘게 미래면 이 기기 시계가 느린 것 — 글 시각 기한을 쓰지 않는다
 const yieldKey = (wsId, crewId, msgId) => `${wsId}:${crewId}:${msgId}`;
-/** 넘겨받을 다른 기기가 있나 — 글(yieldKey)마다 한 번만 묻고 drain 보류·핸들러 양보가 같은 답을 쓴다(앱↔메신저 연결 감사 D5, 2026-10-15).
-    false(없음)일 때만 양보하지 않는다. true·null(오류·옛 서버·어댑터에 함수 없음)은 종전 160초 양보 — 배포본보다 나빠지는 경우를 만들지 않는다.
-    부하: 러너 없는 프로세스가 양보하려는 대상 글당 1회(주기 호출 0). 기억은 프로세스 메모리, 2,000건을 넘으면 오래된 것부터 지운다(다시 물으면 1회 더). */
-const peerVerdicts = new Map();
+/** 넘겨받을 다른 기기가 없어 양보를 그만둘까 — 글(yieldKey)마다 drain 보류·핸들러 양보가 같은 판정을 쓴다(앱↔메신저 연결 감사 D5, 2026-10-15).
+    첫 답이 false(없음)여도 바로 그만두지 않고 PEER_RECHECK_MS 뒤 한 번 더 묻는다 — 기기 심박을 쓰지 않는 옛 앱·CLI의 흔적(행 last_seen_at)은 그 순간 이 기기의
+    호환 쓰기에 같은 시각으로 덮여 있을 수 있다(재검수 B2). 두 번 다 false일 때만 그만둔다(true). true·null(오류·옛 서버·어댑터에 함수 없음)이 한 번이라도 나오면
+    종전 160초 양보 — 배포본보다 나빠지는 경우를 만들지 않는다. 기다리는 동안은 양보 중이라 다른 기기가 실행권을 잡으면 이쪽은 실패 안내를 올리지 않는다(이미 답함).
+    부하: 러너 없는 프로세스가 양보하려는 대상 글당 최대 2회(주기 호출 0). 기억은 프로세스 메모리, 2,000건을 넘으면 오래된 것부터 지운다(다시 물으면 처음부터). */
+// 옛 앱·CLI(≤0.1.99)는 연결된 행 last_seen_at을 HEARTBEAT_WRITE_MS(30초)가 지난 뒤 POLL_MS(15초) 틱에 다시 쓴다(위 heartbeat 종전 경로, 2026-09-23 #689 —
+// 그 전 앱은 15초 틱마다) → 다시 쓰는 간격은 최대 45초. 틱 지연(그 틱의 다른 조회) 여유 5초를 더해 50초 — 두 번째 질문 전에 옛 쪽이 적어도 한 번 다시 쓴다.
+export const PEER_RECHECK_MS = HEARTBEAT_WRITE_MS + POLL_MS + 5_000;
+const peerVerdicts = new Map(); // yieldKey → { first: bool|null, at, second?: bool|null, pending?: Promise }
 export const _runnerPeerVerdictsForTest = peerVerdicts;
-async function peerVerdict(key, ask) {
-  if (peerVerdicts.has(key)) return peerVerdicts.get(key);
-  const v = await Promise.resolve().then(ask).then((x) => (typeof x === 'boolean' ? x : null), () => null);
-  peerVerdicts.set(key, v);
-  while (peerVerdicts.size > 2000) peerVerdicts.delete(peerVerdicts.keys().next().value);
-  return v;
+const askPeer = (ask) => Promise.resolve().then(ask).then((x) => (typeof x === 'boolean' ? x : null), () => null);
+async function peerGone(key, t, ask) {
+  let e = peerVerdicts.get(key);
+  if (!e) {
+    e = { pending: askPeer(ask) };
+    peerVerdicts.set(key, e);
+    while (peerVerdicts.size > 2000) peerVerdicts.delete(peerVerdicts.keys().next().value);
+    e.first = await e.pending; e.at = t; delete e.pending;
+    return false; // 첫 답이 무엇이든 이번에는 양보한다(false면 PEER_RECHECK_MS 뒤 다시 묻는다)
+  }
+  if (e.pending) { await e.pending; return false; }
+  if (e.first !== false) return false;
+  if (e.second === undefined) {
+    if (t - e.at < PEER_RECHECK_MS) return false;
+    e.pending = askPeer(ask); e.second = await e.pending; delete e.pending;
+  }
+  return e.second === false;
 }
 /** 처음 본 시각 — 없으면 지금으로 남긴다. 이 기기 시계가 뒤로 갔으면(남긴 시각이 미래) 지금으로 다시 남겨 기한이 늘지 않게 한다. */
 // 정리는 개수가 아니라 나이로 한다(확인 검수 2026-10-08): 500건 상한에서 먼저 넣은 것부터 지우면, 보류 중인 글이 500건을 넘을 때 지워진 글이
@@ -1845,11 +1861,11 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
   const yieldForRunner = async (job) => {
     if (!runnerReady || (job.msgrExecution && job.msgrExecution.phase !== 'claiming')) return false;
     if (!withinRunnerYield(yieldKey(wsId, job.crewId, job.msgId), job.createdAt, now()) || await runnerReady(wsId, job.slug)) return false;
-    // 넘겨받을 다른 기기가 없으면(D5) 양보하지 않는다 — drain에서 이미 물었으면 그 답(글당 1회). 세션을 못 얻거나 모르면 종전 양보
-    if (await peerVerdict(yieldKey(wsId, job.crewId, job.msgId), async () => {
+    // 넘겨받을 다른 기기가 없으면(D5) 더 양보하지 않는다 — drain과 같은 판정(글당 최대 2회, peerGone). 세션을 못 얻거나 모르면 종전 양보
+    if (await peerGone(yieldKey(wsId, job.crewId, job.msgId), now(), async () => {
       const c = await session();
       return c?.db?.runnerPeerAlive?.(await getDeviceId().catch(() => null));
-    }) === false) return false;
+    })) return false;
     const k = `${job.crewId}:${job.msgId}`;
     if (!yieldLogged.has(k)) {
       yieldLogged.add(k); if (yieldLogged.size > 500) yieldLogged.delete(yieldLogged.values().next().value);
