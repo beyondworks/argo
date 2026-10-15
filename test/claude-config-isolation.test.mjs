@@ -17,7 +17,8 @@ import { mkdtemp } from './helpers/tmp.mjs';
 
 const root = await mkdtemp(join(tmpdir(), 'argo-cfgiso-'));
 const home = await mkdtemp(join(tmpdir(), 'argo-cfgiso-home-'));
-Object.assign(process.env, { ARGO_ROOT: root, HOME: home, USERPROFILE: home, ARGO_ENC_VAULT: '0', ARGO_MODEL_CATALOG: 'off', ARGO_NATIVE_RUNNERS: 'off' });
+process.env.HOME = process.env.USERPROFILE = home;
+Object.assign(process.env, { ARGO_ROOT: root, ARGO_ENC_VAULT: '0', ARGO_MODEL_CATALOG: 'off', ARGO_NATIVE_RUNNERS: 'off' });
 for (const k of ['NEXT_PUBLIC_SUPABASE_URL', 'NEXT_PUBLIC_SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY', 'CLAUDE_CONFIG_DIR', 'CLAUDE_SECURESTORAGE_CONFIG_DIR', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_BASE_URL']) delete process.env[k];
 
 const reqs = []; // [인증 방식, 요청 messages 수]
