@@ -151,3 +151,35 @@ test('⑥ 이 앱이 서버의 무료 최소 버전 이상일 때만 멈춘 회�
   assert.equal((await run2(null)).ok, false, '옛 서버');
   assert.equal((await run2('0.0.1')).ok, true);
 });
+
+// 앱↔메신저 연결 감사 D3(2026-10-15): 무료 계정 첫 연결에서 미러가 행을 넣는 첫 틱은 심박 대상을 미러 전에 읽어 비어 있었다 — 심박 0.
+// 다음 15초 틱은 Realtime이 붙어 있으면 관리 틱이 아니라(held → 'wake') 심박이 다음 관리 틱(120초)까지 밀렸고, 그동안 서버는 새 앱을 몰라 업데이트를 요구했다.
+// 고친 뒤: 미러가 행을 넣은 틱은 같은 틱에 넣은 행까지 심박한다(행 다시 읽기 1건 — 넣은 틱에만).
+const firstConnectDb = ({ org = true } = {}) => { const d = fakeDb([]); let rows = []; let n = 0;
+  d.myCrews = async (uid, ws, opt) => { d.calls.push(['myCrews', opt ?? null]); return rows.map((r) => ({ ...r })); };
+  d.myCrewRows = async () => rows.map((r) => ({ ...r }));
+  d.myOrgIds = async () => (org ? [O1] : []);
+  d.upsertAvailable = async (ins) => { d.calls.push(['upsertAvailable', ins.length]); for (const r of ins) rows.push(row(`new-${++n}`, r.slug, 'paused', r.org_id)); }; // 서버 관문: 새 앱 심박 전 무료 insert는 paused
+  d.insertPersonal = async (ins) => { d.calls.push(['insertPersonal', ins.length]); for (const r of ins) rows.push(row(`newp-${++n}`, r.slug, 'paused', null)); };
+  d.myCrewLooks = async () => []; d.crewLooks = async () => new Map();
+  return d; };
+
+test('⑦ D3 첫 연결: 미러가 행을 넣은 첫 틱에 넣은 행으로 심박한다 — 다음 관리 틱(120초)까지 기다리지 않는다', async () => {
+  const d = firstConnectDb();
+  const report = {};
+  await drain(WS, { db: d, uid: UID, enqueue: async () => {}, housekeeping: true, inventory: async () => [{ slug: 'jun', name: '준', role: null }, { slug: 'mia', name: '미아', role: null }], commandsFor: null, deviceId: DEV, report });
+  const beats = d.calls.filter(([k]) => k === 'heartbeat');
+  assert.equal(beats.length, 1, `첫 틱 심박 1건 (${d.calls.map(([k]) => k)})`);
+  assert.deepEqual(beats[0][1].slice().sort(), ['new-3', 'new-4', 'newp-1', 'newp-2'], '방금 넣은 멈춘 행(개인·조직)으로');
+  assert.deepEqual(beats[0][2], { wsId: WS, deviceId: DEV });
+  assert.ok(report.beatAt != null, '성공한 심박 시각을 남긴다(브리지가 다음 심박 기한을 센다)');
+  assert.deepEqual(report.beat.ids.slice().sort(), ['new-3', 'new-4', 'newp-1', 'newp-2'], '쉬는 틱 심박 대상도 같은 행');
+  assert.equal(report.held, true, '다음 15초 틱에 다시 drain(목록·구독 맞추기 — 종전 그대로)');
+});
+
+test('⑦ D3 유휴: 미러가 넣은 것이 없는 틱은 행을 다시 읽지 않는다(조회 수 종전 그대로)', async () => {
+  const d = fakeDb([row('p-jun', 'jun', 'paused'), row('p-mia', 'mia', 'paused')]);
+  await run(d);
+  assert.equal(d.calls.filter(([k]) => k === 'myCrews').length, 1);
+  assert.equal(d.calls.filter(([k]) => k === 'heartbeat').length, 1);
+});

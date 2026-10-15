@@ -1218,11 +1218,20 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
   // 카드 목록 — 미러와 심박이 같은 목록을 쓴다(하우스키핑 틱만 읽는다). 읽기 실패도 미러 실패로 드러내고 드레인은 계속한다(종전엔 여기서 던지면 드레인 전체가 멈췄다)
   const mirrorFail = (e) => { out.mirrorError = String(e?.message ?? e); console.error('[argo] msgr 에이전트 인벤토리 미러 실패:', out.mirrorError); };
   const cards = housekeeping && !nodeOrgId && inventory ? await (async () => inventory(wsId))().catch((e) => { mirrorFail(e); return null; }) : null; // 동기로 던지는 주입 함수도 여기서 잡는다
+  let added = []; // 이번 틱 미러가 넣은 행(맨 앞 myCrews에는 없다) — 아래 심박 대상에 더한다(D3)
   if (cards) { // 브리지가 상태로 드러낸다(검수 MEDIUM-A: 로그만 남기고 '연결됨'이던 것)
     const m = await mirrorInventory(wsId, { db, uid, agents: cards }).catch((e) => { mirrorFail(e); return null; });
     // 행을 넣거나 바꿨다(새 에이전트 첫 파견·되살림·새 조직) — 이번 틱의 에이전트 목록(맨 앞 myCrews)에는 없으니 그 조직 토픽을 아직 구독하지 않았다.
     // 다음 15초 틱에 다시 drain해 목록·구독을 맞춘다(쉬는 주기로 넘어가면 그 조직 공개 채널 글이 예비 조회까지 늦는다 — #943 검수 MEDIUM-1)
     if (m && (m.inserted || m.updated || m.removed)) report.held = true;
+    // 넣은 행은 이 틱에 심박한다(앱↔메신저 연결 감사 D3, 2026-10-15). 무료 계정 첫 연결은 넣은 행이 전부 멈춘 행(새 앱 심박 전)이라, 미러 전에 읽은 심박 대상이 비어
+    // 심박이 없었고 다음 틱은 held라도 관리 틱이 아니어서(쉬는 주기) 첫 심박이 다음 관리 틱(IDLE_POLL_MS 120초)까지 밀렸다 — 그동안 서버는 새 앱을 몰라 업데이트를 요구했다.
+    // 부하: 행을 넣은 틱에만 행 다시 읽기 1건(넣을 것이 없는 틱은 0 — 시험 ⑦ 유휴).
+    if (m?.inserted) {
+      const seen = new Set(mineRows.map((c) => c.id));
+      added = (await db.myCrews(uid, wsId, { withPaused: true }).catch((e) => { console.error('[argo] msgr 새 행 다시 읽기 실패 — 다음 틱에 심박합니다:', e?.message ?? e); return []; }))
+        .filter((c) => !seen.has(c.id) && ['active', 'paused'].includes(c.status ?? 'active'));
+    }
   }
   // 심박은 카드가 있는 행만(CX-14) — 해고를 이 프로세스가 못 본 경우(꺼져 있던 사이 동기화로 카드가 사라짐)에도 메신저에서 접속 중으로 남지 않게.
   // 상태는 바꾸지 않는다(그건 해고를 본 틱의 미러 몫). 카드 목록을 못 읽었거나 비었으면 종전대로 전부 — 폴더 읽기 실패가 크루 전원을 부재중으로 만들지 않게.
@@ -1235,7 +1244,7 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
   if (housekeeping && !nodeOrgId && orgCrewRows.length) { const rr = await mirrorRoutines(wsId, { db, crews: orgCrewRows }).catch((e) => { console.error('[argo] msgr 루틴 미러 실패:', e.message); return { failed: 1 }; }); if (rr?.failed) report.mirrorFailed = true; }
   // 접속 표시: 조직 행 + 방에 든 개인 행. 조직 행이 없는 계정은 개인 행 전부(방 없는 개인 크루는 msgr_personal_room_crews가 같은 크루의 조직 행 시각을 쓴다 — 쓰기 0)
   // 멈춘 행만 있는 회사도 심박은 나간다 — 서버가 이 기기의 새 앱(버전)을 봐야 무료 계정 에이전트를 재개한다(20261011120000). 옛 서버로는 보내지 않는다(makeDb.heartbeat)
-  const idleBeat = orgCrewRows.length ? [] : [...allCrews.filter((c) => c.org_id == null && !inRooms.has(c.id)), ...pausedRows];
+  const idleBeat = orgCrewRows.length ? [] : [...allCrews.filter((c) => c.org_id == null && !inRooms.has(c.id)), ...pausedRows, ...added];
   // 기기 단위 심박(유건 2026-10-10): 기기 id가 있으면 서버 함수 한 번이 기기 행·옛 읽기 호환 행·업무 기능 표시를 함께 쓴다(makeDb.heartbeat)
   const beat = deviceId ? { wsId, deviceId } : null;
   // 심박 대상은 report.beat로 남긴다 — 브리지가 쉬는 동안(예비 조회 사이) 같은 대상으로 심박만 따로 보낸다(startMsgrBridge). beatAt = 성공한 요청을 보낸 시각
