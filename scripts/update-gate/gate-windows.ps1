@@ -27,6 +27,8 @@ function Reg { Get-ItemProperty HKCU:\Software\Microsoft\Windows\CurrentVersion\
 # 앱 서버는 3001이 기본이고, 막혀 있으면 3011·3021…로 옮긴다(src-tauri lib.rs 폴백). 응답한 첫 포트를 쓴다.
 function Ping { foreach ($p in 3001, 3011, 3021, 3031) { try { $r = Invoke-RestMethod "http://127.0.0.1:$p/api/ping" -TimeoutSec 3; if ($r.argo) { return [pscustomobject]@{ port = $p; version = $r.version; buildId = $r.buildId } } } catch {} }; return $null }
 function WaitPing($want, $sec) { $t0 = Get-Date; do { $p = Ping; if ($p -and (-not $want -or $p.version -eq $want)) { return $p }; Start-Sleep 2 } while (((Get-Date) - $t0).TotalSeconds -lt $sec); return (Ping) }
+# 설치기 실행 — 그 프로세스만 기다린다. Start-Process -Wait는 자식까지 기다려, /R로 다시 뜬 앱(설치기의 자식) 때문에 끝나지 않는다(windows-latest 실측 30분 초과).
+function RunSetup($file, $argv, $limitSec) { $p = Start-Process $file -ArgumentList $argv -PassThru; if (-not $p.WaitForExit($limitSec * 1000)) { return $null }; return $p.ExitCode }
 function Show($p) { if ($p) { "port=$($p.port) version=$($p.version) buildId=$($p.buildId)" } else { '응답 없음' } }
 function Procs { Get-Process app, node -ErrorAction SilentlyContinue | ForEach-Object { $path = try { $_.Path } catch { '' }; Note "  $($_.ProcessName) pid=$($_.Id) start=$($_.StartTime.ToString('HH:mm:ss')) $path" } }
 function Owner($port) {
@@ -38,12 +40,12 @@ function Owner($port) {
 function Files($loc, $tag) {
   Get-ChildItem $loc -Recurse -Depth 2 -ErrorAction SilentlyContinue | Where-Object { $_.FullName -notmatch '\\node_modules\\' } |
     ForEach-Object { '{0,12} {1}' -f $(if ($_.PSIsContainer) { '<dir>' } else { $_.Length }), $_.FullName.Substring($loc.Length) } | Set-Content (Join-Path $Out "files-$tag.txt")
-  # 구운 서버 설정(argo-server-config.json)은 값이 아니라 있는지·크기만
-  foreach ($rel in 'app.exe', 'resources\server\server.js', 'resources\server\package.json', 'resources\server\argo-server-config.json') {
+  # 사이드카 서버 트리는 설치 폴더의 server\(windows-latest 실측). 구운 서버 설정(argo-server-config.json)은 값이 아니라 있는지·크기만
+  foreach ($rel in 'app.exe', 'node.exe', 'server\server.js', 'server\package.json', 'server\argo-server-config.json') {
     $f = Join-Path $loc $rel
     if (Test-Path $f) { Note "[$tag] $rel $((Get-Item $f).Length) bytes" } else { Note "[$tag] $rel 없음" }
   }
-  $pkg = Join-Path $loc 'resources\server\package.json'
+  $pkg = Join-Path $loc 'server\package.json'
   if (Test-Path $pkg) { Note "[$tag] 서버 package.json version=$((Get-Content $pkg -Raw | ConvertFrom-Json).version)" }
 }
 
@@ -67,8 +69,8 @@ if (-not (Newer $New $From)) { Verdict FAIL "new build $New is not newer than $F
 Note "시작 $From ($((Get-Item $PubSetup).Length) bytes) -> 새 $New ($((Get-Item $NewSetup).Length) bytes)"
 
 # 2) 시작 버전 설치·실행
-$p = Start-Process $PubSetup -ArgumentList '/S' -Wait -PassThru
-if ($p.ExitCode -ne 0) { Verdict FAIL "public $From silent install exit=$($p.ExitCode)" }
+$code = RunSetup $PubSetup @('/S') 600
+if ($code -ne 0) { Verdict FAIL "public $From silent install exit=$code" }
 $r = Reg; if (-not $r) { Verdict FAIL "public $From not registered after install" }
 $Loc = $r.InstallLocation.Trim().Trim('"').TrimEnd('\') # 레지스트리 값이 큰따옴표로 감싸여 있다(windows-latest 실측)
 if (-not (Test-Path (Join-Path $Loc 'app.exe'))) { Verdict FAIL "app.exe not found under InstallLocation '$($r.InstallLocation)'" }
@@ -94,10 +96,11 @@ Start-Sleep 2
 $old = Owner $p0.port
 Note "앱 종료 뒤 포트 $($p0.port): $(if ($old) { "$($old.name) pid=$($old.pid)" } else { '비어 있음' })"
 $t0 = Get-Date
-$p = Start-Process $NewSetup -ArgumentList '/P', '/R', '/UPDATE', '/ARGS' -Wait -PassThru
+$code = RunSetup $NewSetup @('/P', '/R', '/UPDATE', '/ARGS') 600
 $secs = [int]((Get-Date) - $t0).TotalSeconds
-Note "업데이트 설치기 exit=$($p.ExitCode) (${secs}초)"
-if ($p.ExitCode -ne 0) { Procs; Verdict FAIL "update installer $From -> $New exit=$($p.ExitCode)" }
+Note "업데이트 설치기 exit=$code (${secs}초)"
+if ($null -eq $code) { Procs; Verdict FAIL "update installer $From -> $New did not finish within 600s" }
+if ($code -ne 0) { Procs; Verdict FAIL "update installer $From -> $New exit=$code" }
 $r = Reg
 Note "업데이트 뒤 DisplayVersion=$($r.DisplayVersion) InstallLocation=$($r.InstallLocation)"
 Files $Loc 'after'
