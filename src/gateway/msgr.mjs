@@ -736,6 +736,16 @@ async function listAgentsForInventory(wsId) { const { listAgents } = await impor
     부하: 손님 상태에서 틱마다 실패 쓰기 1+K(K = 손님 조직 수)이던 것이 10분에 사전 확인 K건(읽기)로 — 실패 쓰기 0. 세션 uid가 키에 있어 로그인 계정을 바꾸면 바로 다시 시도한다. */
 const INSERT_BLOCK_MS = 10 * 60_000;
 const insertBlocked = new Map();
+/** 조직 파견 insert 한 요청의 최대 행 수. 운영 실측(2026-10-15): msgr_crews insert 트리거가 행당 약 28ms(무료 계정 관문 is_pro_for·_msgr_free_app_ok·주인 잠금, 소유자 관문, 에이전트 연결, 멈춤 기록)라
+    에이전트 534명 회사의 첫 미러 353행 한 묶음이 authenticated statement_timeout 8초를 넘어 57014(PostgREST 500)로 2.2분마다 같은 실패를 되풀이했다.
+    50행 ≈ 1.4초로 제한의 1/5 안쪽. 50행 이하 묶음(보통의 새 에이전트)은 종전과 같은 한 요청이다. */
+export const CREW_INSERT_CHUNK = 50;
+/** 같은 조각이 연달아 시간 초과(57014)일 때만 다음 시도를 늦춘다 — 첫 시간 초과는 종전처럼 다음 틱에 다시(일시 오류의 정상 회복 경로), 두 번째부터 1→2→4…분(최대 30분), 성공하면 바로 푼다.
+    키 = 계정·회사·조각에 든 (조직, slug) 목록의 해시 — 빠진 행이 바뀌면 다른 조각이라 기다리지 않는다. */
+const insertTimeouts = new Map();
+const TIMEOUT_HOLD_BASE_MS = 60_000, TIMEOUT_HOLD_MAX_MS = 30 * 60_000;
+const isStatementTimeout = (e) => String(e?.code ?? '') === '57014' || /statement timeout/i.test(String(e?.message ?? ''));
+const chunkKey = (uid, wsId, rows) => `${uid}:${wsId}:${createHash('sha1').update(rows.map((r) => `${r.org_id}/${r.slug}`).sort().join('\n')).digest('hex').slice(0, 16)}`;
 const DETERMINISTIC_MSG = /msgr_ws_owned_by_other|row-level security|violates (?:check|not-null|foreign key|unique) constraint/i;
 /** 다시 해도 같은 결과일 오류인가 — 일시 오류(코드 없음·연결·JWT·직렬화·교착·자원·잠금·시간 초과·관리자 종료·5xx·402·408·429)만 좁게 나열하고 나머지는 결정적(src/pg-error-class.mjs, 검수 4차 M-1).
     SQLSTATE가 없는 경로(공용 unwrap)의 msgr 오류는 메시지로 결정적을 가린다 */
@@ -764,7 +774,7 @@ async function insertableOrgs(db, uid, wsId, orgIds, { blocked, now, log }) {
     카드가 사라진 크루의 available(해제) 행은 삭제(종전), active 행은 해고를 본 틱에 detached로 한 번(행·글·기억은 남긴다).
     회사 노드(서비스 계정)는 미러하지 않는다 — 회사 크루는 조직이 만든다(I-5).
     seen = 회사별 카드 관찰 기록(테스트가 바꿔 끼운다). */
-export async function mirrorInventory(wsId, { db, uid, agents, log = console.error, seen = cardSeen, blocked = insertBlocked, now = Date.now, revive = pendingRevive } = {}) {
+export async function mirrorInventory(wsId, { db, uid, agents, log = console.error, seen = cardSeen, blocked = insertBlocked, now = Date.now, revive = pendingRevive, timeouts = insertTimeouts, chunkSize = CREW_INSERT_CHUNK } = {}) {
   const edges = cardEdges(seen.get(wsId), agents);
   // 되살릴 slug(검수 4차 L-2) — 해고 직후 재영입 경쟁에서 되돌리기가 실패했는데 기준(seen)이 아직 없어 '다시 생긴 카드' 변화가 안 잡히는 slug는 카드가 있으면 그 slug만 되살린다
   // 틱 시작 때의 사본 — 틱 도중(myOrgIds 등을 기다리는 사이) 해고 라우트가 더한 slug는 이 틱이 처리하지 않았으니 done()이 지우지 않고 다음 틱에 넘긴다(검수 5차)
@@ -823,13 +833,19 @@ export async function mirrorInventory(wsId, { db, uid, agents, log = console.err
   // 파견 insert 실패가 틱을 멈추지 않게(검수 #fix-cross M3b): 손님 역할 조직·잠긴 조직은 msgr_crews_insert가 거절하는데(owner·admin·member만 허용), 던진 틱은 done()이 안 불려
   // 기준(cardSeen)이 영영 안 생겨 직무 변경·해고가 쓰이지 않았다. 묶음(원자적)이 실패하고 조직이 둘 이상이면 조직마다 다시 넣어 멀쩡한 조직의 새 에이전트 파견이 손님 조직에 막히지 않게 한다.
   // 틱은 끝까지 가서 기준을 옮기고, 첫 실패는 그대로 던져 브리지가 미러 오류로 드러내게 한다(msgr_ws_owned_by_other 등). 부하: 성공 틱은 종전 1회, 실패 틱만 조직 수만큼 더(새 행이 없으면 0).
+  // 큰 묶음은 chunkSize행씩 나눠 보낸다(CREW_INSERT_CHUNK — 한 묶음이 문장 시간 제한을 넘던 2026-10-15 실측). 조각마다 종전 규칙 그대로: 실패하고 조직이 둘 이상이면 그 조각만 조직별로 다시.
+  // 성공한 조각은 다시 보내지 않는다 — 다음 틱은 행을 다시 읽어 빠진 slug만 넣는다(이미 있는 행을 upsert로 다시 쓰면 멈춘 행이 active로 덮여 무료 계정 관문이 '주인의 연결'로 센다)
   const failed = new Map(); // orgId → 첫 오류
-  if (inserts.length) {
-    try { await db.upsertAvailable(inserts); }
+  const seenKey = new Set(), unique = inserts.filter((r) => { const k = `${r.org_id}/${r.slug}`; if (seenKey.has(k)) return false; seenKey.add(k); return true; }); // 같은 키 두 번(21000) 방어
+  for (let i = 0; i < unique.length; i += chunkSize) {
+    const chunk = unique.slice(i, i + chunkSize), key = chunkKey(uid, wsId, chunk), hold = timeouts.get(key);
+    const orgs = [...new Set(chunk.map((r) => r.org_id))];
+    if (hold && now() < hold.until) { for (const orgId of orgs) if (!failed.has(orgId)) failed.set(orgId, hold.error); continue; } // 연달아 시간 초과한 같은 조각 — 기다리는 동안은 보내지 않고 오류만 계속 드러낸다
+    try { await db.upsertAvailable(chunk); timeouts.delete(key); }
     catch (e) {
-      const orgs = [...new Set(inserts.map((r) => r.org_id))];
-      if (orgs.length < 2) failed.set(orgs[0], e);
-      else for (const orgId of orgs) await db.upsertAvailable(inserts.filter((r) => r.org_id === orgId)).catch((err) => failed.set(orgId, err));
+      if (isStatementTimeout(e)) { const count = (hold?.count ?? 0) + 1; timeouts.set(key, { count, error: e, until: count < 2 ? 0 : now() + Math.min(TIMEOUT_HOLD_BASE_MS * 2 ** (count - 2), TIMEOUT_HOLD_MAX_MS) }); }
+      if (orgs.length < 2) { if (!failed.has(orgs[0])) failed.set(orgs[0], e); }
+      else for (const orgId of orgs) await db.upsertAvailable(chunk.filter((r) => r.org_id === orgId)).catch((err) => { if (!failed.has(orgId)) failed.set(orgId, err); });
     }
   }
   // 사전 확인으로 못 거른 결정적 실패(msgr_ws_owned_by_other 등)는 10분 동안 그 회사·조직 insert를 다시 하지 않는다 — 같은 실패 쓰기를 15초마다 되풀이하지 않게(DB 위생).
