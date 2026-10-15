@@ -896,7 +896,7 @@ test('D6-3. 방 문구 표 — 주인 요청의 원인별(러너 없음·멈춤)
 });
 
 // 앱↔메신저 연결 감사 D5(2026-10-15, 재현 1-8): 러너 없는 기기는 넘겨받을 다른 기기가 없어도 첫 멘션을 160초(YIELD_GRACE_MS) 양보했다 — 기기 1대면 실패 안내까지 2분 40초.
-// 고친 뒤: 양보하려는 그 글에서만 서버에 한 번 묻는다(msgr_runner_peer_alive — 무료 계정이면 '내 다른 기기의 기기 심박이 무료 정책 창(30분) 안', Pro·판정 불가면 늘 있음).
+// 고친 뒤: 양보하려는 그 글에서만 서버에 한 번 묻는다(msgr_runner_peer_alive — 무료 계정이면 '내 다른 기기의 기기 심박 행(7일 보존)·옛 앱 흔적', Pro·판정 불가면 늘 있음).
 // '없음'이면 양보하지 않고 바로 처리(실패 안내 — D6 문구). '있음'·오류·옛 서버(함수 없음)면 종전 160초. 글마다 1회(drain·핸들러가 같은 결과를 쓴다), 주기 호출 0.
 const peerServer = (msgs, verdict) => { const srv = inboxServer(msgs); srv.peerCalls = []; const base = srv.forProc;
   srv.forProc = (who) => Object.assign(base(who), { async runnerPeerAlive(device) { srv.peerCalls.push([who, device]); if (verdict instanceof Error) throw verdict; return verdict; } });

@@ -747,10 +747,10 @@ test('[D3 경계] 가장 늦게 생긴 행이 10분 안이면 첫 심박 전(off
 });
 
 // 앱↔메신저 연결 감사 D5(2026-10-15) — msgr_runner_peer_alive(20261015200000): 러너 없는 기기가 양보하려는 글에서만 한 번 부른다.
-// 무료: 이 기기가 아닌 내 기기의 기기 심박이 30분(무료 정책 창) 안이면 true. 무료 판정이 아니면(Pro) 늘 true(종전 160초 양보). 쓰기 0, 본인 것만, 익명 불가.
+// 무료: 이 기기가 아닌 내 기기의 기기 심박 행이 7일(보존 기간) 안이면, 또는 옛 앱 흔적(행 last_seen_at이 90초 안인데 이 기기 심박 시각과 다름)이면 true. 무료 판정이 아니면(Pro) 늘 true(종전 160초 양보). 쓰기 0, 본인 것만, 익명 불가.
 const peer = (uid, dev) => last(asUser(uid, `select (public.msgr_runner_peer_alive(${dev === null ? 'null' : q(dev)}))::text || '|' || coalesce(txid_current_if_assigned()::text, 'none')`)).split('|');
 
-test('[D5] 무료 단일 기기 → false(바로 처리), 다른 기기 심박 30분(무료 정책 창) 안 → true, 오래됨 → false, 자기 심박은 세지 않는다 — 쓰기 0', { skip }, () => {
+test('[D5] 무료 단일 기기 → false(바로 처리), 다른 기기 심박 7일(보존 기간) 안 → true, 넘음 → false, 자기 심박은 세지 않는다 — 쓰기 0', { skip }, () => {
   const S = 'ad000005-0000-4000-8000-000000000001'; mkUser(S, 'd5solo');
   assert.deepEqual(peer(S, 'mac-s'), ['false', 'none'], '기기 심박 행 없음(새 사용자 1대)');
   asUser(S, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name, hosting, status, allow) values (null, '${S}', '${WS}', 's1', 's1', 'local', 'active', 'owner')`);
@@ -760,10 +760,10 @@ test('[D5] 무료 단일 기기 → false(바로 처리), 다른 기기 심박 3
   assert.equal(peer(S, null)[0], 'true', '기기 id를 모르면(null) 자기 행도 다른 기기로 센다 — 덜 줄이는 쪽');
   beatV(S, 'win-s', sid);
   assert.deepEqual(peer(S, 'mac-s'), ['true', 'none'], '다른 기기(같은 계정) 심박 창 안');
-  sql(`update public.msgr_device_beats set seen_at = now() - interval '29 minutes' where owner_user_id = '${S}' and device_id = 'win-s'`);
-  assert.equal(peer(S, 'mac-s')[0], 'true', '업데이트·재시작·짧은 잠자기 — 160초 안에 돌아와 답할 수 있다(배포본처럼 양보)');
-  sql(`update public.msgr_device_beats set seen_at = now() - interval '31 minutes' where owner_user_id = '${S}' and device_id = 'win-s'`);
-  assert.equal(peer(S, 'mac-s')[0], 'false', '무료 정책 창(30분) 밖 = 꺼진 기기');
+  sql(`update public.msgr_device_beats set seen_at = now() - interval '6 days' where owner_user_id = '${S}' and device_id = 'win-s'`);
+  assert.equal(peer(S, 'mac-s')[0], 'true', '지난 7일 안에 다른 기기가 있었다 — 160초 안에 돌아와 답할 수 있다(배포본처럼 양보, 재검수 B1)');
+  sql(`update public.msgr_device_beats set seen_at = now() - interval '8 days' where owner_user_id = '${S}' and device_id = 'win-s'`);
+  assert.equal(peer(S, 'mac-s')[0], 'false', '보존 기간(7일) 밖 = 정말 1대(크론이 지울 행)');
 });
 
 test('[D5] 무료 판정이 아니면 늘 true(종전 160초) — Pro·관문 꺼짐, 남의 기기는 세지 않고, 익명은 부를 수 없다', { skip }, () => {
@@ -780,4 +780,29 @@ test('[D5] 무료 판정이 아니면 늘 true(종전 160초) — Pro·관문 �
   assert.equal(peer(M2, 'mac-m')[0], 'false', '남의 기기 심박은 내 다른 기기가 아니다');
   fails(psqlRaw(['-A', '-t', '-c', "set role anon; select public.msgr_runner_peer_alive('x')"]), /permission denied/, '익명');
   assert.equal(sql(`select p.prosecdef::text || ':' || coalesce(array_to_string(p.proconfig, ','), '') from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = 'msgr_runner_peer_alive'`), 'true:search_path=public, pg_temp');
+});
+
+test('[D5 B2] 무료 + 옛 앱·CLI(기기 심박 없이 행 last_seen_at만 PATCH) 흔적 → true(종전 양보), 이 기기가 쓴 행 시각(심박과 같은 문장·같은 시각)은 흔적이 아니다 — 쓰기 0', { skip }, () => {
+  const L = 'ad000005-0000-4000-8000-000000000006'; mkUser(L, 'd5legacy');
+  asUser(L, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name, hosting, status, allow) values (null, '${L}', '${WS}', 'l1', 'l1', 'local', 'active', 'owner')`);
+  beatV(L, 'mac-l', ids(L, 'paused').concat(ids(L, 'active')));
+  assert.equal(slugsOf(L, 'active'), 'l1', '새 앱 첫 심박으로 연결(무료 4명 안)');
+  assert.equal(sql(`select count(*) from public.msgr_device_beats where owner_user_id = '${L}'`), '1', '기기 심박 행은 이 기기 하나');
+  // 이 기기의 심박이 같은 호출에서 쓴 행 시각 = 기기 행 seen_at(같은 트랜잭션 now()) — 단일 기기
+  sql(`update public.msgr_crews set last_seen_at = (select seen_at from public.msgr_device_beats where owner_user_id = '${L}' and device_id = 'mac-l') where owner_user_id = '${L}'`);
+  assert.equal(sql(`select (c.last_seen_at = d.seen_at)::text from public.msgr_crews c join public.msgr_device_beats d on d.owner_user_id = c.owner_user_id and d.ws_id = c.ws_id where c.owner_user_id = '${L}'`), 'true');
+  assert.deepEqual(peer(L, 'mac-l'), ['false', 'none'], '내가 쓴 시각뿐 — 단일 기기');
+  // 옛 앱(러너)이 PATCH: 이 기기의 마지막 심박 50초 뒤에 행만 고침
+  sql(`update public.msgr_device_beats set seen_at = now() - interval '50 seconds' where owner_user_id = '${L}' and device_id = 'mac-l'`);
+  sql(`update public.msgr_crews set last_seen_at = now() where owner_user_id = '${L}'`);
+  assert.deepEqual(peer(L, 'mac-l'), ['true', 'none'], '옛 앱 흔적 — 종전 160초 양보(그 옛 앱이 답한다)');
+  sql(`update public.msgr_crews set last_seen_at = (select seen_at from public.msgr_device_beats where owner_user_id = '${L}' and device_id = 'mac-l') + interval '1.5 seconds' where owner_user_id = '${L}'`);
+  assert.equal(peer(L, 'mac-l')[0], 'false', '2초 여유 안은 이 기기의 쓰기로 본다');
+  sql(`update public.msgr_crews set last_seen_at = now() - interval '100 seconds' where owner_user_id = '${L}'`);
+  assert.equal(peer(L, 'mac-l')[0], 'false', '흔적이 90초(부재 기준)보다 오래됨 = 옛 쪽도 꺼짐');
+  sql(`update public.msgr_crews set last_seen_at = now() where owner_user_id = '${L}'`);
+  assert.equal(peer(L, null)[0], 'true', '이 기기 id를 모르면 최근 행 쓰기는 모두 흔적(덜 줄이는 쪽)');
+  off(`update public.msgr_crews set status = 'paused', last_seen_at = now() where owner_user_id = '${L}'`); // 관문은 paused 직접 쓰기를 되돌린다 — 관문 끈 세션(sweep과 같은 길)
+  assert.equal(slugsOf(L, 'paused'), 'l1');
+  assert.equal(peer(L, 'mac-l')[0], 'false', '멈춘 행은 세지 않는다 — 무료 옛 앱의 에이전트는 멈춰 있어 답하지 못한다');
 });

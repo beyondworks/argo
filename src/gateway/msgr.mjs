@@ -294,7 +294,7 @@ export function makeDb(client) {
       if (error) { if (['PGRST202', '42883'].includes(error.code)) return 0; throw new Error(`msgr db: ${error.message}`); }
       return Number(data) || 0;
     },
-    /** 러너 없는 이 프로세스가 양보하려는 글에서만 한 번(D5) — 넘겨받을 내 다른 기기가 있나(서버 msgr_runner_peer_alive: 무료면 다른 기기의 기기 심박이 무료 정책 창(30분) 안, Pro·판정 불가는 늘 참).
+    /** 러너 없는 이 프로세스가 양보하려는 글에서만 한 번(D5) — 넘겨받을 내 다른 기기가 있나(서버 msgr_runner_peer_alive: 무료면 다른 기기의 기기 심박 행(7일 보존)이나 옛 앱 흔적이 있는지, Pro·판정 불가는 늘 참).
         → true | false | null(모름 — 오류·옛 서버. 부르는 쪽은 종전 160초 양보). 옛 서버면 10분 동안 다시 부르지 않는다. */
     async runnerPeerAlive(device) {
       if (Date.now() - deviceBeatRpc.peerMissingAt < DEVICE_BEAT_RECHECK_MS) return null;
