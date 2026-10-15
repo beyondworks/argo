@@ -6,11 +6,11 @@ export const ORGS_RETRY_UI_MS = 20_000;   // 이만큼 기다리면 [다시 시�
 export const ORGS_RETRY_STEPS = [5_000, 10_000, 20_000, 40_000, 60_000]; // 실패 뒤 자동 재시도 간격(마지막 값에서 멈춘다)
 export const ORGS_RETRY_MAX = 10;         // 자동 재시도 상한 — 넘으면 [다시 시도]와 회복 신호만
 
-/** 오류 종류 — 'offline' | 'auth' | 'server'. e = { message, status, code }(App이 원 응답의 status·code를 붙여 던진다) */
+/** 오류 종류 — 'offline' | 'refreshing' | 'auth' | 'server'. e = { message, status, code }(App이 원 응답의 status·code를 붙여 던진다) */
 export function orgsLoadError(e, online = true) {
   const msg = String(e?.message ?? e ?? ''), status = Number(e?.status ?? 0);
   if (online === false) return 'offline';
-  if (/session_refreshing/i.test(msg)) return 'offline'; // anon-guard SESSION_REFRESHING(D50) = 로그인은 살아 있고 토큰 갱신만 잠시 실패 — 자동 재시도 대상. 'auth'면 [다시 로그인] → signOut이 저장 초안을 지운다(검수 2 #1039)
+  if (/session_refreshing/i.test(msg)) return 'refreshing'; // anon-guard SESSION_REFRESHING(D50) = 로그인은 살아 있고 토큰 갱신만 잠시 실패 — 자동 재시도 대상(오프라인과 같은 간격), 전용 문구. 'auth'면 [다시 로그인] → signOut이 저장 초안을 지운다(검수 2 #1039)
   if (status === 401 || e?.code === 'PGRST301' || /JWT expired/i.test(msg)) return 'auth';
   if (!status && /Failed to fetch|Load failed|NetworkError|fetch failed|network/i.test(msg)) return 'offline';
   return 'server';
