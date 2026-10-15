@@ -90,7 +90,8 @@ import { crewRowMenuKeys, crewOpeners, creatorTagVisible } from './crew-row-menu
 import { adminRemovedNotice, readAdminRemoved } from './dispatch-notice.mjs';
 import { crewAwayNotice } from './crew-dm-notice.mjs';
 import { crewListEmptyKey } from './crews-empty.mjs';
-import { railAgentsView, phoneAgentsEmpty, ownAgentsEmptyOf } from './agents-empty.mjs'; // 개인 공간 0명이면 구역 + 계정 단서(D7, 2026-10-15)
+import { railAgentsView, phoneAgentsEmpty, ownAgentsEmptyOf } from './agents-empty.mjs';
+import { makeOrgsLoader } from './orgs-load.mjs'; // 첫 조직 목록 — 실패·무응답에도 빠져나갈 길(D8, 2026-10-15) // 개인 공간 0명이면 구역 + 계정 단서(D7, 2026-10-15)
 import { readAgentPause, agentPauseNote, readSwapNames, splitSpaceCrews, withPaused, pausedRoomCrew, pausedRoomNotice, readPausedCrewNames, crewNameAsker } from './agent-pause.mjs'; // 무료 계정 에이전트가 멈춘 이유(2026-10-11)
 import { slotState, slotKey, swapPreview, keepAgents, keepChoices, togglePick, pickReady, readMyPlan, FREE_AGENT_LIMIT } from './agent-pick.mjs'; // 무료 4명을 사용자가 고른다(2026-10-12)
 import { runnerOptions, RUNNER_INSTALL } from './runner-sheet.mjs';
@@ -1132,7 +1133,9 @@ function Shell({ session }) {
   useEffect(() => { if (uid) loadJoined().then(() => setTick((x) => x + 1)); }, [uid, loadJoined]); // 읽고 나서 목록을 한 번 다시 만든다
   const rt = useRef(null);
   const loadOrgs = useCallback(async () => {
-    const rows = await q(supabase.from('msgr_org_members').select('org_id, role, msgr_orgs(id, name, slug, owner_user_id, service_user_id, node_seen_at, pending_owner_user_id, successor_user_id, auto_join_domain, auto_join_role, deleted_at, node_info)').eq('user_id', uid).is('removed_at', null));
+    const res = await supabase.from('msgr_org_members').select('org_id, role, msgr_orgs(id, name, slug, owner_user_id, service_user_id, node_seen_at, pending_owner_user_id, successor_user_id, auto_join_domain, auto_join_role, deleted_at, node_info)').eq('user_id', uid).is('removed_at', null);
+    if (res.error) throw Object.assign(new Error(res.error.message), { status: res.status, code: res.error.code }); // q()와 같은 메시지 + 첫 조회 오류 분류용 status·code(D8 orgs-load.mjs)
+    const rows = res.data ?? [];
     const list = rows.filter((r) => r.msgr_orgs && !r.msgr_orgs.deleted_at).map((r) => ({ id: r.org_id, role: r.role, ...r.msgr_orgs }));
     setOrgs(list);
     // 조직이 없고 마지막 공간 기록도 없는 사용자 — 개인 공간에 대화·친구가 있으면 거기서 시작한다(점검 A·B #1: 빈 조직 화면이 첫 화면이었다).
@@ -1152,15 +1155,27 @@ function Shell({ session }) {
     try { await q(supabase.rpc('msgr_join_by_domain', { org: o.id })); setNote(t('org.joined')); await loadOrgs(); setOrgId(o.id); }
     catch (e) { setErr(/msgr_seat_limit/.test(e.message) ? t('seat.limit') : e.message); }
   };
-  useEffect(() => { // 초대 링크 수락(?invite=code)
+  // 첫 조직 목록(D8) — 응답이 없거나 실패해도 "불러오는 중…"에 갇히지 않게: 한 번에 하나, 실패 뒤에만 5→10→20→40→60초 재시도(10회 상한),
+  // 회복 신호(online·복귀·재연결·토큰 갱신)에 즉시 한 번. 8초 넘으면 '늦어요', 20초 넘으면 [다시 시도](요청은 끊지 않는다). 목록을 받은 뒤의 흐름은 종전 그대로
+  const [orgsLoad, setOrgsLoad] = useState({ phase: 'loading', kind: null, tries: 0, slow: false, retryUi: false });
+  const loadOrgsRef = useRef(loadOrgs); loadOrgsRef.current = loadOrgs;
+  const orgsLoader = useMemo(() => makeOrgsLoader({ run: () => loadOrgsRef.current(), onState: setOrgsLoad, online: () => navigator.onLine !== false }), [uid]);
+  const inviteCodeRef = useRef(null); // 초대 링크(?invite=code) — 첫 목록을 받은 뒤 처리한다(첫 조회가 실패해도 버리지 않는다 — 종전엔 첫 실패면 건너뛰었다)
+  useEffect(() => {
     const code = new URLSearchParams(location.search).get('invite');
+    if (code) { inviteCodeRef.current = code; history.replaceState(history.state, '', location.pathname); }
+    orgsLoader.start();
+    return () => orgsLoader.dispose();
+  }, [orgsLoader]);
+  useEffect(() => { // 초대 링크 수락 — 붙여 넣기와 같은 길(미리보기 → 참여 → 첫 채널, 서버에 미리보기가 없으면 바로 수락)
+    if (orgsLoad.phase !== 'ready' || !inviteCodeRef.current) return;
+    const code = inviteCodeRef.current; inviteCodeRef.current = null;
     (async () => {
-      try {
-        await loadOrgs();
-        if (code) { history.replaceState(history.state, '', location.pathname); const hint = await joinByCode(code); if (hint) setErr(t(hint)); } // 붙여 넣기와 같은 길 — 미리보기 → 참여 → 첫 채널(서버에 미리보기가 없으면 바로 수락)
-      } catch (e) { setErr(/msgr_seat_limit/.test(e.message) ? t('seat.limit') : e.message); await loadOrgs().catch(() => {}); }
+      try { const hint = await joinByCode(code); if (hint) setErr(t(hint)); }
+      catch (e) { setErr(/msgr_seat_limit/.test(e.message) ? t('seat.limit') : e.message); await loadOrgs().catch(() => {}); }
     })();
-  }, [loadOrgs]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [orgsLoad.phase]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (online) orgsLoader.signal(); }, [online, resumeEpoch, syncEpoch, session.access_token]); // eslint-disable-line react-hooks/exhaustive-deps -- 회복 신호: 연결 회복·복귀·재연결·토큰 갱신. 실패 상태일 때만 즉시 한 번(orgs-load.mjs)
   const loadOrg = useCallback(async (id) => {
     if (!id || id !== activeOrg.current) return;
     const current = orgRequests.current.begin(id);
@@ -2483,8 +2498,8 @@ function Shell({ session }) {
     }, 300);
     return () => { off = true; clearTimeout(timer); };
   }, [tabBodyQ, uid, orgId, blockedIds, mutedCrewIds]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (orgs !== null) markAppReady(); }, [orgs]); // 스플래시 준비 신호 — 조직을 불러온 뒤(조기 반환 앞, 훅 순서)
-  if (orgs === null) return <div className="msgr-auth"><span className="msgr-klabel">{t('ui.loading')}</span></div>;
+  useEffect(() => { if (orgs !== null || orgsLoad.phase === 'error' || orgsLoad.slow) markAppReady(); }, [orgs, orgsLoad.phase, orgsLoad.slow]); // 스플래시 준비 신호 — 조직을 불러온 뒤, 또는 첫 조회가 늦거나 실패해 안내를 보여야 할 때(D8 — 스플래시 뒤에 갇히지 않게)(조기 반환 앞, 훅 순서)
+  if (orgs === null) return <OrgsLoading state={orgsLoad} online={online} onRetry={() => orgsLoader.retry()} onSignOut={signOut} signingOut={signingOut} />; // 첫 조직 목록 전(D8)
   const joinedChannel = loadedOrg.current === orgId ? channels.find((c) => c.id === chId) : undefined;
   const previewing = !joinedChannel && loadedOrg.current === orgId && !isPersonal ? previewChannels.find((c) => c.id === chId) : undefined;
   const archivedView = !joinedChannel && !previewing && loadedOrg.current === orgId && !isPersonal ? archivedRoomFor(earlierRoom, { orgId, chId }) : undefined; // 이전 대화 보기로 연 보관 방 — 읽기 전용
@@ -2752,7 +2767,7 @@ function Shell({ session }) {
   const railCompany = sortCrews(crews.filter((c) => c.owner_user_id !== uid && crewTier(c, org) === 'company')); // 다른 멤버의 에이전트는 레일에 두지 않는다 — 외부(VPS) 봇 포함(유건 2026-09-16 "다른 멤버의 에이전트는 안 보이게", 2026-09-24 "VPS 에이전트도 Argo 에이전트처럼").
   // 조직 명부에는 그대로 있다 — 목록에서 빼는 것은 화면 규칙이고, 지시는 서버가 허용 범위로 막는다. 회사 크루만 남는다.
   const railVisible = crews.filter((c) => c.owner_user_id === uid || crewTier(c, org) === 'company');
-  const ownAgentsEmpty = ownAgentsEmptyOf(ownCrews); // 내 에이전트 행(active·available)을 읽었고 하나도 없다(D7 계정 단서의 근거 — 읽지 못했으면 false, 검수 2 #1037) // 내 에이전트 행 전체를 읽었고 연결된 것이 없다(D7 계정 단서의 근거 — 읽지 못했으면 false)
+  const ownAgentsEmpty = ownAgentsEmptyOf(ownCrews); // 내 에이전트 행(active·available)을 읽었고 하나도 없다(D7 계정 단서의 근거 — 읽지 못했으면 false, 검수 2 #1037)
   const railView = railAgentsView({ isPersonal, orgReady: !orgBlocked && !!org, shown: railVisible.length, available: myAvailable.length, paused: isPersonal ? pausedCrews.filter((c) => c.owner_user_id === uid).length + (agentPause?.paused > 0 ? 1 : 0) : 0, ownEmpty: ownAgentsEmpty, email: session.user.email ?? null }); // 개인 공간 0명이면 구역 + 계정 단서(D7). 조직 공간·에이전트 있음·멈춤만 있음은 종전
   const openers = crewOpeners({ isPersonal, openSheet: setSheet, openDm: dmWithCrew }); // 개인 공간은 에이전트 시트를 그리지 않는다 — 메시지의 에이전트 버튼 없음, 검색 결과는 1:1로
   const orgJoinForms = (phone = false) => (<>{/* 조직 메뉴의 '초대 코드로 참여'·'조직 만들기' — 데스크톱 조직 창과 폰 채널 탭 조직 메뉴·빈 화면이 같은 폼 */}
@@ -4050,6 +4065,26 @@ function PausedBar({ notice }) {
     <div className={`msgr-joinbar msgr-awaybar msgr-pausedbar${notice.block ? ' block' : ''}`} role="status">
       <span>{j(t(notice.head.key, notice.head.vars))}{notice.reason && <> {t(notice.reason.key, notice.reason.vars)}</>}</span>
       {notice.action === 'runner' && <RunnerButton />}
+    </div>
+  );
+}
+
+/** 첫 조직 목록 전 화면(D8, orgs-load.mjs) — 정상이면 종전과 같은 '불러오는 중…' 한 줄. 8초 넘으면 '늦어요', 20초 넘거나 실패하면 이유 + [다시 시도](로그인 만료면 [다시 로그인]도) */
+function OrgsLoading({ state, online, onRetry, onSignOut, signingOut }) {
+  const { t } = useT();
+  const err = state.phase === 'error';
+  const kind = err ? (online ? state.kind : 'offline') : null;
+  const note = err ? t(`orgs.load.${kind}`) : state.slow ? t('orgs.load.slow') : null;
+  return (
+    <div className="msgr-auth">
+      <div className="msgr-orgsload" role={note ? 'status' : undefined}>
+        {!err && <span className="msgr-klabel">{t('ui.loading')}</span>}
+        {note && <p className="msgr-orgsload-note">{note}</p>}
+        {(err || state.retryUi) && <div className="msgr-orgsload-acts">
+          <button type="button" className="btn btn-primary sm" onClick={onRetry}>{t('orgs.load.retry')}</button>
+          {kind === 'auth' && <button type="button" className="btn sm" disabled={signingOut} onClick={() => onSignOut()}>{t('orgs.load.signin')}</button>}
+        </div>}
+      </div>
     </div>
   );
 }

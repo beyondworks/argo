@@ -1508,6 +1508,12 @@ export const DICT = {
   'phone.agents.mine': ['내 에이전트', 'My agents'],
   'phone.agents.ext': ['외부 에이전트', 'External agents'],
   'phone.agents.none': ['아직 연결된 에이전트가 없어요.', 'No agents connected yet.'],
+  'orgs.load.slow': ['서버 응답이 늦어요. 잠시만 기다려 주세요.', 'The server is slow to respond. Please wait a moment.'], // 첫 조직 목록 전 화면(D8, 2026-10-15) — 요청은 끊지 않고 기다린다
+  'orgs.load.offline': ['인터넷에 연결되어 있지 않아요. 연결되면 자동으로 다시 불러와요.', "You're offline. We'll load again automatically once you're connected."],
+  'orgs.load.server': ['서버에 문제가 있어 불러오지 못했어요. 잠시 뒤 자동으로 다시 시도해요.', "Couldn't load because of a server problem. We'll try again automatically shortly."],
+  'orgs.load.auth': ['로그인이 만료됐어요. 다시 로그인해 주세요.', 'Your sign-in has expired. Please sign in again.'],
+  'orgs.load.retry': ['다시 시도', 'Try again'],
+  'orgs.load.signin': ['다시 로그인', 'Sign in again'], // 로그인 만료 — 로그아웃 뒤 로그인 화면으로(기존 SignOutContext 경로)
   'agents.none.account': ['실행기에 이 계정({email})으로 로그인하면 내 에이전트가 여기 나타나요.', 'Sign in to your runner with this account ({email}) and your agents will show up here.'], // D7(2026-10-15) — 메신저와 실행기 계정이 다르면 개인 공간이 비어 단서가 없었다. 다른 앱 설치를 전제하지 않는다('실행기' — runner-sheet 시험)
   'agents.none.account.noemail': ['실행기에 이 메신저와 같은 계정으로 로그인하면 내 에이전트가 여기 나타나요.', 'Sign in to your runner with the same account as this messenger and your agents will show up here.'],
   'phone.agent.working': ['일하는 중', 'Working'],

@@ -38,5 +38,6 @@ test('앱: 폼이 이유를 입력 아래에 보이고, 입력을 고치면 지�
 test('앱: joinByCode는 이유 키를 돌려주고, 링크로 들어온 길은 그 이유를 전역 알림(setErr)으로 보인다', () => {
   const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
   assert.match(app, /const chk = checkJoinInput\(raw\); if \(chk\.hint\) \{ setJoinHint\(chk\.hint\); return chk\.hint; \}/);
-  assert.match(app, /if \(code\) \{ history\.replaceState\(history\.state, '', location\.pathname\); const hint = await joinByCode\(code\); if \(hint\) setErr\(t\(hint\)\); \}/);
+  assert.match(app, /if \(code\) \{ inviteCodeRef\.current = code; history\.replaceState\(history\.state, '', location\.pathname\); \}/); // D8: 첫 조직 목록을 받은 뒤 처리(첫 조회 실패에도 코드를 버리지 않는다)
+  assert.match(app, /try \{ const hint = await joinByCode\(code\); if \(hint\) setErr\(t\(hint\)\); \}/);
 });

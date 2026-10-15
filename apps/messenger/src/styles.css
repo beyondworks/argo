@@ -565,6 +565,10 @@
 .msgr-legal .linkbtn { background: none; border: 0; padding: 0; color: inherit; font: inherit; text-decoration: underline; cursor: pointer; min-height: 0; }
 .msgr-crewsheet p.note.danger { color: var(--danger); } /* 폰 시트 안 오류 문구(친구 찾기 등) — 시트의 회색 note 규칙(0,2,1)이 붉은색을 덮었다(UXM-16) */
 .msgr-auth { min-height: calc(100vh / var(--z, 1)); display: grid; place-items: center; padding: 24px; }
+.msgr-orgsload { display: grid; justify-items: center; gap: 12px; max-width: 360px; text-align: center; } /* 첫 조직 목록 전 안내(D8) — 정상이면 종전 '불러오는 중…' 한 줄만 */
+.msgr-orgsload-note { margin: 0; font-size: 13px; line-height: 1.5; color: var(--fg-2); }
+.msgr-orgsload-acts { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; align-items: center; }
+.msgr-auth .msgr-orgsload-acts .btn { height: 36px; padding: 0 16px; border-radius: 999px; } /* 로그인 화면용 큰 단추(.msgr-auth .btn-primary 44px)와 보조 단추 높이를 맞춘다 */
 .msgr-auth .msgr-card { width: min(420px, 100%); background: var(--card); border: 1px solid var(--border); border-radius: 22px; overflow: hidden; display: grid; }
 .msgr-auth .band { display: flex; align-items: center; gap: 10px; padding: 14px 20px; background: var(--primary); color: var(--primary-fg); font-family: var(--mono); font-weight: 600; letter-spacing: 0.16em; font-size: 12px; }
 .msgr-auth .band svg { fill: currentColor; } /* 머리띠 글자색(--primary-fg)을 따른다 — --mark는 graphite·argo-dark에서 머리띠 바탕(--primary)과 같은 색이라 별이 사라졌다(D12 P14) */

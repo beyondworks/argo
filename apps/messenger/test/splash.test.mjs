@@ -25,7 +25,7 @@ test('배선 — 진입 청크(main.jsx)는 큰 앱 본체를 정적으로 끌�
   const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
   assert.match(app, /if \(!configured \|\| sessionWaiting \|\| session === null\) markAppReady\(\);/);
   const early = app.indexOf('if (orgs === null) return');
-  const ready = app.indexOf('if (orgs !== null) markAppReady();');
+  const ready = app.indexOf("if (orgs !== null || orgsLoad.phase === 'error' || orgsLoad.slow) markAppReady();"); // D8: 첫 조회가 늦거나 실패해도 안내가 스플래시 뒤에 갇히지 않게
   assert.ok(ready > -1 && ready < early, '조직 준비 신호는 조기 반환 앞(훅 순서)');
 });
 

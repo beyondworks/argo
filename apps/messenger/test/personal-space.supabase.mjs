@@ -1,6 +1,7 @@
 // Browser-only fixture: no credentials or production client imported.
 export const configured = true, customServer = false, SB_URL = 'http://fixture.invalid', SB_ANON = 'fixture';
 const uid = 'user-me', org = 'org-fixture', now = new Date().toISOString();
+const qs0 = new URLSearchParams(location.search);
 const channel = (id, kind, name, orgId = org) => ({ id, org_id: orgId, kind, name, created_by: uid, archived_at: null, admin_user_ids: [], crew_memory: true, personal_crews: orgId ? 'allowed' : 'blocked' });
 const state = window.__psFixture = { calls: [], failNext: null, aiConsent: localStorage.getItem('psFixtureAiConsent') === 'none' ? null : undefined, tables: { // aiConsent: 시나리오가 동의 전 상태를 볼 때 'none'
   msgr_org_members: [{ user_id: uid, org_id: org, role: 'owner', display_name: 'Fixture Owner', removed_at: null, msgr_orgs: { id: org, name: 'Fixture Organization', slug: 'fixture', owner_user_id: uid } },
@@ -70,8 +71,24 @@ if (qs.has('availableOnly')) { // 꺼 둔(available) 에이전트만 있는 같�
 if (qs.has('noOrg')) { state.tables.msgr_org_members = state.tables.msgr_org_members.filter((m) => m.user_id !== uid && m.org_id !== org); state.tables.msgr_channels = []; }
 const pauseInfo = agentPause ? { paused: agentPause === 'limit' ? 3 : 7, active: agentPause === 'limit' ? 4 : 0, limit: 4, reason: agentPause } : { paused: 0, active: 1, limit: 4, reason: null };
 
+// 조직 목록 첫 조회 장애(D8, 2026-10-15). ?orgsFail=network|401|500 + ?orgsFailCount=N(기본 끝없이) = msgr_org_members 조회를 N번 실패,
+// ?orgsDelay=ms = 그 조회를 늦게 답함. state.orgsOffline = true면 실패를 계속(시험이 false로 바꾸고 online 이벤트를 쏜다). 없으면 기존 그대로.
+const orgsFail = qs0.get('orgsFail'); let orgsFailLeft = qs0.has('orgsFailCount') ? Number(qs0.get('orgsFailCount')) : Infinity;
+const orgsDelay = Number(qs0.get('orgsDelay') || 0);
+state.orgsOffline = orgsFail === 'network' && !qs0.has('orgsFailCount'); state.orgsCalls = 0;
+function orgsFault(call) {
+  if (call.table !== 'msgr_org_members' || call.op !== 'select') return null;
+  state.orgsCalls += 1;
+  const counted = qs0.has('orgsFailCount') || orgsFail !== 'network'; // network(횟수 없음) = state.orgsOffline이 풀릴 때까지
+  if (!orgsFail || !(state.orgsOffline || (counted && orgsFailLeft > 0))) return null;
+  if (!state.orgsOffline) orgsFailLeft -= 1;
+  if (orgsFail === '401') return { data: null, error: { message: 'JWT expired', code: 'PGRST301' }, status: 401 };
+  if (orgsFail === '500') return { data: null, error: { message: 'upstream error', code: '' }, status: 503 };
+  return { data: null, error: { message: 'TypeError: Failed to fetch', code: '' }, status: 0 };
+}
 function result(call, action) {
   state.calls.push(structuredClone(call));
+  const fault = orgsFault(call); if (fault) return fault;
   if (state.failNext === `${call.table || call.rpc}:${call.op || 'rpc'}`) { state.failNext = null; return { data: null, error: { message: 'Fixture temporary failure.' } }; }
   try { return { data: action(), error: null }; } catch (e) { return { data: null, error: { message: e.message } }; } // 서버 오류는 supabase-js처럼 error로 돌려준다
 }
@@ -85,7 +102,7 @@ function query(table) {
     order() { return api; }, limit() { return api; }, contains() { return api; }, or() { return api; }, ilike() { return api; }, maybeSingle() { one = true; return api; }, single() { one = true; return api; },
     upsert(v) { op = 'upsert'; values = v; return api; }, update(v) { op = 'update'; values = v; return api; }, delete() { op = 'delete'; return api; }, insert(v) { op = 'insert'; values = v; return api; },
     then(resolve, reject) {
-      return Promise.resolve(result({ table, op, values, eqs }, () => {
+      return (orgsDelay && table === 'msgr_org_members' && op === 'select' ? new Promise((r) => setTimeout(r, orgsDelay)) : Promise.resolve()).then(() => result({ table, op, values, eqs }, () => {
         const all = table === 'msgr_channel_members' && op === 'select' // 개인 방 구성원(사람·크루)도 같은 표로 보인다 — 서버와 같게
           ? [...(state.tables.msgr_channel_members ?? []), ...(state.tables.msgr_personal_members ?? []), ...state.tables.msgr_personal_list.flatMap((r) => [
               ...(r.crew_dm ? [{ channel_id: r.channel_id, member_kind: 'user', member_id: uid }] : []),
