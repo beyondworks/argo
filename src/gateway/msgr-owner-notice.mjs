@@ -17,7 +17,7 @@ export function ownerNoticeCause(e) {
   if (!e || typeof e !== 'object' || e.aborted || e.subscriptionBlocked) return null;
   const auth = roomAuthRunner(e);
   if (auth) return { kind: 'auth', runner: auth };
-  if (e.failCode === 'no_runner') return { kind: 'no_runner', runner: null };
+  if (e.failCode === 'no_runner' || e.noRunner === true) return { kind: 'no_runner', runner: null }; // noRunner = chat.mjs 러너 확인 갈래의 표지(실패 코드 없이 던진다 — D6)
   if (e.failCode === 'crash') return { kind: 'crash', runner: typeof e.failRunner === 'string' ? e.failRunner : null };
   return null;
 }

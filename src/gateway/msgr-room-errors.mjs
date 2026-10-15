@@ -23,15 +23,29 @@ export function roomAuthRunner(e) {
 
 /** 크루 턴 실패 — 원인을 아는 경우만 원인과 고칠 곳을 말하고, 그 밖은 일반 문구(roomTurnFailure). 방(손님 포함)에 오르므로 원문·계정·토큰은 싣지 않는다 —
     러너 이름(Claude 등)과 할 일만. 다시 로그인은 실행기 주인만 할 수 있어 "주인이"라고 말한다(데스크톱: 설정 → AI 연결, 서버: 그 기기에서 다시 로그인). */
-export function roomTurnFailureFor(e, lang = 'ko') {
+export function roomTurnFailureFor(e, lang = 'ko', { ownerCause = null } = {}) {
   const runner = roomAuthRunner(e);
-  if (!runner) return roomTurnFailure(lang);
+  if (!runner) return ownerCause ? roomOwnerFailure(ownerCause, lang) ?? roomTurnFailure(lang) : roomTurnFailure(lang);
   const name = RUNNERS[runner]?.name;
   return name
     ? pick(`이 에이전트를 돌리는 실행기의 ${name} 로그인이 만료돼 답하지 못했습니다. 실행기 주인이 ${name}에 다시 로그인하면 다시 답할 수 있습니다(Argo 데스크톱: 설정 → AI 연결).`,
       `The ${name} login on the runner behind this agent has expired, so it could not answer. Once the runner's owner signs in to ${name} again, it can answer again (Argo desktop: Settings → AI connection).`, lang)
     : pick('이 에이전트를 돌리는 실행기의 AI 로그인이 만료돼 답하지 못했습니다. 실행기 주인이 다시 로그인하면 다시 답할 수 있습니다(Argo 데스크톱: 설정 → AI 연결).',
       "The AI login on the runner behind this agent has expired, so it could not answer. Once the runner's owner signs in again, it can answer again (Argo desktop: Settings → AI connection).", lang);
+}
+
+/** 요청한 사람이 그 에이전트의 주인일 때(앱↔메신저 연결 감사 D6, 2026-10-15) — 주인이 고칠 수 있는 실행기 원인과 고칠 곳. 남의 요청이면 부르지 않는다
+    (호출부가 ownerCause를 넘기지 않음 — 설정 정보는 주인에게만, 남의 요청은 주인 1:1 안내 #1026). cause = msgr-owner-notice ownerNoticeCause 결과.
+    로그인 만료(auth)는 roomTurnFailureFor가 누구에게나 이미 말한다. 그 밖(한도·시간 초과 등)은 null → 일반 문구. 러너 이름과 할 일만(원문·계정·토큰 없음). */
+export function roomOwnerFailure(cause, lang = 'ko') {
+  if (cause?.kind === 'no_runner') return pick('이 에이전트를 돌리는 내 실행기에 연결된 AI가 없어 답하지 못했습니다. Argo 데스크톱 설정 → AI 연결에서 AI를 연결하면 다시 답할 수 있습니다.',
+    "No AI is connected on your runner behind this agent, so it could not answer. Connect one in Argo desktop Settings → AI connection and it can answer again.", lang);
+  if (cause?.kind === 'crash') {
+    const name = RUNNERS[cause.runner]?.name ?? 'AI';
+    return pick(`내 실행기의 ${name} 프로그램이 응답하지 않고 멈춰 답하지 못했습니다. Argo를 다시 시작한 뒤에도 같으면 설정 → AI 연결에서 상태를 확인해 주세요.`,
+      `The ${name} program on this runner stopped responding, so it could not answer. Restart Argo; if it keeps happening, check Settings → AI connection.`, lang);
+  }
+  return null;
 }
 
 /** 답하던 중 에이전트(상주)가 다시 시작돼 끊긴 턴(D25). 자동으로 다시 하지 않는 이유와 사용자가 할 일을 함께 말한다. */

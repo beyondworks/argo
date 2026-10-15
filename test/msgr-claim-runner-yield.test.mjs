@@ -156,7 +156,8 @@ test('3. 둘 다 러너 없음 — 기한 동안 아무도 선점하지 않고, 
   const replies = replyOf(srv, job);
   assert.equal(replies.length, 1, '실패 답은 한 번');
   assert.equal(replies[0].meta?.failed, true);
-  assert.match(replies[0].body, /^에이전트가 지금 답하지 못했습니다\. 주인이 Argo 활동에서 원인을 확인할 수 있습니다\.$/);
+  // 요청자 = 주인(jobAt authorId OWNER = 실행기 계정) — 방 실패 글에 원인과 고칠 곳(D6, 감사 1-8과 같은 상황). 남의 요청은 D6-2가 종전 문구를 잠근다
+  assert.match(replies[0].body, /^이 에이전트를 돌리는 내 실행기에 연결된 AI가 없어 답하지 못했습니다\. Argo 데스크톱 설정 → AI 연결/);
   assert.equal(srv.callsOf('B', 'claimExecution').length, 0, '뒤에 온 B는 이미 답함으로 끝난다');
   const fails = (await events(ws)).filter((e) => e.type === 'turn' && e.ok === false);
   assert.equal(fails.length, 1, '방 문구가 가리키는 활동 기록이 있다');
@@ -844,4 +845,51 @@ test('32. 이 기기 시계가 뒤로 가면 마지막 정리 시각도 내린�
   assert.equal(countSeen('stale-d'), 0, '되감은 뒤 61초 — 정리한다');
   assert.equal(enq.jobs.length, 0, '보류는 그대로');
   assert.equal(srv.cursor, 10);
+});
+
+// 앱↔메신저 연결 감사 D6(2026-10-15, 재현 1-8): 러너가 없어 못 답하면, 요청한 사람이 그 에이전트의 주인이어도 방에는 "주인이 Argo 활동에서 원인을
+// 확인할 수 있습니다"만 올랐다. 진짜 원인(연결된 AI 없음 → 설정 › AI 연결)은 데스크톱 로그에만 있었다.
+// chat()의 러너 없음 오류에는 실패 코드가 없어(위 9번 — 화면 문구 종전) 주인 1:1 안내(#1026 ownerNoticeCause no_runner)도 이 원인을 알아보지 못했다.
+// 고친 뒤: 진짜 러너 없음 두 문장(연결 0·숨은 러너만)에 표지 noRunner를 붙이고(실패 코드·화면 문구는 그대로), 요청자가 주인이면 방 실패 글에 원인과 고칠 곳.
+const { ownerNoticeCause } = await import('../src/gateway/msgr-owner-notice.mjs');
+const { roomTurnFailureFor } = await import('../src/gateway/msgr-room-errors.mjs');
+
+test('D6-1. chat() 러너 없음 오류에 표지 noRunner — 실패 코드는 그대로 없음(화면 문구 종전), 주인 안내 원인이 no_runner로 잡힌다', async () => {
+  const ws = await seed('d6-marker');
+  await assert.rejects(C.chat(ws, 'seoyun', '메신저 지시', null, { source: 'messenger' }), (e) => {
+    assert.equal(e.noRunner, true);
+    assert.equal(e.failCode, undefined, '9번 그대로 — 대화 기록·데스크톱 화면 문구 종전');
+    assert.deepEqual(ownerNoticeCause(e), { kind: 'no_runner', runner: null }, '#1026 주인 1:1 안내가 이 원인을 알아본다');
+    return true;
+  });
+});
+
+test('D6-2. 주인이 요청하면 방 실패 글에 원인과 고칠 곳(설정 → AI 연결) — 남이 요청하면 종전 일반 문구(설정 정보를 남에게 보이지 않는다)', async () => {
+  const ws = await seed('d6-room');
+  const srv = server();
+  let clock = Date.now(); const now = () => clock;
+  const h = M.makeMsgrHandler(ws, { session: async () => ({ db: srv.forProc('A'), uid: OWNER }), now, linkPreview: noPreview });
+  const mine = jobAt(clock); const theirs = { ...jobAt(clock), authorId: MEMBER };
+  assert.equal(await h(mine), DEFER); assert.equal(await h(theirs), DEFER);
+  clock += YIELD_GRACE_MS + 1;
+  await h(mine); await h(theirs);
+  const [r1] = replyOf(srv, mine); const [r2] = replyOf(srv, theirs);
+  assert.equal(r1.meta?.failed, true);
+  assert.match(r1.body, /연결된 AI가 없어 답하지 못했습니다/);
+  assert.match(r1.body, /설정 → AI 연결/);
+  assert.match(r2.body, /^에이전트가 지금 답하지 못했습니다\. 주인이 Argo 활동에서 원인을 확인할 수 있습니다\.$/, '남의 요청 — 종전 문구(원인은 주인 1:1 안내 #1026으로)');
+});
+
+test('D6-3. 방 문구 표 — 주인 요청의 원인별(러너 없음·멈춤)·언어별, 로그인 만료는 누구에게나 종전, 모르는 원인·한도는 일반 문구', () => {
+  const own = (e, lang) => roomTurnFailureFor(e, lang, { ownerCause: ownerNoticeCause(e) });
+  assert.match(own({ noRunner: true }, 'ko'), /연결된 AI가 없어/);
+  assert.match(own({ noRunner: true }, 'en'), /No AI is connected[\s\S]*Settings → AI connection/);
+  assert.match(own({ failCode: 'crash', failRunner: 'claude' }, 'ko'), /Claude 프로그램이 응답하지 않고 멈춰/);
+  assert.match(own({ failCode: 'crash', failRunner: 'claude' }, 'en'), /Claude program on this runner stopped responding/);
+  const auth = { failCode: 'auth_expired', failRunner: 'claude' };
+  assert.equal(own(auth, 'ko'), roomTurnFailureFor(auth, 'ko'), '로그인 만료는 종전 문구(이미 원인을 말한다)');
+  for (const e of [{ failCode: 'credit' }, { failCode: 'timeout' }, new Error('x'), null]) {
+    assert.equal(own(e, 'ko'), roomTurnFailureFor(e, 'ko'), `일반 문구 그대로: ${JSON.stringify(e)}`);
+  }
+  assert.equal(roomTurnFailureFor({ noRunner: true }, 'ko'), '에이전트가 지금 답하지 못했습니다. 주인이 Argo 활동에서 원인을 확인할 수 있습니다.', '주인 원인을 넘기지 않으면(남의 요청) 종전');
 });

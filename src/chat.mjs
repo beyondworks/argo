@@ -1593,18 +1593,21 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
     // 저장 자격의 방식이 더 이상 제공되지 않는 경우(gemini 구독) — "하나도 연결돼 있지 않다"는 거짓, API 키 재연결을 정확히 안내(3R M-2, 두 번 닫은 사고의 재개봉 방지)
     const unsupported = stNow ? unsupportedMethodStatus(stNow) : [];
     if (unsupported.length) throw new Error(unsupportedMethodNotice(lang, unsupported));
+    // 표지 noRunner(앱↔메신저 연결 감사 D6, 2026-10-15) — 연결된 AI가 없는 두 문장에만. 메신저 게이트웨이가 원문을 다시 판정하지 않고 이 원인을 알아본다
+    //   (요청자가 주인이면 방 실패 글에 원인·고칠 곳, 남의 요청이면 주인 1:1 안내 #1026). 실패 코드(failCode)는 붙이지 않는다 — 대화 기록·화면 문구 종전(시험 9번).
+    //   CLI 미설치(noCli)는 고칠 일이 달라(CLI 설치) 표지를 붙이지 않는다 — 종전 일반 문구.
+    const noRunnerErr = (msg) => Object.assign(new Error(msg), { noRunner: true });
     if (!noCli.length && onlyHiddenConnectedStatus(stNow)) {
-      throw new Error(lang === 'en'
+      throw noRunnerErr(lang === 'en'
         ? `The connected runner is no longer offered. Connect another runner (${visibleRunnerNamesLine('en')}) in Settings → AI connections, then try again.`
         : `연결된 러너는 더 이상 제공되지 않습니다. 설정 → AI 연결에서 다른 러너(${visibleRunnerNamesLine()})를 연결한 뒤 다시 말을 걸어 주세요.`);
     }
-    throw new Error(noCli.length
-      ? (lang === 'en'
-          ? `${noCli.join('/')} is connected but its CLI is not installed on this computer — the ${noCli.join('/')} runner executes through the vendor CLI. Install it, or connect Claude (no install needed) in Settings → AI connections.`
-          : `${noCli.join('/')} 자격은 연결됐지만 이 컴퓨터에 해당 CLI가 설치돼 있지 않습니다 — ${noCli.join('/')} 러너는 벤더 CLI로 실행됩니다. CLI를 설치하거나, 설치가 필요 없는 Claude를 설정 → AI 연결에서 연결해 주세요.`)
-      : (lang === 'en'
-          ? `No AI runner is connected. Connect one in Settings → AI connections (${visibleRunnerNamesLine('en')}), then try again.`
-          : `AI 러너가 하나도 연결돼 있지 않습니다. 설정 → AI 연결에서 ${visibleRunnerNamesLine()} 중 하나를 연결한 뒤 다시 말을 걸어 주세요.`));
+    if (!noCli.length) throw noRunnerErr(lang === 'en'
+      ? `No AI runner is connected. Connect one in Settings → AI connections (${visibleRunnerNamesLine('en')}), then try again.`
+      : `AI 러너가 하나도 연결돼 있지 않습니다. 설정 → AI 연결에서 ${visibleRunnerNamesLine()} 중 하나를 연결한 뒤 다시 말을 걸어 주세요.`);
+    throw new Error(lang === 'en'
+      ? `${noCli.join('/')} is connected but its CLI is not installed on this computer — the ${noCli.join('/')} runner executes through the vendor CLI. Install it, or connect Claude (no install needed) in Settings → AI connections.`
+      : `${noCli.join('/')} 자격은 연결됐지만 이 컴퓨터에 해당 CLI가 설치돼 있지 않습니다 — ${noCli.join('/')} 러너는 벤더 CLI로 실행됩니다. CLI를 설치하거나, 설치가 필요 없는 Claude를 설정 → AI 연결에서 연결해 주세요.`); // CLI 미설치(noCli) — 위 두 갈래가 러너 없음을 먼저 던진다
   } catch (e) { await failBeforeRun(e, { flags: { noRunner: true }, ev: evFrom }); } // 이 갈래가 던지는 것은 위 안내 문구뿐이다 — 활동에 남긴 뒤 그대로 던진다
   const runner = resolved.runner;
   // 이번 턴까지 시도한 러너 목록 — 아래 두 실행 경로(CLI·SDK)의 인증 자가치유가 공유한다.
