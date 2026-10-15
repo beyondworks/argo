@@ -13,8 +13,13 @@ export const WS_ROOT = process.env.ARGO_ROOT || process.env.CREWBASE_ROOT || joi
 
 /* ─── 기기 식별 — 동기화 리스(sync)·세션 소유 판정(thread/chat)이 공유 (WS_ROOT/.device-id) ─── */
 let deviceId = null;
-export async function getDeviceId() {
-  if (deviceId) return deviceId;
+let devicePending = null; // 첫 읽기·생성이 끝나기 전의 동시 호출은 같은 약속을 기다린다 — 각자 새 ID를 만들면 한 프로세스가 두 신원이 되어
+                          // 큐 워커(me)와 적재(dev)가 갈려 첫 메신저 잡이 '다른 기기 사본'으로 지워졌다(2026-10-15). 끝나면(실패 포함) 비워 다음 호출이 다시 시도한다
+export function getDeviceId() {
+  if (deviceId) return Promise.resolve(deviceId);
+  return (devicePending ??= readOrCreateDeviceId().finally(() => { devicePending = null; }));
+}
+async function readOrCreateDeviceId() {
   const f = join(WS_ROOT, '.device-id');
   // 새 신원은 파일이 없거나 비었을 때만 — 권한·잠김(EACCES·EBUSY)으로 못 읽은 것을 새 ID로 덮으면 리스·세션 소유가 어긋난다(K71)
   const saved = await readFile(f, 'utf8').then((s) => s.trim(), (e) => { if (e?.code === 'ENOENT') return ''; throw e; });
