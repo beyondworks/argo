@@ -111,3 +111,27 @@ test('C7 조직이 둘 섞인 조각이 실패 → 그 조각만 조직별로 �
   assert.deepEqual(d.calls, [['O1/a000', 'O1/a001', 'O2/a000', 'O2/a001'], ['O1/a000', 'O1/a001'], ['O2/a000', 'O2/a001']]);
   assert.deepEqual(d.rows.map((r) => r.slug), ['a000', 'a001']);
 });
+
+test('C8 만료 기록 정리(검수 LOW-1) — 시간 초과한 조각의 행이 다른 경로로 생겨 그 조각을 다시 안 보내면, 같은 계정·회사의 다음 틱이 그 기록을 지운다. 보류 중인 조각·다른 회사 기록은 남긴다', async () => {
+  let t = 0, failSlugs = new Set(['a000']);
+  const d = db({ fail: (c) => (c.some((r) => failSlugs.has(r.slug)) ? TIMEOUT() : null) }), st = fresh();
+  st.timeouts.set('other-uid:ws9:abc', { count: 3, error: TIMEOUT(), until: 1e12, uid: 'other-uid', wsId: 'ws9' }); // 다른 계정·회사의 기록
+  await assert.rejects(run(d, many(2), st, () => t)); // a000·a001 조각 시간 초과 1회
+  await assert.rejects(run(d, many(2), st, () => t)); // 2회 → 보류
+  assert.equal(st.timeouts.size, 2);
+  t = 10_000; await assert.rejects(run(d, many(2), st, () => t)); // 보류 중인 조각 — 기록 유지
+  assert.equal(st.timeouts.size, 2, '보류 중인 조각의 기록은 지우지 않는다');
+  // 다른 프로세스가 a000을 넣어 빠진 행이 a001 하나로 바뀜 → 조각이 달라져 성공, 옛 조각 기록은 쓸 일이 없다
+  d.rows.push({ id: `${O1}/a000`, org_id: O1, slug: 'a000', display_name: 'x', role_text: null, status: 'paused' }); failSlugs = new Set();
+  await run(d, many(2), st, () => t);
+  assert.deepEqual([...st.timeouts.keys()], ['other-uid:ws9:abc'], '이 계정·회사의 쓸 일 없는 기록은 지우고 남의 기록은 그대로');
+});
+
+test('C9 빠진 행이 0인 유휴 틱도 이 계정·회사의 남은 시간 초과 기록을 지운다', async () => {
+  const d = db({ fail: () => TIMEOUT() }), st = fresh();
+  await assert.rejects(run(d, many(1), st));
+  assert.equal(st.timeouts.size, 1);
+  d.rows.push({ id: `${O1}/a000`, org_id: O1, slug: 'a000', display_name: 'x', role_text: null, status: 'paused' });
+  await run(d, many(1), st);
+  assert.equal(st.timeouts.size, 0);
+});

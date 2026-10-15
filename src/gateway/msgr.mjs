@@ -836,18 +836,20 @@ export async function mirrorInventory(wsId, { db, uid, agents, log = console.err
   // 큰 묶음은 chunkSize행씩 나눠 보낸다(CREW_INSERT_CHUNK — 한 묶음이 문장 시간 제한을 넘던 2026-10-15 실측). 조각마다 종전 규칙 그대로: 실패하고 조직이 둘 이상이면 그 조각만 조직별로 다시.
   // 성공한 조각은 다시 보내지 않는다 — 다음 틱은 행을 다시 읽어 빠진 slug만 넣는다(이미 있는 행을 upsert로 다시 쓰면 멈춘 행이 active로 덮여 무료 계정 관문이 '주인의 연결'로 센다)
   const failed = new Map(); // orgId → 첫 오류
+  const liveTimeouts = new Set(); // 이 틱에 시간 초과했거나 보류 중인 조각 — 나머지 이 계정·회사 기록은 빠진 행 구성이 바뀌어 다시 쓸 일이 없다(검수 #1046 LOW-1)
   const seenKey = new Set(), unique = inserts.filter((r) => { const k = `${r.org_id}/${r.slug}`; if (seenKey.has(k)) return false; seenKey.add(k); return true; }); // 같은 키 두 번(21000) 방어
   for (let i = 0; i < unique.length; i += chunkSize) {
     const chunk = unique.slice(i, i + chunkSize), key = chunkKey(uid, wsId, chunk), hold = timeouts.get(key);
     const orgs = [...new Set(chunk.map((r) => r.org_id))];
-    if (hold && now() < hold.until) { for (const orgId of orgs) if (!failed.has(orgId)) failed.set(orgId, hold.error); continue; } // 연달아 시간 초과한 같은 조각 — 기다리는 동안은 보내지 않고 오류만 계속 드러낸다
+    if (hold && now() < hold.until) { liveTimeouts.add(key); for (const orgId of orgs) if (!failed.has(orgId)) failed.set(orgId, hold.error); continue; } // 연달아 시간 초과한 같은 조각 — 기다리는 동안은 보내지 않고 오류만 계속 드러낸다
     try { await db.upsertAvailable(chunk); timeouts.delete(key); }
     catch (e) {
-      if (isStatementTimeout(e)) { const count = (hold?.count ?? 0) + 1; timeouts.set(key, { count, error: e, until: count < 2 ? 0 : now() + Math.min(TIMEOUT_HOLD_BASE_MS * 2 ** (count - 2), TIMEOUT_HOLD_MAX_MS) }); }
+      if (isStatementTimeout(e)) { const count = (hold?.count ?? 0) + 1; liveTimeouts.add(key); timeouts.set(key, { uid, wsId, count, error: e, until: count < 2 ? 0 : now() + Math.min(TIMEOUT_HOLD_BASE_MS * 2 ** (count - 2), TIMEOUT_HOLD_MAX_MS) }); }
       if (orgs.length < 2) { if (!failed.has(orgs[0])) failed.set(orgs[0], e); }
       else for (const orgId of orgs) await db.upsertAvailable(chunk.filter((r) => r.org_id === orgId)).catch((err) => { if (!failed.has(orgId)) failed.set(orgId, err); });
     }
   }
+  for (const [k, v] of timeouts) if (v.uid === uid && v.wsId === wsId && !liveTimeouts.has(k)) timeouts.delete(k);
   // 사전 확인으로 못 거른 결정적 실패(msgr_ws_owned_by_other 등)는 10분 동안 그 회사·조직 insert를 다시 하지 않는다 — 같은 실패 쓰기를 15초마다 되풀이하지 않게(DB 위생).
   // 오류 표시는 유지한다: 백오프 중인 틱도 저장한 오류를 끝에 다시 던져 브리지가 미러 오류로 계속 드러낸다
   for (const [orgId, e] of failed) if (isDeterministicInsertError(e)) blocked.set(`fail:${uid}:${wsId}:${orgId}`, { until: now() + INSERT_BLOCK_MS, error: e }); // 일시 오류는 백오프 없이 다음 틱에 다시
