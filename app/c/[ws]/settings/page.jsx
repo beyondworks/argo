@@ -14,7 +14,7 @@ import LocalAssetImport from '../../../components/LocalAssetImport';
 import { accountPlan, trialBadgeState } from '../../../../src/entitlement.mjs';
 
 // Argo Messenger 받기 — 맥·윈도우 설치파일만 걸던 것을 앱 스토어·Play까지 있는 안내 페이지 한 곳으로(CX-12). 오피스 진입 버튼(CX-13)은 오피스가 비공개라 뺐다(유건 2026-10-10).
-import { MESSENGER_PAGE, msgrCardView, runtimeWaitingKey, runtimeAction, pausedLabelKey, personalCardView, msgrSetupReason, msgrRuntimeBesideSetup } from './msgr-card.mjs';
+import { MESSENGER_PAGE, msgrCardView, runtimeWaitingKey, runtimeAction, pausedLabelKey, personalCardView, msgrSetupReason, msgrRuntimeBesideSetup, pauseSoon, tabReturnDue } from './msgr-card.mjs';
 import { keepChoices, togglePick, pickReady, hereSlugs, sameAsActive, FREE_AGENT_LIMIT } from './keep-choices.mjs'; // 무료 계정이 유지할 에이전트를 고른다(2026-10-12 제보)
 import ArchivedCompaniesCard from '../../../archived-companies'; // 보관한 회사 되돌리기 — 홈에도 같은 카드(UM3)
 import { trashFailKind } from './trash-fail.mjs'; // 보관함 항목이 이미 사라졌는지(2차 M3)
@@ -910,7 +910,25 @@ function MsgrCard({ ws, agents }) {
     .then((d) => { setSt(d); setOrgId((cur) => cur && d.orgs?.some((o) => o.id === cur) ? cur : (d.orgs?.[0]?.id ?? '')); })
     .catch(() => { setSt({ signedIn: false, orgs: [], crews: [] }); setErr(t('settings.msgr.err.load')); }), [ws, t]);
   useEffect(() => { load(); }, [load]);
-  const view = msgrCardView({ st, orgId, agents }); // 서버 응답 → 카드 판정 한 곳(msgr-card.mjs) — 폴 조건과 문구가 같은 판정을 쓴다(UL7)
+  // 탭으로 돌아오면 다시 읽는다(앱↔메신저 연결 감사 D4) — 메신저에서 조직을 만들거나 로그인하고 돌아온 사람에게 옛 판정('다른 계정으로 로그인'만) 대신
+  //   지금 상태(이유 'pending' + [지금 연결] 등)를 보인다. 보일 때만·5초 안 중복 접기(tabReturnDue). 주기 호출 없음.
+  const lastBack = useRef(0);
+  useEffect(() => {
+    const onBack = () => {
+      const now = Date.now();
+      if (!tabReturnDue({ visible: document.visibilityState === 'visible', now, last: lastBack.current })) return;
+      lastBack.current = now;
+      load();
+    };
+    document.addEventListener('visibilitychange', onBack);
+    window.addEventListener('focus', onBack);
+    return () => { document.removeEventListener('visibilitychange', onBack); window.removeEventListener('focus', onBack); };
+  }, [load]);
+  // 곧 연결(D3)을 처음 본 시각 — 2분 상한(msgrCardView SOON_CAP_MS). 풀리면 지워 다시 곧 연결이면 처음부터 센다. 8초 폴이 다시 그려 상한이 지나면 종전 문구로 바뀐다
+  const rawSoon = pauseSoon(st);
+  const [soonSince, setSoonSince] = useState(null);
+  useEffect(() => { setSoonSince((s) => (rawSoon ? (s ?? Date.now()) : null)); }, [rawSoon]);
+  const view = msgrCardView({ st, orgId, agents, soonSince }); // 서버 응답 → 카드 판정 한 곳(msgr-card.mjs) — 폴 조건과 문구가 같은 판정을 쓴다(UL7)
   useEffect(() => {
     if (!view.polling) return; // 개인 공간만 쓰는 사용자는 폴이 안 돈다 — 문구도 '다시 확인' 단추로 안내(폴을 늘리지 않는다: DB·서버 부하)
     const timer = setInterval(load, 8000);
@@ -923,7 +941,7 @@ function MsgrCard({ ws, agents }) {
   const org = st?.orgs?.find((o) => o.id === orgId);
   const policyLine = org?.policy ? t('settings.msgr.policy.summary', { allow: t(`settings.msgr.allow.${org.policy.allow_default}`) + (org.policy.allow_locked ? t('settings.msgr.policy.locked') : ''), approver: t(`settings.msgr.policy.approver.${org.policy.approval_high_by ?? 'admin'}`), memory: (org.policy.crew_memory_default === false ? t('settings.msgr.policy.memory.off') : t('settings.msgr.policy.memory.on')) + (org.policy.crew_memory_locked ? t('settings.msgr.policy.locked') : '') }) : '';
 
-  const personalView = personalCardView({ st, agents }); // 조직이 없는 사용자의 개인 공간 줄(검수 스택 화면 4차)
+  const personalView = personalCardView({ st, agents, soon: view.soon }); // 조직이 없는 사용자의 개인 공간 줄(검수 스택 화면 4차)
   const setupWhy = msgrSetupReason({ st }); // 메신저에 내 에이전트가 하나도 없을 때 이유·할 일(2026-10-13 사례) — 있으면 '첫 응답을 기다리는 중' 대신 이것을 보인다
   const runtimeToo = msgrRuntimeBesideSetup({ st, setupWhy }); // 브리지가 켜졌는데 막혔으면 실행기 상태(원인 문구)도 함께(검수 2 MEDIUM-2)
   // 연결 한 곳 — 조직 카드(scope { orgId })와 개인 공간 카드(scope { personal: true })가 같은 길. 무료 4명이 차 있으면 서버가 미리 알린 멈출 에이전트를

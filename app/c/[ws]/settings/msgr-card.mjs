@@ -19,11 +19,13 @@ export function msgrShowRuntime({ signedIn = false, agentCount = 0 } = {}) {
 /** 서버 응답(GET /api/companies/[ws]/msgr)을 카드가 읽는 판정 한 곳 — st = 응답 JSON({ signedIn, orgs, crews, personalCount, runtime }) 또는 null(로드 전).
     regCount = 선택한 조직(orgId)에 활성 등록된 크루 수 · polling = 8초 실행기 상태 폴이 도는가(로그인했고 활성 조직 크루가 하나라도 있을 때 — 개인 공간만 쓰는 사용자는 안 돈다).
     폴 조건과 "자동으로 다시 확인" 문구가 같은 판정을 쓴다(UL7). */
-export function msgrCardView({ st, orgId = '', agents = [] } = {}) {
+export function msgrCardView({ st, orgId = '', agents = [], soonSince = null, now = Date.now() } = {}) {
   const crews = Array.isArray(st?.crews) ? st.crews : [];
   const regCount = agents.filter((a) => crews.some((r) => r.org_id === orgId && r.slug === a.slug && r.status === 'active')).length;
   const personalCount = st?.personalCount ?? 0;
-  const soon = pauseSoon(st);
+  // 곧 연결 상한(D3 검수 미룸, D4와 함께 2026-10-15): 처음 본 뒤 SOON_CAP_MS가 지나도 그대로면(첫 심박이 안 옴) 종전 문구로 돌아가고 폴도 멈춘다 — 8초 GET 최대 15회.
+  //   soonSince = 화면이 곧 연결을 처음 본 시각(MsgrCard 상태). 넘기지 않으면(옛 호출) 상한 없이 종전 판정.
+  const soon = pauseSoon(st) && (soonSince == null || now - soonSince < SOON_CAP_MS);
   return {
     regCount, personalCount, soon,
     chip: msgrConnectionChip({ regCount, personalCount }),
@@ -31,6 +33,15 @@ export function msgrCardView({ st, orgId = '', agents = [] } = {}) {
     // 곧 연결 상태(D3)도 폴한다 — 첫 심박으로 풀리는 순간(보통 몇 초)을 카드가 본다. 풀리면 active 행이 생겨 종전 폴로 이어진다(같은 8초 주기)
     polling: !!st?.signedIn && (crews.some((r) => r.status === 'active') || soon),
   };
+}
+
+export const SOON_CAP_MS = 120_000;
+
+/** 탭으로 돌아왔을 때 연결 카드를 다시 읽을까(앱↔메신저 연결 감사 D4, 2026-10-15) — 메신저에서 조직을 만들거나 로그인하고 돌아와도 카드가 옛 판정
+    ('다른 계정으로 로그인'만)을 보였다. 보이는 탭에서만, focus·visibilitychange가 같이 튀므로 gapMs(5초) 안 중복은 접는다(SyncCard 결제 재조회와 같은 접기).
+    부하: 설정 화면을 연 기기 1대 × 탭 복귀 횟수만큼 GET(주기 호출 0). */
+export function tabReturnDue({ visible, now, last, gapMs = 5000 }) {
+  return !!visible && now - last >= gapMs;
 }
 
 /** 이 기기가 곧 연결되는 중인가(앱↔메신저 연결 감사 D3, 2026-10-15) — 무료 계정 첫 연결은 첫 기기 심박 전이라 서버 이유가 app·off인데, 이 앱이 바로 그 최신 앱이다.
@@ -54,12 +65,12 @@ export function pausedLabelKey(reason, { soon = false } = {}) {
     rows = 에이전트마다 개인 행 상태 문구 키(연결 'settings.msgr.connection.personal' · 멈춤 pausedLabelKey · 해제 notRegistered · 행 없음 notInMessenger),
     missing = 연결할 것(멈춘 개인 행만 — 메신저에서 사람이 해제한 available은 묶지 않는다, 재검수 LOW-1), show = 조직이 없고 멈춘 개인 행이 있고 무료 한도 이유가 있을 때만
     (pauseReason이 없으면 Pro·관문 꺼짐 — 종전 카드 그대로, 재검수 LOW-2). */
-export function personalCardView({ st, agents = [] } = {}) {
+export function personalCardView({ st, agents = [], soon = pauseSoon(st) } = {}) { // soon — 화면이 상한(SOON_CAP_MS)을 적용한 판정(msgrCardView.soon)을 넘긴다
   const rowsAll = Array.isArray(st?.personal) ? st.personal : [];
   const rows = agents.map((a) => {
     const row = rowsAll.find((r) => r.slug === a.slug) ?? null;
     const labelKey = !row ? 'settings.msgr.notInMessenger' : row.status === 'active' ? 'settings.msgr.connection.personal'
-      : row.status === 'paused' ? pausedLabelKey(st?.pauseReason, { soon: pauseSoon(st) }) : 'settings.msgr.notRegistered';
+      : row.status === 'paused' ? pausedLabelKey(st?.pauseReason, { soon }) : 'settings.msgr.notRegistered';
     return { slug: a.slug, row, labelKey };
   });
   const missing = rows.filter((r) => r.row?.status === 'paused').map((r) => r.slug);
