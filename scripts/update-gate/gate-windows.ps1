@@ -121,6 +121,6 @@ $markNow = Get-Content (Join-Path $Ws 'gate-co\gate-marker.txt') -ErrorAction Si
 $after = (Get-ChildItem $Data -Force -Recurse -Depth 1 -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName.Substring($Data.Length) }) | Sort-Object
 $lost = $before | Where-Object { $_ -notin $after -and $_ -notmatch '\\logs|\.lock$|\.tmp-' }
 if ($markNow -ne $Mark) { Verdict FAIL "data marker lost after updating to $New — 화면 미확인" }
-if ($lost) { Note "사라진 데이터 항목: $($lost -join ', ')"; Verdict FAIL "data entries disappeared after updating to $New: $(@($lost)[0..4] -join ', ') — 화면 미확인" }
+if ($lost) { Note "사라진 데이터 항목: $($lost -join ', ')"; Verdict FAIL "data entries disappeared after updating to ${New}: $(@($lost)[0..4] -join ', ') — 화면 미확인" }
 
 Verdict PASS "$From -> $New installed (exit 0, ${secs}s), relaunched, server answers $New (buildId $($p1.buildId)) on port $($p1.port), data kept — 화면 미확인(세션 0)"
