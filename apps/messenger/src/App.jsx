@@ -6629,6 +6629,7 @@ function Channel({ movedBar = null, pausedCrew = null, pausedNotice = null, onCr
     {!preview && !archived && namePrompt}
     {(isPersonal || channel.kind === 'dm') && !preview && !archived && <PersonalRoomBar chId={chId} uid={uid} hasCrews={isPersonal && chCrews.length > 0} event={event} nameOfUser={nameOfUser} crewName={(id) => crews.find((c) => c.id === id)?.display_name ?? null} onChanged={onPersonalChanged} onError={onError} />}
     {!preview && !archived && (() => { const off = crewAwayNotice({ channel, chCrews, people, uid, now: Date.now(), awayMs: AWAY_MS }); return off && <div className="msgr-joinbar msgr-awaybar" role="status"><span>{(lang === 'en' ? (x) => x : koJosa)(t(off.mine ? 'crew.dm.away.mine' : 'crew.dm.away', { name: off.name }))}</span>{off.mine && <RunnerButton />}</div>; })()}{/* 에이전트 1:1에서 에이전트가 꺼져 있으면 — 보내도 답이 없는 이유(검수 F, 2026-10-01) */}
+    {!preview && !archived && pausedNotice && !pausedNotice.block && pausedNotice.solo && <PausedBar notice={pausedNotice} />}{/* 남의 멈춘 에이전트 1:1 — 막지 않고 머리 줄만(검수 #1032) */}
     {preview
       ? <div className="msgr-joinbar" role="region" aria-label={t('ch.preview.title')}><span>{t('ch.preview.note', { name: channel.name })}</span><button type="button" className="btn btn-primary" onClick={onJoin}><I name="plus" size={14} />{t('ch.browse.join')}</button></div>
       : archived ? <div className="msgr-joinbar msgr-archivedbar" role="status"><span>{t('dm.archived.note')}</span></div> /* 보관한 옛 1:1(유건 결정 2026-10-08 1-②) — 입력창 자리에 읽기 전용 안내. 새 글은 서버도 막는다(msgr_can_write_channel) */

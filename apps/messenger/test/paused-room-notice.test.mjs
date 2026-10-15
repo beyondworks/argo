@@ -53,9 +53,10 @@ test('C11 사람이 더 있으면 막지 않는다(1:1·채널 모두)', () => {
   assert.equal(pausedRoomNotice({ ...base, channel: { id: 'g', kind: 'private' }, people: 1, pause: pause('limit') }).block, false); // 1:1이 아니면 혼자여도 막지 않는다
 });
 
-test('C13 남의 멈춘 에이전트: 머리 줄만, 이유·버튼 없음', () => {
+test('C13 남의 멈춘 에이전트: 막지 않고 머리 줄만, 이유·버튼 없음', () => {
   const n = pausedRoomNotice({ ...base, roomCrewIds: ['c9'], pause: pause('limit') });
   assert.equal(n.reason, null); assert.equal(n.action, null); assert.equal(n.head.vars.name, '친구봇');
+  assert.equal(n.block, false); assert.equal(n.solo, true); // 막지 않는다 — 다시 켜져도 crew_sync는 주인에게만 간다(검수 #1032)
 });
 
 test('C14 연결된 에이전트와 함께 있는 방: 멈춘 것만 이름, 막지 않음', () => {
