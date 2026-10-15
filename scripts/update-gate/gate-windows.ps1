@@ -70,7 +70,9 @@ Note "시작 $From ($((Get-Item $PubSetup).Length) bytes) -> 새 $New ($((Get-It
 $p = Start-Process $PubSetup -ArgumentList '/S' -Wait -PassThru
 if ($p.ExitCode -ne 0) { Verdict FAIL "public $From silent install exit=$($p.ExitCode)" }
 $r = Reg; if (-not $r) { Verdict FAIL "public $From not registered after install" }
-$Loc = $r.InstallLocation.TrimEnd('\'); Note "설치 $($r.DisplayVersion) at $Loc"
+$Loc = $r.InstallLocation.Trim().Trim('"').TrimEnd('\') # 레지스트리 값이 큰따옴표로 감싸여 있다(windows-latest 실측)
+if (-not (Test-Path (Join-Path $Loc 'app.exe'))) { Verdict FAIL "app.exe not found under InstallLocation '$($r.InstallLocation)'" }
+Note "설치 $($r.DisplayVersion) at $Loc"
 Files $Loc 'before'
 Start-Process (Join-Path $Loc 'app.exe')
 $p0 = WaitPing $From 180
