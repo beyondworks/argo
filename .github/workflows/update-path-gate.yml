@@ -4,7 +4,8 @@
 # - 자동: 그 워크플로가 main이나 릴리스 태그에서 성공하면 바로 돈다(workflow_run). 발행 드릴은 이 결과를 보고 초안을 공개한다.
 # - 수동: gh workflow run update-path-gate.yml -f app=argo -f run_id=<실행 번호>
 # 러너 안에서만 github.com을 로컬 HTTPS 미러로 돌린다(scripts/update-gate/gate.sh). 아무것도 발행하지 않는다.
-# 범위: 맥 Apple Silicon·Intel. Windows(NSIS 설치 프로그램 경로)는 이 관문이 보지 않는다.
+# 범위: 맥 Apple Silicon·Intel(gate 잡)과 Windows x64(gate-windows 잡 — NSIS 설치기, scripts/update-gate/gate-windows.ps1, 2026-10-15 winpc 대신).
+# Windows는 세션 0이라 화면을 보지 않는다(판정 줄에 '화면 미확인'). 메신저 앱의 Windows는 아직 보지 않는다.
 name: Update path gate
 
 on:
@@ -19,6 +20,10 @@ on:
         description: 'Release build run id whose artifacts are the new version'
         type: string
         required: true
+      from_version:
+        description: 'Windows only: start version to install first (empty = the public Latest)'
+        type: string
+        required: false
   workflow_call:
     inputs:
       app: { type: string, required: true }
@@ -30,6 +35,9 @@ on:
   workflow_run:
     workflows: ['Build desktop apps', 'Build messenger app']
     types: [completed]
+  # 관문 자체를 고친 PR — Windows 잡만 공개 릴리스 짝으로 스스로 시험한다(새 빌드 없이). 맥 잡은 이 이벤트에서 돌지 않는다.
+  pull_request:
+    paths: ['.github/workflows/update-path-gate.yml', 'scripts/update-gate/gate-windows.ps1']
 
 permissions:
   contents: read
@@ -39,9 +47,9 @@ jobs:
   gate:
     # 자동 실행은 성공한 main·릴리스 태그 빌드만(브랜치 시험 빌드는 건너뛴다)
     if: >-
-      github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' &&
+      github.event_name != 'pull_request' && (github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' &&
       (github.event.workflow_run.head_branch == 'main' || startsWith(github.event.workflow_run.head_branch, 'v') ||
-      startsWith(github.event.workflow_run.head_branch, 'messenger-v')))
+      startsWith(github.event.workflow_run.head_branch, 'messenger-v'))))
     name: ${{ inputs.app || (github.event.workflow_run.name == 'Build messenger app' && 'messenger' || 'argo') }}-${{ matrix.arch }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
@@ -73,6 +81,57 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: update-gate-${{ env.APP }}-${{ matrix.arch }}
+          path: out/
+          if-no-files-found: warn
+          retention-days: 14
+
+  # Windows x64(NSIS) — 지금 공개된 Latest(또는 from_version)를 /S로 깔고, 앱만 끈 채 새 빌드 버전명 설치기를 앱 안 업데이트와 같은 인자(/P /R /UPDATE /ARGS)로 실행해
+  # 다시 뜬 앱의 /api/ping 버전·포트 주인·데이터 표식을 본다. 판정 줄은 맥과 같은 'PASS <공개> -> <새> …'. 본체(argo)만 — 메신저 Windows는 아직 아니다.
+  gate-windows:
+    if: >-
+      (github.event_name == 'pull_request') ||
+      ((inputs.app || (github.event.workflow_run.name == 'Build messenger app' && 'messenger' || 'argo')) == 'argo' &&
+      (github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' &&
+      (github.event.workflow_run.head_branch == 'main' || startsWith(github.event.workflow_run.head_branch, 'v')))))
+    name: argo-x86_64-pc-windows-msvc${{ matrix.pair && format(' ({0})', matrix.pair) || '' }}
+    runs-on: windows-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # PR(관문 자체 시험)은 공개 릴리스 짝으로, 그 밖에는 새 빌드 한 번(pair 빈 값)
+        pair: ${{ fromJSON(github.event_name == 'pull_request' && '["0.1.107>0.1.108","0.1.108>0.1.109","0.1.107>0.1.109"]' || '[""]') }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/update-gate
+      - uses: actions/download-artifact@v4
+        if: github.event_name != 'pull_request'
+        with:
+          name: argo-x86_64-pc-windows-msvc
+          run-id: ${{ inputs.run_id || github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+          path: new
+      - name: Public version -> in-app update (NSIS /P /R /UPDATE) -> new build
+        shell: pwsh
+        env:
+          OUT: ${{ github.workspace }}/out
+          PAIR: ${{ matrix.pair }}
+          FROM_INPUT: ${{ inputs.from_version }}
+        run: |
+          if ($env:PAIR) { $env:FROM_VERSION, $env:TO_VERSION = $env:PAIR -split '>' }
+          else {
+            $env:FROM_VERSION = $env:FROM_INPUT
+            # 새 빌드의 버전명 설치기 — 고정 이름 사본(argo-windows-setup.exe)은 업데이터가 쓰지 않는다
+            $s = Get-ChildItem new -Filter 'argo_*_x64-setup.exe' | Select-Object -First 1
+            if ($s) { $env:NEW_SETUP = $s.FullName } else { Get-ChildItem new | Format-Table Name, Length | Out-String | Write-Host }
+          }
+          ./scripts/update-gate/gate-windows.ps1
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: update-gate-argo-windows${{ strategy.job-index && format('-{0}', strategy.job-index) || '' }}
           path: out/
           if-no-files-found: warn
           retention-days: 14
