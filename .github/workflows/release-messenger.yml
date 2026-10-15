@@ -77,6 +77,8 @@ jobs:
 
       - name: Messenger regression tests
         shell: bash
+        # 평소 4~5분. 멈춘 시험이 맥 잡을 한 시간 넘게 붙잡은 일(0.1.62 run 38670345810) 뒤 상한을 둔다.
+        timeout-minutes: 20
         # 윈도우는 test.yml과 같은 임시 폴더(RUNNER_TEMP, D:) — release.yml npm test 단계 주석 참고(0.1.100 run 37910750279)
         env:
           TEMP: ${{ runner.os == 'Windows' && runner.temp || env.TEMP }}

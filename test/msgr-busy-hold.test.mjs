@@ -22,7 +22,7 @@ test('C4 바쁜 동안 온 글은 커서를 넘기지 않는다 → A가 꺼지�
   const ws = 'hold-c4'; const server = await setup(ws);
   const A = await H.startDevice({ M, Q, server, who: 'A', ws, turnMs: 3000, pollMs: POLL });
   server.send(); await A.drainOnce();
-  while (!A.starts.length) await H.sleep(50);
+  assert.ok(await H.waitStarted(A), `첫 글의 턴이 20초 안에 시작한다(drain ${A.stats().drains}회)`);
   const m12 = server.send(); await A.drainOnce();
   assert.equal(server.row.cursor_msg_id, 11, '바쁜 크루의 뒤 글(12) 앞에서 커서가 멈춘다');
   A.kill(); // A의 큐 워커·폴·깨우기를 멈춘다. 이미 실행권을 잡은 m11 턴은 끝까지 돈다(실행 중 꺼짐 F3는 이 시험 밖)
@@ -39,7 +39,7 @@ test('C2·C8 한 기기: 바쁜 동안 뒤 글 3개 — 순서·각 1회, 보류
   const ws = 'hold-c2'; const server = await setup(ws);
   const A = await H.startDevice({ M, Q, server, who: 'A', ws, turnMs: 1200, pollMs: POLL });
   server.send(); await A.drainOnce();
-  while (!A.starts.length) await H.sleep(50);
+  assert.ok(await H.waitStarted(A), `첫 글의 턴이 20초 안에 시작한다(drain ${A.stats().drains}회)`);
   for (let i = 0; i < 3; i++) { server.send(); await A.drainOnce(); }
   const writesHeld = server.counts.A.setCursor ?? 0;
   await A.drainOnce(); await A.drainOnce(); // 같은 글을 다시 읽기만
@@ -82,7 +82,7 @@ test('C12 바쁜 크루라도 대상이 아닌 글은 지나간다(커서 전진
   const ws = 'hold-c12'; const server = await setup(ws);
   const A = await H.startDevice({ M, Q, server, who: 'A', ws, turnMs: 1500, pollMs: POLL });
   server.send(); await A.drainOnce();
-  while (!A.starts.length) await H.sleep(50);
+  assert.ok(await H.waitStarted(A), `첫 글의 턴이 20초 안에 시작한다(drain ${A.stats().drains}회)`);
   const chat = server.send(); server.messages.at(-1).mentions = []; // 잡담
   const target = server.send();
   await A.drainOnce();
@@ -103,7 +103,7 @@ test('C17 보류 상한(BUSY_HOLD_MAX_MS)을 넘은 글은 바빠도 배포본�
   const ws = 'hold-c17'; const server = await setup(ws);
   const A = await H.startDevice({ M, Q, server, who: 'A', ws, turnMs: 1500, pollMs: POLL });
   server.send(); await A.drainOnce();
-  while (!A.starts.length) await H.sleep(50);
+  assert.ok(await H.waitStarted(A), `첫 글의 턴이 20초 안에 시작한다(drain ${A.stats().drains}회)`);
   const old = server.send(); server.messages.at(-1).created_at = new Date(Date.now() - M.BUSY_HOLD_MAX_MS - 1000).toISOString();
   await A.drainOnce();
   assert.equal(server.row.cursor_msg_id, old, '상한을 넘은 글은 보류하지 않고 커서를 넘긴다');

@@ -161,4 +161,10 @@ export async function waitPosted(server, n, limitMs = 60_000) {
   while (server.posted.length < n && Date.now() - t0 < limitMs) await sleep(50);
   return server.posted.length >= n;
 }
+/** 기기가 턴을 n개 시작할 때까지(또는 시간 상한) 기다린다. 상한 없는 대기는 턴이 안 시작되는 환경에서 CI를 한 시간 넘게 붙잡았다(메신저 0.1.62 빌드 run 38670345810, 맥 두 잡). */
+export async function waitStarted(dev, n = 1, limitMs = 20_000) {
+  const t0 = Date.now();
+  while (dev.starts.length < n && Date.now() - t0 < limitMs) await sleep(50);
+  return dev.starts.length >= n;
+}
 export { sleep };
