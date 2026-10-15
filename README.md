@@ -95,9 +95,13 @@ scheduler run without the UI open (`ARGO_PORT` to change the default 3999).
 ## Adding a device
 
 **Sign-in = sync (default).** Install Argo on the new device and sign in with the same
-account — companies (memory, agents, conversations, bot tokens and runner credentials)
-come down automatically. Credentials cross the cloud only as account-key envelope
-ciphertext; sessions live in a `0600` device file; storage is locked per-owner by RLS.
+account — companies (memory, agents, conversations) come down automatically, encrypted
+(AES-256-GCM; the envelope key lives in the same cloud, so the operator can technically decrypt
+company data); storage is locked per-owner by RLS. Credentials do **not** sync on
+the hosted cloud: runner login tokens / API keys (`.secrets.json`), bot tokens
+(`connections.json`) and MCP env vars (`mcp.json`) stay on the device, so reconnect runners
+and bots on the new device. Self-hosted setups can opt in to credential sync per company.
+Details: [docs/privacy-sync.md](docs/privacy-sync.md).
 
 **Link code (self-host backup path).** Only for auth-less self-hosted setups:
 Settings → Devices → **Create link code** on the old device, paste on the new one.
