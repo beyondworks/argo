@@ -63,6 +63,10 @@ if (qs.has('noAgents')) {
   state.tables.msgr_crews = state.tables.msgr_crews.filter((c) => c.owner_user_id !== uid);
   state.tables.msgr_personal_room_crews = state.tables.msgr_personal_room_crews.filter((c) => c.owner_user_id !== uid);
 }
+if (qs.has('availableOnly')) { // 꺼 둔(available) 에이전트만 있는 같은 계정(검수 2 #1037) — 계정 단서가 뜨면 안 된다
+  state.tables.msgr_crews = state.tables.msgr_crews.map((c) => (c.owner_user_id === uid ? { ...c, status: 'available' } : c));
+  state.tables.msgr_personal_room_crews = state.tables.msgr_personal_room_crews.filter((c) => c.owner_user_id !== uid);
+}
 if (qs.has('noOrg')) { state.tables.msgr_org_members = state.tables.msgr_org_members.filter((m) => m.user_id !== uid && m.org_id !== org); state.tables.msgr_channels = []; }
 const pauseInfo = agentPause ? { paused: agentPause === 'limit' ? 3 : 7, active: agentPause === 'limit' ? 4 : 0, limit: 4, reason: agentPause } : { paused: 0, active: 1, limit: 4, reason: null };
 

@@ -1,7 +1,7 @@
 // D7(링크 감사 2-1) — 개인 공간에 에이전트가 0명이면 '에이전트' 구역과 계정 단서를 보인다. 인접 행동(에이전트 있음·조직 공간·멈춤)은 종전 그대로.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { railAgentsView, phoneAgentsEmpty } from '../src/agents-empty.mjs';
+import { railAgentsView, phoneAgentsEmpty, ownAgentsEmptyOf } from '../src/agents-empty.mjs';
 import { t } from '../src/i18n.js';
 
 const email = 'other@audit.test';
@@ -36,4 +36,14 @@ test('문구: ko·en, 이메일이 들어간다', () => {
     assert.match(t('agents.none.account', lang, { email }), /other@audit\.test/);
     assert.ok(t('agents.none.account.noemail', lang) !== 'agents.none.account.noemail');
   }
+});
+
+test('검수 2 #1037: 꺼 둔(available) 에이전트만 있으면 — 앱 배선 값 그대로(개인 공간 로더는 myAvailable 0, paused 0) 종전 화면', () => {
+  const own = { rows: [{ id: 'c1', org_id: null, status: 'available' }, { id: 'c2', org_id: 'o1', status: 'available' }] }; // readOwnCrews는 active·available을 읽는다
+  const ownEmpty = ownAgentsEmptyOf(own);
+  assert.equal(ownEmpty, false, '꺼 둔 행이 있으면 내 에이전트가 없는 것이 아니다');
+  assert.deepEqual(railAgentsView({ isPersonal: true, shown: 0, available: 0, paused: 0, ownEmpty, email }), { section: false, hint: null });
+  assert.deepEqual(phoneAgentsEmpty({ paused: 0, ownEmpty, email }), { key: 'phone.agents.none', vars: {} });
+  assert.equal(ownAgentsEmptyOf({ rows: [] }), true, '행이 하나도 없을 때만 빈 것');
+  assert.equal(ownAgentsEmptyOf(null), false, '못 읽었으면 모른다');
 });

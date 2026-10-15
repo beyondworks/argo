@@ -90,7 +90,7 @@ import { crewRowMenuKeys, crewOpeners, creatorTagVisible } from './crew-row-menu
 import { adminRemovedNotice, readAdminRemoved } from './dispatch-notice.mjs';
 import { crewAwayNotice } from './crew-dm-notice.mjs';
 import { crewListEmptyKey } from './crews-empty.mjs';
-import { railAgentsView, phoneAgentsEmpty } from './agents-empty.mjs'; // 개인 공간 0명이면 구역 + 계정 단서(D7, 2026-10-15)
+import { railAgentsView, phoneAgentsEmpty, ownAgentsEmptyOf } from './agents-empty.mjs'; // 개인 공간 0명이면 구역 + 계정 단서(D7, 2026-10-15)
 import { readAgentPause, agentPauseNote, readSwapNames, splitSpaceCrews, withPaused, pausedRoomCrew, pausedRoomNotice, readPausedCrewNames, crewNameAsker } from './agent-pause.mjs'; // 무료 계정 에이전트가 멈춘 이유(2026-10-11)
 import { slotState, slotKey, swapPreview, keepAgents, keepChoices, togglePick, pickReady, readMyPlan, FREE_AGENT_LIMIT } from './agent-pick.mjs'; // 무료 4명을 사용자가 고른다(2026-10-12)
 import { runnerOptions, RUNNER_INSTALL } from './runner-sheet.mjs';
@@ -2752,7 +2752,7 @@ function Shell({ session }) {
   const railCompany = sortCrews(crews.filter((c) => c.owner_user_id !== uid && crewTier(c, org) === 'company')); // 다른 멤버의 에이전트는 레일에 두지 않는다 — 외부(VPS) 봇 포함(유건 2026-09-16 "다른 멤버의 에이전트는 안 보이게", 2026-09-24 "VPS 에이전트도 Argo 에이전트처럼").
   // 조직 명부에는 그대로 있다 — 목록에서 빼는 것은 화면 규칙이고, 지시는 서버가 허용 범위로 막는다. 회사 크루만 남는다.
   const railVisible = crews.filter((c) => c.owner_user_id === uid || crewTier(c, org) === 'company');
-  const ownAgentsEmpty = !!ownCrews && !ownCrews.rows.some((r) => r.status === 'active'); // 내 에이전트 행 전체를 읽었고 연결된 것이 없다(D7 계정 단서의 근거 — 읽지 못했으면 false)
+  const ownAgentsEmpty = ownAgentsEmptyOf(ownCrews); // 내 에이전트 행(active·available)을 읽었고 하나도 없다(D7 계정 단서의 근거 — 읽지 못했으면 false, 검수 2 #1037) // 내 에이전트 행 전체를 읽었고 연결된 것이 없다(D7 계정 단서의 근거 — 읽지 못했으면 false)
   const railView = railAgentsView({ isPersonal, orgReady: !orgBlocked && !!org, shown: railVisible.length, available: myAvailable.length, paused: isPersonal ? pausedCrews.filter((c) => c.owner_user_id === uid).length + (agentPause?.paused > 0 ? 1 : 0) : 0, ownEmpty: ownAgentsEmpty, email: session.user.email ?? null }); // 개인 공간 0명이면 구역 + 계정 단서(D7). 조직 공간·에이전트 있음·멈춤만 있음은 종전
   const openers = crewOpeners({ isPersonal, openSheet: setSheet, openDm: dmWithCrew }); // 개인 공간은 에이전트 시트를 그리지 않는다 — 메시지의 에이전트 버튼 없음, 검색 결과는 1:1로
   const orgJoinForms = (phone = false) => (<>{/* 조직 메뉴의 '초대 코드로 참여'·'조직 만들기' — 데스크톱 조직 창과 폰 채널 탭 조직 메뉴·빈 화면이 같은 폼 */}
