@@ -87,7 +87,9 @@ $Ws = Join-Path $Data 'workspaces'
 New-Item -ItemType Directory -Force (Join-Path $Ws 'gate-co') | Out-Null
 $Mark = "gate-$From-$(Get-Random)"
 Set-Content (Join-Path $Ws 'gate-co\gate-marker.txt') $Mark
-$before = (Get-ChildItem $Data -Force -Recurse -Depth 1 -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName.Substring($Data.Length) }) | Sort-Object
+# 사용자 데이터 = 회사 폴더(workspaces\ 두 단계)만 비교한다 — 데이터 루트의 EBWebView\(WebView2 캐시·BrowserMetrics)는 브라우저가 수시로 지우고 만든다(0.1.107→0.1.108 실측 오탐)
+function DataItems { if (Test-Path $Ws) { (Get-ChildItem $Ws -Force -Recurse -Depth 1 -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName.Substring($Ws.Length) }) | Sort-Object } }
+$before = DataItems
 Procs
 
 # 4) 앱 안 업데이트와 같은 조건 — 앱만 끝내고 사이드카 node는 남긴다
@@ -123,7 +125,7 @@ if ($own -and $own.start -lt $t0) { Verdict FAIL "port $($p1.port) is held by a 
 
 # 6) 데이터 보존
 $markNow = Get-Content (Join-Path $Ws 'gate-co\gate-marker.txt') -ErrorAction SilentlyContinue
-$after = (Get-ChildItem $Data -Force -Recurse -Depth 1 -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName.Substring($Data.Length) }) | Sort-Object
+$after = DataItems
 $lost = $before | Where-Object { $_ -notin $after -and $_ -notmatch '\\logs|\.lock$|\.tmp-' }
 if ($markNow -ne $Mark) { Verdict FAIL "data marker lost after updating to $New — 화면 미확인" }
 if ($lost) { Note "사라진 데이터 항목: $($lost -join ', ')"; Verdict FAIL "data entries disappeared after updating to ${New}: $(@($lost)[0..4] -join ', ') — 화면 미확인" }
