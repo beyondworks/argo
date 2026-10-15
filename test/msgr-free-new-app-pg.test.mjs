@@ -745,3 +745,39 @@ test('[D3 경계] 가장 늦게 생긴 행이 10분 안이면 첫 심박 전(off
   off(`update public.msgr_crews set created_at = now() - interval '11 minutes' where owner_user_id = '${O}'`);
   assert.equal(reason(O).reason, 'app');
 });
+
+// 앱↔메신저 연결 감사 D5(2026-10-15) — msgr_runner_peer_alive(20261015200000): 러너 없는 기기가 양보하려는 글에서만 한 번 부른다.
+// 무료: 이 기기가 아닌 내 기기의 기기 심박이 30분(무료 정책 창) 안이면 true. 무료 판정이 아니면(Pro) 늘 true(종전 160초 양보). 쓰기 0, 본인 것만, 익명 불가.
+const peer = (uid, dev) => last(asUser(uid, `select (public.msgr_runner_peer_alive(${dev === null ? 'null' : q(dev)}))::text || '|' || coalesce(txid_current_if_assigned()::text, 'none')`)).split('|');
+
+test('[D5] 무료 단일 기기 → false(바로 처리), 다른 기기 심박 30분(무료 정책 창) 안 → true, 오래됨 → false, 자기 심박은 세지 않는다 — 쓰기 0', { skip }, () => {
+  const S = 'ad000005-0000-4000-8000-000000000001'; mkUser(S, 'd5solo');
+  assert.deepEqual(peer(S, 'mac-s'), ['false', 'none'], '기기 심박 행 없음(새 사용자 1대)');
+  asUser(S, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name, hosting, status, allow) values (null, '${S}', '${WS}', 's1', 's1', 'local', 'active', 'owner')`);
+  const sid = ids(S, 'paused').concat(ids(S, 'active'));
+  beatV(S, 'mac-s', sid);
+  assert.deepEqual(peer(S, 'mac-s'), ['false', 'none'], '자기 기기 심박만 — 다른 기기 아님');
+  assert.equal(peer(S, null)[0], 'true', '기기 id를 모르면(null) 자기 행도 다른 기기로 센다 — 덜 줄이는 쪽');
+  beatV(S, 'win-s', sid);
+  assert.deepEqual(peer(S, 'mac-s'), ['true', 'none'], '다른 기기(같은 계정) 심박 창 안');
+  sql(`update public.msgr_device_beats set seen_at = now() - interval '29 minutes' where owner_user_id = '${S}' and device_id = 'win-s'`);
+  assert.equal(peer(S, 'mac-s')[0], 'true', '업데이트·재시작·짧은 잠자기 — 160초 안에 돌아와 답할 수 있다(배포본처럼 양보)');
+  sql(`update public.msgr_device_beats set seen_at = now() - interval '31 minutes' where owner_user_id = '${S}' and device_id = 'win-s'`);
+  assert.equal(peer(S, 'mac-s')[0], 'false', '무료 정책 창(30분) 밖 = 꺼진 기기');
+});
+
+test('[D5] 무료 판정이 아니면 늘 true(종전 160초) — Pro·관문 꺼짐, 남의 기기는 세지 않고, 익명은 부를 수 없다', { skip }, () => {
+  const P = 'ad000005-0000-4000-8000-000000000005'; mkUser(P, 'd5pro');
+  sql(`insert into public.entitlements (user_id, plan) values ('${P}', 'pro')`);
+  assert.equal(sql(`select public.is_pro_for('${P}')`), 't');
+  assert.deepEqual(peer(P, 'mac-p'), ['true', 'none'], 'Pro는 기기 심박과 상관없이 true(옛 앱 ≤0.1.99를 셀 수 없다)');
+  const S = 'ad000005-0000-4000-8000-000000000002'; mkUser(S, 'd5off');
+  assert.equal(last(asUser(S, `select set_config('msgr.pro_gate', 'off', false); select public.msgr_runner_peer_alive('x')::text`)), 'true', '관문 꺼짐 = 무료 판정 아님');
+  const O = 'ad000005-0000-4000-8000-000000000003'; mkUser(O, 'd5other');
+  asUser(O, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name, hosting, status, allow) values (null, '${O}', '${WS}', 'o1', 'o1', 'local', 'active', 'owner')`);
+  beatV(O, 'other-dev', ids(O, 'paused').concat(ids(O, 'active')));
+  const M2 = 'ad000005-0000-4000-8000-000000000004'; mkUser(M2, 'd5me');
+  assert.equal(peer(M2, 'mac-m')[0], 'false', '남의 기기 심박은 내 다른 기기가 아니다');
+  fails(psqlRaw(['-A', '-t', '-c', "set role anon; select public.msgr_runner_peer_alive('x')"]), /permission denied/, '익명');
+  assert.equal(sql(`select p.prosecdef::text || ':' || coalesce(array_to_string(p.proconfig, ','), '') from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = 'msgr_runner_peer_alive'`), 'true:search_path=public, pg_temp');
+});
