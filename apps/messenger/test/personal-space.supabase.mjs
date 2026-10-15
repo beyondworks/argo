@@ -71,7 +71,7 @@ if (qs.has('availableOnly')) { // 꺼 둔(available) 에이전트만 있는 같�
 if (qs.has('noOrg')) { state.tables.msgr_org_members = state.tables.msgr_org_members.filter((m) => m.user_id !== uid && m.org_id !== org); state.tables.msgr_channels = []; }
 const pauseInfo = agentPause ? { paused: agentPause === 'limit' ? 3 : 7, active: agentPause === 'limit' ? 4 : 0, limit: 4, reason: agentPause } : { paused: 0, active: 1, limit: 4, reason: null };
 
-// 조직 목록 첫 조회 장애(D8, 2026-10-15). ?orgsFail=network|401|500 + ?orgsFailCount=N(기본 끝없이) = msgr_org_members 조회를 N번 실패,
+// 조직 목록 첫 조회 장애(D8, 2026-10-15). ?orgsFail=network|401|500|refreshing + ?orgsFailCount=N(기본 끝없이) = msgr_org_members 조회를 N번 실패,
 // ?orgsDelay=ms = 그 조회를 늦게 답함. state.orgsOffline = true면 실패를 계속(시험이 false로 바꾸고 online 이벤트를 쏜다). 없으면 기존 그대로.
 const orgsFail = qs0.get('orgsFail'); let orgsFailLeft = qs0.has('orgsFailCount') ? Number(qs0.get('orgsFailCount')) : Infinity;
 const orgsDelay = Number(qs0.get('orgsDelay') || 0);
@@ -83,6 +83,7 @@ function orgsFault(call) {
   if (!orgsFail || !(state.orgsOffline || (counted && orgsFailLeft > 0))) return null;
   if (!state.orgsOffline) orgsFailLeft -= 1;
   if (orgsFail === '401') return { data: null, error: { message: 'JWT expired', code: 'PGRST301' }, status: 401 };
+  if (orgsFail === 'refreshing') return { data: null, error: { message: 'TypeError: msgr_session_refreshing', code: '' }, status: 0 }; // anon-guard D50 — 로그인은 살아 있고 토큰 갱신 중(검수 2 #1039)
   if (orgsFail === '500') return { data: null, error: { message: 'upstream error', code: '' }, status: 503 };
   return { data: null, error: { message: 'TypeError: Failed to fetch', code: '' }, status: 0 };
 }

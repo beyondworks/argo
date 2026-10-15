@@ -10,7 +10,8 @@ export const ORGS_RETRY_MAX = 10;         // 자동 재시도 상한 — 넘으�
 export function orgsLoadError(e, online = true) {
   const msg = String(e?.message ?? e ?? ''), status = Number(e?.status ?? 0);
   if (online === false) return 'offline';
-  if (status === 401 || e?.code === 'PGRST301' || /JWT expired|session_refreshing/i.test(msg)) return 'auth'; // anon-guard SESSION_REFRESHING 포함
+  if (/session_refreshing/i.test(msg)) return 'offline'; // anon-guard SESSION_REFRESHING(D50) = 로그인은 살아 있고 토큰 갱신만 잠시 실패 — 자동 재시도 대상. 'auth'면 [다시 로그인] → signOut이 저장 초안을 지운다(검수 2 #1039)
+  if (status === 401 || e?.code === 'PGRST301' || /JWT expired/i.test(msg)) return 'auth';
   if (!status && /Failed to fetch|Load failed|NetworkError|fetch failed|network/i.test(msg)) return 'offline';
   return 'server';
 }

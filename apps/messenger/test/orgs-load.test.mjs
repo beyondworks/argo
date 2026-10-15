@@ -71,13 +71,23 @@ test('느린 응답: 8초에 slow, 20초에 retryUi, 요청은 끊지 않고 30�
   assert.equal(L.state().phase, 'ready'); assert.equal(n, 1);
 });
 
-test('오류 분류: 오프라인·fetch 실패 → offline, 401·PGRST301·세션 갱신 중 → auth, 5xx·그 밖 → server', () => {
+test('오류 분류: 오프라인·fetch 실패·세션 갱신 중 → offline, 401·PGRST301·JWT expired → auth, 5xx·그 밖 → server', () => {
   assert.equal(orgsLoadError({ message: 'x', status: 500 }, false), 'offline');
   assert.equal(orgsLoadError({ message: 'TypeError: Failed to fetch', status: 0 }), 'offline');
   assert.equal(orgsLoadError({ message: 'Load failed' }), 'offline');
   assert.equal(orgsLoadError({ message: 'JWT expired', status: 401 }), 'auth');
   assert.equal(orgsLoadError({ message: 'x', code: 'PGRST301' }), 'auth');
-  assert.equal(orgsLoadError({ message: 'msgr_session_refreshing' }), 'auth');
+  // 검수 2 #1039: anon-guard SESSION_REFRESHING(D50)은 로그인이 살아 있고 토큰 갱신만 잠시 실패한 것 — 'auth'로 보면 [다시 로그인] → signOut이 저장 초안을 지운다
+  assert.equal(orgsLoadError({ message: 'msgr_session_refreshing' }), 'offline');
+  assert.equal(orgsLoadError({ message: 'TypeError: msgr_session_refreshing', status: 0 }), 'offline');
+  assert.equal(orgsLoadError({ message: 'whatever', status: 401 }), 'auth');
   assert.equal(orgsLoadError({ message: 'upstream error', status: 503 }), 'server');
   assert.equal(orgsLoadError({ message: 'permission denied', status: 403 }), 'server');
+});
+
+test('검수 2 #1039: 세션 갱신 중(SESSION_REFRESHING) 실패는 자동 재시도 대상 — [다시 로그인] 화면이 아니다', async () => {
+  const c = clock(); let n = 0;
+  const L = makeOrgsLoader({ run: async () => { n++; if (n === 1) throw new Error('TypeError: msgr_session_refreshing'); }, onState: () => {}, ...c });
+  await L.start(); await flush(); assert.equal(L.state().kind, 'offline');
+  await c.advance(5_000); assert.equal(n, 2); assert.equal(L.state().phase, 'ready');
 });
