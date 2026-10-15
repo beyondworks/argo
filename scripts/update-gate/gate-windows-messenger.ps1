@@ -21,7 +21,11 @@ $ExpectFail = $env:EXPECT_FAIL -eq '1'
 function Note($s) { $line = "[$(Get-Date -Format HH:mm:ss)] $s"; Write-Host $line; Add-Content $Log $line }
 function Verdict($kind, $msg) {
   Note "${kind}: $msg"; Set-Content (Join-Path $Out 'RESULT') "$kind $msg"
-  if ($ExpectFail) { if ($kind -eq 'FAIL' -and $msg -match 'DisplayVersion=|ProductVersion') { Note 'EXPECT_FAIL: 기대대로 버전 불일치로 FAIL'; exit 0 }; Note "EXPECT_FAIL: 버전 불일치 FAIL이 아니다($kind) — 관문이 거짓 PASS를 내거나 다른 이유로 멈췄다"; exit 1 } # 다른 이유(내려받기 실패 등)의 FAIL로 자체 시험이 통과하지 않게
+  if ($ExpectFail) {
+    # 업데이트 뒤 두 판정(DisplayVersion·다시 뜬 앱 ProductVersion)이 모두 버전 불일치로 걸려야 통과 — 시작 버전 설치 이상('public install DisplayVersion=…')·내려받기 실패 같은 다른 이유의 FAIL로는 통과하지 않는다(검수 #1041 L1·L2)
+    if ($kind -eq 'FAIL' -and $msg -match 'DisplayVersion=\S+ after updating to' -and $msg -match 'relaunched \S+ is ProductVersion') { Note 'EXPECT_FAIL: 기대대로 업데이트 뒤 두 버전 판정 모두 FAIL'; exit 0 }
+    Note "EXPECT_FAIL: 업데이트 뒤 두 버전 판정이 모두 걸린 FAIL이 아니다($kind) — 관문이 거짓 PASS를 내거나 다른 이유로 멈췄다"; exit 1
+  }
   if ($kind -ne 'PASS') { exit 1 }
 }
 function Newer($a, $b) { [version]$a -gt [version]$b }
@@ -94,7 +98,8 @@ if ($code -ne 0) { ShowProcs; Verdict FAIL "update installer $From -> $New exit=
 $r = Reg
 Note "업데이트 뒤 DisplayVersion=$($r.DisplayVersion) InstallLocation=$($r.InstallLocation)"
 Files $Loc 'after'
-if ($r.DisplayVersion -ne $New) { Verdict FAIL "DisplayVersion=$($r.DisplayVersion) after updating to $New" }
+$soft = @() # 거짓 PASS 막기 자체 시험(EXPECT_FAIL)만: 버전 불일치를 모아 두고 다음 판정(다시 뜬 앱 ProductVersion)까지 거친다. 보통 실행은 종전처럼 첫 불일치에서 FAIL
+if ($r.DisplayVersion -ne $New) { $m = "DisplayVersion=$($r.DisplayVersion) after updating to $New"; if ($ExpectFail) { Note "(모음) $m"; $soft += $m } else { Verdict FAIL $m } }
 
 # 5) /R로 다시 뜬 앱 — 업데이트 뒤에 시작한 새 프로세스이고, 그 파일이 새 버전이어야 한다
 $p1 = WaitProc $t0 120
@@ -103,7 +108,8 @@ if (-not $p1) { Verdict FAIL "after updating to $New no $Exe started after the u
 $path1 = try { $p1.Path } catch { '' }
 $pv = if ($path1 -and (Test-Path $path1)) { (Get-Item $path1).VersionInfo.ProductVersion } else { '' }
 Note "다시 뜬 앱 pid=$($p1.Id) start=$($p1.StartTime.ToString('HH:mm:ss')) path=$path1 ProductVersion=$pv"
-if ((V3 $pv) -ne $New) { Verdict FAIL "relaunched $Exe is ProductVersion '$pv', expected $New — 화면 미확인" }
+if ((V3 $pv) -ne $New) { $m = "relaunched $Exe is ProductVersion '$pv', expected $New"; if ($ExpectFail) { Note "(모음) $m"; $soft += $m } else { Verdict FAIL "$m — 화면 미확인" } }
+if ($soft.Count) { Verdict FAIL "$($soft -join '; ') — 화면 미확인" }
 Start-Sleep 6
 if (-not (AppProcs | Where-Object { $_.Id -eq $p1.Id })) { Verdict FAIL "relaunched $Exe $New exited within seconds — 화면 미확인" }
 
