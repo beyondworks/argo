@@ -5,7 +5,7 @@
 # - 수동: gh workflow run update-path-gate.yml -f app=argo -f run_id=<실행 번호>
 # 러너 안에서만 github.com을 로컬 HTTPS 미러로 돌린다(scripts/update-gate/gate.sh). 아무것도 발행하지 않는다.
 # 범위: 맥 Apple Silicon·Intel(gate 잡)과 Windows x64(gate-windows 잡 — NSIS 설치기, scripts/update-gate/gate-windows.ps1, 2026-10-15 winpc 대신).
-# Windows는 세션 0이라 화면을 보지 않는다(판정 줄에 '화면 미확인'). 메신저 앱의 Windows는 아직 보지 않는다.
+# Windows는 세션 0이라 화면을 보지 않는다(판정 줄에 '화면 미확인'). 메신저 Windows는 gate-windows-messenger 잡(scripts/update-gate/gate-windows-messenger.ps1, 2026-10-15 — 0.1.62가 확인 없이 나갔다).
 name: Update path gate
 
 on:
@@ -37,7 +37,7 @@ on:
     types: [completed]
   # 관문 자체를 고친 PR — Windows 잡만 공개 릴리스 짝으로 스스로 시험한다(새 빌드 없이). 맥 잡은 이 이벤트에서 돌지 않는다.
   pull_request:
-    paths: ['.github/workflows/update-path-gate.yml', 'scripts/update-gate/gate-windows.ps1']
+    paths: ['.github/workflows/update-path-gate.yml', 'scripts/update-gate/gate-windows.ps1', 'scripts/update-gate/gate-windows-messenger.ps1']
 
 permissions:
   contents: read
@@ -132,6 +132,64 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: update-gate-argo-windows${{ strategy.job-index && format('-{0}', strategy.job-index) || '' }}
+          path: out/
+          if-no-files-found: warn
+          retention-days: 14
+
+  # 메신저 Windows x64(NSIS) — 본체 잡과 같은 순서(공개 Latest를 /S로 → 앱을 끄고 새 버전명 설치기를 /P /R /UPDATE /ARGS로). 메신저는 사이드카·3001이 없어
+  # /api/ping 대신 업데이트 뒤 새로 뜬 argo-messenger.exe와 그 파일의 ProductVersion·DisplayVersion·앱 데이터 표식을 본다(2026-10-15, 0.1.62가 확인 없이 공개됐다).
+  # PR(관문 자체 시험)은 공개 짝 둘 + 거짓 PASS 막기(옛 설치기를 새 버전 이름으로 — 버전 불일치 FAIL이어야 통과).
+  gate-windows-messenger:
+    if: >-
+      (github.event_name == 'pull_request') ||
+      ((inputs.app || (github.event.workflow_run.name == 'Build messenger app' && 'messenger' || 'argo')) == 'messenger' &&
+      (github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' &&
+      (github.event.workflow_run.head_branch == 'main' || startsWith(github.event.workflow_run.head_branch, 'messenger-v')))))
+    name: messenger-x86_64-pc-windows-msvc${{ matrix.pair && format(' ({0})', matrix.pair) || '' }}
+    runs-on: windows-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        pair: ${{ fromJSON(github.event_name == 'pull_request' && '["0.1.60>0.1.61","0.1.61>0.1.62","neg:0.1.60>0.1.61=0.1.62"]' || '[""]') }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/update-gate
+      - uses: actions/download-artifact@v4
+        if: github.event_name != 'pull_request'
+        with:
+          name: argo-messenger-x86_64-pc-windows-msvc
+          run-id: ${{ inputs.run_id || github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+          path: new
+      - name: Public messenger -> in-app update (NSIS /P /R /UPDATE) -> new build
+        shell: pwsh
+        env:
+          OUT: ${{ github.workspace }}/out
+          PAIR: ${{ matrix.pair }}
+          FROM_INPUT: ${{ inputs.from_version }}
+        run: |
+          if ($env:PAIR -like 'neg:*') {
+            # 거짓 PASS 막기: <from>><실제>=<이름> — 실제 버전 설치기를 새 버전 이름으로 바꿔 넣는다. 관문이 버전을 보지 않으면 PASS가 나와 이 칸이 실패한다
+            $m = [regex]::Match($env:PAIR, '^neg:([0-9.]+)>([0-9.]+)=([0-9.]+)$')
+            $env:FROM_VERSION = $m.Groups[1].Value; $real = $m.Groups[2].Value; $fake = $m.Groups[3].Value
+            $dir = Join-Path $env:RUNNER_TEMP 'neg'; New-Item -ItemType Directory -Force $dir | Out-Null
+            $env:NEW_SETUP = Join-Path $dir "argo-messenger_${fake}_x64-setup.exe"
+            Invoke-WebRequest "https://github.com/beyondworks/argo-messenger/releases/download/v$real/argo-messenger_${real}_x64-setup.exe" -OutFile $env:NEW_SETUP
+            $env:EXPECT_FAIL = '1'
+          } elseif ($env:PAIR) { $env:FROM_VERSION, $env:TO_VERSION = $env:PAIR -split '>' }
+          else {
+            $env:FROM_VERSION = $env:FROM_INPUT
+            $s = Get-ChildItem new -Filter 'argo-messenger_*_x64-setup.exe' | Select-Object -First 1 # 버전명 설치기(고정 이름 사본 argo-messenger-windows-setup.exe는 업데이터가 쓰지 않는다)
+            if ($s) { $env:NEW_SETUP = $s.FullName } else { Get-ChildItem new | Format-Table Name, Length | Out-String | Write-Host }
+          }
+          ./scripts/update-gate/gate-windows-messenger.ps1
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: update-gate-messenger-windows${{ strategy.job-index && format('-{0}', strategy.job-index) || '' }}
           path: out/
           if-no-files-found: warn
           retention-days: 14
