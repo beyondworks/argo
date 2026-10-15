@@ -535,7 +535,11 @@ test('[3차 ①] 설정 카드 연결 순서(새 행은 paused로 넣기 → act
   const up = asUserRaw(R, `update public.msgr_crews set status = 'active' where id = '${r1}'`);
   assert.equal(up.status, 0, '새 앱이 없어도 오류 없이(조용히 paused) — 라우트가 이유(app)를 보인다');
   assert.equal(statusOf(r1), 'paused', '파견 해제(available)로 남지 않는다');
-  assert.equal(reason(R).reason, 'app');
+  // 기기 심박이 아직 없고 행이 방금 생겼다 = 첫 심박 전(D3, 20261015180000) — 'off'(라우트·카드는 app과 같은 갈래). 낮은 버전 심박이 들어오면 옛 앱 판정 'app'
+  assert.equal(reason(R).reason, 'off');
+  beatV(R, 'r-dev', [r1], OLD);
+  assert.equal(reason(R).reason, 'app', '개발 빌드(최소 버전 미만)는 낮은 버전으로 심박한다 — 업데이트 안내');
+  sql(`delete from public.msgr_device_beats where device_id = 'r-dev'`);
   // 9cbc1f2e 경로로 이미 available로 남은 행(새 행을 available로 넣은 뒤 연결이 거절됨)
   const r2 = ins('r2', 'available');
   fails(asUserRaw(R, `update public.msgr_crews set status = 'active' where id = '${r2}'`), /msgr_app_update_required/, '새 앱 없이 연결');
@@ -702,4 +706,42 @@ test('[제보 12명] 종전 일괄 연결을 되풀이하면 5~8·9~12번만 번
   assert.equal(sql(`select count(*) from public.msgr_crews where owner_user_id = '${Z}' and status = 'available'`), '0', '고르지 않은 것은 멈춤 — 기억을 지우는 파견 해제가 아니다');
   sweep(Z);
   assert.equal(slugsOf(Z, 'active'), 'z01,z02,z07,z12', 'sweep이 선택을 뒤집지 않는다');
+});
+
+// 앱↔메신저 연결 감사 D3(2026-10-15): 첫 연결 직후 최신 앱인데도 이유가 'app'(옛 버전)이라 카드·메신저가 업데이트를 요구했다.
+// 새 앱 심박이 한 번도 없고 옛 앱 심박(버전 없는 기기 행)도 없는데 에이전트 행이 방금(10분 안) 생겼으면 'off'(앱이 아직 심박 전) — 업데이트 안내가 아니다.
+// 옛 앱 신호(버전 없는 기기 행)나 오래된 행이 있으면 지금처럼 'app'. 판정은 읽기만(쓰기 0).
+const pauseTx = (uid) => last(asUser(uid, `select (x.r->>'reason') || '|' || coalesce(txid_current_if_assigned()::text, 'none') from (select public.msgr_my_agent_pause() r offset 0) x`)).split('|');
+const freshRows = (uid, pre, n = 2) => { for (let i = 1; i <= n; i += 1) asUser(uid, `insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name, hosting, status, allow) values (null, '${uid}', '${WS}', '${pre}${i}', '${pre}${i}', 'local', 'active', 'owner')`); };
+
+test('[D3 첫 연결] 새 앱 심박 전(기기 행 없음·행이 방금 생김)은 off — 업데이트 안내가 아니다, 판정은 쓰기 0, 첫 새 앱 심박 뒤 연결', { skip }, () => {
+  const N = 'ad000003-0000-4000-8000-000000000001'; mkUser(N, 'd3new');
+  freshRows(N, 'n');
+  assert.equal(slugsOf(N, 'paused'), 'n1,n2', '심박 전 미러 insert는 paused(관문 그대로)');
+  const [why, tx] = pauseTx(N);
+  assert.equal(why, 'off', '최신 앱이 아직 첫 심박 전 — app(업데이트)이 아니다');
+  assert.equal(tx, 'none', '이유 판정은 읽기만');
+  assert.ok(beatV(N, 'mac-n', ids(N, 'paused')));
+  assert.equal(slugsOf(N, 'active'), 'n1,n2', '첫 새 앱 심박에서 재개(종전 그대로)');
+  assert.equal(reason(N).reason, null);
+});
+
+test('[D3 핀] 옛 앱 신호가 있으면 app 그대로 — 버전 없는 기기 심박(0.1.100~0.1.101), 오래된 행만 있고 심박 없음(0.1.99 이하·오래 꺼짐)', { skip }, () => {
+  const P = 'ad000003-0000-4000-8000-000000000002'; mkUser(P, 'd3old100');
+  freshRows(P, 'p');
+  beatOld(P, 'old-p', ids(P, 'paused'));
+  assert.equal(reason(P).reason, 'app', '버전 없는 기기 심박 = 옛 앱 — 행이 방금 생겼어도 업데이트 안내');
+  const O = 'ad000003-0000-4000-8000-000000000003'; mkUser(O, 'd3old99');
+  freshRows(O, 'o');
+  off(`update public.msgr_crews set created_at = now() - interval '11 minutes' where owner_user_id = '${O}'`);
+  assert.equal(reason(O).reason, 'app', '행이 10분 넘게 전에 생겼는데 새 앱 심박이 없다 = 옛 앱(0.1.99 이하 — 기기 심박 없음)');
+});
+
+test('[D3 경계] 가장 늦게 생긴 행이 10분 안이면 첫 심박 전(off) — 옛 앱 0.1.99 이하의 첫 연결은 업데이트 안내가 최대 10분 늦다(경우 표 3b)', { skip }, () => {
+  const O = 'ad000003-0000-4000-8000-000000000004'; mkUser(O, 'd3edge');
+  freshRows(O, 'e');
+  off(`update public.msgr_crews set created_at = now() - interval '9 minutes' where owner_user_id = '${O}'`);
+  assert.equal(reason(O).reason, 'off');
+  off(`update public.msgr_crews set created_at = now() - interval '11 minutes' where owner_user_id = '${O}'`);
+  assert.equal(reason(O).reason, 'app');
 });
