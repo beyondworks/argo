@@ -31,7 +31,7 @@ test('동의 전엔(또는 아직 모르면) 사이드바 채널·멤버·에이
     "{!isPersonal && !orgBlocked && <RailSection id={orgId ? 'channels' : 'start'}",
     '{railRoom.showDms && (<RailSection id="dms"',
     '{!isPersonal && !orgBlocked && org && members.length > 0 && (<RailSection id="people"',
-    '{(isPersonal ? railVisible.length > 0 : !orgBlocked && org)', // 개인 공간 에이전트(2026-09-30) — 조직 쪽은 그대로 동의 게이트가 막는다. 조직은 비어도 구역을 둔다(UXM-08)
+    '{railView.section && (<RailSection id="mine"', 'orgReady: !orgBlocked && !!org', // 구역 판정은 agents-empty.mjs railAgentsView(D7) — 조직 쪽은 그대로 동의 게이트가 막는다(orgReady). 조직은 비어도 구역을 둔다(UXM-08)
     '{sheet && crewOf(sheet) && !orgBlocked && !isPersonal && <CrewSheet',
     '{chSheet && channel && !orgBlocked && <ChannelSheet',
     'gated={orgBlocked}',

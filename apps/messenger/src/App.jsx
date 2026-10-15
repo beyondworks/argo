@@ -90,6 +90,7 @@ import { crewRowMenuKeys, crewOpeners, creatorTagVisible } from './crew-row-menu
 import { adminRemovedNotice, readAdminRemoved } from './dispatch-notice.mjs';
 import { crewAwayNotice } from './crew-dm-notice.mjs';
 import { crewListEmptyKey } from './crews-empty.mjs';
+import { railAgentsView, phoneAgentsEmpty } from './agents-empty.mjs'; // 개인 공간 0명이면 구역 + 계정 단서(D7, 2026-10-15)
 import { readAgentPause, agentPauseNote, readSwapNames, splitSpaceCrews, withPaused, pausedRoomCrew, pausedRoomNotice, readPausedCrewNames, crewNameAsker } from './agent-pause.mjs'; // 무료 계정 에이전트가 멈춘 이유(2026-10-11)
 import { slotState, slotKey, swapPreview, keepAgents, keepChoices, togglePick, pickReady, readMyPlan, FREE_AGENT_LIMIT } from './agent-pick.mjs'; // 무료 4명을 사용자가 고른다(2026-10-12)
 import { runnerOptions, RUNNER_INSTALL } from './runner-sheet.mjs';
@@ -2751,6 +2752,8 @@ function Shell({ session }) {
   const railCompany = sortCrews(crews.filter((c) => c.owner_user_id !== uid && crewTier(c, org) === 'company')); // 다른 멤버의 에이전트는 레일에 두지 않는다 — 외부(VPS) 봇 포함(유건 2026-09-16 "다른 멤버의 에이전트는 안 보이게", 2026-09-24 "VPS 에이전트도 Argo 에이전트처럼").
   // 조직 명부에는 그대로 있다 — 목록에서 빼는 것은 화면 규칙이고, 지시는 서버가 허용 범위로 막는다. 회사 크루만 남는다.
   const railVisible = crews.filter((c) => c.owner_user_id === uid || crewTier(c, org) === 'company');
+  const ownAgentsEmpty = !!ownCrews && !ownCrews.rows.some((r) => r.status === 'active'); // 내 에이전트 행 전체를 읽었고 연결된 것이 없다(D7 계정 단서의 근거 — 읽지 못했으면 false)
+  const railView = railAgentsView({ isPersonal, orgReady: !orgBlocked && !!org, shown: railVisible.length, available: myAvailable.length, paused: isPersonal ? pausedCrews.filter((c) => c.owner_user_id === uid).length + (agentPause?.paused > 0 ? 1 : 0) : 0, ownEmpty: ownAgentsEmpty, email: session.user.email ?? null }); // 개인 공간 0명이면 구역 + 계정 단서(D7). 조직 공간·에이전트 있음·멈춤만 있음은 종전
   const openers = crewOpeners({ isPersonal, openSheet: setSheet, openDm: dmWithCrew }); // 개인 공간은 에이전트 시트를 그리지 않는다 — 메시지의 에이전트 버튼 없음, 검색 결과는 1:1로
   const orgJoinForms = (phone = false) => (<>{/* 조직 메뉴의 '초대 코드로 참여'·'조직 만들기' — 데스크톱 조직 창과 폰 채널 탭 조직 메뉴·빈 화면이 같은 폼 */}
               {joinCode === null
@@ -3006,7 +3009,7 @@ function Shell({ session }) {
           </div>}
           {agentSecs.map((sec) => (<div key={sec.key}><div className="ph-sechead">{t(sec.key === 'fav' ? 'phone.agents.fav' : `phone.agents.${sec.key}`)}</div><div className="msgr-list ph-agents">{sec.list.map(agentRow)}</div></div>))}
           {myAgents === null && <div className="msgr-hint ph-empty" role="status">{t('ui.loading')}</div>}
-          {myAgents !== null && !agentGroups.length && !tabQText.trim() && <div className="msgr-hint ph-empty">{t('phone.agents.none')}<div className="ph-emptyacts"><RunnerButton primary /></div></div>}
+          {myAgents !== null && !agentGroups.length && !tabQText.trim() && (() => { const e = phoneAgentsEmpty({ paused: agentPause?.paused > 0 ? 1 : 0, ownEmpty: ownAgentsEmpty, email: session.user.email ?? null }); return <div className="msgr-hint ph-empty">{t(e.key, e.vars)}<div className="ph-emptyacts"><RunnerButton primary /></div></div>; })()}
           {myAgents !== null && agentGroups.length > 0 && agentFilter !== 'all' && !agentSecs.length && !tabQText.trim() && <div className="msgr-hint ph-empty">{t(`phone.agents.empty.${agentFilter}`)}</div>}
           {searchFoot(agentSecs.length > 0)}
         </>)}
@@ -3110,11 +3113,11 @@ function Shell({ session }) {
               </button>))}
           </div>
         </RailSection>)}
-        {!isPhone && pauseNote && !(isPersonal ? railVisible.length > 0 : !orgBlocked && org) && pauseNoteEl}{/* 무료 계정 — 내 에이전트 구역이 숨을 때(개인 공간에 연결된 에이전트 0)만 구역 밖에. 구역이 있으면 그 안 맨 위(검수 #945 LOW-4) */}
-        {(isPersonal ? railVisible.length > 0 : !orgBlocked && org) && (<RailSection id="mine" label={`${t('rail.agents')} · ${railVisible.length}`} right={<span className="right">{railVisible.length > 0 && <span className="msgr-sortwrap msgr-railsort"><button type="button" className={`msgr-sortbtn${sortMenu ? ' on' : ''}`} onClick={() => setSortMenu((v) => !v)} title={t('rail.sort')} aria-label={t('rail.sort')} aria-haspopup="menu" aria-expanded={sortMenu}><I name="sort" size={14} /></button>{sortMenu && <div className="msgr-rowmenu" role="menu" onMouseLeave={() => setSortMenu(false)}>{['name', 'added', 'custom'].map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={railSort === v} onClick={() => { pickSort(v); setSortMenu(false); }}>{railSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`rail.sort.${v}`)}</button>)}</div>}</span>}{myAvailable.length > 0 && <span className="msgr-klabel">{myCrews.length}/{myCrews.length + myAvailable.length}</span>}</span>}>
+        {!isPhone && pauseNote && !railView.section && pauseNoteEl}{/* 무료 계정 — 내 에이전트 구역이 숨을 때(개인 공간에 연결된 에이전트 0)만 구역 밖에. 구역이 있으면 그 안 맨 위(검수 #945 LOW-4) */}
+        {railView.section && (<RailSection id="mine" label={`${t('rail.agents')} · ${railVisible.length}`} right={<span className="right">{railVisible.length > 0 && <span className="msgr-sortwrap msgr-railsort"><button type="button" className={`msgr-sortbtn${sortMenu ? ' on' : ''}`} onClick={() => setSortMenu((v) => !v)} title={t('rail.sort')} aria-label={t('rail.sort')} aria-haspopup="menu" aria-expanded={sortMenu}><I name="sort" size={14} /></button>{sortMenu && <div className="msgr-rowmenu" role="menu" onMouseLeave={() => setSortMenu(false)}>{['name', 'added', 'custom'].map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={railSort === v} onClick={() => { pickSort(v); setSortMenu(false); }}>{railSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`rail.sort.${v}`)}</button>)}</div>}</span>}{myAvailable.length > 0 && <span className="msgr-klabel">{myCrews.length}/{myCrews.length + myAvailable.length}</span>}</span>}>
           <div className="msgr-list mine">
             {!isPhone && pauseNote && pauseNoteEl}
-            {!isPersonal && !myAvailable.length && !railVisible.length && <p className="msgr-rail-empty">{t('phone.agents.none')} <RunnerButton /></p>}{/* 비어도 구역과 연결 단추를 둔다 — 통째로 사라져 에이전트를 붙일 곳이 안 보였다(UXM-08) */}
+            {railView.hint && <p className="msgr-rail-empty">{t(railView.hint.key, railView.hint.vars)} <RunnerButton /></p>}{/* 비어도 구역과 연결 단추를 둔다 — 통째로 사라져 에이전트를 붙일 곳이 안 보였다(UXM-08) */}
             {/* 묶음마다 접었다 편다(유건 2026-09-16) — 조직의 다른 에이전트는 한 절에서(유건 제보 2026-09-12: 절이 둘로 중복) */}
             {[['mine.argo', 'rail.agents.mine', railArgo], ['mine.ext', 'rail.src.custom', railExt], ['mine.company', 'rail.agents.company', railCompany]]
               .map(([id, k, list]) => list.length > 0 && <RailFold key={id} id={id} label={t(k)} count={list.length}>{list.map(railRow)}</RailFold>)}

@@ -1508,6 +1508,8 @@ export const DICT = {
   'phone.agents.mine': ['내 에이전트', 'My agents'],
   'phone.agents.ext': ['외부 에이전트', 'External agents'],
   'phone.agents.none': ['아직 연결된 에이전트가 없어요.', 'No agents connected yet.'],
+  'agents.none.account': ['실행기에 이 계정({email})으로 로그인하면 내 에이전트가 여기 나타나요.', 'Sign in to your runner with this account ({email}) and your agents will show up here.'], // D7(2026-10-15) — 메신저와 실행기 계정이 다르면 개인 공간이 비어 단서가 없었다. 다른 앱 설치를 전제하지 않는다('실행기' — runner-sheet 시험)
+  'agents.none.account.noemail': ['실행기에 이 메신저와 같은 계정으로 로그인하면 내 에이전트가 여기 나타나요.', 'Sign in to your runner with the same account as this messenger and your agents will show up here.'],
   'phone.agent.working': ['일하는 중', 'Working'],
   'phone.agent.idle': ['쉬는 중', 'Idle'],
   'phone.agent.relink': ['연결 끊김', 'Unlinked'], // 상태 말 — 데스크톱 줄 배지(rail.relink)와 같게(화면 검수 UL6)

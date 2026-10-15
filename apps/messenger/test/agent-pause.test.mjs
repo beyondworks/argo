@@ -56,7 +56,7 @@ test('⑤ 화면 두 자리 — 폰 에이전트 탭(목록 위)·데스크톱 �
   assert.match(app, /\{pauseNote && !tabQText\.trim\(\) && <div className="msgr-hint ph-pausenote" role="status">\{t\(pauseNote\.key, pauseNote\.vars\)\}\{pauseNote\.key !== 'agents\.pause\.limit' && <div className="ph-emptyacts"><RunnerButton \/><\/div>\}<\/div>\}/, '폰: 업데이트·꺼짐이면 실행기 연결 단추');
   assert.match(app, /const pauseNoteEl = pauseNote && <div className="msgr-rail-empty msgr-pausenote" role="status">\{t\(pauseNote\.key, pauseNote\.vars\)\}\{pauseNote\.key !== 'agents\.pause\.limit' && <div><RunnerButton \/><\/div>\}<\/div>;/, '데스크톱 레일 안내');
   assert.match(app, /<div className="msgr-list mine">\n\s+\{!isPhone && pauseNote && pauseNoteEl\}/, '내 에이전트 구역 안 맨 위(검수 #945 LOW-4)');
-  assert.match(app, /\{!isPhone && pauseNote && !\(isPersonal \? railVisible\.length > 0 : !orgBlocked && org\) && pauseNoteEl\}/, '구역이 숨을 때만 밖');
+  assert.match(app, /\{!isPhone && pauseNote && !railView\.section && pauseNoteEl\}/, '구역이 숨을 때만 밖'); // 구역 판정은 agents-empty.mjs railAgentsView(D7) — 개인 공간 멈춤만 있음은 종전처럼 구역 없음
   assert.equal((app.match(/readAgentPause\(supabase\)/g) ?? []).length, 5, '주기 호출 없음 — 로그인·재연결, 폰 에이전트 탭, 교체가 일어난 직후(서버 자동 교체·사용자 선택 교체), 멈춘 에이전트의 crew_sync(다시 연결됨 방송) 다섯 곳만(2026-10-15)');
   assert.match(app, /readAgentPause\(supabase\)\.then\(\(v\) => \{ if \(live\) setAgentPause\(v\); \}\); return \(\) => \{ live = false; \}; \}, \[uid, syncEpoch\]\);/);
 });

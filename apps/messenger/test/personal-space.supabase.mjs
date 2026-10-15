@@ -56,6 +56,14 @@ if (agentPause === 'app' || agentPause === 'off') {
   state.tables.msgr_crews = state.tables.msgr_crews.filter((c) => c.owner_user_id !== uid);
   state.tables.msgr_personal_room_crews = state.tables.msgr_personal_room_crews.filter((c) => c.owner_user_id !== uid || c.hosting === 'bot');
 }
+// 메신저 계정이 실행기와 달라 내 에이전트가 0명인 상태(D7, 2026-10-15 — 링크 감사 2-1). ?noAgents=1 = 내 에이전트(조직·개인·봇 쌍둥이) 0명,
+// ?noOrg=1 = 조직도 없는 계정("아직 조직이 없습니다"). 없으면 기존 시나리오 그대로.
+const qs = new URLSearchParams(location.search);
+if (qs.has('noAgents')) {
+  state.tables.msgr_crews = state.tables.msgr_crews.filter((c) => c.owner_user_id !== uid);
+  state.tables.msgr_personal_room_crews = state.tables.msgr_personal_room_crews.filter((c) => c.owner_user_id !== uid);
+}
+if (qs.has('noOrg')) { state.tables.msgr_org_members = state.tables.msgr_org_members.filter((m) => m.user_id !== uid && m.org_id !== org); state.tables.msgr_channels = []; }
 const pauseInfo = agentPause ? { paused: agentPause === 'limit' ? 3 : 7, active: agentPause === 'limit' ? 4 : 0, limit: 4, reason: agentPause } : { paused: 0, active: 1, limit: 4, reason: null };
 
 function result(call, action) {

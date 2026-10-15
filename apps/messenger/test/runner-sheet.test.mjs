@@ -35,9 +35,9 @@ test("'Argo 앱'이 남는 문구는 정말 데스크톱 GUI에서만 되는 일
 });
 
 test("에이전트가 없거나 실행기가 꺼졌다는 안내는 '실행기'라는 말을 쓴다", () => {
-  for (const k of ['crew.dm.away.mine', 'ch.crews.none.personal', 'phone.agents.none', 'ch.add.crew.none']) {
+  for (const k of ['crew.dm.away.mine', 'ch.crews.none.personal', 'phone.agents.none', 'ch.add.crew.none', 'agents.none.account', 'agents.none.account.noemail']) {
     const e = entries.find((x) => x.key === k); assert.ok(e, k);
-    if (k === 'crew.dm.away.mine') assert.match(e.body, /실행기.*runner/);
+    if (k === 'crew.dm.away.mine' || k.startsWith('agents.none.account')) assert.match(e.body, /실행기.*runner/); // D7 계정 단서도 '실행기'(다른 앱 설치 전제 없음)
     else assert.match(e.body, /에이전트가 없어요/);
   }
 });
