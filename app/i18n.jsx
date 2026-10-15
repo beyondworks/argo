@@ -964,6 +964,7 @@ const DICT = {
   'settings.msgr.paused': ['멈춤', 'Paused'],
   'settings.msgr.paused.limit': ['멈춤 · 무료 4명 한도', 'Paused · Free plan limit of 4'],
   'settings.msgr.paused.app': ['멈춤 · 무료 계정 최신 앱 필요', 'Paused · Free plan needs the latest app'],
+  'settings.msgr.paused.soon': ['멈춤 · 곧 연결됩니다', 'Paused · Connecting in a moment'], // 이 기기(최신 앱)가 응답 중인데 첫 심박 전(D3, msgr-card.mjs pauseSoon)
   'settings.msgr.paused.room': ['멈춤 · 지금 연결할 수 있어요', 'Paused · You can connect it now'],
   // 개인 공간만 쓰는 사용자의 연결 줄·교체 미리 알림(검수 스택 화면 4차, 2026-10-11)
   'settings.msgr.personal.title': ['개인 공간 연결', 'Personal space connection'],

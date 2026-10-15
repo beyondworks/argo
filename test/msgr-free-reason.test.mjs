@@ -80,12 +80,12 @@ test('⑦ 화면 검수 B(10/11) — 연결 카드의 멈춘 행은 "파견 해�
   assert.match(sw.ko, /멈췄어요/); assert.doesNotMatch(sw.ko, /쉬/, '교체 안내는 대기 표시(쉬는 중)와 겹치지 않는 말'); assert.match(sw.en, /paused/);
   assert.doesNotMatch(API_MSG.msgr_free_agent_limit.ko, /쉬/);
   const page = readFileSync(new URL('../app/c/[ws]/settings/page.jsx', import.meta.url), 'utf8');
-  assert.match(page, /row\?\.status === 'paused' \? t\(pausedLabelKey\(st\?\.pauseReason\)\)/, '카드 줄: 멈춘 행이면 멈춤 문구');
+  assert.match(page, /row\?\.status === 'paused' \? t\(pausedLabelKey\(st\?\.pauseReason, \{ soon: view\.soon \}\)\)/, '카드 줄: 멈춘 행이면 멈춤 문구(D3 — 이 기기가 응답 중이면 곧 연결)');
   const act = page.slice(page.indexOf('async function connectAgents('), page.indexOf('finally { setActivating(false); }', page.indexOf('async function connectAgents(')));
   assert.match(act.slice(act.indexOf('catch (e)')), /load\(\)/, '연결이 거절돼도 다시 읽는다 — 행은 멈춤으로 들어갔으니 "메신저에 아직 없음"으로 남지 않게(분리 검수 3차 화면 확인)');
   const route = readFileSync(new URL('../app/api/companies/[ws]/msgr/route.js', import.meta.url), 'utf8');
   const get = route.slice(route.indexOf('export async function GET'), route.indexOf('export async function POST'));
-  assert.match(get, /\[\.\.\.crews, \.\.\.personal\]\.some\(\(r\) => r\.status === 'paused'\) \? \(await readAgentPause\(c\.client\)\.catch\(\(\) => null\)\)\?\.reason \?\? null : null/, '이유 읽기는 멈춘 행(조직·개인)이 있을 때만(8초 폴에 호출을 늘리지 않게)');
+  assert.match(get, /\[\.\.\.crews, \.\.\.personal\]\.some\(\(r\) => r\.status === 'paused'\) \? await readAgentPause\(c\.client\)\.catch\(\(\) => null\) : null/, '이유 읽기는 멈춘 행(조직·개인)이 있을 때만(8초 폴에 호출을 늘리지 않게)');
 });
 
 test('⑧ 검수 스택 화면 4차 — 개인 공간 연결(조직 없음)·교체 미리 알림: 라우트는 개인 행을 넣지 않고 멈춤·해제 행만 연결, 미리 알림은 서버 RPC, 카드는 미리 알림 뒤 확인을 받고 연결', () => {
@@ -108,4 +108,29 @@ test('⑧ 검수 스택 화면 4차 — 개인 공간 연결(조직 없음)·교
   const dict = readFileSync(new URL('../app/i18n.jsx', import.meta.url), 'utf8');
   for (const k of ['settings.msgr.swap.confirm', 'settings.msgr.swap.go', 'settings.msgr.personal.title', 'settings.msgr.personal.status', 'settings.msgr.personal.rosterHelp', 'settings.msgr.personal.count'])
     assert.match(dict, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
+});
+
+// 앱↔메신저 연결 감사 D3(2026-10-15): 이 기기(최신 앱)가 정상 응답 중인데 첫 심박 전이라 서버 이유가 app·off면 카드가 "최신 앱 필요"를 보였다.
+// 이 기기가 응답 중(runtime alive)이고 이 앱이 서버 최소 버전 이상(pauseAppOk)이면 "곧 연결됩니다" — 그동안 8초 폴로 풀리는 순간을 본다.
+test('⑨ D3 — 이 기기가 응답 중인 최신 앱이면 app·off 이유를 "곧 연결"로, 그 밖(응답 없음·개발 빌드·limit·room)은 종전 문구', async () => {
+  const { pauseSoon, msgrCardView } = await import('../app/c/[ws]/settings/msgr-card.mjs');
+  const st = (over = {}) => ({ signedIn: true, crews: [{ org_id: 'o', slug: 'a', status: 'paused' }], pauseReason: 'app', pauseAppOk: true, runtime: { state: 'alive' }, ...over });
+  for (const r of ['app', 'off']) {
+    assert.equal(pauseSoon(st({ pauseReason: r })), true, r);
+    assert.equal(pausedLabelKey(r, { soon: true }), 'settings.msgr.paused.soon');
+  }
+  assert.equal(pauseSoon(st({ runtime: { state: 'offline' } })), false, '이 기기 브리지가 응답하지 않으면 종전(최신 앱 필요)');
+  assert.equal(pauseSoon(st({ runtime: null })), false);
+  assert.equal(pauseSoon(st({ pauseAppOk: false })), false, '개발 빌드(최소 버전 미만)는 곧 연결된다고 말하지 않는다');
+  assert.equal(pauseSoon(st({ pauseAppOk: undefined })), false, '옛 응답(값 없음)');
+  for (const r of ['limit', 'room', null]) { assert.equal(pauseSoon(st({ pauseReason: r })), false, String(r)); }
+  assert.equal(pausedLabelKey('limit', { soon: true }), 'settings.msgr.paused.limit', 'limit·room은 soon이어도 종전');
+  assert.equal(pausedLabelKey('room', { soon: true }), 'settings.msgr.paused.room');
+  assert.equal(pausedLabelKey('app', { soon: false }), 'settings.msgr.paused.app');
+  assert.equal(msgrCardView({ st: st(), orgId: 'o', agents: [{ slug: 'a' }] }).polling, true, '곧 연결 상태는 8초 폴(풀리는 순간을 본다)');
+  assert.equal(msgrCardView({ st: st({ runtime: { state: 'offline' } }), orgId: 'o', agents: [{ slug: 'a' }] }).polling, false, '멈춘 행만 + 곧 연결 아님 = 폴 없음(종전)');
+  assert.equal(msgrCardView({ st: st(), orgId: 'o', agents: [{ slug: 'a' }] }).soon, true);
+  const dict = readFileSync(new URL('../app/i18n.jsx', import.meta.url), 'utf8');
+  const m = dict.match(/'settings\.msgr\.paused\.soon': \['([^']*)', '([^']*)'\]/);
+  assert.ok(m, '사전 등록(ko·en)'); assert.match(m[1], /곧 연결/); assert.match(m[2], /moment|shortly|soon/i);
 });

@@ -23,20 +23,29 @@ export function msgrCardView({ st, orgId = '', agents = [] } = {}) {
   const crews = Array.isArray(st?.crews) ? st.crews : [];
   const regCount = agents.filter((a) => crews.some((r) => r.org_id === orgId && r.slug === a.slug && r.status === 'active')).length;
   const personalCount = st?.personalCount ?? 0;
+  const soon = pauseSoon(st);
   return {
-    regCount, personalCount,
+    regCount, personalCount, soon,
     chip: msgrConnectionChip({ regCount, personalCount }),
     showRuntime: msgrShowRuntime({ signedIn: st?.signedIn, agentCount: agents.length }),
-    polling: !!st?.signedIn && crews.some((r) => r.status === 'active'),
+    // 곧 연결 상태(D3)도 폴한다 — 첫 심박으로 풀리는 순간(보통 몇 초)을 카드가 본다. 풀리면 active 행이 생겨 종전 폴로 이어진다(같은 8초 주기)
+    polling: !!st?.signedIn && (crews.some((r) => r.status === 'active') || soon),
   };
+}
+
+/** 이 기기가 곧 연결되는 중인가(앱↔메신저 연결 감사 D3, 2026-10-15) — 무료 계정 첫 연결은 첫 기기 심박 전이라 서버 이유가 app·off인데, 이 앱이 바로 그 최신 앱이다.
+    이 회사 브리지가 응답 중(runtime alive)이고 이 앱이 서버 최소 버전 이상(GET pauseAppOk)이면 참 — 업데이트 안내 대신 "곧 연결됩니다".
+    개발 빌드(최소 버전 미만)·브리지 응답 없음·옛 응답(pauseAppOk 없음)·limit·room은 거짓(종전 문구). */
+export function pauseSoon(st) {
+  return !!st?.signedIn && st?.pauseAppOk === true && st?.runtime?.state === 'alive' && (st?.pauseReason === 'app' || st?.pauseReason === 'off');
 }
 
 /** 무료 계정 한도로 서버가 멈춘 행(status paused)의 줄 문구 — 사람이 해제한 '파견 해제됨'과 구별한다(화면 검수 B, 2026-10-11).
     reason = GET 응답 pauseReason(서버 msgr_my_agent_pause의 이유): limit 4명 한도 · app/off 최신 앱이 켜져 있지 않음 · room 새 앱 켜짐 + 자리 남음(지금 연결할 수 있음)
-    · 그 밖(모름·Pro로 바뀌는 중) 멈춤만 */
-export function pausedLabelKey(reason) {
+    · 그 밖(모름·Pro로 바뀌는 중) 멈춤만. soon = pauseSoon(st) — 이 기기(최신 앱)가 응답 중이면 app·off를 "곧 연결됩니다"로(D3) */
+export function pausedLabelKey(reason, { soon = false } = {}) {
   if (reason === 'limit') return 'settings.msgr.paused.limit';
-  if (reason === 'app' || reason === 'off') return 'settings.msgr.paused.app';
+  if (reason === 'app' || reason === 'off') return soon ? 'settings.msgr.paused.soon' : 'settings.msgr.paused.app';
   if (reason === 'room') return 'settings.msgr.paused.room';
   return 'settings.msgr.paused';
 }
@@ -50,7 +59,7 @@ export function personalCardView({ st, agents = [] } = {}) {
   const rows = agents.map((a) => {
     const row = rowsAll.find((r) => r.slug === a.slug) ?? null;
     const labelKey = !row ? 'settings.msgr.notInMessenger' : row.status === 'active' ? 'settings.msgr.connection.personal'
-      : row.status === 'paused' ? pausedLabelKey(st?.pauseReason) : 'settings.msgr.notRegistered';
+      : row.status === 'paused' ? pausedLabelKey(st?.pauseReason, { soon: pauseSoon(st) }) : 'settings.msgr.notRegistered';
     return { slug: a.slug, row, labelKey };
   });
   const missing = rows.filter((r) => r.row?.status === 'paused').map((r) => r.slug);

@@ -1176,7 +1176,7 @@ function MsgrCard({ ws, agents }) {
               <span className="chip">{t('settings.msgr.count', { n: regCount, total: agents.length })}</span>
             </div>
             <ul className="msgr-crews" role="list">
-              {agents.map((a) => { const reg = regOf(a.slug); const row = rowOf(a.slug); const off = row?.status === 'paused' ? t(pausedLabelKey(st?.pauseReason)) : t(row ? 'settings.msgr.notRegistered' : 'settings.msgr.notInMessenger'); /* 멈춤(무료 한도)은 해제와 다르게(화면 검수 B) */ return (
+              {agents.map((a) => { const reg = regOf(a.slug); const row = rowOf(a.slug); const off = row?.status === 'paused' ? t(pausedLabelKey(st?.pauseReason, { soon: view.soon })) : t(row ? 'settings.msgr.notRegistered' : 'settings.msgr.notInMessenger'); /* 멈춤(무료 한도)은 해제와 다르게(화면 검수 B) */ return (
                 <li key={a.slug} className={`msgr-crew${reg ? ' on' : ''}`}>
                   <div className="row">
                     <Avatar name={a.name} sm />

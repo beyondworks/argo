@@ -109,10 +109,12 @@ export async function GET(_req, { params }) {
   try {
     const [orgs, { crews, personalCount, personal }, gateway] = await Promise.all([myOrgs(c), myCardRows(c, ws), msgrGatewayStatus(ws)]);
     // 멈춘 행(무료 계정 한도)의 이유 — 카드 줄 문구(msgr-card.mjs pausedLabelKey). 멈춘 행이 있을 때만 읽는다(카드의 8초 폴에 호출을 늘리지 않게, 화면 검수 B)
-    const pauseReason = [...crews, ...personal].some((r) => r.status === 'paused') ? (await readAgentPause(c.client).catch(() => null))?.reason ?? null : null;
+    const pause = [...crews, ...personal].some((r) => r.status === 'paused') ? await readAgentPause(c.client).catch(() => null) : null;
+    const pauseReason = pause?.reason ?? null;
+    const pauseAppOk = pause ? appMeetsMin(pause.min_app) : undefined; // 이 앱이 무료 최소 버전 이상인가 — 카드가 app·off를 "곧 연결"로 읽을지(D3, msgr-card.mjs pauseSoon). 같은 응답에서 — 호출 추가 0
     // 내 행이 하나도 없으면 왜 없는지 — 회사 파일 읽기 + (조직이 없을 때) 메신저 프로필 조회 1건. 행이 있으면 0건(카드 8초 폴은 행이 있을 때만 돈다)
     const setup = await setupFacts({ rows: [...crews, ...personal], orgCount: orgs.length, company: await loadCompany(ws).catch(() => null), uid: c.uid, hasProfile: () => c.db.hasMsgrProfile(c.uid) });
-    return Response.json({ signedIn: true, uid: c.uid, email: c.email ?? '', orgs, crews, personalCount, personal, pauseReason, setup, runtime: runtimeState(gateway) });
+    return Response.json({ signedIn: true, uid: c.uid, email: c.email ?? '', orgs, crews, personalCount, personal, pauseReason, pauseAppOk, setup, runtime: runtimeState(gateway) });
   } catch (e) { return upstream('GET', e, await requestLang()); }
 }
 
