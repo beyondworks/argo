@@ -109,9 +109,10 @@ test('1. 두 프로세스 — 러너 없는 A가 먼저 집어도 실행권을 �
 
   assert.equal(await A(jobA), DEFER, '러너 없는 A는 실행권을 잡지 않고 미룬다');
   assert.deepEqual(srv.callsOf('A'), [], '양보 중에는 DB를 부르지 않는다');
-  assert.equal(aSessions, 0, '기기 세션도 열지 않는다');
+  assert.equal(aSessions, 1, '넘겨받을 다른 기기가 있나 한 번만 묻는다(D5 — 이 가짜 DB엔 판정 함수가 없어 모름 → 종전 양보)');
   clock += 3_000;
   assert.equal(await A(jobA), DEFER, '기한 안의 다음 집기도 미룬다');
+  assert.equal(aSessions, 1, '같은 글은 다시 묻지 않는다 — 3초 재시도마다 세션을 열지 않는다');
   await B(jobB);
   assert.equal(bTurns, 1, '러너 있는 B가 실행한다');
   clock += YIELD_GRACE_MS;
@@ -892,4 +893,70 @@ test('D6-3. 방 문구 표 — 주인 요청의 원인별(러너 없음·멈춤)
     assert.equal(own(e, 'ko'), roomTurnFailureFor(e, 'ko'), `일반 문구 그대로: ${JSON.stringify(e)}`);
   }
   assert.equal(roomTurnFailureFor({ noRunner: true }, 'ko'), '에이전트가 지금 답하지 못했습니다. 주인이 Argo 활동에서 원인을 확인할 수 있습니다.', '주인 원인을 넘기지 않으면(남의 요청) 종전');
+});
+
+// 앱↔메신저 연결 감사 D5(2026-10-15, 재현 1-8): 러너 없는 기기는 넘겨받을 다른 기기가 없어도 첫 멘션을 160초(YIELD_GRACE_MS) 양보했다 — 기기 1대면 실패 안내까지 2분 40초.
+// 고친 뒤: 양보하려는 그 글에서만 서버에 한 번 묻는다(msgr_runner_peer_alive — 무료 계정이면 '내 다른 기기의 기기 심박이 무료 정책 창(30분) 안', Pro·판정 불가면 늘 있음).
+// '없음'이면 양보하지 않고 바로 처리(실패 안내 — D6 문구). '있음'·오류·옛 서버(함수 없음)면 종전 160초. 글마다 1회(drain·핸들러가 같은 결과를 쓴다), 주기 호출 0.
+const peerServer = (msgs, verdict) => { const srv = inboxServer(msgs); srv.peerCalls = []; const base = srv.forProc;
+  srv.forProc = (who) => Object.assign(base(who), { async runnerPeerAlive(device) { srv.peerCalls.push([who, device]); if (verdict instanceof Error) throw verdict; return verdict; } });
+  return srv; };
+
+test('D5-1. 넘겨받을 다른 기기가 없으면(서버 판정 없음) 양보하지 않는다 — drain이 바로 적재, 핸들러가 바로 실패 안내, 서버 판정은 글당 1회', async () => {
+  const ws = await seed('d5-solo');
+  let clock = Date.now(); const now = () => clock;
+  const srv = peerServer([inboxMsg(11, clock)], false);
+  const enq = collector();
+  await drainAs(ws, srv, 'A', enq, now);
+  assert.deepEqual(enq.jobs.map((j) => j.msgId), [11], '기다리지 않고 적재');
+  assert.equal(srv.cursor, 11);
+  const A = M.makeMsgrHandler(ws, { session: async () => ({ db: srv.forProc('A'), uid: OWNER }), now, linkPreview: noPreview });
+  assert.notEqual(await A(enq.jobs[0]), DEFER, '핸들러도 양보하지 않는다');
+  const [r] = srv.messages.filter((m) => m.client_msg_id === `reply:${CREW}:11`);
+  assert.equal(r?.meta?.failed, true);
+  assert.match(r.body, /연결된 AI가 없어/, '주인 요청 — D6 원인 문구');
+  assert.equal(srv.peerCalls.length, 1, '서버 판정은 글당 한 번(drain과 핸들러가 같은 결과)');
+  assert.equal(typeof srv.peerCalls[0][1], 'string', '이 기기 id를 넘긴다(자기 심박은 다른 기기로 세지 않게)');
+});
+
+test('D5-2. 인접 핀 — 다른 기기가 있으면(서버 판정 있음) 종전대로 160초 양보, 판정은 글당 1회(drain을 여러 번 돌아도)', async () => {
+  const ws = await seed('d5-peer');
+  let clock = Date.now(); const now = () => clock; const born = clock;
+  const srv = peerServer([inboxMsg(11, born)], true);
+  const enq = collector();
+  await drainAs(ws, srv, 'A', enq, now);
+  clock = born + YIELD_GRACE_MS - 1000; await drainAs(ws, srv, 'A', enq, now);
+  assert.equal(enq.jobs.length, 0); assert.equal(srv.cursor, 10);
+  assert.equal(srv.peerCalls.length, 1);
+  clock = born + YIELD_GRACE_MS + 1; await drainAs(ws, srv, 'A', enq, now);
+  assert.deepEqual(enq.jobs.map((j) => j.msgId), [11], '기한 뒤 종전대로');
+});
+
+test('D5-3. 인접 핀 — 서버 판정 오류·옛 서버(함수 없음 = null)면 종전 160초 양보(배포본보다 나빠지지 않는다)', async () => {
+  for (const [name, verdict] of [['d5-err', new Error('msgr db: timeout')], ['d5-old', null]]) {
+    const ws = await seed(name);
+    let clock = Date.now(); const now = () => clock;
+    const srv = peerServer([inboxMsg(11, clock)], verdict);
+    const enq = collector();
+    await drainAs(ws, srv, 'A', enq, now);
+    assert.equal(enq.jobs.length, 0, `${name}: 양보`);
+    const A = M.makeMsgrHandler(ws, { session: async () => ({ db: srv.forProc('A'), uid: OWNER }), now, linkPreview: noPreview });
+    assert.equal(await A(jobAt(clock)), DEFER, `${name}: 핸들러도 양보`);
+  }
+});
+
+test('D5-4. 큐에 이미 있던 잡(drain을 거치지 않음)도 핸들러가 한 번 묻고, 다른 기기가 없으면 바로 처리 — 러너가 있으면 묻지 않는다', async () => {
+  const ws = await seed('d5-handler');
+  let clock = Date.now(); const now = () => clock;
+  const srv = peerServer([], false);
+  const A = M.makeMsgrHandler(ws, { session: async () => ({ db: srv.forProc('A'), uid: OWNER }), now, linkPreview: noPreview });
+  const job = jobAt(clock);
+  assert.notEqual(await A(job), DEFER);
+  assert.equal(replyOf(srv, job)[0]?.meta?.failed, true);
+  assert.equal(srv.peerCalls.length, 1);
+  const ws2 = await seed('d5-has-runner', { cred: true });
+  const srv2 = peerServer([], false);
+  const B = M.makeMsgrHandler(ws2, { session: async () => ({ db: srv2.forProc('B'), uid: OWNER }), now, linkPreview: noPreview, runChat: okTurn('답') });
+  await B(jobAt(clock));
+  assert.equal(srv2.peerCalls.length, 0, '러너가 있으면 서버 판정을 부르지 않는다');
 });

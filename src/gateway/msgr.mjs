@@ -143,7 +143,7 @@ export async function crewMemoryForMail(crewId, channelId) {
 }
 // 기기 단위 심박(20261010120000) — 서버에 함수·계산 열이 없다고 본 시각. 10분 뒤 다시 본다(운영 적용 전에 켜진 앱이 재시작 없이 넘어가게). (export: 테스트 초기화용)
 const DEVICE_BEAT_RECHECK_MS = 10 * 60_000;
-export const deviceBeatRpc = { missingAt: 0, seenMissingAt: 0, versionMissingAt: 0 }; // versionMissingAt — 함수는 있으나 앱 버전 인자가 없는 서버(20261011120000 적용 전)
+export const deviceBeatRpc = { missingAt: 0, seenMissingAt: 0, versionMissingAt: 0, peerMissingAt: 0 }; // peerMissingAt — msgr_runner_peer_alive가 없는 서버(20261015200000 적용 전, D5) // versionMissingAt — 함수는 있으나 앱 버전 인자가 없는 서버(20261011120000 적용 전)
 /** 이 앱의 버전 — 기기 심박에 실어 보낸다(무료 계정 에이전트 재개 판정, 20261011120000). 읽는 방법은 src/app-version.mjs 한 곳(번들·번들 밖 차이 설명도 거기). */
 export { APP_VERSION };
 const rpcMissing = (e) => ['PGRST202', '42883'].includes(e?.code);
@@ -293,6 +293,14 @@ export function makeDb(client) {
       const { data, error } = await client.rpc('msgr_gateway_wake_protocol');
       if (error) { if (['PGRST202', '42883'].includes(error.code)) return 0; throw new Error(`msgr db: ${error.message}`); }
       return Number(data) || 0;
+    },
+    /** 러너 없는 이 프로세스가 양보하려는 글에서만 한 번(D5) — 넘겨받을 내 다른 기기가 있나(서버 msgr_runner_peer_alive: 무료면 다른 기기의 기기 심박이 무료 정책 창(30분) 안, Pro·판정 불가는 늘 참).
+        → true | false | null(모름 — 오류·옛 서버. 부르는 쪽은 종전 160초 양보). 옛 서버면 10분 동안 다시 부르지 않는다. */
+    async runnerPeerAlive(device) {
+      if (Date.now() - deviceBeatRpc.peerMissingAt < DEVICE_BEAT_RECHECK_MS) return null;
+      const { data, error } = await client.rpc('msgr_runner_peer_alive', { p_device: device ?? null });
+      if (error) { if (rpcMissing(error)) deviceBeatRpc.peerMissingAt = Date.now(); return null; }
+      return typeof data === 'boolean' ? data : null;
     },
     async heartbeat(ids, beat = null) {
       if (!ids.length) return undefined;
@@ -1314,6 +1322,8 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
       if (!runnerReady || !candidate(m) || !withinRunnerYield(yieldKey(wsId, crew.id, m.id), m.created_at, now())) return false;
       ready ??= await (async () => runnerReady(wsId, crew.slug))().catch(() => false) === true;
       if (ready) return false;
+      // 넘겨받을 다른 기기가 없으면(D5) 기다리지 않는다 — 글당 한 번 묻는다(peerVerdict). 모르면 종전 양보
+      if (await peerVerdict(yieldKey(wsId, crew.id, m.id), async () => db.runnerPeerAlive?.(deviceId ?? await getDeviceId().catch(() => null))) === false) return false;
       const k = `${crew.id}:${m.id}`;
       if (!heldLogged.has(k)) { heldLogged.add(k); if (heldLogged.size > 500) heldLogged.delete(heldLogged.values().next().value); console.log(`[argo] msgr ${crew.slug}: 이 프로세스엔 이 에이전트를 실행할 러너가 없어 메시지 ${m.id}부터 적재를 러너 있는 Argo에 양보합니다(처음 본 뒤 최대 ${Math.round(YIELD_GRACE_MS / 1000)}초)`); }
       return true;
@@ -1775,6 +1785,18 @@ const yieldSeenAt = new Map(); // (회사:크루:글) → 이 프로세스가 �
 export const _runnerYieldSeenForTest = yieldSeenAt;
 const YIELD_CLOCK_AHEAD_MS = 60_000; // 글 시각(created_at)이 이 기기 시계보다 이만큼 넘게 미래면 이 기기 시계가 느린 것 — 글 시각 기한을 쓰지 않는다
 const yieldKey = (wsId, crewId, msgId) => `${wsId}:${crewId}:${msgId}`;
+/** 넘겨받을 다른 기기가 있나 — 글(yieldKey)마다 한 번만 묻고 drain 보류·핸들러 양보가 같은 답을 쓴다(앱↔메신저 연결 감사 D5, 2026-10-15).
+    false(없음)일 때만 양보하지 않는다. true·null(오류·옛 서버·어댑터에 함수 없음)은 종전 160초 양보 — 배포본보다 나빠지는 경우를 만들지 않는다.
+    부하: 러너 없는 프로세스가 양보하려는 대상 글당 1회(주기 호출 0). 기억은 프로세스 메모리, 2,000건을 넘으면 오래된 것부터 지운다(다시 물으면 1회 더). */
+const peerVerdicts = new Map();
+export const _runnerPeerVerdictsForTest = peerVerdicts;
+async function peerVerdict(key, ask) {
+  if (peerVerdicts.has(key)) return peerVerdicts.get(key);
+  const v = await Promise.resolve().then(ask).then((x) => (typeof x === 'boolean' ? x : null), () => null);
+  peerVerdicts.set(key, v);
+  while (peerVerdicts.size > 2000) peerVerdicts.delete(peerVerdicts.keys().next().value);
+  return v;
+}
 /** 처음 본 시각 — 없으면 지금으로 남긴다. 이 기기 시계가 뒤로 갔으면(남긴 시각이 미래) 지금으로 다시 남겨 기한이 늘지 않게 한다. */
 // 정리는 개수가 아니라 나이로 한다(확인 검수 2026-10-08): 500건 상한에서 먼저 넣은 것부터 지우면, 보류 중인 글이 500건을 넘을 때 지워진 글이
 // '지금'으로 다시 들어와 160초를 처음부터 세서 보류가 끝나지 않았다. 기한이 한참 지난 키(30분)만 지우고, 그래도 넘치면 5만 건에서 오래된 것부터.
@@ -1823,6 +1845,11 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
   const yieldForRunner = async (job) => {
     if (!runnerReady || (job.msgrExecution && job.msgrExecution.phase !== 'claiming')) return false;
     if (!withinRunnerYield(yieldKey(wsId, job.crewId, job.msgId), job.createdAt, now()) || await runnerReady(wsId, job.slug)) return false;
+    // 넘겨받을 다른 기기가 없으면(D5) 양보하지 않는다 — drain에서 이미 물었으면 그 답(글당 1회). 세션을 못 얻거나 모르면 종전 양보
+    if (await peerVerdict(yieldKey(wsId, job.crewId, job.msgId), async () => {
+      const c = await session();
+      return c?.db?.runnerPeerAlive?.(await getDeviceId().catch(() => null));
+    }) === false) return false;
     const k = `${job.crewId}:${job.msgId}`;
     if (!yieldLogged.has(k)) {
       yieldLogged.add(k); if (yieldLogged.size > 500) yieldLogged.delete(yieldLogged.values().next().value);

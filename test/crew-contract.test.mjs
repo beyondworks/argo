@@ -23,6 +23,7 @@ const CONTRACT = {
   msgr_device_beat: { bot: ['msgr_bot_updates'] }, // 접속 심박(기기 단위, 2026-10-10) — 봇은 getUpdates가 자기 에이전트 행의 접속 시각을 찍는다(봇 하나 = 에이전트 하나, 기기 개념 없음)
   msgr_free_resume: { server: '무료 계정 사람 에이전트 재개(20261011120000) — 외부 봇 연결은 Pro 전용(msgr_bot_gate)이라 봇 쪽 호출 없음' },
   msgr_my_agent_pause: { server: '무료 계정 에이전트가 멈춘 이유·최소 앱 버전(20261011120000) — 앱 버전으로 정하는 본체 브리지 판정이라 봇 쪽 호출 없음' },
+  msgr_runner_peer_alive: { server: '러너 없는 Argo가 양보하려는 글에서만 묻는 넘겨받을 다른 기기 판정(20261015200000, D5) — 러너 양보는 Argo 브리지만 하므로 봇 쪽 호출 없음' },
   msgr_attachments: { bot: ['msgr_bot_file', 'msgr_bot_attach_prepare', 'msgr_bot_attach_commit'] }, // 받기(getFile)·보내기(createUpload·attachFile, 20260930160000)
   msgr_execution_finish: { bot: ['msgr_bot_finish'] },
   msgr_execution_heartbeat: { pending: '2단계 — 긴 실행의 진행 신호(지금 봇은 결재 대기 중에만 msgr_bot_events가 심박을 올린다)' },
