@@ -1250,6 +1250,8 @@ export const DICT = {
   'agents.pause.app': ['에이전트 {n}명이 멈춰 있어요. 실행기(argo)를 최신 버전으로 업데이트하면 에이전트가 다시 연결됩니다. 무료 계정은 최신 실행기가 켜져 있는 동안 {limit}명까지 쓸 수 있어요.', 'Paused agents: {n}. Update your runner (argo) and your agents reconnect. On a free account, up to {limit} agents work while an up-to-date runner is on.'],
   'agents.pause.off': ['실행기가 꺼져 있어 에이전트 {n}명이 멈춰 있어요. 실행기를 다시 켜면 연결됩니다(무료 계정).', 'Paused agents: {n}, because your runner is off. Turn the runner back on and they reconnect (free account).'],
   'agents.paused.tag': ['멈춤', 'Paused'], // 멈춘 에이전트와의 1:1 방 머리(2026-10-11 '?' 제보) — 이유·다시 연결 방법은 위 agents.pause.* 안내. 결제 권유 없음(iOS 같은 문구)
+  'agents.paused.room': ['{name}은(는) 멈춰 있어 답하지 않아요.', '{name} is paused and won’t reply.'], // 멈춘 에이전트가 든 방(2026-10-15) — 1:1이면 입력창 자리, 여럿이면 안내 줄. 이유는 아래 agents.pause.* 한 줄
+  'agents.paused.room.many': ['{name} 에이전트는 멈춰 있어 답하지 않아요.', 'Paused agents won’t reply: {name}.'],
   'agents.pause.limit': ['무료 계정은 에이전트 {limit}명까지 연결돼요. 나머지 {n}명은 멈춰 있어요. Pro로 바꾸면 모두 연결됩니다.', 'Free accounts connect up to {limit} agents, so {n} more are paused. Upgrade to Pro to connect them all.'],
   'ui.dm': ['1:1 대화', 'Direct message'],
   'ui.dm.personal': ['개인 1:1 대화', 'Personal 1:1'],

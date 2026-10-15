@@ -89,3 +89,21 @@ export function pausedRoomCrew(channel, roomMembers, { connected = [], paused = 
   if (ids.length !== 1 || connected.some((c) => c.id === ids[0])) return null;
   return paused.find((c) => c.id === ids[0]) ?? null;
 }
+
+/** 멈춘 에이전트가 든 방의 안내(2026-10-15 — 운영 실측: 답 없는 개인 1:1 5건이 모두 멈춘 에이전트, 글은 저장되지만 답도 안내도 없었다).
+    roomCrewIds = 방의 에이전트 구성원 id. people = 방의 사람 수(나 포함). pause = msgr_my_agent_pause 결과(readAgentPause — 없으면 null).
+    → null(멈춘 에이전트 없음) 또는 { crews, block, head, reason, action }.
+    block — 나와 그 에이전트 둘뿐인 1:1이면 보내기를 막는다(입력창 자리에 안내 — 보관한 1:1과 같은 자리). 사람이 더 있는 방은 이번에 그리지 않는다(채널 안내는 다음 발행).
+    reason — 내 에이전트일 때만 계정 이유(agentPauseNote와 같은 문구). action — 'runner'(실행기 켜기·업데이트) · null */
+export function pausedRoomNotice({ channel, roomCrewIds = [], connected = [], paused = [], people = 0, uid = null, pause = null, ios = false } = {}) {
+  if (!channel) return null;
+  const ids = [...new Set(roomCrewIds ?? [])];
+  const crews = ids.filter((id) => !connected.some((c) => c.id === id)).map((id) => paused.find((c) => c.id === id)).filter(Boolean);
+  if (!crews.length) return null;
+  const block = channel.kind === 'dm' && ids.length === 1 && people <= 1;
+  const mine = crews.every((c) => c.owner_user_id === uid);
+  const head = { key: crews.length === 1 ? 'agents.paused.room' : 'agents.paused.room.many', vars: { name: crews.map((c) => c.display_name).join(', ') } };
+  const note = mine ? agentPauseNote(pause, { ios }) : null;
+  const action = note && pause.reason !== 'limit' ? 'runner' : null; // 실행기 꺼짐·옛 실행기 — 실행기 단추. 무료 한도의 [바꾸기]는 다음 발행(2026-10-15 범위 축소)
+  return { crews, block, head, reason: note, action };
+}

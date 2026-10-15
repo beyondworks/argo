@@ -90,7 +90,7 @@ import { crewRowMenuKeys, crewOpeners, creatorTagVisible } from './crew-row-menu
 import { adminRemovedNotice, readAdminRemoved } from './dispatch-notice.mjs';
 import { crewAwayNotice } from './crew-dm-notice.mjs';
 import { crewListEmptyKey } from './crews-empty.mjs';
-import { readAgentPause, agentPauseNote, readSwapNames, splitSpaceCrews, withPaused, pausedRoomCrew, readPausedCrewNames, crewNameAsker } from './agent-pause.mjs'; // 무료 계정 에이전트가 멈춘 이유(2026-10-11)
+import { readAgentPause, agentPauseNote, readSwapNames, splitSpaceCrews, withPaused, pausedRoomCrew, pausedRoomNotice, readPausedCrewNames, crewNameAsker } from './agent-pause.mjs'; // 무료 계정 에이전트가 멈춘 이유(2026-10-11)
 import { slotState, slotKey, swapPreview, keepAgents, keepChoices, togglePick, pickReady, readMyPlan, FREE_AGENT_LIMIT } from './agent-pick.mjs'; // 무료 4명을 사용자가 고른다(2026-10-12)
 import { runnerOptions, RUNNER_INSTALL } from './runner-sheet.mjs';
 import { seenWithin, stampFetched, markSeen } from './presence-clock.mjs'; import { readWithSeen } from './crew-seen.mjs'; // 접속 판정 = 받아 온 때 기준(기능 점검 D2) // '실행기 연결' 시트(아르고 패밀리 구조, 2026-10-02)
@@ -820,6 +820,7 @@ function Shell({ session }) {
   const [crewNames, setCrewNames] = useState({});
   const crewAsker = useMemo(() => crewNameAsker((ids) => readPausedCrewNames(supabase, ids), (rows) => setCrewNames((cur) => ({ ...cur, ...Object.fromEntries(rows.map((r) => [r.id, r])) }))), [uid]);
   const pausedKnown = useMemo(() => { const extra = Object.values(crewNames); return extra.length ? [...pausedCrews, ...extra] : pausedCrews; }, [pausedCrews, crewNames]);
+  const crewSyncRef = useRef(() => {}); // u:<나>의 crew_sync(에이전트가 active가 됨 — 서버 20261010232100) → 멈춘 에이전트였으면 목록·이유를 다시 읽는다(아래 applyVictimPick 다음에서 채운다)
   const [chMembers, setChMembers] = useState([]); // 현재 채널의 msgr_channel_members(비공개·DM)
   const [ent, setEnt] = useState(null); const [policy, setPolicy] = useState(null);
   const orgLocked = ent?.ls_status === 'past_due' || ent?.ls_status === 'unpaid'; // J-2: 결제 문제 = 읽기 전용(서버 msgr_org_locked가 최종) // msgr_org_entitlements(plan·seats) — 좌석 표시·한도 안내
@@ -1639,6 +1640,7 @@ function Shell({ session }) {
         .on('broadcast', { event: 'approval' }, on(({ payload }) => { approvalsSoon.current(); if (here(payload?.org_id ?? null)) { setEvent(broadcastEvent('approval', payload)); notifyApproval(payload); inboxSoon.current(); } }))
         .on('broadcast', { event: 'attach' }, on(({ payload }) => { if (here(payload?.org_id ?? null)) setEvent(broadcastEvent('attach', payload)); }))
         .on('broadcast', { event: 'crew_request' }, on(({ payload }) => { if (here(payload?.org_id ?? null) && payload?.channel_id === activeChannel.current) bumpMembers(); }))
+        .on('broadcast', { event: 'crew_sync' }, on(({ payload }) => crewSyncRef.current(payload))) // 멈춘 에이전트가 다시 연결되면 그 방의 안내·막힌 입력창을 바로 푼다(2026-10-15). 옛 서버는 방송이 없다 — 다음 다시 읽기에 풀린다
         .on('broadcast', { event: 'friend' }, on(() => bumpFriends())) // 친구 요청·수락·삭제·차단(서버 20261002110000 — 종류와 상대 id만) — 받았을 때만 친구 목록을 다시 읽는다(D5)
         .on('broadcast', { event: 'crew_join' }, on(({ payload }) => { approvalsSoon.current(); inboxSoon.current(); if (payload?.channel_id && payload.channel_id === activeChannel.current) { bumpMembers(); setEvent(broadcastEvent('crew_join', payload)); } })), // 에이전트 넣기 요청 생성·처리(D6, 서버 20261002115000)
         { onStatus: status(`u:${uid}`, null, false, bumpURejoin) }); // 조직이 없는 사용자는 u:가 유일한 재연결 신호 — 끊겼다 붙으면 목록을 다시 읽는다(2026-10-05)
@@ -2305,6 +2307,12 @@ function Shell({ session }) {
     loadMyAgents({ favs: true }).catch(() => {});
     readAgentPause(supabase).then(setAgentPause);
   }, [victimPick, isPersonal, loadPersonal, loadOrg, orgId, loadMyAgents, t]);
+  // crew_sync는 내 에이전트가 active가 될 때만 온다(드문 방송) — 지금 멈춘 것으로 아는 에이전트일 때만 목록 1건 + 이유 1건을 다시 읽는다
+  crewSyncRef.current = (payload) => {
+    if (!payload?.crew_id || !pausedKnown.some((c) => c.id === payload.crew_id)) return;
+    (isPersonal ? loadPersonal() : loadOrg(orgId)).catch(() => {});
+    readAgentPause(supabase).then(setAgentPause);
+  };
   // 에이전트 즐겨찾기 — 조직 행은 기존 에이전트 즐겨찾기(msgr_target_prefs, 데스크톱 레일 별과 같은 행), 개인 행은 이 기기(AGENT_FAV_KEY). 누를 때만 쓴다(같은 값은 다시 쓰지 않는다)
   const [agentPins, setAgentPins] = useState(() => new Set());
   const [agentLocalFav, setAgentLocalFav] = useState(() => { try { return readAgentFav(window.localStorage); } catch { return new Set(); } });
@@ -2486,6 +2494,10 @@ function Shell({ session }) {
   // 종전에는 공개 채널이면 조직원 전원을 보여 줘, 참여하지 않은 사람까지 "이 채널의 사람"에 떴다(유건 제보 2026-09-16).
   // 개인 공간: members는 친구 목록뿐이라 나·친구 아닌 구성원이 빠져 "사람 더 부르기"가 안 보이고 인원도 틀렸다(검수 HIGH-2) — 방 구성원에서 만든다
   const chPeople = !channel ? [] : isPersonal ? (dmMembers[channel.id] ?? []).filter((x) => x.member_kind === 'user').map((x) => ({ user_id: x.member_id, display_name: nameOfUser(x.member_id), role: x.member_id === uid ? null : members.some((f) => f.user_id === x.member_id) ? 'friend' : null })) : members.filter((m) => chMembers.some((x) => x.member_kind === 'user' && x.member_id === m.user_id) && !(channel.kind === 'public' && (channel.excluded_user_ids ?? []).includes(m.user_id)));
+  // 멈춘 에이전트가 든 방(2026-10-15, agent-pause.mjs pausedRoomNotice) — 1:1(나 + 멈춘 에이전트)이면 입력창 자리에 이유(그 밖의 방 안내는 다음 발행). 새 읽기 0(이유는 이미 읽는 msgr_my_agent_pause)
+  const roomCrewIds = !channel ? [] : (channel.kind === 'dm' ? (dmMembers[channel.id] ?? chMembers) : chMembers).filter((m) => m.member_kind === 'crew').map((m) => m.member_id);
+  for (const id of roomCrewIds) if (!crews.some((c) => c.id === id)) crewShown(id); // 조직 공간의 멈춘 행 이름은 모르는 id만 따로 묻는다(crewNameAsker — 세션 동안 한 번)
+  const roomPausedNotice = pausedRoomNotice({ channel, roomCrewIds, connected: crews, paused: pausedKnown, people: chPeople.length, uid, pause: agentPause, ios: isIos });
   // @멘션 후보는 따로 둔다 — 공개 채널은 누구나 읽을 수 있고, 멘션하면 참여하지 않은 사람에게도 알림이 간다(msgr_push_recipients의 멘션 분기, 슬랙과 같다).
   const mentionPeople = channel?.kind === 'public' ? members.filter((m) => !(channel.excluded_user_ids ?? []).includes(m.user_id)) : chPeople;
   // 이 채널의 에이전트 = 초대된(참여 행이 있는) 에이전트. 공개 채널도 같다 — 종전에는 파견된 에이전트 전원이 저절로 들어와 있었다(유건 2026-09-16).
@@ -3184,7 +3196,7 @@ function Shell({ session }) {
         ) : dmDraft && isPersonal && page === 'chat' ? (
           <DmDraft key={dmDraft.userId} userId={dmDraft.userId} name={nameOfUser(dmDraft.userId)} initialText={dmDraft.text} onSend={(body) => sendFirstDm(dmDraft.userId, body)} onMenu={openNav} />
         ) : isPhone && page !== 'chat' ? null /* 폰 목록·설정 뒤에 숨은 대화방을 그리지 않는다 — 공간을 바꿀 때마다 보이지 않는 방의 글·첨부·반응을 읽던 것(기능 점검 D3) */ : channel ? (
-          <Channel key={chId} pausedCrew={pausedRoomCrew(channel, channel?.kind === 'dm' ? (dmMembers[channel.id] ?? chMembers) : [], { connected: crews, paused: pausedKnown })} movedBar={legacyDm?.known ? <LegacyDmBar key={legacyDm.crew.id} onGo={() => dmWithCrew(legacyDm.crew.id)} t={t} /> : earlierCrew ? <EarlierDmBar key={earlierCrew} find={() => findEarlier(earlierCrew)} ready={!!ownCrews} orgs={orgs} onOpen={openEarlier} t={t} /> : null} onCrewJoined={bumpMembers} onCrewFailed={noteCrewFailed} onPersonalChanged={async () => { await loadPersonal().catch(() => {}); await loadChMembers(chId).catch(() => {}); }} onScreen={channelOnScreen({ isPhone, page })} namePrompt={org && !isPersonal && me && !orgLocked ? <NamePrompt key={orgId} org={org} me={me} email={session.user.email} onChanged={() => loadOrg(orgId).catch(() => {})} onNote={setNote} onError={setErr} /> : null} onOutsideDm={dmWithCrew} outsideDmPersonal={dmGoesPersonal} startCard={org && !isPersonal && org.role !== 'guest' && channel.kind !== 'dm' ? <OnboardCard key={orgId} orgId={orgId} t={t} steps={orgSteps({ t, ...onboard, hasChannel: true, invite: isAdmin ? orgInvite : null })} /> : null} jumpTo={jump?.ch === chId ? jump.mid : null} jumpStart={!!jump?.start} onJumped={() => setJump(null)} channel={channel} preview={!!previewing} onJoin={() => joinChannel(channel)} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} mentionPeople={mentionPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewShown} event={event} typing={typing} typingStart={typingStartRef.current} progress={progress} received={received} onRead={markRead} muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} onToggleMemory={() => toggleMemory(channel)} broadcast={(ev, payload) => (roomTopic ? roomSubs.current.get(chId) : rt.current)?.send({ type: 'broadcast', event: ev, payload }).catch?.(() => {})} onError={setErr} onNote={setNote} onMenu={openNav} onCrew={openers.channel} onTitle={() => setChSheet(true)} onCrewAdd={() => { setChSheetAdd('crew'); setChSheet(true); }} mentionReq={mentionReq} onMentionDone={() => setMentionReq(null)} dmName={dmName} channels={channels} onOpenRelay={openRelay} isPersonal={isPersonal} crewPosts={crewPosts} seenAt={seenMine} onCrewPosted={(crewId) => settleCrew({ channel_id: chId, crew_id: crewId })} uRejoin={uRejoin} serverUnread={unread[chId]?.n ?? 0} />
+          <Channel key={chId} pausedCrew={pausedRoomCrew(channel, channel?.kind === 'dm' ? (dmMembers[channel.id] ?? chMembers) : [], { connected: crews, paused: pausedKnown })} pausedNotice={roomPausedNotice} movedBar={legacyDm?.known ? <LegacyDmBar key={legacyDm.crew.id} onGo={() => dmWithCrew(legacyDm.crew.id)} t={t} /> : earlierCrew ? <EarlierDmBar key={earlierCrew} find={() => findEarlier(earlierCrew)} ready={!!ownCrews} orgs={orgs} onOpen={openEarlier} t={t} /> : null} onCrewJoined={bumpMembers} onCrewFailed={noteCrewFailed} onPersonalChanged={async () => { await loadPersonal().catch(() => {}); await loadChMembers(chId).catch(() => {}); }} onScreen={channelOnScreen({ isPhone, page })} namePrompt={org && !isPersonal && me && !orgLocked ? <NamePrompt key={orgId} org={org} me={me} email={session.user.email} onChanged={() => loadOrg(orgId).catch(() => {})} onNote={setNote} onError={setErr} /> : null} onOutsideDm={dmWithCrew} outsideDmPersonal={dmGoesPersonal} startCard={org && !isPersonal && org.role !== 'guest' && channel.kind !== 'dm' ? <OnboardCard key={orgId} orgId={orgId} t={t} steps={orgSteps({ t, ...onboard, hasChannel: true, invite: isAdmin ? orgInvite : null })} /> : null} jumpTo={jump?.ch === chId ? jump.mid : null} jumpStart={!!jump?.start} onJumped={() => setJump(null)} channel={channel} preview={!!previewing} onJoin={() => joinChannel(channel)} orgId={orgId} org={org} uid={uid} isAdmin={!!isAdmin} locked={orgLocked} policy={policy} members={members} crews={crews} people={chPeople} mentionPeople={mentionPeople} chCrews={chCrews} nameOfUser={nameOfUser} crewOf={crewShown} event={event} typing={typing} typingStart={typingStartRef.current} progress={progress} received={received} onRead={markRead} muted={muted.has(channel.id)} onToggleMute={() => toggleMute(channel)} onToggleMemory={() => toggleMemory(channel)} broadcast={(ev, payload) => (roomTopic ? roomSubs.current.get(chId) : rt.current)?.send({ type: 'broadcast', event: ev, payload }).catch?.(() => {})} onError={setErr} onNote={setNote} onMenu={openNav} onCrew={openers.channel} onTitle={() => setChSheet(true)} onCrewAdd={() => { setChSheetAdd('crew'); setChSheet(true); }} mentionReq={mentionReq} onMentionDone={() => setMentionReq(null)} dmName={dmName} channels={channels} onOpenRelay={openRelay} isPersonal={isPersonal} crewPosts={crewPosts} seenAt={seenMine} onCrewPosted={(crewId) => settleCrew({ channel_id: chId, crew_id: crewId })} uRejoin={uRejoin} serverUnread={unread[chId]?.n ?? 0} />
         ) : isPersonal ? (
           <><div className="msgr-top"><NavButton onMenu={openNav} /><span className="title">{t('personal')}</span><span className="topic">{t('personal.space')}</span></div><div className="msgr-thread" style={{ display: 'flex' }}><div className="msgr-empty"><p>{t('personal.empty')}</p><button type="button" className="btn btn-primary sm" onClick={() => setFriendAdd(true)}><I name="plus" size={13} />{t('friends.add')}</button></div></div></>
         ) : (
@@ -4028,6 +4040,17 @@ function RunnerSheet({ hasOrg, onClose, onAgents, onNote, onError }) {
     </div>
   );
 }
+/** 멈춘 에이전트 1:1의 입력창 자리(agent-pause.mjs pausedRoomNotice) — 머리(누가 멈췄나) + 내 에이전트면 이유 한 줄. 실행기 꺼짐·옛 실행기면 실행기 단추(목록 위 안내와 같다) */
+function PausedBar({ notice }) {
+  const { t, lang } = useT(); const j = lang === 'en' ? (x) => x : koJosa;
+  return (
+    <div className={`msgr-joinbar msgr-awaybar msgr-pausedbar${notice.block ? ' block' : ''}`} role="status">
+      <span>{j(t(notice.head.key, notice.head.vars))}{notice.reason && <> {t(notice.reason.key, notice.reason.vars)}</>}</span>
+      {notice.action === 'runner' && <RunnerButton />}
+    </div>
+  );
+}
+
 function RunnerButton({ primary = false }) { // 에이전트가 없거나 실행기가 꺼졌다는 안내 옆 — 시트를 연다
   const { t } = useT(); const open = useContext(RunnerCtx);
   return open ? <button type="button" className={`btn sm${primary ? ' btn-primary' : ''} msgr-runbtn`} onClick={open}><I name="node" size={14} />{t('runner.title')}</button> : null;
@@ -6242,7 +6265,7 @@ function EarlierDmBar({ find, ready, orgs, onOpen, t }) {
   return <nav className="msgr-joinbar msgr-movedbar msgr-earlier" aria-label={t('dm.earlier.label')}>{lines.map((l) => (
     <button key={l.channelId} type="button" className="msgr-earlier-line" onClick={() => onOpen(l)}><I name="clock" size={14} /><span>{t(...earlierLineLabel(l))}</span><I name="next" size={14} className="go" /></button>))}</nav>;
 }
-function Channel({ movedBar = null, pausedCrew = null, onCrewJoined = null, onCrewFailed = null, onScreen = true, namePrompt = null, onOutsideDm = null, outsideDmPersonal = null, onPersonalChanged = null, startCard = null, jumpTo = null, jumpStart = false, onJumped, channel, preview = false, onJoin, orgId, org, uid, isAdmin, locked = false, policy, members, crews, people = [], mentionPeople = null, chCrews = [], nameOfUser, crewOf, event, typing, typingStart = {}, progress = {}, received = {}, onRead: onReadOut, muted = false, onToggleMute, onToggleMemory, broadcast, onError, onNote = () => {}, onMenu, onCrew, onTitle, onCrewAdd, mentionReq, onMentionDone, dmName, channels = [], onOpenRelay, isPersonal = false, onCrewPosted = () => {}, crewPosts = null, seenAt = null, uRejoin = 0, serverUnread = 0 }) {
+function Channel({ movedBar = null, pausedCrew = null, pausedNotice = null, onCrewJoined = null, onCrewFailed = null, onScreen = true, namePrompt = null, onOutsideDm = null, outsideDmPersonal = null, onPersonalChanged = null, startCard = null, jumpTo = null, jumpStart = false, onJumped, channel, preview = false, onJoin, orgId, org, uid, isAdmin, locked = false, policy, members, crews, people = [], mentionPeople = null, chCrews = [], nameOfUser, crewOf, event, typing, typingStart = {}, progress = {}, received = {}, onRead: onReadOut, muted = false, onToggleMute, onToggleMemory, broadcast, onError, onNote = () => {}, onMenu, onCrew, onTitle, onCrewAdd, mentionReq, onMentionDone, dmName, channels = [], onOpenRelay, isPersonal = false, onCrewPosted = () => {}, crewPosts = null, seenAt = null, uRejoin = 0, serverUnread = 0 }) {
   const { t, lang } = useT();
   // 보관한 방(이전 대화 보기로 연 옛 조직 1:1, 유건 결정 2026-10-08 1-②) — 읽기 전용. 목록·개인 방 조회는 보관 방을 빼고 archived_at을 돌려주지 않아(loadOrg·addRoom·msgr_dm_personal_list)
   // 이 표지는 Shell archivedRoomFor가 넘긴 행에서만 선다. 새 글은 서버도 막는다(msgr_can_write_channel)
@@ -6609,6 +6632,7 @@ function Channel({ movedBar = null, pausedCrew = null, onCrewJoined = null, onCr
     {preview
       ? <div className="msgr-joinbar" role="region" aria-label={t('ch.preview.title')}><span>{t('ch.preview.note', { name: channel.name })}</span><button type="button" className="btn btn-primary" onClick={onJoin}><I name="plus" size={14} />{t('ch.browse.join')}</button></div>
       : archived ? <div className="msgr-joinbar msgr-archivedbar" role="status"><span>{t('dm.archived.note')}</span></div> /* 보관한 옛 1:1(유건 결정 2026-10-08 1-②) — 입력창 자리에 읽기 전용 안내. 새 글은 서버도 막는다(msgr_can_write_channel) */
+      : pausedNotice?.block ? <PausedBar notice={pausedNotice} /> /* 나와 멈춘 에이전트뿐인 1:1 — 보내도 답이 없으니 입력창 자리에 이유(2026-10-15 운영 실측). 게이트웨이는 멈춘 행의 받은 글을 보지 않는다 */
       : <Composer broadcast={broadcast} onOutsideDm={onOutsideDm} outsideDmPersonal={outsideDmPersonal} onCrewJoined={onCrewJoined} isPersonal={isPersonal} chId={chId} orgId={orgId} org={org} uid={uid} members={members} crews={crews} channel={channel} scopePeople={mentionPeople ?? people} scopeCrews={chCrews} locked={locked} sbw={sbw} typingLabel={typingLabel} mentionReq={mentionReq} onMentionDone={onMentionDone} replyReq={replyReq} onReplyDone={() => setReplyReq(null)} onPending={(x) => { stick.current = true; setPending((cur) => [...cur, x]); if (x.files?.length) setUploads((m) => ({ ...m, [x.clientId]: x.files })); }} onPendingSettled={(clientId, ok) => { if (!ok) setPending((cur) => cur.filter((x) => x.clientId !== clientId)); setUploads((m) => withoutKey(m, clientId)); }} onDiscarded={(id) => reloadMsg(id).catch(() => {})} onSent={async (id) => {
       try {
         await catchUp();
