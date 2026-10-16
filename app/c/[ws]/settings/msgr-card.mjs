@@ -11,10 +11,12 @@ export const MESSENGER_WAITLIST = 'https://argo.ceo/messenger#waitlist'; // 메�
     빼고 메신저 대기 알림 신청만 두면 되잖아") — 문구로 다듬지 않고 화면에서 뺀다. 꺼짐·모름(로드 전·옛 서버·오류)이면 main과 똑같이.
     showMsgrNotify = '알림 받을 메신저'에 아르고 메신저 줄을 보일까(저장된 값은 바꾸지 않는다 — 다시 열리면 그대로)
     msgrCard = 'full'(지금 카드) | 'waitlist'(제목 + '메신저 출시 알림 받기' 단추 하나) · noticeSettingsLink = 회사 화면 완료 안내의 '설정에서 보기' 단추(갈 곳이 없어져 뺀다).
-    paused = GET /api/companies/[ws]/msgr-archive 응답의 paused(설정 화면 부모가 연결 탭을 열 때 한 번 읽는다, 서버는 10분 캐시 — 새 주기 호출 없음). */
-export function msgrPausedView(paused) {
+    paused = GET /api/companies/[ws]/msgr-archive 응답의 paused(설정 화면 부모가 연결 탭을 열 때 한 번 읽는다, 서버는 10분 캐시 — 새 주기 호출 없음).
+    known = 그 응답을 받았나(실패도 받은 것으로 본다 — 실패면 paused false, main과 같다). 받기 전에는 msgrCard 'pending'(카드 자리를 비운다):
+    MsgrCard가 먼저 그려졌다가 출시 알림 카드로 바뀌며 GET /msgr·이관 GET을 한 번씩 더 보내던 깜빡임을 막는다(검수 1, 2026-10-16). */
+export function msgrPausedView(paused, { known = true } = {}) {
   const on = paused === true;
-  return { showMsgrNotify: !on, msgrCard: on ? 'waitlist' : 'full', noticeSettingsLink: !on };
+  return { showMsgrNotify: !on, msgrCard: !known ? 'pending' : on ? 'waitlist' : 'full', noticeSettingsLink: !on };
 }
 
 export function msgrGetLink(paused) {

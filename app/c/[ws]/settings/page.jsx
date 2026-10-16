@@ -53,14 +53,15 @@ function Settings({ params }) {
   const wantTab = sp.get('ai') ? 'ai' : sp.get('tab');
   const [tab, setTab] = useRememberedTab('argo-settings-tab', SETTINGS_TABS, 'general', wantTab);
   // 메신저 중단 스위치 — 연결 탭을 열 때 이관 상태 GET 한 번(서버가 스위치 RPC를 10분 캐시하고 동시 요청은 한 번으로 묶는다). 켜지면 메신저 항목을 화면에서 뺀다(msgrPausedView)
-  const [msgrPaused, setMsgrPaused] = useState(false);
+  const [msgrPaused, setMsgrPaused] = useState(null); // null = 아직 모름(카드 자리를 비운다), 응답·실패 뒤 true/false
+  useEffect(() => { setMsgrPaused(null); }, [ws]);
   useEffect(() => {
-    if (tab !== 'connections') return;
+    if (tab !== 'connections' || msgrPaused !== null) return; // 한 번 알면 탭을 오가도 다시 묻지 않는다
     let live = true;
-    api(`/api/companies/${ws}/msgr-archive`).then((d) => { if (live) setMsgrPaused(d?.paused === true); }).catch(() => {});
+    api(`/api/companies/${ws}/msgr-archive`).then((d) => { if (live) setMsgrPaused(d?.paused === true); }).catch(() => { if (live) setMsgrPaused(false); }); // 실패 = 모름 → main과 같은 카드
     return () => { live = false; };
-  }, [ws, tab]);
-  const pv = msgrPausedView(msgrPaused);
+  }, [ws, tab, msgrPaused]);
+  const pv = msgrPausedView(msgrPaused, { known: msgrPaused !== null });
 
   useEffect(() => {
     api(`/api/companies/${ws}`).then((d) => {
@@ -204,7 +205,7 @@ function Settings({ params }) {
       {tab === 'connections' && (
       <div className="cardcols" data-tab-pane="connections">
       <div className="cardrow"><NotifyChannelsCard ws={ws} showMsgr={pv.showMsgrNotify} /></div>
-      <div className="cardrow">{pv.msgrCard === 'waitlist' ? <MsgrWaitlistCard /> : <MsgrCard ws={ws} agents={data?.agents ?? []} />}</div>
+      <div className="cardrow">{pv.msgrCard === 'pending' ? null : pv.msgrCard === 'waitlist' ? <MsgrWaitlistCard /> : <MsgrCard ws={ws} agents={data?.agents ?? []} />}</div>
       <div className="cardrow">
       <ConnectionCard ws={ws} kind="telegram" title={t('activity.telegram')}
         help={t('settings.conn.tgHelp')}

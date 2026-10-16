@@ -16,6 +16,14 @@ test('스위치 꺼짐·모름(로드 전·옛 서버·오류) — main과 같�
   for (const v of [false, undefined, null, 'true', 1]) assert.deepEqual(msgrPausedView(v), MAIN, String(v));
 });
 
+test('판정 전(모름) — 메신저 카드 자리를 비운다(pending). 지금 카드가 먼저 그려졌다 바뀌며 GET을 한 번씩 더 보내는 깜빡임 방지', () => {
+  assert.equal(msgrPausedView(null, { known: false }).msgrCard, 'pending');
+  assert.equal(msgrPausedView(true, { known: false }).msgrCard, 'pending');
+  assert.equal(msgrPausedView(false, { known: true }).msgrCard, 'full', '응답 받음·꺼짐(또는 조회 실패 = false) → main 카드');
+  assert.equal(msgrPausedView(true, { known: true }).msgrCard, 'waitlist');
+  assert.equal(msgrPausedView(false).msgrCard, 'full', 'known 기본값 true — 옛 호출은 종전과 같다');
+});
+
 test('사전 — 카드 제목 한 줄만 새로, #1059의 쉬는 중 문구 키 4개는 지운다', async () => {
   const dict = await readFile(new URL('../app/i18n.jsx', import.meta.url), 'utf8');
   assert.match(dict, /'settings\.msgr\.titlePaused': \['Argo Messenger', 'Argo Messenger'\],/);
@@ -27,9 +35,12 @@ test('사전 — 카드 제목 한 줄만 새로, #1059의 쉬는 중 문구 키
 // 배선 확인(보조 — 행동은 위 판정 시험이 잠근다)
 test('배선 — 부모가 연결 탭에서 스위치를 한 번 읽고, 알림 칸·메신저 카드·회사 화면 안내가 msgrPausedView 값으로 갈린다', async () => {
   const page = await readFile(new URL('../app/c/[ws]/settings/page.jsx', import.meta.url), 'utf8');
-  assert.match(page, /if \(tab !== 'connections'\) return;[\s\S]{0,200}api\(`\/api\/companies\/\$\{ws\}\/msgr-archive`\)/);
+  assert.match(page, /if \(tab !== 'connections' \|\| msgrPaused !== null\) return;[\s\S]{0,200}api\(`\/api\/companies\/\$\{ws\}\/msgr-archive`\)/, '연결 탭에서 모를 때만 한 번');
   assert.match(page, /<NotifyChannelsCard ws=\{ws\} showMsgr=\{pv\.showMsgrNotify\} \/>/);
-  assert.match(page, /\{pv\.msgrCard === 'waitlist' \? <MsgrWaitlistCard \/> : <MsgrCard ws=\{ws\} agents=\{data\?\.agents \?\? \[\]\} \/>\}/);
+  assert.match(page, /\{pv\.msgrCard === 'pending' \? null : pv\.msgrCard === 'waitlist' \? <MsgrWaitlistCard \/> : <MsgrCard ws=\{ws\} agents=\{data\?\.agents \?\? \[\]\} \/>\}/);
+  assert.match(page, /useState\(null\); \/\/ null = 아직 모름/, '처음은 모름(null)');
+  assert.match(page, /msgrPausedView\(msgrPaused, \{ known: msgrPaused !== null \}\)/);
+  assert.match(page, /\.catch\(\(\) => \{ if \(live\) setMsgrPaused\(false\); \}\)/, '조회 실패면 main 카드');
   assert.match(page, /\.\.\.\(showMsgr \? \[\{ kind: 'msgr'/);
   const card = page.slice(page.indexOf('function MsgrWaitlistCard()'), page.indexOf('function MsgrCard('));
   assert.match(card, /msgrGetLink\(true\)/);
