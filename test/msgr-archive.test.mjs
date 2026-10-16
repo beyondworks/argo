@@ -573,3 +573,39 @@ test('partial 상한 — 계속 못 받으면 3번만 시도하고(시작마다 
   const notice = await readFile(new URL('../app/c/[ws]/msgr-archive-notice.jsx', import.meta.url), 'utf8');
   assert.match(notice, /st\.gaveUp \? 'msgrArchive\.noticePartialFinal' : 'msgrArchive\.noticePartial'/, '배선(보조)');
 });
+
+test('원자 쓰기 — 다시 받은 첨부를 jsonl·md에 반영하다 꺼져도(임시 파일만 쓰고 교체 전) 원본 기록은 그대로 남는다', async (t) => {
+  A._resetPauseCache();
+  const uid = 'aaaa1111-1111-4111-8111-111111111111';
+  await company('atomic-co', { ownerId: uid });
+  let storageDown = true;
+  const fake = await fakeMsgr(sampleDb(), { fault: (h) => (storageDown && h.table === 'storage' ? 500 : null) }); t.after(() => fake.close());
+  const c = { uid, client: fake.client };
+  const companies = async () => [{ id: 'atomic-co', ownerId: uid }];
+  const run = (args) => A.runArchive({ ...args, sleep: noSleep });
+  await R.maybeAutoArchive({ session: async () => c, companies, run });
+  const dir = join(process.env.ARGO_ROOT, '.msgr-archive', uid.slice(0, 8));
+  const room = (await readdir(join(dir, 'rooms'))).find((n) => n.startsWith('주말'));
+  const jsonl = join(dir, 'rooms', room, 'messages.jsonl');
+  const before = await readFile(jsonl, 'utf8');
+  // 재시작 — 첨부는 받지만 jsonl을 반영하는 쓰기가 교체(rename) 전에 꺼진다
+  storageDown = false; A._resetPauseCache();
+  const orig = A._io.writeText; const writes = [];
+  A._io.writeText = async (file, body) => {
+    writes.push(file);
+    if (file.endsWith('messages.jsonl')) { await writeFile(`${file}.tmp-crash`, body.slice(0, 10)); throw new Error('꺼짐(시험)'); } // 임시 파일만 쓰다 멈춤
+    return orig(file, body);
+  };
+  t.after(() => { A._io.writeText = orig; });
+  await R.maybeAutoArchive({ session: async () => c, companies, run });
+  assert.ok(writes.some((f) => f.endsWith('messages.jsonl')), 'jsonl은 원자 쓰기 한 곳(_io.writeText)으로 쓴다');
+  assert.equal(await readFile(jsonl, 'utf8'), before, '원본 jsonl이 잘리거나 바뀌지 않는다');
+  const st = await A.readArchiveState(dir);
+  assert.equal(st.status, 'partial', '반영을 못 끝냈으니 끝남이 아니다(다음 시작에 다시)');
+  assert.equal(st.partialRetries, 1);
+  // 다음 시작 — 정상 쓰기로 마무리
+  A._io.writeText = orig;
+  await R.maybeAutoArchive({ session: async () => c, companies, run });
+  assert.equal((await A.readArchiveState(dir)).status, 'done');
+  assert.match(await readFile(join(dir, 'rooms', room, 'messages.md'), 'utf8'), /\[plan\.pdf\]\(attachments\/4-plan\.pdf\)/);
+});

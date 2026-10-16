@@ -13,7 +13,11 @@
 // 요청 상한: 페이지 1000행·id 묶음 200개·순차 요청. 429·5xx·네트워크 오류는 1·2·4·8초 백오프 4번 뒤 실패(상태 'failed' — 재시도 단추가 이어 받는다). 4xx(권한)는 그 항목만 건너뛴다.
 import { mkdir, readFile, writeFile, appendFile, stat, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { writeJsonAtomic } from './jsonstore.mjs';
+import { writeJsonAtomic, writeFileAtomic } from './jsonstore.mjs';
+
+/** 기록 파일(messages.md·messages.jsonl·README.md) 쓰기 한 곳 — 원자 쓰기(임시 파일 → rename). 통째로 다시 쓰는 중에 앱이 꺼져도
+    원본은 완전한 이전 상태로 남는다(검수 1 권고, 2026-10-16: 다시 받은 첨부를 반영하며 jsonl을 덮어쓰다 꺼지면 방 기록 뒷부분이 빠질 수 있었다). (export: 시험용 주입점) */
+export const _io = { writeText: (file, body) => writeFileAtomic(file, body) };
 
 export const PAUSE_RPC = 'msgr_service_pause';
 export const ARCHIVE_DIR = '.msgr-archive'; // <WS_ROOT> 직속 — 계정별 하위 폴더
@@ -350,7 +354,7 @@ function namers(st) {
 async function writeRoomMarkdown(roomDir, room, rows, st) {
   const { userName, crewName } = namers(st);
   const author = (m) => (m.author_kind === 'user' ? userName(m.author_user_id) : m.author_kind === 'crew' ? crewName(m.crew_id) : '시스템 · System');
-  await writeFile(join(roomDir, 'messages.md'), renderRoomMarkdown(room, rows.map((m) => ({ ...m, author: author(m) }))));
+  await _io.writeText(join(roomDir, 'messages.md'), renderRoomMarkdown(room, rows.map((m) => ({ ...m, author: author(m) }))));
 }
 
 /** 일부 실패(partial) 이어 받기 — 앱을 다시 켤 때 못 받은 첨부만 다시 받는다(설정의 '다시 받기' 단추가 없어진 뒤, 2026-10-16 워커 2 지적).
@@ -373,7 +377,7 @@ async function retryPartial({ ctx, prev, dir, now, save }) {
     const rows = await readJsonl(join(roomDir, 'messages.jsonl'));
     const byPath = new Map(fs.map((f) => [f.storage_path, f.file.slice(roomRel.length + 1)]));
     for (const m of rows) for (const a of m.attachments ?? []) if (!a.file && byPath.has(a.storage_path)) a.file = byPath.get(a.storage_path);
-    await writeFile(join(roomDir, 'messages.jsonl'), rows.length ? `${rows.map((r) => JSON.stringify(r)).join('\n')}\n` : '');
+    await _io.writeText(join(roomDir, 'messages.jsonl'), rows.length ? `${rows.map((r) => JSON.stringify(r)).join('\n')}\n` : '');
     const room = await readJsonSafe(join(roomDir, 'room.json'));
     if (room) await writeRoomMarkdown(roomDir, room, rows, st);
   }
@@ -392,7 +396,7 @@ async function writeReadme(dir, st, chs) {
     `- 방 · Rooms: ${chs.length}`, `- 메시지 · Messages: ${st.totals.messages}`, `- 첨부 · Attachments: ${st.totals.attachments}`, '',
     ...rooms.map((r) => `- [${r}](${encodeURI(`${r}/messages.md`)})`), '',
   ].join('\n');
-  await writeFile(join(dir, 'README.md'), body);
+  await _io.writeText(join(dir, 'README.md'), body);
 }
 
 /** 보관 폴더 안 방 수(설정 화면 표시용) — 상태 파일이 없을 때의 보조. */
