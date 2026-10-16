@@ -141,7 +141,7 @@ const BROADCAST_CONCURRENCY = 10;
 const BROADCAST_DEADLINE_MS = 90_000;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function broadcastPush(bid: string) {
-  const claimed = await rest(`msgr_push_broadcasts?id=eq.${encodeURIComponent(bid)}&claimed_at=is.null&select=id,ko,en`,
+  const claimed = await rest(`msgr_push_broadcasts?id=eq.${encodeURIComponent(bid)}&claimed_at=is.null&select=id,ko_title,ko,en_title,en`,
     { method: 'PATCH', headers: { Prefer: 'return=representation' }, body: JSON.stringify({ claimed_at: new Date(Date.now()).toISOString() }) });
   const b = claimed?.[0]; if (!b) return Response.json({ ok: true, dup: true });
   const max = Math.max(1, Number(Deno.env.get('PUSH_BROADCAST_MAX')) || 5000);

@@ -14,7 +14,9 @@ const p8 = `-----BEGIN PRIVATE KEY-----\n${Buffer.from(await crypto.subtle.expor
 const rsa = await crypto.subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['sign', 'verify']);
 const rsaPem = `-----BEGIN PRIVATE KEY-----\n${Buffer.from(await crypto.subtle.exportKey('pkcs8', rsa.privateKey)).toString('base64')}\n-----END PRIVATE KEY-----`;
 
-const ROW = { id: 'pause:2026-10-16T18:00:00+09:00', ko: '메신저를 잠시 멈춥니다.', en: 'Messenger is paused for now.' };
+// 유건님 승인 문구(2026-10-16) — 제목·본문 ko·en
+const ROW = { id: 'pause:2026-10-16T18:00:00+09:00', ko_title: 'Argo Messenger 운영 일시 중단', ko: '더 안정적인 서비스를 위해 잠시 운영을 멈춥니다. 대화와 파일은 Argo 데스크톱 다음 업데이트에서 옮겨 드립니다.',
+  en_title: 'Argo Messenger is pausing', en: "We're pausing briefly to make it more stable. Your chats and files will move to Argo desktop in the next update." };
 function edge({ tokens, rows = [ROW], answer = () => 200, env = {}, delayMs = 0 } = {}) {
   const claims = new Set(); const deliveries = []; const deletes = []; const finished = []; const attempts = new Map(); let inflight = 0; let maxInflight = 0;
   const config = { SUPABASE_URL: 'https://database.test', SUPABASE_SERVICE_ROLE_KEY: 'test-service', APNS_KEY_P8: p8, APNS_KEY_ID: 'K', APNS_TEAM_ID: 'T',
@@ -62,16 +64,17 @@ function edge({ tokens, rows = [ROW], answer = () => 200, env = {}, delayMs = 0 
 }
 const tok = (user, platform, i) => ({ token: `${platform}-${user}-${i}`, platform, user_id: user, sound: 'wood-knock' });
 
-test('기기마다 한 번 — 토큰 있는 사용자 전원(아이폰·안드로이드), 토큰 없는 사용자는 대상 밖, 문구는 행의 ko 다음 줄 en(요청의 문구는 무시)', async () => {
+test('기기마다 한 번 — 토큰 있는 사용자 전원(아이폰·안드로이드), 토큰 없는 사용자는 대상 밖, 제목은 ko 제목·본문은 ko 다음 줄 "en 제목: en 본문"(요청의 문구는 무시)', async () => {
   const tokens = [tok('u1', 'ios', 1), tok('u1', 'android', 1), tok('u2', 'ios', 1), tok('u3', 'android', 1)];
   const e = edge({ tokens });
-  const r = await e.call({ broadcast_id: ROW.id, ko: '위조 문구', en: 'forged' });
+  const r = await e.call({ broadcast_id: ROW.id, ko_title: '위조', ko: '위조 문구', en_title: 'x', en: 'forged' });
   assert.equal(r.status, 200);
   assert.deepEqual({ users: r.json.users, tokens: r.json.tokens, sent: r.json.sent, failed: r.json.failed }, { users: 3, tokens: 4, sent: 4, failed: 0 });
   assert.deepEqual(e.deliveries.map((d) => d.token).sort(), tokens.map((t) => t.token).sort(), '기기마다 정확히 한 번');
   const ios = e.deliveries.find((d) => d.platform === 'ios').payload.aps.alert;
   const android = e.deliveries.find((d) => d.platform === 'android').payload.message.notification;
-  for (const n of [ios, android]) assert.deepEqual(n, { title: 'Argo Messenger', body: `${ROW.ko}\n${ROW.en}` });
+  for (const n of [ios, android]) assert.deepEqual(n, { title: 'Argo Messenger 운영 일시 중단',
+    body: "더 안정적인 서비스를 위해 잠시 운영을 멈춥니다. 대화와 파일은 Argo 데스크톱 다음 업데이트에서 옮겨 드립니다.\nArgo Messenger is pausing: We're pausing briefly to make it more stable. Your chats and files will move to Argo desktop in the next update." });
   assert.equal(e.deliveries.find((d) => d.platform === 'ios').payload.aps.badge, undefined, '배지는 건드리지 않는다');
   assert.equal(e.finished.length, 1); assert.equal(e.finished[0].result.sent, 4);
 });

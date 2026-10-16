@@ -99,10 +99,12 @@ export function shouldDropToken(platform, status, bodyText = '') {
   return status === 404 || /UNREGISTERED|Requested entity was not found|INVALID_ARGUMENT/.test(bodyText);
 }
 
-/** 서비스 공지 알림 문구(메신저 일시 중단 공지, 2026-10-16) — 사용자 언어를 저장하지 않으므로 한국어 줄 다음에 영어 줄. 각 줄 200자. */
-export function broadcastPushText({ ko, en }) {
-  const line = (v) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, 200);
-  return { title: 'Argo Messenger', body: [line(ko), line(en)].filter(Boolean).join('\n') };
+/** 서비스 공지 알림 문구(메신저 일시 중단 공지, 2026-10-16) — 사용자 언어를 저장하지 않으므로 제목은 한국어 제목,
+ *  본문은 한국어 본문 다음 줄에 '영어 제목: 영어 본문'(영어 사용자가 둘째 줄에서 제목까지 읽게). 제목 100자·각 줄 300자. */
+export function broadcastPushText({ ko_title, ko, en_title, en }) {
+  const clean = (v, n) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
+  const enLine = [clean(en_title, 100), clean(en, 300)].filter(Boolean).join(': ');
+  return { title: clean(ko_title, 100) || 'Argo Messenger', body: [clean(ko, 300), enLine].filter(Boolean).join('\n') };
 }
 
 /** 공지 발송 한 건의 재시도 판정 — 일시 오류(429·5xx·네트워크)만, 시도 상한 안에서. 무효 토큰(410·404·400)은 다시 보내지 않는다(shouldDropToken이 지운다). */
