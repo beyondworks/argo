@@ -8,7 +8,7 @@
 --
 -- 켜져 있는 동안
 --   1) 쓰기 거부 — 아래 표의 INSERT를 트리거 a0_msgr_pause_guard가 맨 먼저(이름 순) 막는다. RLS(사람 직접 쓰기)·security definer 함수(크루·봇·초대 RPC)·
---      service_role(엣지 msgr-bot) 모두 이 트리거를 지나므로 경로별로 따로 막지 않는다. 오류: errcode 42501 'msgr_paused_forbidden (… row-level security …)' — 기존 앱 문구는 PR 본문 표.
+--      service_role(엣지 msgr-bot) 모두 이 트리거를 지나므로 경로별로 따로 막지 않는다. 오류: errcode 42501 'msgr_forbidden (… row-level security …, messenger service paused)' — 기존 앱·엣지 응답은 PR 본문 표.
 --        msgr_messages(새 글 — 사람·크루·봇·자동화), msgr_channels(방 만들기), msgr_channel_members(초대·참여), msgr_invites·msgr_invite_uses·msgr_org_members·msgr_orgs
 --        (조직 초대·가입·만들기), msgr_friends(친구 요청 — 차단 'blocked'은 안전 기능이라 그대로), msgr_channel_crew_requests·msgr_crew_requests·msgr_executions·
 --        msgr_automations·msgr_automation_runs·msgr_crew_routine_edits(크루 지시), msgr_org_announcements(조직 공지), msgr_attachments(첨부 행 — 새 글에 딸린다)
@@ -39,33 +39,6 @@ language sql stable security definer set search_path = public, pg_temp as $$
 $$;
 revoke all on function public.msgr_service_pause() from public;
 grant execute on function public.msgr_service_pause() to anon, authenticated, service_role;
-
--- 1) 쓰기 거부 트리거
-create or replace function public.msgr_pause_guard() returns trigger
-language plpgsql security definer set search_path = public, pg_temp as $$
-declare r jsonb;
-begin
-  if not public._msgr_paused() then return new; end if;
-  r := to_jsonb(new); -- 표마다 열이 달라 new.<열>을 직접 읽지 않는다(PL/pgSQL은 and 앞이 거짓이어도 뒤 식의 열을 찾는다)
-  if tg_table_name = 'msgr_messages' and r->>'kind' = 'system' and coalesce(current_setting('msgr.pause_notice', true), '') = '1' then return new; end if;
-  if tg_table_name = 'msgr_friends' and r->>'status' = 'blocked' then return new; end if; -- 차단은 안전 기능(msgr_friend_remove)
-  -- 문구·코드는 배포된 앱이 이미 아는 모양에 맞췄다(PR 표): 42501 = 글 보내기 카드 "이 방에 보낼 수 없습니다"(다시 시도 없음)·본체 큐 영구 오류(재시도 없음),
-  -- 'row-level security' = 토스트·초대 창 "권한이 없습니다". 'msgr_paused'로 시작해 새 앱은 가려 읽을 수 있다. 'read-only'는 넣지 않는다("읽기 전용(계정 상태)"로 오해).
-  raise exception 'msgr_paused_forbidden (new row violates row-level security policy, messenger service paused)' using errcode = '42501';
-end $$;
-revoke all on function public.msgr_pause_guard() from public, anon, authenticated;
-
-do $$
-declare t text;
-begin
-  foreach t in array array['msgr_messages', 'msgr_channels', 'msgr_channel_members', 'msgr_invites', 'msgr_invite_uses', 'msgr_org_members', 'msgr_orgs',
-                           'msgr_friends', 'msgr_channel_crew_requests', 'msgr_crew_requests', 'msgr_executions', 'msgr_automations', 'msgr_automation_runs',
-                           'msgr_crew_routine_edits', 'msgr_org_announcements', 'msgr_attachments'] loop
-    if to_regclass('public.' || t) is null then continue; end if; -- 일부 표만 있는 시험 DB
-    execute format('drop trigger if exists a0_msgr_pause_guard on public.%I', t);
-    execute format('create trigger a0_msgr_pause_guard before insert on public.%I for each row execute function public.msgr_pause_guard()', t);
-  end loop;
-end $$;
 
 -- 2)·3) 감싸개 — core로 이름을 바꾼다(다시 적용해도 한 번만: core가 이미 있으면 건너뛴다)
 do $$
@@ -169,5 +142,33 @@ begin
 end $$;
 revoke all on function public.msgr_pause_announce(text, text) from public, anon, authenticated;
 grant execute on function public.msgr_pause_announce(text, text) to service_role;
+
+-- 1) 쓰기 거부 트리거 — 파일 끝에 둔다(시험 msgr-bot-err-contract는 함수 본문을 다음 create function까지 읽는다 — 트리거 함수 뒤에 다른 함수 이름이 섞이지 않게)
+create or replace function public.msgr_pause_guard() returns trigger
+language plpgsql security definer set search_path = public, pg_temp as $$
+declare r jsonb;
+begin
+  if not public._msgr_paused() then return new; end if;
+  r := to_jsonb(new); -- 표마다 열이 달라 new.<열>을 직접 읽지 않는다(PL/pgSQL은 and 앞이 거짓이어도 뒤 식의 열을 찾는다)
+  if tg_table_name = 'msgr_messages' and r->>'kind' = 'system' and coalesce(current_setting('msgr.pause_notice', true), '') = '1' then return new; end if;
+  if tg_table_name = 'msgr_friends' and r->>'status' = 'blocked' then return new; end if; -- 차단은 안전 기능(msgr_friend_remove)
+  -- 문구·코드는 이미 배포된 쪽이 아는 모양에 맞췄다(PR 표): 42501 = 메신저 글 보내기 카드 "이 방에 보낼 수 없습니다"(다시 시도 없음)·본체 큐 영구 오류(재시도 없음),
+  -- 첫 토큰 msgr_forbidden = 엣지 msgr-bot ERR의 403(모르는 이름이면 500 → Hermes outbox 재시도, msgr-bot-err-contract), 'row-level security' = 토스트·초대 창 "권한이 없습니다".
+  -- 'messenger service paused'로 새 앱은 가려 읽을 수 있다. 'read-only'는 넣지 않는다("읽기 전용(계정 상태)"로 오해).
+  raise exception 'msgr_forbidden (new row violates row-level security policy, messenger service paused)' using errcode = '42501';
+end $$;
+revoke all on function public.msgr_pause_guard() from public, anon, authenticated;
+
+do $$
+declare t text;
+begin
+  foreach t in array array['msgr_messages', 'msgr_channels', 'msgr_channel_members', 'msgr_invites', 'msgr_invite_uses', 'msgr_org_members', 'msgr_orgs',
+                           'msgr_friends', 'msgr_channel_crew_requests', 'msgr_crew_requests', 'msgr_executions', 'msgr_automations', 'msgr_automation_runs',
+                           'msgr_crew_routine_edits', 'msgr_org_announcements', 'msgr_attachments'] loop
+    if to_regclass('public.' || t) is null then continue; end if; -- 일부 표만 있는 시험 DB
+    execute format('drop trigger if exists a0_msgr_pause_guard on public.%I', t);
+    execute format('create trigger a0_msgr_pause_guard before insert on public.%I for each row execute function public.msgr_pause_guard()', t);
+  end loop;
+end $$;
 
 notify pgrst, 'reload schema';

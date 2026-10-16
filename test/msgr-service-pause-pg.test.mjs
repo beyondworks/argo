@@ -17,7 +17,7 @@ const asUser = (uid, q) => sql(`set role authenticated; select set_config('argo.
 const asUserRaw = (uid, q) => psqlRaw(['-A', '-t', '-c', `set role authenticated; select set_config('argo.uid', '${uid}', false); ${q}`]);
 const asAnon = (q) => sql(`set role anon; select set_config('argo.uid', '', false); ${q}`);
 const last = (s) => s.split('\n').filter(Boolean).pop() ?? '';
-const PAUSED = /42501: msgr_paused_forbidden \(new row violates row-level security policy/;
+const PAUSED = /42501: msgr_forbidden \(new row violates row-level security policy, messenger service paused\)/;
 const paused = (raw, label) => { assert.notEqual(raw.status, 0, `중단 중인데 허용됨: ${label}`); assert.match(raw.stderr, PAUSED, `${label} — 실제 오류: ${raw.stderr.trim().slice(0, 240)}`); };
 const ok = (raw, label) => { assert.equal(raw.status, 0, `${label} — 실제 오류: ${raw.stderr.trim().slice(0, 240)}`); return last(raw.stdout); };
 const superRaw = (q) => psqlRaw(['-A', '-t', '-c', q]); // 슈퍼유저 = service_role처럼 RLS를 건너뛴다(엣지 msgr-bot·크론 경로) — 트리거는 그대로 돈다

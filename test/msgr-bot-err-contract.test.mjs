@@ -25,12 +25,16 @@ for (const { f, s } of files) {
     const name = m[1].toLowerCase();
     byName.set(name, (byName.get(name) ?? '') + body);
   });
+  // 이름 바꾸기(alter function … rename to …) — 감싸개를 두고 원래 본문을 _<이름>_core로 옮긴 경우(20261016170000) 그 본문을 새 이름으로 따라간다
+  for (const m of s.matchAll(/alter\s+function\s+(?:public\.)?([a-z_][a-z0-9_]*)\s*\([^)]*\)\s+rename\s+to\s+([a-z_][a-z0-9_]*)/gi)) {
+    const from = m[1].toLowerCase(); if (latest.has(from)) latest.set(m[2].toLowerCase(), latest.get(from));
+  }
   for (const [name, body] of byName) latest.set(name, { f, body });
 }
 
 // core.js가 부르는 RPC — rpc('이름', …)과 삼항으로 고르는 이름(getUpdates·ack/expire)까지 봇 함수 문자열 리터럴을 모두 줍는다
 const rpcs = [...new Set([...core.matchAll(/'(msgr_bot_[a-z_]+)'/g)].map((m) => m[1]).filter((n) => latest.has(n)))];
-const TRIGGERS = ['msgr_message_fill', 'msgr_dm_message_guard', 'msgr_crew_reply_gate', 'msgr_messages_crew_scope_guard', 'msgr_message_entitlement_gate', 'msgr_work_message_guard', 'msgr_messages_server_time'];
+const TRIGGERS = ['msgr_message_fill', 'msgr_dm_message_guard', 'msgr_crew_reply_gate', 'msgr_messages_crew_scope_guard', 'msgr_message_entitlement_gate', 'msgr_work_message_guard', 'msgr_messages_server_time', 'msgr_pause_guard'];
 
 // 봇 경로에서 닿지 않는 이름(이유를 적는다). 늘리지 말고 ERR에 넣거나 기존 이름을 쓴다.
 const UNREACHABLE = new Set([
@@ -60,7 +64,7 @@ test('봇 RPC(전이 포함)와 봇 글 삽입 트리거가 raise하는 이름�
   assert.ok(fns.has('_msgr_bot_twin') && fns.has('_msgr_bot_personal_updates'), '개인 공간 봇 경로(20261001140000)가 범위에 든다');
   const missing = [];
   for (const fn of fns) {
-    for (const m of latest.get(fn).body.matchAll(/raise\s+exception\s+'(msgr_[a-z_]+)'/gi)) if (!ERR.has(m[1]) && !UNREACHABLE.has(m[1])) missing.push(`${m[1]} ← ${fn} (${latest.get(fn).f})`);
+    for (const m of latest.get(fn).body.matchAll(/raise\s+exception\s+'(msgr_[a-z_]+)(?:'| )/gi)) if (!ERR.has(m[1]) && !UNREACHABLE.has(m[1])) missing.push(`${m[1]} ← ${fn} (${latest.get(fn).f})`);
   }
   assert.deepEqual([...new Set(missing)].sort(), [], 'ERR에 없는 이름은 엣지에서 500 → 봇 outbox 정지');
 });
