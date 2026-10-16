@@ -44,7 +44,7 @@ export const UPDATE_NOTES = Object.freeze({
   '0.1.111': Object.freeze(['updates.note.connectFresh', 'updates.note.noRunnerNotice', 'updates.note.singleDevice']),
   // 0.1.112 — limitNotice: 내 에이전트가 사용 한도로 답 못 하면 러너·해제 시각·할 일 안내(#1049) · fallbackOrder: 대체 러너로 넘어간 뒤 사용 한도면 순서 안내(#1051) · idleLess: 쉬는 동안 서버 요청 줄임, 첫 알림 약 30초 늦어질 수 있음(#1050)
   '0.1.112': Object.freeze(['updates.note.limitNotice', 'updates.note.fallbackOrder', 'updates.note.idleLess']),
-  // 0.1.113 — msgrArchive: 메신저가 쉬는 동안 메신저 기록을 이 기기 Argo 보관 폴더로 한 번 옮김, 설정 > 연결에서 진행·폴더 열기, 기기 사이 동기화 없음, 에이전트 기억과 섞이지 않음(#1056) · msgrPausedQuiet: 메신저가 쉬는 동안 메신저 서버 확인을 30분에 한 번으로(#1055) · msgrPausedSettings: 쉬는 동안 설정 메신저 카드 '쉬는 중'·알림은 텔레그램·슬랙·Argo 앱 안내(#1059)
+  // 0.1.113 — msgrArchive: 메신저가 일시 중단된 동안 메신저 기록을 이 기기 Argo 보관 폴더로 한 번 복사, 끝나면 회사 화면 위쪽 안내에 위치, 기기 사이 동기화 없음, 에이전트 기억과 섞이지 않음(#1056) · msgrPausedQuiet: 일시 중단 동안 메신저 서버 확인을 30분에 한 번으로, 다시 열린 뒤 30분 안에 원래대로(#1055) · msgrPausedSettings: 일시 중단 동안 설정에서 메신저 항목을 숨기고 출시 알림 신청만(#1061 — #1059의 '쉬는 중' 표시를 대신)
   '0.1.113': Object.freeze(['updates.note.msgrArchive', 'updates.note.msgrPausedQuiet', 'updates.note.msgrPausedSettings']),
 });
 
