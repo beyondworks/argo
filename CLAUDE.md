@@ -14,7 +14,7 @@
 
 ## 프로젝트 사실
 
-- 스택: Next.js(App Router, JS) + Claude Agent SDK 코어(`src/*.mjs`) + Supabase(인증·DB), 데스크톱·메신저 앱은 Tauri(`src-tauri`, `apps/messenger`), 오피스는 `apps/office`.
+- 스택: Next.js(App Router, JS) + Claude Agent SDK 코어(`src/*.mjs`) + Supabase(인증·DB), 데스크톱·메신저 앱은 Tauri(`src-tauri`, `apps/messenger`). 오피스는 별도 저장소다(2026-10-16 분리).
 - 워크스페이스 루트는 env `ARGO_ROOT`(구 `CREWBASE_ROOT` 병행). `workspaces/`는 gitignore — 사용자 데이터를 커밋하지 않는다.
 - 디자인 기본 테마는 **graphite**: 중성 회색, 표면 단계로 위계, 액션 색은 primary 하나(`#1a1a1a`, 다크 `#ededed`), 시스템 다크 자동. 정본은 `app/globals.css`의 `:root[data-theme='graphite']` 토큰이고 새 화면·페이지(CLI 로그인 페이지 포함)는 이 값을 쓴다. 옛 네이비+골드 모티프는 폐기(2026-09-29).
 
@@ -36,7 +36,7 @@
 |---|---|
 | PR 본문: 영향 반경·분리 검수·경우 표·부하(분당)·메신저 390/1280/880·러너별 검증 | `.github/workflows/pr-rules.yml` + `scripts/pr-rules-check.mjs`(바뀐 파일에 따라 해당 절이 비면 실패, 템플릿 `.github/pull_request_template.md`) |
 | `window.confirm/prompt` 금지, 마이그레이션 버전 중복, 새 마이그레이션의 `storage.objects`·기억 데이터 SQL 삭제 금지(`-- rule-ok:` 예외) | `test/rule-gates.test.mjs`(CI `npm test`) |
-| 오피스 confirm 금지·사전 밖 한글 금지 | `apps/office/test`(CI macOS) |
+| 오피스 재유입 금지(2026-10-16 분리) | `test/core-office-removed.test.mjs`(CI `npm test`) |
 | 맥 two에서 라이브 DB 적용·iOS 발행 금지 | `scripts/msgr-live-apply.sh`·`apps/messenger/scripts/ios-store.mjs` 첫머리(exit 5) |
 | 라이브 적용은 main과 같은 파일만 | `msgr-live-apply.sh` 검문 |
 | 시크릿 평문 커밋 금지 | `.githooks/pre-commit`(`npm install`이 켬) |
@@ -123,7 +123,7 @@
 
 1. **경우 표 먼저.** 상태를 바꾸는 변경(동기화·결제·권한·메신저 표지)은 고치기 전에 경우 표를 만든다: 버전 섞임·첫 실행·중단·복원·빈 상태·다른 기기·오류 응답·러너·화면(ko/en·라이트/다크·390/1280)·데이터 보존. 칸마다 기대 결과와 확인 방법을 적고, 끝날 때 근거(테스트 이름·명령 출력·스크린샷)를 채운다. 근거 없는 칸은 미완.
 2. **검수는 칸 단위 반박.** 표에 없던 경우를 찾으면 한 줄 더한다.
-3. **게이트 A.** 발행 전과 큰 묶음을 합친 뒤, 임시 워크트리에 새 코드 + 배포본(`origin/main` 또는 직전 발행 태그)의 `test/`·`apps/messenger/test`·`apps/office/test`를 두고 돌린다. 배포본 코드 기준선의 실패 목록과 비교해 새 실패를 (a) 의도된 변경(새 기대값 테스트와 커밋 근거) (b) 구현 세부 고정 (c) 환경 (d) 의도하지 않은 회귀로 판정해 문서로 남긴다. (d)가 0이어야 병합·발행.
+3. **게이트 A.** 발행 전과 큰 묶음을 합친 뒤, 임시 워크트리에 새 코드 + 배포본(`origin/main` 또는 직전 발행 태그)의 `test/`·`apps/messenger/test`를 두고 돌린다. 배포본 코드 기준선의 실패 목록과 비교해 새 실패를 (a) 의도된 변경(새 기대값 테스트와 커밋 근거) (b) 구현 세부 고정 (c) 환경 (d) 의도하지 않은 회귀로 판정해 문서로 남긴다. (d)가 0이어야 병합·발행.
 4. **게이트 B.** 같은 상황 스크립트를 배포본과 새 코드에 돌려 칸별로 비교한다(요청 수·쓰기 수 포함). 다른 칸마다 "같음/더 안전/의도한 변경"을 적고, 배포본보다 나빠지는 칸이 하나라도 있으면 발행하지 않는다. 위험한 수정은 배포본과의 차이를 사고 경로에만 두는 쪽을 먼저 검토한다.
 5. **공용 파일은 양쪽 앱으로 확인.** `app/globals.css`·`app/ui.jsx`·`app/i18n.jsx`를 바꾸면 메신저 390·1280·880도 띄운다.
 6. **효율.** 큰 변경은 단위별 워크트리로 나눠 병렬로(단위마다 경우 표 칸을 나눠 맡기고, 같은 파일을 여러 단위가 고치지 않게). 총괄 세션 effort는 high, 동기화·보안·데이터 손실 검수만 `agent({effort:'xhigh'})`. CI 전용 실패는 `env -i PATH="$PATH" HOME="$HOME" node --test …`로 재현. 전체 테스트는 TAP 파일로 남긴다(`--test-reporter=tap > 파일`). 백그라운드 프로세스는 `$!`로 pid를 모아 trap으로 정리하고 `pgrep`으로 0개를 확인한다. 공유 scratchpad는 glob으로 지우지 않고 자기가 만든 정확한 경로만 지운다.
