@@ -175,4 +175,5 @@ test('F7. 진단 줄은 자가치유 대체(인증 오류로 제외)에는 남�
   assert.equal(runnerPickReasonLine('codex', 'claude', { connected: true, type: 'host', invalid: true, installed: false, authed: false, detectedAt: 1_000 }, 61_000),
     '지정 codex 사용 불가 → claude · connected=true type=host invalid=true unsupported=false installed=false authed=false 감지=1970-01-01T00:00:01.000Z(60초 전)');
   assert.match(runnerPickReasonLine('codex', 'claude', null), /connected=false type=- .* 감지=-$/, '근거를 못 읽으면 빈 값');
+  assert.match(runnerPickReasonLine('codex', 'claude', { detectedAt: 1_000, freshDetect: true }, 1_000), /감지=1970-01-01T00:00:01\.000Z\(0초 전\)\(진단이 새로 감지 — 판정 때 감지와 다를 수 있음\)$/, '진단이 만든 감지는 판정 근거와 구분');
 });

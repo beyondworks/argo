@@ -410,14 +410,16 @@ export async function runnerStatus(wsId, { forPick = false } = {}) {
     원인(기동 직후 감지 캐시 등)을 확인할 수 없었다). pickRunner가 보는 값(회사 자격 connected·type·invalid·unsupportedMethod)과 그 판정에 쓰인 호스트 감지(installed·authed)
     + 감지 캐시 시각만 — 자격 값·경로·계정은 싣지 않는다. 감지 로직은 바꾸지 않는다(캐시가 있으면 그대로 읽는다). 대체 턴에서만 부른다(chat.mjs). */
 export async function runnerPickReason(wsId, id) {
+  const before = detectCacheAt(); // 판정이 본 감지 캐시 시각 — 아래 감지가 캐시를 새로 만들면(캐시 없음·만료) 그 사실을 따로 적는다(재검수 LOW: 방금 만든 시각을 판정 근거로 오독)
   const [st, host] = await Promise.all([runnerStatus(wsId, { forPick: true }), detectRunners()]);
   const c = st[id]?.company ?? {};
-  return { connected: !!c.connected, type: c.type ?? null, invalid: !!c.invalid, unsupported: !!c.unsupportedMethod, installed: !!host[id]?.installed, authed: !!host[id]?.authed, detectedAt: detectCacheAt() };
+  const after = detectCacheAt();
+  return { connected: !!c.connected, type: c.type ?? null, invalid: !!c.invalid, unsupported: !!c.unsupportedMethod, installed: !!host[id]?.installed, authed: !!host[id]?.authed, detectedAt: after, ...(after !== before ? { freshDetect: true } : {}) };
 }
 /** 진단 한 줄(순수) — 값은 참거짓·자격 종류 이름·시각뿐. */
 export function runnerPickReasonLine(want, ran, r, now = Date.now()) {
   const at = r?.detectedAt ? `${new Date(r.detectedAt).toISOString()}(${Math.max(0, Math.round((now - r.detectedAt) / 1000))}초 전)` : '-';
-  return `지정 ${want} 사용 불가 → ${ran} · connected=${!!r?.connected} type=${r?.type ?? '-'} invalid=${!!r?.invalid} unsupported=${!!r?.unsupported} installed=${!!r?.installed} authed=${!!r?.authed} 감지=${at}`;
+  return `지정 ${want} 사용 불가 → ${ran} · connected=${!!r?.connected} type=${r?.type ?? '-'} invalid=${!!r?.invalid} unsupported=${!!r?.unsupported} installed=${!!r?.installed} authed=${!!r?.authed} 감지=${at}${r?.freshDetect ? '(진단이 새로 감지 — 판정 때 감지와 다를 수 있음)' : ''}`;
 }
 
 /** 턴에 실제로 쓸 러너 결정 — 크루의 러너가 미가용이면 가용한 러너로 폴백(pickRunner).
