@@ -912,7 +912,7 @@ function MsgrCard({ ws, agents, paused = false, onArchiveState }) {
   const [note, setNote] = useState(''); // 무료 4명 교체 안내(연결 결과)
   const [confirm, setConfirm] = useState(null); // 교체 미리 알림 { scope, slugs, victims } — 유지할 에이전트 고르기를 못 쓸 때(옛 서버·Pro 판정 실패)만의 종전 확인
   const getLink = msgrGetLink(paused); // 메신저 중단 스위치(부모가 이관 영역 응답으로 받는다) — 켜지면 '메신저 받기' 대신 '출시 알림 받기'
-  const pv = msgrPausedView(paused); // 쉬는 동안 카드 설명·응답 상태·단추(0.1.113)
+  const pv = msgrPausedView(paused); // 일시 중단 동안 카드 설명·응답 상태·단추(0.1.113)
   const [keep, setKeep] = useState(null); // 유지할 에이전트 고르기 { scope, slots, picked, victims } — 무료 한도에서 사람이 고른다(2026-10-12)
   const load = useCallback(() => api(`/api/companies/${ws}/msgr`)
     .then((d) => { setSt(d); setOrgId((cur) => cur && d.orgs?.some((o) => o.id === cur) ? cur : (d.orgs?.[0]?.id ?? '')); })
@@ -1086,7 +1086,7 @@ function MsgrCard({ ws, agents, paused = false, onArchiveState }) {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
         <span className="card-title" style={{ minWidth: 0 }}>{t('settings.msgr.title')}</span>
         {st?.signedIn && (pv.chipKey ? (
-          // 쉬는 동안에는 '연결됨'(초록) 대신 '쉬는 중'(회색) — 연결돼 있어도 메신저가 답하지 않는다(msgrPausedView)
+          // 일시 중단 동안에는 '연결됨'(초록) 대신 '일시 중단'(회색) — 연결돼 있어도 메신저가 답하지 않는다(msgrPausedView)
           <span className="chip msgr-chip-paused" title={t('settings.msgr.pausedHelp')}><span className="dot" style={{ background: 'var(--border)' }} />{t(pv.chipKey)}</span>
         ) : <span className="chip" title={t(chip === 'personal' ? 'settings.msgr.connection.personalHelp' : 'settings.msgr.connection.statusHelp', { n: chip === 'personal' ? personalCount : regCount })}>
           <span className="dot" style={{ background: chip === 'notConnected' ? 'var(--border)' : 'var(--ok)' }} />{t(chip === 'connected' ? 'settings.msgr.connection.connected' : chip === 'personal' ? 'settings.msgr.connection.personal' : 'settings.msgr.connection.notConnected')}
@@ -1119,7 +1119,7 @@ function MsgrCard({ ws, agents, paused = false, onArchiveState }) {
           </div>
         </section>
       )}
-      {pv.showHelp && st?.signedIn && !st.orgs?.length && <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: 0 }}>{personalCount ? t('settings.msgr.personalOnly', { n: personalCount }) : t('settings.msgr.noOrg')}</p>}{/* 쉬는 동안에는 '팀과 함께 쓰려면 조직을…' 안내도 숨긴다(지금 쓸 수 있다고 읽힌다) */}
+      {pv.showHelp && st?.signedIn && !st.orgs?.length && <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: 0 }}>{personalCount ? t('settings.msgr.personalOnly', { n: personalCount }) : t('settings.msgr.noOrg')}</p>}{/* 일시 중단 동안에는 '팀과 함께 쓰려면 조직을…' 안내도 숨긴다(지금 쓸 수 있다고 읽힌다) */}
       {/* 실행기 연결 상태 — 개인 공간도 이 기기의 실행기가 답한다. 조직이 없어도 보인다(CX-12: 조직 블록 안에만 있어 숨었다) */}
       {showRuntime && !st.orgs?.length && runtimeToo && (
         <section className={`msgr-runtime${runtime?.state === 'alive' && !paused ? ' on' : ''}`} aria-live="polite">
