@@ -24,6 +24,9 @@ export function roomAuthRunner(e) {
 /** 크루 턴 실패 — 원인을 아는 경우만 원인과 고칠 곳을 말하고, 그 밖은 일반 문구(roomTurnFailure). 방(손님 포함)에 오르므로 원문·계정·토큰은 싣지 않는다 —
     러너 이름(Claude 등)과 할 일만. 다시 로그인은 실행기 주인만 할 수 있어 "주인이"라고 말한다(데스크톱: 설정 → AI 연결, 서버: 그 기기에서 다시 로그인). */
 export function roomTurnFailureFor(e, lang = 'ko', { ownerCause = null } = {}) {
+  // 주인 요청의 사용 한도는 로그인 만료보다 먼저 — 대체 실행(지정 러너 인증 오류 → 대체 러너 한도)이면 마지막 원인이 한도이고, 순서는 roomOwnerFailure가 말한다(2026-10-16 11:43 운영).
+  // 남의 요청(ownerCause 없음)은 종전 그대로: 로그인 만료면 누구에게나 그 러너, 그 밖은 일반 문구(한도 원인은 주인 1:1 안내로)
+  if (ownerCause?.kind === 'limit') return roomOwnerFailure(ownerCause, lang) ?? roomTurnFailure(lang);
   const runner = roomAuthRunner(e);
   if (!runner) return ownerCause ? roomOwnerFailure(ownerCause, lang) ?? roomTurnFailure(lang) : roomTurnFailure(lang);
   const name = RUNNERS[runner]?.name;
@@ -69,6 +72,14 @@ export function roomOwnerFailure(cause, lang = 'ko') {
     "No AI is connected on your runner behind this agent, so it could not answer. Connect one in Argo desktop Settings → AI connection and it can answer again.", lang);
   if (cause?.kind === 'limit') { // 사용 한도(0.1.112) — 한도는 다른 러너로 저절로 넘어가지 않는다(runners.mjs) — 풀린 뒤 다시 또는 에이전트에 다른 러너 지정
     const name = RUNNERS[cause.runner]?.name ?? 'AI'; const when = formatLimitResets(cause.resets, lang);
+    if (cause.from) { // 대체 실행 뒤 한도 — 지정 러너 → 대체 러너 → 한도 순서. 할 일은 지정 러너 다시 로그인(인증 오류였으면) 또는 한도가 풀린 뒤
+      const f = RUNNERS[cause.from]?.name ?? cause.from;
+      return cause.fromAuth
+        ? pick(`지정 러너 ${f}의 로그인이 만료돼 ${name}(으)로 넘겼지만, 내 실행기의 ${name} 사용 한도에 걸려 답하지 못했습니다${when ? ` · ${when}에 풀립니다` : ''}. Argo 데스크톱 설정 → AI 연결에서 ${f}에 다시 로그인하거나, 한도가 풀린 뒤 다시 보내세요.`,
+          `The ${f} login (this agent's assigned runner) has expired, so it switched to ${name}, but the ${name} usage limit was reached${when ? ` (resets ${when})` : ''} on your runner, so it could not answer. Sign in to ${f} again in Argo desktop Settings → AI connection, or send it again after the limit resets.`, lang)
+        : pick(`지정 러너 ${f} 대신 ${name}(으)로 답하려 했지만, 내 실행기의 ${name} 사용 한도에 걸려 답하지 못했습니다${when ? ` · ${when}에 풀립니다` : ''}. 풀린 뒤 다시 보내거나, Argo 데스크톱에서 이 에이전트의 러너를 확인하세요(연결된 러너가 없으면 설정 → AI 연결).`,
+          `It tried ${name} instead of this agent's assigned runner ${f}, but the ${name} usage limit was reached${when ? ` (resets ${when})` : ''} on your runner, so it could not answer. Send it again after that, or check this agent's runner in Argo desktop (connect one in Settings → AI connection if none).`, lang);
+    }
     return pick(`이 에이전트를 돌리는 내 실행기의 ${name} 사용 한도에 걸려 답하지 못했습니다${when ? ` · ${when}에 풀립니다` : ''}. 풀린 뒤 다시 보내거나, Argo 데스크톱에서 이 에이전트에 다른 러너를 지정하세요(연결된 러너가 없으면 설정 → AI 연결).`,
       `The ${name} usage limit was reached${when ? ` (resets ${when})` : ''} on your runner behind this agent, so it could not answer. Send it again after that, or assign another runner to this agent in Argo desktop (connect one in Settings → AI connection if none).`, lang);
   }

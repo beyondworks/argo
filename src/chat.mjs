@@ -1662,6 +1662,7 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
   const prefixFallbackError = (e) => {
     if (!resolved.fellBack || !e || typeof e !== 'object') return;
     e.message = fallbackErrorPrefix(true, wantRunner, runner, lang, { excluded: wantExcluded }) + String(e.message || '');
+    if (!e.fellBackFrom) e.fellBackFrom = wantRunner; // 지정 러너 대신 돈 실패 — 메신저 실패 글이 "Codex 대신 Claude → 사용 한도" 순서를 원문 없이 말한다(msgr-owner-notice ownerNoticeCause)
   };
   // 참조(cc)로 공유된 맥락 — 이번 턴 프롬프트에 1회 주입(맥락 공유는 기본, 실행은 지시받은 크루만)
   // 재시도(__seedNotes)면 아우터 시도가 이미 소비한 공유 노트를 이어받는다 — 재시도에서 cc 맥락 소실 방지
@@ -2044,7 +2045,7 @@ ${lang === 'en'
       if (!__seedNotes && sharedNotes.length) await restoreSharedNotes(wsId, agentSlug, sharedNotes).catch(() => {});
       // 턴 전 자격 게이트가 끊은 오류(authExpired)는 우리가 만든 내부 문구라 사용자에겐 재연결 안내로 대체한다 — 이벤트엔 원문(위), SDK 갈래 catch와 같은 계약(검수 K52)
       // authExpired 필드는 유지한다 — 재시도 프레임을 감싼 바깥 프레임의 자가치유 판정(shouldSelfHeal)이 종전과 같은 신호를 보게. authError로 이중 감싸기를 막는다.
-      if (!aborted && e?.authExpired && !e?.authError) e = Object.assign(new Error(runnerAuthNotice(lang, e.authExpired)), { authError: true, authExpired: e.authExpired, cause: e, failCode: e.failCode, failOrigin: e.failOrigin, failRunner: e.failRunner, authFailedRunner: e.authFailedRunner });
+      if (!aborted && e?.authExpired && !e?.authError) e = Object.assign(new Error(runnerAuthNotice(lang, e.authExpired)), { authError: true, authExpired: e.authExpired, cause: e, failCode: e.failCode, failOrigin: e.failOrigin, failRunner: e.failRunner, authFailedRunner: e.authFailedRunner, fellBackFrom: e.fellBackFrom });
       throw aborted ? turnAbortedError(e) : e;
     } finally {
       closeTurnLedger(ledgerEntry); // 실패·중단 턴도 장부를 닫는다(멱등) — 열린 채 남으면 뒤 턴이 영원히 "겹침"으로 본다
@@ -2593,6 +2594,7 @@ ${lang === 'en'
     // failCode/failOrigin은 위(이벤트 전)에서 e에 붙었다 — surfaced가 e를 감싼 새 객체면 옮겨 싣는다(재분류·재프로브 없음)
     if (surfaced !== e && e?.failCode) Object.assign(surfaced, { failCode: e.failCode, failOrigin: e.failOrigin, failRunner: e.failRunner });
     if (surfaced !== e && e?.authFailedRunner) surfaced.authFailedRunner = e.authFailedRunner; // 첫 원인(자가치유 전 인증 만료 러너)도 옮긴다
+    if (surfaced !== e && e?.fellBackFrom) surfaced.fellBackFrom = e.fellBackFrom; // 대체 실행의 지정 러너도 옮긴다(prefixFallbackError)
     throw aborted ? turnAbortedError(e) : surfaced;
   } finally {
     closeTurnLedger(ledgerEntry); // 실패·중단 턴도 장부를 닫는다(멱등)

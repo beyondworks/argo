@@ -1079,3 +1079,15 @@ test('LIM-6. 보통 답글(넘김 아님)은 글쓴이가 요청자 — A: 남�
     assert.equal(noticeB, false, 'B: 주인 자신의 요청 — 1:1 안내를 보내지 않는다');
   } finally { console.warn = warn; }
 });
+
+// 2026-10-16 11:43 운영: 지정 러너(codex)가 빠지고 대체 러너(claude)가 한도로 실패한 턴 — 최종 오류 모양(chat.mjs 자가치유 사슬: failCode·failRunner는 대체 러너,
+// authFailedRunner·fellBackFrom은 지정 러너, msgr-fallback-limit.test.mjs가 실제 chat()으로 만든다)을 게이트웨이가 방 문구로 옮기는지.
+test('LIM-7. 게이트웨이 — 대체 뒤 한도: 주인 요청이면 순서·한도, 남의 요청이면 종전 로그인 만료 문구', async () => {
+  const ws = await seed('lim-fallback', { cred: true });
+  const srv = server();
+  const h = M.makeMsgrHandler(ws, { session: async () => ({ db: srv.forProc('A'), uid: OWNER }), linkPreview: noPreview, runChat: async () => { throw limitErr(WEEKLY, { authFailedRunner: 'codex', fellBackFrom: 'codex' }); } });
+  const mine = jobAt(Date.now()), theirs = { ...jobAt(Date.now()), authorId: MEMBER };
+  for (const j of [mine, theirs]) await h(j);
+  assert.match(replyOf(srv, mine)[0]?.body ?? '', /^지정 러너 Codex의 로그인이 만료돼 Claude\(으\)로 넘겼지만, 내 실행기의 Claude 사용 한도에 걸려 답하지 못했습니다 · 10\/19 13:00에 풀립니다\./);
+  assert.match(replyOf(srv, theirs)[0]?.body ?? '', /^이 에이전트를 돌리는 실행기의 Codex 로그인이 만료돼 답하지 못했습니다/);
+});

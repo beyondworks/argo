@@ -12,19 +12,26 @@ import { roomAuthRunner, parseLimitResets, formatLimitResets } from './msgr-room
 export const OWNER_NOTICE_WINDOW_MS = 6 * 3600_000;
 export const OWNER_NOTICE_KIND = 'runner'; // meta.notification — 끌 수 없는 장애 안내(총괄 확정 2026-10-15). 하트비트('assistant')와 다른 종류
 
-/** 실패 → 주인에게 알릴 원인 { kind: 'auth'|'no_runner'|'crash'|'limit', runner, resets? } | null(알리지 않음). chat.mjs가 붙인 필드만 본다(원문을 다시 판정하지 않는다). */
+/** 실패 → 주인에게 알릴 원인 { kind: 'auth'|'no_runner'|'crash'|'limit', runner, resets?, from?, fromAuth? } | null(알리지 않음). chat.mjs가 붙인 필드만 본다(원문을 다시 판정하지 않는다). */
 export function ownerNoticeCause(e) {
   if (!e || typeof e !== 'object' || e.aborted || e.subscriptionBlocked) return null;
+  // 사용 한도(0.1.112) — 분류는 chat.mjs surfaceRunnerFailure의 failCode 'quota'(error-class QUOTA_RE)와 codex 앱서버의 limitReached 표지 그대로. 해제 시각은 원문에서 읽을 때만.
+  // 대체 실행 뒤 한도는 로그인 만료보다 먼저 본다 — 지정 러너(codex)가 인증 오류로 빠지고 대체 러너(claude)가 한도로 실패하면 마지막 원인은 한도다(2026-10-16 11:43 운영: 처음 러너만 말하면
+  // "다시 로그인"해도 대체 러너 한도에 또 걸린다). from = 대신 돈 지정 러너(authFailedRunner: 인증 오류로 뺀 러너, fellBackFrom: 미연결·잠김 등으로 대신 돈 경우), fromAuth = 인증 오류였나
+  // 대체 없는 실패는 종전 순서(로그인 만료 먼저) 그대로 — 인증 표지와 한도 낱말이 함께 있는 단일 러너 실패를 한도로 바꾸지 않는다(분리 검수 LOW)
+  const limit = (e.failCode === 'quota' || e.limitReached === true) ? limitCause(e) : null;
+  if (limit?.from) return limit;
   const auth = roomAuthRunner(e);
   if (auth) return { kind: 'auth', runner: auth };
   if (e.failCode === 'no_runner' || e.noRunner === true) return { kind: 'no_runner', runner: null }; // noRunner = chat.mjs 러너 확인 갈래의 표지(실패 코드 없이 던진다 — D6)
   if (e.failCode === 'crash') return { kind: 'crash', runner: typeof e.failRunner === 'string' ? e.failRunner : null };
-  // 사용 한도(0.1.112) — 분류는 chat.mjs surfaceRunnerFailure의 failCode 'quota'(error-class QUOTA_RE)와 codex 앱서버의 limitReached 표지 그대로. 해제 시각은 원문에서 읽을 때만
-  if (e.failCode === 'quota' || e.limitReached === true) {
-    const runner = typeof e.failRunner === 'string' && e.failRunner ? e.failRunner : typeof e.runner === 'string' && e.runner ? e.runner : null;
-    return { kind: 'limit', runner, resets: parseLimitResets(`${e.message ?? ''}\n${e.cause?.message ?? ''}`) };
-  }
-  return null;
+  return limit;
+}
+
+function limitCause(e) {
+  const runner = typeof e.failRunner === 'string' && e.failRunner ? e.failRunner : typeof e.runner === 'string' && e.runner ? e.runner : null;
+  const from = [e.authFailedRunner, e.fellBackFrom].find((r) => typeof r === 'string' && r && r !== runner) ?? null;
+  return { kind: 'limit', runner, resets: parseLimitResets(`${e.message ?? ''}\n${e.cause?.message ?? ''}`), ...(from ? { from, fromAuth: from === e.authFailedRunner } : {}) };
 }
 
 /** 주인에게 보낼 글(에이전트가 주인 1:1에 쓰는 말) — 원인과 고칠 곳만. */
@@ -37,6 +44,14 @@ export function ownerNoticeText(cause, lang = 'ko') {
       "I couldn't answer someone's request because the AI login on this runner has expired. Sign in again in Argo desktop Settings → AI connection and I can answer again.", lang);
   if (cause?.kind === 'limit') {
     const when = formatLimitResets(cause.resets, lang); const n = name ?? 'AI';
+    if (cause.from) { // 대체 실행 뒤 한도 — 지정 러너 → 대체 러너 → 한도 순서(원문 없음)
+      const f = RUNNERS[cause.from]?.name ?? cause.from;
+      return cause.fromAuth
+        ? pick(`다른 분의 요청에 답하지 못했습니다. 지정 러너 ${f}의 로그인이 만료돼 ${n}(으)로 넘겼지만, 이 실행기의 ${n} 사용 한도에 걸렸습니다${when ? ` · ${when}에 풀립니다` : ''}. Argo 데스크톱 설정 → AI 연결에서 ${f}에 다시 로그인하거나, 한도가 풀린 뒤 다시 받아 주세요.`,
+          `I couldn't answer someone's request. The ${f} login (this agent's assigned runner) has expired, so it switched to ${n}, but the ${n} usage limit on this runner was reached${when ? ` (resets ${when})` : ''}. Sign in to ${f} again in Argo desktop Settings → AI connection, or it works again after the limit resets.`, lang)
+        : pick(`다른 분의 요청에 답하지 못했습니다. 지정 러너 ${f} 대신 ${n}(으)로 답하려 했지만, 이 실행기의 ${n} 사용 한도에 걸렸습니다${when ? ` · ${when}에 풀립니다` : ''}. 풀린 뒤 다시 받거나, Argo 데스크톱에서 이 에이전트의 러너를 확인해 주세요(연결된 러너가 없으면 설정 → AI 연결).`,
+          `I couldn't answer someone's request. It tried ${n} instead of this agent's assigned runner ${f}, but the ${n} usage limit on this runner was reached${when ? ` (resets ${when})` : ''}. It works again after that, or check this agent's runner in Argo desktop (connect one in Settings → AI connection if none).`, lang);
+    }
     return pick(`다른 분의 요청에 답하지 못했습니다. 이 실행기의 ${n} 사용 한도에 걸렸습니다${when ? ` · ${when}에 풀립니다` : ''}. 풀린 뒤 다시 받거나, Argo 데스크톱에서 이 에이전트에 다른 러너를 지정해 주세요(연결된 러너가 없으면 설정 → AI 연결).`,
       `I couldn't answer someone's request because the ${n} usage limit on this runner was reached${when ? ` (resets ${when})` : ''}. It works again after that, or assign another runner to this agent in Argo desktop (connect one in Settings → AI connection if none).`, lang);
   }
@@ -56,7 +71,7 @@ export async function sendOwnerNotice({ c, wsId, slug, cause, lang = 'ko', now =
   const room = await personalRoom(c, wsId, slug);
   const bucket = Math.floor(now / OWNER_NOTICE_WINDOW_MS);
   return insertNotice(c, { ...room, ws: wsId, slug, lang }, {
-    basis: `runner-fail:${cause.kind}:${cause.runner ?? '-'}:${bucket}`,
+    basis: `runner-fail:${cause.kind}:${cause.runner ?? '-'}${cause.from ? `:from-${cause.from}` : ''}:${bucket}`, // 대체 뒤 한도는 지정 러너도 기준에 — 같은 러너 한도 단독 안내와 묶이면 지정 러너 만료를 못 듣는다
     body: ownerNoticeText(cause, lang),
     notification: OWNER_NOTICE_KIND,
     meta: { kind: cause.kind, runner: cause.runner ?? null },
