@@ -946,6 +946,7 @@ const DICT = {
   'role.guest': ['게스트', 'Guest'],
   'settings.msgr.title': ['Argo 메신저 연결', 'Argo Messenger connection'],
   'settings.msgr.downloadHelp': ['Argo 계정으로 로그인하면 내 에이전트가 메신저 개인 공간에 바로 연결됩니다. 팀과 함께 쓰려면 조직을 만들거나 초대 링크로 들어와, 사람과 에이전트가 같은 대화에서 일하고 결재받습니다. 맥·윈도우·iOS·Android에서 쓸 수 있습니다.', 'Sign in with your Argo account and your agents connect to your personal space in the messenger right away. To work with a team, create an organization or join via invite link so people and agents work and get approvals in the same conversation. Available on Mac, Windows, iOS and Android.'],
+  'settings.msgr.pausedHelp': ['Argo Messenger는 안정화를 위해 잠시 쉬고 있습니다. 지금까지의 기록은 아래에서 볼 수 있습니다.', 'Argo Messenger is taking a short break for stabilization. Your history so far is available below.'], // 메신저 중단 중(msgrPausedView)
   'settings.msgr.get': ['메신저 받기', 'Get the messenger'],
   'settings.msgr.getWaitlist': ['메신저 출시 알림 받기', 'Get notified when Messenger returns'], // 메신저 중단 중(msgrGetLink) — 랜딩 #waitlist로
   'settings.msgrArchive.title': ['메신저 기록 옮기기', 'Messenger history'],
@@ -1050,6 +1051,7 @@ const DICT = {
   'settings.msgr.runtime.waitingManual': ['아직 첫 응답을 기다리는 중입니다. 잠시 뒤 \'다시 확인\'을 눌러 보세요.', "Waiting for the first response. Press 'Check again' in a moment."],
   'settings.msgr.runtime.recheck': ['다시 확인', 'Check again'],
   'settings.msgr.runtime.offline': ['메신저 응답을 확인하지 못했습니다. 자동 복구를 시도하고 있습니다.', 'Messenger is not responding. Automatic recovery is being attempted.'],
+  'settings.msgr.runtime.paused': ['메신저가 안정화를 위해 쉬고 있습니다. 다시 열리면 자동으로 이어집니다.', 'Messenger is resting for stabilization. It will pick up automatically when it reopens.'], // 메신저 중단 중 — 다시 연결 단추 없음
   'settings.msgr.runtime.login': ['이 기기의 Argo 로그인이 필요합니다. 로그인한 뒤 다시 연결하세요.', 'This device needs an Argo login. Sign in, then reconnect.'],
   'settings.msgr.runtime.owner': ['이 회사를 만든 Argo 계정으로 로그인해야 메신저가 응답합니다.', 'Sign in with the Argo account that created this company to receive Messenger responses.'],
   'settings.msgr.runtime.company': ['회사 설정을 읽지 못해 메신저를 시작하지 못했습니다. 다시 연결을 시도하세요.', 'Messenger could not start because company settings could not be read. Try reconnecting.'],
@@ -1061,6 +1063,7 @@ const DICT = {
   'settings.msgr.err.load': ['조직·등록 상태를 불러오지 못했습니다.', 'Could not load organizations and registrations.'],
   'settings.notify.title': ['알림 받을 메신저', 'Where to receive agent notifications'],
   'settings.notify.help': ['체크한 메신저로 에이전트 알림(결재 요청·작업 완료·쪽지·루틴 결과)을 받습니다. 연결된 메신저만 켤 수 있고, 여러 개를 켜면 모두에 갑니다.', 'Agent notifications (approval requests, task results, agent mail, routine results) go to every messenger you check. Only connected messengers can be turned on; check several to receive on all of them.'],
+  'settings.notify.msgrPaused': ['메신저가 쉬는 동안에는 메신저로 알림이 가지 않습니다. 텔레그램을 켜거나 Argo 앱에서 확인하세요.', 'While Messenger is resting, no notifications go to Messenger. Turn on Telegram or check the Argo app.'], // 메신저 중단 중 — 저장된 체크 값은 그대로
   'settings.notify.ch.msgr': ['아르고 메신저', 'Argo Messenger'],
   'settings.notify.ch.telegram': ['텔레그램', 'Telegram'],
   'settings.notify.ch.slack': ['슬랙', 'Slack'],
