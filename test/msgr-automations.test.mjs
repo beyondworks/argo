@@ -7,6 +7,7 @@ test('scheduler uses server-owned due-time RPC and preserves database results', 
   assert.deepEqual(await dispatchMessengerAutomations(client,'test'),{available:true,runs});
 });
 test('old database has an explicit unavailable state, operational errors are not hidden', async () => {
-  assert.deepEqual(await dispatchMessengerAutomations({rpc:async()=>({error:{code:'PGRST202'}})},'test'),{available:false,runs:[]});
-  await assert.rejects(dispatchMessengerAutomations({rpc:async()=>({error:{code:'42501',message:'forbidden'}})},'test'),/forbidden/);
+  // 회사별 60초 제한(로그 다이어트 1차) 때문에 시험마다 회사 id를 달리 준다
+  assert.deepEqual(await dispatchMessengerAutomations({rpc:async()=>({error:{code:'PGRST202'}})},'test-old'),{available:false,runs:[]});
+  await assert.rejects(dispatchMessengerAutomations({rpc:async()=>({error:{code:'42501',message:'forbidden'}})},'test-err'),/forbidden/);
 });

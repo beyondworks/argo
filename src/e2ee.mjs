@@ -238,21 +238,29 @@ export async function claimFirstWrap(sb, { userId, deviceId, wrap, fresh }) {
 
 /** 자기 랩 회수(claim) — wrapped_deks에서 내 기기 행을 찾아 DEK를 개봉·보관한다.
     승인(다른 기기가 내 공개키로 랩을 넣어줌) 후 이 기기가 잠김을 푸는 경로. cycle이 DEK 미보유일 때
-    60초 간격으로 시도한다(가벼운 own-RLS select 1행). 반환: true = DEK 확보. */
+    60초 간격으로 시도한다(가벼운 own-RLS select 1행). 반환: true = DEK 확보.
+    행이 없으면(승인 전·E2EE를 안 쓰는 계정 — 대부분) 간격을 60초→5분→15분→30분 상한으로 늘린다(2026-10-16 로그 수집 과금: 하루 5만 건 실측).
+    행을 찾거나 force(설정 화면 버튼)면 처음으로 돌아가 즉시 확인한다. 조회 오류는 간격을 늘리지 않는다(일시 오류가 승인 확인을 늦추지 않게). */
 let lastClaim = 0;
+let claimMisses = 0; // 연속으로 '행 없음'이었던 횟수
+const CLAIM_GAPS_MS = [60_000, 300_000, 900_000, 1_800_000]; // 1번째 미스 뒤 60초, 2번째 5분, 3번째 15분, 그 뒤 30분
+const claimGapMs = () => CLAIM_GAPS_MS[Math.min(Math.max(claimMisses - 1, 0), CLAIM_GAPS_MS.length - 1)];
 export async function tryClaimDek(sb, deviceId, { root = WS_ROOT, force = false } = {}) {
   if (dekBuf) return true;
   if (!sb || !deviceId) return false;
-  if (!force && Date.now() - lastClaim < 60_000) return false;
+  if (force) claimMisses = 0;
+  else if (Date.now() - lastClaim < claimGapMs()) return false;
   lastClaim = Date.now();
   try {
     // 로컬 DEK는 캐시가 아니라 디스크로 판정한다 — 재시작 직후(키를 읽기 전)나, 다른 번들 사본·프로세스가 켜기로 setDek한 뒤
     // 이 사본의 캐시가 낡았을 때 정상 기기도 미보유로 보여 자기 랩을 지웠다(검수 #693 MEDIUM 2건). 디스크에 있으면 캐시를 올리고 끝.
     await loadDeviceE2ee({ root });
     const disk = readState(root);
-    if (disk?.dek) { cache = { root, state: disk }; dekBuf = Buffer.from(disk.dek, 'base64'); return true; }
+    if (disk?.dek) { cache = { root, state: disk }; dekBuf = Buffer.from(disk.dek, 'base64'); claimMisses = 0; return true; }
     const { data, error } = await sb.from('wrapped_deks').select('wrap, wrapped_by').eq('device_id', deviceId).maybeSingle();
-    if (error || !data?.wrap) return false;
+    if (error) return false;
+    if (!data?.wrap) { claimMisses++; return false; } // 행 없음 — 다음 확인까지 간격을 늘린다
+    claimMisses = 0; // 행을 찾았다 — 아래 개봉이 실패해도(보류) 60초 간격으로 다시 본다
     if (data.wrapped_by === deviceId) { // 켜기에서 물러난 뒤 못 지운 자기 랩일 수 있다 — 다른 기기가 있으면 그 계정의 DEK가 아니다(갈라진 열쇠, 검수 #687 MEDIUM). 승인이 덮어쓴다.
       const { data: others, error: e2 } = await sb.from('wrapped_deks').select('device_id').neq('device_id', deviceId).limit(1);
       if (e2) return false;
@@ -271,4 +279,4 @@ export async function tryClaimDek(sb, deviceId, { root = WS_ROOT, force = false 
     return false;
   }
 }
-export function _resetClaimForTest() { lastClaim = 0; }
+export function _resetClaimForTest() { lastClaim = 0; claimMisses = 0; }

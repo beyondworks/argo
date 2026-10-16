@@ -131,7 +131,8 @@ test('깨우기 tick은 연결 상태를 덮어쓰지 않는다 — 미러 실�
 
 test('수동 재연결(nudge)은 관리 작업까지 한 번 돈다 — 네트워크 복구 뒤 하트비트가 다음 폴까지 밀리지 않는다(검수 L1)', async () => {
   const { session, db } = bridgeFakes();
-  const stop = M.startMsgrBridge(WS, { session, pollMs: 60_000 });
+  // beatMs 0 — 심박은 40초 기한마다만 나가므로(로그 다이어트 1차, 2026-10-16) 기한을 없애 '관리 작업으로 분류되나'만 본다(기한 자체는 msgr-bridge-idle ㉑)
+  const stop = M.startMsgrBridge(WS, { session, pollMs: 60_000, beatMs: 0 });
   try {
     for (let i = 0; i < 40 && !db.calls.some((c) => c[0] === 'heartbeat'); i++) await settle();
     const beats = () => db.calls.filter((c) => c[0] === 'heartbeat').length;

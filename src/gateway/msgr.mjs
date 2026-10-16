@@ -657,7 +657,7 @@ export const RT_HEARTBEAT_MS = 7_500;
 export function msgrClientOptions(accessToken) {
   return {
     auth: { persistSession: false, autoRefreshToken: false },
-    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+    global: { headers: { Authorization: `Bearer ${accessToken}`, ...(APP_VERSION ? { 'x-argo-app-version': APP_VERSION } : {}) } }, // 진단 헤더 — Supabase 로그에서 구버전·신버전을 가른다(2026-10-16)
     realtime: { heartbeatIntervalMs: RT_HEARTBEAT_MS },
   };
 }
@@ -2747,7 +2747,10 @@ export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_M
         await dispatchMessengerAutomations(c.client, wsId).catch((e) => console.warn('[argo] msgr automation:', e.message)); // 서버 크론(매분)도 같은 일을 한다 — 기기 쪽은 예비
       } else await idleBeat(c, t); // 깨우기가 잦아 15초 틱이 합쳐져도 심박이 밀리지 않게
       const deviceId = housekeeping ? await getDeviceId().catch(() => null) : null; // 심박은 관리 틱에만 — 기기 id를 못 읽으면 종전 행 심박
-      const beatDue = !wasHealthy || nodeCompany || t - lastBeatAt >= beatMs; // 15초 조회 중에는 종전처럼 매번(서버가 35초 기한으로 거른다), 쉬는 주기에서는 심박 기한을 지킨다
+      // 심박은 15초 조회 중에도 기한(beatMs 40초)마다만(2026-10-16 로그 다이어트: poll 모드 하루 4.9만 건 — 서버가 35초 미만 요청은 기록하지 않아 15초마다 보낸 3개 중 2개는 로그만 쌓았다).
+      // 기록되는 간격은 종전 15초 틱 실측과 같은 45초(15초 틱 단위, 최대 54.6초 안 — 이 파일 BEAT_EVERY_MS 주석). 빠졌던 !wasHealthy(회복 직후)는 시각 기한과 겹쳐 따로 둘 이유가 없고,
+      // nodeCompany의 생존 신호는 이 심박이 아니라 nodeHeartbeat(drain, 15초 그대로)가 맡는다. 실패한 심박은 시각을 옮기지 않아 다음 15초 틱에 다시 나간다.
+      const beatDue = t - lastBeatAt >= beatMs;
       const rep = {};
       const r = await drain(wsId, { db: c.db, uid: c.uid, lang, nodeOrgId: msgr?.nodeOrgId ?? null, ownerId, housekeeping, runnerReady, deviceId, beatDue, report: rep }); // I-4: 조직 회사(company.json.msgr.nodeOrgId)면 노드 하트비트
       if (r.skipped === 'owner') { held = true; await beatGateway(wsId, MSGR_KEY, false, '이 회사의 소유자 계정이 아님 — 소유자로 로그인 필요').catch(() => {}); return r; }

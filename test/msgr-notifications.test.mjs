@@ -102,7 +102,7 @@ function loop({ conns = off, rows = [] } = {}) {
   const deps = { session: async () => ({ uid: 'creator', client }), readCompany: async () => ({ name: 'Mine', ownerId: 'creator' }), readConnections: async () => state.conns,
     readAgents: async () => [], readDeviceId: async () => 'dev', attempt: 'a', memo: new Map(), now: () => t, send: async () => ({ status: 'sent' }) };
   const tick = () => deliverMessengerNotifications('mine', deps);
-  const run = async (ms) => { const end = t + ms; while (t < end) { await tick(); t += 30_000; } }; // 30초 틱(gateway.mjs notificationTicks)
+  const run = async (ms, step = 30_000) => { const end = t + ms; while (t < end) { await tick(); t += step; } }; // 기본 30초 틱(로그 다이어트 1차 전 gateway.mjs notificationTicks). 지금 게이트는 60초(NOTIFY_TICK_MS) — step으로 준다
   const count = (name, from = 0) => calls.filter((c) => c.name === name && c.at >= from).length;
   return { calls, state, tick, run, count, at: () => t, set: (v) => { t = v; } };
 }
@@ -119,13 +119,13 @@ test('경로가 없으면(ready 0개) 첫 틱에 동기화·확인 1번씩, 그 
   assert.equal(IDLE_CLAIM_MS, 30 * 60_000);
 });
 
-test('ready 경로가 있으면 확인은 30초마다(첫 알림 지연 종전 그대로), 동기화는 65초 지난 첫 틱마다(서버 60초 생략 기준보다 길게, 3분 신선도 안)', async () => {
+test('ready 경로가 있으면 확인은 틱마다(60초 게이트), 동기화는 120초 지난 첫 틱마다(서버 60초 생략 기준보다 길게, 3분 신선도 안)', async () => {
   const w = loop({ conns: connections });
-  await w.run(10 * 60_000); // 30초 틱 20번
-  assert.equal(w.count('msgr_notification_claim'), 20, '매 틱 확인');
-  assert.equal(ROUTE_SYNC_MS, 65_000);
+  await w.run(10 * 60_000, 60_000); // 60초 틱 10번
+  assert.equal(w.count('msgr_notification_claim'), 10, '매 틱 확인');
+  assert.equal(ROUTE_SYNC_MS, 120_000);
   const syncs = w.calls.filter((c) => c.name === 'msgr_notification_routes_sync').map((c) => c.at);
-  assert.deepEqual(syncs, [0, 90_000, 180_000, 270_000, 360_000, 450_000, 540_000], '30초 틱에서는 90초마다(65초가 지난 첫 틱)');
+  assert.deepEqual(syncs, [0, 120_000, 240_000, 360_000, 480_000], '60초 틱에서는 120초마다(120초가 지난 첫 틱)');
   const gaps = syncs.slice(1).map((at, i) => at - syncs[i]);
   assert.ok(gaps.every((g) => g > 60_000), '서버가 쓰기를 건너뛰는 60초 이하로 부르지 않는다');
   assert.ok(gaps.every((g) => g < 180_000), '서버 3분 신선도 안에서 다시 쓴다');
@@ -138,7 +138,7 @@ test('동기화 간격은 서버 쓰기 생략 기준(마이그레이션의 60�
   assert.ok(secs.length >= 2, '서버의 쓰기 생략 기준(route·node)을 찾는다');
   for (const s of secs) assert.ok(ROUTE_SYNC_MS > s * 1000 + 2_000, `ROUTE_SYNC_MS(${ROUTE_SYNC_MS}ms)는 서버 기준 ${s}초 + 흔들림 여유 2초보다 길다`);
   const fresh = Number(sql.match(/n\.last_seen_at>=now\(\)-interval '(\d+) minutes'/)[1]);
-  assert.ok(ROUTE_SYNC_MS * 2 < fresh * 60_000, '두 번 놓쳐도 서버 신선도(분) 안');
+  assert.ok(ROUTE_SYNC_MS + 20_000 < fresh * 60_000, '틱이 70초까지 벌어져도(10초 루프의 60초 게이트) 동기화 간격은 서버 신선도(분) 안 — 140초 < 180초');
 });
 
 test('경로가 막 ready가 된 순간 — 그 틱에 바로 동기화하고 확인한다(첫 알림이 늦지 않는다)', async () => {
