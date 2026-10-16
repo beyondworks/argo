@@ -42,6 +42,8 @@ export const UPDATE_NOTES = Object.freeze({
   '0.1.110': Object.freeze(['updates.note.ownerNotice', 'updates.note.codexRecover', 'updates.note.deviceHandoff']),
   // 0.1.111 — connectFresh: 첫 연결 직후 업데이트 요구 오류·연결 카드 새로 읽기(#1038·#1040) · noRunnerNotice: 연결된 AI가 없어 답 못 하면 방에 원인 안내(#1042) · singleDevice: 기기 하나뿐이면 바로 안내(#1045)
   '0.1.111': Object.freeze(['updates.note.connectFresh', 'updates.note.noRunnerNotice', 'updates.note.singleDevice']),
+  // 0.1.112 — limitNotice: 내 에이전트가 사용 한도로 답 못 하면 러너·해제 시각·할 일 안내(#1049) · fallbackOrder: 대체 러너로 넘어간 뒤 실패하면 순서 안내(#1051) · idleLess: 쉬는 동안 서버 요청 줄임, 첫 알림 약 30초 늦어질 수 있음(#1050)
+  '0.1.112': Object.freeze(['updates.note.limitNotice', 'updates.note.fallbackOrder', 'updates.note.idleLess']),
 });
 
 export function stableVersion(value) {
