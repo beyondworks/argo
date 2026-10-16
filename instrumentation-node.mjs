@@ -45,6 +45,9 @@ ensureSync(); // C-1 기기 간 동기화 — env(서비스 키) 있을 때만 �
 // 고아 턴 스위퍼 — 이전 프로세스가 턴 도중 죽었으면(재배포·크래시) awaiting 지시를 정직한 실패
 // 표시로 전환한다(무언 소멸 금지 — 실사고 2026-08-28). 몇 초 늦춰 부팅 경로를 막지 않는다.
 setTimeout(() => { import('./src/orphan-turns.mjs').then((m) => m.sweepOrphanTurns()).catch(() => {}); }, 5000);
+// 메신저 기록 옮기기(src/msgr-archive-run.mjs) — 서버 중단 스위치가 켜져 있고 이 계정 기록이 없거나 끊겼으면 한 번 받는다. 시작 때 한 번뿐(주기 호출 없음).
+// 20초 늦춰 기기 세션 회전·게이트웨이 시작과 겹치지 않게 한다. 끝난 계정은 스위치도 읽지 않는다(요청 0).
+setTimeout(() => { import('./src/msgr-archive-run.mjs').then((m) => m.maybeAutoArchive()).catch((e) => console.warn('[argo] 메신저 기록 옮기기 확인 실패:', e?.message ?? e)); }, 20_000).unref?.();
 // 세션 메시지 대기 기록 정리 — 이전 프로세스가 답을 기다리다 죽었으면 기다리던 크루의 방에 안내를 남기고 기록을 지운다(src/session-msg.mjs).
 setTimeout(() => { import('./src/session-msg.mjs').then((m) => m.sweepSessionMessages()).catch(() => {}); }, 5000);
 // 작업 과정 기록 보존 정리(100턴·30일) — 저장할 때만 정리하면 쉬는·해고한 크루의 기록이 30일을 넘어 남는다. 시작 때 한 번, 그 뒤 하루 한 번(src/turn-trace.mjs).

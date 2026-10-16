@@ -286,6 +286,7 @@ const WS_DOT_FILES = new Set([
   '.tmp-lease-', // daemonLease 원자적 쓰기 임시본(lock.mjs, 2026-10-13) — rename 직전에 크루가 내용을 바꾸면 위 두 리스 파일을 고친 것과 같다
   '.sessions', // 네이티브 엔진 전사(<ws>/.sessions/native/<slug>.json — 도구 출력·대화 원문). 크루가 자기 전사를 고치면 문맥 위조·타 크루 전사 열람(하네스 통일 P-A)
   '.tg-claims-state.json', '.tg-claims', // 텔레그램 토큰 클레임 상태(sync.mjs) — 크루가 mine을 심으면 두 기기가 같은 봇을 동시 폴링(getUpdates Conflict)
+  '.msgr-archive', // 메신저 기록 보관 폴더(msgr-archive.mjs — 다른 사람의 글·AI 사용 동의를 거부한 사람의 글 포함). 셸로 읽히면 동의 규칙과 채널 경계가 샌다. 접두라 계정별 .msgr-archive-<uid8>도 막힌다
   '.msgr-journal', // 팀 메신저 채널 기억의 PC 사본(memory.mjs relocateOrgJournals) — 다른 채널 턴의 셸로 읽히면 채널 경계가 샌다(2026-09-24)
   '.msgr-sessions.json', // 채널 세션 장부(thread.mjs — 기억 회수용 세션 id 목록, 2026-10-03). 셸로 고쳐지면 회수가 전사를 놓친다
   '.turn-traces', // 작업 과정 기록(turn-trace.mjs — 다른 턴의 도구 입력·결과). 셸로 읽히면 다른 대화의 명령 출력이 새고, 고치면 기록이 위조된다. `.traces`가 아니라 이 이름이라 평범한 명령(jq '.traces')은 안 걸린다

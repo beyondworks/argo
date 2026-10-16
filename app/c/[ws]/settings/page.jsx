@@ -16,6 +16,7 @@ import { accountPlan, trialBadgeState } from '../../../../src/entitlement.mjs';
 // Argo Messenger 받기 — 맥·윈도우 설치파일만 걸던 것을 앱 스토어·Play까지 있는 안내 페이지 한 곳으로(CX-12). 오피스 진입 버튼(CX-13)은 오피스가 비공개라 뺐다(유건 2026-10-10).
 import { MESSENGER_PAGE, msgrCardView, runtimeWaitingKey, runtimeAction, pausedLabelKey, personalCardView, msgrSetupReason, msgrRuntimeBesideSetup, pauseSoon, tabReturnDue } from './msgr-card.mjs';
 import { keepChoices, togglePick, pickReady, hereSlugs, sameAsActive, FREE_AGENT_LIMIT } from './keep-choices.mjs'; // 무료 계정이 유지할 에이전트를 고른다(2026-10-12 제보)
+import MsgrArchiveSection from './msgr-archive-section'; // 메신저 기록 옮기기 진행·완료·다시 받기(0.1.113)
 import ArchivedCompaniesCard from '../../../archived-companies'; // 보관한 회사 되돌리기 — 홈에도 같은 카드(UM3)
 import { trashFailKind } from './trash-fail.mjs'; // 보관함 항목이 이미 사라졌는지(2차 M3)
 import { saveWithRevert } from './save-revert.mjs'; // 저장 실패면 되돌린다(F9)
@@ -1085,6 +1086,7 @@ function MsgrCard({ ws, agents }) {
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
         <a className="btn sm" href={MESSENGER_PAGE} target="_blank" rel="noopener noreferrer">{t('settings.msgr.get')}</a>
       </div>
+      <MsgrArchiveSection ws={ws} />
       <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.7 }}>{t('settings.msgr.help')}</p>
       {st === null && <Skeleton h={44} />}
       {st && !st.signedIn && <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>

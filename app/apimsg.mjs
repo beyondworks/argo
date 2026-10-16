@@ -33,6 +33,10 @@ export const API_MSG = {
   msgr_pro_required: { status: 403, ko: '에이전트를 메신저에 연결하려면 Argo Pro가 필요합니다. Pro로 바꾸면 멈춘 에이전트가 바로 다시 연결됩니다.', en: 'Connecting agents to Messenger needs Argo Pro. Paused agents reconnect as soon as you upgrade to Pro.' },
   msgr_free_agent_limit: { status: 403, ko: '무료 계정은 메신저에 에이전트를 4명까지 연결할 수 있는데, 대신 멈출 에이전트가 없어 연결하지 못했습니다. Pro면 제한이 없습니다.', en: 'Free accounts can connect up to 4 agents to Messenger, and there was no agent to pause in its place. Pro has no limit.' },
   msgr_app_update_required: { status: 403, ko: '무료 계정의 에이전트는 최신 Argo 앱이 켜져 있을 때 메신저에 연결됩니다. Argo 앱을 업데이트하면 에이전트가 다시 연결됩니다.', en: 'On a free account, agents connect to Messenger while the latest Argo app is running. Update the Argo app and your agents reconnect.' },
+  // 메신저 기록 옮기기(src/msgr-archive-run.mjs, 0.1.113)
+  msgr_archive_signin: { status: 401, ko: '메신저 기록을 옮기려면 이 기기에서 Argo에 로그인해 주세요.', en: 'Sign in to Argo on this device to move your Messenger history.' },
+  msgr_archive_owner: { status: 403, ko: '이 회사를 만든 계정으로 로그인해야 메신저 기록을 이 회사 폴더로 옮길 수 있습니다.', en: 'Sign in with the account that created this company to move Messenger history into its folder.' },
+  msgr_archive_not_paused: { status: 409, ko: '메신저 서비스가 아직 운영 중이라 기록을 옮기지 않습니다.', en: 'Messenger is still running, so history is not moved yet.' },
   msgr_upstream: { status: 502, ko: '조직 서버 응답 오류 — 잠시 후 다시 시도해 주세요', en: 'Organization server error — please try again shortly' },
   // 회사 정보(app/api/companies/[ws] GET) — 없음(404 company_not_found)과 구분되는 읽기 실패(F3, 2026-10-05)
   // 엔진 오류 코드(src/coded-error.mjs codedError, F11 2026-10-05) — ko는 엔진이 던지던 문장 그대로(회귀 0)

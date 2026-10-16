@@ -160,6 +160,9 @@ const isAssistantStateRel = (rel) => rel.split('/')[0] === '.assistant';
 /** 작업 과정 기록(.turn-traces/ — src/turn-trace.mjs): 끝난 턴의 생각·도구 입력·결과. 이 기기에만 둔다(유건 확정 2026-10-09 — 다른 기기에서는 답만 보인다).
     .assistant와 같은 계약 — 올리지 않고(EXCLUDE), 원격에 옛 사본이 있어도 diff 불가시(받기·삭제 전파·브레이크 집계 전부 건너뜀). */
 export const isTurnTraceRel = (rel) => rel.split('/')[0] === '.turn-traces';
+/** 메신저 기록 보관 폴더(.msgr-archive/·계정별 .msgr-archive-<uid8>/ — src/msgr-archive.mjs). 기기마다 서버에서 한 번 받는다 — 첨부가 커서 동기화 저장소·전송량을 늘리지 않고,
+    다른 사람의 글을 개인 클라우드로 퍼뜨리지 않는다. .turn-traces와 같은 계약: 올리지 않고(EXCLUDE), 원격 사본이 있어도 diff 불가시, walk가 내려가지 않는다. */
+export const isMsgrArchiveRel = (rel) => String(rel).split('/')[0].startsWith('.msgr-archive');
 
 /** 개발 산출물 디렉터리(node_modules·.git·가상환경·크롬 프로필 등) — 라이브 실측(2026-09-14): companies 버킷
     25GB 중 이런 디렉터리가 약 7GB를 차지하고 매 사이클(8s) walk가 전부 읽고 해시했다. isRoomCardRel과 같은
@@ -225,6 +228,8 @@ export const EXCLUDE = (rel) => { // (export: 회귀 테스트용)
   if (isAssistantStateRel(rel)) return true;
   // 작업 과정 기록(.turn-traces/ — isTurnTraceRel 주석) — 기기 로컬, 턴마다 쌓인다.
   if (isTurnTraceRel(rel)) return true;
+  // 메신저 기록 보관 폴더(isMsgrArchiveRel 주석) — 기기 로컬
+  if (isMsgrArchiveRel(rel)) return true;
   const base = rel.split('/').pop();
   if (
     base.startsWith('.gateway') || base.startsWith('.gw-offset') ||
@@ -928,6 +933,7 @@ async function walk(dir, base = dir, out = {}, failed = null, ctx = null) {
     const full = join(dir, e.name);
     const rel = full.slice(base.length + 1).split(sep).join('/');
     if (isLocalImportRel(rel)) continue; // source paths/consents/staging are private to this device
+    if (isMsgrArchiveRel(rel)) continue; // 메신저 기록 보관 폴더 — 기기 로컬(EXCLUDE·diff 불가시), 첨부가 많아 walk가 내려가지 않게
     if (isTurnTraceRel(rel)) continue; // 작업 과정 기록 — 기기 로컬(EXCLUDE·diff 불가시). 턴마다 쌓이는 폴더라 8초 사이클이 내려가지도 않게
     if (e.isDirectory()) {
       // 개발 산출물 디렉터리는 내려가지 않는다(isDevArtifactRel 주석) — diff 쪽 불가시 가드가 원격 전용
@@ -1429,7 +1435,7 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
   }
 
   // 회의록 충돌 카드·기기 로컬 상태(.local-assets·.assistant)는 집합에서 빼 불가시 — 아래 브레이크 집계·전파 루프가 같은 집합을 돌므로 한 곳이면 된다(isRoomCardRel 주석).
-  const allRels = new Set([...Object.keys(local), ...Object.keys(remote.files), ...Object.keys(state)].filter((rel) => !isRoomCardRel(rel) && !isLocalImportRel(rel) && !isAssistantStateRel(rel) && !isTurnTraceRel(rel)));
+  const allRels = new Set([...Object.keys(local), ...Object.keys(remote.files), ...Object.keys(state)].filter((rel) => !isRoomCardRel(rel) && !isLocalImportRel(rel) && !isAssistantStateRel(rel) && !isTurnTraceRel(rel) && !isMsgrArchiveRel(rel)));
   // 크기 제한을 넘는 파일(SYNC_MAX_OBJECT_BYTES 주석) — 개발 산출물과 같은 diff 불가시: 올리기·받기·삭제 전파·브레이크 집계·사전 확인 전부 건너뛰고 실패로 세지 않는다.
   // 로컬이든 원격 항목이든 한쪽이 크면 그렇다 — 원격에 예전 작은 판이 있던 파일이 커져도 원격을 덮거나 지우지 않고(다른 기기는 작은 판 그대로),
   // 로컬의 큰 파일도 원격 변경·삭제로 덮거나 지우지 않는다. base(state)는 아래 nextFiles 규칙대로 종전 값이 남는다. 단일 출처 — 아래 모든 자리가 이 집합을 본다.

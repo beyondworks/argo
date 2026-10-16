@@ -14,6 +14,7 @@ import { parseSide, sideParam, withSide } from './split.mjs';
 import { useSplitAlive } from './split-alive';
 import { nextCompanyData, brokenCardsOf } from './company-load.mjs';
 import BrokenCardsNote from './broken-cards-note';
+import MsgrArchiveNotice from './msgr-archive-notice'; // 메신저 기록을 옮겼다는 안내(0.1.113)
 import { watchTopbarContent, fitTopbar, isTopbarOver, TOPBAR_ATTRS } from './topbar-fit.mjs';
 import { emitSearch } from './search-bus.mjs'; // 상단 검색 → 데크·활동·기억(UL10)
 import { drawerKeyAction, drawerFocusTarget, drawerTabAction, drawerAttrs, drawerEnds } from './drawer.mjs'; // 폰 폭 서랍 Esc·포커스·Tab 순환·dialog 속성(UL9·2차 L4)
@@ -654,6 +655,7 @@ function Shell({ children, params }) {
         <main ref={contentRef} className="content" style={{ width: '100%' }}>
           {/* 이번 업데이트 펼친 카드 자리 — 비어 있으면 높이 0. 카드는 여기서 아래 내용을 밀어낼 뿐 버튼을 덮지 않는다(update-notes.jsx) */}
           <div id="argo-update-notes-slot" />
+          {!data?.missing && !data?.loadError && <MsgrArchiveNotice ws={ws} />}
           {shellNote && (
             <p role="alert" style={{ margin: '0 0 12px', fontSize: 12.5, color: 'var(--danger)', display: 'flex', gap: 8, alignItems: 'center' }}>
               {shellNote}
