@@ -245,6 +245,15 @@ test('스위치 캐시 — 10분 안에는 다시 묻지 않고, 읽기 실패�
   A._resetPauseCache();
 });
 
+test('스위치 읽기 묶기 — 같은 순간 두 번 물어도 RPC는 한 번(설정 화면 부모와 이관 영역이 함께 GET)', async (t) => {
+  A._resetPauseCache();
+  const fake = await fakeMsgr({ pause: { paused: true } }); t.after(() => fake.close());
+  const [a, b] = await Promise.all([A.pauseState(fake.client), A.pauseState(fake.client)]);
+  assert.equal(a.paused, true); assert.equal(b.paused, true);
+  assert.equal(fake.count((h) => h.table === 'rpc:msgr_service_pause'), 1);
+  A._resetPauseCache();
+});
+
 async function company(id, o) {
   const p = paths(id); await mkdir(p.root, { recursive: true });
   await writeFile(join(p.root, 'company.json'), JSON.stringify({ id, name: id, created: o.created ?? '2026-09-01', ownerId: o.ownerId, msgr: o.msgr ?? {} }));

@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { useLang } from '../../i18n';
 import { api } from '../../ui';
 import { showArchiveNotice, archiveNoticeKey, ARCHIVE_NOTICE_SEEN } from './settings/msgr-archive-view.mjs';
+import { msgrPausedView } from './settings/msgr-card.mjs';
 
 const readSeen = () => { try { return localStorage.getItem(ARCHIVE_NOTICE_SEEN); } catch { return null; } };
 
@@ -24,7 +25,7 @@ export default function MsgrArchiveNotice({ ws }) {
       <span style={{ flex: '1 1 240px', minWidth: 0, overflowWrap: 'anywhere' }}>
         {t(st.status === 'partial' ? 'msgrArchive.noticePartial' : 'msgrArchive.notice', { dir: st.dir, n: st.failed ?? 0 })}
       </span>
-      <Link className="btn sm" href={`/c/${st.ws ?? ws}/settings`}>{t('msgrArchive.noticeSettings')}</Link>
+      {msgrPausedView(st.paused).noticeSettingsLink && <Link className="btn sm" href={`/c/${st.ws ?? ws}/settings`}>{t('msgrArchive.noticeSettings')}</Link>}{/* 일시 중단 동안 설정에 메신저 카드가 없어 갈 곳이 없다 */}
       <button type="button" className="btn sm" onClick={close} aria-label={t('common.close')}>×</button>
     </div>
   );

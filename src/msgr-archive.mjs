@@ -41,12 +41,14 @@ export async function readPause(client) {
 const PAUSE = (globalThis.__argoMsgrPause ??= { value: null, at: 0 });
 export async function pauseState(client, { now = Date.now, force = false } = {}) {
   if (!force && PAUSE.value && now() - PAUSE.at < (PAUSE.value.error ? PAUSE_ERROR_TTL_MS : PAUSE_TTL_MS)) return PAUSE.value;
-  const v = await readPause(client);
-  PAUSE.value = v; PAUSE.at = now();
-  return v;
+  // 동시 요청은 한 번으로 묶는다 — 설정 화면 부모와 이관 영역이 같은 순간 GET해도 RPC는 하나
+  if (!force && PAUSE.inflight) return PAUSE.inflight;
+  const p = readPause(client).then((v) => { PAUSE.value = v; PAUSE.at = now(); return v; }).finally(() => { if (PAUSE.inflight === p) PAUSE.inflight = null; });
+  PAUSE.inflight = p;
+  return p;
 }
 export const cachedPause = () => PAUSE.value;
-export function _resetPauseCache() { PAUSE.value = null; PAUSE.at = 0; }
+export function _resetPauseCache() { PAUSE.value = null; PAUSE.at = 0; PAUSE.inflight = null; }
 
 /** 계정마다 보관 폴더 하나 — <WS_ROOT>/.msgr-archive/<uid 앞 8자>. 앞 8자가 겹치는 다른 계정이 이미 쓰고 있으면 uid 전체로(두 계정 기록을 섞지 않는다). */
 export async function archiveDirFor(wsRoot, uid) {
