@@ -967,6 +967,7 @@ const DICT = {
   'msgrArchive.noticeSettings': ['설정에서 보기', 'View in Settings'],
   'settings.msgr.personalOnly': ['개인 공간에서 에이전트 {n}명을 쓰고 있습니다. 팀과 함께 쓰려면 메신저에서 조직을 만들거나 초대 링크로 들어오세요.', 'You are using {n} agents in your personal space. To work with a team, create an organization or join via invite link in the messenger.'],
   'settings.msgr.connection.personal': ['개인 공간 연결됨', 'Personal space connected'],
+  'settings.msgr.connection.paused': ['쉬는 중', 'Resting'], // 메신저 중단 중 머리 칩(회색, msgrPausedView)
   'settings.msgr.connection.personalHelp': ['메신저 개인 공간에 연결된 에이전트: {n}명. 조직 없이도 메신저에서 이 에이전트들에게 일을 맡길 수 있습니다.', '{n} agents are connected to your personal space in the messenger. You can hand them work there without an organization.'],
   'settings.msgr.help': ['조직을 고른 뒤 이 컴퓨터의 에이전트를 연결하면 팀 메신저에서 쓸 수 있습니다. 조직 채널에서 @로 부르면 연결한 에이전트가 해당 대화에서 답합니다.', 'Choose an organization and connect this computer’s agents to use them in the team messenger. Mention a connected agent with @ in an org channel and it replies in that conversation.'],
   'settings.msgr.notSignedIn': ['이 기기가 아르고 계정에 로그인되어 있지 않습니다. 설정의 기기 카드에서 로그인하세요.', 'This device is not signed in to an Argo account. Sign in from the Devices card.'],

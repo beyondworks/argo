@@ -4,11 +4,11 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { msgrPausedView, runtimeAction } from '../app/c/[ws]/settings/msgr-card.mjs';
 
-const MAIN = { descKey: 'settings.msgr.downloadHelp', showHelp: true, runtimeKey: null, runtimeButton: true, notifyNoteKey: null };
+const MAIN = { descKey: 'settings.msgr.downloadHelp', showHelp: true, runtimeKey: null, runtimeButton: true, notifyNoteKey: null, chipKey: null };
 
 test('스위치 켬 — 카드 설명은 쉬는 중, 조직 안내 숨김, 응답 상태는 쉬는 중 문구 + 단추 없음, 알림 칸 아래 안내', () => {
   assert.deepEqual(msgrPausedView(true), {
-    descKey: 'settings.msgr.pausedHelp', showHelp: false, runtimeKey: 'settings.msgr.runtime.paused', runtimeButton: false, notifyNoteKey: 'settings.notify.msgrPaused',
+    descKey: 'settings.msgr.pausedHelp', showHelp: false, runtimeKey: 'settings.msgr.runtime.paused', runtimeButton: false, notifyNoteKey: 'settings.notify.msgrPaused', chipKey: 'settings.msgr.connection.paused',
   });
 });
 
@@ -16,6 +16,16 @@ test('스위치 꺼짐·모름(로드 전·옛 서버·오류) — main과 같�
   for (const v of [false, undefined, null, 'true', 1]) assert.deepEqual(msgrPausedView(v), MAIN, String(v));
   // 꺼짐이면 단추 판정은 종전 runtimeAction 그대로(offline → 다시 연결)
   assert.equal(runtimeAction('offline', { polling: false }), 'reconnect');
+});
+
+test('머리 칩 — 켬이면 쉬는 중(회색), 꺼짐·모름이면 종전 칩(chipKey null → 연결됨·개인 공간·연결 필요 판정 그대로)', async () => {
+  assert.equal(msgrPausedView(true).chipKey, 'settings.msgr.connection.paused');
+  for (const v of [false, undefined, null]) assert.equal(msgrPausedView(v).chipKey, null, String(v));
+  const dict = await readFile(new URL('../app/i18n.jsx', import.meta.url), 'utf8');
+  assert.match(dict, /'settings\.msgr\.connection\.paused': \['쉬는 중', 'Resting'\],/);
+  const page = await readFile(new URL('../app/c/[ws]/settings/page.jsx', import.meta.url), 'utf8');
+  assert.match(page, /pv\.chipKey \? \(/, '배선(보조): 칩은 pv.chipKey로 갈린다');
+  assert.match(page, /msgr-chip-paused[^\n]*background: 'var\(--border\)'/, '쉬는 중 칩은 회색 점');
 });
 
 test('사전 — 세 문구 ko·en', async () => {

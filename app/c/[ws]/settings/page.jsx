@@ -1085,9 +1085,12 @@ function MsgrCard({ ws, agents, paused = false, onArchiveState }) {
     <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
         <span className="card-title" style={{ minWidth: 0 }}>{t('settings.msgr.title')}</span>
-        {st?.signedIn && <span className="chip" title={t(chip === 'personal' ? 'settings.msgr.connection.personalHelp' : 'settings.msgr.connection.statusHelp', { n: chip === 'personal' ? personalCount : regCount })}>
+        {st?.signedIn && (pv.chipKey ? (
+          // 쉬는 동안에는 '연결됨'(초록) 대신 '쉬는 중'(회색) — 연결돼 있어도 메신저가 답하지 않는다(msgrPausedView)
+          <span className="chip msgr-chip-paused" title={t('settings.msgr.pausedHelp')}><span className="dot" style={{ background: 'var(--border)' }} />{t(pv.chipKey)}</span>
+        ) : <span className="chip" title={t(chip === 'personal' ? 'settings.msgr.connection.personalHelp' : 'settings.msgr.connection.statusHelp', { n: chip === 'personal' ? personalCount : regCount })}>
           <span className="dot" style={{ background: chip === 'notConnected' ? 'var(--border)' : 'var(--ok)' }} />{t(chip === 'connected' ? 'settings.msgr.connection.connected' : chip === 'personal' ? 'settings.msgr.connection.personal' : 'settings.msgr.connection.notConnected')}
-        </span>}
+        </span>)}
       </div>
       <p className="msgr-desc" style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.7 }}>{t(pv.descKey)}</p>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
