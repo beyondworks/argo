@@ -7,18 +7,23 @@
 // 방 이름·요청자·원문·계정·토큰은 싣지 않는다 — 러너 이름과 고칠 곳만.
 import { pick } from './protocol.mjs';
 import { RUNNERS } from '../runners/catalog.mjs';
-import { roomAuthRunner } from './msgr-room-errors.mjs';
+import { roomAuthRunner, parseLimitResets, formatLimitResets } from './msgr-room-errors.mjs';
 
 export const OWNER_NOTICE_WINDOW_MS = 6 * 3600_000;
 export const OWNER_NOTICE_KIND = 'runner'; // meta.notification — 끌 수 없는 장애 안내(총괄 확정 2026-10-15). 하트비트('assistant')와 다른 종류
 
-/** 실패 → 주인에게 알릴 원인 { kind: 'auth'|'no_runner'|'crash', runner } | null(알리지 않음). chat.mjs가 붙인 필드만 본다(원문을 다시 판정하지 않는다). */
+/** 실패 → 주인에게 알릴 원인 { kind: 'auth'|'no_runner'|'crash'|'limit', runner, resets? } | null(알리지 않음). chat.mjs가 붙인 필드만 본다(원문을 다시 판정하지 않는다). */
 export function ownerNoticeCause(e) {
   if (!e || typeof e !== 'object' || e.aborted || e.subscriptionBlocked) return null;
   const auth = roomAuthRunner(e);
   if (auth) return { kind: 'auth', runner: auth };
   if (e.failCode === 'no_runner' || e.noRunner === true) return { kind: 'no_runner', runner: null }; // noRunner = chat.mjs 러너 확인 갈래의 표지(실패 코드 없이 던진다 — D6)
   if (e.failCode === 'crash') return { kind: 'crash', runner: typeof e.failRunner === 'string' ? e.failRunner : null };
+  // 사용 한도(0.1.112) — 분류는 chat.mjs surfaceRunnerFailure의 failCode 'quota'(error-class QUOTA_RE)와 codex 앱서버의 limitReached 표지 그대로. 해제 시각은 원문에서 읽을 때만
+  if (e.failCode === 'quota' || e.limitReached === true) {
+    const runner = typeof e.failRunner === 'string' && e.failRunner ? e.failRunner : typeof e.runner === 'string' && e.runner ? e.runner : null;
+    return { kind: 'limit', runner, resets: parseLimitResets(`${e.message ?? ''}\n${e.cause?.message ?? ''}`) };
+  }
   return null;
 }
 
@@ -30,6 +35,11 @@ export function ownerNoticeText(cause, lang = 'ko') {
       `I couldn't answer someone's request because the ${name} login on this runner has expired. Sign in to ${name} again in Argo desktop Settings → AI connection and I can answer again.`, lang)
     : pick('다른 분의 요청에 답하지 못했습니다. 이 실행기의 AI 로그인이 만료됐습니다. Argo 데스크톱 설정 → AI 연결에서 다시 로그인하면 다시 답할 수 있습니다.',
       "I couldn't answer someone's request because the AI login on this runner has expired. Sign in again in Argo desktop Settings → AI connection and I can answer again.", lang);
+  if (cause?.kind === 'limit') {
+    const when = formatLimitResets(cause.resets, lang); const n = name ?? 'AI';
+    return pick(`다른 분의 요청에 답하지 못했습니다. 이 실행기의 ${n} 사용 한도에 걸렸습니다${when ? ` · ${when}에 풀립니다` : ''}. 풀린 뒤 다시 받거나, Argo 데스크톱에서 이 에이전트에 다른 러너를 지정해 주세요(연결된 러너가 없으면 설정 → AI 연결).`,
+      `I couldn't answer someone's request because the ${n} usage limit on this runner was reached${when ? ` (resets ${when})` : ''}. It works again after that, or assign another runner to this agent in Argo desktop (connect one in Settings → AI connection if none).`, lang);
+  }
   if (cause?.kind === 'no_runner') return pick('다른 분의 요청에 답하지 못했습니다. 이 실행기에 연결된 AI가 없습니다. Argo 데스크톱 설정 → AI 연결에서 AI를 연결하면 다시 답할 수 있습니다.',
     "I couldn't answer someone's request because no AI is connected on this runner. Connect one in Argo desktop Settings → AI connection and I can answer again.", lang);
   return pick(`다른 분의 요청에 답하지 못했습니다. 이 실행기의 ${name ?? 'AI'} 프로그램이 응답하지 않고 멈췄습니다. Argo를 다시 시작한 뒤에도 같으면 설정 → AI 연결에서 상태를 확인해 주세요.`,

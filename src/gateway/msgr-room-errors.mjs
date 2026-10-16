@@ -37,9 +37,41 @@ export function roomTurnFailureFor(e, lang = 'ko', { ownerCause = null } = {}) {
 /** 요청한 사람이 그 에이전트의 주인일 때(앱↔메신저 연결 감사 D6, 2026-10-15) — 주인이 고칠 수 있는 실행기 원인과 고칠 곳. 남의 요청이면 부르지 않는다
     (호출부가 ownerCause를 넘기지 않음 — 설정 정보는 주인에게만, 남의 요청은 주인 1:1 안내 #1026). cause = msgr-owner-notice ownerNoticeCause 결과.
     로그인 만료(auth)는 roomTurnFailureFor가 누구에게나 이미 말한다. 그 밖(한도·시간 초과 등)은 null → 일반 문구. 러너 이름과 할 일만(원문·계정·토큰 없음). */
+// 사용 한도의 해제 시각(0.1.112) — 벤더 원문에서 읽을 수 있을 때만. Claude: "resets Oct 19 at 1pm (Asia/Seoul)" · "resets 3:30pm (Asia/Seoul)",
+// Codex 앱서버 문구: "resets at <시각>". 읽은 값(달·일·시·분·시간대)만 쓰고 원문은 싣지 않는다. 못 읽으면 null — 문구에서 시각을 뺀다.
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+const RESETS_RE = /\bresets\s+(?:at\s+)?(?:([A-Za-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(?:\d{4},?\s+)?(?:at\s+)?)?(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m\.?(?:\s*\(([A-Za-z_]+(?:\/[A-Za-z_+\-]+)+)\))?/i;
+export function parseLimitResets(text) {
+  const m = RESETS_RE.exec(String(text ?? ''));
+  if (!m) return null;
+  const mon = m[1] ? MONTHS.indexOf(m[1].slice(0, 3).toLowerCase()) + 1 : null;
+  if (m[1] && (!mon || !(Number(m[2]) >= 1 && Number(m[2]) <= 31))) return null;
+  const h12 = Number(m[3]); const minute = m[4] ? Number(m[4]) : 0;
+  if (!(h12 >= 1 && h12 <= 12) || minute > 59) return null;
+  const hour = (h12 % 12) + (m[5].toLowerCase() === 'p' ? 12 : 0);
+  return { month: mon || null, day: mon ? Number(m[2]) : null, hour, minute, tz: m[6] ?? null };
+}
+/** 해제 시각 표기 — ko "10/19 13:00", en "Oct 19, 1:00 PM". 날짜가 없으면 시각만. 시간대가 서울이 아니면 덧붙인다(원문의 시간대 그대로 — 바꿔 계산하지 않는다). */
+export function formatLimitResets(r, lang = 'ko') {
+  if (!r) return '';
+  const mm = String(r.minute).padStart(2, '0');
+  const tz = r.tz && r.tz !== 'Asia/Seoul' ? r.tz : null;
+  if (lang === 'en') {
+    const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const t = `${r.hour % 12 || 12}:${mm} ${r.hour < 12 ? 'AM' : 'PM'}`;
+    return `${r.month ? `${MON[r.month - 1]} ${r.day}, ` : ''}${t}${tz ? ` (${tz})` : ''}`;
+  }
+  return `${r.month ? `${r.month}/${r.day} ` : ''}${String(r.hour).padStart(2, '0')}:${mm}${tz ? `(${tz})` : ''}`;
+}
+
 export function roomOwnerFailure(cause, lang = 'ko') {
   if (cause?.kind === 'no_runner') return pick('이 에이전트를 돌리는 내 실행기에 연결된 AI가 없어 답하지 못했습니다. Argo 데스크톱 설정 → AI 연결에서 AI를 연결하면 다시 답할 수 있습니다.',
     "No AI is connected on your runner behind this agent, so it could not answer. Connect one in Argo desktop Settings → AI connection and it can answer again.", lang);
+  if (cause?.kind === 'limit') { // 사용 한도(0.1.112) — 한도는 다른 러너로 저절로 넘어가지 않는다(runners.mjs) — 풀린 뒤 다시 또는 에이전트에 다른 러너 지정
+    const name = RUNNERS[cause.runner]?.name ?? 'AI'; const when = formatLimitResets(cause.resets, lang);
+    return pick(`이 에이전트를 돌리는 내 실행기의 ${name} 사용 한도에 걸려 답하지 못했습니다${when ? ` · ${when}에 풀립니다` : ''}. 풀린 뒤 다시 보내거나, Argo 데스크톱에서 이 에이전트에 다른 러너를 지정하세요(연결된 러너가 없으면 설정 → AI 연결).`,
+      `The ${name} usage limit was reached${when ? ` (resets ${when})` : ''} on your runner behind this agent, so it could not answer. Send it again after that, or assign another runner to this agent in Argo desktop (connect one in Settings → AI connection if none).`, lang);
+  }
   if (cause?.kind === 'crash') {
     const name = RUNNERS[cause.runner]?.name ?? 'AI';
     return pick(`내 실행기의 ${name} 프로그램이 응답하지 않고 멈춰 답하지 못했습니다. Argo를 다시 시작한 뒤에도 같으면 설정 → AI 연결에서 상태를 확인해 주세요.`,

@@ -2540,7 +2540,8 @@ test('주인 안내: 원인 판정·대상 판정·6시간 묶음·언어(순수
   assert.deepEqual(N.ownerNoticeCause(authErr()), { kind: 'auth', runner: 'claude' });
   assert.deepEqual(N.ownerNoticeCause({ failCode: 'no_runner' }), { kind: 'no_runner', runner: null });
   assert.deepEqual(N.ownerNoticeCause({ failCode: 'crash', failRunner: 'codex' }), { kind: 'crash', runner: 'codex' });
-  for (const e of [null, { aborted: true, failCode: 'auth_expired' }, { subscriptionBlocked: true, failCode: 'auth_expired' }, { failCode: 'quota' }, { timedOut: true, failCode: 'unknown' }]) assert.equal(N.ownerNoticeCause(e), null);
+  for (const e of [null, { aborted: true, failCode: 'auth_expired' }, { subscriptionBlocked: true, failCode: 'auth_expired' }, { timedOut: true, failCode: 'unknown' }]) assert.equal(N.ownerNoticeCause(e), null);
+  assert.deepEqual(N.ownerNoticeCause({ failCode: 'quota' }), { kind: 'limit', runner: null, resets: null }, '사용 한도도 주인이 고칠 원인(0.1.112 — 풀린 뒤 다시·다른 러너 지정)');
   assert.equal(N.ownerNoticeWanted({ cause: { kind: 'auth' }, authorId: MEMBER, ownerId: OWNER, ownerSolo: true }), false, '주인 혼자 1:1');
   assert.equal(N.ownerNoticeWanted({ cause: { kind: 'auth' }, authorId: MEMBER, ownerId: OWNER }), true);
   assert.match(N.ownerNoticeText({ kind: 'no_runner' }, 'en'), /Settings → AI connection/);

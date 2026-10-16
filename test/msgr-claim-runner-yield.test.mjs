@@ -996,3 +996,65 @@ test('D5-5. 큐에 이미 있던 잡(drain을 거치지 않음)도 핸들러가 
   await B(jobAt(clock));
   assert.equal(srv2.peerCalls.length, 0, '러너가 있으면 서버 판정을 부르지 않는다');
 });
+
+// 0.1.112(2026-10-16 운영 재현): 주인이 개인 공간 '다빈치'(Claude)에게 보냈는데 Claude 주간 한도("You've hit your weekly limit · resets Oct 19 at 1pm
+// (Asia/Seoul)")로 실패했고, 방에는 일반 문구만 올랐다 — #1042가 연결 없음·멈춤만 원인으로 보였다. 분류는 기존 것(failCode 'quota' — error-class QUOTA_RE,
+// codex 앱서버 limitReached)을 쓴다. 해제 시각은 원문에서 읽을 수 있을 때만, 사용자 언어로. 주인 판정은 (rootAuthor ?? authorId)(#1042 검수 LOW-1).
+const WEEKLY = "Claude Code returned an error result: You've hit your weekly limit · resets Oct 19 at 1pm (Asia/Seoul)";
+const limitErr = (msg = WEEKLY, extra = {}) => Object.assign(new Error(msg), { failCode: 'quota', failRunner: 'claude', failOrigin: 'vendor', ...extra });
+
+test('LIM-1. 인접 핀 — 기존 원인 문구 그대로: 연결 없음·멈춤(주인), 로그인 만료(누구나), 모름·과부하(일반)', () => {
+  const own = (e, lang = 'ko') => roomTurnFailureFor(e, lang, { ownerCause: ownerNoticeCause(e) });
+  assert.match(own({ noRunner: true }), /^이 에이전트를 돌리는 내 실행기에 연결된 AI가 없어/);
+  assert.match(own({ failCode: 'crash', failRunner: 'claude' }), /Claude 프로그램이 응답하지 않고 멈춰/);
+  assert.match(own({ failCode: 'auth_expired', failRunner: 'claude' }), /Claude 로그인이 만료돼/);
+  for (const e of [{ failCode: 'vendor_overloaded' }, { failCode: 'unknown' }, new Error('x')]) assert.equal(own(e), roomTurnFailureFor(e, 'ko'));
+  assert.equal(roomTurnFailureFor(limitErr(), 'ko'), '에이전트가 지금 답하지 못했습니다. 주인이 Argo 활동에서 원인을 확인할 수 있습니다.', '남의 요청(원인을 넘기지 않음)은 한도여도 일반 문구');
+});
+
+test('LIM-2. 사용 한도 = 원인(kind limit) — 러너·해제 시각(원문에서 읽을 때만)', () => {
+  assert.deepEqual(ownerNoticeCause(limitErr()), { kind: 'limit', runner: 'claude', resets: { month: 10, day: 19, hour: 13, minute: 0, tz: 'Asia/Seoul' } });
+  assert.deepEqual(ownerNoticeCause(limitErr("You've hit your session limit · resets 3:30pm (Asia/Seoul)")).resets, { month: null, day: null, hour: 15, minute: 30, tz: 'Asia/Seoul' });
+  assert.equal(ownerNoticeCause(limitErr('429 Too Many Requests')).resets, null, '시각이 없으면 null');
+  assert.equal(ownerNoticeCause(limitErr('weekly limit · resets soon')).resets, null, '읽을 수 없으면 null');
+  assert.deepEqual(ownerNoticeCause(Object.assign(new Error('Codex 구독 사용 한도에 도달했습니다. Codex usage limit reached.'), { limitReached: true, runner: 'codex' })), { kind: 'limit', runner: 'codex', resets: null });
+});
+
+test('LIM-3. 주인 요청의 방 문구 — 러너·해제 시각(ko·en)·할 일, 시각을 못 읽으면 시각 없이, 원문은 싣지 않는다', () => {
+  const own = (e, lang) => roomTurnFailureFor(e, lang, { ownerCause: ownerNoticeCause(e) });
+  const ko = own(limitErr(), 'ko');
+  assert.match(ko, /Claude 사용 한도에 걸려 답하지 못했습니다 · 10\/19 13:00에 풀립니다/);
+  assert.match(ko, /다른 러너를 지정/); assert.doesNotMatch(ko, /weekly|You've hit/, '원문 없음');
+  const en = own(limitErr(), 'en');
+  assert.match(en, /Claude usage limit was reached \(resets Oct 19, 1:00 PM\)/);
+  assert.match(own(limitErr("You've hit your weekly limit · resets Oct 19 at 1pm (America/New_York)"), 'ko'), /10\/19 13:00\(America\/New_York\)에 풀립니다/, '서울이 아니면 시간대를 덧붙인다');
+  const noTime = own(limitErr('429 Too Many Requests'), 'ko');
+  assert.match(noTime, /Claude 사용 한도에 걸려 답하지 못했습니다\./); assert.doesNotMatch(noTime, /풀립니다/);
+  assert.match(own(limitErr("You've hit your session limit · resets 3pm (Asia/Seoul)"), 'en'), /resets 3:00 PM/);
+});
+
+test('LIM-4. 남의 요청 — 방은 일반 문구, 주인 1:1 안내에 한도 원인(6시간 묶음 기준에 kind·runner)', async () => {
+  const { ownerNoticeText, sendOwnerNotice } = await import('../src/gateway/msgr-owner-notice.mjs');
+  const cause = ownerNoticeCause(limitErr());
+  assert.match(ownerNoticeText(cause, 'ko'), /^다른 분의 요청에 답하지 못했습니다\. 이 실행기의 Claude 사용 한도에 걸렸습니다 · 10\/19 13:00에 풀립니다\./);
+  assert.match(ownerNoticeText(cause, 'en'), /Claude usage limit on this runner was reached \(resets Oct 19, 1:00 PM\)/);
+  const sent = [];
+  await sendOwnerNotice({ c: {}, wsId: 'w', slug: 's', cause, lang: 'ko', now: 0 }, { personalRoom: async () => ({ channelId: 'c' }), insertNotice: async (_c, _r, x) => { sent.push(x); return 'sent'; } });
+  assert.equal(sent[0].basis, 'runner-fail:limit:claude:0', '해제 시각은 묶음 기준에 넣지 않는다(같은 한도는 6시간에 한 번)');
+});
+
+test('LIM-5. 게이트웨이 — 주인 요청이면 방에 한도 원인, 남의 요청이면 일반 문구 / 넘김 턴은 뿌리 사람(rootAuthor) 기준(LOW-1)', async () => {
+  const ws = await seed('lim-room', { cred: true });
+  const srv = server();
+  const fail = async () => { throw limitErr(); };
+  const h = M.makeMsgrHandler(ws, { session: async () => ({ db: srv.forProc('A'), uid: OWNER }), linkPreview: noPreview, runChat: fail });
+  const mine = jobAt(Date.now()), theirs = { ...jobAt(Date.now()), authorId: MEMBER };
+  const relayMine = { ...jobAt(Date.now()), authorId: MEMBER, rootAuthor: OWNER, fromCrewId: 'crew-x', hop: 1 }; // 남의 크루가 넘겼지만 뿌리는 주인
+  const relayTheirs = { ...jobAt(Date.now()), authorId: OWNER, rootAuthor: MEMBER, fromCrewId: 'crew-y', hop: 1 }; // 내 크루가 넘겼지만 뿌리는 남
+  for (const j of [mine, theirs, relayMine, relayTheirs]) await h(j);
+  const body = (j) => replyOf(srv, j)[0]?.body ?? '';
+  assert.match(body(mine), /Claude 사용 한도에 걸려 답하지 못했습니다 · 10\/19 13:00에 풀립니다/);
+  assert.match(body(theirs), /^에이전트가 지금 답하지 못했습니다\. 주인이 Argo 활동에서 원인을 확인할 수 있습니다\.$/);
+  assert.match(body(relayMine), /Claude 사용 한도에 걸려/, '넘김 턴 — 뿌리 사람이 주인이면 원인');
+  assert.match(body(relayTheirs), /^에이전트가 지금 답하지 못했습니다\./, '넘김 턴 — 뿌리 사람이 남이면 일반 문구(LOW-1: authorId만 보면 원인이 남에게 보였다)');
+});
