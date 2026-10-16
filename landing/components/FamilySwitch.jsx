@@ -21,6 +21,7 @@ export default function FamilySwitch() {
           scroll
         >
           {p.name}
+          {p.soon && <span className="family-soon">{t('family.soon')}</span>}
         </Link>
       ))}
     </nav>

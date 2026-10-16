@@ -11,9 +11,9 @@ import { productOf } from '@/lib/products';
 
 // GitHub 아이콘·스타 게이트 없음 — 다운로드는 설치파일로만(2026-09-29 운영과 동일하게 확정).
 // 상단 DOWNLOAD = 기기 맞춤 설치파일 직다운로드(argo-agent 릴리스 자산 — 페이지가 아니라 파일).
-// 패밀리 페이지(/messenger·/office)에선 본체 링크 대신 그 제품의 CTA 하나만(받기·대기자 신청) 둔다.
+// 패밀리 페이지(/messenger·/office)에선 본체 링크 대신 그 제품의 CTA 하나만(출시 알림·대기자 신청 — 메신저는 2026-10-16부터 출시 예정) 둔다.
 const MARK_TONE = { argo: 'gold', messenger: 'signal', office: 'pencil' };
-const PAGE_CTA = { messenger: { id: 'get', key: 'msgr.nav.cta' }, office: { id: 'waitlist', key: 'office.nav.cta' } };
+const PAGE_CTA = { messenger: { id: 'waitlist', key: 'msgr.nav.cta' }, office: { id: 'waitlist', key: 'office.nav.cta' } };
 
 export default function Nav() {
   const { t, toggle } = useLang();

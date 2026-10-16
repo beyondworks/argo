@@ -5,15 +5,13 @@ import Nav from '@/components/Nav';
 import Footer from '@/components/Footer';
 import Accent from '@/components/Accent';
 import CrewFace from '@/components/family/CrewFace';
-import Icon from '@/components/family/Icon';
 import AgentTalk from '@/components/family/AgentTalk';
 import StageTabs from '@/components/family/StageTabs';
 import TabFilm from '@/components/family/TabFilm';
 import FamilyCards, { useRise } from '@/components/family/FamilyCards';
-import { CardGrid, Pricing, Faq } from '@/components/family/Convert';
+import { CardGrid, Faq } from '@/components/family/Convert';
 import HeroFilm from '@/components/family/HeroFilm';
 import { useLang } from '@/lib/i18n';
-import { MSGR_DL, detectMacTarget } from '@/lib/downloads';
 
 const TO = 'lean8kim@gmail.com'; // 요금 문의 메일(Pro·Enterprise)
 // 크루 얼굴 띠 — 마우스를 올린 얼굴은 놀란다(앱의 멘션 반응과 같은 표정).
@@ -36,7 +34,14 @@ function Crowd({ t }) {
 export default function MessengerPage() {
   const { t, lang } = useLang();
   useRise();
-  const macDl = (e) => { e.preventDefault(); window.location.assign(MSGR_DL[detectMacTarget()]); };
+  const [email, setEmail] = useState('');
+  // 출시 알림 신청 — 오피스 대기자 신청과 같은 모양(메일 앱으로, 서버 저장 없음)
+  const join = (e) => {
+    e.preventDefault();
+    const subject = encodeURIComponent(t('msgr.wait.subject'));
+    const body = encodeURIComponent(`${t('msgr.wait.bodyline')}\n${email}`);
+    window.location.href = `mailto:${TO}?subject=${subject}&body=${body}`;
+  };
   const joinItems = ['crew', 'hermes', 'vps'].map((id) => ({ id, title: t(`msgr.join.${id}.t`), body: t(`msgr.join.${id}.b`) }));
   const howItems = ['talk', 'handoff', 'approve', 'memory'].map((id) => ({ id, title: t(`msgr.how.${id}.t`), body: t(`msgr.how.${id}.b`) }));
 
@@ -56,8 +61,8 @@ export default function MessengerPage() {
           </h1>
           <p className="fam-lede">{t('msgr.lede')}</p>
           <div className="m-actions">
-            <a className="fam-btn primary" href="#get">{t('msgr.cta.get')}</a>
-            <a className="fam-btn" href="#pricing">{t('msgr.cta.pricing')}</a>
+            <a className="fam-btn primary" href="#waitlist">{t('msgr.nav.cta')}</a>
+            <a className="fam-btn" href="#how">{t('msgr.cta.how')}</a>
           </div>
           <span className="mono-label mono-dim m-platforms">{t('msgr.trust')}</span>
         </div>
@@ -94,14 +99,14 @@ export default function MessengerPage() {
 
       <CardGrid ns="msgr" part="safe" ids={['1', '2', '3', '4']} id="safe" variant="split" />
       <CardGrid ns="msgr" part="start" ids={['1', '2', '3']} id="start" numbered meta="01 — 03" variant="steps" />
-      <Pricing ns="msgr" to={TO} freeHref="#get" />
+      {/* 요금(Free로 지금 시작) 절은 출시 예정 동안 뺀다(2026-10-16) — 다시 열 때 <Pricing ns="msgr" to={TO} freeHref="#waitlist" /> */}
       <Faq ns="msgr" count={5} split />
 
       <FamilyCards here="messenger" />
 
-      <section className="fam-section m-get" id="get">
+      <section className="fam-section m-get" id="waitlist">
         <div className="fam-head">
-          <span className="mono-label">{t('msgr.get.kicker')}</span>
+          <span className="mono-label">{t('msgr.wait.kicker')}</span>
           <span className="mono-label mono-dim">MAC · WIN · IOS · ANDROID</span>
         </div>
         <div className="m-crowd rise">
@@ -109,24 +114,17 @@ export default function MessengerPage() {
           <p className="mono-label mono-dim">{t('msgr.crowd')}</p>
         </div>
         <h2 className="m-get-title rise">
-          <Accent text={t('msgr.get.title')} />
+          <Accent text={t('msgr.wait.title')} />
         </h2>
-        <p className="fam-lede rise" style={{ '--d': '60ms' }}>{t('msgr.get.sub')}</p>
-        <div className="m-actions rise" style={{ '--d': '120ms' }}>
-          <a className="fam-btn primary" href={MSGR_DL.silicon} onClick={macDl}><Icon name="apple" size={15} />{t('download.mac')}</a>
-          <a className="fam-btn" href={MSGR_DL.win}><Icon name="windows" size={13} />{t('download.win')}</a>
-          <a className="fam-btn" href={MSGR_DL.ios} target="_blank" rel="noopener noreferrer"><Icon name="apple" size={15} />{t('msgr.get.ios')}<Icon name="external" size={13} /></a>
-          <a className="fam-btn" href={MSGR_DL.android} target="_blank" rel="noopener noreferrer"><Icon name="android" size={15} />{t('msgr.get.android')}<Icon name="external" size={13} /></a>
-        </div>
-        <span className="download-note">
-          {t('msgr.get.note')}
-          {' · '}
-          <a href={MSGR_DL.silicon}>Apple Silicon</a>
-          {' / '}
-          <a href={MSGR_DL.intel}>Intel Mac</a>
-          {' / '}
-          <a href={MSGR_DL.win}>Windows</a>
-        </span>
+        <p className="fam-lede rise" style={{ '--d': '60ms' }}>{t('msgr.wait.sub')}</p>
+        <form className="o-wait-form rise" style={{ '--d': '120ms' }} onSubmit={join}>
+          <label className="o-wait-field">
+            <span className="sr-only">{t('contact.f.email')}</span>
+            <input type="email" required autoComplete="email" placeholder="you@company.com" value={email} onChange={(e) => setEmail(e.target.value)} />
+          </label>
+          <button type="submit" className="fam-btn primary">{t('msgr.nav.cta')}</button>
+        </form>
+        <span className="download-note">{t('msgr.wait.note')}</span>
       </section>
 
       <Footer />

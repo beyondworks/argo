@@ -17,17 +17,8 @@ export const DL = {
   win: `${BASE}/argo-windows-setup.exe`,
 };
 
-// Argo Messenger — 같은 고정 파일명 규칙(release-messenger.yml). Android APK는 파일명에 버전이 들어가
-// 고정 링크가 없어 릴리스 페이지로 보낸다. iOS는 App Store 공개본(0.1.42, 2026-09-29 출시 — 9/30 조회로 확인).
-export const MSGR_RELEASES = 'https://github.com/beyondworks/argo-messenger/releases/latest';
-const MSGR_BASE = `${MSGR_RELEASES}/download`;
-export const MSGR_DL = {
-  silicon: `${MSGR_BASE}/argo-messenger-macos-apple-silicon.dmg`,
-  intel: `${MSGR_BASE}/argo-messenger-macos-intel.dmg`,
-  win: `${MSGR_BASE}/argo-messenger-windows-setup.exe`,
-  android: MSGR_RELEASES,
-  ios: 'https://apps.apple.com/app/argo-messenger/id6810877561',
-};
+// Argo Messenger 다운로드 링크는 두지 않는다 — 2026-10-16 유건 "랜딩 페이지에도 커밍순으로": 안정화를 위해 잠시 쉬는 동안 /messenger는 출시 알림 신청만.
+// 다시 열 때 되살릴 값(release-messenger.yml 고정 파일명, iOS App Store id6810877561)은 git 기록에 있다.
 
 // mac에서 Intel 감지 — WebGL 렌더러 문자열(Chrome 계열에서 유효, Safari는 둘 다 'Apple GPU' → Silicon 기본)
 function isIntelMac() {

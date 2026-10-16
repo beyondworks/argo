@@ -2,7 +2,7 @@
 // 스위처·마크 색·상단 CTA가 이 목록 하나를 본다. 순서 = 스위처 순서.
 export const PRODUCTS = [
   { id: 'argo', href: '/', name: 'Argo' },
-  { id: 'messenger', href: '/messenger', name: 'Messenger' },
+  { id: 'messenger', href: '/messenger', name: 'Messenger', soon: true }, // 출시 예정(2026-10-16 — 안정화를 위해 잠시 쉰다). 페이지·스위처·카드는 그대로 두고 '출시 예정' 표시만
   { id: 'office', href: '/office', name: 'Office', live: false }, // 공개 전(유건 10/2: 메신저까지만 배포, 오피스는 더 다듬는다) — true로 바꾸면 스위처·패밀리 카드·/office·사이트맵에 다시 나온다
 ];
 

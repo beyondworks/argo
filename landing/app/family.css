@@ -1847,3 +1847,17 @@ html[lang='ko'] .fam-page :is(.ph-name em, .ph-head span, .ph figcaption) { lett
 .ot-frame { position: absolute; top: 0; left: 0; border: 0; transform-origin: 0 0; }
 .ot-still { display: block; width: 100%; height: auto; }
 .ot-note { margin: 0; padding: 12px 16px; font-size: 13px; color: var(--fg-2); text-align: center; border-top: 1px solid rgba(38, 36, 31, 0.08); }
+
+/* ── 출시 예정 표시(2026-10-16 — 메신저 안정화 휴식) ── 스위처 항목·패밀리 카드 이름 옆의 작은 표지. 색은 기존 토큰만 */
+.family-soon {
+  margin-left: 6px;
+  font-family: var(--mono);
+  font-size: 0.78em;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  opacity: 0.62;
+}
+.family-card .fc-name .family-soon { font-size: 11px; vertical-align: middle; margin-left: 10px; color: var(--fg-3); opacity: 1; }
+.p-messenger .m-get .o-wait-form { margin-inline: auto; width: min(100%, 560px); }
+@media (max-width: 640px) { .family-switch .family-soon { display: none; } } /* 좁은 화면의 스위처는 이름만 — 카드·페이지 표지가 대신 알린다 */

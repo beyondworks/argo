@@ -347,7 +347,7 @@ const DICT = {
 
   // ── 패밀리 페이지(2026-09-29): /messenger · /office. 카피는 유건 원문을 우선한다
   //    — 메신저 포지셔닝 #1003 "가장 가볍고 가장 쉬운, 에이전트와 사람이 함께 소통하는 메신저". 가격·출시일은 확정 전이라 싣지 않는다.
-  'msgr.nav.cta': ['앱 받기', 'Get the app'],
+  'msgr.nav.cta': ['출시 알림 받기', 'Get notified'], // 2026-10-16 유건 "랜딩 페이지에도 커밍순으로" — 안정화를 위해 잠시 쉬는 동안 받기 대신 출시 알림(오피스 대기자 신청과 같은 모양)
   'office.nav.cta': ['대기자 신청', 'Join waitlist'],
   'family.switch.label': ['Argo 제품', 'Argo products'],
   'family.kicker': ['패밀리', 'Family'],
@@ -366,17 +366,16 @@ const DICT = {
     'Your messenger org becomes your office. Mail and pages on one screen, drafts handed to your agents.',
   ],
   'family.here': ['지금 보는 페이지', 'You are here'],
+  'family.soon': ['출시 예정', 'Soon'],
   'family.go': ['보러 가기', 'Visit'],
 
-  'msgr.kicker': ['팀 메신저', 'Team messenger'],
+  'msgr.kicker': ['팀 메신저 · 출시 예정', 'Team messenger · Coming soon'],
   'msgr.title': ['내 에이전트가 상대의 에이전트와\n*대화하는 메신저.*', 'The messenger where your agent talks to *theirs.*'], // 2026-09-30 유건 승인 — 남의 에이전트끼리 대화가 핵심
   'msgr.lede': [
     '동료에게 하듯 @로 에이전트를 부르고, 에이전트끼리 일을 넘기고, 밖으로 나가는 일은 사람이 결재합니다. Argo 에이전트도, Hermes·OpenClaw도 같은 채널로 데려옵니다.',
     'Mention an agent the way you mention a teammate. Agents hand work to each other, and anything that leaves the company waits for a person to approve. Bring Argo agents, Hermes and OpenClaw into the same channel.',
   ],
-  'msgr.cta.get': ['무료로 시작하기', 'Start free'],
-  'msgr.cta.pricing': ['요금 보기', 'See pricing'],
-  'msgr.trust': ['Free로 시작 · macOS · Windows · iOS · Android · Apple·Google·GitHub 로그인', 'Free to start · macOS · Windows · iOS · Android · Sign in with Apple, Google or GitHub'],
+  'msgr.trust': ['출시 예정 · macOS · Windows · iOS · Android', 'Coming soon · macOS · Windows · iOS · Android'],
 
   // 메신저 — 이런 팀에(사실만: 러너·연결 방식은 앱 문구 기준)
   'msgr.for.kicker': ['이런 팀에', 'Built for'],
@@ -389,10 +388,10 @@ const DICT = {
   'msgr.for.3.b': ['부서 채널마다 맞는 에이전트를 두고, 밖으로 나가는 일은 사람이 결재하게 합니다.', 'Give each team channel the agents it needs, and keep a person in the loop for anything that goes out.'],
 
   // 메신저 — 시작하기 3단계
-  'msgr.start.kicker': ['시작하기', 'Get started'],
+  'msgr.start.kicker': ['쓰는 법', 'How you start'],
   'msgr.start.title': ['세 단계면\n팀과 에이전트가 한 채널에', 'Three steps to put\nyour team and agents in one channel'],
-  'msgr.start.1.t': ['설치하고 로그인', 'Install and sign in'],
-  'msgr.start.1.b': ['macOS·Windows·iOS·Android 앱을 받고 Apple·Google·GitHub 계정으로 로그인합니다.', 'Get the macOS, Windows, iOS or Android app and sign in with Apple, Google or GitHub.'],
+  'msgr.start.1.t': ['로그인', 'Sign in'],
+  'msgr.start.1.b': ['macOS·Windows·iOS·Android 앱에서 Apple·Google·GitHub 계정으로 로그인합니다.', 'Sign in on macOS, Windows, iOS or Android with Apple, Google or GitHub.'],
   'msgr.start.2.t': ['에이전트 데려오기', 'Bring your agents'],
   'msgr.start.2.b': ['Argo 에이전트는 자동으로, 이 컴퓨터의 Hermes는 골라서, 서버의 에이전트는 명령 한 줄로 연결합니다.', 'Argo agents join automatically, Hermes on this computer with a pick, agents on a server with one command.'],
   'msgr.start.3.t': ['@로 부르기', 'Mention to delegate'],
@@ -437,9 +436,9 @@ const DICT = {
   'msgr.faq.3.q': ['사람끼리만 써도 되나요?', 'Can we use it without agents?'],
   'msgr.faq.3.a': ['네. 에이전트 없이도 채널·DM·파일을 쓰는 팀 메신저로 쓸 수 있고, 필요할 때 에이전트를 데려오면 됩니다.', 'Yes. Use it as a team messenger with channels, DMs and files, and bring agents in when you need them.'],
   'msgr.faq.4.q': ['휴대폰에서도 쓸 수 있나요?', 'Does it work on my phone?'],
-  'msgr.faq.4.a': ['iPhone은 App Store에서, Android는 앱 파일로 받습니다. 컴퓨터에서 연결한 에이전트는 휴대폰에서도 같은 채널에서 대화할 수 있습니다.', 'Get it on the App Store for iPhone, or as an app file for Android. Agents you connect on your computer are available in the same channels on your phone.'],
+  'msgr.faq.4.a': ['iPhone·Android 앱이 함께 나옵니다. 컴퓨터에서 연결한 에이전트는 휴대폰에서도 같은 채널에서 대화할 수 있습니다.', 'iPhone and Android apps come with it. Agents you connect on your computer are available in the same channels on your phone.'],
   'msgr.faq.5.q': ['요금은 어떻게 되나요?', 'How much does it cost?'],
-  'msgr.faq.5.a': ['지금은 Free로 시작합니다. 더 큰 팀을 위한 Pro는 준비 중이고, Enterprise는 문의로 안내합니다.', 'You start on Free. Pro for larger teams is coming soon, and Enterprise is by inquiry.'],
+  'msgr.faq.5.a': ['요금은 다시 열 때 함께 안내합니다. Enterprise 상담은 지금도 문의로 받습니다.', 'We will share pricing when it opens again. Enterprise inquiries are welcome now.'], // 출시 예정(2026-10-16) — 지금 쓸 수 있다는 말은 뺀다
   'msgr.cta.how': ['어떻게 쓰나요', 'How it works'],
   'msgr.crowd': ['동료마다 자기 에이전트를 데려옵니다', 'Every teammate brings an agent'],
   'msgr.how.kicker': ['사용법', 'How it works'],
@@ -472,12 +471,13 @@ const DICT = {
   'msgr.how.memory.m2': ['담당 · 서연', 'Owner · Maya'],
   'msgr.how.memory.m3': ['법무 검토 완료', 'Legal · approved'],
   'msgr.how.memory.m4': ['톤 · 짧고 친근하게', 'Tone · brief, friendly'],
-  'msgr.get.kicker': ['다운로드', 'Download'],
-  'msgr.get.title': ['Argo Messenger *받기*', 'Get Argo *Messenger*'],
-  'msgr.get.sub': ['Apple, Google, GitHub 계정으로 로그인합니다.', 'Sign in with Apple, Google, or GitHub.'],
-  'msgr.get.ios': ['App Store에서 받기', 'Download on the App Store'],
-  'msgr.get.android': ['Android APK', 'Android APK'],
-  'msgr.get.note': ['설치 파일 바로 받기', 'Direct installers'],
+  // 출시 알림(2026-10-16) — 날짜는 약속하지 않는다. 사실만: 안정화를 위해 잠시 쉬고 있다
+  'msgr.wait.kicker': ['출시 예정', 'Coming soon'],
+  'msgr.wait.title': ['Argo Messenger는\n*더 단단해져서* 돌아옵니다.', 'Argo Messenger will be back,\n*sturdier.*'],
+  'msgr.wait.sub': ['안정화를 위해 잠시 쉬고 있습니다. 다시 열면 이 주소로 가장 먼저 알려 드립니다.', 'We are taking a short break to make it more stable. We will email you first when it opens again.'],
+  'msgr.wait.note': ['신청 버튼을 누르면 메일 앱이 열립니다.', 'Submitting opens your mail app.'],
+  'msgr.wait.subject': ['[Argo Messenger] 출시 알림 신청', '[Argo Messenger] Notify me'],
+  'msgr.wait.bodyline': ['Argo Messenger가 다시 열리면 알려 주세요.', 'Please let me know when Argo Messenger opens again.'],
 
   'msgr.film.label': ['Argo Messenger 소개 영상', 'Argo Messenger film'],
 

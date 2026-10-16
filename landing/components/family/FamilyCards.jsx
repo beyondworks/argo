@@ -43,7 +43,7 @@ export default function FamilyCards({ here }) {
               {/* 입체 그림 — 오피스 히어로와 같은 종이 디오라마 세계(블렌더) */}
               <img className="fc-art" src={ART[p.id]} alt="" loading="lazy" />
               <div className="fc-top">
-                <span className="fc-name">{p.name}</span>
+                <span className="fc-name">{p.name}{p.soon && <span className="family-soon">{t('family.soon')}</span>}</span>
                 <BrandMark tone={TONE[p.id]} size={22} />
               </div>
               <p className="fc-body">{t(`family.${p.id}`)}</p>
