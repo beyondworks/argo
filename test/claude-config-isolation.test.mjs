@@ -44,6 +44,7 @@ const { claudeConfigEnv, adoptLegacyTranscript } = await import('../src/runners/
 const { chat } = await import('../src/chat.mjs');
 const { sdkConfigDirs, dropTranscripts } = await import('../src/gateway/msgr-recall.mjs');
 const { query } = await import('@anthropic-ai/claude-agent-sdk');
+const { invalidateDetectCache } = await import('../src/runners.mjs');
 
 const userClaude = join(home, '.claude');
 const isoDir = (ws) => join(home, '.argo', `claude-config-cl-${ws}`);
@@ -103,6 +104,7 @@ test('A3 host 실턴(파일 저장소 ~/.claude/.credentials.json) — 리눅스
   await mkdir(userClaude, { recursive: true });
   await writeFile(join(userClaude, '.credentials.json'), JSON.stringify({ claudeAiOauth: { accessToken: `sk-ant-oat01-${'z'.repeat(80)}`, refreshToken: `sk-ant-ort01-${'r'.repeat(80)}`, expiresAt: Date.now() + 3600e3, scopes: ['user:inference', 'user:profile'], subscriptionType: 'pro' } }));
   await company('iso-a3t', 'host', 'host');
+  invalidateDetectCache(); // 앞 시험(A1·A2 턴)이 로그인 파일 없을 때의 감지 결과를 캐시해 두면 15초 재확인 전까지 host를 미연결로 본다(윈도우 CI 'AI 러너가 하나도 연결돼 있지 않습니다') — 사용자가 터미널에서 로그인한 뒤 재확인이 지난 상태로 맞춘다
   process.env.ANTHROPIC_BASE_URL = process.env.ARGO_CLAUDE_BASE_URL; // host는 env를 주입하지 않는다 — 가짜 끝점으로 보내려면 호스트 env로
   try {
     const t = await turn('iso-a3t');
