@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pausedReply, PAUSED_RETRY_S } from '../supabase/functions/msgr-bot/paused.js';
 import { makeApi, pollLoop } from '../integrations/openclaw-argo-msgr/src/api.js';
+import { RoutineMirror, ROUTINES_EVERY_MS } from '../integrations/openclaw-argo-msgr/src/contract.js';
 
 const T = 'argo_bot_' + 'c'.repeat(48);
 const log = [];
@@ -29,12 +30,12 @@ const BASE = `http://127.0.0.1:${server.address().port}/msgr-bot`;
 const home = mkdtempSync(join(tmpdir(), 'argo-paused-home-'));
 after(() => { server.close(); rmSync(home, { recursive: true, force: true }); });
 
-test('① 응답 — node는 getMe 200·나머지 429, 그 밖은 401, 모두 retry_after 3600·Retry-After·사유 "Argo Messenger is paused", 연결 스크립트는 410, DB·외부 호출 없음', async () => {
+test('① 응답 — node는 getMe·미러 보고 200·나머지 429, 그 밖은 401, 모두 retry_after 3600·Retry-After·사유 "Argo Messenger is paused", 연결 스크립트는 410, DB·외부 호출 없음', async () => {
   const body = (r) => JSON.parse(r.body);
   const me = pausedReply({ path: '/msgr-bot/botX/getMe', userAgent: 'node' });
   assert.equal(me.status, 200); assert.equal(body(me).ok, true);
   for (const [ua, status] of [['node', 429], ['Python-urllib/3.14', 401], ['Python-urllib/3.13', 401], ['python-httpx/0.28.1', 401], ['', 401]]) {
-    for (const m of ['getUpdates', 'sendMessage', 'reportStatus']) {
+    for (const m of ['getUpdates', 'sendMessage', 'getFile']) { // 미러 보고(reportStatus·setRoutines)는 아래 따로
       if (ua === 'node' && m === 'getMe') continue;
       const r = pausedReply({ method: 'POST', path: `/msgr-bot/bot${T}/${m}`, userAgent: ua });
       assert.equal(r.status, status, `${ua} ${m}`);
@@ -43,6 +44,12 @@ test('① 응답 — node는 getMe 200·나머지 429, 그 밖은 401, 모두 re
       assert.equal(r.headers['Retry-After'], '3600');
     }
   }
+  for (const m of ['reportStatus', 'setRoutines']) { // OpenClaw 미러 보고는 받았다고만(저장 안 함) — 그 밖의 UA는 401 그대로
+    const r = pausedReply({ method: 'POST', path: `/msgr-bot/bot${T}/${m}`, userAgent: 'node' });
+    assert.equal(r.status, 200, m); assert.deepEqual(body(r), { ok: true, result: {} });
+    assert.equal(pausedReply({ method: 'POST', path: `/msgr-bot/bot${T}/${m}`, userAgent: 'Python-urllib/3.13' }).status, 401);
+  }
+  for (const m of ['routineEditDone', 'getUpdates', 'sendMessage', 'requestApproval']) assert.equal(pausedReply({ method: 'POST', path: `/msgr-bot/bot${T}/${m}`, userAgent: 'node' }).status, 429, m);
   assert.equal(pausedReply({ path: '/msgr-bot/connect', userAgent: 'curl/8' }).status, 410);
   assert.equal(pausedReply({ method: 'POST', path: '/msgr-bot/link/report', userAgent: 'Python-urllib/3.12' }).status, 410);
   const src = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../supabase/functions/msgr-bot/paused.js', import.meta.url)), 'utf8')
@@ -129,3 +136,27 @@ test('③ ④ OpenClaw(현재판) — getMe를 지나 받기에서 1시간씩 �
   assert.equal(resumedAt, 3600_000);
   assert.ok(firstOkAfterResume !== null && firstOkAfterResume - resumedAt <= 3600_000, `재개 뒤 ${(firstOkAfterResume - resumedAt) / 1000}초 안에 다시 받는다`);
 });
+
+test('⑤ OpenClaw(현재판) 미러 루프 포함 가상 1시간 — getMe·받기·reportStatus·setRoutines 합계 한 자리(미러 보고는 처음 한 번, 1시간마다 재확인)', async () => {
+  mode = 'paused'; log.length = 0;
+  const api = makeApi({ url: BASE, token: T });
+  await api.getMe();
+  // 받기 루프 — 자기 가상 시계로 1시간(③과 같다)
+  let pclock = 0; const ac = new AbortController();
+  await pollLoop(api, { onMessage: () => {}, log: () => {}, signal: ac.signal, sleep: async (ms) => { pclock += ms; if (pclock >= 3600_000) ac.abort(); } });
+  let clock = 0;
+  // channel.ts startAccount의 mirrorLoop와 같은 순서·주기 — report → 3초 → (report → sync → 60초) 반복. 예약 작업은 비어 있는 계정
+  const mirror = new RoutineMirror({ api, cronAccess: async () => ({ state: 'ready', cron: { list: async () => [] } }), accountId: 'default',
+    stateFile: join(home, `routines-${Date.now()}.json`), version: () => '0.3.5', approvalMode: () => 'manual', now: () => clock, log: () => {} });
+  const report = async () => { try { await mirror.reportStatus(); } catch { /* channel.ts와 같이 로그만 */ } };
+  await report(); clock += 3_000;
+  while (clock < 3600_000) {
+    await report();
+    try { await mirror.sync(); } catch { /* 같음 */ }
+    clock += ROUTINES_EVERY_MS;
+  }
+  const by = {}; for (const x of log) { const k = x.path.split('/').pop(); by[k] = (by[k] ?? 0) + 1; }
+  assert.ok(log.length <= 9, `가상 1시간 ${log.length}번 ${JSON.stringify(by)}`);
+  assert.ok((by.reportStatus ?? 0) <= 2 && (by.setRoutines ?? 0) <= 2, JSON.stringify(by));
+});
+
