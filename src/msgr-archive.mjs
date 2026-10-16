@@ -338,7 +338,7 @@ async function writeReadme(dir, st, chs) {
   const rooms = Object.values(st.rooms).filter((r) => r.done).map((r) => r.dir).sort();
   const body = [
     '# 메신저 기록 · Messenger archive', '',
-    '메신저에서 볼 수 있던 대화를 옮겨 둔 읽기 전용 보관 폴더입니다. 에이전트 작업 폴더 밖에 따로 보관해 에이전트가 쓰는 기억과 섞이지 않고, 기기 사이에 동기화되지 않습니다.',
+    '메신저에서 볼 수 있던 대화를 복사해 둔 읽기 전용 보관 폴더입니다. 에이전트 작업 폴더 밖에 따로 보관해 에이전트가 쓰는 기억과 섞이지 않고, 기기 사이에 동기화되지 않습니다.',
     "A read-only copy of the conversations you could see in Argo Messenger. It is kept outside the agents' working folders so it doesn't mix with the memory agents use, and it is not synced between devices.", '',
     `- 방 · Rooms: ${chs.length}`, `- 메시지 · Messages: ${st.totals.messages}`, `- 첨부 · Attachments: ${st.totals.attachments}`, '',
     ...rooms.map((r) => `- [${r}](${encodeURI(`${r}/messages.md`)})`), '',

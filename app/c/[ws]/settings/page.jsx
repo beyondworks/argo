@@ -14,7 +14,7 @@ import LocalAssetImport from '../../../components/LocalAssetImport';
 import { accountPlan, trialBadgeState } from '../../../../src/entitlement.mjs';
 
 // Argo Messenger 받기 — 맥·윈도우 설치파일만 걸던 것을 앱 스토어·Play까지 있는 안내 페이지 한 곳으로(CX-12). 오피스 진입 버튼(CX-13)은 오피스가 비공개라 뺐다(유건 2026-10-10).
-import { msgrGetLink, msgrCardView, runtimeWaitingKey, runtimeAction, pausedLabelKey, personalCardView, msgrSetupReason, msgrRuntimeBesideSetup, pauseSoon, tabReturnDue } from './msgr-card.mjs';
+import { msgrGetLink, msgrPausedView, msgrCardView, runtimeWaitingKey, runtimeAction, pausedLabelKey, personalCardView, msgrSetupReason, msgrRuntimeBesideSetup, pauseSoon, tabReturnDue } from './msgr-card.mjs';
 import { keepChoices, togglePick, pickReady, hereSlugs, sameAsActive, FREE_AGENT_LIMIT } from './keep-choices.mjs'; // 무료 계정이 유지할 에이전트를 고른다(2026-10-12 제보)
 import MsgrArchiveSection from './msgr-archive-section'; // 메신저 기록 옮기기 진행·완료·다시 받기(0.1.113)
 import ArchivedCompaniesCard from '../../../archived-companies'; // 보관한 회사 되돌리기 — 홈에도 같은 카드(UM3)
@@ -52,6 +52,9 @@ function Settings({ params }) {
   const sp = useSearchParams();
   const wantTab = sp.get('ai') ? 'ai' : sp.get('tab');
   const [tab, setTab] = useRememberedTab('argo-settings-tab', SETTINGS_TABS, 'general', wantTab);
+  // 메신저 중단 스위치 — 메신저 카드의 이관 영역이 읽은 값(GET msgr-archive, 새 호출 없음)을 알림 카드와 메신저 카드가 함께 쓴다(msgrPausedView)
+  const [msgrPaused, setMsgrPaused] = useState(false);
+  const onArchiveState = useCallback((d) => setMsgrPaused(d?.paused === true), []);
 
   useEffect(() => {
     api(`/api/companies/${ws}`).then((d) => {
@@ -194,8 +197,8 @@ function Settings({ params }) {
 
       {tab === 'connections' && (
       <div className="cardcols" data-tab-pane="connections">
-      <div className="cardrow"><NotifyChannelsCard ws={ws} /></div>
-      <div className="cardrow"><MsgrCard ws={ws} agents={data?.agents ?? []} /></div>
+      <div className="cardrow"><NotifyChannelsCard ws={ws} paused={msgrPaused} /></div>
+      <div className="cardrow"><MsgrCard ws={ws} agents={data?.agents ?? []} paused={msgrPaused} onArchiveState={onArchiveState} /></div>
       <div className="cardrow">
       <ConnectionCard ws={ws} kind="telegram" title={t('activity.telegram')}
         help={t('settings.conn.tgHelp')}
@@ -856,8 +859,9 @@ function TrashCard({ ws }) {
 /** 알림 받을 메신저 — 아르고 메신저·텔레그램·슬랙 체크박스(연결된 것만 활성). 체크한 메신저로 크루 알림 전부가 간다(유건 결정 2026-09-15: 방·종류 선택 없음).
     연결됨/켜짐 판정은 라우트가 notifyChannelState(src/msgr-notify.mjs)로 내려준다 — 카드는 계산하지 않는다(검수 #537 HIGH-3).
     켜진 채 연결이 끊긴 경우(로그아웃·파견 0)는 해제만 가능하게 남긴다(검수 MEDIUM-3). 저장 중엔 세 줄 모두 잠가 연타 경쟁을 막는다(LOW-1). */
-function NotifyChannelsCard({ ws }) {
+function NotifyChannelsCard({ ws, paused = false }) {
   const { t } = useLang();
+  const pv = msgrPausedView(paused);
   const [st, setSt] = useState(null); // { signedIn, channels: { msgr|telegram|slack: { connected, on } } }
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -892,12 +896,13 @@ function NotifyChannelsCard({ ws }) {
             );
           })}
         </div>
+        {pv.notifyNoteKey && <p className="msgr-paused-note" style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.7 }}>{t(pv.notifyNoteKey)}</p>}
         {err && <p style={{ fontSize: 11.5, color: 'var(--danger)', margin: 0 }}>{err}</p>}
       </div>
   );
 }
 
-function MsgrCard({ ws, agents }) {
+function MsgrCard({ ws, agents, paused = false, onArchiveState }) {
   const { t } = useLang();
   const [st, setSt] = useState(null); // { signedIn, orgs:[{id,name,role}], crews:[등록 행] }
   const [orgId, setOrgId] = useState('');
@@ -906,9 +911,8 @@ function MsgrCard({ ws, agents }) {
   const [err, setErr] = useState('');
   const [note, setNote] = useState(''); // 무료 4명 교체 안내(연결 결과)
   const [confirm, setConfirm] = useState(null); // 교체 미리 알림 { scope, slugs, victims } — 유지할 에이전트 고르기를 못 쓸 때(옛 서버·Pro 판정 실패)만의 종전 확인
-  const [msgrPaused, setMsgrPaused] = useState(false); // 메신저 중단 스위치 — 이관 영역이 읽은 값(새 호출 없음). 켜지면 '메신저 받기' 대신 '출시 알림 받기'(msgrGetLink)
-  const onArchiveState = useCallback((d) => setMsgrPaused(d?.paused === true), []);
-  const getLink = msgrGetLink(msgrPaused);
+  const getLink = msgrGetLink(paused); // 메신저 중단 스위치(부모가 이관 영역 응답으로 받는다) — 켜지면 '메신저 받기' 대신 '출시 알림 받기'
+  const pv = msgrPausedView(paused); // 쉬는 동안 카드 설명·응답 상태·단추(0.1.113)
   const [keep, setKeep] = useState(null); // 유지할 에이전트 고르기 { scope, slots, picked, victims } — 무료 한도에서 사람이 고른다(2026-10-12)
   const load = useCallback(() => api(`/api/companies/${ws}/msgr`)
     .then((d) => { setSt(d); setOrgId((cur) => cur && d.orgs?.some((o) => o.id === cur) ? cur : (d.orgs?.[0]?.id ?? '')); })
@@ -1057,7 +1061,7 @@ function MsgrCard({ ws, agents }) {
   }
 
   const runtime = st?.runtime;
-  const runtimeCopy = runtime?.state === 'alive'
+  const runtimeCopy = pv.runtimeKey ? t(pv.runtimeKey) : runtime?.state === 'alive'
     ? t('settings.msgr.runtime.alive', { s: Math.max(0, Math.round((Date.now() - runtime.lastTs) / 1000)) })
     : runtime?.state === 'login' ? t('settings.msgr.runtime.login')
       : runtime?.state === 'owner' ? t('settings.msgr.runtime.owner')
@@ -1069,7 +1073,7 @@ function MsgrCard({ ws, agents }) {
   const [rechecking, setRechecking] = useState(false);
   async function recheck() { if (rechecking) return; setRechecking(true); try { await load(); } finally { setRechecking(false); } } // 폴이 없는 때의 수동 확인(UL7)
   const action = runtime ? runtimeAction(runtime.state, { polling: view.polling }) : null; // 상태별 단추 하나(2차 L6)
-  const runtimeButton = action === 'login' ? (
+  const runtimeButton = !pv.runtimeButton ? null : action === 'login' ? (
     <Link className="btn sm" href="/login">{t('home.signIn')}</Link>
   ) : action === 'reconnect' ? (
     <button type="button" className="btn sm" disabled={reconnecting} onClick={reconnectBridge}>{reconnecting ? <Spinner size={12} /> : t('settings.msgr.runtime.reconnect')}</button>
@@ -1081,16 +1085,19 @@ function MsgrCard({ ws, agents }) {
     <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
         <span className="card-title" style={{ minWidth: 0 }}>{t('settings.msgr.title')}</span>
-        {st?.signedIn && <span className="chip" title={t(chip === 'personal' ? 'settings.msgr.connection.personalHelp' : 'settings.msgr.connection.statusHelp', { n: chip === 'personal' ? personalCount : regCount })}>
+        {st?.signedIn && (pv.chipKey ? (
+          // 쉬는 동안에는 '연결됨'(초록) 대신 '쉬는 중'(회색) — 연결돼 있어도 메신저가 답하지 않는다(msgrPausedView)
+          <span className="chip msgr-chip-paused" title={t('settings.msgr.pausedHelp')}><span className="dot" style={{ background: 'var(--border)' }} />{t(pv.chipKey)}</span>
+        ) : <span className="chip" title={t(chip === 'personal' ? 'settings.msgr.connection.personalHelp' : 'settings.msgr.connection.statusHelp', { n: chip === 'personal' ? personalCount : regCount })}>
           <span className="dot" style={{ background: chip === 'notConnected' ? 'var(--border)' : 'var(--ok)' }} />{t(chip === 'connected' ? 'settings.msgr.connection.connected' : chip === 'personal' ? 'settings.msgr.connection.personal' : 'settings.msgr.connection.notConnected')}
-        </span>}
+        </span>)}
       </div>
-      <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.7 }}>{t('settings.msgr.downloadHelp')}</p>
+      <p className="msgr-desc" style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.7 }}>{t(pv.descKey)}</p>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
         <a className="btn sm" href={getLink.href} target="_blank" rel="noopener noreferrer">{t(getLink.labelKey)}</a>
       </div>
       <MsgrArchiveSection ws={ws} onState={onArchiveState} />
-      <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.7 }}>{t('settings.msgr.help')}</p>
+      {pv.showHelp && <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.7 }}>{t('settings.msgr.help')}</p>}
       {st === null && <Skeleton h={44} />}
       {st && !st.signedIn && <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: 0, flex: '1 1 240px' }}>{t('settings.msgr.notSignedIn')}</p>
@@ -1112,10 +1119,10 @@ function MsgrCard({ ws, agents }) {
           </div>
         </section>
       )}
-      {st?.signedIn && !st.orgs?.length && <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: 0 }}>{personalCount ? t('settings.msgr.personalOnly', { n: personalCount }) : t('settings.msgr.noOrg')}</p>}
+      {pv.showHelp && st?.signedIn && !st.orgs?.length && <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: 0 }}>{personalCount ? t('settings.msgr.personalOnly', { n: personalCount }) : t('settings.msgr.noOrg')}</p>}{/* 쉬는 동안에는 '팀과 함께 쓰려면 조직을…' 안내도 숨긴다(지금 쓸 수 있다고 읽힌다) */}
       {/* 실행기 연결 상태 — 개인 공간도 이 기기의 실행기가 답한다. 조직이 없어도 보인다(CX-12: 조직 블록 안에만 있어 숨었다) */}
       {showRuntime && !st.orgs?.length && runtimeToo && (
-        <section className={`msgr-runtime${runtime?.state === 'alive' ? ' on' : ''}`} aria-live="polite">
+        <section className={`msgr-runtime${runtime?.state === 'alive' && !paused ? ' on' : ''}`} aria-live="polite">
           <div>
             <span className="microlabel">{t('settings.msgr.runtime.title')}</span>
             <p>{runtimeCopy}</p>
@@ -1170,7 +1177,7 @@ function MsgrCard({ ws, agents }) {
         </div>
         {!agents.length && <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: 0 }}>{t('settings.msgr.noCrews')}</p>}
         {!!agents.length && <>
-          {runtimeToo && <section className={`msgr-runtime${runtime?.state === 'alive' ? ' on' : ''}`} aria-live="polite">
+          {runtimeToo && <section className={`msgr-runtime${runtime?.state === 'alive' && !paused ? ' on' : ''}`} aria-live="polite">
             <div>
               <span className="microlabel">{t('settings.msgr.runtime.title')}</span>
               <p>{runtimeCopy}</p>

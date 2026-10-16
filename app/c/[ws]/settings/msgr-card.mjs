@@ -7,6 +7,22 @@ export const MESSENGER_WAITLIST = 'https://argo.ceo/messenger#waitlist'; // 메�
 
 /** '메신저 받기' 단추(0.1.113) — 서버 중단 스위치(msgr_service_pause)가 켜져 있으면 받을 수 있는 앱이 없으므로 '출시 알림 받기'로 바꾸고 랜딩 신청란으로 보낸다.
     paused = GET /api/companies/[ws]/msgr-archive 응답의 paused(이관 확인 때 함께 읽은 값 — 새 주기 호출 없음). 모르면(로드 전·옛 서버·오류) 꺼짐과 같다(지금 단추 그대로). */
+/** 메신저가 쉬는 동안(서버 중단 스위치 켜짐) 설정 › 연결 화면의 세 칸 문구(0.1.113, 유건 캡처 2026-10-16) — 꺼짐·모름이면 null·종전 키(지금과 똑같이).
+    descKey = 'Argo 메신저 연결' 카드 설명(쓸 수 있다고 읽히는 안내 대신 쉬는 중) · showHelp = 조직·연결 안내 문단과 '팀과 함께 쓰려면 조직을…' 줄을 보일까
+    runtimeKey = 응답 상태 문구를 바꿀 키(null이면 종전 판정 — 쉬는 동안 브리지는 30분에 한 번만 확인해 '응답 없음·자동 복구'가 고장처럼 보였다) · runtimeButton = 다시 연결·다시 확인 단추를 보일까
+    notifyNoteKey = '알림 받을 메신저' 칸 아래 안내(저장된 체크 값은 바꾸지 않는다) · chipKey = 머리 칩을 '쉬는 중'(회색)으로 바꿀 키(null이면 종전 연결됨·개인 공간·연결 필요). paused = GET msgr-archive 응답의 paused(이관 확인 때 읽은 값 — 새 호출 없음). */
+export function msgrPausedView(paused) {
+  const on = paused === true;
+  return {
+    descKey: on ? 'settings.msgr.pausedHelp' : 'settings.msgr.downloadHelp',
+    showHelp: !on,
+    runtimeKey: on ? 'settings.msgr.runtime.paused' : null,
+    runtimeButton: !on,
+    notifyNoteKey: on ? 'settings.notify.msgrPaused' : null,
+    chipKey: on ? 'settings.msgr.connection.paused' : null,
+  };
+}
+
 export function msgrGetLink(paused) {
   return paused === true ? { href: MESSENGER_WAITLIST, labelKey: 'settings.msgr.getWaitlist' } : { href: MESSENGER_PAGE, labelKey: 'settings.msgr.get' };
 }
