@@ -33,7 +33,10 @@ begin
      or length(p_ko_title) > 100 or length(p_en_title) > 100 or length(p_ko) > 500 or length(p_en) > 500 then raise exception 'msgr_pause_text_invalid' using errcode = '22023'; end if;
   select value into url from public.msgr_settings where key = 'push_url';
   if url is null then raise exception 'msgr_push_url_missing' using errcode = '22023'; end if; -- 행을 넣기 전에 — 엣지를 못 부르는 채로 회차를 써 버리지 않게
-  bid := left('pause:' || since, 120);
+  bid := 'pause:' || since;
+  -- 엣지(msgr-push index.ts broadcast_id)와 같은 형식 — 공백 등이 든 스위치 값(now()::text 같은)은 엣지가 400을 주고 pg_net 응답은 아무도 보지 않아
+  -- 조용히 실패한다. 행을 쓰기 전에 거절한다(스위치 값은 '2026-10-16T17:00:00+09:00'처럼 공백 없는 ISO 문자열).
+  if bid !~ '^[A-Za-z0-9:._+-]{1,120}$' then raise exception 'msgr_pause_since_invalid' using errcode = '22023', detail = 'msgr_paused value must be an ISO string without spaces'; end if;
   insert into public.msgr_push_broadcasts (id, ko_title, ko, en_title, en) values (bid, p_ko_title, p_ko, p_en_title, p_en) on conflict (id) do nothing;
   get diagnostics n = row_count;
   if n = 0 then return jsonb_build_object('queued', false, 'id', bid, 'reason', 'already'); end if;

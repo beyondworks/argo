@@ -236,6 +236,14 @@ test('공지 푸시(20261016171000) — service_role만, 중단 중일 때만, �
     assert.equal(sql(`select count(*) from public.msgr_push_broadcasts`), '0', 'push_url이 없으면 회차를 쓰지 않는다');
     const bad = superRaw(`select public.msgr_pause_push('kt', '', 'et', 'en')`); assert.notEqual(bad.status, 0); assert.match(bad.stderr, /msgr_pause_text_invalid/);
     sql(`insert into public.msgr_settings (key, value) values ('push_url', 'https://edge.test/msgr-push') on conflict (key) do update set value = excluded.value`);
+    // 스위치 값 형식 — 엣지 정규식(/^[A-Za-z0-9:._+-]{1,120}$/)을 못 지나는 값(공백 — now()::text 같은)은 행을 쓰기 전에 거절
+    for (const bad of ['2026-10-16 18:00:00+09', 'x'.repeat(120)]) {
+      pause(bad);
+      const r = superRaw(`select public.msgr_pause_push('kt', 'ko', 'et', 'en')`);
+      assert.notEqual(r.status, 0, `허용됨: ${bad}`); assert.match(r.stderr, /msgr_pause_since_invalid/);
+    }
+    assert.equal(sql(`select count(*) from public.msgr_push_broadcasts`), '0', '형식이 틀린 값은 회차를 쓰지 않는다');
+    pause('2026-10-16T18:00:00+09:00');
     const u = asUserRaw(U.a, `select public.msgr_pause_push('kt', 'ko', 'et', 'en')`);
     assert.notEqual(u.status, 0, '사용자는 부를 수 없다'); assert.match(u.stderr, /permission denied for function msgr_pause_push/);
     const r = asUserRaw(U.a, `select count(*) from public.msgr_push_broadcasts`);
