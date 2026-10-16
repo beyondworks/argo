@@ -192,11 +192,7 @@ test('오피스 — 같은 그림의 정지 얼굴(faceStill), 몸짓·상태 �
     assert.equal(still, faceInner({ shape, color: shape }, { px }).replace(/<g class="grin".*?<\/g><ellipse class="yawn"[^>]*\/>/, ''), `몸짓 부품만 뺀 같은 그림 ${shape}/${px}`);
     assert.doesNotMatch(still, /class="(grin|yawn)"/);
   }
-  const face = read('../../office/src/ui/Face.jsx');
-  assert.match(face, /m\.faceStill\(m\.faceOf\(c\?\.faceSeed \?\? id, c\?\.face \?\? null\), \{ px: size \}\)/, '쉼 표정 하나 — 같은 에이전트의 대표 행 기준(board.js faceSeed, 유건 2026-10-05)');
-  assert.match(face, /import\('@msgr\/crew-face'\)/, '그림 정의는 첫 화면 묶음 밖에서 받는다(150KB 상한, 검수 #789)');
-  assert.doesNotMatch(face, /^import [^;]*'@msgr\/crew-face'/m, '정적 import 금지 — 첫 화면 묶음에 다시 들어간다');
-  assert.doesNotMatch(face, /face-gestures|faceGestures|state:/, '몸짓·상태 표정 없음');
+  // 오피스 앱 쪽 사용처 대조(apps/office/src/ui/Face.jsx)는 오피스를 저장소에서 떼어 내며 뺐다(2026-10-16 유건 "오피스는 완전 분리"). 함수의 그림 계약만 남는다
 });
 
 test('오류 알림 대상(failedCrewsInFetch) — 이어 받은 새 글만, 채널을 처음 열 때 읽은 글·재조회 덮어쓰기는 제외, 같은 크루는 한 번', () => {
@@ -219,7 +215,5 @@ test('오피스 달력 색은 얼굴 v2 전과 같다 — main(b58553d0)의 옛 
   assert.equal(calendarColorIndex('crew-1', { shape: 3, color: 7, eyes: 1 }), 7, '옛 형태 저장값의 색');
   assert.equal(calendarColorIndex('crew-1', { v: 2, shape: 3, color: 4 }), 6, 'v2 저장값은 옛 앱처럼 해시 색');
   assert.equal(calendarColorIndex('crew-1', { shape: 6, color: 1, eyes: 0 }), 6, '옛 범위 밖은 해시 색');
-  const cal = read('../../office/src/calendar/shared.js');
-  assert.match(cal, /CALENDAR_COLORS\[calendarColorIndex\(/);
-  assert.doesNotMatch(cal, /FACE_COLORS/, '달력은 새 얼굴 색을 쓰지 않는다');
+  // 오피스 달력 쪽 사용처 대조(apps/office/src/calendar/shared.js)는 오피스 분리로 뺐다(2026-10-16). 색 번호 계약만 남는다
 });

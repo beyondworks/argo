@@ -1,7 +1,8 @@
 // 오피스 완전 분리(유건 지시 2026-10-13: "오피스는 Argo와 완전히 분리한다. 오피스 연결 목록은 다 뺀다") — 본체에 오피스를 아는 코드가 다시 들어오면 빨강.
 // src·app·bin·scripts·integrations·middleware에서 'office'·'오피스'가 든 줄을 파일마다 센다. 마이크로소프트 오피스 문서 형식(docx·xlsx 내보내기·MIME)은 다른 뜻이라 먼저 뺀다.
 // 남은 줄은 아래 허용 목록의 개수와 정확히 같아야 한다 — 늘어나도(새 결합) 줄어들어도(목록 갱신 누락) 빨강이다. 목록을 늘리려면 이유를 같이 적는다.
-// apps/office/·supabase/(오피스 마이그레이션)·오피스 DB 시험(test/office-*-pg)은 오피스 앱 몫이라 대상이 아니다.
+// supabase/(오피스 마이그레이션 — 이력은 지우지 않는다)·오피스 DB 시험(test/office-*-pg — 그 마이그레이션을 지킨다)은 대상이 아니다.
+// 오피스 앱(apps/office)은 2026-10-16 저장소에서 떼어 냈다(유건 "오피스는 완전 분리 … 다른 저장소로 두고 새로 개발") — 아래 마지막 시험이 다시 들어오지 않게 잠근다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs';
@@ -67,4 +68,22 @@ test('오피스 모듈·경로·명령이 본체에 없다 — 커넥터 항목�
   const { CONNECTOR_CATALOG, CONNECTOR_CATALOG_EN } = await import('../src/market.mjs');
   assert.equal([...CONNECTOR_CATALOG, ...CONNECTOR_CATALOG_EN].some((c) => /office/i.test(`${c.id} ${c.url}`)), false, '오피스 연결 목록 없음');
   assert.doesNotMatch(readFileSync(join(ROOT, 'bin/argo.mjs'), 'utf8'), /\boffice\b/, 'argo office 명령 없음');
+});
+
+// 오피스 앱 분리(2026-10-16) — 앱 폴더·CI 단계·앱 파일을 읽는 시험이 다시 들어오면 빨강. 마이그레이션(supabase/)·랜딩 소개(landing/)·프로젝트 문서(*.md)는 대상 밖.
+test('오피스 앱이 저장소에 없다 — apps/office 폴더, 그 경로를 쓰는 CI·스크립트·시험이 없다', () => {
+  assert.ok(!existsSync(join(ROOT, 'apps/office')), 'apps/office');
+  const hits = [];
+  const walk = (d) => {
+    if (!existsSync(d)) return;
+    for (const e of readdirSync(d)) {
+      if (e === 'node_modules' || e === '.next' || e === 'target' || e === 'dist') continue;
+      const p = join(d, e);
+      if (statSync(p).isDirectory()) walk(p);
+      else if (p === fileURLToPath(import.meta.url)) continue; // 이 시험 자신(찾는 무늬를 담는다)
+      else if (/\.(m?js|jsx|ts|sh|json|ya?ml)$/.test(e)) readFileSync(p, 'utf8').split('\n').forEach((l, i) => { if (/apps[\\/]office\b|\.\.\/\.\.\/office\//.test(l) && !/떼어 냈다|떼어 냄|분리로 뺐다|분리 —|저장소에서 떼어/.test(l)) hits.push(`${relative(ROOT, p)}:${i + 1}`); });
+    }
+  };
+  for (const d of ['.github', 'src', 'app', 'bin', 'scripts', 'integrations', 'test', 'apps', 'src-tauri/src']) walk(join(ROOT, d));
+  assert.deepEqual(hits, [], '오피스 앱 경로를 쓰는 줄');
 });

@@ -14,7 +14,7 @@ const walk = (dir) => readdirSync(dir).flatMap((n) => {
 });
 const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
 
-// 삭제류 액션 — window.confirm/prompt는 Tauri 웹뷰에서 동작하지 않는다. DangerModal을 쓴다(오피스는 apps/office/test/core.test.mjs가 잠근다).
+// 삭제류 액션 — window.confirm/prompt는 Tauri 웹뷰에서 동작하지 않는다. DangerModal을 쓴다(오피스 앱은 2026-10-16 이 저장소에서 떼어 냈다).
 test('본체·메신저: window.confirm/prompt 금지', () => {
   const code = [...walk(join(ROOT, 'app')), ...walk(join(ROOT, 'apps/messenger/src'))].filter((p) => /\.(jsx?|mjs)$/.test(p));
   assert.ok(code.length > 50, `검사한 파일이 너무 적다: ${code.length}`);

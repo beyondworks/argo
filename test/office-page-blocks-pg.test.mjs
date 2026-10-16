@@ -6,7 +6,7 @@ import { psqlSpawn } from './helpers/pg.mjs';
 
 // 오피스 16차 페이지 블록(토글·콜아웃·2열/3열·표)과 공개 링크: 서버는 블록 종류를 검사하지 않고, 공개 화면 office_public_page는 office_strip이 뺀 본문만 준다.
 // 마이그레이션은 만들지 않았다 — 여기서는 배포될 office_strip(마이그레이션 전체의 마지막 정의)을 그대로 올려, 새 블록 안쪽 어느 깊이의 비공개 블록·파일 블록·기록 카드·
-// 모듈도 빠지고 새 블록 자체와 그 글자는 남는지 본다(앱의 같은 목록 apps/office/src/core/public-doc.js는 apps/office/test/public-doc.test.mjs가 이 정의와 대조한다).
+// 모듈도 빠지고 새 블록 자체와 그 글자는 남는지 본다(앱 쪽 같은 목록은 오피스 앱과 함께 2026-10-16 이 저장소에서 떼어 냈다 — 대조는 새 오피스 저장소 몫).
 const DB = process.env.ARGO_PG_TEST_URL;
 const skip = !DB && 'Run scripts/billing-pg-drill.sh test/office-page-blocks-pg.test.mjs';
 const sql = (q) => { const r = psqlSpawn(DB, ['-A', '-t', '-c', q]); if (r.status !== 0) throw new Error(r.stderr); return r.stdout.trim(); };

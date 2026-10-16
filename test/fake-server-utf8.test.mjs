@@ -41,7 +41,7 @@ test('검사기 자체 — 고치기 전 모양은 잡고, setEncoding을 붙인
 });
 
 test('시험 폴더의 HTTP 본문 수집기는 모두 setEncoding을 거친다', () => {
-  const dirs = ['test', 'apps/messenger/test', 'apps/office/test'].map((d) => join(ROOT, d));
+  const dirs = ['test', 'apps/messenger/test'].map((d) => join(ROOT, d));
   const bad = [];
   for (const dir of dirs) {
     let files = []; try { files = walk(dir); } catch { continue; }

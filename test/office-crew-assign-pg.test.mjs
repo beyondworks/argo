@@ -1,5 +1,5 @@
 // 아르고 오피스 '크루에게 맡기기'(유건 2026-09-29) — 오피스 웹이 로그인 사용자 권한으로 부르는 DB 계약을 실제 마이그레이션으로 잠근다.
-// 클라이언트(apps/office/src/core/transport.js crew.assign)가 부르는 그대로: 사전 확인 RPC 4개 → 내 크루와의 1:1 방(msgr_create_channel)
+// 클라이언트(옛 apps/office/src/core/transport.js crew.assign — 오피스 앱은 2026-10-16 저장소에서 떼어 냄, 마이그레이션은 남는다)가 부르던 그대로: 사전 확인 RPC 4개 → 내 크루와의 1:1 방(msgr_create_channel)
 // → msgr_messages insert(meta.source = office_*). 게이트웨이는 이 meta.source를 보고 풀 오토를 끈다(src/gateway/msgr-handoff.mjs).
 // 준비(역할·스키마·전체 msgr 마이그레이션)는 msgr-trial-pg.test.mjs와 같다. 실행: bash scripts/billing-pg-drill.sh test/office-crew-assign-pg.test.mjs
 import test, { before } from 'node:test';

@@ -78,7 +78,6 @@ export function unitOf(file) {
   if (/^src\/(gateway\.mjs|gateway\/|connectors\.mjs|permission-gate\.mjs|routines\.mjs|runners|runner-denial\.mjs|connections\.mjs|msgr-notify\.mjs)/.test(file)) return 'T2b 게이트웨이·연결';
   if (file.startsWith('src/') || file === 'bin/argo.mjs') return 'T2a 지시문·엔진';
   if (file.startsWith('landing/') || file.endsWith('.md')) return 'T4 랜딩·문서';
-  if (file.startsWith('apps/office/')) return '오피스';
   return '기타';
 }
 
