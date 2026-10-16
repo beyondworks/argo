@@ -2134,8 +2134,9 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
         console.error(`[argo] msgr 턴 실패(${wsId}/${job.slug}/${job.msgId}):`, String(e?.message ?? e).slice(0, 400));
         // 원인을 아는 실패(실행기의 AI 로그인 만료)는 원인과 고칠 곳을, 그 밖은 일반 문구(원문 없음 — D26). 요청자가 이 에이전트의 주인(이 실행기 계정)이면
         // 주인이 고칠 원인(연결된 AI 없음·AI 프로그램 멈춤)도 방에 말한다(D6) — 남의 요청이면 종전 문구, 원인은 아래 주인 1:1 안내(#1026)로
-        // 요청자 = 넘김 스레드의 뿌리 사람(rootAuthor) 또는 글쓴이(authorId — 넘김 턴이면 넘긴 크루의 주인) — #1042 검수 LOW-1. 아래 주인 1:1 안내도 같은 값
-        reply = roomTurnFailureFor(e, lang, { ownerCause: (job.rootAuthor ?? job.authorId) === uid ? ownerNoticeCause(e) : null });
+        // 요청자 = 넘김 턴(fromCrewId)이면 스레드의 뿌리 사람(rootAuthor — authorId는 넘긴 크루의 주인), 그 밖은 글쓴이(authorId) — #1042 검수 LOW-1.
+        // envelope 경로는 보통 답글에도 rootAuthor를 채우므로 넘김 턴일 때만 쓴다(#1049 검수 1). 위 memberName(사람 이름)과 같은 규칙, 아래 주인 1:1 안내도 같은 값
+        reply = roomTurnFailureFor(e, lang, { ownerCause: (job.fromCrewId ? (job.rootAuthor ?? job.authorId) : job.authorId) === uid ? ownerNoticeCause(e) : null });
       }
     } finally {
       stopHeartbeat(); // 입력 중 방송(stopTyping)은 게시가 끝난 뒤에 멈춘다 — 링크 미리보기·게시 동안 표시가 끊기지 않게(2026-10-05 '표시가 사라지고 30초 뒤 답')
@@ -2169,7 +2170,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     // 이 기기가 실패 글을 실제로 올렸을 때만(row — 다른 기기가 먼저 답했으면 그쪽 몫). 방 답과 따로 — 실패해도 방 답·다음 잡에 영향 없음
     if (row && failed) {
       const cause = ownerNoticeCause(failErr);
-      if (ownerNoticeWanted({ cause, authorId: job.rootAuthor ?? job.authorId, ownerId: uid, ownerSolo: ctx.ownerSolo })) { // 요청자 판정은 방 문구와 같은 값(LOW-1)
+      if (ownerNoticeWanted({ cause, authorId: job.fromCrewId ? (job.rootAuthor ?? job.authorId) : job.authorId, ownerId: uid, ownerSolo: ctx.ownerSolo })) { // 요청자 판정은 방 문구와 같은 값(LOW-1·#1049 검수 1)
         sendOwnerNotice({ c: { uid, client: c.client, db }, wsId, slug: job.slug, cause, lang })
           .catch((e) => console.warn(`[argo] msgr 주인 안내 실패(${wsId}/${job.slug}):`, String(e?.code ?? e?.message ?? e).slice(0, 200)));
       }

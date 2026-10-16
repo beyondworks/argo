@@ -1058,3 +1058,24 @@ test('LIM-5. 게이트웨이 — 주인 요청이면 방에 한도 원인, 남�
   assert.match(body(relayMine), /Claude 사용 한도에 걸려/, '넘김 턴 — 뿌리 사람이 주인이면 원인');
   assert.match(body(relayTheirs), /^에이전트가 지금 답하지 못했습니다\./, '넘김 턴 — 뿌리 사람이 남이면 일반 문구(LOW-1: authorId만 보면 원인이 남에게 보였다)');
 });
+
+// #1049 검수 1(2026-10-16): envelope 경로는 넘김이 아닌 보통 답글에도 rootAuthor(스레드 뿌리 글 작성자)를 채운다 — 요청자를 (rootAuthor ?? authorId)로 보면
+// 남이 주인 스레드에 단 답글이 '주인 요청'이 됐다. 요청자 = 넘김 턴(fromCrewId)일 때만 뿌리 사람, 그 밖은 글쓴이(1976행 memberName 규칙과 같다).
+test('LIM-6. 보통 답글(넘김 아님)은 글쓴이가 요청자 — A: 남이 주인 스레드에 답글 → 일반 문구 + 주인 1:1 안내 / B: 주인이 남의 스레드에 답글 → 원인 문구, 1:1 안내 없음', async () => {
+  const ws = await seed('lim-reply', { cred: true });
+  const srv = server();
+  const h = M.makeMsgrHandler(ws, { session: async () => ({ db: srv.forProc('A'), uid: OWNER }), linkPreview: noPreview, runChat: async () => { throw limitErr(); } });
+  const warns = []; const warn = console.warn; console.warn = (...a) => { warns.push(a.join(' ')); };
+  const a = { ...jobAt(Date.now()), authorId: MEMBER, rootAuthor: OWNER }; // 넘김 아님(fromCrewId 없음)
+  const b = { ...jobAt(Date.now()), authorId: OWNER, rootAuthor: MEMBER };
+  try {
+    await h(a); await new Promise((r) => setImmediate(r));
+    const noticeA = warns.some((w) => w.includes('주인 안내 실패')); warns.length = 0;
+    await h(b); await new Promise((r) => setImmediate(r));
+    const noticeB = warns.some((w) => w.includes('주인 안내 실패'));
+    assert.match(replyOf(srv, a)[0]?.body ?? '', /^에이전트가 지금 답하지 못했습니다\. 주인이 Argo 활동에서 원인을 확인할 수 있습니다\.$/, 'A: 남(X)의 답글 — 주인용 설정 문구를 X에게 보이지 않는다');
+    assert.equal(noticeA, true, 'A: 주인(Y) 1:1 안내를 시도한다(이 가짜 DB엔 개인 방이 없어 실패 경고로 확인)');
+    assert.match(replyOf(srv, b)[0]?.body ?? '', /Claude 사용 한도에 걸려 답하지 못했습니다/, 'B: 주인의 답글 — 원인 문구');
+    assert.equal(noticeB, false, 'B: 주인 자신의 요청 — 1:1 안내를 보내지 않는다');
+  } finally { console.warn = warn; }
+});
