@@ -13,11 +13,11 @@ const psqlRaw = (args) => psqlSpawn(DB, ['-v', 'VERBOSITY=verbose', ...args]);
 function psql(args) { const r = psqlRaw(args); if (r.status !== 0) throw new Error(`psql 실패: ${r.stderr || r.stdout}`); return r.stdout; }
 const sql = (q) => psql(['-A', '-t', '-c', q]).trim();
 const OURS = ['20261016170000_msgr_service_pause.sql', '20261016171000_msgr_pause_push.sql'];
-// public 함수 전체 — 서명·본문 해시·권한·definer·설정·휘발성. 트리거 전체(내부 제외)
+// public 함수 전체 — 서명·본문 해시·권한·definer·설정·휘발성·종류. 트리거 전체(내부 제외). "char"·bool·name 열은 모두 ::text로 — PG17은 text || "char"가 모호하다(42725, CI #1055)
 const snapshot = () => ({
-  procs: sql(`select p.oid::regprocedure::text || '|' || md5(p.prosrc) || '|' || coalesce(p.proacl::text, '-') || '|' || p.prosecdef || '|' || coalesce(p.proconfig::text, '-') || '|' || p.provolatile
+  procs: sql(`select p.oid::regprocedure::text || '|' || md5(p.prosrc) || '|' || coalesce(p.proacl::text, '-') || '|' || p.prosecdef::text || '|' || coalesce(p.proconfig::text, '-') || '|' || p.provolatile::text || '|' || p.prokind::text
                from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' order by 1`).split('\n'),
-  triggers: sql(`select tgrelid::regclass::text || ':' || tgname || ':' || tgfoid::regprocedure::text || ':' || tgenabled from pg_trigger where not tgisinternal order by 1`).split('\n'),
+  triggers: sql(`select tgrelid::regclass::text || ':' || tgname::text || ':' || tgfoid::regprocedure::text || ':' || tgenabled::text from pg_trigger where not tgisinternal order by 1`).split('\n'),
 });
 let BASE, APPLIED;
 before(() => {
