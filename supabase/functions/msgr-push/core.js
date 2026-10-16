@@ -98,3 +98,17 @@ export function shouldDropToken(platform, status, bodyText = '') {
   if (platform === 'ios') return status === 410 || /BadDeviceToken|Unregistered|DeviceTokenNotForTopic/.test(bodyText);
   return status === 404 || /UNREGISTERED|Requested entity was not found|INVALID_ARGUMENT/.test(bodyText);
 }
+
+/** 서비스 공지 알림 문구(메신저 일시 중단 공지, 2026-10-16) — 사용자 언어를 저장하지 않으므로 한국어 줄 다음에 영어 줄. 각 줄 200자. */
+export function broadcastPushText({ ko, en }) {
+  const line = (v) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, 200);
+  return { title: 'Argo Messenger', body: [line(ko), line(en)].filter(Boolean).join('\n') };
+}
+
+/** 공지 발송 한 건의 재시도 판정 — 일시 오류(429·5xx·네트워크)만, 시도 상한 안에서. 무효 토큰(410·404·400)은 다시 보내지 않는다(shouldDropToken이 지운다). */
+export const BROADCAST_MAX_ATTEMPTS = 3;
+export function broadcastRetryable(result, attempt) {
+  if (attempt >= BROADCAST_MAX_ATTEMPTS) return false;
+  return /^(?:apns|fcm) (?:429|5\d\d)\b/.test(String(result)) || /^err /.test(String(result));
+}
+

@@ -220,3 +220,37 @@ test('끔(행 삭제) — 원래대로: 쓰기·방 만들기·참여·초대·�
   assert.notEqual(beatXmin(), x0, '심박이 다시 쓴다');
   assert.equal(asAnon(`select coalesce(public.msgr_service_pause()::text, '(null)')`).split('\n').pop(), '(null)');
 });
+
+test('공지 푸시(20261016171000) — service_role만, 중단 중일 때만, 회차마다 엣지 호출 1번(다시 불러도 0번), push_url 없으면 행을 쓰지 않는다', { skip }, () => {
+  sql(`create table if not exists public._net_calls (url text, body jsonb);
+    create or replace function net.http_post(url text, headers jsonb default '{}', body jsonb default '{}', timeout_milliseconds int default 5000) returns bigint
+      language sql as $f$ insert into public._net_calls (url, body) values (url, body) returning 1::bigint $f$;`);
+  const calls = () => Number(sql(`select count(*) from public._net_calls where body ? 'broadcast_id'`));
+  const off = superRaw(`select public.msgr_pause_push('ko', 'en')`);
+  assert.notEqual(off.status, 0); assert.match(off.stderr, /msgr_not_paused/);
+  sql(`delete from public.msgr_settings where key = 'push_url'`);
+  pause('2026-10-16T18:00:00+09:00');
+  try {
+    const noUrl = superRaw(`select public.msgr_pause_push('ko', 'en')`);
+    assert.notEqual(noUrl.status, 0); assert.match(noUrl.stderr, /msgr_push_url_missing/);
+    assert.equal(sql(`select count(*) from public.msgr_push_broadcasts`), '0', 'push_url이 없으면 회차를 쓰지 않는다');
+    const bad = superRaw(`select public.msgr_pause_push('', 'en')`); assert.notEqual(bad.status, 0); assert.match(bad.stderr, /msgr_pause_text_invalid/);
+    sql(`insert into public.msgr_settings (key, value) values ('push_url', 'https://edge.test/msgr-push') on conflict (key) do update set value = excluded.value`);
+    const u = asUserRaw(U.a, `select public.msgr_pause_push('ko', 'en')`);
+    assert.notEqual(u.status, 0, '사용자는 부를 수 없다'); assert.match(u.stderr, /permission denied for function msgr_pause_push/);
+    const r = asUserRaw(U.a, `select count(*) from public.msgr_push_broadcasts`);
+    assert.ok(r.status !== 0 ? /permission denied for table msgr_push_broadcasts/.test(r.stderr) : last(r.stdout) === '0', '사용자는 공지 행을 못 읽는다');
+    const before = calls();
+    assert.deepEqual(JSON.parse(last(sql(`select public.msgr_pause_push('메신저를 잠시 멈춥니다.', 'Messenger is paused.')::text`))), { queued: true, id: 'pause:2026-10-16T18:00:00+09:00' });
+    assert.equal(calls() - before, 1, '엣지 호출 1번');
+    assert.equal(last(sql(`select body->>'broadcast_id' from public._net_calls where body ? 'broadcast_id' order by ctid desc limit 1`)), 'pause:2026-10-16T18:00:00+09:00', '요청에는 id만 — 문구는 행에서 읽는다');
+    assert.equal(last(sql(`select ko || '|' || en from public.msgr_push_broadcasts where id = 'pause:2026-10-16T18:00:00+09:00'`)), '메신저를 잠시 멈춥니다.|Messenger is paused.');
+    assert.deepEqual(JSON.parse(last(sql(`select public.msgr_pause_push('다른 문구', 'other')::text`))), { queued: false, id: 'pause:2026-10-16T18:00:00+09:00', reason: 'already' });
+    assert.equal(calls() - before, 1, '다시 불러도 엣지 호출이 늘지 않는다');
+    assert.equal(last(sql(`select ko from public.msgr_push_broadcasts where id = 'pause:2026-10-16T18:00:00+09:00'`)), '메신저를 잠시 멈춥니다.', '첫 문구가 그대로');
+    pause('2026-10-17T09:00:00+09:00'); // 새 회차
+    assert.equal(JSON.parse(last(sql(`select public.msgr_pause_push('다시', 'again')::text`))).queued, true);
+    assert.equal(calls() - before, 2);
+    assert.equal(sql(`select count(*) from pg_trigger where tgfoid = 'public.msgr_pause_push(text,text)'::regprocedure`), '0', '트리거로 열지 않는다');
+  } finally { unpause(); }
+});

@@ -3,7 +3,7 @@
 // 재생·위조 호출이 추가 알림을 만들지 못한다(verify_jwt=false, 배포: config.toml [functions.msgr-push]).
 // 비밀은 전부 엣지 시크릿: APNS_KEY_P8(.p8 PEM 본문)·APNS_KEY_ID·APNS_TEAM_ID·APNS_TOPIC(번들 id)·APNS_SANDBOX('1'이면 개발 서버)
 //   ·FCM_SERVICE_ACCOUNT(서비스 계정 JSON 문자열). 없는 플랫폼은 건너뛴다.
-import { apnsJwt, apnsPayload, billingAlertable, billingPushText, fcmMessage, googleAssertion, personName, pushText, reportPushText, shouldDropToken } from './core.js';
+import { apnsJwt, apnsPayload, billingAlertable, billingPushText, BROADCAST_MAX_ATTEMPTS, broadcastPushText, broadcastRetryable, fcmMessage, googleAssertion, personName, pushText, reportPushText, shouldDropToken } from './core.js';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -132,6 +132,54 @@ async function billingPush(bid: number) {
   return Response.json({ ok: sent === results.length, sent });
 }
 
+// 서비스 공지 → 토큰 있는 모든 사용자의 기기마다 한 번(메신저 일시 중단 공지, 20261016170000 msgr_pause_push가 부른다 — 트리거로는 열지 않는다).
+// 문구는 요청이 아니라 공지 행(msgr_push_broadcasts — 정책 없음, service_role만 넣는다)에서 읽고, claimed_at null→now 선점으로 공지당 한 번만 —
+// 재생·위조 호출은 이미 잡힌 행이거나 없는 행이라 알림을 더 만들지 못한다. 한도: 기기 PUSH_BROADCAST_MAX(기본 5000)개, 동시 10개,
+// 일시 오류(429·5xx·네트워크)는 BROADCAST_MAX_ATTEMPTS번까지(Retry-After는 5초까지만 기다린다), 90초가 지나면 새 발송을 시작하지 않는다(엣지 실행 시간 안).
+// 무효 토큰 정리는 sendOne의 shouldDropToken 그대로. 배지는 건드리지 않는다. channel_id 'notice'는 앱이 모르는 값이라 탭하면 앱만 열린다.
+const BROADCAST_CONCURRENCY = 10;
+const BROADCAST_DEADLINE_MS = 90_000;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+async function broadcastPush(bid: string) {
+  const claimed = await rest(`msgr_push_broadcasts?id=eq.${encodeURIComponent(bid)}&claimed_at=is.null&select=id,ko,en`,
+    { method: 'PATCH', headers: { Prefer: 'return=representation' }, body: JSON.stringify({ claimed_at: new Date(Date.now()).toISOString() }) });
+  const b = claimed?.[0]; if (!b) return Response.json({ ok: true, dup: true });
+  const max = Math.max(1, Number(Deno.env.get('PUSH_BROADCAST_MAX')) || 5000);
+  const toks: { token: string; platform: string; user_id: string; sound?: string }[] = [];
+  for (let from = 0; toks.length <= max; from += 1000) { // 서버 최대 행(기본 1000)마다 — 상한 + 1개까지 읽어 넘쳤는지 안다
+    const page = await rest(`msgr_push_tokens?select=token,platform,user_id,sound&order=token&offset=${from}&limit=1000`);
+    toks.push(...(page ?? []));
+    if (!page || page.length < 1000) break;
+  }
+  const truncated = toks.length > max;
+  const list = toks.slice(0, max);
+  const text = broadcastPushText(b);
+  const started = Date.now();
+  const results: string[] = new Array(list.length).fill('deferred');
+  let next = 0;
+  const worker = async () => {
+    while (next < list.length && Date.now() - started < BROADCAST_DEADLINE_MS) {
+      const i = next++;
+      let attempt = 0; let r = '';
+      do {
+        attempt++;
+        r = await sendOne({ ...list[i], badge: null }, text, 'notice', 0, `notice-${bid}`).catch((e) => `err ${String(e?.message ?? e).slice(0, 120)}`);
+        if (r === 'ok' || !broadcastRetryable(r, attempt)) break;
+        await sleep(Math.min(5_000, 1_000 * 3 ** (attempt - 1)));
+      } while (attempt < BROADCAST_MAX_ATTEMPTS);
+      results[i] = r;
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(BROADCAST_CONCURRENCY, list.length) }, worker));
+  const sent = results.filter((x) => x === 'ok').length;
+  const users = new Set(list.map((t) => t.user_id)).size;
+  const summary = { users, tokens: list.length, sent, failed: results.filter((x) => x !== 'ok' && x !== 'skip' && x !== 'deferred').length, deferred: results.filter((x) => x === 'deferred').length, truncated };
+  await rest(`msgr_push_broadcasts?id=eq.${encodeURIComponent(bid)}`, { method: 'PATCH', headers: { Prefer: 'return=minimal' },
+    body: JSON.stringify({ finished_at: new Date(Date.now()).toISOString(), result: summary }) }).catch(() => null);
+  console.log(`[msgr-push] broadcast ${bid.slice(0, 60)} → ${list.length} tokens / ${users} users, sent ${sent}`, results.filter((x) => x !== 'ok').slice(0, 20));
+  return Response.json({ ok: sent === list.length, ...summary });
+}
+
 // 보안 감사 HIGH-1(2026-09-14): 이 함수는 verify_jwt=false 공개 엔드포인트였다 → 트리거(pg_net)가 msgr_settings.push_secret 을
 // Authorization: Bearer 로 싣고, 여기서 PUSH_FN_SECRET 과 상수시간 비교한다. 시크릿이 아직 없으면(점진 도입) 예전처럼 통과.
 const enc = new TextEncoder();
@@ -143,10 +191,13 @@ Deno.serve(async (req: Request) => {
   if (req.method !== 'POST') return new Response('method', { status: 405 });
   const secret = Deno.env.get('PUSH_FN_SECRET');
   if (secret && !(await sameSecret(req.headers.get('authorization') ?? '', `Bearer ${secret}`))) return new Response('unauthorized', { status: 401 });
-  let id: number; let body: { message_id?: unknown; badge_user?: unknown; report_id?: unknown; billing_unmatched_id?: unknown };
+  let id: number; let body: { message_id?: unknown; badge_user?: unknown; report_id?: unknown; billing_unmatched_id?: unknown; broadcast_id?: unknown };
   try { body = await req.json(); } catch { return new Response('bad json', { status: 400 }); }
   if (typeof body?.badge_user === 'string' && /^[0-9a-f-]{36}$/i.test(body.badge_user)) return badgeOnly(body.badge_user);
   if (typeof body?.report_id === 'string' && /^[0-9a-f-]{36}$/i.test(body.report_id)) return reportPush(body.report_id);
+  if (body?.broadcast_id !== undefined) {
+    return typeof body.broadcast_id === 'string' && /^[A-Za-z0-9:._+-]{1,120}$/.test(body.broadcast_id) ? broadcastPush(body.broadcast_id) : new Response('bad broadcast_id', { status: 400 });
+  }
   if (body?.billing_unmatched_id !== undefined) {
     const bid = Number(body.billing_unmatched_id);
     return Number.isInteger(bid) && bid > 0 ? billingPush(bid) : new Response('bad billing_unmatched_id', { status: 400 });
