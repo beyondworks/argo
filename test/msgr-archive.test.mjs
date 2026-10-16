@@ -458,3 +458,16 @@ test('낮음-5 반쯤 쓴 줄 — 이어 받을 때 줄바꿈으로 시작해 �
   assert.deepEqual(ok, [1, 2, 3], '반쪽 줄 뒤의 메시지 2·3이 온전한 줄로 들어간다');
   assert.match(await readFile(join(roomDir, 'messages.md'), 'utf8'), /m2[\s\S]*m3/);
 });
+
+test('재검수 낮음 — 받는 도중 로그인 계정이 바뀌면 새 토큰을 쓰지 않는다(다른 계정 토큰으로 묻지 않음)', async () => {
+  const uid = '77777777-7777-4777-8777-777777777777';
+  await company('swap-co', { ownerId: uid });
+  let getClient; let release;
+  const run = (args) => { getClient = args.getClient; return new Promise((r) => { release = r; }); };
+  let current = { uid, client: 'A-new' };
+  const r = await R.startArchive({ c: { uid, client: 'A-old' }, companies: async () => [{ id: 'swap-co', ownerId: uid }], run, session: async () => current });
+  assert.equal(await getClient(), 'A-new', '같은 계정이면 새 토큰');
+  current = { uid: BOB, client: 'B' };
+  assert.equal(await getClient(), null, '다른 계정이면 쓰지 않는다 → 인증 실패로 failed');
+  release(null); await r.promise;
+});

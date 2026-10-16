@@ -51,7 +51,9 @@ export async function startArchive({ c, ws = null, companies = defaultCompanies,
     }
     await remember(c.uid, target);
     RUN.ws = target.ws;
-    const p = run({ client: c.client, getClient: async () => (await session().catch(() => null))?.client ?? null, uid: c.uid, dir: target.dir });
+    // getClient — 같은 계정의 새 토큰만. 받는 도중 로그인이 다른 계정으로 바뀌면 null(인증 실패 → failed로 남는다). B의 토큰으로 A의 방을 물으면 빈 목록이 와 done으로 굳는다(재검수 낮음)
+    const getClient = async () => { const s = await session().catch(() => null); return s?.uid === c.uid ? s.client : null; };
+    const p = run({ client: c.client, getClient, uid: c.uid, dir: target.dir });
     started({ started: true, ws: target.ws });
     return await p;
   })()
