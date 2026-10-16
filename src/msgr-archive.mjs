@@ -183,7 +183,15 @@ export async function runArchive({ client, getClient = null, uid, dir, onProgres
   await mkdir(dir, { recursive: true });
   const prev = await readArchiveState(dir);
   if (prev?.status === 'done' && prev.uid === uid) return prev;
+  if (prev?.status === 'partial' && prev.uid === uid && (prev.gaveUp || (prev.partialRetries ?? 0) >= PARTIAL_RETRY_MAX)) return prev; // 상한을 넘은 일부 실패 — 더 묻지 않는다(요청 0)
   const ctx = { stats: { requests: 0, bytes: 0 }, sleep, c: client ?? (getClient ? await getClient() : null), refresh: getClient };
+  if (prev?.status === 'partial' && prev.uid === uid) {
+    let st;
+    try { st = await retryPartial({ ctx, prev, dir, now }); }
+    catch (e) { st = { ...prev, status: 'partial', stats: ctx.stats, partialRetries: (prev.partialRetries ?? 0) + 1, error: e?.code ?? 'msgr_archive_failed' }; st.gaveUp = st.partialRetries >= PARTIAL_RETRY_MAX; } // 인증·서버 오류도 시도 1번으로 센다
+    await writeJsonAtomic(join(dir, STATE), st); onProgress(st);
+    return st;
+  }
   const st = {
     v: 1, uid, startedAt: prev?.startedAt ?? now().toISOString(), finishedAt: null, status: 'running', error: null,
     rooms: prev?.rooms ?? {}, docs: prev?.docs ?? {}, failed: [], totals: { rooms: 0, roomsDone: 0, messages: prev?.totals?.messages ?? 0, attachments: prev?.totals?.attachments ?? 0 },
@@ -326,14 +334,53 @@ async function archiveRoom(ctx, dir, ch, orgName, st, save, now) {
     for (const x of r.data ?? []) st.crews[x.id] = x.display_name;
     for (const id of part) st.crews[id] ??= null;
   }
-  const userName = (id) => st.people[id] || (id ? `user-${String(id).slice(0, 8)}` : '(탈퇴한 사용자 · deleted user)');
-  const crewName = (id) => st.crews[id] || `agent-${String(id ?? '').slice(0, 8)}`;
+  const { userName, crewName } = namers(st);
   const members = (mem.rows ?? []).map((m) => ({ kind: m.member_kind, id: m.member_id, name: m.member_kind === 'user' ? userName(m.member_id) : crewName(m.member_id) }));
   const room = { id: ch.id, title, kind: roomKind(ch), orgId: ch.org_id, orgName: ch.org_id ? orgName.get(ch.org_id) ?? null : null, topic: ch.topic ?? null, created_at: ch.created_at, archived_at: ch.archived_at, members, archivedAt: now().toISOString() };
   await writeJsonAtomic(join(roomDir, 'room.json'), room);
+  await writeRoomMarkdown(roomDir, room, rows, st);
+  rs.done = true;
+}
+
+function namers(st) {
+  const userName = (id) => st.people?.[id] || (id ? `user-${String(id).slice(0, 8)}` : '(탈퇴한 사용자 · deleted user)');
+  const crewName = (id) => st.crews?.[id] || `agent-${String(id ?? '').slice(0, 8)}`;
+  return { userName, crewName };
+}
+async function writeRoomMarkdown(roomDir, room, rows, st) {
+  const { userName, crewName } = namers(st);
   const author = (m) => (m.author_kind === 'user' ? userName(m.author_user_id) : m.author_kind === 'crew' ? crewName(m.crew_id) : '시스템 · System');
   await writeFile(join(roomDir, 'messages.md'), renderRoomMarkdown(room, rows.map((m) => ({ ...m, author: author(m) }))));
-  rs.done = true;
+}
+
+/** 일부 실패(partial) 이어 받기 — 앱을 다시 켤 때 못 받은 첨부만 다시 받는다(설정의 '다시 받기' 단추가 없어진 뒤, 2026-10-16 워커 2 지적).
+    방·메시지·문서는 다시 묻지 않는다(목록 조회 0). 시도는 PARTIAL_RETRY_MAX번까지 — 넘으면 gaveUp으로 남기고 더 묻지 않는다(요청 0).
+    받은 첨부는 그 방 messages.jsonl의 첨부 자리(file)를 채우고 messages.md를 다시 써서 '받지 못함' 표시를 지운다. */
+export const PARTIAL_RETRY_MAX = 3;
+async function retryPartial({ ctx, prev, dir, now, save }) {
+  const st = { ...prev, status: 'running', failed: [], stats: ctx.stats, partialRetries: (prev.partialRetries ?? 0) + 1 };
+  const got = [];
+  for (const f of prev.failed ?? []) {
+    if (await sameSizeExists(join(dir, f.file), f.bytes)) { got.push(f); continue; }
+    const ok = await download(ctx, f.storage_path, join(dir, f.file));
+    if (ok) { got.push(f); st.totals = { ...st.totals, attachments: (st.totals?.attachments ?? 0) + 1 }; } else st.failed.push(f);
+  }
+  // 받은 첨부가 있는 방만 jsonl·md를 고친다
+  const byRoom = new Map();
+  for (const f of got) { const roomRel = f.file.split('/attachments/')[0]; (byRoom.get(roomRel) ?? byRoom.set(roomRel, []).get(roomRel)).push(f); }
+  for (const [roomRel, fs] of byRoom) {
+    const roomDir = join(dir, roomRel);
+    const rows = await readJsonl(join(roomDir, 'messages.jsonl'));
+    const byPath = new Map(fs.map((f) => [f.storage_path, f.file.slice(roomRel.length + 1)]));
+    for (const m of rows) for (const a of m.attachments ?? []) if (!a.file && byPath.has(a.storage_path)) a.file = byPath.get(a.storage_path);
+    await writeFile(join(roomDir, 'messages.jsonl'), rows.length ? `${rows.map((r) => JSON.stringify(r)).join('\n')}\n` : '');
+    const room = await readJsonSafe(join(roomDir, 'room.json'));
+    if (room) await writeRoomMarkdown(roomDir, room, rows, st);
+  }
+  st.status = st.failed.length ? 'partial' : 'done';
+  st.gaveUp = st.failed.length > 0 && st.partialRetries >= PARTIAL_RETRY_MAX;
+  st.finishedAt = now().toISOString();
+  return st;
 }
 
 async function writeReadme(dir, st, chs) {

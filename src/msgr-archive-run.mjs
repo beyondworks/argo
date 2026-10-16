@@ -5,7 +5,7 @@
 import { join } from 'node:path';
 import { WS_ROOT, paths } from './workspace.mjs';
 import { readJson, writeJsonAtomic } from './jsonstore.mjs';
-import { runArchive, readArchiveState, archiveDirFor, pickCompany, pauseState, ARCHIVE_DIR } from './msgr-archive.mjs';
+import { runArchive, readArchiveState, archiveDirFor, pickCompany, pauseState, ARCHIVE_DIR, PARTIAL_RETRY_MAX } from './msgr-archive.mjs';
 
 const REGISTRY = () => join(WS_ROOT, '.msgr-archive.json');
 const RUN = (globalThis.__argoMsgrArchiveRun ??= { promise: null, ws: null, uid: null }); // Next 번들 사본이 갈려도 하나(globalThis)
@@ -57,13 +57,20 @@ export async function startArchive({ c, ws = null, companies = defaultCompanies,
   return info.started ? { ...info, promise: RUN.promise } : info;
 }
 
-/** 자동 실행 조건(앱 시작 때 한 번): 로그인함 + 중단 스위치 켜짐 + 이 계정 기록이 없거나 중간에 끊김(running·failed). 끝남·일부 실패(partial)는 다시 돌지 않는다(재시도는 설정 단추). */
+/** 자동 실행 조건(앱 시작 때 한 번): 로그인함 + 중단 스위치 켜짐 + 이 계정 기록이 없거나 중간에 끊김(running·failed). 끝남은 다시 돌지 않는다.
+    일부 실패(partial)는 스위치와 상관없이 못 받은 첨부만 다시 받는다(읽기는 늘 열려 있다, 설정 단추가 없어졌으므로) — PARTIAL_RETRY_MAX번 뒤에는 더 시도하지 않는다(요청 0). */
 export async function maybeAutoArchive({ session = defaultSession, companies = defaultCompanies, run = runArchive } = {}) {
   const c = await session().catch(() => null);
   if (!c) return { ran: false, reason: 'noSession' };
   const target = await archiveTarget(c.uid, { companies });
   const st = target ? await readArchiveState(target.dir) : null;
-  if (st?.uid === c.uid && (st.status === 'done' || st.status === 'partial')) return { ran: false, reason: 'already' }; // 끝난 계정은 스위치도 읽지 않는다(요청 0)
+  if (st?.uid === c.uid && st.status === 'done') return { ran: false, reason: 'already' }; // 끝난 계정은 스위치도 읽지 않는다(요청 0)
+  if (st?.uid === c.uid && st.status === 'partial') {
+    if (st.gaveUp || (st.partialRetries ?? 0) >= PARTIAL_RETRY_MAX) return { ran: false, reason: 'gaveUp' }; // 상한을 넘었다(요청 0)
+    const r = await startArchive({ c, companies, run, session }); // 스위치 RPC 없이 — 못 받은 첨부만(runArchive가 partial이면 retryPartial로 간다)
+    if (r.promise) await r.promise;
+    return { ran: !!r.started, ws: r.ws, retry: true };
+  }
   const pause = await pauseState(c.client);
   if (!pause.paused) return { ran: false, reason: pause.error ? 'pauseUnknown' : 'notPaused' };
   if (!target) return { ran: false, reason: 'noCompany' };
@@ -80,7 +87,7 @@ export async function archiveStatus(uid, ws, { companies = defaultCompanies } = 
   return {
     ws: target?.ws ?? null, dir: target && st ? target.dir : null, // 계정 폴더라 어느 회사 화면에서든 같은 기록을 보인다
     status: running ? 'running' : st?.uid === uid ? (st.status === 'running' ? 'interrupted' : st.status) : 'none',
-    totals: st?.totals ?? null, failed: st?.failed?.length ?? 0, finishedAt: st?.finishedAt ?? null, error: st?.error ?? null,
+    totals: st?.totals ?? null, failed: st?.failed?.length ?? 0, finishedAt: st?.finishedAt ?? null, error: st?.error ?? null, gaveUp: !!st?.gaveUp, // gaveUp — 못 받은 첨부를 상한까지 시도했다(안내가 '다음에 다시 받습니다'를 말하지 않는다)
   };
 }
 

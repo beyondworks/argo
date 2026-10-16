@@ -963,7 +963,8 @@ const DICT = {
   'settings.msgrArchive.open': ['폴더 열기', 'Open folder'],
   'settings.msgrArchive.err': ['옮기기를 시작하지 못했습니다. 잠시 뒤 다시 눌러 주세요.', 'Could not start moving. Please try again shortly.'],
   'msgrArchive.notice': ['메신저 기록을 Argo로 옮겼습니다({dir}).', 'Your Messenger history was moved into Argo ({dir}).'],
-  'msgrArchive.noticePartial': ['메신저 기록을 Argo로 옮겼습니다({dir}). 첨부 {n}개는 받지 못해 설정에서 다시 받을 수 있습니다.', 'Your Messenger history was moved into Argo ({dir}). {n} attachment(s) could not be downloaded; you can retry in Settings.'],
+  'msgrArchive.noticePartial': ['메신저 기록을 Argo로 옮겼습니다({dir}). 첨부 {n}개는 받지 못해 다음에 Argo를 켤 때 다시 받습니다.', 'Your Messenger history was moved into Argo ({dir}). {n} attachment(s) could not be downloaded; Argo will try again the next time it starts.'],
+  'msgrArchive.noticePartialFinal': ['메신저 기록을 Argo로 옮겼습니다({dir}). 첨부 {n}개는 받지 못했습니다.', 'Your Messenger history was moved into Argo ({dir}). {n} attachment(s) could not be downloaded.'], // 다시 받기 상한(PARTIAL_RETRY_MAX)을 넘은 뒤
   'msgrArchive.noticeSettings': ['설정에서 보기', 'View in Settings'],
   'settings.msgr.personalOnly': ['개인 공간에서 에이전트 {n}명을 쓰고 있습니다. 팀과 함께 쓰려면 메신저에서 조직을 만들거나 초대 링크로 들어오세요.', 'You are using {n} agents in your personal space. To work with a team, create an organization or join via invite link in the messenger.'],
   'settings.msgr.connection.personal': ['개인 공간 연결됨', 'Personal space connected'],
