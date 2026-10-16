@@ -265,8 +265,9 @@ test('자동 실행 — 스위치 켜짐 + 기록 없음이면 한 번 받고, �
   A._resetPauseCache(); fake.db.pause = { paused: true };
   const r = await R.maybeAutoArchive({ session: async () => c, companies, run: (args) => A.runArchive({ ...args, sleep: noSleep }) });
   assert.equal(r.ran, true); assert.equal(r.ws, 'auto-a');
-  const dir = join(paths('auto-a').root, '.msgr-archive');
-  assert.equal((await A.readArchiveState(dir)).status, 'done');
+  const dir = join(process.env.ARGO_ROOT, '.msgr-archive', ME.slice(0, 8));
+  assert.equal((await A.readArchiveState(dir)).status, 'done', '계정 폴더 <WS_ROOT>/.msgr-archive/<uid8>');
+  assert.equal(existsSync(join(paths('auto-a').root, '.msgr-archive')), false, '회사 폴더 안에는 만들지 않는다');
   const after = fake.count();
   A._resetPauseCache();
   assert.equal((await R.maybeAutoArchive({ session: async () => c, companies })).reason, 'already');
@@ -298,47 +299,67 @@ test('여러 회사 — 이 계정이 주인인 회사에만, 메신저가 켜�
   // 등록부: auto-a에 받은 계정은 다른 회사에서 시작해도 같은 곳(auto-a)을 가리킨다
   const target = await R.archiveTarget(ME, { ws: "somewhere-else" });
   assert.equal(target.ws, "auto-a");
+  assert.equal(target.dir, join(process.env.ARGO_ROOT, '.msgr-archive', ME.slice(0, 8)));
   const st = await R.archiveStatus(ME, 'somewhere-else', { companies: async () => [] });
-  assert.equal(st.here, false); assert.equal(st.ws, 'auto-a'); assert.equal(st.status, 'done');
+  assert.equal(st.ws, 'auto-a'); assert.equal(st.status, 'done', '어느 회사 화면에서든 같은 계정 기록');
 });
 
-test('같은 회사를 다른 계정이 쓰면 폴더를 나눈다(.msgr-archive-<uid8>) — 두 계정 기록을 섞지 않는다', async (t) => {
-  const root = paths('auto-a').root;
-  assert.equal(await A.archiveDirFor(root, ME), join(root, '.msgr-archive'));
-  assert.equal(await A.archiveDirFor(root, BOB), join(root, `.msgr-archive-${BOB.slice(0, 8)}`));
+test('계정 폴더 — 계정마다 <WS_ROOT>/.msgr-archive/<uid8>, 앞 8자가 겹치는 다른 계정은 uid 전체로(두 계정 기록을 섞지 않는다)', async () => {
+  const R0 = process.env.ARGO_ROOT;
+  assert.equal(await A.archiveDirFor(R0, ME), join(R0, '.msgr-archive', ME.slice(0, 8)));
+  const twin = `${ME.slice(0, 8)}-9999-4999-8999-999999999999`;
+  assert.equal(await A.archiveDirFor(R0, twin), join(R0, '.msgr-archive', twin), 'ME가 이미 쓰는 앞 8자');
+  assert.equal(await A.archiveDirFor(R0, BOB), join(R0, '.msgr-archive', BOB.slice(0, 8)));
 });
 
-test('여러 기기·동기화 — 보관 폴더는 올리지 않고 diff에서도 보이지 않는다(기기마다 서버에서 한 번 받는다)', (t) => {
+test('여러 기기·동기화·내보내기 — 보관 폴더는 회사 폴더 밖이라 회사 동기화 walk·회사 내보내기·회사 목록에 들지 않는다. 회사 안 옛 사본(개발 중)도 올리지 않는다', async (t) => {
   // 전체 암호화 스위치를 끈다 — 켜져 있고 키가 없으면 EXCLUDE가 어느 파일에나 참이라(키 없음 = 이번 사이클 불가시) 이 규칙을 시험할 수 없다
   const prevEnc = process.env.ARGO_ENC_VAULT; process.env.ARGO_ENC_VAULT = '0';
   t.after(() => { if (prevEnc === undefined) delete process.env.ARGO_ENC_VAULT; else process.env.ARGO_ENC_VAULT = prevEnc; });
+  const dir = join(process.env.ARGO_ROOT, '.msgr-archive', ME.slice(0, 8));
+  assert.ok(existsSync(join(dir, 'README.md')), '앞 시험이 받은 계정 기록');
+  // 회사 동기화는 회사 루트만 걷는다 — 보관 폴더가 어느 회사 루트 안에도 없다
+  const { relative, sep } = await import('node:path');
+  for (const ws of ['auto-a']) { const rel = relative(paths(ws).root, dir); assert.ok(rel.startsWith('..'), `${ws} 밖: ${rel}`); assert.ok(!rel.split(sep).includes(ws)); }
+  // 회사 목록(점 이름 제외)에 보관 폴더가 회사로 잡히지 않는다
+  const { listCompanies } = await import('../src/hub.mjs');
+  assert.ok(!(await listCompanies()).some((c) => String(c.id).includes('msgr-archive')));
+  // 회사 내보내기 사본에 들지 않는다
+  const { exportCompany } = await import('../src/export.mjs');
+  const dest = await mkdtemp(join(tmpdir(), 'argo-msgr-archive-export-')); // 내보내기 목적지는 데이터 폴더(ARGO_ROOT) 밖이어야 한다(보호 구역 거부)
+  const out = await exportCompany('auto-a', dest);
+  const walk = async (d) => (await readdir(d, { withFileTypes: true })).flatMap((e) => [e.name]);
+  assert.ok(!(await walk(out.target)).some((n) => n.startsWith('.msgr-archive')), '내보낸 회사 사본에 보관 폴더 없음');
+  // 회사 안 옛 사본(개발 중 생긴 <회사>/.msgr-archive)은 올리지 않는다
   assert.equal(EXCLUDE('vault/notes/x.md'), false, '다른 파일은 올린다(대조군)');
   assert.equal(EXCLUDE('.msgr-archive/rooms/x/messages.md'), true);
-  assert.equal(EXCLUDE(`.msgr-archive-${BOB.slice(0, 8)}/README.md`), true);
-  assert.equal(isMsgrArchiveRel('.msgr-archive/_state.json'), true);
+  assert.equal(isMsgrArchiveRel('.msgr-archive-abcd1234/README.md'), true);
   assert.equal(isMsgrArchiveRel('vault/.msgr-archive/x.md'), false, '최상위만');
   assert.equal(isMsgrArchiveRel('msgr-archive/x.md'), false, '점이 없는 사용자 폴더는 그대로');
 });
 
-test('동의 거부자 글·다른 사람 글 — 에이전트 파일 도구·셸이 보관 폴더를 못 읽고, 기억 색인 폴더 밖에 있다', async (t) => {
+test('동의 거부자 글·다른 사람 글 — 보관 폴더는 크루 작업 폴더(회사 루트) 밖이고, 크루 파일 도구·셸이 그 경로를 막고, 기억 목록에 없다', async (t) => {
   const { makePermissionGate } = await import('../src/permission-gate.mjs');
   const root = paths('auto-a').root;
+  const dir = join(process.env.ARGO_ROOT, '.msgr-archive', ME.slice(0, 8));
+  const { relative } = await import('node:path');
+  assert.ok(relative(root, dir).startsWith('..'), '크루 cwd(회사 루트) 밖 — grep -rn . · tar . 같은 이름 없는 재귀 명령이 닿지 않는다');
   await mkdir(join(root, 'vault', 'notes'), { recursive: true });
   const gate = makePermissionGate('auto-a', 'pepper', root);
   const deny = async (tool, input) => assert.equal((await gate(tool, input)).behavior, 'deny', `${tool} ${JSON.stringify(input)}`);
-  await deny('Read', { file_path: '.msgr-archive/README.md' });
-  await deny('Read', { file_path: join(root, '.msgr-archive', 'README.md') });
-  await deny('Grep', { pattern: '밥', path: '.msgr-archive' });
-  await deny('Glob', { pattern: '**/*.md', path: '.msgr-archive' });
-  await deny('Bash', { command: 'cat .msgr-archive/rooms/*/messages.md' });
-  await deny('Bash', { command: `grep -r 밥 ${join(root, `.msgr-archive-${BOB.slice(0, 8)}`)}` });
+  await deny('Read', { file_path: join(dir, 'README.md') });
+  await deny('Read', { file_path: '../.msgr-archive/README.md' });
+  await deny('Grep', { pattern: '밥', path: dir });
+  await deny('Glob', { pattern: '**/*.md', path: dir });
+  await deny('Bash', { command: `cat ${join(dir, 'rooms')}/*/messages.md` });
+  await deny('Bash', { command: 'grep -r 밥 ../.msgr-archive' });
   assert.equal((await gate('Read', { file_path: 'vault/notes/x.md' })).behavior, 'allow', '자기 책상은 그대로');
   const { listDocs } = await import('../src/hub.mjs');
   const docs = await listDocs('auto-a');
   assert.ok(!docs.some((d) => String(d.rel ?? d.path ?? '').includes('msgr-archive')), '기억 목록에 보관 폴더가 없다');
 });
 
-test('설정 화면 표시 — 스위치 꺼짐+기록 없음은 숨김, 진행 중 2초 조회, 실패·일부·끊김은 다시 받기, 끝나면 단추 없음, 다른 회사면 위치 안내', () => {
+test('설정 화면 표시 — 스위치 꺼짐+기록 없음은 숨김, 진행 중 2초 조회, 실패·일부·끊김은 다시 받기, 끝나면 단추 없음', () => {
   assert.equal(V.archiveView(null).show, false);
   assert.equal(V.archiveView({ signedIn: true, paused: false, status: 'none' }).show, false);
   const none = V.archiveView({ signedIn: true, paused: true, status: 'none' });
@@ -347,7 +368,6 @@ test('설정 화면 표시 — 스위치 꺼짐+기록 없음은 숨김, 진행 
   for (const s of ['failed', 'partial', 'interrupted']) assert.equal(V.archiveView({ signedIn: true, paused: true, status: s }).retry, true, s);
   assert.equal(V.archiveView({ signedIn: true, paused: true, status: 'done' }).retry, false);
   assert.equal(V.archiveView({ signedIn: true, paused: false, status: 'failed' }).retry, false, '스위치가 꺼지면 다시 받기도 없다(서버 POST와 같은 조건)');
-  assert.equal(V.archiveView({ signedIn: true, paused: true, status: 'done', here: false }).here, false);
   assert.equal(V.archiveLabelKey('partial'), 'settings.msgrArchive.partial');
   // 완료 안내 — 한 번 닫으면 같은 완료는 다시 안 보인다
   const done = { signedIn: true, status: 'done', dir: '/x/.msgr-archive', finishedAt: '2026-10-16T09:00:00Z' };
@@ -358,7 +378,7 @@ test('설정 화면 표시 — 스위치 꺼짐+기록 없음은 숨김, 진행 
 
 test('사전 — 이관 문구는 ko·en 둘 다 있다', async (t) => {
   const src = await readFile(new URL('../app/i18n.jsx', import.meta.url), 'utf8');
-  const keys = ['title', 'none', 'running', 'interrupted', 'done', 'partial', 'failed', 'elsewhere', 'where', 'private', 'start', 'retry', 'open', 'err'].map((k) => `settings.msgrArchive.${k}`)
+  const keys = ['title', 'none', 'running', 'interrupted', 'done', 'partial', 'failed', 'where', 'private', 'start', 'retry', 'open', 'err'].map((k) => `settings.msgrArchive.${k}`)
     .concat(['msgrArchive.notice', 'msgrArchive.noticePartial', 'msgrArchive.noticeSettings']);
   for (const k of keys) assert.match(src, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', ["'].+["']\\],$`, 'm'), k);
 });
@@ -401,28 +421,33 @@ test('중간-2 이름이 같은 첨부 둘 — 순번을 붙여 둘 다 남긴�
   assert.equal(await readFile(join(rd, '4-2-image.png'), 'utf8'), 'SECOND');
 });
 
-test('중간-3 보관한 회사 — 등록부가 없는 회사를 가리키면 빈 회사 폴더를 만들지 않고 남은 내 회사로 다시 고른다', async (t) => {
+test('회사 보관·이름 변경 — 기록은 계정 폴더에 그대로라 끊기지 않고, 다시 받지 않으며(요청 0), 보관 되돌리기도 막히지 않는다', async (t) => {
   A._resetPauseCache();
   const uid = '44444444-4444-4444-8444-444444444444';
   await company('gone-co', { ownerId: uid });
-  await company('kept-co', { ownerId: uid, created: '2026-09-05' });
   const fake = await fakeMsgr(sampleDb()); t.after(() => fake.close());
   const c = { uid, client: fake.client };
   const run = (args) => A.runArchive({ ...args, sleep: noSleep });
   await R.maybeAutoArchive({ session: async () => c, companies: async () => [{ id: 'gone-co', ownerId: uid, created: '2026-09-01' }], run });
-  assert.ok(existsSync(join(paths('gone-co').root, '.msgr-archive', 'README.md')));
-  // 회사 보관 — 폴더째 옮겨진다(archiveCompany와 같은 결과)
-  const { rm } = await import('node:fs/promises');
-  await rm(paths('gone-co').root, { recursive: true, force: true });
+  const dir = join(process.env.ARGO_ROOT, '.msgr-archive', uid.slice(0, 8));
+  assert.ok(existsSync(join(dir, 'README.md')));
+  // 이름 변경 — company.json의 name만 바뀐다(id 그대로) → 등록부·위치 그대로
+  const cj = JSON.parse(await readFile(paths('gone-co').company, 'utf8')); cj.name = '새 이름'; await writeFile(paths('gone-co').company, JSON.stringify(cj));
+  assert.equal((await R.archiveTarget(uid)).dir, dir);
+  // 회사 보관(실제 archiveCompany — 폴더째 .archive로)
+  const { archiveCompany, listArchivedCompanies, restoreArchivedCompany } = await import('../src/workspace.mjs');
+  await archiveCompany('gone-co');
+  assert.ok(existsSync(join(dir, 'README.md')), '보관해도 기록은 그대로');
   A._resetPauseCache();
-  const r = await R.maybeAutoArchive({ session: async () => c, companies: async () => [{ id: 'kept-co', ownerId: uid, created: '2026-09-05' }], run });
-  assert.equal(existsSync(paths('gone-co').root), false, '보관한 회사 자리에 빈 폴더가 생기지 않는다(보관 되돌리기가 막히지 않는다)');
-  assert.equal(r.ws, 'kept-co');
-  // 남은 회사도 없으면 받지 않고 폴더도 만들지 않는다
-  assert.equal(await R.archiveTarget('55555555-5555-4555-8555-555555555555', { companies: async () => [{ id: 'nope-co', ownerId: '55555555-5555-4555-8555-555555555555' }] }), null);
-  assert.equal(existsSync(paths('nope-co').root), false);
-  await assert.rejects(A.runArchive({ client: fake.client, uid, dir: join(paths('nope-co').root, '.msgr-archive') }), /msgr_archive_no_company/);
-  assert.equal(existsSync(paths('nope-co').root), false);
+  const before = fake.count();
+  const r = await R.maybeAutoArchive({ session: async () => c, companies: async () => [], run });
+  assert.equal(r.reason, 'already'); assert.equal(fake.count(), before, '다시 받지 않는다(요청 0)');
+  assert.equal(existsSync(paths('gone-co').root), false, '보관한 회사 자리에 빈 폴더가 생기지 않는다');
+  const st = await R.archiveStatus(uid, 'other', { companies: async () => [] });
+  assert.equal(st.status, 'done'); assert.equal(st.dir, dir);
+  const arch = (await listArchivedCompanies()).find((a) => String(a.archiveId ?? a.id ?? '').includes('gone-co'));
+  await restoreArchivedCompany(arch.archiveId ?? arch.id);
+  assert.ok(existsSync(paths('gone-co').company), '보관 되돌리기 성공');
 });
 
 test('낮음-4 동시 시작 — 자동 실행과 설정 POST가 겹쳐도 실행은 하나', async (t) => {

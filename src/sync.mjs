@@ -160,8 +160,8 @@ const isAssistantStateRel = (rel) => rel.split('/')[0] === '.assistant';
 /** 작업 과정 기록(.turn-traces/ — src/turn-trace.mjs): 끝난 턴의 생각·도구 입력·결과. 이 기기에만 둔다(유건 확정 2026-10-09 — 다른 기기에서는 답만 보인다).
     .assistant와 같은 계약 — 올리지 않고(EXCLUDE), 원격에 옛 사본이 있어도 diff 불가시(받기·삭제 전파·브레이크 집계 전부 건너뜀). */
 export const isTurnTraceRel = (rel) => rel.split('/')[0] === '.turn-traces';
-/** 메신저 기록 보관 폴더(.msgr-archive/·계정별 .msgr-archive-<uid8>/ — src/msgr-archive.mjs). 기기마다 서버에서 한 번 받는다 — 첨부가 커서 동기화 저장소·전송량을 늘리지 않고,
-    다른 사람의 글을 개인 클라우드로 퍼뜨리지 않는다. .turn-traces와 같은 계약: 올리지 않고(EXCLUDE), 원격 사본이 있어도 diff 불가시, walk가 내려가지 않는다. */
+/** 회사 루트의 .msgr-archive(…) 폴더 — 메신저 기록 보관 폴더는 회사 밖(<WS_ROOT>/.msgr-archive/<uid8>, src/msgr-archive.mjs)으로 옮겼고, 이 규칙은 개발 중 회사 안에 생긴 옛 사본이
+    올라가지 않게 남긴다(다른 사람의 글을 개인 클라우드로 퍼뜨리지 않는다 — 지우지도 옮기지도 않는다). .turn-traces와 같은 계약: 올리지 않고(EXCLUDE), 원격 사본이 있어도 diff 불가시, walk가 내려가지 않는다. */
 export const isMsgrArchiveRel = (rel) => String(rel).split('/')[0].startsWith('.msgr-archive');
 
 /** 개발 산출물 디렉터리(node_modules·.git·가상환경·크롬 프로필 등) — 라이브 실측(2026-09-14): companies 버킷

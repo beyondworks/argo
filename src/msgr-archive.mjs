@@ -1,21 +1,22 @@
-// 메신저 기록을 Argo 회사 폴더로 옮기기(0.1.113, 2026-10-16 유건 결정 — 메신저 서비스 중단, Argo를 쓰는 사람은 메신저 데이터를 전부 Argo로).
+// 메신저 기록을 Argo(이 기기의 계정별 보관 폴더)로 옮기기(0.1.113, 2026-10-16 유건 결정 — 메신저 서비스 중단, Argo를 쓰는 사람은 메신저 데이터를 전부 Argo로).
 // 서버 중단 스위치(msgr_service_pause, 워커 1)가 켜져 있고 이 계정의 이관 기록이 없으면 한 번만 받는다. 주기 호출은 없다 — 앱이 켜질 때 한 번, 설정 화면이 열릴 때 한 번 스위치를 읽는다.
 //
 // 무엇을: 로그인한 사용자가 메신저에서 볼 수 있던 것 전부 — 방(조직 채널·개인 1:1·친구 1:1·그룹·보관된 옛 조직 1:1), 방 정보·구성원 이름, 메시지(사람·에이전트·봇·시스템),
 //   반응, 결재 카드(메시지 kind approval_card + 결재 행), 첨부(bucket msgr), 조직 문서(msgr_org_docs, journal/ 포함). 읽기는 기기 세션(사용자 JWT)으로만 — RLS가 원래 못 보던 것은 오지 않는다.
-// 어디에: <회사>/.msgr-archive/ — 방마다 messages.md(사람이 읽는 글)·messages.jsonl(원본 행)·room.json·attachments/. 점 폴더라
-//   ① 크루 파일 도구가 막고(permission-gate 직속 점 항목) 셸 게이트도 이름으로 막는다(WS_DOT_FILES) ② 기억 색인(journal/·conversations/·notes/)에 들지 않는다
-//   ③ 기기 간 동기화에서 빠진다(sync EXCLUDE + diff 불가시). 그래서 AI 사용 동의를 거부·철회한 사람의 글도, 다른 사람의 글도 에이전트 검색·기억에 섞이지 않고 사람이 읽을 수 있게만 남는다.
-// 동기화 제외 이유: 메신저 첨부는 크고(동기화 50MB 상한 밖일 수 있다) 기기마다 서버에서 한 번 받으면 끝이라, 동기화 저장소·전송량을 늘릴 이유가 없다. 무료·Pro가 같은 동작이 된다.
+// 어디에: <WS_ROOT>/.msgr-archive/<uid 앞 8자>/ — 계정마다 하나, 회사 폴더 밖(검수 1 중간, 총괄 결정 2026-10-16). 방마다 messages.md(사람이 읽는 글)·messages.jsonl(원본 행)·room.json·attachments/.
+//   회사 폴더(<WS_ROOT>/<회사>)는 크루 작업 폴더(cwd)라, 게이트를 거치지 않는 CLI 러너나 이름 없는 재귀 명령(grep -rn .·tar .)이 읽을 수 있었다. 회사 밖에 두면
+//   ① 크루 작업 폴더·회사 동기화(회사 루트 walk)·회사 내보내기·클라우드 내보내기(점 이름 제외)에 들지 않고 ② 파일 도구는 WS_ROOT 직속 점 항목 규칙으로, 셸은 WS_DOT_FILES 이름으로 막고
+//   ③ 기억 색인(회사 vault) 밖이다. 다른 사람의 글·AI 사용 동의를 거부한 사람의 글이 에이전트가 쓰는 기억에 섞이지 않는다(기술적으로 절대 못 읽는다는 약속은 하지 않는다 — 전권 CLI 러너는 경로를 알면 읽을 수 있다).
+//   회사를 보관·이름 변경해도 위치가 바뀌지 않는다(계정 기준). 등록부 <WS_ROOT>/.msgr-archive.json은 어느 회사 화면에서 처음 받았는지(회사 id)만 적는다.
+// 동기화하지 않는다: 메신저 첨부는 크고(동기화 50MB 상한 밖일 수 있다) 기기마다 서버에서 한 번 받으면 끝이라, 동기화 저장소·전송량을 늘릴 이유가 없다. 무료·Pro가 같은 동작이 된다.
 // 이어 받기: 방마다 messages.jsonl 마지막 id가 커서다(상태 파일과 큰 쪽) — 중단·재시작 뒤 그 뒤부터 받고, 같은 메시지를 두 번 쓰지 않는다. 첨부는 같은 크기 파일이 있으면 다시 받지 않는다.
 // 요청 상한: 페이지 1000행·id 묶음 200개·순차 요청. 429·5xx·네트워크 오류는 1·2·4·8초 백오프 4번 뒤 실패(상태 'failed' — 재시도 단추가 이어 받는다). 4xx(권한)는 그 항목만 건너뛴다.
 import { mkdir, readFile, writeFile, appendFile, stat, readdir } from 'node:fs/promises';
-import { join, dirname } from 'node:path';
-import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { writeJsonAtomic } from './jsonstore.mjs';
 
 export const PAUSE_RPC = 'msgr_service_pause';
-export const ARCHIVE_DIR = '.msgr-archive';
+export const ARCHIVE_DIR = '.msgr-archive'; // <WS_ROOT> 직속 — 계정별 하위 폴더
 export const PAGE = 1000;
 export const ID_BATCH = 200;
 export const BACKOFF_MS = [1000, 2000, 4000, 8000];
@@ -47,12 +48,12 @@ export async function pauseState(client, { now = Date.now, force = false } = {})
 export const cachedPause = () => PAUSE.value;
 export function _resetPauseCache() { PAUSE.value = null; PAUSE.at = 0; }
 
-/** 계정마다 보관 폴더 하나 — 처음 쓴 계정은 .msgr-archive, 같은 회사를 다른 계정이 쓰면 .msgr-archive-<uid 앞 8자>(두 계정 기록을 섞지 않는다). */
-export async function archiveDirFor(companyRoot, uid) {
-  const base = join(companyRoot, ARCHIVE_DIR);
+/** 계정마다 보관 폴더 하나 — <WS_ROOT>/.msgr-archive/<uid 앞 8자>. 앞 8자가 겹치는 다른 계정이 이미 쓰고 있으면 uid 전체로(두 계정 기록을 섞지 않는다). */
+export async function archiveDirFor(wsRoot, uid) {
+  const base = join(wsRoot, ARCHIVE_DIR, String(uid).slice(0, 8));
   const st = await readJsonSafe(join(base, STATE));
   if (!st || st.uid === uid) return base;
-  return join(companyRoot, `${ARCHIVE_DIR}-${String(uid).slice(0, 8)}`);
+  return join(wsRoot, ARCHIVE_DIR, String(uid));
 }
 
 /** 어느 회사에 옮길까 — 이 계정이 주인인 회사만(남의 회사 폴더에 내 메신저 기록을 두지 않는다), 메신저가 켜진 회사 먼저, 그다음 가장 먼저 만든 회사. */
@@ -177,8 +178,6 @@ async function sameSizeExists(file, bytes) { try { const s = await stat(file); r
  * 반환 상태 { status: 'done'|'partial'|'failed', rooms, messages, attachments, failed: [...], stats: { requests, bytes } }
  */
 export async function runArchive({ client, getClient = null, uid, dir, onProgress = () => {}, sleep = sleepReal, now = () => new Date() }) {
-  // 회사 폴더가 없으면 만들지 않는다 — 보관(archiveCompany)한 회사 자리에 빈 폴더가 생기면 보관 되돌리기가 EXISTS로 막힌다(분리 검수 중간-3)
-  if (!existsSync(dirname(dir))) throw fail('msgr_archive_no_company', { message: dirname(dir) });
   await mkdir(dir, { recursive: true });
   const prev = await readArchiveState(dir);
   if (prev?.status === 'done' && prev.uid === uid) return prev;
@@ -339,8 +338,8 @@ async function writeReadme(dir, st, chs) {
   const rooms = Object.values(st.rooms).filter((r) => r.done).map((r) => r.dir).sort();
   const body = [
     '# 메신저 기록 · Messenger archive', '',
-    '메신저에서 볼 수 있던 대화를 옮겨 둔 읽기 전용 보관 폴더입니다. 에이전트는 이 폴더를 읽지 않고, 기기 사이에 동기화되지 않습니다.',
-    'A read-only copy of the conversations you could see in Argo Messenger. Agents do not read this folder and it is not synced between devices.', '',
+    '메신저에서 볼 수 있던 대화를 옮겨 둔 읽기 전용 보관 폴더입니다. 에이전트 작업 폴더 밖에 따로 보관해 에이전트가 쓰는 기억과 섞이지 않고, 기기 사이에 동기화되지 않습니다.',
+    "A read-only copy of the conversations you could see in Argo Messenger. It is kept outside the agents' working folders so it doesn't mix with the memory agents use, and it is not synced between devices.", '',
     `- 방 · Rooms: ${chs.length}`, `- 메시지 · Messages: ${st.totals.messages}`, `- 첨부 · Attachments: ${st.totals.attachments}`, '',
     ...rooms.map((r) => `- [${r}](${encodeURI(`${r}/messages.md`)})`), '',
   ].join('\n');

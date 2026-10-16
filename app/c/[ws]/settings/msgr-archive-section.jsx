@@ -35,11 +35,7 @@ export default function MsgrArchiveSection({ ws, onState }) {
   return (
     <section className="msgr-runtime" aria-live="polite" style={{ display: 'grid', gap: 6 }}>
       <span className="microlabel">{t('settings.msgrArchive.title')}</span>
-      {view.here ? (
-        <p style={{ margin: 0 }}>{t(archiveLabelKey(view.phase), p)}</p>
-      ) : (
-        <p style={{ margin: 0 }}>{t('settings.msgrArchive.elsewhere', { ws: st.ws })}</p>
-      )}
+      <p style={{ margin: 0 }}>{t(archiveLabelKey(view.phase), p)}</p>
       {view.phase === 'running' && <Spinner size={12} />}
       {st?.dir && (view.phase === 'done' || view.phase === 'partial') && (
         <p style={{ margin: 0, fontSize: 12, color: 'var(--fg-2)' }}>{t('settings.msgrArchive.where')} <span className="mono" style={{ overflowWrap: 'anywhere', color: 'var(--fg-1)' }}>{st.dir}</span></p>
