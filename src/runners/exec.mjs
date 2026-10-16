@@ -108,6 +108,8 @@ const authFileAt = (p) => stat(p).then((s) => s.mtime.toISOString(), () => null)
 export const HOST_RECHECK_MS = 15_000;
 /** 감지 캐시를 버린다 — 인증 실패를 만난 턴이 부른다(다음 판정이 지금 로그인 상태를 본다). */
 export function invalidateDetectCache() { cache = null; cacheAt = 0; }
+/** 감지 캐시를 만든 시각(ms) | null — 러너 대체 진단 줄(runners.mjs runnerPickReason)이 "그 판정이 몇 초 전 감지였나"를 남긴다. */
+export const detectCacheAt = () => cacheAt || null;
 
 export async function detectRunners(force = false, { maxAgeMs = DETECT_CACHE_MS } = {}) {
   if (cache && Date.now() - cacheAt >= maxAgeMs) force = true; // 짧은 재감지 요청(HOST_RECHECK_MS) — 캐시가 그보다 오래됐으면 새로 본다

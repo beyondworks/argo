@@ -47,7 +47,7 @@ for (const [relative, replacements] of [
   ['./runners.mjs', `
     export const resolveRunner = async (_ws, _want, { exclude = [] } = {}) => { // 사슬 순서대로 아직 안 뺀 첫 러너 — 카드 러너(codex)가 빠지면 claude
       const chain = globalThis.__argoFbChain ?? ['codex', 'claude'];
-      const next = chain.find((r) => !(exclude ?? []).includes(r));
+      const next = chain.find((r) => !(exclude ?? []).includes(r) && !(globalThis.__argoFbDown ?? []).includes(r)); // __argoFbDown = 턴 전 판정에서 사용 불가(미연결·감지 실패)
       return next ? { runner: next, available: true, fellBack: next !== chain[0] } : { runner: chain[0], available: false };
     };
     export const isBilledRunner = async () => false;
@@ -64,7 +64,7 @@ const hooks = registerHooks({ resolve(specifier, context, next) {
   if (/\/src\/chat\.mjs$/.test(context.parentURL ?? '') && wrappers.has(specifier)) return { url: wrappers.get(specifier), shortCircuit: true };
   return next(specifier, context);
 } });
-after(() => { hooks.deregister(); delete globalThis.__argoFbExec; delete globalThis.__argoFbChain; });
+after(() => { hooks.deregister(); delete globalThis.__argoFbExec; delete globalThis.__argoFbChain; delete globalThis.__argoFbDown; });
 
 const { createCompany, paths } = await import('../src/workspace.mjs');
 const { saveRunnerCred } = await import('../src/runners/creds.mjs');
@@ -72,25 +72,26 @@ const { readEvents } = await import('../src/events.mjs');
 const { chat } = await import('../src/chat.mjs');
 const { roomTurnFailureFor } = await import('../src/gateway/msgr-room-errors.mjs');
 const { ownerNoticeCause, ownerNoticeText, sendOwnerNotice } = await import('../src/gateway/msgr-owner-notice.mjs');
+const { runnerPickReasonLine } = await import('../src/runners.mjs');
 
 const CODEX_AUTH = 'Failed to authenticate: OAuth session expired. Please run /login'; // 상주 실측 원문 모양(AUTH_ERR_RE)
 const RAW = /weekly limit|You've hit|OAuth session|\/login|unexpected payload|sk-proj|sk-ant/; // 방에 실리면 안 되는 원문·자격
 
 let seq = 0;
-async function turn({ codex, chain = ['codex', 'claude'], claude = 'limit' }) {
+async function turn({ codex = () => new Error('codex should not run'), chain = ['codex', 'claude'], claude = 'limit', down = [] }) {
   const ws = `fb-${++seq}`;
   await createCompany(ws, '대체 한도', 'owner', null, 'ko');
   await mkdir(paths(ws).agents, { recursive: true });
   await writeFile(join(paths(ws).agents, 'davinci.md'), '---\nname: 다빈치\nrole: 검증\nrunner: codex\n---\n검증용.\n');
   await saveRunnerCred(ws, 'codex', 'apikey', `sk-proj-${'y'.repeat(40)}`);
   await saveRunnerCred(ws, 'claude', 'apikey', `sk-ant-api03-${'x'.repeat(80)}`); // 형식만 맞춘 가짜 — 요청은 로컬 가짜 엔드포인트로만
-  globalThis.__argoFbChain = chain; vendor = claude;
+  globalThis.__argoFbChain = chain; globalThis.__argoFbDown = down; vendor = claude;
   const calls = [];
   globalThis.__argoFbExec = async (o) => { calls.push(o?.runner ?? o); throw codex(); };
-  let err = null;
-  await chat(ws, 'davinci', '안녕', null, {}).catch((e) => { err = e; });
+  let err = null; const warns = []; const warn = console.warn; console.warn = (...a) => { warns.push(a.join(' ')); warn(...a); };
+  try { await chat(ws, 'davinci', '안녕', null, {}).catch((e) => { err = e; }); } finally { console.warn = warn; }
   assert.ok(err, '턴은 실패해야 한다');
-  return { ws, err, calls, own: (lang) => roomTurnFailureFor(err, lang, { ownerCause: ownerNoticeCause(err) }), other: (lang) => roomTurnFailureFor(err, lang) };
+  return { ws, err, calls, warns, own: (lang) => roomTurnFailureFor(err, lang, { ownerCause: ownerNoticeCause(err) }), other: (lang) => roomTurnFailureFor(err, lang) };
 }
 
 test('F1. 지정 러너(codex) 인증 오류 → claude로 넘김 → claude 주간 한도: 주인 방 문구가 순서·해제 시각·할 일을 말한다(ko·en, 원문 없음)', async () => {
@@ -151,4 +152,27 @@ test('F5. 인접 핀(분리 검수 LOW) — 대체 없는 단일 러너가 인�
   const e = Object.assign(new Error('429 rate limit'), { authError: true, authExpired: 'codex', failCode: 'quota', failRunner: 'codex' });
   assert.deepEqual(ownerNoticeCause(e), { kind: 'auth', runner: 'codex' });
   assert.match(roomTurnFailureFor(e, 'ko', { ownerCause: ownerNoticeCause(e) }), /^이 에이전트를 돌리는 실행기의 Codex 로그인이 만료돼/);
+});
+
+// 11:43 운영의 실제 모양(맥 one events.jsonl): codex 줄 없이 claude 한 줄, fellBackFrom codex, failCode quota, error 머리 "지정 러너 Codex가 이 기기에 연결돼 있지 않아…".
+// = codex를 실행하지 않고 턴 전 판정(pickRunner)이 사용 불가로 보고 claude로 넘긴 갈래. 이 코드(주인 요청)는 한도 문구를 낸다 — 방의 일반 문구는 이 코드 밖(PR 본문 "남은 것").
+test('F6. 턴 전 판정으로 대체("이 기기에 연결돼 있지 않아") → claude 한도: 주인 방 문구에 순서·한도, 대체 근거 진단 한 줄(값은 참거짓·종류·감지 시각)', async () => {
+  const t = await turn({ down: ['codex'] });
+  assert.deepEqual(t.calls, [], 'codex는 실행되지 않는다');
+  assert.equal(t.err.failCode, 'quota'); assert.equal(t.err.fellBackFrom, 'codex'); assert.equal(t.err.authFailedRunner, undefined);
+  assert.match(String(t.err.message), /^지정 러너 Codex가 이 기기에 연결돼 있지 않아 Claude\(으\)로 대체 실행됐습니다\. API Error: 400 You've hit your weekly limit/, '운영 기록과 같은 모양');
+  assert.equal(t.own('ko'), '지정 러너 Codex 대신 Claude(으)로 답하려 했지만, 내 실행기의 Claude 사용 한도에 걸려 답하지 못했습니다 · 10/19 13:00에 풀립니다. 풀린 뒤 다시 보내거나, Argo 데스크톱에서 이 에이전트의 러너를 확인하세요(연결된 러너가 없으면 설정 → AI 연결).');
+  assert.match(t.other('ko'), /^에이전트가 지금 답하지 못했습니다\./, '남의 요청은 종전 일반 문구(한도는 주인 1:1 안내)');
+  const diag = t.warns.filter((w) => w.includes('러너 대체('));
+  assert.equal(diag.length, 1, `대체 턴마다 한 줄(${diag.length})`);
+  assert.match(diag[0], /지정 codex 사용 불가 → claude · connected=true type=apikey invalid=false unsupported=false installed=(true|false) authed=(true|false) 감지=/);
+  assert.doesNotMatch(diag[0], /sk-proj|sk-ant|\/Users\/|\/home\//, '자격 값·경로를 싣지 않는다');
+});
+
+test('F7. 진단 줄은 자가치유 대체(인증 오류로 제외)에는 남기지 않는다 — 판정 근거가 아니라 실행 실패라서', async () => {
+  const t = await turn({ codex: () => new Error(CODEX_AUTH) });
+  assert.equal(t.warns.filter((w) => w.includes('러너 대체(')).length, 0);
+  assert.equal(runnerPickReasonLine('codex', 'claude', { connected: true, type: 'host', invalid: true, installed: false, authed: false, detectedAt: 1_000 }, 61_000),
+    '지정 codex 사용 불가 → claude · connected=true type=host invalid=true unsupported=false installed=false authed=false 감지=1970-01-01T00:00:01.000Z(60초 전)');
+  assert.match(runnerPickReasonLine('codex', 'claude', null), /connected=false type=- .* 감지=-$/, '근거를 못 읽으면 빈 값');
 });

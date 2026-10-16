@@ -22,7 +22,7 @@ import { geminiCmd, writeGeminiTurnSettings } from './runners/gemini.mjs';
 import { openRoots } from './workroots.mjs'; // 파일 반경 단일 진실(codex·gemini·antigravity 공유)
 
 import { loadSecrets, credType, maskCred } from './runners/creds.mjs';
-import { ensureCliPath, apiError, detectRunners, HOST_RECHECK_MS } from './runners/exec.mjs';
+import { ensureCliPath, apiError, detectRunners, detectCacheAt, HOST_RECHECK_MS } from './runners/exec.mjs';
 /** antigravity 파일 반경 인자(순수) — openRoots를 반복형 --add-dir로. (export: 회귀 테스트용 —
     검수 HIGH-1: 반경 인자 세 줄을 지워도 전 게이트가 초록이었다. 인라인 조립은 단위로 못 잠근다.) */
 export const agyDirArgs = (caps, workRoots = []) => openRoots(caps, workRoots).flatMap((r) => ['--add-dir', r]);
@@ -404,6 +404,20 @@ export async function runnerStatus(wsId, { forPick = false } = {}) {
     };
   }
   return out;
+}
+
+/** 지정 러너를 왜 못 썼나 — 러너 대체 턴의 진단 한 줄(2026-10-16 11:43 운영: 카드 codex가 턴 전 판정에서 사용 불가로 claude로 넘어갔는데, 판정 근거가 로그에 없어
+    원인(기동 직후 감지 캐시 등)을 확인할 수 없었다). pickRunner가 보는 값(회사 자격 connected·type·invalid·unsupportedMethod)과 그 판정에 쓰인 호스트 감지(installed·authed)
+    + 감지 캐시 시각만 — 자격 값·경로·계정은 싣지 않는다. 감지 로직은 바꾸지 않는다(캐시가 있으면 그대로 읽는다). 대체 턴에서만 부른다(chat.mjs). */
+export async function runnerPickReason(wsId, id) {
+  const [st, host] = await Promise.all([runnerStatus(wsId, { forPick: true }), detectRunners()]);
+  const c = st[id]?.company ?? {};
+  return { connected: !!c.connected, type: c.type ?? null, invalid: !!c.invalid, unsupported: !!c.unsupportedMethod, installed: !!host[id]?.installed, authed: !!host[id]?.authed, detectedAt: detectCacheAt() };
+}
+/** 진단 한 줄(순수) — 값은 참거짓·자격 종류 이름·시각뿐. */
+export function runnerPickReasonLine(want, ran, r, now = Date.now()) {
+  const at = r?.detectedAt ? `${new Date(r.detectedAt).toISOString()}(${Math.max(0, Math.round((now - r.detectedAt) / 1000))}초 전)` : '-';
+  return `지정 ${want} 사용 불가 → ${ran} · connected=${!!r?.connected} type=${r?.type ?? '-'} invalid=${!!r?.invalid} unsupported=${!!r?.unsupported} installed=${!!r?.installed} authed=${!!r?.authed} 감지=${at}`;
 }
 
 /** 턴에 실제로 쓸 러너 결정 — 크루의 러너가 미가용이면 가용한 러너로 폴백(pickRunner).

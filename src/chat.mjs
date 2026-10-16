@@ -43,7 +43,7 @@ import { detectRunnerDenial, detectDenialNarration, denialNote, detectForcedRmRe
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
 import { createTrace, recordSdkMessage, recordCodexEvent, maskSecrets, safeDetail } from './turn-trace.mjs';
 import { registerTurn, withTurnControl, turnAbortedError } from './turn-abort.mjs';
-import { invalidateDetectCache, reabsorbCodexFromHost, scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, loadRunnerCred, verifyRunnerCred, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply, isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice, isHiddenRunner, visibleRunnerIds, visibleRunnerNamesLine, onlyHiddenConnectedStatus, unsupportedMethodStatus, unsupportedMethodNotice, isCliTurn, GEMINI_DEFAULT_MODEL, runnerCredType, CODEX_DEFAULT_MODEL, CLI_CHAT_TURN_TIMEOUT_MS } from './runners.mjs';
+import { invalidateDetectCache, runnerPickReason, runnerPickReasonLine, reabsorbCodexFromHost, scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, loadRunnerCred, verifyRunnerCred, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply, isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice, isHiddenRunner, visibleRunnerIds, visibleRunnerNamesLine, onlyHiddenConnectedStatus, unsupportedMethodStatus, unsupportedMethodNotice, isCliTurn, GEMINI_DEFAULT_MODEL, runnerCredType, CODEX_DEFAULT_MODEL, CLI_CHAT_TURN_TIMEOUT_MS } from './runners.mjs';
 import { userAddressNote, turnUserName, userSetAddress } from './user-name.mjs'; // 에이전트가 사용자를 이름으로 부르기(T5) — 이름 출처·남의 이름 차단은 그 파일 한 곳
 import { USER_ABORT_ERROR, LEGACY_RECORD_TERMS_NOTE } from './legacy-terms.mjs'; // 중단 이벤트 문자열 — 읽는 쪽(runner-usable·failure-digest)은 옛 문자열도 본다
 import { delegateHead } from './inbound-marks.mjs'; // 위임 머리말 = 1:1 화면 출처 카드와 같은 함수
@@ -1610,6 +1610,11 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
       : `${noCli.join('/')} 자격은 연결됐지만 이 컴퓨터에 해당 CLI가 설치돼 있지 않습니다 — ${noCli.join('/')} 러너는 벤더 CLI로 실행됩니다. CLI를 설치하거나, 설치가 필요 없는 Claude를 설정 → AI 연결에서 연결해 주세요.`); // CLI 미설치(noCli) — 위 두 갈래가 러너 없음을 먼저 던진다
   } catch (e) { await failBeforeRun(e, { flags: { noRunner: true }, ev: evFrom }); } // 이 갈래가 던지는 것은 위 안내 문구뿐이다 — 활동에 남긴 뒤 그대로 던진다
   const runner = resolved.runner;
+  // 턴 전 판정이 지정 러너를 사용 불가로 보고 대체했으면(자가치유 제외가 아니라) 그 근거를 한 줄 남긴다 — 대체 턴에서만, 값은 참거짓·종류·감지 시각(runners.mjs runnerPickReason)
+  if (resolved.fellBack && wantRunner && !__excludeRunners?.includes(wantRunner)) {
+    const why = await runnerPickReason(wsId, wantRunner).catch(() => null);
+    console.warn(`[argo] 러너 대체(${wsId}/${agentSlug}, pid ${process.pid}): ${runnerPickReasonLine(wantRunner, runner, why)}`);
+  }
   // 이번 턴까지 시도한 러너 목록 — 아래 두 실행 경로(CLI·SDK)의 인증 자가치유가 공유한다.
   const tried = excludeWith(__excludeRunners, runner);
   // 폴백이면 크루에 지정된 model은 원래 러너의 것이라 무효 — 폴백 러너의 기본 모델로 실행한다.
