@@ -14,7 +14,7 @@ import LocalAssetImport from '../../../components/LocalAssetImport';
 import { accountPlan, trialBadgeState } from '../../../../src/entitlement.mjs';
 
 // Argo Messenger 받기 — 맥·윈도우 설치파일만 걸던 것을 앱 스토어·Play까지 있는 안내 페이지 한 곳으로(CX-12). 오피스 진입 버튼(CX-13)은 오피스가 비공개라 뺐다(유건 2026-10-10).
-import { MESSENGER_PAGE, msgrCardView, runtimeWaitingKey, runtimeAction, pausedLabelKey, personalCardView, msgrSetupReason, msgrRuntimeBesideSetup, pauseSoon, tabReturnDue } from './msgr-card.mjs';
+import { msgrGetLink, msgrCardView, runtimeWaitingKey, runtimeAction, pausedLabelKey, personalCardView, msgrSetupReason, msgrRuntimeBesideSetup, pauseSoon, tabReturnDue } from './msgr-card.mjs';
 import { keepChoices, togglePick, pickReady, hereSlugs, sameAsActive, FREE_AGENT_LIMIT } from './keep-choices.mjs'; // 무료 계정이 유지할 에이전트를 고른다(2026-10-12 제보)
 import MsgrArchiveSection from './msgr-archive-section'; // 메신저 기록 옮기기 진행·완료·다시 받기(0.1.113)
 import ArchivedCompaniesCard from '../../../archived-companies'; // 보관한 회사 되돌리기 — 홈에도 같은 카드(UM3)
@@ -906,6 +906,9 @@ function MsgrCard({ ws, agents }) {
   const [err, setErr] = useState('');
   const [note, setNote] = useState(''); // 무료 4명 교체 안내(연결 결과)
   const [confirm, setConfirm] = useState(null); // 교체 미리 알림 { scope, slugs, victims } — 유지할 에이전트 고르기를 못 쓸 때(옛 서버·Pro 판정 실패)만의 종전 확인
+  const [msgrPaused, setMsgrPaused] = useState(false); // 메신저 중단 스위치 — 이관 영역이 읽은 값(새 호출 없음). 켜지면 '메신저 받기' 대신 '출시 알림 받기'(msgrGetLink)
+  const onArchiveState = useCallback((d) => setMsgrPaused(d?.paused === true), []);
+  const getLink = msgrGetLink(msgrPaused);
   const [keep, setKeep] = useState(null); // 유지할 에이전트 고르기 { scope, slots, picked, victims } — 무료 한도에서 사람이 고른다(2026-10-12)
   const load = useCallback(() => api(`/api/companies/${ws}/msgr`)
     .then((d) => { setSt(d); setOrgId((cur) => cur && d.orgs?.some((o) => o.id === cur) ? cur : (d.orgs?.[0]?.id ?? '')); })
@@ -1084,9 +1087,9 @@ function MsgrCard({ ws, agents }) {
       </div>
       <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.7 }}>{t('settings.msgr.downloadHelp')}</p>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-        <a className="btn sm" href={MESSENGER_PAGE} target="_blank" rel="noopener noreferrer">{t('settings.msgr.get')}</a>
+        <a className="btn sm" href={getLink.href} target="_blank" rel="noopener noreferrer">{t(getLink.labelKey)}</a>
       </div>
-      <MsgrArchiveSection ws={ws} />
+      <MsgrArchiveSection ws={ws} onState={onArchiveState} />
       <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.7 }}>{t('settings.msgr.help')}</p>
       {st === null && <Skeleton h={44} />}
       {st && !st.signedIn && <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>

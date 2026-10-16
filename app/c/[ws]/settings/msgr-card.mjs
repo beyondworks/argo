@@ -3,6 +3,13 @@
 // '연결 필요' + '조직을 만들거나 초대받으세요'를 보이고 연결 상태(실행기)를 숨겼다.
 
 export const MESSENGER_PAGE = 'https://argo.ceo/messenger'; // 맥·윈도우·iOS·Android 받기 안내(앱 스토어 포함) 한 곳
+export const MESSENGER_WAITLIST = 'https://argo.ceo/messenger#waitlist'; // 메신저 중단 중(랜딩 '출시 예정', #1053) — 받기 대신 출시 알림 신청
+
+/** '메신저 받기' 단추(0.1.113) — 서버 중단 스위치(msgr_service_pause)가 켜져 있으면 받을 수 있는 앱이 없으므로 '출시 알림 받기'로 바꾸고 랜딩 신청란으로 보낸다.
+    paused = GET /api/companies/[ws]/msgr-archive 응답의 paused(이관 확인 때 함께 읽은 값 — 새 주기 호출 없음). 모르면(로드 전·옛 서버·오류) 꺼짐과 같다(지금 단추 그대로). */
+export function msgrGetLink(paused) {
+  return paused === true ? { href: MESSENGER_WAITLIST, labelKey: 'settings.msgr.getWaitlist' } : { href: MESSENGER_PAGE, labelKey: 'settings.msgr.get' };
+}
 
 /** 머리 칩 — 'connected'(조직에 등록됨) · 'personal'(조직은 없지만 개인 공간에 연결됨) · 'notConnected' */
 export function msgrConnectionChip({ regCount = 0, personalCount = 0 } = {}) {
