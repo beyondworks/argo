@@ -32,7 +32,7 @@ test('사전 — 세 문구 ko·en', async () => {
   const dict = await readFile(new URL('../app/i18n.jsx', import.meta.url), 'utf8');
   assert.match(dict, /'settings\.msgr\.pausedHelp': \['Argo Messenger는 안정화를 위해 잠시 쉬고 있습니다\. 지금까지의 기록은 아래에서 볼 수 있습니다\.', 'Argo Messenger is taking a short break/);
   assert.match(dict, /'settings\.msgr\.runtime\.paused': \['메신저가 안정화를 위해 쉬고 있습니다\. 다시 열리면 자동으로 이어집니다\.', 'Messenger is resting/);
-  assert.match(dict, /'settings\.notify\.msgrPaused': \['메신저가 쉬는 동안에는 메신저로 알림이 가지 않습니다\. 텔레그램을 켜거나 Argo 앱에서 확인하세요\.', 'While Messenger is resting/);
+  assert.match(dict, /'settings\.notify\.msgrPaused': \['메신저가 쉬는 동안에는 메신저로 알림이 가지 않습니다\. 텔레그램이나 슬랙을 켜거나 Argo 앱에서 확인하세요\.', 'While Messenger is paused, no notifications go to Messenger\. Turn on Telegram or Slack, or check the Argo app\.'\]/);
 });
 
 // 배선 확인(보조 — 행동은 위 판정 시험이 잠근다): 세 칸이 msgrPausedView의 값을 쓰고, 스위치 값은 이관 영역 응답 하나에서 온다

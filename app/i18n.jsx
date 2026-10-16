@@ -950,7 +950,7 @@ const DICT = {
   'settings.msgr.get': ['메신저 받기', 'Get the messenger'],
   'settings.msgr.getWaitlist': ['메신저 출시 알림 받기', 'Get notified when Messenger returns'], // 메신저 중단 중(msgrGetLink) — 랜딩 #waitlist로
   'settings.msgrArchive.title': ['메신저 기록 옮기기', 'Messenger history'],
-  'settings.msgrArchive.none': ['메신저 서비스가 중단되어, 메신저에서 볼 수 있던 대화를 이 기기의 Argo 보관 폴더로 옮겨 둡니다.', 'Messenger has been discontinued, so the conversations you could see there are copied into an Argo archive folder on this device.'],
+  'settings.msgrArchive.none': ['메신저가 쉬는 동안, 메신저에서 볼 수 있던 대화를 이 기기의 Argo 보관 폴더로 옮겨 둡니다.', 'While Messenger is paused, the conversations you could see there are copied into an Argo archive folder on this device.'],
   'settings.msgrArchive.running': ['옮기는 중입니다. 방 {done}/{total}개, 메시지 {messages}개, 첨부 {attachments}개를 받았습니다.', 'Moving now: {done}/{total} rooms, {messages} messages and {attachments} attachments so far.'],
   'settings.msgrArchive.interrupted': ['옮기는 도중에 앱이 꺼졌습니다. 받은 데까지는 남아 있고, 다시 받기를 누르거나 앱을 다시 켜면 이어서 받습니다.', 'The app closed while moving. What was already copied is kept; press Retry or restart the app to continue.'],
   'settings.msgrArchive.done': ['메신저 기록을 Argo로 옮겼습니다. 방 {total}개, 메시지 {messages}개, 첨부 {attachments}개입니다.', 'Your Messenger history was moved into Argo: {total} rooms, {messages} messages and {attachments} attachments.'],
@@ -1064,7 +1064,7 @@ const DICT = {
   'settings.msgr.err.load': ['조직·등록 상태를 불러오지 못했습니다.', 'Could not load organizations and registrations.'],
   'settings.notify.title': ['알림 받을 메신저', 'Where to receive agent notifications'],
   'settings.notify.help': ['체크한 메신저로 에이전트 알림(결재 요청·작업 완료·쪽지·루틴 결과)을 받습니다. 연결된 메신저만 켤 수 있고, 여러 개를 켜면 모두에 갑니다.', 'Agent notifications (approval requests, task results, agent mail, routine results) go to every messenger you check. Only connected messengers can be turned on; check several to receive on all of them.'],
-  'settings.notify.msgrPaused': ['메신저가 쉬는 동안에는 메신저로 알림이 가지 않습니다. 텔레그램을 켜거나 Argo 앱에서 확인하세요.', 'While Messenger is resting, no notifications go to Messenger. Turn on Telegram or check the Argo app.'], // 메신저 중단 중 — 저장된 체크 값은 그대로
+  'settings.notify.msgrPaused': ['메신저가 쉬는 동안에는 메신저로 알림이 가지 않습니다. 텔레그램이나 슬랙을 켜거나 Argo 앱에서 확인하세요.', 'While Messenger is paused, no notifications go to Messenger. Turn on Telegram or Slack, or check the Argo app.'], // 메신저 중단 중 — 저장된 체크 값은 그대로
   'settings.notify.ch.msgr': ['아르고 메신저', 'Argo Messenger'],
   'settings.notify.ch.telegram': ['텔레그램', 'Telegram'],
   'settings.notify.ch.slack': ['슬랙', 'Slack'],
