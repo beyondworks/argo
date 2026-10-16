@@ -950,7 +950,7 @@ const DICT = {
   'settings.msgr.get': ['메신저 받기', 'Get the messenger'],
   'settings.msgr.getWaitlist': ['메신저 출시 알림 받기', 'Get notified when Messenger returns'], // 메신저 중단 중(msgrGetLink) — 랜딩 #waitlist로
   'settings.msgrArchive.title': ['메신저 기록 옮기기', 'Messenger history'],
-  'settings.msgrArchive.none': ['메신저가 쉬는 동안, 메신저에서 볼 수 있던 대화를 이 기기의 Argo 보관 폴더로 옮겨 둡니다.', 'While Messenger is paused, the conversations you could see there are copied into an Argo archive folder on this device.'],
+  'settings.msgrArchive.none': ['메신저가 쉬는 동안, 메신저에서 볼 수 있던 대화를 이 기기의 Argo 보관 폴더로 복사해 둡니다.', 'While Messenger is paused, the conversations you could see there are copied into an Argo archive folder on this device.'],
   'settings.msgrArchive.running': ['옮기는 중입니다. 방 {done}/{total}개, 메시지 {messages}개, 첨부 {attachments}개를 받았습니다.', 'Moving now: {done}/{total} rooms, {messages} messages and {attachments} attachments so far.'],
   'settings.msgrArchive.interrupted': ['옮기는 도중에 앱이 꺼졌습니다. 받은 데까지는 남아 있고, 다시 받기를 누르거나 앱을 다시 켜면 이어서 받습니다.', 'The app closed while moving. What was already copied is kept; press Retry or restart the app to continue.'],
   'settings.msgrArchive.done': ['메신저 기록을 Argo로 옮겼습니다. 방 {total}개, 메시지 {messages}개, 첨부 {attachments}개입니다.', 'Your Messenger history was moved into Argo: {total} rooms, {messages} messages and {attachments} attachments.'],
