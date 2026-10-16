@@ -37,14 +37,30 @@ test('배선 — 부모가 연결 탭에서 스위치를 한 번 읽고, 알림 
   const page = await readFile(new URL('../app/c/[ws]/settings/page.jsx', import.meta.url), 'utf8');
   assert.match(page, /if \(tab !== 'connections' \|\| msgrPaused !== null\) return;[\s\S]{0,200}api\(`\/api\/companies\/\$\{ws\}\/msgr-archive`\)/, '연결 탭에서 모를 때만 한 번');
   assert.match(page, /<NotifyChannelsCard ws=\{ws\} showMsgr=\{pv\.showMsgrNotify\} \/>/);
-  assert.match(page, /\{pv\.msgrCard === 'pending' \? null : pv\.msgrCard === 'waitlist' \? <MsgrWaitlistCard \/> : <MsgrCard ws=\{ws\} agents=\{data\?\.agents \?\? \[\]\} \/>\}/);
+  assert.match(page, /\{pv\.msgrCard === 'pending' \? null : pv\.msgrCard === 'waitlist' \? <MsgrWaitlistCard archive=\{msgrArchive\} \/> : <MsgrCard ws=\{ws\} agents=\{data\?\.agents \?\? \[\]\} \/>\}/);
   assert.match(page, /useState\(null\); \/\/ null = 아직 모름/, '처음은 모름(null)');
   assert.match(page, /msgrPausedView\(msgrPaused, \{ known: msgrPaused !== null \}\)/);
   assert.match(page, /\.catch\(\(\) => \{ if \(live\) setMsgrPaused\(false\); \}\)/, '조회 실패면 main 카드');
   assert.match(page, /\.\.\.\(showMsgr \? \[\{ kind: 'msgr'/);
-  const card = page.slice(page.indexOf('function MsgrWaitlistCard()'), page.indexOf('function MsgrCard('));
+  const card = page.slice(page.indexOf('function MsgrWaitlistCard('), page.indexOf('function MsgrCard('));
   assert.match(card, /msgrGetLink\(true\)/);
   assert.doesNotMatch(card, /MsgrArchiveSection|runtime|chip|downloadHelp/, '출시 알림 카드에는 설명·칩·응답 상태·이관 영역이 없다');
   const notice = await readFile(new URL('../app/c/[ws]/msgr-archive-notice.jsx', import.meta.url), 'utf8');
   assert.match(notice, /msgrPausedView\(st\.paused\)\.noticeSettingsLink && <Link/);
+});
+
+test('출시 알림 카드의 \'옮겨진 메신저 기록 · 폴더 열기\' 한 줄 — 받은 기록(done·partial)이 있을 때만, 진행률·옮기기·다시 받기 단추는 없다', async () => {
+  const { waitlistArchiveLine } = await import('../app/c/[ws]/settings/msgr-archive-view.mjs');
+  assert.deepEqual(waitlistArchiveLine({ signedIn: true, status: 'done', dir: '/x' }), { dir: '/x' });
+  assert.deepEqual(waitlistArchiveLine({ signedIn: true, status: 'partial', dir: '/x' }), { dir: '/x' });
+  for (const s of ['none', 'running', 'interrupted', 'failed']) assert.equal(waitlistArchiveLine({ signedIn: true, status: s, dir: '/x' }), null, s);
+  assert.equal(waitlistArchiveLine({ signedIn: true, status: 'done', dir: null }), null);
+  assert.equal(waitlistArchiveLine(null), null);
+  const page = await readFile(new URL('../app/c/[ws]/settings/page.jsx', import.meta.url), 'utf8');
+  const card = page.slice(page.indexOf('function MsgrWaitlistCard('), page.indexOf('function MsgrCard('));
+  assert.match(card, /waitlistArchiveLine\(archive\)/, '배선(보조)');
+  assert.match(card, /settings\.msgrArchive\.open/);
+  assert.doesNotMatch(card, /settings\.msgrArchive\.(retry|start|running)|MsgrArchiveSection/, '진행률·지금 옮기기·다시 받기 없음');
+  const dict = await readFile(new URL('../app/i18n.jsx', import.meta.url), 'utf8');
+  assert.match(dict, /'settings\.msgr\.archiveLine': \['옮겨진 메신저 기록', 'Moved Messenger history'\],/);
 });

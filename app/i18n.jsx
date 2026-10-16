@@ -947,6 +947,7 @@ const DICT = {
   'settings.msgr.title': ['Argo 메신저 연결', 'Argo Messenger connection'],
   'settings.msgr.downloadHelp': ['Argo 계정으로 로그인하면 내 에이전트가 메신저 개인 공간에 바로 연결됩니다. 팀과 함께 쓰려면 조직을 만들거나 초대 링크로 들어와, 사람과 에이전트가 같은 대화에서 일하고 결재받습니다. 맥·윈도우·iOS·Android에서 쓸 수 있습니다.', 'Sign in with your Argo account and your agents connect to your personal space in the messenger right away. To work with a team, create an organization or join via invite link so people and agents work and get approvals in the same conversation. Available on Mac, Windows, iOS and Android.'],
   'settings.msgr.get': ['메신저 받기', 'Get the messenger'],
+  'settings.msgr.archiveLine': ['옮겨진 메신저 기록', 'Moved Messenger history'], // 메신저 일시 중단 동안 출시 알림 카드 아래 한 줄(waitlistArchiveLine)
   'settings.msgr.titlePaused': ['Argo Messenger', 'Argo Messenger'], // 메신저 일시 중단 동안 카드 제목 한 줄(MsgrWaitlistCard) — 고유명사
   'settings.msgr.getWaitlist': ['메신저 출시 알림 받기', 'Get notified when Messenger returns'], // 메신저 중단 중(msgrGetLink) — 랜딩 #waitlist로
   'settings.msgrArchive.title': ['메신저 기록 옮기기', 'Messenger history'],

@@ -56,7 +56,7 @@ test('설정 — 카드 20개가 정확히 한 탭에만, 순서는 작은 카�
   // 행 묶음: 변동이 큰 카드(연결·커넥터·외부 폴더·동기화·E2EE·가져오기·테마·AI)는 혼자 한 행 — 이웃을 늘리지 않는다
   const rows = src.split('<div className="cardrow">').slice(1).map((chunk) => chunk.slice(0, chunk.indexOf('\n      </div>\n') === -1 ? undefined : chunk.indexOf('\n      </div>\n')));
   // form도 className="card"로 센다. 메신저 일시 중단 삼항(`pv.msgrCard === 'waitlist' ? <MsgrWaitlistCard /> : <MsgrCard …>`)은 한 번에 하나만 그리므로 출시 알림 카드는 세지 않는다(0.1.113)
-  const cardCount = (chunk) => (chunk.replace(/\? <MsgrWaitlistCard \/> :/, '?:').match(/<[A-Z][A-Za-z0-9]+Card\b|<ConnectionCard\b|className="card"/g) ?? []).length;
+  const cardCount = (chunk) => (chunk.replace(/\? <MsgrWaitlistCard[^>]*\/> :/, '?:').match(/<[A-Z][A-Za-z0-9]+Card\b|<ConnectionCard\b|className="card"/g) ?? []).length;
   for (const solo of ['<NotifyChannelsCard', 'kind="telegram"', 'kind="slack"', '<MsgrCard', '<ConnectorsCard', '<WorkRootsCard', '<SyncCard', '<E2eeCard />', '<ImportCard', '<FullAutoCard', '<ThemeCard />', '<AiConnectionCard', '<TerminalCommandCard />']) {
     const row = rows.find((r) => r.includes(solo)); assert.ok(row, `${solo}는 row 안`);
     assert.equal(cardCount(row), 1, `${solo} 행에는 카드 하나`);

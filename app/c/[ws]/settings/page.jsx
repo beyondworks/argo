@@ -16,7 +16,8 @@ import { accountPlan, trialBadgeState } from '../../../../src/entitlement.mjs';
 // Argo Messenger 받기 — 맥·윈도우 설치파일만 걸던 것을 앱 스토어·Play까지 있는 안내 페이지 한 곳으로(CX-12). 오피스 진입 버튼(CX-13)은 오피스가 비공개라 뺐다(유건 2026-10-10).
 import { msgrGetLink, msgrPausedView, msgrCardView, runtimeWaitingKey, runtimeAction, pausedLabelKey, personalCardView, msgrSetupReason, msgrRuntimeBesideSetup, pauseSoon, tabReturnDue } from './msgr-card.mjs';
 import { keepChoices, togglePick, pickReady, hereSlugs, sameAsActive, FREE_AGENT_LIMIT } from './keep-choices.mjs'; // 무료 계정이 유지할 에이전트를 고른다(2026-10-12 제보)
-import MsgrArchiveSection from './msgr-archive-section'; // 메신저 기록 옮기기 진행·완료·다시 받기(0.1.113)
+import MsgrArchiveSection from './msgr-archive-section';
+import { waitlistArchiveLine } from './msgr-archive-view.mjs'; // 출시 알림 카드의 '옮겨진 메신저 기록' 한 줄 // 메신저 기록 옮기기 진행·완료·다시 받기(0.1.113)
 import ArchivedCompaniesCard from '../../../archived-companies'; // 보관한 회사 되돌리기 — 홈에도 같은 카드(UM3)
 import { trashFailKind } from './trash-fail.mjs'; // 보관함 항목이 이미 사라졌는지(2차 M3)
 import { saveWithRevert } from './save-revert.mjs'; // 저장 실패면 되돌린다(F9)
@@ -54,11 +55,12 @@ function Settings({ params }) {
   const [tab, setTab] = useRememberedTab('argo-settings-tab', SETTINGS_TABS, 'general', wantTab);
   // 메신저 중단 스위치 — 연결 탭을 열 때 이관 상태 GET 한 번(서버가 스위치 RPC를 10분 캐시하고 동시 요청은 한 번으로 묶는다). 켜지면 메신저 항목을 화면에서 뺀다(msgrPausedView)
   const [msgrPaused, setMsgrPaused] = useState(null); // null = 아직 모름(카드 자리를 비운다), 응답·실패 뒤 true/false
-  useEffect(() => { setMsgrPaused(null); }, [ws]);
+  const [msgrArchive, setMsgrArchive] = useState(null); // 같은 응답 — 출시 알림 카드의 '옮겨진 메신저 기록' 한 줄(waitlistArchiveLine)
+  useEffect(() => { setMsgrPaused(null); setMsgrArchive(null); }, [ws]);
   useEffect(() => {
     if (tab !== 'connections' || msgrPaused !== null) return; // 한 번 알면 탭을 오가도 다시 묻지 않는다
     let live = true;
-    api(`/api/companies/${ws}/msgr-archive`).then((d) => { if (live) setMsgrPaused(d?.paused === true); }).catch(() => { if (live) setMsgrPaused(false); }); // 실패 = 모름 → main과 같은 카드
+    api(`/api/companies/${ws}/msgr-archive`).then((d) => { if (live) { setMsgrPaused(d?.paused === true); setMsgrArchive(d ?? null); } }).catch(() => { if (live) setMsgrPaused(false); }); // 실패 = 모름 → main과 같은 카드
     return () => { live = false; };
   }, [ws, tab, msgrPaused]);
   const pv = msgrPausedView(msgrPaused, { known: msgrPaused !== null });
@@ -205,7 +207,7 @@ function Settings({ params }) {
       {tab === 'connections' && (
       <div className="cardcols" data-tab-pane="connections">
       <div className="cardrow"><NotifyChannelsCard ws={ws} showMsgr={pv.showMsgrNotify} /></div>
-      <div className="cardrow">{pv.msgrCard === 'pending' ? null : pv.msgrCard === 'waitlist' ? <MsgrWaitlistCard /> : <MsgrCard ws={ws} agents={data?.agents ?? []} />}</div>
+      <div className="cardrow">{pv.msgrCard === 'pending' ? null : pv.msgrCard === 'waitlist' ? <MsgrWaitlistCard archive={msgrArchive} /> : <MsgrCard ws={ws} agents={data?.agents ?? []} />}</div>
       <div className="cardrow">
       <ConnectionCard ws={ws} kind="telegram" title={t('activity.telegram')}
         help={t('settings.conn.tgHelp')}
@@ -909,13 +911,21 @@ function NotifyChannelsCard({ ws, showMsgr = true }) {
 }
 
 /** 메신저 일시 중단 동안 'Argo 메신저 연결' 카드 자리 — 제목 한 줄과 '메신저 출시 알림 받기' 단추 하나(설명·칩·응답 상태·조직 선택·이관 영역 없음, 유건 2026-10-16). */
-function MsgrWaitlistCard() {
+function MsgrWaitlistCard({ archive = null }) {
   const { t } = useLang();
   const link = msgrGetLink(true);
+  const line = waitlistArchiveLine(archive); // 옮겨진 메신저 기록 한 줄 — 보관 폴더를 다시 찾을 곳(검수 1 지적 1, 유건 승인 2026-10-16)
+  const openFolder = () => import('@tauri-apps/plugin-opener').then((m) => m.revealItemInDir(`${line.dir}/README.md`)).catch(() => {});
   return (
     <div className="card msgr-waitlist" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 12 }}>
       <span className="card-title">{t('settings.msgr.titlePaused')}</span>
       <div><a className="btn sm" href={link.href} target="_blank" rel="noopener noreferrer">{t(link.labelKey)}</a></div>
+      {line && <div className="msgr-archive-line" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 12, color: 'var(--fg-2)' }}>
+        <span>{t('settings.msgr.archiveLine')}</span>
+        {isTauriApp()
+          ? <button type="button" className="btn sm" onClick={openFolder}>{t('settings.msgrArchive.open')}</button>
+          : <span className="mono" style={{ overflowWrap: 'anywhere', color: 'var(--fg-1)' }}>{line.dir}</span>}{/* 브라우저는 폴더를 열 수 없어 경로만 */}
+      </div>}
     </div>
   );
 }

@@ -35,3 +35,10 @@ export function showArchiveNotice(st, seen) {
   return !!key && key !== seen;
 }
 export const ARCHIVE_NOTICE_SEEN = 'argo-msgr-archive-notice';
+
+/** 메신저 일시 중단 동안 출시 알림 카드 아래 한 줄('옮겨진 메신저 기록 · 폴더 열기') — 받은 기록(done·partial)이 있을 때만. 진행률·지금 옮기기·다시 받기는 두지 않는다
+    (partial은 앱 시작 때 자동으로 다시 받는다). st = 이관 GET 응답. → { dir } | null */
+export function waitlistArchiveLine(st) {
+  if (!st?.signedIn || !st.dir || !(st.status === 'done' || st.status === 'partial')) return null;
+  return { dir: st.dir };
+}
