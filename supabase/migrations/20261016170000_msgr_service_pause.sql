@@ -22,7 +22,8 @@
 --   본문 복사가 운영 함수를 바꾼다. 대신 이름을 _<이름>_core로 바꾸고(본문·소유자·security definer 그대로), 같은 이름·인자·기본값의 얇은 감싸개를 둔다.
 --   core는 사용자 역할에서 실행 권한을 거둔다(감싸개를 건너뛰지 못하게). 감싸개는 core를 부를 때 중단이 아니면 결과를 그대로 넘긴다.
 --   주의: 이후 마이그레이션이 이 다섯 함수를 create or replace로 본문째 다시 정의하면 감싸개가 사라진다 — 그때는 core를 고치거나 같은 판정을 넣는다.
--- 되돌리기(스위치 말고 이 마이그레이션 자체): 감싸개 drop → core를 원래 이름으로 rename → 원래 grant, 트리거·_msgr_paused·msgr_service_pause·msgr_pause_announce drop.
+-- 되돌리기(스위치 말고 이 마이그레이션 자체): scripts/rollback/20261016170000_msgr_service_pause.down.sql(한 트랜잭션 — 감싸개 drop → core 원래 이름 → 원래 권한 →
+--   트리거·판정·공지 함수 drop → 디스패치 base 본문). 시험 test/msgr-service-pause-rollback-pg.test.mjs가 '적용 → 되돌림 = 적용 전'을 잠근다.
 set local lock_timeout = '5s';
 
 -- 판정 한 곳. msgr_settings는 RLS 켬·정책 없음(비밀값 행이 같은 표에 있다)이라 security definer로 정해진 키 하나만 본다.
@@ -58,7 +59,7 @@ begin
 end $$;
 revoke all on function public._msgr_crew_inbox_core(text, uuid, bigint, integer) from public, anon, authenticated;
 revoke all on function public._msgr_crew_inbox_many_core(text, jsonb, integer) from public, anon, authenticated;
-revoke all on function public._msgr_bot_updates_core(text, bigint, integer) from public, anon, authenticated, service_role;
+revoke all on function public._msgr_bot_updates_core(text, bigint, integer) from public, anon, authenticated; -- service_role은 건드리지 않는다(되돌림이 원래 권한을 그대로 복원하게 — scripts/rollback)
 revoke all on function public._msgr_device_beat_core(text, text, uuid[], text) from public, anon, authenticated;
 
 create or replace function public.msgr_crew_inbox(p_ws text, p_crew uuid, p_after bigint default 0, p_limit integer default 100) returns setof public.msgr_messages
