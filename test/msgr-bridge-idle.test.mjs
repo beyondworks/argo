@@ -517,9 +517,9 @@ test('⑲ 권한 거절이 아닌 실패(연결 끊김·시간 초과)와 u: 토
     try {
       h.join(`org:${ORG}`); h.join(`org:${ORG2}`); h.join(`u:${UID}`); await settle(); await advance(30_000);
       const ch = h.chans.get(topic); ch.state = 'errored'; ch.cb?.('CHANNEL_ERROR', err); await settle();
-      const a0 = h.at('rpc:msgr_automation_dispatch_due').length;
+      const a0 = drains(h); // 15초 전체 조회 = drain(자동화 호출은 로그 다이어트 1차부터 회사별 60초 제한이라 조회 수의 대리 지표가 아니다)
       await advance(60_000);
-      assert.ok(h.at('rpc:msgr_automation_dispatch_due').length - a0 >= 4, `${topic} ${err.message}: 1분 동안 15초마다 전체 조회`);
+      assert.ok(drains(h) - a0 >= 4, `${topic} ${err.message}: 1분 동안 15초마다 전체 조회`);
     } finally { h.stop(); mock.timers.reset(); }
   }
   warn.mock.restore();
@@ -532,10 +532,10 @@ test('⑲ 토큰 회전(새 클라이언트)이면 옛 클라이언트의 거절
     joinAll(h); deny(h, `org:${ORG2}`); await settle(); await advance(30_000);
     const old = h.chans.get(`org:${ORG2}`);
     const c2 = { ...h.client, channel: h.client.channel, realtime: h.client.realtime }; h.setClient(c2);
-    const a0 = h.at('rpc:msgr_automation_dispatch_due').length;
+    const a0 = drains(h);
     await advance(30_000);
     assert.notEqual(h.chans.get(`org:${ORG2}`), old, '새 클라이언트로 다시 구독');
-    assert.ok(h.at('rpc:msgr_automation_dispatch_due').length - a0 >= 2, '새 채널이 판정되기 전에는 15초 전체 조회');
+    assert.ok(drains(h) - a0 >= 2, '새 채널이 판정되기 전에는 15초 전체 조회');
   } finally { warn.mock.restore(); h.stop(); }
 });
 
@@ -556,4 +556,35 @@ test('계획(순수): 거절된 조직 토픽이 있으면(degraded) 쉬지 않�
   assert.equal(M.msgrTickPlan({ ...base, degraded: true }), 'wake');
   assert.equal(M.msgrTickPlan({ ...base, degraded: true, lastHousekeeping: 1_000_000 - M.IDLE_POLL_MS }), 'poll');
   assert.equal(M.msgrTickPlan({ ...base, degraded: true, healthy: false }), 'poll');
+});
+
+// ㉑ 로그 다이어트 1차(2026-10-16) — 15초 전체 조회(poll) 모드도 접속 심박은 BEAT_EVERY_MS(40초) 기한마다만. 서버(msgr_device_beat)가 35초 미만 요청은 기록하지 않으니
+// 15초마다 보내던 요청 3개 중 2개는 로그만 쌓았다. 기록 간격(약 45초)·부재중 판정(90초)·54.6초 한도는 그대로다.
+test('㉑ 구독이 안 붙은 15초 조회 모드의 심박은 40초 기한마다 — 5분에 7회 안팎(종전 20회), 최대 간격 54.6초 안, 15초 조회는 그대로', async () => {
+  const h = await start();
+  try {
+    const d0 = drains(h);
+    await advance(300_000); // joining 그대로 = poll 모드
+    assert.equal(drains(h) - d0, 20, '받은 글 조회는 15초마다(종전 그대로)');
+    const ts = h.at('heartbeat').map((c) => c.t);
+    assert.ok(ts.length >= 6 && ts.length <= 9, `5분 심박 ${ts.length}회(15초마다면 21회)`);
+    const gaps = ts.slice(1).map((t, i) => t - ts[i]);
+    assert.ok(Math.max(...gaps) <= 54_600, `심박 최대 간격 ${Math.max(...gaps)}ms`);
+    assert.ok(Math.min(...gaps) >= 40_000, `심박 최소 간격 ${Math.min(...gaps)}ms(서버 35초 기한보다 짧으면 기록이 빠진다)`);
+  } finally { h.stop(); }
+});
+
+test('㉑ 인접 핀: 심박이 실패하면 시각을 옮기지 않아 다음 15초 틱에 다시 보낸다(폭주하지 않고, 회복하면 곧 나간다)', async () => {
+  let fail = false;
+  const h = await start({ extra: { heartbeat: async () => { if (fail) throw new Error('boom'); return { device: true }; } } });
+  const err = mock.method(console, 'error', () => {});
+  try {
+    await advance(120_000);
+    const b0 = h.at('heartbeat').length;
+    fail = true; await advance(45_000);
+    const failed = h.at('heartbeat').length - b0;
+    assert.ok(failed >= 2, `실패한 심박은 다음 틱에 다시 시도한다(${failed}회)`);
+    fail = false; const b1 = h.at('heartbeat').length; await advance(15_000);
+    assert.ok(h.at('heartbeat').length > b1, '회복하면 다음 틱에 보낸다');
+  } finally { err.mock.restore(); h.stop(); }
 });

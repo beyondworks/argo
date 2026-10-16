@@ -27,6 +27,7 @@ import { writeJsonAtomic, writeFileAtomic, readJsonLenient } from './jsonstore.m
 import { withLock, withDirLock, withFileLock } from './mutex.mjs';
 import { cryptoOn, isSecretRel, isSecretNameRel, isEncRel, encVaultOn, sealSecret, sealSecretV3, openSecret, openSecretCompat, isEnvelopeGeneration, CRED_WITHDRAWN, isCredWithdrawn } from './secretbox.mjs';
 import { dek, tryClaimDek } from './e2ee.mjs';
+import { APP_VERSION } from './app-version.mjs';
 import { loadSyncCreds, credsEpoch } from './synccreds.mjs';
 import { loadDeviceSession, getFreshDeviceSession } from './devicesession.mjs';
 import { accountKeyError, ensureAccountKey } from './accountkey.mjs';
@@ -242,6 +243,9 @@ export const EXCLUDE = (rel) => { // (export: 회귀 테스트용)
   return isEncRel(rel) && !cryptoOn();
 };
 
+// 진단 헤더 x-argo-app-version(2026-10-16 로그 다이어트) — Supabase 로그에서 구버전·신버전을 가른다. 이 클라이언트는 Node(서버 사이드)라 CORS 사전 요청이 없고,
+// PostgREST·Storage·엣지 함수는 모르는 헤더를 무시한다.
+const APP_HEADERS = APP_VERSION ? { 'x-argo-app-version': APP_VERSION } : {};
 const CLIENT_OPTS = {
   auth: { persistSession: false },
   // 타임아웃 필수 — 기본 fetch는 무한 대기라 요청 하나가 걸리면 동기화 전체가 영원히 멈춘다(실측)
@@ -249,6 +253,11 @@ const CLIENT_OPTS = {
   global: { fetch: (url, opts) => fetch(url, { ...opts, signal: opts?.signal ? AbortSignal.any([opts.signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000) }) },
 };
 let sb = null, sbKey = '';
+/** 세션 모드 클라이언트 옵션(액세스 토큰이 있으면 인증 헤더 포함). export: 시험용 */
+export const syncClientOptions = (accessToken) => ({
+  ...CLIENT_OPTS,
+  global: { ...CLIENT_OPTS.global, headers: { ...APP_HEADERS, ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) } },
+});
 
 /** 호스티드 모드인가(= 세션 동기화, 목적지가 Argo 운영 클라우드) — 이 모드에서 자격 증명 3종은
     **절대** 클라우드로 가지 않는다(유건 지시 2026-08-29: "열쇠를 볼 수 있는 건 사용자 본인뿐" —
@@ -282,17 +291,14 @@ async function ensureClientOnce() {
   const svc = loadSyncCreds();
   if (svc && serviceCredsAllowed()) {
     const k = `svc:${credsEpoch()}`;
-    if (sbKey !== k) { sb = createClient(svc.url, svc.key, CLIENT_OPTS); sbKey = k; resetDiscoverClock(); }
+    if (sbKey !== k) { sb = createClient(svc.url, svc.key, syncClientOptions()); sbKey = k; resetDiscoverClock(); }
     return true;
   }
   const sess = await getFreshDeviceSession();
   if (!sess) return false;
   const k = `sess:${sess.access_token.slice(-24)}`;
   if (sbKey !== k) {
-    sb = createClient(sess.url, sess.anonKey, {
-      ...CLIENT_OPTS,
-      global: { ...CLIENT_OPTS.global, headers: { Authorization: `Bearer ${sess.access_token}` } },
-    });
+    sb = createClient(sess.url, sess.anonKey, syncClientOptions(sess.access_token));
     sbKey = k;
     resetDiscoverClock();
   }
