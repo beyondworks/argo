@@ -362,3 +362,99 @@ test('사전 — 이관 문구는 ko·en 둘 다 있다', async (t) => {
     .concat(['msgrArchive.notice', 'msgrArchive.noticePartial', 'msgrArchive.noticeSettings']);
   for (const k of keys) assert.match(src, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', ["'].+["']\\],$`, 'm'), k);
 });
+
+/* ─── 분리 검수(2026-10-16) 반영 ─── */
+test('높음-1 토큰 만료 — 받는 도중 401이면 새 토큰으로 한 번 다시 묻고, 그래도면 failed(빠진 채 done으로 굳지 않는다)', async (t) => {
+  let expired = false; let n = 0;
+  const fake = await fakeMsgr(sampleDb(), { fault: (h) => { if (++n === 7) expired = true; return expired && h.auth === 'old' ? 401 : null; } }); t.after(() => fake.close());
+  const { createClient } = await import('@supabase/supabase-js');
+  const mk = (tok) => { const c = createClient(fake.url, 'test-anon-key', { auth: { persistSession: false, autoRefreshToken: false }, global: { headers: { Authorization: `Bearer ${tok}` } } }); return c; };
+  // 새 토큰을 못 받는 경우 → failed
+  const dir1 = await tmpDir('jwt-none');
+  const st1 = await A.runArchive({ client: mk('old'), getClient: async () => mk('old'), uid: ME, dir: dir1, sleep: noSleep });
+  assert.equal(st1.status, 'failed'); assert.equal(st1.error, 'msgr_archive_auth');
+  // 다시 실행(새 토큰) → 이어서 끝까지
+  const st1b = await A.runArchive({ client: mk('new'), uid: ME, dir: dir1, sleep: noSleep });
+  assert.equal(st1b.status, 'done'); assert.equal(st1b.totals.messages, 6, '빠진 메시지 없이 6개');
+  // 도중에 새 토큰을 받는 경우 → 한 번에 끝
+  expired = false; n = 0;
+  const dir2 = await tmpDir('jwt-refresh');
+  const st2 = await A.runArchive({ client: mk('old'), getClient: async () => mk('new'), uid: ME, dir: dir2, sleep: noSleep });
+  assert.equal(st2.status, 'done'); assert.equal(st2.totals.messages, 6);
+});
+
+test('중간-2 이름이 같은 첨부 둘 — 순번을 붙여 둘 다 남긴다', async (t) => {
+  const db = sampleDb();
+  const room = db.msgr_channels[2].id;
+  db.msgr_attachments = [
+    { message_id: 4, storage_path: `p/${room}/4/a/image.png`, name: 'image.png', mime: 'image/png', bytes: 5 },
+    { message_id: 4, storage_path: `p/${room}/4/b/image.png`, name: 'image.png', mime: 'image/png', bytes: 6 },
+  ];
+  db.files = { [`p/${room}/4/a/image.png`]: Buffer.from('FIRST'), [`p/${room}/4/b/image.png`]: Buffer.from('SECOND') };
+  const fake = await fakeMsgr(db); t.after(() => fake.close());
+  const dir = await tmpDir('same-name');
+  const st = await A.runArchive({ client: fake.client, uid: ME, dir, sleep: noSleep });
+  assert.equal(st.status, 'done');
+  const rd = join(dir, 'rooms', (await roomDirs(dir)).find((r) => r.startsWith('주말')), 'attachments');
+  assert.deepEqual((await readdir(rd)).sort(), ['4-2-image.png', '4-image.png']);
+  assert.equal(await readFile(join(rd, '4-image.png'), 'utf8'), 'FIRST');
+  assert.equal(await readFile(join(rd, '4-2-image.png'), 'utf8'), 'SECOND');
+});
+
+test('중간-3 보관한 회사 — 등록부가 없는 회사를 가리키면 빈 회사 폴더를 만들지 않고 남은 내 회사로 다시 고른다', async (t) => {
+  A._resetPauseCache();
+  const uid = '44444444-4444-4444-8444-444444444444';
+  await company('gone-co', { ownerId: uid });
+  await company('kept-co', { ownerId: uid, created: '2026-09-05' });
+  const fake = await fakeMsgr(sampleDb()); t.after(() => fake.close());
+  const c = { uid, client: fake.client };
+  const run = (args) => A.runArchive({ ...args, sleep: noSleep });
+  await R.maybeAutoArchive({ session: async () => c, companies: async () => [{ id: 'gone-co', ownerId: uid, created: '2026-09-01' }], run });
+  assert.ok(existsSync(join(paths('gone-co').root, '.msgr-archive', 'README.md')));
+  // 회사 보관 — 폴더째 옮겨진다(archiveCompany와 같은 결과)
+  const { rm } = await import('node:fs/promises');
+  await rm(paths('gone-co').root, { recursive: true, force: true });
+  A._resetPauseCache();
+  const r = await R.maybeAutoArchive({ session: async () => c, companies: async () => [{ id: 'kept-co', ownerId: uid, created: '2026-09-05' }], run });
+  assert.equal(existsSync(paths('gone-co').root), false, '보관한 회사 자리에 빈 폴더가 생기지 않는다(보관 되돌리기가 막히지 않는다)');
+  assert.equal(r.ws, 'kept-co');
+  // 남은 회사도 없으면 받지 않고 폴더도 만들지 않는다
+  assert.equal(await R.archiveTarget('55555555-5555-4555-8555-555555555555', { companies: async () => [{ id: 'nope-co', ownerId: '55555555-5555-4555-8555-555555555555' }] }), null);
+  assert.equal(existsSync(paths('nope-co').root), false);
+  await assert.rejects(A.runArchive({ client: fake.client, uid, dir: join(paths('nope-co').root, '.msgr-archive') }), /msgr_archive_no_company/);
+  assert.equal(existsSync(paths('nope-co').root), false);
+});
+
+test('낮음-4 동시 시작 — 자동 실행과 설정 POST가 겹쳐도 실행은 하나', async (t) => {
+  const uid = '66666666-6666-4666-8666-666666666666';
+  await company('race-co', { ownerId: uid });
+  let calls = 0; let release;
+  const run = () => { calls++; return new Promise((r) => { release = r; }); };
+  const c = { uid, client: null };
+  const companies = async () => [{ id: 'race-co', ownerId: uid }];
+  const [a, b] = await Promise.all([R.startArchive({ c, companies, run }), R.startArchive({ c, ws: 'race-co', companies, run })]);
+  assert.equal(calls, 1, '받기 실행 1번');
+  assert.equal([a.started, b.started].filter(Boolean).length, 1);
+  assert.equal([a.running, b.running].filter(Boolean).length, 1);
+  release(null); await a.promise ?? b.promise;
+});
+
+test('낮음-5 반쯤 쓴 줄 — 이어 받을 때 줄바꿈으로 시작해 다음 메시지가 깨지지 않는다', async (t) => {
+  const db = sampleDb();
+  const big = 'c0000009-0000-4000-8000-000000000009';
+  db.msgr_channels = [{ id: big, org_id: ORG, kind: 'public', name: '큰방', created_at: '2026-09-01T00:00:00Z', archived_at: null }];
+  db.msgr_messages = Array.from({ length: 3 }, (_, i) => ({ id: i + 1, channel_id: big, org_id: ORG, author_kind: 'user', author_user_id: ME, kind: 'text', body: `m${i + 1}`, created_at: '2026-09-01T00:00:00Z' }));
+  db.msgr_reactions = []; db.msgr_attachments = []; db.msgr_org_docs = [];
+  const fake = await fakeMsgr(db); t.after(() => fake.close());
+  const dir = await tmpDir('half-line');
+  const roomDir = join(dir, 'rooms', `큰방-${big.slice(0, 8)}`);
+  await mkdir(roomDir, { recursive: true });
+  await writeFile(join(roomDir, 'messages.jsonl'), `${JSON.stringify({ id: 1, channel_id: big, author_kind: 'user', author_user_id: ME, body: 'm1', created_at: '2026-09-01T00:00:00Z' })}\n{"id":2,"chan`);
+  const st = await A.runArchive({ client: fake.client, uid: ME, dir, sleep: noSleep });
+  assert.equal(st.status, 'done');
+  const ids = await jsonlIds(join(roomDir, 'messages.jsonl')).catch(() => null);
+  assert.equal(ids, null, '반쪽 줄은 그대로 남아 있다(지우지 않는다)');
+  const ok = (await readFile(join(roomDir, 'messages.jsonl'), 'utf8')).split('\n').filter(Boolean).flatMap((l) => { try { return [JSON.parse(l).id]; } catch { return []; } });
+  assert.deepEqual(ok, [1, 2, 3], '반쪽 줄 뒤의 메시지 2·3이 온전한 줄로 들어간다');
+  assert.match(await readFile(join(roomDir, 'messages.md'), 'utf8'), /m2[\s\S]*m3/);
+});

@@ -2,6 +2,7 @@
 // 핵심 받기는 src/msgr-archive.mjs. 여기서는 ① 어느 회사·폴더에 둘지 ② 프로세스 안에서 한 번에 하나만 돌기 ③ 자동 실행 조건만 다룬다.
 // 기기 등록부 <WS_ROOT>/.msgr-archive.json = { [uid]: { ws, dir } } — 회사가 여럿이어도 한 계정의 기록은 한 회사에 한 벌만 받는다(다른 회사 설정 화면은 그 위치를 보인다).
 import { join } from 'node:path';
+import { existsSync } from 'node:fs';
 import { WS_ROOT, paths } from './workspace.mjs';
 import { readJson, writeJsonAtomic } from './jsonstore.mjs';
 import { runArchive, readArchiveState, archiveDirFor, pickCompany, pauseState } from './msgr-archive.mjs';
@@ -17,35 +18,47 @@ async function registry() { try { return await readJson(REGISTRY(), {}); } catch
 /** 이 계정의 기록이 있는(또는 둘) 회사·폴더. ws를 주면 등록부에 없을 때 그 회사로 정한다(설정 화면에서 시작). */
 export async function archiveTarget(uid, { ws = null, companies = defaultCompanies } = {}) {
   const reg = await registry();
-  if (reg[uid]?.ws) return { ws: reg[uid].ws, dir: join(paths(reg[uid].ws).root, reg[uid].dir) };
+  // 등록부의 회사가 아직 있을 때만 — 보관(archiveCompany)·삭제한 회사를 가리키면 새로 고른다(빈 회사 폴더를 만들면 보관 되돌리기가 막힌다, 분리 검수 중간-3)
+  const known = reg[uid]?.ws && existsSync(paths(reg[uid].ws).company) ? reg[uid] : null;
+  if (known) return { ws: known.ws, dir: join(paths(known.ws).root, known.dir) };
   const pick = ws ?? pickCompany(await companies(), uid);
-  if (!pick) return null;
+  if (!pick || !existsSync(paths(pick).company)) return null;
   const dir = await archiveDirFor(paths(pick).root, uid);
   return { ws: pick, dir };
 }
 
 async function remember(uid, target) {
   const reg = await registry();
-  if (reg[uid]?.ws) return;
+  if (reg[uid]?.ws && existsSync(paths(reg[uid].ws).company)) return;
   reg[uid] = { ws: target.ws, dir: target.dir.slice(paths(target.ws).root.length + 1) };
   await writeJsonAtomic(REGISTRY(), reg);
 }
 
-/** 받기 시작(이미 도는 중이면 그 실행을 돌려준다). 끝난 계정은 요청 없이 끝난 상태를 돌려준다. */
-export async function startArchive({ c, ws = null, companies = defaultCompanies, run = runArchive } = {}) {
+/** 받기 시작(이미 도는 중이면 그 실행을 돌려준다). 끝난 계정은 요청 없이 끝난 상태를 돌려준다.
+    자리 잡기는 await 전에 한다 — 앱 시작 자동 실행과 설정 POST가 겹쳐도 실행은 하나(같은 폴더에 두 실행이 덧붙이지 않게, 분리 검수 낮음-4).
+    session = 받는 도중 토큰이 바뀌면 새 클라이언트를 줄 함수(기기 세션 회전 — 분리 검수 높음-1). */
+export async function startArchive({ c, ws = null, companies = defaultCompanies, run = runArchive, session = defaultSession } = {}) {
   if (RUN.promise) return { started: false, running: true, ws: RUN.ws };
-  const target = await archiveTarget(c.uid, { ws, companies });
-  if (!target) return { started: false, reason: 'noCompany' };
-  if (ws && target.ws !== ws) { // 다른 회사(먼저 정한 곳)에 받는다 — 한 계정 한 벌
-    const st = await readArchiveState(target.dir);
-    if (st?.status === 'done') return { started: false, ws: target.ws, state: st };
-  }
-  await remember(c.uid, target);
-  RUN.ws = target.ws; RUN.uid = c.uid;
-  RUN.promise = run({ client: c.client, uid: c.uid, dir: target.dir })
-    .catch((e) => { console.error('[argo] 메신저 기록 옮기기 실패:', e?.message ?? e); return null; })
+  let started;
+  const startInfo = new Promise((r) => { started = r; });
+  RUN.uid = c.uid;
+  RUN.promise = (async () => {
+    const target = await archiveTarget(c.uid, { ws, companies });
+    if (!target) { started({ started: false, reason: 'noCompany' }); return null; }
+    if (ws && target.ws !== ws) { // 다른 회사(먼저 정한 곳)에 받는다 — 한 계정 한 벌
+      const st = await readArchiveState(target.dir);
+      if (st?.status === 'done') { started({ started: false, ws: target.ws, state: st }); return st; }
+    }
+    await remember(c.uid, target);
+    RUN.ws = target.ws;
+    const p = run({ client: c.client, getClient: async () => (await session().catch(() => null))?.client ?? null, uid: c.uid, dir: target.dir });
+    started({ started: true, ws: target.ws });
+    return await p;
+  })()
+    .catch((e) => { console.error('[argo] 메신저 기록 옮기기 실패:', e?.message ?? e); started({ started: false, reason: 'error' }); return null; })
     .finally(() => { RUN.promise = null; RUN.ws = null; RUN.uid = null; });
-  return { started: true, ws: target.ws, promise: RUN.promise };
+  const info = await startInfo;
+  return info.started ? { ...info, promise: RUN.promise } : info;
 }
 
 /** 자동 실행 조건(앱 시작 때 한 번): 로그인함 + 중단 스위치 켜짐 + 이 계정 기록이 없거나 중간에 끊김(running·failed). 끝남·일부 실패(partial)는 다시 돌지 않는다(재시도는 설정 단추). */
@@ -58,7 +71,7 @@ export async function maybeAutoArchive({ session = defaultSession, companies = d
   const pause = await pauseState(c.client);
   if (!pause.paused) return { ran: false, reason: pause.error ? 'pauseUnknown' : 'notPaused' };
   if (!target) return { ran: false, reason: 'noCompany' };
-  const r = await startArchive({ c, companies, run });
+  const r = await startArchive({ c, companies, run, session });
   if (r.promise) await r.promise;
   return { ran: !!r.started, ws: r.ws };
 }

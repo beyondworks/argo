@@ -10,7 +10,8 @@
 // 이어 받기: 방마다 messages.jsonl 마지막 id가 커서다(상태 파일과 큰 쪽) — 중단·재시작 뒤 그 뒤부터 받고, 같은 메시지를 두 번 쓰지 않는다. 첨부는 같은 크기 파일이 있으면 다시 받지 않는다.
 // 요청 상한: 페이지 1000행·id 묶음 200개·순차 요청. 429·5xx·네트워크 오류는 1·2·4·8초 백오프 4번 뒤 실패(상태 'failed' — 재시도 단추가 이어 받는다). 4xx(권한)는 그 항목만 건너뛴다.
 import { mkdir, readFile, writeFile, appendFile, stat, readdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { existsSync } from 'node:fs';
 import { writeJsonAtomic } from './jsonstore.mjs';
 
 export const PAUSE_RPC = 'msgr_service_pause';
@@ -68,29 +69,45 @@ async function readJsonSafe(file) { try { return JSON.parse(await readFile(file,
 const sleepReal = (ms) => new Promise((r) => setTimeout(r, ms));
 const retryable = (status, error) => status === 0 || status === 429 || status >= 500 || (!status && !!error);
 
-/** 요청 하나를 백오프로 감싼다. 반환 { data, error } — 재시도할 수 없는 오류(권한 등)는 error로 돌려준다. 재시도를 다 쓰면 throw(실행 전체 실패 — 다음 실행이 이어 받는다). */
-async function call(ctx, fn) {
+/** 인증 오류(토큰 만료·무효) — 받는 도중 기기 세션 토큰이 바뀌면 서버가 401(PostgREST)·400 'jwt expired'(Storage)를 준다. 이것을 '권한 없음'으로 읽고
+    건너뛰면 메시지가 빠진 채 끝남으로 굳는다(#분리 검수 높음-1). 새 토큰으로 한 번 다시 묻고, 그래도면 실행 전체를 실패로 남긴다(다음 실행이 이어 받는다). */
+const isAuthError = (status, error) => status === 401 || /jwt|JWT|PGRST30[1-3]|invalid.?token|token.*expired|Unauthorized/i.test(`${error?.code ?? ''} ${error?.message ?? ''} ${error?.error ?? ''}`);
+const fail = (code, error) => Object.assign(new Error(`${code}: ${error?.message ?? error?.code ?? 'error'}`), { code });
+
+/** 요청 하나를 백오프로 감싼다. fn(c) — c = 지금 쓸 클라이언트(토큰을 새로 받으면 바뀐다). 반환 { data, error }.
+    soft = 재시도할 수 없는 오류(권한 등)를 돌려준다(호출부가 그 항목만 건너뛴다). soft가 아니면 그런 오류도 실행 전체 실패 — 빈 목록으로 읽고 '끝남'으로 굳히지 않는다.
+    재시도할 수 있는 오류(429·5xx·네트워크)는 백오프 뒤 다 쓰면 실패. 인증 오류는 새 토큰으로 한 번 더, 그래도면 실패. */
+async function call(ctx, fn, { soft = false } = {}) {
+  let refreshed = false;
   for (let i = 0; ; i++) {
     let r;
     // supabase-js 내장 재시도(503·520 GET 3회)는 끈다 — 재시도·상한은 여기 한 곳(겹치면 요청이 4배)
-    try { const b = fn(); if (typeof b?.retry === 'function') b.retry(false); r = await b; } catch (e) { r = { data: null, error: { message: e?.message ?? String(e) }, status: 0 }; }
+    try { const b = fn(ctx.c); if (typeof b?.retry === 'function') b.retry(false); r = await b; } catch (e) { r = { data: null, error: { message: e?.message ?? String(e) }, status: 0 }; }
     ctx.stats.requests++;
     if (!r.error) { ctx.stats.bytes += approxBytes(r.data); return r; }
-    if (!retryable(r.status ?? 0, r.error) || i >= BACKOFF_MS.length) {
-      if (retryable(r.status ?? 0, r.error)) { const e = new Error(`msgr_archive_upstream: ${r.error.message ?? r.error.code ?? 'error'}`); e.code = 'msgr_archive_upstream'; throw e; }
-      return r;
+    const status = r.status ?? 0;
+    if (isAuthError(status, r.error)) {
+      if (!refreshed && ctx.refresh) { refreshed = true; ctx.c = (await ctx.refresh().catch(() => null)) ?? ctx.c; i--; continue; }
+      throw fail('msgr_archive_auth', r.error);
     }
-    await ctx.sleep(BACKOFF_MS[i]);
+    if (retryable(status, r.error)) {
+      if (i >= BACKOFF_MS.length) throw fail('msgr_archive_upstream', r.error);
+      await ctx.sleep(BACKOFF_MS[i]);
+      continue;
+    }
+    if (soft) return r;
+    throw fail('msgr_archive_upstream', r.error);
   }
 }
 const approxBytes = (d) => { if (d == null) return 0; if (Buffer.isBuffer(d)) return d.length; if (typeof d?.size === 'number') return d.size; try { return Buffer.byteLength(JSON.stringify(d)); } catch { return 0; } };
 
 /** 키셋 페이지 읽기 — 빈 페이지에서 멈춘다(서버 최대 행 수가 페이지를 조용히 자를 수 있어 짧은 페이지로 끝을 판정하지 않는다). key = 정렬·커서 열. */
-async function pages(ctx, build, key, after = null) {
+async function pages(ctx, build, key, { soft = false } = {}) {
+  const after = null;
   const out = [];
   for (let cursor = after; ;) {
     const c = cursor; // 시도마다 빌더를 새로 만든다(같은 빌더를 다시 쓰면 order가 겹쳐 붙는다)
-    const { data, error } = await call(ctx, () => { let q = build(); if (c != null) q = q.gt(key, c); return q.order(key, { ascending: true }).limit(PAGE); });
+    const { data, error } = await call(ctx, (cl) => { let q = build(cl); if (c != null) q = q.gt(key, c); return q.order(key, { ascending: true }).limit(PAGE); }, { soft });
     if (error) return { rows: out, error };
     if (!data?.length) return { rows: out, error: null };
     out.push(...data);
@@ -138,11 +155,13 @@ export function renderRoomMarkdown(room, lines) {
   return out.join('\n');
 }
 
-async function lastJsonlId(file) {
-  let raw; try { raw = await readFile(file, 'utf8'); } catch { return null; }
+/** jsonl 꼬리 — { id: 마지막 온전한 줄의 id, open: 파일이 줄바꿈 없이 끝남(반쯤 쓴 줄) }. 열린 채면 다음 덧붙이기를 줄바꿈으로 시작한다(반쪽 줄에 붙어 첫 줄이 깨지지 않게, 검수 낮음-5). */
+async function jsonlTail(file) {
+  let raw; try { raw = await readFile(file, 'utf8'); } catch { return { id: null, open: false }; }
+  const open = raw.length > 0 && !raw.endsWith('\n');
   const rows = raw.split('\n').filter(Boolean);
-  for (let i = rows.length - 1; i >= 0; i--) { try { return JSON.parse(rows[i]).id ?? null; } catch { /* 반쯤 쓴 줄 — 앞 줄을 본다 */ } }
-  return null;
+  for (let i = rows.length - 1; i >= 0; i--) { try { return { id: JSON.parse(rows[i]).id ?? null, open }; } catch { /* 반쯤 쓴 줄 — 앞 줄을 본다 */ } }
+  return { id: null, open };
 }
 async function readJsonl(file) {
   let raw; try { raw = await readFile(file, 'utf8'); } catch { return []; }
@@ -157,11 +176,13 @@ async function sameSizeExists(file, bytes) { try { const s = await stat(file); r
  * client = 사용자 세션 supabase-js · uid = 그 계정 · onProgress(state) = 페이지마다 · sleep = 백오프(시험이 바꾼다).
  * 반환 상태 { status: 'done'|'partial'|'failed', rooms, messages, attachments, failed: [...], stats: { requests, bytes } }
  */
-export async function runArchive({ client, uid, dir, onProgress = () => {}, sleep = sleepReal, now = () => new Date() }) {
+export async function runArchive({ client, getClient = null, uid, dir, onProgress = () => {}, sleep = sleepReal, now = () => new Date() }) {
+  // 회사 폴더가 없으면 만들지 않는다 — 보관(archiveCompany)한 회사 자리에 빈 폴더가 생기면 보관 되돌리기가 EXISTS로 막힌다(분리 검수 중간-3)
+  if (!existsSync(dirname(dir))) throw fail('msgr_archive_no_company', { message: dirname(dir) });
   await mkdir(dir, { recursive: true });
   const prev = await readArchiveState(dir);
   if (prev?.status === 'done' && prev.uid === uid) return prev;
-  const ctx = { stats: { requests: 0, bytes: 0 }, sleep };
+  const ctx = { stats: { requests: 0, bytes: 0 }, sleep, c: client ?? (getClient ? await getClient() : null), refresh: getClient };
   const st = {
     v: 1, uid, startedAt: prev?.startedAt ?? now().toISOString(), finishedAt: null, status: 'running', error: null,
     rooms: prev?.rooms ?? {}, docs: prev?.docs ?? {}, failed: [], totals: { rooms: 0, roomsDone: 0, messages: prev?.totals?.messages ?? 0, attachments: prev?.totals?.attachments ?? 0 },
@@ -173,28 +194,28 @@ export async function runArchive({ client, uid, dir, onProgress = () => {}, slee
     // 0) 지난 실행에서 못 받은 첨부부터
     for (const f of retryFailed) {
       if (await sameSizeExists(join(dir, f.file), f.bytes)) continue;
-      const ok = await download(ctx, client, f.storage_path, join(dir, f.file));
+      const ok = await download(ctx, f.storage_path, join(dir, f.file));
       if (ok) st.totals.attachments++; else st.failed.push(f);
     }
     // 1) 조직 이름
-    const orgs = await pages(ctx, () => client.from('msgr_orgs').select('id, name'), 'id');
+    const orgs = await pages(ctx, (cl) => cl.from('msgr_orgs').select('id, name'), 'id');
     const orgName = new Map((orgs.rows ?? []).map((o) => [o.id, o.name]));
     // 2) 방 목록 — RLS가 이 계정이 읽을 수 있는 방만 준다(보관된 방 포함)
-    const chs = await pages(ctx, () => client.from('msgr_channels').select('id, org_id, kind, name, topic, personal_pair, created_at, archived_at'), 'id');
+    const chs = await pages(ctx, (cl) => cl.from('msgr_channels').select('id, org_id, kind, name, topic, personal_pair, created_at, archived_at'), 'id');
     if (chs.error) throw Object.assign(new Error(`msgr_archive_rooms: ${chs.error.message ?? chs.error.code}`), { code: 'msgr_archive_upstream' });
     st.totals.rooms = chs.rows.length;
     st.totals.roomsDone = chs.rows.filter((c) => st.rooms[c.id]?.done).length;
     await save();
     for (const ch of chs.rows) {
       if (st.rooms[ch.id]?.done) continue;
-      await archiveRoom(ctx, client, dir, ch, orgName, st, save, now);
+      await archiveRoom(ctx, dir, ch, orgName, st, save, now);
       st.totals.roomsDone++;
       await save();
     }
     // 3) 조직 문서(journal/ 포함) — 조직마다, 권한 밖이면 서버가 빈 목록을 준다
     for (const [orgId, name] of orgName) {
       if (st.docs[orgId]) continue;
-      const docs = await pages(ctx, () => client.from('msgr_org_docs').select('id, org_id, channel_id, path, title, body, version, updated_at, updated_by').eq('org_id', orgId), 'id');
+      const docs = await pages(ctx, (cl) => cl.from('msgr_org_docs').select('id, org_id, channel_id, path, title, body, version, updated_at, updated_by').eq('org_id', orgId), 'id');
       if (!docs.error && docs.rows.length) {
         const base = join(dir, 'docs', `${safeName(name)}-${String(orgId).slice(0, 8)}`);
         for (const d of docs.rows) {
@@ -220,11 +241,11 @@ export async function runArchive({ client, uid, dir, onProgress = () => {}, slee
 }
 
 export const ATTACH_DOWN_AFTER = 3; // 첨부가 서버 오류(재시도까지 실패)로 연달아 이만큼 실패하면 이번 실행의 남은 첨부는 요청 없이 '못 받음'으로 남긴다(다시 받기가 받는다)
-async function download(ctx, client, path, file) {
+async function download(ctx, path, file) {
   if ((ctx.attachDown ?? 0) >= ATTACH_DOWN_AFTER) return false;
   let exhausted = false;
-  const r = await call(ctx, async () => { const x = await client.storage.from('msgr').download(path); return x.error ? { data: null, error: x.error, status: x.error.status ?? x.error.statusCode ?? 400 } : { data: Buffer.from(await x.data.arrayBuffer()), error: null }; })
-    .catch(() => { exhausted = true; return { error: true }; });
+  const r = await call(ctx, async (cl) => { const x = await cl.storage.from('msgr').download(path); return x.error ? { data: null, error: x.error, status: x.error.status ?? x.error.statusCode ?? 400 } : { data: Buffer.from(await x.data.arrayBuffer()), error: null }; },
+    { soft: true }).catch((e) => { if (e?.code === 'msgr_archive_auth') throw e; exhausted = true; return { error: true }; }); // 인증 오류는 첨부 실패가 아니라 실행 실패
   ctx.attachDown = exhausted ? (ctx.attachDown ?? 0) + 1 : 0;
   if (r.error) return false;
   await mkdir(join(file, '..'), { recursive: true });
@@ -232,70 +253,75 @@ async function download(ctx, client, path, file) {
   return true;
 }
 
-async function archiveRoom(ctx, client, dir, ch, orgName, st, save, now) {
+async function archiveRoom(ctx, dir, ch, orgName, st, save, now) {
   const title = ch.name || (ch.kind === 'dm' ? 'DM' : ch.id);
   const roomDir = join(dir, 'rooms', `${safeName(title)}-${String(ch.id).slice(0, 8)}`);
   await mkdir(roomDir, { recursive: true });
   const jsonl = join(roomDir, 'messages.jsonl');
   const rs = (st.rooms[ch.id] ??= { dir: roomDir.slice(dir.length + 1), lastId: null, done: false });
   // 커서 = 상태 파일과 jsonl 마지막 줄 중 큰 쪽 — 줄을 쓴 뒤 상태를 저장하기 전에 멈춰도 같은 줄을 두 번 쓰지 않는다
-  const tail = await lastJsonlId(jsonl);
+  const { id: tail, open: tailOpen } = await jsonlTail(jsonl);
+  let lead = tailOpen ? '\n' : '';
   let cursor = [rs.lastId, tail].filter((x) => x != null).map(Number).reduce((a, b) => Math.max(a, b), -Infinity);
   if (!Number.isFinite(cursor)) cursor = null;
   for (;;) {
     const c = cursor;
-    const { data: page, error } = await call(ctx, () => {
-      let q = client.from('msgr_messages').select(MSG_COLS).eq('channel_id', ch.id).is('deleted_at', null);
+    const { data: page, error } = await call(ctx, (cl) => {
+      let q = cl.from('msgr_messages').select(MSG_COLS).eq('channel_id', ch.id).is('deleted_at', null);
       if (c != null) q = q.gt('id', c);
       return q.order('id', { ascending: true }).limit(PAGE);
-    });
+    }, { soft: true }); // 권한 거부(4xx, 인증 오류 아님)인 방만 받은 데까지
     if (error || !page?.length) break; // 권한 없는 방(4xx)은 받은 데까지
     const ids = page.map((m) => m.id);
     const reactions = new Map(); const atts = new Map(); const approvals = new Map();
     for (const part of chunks(ids, ID_BATCH)) {
-      const r = await call(ctx, () => client.from('msgr_reactions').select('message_id, user_id, emoji, created_at').in('message_id', part));
+      const r = await call(ctx, (cl) => cl.from('msgr_reactions').select('message_id, user_id, emoji, created_at').in('message_id', part));
       for (const x of r.data ?? []) (reactions.get(x.message_id) ?? reactions.set(x.message_id, []).get(x.message_id)).push(x);
-      const a = await call(ctx, () => client.from('msgr_attachments').select('message_id, storage_path, name, mime, bytes').in('message_id', part));
+      const a = await call(ctx, (cl) => cl.from('msgr_attachments').select('message_id, storage_path, name, mime, bytes').in('message_id', part));
       for (const x of a.data ?? []) (atts.get(x.message_id) ?? atts.set(x.message_id, []).get(x.message_id)).push(x);
       if (page.some((m) => part.includes(m.id) && m.kind === 'approval_card')) {
-        const p = await call(ctx, () => client.from('msgr_crew_approvals').select('message_id, approval_id, action, reason, status, decided_by, decided_at').in('message_id', part));
+        const p = await call(ctx, (cl) => cl.from('msgr_crew_approvals').select('message_id, approval_id, action, reason, status, decided_by, decided_at').in('message_id', part), { soft: true }); // 결재 행을 못 읽으면 카드 본문만(메시지는 남는다)
         for (const x of p.data ?? []) approvals.set(x.message_id, x);
       }
     }
     const lines = [];
     for (const m of page) {
       const files = [];
+      const used = new Set();
       for (const a of atts.get(m.id) ?? []) {
-        const file = `attachments/${m.id}-${safeName(a.name, 80)}`;
+        // 한 메시지에 이름이 같은 첨부가 둘이면(붙여넣은 스크린샷 image.png 두 장) 순번을 붙인다 — 덮이면 앞의 것이 사라진다(분리 검수 중간-2)
+        let base = safeName(a.name, 80); for (let n = 2; used.has(base); n++) base = `${n}-${safeName(a.name, 78)}`;
+        used.add(base);
+        const file = `attachments/${m.id}-${base}`;
         const abs = join(roomDir, file);
         let ok = await sameSizeExists(abs, a.bytes);
-        if (!ok) ok = await download(ctx, client, a.storage_path, abs);
+        if (!ok) ok = await download(ctx, a.storage_path, abs);
         if (ok) st.totals.attachments++;
         else st.failed.push({ storage_path: a.storage_path, file: `${rs.dir}/${file}`, bytes: a.bytes ?? null });
         files.push({ name: a.name, mime: a.mime, bytes: a.bytes, storage_path: a.storage_path, file: ok ? file : null });
       }
       lines.push(JSON.stringify({ ...m, reactions: reactions.get(m.id) ?? [], attachments: files, approval: approvals.get(m.id) ?? null }));
     }
-    await appendFile(jsonl, `${lines.join('\n')}\n`);
+    await appendFile(jsonl, `${lead}${lines.join('\n')}\n`); lead = '';
     cursor = ids[ids.length - 1];
     rs.lastId = cursor;
     st.totals.messages += page.length;
     await save();
   }
   // 구성원·이름 — 방 정보와 Markdown에 쓴다
-  const mem = await pages(ctx, () => client.from('msgr_channel_members').select('channel_id, member_kind, member_id').eq('channel_id', ch.id), 'member_id');
+  const mem = await pages(ctx, (cl) => cl.from('msgr_channel_members').select('channel_id, member_kind, member_id').eq('channel_id', ch.id), 'member_id', { soft: true }); // 구성원·이름은 표시용 — 못 읽어도 메시지는 남긴다
   const rows = await readJsonl(jsonl);
   const userIds = new Set([...(mem.rows ?? []).filter((m) => m.member_kind === 'user').map((m) => m.member_id), ...rows.map((m) => m.author_user_id).filter(Boolean), ...rows.flatMap((m) => (m.reactions ?? []).map((r) => r.user_id))]);
   const crewIds = new Set([...(mem.rows ?? []).filter((m) => m.member_kind === 'crew').map((m) => m.member_id), ...rows.map((m) => m.crew_id).filter(Boolean)]);
   const needU = [...userIds].filter((id) => !(id in st.people));
   for (const part of chunks(needU, ID_BATCH)) {
-    const r = await call(ctx, () => client.rpc('msgr_people_names', { ids: part }));
+    const r = await call(ctx, (cl) => cl.rpc('msgr_people_names', { ids: part }), { soft: true });
     for (const x of r.data ?? []) st.people[x.user_id] = x.name;
     for (const id of part) st.people[id] ??= null; // 이름을 못 받은 사람(나간 사람 등)도 다시 묻지 않는다
   }
   const needC = [...crewIds].filter((id) => !(id in st.crews));
   for (const part of chunks(needC, ID_BATCH)) {
-    const r = await call(ctx, () => client.from('msgr_crews').select('id, display_name').in('id', part));
+    const r = await call(ctx, (cl) => cl.from('msgr_crews').select('id, display_name').in('id', part), { soft: true });
     for (const x of r.data ?? []) st.crews[x.id] = x.display_name;
     for (const id of part) st.crews[id] ??= null;
   }

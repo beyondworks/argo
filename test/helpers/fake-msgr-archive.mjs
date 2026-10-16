@@ -20,7 +20,7 @@ export async function fakeMsgr(db = {}, { maxRows = 1000, fault = () => null } =
   const t = (name) => (db[name] ??= []);
   const srv = createServer(async (req, res) => {
     const u = new URL(req.url, 'http://x');
-    const hit = { method: req.method, path: u.pathname, url: decodeURIComponent(u.search), table: null, status: 200, bytes: 0 };
+    const hit = { method: req.method, path: u.pathname, url: decodeURIComponent(u.search), auth: String(req.headers.authorization ?? '').replace(/^Bearer /, ''), table: null, status: 200, bytes: 0 };
     hits.push(hit);
     hit.table = u.pathname.startsWith('/storage/') ? 'storage' : u.pathname.startsWith('/rest/v1/rpc/') ? `rpc:${u.pathname.slice('/rest/v1/rpc/'.length)}` : u.pathname.startsWith('/rest/v1/') ? u.pathname.slice('/rest/v1/'.length) : null;
     let body = '';
