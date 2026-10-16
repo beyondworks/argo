@@ -73,6 +73,7 @@ export const IDLE_POLL_MS = 120_000;
 /** 쉬는 동안 접속 심박 요청 간격 — 마지막 심박 요청 뒤 이만큼 지난 첫 15초 틱에 보낸다(간격 40~55초). 서버 기록 기한(msgr_device_beat 35초)보다 늘 길어
     요청마다 기록되고, 최대 간격은 종전 15초 틱 실측(54.6초, 20261010120000 머리말)과 같다 — 옛 메신저의 행 나이 + 재조회 30초 < 부재중 90초. */
 export const BEAT_EVERY_MS = 40_000;
+const SERVICE_PAUSED_NOTE = '메신저 서비스가 잠시 중단됐습니다 — 에이전트는 메신저에서 답하지 않습니다(30분마다 다시 확인)';
 /** Realtime 소켓이 이만큼 계속 끊겨 있으면 다시 연결한다. 실측(2026-10-10, 로컬 Supabase, realtime-js 2.110.2·Node): Realtime 서버가 잠깐 내려갔다 올라오면
     소켓이 'connecting'에 멈춰 스스로 다시 붙지 않는다(새 채널 구독·connect()도 안 됨, disconnect() 뒤 connect()는 1.5초 만에 다시 붙음). 안 붙은 동안은 15초 조회로 완결된다. */
 export const RT_STUCK_MS = 60_000;
@@ -143,6 +144,18 @@ export async function crewMemoryForMail(crewId, channelId) {
 }
 // 기기 단위 심박(20261010120000) — 서버에 함수·계산 열이 없다고 본 시각. 10분 뒤 다시 본다(운영 적용 전에 켜진 앱이 재시작 없이 넘어가게). (export: 테스트 초기화용)
 const DEVICE_BEAT_RECHECK_MS = 10 * 60_000;
+/* 메신저 서비스 일시 중단(서버 스위치 msgr_settings 'msgr_paused', 20261016170000) — 중단 중 서버는 기기 심박(msgr_device_beat)을 쓰지 않고 { paused, since }를 돌려준다.
+   이 표지를 보면 브리지는 30분 동안 틱마다 아무 요청도 보내지 않고(쉬는 동안 쓰기·요청 0), 30분마다 심박 한 번으로만 다시 확인한다. 풀리면 그 틱부터 원래대로.
+   중단은 서비스 전체 하나라 프로세스 전체에 상태 하나(회사가 여럿이어도 같은 판정). 옛 서버는 이 표지를 주지 않으므로 이 상태는 켜지지 않는다(종전 그대로). */
+export const SERVICE_PAUSE_RECHECK_MS = 30 * 60_000;
+export const servicePause = (globalThis.__argoMsgrServicePause ??= { since: null, checkedAt: -Infinity });
+/** 심박 응답 하나를 반영한다 — 기기 심박 응답({ device: true, … })만 판정에 쓴다(옛 행 심박 경로는 응답이 없다). */
+export function noteServicePause(beaten, now = Date.now()) {
+  if (!beaten?.device) return;
+  if (beaten.paused === true) { if (servicePause.since === null) console.warn('[argo] msgr 메신저 서비스가 일시 중단됐습니다 — 30분마다 한 번만 확인합니다'); servicePause.since = String(beaten.since ?? ''); servicePause.checkedAt = now; }
+  else if (servicePause.since !== null) { console.log('[argo] msgr 메신저 서비스 중단이 풀렸습니다 — 브리지를 다시 엽니다'); servicePause.since = null; }
+}
+export const msgrServicePaused = () => servicePause.since !== null;
 export const deviceBeatRpc = { missingAt: 0, seenMissingAt: 0, versionMissingAt: 0, peerMissingAt: 0 }; // peerMissingAt — msgr_runner_peer_alive가 없는 서버(20261015200000 적용 전, D5) // versionMissingAt — 함수는 있으나 앱 버전 인자가 없는 서버(20261011120000 적용 전)
 /** 이 앱의 버전 — 기기 심박에 실어 보낸다(무료 계정 에이전트 재개 판정, 20261011120000). 읽는 방법은 src/app-version.mjs 한 곳(번들·번들 밖 차이 설명도 거기). */
 export { APP_VERSION };
@@ -310,6 +323,7 @@ export function makeDb(client) {
         if (APP_VERSION && Date.now() - deviceBeatRpc.versionMissingAt > DEVICE_BEAT_RECHECK_MS) {
           const { data, error } = await client.rpc('msgr_device_beat', { p_ws: beat.wsId, p_device: beat.deviceId, p_crews: ids, p_app_version: APP_VERSION });
           if (!error) {
+            if (data?.paused === true) return { device: true, paused: true, since: data.since ?? null }; // 서비스 일시 중단(서버가 쓰지 않았다) — 재개 신호도 없다
             // 처음 들어온 새 앱 심박이면 서버가 재개 신호를 준다 — 재개는 따로 부른다(실패·시간 초과가 심박을 실패시키지 않게, 검수 #945 LOW-6). 놓쳐도 10분 크론이 한다
             if (data?.resume) await client.rpc('msgr_free_resume').then(({ error: e }) => { if (e) console.warn('[argo] msgr 무료 에이전트 재개 실패 — 크론이 다시 합니다:', e.message); }, (e) => console.warn('[argo] msgr 무료 에이전트 재개 실패 — 크론이 다시 합니다:', e?.message ?? e));
             return { device: true };
@@ -318,8 +332,8 @@ export function makeDb(client) {
           deviceBeatRpc.versionMissingAt = Date.now();
         }
         if (!live.length) return undefined; // 멈춘 행뿐 — 옛 서버에는 보낼 심박이 없다(새 앱 판정이 없는 서버라 보내도 재개되지 않는다)
-        const { error } = await client.rpc('msgr_device_beat', { p_ws: beat.wsId, p_device: beat.deviceId, p_crews: live });
-        if (!error) return { device: true };
+        const { data, error } = await client.rpc('msgr_device_beat', { p_ws: beat.wsId, p_device: beat.deviceId, p_crews: live });
+        if (!error) return data?.paused === true ? { device: true, paused: true, since: data.since ?? null } : { device: true };
         if (!rpcMissing(error)) throw new Error(`msgr db: ${error.message}`);
         deviceBeatRpc.missingAt = Date.now(); // 운영 적용 전 서버 — 틱마다 실패할 요청을 다시 보내지 않는다(DB 위생)
       }
@@ -1214,6 +1228,7 @@ async function periodicRecall(wsId, { db, uid, inventory }) {
 async function beatCrews(db, { ids, workIds, beat }) {
   let ok = true;
   const beaten = await db.heartbeat(ids, beat).catch((e) => { console.error('[argo] msgr 하트비트 실패:', e.message); ok = false; return null; });
+  noteServicePause(beaten);
   if (workIds && !beaten?.device) await db.workHeartbeat?.(workIds).catch((e) => console.warn('[argo] msgr work capability:', e.message)); // 업무 기능은 조직 전용 — 개인 행은 보내지 않는다(분리 검수 M3)
   return ok;
 }
@@ -2698,6 +2713,18 @@ export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_M
   const tick = coalesce(async (kind = 'wake') => {
     if (stopped) return;
     const t = Date.now();
+    if (msgrServicePaused()) { // 서비스 일시 중단 — 받은 글·턴·미러·자동화·구독 정리 모두 쉰다(위 servicePause 주석)
+      await beatGateway(wsId, MSGR_KEY, false, SERVICE_PAUSED_NOTE).catch(() => {}); // 로컬 상태 파일만(설정 화면 40초 창) — 요청 아님
+      if (t - servicePause.checkedAt < SERVICE_PAUSE_RECHECK_MS) return { paused: true };
+      servicePause.checkedAt = t; // 같은 프로세스의 다른 회사 브리지가 같은 틱에 또 확인하지 않게 먼저 적는다
+      if (beatPlan?.ids?.length) { // 심박 대상이 있으면 심박 한 번으로만 확인(중단 중이면 서버는 쓰지 않는다) — 풀렸으면 noteServicePause가 상태를 지운다
+        const c = await session().catch(() => null);
+        if (!c || c.uid !== beatPlan.uid) return { paused: true };
+        await beatCrews(c.db, beatPlan);
+        if (msgrServicePaused()) return { paused: true };
+      } // 심박 대상이 없는 회사는 30분마다 아래 일반 틱 한 번으로 확인한다(중단 중 받은 글은 빈 결과 — 턴 없음)
+      kind = 'poll'; // 풀렸거나 대상이 없다 — 이번 틱에 관리 작업까지 한 번(멈춘 사이 바뀐 것을 따라잡는다)
+    }
     try {
       const c = await session();
       if (!c) { held = true; await beatGateway(wsId, MSGR_KEY, false, '기기 세션 없음 — 로그인 필요').catch(() => {}); return; }

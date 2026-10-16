@@ -588,3 +588,55 @@ test('㉑ 인접 핀: 심박이 실패하면 시각을 옮기지 않아 다음 1
     assert.ok(h.at('heartbeat').length > b1, '회복하면 다음 틱에 보낸다');
   } finally { err.mock.restore(); h.stop(); }
 });
+
+// ㉒ 메신저 서비스 일시 중단(서버 스위치 20261016170000) — 심박 응답의 paused 표지를 보면 30분 동안 틱마다 요청 0, 30분마다 심박 한 번으로만 확인, 풀리면 원래대로
+const resetPause = () => { M.servicePause.since = null; M.servicePause.checkedAt = -Infinity; };
+test('㉒ 서비스 중단 표지를 받으면 30분 동안 요청 0(받은 글·자동화·심박 모두), 30분마다 심박 1회로만 확인 — 풀리면 그 틱에 관리 작업까지 돌고 원래 주기로', async () => {
+  let pausedNow = true;
+  const h = await start({ extra: { heartbeat: async () => (pausedNow ? { device: true, paused: true, since: '2026-10-16T17:00:00+09:00' } : { device: true }) } });
+  try {
+    joinAll(h); await settle();
+    for (let i = 0; i < 10 && !M.msgrServicePaused(); i++) await advance(15_000); // 첫 심박에서 표지를 받는다
+    assert.equal(M.msgrServicePaused(), true, '심박 응답의 paused 표지로 중단 상태가 된다');
+    const c0 = h.calls.length;
+    await advance(25 * 60_000);
+    assert.equal(h.calls.length - c0, 0, `중단 확인 뒤 25분 동안 요청 ${h.calls.length - c0}건(0이어야 한다)`);
+    const c1 = h.calls.length;
+    await advance(10 * 60_000); // 30분 지점을 지난다
+    const during = h.calls.slice(c1).map((c) => c.name);
+    assert.deepEqual(during, ['heartbeat'], `30분 지점의 확인은 심박 한 번뿐: ${during}`);
+    pausedNow = false;
+    const c2 = h.calls.length;
+    await advance(31 * 60_000);
+    assert.equal(M.msgrServicePaused(), false, '풀린 응답을 받으면 중단 상태가 풀린다');
+    assert.ok(h.at('myCrews').filter((c) => h.calls.indexOf(c) >= c2).length >= 1, '풀린 뒤 받은 글 조회가 다시 돈다');
+    const c3 = h.calls.length; await advance(10 * 60_000);
+    const d = h.calls.slice(c3).filter((c) => c.name === 'myCrews').length;
+    assert.ok(d >= 4 && d <= 6, `풀린 뒤 10분 동안 받은 글 조회 ${d}회 — 원래 쉬는 주기(2분)`);
+  } finally { h.stop(); resetPause(); }
+});
+
+test('㉒ 인접 핀: 서버가 표지를 주지 않으면(스위치 없음·옛 서버) 중단 상태가 켜지지 않는다 — 10분 동안 종전과 같은 호출', async () => {
+  resetPause();
+  const h = await start();
+  try {
+    joinAll(h); await settle();
+    const base = h.calls.length; await advance(600_000);
+    assert.equal(M.msgrServicePaused(), false);
+    const total = h.calls.length - base;
+    assert.ok(total <= 60 && h.at('heartbeat').length >= 11, `10분 호출 ${total}건·심박 ${h.at('heartbeat').length}회(①과 같은 기준)`);
+  } finally { h.stop(); resetPause(); }
+});
+
+test('㉒ makeDb.heartbeat — 기기 심박 응답의 paused를 { device, paused, since }로 넘기고, 풀린 응답·옛 행 심박은 표지가 없다', async () => {
+  const rpc = []; let data = { paused: true, since: 's1' };
+  const db = M.makeDb({ rpc: async (name, args) => { rpc.push(name); return { data, error: null }; }, from: () => { throw new Error('행 심박 경로를 타면 안 된다'); } });
+  const ids = ['cccccccc-0000-4000-8000-000000000001'];
+  assert.deepEqual(await db.heartbeat(ids, { wsId: 'w1', deviceId: 'dev' }), { device: true, paused: true, since: 's1' });
+  data = {};
+  assert.deepEqual(await db.heartbeat(ids, { wsId: 'w1', deviceId: 'dev' }), { device: true });
+  assert.ok(rpc.every((n) => n === 'msgr_device_beat'), '중단 중에도 재개 RPC(msgr_free_resume) 등 다른 호출이 없다');
+  resetPause(); M.noteServicePause(undefined); assert.equal(M.msgrServicePaused(), false, '옛 행 심박(응답 없음)은 판정에 쓰지 않는다');
+  M.noteServicePause({ device: true, paused: true, since: 'x' }); assert.equal(M.msgrServicePaused(), true);
+  M.noteServicePause({ device: true }); assert.equal(M.msgrServicePaused(), false); resetPause();
+});

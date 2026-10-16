@@ -31,7 +31,7 @@ import { routeMessage, crewStatusReply, approvalWho, defaultCrew, resolveTelegra
 import { channelSends } from './channel-events.mjs'; // 판정 정본 — 테스트도 같은 함수를 본다
 import { CHANNEL_EVENTS } from './channel-events.mjs'; // msgr 푸시 대상 종류 집합(pushEvent 머리) — 음소거(company.json.msgr.mutedEvents) 판정은 msgrPush 안에서 channelSends로
 const channelSendsKinds = (kind) => CHANNEL_EVENTS[kind] ?? [];
-import { MSGR_KEY, makeMsgrHandler, startMsgrBridge, msgrPush, msgrNotifyPush, msgrEventOrigin, runMessengerContinuation, autoEnableMsgr } from './gateway/msgr.mjs'; // 팀 메신저 — 새 채널 종류(접합 4지점: qkeys·핸들러·폴러·push)
+import { MSGR_KEY, makeMsgrHandler, startMsgrBridge, msgrPush, msgrNotifyPush, msgrEventOrigin, runMessengerContinuation, autoEnableMsgr, msgrServicePaused } from './gateway/msgr.mjs'; // 팀 메신저 — 새 채널 종류(접합 4지점: qkeys·핸들러·폴러·push)
 import { normalizeMsgrNotify, msgrNotifyWants } from './msgr-notify.mjs'; // 회사 단위 알림 목적지(원점 없는 이벤트)
 import { deliverMessengerNotifications, notificationTickDue } from './gateway/msgr-notifications.mjs';
 import { makeMsgrAbandonNotifier, makeMsgrStallNotifier } from './gateway/msgr-abandon.mjs'; // 큐가 버린 메신저 잡의 실패 안내(H1) — msgr.mjs 밖에 둬 다른 변경과 겹치지 않는다
@@ -1180,7 +1180,7 @@ export function ensureGateway() {
     // hosted by someone else). SQL claims prevent two devices sending one row.
     for (const [c] of loaded) {
       const previous = notificationTicks.get(c.id);
-      if (!notificationTickDue(previous, Date.now())) continue;
+      if (msgrServicePaused() || !notificationTickDue(previous, Date.now())) continue; // 메신저 서비스 일시 중단 중에는 알림 경로 동기화·확인도 쉰다(msgr.mjs servicePause)
       const tick = { busy: true, at: Date.now() };
       notificationTicks.set(c.id, tick);
       deliverMessengerNotifications(c.id, { send: sendRoutineNotification })
