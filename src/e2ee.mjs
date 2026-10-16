@@ -248,15 +248,17 @@ const claimGapMs = () => CLAIM_GAPS_MS[Math.min(Math.max(claimMisses - 1, 0), CL
 export async function tryClaimDek(sb, deviceId, { root = WS_ROOT, force = false } = {}) {
   if (dekBuf) return true;
   if (!sb || !deviceId) return false;
-  if (force) claimMisses = 0;
-  else if (Date.now() - lastClaim < claimGapMs()) return false;
-  lastClaim = Date.now();
   try {
     // 로컬 DEK는 캐시가 아니라 디스크로 판정한다 — 재시작 직후(키를 읽기 전)나, 다른 번들 사본·프로세스가 켜기로 setDek한 뒤
     // 이 사본의 캐시가 낡았을 때 정상 기기도 미보유로 보여 자기 랩을 지웠다(검수 #693 MEDIUM 2건). 디스크에 있으면 캐시를 올리고 끝.
+    // 디스크 확인은 간격 게이트 **앞에서** 매번 한다(로컬 파일 읽기, 요청 아님) — 게이트 뒤에 두면 '행 없음'이 쌓인 사본(sync)이 다른 사본(라우트)의
+    // 켜기·회수 버튼 결과를 최대 30분 못 봐 평문 업로드·v3 파일 못 엶(#1050 검수 1 HIGH). 간격은 아래 wrapped_deks 원격 조회만 묶는다.
     await loadDeviceE2ee({ root });
     const disk = readState(root);
     if (disk?.dek) { cache = { root, state: disk }; dekBuf = Buffer.from(disk.dek, 'base64'); claimMisses = 0; return true; }
+    if (force) claimMisses = 0;
+    else if (Date.now() - lastClaim < claimGapMs()) return false;
+    lastClaim = Date.now();
     const { data, error } = await sb.from('wrapped_deks').select('wrap, wrapped_by').eq('device_id', deviceId).maybeSingle();
     if (error) return false;
     if (!data?.wrap) { claimMisses++; return false; } // 행 없음 — 다음 확인까지 간격을 늘린다

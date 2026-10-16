@@ -127,6 +127,59 @@ test('④ 인접 핀: 경로 목록이 바뀌면 간격과 무관하게 그 틱�
   assert.equal(N.notificationPlan(m2, r2, 1000 + 120_000).sync, true);
 });
 
+/* ── #1050 검수 1 지적 반영 ── */
+test('① 두 사본 DEK 전파: 행 없음이 8번 쌓인 sync 사본도 다른 사본(라우트)이 setDek하면 다음 호출에 디스크 DEK를 집는다 — 원격 조회 없이(종전 PR 1800초, main 60초)', async () => {
+  mock.timers.enable({ apis: ['Date'], now: 40_000_000 });
+  const root = await mkdtemp(join(tmpdir(), 'argo-logdiet1-e-'));
+  // 번들 사본 둘(sync·instrumentation 쪽과 API 라우트 쪽) — 모듈 상태(dekBuf·claimMisses·lastClaim)를 따로 가진다
+  const SYNC = await import('../src/e2ee.mjs?copy=sync');
+  const ROUTE = await import('../src/e2ee.mjs?copy=route');
+  SYNC.clearDekCache(); SYNC._resetClaimForTest(); ROUTE.clearDekCache();
+  await SYNC.loadDeviceE2ee({ root });
+  const st = { selects: 0, row: null }; const sb = wrapSb(st);
+  while (st.selects < 8) { await SYNC.tryClaimDek(sb, 'dev-1', { root }); mock.timers.tick(10_000); }
+  const selects = st.selects;
+  mock.timers.tick(5_000);
+  const key = Buffer.alloc(32, 7);
+  await ROUTE.setDek(key, { root }); // 켜기·회수 버튼(force 회수도 끝에 setDek)이 라우트 사본에서 일어남
+  mock.timers.tick(10_000); // 다음 sync 사이클
+  assert.equal(SYNC.dek(), null, '아직 이 사본의 캐시는 비어 있다');
+  assert.equal(await SYNC.tryClaimDek(sb, 'dev-1', { root }), true, '디스크 DEK를 즉시 집는다(간격 게이트와 무관)');
+  assert.deepEqual(SYNC.dek(), key);
+  assert.equal(st.selects, selects, 'wrapped_deks 원격 조회는 하지 않는다');
+});
+
+test('④ 알림 노드 3분 경계: 틱 시작 노드 나이 115초 + 텔레그램 타임아웃 35초가 이어져도 행마다 권한 확인 직전 나이 100초 미만 — 4행 모두 배달 시도(종전 PR은 3번째부터 skipped)', async () => {
+  assert.equal(N.NODE_FRESH_MS, 100_000);
+  const SERVER_FRESH = 180_000; // 20260913110500 msgr_notification_authorize: node.last_seen_at >= now() - 3분
+  let t = 1_000_000; let lastSeen = 0; const ages = []; const calls = [];
+  const rows = [1, 2, 3, 4].map((i) => ({ delivery_id: `d${i}`, ws_id: 'ws', kind: 'telegram', status: 'completed', run_id: `r${i}`, title: 'x', body: 'b' }));
+  const client = { rpc: async (name) => {
+    calls.push(name);
+    if (name === 'msgr_notification_routes_sync') { lastSeen = t; return { data: null, error: null }; }
+    if (name === 'msgr_notification_claim') return { data: rows, error: null };
+    if (name === 'msgr_notification_authorize') { ages.push(t - lastSeen); return { data: t - lastSeen <= SERVER_FRESH, error: null }; }
+    return { data: true, error: null }; // finish
+  } };
+  const conns = { telegram: { enabled: true, token: 'x', chatId: '1' }, slack: { enabled: false } };
+  const routes = N.notificationRoutes({ name: 'M', ownerId: 'u', id: 'ws' }, conns, []);
+  assert.ok(routes.some((r) => r.ready), 'ready 경로 있음');
+  const memo = new Map([['u:ws:dev', { routes: JSON.stringify(routes), syncedAt: t - 115_000, claimedAt: t - 60_000 }]]);
+  lastSeen = t - 115_000; // 틱 사이가 불규칙해(앞 틱이 오래 걸림) 동기화 기한 120초 직전에 claim하는 경우
+  const send = async () => { t += 35_000; return { status: 'uncertain', reason: 'timeout' }; }; // gateway.mjs 텔레그램 send 타임아웃 35초
+  const deps = { session: async () => ({ uid: 'u', client }), readCompany: async () => ({ name: 'M', ownerId: 'u' }), readConnections: async () => conns, readAgents: async () => [], readDeviceId: async () => 'dev', attempt: 'a', memo, now: () => t, send };
+  const r = await N.deliverMessengerNotifications('ws', deps);
+  assert.equal(calls[0], 'msgr_notification_claim', '틱 시작에는 동기화하지 않는다(나이 115초 < 120초)');
+  assert.ok(ages.every((a) => a < N.NODE_FRESH_MS), `권한 확인 시점 노드 나이 ${ages.map((a) => a / 1000)}초`);
+  assert.deepEqual(r.deliveries.map((d) => d.reason), ['timeout', 'timeout', 'timeout', 'timeout'], '권한 거부(permission_or_connection_changed)로 사라지는 행이 없다');
+
+  // 평상시(send가 빠름): 추가 동기화 없음 — 부하는 120~140초 동기화 그대로
+  calls.length = 0; ages.length = 0;
+  memo.set('u:ws:dev', { routes: JSON.stringify(routes), syncedAt: t - 70_000, claimedAt: t - 60_000 }); lastSeen = t - 70_000;
+  await N.deliverMessengerNotifications('ws', { ...deps, send: async () => ({ status: 'sent' }) });
+  assert.equal(calls.filter((c) => c === 'msgr_notification_routes_sync').length, 0, 'send가 빠르면 동기화 요청이 늘지 않는다');
+});
+
 /* ── ⑤ 진단 헤더 ── */
 test('⑤ 두 Supabase 클라이언트 옵션 모두 x-argo-app-version 헤더를 싣는다 — 인증 헤더·타임아웃 fetch는 그대로', () => {
   assert.ok(APP_VERSION, '시험 환경에서 버전을 읽는다');

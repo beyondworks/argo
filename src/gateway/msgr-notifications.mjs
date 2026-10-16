@@ -25,6 +25,10 @@ export const NOTIFY_TICK_MS = 60_000; // 게이트웨이 회사별 알림 틱 �
 /** previous = 그 회사의 마지막 틱 기록({ busy, at }). 진행 중이거나 간격 안이면 건너뛴다. */
 export function notificationTickDue(previous, t) { return !previous?.busy && t - (previous?.at ?? -Infinity) >= NOTIFY_TICK_MS; }
 export const IDLE_CLAIM_MS = 30 * 60_000;
+// 행마다 권한 확인(msgr_notification_authorize) 직전 노드 나이 상한 — 서버는 노드 last_seen_at이 3분(180초)을 넘으면 그 행을 skipped(재시도 없음)로 끝낸다
+// (20260913110500). 틱 시작의 동기화만으로는 앞 행들의 send가 길어질 때(텔레그램 타임아웃 35초씩) 뒤 행의 나이가 기한을 넘을 수 있어(#1050 검수 1),
+// 이 나이를 넘으면 그 행 확인 전에 경로를 다시 동기화한다. 평상시(send가 빠름)에는 추가 요청이 없다. 100초 = 기한까지 80초 여유(send 1회 + RPC).
+export const NODE_FRESH_MS = 100_000;
 const routeMemo = (globalThis.__argoNotifyRouteMemo ??= new Map()); // `${uid}:${wsId}:${device}` → { routes, syncedAt, claimedAt }
 export function notificationPlan(memo, routes, t) {
   const key = JSON.stringify(routes);
@@ -60,13 +64,21 @@ export async function deliverMessengerNotifications(wsId, {
   const memoKey = `${c.uid}:${wsId}:${deviceId}`;
   const t = now();
   const plan = notificationPlan(memo.get(memoKey), routes, t);
+  const syncRoutes = () => c.client.rpc('msgr_notification_routes_sync', { p_ws: wsId, p_routes: routes, p_device: deviceId });
   if (plan.sync) {
-    const synced = await c.client.rpc('msgr_notification_routes_sync', { p_ws: wsId, p_routes: routes, p_device: deviceId });
+    const synced = await syncRoutes();
     if (missingRpc(synced.error)) return { available: false, reason: 'upgrade', deliveries: [] };
     if (synced.error) throw new Error('Notification connections could not be synchronized');
     memo.set(memoKey, { ...memo.get(memoKey), routes: plan.key, syncedAt: t });
     while (memo.size > 1000) memo.delete(memo.keys().next().value); // 회사·기기·계정 조합 상한
   }
+  // 권한 확인 직전 노드 신선도(NODE_FRESH_MS 주석). 실패하면 기억을 남기지 않고 그대로 확인한다 — 판정은 서버가 하고, 이미 잡은 행을 버리지 않는다.
+  const keepNodeFresh = async () => {
+    const at = now();
+    if (!plan.ready || at - (memo.get(memoKey)?.syncedAt ?? -Infinity) < NODE_FRESH_MS) return;
+    const synced = await syncRoutes().catch(() => ({ error: true }));
+    if (!synced?.error) memo.set(memoKey, { ...memo.get(memoKey), routes: plan.key, syncedAt: at });
+  };
   // Do not claim work if no sender is installed. Claiming reserves one outbound
   // attempt; an interrupted/ambiguous attempt must not become a duplicate send.
   if (typeof send !== 'function') return { available: true, deliveries: [] };
@@ -87,6 +99,7 @@ export async function deliverMessengerNotifications(wsId, {
     } else {
       // Recheck channel access immediately before each external request, rather
       // than relying on permissions captured before earlier queue items sent.
+      await keepNodeFresh();
       const authorized = await c.client.rpc('msgr_notification_authorize', { p_delivery: row.delivery_id, p_attempt: attempt });
       if (authorized.error || authorized.data !== true) {
         deliveries.push({ id: row.delivery_id, status: 'skipped', reason: 'permission_or_connection_changed' });
