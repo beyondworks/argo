@@ -258,7 +258,12 @@ export function createLinkMachine(opts) {
     const ch = uChannel; const gen = epoch;
     const pz = await call(() => client.rpc(names.pauseRpc));
     if (gen !== epoch || ch !== uChannel || terminal() || state !== STATES.paused) return;
-    if (!pz.code && !pausedOf(pz.data)) void catchUp();
+    if (!pz.code && !pausedOf(pz.data)) resumeFromPause();
+  }
+  /** 중단이 풀림(소켓은 살아 있음): 중단 때 닫은 v2:s:를 다시 열고, u:·s:가 붙은 뒤 따라잡기 1회(#1077 재검수). */
+  function resumeFromPause() {
+    openSpaces();
+    catchWhenSettled = true; maybeCatchUp();
   }
   function giveUp(why) {
     clearTimer(); closeUser(); closeWorks();
@@ -407,7 +412,7 @@ export function createLinkMachine(opts) {
     const payload = m?.payload ?? {};
     if (ev === USER_EVENTS.pause) {
       if (pausedOf(payload)) { enterPaused('server'); return; }
-      if (state === STATES.paused && subscribed) { attempts = 0; void catchUp(); }
+      if (state === STATES.paused && subscribed) { attempts = 0; resumeFromPause(); }
       return;
     }
     if (ev === USER_EVENTS.deviceRevoked) {
