@@ -18,7 +18,19 @@ const DEVICE = 'c4d5e6f7-8091-4a2b-9c3d-4e5f6a7b8c03';
 
 async function setup({ chatImpl, regFails = false, plan, agents = [{ ws: 'co-1', slug: 'pm', name: 'PM', role: '기획' }] } = {}) {
   let t = Date.parse('2026-10-17T06:00:00Z');
-  const clock = { now: () => t, setTimeout: (fn, ms) => ({ fn, ms }), clearTimeout: () => {}, sleep: async (ms) => { t += ms; }, advance: (ms) => { t += ms; } };
+  // 가짜 시계: 타이머는 advance()가 시각 순으로 부른다(결재 만료·리스 연장)
+  const timers = new Set();
+  const clock = { now: () => t, setTimeout: (fn, ms) => { const h = { fn, at: t + ms }; timers.add(h); return h; }, clearTimeout: (h) => timers.delete(h), sleep: async (ms) => { t += ms; },
+    async advance(ms) {
+      const end = t + ms;
+      for (;;) {
+        const due = [...timers].filter((h) => h.at <= end).sort((a, b) => a.at - b.at)[0];
+        if (!due) break;
+        timers.delete(due); t = due.at; await due.fn(); await flush();
+      }
+      t = end;
+    },
+    pending: () => timers.size };
   const server = createFakeServer({ now: clock.now, uid: 'u1' });
   const rpc0 = server.transport.rpc;
   server.transport.rpc = async (name, args) => {
@@ -377,31 +389,27 @@ test('행동 결재 거절: effect 없이 resolveWithFollowUp(거절), 후속 �
   assert.match(server.sentOf('work.result', o.work)[0].data.text, /후속: 거절되어 하지 않음$/);
 });
 
-test('결재 만료(expire): 후속 턴 없이 로컬 결재를 닫고 결과를 낸다', async () => {
-  const { server, calls, agentId, raise } = await setup({ chatImpl: (opts) => { raise(opts, { id: 'ap-3', kind: 'action', action: '구매', slug: 'pm' }); return { reply: '올렸습니다' }; } });
+test('결재 만료: 서버는 만료 결정을 보내지 않는다 — expires_at에 로컬 타이머로 닫고(후속 턴 없음) work.error{timeout}, 리스 연장이 멈춘다', async () => {
+  const { server, calls, agentId, raise, clock } = await setup({ chatImpl: (opts) => { raise(opts, { id: 'ap-3', kind: 'action', action: '구매', slug: 'pm' }); return { reply: '올렸습니다' }; } });
   const o = server.offer({ agent: agentId });
   server.push(o); await flush();
   await until(() => approvalOf(server, o.work).length > 0);
-  server.decide(o.work, approvalOf(server, o.work)[0].data.approval_id, 'expire'); await flush();
-  await until(() => server.sentOf('work.result', o.work).length > 0);
-  assert.deepEqual(calls.resolved, []);
+  const req = approvalOf(server, o.work)[0];
+  assert.equal(Date.parse(req.data.expires_at) - clock.now(), 24 * 3_600_000);
+  await clock.advance(24 * 3_600_000 - 1000); await flush();
+  assert.deepEqual(calls.closed, [], '기한 전에는 닫지 않는다');
+  const renews = server.sentOf('work.accept', o.work).length;
+  assert.ok(renews > 200, `기다리는 동안 5분마다 연장(${renews})`);
+  await clock.advance(2000); await flush();
+  await until(() => server.sentOf('work.error', o.work).length > 0);
   assert.deepEqual(calls.closed, [{ id: 'ap-3', approve: false }]);
-  assert.equal(server.sentOf('work.result', o.work)[0].data.text, '올렸습니다');
-});
-
-test('셸 결재(tool): 턴이 기다리는 동안 approval_request(high) → 승인 → 기다리던 턴이 재개, 후속 턴 없음', async () => {
-  const { server, calls, agentId, raise } = await setup({ chatImpl: async (opts, { toolGates }) => {
-    const ok = await new Promise((res) => { toolGates.set('ap-t', res); raise(opts, { id: 'ap-t', kind: 'tool', action: 'rm -rf build', slug: 'pm' }); });
-    return { reply: ok ? '실행했습니다' : '하지 않았습니다' };
-  } });
-  const o = server.offer({ agent: agentId });
-  server.push(o); await flush();
-  await until(() => approvalOf(server, o.work).length > 0);
-  assert.equal(approvalOf(server, o.work)[0].data.risk, 'high');
-  server.decide(o.work, approvalOf(server, o.work)[0].data.approval_id, 'approve'); await flush();
-  await until(() => server.sentOf('work.result', o.work).length > 0);
-  assert.equal(server.sentOf('work.result', o.work)[0].data.text, '실행했습니다');
-  assert.equal(calls.resolved[0].effectAt, 'intent');
+  assert.deepEqual(calls.resolved, [], '후속 턴 없음');
+  assert.deepEqual(server.sentOf('work.error', o.work)[0].data, { code: 'timeout', runner: null });
+  assert.equal(server.works.get(o.work).state, 'failed');
+  assert.equal(server.sentOf('work.result', o.work).length, 0);
+  await clock.advance(60 * 60 * 1000); await flush();
+  assert.equal(server.sentOf('work.accept', o.work).length, renews, '끝난 뒤에는 리스 연장이 없다');
+  assert.equal(clock.pending(), 0, '남은 타이머 0');
 });
 
 test('guest 결재: 승인 요청을 보내지 않고 로컬 결재를 거절로 닫는다(막힌 셸 결재도 풀린다)', async () => {

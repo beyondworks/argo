@@ -296,3 +296,59 @@ test('v2 link 범위: owner 표지가 없으면 SDK·네이티브·CLI 모두 �
   await chat(ws, 'alpha', 'hi', null, { mirrorCtx: linkCtx(true), source: 'messenger', journal: { off: true } });
   assert.equal(calls, 1, 'owner CLI 턴은 실행');
 });
+
+// ── #1078 검수 반영: team·guest link 턴 → send_to_crew → 쪽지 배달 턴도 같은 등급(높음), owner link 턴의 고위험 셸 결재(D28, 중간) ──
+const { deliverCrewMail } = await import('../src/crewmail.mjs');
+const { crewmailTurn } = await import('../src/scheduler.mjs');
+const { resolveApproval } = await import('../src/approvals.mjs');
+async function withBeta(ws, card = runner) { await writeFile(join(paths(ws).agents, 'beta.md'), `---\nname: Beta\nrunner: ${card}\n---\nQA fixture`); }
+async function deliveredGate(ws, ctx) {
+  // 실제 makeCrewServer의 send_to_crew → 실제 쪽지함 → 실제 deliverCrewMail·crewmailTurn → 실제 chat()·권한 게이트
+  const sink = [];
+  makeCrewServer(ws, 'alpha', 'Alpha', [{ slug: 'beta', name: 'Beta' }], 0, [], ctx, 'ko', [], '', sink, null);
+  const send = sink.find((t) => t.name === 'send_to_crew');
+  assert.match((await send.handler({ to: 'beta', message: '이 파일 고쳐 줘' })).content[0].text, /쪽지를 보냈다/);
+  let seen; vendorTurn = async (options) => { seen = options; return 'fixture finished'; };
+  await deliverCrewMail(ws, (slug, msg, opts) => crewmailTurn(ws, slug, msg, opts));
+  assert.ok(seen?.canUseTool, '배달 턴이 실제로 돌았다');
+  return seen;
+}
+test('v2 link 턴의 쪽지(send_to_crew) → 배달 턴도 같은 등급: team·guest는 손님 도구(Bash·Write·Read·WebFetch 거부), owner는 주인 도구', async () => {
+  runner = 'claude'; process.env.ARGO_NATIVE_RUNNERS = 'off';
+  const inside = (ws) => join(paths(ws).root, 'vault', 'note.md');
+  for (const owner of [false, true]) {
+    const ws = await setup('claude'); await withBeta(ws, 'claude');
+    const seen = await deliveredGate(ws, linkCtx(owner));
+    for (const tool of ['Bash', 'Write', 'Read', 'WebFetch']) {
+      const b = (await seen.canUseTool(tool, { file_path: inside(ws), url: 'https://example.com', command: 'ls', content: 'x' })).behavior;
+      assert.equal(b, owner ? 'allow' : 'deny', `${owner ? 'owner' : 'team·guest'} 배달 턴 ${tool}`);
+    }
+    assert.deepEqual(seen.allowedTools, owner ? [...SDK_ALLOWED_TOOLS] : ['mcp__crew'], '배달 턴 사전 승인 목록');
+  }
+});
+
+test('D28: v2 owner link 턴의 고위험 셸(rm -rf ~/Documents/x)은 옛 메신저 주인 턴처럼 결재로 막히고, 결재는 그 일의 범위를 단다(옛 msgr 목적지 없음) — 승인되면 같은 명령을 한 번 허용', async () => {
+  runner = 'claude'; process.env.ARGO_NATIVE_RUNNERS = 'off';
+  const cmd = { command: 'rm -rf ~/Documents/x' };
+  const ws = await setup('claude');
+  let seen; vendorTurn = async (options) => { seen = options; return 'fixture finished'; };
+  await chat(ws, 'alpha', 'hi', null, { mirrorCtx: ctxOf(ws, OWNER), source: 'messenger', journal: { off: true } });
+  assert.equal((await seen.canUseTool('Bash', cmd, { toolUseID: 'legacy-1' })).behavior, 'deny', '배포본 메신저 주인 턴: 결재');
+  const ws2 = await setup('claude');
+  const ctx = linkCtx(true); ctx.scope.work = 'w-d28';
+  await chat(ws2, 'alpha', 'hi', null, { mirrorCtx: ctx, source: 'messenger', journal: { off: true } });
+  const r = await seen.canUseTool('Bash', cmd, { toolUseID: 'v2-1' });
+  assert.equal(r.behavior, 'deny', 'v2 owner 턴도 결재(배포본 대비 회귀 없음)');
+  const aps = (await loadApprovals(ws2)).filter((a) => a.payload?.shell);
+  assert.equal(aps.length, 1);
+  assert.deepEqual(aps[0].scope, { kind: 'link', work: 'w-d28', room: 'r-1', owner: true }, '그 일의 범위');
+  assert.equal(aps[0].msgr, undefined, '옛 메신저 목적지로 미러하지 않는다');
+  // 같은 명령을 다시 시도하면 새 카드 없이 같은 결재를 가리킨다
+  assert.equal((await seen.canUseTool('Bash', cmd, { toolUseID: 'v2-2' })).behavior, 'deny');
+  assert.equal((await loadApprovals(ws2)).filter((a) => a.payload?.shell).length, 1);
+  // 승인 → 후속 턴(같은 범위)이 같은 명령을 한 번 실행할 수 있다
+  await resolveApproval(ws2, aps[0].id, true);
+  await chat(ws2, 'alpha', 'go', null, { mirrorCtx: ctx, source: 'messenger', journal: { off: true } });
+  assert.equal((await seen.canUseTool('Bash', cmd, { toolUseID: 'v2-3' })).behavior, 'allow', '승인된 같은 명령 한 번');
+  assert.equal((await seen.canUseTool('Bash', cmd, { toolUseID: 'v2-4' })).behavior, 'deny', '두 번째는 다시 결재');
+});

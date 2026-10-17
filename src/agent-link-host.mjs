@@ -117,7 +117,9 @@ export function contextSection(context, lang = 'ko') {
   return `${head}\n${lines.join('\n')}\n\n`;
 }
 
-export const APPROVAL_TTL_MS = 24 * 3_600_000; // v2 승인 요청의 만료(서버가 그때 work.approval_decision{expire}를 보낸다)
+// v2 승인 요청의 만료. 서버는 만료 결정을 보내지 않는다(msgr2_approval_decide는 approve·reject만, 기한이 지나면 'expired'만 돌려주고 크론도 없다) —
+// 본체가 expires_at에 로컬 타이머를 걸어 닫는다. 결재 대기 중인 일은 result를 받지 않으므로 work.error{timeout}으로 끝내고, 그러면 리스 연장도 멈춘다.
+export const APPROVAL_TTL_MS = 24 * 3_600_000;
 
 /** offer.peers[](서버가 등급·파견 허용으로 거른 동료) → 지시 앞에 붙일 동료 구역과 넘김 규칙. 비면 ''. */
 export function peersSection(peers, lang = 'ko') {
@@ -151,7 +153,7 @@ export function approvalRequestFrom(item, now = Date.now()) {
   const summary = (plain || [item.action, item.reason].filter(Boolean).join(' — ') || 'approval').slice(0, 2000);
   return {
     action: String(item.action || item.kind || 'approval').slice(0, 200),
-    risk: item.kind === 'tool' || item.kind === 'connector' ? 'high' : 'medium',
+    risk: item.kind === 'tool' || item.kind === 'connector' || item.payload?.shell ? 'high' : 'medium', // payload.shell = 고위험 셸 결재(D28)
     summary, effect_key: `approval:${item.id}`, expires_at: new Date(now + APPROVAL_TTL_MS).toISOString(),
   };
 }
@@ -203,12 +205,17 @@ export function createAgentLinkHost(deps) {
         waiters.set(id, res);
         ctx.signal.addEventListener('abort', () => res(''), { once: true });
       }));
+      let expiredAny = false; // 기한이 지난 결재가 있다 — 일은 결과 대신 timeout 오류로 끝난다(결재 대기 상태라 result를 받지 않는다)
       const closeLocal = (id) => deps.resolveApproval(a.ws, id, false, { resolvedBy: { via: 'msgr2', at: new Date(clock.now()).toISOString() } }).catch(() => {});
       async function bridge(item) {
         if (!policy.approvals) { await closeLocal(item.id); return ''; } // guest: 승인 요청을 보내지 않는다(서버도 tier_denied) — 막힌 턴을 풀어 준다
         let decision;
-        try { decision = await ctx.requestApproval(approvalRequestFrom(item, clock.now())); }
+        const req = approvalRequestFrom(item, clock.now());
+        let timer = null;
+        const expiry = new Promise((res) => { timer = clock.setTimeout(() => res('expire'), Math.max(0, Date.parse(req.expires_at) - clock.now())); });
+        try { decision = await Promise.race([ctx.requestApproval(req), expiry]); }
         catch (e) { log('approval request failed', e.code ?? e.message); await closeLocal(item.id); return ''; }
+        finally { clock.clearTimeout(timer); }
         if (ctx.signal.aborted) { await closeLocal(item.id); return ''; }
         const tool = item.kind === 'tool'; // 권한 게이트 결재 — 기다리던 턴이 스스로 재개한다(후속 턴 없음)
         if (decision === 'approve') {
@@ -231,7 +238,8 @@ export function createAgentLinkHost(deps) {
           await deps.resolveWithFollowUp(a.ws, item.id, false, { resolvedBy: { via: 'msgr2', at: new Date(clock.now()).toISOString() } }).catch(() => {});
           return wait ? await wait : '';
         }
-        await closeLocal(item.id); // expire: 후속 턴 없이 닫는다
+        await closeLocal(item.id); // expire(로컬 타이머): 후속 턴 없이 닫는다
+        expiredAny = true;
         return '';
       }
       const off = deps.onNotify((ev) => {
@@ -261,6 +269,7 @@ export function createAgentLinkHost(deps) {
           if (t) parts.push(t);
         }
         if (ctx.signal.aborted) return null;
+        if (expiredAny) throw Object.assign(new Error('approval expired'), { code: 'timeout' }); // 방에는 코드 글만(원문 없음, D15)
         ctx.progress('writing');
         const { body, handoffs } = parseHandoffs(parts.filter(Boolean).join('\n\n'), peers);
         const plan = policy.uploads ? await deps.planReplyFiles(a.ws, body).catch(() => ({ body, files: [] })) : { body, files: [] };

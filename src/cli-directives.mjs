@@ -186,7 +186,8 @@ export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', b
         const cost = lim.relaxed ? 1 + cc.length : 1;
         if (cnt.mail + cost > lim.mail) throw new Error(en ? `note limit reached (${lim.mail} per turn${lim.relaxed ? ', each CC counts' : ''})` : `쪽지 한도 초과(턴당 ${lim.mail}회${lim.relaxed ? ', 참조도 한 통으로 센다' : ''})`);
         try {
-          await sendCrewMail(wsId, { from: fromSlug, fromName, to: to.slug, cc, message: msg, hop: hop + 1, chain: [...chain, fromSlug], relaxed: lim.relaxed, ...(delegationTree ? { tree: delegationTree.id } : {}) });
+          await sendCrewMail(wsId, { from: fromSlug, fromName, to: to.slug, cc, message: msg, hop: hop + 1, chain: [...chain, fromSlug], relaxed: lim.relaxed, ...(delegationTree ? { tree: delegationTree.id } : {}),
+            ...(mirrorCtx?.kind === 'scope' && mirrorCtx.scope?.kind === 'link' ? { link: mirrorCtx.scope } : {}) }); // v2 일의 등급을 배달 턴에 잇는다(SDK 도구 chat.mjs send_to_crew와 같다)
         } catch (e) {
           if (e?.code === 'TREE_CAP') throw new Error(en ? `total limit for agent turns from this message reached (${lim.tree}) — report what remains and ask the user whether to continue` : `이번 지시에서 이어진 에이전트 턴이 합계 상한(${lim.tree}회)에 닿았다 — 남은 일을 알리고 사용자에게 계속할지 물어라`);
           throw e;
