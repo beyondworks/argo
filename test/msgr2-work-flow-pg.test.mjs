@@ -359,3 +359,61 @@ test('offer.peers — 넘김할 수 있는 동료만 싣고(자기 제외·파�
     assert.equal(db.sql(`select count(*) from public.msgr2_works where parent_work_id = '${gw}'`), '0', 'guest 일의 넘김은 새 일이 아니다');
   } finally { db.sql(`update public.msgr2_agent_seats set allow = 'owner' where agent_id = '${AG2}'`); }
 });
+
+// 검수 1 #1075 지적 1 — 주인이 못 읽는 방의 문맥이 주인 본체로 가면 안 된다(설계 1-3 "에이전트를 넣는 조건 = 주인이 그 방의 멤버"를 offer 때도)
+test('지적 1 — 에이전트 주인이 못 읽는 방(빠진 방·제거된 공간)에서는 offer·문맥이 주인 본체로 가지 않고, 동료 목록에도 안 나온다', { skip }, () => {
+  const X = '40000000-0000-4000-8000-0000000000a1'; // 팀 공간 주인(O와 다른 사람)
+  const xApp = seedDevice(db, X, 'app');
+  const S2 = db.sql(`insert into public.msgr2_spaces (kind, name, owner_user_id) values ('team', '남의 팀', '${X}') returning id`);
+  db.sql(`insert into public.msgr2_space_members (space_id, user_id, role) values ('${S2}', '${X}', 'owner'), ('${S2}', '${O}', 'member')`);
+  db.sql(`insert into public.msgr2_agent_seats (agent_id, space_id, allow) values ('${AG}', '${S2}', 'all')`);
+  const XG = db.sql(`insert into public.msgr2_agents (owner_user_id, ws_id, slug, display_name) values ('${X}', 'x', 'g', '엑스') returning id`);
+  db.sql(`insert into public.msgr2_agent_seats (agent_id, space_id, allow) values ('${XG}', '${S2}', 'all')`);
+  const P = db.sql(`insert into public.msgr2_rooms (space_id, kind, name) values ('${S2}', 'private', 'X만') returning id`);
+  db.sql(`insert into public.msgr2_room_members (room_id, member_kind, member_id) values ('${P}', 'user', '${X}'), ('${P}', 'agent', '${AG}'), ('${P}', 'agent', '${XG}')`);
+  assert.equal(db.as(O, oApp.sid, `select (public.msgr2_access('${P}')).read`), 'f', 'O는 이 방을 못 읽는다');
+  const leaked = (secret) => JSON.stringify(pending(oRun1)).includes(secret) || db.sql(`select count(*) from realtime.sent where topic = 'w:${O}' and payload::text like '%${secret}%'`) !== '0';
+  say(xApp, P, 'SECRET-CONTEXT-1'); say(xApp, P, '요약해', [AG]);
+  assert.equal(db.sql(`select count(*) from public.msgr2_works where room_id = '${P}' and agent_id = '${AG}'`), '0', 'O의 에이전트에게 offer 없음');
+  assert.equal(leaked('SECRET-CONTEXT-1'), false, '문맥이 O 본체로 가지 않는다');
+  // X 자신의 에이전트는 된다. 그 offer의 동료 목록에 O의 에이전트(주인이 못 읽음)는 없다
+  say(xApp, P, '엑스 해줘', [XG]); const xw = lastWork(P);
+  assert.equal(workRow(xw).agent_id, XG);
+  const peers = JSON.parse(db.sql(`select envelope->'data'->'peers' from public.msgr2_work_events where work_id = '${xw}' and type = 'work.offer'`));
+  assert.ok(!peers.some((p) => p.agent === AG), '주인이 못 읽는 동료는 넘김 대상이 아니다');
+  // open 방이면 O가 읽을 수 있어 offer가 된다 → 그 뒤 O를 공간에서 제거하면 다음 멘션부터 offer 없음 + 남은 offer도 따라잡기에서 빠진다
+  const OP = db.sql(`insert into public.msgr2_rooms (space_id, kind, name) values ('${S2}', 'open', '열린방') returning id`);
+  db.sql(`insert into public.msgr2_room_members (room_id, member_kind, member_id) values ('${OP}', 'agent', '${AG}')`);
+  say(xApp, OP, '열린방 일', [AG]); const ow = lastWork(OP);
+  assert.equal(workRow(ow).agent_id, AG, '읽을 수 있으면 offer');
+  assert.ok(pending(oRun1).envelopes.some((e) => e.work === ow));
+  db.sql(`update public.msgr2_space_members set removed_at = now() where space_id = '${S2}' and user_id = '${O}'`);
+  assert.ok(!pending(oRun1).envelopes.some((e) => e.work === ow), '제거된 뒤에는 남은 offer도 내려주지 않는다');
+  say(xApp, OP, 'SECRET-AFTER-REMOVAL'); say(xApp, OP, '또 해줘', [AG]);
+  assert.equal(db.sql(`select count(*) from public.msgr2_works where room_id = '${OP}' and agent_id = '${AG}'`), '1', '제거 뒤 새 offer 없음');
+  assert.equal(leaked('SECRET-AFTER-REMOVAL'), false);
+});
+
+// 검수 1 #1075 지적 2 — 친구 1:1(만든 사람의 개인 공간에 있는 방)이 친구의 따라잡기에서 빠지면 안 된다
+test('지적 2 — 남의 개인 공간에 있는 친구 방도 방 멤버의 앱 따라잡기에 온다', { skip }, () => {
+  const F = '40000000-0000-4000-8000-0000000000f1'; const fApp = seedDevice(db, F, 'app');
+  const FR = db.sql(`insert into public.msgr2_rooms (space_id, kind, pair_key) values ('${PS}', 'direct', 'o-f') returning id`);
+  db.sql(`insert into public.msgr2_room_members (room_id, member_kind, member_id) values ('${FR}', 'user', '${O}'), ('${FR}', 'user', '${F}')`);
+  say(oApp, FR, 'hi-friend');
+  const c = JSON.parse(db.as(F, fApp.sid, 'select public.msgr2_catch_up(null)'));
+  const room = c.rooms.find((r) => r.room_id === FR);
+  assert.ok(room, JSON.stringify(c).slice(0, 200)); assert.ok(room.messages.some((m) => m.body === 'hi-friend'));
+  assert.ok(!c.rooms.some((r) => r.room_id === DM), 'O의 다른 개인 방은 안 온다');
+});
+
+test('판정 함수 하나 — 모든 사람 × 모든 방에서 msgr2_access(사람 문맥) = _msgr2_access_for(방, 그 사람)', { skip }, () => {
+  const people = [[O, oApp], [M, mApp], [G, gApp]];
+  const rooms = db.sql(`select string_agg(id::text, ',') from public.msgr2_rooms`).split(',');
+  for (const [uid, dev] of people) {
+    const ids = `(values ${rooms.map((r) => `('${r}'::uuid)`).join(',')}) v(id)`; // 사람 문맥에서는 방 표 RLS가 걸리므로 id 목록으로 돈다
+    const viaRpc = db.as(uid, dev.sid, `select string_agg((public.msgr2_access(id))::text, '|' order by id) from ${ids}`);
+    const direct = db.sql(`select string_agg((public._msgr2_access_for(id, '${uid}'))::text, '|' order by id) from ${ids}`);
+    assert.equal(viaRpc, direct, uid);
+  }
+  assert.ok(rooms.length >= 5);
+});

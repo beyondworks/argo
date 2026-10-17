@@ -34,6 +34,68 @@ begin
 end $$;
 revoke execute on function public.msgr2_lock_cols() from public, anon, authenticated;
 
+-- 판정 함수 나누기(검수 1 #1075 지적 1): 같은 규칙을 "지금 요청한 사람" 말고 다른 사람(에이전트 주인) 기준으로도 봐야 한다.
+-- _msgr2_access_for(room, uid) = U1 msgr2_access 본문 그대로(기기 확인만 뺌). msgr2_access = 기기 확인 + _msgr2_access_for(room, auth.uid()).
+-- 규칙은 이 한 곳에만 있다. U1 파일이 나중에 다시 적용돼 msgr2_access가 U1 본문으로 돌아가도 판정 결과는 같다.
+create or replace function public._msgr2_access_for(p_room uuid, p_uid uuid) returns public.msgr2_access_t
+  language plpgsql stable security definer set search_path = public, pg_temp as $$
+declare
+  uid uuid := p_uid;
+  r public.msgr2_rooms;
+  s public.msgr2_spaces;
+  v_role text;
+  in_room boolean;
+  rd boolean; adm boolean; t text;
+  res public.msgr2_access_t := row(false, false, false, false, false, null)::public.msgr2_access_t;
+begin
+  if uid is null or p_room is null then return res; end if;
+  select * into r from public.msgr2_rooms where id = p_room;
+  if not found then return res; end if;
+  select * into s from public.msgr2_spaces where id = r.space_id;
+  if not found or s.deleted_at is not null then return res; end if;
+  in_room := exists (select 1 from public.msgr2_room_members m where m.room_id = r.id and m.member_kind = 'user' and m.member_id = uid and m.removed_at is null);
+  if s.kind = 'team' then
+    select m.role into v_role from public.msgr2_space_members m
+      where m.space_id = s.id and m.user_id = uid and m.removed_at is null and (m.expires_at is null or m.expires_at > now());
+    if v_role is null then return res; end if;
+    rd := (r.kind = 'open' and v_role in ('owner', 'admin', 'member')) or in_room;
+    adm := v_role in ('owner', 'admin');
+  else
+    rd := in_room;
+    adm := s.owner_user_id = uid;
+  end if;
+  if not rd then return res; end if;
+  -- 방의 사람: 활동 중인 사람 방 멤버(팀은 활동 중인 공간 멤버인 사람만) + 팀 open 방이면 owner·admin·member 전원
+  with humans as (
+    select m.member_id as u from public.msgr2_room_members m
+      where m.room_id = r.id and m.member_kind = 'user' and m.removed_at is null
+        and (s.kind = 'personal' or exists (select 1 from public.msgr2_space_members sm where sm.space_id = s.id and sm.user_id = m.member_id and sm.removed_at is null and (sm.expires_at is null or sm.expires_at > now())))
+    union
+    select sm.user_id from public.msgr2_space_members sm
+      where s.kind = 'team' and r.kind = 'open' and sm.space_id = s.id and sm.role in ('owner', 'admin', 'member') and sm.removed_at is null and (sm.expires_at is null or sm.expires_at > now())
+  )
+  select case
+    when not exists (select 1 from humans h where h.u <> s.owner_user_id) then 'owner'
+    when s.kind = 'team' and not exists (select 1 from humans h join public.msgr2_space_members sm on sm.space_id = s.id and sm.user_id = h.u where sm.role = 'guest') then 'team'
+    else 'guest' end into t;
+  res.read := true;
+  res.write := r.archived_at is null;
+  res.invite := r.kind <> 'direct' and r.archived_at is null and (case when s.kind = 'team' then v_role in ('owner', 'admin', 'member') else adm end);
+  res.manage := r.kind <> 'direct' and adm;
+  res.decide := adm;
+  res.tier := t;
+  return res;
+end $$;
+revoke all on function public._msgr2_access_for(uuid, uuid) from public, anon, authenticated;
+create or replace function public.msgr2_access(p_room uuid) returns public.msgr2_access_t
+  language plpgsql stable security definer set search_path = public, pg_temp as $$
+begin
+  if auth.uid() is null or p_room is null or not public._msgr2_device_ok() then
+    return row(false, false, false, false, false, null)::public.msgr2_access_t;
+  end if;
+  return public._msgr2_access_for(p_room, auth.uid());
+end $$;
+
 -- 사람 글의 멘션(에이전트 id 배열). 서버가 방 멤버인 에이전트만 본다(모르는 id는 무시). 사람이 넣는 열이라 권한을 연다.
 alter table public.msgr2_messages add column if not exists mentions uuid[] not null default '{}';
 alter table public.msgr2_messages add column if not exists work_id uuid; -- 에이전트·시스템 글이 어느 일의 글인가(서버만 쓴다)
@@ -330,7 +392,7 @@ begin
 end $$;
 
 -- ── 4. offer 만들기(사람 글 트리거·넘김이 부른다) ─────────────────────────────────
--- 넘김할 수 있는 동료(offer.peers[], 총괄 지시 2026-10-17). 같은 방의 활동 중인 다른 에이전트 중, 사슬을 시작한 사람(p_root_user)이
+-- 넘김할 수 있는 동료(offer.peers[], 총괄 지시 2026-10-17). 같은 방의 활동 중인 다른 에이전트(주인이 그 방을 읽을 수 있는) 중, 사슬을 시작한 사람(p_root_user)이
 -- 그 에이전트에게 시킬 수 있는 것만(개인 공간 = 주인만, 팀 공간 = 파견 행 allow). guest 등급이면 빈 배열(D12). 이름이 비면 slug. 50개까지.
 -- 넘김(result.handoffs[])을 받을 때도 이 목록으로 다시 본다 — offer에 실은 목록과 서버가 받는 넘김이 같은 규칙이다.
 create or replace function public._msgr2_peers(p_room uuid, p_agent uuid, p_root_user uuid, p_tier text) returns jsonb
@@ -343,6 +405,7 @@ create or replace function public._msgr2_peers(p_room uuid, p_agent uuid, p_root
       join public.msgr2_spaces s on s.id = r.space_id and s.deleted_at is null
       left join public.msgr2_agent_seats st on st.agent_id = a.id and st.space_id = s.id and st.removed_at is null
      where m.room_id = p_room and m.member_kind = 'agent' and m.removed_at is null and a.id <> p_agent
+       and coalesce((public._msgr2_access_for(p_room, a.owner_user_id)).read, false) -- 그 동료의 주인도 방을 읽을 수 있어야(make_offer와 같은 조건)
        and p_tier is distinct from 'guest'
        and case when s.kind = 'personal' then a.owner_user_id = p_root_user
                 else st.agent_id is not null and (st.allow = 'all' or a.owner_user_id = p_root_user or (st.allow = 'list' and p_root_user = any (st.allow_users))) end
@@ -358,13 +421,16 @@ create or replace function public._msgr2_make_offer(p_room uuid, p_topic uuid, p
 declare
   r public.msgr2_rooms; s public.msgr2_spaces; a public.msgr2_agents; seat public.msgr2_agent_seats; ctr public.msgr2_room_counters;
   wid uuid := gen_random_uuid(); tid uuid := p_topic; tier text; ctx jsonb := '[]'::jsonb; item jsonb; total int := 2; m record;
-  lim text; dev uuid; ttl_s int := public._msgr2_setting_int('msgr2_offer_ttl_s', 1800);
+  lim text; dev uuid; ttl_s int := public._msgr2_setting_int('msgr2_offer_ttl_s', 1800); acc public.msgr2_access_t;
 begin
   select * into r from public.msgr2_rooms where id = p_room;
   select * into s from public.msgr2_spaces where id = r.space_id;
   select * into a from public.msgr2_agents where id = p_agent;
   if r.id is null or s.deleted_at is not null or r.archived_at is not null or r.agent_policy = 'blocked' or a.id is null or a.status <> 'active' then return null; end if;
   if not exists (select 1 from public.msgr2_room_members where room_id = p_room and member_kind = 'agent' and member_id = p_agent and removed_at is null) then return null; end if;
+  -- 에이전트 주인이 지금 그 방을 읽을 수 있어야 한다(문맥·지시가 주인 본체로 간다). 방에서 빠졌거나 공간에서 제거·만료되면 offer 없음(검수 1 #1075 지적 1).
+  acc := public._msgr2_access_for(p_room, a.owner_user_id);
+  if not coalesce(acc.read, false) then return null; end if;
   if s.kind = 'personal' then
     if p_root_user <> a.owner_user_id then return null; end if;
   else
@@ -394,7 +460,7 @@ begin
     perform public._msgr2_system_msg(p_room, p_topic, null, jsonb_build_object('code', 'work.limit', 'limit', lim, 'agent', p_agent));
     return null;
   end if;
-  tier := coalesce((public.msgr2_access(p_room)).tier, 'guest'); -- 부른 사람(글쓴이·넘긴 일의 주인)이 못 읽는 방이면 가장 좁은 등급
+  tier := coalesce(acc.tier, 'guest'); -- 등급은 방의 사람 구성(보는 사람과 무관) — 주인 기준 판정에서 가져온다
   for m in select x.id, x.author_kind, x.author_user_id, x.author_agent_id, x.body, x.created_at from public.msgr2_messages x
              where x.room_id = p_room and x.deleted_at is null and x.kind <> 'system' and (p_source is null or x.id <> p_source)
              order by x.id desc limit 200 loop
@@ -674,6 +740,7 @@ begin
   select coalesce(jsonb_agg(q.envelope order by q.id), '[]'::jsonb) into envs from (
     select e.id, e.envelope from public.msgr2_work_events e join public.msgr2_works w on w.id = e.work_id
      where w.owner_user_id = uid and w.state = 'offered' and w.expires_at > now() and cardinality(dv.runners) > 0
+       and coalesce((public._msgr2_access_for(w.room_id, uid)).read, false) -- offer 뒤에 방에서 빠졌으면 내려주지 않는다
        and e.sender = 'server' and e.type = 'work.offer' and (e.device_id is null or e.device_id = dv.id)
        and not exists (select 1 from public.msgr2_agent_leases l where l.agent_id = w.agent_id and l.lease_until > now() and l.device_id <> dv.id)
     union all
@@ -731,9 +798,13 @@ declare uid uuid := auth.uid(); res jsonb; nxt bigint;
 begin
   if uid is null or not public._msgr2_device_ok() then raise exception 'msgr2_device_invalid' using errcode = '42501'; end if;
   if public._msgr2_paused() then return jsonb_build_object('rooms', '[]'::jsonb, 'paused', true, 'next_since', p_since_id); end if;
+  -- 후보 = 내가 활동 중인 방 멤버인 방(개인 공간의 친구 1:1·그룹 포함) ∪ 내가 owner·admin·member인 팀 공간의 open 방. 거르기는 msgr2_access(검수 1 #1075 지적 2).
   with cand as (
+    select m.room_id as id from public.msgr2_room_members m join public.msgr2_rooms r on r.id = m.room_id
+     where m.member_kind = 'user' and m.member_id = uid and m.removed_at is null and r.archived_at is null
+    union
     select r.id from public.msgr2_rooms r join public.msgr2_space_members sm on sm.space_id = r.space_id and sm.user_id = uid and sm.removed_at is null
-     where r.archived_at is null
+     where r.kind = 'open' and r.archived_at is null and sm.role in ('owner', 'admin', 'member')
   ), readable as (select c.id from cand c where (public.msgr2_access(c.id)).read),
   pick as (
     select m.* from readable rd
