@@ -158,8 +158,8 @@ test('글 넣기 — 사람만, 자기 이름으로, 같은 방의 토픽에만 
   const T1 = sql(`insert into public.msgr2_topics (room_id, title) values ('${ROOM}', '일') returning id`);
   const T2 = sql(`insert into public.msgr2_topics (room_id, title) values ('${ROOM2}', '다른 방') returning id`);
   asUser(U.member, `insert into public.msgr2_messages (room_id, author_kind, author_user_id, body) values ('${ROOM}', 'user', '${U.member}', '안녕')`);
-  asUser(U.member, `insert into public.msgr2_messages (room_id, topic_id, author_kind, author_user_id, body) values ('${ROOM}', ${T1}, 'user', '${U.member}', '토픽 글')`);
-  assert.match(asUserErr(U.member, `insert into public.msgr2_messages (room_id, topic_id, author_kind, author_user_id, body) values ('${ROOM}', ${T2}, 'user', '${U.member}', 'x')`) ?? '', /msgr2_topic_room_mismatch/);
+  asUser(U.member, `insert into public.msgr2_messages (room_id, topic_id, author_kind, author_user_id, body) values ('${ROOM}', '${T1}', 'user', '${U.member}', '토픽 글')`);
+  assert.match(asUserErr(U.member, `insert into public.msgr2_messages (room_id, topic_id, author_kind, author_user_id, body) values ('${ROOM}', '${T2}', 'user', '${U.member}', 'x')`) ?? '', /msgr2_topic_room_mismatch/);
   for (const q of [
     `insert into public.msgr2_messages (room_id, author_kind, author_user_id, body) values ('${ROOM}', 'user', '${U.owner}', '남의 이름')`,
     `insert into public.msgr2_messages (room_id, author_kind, author_agent_id, body) values ('${ROOM}', 'agent', '${ag}', '에이전트인 척')`,
