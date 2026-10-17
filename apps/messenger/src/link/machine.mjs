@@ -17,6 +17,7 @@ import {
   NAMES, USER_EVENTS, STATES, TERMINAL_STATES, RECONNECT, SEND_RETRY, REGISTER_EVERY_MS, SEEN_CAP,
   backoffDelay, belowMin, rejectCodeOf, retryable, normalizeCatchUp, deviceIdOf, pausedOf, attachmentProblem,
 } from './policy.mjs';
+import { STAGES } from '../../../../packages/agent-link/contract/v1.mjs';
 
 export const LAST_ID_KEY = (uid) => `argo-msgr2-last-id:${uid}`;
 const BUSY = [STATES.connecting, STATES.registering, STATES.subscribing, STATES.catchingUp];
@@ -479,7 +480,7 @@ export function createLinkMachine(opts) {
       const env = m?.payload;
       if (!env || env.type !== 'work.progress' || (env.work != null && env.work !== workId)) return;
       const data = env.data && typeof env.data === 'object' ? env.data : {};
-      if (typeof data.stage !== 'string' || !data.stage) return;
+      if (!STAGES.includes(data.stage)) return; // 약속 v1 단계(thinking·tool·writing)만 — 모르는 값은 화면에 사전 키로 보인다
       emit('progress', { workId, stage: data.stage, note: typeof data.note === 'string' ? data.note : null, at: env.at ?? null, seq: env.seq ?? null });
     });
     ch.subscribe(() => {}); // 끊기면 u:가 다시 붙을 때 함께 다시 가입한다(따로 재시도하지 않는다)

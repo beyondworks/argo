@@ -94,9 +94,9 @@ test('@멘션: 방 에이전트의 이름·slug만, 단어 경계, 중복 0, 20�
   assert.equal(mentionsOf(Array.from({ length: 30 }, (_, i) => `@n${i}`).join(' '), Array.from({ length: 30 }, (_, i) => ({ id: `x${i}`, slug: `n${i}` }))).length, 20);
 });
 
-test('v2 일 카드 사전 전수: WorkCard.jsx의 정적 t(키)는 모두 ko·en 쌍, 주석 밖 한글 문자열 0, window.confirm·prompt 0', async () => {
+test('v2 부품 사전 전수: WorkCard·useWorkCards·source·composer·runtime의 정적 t(키)는 모두 ko·en 쌍, 주석 밖 한글 문자열 0, window.confirm·prompt 0', async () => {
   const { readFileSync } = await import('node:fs');
-  const src = readFileSync(new URL('../src/v2/WorkCard.jsx', import.meta.url), 'utf8');
+  const src = ['WorkCard.jsx', 'useWorkCards.jsx', 'source.mjs', 'composer.mjs', 'runtime.mjs'].map((f) => readFileSync(new URL(`../src/v2/${f}`, import.meta.url), 'utf8')).join('\n'); // U6c-1b: 기존 셸에 끼우는 v2 부품 전부
   const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
   const keys = [...code.matchAll(/\bt\(\s*'([a-z0-9._]+)'/g)].map((m) => m[1]);
   assert.ok(keys.length >= 5, `키 ${keys.length}개`);

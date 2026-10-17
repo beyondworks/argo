@@ -1895,6 +1895,7 @@ export const DICT = {
   'v2.msg.deleted': ['지운 글입니다', 'Message deleted'],
   'v2.ap.failed': ['결정을 저장하지 못했습니다. 다시 눌러 주세요.', 'Could not save the decision. Try again.'],
   'v2.work.cancel.failed': ['일을 취소하지 못했습니다. 다시 눌러 주세요.', 'Could not cancel the work. Try again.'],
+  'v2.unsupported': ['새 메신저에서 곧 지원할 기능입니다.', 'Coming soon to the new messenger.'],
   'v2.state.paused': ['메신저가 잠시 멈췄습니다. 풀리면 자동으로 이어집니다.', 'Messenger is paused. It resumes on its own.'],
   'v2.state.update': ['앱을 업데이트해야 이어서 쓸 수 있습니다.', 'Update the app to keep using it.'],
   'v2.state.signedOut': ['이 기기에서 로그아웃되었습니다. 다시 로그인하세요.', 'This device was signed out. Sign in again.'],
