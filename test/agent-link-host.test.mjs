@@ -9,6 +9,8 @@ import { createAgentLinkHost, agentLinkEnabled, legacyMsgrBridgeEnabled, context
 import { createFakeServer } from '../packages/agent-link/test/fake-server.mjs';
 
 const flush = async (n = 30) => { for (let i = 0; i < n; i++) await new Promise((r) => setImmediate(r)); };
+// 실제 파일 쓰기가 끼는 칸(첨부 저장) — 윈도우는 느려 정해진 횟수로는 모자라다. 조건이 설 때까지 기다린다(상한 10초)
+const until = async (cond, ms = 10_000) => { const end = Date.now() + ms; while (!cond() && Date.now() < end) await new Promise((r) => setTimeout(r, 10)); };
 const DEVICE = 'c4d5e6f7-8091-4a2b-9c3d-4e5f6a7b8c03';
 
 async function setup({ chatImpl, regFails = false, plan, fetchImpl, agents = [{ ws: 'co-1', slug: 'pm', name: 'PM', role: '기획' }] } = {}) {
@@ -124,6 +126,7 @@ test('받은 첨부: 서명 URL에서 받아 vault/files/msgr2에 두고 chat()�
     { id: crypto.randomUUID(), name: 'big.bin', mime: 'application/octet-stream', bytes: ATTACH_IN_MAX + 1, url: 'https://x/sign/b', url_expires_at: o.data.expires_at },
   ];
   server.push(o); await flush();
+  await until(() => calls.chat.length > 0);
   assert.deepEqual(fetched, ['https://x/sign/a']);
   const att = calls.chat[0].opts.attachments;
   assert.equal(att.length, 1);
