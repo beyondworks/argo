@@ -34,7 +34,7 @@
 
 | 규칙 | 막는 장치 |
 |---|---|
-| PR 본문: 영향 반경·분리 검수·경우 표·부하(분당)·메신저 390/1280/880·러너별 검증 | `.github/workflows/pr-rules.yml` + `scripts/pr-rules-check.mjs`(바뀐 파일에 따라 해당 절이 비면 실패, 템플릿 `.github/pull_request_template.md`) |
+| PR 본문: 영향 반경·분리 검수·경우 표·부하(분당)·메신저 390/1280/880·러너별 검증, 코드 PR은 요청자·Testing·Risk(위험도 0/1/2)·How to revert | `.github/workflows/pr-rules.yml` + `scripts/pr-rules-check.mjs`(바뀐 파일에 따라 해당 절이 비면 실패, 템플릿 `.github/pull_request_template.md`) |
 | `window.confirm/prompt` 금지, 마이그레이션 버전 중복, 새 마이그레이션의 `storage.objects`·기억 데이터 SQL 삭제 금지(`-- rule-ok:` 예외) | `test/rule-gates.test.mjs`(CI `npm test`) |
 | 오피스 재유입 금지(2026-10-16 분리) | `test/core-office-removed.test.mjs`(CI `npm test`) |
 | 맥 two에서 라이브 DB 적용·iOS 발행 금지 | `scripts/msgr-live-apply.sh`·`apps/messenger/scripts/ios-store.mjs` 첫머리(exit 5) |
@@ -52,6 +52,13 @@
 - 약속을 바꿔야 할 때만 본체를 함께 발행하고, 옛 약속을 같이 지원해 이미 설치된 앱이 깨지지 않게 한다.
 - 메신저 수정(앱·msgr 서버 함수·마이그레이션·본체 메신저 연결 코드)은 맥 two에서만 하고, 충분히 시험한 뒤 발행한다. 발행·라이브 적용 실행은 머신 표대로 맥 one이 한다.
 - 메신저 재설계(2026-10-16 승인, 공간 통합·본체 분리)는 main이 아니라 장기 브랜치 `messenger-v2`에서 한다. 재설계 PR은 `messenger-v2`로 보내고, 시험 서버는 예비 Supabase(qbwr)를 쓴다. main은 주기적으로 `messenger-v2`에 합친다. 유건 컨펌 뒤에 `messenger-v2` → main PR 하나로 바꾼다(검수 환경 → 발행 흐름 1번 "별도 rc 브랜치 안 씀"의 유건 명시 예외).
+
+## 리뷰 방식 (2026-10-17 유건 승인)
+
+리뷰 기준·위험도 0/1/2·지적 규칙은 `REVIEW.md`가 정본이다. 등급은 리뷰어가 확정하고, 애매하면 높은 쪽으로 한다. 2등급은 유건 승인이 필요하다.
+- PR 열기 전 자체 점검: 테스트·빌드·린트를 직접 돌려 `## Testing`에 적고, 맥락을 비운 다른 리뷰어(`/code-review`·`/security-review`·검수 세션·서브에이전트)가 diff를 다시 본다.
+- 리뷰 라운드: 3번째 리뷰 뒤에는 접근 자체를 다시 검토하고, 그 뒤로는 새로 바뀐 부분만 본다. 같은 종류의 지적은 묶는다.
+- 모든 지적은 고치거나 이유를 적고 닫은 뒤 병합한다. AI 승인은 사람 승인으로 치지 않는다.
 
 ## 검수 환경 → 발행 흐름 (2026-10-05)
 
