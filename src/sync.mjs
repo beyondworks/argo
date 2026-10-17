@@ -573,10 +573,13 @@ export async function renewLease(owner, { runnerUsable = true } = {}) {
     leaseState.escapeBlocked = false;
     noteOnce('lease-read', '');
   }
-  if (cur?.deviceId && cur.deviceId !== me) notePeer(cur);
   // 읽은 리스 글의 주인 — 리더가 아닌 기기가 "어느 기기가 실행 담당인가"를 보여 주는 재료(leaseCheck). 메모리만, 쓰기 없음.
   leaseState.holder = cur?.deviceId ? { deviceId: String(cur.deviceId), ts: Number(cur.ts) || 0 } : null;
   const live = cur && Date.now() - cur.ts < LEASE_TTL_MS; // 살아 있는 리스(TTL 안) — 위 fresh()(캐시 우회)와 다른 이름
+  // 다른 기기 표지는 살아 있는 남의 글을 볼 때만 켠다(2026-10-17). 만료된 글은 지금 함께 도는 기기의 증거가 아니다 — 기기 신원(.device-id)이 바뀐 기기(재설치·데이터 폴더
+  // 초기화·새 맥)가 저장소에 남은 옛 신원의 만료 글을 첫 판정에서 읽어, 혼자인데도 14일 동안 엄격 판정(담당 읽기 15초 → 8초)이 되던 것. 진짜 다른 기기는 그 기기가 담당일 때
+  // 살아 있는 글로 보이고(같은 역할이면 여기서 양보한다), 경합 승자 확인(아래 winner)은 막 쓴 글이라 늘 살아 있다.
+  if (live && cur.deviceId && cur.deviceId !== me) notePeer(cur);
   if (!readErr && !(live && cur.deviceId !== me)) leaseState.checkedAt = Date.now(); // 다른 기기가 맡고 있지 않음을 읽었다 — 단일 기기의 기동·깸 대기는 여기서 끝(쓰기·재확인 800ms를 기다리지 않는다)
   // 확인 — 내가 쓴 글(토큰)이 그대로 살아 있다. 이 읽기를 보낸 시각부터 확인 기한을 다시 센다(엄격 판정의 담당 근거).
   if (live && cur.deviceId === me && leaseState.leader && leaseState.token && cur.token === leaseState.token) confirmLease(readAt, cur.ts);
