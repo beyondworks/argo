@@ -4623,6 +4623,7 @@ function Settings({ session, me, uid, invitesTick = 0, org, orgs = [], isAdmin, 
         {sub === 'profile' && (<div className="msgr-setbody">
           <section className="msgr-setcard"><h2>{t('set.account')}</h2><div className="row"><Av name={myName} userId={uid} /><span className="msgr-klabel">{session.user.email}</span></div></section>
           <ProfileCard part="profile" uid={uid} onNote={onNote} onError={onError} onAvatar={onAvatar} onSaved={onProfileSaved} />
+          {V2 && <V2DevicesCard client={rawSupabase} t={t} lang={lang} onSignedOut={(key) => signOutNotice(key)} onNote={onNote} onError={onError} />}{/* v2 ④ 기기 관리(폰 계정 화면) */}
           <AccountDeleteCard session={session} onDeleted={accountDeleted} />
         </div>)}
         {sub === 'notify' && (<div className="msgr-setbody">

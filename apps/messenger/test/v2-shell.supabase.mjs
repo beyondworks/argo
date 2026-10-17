@@ -8,7 +8,7 @@ const T = '7e000000-0000-4000-8000-0000000000aa', P = '7e000000-0000-4000-8000-0
 const GEN = '7f000000-0000-4000-8000-000000000001', PLAN = '7f000000-0000-4000-8000-000000000002', DM = '7f000000-0000-4000-8000-000000000003';
 const A = 'a0000000-0000-4000-8000-000000000001', B = 'a0000000-0000-4000-8000-000000000002', C = 'a0000000-0000-4000-8000-000000000003';
 const W = (n) => `b0000000-0000-4000-8000-00000000000${n}`;
-const state = window.__v2Fixture = { calls: [], topics: new Map(), tables: {
+const state = window.__v2Fixture = { calls: [], topics: new Map(), signedIn: true, authCbs: new Set(), tables: {
   msgr2_spaces: [{ id: P, kind: 'personal', name: '', owner_user_id: uid }, { id: T, kind: 'team', name: 'Beyond 팀', owner_user_id: mate }],
   msgr2_space_members: [{ space_id: P, user_id: uid, role: 'owner', display_name: '나' }, { space_id: T, user_id: uid, role: 'member', display_name: '유건' }, { space_id: T, user_id: mate, role: 'owner', display_name: '민지' }],
   msgr2_rooms: [
@@ -115,7 +115,11 @@ const rpcs = {
 function fire(topic, event, payload) { for (const c of state.topics.get(topic) ?? []) for (const h of c.handlers) if (h.kind === 'broadcast' && (h.filter?.event === '*' || h.filter?.event === event)) h.cb({ event, payload }); }
 export const supabase = {
   from: query,
-  auth: { getSession: async () => ({ data: { session: { user: { id: uid, email: 'fixture@example.invalid' }, access_token: 'fixture' } } }), onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }) },
+  auth: { // 로그인 세션 대역 — signOut이면 세션을 비우고 SIGNED_OUT을 알린다(기기 폐기·모든 기기 로그아웃 화면 확인용)
+    getSession: async () => ({ data: { session: state.signedIn ? { user: { id: uid, email: 'fixture@example.invalid' }, access_token: 'fixture' } : null }, error: null }),
+    onAuthStateChange: (cb) => { state.authCbs.add(cb); return { data: { subscription: { unsubscribe() { state.authCbs.delete(cb); } } } }; },
+    signOut: async () => { state.signedIn = false; for (const cb of state.authCbs) cb('SIGNED_OUT', null); return { error: null }; },
+  },
   rpc: async (name, args = {}) => { call({ rpc: name }); try { return { data: rpcs[name] ? rpcs[name](args) : [], error: null, status: 200 }; } catch (e) { return { data: null, error: { message: String(e.message) }, status: 400 }; } },
   realtime: { setAuth: async () => {}, isConnected: () => true },
   functions: { invoke: async () => ({ data: null, error: null }) },
@@ -146,5 +150,6 @@ state.devices = [
   { id: 'd0000000-0000-4000-8000-000000000004', kind: 'app', app: 'messenger', app_version: '0.1.5', registered_at: at(60000), created_at: at(90000), state: 'expired', is_current: false },
 ];
 state.pause = (on) => fire(`v2:u:${uid}`, 'pause', { paused: !!on }); // 서버 중단 스위치 대역
+state.client = () => supabase; // 페이지 시험은 이 함수로 앱과 같은 대역을 쓴다(모듈을 다시 불러오면 다른 사본이 생긴다)
 state.ids = { uid, mate, T, P, GEN, PLAN, DM, A, B, C, W };
 export async function q(p) { const { data, error } = await p; if (error) throw new Error(error.message); return data; }

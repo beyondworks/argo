@@ -21,7 +21,7 @@ export function personalSpaceOf(raw) {
 }
 
 /** 모듈 하나에 클라이언트 하나 — 플래그가 켜졌을 때만 App.jsx가 부른다. */
-export function createV2ClientFor(raw) { return createV2Client(raw, { personalSpace: personalSpaceOf(raw) }); }
+export function createV2ClientFor(raw) { return createV2Client(raw, { personalSpace: personalSpaceOf(raw), ready: async () => { await current?.registered; } }); } // 등록 전 v2 읽기를 등록 뒤로(#1085 검수 2)
 
 // 기기 등록이 끝났는가 — v2 표의 RLS는 등록된 기기 세션만 읽게 한다(U3). 목록 조회는 그 뒤에.
 const AFTER_REGISTER = [STATES.subscribing, STATES.catchingUp, STATES.ready, STATES.background, STATES.paused, STATES.updateRequired, STATES.signedOut];

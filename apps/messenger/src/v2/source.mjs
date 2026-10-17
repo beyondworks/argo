@@ -149,6 +149,7 @@ class NoneBuilder extends Builder {
 
 class MapBuilder extends Builder {
   async run() {
+    await this.ctx.ready(); // v2 표의 RLS는 등록된 기기 세션만 읽게 한다(U3) — 첫 실행의 등록 전 읽기가 빈 결과로 굳지 않게(#1085 검수 2)
     const spec = TABLES[this.table]; const raw = this.ctx.raw;
     const want = this.verb === 'select' ? (this.cols === '*' ? ['*'] : splitCols(this.cols)) : (this.writeSelect ? splitCols(this.writeSelect) : null);
     const col = (c) => spec.cols?.[c] ?? c;
@@ -220,6 +221,7 @@ function renameOr(spec, expr) {
 class CrewBuilder extends Builder {
   async run() {
     if (this.verb !== 'select') return unsupported();
+    await this.ctx.ready();
     const raw = this.ctx.raw;
     const want = this.cols === '*' ? ['*'] : splitCols(this.cols);
     let space = null; let ids = null; let owner = null; let statuses = null;
@@ -279,6 +281,7 @@ export function createV2Client(raw, opts = {}) {
   const roomCache = new Map();
   const ctx = {
     raw,
+    ready: opts.ready ?? (async () => {}),
     personalSpace: opts.personalSpace ?? (async () => null),
     roomsOf: opts.roomsOf ?? (async (space) => {
       if (!space) return [];
@@ -297,7 +300,8 @@ export function createV2Client(raw, opts = {}) {
     return new NoneBuilder(ctx, table);
   };
   client.rpc = (name, args, o) => {
-    if (RPCS.keep.has(name) || String(name).startsWith('msgr2_')) return raw.rpc(name, args, o);
+    if (String(name).startsWith('msgr2_')) return ctx.ready().then(() => raw.rpc(name, args, o));
+    if (RPCS.keep.has(name)) return raw.rpc(name, args, o);
     if (RPCS.write.has(name)) return Promise.resolve(unsupported());
     return Promise.resolve({ data: name in RPCS.empty ? RPCS.empty[name] : [], error: null, status: 200 });
   };
