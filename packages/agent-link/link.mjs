@@ -21,12 +21,12 @@
 // - 따라잡기(msgr2_link_pending)로 받은 봉투 가운데 이 프로세스가 시작하지 않은 일은 offer만 받는다.
 // - 되돌릴 수 없는 일은 effect intent가 서버에 기록된 뒤에만 실행한다(D13). intent가 거부되면 실행하지 않는다.
 import {
-  LINK_V, SUPPORTED, DIRECTION, REJECT_CODES, validateEnvelope, tierAllows, unsupportedReply,
+  LINK_V, SUPPORTED, DIRECTION, REJECT_CODES, TOPICS, validateEnvelope, tierAllows, unsupportedReply,
 } from './contract/v1.mjs';
 
-// v2 실시간 토픽(총괄 공지 2026-10-17): 옛 'u:'·'w:' 정책은 기기 확인 없이 허용돼 폐기된 기기도 받는다 — v2는 접두 'v2:'로 따로 둔다(서버 정책 #1076).
-export const topicWork = (uid) => `v2:w:${uid}`; // 서버→본체(offer·cancel·approval_decision)
-export const topicProgress = (work) => `v2:wk:${work}`; // 본체→화면 진행 표시(저장 안 함)
+// v2 실시간 토픽은 약속 정본(contract TOPICS)을 그대로 쓴다 — 문자열을 따로 두지 않는다(옛 'u:'·'w:' 정책은 기기 확인이 없어 v2는 'v2:' 접두, #1076).
+export const topicWork = TOPICS.runner; // 서버→본체(offer·cancel·approval_decision)
+export const topicProgress = TOPICS.work; // 본체→화면 진행 표시(저장 안 함)
 
 export const LEASE_RENEW_MS = 5 * 60 * 1000; // 리스 10분, 5분마다 연장(설계 5절)
 export const PROGRESS_MIN_MS = 2000; // 진행 방송은 2초에 한 번까지(같은 단계·문구면 보내지 않음)

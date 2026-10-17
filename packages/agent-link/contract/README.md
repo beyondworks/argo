@@ -32,17 +32,19 @@
 
 크기 상한: 봉투 JSON 128KB(`too_large`), offer `context[]` 16KB. 이 둘은 JSON Schema로 적을 수 없어 `v1.mjs`만 검사한다.
 
+토픽 이름: `TOPICS`(v1.mjs) — `v2:u:<uid>`(사람), `v2:w:<uid>`(본체), `v2:s:<space>`(큰 팀 open 방), `v2:wk:<work>`(진행 표시). 옛 메신저 토픽(`u:`·`org:`·`dm:`)과 겹치지 않게 `v2:` 접두사를 둔다(옛 `u:` 받기 정책이 기기 확인 없이 본인을 허용하기 때문).
+
 id 형식: 봉투·일·에이전트·기기·방·토픽·승인·업로드 슬롯 id는 uuid 문자열이다. 글·첨부 id(`context[].id`, `attachments[].id` — 서버의 `msgr2_messages.id`·`msgr2_attachments.id`)는 옛 글 id를 그대로 보존해 bigint라 **JSON 정수**로 싣는다(`msgid` 규칙: 1 이상, `Number.MAX_SAFE_INTEGER`(2^53-1) 이하). 서버 id가 이 범위를 넘지 않는다는 전제다(지금 최댓값은 수백만 대). 넘게 되면 v를 올려 문자열로 바꾼다(2026-10-17 총괄 승인, v1 안에서 고침 — 출시 전). 다른 정수 필드(`seq`·`lease_gen`·`max_turn_s`·토큰 수 등)도 같은 상한(안전 정수)이다.
 
 ## type 10종
 
 | type | 방향·길 | data(필수) | 선택 |
 |---|---|---|---|
-| `work.offer` | 서버→본체, `w:<uid>` 방송·따라잡기 | `room`, `topic`, `from{kind:user·agent, id}`, `text`(≤20,000자), `context[]{id, author, text, at}`, `attachments[]{id, name, mime, bytes, bucket, path}`(Storage 위치 — 본체가 runner 세션으로 받는다. 리스를 쥔 동안만 읽힌다), `memory`(bool), `limits{tier, max_turn_s, budget}`, `expires_at` | `from.name`, `budget{max_tokens, max_usd}` 또는 `null`, `peers[]{agent, name, role}`(≤50 — 이 방에서 넘김할 수 있는 동료, 등급·파견 허용으로 거름, guest는 빈 배열) |
+| `work.offer` | 서버→본체, `v2:w:<uid>` 방송·따라잡기 | `room`, `topic`, `from{kind:user·agent, id}`, `text`(≤20,000자), `context[]{id, author, text, at}`, `attachments[]{id, name, mime, bytes, bucket, path}`(Storage 위치 — 본체가 runner 세션으로 받는다. 리스를 쥔 동안만 읽힌다), `memory`(bool), `limits{tier, max_turn_s, budget}`, `expires_at` | `from.name`, `budget{max_tokens, max_usd}` 또는 `null`, `peers[]{agent, name, role}`(≤50 — 이 방에서 넘김할 수 있는 동료, 등급·파견 허용으로 거름, guest는 빈 배열) |
 | `work.cancel` | 서버→본체 | `by{kind, id}`, `reason`(코드, 열린 값: user·service_paused 등) | |
 | `work.approval_decision` | 서버→본체 | `approval_id`, `decision`(approve·reject·expire), `by{kind:user·system, id}` | |
 | `work.accept` | 본체→서버, RPC | 없음(`{}`) | `lease_gen`(정수): 서버가 accept 성공 답으로 준 리스 세대. 연장(5분마다)·이어 하기 accept에 싣는다. 실행 중 메모리에만 둔다 |
-| `work.progress` | 본체→`wk:<work>` 방송(저장 안 함) | `stage`(thinking·tool·writing) | `note`(≤200자) |
+| `work.progress` | 본체→`v2:wk:<work>` 방송(저장 안 함, 그 일의 리스를 쥔 본체만 보낼 수 있다) | `stage`(thinking·tool·writing) | `note`(≤200자) |
 | `work.approval_request` | 본체→서버 | `approval_id`, `action`, `risk`(low·medium·high), `summary`(≤2,000자), `effect_key`(또는 null), `expires_at` | |
 | `work.effect` | 본체→서버 | `effect_key`(≤200자), `state`(intent·done·failed) | `kind`(코드) |
 | `work.result` | 본체→서버 | `text`(≤20,000자), `files[]`(업로드 슬롯 id, ≤20), `handoffs[]{agent, text}`(≤8) | `usage{input_tokens, output_tokens, cost_usd, runner, model}` |

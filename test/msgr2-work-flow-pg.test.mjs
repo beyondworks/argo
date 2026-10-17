@@ -60,7 +60,7 @@ test('경우 16·1:1 — 사람 글이 offer가 되고(등급 owner·토픽 생�
   const id = lastWork(DM); const w = workRow(id);
   assert.equal(w.state, 'offered'); assert.equal(w.tier, 'owner'); assert.equal(w.owner_user_id, O); assert.equal(w.from_kind, 'user');
   assert.equal(db.sql(`select work_id from public.msgr2_topics where id = '${w.topic_id}'`), id, 'D4 일 1건 = 토픽 1개');
-  const sent = JSON.parse(db.sql(`select payload from realtime.sent where topic = 'w:${O}' and payload->'envelope'->>'work' = '${id}'`));
+  const sent = JSON.parse(db.sql(`select payload from realtime.sent where topic = 'v2:w:${O}' and payload->'envelope'->>'work' = '${id}'`));
   const offer = sent.envelope;
   assert.equal(offer.type, 'work.offer'); assert.equal(offer.data.text, '첫 대화');
   const v = validateEnvelope(offer, { from: 'server' }); assert.ok(v.ok, JSON.stringify(v));
@@ -372,7 +372,7 @@ test('지적 1 — 에이전트 주인이 못 읽는 방(빠진 방·제거된 �
   const P = db.sql(`insert into public.msgr2_rooms (space_id, kind, name) values ('${S2}', 'private', 'X만') returning id`);
   db.sql(`insert into public.msgr2_room_members (room_id, member_kind, member_id) values ('${P}', 'user', '${X}'), ('${P}', 'agent', '${AG}'), ('${P}', 'agent', '${XG}')`);
   assert.equal(db.as(O, oApp.sid, `select (public.msgr2_access('${P}')).read`), 'f', 'O는 이 방을 못 읽는다');
-  const leaked = (secret) => JSON.stringify(pending(oRun1)).includes(secret) || db.sql(`select count(*) from realtime.sent where topic = 'w:${O}' and payload::text like '%${secret}%'`) !== '0';
+  const leaked = (secret) => JSON.stringify(pending(oRun1)).includes(secret) || db.sql(`select count(*) from realtime.sent where topic = 'v2:w:${O}' and payload::text like '%${secret}%'`) !== '0';
   say(xApp, P, 'SECRET-CONTEXT-1'); say(xApp, P, '요약해', [AG]);
   assert.equal(db.sql(`select count(*) from public.msgr2_works where room_id = '${P}' and agent_id = '${AG}'`), '0', 'O의 에이전트에게 offer 없음');
   assert.equal(leaked('SECRET-CONTEXT-1'), false, '문맥이 O 본체로 가지 않는다');

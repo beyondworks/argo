@@ -294,3 +294,11 @@ test('offer.attachments는 {id, name, mime, bytes, bucket, path} — 옛 url 모
     assert.equal(validateEnvelope(e, { from: 'server' }).code, 'invalid_envelope', JSON.stringify(bad));
   }
 });
+
+// 토픽 이름은 v2: 접두사(옛 u:·org:·dm: 정책과 겹치지 않게 — 검수 #1076)
+test('TOPICS — v2:u·v2:w·v2:s·v2:wk, 옛 토픽 모양과 겹치지 않는다', async () => {
+  const { TOPICS } = await import('../v1.mjs');
+  const id = '00000000-0000-4000-8000-000000000001';
+  assert.deepEqual([TOPICS.user(id), TOPICS.runner(id), TOPICS.space(id), TOPICS.work(id)], [`v2:u:${id}`, `v2:w:${id}`, `v2:s:${id}`, `v2:wk:${id}`]);
+  for (const t of Object.values(TOPICS)) assert.doesNotMatch(t(id), /^(u|org|dm|w|s|wk):/);
+});
