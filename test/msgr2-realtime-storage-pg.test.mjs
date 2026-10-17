@@ -48,61 +48,61 @@ before(() => {
 test('u: 방송 — 글 1개는 방의 사람마다 u:<uid> msg(본문 포함), 방 밖 사람·손님(방 멤버 아님)에게는 없다, 4KB를 넘으면 id만', { skip }, () => {
   const m0 = mark();
   const id = Number(say(mApp, TR, '안녕 팀'));
-  const toO = sentTo(`u:${O}`, m0), toM = sentTo(`u:${M}`, m0);
+  const toO = sentTo(`v2:u:${O}`, m0), toM = sentTo(`v2:u:${M}`, m0);
   assert.equal(toO.length, 1); assert.equal(toM.length, 1, '글쓴이 자신에게도(다른 기기)');
   assert.equal(toO[0].event, 'msg'); assert.equal(toO[0].payload.message.id, id); assert.equal(toO[0].payload.message.body, '안녕 팀');
-  assert.equal(sentTo(`u:${G}`, m0).length, 0, '방 멤버 아닌 손님'); assert.equal(sentTo(`u:${Z}`, m0).length, 0, '공간 밖');
+  assert.equal(sentTo(`v2:u:${G}`, m0).length, 0, '방 멤버 아닌 손님'); assert.equal(sentTo(`v2:u:${Z}`, m0).length, 0, '공간 밖');
   const m1 = mark(); const big = Number(say(mApp, TR, '가'.repeat(2000)));
-  const p = sentTo(`u:${O}`, m1)[0].payload.message;
+  const p = sentTo(`v2:u:${O}`, m1)[0].payload.message;
   assert.equal(p.id, big); assert.equal(p.body, undefined, '4KB 초과는 본문 없이'); assert.equal(p.room_id, TR);
 });
 
 test('u: 방송 — 고치거나 지우면 같은 id로 다시 보내고, 바뀐 것이 없는 갱신은 보내지 않는다', { skip }, () => {
   const id = say(mApp, TR, '고칠 글'); const m0 = mark();
   db.sql(`update public.msgr2_messages set body = '고친 글', edited_at = now() where id = ${id}`);
-  const e = sentTo(`u:${O}`, m0); assert.equal(e.length, 1); assert.equal(e[0].payload.message.body, '고친 글'); assert.ok(e[0].payload.message.edited_at);
+  const e = sentTo(`v2:u:${O}`, m0); assert.equal(e.length, 1); assert.equal(e[0].payload.message.body, '고친 글'); assert.ok(e[0].payload.message.edited_at);
   const m1 = mark(); db.sql(`update public.msgr2_messages set deleted_at = now() where id = ${id}`);
-  const d = sentTo(`u:${O}`, m1)[0].payload.message; assert.ok(d.deleted_at); assert.equal(d.body, undefined, '지운 글은 본문 없이');
+  const d = sentTo(`v2:u:${O}`, m1)[0].payload.message; assert.ok(d.deleted_at); assert.equal(d.body, undefined, '지운 글은 본문 없이');
   const m2 = mark(); db.sql(`update public.msgr2_messages set client_msg_id = client_msg_id where id = ${id}`);
-  assert.equal(sentTo(`u:${O}`, m2).length, 0);
+  assert.equal(sentTo(`v2:u:${O}`, m2).length, 0);
 });
 
 test('s: 방송 — 사람이 상한(설정 msgr2_fanout_max)을 넘는 팀 open 방은 s:<space> 한 번, 넘지 않으면 사람마다', { skip }, () => {
   const m0 = mark(); say(mApp, OPEN, '작은 open 방');
-  assert.equal(sentTo(`s:${TS}`, m0).length, 0); assert.equal(sentTo(`u:${O}`, m0).length, 1);
+  assert.equal(sentTo(`v2:s:${TS}`, m0).length, 0); assert.equal(sentTo(`v2:u:${O}`, m0).length, 1);
   db.sql(`insert into public.msgr_settings values ('msgr2_fanout_max', '1') on conflict (key) do update set value = excluded.value`);
   try {
     const m1 = mark(); say(mApp, OPEN, '큰 open 방');
-    assert.equal(sentTo(`s:${TS}`, m1).length, 1, '공간 토픽 한 번'); assert.equal(sentTo(`u:${O}`, m1).length, 0, '사람마다 보내지 않는다');
+    assert.equal(sentTo(`v2:s:${TS}`, m1).length, 1, '공간 토픽 한 번'); assert.equal(sentTo(`v2:u:${O}`, m1).length, 0, '사람마다 보내지 않는다');
     const m2 = mark(); say(mApp, TR, 'private 방은 상한과 무관');
-    assert.equal(sentTo(`s:${TS}`, m2).length, 0); assert.equal(sentTo(`u:${O}`, m2).length, 1);
+    assert.equal(sentTo(`v2:s:${TS}`, m2).length, 0); assert.equal(sentTo(`v2:u:${O}`, m2).length, 1);
   } finally { db.sql(`delete from public.msgr_settings where key = 'msgr2_fanout_max'`); }
 });
 
 test('pause·device_revoked 방송 — 중단을 켜고 끄면 유효한 앱 기기 사용자에게 u: pause, 세대를 올리면 device_revoked {all:true}', { skip }, () => {
   const m0 = mark();
   db.sql(`insert into public.msgr_settings values ('msgr2_paused', '2026-10-17T13:00:00Z')`);
-  assert.deepEqual(sentTo(`u:${M}`, m0).map((x) => x.payload), [{ paused: true, since: '2026-10-17T13:00:00Z' }]);
+  assert.deepEqual(sentTo(`v2:u:${M}`, m0).map((x) => x.payload), [{ paused: true, since: '2026-10-17T13:00:00Z' }]);
   const m1 = mark(); db.sql(`delete from public.msgr_settings where key = 'msgr2_paused'`);
-  assert.deepEqual(sentTo(`u:${O}`, m1).map((x) => [x.event, x.payload]), [['pause', { paused: false }]]);
+  assert.deepEqual(sentTo(`v2:u:${O}`, m1).map((x) => [x.event, x.payload]), [['pause', { paused: false }]]);
   const m2 = mark(); db.sql(`insert into public.msgr_settings values ('other_key', 'x') on conflict (key) do update set value = 'y'`);
   assert.equal(Number(mark()), m2, '다른 설정은 방송 없음');
   const m3 = mark(); db.sql(`insert into public.msgr2_user_gen (user_id, gen) values ('${Z}', 1) on conflict (user_id) do update set gen = public.msgr2_user_gen.gen + 1`);
-  assert.deepEqual(sentTo(`u:${Z}`, m3).map((x) => [x.event, x.payload]), [['device_revoked', { all: true }]]);
+  assert.deepEqual(sentTo(`v2:u:${Z}`, m3).map((x) => [x.event, x.payload]), [['device_revoked', { all: true }]]);
 });
 
 test('토픽 권한 — u:·w:는 본인만(w:는 본체 기기만), s:는 그 팀 공간의 owner·admin·member, wk:는 그 일의 방을 읽는 사람, 폐기된 기기·anon은 못 받는다', { skip }, () => {
-  assert.equal(db.canListen(O, oApp.sid, `u:${O}`), true);
-  assert.equal(db.canListen(M, mApp.sid, `u:${O}`), false, '남의 u:');
-  assert.equal(db.canListen(O, oApp.sid, `w:${O}`), false, '앱 기기는 w:를 못 받는다');
-  assert.equal(db.canListen(O, oRun.sid, `w:${O}`), true);
-  assert.equal(db.canListen(M, mRun.sid, `w:${O}`), false, '남의 w:');
-  assert.equal(db.canListen(M, mApp.sid, `s:${TS}`), true); assert.equal(db.canListen(G, gApp.sid, `s:${TS}`), false, '손님은 s: 아님');
-  assert.equal(db.canListen(Z, zApp.sid, `s:${TS}`), false, '공간 밖');
+  assert.equal(db.canListen(O, oApp.sid, `v2:u:${O}`), true);
+  assert.equal(db.canListen(M, mApp.sid, `v2:u:${O}`), false, '남의 u:');
+  assert.equal(db.canListen(O, oApp.sid, `v2:w:${O}`), false, '앱 기기는 w:를 못 받는다');
+  assert.equal(db.canListen(O, oRun.sid, `v2:w:${O}`), true);
+  assert.equal(db.canListen(M, mRun.sid, `v2:w:${O}`), false, '남의 w:');
+  assert.equal(db.canListen(M, mApp.sid, `v2:s:${TS}`), true); assert.equal(db.canListen(G, gApp.sid, `v2:s:${TS}`), false, '손님은 s: 아님');
+  assert.equal(db.canListen(Z, zApp.sid, `v2:s:${TS}`), false, '공간 밖');
   say(mApp, TR, '일 시키기', [AG]); const wid = lastWork(TR);
-  assert.equal(db.canListen(M, mApp.sid, `wk:${wid}`), true); assert.equal(db.canListen(G, gApp.sid, `wk:${wid}`), false);
+  assert.equal(db.canListen(M, mApp.sid, `v2:wk:${wid}`), true); assert.equal(db.canListen(G, gApp.sid, `v2:wk:${wid}`), false);
   const rev = seedDevice(db, O, 'app', { revoked: true });
-  assert.equal(db.canListen(O, rev.sid, `u:${O}`), false, '폐기된 기기');
+  assert.equal(db.canListen(O, rev.sid, `v2:u:${O}`), false, '폐기된 기기');
   assert.equal(db.canListen(O, oApp.sid, 'org:00000000-0000-4000-8000-000000000000'), false, '옛 토픽은 이 정책이 열지 않는다');
   const r = db.raw(['-A', '-t', '-c', `set role anon; select set_config('realtime.topic', 'u:${O}', false); select count(*) from realtime.messages`]);
   assert.notEqual(r.status === 0 && r.stdout.trim().split('\n').pop() !== '0', true, 'anon');
@@ -212,4 +212,44 @@ test('권한 — 방송·판정 보조 함수는 사람이 직접 부를 수 없
   for (const f of ['_msgr2_send_u(uuid, text, jsonb)', '_msgr2_send_s(uuid, text, jsonb)', '_msgr2_room_humans(uuid)', 'msgr2_on_message_broadcast()', '_msgr2_storage_room(text)']) {
     assert.equal(db.sql(`select has_function_privilege('authenticated', 'public.${f}', 'execute')`), 'f', f);
   }
+});
+
+test('검수 #1076 중간 — 큰 open 방에서 v2:s:를 못 받는 방 멤버(손님)에게는 v2:u:로 따로 보낸다', { skip }, () => {
+  db.sql(`insert into public.msgr2_room_members (room_id, member_kind, member_id) values ('${OPEN}', 'user', '${G}') on conflict do nothing`);
+  db.sql(`insert into public.msgr_settings values ('msgr2_fanout_max', '1') on conflict (key) do update set value = excluded.value`);
+  try {
+    const m0 = mark(); say(mApp, OPEN, '손님도 보는 큰 방');
+    assert.equal(sentTo(`v2:s:${TS}`, m0).length, 1);
+    assert.equal(sentTo(`v2:u:${G}`, m0).length, 1, '손님은 u:로'); assert.equal(sentTo(`v2:u:${M}`, m0).length, 0, 'member는 s:로만');
+  } finally { db.sql(`delete from public.msgr_settings where key = 'msgr2_fanout_max'`); }
+});
+
+test('검수 #1076 중간 — 이전 백필(서비스 문맥 + msgr2.backfill = on)은 방송하지 않고, 사람 문맥은 그 설정이 있어도 방송한다', { skip }, () => {
+  const m0 = mark();
+  db.sql(`select set_config('msgr2.backfill', 'on', false); insert into public.msgr2_messages (room_id, author_kind, author_user_id, body) values ('${TR}', 'user', '${M}', '옛 글 이전')`);
+  assert.equal(mark(), m0, '백필 방송 0');
+  const m1 = mark();
+  db.as(M, mApp.sid, `select set_config('msgr2.backfill', 'on', false); insert into public.msgr2_messages (room_id, author_kind, author_user_id, body) values ('${TR}', 'user', '${M}', '사람 글')`);
+  assert.ok(sentTo(`v2:u:${O}`, m1).length === 1, '사람 문맥은 설정과 무관');
+});
+
+test('검수 #1076 — v2:wk:<일> 보내기는 그 일의 리스를 쥔 본체만, 다른 토픽·앱 기기·다른 본체는 못 보낸다, _msgr2_storage_room은 사람이 못 부른다', { skip }, () => {
+  say(oApp, DM, '진행 표시 일'); const wid = lastWork(DM);
+  assert.equal(send(oRun, env('work.accept', { work: wid })).ok, true);
+  const ins = (who, topic) => db.asErr(who.uid, who.sid, `select set_config('realtime.topic', '${topic}', false); insert into realtime.messages (topic, extension, payload) values ('${topic}', 'broadcast', '{"stage":"tool"}')`) === null;
+  assert.equal(ins(oRun, `v2:wk:${wid}`), true, '리스를 쥔 본체');
+  assert.equal(ins(oRun2, `v2:wk:${wid}`), false, '다른 본체');
+  assert.equal(ins(oApp, `v2:wk:${wid}`), false, '앱 기기');
+  assert.equal(ins(oRun, `v2:u:${O}`), false, '다른 v2 토픽');
+  assert.equal(db.sql(`select has_function_privilege('authenticated', 'public._msgr2_storage_room(text)', 'execute')`), 'f');
+});
+
+test('검수 #1076 — U2b를 얹으면 U3 기기 폐기 방송과 U2 offer 방송도 v2: 토픽으로 간다(옛 u:·w:로는 보내지 않는다)', { skip }, () => {
+  const m0 = mark();
+  const victim = seedDevice(db, O, 'app');
+  assert.equal(db.as(O, oApp.sid, `select public.msgr2_device_revoke('${victim.dev}')`), 't');
+  assert.deepEqual(sentTo(`v2:u:${O}`, m0).filter((x) => x.event === 'device_revoked').map((x) => x.payload), [{ device_id: victim.dev }]);
+  say(oApp, DM, 'offer 토픽 확인');
+  assert.ok(sentTo(`v2:w:${O}`, m0).some((x) => x.payload.envelope?.type === 'work.offer'));
+  assert.equal(db.sql(`select count(*) from realtime.sent where id > ${m0} and topic ~ '^(u|w|s|wk):'`), '0');
 });

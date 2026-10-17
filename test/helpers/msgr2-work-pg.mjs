@@ -75,13 +75,25 @@ export function setupBase(DB) {
     alter table realtime.messages enable row level security; grant select, insert on realtime.messages to authenticated;
     -- Storage 대역(버킷 msgr 정책 시험, U2b)
     create schema if not exists storage;
-    create table if not exists storage.objects (id uuid primary key default gen_random_uuid(), bucket_id text, name text, owner uuid, metadata jsonb);
+    create table if not exists storage.objects (id uuid primary key default gen_random_uuid(), bucket_id text, name text, owner uuid, metadata jsonb, created_at timestamptz not null default now());
+    create table if not exists storage.buckets (id text primary key, name text, public boolean not null default false);
     create or replace function storage.foldername(name text) returns text[] language sql immutable as $$ select (string_to_array(name, '/'))[1:array_length(string_to_array(name, '/'), 1) - 1] $$;
     alter table storage.objects enable row level security;
     grant usage on schema storage to authenticated; grant select, insert, update, delete on storage.objects to authenticated;
     -- 운영에 있는 설정 표(옛 메신저 20260912150000). 상한·중단 스위치를 읽는다
-    create table if not exists public.msgr_settings (key text primary key, value text);`]);
+    create table if not exists public.msgr_settings (key text primary key, value text);
+    create schema if not exists net; create or replace function net.http_post(url text, headers jsonb default '{}', body jsonb default '{}', timeout_milliseconds int default 5000) returns bigint language sql as $$ select 1::bigint $$;`]);
   return db;
+}
+
+// 운영 순서 판(검수 #1076): 옛 메신저 마이그레이션 전체(*_msgr*.sql — msgr2 포함) + 그 앞 요금제 기반을 이름 순으로 적용한다.
+// msgr2 파일만 적용하면 옛 정책(OR로 합쳐지는 허용 정책)·옛 정리 작업과의 상호작용이 안 보인다.
+export function setupFull(DB) {
+  const db = setupBase(DB);
+  const base = ['20260714150000_entitlements.sql', '20260724000100_trial_14d.sql', '20260728100000_entitlements_ls.sql', '20260728113000_billing_hardening.sql', '20260728150000_ls_reconcile_cooldown.sql', '20260929110000_plan_no_trial.sql'];
+  const all = [...base, ...readdirSync(mig('')).filter((x) => /^\d+_msgr.*\.sql$/.test(x))].sort();
+  for (const f of all) db.psql(['-c', readFileSync(mig(f), 'utf8').replace(/^create extension if not exists pg_net;$/m, '')]);
+  return { ...db, files: all };
 }
 
 // 적용 순서: U1 → U3(없으면 최소 판) → U2 → U2b(있으면)

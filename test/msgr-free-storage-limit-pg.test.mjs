@@ -223,7 +223,9 @@ test('방이 남아 있는 동안 파일 삭제 권한은 종전 그대로(조�
   const mine = sendOk(U.g, ch, 10, { org: ORG }).path;
   assert.equal(del(U.g, mine), '0', '내 파일도 종전처럼 관리자만 지운다');
   assert.equal(del(U.f, mine), '1', '조직 관리자는 종전대로 지운다');
-  assert.equal(sql(`select string_agg(policyname, ',' order by policyname) from pg_policies where schemaname = 'storage' and tablename = 'objects' and cmd = 'DELETE' and qual like '%''msgr''%'`), 'msgr_files_delete', 'msgr 버킷 삭제 정책은 하나');
+  // 지우기를 넓히는(permissive) 정책은 여전히 하나. restrictive는 좁히기만 한다 — v2 방 경로 문지기(20261018010000, 검수 #1076 높음 3)
+  assert.equal(sql(`select string_agg(policyname, ',' order by policyname) from pg_policies where schemaname = 'storage' and tablename = 'objects' and cmd = 'DELETE' and permissive = 'PERMISSIVE' and qual like '%''msgr''%'`), 'msgr_files_delete', 'msgr 버킷 허용 삭제 정책은 하나');
+  assert.equal(sql(`select coalesce(string_agg(policyname, ',' order by policyname), '') from pg_policies where schemaname = 'storage' and tablename = 'objects' and cmd = 'DELETE' and permissive = 'RESTRICTIVE' and qual like '%''msgr''%'`), 'msgr2_files_gate_delete', 'restrictive는 v2 문지기만');
 });
 
 test('남이 내 사용량을 부풀릴 수 없다 — 내 글 폴더에 올린 파일은 그 사람 몫, 남이 방을 지워도 내 몫은 내가 올린 만큼', { skip }, () => {
