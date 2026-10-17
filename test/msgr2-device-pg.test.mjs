@@ -7,6 +7,7 @@
 // ⑩ 새 app 행은 로그인 10분 안 세션만(행 없는 본체 세션을 app으로 먼저 등록하는 길 차단) ⑪ 같은 푸시 토큰은 한 행만
 // ⑫ U1(_msgr2_space.sql)이 있으면 먼저 적용하고 그 권한 RPC(msgr2_set_member_role)가 runner 세션을 42501로 막는지 본다.
 //    U1이 아직 병합 전이면 MSGR2_U1_MIG=<U1 마이그레이션 경로>로 넘긴다(PR #1070 확인 방식).
+// ⑬ U1 → U3 → U1 재적용 뒤에도 U3 판정이 살아 있다(U1 자리 함수가 진짜 판정을 늘 참으로 덮어쓰지 않는다 — 검수 1 높음 1). 이 시험은 맨 끝에 둔다.
 // JWT session_id: 실 GoTrue 토큰 대신 request.jwt.claims를 직접 넣는다(PostgREST가 넣는 방식). 실 GoTrue 미확인.
 // 실행: bash scripts/billing-pg-drill.sh test/msgr2-device-pg.test.mjs
 import test, { before } from 'node:test';
@@ -306,7 +307,7 @@ test('_msgr2_device_app — 유효한 app 기기만 참 · U1 권한 RPC가 runn
   assert.equal(as(U.u1, app, 'select public._msgr2_device_app()'), 't');
   assert.equal(as(U.u1, runner, 'select public._msgr2_device_app()'), 'f');
   assert.equal(as(U.u1, randomUUID(), 'select public._msgr2_device_app()'), 'f', '등록 안 한 세션');
-  const props = sql(`select string_agg(proname || ':' || prosecdef || ':' || provolatile || ':' || pg_get_function_result(oid), ',' order by proname) from pg_proc where proname in ('_msgr2_device_ok', '_msgr2_device_app')`);
+  const props = sql(`select string_agg(proname || ':' || prosecdef::text || ':' || provolatile::text || ':' || pg_get_function_result(oid), ',' order by proname) from pg_proc where proname in ('_msgr2_device_ok', '_msgr2_device_app')`);
   assert.equal(props, '_msgr2_device_app:true:s:boolean,_msgr2_device_ok:true:s:boolean', 'U1 자리 함수와 같은 시그니처·속성');
   if (u1File) {
     const space = randomUUID(); const other = randomUUID();
@@ -319,4 +320,17 @@ test('_msgr2_device_app — 유효한 app 기기만 참 · U1 권한 RPC가 runn
     fails(asRaw(U.u1, app, `select public.msgr2_set_member_role('${space}', '${other}', 'admin')`), /42501: msgr2_app_device_required/, 'U1 권한 RPC: 폐기된 app 세션');
     fails(asRaw(U.u1, app, 'select public.msgr2_my_personal_space()'), /42501: msgr2_device_invalid/, 'U1 판정: 폐기된 기기');
   }
+});
+
+test('U1 → U3 → U1 재적용 뒤에도 판정이 살아 있다 — 등록 안 한 세션은 거짓, 등록한 app 세션은 참', { skip }, () => {
+  const u = randomUUID(); sql(`insert into auth.users (id) values ('${u}')`);
+  const app = session(u); const runner = session(u); const none = session(u);
+  reg(u, app); reg(u, runner, { kind: 'runner' });
+  if (u1File) psql(['-c', readFileSync(u1File, 'utf8')]); // 운영에서 U1 파일이 U3 뒤에 다시 적용되는 경우(파일 하나씩 적용·db push 재실행)
+  // U3는 다시 적용하지 않는다 — U1만 다시 돈 상태를 본다
+  assert.equal(ok(u, none), false, '등록 안 한 세션 = 거짓');
+  assert.equal(ok(u, app), true, '등록한 app 세션 = 참');
+  assert.equal(as(u, none, 'select public._msgr2_device_app()'), 'f', '등록 안 한 세션은 앱 기기가 아니다');
+  assert.equal(as(u, runner, 'select public._msgr2_device_app()'), 'f', 'runner는 앱 기기가 아니다');
+  assert.equal(as(u, app, 'select public._msgr2_device_app()'), 't');
 });
