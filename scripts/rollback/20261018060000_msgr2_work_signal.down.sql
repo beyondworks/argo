@@ -1,6 +1,6 @@
--- 되돌림: supabase/migrations/20261018030000_msgr2_work_signal.sql(U6c-1a — 일 표지 방송·접속 표시 받기 범위)을 걷어 낸다. 표는 만들지 않았다.
+-- 되돌림: supabase/migrations/20261018060000_msgr2_work_signal.sql(U6c-1a — 일 표지 방송·접속 표시 받기 범위)을 걷어 낸다. 표는 만들지 않았다.
 -- 바로 실행하는 파일이다(마이그레이션이 아니다). 순서는 역순만: U6c-1a → U6b → U2b → U2 → U3 → U1.
--- 실행: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/rollback/20261018030000_msgr2_work_signal.down.sql   (파일 안의 begin/commit — -1 없이)
+-- 실행: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/rollback/20261018060000_msgr2_work_signal.down.sql   (파일 안의 begin/commit — -1 없이)
 begin;
 set local lock_timeout = '5s';
 drop trigger if exists msgr2_on_work_insert_broadcast on public.msgr2_works;
