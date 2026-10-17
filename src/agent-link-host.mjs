@@ -22,41 +22,86 @@ export const ATTACH_IN_MAX = 25 * 1024 * 1024; // 받은 첨부 한 개 상한(�
 const SESSION_RETRY_MS = [60_000, 120_000, 300_000, 600_000];
 export const RESYNC_MIN_MS = 60_000; // 게이트웨이 확인(10초)마다 불려도 로컬 목록은 1분에 한 번만 읽는다(보낼지는 바뀌었을 때만) // 세션·등록이 없을 때 다시 볼 간격(요청 폭주 없이, 상한 10분)
 
-/** supabase-js 클라이언트를 link.mjs transport 모양으로. 받는 길은 비공개 broadcast 채널(event 'envelope') 하나. */
-export function supabaseTransport(client) {
-  const channels = new Map();
+/** 서버 방송에서 봉투 꺼내기. 서버(_msgr2_send_w, 20261018010000)는 event = 봉투 type('work.offer' 등), payload = { envelope: 봉투 }로 보낸다.
+    본체 진행 방송(event 'envelope')과 옛 모양은 payload가 봉투 자체다 — 둘 다 받는다. 봉투가 아니면 null. */
+export function unwrapEnvelope(payload) {
+  if (!payload || typeof payload !== 'object') return null;
+  const env = payload.envelope && typeof payload.envelope === 'object' ? payload.envelope : payload;
+  return typeof env.type === 'string' ? env : null;
+}
+
+/** supabase-js 클라이언트를 link.mjs transport 모양으로. 받는 길은 비공개 broadcast 채널(v2:w:) 하나 — 서버가 봉투 type을 event로 쓰므로 모든 event를 받는다.
+    source = 클라이언트, 또는 지금 클라이언트를 돌려주는 함수(async 가능). 기기 세션 토큰이 회전하면(게이트웨이 sessionClient가 새 클라이언트를 만든다)
+    요청마다 새 클라이언트를 쓰고, 열어 둔 구독 채널을 새 클라이언트로 옮긴다(옮기면 다시 'connected' → 따라잡기 1번). 그대로 두면 옛 토큰이 만료된 뒤 401이다.
+    진행 방송 채널(v2:wk:<일>)은 일이 끝나면 release로 닫는다(쌓이지 않게). */
+export function supabaseTransport(source) {
+  const getClient = typeof source === 'function' ? source : async () => source;
+  let cur = typeof source === 'function' ? null : source;
+  const subs = new Set();      // { topic, onEnvelope, onStatus, ch }
+  const progress = new Map();  // topic → ch(보내기만)
+  function open(sub) {
+    const ch = cur.channel(sub.topic, { config: { private: true } });
+    ch.on('broadcast', { event: '*' }, (msg) => { const env = unwrapEnvelope(msg?.payload); if (env) sub.onEnvelope(env); });
+    sub.ch = ch; // 상태 알림보다 먼저(동기로 SUBSCRIBED를 알리는 클라이언트도 있다)
+    ch.subscribe((status) => {
+      if (sub.ch !== ch) return; // 옮긴 뒤 옛 채널의 상태는 무시
+      if (status === 'SUBSCRIBED') sub.onStatus?.('connected');
+      else if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') sub.onStatus?.('disconnected');
+    });
+  }
+  function swap(next) {
+    if (!next || next === cur) return;
+    const old = cur; cur = next;
+    for (const sub of subs) { const och = sub.ch; sub.ch = null; try { if (och) old?.removeChannel?.(och); } catch { /* 닫기 실패 무시 */ } open(sub); }
+    for (const ch of progress.values()) { try { old?.removeChannel?.(ch); } catch { /* 무시 */ } }
+    progress.clear();
+  }
+  async function client() {
+    const next = await getClient();
+    if (next) swap(next);
+    if (!cur) throw Object.assign(new Error('no session'), { code: 'no_session' });
+    return cur;
+  }
   return {
     async rpc(name, args) {
-      const { data, error, status } = await client.rpc(name, args);
+      let c;
+      try { c = await client(); } catch (e) { return { data: null, error: { code: e.code ?? null, message: e.message ?? '', status: 0 } }; }
+      const { data, error, status } = await c.rpc(name, args);
       return { data, error: error ? { code: error.code ?? null, message: error.message ?? '', status: error.status ?? status ?? 0 } : null };
     },
     subscribe(topic, onEnvelope, onStatus) {
-      const ch = client.channel(topic, { config: { private: true } });
-      ch.on('broadcast', { event: 'envelope' }, (msg) => onEnvelope(msg?.payload));
-      ch.subscribe((status) => {
-        if (status === 'SUBSCRIBED') onStatus?.('connected');
-        else if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') onStatus?.('disconnected');
-      });
-      channels.set(topic, ch);
-      return { close: () => { channels.delete(topic); client.removeChannel?.(ch); } };
+      const sub = { topic, onEnvelope, onStatus, ch: null };
+      subs.add(sub);
+      if (cur) open(sub);
+      else client().then(() => { if (subs.has(sub) && !sub.ch) open(sub); }).catch(() => onStatus?.('disconnected'));
+      return { close: () => { subs.delete(sub); const ch = sub.ch; sub.ch = null; try { if (ch) cur?.removeChannel?.(ch); } catch { /* 무시 */ } } };
     },
     async broadcast(topic, envelope) {
-      // 진행 표시는 저장하지 않는 방송이다(설계 D7). 채널을 만들어 두고 다시 쓴다.
-      let ch = channels.get(topic);
-      if (!ch) { ch = client.channel(topic, { config: { private: true } }); channels.set(topic, ch); ch.subscribe(); }
+      // 진행 표시는 저장하지 않는 방송이다(설계 D7). 채널을 만들어 두고 일이 끝날 때까지 다시 쓴다(release).
+      const c = await client();
+      let ch = progress.get(topic);
+      if (!ch) { ch = c.channel(topic, { config: { private: true } }); progress.set(topic, ch); ch.subscribe(); }
       await ch.send({ type: 'broadcast', event: 'envelope', payload: envelope });
+    },
+    release(topic) {
+      const ch = progress.get(topic);
+      if (!ch) return;
+      progress.delete(topic);
+      try { cur?.removeChannel?.(ch); } catch { /* 무시 */ }
     },
     // offer 첨부(#1076): 서명 URL이 아니라 Storage 위치. runner 세션으로 받는다(버킷 정책 = 그 방 일의 리스를 쥔 runner 기기만)
     async download(bucket, path) {
-      const { data, error } = await client.storage.from(bucket).download(path);
+      const { data, error } = await (await client()).storage.from(bucket).download(path);
       if (error || !data) throw Object.assign(new Error('download failed'), { code: 'download_failed' });
       return new Uint8Array(await data.arrayBuffer());
     },
     // 업로드 슬롯(서버가 정한 경로)에 runner 세션으로 올린다. 덮어쓰지 않는다(같은 슬롯에 두 번 올리지 않는다)
     async upload(bucket, path, bytes, mime) {
-      const { error } = await client.storage.from(bucket).upload(path, bytes, { contentType: mime || 'application/octet-stream', upsert: false });
+      const { error } = await (await client()).storage.from(bucket).upload(path, bytes, { contentType: mime || 'application/octet-stream', upsert: false });
       if (error) throw Object.assign(new Error('upload failed'), { code: 'upload_failed' });
     },
+    // 시험·진단용
+    get openChannels() { return [...subs].filter((x) => x.ch).length + progress.size; },
   };
 }
 
@@ -371,7 +416,8 @@ export async function startAgentLinkHost() {
         if (r?.available && r.runner) m[r.runner] = { installed: true, authed: true };
       }
       return m;
-    }, transportFor: (client) => supabaseTransport(client),
+    }, // 토큰 회전을 따라가게 클라이언트 대신 "지금 세션의 클라이언트"를 넘긴다(sessionClient는 토큰이 같으면 캐시를 돌려준다 — 요청마다 세션 파일 확인만)
+    transportFor: () => supabaseTransport(async () => (await sessionClient())?.client ?? null),
   });
   host.start();
   return host;
