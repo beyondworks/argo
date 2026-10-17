@@ -5,7 +5,7 @@
 // 엄격 판정 여부는 leaseReadInterval()로 본다 — 확인된 담당이면 단일 기기 15초, 엄격 판정 8초(이 수정 전후 같은 규칙).
 import { test, mock, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync, existsSync, rmSync } from 'node:fs';
+import { writeFileSync, existsSync, rmSync, readFileSync } from 'node:fs';
 import { mkdtemp } from './helpers/tmp.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -68,8 +68,10 @@ test('재설치 뒤 첫 판정 — 옛 신원의 만료된 리스 글을 봐도 
   assert.equal(lease().leader && lease().ownedAt > 0, true, '만료 글이라 바로 가져와 담당');
   assert.equal(f.get(KEY(owner)).deviceId, ME);
   assert.equal(leaseReadInterval(), LEASE_SOLO_READ_MS, '혼자 쓰는 기기 — 15초(전에는 표지가 켜져 14일 동안 8초)');
-  await new Promise((r) => setTimeout(r, 100));
-  assert.equal(existsSync(PEER_FILE), false, '표지 파일을 쓰지 않는다');
+  assert.ok(!(lease().peers?.[ACCT]?.at > 0), '다른 기기 표지(엄격 판정)는 켜지 않는다');
+  assert.ok(lease().peers?.[ACCT]?.weakAt > 0, '만료 글은 약한 표지로만 남긴다(기동·세션 실패 기본값용 — P9-b)');
+  for (let i = 0; i < 50 && !existsSync(PEER_FILE); i++) await new Promise((r) => setTimeout(r, 10));
+  assert.ok(JSON.parse(readFileSync(PEER_FILE, 'utf8')).accounts[ACCT].weakAt > 0, '약한 표지도 파일에 남아 재시작 뒤에 이어진다');
 });
 
 test('진짜 두 번째 기기 — 살아 있는 남의 리스를 보면 표지를 켜고 양보한다(엄격 판정)', async () => {
@@ -94,7 +96,8 @@ test('만료 경계 — 글 나이가 TTL에서 1ms 모자라면 살아 있는 �
     const owner = `o-edge-${age}`; fresh();
     f.set(KEY(owner), { deviceId: 'Other-Mac-edge0001', token: 'e', ts: Date.now() - age });
     await renewLease(owner, { runnerUsable: true });
-    assert.equal(!!lease().peers?.[ACCT], expect, `나이 ${age}ms → 표지 ${expect}`);
+    assert.equal(lease().peers?.[ACCT]?.at > 0, expect, `나이 ${age}ms → 표지 ${expect}`);
+    assert.equal(lease().peers?.[ACCT]?.weakAt > 0, !expect, `나이 ${age}ms → 약한 표지 ${!expect}`);
   }
 });
 
@@ -105,7 +108,7 @@ test('예비 기기(--standby)는 표지와 무관하게 늘 엄격 판정이다
   f.set(KEY(owner), { deviceId: OLD, token: 'old', ts: Date.now() - LEASE_TTL_MS - 60_000, standby: true });
   await renewLease(owner, { runnerUsable: true });
   assert.equal(lease().ownedAt > 0, true, '만료 글 — 예비도 가져온다(맥 두 대를 본 적 없음)');
-  assert.equal(lease().peers?.[ACCT], undefined, '표지는 켜지 않는다');
+  assert.ok(!(lease().peers?.[ACCT]?.at > 0), '표지는 켜지 않는다(약한 표지만)');
   assert.equal(leaseReadInterval(), 8_000, '예비는 늘 엄격 판정');
 });
 
@@ -128,4 +131,52 @@ test('가져오며 쓴 직후 다른 기기가 덮어쓴 경우(확인 읽기의
   await renewLease(owner, { runnerUsable: true }); // 빈 리스 → 내가 씀 → 확인 직전 다른 기기가 씀
   assert.equal(lease().ownedAt > 0, false, '경합에서 졌다');
   assert.ok(lease().peers?.[ACCT]?.at > 0, '살아 있는 다른 기기 — 표지');
+});
+
+/* ── P9-b(검수 1, 2026-10-17): 진짜 다른 기기를 만료 글로만 본 기기가, 그 기기가 담당인 동안 세션 실패·첫 읽기 걸림으로 켜져도 함께 담당이 되지 않는다 ──
+   배포본은 만료 글로도 표지가 켜져 엄격 판정이라 이 두 경로에서 담당이 아니었다(D 3차 MEDIUM-3). 만료 글은 약한 표지로 남겨 기동·세션 실패 기본값만 배포본처럼 둔다. */
+const { _leaseUnreadableForTest } = sync;
+const A = 'Mac-One-aaaa0001'; // 진짜 다른 기기 — 이 기기가 처음 켰을 때는 꺼져 있었다
+/** 맥 두 대 번갈아 쓰기: 이 기기(B)가 처음 켰을 때 A의 만료 글을 보고 담당이 됐다가 꺼짐 → A가 켜져 담당 → B가 다시 켜진다(새 프로세스, 표지는 파일에서 이어진다). */
+async function bootAfterExpiredSighting(f, owner) {
+  fresh();
+  f.set(KEY(owner), { deviceId: A, token: 'a-old', ts: Date.now() - LEASE_TTL_MS - 10 * 60_000 });
+  await renewLease(owner, { runnerUsable: true });
+  assert.equal(lease().ownedAt > 0, true, 'B가 만료 글을 가져와 담당이 됐다');
+  for (let i = 0; i < 50 && !existsSync(PEER_FILE); i++) await new Promise((r) => setTimeout(r, 10));
+  f.set(KEY(owner), { deviceId: A, token: 'a-live', ts: Date.now() - 20_000 }); // 이제 A가 담당(살아 있는 글)
+  // B 재시작 — 프로세스 상태는 기동 기본값(leader 기본 true·미확인), 표지(peers)는 파일에서 읽은 그대로
+  Object.assign(lease(), { leader: true, ownedAt: 0, checkedAt: 0, yieldSince: 0, pending: null, readFailSince: 0, token: null, validUntil: 0, holder: null });
+  globalThis.__argoSyncLeaseBootAt = Date.now() - 60_000; // 기동 대기(5초)는 지났다
+  awakeNow();
+}
+
+test('P9-b (가) 세션 실패로 켜짐 — 만료 글로만 본 다른 기기가 지금 담당이어도 이 기기는 담당이 아니다(배포본과 같음)', async () => {
+  const f = fakeStore(); _setSyncClientForTest(f.client);
+  const owner = 'o-p9b-session';
+  await bootAfterExpiredSighting(f, owner);
+  _leaseUnreadableForTest(null); // leaseTick: ensureClient 실패(세션 갱신 실패) → 리스를 볼 수 없다
+  assert.equal(isCloudLeader(), false, 'A와 함께 담당이 되면 루틴 이중 실행·이중 답');
+  assert.equal(sync.leaseCheck().leader, false, '담당 표시도 내려놓는다 — argo run 안내가 "판정 전"이 아니라 배포본처럼 "아직 아무도/다른 기기"로 읽는다');
+});
+
+test('P9-b (나) 첫 리스 읽기가 걸린 채 기동 — 기동 대기 5초가 지나도 담당이 아니다(배포본과 같음)', async () => {
+  const f = fakeStore(); _setSyncClientForTest(f.client);
+  const owner = 'o-p9b-hang';
+  await bootAfterExpiredSighting(f, owner);
+  assert.equal(lease().checkedAt, 0, '아직 첫 판정 전(읽기가 걸려 있다)');
+  assert.equal(isCloudLeader(), false, '걸린 읽기가 끝나기 전 최대 30초 동안 A와 함께 담당이 되지 않는다');
+});
+
+test('P9-b 약한 표지는 읽기 간격·확인 기한에 쓰지 않는다 — 혼자 쓰는 재설치 기기는 담당이 되면 15초, 내 글 만료 전까지 담당(단일 판정)', async () => {
+  const f = fakeStore(); _setSyncClientForTest(f.client);
+  const owner = 'o-p9b-solo'; fresh();
+  f.set(KEY(owner), { deviceId: OLD, token: 'old', ts: Date.now() - LEASE_TTL_MS - 60_000 });
+  await renewLease(owner, { runnerUsable: true });
+  assert.equal(leaseReadInterval(), LEASE_SOLO_READ_MS);
+  assert.equal(isCloudLeader(), true, '확인된 담당 — 단일 판정');
+  lease().validUntil = 0; // 엄격 판정이었다면 확인 기한이 지나 담당이 아니다
+  assert.equal(isCloudLeader(), true, '약한 표지는 엄격 확인 기한을 쓰지 않는다');
+  _leaseUnreadableForTest(null); // 확인된 담당의 세션 실패 — 내 글이 TTL 안이면 유지(종전과 같다)
+  assert.equal(isCloudLeader(), true);
 });

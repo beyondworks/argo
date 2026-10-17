@@ -453,6 +453,23 @@ function notePeer(doc, now = Date.now()) {
     writeJsonAtomic(PEER_FILE(), { v: 2, accounts: leaseState.peers }).catch(() => {});
   }
 }
+/** 약한 표지 — 다른 기기의 **만료된** 리스 글만 본 적 있음(weakAt, 2026-10-17 검수 1 P9-b). 만료 글은 지금 함께 도는 기기의 증거가 아니라 엄격 판정(읽기 간격·확인 기한)은
+    켜지 않는다 — 기기 신원이 바뀐 혼자 쓰는 기기(재설치)가 14일 동안 8초로 읽던 것. 다만 그 글이 진짜 다른 기기(맥 두 대 번갈아 쓰기)일 수 있으므로, 확인된 담당이
+    아닌 기동·세션 실패 기본값은 배포본(엄격 판정)처럼 담당이 아니다(isCloudLeader·leaseUnreadable) — 그 기기가 지금 담당이면 함께 담당이 되지 않게. 14일·계정별·파일 저장은 표지와 같다. */
+function weakPeerSeen(now = Date.now()) {
+  const e = leaseState.peers?.[leaseAccount()];
+  return !!(e && now - (Number(e.weakAt) || 0) < PEER_FRESH_MS);
+}
+function noteWeakPeer(now = Date.now()) {
+  const acct = leaseAccount();
+  const e = (leaseState.peers[acct] ??= { at: 0, normals: [] });
+  const first = !(Number(e.weakAt) > 0);
+  e.weakAt = now;
+  if (first || now - ((leaseState.peersSavedAt ??= {})[acct] || 0) >= PEER_SAVE_MS) {
+    leaseState.peersSavedAt[acct] = now;
+    writeJsonAtomic(PEER_FILE(), { v: 2, accounts: leaseState.peers }).catch(() => {});
+  }
+}
 /** 엄격 판정을 쓰는가 — 예비 기기(늘 다른 기기와 함께 쓴다)이거나 이 계정이 최근 14일 안에 다른 기기를 본 기기. */
 const strictLease = () => leaseRole() === 'standby' || !!peerSeen();
 /** 단일 기기의 기동 대기 — 첫 리스 판정이 끝날 때까지(성공이든 실패든, 보통 1초 안) 담당이 아니다. 그 판정이 다른 기기의 리스를 보면 엄격 판정으로 넘어가
@@ -485,6 +502,7 @@ export function isCloudLeader(now = Date.now()) {
   if (!syncOn()) return leaseRole() !== 'standby';
   if (!leaseState.leader) return false;
   if (strictLease()) return now < (leaseState.validUntil || 0);
+  if (!(leaseState.ownedAt > 0) && weakPeerSeen(now)) return false; // 약한 표지: 확인된 담당만(기동·세션 실패 기본값은 배포본의 엄격 판정처럼 아님 — P9-b)
   observeAwake();
   if ((awake.wokeAt || 0) > (leaseState.checkedAt || 0)) return false;
   if (leaseState.ownedAt > 0) return now < leaseState.ownedAt + LEASE_TTL_MS - LEASE_CONFIRM_MARGIN_MS;
@@ -526,11 +544,13 @@ function dropLease() {
     처음 만나는 맥이 리스를 못 읽은 채 기동 기본값으로 VPS와 함께 담당이던 것(D 4차 검수 MEDIUM-A: GET만 실패 128.7초, 첫 읽기 500에 7.8초). */
 function leaseUnreadable(line) {
   const strict = strictLease();
-  const keep = (!strict && !line) || holdsLeaseOnWriteFailure(leaseState);
+  const keep = (!strict && !line && !weakPeerSeen()) || holdsLeaseOnWriteFailure(leaseState); // 약한 표지면 세션 실패 예외도 없다(P9-b — 배포본의 엄격 판정과 같다)
   if (line) noteOnce('lease-read', `[argo] ${line} — ${keep ? (strict ? '보유 리스: 확인 기한 안에서만 리더 유지(쓰기 없음)' : '보유 리스: 내 글 만료 전까지 리더 유지(쓰기 없음)') : '이번 판정 보류(담당 아님·쓰기 없음)'}`);
   if (!keep) { leaseState.leader = false; leaseState.ownedAt = 0; leaseState.validUntil = 0; }
   leaseState.checkedAt = Date.now();
 }
+/** (export: 회귀 테스트용 — leaseTick이 기기 세션을 못 얻을 때 부르는 판정 보류. 배선은 leaseTick 한 곳) */
+export const _leaseUnreadableForTest = (line) => leaseUnreadable(line);
 
 // (export: 회귀 테스트용 — 판정식이 아닌 **배선**을 잠그기 위해. 프로덕션 호출부는 리스 타이머(leaseTick) 하나다.)
 export async function renewLease(owner, { runnerUsable = true } = {}) {
@@ -578,8 +598,8 @@ export async function renewLease(owner, { runnerUsable = true } = {}) {
   const live = cur && Date.now() - cur.ts < LEASE_TTL_MS; // 살아 있는 리스(TTL 안) — 위 fresh()(캐시 우회)와 다른 이름
   // 다른 기기 표지는 살아 있는 남의 글을 볼 때만 켠다(2026-10-17). 만료된 글은 지금 함께 도는 기기의 증거가 아니다 — 기기 신원(.device-id)이 바뀐 기기(재설치·데이터 폴더
   // 초기화·새 맥)가 저장소에 남은 옛 신원의 만료 글을 첫 판정에서 읽어, 혼자인데도 14일 동안 엄격 판정(담당 읽기 15초 → 8초)이 되던 것. 진짜 다른 기기는 그 기기가 담당일 때
-  // 살아 있는 글로 보이고(같은 역할이면 여기서 양보한다), 경합 승자 확인(아래 winner)은 막 쓴 글이라 늘 살아 있다.
-  if (live && cur.deviceId && cur.deviceId !== me) notePeer(cur);
+  // 살아 있는 글로 보이고(같은 역할이면 여기서 양보한다), 경합 승자 확인(아래 winner)은 막 쓴 글이라 늘 살아 있다. 만료된 남의 글은 약한 표지로 남긴다(weakPeerSeen — P9-b).
+  if (cur?.deviceId && cur.deviceId !== me) { if (live) notePeer(cur); else noteWeakPeer(); }
   if (!readErr && !(live && cur.deviceId !== me)) leaseState.checkedAt = Date.now(); // 다른 기기가 맡고 있지 않음을 읽었다 — 단일 기기의 기동·깸 대기는 여기서 끝(쓰기·재확인 800ms를 기다리지 않는다)
   // 확인 — 내가 쓴 글(토큰)이 그대로 살아 있다. 이 읽기를 보낸 시각부터 확인 기한을 다시 센다(엄격 판정의 담당 근거).
   if (live && cur.deviceId === me && leaseState.leader && leaseState.token && cur.token === leaseState.token) confirmLease(readAt, cur.ts);
