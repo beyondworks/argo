@@ -18,7 +18,7 @@
     "text": "다음 주 회의 자료 초안을 써 줘",
     "context": [
       {
-        "id": "55555555-6666-4777-8888-999999999908",
+        "id": 1000,
         "author": {
           "kind": "user",
           "id": "33333333-4444-4555-8666-777777777706",
@@ -30,7 +30,7 @@
     ],
     "attachments": [
       {
-        "id": "77777777-8888-4999-8aaa-bbbbbbbbbb10",
+        "id": 500,
         "name": "notes.pdf",
         "mime": "application/pdf",
         "bytes": 20480,
@@ -44,6 +44,13 @@
       "max_turn_s": 900,
       "budget": null
     },
-    "expires_at": "2026-10-17T06:30:00Z"
+    "expires_at": "2026-10-17T06:30:00Z",
+    "peers": [
+      {
+        "agent": "7a0e5c11-2b3d-4e5f-8a9b-0c1d2e3f4a09",
+        "name": "리서치",
+        "role": "자료 조사"
+      }
+    ]
   }
 }
