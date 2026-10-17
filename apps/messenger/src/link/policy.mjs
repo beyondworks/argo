@@ -28,6 +28,7 @@ export const USER_EVENTS = Object.freeze({
   pause: 'pause', // v2 중단 스위치 — { paused: boolean }
   deviceRevoked: 'device_revoked', // 기기 폐기 — { device_id } 또는 { all: true }(사용자 폐기 세대)
   attach: 'attach', // 첨부 행이 생김(U6b 서버) — { attachment: { id, message_id, room_id, name, mime, bytes, bucket, path } }. 받는 쪽 요청 0
+  work: 'work', // 일이 생기거나 상태가 바뀜(U6c-1a 서버) — { work: { id, room_id, topic_id, agent_id, state, source_message_id, … } }. 받는 쪽 요청 0
 });
 
 /** 상태 코드(화면은 U6이 이 값으로 그린다). */

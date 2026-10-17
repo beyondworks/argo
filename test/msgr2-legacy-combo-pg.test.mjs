@@ -98,7 +98,7 @@ test('되돌림(운영 순서 판) — U2b 되돌림 뒤 옛 정리 후보 함�
 });
 
 // U6b 접속 표시(v2:pr:<주인>) — Presence 받기·보내기 권한(옛 msgr 전체 + msgr2 운영 순서 판)
-test('U6b 접속 표시 — 본인·같은 팀 공간 멤버는 받고, 남(공간 밖)·폐기된 기기는 못 받는다, track은 주인의 본체 기기만, 옛 pr: 토픽은 열리지 않는다', { skip }, () => {
+test('U6b·U6c-1a 접속 표시 — 본인·같은 팀 공간 멤버(owner·admin·member)는 받고, 손님은 방을 함께 쓸 때만, 남(공간 밖)·폐기된 기기는 못 받는다, track은 주인의 본체 기기만, 옛 pr: 토픽은 열리지 않는다', { skip }, () => {
   const Z = '70000000-0000-4000-8000-000000000009'; const zApp = seedDevice(db, Z, 'app');
   const pres = (who, topic) => { db.sql(`insert into realtime.messages (topic, extension, payload) select '${topic}', 'presence', '{}' where not exists (select 1 from realtime.messages where topic = '${topic}' and extension = 'presence')`);
     return db.as(who.uid, who.sid, `select set_config('realtime.topic', '${topic}', false); select count(*) from realtime.messages where topic = '${topic}' and extension = 'presence'`).split('\n').pop() !== '0'; };
@@ -110,7 +110,12 @@ test('U6b 접속 표시 — 본인·같은 팀 공간 멤버는 받고, 남(공�
   assert.equal(pres(zApp, `v2:pr:${O}`), false, '다른 팀 공간의 멤버일 뿐이면 못 받는다(그 주인과 같은 공간이어야)');
   assert.equal(pres(oRev, `v2:pr:${O}`), false, '폐기된 기기');
   db.sql(`insert into public.msgr2_space_members (space_id, user_id, role) values ('${S}', '${Z}', 'guest')`);
-  assert.equal(pres(zApp, `v2:pr:${O}`), true, '같은 팀 공간의 활동 멤버');
+  assert.equal(pres(zApp, `v2:pr:${O}`), false, 'U6c-1a: 같은 팀 공간의 손님은 방을 함께 쓰지 않으면 못 받는다');
+  db.sql(`update public.msgr2_space_members set role = 'member' where space_id = '${S}' and user_id = '${Z}'`);
+  assert.equal(pres(zApp, `v2:pr:${O}`), true, '같은 팀 공간의 활동 멤버(member)');
+  db.sql(`update public.msgr2_space_members set role = 'guest' where space_id = '${S}' and user_id = '${O}'`);
+  assert.equal(pres(zApp, `v2:pr:${O}`), false, 'U6c-1a: 주인 쪽이 손님 자리여도 같은 팀 길은 열리지 않는다');
+  db.sql(`update public.msgr2_space_members set role = 'owner' where space_id = '${S}' and user_id = '${O}'`);
   db.sql(`update public.msgr2_space_members set removed_at = now() where space_id = '${S}' and user_id = '${Z}'`);
   assert.equal(pres(zApp, `v2:pr:${O}`), false, '공간에서 빠지면 못 받는다');
   assert.equal(pres(zApp, `pr:${O}`), false, '옛 모양 pr: 토픽은 v2 정책이 열지 않는다');

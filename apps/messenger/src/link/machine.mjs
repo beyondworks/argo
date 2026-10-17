@@ -358,7 +358,7 @@ export function createLinkMachine(opts) {
     if (spaceChans.length || terminal() || !foreground) return;
     for (const sp of spaces) {
       const ch = client.channel(names.spaceTopic(sp), { config: { private: true } });
-      ch.on('broadcast', { event: '*' }, (m) => { if (spaceChans.includes(ch) && [USER_EVENTS.message, USER_EVENTS.attach].includes(String(m?.event ?? '').toLowerCase())) onUserEvent(m); });
+      ch.on('broadcast', { event: '*' }, (m) => { if (spaceChans.includes(ch) && [USER_EVENTS.message, USER_EVENTS.attach, USER_EVENTS.work].includes(String(m?.event ?? '').toLowerCase())) onUserEvent(m); });
       spaceChans.push(ch); spacePending.add(ch);
       ch.subscribe((status) => {
         if (!spaceChans.includes(ch)) return; // 우리가 닫은 채널
@@ -426,6 +426,11 @@ export function createLinkMachine(opts) {
       if (a && Number.isSafeInteger(Number(a.message_id)) && a.room_id && a.path) emit('attachments', { roomId: a.room_id, messageId: Number(a.message_id), attachments: [a] });
       return;
     }
+    if (ev === USER_EVENTS.work) { // 일 표지 — @멘션으로 생긴 일도 에이전트 글을 기다리지 않고 카드·v2:wk: 구독·취소 단추를 만든다. 요청 없이 화면에 넘긴다
+      const w = payload.work;
+      if (w && typeof w.id === 'string' && w.id && typeof w.room_id === 'string' && w.room_id && typeof w.state === 'string') emit('works', { roomId: w.room_id, works: [w] });
+      return;
+    }
     if (ev === USER_EVENTS.message) {
       const msg = payload.message ?? payload;
       const id = Number(msg?.id);
@@ -468,7 +473,15 @@ export function createLinkMachine(opts) {
     const w = watched.get(workId);
     if (!w || w.chans.length || state !== STATES.ready) return;
     const ch = client.channel(names.workTopic(workId), { config: { private: true } });
-    ch.on('broadcast', { event: '*' }, (m) => emit('progress', { workId, event: String(m?.event ?? '').toLowerCase(), payload: m?.payload ?? {} }));
+    // 본체는 봉투째 보낸다(event 'envelope', payload = 약속 v1 봉투 — packages/agent-link/link.mjs progress). 화면은 단계만 쓰므로 여기서 data를 풀어 넘긴다.
+    // 다른 일의 봉투·진행이 아닌 봉투는 버린다(토픽 권한이 정본이지만 화면이 남의 단계를 그리지 않게).
+    ch.on('broadcast', { event: 'envelope' }, (m) => {
+      const env = m?.payload;
+      if (!env || env.type !== 'work.progress' || (env.work != null && env.work !== workId)) return;
+      const data = env.data && typeof env.data === 'object' ? env.data : {};
+      if (typeof data.stage !== 'string' || !data.stage) return;
+      emit('progress', { workId, stage: data.stage, note: typeof data.note === 'string' ? data.note : null, at: env.at ?? null, seq: env.seq ?? null });
+    });
     ch.subscribe(() => {}); // 끊기면 u:가 다시 붙을 때 함께 다시 가입한다(따로 재시도하지 않는다)
     w.chans.push(ch);
     if (w.owner) {
