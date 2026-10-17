@@ -264,3 +264,35 @@ test('커넥터 손님: 결재 게이트보다 앞에서 막는다 — 주인 �
   const ownerR = await callConnectorTool(ws, 'gmail', 'search_threads', { query: 'x' }, { mirrorCtx: ctxOf(ws, OWNER) });
   assert.notEqual(ownerR.error, 'guest_blocked', '주인 턴은 기존 판정(미연결 등)으로 간다');
 });
+
+// ── 메신저 v2 일(agent-link 범위 턴, U4b): team·guest 등급 = 위 조직 채널 손님 턴과 같은 도구 묶음, owner = 주인 턴 ──
+const linkCtx = (owner) => ({ kind: 'scope', scope: { kind: 'link', work: 'w-1', room: 'r-1', owner } });
+test('v2 link 범위: owner 표지가 없으면 SDK·네이티브·CLI 모두 조직 채널 손님 턴과 같은 제한, owner면 주인 턴과 같다', async () => {
+  for (const [name, native] of [['claude', 'off'], ['openrouter', 'openrouter']]) {
+    runner = name; process.env.ARGO_NATIVE_RUNNERS = native;
+    try {
+      const ws = await setup(name);
+      const inside = join(paths(ws).root, 'vault', 'note.md');
+      const probe = async (mirrorCtx) => {
+        let seen; vendorTurn = async (options) => { seen = options; return 'fixture finished'; };
+        await chat(ws, 'alpha', 'hi', null, { mirrorCtx, source: 'messenger', journal: { off: true } });
+        const out = { allowed: seen.allowedTools ?? null };
+        for (const tool of ['WebFetch', 'Write', 'Read', 'Bash']) out[tool] = (await seen.canUseTool(tool, { file_path: inside, url: 'https://example.com', command: 'ls', content: 'x' })).behavior;
+        return out;
+      };
+      const legacyGuest = await probe(ctxOf(ws, GUEST));
+      const legacyOwner = await probe(ctxOf(ws, OWNER));
+      assert.deepEqual(await probe(linkCtx(false)), legacyGuest, `${name}: team·guest = 조직 채널 손님 턴`);
+      assert.deepEqual(await probe(linkCtx(undefined)), legacyGuest, `${name}: 표지 없음 = 손님(fail-closed)`);
+      assert.equal((await probe(linkCtx(true))).Write, legacyOwner.Write, `${name}: owner = 주인 턴 쓰기`);
+    } finally { process.env.ARGO_NATIVE_RUNNERS = 'off'; }
+  }
+  runner = 'codex';
+  const ws = await setup('codex');
+  let calls = 0; vendorTurn = async () => { calls++; return 'fixture finished'; };
+  const r = await chat(ws, 'alpha', 'hi', null, { mirrorCtx: linkCtx(false), source: 'messenger', journal: { off: true } });
+  assert.equal(calls, 0, 'team·guest CLI 턴은 CLI를 띄우지 않는다');
+  assert.equal(r.reply, guestCliRefusal('Alpha', 'ko'));
+  await chat(ws, 'alpha', 'hi', null, { mirrorCtx: linkCtx(true), source: 'messenger', journal: { off: true } });
+  assert.equal(calls, 1, 'owner CLI 턴은 실행');
+});

@@ -103,6 +103,9 @@ export const OWNER_APPROVAL_LIFTS_GUEST = false;
 export const msgrJournal = (orgId, channelId, off) => ({ off: off === true, tag: `org-${orgId}-ch-${channelId}` });
 
 export function isGuestCtx(ctx) {
+  // 메신저 v2 일(agent-link 범위 턴, src/agent-link-host.mjs): 서버가 정한 등급이 owner일 때만 주인 턴이다. 표지가 없거나 owner가 아니면 손님(fail-closed).
+  // 승인 뒤 후속 턴(approval-actions followUp)도 같은 범위(item.scope)로 돌아 손님 표지가 이어진다.
+  if (ctx?.kind === 'scope' && ctx.scope?.kind === 'link') return ctx.scope.owner !== true;
   if (ctx?.kind !== 'msgr') return false;
   if (OWNER_APPROVAL_LIFTS_GUEST && ctx.ownerApproved === true) return false;
   if (ctx.guest === true) return true;
