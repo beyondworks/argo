@@ -55,7 +55,7 @@ function fakeSupabase({ minVersion = null, paused = false, session = { id: 'sess
     const m = { id: s.db.nextId++, room_id: room, author_kind: 'user', author_user_id: author, body, client_msg_id: null, created_at: new Date().toISOString() };
     s.db.messages.push(m);
     const payload = bodyless ? { message: { id: m.id, room_id: m.room_id, author_user_id: author } } : { message: m };
-    s.broadcast(`u:${UID}`, 'msg', payload);
+    s.broadcast(`v2:u:${UID}`, 'msg', payload);
     return m;
   };
   s.broadcast = (topic, event, payload) => {
@@ -196,7 +196,7 @@ test('정상 시작: 최소 버전 → 중단 확인 → 등록 → u:<uid> 1개
   assert.deepEqual(fake.log.map((l) => l.name), ['argo_min_app_version', 'msgr2_service_pause', 'msgr2_device_register', 'msgr2_catch_up']);
   assert.deepEqual(fake.log[0].args, { p_app: 'messenger' });
   assert.equal(fake.log[3].args.p_since_id, null, '처음 기기는 since 없이(서버가 방별 최근 200개)');
-  assert.deepEqual(fake.liveTopics(), [`u:${UID}`]);
+  assert.deepEqual(fake.liveTopics(), [`v2:u:${UID}`]);
   assert.equal([...fake.channels][0].opts.config.private, true);
   assert.deepEqual(states, ['connecting', 'registering', 'subscribing', 'catching_up', 'ready']);
   const reg = fake.log[2].args;
@@ -295,7 +295,7 @@ test('경우 10: u: 방송으로 중단 → 받은 글 표지·본문 없는 글
   const { m, fake, clock, ids } = setup();
   await m.start(); await flush();
   const n = fake.log.length;
-  fake.broadcast(`u:${UID}`, 'pause', { paused: true }); await flush();
+  fake.broadcast(`v2:u:${UID}`, 'pause', { paused: true }); await flush();
   assert.equal(m.getState(), 'paused');
   fake.db.paused = true;
   fake.insertMessage({ body: 'during' }); fake.insertMessage({ bodyless: true }); await flush();
@@ -304,9 +304,9 @@ test('경우 10: u: 방송으로 중단 → 받은 글 표지·본문 없는 글
   await clock.advance(10 * MIN);
   assert.equal(fake.log.length, n, '중단 중 조회·보내기 요청 0');
   assert.deepEqual(ids(), []);
-  assert.deepEqual(fake.liveTopics(), [`u:${UID}`], 'u: 소켓은 열린 채(DB 요청 아님) 풀림을 기다린다');
+  assert.deepEqual(fake.liveTopics(), [`v2:u:${UID}`], 'u: 소켓은 열린 채(DB 요청 아님) 풀림을 기다린다');
   fake.db.paused = false;
-  fake.broadcast(`u:${UID}`, 'pause', { paused: false }); await flush();
+  fake.broadcast(`v2:u:${UID}`, 'pause', { paused: false }); await flush();
   assert.equal(m.getState(), 'ready');
   assert.deepEqual(fake.log.slice(n).map((l) => l.name), ['msgr2_catch_up']);
   assert.equal(ids().length, 2, '중단 중 놓친 글은 풀린 뒤 따라잡기로');
@@ -348,11 +348,11 @@ test('경우 19: u: 방송으로 이 기기 폐기 → 소켓 닫힘·signed_out
   const { m, fake, clock } = setup();
   await m.start(); await flush();
   const ev = []; m.on('event', (e) => ev.push(e));
-  fake.broadcast(`u:${UID}`, 'device_revoked', { device_id: 'dev-other' }); await flush();
+  fake.broadcast(`v2:u:${UID}`, 'device_revoked', { device_id: 'dev-other' }); await flush();
   assert.equal(m.getState(), 'ready', '다른 기기 폐기는 목록 사건으로만');
   assert.equal(ev[0].event, 'device_revoked');
   const n = fake.log.length; const j = fake.joins.length;
-  fake.broadcast(`u:${UID}`, 'device_revoked', { device_id: 'dev-1' }); await flush();
+  fake.broadcast(`v2:u:${UID}`, 'device_revoked', { device_id: 'dev-1' }); await flush();
   assert.equal(m.getState(), 'signed_out');
   assert.deepEqual(fake.liveTopics(), [], '소켓 닫힘');
   fake.insertMessage(); await m.setForeground(false); await m.setForeground(true); m.nudge();
@@ -363,7 +363,7 @@ test('경우 19: u: 방송으로 이 기기 폐기 → 소켓 닫힘·signed_out
 
 test('경우 19: 사용자 전체 폐기(all) 방송과 device_revoked 오류도 signed_out', async () => {
   const a = setup(); await a.m.start(); await flush();
-  a.fake.broadcast(`u:${UID}`, 'device_revoked', { all: true }); await flush();
+  a.fake.broadcast(`v2:u:${UID}`, 'device_revoked', { all: true }); await flush();
   assert.equal(a.m.getState(), 'signed_out');
 
   const b = setup(); b.fake.fail.msgr2_catch_up = [{ error: { code: 'P0001', message: 'device_revoked' }, status: 400 }];
@@ -525,13 +525,13 @@ test('일 화면: 볼 때만 wk:<일>·pr:<주인>을 구독하고, 뒤로 가�
   const prog = []; m.on('progress', (p) => prog.push(p));
   await m.start(); await flush();
   const off = m.watchWork('w-1', { owner: OTHER }); await flush();
-  assert.deepEqual(fake.liveTopics(), [`pr:${OTHER}`, `u:${UID}`, 'wk:w-1'].sort());
-  fake.broadcast('wk:w-1', 'progress', { stage: 'tool' }); await flush();
+  assert.deepEqual(fake.liveTopics(), [`pr:${OTHER}`, `v2:u:${UID}`, 'v2:wk:w-1'].sort());
+  fake.broadcast('v2:wk:w-1', 'progress', { stage: 'tool' }); await flush();
   assert.deepEqual(prog.map((p) => p.payload.stage), ['tool']);
   await m.setForeground(false); assert.deepEqual(fake.liveTopics(), []);
   await m.setForeground(true); await flush();
-  assert.deepEqual(fake.liveTopics(), [`pr:${OTHER}`, `u:${UID}`, 'wk:w-1'].sort());
-  off(); assert.deepEqual(fake.liveTopics(), [`u:${UID}`]);
+  assert.deepEqual(fake.liveTopics(), [`pr:${OTHER}`, `v2:u:${UID}`, 'v2:wk:w-1'].sort());
+  off(); assert.deepEqual(fake.liveTopics(), [`v2:u:${UID}`]);
 });
 
 // ── 분리 검수 지적 반영(1~5) ─────────────────────────────────────────────────
@@ -571,16 +571,16 @@ test('검수 2: id만 온 글을 못 읽은 사이 뒤 글이 와도, 다시 붙
 test('검수 3: 중단 중 소켓이 끊기면 소켓만 간격 두고 다시 열고(중단 표지 1회), 풀림 방송을 받는다', async () => {
   const { m, fake, clock } = setup();
   await m.start(); await flush();
-  fake.broadcast(`u:${UID}`, 'pause', { paused: true }); fake.db.paused = true; await flush();
+  fake.broadcast(`v2:u:${UID}`, 'pause', { paused: true }); fake.db.paused = true; await flush();
   const n = fake.log.length;
   fake.dropSockets(); await flush();
   assert.equal(m.getState(), 'paused');
   await clock.advance(60 * MIN);
-  assert.deepEqual(fake.liveTopics(), [`u:${UID}`], '소켓 다시 열림');
+  assert.deepEqual(fake.liveTopics(), [`v2:u:${UID}`], '소켓 다시 열림');
   assert.deepEqual(fake.log.slice(n).map((l) => l.name), ['msgr2_service_pause'], '끊김 1번 = 중단 표지 1회, 그 밖 REST 0');
   assert.equal(m.getState(), 'paused'); assert.equal(clock.pending(), 0);
   fake.db.paused = false;
-  fake.broadcast(`u:${UID}`, 'pause', { paused: false }); await flush();
+  fake.broadcast(`v2:u:${UID}`, 'pause', { paused: false }); await flush();
   assert.equal(m.getState(), 'ready');
   assert.deepEqual(fake.log.slice(n + 1).map((l) => l.name), ['msgr2_catch_up']);
 });
@@ -589,9 +589,9 @@ test('검수 4: 이미 받은 글의 고침·지움 방송은 갱신으로 낸�
   const { m, fake, got } = setup();
   await m.start(); await flush();
   const msg = fake.insertMessage({ body: 'v1' }); await flush();
-  fake.broadcast(`u:${UID}`, 'msg', { message: { ...msg, body: 'v2', edited_at: '2026-10-17T07:00:00Z' } });
-  fake.broadcast(`u:${UID}`, 'msg', { message: { id: msg.id, room_id: msg.room_id, deleted_at: '2026-10-17T07:01:00Z' } });
-  fake.broadcast(`u:${UID}`, 'msg', { message: msg }); // 같은 새 글 다시 — 중복 0
+  fake.broadcast(`v2:u:${UID}`, 'msg', { message: { ...msg, body: 'v2', edited_at: '2026-10-17T07:00:00Z' } });
+  fake.broadcast(`v2:u:${UID}`, 'msg', { message: { id: msg.id, room_id: msg.room_id, deleted_at: '2026-10-17T07:01:00Z' } });
+  fake.broadcast(`v2:u:${UID}`, 'msg', { message: msg }); // 같은 새 글 다시 — 중복 0
   await flush();
   const ups = got.filter((e) => e.source === 'update').map((e) => e.messages[0]);
   assert.deepEqual(ups.map((x) => x.body ?? 'deleted'), ['v2', 'deleted']);
@@ -615,7 +615,7 @@ test('검수 5: 보내기 재시도 대기 중 뒤로 가면 더 보내지 않�
 test('검수 3: 소켓이 끊긴 사이 풀림 방송을 놓쳐도, 다시 연 직후 중단 표지 1회로 풀린 것을 안다', async () => {
   const { m, fake, clock } = setup();
   await m.start(); await flush();
-  fake.broadcast(`u:${UID}`, 'pause', { paused: true }); fake.db.paused = true; await flush();
+  fake.broadcast(`v2:u:${UID}`, 'pause', { paused: true }); fake.db.paused = true; await flush();
   const n = fake.log.length;
   fake.dropSockets(); fake.db.paused = false; await flush(); // 풀림 방송은 소켓이 없어 못 받음
   await clock.advance(60 * MIN);

@@ -28,7 +28,7 @@ export const LIMITS = Object.freeze({
   role: 2000,
 });
 
-/** type → 보내는 쪽. server = 서버→본체(w:<uid> 방송·따라잡기), runner = 본체→서버. */
+/** type → 보내는 쪽. server = 서버→본체(v2:w:<uid> 방송·따라잡기), runner = 본체→서버. */
 export const DIRECTION = Object.freeze({
   'work.offer': 'server',
   'work.cancel': 'server',
@@ -43,7 +43,18 @@ export const DIRECTION = Object.freeze({
 });
 export const TYPES = Object.freeze(Object.keys(DIRECTION));
 
-/** type → 길. progress만 저장하지 않는 wk:<work> 방송이고, 본체가 보내는 나머지는 RPC msgr2_link_send 한 곳이다. */
+/**
+ * Realtime 토픽 이름(서버·메신저·본체가 이 한 곳을 쓴다). 옛 메신저 토픽(u:·org:·dm:)과 겹치지 않게 'v2:' 접두사를 둔다 —
+ * 옛 u:<uid> 받기 정책은 기기 확인 없이 본인을 허용하고, 허용 정책은 OR로 합쳐지므로 같은 이름이면 v2의 기기 확인이 무력해진다(검수 #1076).
+ */
+export const TOPICS = Object.freeze({
+  user: (uid) => `v2:u:${uid}`, // 사람(앱 기기): msg·pause·device_revoked
+  runner: (uid) => `v2:w:${uid}`, // 본체(runner·resident 기기): 서버→본체 봉투
+  space: (space) => `v2:s:${space}`, // 사람이 많은 팀 open 방의 글(owner·admin·member)
+  work: (work) => `v2:wk:${work}`, // 일 진행 표시(본체가 보내고 그 방을 읽는 사람이 받는다)
+});
+
+/** type → 길. progress만 저장하지 않는 v2:wk:<work> 방송이고, 본체가 보내는 나머지는 RPC msgr2_link_send 한 곳이다. */
 export const CHANNEL = Object.freeze(Object.fromEntries(TYPES.map((t) => [t,
   t === 'work.progress' ? 'broadcast:wk' : DIRECTION[t] === 'server' ? 'broadcast:w' : 'rpc'])));
 
