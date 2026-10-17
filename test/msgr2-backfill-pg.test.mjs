@@ -20,7 +20,7 @@ const ROLLBACK = readFileSync(fileURLToPath(new URL('../scripts/msgr2-migrate-ro
 const id = (n) => `b8000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const U = { O: id(1), M: id(2), G: id(3), X: id(4), E: id(5), F: id(6), Z: id(7), N: id(8), W: id(9) }; // N·W = 참여 행 없는 조직 멤버(W는 PUBX 제외 목록)
 const T = id(100), T2 = id(101);
-const AG1 = id(200), AG2 = id(201);
+const AG1 = id(200), AG2 = id(201), AG3 = id(202); // AG3 = 자리가 하나도 없는 에이전트(게이트웨이가 자리만 지운 경우)
 const PC1 = id(300), OC1 = id(301), OC2 = id(302), OC1b = id(303);
 const CH = { PUB: id(400), PUBX: id(401), PRIV: id(402), ODM: id(403), OADM: id(404), ODUP: id(405), OGRP: id(406), ARCH: id(407),
              GRP: id(408), FDM: id(409), CDM: id(410), DEL: id(411) };
@@ -68,7 +68,8 @@ before(() => {
       ('${T2}', '${U.O}', 'owner', null, now() - interval '30 days', null, null),
       ('${T2}', '${U.M}', 'member', null, now() - interval '30 days', null, null);
     insert into public.msgr_agents (id, owner_user_id, ws_id, slug, created_at) values
-      ('${AG1}', '${U.O}', 'w1', 'a1', now() - interval '30 days'), ('${AG2}', '${U.M}', 'w2', 'b1', now() - interval '30 days');
+      ('${AG1}', '${U.O}', 'w1', 'a1', now() - interval '30 days'), ('${AG2}', '${U.M}', 'w2', 'b1', now() - interval '30 days'),
+      ('${AG3}', '${U.M}', 'w3', 'c1', now() - interval '30 days');
     insert into public.msgr_crews (id, org_id, owner_user_id, ws_id, slug, display_name, role_text, hosting, status, allow, allow_users, registered_at, created_at, agent_id) values
       ('${PC1}', null, '${U.O}', 'w1', 'a1', '에이전트 하나', '조사', 'local', 'active', 'owner', '{}', now() - interval '1 day', now() - interval '30 days', '${AG1}'),
       ('${OC1}', '${T}', '${U.O}', 'w1', 'a1', '조직 자리 이름', '', 'local', 'active', 'list', '{${U.M}}', now() - interval '2 days', now() - interval '29 days', '${AG1}'),
@@ -191,14 +192,14 @@ test('4) 대응: 방 종류·짝·공간·정책·보관', { skip }, () => {
   assert.equal(room(CH.PUB), `open|-|${T}|allowed|true|false`);
   assert.equal(room(CH.PUBX), `private|-|${T}|approval|true|false`, '제외 목록이 있던 public → private');
   assert.equal(room(CH.PRIV), `private|-|${T}|blocked|false|false`);
-  assert.equal(room(CH.ODM), `direct|${pair(U.O, U.M)}|${T}|allowed|true|false`);
+  assert.equal(room(CH.ODM), `direct|${pair(U.O, U.M)}|${T}|allowed|true|false`, '팀 1:1 = U6d와 같은 짝 키');
   assert.equal(room(CH.ODUP), `private|-|${T}|allowed|true|false`, '같은 짝의 두 번째 dm은 private');
-  assert.equal(room(CH.OADM), `direct|agent:${AG1}:${U.O}|${T}|allowed|true|false`);
+  assert.equal(room(CH.OADM), `private|-|${T}|allowed|true|false`, '조직 에이전트 1:1 = private(U6d 에이전트 1:1 규칙)');
   assert.equal(room(CH.OGRP), `private|-|${T}|allowed|true|false`);
   assert.equal(room(CH.ARCH), `private|-|${T}|allowed|true|true`);
   assert.equal(room(CH.GRP), `private|-|${PO}|allowed|true|false`, '개인 그룹 = 만든 사람의 개인 공간');
-  assert.equal(room(CH.FDM), `direct|${pair(U.O, U.F)}|${PO}|allowed|true|false`);
-  assert.equal(room(CH.CDM), `direct|agent:${AG1}|${PO}|blocked|true|false`, 'read_only → blocked');
+  assert.equal(room(CH.FDM), `direct|p:${pair(U.O, U.F)}|${PO}|allowed|true|false`, '개인 1:1 = p: + 짝(U6d)');
+  assert.equal(room(CH.CDM), `private|-|${PO}|blocked|true|false`, '개인 에이전트 1:1 = private, read_only → blocked');
   assert.equal(room(CH.DEL), `open|-|${T2}|allowed|true|false`);
   // 방 멤버: PUB = M(손님 G 빠짐) + AG1(제외 목록의 OC2 빠짐), PUBX = O·M(M은 제외 목록에 있지만 참여 행이 있어 옛 판정도 읽는다. G 손님·X 탈퇴·E 만료는 없음), CDM = O + AG1
   assert.equal(members(CH.PUB), `agent:${AG1},user:${U.M}`);
@@ -213,6 +214,7 @@ test('4) 대응: 방 종류·짝·공간·정책·보관', { skip }, () => {
     [`${T}:list:{${U.M}}`, `${T2}:all:{}`].sort().join(','));
   assert.equal(one(`select display_name || '|' || role_text || '|' || hosting || '|' || status from public.msgr2_agents where id = '${AG1}'`), '에이전트 하나|조사|local|active', '대표 자리 = 개인 자리');
   assert.equal(one(`select hosting || '|' || status from public.msgr2_agents where id = '${AG2}'`), 'bot|paused');
+  assert.equal(one(`select owner_user_id || '|' || display_name || '|' || role_text || '|' || hosting || '|' || status from public.msgr2_agents where id = '${AG3}'`), `${U.M}|c1||local|active`, '자리 없는 에이전트도 같은 id로(이름 = slug)');
 });
 
 test('5) 대응: 글 작성자·종류·답글·멘션·클라 id·첨부·읽음·반응·고정·결재', { skip }, () => {
@@ -231,7 +233,8 @@ test('5) 대응: 글 작성자·종류·답글·멘션·클라 id·첨부·읽�
   assert.equal(one(`select last_read_id from public.msgr2_reads where room_id = '${CH.PUB}' and user_id = '${U.M}'`), '10007');
   assert.equal(one(`select string_agg(message_id || ':' || emoji, ',' order by message_id, emoji) from public.msgr2_reactions`), ['10006:a,b', '10006:👍', '10012:❤️'].sort().join(','));
   assert.equal(one(`select string_agg(room_id || ':' || user_id || ':' || muted || ':' || pinned, ',' order by room_id, user_id) from public.msgr2_prefs`),
-    [`${CH.PUB}:${U.M}:true:false`, `${CH.ODM}:${U.O}:false:true`, `${CH.OADM}:${U.O}:false:true`].sort().join(','), '조직 고정 → direct 방 pinned');
+    [`${CH.PUB}:${U.M}:true:false`, `${CH.ODM}:${U.O}:false:true`, `${CH.OADM}:${U.O}:false:true`, `${CH.ODUP}:${U.O}:false:true`].sort().join(','),
+    '조직 고정 → 옛 1:1 채널 방 pinned(같은 짝 두 방 모두, 에이전트 1:1 포함)');
   assert.equal(one(`select state || ':' || card_message_id || ':' || risk from public.msgr2_approvals where id = '${AP_PENDING}'`), 'expired:10004:high');
   assert.equal(one(`select state || ':' || agent_id || ':' || source_message_id || ':' || from_id from public.msgr2_works where id = '${AP_PENDING}'`), `cancelled:${AG1}:10016:${U.O}`);
   assert.equal(one(`select count(*) from public.msgr2_approvals where id = '${AP_DONE}'`), '0', '결정된 결재는 옮기지 않는다');
@@ -284,7 +287,21 @@ test('8) claim·세대·문맥 거부: busy · stale_generation · 앞 단계 ·
   const rb = db.raw(['-c', ROLLBACK]);
   assert.match(rb.stderr, /msgr2_rollback_after_switch/);
   db.sql("delete from public.msgr_settings where key = 'msgr2_switched_at'");
+  // v2 운영 표지(msgr2_enabled, U6d)만 있어도 거부
+  db.sql("insert into public.msgr_settings (key, value) values ('msgr2_enabled', now()::text)");
+  assert.match(db.raw(['-A', '-t', '-c', "select public.msgr2_backfill_run('messages')"]).stderr, /msgr2_backfill_after_switch/);
+  assert.match(db.raw(['-c', ROLLBACK]).stderr, /msgr2_rollback_after_switch/);
+  db.sql("delete from public.msgr_settings where key = 'msgr2_enabled'");
   assert.deepEqual(v2Counts(), firstCounts, '거부된 실행은 아무것도 바꾸지 않았다');
+  // 같은 id의 글이 다른 방에 이미 있으면(v2에서 먼저 쓴 글) 글 단계가 멈추고 덮지 않는다
+  db.sql(`update public.msgr2_messages set room_id = '${CH.PRIV}' where id = 10012`);
+  assert.equal(migrate('restart').status, 0);
+  const rc = migrate('run');
+  assert.equal(rc.status, 3, rc.stdout + rc.stderr);
+  assert.match(rc.stdout + rc.stderr, /msgr2_backfill_message_id_conflict/);
+  assert.equal(one('select room_id || \'|\' || body from public.msgr2_messages where id = 10012'), `${CH.PRIV}|친구 글`, '덮지 않았다');
+  db.sql(`update public.msgr2_messages set room_id = '${CH.FDM}' where id = 10012`);
+  assert.equal(migrate('run').status, 0);
 });
 
 test('9) 되돌림 → 중간 종료 뒤 재개(경우 13): 체크포인트부터, 최종 행 수·검증 같음', { skip }, () => {
@@ -294,7 +311,7 @@ test('9) 되돌림 → 중간 종료 뒤 재개(경우 13): 체크포인트부�
   assert.deepEqual(oldHash(), oldBefore, '되돌림도 옛 표를 건드리지 않는다');
   assert.ok(jobs().every((j) => j.split('|')[1] === '-' && j.split('|')[2] === 'false'));
   // 글 앞까지 + 글 두 묶음
-  for (const j of ['agents', 'spaces', 'space_members', 'seats', 'rooms', 'room_members']) assert.equal(json(`select public.msgr2_backfill_run('${j}')`).done, true, j);
+  for (const j of ['agents', 'spaces', 'space_members', 'seats', 'rooms', 'room_members', 'message_keys']) assert.equal(json(`select public.msgr2_backfill_run('${j}')`).done, true, j);
   json("select public.msgr2_backfill_run('messages')"); json("select public.msgr2_backfill_run('messages')");
   assert.equal(one("select checkpoint from public.msgr2_backfill_jobs where name = 'messages'"), '2000');
   // 세 번째 묶음 도중 종료(트랜잭션이 커밋되지 않음) — 그 묶음의 글도 체크포인트도 남지 않는다
@@ -331,7 +348,73 @@ test('10b) 백필 밖(사람 문맥)에서는 감싼 offer 트리거가 그대�
   assert.ok(Number(one('select count(*) from public._push_calls')) >= 1, '백필 밖 글은 푸시 트리거가 부른다(대역이 살아 있다)');
 });
 
+test('10c) 큰 채널: 10만 글 채널(client_msg_id 있음, 중복 일부)에서 글 묶음 하나가 짧다 — 측정을 남긴다', { skip }, () => {
+  const BIG = id(420), N = 100000, B0 = 1000000;
+  db.psql(['-c', `set session_replication_role = replica;
+    insert into public.msgr_channels (id, org_id, kind, name, crew_memory, created_by, created_at, personal_crews) values ('${BIG}', '${T}', 'public', 'big', true, '${U.O}', now() - interval '20 days', 'allowed');
+    insert into public.msgr_messages (id, org_id, channel_id, author_kind, author_user_id, kind, body, mentions, client_msg_id, created_at, meta) overriding system value
+      -- 1,000번째 글마다 값 'c-d<k/2>'를 쓰고 작성자를 번갈아(옛 유일 조건은 작성자별) — k = 2..99는 둘씩 겹친다(98글), k = 1·100은 혼자
+      select ${B0} + g, '${T}', '${BIG}', 'user', case when (g / 1000) % 2 = 0 then '${U.M}'::uuid else '${U.O}'::uuid end, 'text', '큰 방 ' || g, '[]',
+             case when g % 1000 = 0 then 'c-d' || ((g / 1000) / 2) else 'c-' || g end, now() - interval '19 days', '{}'
+        from generate_series(1, ${N}) g;
+    set session_replication_role = origin;
+    analyze public.msgr_messages;
+    update public.msgr2_backfill_jobs set batch_limit = 5000 where name = 'messages';`]);
+  assert.equal(migrate('restart').status, 0);
+  const t0 = Date.now();
+  for (const j of ['agents', 'spaces', 'space_members', 'seats', 'rooms', 'room_members']) json(`select public.msgr2_backfill_run('${j}')`);
+  const k0 = Date.now(); json("select public.msgr2_backfill_run('message_keys')"); const keysMs = Date.now() - k0;
+  const ms = [];
+  for (let i = 0; i < 100; i++) { const a = Date.now(); const r = json("select public.msgr2_backfill_run('messages')"); ms.push(Date.now() - a); if (r.done) break; }
+  const max = Math.max(...ms);
+  console.log(`# 큰 채널 측정: 옛 글 ${N}개(그 채널), 글 키 단계 ${keysMs}ms, 글 묶음 ${ms.length}개(5,000행씩) 최대 ${max}ms · 평균 ${Math.round(ms.reduce((a, b) => a + b, 0) / ms.length)}ms, 앞 단계 포함 ${Date.now() - t0}ms`);
+  assert.ok(max < 20000, `글 묶음 하나 ${max}ms — 운영 statement_timeout 120s보다 훨씬 짧아야 한다`);
+  assert.equal(one(`select count(*) from public.msgr2_messages where room_id = '${BIG}'`), String(N));
+  assert.equal(one(`select count(*) from public.msgr2_messages where room_id = '${BIG}' and client_msg_id is null`), '98', '같은 채널에 같은 값이 둘인 글만 비운다');
+  const rest = migrate('run'); // 남은 단계(반응은 상한 1이라 여러 번)
+  assert.equal(rest.status, 0, rest.stdout + rest.stderr);
+  const v = json('select public.msgr2_backfill_verify(200)');
+  assert.equal(v.ok, true, JSON.stringify(v));
+});
+
+test('10d) 개인 방 첨부(p/<방>/…): 백필 뒤 v2 방 멤버는 열고(서명 = 읽기 판정), 방 밖·다른 사람은 못 열고, p/ 경로 쓰기는 거부', { skip }, () => {
+  // 옛 파일은 옮기지 않는다 — 객체는 옛 이름 그대로(버킷 msgr, 이름 = 옛 storage_path)
+  db.sql(`insert into storage.objects (bucket_id, name) values ('msgr', 'p/${CH.FDM}/f2.txt'), ('msgr', '${T}/${CH.PUB}/f1.png'), ('msgr', 'p/${id(499)}/ghost.txt')`);
+  const dev = Object.fromEntries(['F', 'M', 'Z', 'G', 'O'].map((k) => [k, seedDevice(db, U[k], 'app').sid]));
+  const can = (k, name) => db.as(U[k], dev[k], `select count(*) from storage.objects where bucket_id = 'msgr' and name = '${name}'`);
+  assert.equal(one(`select storage_path from public.msgr2_attachments where room_id = '${CH.FDM}'`), `msgr/p/${CH.FDM}/f2.txt`, '서비스 문맥 백필은 경로 검사를 건너뛰어 옛 경로로 들어갔다');
+  assert.equal(can('F', `p/${CH.FDM}/f2.txt`), '1', '방 멤버(친구) = 열림');
+  assert.equal(can('O', `p/${CH.FDM}/f2.txt`), '1', '방 멤버(만든 사람) = 열림');
+  assert.equal(can('M', `p/${CH.FDM}/f2.txt`), '0', '방 밖 = 못 엶');
+  assert.equal(can('Z', `p/${CH.FDM}/f2.txt`), '0', '모르는 사람 = 못 엶');
+  assert.equal(can('F', `p/${id(499)}/ghost.txt`), '0', 'v2에 없는 방의 p/ 경로는 v2가 열지 않는다');
+  assert.equal(db.as(U.F, dev.F, `select public._msgr2_storage_read('p/${CH.FDM}/f2.txt')`), 't', 'v2 판정이 연다(옛 정책이 아니라)');
+  // v2 판정만 따른다: v2에서 F를 방에서 빼면 옛 채널 멤버십이 남아 있어도 못 연다
+  db.sql(`update public.msgr2_room_members set removed_at = now() where room_id = '${CH.FDM}' and member_kind = 'user' and member_id = '${U.F}'`);
+  assert.equal(can('F', `p/${CH.FDM}/f2.txt`), '0', 'v2에서 빠진 사람 = 못 엶(옛 멤버십 무시)');
+  db.sql(`update public.msgr2_room_members set removed_at = null where room_id = '${CH.FDM}' and member_kind = 'user' and member_id = '${U.F}'`);
+  assert.equal(can('M', `${T}/${CH.PUB}/f1.png`), '1', '조직 첨부(<공간>/<방>/…) = 방을 읽는 사람');
+  assert.equal(can('G', `${T}/${CH.PUB}/f1.png`), '0', '손님(옛 public 방에서 막힌 사람) = 못 엶');
+  assert.match(db.asErr(U.O, dev.O, `insert into storage.objects (bucket_id, name) values ('msgr', 'p/${CH.FDM}/10012/new.txt')`) ?? '', /row-level security/, 'p/ 경로 쓰기 거부');
+  assert.match(db.asErr(U.F, dev.F, `update storage.objects set metadata = '{}' where name = 'p/${CH.FDM}/f2.txt'`) ?? 'no-error', /no-error|row-level security/);
+  assert.equal(db.sql(`select count(*) from storage.objects where name = 'p/${CH.FDM}/f2.txt' and metadata is not null`), '0', '덮어쓰기 없음');
+  // 경로 검사(U1 :345): 사람 문맥에서도 msgr/p/<개인 방>/…은 허용, 팀 방 id로 p/를 쓰면 거부
+  const probe = (room, msg, path) => db.raw(['-c', `do $$ begin perform set_config('argo.uid', '${U.O}', true);
+    insert into public.msgr2_attachments (message_id, room_id, storage_path, name) values (${msg}, '${room}', '${path}', 'x'); raise exception 'probe_ok'; end $$`]).stderr;
+  assert.match(probe(CH.FDM, 10012, `msgr/p/${CH.FDM}/10012/x`), /probe_ok/);
+  assert.match(probe(CH.PUB, 10006, `msgr/p/${CH.PUB}/10006/x`), /msgr2_attachment_path/);
+  assert.match(probe(CH.FDM, 10012, `msgr/p/${CH.FDM}/../x`), /msgr2_attachment_path/);
+});
+
 test('11) 이 마이그레이션 되돌림: 백필이 돈 기록이 있으면 멈추고, 없으면 함수·작업 행을 걷어 내고 offer 트리거를 U2 본문으로', { skip }, () => {
+  // 개인 방 첨부 판정(051000) 되돌림 → 세 함수가 U2b·U1 본문으로
+  const downPf = readFileSync(fileURLToPath(new URL('../scripts/rollback/20261018051000_msgr2_personal_files.down.sql', import.meta.url)), 'utf8');
+  const rp = db.raw(['-c', downPf]);
+  assert.equal(rp.status, 0, rp.stderr);
+  const body = (f, name) => { const t = readFileSync(fileURLToPath(new URL(`../supabase/migrations/${f}`, import.meta.url)), 'utf8'); const i = t.indexOf(`create or replace function public.${name}(`);
+    const a2 = t.indexOf('$$', i) + 2; return t.slice(a2, t.indexOf('$$;', a2)); };
+  for (const [f, n] of [['20261018010000_msgr2_realtime_storage.sql', '_msgr2_storage_room'], ['20261018010000_msgr2_realtime_storage.sql', '_msgr2_storage_write'], ['20261017151000_msgr2_space.sql', 'msgr2_insert_stamp']])
+    assert.equal(one(`select md5(prosrc) from pg_proc where proname = '${n}'`), one(`select md5($b$${body(f, n)}$b$)`), n);
   const down = readFileSync(fileURLToPath(new URL('../scripts/rollback/20261018050000_msgr2_backfill.down.sql', import.meta.url)), 'utf8');
   const u2 = readFileSync(fileURLToPath(new URL('../supabase/migrations/20261018000000_msgr2_work.sql', import.meta.url)), 'utf8');
   const fn = (s) => s.slice(s.indexOf('create or replace function public.msgr2_on_user_message()'), s.indexOf('end $$;', s.indexOf('create or replace function public.msgr2_on_user_message()')));

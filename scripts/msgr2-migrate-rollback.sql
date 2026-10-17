@@ -8,7 +8,7 @@ set local lock_timeout = '5s';
 do $g$
 declare n bigint;
 begin
-  if exists (select 1 from public.msgr_settings where key = 'msgr2_switched_at') then
+  if exists (select 1 from public.msgr_settings where key in ('msgr2_switched_at', 'msgr2_enabled')) then
     raise exception 'msgr2_rollback_after_switch: 스위치 뒤에는 비우지 않는다(v2 중단 스위치 + 앞으로 고치기)'; end if;
   select count(*) into n from public.msgr2_messages v where not exists (select 1 from public.msgr_messages o where o.id = v.id);
   if n > 0 then raise exception 'msgr2_rollback_native_rows: msgr2_messages % rows (옛 글에 없는 id)', n; end if;
@@ -43,6 +43,7 @@ delete from public.msgr2_agent_seats;
 delete from public.msgr2_space_members;
 delete from public.msgr2_spaces;
 delete from public.msgr2_agents;
+delete from public.msgr2_backfill_cmid_dups; -- 백필 도우미 표
 update public.msgr2_backfill_jobs set generation = generation + 1, checkpoint = null, done_at = null, verified_at = null, runs = 0, rows_written = 0,
        claimed_by = null, claimed_at = null, updated_at = now();
 commit;

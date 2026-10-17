@@ -9,13 +9,15 @@
 --     옛 세대를 들고 있는 실행기는 'stale_generation'으로 멈춘다.
 --   · 백필 중 방송·푸시·offer = 0: 서비스 문맥(auth.uid() 없음)에서 msgr2.backfill = on(이 함수가 트랜잭션 안에서만 켠다)이면
 --     글 방송(U2b)·푸시 줄 세우기(U7)·사람 글 → offer(아래에서 감싼다)가 모두 건너뛴다.
---   · 스위치 뒤에는 돌지 않는다: msgr_settings key 'msgr2_switched_at'이 있으면 모든 실행이 거부된다(스위치 뒤 v2에서 생긴 변경을 옛 값으로 덮지 않게).
+--   · 스위치 뒤에는 돌지 않는다: msgr_settings key 'msgr2_switched_at'(런북이 손으로 넣는다) 또는 'msgr2_enabled'(v2 운영 표지, U6d)가 있으면 모든 실행이 거부된다
+--     (스위치 뒤 v2에서 생긴 변경 — 새 멤버·새 방 — 을 옛 값으로 덮거나 removed_at을 찍지 않게).
 -- 옛 → 새 대응(설계 1-2절 표, 정하지 않았던 칸은 여기서 정했다 — PR 본문 경우 표에 적었다)
 --   방 종류: public → open. 단 제외 목록(excluded_user_ids)이 있는 public은 private + 그 조직의 활동 중인 owner·admin·member 중 제외되지 않은 사람을 멤버로
 --            (v2 open 방에는 제외 개념이 없다 — 옛날에 못 보던 사람이 보게 되는 길을 막는다).
---            private → private. dm: 개인 짝(personal_pair 'a:b') → direct(같은 짝 키). 개인 에이전트 1:1('crew:<crew>') → direct 'agent:<에이전트>'.
---            조직 dm은 사람 둘 → direct '<작은 uid>:<큰 uid>', 사람 하나 + 에이전트 하나 → direct 'agent:<에이전트>:<사람>', 그 밖(그룹·자기 자신) → private.
---            같은 공간에 같은 짝이 둘이면 먼저 만든 방만 direct, 나머지는 private.
+--            private → private. 1:1 짝 키는 U6d(20261018040000_msgr2_rooms.sql — msgr2_dm_open·msgr2_agent_dm_open·msgr2_dm_list)와 같다:
+--              개인 친구 dm(personal_pair 'a:b') → direct 'p:' || 같은 짝(모든 개인 공간에서 유일). 조직 dm 사람 둘 → direct '<작은 uid>:<큰 uid>'(공간마다 유일).
+--              에이전트 1:1(개인 'crew:<crew>'·조직 사람 하나 + 에이전트 하나) → private, pair_key 없음(U6d는 "나와 그 에이전트만 있는 private 방"으로 찾는다).
+--              그 밖(그룹·자기 자신) → private. 같은 짝이 이미 있으면(개인은 전체, 조직은 그 공간) 먼저 만든 방만 direct, 나머지는 private.
 --   개인 방(org_id null)은 만든 사람의 개인 공간에 둔다. 에이전트 정책: allowed·approval·blocked 그대로, read_only → blocked. 기억 = crew_memory.
 --   방 멤버: 사람은 그대로(단 옛 public 방의 손님 역할 행은 뺀다 — 옛 판정도 public 방에서 손님을 막는다. 제외 목록은 참여 행이 없는 사람에게만 듣는다). 크루 → 에이전트(crews.agent_id), 제외 목록의 크루는 뺀다.
 --   글 작성자: 사람 → user. 크루 → agent(crews.agent_id). 작성자가 지워져 null인 사람 글·크루 글 → system 작성자 + meta.legacy_author(옛 작성자 종류).
@@ -23,7 +25,9 @@
 --            멘션: [{kind:'user'|'crew', id}] → uuid[](크루는 에이전트 id), 최대 20. client_msg_id는 같은 방에 같은 값이 둘 이상이면 비운다(v2 유일 색인).
 --   첨부: 행만 복사한다(파일은 옮기지 않는다). storage_path = 'msgr/' || 옛 경로(v2는 '버킷/경로' — U2b 정리 제외 조건과 _msgr2_attachments_of가 이 모양을 본다).
 --   대기 결재(pending) → 결재 행 expired + 일 행 cancelled(같은 id, 다시 실행하지 않는다). 결정된 결재·실행 기록·푸시 토큰·초대·리스는 옮기지 않는다.
---   조직 고정(msgr_target_prefs, 사람·크루 고정) → 그 조직 공간의 그 상대와의 direct 방 설정 pinned.
+--   조직 고정(msgr_target_prefs, 사람·크루 고정) → 그 조직의 옛 1:1 채널(나와 그 사람 / 나와 그 에이전트) 방 설정 pinned.
+--   에이전트: 자리가 하나도 없는 msgr_agents 행(게이트웨이가 자리만 지운 경우)도 기본값(이름 = slug, local, active)으로 옮긴다(id 보존).
+--   옮기지 않는 것(옛 표에 남는다): 채널 topic, 방 설정 pin_pos·folder·sort_pos, 멤버 department·title.
 -- 함정: 이 파일은 기억 데이터를 지우는 SQL이 없다(rule-gates). 비우기(스위치 전 되돌림)는 scripts/msgr2-migrate-rollback.sql — 백필로 생긴 행만 있을 때만 돈다.
 -- 시험: test/msgr2-backfill-pg.test.mjs(합성 옛 데이터 — bash scripts/billing-pg-drill.sh test/msgr2-backfill-pg.test.mjs).
 -- 되돌림(이 파일): scripts/rollback/20261018050000_msgr2_backfill.down.sql
@@ -45,9 +49,14 @@ create table if not exists public.msgr2_backfill_jobs (
 );
 alter table public.msgr2_backfill_jobs enable row level security; -- 정책 없음: 사람·기기는 못 읽는다(서비스 전용)
 revoke all on public.msgr2_backfill_jobs from anon, authenticated;
+-- 같은 채널에 같은 client_msg_id가 둘 이상인 (채널, 값) — message_keys 단계가 한 번 채우고 messages 단계가 기본 키로 찾는다
+-- (글마다 채널 전체를 훑지 않게: 10만 글 채널에서 묶음 하나 47초였다 — 검수 #1084). 옛 표가 동결이라 한 세대 동안 그대로다. 기억 데이터 아님.
+create table if not exists public.msgr2_backfill_cmid_dups (channel_id uuid not null, client_msg_id text not null, primary key (channel_id, client_msg_id));
+alter table public.msgr2_backfill_cmid_dups enable row level security;
+revoke all on public.msgr2_backfill_cmid_dups from anon, authenticated;
 insert into public.msgr2_backfill_jobs (name, step) values
-  ('agents', 1), ('spaces', 2), ('space_members', 3), ('seats', 4), ('rooms', 5), ('room_members', 6), ('messages', 7),
-  ('attachments', 8), ('reads', 9), ('reactions', 10), ('prefs', 11), ('target_prefs', 12), ('approvals', 13), ('identity', 14)
+  ('agents', 1), ('spaces', 2), ('space_members', 3), ('seats', 4), ('rooms', 5), ('room_members', 6), ('message_keys', 7), ('messages', 8),
+  ('attachments', 9), ('reads', 10), ('reactions', 11), ('prefs', 12), ('target_prefs', 13), ('approvals', 14), ('identity', 15)
 on conflict (name) do nothing;
 
 -- ── 1. 문맥 확인 ────────────────────────────────────────────────────────────────
@@ -56,8 +65,8 @@ create or replace function public._msgr2_bf_begin() returns void
   language plpgsql volatile security definer set search_path = public, pg_temp as $$
 begin
   if auth.uid() is not null then raise exception 'msgr2_backfill_service_only' using errcode = '42501'; end if;
-  if exists (select 1 from public.msgr_settings where key = 'msgr2_switched_at') then
-    raise exception 'msgr2_backfill_after_switch' using errcode = '55000', hint = '스위치 뒤에는 백필하지 않는다(v2 변경을 옛 값으로 덮는다)'; end if;
+  if exists (select 1 from public.msgr_settings where key in ('msgr2_switched_at', 'msgr2_enabled')) then
+    raise exception 'msgr2_backfill_after_switch' using errcode = '55000', hint = '스위치 뒤(msgr2_switched_at·msgr2_enabled)에는 백필하지 않는다(v2 변경을 옛 값으로 덮는다)'; end if;
   perform set_config('msgr2.backfill', 'on', true);
 end $$;
 
@@ -91,7 +100,7 @@ create or replace function public._msgr2_bf_uuid(p text) returns uuid language s
 -- 옛 표는 실행할 때 찾는다(plpgsql) — 옛 표가 없는 DB(v2만 적용한 시험 판)에서도 이 파일이 적용된다.
 create or replace function public._msgr2_bf_room_shape(p_channel uuid, out space_id uuid, out kind text, out pair_key text)
   language plpgsql stable security definer set search_path = public, pg_temp as $$
-declare c record; u uuid[]; a uuid[]; ag uuid;
+declare c record; u uuid[]; a uuid[];
 begin
   select * into c from public.msgr_channels where id = p_channel;
   space_id := coalesce(c.org_id, (select s.id from public.msgr2_spaces s where s.owner_user_id = c.created_by and s.kind = 'personal'));
@@ -99,11 +108,9 @@ begin
   if c.kind = 'private' then kind := 'private'; return; end if;
   kind := 'private'; -- dm 중 짝을 못 정하면 private
   if c.org_id is null then
-    if c.personal_pair like 'crew:%' then
-      select cr.agent_id into ag from public.msgr_crews cr where cr.id = public._msgr2_bf_uuid(substr(c.personal_pair, 6));
-      if ag is not null then kind := 'direct'; pair_key := 'agent:' || ag::text; end if;
-    elsif c.personal_pair is not null then
-      kind := 'direct'; pair_key := c.personal_pair;
+    -- 개인 에이전트 1:1('crew:<자리>')은 private 그대로(U6d msgr2_agent_dm_open이 찾는 모양)
+    if c.personal_pair is not null and c.personal_pair not like 'crew:%' then
+      kind := 'direct'; pair_key := 'p:' || c.personal_pair;
     end if;
     return;
   end if;
@@ -114,9 +121,7 @@ begin
    where m.channel_id = c.id;
   if cardinality(u) = 2 and cardinality(a) = 0 then
     kind := 'direct'; pair_key := least(u[1]::text, u[2]::text) || ':' || greatest(u[1]::text, u[2]::text);
-  elsif cardinality(u) = 1 and cardinality(a) = 1 then
-    kind := 'direct'; pair_key := 'agent:' || a[1]::text || ':' || u[1]::text;
-  end if;
+  end if; -- 사람 하나 + 에이전트 하나는 private(에이전트 1:1, pair_key 없음)
 end $$;
 
 -- 옮길 방 멤버 원본(rooms 단계 뒤에 부른다). 방 = 옛 채널 id.
@@ -147,23 +152,28 @@ begin
     order by m.channel_id, cr.agent_id, m.added_at);
 end $$;
 
--- 조직 고정(msgr_target_prefs)이 이 방(조직 direct)을 고정했나 — prefs·target_prefs 두 단계가 같은 값을 내야 반복 실행이 쓰기 0이다
+-- 조직 고정(msgr_target_prefs)이 이 방을 고정했나 — 옛 조직 1:1 채널(사람 둘 / 나 + 에이전트 하나)의 구성으로 본다(새 방 모양과 무관).
+-- prefs·target_prefs 두 단계가 같은 값을 내야 반복 실행이 쓰기 0이다.
 create or replace function public._msgr2_bf_target_pin(p_room uuid, p_user uuid) returns boolean
   language plpgsql stable security definer set search_path = public, pg_temp as $$
-declare r public.msgr2_rooms; other uuid; ag uuid;
+declare c record; u uuid[]; a uuid[];
 begin
-  select * into r from public.msgr2_rooms where id = p_room;
-  if not found or r.kind <> 'direct' or not exists (select 1 from public.msgr_orgs o where o.id = r.space_id) then return false; end if;
-  if r.pair_key like 'agent:%:%' then
-    ag := public._msgr2_bf_uuid(split_part(r.pair_key, ':', 2));
-    if public._msgr2_bf_uuid(split_part(r.pair_key, ':', 3)) is distinct from p_user then return false; end if;
+  select * into c from public.msgr_channels where id = p_room;
+  if not found or c.org_id is null or c.kind <> 'dm' then return false; end if;
+  select coalesce(array_agg(distinct m.member_id) filter (where m.member_kind = 'user'), '{}'),
+         coalesce(array_agg(distinct cr.agent_id) filter (where m.member_kind = 'crew' and cr.agent_id is not null), '{}')
+    into u, a
+    from public.msgr_channel_members m left join public.msgr_crews cr on m.member_kind = 'crew' and cr.id = m.member_id
+   where m.channel_id = c.id;
+  if not (p_user = any (u)) then return false; end if;
+  if cardinality(u) = 1 and cardinality(a) = 1 then
     return exists (select 1 from public.msgr_target_prefs t join public.msgr_crews cr on cr.id = t.target_id
-                    where t.user_id = p_user and t.org_id = r.space_id and t.target_kind = 'crew' and t.pinned and cr.agent_id = ag);
+                    where t.user_id = p_user and t.org_id = c.org_id and t.target_kind = 'crew' and t.pinned and cr.agent_id = a[1]);
+  elsif cardinality(u) = 2 and cardinality(a) = 0 then
+    return exists (select 1 from public.msgr_target_prefs t where t.user_id = p_user and t.org_id = c.org_id and t.target_kind = 'user' and t.pinned
+                      and t.target_id = (select x from unnest(u) x where x <> p_user));
   end if;
-  other := case when split_part(r.pair_key, ':', 1) = p_user::text then public._msgr2_bf_uuid(split_part(r.pair_key, ':', 2))
-                when split_part(r.pair_key, ':', 2) = p_user::text then public._msgr2_bf_uuid(split_part(r.pair_key, ':', 1)) end;
-  return other is not null and exists (select 1 from public.msgr_target_prefs t
-    where t.user_id = p_user and t.org_id = r.space_id and t.target_kind = 'user' and t.target_id = other and t.pinned);
+  return false;
 end $$;
 
 -- ── 3. 단계 ─────────────────────────────────────────────────────────────────────
@@ -172,6 +182,7 @@ end $$;
 
 -- 1) 에이전트: 크루의 agent_id가 비어 있으면 멈춘다(옛 표를 고치지 않는다 — 먼저 msgr_agents_backfill, 런북 2단계).
 --    값은 대표 자리 행(개인 자리 우선, 그다음 최근 등록)에서 온다. hosting: 자리가 모두 bot이면 bot, 아니면 local. status: 대표 자리가 paused면 paused.
+--    자리가 하나도 없으면 이름 = slug, 역할 '', local, active(검수 #1084 — 게이트웨이 deleteCrews가 자리만 지우고 msgr_agents 행을 남긴다).
 create or replace function public._msgr2_bf_agents(p_after text, p_limit int, out written bigint, out next text, out done boolean)
   language plpgsql volatile security definer set search_path = public, pg_temp as $$
 declare n bigint;
@@ -181,11 +192,11 @@ begin
   select count(*) into n from public.msgr2_agents v join public.msgr_agents a on (a.owner_user_id, a.ws_id, a.slug) = (v.owner_user_id, v.ws_id, v.slug) where a.id <> v.id;
   if n > 0 then raise exception 'msgr2_backfill_agent_id_conflict: % agents', n using errcode = '55000', hint = 'v2 agent.sync가 옛 에이전트와 다른 id로 먼저 등록했다(런북 함정 1)'; end if;
   insert into public.msgr2_agents as t (id, owner_user_id, ws_id, slug, display_name, role_text, face, hosting, status, created_at)
-  select a.id, a.owner_user_id, a.ws_id, a.slug, left(coalesce(rep.display_name, ''), 80), left(coalesce(rep.role_text, ''), 200), rep.face,
-         case when bool_and_bot.all_bot then 'bot' else 'local' end, case when rep.status = 'paused' then 'paused' else 'active' end, a.created_at
+  select a.id, a.owner_user_id, a.ws_id, a.slug, left(coalesce(rep.display_name, a.slug), 80), left(coalesce(rep.role_text, ''), 200), rep.face,
+         case when coalesce(bool_and_bot.all_bot, false) then 'bot' else 'local' end, case when rep.status = 'paused' then 'paused' else 'active' end, a.created_at
     from public.msgr_agents a
-    cross join lateral (select c.* from public.msgr_crews c where c.agent_id = a.id order by (c.org_id is null) desc, c.registered_at desc, c.id limit 1) rep
-    cross join lateral (select bool_and(c.hosting = 'bot') as all_bot from public.msgr_crews c where c.agent_id = a.id) bool_and_bot
+    left join lateral (select c.* from public.msgr_crews c where c.agent_id = a.id order by (c.org_id is null) desc, c.registered_at desc, c.id limit 1) rep on true
+    left join lateral (select bool_and(c.hosting = 'bot') as all_bot from public.msgr_crews c where c.agent_id = a.id) bool_and_bot on true
   on conflict (id) do update set display_name = excluded.display_name, role_text = excluded.role_text, face = excluded.face,
     hosting = excluded.hosting, status = excluded.status, updated_at = now()
   where (t.display_name, t.role_text, t.face, t.hosting, t.status) is distinct from (excluded.display_name, excluded.role_text, excluded.face, excluded.hosting, excluded.status);
@@ -271,8 +282,9 @@ begin
   for c in select * from public.msgr_channels ch where not exists (select 1 from public.msgr2_rooms r where r.id = ch.id) order by ch.created_at, ch.id loop
     sh := public._msgr2_bf_room_shape(c.id);
     if sh.space_id is null then raise exception 'msgr2_backfill_room_without_space: %', c.id using errcode = '55000'; end if;
-    if sh.kind = 'direct' and exists (select 1 from public.msgr2_rooms r where r.space_id = sh.space_id and r.kind = 'direct' and r.pair_key = sh.pair_key) then
-      sh.kind := 'private'; sh.pair_key := null; -- 같은 짝의 방이 이미 있다(먼저 만든 방이 direct)
+    if sh.kind = 'direct' and exists (select 1 from public.msgr2_rooms r where r.kind = 'direct' and r.pair_key = sh.pair_key
+                                        and (sh.pair_key like 'p:%' or r.space_id = sh.space_id)) then
+      sh.kind := 'private'; sh.pair_key := null; -- 같은 짝의 방이 이미 있다(먼저 만든 방이 direct). 'p:'는 모든 개인 공간에서 유일(U6d 인덱스)
     end if;
     insert into public.msgr2_rooms (id, space_id, kind, pair_key, name, memory, agent_policy, created_by, created_at, archived_at)
     values (c.id, sh.space_id, sh.kind, sh.pair_key, c.name, c.crew_memory,
@@ -301,7 +313,20 @@ begin
   done := true;
 end $$;
 
--- 7) 글: id 순 묶음. 체크포인트 = 이 묶음의 마지막 옛 글 id.
+-- 7) 글 키: 같은 채널에 같은 client_msg_id가 둘 이상인 (채널, 값)을 한 번 모은다(옛 글 전체를 한 번 훑는다 — 글 단계의 묶음마다 훑지 않게).
+--    세대마다 처음부터 다시 모은다(restart 뒤). 이 표는 백필 도우미라 비우고 다시 채운다(기억 데이터 아님).
+create or replace function public._msgr2_bf_message_keys(p_after text, p_limit int, out written bigint, out next text, out done boolean)
+  language plpgsql volatile security definer set search_path = public, pg_temp as $$
+begin
+  delete from public.msgr2_backfill_cmid_dups; -- 도우미 표(기억 데이터 아님) — 이 세대의 옛 글로 다시 모은다
+  insert into public.msgr2_backfill_cmid_dups (channel_id, client_msg_id)
+  select o.channel_id, o.client_msg_id from public.msgr_messages o where o.client_msg_id is not null group by 1, 2 having count(*) > 1
+  on conflict do nothing;
+  written := 0; done := true; -- 새 표(기억·사본) 쓰기가 아니라 세지 않는다
+end $$;
+
+-- 8) 글: id 순 묶음. 체크포인트 = 이 묶음의 마지막 옛 글 id.
+--    같은 id가 다른 방에 이미 있으면(v2에서 먼저 쓴 글) 멈춘다 — on conflict(id)로 다른 방 글을 덮지 않게(검수 #1084).
 create or replace function public._msgr2_bf_messages(p_after text, p_limit int, out written bigint, out next text, out done boolean)
   language plpgsql volatile security definer set search_path = public, pg_temp as $$
 declare last_id bigint; n int;
@@ -310,13 +335,15 @@ begin
   truncate _msgr2_bf_m;
   insert into _msgr2_bf_m select * from public.msgr_messages m where m.id > coalesce(p_after::bigint, 0) order by m.id limit p_limit;
   select count(*), max(id) into n, last_id from _msgr2_bf_m;
+  if exists (select 1 from _msgr2_bf_m m join public.msgr2_messages v on v.id = m.id where v.room_id is distinct from m.channel_id) then
+    raise exception 'msgr2_backfill_message_id_conflict: 옛 글 id가 다른 방의 v2 글로 이미 있다' using errcode = '55000'; end if;
   insert into public.msgr2_messages as t (id, room_id, author_kind, author_user_id, author_agent_id, kind, body, meta, reply_to, client_msg_id,
                                           created_at, edited_at, deleted_at, mentions)
   select m.id, m.channel_id, a.kind, a.uid, a.agent,
          case m.kind when 'approval_card' then 'card' when 'system' then 'system' else 'text' end, m.body,
          case when a.legacy is null then m.meta else m.meta || jsonb_build_object('legacy_author', a.legacy) end,
          coalesce(m.reply_to, m.thread_root),
-         case when m.client_msg_id is not null and not exists (select 1 from public.msgr_messages o where o.channel_id = m.channel_id and o.client_msg_id = m.client_msg_id and o.id <> m.id)
+         case when m.client_msg_id is not null and not exists (select 1 from public.msgr2_backfill_cmid_dups d where d.channel_id = m.channel_id and d.client_msg_id = m.client_msg_id)
               then m.client_msg_id end,
          m.created_at, m.edited_at, m.deleted_at, coalesce(mn.ids, '{}')
     from _msgr2_bf_m m
@@ -419,17 +446,18 @@ begin
   done := n < p_limit;
 end $$;
 
--- 12) 조직 고정: 방 설정 행이 없는 (사람, 조직 direct 방)에 pinned 행을 만든다(방 설정 행이 있으면 11단계가 이미 반영했다).
+-- 12) 조직 고정: 방 설정 행이 없는 (사람, 옛 조직 1:1 채널 방)에 pinned 행을 만든다(방 설정 행이 있으면 11단계가 이미 반영했다).
 create or replace function public._msgr2_bf_target_prefs(p_after text, p_limit int, out written bigint, out next text, out done boolean)
   language plpgsql volatile security definer set search_path = public, pg_temp as $$
 begin
   insert into public.msgr2_prefs (room_id, user_id, pinned)
   select distinct r.id, t.user_id, true
     from public.msgr_target_prefs t
-    join public.msgr2_rooms r on r.space_id = t.org_id and r.kind = 'direct'
-     and r.pair_key = case when t.target_kind = 'user' then least(t.user_id::text, t.target_id::text) || ':' || greatest(t.user_id::text, t.target_id::text)
-                           else 'agent:' || (select c.agent_id::text from public.msgr_crews c where c.id = t.target_id) || ':' || t.user_id::text end
-   where t.pinned and not exists (select 1 from public.msgr_channel_prefs cp where cp.channel_id = r.id and cp.user_id = t.user_id)
+    join public.msgr_channel_members cm on cm.member_kind = 'user' and cm.member_id = t.user_id
+    join public.msgr_channels c on c.id = cm.channel_id and c.org_id = t.org_id and c.kind = 'dm'
+    join public.msgr2_rooms r on r.id = c.id
+   where t.pinned and public._msgr2_bf_target_pin(r.id, t.user_id)
+     and not exists (select 1 from public.msgr_channel_prefs cp where cp.channel_id = r.id and cp.user_id = t.user_id)
   on conflict (room_id, user_id) do nothing;
   get diagnostics written = row_count;
   done := true;
@@ -574,7 +602,7 @@ end $$;
 revoke all on function public._msgr2_bf_begin(), public._msgr2_bf_uuid(text), public._msgr2_bf_room_shape(uuid),
   public._msgr2_bf_room_members_src(), public._msgr2_bf_target_pin(uuid, uuid),
   public._msgr2_bf_agents(text, int), public._msgr2_bf_spaces(text, int), public._msgr2_bf_space_members(text, int), public._msgr2_bf_seats(text, int),
-  public._msgr2_bf_rooms(text, int), public._msgr2_bf_room_members(text, int), public._msgr2_bf_messages(text, int), public._msgr2_bf_attachments(text, int),
+  public._msgr2_bf_rooms(text, int), public._msgr2_bf_room_members(text, int), public._msgr2_bf_message_keys(text, int), public._msgr2_bf_messages(text, int), public._msgr2_bf_attachments(text, int),
   public._msgr2_bf_reads(text, int), public._msgr2_bf_reactions(text, int), public._msgr2_bf_prefs(text, int), public._msgr2_bf_target_prefs(text, int),
   public._msgr2_bf_approvals(text, int), public._msgr2_bf_identity(text, int),
   public.msgr2_backfill_run(text, int, text), public.msgr2_backfill_restart(), public.msgr2_backfill_verify(int)

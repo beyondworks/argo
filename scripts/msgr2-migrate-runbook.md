@@ -10,11 +10,11 @@
 | # | 확인 | 방법 |
 |---|---|---|
 | 0-1 | 옛 메신저가 중단 상태다(옛 쓰기 거부) | `select value from msgr_settings where key = 'msgr_paused'` 가 있다 |
-| 0-2 | U1·U3·U2·U2b·U7·U8 마이그레이션이 main과 같은 파일로 라이브에 적용돼 있다 | `bash scripts/msgr-live-apply.sh <이름>`(이미 기록됨이면 skip) · 라이브 `prosrc`와 저장소 정의 대조 |
+| 0-2 | U1·U3·U2·U2b·U6b·U7·U6d·U8(050000·051000) 마이그레이션이 main과 같은 파일로 라이브에 적용돼 있다 | `bash scripts/msgr-live-apply.sh <이름>`(이미 기록됨이면 skip) · 라이브 `prosrc`와 저장소 정의 대조 |
 | 0-3 | 크루의 `agent_id`가 다 채워져 있다 | `select count(*) from msgr_crews where agent_id is null` = 0. 아니면 `select public.msgr_agents_backfill()` 한 번(옛 표 쓰기 — 10/14 설계에서 승인된 채움 함수, 멱등) |
 | 0-4 | v2 `agent.sync`가 옛 에이전트와 다른 id로 먼저 등록하지 않았다 | 함정 1. 백필 1단계가 겹치면 `msgr2_backfill_agent_id_conflict`로 멈춘다 |
 | 0-5 | 옛 계정 삭제(`msgr_delete_me`)를 이전 기간 동안 막았다 | 설계 6절 0단계. **이 PR에는 없다**(총괄 결정 대기 — PR 본문 "미룸") |
-| 0-6 | 스위치 표지가 없다 | `select count(*) from msgr_settings where key = 'msgr2_switched_at'` = 0 |
+| 0-6 | 스위치 표지가 없다 | `select count(*) from msgr_settings where key in ('msgr2_switched_at', 'msgr2_enabled')` = 0 (둘 중 하나라도 있으면 백필·비우기가 거부된다) |
 | 0-7 | 실행 전 옛 표 행 수를 남겼다 | `bash scripts/msgr2-migrate.sh verify` 출력의 `old_counts`를 파일로(아직 비어 있으면 ok=false가 정상) |
 
 ## 1. 백필 (설계 6절 2단계)
@@ -24,12 +24,13 @@ bash scripts/msgr2-migrate.sh status
 bash scripts/msgr2-migrate.sh run
 ```
 
-- 14단계를 순서대로 한 묶음씩 부른다: 에이전트 → 공간 → 공간 멤버 → 파견 → 방 → 방 멤버 → 글(5,000행씩) → 첨부 → 읽음 → 반응 → 방 설정 → 조직 고정 → 대기 결재(expired) → 글 identity.
+- 15단계를 순서대로 한 묶음씩 부른다: 에이전트 → 공간 → 공간 멤버 → 파견 → 방 → 방 멤버 → 글 키(같은 채널의 겹치는 client_msg_id를 한 번 모음) → 글(5,000행씩) → 첨부 → 읽음 → 반응 → 방 설정 → 조직 고정 → 대기 결재(expired) → 글 identity.
+- 1:1 짝 키는 U6d(`20261018040000_msgr2_rooms.sql`)와 같다: 개인 친구 1:1 = `p:<작은>:<큰>`, 팀 1:1 = `<작은>:<큰>`, 에이전트 1:1 = 짝 없는 private 방. U6d와 U8을 함께 적용한 결합 시험으로 목록·열기가 옮긴 방을 찾는 것을 확인했다(#1084 PR 본문).
 - 한 묶음 = 한 트랜잭션이고 체크포인트를 같은 트랜잭션에서 쓴다. 터미널이 끊기거나 실패하면 그 묶음만 되돌아간다 — **같은 명령을 다시 실행하면 체크포인트부터** 간다.
 - 실행기 두 개를 동시에 띄워도 한 작업은 한 곳만 돈다(`busy`, 5초씩 최대 5분 기다림). `restart`가 끼어들면 돌던 실행기는 `stale_generation`으로 멈춘다.
 - 백필 중 방송·푸시·offer는 0이다(서비스 문맥 + 트랜잭션 안의 `msgr2.backfill = on`). 확인: 실행 전후 `select count(*) from net._http_response`·Realtime 대시보드 메시지 수가 그대로.
-- 부하: 글 5,000행 묶음 하나가 옛 글 읽기 5,000 + 새 글 쓰기 최대 5,000. 운영 글 수 ÷ 5,000 = 묶음 수. 묶음은 기다림 없이 이어지므로 실행 시간 동안만 쓰기가 몰린다(유휴 쓰기 아님).
-- 멈춤 코드: `msgr2_backfill_agent_ids_missing`(0-3) · `msgr2_backfill_agent_id_conflict`(0-4) · `msgr2_backfill_room_without_space`(방 만든 사람의 개인 공간 없음 — 2단계 공간이 끝났는지 확인) · `msgr2_backfill_no_progress`(체크포인트가 안 움직임 — 결함, 멈추고 보고) · `msgr2_backfill_after_switch`.
+- 부하: 글 5,000행 묶음 하나가 옛 글 읽기 5,000 + 새 글 쓰기 최대 5,000(맥 two 측정: 10만 글 채널에서 묶음 하나 최대 0.18초, 글 키 단계 0.07초). 운영 글 수 ÷ 5,000 = 묶음 수. 묶음은 기다림 없이 이어지므로 실행 시간 동안만 쓰기가 몰린다(유휴 쓰기 아님).
+- 멈춤 코드: `msgr2_backfill_agent_ids_missing`(0-3) · `msgr2_backfill_agent_id_conflict`(0-4) · `msgr2_backfill_room_without_space`(방 만든 사람의 개인 공간 없음 — 2단계 공간이 끝났는지 확인) · `msgr2_backfill_no_progress`(체크포인트가 안 움직임 — 결함, 멈추고 보고) · `msgr2_backfill_message_id_conflict`(옛 글 id가 다른 방의 v2 글로 이미 있음 — 덮지 않고 멈춘다, 보고) · `msgr2_backfill_after_switch`.
 
 ## 2. 검증 (6절 2단계 확인 칸, 경우 25)
 
@@ -54,7 +55,8 @@ ok면 모든 작업 행에 `verified_at`이 찍힌다.
 ```sql
 select storage_path, room_id from public.msgr2_attachments order by random() limit 20;
 ```
-- `storage_path`는 `msgr/<옛 경로>`다(버킷 + 경로). 조직 첨부(`msgr/<조직>/<채널>/…`)는 공간 id = 조직 id, 방 id = 채널 id라 v2 Storage 정책(U2b `_msgr2_storage_gate`)이 판정한다. 개인 첨부(`msgr/p/<채널>/…`)는 옛 정책이 판정한다(스위치 뒤 판정은 U9에서 정한다 — 미룸).
+- `storage_path`는 `msgr/<옛 경로>`다(버킷 + 경로). 조직 첨부(`msgr/<조직>/<채널>/…`)는 공간 id = 조직 id, 방 id = 채널 id라 v2 Storage 정책(U2b `_msgr2_storage_gate`)이 판정한다. 개인 첨부(`msgr/p/<채널>/…`)는 `20261018051000_msgr2_personal_files.sql`이 `p/<방>/…`을 이전된 개인 방(같은 id)으로 해석해 v2 판정으로 연다(읽기 전용 — v2는 `p/` 경로에 쓰지 않는다).
+- 표본 20개에 조직 첨부와 개인 첨부를 둘 다 넣고, 각각 그 방 멤버의 v2 세션으로 서명 URL을 만들어 연다. 방 밖 사람 세션으로는 서명이 거부되는지 1개씩 확인한다.
 - 20개 모두 200이어야 한다. 결과(경로 해시·상태 코드)를 발행 기록에 남긴다.
 - 옛 정리 작업(`msgr_storage_sweep_list`)은 `msgr2_attachments`가 가리키는 객체를 후보에서 뺀다(U2b). 이전 직후 `select count(*) from public.msgr_storage_sweep_list(1000) s where exists (select 1 from public.msgr2_attachments a where a.storage_path = 'msgr/' || s)` = 0 을 확인한다.
 
@@ -87,5 +89,5 @@ bash scripts/msgr2-migrate.sh verify
 1. **v2 `agent.sync`가 먼저 돈 경우.** 옵트인 본체가 v2에 붙으면 `msgr2_agents`에 새 id로 등록한다. 같은 (주인, 회사, slug)가 옛 id와 다르면 옛 글의 작성자 연결이 깨지므로 백필이 멈춘다. 처리: 그 v2 행이 가리키는 데이터가 없으면 스위치 전 비우기로 같이 지우고, 데이터가 있으면 총괄에 보고한다.
 2. **방 모양은 처음 만들 때 한 번만 정한다.** 두 번째 실행은 이름·보관·기억·에이전트 정책과 멤버만 맞춘다(종류·짝 키는 잠금 열이라 바꾸지 않는다).
 3. **제외 목록이 있던 public 방은 private가 된다.** 옛날에는 조직에 새로 들어온 member가 자동으로 보던 방이다. v2에서는 이전 시점의 활동 멤버만 멤버가 되고, 그 뒤에 들어온 사람은 초대해야 본다(넓어지는 쪽을 막고 좁아지는 쪽을 택했다).
-4. **결정된 결재·실행 기록·푸시 토큰·초대·리스는 옮기지 않는다**(설계 6절). 새 앱에서 다시 등록·초대한다.
+4. **결정된 결재·실행 기록·푸시 토큰·초대·리스는 옮기지 않는다**(설계 6절). 새 앱에서 다시 등록·초대한다. 채널 topic, 방 설정 pin_pos·folder·sort_pos, 멤버 department·title도 이번에는 옮기지 않는다(옛 표에 남는다).
 5. 글 identity는 옛·새 글 id 중 큰 값으로 맞춘다. 스위치 뒤 새 글 id는 옛 최댓값 + 1부터다.

@@ -12,12 +12,12 @@ do $g$ declare n bigint; begin
 end $g$;
 drop function if exists public.msgr2_backfill_run(text, int, text), public.msgr2_backfill_restart(), public.msgr2_backfill_verify(int),
   public._msgr2_bf_agents(text, int), public._msgr2_bf_spaces(text, int), public._msgr2_bf_space_members(text, int), public._msgr2_bf_seats(text, int),
-  public._msgr2_bf_rooms(text, int), public._msgr2_bf_room_members(text, int), public._msgr2_bf_messages(text, int), public._msgr2_bf_attachments(text, int),
+  public._msgr2_bf_rooms(text, int), public._msgr2_bf_room_members(text, int), public._msgr2_bf_message_keys(text, int), public._msgr2_bf_messages(text, int), public._msgr2_bf_attachments(text, int),
   public._msgr2_bf_reads(text, int), public._msgr2_bf_reactions(text, int), public._msgr2_bf_prefs(text, int), public._msgr2_bf_target_prefs(text, int),
   public._msgr2_bf_approvals(text, int), public._msgr2_bf_identity(text, int),
   public._msgr2_bf_room_members_src(), public._msgr2_bf_target_pin(uuid, uuid), public._msgr2_bf_room_shape(uuid),
   public._msgr2_bf_uuid(text), public._msgr2_bf_begin();
-drop table if exists public.msgr2_backfill_jobs;
+drop table if exists public.msgr2_backfill_jobs, public.msgr2_backfill_cmid_dups;
 -- U2 본문으로 되돌림(20261018000000_msgr2_work.sql에서 그대로 옮김 — 시험이 적용 전 본문과 같은지 본다)
 create or replace function public.msgr2_on_user_message() returns trigger
   language plpgsql security definer set search_path = public, pg_temp as $$
