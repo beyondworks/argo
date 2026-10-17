@@ -59,11 +59,12 @@
 | offered | accepted | ✗ | ✗ | ✗ | ✗ | `unsupported`만 기록(그대로) | cancelled |
 | accepted·running | 그대로(리스 연장) | awaiting_approval | ✗ | 기록 | done | failed | cancelled |
 | awaiting_approval | 그대로(리스 연장) | ✗ | running | done·failed만 기록(새 intent ✗) | ✗ | failed | cancelled |
-| stalled | running(리스 다시 잡음) | ✗ | ✗ | done·failed만 기록 | ✗ | ✗ | cancelled |
+| stalled(같은 기기) | running(리스 다시 잡음) | ✗ | ✗ | done·failed만 기록 | done + `work.late` 표시 | failed + `work.late` 표시 | cancelled |
+| stalled(다른 기기) | not_lease_holder | not_lease_holder | — | not_lease_holder | not_lease_holder | not_lease_holder | cancelled |
 | done·failed·cancelled | work_closed | work_closed | work_closed | done·failed만 기록(이미 시작한 효과의 결과) | work_closed | cancelled만 기록 | 그대로 |
 | expired | work_closed | work_closed | work_closed | work_closed | work_closed | work_closed | 그대로 |
 
-✗ = `invalid_transition`. 새 `intent`는 accepted·running에서만 받는다. 본체는 intent가 성공해야 되돌릴 수 없는 일을 실행한다(D13).
+✗ = `invalid_transition`. stalled는 저장하지 않는 계산 상태라, 같은 기기 = 이 일의 리스를 마지막으로 잡았던 기기다(`nextState(…, { sameDevice })`). 같은 기기의 늦은 result·error는 받아서 일을 끝내고 방 글에 표시 코드 `work.late`(`LATE_MARK`)를 붙인다. 실제로 끝난 일이 "결과 모름"으로 남지 않게 하기 위해서다. 자동 재실행은 없고, 사람이 "다시 시키기"로 새 일을 만들었어도 늦은 결과는 옛 일의 토픽에만 붙는다. 새 `intent`는 accepted·running에서만 받는다. 본체는 intent가 성공해야 되돌릴 수 없는 일을 실행한다(D13).
 
 받을 수 없는 본체(러너 로그인 없음 등)는 accept하지 않는다. 받은 뒤 실패하면 `work.error`를 보낸다. 리스 주인이 아닌 기기는 accept 외의 봉투를 보낼 수 없다(`not_lease_holder`).
 
@@ -80,7 +81,7 @@
 | `device_unknown`·`device_revoked`·`device_expired` | 아니오 | 기기 확인 실패(5절) |
 | `service_paused` | 아니오 | v2 중단 스위치 |
 | `work_not_found`·`work_closed`·`invalid_transition` | 아니오 | 상태표 밖 |
-| `lease_held`·`not_lease_holder` | 아니오 | 담당 기기 한 대(D8) |
+| `lease_held`·`not_lease_holder` | 아니오 | 담당 기기 한 대(D8). stalled 일에 다른 기기가 보낸 봉투도 `not_lease_holder` |
 | `seq_conflict` | 아니오 | 같은 seq에 다른 봉투 |
 | `effect_exists`·`effect_unknown` | 아니오 | 이미 있는 키로 intent, intent 없이 결과 |
 | `tier_denied` | 아니오 | guest 등급 밖 행동(승인 요청·효과·파일 결과) |

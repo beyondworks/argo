@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import {
-  LINK_V, SUPPORTED, TYPES, DIRECTION, CHANNEL, DATA, REJECT_CODES, WORK_ERROR_CODES, STATES, TERMINAL, TRANSITIONS,
+  LATE_MARK, LINK_V, SUPPORTED, TYPES, DIRECTION, CHANNEL, DATA, REJECT_CODES, WORK_ERROR_CODES, STATES, TERMINAL, TRANSITIONS,
   validateEnvelope, nextState, effectiveState, negotiate, tierAllows, unsupportedReply, normalizeWorkErrorCode,
 } from '../v1.mjs';
 import { buildSchema } from '../schema.mjs';
@@ -183,9 +183,8 @@ test('상태 전이: 막는 칸 — 승인 대기 중 결과·새 intent, offer 
   assert.equal(nextState('offered', 'work.error', { code: 'login' }).code, 'invalid_transition');
   assert.equal(nextState('offered', 'work.error', { code: 'unsupported' }).to, 'offered');
   assert.equal(nextState('accepted', 'work.approval_decision').code, 'invalid_transition');
-  assert.equal(nextState('stalled', 'work.result').code, 'invalid_transition'); // 결과 모름: 자동 재실행·늦은 결과 없음
-  assert.equal(nextState('stalled', 'work.effect', { state: 'intent' }).code, 'invalid_transition');
-  assert.equal(nextState('stalled', 'work.accept').to, 'running');
+  assert.equal(nextState('stalled', 'work.effect', { state: 'intent' }, { sameDevice: true }).code, 'invalid_transition');
+  assert.equal(nextState('stalled', 'work.approval_request', {}, { sameDevice: true }).code, 'invalid_transition');
   assert.equal(nextState('nope', 'work.accept').code, 'invalid_transition');
   // 표의 모든 상태가 STATES 또는 계산 상태다
   for (const s of Object.keys(TRANSITIONS)) assert.ok(STATES.includes(s) || s === 'expired', s);
@@ -210,4 +209,21 @@ test('등급: guest는 승인 요청·효과·파일 결과를 못 보낸다(D12
   assert.equal(tierAllows('guest', 'work.result', { files: [] }), true);
   assert.equal(tierAllows('team', 'work.effect'), true);
   assert.equal(tierAllows('owner', 'work.approval_request'), true);
+});
+
+test('stalled(결과 모름): 같은 기기의 늦은 result·error는 받아 끝내고 표시를 붙이고, 다른 기기는 거부한다(총괄 결정 2026-10-17)', () => {
+  const same = { sameDevice: true }, other = { sameDevice: false };
+  assert.deepEqual(nextState('stalled', 'work.result', {}, same), { ok: true, to: 'done', mark: LATE_MARK });
+  assert.deepEqual(nextState('stalled', 'work.error', { code: 'timeout' }, same), { ok: true, to: 'failed', mark: LATE_MARK });
+  assert.equal(nextState('stalled', 'work.accept', {}, same).to, 'running'); // 리스 다시 잡음
+  assert.equal(nextState('stalled', 'work.effect', { state: 'done' }, same).to, 'stalled');
+  for (const [type, data] of [['work.result', {}], ['work.error', { code: 'timeout' }], ['work.accept', {}], ['work.effect', { state: 'done' }]]) {
+    assert.equal(nextState('stalled', type, data, other).code, 'not_lease_holder', type);
+    assert.equal(nextState('stalled', type, data).code, 'not_lease_holder', `${type}: 기기를 모르면 거부`);
+  }
+  assert.equal(nextState('stalled', 'work.cancel', {}, other).to, 'cancelled'); // 사람의 취소는 기기와 무관
+  // 리스가 살아 있는 보통 상태의 result에는 표시가 없다
+  assert.equal(nextState('running', 'work.result').mark, undefined);
+  // 늦은 결과로 끝난 일은 다시 끝난 일 규칙을 따른다
+  assert.equal(nextState('done', 'work.result', {}, same).code, 'work_closed');
 });

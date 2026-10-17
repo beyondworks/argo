@@ -75,7 +75,7 @@ export const REJECT_CODES = Object.freeze({
   work_closed: { retry: false }, // 끝난(또는 만료된) 일에 새 봉투
   invalid_transition: { retry: false },
   lease_held: { retry: false }, // 다른 기기가 리스를 쥐고 있어 accept 실패
-  not_lease_holder: { retry: false }, // 리스 주인이 아닌 기기의 accept 외 봉투
+  not_lease_holder: { retry: false }, // 리스 주인이 아닌 기기의 accept 외 봉투, stalled 일에 다른 기기가 보낸 봉투
   seq_conflict: { retry: false }, // 같은 (work, 보낸 쪽, seq)에 다른 봉투
   effect_exists: { retry: false }, // 이미 있는 effect_key로 intent(다시 실행 금지)
   effect_unknown: { retry: false }, // intent 없이 done·failed
@@ -261,16 +261,26 @@ export function effectiveState(work, now = Date.now()) {
   return work.state;
 }
 
+/** stalled 일에 같은 기기의 늦은 result·error가 왔을 때 방 글(시스템 글 meta)에 붙이는 표시 코드. 화면이 "늦게 도착"으로 그린다(D15). */
+export const LATE_MARK = 'work.late';
+
 /**
- * 서버가 봉투 하나를 일에 적용할 때의 다음 상태. state는 effectiveState 결과를 넣는다(stalled는 리스를 다시 잡는 accept만 받는다).
- * 반환: { ok:true, to } | { ok:false, code }. to === state면 사건만 기록한다.
+ * 서버가 봉투 하나를 일에 적용할 때의 다음 상태. state는 effectiveState 결과를 넣는다.
+ * opts.sameDevice = 봉투의 device가 이 일의 리스를 마지막으로 잡았던 기기인가(stalled 판정에만 쓴다, 모르면 false).
+ * 반환: { ok:true, to, mark? } | { ok:false, code }. to === state면 사건만 기록한다. mark가 있으면 방 글에 붙인다.
  */
-export function nextState(state, type, data = {}) {
+export function nextState(state, type, data = {}, { sameDevice = false } = {}) {
   if (state === 'stalled') {
-    // 리스가 끝난 일: 원래 주인 기기가 살아나 accept로 리스를 다시 잡거나, 효과 결과(done·failed)를 알리는 것만 받는다.
+    // 리스가 끝났고 결과가 없는 일(저장하지 않는 계산 상태). 리스를 잡았던 같은 기기만 받는다(다른 기기는 not_lease_holder).
+    // 같은 기기: accept로 리스를 다시 잡거나, 효과 결과(done·failed)를 알리거나, 늦은 result·error로 일을 끝낸다
+    // (실제로 끝난 일이 "결과 모름"으로 남지 않게, 방 글에 LATE_MARK). 새 intent는 받지 않는다. 자동 재실행은 없다 —
+    // 사람이 "다시 시키기"로 만든 새 일과 별개로, 늦은 결과는 옛 일(옛 토픽)에만 붙는다.
+    if (type === 'work.cancel') return { ok: true, to: 'cancelled' };
+    if (!sameDevice) return { ok: false, code: 'not_lease_holder' };
     if (type === 'work.accept') return { ok: true, to: 'running' };
     if (type === 'work.effect' && data.state !== 'intent') return { ok: true, to: state };
-    if (type === 'work.cancel') return { ok: true, to: 'cancelled' };
+    if (type === 'work.result') return { ok: true, to: 'done', mark: LATE_MARK };
+    if (type === 'work.error') return { ok: true, to: 'failed', mark: LATE_MARK };
     return { ok: false, code: 'invalid_transition' };
   }
   const row = TRANSITIONS[state];
