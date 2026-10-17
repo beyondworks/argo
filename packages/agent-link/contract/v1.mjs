@@ -52,6 +52,7 @@ export const TOPICS = Object.freeze({
   runner: (uid) => `v2:w:${uid}`, // 본체(runner·resident 기기): 서버→본체 봉투
   space: (space) => `v2:s:${space}`, // 사람이 많은 팀 open 방의 글(owner·admin·member)
   work: (work) => `v2:wk:${work}`, // 일 진행 표시(본체가 보내고 그 방을 읽는 사람이 받는다)
+  presence: (owner) => `v2:pr:${owner}`, // 접속 표시(Presence, DB 행 없음) — 그 주인의 본체가 track하고, 본인·같은 팀 공간 멤버·그 에이전트가 있는 방을 읽는 사람이 받는다
 });
 
 /** type → 길. progress만 저장하지 않는 v2:wk:<work> 방송이고, 본체가 보내는 나머지는 RPC msgr2_link_send 한 곳이다. */

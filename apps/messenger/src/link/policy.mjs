@@ -19,7 +19,7 @@ export const NAMES = Object.freeze({
   userTopic: TOPICS.user, // v2:u:<uid> — 옛 u: 토픽과 겹치지 않게(약속 v1 TOPICS, 검수 #1076)
   workTopic: TOPICS.work, // v2:wk:<work>
   spaceTopic: TOPICS.space, // v2:s:<space> — 사람이 많은 팀 open 방의 글은 이 토픽 한 번으로 온다(U2b)
-  presenceTopic: (owner) => `pr:${owner}`,
+  presenceTopic: TOPICS.presence, // v2:pr:<주인> — 접속 표시(U6b 정책: 본인·같은 팀 공간 멤버·그 에이전트가 있는 방을 읽는 사람)
 });
 
 /** u:<uid> 방송 event 이름(Realtime이 소문자로 비교한다). 서버(U2·U3)가 같은 이름으로 보낸다. 그 밖의 event는 화면에 그대로 넘긴다. */
@@ -27,6 +27,7 @@ export const USER_EVENTS = Object.freeze({
   message: 'msg', // 새 글 — payload.message(또는 payload 자체)가 글 행. 본문 4KB 초과면 body 없이 id만(그때만 1회 조회)
   pause: 'pause', // v2 중단 스위치 — { paused: boolean }
   deviceRevoked: 'device_revoked', // 기기 폐기 — { device_id } 또는 { all: true }(사용자 폐기 세대)
+  attach: 'attach', // 첨부 행이 생김(U6b 서버) — { attachment: { id, message_id, room_id, name, mime, bytes, bucket, path } }. 받는 쪽 요청 0
 });
 
 /** 상태 코드(화면은 U6이 이 값으로 그린다). */

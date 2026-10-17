@@ -97,7 +97,7 @@ export function setupFull(DB) {
 }
 
 // 적용 순서: U1 → U3(없으면 최소 판) → U2 → U2b(있으면)
-export const MSGR2_FILES = () => ({ u1: pick('_msgr2_space.sql'), u3: pick('_msgr2_device.sql'), u2: pick('_msgr2_work.sql'), u2b: pick('_msgr2_realtime_storage.sql') });
+export const MSGR2_FILES = () => ({ u1: pick('_msgr2_space.sql'), u3: pick('_msgr2_device.sql'), u2: pick('_msgr2_work.sql'), u2b: pick('_msgr2_realtime_storage.sql'), u6b: pick('_msgr2_presence_attach.sql') });
 export const migText = (f) => readFileSync(mig(f), 'utf8');
 
 export function setup(DB) {
@@ -108,6 +108,8 @@ export function setup(DB) {
   db.psql(['-c', readFileSync(mig(pick('_msgr2_work.sql')), 'utf8')]);
   const u2b = pick('_msgr2_realtime_storage.sql');
   if (u2b) db.psql(['-c', readFileSync(mig(u2b), 'utf8')]);
+  // U2b 뒤의 msgr2 파일(U6b 접속 표시·첨부 표지 등) — 버전 순서대로
+  for (const f of readdirSync(mig('')).filter((x) => /_msgr2_.*\.sql$/.test(x) && u2b && x > u2b).sort()) db.psql(['-c', readFileSync(mig(f), 'utf8')]);
   return { ...db, u3: u3 ?? 'stub' };
 }
 
