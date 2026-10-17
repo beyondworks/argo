@@ -1,0 +1,28 @@
+{
+  "_doc": [
+    "메신저 v2 판정 행렬 기대값(설계 1-5 원칙 7) — 공간 2 × 역할 7 × 방 3 × 기기 상태 × 행동 5. test/msgr2-access-matrix-pg.test.mjs가 칸마다 대조한다.",
+    "행동 글자: R=read W=write I=invite M=manage D=decide, '-'=거짓. 손으로 쓴 값이다(판정 함수에서 뽑지 않는다 — 함수가 바뀌면 이 파일과 어긋나 빨강).",
+    "기기 상태: 지금은 '앱'만(U3 병합 전 _msgr2_device_ok 자리 함수 = 참). 본체·폐기·만료 칸은 U3 병합 뒤 채운다.",
+    "등장인물(같은 사람이 두 공간에 있다): owner=두 공간의 주인, admin·member·guest=팀 공간 역할(개인 공간에는 멤버가 아니고 방 멤버로만 있다),",
+    "friend=팀 공간 밖 사람(팀 방의 방 멤버 행은 있으나 공간 멤버가 아니다 / 개인 방의 방 멤버), stranger=아무 데도 없음, removed=팀 공간에서 제거됨(removed_at, 방 멤버 행은 남음) / 개인 방에서 제거됨(방 멤버 removed_at).",
+    "방 멤버: 팀 open·private = owner·admin·member·guest·friend·removed, 팀 direct = owner·member. 개인 open·private = owner·admin·member·guest·friend·removed(제거됨 표시), 개인 direct = owner·friend.",
+    "tier는 방의 사람 구성으로 정한다(보는 사람과 무관, read가 거짓이면 null)."
+  ],
+  "device": { "app": {
+    "team": {
+      "open":    { "owner": "RWIMD", "admin": "RWIMD", "member": "RWI--", "guest": "RW---", "friend": "-----", "stranger": "-----", "removed": "-----" },
+      "private": { "owner": "RWIMD", "admin": "RWIMD", "member": "RWI--", "guest": "RW---", "friend": "-----", "stranger": "-----", "removed": "-----" },
+      "direct":  { "owner": "RW--D", "admin": "-----", "member": "RW---", "guest": "-----", "friend": "-----", "stranger": "-----", "removed": "-----" }
+    },
+    "personal": {
+      "open":    { "owner": "RWIMD", "admin": "RW---", "member": "RW---", "guest": "RW---", "friend": "RW---", "stranger": "-----", "removed": "-----" },
+      "private": { "owner": "RWIMD", "admin": "RW---", "member": "RW---", "guest": "RW---", "friend": "RW---", "stranger": "-----", "removed": "-----" },
+      "direct":  { "owner": "RW--D", "admin": "-----", "member": "-----", "guest": "-----", "friend": "RW---", "stranger": "-----", "removed": "-----" }
+    }
+  } },
+  "tier": {
+    "team":     { "open": "guest", "private": "guest", "direct": "team" },
+    "personal": { "open": "guest", "private": "guest", "direct": "guest" },
+    "extra":    { "team-private-no-guest": "team", "personal-private-solo": "owner", "team-open-guest-not-in-room": "team" }
+  }
+}
