@@ -88,7 +88,7 @@ export async function sendCrewMail(wsId, { from, fromName, fromRole = null, to, 
     hop, chain, ts: new Date().toISOString(), attempts: 0,
     ...(msgr?.channelId ? { msgr } : {}), // 메신저 채널 문맥(orgId·channelId·crewId(발신)·threadRoot) — 배달 턴과 회신이 그 채널로 간다
     // 메신저 v2 일(link 범위 턴)에서 보낸 쪽지 — 배달 턴이 같은 범위·같은 등급(owner 표지)으로 돈다(isGuestCtx). 빠지면 team·guest 턴이 쪽지로 주인 도구를 얻는다(#1078 검수 높음)
-    ...(link?.kind === 'link' ? { link: { kind: 'link', work: link.work ?? null, room: link.room ?? null, owner: link.owner === true } } : {}),
+    ...(link?.kind === 'link' ? { link: { kind: 'link', work: link.work ?? null, room: link.room ?? null, owner: link.owner === true, ...(link.memoryOff === true ? { memoryOff: true } : {}) } } : {}), // memoryOff = 기억 안 남김 방
   };
   const seen = new Set([String(to)]);
   const rcpts = [{ slug: String(to), kind }];

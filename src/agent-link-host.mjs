@@ -256,7 +256,8 @@ export function createAgentLinkHost(deps) {
         const text = contextSection(offer.data.context) + peersSection(peers) + offer.data.text;
         const turn = await deps.chat(a.ws, a.slug, text, null, {
           source: 'messenger', attachments: files, abortTag: offer.work,
-          mirrorCtx: { kind: 'scope', scope: { kind: 'link', work: offer.work, room: offer.data.room, owner: policy.ownerTools === true } },
+          // memoryOff — 기억 안 남김 방: 이 턴에서 이어지는 쪽지 배달 턴·결재 후속 턴도 일지를 남기지 않게 범위에 싣는다
+          mirrorCtx: { kind: 'scope', scope: { kind: 'link', work: offer.work, room: offer.data.room, owner: policy.ownerTools === true, ...(offer.data.memory === false ? { memoryOff: true } : {}) } },
           // 일지: offer.memory가 거짓이면 남기지 않는다(기억 안 남김 방). 참이면 chat()의 기본 일지
           ...(offer.data.memory === false ? { journal: { off: true } } : {}),
         });
