@@ -261,3 +261,25 @@ test('offer의 글·첨부 id는 1 이상 안전 정수 — uuid 문자열·0·2
   const s = JSON.stringify(buildSchema());
   assert.match(s, /"maximum":9007199254740991/, 'JSON Schema에도 안전 정수 상한');
 });
+
+// 다른 정수 필드(seq·lease_gen·토큰 수)도 안전 정수 — 서버 SQL이 같은 상한으로 본다(test/msgr2-work-contract-pg가 대조)
+test('정수 필드는 안전 정수만 — seq 2^53은 invalid_envelope, 2^53-1은 받는다', () => {
+  const base = valid.find((x) => x.env.type === 'work.accept').env;
+  assert.equal(validateEnvelope({ ...clone(base), seq: 2 ** 53 }, { from: 'runner' }).code, 'invalid_envelope');
+  assert.equal(validateEnvelope({ ...clone(base), seq: Number.MAX_SAFE_INTEGER }, { from: 'runner' }).ok, true);
+  assert.equal(validateEnvelope({ ...clone(base), data: { lease_gen: 2 ** 53 } }, { from: 'runner' }).code, 'invalid_envelope');
+});
+
+// offer.peers[] — 넘김할 수 있는 동료(선택 필드, 총괄 지시 2026-10-17). 없으면 통과, 있으면 모양을 본다.
+test('offer.peers는 선택 — 없어도 되고, 있으면 {agent uuid, name 1자 이상, role}이며 50개까지', () => {
+  const base = valid.find((x) => x.f === 'work_offer.json').env;
+  assert.equal(validateEnvelope(base, { from: 'server' }).ok, true);
+  const none = clone(base); delete none.data.peers; assert.equal(validateEnvelope(none, { from: 'server' }).ok, true, '옛 서버(peers 없음)');
+  for (const peers of [[{ agent: 'x', name: 'n', role: '' }], [{ agent: base.agent, name: '', role: '' }], [{ agent: base.agent, name: 'n' }], 'no',
+    Array.from({ length: 51 }, () => ({ agent: base.agent, name: 'n', role: '' }))]) {
+    const e = clone(base); e.data.peers = peers;
+    assert.equal(validateEnvelope(e, { from: 'server' }).code, 'invalid_envelope', JSON.stringify(peers).slice(0, 60));
+  }
+  const offerData = buildSchema().allOf.find((x) => x.if?.properties?.type?.const === 'work.offer')?.then.properties.data;
+  assert.ok(offerData?.properties.peers, 'JSON Schema에 peers'); assert.ok(!offerData.required.includes('peers'), 'peers는 선택');
+});

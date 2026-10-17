@@ -32,13 +32,13 @@
 
 크기 상한: 봉투 JSON 128KB(`too_large`), offer `context[]` 16KB. 이 둘은 JSON Schema로 적을 수 없어 `v1.mjs`만 검사한다.
 
-id 형식: 봉투·일·에이전트·기기·방·토픽·승인·업로드 슬롯 id는 uuid 문자열이다. 글·첨부 id(`context[].id`, `attachments[].id` — 서버의 `msgr2_messages.id`·`msgr2_attachments.id`)는 옛 글 id를 그대로 보존해 bigint라 **JSON 정수**로 싣는다(`msgid` 규칙: 1 이상, `Number.MAX_SAFE_INTEGER`(2^53-1) 이하). 서버 id가 이 범위를 넘지 않는다는 전제다(지금 최댓값은 수백만 대). 넘게 되면 v를 올려 문자열로 바꾼다(2026-10-17 총괄 승인, v1 안에서 고침 — 출시 전).
+id 형식: 봉투·일·에이전트·기기·방·토픽·승인·업로드 슬롯 id는 uuid 문자열이다. 글·첨부 id(`context[].id`, `attachments[].id` — 서버의 `msgr2_messages.id`·`msgr2_attachments.id`)는 옛 글 id를 그대로 보존해 bigint라 **JSON 정수**로 싣는다(`msgid` 규칙: 1 이상, `Number.MAX_SAFE_INTEGER`(2^53-1) 이하). 서버 id가 이 범위를 넘지 않는다는 전제다(지금 최댓값은 수백만 대). 넘게 되면 v를 올려 문자열로 바꾼다(2026-10-17 총괄 승인, v1 안에서 고침 — 출시 전). 다른 정수 필드(`seq`·`lease_gen`·`max_turn_s`·토큰 수 등)도 같은 상한(안전 정수)이다.
 
 ## type 10종
 
 | type | 방향·길 | data(필수) | 선택 |
 |---|---|---|---|
-| `work.offer` | 서버→본체, `w:<uid>` 방송·따라잡기 | `room`, `topic`, `from{kind:user·agent, id}`, `text`(≤20,000자), `context[]{id, author, text, at}`, `attachments[]{id, name, mime, bytes, url, url_expires_at}`, `memory`(bool), `limits{tier, max_turn_s, budget}`, `expires_at` | `from.name`, `budget{max_tokens, max_usd}` 또는 `null` |
+| `work.offer` | 서버→본체, `w:<uid>` 방송·따라잡기 | `room`, `topic`, `from{kind:user·agent, id}`, `text`(≤20,000자), `context[]{id, author, text, at}`, `attachments[]{id, name, mime, bytes, url, url_expires_at}`, `memory`(bool), `limits{tier, max_turn_s, budget}`, `expires_at` | `from.name`, `budget{max_tokens, max_usd}` 또는 `null`, `peers[]{agent, name, role}`(≤50 — 이 방에서 넘김할 수 있는 동료, 등급·파견 허용으로 거름, guest는 빈 배열) |
 | `work.cancel` | 서버→본체 | `by{kind, id}`, `reason`(코드, 열린 값: user·service_paused 등) | |
 | `work.approval_decision` | 서버→본체 | `approval_id`, `decision`(approve·reject·expire), `by{kind:user·system, id}` | |
 | `work.accept` | 본체→서버, RPC | 없음(`{}`) | `lease_gen`(정수): 서버가 accept 성공 답으로 준 리스 세대. 연장(5분마다)·이어 하기 accept에 싣는다. 실행 중 메모리에만 둔다 |

@@ -24,6 +24,8 @@ export const LIMITS = Object.freeze({
   effectKey: 200,
   code: 64,
   name: 200,
+  peers: 50, // offer.peers[] — 넘김할 수 있는 동료 에이전트
+  role: 2000,
 });
 
 /** type → 보내는 쪽. server = 서버→본체(w:<uid> 방송·따라잡기), runner = 본체→서버. */
@@ -124,7 +126,8 @@ export const jsonBytes = (x) => enc.encode(JSON.stringify(x)).length;
 const isObj = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 const isUuid = (x) => typeof x === 'string' && UUID.test(x);
 const isTs = (x) => typeof x === 'string' && TS.test(x) && Number.isFinite(Date.parse(x));
-const isInt = (x, min = 0) => Number.isInteger(x) && x >= min;
+// 정수는 JSON 숫자로 정확히 오가는 안전 정수(≤ 2^53-1)만 — 서버(SQL)가 같은 상한으로 본다(seq·토큰 수 등).
+const isInt = (x, min = 0) => Number.isSafeInteger(x) && x >= min;
 const isStr = (x, max, min = 0) => typeof x === 'string' && x.length >= min && x.length <= max;
 
 // 작은 검사기 — 필드 표를 보고 어긋난 경로를 errors에 모은다. 표에 없는 필드는 보지 않는다(모르는 필드 무시).
@@ -181,6 +184,11 @@ export const DATA = Object.freeze({
       budget: ['obj', { nullable: true, fields: { max_tokens: ['int', { optional: true, min: 1 }], max_usd: ['num', { optional: true }] } }],
     } }],
     expires_at: 'ts',
+    // 이 방에서 이 에이전트가 넘김(result.handoffs[])할 수 있는 동료 에이전트. 서버가 등급·파견 허용으로 거른다(guest는 빈 배열).
+    // 서버는 넘김을 받을 때 같은 규칙으로 다시 본다 — 목록 밖 에이전트로의 넘김은 새 일이 되지 않는다.
+    peers: ['arr', { optional: true, max: LIMITS.peers, items: ['obj', { fields: {
+      agent: 'uuid', name: ['str', { min: 1 }], role: ['str', { max: LIMITS.role }],
+    } }] }],
   },
   'work.cancel': { by: actor(), reason: 'code' },
   'work.approval_decision': { approval_id: 'uuid', decision: ['enum', { of: DECISIONS }], by: actor(['user', 'system']) },

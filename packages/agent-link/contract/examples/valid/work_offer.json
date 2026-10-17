@@ -44,6 +44,13 @@
       "max_turn_s": 900,
       "budget": null
     },
-    "expires_at": "2026-10-17T06:30:00Z"
+    "expires_at": "2026-10-17T06:30:00Z",
+    "peers": [
+      {
+        "agent": "7a0e5c11-2b3d-4e5f-8a9b-0c1d2e3f4a09",
+        "name": "리서치",
+        "role": "자료 조사"
+      }
+    ]
   }
 }

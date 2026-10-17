@@ -15,7 +15,7 @@ function rule(r) {
   switch (kind) {
     case 'uuid': s = { type: 'string', pattern: UUID }; break;
     case 'ts': s = { type: 'string', pattern: TS }; break;
-    case 'int': s = { type: 'integer', minimum: opt.min ?? 0 }; break;
+    case 'int': s = { type: 'integer', minimum: opt.min ?? 0, maximum: Number.MAX_SAFE_INTEGER }; break;
     case 'msgid': s = { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER }; break;
     case 'num': s = { type: 'number', minimum: 0 }; break;
     case 'bool': s = { type: 'boolean' }; break;
