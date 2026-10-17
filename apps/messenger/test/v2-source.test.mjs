@@ -172,3 +172,18 @@ test('첨부 경로(#1085 검수): v2 storage_path(버킷/객체)는 옛 모양�
   assert.deepEqual(raw.log.at(-1).ops.at(-1), ['in', 'storage_path', [`msgr/${obj}`, `msgr/${obj}`]]);
   assert.deepEqual(toV2Row('msgr_attachments', { storage_path: obj, name: 'a' }), { storage_path: `msgr/${obj}`, name: 'a' });
 });
+
+test('등록 전 읽기(#1085 검수 2): 바꾼 조회·에이전트 조회·msgr2_* RPC는 기기 등록이 끝난 뒤에 나간다, 그대로 쓰는 표·RPC는 기다리지 않는다', async () => {
+  const raw = fakeRaw({ msgr2_room_members: [], msgr2_agent_seats: [] });
+  let open; const gate = new Promise((r) => { open = r; });
+  const c = createV2Client(raw, { ready: () => gate });
+  const a = c.from('msgr_channel_members').select('channel_id').eq('member_kind', 'user').eq('member_id', 'me');
+  const b = c.from('msgr_crews').select('id').eq('org_id', SPACE);
+  const r = c.rpc('msgr2_unread', {});
+  c.from('msgr_profiles').select('*'); await c.rpc('msgr_my_friends');
+  const p1 = a.then((x) => x); const p2 = b.then((x) => x);
+  await new Promise((res) => setTimeout(res, 5));
+  assert.deepEqual(raw.log.map((e) => e.table ?? e.name), ['msgr_profiles', 'msgr_my_friends'], '등록 전에는 그대로 쓰는 것만');
+  open(); await Promise.all([p1, p2, r]);
+  assert.ok(raw.log.some((e) => e.table === 'msgr2_room_members') && raw.log.some((e) => e.table === 'msgr2_agent_seats') && raw.log.some((e) => e.name === 'msgr2_unread'), '등록 뒤에 나간다');
+});

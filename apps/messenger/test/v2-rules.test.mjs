@@ -96,7 +96,7 @@ test('@멘션: 방 에이전트의 이름·slug만, 단어 경계, 중복 0, 20�
 
 test('v2 부품 사전 전수: WorkCard·useWorkCards·source·composer·runtime의 정적 t(키)는 모두 ko·en 쌍, 주석 밖 한글 문자열 0, window.confirm·prompt 0', async () => {
   const { readFileSync } = await import('node:fs');
-  const src = ['WorkCard.jsx', 'useWorkCards.jsx', 'source.mjs', 'composer.mjs', 'runtime.mjs'].map((f) => readFileSync(new URL(`../src/v2/${f}`, import.meta.url), 'utf8')).join('\n'); // U6c-1b: 기존 셸에 끼우는 v2 부품 전부
+  const src = ['WorkCard.jsx', 'useWorkCards.jsx', 'source.mjs', 'composer.mjs', 'runtime.mjs', 'DevicesCard.jsx', 'devices.mjs'].map((f) => readFileSync(new URL(`../src/v2/${f}`, import.meta.url), 'utf8')).join('\n'); // U6c-1b: 기존 셸에 끼우는 v2 부품 전부
   const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
   const keys = [...code.matchAll(/\bt\(\s*'([a-z0-9._]+)'/g)].map((m) => m[1]);
   assert.ok(keys.length >= 5, `키 ${keys.length}개`);
@@ -130,4 +130,105 @@ test('결과 모름 보호(#1085 검수): 진행 신호를 받은 뒤 리스 한
   // 결과가 있는 일·끝난 일은 건드리지 않는다
   assert.equal(stalledGuard({ work: { ...w, state: 'done' }, now }).recheck, false);
   assert.equal(stalledGuard({ work: { ...w, has_result: true }, now }).recheck, false);
+});
+
+test('④ 기기 목록·상태 안내(U6c-2a): 이 기기 먼저·사용 중 먼저, 모르는 값은 안전한 쪽, 중단·업데이트는 안내 줄, 폐기·다시 로그인은 로그인 화면 이유', async () => {
+  const { deviceRows, v2StateBar, v2SignOutNotice } = await import('../src/v2/devices.mjs');
+  const rows = deviceRows([
+    { id: 'a', kind: 'runner', app: 'desktop', app_version: '0.9.1', registered_at: '2026-10-17T01:00:00Z', state: 'active', is_current: false },
+    { id: 'b', kind: 'app', app: 'messenger', app_version: '0.2.0', registered_at: '2026-10-10T01:00:00Z', state: 'active', is_current: true },
+    { id: 'c', kind: 'app', app: 'messenger', registered_at: '2026-10-18T01:00:00Z', state: 'revoked', is_current: false },
+    { id: 'd', kind: 'robot', app: 'x', state: 'weird' },
+  ], { lang: 'en' });
+  assert.deepEqual(rows.map((r) => r.id), ['b', 'a', 'c', 'd'], '이 기기 → 사용 중 → 최근순');
+  assert.equal(rows[0].current, true); assert.equal(rows[1].active, true); assert.equal(rows[2].active, false);
+  assert.deepEqual([rows[3].kind, rows[3].app, rows[3].state, rows[3].active], ['other', 'other', 'revoked', false], '모르는 값');
+  for (const r of rows) for (const k of [`v2.dev.kind.${r.kind}`, `v2.dev.app.${r.app}`, `v2.dev.state.${r.state}`]) assert.ok(DICT[k]?.[0] && DICT[k]?.[1], k);
+  assert.equal(v2StateBar({ state: 'paused' }), 'v2.state.paused'); assert.equal(v2StateBar({ state: 'update_required' }), 'v2.state.update');
+  assert.equal(v2StateBar({ state: 'ready' }), null); assert.equal(v2StateBar({ state: 'signed_out' }), null); assert.equal(v2StateBar(null), null);
+  assert.equal(v2SignOutNotice({ state: 'signed_out', reason: 'device_revoked' }), 'v2.state.signedOut');
+  assert.equal(v2SignOutNotice({ state: 'signed_out', reason: 'login_required' }), 'v2.state.loginRequired');
+  assert.equal(v2SignOutNotice({ state: 'paused' }), null);
+  for (const k of ['v2.state.paused', 'v2.state.update', 'v2.state.signedOut', 'v2.state.loginRequired']) assert.doesNotMatch(DICT[k][1], /[가-힣]/, k);
+});
+
+// ── #1086 검수 1·2: 등록 대기 상한·다시 붙기 그만둠·뒤로 감, 이 기기 폐기 실패 ──────────────────────
+function fakeMachine(snap) {
+  const fns = new Set(); let s = snap; let retries = 0;
+  return { getSnapshot: () => s, on: (type, fn) => { fns.add(fn); return () => fns.delete(fn); }, set(next) { s = next; for (const fn of [...fns]) fn(s); }, retry() { retries++; return true; }, listeners: () => fns.size, retries: () => retries };
+}
+const within = (p, ms = 500) => Promise.race([p, new Promise((_, no) => setTimeout(() => no(new Error('hung: 약속이 풀리지 않았다')), ms).unref?.())]); // 끝없이 걸리면 실패(취소가 아니라)
+function fakeTimer() { const q = new Map(); let n = 0; return { timer: (fn, ms) => { q.set(++n, { fn, ms }); return n; }, clear: (id) => q.delete(id), fire() { for (const [id, x] of [...q]) { q.delete(id); x.fn(); } }, size: () => q.size }; }
+
+test('#1086 검수 1: 등록 대기 — 기기 id면 풀림, 뒤로 감은 기기 id 없이 풀리지 않음, 상한·gave_up이면 v2_not_registered로 거부하고 안내', async () => {
+  const { waitRegistered, V2_NOT_READY, READY_MS } = await import('../src/v2/runtime.mjs');
+  const { v2StateBar } = await import('../src/v2/devices.mjs');
+  assert.equal(READY_MS, 15_000);
+  // 이미 등록됨
+  assert.equal((await waitRegistered(fakeMachine({ state: 'ready', deviceId: 'd1' }))).deviceId, 'd1');
+  // 등록 중 → 기기 id가 생기면 풀리고 듣기·타이머를 걷는다
+  { const m = fakeMachine({ state: 'registering', deviceId: null }); const tm = fakeTimer();
+    const p = waitRegistered(m, tm); m.set({ state: 'subscribing', deviceId: 'd1' });
+    assert.equal((await within(p)).deviceId, 'd1'); assert.equal(m.listeners(), 0); assert.equal(tm.size(), 0); }
+  // ③ 등록 중에 뒤로 감(기기 id 없음) → 풀리지 않는다 → 상한에서 거부
+  { const m = fakeMachine({ state: 'registering', deviceId: null }); const tm = fakeTimer(); const stuck = [];
+    let done = null; const p = waitRegistered(m, { ...tm, onStuck: (w) => stuck.push(w) }).then(() => { done = 'resolved'; }, (e) => { done = e; });
+    m.set({ state: 'background', deviceId: null }); await new Promise((r) => setTimeout(r, 0));
+    assert.equal(done, null, '뒤로 감만으로는 풀리지 않는다');
+    tm.fire(); await within(p);
+    assert.equal(done.code, V2_NOT_READY); assert.equal(done.why, 'timeout'); assert.deepEqual(stuck, ['timeout']); assert.equal(m.listeners(), 0); }
+  // 뒤로 간 앱이라도 기기 id가 있으면 등록된 것
+  assert.equal((await waitRegistered(fakeMachine({ state: 'background', deviceId: 'd1' }))).state, 'background');
+  // ② 다시 붙기 그만둠 — 이미 그 상태이거나 기다리는 중에 그 상태가 되면 바로 거부
+  await assert.rejects(within(waitRegistered(fakeMachine({ state: 'disconnected', reason: 'gave_up:invalid', deviceId: null }))), (e) => e.code === V2_NOT_READY && e.why === 'gave_up');
+  { const m = fakeMachine({ state: 'connecting', deviceId: null }); const tm = fakeTimer(); const p = waitRegistered(m, tm);
+    m.set({ state: 'disconnected', reason: 'net', deviceId: null }); // 간격 두고 다시 붙는 중 — 아직 기다린다
+    m.set({ state: 'disconnected', reason: 'gave_up:net', deviceId: null });
+    await assert.rejects(within(p), (e) => e.why === 'gave_up'); assert.equal(tm.size(), 0); }
+  // 기다릴 수 없는 상태(중단·업데이트 필요·로그아웃)는 풀어 그 안내가 화면을 맡는다
+  for (const state of ['paused', 'update_required', 'signed_out']) assert.equal((await waitRegistered(fakeMachine({ state, deviceId: null }))).state, state);
+  // 안내 줄: gave_up·상한 → 연결할 수 없음(다시 시도), 중단·업데이트 안내가 우선
+  assert.equal(v2StateBar({ state: 'disconnected', reason: 'gave_up:net' }), 'v2.state.unreachable');
+  assert.equal(v2StateBar({ state: 'disconnected', reason: 'net' }), null, '간격 두고 다시 붙는 중은 안내 없음');
+  assert.equal(v2StateBar({ state: 'connecting' }, 'timeout'), 'v2.state.unreachable');
+  assert.equal(v2StateBar({ state: 'paused' }, 'timeout'), 'v2.state.paused');
+  for (const k of ['v2.state.unreachable', 'v2.state.retry', 'v2.dev.selfFailed']) { assert.ok(DICT[k]?.[0] && DICT[k]?.[1], k); assert.doesNotMatch(DICT[k][1], /[가-힣]/, k); }
+});
+
+test('#1086 검수 1: 실행 묶음 — 상한이 지나면 stuck=timeout(안내 줄), 기계에 사람용 다시 시도가 있다', async () => {
+  const { createV2Runtime } = await import('../src/v2/runtime.mjs');
+  const link = await import('../src/link/machine.mjs');
+  const tm = fakeTimer(); const raw = { rpc: async () => ({ data: null, error: { message: 'x' } }), channel: () => ({ on() { return this; }, subscribe() { return this; } }), removeChannel: async () => {}, realtime: { setAuth: async () => {} } };
+  const rt = createV2Runtime({ raw, client: raw, uid: 'u1', timer: tm.timer, clear: tm.clear });
+  const seen = []; rt.onStuck((v) => seen.push(v));
+  const p = rt.ready().catch((e) => e);
+  tm.fire(); const e = await within(p);
+  assert.equal(e.code, 'v2_not_registered'); assert.equal(rt.stuck(), 'timeout'); assert.deepEqual(seen, ['timeout']);
+  assert.equal(typeof rt.machine.retry, 'function', '기계에 다시 시도가 있다');
+  assert.ok(link.createLinkMachine);
+  rt.dispose();
+});
+
+test('#1086 검수 1: 조회 어댑터 — 등록 대기가 실패하면 요청 없이 v2_not_registered 오류로 끝난다(끝없이 걸리지 않음), 사전 문구로 보인다', async () => {
+  const { createV2Client } = await import('../src/v2/source.mjs');
+  const { friendlyErr } = await import('../src/error-toast.mjs');
+  const log = []; const raw = { from: (t) => { log.push(t); throw new Error('no request expected'); }, rpc: async (n) => { log.push(n); return { data: [], error: null }; }, auth: { getSession: async () => ({ data: null }) } };
+  const fail = Object.assign(new Error('v2_not_registered'), { code: 'v2_not_registered' });
+  const c = createV2Client(raw, { ready: async () => { throw fail; } });
+  for (const r of [await c.from('msgr_messages').select('id').eq('channel_id', 'r'), await c.from('msgr_crews').select('id').eq('org_id', 's'), await c.rpc('msgr2_unread', {})]) {
+    assert.equal(r.data, null); assert.equal(r.error.code, 'v2_not_registered');
+  }
+  assert.deepEqual(log, [], '요청 0');
+  const t = (k) => DICT[k][0];
+  assert.equal(friendlyErr('v2_not_registered', t), DICT['v2.state.unreachable'][0]);
+});
+
+test('#1086 검수 2: 모든 기기 로그아웃 — 다른 기기 먼저, 이 기기 폐기가 실패하면 self_failed(로컬 로그아웃 안 함), 다른 기기 실패는 던진다', async () => {
+  const { revokeAllDevices } = await import('../src/v2/devices.mjs');
+  const view = [{ id: 'me', current: true, active: true }, { id: 'a', current: false, active: true }, { id: 'old', current: false, active: false }, { id: 'b', current: false, active: true }];
+  const calls = []; const ok = async (id) => { calls.push(id); return true; };
+  assert.equal(await revokeAllDevices(view, ok), 'done'); assert.deepEqual(calls, ['a', 'b', 'me'], '다른 기기 → 이 기기, 끝난 기기는 건너뛴다');
+  calls.length = 0;
+  assert.equal(await revokeAllDevices(view, async (id) => { calls.push(id); if (id === 'me') throw new Error('net'); return true; }), 'self_failed');
+  await assert.rejects(revokeAllDevices(view, async (id) => { if (id === 'a') throw new Error('net'); return true; }));
 });

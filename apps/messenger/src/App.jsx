@@ -19,6 +19,8 @@ import { createV2ClientFor, createV2Runtime, currentV2 } from './v2/runtime.mjs'
 import { bindLifecycle } from './link/lifecycle.mjs';
 import { v2ComposerTransport } from './v2/composer.mjs';
 import { useWorkCards } from './v2/useWorkCards.jsx';
+import { DevicesCard as V2DevicesCard } from './v2/DevicesCard.jsx';
+import { v2StateBar, v2SignOutNotice } from './v2/devices.mjs';
 import { systemLine as v2SystemLine } from './v2/system-text.mjs';
 import { loadSpaces as v2LoadSpaces } from './v2/data.mjs';
 import { spaceList as v2SpaceList, liveSpaceIds as v2LiveSpaceIds } from './v2/spaces.mjs';
@@ -155,7 +157,7 @@ const LegalLinks = ({ t, className = '', agree = false }) => (
     <button type="button" className="linkbtn" onClick={() => openExternal(LEGAL.contact)}>{t('legal.contact')}</button>{/* App Store 1.5: 개발자 연락처 */}
   </p>
 );
-const SignOutContext = createContext({ signOut: () => {}, signingOut: false, accountDeleted: () => {} });
+const SignOutContext = createContext({ signOut: () => {}, signingOut: false, accountDeleted: () => {}, signOutNotice: () => {} });
 
 // Installation + signed-in owner scope prevents another PC's identically named agent being rotated.
 export const externalAgentId = (installation, owner, kind, id) => {
@@ -482,7 +484,8 @@ export default function App() {
   else if (!session) body = <Auth logoutNotice={logoutNotice} />;
   else body = <Shell key={session.user.id} session={session} />;
   const accountDeleted = async () => { deletingAccount.current = true; try { await detachPush(supabase, session?.user?.id); } catch { /* 서버 토큰 행은 이미 없다 */ } try { await recoveryRef.current?.restartSignIn(); } catch { /* 서버 세션은 이미 없다 — 로컬만 비운다 */ } setLogoutNotice('auth.deleted'); deletingAccount.current = false; };
-  return <SignOutContext.Provider value={{ signOut, signingOut, accountDeleted }}><Sprite /><UpdateBar t={t} /><MobileUpdateBar t={t} />{session && logoutNotice && <button type="button" className="msgr-toast err" role="alert" onClick={() => setLogoutNotice('')}>{t(logoutNotice)}</button>}{body}</SignOutContext.Provider>;
+  const signOutNotice = async (key) => { await signOut(); setLogoutNotice(key); }; // 메신저 v2: 기기 폐기·다시 로그인 필요·모든 기기 로그아웃 뒤 로그인 화면에 이유를 남긴다(U6c-2a)
+  return <SignOutContext.Provider value={{ signOut, signingOut, accountDeleted, signOutNotice }}><Sprite /><UpdateBar t={t} /><MobileUpdateBar t={t} />{session && logoutNotice && <button type="button" className="msgr-toast err" role="alert" onClick={() => setLogoutNotice('')}>{t(logoutNotice)}</button>}{body}</SignOutContext.Provider>;
 }
 
 function ConnectionWaiting({ t, onRetry, onSignIn, error, busy }) {
@@ -794,7 +797,7 @@ function CtxMenu({ at, items, onClose }) {
 // 당겨서 새로고침이 실제로 발동할 수 있는 화면만(그 외 화면엔 당김 손잡이 자체가 없다) — 복원 스냅샷의 page 값을 이 범위로만 신뢰한다.
 const PULL_RESTORE_PAGES = new Set([...PHONE_TABS, 'chat']);
 function Shell({ session }) {
-  const { signOut, signingOut } = useContext(SignOutContext);
+  const { signOut, signingOut, signOutNotice } = useContext(SignOutContext);
   const { t, lang } = useT();
   const isPhone = useIsPhone(); // 폰 셸(홈 전체화면 + 하단 탭) — 데스크톱은 false라 기존 트리 그대로
   const isPhoneRef = useRef(isPhone); isPhoneRef.current = isPhone; // 구독 핸들러(deps에 isPhone 없음)가 최신 값을 보게(재검수 L-2)
@@ -1155,7 +1158,7 @@ function Shell({ session }) {
   const rt = useRef(null);
   const loadOrgs = useCallback(async () => {
     if (V2) { // v2: 공간 목록(개인 + 팀) — 팀 공간을 조직 자리에, 개인 공간은 기존 개인 공간 자리(PERSONAL)에 둔다
-      await currentV2()?.registered; // v2 표는 등록된 기기 세션만 읽는다(U3)
+      await currentV2()?.ready(); // v2 표는 등록된 기기 세션만 읽는다(U3). 상한·다시 붙기 그만둠이면 던진다 → 조직 목록 화면의 다시 시도(#1086 검수 1). 자동 재시도는 기계를 다시 붙이지 않는다
       const list = v2SpaceList(await v2LoadSpaces(rawSupabase, uid));
       currentV2()?.machine.setSpaces(v2LiveSpaceIds(list));
       const teams = list.filter((x) => !x.personal).map((x) => ({ id: x.id, role: x.role, name: x.name, slug: null, owner_user_id: null, deleted_at: null, _v2: true }));
@@ -1256,7 +1259,7 @@ function Shell({ session }) {
     const current = orgRequests.current.begin(PERSONAL);
     if (V2) { // v2: 개인 공간(진짜 공간 행)의 방 — 기존 개인 공간 목록과 같은 모양(모두 dm 줄)으로 채운다
       try {
-        await currentV2()?.registered;
+        await currentV2()?.ready();
         const pid = await q(rawSupabase.rpc('msgr2_my_personal_space'));
         const [rooms, friendsList] = await Promise.all([
           q(supabase.from('msgr_channels').select('id, kind, name, created_by, crew_memory, personal_crews, created_at').eq('org_id', pid).is('archived_at', null).order('created_at')),
@@ -1753,11 +1756,15 @@ function Shell({ session }) {
       m.on('attachments', ({ roomId, messageId }) => setEvent(broadcastEvent('attach', { channel_id: roomId, message_id: messageId }))),
       m.on('works', ({ roomId, works }) => setEvent(broadcastEvent('v2work', { channel_id: roomId, works }))), // 일 표지(U6c-1a) — 채널 화면이 카드를 만든다
       m.on('progress', (p) => setEvent(broadcastEvent('v2progress', p))),
-      m.on('state', (st) => { const ready = st.state === 'ready'; if (wasReady !== null && ready !== wasReady) setEvent(broadcastEvent(ready ? 'rt_up' : 'rt_down', {})); wasReady = ready; }),
+      m.on('state', (st) => { setV2state(st); const ready = st.state === 'ready'; if (wasReady !== null && ready !== wasReady) setEvent(broadcastEvent(ready ? 'rt_up' : 'rt_down', {})); wasReady = ready; }),
     ];
     return () => offs.forEach((f) => f());
   }, [v2rt]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { v2rt?.machine.setActiveRoom(chId ?? null); }, [v2rt, chId]); // 보는 방은 배지에서 뺀다
+  // ④ 기기 폐기·다시 로그인 필요(signed_out) → 로그인 화면으로, 이유를 남긴다. 중단·업데이트 필요는 화면 위 안내 줄(v2StateBar)
+  const [v2state, setV2state] = useState(null); const [v2stuck, setV2stuck] = useState(null); // 등록 대기 실패(시간 상한·다시 붙기 그만둠 — v2/runtime.mjs)
+  useEffect(() => { if (!v2rt) return undefined; setV2stuck(v2rt.stuck()); return v2rt.onStuck(setV2stuck); }, [v2rt]);
+  useEffect(() => { const key = v2SignOutNotice(v2state); if (key) void signOutNotice(key); }, [v2state?.state, v2state?.reason]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { rt.current = subsRef.current.get(orgId) ?? null; }, [orgId]);
   useEffect(() => { const iv = setInterval(() => setTick((x) => x + 1), 15_000); return () => clearInterval(iv); }, []);
   const dmIdsKey = useMemo(() => channels.filter((c) => c.kind === 'dm').map((c) => c.id).sort().join(','), [channels]); // DM 집합(개수가 아니라 집합 — 하나 끝나고 하나 생겨도 재조회)
@@ -2593,7 +2600,7 @@ function Shell({ session }) {
     return () => { off = true; clearTimeout(timer); };
   }, [tabBodyQ, uid, orgId, blockedIds, mutedCrewIds]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (orgs !== null || orgsLoad.phase === 'error' || orgsLoad.slow) markAppReady(); }, [orgs, orgsLoad.phase, orgsLoad.slow]); // 스플래시 준비 신호 — 조직을 불러온 뒤, 또는 첫 조회가 늦거나 실패해 안내를 보여야 할 때(D8 — 스플래시 뒤에 갇히지 않게)(조기 반환 앞, 훅 순서)
-  if (orgs === null) return <OrgsLoading state={orgsLoad} online={online} onRetry={() => orgsLoader.retry()} onSignOut={signOut} signingOut={signingOut} />; // 첫 조직 목록 전(D8)
+  if (orgs === null) return <OrgsLoading state={orgsLoad} online={online} onRetry={() => { v2rt?.retry(); orgsLoader.retry(); }} /* v2: 멈춘 연결 상태 기계도 사람이 누를 때만 다시 붙인다 */ onSignOut={signOut} signingOut={signingOut} />; // 첫 조직 목록 전(D8)
   const joinedChannel = loadedOrg.current === orgId ? channels.find((c) => c.id === chId) : undefined;
   const previewing = !joinedChannel && loadedOrg.current === orgId && !isPersonal ? previewChannels.find((c) => c.id === chId) : undefined;
   const archivedView = !joinedChannel && !previewing && loadedOrg.current === orgId && !isPersonal ? archivedRoomFor(earlierRoom, { orgId, chId }) : undefined; // 이전 대화 보기로 연 보관 방 — 읽기 전용
@@ -3129,6 +3136,7 @@ function Shell({ session }) {
     <AvatarCtx.Provider value={avatarCtx}><SafetyCtx.Provider value={safetyCtx}><RunnerCtx.Provider value={openRunner}>
     <div className={`shell msgr-shell${online ? '' : ' is-offline'}${rail ? ' rail-open' : ''}${isPhone ? ' msgr-phone' : ''}${isPhone && isPhoneRoot(page) ? ' phone-home' : ''}${isPhone && page === 'chat' ? ' phone-chat' : ''}${isPhone && ROOT_PAGES.has(page) ? ' phone-root' : ''}${isPhone && pageAnim ? ` anim-${pageAnim}` : ''}`}>
       {!online && <div className="msgr-offline-bar" role="status">{t('net.offline')}</div>}
+      {online && v2StateBar(v2state, v2stuck) && <div className="msgr-offline-bar" role="status">{t(v2StateBar(v2state, v2stuck))}{v2StateBar(v2state, v2stuck) === 'v2.state.unreachable' && <> <button type="button" className="btn sm ghost" onClick={() => { v2rt?.retry(); orgsLoader.retry(); setTick((x) => x + 1); }}>{t('v2.state.retry')}</button></>}</div>}{/* v2 ④ 중단·업데이트 필요·연결할 수 없음(다시 시도) — 오프라인 줄과 같은 자리·모양 */}
       {rail && <div className="msgr-scrim" onClick={() => setRail(false)} role="presentation" />}
       {dmPeek && <DmPeekSheet channel={dmPeek} name={dmName(dmPeek)} uid={uid} whoOf={(m) => dmWho(dmPeek, { mine: m.author_user_id === uid, userId: m.author_user_id, crewId: m.crew_id })} onOpen={() => { const c = dmPeek; setDmPeek(null); if (openAgentDmInstead(c.id, 'peek')) return; setChId(c.id); setRail(false); setPage('chat'); }} onClose={() => setDmPeek(null)} />}
       <aside id="msgr-navigation" className={`side msgr-side${orgMenu ? ' menu-open' : ''}`}>
@@ -4507,7 +4515,7 @@ function AgentSlotPicker({ uid, myAgents, org, onOpenAgent, onChanged, onNote, o
   </section>);
 }
 function Settings({ session, me, uid, invitesTick = 0, org, orgs = [], isAdmin, gated = false, policy, ent = null, members = [], nameOfUser, onOpenCrew, onAvatar, onProfileSaved, friends = [], onFriendsChanged, onDm, onPersonalDm, channels = [], onInvite = null, initialTab = null, onTabUsed, onChanged, onOrgsChanged, onNote, onError, onBack, onMenu, phoneView = null, onSub = null, crews = [], myName: myProfileName = null, myAgents = null, onOpenAgent = null, onOrgSub = null, onPickOrg = null, onOrgAdmin = null, hostIds = new Set(), onToggleMemory = null, spaceReady = true, memSort = 'recent', onMemSort = null, focusGroup = null, onFocusUsed = null, chOrgId = null, onAgentsChanged = null }) { // phoneView(폰만): 'list' = 내 설정 줄 목록, 'profile'|'notify'|'display'|'friends'|'privacy'|'about' = 하위 화면, 'org' = 조직 설정
-  const { signOut, signingOut, accountDeleted } = useContext(SignOutContext);
+  const { signOut, signingOut, accountDeleted, signOutNotice } = useContext(SignOutContext);
   const avLooks = useContext(AvatarCtx).looks; // 내 에이전트 목록의 사진 — 같은 에이전트 기준(유건 2026-10-05)
   const { t, ta, lang, setLang } = useT();
   const { theme, setTheme } = useTheme();
@@ -4616,6 +4624,7 @@ function Settings({ session, me, uid, invitesTick = 0, org, orgs = [], isAdmin, 
         {sub === 'profile' && (<div className="msgr-setbody">
           <section className="msgr-setcard"><h2>{t('set.account')}</h2><div className="row"><Av name={myName} userId={uid} /><span className="msgr-klabel">{session.user.email}</span></div></section>
           <ProfileCard part="profile" uid={uid} onNote={onNote} onError={onError} onAvatar={onAvatar} onSaved={onProfileSaved} />
+          {V2 && <V2DevicesCard client={rawSupabase} t={t} lang={lang} onSignedOut={(key) => signOutNotice(key)} onNote={onNote} onError={onError} />}{/* v2 ④ 기기 관리(폰 계정 화면) */}
           <AccountDeleteCard session={session} onDeleted={accountDeleted} />
         </div>)}
         {sub === 'notify' && (<div className="msgr-setbody">
@@ -4670,6 +4679,7 @@ function Settings({ session, me, uid, invitesTick = 0, org, orgs = [], isAdmin, 
             <LegalLinks t={t} className="in-card" />
             <p className="msgr-klabel msgr-version">{t('set.version', { v: APP_VERSION })}</p>{/* 지금 앱 버전(UXM-26) — 문의·업데이트 확인 때 */}
           </section>
+          {V2 && <V2DevicesCard client={rawSupabase} t={t} lang={lang} onSignedOut={(key) => signOutNotice(key)} onNote={onNote} onError={onError} />}{/* v2 ④ 기기 관리 — 플래그 켜짐에서만 */}
           <PlanCard uid={uid} email={session.user.email} />
           <section className="msgr-setcard">
             <h2>{t('set.profanityFilter')}</h2><p>{t('set.profanityFilter.desc')}</p>

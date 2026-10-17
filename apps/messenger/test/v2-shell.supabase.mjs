@@ -8,7 +8,7 @@ const T = '7e000000-0000-4000-8000-0000000000aa', P = '7e000000-0000-4000-8000-0
 const GEN = '7f000000-0000-4000-8000-000000000001', PLAN = '7f000000-0000-4000-8000-000000000002', DM = '7f000000-0000-4000-8000-000000000003';
 const A = 'a0000000-0000-4000-8000-000000000001', B = 'a0000000-0000-4000-8000-000000000002', C = 'a0000000-0000-4000-8000-000000000003';
 const W = (n) => `b0000000-0000-4000-8000-00000000000${n}`;
-const state = window.__v2Fixture = { calls: [], topics: new Map(), tables: {
+const state = window.__v2Fixture = { calls: [], topics: new Map(), signedIn: true, authCbs: new Set(), tables: {
   msgr2_spaces: [{ id: P, kind: 'personal', name: '', owner_user_id: uid }, { id: T, kind: 'team', name: 'Beyond 팀', owner_user_id: mate }],
   msgr2_space_members: [{ space_id: P, user_id: uid, role: 'owner', display_name: '나' }, { space_id: T, user_id: uid, role: 'member', display_name: '유건' }, { space_id: T, user_id: mate, role: 'owner', display_name: '민지' }],
   msgr2_rooms: [
@@ -97,24 +97,30 @@ function query(table) {
 
 const rpcs = {
   argo_min_app_version: () => null, msgr2_service_pause: () => null,
-  msgr2_device_register: () => ({ device_id: 'd0000000-0000-4000-8000-000000000001', kind: 'app', wrote: false }),
+  msgr2_device_register: () => { if (state.failRegister) { state.failRegister -= 1; throw Object.assign(new Error('msgr2_device_invalid'), { code: '22023' }); } return { device_id: 'd0000000-0000-4000-8000-000000000001', kind: 'app', wrote: false }; }, // ?failreg=N — 처음 N번 등록 거부(#1086 검수 1: 다시 붙기 그만둠 화면)
   msgr2_catch_up: () => ({ rooms: [], next_since: 202 }),
   msgr2_my_personal_space: () => P,
   msgr2_work_status: ({ p_work }) => ({ work: p_work, effects: [] }),
   msgr2_approval_decide: ({ p_approval, p_decision }) => { const a = state.tables.msgr2_approvals.find((x) => x.id === p_approval); a.state = p_decision === 'approve' ? 'approved' : 'rejected'; const w = state.tables.msgr2_works.find((x) => x.id === a.work_id); w.state = 'running'; fire(`v2:u:${uid}`, 'work', { work: w }); return a.state; },
   msgr2_work_cancel: ({ p_work }) => { const w = state.tables.msgr2_works.find((x) => x.id === p_work); w.state = 'cancelled'; fire(`v2:u:${uid}`, 'work', { work: w }); return 'cancelled'; },
   msgr2_set_seat: ({ p_agent, p_space, p_remove }) => { const s = state.tables.msgr2_agent_seats; const row = s.find((x) => x.agent_id === p_agent && x.space_id === p_space); if (p_remove) { if (row) row.removed_at = new Date().toISOString(); } else if (row) row.removed_at = null; else s.push({ agent_id: p_agent, space_id: p_space, allow: 'all', allow_users: [], removed_at: null }); return null; },
+  msgr2_devices_list: () => state.devices.map((d) => ({ ...d })),
+  msgr2_device_revoke: ({ p_device }) => { const d = state.devices.find((x) => x.id === p_device); if (!d || d.revoked_at) return false; d.revoked_at = new Date().toISOString(); d.state = 'revoked'; if (d.is_current) setTimeout(() => fire(`v2:u:${uid}`, 'device_revoked', { device_id: d.id }), 50); return true; },
   // 그대로 쓰는 옛 RPC(설계 1-2절)
   msgr_my_friends: () => [{ user_id: mate, status: 'accepted', display_name: '민지', handle: 'minji' }],
   msgr_avatars: () => [], msgr_people_names: ({ ids }) => (ids ?? []).map((id) => ({ user_id: id, display_name: id === uid ? '유건' : '민지' })),
-  msgr_my_hidden_users: () => [], msgr_my_blocked: () => [], my_plan: () => 'pro', msgr_my_ai_consent: () => true,
+  msgr_my_hidden_users: () => [], msgr_my_blocked: () => [], my_plan: () => ({ plan: 'pro' }) /* 서버 my_plan은 {plan, …} 객체(src/entitlement.mjs effectivePlanOf) */, msgr_my_ai_consent: () => true,
 };
 
 function fire(topic, event, payload) { for (const c of state.topics.get(topic) ?? []) for (const h of c.handlers) if (h.kind === 'broadcast' && (h.filter?.event === '*' || h.filter?.event === event)) h.cb({ event, payload }); }
 export const supabase = {
   from: query,
-  auth: { getSession: async () => ({ data: { session: { user: { id: uid, email: 'fixture@example.invalid' }, access_token: 'fixture' } } }), onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }) },
-  rpc: async (name, args = {}) => { call({ rpc: name }); try { return { data: rpcs[name] ? rpcs[name](args) : [], error: null, status: 200 }; } catch (e) { return { data: null, error: { message: String(e.message) }, status: 400 }; } },
+  auth: { // 로그인 세션 대역 — signOut이면 세션을 비우고 SIGNED_OUT을 알린다(기기 폐기·모든 기기 로그아웃 화면 확인용)
+    getSession: async () => ({ data: { session: state.signedIn ? { user: { id: uid, email: 'fixture@example.invalid' }, access_token: 'fixture' } : null }, error: null }),
+    onAuthStateChange: (cb) => { state.authCbs.add(cb); return { data: { subscription: { unsubscribe() { state.authCbs.delete(cb); } } } }; },
+    signOut: async () => { state.signedIn = false; for (const cb of state.authCbs) cb('SIGNED_OUT', null); return { error: null }; },
+  },
+  rpc: async (name, args = {}) => { call({ rpc: name }); try { return { data: rpcs[name] ? rpcs[name](args) : [], error: null, status: 200 }; } catch (e) { return { data: null, error: { message: String(e.message), code: e.code }, status: 400 }; } },
   realtime: { setAuth: async () => {}, isConnected: () => true },
   functions: { invoke: async () => ({ data: null, error: null }) },
   channel: (topic) => {
@@ -137,5 +143,14 @@ export const supabase = {
 // 시험·캡처가 쓰는 대역: 본체의 진행 봉투(v2:wk:), 새 일 표지(v2:u: work)
 state.progress = (work, stage) => fire(`v2:wk:${work}`, 'envelope', { v: 1, id: 'e', work, seq: 1, type: 'work.progress', at: new Date().toISOString(), data: { stage } });
 state.work = (w) => { const all = state.tables.msgr2_works; const i = all.findIndex((x) => x.id === w.id); if (i >= 0) Object.assign(all[i], w); else all.push(w); fire(`v2:u:${uid}`, 'work', { work: all.find((x) => x.id === w.id) }); };
+state.devices = [
+  { id: 'd0000000-0000-4000-8000-000000000001', kind: 'app', app: 'messenger', app_version: '0.2.0', registered_at: at(5), created_at: at(600), state: 'active', is_current: true },
+  { id: 'd0000000-0000-4000-8000-000000000002', kind: 'runner', app: 'desktop', app_version: '0.9.1', registered_at: at(30), created_at: at(9000), state: 'active', is_current: false },
+  { id: 'd0000000-0000-4000-8000-000000000003', kind: 'app', app: 'messenger', app_version: '0.1.9', registered_at: at(4000), created_at: at(9000), state: 'active', is_current: false },
+  { id: 'd0000000-0000-4000-8000-000000000004', kind: 'app', app: 'messenger', app_version: '0.1.5', registered_at: at(60000), created_at: at(90000), state: 'expired', is_current: false },
+];
+state.failRegister = Number(new URLSearchParams(globalThis.location?.search ?? '').get('failreg') || 0);
+state.pause = (on) => fire(`v2:u:${uid}`, 'pause', { paused: !!on }); // 서버 중단 스위치 대역
+state.client = () => supabase; // 페이지 시험은 이 함수로 앱과 같은 대역을 쓴다(모듈을 다시 불러오면 다른 사본이 생긴다)
 state.ids = { uid, mate, T, P, GEN, PLAN, DM, A, B, C, W };
 export async function q(p) { const { data, error } = await p; if (error) throw new Error(error.message); return data; }
