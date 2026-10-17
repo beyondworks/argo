@@ -175,7 +175,9 @@ export const DATA = Object.freeze({
       id: 'msgid', author: actor(), text: ['str', { max: LIMITS.offerText }], at: 'ts',
     } }] }],
     attachments: ['arr', { max: LIMITS.attachments, items: ['obj', { fields: {
-      id: 'msgid', name: ['str', { min: 1 }], mime: ['str', { max: 200 }], bytes: 'int', url: ['str', { min: 1, max: 4096 }], url_expires_at: 'ts',
+      // 서명 URL 대신 Storage 위치(2026-10-17 총괄 결정, 출시 전이라 v1 안에서 의미 변경). 본체는 자기 runner 세션으로 Storage API를 불러 받는다
+      // (버킷 정책: 그 방에 진행 중인 일의 리스를 쥔 runner 기기만). path는 버킷 안 경로(<공간>/<방>/…).
+      id: 'msgid', name: ['str', { min: 1 }], mime: ['str', { max: 200 }], bytes: 'int', bucket: ['str', { min: 1, max: 64 }], path: ['str', { min: 1, max: 1024 }],
     } }] }],
     memory: 'bool',
     limits: ['obj', { fields: {

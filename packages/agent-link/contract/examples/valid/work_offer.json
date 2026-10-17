@@ -34,8 +34,8 @@
         "name": "notes.pdf",
         "mime": "application/pdf",
         "bytes": 20480,
-        "url": "https://example.supabase.co/storage/v1/object/sign/msgr/notes.pdf?token=REDACTED",
-        "url_expires_at": "2026-10-17T06:10:00Z"
+        "bucket": "msgr",
+        "path": "44444444-5555-4666-8777-888888888801/11111111-2222-4333-8444-555555555504/500/0-notes.pdf"
       }
     ],
     "memory": true,

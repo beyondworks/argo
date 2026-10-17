@@ -38,7 +38,7 @@ id 형식: 봉투·일·에이전트·기기·방·토픽·승인·업로드 슬
 
 | type | 방향·길 | data(필수) | 선택 |
 |---|---|---|---|
-| `work.offer` | 서버→본체, `w:<uid>` 방송·따라잡기 | `room`, `topic`, `from{kind:user·agent, id}`, `text`(≤20,000자), `context[]{id, author, text, at}`, `attachments[]{id, name, mime, bytes, url, url_expires_at}`, `memory`(bool), `limits{tier, max_turn_s, budget}`, `expires_at` | `from.name`, `budget{max_tokens, max_usd}` 또는 `null`, `peers[]{agent, name, role}`(≤50 — 이 방에서 넘김할 수 있는 동료, 등급·파견 허용으로 거름, guest는 빈 배열) |
+| `work.offer` | 서버→본체, `w:<uid>` 방송·따라잡기 | `room`, `topic`, `from{kind:user·agent, id}`, `text`(≤20,000자), `context[]{id, author, text, at}`, `attachments[]{id, name, mime, bytes, bucket, path}`(Storage 위치 — 본체가 runner 세션으로 받는다. 리스를 쥔 동안만 읽힌다), `memory`(bool), `limits{tier, max_turn_s, budget}`, `expires_at` | `from.name`, `budget{max_tokens, max_usd}` 또는 `null`, `peers[]{agent, name, role}`(≤50 — 이 방에서 넘김할 수 있는 동료, 등급·파견 허용으로 거름, guest는 빈 배열) |
 | `work.cancel` | 서버→본체 | `by{kind, id}`, `reason`(코드, 열린 값: user·service_paused 등) | |
 | `work.approval_decision` | 서버→본체 | `approval_id`, `decision`(approve·reject·expire), `by{kind:user·system, id}` | |
 | `work.accept` | 본체→서버, RPC | 없음(`{}`) | `lease_gen`(정수): 서버가 accept 성공 답으로 준 리스 세대. 연장(5분마다)·이어 하기 accept에 싣는다. 실행 중 메모리에만 둔다 |
@@ -68,13 +68,13 @@ id 형식: 봉투·일·에이전트·기기·방·토픽·승인·업로드 슬
 
 ✗ = `invalid_transition`. stalled는 저장하지 않는 계산 상태라, 같은 기기 = 이 일의 리스를 마지막으로 잡았던 기기다(`nextState(…, { sameDevice, leaseGen })`). accept는 같은 기기가 직전 리스 세대를 실어 보낸 "이어 하기"만 받는다. 재시작한 본체는 세대를 모르므로 같은 기기라도 거부된다. 처음부터 다시 돌려 되돌릴 수 없는 일이 다른 키로 두 번 나가는 것을 막기 위해서다(경우 8). 같은 기기의 늦은 result·error는 받아서 일을 끝내고 방 글에 표시 코드 `work.late`(`LATE_MARK`)를 붙인다. 실제로 끝난 일이 "결과 모름"으로 남지 않게 하기 위해서다. 자동 재실행은 없고, 사람이 "다시 시키기"로 새 일을 만들었어도 늦은 결과는 옛 일의 토픽에만 붙는다. 새 `intent`는 accepted·running에서만 받는다. 본체는 intent가 성공해야 되돌릴 수 없는 일을 실행한다(D13).
 
-본체 의무(U4가 시험한다): stalled 일의 accept(이어 하기)와 늦은 result·error는 그 일을 메모리에 들고 계속하던 본체 프로세스만 보낸다. 재시작한 본체는 `msgr2_link_pending`에서 본 stalled 일을 accept하지 않고, 남은 intent 키는 `unknown`으로 알린다(자동 재실행 0, 설계 7절 경우 8). 계약도 같은 것을 막는다: `lease_gen`은 메모리에만 두므로 재시작한 본체의 accept는 세대가 없어 거부된다. U4 시험: 재시작 뒤 stalled 일 accept 0.
+본체 의무(U4가 시험한다): stalled 일의 accept(이어 하기)와 늦은 result·error는 그 일을 메모리에 들고 계속하던 본체 프로세스만 보낸다. 재시작한 본체는 `msgr2_link_pending`에서 본 stalled 일을 accept하지 않는다(자동 재실행 0, 설계 7절 경우 8). 남은 intent 키는 본체가 알리지 않는다(`EFFECT_STATES`에 unknown이 없다) — 서버가 리스가 끝난 일(stalled)이나 끝난 일의 intent를 읽을 때 `unknown`으로 계산한다(`msgr2_work_status`의 `effects[].state`). 계약도 같은 것을 막는다: `lease_gen`은 메모리에만 두므로 재시작한 본체의 accept는 세대가 없어 거부된다. U4 시험: 재시작 뒤 stalled 일 accept 0.
 
 받을 수 없는 본체(러너 로그인 없음 등)는 accept하지 않는다. 받은 뒤 실패하면 `work.error`를 보낸다. 리스 주인이 아닌 기기는 accept 외의 봉투를 보낼 수 없다(`not_lease_holder`).
 
 ## 거부 코드(`msgr2_link_send` 답)
 
-답 모양: 성공 `{ ok: true, duplicate?: true }`(accept 성공이면 `lease_gen`, `lease_until`도 싣는다), 거부 `{ ok: false, code, retry }`.
+답 모양: 성공 `{ ok: true, duplicate?: true }`(accept 성공이면 `lease_gen`, `lease_until`과 원글의 지금 첨부 `attachments[]`(offer와 같은 모양)도 싣는다 — 사람 글의 첨부는 글을 넣은 뒤에 붙어 offer에 없을 수 있다), 거부 `{ ok: false, code, retry }`.
 
 | 코드 | 다시 보냄 | 뜻 |
 |---|---|---|
