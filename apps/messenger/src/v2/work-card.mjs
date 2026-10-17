@@ -39,6 +39,25 @@ export function workCard({ work, approval = null, progress = null, effects = [],
   };
 }
 
+/** 리스 길이(서버 설정 msgr2_lease_s 기본 600초). 리스 연장(accept 다시 보내기)은 방송이 없어, 화면이 받은 lease_until은 오래된 값일 수 있다. */
+export const LEASE_MS = 600_000;
+
+/**
+ * 결과 모름(stalled) 판정 보호(총괄 #1085 검수 2026-10-18): 받은 lease_until로만 계산하면 리스보다 긴 일이 정상 진행 중에도 '결과 모름'이 된다.
+ * ① v2:wk: 진행 신호를 받은 시각(aliveAt)이 있으면 그 뒤 리스 한 번만큼은 살아 있다고 본다.
+ * ② 그래도 stalled면, 이 행(id·lease_until·updated_at)으로 아직 다시 읽지 않았을 때 다시 읽기를 요청하고(recheck), 다시 읽는 동안은 결과 모름을 그리지 않는다.
+ * checked: 이미 다시 읽은 행 표지 집합(rowKey). 반환: { view(workCard에 넣을 행), recheck, key }.
+ */
+export const rowKey = (w) => `${w.id}|${w.lease_until ?? ''}|${w.updated_at ?? ''}`;
+export function stalledGuard({ work, aliveAt = null, checked = new Set(), now = Date.now() }) {
+  let view = work;
+  if (aliveAt && !(Date.parse(work.lease_until ?? '') >= aliveAt + LEASE_MS)) view = { ...work, lease_until: new Date(aliveAt + LEASE_MS).toISOString() };
+  if (effectiveState(view, now) !== 'stalled') return { view, recheck: false, key: rowKey(work) };
+  const key = rowKey(work);
+  if (checked.has(key)) return { view, recheck: false, key };
+  return { view: { ...view, lease_until: new Date(now + 60_000).toISOString() }, recheck: true, key }; // 다시 읽는 동안은 진행 중으로
+}
+
 /**
  * 메시지 목록에 일 카드를 끼운다. 카드는 그 일을 시킨 글(source_message_id) 바로 아래, 그 글이 목록에 없으면 일이 생긴 시각 자리.
  * 승인 요청 카드 글(kind 'card', meta.code 'approval.request')과 카드가 있는 일의 오류 시스템 글(work.error)은 일 카드가 대신 그리므로 목록에서 뺀다.

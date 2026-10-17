@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ConfirmModal } from '@argo/ui';
 import { WorkCard } from './WorkCard.jsx';
-import { workCard } from './work-card.mjs';
+import { workCard, stalledGuard } from './work-card.mjs';
 import { loadWorks, workStatus, cancelWork, decideApproval } from './data.mjs';
 
 const LIVE = ['accepted', 'running', 'awaiting_approval'];
@@ -18,13 +18,15 @@ export function useWorkCards({ enabled, client, machine, chId, uid, event, nameO
   const [works, setWorks] = useState([]); const [approvals, setApprovals] = useState([]);
   const [progress, setProgress] = useState(() => new Map()); const [effects, setEffects] = useState(() => new Map());
   const [busy, setBusy] = useState(null); const [cancelAsk, setCancelAsk] = useState(null);
+  const [aliveAt, setAliveAt] = useState(() => new Map()); // 일 id → v2:wk: 진행 신호를 받은 시각(리스 연장은 방송이 없다)
+  const checked = useRef(new Set()); const recheckSoon = useRef(null); // 결과 모름 판정 전에 한 번 다시 읽은 행(stalledGuard)
   const chRef = useRef(chId); chRef.current = chId;
   const worksRef = useRef(works); worksRef.current = works;
 
   const reload = useCallback(async (room) => {
     try { const d = await loadWorks(client, room); if (room === chRef.current) { setWorks(d.works); setApprovals(d.approvals); } } catch { /* 다음 표지에 다시 읽는다 */ }
   }, [client]);
-  useEffect(() => { if (!enabled || !chId) return; setWorks([]); setApprovals([]); setProgress(new Map()); setEffects(new Map()); void reload(chId); }, [enabled, chId, reload]);
+  useEffect(() => { if (!enabled || !chId) return; setWorks([]); setApprovals([]); setProgress(new Map()); setEffects(new Map()); setAliveAt(new Map()); void reload(chId); }, [enabled, chId, reload]);
 
   useEffect(() => {
     if (!enabled || !event) return;
@@ -35,7 +37,7 @@ export function useWorkCards({ enabled, client, machine, chId, uid, event, nameO
       // 결재 행은 표지에 없다 — 결재 대기로 바뀌었거나 결재 대기에서 벗어난 일이 있을 때만 다시 읽는다
       if (incoming.some((w) => w.state === 'awaiting_approval' || prev.get(w.id)?.state === 'awaiting_approval')) void reload(chRef.current);
     }
-    if (event.kind === 'v2progress' && event.workId) setProgress((p) => new Map(p).set(event.workId, { stage: event.stage, note: event.note, at: event.at }));
+    if (event.kind === 'v2progress' && event.workId) { setProgress((p) => new Map(p).set(event.workId, { stage: event.stage, note: event.note, at: event.at })); setAliveAt((m) => new Map(m).set(event.workId, Date.now())); }
     if (event.kind === 'rt_up' && chRef.current) void reload(chRef.current); // 끊긴 동안 놓친 표지
   }, [enabled, event, reload]);
 
@@ -48,8 +50,16 @@ export function useWorkCards({ enabled, client, machine, chId, uid, event, nameO
   }, [enabled, machine, liveKey]);
 
   const approvalOf = useCallback((wid) => approvals.filter((a) => a.work_id === wid).sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))[0] ?? null, [approvals]);
-  const cards = useMemo(() => works.map((w) => ({ w, card: workCard({ work: w, approval: approvalOf(w.id), progress: progress.get(w.id) ?? null, effects: effects.get(w.id) ?? [], uid }) }))
-    .sort((a, b) => Date.parse(a.w.created_at) - Date.parse(b.w.created_at)), [works, approvalOf, progress, effects, uid]);
+  const [, setTick] = useState(0);
+  const guarded = works.map((w) => ({ w, g: stalledGuard({ work: w, aliveAt: aliveAt.get(w.id) ?? null, checked: checked.current }) }));
+  const recheckKeys = guarded.filter((x) => x.g.recheck).map((x) => x.g.key).join(',');
+  useEffect(() => { // 결과 모름으로 보이기 전에 그 방의 일을 한 번 다시 읽는다(행이 바뀌지 않았으면 그다음은 결과 모름을 그린다)
+    if (!enabled || !recheckKeys || recheckSoon.current) return;
+    const keys = recheckKeys.split(','); const room = chRef.current;
+    recheckSoon.current = reload(room).finally(() => { for (const k of keys) checked.current.add(k); recheckSoon.current = null; setTick((x) => x + 1); });
+  }, [enabled, recheckKeys, reload]);
+  const cards = useMemo(() => guarded.map(({ w, g }) => ({ w, card: workCard({ work: g.view, approval: approvalOf(w.id), progress: progress.get(w.id) ?? null, effects: effects.get(w.id) ?? [], uid }) }))
+    .sort((a, b) => Date.parse(a.w.created_at) - Date.parse(b.w.created_at)), [guarded.map((x) => x.g.view.lease_until + x.g.view.state).join(), works, approvalOf, progress, effects, uid]); // eslint-disable-line react-hooks/exhaustive-deps
   const ids = useMemo(() => new Set(works.map((w) => w.id)), [works]);
 
   const decide = async (card, decision) => {

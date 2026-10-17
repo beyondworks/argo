@@ -106,3 +106,28 @@ test('v2 부품 사전 전수: WorkCard·useWorkCards·source·composer·runtime
   assert.doesNotMatch(code, /[가-힣]/, '사전 밖 한글');
   assert.doesNotMatch(code, /\bwindow\.(confirm|prompt)\(/);
 });
+
+test('결과 모름 보호(#1085 검수): 진행 신호를 받은 뒤 리스 한 번은 살아 있다, 그래도 stalled면 한 번 다시 읽는 동안은 진행 중으로, 다시 읽은 같은 행은 결과 모름', async () => {
+  const { stalledGuard, rowKey, LEASE_MS, workCard: card } = await import('../src/v2/work-card.mjs');
+  const now = Date.parse('2026-10-18T10:00:00Z');
+  const w = { id: 'w1', state: 'running', has_result: false, lease_until: new Date(now - 60_000).toISOString(), updated_at: '2026-10-18T09:40:00Z', expires_at: new Date(now + 1e6).toISOString(), owner_user_id: 'o', root_user_id: 'u' };
+  // ① 진행 신호가 리스 안이면 살아 있다(요청 없음)
+  const alive = stalledGuard({ work: w, aliveAt: now - LEASE_MS + 30_000, now });
+  assert.equal(alive.recheck, false); assert.equal(card({ work: alive.view, now }).phase, 'working');
+  // 진행 신호가 리스보다 오래됐으면 stalled 후보
+  const old = stalledGuard({ work: w, aliveAt: now - LEASE_MS - 1, now });
+  assert.equal(old.recheck, true, '다시 읽기 요청'); assert.equal(card({ work: old.view, now }).phase, 'working', '다시 읽는 동안 결과 모름을 그리지 않는다');
+  // ② 신호가 없어도 처음 stalled는 다시 읽기부터
+  const first = stalledGuard({ work: w, now });
+  assert.equal(first.recheck, true); assert.equal(first.key, rowKey(w));
+  // 다시 읽은 같은 행(리스·갱신 시각 그대로)은 결과 모름
+  const after = stalledGuard({ work: w, checked: new Set([rowKey(w)]), now });
+  assert.equal(after.recheck, false); assert.equal(card({ work: after.view, now }).phase, 'unknown');
+  // 다시 읽었더니 리스가 늘어 있었다(다른 행 표지) → 진행 중
+  const renewed = { ...w, lease_until: new Date(now + 300_000).toISOString(), updated_at: '2026-10-18T09:59:00Z' };
+  const r = stalledGuard({ work: renewed, checked: new Set([rowKey(w)]), now });
+  assert.equal(r.recheck, false); assert.equal(card({ work: r.view, now }).phase, 'working');
+  // 결과가 있는 일·끝난 일은 건드리지 않는다
+  assert.equal(stalledGuard({ work: { ...w, state: 'done' }, now }).recheck, false);
+  assert.equal(stalledGuard({ work: { ...w, has_result: true }, now }).recheck, false);
+});
