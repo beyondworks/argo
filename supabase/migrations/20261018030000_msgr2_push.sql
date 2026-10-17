@@ -6,7 +6,7 @@
 --   갱신된 사람은 그 방을 보고 있는 것으로 보고 뺀다(읽음은 사람이 방을 볼 때 값이 바뀌면만 쓴다 — 쓰기 추가 0). 앱이 앞에 있지만 다른 방을 보는 사람에게는 간다
 --   (앱이 전경 알림을 그린다 — 지금 메신저와 같다). 기억 안 남김 방도 알림은 보낸다(저장이 아니다).
 -- 대상 글: 사람·에이전트의 text 글과 승인 요청 카드(meta.code 'approval.request'). 시스템 글·진행 카드·지운 글은 보내지 않는다.
--- 보내지 않는 때: 받을 사람이 없을 때(요청 0), 이전(U8) 백필 중(서비스 문맥 + msgr2.backfill = on — U2b 방송 규칙과 같다), v2 중단 스위치(msgr2_paused), 주소 설정 없음.
+-- 보내지 않는 때(트리거): 대상 글이 아닐 때, 이전(U8) 백필 중(서비스 문맥 + msgr2.backfill = on — U2b 방송 규칙과 같다), v2 중단 스위치(msgr2_paused), 주소 설정 없음.
 -- 멱등: 엣지가 msgr2_push_sent(message_id 기본 키)를 먼저 잡는다 — 같은 글에 두 번 보내지 않는다(재생·위조 호출 포함). 보존: msgr2_push_sent 7일, pg_net 응답 1일(하루 1번 정리).
 -- 키 값(APNs .p8·FCM 서비스 계정)은 엣지 시크릿에만 있다 — 이름: APNS_KEY_P8·APNS_KEY_ID·APNS_TEAM_ID·APNS_TOPIC·APNS_SANDBOX·FCM_SERVICE_ACCOUNT·PUSH_FN_SECRET.
 -- 주소: msgr_settings 'msgr2_push_url'(엣지 배포 뒤 맥 one이 넣는다). 인증 헤더는 옛 msgr_push_headers()(push_secret) 그대로.
@@ -58,7 +58,8 @@ $$;
 revoke all on function public.msgr2_push_recipients(bigint) from public, anon, authenticated;
 grant execute on function public.msgr2_push_recipients(bigint) to service_role;
 
--- 글 insert → 엣지 호출 한 번({message_id}). 받을 사람이 없으면 요청하지 않는다. 푸시 실패가 글 저장을 막지 않는다.
+-- 글 insert → 엣지 호출 한 번({message_id}). 트리거는 대상 글·백필·중단 스위치·주소만 본다 — 받는 사람 판정은 엣지에서 한 번만 한다(받을 사람이 없으면 엣지가 0건으로 끝낸다).
+-- 받는 사람을 여기서 계산하면 글 넣기가 방 크기만큼 느려진다(검수 실측 800명 open 방: 1.95ms → 173ms). 푸시 실패가 글 저장을 막지 않는다.
 create or replace function public.msgr2_push_enqueue() returns trigger
   language plpgsql security definer set search_path = public, pg_temp as $$
 declare url text;
@@ -66,7 +67,6 @@ begin
   if new.deleted_at is not null or not public._msgr2_push_target(new.kind, new.meta) then return new; end if;
   if auth.uid() is null and coalesce(current_setting('msgr2.backfill', true), '') = 'on' then return new; end if; -- 이전(U8) 백필: 옛 글 수백만 건에 알림을 보내지 않는다
   if public._msgr2_paused() then return new; end if;
-  if not exists (select 1 from public.msgr2_push_recipients(new.id)) then return new; end if;
   select value into url from public.msgr_settings where key = 'msgr2_push_url';
   if url is null or url = '' then return new; end if;
   perform net.http_post(url := url, headers := public.msgr_push_headers(), body := jsonb_build_object('message_id', new.id), timeout_milliseconds := 5000);
@@ -82,9 +82,13 @@ create or replace function public.msgr2_push_prune() returns void
   language plpgsql security definer set search_path = public, pg_temp as $$
 begin
   delete from public.msgr2_push_sent where claimed_at < now() - interval '7 days';
-  if to_regclass('net._http_response') is not null then
-    execute 'delete from net._http_response where created < now() - interval ''1 day''';
-  end if;
+  -- pg_net 응답 정리는 따로 — 라이브에서 net 표 삭제 권한이 없어도 위 장부 정리까지 롤백되지 않게 한다(pg_net 자체 ttl이 남은 몫을 지운다)
+  begin
+    if to_regclass('net._http_response') is not null then
+      execute 'delete from net._http_response where created < now() - interval ''1 day''';
+    end if;
+  exception when others then null;
+  end;
 end $$;
 revoke all on function public.msgr2_push_prune() from public, anon, authenticated;
 do $$

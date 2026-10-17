@@ -45,7 +45,7 @@ before(() => {
   for (const [u, n] of [[O, 1], [M, 2], [G, 3], [X, 4], [R, 5]]) appWithToken(u, n);
 });
 
-test('1:1: 에이전트 답 → 주인 앱 기기에 알림(트리거가 엣지를 한 번 부른다), 주인 자신의 글은 알림 없음', { skip }, () => {
+test('1:1: 에이전트 답 → 주인 앱 기기에 알림(트리거가 엣지를 한 번 부른다), 주인 자신의 글은 받는 사람 0(엣지가 0건으로 끝낸다)', { skip }, () => {
   const c0 = calls();
   const mid = post(DM, { agent: AG, body: '초안 올렸어요' });
   assert.deepEqual(usersOf(mid), [O]);
@@ -54,7 +54,7 @@ test('1:1: 에이전트 답 → 주인 앱 기기에 알림(트리거가 엣지�
   assert.equal(lastCall().url, 'https://edge.test/msgr2-push');
   const own = post(DM, { author: O });
   assert.deepEqual(usersOf(own), [], '본인 제외');
-  assert.equal(calls(), c0 + 1, '받을 사람이 없으면 엣지를 부르지 않는다(요청 0)');
+  assert.equal(calls(), c0 + 2, '트리거는 받는 사람을 계산하지 않는다 — 대상 글이면 엣지를 한 번 부르고, 엣지가 받는 사람 0으로 끝낸다');
 });
 
 test('팀 비공개 방: 방 멤버(멤버·손님)는 받고, 방 멤버 아닌 팀원·빠진 사람·보낸 사람은 못 받는다', { skip }, () => {
@@ -156,6 +156,45 @@ test('유휴 쓰기 0: 받는 사람 계산은 읽기만(기기·읽음·장부 
   const mid = post(TR, { author: M });
   for (let i = 0; i < 3; i++) recipients(mid);
   assert.deepEqual(['msgr2_devices', 'msgr2_reads', 'msgr2_push_sent'].map((t) => db.xmins(t)), before);
+});
+
+test('트리거는 받는 사람을 계산하지 않는다 — 받는 사람 함수가 실패해도 대상 글이면 엣지를 한 번 부른다(판정은 엣지에서 한 번만)', { skip }, () => {
+  db.sql(`alter function public.msgr2_push_recipients(bigint) rename to msgr2_push_recipients_real`);
+  db.sql(`create function public.msgr2_push_recipients(p_message bigint) returns table (user_id uuid, push_token text) language plpgsql as $$ begin raise exception 'recipients called'; end $$`);
+  try {
+    const c0 = calls();
+    post(TR, { author: M, body: '트리거 판정 확인' });
+    assert.equal(calls(), c0 + 1, '받는 사람 함수를 불렀다면 예외를 삼켜 호출이 0이었을 것이다');
+  } finally {
+    db.sql(`drop function public.msgr2_push_recipients(bigint); alter function public.msgr2_push_recipients_real(bigint) rename to msgr2_push_recipients`);
+  }
+});
+
+test('큰 방: 800명 open 방에도 글 넣기는 받는 사람 수와 무관하게 빠르다(측정을 남긴다)', { skip }, (t) => {
+  const BIG = db.sql(`insert into public.msgr2_rooms (space_id, kind, name) values ('${TS}', 'open', '큰방') returning id`);
+  db.sql(`with u as (select gen_random_uuid() as id from generate_series(1, 800)),
+    a as (insert into auth.users (id) select id from u returning id),
+    m as (insert into public.msgr2_space_members (space_id, user_id, role) select '${TS}', id, 'member' from a returning user_id)
+    insert into public.msgr2_devices (user_id, kind, app, app_version, session_id, push_token, expires_at)
+      select user_id, 'app', 'messenger', '0.1.200', gen_random_uuid(), md5(user_id::text) || md5(user_id::text), now() + interval '30 days' from m`);
+  const time = (room) => Number(db.sql(`do $$ declare t0 timestamptz := clock_timestamp(); begin
+      insert into public.msgr2_messages (room_id, author_kind, author_user_id, body) values ('${room}', 'user', '${O}', '측정');
+      perform set_config('argo.t_ms', (extract(epoch from clock_timestamp() - t0) * 1000)::text, false); end $$; select current_setting('argo.t_ms')`).split('\n').pop());
+  for (let i = 0; i < 3; i++) { time(BIG); time(DM); } // 예열
+  const big = Math.min(...[0, 1, 2, 3, 4].map(() => time(BIG)));
+  const small = Math.min(...[0, 1, 2, 3, 4].map(() => time(DM)));
+  t.diagnostic(`글 넣기(최솟값 5회): 800명 open 방 ${big.toFixed(2)}ms · 1:1 방 ${small.toFixed(2)}ms (검수 실측: 받는 사람을 트리거에서 계산하면 800명 방 173ms)`);
+  assert.ok(big < 50, `800명 방 글 넣기 ${big}ms — 받는 사람을 트리거에서 계산하고 있다`);
+  assert.ok(recipients(db.sql(`select max(id) from public.msgr2_messages where room_id = '${BIG}'`)).length >= 800, '판정은 엣지에서 그대로(800명 이상)');
+});
+
+test('보존 정리: pg_net 응답 삭제가 실패해도(권한 없음 등) 장부 7일 정리는 롤백되지 않는다', { skip }, () => {
+  db.sql(`create table if not exists net._http_response (id bigint)`); // created 열이 없어 삭제가 실패하는 대역
+  try {
+    db.sql(`insert into public.msgr2_push_sent (message_id, claimed_at) values (900200, now() - interval '9 days')`);
+    db.sql('select public.msgr2_push_prune()');
+    assert.equal(db.sql(`select count(*) from public.msgr2_push_sent where message_id = 900200`), '0');
+  } finally { db.sql('drop table net._http_response'); }
 });
 
 test('되돌림: 장부에 행이 있으면 멈추고 아무것도 지우지 않는다 — 비운 뒤에는 트리거·함수·표가 사라지고 글 쓰기는 그대로', { skip }, async () => {
