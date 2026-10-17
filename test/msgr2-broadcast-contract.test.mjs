@@ -21,7 +21,7 @@ function lastBodies() {
   const fns = new Map();
   for (const f of files) {
     const src = readFileSync(MIG + f, 'utf8').replace(/^\s*--.*$/gm, '');
-    const re = /create or replace function public\.([a-z0-9_]+)\s*\(([\s\S]*?)\$(\w*)\$([\s\S]*?)\$\3\$/gi;
+    const re = /create\s+(?:or\s+replace\s+)?function\s+public\.([a-z0-9_]+)\s*\(([\s\S]*?)\$(\w*)\$([\s\S]*?)\$\3\$/gi; // or replace 없는 create function도(검수 #1089 M3)
     let m;
     while ((m = re.exec(src))) fns.set(m[1], { file: f, body: m[4] });
   }

@@ -83,3 +83,48 @@ test('진행 방송 채널은 일마다 하나를 다시 쓰고 release로 닫�
   assert.equal(t.openChannels, 0);
   assert.equal(A.chans[0].removed, true);
 });
+
+test('쉬는 본체: 요청 없이 토큰이 회전해도 refresh()가 구독을 새 클라이언트로 옮기고 connected를 한 번 다시 낸다', async () => {
+  const A = fakeClient('A'), B = fakeClient('B');
+  let current = A;
+  const t = supabaseTransport(async () => current);
+  await t.refresh();
+  const status = [];
+  t.subscribe('v2:w:u', () => {}, (s) => status.push(s));
+  current = B; // 요청 없이 회전
+  await t.refresh();
+  assert.deepEqual({ liveOnA: live(A), liveOnB: live(B) }, { liveOnA: [], liveOnB: ['v2:w:u'] });
+  assert.deepEqual(status, ['connected', 'connected']);
+  assert.equal(A.calls.length + B.calls.length, 0, 'refresh는 네트워크 요청이 아니다');
+  await t.refresh(); // 그대로면 아무것도 안 바꾼다
+  assert.equal(B.chans.length, 1);
+});
+
+test('끊긴 구독(CLOSED·CHANNEL_ERROR·TIMED_OUT)은 다음 refresh()에서 같은 클라이언트로 다시 붙는다(끊기지 않았으면 그대로)', async () => {
+  const A = fakeClient('A');
+  const t = supabaseTransport(A);
+  const status = [];
+  t.subscribe('v2:w:u', () => {}, (s) => status.push(s));
+  await t.refresh();
+  assert.equal(A.chans.length, 1, '살아 있는 구독은 다시 붙이지 않는다');
+  A.chans[0].status('CHANNEL_ERROR'); // 옛 토큰 만료 등으로 서버가 닫았다
+  assert.deepEqual(status, ['connected', 'disconnected']);
+  await t.refresh();
+  assert.deepEqual(live(A), ['v2:w:u']);
+  assert.equal(A.chans.length, 2);
+  assert.deepEqual(status, ['connected', 'disconnected', 'connected']);
+});
+
+test('닫은 진행 토픽에 늦게 온 진행 방송은 채널을 다시 만들지 않는다(취소로 먼저 닫힌 경쟁)', async () => {
+  const A = fakeClient('A');
+  let gate; const wait = new Promise((r) => { gate = r; });
+  let first = true;
+  const t = supabaseTransport(async () => { if (first) { first = false; await wait; } return A; });
+  const p = t.broadcast(TOPICS.work('w9'), { v: 1, type: 'work.progress' }); // 클라이언트를 기다리는 중
+  t.release(TOPICS.work('w9')); // 그 사이 일이 끝났다
+  gate(); await p;
+  assert.equal(t.openChannels, 0);
+  assert.equal(A.chans.length, 0, '채널을 만들지 않았다');
+  await t.broadcast(TOPICS.work('w9'), { v: 1, type: 'work.progress' });
+  assert.equal(A.chans.length, 0);
+});

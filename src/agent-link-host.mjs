@@ -33,20 +33,24 @@ export function unwrapEnvelope(payload) {
 /** supabase-js 클라이언트를 link.mjs transport 모양으로. 받는 길은 비공개 broadcast 채널(v2:w:) 하나 — 서버가 봉투 type을 event로 쓰므로 모든 event를 받는다.
     source = 클라이언트, 또는 지금 클라이언트를 돌려주는 함수(async 가능). 기기 세션 토큰이 회전하면(게이트웨이 sessionClient가 새 클라이언트를 만든다)
     요청마다 새 클라이언트를 쓰고, 열어 둔 구독 채널을 새 클라이언트로 옮긴다(옮기면 다시 'connected' → 따라잡기 1번). 그대로 두면 옛 토큰이 만료된 뒤 401이다.
-    진행 방송 채널(v2:wk:<일>)은 일이 끝나면 release로 닫는다(쌓이지 않게). */
+    쉬는 본체는 요청이 없으므로 호스트가 게이트웨이 확인(10초)마다 refresh()를 불러 회전을 따라가고, 끊긴 구독(CLOSED·CHANNEL_ERROR·TIMED_OUT)을 다시 붙인다
+    (realtime-js는 손으로 넣은 토큰이면 heartbeat 때 토큰을 바꾸지 않는다 — 옛 토큰이 만료되면 서버가 채널을 닫는다).
+    진행 방송 채널(v2:wk:<일>)은 일이 끝나면 release로 닫는다(쌓이지 않게). 닫은 뒤 늦게 도착한 진행 방송은 채널을 다시 만들지 않는다. */
 export function supabaseTransport(source) {
   const getClient = typeof source === 'function' ? source : async () => source;
   let cur = typeof source === 'function' ? null : source;
-  const subs = new Set();      // { topic, onEnvelope, onStatus, ch }
+  const subs = new Set();      // { topic, onEnvelope, onStatus, ch, dead }
   const progress = new Map();  // topic → ch(보내기만)
+  const released = new Map();  // 닫은 진행 토픽 → 닫은 시각(늦은 진행 방송이 채널을 다시 만들지 않게, 10분 뒤 잊는다)
+  const RELEASED_KEEP_MS = 10 * 60_000;
   function open(sub) {
     const ch = cur.channel(sub.topic, { config: { private: true } });
     ch.on('broadcast', { event: '*' }, (msg) => { const env = unwrapEnvelope(msg?.payload); if (env) sub.onEnvelope(env); });
-    sub.ch = ch; // 상태 알림보다 먼저(동기로 SUBSCRIBED를 알리는 클라이언트도 있다)
+    sub.ch = ch; sub.dead = false; // 상태 알림보다 먼저(동기로 SUBSCRIBED를 알리는 클라이언트도 있다)
     ch.subscribe((status) => {
       if (sub.ch !== ch) return; // 옮긴 뒤 옛 채널의 상태는 무시
-      if (status === 'SUBSCRIBED') sub.onStatus?.('connected');
-      else if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') sub.onStatus?.('disconnected');
+      if (status === 'SUBSCRIBED') { sub.dead = false; sub.onStatus?.('connected'); }
+      else if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') { sub.dead = true; sub.onStatus?.('disconnected'); }
     });
   }
   function swap(next) {
@@ -76,14 +80,29 @@ export function supabaseTransport(source) {
       else client().then(() => { if (subs.has(sub) && !sub.ch) open(sub); }).catch(() => onStatus?.('disconnected'));
       return { close: () => { subs.delete(sub); const ch = sub.ch; sub.ch = null; try { if (ch) cur?.removeChannel?.(ch); } catch { /* 무시 */ } } };
     },
+    /** 네트워크 없이 지금 클라이언트를 확인한다 — 바뀌었으면 구독을 옮기고, 끊긴 구독은 다시 붙인다. 호스트가 게이트웨이 확인마다 부른다. */
+    async refresh() {
+      try { await client(); } catch { return; }
+      for (const sub of subs) {
+        if (!sub.dead || !sub.ch) continue;
+        const och = sub.ch; sub.ch = null;
+        try { cur.removeChannel?.(och); } catch { /* 무시 */ }
+        open(sub);
+      }
+    },
     async broadcast(topic, envelope) {
       // 진행 표시는 저장하지 않는 방송이다(설계 D7). 채널을 만들어 두고 일이 끝날 때까지 다시 쓴다(release).
+      if (released.has(topic)) return;
       const c = await client();
+      if (released.has(topic)) return; // 기다리는 사이 일이 끝나 닫혔다 — 다시 만들지 않는다
       let ch = progress.get(topic);
       if (!ch) { ch = c.channel(topic, { config: { private: true } }); progress.set(topic, ch); ch.subscribe(); }
       await ch.send({ type: 'broadcast', event: 'envelope', payload: envelope });
     },
     release(topic) {
+      const now = Date.now();
+      released.set(topic, now);
+      for (const [t, at] of released) if (now - at > RELEASED_KEEP_MS) released.delete(t);
       const ch = progress.get(topic);
       if (!ch) return;
       progress.delete(topic);
@@ -378,9 +397,11 @@ export function createAgentLinkHost(deps) {
     start() { stopped = false; boot().catch((e) => { log('boot failed', e.message); retryLater(); }); return this; },
     stop() { stopped = true; if (timer) clock.clearTimeout(timer); timer = null; link?.stop(); link = null; },
     resync() {
-      if (clock.now() - lastResync < RESYNC_MIN_MS) return Promise.resolve();
+      // 토큰 회전·끊긴 구독은 매번(게이트웨이 확인 10초마다) 확인한다 — 네트워크 요청이 아니다(쉬는 본체가 옛 토큰의 구독에 남지 않게)
+      const fresh = Promise.resolve(current?.refresh?.()).catch(() => {});
+      if (clock.now() - lastResync < RESYNC_MIN_MS) return fresh;
       lastResync = clock.now();
-      return resync().catch((e) => log('agent sync failed', e.code ?? e.message));
+      return fresh.then(() => resync()).catch((e) => log('agent sync failed', e.code ?? e.message));
     },
     get link() { return link; },
     get agents() { return agents; },
