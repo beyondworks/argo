@@ -13,7 +13,7 @@ const flush = async (n = 30) => { for (let i = 0; i < n; i++) await new Promise(
 const until = async (cond, ms = 10_000) => { const end = Date.now() + ms; while (!cond() && Date.now() < end) await new Promise((r) => setTimeout(r, 10)); };
 const DEVICE = 'c4d5e6f7-8091-4a2b-9c3d-4e5f6a7b8c03';
 
-async function setup({ chatImpl, regFails = false, plan, fetchImpl, agents = [{ ws: 'co-1', slug: 'pm', name: 'PM', role: '기획' }] } = {}) {
+async function setup({ chatImpl, regFails = false, plan, agents = [{ ws: 'co-1', slug: 'pm', name: 'PM', role: '기획' }] } = {}) {
   let t = Date.parse('2026-10-17T06:00:00Z');
   const clock = { now: () => t, setTimeout: (fn, ms) => ({ fn, ms }), clearTimeout: () => {}, sleep: async (ms) => { t += ms; }, advance: (ms) => { t += ms; } };
   const server = createFakeServer({ now: clock.now, uid: 'u1' });
@@ -37,12 +37,14 @@ async function setup({ chatImpl, regFails = false, plan, fetchImpl, agents = [{ 
     vaultDir: () => vault,
     appVersion: '0.1.113',
     transportFor: () => server.transport,
-    fetchImpl,
     clock,
     linkClock: clock, // 부품도 같은 가짜 시계(offer 만료 판정)
     log: (...a) => calls.logs.push(a.join(' ')),
   });
   host.start(); await flush();
+  // 시작(등록 → 목록 보내기 → 구독·따라잡기)이 끝날 때까지 — 느린 CI(윈도우)에서는 정해진 flush 횟수로 모자라 대응표가 비어 있었다
+  if (!regFails) await until(() => !!host.link && server.agentIds.has('co-1/pm') && server.rpcCount('msgr2_link_pending') > 0);
+  else { await until(() => calls.logs.some((l) => /device register failed/.test(l))); await flush(); }
   const agentId = server.agentIds.get('co-1/pm');
   return { server, host, calls, vault, agentId, clock };
 }
@@ -56,7 +58,7 @@ test('플래그: ARGO_AGENT_LINK는 정확히 1일 때만 켬, 옛 브리지는 
   assert.equal(legacyMsgrBridgeEnabled({ ARGO_MSGR_LEGACY: '0' }), true);
 });
 
-test('시작: runner 기기 등록(약속 범위) → 에이전트 목록 보내기 → 대응표 → w:<uid> 따라잡기', async () => {
+test('시작: runner 기기 등록(약속 범위) → 에이전트 목록 보내기 → 대응표 → v2:w:<uid> 따라잡기', async () => {
   const { server, host, agentId } = await setup();
   const reg = server.log.find((x) => x.name === 'msgr2_device_register');
   assert.deepEqual({ kind: reg.args.p_kind, app: reg.args.p_app, min: reg.args.p_link_min, max: reg.args.p_link_max }, { kind: 'runner', app: 'desktop', min: 1, max: 1 });
@@ -69,8 +71,9 @@ test('시작: runner 기기 등록(약속 범위) → 에이전트 목록 보내
 test('주인 offer: chat()을 그 에이전트로 부르고(방 문맥 + 지시, abortTag = 일 id) 결과를 보낸다', async () => {
   const { server, calls, agentId } = await setup();
   const o = server.offer({ agent: agentId, text: '회의 자료 초안' });
-  o.data.context = [{ id: crypto.randomUUID(), author: { kind: 'user', id: crypto.randomUUID(), name: '유건' }, text: '지난 회의록 참고', at: o.at }];
+  o.data.context = [{ id: 501, author: { kind: 'user', id: crypto.randomUUID(), name: '유건' }, text: '지난 회의록 참고', at: o.at }];
   server.push(o); await flush();
+  await until(() => server.sentOf('work.result', o.work).length > 0);
   assert.equal(calls.chat.length, 1);
   const c = calls.chat[0];
   assert.equal(c.ws, 'co-1'); assert.equal(c.slug, 'pm'); assert.equal(c.sid, null);
@@ -116,22 +119,41 @@ test('기기 등록이 실패하면 링크를 열지 않는다(구독·요청 0,
   assert.ok(calls.logs.some((l) => /device register failed/.test(l)));
 });
 
-test('받은 첨부: 서명 URL에서 받아 vault/files/msgr2에 두고 chat()에 넘긴다, 25MB 넘는 것은 받지 않는다', async () => {
-  const fetched = [];
-  const fetchImpl = async (url) => { fetched.push(url); return { ok: true, arrayBuffer: async () => new TextEncoder().encode('PDFDATA').buffer }; };
-  const { server, calls, agentId, vault } = await setup({ fetchImpl });
+test('받은 첨부: Storage 위치(bucket·path)에서 runner 세션으로 받아 vault/files/msgr2에 두고 chat()에 넘긴다, 25MB 넘는 것은 받지 않는다(#1076)', async () => {
+  const { server, calls, agentId, vault } = await setup();
+  server.files.set('msgr/s1/r1/501/0-a.pdf', new TextEncoder().encode('PDFDATA'));
   const o = server.offer({ agent: agentId });
   o.data.attachments = [
-    { id: crypto.randomUUID(), name: '../보고서 v1.pdf', mime: 'application/pdf', bytes: 7, url: 'https://x/sign/a', url_expires_at: o.data.expires_at },
-    { id: crypto.randomUUID(), name: 'big.bin', mime: 'application/octet-stream', bytes: ATTACH_IN_MAX + 1, url: 'https://x/sign/b', url_expires_at: o.data.expires_at },
+    { id: 501, name: '../보고서 v1.pdf', mime: 'application/pdf', bytes: 7, bucket: 'msgr', path: 's1/r1/501/0-a.pdf' },
+    { id: 502, name: 'big.bin', mime: 'application/octet-stream', bytes: ATTACH_IN_MAX + 1, bucket: 'msgr', path: 's1/r1/502/0-big.bin' },
   ];
   server.push(o); await flush();
   await until(() => calls.chat.length > 0);
-  assert.deepEqual(fetched, ['https://x/sign/a']);
+  assert.deepEqual(server.downloads, ['msgr/s1/r1/501/0-a.pdf']);
   const att = calls.chat[0].opts.attachments;
   assert.equal(att.length, 1);
   assert.match(att[0].rel, /^files\/msgr2\/[0-9a-f]{8}-보고서_v1\.pdf$/); // 경로 조각을 지운 이름
   assert.equal(await readFile(join(vault, att[0].rel), 'utf8'), 'PDFDATA');
+});
+
+test('offer에 첨부가 비어도 accept 답에 실린 원글 첨부를 받는다(사람 글의 첨부는 글 뒤에 붙는다, #1076)', async () => {
+  const { server, calls, agentId } = await setup();
+  server.files.set('msgr/s1/r1/600/0-late.png', new TextEncoder().encode('PNG'));
+  const o = server.offer({ agent: agentId });
+  server.works.get(o.work).attachments = [{ id: 600, name: 'late.png', mime: 'image/png', bytes: 3, bucket: 'msgr', path: 's1/r1/600/0-late.png' }];
+  server.push(o); await flush();
+  await until(() => calls.chat.length > 0);
+  assert.deepEqual(server.downloads, ['msgr/s1/r1/600/0-late.png']);
+  assert.equal(calls.chat[0].opts.attachments[0].isImage, true);
+});
+
+test('첨부 받기가 실패해도(권한·없음) 턴은 그대로 돈다 — 그 첨부만 빠진다', async () => {
+  const { server, calls, agentId } = await setup();
+  const o = server.offer({ agent: agentId });
+  o.data.attachments = [{ id: 700, name: 'x.pdf', mime: 'application/pdf', bytes: 3, bucket: 'msgr', path: 'nope' }];
+  server.push(o); await flush();
+  await until(() => server.sentOf('work.result', o.work).length > 0);
+  assert.deepEqual(calls.chat[0].opts.attachments, []);
 });
 
 test('답 속 파일: 업로드 슬롯으로 올려 결과 files에 싣는다(본문은 경로를 지운 것)', async () => {

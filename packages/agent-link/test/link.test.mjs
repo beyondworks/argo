@@ -48,6 +48,7 @@ function setup({ turn, canAccept = () => true, device = DEV, clock = fakeClock()
 test('offer → accept → 결과: 본체 요청 2번(accept·result), seq 1·2, 세대를 받아 둔다', async () => {
   const { server, link, calls } = setup();
   link.start(); await flush();
+  assert.deepEqual([...server.subs.keys()], ['v2:w:u1']); // v2 토픽만 구독(옛 w:·u: 정책은 기기 확인이 없다)
   const o = server.offer({ agent: AGENT });
   server.push(o); await flush();
   assert.equal(calls.turns, 1);
@@ -166,7 +167,7 @@ test('업로드 슬롯: 슬롯을 받아 올리고 결과에 슬롯 id를 싣는
   assert.equal(g.server.rpcCount('msgr2_link_upload_slot'), 0);
 });
 
-test('진행 표시: wk:<일> 방송(저장 안 함), 같은 단계·2초 안은 보내지 않는다', async () => {
+test('진행 표시: v2:wk:<일> 방송(저장 안 함), 같은 단계·2초 안은 보내지 않는다', async () => {
   const clock = fakeClock();
   const { server, link } = setup({ clock, turn: async (o, ctx) => {
     ctx.progress('thinking'); ctx.progress('thinking'); ctx.progress('tool', 'Write');
@@ -177,7 +178,7 @@ test('진행 표시: wk:<일> 방송(저장 안 함), 같은 단계·2초 안은
   const o = server.offer({ agent: AGENT });
   server.push(o); await flush();
   // thinking(보냄) → 같은 thinking(안 보냄) → 2초 안 tool(안 보냄) → 2.5초 뒤 tool(보냄) → 바로 writing(2초 안이라 안 보냄)
-  assert.deepEqual(server.broadcasts.map((b) => [b.topic, b.env.data.stage, b.env.data.note]), [[`wk:${o.work}`, 'thinking', undefined], [`wk:${o.work}`, 'tool', 'Write']]);
+  assert.deepEqual(server.broadcasts.map((b) => [b.topic, b.env.data.stage, b.env.data.note]), [[`v2:wk:${o.work}`, 'thinking', undefined], [`v2:wk:${o.work}`, 'tool', 'Write']]);
   assert.equal(server.sentOf('work.progress').length, 0); // RPC로 가지 않는다
 });
 

@@ -43,6 +43,12 @@ export function supabaseTransport(client, { fetchImpl = fetch } = {}) {
       if (!ch) { ch = client.channel(topic, { config: { private: true } }); channels.set(topic, ch); ch.subscribe(); }
       await ch.send({ type: 'broadcast', event: 'envelope', payload: envelope });
     },
+    // offer 첨부(#1076): 서명 URL이 아니라 Storage 위치. runner 세션으로 받는다(버킷 정책 = 그 방 일의 리스를 쥔 runner 기기만)
+    async download(bucket, path) {
+      const { data, error } = await client.storage.from(bucket).download(path);
+      if (error || !data) throw Object.assign(new Error('download failed'), { code: 'download_failed' });
+      return new Uint8Array(await data.arrayBuffer());
+    },
     async put(url, bytes, mime) {
       const r = await fetchImpl(url, { method: 'PUT', headers: { 'content-type': mime || 'application/octet-stream' }, body: bytes });
       if (!r.ok) throw Object.assign(new Error(`upload ${r.status}`), { code: 'upload_failed' });
@@ -112,23 +118,21 @@ const safeName = (n) => basename(String(n || 'file')).replace(/[^\p{L}\p{N}._-]+
 /**
  * 연결부. deps는 시험이 가짜로 바꾼다.
  * deps = { getSession() → { client, uid } | null, listOwnedAgents(uid) → [{ ws, slug, name, role }], chat, interruptTurn,
- *          planReplyFiles, readReplyFile, vaultDir(ws), appVersion, clock, log, transportFor(client), fetchImpl }
+ *          planReplyFiles, readReplyFile, vaultDir(ws), appVersion, clock, log, transportFor(client) }
  */
 export function createAgentLinkHost(deps) {
   const { clock = { now: () => Date.now(), setTimeout, clearTimeout }, log = (...a) => console.error('[argo] agent-link', ...a) } = deps;
-  let link = null, timer = null, stopped = false, tries = 0, lastResync = -Infinity;
+  let link = null, timer = null, stopped = false, tries = 0, lastResync = -Infinity, current = null; // current = 지금 transport(첨부 받기)
   const agents = new Map(); // 서버 에이전트 id → { ws, slug }
   const agentIds = new Set();
 
-  async function attachments(offer, ws) {
+  async function attachments(offer, ws, transport) {
     const out = [];
     const dir = join(deps.vaultDir(ws), 'files', 'msgr2');
     for (const a of offer.data.attachments) {
       if (a.bytes > ATTACH_IN_MAX) continue;
       try {
-        const r = await (deps.fetchImpl ?? fetch)(a.url);
-        if (!r.ok) continue;
-        const buf = Buffer.from(await r.arrayBuffer());
+        const buf = Buffer.from(await transport.download(a.bucket, a.path));
         if (buf.length > ATTACH_IN_MAX) continue;
         await mkdir(dir, { recursive: true });
         const name = `${offer.work.slice(0, 8)}-${safeName(a.name)}`;
@@ -149,7 +153,7 @@ export function createAgentLinkHost(deps) {
       const onAbort = () => { deps.interruptTurn(a.ws, a.slug, { source: 'messenger', tag: offer.work }).catch(() => {}); };
       ctx.signal.addEventListener('abort', onAbort, { once: true });
       try {
-        const files = await attachments(offer, a.ws);
+        const files = await attachments(offer, a.ws, current); // offer = accept 답의 첨부가 반영된 것(link.mjs)
         const text = contextSection(offer.data.context) + offer.data.text;
         const turn = await deps.chat(a.ws, a.slug, text, null, {
           source: 'messenger', attachments: files, abortTag: offer.work,
@@ -186,6 +190,7 @@ export function createAgentLinkHost(deps) {
     const s = await deps.getSession();
     if (!s) return retryLater();
     const transport = deps.transportFor(s.client);
+    current = transport;
     // 기기 등록(U3 msgr2_device_register): runner 기기 + 지원 약속 범위. 답의 device_id가 봉투의 device다.
     const runners = deps.detectRunners ? await detectRunnerIds(deps.detectRunners) : [];
     const reg = await transport.rpc('msgr2_device_register', runnerRegisterArgs({ appVersion: deps.appVersion ?? null, runners }));

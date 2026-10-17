@@ -7,6 +7,7 @@
 //   subscribe(topic, onEnvelope, onStatus) → { close() }   // 비공개 broadcast 채널. onStatus('connected'|'disconnected')
 //   broadcast(topic, envelope) → Promise<void>             // 저장하지 않는 방송(work.progress)
 //   put(url, bytes, mime) → Promise<void>                  // 서명 업로드 URL에 파일 올리기
+//   download(bucket, path) → Promise<Uint8Array>           // offer 첨부 받기(runner 세션 + Storage API, 리스를 쥔 동안만 읽힌다)
 // }
 // host = {
 //   canAccept(offer) → boolean                             // 이 기기에 러너가 있어 받을 수 있나(받을 수 없으면 accept하지 않는다)
@@ -22,6 +23,10 @@
 import {
   LINK_V, SUPPORTED, DIRECTION, REJECT_CODES, validateEnvelope, tierAllows, unsupportedReply,
 } from './contract/v1.mjs';
+
+// v2 실시간 토픽(총괄 공지 2026-10-17): 옛 'u:'·'w:' 정책은 기기 확인 없이 허용돼 폐기된 기기도 받는다 — v2는 접두 'v2:'로 따로 둔다(서버 정책 #1076).
+export const topicWork = (uid) => `v2:w:${uid}`; // 서버→본체(offer·cancel·approval_decision)
+export const topicProgress = (work) => `v2:wk:${work}`; // 본체→화면 진행 표시(저장 안 함)
 
 export const LEASE_RENEW_MS = 5 * 60 * 1000; // 리스 10분, 5분마다 연장(설계 5절)
 export const PROGRESS_MIN_MS = 2000; // 진행 방송은 2초에 한 번까지(같은 단계·문구면 보내지 않음)
@@ -137,6 +142,8 @@ export function createLink({ transport, host, uid, device, agentIds = null, cloc
     try { acc = await send(envelope(w, 'work.accept', {})); }
     catch (e) { works.delete(offer.work); ev('accept_failed', { work: offer.work, code: e.code }); return; }
     w.leaseGen = Number.isInteger(acc?.lease_gen) ? acc.lease_gen : null;
+    // accept 답에는 원글의 지금 첨부가 실린다(사람 글의 첨부는 글을 넣은 뒤에 붙어 offer에 없을 수 있다 — #1076). 있으면 그것을 쓴다.
+    if (Array.isArray(acc?.attachments)) w.offer = { ...offer, data: { ...offer.data, attachments: acc.attachments.slice(0, 20) } };
     scheduleRenew(w);
     runWork(w);
   }
@@ -186,7 +193,7 @@ export function createLink({ transport, host, uid, device, agentIds = null, cloc
         if (key === lastProg.key || t - lastProg.at < PROGRESS_MIN_MS || w.done) return;
         lastProg = { at: t, key };
         const env = envelope(w, 'work.progress', note ? { stage, note: String(note).slice(0, 200) } : { stage });
-        Promise.resolve(transport.broadcast(`wk:${w.offer.work}`, env)).catch(() => {});
+        Promise.resolve(transport.broadcast(topicProgress(w.offer.work), env)).catch(() => {});
       },
       async requestApproval({ approval_id = uuid(), action, risk, summary, effect_key = null, expires_at }) {
         if (!tierAllows(tier, 'work.approval_request')) throw new LinkError('tier_denied');
@@ -254,7 +261,7 @@ export function createLink({ transport, host, uid, device, agentIds = null, cloc
 
   function start() {
     stopped = false;
-    sub = transport.subscribe(`w:${uid}`, (env) => onEnvelope(env), (status) => {
+    sub = transport.subscribe(topicWork(uid), (env) => onEnvelope(env), (status) => {
       if (status === 'connected') catchUp(); // (재)접속마다 한 번 따라잡는다 — 예비 조회·폴링은 없다(D7)
     });
     return api;

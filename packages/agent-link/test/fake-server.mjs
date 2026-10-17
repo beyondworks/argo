@@ -1,5 +1,6 @@
 // 약속 v1을 따르는 가짜 메신저 서버(U2가 아직 없어 부품 시험용). 상태 전이·리스 CAS·세대·중복·효과 키는 계약(contract/v1.mjs) 그대로 판정한다.
 // 실제 서버(msgr2_link_send)와 같은 답 모양을 낸다: { ok:true, duplicate?, lease_gen?, lease_until? } | { ok:false, code }.
+import { topicWork } from '../link.mjs';
 import {
   validateEnvelope, nextState, effectiveState, tierAllows, LINK_V,
 } from '../contract/v1.mjs';
@@ -16,7 +17,9 @@ export function createFakeServer({ now = () => Date.now(), uid = 'u' } = {}) {
   const broadcasts = []; // { topic, env }
   const pending = []; // 따라잡기로 돌려줄 서버→본체 봉투
   const slots = new Map();
-  const agentIds = new Map(); // `${ws}/${slug}` → 서버 에이전트 id
+  const agentIds = new Map();
+  const files = new Map(); // `${bucket}/${path}` → 바이트(Storage 흉내)
+  const downloads = []; // `${ws}/${slug}` → 서버 에이전트 id
   let gen = 0;
   let failNext = []; // 다음 rpc 호출에 넣을 일시 오류
   const opts = { paused: false, revoked: false, maxV: 1 };
@@ -66,6 +69,7 @@ export function createFakeServer({ now = () => Date.now(), uid = 'u' } = {}) {
         w.lease = { device: env.device, gen: ++gen, until: now() + LEASE_MS };
       } else w.lease.until = now() + LEASE_MS;
       out.lease_gen = w.lease.gen;
+      out.attachments = w.attachments ?? w.offer.data.attachments; // 원글의 지금 첨부(#1076)
       out.lease_until = new Date(w.lease.until).toISOString();
     }
     if (env.type === 'work.effect') effects.set(env.data.effect_key, env.data.state);
@@ -98,12 +102,18 @@ export function createFakeServer({ now = () => Date.now(), uid = 'u' } = {}) {
       return { close: () => subs.get(topic)?.delete(s) };
     },
     async broadcast(topic, env) { broadcasts.push({ topic, env }); },
+    async download(bucket, path) {
+      downloads.push(`${bucket}/${path}`);
+      const f = files.get(`${bucket}/${path}`);
+      if (!f) throw Object.assign(new Error('not found'), { code: 'download_failed' });
+      return f;
+    },
     async put(url, bytes) { const id = url.split('/').pop(); if (slots.has(id)) slots.get(id).put = true; },
   };
 
   function push(env, { store = true } = {}) {
     if (store) pending.push(env);
-    for (const s of subs.get(`w:${uid}`) || []) s.onEnvelope(env);
+    for (const s of subs.get(topicWork(uid)) || []) s.onEnvelope(env);
   }
 
   function offer({ agent, device = null, tier = 'owner', text = '보고서 써 줘', expiresIn = 30 * 60 * 1000, memory = true } = {}) {
@@ -142,7 +152,7 @@ export function createFakeServer({ now = () => Date.now(), uid = 'u' } = {}) {
   function reconnect() { for (const set of subs.values()) for (const s of set) s.onStatus?.('connected'); }
 
   return {
-    transport, works, sent, log, agentIds, effects, broadcasts, pending, slots, opts,
+    transport, works, sent, log, agentIds, files, downloads, subs, effects, broadcasts, pending, slots, opts,
     offer, push, cancel, decide, reconnect, serverEnvelope,
     failNext: (...errs) => { failNext.push(...errs); },
     sentOf: (type, work) => sent.filter((e) => e.type === type && (!work || e.work === work)),
