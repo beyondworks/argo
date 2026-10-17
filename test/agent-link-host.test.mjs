@@ -124,10 +124,15 @@ test('주인 offer: chat()을 그 에이전트로 부르고(방 문맥 + 지시,
   assert.equal(server.works.get(o.work).state, 'done');
 });
 
-test('기억 안 남김 방(memory=false)은 journal.off로 부른다', async () => {
+test('기억 안 남김 방(memory=false)은 journal.off로 부르고, 범위에 memoryOff를 실어 이어지는 쪽지·결재 후속 턴도 일지를 끈다', async () => {
   const { server, calls, agentId } = await setup();
   server.push(server.offer({ agent: agentId, memory: false })); await flush();
+  await until(() => calls.chat.length > 0);
   assert.deepEqual(calls.chat[0].opts.journal, { off: true });
+  assert.equal(calls.chat[0].opts.mirrorCtx.scope.memoryOff, true);
+  server.push(server.offer({ agent: agentId, memory: true })); await flush();
+  await until(() => calls.chat.length > 1);
+  assert.equal('memoryOff' in calls.chat[1].opts.mirrorCtx.scope, false, '기억 남김 방은 표지 없음');
 });
 
 test('등급별 실행: owner는 주인 도구(범위 owner 표지), team·guest는 손님 도구 묶음으로 돈다(tier_denied 거절 없음)', async () => {

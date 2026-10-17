@@ -742,7 +742,7 @@ export function makePermissionGate(wsId, slug, wsRoot, from = null, lang = 'ko',
         if (hit) {
           const shell = normalizeShell(cmd); const channelId = opts.msgr.channelId ?? null;
           if (toolUseID && shellGranted.has(toolUseID)) { shellGranted.delete(toolUseID); return allow; } // 같은 호출의 두 번째 판정
-          if (await consumeShellApproval(wsId, { slug, shell, channelId })) { if (toolUseID) shellGranted.add(toolUseID); return allow; }
+          if (await consumeShellApproval(wsId, { slug, shell, channelId, work: opts.msgr.link?.work ?? null })) { if (toolUseID) shellGranted.add(toolUseID); return allow; }
           const pending = (await loadApprovals(wsId)).find((a) => a.status === 'pending' && a.slug === slug && a.payload?.shell === shell && (a.msgr?.channelId ?? null) === channelId
             && (!opts.msgr.link || a.scope?.work === opts.msgr.link.work)); // v2 일: 같은 일의 결재만 가리킨다(다른 일·데스크톱 결재는 그 일의 카드가 아니다)
           const item = pending ?? await addApproval(wsId, { slug, ...(from ? { from } : {}),
