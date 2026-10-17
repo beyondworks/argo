@@ -577,6 +577,7 @@ test('일 화면: 볼 때만 wk:<일>·pr:<주인>을 구독하고, 뒤로 가�
   fake.broadcast('v2:wk:w-1', 'envelope', { v: 1, id: 'e2', work: 'w-OTHER', seq: 4, type: 'work.progress', data: { stage: 'answer' } }); await flush(); // 다른 일
   fake.broadcast('v2:wk:w-1', 'envelope', { v: 1, id: 'e3', work: 'w-1', seq: 5, type: 'work.result', data: { stage: 'answer', text: 'x' } }); await flush(); // 진행이 아님(stage가 있어도)
   fake.broadcast('v2:wk:w-1', 'progress', { stage: 'think' }); await flush(); // 평평한 옛 흉내 모양은 받지 않는다
+  fake.broadcast('v2:wk:w-1', 'envelope', { v: 1, id: 'e4', work: 'w-1', seq: 6, type: 'work.progress', data: { stage: 'answer' } }); await flush(); // 약속에 없는 단계
   assert.deepEqual(prog.map((p) => [p.stage, p.note, p.seq]), [['tool', '검색', 3]]);
   await m.setForeground(false); assert.deepEqual(fake.liveTopics(), []);
   await m.setForeground(true); await flush();

@@ -27,7 +27,7 @@ const orgEffectSrc = between('useEffect(() => {\n    if (!uid || !hasToken || !o
 function orgShell({ orgs, active, watch = null }) {
   const rt = fakeSupabase(); const events = []; let syncs = 0; let uRejoins = 0;
   watch ??= createLinkWatch({ onSync: () => { syncs++; }, timer: (fn) => setTimeout(fn, 0), clear: clearTimeout });
-  const scope = { uid: 'u1', hasToken: true, orgs, linkWatch: () => watch, linkRef: { current: { subUid: null } }, realtimeScope: createRealtimeScope(), supabase: rt.sb,
+  const scope = { V2: false /* 메신저 v2 플래그 꺼짐(기본) — 옛 구독 경로 */, uid: 'u1', hasToken: true, orgs, linkWatch: () => watch, linkRef: { current: { subUid: null } }, realtimeScope: createRealtimeScope(), supabase: rt.sb,
     activeOrg: { current: active }, PERSONAL: '__personal__', setEvent: (e) => events.push(e.kind), broadcastEvent: (kind, p) => ({ kind, ...p }), subsRef: { current: new Map() }, rt: { current: null },
     setRoomReset: () => {}, handleMessageRef: { current: () => {} }, crossRef: { current: () => {} }, approvalsSoon: { current: () => {} }, notifyApproval: () => {}, inboxSoon: { current: () => {} },
     spaceChanged: { current: () => {} }, activeChannel: { current: null }, bumpMembers: () => {}, onTypingEvent: () => {}, onProgressEvent: () => {}, bumpFriends: () => {}, joinWithBackoff, uRetryRef: { current: null },
@@ -102,7 +102,7 @@ const roomEffectSrc = between('useEffect(() => {\n    let live = true; // 정리
 function roomShell({ open, rooms }) {
   const rt = fakeSupabase(); const events = [];
   const watch = createLinkWatch({ timer: (fn) => setTimeout(fn, 0), clear: clearTimeout });
-  const base = { supabase: rt.sb, roomSubs: { current: new Map() }, linkWatch: () => watch, roomEpoch: { current: null }, roomSpaces: { current: new Map() }, activeOrg: { current: '__personal__' },
+  const base = { V2: false /* 메신저 v2 플래그 꺼짐(기본) */, supabase: rt.sb, roomSubs: { current: new Map() }, linkWatch: () => watch, roomEpoch: { current: null }, roomSpaces: { current: new Map() }, activeOrg: { current: '__personal__' },
     loadedOrg: { current: '__personal__' }, roomIdsKey: rooms.join(','), handleMessageRef: { current: () => {} }, crossRef: { current: () => {} }, PERSONAL: '__personal__', onTypingEvent: () => {},
     onProgressEvent: () => {}, setEvent: (e) => events.push(e.kind), broadcastEvent: (kind, p) => ({ kind, ...p }), activeChannel: { current: open }, roomSignal };
   return { rt, events, run: async (resumeEpoch) => { build(roomEffectSrc, { ...base, resumeEpoch })(); await tick(); } };

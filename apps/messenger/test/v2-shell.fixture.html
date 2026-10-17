@@ -1,0 +1,8 @@
+<!doctype html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>
+// v2 플래그를 이 픽스처에서만 켠다. ?lang=ko|en&theme=graphite-light|graphite-dark&space=team|personal&still=1(캡처용 — 애니메이션 끔)
+(function () { var p = new URLSearchParams(location.search); localStorage.setItem('argo-msgr-v2', '1');
+  localStorage.setItem('argo-lang', p.get('lang') || 'ko'); localStorage.setItem('argo-theme', p.get('theme') || 'graphite-light');
+  if (p.get('still')) document.write('<style>*,*::before,*::after{animation:none!important;transition:none!important}</style>');
+  localStorage.setItem('argo-msgr-last-org', p.get('space') === 'personal' ? '__personal__' : '7e000000-0000-4000-8000-0000000000aa'); })();
+</script></head><body class="argo-messenger"><div id="root"></div><script type="module" src="/src/main.jsx"></script></body></html>
