@@ -245,6 +245,15 @@ test('스위치 캐시 — 10분 안에는 다시 묻지 않고, 읽기 실패�
   A._resetPauseCache();
 });
 
+test('스위치 읽기 묶기 — 같은 순간 두 번 물어도 RPC는 한 번(설정 화면 부모와 이관 영역이 함께 GET)', async (t) => {
+  A._resetPauseCache();
+  const fake = await fakeMsgr({ pause: { paused: true } }); t.after(() => fake.close());
+  const [a, b] = await Promise.all([A.pauseState(fake.client), A.pauseState(fake.client)]);
+  assert.equal(a.paused, true); assert.equal(b.paused, true);
+  assert.equal(fake.count((h) => h.table === 'rpc:msgr_service_pause'), 1);
+  A._resetPauseCache();
+});
+
 async function company(id, o) {
   const p = paths(id); await mkdir(p.root, { recursive: true });
   await writeFile(join(p.root, 'company.json'), JSON.stringify({ id, name: id, created: o.created ?? '2026-09-01', ownerId: o.ownerId, msgr: o.msgr ?? {} }));
@@ -495,4 +504,108 @@ test('재검수 낮음 — 받는 도중 로그인 계정이 바뀌면 새 토�
   current = { uid: BOB, client: 'B' };
   assert.equal(await getClient(), null, '다른 계정이면 쓰지 않는다 → 인증 실패로 failed');
   release(null); await r.promise;
+});
+
+/* ─── 일부 실패(partial) 자동 이어 받기(2026-10-16 워커 2 지적 — 설정의 다시 받기 단추가 없어진 뒤) ─── */
+test('partial → 앱 재시작 — 못 받은 첨부만 요청하고(방·메시지·스위치 조회 0), md의 받지 못함을 지우고 done, 그 뒤 요청 0', async (t) => {
+  A._resetPauseCache();
+  const uid = '88888888-8888-4888-8888-888888888888';
+  await company('partial-co', { ownerId: uid });
+  let storageDown = true;
+  const fake = await fakeMsgr(sampleDb(), { fault: (h) => (storageDown && h.table === 'storage' ? 500 : null) }); t.after(() => fake.close());
+  const c = { uid, client: fake.client };
+  const companies = async () => [{ id: 'partial-co', ownerId: uid }];
+  const run = (args) => A.runArchive({ ...args, sleep: noSleep });
+  await R.maybeAutoArchive({ session: async () => c, companies, run });
+  const dir = join(process.env.ARGO_ROOT, '.msgr-archive', uid.slice(0, 8));
+  const st1 = await A.readArchiveState(dir);
+  assert.equal(st1.status, 'partial'); assert.equal(st1.failed.length, 1);
+  // 재시작 — 서버가 회복
+  storageDown = false; A._resetPauseCache();
+  const before = fake.hits.length;
+  const r = await R.maybeAutoArchive({ session: async () => c, companies, run });
+  assert.equal(r.retry, true);
+  const hits = fake.hits.slice(before);
+  assert.deepEqual([...new Set(hits.map((h) => h.table))], ['storage'], '못 받은 첨부만 — 방·메시지·조직·스위치 조회 0');
+  assert.equal(hits.length, 1);
+  const st2 = await A.readArchiveState(dir);
+  assert.equal(st2.status, 'done'); assert.equal(st2.failed.length, 0); assert.equal(st2.partialRetries, 1);
+  const room = (await readdir(join(dir, 'rooms'))).find((n) => n.startsWith('주말'));
+  const md = await readFile(join(dir, 'rooms', room, 'messages.md'), 'utf8');
+  assert.match(md, /\[plan\.pdf\]\(attachments\/4-plan\.pdf\)/, 'md에 첨부 링크');
+  assert.doesNotMatch(md, /받지 못함/, '받지 못함 표시가 지워진다');
+  const row = (await readFile(join(dir, 'rooms', room, 'messages.jsonl'), 'utf8')).split('\n').filter(Boolean).map((l) => JSON.parse(l)).find((m) => m.id === 4);
+  assert.equal(row.attachments[0].file, 'attachments/4-plan.pdf', 'jsonl 첨부 자리 채움');
+  const after = fake.hits.length;
+  assert.equal((await R.maybeAutoArchive({ session: async () => c, companies, run })).reason, 'already');
+  assert.equal(fake.hits.length, after, 'done 뒤 요청 0');
+});
+
+test('partial 상한 — 계속 못 받으면 3번만 시도하고(시작마다 못 받은 수만큼), 그 뒤 요청 0·gaveUp(안내는 받지 못했습니다로 끝)', async (t) => {
+  A._resetPauseCache();
+  const uid = '99999999-9999-4999-8999-999999999999';
+  await company('giveup-co', { ownerId: uid });
+  const db = sampleDb(); delete db.files[Object.keys(db.files)[0]]; // 저장소에 파일이 없다(영구 거부 — 재시도 대상 아님)
+  const fake = await fakeMsgr(db); t.after(() => fake.close());
+  const c = { uid, client: fake.client };
+  const companies = async () => [{ id: 'giveup-co', ownerId: uid }];
+  const run = (args) => A.runArchive({ ...args, sleep: noSleep });
+  await R.maybeAutoArchive({ session: async () => c, companies, run });
+  const dir = join(process.env.ARGO_ROOT, '.msgr-archive', uid.slice(0, 8));
+  assert.equal((await A.readArchiveState(dir)).status, 'partial');
+  for (let i = 1; i <= A.PARTIAL_RETRY_MAX; i++) {
+    const before = fake.hits.length;
+    await R.maybeAutoArchive({ session: async () => c, companies, run });
+    const hits = fake.hits.slice(before);
+    assert.equal(hits.length, 1, `${i}번째 재시작: 못 받은 첨부 1개만`);
+    assert.equal(hits[0].table, 'storage');
+    const st = await A.readArchiveState(dir);
+    assert.equal(st.partialRetries, i); assert.equal(st.gaveUp, i === A.PARTIAL_RETRY_MAX);
+  }
+  const before = fake.hits.length;
+  assert.equal((await R.maybeAutoArchive({ session: async () => c, companies, run })).reason, 'gaveUp');
+  assert.equal(fake.hits.length, before, '상한 뒤 요청 0');
+  const s = await R.archiveStatus(uid, 'giveup-co', { companies });
+  assert.equal(s.status, 'partial'); assert.equal(s.gaveUp, true);
+  const dict = await readFile(new URL('../app/i18n.jsx', import.meta.url), 'utf8');
+  assert.match(dict, /'msgrArchive\.noticePartial': \['[^']*다음에 Argo를 켤 때 다시 받습니다\.', '[^']*Argo will try again the next time it starts\.'\]/);
+  assert.match(dict, /'msgrArchive\.noticePartialFinal': \['[^']*첨부 \{n\}개는 받지 못했습니다\.', '[^']*could not be downloaded\.'\]/);
+  const notice = await readFile(new URL('../app/c/[ws]/msgr-archive-notice.jsx', import.meta.url), 'utf8');
+  assert.match(notice, /st\.gaveUp \? 'msgrArchive\.noticePartialFinal' : 'msgrArchive\.noticePartial'/, '배선(보조)');
+});
+
+test('원자 쓰기 — 다시 받은 첨부를 jsonl·md에 반영하다 꺼져도(임시 파일만 쓰고 교체 전) 원본 기록은 그대로 남는다', async (t) => {
+  A._resetPauseCache();
+  const uid = 'aaaa1111-1111-4111-8111-111111111111';
+  await company('atomic-co', { ownerId: uid });
+  let storageDown = true;
+  const fake = await fakeMsgr(sampleDb(), { fault: (h) => (storageDown && h.table === 'storage' ? 500 : null) }); t.after(() => fake.close());
+  const c = { uid, client: fake.client };
+  const companies = async () => [{ id: 'atomic-co', ownerId: uid }];
+  const run = (args) => A.runArchive({ ...args, sleep: noSleep });
+  await R.maybeAutoArchive({ session: async () => c, companies, run });
+  const dir = join(process.env.ARGO_ROOT, '.msgr-archive', uid.slice(0, 8));
+  const room = (await readdir(join(dir, 'rooms'))).find((n) => n.startsWith('주말'));
+  const jsonl = join(dir, 'rooms', room, 'messages.jsonl');
+  const before = await readFile(jsonl, 'utf8');
+  // 재시작 — 첨부는 받지만 jsonl을 반영하는 쓰기가 교체(rename) 전에 꺼진다
+  storageDown = false; A._resetPauseCache();
+  const orig = A._io.writeText; const writes = [];
+  A._io.writeText = async (file, body) => {
+    writes.push(file);
+    if (file.endsWith('messages.jsonl')) { await writeFile(`${file}.tmp-crash`, body.slice(0, 10)); throw new Error('꺼짐(시험)'); } // 임시 파일만 쓰다 멈춤
+    return orig(file, body);
+  };
+  t.after(() => { A._io.writeText = orig; });
+  await R.maybeAutoArchive({ session: async () => c, companies, run });
+  assert.ok(writes.some((f) => f.endsWith('messages.jsonl')), 'jsonl은 원자 쓰기 한 곳(_io.writeText)으로 쓴다');
+  assert.equal(await readFile(jsonl, 'utf8'), before, '원본 jsonl이 잘리거나 바뀌지 않는다');
+  const st = await A.readArchiveState(dir);
+  assert.equal(st.status, 'partial', '반영을 못 끝냈으니 끝남이 아니다(다음 시작에 다시)');
+  assert.equal(st.partialRetries, 1);
+  // 다음 시작 — 정상 쓰기로 마무리
+  A._io.writeText = orig;
+  await R.maybeAutoArchive({ session: async () => c, companies, run });
+  assert.equal((await A.readArchiveState(dir)).status, 'done');
+  assert.match(await readFile(join(dir, 'rooms', room, 'messages.md'), 'utf8'), /\[plan\.pdf\]\(attachments\/4-plan\.pdf\)/);
 });

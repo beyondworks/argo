@@ -7,20 +7,16 @@ export const MESSENGER_WAITLIST = 'https://argo.ceo/messenger#waitlist'; // 메�
 
 /** '메신저 받기' 단추(0.1.113) — 서버 중단 스위치(msgr_service_pause)가 켜져 있으면 받을 수 있는 앱이 없으므로 '출시 알림 받기'로 바꾸고 랜딩 신청란으로 보낸다.
     paused = GET /api/companies/[ws]/msgr-archive 응답의 paused(이관 확인 때 함께 읽은 값 — 새 주기 호출 없음). 모르면(로드 전·옛 서버·오류) 꺼짐과 같다(지금 단추 그대로). */
-/** 메신저가 쉬는 동안(서버 중단 스위치 켜짐) 설정 › 연결 화면의 세 칸 문구(0.1.113, 유건 캡처 2026-10-16) — 꺼짐·모름이면 null·종전 키(지금과 똑같이).
-    descKey = 'Argo 메신저 연결' 카드 설명(쓸 수 있다고 읽히는 안내 대신 쉬는 중) · showHelp = 조직·연결 안내 문단과 '팀과 함께 쓰려면 조직을…' 줄을 보일까
-    runtimeKey = 응답 상태 문구를 바꿀 키(null이면 종전 판정 — 쉬는 동안 브리지는 30분에 한 번만 확인해 '응답 없음·자동 복구'가 고장처럼 보였다) · runtimeButton = 다시 연결·다시 확인 단추를 보일까
-    notifyNoteKey = '알림 받을 메신저' 칸 아래 안내(저장된 체크 값은 바꾸지 않는다) · chipKey = 머리 칩을 '쉬는 중'(회색)으로 바꿀 키(null이면 종전 연결됨·개인 공간·연결 필요). paused = GET msgr-archive 응답의 paused(이관 확인 때 읽은 값 — 새 호출 없음). */
-export function msgrPausedView(paused) {
+/** 메신저가 일시 중단된 동안(서버 중단 스위치 켜짐) 설정 › 연결 화면(0.1.113, 유건 2026-10-16 "알림 받을 메신저에 아르고 메신저나 Argo 메신저 연결 이런 거 빼.
+    빼고 메신저 대기 알림 신청만 두면 되잖아") — 문구로 다듬지 않고 화면에서 뺀다. 꺼짐·모름(로드 전·옛 서버·오류)이면 main과 똑같이.
+    showMsgrNotify = '알림 받을 메신저'에 아르고 메신저 줄을 보일까(저장된 값은 바꾸지 않는다 — 다시 열리면 그대로)
+    msgrCard = 'full'(지금 카드) | 'waitlist'(제목 + '메신저 출시 알림 받기' 단추 하나) · noticeSettingsLink = 회사 화면 완료 안내의 '설정에서 보기' 단추(갈 곳이 없어져 뺀다).
+    paused = GET /api/companies/[ws]/msgr-archive 응답의 paused(설정 화면 부모가 연결 탭을 열 때 한 번 읽는다, 서버는 10분 캐시 — 새 주기 호출 없음).
+    known = 그 응답을 받았나(실패도 받은 것으로 본다 — 실패면 paused false, main과 같다). 받기 전에는 msgrCard 'pending'(카드 자리를 비운다):
+    MsgrCard가 먼저 그려졌다가 출시 알림 카드로 바뀌며 GET /msgr·이관 GET을 한 번씩 더 보내던 깜빡임을 막는다(검수 1, 2026-10-16). */
+export function msgrPausedView(paused, { known = true } = {}) {
   const on = paused === true;
-  return {
-    descKey: on ? 'settings.msgr.pausedHelp' : 'settings.msgr.downloadHelp',
-    showHelp: !on,
-    runtimeKey: on ? 'settings.msgr.runtime.paused' : null,
-    runtimeButton: !on,
-    notifyNoteKey: on ? 'settings.notify.msgrPaused' : null,
-    chipKey: on ? 'settings.msgr.connection.paused' : null,
-  };
+  return { showMsgrNotify: !on, msgrCard: !known ? 'pending' : on ? 'waitlist' : 'full', noticeSettingsLink: !on };
 }
 
 export function msgrGetLink(paused) {

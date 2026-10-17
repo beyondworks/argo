@@ -20,11 +20,11 @@ const msgrI18n = read('apps/messenger/src/i18n.js');
 
 test('MsgrCard가 연결 섹션에 꽂혀 있다 — 연결 탭 맨 위', () => {
   const slack = page.indexOf('kind="slack"');
-  const card = page.indexOf('<MsgrCard ws={ws} agents={data?.agents ?? []} paused={msgrPaused} onArchiveState={onArchiveState} />'); // 0.1.113 — 메신저 중단 스위치(msgrPausedView)를 부모에서 받는다
+  const card = page.indexOf('<MsgrCard ws={ws} agents={data?.agents ?? []} />');
   const conn = page.indexOf('<ConnectorsCard ws={ws} />');
   assert.ok(slack > 0 && card > 0 && conn > 0, '세 카드가 모두 있어야 한다');
   assert.ok(card < page.indexOf('kind="telegram"') && card < slack && card < conn, 'MsgrCard는 연결 탭 맨 위에 있어야 한다');
-  assert.match(page, /function MsgrCard\(\{ ws, agents, paused = false, onArchiveState \}\)/, '컴포넌트 시그니처');
+  assert.match(page, /function MsgrCard\(\{ ws, agents \}\)/, '컴포넌트 시그니처');
 });
 
 test('라우트: 기본 allow는 owner, GET은 조직별 members를 싣는다', () => {
