@@ -32,6 +32,7 @@ import { channelSends } from './channel-events.mjs'; // 판정 정본 — 테스
 import { CHANNEL_EVENTS } from './channel-events.mjs'; // msgr 푸시 대상 종류 집합(pushEvent 머리) — 음소거(company.json.msgr.mutedEvents) 판정은 msgrPush 안에서 channelSends로
 const channelSendsKinds = (kind) => CHANNEL_EVENTS[kind] ?? [];
 import { MSGR_KEY, makeMsgrHandler, startMsgrBridge, msgrPush, msgrNotifyPush, msgrEventOrigin, runMessengerContinuation, autoEnableMsgr, msgrServicePaused } from './gateway/msgr.mjs'; // 팀 메신저 — 새 채널 종류(접합 4지점: qkeys·핸들러·폴러·push)
+import { agentLinkEnabled, legacyMsgrBridgeEnabled } from './agent-link-flags.mjs'; // 메신저 v2 연결(옵트인 ARGO_AGENT_LINK=1)·옛 브리지 끄기(ARGO_MSGR_LEGACY=off) — 기본은 지금 그대로. 연결부는 켜졌을 때만 동적으로 부른다
 import { normalizeMsgrNotify, msgrNotifyWants } from './msgr-notify.mjs'; // 회사 단위 알림 목적지(원점 없는 이벤트)
 import { deliverMessengerNotifications, notificationTickDue } from './gateway/msgr-notifications.mjs';
 import { makeMsgrAbandonNotifier, makeMsgrStallNotifier } from './gateway/msgr-abandon.mjs'; // 큐가 버린 메신저 잡의 실패 안내(H1) — msgr.mjs 밖에 둬 다른 변경과 겹치지 않는다
@@ -1148,6 +1149,7 @@ export function ensureGateway() {
   onNotify(pushEvent);
   let wasLeader = false;
   const sync = async () => {
+    const legacyMsgr = legacyMsgrBridgeEnabled(); // 기본 켜짐. off면 옛 메신저 자동 켜기·큐 드레인·브리지·알림 틱을 이 프로세스에서 돌리지 않는다
     const procLeader = lease.isLeader(); // 이 프로세스가 이 기기의 게이트웨이 주체인가(Next 멀티 워커 단일화)
     const leader = procLeader && isCloudLeader(); // 기기 간에도 폴러 주체는 하나(클라우드 리스)
     if (leader !== wasLeader) { // 리더십 전환은 반드시 로그 — "폴러가 왜 안 도나" 1차 단서
@@ -1180,7 +1182,7 @@ export function ensureGateway() {
     // hosted by someone else). SQL claims prevent two devices sending one row.
     for (const [c] of loaded) {
       const previous = notificationTicks.get(c.id);
-      if (msgrServicePaused() || !notificationTickDue(previous, Date.now())) continue; // 메신저 서비스 일시 중단 중에는 알림 경로 동기화·확인도 쉰다(msgr.mjs servicePause)
+      if (!legacyMsgr || msgrServicePaused() || !notificationTickDue(previous, Date.now())) continue; // 메신저 서비스 일시 중단 중에는 알림 경로 동기화·확인도 쉰다(msgr.mjs servicePause)
       const tick = { busy: true, at: Date.now() };
       notificationTicks.set(c.id, tick);
       deliverMessengerNotifications(c.id, { send: sendRoutineNotification })
@@ -1207,12 +1209,14 @@ export function ensureGateway() {
       for (const [slug, bot] of Object.entries(all.telegram.agents ?? {})) cfgMap[gwCfgKey(c.id, tgAgentQkey(slug))] = bot;
       const qkeys = new Set(['telegram', 'slack', ...Object.keys(all.telegram.agents ?? {}).map(tgAgentQkey)]);
       // 팀 메신저 자동 켜기 — 조직 멤버인데 꺼져 있으면 켠다(10분 스로틀, 세션 있을 때만). 같은 sync에서 아래 큐·브리지가 바로 시작되게 c.msgr을 갱신
-      if (!c.msgr?.enabled && await autoEnableMsgr(c.id, { company: c }).catch((e) => { console.error('[argo] msgr 자동 켜기 실패:', e.message); return false; })) c.msgr = { ...(c.msgr ?? {}), enabled: true };
-      if (c.msgr?.enabled) qkeys.add(MSGR_KEY); // 팀 메신저 — company.json.msgr.enabled(조직에 크루 등록 시 켜짐)
+      if (legacyMsgr && !c.msgr?.enabled && await autoEnableMsgr(c.id, { company: c }).catch((e) => { console.error('[argo] msgr 자동 켜기 실패:', e.message); return false; })) c.msgr = { ...(c.msgr ?? {}), enabled: true };
+      if (legacyMsgr && c.msgr?.enabled) qkeys.add(MSGR_KEY); // 팀 메신저 — company.json.msgr.enabled(조직에 크루 등록 시 켜짐)
       // 설정이 사라진 잔여 큐 디렉터리도 대상 — 핸들러가 cfg 부재 잡을 폐기해 스스로 청소된다
       try {
         for (const n of await readdir(paths(c.id).root)) if (n.startsWith('.gw-queue-')) qkeys.add(n.slice('.gw-queue-'.length));
       } catch { /* 루트 없음 — 새 회사 */ }
+      // 옛 브리지를 끈 프로세스는 남은 메신저 큐도 돌리지 않는다 — 잔여 큐로 잡으면 cfg 없는 잡을 폐기하는 핸들러가 돌 수 있어 파일째 그대로 둔다
+      if (!legacyMsgr) qkeys.delete(MSGR_KEY);
       for (const qkey of qkeys) {
         const id = `${c.id}:${qkey}`;
         aliveDrain.add(id);
@@ -1280,7 +1284,7 @@ export function ensureGateway() {
       // 팀 메신저 브리지 — 회사마다 1개. 폴+Realtime 깨우기로 멘션·DM을 큐에 적재(드레인 워커는 위에서 리더 무관 상시).
       // 기기 사이 단일화는 리스가 아니라 서버 실행권 클레임이다 — 일반·우선 기기는 담당이 아니어도 받는다(종전). 예비 기기(argo run --standby)만
       // 확인된 담당일 때 받는다: 맥이 켜져 담당인 동안 VPS가 먼저 집어 답하지 않게(맥 우선·VPS 예비, 2026-10-08). 공백 동안 온 글은 서버 커서부터 이어 받는다.
-      if (c.msgr?.enabled && !standbyIdle()) {
+      if (legacyMsgr && c.msgr?.enabled && !standbyIdle()) {
         const id = `${c.id}:${MSGR_KEY}`;
         alive.add(id);
         if (!running.has(id)) running.set(id, { key: 'v1', stop: startMsgrBridge(c.id) });
@@ -1309,6 +1313,15 @@ export function ensureGateway() {
         const getCfg = () => globalThis.__argoGwCfg?.[id];
         running.set(id, { key: bot.token, stop: startAgentTelegram(c.id, slug, getCfg) });
       }
+    }
+    // 메신저 v2 연결(agent-link) — 계정당 하나(w:<uid> 구독). 옵트인 플래그일 때만. 예비 기기는 옛 브리지와 같이 담당일 때만 받는다.
+    if (agentLinkEnabled() && !standbyIdle()) {
+      alive.add('agent-link');
+      const cur = running.get('agent-link');
+      if (!cur) {
+        const host = import('./agent-link-host.mjs').then((m) => m.startAgentLinkHost()).catch((e) => { console.error('[argo] agent-link 시작 실패:', e.message); return null; });
+        running.set('agent-link', { key: 'v2', stop: () => { host.then((h) => h?.stop()); }, resync: () => host.then((h) => h?.resync()) });
+      } else cur.resync?.();
     }
     for (const [id, cur] of running) {
       if (!alive.has(id)) { cur.stop(); running.delete(id); }

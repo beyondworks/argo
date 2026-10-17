@@ -13,6 +13,7 @@ import { WS_ROOT } from './workspace.mjs';
 import { withLock, withDirLock } from './mutex.mjs';
 import { createHash } from 'node:crypto';
 import { appGateState, refreshAppGate, appGateClient as gateClient } from './app-gate.mjs';
+import { agentLinkEnabled } from './agent-link-flags.mjs'; // 메신저 v2 로그인 직후 runner 기기 잠금(옵트인 — 켜졌을 때만 연결부를 부른다)
 
 const FILE = '.device-session.json';
 const LOG = '.device-session.log';
@@ -106,6 +107,12 @@ export async function saveDeviceSession({ url, anonKey, session }, { root = WS_R
   // 사용자 이름(프로필 표시 이름) — 로그인마다 1회. 잠금 밖에서 읽는다(네트워크를 기다리며 회전을 막지 않게). 실패하면 이름 없이 저장하고
   // nameAt=0으로 두어 다음 회전 때 한 번 더 읽는다(기기 연동 라우트처럼 만료된 토큰으로 저장하는 경로). 계정이 바뀌어도 옛 이름은 남지 않는다(user를 새로 만든다).
   const prof = await fetchProfileName({ url, anonKey, accessToken: session.access_token, userId: session.user.id }, _mkClient);
+  // 메신저 v2(옵트인 ARGO_AGENT_LINK=1): 세션 파일을 쓰기 **전에** 이 세션을 runner 기기로 잠근다 — 파일을 쓴 뒤에는 에이전트 셸이 그 세션으로
+  // app 기기 등록을 먼저 할 수 있다(검수 1 #1071). 실패해도 로그인은 막지 않는다(연결부가 시작할 때 다시 등록하고, 그 전에는 v2 일을 받지 않는다).
+  if (agentLinkEnabled()) {
+    const [{ APP_VERSION }, { registerRunnerOnLogin }] = await Promise.all([import('./app-version.mjs'), import('./agent-link-host.mjs')]);
+    await registerRunnerOnLogin({ url, anonKey, accessToken: session.access_token }, { mkClient: _mkClient, appVersion: APP_VERSION }).catch(() => {});
+  }
   return withLock(`devsess:${root}`, async () => {
     await mkdir(root, { recursive: true });
     // 프로세스 간 잠금도 잡는다 — 다른 프로세스가 회전하는 중에 로그인을 저장하면, 그 회전이 끝나며 옛 세션으로 덮어 로그인이 사라진다.
