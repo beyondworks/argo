@@ -187,7 +187,8 @@ end $$;
 --   개인 공간: 활동 중인 방 멤버만으로 판정한다(개인 공간의 멤버는 주인 하나).
 --   read = 들어갈 수 있다 · write = read + 보관 안 된 방 · invite = read + direct 아님 + 보관 안 됨 + (팀: owner·admin·member / 개인: 공간 주인)
 --   manage = read + direct 아님 + (팀: owner·admin / 개인: 공간 주인) · decide = read + (팀: owner·admin / 개인: 공간 주인)
---   tier(방의 사람 구성): 사람이 공간 주인뿐이면 owner, 팀 공간이고 손님(손님 역할·공간 밖 사람)이 없으면 team, 그 밖은 guest. read가 거짓이면 null(구성을 흘리지 않는다).
+--   tier(방의 사람 구성): 사람이 공간 주인뿐이면 owner, 팀 공간이고 손님 역할이 없으면 team, 그 밖은 guest. read가 거짓이면 null(구성을 흘리지 않는다).
+--     팀 방의 사람은 활동 중인 공간 멤버만 센다(공간 밖 방 멤버는 판정에서 이미 못 들어온다 — 팀 private·direct도 공간 멤버 + 방 멤버, 설계 1-5 원칙 2보다 좁은 쪽).
 --   삭제된 공간·없는 방·로그인 없음·기기 무효는 모두 거짓.
 create or replace function public.msgr2_access(p_room uuid) returns public.msgr2_access_t
   language plpgsql stable security definer set search_path = public, pg_temp as $$
@@ -323,6 +324,27 @@ create trigger msgr2_same_room before insert on public.msgr2_messages for each r
 drop trigger if exists msgr2_same_room on public.msgr2_attachments;
 create trigger msgr2_same_room before insert on public.msgr2_attachments for each row execute function public.msgr2_same_room();
 
+-- 사람 문맥(auth.uid() 있음 — 사람이 부른 RPC 안)에서 넣는 글은 시각을 서버가 정하고, 첨부 경로는 그 방 폴더만(검수 1 지적 1~3).
+-- 서비스 문맥(이전 U8)은 옛 시각·옛 경로를 그대로 보존해 넣는다. 작성자 열은 바꾸지 않는다 — 남의 이름으로 넣으면 정책이 거부해야 하므로(조용히 고치지 않는다).
+create or replace function public.msgr2_insert_stamp() returns trigger
+  language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  if auth.uid() is null then return new; end if;
+  if tg_table_name = 'msgr2_messages' then
+    new.created_at := now();
+  elsif tg_table_name = 'msgr2_attachments' then
+    new.created_at := now();
+    if new.storage_path not like 'msgr/' || (select r.space_id::text from public.msgr2_rooms r where r.id = new.room_id) || '/' || new.room_id::text || '/%'
+       or new.storage_path like '%..%' or new.storage_path like '%//%' then
+      raise exception 'msgr2_attachment_path' using errcode = '42501'; end if;
+  end if;
+  return new;
+end $$;
+drop trigger if exists msgr2_insert_stamp on public.msgr2_messages;
+create trigger msgr2_insert_stamp before insert on public.msgr2_messages for each row execute function public.msgr2_insert_stamp();
+drop trigger if exists msgr2_insert_stamp on public.msgr2_attachments;
+create trigger msgr2_insert_stamp before insert on public.msgr2_attachments for each row execute function public.msgr2_insert_stamp();
+
 -- 파견은 팀 공간에만(D3 — 개인 공간 자리는 행 없이 늘 있다)
 create or replace function public.msgr2_seat_team_only() returns trigger
   language plpgsql security definer set search_path = public, pg_temp as $$
@@ -352,10 +374,21 @@ revoke all on public.msgr2_spaces, public.msgr2_space_members, public.msgr2_room
   public.msgr2_topics, public.msgr2_messages, public.msgr2_attachments, public.msgr2_reads, public.msgr2_reactions, public.msgr2_prefs from anon, authenticated;
 grant select on public.msgr2_spaces, public.msgr2_space_members, public.msgr2_rooms, public.msgr2_room_members, public.msgr2_agents, public.msgr2_agent_seats,
   public.msgr2_topics, public.msgr2_messages, public.msgr2_attachments, public.msgr2_reads, public.msgr2_reactions, public.msgr2_prefs to authenticated;
--- 사람이 직접 쓰는 것은 글·첨부 행·읽음·반응·설정뿐이다. 공간·멤버·방·방 멤버·에이전트·파견·토픽은 RPC(이 파일·U2)로만 쓴다.
-grant insert on public.msgr2_messages, public.msgr2_attachments to authenticated;
+-- 사람이 직접 쓰는 것은 글·읽음·반응·설정뿐이다. 공간·멤버·방·방 멤버·에이전트·파견·토픽은 RPC(이 파일·U2)로만 쓴다.
+-- 글·첨부는 열 단위로만 연다(검수 1 #1070 지적 1·2): id(identity)를 사람이 정하면 앞으로 쓸 id를 선점해 모든 사람의 다음 글이 pkey 충돌로 실패하고,
+-- created_at·edited_at·deleted_at을 정하면 기록 날짜를 꾸민다. 이 열들은 기본값만 쓴다. 이전(U8, 서비스 문맥)은 표 권한으로 id를 보존해 넣는다.
+grant insert (room_id, topic_id, author_kind, author_user_id, kind, body, meta, reply_to, client_msg_id) on public.msgr2_messages to authenticated;
+-- 첨부 행은 사람이 직접 넣지 않는다(검수 1 지적 3, 총괄 결정): 업로드 슬롯 RPC(U2·U6)가 경로(msgr/<공간>/<방>/<uuid>)를 정해 넣는다. 아래 msgr2_attachment_path 트리거가 경로를 검사한다.
 grant insert, update on public.msgr2_reads, public.msgr2_prefs to authenticated;
 grant insert, delete on public.msgr2_reactions to authenticated;
+
+-- 글이 그 방의 글인가 — 글 넣기 정책의 답글 확인(정책 안에서 같은 표를 읽으면 정책이 재귀한다). 존재 여부만 돌려주고 내용은 돌려주지 않는다.
+create or replace function public._msgr2_msg_in_room(p_msg bigint, p_room uuid) returns boolean
+  language sql stable security definer set search_path = public, pg_temp as $$
+  select exists (select 1 from public.msgr2_messages m where m.id = p_msg and m.room_id = p_room)
+$$;
+revoke all on function public._msgr2_msg_in_room(bigint, uuid) from public, anon;
+grant execute on function public._msgr2_msg_in_room(bigint, uuid) to authenticated, service_role;
 
 drop policy if exists msgr2_spaces_select on public.msgr2_spaces;
 create policy msgr2_spaces_select on public.msgr2_spaces for select to authenticated using ((select public._msgr2_space_visible(id)));
@@ -375,15 +408,15 @@ drop policy if exists msgr2_messages_select on public.msgr2_messages;
 create policy msgr2_messages_select on public.msgr2_messages for select to authenticated using ((select (public.msgr2_access(room_id)).read));
 drop policy if exists msgr2_messages_insert on public.msgr2_messages;
 -- 사람 글만(에이전트·시스템 글은 U2 서버 함수가 쓴다). 토픽 글은 같은 방의 토픽만(msgr2_same_room 트리거).
+-- meta는 비운다 — 시스템 글 코드(D15 meta.code)를 사람 글이 흉내 내지 못하게(검수 1 지적 2). 답글은 같은 방의 글에만.
 create policy msgr2_messages_insert on public.msgr2_messages for insert to authenticated with check (
   author_kind = 'user' and author_user_id = (select auth.uid()) and author_agent_id is null and kind = 'text'
-  and deleted_at is null and edited_at is null and (select (public.msgr2_access(room_id)).write));
+  and deleted_at is null and edited_at is null and meta = '{}'::jsonb
+  and (reply_to is null or (select public._msgr2_msg_in_room(reply_to, room_id)))
+  and (select (public.msgr2_access(room_id)).write));
 drop policy if exists msgr2_attachments_select on public.msgr2_attachments;
 create policy msgr2_attachments_select on public.msgr2_attachments for select to authenticated using ((select (public.msgr2_access(room_id)).read));
-drop policy if exists msgr2_attachments_insert on public.msgr2_attachments;
-create policy msgr2_attachments_insert on public.msgr2_attachments for insert to authenticated with check (
-  (select (public.msgr2_access(room_id)).write)
-  and exists (select 1 from public.msgr2_messages m where m.id = message_id and m.room_id = msgr2_attachments.room_id and m.author_kind = 'user' and m.author_user_id = (select auth.uid())));
+drop policy if exists msgr2_attachments_insert on public.msgr2_attachments; -- 사람 직접 넣기 없음(위 권한 참고)
 drop policy if exists msgr2_reads_own on public.msgr2_reads;
 create policy msgr2_reads_own on public.msgr2_reads for all to authenticated
   using (user_id = (select auth.uid()) and (select (public.msgr2_access(room_id)).read))
@@ -501,4 +534,4 @@ grant execute on function public.msgr2_agent_sync(jsonb) to authenticated;
 grant execute on function public.msgr2_set_member_role(uuid, uuid, text) to authenticated;
 grant execute on function public.msgr2_set_seat(uuid, uuid, text, uuid[], boolean) to authenticated;
 grant execute on function public.msgr2_set_room_agent_policy(uuid, text) to authenticated;
-revoke execute on function public.msgr2_lock_cols(), public.msgr2_same_room(), public.msgr2_seat_team_only() from public, anon, authenticated;
+revoke execute on function public.msgr2_lock_cols(), public.msgr2_same_room(), public.msgr2_seat_team_only(), public.msgr2_insert_stamp() from public, anon, authenticated;

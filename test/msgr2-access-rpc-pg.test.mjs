@@ -1,4 +1,5 @@
 // 메신저 v2 U1 RPC·잠금·직접 쓰기 금지·유휴 쓰기 0(설계 1-3·1-5 원칙 5·6, 경우 표 6·7·15·19) — 실제 Postgres에 *_msgr2_space.sql만 적용한다.
+// 검수 1 #1070 지적 1~3(id 선점·기록 위조·남의 방 파일 경로)은 'msgr2-access-attack-pg'와 아래 '지적' 시험이 잠근다.
 // 잠그는 것: 개인 공간 1인 1개(두 번 불러도 같은 id·쓰기 0) · 에이전트 sync는 값이 바뀐 행만(두 번째 쓰기 0, xmin 불변) · 권한 표(멤버 역할·파견·방 정책)는
 // 직접 쓰기가 없고 앱 기기 RPC로만, 권한 밖이면 42501 · 파견은 팀 공간에만 · 소속 열 잠금 · 다른 방의 토픽·글에 붙이기 금지 · 사람만 직접 글을 쓴다.
 // 실행: bash scripts/billing-pg-drill.sh test/msgr2-access-rpc-pg.test.mjs
@@ -165,12 +166,38 @@ test('글 넣기 — 사람만, 자기 이름으로, 같은 방의 토픽에만 
     `insert into public.msgr2_messages (room_id, author_kind, kind, body) values ('${ROOM}', 'system', 'system', '시스템인 척')`,
     `insert into public.msgr2_messages (room_id, author_kind, author_user_id, kind, body) values ('${ROOM}', 'user', '${U.member}', 'card', '카드')`,
     `insert into public.msgr2_messages (room_id, author_kind, author_user_id, body) values ('${DIRECT}', 'user', '${U.guest}', '남의 1:1')`,
-  ]) assert.match(asUserErr(q.includes(U.guest) ? U.guest : U.member, q) ?? '', /row-level security|violates/, q.slice(60, 140));
-  // 첨부 행: 내 글에만, 같은 방으로만
+  ]) assert.match(asUserErr(q.includes(U.guest) ? U.guest : U.member, q) ?? '', /row-level security|violates|permission denied/, q.slice(60, 140)); // author_agent_id는 열 권한부터 없다
+  // 첨부 행: 사람이 직접 넣지 않는다(업로드 슬롯 RPC — U2·U6). 경로 검사는 아래 지적 시험이 본다
   const mid = sql(`select id from public.msgr2_messages where body = '안녕'`);
-  asUser(U.member, `insert into public.msgr2_attachments (message_id, room_id, storage_path, name) values (${mid}, '${ROOM}', 'p/a.png', 'a.png')`);
-  assert.match(asUserErr(U.owner, `insert into public.msgr2_attachments (message_id, room_id, storage_path) values (${mid}, '${ROOM}', 'p/b.png')`) ?? '', /row-level security/, '남의 글에 첨부');
-  assert.match(asUserErr(U.member, `insert into public.msgr2_attachments (message_id, room_id, storage_path) values (${mid}, '${ROOM2}', 'p/c.png')`) ?? '', /row-level security|mismatch/, '다른 방으로');
+  assert.match(asUserErr(U.member, `insert into public.msgr2_attachments (message_id, room_id, storage_path, name) values (${mid}, '${ROOM}', 'msgr/${TEAM}/${ROOM}/a.png', 'a.png')`) ?? '', /permission denied/, '사람 직접 첨부 행');
+});
+
+test('검수 1 #1070 지적 1~3 — 사람이 id·시각을 정하지 못하고(선점으로 남의 글 막기 금지), meta·남의 방 답글·남의 방 파일 경로를 넣지 못한다', { skip }, () => {
+  const before = sql('select coalesce(max(id), 0) from public.msgr2_messages');
+  // 지적 1: id 직접 지정 → 열 권한 없음
+  assert.match(asUserErr(U.member, `insert into public.msgr2_messages (id, room_id, author_kind, author_user_id, body) select g, '${ROOM}', 'user', '${U.member}', 'x' from generate_series(${Number(before) + 1}, ${Number(before) + 5}) g`) ?? '', /permission denied/, 'id 선점');
+  asUser(U.owner, `insert into public.msgr2_messages (room_id, author_kind, author_user_id, body) values ('${ROOM}', 'user', '${U.owner}', '다음 글')`); // 다른 사람의 다음 글이 그대로 들어간다
+  // 지적 2: 시각·meta·답글
+  for (const q of [
+    `insert into public.msgr2_messages (room_id, author_kind, author_user_id, body, created_at) values ('${ROOM}', 'user', '${U.member}', 'x', '2001-01-01')`,
+    `insert into public.msgr2_messages (room_id, author_kind, author_user_id, body, edited_at) values ('${ROOM}', 'user', '${U.member}', 'x', now())`,
+    `insert into public.msgr2_messages (room_id, author_kind, author_user_id, body, deleted_at) values ('${ROOM}', 'user', '${U.member}', 'x', now())`,
+  ]) assert.match(asUserErr(U.member, q) ?? '', /permission denied/, q.slice(100, 160));
+  assert.match(asUserErr(U.member, `insert into public.msgr2_messages (room_id, author_kind, author_user_id, body, meta) values ('${ROOM}', 'user', '${U.member}', 'x', '{"code":"topic.resolved"}')`) ?? '', /row-level security/, '시스템 글 코드 흉내');
+  const other = sql(`insert into public.msgr2_messages (room_id, author_kind, author_user_id, body) values ('${ROOM2}', 'user', '${U.owner}', '비밀 방 글') returning id`);
+  assert.match(asUserErr(U.member, `insert into public.msgr2_messages (room_id, author_kind, author_user_id, body, reply_to) values ('${ROOM}', 'user', '${U.member}', 'x', ${other})`) ?? '', /row-level security/, '다른 방 글에 답글');
+  const same = sql(`select id from public.msgr2_messages where body = '다음 글'`);
+  asUser(U.member, `insert into public.msgr2_messages (room_id, author_kind, author_user_id, body, reply_to) values ('${ROOM}', 'user', '${U.member}', '같은 방 답글', ${same})`);
+  // 지적 3: 사람은 첨부 행을 직접 넣지 못하고(id 지정 포함), 사람 문맥의 RPC가 넣어도 경로는 msgr/<공간>/<방>/만. 서비스 문맥(이전)은 옛 경로 그대로
+  const mine = sql(`select id from public.msgr2_messages where body = '같은 방 답글'`);
+  assert.match(asUserErr(U.member, `insert into public.msgr2_attachments (id, message_id, room_id, storage_path) values (999999, ${mine}, '${ROOM}', 'msgr/${TEAM}/${ROOM}/a')`) ?? '', /permission denied/, '첨부 id 지정');
+  const inRpc = (path) => psqlRaw(['-A', '-t', '-c', `select set_config('argo.uid', '${U.member}', false); insert into public.msgr2_attachments (message_id, room_id, storage_path, created_at) values (${mine}, '${ROOM}', '${path}', '2001-01-01') returning extract(year from created_at)`]);
+  for (const path of [`msgr/${TEAM}/${ROOM2}/secret.pdf`, 'r1/secret.pdf', `msgr/${TEAM}/${ROOM}/../${ROOM2}/x`, `msgr/${TEAM}/${ROOM}//x`, `${ROOM}/a.pdf`]) {
+    const r = inRpc(path); assert.notEqual(r.status, 0, path); assert.match(r.stderr, /msgr2_attachment_path/, path);
+  }
+  const ok = inRpc(`msgr/${TEAM}/${ROOM}/ok.pdf`); assert.equal(ok.status, 0, ok.stderr);
+  assert.notEqual(ok.stdout.trim(), '2001', '사람 문맥이면 시각은 서버가 정한다');
+  assert.equal(sql(`insert into public.msgr2_attachments (message_id, room_id, storage_path, created_at) values (${mine}, '${ROOM}', 'old/legacy/path.pdf', '2001-01-01') returning extract(year from created_at)`), '2001', '서비스 문맥(이전)은 옛 경로·옛 시각 보존');
 });
 
 test('소속 열 잠금 — 읽음·설정 행의 방을 바꾸지 못하고, 서비스 문맥이 아닌 RPC 밖 갱신도 소속 열은 그대로', { skip }, () => {
