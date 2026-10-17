@@ -182,7 +182,8 @@ export const DATA = Object.freeze({
   },
   'work.cancel': { by: actor(), reason: 'code' },
   'work.approval_decision': { approval_id: 'uuid', decision: ['enum', { of: DECISIONS }], by: actor(['user', 'system']) },
-  'work.accept': {},
+  // lease_gen: 서버가 accept 성공 답으로 준 리스 세대. 처음 accept에는 없고, 연장·이어 하기 accept에 그 값을 싣는다(실행 중 메모리에만 둔다).
+  'work.accept': { lease_gen: ['int', { optional: true, min: 1 }] },
   'work.progress': { stage: ['enum', { of: STAGES }], note: ['str', { optional: true, max: LIMITS.note }] },
   'work.approval_request': {
     approval_id: 'uuid', action: ['str', { min: 1, max: LIMITS.action }], risk: ['enum', { of: RISKS }],
@@ -266,22 +267,31 @@ export const LATE_MARK = 'work.late';
 
 /**
  * 서버가 봉투 하나를 일에 적용할 때의 다음 상태. state는 effectiveState 결과를 넣는다.
- * opts.sameDevice = 봉투의 device가 이 일의 리스를 마지막으로 잡았던 기기인가(stalled 판정에만 쓴다, 모르면 false).
+ * opts.sameDevice = 봉투의 device가 이 일의 리스를 마지막으로 잡았던 기기인가, opts.leaseGen = 그 리스의 세대(stalled 판정에만 쓴다, 모르면 거부 쪽).
  * 반환: { ok:true, to, mark? } | { ok:false, code }. to === state면 사건만 기록한다. mark가 있으면 방 글에 붙인다.
  */
-export function nextState(state, type, data = {}, { sameDevice = false } = {}) {
+export function nextState(state, type, data = {}, { sameDevice = false, leaseGen = null } = {}) {
   if (state === 'stalled') {
     // 리스가 끝났고 결과가 없는 일(저장하지 않는 계산 상태). 리스를 잡았던 같은 기기만 받는다(다른 기기는 not_lease_holder).
-    // 같은 기기: accept로 리스를 다시 잡거나, 효과 결과(done·failed)를 알리거나, 늦은 result·error로 일을 끝낸다
+    // accept는 "이어 하기"만 받는다: 같은 기기 + 직전 리스 세대(data.lease_gen === leaseGen). 재시작한 본체는 세대를 모르므로
+    // (메모리에만 둔다) 같은 기기라도 거부된다 — 처음부터 다시 돌려 되돌릴 수 없는 일이 다른 effect_key로 두 번 나가는 것을 막는다(경우 8).
+    // 같은 기기: 이어 하기 accept로 리스를 다시 잡거나, 효과 결과(done·failed)를 알리거나, 늦은 result·error로 일을 끝낸다
     // (실제로 끝난 일이 "결과 모름"으로 남지 않게, 방 글에 LATE_MARK). 새 intent는 받지 않는다. 자동 재실행은 없다 —
     // 사람이 "다시 시키기"로 만든 새 일과 별개로, 늦은 결과는 옛 일(옛 토픽)에만 붙는다.
     if (type === 'work.cancel') return { ok: true, to: 'cancelled' };
     if (!sameDevice) return { ok: false, code: 'not_lease_holder' };
-    if (type === 'work.accept') return { ok: true, to: 'running' };
+    if (type === 'work.accept') {
+      return leaseGen != null && data.lease_gen === leaseGen ? { ok: true, to: 'running' } : { ok: false, code: 'not_lease_holder' };
+    }
     if (type === 'work.effect' && data.state !== 'intent') return { ok: true, to: state };
     if (type === 'work.result') return { ok: true, to: 'done', mark: LATE_MARK };
     if (type === 'work.error') return { ok: true, to: 'failed', mark: LATE_MARK };
     return { ok: false, code: 'invalid_transition' };
+  }
+  // 일하는 중의 accept = 리스 연장. 같은 기기 + 현재 리스 세대일 때만이다. 재시작한 본체(세대 모름)나 다른 기기는 lease_held —
+  // 살아 있는 리스를 "연장"으로 가로채 같은 일을 처음부터 다시 돌리지 못하게 한다.
+  if (type === 'work.accept' && LIVE.includes(state) && !(sameDevice && leaseGen != null && data.lease_gen === leaseGen)) {
+    return { ok: false, code: 'lease_held' };
   }
   const row = TRANSITIONS[state];
   if (!row) return { ok: false, code: 'invalid_transition' };

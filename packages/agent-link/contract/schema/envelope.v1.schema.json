@@ -480,7 +480,12 @@
           },
           "data": {
             "type": "object",
-            "properties": {}
+            "properties": {
+              "lease_gen": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
           }
         }
       }

@@ -39,7 +39,7 @@
 | `work.offer` | 서버→본체, `w:<uid>` 방송·따라잡기 | `room`, `topic`, `from{kind:user·agent, id}`, `text`(≤20,000자), `context[]{id, author, text, at}`, `attachments[]{id, name, mime, bytes, url, url_expires_at}`, `memory`(bool), `limits{tier, max_turn_s, budget}`, `expires_at` | `from.name`, `budget{max_tokens, max_usd}` 또는 `null` |
 | `work.cancel` | 서버→본체 | `by{kind, id}`, `reason`(코드, 열린 값: user·service_paused 등) | |
 | `work.approval_decision` | 서버→본체 | `approval_id`, `decision`(approve·reject·expire), `by{kind:user·system, id}` | |
-| `work.accept` | 본체→서버, RPC | 없음(`{}`) | 리스를 쥔 기기가 다시 보내면 리스 연장(5분마다) |
+| `work.accept` | 본체→서버, RPC | 없음(`{}`) | `lease_gen`(정수): 서버가 accept 성공 답으로 준 리스 세대. 연장(5분마다)·이어 하기 accept에 싣는다. 실행 중 메모리에만 둔다 |
 | `work.progress` | 본체→`wk:<work>` 방송(저장 안 함) | `stage`(thinking·tool·writing) | `note`(≤200자) |
 | `work.approval_request` | 본체→서버 | `approval_id`, `action`, `risk`(low·medium·high), `summary`(≤2,000자), `effect_key`(또는 null), `expires_at` | |
 | `work.effect` | 본체→서버 | `effect_key`(≤200자), `state`(intent·done·failed) | `kind`(코드) |
@@ -57,20 +57,20 @@
 | 지금 \ 봉투 | accept | approval_request | approval_decision | effect | result | error | cancel |
 |---|---|---|---|---|---|---|---|
 | offered | accepted | ✗ | ✗ | ✗ | ✗ | `unsupported`만 기록(그대로) | cancelled |
-| accepted·running | 그대로(리스 연장) | awaiting_approval | ✗ | 기록 | done | failed | cancelled |
-| awaiting_approval | 그대로(리스 연장) | ✗ | running | done·failed만 기록(새 intent ✗) | ✗ | failed | cancelled |
-| stalled(같은 기기) | running(리스 다시 잡음) | ✗ | ✗ | done·failed만 기록 | done + `work.late` 표시 | failed + `work.late` 표시 | cancelled |
+| accepted·running | 같은 기기 + 현재 `lease_gen`이면 그대로(리스 연장), 그 밖은 lease_held | awaiting_approval | ✗ | 기록 | done | failed | cancelled |
+| awaiting_approval | 같은 기기 + 현재 `lease_gen`이면 그대로(리스 연장), 그 밖은 lease_held | ✗ | running | done·failed만 기록(새 intent ✗) | ✗ | failed | cancelled |
+| stalled(같은 기기) | 이어 하기(직전 `lease_gen`)만 running, 그 밖은 not_lease_holder | ✗ | ✗ | done·failed만 기록 | done + `work.late` 표시 | failed + `work.late` 표시 | cancelled |
 | stalled(다른 기기) | not_lease_holder | not_lease_holder | — | not_lease_holder | not_lease_holder | not_lease_holder | cancelled |
 | done·failed·cancelled | work_closed | work_closed | work_closed | done·failed만 기록(이미 시작한 효과의 결과) | work_closed | cancelled만 기록 | 그대로 |
 | expired | work_closed | work_closed | work_closed | work_closed | work_closed | work_closed | 그대로 |
 
-✗ = `invalid_transition`. stalled는 저장하지 않는 계산 상태라, 같은 기기 = 이 일의 리스를 마지막으로 잡았던 기기다(`nextState(…, { sameDevice })`). 같은 기기의 늦은 result·error는 받아서 일을 끝내고 방 글에 표시 코드 `work.late`(`LATE_MARK`)를 붙인다. 실제로 끝난 일이 "결과 모름"으로 남지 않게 하기 위해서다. 자동 재실행은 없고, 사람이 "다시 시키기"로 새 일을 만들었어도 늦은 결과는 옛 일의 토픽에만 붙는다. 새 `intent`는 accepted·running에서만 받는다. 본체는 intent가 성공해야 되돌릴 수 없는 일을 실행한다(D13).
+✗ = `invalid_transition`. stalled는 저장하지 않는 계산 상태라, 같은 기기 = 이 일의 리스를 마지막으로 잡았던 기기다(`nextState(…, { sameDevice, leaseGen })`). accept는 같은 기기가 직전 리스 세대를 실어 보낸 "이어 하기"만 받는다. 재시작한 본체는 세대를 모르므로 같은 기기라도 거부된다. 처음부터 다시 돌려 되돌릴 수 없는 일이 다른 키로 두 번 나가는 것을 막기 위해서다(경우 8). 같은 기기의 늦은 result·error는 받아서 일을 끝내고 방 글에 표시 코드 `work.late`(`LATE_MARK`)를 붙인다. 실제로 끝난 일이 "결과 모름"으로 남지 않게 하기 위해서다. 자동 재실행은 없고, 사람이 "다시 시키기"로 새 일을 만들었어도 늦은 결과는 옛 일의 토픽에만 붙는다. 새 `intent`는 accepted·running에서만 받는다. 본체는 intent가 성공해야 되돌릴 수 없는 일을 실행한다(D13).
 
 받을 수 없는 본체(러너 로그인 없음 등)는 accept하지 않는다. 받은 뒤 실패하면 `work.error`를 보낸다. 리스 주인이 아닌 기기는 accept 외의 봉투를 보낼 수 없다(`not_lease_holder`).
 
 ## 거부 코드(`msgr2_link_send` 답)
 
-답 모양: 성공 `{ ok: true, duplicate?: true }`, 거부 `{ ok: false, code, retry }`.
+답 모양: 성공 `{ ok: true, duplicate?: true }`(accept 성공이면 `lease_gen`, `lease_until`도 싣는다), 거부 `{ ok: false, code, retry }`.
 
 | 코드 | 다시 보냄 | 뜻 |
 |---|---|---|

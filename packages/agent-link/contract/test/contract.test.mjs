@@ -155,13 +155,14 @@ test('거부 코드: 다시 보낼 것은 rate_limited·internal뿐', () => {
 });
 
 test('상태 전이: 승인 없는 일·승인 있는 일·취소·끝난 일', () => {
-  const run = (from, steps) => steps.reduce((s, [type, data]) => {
-    const r = nextState(s, type, data);
+  const holder = { sameDevice: true, leaseGen: 1 };
+  const run = (from, steps) => steps.reduce((s, [type, data, opts]) => {
+    const r = nextState(s, type, data, opts);
     assert.ok(r.ok, `${s} --${type}--> ${r.code}`);
     return r.to;
   }, from);
   assert.equal(run('offered', [['work.accept'], ['work.effect', { state: 'intent' }], ['work.effect', { state: 'done' }], ['work.result']]), 'done');
-  assert.equal(run('offered', [['work.accept'], ['work.approval_request'], ['work.accept'] /* 리스 연장 */, ['work.approval_decision', { decision: 'approve' }],
+  assert.equal(run('offered', [['work.accept'], ['work.approval_request'], ['work.accept', { lease_gen: 1 }, holder] /* 리스 연장 */, ['work.approval_decision', { decision: 'approve' }],
     ['work.effect', { state: 'intent' }], ['work.result']]), 'done');
   assert.equal(run('offered', [['work.accept'], ['work.error', { code: 'login' }]]), 'failed');
   for (const s of ['offered', 'accepted', 'running', 'awaiting_approval', 'stalled']) assert.equal(nextState(s, 'work.cancel').to, 'cancelled', s);
@@ -215,7 +216,12 @@ test('stalled(결과 모름): 같은 기기의 늦은 result·error는 받아 �
   const same = { sameDevice: true }, other = { sameDevice: false };
   assert.deepEqual(nextState('stalled', 'work.result', {}, same), { ok: true, to: 'done', mark: LATE_MARK });
   assert.deepEqual(nextState('stalled', 'work.error', { code: 'timeout' }, same), { ok: true, to: 'failed', mark: LATE_MARK });
-  assert.equal(nextState('stalled', 'work.accept', {}, same).to, 'running'); // 리스 다시 잡음
+  // accept는 이어 하기만: 같은 기기 + 직전 리스 세대. 재시작한 본체(세대 모름)·옛 세대·다른 기기는 거부(검수 2 2026-10-17)
+  assert.equal(nextState('stalled', 'work.accept', { lease_gen: 4 }, { sameDevice: true, leaseGen: 4 }).to, 'running');
+  assert.equal(nextState('stalled', 'work.accept', {}, { sameDevice: true, leaseGen: 4 }).code, 'not_lease_holder');
+  assert.equal(nextState('stalled', 'work.accept', { lease_gen: 3 }, { sameDevice: true, leaseGen: 4 }).code, 'not_lease_holder');
+  assert.equal(nextState('stalled', 'work.accept', { lease_gen: 4 }, { sameDevice: false, leaseGen: 4 }).code, 'not_lease_holder');
+  assert.equal(nextState('stalled', 'work.accept', { lease_gen: 4 }, { sameDevice: true }).code, 'not_lease_holder');
   assert.equal(nextState('stalled', 'work.effect', { state: 'done' }, same).to, 'stalled');
   for (const [type, data] of [['work.result', {}], ['work.error', { code: 'timeout' }], ['work.accept', {}], ['work.effect', { state: 'done' }]]) {
     assert.equal(nextState('stalled', type, data, other).code, 'not_lease_holder', type);
@@ -226,4 +232,14 @@ test('stalled(결과 모름): 같은 기기의 늦은 result·error는 받아 �
   assert.equal(nextState('running', 'work.result').mark, undefined);
   // 늦은 결과로 끝난 일은 다시 끝난 일 규칙을 따른다
   assert.equal(nextState('done', 'work.result', {}, same).code, 'work_closed');
+});
+
+test('일하는 중의 accept(리스 연장)는 같은 기기 + 현재 세대만 — 재시작한 본체·다른 기기는 lease_held(검수 2 2026-10-17)', () => {
+  for (const st of ['accepted', 'running', 'awaiting_approval']) {
+    assert.equal(nextState(st, 'work.accept', { lease_gen: 2 }, { sameDevice: true, leaseGen: 2 }).to, st, `${st} 연장`);
+    assert.equal(nextState(st, 'work.accept', {}, { sameDevice: true, leaseGen: 2 }).code, 'lease_held', `${st} 재시작(세대 없음)`);
+    assert.equal(nextState(st, 'work.accept', { lease_gen: 1 }, { sameDevice: true, leaseGen: 2 }).code, 'lease_held', `${st} 옛 세대`);
+    assert.equal(nextState(st, 'work.accept', { lease_gen: 2 }, { sameDevice: false, leaseGen: 2 }).code, 'lease_held', `${st} 다른 기기`);
+  }
+  assert.equal(nextState('offered', 'work.accept').to, 'accepted'); // 처음 accept에는 세대가 없다
 });
