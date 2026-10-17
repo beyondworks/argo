@@ -35,11 +35,15 @@ export function unwrapEnvelope(payload) {
     요청마다 새 클라이언트를 쓰고, 열어 둔 구독 채널을 새 클라이언트로 옮긴다(옮기면 다시 'connected' → 따라잡기 1번). 그대로 두면 옛 토큰이 만료된 뒤 401이다.
     쉬는 본체는 요청이 없으므로 호스트가 게이트웨이 확인(10초)마다 refresh()를 불러 회전을 따라가고, 끊긴 구독(CLOSED·CHANNEL_ERROR·TIMED_OUT)을 다시 붙인다
     (realtime-js는 손으로 넣은 토큰이면 heartbeat 때 토큰을 바꾸지 않는다 — 옛 토큰이 만료되면 서버가 채널을 닫는다).
+    다시 붙기(#1089 재검수): 끊긴 채널은 다음 refresh에서 떼어 realtime-js 자체 재시도를 멈추고, 끊긴 뒤 1→2→5→10분 간격으로만 다시 연다(SUBSCRIBED면 처음으로).
+    다시 열기 전에 beforeReopen(호스트 = 링크 따라잡기 rpc 1번)으로 기기 상태를 본다 — device_revoked 등이면 링크가 멈추고 구독을 닫아 다시 열지 않는다.
+    세션이 없으면(getClient → null: 로그아웃·앱 관문 차단) 옛 클라이언트와 채널을 버리고 다시 붙지 않는다. 세션이 돌아오면 그때 연다.
     진행 방송 채널(v2:wk:<일>)은 일이 끝나면 release로 닫는다(쌓이지 않게). 닫은 뒤 늦게 도착한 진행 방송은 채널을 다시 만들지 않는다. */
-export function supabaseTransport(source) {
+export const RESUBSCRIBE_BACKOFF_MS = Object.freeze([60_000, 120_000, 300_000, 600_000]);
+export function supabaseTransport(source, { now = () => Date.now() } = {}) {
   const getClient = typeof source === 'function' ? source : async () => source;
   let cur = typeof source === 'function' ? null : source;
-  const subs = new Set();      // { topic, onEnvelope, onStatus, ch, dead }
+  const subs = new Set();      // { topic, onEnvelope, onStatus, ch, dead, fails, retryAt }
   const progress = new Map();  // topic → ch(보내기만)
   const released = new Map();  // 닫은 진행 토픽 → 닫은 시각(늦은 진행 방송이 채널을 다시 만들지 않게, 10분 뒤 잊는다)
   const RELEASED_KEEP_MS = 10 * 60_000;
@@ -49,21 +53,33 @@ export function supabaseTransport(source) {
     sub.ch = ch; sub.dead = false; // 상태 알림보다 먼저(동기로 SUBSCRIBED를 알리는 클라이언트도 있다)
     ch.subscribe((status) => {
       if (sub.ch !== ch) return; // 옮긴 뒤 옛 채널의 상태는 무시
-      if (status === 'SUBSCRIBED') { sub.dead = false; sub.onStatus?.('connected'); }
-      else if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') { sub.dead = true; sub.onStatus?.('disconnected'); }
+      if (status === 'SUBSCRIBED') { sub.dead = false; sub.fails = 0; sub.retryAt = 0; sub.onStatus?.('connected'); }
+      else if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        if (!sub.dead) { sub.dead = true; sub.retryAt = now() + RESUBSCRIBE_BACKOFF_MS[Math.min(sub.fails ?? 0, RESUBSCRIBE_BACKOFF_MS.length - 1)]; }
+        if ((sub.fails ?? 0) > 0) detach(sub); // 우리가 다시 연 채널이 또 끊겼다 — 바로 떼어 realtime-js 재시도를 멈춘다(다음은 간격 뒤)
+        sub.onStatus?.('disconnected');
+      }
     });
+  }
+  function detach(sub) { const ch = sub.ch; sub.ch = null; try { if (ch) cur?.removeChannel?.(ch); } catch { /* 무시 */ } }
+  function drop() { // 세션 없음: 옛 클라이언트·채널을 버린다(관문이 끊은 연결이 옛 클라이언트로 되살아나지 않게)
+    if (!cur) return;
+    for (const sub of subs) { detach(sub); if (!sub.dead) { sub.dead = true; sub.retryAt = 0; sub.onStatus?.('disconnected'); } }
+    for (const ch of progress.values()) { try { cur.removeChannel?.(ch); } catch { /* 무시 */ } }
+    progress.clear();
+    cur = null;
   }
   function swap(next) {
     if (!next || next === cur) return;
     const old = cur; cur = next;
-    for (const sub of subs) { const och = sub.ch; sub.ch = null; try { if (och) old?.removeChannel?.(och); } catch { /* 닫기 실패 무시 */ } open(sub); }
+    for (const sub of subs) { const och = sub.ch; sub.ch = null; try { if (och) old?.removeChannel?.(och); } catch { /* 닫기 실패 무시 */ } sub.fails = 0; open(sub); }
     for (const ch of progress.values()) { try { old?.removeChannel?.(ch); } catch { /* 무시 */ } }
     progress.clear();
   }
   async function client() {
     const next = await getClient();
-    if (next) swap(next);
-    if (!cur) throw Object.assign(new Error('no session'), { code: 'no_session' });
+    if (!next) { drop(); throw Object.assign(new Error('no session'), { code: 'no_session' }); }
+    swap(next);
     return cur;
   }
   return {
@@ -74,19 +90,30 @@ export function supabaseTransport(source) {
       return { data, error: error ? { code: error.code ?? null, message: error.message ?? '', status: error.status ?? status ?? 0 } : null };
     },
     subscribe(topic, onEnvelope, onStatus) {
-      const sub = { topic, onEnvelope, onStatus, ch: null };
+      const sub = { topic, onEnvelope, onStatus, ch: null, dead: false, fails: 0, retryAt: 0 };
       subs.add(sub);
       if (cur) open(sub);
       else client().then(() => { if (subs.has(sub) && !sub.ch) open(sub); }).catch(() => onStatus?.('disconnected'));
       return { close: () => { subs.delete(sub); const ch = sub.ch; sub.ch = null; try { if (ch) cur?.removeChannel?.(ch); } catch { /* 무시 */ } } };
     },
-    /** 네트워크 없이 지금 클라이언트를 확인한다 — 바뀌었으면 구독을 옮기고, 끊긴 구독은 다시 붙인다. 호스트가 게이트웨이 확인마다 부른다. */
-    async refresh() {
+    /** 지금 클라이언트를 확인한다(네트워크 없음) — 바뀌었으면 구독을 옮기고, 끊긴 구독은 간격(1→2→5→10분)이 지났을 때만 beforeReopen 뒤 다시 연다.
+        세션이 없으면 아무것도 다시 열지 않는다. 호스트가 게이트웨이 확인마다 부른다. */
+    async refresh({ beforeReopen } = {}) {
       try { await client(); } catch { return; }
+      const due = [];
       for (const sub of subs) {
-        if (!sub.dead || !sub.ch) continue;
-        const och = sub.ch; sub.ch = null;
-        try { cur.removeChannel?.(och); } catch { /* 무시 */ }
+        if (!sub.dead) continue;
+        if (sub.ch) detach(sub); // 끊긴 채 남은 채널을 떼어 realtime-js 자체 재시도를 멈춘다
+        if (now() >= (sub.retryAt ?? 0)) due.push(sub);
+      }
+      if (!due.length) return;
+      if (beforeReopen) { try { await beforeReopen(); } catch { /* 확인 실패는 다시 열기를 막지 않는다 — 간격은 그대로 */ } }
+      if (!cur) return; // 확인하는 사이 세션이 사라졌다
+      for (const sub of due) {
+        if (!subs.has(sub) || !sub.dead || sub.ch) continue; // 링크가 멈춰 닫았거나(폐기) 이미 다시 붙었다
+        sub.fails = (sub.fails ?? 0) + 1;
+        sub.retryAt = now() + RESUBSCRIBE_BACKOFF_MS[Math.min(sub.fails, RESUBSCRIBE_BACKOFF_MS.length - 1)];
+        sub.dead = false; // open이 상태를 다시 받는다(실패하면 위 retryAt 뒤에 또)
         open(sub);
       }
     },
@@ -398,7 +425,7 @@ export function createAgentLinkHost(deps) {
     stop() { stopped = true; if (timer) clock.clearTimeout(timer); timer = null; link?.stop(); link = null; },
     resync() {
       // 토큰 회전·끊긴 구독은 매번(게이트웨이 확인 10초마다) 확인한다 — 네트워크 요청이 아니다(쉬는 본체가 옛 토큰의 구독에 남지 않게)
-      const fresh = Promise.resolve(current?.refresh?.()).catch(() => {});
+      const fresh = Promise.resolve(current?.refresh?.({ beforeReopen: () => link?.catchUp?.() })).catch(() => {}); // 다시 붙기 전 따라잡기 rpc 1번 = 기기 상태 확인(폐기면 링크가 멈춘다)
       if (clock.now() - lastResync < RESYNC_MIN_MS) return fresh;
       lastResync = clock.now();
       return fresh.then(() => resync()).catch((e) => log('agent sync failed', e.code ?? e.message));
