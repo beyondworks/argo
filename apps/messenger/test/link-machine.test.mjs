@@ -817,6 +817,31 @@ test('#1077 검수 3: 서버가 거부할 첨부(개수·크기·이름)는 글�
   assert.equal(ok.ok, true, '경계값은 보낸다');
 });
 
+test('#1077 재검수: 중단이 풀리면(방송·다시 연 직후 확인) v2:s:를 다시 열고 따라잡기 1회', async () => {
+  const SP = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  const { m, fake } = setup(); m.setSpaces([SP]);
+  await m.start(); await flush();
+  assert.deepEqual(fake.liveTopics(), [`v2:s:${SP}`, `v2:u:${UID}`].sort());
+  fake.broadcast(`v2:u:${UID}`, 'pause', { paused: true }); await flush();
+  assert.equal(m.getState(), 'paused'); assert.deepEqual(fake.liveTopics(), [`v2:u:${UID}`], '중단 중 s: 닫힘');
+  const c0 = fake.count('msgr2_catch_up');
+  fake.broadcast(`v2:u:${UID}`, 'pause', { paused: false }); await flush();
+  assert.equal(m.getState(), 'ready');
+  assert.deepEqual(fake.liveTopics(), [`v2:s:${SP}`, `v2:u:${UID}`].sort(), '풀리면 s: 다시 열림');
+  assert.equal(fake.count('msgr2_catch_up'), c0 + 1, '따라잡기 1회');
+});
+
+test('#1077 재검수: 소켓이 끊긴 사이 풀림을 놓쳐도 다시 연 직후 확인(pauseCheckLive)으로 풀리면 v2:s:도 다시 열린다', async () => {
+  const SP = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  const { m, fake, clock } = setup(); m.setSpaces([SP]);
+  await m.start(); await flush();
+  fake.broadcast(`v2:u:${UID}`, 'pause', { paused: true }); fake.db.paused = true; await flush();
+  fake.dropSockets(); fake.db.paused = false; await flush();
+  await clock.advance(60 * MIN);
+  assert.equal(m.getState(), 'ready');
+  assert.deepEqual(fake.liveTopics(), [`v2:s:${SP}`, `v2:u:${UID}`].sort());
+});
+
 test('U6b 첨부 표지: v2:u:·v2:s:의 attach 사건은 요청 없이 attachments로 넘기고, 모양이 틀리면 버린다', async () => {
   const SP = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
   const { m, fake } = setup(); m.setSpaces([SP]);
