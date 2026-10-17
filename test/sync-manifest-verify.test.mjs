@@ -56,9 +56,9 @@ function storage() {
       state.afterInfo?.(k);
       return out;
     },
-    async upload(k, blob) {
+    async upload(k, blob, opts) {
       const b = Buffer.from(await blob.arrayBuffer());
-      note('PUT', k);
+      note('PUT', k); (state.putOpts ??= []).push([k, opts]);
       store.set(k, b); state.afterUpload?.(k); return { error: null };
     },
     async remove(keys) { for (const k of keys) { note('DEL', k); store.delete(k); } return { data: [], error: null }; },
@@ -248,4 +248,85 @@ test('부하 — 검증 켜짐은 로컬이 바뀐 주기에 info 1건만 더하
   assert.equal(on.local.get, off.local.get); assert.equal(on.local.put, off.local.put);
   assert.equal(on.local.info, off.local.info + 10, '로컬이 바뀐 주기 10번 × info +1');
   assert.equal(on.idleWrites, 0); assert.equal(off.idleWrites, 0); assert.equal(reuse.idleWrites, 0);
+});
+
+/* ── 엄격 검수 지적 1(M2 총괄 독립 에이전트, 2026-10-17 22:09 KST): 보류가 이어질 때 횟수 상한·실패 대기·화면 표시가 없었다 ──
+   S1: etag가 32자리 hex인데 내용 MD5가 아닌 저장소 — 사이클마다 보류(PUT 0)하며 info 2·GET 2를 끝없이 불렀다.
+   S2: CDN 옛 판이 안 걷힘 — 유휴 기기도 10사이클에 GET 20·info 20(배포본은 GET 1·info 1 뒤 유휴).
+   처방: 같은 회사에서 3번 연속 보류되면 실패 대기(30초부터 두 배, 최대 5분). 검증 없이 진행하지 않는다(옛 판으로 덮으면 다른 기기 항목 유실). */
+const STALE_CAP = { get: 6, info: 6 }; // 연달아 돈 10사이클: 3번 보류 × (info 2·GET 2) — 그 뒤는 실패 대기라 요청 0
+const STALE_CAP_8S = { get: 8, info: 8 }; // 8초 주기 10사이클(80초): 3번 보류 + 30초 대기 뒤 1번 = 4번 × 2 (지적 전 20·20, 배포본 1·1 뒤 유휴)
+
+test('S1 etag가 32자리 hex인데 내용 MD5가 아님 — 10사이클 내내 덮지 않고(PUT 0), 3번 보류 뒤 실패 대기로 GET·info 각 6건 이하', async () => {
+  const f = storage(); const ws = 'mv-s1'; const dir = await company(ws, f);
+  f.state.etagOf = (b) => `"${md5(Buffer.concat([b, Buffer.from('-not-content')]))}"`; // MD5 꼴이지만 내용 MD5가 아니다
+  await writeFile(join(dir, 'n0.md'), '# 노트 0 — S1 로컬 변경\n');
+  f.reset();
+  const rs = [];
+  for (let i = 0; i < 10; i++) rs.push(await syncCompany(ws, OWNER, false));
+  assert.equal(f.count('PUT', ws), 0, '검증 없이 진행하지 않는다 — 매니페스트를 덮지 않는다');
+  assert.ok(f.count('GET', ws) <= STALE_CAP.get && f.count('INFO', ws) <= STALE_CAP.info, `요청 상한: GET ${f.count('GET', ws)}·info ${f.count('INFO', ws)}`);
+  assert.deepEqual(rs.slice(0, 3).map((r) => [r.skipped, r.staleStrikes]), [['manifest-stale', 1], ['manifest-stale', 2], ['manifest-stale', 3]]);
+  assert.ok(rs[2].retryAt > Date.now() && rs[2].retryAt - Date.now() <= 30_000 + 1000, '3번째 보류에서 실패 대기 시작(30초)');
+  assert.ok(rs.slice(3).every((r) => r.skipped === 'retry-backoff'), '대기 중에는 요청하지 않는다');
+});
+
+test('S2 CDN 옛 판이 안 걷힘 — 유휴 기기도 8초 주기 10사이클에 GET·info 각 8건 이하(지적 전 20·20), 다른 기기 항목은 원격에 남는다', async () => {
+  const realNow = Date.now; let off = 0;
+  Date.now = () => realNow() + off;
+  try {
+    const f = storage(); const ws = 'mv-s2'; await company(ws, f);
+    const old = f.store.get(MKEY(ws));
+    otherDeviceAdds(f, ws, 'vault/notes/s2.md', '# 다른 기기 S2\n');
+    f.state.staleGet = (k) => (k === MKEY(ws) ? old : undefined);
+    f.reset();
+    for (let i = 0; i < 10; i++) { off = 61_000 + i * 8000; await syncCompany(ws, OWNER, false); } // 유휴 확인(60초) 뒤부터 8초 주기
+    assert.ok(f.count('GET', ws) >= 2, `전제: 유휴 확인이 판이 바뀐 것을 보고 받으러 갔다(GET ${f.count('GET', ws)})`);
+    assert.ok(f.count('GET', ws) <= STALE_CAP_8S.get && f.count('INFO', ws) <= STALE_CAP_8S.info, `요청 상한: GET ${f.count('GET', ws)}·info ${f.count('INFO', ws)}`);
+    assert.equal(f.count('PUT', ws), 0);
+    assert.ok('vault/notes/s2.md' in f.manifest(ws).files);
+  } finally { Date.now = realNow; }
+});
+
+test('S2b 실패 대기는 30초부터 두 배·최대 5분 — 한 시간(8초 주기 450번) 동안 보류 사이클 20번 이하, 옛 판이 걷히면 받고 보류 횟수는 처음부터', async () => {
+  const realNow = Date.now; let off = 0;
+  Date.now = () => realNow() + off;
+  try {
+    const f = storage(); const ws = 'mv-s2b'; const dir = await company(ws, f);
+    const old = f.store.get(MKEY(ws));
+    otherDeviceAdds(f, ws, 'vault/notes/s2b.md', '# 다른 기기 S2b\n');
+    f.state.staleGet = (k) => (k === MKEY(ws) ? old : undefined);
+    f.reset();
+    const waits = []; let held = 0;
+    for (let t = 0; t < 3_600_000; t += 8000) {
+      off = t;
+      const r = await syncCompany(ws, OWNER, false);
+      if (r.skipped === 'manifest-stale') { held++; if (r.retryAt) waits.push(r.retryAt - Date.now()); }
+    }
+    console.log('[보류 한 시간]', JSON.stringify({ held, get: f.count('GET', ws), info: f.count('INFO', ws), waits }));
+    assert.ok(held <= 20, `보류 사이클 ${held}번(상한 없으면 450번)`);
+    assert.ok(f.count('GET', ws) <= 2 * held && f.count('INFO', ws) <= 2 * held);
+    assert.equal(Math.max(...waits), 300_000, `최대 대기 5분: ${waits.join(',')}`);
+    assert.deepEqual(waits.slice(0, 4), [30_000, 60_000, 120_000, 240_000], '30초부터 두 배');
+    // 옛 판이 걷힘 — 대기가 끝나면 받는다, 보류 횟수는 0부터
+    f.state.staleGet = null; off += 300_001;
+    const ok = await syncCompany(ws, OWNER, false);
+    assert.equal(ok.skipped, undefined, `걷히면 동기화: ${JSON.stringify(ok)}`);
+    assert.equal(await readFile(join(dir, 's2b.md'), 'utf8'), '# 다른 기기 S2b\n');
+    f.state.staleGet = (k) => (k === MKEY(ws) ? old : undefined);
+    otherDeviceAdds(f, ws, 'vault/notes/s2c.md', '# 다른 기기 S2c\n');
+    off += 8000;
+    const again = await syncCompany(ws, OWNER, false);
+    assert.deepEqual([again.skipped, again.staleStrikes], ['manifest-stale', 1], '검증된 매니페스트를 읽으면 보류 횟수는 처음부터');
+  } finally { Date.now = realNow; }
+});
+
+test('매니페스트 업로드만 짧은 cacheControl(0) — 파일 업로드는 기본값 그대로(옵션 없음)', async () => {
+  const f = storage(); const ws = 'mv-cc'; await company(ws, f);
+  const opts = f.state.putOpts;
+  const man = opts.filter(([k]) => k === MKEY(ws));
+  const files = opts.filter(([k]) => k !== MKEY(ws));
+  assert.ok(man.length >= 1 && files.length >= 1, '전제: 매니페스트와 파일을 올렸다');
+  assert.ok(man.every(([, o]) => o?.cacheControl === '0'), `매니페스트: ${JSON.stringify(man.map(([, o]) => o))}`);
+  assert.ok(files.every(([, o]) => o?.cacheControl === undefined), '파일 업로드는 바꾸지 않는다(storage-js 기본 3600)');
 });

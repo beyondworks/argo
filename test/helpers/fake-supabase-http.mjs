@@ -26,6 +26,7 @@ export async function startFakeSupabase({ plan = 'pro', userId = 'u1', rejectUpl
       if (fault === 'reset') { req.socket.destroy(); return; }
       if (fault === 'hang') return;
       if (typeof fault === 'number') await new Promise((r) => setTimeout(r, fault));
+      else if (fault?.raw) { res.writeHead(fault.status ?? 200, { 'content-type': 'application/octet-stream' }); return res.end(fault.raw); } // { raw }면 그 바이트 그대로(CDN 옛 판 흉내)
       else if (fault) return json(fault.status, fault.body ?? { statusCode: String(fault.status), error: 'fault', message: `HTTP ${fault.status}` });
       try {
         if (path === '/auth/v1/user') return json(200, { id: userId, email: `${userId}@example.test`, aud: 'authenticated', role: 'authenticated' });
