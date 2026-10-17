@@ -59,6 +59,21 @@ test('offer → accept → 결과: 본체 요청 2번(accept·result), seq 1·2,
   assert.equal(link.active.length, 0);
 });
 
+test('일이 끝나면(결과·오류·취소) 그 일의 진행 방송 채널을 transport.release로 닫는다 — 일마다 연 채널이 쌓이지 않게', async () => {
+  const { server, link } = setup({ turn: async (offer, ctx) => { ctx.progress('thinking'); return { text: '끝' }; } });
+  const released = [];
+  server.transport.release = (topic) => released.push(topic);
+  link.start(); await flush();
+  const o = server.offer({ agent: AGENT });
+  server.push(o); await flush();
+  assert.equal(server.works.get(o.work).state, 'done');
+  assert.deepEqual(released, [`v2:wk:${o.work}`]);
+  delete server.transport.release; // release가 없는 transport(옛 판)도 그대로 돈다
+  const o2 = server.offer({ agent: AGENT });
+  server.push(o2); await flush();
+  assert.equal(server.works.get(o2.work).state, 'done');
+});
+
 test('받을 수 없는 본체·만료된 offer·다른 기기·모르는 에이전트 offer는 accept하지 않는다', async () => {
   const a = setup({ canAccept: () => false });
   a.link.start(); await flush();

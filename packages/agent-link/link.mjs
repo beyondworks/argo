@@ -6,6 +6,7 @@
 //   rpc(name, args) → Promise<{ data, error }>            // supabase-js rpc 모양. error = { code?, message?, status? }
 //   subscribe(topic, onEnvelope, onStatus) → { close() }   // 비공개 broadcast 채널. onStatus('connected'|'disconnected')
 //   broadcast(topic, envelope) → Promise<void>             // 저장하지 않는 방송(work.progress)
+//   release?(topic)                                        // (있으면) 일이 끝났을 때 그 일의 진행 방송 채널을 닫는다
 //   upload(bucket, path, bytes, mime) → Promise<void>      // 업로드 슬롯이 정한 Storage 위치에 올리기(runner 세션, 리스를 쥔 동안만 쓸 수 있다)
 //   download(bucket, path) → Promise<Uint8Array>           // offer 첨부 받기(runner 세션 + Storage API, 리스를 쥔 동안만 읽힌다)
 // }
@@ -179,6 +180,7 @@ export function createLink({ transport, host, uid, device, agentIds = null, cloc
     w.done = true;
     if (w.renewTimer) clock.clearTimeout(w.renewTimer);
     works.delete(w.offer.work);
+    try { transport.release?.(topicProgress(w.offer.work)); } catch { /* 진행 채널 닫기 실패 무시 */ } // 일마다 연 진행 채널이 쌓이지 않게
   }
 
   function makeCtx(w) {

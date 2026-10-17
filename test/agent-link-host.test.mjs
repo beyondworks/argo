@@ -86,6 +86,16 @@ async function setup({ chatImpl, regFails = false, plan, agents = [{ ws: 'co-1',
   return { server, host, calls, vault, agentId, clock, bus, raise };
 }
 
+test('resync는 1분 제한과 무관하게 매번 transport.refresh를 부른다(쉬는 본체의 토큰 회전·끊긴 구독)', async () => {
+  const { server, host } = await setup();
+  let n = 0;
+  server.transport.refresh = async () => { n++; };
+  await host.resync(); await host.resync(); await host.resync();
+  assert.equal(n, 3);
+  delete server.transport.refresh; // refresh가 없는 transport도 그대로
+  await host.resync();
+});
+
 test('플래그: ARGO_AGENT_LINK는 정확히 1일 때만 켬, 옛 브리지는 off일 때만 끔(기본 = 지금 그대로)', () => {
   assert.equal(agentLinkEnabled({}), false);
   assert.equal(agentLinkEnabled({ ARGO_AGENT_LINK: '1' }), true);
