@@ -1,0 +1,49 @@
+{
+  "v": 1,
+  "id": "00000001-0000-4000-8000-000000000000",
+  "work": "3f1c2b7a-9d4e-4c1a-8b2f-1a2b3c4d5e01",
+  "seq": 1,
+  "type": "work.offer",
+  "agent": "7a0e5c11-2b3d-4e5f-8a9b-0c1d2e3f4a02",
+  "device": null,
+  "at": "2026-10-17T06:00:00Z",
+  "data": {
+    "room": "11111111-2222-4333-8444-555555555504",
+    "topic": "22222222-3333-4444-8555-666666666605",
+    "from": {
+      "kind": "user",
+      "id": "33333333-4444-4555-8666-777777777706",
+      "name": "유건"
+    },
+    "text": "다음 주 회의 자료 초안을 써 줘",
+    "context": [
+      {
+        "id": "55555555-6666-4777-8888-999999999908",
+        "author": {
+          "kind": "user",
+          "id": "33333333-4444-4555-8666-777777777706",
+          "name": "유건"
+        },
+        "text": "지난 회의록은 위에 있어",
+        "at": "2026-10-17T05:58:00Z"
+      }
+    ],
+    "attachments": [
+      {
+        "id": "77777777-8888-4999-8aaa-bbbbbbbbbb10",
+        "name": "notes.pdf",
+        "mime": "application/pdf",
+        "bytes": 20480,
+        "url": "https://example.supabase.co/storage/v1/object/sign/msgr/notes.pdf?token=REDACTED",
+        "url_expires_at": "2026-10-17T06:10:00Z"
+      }
+    ],
+    "memory": true,
+    "limits": {
+      "tier": "owner",
+      "max_turn_s": 900,
+      "budget": null
+    },
+    "expires_at": "2026-10-17T06:30:00Z"
+  }
+}
