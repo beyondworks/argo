@@ -162,8 +162,12 @@ test('PR 본문 검사: Testing·Risk(위험도 0/1/2)·How to revert·요청자
   assert.match(checkPr({ body: ok.replace('위험도: 1 — 동기화 주기', '동기화 주기를 바꿈'), files, shared }).join('\n'), /Risk/, '등급 숫자가 없으면 실패');
   assert.match(checkPr({ body: ok.replace('위험도: 1 — 동기화 주기', '위험도: 3'), files, shared }).join('\n'), /Risk/, '0/1/2 밖의 등급은 실패');
   assert.match(checkPr({ body: ok.replace('위험도: 1 — 동기화 주기', '위험도: 1.5'), files, shared }).join('\n'), /Risk/);
-  for (const g of ['위험도 0 — 문구', '등급: 2 (마이그레이션)', 'Risk: 1 sync']) assert.deepEqual(checkPr({ body: ok.replace('위험도: 1 — 동기화 주기', g), files, shared }), [], g);
+  for (const g of ['위험도 0 — 문구', '등급: 2 (마이그레이션)', 'Risk: 1 sync', '위험도: 1.', 'Risk: 0. docs only', '위험도: **1**', 'Risk: `2`', '**위험도**: 1', '| 위험도 | 1 |', 'Risk level: 1']) assert.deepEqual(checkPr({ body: ok.replace('위험도: 1 — 동기화 주기', g), files, shared }), [], g);
   assert.match(checkPr({ body: ok.replace('커밋 revert', 'TBD'), files, shared }).join('\n'), /How to revert/);
+  assert.match(checkPr({ body: ok.replace('위험도: 1 — 동기화 주기', '위험도 0/1/2 중 하나'), files, shared }).join('\n'), /Risk/, '등급을 고르지 않으면 실패');
+  for (const v of ['TBD', '해당 없음', '-', '대기', '없음']) assert.match(checkPr({ body: ok.replace('요청자: 유건', `요청자: ${v}`), files, shared }).join('\n'), /요청자/, v);
+  for (const v of ['**요청자**: 유건', 'Requester: 유건']) assert.deepEqual(checkPr({ body: ok.replace('요청자: 유건', v), files, shared }), [], v);
+  assert.deepEqual(checkPr({ body: ok.replace('## Testing', '## 시험').replace('## How to revert', '## 롤백'), files, shared }), [], '시험·롤백 절 이름도 읽는다');
   assert.match(checkPr({ body: ok.replace('요청자: 유건', '요청자:'), files, shared }).join('\n'), /요청자/);
   assert.match(checkPr({ body: TEMPLATE, files, shared }).join('\n'), /요청자/, '템플릿 안내 주석은 요청자로 치지 않는다');
   assert.deepEqual(checkPr({ body: '', files: ['REVIEW.md'], shared }), [], '문서만 바뀐 PR은 여전히 검사하지 않는다');

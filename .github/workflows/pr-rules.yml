@@ -1,5 +1,5 @@
-# PR 본문 규칙 검사(CLAUDE.md — 2026-10-12). 바뀐 파일에 따라 영향 반경·분리 검수·경우 표·부하 계산·메신저 화면·러너별 검증이
-# 본문에 없으면 실패한다. 본문을 고치면(edited) 다시 돈다. 판정 로직과 시험: scripts/pr-rules-check.mjs, test/rule-gates.test.mjs
+# PR 본문 규칙 검사(CLAUDE.md — 2026-10-12, REVIEW.md — 2026-10-17). 바뀐 파일에 따라 영향 반경·분리 검수·경우 표·부하 계산·메신저 화면·러너별 검증이,
+# 코드 PR이면 Testing·Risk(위험도 0/1/2)·How to revert·요청자가 본문에 없으면 실패한다. 본문을 고치면(edited) 다시 돈다. 판정 로직과 시험: scripts/pr-rules-check.mjs, test/rule-gates.test.mjs
 # 판정기는 base 쪽 판본으로 돌린다(같은 PR에서 판정기를 고쳐 스스로 통과시키지 못하게). base에 아직 없으면(이 검사를 처음 넣는 PR) head 판본.
 name: PR rules
 

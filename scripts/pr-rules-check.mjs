@@ -61,7 +61,10 @@ const EMPTY = /^(해당\s*없음|없음|안\s*함|미실시|n\/?a|-)\.?$/i;
 // 자리 표시 — 줄마다 목록 기호와 "라벨:"을 떼고 이것만 남으면 내용이 아니다. 절의 모든 줄이 자리 표시면 빈 절이다("분리 검수: 대기"만 적어도 통과하던 것, #961 검수 LOW-2).
 const PLACEHOLDER = /^(대기(\s*중)?|예정|pending|tbd|todo|wip)\.?$/i;
 const placeholderLine = (l) => PLACEHOLDER.test(l.replace(/^[-*]\s*/, '').replace(/^[^:：]{1,30}[:：]\s*/, '').trim());
-const RISK_GRADE = /(위험도|등급|grade|risk)\s*[:：]?\s*[012](?![\d.])/i;
+// 위험도 숫자 — 앞뒤 서식(**·`·표 칸)과 문장 끝 마침표는 받고, 소수(1.5)·3 이상·고르지 않은 "0/1/2"는 받지 않는다(#review 검수 I-1)
+const RISK_GRADE = /(위험도|등급|grade|risk)[\s*_`|]*(level)?[\s*_`|]*[:：]?[\s*_`|]*[012](?!\d|\.\d|\s*\/)/i;
+// 요청자 값 — 같은 줄의 값이 자리 표시·"해당 없음"이면 빈 것으로 본다(#review 검수 I-2)
+const requester = (t) => [...t.matchAll(/(요청자|requester)[\s*_]*[:：][ \t*_]*([^\n]*)/gi)].some((m) => filled(m[2].replace(/[*_]+$/, '')));
 const filled = (t) => t.trim() !== '' && !EMPTY.test(t.trim()) && !t.trim().split('\n').every(placeholderLine);
 
 // 반환: 빠진 항목 설명 목록(빈 배열 = 통과). added = [{ file, line }]
@@ -78,11 +81,11 @@ export function checkPr({ body = '', files = [], added = [], shared = messengerS
   if (code.some((f) => shared.has(f)) && !['390', '1280', '880'].every((n) => sectionText(secs, /화면/).includes(n))) missing.push(`메신저 화면 확인: 메신저가 쓰는 공용 파일(${code.filter((f) => shared.has(f)).join('·')})이 바뀌었다 — "## 화면"에 메신저 390·1280·880(회귀 게이트 5)`);
   if (code.some((f) => RUNNER.test(f)) && !/러너/.test(all)) missing.push('러너별 검증: 벤더 와이어·도구 정의 파일이 바뀌었다 — 러너(벤더)마다 "실턴/가짜 서버/미검증"(벤더 1·4)');
   // 리뷰 방식(REVIEW.md, 2026-10-17) — 직접 돌린 확인, 위험도 0/1/2와 이유, 되돌리는 방법, 요청자
-  if (!filled(sectionText(secs, /testing|테스트/i))) missing.push('Testing: "## Testing"에 직접 돌린 테스트·빌드·린트·화면 확인과 결과(REVIEW.md)');
+  if (!filled(sectionText(secs, /testing|테스트|시험/i))) missing.push('Testing: "## Testing"에 직접 돌린 테스트·빌드·린트·화면 확인과 결과(REVIEW.md)');
   const risk = sectionText(secs, /risk|위험/i);
   if (!filled(risk) || !RISK_GRADE.test(risk)) missing.push('Risk: "## Risk"에 위험도(0/1/2)와 이유, 무엇이 잘못될 수 있나(REVIEW.md 위험도 기준)');
-  if (!filled(sectionText(secs, /revert|되돌/i))) missing.push('How to revert: "## How to revert"에 되돌리는 방법(커밋 revert·플래그 끄기·마이그레이션 되돌리기)(REVIEW.md)');
-  if (!/요청자[ \t]*[:：][ \t]*\S/.test(all)) missing.push('요청자: 본문에 "요청자: <이름>"(변경을 시킨 사람 — 세션이 대신 썼어도 요청한 사람)(REVIEW.md)');
+  if (!filled(sectionText(secs, /revert|되돌|롤백/i))) missing.push('How to revert: "## How to revert"에 되돌리는 방법(커밋 revert·플래그 끄기·마이그레이션 되돌리기)(REVIEW.md)');
+  if (!requester(all)) missing.push('요청자: 본문에 "요청자: <이름>"(변경을 시킨 사람 — 세션이 대신 썼어도 요청한 사람)(REVIEW.md)');
   return missing;
 }
 

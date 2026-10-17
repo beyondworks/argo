@@ -5,7 +5,7 @@
 ## 이 저장소에서 "실패"인 것
 - 인증·기기 세션·토큰: 남의 계정·회사·볼트에 닿거나, 로그아웃·폐기된 토큰이 계속 통한다.
 - 결제·플랜(free·trial·pro): 돈을 낸 사람이 막히거나, 안 낸 사람이 유료 기능을 쓴다.
-- 권한·RLS·`supabase/migrations`: 다른 사용자 행이 보이거나, 기억 데이터(`msgr_messages`·일지·`msgr_org_docs`·볼트)가 지워진다. 버전 중복·되돌림 SQL 없음.
+- 권한·RLS·`supabase/migrations`: 다른 사용자 행이 보이거나, 기억 데이터(`msgr_messages`·일지·`msgr_org_docs`·볼트)가 지워진다. 버전이 중복되거나, 데이터를 바꾸는 마이그레이션에 되돌리는 방법(`scripts/rollback/` SQL 또는 되돌릴 수 없는 이유)이 없다.
 - 동기화·Storage: 동시 수정·삭제가 다른 기기에서 사라지거나, 유휴 상태에서 DB 쓰기·요청이 생긴다(분당 계산 없음).
 - 러너(SDK·CLI·벤더별): 한 벤더만 고치고 다른 벤더 와이어가 깨진다. 도구 정의가 벤더 스키마를 벗어난다.
 - 업데이터·설치·서명(`src-tauri`·발행 스크립트): 옛 설치본이 새 버전으로 못 올라오거나, 서명·공증이 빠진다.
@@ -14,7 +14,7 @@
 - 문서·안내 문구: 사실과 다르면 실패다(업데이트 안내·발행 노트 포함).
 
 ## 건너뛸 경로
-`package-lock.json`·`src-tauri/Cargo.lock`·`public/`의 빌드 결과물·`vendor/`·`workspaces/`·`artifacts/`의 캡처 이미지.
+모든 `package-lock.json`·`Cargo.lock`(루트·`apps/messenger`·`landing`)·`vendor/`·`public/fonts`와 이미지·`workspaces/`·`artifacts/`. `public/`의 `boot.js`·`splash/`는 사용자에게 나가는 코드라 본다.
 
 ## 지적 규칙
 - 근거는 `파일:줄`로 적는다. 추측이면 "추측"이라고 쓰고, 재현 경로(입력 → 잘못된 결과)를 붙인다.
