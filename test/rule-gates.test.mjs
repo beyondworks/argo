@@ -39,7 +39,7 @@ test('마이그레이션 버전 중복 없음', () => {
 // 유건 승인을 받은 예외는 그 문장 안에 `-- rule-ok: <이유·승인 날짜>` 주석을 단다.
 // ponytail: 문장 단위 정규식 — 동적 SQL(execute format)로 이름을 조립하면 못 잡는다. 그런 마이그레이션은 검수에서 본다.
 const CUTOFF = '20261012140000';
-const FORBIDDEN = /\b(delete\s+from(\s+only)?|truncate(\s+table)?(\s+only)?|drop\s+table(\s+if\s+exists)?)\s+(storage\s*\.\s*objects|(public\s*\.\s*)?msgr_messages|(public\s*\.\s*)?msgr_org_docs)\b/i;
+const FORBIDDEN = /\b(delete\s+from(\s+only)?|truncate(\s+table)?(\s+only)?|drop\s+table(\s+if\s+exists)?)\s+(storage\s*\.\s*objects|(public\s*\.\s*)?msgr2?_messages|(public\s*\.\s*)?msgr_org_docs)\b/i; // msgr2_messages — 메신저 v2 기억 데이터(설계 6절, 2026-10-17)
 const forbiddenStatements = (sql) => sql
   .replace(/;([ \t]*--[^\n]*rule-ok:[^\n]*)/g, '$1\n;') // 줄 끝 `; -- rule-ok:`는 앞 문장의 예외다
   .split(';').filter((stmt) => {
@@ -61,9 +61,11 @@ test('삭제 금지 판정이 변형까지 잡는다(변이 확인)', () => {
     'delete from public."msgr_messages"',
     'delete from only public.msgr_messages',
     'truncate msgr_messages', 'truncate table storage.objects', 'drop table if exists msgr_org_docs',
+    'delete from public.msgr2_messages where true', 'truncate msgr2_messages', 'drop table if exists public.msgr2_messages',
     'delete from storage . objects', 'delete\n  from storage.objects\n where true', 'delete /* x */ from storage.objects',
   ]) assert.equal(forbiddenStatements(sql).length, 1, sql);
   assert.deepEqual(forbiddenStatements('delete from msgr_crews where id = $1'), []);
+  assert.deepEqual(forbiddenStatements('delete from msgr2_reactions where user_id = $1'), [], 'v2 반응 지우기는 기억 데이터가 아니다');
   assert.deepEqual(forbiddenStatements('delete from storage.objects_x'), []);
   assert.deepEqual(forbiddenStatements('delete from storage.objects where true -- rule-ok: 시험'), []);
   assert.equal(forbiddenStatements('delete from storage.objects; -- rule-ok: 시험\ndelete from storage.objects;').length, 1, '줄 끝 예외 주석은 앞 문장에만 걸린다');
