@@ -3,7 +3,10 @@
 // ① 등록 멱등: 1일 안 같은 값이면 쓰기 0(트랜잭션 번호 없음·xmin 그대로), 값이 바뀌거나 1일 지나면 쓴다
 // ② 최소 버전 미만·약속 범위 밖 등록 거부(경우 5) ③ 폐기 직후 _msgr2_device_ok 거짓·재등록 거부·u: 방송(경우 19)
 // ④ 사용자 세대를 올리면 그 사용자 기기 전부 거짓 ⑤ 만료 30일 경계 ⑥ runner·resident 세션의 폐기 호출 42501, 다른 사용자 기기 폐기 불가
-// ⑦ 새 기기 로그인 = 새 행, 옛 기기 영향 없음(경우 12) ⑧ 종류 잠금·세션 없음·표 직접 접근 ⑨ 보존 규칙
+// ⑦ 새 기기 로그인 = 새 행, 옛 기기 영향 없음(경우 12) ⑧ 종류 잠금·세션 없음·표 직접 접근 ⑨ 보존 규칙(지운 세션은 되살아나지 않음)
+// ⑩ 새 app 행은 로그인 10분 안 세션만(행 없는 본체 세션을 app으로 먼저 등록하는 길 차단) ⑪ 같은 푸시 토큰은 한 행만
+// ⑫ U1(_msgr2_space.sql)이 있으면 먼저 적용하고 그 권한 RPC(msgr2_set_member_role)가 runner 세션을 42501로 막는지 본다.
+//    U1이 아직 병합 전이면 MSGR2_U1_MIG=<U1 마이그레이션 경로>로 넘긴다(PR #1070 확인 방식).
 // JWT session_id: 실 GoTrue 토큰 대신 request.jwt.claims를 직접 넣는다(PostgREST가 넣는 방식). 실 GoTrue 미확인.
 // 실행: bash scripts/billing-pg-drill.sh test/msgr2-device-pg.test.mjs
 import test, { before } from 'node:test';
@@ -51,7 +54,13 @@ const setting = (k, v) => (v === null ? sql(`delete from public.msgr_settings wh
   : sql(`insert into public.msgr_settings (key, value) values ('${k}', '${v}') on conflict (key) do update set value = excluded.value`));
 const session = (uid) => { const s = randomUUID(); sql(`insert into auth.sessions (id, user_id) values ('${s}', '${uid}')`); return s; };
 
-const U = Object.fromEntries(['idem', 'ver', 'rev', 'gen', 'genOther', 'exp', 'kind', 'other', 'keep'].map((k) => [k, randomUUID()]));
+const U = Object.fromEntries(['idem', 'ver', 'rev', 'gen', 'genOther', 'exp', 'kind', 'other', 'keep', 'fresh', 'push1', 'push2', 'u1'].map((k) => [k, randomUUID()]));
+// U1 마이그레이션(공간·판정 함수) — 저장소에 있으면 그 파일, 없으면 MSGR2_U1_MIG 경로. 둘 다 없으면 ⑫의 U1 부분만 건너뛰고 _msgr2_device_app만 본다.
+const u1File = (() => {
+  const f = readdirSync(migDir).filter((x) => x.endsWith('_msgr2_space.sql'));
+  if (f.length === 1) return migDir + f[0];
+  return process.env.MSGR2_U1_MIG || null;
+})();
 
 before(() => {
   if (!DB) return;
@@ -65,7 +74,7 @@ before(() => {
     grant usage on schema public to anon, authenticated, service_role;
     create schema if not exists auth; grant usage on schema auth to anon, authenticated, service_role;
     create table if not exists auth.users (id uuid primary key, created_at timestamptz not null default now(), email text);
-    create table if not exists auth.sessions (id uuid primary key, user_id uuid not null);
+    create table if not exists auth.sessions (id uuid primary key, user_id uuid not null, created_at timestamptz not null default now());
     -- 실제 Supabase auth.uid()처럼 request.jwt.claim.sub 또는 request.jwt.claims의 sub를 읽는다
     create or replace function auth.uid() returns uuid language sql stable as $$
       select coalesce(nullif(current_setting('request.jwt.claim.sub', true), ''), nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid $$;
@@ -76,6 +85,7 @@ before(() => {
     create table if not exists public.msgr_settings (key text primary key, value text not null); alter table public.msgr_settings enable row level security;
   `]);
   psql(['-c', migBy('_msgr_app_min_version.sql')]);
+  if (u1File) psql(['-c', readFileSync(u1File, 'utf8')]); // 버전 순서: U1(20261017151000) → U3
   psql(['-c', migBy('_msgr2_device.sql')]);
   for (const [k, id] of Object.entries(U)) sql(`insert into auth.users (id, email) values ('${id}', '${k}@example.test')`);
 });
@@ -163,9 +173,12 @@ test('경우 19: 폐기 직후 _msgr2_device_ok 거짓 — 재등록·목록 거
 
 test('사용자 세대를 올리면 그 사용자 기기 전부 거짓 — 다른 사용자 영향 없음, 새 로그인은 새 세대로 유효', { skip }, () => {
   const a = session(U.gen); const b = session(U.gen); const o = session(U.genOther);
+  const pre = session(U.gen); // 세대를 올리기 전에 로그인했지만 아직 등록하지 않은 세션
   reg(U.gen, a); reg(U.gen, b, { kind: 'runner' }); reg(U.genOther, o);
   assert.equal(ok(U.gen, a) && ok(U.gen, b) && ok(U.genOther, o), true);
-  sql(`insert into public.msgr2_user_gen (user_id, gen) values ('${U.gen}', 1) on conflict (user_id) do update set gen = excluded.gen`);
+  sql(`insert into public.msgr2_user_gen (user_id, gen, bumped_at) values ('${U.gen}', 1, clock_timestamp()) on conflict (user_id) do update set gen = excluded.gen, bumped_at = excluded.bumped_at`);
+  fails(regRaw(U.gen, pre, { kind: 'runner' }), /device_revoked/, '세대를 올리기 전 로그인한 세션은 새 행도 못 만든다');
+  assert.equal(row(pre, 'count(*)'), '0');
   assert.equal(ok(U.gen, a), false); assert.equal(ok(U.gen, b), false);
   assert.equal(ok(U.genOther, o), true, '다른 사용자 그대로');
   fails(regRaw(U.gen, a), /device_revoked/, '세대가 지난 세션은 재등록 거부');
@@ -250,5 +263,60 @@ test('보존 규칙 — 새 기기를 만들 때 60일 넘게 등록이 없고 �
   assert.equal(row(alive, 'count(*)'), '1', '세션이 살아 있으면 남긴다(폐기·만료 표시 보존)');
   assert.equal(row(recentGone, 'count(*)'), '1', '60일 안이면 남긴다');
   assert.equal(sql(`select count(*) from public.msgr2_devices where user_id = '${U.keep}'`), keepRows, '남의 행 그대로');
-  // 지운 세션으로 다시 등록해도 auth.sessions가 없으면 실서비스에서는 토큰을 받을 수 없다 — 여기서는 규칙만 본다
+  // 지운 행의 세션은 auth.sessions에 없으므로 남은 JWT로 다시 등록해도 새 행이 생기지 않는다(폐기·만료 표시가 되살아나지 않음)
+  fails(regRaw(u, gone), /device_login_required/, '지운 세션 재등록');
+  assert.equal(row(gone, 'count(*)'), '0');
+});
+
+test('새 app 행은 로그인 10분 안 세션만 — 행 없는 오래된 세션을 app으로 먼저 등록할 수 없다, runner는 된다', { skip }, () => {
+  const stale = session(U.fresh); sql(`update auth.sessions set created_at = now() - interval '11 minutes' where id = '${stale}'`);
+  fails(regRaw(U.fresh, stale), /42501: device_login_required/, '11분 된 세션을 app으로 → 다시 로그인');
+  assert.equal(row(stale, 'count(*)'), '0', '거부 때 행 없음');
+  assert.equal(reg(U.fresh, stale, { kind: 'runner' }).kind, 'runner', '오래된 세션도 runner로는 등록된다');
+  assert.equal(as(U.fresh, stale, 'select public._msgr2_device_app()'), 'f', 'runner는 앱 기기가 아니다');
+  const nine = session(U.fresh); sql(`update auth.sessions set created_at = now() - interval '9 minutes' where id = '${nine}'`);
+  assert.equal(reg(U.fresh, nine).kind, 'app', '9분 = 통과');
+  assert.equal(as(U.fresh, nine, 'select public._msgr2_device_app()'), 't');
+  // 한 번 app 행이 생기면 그 뒤로는 세션 나이와 관계없이 재등록된다(10분은 새 행에만)
+  sql(`update auth.sessions set created_at = now() - interval '20 days' where id = '${nine}'`);
+  sql(`update public.msgr2_devices set registered_at = now() - interval '2 days', expires_at = now() + interval '28 days' where session_id = '${nine}'`);
+  assert.equal(reg(U.fresh, nine).wrote, true);
+  // GoTrue에 없는 세션(남의 세션 id·지워진 세션)은 새 행을 못 만든다
+  fails(regRaw(U.fresh, randomUUID(), { kind: 'runner' }), /device_login_required/, 'auth.sessions에 없는 세션');
+  const theirs = session(U.other);
+  fails(regRaw(U.fresh, theirs, { kind: 'runner' }), /device_login_required/, '남의 세션 id');
+});
+
+test('같은 푸시 토큰은 한 행만 — 같은 폰에 다른 사람이 로그인하면 옛 행의 토큰을 비운다', { skip }, () => {
+  const a = session(U.push1); reg(U.push1, a, { push: 'phone-tok' });
+  const b = session(U.push2); reg(U.push2, b, { push: 'phone-tok' });
+  assert.equal(row(a, `coalesce(push_token, '(null)')`), '(null)', '옛 행 토큰 비움');
+  assert.equal(row(b, 'push_token'), 'phone-tok');
+  const x = row(b);
+  assert.equal(reg(U.push2, b, { push: 'phone-tok' }).txid, false, '같은 토큰 재등록 = 쓰기 0');
+  assert.equal(row(b), x);
+  reg(U.push1, a, { push: 'phone-tok' }); // 다시 A가 같은 폰으로(값이 바뀜) → B의 토큰을 비운다
+  assert.equal(row(b, `coalesce(push_token, '(null)')`), '(null)');
+  assert.equal(row(a, 'push_token'), 'phone-tok');
+});
+
+test('_msgr2_device_app — 유효한 app 기기만 참 · U1 권한 RPC가 runner 세션을 42501로 막는다', { skip }, () => {
+  const app = session(U.u1); const runner = session(U.u1);
+  reg(U.u1, app); reg(U.u1, runner, { kind: 'runner' });
+  assert.equal(as(U.u1, app, 'select public._msgr2_device_app()'), 't');
+  assert.equal(as(U.u1, runner, 'select public._msgr2_device_app()'), 'f');
+  assert.equal(as(U.u1, randomUUID(), 'select public._msgr2_device_app()'), 'f', '등록 안 한 세션');
+  const props = sql(`select string_agg(proname || ':' || prosecdef || ':' || provolatile || ':' || pg_get_function_result(oid), ',' order by proname) from pg_proc where proname in ('_msgr2_device_ok', '_msgr2_device_app')`);
+  assert.equal(props, '_msgr2_device_app:true:s:boolean,_msgr2_device_ok:true:s:boolean', 'U1 자리 함수와 같은 시그니처·속성');
+  if (u1File) {
+    const space = randomUUID(); const other = randomUUID();
+    fails(asRaw(U.u1, runner, `select public.msgr2_set_member_role('${space}', '${other}', 'admin')`), /42501: msgr2_app_device_required/, 'U1 권한 RPC: runner 세션');
+    const viaApp = asRaw(U.u1, app, `select public.msgr2_set_member_role('${space}', '${other}', 'admin')`);
+    assert.doesNotMatch(viaApp.stderr, /msgr2_app_device_required/, 'U1 권한 RPC: app 세션은 기기 검사를 지난다');
+    assert.notEqual(as(U.u1, app, 'select public.msgr2_my_personal_space()'), '', 'U1 판정이 유효한 기기를 받는다');
+    const appId = as(U.u1, app, 'select id from public.msgr2_devices_list() where is_current');
+    as(U.u1, app, `select public.msgr2_device_revoke('${appId}')`);
+    fails(asRaw(U.u1, app, `select public.msgr2_set_member_role('${space}', '${other}', 'admin')`), /42501: msgr2_app_device_required/, 'U1 권한 RPC: 폐기된 app 세션');
+    fails(asRaw(U.u1, app, 'select public.msgr2_my_personal_space()'), /42501: msgr2_device_invalid/, 'U1 판정: 폐기된 기기');
+  }
 });
