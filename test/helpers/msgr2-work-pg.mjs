@@ -33,17 +33,25 @@ export function makeDb(DB) {
   const raw = (args) => psqlSpawn(DB, args);
   const psql = (args) => { const r = raw(args); if (r.status !== 0) throw new Error(`psql 실패: ${r.stderr || r.stdout}`); return r.stdout; };
   const sql = (q) => psql(['-A', '-t', '-c', q]).trim();
-  const ctx = (uid, sid) => `set role authenticated; select set_config('argo.uid', '${uid}', false), set_config('request.jwt.claims', '${JSON.stringify({ session_id: sid ?? '' })}', false); `;
+  const ctx = (uid, sid, topic = '') => `set role authenticated; select set_config('argo.uid', '${uid}', false), set_config('request.jwt.claims', '${JSON.stringify({ session_id: sid ?? '' })}', false), set_config('realtime.topic', '${topic}', false); `;
   // 사람·본체 문맥에서 질의 → 마지막 줄
   const as = (uid, sid, q) => { const r = raw(['-A', '-t', '-c', ctx(uid, sid) + q]); if (r.status !== 0) throw new Error(`psql 실패: ${r.stderr}`); return r.stdout.trim(); };
   const asErr = (uid, sid, q) => { const r = raw(['-A', '-t', '-c', ctx(uid, sid) + q]); return r.status === 0 ? null : r.stderr; };
   const lit = (o) => `'${JSON.stringify(o).replace(/'/g, "''")}'::jsonb`;
   const send = (uid, sid, env) => JSON.parse(as(uid, sid, `select public.msgr2_link_send(${lit(env)})`));
   const xmins = (t, where = 'true') => sql(`select coalesce(string_agg(xmin::text, ',' order by ctid), '') from public.${t} where ${where}`);
-  return { raw, psql, sql, as, asErr, lit, send, xmins };
+  // Realtime 토픽 구독 판정(받기 정책) — 그 토픽의 메시지 행 하나를 볼 수 있나
+  const canListen = (uid, sid, topic) => {
+    raw(['-c', `insert into realtime.messages (topic, extension, payload) select '${topic}', 'broadcast', '{}' where not exists (select 1 from realtime.messages where topic = '${topic}')`]);
+    const r = raw(['-A', '-t', '-c', ctx(uid, sid, topic) + `select count(*) from realtime.messages where topic = '${topic}'`]);
+    if (r.status !== 0) throw new Error(r.stderr);
+    return r.stdout.trim() !== '0';
+  };
+  return { raw, psql, sql, as, asErr, lit, send, xmins, ctx, canListen };
 }
 
-export function setup(DB) {
+// 역할·auth·realtime·storage·msgr_settings 대역만(마이그레이션 적용 전). 되돌림 시험이 단계별로 적용할 때 쓴다.
+export function setupBase(DB) {
   const db = makeDb(DB);
   db.psql(['-c', `
     do $$ begin
@@ -60,11 +68,34 @@ export function setup(DB) {
     create table if not exists realtime.sent (id bigserial primary key, topic text, event text, payload jsonb);
     create or replace function realtime.send(payload jsonb, event text, topic text, private boolean default true) returns void
       language sql as $$ insert into realtime.sent (topic, event, payload) values (topic, event, payload) $$;
-    grant usage on schema realtime to authenticated; grant insert on realtime.sent to authenticated; grant usage on sequence realtime.sent_id_seq to authenticated;`]);
+    grant usage on schema realtime to authenticated; grant insert on realtime.sent to authenticated; grant usage on sequence realtime.sent_id_seq to authenticated;
+    -- Realtime 토픽 권한 대역: realtime.messages + realtime.topic()(설정 realtime.topic). Supabase와 같은 모양으로 정책을 건다(U2b)
+    create table if not exists realtime.messages (id bigint generated always as identity primary key, topic text, extension text, payload jsonb, event text);
+    create or replace function realtime.topic() returns text language sql stable as $$ select nullif(current_setting('realtime.topic', true), '') $$;
+    alter table realtime.messages enable row level security; grant select, insert on realtime.messages to authenticated;
+    -- Storage 대역(버킷 msgr 정책 시험, U2b)
+    create schema if not exists storage;
+    create table if not exists storage.objects (id uuid primary key default gen_random_uuid(), bucket_id text, name text, owner uuid, metadata jsonb);
+    create or replace function storage.foldername(name text) returns text[] language sql immutable as $$ select (string_to_array(name, '/'))[1:array_length(string_to_array(name, '/'), 1) - 1] $$;
+    alter table storage.objects enable row level security;
+    grant usage on schema storage to authenticated; grant select, insert, update, delete on storage.objects to authenticated;
+    -- 운영에 있는 설정 표(옛 메신저 20260912150000). 상한·중단 스위치를 읽는다
+    create table if not exists public.msgr_settings (key text primary key, value text);`]);
+  return db;
+}
+
+// 적용 순서: U1 → U3(없으면 최소 판) → U2 → U2b(있으면)
+export const MSGR2_FILES = () => ({ u1: pick('_msgr2_space.sql'), u3: pick('_msgr2_device.sql'), u2: pick('_msgr2_work.sql'), u2b: pick('_msgr2_realtime_storage.sql') });
+export const migText = (f) => readFileSync(mig(f), 'utf8');
+
+export function setup(DB) {
+  const db = setupBase(DB);
   db.psql(['-c', readFileSync(mig(pick('_msgr2_space.sql')), 'utf8')]);
   const u3 = pick('_msgr2_device.sql');
   db.psql(['-c', u3 ? readFileSync(mig(u3), 'utf8') : U3_STUB]);
   db.psql(['-c', readFileSync(mig(pick('_msgr2_work.sql')), 'utf8')]);
+  const u2b = pick('_msgr2_realtime_storage.sql');
+  if (u2b) db.psql(['-c', readFileSync(mig(u2b), 'utf8')]);
   return { ...db, u3: u3 ?? 'stub' };
 }
 

@@ -16,8 +16,8 @@
 --   · 상한(D11)은 msgr_settings에서 읽고(없으면 기본값), 만료·카운터도 읽을 때 계산한다.
 --   · U1 미룸 "msgr2_lock_cols의 pg_trigger_depth() > 1 통과": 서버 코드는 잠긴 열을 바꾸지 않고, msgr2_* 표에는 cascade FK가 없어 이 통과가 필요 없다 → 없앤다.
 --   · U5(메신저 연결 상태 기계, #1072)와 맞춘 입구: msgr2_service_pause()·msgr2_catch_up(p_since_id)·msgr2_attachment_add(글, 순번, 이름, mime, 크기)·
---     중단 중 사람 글 거부 'service_paused'. u:<uid> 방송(msg·pause·device_revoked)은 이 파일에 없다(미룸 — PR 본문).
---   · Storage 정책(버킷 msgr의 v2 경로 쓰기·읽기)은 이 파일에 없다(미룸). 슬롯·첨부 RPC는 경로와 행만 만든다.
+--     중단 중 사람 글 거부 'service_paused'. u:<uid> 방송(msg·pause·device_revoked)은 U2b 파일.
+--   · Storage 정책(버킷 msgr의 v2 경로 쓰기·읽기)·u:<uid> 방송·Realtime 토픽 권한·보존 규칙은 다음 파일(*_msgr2_realtime_storage.sql, U2b)이 둔다.
 -- 지우는 SQL 없음. 기억 데이터(글)는 지우지 않는다.
 
 -- ── 0. U1 보완 ──────────────────────────────────────────────────────────────────
@@ -392,6 +392,17 @@ begin
 end $$;
 
 -- ── 4. offer 만들기(사람 글 트리거·넘김이 부른다) ─────────────────────────────────
+-- 글의 첨부 → 약속 v1 offer.attachments[] 모양(Storage 위치, U2b). storage_path = '<버킷>/<버킷 안 경로>'. 20개까지.
+create or replace function public._msgr2_attachments_of(p_message bigint) returns jsonb
+  language sql stable security definer set search_path = public, pg_temp as $$
+  select coalesce(jsonb_agg(jsonb_build_object('id', q.id, 'name', q.name, 'mime', q.mime, 'bytes', q.bytes, 'bucket', q.bucket,
+           'path', substr(q.storage_path, char_length(q.bucket) + 2)) order by q.id), '[]'::jsonb)
+    from (select a.id, left(coalesce(nullif(a.name, ''), 'file'), 200) as name, left(coalesce(nullif(a.mime, ''), 'application/octet-stream'), 200) as mime,
+                 greatest(coalesce(a.bytes, 0), 0) as bytes, split_part(a.storage_path, '/', 1) as bucket, a.storage_path
+            from public.msgr2_attachments a where p_message is not null and a.message_id = p_message and position('/' in a.storage_path) > 1
+           order by a.id limit 20) q
+$$;
+
 -- 넘김할 수 있는 동료(offer.peers[], 총괄 지시 2026-10-17). 같은 방의 활동 중인 다른 에이전트(주인이 그 방을 읽을 수 있는) 중, 사슬을 시작한 사람(p_root_user)이
 -- 그 에이전트에게 시킬 수 있는 것만(개인 공간 = 주인만, 팀 공간 = 파견 행 allow). guest 등급이면 빈 배열(D12). 이름이 비면 slug. 50개까지.
 -- 넘김(result.handoffs[])을 받을 때도 이 목록으로 다시 본다 — offer에 실은 목록과 서버가 받는 넘김이 같은 규칙이다.
@@ -480,7 +491,7 @@ begin
   select l.device_id into dev from public.msgr2_agent_leases l where l.agent_id = p_agent and l.lease_until > now();
   perform public._msgr2_server_event(wid, 'work.offer', dev, jsonb_build_object(
     'room', p_room, 'topic', tid, 'from', jsonb_build_object('kind', p_from_kind, 'id', p_from_id), 'text', left(coalesce(p_text, ''), 20000),
-    'context', ctx, 'attachments', '[]'::jsonb, 'memory', r.memory, 'peers', public._msgr2_peers(p_room, p_agent, p_root_user, tier),
+    'context', ctx, 'attachments', public._msgr2_attachments_of(p_source), 'memory', r.memory, 'peers', public._msgr2_peers(p_room, p_agent, p_root_user, tier),
     'limits', jsonb_build_object('tier', tier, 'max_turn_s', public._msgr2_setting_int('msgr2_max_turn_s', 900), 'budget', null),
     'expires_at', to_char((now() + make_interval(secs => ttl_s)) at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')));
   return wid;
@@ -722,7 +733,8 @@ begin
   insert into public.msgr2_work_events (work_id, sender, seq, type, envelope_id, device_id, envelope)
   values (w.id, 'runner', (p_env->>'seq')::bigint, t, (p_env->>'id')::uuid, dv.id, p_env);
   return jsonb_build_object('ok', true, 'state', ns.to_state)
-    || case when t = 'work.accept' then jsonb_build_object('lease_gen', lg, 'lease_until', to_char(v_until at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')) else '{}'::jsonb end;
+    || case when t = 'work.accept' then jsonb_build_object('lease_gen', lg, 'lease_until', to_char(v_until at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+         'attachments', public._msgr2_attachments_of(w.source_message_id)) else '{}'::jsonb end; -- 사람 글의 첨부는 글을 넣은 뒤에 붙어 offer에 없을 수 있다
 end $$;
 
 -- ── 7. 따라잡기·업로드 슬롯(쓰기 없음 / 슬롯 1행) ────────────────────────────────
@@ -917,7 +929,11 @@ begin
   select * into w from public.msgr2_works where id = p_work;
   if not found or not (select (public.msgr2_access(w.room_id)).read) then return null; end if;
   st := public._msgr2_effective_state(w.state, w.expires_at, w.lease_until, w.has_result);
+  -- effects[].state: intent가 남았는데 일이 끝났거나 리스가 끝났으면(stalled) unknown — 재시작한 본체는 알릴 수 없어 서버가 읽을 때 계산한다(#1074 검수).
   return jsonb_build_object('work', w.id, 'state', st, 'late', w.late, 'error', w.error_code, 'has_result', w.has_result,
+    'effects', coalesce((select jsonb_agg(jsonb_build_object('key', e.effect_key, 'kind', e.kind,
+        'state', case when e.state = 'intent' and st in ('done', 'failed', 'cancelled', 'stalled') then 'unknown' else e.state end) order by e.at, e.effect_key)
+      from public.msgr2_effects e where e.work_id = w.id), '[]'::jsonb),
     'unknown_effects', case when st in ('done', 'failed', 'cancelled', 'stalled') then
       coalesce((select jsonb_agg(e.effect_key order by e.at) from public.msgr2_effects e where e.work_id = w.id and e.state = 'intent'), '[]'::jsonb) else '[]'::jsonb end);
 end $$;
@@ -927,7 +943,7 @@ do $$ declare f text; begin
   foreach f in array array[
     '_msgr2_setting(text)', '_msgr2_setting_int(text, integer)', '_msgr2_my_device()', '_msgr2_send_w(uuid, jsonb)',
     '_msgr2_system_msg(uuid, uuid, uuid, jsonb)', '_msgr2_server_event(uuid, text, uuid, jsonb)',
-    '_msgr2_make_offer(uuid, uuid, uuid, text, uuid, uuid, text, bigint, uuid, integer)', '_msgr2_peers(uuid, uuid, uuid, text)', '_msgr2_bump_streak(uuid)', '_msgr2_paused()',
+    '_msgr2_make_offer(uuid, uuid, uuid, text, uuid, uuid, text, bigint, uuid, integer)', '_msgr2_peers(uuid, uuid, uuid, text)', '_msgr2_attachments_of(bigint)', '_msgr2_bump_streak(uuid)', '_msgr2_paused()',
     'msgr2_on_user_message()', 'msgr2_pause_guard()'] loop
     execute format('revoke all on function public.%s from public, anon, authenticated', f);
   end loop;
