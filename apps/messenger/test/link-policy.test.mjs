@@ -63,7 +63,10 @@ test('따라잡기 응답: 방별 묶음·id 오름차순·200 넘으면 더 있
   const obj = normalizeCatchUp({ rooms: [{ room_id: 'A', messages: [{ id: 3 }, { id: 2 }], more: true }], paused: false });
   assert.deepEqual(obj.rooms[0].messages.map((m) => m.id), [2, 3]); assert.equal(obj.rooms[0].more, true); assert.equal(obj.paused, false);
   assert.equal(normalizeCatchUp({ rooms: [], paused: true }).paused, true);
-  assert.deepEqual(normalizeCatchUp(null), { rooms: [], paused: false });
+  assert.deepEqual(normalizeCatchUp(null), { rooms: [], paused: false, nextSince: null });
+  // U2 next_since: 안전 정수만 받고, 옛 서버(값 없음)·이상한 값은 null
+  assert.equal(normalizeCatchUp({ rooms: [], next_since: 42 }).nextSince, 42);
+  for (const v of [undefined, null, -1, 1.5, '42x', 2 ** 53]) assert.equal(normalizeCatchUp({ rooms: [], next_since: v }).nextSince, null, String(v));
 });
 
 test('작은 읽기: 중단 표지·기기 id·업로드 경로(같은 글의 같은 파일 = 같은 경로)', () => {

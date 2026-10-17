@@ -13,10 +13,12 @@ export const NAMES = Object.freeze({
   registerRpc: 'msgr2_device_register', // 설계 5절(U3)
   catchUpRpc: 'msgr2_catch_up', // 설계 4절 — (since_id) → 방별 최근 200개 + 더 있음
   messages: 'msgr2_messages', // U1 — 사람 글은 표에 직접 insert(RLS), (room_id, client_msg_id) 유일
-  attachments: 'msgr2_attachments', // U1
+  attachments: 'msgr2_attachments', // U1(사람은 직접 넣지 못한다 — 아래 attachmentAddRpc)
+  attachmentAddRpc: 'msgr2_attachment_add', // U2 — (p_message, p_index, p_name, p_mime, p_bytes) → { attachment_id, bucket, path, existing }. 이 path에만 올릴 수 있다(U2b Storage 정책)
   bucket: 'msgr', // 첨부 Storage 버킷(옛 경로 유지 — 설계 1-2)
   userTopic: TOPICS.user, // v2:u:<uid> — 옛 u: 토픽과 겹치지 않게(약속 v1 TOPICS, 검수 #1076)
   workTopic: TOPICS.work, // v2:wk:<work>
+  spaceTopic: TOPICS.space, // v2:s:<space> — 사람이 많은 팀 open 방의 글은 이 토픽 한 번으로 온다(U2b)
   presenceTopic: (owner) => `pr:${owner}`,
 });
 
@@ -103,7 +105,9 @@ export const DEVICE_CODES = Object.freeze(['device_revoked', 'device_unknown', '
 /**
  * msgr2_catch_up 응답을 방별 묶음으로 정리한다.
  * 받는 모양: { rooms: [{ room_id, messages: [...], more }], paused? } 또는 글 행 배열(방마다 200개를 넘겨 주면 넘침 = 더 있음).
- * 반환: { rooms: [{ roomId, messages(id 오름차순, 최대 200), more }], paused: boolean }.
+ * 반환: { rooms: [{ roomId, messages(id 오름차순, 최대 200), more }], paused: boolean, nextSince: number | null }.
+ * nextSince(U2 next_since): 다음 따라잡기 기준. 서버가 "60초보다 오래된 글 중 최대 id"까지만 올린다 — 글 id 순서와 커밋 순서가 어긋나
+ * 늦게 보이는 글을 빠뜨리지 않게. 최근 글은 다음 따라잡기에서 다시 오고 받는 쪽이 id로 거른다. 옛 서버(값 없음)면 null.
  */
 export function normalizeCatchUp(data, perRoom = CATCH_UP_PER_ROOM) {
   const out = new Map();
@@ -126,7 +130,8 @@ export function normalizeCatchUp(data, perRoom = CATCH_UP_PER_ROOM) {
     const over = sorted.length > perRoom;
     return { roomId: r.roomId, messages: over ? sorted.slice(-perRoom) : sorted, more: r.more || over };
   });
-  return { rooms, paused: !!(data && !Array.isArray(data) && data.paused) };
+  const ns = data && !Array.isArray(data) && data.next_since != null ? Number(data.next_since) : NaN; // null은 값 없음(0으로 읽으면 기준이 처음으로 돌아간다)
+  return { rooms, paused: !!(data && !Array.isArray(data) && data.paused), nextSince: Number.isSafeInteger(ns) && ns >= 0 ? ns : null };
 }
 
 /** 등록 응답에서 기기 id를 꺼낸다(uuid 문자열 또는 { device_id } / { id }). */
@@ -135,7 +140,10 @@ export const deviceIdOf = (data) => (typeof data === 'string' ? data : data?.dev
 /** 중단 표지 읽기 — msgr2_service_pause() 응답(null = 꺼짐) 또는 u: 방송 payload. */
 export const pausedOf = (data) => !!(data && (data === true || data.paused === true));
 
-/** Storage 경로 — 같은 글(client_msg_id)의 같은 파일은 늘 같은 경로라 다시 올려도 한 벌이다. */
+/**
+ * (옛) Storage 경로 — 클라이언트가 정하던 경로. v2 서버(U2b)는 msgr2_attachment_add가 돌려준 경로에만 쓰기를 허용하므로 보내기는 더 쓰지 않는다.
+ * 옛 판 시험·도구가 부를 수 있어 남긴다.
+ */
 export function uploadPath(roomId, clientMsgId, index, name) {
   const safe = String(name || 'file').normalize('NFC').replace(/[\\/\u0000-\u001f]/g, '_').slice(-120) || 'file';
   return `${roomId}/${clientMsgId}/${index}-${safe}`;

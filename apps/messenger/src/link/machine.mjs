@@ -6,11 +6,14 @@
 //   background: 앱이 뒤로 가면 소켓을 닫는다(요청 0). 앞으로 오면 구독 → 따라잡기 1회.
 //   paused: 서버 중단 스위치(시작 확인·u: 방송·거부 코드 service_paused). 조회·보내기 0. u: 소켓이 열려 있으면 그대로 두고(DB 요청 아님) 풀림 방송을 기다린다.
 //   update_required: 최소 버전 미만 — 등록하지 않는다. signed_out: 기기 폐기 — 소켓을 닫고 그 뒤 요청 0.
-// 유휴 요청 0: ready에서는 타이머가 하나도 없다(주기 조회·심박·폴링 없음). 서버 커서 행을 쓰지 않고, 마지막으로 받은 글 id는 로컬에 둔다.
+// 유휴 요청 0: ready에서는 타이머가 하나도 없다(주기 조회·심박·폴링 없음). 서버 커서 행을 쓰지 않고, 따라잡기 기준(since)은 로컬에 둔다.
+// 따라잡기 기준(U6a): 서버 next_since(60초보다 오래된 글 중 최대 id)를 그대로 쓴다 — 커밋이 늦은 작은 id의 글을 빠뜨리지 않게. 최근 글은 다시 오고 seen으로 거른다.
+//   옛 서버(next_since 없음)면 받은 최대 id. 방송으로 받은 글은 기준을 올리지 않는다(그보다 작은 id가 아직 커밋 전일 수 있다).
+// 큰 팀 open 방(U2b): 글이 v2:s:<공간>으로 한 번만 온다 — setSpaces(공간 id들)로 받은 공간을 ready에서 구독한다(끊김·뒤로 감에 닫고 다시 붙을 때 다시 가입).
 // 화면 문자열은 없다 — 상태 코드와 사건만 낸다(문구는 U6이 i18n 사전으로 그린다).
 import {
   NAMES, USER_EVENTS, STATES, TERMINAL_STATES, RECONNECT, SEND_RETRY, REGISTER_EVERY_MS, SEEN_CAP,
-  backoffDelay, belowMin, rejectCodeOf, retryable, normalizeCatchUp, deviceIdOf, pausedOf, uploadPath,
+  backoffDelay, belowMin, rejectCodeOf, retryable, normalizeCatchUp, deviceIdOf, pausedOf,
 } from './policy.mjs';
 
 export const LAST_ID_KEY = (uid) => `argo-msgr2-last-id:${uid}`;
@@ -42,7 +45,9 @@ export function createLinkMachine(opts) {
   let reopenedPaused = false;
   let attempts = 0; let timer = null; let nextAt = null; let lastAttemptAt = -Infinity;
   let catching = false; let catchAgain = false;
-  let lastId = readLastId();
+  let lastId = readLastId(); // 받은 최대 글 id(화면·배지용)
+  let since = lastId; // 따라잡기 기준(위 머리말) — 로컬에 저장하는 값
+  let spaces = []; let spaceChans = []; // v2:s:<공간> 구독
   const gaps = new Set(); // 방송으로 id만 받고 아직 못 읽은 글 — 따라잡기 since를 그 앞으로 둔다(검수 2: 뒤 글이 lastId를 넘겨 빠지는 것)
   const seen = new Set();
   const unread = new Map(); let activeRoom = null;
@@ -77,11 +82,11 @@ export function createLinkMachine(opts) {
   function readLastId() {
     try { const v = Number(storage?.getItem?.(LAST_ID_KEY(userId))); return Number.isSafeInteger(v) && v > 0 ? v : null; } catch { return null; } // 글 id = 정수(bigint, 2^53 안)
   }
-  /** 따라잡기 기준 = 받은 최대 id, 단 못 읽은 글이 있으면 그 바로 앞(정수 크기 비교). */
+  /** 따라잡기 기준 = 서버 next_since(옛 서버면 받은 최대 id), 단 못 읽은 글이 있으면 그 바로 앞(정수 크기 비교). */
   function sinceId() {
-    if (!gaps.size) return lastId;
+    if (!gaps.size) return since;
     const g = Math.min(...gaps) - 1;
-    return lastId == null ? (g > 0 ? g : null) : Math.min(lastId, g);
+    return since == null ? (g > 0 ? g : null) : Math.min(since, g);
   }
   function writeLastId() {
     const v = sinceId(); if (v == null) return;
@@ -102,6 +107,11 @@ export function createLinkMachine(opts) {
   function clearTimer() { if (timer != null) clock.clearTimeout(timer); timer = null; nextAt = null; }
   function closeWorks() {
     for (const w of watched.values()) { for (const ch of w.chans) { try { client.removeChannel(ch); } catch { /* 이미 닫힘 */ } } w.chans = []; }
+    closeSpaces();
+  }
+  function closeSpaces() {
+    for (const ch of spaceChans) { try { client.removeChannel(ch); } catch { /* 이미 닫힘 */ } }
+    spaceChans = [];
   }
   function closeUser() {
     const ch = uChannel; uChannel = null; subscribed = false;
@@ -305,8 +315,8 @@ export function createLinkMachine(opts) {
     try {
       do {
         catchAgain = false;
-        const since = sinceId(); const asked = new Set(gaps);
-        const r = await call(() => client.rpc(names.catchUpRpc, { p_since_id: since }));
+        const from = sinceId(); const asked = new Set(gaps);
+        const r = await call(() => client.rpc(names.catchUpRpc, { p_since_id: from }));
         if (gen !== epoch || ch !== uChannel || terminal()) return;
         if (r.code) {
           if (handleCode(r.code, 'catch_up')) return;
@@ -316,6 +326,8 @@ export function createLinkMachine(opts) {
         if (n.paused) { enterPaused('server'); return; }
         for (const id of asked) gaps.delete(id); // 이 따라잡기가 빈 곳을 덮었다
         for (const room of n.rooms) deliver(room.roomId, room.messages, { more: room.more, source: 'catch_up' });
+        since = n.nextSince != null ? Math.max(n.nextSince, since ?? 0) : lastId; // 서버 기준(옛 서버면 받은 최대 id)
+        writeLastId();
       } while (catchAgain);
     } finally {
       if (gen === epoch) catching = false;
@@ -324,6 +336,25 @@ export function createLinkMachine(opts) {
     attempts = 0;
     setState(STATES.ready);
     for (const id of watched.keys()) joinWork(id);
+    joinSpaces();
+  }
+
+  // ── 큰 팀 open 방(v2:s:<공간>) ──────────────────────────────────────────────
+  function joinSpaces() {
+    if (state !== STATES.ready || spaceChans.length) return;
+    for (const sp of spaces) {
+      const ch = client.channel(names.spaceTopic(sp), { config: { private: true } });
+      ch.on('broadcast', { event: '*' }, (m) => { if (spaceChans.includes(ch) && String(m?.event ?? '').toLowerCase() === USER_EVENTS.message) onUserEvent(m); });
+      ch.subscribe(() => {}); // 끊기면 u:가 다시 붙을 때 함께 다시 가입한다(따라잡기가 빈 곳을 덮는다)
+      spaceChans.push(ch);
+    }
+  }
+  /** 구독할 팀 공간(내가 owner·admin·member인 팀 공간 id). 바뀌면 다시 가입한다. */
+  function setSpaces(ids) {
+    const next = [...new Set((ids || []).filter((x) => typeof x === 'string' && x))].sort();
+    if (next.join(',') === spaces.join(',')) return;
+    spaces = next; closeSpaces();
+    if (!terminal()) joinSpaces();
   }
 
   // ── 글 받기(중복 0) ─────────────────────────────────────────────────────────
@@ -337,7 +368,7 @@ export function createLinkMachine(opts) {
       const id = Number(m.id);
       if (!Number.isSafeInteger(id) || seen.has(id)) continue; // 글 id는 정수 — 크기로 비교한다
       remember(id); fresh.push(m);
-      if (lastId == null || id > lastId) lastId = id;
+      if (lastId == null || id > lastId) lastId = id; // 따라잡기 기준(since)은 올리지 않는다 — 머리말
       if (m.author_user_id !== userId && roomId !== activeRoom) unread.set(roomId, (unread.get(roomId) || 0) + 1);
     }
     if (more) moreRooms.add(roomId);
@@ -444,15 +475,9 @@ export function createLinkMachine(opts) {
     });
   }
 
-  async function sendOnce({ roomId, body, clientMsgId, topicId, replyTo, files }, attempt) {
-    const ups = [];
-    for (let i = 0; i < files.length; i++) {
-      const f = files[i];
-      const path = uploadPath(roomId, clientMsgId, i, f.name);
-      const up = await call(() => client.storage.from(names.bucket).upload(path, f.data, { contentType: f.mime || undefined, upsert: false }), { storage: true });
-      if (up.code && up.code !== 'duplicate') return { ok: false, code: up.code };
-      ups.push({ storage_path: path, name: String(f.name || ''), mime: f.mime || null, bytes: Number.isFinite(f.bytes) ? f.bytes : null });
-    }
+  // 글을 먼저 넣고(client_msg_id 멱등), 파일마다 서버가 첨부 행과 경로를 만든다(msgr2_attachment_add — (글, 순번) 멱등). 그 경로에만 올린다(U2b Storage 정책).
+  // 다시 보내면 같은 (글, 순번)이 같은 행·경로를 돌려주고, 이미 올라간 파일은 Storage가 409(이미 있음)로 답해 성공으로 본다 — 행·파일 한 벌, 같은 바이트를 다시 보내지 않는다.
+  async function sendOnce({ roomId, body, clientMsgId, topicId, replyTo, files }) {
     const row = { room_id: roomId, author_kind: 'user', author_user_id: userId, kind: 'text', body, client_msg_id: clientMsgId };
     if (topicId != null) row.topic_id = topicId;
     if (replyTo != null) row.reply_to = replyTo;
@@ -460,33 +485,35 @@ export function createLinkMachine(opts) {
     let id = ins.data?.id ?? null; let duplicate = false;
     if (ins.code === 'duplicate') {
       duplicate = true;
-      if (ups.length) {
+      if (files.length) {
         const q = await call(() => client.from(names.messages).select('id').eq('room_id', roomId).eq('client_msg_id', clientMsgId).maybeSingle());
         if (q.code) return { ok: false, code: q.code };
         id = q.data?.id ?? null;
       }
     } else if (ins.code) return { ok: false, code: ins.code };
-    if (ups.length && id != null) {
-      let missing = ups;
-      if (duplicate || attempt > 0) { // 앞선 시도가 첨부 행을 이미 넣었을 수 있다 — 빠진 것만 넣는다(첨부 표에는 유일 키가 없다)
-        const ex = await call(() => client.from(names.attachments).select('storage_path').eq('message_id', id));
-        if (ex.code) return { ok: false, code: ex.code };
-        const have = new Set((ex.data || []).map((r) => r.storage_path));
-        missing = ups.filter((u) => !have.has(u.storage_path));
-      }
-      if (missing.length) {
-        const a = await call(() => client.from(names.attachments).insert(missing.map((u) => ({ ...u, message_id: id, room_id: roomId }))));
+    const attachments = [];
+    if (files.length && id != null) {
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i];
+        const a = await call(() => client.rpc(names.attachmentAddRpc, {
+          p_message: id, p_index: i, p_name: String(f.name || 'file'), p_mime: f.mime || null, p_bytes: Number.isFinite(f.bytes) ? f.bytes : 0,
+        }));
         if (a.code) return { ok: false, code: a.code };
+        const path = a.data?.path; const bucket = a.data?.bucket || names.bucket;
+        if (!path) return { ok: false, code: 'rejected' };
+        const up = await call(() => client.storage.from(bucket).upload(path, f.data, { contentType: f.mime || undefined, upsert: false }), { storage: true });
+        if (up.code && up.code !== 'duplicate') return { ok: false, code: up.code };
+        attachments.push({ id: a.data?.attachment_id ?? null, index: i, name: String(f.name || 'file'), bucket, path });
       }
     }
-    return { ok: true, id, duplicate };
+    return { ok: true, id, duplicate, attachments };
   }
 
   /**
    * 사람 글 보내기. client_msg_id로 멱등(같은 id로 다시 보내면 서버 유일 키가 한 벌만 남긴다).
    * 다시 보내는 것은 약속의 retry 표시가 참인 코드(rate_limited·internal)뿐이고 간격·상한(SEND_RETRY)을 둔다.
-   * files: [{ name, mime, bytes, data(Blob·File·ArrayBuffer) }] — 같은 글의 같은 파일은 같은 경로라 다시 올려도 한 벌이다.
-   * 반환: { ok, clientMsgId, id?, duplicate?, code?, attempts }.
+   * files: [{ name, mime, bytes, data(Blob·File·ArrayBuffer) }] — 서버가 (글, 순번)마다 경로를 하나 정하므로 다시 올려도 한 벌이다.
+   * 반환: { ok, clientMsgId, id?, duplicate?, attachments?[{ id, index, name, bucket, path }], code?, attempts }.
    */
   async function send({ roomId, body = '', clientMsgId = newId(), topicId = null, replyTo = null, files = [] } = {}) {
     const blocked = sendBlock();
@@ -496,10 +523,10 @@ export function createLinkMachine(opts) {
     for (; n < sendRetry.maxAttempts; n++) {
       const b = sendBlock();
       if (b) { last = b; break; }
-      const r = await sendOnce({ roomId, body, clientMsgId, topicId, replyTo, files: files || [] }, n);
+      const r = await sendOnce({ roomId, body, clientMsgId, topicId, replyTo, files: files || [] });
       if (r.ok) {
-        const out = { ok: true, clientMsgId, id: r.id, duplicate: r.duplicate, attempts: n + 1 };
-        emit('send', { clientMsgId, roomId, status: 'sent', id: r.id });
+        const out = { ok: true, clientMsgId, id: r.id, duplicate: r.duplicate, attachments: r.attachments, attempts: n + 1 };
+        emit('send', { clientMsgId, roomId, status: 'sent', id: r.id, attachments: r.attachments });
         return out;
       }
       last = r.code;
@@ -522,7 +549,7 @@ export function createLinkMachine(opts) {
   }
 
   return {
-    start, stop, setForeground, nudge, send, watchWork, setActiveRoom, clearMore, on,
+    start, stop, setForeground, nudge, send, watchWork, setActiveRoom, clearMore, setSpaces, on,
     getState: () => state, getSnapshot: snapshot,
   };
 }
