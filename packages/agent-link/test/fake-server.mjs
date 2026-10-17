@@ -84,13 +84,14 @@ export function createFakeServer({ now = () => Date.now(), uid = 'u' } = {}) {
   const transport = {
     async rpc(name, args) {
       if (failNext.length) { const e = failNext.shift(); return reply(name, args, { data: null, error: e }); }
-      if (name === 'msgr2_link_send') return reply(name, args, linkSend(args.envelope));
+      if (name === 'msgr2_link_send') return reply(name, args, args.p_env ? linkSend(args.p_env) : { data: null, error: { code: 'PGRST202', message: 'no function with these argument names', status: 404 } }); // 실제 PostgREST처럼 이름이 다르면 함수가 없다
       if (name === 'msgr2_link_pending') return reply(name, args, { data: opts.revoked ? { ok: false, code: 'device_revoked' } : [...pending] });
       if (name === 'msgr2_link_upload_slot') {
-        const w = works.get(args.work);
+        if (!args.p_work) return reply(name, args, { data: null, error: { code: 'PGRST202', status: 404 } });
+        const w = works.get(args.p_work);
         if (!w || !tierAllows(w.tier, 'work.result', { files: ['x'] })) return reply(name, args, { data: { ok: false, code: 'tier_denied' } });
-        const slot_id = uuid(); slots.set(slot_id, { ...args, put: false });
-        return reply(name, args, { data: { slot_id, url: `https://fake.storage/${slot_id}` } });
+        const slot = uuid(); slots.set(slot, { ...args, put: false });
+        return reply(name, args, { data: { ok: true, slot, bucket: 'msgr', path: `s/${args.p_work}/${slot}/${args.p_name}` } }); // 서버 모양(msgr2_link_upload_slot)
       }
       return reply(name, args, { data: null, error: { code: 'PGRST202', message: 'unknown rpc', status: 404 } });
     },
@@ -108,7 +109,7 @@ export function createFakeServer({ now = () => Date.now(), uid = 'u' } = {}) {
       if (!f) throw Object.assign(new Error('not found'), { code: 'download_failed' });
       return f;
     },
-    async put(url, bytes) { const id = url.split('/').pop(); if (slots.has(id)) slots.get(id).put = true; },
+    async upload(bucket, path) { const id = path.split('/')[2]; if (slots.has(id)) slots.get(id).put = true; },
   };
 
   function push(env, { store = true } = {}) {

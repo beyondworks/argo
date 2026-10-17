@@ -117,7 +117,7 @@ test('승인: 요청 → 결정을 기다렸다 이어 한다. guest는 요청�
   g.link.start(); await flush();
   g.server.push(g.server.offer({ agent: AGENT, tier: 'guest' })); await flush();
   assert.equal(err?.code, 'tier_denied');
-  assert.equal(g.server.log.filter((x) => x.args?.envelope?.type === 'work.approval_request').length, 0); // 보내지도 않는다(서버 거부에 기대지 않음)
+  assert.equal(g.server.log.filter((x) => x.args?.p_env?.type === 'work.approval_request').length, 0); // 보내지도 않는다(서버 거부에 기대지 않음)
 });
 
 test('효과: intent가 기록된 뒤에만 실행하고 done을 알린다. 이미 있는 키면 실행하지 않는다(D13)', async () => {
@@ -231,7 +231,7 @@ test('재시작한 본체는 옛 일을 다시 돌리지 않는다 — 살아 �
   const third = setup({ clock, server });
   third.link.start(); await flush();
   assert.equal(third.calls.turns, 0, 'stalled');
-  assert.equal(server.log.filter((x) => x.args?.envelope?.type === 'work.accept' && x.reply.data?.ok).length, 1); // 성공한 accept는 처음 한 번뿐
+  assert.equal(server.log.filter((x) => x.args?.p_env?.type === 'work.accept' && x.reply.data?.ok).length, 1); // 성공한 accept는 처음 한 번뿐
 });
 
 test('일시 오류(503·429·네트워크)는 같은 id·seq로 다시 보내 결과가 한 번만 남는다(경우 21)', async () => {
@@ -239,9 +239,9 @@ test('일시 오류(503·429·네트워크)는 같은 id·seq로 다시 보내 �
   link.start(); await flush();
   const o = server.offer({ agent: AGENT });
   server.push(o); await flush();
-  const tries = server.log.filter((x) => x.name === 'msgr2_link_send' && x.args.envelope.type === 'work.result');
+  const tries = server.log.filter((x) => x.name === 'msgr2_link_send' && x.args.p_env.type === 'work.result');
   assert.equal(tries.length, 3);
-  assert.equal(new Set(tries.map((x) => `${x.args.envelope.id}|${x.args.envelope.seq}`)).size, 1);
+  assert.equal(new Set(tries.map((x) => `${x.args.p_env.id}|${x.args.p_env.seq}`)).size, 1);
   assert.equal(server.sentOf('work.result', o.work).length, 1);
 });
 
@@ -249,7 +249,7 @@ test('재시도에는 상한이 있다(같은 봉투 최대 RETRY.attempts번)',
   const { server, link, events } = setup({ turn: async () => { server.failNext(...Array.from({ length: 20 }, () => ({ status: 503 }))); return { text: 'ok' }; } });
   link.start(); await flush();
   server.push(server.offer({ agent: AGENT })); await flush();
-  assert.equal(server.log.filter((x) => x.args?.envelope?.type === 'work.result').length, RETRY.attempts);
+  assert.equal(server.log.filter((x) => x.args?.p_env?.type === 'work.result').length, RETRY.attempts);
   assert.ok(events.some((e) => e.name === 'report_failed'));
 });
 

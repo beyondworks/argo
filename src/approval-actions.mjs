@@ -156,7 +156,7 @@ async function followUp(wsId, item, approve, { runChat = chat, session } = {}) {
       ? await (await import('./gateway/msgr.mjs')).runMessengerContinuation(wsId, item.slug, item.msgr, msg, t.sessionId, { runChat, session, ownerApproved: approve === true, ...(item.from ? { notOwnerDirect: item.from } : {}),
         // 이어 실행 근거 — 이 후속 턴이 올리는 결재 카드는 원래 글(실행 완료)에 붙는다. 승인된 부모 결재 행(rowId)이 있으면 followup_of로 싣는다(봇 선례, 옛 서버 가드도 받는다)
         continuation: { kind: 'followup', ...(approve === true && item.msgr.rowId ? { followupOf: item.msgr.rowId } : {}) } })
-      : await runChat(wsId, item.slug, msg, tgScope ? scopedSession(t, scopeKey(tgScope)).sessionId : t.sessionId, { ...(item.tg?.chatId ? { source: 'messenger' } : {}), ...(followCtx ? { mirrorCtx: followCtx } : {}), ...(item.from ? { notOwnerDirect: item.from } : {}) /* 사장 직접 턴이 아닌 턴(위임·쪽지·세션 메시지)에서 올린 결재의 후속 — 풀 오토만 끈다(출처·프롬프트는 그대로, LOW-5). 이 턴에서 다시 올린 결재도 같은 표지 */ });
+      : await runChat(wsId, item.slug, msg, tgScope ? scopedSession(t, scopeKey(tgScope)).sessionId : t.sessionId, { ...(item.tg?.chatId ? { source: 'messenger' } : {}), ...(followCtx ? { mirrorCtx: followCtx } : {}), ...(item.scope?.kind === 'link' && item.scope.memoryOff === true ? { journal: { off: true } } : {}) /* 메신저 v2 기억 안 남김 방의 결재 후속 — 일지 없음 */, ...(item.from ? { notOwnerDirect: item.from } : {}) /* 사장 직접 턴이 아닌 턴(위임·쪽지·세션 메시지)에서 올린 결재의 후속 — 풀 오토만 끈다(출처·프롬프트는 그대로, LOW-5). 이 턴에서 다시 올린 결재도 같은 표지 */ });
     await appendTurn(wsId, item.slug, { userMsg: msg, reply: r.reply, handover: r.handover, sessionId: r.sessionId, artifacts: r.artifacts, contextScope: r.contextScope, ...actor });
     // 결재가 메신저에서 왔으면(item.tg) 후속 보고도 그 방으로 — 이 방송이 없어서 카드가
     // "이어서 보고합니다"라고 약속하고 영원히 무소식이었다(실사용 제보 2026-07-30). 파일 첨부는
