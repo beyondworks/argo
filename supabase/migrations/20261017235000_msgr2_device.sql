@@ -157,7 +157,7 @@ begin
   if not found then
     -- 새 행: GoTrue에 살아 있는 내 세션이어야 하고, app은 로그인 10분 안, 세대를 올린 뒤 로그인한 세션이어야 한다.
     select s.created_at into sess_at from auth.sessions s where s.id = sid and s.user_id = me;
-    if not found or (p_kind = 'app' and sess_at < now() - interval '10 minutes') then
+    if not found or sess_at is null or (p_kind = 'app' and sess_at < now() - interval '10 minutes') then
       raise exception 'device_login_required' using errcode = '42501';
     end if;
     if bumped is not null and sess_at < bumped then raise exception 'device_revoked' using errcode = '42501'; end if;
