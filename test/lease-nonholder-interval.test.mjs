@@ -53,14 +53,15 @@ const asHolder = (f, owner, { sawPeer = true } = {}) => {
   f.set(KEY(owner), { deviceId: ME, token, ts: Date.now() });
   awakeNow(); globalThis.__argoSyncLeaseBootAt = Date.now() - 60_000;
   Object.assign(lease() ?? (globalThis.__argoSyncLease = {}), { leader: true, ownedAt: Date.now(), checkedAt: Date.now(), yieldSince: 0, pending: null, readFailSince: 0, escapeAt: 0, escapeBlocked: false,
-    token, validUntil: Date.now() + LEASE_CONFIRM_VALID_MS, holder: null, ...peers(sawPeer) });
+    token, validUntil: Date.now() + LEASE_CONFIRM_VALID_MS, holder: null, followAt: 0, ...peers(sawPeer) });
 };
 /** 이 기기 = 담당 아님, 다른 기기(OTHER)가 방금 쓴 살아 있는 리스. */
 const asFollower = (f, owner, { sawPeer = true } = {}) => {
   f.set(KEY(owner), { deviceId: OTHER, token: 't-other', ts: Date.now() });
   awakeNow(); globalThis.__argoSyncLeaseBootAt = Date.now() - 60_000;
-  Object.assign(lease() ?? (globalThis.__argoSyncLease = {}), { leader: false, ownedAt: 0, checkedAt: Date.now(), yieldSince: 0, pending: null, readFailSince: 0, escapeAt: 0, escapeBlocked: false,
-    token: null, validUntil: 0, holder: { deviceId: OTHER, ts: Date.now() }, ...peers(sawPeer) });
+  const judged = Date.now();
+  Object.assign(lease() ?? (globalThis.__argoSyncLease = {}), { leader: false, ownedAt: 0, checkedAt: judged, followAt: judged, yieldSince: 0, pending: null, readFailSince: 0, escapeAt: 0, escapeBlocked: false,
+    token: null, validUntil: 0, holder: { deviceId: OTHER, ts: Date.now() }, ...peers(sawPeer) }); // 방금 남의 살아 있는 글을 읽고 양보했다(followAt = checkedAt)
 };
 afterEach(() => { mock.timers.reset(); delete process.env.ARGO_STANDBY_LEADER; });
 
@@ -156,4 +157,37 @@ test('넘겨받는 중(우선 기기가 일반 기기의 살아 있는 리스를
     assert.ok(each[s].t - each[w].t >= HANDOVER_WAIT_MS, `쓴 뒤 ${(each[s].t - each[w].t) / 1000}초 — 대기 22초 전에는 담당이 아니다(앞 담당이 물러날 시간)`);
     assert.ok(each[s].t - each[w].t <= HANDOVER_WAIT_MS + 8_000, '대기가 끝난 뒤 첫 판정(8초 안)');
   } finally { delete process.env.ARGO_PREFER_LEADER; }
+});
+
+/* ── 검수 2(2026-10-17): 30초는 방금 남의 살아 있는 글을 읽고 양보한 판정 뒤에만. 그 밖의 '담당 아님'은 8초(배포본) ── */
+
+test('R2 — 담당 기기의 프로세스 재시작으로 옛 실행 락이 살아 있어 첫 판정이 읽기 없이 끝나면(담당 아님·미확인) 다음 판정은 8초다', () => {
+  const f = fakeStore(); _setSyncClientForTest(f.client);
+  asHolder(f, 'o-r2'); // 이 기기가 담당이던 계정(다른 기기를 본 적 있음) — 새 프로세스는 기동 상태(followAt 없음)
+  Object.assign(lease(), { leader: false, ownedAt: 0, validUntil: 0, checkedAt: Date.now() }); // leaseTick: 실행 리스 미보유 분기(리스 읽기 없음)가 남긴 상태
+  assert.equal(leaseReadInterval(), 8_000, '30초면 다른 기기는 이 기기의 살아 있는 글에 양보한 채 계정 전체 담당 공백이 재시작마다 +6~22초');
+  asFollower(f, 'o-r2'); assert.equal(leaseReadInterval(), 30_000, '같은 프로세스 — 방금 양보했다');
+  lease().checkedAt = lease().followAt + 1; // 그 뒤 실행 리스를 잃어 읽기 없는 판정이 한 번 돌았다(leaseTick 2124 분기 — checkedAt만 새로 찍는다)
+  assert.equal(leaseReadInterval(), 8_000, '양보 판정 뒤 다른 판정이 끼면 8초');
+});
+
+test('남의 살아 있는 글을 읽고 양보한 판정 바로 뒤에만 30초', async () => {
+  const f = fakeStore(); _setSyncClientForTest(f.client);
+  const owner = 'o-follow-now'; asHolder(f, owner);
+  Object.assign(lease(), { leader: false, ownedAt: 0, validUntil: 0, followAt: 0 });
+  f.set(KEY(owner), { deviceId: OTHER, token: 't-other', ts: Date.now() - 5_000 });
+  assert.equal(leaseReadInterval(), 8_000, '판정 전 — 8초');
+  await renewLease(owner, { runnerUsable: true });
+  assert.equal(isCloudLeader(), false);
+  assert.equal(leaseReadInterval(), 30_000, '양보 직후 — 30초');
+});
+
+test('Y3 — 만료 글 + 러너 없음으로 양보 중인 기기는 8초로 읽는다(러너 있는 다른 기기가 먼저 잡을 여유를 줄이지 않는다)', async () => {
+  const f = fakeStore(); _setSyncClientForTest(f.client);
+  const owner = 'o-y3'; asFollower(f, owner);
+  f.set(KEY(owner), { deviceId: OTHER, token: 't-other', ts: Date.now() - LEASE_TTL_MS - 1_000 }); // 만료 — 원래면 가져갈 차례
+  await renewLease(owner, { runnerUsable: false });
+  assert.equal(isCloudLeader(), false, '러너가 없어 양보 중');
+  assert.ok(lease().yieldSince > 0);
+  assert.equal(leaseReadInterval(), 8_000);
 });
