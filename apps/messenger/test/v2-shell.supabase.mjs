@@ -104,6 +104,8 @@ const rpcs = {
   msgr2_approval_decide: ({ p_approval, p_decision }) => { const a = state.tables.msgr2_approvals.find((x) => x.id === p_approval); a.state = p_decision === 'approve' ? 'approved' : 'rejected'; const w = state.tables.msgr2_works.find((x) => x.id === a.work_id); w.state = 'running'; fire(`v2:u:${uid}`, 'work', { work: w }); return a.state; },
   msgr2_work_cancel: ({ p_work }) => { const w = state.tables.msgr2_works.find((x) => x.id === p_work); w.state = 'cancelled'; fire(`v2:u:${uid}`, 'work', { work: w }); return 'cancelled'; },
   msgr2_set_seat: ({ p_agent, p_space, p_remove }) => { const s = state.tables.msgr2_agent_seats; const row = s.find((x) => x.agent_id === p_agent && x.space_id === p_space); if (p_remove) { if (row) row.removed_at = new Date().toISOString(); } else if (row) row.removed_at = null; else s.push({ agent_id: p_agent, space_id: p_space, allow: 'all', allow_users: [], removed_at: null }); return null; },
+  msgr2_devices_list: () => state.devices.map((d) => ({ ...d })),
+  msgr2_device_revoke: ({ p_device }) => { const d = state.devices.find((x) => x.id === p_device); if (!d || d.revoked_at) return false; d.revoked_at = new Date().toISOString(); d.state = 'revoked'; if (d.is_current) setTimeout(() => fire(`v2:u:${uid}`, 'device_revoked', { device_id: d.id }), 50); return true; },
   // 그대로 쓰는 옛 RPC(설계 1-2절)
   msgr_my_friends: () => [{ user_id: mate, status: 'accepted', display_name: '민지', handle: 'minji' }],
   msgr_avatars: () => [], msgr_people_names: ({ ids }) => (ids ?? []).map((id) => ({ user_id: id, display_name: id === uid ? '유건' : '민지' })),
@@ -127,5 +129,12 @@ export const supabase = {
 // 시험·캡처가 쓰는 대역: 본체의 진행 봉투(v2:wk:), 새 일 표지(v2:u: work)
 state.progress = (work, stage) => fire(`v2:wk:${work}`, 'envelope', { v: 1, id: 'e', work, seq: 1, type: 'work.progress', at: new Date().toISOString(), data: { stage } });
 state.work = (w) => { const all = state.tables.msgr2_works; const i = all.findIndex((x) => x.id === w.id); if (i >= 0) Object.assign(all[i], w); else all.push(w); fire(`v2:u:${uid}`, 'work', { work: all.find((x) => x.id === w.id) }); };
+state.devices = [
+  { id: 'd0000000-0000-4000-8000-000000000001', kind: 'app', app: 'messenger', app_version: '0.2.0', registered_at: at(5), created_at: at(600), state: 'active', is_current: true },
+  { id: 'd0000000-0000-4000-8000-000000000002', kind: 'runner', app: 'desktop', app_version: '0.9.1', registered_at: at(30), created_at: at(9000), state: 'active', is_current: false },
+  { id: 'd0000000-0000-4000-8000-000000000003', kind: 'app', app: 'messenger', app_version: '0.1.9', registered_at: at(4000), created_at: at(9000), state: 'active', is_current: false },
+  { id: 'd0000000-0000-4000-8000-000000000004', kind: 'app', app: 'messenger', app_version: '0.1.5', registered_at: at(60000), created_at: at(90000), state: 'expired', is_current: false },
+];
+state.pause = (on) => fire(`v2:u:${uid}`, 'pause', { paused: !!on }); // 서버 중단 스위치 대역
 state.ids = { uid, mate, T, P, GEN, PLAN, DM, A, B, C, W };
 export async function q(p) { const { data, error } = await p; if (error) throw new Error(error.message); return data; }

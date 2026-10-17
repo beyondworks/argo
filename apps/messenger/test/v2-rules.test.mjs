@@ -96,7 +96,7 @@ test('@멘션: 방 에이전트의 이름·slug만, 단어 경계, 중복 0, 20�
 
 test('v2 부품 사전 전수: WorkCard·useWorkCards·source·composer·runtime의 정적 t(키)는 모두 ko·en 쌍, 주석 밖 한글 문자열 0, window.confirm·prompt 0', async () => {
   const { readFileSync } = await import('node:fs');
-  const src = ['WorkCard.jsx', 'useWorkCards.jsx', 'source.mjs', 'composer.mjs', 'runtime.mjs'].map((f) => readFileSync(new URL(`../src/v2/${f}`, import.meta.url), 'utf8')).join('\n'); // U6c-1b: 기존 셸에 끼우는 v2 부품 전부
+  const src = ['WorkCard.jsx', 'useWorkCards.jsx', 'source.mjs', 'composer.mjs', 'runtime.mjs', 'DevicesCard.jsx', 'devices.mjs'].map((f) => readFileSync(new URL(`../src/v2/${f}`, import.meta.url), 'utf8')).join('\n'); // U6c-1b: 기존 셸에 끼우는 v2 부품 전부
   const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
   const keys = [...code.matchAll(/\bt\(\s*'([a-z0-9._]+)'/g)].map((m) => m[1]);
   assert.ok(keys.length >= 5, `키 ${keys.length}개`);
@@ -130,4 +130,24 @@ test('결과 모름 보호(#1085 검수): 진행 신호를 받은 뒤 리스 한
   // 결과가 있는 일·끝난 일은 건드리지 않는다
   assert.equal(stalledGuard({ work: { ...w, state: 'done' }, now }).recheck, false);
   assert.equal(stalledGuard({ work: { ...w, has_result: true }, now }).recheck, false);
+});
+
+test('④ 기기 목록·상태 안내(U6c-2a): 이 기기 먼저·사용 중 먼저, 모르는 값은 안전한 쪽, 중단·업데이트는 안내 줄, 폐기·다시 로그인은 로그인 화면 이유', async () => {
+  const { deviceRows, v2StateBar, v2SignOutNotice } = await import('../src/v2/devices.mjs');
+  const rows = deviceRows([
+    { id: 'a', kind: 'runner', app: 'desktop', app_version: '0.9.1', registered_at: '2026-10-17T01:00:00Z', state: 'active', is_current: false },
+    { id: 'b', kind: 'app', app: 'messenger', app_version: '0.2.0', registered_at: '2026-10-10T01:00:00Z', state: 'active', is_current: true },
+    { id: 'c', kind: 'app', app: 'messenger', registered_at: '2026-10-18T01:00:00Z', state: 'revoked', is_current: false },
+    { id: 'd', kind: 'robot', app: 'x', state: 'weird' },
+  ], { lang: 'en' });
+  assert.deepEqual(rows.map((r) => r.id), ['b', 'a', 'c', 'd'], '이 기기 → 사용 중 → 최근순');
+  assert.equal(rows[0].current, true); assert.equal(rows[1].active, true); assert.equal(rows[2].active, false);
+  assert.deepEqual([rows[3].kind, rows[3].app, rows[3].state, rows[3].active], ['other', 'other', 'revoked', false], '모르는 값');
+  for (const r of rows) for (const k of [`v2.dev.kind.${r.kind}`, `v2.dev.app.${r.app}`, `v2.dev.state.${r.state}`]) assert.ok(DICT[k]?.[0] && DICT[k]?.[1], k);
+  assert.equal(v2StateBar({ state: 'paused' }), 'v2.state.paused'); assert.equal(v2StateBar({ state: 'update_required' }), 'v2.state.update');
+  assert.equal(v2StateBar({ state: 'ready' }), null); assert.equal(v2StateBar({ state: 'signed_out' }), null); assert.equal(v2StateBar(null), null);
+  assert.equal(v2SignOutNotice({ state: 'signed_out', reason: 'device_revoked' }), 'v2.state.signedOut');
+  assert.equal(v2SignOutNotice({ state: 'signed_out', reason: 'login_required' }), 'v2.state.loginRequired');
+  assert.equal(v2SignOutNotice({ state: 'paused' }), null);
+  for (const k of ['v2.state.paused', 'v2.state.update', 'v2.state.signedOut', 'v2.state.loginRequired']) assert.doesNotMatch(DICT[k][1], /[가-힣]/, k);
 });

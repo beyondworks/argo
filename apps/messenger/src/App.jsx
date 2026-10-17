@@ -19,6 +19,8 @@ import { createV2ClientFor, createV2Runtime, currentV2 } from './v2/runtime.mjs'
 import { bindLifecycle } from './link/lifecycle.mjs';
 import { v2ComposerTransport } from './v2/composer.mjs';
 import { useWorkCards } from './v2/useWorkCards.jsx';
+import { DevicesCard as V2DevicesCard } from './v2/DevicesCard.jsx';
+import { v2StateBar, v2SignOutNotice } from './v2/devices.mjs';
 import { systemLine as v2SystemLine } from './v2/system-text.mjs';
 import { loadSpaces as v2LoadSpaces } from './v2/data.mjs';
 import { spaceList as v2SpaceList, liveSpaceIds as v2LiveSpaceIds } from './v2/spaces.mjs';
@@ -155,7 +157,7 @@ const LegalLinks = ({ t, className = '', agree = false }) => (
     <button type="button" className="linkbtn" onClick={() => openExternal(LEGAL.contact)}>{t('legal.contact')}</button>{/* App Store 1.5: 개발자 연락처 */}
   </p>
 );
-const SignOutContext = createContext({ signOut: () => {}, signingOut: false, accountDeleted: () => {} });
+const SignOutContext = createContext({ signOut: () => {}, signingOut: false, accountDeleted: () => {}, signOutNotice: () => {} });
 
 // Installation + signed-in owner scope prevents another PC's identically named agent being rotated.
 export const externalAgentId = (installation, owner, kind, id) => {
@@ -482,7 +484,8 @@ export default function App() {
   else if (!session) body = <Auth logoutNotice={logoutNotice} />;
   else body = <Shell key={session.user.id} session={session} />;
   const accountDeleted = async () => { deletingAccount.current = true; try { await detachPush(supabase, session?.user?.id); } catch { /* 서버 토큰 행은 이미 없다 */ } try { await recoveryRef.current?.restartSignIn(); } catch { /* 서버 세션은 이미 없다 — 로컬만 비운다 */ } setLogoutNotice('auth.deleted'); deletingAccount.current = false; };
-  return <SignOutContext.Provider value={{ signOut, signingOut, accountDeleted }}><Sprite /><UpdateBar t={t} /><MobileUpdateBar t={t} />{session && logoutNotice && <button type="button" className="msgr-toast err" role="alert" onClick={() => setLogoutNotice('')}>{t(logoutNotice)}</button>}{body}</SignOutContext.Provider>;
+  const signOutNotice = async (key) => { await signOut(); setLogoutNotice(key); }; // 메신저 v2: 기기 폐기·다시 로그인 필요·모든 기기 로그아웃 뒤 로그인 화면에 이유를 남긴다(U6c-2a)
+  return <SignOutContext.Provider value={{ signOut, signingOut, accountDeleted, signOutNotice }}><Sprite /><UpdateBar t={t} /><MobileUpdateBar t={t} />{session && logoutNotice && <button type="button" className="msgr-toast err" role="alert" onClick={() => setLogoutNotice('')}>{t(logoutNotice)}</button>}{body}</SignOutContext.Provider>;
 }
 
 function ConnectionWaiting({ t, onRetry, onSignIn, error, busy }) {
@@ -794,7 +797,7 @@ function CtxMenu({ at, items, onClose }) {
 // 당겨서 새로고침이 실제로 발동할 수 있는 화면만(그 외 화면엔 당김 손잡이 자체가 없다) — 복원 스냅샷의 page 값을 이 범위로만 신뢰한다.
 const PULL_RESTORE_PAGES = new Set([...PHONE_TABS, 'chat']);
 function Shell({ session }) {
-  const { signOut, signingOut } = useContext(SignOutContext);
+  const { signOut, signingOut, signOutNotice } = useContext(SignOutContext);
   const { t, lang } = useT();
   const isPhone = useIsPhone(); // 폰 셸(홈 전체화면 + 하단 탭) — 데스크톱은 false라 기존 트리 그대로
   const isPhoneRef = useRef(isPhone); isPhoneRef.current = isPhone; // 구독 핸들러(deps에 isPhone 없음)가 최신 값을 보게(재검수 L-2)
@@ -1753,11 +1756,14 @@ function Shell({ session }) {
       m.on('attachments', ({ roomId, messageId }) => setEvent(broadcastEvent('attach', { channel_id: roomId, message_id: messageId }))),
       m.on('works', ({ roomId, works }) => setEvent(broadcastEvent('v2work', { channel_id: roomId, works }))), // 일 표지(U6c-1a) — 채널 화면이 카드를 만든다
       m.on('progress', (p) => setEvent(broadcastEvent('v2progress', p))),
-      m.on('state', (st) => { const ready = st.state === 'ready'; if (wasReady !== null && ready !== wasReady) setEvent(broadcastEvent(ready ? 'rt_up' : 'rt_down', {})); wasReady = ready; }),
+      m.on('state', (st) => { setV2state(st); const ready = st.state === 'ready'; if (wasReady !== null && ready !== wasReady) setEvent(broadcastEvent(ready ? 'rt_up' : 'rt_down', {})); wasReady = ready; }),
     ];
     return () => offs.forEach((f) => f());
   }, [v2rt]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { v2rt?.machine.setActiveRoom(chId ?? null); }, [v2rt, chId]); // 보는 방은 배지에서 뺀다
+  // ④ 기기 폐기·다시 로그인 필요(signed_out) → 로그인 화면으로, 이유를 남긴다. 중단·업데이트 필요는 화면 위 안내 줄(v2StateBar)
+  const [v2state, setV2state] = useState(null);
+  useEffect(() => { const key = v2SignOutNotice(v2state); if (key) void signOutNotice(key); }, [v2state?.state, v2state?.reason]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { rt.current = subsRef.current.get(orgId) ?? null; }, [orgId]);
   useEffect(() => { const iv = setInterval(() => setTick((x) => x + 1), 15_000); return () => clearInterval(iv); }, []);
   const dmIdsKey = useMemo(() => channels.filter((c) => c.kind === 'dm').map((c) => c.id).sort().join(','), [channels]); // DM 집합(개수가 아니라 집합 — 하나 끝나고 하나 생겨도 재조회)
@@ -3129,6 +3135,7 @@ function Shell({ session }) {
     <AvatarCtx.Provider value={avatarCtx}><SafetyCtx.Provider value={safetyCtx}><RunnerCtx.Provider value={openRunner}>
     <div className={`shell msgr-shell${online ? '' : ' is-offline'}${rail ? ' rail-open' : ''}${isPhone ? ' msgr-phone' : ''}${isPhone && isPhoneRoot(page) ? ' phone-home' : ''}${isPhone && page === 'chat' ? ' phone-chat' : ''}${isPhone && ROOT_PAGES.has(page) ? ' phone-root' : ''}${isPhone && pageAnim ? ` anim-${pageAnim}` : ''}`}>
       {!online && <div className="msgr-offline-bar" role="status">{t('net.offline')}</div>}
+      {online && v2StateBar(v2state) && <div className="msgr-offline-bar" role="status">{t(v2StateBar(v2state))}</div>}{/* v2 ④ 중단·업데이트 필요 — 오프라인 줄과 같은 자리·모양 */}
       {rail && <div className="msgr-scrim" onClick={() => setRail(false)} role="presentation" />}
       {dmPeek && <DmPeekSheet channel={dmPeek} name={dmName(dmPeek)} uid={uid} whoOf={(m) => dmWho(dmPeek, { mine: m.author_user_id === uid, userId: m.author_user_id, crewId: m.crew_id })} onOpen={() => { const c = dmPeek; setDmPeek(null); if (openAgentDmInstead(c.id, 'peek')) return; setChId(c.id); setRail(false); setPage('chat'); }} onClose={() => setDmPeek(null)} />}
       <aside id="msgr-navigation" className={`side msgr-side${orgMenu ? ' menu-open' : ''}`}>
@@ -4507,7 +4514,7 @@ function AgentSlotPicker({ uid, myAgents, org, onOpenAgent, onChanged, onNote, o
   </section>);
 }
 function Settings({ session, me, uid, invitesTick = 0, org, orgs = [], isAdmin, gated = false, policy, ent = null, members = [], nameOfUser, onOpenCrew, onAvatar, onProfileSaved, friends = [], onFriendsChanged, onDm, onPersonalDm, channels = [], onInvite = null, initialTab = null, onTabUsed, onChanged, onOrgsChanged, onNote, onError, onBack, onMenu, phoneView = null, onSub = null, crews = [], myName: myProfileName = null, myAgents = null, onOpenAgent = null, onOrgSub = null, onPickOrg = null, onOrgAdmin = null, hostIds = new Set(), onToggleMemory = null, spaceReady = true, memSort = 'recent', onMemSort = null, focusGroup = null, onFocusUsed = null, chOrgId = null, onAgentsChanged = null }) { // phoneView(폰만): 'list' = 내 설정 줄 목록, 'profile'|'notify'|'display'|'friends'|'privacy'|'about' = 하위 화면, 'org' = 조직 설정
-  const { signOut, signingOut, accountDeleted } = useContext(SignOutContext);
+  const { signOut, signingOut, accountDeleted, signOutNotice } = useContext(SignOutContext);
   const avLooks = useContext(AvatarCtx).looks; // 내 에이전트 목록의 사진 — 같은 에이전트 기준(유건 2026-10-05)
   const { t, ta, lang, setLang } = useT();
   const { theme, setTheme } = useTheme();
@@ -4670,6 +4677,7 @@ function Settings({ session, me, uid, invitesTick = 0, org, orgs = [], isAdmin, 
             <LegalLinks t={t} className="in-card" />
             <p className="msgr-klabel msgr-version">{t('set.version', { v: APP_VERSION })}</p>{/* 지금 앱 버전(UXM-26) — 문의·업데이트 확인 때 */}
           </section>
+          {V2 && <V2DevicesCard client={rawSupabase} t={t} lang={lang} onSignedOut={(key) => signOutNotice(key)} onNote={onNote} onError={onError} />}{/* v2 ④ 기기 관리 — 플래그 켜짐에서만 */}
           <PlanCard uid={uid} email={session.user.email} />
           <section className="msgr-setcard">
             <h2>{t('set.profanityFilter')}</h2><p>{t('set.profanityFilter.desc')}</p>
