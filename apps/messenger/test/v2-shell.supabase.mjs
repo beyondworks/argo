@@ -124,7 +124,17 @@ export const supabase = {
     if (!state.topics.has(topic)) state.topics.set(topic, new Set()); state.topics.get(topic).add(c); return c;
   },
   removeChannel: async (c) => { state.topics.get(c.topic)?.delete(c); return 'ok'; }, removeAllChannels: async () => { state.topics.clear(); }, getChannels: () => [...state.topics.values()].flatMap((s) => [...s]),
-  storage: { from: () => ({ upload: async (path) => ({ data: { path }, error: null }), list: async () => ({ data: [], error: null }), remove: async () => ({ data: [], error: null }), createSignedUrl: async () => ({ data: { signedUrl: 'data:,' }, error: null }) }) },
+  // Storage 대역: 버킷 'msgr' 안의 객체 이름만 받는다 — 'msgr/'로 시작하는 이름(버킷을 두 번 쓴 경로)이나 첨부 행에 없는 이름이면 실패한다(#1085 검수: 첨부를 열 수 없던 결함을 잡게)
+  storage: { from: (bucket) => {
+    const known = (name) => bucket === 'msgr' && !String(name).startsWith('msgr/') && state.tables.msgr2_attachments.some((a) => a.storage_path === `msgr/${name}`);
+    const bad = (name) => ({ data: null, error: { message: `Object not found: ${bucket}/${name}`, statusCode: '400' }, status: 400 });
+    return {
+      upload: async (path) => { call({ storage: 'upload', bucket, path }); return bucket === 'msgr' && !String(path).startsWith('msgr/') ? { data: { path }, error: null } : bad(path); },
+      list: async () => ({ data: [], error: null }),
+      remove: async (paths) => { call({ storage: 'remove', bucket, paths }); return (paths ?? []).every(known) ? { data: paths.map((name) => ({ name })), error: null } : bad(paths.find((p) => !known(p))); },
+      createSignedUrl: async (path) => { call({ storage: 'sign', bucket, path }); return known(path) ? { data: { signedUrl: 'data:text/plain,fixture' }, error: null } : bad(path); },
+    };
+  } },
 };
 // 시험·캡처가 쓰는 대역: 본체의 진행 봉투(v2:wk:), 새 일 표지(v2:u: work)
 state.progress = (work, stage) => fire(`v2:wk:${work}`, 'envelope', { v: 1, id: 'e', work, seq: 1, type: 'work.progress', at: new Date().toISOString(), data: { stage } });
