@@ -14,6 +14,8 @@ export const CLI_DEPS = ['@supabase/supabase-js', '@modelcontextprotocol/sdk', '
     반환: { deps(복사한 패키지 수), publicConfig(argo-public.json을 만들었는가) } */
 export function stageCli({ root, tree, env = process.env, publicEnv = ['ARGO_CLI_SUPABASE_URL', 'ARGO_CLI_SUPABASE_ANON_KEY'] }) {
   cpSync(join(root, 'src'), join(tree, 'src'), { recursive: true });
+  // 메신저 v2 부품(src/agent-link-host.mjs가 ../packages/agent-link를 부른다) — 시험 폴더는 싣지 않는다
+  if (existsSync(join(root, 'packages', 'agent-link'))) cpSync(join(root, 'packages', 'agent-link'), join(tree, 'packages', 'agent-link'), { recursive: true, filter: (p) => !/[\\/]test([\\/]|$)/.test(p.slice(join(root, 'packages', 'agent-link').length)) });
   mkdirSync(join(tree, 'bin'), { recursive: true });
   cpSync(join(root, 'bin', 'argo.mjs'), join(tree, 'bin', 'argo.mjs'));
   if (!existsSync(join(tree, 'instrumentation-node.mjs'))) cpSync(join(root, 'instrumentation-node.mjs'), join(tree, 'instrumentation-node.mjs'));
