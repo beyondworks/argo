@@ -243,3 +243,21 @@ test('일하는 중의 accept(리스 연장)는 같은 기기 + 현재 세대만
   }
   assert.equal(nextState('offered', 'work.accept').to, 'accepted'); // 처음 accept에는 세대가 없다
 });
+
+// 글·첨부 id = JSON 안전 정수(서버 msgr2_messages.id·msgr2_attachments.id는 옛 글 id 보존이라 bigint, 2026-10-17 총괄 승인 — v1 안에서 uuid → 정수)
+test('offer의 글·첨부 id는 1 이상 안전 정수 — uuid 문자열·0·2^53·소수는 invalid_envelope, JSON Schema도 같다', () => {
+  const base = valid.find((x) => x.f === 'work_offer.json').env;
+  assert.equal(validateEnvelope(base, { from: 'server' }).ok, true, '예제는 정수 id');
+  const bad = [];
+  for (const [path, v] of [['context', '55555555-6666-4777-8888-999999999908'], ['context', 0], ['context', 2 ** 53], ['context', 1.5],
+    ['attachments', '77777777-8888-4999-8aaa-bbbbbbbbbb10'], ['attachments', -1]]) {
+    const e = clone(base); e.data[path][0].id = v;
+    const r = validateEnvelope(e, { from: 'server' });
+    if (r.ok || r.code !== 'invalid_envelope') bad.push(`${path}=${v}: ${JSON.stringify(r)}`);
+  }
+  assert.deepEqual(bad, []);
+  const e = clone(base); e.data.context[0].id = Number.MAX_SAFE_INTEGER;
+  assert.equal(validateEnvelope(e, { from: 'server' }).ok, true, '2^53-1은 받는다');
+  const s = JSON.stringify(buildSchema());
+  assert.match(s, /"maximum":9007199254740991/, 'JSON Schema에도 안전 정수 상한');
+});

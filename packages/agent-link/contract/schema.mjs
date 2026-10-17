@@ -16,6 +16,7 @@ function rule(r) {
     case 'uuid': s = { type: 'string', pattern: UUID }; break;
     case 'ts': s = { type: 'string', pattern: TS }; break;
     case 'int': s = { type: 'integer', minimum: opt.min ?? 0 }; break;
+    case 'msgid': s = { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER }; break;
     case 'num': s = { type: 'number', minimum: 0 }; break;
     case 'bool': s = { type: 'boolean' }; break;
     case 'str': s = { type: 'string', minLength: opt.min ?? 0, maxLength: opt.max ?? LIMITS.name }; break;

@@ -32,6 +32,8 @@
 
 크기 상한: 봉투 JSON 128KB(`too_large`), offer `context[]` 16KB. 이 둘은 JSON Schema로 적을 수 없어 `v1.mjs`만 검사한다.
 
+id 형식: 봉투·일·에이전트·기기·방·토픽·승인·업로드 슬롯 id는 uuid 문자열이다. 글·첨부 id(`context[].id`, `attachments[].id` — 서버의 `msgr2_messages.id`·`msgr2_attachments.id`)는 옛 글 id를 그대로 보존해 bigint라 **JSON 정수**로 싣는다(`msgid` 규칙: 1 이상, `Number.MAX_SAFE_INTEGER`(2^53-1) 이하). 서버 id가 이 범위를 넘지 않는다는 전제다(지금 최댓값은 수백만 대). 넘게 되면 v를 올려 문자열로 바꾼다(2026-10-17 총괄 승인, v1 안에서 고침 — 출시 전).
+
 ## type 10종
 
 | type | 방향·길 | data(필수) | 선택 |

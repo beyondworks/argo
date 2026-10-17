@@ -137,6 +137,8 @@ function check(errors, path, val, rule) {
     case 'uuid': if (!isUuid(val)) bad('uuid'); break;
     case 'ts': if (!isTs(val)) bad('timestamp'); break;
     case 'int': if (!isInt(val, opt.min ?? 0)) bad('integer'); break;
+    // 글·첨부 id(msgr2_messages.id·msgr2_attachments.id — 옛 글 id 보존이라 bigint). JSON 숫자로 정확히 오가는 안전 정수(≤ 2^53-1)만 받는다
+    case 'msgid': if (!Number.isSafeInteger(val) || val < 1) bad('message id(safe integer >= 1)'); break;
     case 'num': if (typeof val !== 'number' || !Number.isFinite(val) || val < 0) bad('number'); break;
     case 'bool': if (typeof val !== 'boolean') bad('boolean'); break;
     case 'str': if (!isStr(val, opt.max ?? LIMITS.name, opt.min ?? 0)) bad(`string(${opt.min ?? 0}..${opt.max ?? LIMITS.name})`); break;
@@ -167,10 +169,10 @@ export const DATA = Object.freeze({
     from: actor(['user', 'agent']),
     text: ['str', { max: LIMITS.offerText }],
     context: ['arr', { max: LIMITS.contextItems, items: ['obj', { fields: {
-      id: 'uuid', author: actor(), text: ['str', { max: LIMITS.offerText }], at: 'ts',
+      id: 'msgid', author: actor(), text: ['str', { max: LIMITS.offerText }], at: 'ts',
     } }] }],
     attachments: ['arr', { max: LIMITS.attachments, items: ['obj', { fields: {
-      id: 'uuid', name: ['str', { min: 1 }], mime: ['str', { max: 200 }], bytes: 'int', url: ['str', { min: 1, max: 4096 }], url_expires_at: 'ts',
+      id: 'msgid', name: ['str', { min: 1 }], mime: ['str', { max: 200 }], bytes: 'int', url: ['str', { min: 1, max: 4096 }], url_expires_at: 'ts',
     } }] }],
     memory: 'bool',
     limits: ['obj', { fields: {
