@@ -2864,7 +2864,7 @@ function Shell({ session }) {
   const ownAgentsEmpty = ownAgentsEmptyOf(ownCrews); // 내 에이전트 행(active·available)을 읽었고 하나도 없다(D7 계정 단서의 근거 — 읽지 못했으면 false, 검수 2 #1037)
   const railView = railAgentsView({ isPersonal, orgReady: !orgBlocked && !!org, shown: railVisible.length, available: myAvailable.length, paused: isPersonal ? pausedCrews.filter((c) => c.owner_user_id === uid).length + (agentPause?.paused > 0 ? 1 : 0) : 0, ownEmpty: ownAgentsEmpty, email: session.user.email ?? null }); // 개인 공간 0명이면 구역 + 계정 단서(D7). 조직 공간·에이전트 있음·멈춤만 있음은 종전
   const openers = crewOpeners({ isPersonal, openSheet: setSheet, openDm: dmWithCrew }); // 개인 공간은 에이전트 시트를 그리지 않는다 — 메시지의 에이전트 버튼 없음, 검색 결과는 1:1로
-  const orgJoinForms = (phone = false) => (<>{/* 조직 메뉴의 '초대 코드로 참여'·'조직 만들기' — 데스크톱 조직 창과 폰 채널 탭 조직 메뉴·빈 화면이 같은 폼 */}
+  const orgJoinForms = (phone = false) => (V2 ? null /* v2: 초대 코드 참여·공간 만들기 RPC는 U6d */ : <>{/* 조직 메뉴의 '초대 코드로 참여'·'조직 만들기' — 데스크톱 조직 창과 폰 채널 탭 조직 메뉴·빈 화면이 같은 폼 */}
               {joinCode === null
                 ? <button type="button" role="menuitem" onClick={() => { setJoinCode(''); setJoinHint(null); setNewOrg(null); }}><span className="msgr-av sm ghost"><I name="link" size={13} /></span><span className="label">{t(phone ? 'phone.org.join' : 'org.join.code')}</span></button>
                 : <form className="msgr-inline" onSubmit={(e) => { e.preventDefault(); joinByCode(joinCode); }}>
@@ -2973,7 +2973,7 @@ function Shell({ session }) {
       {items.includes('deleted') && deletedOrgs.map((o) => <button key={`d-${o.id}`} type="button" role="menuitem" className="join" onClick={() => { setOrgMenu(false); restoreOrg(o); }}><Av name={o.name} size="sm" /><span className="label">{o.name}</span><span className="msgr-klabel">{t('org.restore.cta', { days: Math.max(0, Math.ceil((Date.parse(o.purge_at) - Date.now()) / 86_400_000)) })}</span></button>)}
       {(orgs ?? []).length > 0 && <div className="sep" />}
       {items.includes('join') && orgJoinForms(true)}
-      {items.includes('invite') && <button type="button" role="menuitem" onClick={() => { setOrgMenu(false); orgInvite(); }}><span className="msgr-av sm ghost"><I name="personplus" size={13} /></span><span className="label">{t('phone.org.invite')}</span></button>}
+      {items.includes('invite') && !V2 && <button type="button" role="menuitem" onClick={() => { setOrgMenu(false); orgInvite(); }}><span className="msgr-av sm ghost"><I name="personplus" size={13} /></span><span className="label">{t('phone.org.invite')}</span></button>}
       {items.includes('org-settings') && <button type="button" role="menuitem" onClick={() => { setOrgMenu(false); openSettings('org'); }}><span className="msgr-av sm ghost"><I name="gear" size={13} /></span><span className="label">{t('phone.org.settings')}</span></button>}
       {items.includes('memory-settings') && <button type="button" role="menuitem" onClick={() => { setOrgMenu(false); openSettings(null, 'memory'); }}><span className="msgr-av sm ghost"><I name="gear" size={13} /></span><span className="label">{t('phone.mem.settings')}</span></button>}
     </OrgMenuCard>
@@ -6675,7 +6675,8 @@ function Channel({ movedBar = null, pausedCrew = null, pausedNotice = null, onCr
   noteSeen(seenAtRef.current, msgs, { uid, now: Date.now(), first: firstLoad.current }); // 첫 목록에 있던 글은 created_at 기준(2차 검수 L-d)
   const awaiting = awaitingReplies({ msgs: msgs ?? [], uid, isDm: channel.kind === 'dm', roomCrewIds: chCrews.map((c) => c.id),
     signals: (crewId) => { const k = `${chId}:${crewId}`; return { typingAt: typing[k], progressAt: progress[k]?.at, receivedAt: received[k] }; },
-    away: (crewId) => crewAway(crewOf(crewId)), now: Date.now(), seenAt: (id) => seenAtRef.current.get(id) }).map((a) => ({ ...a, crew: crewOf(a.crewId) })).filter((a) => a.crew && !V2); // v2: 답 기다림은 일 카드가 보인다(같은 상태를 두 번 그리지 않는다)
+    away: (crewId) => crewAway(crewOf(crewId)), now: Date.now(), seenAt: (id) => seenAtRef.current.get(id) }).map((a) => ({ ...a, crew: crewOf(a.crewId) })).filter((a) => a.crew);
+  if (V2) awaiting.splice(0); // v2: 답 기다림은 일 카드가 보인다(같은 상태를 두 번 그리지 않는다)
   const awaitIds = new Set(awaiting.map((a) => a.crewId));
   const [, setAwaitTick] = useState(0); // 대기 표시가 있는 동안만 5초마다 다시 그린다(30초·5분 단계 전환) — 요청 없음
   useEffect(() => { if (!awaiting.length) return undefined; const iv = setInterval(() => setAwaitTick((x) => x + 1), 5000); return () => clearInterval(iv); }, [awaiting.length > 0]); // eslint-disable-line react-hooks/exhaustive-deps
