@@ -98,9 +98,15 @@ async function fetchProfileName({ url, anonKey, accessToken, userId }, mk) {
   } catch { return { ok: false, name: null }; }
 }
 
+/** 메신저 v2 로그인 등록 모듈(옵트인일 때만 읽는다). 시험이 실패하는 로더로 바꾼다. */
+async function loadLinkReg() {
+  const [{ APP_VERSION }, { registerRunnerOnLogin }] = await Promise.all([import('./app-version.mjs'), import('./agent-link-host.mjs')]);
+  return { APP_VERSION, registerRunnerOnLogin };
+}
+
 /** 로그인/링크 시 저장. session = Supabase Auth 세션(user 포함).
  * getFreshDeviceSession의 회전과 같은 락(devsess:root)으로 직렬화 — 회전 대기 중 끼어들어도 lost update 없음. */
-export async function saveDeviceSession({ url, anonKey, session }, { root = WS_ROOT, _mkClient = createClient } = {}) {
+export async function saveDeviceSession({ url, anonKey, session }, { root = WS_ROOT, _mkClient = createClient, _loadLinkReg = loadLinkReg } = {}) {
   if (!url || !anonKey || !session?.access_token || !session?.refresh_token || !session?.user?.id) {
     throw new Error('기기 세션 저장에 필요한 값 누락 (url/anonKey/session)');
   }
@@ -109,9 +115,12 @@ export async function saveDeviceSession({ url, anonKey, session }, { root = WS_R
   const prof = await fetchProfileName({ url, anonKey, accessToken: session.access_token, userId: session.user.id }, _mkClient);
   // 메신저 v2(옵트인 ARGO_AGENT_LINK=1): 세션 파일을 쓰기 **전에** 이 세션을 runner 기기로 잠근다 — 파일을 쓴 뒤에는 에이전트 셸이 그 세션으로
   // app 기기 등록을 먼저 할 수 있다(검수 1 #1071). 실패해도 로그인은 막지 않는다(연결부가 시작할 때 다시 등록하고, 그 전에는 v2 일을 받지 않는다).
+  // 모듈을 읽는 것까지 try 안에 둔다 — import 실패(번들 누락·문법 오류)도 로그인을 깨지 않는다. 기다림은 registerRunnerOnLogin의 합계 상한(8초)까지.
   if (agentLinkEnabled()) {
-    const [{ APP_VERSION }, { registerRunnerOnLogin }] = await Promise.all([import('./app-version.mjs'), import('./agent-link-host.mjs')]);
-    await registerRunnerOnLogin({ url, anonKey, accessToken: session.access_token }, { mkClient: _mkClient, appVersion: APP_VERSION }).catch(() => {});
+    try {
+      const { APP_VERSION, registerRunnerOnLogin } = await _loadLinkReg();
+      await registerRunnerOnLogin({ url, anonKey, accessToken: session.access_token }, { mkClient: _mkClient, appVersion: APP_VERSION });
+    } catch { /* 실패해도 로그인은 진행 — 연결부가 시작할 때 다시 등록한다 */ }
   }
   return withLock(`devsess:${root}`, async () => {
     await mkdir(root, { recursive: true });

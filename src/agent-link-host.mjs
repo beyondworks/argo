@@ -58,10 +58,15 @@ export async function detectRunnerIds(detect, { timeoutMs = 3000 } = {}) {
   } catch { return []; }
 }
 
-/** msgr2_device_register 인자(U3) — runner 기기 + 지원 약속 범위 + 정렬한 러너 목록. 로그인 지점과 연결부 시작이 같은 모양을 쓴다. */
+/** msgr2_device_register 인자(U3 …_msgr2_device.sql) — PostgREST가 이름으로 잇는다(p_ 접두). 본체는 kind 'runner' + app 'desktop'만 받는다
+ *  (app 'argo'는 22023 msgr2_device_invalid). 지원 약속 범위 + 정렬한 러너 목록. 로그인 지점과 연결부 시작이 같은 모양을 쓴다. p_push_token은 싣지 않는다(기본 null). */
+export const RUNNER_APP = 'desktop';
 export const runnerRegisterArgs = ({ appVersion = null, runners = [] } = {}) => ({
-  kind: 'runner', app: 'argo', app_version: appVersion, link_min: SUPPORTED.min, link_max: SUPPORTED.max, runners: [...new Set(runners)].sort(),
+  p_kind: 'runner', p_app: RUNNER_APP, p_app_version: appVersion, p_link_min: SUPPORTED.min, p_link_max: SUPPORTED.max, p_runners: [...new Set(runners)].sort(),
 });
+
+export const LOGIN_REG_TIMEOUT_MS = 5_000; // 한 번의 등록 요청 상한(옆 fetchProfileName과 같은 5초)
+export const LOGIN_REG_BUDGET_MS = 8_000; // 재시도까지 합친 상한 — 응답 없는 서버에서도 로그인이 이보다 오래 기다리지 않는다
 
 /**
  * 로그인 응답을 받은 즉시, 세션 파일을 쓰기 전에 그 세션을 runner 기기로 잠근다(검수 1 #1071 경주 창: 다시 로그인한 직후
@@ -69,18 +74,27 @@ export const runnerRegisterArgs = ({ appVersion = null, runners = [] } = {}) => 
  * 짧게 3번까지 다시 해 본다. 그래도 실패하면 로그인은 그대로 진행한다(로그인을 막지 않는다) — 연결부가 시작할 때 다시 등록하고,
  * 등록이 성공하기 전에는 메신저 v2 일을 받지 않는다(boot 순서). 반환: { ok, device_id?, code? }.
  */
-export async function registerRunnerOnLogin({ url, anonKey, accessToken }, { mkClient, appVersion = null, runners = [], attempts = 3, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), log = (...a) => console.error('[argo] agent-link', ...a) } = {}) {
-  const client = mkClient(url, anonKey, { auth: { persistSession: false, autoRefreshToken: false }, global: { headers: { Authorization: `Bearer ${accessToken}` } } });
+export async function registerRunnerOnLogin({ url, anonKey, accessToken }, { mkClient, appVersion = null, runners = [], attempts = 3, timeoutMs = LOGIN_REG_TIMEOUT_MS, budgetMs = LOGIN_REG_BUDGET_MS, now = () => Date.now(), sleep = (ms) => new Promise((r) => setTimeout(r, ms)), log = (...a) => console.error('[argo] agent-link', ...a) } = {}) {
+  const deadline = now() + budgetMs;
   let last = null;
-  for (let i = 0; i < attempts; i++) {
-    if (i) await sleep(300 * 3 ** (i - 1));
-    try {
-      const { data, error } = await client.rpc('msgr2_device_register', runnerRegisterArgs({ appVersion, runners }));
-      if (!error && data?.device_id) return { ok: true, device_id: data.device_id };
-      last = error?.code ?? data?.code ?? 'no_device_id';
-      if (error && error.status && error.status < 500 && error.status !== 429) break; // 영구 거부(함수 없음·권한) — 다시 해도 같다
-    } catch (e) { last = 'network'; }
-  }
+  try {
+    const client = mkClient(url, anonKey, { auth: { persistSession: false, autoRefreshToken: false }, global: { headers: { Authorization: `Bearer ${accessToken}` } } });
+    for (let i = 0; i < attempts; i++) {
+      if (i) await sleep(300 * 3 ** (i - 1));
+      const left = Math.min(timeoutMs, deadline - now());
+      if (left < 1) { last = last ?? 'timeout'; break; } // 합계 상한을 다 썼다
+      let timer = null;
+      try {
+        // supabase-js 빌더면 요청 자체를 끊고(abortSignal), 아니어도 경주로 기다림을 끊는다(멈춘 서버가 로그인을 붙잡지 않게).
+        const call = client.rpc('msgr2_device_register', runnerRegisterArgs({ appVersion, runners }));
+        const q = typeof call?.abortSignal === 'function' ? call.abortSignal(AbortSignal.timeout(left)) : call;
+        const { data, error } = await Promise.race([q, new Promise((_, rej) => { timer = setTimeout(() => rej(Object.assign(new Error('timeout'), { code: 'timeout' })), left); })]);
+        if (!error && data?.device_id) return { ok: true, device_id: data.device_id };
+        last = error?.code || data?.code || (error ? 'error' : 'no_device_id');
+        if (error && error.status && error.status < 500 && error.status !== 429) break; // 영구 거부(함수 없음·권한·값 모양) — 다시 해도 같다
+      } catch (e) { last = e?.code === 'timeout' ? 'timeout' : 'network'; } finally { clearTimeout(timer); }
+    }
+  } catch { last = 'client'; }
   log('runner register on login failed', last);
   return { ok: false, code: last };
 }

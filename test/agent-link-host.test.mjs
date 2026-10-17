@@ -59,7 +59,7 @@ test('플래그: ARGO_AGENT_LINK는 정확히 1일 때만 켬, 옛 브리지는 
 test('시작: runner 기기 등록(약속 범위) → 에이전트 목록 보내기 → 대응표 → w:<uid> 따라잡기', async () => {
   const { server, host, agentId } = await setup();
   const reg = server.log.find((x) => x.name === 'msgr2_device_register');
-  assert.deepEqual({ kind: reg.args.kind, min: reg.args.link_min, max: reg.args.link_max }, { kind: 'runner', min: 1, max: 1 });
+  assert.deepEqual({ kind: reg.args.p_kind, app: reg.args.p_app, min: reg.args.p_link_min, max: reg.args.p_link_max }, { kind: 'runner', app: 'desktop', min: 1, max: 1 });
   assert.equal(server.sentOf('agent.sync').length, 1);
   assert.ok(agentId);
   assert.deepEqual(host.agents.get(agentId), { ws: 'co-1', slug: 'pm' });
@@ -176,7 +176,9 @@ test('문맥 구역: 비면 빈 문자열, 글은 한 줄로 2,000자까지', ()
 
 test('로그인 직후 등록: runner + 정렬한 러너, 일시 오류는 3번까지, 영구 거부(4xx)는 바로 멈춘다', async () => {
   const { registerRunnerOnLogin, runnerRegisterArgs, detectRunnerIds } = await import('../src/agent-link-host.mjs');
-  assert.deepEqual(runnerRegisterArgs({ runners: ['codex', 'claude', 'codex'] }).runners, ['claude', 'codex']);
+  assert.deepEqual(runnerRegisterArgs({ runners: ['codex', 'claude', 'codex'] }).p_runners, ['claude', 'codex']);
+  // U3 함수의 이름 있는 인자(p_ 접두)만 싣는다 — 다른 이름이면 PostgREST가 함수를 못 찾는다(PGRST202)
+  assert.deepEqual(Object.keys(runnerRegisterArgs({ appVersion: '0.2.0' })).sort(), ['p_app', 'p_app_version', 'p_kind', 'p_link_max', 'p_link_min', 'p_runners']);
   assert.deepEqual(await detectRunnerIds(async () => ({ gemini: { installed: true, authed: true }, claude: { installed: true, authed: true }, codex: { installed: true, authed: false } })), ['claude', 'gemini']);
   assert.deepEqual(await detectRunnerIds(() => new Promise(() => {}), { timeoutMs: 10 }), []);
   const mk = (replies) => { const calls = []; return { calls, mkClient: (url, key, opts) => ({ rpc: async (name, args) => { calls.push({ name, args, auth: opts.global.headers.Authorization }); return replies.shift(); } }) }; };
@@ -185,13 +187,54 @@ test('로그인 직후 등록: runner + 정렬한 러너, 일시 오류는 3번�
   assert.deepEqual(r, { ok: true, device_id: DEVICE });
   assert.equal(ok.calls.length, 2);
   assert.equal(ok.calls[0].auth, 'Bearer tok');
-  assert.deepEqual(ok.calls[0].args.runners, ['claude', 'codex']);
+  assert.deepEqual(ok.calls[0].args.p_runners, ['claude', 'codex']);
   const gone = mk([{ data: null, error: { status: 404, code: 'PGRST202' } }]);
   assert.deepEqual(await registerRunnerOnLogin({ url: 'u', anonKey: 'k', accessToken: 't' }, { mkClient: gone.mkClient, sleep: async () => {}, log: () => {} }), { ok: false, code: 'PGRST202' });
   assert.equal(gone.calls.length, 1);
   const down = mk([{ data: null, error: { status: 500 } }, { data: null, error: { status: 500 } }, { data: null, error: { status: 500 } }, { data: { device_id: DEVICE } }]);
   assert.equal((await registerRunnerOnLogin({ url: 'u', anonKey: 'k', accessToken: 't' }, { mkClient: down.mkClient, sleep: async () => {}, log: () => {} })).ok, false);
   assert.equal(down.calls.length, 3);
+});
+
+test('로그인 직후 등록: 응답 없는 서버 — 한 번 5초·합계 상한으로 끊고 실패를 돌려준다(로그인을 붙잡지 않는다)', async () => {
+  const { registerRunnerOnLogin } = await import('../src/agent-link-host.mjs');
+  // ① 끝나지 않는 약속(빌더 아님) — 경주로 끊는다
+  let n = 0;
+  const hang = () => ({ rpc: () => { n++; return new Promise(() => {}); } });
+  const t0 = Date.now();
+  const r = await registerRunnerOnLogin({ url: 'u', anonKey: 'k', accessToken: 't' }, { mkClient: hang, timeoutMs: 30, budgetMs: 1_000, sleep: async () => {}, log: () => {} });
+  assert.deepEqual(r, { ok: false, code: 'timeout' });
+  assert.equal(n, 3, '시도마다 끊고 3번까지');
+  assert.ok(Date.now() - t0 < 900, '시도 상한 안에 끝난다');
+  // ② supabase-js 빌더 모양 — abortSignal로 요청 자체를 끊는다
+  const signals = [];
+  const builder = () => ({ rpc: () => ({ abortSignal(sig) { signals.push(sig); return new Promise((res) => sig.addEventListener('abort', () => res({ data: null, error: { code: '', message: 'AbortError', status: 0 } }))); } }) });
+  const b = await registerRunnerOnLogin({ url: 'u', anonKey: 'k', accessToken: 't' }, { mkClient: builder, timeoutMs: 30, budgetMs: 1_000, sleep: async () => {}, log: () => {} });
+  assert.equal(b.ok, false);
+  assert.equal(signals.length, 3);
+  assert.ok(signals.every((s) => s.aborted), '요청마다 시간 제한 신호');
+  // ③ 합계 상한: 남은 시간이 없으면 더 시도하지 않는다
+  let m = 0, clock = 0;
+  const slow = () => ({ rpc: () => { m++; clock += 60; return new Promise(() => {}); } });
+  const c = await registerRunnerOnLogin({ url: 'u', anonKey: 'k', accessToken: 't' }, { mkClient: slow, timeoutMs: 20, budgetMs: 100, now: () => clock, sleep: async () => {}, log: () => {} });
+  assert.equal(c.ok, false);
+  assert.equal(m, 2, '합계 상한 100ms 안에서 2번만');
+  // ④ 클라이언트를 못 만들어도 던지지 않는다
+  assert.deepEqual(await registerRunnerOnLogin({ url: 'u', anonKey: 'k', accessToken: 't' }, { mkClient: () => { throw new Error('bad url'); }, log: () => {} }), { ok: false, code: 'client' });
+});
+
+test('saveDeviceSession: 등록 모듈을 못 읽어도(import 실패) 로그인은 저장된다', async () => {
+  const { saveDeviceSession } = await import('../src/devicesession.mjs');
+  const { existsSync } = await import('node:fs');
+  const root = await mkdtemp(join(tmpdir(), 'argo-link-login-'));
+  const _mkClient = () => ({ from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }) }) });
+  const prev = process.env.ARGO_AGENT_LINK;
+  process.env.ARGO_AGENT_LINK = '1';
+  try {
+    await saveDeviceSession({ url: 'https://x.invalid', anonKey: 'k', session: { access_token: 'a.b.c', refresh_token: 'r', expires_at: 9e9, user: { id: 'u1', email: '' } } },
+      { root, _mkClient, _loadLinkReg: async () => { throw new Error('Cannot find module agent-link-host.mjs'); } });
+  } finally { if (prev === undefined) delete process.env.ARGO_AGENT_LINK; else process.env.ARGO_AGENT_LINK = prev; }
+  assert.ok(existsSync(join(root, '.device-session.json')), '로그인은 그대로 저장된다');
 });
 
 test('saveDeviceSession: 플래그가 켜지면 세션 파일을 쓰기 **전에** runner 등록, 꺼지면 등록 요청 0(배포본과 같음)', async () => {
