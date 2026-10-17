@@ -2,7 +2,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { REJECT_CODES } from '../../../packages/agent-link/contract/v1.mjs';
-import { backoffDelay, belowMin, rejectCodeOf, retryable, normalizeCatchUp, uploadPath, RECONNECT, SEND_RETRY, pausedOf, deviceIdOf } from '../src/link/policy.mjs';
+import { backoffDelay, belowMin, rejectCodeOf, retryable, normalizeCatchUp, uploadPath, RECONNECT, SEND_RETRY, pausedOf, deviceIdOf, ATTACH_LIMITS, attachName, attachmentProblem } from '../src/link/policy.mjs';
+import { readFileSync } from 'node:fs';
 
 test('재연결 간격: 지수로 늘고 상한(60초)을 넘지 않는다, 흔들기는 절반~전부', () => {
   const full = () => 0.999999;
@@ -63,7 +64,10 @@ test('따라잡기 응답: 방별 묶음·id 오름차순·200 넘으면 더 있
   const obj = normalizeCatchUp({ rooms: [{ room_id: 'A', messages: [{ id: 3 }, { id: 2 }], more: true }], paused: false });
   assert.deepEqual(obj.rooms[0].messages.map((m) => m.id), [2, 3]); assert.equal(obj.rooms[0].more, true); assert.equal(obj.paused, false);
   assert.equal(normalizeCatchUp({ rooms: [], paused: true }).paused, true);
-  assert.deepEqual(normalizeCatchUp(null), { rooms: [], paused: false });
+  assert.deepEqual(normalizeCatchUp(null), { rooms: [], paused: false, nextSince: null });
+  // U2 next_since: 안전 정수만 받고, 옛 서버(값 없음)·이상한 값은 null
+  assert.equal(normalizeCatchUp({ rooms: [], next_since: 42 }).nextSince, 42);
+  for (const v of [undefined, null, -1, 1.5, '42x', 2 ** 53]) assert.equal(normalizeCatchUp({ rooms: [], next_since: v }).nextSince, null, String(v));
 });
 
 test('작은 읽기: 중단 표지·기기 id·업로드 경로(같은 글의 같은 파일 = 같은 경로)', () => {
@@ -71,4 +75,18 @@ test('작은 읽기: 중단 표지·기기 id·업로드 경로(같은 글의 �
   assert.equal(deviceIdOf('d1'), 'd1'); assert.equal(deviceIdOf({ device_id: 'd2' }), 'd2'); assert.equal(deviceIdOf(null), null);
   assert.equal(uploadPath('r', 'c', 0, 'a/b.png'), 'r/c/0-a_b.png');
   assert.equal(uploadPath('r', 'c', 1, 'x.txt'), uploadPath('r', 'c', 1, 'x.txt'));
+});
+
+test('첨부 제한(#1077 검수 3) — 서버 msgr2_attachment_add와 같은 값·같은 이름 정리', () => {
+  const sql = readFileSync(new URL('../../../supabase/migrations/20261018000000_msgr2_work.sql', import.meta.url), 'utf8');
+  const fn = sql.slice(sql.indexOf('create or replace function public.msgr2_attachment_add('), sql.indexOf('end $$;', sql.indexOf('create or replace function public.msgr2_attachment_add(')));
+  assert.match(fn, new RegExp(`p_index not between 0 and ${ATTACH_LIMITS.maxFiles - 1}\\b`), '파일 수');
+  assert.match(fn, new RegExp(`char_length\\(nm\\) > ${ATTACH_LIMITS.maxName}\\b`), '이름 길이');
+  assert.match(fn, new RegExp(`p_bytes not between 0 and ${ATTACH_LIMITS.maxBytes}\\b`), '크기');
+  assert.match(fn, /nm in \('', '\.'\)/, "빈 이름·'.' 거부");
+  assert.equal(attachName('a/b\\c..d\u0001e'), 'a_b_c_d_e');
+  assert.equal(attachmentProblem([{ name: 'ok.txt', bytes: 0 }]), null);
+  assert.equal(attachmentProblem([{ name: '..', bytes: 1 }]), null, "'..'은 '_'가 되어 통과(서버와 같다)");
+  assert.equal(attachmentProblem([{ name: '.', bytes: 1 }]), 'invalid_attachment');
+  assert.equal(attachmentProblem([{ name: 'x', bytes: -1 }]), 'invalid_attachment');
 });

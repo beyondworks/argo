@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createLinkMachine, LAST_ID_KEY } from '../src/link/machine.mjs';
-import { RECONNECT, SEND_RETRY } from '../src/link/policy.mjs';
+import { RECONNECT, SEND_RETRY, ATTACH_LIMITS } from '../src/link/policy.mjs';
 
 const UID = '11111111-1111-4111-8111-111111111111';
 const OTHER = '22222222-2222-4222-8222-222222222222';
@@ -43,7 +43,7 @@ function fakeSupabase({ minVersion = null, paused = false, session = { id: 'sess
   const s = {
     session, // 지금 JWT의 session_id와 로그인 뒤 지난 분(U3 새 app 행은 10분 안 세션만)
     log: [], joins: [], channels: new Set(), net: { down: false },
-    db: { messages: [], attachments: [], files: new Map(), devices: new Map(), bySession: new Map(), nextId: 100, minVersion, paused, revokedSession: false },
+    db: { messages: [], attachments: [], files: new Map(), devices: new Map(), bySession: new Map(), nextId: 100, minVersion, paused, revokedSession: false, nextSince: undefined },
     fail: {}, // 이름 → [{ error, status, commit? }] 차례로 꺼내 쓴다
     hooks: {}, // 이름 → 응답 만들기 직전에 부른다
   };
@@ -94,7 +94,20 @@ function fakeSupabase({ minVersion = null, paused = false, session = { id: 'sess
       const by = new Map();
       for (const m of s.db.messages) if (p_since_id == null || m.id > p_since_id) (by.get(m.room_id) || by.set(m.room_id, []).get(m.room_id)).push(m);
       const rooms = [...by].map(([room_id, ms]) => ({ room_id, messages: ms.slice(-200), more: ms.length > 200 }));
-      return { data: { rooms }, error: null, status: 200 };
+      // U2 next_since: 시험이 정한 값(최근 글 앞에서 멈춘 기준). 정하지 않으면 옛 서버처럼 싣지 않는다
+      const ns = typeof s.db.nextSince === 'function' ? s.db.nextSince(p_since_id) : s.db.nextSince;
+      return { data: ns === undefined ? { rooms } : { rooms, next_since: ns }, error: null, status: 200 };
+    },
+    // U2 msgr2_attachment_add 흉내: 내 사람 글만, (글, 순번) 멱등, 경로는 서버가 정한다
+    msgr2_attachment_add: ({ p_message, p_index, p_name, p_mime, p_bytes }) => {
+      const m = s.db.messages.find((x) => x.id === p_message);
+      if (!m || m.author_user_id !== UID) return { data: null, error: { code: '42501', message: 'msgr2_message_not_found' }, status: 403 };
+      const path = `sp/${m.room_id}/${m.id}/${p_index}-${String(p_name).replace(/[\\/]/g, '_')}`;
+      const had = s.db.attachments.find((a) => a.message_id === m.id && a.storage_path === `msgr/${path}`);
+      if (had) return { data: { ok: true, attachment_id: had.id, bucket: 'msgr', path, existing: true }, error: null, status: 200 };
+      const a = { id: s.db.attachments.length + 1, message_id: m.id, room_id: m.room_id, storage_path: `msgr/${path}`, name: p_name, mime: p_mime, bytes: p_bytes };
+      s.db.attachments.push(a);
+      return { data: { ok: true, attachment_id: a.id, bucket: 'msgr', path, existing: false }, error: null, status: 200 };
     },
   };
 
@@ -165,11 +178,13 @@ function fakeSupabase({ minVersion = null, paused = false, session = { id: 'sess
       on(type, filter, fn) { this.handlers.push({ type, filter, fn }); return this; },
       subscribe(cb) {
         this.cb = cb; s.joins.push(topic);
-        queueMicrotask(() => {
+        const go = () => {
           if (!s.channels.has(ch)) return;
-          if (s.net.down) { this.cb?.('CHANNEL_ERROR'); return; }
+          if (s.net.down || s.denyJoin.has(topic)) { this.cb?.('CHANNEL_ERROR'); return; } // 권한 없는 토픽(팀에서 빠진 공간 등)
           this.joined = true; this.cb?.('SUBSCRIBED');
-        });
+        };
+        if (s.holdJoin.has(topic)) { s.held.set(topic, go); return this; } // 시험이 release(topic)로 가입을 끝낸다
+        queueMicrotask(go);
         return this;
       },
       presenceState() { return {}; },
@@ -177,6 +192,10 @@ function fakeSupabase({ minVersion = null, paused = false, session = { id: 'sess
     s.channels.add(ch);
     return ch;
   };
+  s.denyJoin = new Set(); s.holdJoin = new Set(); s.held = new Map();
+  // Realtime(phoenix)는 오류 난 채널을 닫지 않으면 rejoinTimer로 계속 다시 가입한다 — 그 한 번을 흉내 낸다
+  s.tickRejoin = () => { for (const ch of [...s.channels]) if (!ch.joined && ch.cb) ch.subscribe(ch.cb); };
+  s.release = (topic) => { const f = s.held.get(topic); s.held.delete(topic); s.holdJoin.delete(topic); f?.(); };
   s.removeChannel = (ch) => { const was = s.channels.delete(ch); ch.joined = false; if (was) ch.cb?.('CLOSED'); return Promise.resolve('ok'); };
   return s;
 }
@@ -481,20 +500,47 @@ test('보내기 재시도: 다시 보낼 코드(503·429)만 간격·상한 안�
   assert.equal(m.getState(), 'ready');
 });
 
-test('업로드: 같은 글의 같은 파일은 같은 경로, 첨부 행이 실패해 다시 보내도 파일·행 한 벌', async () => {
+test('업로드(U6a): 글을 먼저 넣고 msgr2_attachment_add가 준 경로에만 올린다 — 올리기가 끊겨 다시 보내도 글·첨부 행·파일 한 벌', async () => {
   const { m, fake, clock } = setup();
   await m.start(); await flush();
-  fake.fail['insert:msgr2_attachments'] = [{ error: { message: 'boom' }, status: 0, commit: true }];
-  const files = [{ name: 'a.png', mime: 'image/png', bytes: 3, data: 'AAA' }, { name: 'b.txt', mime: 'text/plain', bytes: 1, data: 'B' }];
+  fake.fail['upload:msgr'] = [{ error: { name: 'StorageUnknownError', message: 'Failed to fetch' } }]; // 첫 파일 올리기가 끊긴다(행은 이미 있다)
+  const files = [{ name: 'a.png', mime: 'image/png', bytes: 3, data: 'AAA' }, { name: 'b/c.txt', mime: 'text/plain', bytes: 1, data: 'B' }];
   const p = m.send({ roomId: ROOM_A, body: 'files', clientMsgId: 'cm-f', files });
   await clock.advance(SEND_RETRY.maxMs);
   const r = await p;
-  assert.equal(r.ok, true);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const msg = fake.db.messages.filter((x) => x.client_msg_id === 'cm-f'); assert.equal(msg.length, 1, '글 한 벌');
+  const atts = fake.db.attachments.filter((x) => x.message_id === msg[0].id); assert.equal(atts.length, 2, '첨부 행 한 벌(서버가 (글, 순번) 멱등)');
+  assert.deepEqual([...fake.db.files.keys()].sort(), [`sp/${ROOM_A}/${msg[0].id}/0-a.png`, `sp/${ROOM_A}/${msg[0].id}/1-b_c.txt`], '서버가 정한 경로에만');
+  assert.deepEqual(r.attachments.map((x) => x.path), [`sp/${ROOM_A}/${msg[0].id}/0-a.png`, `sp/${ROOM_A}/${msg[0].id}/1-b_c.txt`]);
+  assert.equal(fake.count('insert:msgr2_attachments'), 0, '첨부 표에 직접 넣지 않는다(U1이 막는다)');
+  const order = fake.log.filter((l) => ['insert:msgr2_messages', 'msgr2_attachment_add', 'upload:msgr'].includes(l.name)).map((l) => l.name);
+  assert.equal(order[0], 'insert:msgr2_messages', '글이 먼저');
+});
+
+test('업로드(U6a): 첫 파일은 올라갔는데 둘째 첨부 RPC가 끊김 → 다시 보내면 첫 파일은 409(이미 있음)를 성공으로 보고 둘째만 올린다', async () => {
+  const { m, fake, clock } = setup();
+  await m.start(); await flush();
+  let n = 0; fake.hooks.msgr2_attachment_add = () => { n++; if (n === 2) fake.fail.msgr2_attachment_add = [{ error: { message: 'upstream' }, status: 503 }]; };
+  const files = [{ name: 'a.png', mime: 'image/png', bytes: 3, data: 'AAA' }, { name: 'b.txt', mime: 'text/plain', bytes: 1, data: 'B' }];
+  const p = m.send({ roomId: ROOM_A, body: 'two', clientMsgId: 'cm-h', files });
+  await clock.advance(SEND_RETRY.maxMs);
+  const r = await p;
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const id = fake.db.messages.find((x) => x.client_msg_id === 'cm-h').id;
+  assert.equal(fake.db.attachments.filter((a) => a.message_id === id).length, 2);
   assert.equal(fake.db.files.size, 2);
-  assert.deepEqual([...fake.db.files.keys()].sort(), [`${ROOM_A}/cm-f/0-a.png`, `${ROOM_A}/cm-f/1-b.txt`]);
-  assert.equal(fake.db.messages.filter((x) => x.client_msg_id === 'cm-f').length, 1);
-  const msgId = fake.db.messages.find((x) => x.client_msg_id === 'cm-f').id;
-  assert.equal(fake.db.attachments.filter((a) => a.message_id === msgId).length, 2, '첨부 행 중복 0');
+  const ups = fake.log.filter((l) => l.name === 'upload:msgr').map((l) => l.path);
+  assert.deepEqual(ups, [`sp/${ROOM_A}/${id}/0-a.png`, `sp/${ROOM_A}/${id}/0-a.png`, `sp/${ROOM_A}/${id}/1-b.txt`], '첫 파일은 다시 시도(409 = 성공), 바이트를 덮어쓰지 않는다');
+  assert.equal(fake.db.files.get(`sp/${ROOM_A}/${id}/0-a.png`), 'AAA');
+});
+
+test('업로드(U6a): 첨부 RPC가 거부하면(남의 글 등) 다시 보내지 않고 실패로 낸다', async () => {
+  const { m, fake } = setup();
+  await m.start(); await flush();
+  fake.fail.msgr2_attachment_add = [{ error: { code: '42501', message: 'msgr2_message_not_found' }, status: 403 }];
+  const r = await m.send({ roomId: ROOM_A, body: 'x', clientMsgId: 'cm-g', files: [{ name: 'a.png', mime: 'image/png', bytes: 1, data: 'A' }] });
+  assert.equal(r.ok, false); assert.equal(fake.count('upload:msgr'), 0); assert.equal(fake.count('msgr2_attachment_add'), 1, '재시도 0');
 });
 
 test('본문이 큰 글(방송에 id만) → 그 글 하나만 1회 읽는다', async () => {
@@ -671,4 +717,127 @@ test('검수2-3: 등록의 만료 토큰 401(PGRST301)은 간격·상한 안에�
   const c = fakeSupabase(); c.fail.msgr2_device_register = Array.from({ length: 50 }, () => ({ error: { code: 'PGRST301', message: 'JWT expired' }, status: 401 }));
   const x = setup({ fake: c }); await x.m.start(); await x.clock.advance(30 * MIN);
   assert.ok(c.count('msgr2_device_register') <= 1 + RECONNECT.maxAttempts); assert.match(x.m.getSnapshot().reason, /^gave_up/);
+});
+
+test('U6a next_since: 따라잡기 기준은 서버 next_since — 최근 글은 다음 따라잡기에 다시 와도 중복 0, 재시작도 그 기준부터', async () => {
+  const fake = fakeSupabase(); const storage = memStorage();
+  for (let i = 0; i < 5; i++) fake.insertMessage({ body: `m${i}` }); // id 100..104
+  fake.db.nextSince = 102; // 103·104는 60초 안 — 서버가 기준을 102에서 멈춘다
+  const a = setup({ fake, storage });
+  await a.m.start(); await flush();
+  assert.deepEqual(a.ids(), [100, 101, 102, 103, 104]);
+  assert.equal(storage.getItem(LAST_ID_KEY(UID)), '102', '저장하는 기준 = next_since(받은 최대 id 104가 아니다)');
+  assert.equal(a.m.getSnapshot().lastId, 104, '화면용 최대 id는 그대로');
+  a.fake.dropSockets(); await a.clock.advance(RECONNECT.maxMs);
+  const calls = a.fake.log.filter((l) => l.name === 'msgr2_catch_up');
+  assert.equal(calls.at(-1).args.p_since_id, 102, '다시 붙은 따라잡기는 102부터(103·104가 다시 온다)');
+  assert.deepEqual(a.ids(), [100, 101, 102, 103, 104], '다시 온 103·104는 중복으로 걸러진다');
+  a.m.stop();
+  const b = setup({ fake: fakeSupabase(), storage }); await b.m.start(); await flush();
+  assert.equal(b.fake.log.find((l) => l.name === 'msgr2_catch_up').args.p_since_id, 102, '재시작도 저장한 기준부터');
+});
+
+test('U6a next_since: 커밋이 늦은 작은 id 글 — 끊긴 사이 보인 102를 다음 따라잡기가 가져온다(최대 id 기준이면 빠진다)', async () => {
+  const fake = fakeSupabase();
+  fake.insertMessage({ body: 'a' }); fake.insertMessage({ body: 'b' }); // 100, 101
+  fake.db.nextSince = 101;
+  const { m, clock, ids } = setup({ fake });
+  await m.start(); await flush();
+  // 104가 먼저 커밋되어 방송으로 오고, 102·103은 늦게 커밋된다(방송은 끊긴 사이에 지나갔다)
+  const late = [{ id: 102 }, { id: 103 }].map((x) => ({ ...x, room_id: ROOM_A, author_kind: 'user', author_user_id: OTHER, body: 'late', created_at: new Date().toISOString() }));
+  fake.db.nextId = 104; fake.insertMessage({ body: 'fast' }); await flush();
+  fake.dropSockets(); fake.db.messages.push(...late); fake.db.nextSince = 104;
+  await clock.advance(RECONNECT.maxMs);
+  assert.deepEqual(ids().sort((x, y) => x - y), [100, 101, 102, 103, 104], '늦게 커밋된 102·103을 놓치지 않는다');
+});
+
+test('U6a v2:s: — setSpaces로 받은 팀 공간을 ready에서 구독해 그 토픽의 글을 받고, 뒤로 가면 닫고 앞으로 오면 다시 가입, 유휴 요청 0', async () => {
+  const SP = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  const { m, fake, clock, ids } = setup();
+  m.setSpaces([SP, SP]); // 중복은 한 번
+  await m.start(); await flush();
+  assert.deepEqual(fake.liveTopics(), [`v2:s:${SP}`, `v2:u:${UID}`].sort());
+  const msg = { id: 300, room_id: ROOM_B, author_kind: 'user', author_user_id: OTHER, body: '큰 방', created_at: new Date().toISOString() };
+  fake.db.messages.push(msg); fake.broadcast(`v2:s:${SP}`, 'msg', { message: msg }); await flush();
+  assert.ok(ids().includes(300));
+  fake.broadcast(`v2:s:${SP}`, 'pause', { paused: true }); await flush();
+  assert.equal(m.getState(), 'ready', 's: 토픽의 중단·폐기 표지는 무시(u:만 믿는다)');
+  const before = fake.log.length; await clock.advance(10 * MIN);
+  assert.equal(fake.log.length, before, '유휴 10분 요청 0');
+  await m.setForeground(false); assert.deepEqual(fake.liveTopics(), [], '뒤로 가면 닫힘');
+  await m.setForeground(true); await flush();
+  assert.deepEqual(fake.liveTopics(), [`v2:s:${SP}`, `v2:u:${UID}`].sort(), '앞으로 오면 다시 가입');
+  m.setSpaces([]); assert.deepEqual(fake.liveTopics(), [`v2:u:${UID}`], '공간을 비우면 닫힘');
+});
+
+test('#1077 검수 1: v2:s:는 u:와 함께 열고, 따라잡기는 s: 가입이 끝난 뒤 1회 — 그 사이 온 큰 방 글을 놓치지 않는다', async () => {
+  const SP = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  const fake = fakeSupabase(); fake.holdJoin.add(`v2:s:${SP}`);
+  const { m, ids } = setup({ fake }); m.setSpaces([SP]);
+  await m.start(); await flush();
+  assert.equal(fake.count('msgr2_catch_up'), 0, 's: 가입 전에는 따라잡지 않는다');
+  // 가입을 기다리는 사이 큰 방에 글이 들어간다(방송은 아직 못 받는다)
+  fake.db.messages.push({ id: 400, room_id: ROOM_B, author_kind: 'user', author_user_id: OTHER, body: '사이 글', created_at: new Date().toISOString() });
+  fake.release(`v2:s:${SP}`); await flush();
+  assert.equal(fake.count('msgr2_catch_up'), 1, '가입이 끝나면 따라잡기 1회');
+  assert.ok(ids().includes(400), '사이 글을 따라잡기가 가져온다');
+  assert.equal(m.getState(), 'ready');
+});
+
+test('#1077 검수 2: 가입이 거부된 공간은 닫고 다시 붙지 않는다 — 10분 유휴 동안 재가입·요청 0, 따라잡기는 그대로', async () => {
+  const SP = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'; const OK = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+  const fake = fakeSupabase(); fake.denyJoin.add(`v2:s:${SP}`);
+  const { m, clock } = setup({ fake }); m.setSpaces([SP, OK]);
+  await m.start(); await flush();
+  assert.equal(m.getState(), 'ready'); assert.equal(fake.count('msgr2_catch_up'), 1);
+  assert.deepEqual(fake.liveTopics(), [`v2:s:${OK}`, `v2:u:${UID}`].sort(), '거부된 공간은 닫힘');
+  assert.equal([...fake.channels].filter((c) => c.topic === `v2:s:${SP}`).length, 0, '거부된 채널은 removeChannel(재가입 타이머가 없다)');
+  const joins = fake.joins.length; const reqs = fake.log.length;
+  for (let i = 0; i < 6; i++) { fake.tickRejoin(); await clock.advance(10 * 1000); } // 10초마다 재가입 시도가 있었다면 늘었을 것
+  await clock.advance(10 * MIN);
+  assert.equal(fake.joins.length, joins, '재가입 0'); assert.equal(fake.log.length, reqs, '요청 0');
+  // 다시 연결하면 한 번 더 시도한다(그때도 거부면 닫힘)
+  fake.dropSockets(); await clock.advance(RECONNECT.maxMs);
+  assert.equal(fake.joins.filter((t) => t === `v2:s:${SP}`).length, 2, '연결마다 한 번');
+});
+
+test('#1077 검수 3: 서버가 거부할 첨부(개수·크기·이름)는 글을 넣기 전에 멈춘다 — 요청 0', async () => {
+  const { m, fake } = setup();
+  await m.start(); await flush();
+  const before = fake.log.length;
+  const big = { name: 'a.bin', mime: 'application/octet-stream', bytes: ATTACH_LIMITS.maxBytes + 1, data: 'x' };
+  const many = Array.from({ length: ATTACH_LIMITS.maxFiles + 1 }, (_, i) => ({ name: `f${i}.txt`, bytes: 1, data: 'x' }));
+  for (const files of [[big], many, [{ name: '.', bytes: 1, data: 'x' }], [{ name: 'n'.repeat(ATTACH_LIMITS.maxName + 1), bytes: 1, data: 'x' }]]) {
+    const r = await m.send({ roomId: ROOM_A, body: 'x', files });
+    assert.equal(r.ok, false); assert.equal(r.code, 'invalid_attachment');
+  }
+  assert.equal(fake.log.length, before, '글·첨부·업로드 요청 0');
+  assert.equal(fake.db.messages.filter((x) => x.body === 'x').length, 0, '본문만 남지 않는다');
+  const ok = await m.send({ roomId: ROOM_A, body: 'ok', files: [{ name: 'n'.repeat(ATTACH_LIMITS.maxName), bytes: ATTACH_LIMITS.maxBytes, data: 'x' }] });
+  assert.equal(ok.ok, true, '경계값은 보낸다');
+});
+
+test('#1077 재검수: 중단이 풀리면(방송·다시 연 직후 확인) v2:s:를 다시 열고 따라잡기 1회', async () => {
+  const SP = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  const { m, fake } = setup(); m.setSpaces([SP]);
+  await m.start(); await flush();
+  assert.deepEqual(fake.liveTopics(), [`v2:s:${SP}`, `v2:u:${UID}`].sort());
+  fake.broadcast(`v2:u:${UID}`, 'pause', { paused: true }); await flush();
+  assert.equal(m.getState(), 'paused'); assert.deepEqual(fake.liveTopics(), [`v2:u:${UID}`], '중단 중 s: 닫힘');
+  const c0 = fake.count('msgr2_catch_up');
+  fake.broadcast(`v2:u:${UID}`, 'pause', { paused: false }); await flush();
+  assert.equal(m.getState(), 'ready');
+  assert.deepEqual(fake.liveTopics(), [`v2:s:${SP}`, `v2:u:${UID}`].sort(), '풀리면 s: 다시 열림');
+  assert.equal(fake.count('msgr2_catch_up'), c0 + 1, '따라잡기 1회');
+});
+
+test('#1077 재검수: 소켓이 끊긴 사이 풀림을 놓쳐도 다시 연 직후 확인(pauseCheckLive)으로 풀리면 v2:s:도 다시 열린다', async () => {
+  const SP = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  const { m, fake, clock } = setup(); m.setSpaces([SP]);
+  await m.start(); await flush();
+  fake.broadcast(`v2:u:${UID}`, 'pause', { paused: true }); fake.db.paused = true; await flush();
+  fake.dropSockets(); fake.db.paused = false; await flush();
+  await clock.advance(60 * MIN);
+  assert.equal(m.getState(), 'ready');
+  assert.deepEqual(fake.liveTopics(), [`v2:s:${SP}`, `v2:u:${UID}`].sort());
 });
