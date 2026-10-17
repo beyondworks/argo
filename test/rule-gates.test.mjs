@@ -72,6 +72,7 @@ test('삭제 금지 판정이 변형까지 잡는다(변이 확인)', () => {
 // PR 본문 규칙 검사 판정(scripts/pr-rules-check.mjs)
 const TEMPLATE = readFileSync(join(ROOT, '.github/pull_request_template.md'), 'utf8');
 const shared = messengerShared(ROOT);
+const REVIEW_TAIL = '\n## 요청\n요청자: 유건\n## Testing\nnpm test 통과\n## Risk\n위험도: 1 — 동기화 주기\n## How to revert\n커밋 revert';
 test('PR 본문 검사: 메신저 공용 파일 목록을 설정에서 읽는다', () => {
   for (const f of ['app/globals.css', 'app/ui.jsx', 'app/i18n.jsx', 'app/theme.jsx']) assert.ok(shared.has(f), f);
 });
@@ -85,7 +86,7 @@ test('PR 본문 검사: 템플릿을 채우지 않으면 모두 실패한다', (
     added: [{ file: 'src/sync.mjs', line: 'setInterval(tick, 5000)' }],
     shared,
   });
-  assert.equal(m.length, 6, m.join('\n'));
+  assert.equal(m.length, 10, m.join('\n'));
 });
 test('PR 본문 검사: 채운 절은 통과하고 "해당 없음"은 빈 절로 본다', () => {
   const filledBody = TEMPLATE
@@ -93,7 +94,11 @@ test('PR 본문 검사: 채운 절은 통과하고 "해당 없음"은 빈 절로
     .replace('## 경우 표', '## 경우 표\n첫 실행: 기대 … 근거 test/x')
     .replace('## 부하', '## 부하\n기기 100대 × 분당 1회 = 분당 100행')
     .replace('## 화면', '## 화면\n메신저 390·1280·880 캡처')
-    .replace('## 검수', '## 검수\n분리 검수: MEDIUM 1 고침\n러너: OpenRouter 실턴');
+    .replace('## 검수', '## 검수\n분리 검수: MEDIUM 1 고침\n러너: OpenRouter 실턴')
+    .replace('## Testing', '## Testing\nnpm test 통과')
+    .replace('## Risk', '## Risk\n위험도: 2 — 마이그레이션')
+    .replace('## How to revert', '## How to revert\nscripts/rollback/x.down.sql')
+    .replace('요청자:', '요청자: 유건');
   const files = ['supabase/migrations/20261013000000_x.sql', 'app/i18n.jsx', 'src/engine/native-query.mjs'];
   const added = [{ file: 'src/sync.mjs', line: 'setInterval(tick, 5000)' }];
   assert.deepEqual(checkPr({ body: filledBody, files, added, shared }), []);
@@ -101,7 +106,7 @@ test('PR 본문 검사: 채운 절은 통과하고 "해당 없음"은 빈 절로
   assert.match(checkPr({ body: na, files, added, shared }).join('\n'), /경우 표/);
 });
 test('PR 본문 검사: 판정 경계(오탐·누락)', () => {
-  const body = '## 영향 반경\n맥 검증함\n## 검수\n분리 검수 지적 0';
+  const body = '## 영향 반경\n맥 검증함\n## 검수\n분리 검수 지적 0' + REVIEW_TAIL;
   assert.deepEqual(checkPr({ body, files: ['src/author.mjs', 'src/async-queue.mjs'], shared }), [], '이름에 sync·auth가 들어 있을 뿐인 파일은 상태 변경으로 보지 않는다');
   for (const f of ['apps/messenger/src/App.jsx', 'app/api/billing/webhook/route.js', 'app/api/auth/pair/route.js', 'src/gateway/msgr-execution.mjs', 'scripts/sql/msgr-automation-scheduler.sql']) {
     assert.match(checkPr({ body, files: [f], shared }).join(''), /경우 표/, f);
@@ -119,16 +124,16 @@ test('PR 본문 검사: 판정 경계(오탐·누락)', () => {
 
 test('PR 본문 검사: ## 절 안의 ### 소제목은 그 절에 합친다(#961 검수 LOW-1)', () => {
   const files = ['src/sync.mjs'];
-  const body = '## 영향 반경\n### 축\n| 맥 | 검증함(npm test) |\n### 산출물\n기능 브랜치뿐\n## 경우 표\n### 첫 실행\n기대 … 근거 test/x\n## 검수\n분리 검수: MEDIUM 1 고침';
+  const body = '## 영향 반경\n### 축\n| 맥 | 검증함(npm test) |\n### 산출물\n기능 브랜치뿐\n## 경우 표\n### 첫 실행\n기대 … 근거 test/x\n## 검수\n분리 검수: MEDIUM 1 고침' + REVIEW_TAIL;
   assert.deepEqual(checkPr({ body, files, shared }), [], '소제목 아래 내용이 상위 절의 내용으로 세지지 않았다');
-  assert.deepEqual(Object.keys(sections(body)), ['영향 반경', '경우 표', '검수'], '### 소제목이 새 절이 됐다');
+  assert.deepEqual(Object.keys(sections(body)), ['영향 반경', '경우 표', '검수', '요청', 'Testing', 'Risk', 'How to revert'], '### 소제목이 새 절이 됐다');
   // 소제목 글자만 있고 내용이 없으면 여전히 빈 절이다
   assert.match(checkPr({ body: '## 영향 반경\n### 축\n## 검수\n분리 검수: 지적 0', files, shared }).join('\n'), /영향 반경/);
   // 위에 ## 절이 없으면 ### 도 절로 읽는다(제목 단계를 하나씩 내려 쓴 본문)
-  assert.deepEqual(checkPr({ body: '### 영향 반경\n맥 검증함\n### 경우 표\n기대 … 근거\n### 검수\n지적 0', files, shared }), []);
+  assert.deepEqual(checkPr({ body: '### 영향 반경\n맥 검증함\n### 경우 표\n기대 … 근거\n### 검수\n지적 0\n요청자: 유건\n### Testing\nnpm test\n### Risk\n위험도 1\n### How to revert\nrevert', files, shared }), []);
 });
 test('PR 본문 검사: "대기·pending·TBD"만 있는 절은 빈 절로 본다(#961 검수 LOW-2)', () => {
-  const ok = '## 영향 반경\n맥 검증함\n## 검수\n분리 검수: MEDIUM 1 고침';
+  const ok = '## 영향 반경\n맥 검증함\n## 검수\n분리 검수: MEDIUM 1 고침' + REVIEW_TAIL;
   assert.deepEqual(checkPr({ body: ok, files: ['src/a.mjs'], shared }), []);
   for (const t of ['분리 검수: 대기', '대기 중', '- 분리 검수: pending', 'TBD', '분리 검수: 대기\n도달 지점: TBD', '검수: 예정']) {
     assert.match(checkPr({ body: ok.replace('분리 검수: MEDIUM 1 고침', t), files: ['src/a.mjs'], shared }).join('\n'), /분리 검수/, JSON.stringify(t));
@@ -148,4 +153,18 @@ test('맥 two에서는 라이브 DB 적용·iOS 발행을 거부한다', { skip:
   }
   const b = spawnSync(process.execPath, [join(ROOT, 'apps/messenger/scripts/ios-store.mjs'), 'upload'], { env, encoding: 'utf8' });
   assert.equal(b.status, 5, b.stdout + b.stderr); assert.match(b.stderr, /맥 two/);
+});
+test('PR 본문 검사: Testing·Risk(위험도 0/1/2)·How to revert·요청자(REVIEW.md, 2026-10-17)', () => {
+  const ok = '## 영향 반경\n맥 검증함\n## 검수\n분리 검수: 지적 0' + REVIEW_TAIL;
+  const files = ['src/a.mjs'];
+  assert.deepEqual(checkPr({ body: ok, files, shared }), []);
+  assert.match(checkPr({ body: ok.replace('npm test 통과', '해당 없음'), files, shared }).join('\n'), /Testing/);
+  assert.match(checkPr({ body: ok.replace('위험도: 1 — 동기화 주기', '동기화 주기를 바꿈'), files, shared }).join('\n'), /Risk/, '등급 숫자가 없으면 실패');
+  assert.match(checkPr({ body: ok.replace('위험도: 1 — 동기화 주기', '위험도: 3'), files, shared }).join('\n'), /Risk/, '0/1/2 밖의 등급은 실패');
+  assert.match(checkPr({ body: ok.replace('위험도: 1 — 동기화 주기', '위험도: 1.5'), files, shared }).join('\n'), /Risk/);
+  for (const g of ['위험도 0 — 문구', '등급: 2 (마이그레이션)', 'Risk: 1 sync']) assert.deepEqual(checkPr({ body: ok.replace('위험도: 1 — 동기화 주기', g), files, shared }), [], g);
+  assert.match(checkPr({ body: ok.replace('커밋 revert', 'TBD'), files, shared }).join('\n'), /How to revert/);
+  assert.match(checkPr({ body: ok.replace('요청자: 유건', '요청자:'), files, shared }).join('\n'), /요청자/);
+  assert.match(checkPr({ body: TEMPLATE, files, shared }).join('\n'), /요청자/, '템플릿 안내 주석은 요청자로 치지 않는다');
+  assert.deepEqual(checkPr({ body: '', files: ['REVIEW.md'], shared }), [], '문서만 바뀐 PR은 여전히 검사하지 않는다');
 });
