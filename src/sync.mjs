@@ -86,6 +86,43 @@ function keepManifest(key, buf) { if (manifestReuseOn() && buf?.length) manifest
     — 기본값 승격 조건으로 다시 확인한다. storage-js info()는 경로를 그대로 URL에 붙이고 storage-api는 쿼리를 무시해 같은 객체를 돌려준다(로컬 1.41.8 실측).
     꺼져 있으면 배포본과 같은 경로. */
 const manifestInfoPath = (key) => (manifestReuseOn() ? `${key}?cacheNonce=${randomUUID()}` : key);
+/* 매니페스트 원본 검증(결함 B, 2026-10-17): 시작 읽기·쓰기 직전 재읽기는 fresh()(cacheNonce GET)로 원본을 읽는다고 전제했지만(#832), 운영 CDN은 cacheNonce가 붙어도
+   매니페스트 GET의 59%를 캐시로 응답했다(10/16~17 24시간 HIT 1,654·MISS 1,140, 업로드 뒤 13.5·15.7초에 옛 판). 옛 목록으로 diff·병합하면 다른 기기가 막 더한 항목을
+   덮어 잃는다(그 기기는 다음 주기에 '원격 삭제'로 읽어 로컬 파일을 지울 수 있다). 같은 기간 info는 HIT 0(EXPIRED 11,952 — 늘 원본 확인)이라, 받은 바이트의 MD5를
+   같은 사이클 info의 etag(단일 업로드 객체의 내용 MD5)와 비교한다. 다르면 info를 다시 보고 한 번 더 받는다(info와 GET 사이 다른 기기 쓰기 — 정상 경합). 그래도 다르면
+   그 바이트를 쓰지 않고 이번 사이클을 가볍게 보류한다(manifestStale — 실패 대기를 늘리지 않는다: 옛 판은 13~16초라 다음 주기에 맞춰진다).
+   판정할 수 없으면(info 오류·MD5 꼴 아닌 etag·info 없음) 종전대로 받은 바이트를 쓴다. ARGO_SYNC_MANIFEST_VERIFY=0이면 배포본 경로. 경우 표: artifacts/manifest-verify/case-table.md */
+const manifestVerifyOn = () => process.env.ARGO_SYNC_MANIFEST_VERIFY !== '0';
+/** info 결과 → { exists, md5 } | { exists: false } | { undecided: true } */
+function manifestMetaOf(data, error) {
+  if (error) return isNotFound(error) ? { exists: false } : { undecided: true };
+  const m = etagMd5(data?.etag);
+  return m ? { exists: true, md5: m } : { undecided: true };
+}
+const manifestStale = (why) => Object.assign(new Error(`매니페스트 원본 확인 실패(CDN 옛 판 의심) — 이번 사이클 보류: ${why}`), { manifestStale: true });
+/** 매니페스트를 받고 info etag로 원본인지 확인한다. meta = 같은 사이클에 이미 본 info(없으면 지금 본다). 반환 { bytes } | { error }(종전 download 오류 그대로). 옛 판이면 manifestStale을 던진다. */
+async function readManifestVerified(key, meta = null) {
+  const bucket = client().storage.from(BUCKET);
+  const getOnce = async () => {
+    const { data, error } = await bucket.download(key, fresh());
+    if (error) return { error };
+    return { bytes: Buffer.from(await data.arrayBuffer()) };
+  };
+  if (!manifestVerifyOn() || typeof bucket.info !== 'function') return getOnce();
+  const infoOnce = async () => { try { const { data, error } = await bucket.info(manifestInfoPath(key)); return manifestMetaOf(data, error); } catch { return { undecided: true }; } };
+  let m = meta ?? await infoOnce();
+  for (let attempt = 0; ; attempt++) {
+    const got = await getOnce();
+    if (m.undecided) return got;
+    const missing = !!got.error && isNotFound(got.error);
+    if (got.error && !missing) return got; // 만료 토큰·5xx 등 — 종전 판정(보류)에 맡긴다
+    const ok = m.exists ? !!got.bytes && createHash('md5').update(got.bytes).digest('hex') === m.md5 : missing;
+    if (ok) return got;
+    if (attempt >= 1) throw manifestStale(m.exists ? (missing ? '원본은 있는데 받은 것은 없음' : '받은 바이트가 원본 MD5와 다름') : '원본은 없는데 받은 바이트가 있음');
+    m = await infoOnce(); // 정상 경합(그 사이 다른 기기가 씀)이면 새 판의 etag와 맞는다
+    if (m.undecided) return getOnce();
+  }
+}
 function keptManifest(key, etag) {
   if (!manifestReuseOn()) return null;
   const want = etagMd5(etag); const k = manifestKeep.get(key);
@@ -1236,6 +1273,7 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
   try {
     let revision = null;
     let manifestEtag = null; // 매니페스트 판 재사용 — 위 info의 etag(내용 MD5)를 사이클에 넘긴다(manifestKeep 주석)
+    let manifestMeta = null; // 매니페스트 원본 검증 — 같은 info 결과(readManifestVerified)
     const bucket = client().storage.from(BUCKET);
     if (canIdle && typeof bucket.info === 'function') {
       // Capture revision BEFORE the GET: a concurrent writer can only cause an extra
@@ -1244,12 +1282,13 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
       if (error && ![404, 400, 501].includes(Number(error.status ?? error.statusCode))) throw new Error(`매니페스트 메타데이터 읽기 실패: ${String(error.message).slice(0, 80)}`);
       if (data?.version || data?.etag) revision = JSON.stringify([data.version, data.etag, data.lastModified, data.size]);
       manifestEtag = data?.etag ?? null;
+      manifestMeta = manifestMetaOf(data, error);
       if (revision && idle?.revision === revision && beforeFingerprint === idle.fingerprint) {
         companyIdle.set(key, { ...idle, at: Date.now() });
         return { skipped: 'idle-probe', pulled: 0, pushed: 0, deletedL: 0, deletedR: 0, failed: 0, ...idle.excluded };
       }
     }
-    const result = await syncCompanyOnce(wsId, owner, isRestore, { ...opts, manifestEtag });
+    const result = await syncCompanyOnce(wsId, owner, isRestore, { ...opts, manifestEtag, manifestMeta });
     // 실패 파일·빈 항목은 이름까지 로그에 남긴다(~/Library/Logs/argo.err.log) — 목록이 바뀔 때만 한 줄
     noteOnce(`${key}:fail`, result.failed ? `[argo] 동기화(${wsId}): 파일 ${result.failed}건 실패 — ${(result.failures ?? []).map((f) => `${f.rel}: ${f.reason}`).join(' | ')}` : '');
     noteOnce(`${key}:missing`, result.missing ? `[argo] 동기화(${wsId}): 매니페스트에만 있고 객체가 없는 항목 ${result.missing}개 — 건너뜀(항목 보존): ${result.missingRels.join(', ')}${result.needsRecovery ? ` · 복구 필요 ${result.needsRecovery}개(하루 한 번만 다시 확인 — 그 파일을 가진 기기에서 다시 저장하면 복구): ${result.needsRecoveryRels.join(', ')}` : ''}` : '');
@@ -1263,6 +1302,11 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
     } else companyIdle.delete(key);
     return result;
   } catch (e) {
+    if (e?.manifestStale) { // 결함 B — 옛 판을 쓰지 않고 이번 사이클만 보류. 실패 대기(retry-backoff)를 늘리지 않는다(옛 판은 13~16초 — 다음 주기)
+      companyIdle.delete(key);
+      noteOnce(`${key}:stale`, `[argo] 동기화(${wsId}): ${e.message}`);
+      return { skipped: 'manifest-stale', pulled: 0, pushed: 0, deletedL: 0, deletedR: 0, failed: 0 };
+    }
     // 30s → 60s → ... → 10min per company/device; nudge does not reset the cooldown.
     deferFailure();
     throw e;
@@ -1283,7 +1327,8 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
   let startBytes = null; // 사이클 시작 때 원격 매니페스트 바이트 — 쓰기 직전 재읽기가 판이 그대로인지 info로만 확인할 때 쓴다(manifestKeep 주석)
   {
     const kept = keptManifest(manifestKey, opts.manifestEtag); // 이 기기가 마지막으로 받거나 올린 바이트 = 지금 원격 바이트면 받지 않는다
-    const { data, error } = kept ? { data: { arrayBuffer: async () => kept }, error: null } : await client().storage.from(BUCKET).download(manifestKey, fresh());
+    const got = kept ? { bytes: kept } : await readManifestVerified(manifestKey, opts.manifestMeta); // 받은 것은 info etag로 원본인지 확인(결함 B)
+    const { data, error } = got.error ? { data: null, error: got.error } : { data: { arrayBuffer: async () => got.bytes }, error: null };
     if (error) {
       const msg = String(error.message || error);
       if (!isNotFound(error)) throw new Error(`매니페스트 읽기 실패 — 삭제 보류(다음 사이클 재시도): ${msg.slice(0, 80)}`);
@@ -1770,16 +1815,21 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
       // info가 없거나 오류이거나 다르면 종전처럼 받는다.
       const bucket = client().storage.from(BUCKET);
       let same = false;
+      let meta = null; // 이 info를 원본 검증에도 쓴다(결함 B — 요청을 더하지 않게)
       if (manifestReuseOn() && startBytes && typeof bucket.info === 'function') {
         const { data: inf, error: infErr } = await bucket.info(manifestInfoPath(manifestKey));
         same = !infErr && etagMd5(inf?.etag) === createHash('md5').update(startBytes).digest('hex');
+        meta = manifestMetaOf(inf, infErr);
       }
       if (same) freshBuf = startBytes;
       else {
-        const { data } = await bucket.download(manifestKey, fresh());
-        if (data) { freshBuf = Buffer.from(await data.arrayBuffer()); keepManifest(manifestKey, freshBuf); }
+        const got = await readManifestVerified(manifestKey, meta); // 재읽기도 info etag로 원본 확인 — 옛 판으로 병합하면 사이클 도중 다른 기기가 더한 항목을 덮는다
+        if (got.bytes) { freshBuf = got.bytes; keepManifest(manifestKey, freshBuf); }
       }
-    } catch { /* 재읽기 네트워크 실패 — 병합 없이 진행(남는 경합은 blob 검사가 방어, 다음 사이클 self-heal) */ }
+    } catch (e) {
+      if (e?.manifestStale) throw e; // 옛 판 — 쓰지 않고 이번 사이클 보류(아래로 내려가 매니페스트를 덮으면 안 된다)
+      /* 재읽기 네트워크 실패 — 병합 없이 진행(남는 경합은 blob 검사가 방어, 다음 사이클 self-heal) */
+    }
     if (freshBuf) {
       let fresh = null;
       try { fresh = JSON.parse(openSecretCompat(freshBuf).toString()); }
