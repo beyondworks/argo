@@ -27,7 +27,7 @@ import { writeJsonAtomic, writeFileAtomic, readJsonLenient } from './jsonstore.m
 import { withLock, withDirLock, withFileLock } from './mutex.mjs';
 import { cryptoOn, isSecretRel, isSecretNameRel, isEncRel, encVaultOn, sealSecret, sealSecretV3, openSecret, openSecretCompat, isEnvelopeGeneration, CRED_WITHDRAWN, isCredWithdrawn } from './secretbox.mjs';
 import { dek, tryClaimDek } from './e2ee.mjs';
-import { APP_VERSION } from './app-version.mjs';
+import { APP_VERSION, withArgoClientInfo } from './app-version.mjs';
 import { loadSyncCreds, credsEpoch } from './synccreds.mjs';
 import { loadDeviceSession, getFreshDeviceSession } from './devicesession.mjs';
 import { accountKeyError, ensureAccountKey } from './accountkey.mjs';
@@ -255,7 +255,8 @@ const CLIENT_OPTS = {
   auth: { persistSession: false },
   // 타임아웃 필수 — 기본 fetch는 무한 대기라 요청 하나가 걸리면 동기화 전체가 영원히 멈춘다(실측)
   // 호출부가 멈추기 신호를 넘기면(받기 미리 하기의 stop) 시간 초과와 함께 건다 — 넘기지 않는 요청은 종전과 같다.
-  global: { fetch: (url, opts) => fetch(url, { ...opts, signal: opts?.signal ? AbortSignal.any([opts.signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000) }) },
+  // X-Client-Info 끝에 argo/<버전>(edge_logs에서 앱 버전 구분, 2026-10-17 — app-version.mjs withArgoClientInfo)
+  global: { fetch: withArgoClientInfo((url, opts) => fetch(url, { ...opts, signal: opts?.signal ? AbortSignal.any([opts.signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000) })) },
 };
 let sb = null, sbKey = '';
 /** 세션 모드 클라이언트 옵션(액세스 토큰이 있으면 인증 헤더 포함). export: 시험용 */

@@ -19,7 +19,7 @@
 // DB 접근은 makeDb(client) 한 층에 모은다 — 단위 테스트는 가짜 db를 주입하고(test/msgr-bridge.test.mjs), 실제
 // supabase-js 체인 호출·RLS 왕복은 로컬 Supabase 스택 E2E(scripts/e2e-msgr-bridge.mjs)가 검증한다.
 import { createClient } from '@supabase/supabase-js';
-import { APP_VERSION } from '../app-version.mjs';
+import { APP_VERSION, withArgoClientInfo } from '../app-version.mjs';
 import { cmpVersion } from '../version-compare.mjs';
 import { chmod, mkdir, readFile, readdir, rm, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
@@ -671,7 +671,8 @@ export const RT_HEARTBEAT_MS = 7_500;
 export function msgrClientOptions(accessToken) {
   return {
     auth: { persistSession: false, autoRefreshToken: false },
-    global: { headers: { Authorization: `Bearer ${accessToken}`, ...(APP_VERSION ? { 'x-argo-app-version': APP_VERSION } : {}) } }, // 진단 헤더 — Supabase 로그에서 구버전·신버전을 가른다(2026-10-16)
+    // 진단 헤더 — Supabase 로그에서 구버전·신버전을 가른다(2026-10-16). edge_logs는 x_client_info만 남겨 X-Client-Info 끝에도 argo/<버전>을 붙인다(2026-10-17, withArgoClientInfo)
+    global: { headers: { Authorization: `Bearer ${accessToken}`, ...(APP_VERSION ? { 'x-argo-app-version': APP_VERSION } : {}) }, fetch: withArgoClientInfo() },
     realtime: { heartbeatIntervalMs: RT_HEARTBEAT_MS },
   };
 }

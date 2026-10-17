@@ -7,3 +7,18 @@
 import { createRequire } from 'node:module';
 
 export const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION || (() => { try { return createRequire(import.meta.url)('../package.json').version ?? null; } catch { return null; } })();
+
+// Supabase edge_logs에서 앱 버전을 가른다(2026-10-17) — edge_logs는 x-argo-app-version(#1050)을 남기지 않고 x_client_info는 남긴다(맥 one 실측).
+// supabase-js 2.x는 기본 헤더 { 'X-Client-Info': 'supabase-js/<v>; runtime=node; …' } 위에 global.headers를 펼친다 — 소문자 키로 주면 두 값이 쉼표로 합쳐 실리고,
+// 같은 키로 주면 기본값이 사라진다. 그래서 헤더 옵션이 아니라 나가는 fetch에서 기존 값 뒤에 " argo/<버전>"을 덧붙인다(기본값 보존, 이미 붙었으면 그대로).
+// Node 클라이언트에만 쓴다 — 브라우저는 CORS 사전 요청 허용 헤더가 달라질 수 있다. 버전을 못 읽으면 fetch를 그대로 돌려준다.
+export const ARGO_CLIENT_INFO = APP_VERSION ? `argo/${APP_VERSION}` : null;
+export function withArgoClientInfo(fetchImpl = (...a) => fetch(...a)) {
+  if (!ARGO_CLIENT_INFO) return fetchImpl;
+  return (input, init = {}) => {
+    const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+    const cur = headers.get('x-client-info');
+    if (!cur?.split(' ').includes(ARGO_CLIENT_INFO)) headers.set('x-client-info', cur ? `${cur} ${ARGO_CLIENT_INFO}` : ARGO_CLIENT_INFO);
+    return fetchImpl(input, { ...init, headers });
+  };
+}
