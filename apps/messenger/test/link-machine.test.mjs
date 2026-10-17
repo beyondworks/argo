@@ -572,8 +572,12 @@ test('일 화면: 볼 때만 wk:<일>·pr:<주인>을 구독하고, 뒤로 가�
   await m.start(); await flush();
   const off = m.watchWork('w-1', { owner: OTHER }); await flush();
   assert.deepEqual(fake.liveTopics(), [`v2:pr:${OTHER}`, `v2:u:${UID}`, 'v2:wk:w-1'].sort());
-  fake.broadcast('v2:wk:w-1', 'progress', { stage: 'tool' }); await flush();
-  assert.deepEqual(prog.map((p) => p.payload.stage), ['tool']);
+  // 본체가 보내는 실제 모양: event 'envelope', payload = 봉투(data.stage)
+  fake.broadcast('v2:wk:w-1', 'envelope', { v: 1, id: 'e1', work: 'w-1', seq: 3, type: 'work.progress', agent: 'a', device: 'd', at: '2026-10-18T00:00:00Z', data: { stage: 'tool', note: '검색' } }); await flush();
+  fake.broadcast('v2:wk:w-1', 'envelope', { v: 1, id: 'e2', work: 'w-OTHER', seq: 4, type: 'work.progress', data: { stage: 'answer' } }); await flush(); // 다른 일
+  fake.broadcast('v2:wk:w-1', 'envelope', { v: 1, id: 'e3', work: 'w-1', seq: 5, type: 'work.result', data: { stage: 'answer', text: 'x' } }); await flush(); // 진행이 아님(stage가 있어도)
+  fake.broadcast('v2:wk:w-1', 'progress', { stage: 'think' }); await flush(); // 평평한 옛 흉내 모양은 받지 않는다
+  assert.deepEqual(prog.map((p) => [p.stage, p.note, p.seq]), [['tool', '검색', 3]]);
   await m.setForeground(false); assert.deepEqual(fake.liveTopics(), []);
   await m.setForeground(true); await flush();
   assert.deepEqual(fake.liveTopics(), [`v2:pr:${OTHER}`, `v2:u:${UID}`, 'v2:wk:w-1'].sort());
@@ -855,6 +859,22 @@ test('U6b 첨부 표지: v2:u:·v2:s:의 attach 사건은 요청 없이 attachme
   await flush();
   assert.deepEqual(got.map((e) => [e.roomId, e.messageId, e.attachments[0].id]), [[ROOM_A, 150, 7], [ROOM_A, 150, 8]]);
   assert.equal(fake.log.length, before, '첨부 표지는 요청 0');
+});
+
+test('U6c-1a 일 표지: v2:u:·v2:s:의 work 사건은 요청 없이 works로 넘기고, 모양이 틀리면 버린다', async () => {
+  const SP = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  const { m, fake } = setup(); m.setSpaces([SP]);
+  const got = []; m.on('works', (e) => got.push(e));
+  await m.start(); await flush();
+  const before = fake.log.length;
+  const w = { id: 'w-9', room_id: ROOM_A, topic_id: null, agent_id: 'ag', state: 'offered', source_message_id: 150 };
+  fake.broadcast(`v2:u:${UID}`, 'work', { work: w });
+  fake.broadcast(`v2:s:${SP}`, 'work', { work: { ...w, state: 'accepted' } });
+  fake.broadcast(`v2:u:${UID}`, 'work', { work: { id: 'w-x', state: 'offered' } }); // room_id 없음
+  fake.broadcast(`v2:u:${UID}`, 'work', { work: { room_id: ROOM_A, state: 'offered' } }); // id 없음
+  await flush();
+  assert.deepEqual(got.map((e) => [e.roomId, e.works[0].id, e.works[0].state]), [[ROOM_A, 'w-9', 'offered'], [ROOM_A, 'w-9', 'accepted']]);
+  assert.equal(fake.log.length, before, '일 표지는 요청 0');
 });
 
 test('U6b 멘션: 보내기에 mentions를 실으면 글 행에 그대로(중복 제거·20개까지), 없으면 열을 싣지 않는다', async () => {

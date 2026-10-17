@@ -269,10 +269,53 @@ test('U6b 첨부 표지 — 사람 첨부(msgr2_attachment_add)와 에이전트 
   const m1 = mark();
   assert.equal(send(oRun, env('work.result', { work: wid, data: { text: '결과', files: [slot.slot], handoffs: [] } })).ok, true);
   const ev = sentTo(`v2:u:${O}`, m1);
-  assert.deepEqual(ev.map((x) => x.event), ['msg', 'attach'], '글 방송 다음 첨부 표지');
+  assert.deepEqual(ev.map((x) => x.event), ['msg', 'attach', 'work'], '글 방송 다음 첨부 표지, 마지막에 일 끝 표지(U6c-1a — 카드는 결과 글·첨부가 온 뒤 끝으로 바뀐다)');
   assert.equal(ev[1].payload.attachment.path, slot.path);
   // 백필
   const m2 = mark();
   db.sql(`select set_config('msgr2.backfill', 'on', false); insert into public.msgr2_attachments (message_id, room_id, storage_path, name) values (${mid}, '${TR}', 'msgr/${TS}/${TR}/${mid}/9-old.pdf', 'old.pdf')`);
   assert.equal(mark(), m2, '백필 첨부는 방송 없음');
+});
+
+// U6c-1a 일 표지('work') — 일이 생길 때·상태가 바뀔 때만, 방의 사람에게(글 방송과 같은 받는 사람), 읽을 수 있는 열만
+test('U6c-1a 일 표지 — @멘션으로 생긴 일은 방의 사람에게 work(offered), 상태가 바뀔 때만 다시, 리스 연장·같은 상태는 0, 백필 0, 지시문은 싣지 않는다', { skip }, () => {
+  const works = (topic, since) => sentTo(topic, since).filter((x) => x.event === 'work');
+  const m0 = mark();
+  say(mApp, TR, '@에이 정리해 줘', [AG]); const wid = lastWork(TR);
+  const toO = works(`v2:u:${O}`, m0), toM = works(`v2:u:${M}`, m0);
+  assert.equal(toO.length, 1); assert.equal(toM.length, 1, '시킨 사람에게도(다른 기기·카드)');
+  assert.equal(works(`v2:u:${G}`, m0).length, 0, '방 멤버 아닌 손님'); assert.equal(works(`v2:u:${Z}`, m0).length, 0, '공간 밖');
+  const w = toO[0].payload.work;
+  assert.equal(w.id, wid); assert.equal(w.room_id, TR); assert.equal(w.state, 'offered'); assert.equal(w.agent_id, AG); assert.equal(w.root_user_id, M);
+  assert.ok(w.source_message_id, '시킨 글(카드 자리)');
+  for (const k of ['text', 'lease_device', 'lease_gen', 'tier', 'memory', 'depth']) assert.equal(k in w, false, `${k}는 싣지 않는다`);
+  // 받음 → 상태 표지 한 번
+  const m1 = mark();
+  assert.equal(send(oRun, env('work.accept', { work: wid })).ok, true);
+  const acc = works(`v2:u:${M}`, m1); assert.equal(acc.length, 1); assert.equal(acc[0].payload.work.state, 'accepted');
+  // 상태가 그대로인 갱신(리스 연장·결과 표시)은 0
+  const m2 = mark();
+  db.sql(`update public.msgr2_works set lease_until = now() + interval '5 minutes', has_result = has_result where id = '${wid}'`);
+  db.sql(`update public.msgr2_works set state = state where id = '${wid}'`);
+  assert.equal(works(`v2:u:${M}`, m2).length, 0, '유휴 0');
+  // 끝 → 한 번
+  const m3 = mark();
+  assert.equal(send(oRun, env('work.result', { work: wid, data: { text: '끝', files: [], handoffs: [] } })).ok, true);
+  assert.deepEqual(works(`v2:u:${M}`, m3).map((x) => x.payload.work.state), ['done']);
+  // 백필(서비스 문맥 + msgr2.backfill)은 0
+  const m4 = mark();
+  db.sql(`select set_config('msgr2.backfill', 'on', false); insert into public.msgr2_works (room_id, agent_id, owner_user_id, from_kind, from_id, root_user_id, tier, expires_at)
+          values ('${TR}', '${AG}', '${O}', 'user', '${M}', '${M}', 'team', now()); select set_config('msgr2.backfill', '', false)`);
+  assert.equal(mark(), m4, '백필 일은 방송 없음');
+});
+
+test('U6c-1a 일 표지 — 큰 팀 open 방은 v2:s:<공간> 한 번(사람마다 보내지 않는다)', { skip }, () => {
+  db.sql(`insert into public.msgr2_room_members (room_id, member_kind, member_id) select '${OPEN}', 'agent', '${AG}' where not exists (select 1 from public.msgr2_room_members where room_id = '${OPEN}' and member_id = '${AG}')`);
+  db.sql(`insert into public.msgr_settings values ('msgr2_fanout_max', '1') on conflict (key) do update set value = excluded.value`);
+  try {
+    const m0 = mark(); say(mApp, OPEN, '@에이 공지 정리', [AG]);
+    const s = sentTo(`v2:s:${TS}`, m0).filter((x) => x.event === 'work');
+    assert.equal(s.length, 1); assert.equal(s[0].payload.work.state, 'offered');
+    assert.equal(sentTo(`v2:u:${O}`, m0).filter((x) => x.event === 'work').length, 0);
+  } finally { db.sql(`delete from public.msgr_settings where key = 'msgr2_fanout_max'`); }
 });

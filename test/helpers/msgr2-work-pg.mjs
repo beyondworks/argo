@@ -97,7 +97,7 @@ export function setupFull(DB) {
 }
 
 // 적용 순서: U1 → U3(없으면 최소 판) → U2 → U2b(있으면)
-export const MSGR2_FILES = () => ({ u1: pick('_msgr2_space.sql'), u3: pick('_msgr2_device.sql'), u2: pick('_msgr2_work.sql'), u2b: pick('_msgr2_realtime_storage.sql'), u6b: pick('_msgr2_presence_attach.sql') });
+export const MSGR2_FILES = () => ({ u1: pick('_msgr2_space.sql'), u3: pick('_msgr2_device.sql'), u2: pick('_msgr2_work.sql'), u2b: pick('_msgr2_realtime_storage.sql'), u6b: pick('_msgr2_presence_attach.sql'), u6c1a: pick('_msgr2_work_signal.sql') });
 export const migText = (f) => readFileSync(mig(f), 'utf8');
 
 export function setup(DB) {
