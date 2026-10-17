@@ -32,7 +32,7 @@
 
 크기 상한: 봉투 JSON 128KB(`too_large`), offer `context[]` 16KB. 이 둘은 JSON Schema로 적을 수 없어 `v1.mjs`만 검사한다.
 
-토픽 이름: `TOPICS`(v1.mjs) — `v2:u:<uid>`(사람), `v2:w:<uid>`(본체), `v2:s:<space>`(큰 팀 open 방), `v2:wk:<work>`(진행 표시). 옛 메신저 토픽(`u:`·`org:`·`dm:`)과 겹치지 않게 `v2:` 접두사를 둔다(옛 `u:` 받기 정책이 기기 확인 없이 본인을 허용하기 때문).
+토픽 이름: `TOPICS`(v1.mjs) — `v2:u:<uid>`(사람), `v2:w:<uid>`(본체), `v2:s:<space>`(큰 팀 open 방), `v2:wk:<work>`(진행 표시), `v2:pr:<owner>`(접속 표시 — Presence, 그 주인의 본체만 track). 옛 메신저 토픽(`u:`·`org:`·`dm:`)과 겹치지 않게 `v2:` 접두사를 둔다(옛 `u:` 받기 정책이 기기 확인 없이 본인을 허용하기 때문).
 
 id 형식: 봉투·일·에이전트·기기·방·토픽·승인·업로드 슬롯 id는 uuid 문자열이다. 글·첨부 id(`context[].id`, `attachments[].id` — 서버의 `msgr2_messages.id`·`msgr2_attachments.id`)는 옛 글 id를 그대로 보존해 bigint라 **JSON 정수**로 싣는다(`msgid` 규칙: 1 이상, `Number.MAX_SAFE_INTEGER`(2^53-1) 이하). 서버 id가 이 범위를 넘지 않는다는 전제다(지금 최댓값은 수백만 대). 넘게 되면 v를 올려 문자열로 바꾼다(2026-10-17 총괄 승인, v1 안에서 고침 — 출시 전). 다른 정수 필드(`seq`·`lease_gen`·`max_turn_s`·토큰 수 등)도 같은 상한(안전 정수)이다.
 

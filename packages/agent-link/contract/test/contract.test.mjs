@@ -299,6 +299,6 @@ test('offer.attachments는 {id, name, mime, bytes, bucket, path} — 옛 url 모
 test('TOPICS — v2:u·v2:w·v2:s·v2:wk, 옛 토픽 모양과 겹치지 않는다', async () => {
   const { TOPICS } = await import('../v1.mjs');
   const id = '00000000-0000-4000-8000-000000000001';
-  assert.deepEqual([TOPICS.user(id), TOPICS.runner(id), TOPICS.space(id), TOPICS.work(id)], [`v2:u:${id}`, `v2:w:${id}`, `v2:s:${id}`, `v2:wk:${id}`]);
-  for (const t of Object.values(TOPICS)) assert.doesNotMatch(t(id), /^(u|org|dm|w|s|wk):/);
+  assert.deepEqual([TOPICS.user(id), TOPICS.runner(id), TOPICS.space(id), TOPICS.work(id), TOPICS.presence(id)], [`v2:u:${id}`, `v2:w:${id}`, `v2:s:${id}`, `v2:wk:${id}`, `v2:pr:${id}`]);
+  for (const t of Object.values(TOPICS)) assert.doesNotMatch(t(id), /^(u|org|dm|w|s|wk|pr):/);
 });
