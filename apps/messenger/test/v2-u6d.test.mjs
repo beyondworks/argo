@@ -235,5 +235,5 @@ test('셸: #1085에서 숨긴 단추를 켰다(신고·친구 요청·새 채널
   assert.doesNotMatch(src, /\.\.\.\(V2 \? \[\] : \[\{ key: 'new'/);
   assert.doesNotMatch(src, /!V2 && <button type="button" className="btn msgr-chbrowse"/);
   assert.doesNotMatch(src, /onOrgTab && !orgBlocked && !V2 &&/);
-  for (const keep of [/isPhone && !isPersonal && !V2 && \{ icon: 'folder'/, /isAdmin && !V2 && <OrgCard part="node"/, /\{!V2 && <>\{!isPersonal && !archived && <button type="button" className="btn sm msgr-work-button"/, /const canMuteCrew = !V2 &&/]) assert.match(src, keep);
+  for (const keep of [/isPhone && !isPersonal && !V2 && \{ icon: 'folder'/, /if \(V2 && \(props\.part === 'node' \|\| props\.part === 'agents'\)\) return null;/, /\{!V2 && <>\{!isPersonal && !archived && <button type="button" className="btn sm msgr-work-button"/, /const canMuteCrew = !V2 &&/]) assert.match(src, keep);
 });

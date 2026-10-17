@@ -5,8 +5,9 @@
 // 표마다 세 가지 중 하나다.
 //   MAP   옛 표 → v2 표(열 이름·값 바꿈). 글·방·방 멤버·공간 멤버·첨부·반응·읽음·방 설정·에이전트.
 //   KEEP  그대로 쓴다(설계 1-2절 — 사람 관계·기억·요금): 프로필·친구·친구 링크·차단·숨김·신고·회사 문서·일지·요금. 원래 클라이언트로 보낸다.
-//   NONE  v2에 대응 표가 없다(설계 D16 범위 밖이거나 U6d 전). 요청 없이 빈 결과, 쓰기는 'v2_unsupported' 오류. 화면은 그 단추를 v2 모드에서 숨긴다.
-// RPC도 같은 세 갈래다(RPCS). 실시간·보내기는 여기서 하지 않는다 — 연결 상태 기계(src/link/machine.mjs)가 맡는다(App.jsx v2 분기).
+//   NONE  v2에 대응 표가 없다(설계 D16 범위 밖). 요청 없이 빈 결과, 쓰기는 'v2_unsupported' 오류. 화면은 그 단추를 v2 모드에서 숨긴다.
+// 직접 쓰기가 막힌 표(읽음·방 멤버)·초대·조직 만들기는 U6d RPC로 보낸다(WRITES·InviteBuilder·OrgBuilder, U6c-2b).
+// RPC는 네 갈래다: 그대로(RPCS.keep·msgr2_*), U6d로 번역(legacy-rpc.mjs LEGACY_RPCS), 쓰기 없음(RPCS.write → v2_unsupported), 그 밖의 읽기는 빈 값. 실시간·보내기는 여기서 하지 않는다 — 연결 상태 기계(src/link/machine.mjs)가 맡는다(App.jsx v2 분기).
 
 import { LEGACY_RPCS, legacyInvite, inviteArgs } from './legacy-rpc.mjs';
 
@@ -220,16 +221,7 @@ class MapBuilder extends Builder {
     if (r?.error || r?.data == null) return r;
     const back = (x) => { const o = toLegacyRow(this.table, x, want); for (const e of embeds) if (o && e.table in o) o[e.table] = o[e.table] ? toLegacyRow(e.table, o[e.table], e.cols) : null; return o; }; // 끼워 읽은 방도 옛 모양(org_id·dm)
     let rows = Array.isArray(r.data) ? r.data.map(back) : back(r.data);
-    // 내 참여 방(옛 '참여한 채널' 조회 — member_kind user + member_id, 방 조건 없음): v2 open 방은 공간 멤버가 참여 단계 없이 읽는다 → 읽을 수 있는 open 방을 더한다(조회 1회)
-    if (this.table === 'msgr_channel_members' && this.verb === 'select' && Array.isArray(rows) && !this.one) {
-      const who = this.ops.find(([op, a]) => op === 'eq' && a[0] === 'member_id')?.[1][1];
-      const userOnly = this.ops.some(([op, a]) => op === 'eq' && a[0] === 'member_kind' && a[1] === 'user');
-      const roomScoped = this.ops.some(([, a]) => a[0] === 'channel_id');
-      if (who && userOnly && !roomScoped) {
-        const open = await raw.from('msgr2_rooms').select('id').eq('kind', 'open').is('archived_at', null);
-        if (!open.error) { const have = new Set(rows.map((x) => x.channel_id)); for (const o of open.data ?? []) if (!have.has(o.id)) rows.push({ channel_id: o.id, member_kind: 'user', member_id: who }); }
-      }
-    }
+    // 내 참여 방은 멤버 행 그대로다(U6c-2b): open 방도 참여(msgr2_room_join)해야 목록·안 읽음(msgr2_unread)에 든다 — 참여 전 open 방은 옛 앱처럼 미리보기·둘러보기로 보인다
     return { ...r, data: rows };
   }
 }

@@ -89,15 +89,12 @@ test('방 멤버: 빠진 멤버는 없는 것으로(removed_at is null), crew �
   assert.deepEqual(r.data, [{ channel_id: ROOM, member_kind: 'crew', member_id: AG }]);
 });
 
-test('내 참여 방(방 조건 없는 내 멤버십 조회)에는 읽을 수 있는 open 방을 더한다(v2 open 방은 참여 단계가 없다), 방 조건이 있으면 더하지 않는다', async () => {
+test('내 참여 방(방 조건 없는 내 멤버십 조회)은 멤버 행 그대로 — open 방도 참여해야 든다(U6c-2b msgr2_room_join, 참여 전은 미리보기·둘러보기), 조회 1건', async () => {
   const raw = fakeRaw({ msgr2_room_members: [{ room_id: ROOM, member_kind: 'user', member_id: 'me' }], msgr2_rooms: [{ id: ROOM }, { id: 'open-1' }] });
   const c = createV2Client(raw);
   const r = await c.from('msgr_channel_members').select('channel_id').eq('member_kind', 'user').eq('member_id', 'me');
-  assert.deepEqual(r.data.map((x) => x.channel_id), [ROOM, 'open-1']);
-  assert.deepEqual(raw.log[1].ops, [['select', 'id'], ['eq', 'kind', 'open'], ['is', 'archived_at', null]]);
-  const n = raw.log.length;
-  await c.from('msgr_channel_members').select('channel_id, member_kind, member_id').in('channel_id', [ROOM]);
-  assert.equal(raw.log.length, n + 1, '방 조건이 있는 조회는 open 방을 묻지 않는다');
+  assert.deepEqual(r.data.map((x) => x.channel_id), [ROOM]);
+  assert.deepEqual(raw.log.map((e) => e.table), ['msgr2_room_members'], 'open 방을 따로 묻지 않는다');
 });
 
 test('에이전트: 조직 조건 = 그 팀 공간의 자리(allow 붙임), 파견 전(available) = 자리가 없는 내 에이전트, 자리도 파견 전도 안 물으면 에이전트 조회 없음', async () => {
