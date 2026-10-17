@@ -45,10 +45,13 @@ function storage() {
       return b ? { data: { arrayBuffer: async () => new Uint8Array(b).buffer }, error: null } : { data: null, error: OBJECT_NOT_FOUND };
     },
     async info(k) {
+      const [base, query = ''] = k.split('?');
+      k = base;
       note('INFO', k, 400);
+      if (/cacheNonce=/.test(query)) log.nonceInfo = (log.nonceInfo || 0) + 1;
       const forced = state.infoError?.(k);
       if (forced) return { data: null, error: forced };
-      const b = store.get(k);
+      const b = (!/cacheNonce=/.test(query) && state.staleInfo?.(k)) || store.get(k); // staleInfo: CDN이 info를 캐시해 옛 판의 메타를 주는 경우(캐시 우회 쿼리가 없을 때만)
       if (!b) return { data: null, error: { message: 'Object not found', status: 404, statusCode: '404' } };
       return { data: { etag: state.etagOf ? state.etagOf(b) : `"${md5(b)}"`, version: randomUUID(), size: b.length, lastModified: new Date().toISOString() }, error: null };
     },
@@ -260,4 +263,34 @@ test('부하 — 파일 2,000개 회사: 로컬만 바뀐 주기의 매니페스
   assert.equal(on.local.put, off.local.put, '매니페스트 쓰기 수는 같다');
   assert.ok(on.prop.get >= 3, '다른 기기 변경 주기는 받는다');
   assert.equal(on.idleWrites, 0); assert.equal(off.idleWrites, 0);
+});
+
+test('M17 info가 옛 판의 etag를 주는 CDN(캐시 우회 없을 때) — 켜져 있어도 다른 기기 변경을 덮지 않고 받는다(재사용 판정 info는 캐시를 우회)', async () => {
+  process.env.ARGO_SYNC_MANIFEST_REUSE = '1';
+  const f = storage(); const ws = 'mr-staleinfo'; const dir = await company(ws, f);
+  const before = f.store.get(MKEY(ws)); // 이 기기가 마지막으로 올린 판(보관본과 같다)
+  otherDeviceAdds(f, ws, 'vault/notes/other-stale.md', '# 옛 info 뒤 다른 기기 노트\n');
+  f.state.staleInfo = (k) => (k === MKEY(ws) ? before : undefined); // 캐시된 info는 옛 판의 etag(= 보관본 MD5)를 준다
+  await localChange(ws, dir, f, 's');
+  assert.ok('vault/notes/other-stale.md' in f.manifest(ws).files, '다른 기기 항목이 원격 매니페스트에 남는다(덮지 않음)');
+  assert.equal(await readFile(join(dir, 'other-stale.md'), 'utf8'), '# 옛 info 뒤 다른 기기 노트\n', '이 기기에 받았다');
+});
+
+test('M17b 꺼짐 — 매니페스트 info에 캐시 우회 쿼리를 붙이지 않는다(배포본과 같은 요청)', async () => {
+  const f = storage(); const ws = 'mr-off-nonce'; const dir = await company(ws, f);
+  await localChange(ws, dir, f, 'n');
+  assert.equal(f.log.nonceInfo || 0, 0);
+});
+
+test('M17c 사이클 도중 다른 기기가 쓰고 info가 시작 때 판을 캐시해 주는 경우 — 재읽기도 캐시를 우회해 알아채고 병합한다(두 번째 관문)', async () => {
+  process.env.ARGO_SYNC_MANIFEST_REUSE = '1';
+  const f = storage(); const ws = 'mr-staleinfo-race'; const dir = await company(ws, f);
+  const start = f.store.get(MKEY(ws)); // 시작 읽기 때 원격 = 보관본
+  let fired = false;
+  f.state.afterUpload = (k) => {
+    if (!fired && k.endsWith('/n0.md')) { fired = true; otherDeviceAdds(f, ws, 'vault/notes/race-stale.md', '# 경합 + 옛 info\n'); f.state.staleInfo = (kk) => (kk === MKEY(ws) ? start : undefined); }
+  };
+  await localChange(ws, dir, f, 'q');
+  assert.ok(fired, '전제: 사이클 도중 다른 기기가 썼다');
+  assert.ok('vault/notes/race-stale.md' in f.manifest(ws).files, '다른 기기 항목이 원격 매니페스트에 남는다(덮지 않음)');
 });

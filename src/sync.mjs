@@ -80,6 +80,10 @@ const manifestReuseOn = () => process.env.ARGO_SYNC_MANIFEST_REUSE === '1';
 const etagMd5 = (etag) => { const m = String(etag ?? '').replace(/"/g, '').trim().toLowerCase(); return /^[0-9a-f]{32}$/.test(m) ? m : null; };
 function keepManifest(key, buf) { if (manifestReuseOn() && buf?.length) manifestKeep.set(key, { buf, md5: createHash('md5').update(buf).digest('hex') }); }
 /** 보관 바이트가 지금 원격 바이트 그대로인가 — etag(info, 원본)가 보관 바이트의 MD5와 같을 때만 그 바이트. 아니면 null(받는다). */
+/** 재사용 판정에 쓰는 info 경로 — 캐시 우회 쿼리(cacheNonce)를 붙인다(검수 2 M17: info가 CDN에 캐시되면 옛 판의 etag가 보관본 MD5와 같아 보여 시작 읽기·재읽기가
+    함께 뚫리고 다른 기기 변경을 덮는다. 지금 운영 info는 HIT 0이지만 CDN 설정에 기대지 않는다). storage-js info()는 경로를 그대로 URL에 붙이고 storage-api는 쿼리를
+    무시해 같은 객체를 돌려준다(로컬 storage-api 1.41.8 실측 — 있는 객체 etag 같음, 없는 객체 'Object not found' 같음). 꺼져 있으면 배포본과 같은 경로. */
+const manifestInfoPath = (key) => (manifestReuseOn() ? `${key}?cacheNonce=${randomUUID()}` : key);
 function keptManifest(key, etag) {
   if (!manifestReuseOn()) return null;
   const want = etagMd5(etag); const k = manifestKeep.get(key);
@@ -1234,7 +1238,7 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
     if (canIdle && typeof bucket.info === 'function') {
       // Capture revision BEFORE the GET: a concurrent writer can only cause an extra
       // fetch next time, never bless old content with a newer revision.
-      const { data, error } = await bucket.info(skey(owner, wsId, '__manifest__.json'));
+      const { data, error } = await bucket.info(manifestInfoPath(skey(owner, wsId, '__manifest__.json')));
       if (error && ![404, 400, 501].includes(Number(error.status ?? error.statusCode))) throw new Error(`매니페스트 메타데이터 읽기 실패: ${String(error.message).slice(0, 80)}`);
       if (data?.version || data?.etag) revision = JSON.stringify([data.version, data.etag, data.lastModified, data.size]);
       manifestEtag = data?.etag ?? null;
@@ -1765,7 +1769,7 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
       const bucket = client().storage.from(BUCKET);
       let same = false;
       if (manifestReuseOn() && startBytes && typeof bucket.info === 'function') {
-        const { data: inf, error: infErr } = await bucket.info(manifestKey);
+        const { data: inf, error: infErr } = await bucket.info(manifestInfoPath(manifestKey));
         same = !infErr && etagMd5(inf?.etag) === createHash('md5').update(startBytes).digest('hex');
       }
       if (same) freshBuf = startBytes;
