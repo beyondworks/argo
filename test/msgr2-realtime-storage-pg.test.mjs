@@ -253,3 +253,26 @@ test('검수 #1076 — U2b를 얹으면 U3 기기 폐기 방송과 U2 offer 방�
   assert.ok(sentTo(`v2:w:${O}`, m0).some((x) => x.payload.envelope?.type === 'work.offer'));
   assert.equal(db.sql(`select count(*) from realtime.sent where id > ${m0} and topic ~ '^(u|w|s|wk):'`), '0');
 });
+
+test('U6b 첨부 표지 — 사람 첨부(msgr2_attachment_add)와 에이전트 결과 첨부(슬롯) 모두 방의 사람에게 attach 사건, 방 밖에는 없음, 백필은 방송 없음', { skip }, () => {
+  const m0 = mark();
+  const mid = say(mApp, TR, '첨부 표지');
+  const a = JSON.parse(db.as(M, mApp.sid, `select public.msgr2_attachment_add(${mid}, 0, 'p.pdf', 'application/pdf', 4)`));
+  const toO = sentTo(`v2:u:${O}`, m0).filter((x) => x.event === 'attach');
+  assert.equal(toO.length, 1);
+  assert.deepEqual(toO[0].payload.attachment, { id: a.attachment_id, message_id: Number(mid), room_id: TR, name: 'p.pdf', mime: 'application/pdf', bytes: 4, bucket: 'msgr', path: a.path });
+  assert.equal(sentTo(`v2:u:${G}`, m0).filter((x) => x.event === 'attach').length, 0, '방 멤버 아닌 손님');
+  // 에이전트 결과의 슬롯 파일
+  say(oApp, DM, '파일로 답해'); const wid = lastWork(DM);
+  assert.equal(send(oRun, env('work.accept', { work: wid })).ok, true);
+  const slot = JSON.parse(db.as(O, oRun.sid, `select public.msgr2_link_upload_slot('${wid}', 'out.csv', 9)`));
+  const m1 = mark();
+  assert.equal(send(oRun, env('work.result', { work: wid, data: { text: '결과', files: [slot.slot], handoffs: [] } })).ok, true);
+  const ev = sentTo(`v2:u:${O}`, m1);
+  assert.deepEqual(ev.map((x) => x.event), ['msg', 'attach'], '글 방송 다음 첨부 표지');
+  assert.equal(ev[1].payload.attachment.path, slot.path);
+  // 백필
+  const m2 = mark();
+  db.sql(`select set_config('msgr2.backfill', 'on', false); insert into public.msgr2_attachments (message_id, room_id, storage_path, name) values (${mid}, '${TR}', 'msgr/${TS}/${TR}/${mid}/9-old.pdf', 'old.pdf')`);
+  assert.equal(mark(), m2, '백필 첨부는 방송 없음');
+});

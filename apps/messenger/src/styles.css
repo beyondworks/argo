@@ -2457,3 +2457,16 @@ html { -webkit-tap-highlight-color: transparent; }
 .msgr-keeplist .ph-kbody { flex: 1 1 auto; min-width: 0; display: flex; align-items: baseline; gap: 8px; }
 .msgr-keeplist .ph-kbody .snip { font-size: 12px; color: var(--fg-3); }
 .msgr-keepfoot .note.warn { color: var(--danger, #c0392b); }
+
+/* ── 메신저 v2 셸(U6b, 옵트인 플래그) — 기존 클래스(msgr-shell·msgr-row·msgr-slip…)를 그대로 쓰고, 새 구조에만 필요한 몇 줄. 색은 토큰만 ── */
+.msgr-v2 .msgr-rows-v2 { display: grid; gap: 14px; align-content: start; }
+.msgr-v2 .msgr-v2-work { margin: -4px 0 4px 44px; } /* 시킨 글 아래 — 아바타 열만큼 들여 같은 척추에 붙인다 */
+.msgr-v2 .msgr-v2-work.pending .band { background: var(--mark); color: var(--mark-fg); }
+.msgr-v2 .msgr-v2-work.approved .band { background: var(--primary); color: var(--primary-fg); }
+.msgr-v2 .msgr-v2-work.rejected .band, .msgr-v2 .msgr-v2-work.expired .band { background: var(--card-2); color: var(--fg-2); }
+.msgr-v2 .msgr-v2-files { display: flex; flex-wrap: wrap; gap: 6px; }
+.msgr-v2 .msgr-v2-compose { display: flex; align-items: flex-end; gap: 8px; }
+.msgr-v2 .msgr-v2-compose .msgr-input { flex: 1; resize: none; min-height: 40px; padding: 9px 12px; border-radius: 12px; }
+.msgr-v2 .msgr-v2-work .band { flex-wrap: nowrap; }
+.msgr-v2 .msgr-v2-work .band .v2-band-text { flex: 1; min-width: 0; } /* 긴 단계 문구가 줄바꿈돼도 아이콘은 첫 줄에 */
+@media (max-width: 760px) { .msgr-v2 .msgr-v2-work { margin-left: 0; } }

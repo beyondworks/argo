@@ -31,11 +31,12 @@ before(() => {
   db.psql(['-c', migText(F.u3)]); snaps.u3 = snapshot();
   db.psql(['-c', migText(F.u2)]); snaps.u2 = snapshot();
   db.psql(['-c', migText(F.u2b)]); snaps.u2b = snapshot();
+  db.psql(['-c', migText(F.u6b)]); snaps.u6b = snapshot();
 });
 
 test('적용하면 단계마다 실제로 달라진다(비교가 헛돌지 않는다)', { skip }, () => {
   assert.ok(F.u3, 'U3 실물 파일이 있어야 한다');
-  for (const [a, b] of [['base', 'u1'], ['u1', 'u3'], ['u3', 'u2'], ['u2', 'u2b']]) assert.notDeepEqual(snaps[b], snaps[a], `${a} → ${b}`);
+  for (const [a, b] of [['base', 'u1'], ['u1', 'u3'], ['u3', 'u2'], ['u2', 'u2b'], ['u2b', 'u6b']]) assert.notDeepEqual(snaps[b], snaps[a], `${a} → ${b}`);
   assert.ok(snaps.u2b.policies.some((p) => p.startsWith('storage.objects:msgr2_files_select')));
   assert.ok(snaps.u2.columns.includes('msgr2_messages.mentions:ARRAY'));
 });
@@ -49,16 +50,17 @@ test('빈 표가 아니면 멈춘다 — U2 되돌림은 일 행이 있으면 �
           values ('${rm}', '${ag}', '60000000-0000-4000-8000-000000000001', 'user', '60000000-0000-4000-8000-000000000001', '60000000-0000-4000-8000-000000000001', 'owner', now())`);
   const r = db.raw(['-v', 'ON_ERROR_STOP=1', '-c', down(F.u2)]);
   assert.notEqual(r.status, 0); assert.match(r.stderr, /msgr2_rollback_not_empty: msgr2_works/);
-  const now = snapshot(); assert.deepEqual(now, snaps.u2b, '멈추면 하나도 안 바뀐다');
+  const now = snapshot(); assert.deepEqual(now, snaps.u6b, '멈추면 하나도 안 바뀐다');
   db.sql(`truncate public.msgr2_works, public.msgr2_agents, public.msgr2_rooms, public.msgr2_spaces cascade`); // 시험 DB 정리(시드만)
 });
 
-test('역순 되돌림 — U2b → U2 → U3 → U1 각각 적용 전과 같다', { skip }, () => {
+test('역순 되돌림 — U6b → U2b → U2 → U3 → U1 각각 적용 전과 같다', { skip }, () => {
+  db.psql(['-c', down(F.u6b)]); assert.deepEqual(snapshot(), snaps.u2b, 'U6b 되돌림 = U2b 적용 직후');
   db.psql(['-c', down(F.u2b)]); assert.deepEqual(snapshot(), snaps.u2, 'U2b 되돌림 = U2 적용 직후');
   db.psql(['-c', down(F.u2)]); assert.deepEqual(snapshot(), snaps.u3, 'U2 되돌림 = U3 적용 직후(msgr2_access·msgr2_lock_cols U1 본문 복원)');
   db.psql(['-c', down(F.u3)]); assert.deepEqual(snapshot(), snaps.u1, 'U3 되돌림 = U1 적용 직후(기기 자리 함수 닫힘)');
   db.psql(['-c', down(F.u1)]); assert.deepEqual(snapshot(), snaps.base, 'U1 되돌림 = 적용 전');
   // 되돌린 뒤 다시 적용해도 된다(재적용 길)
-  for (const f of [F.u1, F.u3, F.u2, F.u2b]) db.psql(['-c', migText(f)]);
-  assert.deepEqual(snapshot(), snaps.u2b, '다시 적용 = 처음 적용');
+  for (const f of [F.u1, F.u3, F.u2, F.u2b, F.u6b]) db.psql(['-c', migText(f)]);
+  assert.deepEqual(snapshot(), snaps.u6b, '다시 적용 = 처음 적용');
 });

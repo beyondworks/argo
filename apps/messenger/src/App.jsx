@@ -14,6 +14,8 @@ import { Graph3D } from './graph3d.jsx';
 import { WorkPanel, missingSchema } from './work-panel.jsx';
 import * as Panes from './panes.mjs'; import { GRAPH_TAB, MAX_PANES } from './panes.mjs'; // 창·탭 전이(순수) // 활동 그래프 3D(옵시디언식 구·궤도 회전) — 구성은 @argo/graph2d-core 재사용
 import { supabase, configured, q } from './supabase.js';
+import { V2App } from './v2/V2App.jsx'; // 메신저 v2 셸(U6b) — 옵트인 플래그가 켜졌을 때만
+import { v2Enabled } from './v2/flag.mjs';
 import { customServer, SB_URL, SB_ANON } from './supabase.js';
 import { readProfile, writeProfile, clearProfile, normalizeUrl, hostOf } from './server-profile.mjs';
 import { handoff, fetchProviderSettings, providerShown, noProviders, providerErrorKey } from './oauth-handoff.mjs';
@@ -469,7 +471,9 @@ export default function App() {
   else if (sessionWaiting) body = <ConnectionWaiting t={t} onRetry={() => recoveryRef.current?.retryNow()} onSignIn={restartSignIn} error={sessionRecoveryError} busy={signingOut} />;
   else if (session === undefined) body = <div className="msgr-auth"><span className="msgr-klabel">{t('ui.loading')}</span></div>;
   else if (!session) body = <Auth logoutNotice={logoutNotice} />;
-  else body = <Shell key={session.user.id} session={session} />;
+  else body = v2Enabled(import.meta.env.VITE_MSGR_V2, globalThis.localStorage) // 기본 꺼짐 — 지금 앱 그대로(U6b 옵트인)
+    ? <V2App key={session.user.id} session={session} supabase={supabase} t={t} lang={lang} appVersion={APP_VERSION} />
+    : <Shell key={session.user.id} session={session} />;
   const accountDeleted = async () => { deletingAccount.current = true; try { await detachPush(supabase, session?.user?.id); } catch { /* 서버 토큰 행은 이미 없다 */ } try { await recoveryRef.current?.restartSignIn(); } catch { /* 서버 세션은 이미 없다 — 로컬만 비운다 */ } setLogoutNotice('auth.deleted'); deletingAccount.current = false; };
   return <SignOutContext.Provider value={{ signOut, signingOut, accountDeleted }}><Sprite /><UpdateBar t={t} /><MobileUpdateBar t={t} />{session && logoutNotice && <button type="button" className="msgr-toast err" role="alert" onClick={() => setLogoutNotice('')}>{t(logoutNotice)}</button>}{body}</SignOutContext.Provider>;
 }

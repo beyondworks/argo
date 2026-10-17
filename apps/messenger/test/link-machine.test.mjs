@@ -571,12 +571,12 @@ test('일 화면: 볼 때만 wk:<일>·pr:<주인>을 구독하고, 뒤로 가�
   const prog = []; m.on('progress', (p) => prog.push(p));
   await m.start(); await flush();
   const off = m.watchWork('w-1', { owner: OTHER }); await flush();
-  assert.deepEqual(fake.liveTopics(), [`pr:${OTHER}`, `v2:u:${UID}`, 'v2:wk:w-1'].sort());
+  assert.deepEqual(fake.liveTopics(), [`v2:pr:${OTHER}`, `v2:u:${UID}`, 'v2:wk:w-1'].sort());
   fake.broadcast('v2:wk:w-1', 'progress', { stage: 'tool' }); await flush();
   assert.deepEqual(prog.map((p) => p.payload.stage), ['tool']);
   await m.setForeground(false); assert.deepEqual(fake.liveTopics(), []);
   await m.setForeground(true); await flush();
-  assert.deepEqual(fake.liveTopics(), [`pr:${OTHER}`, `v2:u:${UID}`, 'v2:wk:w-1'].sort());
+  assert.deepEqual(fake.liveTopics(), [`v2:pr:${OTHER}`, `v2:u:${UID}`, 'v2:wk:w-1'].sort());
   off(); assert.deepEqual(fake.liveTopics(), [`v2:u:${UID}`]);
 });
 
@@ -840,4 +840,29 @@ test('#1077 재검수: 소켓이 끊긴 사이 풀림을 놓쳐도 다시 연 �
   await clock.advance(60 * MIN);
   assert.equal(m.getState(), 'ready');
   assert.deepEqual(fake.liveTopics(), [`v2:s:${SP}`, `v2:u:${UID}`].sort());
+});
+
+test('U6b 첨부 표지: v2:u:·v2:s:의 attach 사건은 요청 없이 attachments로 넘기고, 모양이 틀리면 버린다', async () => {
+  const SP = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  const { m, fake } = setup(); m.setSpaces([SP]);
+  const got = []; m.on('attachments', (e) => got.push(e));
+  await m.start(); await flush();
+  const before = fake.log.length;
+  const a = { id: 7, message_id: 150, room_id: ROOM_A, name: 'r.pdf', mime: 'application/pdf', bytes: 3, bucket: 'msgr', path: `sp/${ROOM_A}/150/0-r.pdf` };
+  fake.broadcast(`v2:u:${UID}`, 'attach', { attachment: a });
+  fake.broadcast(`v2:s:${SP}`, 'attach', { attachment: { ...a, id: 8, path: `sp/${ROOM_A}/150/1-s.pdf` } });
+  fake.broadcast(`v2:u:${UID}`, 'attach', { attachment: { id: 9, room_id: ROOM_A } }); // message_id·path 없음
+  await flush();
+  assert.deepEqual(got.map((e) => [e.roomId, e.messageId, e.attachments[0].id]), [[ROOM_A, 150, 7], [ROOM_A, 150, 8]]);
+  assert.equal(fake.log.length, before, '첨부 표지는 요청 0');
+});
+
+test('U6b 멘션: 보내기에 mentions를 실으면 글 행에 그대로(중복 제거·20개까지), 없으면 열을 싣지 않는다', async () => {
+  const { m, fake } = setup();
+  await m.start(); await flush();
+  const A = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+  await m.send({ roomId: ROOM_A, body: '@에이 해줘', clientMsgId: 'cm-m1', mentions: [A, A] });
+  await m.send({ roomId: ROOM_A, body: '그냥 글', clientMsgId: 'cm-m2' });
+  assert.deepEqual(fake.db.messages.find((x) => x.client_msg_id === 'cm-m1').mentions, [A]);
+  assert.equal('mentions' in fake.db.messages.find((x) => x.client_msg_id === 'cm-m2'), false);
 });

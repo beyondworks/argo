@@ -358,7 +358,7 @@ export function createLinkMachine(opts) {
     if (spaceChans.length || terminal() || !foreground) return;
     for (const sp of spaces) {
       const ch = client.channel(names.spaceTopic(sp), { config: { private: true } });
-      ch.on('broadcast', { event: '*' }, (m) => { if (spaceChans.includes(ch) && String(m?.event ?? '').toLowerCase() === USER_EVENTS.message) onUserEvent(m); });
+      ch.on('broadcast', { event: '*' }, (m) => { if (spaceChans.includes(ch) && [USER_EVENTS.message, USER_EVENTS.attach].includes(String(m?.event ?? '').toLowerCase())) onUserEvent(m); });
       spaceChans.push(ch); spacePending.add(ch);
       ch.subscribe((status) => {
         if (!spaceChans.includes(ch)) return; // 우리가 닫은 채널
@@ -421,6 +421,11 @@ export function createLinkMachine(opts) {
       return;
     }
     if (state === STATES.paused) return; // 중단 중에는 받은 표지로 조회하지 않는다(풀린 뒤 따라잡기가 가져온다)
+    if (ev === USER_EVENTS.attach) { // 첨부 표지 — 글 방송에는 첨부가 없다(글 뒤에 붙는다). 요청 없이 화면에 넘긴다
+      const a = payload.attachment;
+      if (a && Number.isSafeInteger(Number(a.message_id)) && a.room_id && a.path) emit('attachments', { roomId: a.room_id, messageId: Number(a.message_id), attachments: [a] });
+      return;
+    }
     if (ev === USER_EVENTS.message) {
       const msg = payload.message ?? payload;
       const id = Number(msg?.id);
@@ -506,10 +511,11 @@ export function createLinkMachine(opts) {
   // 글을 먼저 넣고(client_msg_id 멱등), 파일마다 서버가 첨부 행과 경로를 만든다(msgr2_attachment_add — (글, 순번) 멱등). 그 경로에만 올린다(U2b Storage 정책).
   // 다시 보내면 같은 (글, 순번)이 같은 행·경로를 돌려주고, 이미 올라간 파일은 Storage가 409(이미 있음)로 답해 성공으로 본다 — 행·파일 한 벌(덮어쓰지 않는다).
   //   업로드 요청은 바이트를 실어 보내므로 다시 보낼 때 이미 올라간 파일의 바이트도 다시 전송된다(전과 같다).
-  async function sendOnce({ roomId, body, clientMsgId, topicId, replyTo, files }) {
+  async function sendOnce({ roomId, body, clientMsgId, topicId, replyTo, files, mentions }) {
     const row = { room_id: roomId, author_kind: 'user', author_user_id: userId, kind: 'text', body, client_msg_id: clientMsgId };
     if (topicId != null) row.topic_id = topicId;
     if (replyTo != null) row.reply_to = replyTo;
+    if (Array.isArray(mentions) && mentions.length) row.mentions = [...new Set(mentions)].slice(0, 20); // @에이전트 — 서버가 방 멤버인 에이전트에게 일을 만든다(U2, 20개까지)
     const ins = await call(() => client.from(names.messages).insert(row).select('id').single());
     let id = ins.data?.id ?? null; let duplicate = false;
     if (ins.code === 'duplicate') {
@@ -544,7 +550,7 @@ export function createLinkMachine(opts) {
    * files: [{ name, mime, bytes, data(Blob·File·ArrayBuffer) }] — 서버가 (글, 순번)마다 경로를 하나 정하므로 다시 올려도 한 벌이다.
    * 반환: { ok, clientMsgId, id?, duplicate?, attachments?[{ id, index, name, bucket, path }], code?, attempts }.
    */
-  async function send({ roomId, body = '', clientMsgId = newId(), topicId = null, replyTo = null, files = [] } = {}) {
+  async function send({ roomId, body = '', clientMsgId = newId(), topicId = null, replyTo = null, files = [], mentions = [] } = {}) {
     const blocked = sendBlock();
     if (blocked || !roomId) return { ok: false, clientMsgId, code: blocked || 'invalid_envelope', attempts: 0 };
     const bad = attachmentProblem(files || []); // 서버가 영구 거부할 첨부면 글을 넣기 전에 멈춘다(요청 0)
@@ -554,7 +560,7 @@ export function createLinkMachine(opts) {
     for (; n < sendRetry.maxAttempts; n++) {
       const b = sendBlock();
       if (b) { last = b; break; }
-      const r = await sendOnce({ roomId, body, clientMsgId, topicId, replyTo, files: files || [] });
+      const r = await sendOnce({ roomId, body, clientMsgId, topicId, replyTo, files: files || [], mentions });
       if (r.ok) {
         const out = { ok: true, clientMsgId, id: r.id, duplicate: r.duplicate, attachments: r.attachments, attempts: n + 1 };
         emit('send', { clientMsgId, roomId, status: 'sent', id: r.id, attachments: r.attachments });
