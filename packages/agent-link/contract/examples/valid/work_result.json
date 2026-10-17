@@ -1,0 +1,27 @@
+{
+  "v": 1,
+  "id": "00000009-0000-4000-8000-000000000000",
+  "work": "3f1c2b7a-9d4e-4c1a-8b2f-1a2b3c4d5e01",
+  "seq": 5,
+  "type": "work.result",
+  "agent": "7a0e5c11-2b3d-4e5f-8a9b-0c1d2e3f4a02",
+  "device": "c4d5e6f7-8091-4a2b-9c3d-4e5f6a7b8c03",
+  "at": "2026-10-17T06:00:00Z",
+  "data": {
+    "text": "초안을 첨부했습니다. 일정은 마케팅 담당에게 넘겼습니다.",
+    "files": [
+      "66666666-7777-4888-8999-aaaaaaaaaa09"
+    ],
+    "handoffs": [
+      {
+        "agent": "88888888-9999-4aaa-8bbb-cccccccccc11",
+        "text": "회의 일정을 확정해 줘"
+      }
+    ],
+    "usage": {
+      "input_tokens": 5120,
+      "output_tokens": 830,
+      "runner": "claude"
+    }
+  }
+}
