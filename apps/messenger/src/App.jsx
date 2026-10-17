@@ -4654,10 +4654,10 @@ function Settings({ session, me, uid, invitesTick = 0, org, orgs = [], isAdmin, 
         {tab === 'org' && org && !gated && (isAdmin
           ? <OrgCard part="org" org={org} uid={uid} members={members} ent={ent} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} myEmail={session.user.email} />
           : <section className="msgr-setcard"><h2>{t('set.org')}</h2><p>{t('org.noEdit')}</p></section>)}
-        {tab === 'org' && org && !gated && !V2 && <ReportsCard org={org} uid={uid} isAdmin={!!isAdmin} members={members} nameOfUser={nameOfUser} channels={channels} onNote={onNote} onError={onError} />}
+        {tab === 'org' && org && !gated && <ReportsCard org={org} uid={uid} isAdmin={!!isAdmin} members={members} nameOfUser={nameOfUser} channels={channels} onNote={onNote} onError={onError} />}
         {tab === 'crews' && org && !gated && (<>
-          {isAdmin && !V2 && <OrgCard part="node" org={org} uid={uid} members={members} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} />}
-          {isAdmin && !V2 && <OrgCard part="agents" org={org} orgs={orgs} uid={uid} members={members} channels={channels} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} onOpenCrew={onOpenCrew} />}
+          {isAdmin && <OrgCard part="node" org={org} uid={uid} members={members} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} />}
+          {isAdmin && <OrgCard part="agents" org={org} orgs={orgs} uid={uid} members={members} channels={channels} nameOfUser={nameOfUser} onChanged={onChanged} onOrgsChanged={onOrgsChanged} onNote={onNote} onError={onError} onOpenCrew={onOpenCrew} />}
           {policy && <PolicyCard org={org} isAdmin={isAdmin} policy={policy} members={members} onChanged={onChanged} onNote={onNote} onError={onError} />}
         </>)}
         {tab === 'friends' && !gated && <FriendsCard isPersonal={!org} uid={uid} friends={friends} members={members} onChanged={onFriendsChanged} onDm={onDm} onPersonalDm={onPersonalDm} onNote={onNote} onError={onError} />}
@@ -4757,7 +4757,11 @@ function MemNew({ org, channelId, uid, onCreated, onNote, onError, onCancel }) {
 }
 
 // 신고함(App Store 1.2 UGC) — 관리자는 조직 신고 전부를 보고 처리한다. 멤버는 자기 신고와 처리 상태만 본다(msgr_reports_list가 가른다)
-function ReportsCard({ org, uid, isAdmin = false, mode = 'org', members = [], nameOfUser, channels = [], onNote, onError }) { // mode: org(조직 탭) · ops(운영자 — 전부) · personal(내 개인 공간 신고)
+function ReportsCard(props) {
+  if (V2 && (props.mode ?? 'org') === 'org') return null; // v2: 조직 신고 목록은 옛 표(msgr_reports의 조직 열)를 읽는다 — v2 신고 목록 RPC(msgr2_reports_list)는 U6d 연결 단위에서
+  return <ReportsCardBody {...props} />;
+}
+function ReportsCardBody({ org, uid, isAdmin = false, mode = 'org', members = [], nameOfUser, channels = [], onNote, onError }) { // mode: org(조직 탭) · ops(운영자 — 전부) · personal(내 개인 공간 신고)
   const { t, lang } = useT();
   const [rows, setRows] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -5581,7 +5585,11 @@ function MemberListCard({ org, uid, members, onNote, onError, t, editSelf = true
   const [profiles, reload] = useMemberProfiles(org.id, true);
   return (<section className="msgr-setcard"><h2>{t('org.members')} · {members.length}</h2><div className="msgr-rows">{members.map((m) => <div key={m.user_id} className="row"><Av name={m.display_name || m.user_id} size="sm" userId={m.user_id} /><span className="name">{m.display_name || m.user_id.slice(0, 8)}</span><span className="sub">{m.user_id === org.service_user_id ? t('org.node') : t(`role.${m.role}`)}{m.user_id === uid ? ` · ${t('ui.me')}` : ''}</span><MemberProfile org={org} m={m} uid={editSelf ? uid : null} profiles={profiles} reload={reload} onNote={onNote} onError={onError} t={t} /></div>)}</div></section>);
 }
-function OrgCard({ org, orgs = [], uid, invitesTick = 0, members, channels = [], onInvite = null, nameOfUser, onChanged, onOrgsChanged, onNote, onError, part = 'org', myEmail = '', onOpenCrew, ent = null }) {
+function OrgCard(props) {
+  if (V2 && (props.part === 'node' || props.part === 'agents')) return null; // v2: 상주 서버(노드)·조직 에이전트 관리 카드는 v2 공간에 없다(자리 = 파견, U6c-1b) — 플래그는 모듈 상수라 훅 순서가 바뀌지 않는다
+  return <OrgCardBody {...props} />;
+}
+function OrgCardBody({ org, orgs = [], uid, invitesTick = 0, members, channels = [], onInvite = null, nameOfUser, onChanged, onOrgsChanged, onNote, onError, part = 'org', myEmail = '', onOpenCrew, ent = null }) {
   const { t, lang } = useT();
   const phone = useIsPhone(); // 폰 에이전트 연결 화면: 설명 2줄 이내·연결 칩 네 개 같은 모양(4차 피드백). 데스크톱은 그대로
   const [name, setName] = useState(org.name); const [busy, setBusy] = useState(false);
