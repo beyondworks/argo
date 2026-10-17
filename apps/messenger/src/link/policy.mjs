@@ -2,7 +2,7 @@
 // 설계 정본: 볼트 AI-Sessions/conversations/argo/2026-10-17-argo-messenger-redesign-design.md 4절(실시간)·5절(안전장치)·7절 경우 5·10·11·19.
 // 약속 정본: packages/agent-link/contract/v1.mjs — 다시 보낼지는 REJECT_CODES[code].retry만 본다(rate_limited·internal만 참).
 // 이 파일은 네트워크·시계·저장소를 모른다(시험에서 그대로 부른다). 화면 문자열은 없다 — 상태 코드만 낸다(문구는 U6 i18n).
-import { REJECT_CODES } from '../../../../packages/agent-link/contract/v1.mjs';
+import { REJECT_CODES, TOPICS } from '../../../../packages/agent-link/contract/v1.mjs';
 import { cmpVersion } from '../../../../src/version-compare.mjs';
 import { isNetworkFailure } from '../../../../src/net-errors.mjs';
 
@@ -15,8 +15,8 @@ export const NAMES = Object.freeze({
   messages: 'msgr2_messages', // U1 — 사람 글은 표에 직접 insert(RLS), (room_id, client_msg_id) 유일
   attachments: 'msgr2_attachments', // U1
   bucket: 'msgr', // 첨부 Storage 버킷(옛 경로 유지 — 설계 1-2)
-  userTopic: (uid) => `u:${uid}`,
-  workTopic: (work) => `wk:${work}`,
+  userTopic: TOPICS.user, // v2:u:<uid> — 옛 u: 토픽과 겹치지 않게(약속 v1 TOPICS, 검수 #1076)
+  workTopic: TOPICS.work, // v2:wk:<work>
   presenceTopic: (owner) => `pr:${owner}`,
 });
 

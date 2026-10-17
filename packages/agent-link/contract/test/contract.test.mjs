@@ -283,3 +283,22 @@ test('offer.peers는 선택 — 없어도 되고, 있으면 {agent uuid, name 1�
   const offerData = buildSchema().allOf.find((x) => x.if?.properties?.type?.const === 'work.offer')?.then.properties.data;
   assert.ok(offerData?.properties.peers, 'JSON Schema에 peers'); assert.ok(!offerData.required.includes('peers'), 'peers는 선택');
 });
+
+// offer.attachments는 서명 URL이 아니라 Storage 위치(bucket·path) — 2026-10-17 총괄 결정(U2b)
+test('offer.attachments는 {id, name, mime, bytes, bucket, path} — 옛 url 모양(bucket·path 없음)은 invalid_envelope', () => {
+  const base = valid.find((x) => x.f === 'work_offer.json').env;
+  assert.equal(validateEnvelope(base, { from: 'server' }).ok, true);
+  const a = base.data.attachments[0];
+  for (const bad of [{ ...a, bucket: undefined }, { ...a, path: '' }, (() => { const { bucket, path, ...rest } = a; return { ...rest, url: 'https://x', url_expires_at: '2026-10-17T06:00:00Z' }; })()]) {
+    const e = clone(base); e.data.attachments = [bad];
+    assert.equal(validateEnvelope(e, { from: 'server' }).code, 'invalid_envelope', JSON.stringify(bad));
+  }
+});
+
+// 토픽 이름은 v2: 접두사(옛 u:·org:·dm: 정책과 겹치지 않게 — 검수 #1076)
+test('TOPICS — v2:u·v2:w·v2:s·v2:wk, 옛 토픽 모양과 겹치지 않는다', async () => {
+  const { TOPICS } = await import('../v1.mjs');
+  const id = '00000000-0000-4000-8000-000000000001';
+  assert.deepEqual([TOPICS.user(id), TOPICS.runner(id), TOPICS.space(id), TOPICS.work(id)], [`v2:u:${id}`, `v2:w:${id}`, `v2:s:${id}`, `v2:wk:${id}`]);
+  for (const t of Object.values(TOPICS)) assert.doesNotMatch(t(id), /^(u|org|dm|w|s|wk):/);
+});
