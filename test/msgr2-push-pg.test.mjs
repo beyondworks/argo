@@ -160,7 +160,7 @@ test('유휴 쓰기 0: 받는 사람 계산은 읽기만(기기·읽음·장부 
 
 test('되돌림: 장부에 행이 있으면 멈추고 아무것도 지우지 않는다 — 비운 뒤에는 트리거·함수·표가 사라지고 글 쓰기는 그대로', { skip }, async () => {
   const { readFileSync } = await import('node:fs');
-  const down = readFileSync(new URL('../scripts/rollback/20261018020000_msgr2_push.down.sql', import.meta.url), 'utf8');
+  const down = readFileSync(new URL('../scripts/rollback/20261018030000_msgr2_push.down.sql', import.meta.url), 'utf8');
   const r = db.raw(['-v', 'ON_ERROR_STOP=1', '-c', down]);
   assert.notEqual(r.status, 0, '행이 있으면 실패');
   assert.equal(db.sql(`select count(*) from pg_trigger where tgname = 'msgr2_push_after_insert'`), '1', '실패하면 그대로');

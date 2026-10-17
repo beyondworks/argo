@@ -10,7 +10,7 @@
 -- 멱등: 엣지가 msgr2_push_sent(message_id 기본 키)를 먼저 잡는다 — 같은 글에 두 번 보내지 않는다(재생·위조 호출 포함). 보존: msgr2_push_sent 7일, pg_net 응답 1일(하루 1번 정리).
 -- 키 값(APNs .p8·FCM 서비스 계정)은 엣지 시크릿에만 있다 — 이름: APNS_KEY_P8·APNS_KEY_ID·APNS_TEAM_ID·APNS_TOPIC·APNS_SANDBOX·FCM_SERVICE_ACCOUNT·PUSH_FN_SECRET.
 -- 주소: msgr_settings 'msgr2_push_url'(엣지 배포 뒤 맥 one이 넣는다). 인증 헤더는 옛 msgr_push_headers()(push_secret) 그대로.
--- 되돌림: scripts/rollback/20261018020000_msgr2_push.down.sql
+-- 되돌림: scripts/rollback/20261018030000_msgr2_push.down.sql
 
 -- 같은 글에 한 번 — 엣지가 먼저 넣는다(경합·재생 방지). 결과 요약(sent·failed)은 끝날 때 갱신한다.
 create table if not exists public.msgr2_push_sent (

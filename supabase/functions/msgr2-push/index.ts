@@ -1,4 +1,4 @@
-// msgr2-push — 메신저 v2 휴대폰 알림(APNs·FCM). 트리거 msgr2_push_enqueue(pg_net)가 {message_id} 하나를 보낸다(20261018020000_msgr2_push.sql).
+// msgr2-push — 메신저 v2 휴대폰 알림(APNs·FCM). 트리거 msgr2_push_enqueue(pg_net)가 {message_id} 하나를 보낸다(20261018030000_msgr2_push.sql).
 // 받는 사람은 여기서 DB 함수(msgr2_push_recipients)로 다시 계산하고 msgr2_push_sent로 글당 한 번만 보낸다 → 재생·위조 호출이 추가 알림을 만들지 못한다.
 // 배포(맥 one): `supabase functions deploy msgr2-push --no-verify-jwt` — pg_net 호출에는 사용자 JWT가 없다(옛 msgr-push와 같이 아래 비밀로 막는다). 배포 뒤 msgr_settings 'msgr2_push_url'에 함수 주소를 넣는다.
 // 인증: 트리거가 msgr_settings.push_secret을 Authorization: Bearer로 싣고 여기서 PUSH_FN_SECRET과 상수시간 비교(옛 msgr-push와 같다).
