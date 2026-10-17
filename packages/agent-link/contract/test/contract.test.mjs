@@ -283,3 +283,14 @@ test('offer.peers는 선택 — 없어도 되고, 있으면 {agent uuid, name 1�
   const offerData = buildSchema().allOf.find((x) => x.if?.properties?.type?.const === 'work.offer')?.then.properties.data;
   assert.ok(offerData?.properties.peers, 'JSON Schema에 peers'); assert.ok(!offerData.required.includes('peers'), 'peers는 선택');
 });
+
+// offer.attachments는 서명 URL이 아니라 Storage 위치(bucket·path) — 2026-10-17 총괄 결정(U2b)
+test('offer.attachments는 {id, name, mime, bytes, bucket, path} — 옛 url 모양(bucket·path 없음)은 invalid_envelope', () => {
+  const base = valid.find((x) => x.f === 'work_offer.json').env;
+  assert.equal(validateEnvelope(base, { from: 'server' }).ok, true);
+  const a = base.data.attachments[0];
+  for (const bad of [{ ...a, bucket: undefined }, { ...a, path: '' }, (() => { const { bucket, path, ...rest } = a; return { ...rest, url: 'https://x', url_expires_at: '2026-10-17T06:00:00Z' }; })()]) {
+    const e = clone(base); e.data.attachments = [bad];
+    assert.equal(validateEnvelope(e, { from: 'server' }).code, 'invalid_envelope', JSON.stringify(bad));
+  }
+});
