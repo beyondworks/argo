@@ -16,6 +16,8 @@ const run = (args) => psqlSpawn(DB, args);
 const sql = (q) => { const r = run(['-A', '-t', '-c', q]); if (r.status) throw new Error(r.stderr); return r.stdout.trim(); };
 const as = (uid, q) => { const r = run(['-A', '-t', '-c', `set role authenticated; select set_config('argo.uid', '${uid}', false); ${q}`]); return { ok: r.status === 0, out: r.stdout.trim(), err: r.stderr.trim() }; };
 const A = '30000000-0000-4000-8000-000000000001', B = '30000000-0000-4000-8000-000000000002', C = '30000000-0000-4000-8000-000000000003';
+const DEVICE_TRUE = `create or replace function public._msgr2_device_ok() returns boolean language sql stable security definer set search_path = public, pg_temp as $$ select true $$;
+  create or replace function public._msgr2_device_app() returns boolean language sql stable security definer set search_path = public, pg_temp as $$ select true $$;`;
 let T, R1, R2;
 before(() => {
   if (!DB) return;
@@ -23,6 +25,7 @@ before(() => {
     grant usage on schema public to anon, authenticated, service_role; create schema if not exists auth; grant usage on schema auth to anon, authenticated, service_role;
     create or replace function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('argo.uid', true), '')::uuid $$;`]);
   sql(readFileSync(mig(FILE), 'utf8'));
+  sql(DEVICE_TRUE); // U3 전 자리 함수는 닫힘(거짓) — 판정 행렬은 기기가 유효하다는 전제로 본다
   T = sql(`insert into msgr2_spaces (kind,name,owner_user_id) values ('team','t','${A}') returning id`);
   sql(`insert into msgr2_space_members (space_id,user_id,role) values ('${T}','${A}','owner'),('${T}','${B}','member'),('${T}','${C}','member')`);
   R1 = sql(`insert into msgr2_rooms (space_id,kind,name) values ('${T}','private','r1') returning id`); // A·C만

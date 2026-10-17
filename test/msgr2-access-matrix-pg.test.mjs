@@ -25,6 +25,8 @@ const sql = (q) => psql(['-A', '-t', '-c', q]).trim();
 const asUser = (uid, q) => psql(['-A', '-t', '-c', `set role authenticated; select set_config('argo.uid', '${uid}', false); ${q}`]).trim();
 
 const R = {}; // 방 이름 → id
+const DEVICE_TRUE = `create or replace function public._msgr2_device_ok() returns boolean language sql stable security definer set search_path = public, pg_temp as $$ select true $$;
+  create or replace function public._msgr2_device_app() returns boolean language sql stable security definer set search_path = public, pg_temp as $$ select true $$;`;
 let TEAM, PERS;
 before(() => {
   if (!DB) return;
@@ -39,6 +41,7 @@ before(() => {
     create table if not exists auth.users (id uuid primary key, created_at timestamptz not null default now(), email text);
     create or replace function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('argo.uid', true), '')::uuid $$;`]);
   psql(['-c', readFileSync(mig(FILE), 'utf8')]);
+  psql(['-c', DEVICE_TRUE]); // U3 전 자리 함수는 닫힘(거짓) — 판정 행렬은 기기가 유효하다는 전제로 본다
   // 시드는 슈퍼유저(서비스 문맥)로 — 사람 경로(RPC)는 msgr2-access-rpc-pg가 따로 본다
   TEAM = sql(`insert into public.msgr2_spaces (kind, name, slug, owner_user_id) values ('team', '팀', 'team-a', '${U.owner}') returning id`);
   PERS = sql(`insert into public.msgr2_spaces (kind, owner_user_id) values ('personal', '${U.owner}') returning id`);

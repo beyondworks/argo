@@ -5,7 +5,8 @@
 --   D3 에이전트 = msgr2_agents 1행(주인·회사·slug). 팀 공간에는 파견 행(msgr2_agent_seats)만 둔다. 개인 공간 자리는 행 없이 늘 있다고 본다.
 --   D4 토픽은 일 단위(work_id 유일). 사람 대화에는 토픽을 강제하지 않는다. 토픽 쓰기는 U2(일·약속 서버)가 정의한다 — 여기서는 표와 읽기 정책만.
 --   1-5 판정 함수는 msgr2_access(room) 하나다. 표 정책·RPC는 이 함수만 부르고 멤버십 식을 다시 쓰지 않는다.
---       기기 확인 _msgr2_device_ok()·앱 기기 확인 _msgr2_device_app()은 U3가 정의한다 — 이 파일은 같은 이름·시그니처의 자리 함수(늘 참)만 둔다.
+--       기기 확인 _msgr2_device_ok()·앱 기기 확인 _msgr2_device_app()은 U3가 정의한다 — 이 파일은 그 이름의 함수가 없을 때만 닫힌 자리 함수(늘 거짓)를 만든다.
+--       U3 뒤에 이 파일이 다시 적용돼도(제자리 수정 뒤 재적용·반복 적용) U3 정의를 덮지 않는다. U3 전에는 v2가 닫혀 있다(공개 전이라 손해 없음).
 --       U3 마이그레이션이 같은 이름으로 create or replace 한다(시그니처: () returns boolean, security definer, stable, search_path public, pg_temp).
 --   D9 권한 표(space_members 역할·agent_seats·rooms.agent_policy)에는 직접 쓰기 정책이 없다. 앱 기기만 부를 수 있는 RPC로만 바꾼다.
 --   D12 등급(tier) owner·team·guest는 방의 사람 구성으로 정한다(보는 사람과 무관). 판정 결과에 함께 싣는다.
@@ -170,10 +171,17 @@ create table if not exists public.msgr2_prefs (
 -- ── 기기 확인 자리 함수(U3가 같은 이름·시그니처로 다시 정의한다) ─────────────────
 -- _msgr2_device_ok(): 지금 요청한 기기가 유효한가(폐기·만료가 아닌가). 거짓이면 모든 판정이 거짓이다(1-5 원칙 4).
 -- _msgr2_device_app(): 지금 요청한 기기가 앱(kind 'app') 기기인가. 권한 표를 바꾸는 RPC 첫 줄이 부른다(D9).
-create or replace function public._msgr2_device_ok() returns boolean
-  language sql stable security definer set search_path = public, pg_temp as $$ select true $$;
-create or replace function public._msgr2_device_app() returns boolean
-  language sql stable security definer set search_path = public, pg_temp as $$ select true $$;
+-- 없을 때만 만든다 — create or replace로 두면 U3 뒤 재적용이 기기 검사를 모든 RLS·RPC에서 한꺼번에 지운다.
+do $do$ begin
+  if to_regprocedure('public._msgr2_device_ok()') is null then
+    create function public._msgr2_device_ok() returns boolean
+      language sql stable security definer set search_path = public, pg_temp as $$ select false $$;
+  end if;
+  if to_regprocedure('public._msgr2_device_app()') is null then
+    create function public._msgr2_device_app() returns boolean
+      language sql stable security definer set search_path = public, pg_temp as $$ select false $$;
+  end if;
+end $do$;
 
 -- ── 판정 함수 ────────────────────────────────────────────────────────────────────
 do $$ begin
