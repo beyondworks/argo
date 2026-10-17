@@ -34,12 +34,15 @@ test('발송기: 다시 보내도 같은 거절은 영구 실패(실패 카드�
   assert.match(none.message, /not ready/);
 });
 
-test('v2 표지(_v2): 에이전트 꺼짐 안내를 내지 않고, v2 글은 신고 단추가 없고, v2 공간은 새 채널이 없다 — 옛 행은 그대로', () => {
+test('v2 표지(_v2): 에이전트 꺼짐 안내를 내지 않는다, v2 글도 신고할 수 있다(U6c-2b msgr2_report_message), v2 공간도 새 채널을 만든다 — 옛 행은 그대로', () => {
   const dm = { kind: 'dm' }; const old = { display_name: '에이', owner_user_id: 'me', last_seen_at: null };
   assert.ok(crewAwayNotice({ channel: dm, chCrews: [old], people: [], uid: 'me', now: Date.now(), awayMs: 90_000 }), '옛 에이전트는 그대로 꺼짐 안내');
   assert.equal(crewAwayNotice({ channel: dm, chCrews: [{ ...old, _v2: true }], people: [], uid: 'me', now: Date.now(), awayMs: 90_000 }), null);
   const msg = { author_kind: 'crew', crew_id: A };
-  assert.equal(canReportMessage(msg, 'me'), true); assert.equal(canReportMessage({ ...msg, _v2: true }, 'me'), false);
+  assert.equal(canReportMessage(msg, 'me'), true); assert.equal(canReportMessage({ ...msg, _v2: true }, 'me'), true);
+  assert.equal(canReportMessage({ author_kind: 'system', _v2: true }, 'me'), false, 'v2 시스템 글은 신고 없음(서버 msgr2_report_no_message)');
+  assert.equal(canReportMessage({ author_kind: 'user', author_user_id: 'me', _v2: true }, 'me'), false, '내 글(서버 msgr2_report_own)');
+  assert.match(readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8'), /unsupported: false \/\* v2 공간도 방을 만든다/, '셸은 v2 공간에도 새 채널을 켠다');
   assert.equal(newChannelOffer({ role: 'member' }).can, true); assert.equal(newChannelOffer({ role: 'member', unsupported: true }).can, false);
 });
 

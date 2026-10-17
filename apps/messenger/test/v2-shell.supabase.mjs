@@ -4,20 +4,21 @@ export const configured = true, customServer = false, SB_URL = 'http://fixture.i
 const uid = '5c1e0a77-0000-4000-8000-000000000001', mate = '9b2d4f10-0000-4000-8000-000000000002', now = Date.now();
 const at = (min) => new Date(now - min * 60_000).toISOString();
 const later = (min) => new Date(now + min * 60_000).toISOString();
-const T = '7e000000-0000-4000-8000-0000000000aa', P = '7e000000-0000-4000-8000-0000000000bb';
-const GEN = '7f000000-0000-4000-8000-000000000001', PLAN = '7f000000-0000-4000-8000-000000000002', DM = '7f000000-0000-4000-8000-000000000003';
+const T = '7e000000-0000-4000-8000-0000000000aa', P = '7e000000-0000-4000-8000-0000000000bb', PM = '7e000000-0000-4000-8000-0000000000cc'; // PM = 친구(민지)의 개인 공간
+const GEN = '7f000000-0000-4000-8000-000000000001', PLAN = '7f000000-0000-4000-8000-000000000002', DM = '7f000000-0000-4000-8000-000000000003', NEWS = '7f000000-0000-4000-8000-000000000004';
 const A = 'a0000000-0000-4000-8000-000000000001', B = 'a0000000-0000-4000-8000-000000000002', C = 'a0000000-0000-4000-8000-000000000003';
 const W = (n) => `b0000000-0000-4000-8000-00000000000${n}`;
 const state = window.__v2Fixture = { calls: [], topics: new Map(), signedIn: true, authCbs: new Set(), tables: {
-  msgr2_spaces: [{ id: P, kind: 'personal', name: '', owner_user_id: uid }, { id: T, kind: 'team', name: 'Beyond 팀', owner_user_id: mate }],
+  msgr2_spaces: [{ id: P, kind: 'personal', name: '', owner_user_id: uid }, { id: PM, kind: 'personal', name: '', owner_user_id: mate }, { id: T, kind: 'team', name: 'Beyond 팀', owner_user_id: mate }],
   msgr2_space_members: [{ space_id: P, user_id: uid, role: 'owner', display_name: '나' }, { space_id: T, user_id: uid, role: 'member', display_name: '유건' }, { space_id: T, user_id: mate, role: 'owner', display_name: '민지' }],
   msgr2_rooms: [
     { id: GEN, space_id: T, kind: 'open', name: '일반', memory: true, agent_policy: 'allowed', created_at: at(500), archived_at: null },
     { id: PLAN, space_id: T, kind: 'private', name: '기획', memory: true, agent_policy: 'approval', created_at: at(400), archived_at: null },
     { id: DM, space_id: P, kind: 'direct', pair_key: 'me-research', name: null, memory: true, agent_policy: 'allowed', created_at: at(300), archived_at: null },
+    { id: NEWS, space_id: T, kind: 'open', name: '공지', memory: true, agent_policy: 'allowed', created_at: at(450), archived_at: null }, // 참여 전 open 방(둘러보기)
   ],
   msgr2_room_members: [
-    { room_id: GEN, member_kind: 'user', member_id: mate, removed_at: null }, { room_id: GEN, member_kind: 'agent', member_id: A, removed_at: null }, { room_id: GEN, member_kind: 'agent', member_id: B, removed_at: null },
+    { room_id: GEN, member_kind: 'user', member_id: uid, removed_at: null }, { room_id: GEN, member_kind: 'user', member_id: mate, removed_at: null }, { room_id: NEWS, member_kind: 'user', member_id: mate, removed_at: null }, { room_id: GEN, member_kind: 'agent', member_id: A, removed_at: null }, { room_id: GEN, member_kind: 'agent', member_id: B, removed_at: null },
     { room_id: PLAN, member_kind: 'user', member_id: uid, removed_at: null }, { room_id: PLAN, member_kind: 'user', member_id: mate, removed_at: null },
     { room_id: DM, member_kind: 'user', member_id: uid, removed_at: null }, { room_id: DM, member_kind: 'agent', member_id: A, removed_at: null },
   ],
@@ -53,9 +54,9 @@ const state = window.__v2Fixture = { calls: [], topics: new Map(), signedIn: tru
 const call = (c) => state.calls.push(c);
 function query(table) {
   let op = 'select', values, one = false, desc = false, orderKey = null, lim = null, head = false;
-  const filters = [];
+  const filters = []; const embeds = [];
   const api = {
-    select(_c, o) { if (o?.head) head = true; return api; },
+    select(c, o) { if (o?.head) head = true; for (const m of String(c ?? '').matchAll(/([a-z_]+):(msgr2_rooms)(!inner)?\(/g)) embeds.push({ alias: m[1], inner: !!m[3] }); return api; }, // 끼워 읽기(방): 'msgr_channels:msgr2_rooms!inner(…)' — room_id로 붙인다
     eq(k, v) { filters.push((r) => r[k] === v); return api; }, neq(k, v) { filters.push((r) => r[k] !== v); return api; },
     is(k, v) { filters.push((r) => (r[k] ?? null) === v); return api; }, in(k, vs) { filters.push((r) => vs.includes(r[k])); return api; },
     lt(k, v) { filters.push((r) => r[k] < v); return api; }, lte(k, v) { filters.push((r) => r[k] <= v); return api; },
@@ -84,6 +85,7 @@ function query(table) {
         if (op === 'update') { rows.forEach((r) => Object.assign(r, values)); out = rows; }
         else if (op === 'delete') { state.tables[table] = all.filter((r) => !rows.includes(r)); out = rows; }
         else {
+          for (const e of embeds) { rows = rows.map((r) => ({ ...r, [e.alias]: state.tables.msgr2_rooms.find((x) => x.id === r.room_id) ?? null })); if (e.inner) rows = rows.filter((r) => r[e.alias]); }
           if (orderKey) rows = [...rows].sort((a, b) => (a[orderKey] < b[orderKey] ? -1 : a[orderKey] > b[orderKey] ? 1 : 0) * (desc ? -1 : 1));
           if (lim != null) rows = rows.slice(0, lim);
           out = one ? rows[0] ?? null : rows;
@@ -106,12 +108,36 @@ const rpcs = {
   msgr2_set_seat: ({ p_agent, p_space, p_remove }) => { const s = state.tables.msgr2_agent_seats; const row = s.find((x) => x.agent_id === p_agent && x.space_id === p_space); if (p_remove) { if (row) row.removed_at = new Date().toISOString(); } else if (row) row.removed_at = null; else s.push({ agent_id: p_agent, space_id: p_space, allow: 'all', allow_users: [], removed_at: null }); return null; },
   msgr2_devices_list: () => state.devices.map((d) => ({ ...d })),
   msgr2_device_revoke: ({ p_device }) => { const d = state.devices.find((x) => x.id === p_device); if (!d || d.revoked_at) return false; d.revoked_at = new Date().toISOString(); d.state = 'revoked'; if (d.is_current) setTimeout(() => fire(`v2:u:${uid}`, 'device_revoked', { device_id: d.id }), 50); return true; },
+  // U6d(방·공간·초대·안 읽음·찾기·신고) 대역 — 메모리 표를 바꾸고 v2:u: 방 사건을 보낸다
+  // 개인 방 목록(나 기준): 개인 종류 공간의 내 1:1·그룹방 — 친구가 연 방은 친구의 개인 공간(PM)에 있다(U6d·U8)
+  msgr2_dm_list: ({ p_include_groups }) => { const T_ = state.tables; const personal = new Set(T_.msgr2_spaces.filter((x) => x.kind === 'personal').map((x) => x.id)); return T_.msgr2_rooms.filter((r) => personal.has(r.space_id) && !r.archived_at && (r.kind === 'direct' || (p_include_groups && r.kind === 'private')) && T_.msgr2_room_members.some((m) => m.room_id === r.id && m.member_kind === 'user' && m.member_id === uid && !m.removed_at)).map((r) => { const mem = T_.msgr2_room_members.filter((m) => m.room_id === r.id && !m.removed_at); const other = r.kind === 'direct' ? mem.find((m) => m.member_kind === 'user' && m.member_id !== uid)?.member_id ?? null : null; const last = T_.msgr2_messages.filter((m) => m.room_id === r.id && m.kind !== 'system').sort((a, b) => b.id - a.id)[0]; return { room_id: r.id, space_id: r.space_id, kind: r.kind, name: r.name ?? '', other_user_id: other, other_name: other === mate ? '민지' : null, members: mem.map((m) => ({ kind: m.member_kind, id: m.member_id, name: m.member_kind === 'agent' ? T_.msgr2_agents.find((a) => a.id === m.member_id)?.display_name : m.member_id === uid ? '유건' : '민지' })), agent_id: null, last_id: last?.id ?? null, last_at: last?.created_at ?? r.created_at, last_body: last?.body ?? '', created_by: r.created_by ?? uid }; }); },
+  msgr2_unread: ({ p_space }) => { const T_ = state.tables; return T_.msgr2_room_members.filter((m) => m.member_kind === 'user' && m.member_id === uid && !m.removed_at).map((m) => T_.msgr2_rooms.find((r) => r.id === m.room_id)).filter((r) => r && !r.archived_at && (!p_space || r.space_id === p_space)).map((r) => { const last = T_.msgr2_reads.find((x) => x.room_id === r.id)?.last_read_id ?? 0; const n = T_.msgr2_messages.filter((x) => x.room_id === r.id && x.id > last && x.author_user_id !== uid && x.kind !== 'system').length; return { room_id: r.id, space_id: r.space_id, n: Math.min(n, 99), last_id: null, last_read_id: last, muted: false }; }); },
+  msgr2_mark_read: ({ p_room, p_last_id }) => { const T_ = state.tables.msgr2_reads; const cur = T_.find((x) => x.room_id === p_room); if (cur) { if (p_last_id > cur.last_read_id) Object.assign(cur, { last_read_id: p_last_id, updated_at: new Date().toISOString() }); } else T_.push({ room_id: p_room, user_id: uid, last_read_id: p_last_id, updated_at: new Date().toISOString() }); return p_last_id; },
+  msgr2_room_pref_set: ({ p_room, p_muted, p_pinned }) => { const T_ = state.tables.msgr2_prefs; let r = T_.find((x) => x.room_id === p_room); if (!r) { r = { room_id: p_room, user_id: uid, muted: false, pinned: false }; T_.push(r); } if (p_muted != null) r.muted = p_muted; if (p_pinned != null) r.pinned = p_pinned; return { muted: r.muted, pinned: r.pinned }; },
+  msgr2_rooms_browse: ({ p_space }) => state.tables.msgr2_rooms.filter((r) => r.space_id === p_space && r.kind === 'open' && !r.archived_at && !state.tables.msgr2_room_members.some((m) => m.room_id === r.id && m.member_kind === 'user' && m.member_id === uid && !m.removed_at)).map((r) => ({ id: r.id, name: r.name, members: state.tables.msgr2_room_members.filter((m) => m.room_id === r.id && m.member_kind === 'user' && !m.removed_at).length, created_at: r.created_at, joined: false })),
+  msgr2_room_join: ({ p_room }) => { if (state.tables.msgr2_room_members.some((m) => m.room_id === p_room && m.member_id === uid && !m.removed_at)) return false; state.tables.msgr2_room_members.push({ room_id: p_room, member_kind: 'user', member_id: uid, removed_at: null }); roomEvent(p_room); return true; },
+  msgr2_room_leave: ({ p_room }) => { const m = state.tables.msgr2_room_members.find((x) => x.room_id === p_room && x.member_id === uid && !x.removed_at); if (!m) return false; m.removed_at = new Date().toISOString(); fire(`v2:u:${uid}`, 'rooms', { room_id: p_room, removed: true }); return true; },
+  msgr2_room_create: ({ p_space, p_kind, p_name, p_users = [], p_agents = [] }) => { if (p_space && !String(p_name ?? '').trim()) throw new Error('msgr2_bad_name'); const id = `7f100000-0000-4000-8000-${String(Date.now()).slice(-12)}`; state.tables.msgr2_rooms.push({ id, space_id: p_space ?? P, kind: p_kind, name: p_name, memory: true, agent_policy: 'allowed', created_at: new Date().toISOString(), archived_at: null }); for (const u of [uid, ...p_users]) state.tables.msgr2_room_members.push({ room_id: id, member_kind: 'user', member_id: u, removed_at: null }); for (const a of p_agents) state.tables.msgr2_room_members.push({ room_id: id, member_kind: 'agent', member_id: a, removed_at: null }); roomEvent(id); return id; },
+  msgr2_dm_open: ({ p_user, p_space }) => { if (p_user === 'blocked') throw new Error('msgr2_dm_unavailable'); const sp = p_space ?? P; let r = state.tables.msgr2_rooms.find((x) => x.kind === 'direct' && x.space_id === sp && state.tables.msgr2_room_members.some((m) => m.room_id === x.id && m.member_id === p_user)); if (!r) { const id = `7f200000-0000-4000-8000-${String(Date.now()).slice(-12)}`; r = { id, space_id: sp, kind: 'direct', pair_key: `${uid}:${p_user}`, name: '', memory: true, agent_policy: 'allowed', created_at: new Date().toISOString(), archived_at: null }; state.tables.msgr2_rooms.push(r); for (const u of [uid, p_user]) state.tables.msgr2_room_members.push({ room_id: id, member_kind: 'user', member_id: u, removed_at: null }); roomEvent(id); } return { room_id: r.id, space_id: sp, existing: false }; },
+  msgr2_agent_dm_open: ({ p_agent }) => { const r = state.tables.msgr2_rooms.find((x) => x.space_id === P && state.tables.msgr2_room_members.some((m) => m.room_id === x.id && m.member_id === p_agent)); return { room_id: r?.id ?? DM, space_id: P, existing: true }; },
+  msgr2_room_members_add: ({ p_room, p_users = [], p_agents = [] }) => { let n = 0; for (const [k, ids] of [['user', p_users], ['agent', p_agents]]) for (const id of ids) if (!state.tables.msgr2_room_members.some((m) => m.room_id === p_room && m.member_id === id && !m.removed_at)) { state.tables.msgr2_room_members.push({ room_id: p_room, member_kind: k, member_id: id, removed_at: null }); n++; } return n; },
+  msgr2_room_member_remove: ({ p_room, p_member }) => { const m = state.tables.msgr2_room_members.find((x) => x.room_id === p_room && x.member_id === p_member && !x.removed_at); if (!m) return false; m.removed_at = new Date().toISOString(); return true; },
+  msgr2_search: ({ p_q }) => { const q = String(p_q ?? '').trim(); if (q.length < 2) return { rooms: [], messages: [], people: [], agents: [] }; return { rooms: state.tables.msgr2_rooms.filter((r) => (r.name ?? '').includes(q)).map((r) => ({ id: r.id, space_id: r.space_id, kind: r.kind, name: r.name })), messages: state.tables.msgr2_messages.filter((m) => m.kind !== 'system' && (m.body ?? '').includes(q)).sort((a, b) => b.id - a.id).map((m) => ({ id: m.id, room_id: m.room_id, author_kind: m.author_kind, author_user_id: m.author_user_id ?? null, author_agent_id: m.author_agent_id ?? null, created_at: m.created_at, snippet: m.body.slice(0, 200) })), people: [], agents: [] }; },
+  msgr2_report_message: ({ p_message }) => { state.reports = [...(state.reports ?? []), p_message]; return 'r1'; },
+  msgr2_space_create: ({ p_name }) => { const id = `7e100000-0000-4000-8000-${String(Date.now()).slice(-12)}`; state.tables.msgr2_spaces.push({ id, kind: 'team', name: p_name, owner_user_id: uid }); state.tables.msgr2_space_members.push({ space_id: id, user_id: uid, role: 'owner', display_name: '유건' }); fire(`v2:u:${uid}`, 'spaces', { space_id: id }); return id; },
+  msgr2_invite_create: ({ p_space, p_role, p_rooms = [], p_max_uses, p_expires_in_s }) => { const inv = { id: `c1000000-0000-4000-8000-${String(Date.now()).slice(-12)}`, code: 'ab'.repeat(24), role: p_role, room_ids: p_rooms, max_uses: p_max_uses, use_count: 0, expires_at: p_expires_in_s ? later(p_expires_in_s / 60) : null, created_by: uid, created_at: new Date().toISOString(), state: 'valid', space_id: p_space }; (state.invites ??= []).push(inv); return { invite_id: inv.id, code: inv.code, expires_at: inv.expires_at, existing: false }; },
+  msgr2_invites_list: ({ p_space }) => (state.invites ?? []).filter((i) => i.space_id === p_space),
+  msgr2_invite_revoke: ({ p_invite }) => { const i = (state.invites ?? []).find((x) => x.id === p_invite); if (!i || i.state === 'revoked') return false; i.state = 'revoked'; return true; },
+  msgr2_invite_preview: ({ p_code }) => { if (p_code === 'ff'.repeat(24)) return { state: 'expired', space_name: 'Beyond 팀' }; return { state: 'valid', space_id: T, space_name: 'Beyond 팀', role: 'member', inviter_name: '민지', expires_at: later(60 * 24 * 6), already_member: false, rooms: [{ id: GEN, name: '일반' }, { id: NEWS, name: '공지' }] }; },
+  msgr2_invite_accept: () => ({ space_id: T, role: 'member', rooms: [GEN], already_member: true }),
   // 그대로 쓰는 옛 RPC(설계 1-2절)
   msgr_my_friends: () => [{ user_id: mate, status: 'accepted', display_name: '민지', handle: 'minji' }],
   msgr_avatars: () => [], msgr_people_names: ({ ids }) => (ids ?? []).map((id) => ({ user_id: id, display_name: id === uid ? '유건' : '민지' })),
+  msgr_friend_request: () => 'sent', msgr_find_user: () => [{ user_id: '9b2d4f10-0000-4000-8000-000000000003', display_name: '지수', handle: 'jisu' }],
   msgr_my_hidden_users: () => [], msgr_my_blocked: () => [], my_plan: () => ({ plan: 'pro' }) /* 서버 my_plan은 {plan, …} 객체(src/entitlement.mjs effectivePlanOf) */, msgr_my_ai_consent: () => true,
 };
 
+function roomEvent(room) { const r = state.tables.msgr2_rooms.find((x) => x.id === room); setTimeout(() => fire(`v2:u:${uid}`, 'rooms', { space_id: r?.space_id ?? null, room_id: room }), 30); }
 function fire(topic, event, payload) { for (const c of state.topics.get(topic) ?? []) for (const h of c.handlers) if (h.kind === 'broadcast' && (h.filter?.event === '*' || h.filter?.event === event)) h.cb({ event, payload }); }
 export const supabase = {
   from: query,
@@ -150,7 +176,19 @@ state.devices = [
   { id: 'd0000000-0000-4000-8000-000000000004', kind: 'app', app: 'messenger', app_version: '0.1.5', registered_at: at(60000), created_at: at(90000), state: 'expired', is_current: false },
 ];
 state.failRegister = Number(new URLSearchParams(globalThis.location?.search ?? '').get('failreg') || 0);
+// 두 번째 계정(민지)이 나에게 새 1:1을 연다 — 서버처럼 방을 민지의 개인 공간(PM)에 두고, 나에게 rooms 사건과 글 방송을 보낸다(#1088 검수 1: 받는 쪽에 보여야 한다)
+state.friendOpens = (body = '안녕하세요, 민지예요') => {
+  const T_ = state.tables; const id = '7f300000-0000-4000-8000-000000000001';
+  if (!T_.msgr2_rooms.some((r) => r.id === id)) {
+    T_.msgr2_rooms.push({ id, space_id: PM, kind: 'direct', pair_key: `p:${uid}:${mate}`, name: '', memory: true, agent_policy: 'allowed', created_by: mate, created_at: new Date().toISOString(), archived_at: null });
+    for (const u of [mate, uid]) T_.msgr2_room_members.push({ room_id: id, member_kind: 'user', member_id: u, removed_at: null });
+  }
+  const m = { id: Math.max(0, ...T_.msgr2_messages.map((x) => x.id)) + 1, room_id: id, author_kind: 'user', author_user_id: mate, kind: 'text', body, meta: {}, mentions: [], created_at: new Date().toISOString() };
+  T_.msgr2_messages.push(m);
+  fire(`v2:u:${uid}`, 'rooms', { space_id: PM, room_id: id }); fire(`v2:u:${uid}`, 'msg', { message: m });
+  return id;
+};
 state.pause = (on) => fire(`v2:u:${uid}`, 'pause', { paused: !!on }); // 서버 중단 스위치 대역
 state.client = () => supabase; // 페이지 시험은 이 함수로 앱과 같은 대역을 쓴다(모듈을 다시 불러오면 다른 사본이 생긴다)
-state.ids = { uid, mate, T, P, GEN, PLAN, DM, A, B, C, W };
+state.ids = { uid, mate, T, P, PM, GEN, PLAN, DM, NEWS, A, B, C, W };
 export async function q(p) { const { data, error } = await p; if (error) throw new Error(error.message); return data; }

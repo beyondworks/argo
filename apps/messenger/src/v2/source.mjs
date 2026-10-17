@@ -5,8 +5,11 @@
 // 표마다 세 가지 중 하나다.
 //   MAP   옛 표 → v2 표(열 이름·값 바꿈). 글·방·방 멤버·공간 멤버·첨부·반응·읽음·방 설정·에이전트.
 //   KEEP  그대로 쓴다(설계 1-2절 — 사람 관계·기억·요금): 프로필·친구·친구 링크·차단·숨김·신고·회사 문서·일지·요금. 원래 클라이언트로 보낸다.
-//   NONE  v2에 대응 표가 없다(설계 D16 범위 밖이거나 U6d 전). 요청 없이 빈 결과, 쓰기는 'v2_unsupported' 오류. 화면은 그 단추를 v2 모드에서 숨긴다.
-// RPC도 같은 세 갈래다(RPCS). 실시간·보내기는 여기서 하지 않는다 — 연결 상태 기계(src/link/machine.mjs)가 맡는다(App.jsx v2 분기).
+//   NONE  v2에 대응 표가 없다(설계 D16 범위 밖). 요청 없이 빈 결과, 쓰기는 'v2_unsupported' 오류. 화면은 그 단추를 v2 모드에서 숨긴다.
+// 직접 쓰기가 막힌 표(읽음·방 멤버)·초대·조직 만들기는 U6d RPC로 보낸다(WRITES·InviteBuilder·OrgBuilder, U6c-2b).
+// RPC는 네 갈래다: 그대로(RPCS.keep·msgr2_*), U6d로 번역(legacy-rpc.mjs LEGACY_RPCS), 쓰기 없음(RPCS.write → v2_unsupported), 그 밖의 읽기는 빈 값. 실시간·보내기는 여기서 하지 않는다 — 연결 상태 기계(src/link/machine.mjs)가 맡는다(App.jsx v2 분기).
+
+import { LEGACY_RPCS, legacyInvite, inviteArgs } from './legacy-rpc.mjs';
 
 export const V2_UNSUPPORTED = 'v2_unsupported';
 /** v2 첨부 버킷(storage_path 앞 칸). */
@@ -53,11 +56,10 @@ const RPCS = {
   keep: new Set(['msgr_people_names', 'msgr_avatars', 'msgr_my_friends', 'msgr_my_hidden_users', 'msgr_hide_user', 'msgr_unhide_user',
     'msgr_my_blocked', 'msgr_friend_remove', 'msgr_friend_unblock', 'msgr_friend_decide', 'msgr_friend_link_mine', 'msgr_friend_link_revoke',
     'msgr_find_user', 'my_plan', 'msgr_my_ai_consent', 'msgr_set_ai_consent', 'msgr_chief_docs', 'msgr_doc_links_for', 'msgr_delete_me',
-    'msgr_service_pause']),
+    'msgr_service_pause', 'msgr_friend_request', 'msgr_friend_link_accept']), // 친구 요청·링크 수락: 옛 중단 장치가 v2 앱 기기의 msgr_friends 쓰기만 통과시킨다(U6d)
   // 읽기 RPC가 none일 때 돌려줄 빈 값(배열이 아닌 것만)
-  empty: { msgr_my_badge: 0, msgr_unread: [], msgr_my_ai_consent: null },
-  write: new Set(['msgr_friend_request', 'msgr_friend_link_accept', 'msgr_report_message', 'msgr_create_channel', 'msgr_join_channel', 'msgr_crew_join',
-    'msgr_crew_leave_channel', 'msgr_crew_join_decide', 'msgr_leave_dm', 'msgr_dm_personal', 'msgr_dm_personal_crew', 'msgr_dm_personal_group',
+  empty: { msgr_my_badge: 0, msgr_my_ai_consent: null },
+  write: new Set(['msgr_crew_join_decide', // 방·1:1·신고·초대·안 읽음·찾기는 U6d RPC로 바꿔 보낸다(legacy-rpc.mjs LEGACY_RPCS)
     'msgr_restore_org', 'msgr_join_by_domain', 'msgr_mute_crew', 'msgr_unmute_crew', 'msgr_set_member_profile', 'msgr_work_create', 'msgr_work_cancel',
     'msgr_work_resume', 'msgr_request_stop', 'msgr_bot_create', 'msgr_bot_rotate', 'msgr_bot_revoke', 'msgr_bot_rename', 'msgr_bot_set_role',
     'msgr_bot_set_mirror_all', 'msgr_crew_routine_edit', 'msgr_automation_set_enabled', 'msgr_automation_save_with_notifications',
@@ -71,12 +73,26 @@ async function waitReady(ctx) { try { await ctx.ready(); return null; } catch (e
 const unsupported = () => ({ data: null, error: { message: V2_UNSUPPORTED, code: V2_UNSUPPORTED }, status: 400, count: null });
 const invert = (m) => Object.fromEntries(Object.entries(m).map(([k, v]) => [v, k]));
 
-/** select 문자열 → 열 목록(최상위 쉼표, 공백 제거). 끼워 읽기(괄호)는 MAP 표에서 쓰지 않는다. */
-export function splitCols(sel) {
-  const s = String(sel ?? '*').trim();
-  if (s.includes('(')) throw new Error('v2 source: embedded select is not mapped');
-  return s.split(',').map((c) => c.trim()).filter(Boolean).map((c) => (c.includes(':') ? c.split(':')[0].trim() : c)); // 별칭(last_seen_at:msgr_crew_seen)은 앞 이름으로
+/** select 문자열 → 최상위 항목(쉼표, 괄호 안은 나누지 않음). */
+function topItems(sel) {
+  const out = []; let depth = 0; let cur = '';
+  for (const ch of String(sel ?? '*')) { if (ch === '(') depth++; if (ch === ')') depth--; if (ch === ',' && depth === 0) { out.push(cur.trim()); cur = ''; } else cur += ch; }
+  if (cur.trim()) out.push(cur.trim());
+  return out.filter(Boolean);
 }
+/** 끼워 읽기 항목 'msgr_channels(name, kind)'·'msgr_channels!inner(id, …)' → { table, inner, cols }. 아니면 null. */
+export function parseEmbed(item) {
+  const m = /^([a-z_]+)(!inner)?\((.*)\)$/s.exec(item);
+  return m ? { table: m[1], inner: !!m[2], cols: m[3].split(',').map((c) => c.trim()).filter(Boolean) } : null;
+}
+/** select 문자열 → 열 목록(최상위 쉼표, 공백 제거). 끼워 읽기는 방(msgr_channels)만 바꾼다(EMBEDS) — 그 밖의 끼워 읽기는 던진다. */
+export function splitCols(sel) {
+  return topItems(sel).filter((c) => { const e = parseEmbed(c); if (!e) return true; if (!EMBEDS[e.table]) throw new Error('v2 source: embedded select is not mapped'); return false; })
+    .map((c) => (c.includes(':') ? c.split(':')[0].trim() : c)); // 별칭(last_seen_at:msgr_crew_seen)은 앞 이름으로
+}
+const embedsOf = (sel) => topItems(sel).map(parseEmbed).filter(Boolean);
+// 끼워 읽기: 옛 이름 → v2 표(외래 키 room_id → msgr2_rooms). 결과 열 이름은 옛 이름 그대로(별칭), 행은 옛 모양으로 되돌린다.
+const EMBEDS = { msgr_channels: 'msgr2_rooms' };
 
 function mapValue(spec, oldCol, v) {
   if (spec.to === 'msgr2_attachments' && oldCol === 'storage_path') { // 옛 객체 이름 → v2 '버킷/객체'(조건·쓰기)
@@ -161,7 +177,7 @@ class MapBuilder extends Builder {
     let roomFilter = null;
     for (const [op, args] of this.ops) {
       if (op === 'eq' && args[0] === 'org_id' && spec.spaceVia) roomFilter = await this.ctx.roomsOf(args[1]);
-      else if (op === 'is' && args[0] === 'org_id' && args[1] === null && spec.spaceVia) roomFilter = await this.ctx.roomsOf(await this.ctx.personalSpace());
+      else if (op === 'is' && args[0] === 'org_id' && args[1] === null && spec.spaceVia) roomFilter = await this.ctx.personalRooms(); // 개인 방 = 개인 종류 공간의 내 방(친구 공간 포함, #1088 검수 1)
     }
     const nothing = () => (this.verb === 'select' ? NONE_RESULT(this.one) : unsupported());
     if (roomFilter && !roomFilter.length) return nothing();
@@ -175,7 +191,9 @@ class MapBuilder extends Builder {
     }
     let q = raw.from(spec.to);
     const v2Cols = want ? [...new Set(want.filter((c) => c === '*' || known(c)).map((c) => (c === '*' ? '*' : col(c))))] : null;
-    if (this.verb === 'select') q = q.select((v2Cols?.length ? v2Cols : ['id']).join(', '), this.selOpts);
+    const embeds = this.verb === 'select' ? embedsOf(this.cols) : [];
+    const embedSel = embeds.map((e) => { const rs = TABLES[e.table]; const cs = [...new Set(e.cols.map((c) => rs.cols?.[c] ?? c).filter((c) => rs.have.includes(c)))]; return `${e.table}:${EMBEDS[e.table]}${e.inner ? '!inner' : ''}(${(cs.length ? cs : ['id']).join(', ')})`; });
+    if (this.verb === 'select') q = q.select([...(v2Cols?.length ? v2Cols : ['id']), ...embedSel].join(', '), this.selOpts);
     else if (this.verb === 'insert') q = q.insert(Array.isArray(this.payload) ? this.payload.map((r) => toV2Row(this.table, r)) : toV2Row(this.table, this.payload), this.writeOpts);
     else if (this.verb === 'upsert') {
       const conflict = this.writeOpts?.onConflict ? this.writeOpts.onConflict.split(',').map((c) => col(c.trim())).join(',') : this.table === 'msgr_channel_prefs' ? 'room_id,user_id' : undefined; // 충돌 기준 열도 v2 이름으로
@@ -201,18 +219,107 @@ class MapBuilder extends Builder {
     if (this.one === 'maybe') q = q.maybeSingle(); else if (this.one === 'one') q = q.single();
     const r = await q;
     if (r?.error || r?.data == null) return r;
-    let rows = Array.isArray(r.data) ? r.data.map((x) => toLegacyRow(this.table, x, want)) : toLegacyRow(this.table, r.data, want);
-    // 내 참여 방(옛 '참여한 채널' 조회 — member_kind user + member_id, 방 조건 없음): v2 open 방은 공간 멤버가 참여 단계 없이 읽는다 → 읽을 수 있는 open 방을 더한다(조회 1회)
-    if (this.table === 'msgr_channel_members' && this.verb === 'select' && Array.isArray(rows) && !this.one) {
-      const who = this.ops.find(([op, a]) => op === 'eq' && a[0] === 'member_id')?.[1][1];
-      const userOnly = this.ops.some(([op, a]) => op === 'eq' && a[0] === 'member_kind' && a[1] === 'user');
-      const roomScoped = this.ops.some(([, a]) => a[0] === 'channel_id');
-      if (who && userOnly && !roomScoped) {
-        const open = await raw.from('msgr2_rooms').select('id').eq('kind', 'open').is('archived_at', null);
-        if (!open.error) { const have = new Set(rows.map((x) => x.channel_id)); for (const o of open.data ?? []) if (!have.has(o.id)) rows.push({ channel_id: o.id, member_kind: 'user', member_id: who }); }
-      }
-    }
+    const back = (x) => { const o = toLegacyRow(this.table, x, want); for (const e of embeds) if (o && e.table in o) o[e.table] = o[e.table] ? toLegacyRow(e.table, o[e.table], e.cols) : null; return o; }; // 끼워 읽은 방도 옛 모양(org_id·dm)
+    let rows = Array.isArray(r.data) ? r.data.map(back) : back(r.data);
+    // 내 참여 방은 멤버 행 그대로다(U6c-2b): open 방도 참여(msgr2_room_join)해야 목록·안 읽음(msgr2_unread)에 든다 — 참여 전 open 방은 옛 앱처럼 미리보기·둘러보기로 보인다
     return { ...r, data: rows };
+  }
+}
+
+const rowsOf = (payload) => (Array.isArray(payload) ? payload : payload ? [payload] : []);
+const eqOf = (ops, col) => ops.find(([op, a]) => op === 'eq' && a[0] === col)?.[1][1];
+const okRows = (b, data) => ({ data: b.one ? (data[0] ?? null) : b.writeSelect || b.verb === 'select' ? data : null, error: null, status: 200, count: data.length });
+async function meOf(raw) { const { data } = await Promise.resolve(raw.auth?.getSession?.()).catch(() => ({ data: null })) ?? {}; return data?.session?.user?.id ?? null; }
+
+/**
+ * 직접 쓰기가 막힌 v2 표(읽음·방 멤버 — U6d가 쓰기 권한을 거뒀다)와 RPC가 더 맞는 쓰기(방 설정)는 그 RPC로 보낸다(U6c-2b). 읽기는 MapBuilder 그대로.
+ *   msgr_reads 쓰기          → msgr2_mark_read(값이 커질 때만 서버가 쓴다)
+ *   msgr_channel_prefs 쓰기  → msgr2_room_pref_set(음소거·고정만 — 순서 열 pin_pos·sort_pos는 v2에 없어 요청 없이 버린다)
+ *   msgr_channel_members 넣기 → msgr2_room_members_add, 빼기 → 나면 msgr2_room_leave, 남·에이전트면 msgr2_room_member_remove
+ */
+const WRITES = {
+  msgr_reads: { async upsert(b) { for (const r of rowsOf(b.payload)) { const x = await b.ctx.rpc('msgr2_mark_read', { p_room: r.channel_id, p_last_id: r.last_read_id }); if (x.error) return x; } return okRows(b, []); } },
+  msgr_channel_prefs: { async upsert(b) {
+    for (const r of rowsOf(b.payload)) {
+      if (!('muted' in r) && !('pinned' in r)) continue;
+      const x = await b.ctx.rpc('msgr2_room_pref_set', { p_room: r.channel_id, p_muted: 'muted' in r ? !!r.muted : null, p_pinned: 'pinned' in r ? !!r.pinned : null });
+      if (x.error) return x;
+    }
+    return okRows(b, []);
+  } },
+  msgr_channel_members: {
+    async upsert(b) {
+      const by = new Map(); for (const r of rowsOf(b.payload)) { const g = by.get(r.channel_id) ?? { users: [], agents: [] }; (r.member_kind === 'crew' ? g.agents : g.users).push(r.member_id); by.set(r.channel_id, g); }
+      for (const [room, g] of by) { const x = await b.ctx.rpc('msgr2_room_members_add', { p_room: room, p_users: g.users, p_agents: g.agents }); if (x.error) return x; }
+      return okRows(b, rowsOf(b.payload).map((r) => ({ member_id: r.member_id })));
+    },
+    async delete(b) {
+      const room = eqOf(b.ops, 'channel_id'); const kind = eqOf(b.ops, 'member_kind'); const id = eqOf(b.ops, 'member_id');
+      if (!room || !kind || !id) return unsupported(); // 여러 행을 한 번에 지우는 옛 쓰기는 v2에 없다
+      const x = kind === 'user' && id === await meOf(b.ctx.raw) ? await b.ctx.rpc('msgr2_room_leave', { p_room: room })
+        : await b.ctx.rpc('msgr2_room_member_remove', { p_room: room, p_kind: kind === 'crew' ? 'agent' : 'user', p_member: id });
+      if (x.error) return x;
+      return okRows(b, x.data ? [{ member_id: id }] : []);
+    },
+  },
+};
+WRITES.msgr_reads.insert = WRITES.msgr_reads.upsert; WRITES.msgr_channel_prefs.insert = WRITES.msgr_channel_prefs.upsert; WRITES.msgr_channel_members.insert = WRITES.msgr_channel_members.upsert;
+
+class WriteMapBuilder extends MapBuilder {
+  async run() {
+    const w = WRITES[this.table]?.[this.verb];
+    if (!w) return super.run();
+    const nr = await waitReady(this.ctx); if (nr) return nr;
+    return w(this);
+  }
+}
+
+/** 초대(옛 msgr_invites — v2는 msgr2_space_invites, 쓰기·목록은 RPC만). 넣기 → msgr2_invite_create, 목록 → msgr2_invites_list(그 공간), 지우기 → msgr2_invite_revoke(소프트 취소). */
+class InviteBuilder extends Builder {
+  async run() {
+    const nr = await waitReady(this.ctx); if (nr) return nr;
+    const c = this.ctx;
+    if (this.verb === 'insert') {
+      const row = rowsOf(this.payload)[0];
+      if (!row || row.for_node) return unsupported(); // 노드 코드는 v2에 없다
+      const r = await c.rpc('msgr2_invite_create', inviteArgs(row));
+      if (r.error) return r;
+      if (!r.data?.invite_id) return { data: null, error: { message: 'msgr2_invite_unavailable' }, status: 400 };
+      c.inviteSpace.set(r.data.invite_id, row.org_id);
+      return okRows(this, [{ id: r.data.invite_id, code: r.data.code, expires_at: r.data.expires_at ?? null }]);
+    }
+    const id = eqOf(this.ops, 'id');
+    if (this.verb === 'delete') {
+      if (!id) return unsupported();
+      const r = await c.rpc('msgr2_invite_revoke', { p_invite: id });
+      return r.error ? r : okRows(this, r.data ? [{ id }] : []);
+    }
+    if (this.verb !== 'select') return unsupported();
+    const space = eqOf(this.ops, 'org_id') ?? (id ? c.inviteSpace.get(id) : null);
+    if (!space) return NONE_RESULT(this.one);
+    const l = await c.rpc('msgr2_invites_list', { p_space: space });
+    if (l.error) return l;
+    for (const i of l.data ?? []) c.inviteSpace.set(i.id, space);
+    let rows = (l.data ?? []).map(legacyInvite);
+    for (const [op, [col, v]] of this.ops) {
+      if (op === 'eq' && col !== 'org_id') rows = rows.filter((x) => x[col] === v);
+      else if (op === 'is') rows = rows.filter((x) => (x[col] ?? null) === v);
+    }
+    const ord = this.ops.find(([op]) => op === 'order'); if (ord) { const [col, o] = ord[1]; const dir = o?.ascending === false ? -1 : 1; rows.sort((a, b) => (a[col] < b[col] ? -dir : a[col] > b[col] ? dir : 0)); }
+    const lim = this.ops.find(([op]) => op === 'limit'); if (lim) rows = rows.slice(0, lim[1][0]);
+    return okRows(this, rows);
+  }
+}
+
+/** 조직 만들기(옛 msgr_orgs 넣기) → msgr2_space_create. 주소(slug)는 v2 규칙에 맞을 때만 넘긴다. 그 밖의 msgr_orgs 쓰기는 v2에 없다. */
+class OrgBuilder extends NoneBuilder {
+  async run() {
+    if (this.verb !== 'insert') return super.run();
+    const nr = await waitReady(this.ctx); if (nr) return nr;
+    const row = rowsOf(this.payload)[0] ?? {};
+    const slug = /^[a-z0-9][a-z0-9-]{1,39}$/.test(row.slug ?? '') ? row.slug : null;
+    const r = await this.ctx.rpc('msgr2_space_create', { p_name: row.name ?? '', p_slug: slug });
+    return r.error ? r : okRows(this, [{ id: r.data }]);
   }
 }
 
@@ -295,26 +402,40 @@ export function createV2Client(raw, opts = {}) {
       return roomCache.get(space);
     }),
   };
+  ctx.rpc = (name, args, o) => waitReady(ctx).then((nr) => nr ?? raw.rpc(name, args, o)); // v2 RPC는 기기 등록 뒤에
+  // 개인 방(옛 '개인 공간' = org_id null): 개인 종류 공간의 내 1:1·그룹방. 친구가 연 방은 친구의 개인 공간에 있어(U6d msgr2_dm_open·room_create p_space null, U8 백필)
+  // 내 개인 공간 id만으로는 못 찾는다 — msgr2_dm_list(그룹 포함)로 모은다(#1088 검수 1). 방 목록이 바뀌는 사건·쓰기 뒤에 다시 묻는다(forgetRooms).
+  let personalRoomsP = null;
+  ctx.personalRooms = () => (personalRoomsP ??= Promise.resolve(ctx.rpc('msgr2_dm_list', { p_include_groups: true }))
+    .then((r) => (r?.error ? (personalRoomsP = null, []) : (r?.data ?? []).map((x) => x.room_id)), () => (personalRoomsP = null, [])));
+  ctx.forgetPersonal = () => { personalRoomsP = null; };
+  ctx.inviteSpace = new Map(); // 초대 id → 공간(목록·만들기에서 기억 — 공간 없이 id만으로 읽거나 바꾸는 옛 호출용)
+  const legacy = { call: (n, a) => ctx.rpc(n, a), personal: () => ctx.personalSpace(), personalRooms: () => ctx.personalRooms(), roomsOf: (sp) => ctx.roomsOf(sp),
+    forget: (sp) => { if (sp) roomCache.delete(sp); ctx.forgetPersonal(); }, inviteSpace: ctx.inviteSpace };
   const client = Object.create(raw);
   client.from = (table) => {
     if (table === 'msgr_crews') return new CrewBuilder(ctx, table);
+    if (table === 'msgr_invites') return new InviteBuilder(ctx, table);
+    if (table === 'msgr_orgs') return new OrgBuilder(ctx, table);
+    if (WRITES[table]) return new WriteMapBuilder(ctx, table);
     if (TABLES[table]) return new MapBuilder(ctx, table);
     if (KEEP.has(table) || String(table).startsWith('msgr2_') || !String(table).startsWith('msgr')) return raw.from(table); // v2 표를 직접 읽는 곳(v2/data.mjs 등)은 그대로
     return new NoneBuilder(ctx, table);
   };
   client.rpc = (name, args, o) => {
-    if (String(name).startsWith('msgr2_')) return waitReady(ctx).then((nr) => nr ?? raw.rpc(name, args, o));
+    if (String(name).startsWith('msgr2_')) return ctx.rpc(name, args, o);
+    if (LEGACY_RPCS[name]) return Promise.resolve(LEGACY_RPCS[name](legacy, args ?? {})).catch((e) => ({ data: null, error: { message: String(e?.message ?? e) }, status: 0 }));
     if (RPCS.keep.has(name)) return raw.rpc(name, args, o);
     if (RPCS.write.has(name)) return Promise.resolve(unsupported());
     return Promise.resolve({ data: name in RPCS.empty ? RPCS.empty[name] : [], error: null, status: 200 });
   };
-  client.forgetRooms = (space) => { if (space) roomCache.delete(space); else roomCache.clear(); }; // 방 목록이 바뀌면(새 방) 다시 묻는다
+  client.forgetRooms = (space) => { if (space) roomCache.delete(space); else roomCache.clear(); ctx.forgetPersonal(); }; // 방 목록이 바뀌면(새 방) 다시 묻는다
   client.v2 = true;
   return client;
 }
 
 /** 이 이름의 RPC·표가 v2 모드에서 실제로 서버에 가는가(시험·숨김 표용). */
 export function v2Route(kind, name) {
-  if (kind === 'table') return name === 'msgr_crews' || TABLES[name] ? 'map' : KEEP.has(name) || String(name).startsWith('msgr2_') || !String(name).startsWith('msgr') ? 'keep' : 'none';
-  return RPCS.keep.has(name) || String(name).startsWith('msgr2_') ? 'keep' : RPCS.write.has(name) ? 'unsupported' : 'none';
+  if (kind === 'table') return name === 'msgr_crews' || name === 'msgr_invites' || TABLES[name] ? 'map' : KEEP.has(name) || String(name).startsWith('msgr2_') || !String(name).startsWith('msgr') ? 'keep' : 'none';
+  return RPCS.keep.has(name) || String(name).startsWith('msgr2_') ? 'keep' : LEGACY_RPCS[name] ? 'map' : RPCS.write.has(name) ? 'unsupported' : 'none';
 }

@@ -89,15 +89,12 @@ test('방 멤버: 빠진 멤버는 없는 것으로(removed_at is null), crew �
   assert.deepEqual(r.data, [{ channel_id: ROOM, member_kind: 'crew', member_id: AG }]);
 });
 
-test('내 참여 방(방 조건 없는 내 멤버십 조회)에는 읽을 수 있는 open 방을 더한다(v2 open 방은 참여 단계가 없다), 방 조건이 있으면 더하지 않는다', async () => {
+test('내 참여 방(방 조건 없는 내 멤버십 조회)은 멤버 행 그대로 — open 방도 참여해야 든다(U6c-2b msgr2_room_join, 참여 전은 미리보기·둘러보기), 조회 1건', async () => {
   const raw = fakeRaw({ msgr2_room_members: [{ room_id: ROOM, member_kind: 'user', member_id: 'me' }], msgr2_rooms: [{ id: ROOM }, { id: 'open-1' }] });
   const c = createV2Client(raw);
   const r = await c.from('msgr_channel_members').select('channel_id').eq('member_kind', 'user').eq('member_id', 'me');
-  assert.deepEqual(r.data.map((x) => x.channel_id), [ROOM, 'open-1']);
-  assert.deepEqual(raw.log[1].ops, [['select', 'id'], ['eq', 'kind', 'open'], ['is', 'archived_at', null]]);
-  const n = raw.log.length;
-  await c.from('msgr_channel_members').select('channel_id, member_kind, member_id').in('channel_id', [ROOM]);
-  assert.equal(raw.log.length, n + 1, '방 조건이 있는 조회는 open 방을 묻지 않는다');
+  assert.deepEqual(r.data.map((x) => x.channel_id), [ROOM]);
+  assert.deepEqual(raw.log.map((e) => e.table), ['msgr2_room_members'], 'open 방을 따로 묻지 않는다');
 });
 
 test('에이전트: 조직 조건 = 그 팀 공간의 자리(allow 붙임), 파견 전(available) = 자리가 없는 내 에이전트, 자리도 파견 전도 안 물으면 에이전트 조회 없음', async () => {
@@ -118,14 +115,14 @@ test('에이전트: 조직 조건 = 그 팀 공간의 자리(allow 붙임), 파�
   assert.equal((await createV2Client(fakeRaw()).from('msgr_crews').update({ bio: 'x' }).eq('id', AG)).error.code, V2_UNSUPPORTED, '에이전트 고치기는 v2 모드에서 아직 없다');
 });
 
-test('쓰기: 반응·방 설정은 v2 표로(없는 열은 버림), 대응 표가 없으면 요청 없이 v2_unsupported', async () => {
+test('쓰기: 반응은 v2 표로(없는 열은 버림), 방 설정·방 멤버는 U6d RPC로(U6c-2b), 대응 표가 없으면 요청 없이 v2_unsupported', async () => {
   const raw = fakeRaw(); const c = createV2Client(raw);
   await c.from('msgr_reactions').insert({ message_id: 5, user_id: 'u', emoji: '👍' });
   assert.deepEqual(raw.log[0], { kind: 'from', table: 'msgr2_reactions', ops: [['insert', { message_id: 5, user_id: 'u', emoji: '👍' }, undefined]] });
-  await c.from('msgr_channel_prefs').upsert([{ channel_id: ROOM, user_id: 'u', muted: true, pin_pos: 3, sort_pos: 1 }]);
-  assert.deepEqual(raw.log[1].ops[0], ['upsert', [{ room_id: ROOM, user_id: 'u', muted: true }], { onConflict: 'room_id,user_id' }]);
-  await c.from('msgr_channel_members').upsert([{ channel_id: ROOM, member_kind: 'crew', member_id: AG }], { onConflict: 'channel_id,member_kind,member_id' });
-  assert.deepEqual(raw.log[2].ops[0], ['upsert', [{ room_id: ROOM, member_kind: 'agent', member_id: AG }], { onConflict: 'room_id,member_kind,member_id' }], '충돌 기준 열도 v2 이름으로');
+  await c.from('msgr_channel_prefs').upsert([{ channel_id: ROOM, user_id: 'u', muted: true, pin_pos: 3, sort_pos: 1 }, { channel_id: 'r2', user_id: 'u', sort_pos: 4 }]);
+  assert.deepEqual(raw.log.slice(1).map((e) => [e.name, e.args]), [['msgr2_room_pref_set', { p_room: ROOM, p_muted: true, p_pinned: null }]], '순서 열만 있는 행은 요청 없이 버린다');
+  await c.from('msgr_channel_members').upsert([{ channel_id: ROOM, member_kind: 'crew', member_id: AG }, { channel_id: ROOM, member_kind: 'user', member_id: 'x' }], { onConflict: 'channel_id,member_kind,member_id' });
+  assert.deepEqual([raw.log.at(-1).name, raw.log.at(-1).args], ['msgr2_room_members_add', { p_room: ROOM, p_users: ['x'], p_agents: [AG] }]);
   const n = raw.log.length;
   assert.equal((await c.from('msgr_channel_groups').insert({ name: 'x' })).error.code, V2_UNSUPPORTED);
   assert.deepEqual((await c.from('msgr_bots').select('crew_id').eq('org_id', SPACE)).data, []);
@@ -141,15 +138,15 @@ test('그대로 쓰는 표(설계 1-2절)는 원래 클라이언트로, auth·st
   assert.equal(c.auth.tag, 'auth'); assert.equal(c.storage.tag, 'storage');
 });
 
-test('RPC: 그대로 쓰는 것·msgr2_*는 원래대로, 옛 방·조직 쓰기는 요청 없이 v2_unsupported, 그 밖의 옛 읽기는 요청 없이 빈 값', async () => {
+test('RPC: 그대로 쓰는 것·msgr2_*·친구 요청은 원래대로, 바꾸지 않은 옛 쓰기는 요청 없이 v2_unsupported, 그 밖의 옛 읽기는 요청 없이 빈 값', async () => {
   const raw = fakeRaw(); const c = createV2Client(raw);
-  await c.rpc('msgr_my_friends'); await c.rpc('msgr2_catch_up', { p_since_id: 0 }); await c.rpc('msgr_avatars', { ids: [] });
-  assert.deepEqual(raw.log.map((e) => e.name), ['msgr_my_friends', 'msgr2_catch_up', 'msgr_avatars']);
-  for (const w of ['msgr_friend_request', 'msgr_friend_link_accept', 'msgr_report_message', 'msgr_create_channel', 'msgr_crew_join', 'msgr_work_create']) assert.equal((await c.rpc(w, {})).error.code, V2_UNSUPPORTED, w);
+  await c.rpc('msgr_my_friends'); await c.rpc('msgr2_catch_up', { p_since_id: 0 }); await c.rpc('msgr_avatars', { ids: [] }); await c.rpc('msgr_friend_request', { target: 'x' }); await c.rpc('msgr_friend_link_accept', { code: 'c' });
+  assert.deepEqual(raw.log.map((e) => e.name), ['msgr_my_friends', 'msgr2_catch_up', 'msgr_avatars', 'msgr_friend_request', 'msgr_friend_link_accept'], '친구 쓰기는 옛 RPC 그대로(옛 중단 장치가 v2 앱 기기만 통과 — U6d)');
+  for (const w of ['msgr_crew_join_decide', 'msgr_work_create', 'msgr_mute_crew']) assert.equal((await c.rpc(w, {})).error.code, V2_UNSUPPORTED, w);
   assert.deepEqual((await c.rpc('msgr_dm_personal_list', {})).data, []);
   assert.equal((await c.rpc('msgr_my_badge')).data, 0);
-  assert.equal(raw.log.length, 3, '옛 RPC는 요청 0');
-  assert.equal(v2Route('rpc', 'msgr_unread'), 'none'); assert.equal(v2Route('table', 'msgr_channels'), 'map'); assert.equal(v2Route('table', 'msgr_profiles'), 'keep'); assert.equal(v2Route('table', 'msgr_bots'), 'none');
+  assert.equal(raw.log.length, 5, '바꾸지 않은 옛 RPC는 요청 0');
+  assert.equal(v2Route('rpc', 'msgr_unread'), 'map'); assert.equal(v2Route('rpc', 'msgr_mute_crew'), 'unsupported'); assert.equal(v2Route('table', 'msgr_channels'), 'map'); assert.equal(v2Route('table', 'msgr_profiles'), 'keep'); assert.equal(v2Route('table', 'msgr_bots'), 'none');
 });
 
 test('행 바꾸기 왕복: 옛 → v2 → 옛이 같은 값(정해진 열)', () => {
