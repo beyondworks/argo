@@ -234,10 +234,10 @@ export function V2App({ session, supabase, t, lang, appVersion }) {
         {roomId && (
           <div className="msgr-dock"><div>
             {sendErr && <div className="msgr-delivery" role="alert"><span>{t(sendErr.code === 'invalid_attachment' ? 'v2.compose.badFile' : 'v2.compose.failed')}</span><button type="button" className="btn sm" onClick={() => send(sendErr)}>{t('v2.compose.resend')}</button></div>}
-            <form className="msgr-v2-compose" onSubmit={(e) => { e.preventDefault(); void send(); }}>
-              <textarea className="msgr-input" rows={1} value={draft} placeholder={t('v2.compose.placeholder')} onChange={(e) => setDraft(e.target.value)}
+            <form className="msgr-composer" onSubmit={(e) => { e.preventDefault(); void send(); }}>
+              <textarea rows={1} maxLength={20000} value={draft} placeholder={t('v2.compose.placeholder')} onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); } }} aria-label={t('v2.compose.placeholder')} />
-              <button type="submit" className="btn btn-primary" disabled={!draft.trim()} aria-label={t('v2.compose.send')}><I name="up" size={16} /></button>
+              <div className="msgr-tools"><button type="submit" className="send" disabled={!draft.trim()} aria-label={t('v2.compose.send')} title={t('v2.compose.send')}><I name="up" size={16} /></button></div>
             </form>
           </div></div>
         )}
