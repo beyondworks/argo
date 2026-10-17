@@ -67,11 +67,13 @@ export function belowMin(version, min) {
 
 // 약속 밖이지만 앱이 따로 다루는 서버 표지. 업데이트 요구는 등록 RPC의 거부(설계 D10), 기기 무효는 U1 자리 함수의 오류 이름이다.
 const UPDATE_MARKS = ['app_version_unsupported', 'app_update_required', 'min_app_version'];
+// U3 등록이 "다시 로그인"을 뜻하는 거부(…_msgr2_device.sql 124·161·182·183줄) — 재시도로 풀리지 않는다
+const LOGIN_MARKS = ['device_login_required', 'msgr2_session_required', 'msgr2_device_kind_locked'];
 const CONTRACT_CODES = Object.keys(REJECT_CODES).sort((a, b) => b.length - a.length);
 
 /**
  * supabase-js 오류({ data, error, status } 또는 Storage 오류)를 거부 코드로 읽는다.
- * 반환: null(성공) | 'duplicate'(같은 client_msg_id·같은 파일이 이미 있음 = 성공) | 'update_required' | REJECT_CODES 키 | 'rejected'(모르는 거부 — 다시 보내지 않는다).
+ * 반환: null(성공) | 'duplicate'(같은 client_msg_id·같은 파일이 이미 있음 = 성공) | 'update_required' | 'login_required' | 'invalid'(값 모양) | REJECT_CODES 키 | 'rejected'(모르는 거부 — 다시 보내지 않는다).
  */
 export function rejectCodeOf(error, status, { storage = false } = {}) {
   if (!error) return null;
@@ -81,6 +83,8 @@ export function rejectCodeOf(error, status, { storage = false } = {}) {
   // Storage는 같은 경로가 있으면 409. REST의 409는 외래 키 위반(23503)도 포함하므로 Storage일 때만 중복으로 읽는다
   if (storage && (st === 409 || /already exists|duplicate/i.test(String(error.message ?? '')))) return 'duplicate';
   if (UPDATE_MARKS.some((m) => text.includes(m))) return 'update_required';
+  if (LOGIN_MARKS.some((m) => text.includes(m))) return 'login_required';
+  if (text.includes('msgr2_device_invalid') && String(error.code) === '22023') return 'invalid'; // U3 등록의 값 모양 오류 — 기기 무효가 아니다
   for (const c of CONTRACT_CODES) if (text.includes(c)) return c;
   if (text.includes('msgr2_device_invalid')) return 'device_unknown'; // U1 자리 함수 — 폐기·만료·모름을 가르지 않는다. 다시 등록해 보고, 폐기면 등록이 device_revoked로 답한다
   if (st === 429) return 'rate_limited';

@@ -35,6 +35,13 @@ test('서버 오류 → 거부 코드', () => {
   assert.equal(rejectCodeOf({ message: 'TypeError: Failed to fetch', code: '' }, 0), 'internal');
   assert.equal(rejectCodeOf({ name: 'StorageUnknownError', message: 'fetch failed' }, undefined, { storage: true }), 'internal');
   assert.equal(rejectCodeOf({ code: '42501', message: 'new row violates row-level security policy' }, 403), 'rejected', '모르는 거부는 다시 보내지 않는다');
+  // U3 등록 거부(…_msgr2_device.sql): 다시 로그인 3종, 값 모양 22023은 기기 무효와 가른다
+  assert.equal(rejectCodeOf({ code: '42501', message: 'device_login_required' }, 403), 'login_required');
+  assert.equal(rejectCodeOf({ code: '42501', message: 'msgr2_session_required' }, 403), 'login_required');
+  assert.equal(rejectCodeOf({ code: '42501', message: 'msgr2_device_kind_locked' }, 403), 'login_required');
+  assert.equal(rejectCodeOf({ code: '22023', message: 'msgr2_device_invalid' }, 400), 'invalid');
+  assert.equal(rejectCodeOf({ code: '42501', message: 'device_expired' }, 403), 'device_expired');
+  assert.equal(rejectCodeOf({ code: 'PGRST301', message: 'JWT expired' }, 401), 'rejected', '만료 토큰은 기계가 간격 두고 다시 붙는다(코드는 rejected)');
 });
 
 test('최소 버전: 아래면 참, 같거나 위·값 없음·앱 버전 모름은 거짓', () => {

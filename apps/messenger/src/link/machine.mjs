@@ -8,7 +8,6 @@
 //   update_required: 최소 버전 미만 — 등록하지 않는다. signed_out: 기기 폐기 — 소켓을 닫고 그 뒤 요청 0.
 // 유휴 요청 0: ready에서는 타이머가 하나도 없다(주기 조회·심박·폴링 없음). 서버 커서 행을 쓰지 않고, 마지막으로 받은 글 id는 로컬에 둔다.
 // 화면 문자열은 없다 — 상태 코드와 사건만 낸다(문구는 U6이 i18n 사전으로 그린다).
-import { SUPPORTED } from '../../../../packages/agent-link/contract/v1.mjs';
 import {
   NAMES, USER_EVENTS, STATES, TERMINAL_STATES, RECONNECT, SEND_RETRY, REGISTER_EVERY_MS, SEEN_CAP,
   backoffDelay, belowMin, rejectCodeOf, retryable, normalizeCatchUp, deviceIdOf, pausedOf, uploadPath,
@@ -128,6 +127,9 @@ export function createLinkMachine(opts) {
   function handleCode(code, where) {
     if (code === 'update_required' || (where === 'register' && code === 'link_version_unsupported')) { toTerminal(STATES.updateRequired, code); return true; }
     if (code === 'device_revoked') { signOut(code); return true; }
+    // 다시 로그인해야 하는 거부(U3 등록): 새 기기 행인데 앱 세션이 10분보다 오래됨·JWT에 session_id 없음·종류 잠금 — 끝 상태, 재시도 0
+    if (code === 'login_required') { signOut('login_required'); return true; }
+    if (where === 'register' && (code === 'invalid' || code === 'device_unknown')) { giveUp('invalid'); return true; } // 값 모양 오류(22023) — 로그아웃하지 않는다
     if (code === 'device_unknown' || code === 'device_expired') {
       if (where === 'register') { signOut(code); return true; }
       deviceId = null; registeredAt = 0; // 한 번 다시 등록한다(폐기된 기기면 등록이 device_revoked로 답한다)
@@ -175,8 +177,7 @@ export function createLinkMachine(opts) {
       if (gen !== epoch || terminal()) return;
       if (r.code) {
         if (handleCode(r.code, 'register')) return;
-        if (retryable(r.code)) drop(r.code); else giveUp(r.code);
-        return;
+        drop(r.code); return; // 만료 토큰 401 같은 일시 거부도 간격·상한(8회) 안에서 다시 붙는다(따라잡기와 같은 규칙)
       }
       deviceId = deviceIdOf(r.data) ?? deviceId; registeredAt = clock.now();
     }
@@ -185,8 +186,8 @@ export function createLinkMachine(opts) {
   }
 
   function registerArgs() {
-    // 설계 5절 msgr2_devices 열 — U3의 인자 이름과 맞춘다(PR 본문 "접점")
-    return { p_kind: 'app', p_app: 'messenger', p_app_version: appVersion, p_link_min: SUPPORTED.min, p_link_max: SUPPORTED.max, p_runners: [], p_push_token: pushToken };
+    // U3 msgr2_device_register(…_msgr2_device.sql) 인자. 앱(app)은 약속 범위를 싣지 않는다 — 실으면 msgr2_device_invalid(22023)로 거부된다
+    return { p_kind: 'app', p_app: 'messenger', p_app_version: appVersion, p_link_min: null, p_link_max: null, p_runners: [], p_push_token: pushToken };
   }
 
   function openUser() {

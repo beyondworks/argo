@@ -39,10 +39,11 @@ function memStorage() { const m = new Map(); return { getItem: (k) => (m.has(k) 
 
 // ── 가짜 Supabase ────────────────────────────────────────────────────────────
 // 요청(REST·RPC·Storage)은 전부 log에 남는다. Realtime 가입·방송은 DB 요청이 아니라 따로 센다(joins).
-function fakeSupabase({ minVersion = null, paused = false } = {}) {
+function fakeSupabase({ minVersion = null, paused = false, session = { id: 'sess-1', ageMin: 0 } } = {}) {
   const s = {
+    session, // 지금 JWT의 session_id와 로그인 뒤 지난 분(U3 새 app 행은 10분 안 세션만)
     log: [], joins: [], channels: new Set(), net: { down: false },
-    db: { messages: [], attachments: [], files: new Map(), devices: new Map(), nextId: 100, minVersion, paused, revokedSession: false },
+    db: { messages: [], attachments: [], files: new Map(), devices: new Map(), bySession: new Map(), nextId: 100, minVersion, paused, revokedSession: false },
     fail: {}, // 이름 → [{ error, status, commit? }] 차례로 꺼내 쓴다
     hooks: {}, // 이름 → 응답 만들기 직전에 부른다
   };
@@ -67,11 +68,26 @@ function fakeSupabase({ minVersion = null, paused = false } = {}) {
   const rpcs = {
     argo_min_app_version: () => ({ data: s.db.minVersion, error: null, status: 200 }),
     msgr2_service_pause: () => ({ data: s.db.paused ? { paused: true, since: '2026-10-17T15:00:00+09:00' } : null, error: null, status: 200 }),
+    // U3 …_msgr2_device.sql msgr2_device_register의 거부 순서를 흉내 낸다(124~185줄). PostgREST 상태: 42501 → 403, 22023·P0001 → 400
     msgr2_device_register: (args) => {
-      if (s.db.revokedSession) return { data: null, error: { code: 'P0001', message: 'device_revoked' }, status: 400 };
-      if (s.db.minVersion && args.p_app_version < s.db.minVersion) return { data: null, error: { code: 'P0001', message: 'app_version_unsupported' }, status: 400 };
-      const id = `dev-${s.db.devices.size + 1}`; s.db.devices.set(id, args);
-      return { data: { device_id: id }, error: null, status: 200 };
+      const err = (code, message) => ({ data: null, error: { code, message, details: null, hint: null }, status: code === '42501' ? 403 : 400 });
+      if (!s.session?.id) return err('42501', 'msgr2_session_required');
+      const runners = args.p_runners ?? [];
+      if (!['app', 'runner', 'resident'].includes(args.p_kind) || args.p_app !== (args.p_kind === 'app' ? 'messenger' : 'desktop')
+        || !/^\d+(\.\d+)*/.test(String(args.p_app_version ?? '')) || (args.p_kind === 'app' && runners.length)) return err('22023', 'msgr2_device_invalid');
+      if (args.p_kind === 'app' && (args.p_link_min != null || args.p_link_max != null)) return err('22023', 'msgr2_device_invalid');
+      if (s.db.minVersion && args.p_app_version < s.db.minVersion) return err('P0001', 'app_version_unsupported');
+      let d = s.db.bySession.get(s.session.id);
+      if (!d) {
+        if (args.p_kind === 'app' && s.session.ageMin > 10) return err('42501', 'device_login_required');
+        if (s.db.revokedSession) return err('42501', 'device_revoked');
+        d = { id: `dev-${s.db.devices.size + 1}`, kind: args.p_kind, app: args.p_app };
+        s.db.devices.set(d.id, args); s.db.bySession.set(s.session.id, d);
+        return { data: { device_id: d.id, kind: d.kind, wrote: true }, error: null, status: 200 };
+      }
+      if (d.kind !== args.p_kind || d.app !== args.p_app) return err('42501', 'msgr2_device_kind_locked');
+      if (s.db.revokedSession) return err('42501', 'device_revoked');
+      return { data: { device_id: d.id, kind: d.kind, wrote: false }, error: null, status: 200 };
     },
     msgr2_catch_up: ({ p_since_id }) => {
       if (s.db.paused) return { data: { rooms: [], paused: true }, error: null, status: 200 };
@@ -185,7 +201,7 @@ test('정상 시작: 최소 버전 → 중단 확인 → 등록 → u:<uid> 1개
   assert.deepEqual(states, ['connecting', 'registering', 'subscribing', 'catching_up', 'ready']);
   const reg = fake.log[2].args;
   assert.equal(reg.p_kind, 'app'); assert.equal(reg.p_app, 'messenger'); assert.equal(reg.p_app_version, '0.2.0');
-  assert.equal(reg.p_link_min, 1); assert.equal(reg.p_link_max, 1);
+  assert.equal(reg.p_link_min, null, '앱은 약속 범위를 싣지 않는다(U3: 실으면 msgr2_device_invalid)'); assert.equal(reg.p_link_max, null);
 });
 
 test('유휴 10분: 요청 0·타이머 0, 방송으로 온 글은 요청 없이 받는다', async () => {
@@ -606,4 +622,53 @@ test('검수 3: 소켓이 끊긴 사이 풀림 방송을 놓쳐도, 다시 연 �
   assert.equal(m.getState(), 'ready');
   assert.deepEqual(fake.log.slice(n).map((l) => l.name), ['msgr2_service_pause', 'msgr2_catch_up']);
   assert.equal(clock.pending(), 0);
+});
+
+// ── 검수 2(2026-10-17 15:58) 반영 — U3 등록 거부 규칙 ─────────────────────────────
+test('검수2-1: 등록 값 모양 오류(22023 msgr2_device_invalid)는 로그아웃이 아니라 멈춤(gave_up:invalid), 재시도 0', async () => {
+  const fake = fakeSupabase();
+  fake.fail.msgr2_device_register = [{ error: { code: '22023', message: 'msgr2_device_invalid' }, status: 400 }];
+  const { m, clock } = setup({ fake });
+  await m.start(); await clock.advance(10 * MIN);
+  assert.equal(m.getState(), 'disconnected'); assert.equal(m.getSnapshot().reason, 'gave_up:invalid');
+  assert.equal(fake.count('msgr2_device_register'), 1); assert.equal(clock.pending(), 0);
+  // 보내기·조회 경로의 U1 자리 함수 오류(42501 msgr2_device_invalid)는 그대로 "다시 등록" 갈래
+  const b = setup(); await b.m.start(); await flush();
+  b.fake.fail['insert:msgr2_messages'] = [{ error: { code: '42501', message: 'msgr2_device_invalid' }, status: 403 }];
+  assert.equal((await b.m.send({ roomId: ROOM_A, body: 'x' })).code, 'device_unknown');
+  await b.clock.advance(RECONNECT.baseMs);
+  assert.equal(b.m.getState(), 'ready'); assert.equal(b.fake.count('msgr2_device_register'), 2);
+});
+
+test('검수2-2: 다시 로그인해야 하는 등록 거부 3종 → signed_out(login_required), 소켓·재시도 0', async () => {
+  const cases = [
+    ['10분 지난 세션의 새 기기(device_login_required)', fakeSupabase({ session: { id: 'sess-old', ageMin: 30 } })],
+    ['JWT에 session_id 없음(msgr2_session_required)', fakeSupabase({ session: { id: null, ageMin: 0 } })],
+    ['같은 세션이 다른 종류로 등록됨(msgr2_device_kind_locked)', (() => { const f = fakeSupabase(); f.db.bySession.set('sess-1', { id: 'dev-r', kind: 'runner', app: 'desktop' }); return f; })()],
+  ];
+  for (const [label, fake] of cases) {
+    const { m, clock } = setup({ fake });
+    await m.start(); await clock.advance(10 * MIN); await m.setForeground(false); await m.setForeground(true); m.nudge(); await flush();
+    assert.equal(m.getState(), 'signed_out', label); assert.equal(m.getSnapshot().reason, 'login_required', label);
+    assert.equal(fake.count('msgr2_device_register'), 1, `${label}: 재시도 0`);
+    assert.deepEqual(fake.joins, [], `${label}: 소켓 0`); assert.equal(clock.pending(), 0);
+    assert.equal((await m.send({ roomId: ROOM_A, body: 'x' })).ok, false);
+    assert.equal(fake.log.filter((l) => l.kind === 'rest').length, 0);
+  }
+  const fresh = setup({ fake: fakeSupabase({ session: { id: 'sess-new', ageMin: 5 } }) });
+  await fresh.m.start(); await flush();
+  assert.equal(fresh.m.getState(), 'ready', '10분 안 세션은 새 기기로 등록된다');
+});
+
+test('검수2-3: 등록의 만료 토큰 401(PGRST301)은 간격·상한 안에서 다시 붙는다', async () => {
+  const fake = fakeSupabase();
+  fake.fail.msgr2_device_register = [1, 2].map(() => ({ error: { code: 'PGRST301', message: 'JWT expired' }, status: 401 }));
+  const { m, clock } = setup({ fake });
+  await m.start(); await flush();
+  assert.equal(m.getState(), 'disconnected');
+  await clock.advance(10 * MIN);
+  assert.equal(m.getState(), 'ready'); assert.equal(fake.count('msgr2_device_register'), 3); assert.equal(clock.pending(), 0);
+  const c = fakeSupabase(); c.fail.msgr2_device_register = Array.from({ length: 50 }, () => ({ error: { code: 'PGRST301', message: 'JWT expired' }, status: 401 }));
+  const x = setup({ fake: c }); await x.m.start(); await x.clock.advance(30 * MIN);
+  assert.ok(c.count('msgr2_device_register') <= 1 + RECONNECT.maxAttempts); assert.match(x.m.getSnapshot().reason, /^gave_up/);
 });
