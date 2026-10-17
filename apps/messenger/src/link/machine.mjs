@@ -9,11 +9,13 @@
 // 유휴 요청 0: ready에서는 타이머가 하나도 없다(주기 조회·심박·폴링 없음). 서버 커서 행을 쓰지 않고, 따라잡기 기준(since)은 로컬에 둔다.
 // 따라잡기 기준(U6a): 서버 next_since(60초보다 오래된 글 중 최대 id)를 그대로 쓴다 — 커밋이 늦은 작은 id의 글을 빠뜨리지 않게. 최근 글은 다시 오고 seen으로 거른다.
 //   옛 서버(next_since 없음)면 받은 최대 id. 방송으로 받은 글은 기준을 올리지 않는다(그보다 작은 id가 아직 커밋 전일 수 있다).
-// 큰 팀 open 방(U2b): 글이 v2:s:<공간>으로 한 번만 온다 — setSpaces(공간 id들)로 받은 공간을 ready에서 구독한다(끊김·뒤로 감에 닫고 다시 붙을 때 다시 가입).
+// 큰 팀 open 방(U2b): 글이 v2:s:<공간>으로 한 번만 온다 — setSpaces(공간 id들)로 받은 공간을 u:와 함께 연다. 따라잡기는 u:와 s:가 모두 붙은 뒤 1회
+//   (따라잡기 조회 ~ s: 가입 사이에 온 글을 놓치지 않게, #1077 검수 1). 가입이 거부된 공간(팀에서 빠짐 등)은 닫고 다음 연결·setSpaces까지 다시 붙지 않는다
+//   (Realtime의 끝없는 재가입 = 유휴 요청을 막는다, 검수 2). ready에서 setSpaces로 새로 붙은 공간은 붙은 뒤 따라잡기 1회.
 // 화면 문자열은 없다 — 상태 코드와 사건만 낸다(문구는 U6이 i18n 사전으로 그린다).
 import {
   NAMES, USER_EVENTS, STATES, TERMINAL_STATES, RECONNECT, SEND_RETRY, REGISTER_EVERY_MS, SEEN_CAP,
-  backoffDelay, belowMin, rejectCodeOf, retryable, normalizeCatchUp, deviceIdOf, pausedOf,
+  backoffDelay, belowMin, rejectCodeOf, retryable, normalizeCatchUp, deviceIdOf, pausedOf, attachmentProblem,
 } from './policy.mjs';
 
 export const LAST_ID_KEY = (uid) => `argo-msgr2-last-id:${uid}`;
@@ -48,6 +50,7 @@ export function createLinkMachine(opts) {
   let lastId = readLastId(); // 받은 최대 글 id(화면·배지용)
   let since = lastId; // 따라잡기 기준(위 머리말) — 로컬에 저장하는 값
   let spaces = []; let spaceChans = []; // v2:s:<공간> 구독
+  const spacePending = new Set(); let catchWhenSettled = false; // u:가 붙었고 s: 가입을 기다리는 중
   const gaps = new Set(); // 방송으로 id만 받고 아직 못 읽은 글 — 따라잡기 since를 그 앞으로 둔다(검수 2: 뒤 글이 lastId를 넘겨 빠지는 것)
   const seen = new Set();
   const unread = new Map(); let activeRoom = null;
@@ -110,11 +113,11 @@ export function createLinkMachine(opts) {
     closeSpaces();
   }
   function closeSpaces() {
-    for (const ch of spaceChans) { try { client.removeChannel(ch); } catch { /* 이미 닫힘 */ } }
-    spaceChans = [];
+    const chans = spaceChans; spaceChans = []; spacePending.clear(); // 먼저 비운다 — removeChannel이 부르는 CLOSED 콜백이 우리 채널로 보지 않게
+    for (const ch of chans) { try { client.removeChannel(ch); } catch { /* 이미 닫힘 */ } }
   }
   function closeUser() {
-    const ch = uChannel; uChannel = null; subscribed = false;
+    const ch = uChannel; uChannel = null; subscribed = false; catchWhenSettled = false;
     if (ch) { try { client.removeChannel(ch); } catch { /* 이미 닫힘 */ } }
   }
   function wakeSleeps() { for (const s of [...sleeps]) s(); sleeps.clear(); }
@@ -192,6 +195,8 @@ export function createLinkMachine(opts) {
       deviceId = deviceIdOf(r.data) ?? deviceId; registeredAt = clock.now();
     }
     setState(STATES.subscribing);
+    catchWhenSettled = false;
+    openSpaces();
     openUser();
   }
 
@@ -213,11 +218,16 @@ export function createLinkMachine(opts) {
           if (reopenedPaused) { reopenedPaused = false; void pauseCheckLive(); }
           return;
         }
-        void catchUp();
+        catchWhenSettled = true; maybeCatchUp(); // s: 가입이 끝난 뒤 따라잡기 1회(검수 1)
       } else if (DROP_STATUSES.includes(status)) {
         drop(status.toLowerCase());
       }
     });
+  }
+  function maybeCatchUp() {
+    if (!catchWhenSettled || spacePending.size) return;
+    catchWhenSettled = false;
+    void catchUp();
   }
 
   // ── 끊김·재연결 ─────────────────────────────────────────────────────────────
@@ -336,17 +346,29 @@ export function createLinkMachine(opts) {
     attempts = 0;
     setState(STATES.ready);
     for (const id of watched.keys()) joinWork(id);
-    joinSpaces();
   }
 
   // ── 큰 팀 open 방(v2:s:<공간>) ──────────────────────────────────────────────
-  function joinSpaces() {
-    if (state !== STATES.ready || spaceChans.length) return;
+  function openSpaces() {
+    if (spaceChans.length || terminal() || !foreground) return;
     for (const sp of spaces) {
       const ch = client.channel(names.spaceTopic(sp), { config: { private: true } });
       ch.on('broadcast', { event: '*' }, (m) => { if (spaceChans.includes(ch) && String(m?.event ?? '').toLowerCase() === USER_EVENTS.message) onUserEvent(m); });
-      ch.subscribe(() => {}); // 끊기면 u:가 다시 붙을 때 함께 다시 가입한다(따라잡기가 빈 곳을 덮는다)
-      spaceChans.push(ch);
+      spaceChans.push(ch); spacePending.add(ch);
+      ch.subscribe((status) => {
+        if (!spaceChans.includes(ch)) return; // 우리가 닫은 채널
+        const wasPending = spacePending.delete(ch);
+        if (status === 'SUBSCRIBED') {
+          if (wasPending && !catchWhenSettled && state === STATES.ready) void catchUp(); // ready에서 새로 붙은 공간 — 붙기 전 글을 덮는다
+          else maybeCatchUp();
+          return;
+        }
+        if (DROP_STATUSES.includes(status)) { // 거부·끊김 — 닫고 다음 연결·setSpaces까지 다시 붙지 않는다(끝없는 재가입 막기, 검수 2)
+          spaceChans = spaceChans.filter((x) => x !== ch);
+          try { client.removeChannel(ch); } catch { /* 이미 닫힘 */ }
+          maybeCatchUp();
+        }
+      });
     }
   }
   /** 구독할 팀 공간(내가 owner·admin·member인 팀 공간 id). 바뀌면 다시 가입한다. */
@@ -354,7 +376,8 @@ export function createLinkMachine(opts) {
     const next = [...new Set((ids || []).filter((x) => typeof x === 'string' && x))].sort();
     if (next.join(',') === spaces.join(',')) return;
     spaces = next; closeSpaces();
-    if (!terminal()) joinSpaces();
+    if (!terminal() && foreground && [STATES.ready, STATES.catchingUp, STATES.subscribing].includes(state)) openSpaces();
+    maybeCatchUp(); // 기다리던 공간이 빠졌으면 따라잡기를 더 미루지 않는다
   }
 
   // ── 글 받기(중복 0) ─────────────────────────────────────────────────────────
@@ -476,7 +499,8 @@ export function createLinkMachine(opts) {
   }
 
   // 글을 먼저 넣고(client_msg_id 멱등), 파일마다 서버가 첨부 행과 경로를 만든다(msgr2_attachment_add — (글, 순번) 멱등). 그 경로에만 올린다(U2b Storage 정책).
-  // 다시 보내면 같은 (글, 순번)이 같은 행·경로를 돌려주고, 이미 올라간 파일은 Storage가 409(이미 있음)로 답해 성공으로 본다 — 행·파일 한 벌, 같은 바이트를 다시 보내지 않는다.
+  // 다시 보내면 같은 (글, 순번)이 같은 행·경로를 돌려주고, 이미 올라간 파일은 Storage가 409(이미 있음)로 답해 성공으로 본다 — 행·파일 한 벌(덮어쓰지 않는다).
+  //   업로드 요청은 바이트를 실어 보내므로 다시 보낼 때 이미 올라간 파일의 바이트도 다시 전송된다(전과 같다).
   async function sendOnce({ roomId, body, clientMsgId, topicId, replyTo, files }) {
     const row = { room_id: roomId, author_kind: 'user', author_user_id: userId, kind: 'text', body, client_msg_id: clientMsgId };
     if (topicId != null) row.topic_id = topicId;
@@ -518,6 +542,8 @@ export function createLinkMachine(opts) {
   async function send({ roomId, body = '', clientMsgId = newId(), topicId = null, replyTo = null, files = [] } = {}) {
     const blocked = sendBlock();
     if (blocked || !roomId) return { ok: false, clientMsgId, code: blocked || 'invalid_envelope', attempts: 0 };
+    const bad = attachmentProblem(files || []); // 서버가 영구 거부할 첨부면 글을 넣기 전에 멈춘다(요청 0)
+    if (bad) { emit('send', { clientMsgId, roomId, status: 'failed', code: bad }); return { ok: false, clientMsgId, code: bad, attempts: 0 }; }
     emit('send', { clientMsgId, roomId, status: 'sending' });
     let last = null; let n = 0;
     for (; n < sendRetry.maxAttempts; n++) {

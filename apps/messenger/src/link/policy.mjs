@@ -50,6 +50,24 @@ export const SEND_RETRY = Object.freeze({ baseMs: 2000, maxMs: 30_000, maxAttemp
 export const REGISTER_EVERY_MS = 24 * 3600_000; // 오래 켜 둔 데스크톱: 하루 지났을 때만 다시 등록(서버 만료 30일, 서버도 1일 이상일 때만 쓴다)
 export const CATCH_UP_PER_ROOM = 200;
 export const SEEN_CAP = 5000; // 중복 거르기용으로 기억하는 글 id 수
+/**
+ * 사람 글 첨부 제한 — 서버 msgr2_attachment_add(…_msgr2_work.sql)와 같은 값이다(test/link-policy가 SQL 본문과 대조한다).
+ * 보내기 전에 미리 본다: 서버가 영구 거부(22023)할 파일이면 글을 넣기 전에 멈춘다(본문만 남는 반쯤 상태를 막는다, #1077 검수 3).
+ */
+export const ATTACH_LIMITS = Object.freeze({ maxFiles: 20, maxBytes: 52_428_800, maxName: 200 });
+/** 서버와 같은 이름 정리: NFC, '/'·'\'·제어문자 → '_', '..' 이상 → '_'. */
+export const attachName = (name) => String(name ?? '').normalize('NFC').replace(/[\/\\\u0000-\u001f\u007f]/g, '_').replace(/\.\.+/g, '_');
+/** 파일 목록 검사. 반환: null(통과) | 'invalid_attachment'(서버가 받지 않을 모양). */
+export function attachmentProblem(files) {
+  if (!Array.isArray(files)) return 'invalid_attachment';
+  if (files.length > ATTACH_LIMITS.maxFiles) return 'invalid_attachment';
+  for (const f of files) {
+    const nm = attachName(f?.name || 'file');
+    const bytes = Number.isFinite(f?.bytes) ? f.bytes : 0;
+    if (!nm || nm === '.' || [...nm].length > ATTACH_LIMITS.maxName || bytes < 0 || bytes > ATTACH_LIMITS.maxBytes) return 'invalid_attachment';
+  }
+  return null;
+}
 
 /**
  * n번째(0부터) 재시도까지 기다릴 시간. 지수 증가 + 상한, 반쯤 흔들기(같은 순간에 끊긴 기기들이 한꺼번에 붙지 않게).

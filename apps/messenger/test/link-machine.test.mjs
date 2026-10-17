@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createLinkMachine, LAST_ID_KEY } from '../src/link/machine.mjs';
-import { RECONNECT, SEND_RETRY } from '../src/link/policy.mjs';
+import { RECONNECT, SEND_RETRY, ATTACH_LIMITS } from '../src/link/policy.mjs';
 
 const UID = '11111111-1111-4111-8111-111111111111';
 const OTHER = '22222222-2222-4222-8222-222222222222';
@@ -178,11 +178,13 @@ function fakeSupabase({ minVersion = null, paused = false, session = { id: 'sess
       on(type, filter, fn) { this.handlers.push({ type, filter, fn }); return this; },
       subscribe(cb) {
         this.cb = cb; s.joins.push(topic);
-        queueMicrotask(() => {
+        const go = () => {
           if (!s.channels.has(ch)) return;
-          if (s.net.down) { this.cb?.('CHANNEL_ERROR'); return; }
+          if (s.net.down || s.denyJoin.has(topic)) { this.cb?.('CHANNEL_ERROR'); return; } // 권한 없는 토픽(팀에서 빠진 공간 등)
           this.joined = true; this.cb?.('SUBSCRIBED');
-        });
+        };
+        if (s.holdJoin.has(topic)) { s.held.set(topic, go); return this; } // 시험이 release(topic)로 가입을 끝낸다
+        queueMicrotask(go);
         return this;
       },
       presenceState() { return {}; },
@@ -190,6 +192,10 @@ function fakeSupabase({ minVersion = null, paused = false, session = { id: 'sess
     s.channels.add(ch);
     return ch;
   };
+  s.denyJoin = new Set(); s.holdJoin = new Set(); s.held = new Map();
+  // Realtime(phoenix)는 오류 난 채널을 닫지 않으면 rejoinTimer로 계속 다시 가입한다 — 그 한 번을 흉내 낸다
+  s.tickRejoin = () => { for (const ch of [...s.channels]) if (!ch.joined && ch.cb) ch.subscribe(ch.cb); };
+  s.release = (topic) => { const f = s.held.get(topic); s.held.delete(topic); s.holdJoin.delete(topic); f?.(); };
   s.removeChannel = (ch) => { const was = s.channels.delete(ch); ch.joined = false; if (was) ch.cb?.('CLOSED'); return Promise.resolve('ok'); };
   return s;
 }
@@ -762,4 +768,51 @@ test('U6a v2:s: — setSpaces로 받은 팀 공간을 ready에서 구독해 그 
   await m.setForeground(true); await flush();
   assert.deepEqual(fake.liveTopics(), [`v2:s:${SP}`, `v2:u:${UID}`].sort(), '앞으로 오면 다시 가입');
   m.setSpaces([]); assert.deepEqual(fake.liveTopics(), [`v2:u:${UID}`], '공간을 비우면 닫힘');
+});
+
+test('#1077 검수 1: v2:s:는 u:와 함께 열고, 따라잡기는 s: 가입이 끝난 뒤 1회 — 그 사이 온 큰 방 글을 놓치지 않는다', async () => {
+  const SP = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  const fake = fakeSupabase(); fake.holdJoin.add(`v2:s:${SP}`);
+  const { m, ids } = setup({ fake }); m.setSpaces([SP]);
+  await m.start(); await flush();
+  assert.equal(fake.count('msgr2_catch_up'), 0, 's: 가입 전에는 따라잡지 않는다');
+  // 가입을 기다리는 사이 큰 방에 글이 들어간다(방송은 아직 못 받는다)
+  fake.db.messages.push({ id: 400, room_id: ROOM_B, author_kind: 'user', author_user_id: OTHER, body: '사이 글', created_at: new Date().toISOString() });
+  fake.release(`v2:s:${SP}`); await flush();
+  assert.equal(fake.count('msgr2_catch_up'), 1, '가입이 끝나면 따라잡기 1회');
+  assert.ok(ids().includes(400), '사이 글을 따라잡기가 가져온다');
+  assert.equal(m.getState(), 'ready');
+});
+
+test('#1077 검수 2: 가입이 거부된 공간은 닫고 다시 붙지 않는다 — 10분 유휴 동안 재가입·요청 0, 따라잡기는 그대로', async () => {
+  const SP = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'; const OK = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+  const fake = fakeSupabase(); fake.denyJoin.add(`v2:s:${SP}`);
+  const { m, clock } = setup({ fake }); m.setSpaces([SP, OK]);
+  await m.start(); await flush();
+  assert.equal(m.getState(), 'ready'); assert.equal(fake.count('msgr2_catch_up'), 1);
+  assert.deepEqual(fake.liveTopics(), [`v2:s:${OK}`, `v2:u:${UID}`].sort(), '거부된 공간은 닫힘');
+  assert.equal([...fake.channels].filter((c) => c.topic === `v2:s:${SP}`).length, 0, '거부된 채널은 removeChannel(재가입 타이머가 없다)');
+  const joins = fake.joins.length; const reqs = fake.log.length;
+  for (let i = 0; i < 6; i++) { fake.tickRejoin(); await clock.advance(10 * 1000); } // 10초마다 재가입 시도가 있었다면 늘었을 것
+  await clock.advance(10 * MIN);
+  assert.equal(fake.joins.length, joins, '재가입 0'); assert.equal(fake.log.length, reqs, '요청 0');
+  // 다시 연결하면 한 번 더 시도한다(그때도 거부면 닫힘)
+  fake.dropSockets(); await clock.advance(RECONNECT.maxMs);
+  assert.equal(fake.joins.filter((t) => t === `v2:s:${SP}`).length, 2, '연결마다 한 번');
+});
+
+test('#1077 검수 3: 서버가 거부할 첨부(개수·크기·이름)는 글을 넣기 전에 멈춘다 — 요청 0', async () => {
+  const { m, fake } = setup();
+  await m.start(); await flush();
+  const before = fake.log.length;
+  const big = { name: 'a.bin', mime: 'application/octet-stream', bytes: ATTACH_LIMITS.maxBytes + 1, data: 'x' };
+  const many = Array.from({ length: ATTACH_LIMITS.maxFiles + 1 }, (_, i) => ({ name: `f${i}.txt`, bytes: 1, data: 'x' }));
+  for (const files of [[big], many, [{ name: '.', bytes: 1, data: 'x' }], [{ name: 'n'.repeat(ATTACH_LIMITS.maxName + 1), bytes: 1, data: 'x' }]]) {
+    const r = await m.send({ roomId: ROOM_A, body: 'x', files });
+    assert.equal(r.ok, false); assert.equal(r.code, 'invalid_attachment');
+  }
+  assert.equal(fake.log.length, before, '글·첨부·업로드 요청 0');
+  assert.equal(fake.db.messages.filter((x) => x.body === 'x').length, 0, '본문만 남지 않는다');
+  const ok = await m.send({ roomId: ROOM_A, body: 'ok', files: [{ name: 'n'.repeat(ATTACH_LIMITS.maxName), bytes: ATTACH_LIMITS.maxBytes, data: 'x' }] });
+  assert.equal(ok.ok, true, '경계값은 보낸다');
 });
