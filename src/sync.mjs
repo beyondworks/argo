@@ -80,9 +80,11 @@ const manifestReuseOn = () => process.env.ARGO_SYNC_MANIFEST_REUSE === '1';
 const etagMd5 = (etag) => { const m = String(etag ?? '').replace(/"/g, '').trim().toLowerCase(); return /^[0-9a-f]{32}$/.test(m) ? m : null; };
 function keepManifest(key, buf) { if (manifestReuseOn() && buf?.length) manifestKeep.set(key, { buf, md5: createHash('md5').update(buf).digest('hex') }); }
 /** 보관 바이트가 지금 원격 바이트 그대로인가 — etag(info, 원본)가 보관 바이트의 MD5와 같을 때만 그 바이트. 아니면 null(받는다). */
-/** 재사용 판정에 쓰는 info 경로 — 캐시 우회 쿼리(cacheNonce)를 붙인다(검수 2 M17: info가 CDN에 캐시되면 옛 판의 etag가 보관본 MD5와 같아 보여 시작 읽기·재읽기가
-    함께 뚫리고 다른 기기 변경을 덮는다. 지금 운영 info는 HIT 0이지만 CDN 설정에 기대지 않는다). storage-js info()는 경로를 그대로 URL에 붙이고 storage-api는 쿼리를
-    무시해 같은 객체를 돌려준다(로컬 storage-api 1.41.8 실측 — 있는 객체 etag 같음, 없는 객체 'Object not found' 같음). 꺼져 있으면 배포본과 같은 경로. */
+/** 재사용 판정에 쓰는 info 경로 — cacheNonce 쿼리를 붙인다(검수 2 M17: info가 CDN에 캐시되면 옛 판의 etag가 보관본 MD5와 같아 보여 시작 읽기·재읽기가
+    함께 뚫리고 다른 기기 변경을 덮는다). **운영에서 캐시 우회를 보장하지 않는다** — 운영 CDN은 cacheNonce가 붙은 매니페스트 다운로드도 59%를 캐시로 응답했다
+    (검수 2 재검수, 24시간 HIT 1,745·MISS 1,212). 이 쿼리는 덜어 주는 장치일 뿐이고, **안전 근거는 운영 info 응답이 늘 원본 확인(EXPIRED, HIT 0)이라는 관찰**이다
+    — 기본값 승격 조건으로 다시 확인한다. storage-js info()는 경로를 그대로 URL에 붙이고 storage-api는 쿼리를 무시해 같은 객체를 돌려준다(로컬 1.41.8 실측).
+    꺼져 있으면 배포본과 같은 경로. */
 const manifestInfoPath = (key) => (manifestReuseOn() ? `${key}?cacheNonce=${randomUUID()}` : key);
 function keptManifest(key, etag) {
   if (!manifestReuseOn()) return null;
