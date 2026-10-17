@@ -51,9 +51,11 @@ export function fromResponsesResponse(resp, model) {
     if (it?.type === 'message') for (const p of it.content ?? []) { if (p?.type === 'output_text' || p?.type === 'refusal') content.push({ type: 'text', text: p.text ?? p.refusal ?? '' }); }
     else if (it?.type === 'function_call') { let input = {}; try { input = it.arguments ? JSON.parse(it.arguments) : {}; } catch { input = { _raw: String(it.arguments ?? '') }; } content.push({ type: 'tool_use', id: it.call_id || it.id, name: it.name, input }); }
   }
-  const stop_reason = content.some((b) => b.type === 'tool_use') ? 'tool_use' : (resp?.status === 'incomplete' && resp?.incomplete_details?.reason === 'max_output_tokens') ? 'max_tokens' : 'end_turn';
+  const cut = resp?.status === 'incomplete' && resp?.incomplete_details?.reason === 'max_output_tokens';
+  const stop_reason = content.some((b) => b.type === 'tool_use') ? 'tool_use' : cut ? 'max_tokens' : 'end_turn';
   const u = resp?.usage ?? {};
-  return { id: resp?.id || `resp_${Date.now().toString(36)}`, type: 'message', role: 'assistant', model: resp?.model || model, content, stop_reason, ...(thoughts.length ? { thoughts } : {}),
+  // truncated — 도구 호출이 있으면 stop_reason이 'tool_use'라 절단이 가려진다. stop_reason은 종전 그대로 두고(바꾸면 엔진 분기가 달라진다) 절단 표지만 따로 싣는다(native-query 잘린 tool_use 판정)
+  return { id: resp?.id || `resp_${Date.now().toString(36)}`, type: 'message', role: 'assistant', model: resp?.model || model, content, stop_reason, ...(cut ? { truncated: true } : {}), ...(thoughts.length ? { thoughts } : {}),
     usage: { input_tokens: Number(u.input_tokens) || 0, output_tokens: Number(u.output_tokens) || 0, cache_read_input_tokens: Number(u.input_tokens_details?.cached_tokens) || 0 } };
 }
 

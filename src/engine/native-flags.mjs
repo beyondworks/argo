@@ -17,3 +17,13 @@ export function nativeRunnerEnabled(runner, env = process.env) {
   if (['none', 'off', '0', 'false'].includes(raw)) return false;
   return raw.split(',').map((s) => s.trim()).filter(Boolean).includes(r);
 }
+
+/** env ARGO_NATIVE_TRUNCATED_TOOLS=reject — 출력 한도(max_tokens)로 잘린 응답의 tool_use를 실행하지 않고 is_error tool_result로 짝을 맞춘다(옵트인, 기본 꺼짐 = 지금 동작: 실행).
+    잘린 tool_use는 입력이 반쪽일 수 있어 Write·Edit가 기존 파일을 덮어쓸 수 있다(argo-pi-assessment 3번, pi report 2.1). 기본값 켜기는 러너별 실벤더 실증과 유건 승인 뒤.
+    그 밖의 값(미설정·빈 값·'run' 등)은 꺼짐이다. 서버 프로세스 env에서 읽는다(nativeRunnerEnabled와 같은 자리). */
+export function truncatedToolsRejected(env = process.env) {
+  return String(env.ARGO_NATIVE_TRUNCATED_TOOLS ?? '').trim().toLowerCase() === 'reject';
+}
+/** 잘린 응답의 tool_use에 붙이는 오류 결과 — 모델이 읽는 문장이라 영어. 실행하지 않았다는 것과 더 작게 나눠 다시 부르라는 것만 말한다. */
+export const TRUNCATED_TOOL_ERROR = 'Not executed: your previous response hit the output token limit, so this tool call\'s input may be incomplete. '
+  + 'Split the work into smaller calls (for example, write a large file in several smaller Write or Edit steps) and call the tool again.';

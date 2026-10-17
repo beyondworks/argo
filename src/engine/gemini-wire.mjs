@@ -138,7 +138,8 @@ export function fromGeminiResponse(json, model) {
     throw Object.assign(new Error(`API Error: 400 Gemini returned no usable content (finishReason=${reason}${cand.finishMessage ? ` — ${String(cand.finishMessage).slice(0, 200)}` : ''}${reason === 'MAX_TOKENS' ? ' — thinking consumed the output budget' : ''})`), { status: 400, finishReason: reason, usage, synthetic: true });
   }
   const stop_reason = content.some((b) => b.type === 'tool_use') ? 'tool_use' : cand.finishReason === 'MAX_TOKENS' ? 'max_tokens' : 'end_turn';
-  return { id: `gem_${Date.now().toString(36)}`, type: 'message', role: 'assistant', model: json.modelVersion || model, content, stop_reason, usage };
+  // truncated — 함수 호출이 있으면 stop_reason이 'tool_use'라 MAX_TOKENS가 가려진다. stop_reason은 종전 그대로, 절단 표지만 따로(native-query 잘린 tool_use 판정)
+  return { id: `gem_${Date.now().toString(36)}`, type: 'message', role: 'assistant', model: json.modelVersion || model, content, stop_reason, ...(cand.finishReason === 'MAX_TOKENS' ? { truncated: true } : {}), usage };
 }
 
 const RETRYABLE = new Set([500, 502, 503, 504]);

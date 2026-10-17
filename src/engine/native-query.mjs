@@ -4,6 +4,7 @@
 // 통일의 요점: 내장 도구·외부 MCP 전부가 permission-gate(canUseTool)를 지난다. 크루 도구(mcp__crew__*)는 서버측 코드라 SDK와 같이 무검사.
 import { z } from 'zod';
 import { authFromEnv, callMessages } from './messages-http.mjs';
+import { truncatedToolsRejected, TRUNCATED_TOOL_ERROR } from './native-flags.mjs';
 import { BUILTIN_SPECS, builtinRunners, shellEnv } from './builtin-tools.mjs';
 import { BROWSER_SPECS, browserRunners } from './browser-tools.mjs';
 import { COMPUTER_SPECS, computerRunners } from './computer-tools.mjs';
@@ -251,6 +252,9 @@ async function* run(opts, ac, isInterrupted, inbox = { items: [], closed: false 
       const uses = content.filter((b) => b?.type === 'tool_use');
       // tool_use 블록이 있으면 stop_reason과 무관하게 실행한다(분리 검수 HIGH-2: max_tokens 절단 응답의 tool_use를 버리면
       // 도구는 안 돌고 전사에는 짝 없는 tool_use가 남아 다음 턴이 죽는다).
+      // 옵트인 ARGO_NATIVE_TRUNCATED_TOOLS=reject(native-flags truncatedToolsRejected)면 절단 응답의 tool_use는 실행하지 않고 is_error tool_result로 짝을 맞춘다 —
+      // 짝이 맞으니 다음 턴은 산다. 절단 = Messages stop_reason 'max_tokens' 또는 와이어가 따로 실은 truncated(Responses incomplete·Gemini MAX_TOKENS — 도구 호출이 있으면 stop_reason이 tool_use라 가려진다).
+      const rejectCut = (res?.stop_reason === 'max_tokens' || res?.truncated === true) && truncatedToolsRejected();
       if (!uses.length) {
         const text = content.filter((b) => b?.type === 'text').map((b) => b.text).join('\n').trim();
         if (saveSession) await saveNativeSession(wsId, slug, sess);
@@ -267,6 +271,7 @@ async function* run(opts, ac, isInterrupted, inbox = { items: [], closed: false 
       const results = [];
       for (const u of uses) {
         if (isInterrupted()) throw Object.assign(new Error('aborted'), { aborted: true });
+        if (rejectCut) { results.push({ type: 'tool_result', tool_use_id: u.id, content: TRUNCATED_TOOL_ERROR, is_error: true }); continue; } // 잘린 입력 — 게이트·실행 전에 거절
         const t = byName.get(u.name);
         let text = ''; let isError = false; let blocks = null;
         if (!t) { text = `unknown tool: ${u.name}`; isError = true; }
