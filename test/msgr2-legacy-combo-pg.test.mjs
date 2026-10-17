@@ -96,3 +96,33 @@ test('되돌림(운영 순서 판) — U2b 되돌림 뒤 옛 정리 후보 함�
   assert.equal(got.trim(), want.trim());
   assert.equal(db.sql(`select count(*) from pg_policies where policyname like 'msgr2_files_gate_%' or policyname in ('msgr2_realtime_send', 'msgr2_realtime_recv')`), '0');
 });
+
+// U6b 접속 표시(v2:pr:<주인>) — Presence 받기·보내기 권한(옛 msgr 전체 + msgr2 운영 순서 판)
+test('U6b 접속 표시 — 본인·같은 팀 공간 멤버는 받고, 남(공간 밖)·폐기된 기기는 못 받는다, track은 주인의 본체 기기만, 옛 pr: 토픽은 열리지 않는다', { skip }, () => {
+  const Z = '70000000-0000-4000-8000-000000000009'; const zApp = seedDevice(db, Z, 'app');
+  const pres = (who, topic) => { db.sql(`insert into realtime.messages (topic, extension, payload) select '${topic}', 'presence', '{}' where not exists (select 1 from realtime.messages where topic = '${topic}' and extension = 'presence')`);
+    return db.as(who.uid, who.sid, `select set_config('realtime.topic', '${topic}', false); select count(*) from realtime.messages where topic = '${topic}' and extension = 'presence'`).split('\n').pop() !== '0'; };
+  const track = (who, topic) => db.asErr(who.uid, who.sid, `select set_config('realtime.topic', '${topic}', false); insert into realtime.messages (topic, extension, payload) values ('${topic}', 'presence', '{}')`) === null;
+  assert.equal(pres(oApp, `v2:pr:${O}`), true, '본인');
+  assert.equal(pres(zApp, `v2:pr:${O}`), false, '공간 밖 남');
+  const S9 = db.sql(`insert into public.msgr2_spaces (kind, name, owner_user_id) values ('team', 'z팀', '${Z}') returning id`);
+  db.sql(`insert into public.msgr2_space_members (space_id, user_id, role) values ('${S9}', '${Z}', 'owner')`);
+  assert.equal(pres(zApp, `v2:pr:${O}`), false, '다른 팀 공간의 멤버일 뿐이면 못 받는다(그 주인과 같은 공간이어야)');
+  assert.equal(pres(oRev, `v2:pr:${O}`), false, '폐기된 기기');
+  db.sql(`insert into public.msgr2_space_members (space_id, user_id, role) values ('${S}', '${Z}', 'guest')`);
+  assert.equal(pres(zApp, `v2:pr:${O}`), true, '같은 팀 공간의 활동 멤버');
+  db.sql(`update public.msgr2_space_members set removed_at = now() where space_id = '${S}' and user_id = '${Z}'`);
+  assert.equal(pres(zApp, `v2:pr:${O}`), false, '공간에서 빠지면 못 받는다');
+  assert.equal(pres(zApp, `pr:${O}`), false, '옛 모양 pr: 토픽은 v2 정책이 열지 않는다');
+  // 그 주인의 에이전트가 있는 방을 읽을 수 있으면 받는다(Z의 개인 공간 방에 O의 에이전트)
+  const ZP = db.sql(`insert into public.msgr2_spaces (kind, owner_user_id) values ('personal', '${Z}') returning id`);
+  const ZR = db.sql(`insert into public.msgr2_rooms (space_id, kind, name) values ('${ZP}', 'private', 'z방') returning id`);
+  const OAG = db.sql(`insert into public.msgr2_agents (owner_user_id, ws_id, slug) values ('${O}', 'w', 'pa') returning id`);
+  db.sql(`insert into public.msgr2_room_members (room_id, member_kind, member_id) values ('${ZR}', 'user', '${Z}'), ('${ZR}', 'agent', '${OAG}')`);
+  assert.equal(pres(zApp, `v2:pr:${O}`), true, '그 주인의 에이전트가 있는 방을 읽는 사람');
+  db.sql(`update public.msgr2_room_members set removed_at = now() where room_id = '${ZR}' and member_kind = 'agent'`);
+  assert.equal(pres(zApp, `v2:pr:${O}`), false, '에이전트가 빠지면 못 받는다');
+  assert.equal(track(oRun, `v2:pr:${O}`), true, '주인의 본체 기기');
+  assert.equal(track(oApp, `v2:pr:${O}`), false, '앱 기기는 track 못 한다');
+  assert.equal(track(xApp, `v2:pr:${O}`), false, '남');
+});
