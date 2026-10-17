@@ -158,3 +158,17 @@ test('행 바꾸기 왕복: 옛 → v2 → 옛이 같은 값(정해진 열)', ()
   const back = toLegacyRow('msgr_messages', v2, ['channel_id', 'author_kind', 'crew_id', 'body', 'mentions', 'thread_root']);
   assert.deepEqual({ ...back, _v2: undefined }, { channel_id: ROOM, author_kind: 'crew', crew_id: AG, body: 'x', mentions: [{ kind: 'crew', id: AG }], thread_root: null, _v2: undefined });
 });
+
+test('첨부 경로(#1085 검수): v2 storage_path(버킷/객체)는 옛 모양에서 버킷 안 객체 이름으로, 조건·쓰기는 다시 버킷을 붙인다, 다른 버킷은 그대로', async () => {
+  const obj = `${SPACE}/${ROOM}/103/0-a.csv`;
+  const raw = fakeRaw({ msgr2_attachments: [{ id: 1, message_id: 103, storage_path: `msgr/${obj}`, name: 'a.csv' }, { id: 2, message_id: 104, storage_path: `other/${obj}`, name: 'b' }] });
+  const c = createV2Client(raw);
+  const r = await c.from('msgr_attachments').select('id, message_id, storage_path, name, mime, bytes').in('message_id', [103, 104]);
+  assert.equal(r.data[0].storage_path, obj, "media-io가 storage.from('msgr')로 서명하는 이름");
+  assert.equal(r.data[1].storage_path, `other/${obj}`, '다른 버킷은 그대로(옛 화면이 열지 않게)');
+  await c.from('msgr_attachments').select('id').eq('storage_path', obj);
+  assert.deepEqual(raw.log.at(-1).ops.at(-1), ['eq', 'storage_path', `msgr/${obj}`]);
+  await c.from('msgr_attachments').select('id').in('storage_path', [obj, `msgr/${obj}`]);
+  assert.deepEqual(raw.log.at(-1).ops.at(-1), ['in', 'storage_path', [`msgr/${obj}`, `msgr/${obj}`]]);
+  assert.deepEqual(toV2Row('msgr_attachments', { storage_path: obj, name: 'a' }), { storage_path: `msgr/${obj}`, name: 'a' });
+});

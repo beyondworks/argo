@@ -9,6 +9,8 @@
 // RPC도 같은 세 갈래다(RPCS). 실시간·보내기는 여기서 하지 않는다 — 연결 상태 기계(src/link/machine.mjs)가 맡는다(App.jsx v2 분기).
 
 export const V2_UNSUPPORTED = 'v2_unsupported';
+/** v2 첨부 버킷(storage_path 앞 칸). */
+export const V2_BUCKET = 'msgr';
 
 // 옛 열 → v2 열. 값 바꿈은 옛 값 → v2 값(되돌릴 때는 거꾸로).
 const ROOM_KIND = { public: 'open', private: 'private', dm: 'direct' };
@@ -74,6 +76,10 @@ export function splitCols(sel) {
 }
 
 function mapValue(spec, oldCol, v) {
+  if (spec.to === 'msgr2_attachments' && oldCol === 'storage_path') { // 옛 객체 이름 → v2 '버킷/객체'(조건·쓰기)
+    if (Array.isArray(v)) return v.map((x) => mapValue(spec, oldCol, x));
+    return typeof v === 'string' && !v.startsWith(`${V2_BUCKET}/`) ? `${V2_BUCKET}/${v}` : v;
+  }
   const m = spec.values?.[oldCol];
   if (!m) return v;
   if (Array.isArray(v)) return v.map((x) => mapValue(spec, oldCol, x));
@@ -98,6 +104,9 @@ export function toLegacyRow(table, row, want) {
     out._v2 = true; // 시스템 글(meta.code)을 사전 문구로 그리는 표지(App.jsx)
   }
   if (table === 'msgr_channels' && out.kind === 'direct') out.kind = 'dm';
+  // 첨부 경로: v2 storage_path는 '버킷/객체'('msgr/<공간>/<방>/…' — U1·U2·U8). 옛 화면은 버킷 안의 객체 이름을 쓴다(media-io.js storage.from('msgr').createSignedUrl(이름),
+  // 방 지우기 정리 storage.from('msgr').remove(이름들)). 'msgr/'만 뗀다 — 다른 버킷은 옛 화면이 열 수 없으므로 그대로 두어 서명이 실패하게 한다(조용히 다른 파일을 열지 않게).
+  if (table === 'msgr_attachments' && typeof out.storage_path === 'string' && out.storage_path.startsWith(`${V2_BUCKET}/`)) out.storage_path = out.storage_path.slice(V2_BUCKET.length + 1);
   for (const c of want ?? []) if (c !== '*' && !(c in out)) out[c] = spec.defaults && c in spec.defaults ? spec.defaults[c] : null;
   return out;
 }
