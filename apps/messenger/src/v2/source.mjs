@@ -177,7 +177,7 @@ class MapBuilder extends Builder {
     let roomFilter = null;
     for (const [op, args] of this.ops) {
       if (op === 'eq' && args[0] === 'org_id' && spec.spaceVia) roomFilter = await this.ctx.roomsOf(args[1]);
-      else if (op === 'is' && args[0] === 'org_id' && args[1] === null && spec.spaceVia) roomFilter = await this.ctx.roomsOf(await this.ctx.personalSpace());
+      else if (op === 'is' && args[0] === 'org_id' && args[1] === null && spec.spaceVia) roomFilter = await this.ctx.personalRooms(); // 개인 방 = 개인 종류 공간의 내 방(친구 공간 포함, #1088 검수 1)
     }
     const nothing = () => (this.verb === 'select' ? NONE_RESULT(this.one) : unsupported());
     if (roomFilter && !roomFilter.length) return nothing();
@@ -403,8 +403,15 @@ export function createV2Client(raw, opts = {}) {
     }),
   };
   ctx.rpc = (name, args, o) => waitReady(ctx).then((nr) => nr ?? raw.rpc(name, args, o)); // v2 RPC는 기기 등록 뒤에
+  // 개인 방(옛 '개인 공간' = org_id null): 개인 종류 공간의 내 1:1·그룹방. 친구가 연 방은 친구의 개인 공간에 있어(U6d msgr2_dm_open·room_create p_space null, U8 백필)
+  // 내 개인 공간 id만으로는 못 찾는다 — msgr2_dm_list(그룹 포함)로 모은다(#1088 검수 1). 방 목록이 바뀌는 사건·쓰기 뒤에 다시 묻는다(forgetRooms).
+  let personalRoomsP = null;
+  ctx.personalRooms = () => (personalRoomsP ??= Promise.resolve(ctx.rpc('msgr2_dm_list', { p_include_groups: true }))
+    .then((r) => (r?.error ? (personalRoomsP = null, []) : (r?.data ?? []).map((x) => x.room_id)), () => (personalRoomsP = null, [])));
+  ctx.forgetPersonal = () => { personalRoomsP = null; };
   ctx.inviteSpace = new Map(); // 초대 id → 공간(목록·만들기에서 기억 — 공간 없이 id만으로 읽거나 바꾸는 옛 호출용)
-  const legacy = { call: (n, a) => ctx.rpc(n, a), personal: () => ctx.personalSpace(), roomsOf: (sp) => ctx.roomsOf(sp), forget: (sp) => { if (sp) roomCache.delete(sp); }, inviteSpace: ctx.inviteSpace };
+  const legacy = { call: (n, a) => ctx.rpc(n, a), personal: () => ctx.personalSpace(), personalRooms: () => ctx.personalRooms(), roomsOf: (sp) => ctx.roomsOf(sp),
+    forget: (sp) => { if (sp) roomCache.delete(sp); ctx.forgetPersonal(); }, inviteSpace: ctx.inviteSpace };
   const client = Object.create(raw);
   client.from = (table) => {
     if (table === 'msgr_crews') return new CrewBuilder(ctx, table);
@@ -422,7 +429,7 @@ export function createV2Client(raw, opts = {}) {
     if (RPCS.write.has(name)) return Promise.resolve(unsupported());
     return Promise.resolve({ data: name in RPCS.empty ? RPCS.empty[name] : [], error: null, status: 200 });
   };
-  client.forgetRooms = (space) => { if (space) roomCache.delete(space); else roomCache.clear(); }; // 방 목록이 바뀌면(새 방) 다시 묻는다
+  client.forgetRooms = (space) => { if (space) roomCache.delete(space); else roomCache.clear(); ctx.forgetPersonal(); }; // 방 목록이 바뀌면(새 방) 다시 묻는다
   client.v2 = true;
   return client;
 }

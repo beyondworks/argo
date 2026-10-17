@@ -10,7 +10,7 @@ export const setIosCopy = (v) => { iosCopy = !!v; };
 export const friendlyErr = (msg, t) => /msgr_session_refreshing/.test(msg) ? t('err.sessionRefreshing') : /msgr_free_agent_limit/.test(msg) ? t(iosCopy ? 'err.freeAgentLimit.ios' : 'err.freeAgentLimit') : /msgr_app_update_required/.test(msg) ? t('err.appUpdateRequired') /* 무료 계정 최신 앱 4명(2026-10-11) — 같은 오류에 붙은 msgr_pro_required보다 먼저 */ : /msgr_pro_required/.test(msg) ? t('err.proRequired') /* 무료 계정 에이전트 파견(2026-10-10) */ : /msgr_crew_remove_owner_only/.test(msg) ? t('err.crewRemoveOwnerOnly') : /row-level security/.test(msg) ? t('err.denied') : /_check\b|violates check constraint/.test(msg) ? t('err.invalid') : /msgr_seat_limit/.test(msg) ? t('seat.limit') : /msgr_approver_not_member/.test(msg) ? t('set.policy.approverNotMember') : /msgr_org_locked|read-only/.test(msg) ? t('org.locked.short') : /msgr_room_limit/.test(msg) ? t('room.limit') : /\bv2_unsupported\b/.test(msg) ? t('v2.unsupported') /* 메신저 v2 모드에서 아직 없는 기능(v2/source.mjs — 요청 0). 옛 코드와 겹치지 않아 끝에 둔다 */ : v2ErrorKey(msg) ? t(v2ErrorKey(msg)) /* 메신저 v2 서버 코드(U6d — v2/errors.mjs, 등록 대기 실패 v2_not_registered 포함). 옛 코드와 겹치지 않아 끝에 둔다 */ : msg; // 무료 인원 한도(개인 공간 2026-09-30)
 
 /** 기계가 낸 원문의 모양 — 서버 예외 코드(msgr_…)·Postgres·PostgREST·JS 오류. 사전 문구에는 없는 모양만(테스트가 사전 전체로 잠근다) */
-export const MACHINE_ERROR = /\bmsgr_[a-z_]+|PGRST\d|\bviolates\b|duplicate key|\bJWT\b|(?:Type|Reference|Syntax|Range)Error|is not a function|Cannot read propert|null value in column|permission denied for|relation "|column "|non-2xx|status code \d|\bHTTP \d{3}\b|\bErr(?:or)?:/;
+export const MACHINE_ERROR = /\bmsgr2?_[a-z0-9_]+|PGRST\d|\bviolates\b|duplicate key|\bJWT\b|(?:Type|Reference|Syntax|Range)Error|is not a function|Cannot read propert|null value in column|permission denied for|relation "|column "|non-2xx|status code \d|\bHTTP \d{3}\b|\bErr(?:or)?:/;
 
 // 서버 코드의 갈래(화면 검수 UM1, 2026-10-05) — 권한·한도는 다시 해도 같은 거절이라 '잠시 뒤 다시 시도'가 틀린 안내였다.
 const DENIED = /\bmsgr_(?:[a-z_]+_)?(?:forbidden|not_allowed|unauthorized|owner_only|admin_only)\b|\bmsgr_(?:node|transfer)_not_admin\b|permission denied for/;
@@ -41,7 +41,7 @@ function oneLine(msg, t) {
   if (DENIED.test(msg)) return t('err.denied');
   if (LIMIT.test(msg)) return t('err.limit');
   if (TIMEOUT.test(msg)) return t('err.timeout');
-  if (/(?<![\w"'])msgr_[a-z0-9_]+(?![\w"'])/.test(msg)) return t('err.code'); // 따옴표 안의 이름(제약·표 이름 "msgr_…")은 서버 코드가 아니다 // 그 밖 서버 코드 — 같은 요청은 같은 거절이라 다시 시도를 권하지 않는다
+  if (/(?<![\w"'])msgr2?_[a-z0-9_]+(?![\w"'])/.test(msg)) return t('err.code'); // 모르는 메신저 v2 코드(msgr2_…)도 원문 대신 진단 안내(#1088 검수 낮음) // 따옴표 안의 이름(제약·표 이름 "msgr_…")은 서버 코드가 아니다 // 그 밖 서버 코드 — 같은 요청은 같은 거절이라 다시 시도를 권하지 않는다
   return MACHINE_ERROR.test(msg) ? t('err.raw') : msg;
 }
 /** 한 줄 — 사람 말 머리(에이전트·파일 이름, '실패')는 남기고 뒤의 기계 원문만 바꾼다('Other Agent: msgr_crew_not_visible', '실패: msgr_bot_exists') */

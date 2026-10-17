@@ -347,6 +347,7 @@ export const DICT = {
   'inv.p.expired': ['만료된 초대입니다. 초대한 사람에게 새 링크를 받아 주세요.', 'This invite has expired. Ask for a new link.'],
   'inv.p.exhausted': ['사용 횟수가 다 찬 초대입니다. 초대한 사람에게 새 링크를 받아 주세요.', 'This invite has reached its use limit. Ask for a new link.'],
   'inv.p.revoked': ['취소된 초대입니다. 초대한 사람에게 새 링크를 받아 주세요.', 'This invite was cancelled. Ask for a new link.'],
+  'inv.p.declined': ['거절한 초대입니다. 다시 참여하려면 새 초대를 받아 주세요.', 'You declined this invite. Ask for a new one to join.'],
   'inv.p.noChannels': ['조직에만 들어가요. 채널은 들어간 뒤 찾아보기에서 고를 수 있어요.', 'Joins the organization only. Pick channels from Browse after joining.'],
   'inv.p.guest': ['게스트로 참여', 'Joins as a guest'],
   'inv.p.expires': ['{when}까지 유효', 'Valid until {when}'],

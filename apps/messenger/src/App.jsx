@@ -21,7 +21,7 @@ import { v2ComposerTransport } from './v2/composer.mjs';
 import { useWorkCards } from './v2/useWorkCards.jsx';
 import { DevicesCard as V2DevicesCard } from './v2/DevicesCard.jsx';
 import { v2StateBar, v2SignOutNotice } from './v2/devices.mjs';
-import { roomEventPlan } from './v2/room-events.mjs';
+import { roomEventPlan, mergePlans } from './v2/room-events.mjs';
 import { v2SearchFound } from './v2/search.mjs';
 import { systemLine as v2SystemLine } from './v2/system-text.mjs';
 import { loadSpaces as v2LoadSpaces } from './v2/data.mjs';
@@ -818,7 +818,7 @@ function Shell({ session }) {
   }, (message) => setErr(friendlyErr(message, t)));
   const uid = session.user.id;
   // 메신저 v2(옵트인): 계정마다 연결 상태 기계 하나. 실시간·보내기는 이 기계로만, 목록·글 조회는 조회 어댑터(supabase = v2 클라이언트)로.
-  const [v2rt, setV2rt] = useState(null); const v2PersonalId = useRef(null); // 내 개인 공간의 진짜 id(v2) — 개인 공간 목록을 읽을 때 채운다
+  const [v2rt, setV2rt] = useState(null); 
   useEffect(() => {
     if (!V2) return undefined;
     const rt = createV2Runtime({ raw: rawSupabase, client: supabase, uid, appVersion: APP_VERSION });
@@ -1262,27 +1262,31 @@ function Shell({ session }) {
     if (V2) { // v2: 개인 공간(진짜 공간 행)의 방 — 기존 개인 공간 목록과 같은 모양(모두 dm 줄)으로 채운다
       try {
         await currentV2()?.ready();
-        const pid = await q(rawSupabase.rpc('msgr2_my_personal_space')); v2PersonalId.current = pid; // 방 사건이 개인 공간 것인지 가른다(v2/room-events.mjs)
-        const [rooms, friendsList] = await Promise.all([
-          q(supabase.from('msgr_channels').select('id, kind, name, created_by, crew_memory, personal_crews, created_at').eq('org_id', pid).is('archived_at', null).order('created_at')),
+        // 개인 방 = 개인 종류 공간의 내 1:1·그룹방(msgr2_dm_list, 그룹 포함). 친구가 연 방은 친구의 개인 공간에 있어 내 개인 공간 id로 거르면 받는 쪽에 안 보인다(#1088 검수 1)
+        const [list, friendsList] = await Promise.all([
+          q(supabase.rpc('msgr2_dm_list', { p_include_groups: true })),
           q(supabase.rpc('msgr_my_friends')).catch(() => []),
         ]);
         if (!current()) return;
-        const ids = rooms.map((r) => r.id);
-        const mem = ids.length ? await q(supabase.from('msgr_channel_members').select('channel_id, member_kind, member_id, added_at').in('channel_id', ids)) : [];
+        const ids = list.map((r) => r.room_id);
+        const memo = ids.length ? await q(supabase.from('msgr_channels').select('id, crew_memory').in('id', ids)).catch(() => []) : []; // 방 기억 켜짐(목록 RPC에 없다)
+        if (!current()) return;
+        const memOf = new Map(memo.map((r) => [r.id, r.crew_memory]));
+        const rooms = list.map((r) => ({ id: r.room_id, kind: r.kind === 'direct' ? 'dm' : r.kind, name: r.name ?? '', created_by: r.created_by, crew_memory: memOf.get(r.room_id) ?? true, created_at: r.last_at, last_body: r.last_body ?? '' }));
+        const mem = list.flatMap((r) => (r.members ?? []).map((m) => ({ channel_id: r.room_id, member_kind: m.kind === 'agent' ? 'crew' : 'user', member_id: m.id })));
         const agentIds = [...new Set(mem.filter((m) => m.member_kind === 'crew').map((m) => m.member_id))];
         const agents = agentIds.length ? await q(supabase.from('msgr_crews').select('id, owner_user_id, slug, display_name, role_text, hosting, status, allow, allow_users, face, created_at').in('id', agentIds)) : [];
         if (!current()) return;
         const accepted = friendsList.filter((f) => f.status === 'accepted');
         const dmMem = {}; for (const m of mem) (dmMem[m.channel_id] ??= []).push(m);
-        const names = {}; for (const f of accepted) names[f.user_id] = f.display_name || f.handle || f.user_id.slice(0, 8);
+        const names = {}; for (const r of list) for (const m of r.members ?? []) if (m.kind === 'user' && m.name) names[m.id] = m.name; for (const f of accepted) names[f.user_id] = f.display_name || f.handle || f.user_id.slice(0, 8); // 그룹방의 친구 아닌 사람도 서버 이름으로
         const chs = rooms.map((r) => {
           const ms = dmMem[r.id] ?? []; const crew = ms.find((m) => m.member_kind === 'crew')?.member_id ?? null;
           const others = ms.filter((m) => m.member_kind === 'user' && m.member_id !== uid).map((m) => m.member_id);
           const crewName = crew ? agents.find((a) => a.id === crew)?.display_name : null;
           return { id: r.id, kind: 'dm', name: r.name || (others.length === 0 && crew ? `dm:${crewName || '?'}` : `dm:${names[others[0]] || others[0]?.slice(0, 8) || '?'}`),
             org_id: null, created_by: r.created_by ?? uid, _personal_group: others.length > 1, _personal_crew: others.length === 0 ? crew : null, archived_at: null, admin_user_ids: [],
-            crew_memory: r.crew_memory, personal_crews: 'approval', _personal_other: others[0] ?? null, _personal_last_at: r.created_at, _personal_last_body: '' };
+            crew_memory: r.crew_memory, personal_crews: 'approval', _personal_other: others[0] ?? null, _personal_last_at: r.created_at, _personal_last_body: r.last_body };
         });
         loadedOrg.current = PERSONAL;
         setChannels(chs); setPreviewChannels([]); setMembers(accepted.map((f) => ({ user_id: f.user_id, role: 'friend', display_name: names[f.user_id] })));
@@ -1766,13 +1770,22 @@ function Shell({ session }) {
     return () => offs.forEach((f) => f());
   }, [v2rt]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { v2rt?.machine.setActiveRoom(chId ?? null); }, [v2rt, chId]); // 보는 방은 배지에서 뺀다
-  const v2RoomEventRef = useRef(null);
-  v2RoomEventRef.current = (ev) => {
-    const plan = roomEventPlan(ev, { orgId: activeOrg.current, personal: PERSONAL, personalId: v2PersonalId.current, chId: activeChannel.current });
-    if (plan.forget || plan.reload) supabase.forgetRooms?.(plan.forget ?? undefined); // 그 공간의 방 id 목록(글·안 읽음 조회용)을 다시 묻는다
-    if (plan.close) setChId(null);
+  const v2RoomEventRef = useRef(null); const v2EventPlan = useRef(null); // 묶음 창(500ms) 안의 사건 계획 — 창마다 목록 읽기 한 번(#1088 검수 2: 사건마다 약 8건)
+  const v2EventRun = useRef(null);
+  v2EventRun.current = () => {
+    const plan = v2EventPlan.current; v2EventPlan.current = null; if (!plan) return;
+    for (const sp of plan.forget) supabase.forgetRooms?.(sp); if (plan.reload && !plan.forget.length) supabase.forgetRooms?.(); // 그 공간의 방 id 목록(글·안 읽음 조회용)·개인 방 목록을 다시 묻는다
     if (plan.orgs) loadOrgs().catch(() => {});
     if (plan.reload) { (activeOrg.current === PERSONAL ? loadPersonal() : loadOrg(activeOrg.current)).catch(() => {}); unreadSoon.request(); }
+    if (plan.invites) setInvitesTick((n) => n + 1); // 설정 > 멤버의 초대 목록을 다시 읽는다
+  };
+  const v2EventSoon = useMemo(() => createCoalescer(() => v2EventRun.current?.(), { delayMs: 500 }), []);
+  useEffect(() => () => v2EventSoon.cancel(), [v2EventSoon]);
+  v2RoomEventRef.current = (ev) => {
+    const plan = roomEventPlan(ev, { orgId: activeOrg.current, personal: PERSONAL, teamIds: (orgs ?? []).map((o) => o.id), chId: activeChannel.current });
+    if (plan.close) setChId(null); // 보던 방에서 빠짐 — 바로 닫는다
+    if (!plan.orgs && !plan.reload && !plan.invites && !plan.forget) return;
+    v2EventPlan.current = mergePlans(v2EventPlan.current, plan); v2EventSoon.request();
   };
   // ④ 기기 폐기·다시 로그인 필요(signed_out) → 로그인 화면으로, 이유를 남긴다. 중단·업데이트 필요는 화면 위 안내 줄(v2StateBar)
   const [v2state, setV2state] = useState(null); const [v2stuck, setV2stuck] = useState(null); // 등록 대기 실패(시간 상한·다시 붙기 그만둠 — v2/runtime.mjs)
@@ -2266,7 +2279,7 @@ function Shell({ session }) {
       if (activeOrg.current !== here) return null;
       if (twin) { toPersonalTwin(crew, twin, { text, source: opts.source, here, hereCh }); return null; }
     }
-    if (kind === 'user') supabase.rpc('msgr_friend_request', { target: id }).then(({ error }) => { if (!error) loadFriends(); }).catch(() => {}); // 사람 1:1을 열면 친구 목록과 동기화(같은 조직이면 서버가 바로 accepted) — DM 열기를 막지 않는다, 실패는 무시
+    if (kind === 'user' && !V2) supabase.rpc('msgr_friend_request', { target: id }).then(({ error }) => { if (!error) loadFriends(); }).catch(() => {}); // 사람 1:1을 열면 친구 목록과 동기화(같은 조직이면 서버가 바로 accepted) — DM 열기를 막지 않는다, 실패는 무시
     try {
       const mine = await q(supabase.from('msgr_channel_members').select('channel_id, msgr_channels!inner(id, kind, org_id, archived_at)').eq('member_kind', 'user').eq('member_id', uid));
       if (activeOrg.current !== orgId) return null;

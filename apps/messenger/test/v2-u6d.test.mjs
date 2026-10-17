@@ -6,9 +6,9 @@ import { readFileSync } from 'node:fs';
 import { createV2Client, splitCols } from '../src/v2/source.mjs';
 import { legacyInvite, legacyPreview, inviteArgs } from '../src/v2/legacy-rpc.mjs';
 import { v2ErrorKey, V2_ERROR_KEYS } from '../src/v2/errors.mjs';
-import { roomEventPlan } from '../src/v2/room-events.mjs';
+import { roomEventPlan, mergePlans } from '../src/v2/room-events.mjs';
 import { v2SearchFound } from '../src/v2/search.mjs';
-import { friendlyErr } from '../src/error-toast.mjs';
+import { friendlyErr, toastError } from '../src/error-toast.mjs';
 import { DICT } from '../src/i18n.js';
 
 const ME = 'u0000000-0000-4000-8000-000000000001', MATE = 'u0000000-0000-4000-8000-000000000002';
@@ -80,25 +80,29 @@ test('개인 1:1·에이전트 1:1·여러 사람 방·에이전트 넣기/빼�
   ]);
 });
 
-test('안 읽음: 옛 org null = 개인 공간 id로 묻는다, 합계는 공간별(음소거 제외, 개인 = org_id null), 사람 멘션 0', async () => {
-  const rows = [{ room_id: R1, space_id: T, n: 3, muted: false }, { room_id: RX, space_id: T, n: 9, muted: true }, { room_id: R2, space_id: P, n: 2, muted: false }];
-  const raw = fakeRaw({ rpcs: { msgr2_unread: (a) => rows.filter((x) => !a.p_space || x.space_id === a.p_space) } });
+test('안 읽음(#1088 검수 1): 옛 org null = 개인 방 — 친구가 열어 친구 개인 공간에 있는 방도, 합계는 공간별(음소거 제외, 개인 방은 어느 공간이든 org_id null), 사람 멘션 0', async () => {
+  const PF = 'p0000000-0000-4000-8000-0000000000f2'; // 친구의 개인 공간
+  const rows = [{ room_id: R1, space_id: T, n: 3, muted: false }, { room_id: RX, space_id: T, n: 9, muted: true }, { room_id: R2, space_id: P, n: 2, muted: false }, { room_id: 'rf', space_id: PF, n: 5, muted: false }];
+  const raw = fakeRaw({ rpcs: { msgr2_unread: (a) => rows.filter((x) => !a.p_space || x.space_id === a.p_space), msgr2_dm_list: [{ room_id: R2, space_id: P }, { room_id: 'rf', space_id: PF }] } });
   const c = client(raw);
-  assert.deepEqual((await c.rpc('msgr_unread', { org: null })).data, [{ channel_id: R2, n: 2, mention: 0, muted: false }]);
+  assert.deepEqual((await c.rpc('msgr_unread', { org: null })).data.map((x) => [x.channel_id, x.n]), [[R2, 2], ['rf', 5]], '친구가 연 방(rf)도 개인 방');
   assert.deepEqual((await c.rpc('msgr_unread', { org: T })).data.map((x) => [x.channel_id, x.n]), [[R1, 3], [RX, 9]]);
-  assert.deepEqual((await c.rpc('msgr_unread_totals')).data, [{ org_id: T, n: 3, mention: 0 }, { org_id: null, n: 2, mention: 0 }]);
-  assert.deepEqual(rpcLog(raw), [['msgr2_unread', { p_space: P }], ['msgr2_unread', { p_space: T }], ['msgr2_unread', {}]]);
+  assert.deepEqual((await c.rpc('msgr_unread_totals')).data, [{ org_id: T, n: 3, mention: 0 }, { org_id: null, n: 7, mention: 0 }], '친구 공간 칸이 따로 생기지 않는다');
+  assert.deepEqual(rpcLog(raw).map(([n, a]) => [n, a.p_space ?? null]), [['msgr2_unread', null], ['msgr2_dm_list', null], ['msgr2_unread', T], ['msgr2_unread', null]], '개인 방 목록은 한 번 읽고 기억');
+  c.forgetRooms();
+  await c.rpc('msgr_unread', { org: null });
+  assert.equal(rpcLog(raw).filter(([n]) => n === 'msgr2_dm_list').length, 2, '방 사건 뒤(forgetRooms)에는 다시 묻는다');
 });
 
 test('찾기: 탭 본문 찾기·⌘K 글 찾기는 msgr2_search 한 번, 지금 공간의 방만, 옛 행 모양', async () => {
   const res = { rooms: [{ id: R1, name: '일반' }], messages: [{ id: 5, room_id: R1, author_kind: 'agent', author_agent_id: AG, created_at: 'c', snippet: '가격표' }, { id: 6, room_id: R2, author_kind: 'user', author_user_id: MATE, created_at: 'd', snippet: '다른 공간' }], people: [], agents: [] };
-  const raw = fakeRaw({ rpcs: { msgr2_search: res } });
+  const raw = fakeRaw({ rpcs: { msgr2_search: res, msgr2_dm_list: [{ room_id: R2, space_id: 'pf' }] } });
   const c = client(raw);
   assert.deepEqual((await c.rpc('msgr_tab_search', { org: T, q: '가격' })).data, [{ channel_id: R1 }]);
-  assert.deepEqual((await c.rpc('msgr_tab_search', { org: null, q: '공간' })).data, [{ channel_id: R2 }], '개인 공간은 개인 공간 방');
+  assert.deepEqual((await c.rpc('msgr_tab_search', { org: null, q: '공간' })).data, [{ channel_id: R2 }], '개인 공간은 개인 방(친구 공간의 방 포함)');
   const found = await v2SearchFound(c, '가격', new Set([R1]));
   assert.deepEqual(found, [{ id: 5, channel_id: R1, author_kind: 'crew', author_user_id: null, crew_id: AG, body: '가격표', created_at: 'c', _v2: true }]);
-  assert.deepEqual(rpcLog(raw).map(([n, a]) => [n, a.p_limit]), [['msgr2_search', 50], ['msgr2_search', 50], ['msgr2_search', 50]]);
+  assert.deepEqual(rpcLog(raw).filter(([n]) => n === 'msgr2_search').map(([, a]) => a.p_limit), [50, 50, 50]);
   await assert.rejects(v2SearchFound(createV2Client(fakeRaw({ rpcs: { msgr2_search: () => { throw new Error('boom'); } } })), 'x', new Set()), /boom/, '실패는 던진다(셸이 failed로)');
   const src = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
   assert.match(src, /await fetchSearchRows\(\(\) => V2 \? v2SearchFound\(supabase, qs,/, '⌘K는 v2에서 msgr2_search로');
@@ -211,20 +215,33 @@ test('오류 코드 → 사전 문구(ko·en): U6d 코드는 모두 사전 키�
   assert.equal(friendlyErr('msgr2_not_friend', t), DICT['v2.err.notFriend'][0]);
   assert.equal(friendlyErr('msgr2_invite_expired', en), DICT['inv.err.expired'][1]);
   assert.equal(friendlyErr('msgr2_forbidden', t), DICT['err.denied'][0]);
+  const tt = (k, v) => (DICT[k]?.[0] ?? k).replace(/\{(\w+)\}/g, (_, x) => v?.[x] ?? '');
+  assert.equal(toastError('msgr2_brand_new_code', { t: tt }), tt('err.code', { path: tt('diag.path.desktop') }), '모르는 msgr2_ 코드는 원문 대신 진단 안내');
+  assert.equal(DICT['inv.p.declined']?.length, 2, '거절한 초대 미리보기 문구');
 });
 
-test('방 사건(v2:u: spaces·rooms): 공간 목록·보는 공간의 방 목록을 한 번 다시 읽고, 보던 방에서 빠졌으면 닫는다, 다른 공간·초대는 읽지 않는다', () => {
-  const at = { orgId: T, personal: '__personal__', personalId: P, chId: R1 };
-  assert.deepEqual(roomEventPlan({ event: 'spaces', payload: { space_id: T } }, at), { orgs: true, reload: false, forget: T, close: false });
-  assert.deepEqual(roomEventPlan({ event: 'rooms', payload: { space_id: T, room_id: R2 } }, at), { orgs: false, reload: true, forget: T, close: false });
-  assert.deepEqual(roomEventPlan({ event: 'rooms', payload: { space_id: T, room_id: R1, removed: true } }, at), { orgs: false, reload: true, forget: T, close: true });
-  assert.equal(roomEventPlan({ event: 'rooms', payload: { space_id: 'other', room_id: RX } }, at).reload, false, '다른 공간은 읽지 않는다');
-  assert.equal(roomEventPlan({ event: 'rooms', payload: { space_id: P, room_id: R2 } }, { ...at, orgId: '__personal__' }).reload, true, '개인 공간 자리 = 진짜 개인 공간 id');
+test('방 사건(v2:u: spaces·rooms·invite): 공간 목록·보는 공간의 방 목록·초대 목록을 다시 읽고, 보던 방에서 빠졌으면 닫는다, 개인 방은 내 팀 공간이 아니면(친구 개인 공간 포함), 창 안 사건은 합친다', () => {
+  const at = { orgId: T, personal: '__personal__', teamIds: [T], chId: R1 };
+  const none = { orgs: false, reload: false, forget: null, close: false, invites: false };
+  assert.deepEqual(roomEventPlan({ event: 'spaces', payload: { space_id: T } }, at), { ...none, orgs: true, forget: T });
+  assert.deepEqual(roomEventPlan({ event: 'rooms', payload: { space_id: T, room_id: R2 } }, at), { ...none, reload: true, forget: T });
+  assert.deepEqual(roomEventPlan({ event: 'rooms', payload: { space_id: T, room_id: R1, removed: true } }, at), { ...none, reload: true, forget: T, close: true });
+  assert.equal(roomEventPlan({ event: 'rooms', payload: { space_id: 'friend-personal', room_id: RX } }, at).reload, false, '팀 화면에서는 개인 방 사건을 다시 읽지 않는다');
+  const personalAt = { ...at, orgId: '__personal__' };
+  assert.equal(roomEventPlan({ event: 'rooms', payload: { space_id: P, room_id: R2 } }, personalAt).reload, true, '내 개인 공간');
+  assert.equal(roomEventPlan({ event: 'rooms', payload: { space_id: 'friend-personal', room_id: RX } }, personalAt).reload, true, '친구가 연 방(친구 개인 공간) — 받는 쪽도 다시 읽는다');
+  assert.equal(roomEventPlan({ event: 'rooms', payload: { space_id: T, room_id: R1 } }, personalAt).reload, false, '개인 화면에서는 팀 방 사건을 다시 읽지 않는다');
   assert.equal(roomEventPlan({ event: 'rooms', payload: { room_id: R1, removed: true } }, at).close, true, '나가기 방송에는 공간이 없다');
-  assert.deepEqual(roomEventPlan({ event: 'invite', payload: {} }, at), { orgs: false, reload: false, forget: null, close: false });
-  assert.deepEqual(roomEventPlan({ event: 'device_revoked', payload: {} }, at), { orgs: false, reload: false, forget: null, close: false });
+  assert.deepEqual(roomEventPlan({ event: 'invite', payload: { invite_id: 'i', space_id: T } }, at), { ...none, invites: true });
+  assert.deepEqual(roomEventPlan({ event: 'device_revoked', payload: {} }, at), none);
+  let m = null;
+  for (const ev of [{ event: 'rooms', payload: { space_id: T, room_id: R1 } }, { event: 'rooms', payload: { space_id: T, room_id: R2 } }, { event: 'spaces', payload: { space_id: 'n' } }, { event: 'invite', payload: {} }]) m = mergePlans(m, roomEventPlan(ev, at));
+  assert.deepEqual(m, { orgs: true, reload: true, invites: true, close: false, forget: [T, 'n'] }, '창 안 사건 4건 → 목록 읽기 한 번씩');
   const src = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
   assert.match(src, /m\.on\('event', \(ev\) => v2RoomEventRef\.current\?\.\(ev\)\)/, '셸이 기계의 사건을 받는다');
+  assert.match(src, /const v2EventSoon = useMemo\(\(\) => createCoalescer\(\(\) => v2EventRun\.current\?\.\(\), \{ delayMs: 500 \}\), \[\]\);/, '사건은 500ms 창으로 묶는다');
+  assert.match(src, /if \(plan\.invites\) setInvitesTick\(\(n\) => n \+ 1\);/, '초대 사건 → 초대 목록 다시 읽기');
+  assert.match(src, /if \(kind === 'user' && !V2\) supabase\.rpc\('msgr_friend_request'/, 'v2 팀 1:1은 자동 친구 요청을 보내지 않는다(#1088 검수 3)');
 });
 
 test('셸: #1085에서 숨긴 단추를 켰다(신고·친구 요청·새 채널·둘러보기·새 대화·초대·조직 참여·만들기), 범위 밖(그룹·노드·업무 패널·에이전트 숨김)은 그대로 숨김', () => {
@@ -236,4 +253,24 @@ test('셸: #1085에서 숨긴 단추를 켰다(신고·친구 요청·새 채널
   assert.doesNotMatch(src, /!V2 && <button type="button" className="btn msgr-chbrowse"/);
   assert.doesNotMatch(src, /onOrgTab && !orgBlocked && !V2 &&/);
   for (const keep of [/isPhone && !isPersonal && !V2 && \{ icon: 'folder'/, /if \(V2 && \(props\.part === 'node' \|\| props\.part === 'agents'\)\) return null;/, /\{!V2 && <>\{!isPersonal && !archived && <button type="button" className="btn sm msgr-work-button"/, /const canMuteCrew = !V2 &&/]) assert.match(src, keep);
+});
+
+test('두 계정(#1088 검수 1): 친구(민지)가 새 1:1을 열면 방은 친구 개인 공간에 있어도 내 개인 목록·안 읽음·합계·찾기·방 사건에 보인다(픽스처 대역)', async () => {
+  globalThis.window ??= {}; globalThis.location ??= { search: '' };
+  const { supabase: fake } = await import('./v2-shell.supabase.mjs');
+  const f = globalThis.window.__v2Fixture; const { P, PM, T, uid } = f.ids;
+  const c = createV2Client(fake, { personalSpace: async () => P });
+  const before = (await c.rpc('msgr2_dm_list', { p_include_groups: true })).data.map((r) => r.room_id);
+  const seen = []; const ch = fake.channel(`v2:u:${uid}`).on('broadcast', { event: '*' }, (m) => seen.push(m)); ch.subscribe();
+  const room = f.friendOpens('견적서 확인 부탁해요');
+  c.forgetRooms(); // 셸은 rooms 사건을 받으면 방 목록을 다시 묻는다
+  const list = (await c.rpc('msgr2_dm_list', { p_include_groups: true })).data;
+  assert.ok(!before.includes(room) && list.some((r) => r.room_id === room && r.space_id === PM), '친구 공간의 방이 내 개인 목록에');
+  assert.deepEqual((await c.rpc('msgr_unread', { org: null })).data.find((x) => x.channel_id === room)?.n, 1, '개인 안 읽음');
+  assert.ok((await c.rpc('msgr_unread_totals')).data.some((x) => x.org_id === null && x.n >= 1) && !(await c.rpc('msgr_unread_totals')).data.some((x) => x.org_id === PM), '합계는 개인 칸(null), 친구 공간 칸 없음');
+  assert.deepEqual((await c.rpc('msgr_tab_search', { org: null, q: '견적서' })).data, [{ channel_id: room }], '개인 탭 찾기');
+  assert.deepEqual((await c.from('msgr_messages').select('id, body').is('org_id', null).eq('channel_id', room)).data.map((m) => m.body), ['견적서 확인 부탁해요'], '옛 개인 공간 조건(org_id null)으로 그 방 글을 읽는다');
+  const ev = seen.find((m) => m.event === 'rooms');
+  assert.equal(roomEventPlan({ event: ev.event, payload: ev.payload }, { orgId: '__personal__', personal: '__personal__', teamIds: [T], chId: null }).reload, true, '받는 쪽 개인 화면이 다시 읽는다');
+  fake.removeChannel(ch);
 });

@@ -1,6 +1,7 @@
 // 메신저 v2 어댑터의 RPC 번역(U6c-2b) — 기존 셸이 부르던 옛 RPC(msgr_*)를 U6d 서버 RPC(msgr2_*, 20261018040000_msgr2_rooms.sql)로 바꿔 보내고
 // 결과를 옛 모양으로 돌려준다. source.mjs의 client.rpc가 여기 이름이면 이 함수로 보낸다. 옛 호출 코드(App.jsx)는 그대로 둔다.
-// c = { call(name, args) → { data, error }, personal() → 내 개인 공간 id, roomsOf(space) → 방 id 목록, forget(space), inviteSpace: Map(초대 id → 공간) }.
+// c = { call(name, args) → { data, error }, personal() → 내 개인 공간 id, personalRooms() → 개인 방 id 목록(친구 개인 공간에 있는 방 포함 — msgr2_dm_list),
+//       roomsOf(space) → 방 id 목록, forget(space), inviteSpace: Map(초대 id → 공간) }.
 // 오류는 서버 원문(msgr2_…)을 그대로 넘긴다 — 사람이 읽는 문구는 v2/errors.mjs(friendlyErr가 부른다).
 
 const done = (data) => ({ data, error: null, status: 200 });
@@ -40,30 +41,30 @@ export const LEGACY_RPCS = {
   msgr_browse_channels: async (c, a) => pass(await c.call('msgr2_rooms_browse', { p_space: a.org, p_include_joined: false }), (rows) => (rows ?? []).map((x) => ({ ...x, kind: 'public', topic: null }))),
   msgr_leave_dm: (c, a) => c.call('msgr2_room_leave', { p_room: a.ch }),
   // 개인 공간: 친구 1:1(짝당 하나)·내 에이전트 1:1·여러 사람 방(비공개)
-  msgr_dm_personal: async (c, a) => { const r = await pass(await c.call('msgr2_dm_open', { p_user: a.target }), (d) => d?.room_id ?? null); if (!r.error) c.forget(await c.personal()); return r; },
-  msgr_dm_personal_crew: async (c, a) => { const r = await pass(await c.call('msgr2_agent_dm_open', { p_agent: a.crew }), (d) => d?.room_id ?? null); if (!r.error) c.forget(await c.personal()); return r; },
-  msgr_dm_personal_group: async (c, a) => { const r = await c.call('msgr2_room_create', { p_space: null, p_kind: 'private', p_name: dmTitle(a.title), p_users: a.targets ?? [] }); if (!r.error) c.forget(await c.personal()); return r; },
+  msgr_dm_personal: async (c, a) => { const r = await pass(await c.call('msgr2_dm_open', { p_user: a.target }), (d) => d?.room_id ?? null); if (!r.error) c.forget(null); return r; },
+  msgr_dm_personal_crew: async (c, a) => { const r = await pass(await c.call('msgr2_agent_dm_open', { p_agent: a.crew }), (d) => d?.room_id ?? null); if (!r.error) c.forget(null); return r; },
+  msgr_dm_personal_group: async (c, a) => { const r = await c.call('msgr2_room_create', { p_space: null, p_kind: 'private', p_name: dmTitle(a.title), p_users: a.targets ?? [] }); if (!r.error) c.forget(null); return r; },
   // 에이전트 넣기·빼기(내 에이전트만, 팀은 그 공간에 자리가 있어야 — 서버 _msgr2_room_add_agent). 옛 반환 'joined' | 'already'
   msgr_crew_join: async (c, a) => pass(await c.call('msgr2_room_members_add', { p_room: a.ch, p_users: [], p_agents: [a.crew] }), (n) => (n > 0 ? 'joined' : 'already')),
   msgr_crew_leave_channel: async (c, a) => pass(await c.call('msgr2_room_member_remove', { p_room: a.ch, p_kind: 'agent', p_member: a.crew }), (ok) => (ok ? 'left' : 'not_member')),
-  // 안 읽음: 옛 org null = 개인 공간. v2 p_space null은 모든 공간이라 개인 공간 id를 넘긴다. 사람 멘션은 v2에 없어 mention 0
+  // 안 읽음: 옛 org null = 개인 방(개인 종류 공간의 내 방 — 친구가 열어 친구 공간에 있는 방도). 그 밖은 그 팀 공간. 사람 멘션은 v2에 없어 mention 0
   async msgr_unread(c, a) {
-    const space = a?.org ?? await c.personal();
-    if (!space) return done([]);
-    return pass(await c.call('msgr2_unread', { p_space: space }), (rows) => (rows ?? []).map((x) => ({ channel_id: x.room_id, n: x.n ?? 0, mention: 0, muted: !!x.muted })));
+    const legacyRow = (x) => ({ channel_id: x.room_id, n: x.n ?? 0, mention: 0, muted: !!x.muted });
+    if (a?.org) return pass(await c.call('msgr2_unread', { p_space: a.org }), (rows) => (rows ?? []).map(legacyRow));
+    const [r, mine] = [await c.call('msgr2_unread', {}), new Set(await c.personalRooms())];
+    return r.error ? r : done((r.data ?? []).filter((x) => mine.has(x.room_id)).map(legacyRow));
   },
-  // 공간별 합계(음소거 제외 — 옛 msgr_unread_totals와 같은 규칙). 개인 공간은 org_id null
+  // 공간별 합계(음소거 제외 — 옛 msgr_unread_totals와 같은 규칙). 개인 방(어느 개인 공간이든)은 org_id null 한 칸
   async msgr_unread_totals(c) {
-    const [r, personal] = [await c.call('msgr2_unread', {}), await c.personal()];
+    const [r, mine] = [await c.call('msgr2_unread', {}), new Set(await c.personalRooms())];
     if (r.error) return r;
     const sum = new Map();
-    for (const x of r.data ?? []) { if (x.muted || !x.n) continue; const k = x.space_id === personal ? null : x.space_id; sum.set(k, (sum.get(k) ?? 0) + x.n); }
+    for (const x of r.data ?? []) { if (x.muted || !x.n) continue; const k = mine.has(x.room_id) ? null : x.space_id; sum.set(k, (sum.get(k) ?? 0) + x.n); }
     return done([...sum].map(([org_id, n]) => ({ org_id, n, mention: 0 })));
   },
-  // 채팅·채널 탭의 본문 찾기: 맞은 방 id만(옛 모양 [{channel_id}]). 서버 검색은 공간을 가리지 않아 이 공간의 방으로 거른다
+  // 채팅·채널 탭의 본문 찾기: 맞은 방 id만(옛 모양 [{channel_id}]). 서버 검색은 공간을 가리지 않아 이 공간의 방(개인이면 개인 방)으로 거른다
   async msgr_tab_search(c, a) {
-    const space = a?.org ?? await c.personal();
-    const [r, rooms] = [await c.call('msgr2_search', { p_q: a?.q ?? '', p_limit: 50 }), new Set(space ? await c.roomsOf(space) : [])];
+    const [r, rooms] = [await c.call('msgr2_search', { p_q: a?.q ?? '', p_limit: 50 }), new Set(a?.org ? await c.roomsOf(a.org) : await c.personalRooms())];
     if (r.error) return r;
     const ids = new Set([...(r.data?.messages ?? []).map((m) => m.room_id), ...(r.data?.rooms ?? []).map((x) => x.id)].filter((id) => rooms.has(id)));
     return done([...ids].map((channel_id) => ({ channel_id })));

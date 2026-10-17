@@ -4,12 +4,12 @@ export const configured = true, customServer = false, SB_URL = 'http://fixture.i
 const uid = '5c1e0a77-0000-4000-8000-000000000001', mate = '9b2d4f10-0000-4000-8000-000000000002', now = Date.now();
 const at = (min) => new Date(now - min * 60_000).toISOString();
 const later = (min) => new Date(now + min * 60_000).toISOString();
-const T = '7e000000-0000-4000-8000-0000000000aa', P = '7e000000-0000-4000-8000-0000000000bb';
+const T = '7e000000-0000-4000-8000-0000000000aa', P = '7e000000-0000-4000-8000-0000000000bb', PM = '7e000000-0000-4000-8000-0000000000cc'; // PM = 친구(민지)의 개인 공간
 const GEN = '7f000000-0000-4000-8000-000000000001', PLAN = '7f000000-0000-4000-8000-000000000002', DM = '7f000000-0000-4000-8000-000000000003', NEWS = '7f000000-0000-4000-8000-000000000004';
 const A = 'a0000000-0000-4000-8000-000000000001', B = 'a0000000-0000-4000-8000-000000000002', C = 'a0000000-0000-4000-8000-000000000003';
 const W = (n) => `b0000000-0000-4000-8000-00000000000${n}`;
 const state = window.__v2Fixture = { calls: [], topics: new Map(), signedIn: true, authCbs: new Set(), tables: {
-  msgr2_spaces: [{ id: P, kind: 'personal', name: '', owner_user_id: uid }, { id: T, kind: 'team', name: 'Beyond 팀', owner_user_id: mate }],
+  msgr2_spaces: [{ id: P, kind: 'personal', name: '', owner_user_id: uid }, { id: PM, kind: 'personal', name: '', owner_user_id: mate }, { id: T, kind: 'team', name: 'Beyond 팀', owner_user_id: mate }],
   msgr2_space_members: [{ space_id: P, user_id: uid, role: 'owner', display_name: '나' }, { space_id: T, user_id: uid, role: 'member', display_name: '유건' }, { space_id: T, user_id: mate, role: 'owner', display_name: '민지' }],
   msgr2_rooms: [
     { id: GEN, space_id: T, kind: 'open', name: '일반', memory: true, agent_policy: 'allowed', created_at: at(500), archived_at: null },
@@ -109,6 +109,8 @@ const rpcs = {
   msgr2_devices_list: () => state.devices.map((d) => ({ ...d })),
   msgr2_device_revoke: ({ p_device }) => { const d = state.devices.find((x) => x.id === p_device); if (!d || d.revoked_at) return false; d.revoked_at = new Date().toISOString(); d.state = 'revoked'; if (d.is_current) setTimeout(() => fire(`v2:u:${uid}`, 'device_revoked', { device_id: d.id }), 50); return true; },
   // U6d(방·공간·초대·안 읽음·찾기·신고) 대역 — 메모리 표를 바꾸고 v2:u: 방 사건을 보낸다
+  // 개인 방 목록(나 기준): 개인 종류 공간의 내 1:1·그룹방 — 친구가 연 방은 친구의 개인 공간(PM)에 있다(U6d·U8)
+  msgr2_dm_list: ({ p_include_groups }) => { const T_ = state.tables; const personal = new Set(T_.msgr2_spaces.filter((x) => x.kind === 'personal').map((x) => x.id)); return T_.msgr2_rooms.filter((r) => personal.has(r.space_id) && !r.archived_at && (r.kind === 'direct' || (p_include_groups && r.kind === 'private')) && T_.msgr2_room_members.some((m) => m.room_id === r.id && m.member_kind === 'user' && m.member_id === uid && !m.removed_at)).map((r) => { const mem = T_.msgr2_room_members.filter((m) => m.room_id === r.id && !m.removed_at); const other = r.kind === 'direct' ? mem.find((m) => m.member_kind === 'user' && m.member_id !== uid)?.member_id ?? null : null; const last = T_.msgr2_messages.filter((m) => m.room_id === r.id && m.kind !== 'system').sort((a, b) => b.id - a.id)[0]; return { room_id: r.id, space_id: r.space_id, kind: r.kind, name: r.name ?? '', other_user_id: other, other_name: other === mate ? '민지' : null, members: mem.map((m) => ({ kind: m.member_kind, id: m.member_id, name: m.member_kind === 'agent' ? T_.msgr2_agents.find((a) => a.id === m.member_id)?.display_name : m.member_id === uid ? '유건' : '민지' })), agent_id: null, last_id: last?.id ?? null, last_at: last?.created_at ?? r.created_at, last_body: last?.body ?? '', created_by: r.created_by ?? uid }; }); },
   msgr2_unread: ({ p_space }) => { const T_ = state.tables; return T_.msgr2_room_members.filter((m) => m.member_kind === 'user' && m.member_id === uid && !m.removed_at).map((m) => T_.msgr2_rooms.find((r) => r.id === m.room_id)).filter((r) => r && !r.archived_at && (!p_space || r.space_id === p_space)).map((r) => { const last = T_.msgr2_reads.find((x) => x.room_id === r.id)?.last_read_id ?? 0; const n = T_.msgr2_messages.filter((x) => x.room_id === r.id && x.id > last && x.author_user_id !== uid && x.kind !== 'system').length; return { room_id: r.id, space_id: r.space_id, n: Math.min(n, 99), last_id: null, last_read_id: last, muted: false }; }); },
   msgr2_mark_read: ({ p_room, p_last_id }) => { const T_ = state.tables.msgr2_reads; const cur = T_.find((x) => x.room_id === p_room); if (cur) { if (p_last_id > cur.last_read_id) Object.assign(cur, { last_read_id: p_last_id, updated_at: new Date().toISOString() }); } else T_.push({ room_id: p_room, user_id: uid, last_read_id: p_last_id, updated_at: new Date().toISOString() }); return p_last_id; },
   msgr2_room_pref_set: ({ p_room, p_muted, p_pinned }) => { const T_ = state.tables.msgr2_prefs; let r = T_.find((x) => x.room_id === p_room); if (!r) { r = { room_id: p_room, user_id: uid, muted: false, pinned: false }; T_.push(r); } if (p_muted != null) r.muted = p_muted; if (p_pinned != null) r.pinned = p_pinned; return { muted: r.muted, pinned: r.pinned }; },
@@ -174,7 +176,19 @@ state.devices = [
   { id: 'd0000000-0000-4000-8000-000000000004', kind: 'app', app: 'messenger', app_version: '0.1.5', registered_at: at(60000), created_at: at(90000), state: 'expired', is_current: false },
 ];
 state.failRegister = Number(new URLSearchParams(globalThis.location?.search ?? '').get('failreg') || 0);
+// 두 번째 계정(민지)이 나에게 새 1:1을 연다 — 서버처럼 방을 민지의 개인 공간(PM)에 두고, 나에게 rooms 사건과 글 방송을 보낸다(#1088 검수 1: 받는 쪽에 보여야 한다)
+state.friendOpens = (body = '안녕하세요, 민지예요') => {
+  const T_ = state.tables; const id = '7f300000-0000-4000-8000-000000000001';
+  if (!T_.msgr2_rooms.some((r) => r.id === id)) {
+    T_.msgr2_rooms.push({ id, space_id: PM, kind: 'direct', pair_key: `p:${uid}:${mate}`, name: '', memory: true, agent_policy: 'allowed', created_by: mate, created_at: new Date().toISOString(), archived_at: null });
+    for (const u of [mate, uid]) T_.msgr2_room_members.push({ room_id: id, member_kind: 'user', member_id: u, removed_at: null });
+  }
+  const m = { id: Math.max(0, ...T_.msgr2_messages.map((x) => x.id)) + 1, room_id: id, author_kind: 'user', author_user_id: mate, kind: 'text', body, meta: {}, mentions: [], created_at: new Date().toISOString() };
+  T_.msgr2_messages.push(m);
+  fire(`v2:u:${uid}`, 'rooms', { space_id: PM, room_id: id }); fire(`v2:u:${uid}`, 'msg', { message: m });
+  return id;
+};
 state.pause = (on) => fire(`v2:u:${uid}`, 'pause', { paused: !!on }); // 서버 중단 스위치 대역
 state.client = () => supabase; // 페이지 시험은 이 함수로 앱과 같은 대역을 쓴다(모듈을 다시 불러오면 다른 사본이 생긴다)
-state.ids = { uid, mate, T, P, GEN, PLAN, DM, NEWS, A, B, C, W };
+state.ids = { uid, mate, T, P, PM, GEN, PLAN, DM, NEWS, A, B, C, W };
 export async function q(p) { const { data, error } = await p; if (error) throw new Error(error.message); return data; }
