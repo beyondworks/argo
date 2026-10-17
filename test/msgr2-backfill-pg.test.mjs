@@ -241,6 +241,19 @@ test('5) 대응: 글 작성자·종류·답글·멘션·클라 id·첨부·읽�
   assert.equal(one(`select count(*) from public.msgr2_works w where public._msgr2_effective_state(w.state, w.expires_at, w.lease_until, w.has_result) in ('offered', 'accepted', 'running', 'awaiting_approval', 'stalled')`), '0', '다시 실행될 일 없음');
 });
 
+test('5b) U6d 결합: 옮긴 1:1 방을 1:1 목록이 열고, dm_open(친구·팀원)·agent_dm_open이 그 방을 찾는다(새 방 0)', { skip }, () => {
+  const { sid } = seedDevice(db, U.O, 'app');
+  const n0 = one('select count(*) from public.msgr2_rooms');
+  const rows = db.as(U.O, sid, `select coalesce(string_agg(room_id || '|' || kind || '|' || coalesce(other_user_id::text, '-') || '|' || coalesce(agent_id::text, '-'), ',' order by room_id), '')
+                                  from public.msgr2_dm_list(true) where room_id in ('${CH.FDM}', '${CH.CDM}')`);
+  assert.equal(rows, [`${CH.FDM}|direct|${U.F}|-`, `${CH.CDM}|private|-|${AG1}`].sort().join(','), '목록이 열리고(짝 키 파싱 성공) 친구 1:1·에이전트 1:1이 보인다');
+  const fdm = JSON.parse(db.as(U.O, sid, `select public.msgr2_dm_open('${U.F}')`));
+  assert.equal(fdm.room_id, CH.FDM); assert.equal(fdm.existing, true);
+  assert.equal(JSON.parse(db.as(U.O, sid, `select public.msgr2_agent_dm_open('${AG1}')`)).room_id, CH.CDM);
+  assert.equal(JSON.parse(db.as(U.O, sid, `select public.msgr2_dm_open('${U.M}', '${T}')`)).room_id, CH.ODM);
+  assert.equal(one('select count(*) from public.msgr2_rooms'), n0, '새 방을 만들지 않았다(옛 기록과 갈라지지 않는다)');
+});
+
 test('6) 경우 25: 옛 판정(msgr_can_read_channel)과 새 판정(_msgr2_access_for.read)이 사람 × 방마다 같다', { skip }, () => {
   const rows = [];
   for (const [un, u] of Object.entries(U)) for (const [cn, c] of Object.entries(CH)) {
