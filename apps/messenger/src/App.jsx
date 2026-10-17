@@ -1158,7 +1158,7 @@ function Shell({ session }) {
   const rt = useRef(null);
   const loadOrgs = useCallback(async () => {
     if (V2) { // v2: 공간 목록(개인 + 팀) — 팀 공간을 조직 자리에, 개인 공간은 기존 개인 공간 자리(PERSONAL)에 둔다
-      await currentV2()?.registered; // v2 표는 등록된 기기 세션만 읽는다(U3)
+      await currentV2()?.ready(); // v2 표는 등록된 기기 세션만 읽는다(U3). 상한·다시 붙기 그만둠이면 던진다 → 조직 목록 화면의 다시 시도(#1086 검수 1). 자동 재시도는 기계를 다시 붙이지 않는다
       const list = v2SpaceList(await v2LoadSpaces(rawSupabase, uid));
       currentV2()?.machine.setSpaces(v2LiveSpaceIds(list));
       const teams = list.filter((x) => !x.personal).map((x) => ({ id: x.id, role: x.role, name: x.name, slug: null, owner_user_id: null, deleted_at: null, _v2: true }));
@@ -1259,7 +1259,7 @@ function Shell({ session }) {
     const current = orgRequests.current.begin(PERSONAL);
     if (V2) { // v2: 개인 공간(진짜 공간 행)의 방 — 기존 개인 공간 목록과 같은 모양(모두 dm 줄)으로 채운다
       try {
-        await currentV2()?.registered;
+        await currentV2()?.ready();
         const pid = await q(rawSupabase.rpc('msgr2_my_personal_space'));
         const [rooms, friendsList] = await Promise.all([
           q(supabase.from('msgr_channels').select('id, kind, name, created_by, crew_memory, personal_crews, created_at').eq('org_id', pid).is('archived_at', null).order('created_at')),
@@ -1762,7 +1762,8 @@ function Shell({ session }) {
   }, [v2rt]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { v2rt?.machine.setActiveRoom(chId ?? null); }, [v2rt, chId]); // 보는 방은 배지에서 뺀다
   // ④ 기기 폐기·다시 로그인 필요(signed_out) → 로그인 화면으로, 이유를 남긴다. 중단·업데이트 필요는 화면 위 안내 줄(v2StateBar)
-  const [v2state, setV2state] = useState(null);
+  const [v2state, setV2state] = useState(null); const [v2stuck, setV2stuck] = useState(null); // 등록 대기 실패(시간 상한·다시 붙기 그만둠 — v2/runtime.mjs)
+  useEffect(() => { if (!v2rt) return undefined; setV2stuck(v2rt.stuck()); return v2rt.onStuck(setV2stuck); }, [v2rt]);
   useEffect(() => { const key = v2SignOutNotice(v2state); if (key) void signOutNotice(key); }, [v2state?.state, v2state?.reason]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { rt.current = subsRef.current.get(orgId) ?? null; }, [orgId]);
   useEffect(() => { const iv = setInterval(() => setTick((x) => x + 1), 15_000); return () => clearInterval(iv); }, []);
@@ -2599,7 +2600,7 @@ function Shell({ session }) {
     return () => { off = true; clearTimeout(timer); };
   }, [tabBodyQ, uid, orgId, blockedIds, mutedCrewIds]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (orgs !== null || orgsLoad.phase === 'error' || orgsLoad.slow) markAppReady(); }, [orgs, orgsLoad.phase, orgsLoad.slow]); // 스플래시 준비 신호 — 조직을 불러온 뒤, 또는 첫 조회가 늦거나 실패해 안내를 보여야 할 때(D8 — 스플래시 뒤에 갇히지 않게)(조기 반환 앞, 훅 순서)
-  if (orgs === null) return <OrgsLoading state={orgsLoad} online={online} onRetry={() => orgsLoader.retry()} onSignOut={signOut} signingOut={signingOut} />; // 첫 조직 목록 전(D8)
+  if (orgs === null) return <OrgsLoading state={orgsLoad} online={online} onRetry={() => { v2rt?.retry(); orgsLoader.retry(); }} /* v2: 멈춘 연결 상태 기계도 사람이 누를 때만 다시 붙인다 */ onSignOut={signOut} signingOut={signingOut} />; // 첫 조직 목록 전(D8)
   const joinedChannel = loadedOrg.current === orgId ? channels.find((c) => c.id === chId) : undefined;
   const previewing = !joinedChannel && loadedOrg.current === orgId && !isPersonal ? previewChannels.find((c) => c.id === chId) : undefined;
   const archivedView = !joinedChannel && !previewing && loadedOrg.current === orgId && !isPersonal ? archivedRoomFor(earlierRoom, { orgId, chId }) : undefined; // 이전 대화 보기로 연 보관 방 — 읽기 전용
@@ -3135,7 +3136,7 @@ function Shell({ session }) {
     <AvatarCtx.Provider value={avatarCtx}><SafetyCtx.Provider value={safetyCtx}><RunnerCtx.Provider value={openRunner}>
     <div className={`shell msgr-shell${online ? '' : ' is-offline'}${rail ? ' rail-open' : ''}${isPhone ? ' msgr-phone' : ''}${isPhone && isPhoneRoot(page) ? ' phone-home' : ''}${isPhone && page === 'chat' ? ' phone-chat' : ''}${isPhone && ROOT_PAGES.has(page) ? ' phone-root' : ''}${isPhone && pageAnim ? ` anim-${pageAnim}` : ''}`}>
       {!online && <div className="msgr-offline-bar" role="status">{t('net.offline')}</div>}
-      {online && v2StateBar(v2state) && <div className="msgr-offline-bar" role="status">{t(v2StateBar(v2state))}</div>}{/* v2 ④ 중단·업데이트 필요 — 오프라인 줄과 같은 자리·모양 */}
+      {online && v2StateBar(v2state, v2stuck) && <div className="msgr-offline-bar" role="status">{t(v2StateBar(v2state, v2stuck))}{v2StateBar(v2state, v2stuck) === 'v2.state.unreachable' && <> <button type="button" className="btn sm ghost" onClick={() => { v2rt?.retry(); orgsLoader.retry(); setTick((x) => x + 1); }}>{t('v2.state.retry')}</button></>}</div>}{/* v2 ④ 중단·업데이트 필요·연결할 수 없음(다시 시도) — 오프라인 줄과 같은 자리·모양 */}
       {rail && <div className="msgr-scrim" onClick={() => setRail(false)} role="presentation" />}
       {dmPeek && <DmPeekSheet channel={dmPeek} name={dmName(dmPeek)} uid={uid} whoOf={(m) => dmWho(dmPeek, { mine: m.author_user_id === uid, userId: m.author_user_id, crewId: m.crew_id })} onOpen={() => { const c = dmPeek; setDmPeek(null); if (openAgentDmInstead(c.id, 'peek')) return; setChId(c.id); setRail(false); setPage('chat'); }} onClose={() => setDmPeek(null)} />}
       <aside id="msgr-navigation" className={`side msgr-side${orgMenu ? ' menu-open' : ''}`}>

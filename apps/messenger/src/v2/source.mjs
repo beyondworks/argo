@@ -65,6 +65,9 @@ const RPCS = {
     'msgr_push_badge_resync']),
 };
 
+/** 등록을 기다리다 실패하면(시간 상한·다시 붙기 그만둠 — runtime.mjs) 요청 없이 오류 결과로 끝낸다(조회가 끝없이 걸리지 않게, #1086 검수 1). */
+const notReady = (e) => ({ data: null, error: { message: e?.code ?? e?.message ?? 'v2_not_registered', code: e?.code ?? 'v2_not_registered' }, status: 0, count: null });
+async function waitReady(ctx) { try { await ctx.ready(); return null; } catch (e) { return notReady(e); } }
 const unsupported = () => ({ data: null, error: { message: V2_UNSUPPORTED, code: V2_UNSUPPORTED }, status: 400, count: null });
 const invert = (m) => Object.fromEntries(Object.entries(m).map(([k, v]) => [v, k]));
 
@@ -149,7 +152,7 @@ class NoneBuilder extends Builder {
 
 class MapBuilder extends Builder {
   async run() {
-    await this.ctx.ready(); // v2 표의 RLS는 등록된 기기 세션만 읽게 한다(U3) — 첫 실행의 등록 전 읽기가 빈 결과로 굳지 않게(#1085 검수 2)
+    const nr = await waitReady(this.ctx); if (nr) return nr; // v2 표의 RLS는 등록된 기기 세션만 읽게 한다(U3) — 첫 실행의 등록 전 읽기가 빈 결과로 굳지 않게(#1085 검수 2)
     const spec = TABLES[this.table]; const raw = this.ctx.raw;
     const want = this.verb === 'select' ? (this.cols === '*' ? ['*'] : splitCols(this.cols)) : (this.writeSelect ? splitCols(this.writeSelect) : null);
     const col = (c) => spec.cols?.[c] ?? c;
@@ -221,7 +224,7 @@ function renameOr(spec, expr) {
 class CrewBuilder extends Builder {
   async run() {
     if (this.verb !== 'select') return unsupported();
-    await this.ctx.ready();
+    const nr = await waitReady(this.ctx); if (nr) return nr;
     const raw = this.ctx.raw;
     const want = this.cols === '*' ? ['*'] : splitCols(this.cols);
     let space = null; let ids = null; let owner = null; let statuses = null;
@@ -300,7 +303,7 @@ export function createV2Client(raw, opts = {}) {
     return new NoneBuilder(ctx, table);
   };
   client.rpc = (name, args, o) => {
-    if (String(name).startsWith('msgr2_')) return ctx.ready().then(() => raw.rpc(name, args, o));
+    if (String(name).startsWith('msgr2_')) return waitReady(ctx).then((nr) => nr ?? raw.rpc(name, args, o));
     if (RPCS.keep.has(name)) return raw.rpc(name, args, o);
     if (RPCS.write.has(name)) return Promise.resolve(unsupported());
     return Promise.resolve({ data: name in RPCS.empty ? RPCS.empty[name] : [], error: null, status: 200 });

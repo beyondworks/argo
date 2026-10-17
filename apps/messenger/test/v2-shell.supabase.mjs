@@ -97,7 +97,7 @@ function query(table) {
 
 const rpcs = {
   argo_min_app_version: () => null, msgr2_service_pause: () => null,
-  msgr2_device_register: () => ({ device_id: 'd0000000-0000-4000-8000-000000000001', kind: 'app', wrote: false }),
+  msgr2_device_register: () => { if (state.failRegister) { state.failRegister -= 1; throw Object.assign(new Error('msgr2_device_invalid'), { code: '22023' }); } return { device_id: 'd0000000-0000-4000-8000-000000000001', kind: 'app', wrote: false }; }, // ?failreg=N — 처음 N번 등록 거부(#1086 검수 1: 다시 붙기 그만둠 화면)
   msgr2_catch_up: () => ({ rooms: [], next_since: 202 }),
   msgr2_my_personal_space: () => P,
   msgr2_work_status: ({ p_work }) => ({ work: p_work, effects: [] }),
@@ -109,7 +109,7 @@ const rpcs = {
   // 그대로 쓰는 옛 RPC(설계 1-2절)
   msgr_my_friends: () => [{ user_id: mate, status: 'accepted', display_name: '민지', handle: 'minji' }],
   msgr_avatars: () => [], msgr_people_names: ({ ids }) => (ids ?? []).map((id) => ({ user_id: id, display_name: id === uid ? '유건' : '민지' })),
-  msgr_my_hidden_users: () => [], msgr_my_blocked: () => [], my_plan: () => 'pro', msgr_my_ai_consent: () => true,
+  msgr_my_hidden_users: () => [], msgr_my_blocked: () => [], my_plan: () => ({ plan: 'pro' }) /* 서버 my_plan은 {plan, …} 객체(src/entitlement.mjs effectivePlanOf) */, msgr_my_ai_consent: () => true,
 };
 
 function fire(topic, event, payload) { for (const c of state.topics.get(topic) ?? []) for (const h of c.handlers) if (h.kind === 'broadcast' && (h.filter?.event === '*' || h.filter?.event === event)) h.cb({ event, payload }); }
@@ -120,7 +120,7 @@ export const supabase = {
     onAuthStateChange: (cb) => { state.authCbs.add(cb); return { data: { subscription: { unsubscribe() { state.authCbs.delete(cb); } } } }; },
     signOut: async () => { state.signedIn = false; for (const cb of state.authCbs) cb('SIGNED_OUT', null); return { error: null }; },
   },
-  rpc: async (name, args = {}) => { call({ rpc: name }); try { return { data: rpcs[name] ? rpcs[name](args) : [], error: null, status: 200 }; } catch (e) { return { data: null, error: { message: String(e.message) }, status: 400 }; } },
+  rpc: async (name, args = {}) => { call({ rpc: name }); try { return { data: rpcs[name] ? rpcs[name](args) : [], error: null, status: 200 }; } catch (e) { return { data: null, error: { message: String(e.message), code: e.code }, status: 400 }; } },
   realtime: { setAuth: async () => {}, isConnected: () => true },
   functions: { invoke: async () => ({ data: null, error: null }) },
   channel: (topic) => {
@@ -149,6 +149,7 @@ state.devices = [
   { id: 'd0000000-0000-4000-8000-000000000003', kind: 'app', app: 'messenger', app_version: '0.1.9', registered_at: at(4000), created_at: at(9000), state: 'active', is_current: false },
   { id: 'd0000000-0000-4000-8000-000000000004', kind: 'app', app: 'messenger', app_version: '0.1.5', registered_at: at(60000), created_at: at(90000), state: 'expired', is_current: false },
 ];
+state.failRegister = Number(new URLSearchParams(globalThis.location?.search ?? '').get('failreg') || 0);
 state.pause = (on) => fire(`v2:u:${uid}`, 'pause', { paused: !!on }); // 서버 중단 스위치 대역
 state.client = () => supabase; // 페이지 시험은 이 함수로 앱과 같은 대역을 쓴다(모듈을 다시 불러오면 다른 사본이 생긴다)
 state.ids = { uid, mate, T, P, GEN, PLAN, DM, A, B, C, W };

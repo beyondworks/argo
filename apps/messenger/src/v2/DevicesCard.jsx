@@ -3,7 +3,7 @@
 // 읽는 때: 카드를 열 때 한 번, 로그아웃한 뒤 한 번(주기 조회 없음). 모든 기기 로그아웃 = 다른 기기를 하나씩 폐기한 뒤 이 기기도 폐기하고 로그아웃.
 import { useCallback, useEffect, useState } from 'react';
 import { ConfirmModal } from '@argo/ui';
-import { deviceRows } from './devices.mjs';
+import { deviceRows, revokeAllDevices } from './devices.mjs';
 
 export function DevicesCard({ client, t, lang, onSignedOut, onError, onNote }) {
   const [rows, setRows] = useState(null); const [err, setErr] = useState(false);
@@ -21,10 +21,7 @@ export function DevicesCard({ client, t, lang, onSignedOut, onError, onNote }) {
     if (!ask) return; setBusy(true);
     try {
       if (ask.kind === 'one') { await revoke(ask.row.id); onNote?.(t('v2.dev.revoked')); setAsk(null); await load(); return; }
-      // 모든 기기: 다른 기기 먼저(이 기기를 먼저 폐기하면 그 뒤 요청이 거부된다), 마지막에 이 기기
-      for (const d of view.filter((x) => x.active && !x.current)) await revoke(d.id);
-      const me = view.find((x) => x.current && x.active);
-      if (me) await revoke(me.id).catch(() => {}); // 이 기기는 폐기 방송이 먼저 와서 로그아웃될 수도 있다
+      if (await revokeAllDevices(view, revoke) === 'self_failed') { onError?.(t('v2.dev.selfFailed')); await load().catch(() => {}); return; } // 순서·실패 규칙은 devices.mjs
       setAsk(null); onSignedOut?.('v2.dev.all.done');
     } catch { onError?.(t('v2.dev.revokeFailed')); await load().catch(() => {}); } finally { setBusy(false); }
   };

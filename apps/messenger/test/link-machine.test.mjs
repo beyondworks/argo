@@ -887,3 +887,15 @@ test('U6b 멘션: 보내기에 mentions를 실으면 글 행에 그대로(중복
   assert.deepEqual(fake.db.messages.find((x) => x.client_msg_id === 'cm-m1').mentions, [A]);
   assert.equal('mentions' in fake.db.messages.find((x) => x.client_msg_id === 'cm-m2'), false);
 });
+
+test('#1086 검수 1: 다시 시도(retry) — 멈춘(gave_up) 상태에서만 한 번 다시 등록, 붙어 있거나 대기 중이면 요청 0', async () => {
+  const fake = fakeSupabase();
+  fake.fail.msgr2_device_register = [{ error: { code: '22023', message: 'msgr2_device_invalid' }, status: 400 }];
+  const { m, clock } = setup({ fake });
+  await m.start(); await clock.advance(MIN);
+  assert.equal(m.getSnapshot().reason, 'gave_up:invalid'); assert.equal(fake.count('msgr2_device_register'), 1);
+  assert.equal(m.retry(), true); await flush();
+  assert.equal(fake.count('msgr2_device_register'), 2); assert.equal(m.getState(), 'ready');
+  const n = fake.log.length;
+  assert.equal(m.retry(), false, '붙어 있으면 아무것도 안 한다'); await flush(); assert.equal(fake.log.length, n);
+});

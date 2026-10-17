@@ -288,6 +288,15 @@ export function createLinkMachine(opts) {
     return true;
   }
 
+  /** 사람이 누른 다시 시도(안내 줄·조직 목록 다시 불러오기) — 멈춘(gave_up) 상태에서만, 횟수를 처음부터 센다. 대기 중·붙는 중이면 아무것도 안 한다. */
+  function retry() {
+    if (terminal() || !foreground || !booted) return false;
+    if (state !== STATES.disconnected || timer != null) return false;
+    attempts = 0;
+    void connect();
+    return true;
+  }
+
   // ── 앞·뒤 ─────────────────────────────────────────────────────────────────
   async function setForeground(fg) {
     fg = !!fg;
@@ -600,7 +609,7 @@ export function createLinkMachine(opts) {
   }
 
   return {
-    start, stop, setForeground, nudge, send, watchWork, setActiveRoom, clearMore, setSpaces, on,
+    start, stop, setForeground, nudge, retry, send, watchWork, setActiveRoom, clearMore, setSpaces, on,
     getState: () => state, getSnapshot: snapshot,
   };
 }

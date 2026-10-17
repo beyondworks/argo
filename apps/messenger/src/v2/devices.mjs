@@ -14,7 +14,9 @@ export function deviceRows(rows = [], { lang = 'ko', now = Date.now() } = {}) {
 }
 
 /** 연결 상태 기계 상태 → 화면 위 안내 줄 키(없으면 null). 로그아웃(signed_out)은 안내 줄이 아니라 로그인 화면으로 간다. */
-export function v2StateBar(st) {
+export function v2StateBar(st, stuck = null) {
+  if (st?.state === 'disconnected' && String(st.reason ?? '').startsWith('gave_up:')) return 'v2.state.unreachable'; // 다시 붙기를 그만둠 — 다시 시도 단추(#1086 검수 1-②)
+  if (stuck && st?.state !== 'paused' && st?.state !== 'update_required' && st?.state !== 'signed_out') return 'v2.state.unreachable'; // 등록 대기 상한(1-①)
   if (!st) return null;
   if (st.state === 'paused') return 'v2.state.paused';
   if (st.state === 'update_required') return 'v2.state.update';
@@ -22,3 +24,12 @@ export function v2StateBar(st) {
 }
 /** signed_out의 이유 → 로그인 화면 안내 키. */
 export const v2SignOutNotice = (st) => (st?.state === 'signed_out' ? (st.reason === 'login_required' ? 'v2.state.loginRequired' : 'v2.state.signedOut') : null);
+
+/** 모든 기기 로그아웃(순서·실패). 다른 기기를 먼저(이 기기를 먼저 폐기하면 그 뒤 요청이 거부된다), 마지막에 이 기기.
+    다른 기기 폐기가 실패하면 던진다(멈추고 목록을 다시 읽는다). 이 기기 폐기가 실패하면 'self_failed' — 로컬로만 로그아웃하지 않는다(#1086 검수 2). 다 되면 'done'. */
+export async function revokeAllDevices(view, revoke) {
+  for (const d of view.filter((x) => x.active && !x.current)) await revoke(d.id);
+  const me = view.find((x) => x.current && x.active);
+  if (me && !(await revoke(me.id).then(() => true, () => false))) return 'self_failed'; // 이미 폐기됐으면 서버가 오류 없이 false를 준다
+  return 'done';
+}
