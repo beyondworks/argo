@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { readFileSync, readdirSync } from 'node:fs';
-import { setup, setupFull, seedDevice, migText } from './msgr2-work-pg.mjs';
+import { setupBase, setupFull, seedDevice, migText } from './msgr2-work-pg.mjs';
 
 const migDir = fileURLToPath(new URL('../../supabase/migrations/', import.meta.url));
 export const ROOMS_FILE = readdirSync(migDir).filter((f) => f.endsWith('_msgr2_rooms.sql')).sort().pop();
@@ -25,13 +25,20 @@ export function snapshot(db) {
     procs: db.sql(`select p.oid::regprocedure::text || '|' || md5(p.prosrc) || '|' || coalesce(p.proacl::text, '-') || '|' || p.prosecdef::text || '|' || coalesce(p.proconfig::text, '-')
                    from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public'
                      and not exists (select 1 from pg_depend d where d.classid = 'pg_proc'::regclass and d.objid = p.oid and d.deptype = 'e') order by 1`).split('\n'),
-    triggers: db.sql(`select tgrelid::regclass::text || ':' || tgname::text || ':' || tgfoid::regprocedure::text || ':' || tgenabled from pg_trigger where not tgisinternal order by 1`).split('\n'),
+    triggers: db.sql(`select tgrelid::regclass::text || ':' || tgname::text || ':' || tgfoid::regprocedure::text || ':' || tgenabled::text from pg_trigger where not tgisinternal order by 1`).split('\n'),
     columns: db.sql(`select table_name || '.' || column_name || ':' || data_type from information_schema.columns where table_schema = 'public' order by 1`).split('\n'),
     policies: db.sql(`select schemaname || '.' || tablename || ':' || policyname || ':' || md5(coalesce(qual, '') || '|' || coalesce(with_check, '')) from pg_policies where schemaname in ('public', 'storage', 'realtime') order by 1`).split('\n'),
-    constraints: db.sql(`select conrelid::regclass::text || ':' || conname || ':' || pg_get_constraintdef(oid) || ':' || convalidated from pg_constraint where connamespace = 'public'::regnamespace order by 1`).split('\n'),
+    constraints: db.sql(`select conrelid::regclass::text || ':' || conname || ':' || pg_get_constraintdef(oid) || ':' || convalidated::text from pg_constraint where connamespace = 'public'::regnamespace order by 1`).split('\n'),
     acl: db.sql(`select relname || ':' || coalesce(relacl::text, '-') from pg_class where relnamespace = 'public'::regnamespace and relkind = 'r' order by 1`).split('\n'),
     indexes: db.sql(`select indexrelid::regclass::text || ':' || pg_get_indexdef(indexrelid) from pg_index i join pg_class c on c.oid = i.indrelid join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public' order by 1`).split('\n'),
   };
+}
+
+// msgr2 파일을 버전 순서로 적용하되 U6d(이 파일)만 뺀다 — 적용 전·후를 비교하려고(setup()은 U2b 뒤 파일을 모두 적용한다)
+function setupWithoutRooms(DB) {
+  const db = setupBase(DB);
+  for (const f of readdirSync(migDir).filter((x) => /^\d+_msgr2_.*\.sql$/.test(x) && x !== ROOMS_FILE).sort()) db.psql(['-c', migText(f)]);
+  return db;
 }
 
 const LEGACY_STUB = `
@@ -40,7 +47,7 @@ create table if not exists public.msgr_user_blocks (blocker uuid not null, block
 create table if not exists public.msgr_profiles (user_id uuid primary key, display_name text);`;
 
 const id = (n) => `6d000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
-const U = { O: id(1), A: id(2), M: id(3), G: id(4), F: id(5), X: id(6), B: id(7), N: id(8), E: id(9), F2: id(10), Q: id(11) };
+const U = { O: id(1), A: id(2), M: id(3), G: id(4), F: id(5), X: id(6), B: id(7), N: id(8), E: id(9), F2: id(10), Q: id(11), K: id(12), W: id(13), W2: id(14), Z: id(15), K2: id(16) };
 const pair = (x, y) => (x < y ? [x, y] : [y, x]);
 
 export function run(mode) {
@@ -66,7 +73,7 @@ export function run(mode) {
       db = setupFull(DB);
       if (process.env.MSGR2_ROOMS_MUT) db.psql(['-c', roomsText()]);
     } else {
-      db = setup(DB);
+      db = setupWithoutRooms(DB);
       db.psql(['-c', LEGACY_STUB]);
       d.base = snapshot(db);
       db.psql(['-c', roomsText()]);
@@ -370,7 +377,112 @@ export function run(mode) {
     } finally { db.sql(`delete from public.msgr_settings where key = 'msgr2_paused'`); }
   });
 
+
+  test('검수 A — 초대: 이미 멤버여도 소진·만료·취소 링크는 거부하고 받으면 횟수를 센다, 링크는 빠진 행을 되살리지 않는다, 만든 사람이 방에서 빠지면 그 방은 안 넣는다', { skip }, () => {
+    const used = (code) => db.sql(`select use_count from public.msgr2_space_invites where code = '${code}'`);
+    const l1 = J(d.O, `public.msgr2_invite_create('${TEAM}', 'member', null, '{}'::uuid[], 2)`);
+    assert.equal(J(d.M, `public.msgr2_invite_accept('${l1.code}')`).already_member, true);
+    assert.equal(used(l1.code), '1', '이미 멤버여도 센다');
+    J(d.A, `public.msgr2_invite_accept('${l1.code}')`);
+    assert.match(E(d.M, `public.msgr2_invite_accept('${l1.code}')`), /msgr2_invite_exhausted/, '이미 멤버여도 소진 링크는 거부');
+    // 공간에서 내보낸 사람: 살아 있는 링크로는 못 돌아온다, 사람 지정 초대로만
+    const inv = J(d.O, `public.msgr2_invite_create('${TEAM}', 'member', '${U.K}')`); J(d.K, `public.msgr2_invite_accept('${inv.code}')`);
+    V(d.O, `public.msgr2_space_member_remove('${TEAM}', '${U.K}')`);
+    const live = J(d.O, `public.msgr2_invite_create('${TEAM}', 'member', null, '{}'::uuid[], 50)`);
+    assert.match(E(d.K, `public.msgr2_invite_accept('${live.code}')`), /msgr2_invite_rejoin_direct_only/);
+    assert.equal(db.sql(`select removed_at is not null from public.msgr2_space_members where space_id = '${TEAM}' and user_id = '${U.K}'`), 't');
+    const back = J(d.O, `public.msgr2_invite_create('${TEAM}', 'member', '${U.K}')`);
+    assert.equal(J(d.K, `public.msgr2_invite_accept('${back.code}')`).already_member, false, '사람 지정 초대는 되살린다');
+    // 방에서 빼낸 멤버: 그 방이 든 링크로 받아도 되살리지 않는다
+    const r = V(d.O, `public.msgr2_room_create('${TEAM}', 'private', '링크방', array['${U.K}']::uuid[])`);
+    V(d.O, `public.msgr2_room_member_remove('${r}', 'user', '${U.K}')`);
+    const lr = J(d.O, `public.msgr2_invite_create('${TEAM}', 'member', null, array['${r}']::uuid[], 10)`);
+    assert.deepEqual(J(d.K, `public.msgr2_invite_accept('${lr.code}')`).rooms, []);
+    assert.equal(canSeeRoom(d.K, r), false, '링크로 방에 돌아오지 못한다');
+    // 초대 만든 사람이 방에서 빠지면 그 방은 넣지 않는다
+    const r2 = V(d.A, `public.msgr2_room_create('${TEAM}', 'private', '만든이방')`);
+    const la = J(d.A, `public.msgr2_invite_create('${TEAM}', 'member', '${U.K2}', array['${r2}']::uuid[])`);
+    V(d.A, `public.msgr2_room_leave('${r2}')`);
+    assert.deepEqual(J(d.K2, `public.msgr2_invite_accept('${la.code}')`).rooms, []);
+    assert.equal(canSeeRoom(d.K2, r2), false);
+  });
+
+  test('검수 A(결정) — 기한 지난 손님을 다시 초대하면 새로 시작: 옛 비공개 방은 닫히고 이번 초대의 방만 열린다', { skip }, () => {
+    const r = V(d.O, `public.msgr2_room_create('${TEAM}', 'private', '새손님방')`);
+    assert.equal(db.sql(`select count(*) from public.msgr2_room_members where room_id = '${PRIV}' and member_id = '${U.E}' and removed_at is null`), '1', '만료 손님의 옛 방 행은 아직 열려 있다');
+    const g = J(d.O, `public.msgr2_invite_create('${TEAM}', 'guest', '${U.E}', array['${r}']::uuid[], 1, 604800, 7)`);
+    J(d.E, `public.msgr2_invite_accept('${g.code}')`);
+    assert.equal(canSeeRoom(d.E, r), true);
+    assert.equal(canSeeRoom(d.E, PRIV), false, '옛 비공개 방은 돌려주지 않는다');
+    const l = J(d.O, `public.msgr2_invite_create('${TEAM}', 'guest', null, array['${PRIV}']::uuid[], 5, 604800, 7)`);
+    db.sql(`update public.msgr2_space_members set expires_at = now() - interval '1 minute' where user_id = '${U.E}' and space_id = '${TEAM}'`);
+    assert.match(E(d.E, `public.msgr2_invite_accept('${l.code}')`), /msgr2_invite_rejoin_direct_only/, '만료 손님은 링크로 되살아나지 않는다');
+  });
+
+  test('검수 B — 구성원끼리 차단이면 방 만들기·넣기 거부(팀·개인), 1:1은 한쪽이 차단하면 둘 다 못 쓰고 읽기는 남는다', { skip }, () => {
+    block(U.M, U.A);
+    try {
+      assert.match(E(d.O, `public.msgr2_room_create('${TEAM}', 'private', 'x', array['${U.M}', '${U.A}']::uuid[])`), /msgr2_group_blocked_pair/);
+      const r = V(d.O, `public.msgr2_room_create('${TEAM}', 'private', 'y', array['${U.M}']::uuid[])`);
+      assert.match(E(d.O, `public.msgr2_room_members_add('${r}', array['${U.A}']::uuid[])`), /msgr2_group_blocked_pair/, '방에 있는 사람과 차단');
+      assert.match(E(d.A, `public.msgr2_dm_open('${U.M}', '${TEAM}')`), /msgr2_dm_unavailable/, '차단 관계의 팀 1:1은 열리지 않는다');
+    } finally { db.sql(`delete from public.msgr_user_blocks where blocker = '${U.M}' and blocked = '${U.A}'`); }
+    block(U.F, U.F2);
+    try {
+      assert.match(E(d.O, `public.msgr2_room_create(null, 'private', 'z', array['${U.F}', '${U.F2}']::uuid[])`), /msgr2_group_blocked_pair/, '개인 방');
+    } finally { db.sql(`delete from public.msgr_user_blocks where blocker = '${U.F}' and blocked = '${U.F2}'`); }
+    // 1:1 쓰기: 열어 둔 뒤 한쪽이 차단
+    const tdm = J(d.O, `public.msgr2_dm_open('${U.M}', '${TEAM}')`).room_id;
+    const pdm = J(d.O, `public.msgr2_dm_open('${U.F}')`).room_id;
+    const write = (who, room) => db.asErr(who.uid, who.sid, `insert into public.msgr2_messages (room_id, author_kind, author_user_id, body) values ('${room}', 'user', '${who.uid}', 'hi')`) === null;
+    assert.equal(write(d.M, tdm), true); assert.equal(write(d.F, pdm), true);
+    block(U.M, U.O); block(U.O, U.F);
+    try {
+      assert.equal(write(d.M, tdm), false, '차단한 쪽'); assert.equal(write(d.O, tdm), false, '차단당한 쪽');
+      assert.equal(write(d.F, pdm), false); assert.equal(write(d.O, pdm), false);
+      assert.equal(canSeeRoom(d.O, tdm), true, '읽기는 남는다');
+    } finally { db.sql(`delete from public.msgr_user_blocks where (blocker = '${U.M}' and blocked = '${U.O}') or (blocker = '${U.O}' and blocked = '${U.F}')`); }
+    assert.equal(write(d.M, tdm), true, '차단을 풀면 다시 쓴다');
+  });
+
+  test('검수 E — 초대 목록·신고 처리는 앱 기기만, admin은 admin 초대의 코드를 못 본다', { skip }, () => {
+    assert.match(E(d.Orun, `(select count(*) from public.msgr2_invites_list('${TEAM}'))`), /msgr2_app_device_required/);
+    J(d.O, `public.msgr2_invite_create('${TEAM}', 'admin', null, '{}'::uuid[], 1)`);
+    const seenByAdmin = rows(d.A, `select role, code from public.msgr2_invites_list('${TEAM}')`);
+    assert.ok(seenByAdmin.some((x) => x.role === 'admin'));
+    assert.ok(seenByAdmin.filter((x) => x.role === 'admin').every((x) => x.code === null), 'admin이 보는 admin 초대 코드는 비움');
+    assert.ok(rows(d.O, `select role, code from public.msgr2_invites_list('${TEAM}')`).filter((x) => x.role === 'admin').every((x) => x.code), '주인은 본다');
+    if (full) assert.match(E(d.Orun, `public.msgr2_report_resolve(gen_random_uuid())`), /msgr2_app_device_required/);
+  });
+
   if (full) {
+
+    test('검수 C — 거울 조직: 다른 v2 멤버가 있는 팀의 주인이 계정을 지우면 msgr_owner_transfer_required(조직·요금·문서·v2 멤버 유지), 일괄 정리는 그 조직만 건너뜀, 옛 조직만이면 옛 동작', { skip }, () => {
+      const counts = (sp) => db.sql(`select (select count(*) from public.msgr_orgs where id = '${sp}') || '/' || (select count(*) from public.msgr_org_entitlements where org_id = '${sp}')
+        || '/' || (select count(*) from public.msgr_org_docs where org_id = '${sp}') || '/' || (select count(*) from public.msgr2_space_members where space_id = '${sp}' and removed_at is null)`);
+      const sp = V(d.W, `public.msgr2_space_create('거울팀')`);
+      const inv = J(d.W, `public.msgr2_invite_create('${sp}', 'member', '${U.W2}')`); J(d.W2, `public.msgr2_invite_accept('${inv.code}')`);
+      db.sql(`insert into public.msgr_org_docs (org_id, path, title, body, created_by, updated_by) values ('${sp}', 'rules/keep.md', 't', 'x', '${U.W}', '${U.W}')`);
+      assert.equal(counts(sp), '1/1/1/2');
+      assert.match(E(d.W, `public.msgr_delete_me()`), /msgr_owner_transfer_required/);
+      assert.equal(counts(sp), '1/1/1/2', '계정 삭제가 통째로 되돌려진다');
+      assert.equal(db.sql(`select count(*) from auth.users where id = '${U.W}'`), '1');
+      // 일괄 정리: 옛 앱에서 보관(30일 지남)된 거울 조직은 건너뛰고, 옛 조직만 있는 보관 조직은 그대로 지운다
+      db.sql(`delete from public.msgr_settings where key = 'msgr_paused'`);
+      const old = db.sql(`insert into public.msgr_orgs (name, slug, owner_user_id) values ('옛만', 'old-only-org', '${U.Z}') returning id`).split('\n').pop();
+      db.sql(`insert into public.msgr_settings (key, value) values ('msgr_paused', '2026-10-16T17:00:00+09:00')`);
+      db.sql(`update public.msgr_orgs set deleted_at = now() - interval '31 days' where id in ('${sp}', '${old}')`);
+      db.sql('select public.msgr_purge_orgs()');
+      assert.equal(counts(sp), '1/1/1/2', '거울 조직 유지');
+      assert.equal(db.sql(`select count(*) from public.msgr_orgs where id = '${old}'`), '0', '옛 조직만이면 옛 동작(지움)');
+      db.sql(`update public.msgr_orgs set deleted_at = null where id = '${sp}'`);
+      // v2 팀에 주인 혼자면 옛 동작(계정 삭제 진행) — 별도 사용자
+      const solo = V(d.Z, `public.msgr2_space_create('혼자팀')`);
+      const r = db.raw(['-A', '-t', '-c', db.ctx(U.Z, d.Z.sid) + 'select public.msgr_delete_me()']);
+      assert.equal(r.status, 0, r.stderr);
+      assert.equal(db.sql(`select count(*) from public.msgr_orgs where id = '${solo}'`), '0');
+    });
+
     test('옛 중단 장치 — 친구 요청: 옛 앱 세션·runner·v2 운영 표지 없음·v2 중단 중은 막힘, v2 운영 중 v2 앱 기기만 통과', { skip }, () => {
       const req = (who, target) => db.asErr(who.uid, who.sid, `select public.msgr_friend_request('${target}')`) ?? 'ok';
       assert.match(req(d.O, U.Q), /messenger service paused/, 'v2 운영 표지 없음');
@@ -389,18 +501,18 @@ export function run(mode) {
       } finally { db.sql(`delete from public.msgr_settings where key in ('msgr2_enabled', 'msgr2_paused')`); }
     });
 
-    test('옛 FK → 두 표 중 하나 — 신고·일지·조직 문서에 v2 글·방을 넣을 수 있고, 둘 다 없는 값은 23503, 옛 값은 그대로 된다', { skip }, () => {
+    test('옛 FK → 두 표 중 하나 — 신고·일지에 v2 글·방을 넣을 수 있고(조직 문서 FK는 그대로), 둘 다 없는 값은 23503, 옛 값은 그대로 된다', { skip }, () => {
       const mid = db.sql(`select id from public.msgr2_messages where room_id = '${PRIV}' order by id desc limit 1`);
       db.sql(`insert into public.msgr_reports (message_id, channel_id, reporter_user_id) values (${mid}, '${PRIV}', '${U.O}')`);
       db.sql(`insert into public.msgr_journal_entries (org_id, channel_id, day, line, source_msg_id) values ('${TEAM}', '${PRIV}', '2026-10-18', 'x', ${mid})`);
       const bad = (q) => { const r = db.raw(['-A', '-t', '-c', q]); return r.status === 0 ? '' : r.stderr; };
-      // 조직 문서: FK는 v2 방을 받지만, 옛 문서 트리거(msgr_doc_before_write)가 org_id를 옛 채널에서 찾아 아직 막는다 — v2 방 문서는 미룸(PR 본문)
+      // 조직 문서 channel_id FK는 그대로(옛 본체 docsByIds의 msgr_channels 끼워 읽기) — v2 방 문서는 문서 단위로 미룸(PR 본문). 팀 공간 문서(channel_id null)는 된다
+      assert.equal(db.sql(`select count(*) from pg_constraint where conname = 'msgr_org_docs_channel_id_fkey'`), '1');
       assert.match(bad(`insert into public.msgr_org_docs (org_id, channel_id, path, title, body, created_by, updated_by) values ('${TEAM}', '${PRIV}', 'rules/v2.md', 't', 'x', '${U.O}', '${U.O}')`), /msgr_doc_channel_missing/);
       db.sql(`insert into public.msgr_org_docs (org_id, channel_id, path, title, body, created_by, updated_by) values ('${TEAM}', null, 'rules/v2-team.md', 't', 'x', '${U.O}', '${U.O}')`); // 팀 공간 문서(옛 조직 행 = v2 팀 id)
       assert.match(bad(`insert into public.msgr_reports (message_id, reporter_user_id) values (999999999, '${U.O}')`), /violates foreign key/);
       assert.match(bad(`insert into public.msgr_journal_entries (org_id, channel_id, day, line) values ('${TEAM}', gen_random_uuid(), '2026-10-18', 'x')`), /violates foreign key/);
       assert.match(bad(`insert into public.msgr_journal_entries (org_id, channel_id, day, line, source_msg_id) values ('${TEAM}', '${PRIV}', '2026-10-18', 'x', 999999999)`), /violates foreign key/);
-      assert.match(bad(`insert into public.msgr_org_docs (org_id, channel_id, path, title, body, created_by, updated_by) values ('${TEAM}', gen_random_uuid(), 'rules/x.md', 't', 'x', '${U.O}', '${U.O}')`), /violates foreign key/);
       assert.match(bad(`update public.msgr_reports set channel_id = gen_random_uuid() where message_id = ${mid}`), /violates foreign key/);
       // 옛 글: 지우면 신고의 message_id가 비워진다(옛 on delete set null 유지). 옛 표 쓰기는 옛 중단을 잠시 끄고 준비한다
       db.sql(`delete from public.msgr_settings where key = 'msgr_paused'`);

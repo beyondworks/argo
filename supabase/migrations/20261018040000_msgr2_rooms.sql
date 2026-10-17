@@ -23,11 +23,14 @@
 --      · msgr_friends INSERT(친구 요청·친구 링크 수락) — v2 운영 표지(msgr_settings 'msgr2_enabled') 있음 + v2 중단 꺼짐 + 요청한 세션이 v2 앱 기기일 때만. 옛 앱 세션은 기기 행이 없어 계속 막힌다.
 --      · msgr_orgs·msgr_org_members INSERT — msgr2_space_create가 같은 id의 옛 조직 행(요금·문서 FK, 설계 1-2)을 만드는 그 트랜잭션 안에서만(트랜잭션 설정 msgr2.org_mirror = 그 id).
 --        사용자는 PostgREST로 set_config를 부를 수 없다(옛 msgr.pause_notice와 같은 근거).
---   ③ 옛 표의 FK 다섯 개(신고 message_id·channel_id, 일지 source_msg_id·channel_id, 조직 문서 channel_id)는 v2 글·방을 넣을 수 없게 한다 → 같은 열을
+--   ③ 옛 표의 FK 네 개(신고 message_id·channel_id, 일지 source_msg_id·channel_id)는 v2 글·방을 넣을 수 없게 한다 → 같은 열을
 --      "옛 표나 v2 표 중 하나에 있으면 된다" 트리거 검사(_msgr2_ref_check, 23503)로 바꾼다. 기존 행은 건드리지 않는다.
 --      옛 FK의 on delete set null(신고·일지 출처)은 옛 표 삭제 트리거로 그대로 이어 간다(같은 id가 v2에 있으면 끊지 않는다).
---      on delete cascade(일지·문서의 channel_id)는 잇지 않는다 — 옛 채널을 지워도 그 채널의 일지·문서(기억 데이터)는 남는다(지우는 쪽 → 남기는 쪽).
---      되돌림(scripts/rollback/…down.sql)이 원래 FK를 같은 이름·같은 규칙으로 복원한다(복원할 수 없는 행이 있으면 멈춘다).
+--      on delete cascade(일지의 channel_id)는 잇지 않는다 — 옛 채널을 지워도 그 채널의 일지(기억 데이터)는 남는다(지우는 쪽 → 남기는 쪽).
+--      조직 문서 channel_id FK는 그대로 둔다 — 옛 본체 문서 미러(src/gateway/msgr.mjs docsByIds)가 이 FK로 msgr_channels를 끼워 읽고, v2 방 문서는
+--      옛 문서 트리거(msgr_doc_before_write)·문서 RLS도 함께 바꿔야 해서 문서 단위로 미룬다.
+--      되돌림(scripts/rollback/…down.sql)이 원래 FK를 같은 이름·같은 규칙으로 NOT VALID 복원한다(옛 앱이 채널을 지워 생긴 고아 행이 있어도 멈추지 않는다).
+--   ④ 옛 조직 행 지우기 막기(_msgr2_org_delete_guard) — 같은 id의 v2 팀에 다른 멤버가 있으면 거부·건너뜀.
 -- 시험: test/msgr2-rooms-pg.test.mjs(msgr2만 적용한 판), test/msgr2-rooms-legacy-combo-pg.test.mjs(옛 msgr 전체 + msgr2 운영 순서 판) — bash scripts/billing-pg-drill.sh <파일>.
 
 -- ── 1. 표 ───────────────────────────────────────────────────────────────────────
@@ -197,11 +200,10 @@ begin
      and exists (select 1 from public.msgr2_agents a where a.id = m.member_id and a.owner_user_id = p_owner);
 end $$;
 
--- 공간에서 빠진 사람: 그 공간의 방 멤버 행·그 사람 에이전트의 방 멤버 행·파견 행을 함께 닫는다(다시 초대받아도 옛 비공개 방이 저절로 열리지 않게).
-create or replace function public._msgr2_space_drop(p_space uuid, p_uid uuid) returns void
+-- 그 공간의 방 멤버 행·그 사람 에이전트의 방 멤버 행·파견 행을 닫는다(공간에서 빠질 때, 기한 지난 손님이 다시 들어올 때 — 옛 비공개 방이 저절로 열리지 않게).
+create or replace function public._msgr2_space_close(p_space uuid, p_uid uuid) returns void
   language plpgsql volatile security definer set search_path = public, pg_temp as $$
 begin
-  update public.msgr2_space_members set removed_at = now() where space_id = p_space and user_id = p_uid and removed_at is null;
   update public.msgr2_room_members m set removed_at = now()
     from public.msgr2_rooms r
    where r.id = m.room_id and r.space_id = p_space and m.removed_at is null
@@ -210,8 +212,98 @@ begin
   update public.msgr2_agent_seats st set removed_at = now()
    where st.space_id = p_space and st.removed_at is null
      and exists (select 1 from public.msgr2_agents a where a.id = st.agent_id and a.owner_user_id = p_uid);
+end $$;
+
+-- 공간에서 빠진 사람: 멤버 행을 닫고 위 정리를 함께 한다.
+create or replace function public._msgr2_space_drop(p_space uuid, p_uid uuid) returns void
+  language plpgsql volatile security definer set search_path = public, pg_temp as $$
+begin
+  update public.msgr2_space_members set removed_at = now() where space_id = p_space and user_id = p_uid and removed_at is null;
+  perform public._msgr2_space_close(p_space, p_uid);
   perform public._msgr2_send_u(p_uid, 'spaces', jsonb_build_object('space_id', p_space, 'removed', true));
 end $$;
+
+-- 차단 관계(어느 쪽이든)가 새로 넣는 사람(p_new)과 함께 있게 될 사람(p_all) 사이에 하나라도 있나 — 옛 msgr_dm_personal_group의 msgr_group_blocked_pair와 같은 뜻.
+-- 이미 방에 함께 있는 사람끼리의 차단은 보지 않는다(옛 그룹과 같이 — 방 전체가 잠기지 않게).
+create or replace function public._msgr2_blocked_among(p_new uuid[], p_all uuid[]) returns boolean
+  language plpgsql stable security definer set search_path = public, pg_temp as $$
+begin
+  if cardinality(p_new) = 0 then return false; end if;
+  if to_regclass('public.msgr_user_blocks') is not null then
+    if exists (select 1 from public.msgr_user_blocks b
+                where (b.blocker = any (p_new) and b.blocked = any (p_all)) or (b.blocked = any (p_new) and b.blocker = any (p_all))) then return true; end if;
+  end if;
+  if to_regclass('public.msgr_friends') is not null then
+    if exists (select 1 from public.msgr_friends f
+                where f.status = 'blocked' and ((f.a = any (p_new) and f.b = any (p_all)) or (f.b = any (p_new) and f.a = any (p_all)))) then return true; end if;
+  end if;
+  return false;
+end $$;
+
+-- 링크 초대가 방에 넣을 때: 없는 행만 넣는다(빠진 행은 되살리지 않는다 — 방에서 빼낸 사람이 링크로 돌아오지 못하게). 반환 = 넣었는가.
+create or replace function public._msgr2_room_put_new(p_room uuid, p_member uuid, p_by uuid) returns boolean
+  language plpgsql volatile security definer set search_path = public, pg_temp as $$
+declare n int;
+begin
+  insert into public.msgr2_room_members (room_id, member_kind, member_id, added_by) values (p_room, 'user', p_member, p_by) on conflict do nothing;
+  get diagnostics n = row_count;
+  return n > 0;
+end $$;
+
+-- 1:1 차단(총괄 지시 2026-10-18 B, 옛 msgr_can_write_channel과 같은 동작): direct 방은 한쪽이 차단하면(어느 쪽이든) 상대에게 쓰기를 주지 않는다. 지난 대화는 읽기로 남는다.
+-- U2(20261018000000)의 _msgr2_access_for 본문에 아래 한 줄(U6d 주석이 붙은 줄)만 더한다 — 나머지는 바이트 단위로 같다(test/msgr2-rooms-legacy-combo-pg가 대조한다).
+-- 규칙은 여전히 이 한 함수에만 있다(msgr2_access = 기기 확인 + 이 함수). 되돌림은 U2 본문으로 돌린다.
+create or replace function public._msgr2_access_for(p_room uuid, p_uid uuid) returns public.msgr2_access_t
+  language plpgsql stable security definer set search_path = public, pg_temp as $$
+declare
+  uid uuid := p_uid;
+  r public.msgr2_rooms;
+  s public.msgr2_spaces;
+  v_role text;
+  in_room boolean;
+  rd boolean; adm boolean; t text;
+  res public.msgr2_access_t := row(false, false, false, false, false, null)::public.msgr2_access_t;
+begin
+  if uid is null or p_room is null then return res; end if;
+  select * into r from public.msgr2_rooms where id = p_room;
+  if not found then return res; end if;
+  select * into s from public.msgr2_spaces where id = r.space_id;
+  if not found or s.deleted_at is not null then return res; end if;
+  in_room := exists (select 1 from public.msgr2_room_members m where m.room_id = r.id and m.member_kind = 'user' and m.member_id = uid and m.removed_at is null);
+  if s.kind = 'team' then
+    select m.role into v_role from public.msgr2_space_members m
+      where m.space_id = s.id and m.user_id = uid and m.removed_at is null and (m.expires_at is null or m.expires_at > now());
+    if v_role is null then return res; end if;
+    rd := (r.kind = 'open' and v_role in ('owner', 'admin', 'member')) or in_room;
+    adm := v_role in ('owner', 'admin');
+  else
+    rd := in_room;
+    adm := s.owner_user_id = uid;
+  end if;
+  if not rd then return res; end if;
+  -- 방의 사람: 활동 중인 사람 방 멤버(팀은 활동 중인 공간 멤버인 사람만) + 팀 open 방이면 owner·admin·member 전원
+  with humans as (
+    select m.member_id as u from public.msgr2_room_members m
+      where m.room_id = r.id and m.member_kind = 'user' and m.removed_at is null
+        and (s.kind = 'personal' or exists (select 1 from public.msgr2_space_members sm where sm.space_id = s.id and sm.user_id = m.member_id and sm.removed_at is null and (sm.expires_at is null or sm.expires_at > now())))
+    union
+    select sm.user_id from public.msgr2_space_members sm
+      where s.kind = 'team' and r.kind = 'open' and sm.space_id = s.id and sm.role in ('owner', 'admin', 'member') and sm.removed_at is null and (sm.expires_at is null or sm.expires_at > now())
+  )
+  select case
+    when not exists (select 1 from humans h where h.u <> s.owner_user_id) then 'owner'
+    when s.kind = 'team' and not exists (select 1 from humans h join public.msgr2_space_members sm on sm.space_id = s.id and sm.user_id = h.u where sm.role = 'guest') then 'team'
+    else 'guest' end into t;
+  res.read := true;
+  res.write := r.archived_at is null;
+  if r.kind = 'direct' and res.write and exists (select 1 from public.msgr2_room_members m where m.room_id = r.id and m.member_kind = 'user' and m.member_id <> uid and public._msgr2_blocked(uid, m.member_id)) then res.write := false; end if; -- U6d: 1:1은 차단(어느 쪽이든)이면 쓰기 막음
+  res.invite := r.kind <> 'direct' and r.archived_at is null and (case when s.kind = 'team' then v_role in ('owner', 'admin', 'member') else adm end);
+  res.manage := r.kind <> 'direct' and adm;
+  res.decide := adm;
+  res.tier := t;
+  return res;
+end $$;
+revoke all on function public._msgr2_access_for(uuid, uuid) from public, anon, authenticated;
 
 -- ── 3. 옛 중단 장치 통과(총괄 지시 2026-10-18 1·2-③) ────────────────────────────
 -- msgr_pause_guard가 부른다. 참이면 그 INSERT는 중단 중에도 통과한다. 그 밖은 옛 동작 그대로(거부).
@@ -261,6 +353,29 @@ begin
   return true;
 end $$;
 
+-- 거울 조직 지우기 막기(총괄 지시 2026-10-18 C): 같은 id의 살아 있는 v2 팀(주인 말고 활동 멤버가 있음)이 있으면 옛 조직 행을 지우지 않는다 —
+-- 옛 조직을 지우면 요금(msgr_org_entitlements)·조직 문서·일지가 cascade로 사라진다. 옛 판정(msgr_delete_me의 주인 넘기기 확인)은 v2 멤버를 모른다.
+--   사람 문맥(계정 삭제 msgr_delete_me 등)은 옛 함수와 같은 msgr_owner_transfer_required로 거부한다(계정 삭제 전체가 되돌려진다).
+--   서비스 일괄 정리(msgr_purge_orgs, auth.uid() 없음)는 이 조직 행만 건너뛴다(return null) — 거부하면 한 조직 때문에 다른 조직 정리가 매번 멈춘다.
+-- v2 팀이 없거나(옛 조직만) 주인 혼자인 팀이면 옛 동작 그대로.
+create or replace function public._msgr2_org_delete_guard() returns trigger
+  language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  if exists (select 1 from public.msgr2_spaces s where s.id = old.id and s.kind = 'team' and s.deleted_at is null
+               and exists (select 1 from public.msgr2_space_members m where m.space_id = s.id and m.user_id <> s.owner_user_id
+                             and m.removed_at is null and (m.expires_at is null or m.expires_at > now()))) then
+    if auth.uid() is null and coalesce(current_setting('argo.msgr_account_delete', true), '') <> '1' then return null; end if;
+    raise exception 'msgr_owner_transfer_required: %', old.id;
+  end if;
+  return old;
+end $$;
+do $do$ begin
+  if to_regclass('public.msgr_orgs') is not null then
+    drop trigger if exists msgr2_org_delete_guard on public.msgr_orgs;
+    create trigger msgr2_org_delete_guard before delete on public.msgr_orgs for each row execute function public._msgr2_org_delete_guard();
+  end if;
+end $do$;
+
 -- ── 4. 옛 FK → "옛 표나 v2 표 중 하나" 검사(총괄 지시 2026-10-18 2-①②) ─────────────────
 -- tg_argv: 열, 옛 표, v2 표, 형(bigint|uuid). 값이 없거나(null) 바뀌지 않았으면 통과. 둘 다 없으면 FK와 같은 23503.
 create or replace function public._msgr2_ref_check() returns trigger
@@ -301,8 +416,7 @@ begin
       ('msgr_reports', 'message_id', 'msgr_messages', 'msgr2_messages', 'bigint'),
       ('msgr_reports', 'channel_id', 'msgr_channels', 'msgr2_rooms', 'uuid'),
       ('msgr_journal_entries', 'source_msg_id', 'msgr_messages', 'msgr2_messages', 'bigint'),
-      ('msgr_journal_entries', 'channel_id', 'msgr_channels', 'msgr2_rooms', 'uuid'),
-      ('msgr_org_docs', 'channel_id', 'msgr_channels', 'msgr2_rooms', 'uuid')) v(tbl, col, old_t, new_t, typ) loop
+      ('msgr_journal_entries', 'channel_id', 'msgr_channels', 'msgr2_rooms', 'uuid')) v(tbl, col, old_t, new_t, typ) loop
     if to_regclass('public.' || t.tbl) is null or to_regclass('public.' || t.old_t) is null then continue; end if;
     for cname in select c.conname from pg_constraint c
                   where c.conrelid = ('public.' || t.tbl)::regclass and c.contype = 'f' and c.confrelid = ('public.' || t.old_t)::regclass
@@ -462,30 +576,43 @@ begin
                         where r.id = any (i.room_ids) and r.space_id = i.space_id and r.archived_at is null), '[]'::jsonb));
 end $$;
 
--- 받기: 앱 기기. 이미 활동 멤버면 역할은 바꾸지 않고 방만 넣으며 사용 횟수를 세지 않는다(already_member true).
--- 아니면 멤버 행을 넣거나 되살리고(역할 = 초대 역할, 손님은 기한), 초대의 방 중 지금도 유효한 방에 넣는다.
+-- 받기: 앱 기기. 초대가 유효해야 한다(이미 멤버여도 소진·만료·취소는 거부하고, 받으면 사용 횟수를 센다).
+-- 처음 들어오면 멤버 행을 넣는다. 빠졌거나 기한이 지난 멤버 행이 있으면 사람 지정 초대만 되살린다(링크로는 msgr2_invite_rejoin_direct_only) —
+-- 내보낸 사람이 살아 있는 링크로 혼자 돌아오지 못하게. 되살릴 때는 새로 시작한다: 그 공간의 옛 방 멤버 행·에이전트·파견을 닫고(기한 지난 손님은 아직 열려 있다)
+-- 이번 초대의 방만 넣는다. 방은 지금도 유효하고(공간 안·보관 안 됨·open/private) 초대 만든 사람이 지금 그 방에 초대할 수 있어야 한다(_msgr2_access_for(방, 만든 사람).invite).
+-- 링크 초대는 방에서 빠진 행을 되살리지 않는다(없는 행만 넣는다). 사람 지정 초대는 되살린다.
 -- 반환 {space_id, role, rooms[], already_member}
 create or replace function public.msgr2_invite_accept(p_code text) returns jsonb
   language plpgsql volatile security definer set search_path = public, pg_temp as $$
-declare uid uuid := public._msgr2_need_app(); i public.msgr2_space_invites; st text; cur text; added uuid[] := '{}'; x uuid;
+declare uid uuid := public._msgr2_need_app(); i public.msgr2_space_invites; st text; cur text; prev public.msgr2_space_members; added uuid[] := '{}'; x uuid; ok boolean;
 begin
   perform public._msgr2_need_live();
   select * into i from public.msgr2_space_invites where code = p_code for update;
   if i.id is null or (i.target_user_id is not null and i.target_user_id <> uid) then raise exception 'msgr2_invite_not_found' using errcode = '22023'; end if;
-  cur := public._msgr2_team_role(i.space_id, uid);
   st := public._msgr2_invite_state(i);
-  if st <> 'valid' and not (cur is not null and st = 'exhausted') then raise exception 'msgr2_invite_%', st using errcode = '22023'; end if;
+  if st <> 'valid' then raise exception 'msgr2_invite_%', st using errcode = '22023'; end if;
+  cur := public._msgr2_team_role(i.space_id, uid);
   if cur is null then
-    insert into public.msgr2_space_members as t (space_id, user_id, role, expires_at)
-    values (i.space_id, uid, i.role, case when i.guest_days is null then null else now() + make_interval(days => i.guest_days) end)
-    on conflict (space_id, user_id) do update set removed_at = null, role = excluded.role, expires_at = excluded.expires_at
-    where t.removed_at is not null or (t.expires_at is not null and t.expires_at <= now());
-    update public.msgr2_space_invites set use_count = use_count + 1 where id = i.id;
+    select * into prev from public.msgr2_space_members where space_id = i.space_id and user_id = uid for update;
+    if prev.user_id is not null then
+      if i.target_user_id is null then raise exception 'msgr2_invite_rejoin_direct_only' using errcode = '42501'; end if;
+      perform public._msgr2_space_close(i.space_id, uid);
+      update public.msgr2_space_members set removed_at = null, role = i.role,
+             expires_at = case when i.guest_days is null then null else now() + make_interval(days => i.guest_days) end
+       where space_id = i.space_id and user_id = uid;
+    else
+      insert into public.msgr2_space_members (space_id, user_id, role, expires_at)
+      values (i.space_id, uid, i.role, case when i.guest_days is null then null else now() + make_interval(days => i.guest_days) end);
+    end if;
   end if;
+  update public.msgr2_space_invites set use_count = use_count + 1 where id = i.id;
   foreach x in array i.room_ids loop
-    if exists (select 1 from public.msgr2_rooms r where r.id = x and r.space_id = i.space_id and r.archived_at is null and r.kind in ('open', 'private')) then
-      perform public._msgr2_room_put(x, 'user', uid, i.created_by);
-      added := added || x;
+    if exists (select 1 from public.msgr2_rooms r where r.id = x and r.space_id = i.space_id and r.archived_at is null and r.kind in ('open', 'private'))
+       and coalesce((public._msgr2_access_for(x, i.created_by)).invite, false) then
+      ok := case when i.target_user_id is null then public._msgr2_room_put_new(x, uid, i.created_by) else public._msgr2_room_put(x, 'user', uid, i.created_by) end;
+      if ok or exists (select 1 from public.msgr2_room_members m where m.room_id = x and m.member_kind = 'user' and m.member_id = uid and m.removed_at is null) then
+        added := added || x;
+      end if;
     end if;
   end loop;
   perform public._msgr2_send_u(uid, 'spaces', jsonb_build_object('space_id', i.space_id));
@@ -517,16 +644,16 @@ begin
   return true;
 end $$;
 
--- 공간의 초대 목록(관리 화면): 유효한 기기, 그 공간의 owner·admin. 링크 코드를 다시 쓸 수 있게 코드를 싣는다. 최근 200개.
+-- 공간의 초대 목록(관리 화면): 앱 기기, 그 공간의 owner·admin. 링크 코드를 다시 쓸 수 있게 코드를 싣되, 부른 사람이 만들 수 없는 역할(admin이 보는 admin 초대)의 코드는 비운다. 최근 200개.
 create or replace function public.msgr2_invites_list(p_space uuid)
   returns table (id uuid, code text, role text, target_user_id uuid, target_name text, room_ids uuid[], guest_days int, max_uses int, use_count int,
                  expires_at timestamptz, created_by uuid, created_at timestamptz, state text)
   language plpgsql stable security definer set search_path = public, pg_temp as $$
-declare uid uuid := public._msgr2_need_device();
+declare uid uuid := public._msgr2_need_app(); me text := public._msgr2_team_role(p_space, auth.uid());
 begin
-  if coalesce(public._msgr2_team_role(p_space, uid), '') not in ('owner', 'admin') then return; end if;
+  if coalesce(me, '') not in ('owner', 'admin') then return; end if;
   return query
-    select i.id, i.code, i.role, i.target_user_id, case when i.target_user_id is not null then public._msgr2_label(i.target_user_id) end,
+    select i.id, case when i.role = 'admin' and me <> 'owner' then null else i.code end, i.role, i.target_user_id, case when i.target_user_id is not null then public._msgr2_label(i.target_user_id) end,
            i.room_ids, i.guest_days, i.max_uses, i.use_count, i.expires_at, i.created_by, i.created_at, public._msgr2_invite_state(i)
       from public.msgr2_space_invites i where i.space_id = p_space
      order by i.created_at desc limit 200;
@@ -576,6 +703,8 @@ begin
       raise exception 'msgr2_not_friend' using errcode = '42501';
     end if;
   end if;
+  -- 구성원끼리(부른 사람 포함) 차단 관계가 있으면 한 방에 넣지 않는다(팀·개인 모두, 옛 msgr_group_blocked_pair)
+  if public._msgr2_blocked_among(users || uid, users || uid) then raise exception 'msgr2_group_blocked_pair' using errcode = '42501'; end if;
   perform pg_advisory_xact_lock(hashtext('msgr2_room_create:' || s.id::text));
   if (select count(*) from public.msgr2_rooms where space_id = s.id and archived_at is null) >= public._msgr2_setting_int('msgr2_limit_rooms_space', 1000) then
     raise exception 'msgr2_limit' using errcode = '22023', detail = 'rooms';
@@ -681,6 +810,11 @@ begin
       if exists (select 1 from unnest(users) u where public._msgr2_team_role(s.id, u) is null) then raise exception 'msgr2_not_space_member' using errcode = '42501'; end if;
     elsif exists (select 1 from unnest(users) u where not public._msgr2_friends(uid, u) or public._msgr2_blocked(uid, u)) then
       raise exception 'msgr2_not_friend' using errcode = '42501';
+    end if;
+    -- 새로 넣는 사람과 방의 사람(활동 중인 사람 멤버 + 부른 사람 + 함께 넣는 사람) 사이에 차단 관계가 있으면 거부
+    if public._msgr2_blocked_among(users, users || uid || coalesce((select array_agg(m.member_id) from public.msgr2_room_members m
+         where m.room_id = p_room and m.member_kind = 'user' and m.removed_at is null), '{}')) then
+      raise exception 'msgr2_group_blocked_pair' using errcode = '42501';
     end if;
     foreach x in array users loop
       if public._msgr2_room_put(p_room, 'user', x, uid) then
@@ -993,10 +1127,10 @@ begin
      order by r.status, r.created_at desc limit 500;
 end $$;
 
--- 처리: 유효한 기기. 운영자, 또는 그 방이 팀 공간이고 내가 owner·admin. 개인 공간 신고는 운영자만(옛 규칙과 같다). 이미 처리됐으면 false.
+-- 처리: 앱 기기(runner 불가). 운영자, 또는 그 방이 팀 공간이고 내가 owner·admin. 개인 공간 신고는 운영자만(옛 규칙과 같다). 이미 처리됐으면 false.
 create or replace function public.msgr2_report_resolve(p_report uuid) returns boolean
   language plpgsql volatile security definer set search_path = public, pg_temp as $$
-declare uid uuid := public._msgr2_need_device(); sp uuid; n int;
+declare uid uuid := public._msgr2_need_app(); sp uuid; n int;
 begin
   if to_regclass('public.msgr_reports') is null then raise exception 'msgr2_report_not_found' using errcode = '22023'; end if;
   select rm.space_id into sp from public.msgr_reports r join public.msgr2_rooms rm on rm.id = r.channel_id where r.id = p_report;
@@ -1014,7 +1148,8 @@ do $$ declare f text; begin
   foreach f in array array[
     '_msgr2_need_app()', '_msgr2_need_device()', '_msgr2_need_live()', '_msgr2_live()', '_msgr2_team_role(uuid, uuid)', '_msgr2_blocked(uuid, uuid)',
     '_msgr2_friends(uuid, uuid)', '_msgr2_friend_ids(uuid)', '_msgr2_my_blocked(uuid)', '_msgr2_label(uuid)', '_msgr2_room_put(uuid, text, uuid, uuid)',
-    '_msgr2_room_add_agent(uuid, uuid, uuid)', '_msgr2_room_drop_agents_of(uuid, uuid)', '_msgr2_space_drop(uuid, uuid)', '_msgr2_pause_pass(text, jsonb)',
+    '_msgr2_room_add_agent(uuid, uuid, uuid)', '_msgr2_room_drop_agents_of(uuid, uuid)', '_msgr2_space_drop(uuid, uuid)', '_msgr2_space_close(uuid, uuid)',
+    '_msgr2_blocked_among(uuid[], uuid[])', '_msgr2_room_put_new(uuid, uuid, uuid)', '_msgr2_org_delete_guard()', '_msgr2_pause_pass(text, jsonb)',
     '_msgr2_mirror_org(uuid, text, uuid)', '_msgr2_ref_check()', '_msgr2_ref_old_deleted()', '_msgr2_invite_state(public.msgr2_space_invites)',
     '_msgr2_report_operator(uuid)', 'msgr2_reads_stamp()'] loop
     execute format('revoke all on function public.%s from public, anon, authenticated', f);
