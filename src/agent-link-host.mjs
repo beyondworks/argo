@@ -2,13 +2,16 @@
 // 옵트인: ARGO_AGENT_LINK=1일 때만 켠다(기본 꺼짐 — 지금 배포본 동작 그대로). 옛 메신저 브리지는 ARGO_MSGR_LEGACY=off일 때만 끈다(기본 켜짐).
 // 두 플래그는 따로다: 새 링크를 켜도 옛 브리지는 그대로 돈다(옛 표는 서버의 중단 스위치가 막는다). 옛 브리지를 끄는 것은 이전이 끝난 뒤의 일이다.
 //
-// 1판 범위(설계 D16·이 PR 본문 "하지 않은 것"):
-// - 주인(owner) 등급 일만 실행한다. team·guest 등급은 받은 뒤 work.error{tier_denied}로 알린다 — 손님 도구 축소(chat.mjs isGuestCtx)는
-//   옛 메신저 문맥(kind:'msgr')에 묶여 있어 그 문맥 없이 손님 턴을 안전하게 돌릴 길이 아직 없다(돌리지 않는 것이 가장 좁은 도구다).
-// - 결재·되돌릴 수 없는 일 기록(work.approval_request·work.effect)은 부품이 지원하지만, 이 연결부는 아직 chat()의 결재와 잇지 않는다:
-//   주인 턴의 결재는 지금처럼 데스크톱 결재함에 쌓이고, 답 글이 "결재를 올렸다"고 알린다.
-// - 넘김(handoffs)은 보내지 않는다(offer에 동료 목록이 없다 — U2가 싣으면 잇는다).
+// 턴은 범위 턴(mirrorCtx {kind:'scope', scope:{kind:'link', work, room, owner}})으로 돈다(U4b):
+// - 등급(offer.limits.tier) → 부품 등급표(packages/agent-link/tiers.mjs). owner만 주인 도구 묶음이고, team·guest는 손님 도구 묶음
+//   (isGuestCtx가 link 범위를 owner 표지로만 주인으로 본다 — 지금 배포본에서 조직 채널 에이전트가 주인 아닌 사람의 지시로 도는 턴과 같다).
+// - 결재: 그 턴에서 올린 결재(request_approval·셸 결재 등 7곳)는 범위를 각인한다(thread.mjs approvalScope). 연결부가 그것을
+//   work.approval_request로 보내고, v2 결정(work.approval_decision)을 chat() 결재 응답(resolveWithFollowUp)으로 돌려준다.
+//   승인 실행은 effect intent가 서버에 기록된 뒤에만 한다(D13). 승인 뒤 후속 턴의 답이 결과에 이어진다.
+// - 넘김: offer.peers를 동료 목록으로 보여 주고, 답의 넘김 줄을 result.handoffs로 보낸다(연속 상한은 서버, U2).
+// - 범위 턴이라 데스크톱 대화 기록을 문맥에 싣지 않는다(방 문맥은 서버가 offer.context로 준다). 세션도 남기지 않는다(scopeKey 없음).
 import { createLink } from '../packages/agent-link/link.mjs';
+import { tierPolicy } from '../packages/agent-link/tiers.mjs';
 import { SUPPORTED } from '../packages/agent-link/contract/v1.mjs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join, basename } from 'node:path';
@@ -20,7 +23,7 @@ const SESSION_RETRY_MS = [60_000, 120_000, 300_000, 600_000];
 export const RESYNC_MIN_MS = 60_000; // 게이트웨이 확인(10초)마다 불려도 로컬 목록은 1분에 한 번만 읽는다(보낼지는 바뀌었을 때만) // 세션·등록이 없을 때 다시 볼 간격(요청 폭주 없이, 상한 10분)
 
 /** supabase-js 클라이언트를 link.mjs transport 모양으로. 받는 길은 비공개 broadcast 채널(event 'envelope') 하나. */
-export function supabaseTransport(client, { fetchImpl = fetch } = {}) {
+export function supabaseTransport(client) {
   const channels = new Map();
   return {
     async rpc(name, args) {
@@ -49,9 +52,10 @@ export function supabaseTransport(client, { fetchImpl = fetch } = {}) {
       if (error || !data) throw Object.assign(new Error('download failed'), { code: 'download_failed' });
       return new Uint8Array(await data.arrayBuffer());
     },
-    async put(url, bytes, mime) {
-      const r = await fetchImpl(url, { method: 'PUT', headers: { 'content-type': mime || 'application/octet-stream' }, body: bytes });
-      if (!r.ok) throw Object.assign(new Error(`upload ${r.status}`), { code: 'upload_failed' });
+    // 업로드 슬롯(서버가 정한 경로)에 runner 세션으로 올린다. 덮어쓰지 않는다(같은 슬롯에 두 번 올리지 않는다)
+    async upload(bucket, path, bytes, mime) {
+      const { error } = await client.storage.from(bucket).upload(path, bytes, { contentType: mime || 'application/octet-stream', upsert: false });
+      if (error) throw Object.assign(new Error('upload failed'), { code: 'upload_failed' });
     },
   };
 }
@@ -113,11 +117,53 @@ export function contextSection(context, lang = 'ko') {
   return `${head}\n${lines.join('\n')}\n\n`;
 }
 
+// v2 승인 요청의 만료. 서버는 만료 결정을 보내지 않는다(msgr2_approval_decide는 approve·reject만, 기한이 지나면 'expired'만 돌려주고 크론도 없다) —
+// 본체가 expires_at에 로컬 타이머를 걸어 닫는다. 결재 대기 중인 일은 result를 받지 않으므로 work.error{timeout}으로 끝내고, 그러면 리스 연장도 멈춘다.
+export const APPROVAL_TTL_MS = 24 * 3_600_000;
+
+/** offer.peers[](서버가 등급·파견 허용으로 거른 동료) → 지시 앞에 붙일 동료 구역과 넘김 규칙. 비면 ''. */
+export function peersSection(peers, lang = 'ko') {
+  if (!Array.isArray(peers) || !peers.length) return '';
+  const list = peers.map((p) => `- @${p.name}${p.role ? ` — ${String(p.role).replace(/\s+/g, ' ').slice(0, 200)}` : ''}`).join('\n');
+  return lang === 'en'
+    ? `## Colleagues you can hand off to in this room\n${list}\nTo hand part of the work to a colleague, end your answer with one line per colleague: [handoff @name] what they should do\n\n`
+    : `## 이 방에서 넘길 수 있는 동료\n${list}\n일의 일부를 동료에게 넘기려면 답의 끝에 동료마다 한 줄을 쓴다: [넘김 @이름] 맡길 일\n\n`;
+}
+
+const HANDOFF_LINE = /^[ \t]*\[(?:넘김|handoff)[ \t]+@([^\]\n]{1,80})\][ \t]*(\S.*)$/i;
+/** 답에서 넘김 줄을 뽑는다. 동료 이름이 정확히 하나와 맞는 줄만 넘김이 되고 본문에서 지운다(모르는 이름·동명이인 줄은 그대로 둔다). 최대 8개. */
+export function parseHandoffs(text, peers) {
+  const src = String(text ?? '');
+  if (!Array.isArray(peers) || !peers.length) return { body: src, handoffs: [] };
+  const handoffs = [];
+  const kept = src.split('\n').filter((line) => {
+    const m = HANDOFF_LINE.exec(line);
+    if (!m || handoffs.length >= 8) return true;
+    const hit = peers.filter((p) => String(p.name).trim().toLowerCase() === m[1].trim().toLowerCase());
+    if (hit.length !== 1) return true;
+    handoffs.push({ agent: hit[0].agent, text: m[2].trim().slice(0, 4000) });
+    return false;
+  });
+  return { body: kept.join('\n').replace(/\n{3,}/g, '\n\n').trim(), handoffs };
+}
+
+/** 로컬 결재 항목(approvals.mjs) → work.approval_request data. effect_key = approval:<로컬 id>(승인 실행의 intent 키와 같다). */
+export function approvalRequestFrom(item, now = Date.now()) {
+  const plain = item.plain ? [item.plain.purpose, item.plain.task, item.plain.need].filter(Boolean).join(' · ') : '';
+  const summary = (plain || [item.action, item.reason].filter(Boolean).join(' — ') || 'approval').slice(0, 2000);
+  return {
+    action: String(item.action || item.kind || 'approval').slice(0, 200),
+    risk: item.kind === 'tool' || item.kind === 'connector' || item.payload?.shell ? 'high' : 'medium', // payload.shell = 고위험 셸 결재(D28)
+    summary, effect_key: `approval:${item.id}`, expires_at: new Date(now + APPROVAL_TTL_MS).toISOString(),
+  };
+}
+
 const safeName = (n) => basename(String(n || 'file')).replace(/[^\p{L}\p{N}._-]+/gu, '_').slice(0, 120) || 'file';
 
 /**
  * 연결부. deps는 시험이 가짜로 바꾼다.
  * deps = { getSession() → { client, uid } | null, listOwnedAgents(uid) → [{ ws, slug, name, role }], chat, interruptTurn,
+ *          onNotify(fn) → off, resolveWithFollowUp(ws, id, approve, opts), resolveApproval(ws, id, approve, opts),
  *          planReplyFiles, readReplyFile, vaultDir(ws), appVersion, clock, log, transportFor(client) }
  */
 export function createAgentLinkHost(deps) {
@@ -148,29 +194,93 @@ export function createAgentLinkHost(deps) {
     async runTurn(offer, ctx) {
       const a = agents.get(offer.agent);
       if (!a) throw Object.assign(new Error('agent not on this device'), { code: 'no_runner' });
-      if (ctx.tier !== 'owner') throw Object.assign(new Error('tier not served by this Argo build'), { code: 'tier_denied' });
+      const policy = tierPolicy(ctx.tier);
       ctx.progress('thinking');
       const onAbort = () => { deps.interruptTurn(a.ws, a.slug, { source: 'messenger', tag: offer.work }).catch(() => {}); };
       ctx.signal.addEventListener('abort', onAbort, { once: true });
+      // 결재 다리: 이 일의 범위를 단 결재·후속 답만 받는다(같은 에이전트의 다른 턴·다른 일과 섞이지 않게)
+      const mine = (ev) => ev?.wsId === a.ws && ev.item?.scope?.kind === 'link' && ev.item.scope.work === offer.work;
+      const later = []; const bridges = []; const replies = new Map(); const waiters = new Map();
+      const waitFollowup = (id) => (replies.has(id) ? Promise.resolve(replies.get(id)) : new Promise((res) => {
+        waiters.set(id, res);
+        ctx.signal.addEventListener('abort', () => res(''), { once: true });
+      }));
+      let expiredAny = false; // 기한이 지난 결재가 있다 — 일은 결과 대신 timeout 오류로 끝난다(결재 대기 상태라 result를 받지 않는다)
+      const closeLocal = (id) => deps.resolveApproval(a.ws, id, false, { resolvedBy: { via: 'msgr2', at: new Date(clock.now()).toISOString() } }).catch(() => {});
+      async function bridge(item) {
+        if (!policy.approvals) { await closeLocal(item.id); return ''; } // guest: 승인 요청을 보내지 않는다(서버도 tier_denied) — 막힌 턴을 풀어 준다
+        let decision;
+        const req = approvalRequestFrom(item, clock.now());
+        let timer = null;
+        const expiry = new Promise((res) => { timer = clock.setTimeout(() => res('expire'), Math.max(0, Date.parse(req.expires_at) - clock.now())); });
+        try { decision = await Promise.race([ctx.requestApproval(req), expiry]); }
+        catch (e) { log('approval request failed', e.code ?? e.message); await closeLocal(item.id); return ''; }
+        finally { clock.clearTimeout(timer); }
+        if (ctx.signal.aborted) { await closeLocal(item.id); return ''; }
+        const tool = item.kind === 'tool'; // 권한 게이트 결재 — 기다리던 턴이 스스로 재개한다(후속 턴 없음)
+        if (decision === 'approve') {
+          try {
+            // 되돌릴 수 없는 일: intent가 서버에 기록돼야 승인을 풀어 실행한다. 이미 있는 키면 실행하지 않는다(effect_exists)
+            return await ctx.effect(`approval:${item.id}`, String(item.kind || 'approval').replace(/[^a-z0-9_]/g, '_') || 'approval', async () => {
+              const wait = tool ? null : waitFollowup(item.id);
+              try { await deps.resolveWithFollowUp(a.ws, item.id, true, { resolvedBy: { via: 'msgr2', at: new Date(clock.now()).toISOString() } }); }
+              catch (e) {
+                // 주인이 데스크톱 결재함·텔레그램에서 먼저 확정했다(카드는 그쪽에도 간다) — 다시 풀지 않고 그때 나온 후속 답을 쓴다
+                if (e?.code === 'approval_already_resolved') return replies.get(item.id) ?? '';
+                throw e;
+              }
+              return wait ? await wait : '';
+            }) ?? '';
+          } catch (e) { log('approval apply failed', e.code ?? e.message); await closeLocal(item.id); return ''; }
+        }
+        if (decision === 'reject') {
+          const wait = tool ? null : waitFollowup(item.id);
+          await deps.resolveWithFollowUp(a.ws, item.id, false, { resolvedBy: { via: 'msgr2', at: new Date(clock.now()).toISOString() } }).catch(() => {});
+          return wait ? await wait : '';
+        }
+        await closeLocal(item.id); // expire(로컬 타이머): 후속 턴 없이 닫는다
+        expiredAny = true;
+        return '';
+      }
+      const off = deps.onNotify((ev) => {
+        if (!mine(ev)) return;
+        if (ev.type === 'approval') { if (ev.item.kind === 'tool') bridges.push(bridge(ev.item)); else later.push(ev.item); }
+        else if (ev.type === 'approval_followup') {
+          const w = waiters.get(ev.item.id);
+          if (w) { waiters.delete(ev.item.id); w(String(ev.reply ?? '')); } else replies.set(ev.item.id, String(ev.reply ?? ''));
+        }
+      });
       try {
         const files = await attachments(offer, a.ws, current); // offer = accept 답의 첨부가 반영된 것(link.mjs)
-        const text = contextSection(offer.data.context) + offer.data.text;
+        const peers = policy.handoffs ? offer.data.peers ?? [] : [];
+        const text = contextSection(offer.data.context) + peersSection(peers) + offer.data.text;
         const turn = await deps.chat(a.ws, a.slug, text, null, {
           source: 'messenger', attachments: files, abortTag: offer.work,
-          // 일지: offer.memory가 거짓이면 남기지 않는다(기억 안 남김 방). 참이면 chat()의 기본 일지(주인 턴)
+          mirrorCtx: { kind: 'scope', scope: { kind: 'link', work: offer.work, room: offer.data.room, owner: policy.ownerTools === true } },
+          // 일지: offer.memory가 거짓이면 남기지 않는다(기억 안 남김 방). 참이면 chat()의 기본 일지
           ...(offer.data.memory === false ? { journal: { off: true } } : {}),
         });
+        const parts = [String(turn?.reply ?? '')];
+        for (const t of await Promise.all(bridges)) if (t) parts.push(t);
+        // 턴이 끝난 뒤의 결재(행동 결재 — 승인되면 후속 턴이 한다): 하나씩 결정을 기다린다. 기다리는 동안 리스는 link가 5분마다 연장한다
+        for (const item of later) {
+          if (ctx.signal.aborted) { await closeLocal(item.id); continue; }
+          const t = await bridge(item);
+          if (t) parts.push(t);
+        }
         if (ctx.signal.aborted) return null;
+        if (expiredAny) throw Object.assign(new Error('approval expired'), { code: 'timeout' }); // 방에는 코드 글만(원문 없음, D15)
         ctx.progress('writing');
-        const reply = String(turn?.reply ?? '');
-        const plan = await deps.planReplyFiles(a.ws, reply).catch(() => ({ body: reply, files: [] }));
+        const { body, handoffs } = parseHandoffs(parts.filter(Boolean).join('\n\n'), peers);
+        const plan = policy.uploads ? await deps.planReplyFiles(a.ws, body).catch(() => ({ body, files: [] })) : { body, files: [] };
         const slots = [];
         for (const f of plan.files) {
           try { slots.push(await ctx.upload(f.name, await deps.readReplyFile(a.ws, f), undefined)); }
           catch (e) { log('reply file upload failed', e.code ?? e.message); }
         }
-        return { text: plan.body, files: slots, ...(turn?.costUsd != null ? { usage: { cost_usd: turn.costUsd } } : {}) };
+        return { text: plan.body, files: slots, handoffs, ...(turn?.costUsd != null ? { usage: { cost_usd: turn.costUsd } } : {}) };
       } finally {
+        off();
         ctx.signal.removeEventListener('abort', onAbort);
       }
     },
@@ -192,7 +302,8 @@ export function createAgentLinkHost(deps) {
     const transport = deps.transportFor(s.client);
     current = transport;
     // 기기 등록(U3 msgr2_device_register): runner 기기 + 지원 약속 범위. 답의 device_id가 봉투의 device다.
-    const runners = deps.detectRunners ? await detectRunnerIds(deps.detectRunners) : [];
+    // 러너 목록이 비면 서버가 이 기기에 일을 주지 않는다(경우 17) — CLI 감지 + 회사 설정의 러너(API 키 등)를 함께 본다
+    const runners = deps.detectRunners ? await detectRunnerIds(() => deps.detectRunners(s.uid)) : [];
     const reg = await transport.rpc('msgr2_device_register', runnerRegisterArgs({ appVersion: deps.appVersion ?? null, runners }));
     const device = reg?.data?.device_id;
     if (reg.error || !device) { log('device register failed', reg.error?.code ?? reg.data?.code ?? 'no device_id'); return retryLater(); }
@@ -232,9 +343,10 @@ export function createAgentLinkHost(deps) {
 
 /** 게이트웨이가 부르는 실제 연결부(진짜 세션·chat()). 플래그가 꺼져 있으면 부르지 않는다(gateway.mjs). */
 export async function startAgentLinkHost() {
-  const [{ sessionClient }, { chat }, { interruptTurn }, rf, { listCompanies, listAgents }, { paths }, { APP_VERSION }, { detectRunners }] = await Promise.all([
+  const [{ sessionClient }, { chat }, { interruptTurn }, rf, { listCompanies, listAgents }, { paths }, { APP_VERSION }, { detectRunners, resolveRunner }, { onNotify }, { resolveWithFollowUp }, { resolveApproval }] = await Promise.all([
     import('./gateway/msgr.mjs'), import('./chat.mjs'), import('./turn-abort.mjs'), import('./gateway/msgr-reply-files.mjs'),
     import('./hub.mjs'), import('./workspace.mjs'), import('./app-version.mjs'), import('./runners.mjs'),
+    import('./notify.mjs'), import('./approval-actions.mjs'), import('./approvals.mjs'),
   ]);
   const host = createAgentLinkHost({
     getSession: async () => { const c = await sessionClient(); return c ? { client: c.client, uid: c.uid } : null; },
@@ -246,8 +358,19 @@ export async function startAgentLinkHost() {
       }
       return out;
     },
-    chat, interruptTurn, planReplyFiles: rf.planReplyFiles, readReplyFile: rf.readReplyFile,
-    vaultDir: (ws) => paths(ws).vault, appVersion: APP_VERSION, detectRunners: () => detectRunners(), transportFor: (client) => supabaseTransport(client),
+    chat, interruptTurn, onNotify, resolveWithFollowUp, resolveApproval, planReplyFiles: rf.planReplyFiles, readReplyFile: rf.readReplyFile,
+    vaultDir: (ws) => paths(ws).vault, appVersion: APP_VERSION,
+    // CLI 로그인 감지(detectRunners)만 보면 회사 설정에 API 키로 둔 러너(OpenRouter 등)만 쓰는 사용자는 빈 목록이 되어 일을 못 받는다.
+    // 동기화의 리더 양보 판정(sync.mjs probeRunnerUsable)과 같이 주인 회사마다 resolveRunner도 본다(3초 상한은 detectRunnerIds).
+    async detectRunners(uid) {
+      const m = { ...(await detectRunners().catch(() => ({}))) };
+      for (const c of await listCompanies().catch(() => [])) {
+        if (c.ownerId !== uid) continue;
+        const r = await resolveRunner(c.id, null).catch(() => null);
+        if (r?.available && r.runner) m[r.runner] = { installed: true, authed: true };
+      }
+      return m;
+    }, transportFor: (client) => supabaseTransport(client),
   });
   host.start();
   return host;

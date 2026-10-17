@@ -6,7 +6,7 @@
 //   rpc(name, args) → Promise<{ data, error }>            // supabase-js rpc 모양. error = { code?, message?, status? }
 //   subscribe(topic, onEnvelope, onStatus) → { close() }   // 비공개 broadcast 채널. onStatus('connected'|'disconnected')
 //   broadcast(topic, envelope) → Promise<void>             // 저장하지 않는 방송(work.progress)
-//   put(url, bytes, mime) → Promise<void>                  // 서명 업로드 URL에 파일 올리기
+//   upload(bucket, path, bytes, mime) → Promise<void>      // 업로드 슬롯이 정한 Storage 위치에 올리기(runner 세션, 리스를 쥔 동안만 쓸 수 있다)
 //   download(bucket, path) → Promise<Uint8Array>           // offer 첨부 받기(runner 세션 + Storage API, 리스를 쥔 동안만 읽힌다)
 // }
 // host = {
@@ -80,7 +80,8 @@ export function createLink({ transport, host, uid, device, agentIds = null, cloc
     let delay = RETRY.baseMs;
     for (let i = 1; ; i++) {
       let r;
-      try { r = readReply(await transport.rpc('msgr2_link_send', { envelope: env })); }
+      // PostgREST는 이름으로 함수를 찾는다 — 인자 이름은 서버 함수(msgr2_link_send(p_env jsonb))와 같아야 한다(test/agent-link-roundtrip-pg가 잠근다)
+      try { r = readReply(await transport.rpc('msgr2_link_send', { p_env: env })); }
       catch (e) { r = { ok: false, code: 'internal', retry: true, data: null, cause: e }; }
       if (r.ok) return r.data;
       if (fatal(r.code)) throw new LinkError(r.code);
@@ -215,10 +216,11 @@ export function createLink({ transport, host, uid, device, agentIds = null, cloc
       },
       async upload(name, bytes, mime = 'application/octet-stream') {
         if (!tierAllows(tier, 'work.result', { files: ['x'] })) throw new LinkError('tier_denied');
-        const r = readReply(await transport.rpc('msgr2_link_upload_slot', { work: w.offer.work, name, bytes: bytes.byteLength ?? bytes.length }));
+        // 슬롯 = 서버가 정한 Storage 위치 { slot, bucket, path }(msgr2_link_upload_slot(p_work, p_name, p_bytes)). 본체가 그 위치에 올리고 결과 files에 slot을 싣는다
+        const r = readReply(await transport.rpc('msgr2_link_upload_slot', { p_work: w.offer.work, p_name: name, p_bytes: bytes.byteLength ?? bytes.length }));
         if (!r.ok) throw new LinkError(r.code);
-        await transport.put(r.data.url, bytes, mime);
-        return r.data.slot_id;
+        await transport.upload(r.data.bucket, r.data.path, bytes, mime);
+        return r.data.slot;
       },
     };
   }

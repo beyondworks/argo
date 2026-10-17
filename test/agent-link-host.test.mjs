@@ -5,7 +5,10 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { readFile } from 'node:fs/promises';
 import { mkdtemp } from './helpers/tmp.mjs';
-import { createAgentLinkHost, agentLinkEnabled, legacyMsgrBridgeEnabled, contextSection, ATTACH_IN_MAX, RESYNC_MIN_MS } from '../src/agent-link-host.mjs';
+import { createAgentLinkHost, agentLinkEnabled, legacyMsgrBridgeEnabled, contextSection, ATTACH_IN_MAX, RESYNC_MIN_MS, peersSection, parseHandoffs, approvalRequestFrom } from '../src/agent-link-host.mjs';
+import { TIER_POLICY, tierPolicy } from '../packages/agent-link/tiers.mjs';
+import { tierAllows, TIERS } from '../packages/agent-link/contract/v1.mjs';
+import { isGuestCtx } from '../src/gateway/msgr-handoff.mjs';
 import { createFakeServer } from '../packages/agent-link/test/fake-server.mjs';
 
 const flush = async (n = 30) => { for (let i = 0; i < n; i++) await new Promise((r) => setImmediate(r)); };
@@ -15,7 +18,19 @@ const DEVICE = 'c4d5e6f7-8091-4a2b-9c3d-4e5f6a7b8c03';
 
 async function setup({ chatImpl, regFails = false, plan, agents = [{ ws: 'co-1', slug: 'pm', name: 'PM', role: '기획' }] } = {}) {
   let t = Date.parse('2026-10-17T06:00:00Z');
-  const clock = { now: () => t, setTimeout: (fn, ms) => ({ fn, ms }), clearTimeout: () => {}, sleep: async (ms) => { t += ms; }, advance: (ms) => { t += ms; } };
+  // 가짜 시계: 타이머는 advance()가 시각 순으로 부른다(결재 만료·리스 연장)
+  const timers = new Set();
+  const clock = { now: () => t, setTimeout: (fn, ms) => { const h = { fn, at: t + ms }; timers.add(h); return h; }, clearTimeout: (h) => timers.delete(h), sleep: async (ms) => { t += ms; },
+    async advance(ms) {
+      const end = t + ms;
+      for (;;) {
+        const due = [...timers].filter((h) => h.at <= end).sort((a, b) => a.at - b.at)[0];
+        if (!due) break;
+        timers.delete(due); t = due.at; await due.fn(); await flush();
+      }
+      t = end;
+    },
+    pending: () => timers.size };
   const server = createFakeServer({ now: clock.now, uid: 'u1' });
   const rpc0 = server.transport.rpc;
   server.transport.rpc = async (name, args) => {
@@ -26,11 +41,26 @@ async function setup({ chatImpl, regFails = false, plan, agents = [{ ws: 'co-1',
     return rpc0(name, args);
   };
   const vault = await mkdtemp(join(tmpdir(), 'argo-link-host-'));
-  const calls = { chat: [], interrupt: [], listed: 0, logs: [] };
+  const calls = { chat: [], interrupt: [], listed: 0, logs: [], resolved: [], closed: [] };
+  // 알림 버스 대역(notify.mjs와 같이 비동기로 나눠 준다) + 결재 확정 대역(approval-actions·approvals)
+  const handlers = new Set();
+  const bus = { emit: (ev) => { for (const h of handlers) Promise.resolve().then(() => h(ev)); } };
+  const toolGates = new Map(); // 셸 결재 id → 기다리는 턴을 풀어 줄 함수
   const host = createAgentLinkHost({
     getSession: async () => ({ client: {}, uid: 'u1' }),
     listOwnedAgents: async () => { calls.listed++; return agents; },
-    chat: async (ws, slug, text, sid, opts) => { calls.chat.push({ ws, slug, text, sid, opts }); return chatImpl ? chatImpl(opts) : { reply: '초안입니다', costUsd: 0.01 }; },
+    chat: async (ws, slug, text, sid, opts) => { calls.chat.push({ ws, slug, text, sid, opts }); return chatImpl ? chatImpl(opts, { bus, toolGates, ws, slug }) : { reply: '초안입니다', costUsd: 0.01 }; },
+    onNotify: (fn) => { handlers.add(fn); return () => handlers.delete(fn); },
+    // 실제 resolveWithFollowUp처럼: 상태를 바꾸고, 셸 결재(tool)는 기다리던 턴을 풀고, 그 밖은 후속 턴 답을 approval_followup으로 알린다
+    resolveWithFollowUp: async (ws, id, approve, opts) => {
+      calls.resolved.push({ ws, id, approve, effectAt: server.effects.get(`approval:${id}`) ?? null, via: opts?.resolvedBy?.via });
+      const item = calls.items?.get(id);
+      if (item && item.status !== 'pending') throw Object.assign(new Error('이미 처리된 결재입니다'), { code: 'approval_already_resolved' }); // approvals.mjs와 같다
+      if (item) item.status = approve ? 'approved' : 'rejected';
+      if (item?.kind === 'tool') toolGates.get(id)?.(approve);
+      else bus.emit({ type: 'approval_followup', wsId: ws, item: item ?? { id }, reply: approve ? `후속: ${item?.action} 처리 완료` : '후속: 거절되어 하지 않음' });
+    },
+    resolveApproval: async (ws, id, approve) => { calls.closed.push({ id, approve }); },
     interruptTurn: async (ws, slug, o) => { calls.interrupt.push({ ws, slug, ...o }); },
     planReplyFiles: plan ?? (async (ws, reply) => ({ body: reply, files: [] })),
     readReplyFile: async () => new TextEncoder().encode('file-bytes'),
@@ -46,7 +76,14 @@ async function setup({ chatImpl, regFails = false, plan, agents = [{ ws: 'co-1',
   if (!regFails) await until(() => !!host.link && server.agentIds.has('co-1/pm') && server.rpcCount('msgr2_link_pending') > 0);
   else { await until(() => calls.logs.some((l) => /device register failed/.test(l))); await flush(); }
   const agentId = server.agentIds.get('co-1/pm');
-  return { server, host, calls, vault, agentId, clock };
+  // 범위를 단 로컬 결재를 올린다(chat.mjs addApproval → emitNotify({type:'approval'})와 같은 모양)
+  const raise = (opts, item) => {
+    const it = { status: 'pending', ...item, scope: opts.mirrorCtx.scope };
+    (calls.items ??= new Map()).set(it.id, it);
+    bus.emit({ type: 'approval', wsId: 'co-1', item: it });
+    return it;
+  };
+  return { server, host, calls, vault, agentId, clock, bus, raise };
 }
 
 test('플래그: ARGO_AGENT_LINK는 정확히 1일 때만 켬, 옛 브리지는 off일 때만 끔(기본 = 지금 그대로)', () => {
@@ -93,15 +130,51 @@ test('기억 안 남김 방(memory=false)은 journal.off로 부른다', async ()
   assert.deepEqual(calls.chat[0].opts.journal, { off: true });
 });
 
-test('team·guest 등급 offer는 chat()을 부르지 않고 work.error{tier_denied}', async () => {
-  for (const tier of ['team', 'guest']) {
+test('등급별 실행: owner는 주인 도구(범위 owner 표지), team·guest는 손님 도구 묶음으로 돈다(tier_denied 거절 없음)', async () => {
+  for (const tier of ['owner', 'team', 'guest']) {
     const { server, calls, agentId } = await setup();
     const o = server.offer({ agent: agentId, tier });
     server.push(o); await flush();
-    assert.equal(calls.chat.length, 0, tier);
-    assert.equal(server.sentOf('work.error', o.work)[0]?.data.code, 'tier_denied', tier);
-    assert.equal(server.works.get(o.work).state, 'failed', tier);
+    await until(() => server.sentOf('work.result', o.work).length > 0);
+    assert.equal(calls.chat.length, 1, tier);
+    const mc = calls.chat[0].opts.mirrorCtx;
+    assert.deepEqual(mc, { kind: 'scope', scope: { kind: 'link', work: o.work, room: o.data.room, owner: tier === 'owner' } }, tier);
+    assert.equal(isGuestCtx(mc), tier !== 'owner', `${tier}: 손님 판정`);
+    assert.equal(server.sentOf('work.error', o.work).length, 0, tier);
+    assert.equal(server.works.get(o.work).state, 'done', tier);
   }
+});
+
+test('등급표: 부품 한 곳(TIER_POLICY)이 약속 tierAllows와 같고, 모르는 등급은 guest, link 범위는 owner 표지가 있을 때만 주인', () => {
+  assert.deepEqual(Object.keys(TIER_POLICY).sort(), [...TIERS].sort());
+  for (const tier of TIERS) {
+    const p = TIER_POLICY[tier];
+    assert.equal(p.approvals, tierAllows(tier, 'work.approval_request'), `${tier} 승인`);
+    assert.equal(p.effects, tierAllows(tier, 'work.effect'), `${tier} 효과`);
+    assert.equal(p.uploads, tierAllows(tier, 'work.result', { files: ['x'] }), `${tier} 파일`);
+    assert.equal(p.run, true, tier);
+  }
+  assert.equal(TIER_POLICY.owner.ownerTools, true);
+  assert.equal(TIER_POLICY.team.ownerTools, false); // 지금 배포본의 조직 채널 = 주인 아닌 사람의 지시는 손님 도구
+  assert.deepEqual(TIER_POLICY.guest, { run: true, ownerTools: false, approvals: false, effects: false, uploads: false, handoffs: false }); // D12 대화·읽기만
+  assert.equal(tierPolicy('admin'), TIER_POLICY.guest);
+  assert.equal(isGuestCtx({ kind: 'scope', scope: { kind: 'link', work: 'w' } }), true, '표지 없음 = 손님(fail-closed)');
+  assert.equal(isGuestCtx({ kind: 'scope', scope: { kind: 'link', owner: 'yes' } }), true, 'true만 주인');
+  assert.equal(isGuestCtx({ kind: 'scope', scope: { kind: 'link', owner: true } }), false);
+  assert.equal(isGuestCtx({ kind: 'scope', scope: { kind: 'tg-group', chatId: '1' } }), false, '다른 범위 턴은 종전대로');
+});
+
+test('guest: 답 속 파일을 올리지 않고 넘김도 싣지 않는다', async () => {
+  const plan = async () => ({ body: '파일', files: [{ abs: '/v/a.pdf', name: 'a.pdf', bytes: 1 }] });
+  const { server, agentId } = await setup({ plan, chatImpl: () => ({ reply: '여기\n[넘김 @비] 이어서' }) }); // 넘김 줄 모양(줄 맨 앞) — 손님이라 넘김으로 읽지 않는다
+  const o = server.offer({ agent: agentId, tier: 'guest' });
+  o.data.peers = [{ agent: crypto.randomUUID(), name: '비', role: '' }];
+  server.push(o); await flush();
+  await until(() => server.sentOf('work.result', o.work).length > 0);
+  const res = server.sentOf('work.result', o.work)[0];
+  assert.deepEqual(res.data.files, []);
+  assert.deepEqual(res.data.handoffs, []);
+  assert.equal(server.rpcCount('msgr2_link_upload_slot'), 0);
 });
 
 test('대응표에 없는 에이전트(다른 기기·다른 계정의 에이전트) offer는 accept하지 않는다', async () => {
@@ -279,4 +352,141 @@ test('saveDeviceSession: 플래그가 켜지면 세션 파일을 쓰기 **전에
     else assert.equal(reg.length, 0);
     assert.ok(existsSync(join(root, '.device-session.json')), '로그인은 그대로 저장된다');
   }
+});
+
+// ── 결재 다리(U4b): chat() 결재 ↔ work.approval_request / work.approval_decision ──
+const approvalOf = (server, work) => server.log.filter((x) => x.args?.p_env?.type === 'work.approval_request' && x.args.p_env.work === work).map((x) => x.args.p_env);
+
+test('행동 결재: 턴 뒤 approval_request → 승인 → effect intent 먼저 → resolveWithFollowUp(승인) → 후속 답이 결과에 이어진다', async () => {
+  let ctxRef;
+  const { server, calls, agentId, raise } = await setup({ chatImpl: (opts) => { raise(opts, { id: 'ap-1', kind: 'action', action: '거래처 메일 발송', reason: '회의 일정 안내', slug: 'pm' }); ctxRef = opts; return { reply: '결재를 올렸습니다' }; } });
+  const o = server.offer({ agent: agentId });
+  server.push(o); await flush();
+  await until(() => approvalOf(server, o.work).length > 0);
+  const req = approvalOf(server, o.work)[0];
+  assert.equal(req.data.effect_key, 'approval:ap-1');
+  assert.equal(req.data.risk, 'medium');
+  assert.match(req.data.summary, /거래처 메일 발송 — 회의 일정 안내/);
+  assert.equal(server.works.get(o.work).state, 'awaiting_approval');
+  assert.equal(calls.resolved.length, 0, '결정 전에는 로컬 결재를 풀지 않는다');
+  server.decide(o.work, req.data.approval_id, 'approve'); await flush();
+  await until(() => server.sentOf('work.result', o.work).length > 0);
+  assert.deepEqual(calls.resolved.map((x) => [x.id, x.approve, x.effectAt, x.via]), [['ap-1', true, 'intent', 'msgr2']], '승인 실행 순간 서버에 intent가 있다');
+  assert.equal(server.effects.get('approval:ap-1'), 'done');
+  assert.equal(server.sentOf('work.result', o.work)[0].data.text, '결재를 올렸습니다\n\n후속: 거래처 메일 발송 처리 완료');
+  assert.equal(ctxRef.mirrorCtx.scope.work, o.work);
+});
+
+test('행동 결재 거절: effect 없이 resolveWithFollowUp(거절), 후속 답이 결과에 이어진다', async () => {
+  const { server, calls, agentId, raise } = await setup({ chatImpl: (opts) => { raise(opts, { id: 'ap-2', kind: 'action', action: '삭제', slug: 'pm' }); return { reply: '올렸습니다' }; } });
+  const o = server.offer({ agent: agentId });
+  server.push(o); await flush();
+  await until(() => approvalOf(server, o.work).length > 0);
+  server.decide(o.work, approvalOf(server, o.work)[0].data.approval_id, 'reject'); await flush();
+  await until(() => server.sentOf('work.result', o.work).length > 0);
+  assert.deepEqual(calls.resolved.map((x) => [x.id, x.approve]), [['ap-2', false]]);
+  assert.equal(server.effects.has('approval:ap-2'), false);
+  assert.match(server.sentOf('work.result', o.work)[0].data.text, /후속: 거절되어 하지 않음$/);
+});
+
+test('결재 만료: 서버는 만료 결정을 보내지 않는다 — expires_at에 로컬 타이머로 닫고(후속 턴 없음) work.error{timeout}, 리스 연장이 멈춘다', async () => {
+  const { server, calls, agentId, raise, clock } = await setup({ chatImpl: (opts) => { raise(opts, { id: 'ap-3', kind: 'action', action: '구매', slug: 'pm' }); return { reply: '올렸습니다' }; } });
+  const o = server.offer({ agent: agentId });
+  server.push(o); await flush();
+  await until(() => approvalOf(server, o.work).length > 0);
+  const req = approvalOf(server, o.work)[0];
+  assert.equal(Date.parse(req.data.expires_at) - clock.now(), 24 * 3_600_000);
+  await clock.advance(24 * 3_600_000 - 1000); await flush();
+  assert.deepEqual(calls.closed, [], '기한 전에는 닫지 않는다');
+  const renews = server.sentOf('work.accept', o.work).length;
+  assert.ok(renews > 200, `기다리는 동안 5분마다 연장(${renews})`);
+  await clock.advance(2000); await flush();
+  await until(() => server.sentOf('work.error', o.work).length > 0);
+  assert.deepEqual(calls.closed, [{ id: 'ap-3', approve: false }]);
+  assert.deepEqual(calls.resolved, [], '후속 턴 없음');
+  assert.deepEqual(server.sentOf('work.error', o.work)[0].data, { code: 'timeout', runner: null });
+  assert.equal(server.works.get(o.work).state, 'failed');
+  assert.equal(server.sentOf('work.result', o.work).length, 0);
+  await clock.advance(60 * 60 * 1000); await flush();
+  assert.equal(server.sentOf('work.accept', o.work).length, renews, '끝난 뒤에는 리스 연장이 없다');
+  assert.equal(clock.pending(), 0, '남은 타이머 0');
+});
+
+test('guest 결재: 승인 요청을 보내지 않고 로컬 결재를 거절로 닫는다(막힌 셸 결재도 풀린다)', async () => {
+  const { server, calls, agentId, raise } = await setup({ chatImpl: async (opts) => { raise(opts, { id: 'ap-g', kind: 'action', action: '발송', slug: 'pm' }); return { reply: '안내만 했습니다' }; } });
+  const o = server.offer({ agent: agentId, tier: 'guest' });
+  server.push(o); await flush();
+  await until(() => server.sentOf('work.result', o.work).length > 0);
+  assert.equal(approvalOf(server, o.work).length, 0);
+  assert.deepEqual(calls.closed, [{ id: 'ap-g', approve: false }]);
+});
+
+test('다른 일·다른 회사의 결재는 이 일에 붙지 않는다(범위의 work로 거른다)', async () => {
+  const { server, agentId, bus } = await setup({ chatImpl: (opts) => {
+    bus.emit({ type: 'approval', wsId: 'co-1', item: { id: 'x1', kind: 'action', action: '남의 일', scope: { kind: 'link', work: crypto.randomUUID() } } });
+    bus.emit({ type: 'approval', wsId: 'co-2', item: { id: 'x2', kind: 'action', action: '다른 회사', scope: opts.mirrorCtx.scope } });
+    bus.emit({ type: 'approval', wsId: 'co-1', item: { id: 'x3', kind: 'action', action: '범위 없음' } });
+    return { reply: '끝' };
+  } });
+  const o = server.offer({ agent: agentId });
+  server.push(o); await flush();
+  await until(() => server.sentOf('work.result', o.work).length > 0);
+  assert.equal(approvalOf(server, o.work).length, 0);
+  assert.equal(server.sentOf('work.result', o.work)[0].data.text, '끝');
+});
+
+test('결재를 기다리는 중 취소: 로컬 결재를 거절로 닫고 결과를 내지 않는다', async () => {
+  const { server, calls, agentId, raise } = await setup({ chatImpl: (opts) => { raise(opts, { id: 'ap-c', kind: 'action', action: '발송', slug: 'pm' }); return { reply: '올림' }; } });
+  const o = server.offer({ agent: agentId });
+  server.push(o); await flush();
+  await until(() => approvalOf(server, o.work).length > 0);
+  server.cancel(o.work); await flush();
+  await until(() => calls.closed.length > 0);
+  assert.deepEqual(calls.closed, [{ id: 'ap-c', approve: false }]);
+  assert.deepEqual(calls.resolved, []);
+  assert.equal(server.sentOf('work.result', o.work).length, 0);
+});
+
+test('approvalRequestFrom: 쉬운 문장(plain)이 있으면 요약으로, 위험도는 셸·커넥터 high', () => {
+  const r = approvalRequestFrom({ id: 'a', kind: 'connector', action: 'x'.repeat(300), plain: { purpose: '뉴스레터', task: '1200명 발송', need: 'Gmail' } }, Date.parse('2026-10-18T00:00:00Z'));
+  assert.equal(r.action.length, 200); assert.equal(r.risk, 'high'); assert.equal(r.summary, '뉴스레터 · 1200명 발송 · Gmail');
+  assert.equal(r.expires_at, '2026-10-19T00:00:00.000Z'); assert.equal(r.effect_key, 'approval:a');
+});
+
+// ── 넘김(U4b): offer.peers → 동료 구역, 답의 넘김 줄 → result.handoffs ──
+test('넘김: 동료 목록을 지시 앞에 보여 주고, [넘김 @이름] 줄을 result.handoffs로 보낸다(본문에서 지움, 모르는 이름은 그대로)', async () => {
+  const B = crypto.randomUUID();
+  const { server, calls, agentId } = await setup({ chatImpl: () => ({ reply: '초안 끝.\n[넘김 @비] 일정 확정해 줘\n[넘김 @없는사람] 이것도' }) });
+  const o = server.offer({ agent: agentId, tier: 'team' });
+  o.data.peers = [{ agent: B, name: '비', role: '일정 담당' }];
+  server.push(o); await flush();
+  await until(() => server.sentOf('work.result', o.work).length > 0);
+  assert.match(calls.chat[0].text, /## 이 방에서 넘길 수 있는 동료\n- @비 — 일정 담당\n/);
+  const res = server.sentOf('work.result', o.work)[0];
+  assert.deepEqual(res.data.handoffs, [{ agent: B, text: '일정 확정해 줘' }]);
+  assert.equal(res.data.text, '초안 끝.\n[넘김 @없는사람] 이것도');
+});
+
+test('parseHandoffs·peersSection: 동명이인은 넘기지 않고, 8개까지, 동료가 없으면 구역도 없다', () => {
+  const p = [{ agent: 'a1', name: '비' }, { agent: 'a2', name: '씨' }, { agent: 'a3', name: '씨' }];
+  assert.deepEqual(parseHandoffs('[handoff @비] go\n[넘김 @씨] 둘', p).handoffs, [{ agent: 'a1', text: 'go' }]);
+  const many = Array.from({ length: 10 }, () => '[넘김 @비] 일').join('\n');
+  assert.equal(parseHandoffs(many, p).handoffs.length, 8);
+  assert.deepEqual(parseHandoffs('[넘김 @비] x', []), { body: '[넘김 @비] x', handoffs: [] });
+  assert.equal(peersSection([]), '');
+  assert.match(peersSection([{ agent: 'a', name: 'B', role: '' }], 'en'), /\[handoff @name\]/);
+});
+
+test('주인이 데스크톱·텔레그램에서 먼저 확정한 결재: v2 승인이 와도 다시 풀지 않고, 먼저 나온 후속 답을 결과에 쓴다', async () => {
+  const { server, calls, agentId, raise, bus } = await setup({ chatImpl: (opts) => { raise(opts, { id: 'ap-l', kind: 'action', action: '발송', slug: 'pm' }); return { reply: '올림' }; } });
+  const o = server.offer({ agent: agentId });
+  server.push(o); await flush();
+  await until(() => approvalOf(server, o.work).length > 0);
+  // 로컬(데스크톱 결재함)에서 먼저 확정 — 상태가 바뀌고 후속 답이 먼저 나온다
+  calls.items.get('ap-l').status = 'approved';
+  bus.emit({ type: 'approval_followup', wsId: 'co-1', item: calls.items.get('ap-l'), reply: '후속: 데스크톱에서 승인되어 보냈음' }); await flush();
+  server.decide(o.work, approvalOf(server, o.work)[0].data.approval_id, 'approve'); await flush();
+  await until(() => server.sentOf('work.result', o.work).length > 0);
+  assert.equal(server.sentOf('work.result', o.work)[0].data.text, '올림\n\n후속: 데스크톱에서 승인되어 보냈음');
+  assert.equal(calls.resolved.length, 1, 'v2 승인은 한 번 시도하고(이미 처리됨) 다시 실행하지 않는다');
 });
