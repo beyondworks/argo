@@ -297,6 +297,9 @@ test('기동 직후 기본값 — 다른 기기를 본 적 없는 단일 기기�
 
 const PEER_FILE = join(process.env.ARGO_ROOT, '.lease-peer.json');
 const readPeerFile = async () => { for (let i = 0; i < 50; i++) { try { return JSON.parse(readFileSync(PEER_FILE, 'utf8')); } catch { await new Promise((r) => setTimeout(r, 10)); } } return null; };
+/** 표지 파일 쓰기는 기다리지 않는 원자 쓰기(임시 파일 → 이름 바꾸기)라, 느린 러너에서는 고정 50ms 안에 끝나지 않는다(0.1.113 릴리스 빌드 macos-15-intel 재실행 실패).
+    조건이 맞을 때까지 10ms마다 다시 읽고, 5초 상한이 지나면 마지막 값을 돌려준다(단언이 실패를 드러낸다). */
+const waitPeerFile = async (ok, ms = 5_000) => { const end = Date.now() + ms; for (;;) { const d = await readPeerFile(); if ((d && ok(d)) || Date.now() >= end) return d; await new Promise((r) => setTimeout(r, 10)); } };
 test('다른 기기의 리스 글을 보면 데이터 폴더에 계정별 표지를 남긴다 — 다시 켜진 뒤(세션이 끊겨 리스를 못 읽어도) 엄격 판정을 쓰는 근거', async () => {
   rmSync(PEER_FILE, { force: true });
   const f = fakeClient(fresh('mac-a')); _setSyncClientForTest(f.client); reset();
@@ -319,11 +322,9 @@ test('표지는 볼 때마다 메모리의 시각만 고치고 파일은 하루�
   assert.ok(lease().peers[ACCT].at > first, '메모리 시각은 고친다(14일 판정)');
   lease().peersSavedAt[ACCT] -= 25 * 3_600_000; // 마지막으로 쓴 지 하루가 넘었다
   await renewLease('owner-k2', { runnerUsable: true });
-  await new Promise((r) => setTimeout(r, 50));
-  assert.ok((await readPeerFile()).accounts[ACCT].at > first, '하루가 지나면 고쳐 쓴다');
+  assert.ok((await waitPeerFile((d) => d.accounts[ACCT].at > first)).accounts[ACCT].at > first, '하루가 지나면 고쳐 쓴다');
   f.set(fresh('mac-b')); await renewLease('owner-k2', { runnerUsable: true });
-  await new Promise((r) => setTimeout(r, 50));
-  assert.deepEqual((await readPeerFile()).accounts[ACCT].normals, ['mac-a', 'mac-b'], '처음 보는 일반 기기는 바로 쓴다');
+  assert.deepEqual((await waitPeerFile((d) => d.accounts[ACCT].normals.length === 2)).accounts[ACCT].normals, ['mac-a', 'mac-b'], '처음 보는 일반 기기는 바로 쓴다');
 });
 
 test('표지는 최근 14일 안에 이 계정이 다른 기기를 봤을 때만 엄격 판정을 쓴다 — 두 번째 기기를 없앴거나 다른 계정으로 로그인했으면 단일 기기(배포본처럼 담당)', () => {
