@@ -3,7 +3,6 @@
 // 사람이 자기 에이전트 명의로 "관리자 공지" 같은 안내 글을 쓸 수 있기 때문이다. 자기 사람 글·보내는 중인 글은 뺀다.
 export function canReportMessage(m, uid) {
   if (!m || m.pending) return false;
-  if (m._v2) return false; // 메신저 v2 글: 신고 표(msgr_reports)가 옛 글(msgr_messages)을 가리킨다 — v2 신고 RPC는 U6d
   if (m.author_kind !== 'user' && m.author_kind !== 'crew') return false; // 'system' 포함 — 서버가 쓰는 안내
   if (m.author_kind === 'user' && m.author_user_id === uid) return false; // 자기 글(서버 msgr_report_own)
   return true;

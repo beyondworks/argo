@@ -61,12 +61,12 @@ function fakeDb(answer) {
   return { calls, client: { from } };
 }
 const runSearchSrc = statement('const runSearch = ');
-const DEPS = ['supabase', 'q', 'org', 'isPersonal', 'blockedIds', 'uid', 'ownCrews', 'pushDiag', 'fetchSearchRows', 'SEARCH_LIMIT', 'searchSeq', 'activeOrg', 'setPage', 'setRail', 'setSearchRes', 'setSearchBusy',
+const DEPS = ['V2', 'v2SearchFound', 'supabase', 'q', 'org', 'isPersonal', 'blockedIds', 'uid', 'ownCrews', 'pushDiag', 'fetchSearchRows', 'SEARCH_LIMIT', 'searchSeq', 'activeOrg', 'setPage', 'setRail', 'setSearchRes', 'setSearchBusy',
   'members', 'crews', 'crewTier', 'channels', 'previewChannels', 'searchChannelsByName', 'archivedSearchRooms', 'ARCHIVED_ROOM_COLS'];
 function makeRunSearch({ personal, db, ownRows = [{ id: MY_ORG_CREW }] }) {
   const out = { res: null, diag: [] };
   const deps = { supabase: db.client, q: (p) => Promise.resolve(p).then((r) => (r?.error ? Promise.reject(r.error) : r.data)), org: { id: personal ? 'personal' : LEAN }, isPersonal: personal, blockedIds: new Set(), uid: ME,
-    ownCrews: { rows: ownRows }, pushDiag: (k, m) => out.diag.push([k, m]), fetchSearchRows, SEARCH_LIMIT: 60, searchSeq: { current: 0 }, activeOrg: { current: personal ? 'personal' : LEAN },
+    V2: false /* 메신저 v2 플래그 꺼짐(기본) — 옛 검색 경로 */, v2SearchFound: null, ownCrews: { rows: ownRows }, pushDiag: (k, m) => out.diag.push([k, m]), fetchSearchRows, SEARCH_LIMIT: 60, searchSeq: { current: 0 }, activeOrg: { current: personal ? 'personal' : LEAN },
     setPage: () => {}, setRail: () => {}, setSearchRes: (r) => { out.res = r; }, setSearchBusy: () => {}, members: [], crews: [], crewTier: () => null, channels: [], previewChannels: [], searchChannelsByName: () => [],
     archivedSearchRooms: G.archivedSearchRooms, ARCHIVED_ROOM_COLS: G.ARCHIVED_ROOM_COLS };
   const fn = new Function(...DEPS, `return ${runSearchSrc};`)(...DEPS.map((k) => deps[k]));
