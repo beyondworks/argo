@@ -26,6 +26,8 @@ const asUserErr = (uid, q) => { const r = psqlRaw(['-A', '-t', '-c', pre(uid) + 
 const xmins = (t, where = 'true') => sql(`select coalesce(string_agg(xmin::text, ',' order by ctid), '') from public.${t} where ${where}`);
 const setDeviceApp = (v) => sql(`create or replace function public._msgr2_device_app() returns boolean language sql stable security definer set search_path = public, pg_temp as $$ select ${v} $$`);
 
+const DEVICE_TRUE = `create or replace function public._msgr2_device_ok() returns boolean language sql stable security definer set search_path = public, pg_temp as $$ select true $$;
+  create or replace function public._msgr2_device_app() returns boolean language sql stable security definer set search_path = public, pg_temp as $$ select true $$;`;
 let TEAM, ROOM, ROOM2, DIRECT;
 before(() => {
   if (!DB) return;
@@ -40,6 +42,7 @@ before(() => {
     create table if not exists auth.users (id uuid primary key, created_at timestamptz not null default now(), email text);
     create or replace function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('argo.uid', true), '')::uuid $$;`]);
   psql(['-c', readFileSync(mig(FILE), 'utf8')]);
+  psql(['-c', DEVICE_TRUE]); // U3 전 자리 함수는 닫힘(거짓) — 판정 행렬은 기기가 유효하다는 전제로 본다
   TEAM = sql(`insert into public.msgr2_spaces (kind, name, owner_user_id) values ('team', '팀', '${U.owner}') returning id`);
   sql(`insert into public.msgr2_space_members (space_id, user_id, role) values ('${TEAM}', '${U.owner}', 'owner'), ('${TEAM}', '${U.admin}', 'admin'),
     ('${TEAM}', '${U.admin2}', 'admin'), ('${TEAM}', '${U.member}', 'member'), ('${TEAM}', '${U.guest}', 'guest')`);
@@ -224,4 +227,17 @@ test('함수 실행 권한 — anon은 RPC를 못 부르고, 트리거 함수는
   for (const f of ['msgr2_lock_cols', 'msgr2_same_room', 'msgr2_seat_team_only']) {
     assert.equal(sql(`select has_function_privilege('authenticated', 'public.${f}()', 'execute')`), 'f', f);
   }
+});
+
+test('U1 재적용 — 이미 있는 _msgr2_device_ok·_msgr2_device_app 정의(U3 판)를 덮지 않는다', { skip }, () => {
+  // U3 판을 흉내 낸 진짜 판정 함수를 먼저 두고 U1을 다시 적용한다(제자리 수정 뒤 재적용·반복 적용 경로)
+  sql(`create or replace function public._msgr2_device_ok() returns boolean language sql stable security definer set search_path = public, pg_temp as $$ select coalesce(current_setting('argo.u3_ok', true) = 'yes', false) $$;
+    create or replace function public._msgr2_device_app() returns boolean language sql stable security definer set search_path = public, pg_temp as $$ select coalesce(current_setting('argo.u3_app', true) = 'yes', false) $$`);
+  const src = () => sql(`select string_agg(proname || ':' || prosrc, '|' order by proname) from pg_proc where proname in ('_msgr2_device_ok', '_msgr2_device_app') and pronamespace = 'public'::regnamespace`);
+  const before1 = src();
+  assert.match(before1, /argo\.u3_ok/);
+  psql(['-c', readFileSync(mig(FILE), 'utf8')]);
+  assert.equal(src(), before1, 'U1 재적용이 기기 판정 함수를 바꿨다');
+  assert.equal(asUser(U.member, `select (public.msgr2_access('${ROOM}')).read`), 'f', '재적용 뒤에도 기기 검사가 살아 있다');
+  psql(['-c', DEVICE_TRUE]);
 });
