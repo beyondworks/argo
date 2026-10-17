@@ -15,7 +15,7 @@ const ORIG = read('supabase/migrations/20261012160000_msgr_account_delete_storag
 // 20261012160000의 함수 본문($$ … $$ 사이) — 이름을 바꾼 원래 함수의 prosrc와 같아야 한다
 const bodyOf = (src, name) => { const i = src.indexOf(`create or replace function public.${name}(`); const a = src.indexOf('$$', i) + 2; return src.slice(a, src.indexOf('$$;', a)); };
 const id = (n) => `d8000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
-const A = id(1), B = id(2), C = id(3), OA = id(100), OB = id(101), OC = id(102);
+const A = id(1), B = id(2), C = id(3), D = id(4), OA = id(100), OB = id(101), OC = id(102), OD = id(103), CH = id(200), CH2 = id(201), MSG = 9001;
 
 let db;
 const one = (q) => db.sql(q);
@@ -36,7 +36,20 @@ before(() => {
     assert.equal(r.status, 0, r.stderr);
   }
   db.sql(`update public.msgr_orgs set deleted_at = now() - interval '31 days' where id = '${OC}'`);
+  // D의 옛 메신저 데이터(조직·방 둘·글·첨부·반응) — 옛 트리거는 끄고 넣는다(이미 쌓인 데이터 모양)
+  db.psql(['-c', `set session_replication_role = replica;
+    insert into auth.users (id) values ('${D}') on conflict do nothing;
+    insert into public.msgr_orgs (id, name, slug, owner_user_id) values ('${OD}', 'win-d', 'win-d', '${D}');
+    insert into public.msgr_org_members (org_id, user_id, role) values ('${OD}', '${D}', 'owner');
+    insert into public.msgr_channels (id, org_id, kind, name, created_by) values ('${CH}', '${OD}', 'public', 'general', '${D}'), ('${CH2}', '${OD}', 'private', 'p', '${D}');
+    insert into public.msgr_channel_members (channel_id, member_kind, member_id) values ('${CH}', 'user', '${D}'), ('${CH2}', 'user', '${D}');
+    insert into public.msgr_messages (id, org_id, channel_id, author_kind, author_user_id, kind, body, mentions, meta) overriding system value values (${MSG}, '${OD}', '${CH}', 'user', '${D}', 'text', '원문', '[]', '{}');
+    insert into public.msgr_attachments (message_id, org_id, storage_path, name, bytes) values (${MSG}, '${OD}', '${OD}/${CH}/${MSG}/a.txt', 'a.txt', 1);
+    insert into public.msgr_reactions (message_id, user_id, emoji) values (${MSG}, '${D}', 'x');
+    set session_replication_role = origin;`]);
 });
+const oldCore = () => ['msgr_messages', 'msgr_channels', 'msgr_channel_members', 'msgr_attachments', 'msgr_reactions']
+  .map((t) => one(`select '${t}:' || count(*) || ':' || coalesce(md5(string_agg(md5(x::text), ',' order by md5(x::text))), '-') from public.${t} x`)).join(' ');
 
 test('1) 원래 함수는 이름만 바뀌었다: 본문이 20261012160000 정의와 같고, 사람은 원래 함수를 직접 못 부른다', { skip }, () => {
   for (const [body, name] of [['_msgr_delete_me_body', 'msgr_delete_me'], ['_msgr_purge_orgs_body', 'msgr_purge_orgs']]) {
@@ -47,6 +60,8 @@ test('1) 원래 함수는 이름만 바뀌었다: 본문이 20261012160000 정�
   assert.match(asUser(A, 'select public._msgr_purge_orgs_body()').stderr, /permission denied/);
   assert.match(asUser(A, 'select public.msgr_purge_orgs()').stderr, /permission denied/, '영구 삭제는 지금처럼 서비스만');
   assert.match(asUser(A, 'select public._msgr2_migration_window()').stderr, /permission denied/);
+  assert.equal(one("select has_function_privilege('service_role', 'public.msgr_purge_orgs()', 'execute')"), 't', '감싸개도 서비스 역할이 부른다(원래 파일처럼 명시)');
+  assert.equal(one("select count(*) from pg_trigger where tgname = 'a0_msgr2_window_guard'"), '5');
 });
 
 test('2) 표지 없음 = 배포본과 같다: 계정 삭제가 되고(조직도 함께) 결과 모양이 같다', { skip }, () => {
@@ -69,6 +84,22 @@ test('3) 표지 있음 = 거부(데이터 불변): 계정 삭제 · 보관 조�
   assert.equal(one(`select count(*) from public.msgr_orgs where id = '${OC}'`), '1', '보관 조직이 남는다');
 });
 
+test('3b) 표지 있음 = 옛 핵심 표의 수정·지우기·방 삭제·반응·멤버 거부(사람 문맥), 서비스 문맥은 통과, 데이터 불변', { skip }, () => {
+  const before1 = oldCore();
+  for (const q of [
+    `update public.msgr_messages set body = '' , deleted_at = now() where id = ${MSG}`, // 옛 앱의 글 지우기(App.jsx: UPDATE body='' · deleted_at)
+    `update public.msgr_messages set body = '고침' where id = ${MSG}`,
+    `delete from public.msgr_messages where id = ${MSG}`,
+    `delete from public.msgr_channels where id = '${CH2}'`, // msgr_channels_delete 정책 경로
+    `update public.msgr_channels set name = 'x' where id = '${CH}'`,
+    `delete from public.msgr_channel_members where channel_id = '${CH2}' and member_id = '${D}'`,
+    `delete from public.msgr_reactions where message_id = ${MSG}`,
+    `update public.msgr_attachments set name = 'b.txt' where message_id = ${MSG}`,
+  ]) assert.match(asUser(D, q).stderr, /msgr2_migration_in_progress/, q);
+  assert.equal(oldCore(), before1, '옛 핵심 표 그대로');
+  assert.equal(db.raw(['-c', `update public.msgr_messages set body = body where id = ${MSG}`]).status, 0, '서비스 문맥은 통과');
+});
+
 test('4) 표지 끈 뒤 다시 정상', { skip }, () => {
   setFlag(false);
   const r = asUser(B, 'select public.msgr_delete_me()');
@@ -76,6 +107,10 @@ test('4) 표지 끈 뒤 다시 정상', { skip }, () => {
   assert.deepEqual(JSON.parse(lastLine(r)), { deleted_orgs: 1 });
   assert.equal(one('select public.msgr_purge_orgs()'), '1', '서비스 문맥 영구 삭제 1건');
   assert.equal(one(`select count(*) from public.msgr_orgs where id = '${OC}'`), '0');
+  // 옛 앱의 글 고치기가 배포본처럼 다시 된다
+  const u = asUser(D, `update public.msgr_messages set body = '고침' where id = ${MSG} returning id`);
+  assert.equal(u.status, 0, u.stderr);
+  assert.equal(one(`select body from public.msgr_messages where id = ${MSG}`), '고침');
 });
 
 test('5) 되돌림: 표지가 있으면 멈추고, 없으면 원래 이름·원래 권한·원래 본문으로', { skip }, () => {
@@ -85,7 +120,9 @@ test('5) 되돌림: 표지가 있으면 멈추고, 없으면 원래 이름·원�
   setFlag(false);
   const r = db.raw(['-c', DOWN]);
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(one("select count(*) from pg_proc where proname in ('_msgr_delete_me_body', '_msgr_purge_orgs_body', '_msgr2_migration_window')"), '0');
+  assert.equal(one("select count(*) from pg_proc where proname in ('_msgr_delete_me_body', '_msgr_purge_orgs_body', '_msgr2_migration_window', '_msgr2_window_write_guard')"), '0');
+  assert.equal(one("select count(*) from pg_trigger where tgname = 'a0_msgr2_window_guard'"), '0', '옛 표 트리거도 걷힌다');
+  assert.equal(one("select has_function_privilege('service_role', 'public.msgr_purge_orgs()', 'execute')"), 't', '서비스 역할 실행 권한 그대로');
   for (const name of ['msgr_delete_me', 'msgr_purge_orgs']) assert.equal(one(`select md5(prosrc) from pg_proc where proname = '${name}'`), one(`select md5($b$${bodyOf(ORIG, name)}$b$)`), name);
   assert.equal(one("select has_function_privilege('authenticated', 'public.msgr_delete_me()', 'execute')"), 't');
   assert.equal(one("select has_function_privilege('authenticated', 'public.msgr_purge_orgs()', 'execute')"), 'f');

@@ -26,7 +26,9 @@
 ```sql
 insert into public.msgr_settings (key, value) values ('msgr2_migration_window', now()::text);
 ```
-- 이 표지가 있는 동안 옛 `msgr_delete_me()`(계정 삭제)·`msgr_purge_orgs()`(보관 조직 영구 삭제)가 `msgr2_migration_in_progress`로 거부된다. 백필이 읽는 원본(옛 표)의 행이 이전 도중 사라지지 않게 한다. 표지가 없으면 지금과 같은 동작이다.
+- 이 표지가 있는 동안 옛 `msgr_delete_me()`(계정 삭제)·`msgr_purge_orgs()`(보관 조직 영구 삭제)가 `msgr2_migration_in_progress`로 거부된다. 옛 핵심 표(`msgr_messages`·`msgr_channels`·`msgr_channel_members`·`msgr_attachments`·`msgr_reactions`)의 수정·지우기도 사람 문맥에서 같은 코드로 거부된다(서비스 문맥은 통과). 백필이 읽는 원본(옛 표)의 행이 이전 도중 바뀌거나 사라지지 않게 한다. 표지가 없으면 지금과 같은 동작이다.
+- 막지 않는 것: 옛 읽음·방 설정·프로필 쓰기(옛 중단 스위치 `msgr_paused`는 INSERT만 막는다 — 20261016170000). 이것들은 5단계 직전 다시 실행(멱등)이 마지막 값으로 맞춘다.
+- **창을 열기 전에 지운 방·글은 이전 대상이 아니다**(옛 표에 없으므로 — 옛 동작과 같다).
 - 창을 연 시각을 기록에 남긴다. 안내 문구 ①을 올린다.
 
 ## 2. 백필 (설계 6절 2단계)
@@ -72,9 +74,15 @@ select storage_path, room_id from public.msgr2_attachments order by random() lim
 - 20개 모두 200이어야 한다. 결과(경로 해시·상태 코드)를 발행 기록에 남긴다.
 - 옛 정리 작업(`msgr_storage_sweep_list`)은 `msgr2_attachments`가 가리키는 객체를 후보에서 뺀다(U2b). 이전 직후 `select count(*) from public.msgr_storage_sweep_list(1000) s where exists (select 1 from public.msgr2_attachments a where a.storage_path = 'msgr/' || s)` = 0 을 확인한다.
 
-## (없앰) 스위치 직전 두 번째 실행
+## 4b. 스위치 바로 앞 다시 실행 (6절 3단계, 멱등)
 
-설계 6절 3단계의 "스위치 직전에 한 번 더"는 이 순서에서는 필요 없다. 백필과 스위치가 한 창 안에 붙어 있고, 옛 쓰기는 중단 상태로 막혀 있으며, 계정 삭제·영구 삭제는 창 표지가 막는다. 백필 뒤 옛 표가 바뀔 길이 없다. 검증이 실패해 다시 돌릴 때만 `restart` → `run`을 쓴다.
+```bash
+bash scripts/msgr2-migrate.sh restart
+bash scripts/msgr2-migrate.sh run
+bash scripts/msgr2-migrate.sh verify
+```
+- 창 표지가 옛 핵심 표의 수정·지우기를 막지만, 옛 읽음·방 설정·프로필은 창 안에서도 바뀔 수 있다(옛 중단 스위치는 INSERT만 막는다). 1~4단계 사이에 바뀐 값을 마지막으로 맞춘다. 멱등이라 바뀐 행만 쓴다 — `status`의 `written` 합이 0에 가까워야 하고, 크게 나오면 멈추고 원인을 본다.
+- verify가 ok면 바로 5단계로 간다(사이를 두지 않는다).
 
 ## 5. 바로 스위치 (6절 4단계 — 검증·첨부 확인이 끝나면 기다리지 않는다)
 
@@ -88,20 +96,21 @@ select storage_path, room_id from public.msgr2_attachments order by random() lim
 ```sql
 delete from public.msgr_settings where key = 'msgr2_migration_window';
 ```
-- 계정 삭제·보관 조직 영구 삭제가 다시 열린다(창 동안 미뤄진 보관 조직은 다음 정기 실행이 처리한다). 닫은 시각을 기록에 남긴다.
+- 계정 삭제·보관 조직 영구 삭제·옛 표 수정이 다시 열린다. 닫은 시각을 기록에 남긴다.
+- 보관 조직 영구 삭제(`msgr_purge_orgs`)를 부르는 라이브 크론이 있는지는 저장소에서 근거를 찾지 못했다 — **맥 one이 적용 전에 `select jobname, schedule, command from cron.job where command ilike '%msgr_purge_orgs%'`로 확인**하고, 있으면 창 동안 그 실행은 거부(오류 기록)되고 다음 실행이 처리한다는 점을, 없으면 미뤄진 정리를 손으로 한 번 부를지 기록에 남긴다.
 - 창을 닫지 않고 두면 사용자가 계정을 지울 수 없다 — 스위치가 늦어지면 창부터 닫지 말고 원인을 본다(되돌림 뒤에는 바로 닫는다).
 
 ## 안내 문구 초안 (총괄·유건 확인 뒤 확정)
 
 ① 작업 창을 열 때(랜딩 Coming soon·옛 앱 공지 — 한국어 / English)
-- 메신저를 새 버전으로 옮기는 작업을 하고 있습니다. 작업하는 동안 옛 메신저 앱에서는 첨부 파일이 열리지 않을 수 있고, 계정 삭제도 잠시 막힙니다. 새 버전이 나오면 같은 대화와 첨부를 그대로 볼 수 있습니다. Argo 0.1.113 이후를 쓰셨다면, 메신저 대화와 첨부 사본이 이 기기의 Argo 보관 폴더에 있습니다(Argo 설정 › 연결 › 메신저 기록 › 위치).
-- We're moving Messenger to a new version. While this runs, attachments may not open in the old Messenger app, and account deletion is briefly paused. When the new version is out, you'll see the same conversations and attachments. If you used Argo 0.1.113 or later, copies of your Messenger conversations and attachments are in this device's Argo archive folder (Argo Settings › Connections › Messenger history › Location).
+- 메신저를 새 버전으로 옮기는 작업을 하고 있습니다. 작업하는 동안 옛 메신저 앱에서는 첨부 파일이 열리지 않을 수 있고, 글 고치기·지우기와 계정 삭제도 잠시 막힙니다. 새 버전이 나오면 같은 대화와 첨부를 그대로 볼 수 있습니다. Argo 0.1.113 이후를 쓰셨다면, 메신저 대화와 첨부 사본이 이 기기의 Argo 보관 폴더에 있습니다(Argo 설정 › 연결 › 메신저 기록 옮기기 › 위치).
+- We're moving Messenger to a new version. While this runs, attachments may not open in the old Messenger app, and editing or deleting messages and deleting your account are briefly paused. When the new version is out, you'll see the same conversations and attachments. If you used Argo 0.1.113 or later, copies of your Messenger conversations and attachments are in this device's Argo archive folder (Argo Settings › Connections › Messenger history › Location).
 
 ② 스위치 뒤 옛 방 공지(`msgr_pause_announce`)
 - 메신저가 새 버전으로 옮겨졌습니다. 업데이트하면 이 대화를 다시 이어서 쓸 수 있습니다. 옛 앱에서는 첨부 파일이 열리지 않습니다 — 새 버전이나 Argo 보관 폴더(0.1.113 이후)에서 여세요.
 - Messenger has moved to a new version. Update to continue this conversation. Attachments no longer open in the old app — open them in the new version or in your Argo archive folder (0.1.113 or later).
 
-확정 전에 확인할 것: 설정 화면의 실제 메뉴 이름(`settings.msgrArchive.*` 사전 문구)과 맞추고, 보관이 `partial`로 끝난 사람(받지 못한 첨부가 있는 사람)은 창 뒤에 옛 경로로 다시 받을 수 없다는 점을 FAQ에 한 줄 넣을지 정한다(함정 6).
+확정 전에 확인할 것: 메뉴 이름은 사전 문구 `settings.msgrArchive.title`('메신저 기록 옮기기' / 'Messenger history')·`settings.msgrArchive.where`('위치' / 'Location')에 맞췄다. 그 위 단계('연결')는 화면에서 한 번 더 확인하고, 보관이 `partial`로 끝난 사람(받지 못한 첨부가 있는 사람)은 창 뒤에 옛 경로로 다시 받을 수 없다는 점을 FAQ에 한 줄 넣을지 정한다(함정 6).
 
 ## 되돌림
 

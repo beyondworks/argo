@@ -16,9 +16,16 @@ do $g$ begin
     alter function public._msgr_purge_orgs_body() rename to msgr_purge_orgs;
   end if;
 end $g$;
--- 원래 권한(20261012160000과 같다)
+-- 원래 권한(20261012160000과 같다, 영구 삭제의 service_role 실행은 20260903120000:1527)
 revoke all on function public.msgr_delete_me() from public, anon;
 grant execute on function public.msgr_delete_me() to authenticated;
 revoke all on function public.msgr_purge_orgs() from public, anon, authenticated;
+grant execute on function public.msgr_purge_orgs() to service_role;
+do $t$ declare t text; begin
+  foreach t in array array['msgr_messages', 'msgr_channels', 'msgr_channel_members', 'msgr_attachments', 'msgr_reactions'] loop
+    if to_regclass('public.' || t) is not null then execute format('drop trigger if exists a0_msgr2_window_guard on public.%I', t); end if;
+  end loop;
+end $t$;
+drop function if exists public._msgr2_window_write_guard();
 drop function if exists public._msgr2_migration_window();
 commit;
