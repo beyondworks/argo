@@ -377,7 +377,7 @@ export function createAgentLinkHost(deps) {
       }
     },
     onEvent(name, detail) {
-      if (['update_required', 'device_invalid', 'paused', 'lease_lost', 'report_failed', 'accept_failed'].includes(name)) log(name, JSON.stringify(detail));
+      if (['update_required', 'device_invalid', 'paused', 'resumed', 'lease_lost', 'report_failed', 'accept_failed'].includes(name)) log(name, JSON.stringify(detail));
     },
   };
 
