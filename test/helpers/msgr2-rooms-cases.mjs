@@ -34,13 +34,18 @@ export function snapshot(db) {
   };
 }
 
+// U6d 적용 전 판에서 빼는 후속 마이그레이션(U6d 표에 기댄다) — 각각 setupFull 시험이 따로 본다
+export const NEEDS_ROOMS = ['20261018061300_msgr2_invite_revoke_signal.sql']; // test/msgr2-invite-revoke-pg.test.mjs
+
 // msgr2 파일을 버전 순서로 적용하되 U6d(이 파일)만 뺀다 — 적용 전·후를 비교하려고(setup()은 U2b 뒤 파일을 모두 적용한다)
 function setupWithoutRooms(DB) {
   const db = setupBase(DB);
-  // U6d 뒤의 후속 파일 가운데 U6d 초대 표에 기대는 것(예: 061300 초대 취소 방송 — 함수가 msgr2_space_invites 타입을 쓴다)은 U6d 없이 만들 수 없다 →
-  // 이 판(U6d 적용 전·되돌림 비교)에서는 뺀다. 그 파일은 운영 순서 전체 판(setupFull)을 쓰는 자기 시험이 따로 본다(test/msgr2-invite-revoke-pg.test.mjs).
-  const needsRooms = (x) => x > ROOMS_FILE && /msgr2_space_invites/.test(migText(x));
-  for (const f of readdirSync(migDir).filter((x) => /^\d+_msgr2_.*\.sql$/.test(x) && x !== ROOMS_FILE && !needsRooms(x)).sort()) db.psql(['-c', migText(f)]);
+  // U6d 뒤의 후속 파일 가운데 U6d 표에 기대어 U6d 없이 만들 수 없는 것은 이 판(U6d 적용 전·되돌림 비교)에서 뺀다 — 이름으로 명시한다(NEEDS_ROOMS).
+  // 그 파일은 운영 순서 전체 판(setupFull)을 쓰는 자기 시험이 본다. 목록에 없는 새 파일이 U6d 초대 표를 쓰면 말없이 빼지 않고 여기서 멈춘다(#1102 검수 미룸 ①).
+  const files = readdirSync(migDir).filter((x) => /^\d+_msgr2_.*\.sql$/.test(x) && x !== ROOMS_FILE).sort();
+  const unlisted = files.filter((x) => x > ROOMS_FILE && !NEEDS_ROOMS.includes(x) && /msgr2_space_invites/.test(migText(x)));
+  if (unlisted.length) throw new Error(`U6d 초대 표를 쓰는 후속 마이그레이션이 NEEDS_ROOMS에 없습니다: ${unlisted.join(', ')} — 목록에 넣고 setupFull로 그 파일을 보는 시험을 두세요`);
+  for (const f of files.filter((x) => !NEEDS_ROOMS.includes(x))) db.psql(['-c', migText(f)]);
   return db;
 }
 

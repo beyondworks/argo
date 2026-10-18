@@ -130,7 +130,8 @@ const rpcs = {
   msgr2_invite_revoke: ({ p_invite }) => { const i = (state.invites ?? []).find((x) => x.id === p_invite); if (!i || i.state === 'revoked') return false; i.state = 'revoked'; return true; },
   msgr2_my_invites: () => state.myInvites.filter((i) => !state.revokedInvites.includes(i) && Date.parse(i.expires_at) > Date.now()), // 받은 초대(사람 지정) — state.invited()가 하나 넣고 v2:u: invite 사건을 보낸다
   msgr2_invite_preview: ({ p_code }) => { if (p_code === 'ff'.repeat(24)) return { state: 'expired', space_name: 'Beyond 팀' }; const mine = (state.myInvites.concat(state.revokedInvites)).find((i) => i.code === p_code); if (mine) return { state: state.revokedInvites.includes(mine) ? 'revoked' : Date.parse(mine.expires_at) <= Date.now() ? 'expired' : 'valid', space_id: mine.space_id, space_name: mine.space_name, role: mine.role, inviter_name: mine.inviter_name, expires_at: mine.expires_at, already_member: false, rooms: [] }; return { state: 'valid', space_id: T, space_name: 'Beyond 팀', role: 'member', inviter_name: '민지', expires_at: later(60 * 24 * 6), already_member: false, rooms: [{ id: GEN, name: '일반' }, { id: NEWS, name: '공지' }] }; },
-  msgr2_invite_decline: ({ p_code }) => { if (state.failDecline) throw new Error('msgr2_app_device_required'); // state.failDecline = true면 실패(미리보기 안 오류 확인)
+  msgr2_invite_decline: async ({ p_code }) => { const ms = state.declineDelay?.[p_code] ?? 0; if (ms) await new Promise((r) => setTimeout(r, ms)); // state.declineDelay = {코드: ms} — 응답 전에 창 닫기·동시 거절 확인
+    if (state.failDecline) throw new Error('msgr2_app_device_required'); // state.failDecline = true면 실패(미리보기 안 오류 확인)
     const had = state.myInvites.some((i) => i.code === p_code && Date.parse(i.expires_at) > Date.now()); state.myInvites = state.myInvites.filter((i) => i.code !== p_code); return had; }, // 서버처럼: 이미 정해졌으면(만료·취소) false
   msgr2_invite_accept: ({ p_code }) => { const mine = state.myInvites.find((i) => i.code === p_code); if (mine) { state.myInvites = state.myInvites.filter((i) => i.code !== p_code); fire(`v2:u:${uid}`, 'spaces', { space_id: mine.space_id }); } return { space_id: T, role: 'member', rooms: [GEN], already_member: true }; },
   // 그대로 쓰는 옛 RPC(설계 1-2절)
@@ -149,7 +150,7 @@ export const supabase = {
     onAuthStateChange: (cb) => { state.authCbs.add(cb); return { data: { subscription: { unsubscribe() { state.authCbs.delete(cb); } } } }; },
     signOut: async () => { state.signedIn = false; for (const cb of state.authCbs) cb('SIGNED_OUT', null); return { error: null }; },
   },
-  rpc: async (name, args = {}) => { call({ rpc: name }); try { return { data: rpcs[name] ? rpcs[name](args) : [], error: null, status: 200 }; } catch (e) { return { data: null, error: { message: String(e.message), code: e.code }, status: 400 }; } },
+  rpc: async (name, args = {}) => { call({ rpc: name }); try { return { data: rpcs[name] ? await rpcs[name](args) : [], error: null, status: 200 }; } catch (e) { return { data: null, error: { message: String(e.message), code: e.code }, status: 400 }; } },
   realtime: { setAuth: async () => {}, isConnected: () => true },
   functions: { invoke: async () => ({ data: null, error: null }) },
   channel: (topic) => {
