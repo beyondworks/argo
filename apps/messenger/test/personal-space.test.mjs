@@ -47,7 +47,7 @@ test('개인 공간에서는 알림함 조직 질의를 쏘지 않는다(가상 
   assert.ok(eff.length > 0, '알림함 집계');
   const personal = eff.indexOf('if (isPersonal || isPhone) { setInboxNet([]); return; }'), orgQuery = eff.indexOf("supabase.from('msgr_messages')");
   assert.ok(personal > 0 && orgQuery > personal, '개인 공간(과 알림함이 없는 폰)은 조직 질의 전에 돌아간다(S15·기능 점검 D2)');
-  assert.match(src, /return \[\.\.\.inboxNet, \.\.\.friendItems\(\)\]/, '친구 요청은 조회 없이 합친다(개인 공간 벨·탭 배지)');
+  assert.match(src, /return \[\.\.\.inboxNet, \.\.\.friendItems\(\), \.\.\.inviteInboxItems\(myInvites, t\)\]/, '친구 요청·받은 초대(v2)는 조회 없이 합친다(개인 공간 벨·탭 배지)');
 });
 
 test('개인 공간도 붙여넣기·끌어 놓기 첨부를 받는다(2026-10-02 — 개인 경로 p/<방>/<글>/<파일>)', () => {
