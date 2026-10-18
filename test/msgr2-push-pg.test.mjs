@@ -27,9 +27,9 @@ const appWithToken = (uid, n, opts) => { const d = seedDevice(db, uid, 'app', op
 before(() => {
   if (!DB) return;
   db = setupFull(DB);
-  db.sql(`create table if not exists public._push_calls (id bigserial primary key, url text, body jsonb, headers jsonb);
+  db.sql(`create table if not exists public._push_calls (id bigserial primary key, url text, body jsonb, headers jsonb, timeout_ms int);
     create or replace function net.http_post(url text, headers jsonb default '{}', body jsonb default '{}', timeout_milliseconds int default 5000) returns bigint
-      language plpgsql as $$ begin insert into public._push_calls (url, body, headers) values (url, body, headers); return 1; end $$;
+      language plpgsql as $$ begin insert into public._push_calls (url, body, headers, timeout_ms) values (url, body, headers, timeout_milliseconds); return 1; end $$;
     insert into public.msgr_settings (key, value) values ('msgr2_push_url', 'https://edge.test/msgr2-push') on conflict (key) do update set value = excluded.value`);
   for (const u of [O, M, G, X, R]) db.sql(`insert into auth.users (id) values ('${u}') on conflict do nothing`);
   PS = db.sql(`insert into public.msgr2_spaces (kind, owner_user_id) values ('personal', '${O}') returning id`);
@@ -83,15 +83,47 @@ test('기기: 폐기·만료·세대 지남·푸시 토큰 없음·본체(runner
   assert.equal(recipients(post(TR, { author: O })).filter((x) => x.startsWith(U)).length, 0);
 });
 
-test('음소거한 방·지금 그 방을 보고 있는 사람(최근 60초 읽음 갱신)은 빼고, 오래전에 읽은 사람은 받는다', { skip }, () => {
+test('음소거한 방은 빼고, 음소거를 풀면 받는다', { skip }, () => {
   db.sql(`insert into public.msgr2_prefs (room_id, user_id, muted) values ('${TR}', '${G}', true) on conflict (room_id, user_id) do update set muted = true`);
-  db.sql(`insert into public.msgr2_reads (room_id, user_id, last_read_id, updated_at) values ('${TR}', '${O}', 1, now()) on conflict (room_id, user_id) do update set updated_at = now()`);
   let mid = post(TR, { author: M });
-  assert.deepEqual(usersOf(mid).filter((u) => [O, G].includes(u)), [], '음소거·보는 중 제외');
-  db.sql(`update public.msgr2_reads set updated_at = now() - interval '5 minutes' where room_id = '${TR}' and user_id = '${O}'`);
+  assert.ok(!usersOf(mid).includes(G), '음소거 제외');
   db.sql(`update public.msgr2_prefs set muted = false where room_id = '${TR}' and user_id = '${G}'`);
   mid = post(TR, { author: M });
-  assert.deepEqual(usersOf(mid).filter((u) => [O, G].includes(u)), [O, G].sort());
+  assert.ok(usersOf(mid).includes(G));
+});
+
+// 보는 중(20261018061100): 그 글을 읽음으로 올렸고(last_read_id >= 글 id) 그 갱신이 글 뒤면 뺀다. 엣지는 글 뒤 3초까지 기다린 다음 이 함수를 부른다.
+test('보는 중: 글이 온 뒤 그 글까지 읽음을 올린 사람은 빠지고, 직전에 방을 읽고 떠난 사람(옛 60초 판정이 빼던 사람)은 받는다', { skip }, () => {
+  const me = seedDevice(db, O, 'app'); // 읽음을 올리는 O의 앱 기기(토큰 없음 — 받는 기기는 before의 토큰 기기)
+  const prev = post(TR, { author: M, body: '앞 글' });
+  db.as(O, me.sid, `select public.msgr2_mark_read('${TR}', ${prev})`); // 방을 읽고 곧바로 폰을 잠갔다
+  const mid = post(TR, { author: M, body: '잠근 뒤 글' });
+  assert.ok(usersOf(mid).includes(O), '읽음이 방금 갱신됐어도 이 글을 읽지 않았으면 받는다');
+  assert.equal(db.as(O, me.sid, `select public.msgr2_mark_read('${TR}', ${mid})`), mid); // 방을 보는 앱이 새 글을 그리고 바로 올린다
+  assert.ok(!usersOf(mid).includes(O), '그 글까지 읽음을 올렸으면 보는 중 → 뺀다');
+  assert.ok(usersOf(mid).includes(G), '다른 사람 판정은 그대로');
+  const next = post(TR, { author: M, body: '다음 글' });
+  assert.ok(usersOf(next).includes(O), '다음 글은 다시 읽기 전까지 받는다(갱신이 오래돼 보는 중이 아님)');
+  const last = post(TR, { author: M, body: '연달아 온 글' });
+  db.as(O, me.sid, `select public.msgr2_mark_read('${TR}', ${next})`); // 마지막 글이 온 뒤 앞 글까지만 읽었다(스크롤이 거기서 멈춤)
+  assert.ok(usersOf(last).includes(O), '글 뒤에 갱신됐어도 그 글까지 읽지 않았으면 받는다');
+});
+
+test('보는 중: 글보다 먼저 찍힌 읽음(이전 백필이 옮긴 옛 시각)은 last_read_id가 커도 보는 중으로 치지 않는다', { skip }, () => {
+  const mid = post(TR, { author: M });
+  db.sql(`insert into public.msgr2_reads (room_id, user_id, last_read_id, updated_at) values ('${TR}', '${G}', ${mid} + 1000, now() - interval '1 day')
+    on conflict (room_id, user_id) do update set last_read_id = excluded.last_read_id, updated_at = excluded.updated_at`); // 서비스 문맥 — 옛 시각 그대로
+  assert.ok(usersOf(mid).includes(G));
+  db.sql(`update public.msgr2_reads set updated_at = now() where room_id = '${TR}' and user_id = '${G}'`);
+  assert.ok(!usersOf(mid).includes(G), '같은 행이 글 뒤 시각이면 보는 중');
+  db.sql(`delete from public.msgr2_reads where room_id = '${TR}' and user_id = '${G}'`); // 시험 픽스처 정리(시험 DB)
+});
+
+test('엣지 호출 시간 상한: 트리거가 20초로 부른다(엣지가 3초 기다리고 재시도하는 동안 끊지 않게)', { skip }, () => {
+  const c0 = calls();
+  const mid = post(TR, { author: M });
+  assert.equal(calls(), c0 + 1);
+  assert.deepEqual([lastCall().body, lastCall().timeout_ms], [{ message_id: Number(mid) }, 20000]);
 });
 
 test('대상 글: text와 승인 요청 카드만 — 시스템 글·진행 카드·지운 글은 알림·엣지 호출 없음', { skip }, () => {
@@ -130,7 +162,7 @@ test('푸시가 실패해도 글 저장은 그대로(트리거 예외를 삼킨�
     assert.equal(db.sql(`select body from public.msgr2_messages where id = ${mid}`), '저장돼야 함');
   } finally {
     db.sql(`create or replace function net.http_post(url text, headers jsonb default '{}', body jsonb default '{}', timeout_milliseconds int default 5000) returns bigint
-      language plpgsql as $$ begin insert into public._push_calls (url, body, headers) values (url, body, headers); return 1; end $$`);
+      language plpgsql as $$ begin insert into public._push_calls (url, body, headers, timeout_ms) values (url, body, headers, timeout_milliseconds); return 1; end $$`);
   }
 });
 
