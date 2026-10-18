@@ -120,7 +120,8 @@ export function createLink({ transport, host, uid, device, agentIds = null, cloc
       return;
     }
     if (env.device && env.device !== device) return; // 다른 기기에 간 봉투
-    if (agentIds && !agentIds.has(env.agent)) return; // 이 본체에 없는 에이전트
+    // 이 본체에 없는 에이전트 — 받은 봉투 목록에서 뺀다: 대응표를 아직 못 받은 본체(중단 중 부팅)가 나중에 따라잡기로 다시 받을 수 있게
+    if (agentIds && !agentIds.has(env.agent)) { if (env.id) seen.delete(env.id); return; }
     const w = works.get(env.work);
     if (env.type === 'work.offer') {
       if (w) return;
@@ -279,6 +280,7 @@ export function createLink({ transport, host, uid, device, agentIds = null, cloc
     let r;
     try { r = readReply(await transport.rpc('msgr2_link_pending', {})); }
     catch { return; }
+    if (stopped) return; // 멈춘 뒤에 돌아온 답으로 중단 표지를 풀지 않는다
     if (!r.ok) { fatal(r.code); return; }
     resume('catch_up');
     const list = Array.isArray(r.data) ? r.data : Array.isArray(r.data?.envelopes) ? r.data.envelopes : [];

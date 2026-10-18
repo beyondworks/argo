@@ -344,6 +344,17 @@ test('중단 중 늦게 온 옛 offer는 accept 1번으로 도로 멈추고, 중
   assert.equal(p.server.rpcCount('msgr2_link_pending'), 2); // 시작 때 1 + 풀린 줄 알고 1
 });
 
+test('멈춘 뒤에 돌아온 따라잡기 답은 중단 표지를 풀지 않는다', async () => {
+  const p = await pausedLink();
+  p.server.opts.paused = false;
+  const pending = p.link.catchUp(); // 답이 오기 전에 멈춘다
+  p.link.stop();
+  await pending; await flush();
+  assert.equal(p.link.paused, true);
+  assert.ok(!p.events.some((e) => e.name === 'resumed'));
+  assert.equal(p.calls.turns, 0);
+});
+
 test('모르는 type: 진행 중인 일이면 무시(일이 죽지 않음), 아니면 work.error{unsupported}로 답한다', async () => {
   const { server, link } = setup({ turn: () => new Promise(() => {}) });
   link.start(); await flush();

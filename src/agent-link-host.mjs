@@ -260,6 +260,7 @@ const safeName = (n) => basename(String(n || 'file')).replace(/[^\p{L}\p{N}._-]+
 export function createAgentLinkHost(deps) {
   const { clock = { now: () => Date.now(), setTimeout, clearTimeout }, log = (...a) => console.error('[argo] agent-link', ...a) } = deps;
   let link = null, timer = null, stopped = false, tries = 0, lastResync = -Infinity, current = null; // current = 지금 transport(첨부 받기)
+  let catchUpAfterSync = false; // 시작 때 목록을 못 보냈다 — 처음 성공하면 그동안 못 받은 offer를 따라잡기로 한 번 가져온다
   const agents = new Map(); // 서버 에이전트 id → { ws, slug }
   const agentIds = new Set();
 
@@ -402,7 +403,9 @@ export function createAgentLinkHost(deps) {
     tries = 0;
     lastResync = clock.now();
     link = createLink({ transport, host, uid: s.uid, device, agentIds, clock: deps.linkClock });
-    await resync();
+    // 목록을 못 보내도(중단 스위치·일시 오류 6번) 링크는 연다. 예전에는 여기서 던져 link만 남고 start()가 안 불려, retryLater의 boot가 `link`에서 빠져
+    // 해제 뒤에도 구독 0이었다(#1091 검수). 목록은 host.resync가 1분마다 다시 보낸다(대응표가 비어 있는 동안 offer는 받지 않는다)
+    await resync().catch((e) => { catchUpAfterSync = true; log('agent sync failed', e.code ?? e.message); });
     link.start();
   }
 
@@ -418,6 +421,7 @@ export function createAgentLinkHost(deps) {
     for (const m of r.data?.agents ?? []) {
       if (list.some((x) => x.ws === m.ws && x.slug === m.slug)) { agents.set(m.id, { ws: m.ws, slug: m.slug }); agentIds.add(m.id); }
     }
+    if (catchUpAfterSync) { catchUpAfterSync = false; link.catchUp(); }
   }
 
   return {
