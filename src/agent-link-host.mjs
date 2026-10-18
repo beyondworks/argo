@@ -20,6 +20,8 @@ export { agentLinkEnabled, legacyMsgrBridgeEnabled } from './agent-link-flags.mj
 
 export const ATTACH_IN_MAX = 25 * 1024 * 1024; // 받은 첨부 한 개 상한(옛 브리지와 같은 25MB)
 const SESSION_RETRY_MS = [60_000, 120_000, 300_000, 600_000];
+// 목록 보내기가 실패한 뒤(중단 중 부팅·일시 오류)의 다시 보내기 간격 — 다시 붙기(#1089)와 같은 1→2→5→10분. 실패도 요청 예산에 든다(본체 400대 × 분당 0.1회 = 분당 40회)
+export const SYNC_RETRY_MS = [60_000, 120_000, 300_000, 600_000];
 export const RESYNC_MIN_MS = 60_000; // 게이트웨이 확인(10초)마다 불려도 로컬 목록은 1분에 한 번만 읽는다(보낼지는 바뀌었을 때만) // 세션·등록이 없을 때 다시 볼 간격(요청 폭주 없이, 상한 10분)
 
 /** 서버 방송에서 봉투 꺼내기. 서버(_msgr2_send_w, 20261018010000)는 event = 봉투 type('work.offer' 등), payload = { envelope: 봉투 }로 보낸다.
@@ -260,6 +262,7 @@ const safeName = (n) => basename(String(n || 'file')).replace(/[^\p{L}\p{N}._-]+
 export function createAgentLinkHost(deps) {
   const { clock = { now: () => Date.now(), setTimeout, clearTimeout }, log = (...a) => console.error('[argo] agent-link', ...a) } = deps;
   let link = null, timer = null, stopped = false, tries = 0, lastResync = -Infinity, current = null; // current = 지금 transport(첨부 받기)
+  let syncFails = 0; // 연달아 실패한 목록 보내기 수(성공하면 0 — 간격이 1분으로 돌아간다)
   let catchUpAfterSync = false; // 시작 때 목록을 못 보냈다 — 처음 성공하면 그동안 못 받은 offer를 따라잡기로 한 번 가져온다
   const agents = new Map(); // 서버 에이전트 id → { ws, slug }
   const agentIds = new Set();
@@ -405,7 +408,7 @@ export function createAgentLinkHost(deps) {
     link = createLink({ transport, host, uid: s.uid, device, agentIds, clock: deps.linkClock });
     // 목록을 못 보내도(중단 스위치·일시 오류 6번) 링크는 연다. 예전에는 여기서 던져 link만 남고 start()가 안 불려, retryLater의 boot가 `link`에서 빠져
     // 해제 뒤에도 구독 0이었다(#1091 검수). 목록은 host.resync가 1분마다 다시 보낸다(대응표가 비어 있는 동안 offer는 받지 않는다)
-    await resync().catch((e) => { catchUpAfterSync = true; log('agent sync failed', e.code ?? e.message); });
+    await resync().catch((e) => { catchUpAfterSync = true; syncFails++; log('agent sync failed', e.code ?? e.message); });
     link.start();
   }
 
@@ -416,6 +419,7 @@ export function createAgentLinkHost(deps) {
     if (!s) return;
     const list = await deps.listOwnedAgents(s.uid);
     const r = await link.syncAgents(list.map((x) => ({ ws: x.ws, slug: x.slug, name: x.name || x.slug, role: String(x.role ?? '').slice(0, 2000), face_hash: null })));
+    syncFails = 0;
     if (!r.sent) return;
     agents.clear(); agentIds.clear();
     for (const m of r.data?.agents ?? []) {
@@ -430,9 +434,10 @@ export function createAgentLinkHost(deps) {
     resync() {
       // 토큰 회전·끊긴 구독은 매번(게이트웨이 확인 10초마다) 확인한다 — 네트워크 요청이 아니다(쉬는 본체가 옛 토큰의 구독에 남지 않게)
       const fresh = Promise.resolve(current?.refresh?.({ beforeReopen: () => link?.catchUp?.() })).catch(() => {}); // 다시 붙기 전 따라잡기 rpc 1번 = 기기 상태 확인(폐기면 링크가 멈춘다)
-      if (clock.now() - lastResync < RESYNC_MIN_MS) return fresh;
+      const gap = syncFails ? SYNC_RETRY_MS[Math.min(syncFails - 1, SYNC_RETRY_MS.length - 1)] : RESYNC_MIN_MS;
+      if (clock.now() - lastResync < gap) return fresh;
       lastResync = clock.now();
-      return fresh.then(() => resync()).catch((e) => log('agent sync failed', e.code ?? e.message));
+      return fresh.then(() => resync()).catch((e) => { syncFails++; log('agent sync failed', e.code ?? e.message); });
     },
     get link() { return link; },
     get agents() { return agents; },

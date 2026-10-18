@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { readFile } from 'node:fs/promises';
 import { mkdtemp } from './helpers/tmp.mjs';
-import { createAgentLinkHost, agentLinkEnabled, legacyMsgrBridgeEnabled, contextSection, ATTACH_IN_MAX, RESYNC_MIN_MS, peersSection, parseHandoffs, approvalRequestFrom } from '../src/agent-link-host.mjs';
+import { createAgentLinkHost, agentLinkEnabled, legacyMsgrBridgeEnabled, contextSection, ATTACH_IN_MAX, RESYNC_MIN_MS, SYNC_RETRY_MS, peersSection, parseHandoffs, approvalRequestFrom } from '../src/agent-link-host.mjs';
 import { TIER_POLICY, tierPolicy } from '../packages/agent-link/tiers.mjs';
 import { tierAllows, TIERS } from '../packages/agent-link/contract/v1.mjs';
 import { isGuestCtx } from '../src/gateway/msgr-handoff.mjs';
@@ -210,23 +210,24 @@ test('기기 등록이 실패하면 링크를 열지 않는다(구독·요청 0,
 });
 
 // #1091 검수: 중단 중에 부팅하면 agent.sync가 service_paused로 던져 link.start()가 안 불렸고, 다시 부르는 boot는 link가 있어 빠졌다 → 해제 뒤에도 구독 0
-test('중단 중 부팅 → 해제 → offer 받음: 링크는 열려 있고, 중단 중 요청은 분당 1회 이하, 풀린 뒤 유휴 요청 0', async () => {
+test('중단 중 부팅 → 해제 → offer 받음: 링크는 열려 있고, 중단 중 다시 보내기는 1→2→5→10분 간격, 풀린 뒤 유휴 요청 0', async () => {
   const { server, host, calls, clock } = await setup({ paused: true });
   assert.ok(host.link, '링크가 열려 있다');
   assert.equal(host.link.paused, true);
   assert.equal(server.subs.get('v2:w:u1')?.size, 1, 'v2:w:<uid> 구독 1');
   assert.ok(calls.logs.some((l) => /agent sync failed service_paused/.test(l)));
-  // 중단 10분: 게이트웨이가 10초마다 resync를 부른다 → 목록 보내기는 1분에 한 번까지(첫 보내기 포함 11번 이하), 따라잡기는 시작 때 1번뿐
+  // 중단 30분: 게이트웨이가 10초마다 resync를 부른다 → 목록 다시 보내기는 실패할수록 1→2→5→10분 간격(0·1·3·8·18·28분 = 6번), 따라잡기는 시작 때 1번뿐
+  assert.deepEqual(SYNC_RETRY_MS, [60_000, 120_000, 300_000, 600_000]);
   const pend0 = server.rpcCount('msgr2_link_pending');
-  for (let i = 0; i < 60; i++) { await clock.advance(10_000); await host.resync(); }
+  for (let i = 0; i < 180; i++) { await clock.advance(10_000); await host.resync(); }
   await flush();
-  assert.equal(server.rpcCount('msgr2_link_send'), 11, '중단 중 요청 = 시작 1번 + 1분마다 1번(10분 = 10번)');
+  assert.equal(server.rpcCount('msgr2_link_send'), 6, '중단 30분 요청 = 시작 1번 + 1·3·8·18·28분(상한 10분 뒤 분당 0.1회)');
   assert.equal(server.rpcCount('msgr2_link_pending'), pend0);
   assert.equal(calls.chat.length, 0);
 
-  // 해제 → 다음 목록 보내기(1분 안)가 성공하고 따라잡기로 풀린다 → 새 offer를 받는다
+  // 해제 → 다음 목록 보내기(상한 10분 안)가 성공하고 따라잡기로 풀린다 → 새 offer를 받는다
   server.opts.paused = false;
-  await clock.advance(RESYNC_MIN_MS); await host.resync(); await flush();
+  for (let i = 0; i < 60 && !server.agentIds.has('co-1/pm'); i++) { await clock.advance(10_000); await host.resync(); await flush(); }
   const agentId = server.agentIds.get('co-1/pm');
   assert.ok(agentId, '해제 뒤 목록 보내기 성공');
   const offer = server.offer({ agent: agentId });
@@ -234,6 +235,10 @@ test('중단 중 부팅 → 해제 → offer 받음: 링크는 열려 있고, �
   assert.equal(host.link.paused, false);
   assert.equal(calls.chat.length, 1);
 
+  // 성공하면 간격이 1분으로 돌아온다(1분 뒤 목록을 다시 읽는다)
+  const listed1 = calls.listed;
+  await clock.advance(RESYNC_MIN_MS); await host.resync();
+  assert.equal(calls.listed, listed1 + 1);
   // 풀린 뒤 한 시간 유휴: 목록이 같으면 보내지 않고 따라잡기도 없다(요청 0)
   const send0 = server.rpcCount('msgr2_link_send'), pend1 = server.rpcCount('msgr2_link_pending');
   for (let i = 0; i < 360; i++) { await clock.advance(10_000); await host.resync(); }
@@ -250,7 +255,7 @@ test('중단 중 부팅 → 해제 직후 대응표보다 먼저 온 offer도 �
   const offer = server.offer({ agent: agentId });
   server.push(offer); await flush(); // 본체 대응표는 아직 비어 있다
   assert.equal(server.sentOf('work.accept', offer.work).length, 0);
-  await clock.advance(RESYNC_MIN_MS); await host.resync();
+  await clock.advance(SYNC_RETRY_MS[0]); await host.resync(); // 시작 때 1번 실패 → 1분 뒤 다시
   await until(() => server.works.get(offer.work)?.state === 'done');
   assert.equal(server.works.get(offer.work).state, 'done');
   assert.equal(calls.chat.length, 1);
