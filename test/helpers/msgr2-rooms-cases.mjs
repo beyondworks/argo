@@ -37,7 +37,10 @@ export function snapshot(db) {
 // msgr2 파일을 버전 순서로 적용하되 U6d(이 파일)만 뺀다 — 적용 전·후를 비교하려고(setup()은 U2b 뒤 파일을 모두 적용한다)
 function setupWithoutRooms(DB) {
   const db = setupBase(DB);
-  for (const f of readdirSync(migDir).filter((x) => /^\d+_msgr2_.*\.sql$/.test(x) && x !== ROOMS_FILE).sort()) db.psql(['-c', migText(f)]);
+  // U6d 뒤의 후속 파일 가운데 U6d 초대 표에 기대는 것(예: 061300 초대 취소 방송 — 함수가 msgr2_space_invites 타입을 쓴다)은 U6d 없이 만들 수 없다 →
+  // 이 판(U6d 적용 전·되돌림 비교)에서는 뺀다. 그 파일은 운영 순서 전체 판(setupFull)을 쓰는 자기 시험이 따로 본다(test/msgr2-invite-revoke-pg.test.mjs).
+  const needsRooms = (x) => x > ROOMS_FILE && /msgr2_space_invites/.test(migText(x));
+  for (const f of readdirSync(migDir).filter((x) => /^\d+_msgr2_.*\.sql$/.test(x) && x !== ROOMS_FILE && !needsRooms(x)).sort()) db.psql(['-c', migText(f)]);
   return db;
 }
 

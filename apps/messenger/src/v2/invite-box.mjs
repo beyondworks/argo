@@ -27,3 +27,19 @@ export const withoutInvite = (list, code) => (list ?? []).filter((v) => v.code !
 
 /** 아직 받을 수 있는 초대만(만료 시각이 지난 것은 뺀다 — 서버는 다음 다시 읽기 때 뺀다). 배지·알림함·폰 줄이 쓴다. 초대함 카드는 만료도 보여 준다. */
 export const liveInvites = (list, now = Date.now()) => (list ?? []).filter((v) => inviteLeft(v.expiresAt, now).key !== 'inv.box.left.expired');
+
+/** 거절 실행기 — 같은 초대를 거절하는 중이면 다시 부르지 않는다(두 번 눌러도 RPC 한 번, #1096 검수 1). 결과 { kind: 'declined'|'gone'|'busy'|'error', error? }. */
+export function createDecliner(rpc) {
+  const flying = new Set();
+  return {
+    busy: (code) => flying.has(code),
+    async decline(code) {
+      if (flying.has(code)) return { kind: 'busy' };
+      flying.add(code);
+      try { return { kind: await declineInvite(rpc, code) }; } catch (error) { return { kind: 'error', error }; } finally { flying.delete(code); }
+    },
+  };
+}
+
+/** 거절 결과 → 받은 초대 목록. 거절함·이미 정해짐만 그 줄을 뺀다 — 실패·진행 중이면 줄을 그대로 둔다(다시 누를 수 있게, #1096 검수 4). */
+export const afterDecline = (list, code, result) => (result?.kind === 'declined' || result?.kind === 'gone' ? withoutInvite(list, code) : (list ?? []));
