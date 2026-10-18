@@ -17,8 +17,8 @@ const AND = 'fcm-token:APA91bExampleTokenValue_1234567890';
 const ROOM = '11111111-2222-4333-8444-555555555555';
 
 /** 가짜 서버들 + 엣지 핸들러. apns/fcm = 토큰 → 답 순서 배열(마지막 값이 계속), 기본 200. */
-function edge({ msg = {}, recipients = [{ user_id: 'u2', push_token: IOS }, { user_id: 'u3', push_token: AND }], apns = {}, fcm = {}, secret = 'push-s', room = { name: '팀방', kind: 'private', space_id: 'sp1' } } = {}) {
-  const claimed = new Set(); const calls = { apns: [], fcm: [], drops: [], patches: [], rpc: 0, delays: [], rpcAtDelay: [], logs: [] };
+function edge({ msg = {}, recipients = [{ user_id: 'u2', push_token: IOS }, { user_id: 'u3', push_token: AND }], apns = {}, fcm = {}, secret = 'push-s', room = { name: '팀방', kind: 'private', space_id: 'sp1' }, onSleep = null, hangSleep = false } = {}) {
+  const claimed = new Set(); const calls = { apns: [], fcm: [], drops: [], patches: [], rpc: 0, delays: [], rpcAtDelay: [], logs: [], order: [] }; // order: 엣지가 부른 순서(head·claim·msg·rpc·sleep)
   const message = { id: 9, room_id: ROOM, author_kind: 'agent', author_user_id: null, author_agent_id: 'ag1', kind: 'text', body: '초안을 올렸습니다', meta: {}, created_at: new Date(Date.now() - 60_000).toISOString(), deleted_at: null, ...msg };
   const next = (map, tok) => { const q = map[tok]; if (!q) return 200; return q.length > 1 ? q.shift() : q[0]; };
   const fetch = async (input, init = {}) => {
@@ -39,12 +39,13 @@ function edge({ msg = {}, recipients = [{ user_id: 'u2', push_token: IOS }, { us
     const path = url.pathname.replace('/rest/v1/', '');
     if (path === 'msgr2_push_sent' && init.method === 'POST') {
       const { message_id } = JSON.parse(init.body);
+      calls.order.push('claim');
       if (claimed.has(message_id)) return new Response('dup', { status: 409 });
       claimed.add(message_id); return new Response(null, { status: 201 });
     }
     if (path === 'msgr2_push_sent' && init.method === 'PATCH') { calls.patches.push(JSON.parse(init.body)); return new Response(null, { status: 204 }); }
-    if (path === 'msgr2_messages') return Response.json([Object.fromEntries(url.searchParams.get('select').split(',').map((k) => [k, message[k]]))]); // 고른 열만(실제 REST와 같이)
-    if (path === 'rpc/msgr2_push_recipients') { calls.rpc++; assert.deepEqual(JSON.parse(init.body), { p_message: message.id }); return Response.json(typeof recipients === 'function' ? recipients(calls) : recipients); }
+    if (path === 'msgr2_messages') { calls.order.push(url.searchParams.get('select').split(',').includes('body') ? 'msg' : 'head'); return Response.json([Object.fromEntries(url.searchParams.get('select').split(',').map((k) => [k, message[k]]))]); } // 고른 열만(실제 REST와 같이). head = 기다리기 전 가벼운 읽기(본문 없음), msg = 장부를 잡은 뒤 본문 읽기
+    if (path === 'rpc/msgr2_push_recipients') { calls.rpc++; calls.order.push('rpc'); assert.deepEqual(JSON.parse(init.body), { p_message: message.id }); return Response.json(typeof recipients === 'function' ? recipients(calls) : recipients); }
     if (path === 'msgr2_rooms') return Response.json([room]);
     if (path === 'msgr2_agents') return Response.json([{ display_name: '에이' }]);
     if (path === 'msgr2_space_members') return Response.json([{ display_name: '유건' }]);
@@ -57,7 +58,7 @@ function edge({ msg = {}, recipients = [{ user_id: 'u2', push_token: IOS }, { us
   vm.runInNewContext(source, {
     ...core, Deno: { env: { get: (k) => env[k] }, serve: (fn) => { handler = fn; } },
     fetch, Response, Request, TextEncoder, URLSearchParams, crypto, Date, JSON, Number, String, Math, Promise, Set, Map, Uint8Array, encodeURIComponent,
-    setTimeout: (fn, ms) => { calls.delays.push(ms); calls.rpcAtDelay.push(calls.rpc); return setImmediate(fn); }, // 재시도 간격은 기록만(시험은 기다리지 않는다)
+    setTimeout: (fn, ms) => { calls.delays.push(ms); calls.rpcAtDelay.push(calls.rpc); calls.order.push('sleep'); onSleep?.(message); return hangSleep ? null : setImmediate(fn); }, // 재시도 간격은 기록만(시험은 기다리지 않는다). onSleep = 자는 동안 글이 바뀜, hangSleep = 자는 동안 엣지가 끊김
     console: { log: (...a) => calls.logs.push(a.join(' ')) },
   });
   const send = async (body = { message_id: message.id }, auth = `Bearer ${secret}`) => {
@@ -155,10 +156,30 @@ test('보는 중: 엣지 호출이 글 뒤 3초 넘어 왔으면(pg_net 대기) 
   const gone = edge({ msg: { created_at: new Date().toISOString(), deleted_at: new Date().toISOString() } });
   assert.deepEqual((await gone.send()).body, { ok: true, sent: 0 });
   assert.deepEqual(gone.calls.delays, []);
+  assert.deepEqual(gone.calls.order, ['head'], '이미 지운 글은 기다리지도, 장부를 잡지도 않는다');
   const dup = edge({ msg: { created_at: new Date().toISOString() } });
-  await dup.send(); const d0 = dup.calls.delays.length;
-  assert.deepEqual((await dup.send()).body, { ok: true, dup: true });
-  assert.equal(dup.calls.delays.length, d0, '중복 호출은 기다리지 않는다');
+  await dup.send(); const p0 = dup.calls.apns.length + dup.calls.fcm.length;
+  assert.deepEqual((await dup.send()).body, { ok: true, dup: true }, '같은 글의 중복 호출은 기다린 뒤 장부에서 걸린다(장부를 기다림 뒤에 잡는다 — #1092 검수)');
+  assert.equal(dup.calls.apns.length + dup.calls.fcm.length, p0); assert.equal(dup.calls.rpc, 1);
+});
+
+test('순서: 생성 시각만 읽고 → 기다린 뒤 → 장부를 잡고 → 본문을 다시 읽고 → 받는 사람 — 자는 사이 끊기면 장부가 비어 있다(#1092 검수 ②)', async () => {
+  const e = edge({ msg: { created_at: new Date().toISOString() } });
+  await e.send();
+  assert.deepEqual(e.calls.order.slice(0, 5), ['head', 'sleep', 'claim', 'msg', 'rpc']);
+  const cut = edge({ msg: { created_at: new Date().toISOString() }, hangSleep: true });
+  const pending = cut.send(); await new Promise((r) => setImmediate(r)); await new Promise((r) => setImmediate(r));
+  assert.deepEqual(cut.calls.order, ['head', 'sleep'], '자는 동안 끊김 — 장부를 잡지 않았다(다음 호출이 다시 잡을 수 있다)');
+  void pending;
+});
+
+test('기다리는 동안 고친 글은 고친 본문으로, 지운 글은 보내지 않는다(#1092 검수 ①)', async () => {
+  const edited = edge({ msg: { created_at: new Date().toISOString(), body: '옛 본문' }, onSleep: (m) => { m.body = '고친 본문'; } });
+  assert.equal((await edited.send()).body.sent, 2);
+  assert.equal(edited.calls.fcm[0].body.message.notification.body, '고친 본문');
+  const removed = edge({ msg: { created_at: new Date().toISOString() }, onSleep: (m) => { m.deleted_at = new Date().toISOString(); } });
+  assert.deepEqual((await removed.send()).body, { ok: true, sent: 0 });
+  assert.equal(removed.calls.rpc, 0); assert.equal(removed.calls.apns.length + removed.calls.fcm.length, 0);
 });
 
 test('core: viewWait — 시각 모름은 3초 전부, 글 뒤 1초면 약 2초, 3초 넘었으면 0, 미래 시각도 3초를 넘기지 않는다', () => {

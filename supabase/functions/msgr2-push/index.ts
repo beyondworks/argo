@@ -1,5 +1,6 @@
 // msgr2-push — 메신저 v2 휴대폰 알림(APNs·FCM). 트리거 msgr2_push_enqueue(pg_net)가 {message_id} 하나를 보낸다(20261018030000_msgr2_push.sql).
 // 받는 사람은 글 뒤 3초(VIEW_WAIT_MS)까지 기다린 다음 여기서 DB 함수(msgr2_push_recipients)로 다시 계산하고(그 사이 그 글을 읽음으로 올린 사람 = 보는 중 → 뺀다) msgr2_push_sent로 글당 한 번만 보낸다 → 재생·위조 호출이 추가 알림을 만들지 못한다.
+// 순서: 생성 시각 읽기 → 기다림 → 장부 잡기 → 본문 다시 읽기 → 받는 사람 → 보내기(기다리는 동안 끊겨도 장부가 비어 있고, 고친 본문이 간다).
 // 배포(맥 one): `supabase functions deploy msgr2-push --no-verify-jwt` — pg_net 호출에는 사용자 JWT가 없다(옛 msgr-push와 같이 아래 비밀로 막는다). 배포 뒤 msgr_settings 'msgr2_push_url'에 함수 주소를 넣는다.
 // 인증: 트리거가 msgr_settings.push_secret을 Authorization: Bearer로 싣고 여기서 PUSH_FN_SECRET과 상수시간 비교(옛 msgr-push와 같다).
 // 비밀은 전부 엣지 시크릿(값은 어디에도 적지 않는다): APNS_KEY_P8·APNS_KEY_ID·APNS_TEAM_ID·APNS_TOPIC·APNS_SANDBOX('1'이면 개발 서버)·FCM_SERVICE_ACCOUNT·PUSH_FN_SECRET.
@@ -94,14 +95,19 @@ Deno.serve(async (req: Request) => {
   try { body = await req.json(); } catch { return new Response('bad json', { status: 400 }); }
   const id = Number(body?.message_id);
   if (!Number.isSafeInteger(id) || id <= 0) return new Response('bad message_id', { status: 400 });
-  // 글당 한 번 — 먼저 장부를 잡는다(경합·재생 방지). 이미 있으면 보내지 않는다
+  // 보는 중 판정: 방을 보고 있는 앱은 새 글을 그리면 바로 읽음을 올린다 — 글 뒤 3초까지 기다린 뒤 계산한다(DB 쓰기·호출 추가 0).
+  // 기다림 전에는 생성 시각·지움만 가볍게 읽는다. 장부와 본문은 기다린 뒤에(#1092 검수):
+  //   ① 장부를 먼저 잡고 3초 자는 사이 엣지가 끊기면 그 글 알림이 다시 잡히지 않고 빠졌다(장부 잡기 → 보내기 틈 약 0.1초 → 약 3초) — 잡기를 기다림 뒤로 옮겨 틈을 되돌린다
+  //   ② 기다리기 전에 본문을 읽으면 3초 안에 고친 글이 옛 본문으로 갔다 — 본문은 장부를 잡은 뒤 다시 읽는다(그 사이 지운 글은 보내지 않는다)
+  const [head] = await rest(`msgr2_messages?id=eq.${id}&select=id,created_at,deleted_at`);
+  if (!head || head.deleted_at) return Response.json({ ok: true, sent: 0 });
+  const wait = viewWait(head.created_at); if (wait > 0) await sleep(wait);
+  // 글당 한 번 — 장부를 잡는다(경합·재생 방지). 이미 있으면 보내지 않는다(같은 글의 중복 호출은 둘 다 기다린 뒤 여기서 하나만 지난다)
   const claim = await fetch(`${SUPABASE_URL}/rest/v1/msgr2_push_sent`, { method: 'POST', headers: { ...H, Prefer: 'return=minimal' }, body: JSON.stringify({ message_id: id }) });
   if (claim.status === 409) return Response.json({ ok: true, dup: true });
   if (!claim.ok) return new Response(`claim ${claim.status}`, { status: 500 });
   const [m] = await rest(`msgr2_messages?id=eq.${id}&select=id,room_id,author_kind,author_user_id,author_agent_id,kind,body,meta,created_at,deleted_at`);
   if (!m || m.deleted_at) return Response.json({ ok: true, sent: 0 });
-  // 보는 중 판정: 방을 보고 있는 앱은 새 글을 그리면 바로 읽음을 올린다 — 그 시간을 준 뒤 계산한다(DB 쓰기·호출 추가 0)
-  const wait = viewWait(m.created_at); if (wait > 0) await sleep(wait);
   const rows: { user_id: string; push_token: string }[] = (await rest(`rpc/msgr2_push_recipients`, { method: 'POST', body: JSON.stringify({ p_message: id }) })) ?? [];
   const tokens = [...new Set(rows.map((r) => r.push_token).filter(Boolean))];
   if (!tokens.length) return Response.json({ ok: true, sent: 0 });
