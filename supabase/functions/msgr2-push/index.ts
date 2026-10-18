@@ -1,10 +1,10 @@
 // msgr2-push — 메신저 v2 휴대폰 알림(APNs·FCM). 트리거 msgr2_push_enqueue(pg_net)가 {message_id} 하나를 보낸다(20261018030000_msgr2_push.sql).
-// 받는 사람은 여기서 DB 함수(msgr2_push_recipients)로 다시 계산하고 msgr2_push_sent로 글당 한 번만 보낸다 → 재생·위조 호출이 추가 알림을 만들지 못한다.
+// 받는 사람은 글 뒤 3초(VIEW_WAIT_MS)까지 기다린 다음 여기서 DB 함수(msgr2_push_recipients)로 다시 계산하고(그 사이 그 글을 읽음으로 올린 사람 = 보는 중 → 뺀다) msgr2_push_sent로 글당 한 번만 보낸다 → 재생·위조 호출이 추가 알림을 만들지 못한다.
 // 배포(맥 one): `supabase functions deploy msgr2-push --no-verify-jwt` — pg_net 호출에는 사용자 JWT가 없다(옛 msgr-push와 같이 아래 비밀로 막는다). 배포 뒤 msgr_settings 'msgr2_push_url'에 함수 주소를 넣는다.
 // 인증: 트리거가 msgr_settings.push_secret을 Authorization: Bearer로 싣고 여기서 PUSH_FN_SECRET과 상수시간 비교(옛 msgr-push와 같다).
 // 비밀은 전부 엣지 시크릿(값은 어디에도 적지 않는다): APNS_KEY_P8·APNS_KEY_ID·APNS_TEAM_ID·APNS_TOPIC·APNS_SANDBOX('1'이면 개발 서버)·FCM_SERVICE_ACCOUNT·PUSH_FN_SECRET.
 // 없는 플랫폼은 건너뛴다. 무효 토큰은 기기 행에서 지운다(push_token = null). 일시 오류는 기기마다 MAX_ATTEMPTS번까지, 1초 → 3초 간격.
-import { apnsJwt, apnsPayload, DEADLINE_MS, fcmMessage, googleAssertion, MAX_ATTEMPTS, personName, platformOf, pushText, retryable, retryDelay, shouldDropToken } from './core.js';
+import { apnsJwt, apnsPayload, DEADLINE_MS, viewWait, fcmMessage, googleAssertion, MAX_ATTEMPTS, personName, platformOf, pushText, retryable, retryDelay, shouldDropToken } from './core.js';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -98,8 +98,10 @@ Deno.serve(async (req: Request) => {
   const claim = await fetch(`${SUPABASE_URL}/rest/v1/msgr2_push_sent`, { method: 'POST', headers: { ...H, Prefer: 'return=minimal' }, body: JSON.stringify({ message_id: id }) });
   if (claim.status === 409) return Response.json({ ok: true, dup: true });
   if (!claim.ok) return new Response(`claim ${claim.status}`, { status: 500 });
-  const [m] = await rest(`msgr2_messages?id=eq.${id}&select=id,room_id,author_kind,author_user_id,author_agent_id,kind,body,meta,deleted_at`);
+  const [m] = await rest(`msgr2_messages?id=eq.${id}&select=id,room_id,author_kind,author_user_id,author_agent_id,kind,body,meta,created_at,deleted_at`);
   if (!m || m.deleted_at) return Response.json({ ok: true, sent: 0 });
+  // 보는 중 판정: 방을 보고 있는 앱은 새 글을 그리면 바로 읽음을 올린다 — 그 시간을 준 뒤 계산한다(DB 쓰기·호출 추가 0)
+  const wait = viewWait(m.created_at); if (wait > 0) await sleep(wait);
   const rows: { user_id: string; push_token: string }[] = (await rest(`rpc/msgr2_push_recipients`, { method: 'POST', body: JSON.stringify({ p_message: id }) })) ?? [];
   const tokens = [...new Set(rows.map((r) => r.push_token).filter(Boolean))];
   if (!tokens.length) return Response.json({ ok: true, sent: 0 });
