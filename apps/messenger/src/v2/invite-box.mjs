@@ -43,3 +43,13 @@ export function createDecliner(rpc) {
 
 /** 거절 결과 → 받은 초대 목록. 거절함·이미 정해짐만 그 줄을 뺀다 — 실패·진행 중이면 줄을 그대로 둔다(다시 누를 수 있게, #1096 검수 4). */
 export const afterDecline = (list, code, result) => (result?.kind === 'declined' || result?.kind === 'gone' ? withoutInvite(list, code) : (list ?? []));
+
+/** 거절 실패를 어디에 보일까 — 미리보기가 지금 그 초대로 열려 있으면 창 안('preview'), 아니면 전역 안내('global'). 실패가 아니면 null.
+ *  미리보기에서 눌렀어도 응답 전에 창을 닫았으면 전역으로 — 오류가 어디에도 안 보이던 것(#1102 검수 미룸 ②). */
+export function declineErrorTarget(result, { code, openPreviewCode = null } = {}) {
+  if (result?.kind !== 'error') return null;
+  return openPreviewCode != null && openPreviewCode === code ? 'preview' : 'global';
+}
+
+/** 거절 중인 초대 코드 집합에 넣고 빼기(불변) — 서로 다른 초대를 동시에 거절해도 먼저 끝난 쪽이 다른 줄의 막힘을 풀지 않게(#1102 검수 미룸 ③). */
+export const withDeclining = (set, code, on) => { const next = new Set(set); if (on) next.add(code); else next.delete(code); return next; };

@@ -23,7 +23,7 @@ import { DevicesCard as V2DevicesCard } from './v2/DevicesCard.jsx';
 import { v2StateBar, v2SignOutNotice } from './v2/devices.mjs';
 import { roomEventPlan, mergePlans } from './v2/room-events.mjs';
 import { loadMyInvitesIf, inviteInboxItems } from './v2/my-invites.mjs';
-import { createDecliner, afterDecline, withoutInvite, liveInvites, inviteLeft } from './v2/invite-box.mjs';
+import { createDecliner, afterDecline, declineErrorTarget, withDeclining, withoutInvite, liveInvites, inviteLeft } from './v2/invite-box.mjs';
 import { InvitesCard as V2InvitesCard } from './v2/InvitesCard.jsx';
 import { v2SearchFound } from './v2/search.mjs';
 import { systemLine as v2SystemLine } from './v2/system-text.mjs';
@@ -2083,14 +2083,17 @@ function Shell({ session }) {
     try { await acceptCode(joinPreview.code, joinPreview); } catch (e) { setJoinPreviewErr(inviteErr(e)); } finally { setJoinBusy(false); }
   }; // 인라인 폼 상태(문자열) — 네이티브 prompt 금지(QA: 사용성·룩 불일치)
   const decliner = useMemo(() => createDecliner((fn, a) => rawSupabase.rpc(fn, a)), [uid]); // 같은 초대 거절이 진행 중이면 다시 부르지 않는다(#1096 검수 1)
-  const [declining, setDeclining] = useState(null); // 거절 중인 초대 코드 — 그 줄·미리보기 단추를 막는다(참여하기 포함)
-  const declineMyInvite = async (code, where = 'list') => { // 받은 초대 거절(v2 초대함) — 성공이면 그 줄을 바로 빼고 다시 읽지 않는다, 실패면 줄을 둔다(afterDecline)
+  const [declining, setDeclining] = useState(() => new Set()); // 거절 중인 초대 코드들 — 그 줄·미리보기 단추를 막는다(참여하기 포함). 코드별이라 다른 초대의 막힘을 풀지 않는다(#1102 검수 미룸 ③)
+  const joinPreviewRef = useRef(null); joinPreviewRef.current = joinPreview; // 거절 응답이 올 때 미리보기가 아직 그 초대인지(닫혔으면 오류를 전역으로)
+  const declineMyInvite = async (code) => { // 받은 초대 거절(v2 초대함) — 성공이면 그 줄을 바로 빼고 다시 읽지 않는다, 실패면 줄을 둔다(afterDecline)
     if (decliner.busy(code)) return;
-    setDeclining(code); if (where === 'preview') setJoinPreviewErr(null);
+    setDeclining((d) => withDeclining(d, code, true)); if (joinPreviewRef.current?.code === code) setJoinPreviewErr(null);
     const r = await decliner.decline(code);
-    setDeclining((c) => (c === code ? null : c));
+    setDeclining((d) => withDeclining(d, code, false));
     setMyInvites((l) => afterDecline(l, code, r));
-    if (r.kind === 'error') { if (where === 'preview') setJoinPreviewErr(inviteErr(r.error)); else setErr(inviteErr(r.error)); return; } // 미리보기에서 실패하면 창 안에(#1096 검수 2)
+    const where = declineErrorTarget(r, { code, openPreviewCode: joinPreviewRef.current?.code ?? null }); // 미리보기가 그 초대로 열려 있으면 창 안, 닫혔으면 전역(#1102 검수 미룸 ②)
+    if (where === 'preview') { setJoinPreviewErr(inviteErr(r.error)); return; }
+    if (where === 'global') { setErr(inviteErr(r.error)); return; }
     if (r.kind === 'busy') return;
     setJoinPreview((cur) => (cur?.code === code ? null : cur)); setNote(t(r.kind === 'declined' ? 'inv.box.declined' : 'inv.box.gone'));
   };
@@ -3092,7 +3095,7 @@ function Shell({ session }) {
             <button type="button" className="item ph-reqrow" aria-expanded={invOpen} onClick={() => setInvOpen((v) => !v)}><span className="ph-reqic"><I name="home" size={18} /></span><span className="name">{t('phone.friends.invites', { n: liveInvites(myInvites).length })}</span><I name="caret" size={20} className={`ph-chev${invOpen ? ' open' : ''}`} /></button>
             {invOpen && <div className="ph-reqs">{liveInvites(myInvites).map((v) => { const left = inviteLeft(v.expiresAt); return (
               <div key={v.id} className="ph-req"><Av name={v.spaceName || '?'} size="lg" /><span className="ph-kbody"><span className="name">{v.spaceName}</span><span className="snip">{[t('phone.friends.invite.by', { name: v.inviterName || t('inbox.invite.someone') }), t(left.key, { n: left.n })].join(' · ')}</span></span>
-                <button type="button" className="btn btn-primary" disabled={declining === v.code} onClick={() => joinByCode(v.code)}>{t('phone.friends.invite.view')}</button><button type="button" className="btn" disabled={declining === v.code} onClick={() => declineMyInvite(v.code)}>{t('inv.p.decline')}</button></div>); })}</div>}
+                <button type="button" className="btn btn-primary" disabled={declining.has(v.code)} onClick={() => joinByCode(v.code)}>{t('phone.friends.invite.view')}</button><button type="button" className="btn" disabled={declining.has(v.code)} onClick={() => declineMyInvite(v.code)}>{t('inv.p.decline')}</button></div>); })}</div>}
           </>)}
           <div className="ph-sechead">{t('phone.friends.count', { n: friendList.length })}</div>
           {(() => { const shown = tabSearch(friendList, tabQText, (f) => [f.display_name, f.handle]); return (<>
@@ -3338,7 +3341,7 @@ function Shell({ session }) {
           </aside>
         </div>)}
         {inviteFor && org && !isPersonal && <InviteDialog org={org} channels={inviteChannels} isAdmin={!!isAdmin} hostOf={hostChannels} initialChannelIds={inviteFor.channelIds} initialRole={inviteFor.role} create={createInviteCode} loadCurrent={isAdmin ? currentMemberLink : null} confirmReplace={confirmReplace} discard={async (id) => { inviteSync.current.start(); let gone = 0; try { const r = await discardInvite(supabase, id); gone = r ? -1 : 0; return r; } finally { inviteSync.current.finish(gone); } }} shareText={inviteShare} linkOf={inviteLinkOf} errorText={inviteErr} onClose={() => setInviteFor(null)} onManage={isAdmin ? manageInvites : null} t={t} phone={isPhone} />}
-        {joinPreview && <InvitePreview p={joinPreview} avatar={<Av name={joinPreview.org_name} size="lg" />} busy={joinBusy || declining === joinPreview.code} err={joinPreviewErr} onJoin={joinFromPreview} onOpen={() => { const p = joinPreview; setJoinPreview(null); if (p.org_id) setOrgId(p.org_id); if (p.channels?.[0]) requestNav(p.channels[0].id, 'invite'); }} onClose={() => setJoinPreview(null)} onDecline={V2 && myInvites.some((v) => v.code === joinPreview.code) ? () => declineMyInvite(joinPreview.code, 'preview') : null} fmtWhen={(iso) => fmtWhen(iso, lang)} t={t} phone={isPhone} />}
+        {joinPreview && <InvitePreview p={joinPreview} avatar={<Av name={joinPreview.org_name} size="lg" />} busy={joinBusy || declining.has(joinPreview.code)} err={joinPreviewErr} onJoin={joinFromPreview} onOpen={() => { const p = joinPreview; setJoinPreview(null); if (p.org_id) setOrgId(p.org_id); if (p.channels?.[0]) requestNav(p.channels[0].id, 'invite'); }} onClose={() => setJoinPreview(null)} onDecline={V2 && myInvites.some((v) => v.code === joinPreview.code) ? () => declineMyInvite(joinPreview.code) : null} fmtWhen={(iso) => fmtWhen(iso, lang)} t={t} phone={isPhone} />}
         {orgLocked && <div className="msgr-notice locked"><span>{t(isAdmin ? 'org.locked.admin' : 'org.locked')}</span></div>}
         {pushCard && createPortal(<button type="button" className="msgr-pushcard" onClick={() => { if (pushCard.channel_id) requestNav(pushCard.channel_id, 'card'); setPushCard(null); }}><span className="t">{pushCard.title}</span><span className="b">{pushCard.body}</span></button>, document.body)}
         {(err || note) && createPortal( /* 토스트 — 상단 바는 레이아웃을 밀었다(유건 2026-09-09). 자동 소멸(안내 4초·오류 8초), 클릭하면 즉시 */
