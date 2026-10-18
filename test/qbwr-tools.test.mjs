@@ -139,9 +139,10 @@ test('평문: DB 비밀번호는 psql 인자에 없고 PGPASSWORD로만, 합성 
 
 // Storage: 운영 주소·로컬 주소·다른 ref 키로는 요청이 한 건도 나가지 않는다(로컬 수신기로 센다)
 // 서버는 before()에서 연다 — 최상위 await로 열면 --test-force-exit(scripts/gate-a.sh)에서 뒤쪽 시험이 등록되지 않았다(#1093 재검수)
-let hits = 0, srv, PORT;
+let hits = 0, conns = 0, srv, PORT; // hits = HTTP 요청, conns = TCP 연결(원시 net.connect는 요청 없이 연결만 한다)
 before(async () => {
   srv = createServer((req, res) => { hits++; res.end('[]'); });
+  srv.on('connection', () => { conns++; });
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   PORT = srv.address().port;
 });
@@ -241,8 +242,28 @@ test('psql은 언제나 -X로 부른다(~/.psqlrc가 접속·설정을 바꾸지
   }
 });
 
+test('합성 데이터 넣기: qbwr에 옛 합성 데이터가 있으면 비밀번호를 만들거나 시드를 보내기 전에 멈춘다(지우지 않음)', { skip: NO_POSIX_SHELL }, () => {
+  const out = join(dir, 'fake-old-seed.txt'); writeFileSync(out, '61\n');
+  const r = run('qbwr-seed.sh', ['db', '0.01'], envText({ QBWR_DB_URL: GOOD_URL }), { shell: { FAKE_PSQL_OUT: out } });
+  assert.equal(r.status, 3, r.stdout + r.stderr);
+  assert.match(r.stdout, /옛 합성 데이터가 61행/);
+  assert.ok(!/^in:/m.test(r.calls), '시드를 보냈다');
+  assert.ok(!/delete|truncate/i.test(r.calls), '지우는 문장을 보냈다');
+  assert.doesNotMatch(readFileSync(r.envFile, 'utf8'), /QBWR_SEED_PASSWORD/, '멈추기 전에 비밀번호를 만들었다');
+});
+
 // 카나리: 가로채기가 실제로 붙어 있는지 시험이 스스로 확인한다 — no-net.mjs의 가로채기나 sandbox의 NODE_OPTIONS가 빠지면 여기서 실패한다(#1098 재검수 미룸)
-test('카나리: sandbox로 띄운 bash → node의 fetch·WebSocket·http·https·net·tls 요청은 전부 로그 한 줄씩 남고 수신기에 닿지 않는다', { skip: NO_POSIX_SHELL }, () => {
+// 자식이 도는 동안 부모 이벤트 루프가 돌아야 수신기가 연결을 센다 — spawnSync는 그동안 루프를 멈춰 "닿지 않음" 단언이 빈 검사였다(#1101 검수 미룸 ①)
+const bashAsync = (cmd, env) => new Promise((resolve) => {
+  const p = spawn('bash', ['-c', cmd], { cwd: ROOT, env });
+  let stdout = '', stderr = '';
+  p.stdout.on('data', (d) => { stdout += d; }); p.stderr.on('data', (d) => { stderr += d; });
+  const t = setTimeout(() => p.kill('SIGKILL'), 10_000); // 가로채기가 빠져 연결이 열린 채 끝나지 않으면 10초에서 끊는다
+  p.on('close', (status) => { clearTimeout(t); resolve({ status, stdout, stderr }); });
+});
+const loopTurn = () => new Promise((r) => setTimeout(r, 100)); // 늦게 도착한 연결 이벤트까지 받는다
+
+test('카나리: sandbox로 띄운 bash → node의 fetch·WebSocket·http·https·net·tls 요청은 전부 로그 한 줄씩 남고 수신기에 닿지 않는다', { skip: NO_POSIX_SHELL }, async () => {
   const sb = sandbox();
   const code = `
     const tries = [
@@ -255,9 +276,8 @@ test('카나리: sandbox로 띄운 bash → node의 fetch·WebSocket·http·http
       ['socket', () => new (require('node:net').Socket)().connect(${PORT}, '127.0.0.1')],
     ];
     (async () => { for (const [k, f] of tries) { try { await f(); console.log(k + ' 통과'); } catch { console.log(k + ' 막힘'); } } })();`;
-  const h0 = hits;
-  // 가로채기가 빠지면 실제 연결이 열린 채 끝나지 않을 수 있어 10초에서 끊는다(그때는 status null로 실패)
-  const r = spawnSync('bash', ['-c', 'node -e "$CANARY"'], { cwd: ROOT, encoding: 'utf8', timeout: 10_000, killSignal: 'SIGKILL', env: { ...sb.env, CANARY: code } });
+  const h0 = hits, c0 = conns;
+  const r = await bashAsync('node -e "$CANARY"', { ...sb.env, CANARY: code });
   assert.equal(r.status, 0, r.stdout + r.stderr);
   const net = sb.net().split('\n').filter(Boolean);
   for (const k of ['fetch', 'ws', 'http', 'https', 'net', 'tls']) assert.ok(net.some((l) => l.startsWith(`${k} `) && l.includes(String(PORT))), `${k} 가로채기 기록이 없다: ${JSON.stringify(net)}\n${r.stdout}`);
@@ -266,11 +286,13 @@ test('카나리: sandbox로 띄운 bash → node의 fetch·WebSocket·http·http
   // ESM에서 이름으로 가져온 request·connect도 막혔나(syncBuiltinESMExports)
   const esm = `import { get } from 'node:http'; import { connect } from 'node:net';
     for (const [k, f] of [['http-esm', () => get('http://127.0.0.1:${PORT}/canary-esm')], ['net-esm', () => connect(${PORT}, '127.0.0.1')]]) { try { f(); console.log(k + ' 통과'); } catch { console.log(k + ' 막힘'); } }`;
-  const r2 = spawnSync('bash', ['-c', 'node --input-type=module -e "$CANARY"'], { cwd: ROOT, encoding: 'utf8', timeout: 10_000, killSignal: 'SIGKILL', env: { ...sb.env, CANARY: esm } });
+  const r2 = await bashAsync('node --input-type=module -e "$CANARY"', { ...sb.env, CANARY: esm });
   assert.equal(r2.status, 0, r2.stdout + r2.stderr);
   assert.match(r2.stdout, /http-esm 막힘/); assert.match(r2.stdout, /net-esm 막힘/);
   assert.ok(sb.net().includes('/canary-esm'), 'ESM 이름 가져오기 가로채기 기록이 없다');
-  assert.equal(hits, h0, '수신기에 요청이 닿았다');
+  await loopTurn();
+  assert.equal(hits, h0, '수신기에 HTTP 요청이 닿았다');
+  assert.equal(conns, c0, '수신기에 TCP 연결이 닿았다');
 });
 
 test('합성 데이터 생성기: 계정은 전부 @example.test, id는 c9 접두, 운영 ref·비밀번호 평문이 없다, 같은 씨앗이면 같은 SQL', () => {

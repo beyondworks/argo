@@ -23,6 +23,9 @@ export async function makeCaller(argv = process.argv.slice(2), env = process.env
     // 여러 문장 중 마지막 결과만 읽는다(psql 15+는 SHOW_ALL_RESULTS=off, 14는 원래 마지막만)
     const run = (q) => { const r = spawnSync('psql', [url, '-X', '-A', '-t', '-q', '-v', 'ON_ERROR_STOP=1', '-v', 'SHOW_ALL_RESULTS=off', '-c', q], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: LOCAL_PSQL_ENV }); return r.status === 0 ? { out: r.stdout.trim() } : { err: r.stderr.trim().split('\n').find((l) => /ERROR/.test(l))?.replace(/^.*ERROR:\s*/, '') || r.stderr.trim() || String(r.error?.message ?? `psql 종료 ${r.status}`) }; };
     const admin = (q) => { const r = run(q); if (r.err) throw new Error(r.err); return r.out.split('\n').pop() ?? ''; };
+    // 주소가 localhost여도 실제 연결 상대가 루프백인지 서버에게 묻는다(localhost로 열어 둔 운영 터널을 막는다, #1100 검수)
+    const peer = run("select coalesce(host(inet_server_addr()), '')");
+    if (peer.err || !['127.0.0.1', '::1'].includes(peer.out)) { console.error(`거부  --local 연결 상대가 루프백이 아닙니다(${peer.err ? '접속 실패' : peer.out || '알 수 없음'})`); process.exit(5); }
     const ctx = (uid, sid) => `set role authenticated; select set_config('argo.uid', '${uid}', false), set_config('request.jwt.claims', '${JSON.stringify({ sub: uid, session_id: sid, role: 'authenticated' })}', false); `;
     const sets = new Map();
     const retset = (fn) => { if (!sets.has(fn)) sets.set(fn, admin(`select bool_or(proretset) from pg_proc where proname = '${fn.replace(/[^a-z0-9_]/g, '')}' and pronamespace = 'public'::regnamespace`) === 't'); return sets.get(fn); };
