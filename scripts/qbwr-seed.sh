@@ -15,6 +15,11 @@ SCALE="${2:-1}"
 OUT="${QBWR_OUT:-artifacts/qbwr}"; mkdir -p "$OUT"
 case "$CMD" in
   db)
+    # 옛 합성 데이터가 있으면 멈춘다 — 생성기는 on conflict do nothing이라 새 값이 반영되지 않는다. 지우지는 않는다(계획서 6절 되돌리기 뒤 다시)
+    old=$(psql "$C" -X -At -q -c "select (select count(*) from auth.users where email ~ '^p[0-9]{3}@example[.]test$') + (select count(*) from public.msgr_orgs where slug like 'qbwr-org-%')" 2>/dev/null || true)
+    if [ "${old:-0}" -gt 0 ] 2>/dev/null; then
+      echo "멈춤  qbwr에 옛 합성 데이터가 ${old}행 있습니다 — 새 값이 반영되지 않으니 계획서 6절(되돌리기)로 비운 뒤 다시 넣으세요(이 스크립트는 지우지 않습니다)"; exit 3
+    fi
     if [ -z "$Q_SEED" ]; then
       Q_SEED=$(openssl rand -base64 24 | tr -d '/+=' | cut -c1-24)
       printf '\nQBWR_SEED_PASSWORD=%s\n' "$Q_SEED" >> "$QBWR_ENV_FILE" # 검문이 고정한 파일(파일 안의 QBWR_ENV 줄로 바뀌지 않는다)

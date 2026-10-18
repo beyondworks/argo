@@ -15,7 +15,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const A = C.admin;
 const has = (rel) => A(`select to_regclass('${rel}') is not null`) === 't';
 const uidOf = (n) => A(`select id from auth.users where email = 'p${String(n).padStart(3, '0')}@example.test'`);
-const nOf = (uid) => Number(A(`select substring(email from 2 for 3) from auth.users where id = '${uid}'`));
+// 합성 계정(pNNN@example.test)만 고른다 — 체험 계정 같은 실제 계정으로는 로그인하지 않는다(#1100 검수 미룸)
+const nOf = (uid) => { const v = A(`select substring(email from 2 for 3) from auth.users where id = '${uid}' and email ~ '^p[0-9]{3}@example[.]test$'`); if (!/^[0-9]{3}$/.test(v)) throw new Error(`합성 계정이 아니다: ${uid}`); return Number(v); };
+const SYN = (col) => `exists (select 1 from auth.users su where su.id = ${col} and su.email ~ '^p[0-9]{3}@example[.]test$')`;
 async function person(n, args = APP) { const s = await C.login(n); const d = await s.rpc('msgr2_device_register', args); s.device = d.data?.device_id ?? null; if (!s.device) throw new Error(`기기 등록 실패 p${n}: ${d.error?.message}`); return s; }
 const big = () => A(`select id from public.msgr2_rooms where id = (select id from public.msgr_channels where org_id = (select id from public.msgr_orgs where slug = 'qbwr-org-1') and name = '공개1')`);
 
@@ -28,8 +30,17 @@ async function snap() {
 }
 const delta = (a, b) => { const t = {}; let w = 0; for (const [k, v] of Object.entries(b.t)) { const d = v - (a.t[k] ?? 0); if (d) { t[k] = d; w += d; } } return { writes: w, rt: b.rt - a.rt, tables: t }; };
 
+let stop = false; // 앞 칸이 전제를 깨면 뒤 Q를 돌리지 않는다
 if (want('q6')) {
-  // 스위치(설계 6절 4단계): 표지 두 줄. 옮긴 방이 열리고 새 방 0, 목록·검색·안 읽음 응답 시간
+  // 스위치(설계 6절 4단계)는 백필이 모든 단계에서 끝나고 검증(verify ok → verified_at)까지 된 뒤에만 넣는다(런북 3단계). 이미 스위치 뒤면 그대로 간다
+  const switched = A(`select count(*) from public.msgr_settings where key in ('msgr2_switched_at', 'msgr2_enabled')`) !== '0';
+  const jobs = A(`select count(*) || '|' || count(*) filter (where done_at is null) || '|' || count(*) filter (where verified_at is null) from public.msgr2_backfill_jobs`).split('|').map(Number);
+  const ready = switched || (jobs[0] > 0 && jobs[1] === 0 && jobs[2] === 0);
+  cell('Q6', '스위치 전 백필 완료·검증 확인', '모든 단계 done·verified', switched ? '이미 스위치 뒤' : `단계 ${jobs[0]}·안 끝남 ${jobs[1]}·검증 안 됨 ${jobs[2]}`, ready);
+  if (!ready) stop = true; // 스위치를 넣지 않고 멈춘다(런북: run → verify 뒤에 다시)
+}
+if (want('q6') && !stop) {
+  // 스위치: 표지 두 줄. 옮긴 방이 열리고 새 방 0, 목록·검색·안 읽음 응답 시간
   A(`insert into public.msgr_settings (key, value) values ('msgr2_switched_at', now()::text), ('msgr2_enabled', 'on') on conflict (key) do nothing`);
   const o = await person(1);
   const space = A(`select id from public.msgr2_spaces where slug = 'qbwr-org-1'`);
@@ -41,7 +52,7 @@ if (want('q6')) {
      from public.msgr2_rooms r join public.msgr2_spaces s on s.id = r.space_id
      join public.msgr2_room_members m1 on m1.room_id = r.id and m1.member_kind = 'user' and m1.removed_at is null
      join public.msgr2_room_members m2 on m2.room_id = r.id and m2.member_kind = 'user' and m2.member_id > m1.member_id and m2.removed_at is null
-     where r.kind = 'direct' and s.deleted_at is null and r.archived_at is null order by (s.kind = 'team') desc, r.id limit 1`);
+     where r.kind = 'direct' and s.deleted_at is null and r.archived_at is null and ${SYN('m1.member_id')} and ${SYN('m2.member_id')} order by (s.kind = 'team') desc, r.id limit 1`);
   if (pair) {
     const [room, a1, a2, sp] = pair.split('|');
     const actor = a1 === o.uid ? o : await person(nOf(a1));
@@ -65,7 +76,7 @@ if (want('q6')) {
   cell('Q6', '안 읽음', '오류 없음', un.error?.message ?? `${un.ms.toFixed(0)}ms`, !un.error, { ms: Math.round(un.ms) });
 }
 
-if (want('q7')) {
+if (want('q7') && !stop) {
   // 게이트 B 상황을 실 경로로: 단계별 쓰기·방송(로컬 값은 test/msgr2-gate-b-pg.test.mjs·볼트 gate-b.md와 대조)
   const steps = [];
   const step = async (name, fn) => { const a = await snap(); const extra = await fn(); const d = delta(a, await snap()); steps.push({ name, ...d }); cell('Q7', name, '기록', `쓰기 ${d.writes}·방송 ${d.rt}`, null, { ...d, ...(extra ?? {}) }); };
@@ -114,13 +125,13 @@ if (want('q7')) {
   });
 }
 
-if (want('q8')) {
+if (want('q8') && !stop) {
   // 푸시: 글 → pg_net → 엣지 1번. 로컬은 pg_net 대역 표(가짜 엣지 — 경로만), qbwr는 실 pg_net이 qbwr 엣지 주소로 보낸다(엣지 미배포면 404 = 엣지 대기)
   const url = C.mode === 'local' ? 'http://127.0.0.1:9/fake-edge/msgr2-push' : 'https://qbwrlynzvjmphwuqglsx.supabase.co/functions/v1/msgr2-push';
   A(`insert into public.msgr_settings (key, value) values ('msgr2_push_url', '${url}') on conflict (key) do update set value = excluded.value`);
   const o = await person(1);
   const space = A(`select id from public.msgr2_spaces where slug = 'qbwr-org-1'`);
-  const otherUid = A(`select user_id from public.msgr2_space_members where space_id = '${space}' and user_id <> '${o.uid}' and removed_at is null order by user_id limit 1`);
+  const otherUid = A(`select user_id from public.msgr2_space_members where space_id = '${space}' and user_id <> '${o.uid}' and removed_at is null and ${SYN('user_id')} order by user_id limit 1`);
   const p = await person(nOf(otherUid), { ...APP, p_push_token: `fake-token-q8-${Date.now()}` });
   const op = await o.rpc('msgr2_dm_open', { p_user: p.uid, p_space: space });
   const room = op.data?.room_id ?? op.data?.id;
@@ -136,9 +147,16 @@ if (want('q8')) {
     cell('Q8', '글 1개 → pg_net 응답 1건(qbwr 엣지 주소)', '응답 행 +1', `+${after - before}·상태 ${st}`, after - before >= 1, { edge: st === '404' ? '엣지 대기(미배포)' : st });
   }
   cell('Q8', '무효 토큰 → 기기 행에서 비우기·장부 1행', '엣지가 처리', '엣지 대기', null, { wait: '엣지 msgr2-push 배포(맥 one, 2026-10-19 13:00 KST 뒤)' });
+  // pg_net은 20초에 끊는다(#1092). 엣지(DEADLINE_MS)가 그 뒤에도 끝까지 돌았나: 장부의 claimed_at → finished_at이 20초를 넘은 건수와 pg_net 시간 초과 건수를 나란히(읽기만)
+  if (has('public.msgr2_push_sent')) {
+    const led = A(`select count(*) || '|' || count(*) filter (where finished_at - claimed_at > interval '20 seconds') from public.msgr2_push_sent`).split('|').map(Number);
+    const tout = has('net._http_response') ? A('select count(*) filter (where timed_out) from net._http_response') : 'pg_net 없음';
+    if (!led[0]) cell('Q8', 'pg_net 20초 끊김 뒤 엣지가 끝까지 돌았나', '기록', '엣지 대기(장부 0행 — 엣지 미배포)', null);
+    else cell('Q8', 'pg_net 20초 끊김 뒤 엣지가 끝까지 돌았나', '기록(엣지 로그와 대조)', `장부 ${led[0]}·20초 넘김 ${led[1]}·pg_net 시간 초과 ${tout}`, null, { wait: '엣지 로그 대조는 맥 one' });
+  }
 }
 
-if (want('q9')) {
+if (want('q9') && !stop) {
   // 보존·pg_net(#1092): 판, cron 등록, realtime.messages 파티션별 행 수, net 응답 보존, 큐 행 수, 처리 지연(앞 요청이 느릴 때 뒤 요청이 얼마나 기다리나)
   cell('Q9', 'pg_net 판', '기록', A(`select coalesce((select extversion from pg_extension where extname = 'pg_net'), '없음')`), null);
   if (has('cron.job')) {
@@ -165,9 +183,15 @@ if (want('q9')) {
     const worst = Math.max(...fast.map((id) => lat[id] ?? Infinity));
     cell('Q9', '앞 요청이 5초 걸릴 때 뒤 요청 처리 지연', '기록(5초 가까우면 한 묶음씩 처리 — #1092 20초 상한이 다른 호출을 붙잡는다)', Number.isFinite(worst) ? `${worst}ms` : '15초 안에 응답 없음', null, { fast_ms: lat, slow_done: slowDone });
   } else cell('Q9', 'pg_net 큐·처리 지연', '기록', 'pg_net 없음(로컬)', null);
+  // 보내지 못한 알림: 장부에서 claim 뒤 2분이 지나도 finished_at이 없는 비율. 0.1%를 넘으면 재출시 전에 쓸어 담기를 만든다(워커 2 판단)
+  if (has('public.msgr2_push_sent')) {
+    const pr = A(`select count(*) || '|' || count(*) filter (where finished_at is null and claimed_at < now() - interval '2 minutes') from public.msgr2_push_sent`).split('|').map(Number);
+    if (!pr[0]) cell('Q9', '보내지 못한 알림 비율(2분 넘게 finished_at 없음)', '0.1% 이하', '엣지 대기(장부 0행 — 엣지 미배포)', null);
+    else { const ratio = pr[1] / pr[0]; cell('Q9', '보내지 못한 알림 비율(2분 넘게 finished_at 없음)', '0.1% 이하(넘으면 재출시 전 쓸어 담기)', `${(ratio * 100).toFixed(3)}%(${pr[1]}/${pr[0]})`, ratio <= 0.001); }
+  }
 }
 
-if (want('q10')) {
+if (want('q10') && !stop) {
   // 옛 신고 고유 색인(message_id, reporter, open): 백필 뒤 identity = 최댓값+1이라 새 v2 글 id가 옛 글 id와 겹치지 않는다
   const o = await person(1);
   const room = big();
@@ -175,7 +199,7 @@ if (want('q10')) {
   const m = await o.insert('msgr2_messages', { room_id: room, author_kind: 'user', author_user_id: o.uid, body: '신고 시험' });
   const newId = Number(m.data?.id);
   cell('Q10', '새 v2 글 id > 옛 글 최댓값', `> ${maxOld}`, m.error?.message ?? newId, !m.error && newId > maxOld && A(`select count(*) from public.msgr_messages where id = ${newId}`) === '0');
-  const rep = A(`select m.member_id from public.msgr2_room_members m where m.room_id = '${room}' and m.member_kind = 'user' and m.member_id <> '${o.uid}' and m.removed_at is null order by m.member_id limit 1`);
+  const rep = A(`select m.member_id from public.msgr2_room_members m where m.room_id = '${room}' and m.member_kind = 'user' and m.member_id <> '${o.uid}' and m.removed_at is null and ${SYN('m.member_id')} order by m.member_id limit 1`);
   const r = await person(nOf(rep));
   const oldMsg = A(`select id from public.msgr_messages where channel_id = '${room}' and author_kind = 'user' and author_user_id <> '${rep}' and deleted_at is null order by id limit 1`);
   const a1 = await r.rpc('msgr2_report_message', { p_message: newId, p_reason: 'qbwr Q10' });
@@ -183,7 +207,7 @@ if (want('q10')) {
   cell('Q10', '새 글·옛 글 신고 둘 다 들어감(색인 충돌 없음)', '서로 다른 신고 2건', `${a1.error?.message ?? 'ok'} / ${a2.error?.message ?? 'ok'}`, !a1.error && !a2.error && a1.data !== a2.data);
 }
 
-if (want('q11')) {
+if (want('q11') && !stop) {
   // 작업 창 표지(#1087): 창 동안 계정 삭제 거부, 닫은 뒤 정상 — 친구만 있는 합성 계정 p059를 실제로 지운다(마지막).
   // 창은 운영 전 계정의 계정 삭제·옛 표 수정을 막으므로, 로그인·기기 등록을 창을 열기 전에 끝내고 창 열기부터 되살리기까지 try/finally로 묶는다(#1100 검수).
   // p059가 이미 없으면(이전 실행에서 지움) 창을 건드리지 않고 건너뛴다.
@@ -191,19 +215,21 @@ if (want('q11')) {
     cell('Q11', '작업 창 계정 삭제 시험', 'p059@example.test 있음', '건너뜀(이미 실행됨 — p059 없음)', null);
   } else {
     const p = await person(59);
-    const prev = A(`select coalesce((select value from public.msgr_settings where key = 'msgr2_migration_window'), '')`);
+    // 원래 상태: 행이 있었나(값이 빈 문자열이어도 "있음")와 그 값 — 행 없음과 빈 값을 구분해 그대로 되살린다
+    const prevRow = A(`select count(*) from public.msgr_settings where key = 'msgr2_migration_window'`) === '1';
+    const prev = prevRow ? A(`select value from public.msgr_settings where key = 'msgr2_migration_window'`) : null;
     try {
       A(`insert into public.msgr_settings (key, value) values ('msgr2_migration_window', now()::text) on conflict (key) do update set value = excluded.value`);
-      if (process.env.QBWR_FAULT === 'q11-after-open') throw new Error('주입한 실패(시험용 — 창이 되살아나는지 본다)');
+      if (C.mode === 'local' && process.env.QBWR_FAULT === 'q11-after-open') throw new Error('주입한 실패(시험용 — 창이 되살아나는지 본다, 로컬에서만)');
       const d1 = await p.rpc('msgr_delete_me');
-      cell('Q11', '창 동안 계정 삭제 거부', '오류', d1.error?.message ?? JSON.stringify(d1.data), !!d1.error);
+      cell('Q11', '창 동안 계정 삭제 거부', 'msgr2_migration_in_progress', d1.error?.message ?? JSON.stringify(d1.data), /msgr2_migration_in_progress/.test(d1.error?.message ?? ''));
       A(`delete from public.msgr_settings where key = 'msgr2_migration_window'`);
       const d2 = await p.rpc('msgr_delete_me');
       const gone = A(`select count(*) from auth.users where email = 'p059@example.test'`) === '0';
       cell('Q11', '창을 닫은 뒤 계정 삭제 정상(p059 실제로 없어짐)', '성공·계정 0', `${d2.error?.message ?? 'ok'}·계정 ${gone ? 0 : 1}`, !d2.error && gone);
     } finally {
       // 원래 값으로 되살린다: 열려 있었으면 그 값, 아니었으면 지운다
-      if (prev) A(`insert into public.msgr_settings (key, value) values ('msgr2_migration_window', '${prev.replace(/'/g, "''")}') on conflict (key) do update set value = excluded.value`);
+      if (prevRow) A(`insert into public.msgr_settings (key, value) values ('msgr2_migration_window', '${String(prev).replace(/'/g, "''")}') on conflict (key) do update set value = excluded.value`);
       else A(`delete from public.msgr_settings where key = 'msgr2_migration_window'`);
     }
   }
@@ -211,8 +237,9 @@ if (want('q11')) {
 
 // 끝날 때 작업 창 상태(열려 있으면 운영 전 계정의 계정 삭제·옛 표 수정이 막힌다 — 런북 6단계에서 닫는다)
 {
-  const w = A(`select coalesce((select value from public.msgr_settings where key = 'msgr2_migration_window'), '')`);
-  cell('끝', '작업 창 표지 상태', '기록(열림이면 런북 6단계로 닫기)', w ? `열림(${w})` : '닫힘', null);
+  const open = A(`select count(*) from public.msgr_settings where key = 'msgr2_migration_window'`) === '1';
+  const w = open ? A(`select value from public.msgr_settings where key = 'msgr2_migration_window'`) : '';
+  cell('끝', '작업 창 표지 상태', '기록(열림이면 런북 6단계로 닫기)', open ? `열림(${w || '빈 값'})` : '닫힘', null);
 }
 
 const fail = results.filter((r) => r.pass === false);
