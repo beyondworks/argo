@@ -18,8 +18,8 @@ const ROOM = '11111111-2222-4333-8444-555555555555';
 
 /** 가짜 서버들 + 엣지 핸들러. apns/fcm = 토큰 → 답 순서 배열(마지막 값이 계속), 기본 200. */
 function edge({ msg = {}, recipients = [{ user_id: 'u2', push_token: IOS }, { user_id: 'u3', push_token: AND }], apns = {}, fcm = {}, secret = 'push-s', room = { name: '팀방', kind: 'private', space_id: 'sp1' } } = {}) {
-  const claimed = new Set(); const calls = { apns: [], fcm: [], drops: [], patches: [], rpc: 0, delays: [], logs: [] };
-  const message = { id: 9, room_id: ROOM, author_kind: 'agent', author_user_id: null, author_agent_id: 'ag1', kind: 'text', body: '초안을 올렸습니다', meta: {}, deleted_at: null, ...msg };
+  const claimed = new Set(); const calls = { apns: [], fcm: [], drops: [], patches: [], rpc: 0, delays: [], rpcAtDelay: [], logs: [] };
+  const message = { id: 9, room_id: ROOM, author_kind: 'agent', author_user_id: null, author_agent_id: 'ag1', kind: 'text', body: '초안을 올렸습니다', meta: {}, created_at: new Date(Date.now() - 60_000).toISOString(), deleted_at: null, ...msg };
   const next = (map, tok) => { const q = map[tok]; if (!q) return 200; return q.length > 1 ? q.shift() : q[0]; };
   const fetch = async (input, init = {}) => {
     const url = new URL(input);
@@ -43,8 +43,8 @@ function edge({ msg = {}, recipients = [{ user_id: 'u2', push_token: IOS }, { us
       claimed.add(message_id); return new Response(null, { status: 201 });
     }
     if (path === 'msgr2_push_sent' && init.method === 'PATCH') { calls.patches.push(JSON.parse(init.body)); return new Response(null, { status: 204 }); }
-    if (path === 'msgr2_messages') return Response.json([message]);
-    if (path === 'rpc/msgr2_push_recipients') { calls.rpc++; assert.deepEqual(JSON.parse(init.body), { p_message: message.id }); return Response.json(recipients); }
+    if (path === 'msgr2_messages') return Response.json([Object.fromEntries(url.searchParams.get('select').split(',').map((k) => [k, message[k]]))]); // 고른 열만(실제 REST와 같이)
+    if (path === 'rpc/msgr2_push_recipients') { calls.rpc++; assert.deepEqual(JSON.parse(init.body), { p_message: message.id }); return Response.json(typeof recipients === 'function' ? recipients(calls) : recipients); }
     if (path === 'msgr2_rooms') return Response.json([room]);
     if (path === 'msgr2_agents') return Response.json([{ display_name: '에이' }]);
     if (path === 'msgr2_space_members') return Response.json([{ display_name: '유건' }]);
@@ -57,7 +57,7 @@ function edge({ msg = {}, recipients = [{ user_id: 'u2', push_token: IOS }, { us
   vm.runInNewContext(source, {
     ...core, Deno: { env: { get: (k) => env[k] }, serve: (fn) => { handler = fn; } },
     fetch, Response, Request, TextEncoder, URLSearchParams, crypto, Date, JSON, Number, String, Math, Promise, Set, Map, Uint8Array, encodeURIComponent,
-    setTimeout: (fn, ms) => { calls.delays.push(ms); return setImmediate(fn); }, // 재시도 간격은 기록만(시험은 기다리지 않는다)
+    setTimeout: (fn, ms) => { calls.delays.push(ms); calls.rpcAtDelay.push(calls.rpc); return setImmediate(fn); }, // 재시도 간격은 기록만(시험은 기다리지 않는다)
     console: { log: (...a) => calls.logs.push(a.join(' ')) },
   });
   const send = async (body = { message_id: message.id }, auth = `Bearer ${secret}`) => {
@@ -134,6 +134,42 @@ test('승인 요청 카드는 "승인 요청" 머리, 1:1 방은 제목에 방 �
   const e = edge({ msg: { kind: 'card', body: '메일 3통 발송', meta: { code: 'approval.request' }, author_kind: 'user', author_user_id: 'u1', author_agent_id: null }, room: { name: null, kind: 'direct', space_id: 'sp1' } });
   await e.send();
   assert.deepEqual(e.calls.apns[0].body.aps.alert, { title: '유건', body: '승인 요청 · 메일 3통 발송' });
+});
+
+test('보는 중: 막 생긴 글이면 받는 사람을 계산하기 전에 글 뒤 3초까지 기다린다 — 그 사이 그 글을 읽은 사람(DB가 뺀다)은 알림 0', async () => {
+  // DB 대역: 기다림이 끝난 뒤 부르면 보는 사람(u2)이 이미 읽음을 올려 빠진 목록을 준다
+  const e = edge({ msg: { created_at: new Date().toISOString() }, recipients: (c) => c.delays.length ? [{ user_id: 'u3', push_token: AND }] : [{ user_id: 'u2', push_token: IOS }, { user_id: 'u3', push_token: AND }] });
+  const r = await e.send();
+  assert.equal(r.body.sent, 1);
+  assert.equal(e.calls.apns.length, 0, '보는 사람의 폰(iOS)에는 보내지 않는다');
+  assert.equal(e.calls.fcm.length, 1);
+  assert.ok(e.calls.delays[0] > 2_500 && e.calls.delays[0] <= core.VIEW_WAIT_MS, `기다림 ${e.calls.delays[0]}ms`);
+  assert.equal(e.calls.rpcAtDelay[0], 0, '받는 사람 계산은 기다린 뒤에 한 번');
+  assert.equal(e.calls.rpc, 1);
+});
+
+test('보는 중: 엣지 호출이 글 뒤 3초 넘어 왔으면(pg_net 대기) 더 기다리지 않는다, 지운 글·중복 호출은 기다리지 않고 끝낸다', async () => {
+  const late = edge({ msg: { created_at: new Date(Date.now() - 5_000).toISOString() } });
+  assert.equal((await late.send()).body.sent, 2);
+  assert.deepEqual(late.calls.delays, []);
+  const gone = edge({ msg: { created_at: new Date().toISOString(), deleted_at: new Date().toISOString() } });
+  assert.deepEqual((await gone.send()).body, { ok: true, sent: 0 });
+  assert.deepEqual(gone.calls.delays, []);
+  const dup = edge({ msg: { created_at: new Date().toISOString() } });
+  await dup.send(); const d0 = dup.calls.delays.length;
+  assert.deepEqual((await dup.send()).body, { ok: true, dup: true });
+  assert.equal(dup.calls.delays.length, d0, '중복 호출은 기다리지 않는다');
+});
+
+test('core: viewWait — 시각 모름은 3초 전부, 글 뒤 1초면 약 2초, 3초 넘었으면 0, 미래 시각도 3초를 넘기지 않는다', () => {
+  const now = Date.parse('2026-10-18T01:00:10.000Z');
+  assert.equal(core.VIEW_WAIT_MS, 3000);
+  assert.equal(core.viewWait(null, now), 3000);
+  assert.equal(core.viewWait('nope', now), 3000);
+  assert.equal(core.viewWait('2026-10-18T01:00:09.000Z', now), 2000);
+  assert.equal(core.viewWait('2026-10-18T01:00:07.000Z', now), 0);
+  assert.equal(core.viewWait('2026-10-18T00:59:00.000Z', now), 0);
+  assert.equal(core.viewWait('2026-10-18T01:05:00.000Z', now), 3000);
 });
 
 test('core: platformOf(접두·64자 16진수·그 밖 FCM·빈 값), pushText 미리보기 상한', () => {

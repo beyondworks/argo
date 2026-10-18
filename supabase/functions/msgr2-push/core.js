@@ -7,6 +7,15 @@ export const TITLE_MAX = 100;
 export const MAX_ATTEMPTS = 3; // 한 기기에 같은 알림을 보내는 최대 시도(일시 오류만 다시)
 export const RETRY_BASE_MS = 1000; // 1초 → 3초(상한 5초)
 export const DEADLINE_MS = 60_000; // 엣지 실행 시간 안 — 이 뒤로는 새 시도를 시작하지 않는다
+export const VIEW_WAIT_MS = 3_000; // "보는 중" 판정 전에 기다리는 상한 — 방을 보는 앱이 새 글을 그리고 읽음을 올릴 시간(20261018061100_msgr2_push_viewing.sql)
+
+/** 글이 생긴 시각(created_at) → 받는 사람을 계산하기 전에 더 기다릴 ms. 글 뒤 VIEW_WAIT_MS가 지났으면 0, 시각을 모르면 VIEW_WAIT_MS 전부.
+ *  엣지 호출이 늦게 왔으면(pg_net 대기) 그만큼 덜 기다린다. 시계가 어긋나 글이 미래로 보여도 VIEW_WAIT_MS를 넘기지 않는다. */
+export function viewWait(createdAt, now = Date.now()) {
+  const at = Date.parse(String(createdAt ?? ''));
+  if (!Number.isFinite(at)) return VIEW_WAIT_MS;
+  return Math.max(0, Math.min(VIEW_WAIT_MS, at + VIEW_WAIT_MS - now));
+}
 
 /** 기기 토큰 → 플랫폼. v2 기기 행(msgr2_devices.push_token)에는 플랫폼 열이 없다.
  *  'ios:'·'android:' 접두가 있으면 그것을 따르고, 없으면 모양으로 가른다: APNs 기기 토큰은 32바이트 16진수(64자), 그 밖은 FCM.

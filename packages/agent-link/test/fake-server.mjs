@@ -85,7 +85,7 @@ export function createFakeServer({ now = () => Date.now(), uid = 'u' } = {}) {
     async rpc(name, args) {
       if (failNext.length) { const e = failNext.shift(); return reply(name, args, { data: null, error: e }); }
       if (name === 'msgr2_link_send') return reply(name, args, args.p_env ? linkSend(args.p_env) : { data: null, error: { code: 'PGRST202', message: 'no function with these argument names', status: 404 } }); // 실제 PostgREST처럼 이름이 다르면 함수가 없다
-      if (name === 'msgr2_link_pending') return reply(name, args, { data: opts.revoked ? { ok: false, code: 'device_revoked' } : [...pending] });
+      if (name === 'msgr2_link_pending') return reply(name, args, { data: opts.revoked ? { ok: false, code: 'device_revoked' } : opts.paused ? { ok: false, code: 'service_paused' } : [...pending] });
       if (name === 'msgr2_link_upload_slot') {
         if (!args.p_work) return reply(name, args, { data: null, error: { code: 'PGRST202', status: 404 } });
         const w = works.get(args.p_work);

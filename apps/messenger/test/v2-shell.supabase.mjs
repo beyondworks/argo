@@ -128,8 +128,9 @@ const rpcs = {
   msgr2_invite_create: ({ p_space, p_role, p_rooms = [], p_max_uses, p_expires_in_s }) => { const inv = { id: `c1000000-0000-4000-8000-${String(Date.now()).slice(-12)}`, code: 'ab'.repeat(24), role: p_role, room_ids: p_rooms, max_uses: p_max_uses, use_count: 0, expires_at: p_expires_in_s ? later(p_expires_in_s / 60) : null, created_by: uid, created_at: new Date().toISOString(), state: 'valid', space_id: p_space }; (state.invites ??= []).push(inv); return { invite_id: inv.id, code: inv.code, expires_at: inv.expires_at, existing: false }; },
   msgr2_invites_list: ({ p_space }) => (state.invites ?? []).filter((i) => i.space_id === p_space),
   msgr2_invite_revoke: ({ p_invite }) => { const i = (state.invites ?? []).find((x) => x.id === p_invite); if (!i || i.state === 'revoked') return false; i.state = 'revoked'; return true; },
-  msgr2_invite_preview: ({ p_code }) => { if (p_code === 'ff'.repeat(24)) return { state: 'expired', space_name: 'Beyond 팀' }; return { state: 'valid', space_id: T, space_name: 'Beyond 팀', role: 'member', inviter_name: '민지', expires_at: later(60 * 24 * 6), already_member: false, rooms: [{ id: GEN, name: '일반' }, { id: NEWS, name: '공지' }] }; },
-  msgr2_invite_accept: () => ({ space_id: T, role: 'member', rooms: [GEN], already_member: true }),
+  msgr2_my_invites: () => state.myInvites, // 받은 초대(사람 지정) — state.invited()가 하나 넣고 v2:u: invite 사건을 보낸다
+  msgr2_invite_preview: ({ p_code }) => { if (p_code === 'ff'.repeat(24)) return { state: 'expired', space_name: 'Beyond 팀' }; if (p_code === INV_CODE) return { state: 'valid', space_id: INV_SPACE, space_name: 'Acme 디자인', role: 'member', inviter_name: '민지', expires_at: later(60 * 24 * 7), already_member: false, rooms: [] }; return { state: 'valid', space_id: T, space_name: 'Beyond 팀', role: 'member', inviter_name: '민지', expires_at: later(60 * 24 * 6), already_member: false, rooms: [{ id: GEN, name: '일반' }, { id: NEWS, name: '공지' }] }; },
+  msgr2_invite_accept: ({ p_code }) => { if (p_code === INV_CODE) { state.myInvites = state.myInvites.filter((i) => i.code !== INV_CODE); fire(`v2:u:${uid}`, 'spaces', { space_id: INV_SPACE }); } return { space_id: T, role: 'member', rooms: [GEN], already_member: true }; },
   // 그대로 쓰는 옛 RPC(설계 1-2절)
   msgr_my_friends: () => [{ user_id: mate, status: 'accepted', display_name: '민지', handle: 'minji' }],
   msgr_avatars: () => [], msgr_people_names: ({ ids }) => (ids ?? []).map((id) => ({ user_id: id, display_name: id === uid ? '유건' : '민지' })),
@@ -188,6 +189,11 @@ state.friendOpens = (body = '안녕하세요, 민지예요') => {
   fire(`v2:u:${uid}`, 'rooms', { space_id: PM, room_id: id }); fire(`v2:u:${uid}`, 'msg', { message: m });
   return id;
 };
+// 받은 초대: 민지가 나를 다른 팀 공간(Acme 디자인)에 초대한다 — 서버처럼 목록에 넣고 나에게 invite 사건을 보낸다. ?invites=1이면 처음부터 하나 있다
+const INV_CODE = 'cd'.repeat(24), INV_SPACE = '7e000000-0000-4000-8000-0000000000dd';
+state.myInvites = [];
+state.invited = () => { if (!state.myInvites.some((i) => i.code === INV_CODE)) state.myInvites.unshift({ invite_id: 'c2000000-0000-4000-8000-000000000001', code: INV_CODE, space_id: INV_SPACE, space_name: 'Acme 디자인', role: 'member', inviter_id: mate, inviter_name: '민지', created_at: new Date().toISOString(), expires_at: later(60 * 24 * 7) }); fire(`v2:u:${uid}`, 'invite', { invite_id: 'c2000000-0000-4000-8000-000000000001', space_id: INV_SPACE }); };
+if (new URLSearchParams(globalThis.location?.search ?? '').get('invites') === '1') state.invited();
 state.pause = (on) => fire(`v2:u:${uid}`, 'pause', { paused: !!on }); // 서버 중단 스위치 대역
 state.client = () => supabase; // 페이지 시험은 이 함수로 앱과 같은 대역을 쓴다(모듈을 다시 불러오면 다른 사본이 생긴다)
 state.ids = { uid, mate, T, P, PM, GEN, PLAN, DM, NEWS, A, B, C, W };

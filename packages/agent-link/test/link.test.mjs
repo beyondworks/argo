@@ -288,9 +288,71 @@ test('기기 폐기·버전 범위 밖은 링크를 멈추고 다시 보내지 �
   c.server.opts.paused = true;
   c.server.push(c.server.offer({ agent: AGENT })); await flush();
   assert.equal(c.link.paused, true);
-  c.server.opts.paused = false;
-  c.server.push(c.server.offer({ agent: AGENT })); await flush();
   assert.equal(c.calls.turns, 0);
+  assert.ok(c.events.some((e) => e.name === 'paused'));
+});
+
+// #1074 결함 2: 중단 스위치를 한 번 켰다 끄면 본체를 재시작하기 전까지 offer를 버렸다. 풀리는 신호 두 가지(새 offer 방송·재연결 따라잡기)를 각각 본다.
+async function pausedLink() {
+  const p = setup();
+  p.link.start(); await flush();
+  p.server.opts.paused = true;
+  const first = p.server.offer({ agent: AGENT });
+  p.server.push(first); await flush(); // accept가 service_paused를 받아 멈춘다
+  assert.equal(p.link.paused, true);
+  assert.equal(p.calls.turns, 0);
+  return { ...p, first };
+}
+
+test('중단 → 해제 → 새 offer 방송: 다시 받고, 중단 때 거절된 offer도 따라잡기로 한 번 가져온다', async () => {
+  const p = await pausedLink();
+  const pend0 = p.server.rpcCount('msgr2_link_pending');
+  p.server.opts.paused = false;
+  const next = p.server.offer({ agent: AGENT });
+  p.server.push(next); await flush();
+  assert.equal(p.link.paused, false);
+  assert.ok(p.events.some((e) => e.name === 'resumed' && e.via === 'offer'));
+  assert.equal(p.server.works.get(next.work).state, 'done');
+  assert.equal(p.server.works.get(p.first.work).state, 'done'); // 중단 순간에 온 사람 글도 답을 받는다
+  assert.equal(p.calls.turns, 2);
+  assert.equal(p.server.rpcCount('msgr2_link_pending') - pend0, 1); // 풀릴 때 따라잡기 1번뿐
+});
+
+test('중단 → 해제 → 재연결 따라잡기: 따라잡기가 성공하면 풀고 남은 offer를 받는다, 중단 중 재연결은 그대로 멈춰 있다', async () => {
+  const p = await pausedLink();
+  p.server.reconnect(); await flush(); // 아직 중단 중: 따라잡기도 service_paused
+  assert.equal(p.link.paused, true);
+  assert.equal(p.server.sentOf('work.accept', p.first.work).length, 0);
+  p.server.opts.paused = false;
+  p.server.reconnect(); await flush();
+  assert.equal(p.link.paused, false);
+  assert.ok(p.events.some((e) => e.name === 'resumed' && e.via === 'catch_up'));
+  assert.equal(p.server.works.get(p.first.work).state, 'done');
+  assert.equal(p.calls.turns, 1);
+});
+
+test('중단 중 늦게 온 옛 offer는 accept 1번으로 도로 멈추고, 중단 중 유휴 요청은 0이다', async () => {
+  const p = await pausedLink();
+  const n0 = p.server.log.length;
+  await p.clock.advance(60 * 60 * 1000); // 한 시간 유휴: 풀렸는지 묻는 예비 조회·폴링이 없다(D7)
+  assert.equal(p.server.log.length, n0);
+  const late = p.server.offer({ agent: AGENT });
+  p.server.push(late); await flush(); // 서버는 아직 중단 중
+  assert.equal(p.link.paused, true);
+  assert.equal(p.calls.turns, 0);
+  assert.equal(p.server.rpcCount('msgr2_link_send'), 2); // 처음 offer accept 1 + 늦은 offer accept 1
+  assert.equal(p.server.rpcCount('msgr2_link_pending'), 2); // 시작 때 1 + 풀린 줄 알고 1
+});
+
+test('멈춘 뒤에 돌아온 따라잡기 답은 중단 표지를 풀지 않는다', async () => {
+  const p = await pausedLink();
+  p.server.opts.paused = false;
+  const pending = p.link.catchUp(); // 답이 오기 전에 멈춘다
+  p.link.stop();
+  await pending; await flush();
+  assert.equal(p.link.paused, true);
+  assert.ok(!p.events.some((e) => e.name === 'resumed'));
+  assert.equal(p.calls.turns, 0);
 });
 
 test('모르는 type: 진행 중인 일이면 무시(일이 죽지 않음), 아니면 work.error{unsupported}로 답한다', async () => {
