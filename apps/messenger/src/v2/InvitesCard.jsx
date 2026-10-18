@@ -13,7 +13,7 @@ export function InvitesCard({ invites = [], t, onView, onDecline, now = Date.now
       {!invites.length && <p className="note">{t('inv.box.empty')}</p>}
       {invites.length > 0 && <div className="msgr-rows">
         {invites.map((v) => { const left = inviteLeft(v.expiresAt, now); return (
-          <div key={v.id} className="row">
+          <div key={v.id} className={`row${left.key === 'inv.box.left.expired' ? ' dim' : ''}`}>
             <div className="msgr-v2-dev">
               <strong>{v.spaceName}</strong>
               <span className="sub">{[t('inv.box.by', { name: v.inviterName || t('inbox.invite.someone') }), v.role === 'guest' && t('inv.p.guest'), t(left.key, { n: left.n })].filter(Boolean).join(' · ')}</span>

@@ -1,7 +1,7 @@
 // 메신저 v2 받은 초대(v2/my-invites.mjs) — 서버 행 정리·알림함 항목·읽기 실패 처리. 셸 연결은 v2-shell 픽스처 화면으로 확인한다.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { myInviteRows, inviteInboxItems, loadMyInvites } from '../src/v2/my-invites.mjs';
+import { myInviteRows, inviteInboxItems, loadMyInvites, loadMyInvitesIf } from '../src/v2/my-invites.mjs';
 
 const row = (o = {}) => ({ invite_id: 'i1', code: 'cd'.repeat(24), space_id: 's1', space_name: 'Acme 디자인', role: 'member', inviter_id: 'u2', inviter_name: '민지', created_at: '2026-10-18T01:00:00Z', expires_at: '2026-10-25T01:00:00Z', ...o });
 const t = (k, v = {}) => `${k}|${Object.entries(v).map(([a, b]) => `${a}=${b}`).join(',')}`;
@@ -27,4 +27,17 @@ test('읽기: msgr2_my_invites 한 번, 실패(오류 응답·예외)는 null �
   assert.equal(await loadMyInvites(async () => ({ data: null, error: { message: 'msgr2_device_required' } })), null);
   assert.equal(await loadMyInvites(async () => { throw new Error('net'); }), null);
   assert.deepEqual(await loadMyInvites(async () => ({ data: null, error: null })), []);
+});
+
+test('읽기 관문: 플래그 끔·로그인 전이면 기기 대기·서버 호출 0(옛 서버에 실패 요청을 만들지 않는다), 켜짐이면 기기 대기 뒤 한 번', async () => {
+  const log = [];
+  const rpc = async (fn) => { log.push(fn); return { data: [row()], error: null }; };
+  const ready = async () => { log.push('ready'); };
+  assert.equal(await loadMyInvitesIf({ enabled: false, uid: 'u1', ready, rpc }), null);
+  assert.equal(await loadMyInvitesIf({ enabled: true, uid: null, ready, rpc }), null);
+  assert.deepEqual(log, [], '플래그 끔·로그인 전: 호출 0');
+  assert.deepEqual((await loadMyInvitesIf({ enabled: true, uid: 'u1', ready, rpc })).map((v) => v.id), ['i1']);
+  assert.deepEqual(log, ['ready', 'msgr2_my_invites']);
+  await assert.rejects(loadMyInvitesIf({ enabled: true, uid: 'u1', ready: async () => { throw new Error('v2_not_registered'); }, rpc }), /v2_not_registered/, '기기 등록 실패는 던진다(셸이 삼킨다) — 호출하지 않는다');
+  assert.equal(log.length, 2);
 });

@@ -24,3 +24,6 @@ export async function declineInvite(rpc, code) {
 
 /** 거절한 뒤 목록에서 그 초대를 바로 뺀다(서버 다시 읽기 전 — 같은 공간의 다른 초대가 있으면 다시 읽기가 채운다). */
 export const withoutInvite = (list, code) => (list ?? []).filter((v) => v.code !== code);
+
+/** 아직 받을 수 있는 초대만(만료 시각이 지난 것은 뺀다 — 서버는 다음 다시 읽기 때 뺀다). 배지·알림함·폰 줄이 쓴다. 초대함 카드는 만료도 보여 준다. */
+export const liveInvites = (list, now = Date.now()) => (list ?? []).filter((v) => inviteLeft(v.expiresAt, now).key !== 'inv.box.left.expired');

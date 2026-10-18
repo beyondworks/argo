@@ -1,7 +1,7 @@
 // 메신저 v2 초대함(v2/invite-box.mjs) — 남은 기간 문구·거절 결과·목록에서 빼기.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { inviteLeft, declineInvite, withoutInvite } from '../src/v2/invite-box.mjs';
+import { inviteLeft, declineInvite, withoutInvite, liveInvites } from '../src/v2/invite-box.mjs';
 
 const now = Date.parse('2026-10-18T03:00:00Z');
 const plus = (ms) => new Date(now + ms).toISOString();
@@ -32,4 +32,10 @@ test('거절: msgr2_invite_decline(p_code) 한 번, true면 declined, false면 g
 test('목록에서 빼기: 그 코드만 뺀다, 빈 목록·null도 된다', () => {
   assert.deepEqual(withoutInvite([{ code: 'a' }, { code: 'b' }], 'a'), [{ code: 'b' }]);
   assert.deepEqual(withoutInvite(null, 'a'), []);
+});
+
+test('받을 수 있는 초대만: 만료 시각이 지난 것은 빼고, 기한 없음·남은 것은 둔다', () => {
+  const list = [{ code: 'a', expiresAt: plus(-1) }, { code: 'b', expiresAt: plus(60_000) }, { code: 'c', expiresAt: null }];
+  assert.deepEqual(liveInvites(list, now).map((v) => v.code), ['b', 'c']);
+  assert.deepEqual(liveInvites(null, now), []);
 });
