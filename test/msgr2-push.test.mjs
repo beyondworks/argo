@@ -149,7 +149,7 @@ test('보는 중: 막 생긴 글이면 받는 사람을 계산하기 전에 글 
   assert.equal(e.calls.rpc, 1);
 });
 
-test('보는 중: 엣지 호출이 글 뒤 3초 넘어 왔으면(pg_net 대기) 더 기다리지 않는다, 지운 글·중복 호출은 기다리지 않고 끝낸다', async () => {
+test('보는 중: 엣지 호출이 글 뒤 3초 넘어 왔으면(pg_net 대기) 더 기다리지 않는다, 이미 지운 글은 기다리지 않고 끝낸다, 같은 글의 중복 호출은 기다린 뒤 장부에서 걸린다', async () => {
   const late = edge({ msg: { created_at: new Date(Date.now() - 5_000).toISOString() } });
   assert.equal((await late.send()).body.sent, 2);
   assert.deepEqual(late.calls.delays, []);
@@ -169,7 +169,7 @@ test('순서: 생성 시각만 읽고 → 기다린 뒤 → 장부를 잡고 →
   assert.deepEqual(e.calls.order.slice(0, 5), ['head', 'sleep', 'claim', 'msg', 'rpc']);
   const cut = edge({ msg: { created_at: new Date().toISOString() }, hangSleep: true });
   const pending = cut.send(); await new Promise((r) => setImmediate(r)); await new Promise((r) => setImmediate(r));
-  assert.deepEqual(cut.calls.order, ['head', 'sleep'], '자는 동안 끊김 — 장부를 잡지 않았다(다음 호출이 다시 잡을 수 있다)');
+  assert.deepEqual(cut.calls.order, ['head', 'sleep'], '자는 동안 끊김 — 장부를 잡지 않았다(장부가 비어 있다)');
   void pending;
 });
 
