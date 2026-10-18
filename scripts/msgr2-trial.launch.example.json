@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "msgr2-trial-body",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["<체험 체크아웃 절대 경로>/scripts/msgr2-trial-body.sh", "--port", "3310"],
+      "port": 3310
+    },
+    {
+      "name": "msgr2-trial-app",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["<체험 체크아웃 절대 경로>/scripts/msgr2-trial-app.sh", "--port", "5310"],
+      "port": 5310
+    }
+  ]
+}
