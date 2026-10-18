@@ -112,7 +112,7 @@ for (let i = 0; i < 20; i++) { // 사람 + 조직 에이전트
 for (let i = 0; i < 10; i++) { const o = liveOrgs[i % 5]; addChan({ org: o, kind: 'dm', name: 'group', members: pickN(o.active, Math.min(o.active.length, 3)), crewsIn: [], archived: false }); }
 friendPairs.forEach(([a, b]) => addChan({ org: null, kind: 'dm', name: 'dm', members: [a, b], crewsIn: [], pair: `${a}:${b}`, archived: false }));
 for (let i = 0; chans.length < 290 && i < 40; i++) { // 개인 에이전트 1:1
-  const cr = crews.filter((c) => !c.org)[i]; addChan({ org: null, kind: 'dm', name: 'dm', members: [cr.agent.owner], crewsIn: [cr], pair: `crew:${cr.id}`, archived: false, readOnly: true });
+  const cr = crews.filter((c) => !c.org)[i]; addChan({ org: null, kind: 'dm', name: 'dm', members: [cr.agent.owner], crewsIn: [cr], pair: `crew:${cr.id}`, archived: false, readOnly: i % 5 === 4 }); // 대부분 허용, 다섯에 하나는 읽기 전용(백필 뒤 blocked)
 }
 while (chans.length < 300) addChan({ org: orgs[5], kind: 'public', name: `지운조직${chans.length}`, members: orgs[5].members.slice(0, 2), crewsIn: [], archived: false }); // 지운 조직의 방
 sql(`insert into public.msgr_channels (id, org_id, kind, name, crew_memory, created_by, created_at, archived_at, personal_crews, excluded_user_ids, excluded_crew_ids, personal_pair) values
