@@ -21,6 +21,9 @@ select 'd:xact', xact_commit + xact_rollback, '' from pg_stat_database where dat
 SQL
 }
 
+# 문장 원문에 합성 비밀번호를 넣는 문장(set_config·seed_pw)이 있으면 파일에 쓰지 않는다(#1093 검수 4) — 넣을 때도 상수가 정규화되는 select로 넣는다
+snap_clean() { grep -viE 'seed_pw|set_config|password|passwd' || true; }
+
 diff_snaps() {
   python3 - "$1" "$2" "${3:-}" <<'PY'
 import sys
@@ -46,10 +49,10 @@ PY
 }
 
 case "$CMD" in
-  snap) . scripts/qbwr-env.sh; snap > "${2:?파일}"; echo "스냅샷 $2 ($(grep -c . "$2")줄, $(TZ=Asia/Seoul date '+%H:%M:%S KST'))" ;;
+  snap) . scripts/qbwr-env.sh; snap | snap_clean > "${2:?파일}"; echo "스냅샷 $2 ($(grep -c . "$2")줄, $(TZ=Asia/Seoul date '+%H:%M:%S KST'))" ;;
   diff) diff_snaps "${2:?앞}" "${3:?뒤}" ;;
   idle)
     . scripts/qbwr-env.sh; S=${2:-600}; A=$(mktemp); B=$(mktemp); trap 'rm -f "$A" "$B"' EXIT
-    snap > "$A"; sleep "$S"; snap > "$B"; echo "# ${S}초 유휴"; diff_snaps "$A" "$B" "$S" ;;
+    snap | snap_clean > "$A"; sleep "$S"; snap | snap_clean > "$B"; echo "# ${S}초 유휴"; diff_snaps "$A" "$B" "$S" ;;
   *) echo "모르는 명령: $CMD"; exit 2 ;;
 esac

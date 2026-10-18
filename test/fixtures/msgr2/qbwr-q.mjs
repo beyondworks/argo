@@ -1,34 +1,15 @@
 // qbwr 실전 시험 Q1·Q2·Q3·Q5 — 합성 계정으로 실 GoTrue 로그인 → 기기 등록 → Realtime 구독 판정 → 첨부 서명(볼트 2026-10-18-msgr2-u9-qbwr-plan 4절).
 // scripts/qbwr-q.sh가 부른다(접속·키는 환경 변수로만: C·QBWR_URL·QBWR_ANON_KEY·QBWR_SEED_PASSWORD, 값은 출력하지 않는다).
 // 결과는 칸마다 { 칸, 기대, 실제, 통과 } JSON 한 줄. 경로·토큰·세션 id는 남기지 않고 해시 앞 8자만 남긴다.
-import { createClient } from '@supabase/supabase-js';
-import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { userEnv } from './qbwr-lib.mjs';
 
-const REF = 'qbwrlynzvjmphwuqglsx';
-const URL = process.env.QBWR_URL || `https://${REF}.supabase.co`;
-const { C, QBWR_ANON_KEY: ANON, QBWR_SEED_PASSWORD: PW } = process.env;
-if (!URL.includes(REF) || !C?.includes(REF) || !ANON || !PW) { console.error('거부  qbwr 주소·접속·anon 키·합성 비밀번호가 필요합니다'); process.exit(5); }
+const { sql, client, email, login, loginUid, reg } = userEnv(); // 검문한 접속·qbwr anon 키가 아니면 exit 5
 const which = process.argv.slice(2);
 const h8 = (s) => createHash('sha256').update(String(s)).digest('hex').slice(0, 8);
-const sql = (q) => { const r = spawnSync('psql', [C, '-X', '-A', '-t', '-q', '-c', q], { encoding: 'utf8' }); if (r.status !== 0) throw new Error(r.stderr.trim().split('\n').pop()); return r.stdout.trim(); };
-const email = (n) => `p${String(n).padStart(3, '0')}@example.test`;
-const jwt = (t) => JSON.parse(Buffer.from(t.split('.')[1], 'base64url').toString());
 const results = [];
 const cell = (q, name, expect, actual, pass) => { const r = { q, name, expect, actual, pass: !!pass }; results.push(r); console.log(JSON.stringify(r)); };
-const client = () => createClient(URL, ANON, { auth: { persistSession: false, autoRefreshToken: false } });
-
-async function login(n) {
-  const c = client();
-  const { data, error } = await c.auth.signInWithPassword({ email: email(n), password: PW });
-  if (error) throw new Error(`로그인 실패 ${email(n)}: ${error.message}`);
-  const token = data.session.access_token;
-  c.realtime.setAuth(token);
-  return { c, uid: data.user.id, sid: jwt(token).session_id ?? null, token };
-}
-const APP = { p_kind: 'app', p_app: 'messenger', p_app_version: '0.2.0' };
 const RUNNER = { p_kind: 'runner', p_app: 'desktop', p_app_version: '0.1.113', p_link_min: 1, p_link_max: 1, p_runners: ['claude'] };
-const reg = async (s, args = APP) => { const { data, error } = await s.c.rpc('msgr2_device_register', args); return { id: data?.device_id ?? null, err: error?.message ?? null }; };
 // Realtime private 채널 구독 판정: SUBSCRIBED면 허용, CHANNEL_ERROR·TIMED_OUT이면 거부
 function listen(c, topic, { ms = 10_000, onEvent } = {}) {
   return new Promise((res) => {
@@ -108,7 +89,7 @@ async function q5() {
      where a.storage_path ${k === 'org' ? "not like 'msgr/p/%'" : "like 'msgr/p/%'"} and a.storage_path like 'msgr/%' order by a.storage_path limit 10`).split('\n').filter(Boolean);
   const sess = new Map();
   const asUser = async (uid) => {
-    if (!sess.has(uid)) { const n = Number(sql(`select substring(email from 2 for 3) from auth.users where id = '${uid}'`)); const s = await login(n); await reg(s); sess.set(uid, s); }
+    if (!sess.has(uid)) { const s = await loginUid(uid); await reg(s); sess.set(uid, s); }
     return sess.get(uid);
   };
   for (const kind of ['org', 'personal']) for (const row of rows(kind)) {
