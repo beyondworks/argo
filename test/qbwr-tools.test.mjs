@@ -26,7 +26,7 @@ test('대상 검문: 운영 ref·다른 프로젝트·운영 API 주소·파일 
     ['변수 없음', 'FOO=1\n'],
     ['파일 없음', null],
   ];
-  for (const script of [['qbwr-apply.sh', ['plan']], ['qbwr-rate.sh', ['snap', join(dir, 's')]], ['qbwr-seed.sh', ['db']]]) {
+  for (const script of [['qbwr-apply.sh', ['plan']], ['qbwr-rate.sh', ['snap', join(dir, 's')]], ['qbwr-seed.sh', ['db']], ['qbwr-q.sh', ['q1']]]) {
     for (const [name, env] of cases) {
       const r = run(script[0], script[1], env);
       assert.equal(r.status, 5, `${script[0]} ${name}: ${r.stdout}${r.stderr}`);
