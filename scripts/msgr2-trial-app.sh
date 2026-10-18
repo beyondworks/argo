@@ -9,22 +9,24 @@
 # qbwr 사전 설정: Auth Redirect URLs에 http://127.0.0.1:*/auth/paired, Google·GitHub 공급자 켜기.
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-FAKE=(); PORT=5310
+FAKE=0; PORT=5310
 while [ $# -gt 0 ]; do
   case "$1" in
-    --fake) FAKE=(--fake) ;;
+    --fake) FAKE=1 ;;
     --port) PORT="$2"; shift ;;
     *) echo "usage: $0 [--fake] [--port N]" >&2; exit 2 ;;
   esac
   shift
 done
 # 관문만 먼저(실패하면 아무것도 띄우지 않는다) — 값은 받지 않는다(화면 서버가 다시 받는다)
-GUARD_ARGS=(--checkout "$REPO"); [ ${#FAKE[@]} -gt 0 ] && GUARD_ARGS+=(--fake)
-node "$REPO/scripts/msgr2-trial-guard.mjs" "${GUARD_ARGS[@]}" > /dev/null || exit 5
+# 빈 배열을 "${A[@]}"로 펼치면 맥 기본 bash 3.2 + set -u에서 죽는다(#1099 검수) — 배열은 늘 한 칸 이상으로만 쓴다
+GUARD_ARGS=(--checkout "$REPO"); WEB_ARGS=(--port "$PORT"); if [ "$FAKE" = 1 ]; then GUARD_ARGS+=(--fake); WEB_ARGS+=(--fake); fi
+VARS="$(node "$REPO/scripts/msgr2-trial-guard.mjs" "${GUARD_ARGS[@]}")" || exit 5
+[ -n "$VARS" ] || { echo "[msgr2-trial] 멈춤: 관문이 값을 내지 않았습니다" >&2; exit 5; }
 [ -f "$REPO/apps/messenger/node_modules/.bin/tauri" ] || { echo "[msgr2-trial] apps/messenger 의존이 없습니다 — (cd apps/messenger && npm ci)" >&2; exit 3; }
 command -v cargo > /dev/null || { echo "[msgr2-trial] cargo가 없습니다(Rust) — rustup으로 설치" >&2; exit 3; }
 LOGDIR="$HOME/.argo/msgr2-trial"; mkdir -p "$LOGDIR"
-bash "$REPO/scripts/msgr2-trial-web.sh" "${FAKE[@]}" --port "$PORT" > "$LOGDIR/web.log" 2>&1 &
+bash "$REPO/scripts/msgr2-trial-web.sh" "${WEB_ARGS[@]}" > "$LOGDIR/web.log" 2>&1 &
 WEB=$!
 trap 'kill "$WEB" 2>/dev/null || true' EXIT INT TERM
 for _ in $(seq 1 60); do curl -s -o /dev/null "http://127.0.0.1:$PORT/" && break; kill -0 "$WEB" 2>/dev/null || { cat "$LOGDIR/web.log" >&2; exit 5; }; sleep 1; done

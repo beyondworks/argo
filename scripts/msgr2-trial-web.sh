@@ -18,7 +18,9 @@ while [ $# -gt 0 ]; do
 done
 GUARD_ARGS=(--checkout "$REPO"); [ "$FAKE" = 1 ] && GUARD_ARGS+=(--fake)
 VARS="$(node "$REPO/scripts/msgr2-trial-guard.mjs" "${GUARD_ARGS[@]}")" || exit 5
+[ -n "$VARS" ] || { echo "[msgr2-trial] 멈춤: 관문이 값을 내지 않았습니다" >&2; exit 5; } # 관문이 검사 없이 끝나도 띄우지 않는다
 eval "$VARS"
+[ -n "${MSGR2_TRIAL_URL:-}" ] && [ -n "${MSGR2_TRIAL_ANON_KEY:-}" ] || { echo "[msgr2-trial] 멈춤: 주소·키가 비었습니다" >&2; exit 5; }
 [ -x "$REPO/apps/messenger/node_modules/vite/bin/vite.js" ] || [ -f "$REPO/apps/messenger/node_modules/vite/bin/vite.js" ] || { echo "[msgr2-trial] apps/messenger 의존이 없습니다 — (cd apps/messenger && npm ci)" >&2; exit 3; }
 PAGE="http://127.0.0.1:$PORT/"; [ "$FAKE" = 1 ] && PAGE="http://127.0.0.1:$PORT/test/v2-shell.fixture.html?lang=ko"
 echo "[msgr2-trial] 메신저 웹: $PAGE (서버 $([ "$FAKE" = 1 ] && echo '가짜 하네스' || echo 'qbwr'), v2 켜짐)"

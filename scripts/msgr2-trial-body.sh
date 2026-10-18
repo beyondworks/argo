@@ -22,7 +22,9 @@ done
 [ "$PORT" = 3001 ] && { echo "[msgr2-trial] 멈춤: 3001은 상주 본체 포트입니다" >&2; exit 5; }
 GUARD_ARGS=(--checkout "$REPO" --root "$ROOT"); [ "$FAKE" = 1 ] && GUARD_ARGS+=(--fake)
 VARS="$(node "$REPO/scripts/msgr2-trial-guard.mjs" "${GUARD_ARGS[@]}")" || exit 5
+[ -n "$VARS" ] || { echo "[msgr2-trial] 멈춤: 관문이 값을 내지 않았습니다" >&2; exit 5; } # 관문이 검사 없이 끝나도 띄우지 않는다
 eval "$VARS"
+[ -n "${MSGR2_TRIAL_URL:-}" ] && [ -n "${MSGR2_TRIAL_ANON_KEY:-}" ] || { echo "[msgr2-trial] 멈춤: 주소·키가 비었습니다" >&2; exit 5; }
 [ -f "$REPO/node_modules/next/dist/bin/next" ] || { echo "[msgr2-trial] 의존이 없습니다 — npm ci(또는 본 저장소 node_modules 링크)" >&2; exit 3; }
 mkdir -p "$ROOT"; touch "$ROOT/.msgr2-trial"
 echo "[msgr2-trial] 본체: http://127.0.0.1:$PORT (데이터 $ROOT, 서버 $([ "$FAKE" = 1 ] && echo '가짜 하네스' || echo 'qbwr'), 메신저 v2 연결 켜짐·옛 브리지 꺼짐)"

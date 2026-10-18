@@ -5,7 +5,8 @@
 // 3) 체크아웃: 실행할 폴더(루트·apps/messenger)에 .env 파일이 없어야 한다 — Next·Vite가 그 파일을 스스로 읽어 운영 값(서비스 키 등)이 섞인다.
 // 4) 데이터 폴더(본체): 이름에 msgr2-trial이 들어간 임시 폴더만. 실제 workspaces·상주 :3001 데이터 폴더를 쓰지 않는다.
 // 키 파일: 저장소 밖 ~/.argo/msgr2-trial.env (MSGR2_TRIAL_URL=…, MSGR2_TRIAL_ANON_KEY=…). 값은 총괄이 qbwr 공개 키로 채운다.
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { join, resolve, sep } from 'node:path';
 
 export const QBWR_REF = 'qbwrlynzvjmphwuqglsx';
@@ -72,7 +73,10 @@ export function readEnvFile(path) {
 
 // CLI: node scripts/msgr2-trial-guard.mjs --checkout <폴더> [--root <폴더>] [--fake] [--env-file <파일>]
 // 통과하면 표준 출력으로 셸 변수 두 줄(MSGR2_TRIAL_URL·MSGR2_TRIAL_ANON_KEY)을 낸다 — 셸이 eval로 받는다(화면에는 찍지 않는다). 걸리면 이유를 표준 오류로, exit 5.
-if (import.meta.url === `file://${process.argv[1]}`) {
+// 직접 실행인지는 실제 경로로 견준다 — 링크(/tmp→/private/tmp, /Users/yoogeon→/Users/leankim)·공백·한글 경로에서 문자열 비교가 거짓이 되면
+// 검사 없이 exit 0으로 끝났다(#1099 검수). 판정이 틀려도 셸은 출력이 비면 멈춘다(이중 장치).
+const isMain = (() => { try { return realpathSync(process.argv[1] ?? '') === realpathSync(fileURLToPath(import.meta.url)); } catch { return false; } })();
+if (isMain) {
   const arg = (n) => { const i = process.argv.indexOf(n); return i > 0 ? process.argv[i + 1] : null; };
   const fake = process.argv.includes('--fake');
   const checkout = arg('--checkout');
