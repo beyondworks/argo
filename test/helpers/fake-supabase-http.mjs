@@ -3,6 +3,7 @@
 // 토큰 회전(/auth/v1/token)은 **한 번 쓴 refresh 토큰이 다시 오면 거절**한다 — GoTrue 재사용 감지의 엄격판(재사용 간격 0초).
 // 실제 GoTrue는 간격(10초) 밖 재사용을 세션 가족 폐기로 처리한다(devicesession.mjs 2026-09-03 실사고).
 import { createServer } from 'node:http';
+import { createHash } from 'node:crypto';
 
 export async function startFakeSupabase({ plan = 'pro', userId = 'u1', rejectUploads = false, refreshDelayMs = 0, syncIndex = null } = {}) {
   const hits = [];
@@ -25,6 +26,7 @@ export async function startFakeSupabase({ plan = 'pro', userId = 'u1', rejectUpl
       if (fault === 'reset') { req.socket.destroy(); return; }
       if (fault === 'hang') return;
       if (typeof fault === 'number') await new Promise((r) => setTimeout(r, fault));
+      else if (fault?.raw) { res.writeHead(fault.status ?? 200, { 'content-type': 'application/octet-stream' }); return res.end(fault.raw); } // { raw }면 그 바이트 그대로(CDN 옛 판 흉내)
       else if (fault) return json(fault.status, fault.body ?? { statusCode: String(fault.status), error: 'fault', message: `HTTP ${fault.status}` });
       try {
         if (path === '/auth/v1/user') return json(200, { id: userId, email: `${userId}@example.test`, aud: 'authenticated', role: 'authenticated' });
@@ -50,6 +52,14 @@ export async function startFakeSupabase({ plan = 'pro', userId = 'u1', rejectUpl
         if (path.startsWith('/rest/v1/rpc/')) return json(200, null);
         if (path.startsWith('/rest/v1/')) return json(200, []);
         if (path.startsWith('/storage/v1/object/list/')) return json(200, []);
+        // 객체 메타(info) — 운영 storage-api처럼 etag = "<내용 MD5>"(단일 업로드). 이 경로가 없으면 info 요청이 아래 GET 분기에서 'info/<키>' 객체를 찾다가
+        // 'Object not found'가 되어, 매니페스트 원본 검증(결함 B)이 "원본은 없는데 받은 바이트가 있음"으로 읽는다 — 운영과 다른 모양(2026-10-17).
+        if (req.method === 'GET' && path.startsWith('/storage/v1/object/info/')) {
+          const key = decodeURIComponent(path.slice('/storage/v1/object/info/'.length)).replace(/^(authenticated|public)\//, '');
+          if (!store.has(key)) return json(400, { statusCode: '404', error: 'not_found', message: 'Object not found' });
+          const b = store.get(key);
+          return json(200, { id: key, name: key, version: `v-${createHash('md5').update(b).digest('hex').slice(0, 8)}`, size: b.length, etag: `"${createHash('md5').update(b).digest('hex')}"`, last_modified: new Date().toISOString() });
+        }
         if (path.startsWith('/storage/v1/object/')) {
           const key = decodeURIComponent(path.slice('/storage/v1/object/'.length)).replace(/^(authenticated|public)\//, '');
           if (req.method === 'GET') {

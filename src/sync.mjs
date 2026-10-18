@@ -68,6 +68,82 @@ const uploadBackoff = new Map(); // wsId → until(ms)
 const denialStrikes = new Map(); // wsId → 연속 권한 거절 수(throw 경로) — noteUploadDenial
 const companyRetry = new Map(); // owner/ws → bounded failure cooldown; local nudge cannot bypass it
 const companyIdle = new Map();
+/* 매니페스트 판 재사용(2026-10-17 전송량 조사 — 소유자 737d57의 회사 매니페스트 1.73MB를 6시간에 445번 GET, 미적중 Storage 전송량의 약 70%).
+   로컬이 바뀐 주기는 매니페스트를 시작 읽기 + 쓰기 직전 재읽기로 두 번 받는다 — 이 기기가 마지막으로 쓴 판이 그대로여도. 이 기기가 마지막으로 받거나 올린
+   바이트를 회사마다 하나 보관하고, info()의 etag가 보관 바이트의 MD5와 같을 때만 받지 않고 보관 바이트를 쓴다. 판(version)이 아니라 **내용 해시**로 비교한다:
+   쓴 직후 판을 기록하면 그 사이 다른 기기가 덮었을 때 남의 판에 내 내용을 묶지만, MD5가 같다는 것은 보관 바이트가 지금 원격 바이트 그대로라는 뜻이라
+   경합·같은 크기 덮어쓰기·CDN 옛 판(#832 — info는 늘 원본) 어디서도 틀린 내용을 쓰지 않는다. Storage의 etag는 단일 업로드 객체의 내용 MD5다(로컬 storage-api
+   1.41.8 실측, 운영 매니페스트 699개 모두 "32자리 16진수" 꼴). 그 꼴이 아니거나(여러 조각 업로드) 확인 못 하면 종전처럼 받는다.
+   옵트인(ARGO_SYNC_MANIFEST_REUSE=1) — 꺼져 있으면 보관도 하지 않아 요청이 배포본과 같다. 기본값 승격은 상주 실측 뒤. 경우 표: artifacts/manifest-reuse/case-table.md */
+const manifestKeep = (globalThis.__argoManifestKeep ??= new Map()); // 매니페스트 키 → { buf, md5 } — 프로세스 메모리(재시작하면 첫 주기에 한 번 받는다)
+const manifestReuseOn = () => process.env.ARGO_SYNC_MANIFEST_REUSE === '1';
+const etagMd5 = (etag) => { const m = String(etag ?? '').replace(/"/g, '').trim().toLowerCase(); return /^[0-9a-f]{32}$/.test(m) ? m : null; };
+function keepManifest(key, buf) { if (manifestReuseOn() && buf?.length) manifestKeep.set(key, { buf, md5: createHash('md5').update(buf).digest('hex') }); }
+/** 보관 바이트가 지금 원격 바이트 그대로인가 — etag(info, 원본)가 보관 바이트의 MD5와 같을 때만 그 바이트. 아니면 null(받는다). */
+/** 재사용 판정에 쓰는 info 경로 — cacheNonce 쿼리를 붙인다(검수 2 M17: info가 CDN에 캐시되면 옛 판의 etag가 보관본 MD5와 같아 보여 시작 읽기·재읽기가
+    함께 뚫리고 다른 기기 변경을 덮는다). **운영에서 캐시 우회를 보장하지 않는다** — 운영 CDN은 cacheNonce가 붙은 매니페스트 다운로드도 59%를 캐시로 응답했다
+    (검수 2 재검수, 24시간 HIT 1,745·MISS 1,212). 이 쿼리는 덜어 주는 장치일 뿐이고, **안전 근거는 운영 info 응답이 늘 원본 확인(EXPIRED, HIT 0)이라는 관찰**이다
+    — 기본값 승격 조건으로 다시 확인한다. storage-js info()는 경로를 그대로 URL에 붙이고 storage-api는 쿼리를 무시해 같은 객체를 돌려준다(로컬 1.41.8 실측).
+    꺼져 있으면 배포본과 같은 경로. */
+const manifestInfoPath = (key) => (manifestReuseOn() ? `${key}?cacheNonce=${randomUUID()}` : key);
+/* 매니페스트 원본 검증(결함 B, 2026-10-17): 시작 읽기·쓰기 직전 재읽기는 fresh()(cacheNonce GET)로 원본을 읽는다고 전제했지만(#832), 운영 CDN은 cacheNonce가 붙어도
+   매니페스트 GET의 59%를 캐시로 응답했다(10/16~17 24시간 HIT 1,654·MISS 1,140, 업로드 뒤 13.5·15.7초에 옛 판). 옛 목록으로 diff·병합하면 다른 기기가 막 더한 항목을
+   덮어 잃는다(그 기기는 다음 주기에 '원격 삭제'로 읽어 로컬 파일을 지울 수 있다). 같은 기간 info는 HIT 0(EXPIRED 11,952 — 늘 원본 확인)이라, 받은 바이트의 MD5를
+   같은 사이클 info의 etag(단일 업로드 객체의 내용 MD5)와 비교한다. 다르면 info를 다시 보고 한 번 더 받는다(info와 GET 사이 다른 기기 쓰기 — 정상 경합). 그래도 다르면
+   그 바이트를 쓰지 않고 이번 사이클을 가볍게 보류한다(manifestStale — 실패 대기를 늘리지 않는다: 옛 판은 13~16초라 다음 주기에 맞춰진다).
+   판정할 수 없으면(info 오류·MD5 꼴 아닌 etag·info 없음) 종전대로 받은 바이트를 쓴다. ARGO_SYNC_MANIFEST_VERIFY=0이면 배포본 경로. 경우 표: artifacts/manifest-verify/case-table.md */
+const manifestVerifyOn = () => process.env.ARGO_SYNC_MANIFEST_VERIFY !== '0';
+/** info 결과 → { exists, md5 } | { exists: false } | { undecided: true } */
+function manifestMetaOf(data, error) {
+  if (error) return isNotFound(error) ? { exists: false } : { undecided: true };
+  const m = etagMd5(data?.etag);
+  return m ? { exists: true, md5: m } : { undecided: true };
+}
+const manifestStale = (why) => Object.assign(new Error(`매니페스트 원본 확인 실패(CDN 옛 판 의심) — 이번 사이클 보류: ${why}`), { manifestStale: true });
+/* 보류 상한(엄격 검수 M2 총괄, 2026-10-17 지적 1): 보류가 이어지면(etag가 내용 MD5가 아닌 저장소·CDN 옛 판이 안 걷힘) 사이클마다 info 2·GET 2를 끝없이 부르고
+   (8초 주기면 기기·회사당 분당 GET 15건) 화면에도 안 보였다(lastError가 비워져 "마지막 동기화 · ↑0 ↓0"). 같은 회사에서 MANIFEST_STALE_STRIKES번 연속 보류되면
+   (8초 주기로 약 24초 — 관측된 옛 판 지속 13~16초보다 길다) 실패 대기(deferFailure — 30초부터 두 배)를 걸고 회사 오류에 원인 코드 manifest-stale을 남긴다.
+   대기 간격 상한은 MANIFEST_STALE_MAX_WAIT_MS(5분). 안전판: 대기가 끝나도 계속 보류되면 **검증 없이 진행하지 않는다** — 옛 판으로 diff·병합하면 다른 기기 항목을
+   덮어 잃는다(데이터 손실 방향). 보류 + 화면 표시 + 최대 5분 간격 재확인으로 둔다. 검증 자체가 틀린 저장소(셀프호스트 등)는 ARGO_SYNC_MANIFEST_VERIFY=0이 배포본 경로다.
+   보류 횟수는 검증된 매니페스트를 한 번 읽으면(syncCompanyOnce가 결과를 돌려주면) 0으로 돌아간다. */
+const MANIFEST_STALE_STRIKES = 3;
+const MANIFEST_CACHE_CONTROL = '0'; // 매니페스트 업로드의 cacheControl(초) — 아래 upload(manifestKey) 주석
+const MANIFEST_STALE_MAX_WAIT_MS = 300_000;
+const manifestStaleStrikes = new Map(); // owner/ws(companyRetry와 같은 키) → 연속 보류 횟수
+/* 보류된 첫 복원(엄격 검수 지적 2): 새 기기 첫 복원은 매니페스트 읽기에서 보류되면 회사 폴더가 아직 없어(mkdir은 읽기 뒤) 다음 사이클의 로컬 수집에 안 잡히고,
+   발견은 DISCOVER_MS(300초)마다라 그때까지 빠졌다(restoring 표시도 꺼져 홈이 최대 5분 빈 목록). 보류된 복원 회사를 여기 남겨 다음 사이클에도 복원 대상으로 둔다.
+   wsId → { owner, keyOwner } — 계정(keyOwner)이 바뀌면 버린다. 보류·보류 뒤 실패 대기가 아닌 결과(받음·예외)가 나면 지운다(예외는 배포본과 같이 다음 발견을 기다린다). */
+const restorePending = new Map();
+/** 회사 화면 오류 원문 — 원인 코드(manifest-stale)를 앞에 둔다. 화면 문구는 sync-error.mjs가 일반 오류(자동 재시도)로 바꾸고 원문은 title에 남는다. */
+const manifestStaleMessage = (wsId, r) => `${wsId}: manifest-stale — 매니페스트 원본 확인 ${r.staleStrikes}회 연속 실패(CDN 옛 판 의심) — 덮어쓰지 않고 보류, ${Math.max(1, Math.round(((r.retryAt ?? Date.now()) - Date.now()) / 1000))}초 뒤 다시 확인`;
+/** 매니페스트를 받고 info etag로 원본인지 확인한다. meta = 같은 사이클에 이미 본 info(없으면 지금 본다). 반환 { bytes } | { error }(종전 download 오류 그대로). 옛 판이면 manifestStale을 던진다. */
+async function readManifestVerified(key, meta = null) {
+  const bucket = client().storage.from(BUCKET);
+  const getOnce = async () => {
+    const { data, error } = await bucket.download(key, fresh());
+    if (error) return { error };
+    return { bytes: Buffer.from(await data.arrayBuffer()) };
+  };
+  if (!manifestVerifyOn() || typeof bucket.info !== 'function') return getOnce();
+  const infoOnce = async () => { try { const { data, error } = await bucket.info(manifestInfoPath(key)); return manifestMetaOf(data, error); } catch { return { undecided: true }; } };
+  let m = meta ?? await infoOnce();
+  for (let attempt = 0; ; attempt++) {
+    const got = await getOnce();
+    if (m.undecided) return got;
+    const missing = !!got.error && isNotFound(got.error);
+    if (got.error && !missing) return got; // 만료 토큰·5xx 등 — 종전 판정(보류)에 맡긴다
+    const ok = m.exists ? !!got.bytes && createHash('md5').update(got.bytes).digest('hex') === m.md5 : missing;
+    if (ok) return got;
+    if (attempt >= 1) throw manifestStale(m.exists ? (missing ? '원본은 있는데 받은 것은 없음' : '받은 바이트가 원본 MD5와 다름') : '원본은 없는데 받은 바이트가 있음');
+    m = await infoOnce(); // 정상 경합(그 사이 다른 기기가 씀)이면 새 판의 etag와 맞는다
+    if (m.undecided) return getOnce();
+  }
+}
+function keptManifest(key, etag) {
+  if (!manifestReuseOn()) return null;
+  const want = etagMd5(etag); const k = manifestKeep.get(key);
+  return want && k && k.md5 === want ? k.buf : null;
+}
 const IDLE_PROBE_MS = 60_000;
 // 객체 없는 매니페스트 항목은 이만큼 다시 받으러 가지 않는다 — 활성 회사는 8초마다 전체 동기화라 매번 같은 404를 부른다.
 // [규모] 빈 항목 1개당 기기·회사마다 시간당 GET 최대 1회(응답 88바이트). 이전에는 같은 GET이 실패로 세져 재시도(최대 10분)마다
@@ -319,7 +395,7 @@ function resetDiscoverClock() { globalThis.__argoLastDiscover = 0; }
 const client = () => sb; // ensureClient() 성공 뒤에만 호출된다 (cycle/ensureSync 게이트)
 // 테스트 전용 — fake storage를 주입해 syncCompany를 실 Supabase 없이 실행 검증한다.
 // 프로덕션 경로는 절대 호출하지 않는다(ensureClient가 실 클라이언트를 세팅). (export: 통합 테스트용)
-export function _setSyncClientForTest(fake) { sb = fake; sbKey = '__test__'; companyRetry.clear(); companyIdle.clear(); missingSeen.clear(); noticeLog.clear(); slowLinks.clear(); }
+export function _setSyncClientForTest(fake) { sb = fake; sbKey = '__test__'; companyRetry.clear(); companyIdle.clear(); manifestStaleStrikes.clear(); restorePending.clear(); missingSeen.clear(); noticeLog.clear(); slowLinks.clear(); }
 
 // Supabase Storage는 인증 다운로드도 CDN(Cloudflare)에 캐시하고, 같은 키를 덮어쓴 직후에도 한동안 옛 사본(cf HIT)을 준다.
 // 라이브 실측(2026-09-26 03:05Z): 매니페스트를 올리고 10초 뒤 GET이 HIT로 이전 판을 받아 방금 지운 항목을 되살렸고(그 회사는 그 뒤
@@ -1132,9 +1208,9 @@ async function download(key, signal) {
   return Buffer.from(await data.arrayBuffer());
 }
 
-async function upload(key, buf) {
+async function upload(key, buf, extra = null) {
   const { error } = await client().storage.from(BUCKET).upload(
-    key, new Blob([buf]), { upsert: true, contentType: 'application/octet-stream' },
+    key, new Blob([buf]), { upsert: true, contentType: 'application/octet-stream', ...extra },
   );
   if (error) {
     // **쓰기 시도에서 났다**는 사실만 태그한다(원인 문구는 보지 않는다). 두 가지를 동시에 만족하려는 표시다:
@@ -1193,10 +1269,10 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
   const key = `${client().storage.url ?? 'test'}/${owner}/${wsId}`;
   const prior = companyRetry.get(key);
   if (prior && Date.now() < prior.until) return { skipped: 'retry-backoff', retryAt: prior.until, ...(prior.lastFailures ? { failures: prior.lastFailures } : {}), ...prior.excluded }; // 크기 초과 표시는 대기 중에도 유지(검수 #938 LOW-3)
-  const deferFailure = (lastFailures, excluded) => {
+  const deferFailure = (lastFailures, excluded, maxWaitMs = 600_000) => {
     companyIdle.delete(key);
     const failures = Math.min((prior?.failures ?? 0) + 1, 6);
-    companyRetry.set(key, { failures, until: Date.now() + Math.min(600_000, 30_000 * 2 ** (failures - 1)), lastFailures, excluded });
+    companyRetry.set(key, { failures, until: Date.now() + Math.min(maxWaitMs, 30_000 * 2 ** (failures - 1)), lastFailures, excluded });
   };
   const fingerprint = async () => {
     const failed = new Set();
@@ -1212,19 +1288,24 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
   }
   try {
     let revision = null;
+    let manifestEtag = null; // 매니페스트 판 재사용 — 위 info의 etag(내용 MD5)를 사이클에 넘긴다(manifestKeep 주석)
+    let manifestMeta = null; // 매니페스트 원본 검증 — 같은 info 결과(readManifestVerified)
     const bucket = client().storage.from(BUCKET);
     if (canIdle && typeof bucket.info === 'function') {
       // Capture revision BEFORE the GET: a concurrent writer can only cause an extra
       // fetch next time, never bless old content with a newer revision.
-      const { data, error } = await bucket.info(skey(owner, wsId, '__manifest__.json'));
+      const { data, error } = await bucket.info(manifestInfoPath(skey(owner, wsId, '__manifest__.json')));
       if (error && ![404, 400, 501].includes(Number(error.status ?? error.statusCode))) throw new Error(`매니페스트 메타데이터 읽기 실패: ${String(error.message).slice(0, 80)}`);
       if (data?.version || data?.etag) revision = JSON.stringify([data.version, data.etag, data.lastModified, data.size]);
+      manifestEtag = data?.etag ?? null;
+      manifestMeta = manifestMetaOf(data, error);
       if (revision && idle?.revision === revision && beforeFingerprint === idle.fingerprint) {
         companyIdle.set(key, { ...idle, at: Date.now() });
         return { skipped: 'idle-probe', pulled: 0, pushed: 0, deletedL: 0, deletedR: 0, failed: 0, ...idle.excluded };
       }
     }
-    const result = await syncCompanyOnce(wsId, owner, isRestore, opts);
+    const result = await syncCompanyOnce(wsId, owner, isRestore, { ...opts, manifestEtag, manifestMeta });
+    manifestStaleStrikes.delete(key); // 검증된 매니페스트로 사이클을 마쳤다 — 연속 보류가 끊겼다
     // 실패 파일·빈 항목은 이름까지 로그에 남긴다(~/Library/Logs/argo.err.log) — 목록이 바뀔 때만 한 줄
     noteOnce(`${key}:fail`, result.failed ? `[argo] 동기화(${wsId}): 파일 ${result.failed}건 실패 — ${(result.failures ?? []).map((f) => `${f.rel}: ${f.reason}`).join(' | ')}` : '');
     noteOnce(`${key}:missing`, result.missing ? `[argo] 동기화(${wsId}): 매니페스트에만 있고 객체가 없는 항목 ${result.missing}개 — 건너뜀(항목 보존): ${result.missingRels.join(', ')}${result.needsRecovery ? ` · 복구 필요 ${result.needsRecovery}개(하루 한 번만 다시 확인 — 그 파일을 가진 기기에서 다시 저장하면 복구): ${result.needsRecoveryRels.join(', ')}` : ''}` : '');
@@ -1238,6 +1319,16 @@ export async function syncCompany(wsId, owner, isRestore = false, opts = {}) {
     } else companyIdle.delete(key);
     return result;
   } catch (e) {
+    if (e?.manifestStale) { // 결함 B — 옛 판을 쓰지 않고 이번 사이클만 보류. 처음 두 번은 실패 대기 없이 다음 주기(옛 판은 13~16초), 세 번째부터 실패 대기(위 MANIFEST_STALE_STRIKES)
+      companyIdle.delete(key);
+      const staleStrikes = (manifestStaleStrikes.get(key) ?? 0) + 1;
+      manifestStaleStrikes.set(key, staleStrikes);
+      noteOnce(`${key}:stale`, `[argo] 동기화(${wsId}): ${e.message}${staleStrikes >= MANIFEST_STALE_STRIKES ? ` — ${MANIFEST_STALE_STRIKES}번 이상 연속, 실패 대기(최대 ${MANIFEST_STALE_MAX_WAIT_MS / 60_000}분)` : ''}`);
+      const held = { skipped: 'manifest-stale', staleStrikes, pulled: 0, pushed: 0, deletedL: 0, deletedR: 0, failed: 0 };
+      if (staleStrikes < MANIFEST_STALE_STRIKES) return held;
+      deferFailure(undefined, undefined, MANIFEST_STALE_MAX_WAIT_MS);
+      return { ...held, retryAt: companyRetry.get(key).until };
+    }
     // 30s → 60s → ... → 10min per company/device; nudge does not reset the cooldown.
     deferFailure();
     throw e;
@@ -1255,8 +1346,11 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
   let remote = { files: {} };
   let manifestExists = false;
   let manifestNeedsSeal = false;
+  let startBytes = null; // 사이클 시작 때 원격 매니페스트 바이트 — 쓰기 직전 재읽기가 판이 그대로인지 info로만 확인할 때 쓴다(manifestKeep 주석)
   {
-    const { data, error } = await client().storage.from(BUCKET).download(manifestKey, fresh());
+    const kept = keptManifest(manifestKey, opts.manifestEtag); // 이 기기가 마지막으로 받거나 올린 바이트 = 지금 원격 바이트면 받지 않는다
+    const got = kept ? { bytes: kept } : await readManifestVerified(manifestKey, opts.manifestMeta); // 받은 것은 info etag로 원본인지 확인(결함 B)
+    const { data, error } = got.error ? { data: null, error: got.error } : { data: { arrayBuffer: async () => got.bytes }, error: null };
     if (error) {
       const msg = String(error.message || error);
       if (!isNotFound(error)) throw new Error(`매니페스트 읽기 실패 — 삭제 보류(다음 사이클 재시도): ${msg.slice(0, 80)}`);
@@ -1265,7 +1359,9 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
       manifestExists = true;
       // 관용 개봉 — 매니페스트가 봉투일 수도(다른 기기가 스위치 on), 평문일 수도 있다. 둘 다 수용.
       try {
-        const bytes = Buffer.from(await data.arrayBuffer());
+        const bytes = kept ?? Buffer.from(await data.arrayBuffer());
+        startBytes = bytes;
+        if (!kept) keepManifest(manifestKey, bytes);
         const target = dek() ? 'argosecret.v3:' : cryptoOn() ? 'argosecret.v2:' : null;
         manifestNeedsSeal = !!target && !bytes.subarray(0, target.length).equals(Buffer.from(target));
         remote = JSON.parse(openSecretCompat(bytes).toString());
@@ -1737,9 +1833,25 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
     // 같은 세대를 만나 정식 잠김(보류) 경로로 수렴한다.
     let freshBuf = null;
     try {
-      const { data } = await client().storage.from(BUCKET).download(manifestKey, fresh());
-      if (data) freshBuf = Buffer.from(await data.arrayBuffer());
-    } catch { /* 재읽기 네트워크 실패 — 병합 없이 진행(남는 경합은 blob 검사가 방어, 다음 사이클 self-heal) */ }
+      // 판 재사용(manifestKeep 주석): 시작 때 내용 그대로면(info의 etag = 시작 바이트 MD5) 다시 받지 않는다 — 받았어도 같은 바이트였다.
+      // info가 없거나 오류이거나 다르면 종전처럼 받는다.
+      const bucket = client().storage.from(BUCKET);
+      let same = false;
+      let meta = null; // 이 info를 원본 검증에도 쓴다(결함 B — 요청을 더하지 않게)
+      if (manifestReuseOn() && startBytes && typeof bucket.info === 'function') {
+        const { data: inf, error: infErr } = await bucket.info(manifestInfoPath(manifestKey));
+        same = !infErr && etagMd5(inf?.etag) === createHash('md5').update(startBytes).digest('hex');
+        meta = manifestMetaOf(inf, infErr);
+      }
+      if (same) freshBuf = startBytes;
+      else {
+        const got = await readManifestVerified(manifestKey, meta); // 재읽기도 info etag로 원본 확인 — 옛 판으로 병합하면 사이클 도중 다른 기기가 더한 항목을 덮는다
+        if (got.bytes) { freshBuf = got.bytes; keepManifest(manifestKey, freshBuf); }
+      }
+    } catch (e) {
+      if (e?.manifestStale) throw e; // 옛 판 — 쓰지 않고 이번 사이클 보류(아래로 내려가 매니페스트를 덮으면 안 된다)
+      /* 재읽기 네트워크 실패 — 병합 없이 진행(남는 경합은 blob 검사가 방어, 다음 사이클 self-heal) */
+    }
     if (freshBuf) {
       let fresh = null;
       try { fresh = JSON.parse(openSecretCompat(freshBuf).toString()); }
@@ -1783,7 +1895,11 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
     // JSON 파싱 실패로 같은 보류에 떨어진다 — 켜기 전 전 기기 업데이트 안내는 라우트·UI가 담당.
     // 매니페스트(메타데이터)는 계정 키만 있으면 옵트아웃(ARGO_ENC_VAULT=0) 기기도 v2로 쓴다 — 평문으로 되돌리면 ≤v0.1.23 클라이언트가
     // "평문 매니페스트 + v2 파일" 혼합을 만나 v2 노트를 암호문 그대로 로컬에 기록한다(#436 검수 MEDIUM-4 실코드 재현). v2 매니페스트면 그 버전은 파싱 실패로 보류(fail-closed).
-    await upload(manifestKey, dek() ? sealSecretV3(manifestBuf) : cryptoOn() ? sealSecret(manifestBuf) : manifestBuf);
+    const manifestOut = dek() ? sealSecretV3(manifestBuf) : cryptoOn() ? sealSecret(manifestBuf) : manifestBuf;
+    // 매니페스트만 cacheControl 0(엄격 검수 지적 1-③): storage-js 기본은 3600초라, CDN 무효화가 어긋나면 옛 판이 최대 1시간 남을 수 있다(추론 — 운영은
+    // cacheNonce가 붙은 GET도 59%를 캐시로 답했다). 0이면 CDN이 매번 원본에 확인한다(info처럼 EXPIRED). 파일 업로드는 내용이 키마다 고정이라 그대로 둔다.
+    await upload(manifestKey, manifestOut, { cacheControl: MANIFEST_CACHE_CONTROL });
+    if (!opts.freePlan) keepManifest(manifestKey, manifestOut); // 올린 바이트 = 이제 원격 바이트(성공 응답 뒤에만 — 실패면 upload가 던진다)
   } catch (e) {
     // free 복원의 완결 처리(재검수 HIGH-E) — pull은 전부 끝났는데 매니페스트 업로드만 RLS에 거부되면,
     // 여기서 throw할 경우 state가 영영 안 써져 복원이 영구 restoring이 된다(지운 노트가 8초마다 부활,
@@ -2226,7 +2342,13 @@ function startLeaseLoop() {
 /** 한 사이클 — 진행 중 여부(cycling)와 원격에서 처음 발견한 회사 복원 중 여부(restoring)를 화면용 상태에 남긴다(firstSyncPending). */
 async function cycle() {
   status.cycling = true;
-  try { return await cycleOnce(); } finally { status.cycling = false; status.restoring = false; }
+  let reached = false;
+  try { reached = await cycleOnce(); } finally {
+    status.cycling = false;
+    // 매니페스트 보류로 첫 복원이 남아 있으면(restorePending) 사이클 사이에도 restoring을 유지한다 — 홈이 빈 목록 대신 "내려받는 중"을 보인다.
+    // 사이클이 회사 루프를 마쳤을 때만(자격 없음·다른 프로세스·요금제 차단·예외로 일찍 끝나면 종전처럼 끈다 — 끝나지 않는 "내려받는 중" 방지)
+    status.restoring = reached === true && restorePending.size > 0;
+  }
 }
 
 async function cycleOnce() {
@@ -2333,11 +2455,16 @@ async function cycleOnce() {
   // 원격에만 있는 내 회사 발견 → 로컬 복제 대상에 추가 (새 기기가 자기 회사 복원). 남의 테넌트는 안 봄.
   // restoreSet: 로컬에 회사(company.json)가 없어 원격에서 처음 발견된 것 — 신규 복원 가드의 신호.
   const restoreSet = new Set();
+  // 지난 사이클에 매니페스트 읽기가 보류된 첫 복원(restorePending 주석) — 발견 주기를 기다리지 않고 이번 사이클에도 복원 대상이다
+  for (const [wsId, p] of restorePending) {
+    if (p.keyOwner !== keyOwner || tombs.has(wsId) || targets.has(wsId)) { restorePending.delete(wsId); continue; } // 계정이 바뀜·보관됨·이제 로컬에 있음
+    targets.set(wsId, p.owner); restoreSet.add(wsId);
+  }
   for (const { owner, wsId } of discoverDue ? await discoverRemote(localOwners, syncIndex) : []) {
     if (tombs.has(wsId)) continue; // 보관된 회사 — 클라우드 사본이 남아 있어도 복원하지 않는다
     if (!targets.has(wsId)) { targets.set(wsId, owner); restoreSet.add(wsId); }
   }
-  status.restoring = restoreSet.size > 0; // 새 기기가 내 회사를 처음 내려받는 중 — 홈이 빈 목록 대신 "내려받는 중"을 보인다(사이클 끝에 cycle()이 지운다)
+  status.restoring = restoreSet.size > 0; // 새 기기가 내 회사를 처음 내려받는 중 — 홈이 빈 목록 대신 "내려받는 중"을 보인다(사이클 끝에 cycle()이 지운다 — 보류된 복원이 남으면 유지)
   const owners = [...new Set(targets.values())];
   // ARGO_SYNC_OWNER/페어링/세션 어디에도 오너가 없던 서비스 셀프호스트 — 로컬 회사에서 찾은 오너로 한 번 더 시도
   if (!keyOwner && owners[0]) await ensureAccountKey(client(), owners[0]);
@@ -2368,6 +2495,10 @@ async function cycleOnce() {
       const reseal = !!resealSet[wsId];
       const r = await syncCompany(wsId, owner, restoring, { freePlan, noSecrets: noSecretsWs.has(wsId), reseal });
       if (r.skipped !== 'retry-backoff') denialStrikes.delete(wsId); // 결과를 돌려줬다 = throw 거절 연속이 끊김(재시도 대기 중 건너뜀은 새 정보가 아니다)
+      if (restoreSet.has(wsId)) { // 첫 복원이 매니페스트 보류(또는 보류가 건 실패 대기)로 끝났으면 다음 사이클에도 복원 대상 — 아니면 지운다
+        if (r.skipped === 'manifest-stale' || (r.skipped === 'retry-backoff' && restorePending.has(wsId))) restorePending.set(wsId, { owner, keyOwner });
+        else restorePending.delete(wsId);
+      }
       if (r.skipped === 'retry-backoff') { // 대기 중에도 이 회사 오류(회사 화면용, syncStatusFor)는 유지한다
         const error = status.companies[wsId]?.error;
         status.companies[wsId] = { ts: Date.now(), ...r, ...(error ? { error } : {}) }; companyFailed++; continue;
@@ -2383,6 +2514,8 @@ async function cycleOnce() {
       // 다음 사이클이 회사째 재시도한다(무변경 재푸시 비용 < 영구 평문 잔존).
       if (reseal && (r.failed ?? 0) === 0) await clearReseal(wsId).catch(() => {});
       status.companies[wsId] = { ts: Date.now(), ...r };
+      // 매니페스트 보류가 MANIFEST_STALE_STRIKES번 이어져 실패 대기에 들어갔다 — 화면에 원인 코드를 남긴다(대기 중에는 위 retry-backoff 분기가 이 오류를 유지한다)
+      if (r.skipped === 'manifest-stale' && r.staleStrikes >= MANIFEST_STALE_STRIKES) { setCompanyError(wsId, manifestStaleMessage(wsId, r)); companyFailed++; }
       // 회사 오류는 lastError(기기 전체 하나 — 여러 회사가 실패하면 마지막 것만 남는다)와 회사 결과(error) 양쪽에 둔다 — 회사 화면은 자기 것을 본다(분리 검수 2차 MEDIUM-1)
       if (r.failed > 0) { setCompanyError(wsId, syncFailedMessage(wsId, r)); companyFailed++; }
       // 키 미확보 보류는 "성공"이 아니다 — 무증상이면 셀프호스트의 account_keys 미적용 같은 영구 무동작이 정상으로 보인다(#436 검수 HIGH-2)
@@ -2392,6 +2525,7 @@ async function cycleOnce() {
       if (!freePlan && e?.uploadFailed) invalidatePlanCache();
       // 거절로 throw한 회사도 10분 쉰다 — 결과를 돌려준 경우(위)만 보류하던 빈틈으로 옛 클라이언트가 매 사이클 파일 전체를 다시 올렸다(v0.1.84 재현, 운영 co-0nly)
       if (noteUploadDenial(denialStrikes, wsId, e, freePlan)) { uploadBackoff.set(wsId, Date.now() + UPLOAD_BACKOFF_MS); console.warn(`[argo] 동기화(${wsId}): 쓰기 거절(${e.status}) ${DENIAL_STRIKES}회 연속 — ${UPLOAD_BACKOFF_MS / 60_000}분 보류`); }
+      restorePending.delete(wsId); // 예외는 배포본과 같이 — 보류된 복원으로 남기지 않는다(다음 발견을 기다린다)
       // 이번 시도의 결과가 없으니 새 항목으로 — 이전 주기의 failures·↑↓를 이어받으면 지금 오류와 무관한 옛 파일 이름이 같이 보인다(3차 LOW-1)
       status.companies[wsId] = { ts: Date.now() };
       setCompanyError(wsId, `${wsId}: ${String(e.message).slice(0, 120)}`); // 첫 주기에 throw해도 회사로 등록된다(2차 LOW-1)
@@ -2404,6 +2538,7 @@ async function cycleOnce() {
     status.lastError = '';
   }
   status.lastTs = Date.now();
+  return true; // 회사 루프까지 마쳤다(cycle()의 restoring 유지 판정)
 }
 
 /** 즉시 동기화 요청 — 로컬 변경(메시지 전송 등) 직후 호출하면 다음 대기를 건너뛰고 바로 push/pull.
