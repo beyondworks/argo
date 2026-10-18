@@ -13,7 +13,7 @@
 // host = {
 //   canAccept(offer) → boolean                             // 이 기기에 러너가 있어 받을 수 있나(받을 수 없으면 accept하지 않는다)
 //   runTurn(offer, ctx) → Promise<{ text, files?, handoffs?, usage? }>
-//   onEvent?(name, detail)                                 // 로그·화면용(update_required·device_invalid·paused·lease_lost 등)
+//   onEvent?(name, detail)                                 // 로그·화면용(update_required·device_invalid·paused·resumed·lease_lost 등)
 // }
 // ctx(runTurn에 넘기는 것) = { signal, tier, progress(stage, note), requestApproval(req), effect(key, kind, fn), upload(name, bytes, mime) }
 //
@@ -100,6 +100,15 @@ export function createLink({ transport, host, uid, device, agentIds = null, cloc
     return false;
   }
 
+  // 중단이 풀렸다는 신호(따라잡기 성공·서버의 새 offer)를 받으면 다시 일을 받는다 — 풀지 않으면 스위치를 한 번 켰다 끈 본체는 재시작 전까지 offer를 버렸다(#1074 결함 2).
+  // 서버는 중단 중 사람 글을 거부해 새 offer를 만들지 않는다. 늦게 온 옛 offer라면 accept가 다시 service_paused를 받아 도로 멈춘다(요청 1번).
+  function resume(via) {
+    if (!paused) return false;
+    paused = false;
+    ev('resumed', { via });
+    return true;
+  }
+
   function onEnvelope(env, { catchUp = false } = {}) {
     if (stopped || !env || typeof env !== 'object') return;
     if (env.id && seen.has(env.id)) return;
@@ -111,9 +120,15 @@ export function createLink({ transport, host, uid, device, agentIds = null, cloc
       return;
     }
     if (env.device && env.device !== device) return; // 다른 기기에 간 봉투
-    if (agentIds && !agentIds.has(env.agent)) return; // 이 본체에 없는 에이전트
+    // 이 본체에 없는 에이전트 — 받은 봉투 목록에서 뺀다: 대응표를 아직 못 받은 본체(중단 중 부팅)가 나중에 따라잡기로 다시 받을 수 있게
+    if (agentIds && !agentIds.has(env.agent)) { if (env.id) seen.delete(env.id); return; }
     const w = works.get(env.work);
-    if (env.type === 'work.offer') return w ? undefined : startWork(env);
+    if (env.type === 'work.offer') {
+      if (w) return;
+      // 중단 중에 받은 방송 offer는 스위치가 꺼졌다는 뜻이다. 중단 동안 받지 못한 offer도 따라잡기로 한 번 가져온다.
+      if (!catchUp && resume('offer')) catchUpPending();
+      return startWork(env);
+    }
     if (!w) { if (catchUp) ev('ignored_foreign', { type: env.type, work: env.work }); return; } // 재시작 전의 일·다른 프로세스의 일
     if (env.type === 'work.cancel') return cancelWork(w, env.data.reason);
     if (env.type === 'work.approval_decision') {
@@ -142,7 +157,12 @@ export function createLink({ transport, host, uid, device, agentIds = null, cloc
     works.set(offer.work, w);
     let acc;
     try { acc = await send(envelope(w, 'work.accept', {})); }
-    catch (e) { works.delete(offer.work); ev('accept_failed', { work: offer.work, code: e.code }); return; }
+    catch (e) {
+      works.delete(offer.work);
+      if (e.code === 'service_paused') seen.delete(offer.id); // 중단이 풀린 뒤 따라잡기로 다시 받을 수 있게(받은 봉투 목록에 남기면 이 프로세스는 그 offer를 영영 건너뛴다)
+      ev('accept_failed', { work: offer.work, code: e.code });
+      return;
+    }
     w.leaseGen = Number.isInteger(acc?.lease_gen) ? acc.lease_gen : null;
     // accept 답에는 원글의 지금 첨부가 실린다(사람 글의 첨부는 글을 넣은 뒤에 붙어 offer에 없을 수 있다 — #1076). 있으면 그것을 쓴다.
     if (Array.isArray(acc?.attachments)) w.offer = { ...offer, data: { ...offer.data, attachments: acc.attachments.slice(0, 20) } };
@@ -254,11 +274,15 @@ export function createLink({ transport, host, uid, device, agentIds = null, cloc
     }
   }
 
+  const catchUpPending = () => { catchUp().catch(() => {}); };
+
   async function catchUp() {
     let r;
     try { r = readReply(await transport.rpc('msgr2_link_pending', {})); }
     catch { return; }
+    if (stopped) return; // 멈춘 뒤에 돌아온 답으로 중단 표지를 풀지 않는다
     if (!r.ok) { fatal(r.code); return; }
+    resume('catch_up');
     const list = Array.isArray(r.data) ? r.data : Array.isArray(r.data?.envelopes) ? r.data.envelopes : [];
     for (const env of list) onEnvelope(env, { catchUp: true });
   }
