@@ -152,9 +152,9 @@ if (want('q9')) {
   if (has('net.http_request_queue') && has('net._http_response')) {
     cell('Q9', 'pg_net 큐 행 수(지금)', '기록', A('select count(*) from net.http_request_queue'), null);
     cell('Q9', 'net._http_response 보존(가장 오래된 응답)', '기록', A(`select coalesce(min(created)::text, '-') || ' / ' || count(*) from net._http_response`), null);
-    // 앞 요청이 느릴 때: 응답 없는 사설 주소(연결 대기 5초)를 먼저 넣고, 곧바로 qbwr REST 요청 3개를 넣어 뒤 요청의 처리 지연을 잰다
+    // 앞 요청이 느릴 때: 응답 없는 문서용 주소 192.0.2.1(RFC 5737, 연결 대기 5초)를 먼저 넣고, 곧바로 qbwr REST 요청 3개를 넣어 뒤 요청의 처리 지연을 잰다
     const t0 = Date.now();
-    const slow = A(`select net.http_get(url := 'http://10.255.255.1/', timeout_milliseconds := 5000)`);
+    const slow = A(`select net.http_get(url := 'http://192.0.2.1/', timeout_milliseconds := 5000)`);
     const fast = [1, 2, 3].map(() => A(`select net.http_get(url := 'https://qbwrlynzvjmphwuqglsx.supabase.co/rest/v1/', timeout_milliseconds := 5000)`));
     const lat = {};
     for (let i = 0; i < 60 && Object.keys(lat).length < fast.length; i++) {
@@ -184,16 +184,35 @@ if (want('q10')) {
 }
 
 if (want('q11')) {
-  // 작업 창 표지(#1087): 창 동안 계정 삭제 거부, 닫은 뒤 정상 — 친구만 있는 합성 계정 p059를 실제로 지운다(마지막)
-  const prev = A(`select coalesce((select value from public.msgr_settings where key = 'msgr2_migration_window'), '')`);
-  A(`insert into public.msgr_settings (key, value) values ('msgr2_migration_window', now()::text) on conflict (key) do update set value = excluded.value`);
-  const p = await person(59);
-  const d1 = await p.rpc('msgr_delete_me');
-  cell('Q11', '창 동안 계정 삭제 거부', '오류', d1.error?.message ?? JSON.stringify(d1.data), !!d1.error);
-  A(`delete from public.msgr_settings where key = 'msgr2_migration_window'`);
-  const d2 = await p.rpc('msgr_delete_me');
-  cell('Q11', '창을 닫은 뒤 계정 삭제 정상', '성공', d2.error?.message ?? 'ok', !d2.error);
-  if (prev) A(`insert into public.msgr_settings (key, value) values ('msgr2_migration_window', '${prev.replace(/'/g, "''")}') on conflict (key) do update set value = excluded.value`); // 원래 열려 있었으면 되돌린다
+  // 작업 창 표지(#1087): 창 동안 계정 삭제 거부, 닫은 뒤 정상 — 친구만 있는 합성 계정 p059를 실제로 지운다(마지막).
+  // 창은 운영 전 계정의 계정 삭제·옛 표 수정을 막으므로, 로그인·기기 등록을 창을 열기 전에 끝내고 창 열기부터 되살리기까지 try/finally로 묶는다(#1100 검수).
+  // p059가 이미 없으면(이전 실행에서 지움) 창을 건드리지 않고 건너뛴다.
+  if (A(`select count(*) from auth.users where email = 'p059@example.test'`) !== '1') {
+    cell('Q11', '작업 창 계정 삭제 시험', 'p059@example.test 있음', '건너뜀(이미 실행됨 — p059 없음)', null);
+  } else {
+    const p = await person(59);
+    const prev = A(`select coalesce((select value from public.msgr_settings where key = 'msgr2_migration_window'), '')`);
+    try {
+      A(`insert into public.msgr_settings (key, value) values ('msgr2_migration_window', now()::text) on conflict (key) do update set value = excluded.value`);
+      if (process.env.QBWR_FAULT === 'q11-after-open') throw new Error('주입한 실패(시험용 — 창이 되살아나는지 본다)');
+      const d1 = await p.rpc('msgr_delete_me');
+      cell('Q11', '창 동안 계정 삭제 거부', '오류', d1.error?.message ?? JSON.stringify(d1.data), !!d1.error);
+      A(`delete from public.msgr_settings where key = 'msgr2_migration_window'`);
+      const d2 = await p.rpc('msgr_delete_me');
+      const gone = A(`select count(*) from auth.users where email = 'p059@example.test'`) === '0';
+      cell('Q11', '창을 닫은 뒤 계정 삭제 정상(p059 실제로 없어짐)', '성공·계정 0', `${d2.error?.message ?? 'ok'}·계정 ${gone ? 0 : 1}`, !d2.error && gone);
+    } finally {
+      // 원래 값으로 되살린다: 열려 있었으면 그 값, 아니었으면 지운다
+      if (prev) A(`insert into public.msgr_settings (key, value) values ('msgr2_migration_window', '${prev.replace(/'/g, "''")}') on conflict (key) do update set value = excluded.value`);
+      else A(`delete from public.msgr_settings where key = 'msgr2_migration_window'`);
+    }
+  }
+}
+
+// 끝날 때 작업 창 상태(열려 있으면 운영 전 계정의 계정 삭제·옛 표 수정이 막힌다 — 런북 6단계에서 닫는다)
+{
+  const w = A(`select coalesce((select value from public.msgr_settings where key = 'msgr2_migration_window'), '')`);
+  cell('끝', '작업 창 표지 상태', '기록(열림이면 런북 6단계로 닫기)', w ? `열림(${w})` : '닫힘', null);
 }
 
 const fail = results.filter((r) => r.pass === false);

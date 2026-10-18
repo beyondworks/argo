@@ -5,7 +5,9 @@
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 
-const LOCAL_RE = /^postgres(ql)?:\/\/[^@/]+@(127\.0\.0\.1|localhost)(:\d+)?\/[a-z0-9_]+$/;
+// 로컬 연습 DB만: 사용자 칸은 점 없는 이름(postgres.<ref> 같은 Supabase 풀러 사용자 거부), 호스트는 127.0.0.1·localhost, 쿼리 없음. 운영 ref는 어디에도 없어야 한다
+const LOCAL_RE = /^postgres(ql)?:\/\/[a-z0-9_]+(:[^@/?#]*)?@(127\.0\.0\.1|localhost)(:\d+)?\/[a-z0-9_]+$/;
+const PROD_REF = 'nvqorpdorlbkhpcvwoty';
 const lit = (v) => (v === null || v === undefined ? 'null' : typeof v === 'number' || typeof v === 'boolean' ? String(v)
   : Array.isArray(v) ? `'{${v.map((x) => String(x).replace(/[",\\{}]/g, '')).join(',')}}'` : typeof v === 'object' ? `'${JSON.stringify(v).replace(/'/g, "''")}'::jsonb` : `'${String(v).replace(/'/g, "''")}'`);
 const now = () => Number(process.hrtime.bigint() / 1000n) / 1000; // ms
@@ -14,10 +16,12 @@ export async function makeCaller(argv = process.argv.slice(2), env = process.env
   const i = argv.indexOf('--local');
   if (i >= 0) {
     const url = argv[i + 1];
-    if (!LOCAL_RE.test(url ?? '')) { console.error('거부  --local은 127.0.0.1·localhost의 연습 DB만 받습니다'); process.exit(5); }
+    if (!LOCAL_RE.test(url ?? '') || String(url).toLowerCase().includes(PROD_REF)) { console.error('거부  --local은 127.0.0.1·localhost의 연습 DB만 받습니다'); process.exit(5); }
     argv.splice(i, 2);
+    // 셸의 PG*(PGHOSTADDR·PGSERVICE·PGUSER…)가 접속 주소를 바꾸지 못하게 psql에는 PATH와 서비스·비밀번호 파일 막기만 넘긴다(#1093 검문과 같은 이유, #1100 검수)
+    const LOCAL_PSQL_ENV = { PATH: process.env.PATH, PGSERVICEFILE: '/dev/null', PGPASSFILE: '/dev/null', PGSYSCONFDIR: '/dev/null' };
     // 여러 문장 중 마지막 결과만 읽는다(psql 15+는 SHOW_ALL_RESULTS=off, 14는 원래 마지막만)
-    const run = (q) => { const r = spawnSync('psql', [url, '-X', '-A', '-t', '-q', '-v', 'ON_ERROR_STOP=1', '-v', 'SHOW_ALL_RESULTS=off', '-c', q], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }); return r.status === 0 ? { out: r.stdout.trim() } : { err: r.stderr.trim().split('\n').find((l) => /ERROR/.test(l))?.replace(/^.*ERROR:\s*/, '') || r.stderr.trim() || String(r.error?.message ?? `psql 종료 ${r.status}`) }; };
+    const run = (q) => { const r = spawnSync('psql', [url, '-X', '-A', '-t', '-q', '-v', 'ON_ERROR_STOP=1', '-v', 'SHOW_ALL_RESULTS=off', '-c', q], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: LOCAL_PSQL_ENV }); return r.status === 0 ? { out: r.stdout.trim() } : { err: r.stderr.trim().split('\n').find((l) => /ERROR/.test(l))?.replace(/^.*ERROR:\s*/, '') || r.stderr.trim() || String(r.error?.message ?? `psql 종료 ${r.status}`) }; };
     const admin = (q) => { const r = run(q); if (r.err) throw new Error(r.err); return r.out.split('\n').pop() ?? ''; };
     const ctx = (uid, sid) => `set role authenticated; select set_config('argo.uid', '${uid}', false), set_config('request.jwt.claims', '${JSON.stringify({ sub: uid, session_id: sid, role: 'authenticated' })}', false); `;
     const sets = new Map();

@@ -19,7 +19,8 @@ const node = (args, env = {}) => spawnSync('node', args, { cwd: ROOT, encoding: 
 
 test('검문: --local은 127.0.0.1·localhost 연습 DB만, qbwr 방식은 검문한 접속·qbwr anon 키가 아니면 exit 5', () => {
   for (const url of [`postgresql://postgres@db.${PROD}.supabase.co:5432/postgres`, 'postgresql://postgres@127.0.0.1.evil.com:5432/postgres',
-    `postgresql://postgres.${QBWR}:x@aws-1-ap-southeast-1.pooler.supabase.com:5432/postgres`, 'postgresql://postgres@127.0.0.1:5432/postgres?host=10.0.0.1', '']) {
+    `postgresql://postgres.${QBWR}:x@aws-1-ap-southeast-1.pooler.supabase.com:5432/postgres`, 'postgresql://postgres@127.0.0.1:5432/postgres?host=10.0.0.1', '',
+    `postgresql://postgres.${PROD}@127.0.0.1:5432/postgres`, `postgresql://postgres:x@127.0.0.1:5432/${PROD}`]) {
     const r = node(['test/fixtures/msgr2/qbwr-q6.mjs', '--local', url, 'q6']);
     assert.equal(r.status, 5, `${url}: ${r.stderr}`);
   }
@@ -74,6 +75,27 @@ before(() => {
   db.sql(`delete from public.msgr_settings where key = 'msgr2_migration_window'`); // 런북 6단계(Q6이 스위치를 넣는다)
 });
 
+const windowOpen = () => db.sql(`select count(*) from public.msgr_settings where key = 'msgr2_migration_window'`);
+const p059 = () => db.sql(`select count(*) from auth.users where email = 'p059@example.test'`);
+
+test('실제 PG: Q11이 창을 연 뒤 실패해도 작업 창 표지는 원래대로(닫힘) 돌아오고 p059는 남는다(실패 주입)', { skip }, () => {
+  assert.equal(windowOpen(), '0');
+  const r = node(['test/fixtures/msgr2/qbwr-q6.mjs', '--local', DB, 'q11'], { QBWR_FAULT: 'q11-after-open' });
+  assert.notEqual(r.status, 0, '주입한 실패로 끝나야 한다');
+  assert.match(r.stderr, /주입한 실패/);
+  assert.equal(windowOpen(), '0', '창 표지가 열린 채 남았다');
+  assert.equal(p059(), '1');
+});
+
+test('실제 PG: 셸 PG* 변수(PGHOSTADDR·PGPORT·PGUSER·PGSERVICE)는 --local 접속을 바꾸지 못한다', { skip }, () => {
+  const svc = join(tmpdir(), `qbwr-q6-svc-${process.pid}`); writeFileSync(svc, '[x]\nhost=192.0.2.1\nport=1\n');
+  try {
+    const r = node(['test/fixtures/msgr2/qbwr-q6.mjs', '--local', DB, 'q9'], { PGHOSTADDR: '::1', PGPORT: '1', PGUSER: 'nobody', PGSERVICE: 'x', PGSERVICEFILE: svc, PGCONNECT_TIMEOUT: '2' });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.ok(r.stdout.split('\n').some((l) => l.startsWith('{') && JSON.parse(l).q === 'Q9'), r.stdout);
+  } finally { rmSync(svc, { force: true }); }
+});
+
 test('실제 PG: 백필 뒤 Q6~Q11이 칸마다 JSON 한 줄을 내고 실패 0(Q7 유휴 쓰기 0·Q8 엣지 호출 1·Q10 색인 충돌 없음·Q11 창 거부 후 정상)', { skip }, () => {
   const r = node(['test/fixtures/msgr2/qbwr-q6.mjs', '--local', DB], { QBWR_IDLE_S: '1' });
   const rows = r.stdout.split('\n').filter((l) => l.startsWith('{')).map((l) => JSON.parse(l));
@@ -91,4 +113,14 @@ test('실제 PG: 백필 뒤 Q6~Q11이 칸마다 JSON 한 줄을 내고 실패 0(
   assert.equal(cell('Q11', /거부/)?.pass, true);
   assert.equal(cell('Q11', /정상/)?.pass, true);
   for (const q of ['Q6', 'Q7', 'Q8', 'Q9', 'Q10', 'Q11']) assert.ok(rows.some((x) => x.q === q), `${q} 칸이 없다`);
+  assert.equal(cell('끝', /작업 창/)?.actual, '닫힘');
+  assert.equal(p059(), '0', 'Q11이 p059를 실제로 지웠다');
+});
+
+test('실제 PG: Q11을 다시 돌리면 p059가 없어 건너뛰고 작업 창을 건드리지 않는다', { skip }, () => {
+  const r = node(['test/fixtures/msgr2/qbwr-q6.mjs', '--local', DB, 'q11']);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  const rows = r.stdout.split('\n').filter((l) => l.startsWith('{')).map((l) => JSON.parse(l));
+  assert.match(rows.find((x) => x.q === 'Q11')?.actual ?? '', /건너뜀/);
+  assert.equal(windowOpen(), '0', '다시 돌린 뒤 창 표지가 열려 있다');
 });
