@@ -16,6 +16,7 @@ select 't:'||schemaname||'.'||relname, n_tup_ins+n_tup_upd+n_tup_del, '' from pg
 select 'q:'||queryid, calls, left(regexp_replace(query,'\s+',' ','g'),120) from pg_stat_statements where queryid is not null;
 select 'r:realtime.messages', count(*), '' from realtime.messages;
 select 'r:net._http_response', count(*), '' from net._http_response where to_regclass('net._http_response') is not null;
+select 'r:net.http_request_queue', count(*), '' from net.http_request_queue where to_regclass('net.http_request_queue') is not null;
 select 'd:xact', xact_commit + xact_rollback, '' from pg_stat_database where datname = current_database();
 SQL
 }
@@ -36,7 +37,7 @@ writes = sum(r[0] for r in rows if r[1].startswith('t:'))
 calls = sum(r[0] for r in rows if r[1].startswith('q:') and 'pg_stat' not in r[2])
 per = (lambda n: f'  (분당 {n * 60 / secs:.1f})') if secs else (lambda n: '')
 print(f'# 합계  표 쓰기 {writes}{per(writes)}  문장 호출 {calls}{per(calls)}')
-for k in ('r:realtime.messages', 'r:net._http_response', 'd:xact'):
+for k in ('r:realtime.messages', 'r:net._http_response', 'r:net.http_request_queue', 'd:xact'):
     if k in b: print(f'# {k[2:]}  {b[k][0] - a.get(k, (0, ""))[0]:+d}')
 for kind, title in (('t:', '표별 쓰기'), ('q:', '문장별 호출(측정 질의 포함)')):
     print(f'## {title}')

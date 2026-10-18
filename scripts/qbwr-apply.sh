@@ -41,6 +41,8 @@ SQL
         | psql "$C" -X -q -v ON_ERROR_STOP=1 -1 -f - >/dev/null || { echo "멈춤  $b — 위 오류. 이 파일은 되돌아갔고 앞 ${n}개는 적용됐다"; exit 3; }
       n=$((n + 1)); echo "적용  $b"
     done
+    # pg_net 판(#1092 검수: 한 묶음이 끝나야 다음을 집는 판이면 푸시 상한 20초가 다른 pg_net 호출을 붙잡는다) — 판정 문서에 적는다
+    echo "pg_net $(q "select coalesce((select extversion from pg_extension where extname = 'pg_net'), '없음')"), pg_cron $(q "select coalesce((select extversion from pg_extension where extname = 'pg_cron'), '없음')")"
     echo "끝  ${n}개 적용, 마지막 기록 버전 $(q "select max(version) from supabase_migrations.schema_migrations"), $(TZ=Asia/Seoul date '+%Y-%m-%d(%a) %H:%M KST')" ;;
   buckets)
     q "insert into storage.buckets (id, name, public) values ('msgr', 'msgr', false), ('companies', 'companies', false) on conflict (id) do nothing returning id"
