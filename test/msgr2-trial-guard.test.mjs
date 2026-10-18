@@ -5,6 +5,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url'; // Windows에서 URL.pathname은 /D:/…라 파일을 못 찾는다
 import { targetProblems, envFilesIn, rootProblems, readEnvFile, QBWR_URL, QBWR_REF } from '../scripts/msgr2-trial-guard.mjs';
 
 const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
@@ -51,7 +52,7 @@ test('.env 섞임: 루트·apps/messenger의 .env* 파일을 찾고(.env.example
 
 test('CLI: 걸리면 exit 5와 이유(표준 오류, 키 값 없음)·표준 출력 비움, 통과하면 셸 변수 두 줄만', () => {
   const d = mkdtempSync(join(tmpdir(), 'trial-guard-cli-'));
-  const run = (args, env = {}) => spawnSync(process.execPath, [new URL('../scripts/msgr2-trial-guard.mjs', import.meta.url).pathname, ...args], { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: d, ...env } });
+  const run = (args, env = {}) => spawnSync(process.execPath, [fileURLToPath(new URL('../scripts/msgr2-trial-guard.mjs', import.meta.url)), ...args], { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: d, ...env } });
   try {
     const bad = run(['--checkout', d], { MSGR2_TRIAL_URL: 'https://abcdefghijklmnopqrst.supabase.co', MSGR2_TRIAL_ANON_KEY: ANON });
     assert.equal(bad.status, 5); assert.equal(bad.stdout, ''); assert.match(bad.stderr, /허용하지 않은 주소/); assert.ok(!bad.stderr.includes(ANON));

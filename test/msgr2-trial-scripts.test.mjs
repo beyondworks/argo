@@ -7,10 +7,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
+import { fileURLToPath } from 'node:url';
 
 const BASH = '/bin/bash';
 const skip = !existsSync(BASH) && '/bin/bash 없음';
-const REPO = new URL('..', import.meta.url).pathname;
+const REPO = fileURLToPath(new URL('..', import.meta.url)); // Windows에서 URL.pathname은 /D:/…
 const QBWR = 'https://qbwrlynzvjmphwuqglsx.supabase.co';
 const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
 const ANON = `${b64({ alg: 'HS256' })}.${b64({ ref: 'qbwrlynzvjmphwuqglsx', role: 'anon' })}.sig`;
