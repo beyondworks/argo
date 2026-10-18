@@ -648,7 +648,7 @@ test('알림함: 기본은 읽지 않은 것만(지난 알림 토글) · 에이�
   assert.match(app, /const \[unreadOnly, setUnreadOnly\] = useState\(true\);/, '기본 읽지 않은 것만');
   // 내가 결정할 대기 참여 요청(joinReq)은 읽음과 무관하게 남는다 — 결재자가 바뀐 뒤 넘겨받은 요청이 '이미 본 시각'에 가려지지 않게(20260918170000)
   assert.match(app, /const shown = items\.filter\(\(it\) => \(kind === 'all' \|\| it\.kind === kind\) && \(!unreadOnly \|\| isNew\(it\) \|\| pendingMine\(it\)\)\);/, '토글이 목록을 거른다(대기 참여 요청은 남김)');
-  assert.match(app, /const pendingMine = \(it\) => !!it\.joinReq;/, '남기는 것은 결정할 참여 요청뿐');
+  assert.match(app, /const pendingMine = \(it\) => !!it\.joinReq \|\| it\.kind === 'invite';/, '남기는 것은 결정할 참여 요청과 받은 초대(v2 — 수락·거절·만료 전까지, #1094 검수)뿐');
   assert.match(app, /\.eq\('author_kind', 'crew'\)\.eq\('kind', 'text'\)\.in\('reply_to', myIds\)/, '시스템 안내 제외');
   assert.match(app, /\.filter\(\(m\) => !\(Array\.isArray\(m\.mentions\) && m\.mentions\.some\(\(x\) => x\?\.kind === 'crew'\)\)\)/, '다른 크루로 넘기는 중간 답글 제외');
   const i18n = read('apps/messenger/src/i18n.js');

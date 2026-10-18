@@ -26,3 +26,11 @@ export async function loadMyInvites(rpc) {
   if (!r || r.error) return null;
   return myInviteRows(r.data);
 }
+
+/** 읽기 관문 — 플래그가 꺼졌거나(옛 서버에는 msgr2_my_invites가 없다 — 시작·복귀마다 실패 요청이 된다) 로그인 전이면 호출 0, null.
+ *  켜져 있으면 기기 등록을 기다린 뒤(v2 표는 등록된 기기 세션만 읽는다) 한 번 읽는다. */
+export async function loadMyInvitesIf({ enabled, uid, ready = null, rpc }) {
+  if (!enabled || !uid) return null;
+  await ready?.();
+  return loadMyInvites(rpc);
+}

@@ -22,7 +22,9 @@ import { useWorkCards } from './v2/useWorkCards.jsx';
 import { DevicesCard as V2DevicesCard } from './v2/DevicesCard.jsx';
 import { v2StateBar, v2SignOutNotice } from './v2/devices.mjs';
 import { roomEventPlan, mergePlans } from './v2/room-events.mjs';
-import { loadMyInvites, inviteInboxItems } from './v2/my-invites.mjs';
+import { loadMyInvitesIf, inviteInboxItems } from './v2/my-invites.mjs';
+import { declineInvite, withoutInvite, liveInvites, inviteLeft } from './v2/invite-box.mjs';
+import { InvitesCard as V2InvitesCard } from './v2/InvitesCard.jsx';
 import { v2SearchFound } from './v2/search.mjs';
 import { systemLine as v2SystemLine } from './v2/system-text.mjs';
 import { loadSpaces as v2LoadSpaces } from './v2/data.mjs';
@@ -1773,7 +1775,7 @@ function Shell({ session }) {
   }, [v2rt]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { v2rt?.machine.setActiveRoom(chId ?? null); }, [v2rt, chId]); // 보는 방은 배지에서 뺀다
   const [myInvites, setMyInvites] = useState([]); const [myInvitesTick, bumpMyInvites] = useReducer((x) => x + 1, 0); // 받은 초대(v2/my-invites.mjs) — 시작·복귀·초대·공간 사건 때만 다시 읽는다(주기 조회 없음)
-  useEffect(() => { if (!V2 || !uid) return undefined; let live = true; (async () => { await currentV2()?.ready(); const l = await loadMyInvites((fn) => rawSupabase.rpc(fn)); if (live && l) setMyInvites(l); })().catch(() => {}); return () => { live = false; }; }, [uid, syncEpoch, myInvitesTick]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { let live = true; loadMyInvitesIf({ enabled: V2, uid, ready: () => currentV2()?.ready(), rpc: (fn) => rawSupabase.rpc(fn) }).then((l) => { if (live && l) setMyInvites(l); }, () => {}); return () => { live = false; }; }, [uid, syncEpoch, myInvitesTick]); // eslint-disable-line react-hooks/exhaustive-deps -- 플래그 끔(옛 서버)·로그인 전은 호출 0(loadMyInvitesIf)
   const v2RoomEventRef = useRef(null); const v2EventPlan = useRef(null); // 묶음 창(500ms) 안의 사건 계획 — 창마다 목록 읽기 한 번(#1088 검수 2: 사건마다 약 8건)
   const v2EventRun = useRef(null);
   v2EventRun.current = () => {
@@ -1896,10 +1898,11 @@ function Shell({ session }) {
     })();
     return () => { dead = true; };
   }, [org?.id, uid, isPhone, inboxEpoch, syncEpoch, inboxChKey, lang]); // eslint-disable-line react-hooks/exhaustive-deps // lang: 회사 공지 문구가 언어 전환에 다시 그려지게(2026-09-27 L11). 채널은 집합(inboxChKey)으로 — 목록 객체가 새로 만들어질 때마다 다시 조회하지 않게(기능 점검 D2)
+  const liveInviteKey = liveInvites(myInvites).map((v) => v.code).join(','); // 받을 수 있는 초대 집합 — 만료되면 바뀐다(15초 화면 시계 tick이 다시 그린다, 조회 없음)
   const inbox = useMemo(() => { const seenKeys = new Set(); // 친구 요청·차단·숨김은 조회 없이 합친다(친구 목록이 바뀌어도 서버 조회 6건을 다시 보내지 않는다)
-    return [...inboxNet, ...friendItems(), ...inviteInboxItems(myInvites, t)].filter((it) => !(it.whoKind === 'user' && blockedIds.has(it.who))).filter((it) => it.kind === 'approval' || !(it.whoKind === 'crew' && mutedCrewIds.has(it.who))) // 숨긴 크루는 알림함에서도 빠진다(검수 M4) — 결재 카드는 예외(검수 L5)
+    return [...inboxNet, ...friendItems(), ...inviteInboxItems(liveInvites(myInvites), t)].filter((it) => !(it.whoKind === 'user' && blockedIds.has(it.who))).filter((it) => it.kind === 'approval' || !(it.whoKind === 'crew' && mutedCrewIds.has(it.who))) // 숨긴 크루는 알림함에서도 빠진다(검수 M4) — 결재 카드는 예외(검수 L5)
       .filter((it) => !seenKeys.has(it.key) && seenKeys.add(it.key)).sort((a, b) => Date.parse(b.at) - Date.parse(a.at)).slice(0, 80);
-  }, [inboxNet, friends, myInvites, blockedIds, mutedCrewIds, uid, lang]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [inboxNet, friends, myInvites, liveInviteKey, blockedIds, mutedCrewIds, uid, lang]); // eslint-disable-line react-hooks/exhaustive-deps
   const nodeSeenAt = org?.node_seen_at ? Date.parse(org.node_seen_at) : 0; // 상주 노드 하트비트 — 설정 화면과 같은 판정(AWAY_MS)
   const nodeAlive = !!org?.service_user_id && nodeSeenAt > 0 && Date.now() - nodeSeenAt < AWAY_MS;
   const nodeInd = nodeIndicator({ org, isPersonal, now: Date.now(), awayMs: AWAY_MS }); // 폰 위쪽 서버 표시 — 대상·모양은 순수 함수(src/node-indicator.mjs)
@@ -2058,7 +2061,7 @@ function Shell({ session }) {
   const acceptCode = async (code, preview = null) => { // 참여 → 조직 전환 → 첫 채널(v2 channel_id, 옛 서버면 미리보기의 첫 채널) — 열기 요청(requestNav)이 조직을 바꾼 뒤 연다
     const r = await acceptInvite(supabase, code);
     setJoinCode(null); setOrgMenu(false); setJoinPreview(null);
-    await loadJoined(); await loadOrgs(); if (V2) bumpMyInvites(); // 받은 초대에서 수락했으면 그 줄이 빠진다
+    await loadJoined(); await loadOrgs(); if (V2) setMyInvites((l) => withoutInvite(l, code)); // 받은 초대에서 수락했으면 그 줄을 바로 뺀다 — 다시 읽기는 spaces 사건 한 번(#1094 검수)
     if (r.orgId) setOrgId(r.orgId);
     const first = r.channelId ?? (r.legacy ? preview?.channels?.[0]?.id : null) ?? null;
     if (first) requestNav(first, 'invite');
@@ -2070,6 +2073,7 @@ function Shell({ session }) {
     const code = chk.code; setJoinHint(null);
     try {
       const p = await previewInvite(supabase, code);
+      if (V2 && p && p.state !== 'valid' && p.state !== 'already_member' && myInvites.some((v) => v.code === code)) bumpMyInvites(); // 받은 초대가 그 사이 만료·취소됐다 — 목록을 한 번 다시 읽는다
       if (!p) return await acceptCode(code); // 옛 서버: 미리보기 RPC가 없다 → 예전처럼 바로 수락
       setJoinCode(null); setOrgMenu(false); setJoinPreviewErr(null); setJoinPreview({ code, ...p });
     } catch (e) { setErr(inviteErr(e)); }
@@ -2078,6 +2082,10 @@ function Shell({ session }) {
     setJoinBusy(true); setJoinPreviewErr(null);
     try { await acceptCode(joinPreview.code, joinPreview); } catch (e) { setJoinPreviewErr(inviteErr(e)); } finally { setJoinBusy(false); }
   }; // 인라인 폼 상태(문자열) — 네이티브 prompt 금지(QA: 사용성·룩 불일치)
+  const declineMyInvite = async (code) => { // 받은 초대 거절(v2 초대함) — 그 줄을 바로 빼고 다시 읽지 않는다(서버가 이미 정한 것도 목록에서만 뺀다)
+    try { const r = await declineInvite((fn, a) => rawSupabase.rpc(fn, a), code); setMyInvites((l) => withoutInvite(l, code)); setJoinPreview((cur) => (cur?.code === code ? null : cur)); setNote(t(r === 'declined' ? 'inv.box.declined' : 'inv.box.gone')); }
+    catch (e) { setErr(inviteErr(e)); }
+  };
   const [joinable, setJoinable] = useState([]); // J-3 도메인 자동 가입 후보
   const [railAction, setRailAction] = useState(null); const [actionBusy, setActionBusy] = useState(false); const [actionError, setActionError] = useState(''); const actionLock = useRef(false);
   const actionDialog = useRef(null);
@@ -2925,7 +2933,7 @@ function Shell({ session }) {
   const friendReqs = friends.filter((f) => f.status === 'pending' && f.requested_by !== uid);
   const friendList = withoutHidden(friends.filter((f) => f.status === 'accepted'), hiddenUserIds).sort((a, b) => String(a.display_name || a.handle || '').localeCompare(String(b.display_name || b.handle || ''), 'ko'));
   const approvalItems = decidableApprovals(approvals, { uid, orgs }); // 결재 대기(모든 조직 — loadApprovals) 중 내가 결정할 수 있는 것만(분리 검수 M-2 — 숫자·뱃지·페이지 모두). 내 역할은 조직 목록(orgs[].role)
-  const tabBadgeN = tabBadges({ hereKey, here: hereCount, hereReady: unreadSpace === orgId, totals: spaceTotals, orgIds: orgIdList, approvals: approvalItems.length, friendRequests: friendReqs.length + myInvites.length });
+  const tabBadgeN = tabBadges({ hereKey, here: hereCount, hereReady: unreadSpace === orgId, totals: spaceTotals, orgIds: orgIdList, approvals: approvalItems.length, friendRequests: friendReqs.length + liveInvites(myInvites).length });
   const tabQText = tabQ ?? '';
   const decideFriend = async (f, accept) => { try { await q(supabase.rpc('msgr_friend_decide', { other: f.user_id, accept })); setNote(t(accept ? 'friends.accepted' : 'friends.declined')); await onFriendsChanged(); } catch (e) { setErr(/msgr_friend_closed/.test(e.message) ? t('friends.err.closed') : e.message); } };
   const openSettings = (tab = null, focus = null) => { setTabQ(null); const m = phoneSettingsPage(tab); if (m === 'orgsettings') setSettingsTab(tab); setSettingsFocus(focus); setPage(m); }; // 톱니 = 어느 탭에서든 같은 설정 화면(focus = 그 묶음으로 바로 스크롤)
@@ -3072,11 +3080,11 @@ function Shell({ session }) {
               <div key={f.user_id} className="ph-req"><Av name={f.display_name || f.handle || '?'} size="lg" userId={f.user_id} /><span className="name">{f.display_name || f.handle || f.user_id.slice(0, 8)}</span>
                 <button type="button" className="btn btn-primary" onClick={() => decideFriend(f, true)}>{t('phone.friends.accept')}</button><button type="button" className="btn" onClick={() => decideFriend(f, false)}>{t('phone.friends.decline')}</button></div>))}</div>}
           </>)}
-          {myInvites.length > 0 && !tabQText.trim() && (<>{/* 받은 초대(v2) — 누르면 초대 미리보기 카드에서 참여한다 */}
-            <button type="button" className="item ph-reqrow" aria-expanded={invOpen} onClick={() => setInvOpen((v) => !v)}><span className="ph-reqic"><I name="home" size={18} /></span><span className="name">{t('phone.friends.invites', { n: myInvites.length })}</span><I name="caret" size={20} className={`ph-chev${invOpen ? ' open' : ''}`} /></button>
-            {invOpen && <div className="ph-reqs">{myInvites.map((v) => (
-              <div key={v.id} className="ph-req"><Av name={v.spaceName || '?'} size="lg" /><span className="ph-kbody"><span className="name">{v.spaceName}</span><span className="snip">{t('phone.friends.invite.by', { name: v.inviterName || t('inbox.invite.someone') })}</span></span>
-                <button type="button" className="btn btn-primary" onClick={() => joinByCode(v.code)}>{t('phone.friends.invite.view')}</button></div>))}</div>}
+          {liveInvites(myInvites).length > 0 && !tabQText.trim() && (<>{/* 받은 초대(v2) — 누르면 초대 미리보기 카드에서 참여한다 */}
+            <button type="button" className="item ph-reqrow" aria-expanded={invOpen} onClick={() => setInvOpen((v) => !v)}><span className="ph-reqic"><I name="home" size={18} /></span><span className="name">{t('phone.friends.invites', { n: liveInvites(myInvites).length })}</span><I name="caret" size={20} className={`ph-chev${invOpen ? ' open' : ''}`} /></button>
+            {invOpen && <div className="ph-reqs">{liveInvites(myInvites).map((v) => { const left = inviteLeft(v.expiresAt); return (
+              <div key={v.id} className="ph-req"><Av name={v.spaceName || '?'} size="lg" /><span className="ph-kbody"><span className="name">{v.spaceName}</span><span className="snip">{[t('phone.friends.invite.by', { name: v.inviterName || t('inbox.invite.someone') }), t(left.key, { n: left.n })].join(' · ')}</span></span>
+                <button type="button" className="btn btn-primary" onClick={() => joinByCode(v.code)}>{t('phone.friends.invite.view')}</button><button type="button" className="btn" onClick={() => declineMyInvite(v.code)}>{t('inv.p.decline')}</button></div>); })}</div>}
           </>)}
           <div className="ph-sechead">{t('phone.friends.count', { n: friendList.length })}</div>
           {(() => { const shown = tabSearch(friendList, tabQText, (f) => [f.display_name, f.handle]); return (<>
@@ -3322,7 +3330,7 @@ function Shell({ session }) {
           </aside>
         </div>)}
         {inviteFor && org && !isPersonal && <InviteDialog org={org} channels={inviteChannels} isAdmin={!!isAdmin} hostOf={hostChannels} initialChannelIds={inviteFor.channelIds} initialRole={inviteFor.role} create={createInviteCode} loadCurrent={isAdmin ? currentMemberLink : null} confirmReplace={confirmReplace} discard={async (id) => { inviteSync.current.start(); let gone = 0; try { const r = await discardInvite(supabase, id); gone = r ? -1 : 0; return r; } finally { inviteSync.current.finish(gone); } }} shareText={inviteShare} linkOf={inviteLinkOf} errorText={inviteErr} onClose={() => setInviteFor(null)} onManage={isAdmin ? manageInvites : null} t={t} phone={isPhone} />}
-        {joinPreview && <InvitePreview p={joinPreview} avatar={<Av name={joinPreview.org_name} size="lg" />} busy={joinBusy} err={joinPreviewErr} onJoin={joinFromPreview} onOpen={() => { const p = joinPreview; setJoinPreview(null); if (p.org_id) setOrgId(p.org_id); if (p.channels?.[0]) requestNav(p.channels[0].id, 'invite'); }} onClose={() => setJoinPreview(null)} fmtWhen={(iso) => fmtWhen(iso, lang)} t={t} phone={isPhone} />}
+        {joinPreview && <InvitePreview p={joinPreview} avatar={<Av name={joinPreview.org_name} size="lg" />} busy={joinBusy} err={joinPreviewErr} onJoin={joinFromPreview} onOpen={() => { const p = joinPreview; setJoinPreview(null); if (p.org_id) setOrgId(p.org_id); if (p.channels?.[0]) requestNav(p.channels[0].id, 'invite'); }} onClose={() => setJoinPreview(null)} onDecline={V2 && myInvites.some((v) => v.code === joinPreview.code) ? () => declineMyInvite(joinPreview.code) : null} fmtWhen={(iso) => fmtWhen(iso, lang)} t={t} phone={isPhone} />}
         {orgLocked && <div className="msgr-notice locked"><span>{t(isAdmin ? 'org.locked.admin' : 'org.locked')}</span></div>}
         {pushCard && createPortal(<button type="button" className="msgr-pushcard" onClick={() => { if (pushCard.channel_id) requestNav(pushCard.channel_id, 'card'); setPushCard(null); }}><span className="t">{pushCard.title}</span><span className="b">{pushCard.body}</span></button>, document.body)}
         {(err || note) && createPortal( /* 토스트 — 상단 바는 레이아웃을 밀었다(유건 2026-09-09). 자동 소멸(안내 4초·오류 8초), 클릭하면 즉시 */
@@ -3349,7 +3357,7 @@ function Shell({ session }) {
         ) : page === 'inbox' && org ? (
           <Inbox items={inbox} prevSeen={inboxPrev} initialKind={inboxKind} onReadAll={() => { const now = Date.now(); setInboxPrev(now); const next = { ...inboxSeen, [org.id]: now }; setInboxSeen(next); writeInboxSeen(next); const dmIds = new Set(channels.filter((c) => c.kind === 'dm').map((c) => c.id)); const top = new Map(); for (const it of inbox) { const mid = Number(it.key.split(':')[1]); if (it.channel_id && dmIds.has(it.channel_id) && it.kind !== 'approval' && it.kind !== 'friend' && Number.isInteger(mid) && mid > (top.get(it.channel_id) ?? 0)) top.set(it.channel_id, mid); } for (const [cid, mid] of top) markRead(cid, mid); resyncBadge(); }} channels={channels} crews={shownCrews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id, it) => { if (it?.kind === 'invite') { void joinByCode(it.inviteCode); return; } if (!id) { if (it?.kind === 'system') { if (isAdmin) { setPage('settings'); setSettingsTab('org'); } return; } setPage('settings'); setSettingsTab('friends'); return; } if (!it?.joinReq && openAgentDmInstead(id, 'inbox')) return; if (it?.joinReq) { if (id === chId) { setChSheet(true); setSheetReqTick((x) => x + 1); } else sheetAfterNav.current = true; } setChId(id); setPage('chat'); }} onBack={backFromPage} onMenu={openNav} />
         ) : page === 'settings' || page === 'orgsettings' || (isPhone && page.startsWith('set-')) ? (
-          <Settings phoneView={isPhone ? (page === 'settings' ? 'list' : page === 'orgsettings' ? 'orgadmin' : page.slice(4)) : null} onSub={(k) => setPage(`set-${k}`)} crews={crews} myName={profileName} myAgents={myAgents} onOpenAgent={(g) => openAgentCard(rowForSpace(g, orgId, PERSONAL))} onAgentsChanged={() => loadMyAgents({ favs: true }).catch(() => {})} onOrgSub={openOrgSub} onPickOrg={pickSettingsOrg} onOrgAdmin={() => setPage('orgsettings')} hostIds={hostChannels} onToggleMemory={toggleMemory} spaceReady={loadedOrg.current === orgId} memSort={memSort} onMemSort={pickMemSort} focusGroup={settingsFocus} onFocusUsed={() => setSettingsFocus(null)} chOrgId={chOrg} session={session} me={me} uid={uid} onAvatar={() => { avatarAsked.current.delete(uid); loadAvatars(); }} onProfileSaved={() => { askName(uid, true); setProfileTick((x) => x + 1); }} invitesTick={invitesTick} org={isPersonal ? null : org} orgs={orgs} isAdmin={!!isAdmin} gated={orgBlocked} policy={policy} ent={isPersonal ? null : ent} members={isPersonal ? [] : members} nameOfUser={nameOfUser} onOpenCrew={setSheet} friends={friends} onFriendsChanged={onFriendsChanged} onDm={(id) => openDm('user', id)} onPersonalDm={openPersonalDm} channels={inviteChannels} onInvite={isAdmin && !isPersonal ? orgInvite : null} initialTab={settingsTab} onTabUsed={() => setSettingsTab(null)} onChanged={() => (isPersonal ? loadPersonal() : loadOrg(orgId)).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={backFromPage} onMenu={openNav} />
+          <Settings myInvites={myInvites} onViewInvite={(code) => joinByCode(code)} onDeclineInvite={declineMyInvite} phoneView={isPhone ? (page === 'settings' ? 'list' : page === 'orgsettings' ? 'orgadmin' : page.slice(4)) : null} onSub={(k) => setPage(`set-${k}`)} crews={crews} myName={profileName} myAgents={myAgents} onOpenAgent={(g) => openAgentCard(rowForSpace(g, orgId, PERSONAL))} onAgentsChanged={() => loadMyAgents({ favs: true }).catch(() => {})} onOrgSub={openOrgSub} onPickOrg={pickSettingsOrg} onOrgAdmin={() => setPage('orgsettings')} hostIds={hostChannels} onToggleMemory={toggleMemory} spaceReady={loadedOrg.current === orgId} memSort={memSort} onMemSort={pickMemSort} focusGroup={settingsFocus} onFocusUsed={() => setSettingsFocus(null)} chOrgId={chOrg} session={session} me={me} uid={uid} onAvatar={() => { avatarAsked.current.delete(uid); loadAvatars(); }} onProfileSaved={() => { askName(uid, true); setProfileTick((x) => x + 1); }} invitesTick={invitesTick} org={isPersonal ? null : org} orgs={orgs} isAdmin={!!isAdmin} gated={orgBlocked} policy={policy} ent={isPersonal ? null : ent} members={isPersonal ? [] : members} nameOfUser={nameOfUser} onOpenCrew={setSheet} friends={friends} onFriendsChanged={onFriendsChanged} onDm={(id) => openDm('user', id)} onPersonalDm={openPersonalDm} channels={inviteChannels} onInvite={isAdmin && !isPersonal ? orgInvite : null} initialTab={settingsTab} onTabUsed={() => setSettingsTab(null)} onChanged={() => (isPersonal ? loadPersonal() : loadOrg(orgId)).catch((e) => setErr(e.message))} onOrgsChanged={() => loadOrgs().catch((e) => setErr(e.message))} onNote={setNote} onError={setErr} onBack={backFromPage} onMenu={openNav} />
         ) : dmDraft && isPersonal && page === 'chat' ? (
           <DmDraft key={dmDraft.userId} userId={dmDraft.userId} name={nameOfUser(dmDraft.userId)} initialText={dmDraft.text} onSend={(body) => sendFirstDm(dmDraft.userId, body)} onMenu={openNav} />
         ) : isPhone && page !== 'chat' ? null /* 폰 목록·설정 뒤에 숨은 대화방을 그리지 않는다 — 공간을 바꿀 때마다 보이지 않는 방의 글·첨부·반응을 읽던 것(기능 점검 D3) */ : channel ? (
@@ -4467,7 +4475,7 @@ function Inbox({ items, prevSeen = 0, initialKind = 'all', channels, crews, name
   const isNew = (it) => Date.parse(it.at) > prevSeen;
   // 내가 결정할 대기 참여 요청은 읽음과 무관하게 남긴다 — 결정하면 목록에서 빠진다. 시각 기준만 쓰면, 채팅을 연 사람이 나가 결재자가 된
   // 사람은 그 전에 알림함을 연 적이 있으면 넘겨받은 요청(더 이른 시각)을 영영 못 봤다(픽스처 실측 2026-09-18, 20260918170000).
-  const pendingMine = (it) => !!it.joinReq;
+  const pendingMine = (it) => !!it.joinReq || it.kind === 'invite'; // 받은 초대(v2)도 결정할 일 — 수락·거절·만료 전까지 남는다(#1094 검수: '모두 읽음'에 사라지던 것)
   const unreadOf = (k) => items.filter((it) => it.kind === k && (isNew(it) || pendingMine(it))).length; // 탭 숫자는 읽지 않은 것(D37) — 총수면 모두 읽어도 숫자가 남았다
   const shown = items.filter((it) => (kind === 'all' || it.kind === kind) && (!unreadOnly || isNew(it) || pendingMine(it)));
   const readCount = items.filter((it) => (kind === 'all' || it.kind === kind) && !isNew(it) && !pendingMine(it)).length;
@@ -4550,7 +4558,7 @@ function AgentSlotPicker({ uid, myAgents, org, onOpenAgent, onChanged, onNote, o
         <button key={g.key} type="button" className="ph-setrow" onClick={() => onOpenAgent?.(g)}><Av name={g.display_name} crew size="sm" crewId={g.id} src={agentLook(g.id, avLooks, null, g.avatar_url ?? null).photo ?? null} /><span className="ph-kbody"><span className="name">{g.display_name}</span>{g.ext && <span className="snip">{t('agentcard.ext')}</span>}</span><I name="caret" size={14} className="ph-chev" /></button>))}</div>)}
   </section>);
 }
-function Settings({ session, me, uid, invitesTick = 0, org, orgs = [], isAdmin, gated = false, policy, ent = null, members = [], nameOfUser, onOpenCrew, onAvatar, onProfileSaved, friends = [], onFriendsChanged, onDm, onPersonalDm, channels = [], onInvite = null, initialTab = null, onTabUsed, onChanged, onOrgsChanged, onNote, onError, onBack, onMenu, phoneView = null, onSub = null, crews = [], myName: myProfileName = null, myAgents = null, onOpenAgent = null, onOrgSub = null, onPickOrg = null, onOrgAdmin = null, hostIds = new Set(), onToggleMemory = null, spaceReady = true, memSort = 'recent', onMemSort = null, focusGroup = null, onFocusUsed = null, chOrgId = null, onAgentsChanged = null }) { // phoneView(폰만): 'list' = 내 설정 줄 목록, 'profile'|'notify'|'display'|'friends'|'privacy'|'about' = 하위 화면, 'org' = 조직 설정
+function Settings({ session, me, uid, invitesTick = 0, org, orgs = [], isAdmin, gated = false, policy, ent = null, members = [], nameOfUser, onOpenCrew, onAvatar, onProfileSaved, friends = [], onFriendsChanged, onDm, onPersonalDm, channels = [], onInvite = null, initialTab = null, onTabUsed, onChanged, onOrgsChanged, onNote, onError, onBack, onMenu, myInvites = [], onViewInvite = null, onDeclineInvite = null, phoneView = null, onSub = null, crews = [], myName: myProfileName = null, myAgents = null, onOpenAgent = null, onOrgSub = null, onPickOrg = null, onOrgAdmin = null, hostIds = new Set(), onToggleMemory = null, spaceReady = true, memSort = 'recent', onMemSort = null, focusGroup = null, onFocusUsed = null, chOrgId = null, onAgentsChanged = null }) { // phoneView(폰만): 'list' = 내 설정 줄 목록, 'profile'|'notify'|'display'|'friends'|'privacy'|'about' = 하위 화면, 'org' = 조직 설정
   const { signOut, signingOut, accountDeleted, signOutNotice } = useContext(SignOutContext);
   const avLooks = useContext(AvatarCtx).looks; // 내 에이전트 목록의 사진 — 같은 에이전트 기준(유건 2026-10-05)
   const { t, ta, lang, setLang } = useT();
@@ -4660,6 +4668,7 @@ function Settings({ session, me, uid, invitesTick = 0, org, orgs = [], isAdmin, 
         {sub === 'profile' && (<div className="msgr-setbody">
           <section className="msgr-setcard"><h2>{t('set.account')}</h2><div className="row"><Av name={myName} userId={uid} /><span className="msgr-klabel">{session.user.email}</span></div></section>
           <ProfileCard part="profile" uid={uid} onNote={onNote} onError={onError} onAvatar={onAvatar} onSaved={onProfileSaved} />
+          {V2 && <V2InvitesCard invites={myInvites} t={t} onView={onViewInvite} onDecline={onDeclineInvite} />}{/* v2 초대함(폰 계정 화면) */}
           {V2 && <V2DevicesCard client={rawSupabase} t={t} lang={lang} onSignedOut={(key) => signOutNotice(key)} onNote={onNote} onError={onError} />}{/* v2 ④ 기기 관리(폰 계정 화면) */}
           <AccountDeleteCard session={session} onDeleted={accountDeleted} />
         </div>)}
@@ -4715,6 +4724,7 @@ function Settings({ session, me, uid, invitesTick = 0, org, orgs = [], isAdmin, 
             <LegalLinks t={t} className="in-card" />
             <p className="msgr-klabel msgr-version">{t('set.version', { v: APP_VERSION })}</p>{/* 지금 앱 버전(UXM-26) — 문의·업데이트 확인 때 */}
           </section>
+          {V2 && <V2InvitesCard invites={myInvites} t={t} onView={onViewInvite} onDecline={onDeclineInvite} />}{/* v2 초대함 — 플래그 켜짐에서만 */}
           {V2 && <V2DevicesCard client={rawSupabase} t={t} lang={lang} onSignedOut={(key) => signOutNotice(key)} onNote={onNote} onError={onError} />}{/* v2 ④ 기기 관리 — 플래그 켜짐에서만 */}
           <PlanCard uid={uid} email={session.user.email} />
           <section className="msgr-setcard">

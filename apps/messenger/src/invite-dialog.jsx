@@ -142,7 +142,7 @@ export function InviteDialog({ org, channels, isAdmin, hostOf = new Set(), initi
 
 // 받는 쪽 미리보기(설계서 2-2) — 붙여 넣은 코드가 어디로 데려가는지 보여 주고 한 번 눌러 들어간다.
 // p = msgr_invite_preview 결과: valid·already_member면 조직·채널·초대한 사람·만료, expired·exhausted·revoked면 org_name만.
-export function InvitePreview({ p, avatar = null, busy = false, err = null, onJoin, onOpen, onClose, fmtWhen, t, phone = false }) {
+export function InvitePreview({ p, avatar = null, busy = false, err = null, onJoin, onOpen, onClose, onDecline = null, fmtWhen, t, phone = false }) { // onDecline: 나를 지정한 초대(v2 초대함)일 때만 — 거절 단추
   const main = useRef(null); const box = useRef(null);
   useEffect(() => { focusEntry({ dialog: box.current, first: main.current }); }, [p.state]); // 터치는 창 자체로(링 없음 — UXM-17), 화면 낭독기도 창 안으로(UL8)
   const ok = p.state === 'valid', already = p.state === 'already_member';
@@ -170,6 +170,7 @@ export function InvitePreview({ p, avatar = null, busy = false, err = null, onJo
         <footer className="invp-acts">
           {ok && <button type="button" ref={main} className="btn btn-primary" disabled={busy} onClick={onJoin}><I name="check" size={14} />{t('inv.p.join')}</button>}
           {already && <button type="button" ref={main} className="btn btn-primary" onClick={onOpen}>{t('inv.p.open')}</button>}
+          {ok && onDecline && <button type="button" className="btn" disabled={busy} onClick={onDecline}>{t('inv.p.decline')}</button>}
           <button type="button" ref={ok || already ? undefined : main} className="btn" onClick={onClose}>{t(ok ? 'ui.cancel' : 'ui.close')}</button>
         </footer>
       </section>
