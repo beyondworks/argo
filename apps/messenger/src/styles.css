@@ -2471,3 +2471,5 @@ html { -webkit-tap-highlight-color: transparent; }
 .msgr-v2-devices .row.dim { opacity: .6; }
 .msgr-v2-dev { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
 .msgr-v2-devices .msgr-rows .row .msgr-v2-dev .sub { font-size: 12px; color: var(--fg-3); overflow-wrap: anywhere; white-space: normal; overflow: visible; text-overflow: clip; } /* 폰에서도 앱·버전·등록 시각을 자르지 않는다 */
+.msgr-v2-invites .row { display: flex; align-items: center; gap: 8px; } /* 초대함(v2/InvitesCard.jsx) — 기기 카드와 같은 줄 모양 */
+.msgr-v2-invites .msgr-rows .row .msgr-v2-dev .sub { font-size: 12px; color: var(--fg-3); overflow-wrap: anywhere; white-space: normal; overflow: visible; text-overflow: clip; }
