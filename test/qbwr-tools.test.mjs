@@ -40,9 +40,11 @@ function run(script, args, envText, { shell = {}, name } = {}) {
   return { ...r, calls, envFile };
 }
 const envText = (o) => Object.entries(o).map(([k, v]) => `${k}=${v}`).join('\n') + '\n';
+// qbwr 도구는 맥에서만 돈다(bash 스크립트·가짜 psql). 윈도우 러너에는 POSIX 셸이 없어 셸을 부르는 칸은 건너뛰고 macOS CI가 검증한다
+const POSIX = process.platform === 'win32' ? 'POSIX 셸 하네스 — qbwr 도구는 맥 전용(macOS CI가 검증)' : false;
 const SCRIPTS = [['qbwr-apply.sh', ['plan']], ['qbwr-rate.sh', ['snap', join(dir, 'snap')]], ['qbwr-seed.sh', ['db', '0.01']], ['qbwr-q.sh', ['q1']]];
 
-test('대상 검문: 운영·우회 접속(% 인코딩·대문자·conninfo·쿼리·다른 호스트)·운영 API 주소는 psql을 부르기 전에 exit 5', () => {
+test('대상 검문: 운영·우회 접속(% 인코딩·대문자·conninfo·쿼리·다른 호스트)·운영 API 주소는 psql을 부르기 전에 exit 5', { skip: POSIX }, () => {
   const cases = [
     ['운영 ref', { QBWR_DB_URL: `postgresql://postgres.${PROD}:x@${POOL}:5432/postgres` }],
     ['운영 ref가 섞인 qbwr 문자열', { QBWR_DB_URL: `postgresql://postgres.${QBWR}:x@${POOL}:5432/postgres?x=${PROD}` }],
@@ -73,14 +75,14 @@ test('대상 검문: 운영·우회 접속(% 인코딩·대문자·conninfo·쿼
   }
 });
 
-test('대상 검문: env 파일 이름은 .env.qbwr*만(운영 env 파일은 내용과 상관없이 읽지 않는다)', () => {
+test('대상 검문: env 파일 이름은 .env.qbwr*만(운영 env 파일은 내용과 상관없이 읽지 않는다)', { skip: POSIX }, () => {
   for (const name of ['.env.local', '.env.production', '.env', 'env-qbwr']) {
     const r = run('qbwr-apply.sh', ['plan'], envText({ QBWR_DB_URL: GOOD_URL }), { name });
     assert.equal(r.status, 5, name); assert.match(r.stdout, /\.env\.qbwr로 시작/, name); assert.equal(r.calls, '');
   }
 });
 
-test('대상 검문: 셸 PG* 변수(PGHOSTADDR·PGHOST·PGUSER·PGSERVICE·PGSERVICEFILE·PGOPTIONS)는 psql에 넘어가지 않는다(A·D·E2)', () => {
+test('대상 검문: 셸 PG* 변수(PGHOSTADDR·PGHOST·PGUSER·PGSERVICE·PGSERVICEFILE·PGOPTIONS)는 psql에 넘어가지 않는다(A·D·E2)', { skip: POSIX }, () => {
   const svc = join(dir, 'pg_service.conf'); writeFileSync(svc, `[x]\nhost=127.0.0.1\nuser=postgres.${PROD}\n`);
   const r = run('qbwr-apply.sh', ['plan'], envText({ QBWR_DB_URL: GOOD_URL }), {
     shell: { PGHOSTADDR: '127.0.0.1', PGHOST: 'db.evil', PGUSER: `postgres.${PROD}`, PGSERVICE: 'x', PGSERVICEFILE: svc, PGOPTIONS: '-c x=y', PGDATABASE: 'other' },
@@ -93,7 +95,7 @@ test('대상 검문: 셸 PG* 변수(PGHOSTADDR·PGHOST·PGUSER·PGSERVICE·PGSER
   assert.ok(!r.calls.includes(PROD));
 });
 
-test('대상 검문: env 파일 안의 QBWR_REF·PROD_REF·QBWR_ENV·PATH 줄은 기준값을 바꾸지 못한다', () => {
+test('대상 검문: env 파일 안의 QBWR_REF·PROD_REF·QBWR_ENV·PATH 줄은 기준값을 바꾸지 못한다', { skip: POSIX }, () => {
   const r = run('qbwr-apply.sh', ['plan'], `QBWR_REF=${PROD}\nPROD_REF=x0\nPATH=/nonexistent\nQBWR_DB_PASSWORD=pw-Secret1\nQBWR_POOLER_HOST=aws-1-ap-northeast-2.pooler.supabase.com\n`);
   assert.equal(r.status, 0, r.stdout + r.stderr);
   assert.ok(r.calls.includes(`user=postgres.${QBWR} `), r.calls);
@@ -106,7 +108,7 @@ test('대상 검문: env 파일 안의 QBWR_REF·PROD_REF·QBWR_ENV·PATH 줄은
   assert.match(readFileSync(s.envFile, 'utf8'), /^QBWR_SEED_PASSWORD=.+$/m);
 });
 
-test('평문: DB 비밀번호는 psql 인자에 없고 PGPASSWORD로만, 합성 비밀번호는 정규화되는 select set_config로 넣고 스냅샷에서 거른다', () => {
+test('평문: DB 비밀번호는 psql 인자에 없고 PGPASSWORD로만, 합성 비밀번호는 정규화되는 select set_config로 넣고 스냅샷에서 거른다', { skip: POSIX }, () => {
   const r = run('qbwr-apply.sh', ['plan'], envText({ QBWR_DB_URL: GOOD_URL }));
   assert.ok(!r.calls.split('\n').some((l) => l.startsWith('arg:') && l.includes('pw-Secret1')), '비밀번호가 인자에 있다');
   assert.ok(r.calls.includes('env:PGPASSWORD=pw-Secret1'));
@@ -138,7 +140,7 @@ const filesRun = (base, key, mode = '-rm') => new Promise((resolve) => {
   p.on('close', (code) => resolve({ code, out }));
 });
 
-test('Storage 검문: 주소는 정확히 https://<qbwr>.supabase.co, 키는 JWT ref = qbwr·service_role — 아니면 요청 0으로 exit 5', async () => {
+test('Storage 검문: 주소는 정확히 https://<qbwr>.supabase.co, 키는 JWT ref = qbwr·service_role — 아니면 요청 0으로 exit 5', { skip: POSIX }, async () => {
   const bad = [
     [`https://${PROD}.supabase.co/${QBWR}/..`, SERVICE],
     [`http://127.0.0.1:${PORT}/${QBWR}`, SERVICE],
@@ -162,7 +164,7 @@ test('Storage 검문: 주소는 정확히 https://<qbwr>.supabase.co, 키는 JWT
   assert.equal(sh.status, 5, sh.stdout); assert.match(sh.stdout, /QBWR_SERVICE_ROLE_KEY, 또는 QBWR_ANON_KEY·QBWR_SEED_PASSWORD가 필요/);
 });
 
-test('Storage 사용자 토큰 방식(서비스 키 없음): 검문한 접속·qbwr anon 키가 아니면 psql·요청 0으로 exit 5', async () => {
+test('Storage 사용자 토큰 방식(서비스 키 없음): 검문한 접속·qbwr anon 키가 아니면 psql·요청 0으로 exit 5', { skip: POSIX }, async () => {
   const goodC = `host=${POOL} port=5432 user=postgres.${QBWR} dbname=postgres sslmode=require`;
   const userRun = (env) => new Promise((resolve) => {
     const manifest = join(dir, 'att-u.json'); writeFileSync(manifest, JSON.stringify([{ bucket: 'msgr', path: 'p/c905/f1.txt', bytes: 3 }]));
@@ -186,7 +188,7 @@ test('Storage 사용자 토큰 방식(서비스 키 없음): 검문한 접속·q
   assert.equal(s.status, 5, s.stdout); assert.match(s.stdout, /anon JWT가 아닙니다/);
 });
 
-test('Q 실행기: 검문을 거치지 않은 접속(C)·다른 주소·다른 ref anon 키로는 exit 5', () => {
+test('Q 실행기: 검문을 거치지 않은 접속(C)·다른 주소·다른 ref anon 키로는 exit 5', { skip: POSIX }, () => {
   const q = (env) => spawnSync('node', ['test/fixtures/msgr2/qbwr-q.mjs', 'q1'], { cwd: ROOT, encoding: 'utf8', env: { PATH: process.env.PATH, QBWR_SEED_PASSWORD: 'x', ...env } });
   const goodC = `host=${POOL} port=5432 user=postgres.${QBWR} dbname=postgres sslmode=require`;
   for (const env of [
