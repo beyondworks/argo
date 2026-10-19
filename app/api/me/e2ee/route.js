@@ -3,7 +3,7 @@
 // 지문뿐이고, DEK 생성·개봉은 전부 로컬 프로세스(src/e2ee.mjs)에서 일어난다.
 // 인증: 기기 세션의 사용자 스코프 클라이언트(RLS own) — me/billing과 같은 패턴. 서비스키 불요.
 import { randomBytes } from 'node:crypto';
-import { createClient } from '@supabase/supabase-js';
+import { argoCreateClient as createClient } from '../../../../src/supabase-client.mjs'; // X-Client-Info 끝에 argo/<버전>(src/supabase-client.mjs)
 import { currentUser, authError, langFromCookieHeader } from '../../../auth.mjs';
 import { apiError } from '../../../apimsg.mjs';
 import { getFreshDeviceSession } from '../../../../src/devicesession.mjs';
