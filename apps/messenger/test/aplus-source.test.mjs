@@ -24,9 +24,9 @@ test('plan() 실패는 null(모름) — 화면은 다시 확인을 보인다', {
   assert.equal(await s.plan(), null);
 });
 
-test('회의방·외부 봇: 서버 RPC 확정 전에는 aplus_not_ready(요청 0)', { skip: !createAPlusSource && 'source.mjs needs vite aliases' }, async () => {
+test('시작 전(무료·로그인 직후): 회의방·봇·1:1 조회는 aplus_not_ready로 멈추고 요청 0', { skip: !createAPlusSource && 'source.mjs needs vite aliases' }, async () => {
   const raw = fakeRaw();
   const s = createAPlusSource({ raw, uid: 'u1' });
-  for (const fn of ['meetings', 'createMeeting', 'cancelMeeting', 'bots', 'addBot']) await assert.rejects(s[fn]({}), { code: 'aplus_not_ready' }, fn);
+  for (const fn of ['meetings', 'createMeeting', 'cancelMeeting', 'bots', 'agents', 'openDm', 'messages']) await assert.rejects(s[fn]({}), { code: 'aplus_not_ready' }, fn);
   assert.deepEqual(raw.calls, []);
 });

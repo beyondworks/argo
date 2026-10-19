@@ -201,8 +201,6 @@ test('app-root.jsx — 앱 전체를 RootBoundary(빈 화면 대신 오류 문�
         '@argo/i18n': 'export function LanguageProvider() {}',
         '@argo/theme': 'export function ThemeProvider() {}',
         './App.jsx': 'export default function App() {}',
-        './v2/flag.mjs': 'export const v2Enabled = () => false;',
-        './aplus/flag.mjs': 'export const aplusEnabled = () => false;',
       },
     });
   } finally { delete globalThis.document; }

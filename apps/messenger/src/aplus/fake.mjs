@@ -1,5 +1,6 @@
 // A+ 화면용 가짜 원본 — 서버 RPC·약속 v1.1이 확정되기 전 화면 골격과 상태별 캡처에 쓴다(test/aplus.fixture.html). 네트워크를 쓰지 않는다.
-// 실제 원본(source.mjs)과 같은 모양: plan·agents·dms·openDm·messages·send·meetings·createMeeting·cancelMeeting·bots·addBot·on.
+// 실제 원본(source.mjs)과 같은 모양: plan·agents·dms·openDm·messages·send·meetings·createMeeting·cancelMeeting·bots·on.
+// 외부 봇은 내 에이전트 중 hosting 'bot'(약속 v1.1) — 봇 추가는 앱이 아니라 내 PC Argo 설정에서 한다.
 // calls에 부른 이름을 남긴다 — 무료 계정이 plan 말고는 아무것도 부르지 않는지 시험이 본다.
 
 const UID = 'me-0000';
@@ -12,8 +13,10 @@ const AG = [
   { id: 'ag-sales', owner_user_id: UID, display_name: '영업 도우미', slug: 'sales', role_text: '견적·회신 초안', status: 'active' },
   { id: 'ag-legal', owner_user_id: UID, display_name: '법무 검토', slug: 'legal', role_text: '계약서 확인', status: 'paused' },
   { id: 'ag-old', owner_user_id: UID, display_name: '은퇴한 봇', slug: 'old', role_text: '', status: 'retired' },
+  { id: 'bot-hermes', owner_user_id: UID, display_name: '헤르메스 (내 맥)', slug: 'hermes', role_text: '외부 봇', status: 'active', hosting: 'bot', botKind: 'hermes', botStatus: 'connected' },
+  { id: 'bot-claw', owner_user_id: UID, display_name: '오픈클로 (집 PC)', slug: 'openclaw', role_text: '외부 봇', status: 'active', hosting: 'bot', botKind: 'openclaw', botStatus: 'off' },
 ];
-const AG_EN = { 'ag-research': ['Research', 'Find and summarize'], 'ag-writer': ['Writer', 'Drafts and edits'], 'ag-design': ['Designer', 'Screen mockups'], 'ag-ops': ['Ops manager', 'Schedules and tidy-up'], 'ag-data': ['Data analyst', 'Checks the numbers'], 'ag-sales': ['Sales helper', 'Quotes and replies'], 'ag-legal': ['Legal review', 'Contract checks'], 'ag-old': ['Retired bot', ''] };
+const AG_EN = { 'ag-research': ['Research', 'Find and summarize'], 'ag-writer': ['Writer', 'Drafts and edits'], 'ag-design': ['Designer', 'Screen mockups'], 'ag-ops': ['Ops manager', 'Schedules and tidy-up'], 'ag-data': ['Data analyst', 'Checks the numbers'], 'ag-sales': ['Sales helper', 'Quotes and replies'], 'ag-legal': ['Legal review', 'Contract checks'], 'ag-old': ['Retired bot', ''], 'bot-hermes': ['Hermes (my Mac)', 'External bot'], 'bot-claw': ['OpenClaw (home PC)', 'External bot'] };
 
 /** scenario: pro-many(기본) | pro-one | pro-none | free | unknown | offline | meeting-running | closed. lang: 가짜 글 언어. */
 export function createFakeSource({ scenario = 'pro-many', lang = 'ko', now = Date.now() } = {}) {
@@ -32,6 +35,11 @@ export function createFakeSource({ scenario = 'pro-many', lang = 'ko', now = Dat
       { id: 1, author: 'me', body: say('다음 주 경쟁사 가격표 정리해 줘', 'Summarize competitor pricing for next week'), at: min(42) },
       { id: 2, author: 'ag-research', body: say('세 곳을 비교했습니다. 월 요금은 A사 29,000원, B사 35,000원, C사 19,000원이고 C사는 연간 결제만 받습니다. 표로 정리한 파일을 폴더에 넣어 두었습니다.', 'I compared three. Monthly: A $29, B $35, C $19 (annual billing only). The table is saved in the folder.'), at: min(40) },
     ]);
+    if (agents.some((a) => a.id === 'bot-claw')) dm('bot-claw', [
+      { id: 4, author: 'me', body: say('오늘 서버 로그 요약해 줘', 'Summarize today\u2019s server logs'), at: min(30) },
+      { id: 5, author: 'system', kind: 'note', errKey: 'aplus.err.bot_unreachable', at: min(29) },
+      { id: 6, author: 'system', kind: 'system', meta: { code: 'work.limit', limit: 'bot_turns' }, at: min(28) },
+    ]);
     if (agents.length > 1) dm('ag-writer', [{ id: 3, author: 'ag-writer', body: say('소개 문단 초안을 고쳤습니다. 확인해 주세요.', 'I revised the intro paragraph. Please take a look.'), at: min(180) }]);
   }
   const unread = new Map([['dm-ag-writer', 1]]);
@@ -47,10 +55,6 @@ export function createFakeSource({ scenario = 'pro-many', lang = 'ko', now = Dat
     ] });
     meetings.push(id);
   }
-  const bots = scenario === 'closed' ? null : [
-    { id: 'bot-1', kind: 'hermes', name: say('헤르메스 (내 맥)', 'Hermes (my Mac)'), address: 'http://127.0.0.1:8642', status: 'connected' },
-    { id: 'bot-2', kind: 'openclaw', name: say('오픈클로 (집 PC)', 'OpenClaw (home PC)'), address: 'http://home-pc.tail1234.ts.net:18789', status: 'off' },
-  ];
   let seq = 100;
   const later = (v) => new Promise((r) => setTimeout(() => r(v), 30));
   const notReady = () => Object.assign(new Error('aplus_not_ready'), { code: 'aplus_not_ready' });
@@ -85,6 +89,7 @@ export function createFakeSource({ scenario = 'pro-many', lang = 'ko', now = Dat
     },
     async createMeeting({ title, agentIds }) {
       calls.push('createMeeting');
+      if (agentIds.length > 5) throw Object.assign(new Error('msgr2_meeting_full'), { code: '22023' });
       const id = `mt-${++seq}`; rooms.set(id, { kind: 'meeting', title, agentIds, run: null, messages: [] }); meetings.unshift(id);
       return id;
     },
@@ -94,8 +99,7 @@ export function createFakeSource({ scenario = 'pro-many', lang = 'ko', now = Dat
       r.run = { ...r.run, state: 'cancelling' }; emit('meeting', { roomId, run: r.run });
       await later(); r.run = { ...r.run, state: 'cancelled' }; emit('meeting', { roomId, run: r.run });
     },
-    async bots() { calls.push('bots'); if (!bots) throw notReady(); return later([...bots]); },
-    async addBot({ kind, name, address }) { calls.push('addBot'); if (!bots) throw notReady(); const b = { id: `bot-${++seq}`, kind, name, address, status: 'unknown' }; bots.push(b); return b; },
+    async bots() { calls.push('bots'); if (scenario === 'closed') throw notReady(); return later(agents.filter((a) => a.hosting === 'bot' && a.status !== 'retired').map((a) => ({ id: a.id, name: a.display_name, kind: a.botKind, status: a.botStatus }))); },
   };
   return src;
 }

@@ -21,7 +21,7 @@ function Drive() {
     const steps = [];
     const tab = p.get('tab');
     if (tab) steps.push(() => click(`.ap-seg button, .ap-tabbar button, .ap-railfoot`, { dm: '1:1', meet: p.get('lang') === 'en' ? 'Meetings' : '회의방', bots: p.get('lang') === 'en' ? 'Bots' : '외부 봇', me: p.get('lang') === 'en' ? 'Settings' : '설정' }[tab]));
-    if (p.get('open')) steps.push(() => click('.ap-rows .ap-rowbtn:not(.static)'));
+    if (p.get('open')) steps.push(() => click('.ap-rows .ap-rowbtn:not(.static)', p.get('row') || undefined)); // row=이름 일부 — 그 줄을 연다
     if (p.get('sheet')) steps.push(() => click('.ap-head .btn, .ap-railbtn, .ap-note .btn-primary'));
     let i = 0; const id = setInterval(() => { if (i >= steps.length) { clearInterval(id); document.body.dataset.ready = '1'; return; } if (steps[i]()) i += 1; }, 120);
     return () => clearInterval(id);

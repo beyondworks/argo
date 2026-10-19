@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { accessOf, agentRows, togglePick, meetingDraftProblem, meetingView, botAddressProblem, botDraftProblem, botStatusOf, layoutOf, notOpenYet, MEETING_MAX, MEETING_ROUNDS } from '../src/aplus/model.mjs';
+import { accessOf, agentRows, togglePick, meetingDraftProblem, meetingView, meetingPickable, deriveRun, runStateOf, errorKey, limitKey, botStatusOf, layoutOf, notOpenYet, MEETING_MAX, MEETING_ROUNDS } from '../src/aplus/model.mjs';
 import { aplusEnabled, APLUS_FLAG_KEY } from '../src/aplus/flag.mjs';
 import { createFakeSource } from '../src/aplus/fake.mjs';
 import { DICT } from '../src/i18n.js';
@@ -67,19 +67,31 @@ test('회의 진행 줄: 라운드는 1..2로 자르고, 진행 중에만 취소
   assert.equal(meetingView({ state: '???' }).state, 'failed');
 });
 
-test('외부 봇 주소(R8): 루프백·Tailscale만, 공개·사설 LAN·주소 안 계정·다른 스킴은 거부', () => {
-  for (const ok of ['http://127.0.0.1:8642', 'http://localhost:18789/v1', 'http://[::1]:8642', 'https://100.64.0.1', 'http://100.127.255.254:8642', 'http://home-pc.tail1234.ts.net:18789']) assert.equal(botAddressProblem(ok), null, ok);
-  assert.equal(botAddressProblem('https://hermes.example.com'), 'public');
-  assert.equal(botAddressProblem('http://192.168.0.10:8642'), 'public', '집 LAN도 Tailscale이 아니면 거부(공개 노출 경로)');
-  assert.equal(botAddressProblem('http://100.128.0.1'), 'public', '100.64/10 밖');
-  assert.equal(botAddressProblem('http://127.0.0.1.example.com'), 'public');
-  assert.equal(botAddressProblem('http://user:key@127.0.0.1:8642'), 'userinfo');
-  assert.equal(botAddressProblem('ws://127.0.0.1:8642'), 'scheme');
-  assert.equal(botAddressProblem('127.0.0.1:8642'), 'invalid', 'http:// 없이 — 형식 안내(예: http://127.0.0.1:8642)');
-  assert.equal(botAddressProblem('not a url'), 'invalid');
-  assert.equal(botDraftProblem({ kind: 'hermes', name: 'x', address: 'https://evil.example' }), 'addr.public');
-  assert.equal(botDraftProblem({ kind: 'other', name: 'x', address: 'http://127.0.0.1' }), 'kind');
-  assert.equal(botDraftProblem({ kind: 'openclaw', name: ' ', address: 'http://127.0.0.1' }), 'name');
+test('회의 참가자로 고를 수 있는 에이전트: 멈춤·외부 봇 제외(서버 msgr2_meeting_no_bot)', () => {
+  assert.equal(meetingPickable({ paused: false, bot: false }), true);
+  assert.equal(meetingPickable({ paused: true, bot: false }), false);
+  assert.equal(meetingPickable({ paused: false, bot: true }), false);
+  const rows = agentRows([{ id: 'b', owner_user_id: 'me', display_name: '헤르메스', status: 'active', hosting: 'bot' }], { uid: 'me' });
+  assert.equal(rows[0].bot, true, '봇도 1:1 목록에는 보인다(약속 v1.1 kind bot)');
+});
+
+test('회의 진행 계산: 그 일(workId)의 글 meta.round 최대값과 그 라운드에 답한 에이전트 수, 일 상태 → 진행 상태', () => {
+  const run = { workId: 'w1', state: 'running', total: 3 };
+  assert.deepEqual(deriveRun(run, []), { ...run, round: 1, answered: 0 });
+  const msgs = [{ workId: 'w0', round: 2, author: 'a' }, { workId: 'w1', round: 1, author: 'a' }, { workId: 'w1', round: 1, author: 'b' }, { workId: 'w1', round: 1, author: 'c' }, { workId: 'w1', round: 2, author: 'a' }];
+  assert.deepEqual(deriveRun(run, msgs), { ...run, round: 2, answered: 1 }, '다른 일(w0)의 글은 세지 않는다');
+  assert.deepEqual(deriveRun({ state: 'running', round: 1, answered: 2, total: 3 }, msgs), { state: 'running', round: 1, answered: 2, total: 3 }, 'workId 없으면 주어진 값');
+  assert.equal(runStateOf('accepted'), 'running'); assert.equal(runStateOf('waiting_approval'), 'running');
+  assert.equal(runStateOf('done'), 'done'); assert.equal(runStateOf('cancelled'), 'cancelled'); assert.equal(runStateOf('expired'), 'failed'); assert.equal(runStateOf(null), null);
+});
+
+test('서버 거부·봇 오류 코드 → 문구 키(#1117·#1116), 상한 안내 글(meta.limit) → 문구 키', () => {
+  for (const c of ['msgr2_lite_only', 'msgr2_meeting_full', 'msgr2_meeting_no_bot', 'msgr2_pro_required', 'bot_unreachable', 'bot_limit']) assert.equal(errorKey({ code: '42501', message: c }), `aplus.err.${c}`, c);
+  assert.equal(errorKey('bot_limit'), 'aplus.err.bot_limit');
+  assert.equal(errorKey({ message: 'Failed to fetch' }), null);
+  for (const l of ['pro', 'need_update', 'bot_turns', 'bot_hops', 'agent_minute', 'streak']) assert.equal(limitKey({ code: 'work.limit', limit: l }), `aplus.limit.${l}`);
+  assert.equal(limitKey({ code: 'work.limit', limit: 'new_one' }), 'aplus.limit.other', '모르는 상한도 안내는 한다');
+  assert.equal(limitKey({ code: 'room.created' }), null);
 });
 
 test('봇 상태: 연결됨·꺼짐·확인 못 함(모르는 값)', () => {
@@ -87,6 +99,9 @@ test('봇 상태: 연결됨·꺼짐·확인 못 함(모르는 값)', () => {
   assert.equal(botStatusOf({ status: 'disconnected' }), 'off');
   assert.equal(botStatusOf({ status: 'weird' }), 'unknown');
   assert.equal(botStatusOf(null), 'unknown');
+  assert.equal(botStatusOf({ lastWork: { state: 'failed', error_code: 'bot_unreachable' } }), 'off', '마지막 일이 연결 실패면 꺼짐');
+  assert.equal(botStatusOf({ lastWork: { state: 'done' } }), 'connected');
+  assert.equal(botStatusOf({ lastWork: { state: 'failed', error_code: 'bot_limit' } }), 'unknown');
 });
 
 test('배치: 640 미만은 한 칸(390), 그 이상은 목록+대화(880·1280)', () => {
@@ -96,23 +111,26 @@ test('배치: 640 미만은 한 칸(390), 그 이상은 목록+대화(880·1280)
 test('아직 안 열린 기능(서버 스위치)은 오류가 아니라 닫힘으로', () => {
   assert.equal(notOpenYet({ code: 'aplus_not_ready' }), true);
   assert.equal(notOpenYet({ code: 'PGRST202', message: 'Could not find the function' }), true);
+  assert.equal(notOpenYet({ code: '42703', message: 'column msgr2_rooms.meeting does not exist' }), true, '#1117 전 서버');
   assert.equal(notOpenYet({ message: 'Failed to fetch' }), false);
 });
 
-test('문구: A+ 화면이 쓰는 ap.* 키는 사전에 ko·en 둘 다 있다(고정 키 + 조립 키)', () => {
+test('문구: A+ 화면이 쓰는 aplus.* 키는 사전에 ko·en 둘 다 있다(고정 키 + 조립 키)', () => {
   const src = read('../src/aplus/APlusApp.jsx');
-  const fixed = [...src.matchAll(/t\('(ap\.[a-zA-Z0-9.]+)'/g)].map((m) => m[1]);
+  const fixed = [...src.matchAll(/t\('(aplus\.[a-zA-Z0-9.]+)'/g)].map((m) => m[1]);
   const built = [
-    ...['dm', 'meet', 'bots', 'me'].flatMap((k) => [`ap.tab.${k}`]), ...['dm', 'meet', 'bots'].map((k) => `ap.empty.${k}`),
-    ...['idle', 'running', 'done', 'cancelled', 'cancelling', 'failed'].map((s) => `ap.run.${s}`),
-    ...['fewAgents', 'title', 'titleLong', 'dup', 'min', 'max'].map((s) => `ap.meet.problem.${s}`),
-    ...['hermes', 'openclaw'].map((k) => `ap.bots.kind.${k}`), ...['connected', 'off', 'unknown'].map((s) => `ap.bots.status.${s}`),
-    ...['invalid', 'scheme', 'userinfo', 'public'].map((s) => `ap.bots.problem.addr.${s}`),
+    ...['dm', 'meet', 'bots', 'me'].flatMap((k) => [`aplus.tab.${k}`]), ...['dm', 'meet', 'bots'].map((k) => `aplus.empty.${k}`),
+    ...['idle', 'running', 'done', 'cancelled', 'cancelling', 'failed'].map((s) => `aplus.run.${s}`),
+    ...['fewAgents', 'title', 'titleLong', 'dup', 'min', 'max'].map((s) => `aplus.meet.problem.${s}`),
+    ...['hermes', 'openclaw', 'bot'].map((k) => `aplus.bots.kind.${k}`), ...['connected', 'off', 'unknown'].map((s) => `aplus.bots.status.${s}`),
+    ...['s1', 's2', 's3', 's4'].map((k) => `aplus.bots.guide.${k}`),
+    ...['msgr2_lite_only', 'msgr2_meeting_full', 'msgr2_meeting_no_bot', 'msgr2_pro_required', 'msgr2_meeting_agents', 'msgr2_agent_not_allowed', 'bot_unreachable', 'bot_limit'].map((c) => `aplus.err.${c}`),
+    ...['pro', 'need_update', 'bot_turns', 'bot_hops', 'agent_minute', 'streak', 'other'].map((l) => `aplus.limit.${l}`),
   ];
   const missing = [...new Set([...fixed, ...built])].filter((k) => !Array.isArray(DICT[k]) || !DICT[k][0] || !DICT[k][1]);
   assert.deepEqual(missing, []);
   assert.ok(fixed.length > 50, `고정 키 ${fixed.length}개`);
-  assert.doesNotMatch(src.replace(/\/\/.*$/gm, ''), />[^<>{}]*[가-힣][^<>{}]*</, '화면 원본에 한글을 직접 쓰지 않는다(사전으로)');
+  assert.doesNotMatch(src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, ''), />[^<>{}]*[가-힣][^<>{}]*</, '화면 원본에 한글을 직접 쓰지 않는다(사전으로)');
 });
 
 test('진입점: A+ 셸에는 채널·조직·파견·사람 채팅·초대 화면이 없고, 옛 RPC를 부르지 않는다', () => {
@@ -126,11 +144,19 @@ test('쉬는 동안 요청 0: A+ 원본·화면에 주기 조회가 없다(setIn
   for (const f of ['../src/aplus/APlusApp.jsx', '../src/aplus/source.mjs', '../src/aplus/model.mjs']) assert.doesNotMatch(read(f), /setInterval/, f);
 });
 
-test('외부 봇 키: 메신저에는 키 입력 칸이 없다(키는 내 PC Argo에만 — 안내 문구만)', () => {
+test('외부 봇: 메신저에는 주소·키 입력 칸이 없다(내 PC Argo 설정에서 연결 — 약속 v1.1, 서버에 주소·키 없음)', () => {
   const ui = read('../src/aplus/APlusApp.jsx');
-  const sheet = ui.slice(ui.indexOf('function BotSheet'));
-  assert.doesNotMatch(sheet, /type="password"|apiKey|setKey|token\b/);
-  assert.match(sheet, /t\('ap\.bots\.key\.title'\)/);
+  const guide = ui.slice(ui.indexOf('function BotGuide'));
+  assert.doesNotMatch(guide, /<input|type="password"|apiKey|address/);
+  assert.match(guide, /t\('aplus\.bots\.key\.title'\)/);
+  assert.doesNotMatch(read('../src/aplus/source.mjs'), /addBot|bot_url|api_key/i);
+});
+
+test('A+ 원본은 앱 앞·뒤 연결(bindLifecycle)을 기계에 걸고 stop에서 푼다(분리 검수 — 뒤로 가면 소켓 닫음, 앞으로 오면 다시 붙음)', () => {
+  const src = read('../src/aplus/source.mjs');
+  assert.match(src, /offs\.push\(bindLifecycle\(rt\.machine\)\)/);
+  assert.match(src, /stop\(\) \{ for \(const off of offs\.splice\(0\)\) off\(\);/);
+  assert.match(src, /retry\(\) \{ if \(rt && gaveUpOf\(rt\.machine\.getSnapshot\(\)\)\) rt\.retry\(\); \}/);
 });
 
 test('가짜 원본: 무료 시나리오에서 plan 말고는 부르지 않는 흐름의 재료(plan → free)', async () => {
