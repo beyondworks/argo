@@ -175,3 +175,32 @@ test('봇만 부른 회의(에이전트 없음)도 돈다 — 봇 1번, 반응 �
   assert.equal(st.bots.length, 1);
   assert.deepEqual(r.posts.map((p) => p.kind), ['bot']);
 });
+
+test('상한 — 회의방 릴레이는 켜짐 값(3명)까지: 4명 릴레이는 3명만 발언하고 제외 안내(풀림 6명이 새지 않는다)', async () => {
+  const { st, deps } = fakes();
+  const r = await runMeeting({ text: '@에이 > @비 > @씨 > @디 이어서', participants: agents(4), tag: 'w15' }, deps);
+  assert.deepEqual(st.chats.map((c) => c.slug), ['s0', 's1', 's2']);
+  assert.match(r.notes.find((n) => n.code === 'relay').text, /이어받기는 3명까지 — 제외: 디/);
+});
+
+test('글 상한(방어선) — 위임 미러가 켜진 회의방 바깥이라도 질문 1번당 글은 10개를 넘지 않는다', async () => {
+  const { runRoomCore } = await import('../src/room.mjs');
+  const { emitNotify } = await import('../src/notify.mjs');
+  const room = { messages: [] };
+  const core = NAMES.slice(0, 5).map((name, i) => ({ slug: `p${i}`, name, kind: 'agent' }));
+  const env = {
+    wsId: 'cap-ws', participants: async () => core, folder: async () => ({ pin: '', stale: '' }), company: async () => ({ lang: 'ko' }),
+    begin: async (m) => { room.messages.push(m); return { sid: 0, relaxed: false }; },
+    push: async (m) => { room.messages.push(m); return true; }, load: async () => room,
+    async speak(a, prompt, opts) { // 발언마다 위임 결과 1건을 미러로 흘린다 — 미러 글까지 세면 5×2×2 = 20개가 될 자리
+      emitNotify({ type: 'delegate', wsId: 'cap-ws', ctx: opts.mirrorCtx, from: a.slug, to: a.slug, reply: '위임 결과', task: 't' });
+      await new Promise((r) => setTimeout(r, 0));
+      return { reply: `${a.slug} 답`, handover: null, artifacts: [] };
+    },
+    record: async () => {}, overBudget: async () => false, directives: false, mirrorDelegations: true, meeting: { signal: null },
+  };
+  await runRoomCore(env, '@전체 의견', [], {}, async () => {}, { rounds: 2 });
+  const agentPosts = room.messages.filter((m) => m.who !== 'user' && m.who !== 'system');
+  assert.equal(agentPosts.length, 10, '미러 글까지 합쳐 10개(상한값이 바뀌면 여기서 드러난다)');
+  assert.deepEqual({ ...MEETING_LIMITS }, { speakers: 5, rounds: 2, posts: 10 }, '유건 승인 상한표(2026-10-19)');
+});
