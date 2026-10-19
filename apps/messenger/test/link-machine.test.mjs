@@ -959,3 +959,17 @@ test('R3 로그아웃: dropPushToken → 등록 1회에 p_push_token null(실린
   assert.equal(await m.dropPushToken(), true);
   assert.equal(fake.count('msgr2_device_register'), n + 2, '이미 비웠으면 요청 0');
 });
+
+test('R3 분리 검수: 토큰을 싣는 등록이 날아가는 중에 로그아웃해도 끝난 뒤 서버 행 토큰은 null', async () => {
+  const { m, fake } = setup();
+  await m.start(); await flush();
+  m.setPushToken('apns-token-1'); // 등록 요청이 막 나갔다(응답 전)
+  const dropped = m.dropPushToken();
+  assert.equal(await dropped, true);
+  const regs = fake.log.filter((l) => l.name === 'msgr2_device_register');
+  const toks = regs.map((l) => l.args.p_push_token);
+  assert.ok(toks.indexOf('apns-token-1') > 0 && toks.at(-1) === null, `실린 토큰을 본 뒤 비운다: ${JSON.stringify(toks)}`);
+  assert.ok(toks.length <= 5, '비우기 요청은 상한 안(후속 싣기 1 + 로그아웃 1)');
+  await flush();
+  assert.equal(fake.log.filter((l) => l.name === 'msgr2_device_register').at(-1).args.p_push_token, null);
+});
