@@ -1,0 +1,57 @@
+{
+  "v": 1,
+  "id": "00000023-0000-4000-8000-000000000000",
+  "work": "3f1c2b7a-9d4e-4c1a-8b2f-1a2b3c4d5e01",
+  "seq": 5,
+  "type": "work.result",
+  "agent": "7a0e5c11-2b3d-4e5f-8a9b-0c1d2e3f4a02",
+  "device": "c4d5e6f7-8091-4a2b-9c3d-4e5f6a7b8c03",
+  "at": "2026-10-17T06:00:00Z",
+  "data": {
+    "text": "세 명이 2라운드 토론했습니다.",
+    "files": [],
+    "handoffs": [
+      {
+        "agent": "88888888-9999-4aaa-8bbb-cccccccccc11",
+        "text": "넘김"
+      }
+    ],
+    "usage": {
+      "input_tokens": 5120,
+      "output_tokens": 830,
+      "runner": "claude"
+    },
+    "posts": [
+      {
+        "agent": "7a0e5c11-2b3d-4e5f-8a9b-0c1d2e3f4a02",
+        "round": 1,
+        "text": "이PM 1라운드 의견"
+      },
+      {
+        "agent": "7a0e5c11-2b3d-4e5f-8a9b-0c1d2e3f4a09",
+        "round": 1,
+        "text": "리서치 1라운드 의견"
+      },
+      {
+        "agent": "7a0e5c11-2b3d-4e5f-8a9b-0c1d2e3f4a0a",
+        "round": 1,
+        "text": "디자인 1라운드 의견"
+      },
+      {
+        "agent": "7a0e5c11-2b3d-4e5f-8a9b-0c1d2e3f4a02",
+        "round": 2,
+        "text": "이PM 2라운드 의견"
+      },
+      {
+        "agent": "7a0e5c11-2b3d-4e5f-8a9b-0c1d2e3f4a09",
+        "round": 2,
+        "text": "리서치 2라운드 의견"
+      },
+      {
+        "agent": "7a0e5c11-2b3d-4e5f-8a9b-0c1d2e3f4a0a",
+        "round": 2,
+        "text": "디자인 2라운드 의견"
+      }
+    ]
+  }
+}

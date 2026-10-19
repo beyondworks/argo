@@ -23,7 +23,9 @@ const Ajv2020 = require('ajv/dist/2020.js').default;
 const ajv = new Ajv2020({ allErrors: true, strict: false });
 const schemaCheck = ajv.compile(buildSchema());
 // JSON Schema로 못 적는 거부(바이트 상한). 이 예제들은 v1.mjs만 거부한다.
-const JS_ONLY = new Set(['too_large--result-over-128kb.json', 'invalid_envelope--context-over-16kb.json']);
+const JS_ONLY = new Set(['too_large--result-over-128kb.json', 'invalid_envelope--context-over-16kb.json',
+  // v1.1 교차 검사(JSON Schema로 적지 않음)
+  'invalid_envelope--meeting-without-kind.json', 'invalid_envelope--posts-with-handoffs.json', 'invalid_envelope--posts-long-summary.json']);
 
 test('type은 10종이고 방향은 서버 3·본체 7(등록 포함), progress만 wk 방송', () => {
   assert.equal(TYPES.length, 10);
@@ -151,7 +153,7 @@ test('거부 코드: 다시 보낼 것은 rate_limited·internal뿐', () => {
   assert.deepEqual(Object.entries(REJECT_CODES).filter(([, v]) => v.retry).map(([k]) => k).sort(), ['internal', 'rate_limited']);
   assert.equal(normalizeWorkErrorCode('login'), 'login');
   assert.equal(normalizeWorkErrorCode('quota_v2'), 'internal'); // 열린 값: 모르는 코드는 internal로 읽는다
-  assert.equal(WORK_ERROR_CODES.length, 9);
+  assert.equal(WORK_ERROR_CODES.length, 11); // v1.0 9종 + v1.1 bot_unreachable·bot_limit
 });
 
 test('상태 전이: 승인 없는 일·승인 있는 일·취소·끝난 일', () => {
@@ -301,4 +303,76 @@ test('TOPICS — v2:u·v2:w·v2:s·v2:wk, 옛 토픽 모양과 겹치지 않는�
   const id = '00000000-0000-4000-8000-000000000001';
   assert.deepEqual([TOPICS.user(id), TOPICS.runner(id), TOPICS.space(id), TOPICS.work(id), TOPICS.presence(id)], [`v2:u:${id}`, `v2:w:${id}`, `v2:s:${id}`, `v2:wk:${id}`, `v2:pr:${id}`]);
   for (const t of Object.values(TOPICS)) assert.doesNotMatch(t(id), /^(u|org|dm|w|s|wk|pr):/);
+});
+
+// v1.1(같은 v=1 안의 덧붙임) — 회의방·외부 봇·기능 알림. 2026-10-19 유건 지시 "A+"(라운드 2 고정, S×R ≤ 10, 봇 턴 ≤ 4·hop ≤ 2)
+test('v1.1: v는 1 그대로이고, 새 필드가 없는 v1.0 봉투는 그대로 통과한다(설치된 앱·본체 호환)', async () => {
+  const m = await import('../v1.mjs');
+  assert.equal(m.LINK_V, 1);
+  assert.equal(m.LINK_MINOR, 1);
+  assert.deepEqual(SUPPORTED, { min: 1, max: 1 });
+  for (const f of ['work_offer.json', 'work_result.json', 'agent_sync.json']) {
+    const env = valid.find((x) => x.f === f).env;
+    assert.equal(env.data.kind ?? env.data.posts ?? env.data.features, undefined, `${f}는 v1.0 모양`);
+    assert.ok(validateEnvelope(env).ok, f);
+  }
+});
+
+test('v1.1 상한: 회의 참가 5·라운드 2·posts 10·글 3000자·요약 2000자, 봇 hop 2·턴 4, 봇 속도 동시 1·분당 6', async () => {
+  const { LIMITS, BOT_RATE, OFFER_KINDS, FEATURES, AGENT_KINDS, BOT_KINDS } = await import('../v1.mjs');
+  assert.equal(LIMITS.meetingAgents, 5); assert.equal(LIMITS.meetingRounds, 2); assert.equal(LIMITS.posts, 10);
+  assert.equal(LIMITS.meetingAgents * LIMITS.meetingRounds, LIMITS.posts);
+  assert.equal(LIMITS.postText, 3000); assert.equal(LIMITS.postsResultText, 2000);
+  assert.equal(LIMITS.botHops, 2); assert.equal(LIMITS.botTurns, 4);
+  assert.deepEqual(BOT_RATE, { concurrent: 1, perMin: 6, retryOn429: 1 });
+  assert.deepEqual([...OFFER_KINDS], ['chat', 'meeting', 'bot']);
+  assert.deepEqual([...FEATURES], ['meeting', 'bot']);
+  assert.deepEqual([...AGENT_KINDS], ['agent', 'bot']);
+  assert.deepEqual([...BOT_KINDS], ['hermes', 'openclaw']);
+  // 가장 큰 회의 결과(posts 10 × 3000자 한글 + 요약 2000자)도 봉투 128KB 안에 든다
+  const r = clone(valid.find((x) => x.f === 'work_result-posts.json').env);
+  r.data.text = '가'.repeat(LIMITS.postsResultText);
+  r.data.posts = Array.from({ length: LIMITS.posts }, (_, i) => ({ agent: r.data.posts[i % r.data.posts.length].agent, round: 1 + (i % 2), text: '가'.repeat(LIMITS.postText) }));
+  assert.ok(validateEnvelope(r).ok, JSON.stringify(validateEnvelope(r).errors));
+});
+
+test('v1.1 회의: kind·meeting 짝, 참가 6명·라운드 3·posts 11은 거부, posts가 있으면 handoffs 0·요약 2000자', () => {
+  const m = clone(valid.find((x) => x.f === 'work_offer-meeting.json').env);
+  assert.ok(validateEnvelope(m).ok);
+  const noMeeting = clone(m); delete noMeeting.data.meeting;
+  assert.equal(validateEnvelope(noMeeting).code, 'invalid_envelope');
+  const r0 = clone(m); r0.data.meeting.rounds = 0;
+  assert.equal(validateEnvelope(r0).code, 'invalid_envelope');
+  const one = clone(m); one.data.meeting.rounds = 1;
+  assert.ok(validateEnvelope(one).ok, '라운드 1(반응 없이 한 번씩)은 받는다');
+  const r = clone(valid.find((x) => x.f === 'work_result-posts.json').env);
+  const badRound = clone(r); badRound.data.posts[0].round = 3;
+  assert.equal(validateEnvelope(badRound).code, 'invalid_envelope');
+  const empty = clone(r); empty.data.posts[0].text = '';
+  assert.equal(validateEnvelope(empty).code, 'invalid_envelope');
+  const noPosts = clone(r); noPosts.data.posts = []; noPosts.data.handoffs = [{ agent: noPosts.agent, text: 'x' }]; noPosts.data.text = '가'.repeat(5000);
+  assert.ok(validateEnvelope(noPosts).ok, 'posts가 비면 v1.0 결과 규칙 그대로(handoffs·긴 text 허용)');
+});
+
+test('v1.1 봇: limits.hop ≤ max_hops ≤ 2, turns_left ≤ 4, agent.sync의 봇은 종류·프로필만 싣는다', () => {
+  const b = clone(valid.find((x) => x.f === 'work_offer-bot.json').env);
+  assert.ok(validateEnvelope(b).ok);
+  const over = clone(b); over.data.limits.hop = 2; over.data.limits.max_hops = 1;
+  assert.equal(validateEnvelope(over).code, 'invalid_envelope');
+  const turns = clone(b); turns.data.limits.turns_left = 5;
+  assert.equal(validateEnvelope(turns).code, 'invalid_envelope');
+  const s = clone(valid.find((x) => x.f === 'agent_sync-bot.json').env);
+  assert.ok(validateEnvelope(s).ok);
+  const bot = s.data.agents.find((a) => a.kind === 'bot');
+  assert.deepEqual(Object.keys(bot.bot).sort(), ['kind', 'profile']);
+  assert.ok(!JSON.stringify(s).match(/https?:\/\/|api_key|token/i), '주소·키는 약속에 싣지 않는다');
+  const unknownKind = clone(s); unknownKind.data.agents[1].bot.kind = 'future_bot'; unknownKind.data.features.push('future_feature');
+  assert.ok(validateEnvelope(unknownKind).ok, '봇 종류·기능은 열린 값');
+});
+
+test('v1.1 오류·거부 코드: bot_unreachable·bot_limit는 열린 값, post_denied·pro_required는 다시 보내지 않는다', () => {
+  assert.equal(normalizeWorkErrorCode('bot_unreachable'), 'bot_unreachable');
+  assert.equal(normalizeWorkErrorCode('bot_limit'), 'bot_limit');
+  assert.deepEqual(REJECT_CODES.post_denied, { retry: false });
+  assert.deepEqual(REJECT_CODES.pro_required, { retry: false });
 });

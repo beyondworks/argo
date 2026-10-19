@@ -272,6 +272,21 @@
                         "type": "null"
                       }
                     ]
+                  },
+                  "hop": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2
+                  },
+                  "max_hops": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2
+                  },
+                  "turns_left": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 4
                   }
                 },
                 "required": [
@@ -311,6 +326,54 @@
                   ]
                 },
                 "maxItems": 50
+              },
+              "kind": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "pattern": "^[a-z][a-z0-9_]*$"
+              },
+              "meeting": {
+                "type": "object",
+                "properties": {
+                  "participants": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "agent": {
+                          "type": "string",
+                          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "role": {
+                          "type": "string",
+                          "minLength": 0,
+                          "maxLength": 2000
+                        }
+                      },
+                      "required": [
+                        "agent",
+                        "name",
+                        "role"
+                      ]
+                    },
+                    "maxItems": 5
+                  },
+                  "rounds": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 2
+                  }
+                },
+                "required": [
+                  "participants",
+                  "rounds"
+                ]
               }
             },
             "required": [
@@ -758,6 +821,34 @@
                 },
                 "maxItems": 8
               },
+              "posts": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "agent": {
+                      "type": "string",
+                      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+                    },
+                    "round": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 2
+                    },
+                    "text": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 3000
+                    }
+                  },
+                  "required": [
+                    "agent",
+                    "round",
+                    "text"
+                  ]
+                },
+                "maxItems": 10
+              },
               "usage": {
                 "anyOf": [
                   {
@@ -934,6 +1025,38 @@
                           "type": "null"
                         }
                       ]
+                    },
+                    "kind": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "pattern": "^[a-z][a-z0-9_]*$"
+                    },
+                    "bot": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 64,
+                              "pattern": "^[a-z][a-z0-9_]*$"
+                            },
+                            "profile": {
+                              "type": "string",
+                              "minLength": 0,
+                              "maxLength": 200
+                            }
+                          },
+                          "required": [
+                            "kind"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     }
                   },
                   "required": [
@@ -945,6 +1068,16 @@
                   ]
                 },
                 "maxItems": 500
+              },
+              "features": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "pattern": "^[a-z][a-z0-9_]*$"
+                },
+                "maxItems": 16
               }
             },
             "required": [
