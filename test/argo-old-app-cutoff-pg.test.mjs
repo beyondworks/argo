@@ -326,7 +326,7 @@ test('관문 기록: 꼬리 버전을 남기고, 6시간 안의 같은 버전 �
 
 
 test('되돌림 파일(scripts/rollback/…down.sql) — 등록이 풀리고, 관문은 옛 본문(쓰기 0), 요청 전 함수는 빈 본문으로 남는다', { skip }, () => {
-  const down = readFileSync(fileURLToPath(new URL('../scripts/rollback/20261018130000_argo_old_app_cutoff.down.sql', import.meta.url)), 'utf8');
+  const down = readFileSync(fileURLToPath(new URL('../scripts/rollback/20261019135000_argo_old_app_cutoff.down.sql', import.meta.url)), 'utf8');
   psql(['-c', down]);
   assert.doesNotMatch(sql(`select coalesce(array_to_string(rolconfig, ','), '') from pg_roles where rolname = 'authenticator'`), /db_pre_request/);
   assert.equal(sql(`select prolang = (select oid from pg_language where lanname = 'sql') from pg_proc where proname = 'argo_old_app_check'`), 't', '빈 본문으로 남는다(지우지 않음)');

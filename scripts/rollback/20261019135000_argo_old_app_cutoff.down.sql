@@ -1,10 +1,10 @@
--- 되돌림: supabase/migrations/20261018130000_argo_old_app_cutoff.sql을 걷어 낸다(마이그레이션이 아니다 — 바로 실행하는 파일).
+-- 되돌림: supabase/migrations/20261019135000_argo_old_app_cutoff.sql을 걷어 낸다(마이그레이션이 아니다 — 바로 실행하는 파일).
 -- 스위치만 끄려면 이 파일이 아니라: delete from public.msgr_settings where key = 'old_app_cutoff';
 -- 하는 일: ① 스위치 끄기 ② 요청 전 함수를 아무것도 하지 않는 본문으로 바꾸기(지우지 않는다 — 등록 해제가 PostgREST 인스턴스에
 --   반영되기 전에 함수가 없으면 GET을 포함한 모든 Data API 요청이 실패한다) ③ 등록 해제(값이 이 함수일 때만) ④ 관문을 20261013190000 본문으로
 --   ⑤ cron 제거. 기록 표 두 개와 빈 함수는 남긴다(정책 없는 표라 사용자에게 보이지 않는다). 빈 함수는 반영을 확인한 뒤 따로 지워도 되고 남겨도 무해하다.
 --   이미 폐기된 로그인 세션은 되살아나지 않는다(사용자가 다시 로그인한다).
--- 실행: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/rollback/20261018130000_argo_old_app_cutoff.down.sql   (파일 안의 begin/commit — -1 없이)
+-- 실행: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/rollback/20261019135000_argo_old_app_cutoff.down.sql   (파일 안의 begin/commit — -1 없이)
 begin;
 set local lock_timeout = '5s';
 delete from public.msgr_settings where key = 'old_app_cutoff';

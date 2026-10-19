@@ -75,7 +75,7 @@ export async function refreshAppGate(root, sess, mk, { now = Date.now } = {}) {
 }
 
 /** 서버 확인용 클라이언트 — 5초 안에 끝나지 않으면 끊는다(확인 실패는 판정을 바꾸지 않는다) */
-// X-Client-Info 끝에 argo/<버전>(withArgoClientInfo) — 서버가 관문 기록에 이 세션의 앱 버전을 남겨, 옛 앱 사용 중지 장치(20261018130000)가 이 세션의
+// X-Client-Info 끝에 argo/<버전>(withArgoClientInfo) — 서버가 관문 기록에 이 세션의 앱 버전을 남겨, 옛 앱 사용 중지 장치(20261019135000)가 이 세션의
 // 꼬리 없는 다른 요청(결제 화면·프로필 조회 등)을 옛 앱으로 오인하지 않게 한다(0.1.114부터).
 export const appGateClient = (url, key, opts) => createClient(url, key, { ...opts, global: { ...opts?.global, fetch: withArgoClientInfo((u, init = {}) => fetch(u, { ...init, signal: AbortSignal.timeout(5_000) })) } });
 

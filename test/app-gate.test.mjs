@@ -123,7 +123,7 @@ test('판정 파일은 동기화하지 않는다 — 기기마다 그 앱 버전
   } finally { if (prev === undefined) delete process.env.ARGO_ENC_VAULT; else process.env.ARGO_ENC_VAULT = prev; }
 });
 
-// 0.1.114부터 관문 요청에도 X-Client-Info 끝 ' argo/<버전>' — 서버가 관문 기록에 이 세션의 앱 버전을 남겨, 옛 앱 사용 중지 장치(20261018130000)가
+// 0.1.114부터 관문 요청에도 X-Client-Info 끝 ' argo/<버전>' — 서버가 관문 기록에 이 세션의 앱 버전을 남겨, 옛 앱 사용 중지 장치(20261019135000)가
 // 이 세션의 꼬리 없는 다른 요청을 옛 앱으로 오인하지 않게 한다. 꼬리가 빠지면 기준 0.1.113에서 새 앱 세션이 폐기될 수 있다.
 test('appGateClient의 관문 요청은 X-Client-Info에 argo/<앱 버전> 꼬리를 단다(supabase-js 기본값 보존)', async () => {
   const { appGateClient } = await import('../src/app-gate.mjs');

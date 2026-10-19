@@ -40,7 +40,7 @@
 --   끄기:  delete from public.msgr_settings where key = 'old_app_cutoff';
 --   "끄면 원래대로" = 끈 시각 이후 새로 표시·폐기하는 세션 0. 이미 폐기된 세션은 되살아나지 않는다(사용자가 다시 로그인하면 된다).
 --   켜기 전 조건: 이 파일을 적용하고 하루 이상 지나 실행 중인 새 앱이 모두 관문 기록을 남긴 뒤(argo_gate_sessions 행 수 확인)에 켠다.
--- 장치 제거: scripts/rollback/20261018130000_argo_old_app_cutoff.down.sql(함수를 지우지 않고 빈 본문으로 바꾼다).
+-- 장치 제거: scripts/rollback/20261019135000_argo_old_app_cutoff.down.sql(함수를 지우지 않고 빈 본문으로 바꾼다).
 -- 등록은 pgrst.db_pre_request가 비어 있거나 이미 이 함수일 때만 한다. 다른 값이 있으면 멈춘다(덮어쓰지 않는다).
 
 -- 1) 관문을 부른 세션(= 0.1.107 이상). 30일 지난 행은 아래 cron이 지운다.
