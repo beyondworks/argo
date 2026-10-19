@@ -28,8 +28,6 @@ import { withLock, withDirLock, withFileLock } from './mutex.mjs';
 import { cryptoOn, isSecretRel, isSecretNameRel, isEncRel, encVaultOn, sealSecret, sealSecretV3, openSecret, openSecretCompat, isEnvelopeGeneration, CRED_WITHDRAWN, isCredWithdrawn } from './secretbox.mjs';
 import { dek, tryClaimDek } from './e2ee.mjs';
 import { APP_VERSION, withArgoClientInfo } from './app-version.mjs';
-import { readAppGate, APP_GATE_RECHECK_MS } from './app-gate.mjs';
-import { cmpVersion } from './version-compare.mjs';
 import { loadSyncCreds, credsEpoch } from './synccreds.mjs';
 import { loadDeviceSession, getFreshDeviceSession } from './devicesession.mjs';
 import { accountKeyError, ensureAccountKey } from './accountkey.mjs';
@@ -308,6 +306,8 @@ export const EXCLUDE = (rel) => { // (export: 회귀 테스트용)
   if (isTurnTraceRel(rel)) return true;
   // 메신저 기록 보관 폴더(isMsgrArchiveRel 주석) — 기기 로컬
   if (isMsgrArchiveRel(rel)) return true;
+  // 새 시작 합치기에서 진 쪽 사본(SYNC_CONFLICTS_DIR 주석) — 기기 로컬 보관. 올리지 않는다(자격 파일 사본이 봉투 없이 나가지 않게, 앱이 대화·루틴으로 읽지 않게)
+  if (rel.split('/')[0] === SYNC_CONFLICTS_DIR) return true;
   const base = rel.split('/').pop();
   if (
     base.startsWith('.gateway') || base.startsWith('.gw-offset') ||
@@ -1085,21 +1085,30 @@ export const isText = (rel) => rel.endsWith('.md');       // 노트·일지 — 
    ② 다른 기기는 매니페스트의 epoch가 자기 기록의 epoch와 다르면 기록을 비우고 합치기만 한다(삭제 0 — 기록이 없으면 '지웠다'는 판정이 없다).
       그 사이클에 양쪽이 다른 노트(.md)는 수정 시각이 늦은 쪽을 정본으로, 다른 쪽을 .conflict 사본으로 남긴다(평소 충돌의 '원격 정본' 규칙은 그대로 —
       새 시작 합치기에서만. 옛 사본 기기가 먼저 올렸어도 최신 편집이 정본으로 남게).
-   켜는 조건(①의 새 시작 개시만): 서버 최소 앱 버전(argo_min_app_version, .app-gate.json)이 FRESH_START_MIN_APP 이상이고, 이 기기가 그 값을 처음 본 지
-   FRESH_START_SETTLE_MS가 지났을 때. 그보다 옛 앱(epoch를 모른다)이 같은 계정에 있으면 새로 쓴 매니페스트에 없는 자기 파일을 '다른 기기가 지움'으로 읽어 지울 수 있다 —
-   최소 버전이 그 앱을 멈추고, 다른 기기가 확인 주기(30분) 안에 그 값을 알아챈 뒤에만 연다(분리 검수 F2). 꺼져 있으면 종전 보류와 같다.
-   ②의 합치기(epoch가 다르면 기록을 비우고 합침)는 장치와 무관하게 늘 한다 — 삭제가 0이라 안전하고, 매니페스트에 epoch가 없으면 종전과 같다. 장치가 아직 꺼진 새 앱이
-   다른 기기의 새 시작 매니페스트를 종전 규칙으로 읽어 자기만 가진 파일을 지우던 창(F2)을 닫는다.
-   장치가 켜져 있을 때 매니페스트 없음 + 기록 있음 + blob이 일부만 있으면 치유하지 않고 보류한다 — 다른 기기의 새 시작이 진행 중일 수 있고(blob만 올리고 매니페스트 전),
+   켜는 조건(①의 새 시작 개시만): 서버 스위치 argo_sync_fresh_start()가 참일 때만(마이그레이션 20261019140000, 기본 꺼짐 — #1110 엄격 검수 H1).
+   최소 앱 버전과 묶지 않는다 — 기기는 최소 버전 판정을 파일로 기억하고 서버 확인은 뒤에서 돌아, 잠들었다 깬 옛 앱(epoch 모름)의 첫 사이클이 새 시작 매니페스트를
+   읽고 자기만 가진 파일을 지웠다. 스위치는 옛 앱이 모두 사라진 것을 운영이 확인한 뒤 켠다(PR 본문 순서). 꺼져 있으면(함수 없음·오류 포함) 종전 보류와 같다.
+   스위치는 '매니페스트 없음 + 기록 있음'인 회사를 만났을 때만 묻는다(FRESH_SWITCH_TTL_MS 캐시) — 정상 동기화에서는 호출 0.
+   ②의 합치기(epoch가 다르면 기록을 비우고 합침)는 스위치와 무관하게 늘 한다 — 삭제가 0이라 안전하고, 매니페스트에 epoch가 없으면 종전과 같다(분리 검수 F2).
+   스위치가 켜져 있을 때 매니페스트 없음 + 기록 있음 + blob이 일부만 있으면 치유하지 않고 보류한다 — 다른 기기의 새 시작이 진행 중일 수 있고(blob만 올리고 매니페스트 전),
    그 blob에 내 기록 메타를 적으면 옛 판이 내 최신 편집을 덮는다(F1). epoch 매니페스트가 생기면 다음 사이클이 합친다.
    새 시작 직전에는 캐시를 건너뛴 플랜 조회로 Pro·체험인지 다시 확인한다 — 무료(서버가 읽기를 막아 모든 GET이 '없음')를 정리된 원격으로 오인하지 않게(F3). */
-export const FRESH_START_MIN_APP = '0.1.114';
+/** 새 시작 합치기에서 노트(.md) 밖의 파일(.json·첨부 등)이 양쪽 다르면 수정 시각이 늦은 쪽을 정본으로 두고, 진 쪽 바이트를 회사 폴더의
+    SYNC_CONFLICTS_DIR/<원래 경로>.conflict-<기기>-<시각><확장자>에 남긴다(분리 검수 F7 — 사본 없이 덮이던 것). 기기 로컬(EXCLUDE)이다:
+    같은 폴더에 사본을 두면 대화·루틴 로더가 새 파일로 읽고, 자격 파일 사본은 봉투 판정(isSecretRel) 밖이라 평문으로 올라간다. */
+export const SYNC_CONFLICTS_DIR = '.sync-conflicts';
 export const FRESH_START_PROBE = 20;
-export const FRESH_START_SETTLE_MS = APP_GATE_RECHECK_MS + 15 * 60_000;
-export const freshStartAllowed = (now = Date.now()) => {
-  const { min, since } = readAppGate(WS_ROOT);
-  return !!min && cmpVersion(min, FRESH_START_MIN_APP) >= 0 && since > 0 && now - since >= FRESH_START_SETTLE_MS;
-};
+export const FRESH_SWITCH_TTL_MS = 5 * 60_000;
+const freshSwitch = (globalThis.__argoFreshSwitch ??= { at: 0, on: false });
+/** 서버 새 시작 스위치(rpc argo_sync_fresh_start) — 참일 때만 참. 오류·함수 없음·모르는 값은 거짓(꺼짐 = 종전 보류). 5분 캐시. (export: 회귀 테스트용) */
+export async function freshStartAllowed(now = Date.now()) {
+  if (now - freshSwitch.at < FRESH_SWITCH_TTL_MS) return freshSwitch.on;
+  let on = false;
+  try { const { data, error } = await client().rpc('argo_sync_fresh_start'); on = !error && data === true; } catch { on = false; }
+  freshSwitch.at = now; freshSwitch.on = on;
+  return on;
+}
+export const _resetFreshSwitchForTest = () => { freshSwitch.at = 0; freshSwitch.on = false; };
 export const isThread = (rel) => /^chats\/[^/]+\.json$/.test(rel); // 진행 중 턴과 레이스 → 스레드 락
 /** 코어 모듈이 `<file>.lockd` 프로세스 간 잠금 안에서 읽고-고쳐-쓰는 파일(스레드 제외 — 스레드는 isThread). 동기화가 이 파일들을 쓸 때도 같은 잠금을 잡는다. (export: 회귀 테스트용) */
 export const isFileLockedRel = (rel) => /^(company|approvals|corrections|routines|connections|assistant)\.json$/.test(rel) || /^agents\/[^/]+\.md$/.test(rel); // assistant.json — 비서 설정·알리지 않기 목록(설정 API가 같은 잠금 안에서 고친다)
@@ -1627,11 +1636,11 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
     }
   }
 
-  // 새 시작(FRESH_START_MIN_APP 주석) — 브레이크·사전 확인보다 먼저(기록을 비우면 둘 다 판정할 삭제가 없다). 꺼져 있으면 아무것도 하지 않는다.
+  // 새 시작(freshStartAllowed 주석) — 브레이크·사전 확인보다 먼저(기록을 비우면 둘 다 판정할 삭제가 없다). 꺼져 있으면 아무것도 하지 않는다.
   let epoch = typeof remote.epoch === 'string' ? remote.epoch : null;
   let adopt = false; // 이번 사이클이 새 시작 합치기인가(양쪽이 다른 노트는 수정 시각이 늦은 쪽이 정본)
   const preProbe = new Map(); // 정리 판정에서 확인한 blob — 아래 사전 확인이 다시 묻지 않는다
-  const freshOn = freshStartAllowed();
+  const freshOn = !manifestExists && Object.keys(state).length > 0 ? await freshStartAllowed() : false; // 묻는 것은 이 경우뿐(정상 동기화 호출 0)
   let freshStarted = false;
   if (Object.keys(state).length > 0 && manifestExists && epoch && epoch !== stateDoc.epoch) { // 합치기 — 장치와 무관(F2)
     console.warn(`[argo] 동기화(${wsId}): 다른 기기가 새로 시작한 클라우드 사본(${epoch}) — 이 기기 기록을 비우고 합친다(삭제 0)`);
@@ -1884,6 +1893,14 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
         await upload(remoteKey(cRel), sealFor(cRel, localBuf));
         remote.files[cRel] = local[cRel];
       } else { // 기타(json 등) — 최근 mtime 승(LWW), 단 카운트해 관측 가능하게
+        if (adopt) { // 새 시작 합치기에서만 — 진 쪽을 기기 로컬 사본으로 남긴다(F7). 정본 쓰기·업로드보다 먼저(로컬 정합 먼저 — 위 텍스트 분기와 같은 순서)
+          const loser = (r.m ?? 0) >= (l.m ?? 0) ? localBuf : remoteBuf;
+          const dot = rel.lastIndexOf('.') > rel.lastIndexOf('/') ? rel.lastIndexOf('.') : rel.length;
+          const keep = join(root, SYNC_CONFLICTS_DIR, ...`${rel.slice(0, dot)}.conflict-${me}-${Date.now()}${rel.slice(dot)}`.split('/'));
+          await mkdir(dirname(keep), { recursive: true });
+          await writeFileAtomic(keep, loser);
+          console.warn(`[argo] 동기화(${wsId}): 새 시작 합치기 — ${rel} 양쪽이 달라 늦은 쪽을 정본으로, 다른 쪽은 ${SYNC_CONFLICTS_DIR}/에 보관`);
+        }
         if ((r.m ?? 0) >= (l.m ?? 0)) { await writeLocal(rel, remoteBuf, r.m, hashBuf(localBuf)); local[rel] = r; pulled++; }
         else { await upload(remoteKey(rel), sealFor(rel, localBuf)); remote.files[rel] = l; pushed++; }
         conflicts++;

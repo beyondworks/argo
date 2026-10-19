@@ -1,10 +1,10 @@
 // 새 시작 — 클라우드 사본이 정리된 뒤 다시 Pro가 된 계정(2026-10-19, 검수 #1108 H2). 행동 시험(가짜 저장소, 임시 ARGO_ROOT).
-// 계약(src/sync.mjs FRESH_START_MIN_APP 주석):
-//  ① 장치가 켜져 있으면(서버 최소 앱 버전 ≥ FRESH_START_MIN_APP) 정리된 원격 + 옛 기록 → 로컬 파일 하나도 지우지 않고 로컬 기준으로 다시 올린다(.sync-state 있음/없음,
+// 계약(src/sync.mjs freshStartAllowed 주석):
+//  ① 서버 스위치(rpc argo_sync_fresh_start, 기본 꺼짐)가 켜져 있으면 정리된 원격 + 옛 기록 → 로컬 파일 하나도 지우지 않고 로컬 기준으로 다시 올린다(.sync-state 있음/없음,
 //     무변경/일부 수정). 매니페스트·기록에 새 시작 표지(epoch)를 남긴다. 도중에 끊겨도 다음 사이클이 이어 간다(영구 보류 없음).
 //  ② 다른 기기는 epoch가 다르면 기록을 비우고 합친다 — 삭제 0, 양쪽이 다른 노트는 수정 시각이 늦은 쪽이 정본·다른 쪽은 .conflict.
 //  ③ 범위: '늦은 쪽 정본'은 새 시작 합치기에서만 — 평소 충돌은 종전처럼 원격 정본.
-//  ④ 장치가 꺼져 있으면 종전과 같다(보류) — 기존 시험(test/sync-expired-token.test.mjs)은 무변경으로 통과해야 한다. 여기서는 대표 경우만 다시 잠근다.
+//  ④ 스위치가 꺼져 있으면(행 없음·함수 없음·오류) 종전과 같다(보류) — 기존 시험(test/sync-expired-token.test.mjs)은 무변경으로 통과해야 한다. 여기서는 대표 경우만 다시 잠근다.
 //  ⑤ 일부 blob만 없으면(정리 중·부분 유실) 켜져 있어도 종전 보류.
 // ⚠ ARGO_ROOT는 sync.mjs 동적 임포트보다 먼저.
 import { test, after } from 'node:test';
@@ -17,7 +17,7 @@ import { mkdtemp } from './helpers/tmp.mjs';
 
 const ROOT = await mkdtemp(join(tmpdir(), 'argo-freshstart-'));
 process.env.ARGO_ROOT = ROOT;
-const { syncCompany, _setSyncClientForTest, FRESH_START_MIN_APP } = await import('../src/sync.mjs');
+const { syncCompany, _setSyncClientForTest, SYNC_CONFLICTS_DIR, EXCLUDE, _resetFreshSwitchForTest } = await import('../src/sync.mjs');
 const { useFakeAccountKey } = await import('./helpers/fake-account-key.mjs');
 const { sealSecret, openSecretCompat } = await import('../src/secretbox.mjs');
 const { _resetAppGateForTest } = await import('../src/app-gate.mjs');
@@ -31,11 +31,8 @@ const OBJECT_NOT_FOUND = { message: 'Object not found', status: 400, statusCode:
 const NET_FAIL = { message: 'fetch failed', name: 'StorageUnknownError' };
 const isManifest = (k) => k.endsWith('/__manifest__.json');
 
-async function gate(min, sinceAgoMs = 2 * 3600_000) { // 서버 최소 앱 버전(.app-gate.json) — null이면 파일 없음(장치 꺼짐). since = 그 값을 처음 본 시각
-  if (min) await writeFile(join(ROOT, '.app-gate.json'), JSON.stringify({ min, checkedAt: Date.now(), since: Date.now() - sinceAgoMs }));
-  else await rm(join(ROOT, '.app-gate.json'), { force: true });
-  _resetAppGateForTest();
-}
+let SWITCH = false; // 서버 새 시작 스위치 — true | false | 'error'(옛 서버: 함수 없음)
+async function gate(on) { SWITCH = on; _resetFreshSwitchForTest(); }
 
 function storage(initial = {}) {
   const store = new Map(Object.entries(initial));
@@ -58,7 +55,12 @@ function storage(initial = {}) {
     async list() { return { data: [], error: null }; },
   };
   // 플랜 조회(rpc my_plan) — 새 시작 직전의 캐시 건너뛴 확인(F3). 기본 pro, state.plan으로 바꾼다
-  const rpc = async (name) => (name === 'my_plan' ? { data: { plan: state.plan ?? 'pro' }, error: null } : { data: null, error: { message: 'no rpc' } });
+  const rpc = async (name) => {
+    state.rpcs = (state.rpcs ?? 0) + 1;
+    if (name === 'my_plan') return { data: { plan: state.plan ?? 'pro' }, error: null };
+    if (name === 'argo_sync_fresh_start') return SWITCH === 'error' ? { data: null, error: { code: 'PGRST202', message: 'Could not find the function' } } : { data: SWITCH === true, error: null };
+    return { data: null, error: { message: 'no rpc' } };
+  };
   return { client: { storage: { from: () => bucket }, rpc }, store, state, log };
 }
 const manifestOf = (f, WS) => JSON.parse(openSecretCompat(f.store.get(`${OWNER}/${WS}/__manifest__.json`)).toString());
@@ -84,8 +86,8 @@ for (const [idx, [name, opts]] of [
   ['기록 있음 · 10개 중 3개 수정', { withState: true, edited: (i) => i < 3 }],
   ['기록 없음 · 10개', { withState: false, edited: () => false }],
 ].entries()) {
-  test(`① 장치 켜짐 — 사본 정리 뒤 재결제(${name}): 로컬 삭제 0, 로컬 기준으로 전부 다시 올리고 다음 사이클은 할 일 없음`, async () => {
-    await gate(FRESH_START_MIN_APP);
+  test(`① 스위치 켜짐 — 사본 정리 뒤 재결제(${name}): 로컬 삭제 0, 로컬 기준으로 전부 다시 올리고 다음 사이클은 할 일 없음`, async () => {
+    await gate(true);
     const WS = `fs-case-${idx}`;
     const { count } = await seedWiped(WS, 10, opts);
     const f = storage({});
@@ -106,12 +108,12 @@ for (const [idx, [name, opts]] of [
     _setSyncClientForTest(f.client);
     const r2 = await syncCompany(WS, OWNER, false);
     assert.equal(r2.pushed + r2.pulled + r2.deletedL + r2.deletedR, 0, '다음 사이클 할 일 없음');
-    await gate(null);
+    await gate(false);
   });
 }
 
 test('① 새 시작 도중 끊김(3개 올린 뒤 네트워크 실패) — 다음 사이클이 같은 표지로 이어 가 모두 올린다(영구 보류 없음, 삭제 0)', async () => {
-  await gate(FRESH_START_MIN_APP);
+  await gate(true);
   const WS = 'fs-cut';
   const { count } = await seedWiped(WS, 10);
   const f = storage({});
@@ -127,11 +129,11 @@ test('① 새 시작 도중 끊김(3개 올린 뒤 네트워크 실패) — 다�
   assert.equal(r.failed, 0); assert.equal(r.deletedL, 0);
   assert.equal(await count(), 10);
   assert.equal(manifestOf(f, WS).epoch, mid.epoch, '끊기기 전에 정한 표지 그대로');
-  await gate(null);
+  await gate(false);
 });
 
-test('⑤ 장치 켜짐이어도 일부 blob만 없으면 종전 보류(지우지도 다시 밀지도 않음)', async () => {
-  await gate(FRESH_START_MIN_APP);
+test('⑤ 스위치 켜짐이어도 일부 blob만 없으면 종전 보류(지우지도 다시 밀지도 않음)', async () => {
+  await gate(true);
   const WS = 'fs-partial';
   const { count } = await seedWiped(WS, 10);
   const store = {};
@@ -141,11 +143,11 @@ test('⑤ 장치 켜짐이어도 일부 blob만 없으면 종전 보류(지우�
   await assert.rejects(() => syncCompany(WS, OWNER, false), /대량 삭제 감지|클라우드 사본이 비어|새로 올리는 중/);
   assert.deepEqual(f.log.uploads, []); assert.deepEqual(f.log.removed, []);
   assert.equal(await count(), 10);
-  await gate(null);
+  await gate(false);
 });
 
-test('F1 장치 켜짐 + 매니페스트 없음 + 기록 있음 + blob 일부 있음(다른 기기의 새 시작이 매니페스트 전) — 치유하지 않고 보류, 내 편집 그대로', async () => {
-  await gate(FRESH_START_MIN_APP);
+test('F1 스위치 켜짐 + 매니페스트 없음 + 기록 있음 + blob 일부 있음(다른 기기의 새 시작이 매니페스트 전) — 치유하지 않고 보류, 내 편집 그대로', async () => {
+  await gate(true);
   const WS = 'fs-f1';
   const { dir } = await seedWiped(WS, 5, { edited: (i) => i < 3 }); // 무변경 2개 — 대량 삭제 브레이크 아래
   const f = storage({ [`${OWNER}/${WS}/vault/notes/n3.md`]: Buffer.from('# 다른 기기의 옛 판 3\n'), [`${OWNER}/${WS}/vault/notes/n4.md`]: Buffer.from('# 다른 기기의 옛 판 4\n') });
@@ -154,11 +156,11 @@ test('F1 장치 켜짐 + 매니페스트 없음 + 기록 있음 + blob 일부 �
   assert.deepEqual(f.log.uploads, []); assert.deepEqual(f.log.removed, []);
   assert.equal(await readFile(join(dir, 'n0.md'), 'utf8'), '# 이 기기에서 고침 0\n');
   assert.equal((await stateOf(WS)).files['vault/notes/n3.md'].h, meta(Buffer.from('# 원본 3\n')).h, '기록을 다른 기기 blob에 맞춰 고치지 않는다');
-  await gate(null);
+  await gate(false);
 });
 
-test('F3 장치 켜짐 + 정리된 원격처럼 보여도 캐시 건너뛴 플랜 확인이 Pro·체험이 아니면(무료: 서버가 읽기를 막음) 새 시작하지 않는다 — 종전 보류', async () => {
-  await gate(FRESH_START_MIN_APP);
+test('F3 스위치 켜짐 + 정리된 원격처럼 보여도 캐시 건너뛴 플랜 확인이 Pro·체험이 아니면(무료: 서버가 읽기를 막음) 새 시작하지 않는다 — 종전 보류', async () => {
+  await gate(true);
   const WS = 'fs-f3';
   const { count } = await seedWiped(WS, 10);
   const f = storage({});
@@ -168,22 +170,37 @@ test('F3 장치 켜짐 + 정리된 원격처럼 보여도 캐시 건너뛴 플�
   assert.deepEqual(f.log.uploads, []);
   assert.equal(await count(), 10);
   assert.equal((await stateOf(WS)).freshStart, undefined, '기록을 비우지 않는다');
-  await gate(null);
+  await gate(false);
 });
 
-test('F2-b 최소 버전을 본 지 FRESH_START_SETTLE_MS가 안 됐으면 새 시작을 열지 않는다(다른 기기가 알아챌 시간) — 종전 보류', async () => {
-  await gate(FRESH_START_MIN_APP, 60_000);
-  const WS = 'fs-settle';
+test('H1 스위치 확인 오류(옛 서버 — 함수 없음)는 꺼짐으로 본다 — 종전 보류', async () => {
+  await gate('error');
+  const WS = 'fs-switch-err';
   await seedWiped(WS, 10);
   const f = storage({});
   _setSyncClientForTest(f.client);
   await assert.rejects(() => syncCompany(WS, OWNER, false), /대량 삭제 감지|클라우드 사본이 비어/);
   assert.deepEqual(f.log.uploads, []);
-  await gate(null);
+  await gate(false);
 });
 
-test('F2 장치가 아직 꺼진 기기도 다른 기기의 새 시작 매니페스트(epoch)를 보면 합친다 — 자기만 가진 파일을 지우지 않고 올린다', async () => {
-  await gate(null); // 이 기기는 아직 최소 버전을 모른다
+test('H1 스위치는 정상 동기화에서 묻지 않는다(매니페스트 있음 — 호출 0)', async () => {
+  await gate(true);
+  const WS = 'fs-switch-quiet';
+  const dir = join(ROOT, WS, 'vault', 'notes');
+  await mkdir(dir, { recursive: true });
+  const a = Buffer.from('# a\n');
+  await writeFile(join(dir, 'a.md'), a);
+  await writeFile(join(ROOT, WS, '.sync-state.json'), JSON.stringify({ files: { 'vault/notes/a.md': meta(a) }, ts: 1 }));
+  const f = storage({ [`${OWNER}/${WS}/vault/notes/a.md`]: a, [`${OWNER}/${WS}/__manifest__.json`]: sealSecret(Buffer.from(JSON.stringify({ files: { 'vault/notes/a.md': meta(a) } }))) });
+  _setSyncClientForTest(f.client);
+  await syncCompany(WS, OWNER, false);
+  assert.equal(f.state.rpcs ?? 0, 0, '정상 동기화에서 스위치·플랜 RPC를 부르지 않는다');
+  await gate(false);
+});
+
+test('F2 스위치가 꺼진 기기도 다른 기기의 새 시작 매니페스트(epoch)를 보면 합친다 — 자기만 가진 파일을 지우지 않고 올린다', async () => {
+  await gate(false); // 이 기기는 스위치가 꺼져 있다(합치기는 스위치와 무관)
   const WS = 'fs-f2';
   const dir = join(ROOT, WS, 'vault', 'notes');
   await mkdir(dir, { recursive: true });
@@ -202,10 +219,10 @@ test('F2 장치가 아직 꺼진 기기도 다른 기기의 새 시작 매니페
   assert.equal((await stateOf(WS)).epoch, 'e9-bbbbbbbb');
 });
 
-for (const [name, min] of [['파일 없음', null], ['최소 버전이 낮음', '0.1.113']]) {
-  test(`④ 장치 꺼짐(${name}) — 종전처럼 보류: 업로드 0·삭제 0·표지 없음`, async () => {
-    await gate(min);
-    const WS = `fs-off-${min ? 'low' : 'none'}`;
+for (const [name, sw] of [['행 없음(기본)', false], ['함수 없음', 'error']]) {
+  test(`④ 스위치 꺼짐(${name}) — 종전처럼 보류: 업로드 0·삭제 0·표지 없음`, async () => {
+    await gate(sw);
+    const WS = `fs-off-${sw === 'error' ? 'err' : 'none'}`;
     const { count } = await seedWiped(WS, 10, { edited: (i) => i < 3 });
     const f = storage({});
     _setSyncClientForTest(f.client);
@@ -213,13 +230,13 @@ for (const [name, min] of [['파일 없음', null], ['최소 버전이 낮음', 
     assert.deepEqual(f.log.uploads, []); assert.deepEqual(f.log.removed, []);
     assert.equal(await count(), 10);
     assert.equal((await stateOf(WS)).epoch, undefined);
-    await gate(null);
+    await gate(false);
   });
 }
 
-// ② 기기 2대 — 늦게 동기화한 옛 사본 기기 B가 먼저 새로 올려도, 최신 기기 A의 편집·A만 가진 파일이 남는다(wipe2와 같은 장면, 장치 켜짐)
-test('② 기기 2대, 옛 사본 기기가 먼저 새로 시작 — A는 합치기(삭제 0): A의 최신 편집이 정본, B의 옛 판은 .conflict, A만 가진 파일 올라감, B도 수렴', async () => {
-  await gate(FRESH_START_MIN_APP);
+// ② 기기 2대 — 늦게 동기화한 옛 사본 기기 B가 먼저 새로 올려도, 최신 기기 A의 편집·A만 가진 파일이 남는다(wipe2와 같은 장면, 스위치 켜짐)
+test('② 기기 2대(스위치 켜짐), 옛 사본 기기가 먼저 새로 시작 — A는 합치기(삭제 0): A의 최신 편집이 정본, B의 옛 판은 .conflict, A만 가진 파일 올라감, B도 수렴', async () => {
+  await gate(true);
   const WS = 'fs-two';
   const devA = join(ROOT, `${WS}.A`), devB = join(ROOT, `${WS}.B`);
   const old = new Date(Date.now() - 3 * 86400_000), recent = new Date(Date.now() - 60_000);
@@ -264,12 +281,12 @@ test('② 기기 2대, 옛 사본 기기가 먼저 새로 시작 — A는 합치
   assert.equal(await readFile(join(devB, 'vault/notes/x0.md'), 'utf8'), '# x0 A만 가진 파일\n');
   assert.equal((await readdir(join(devB, 'vault/notes'))).filter((x) => x.endsWith('.md')).length, 8, 'B = n0~n4 + x0 + .conflict 2');
   assert.equal(manifestOf(f, WS).epoch, epoch, '표지는 이어진다');
-  await gate(null);
+  await gate(false);
 });
 
 // ③ 범위 — 평소 충돌(표지 변화 없음)은 종전처럼 원격 정본, 로컬본이 .conflict(로컬이 더 새것이어도)
-test('③ 평소 충돌은 종전 규칙 그대로 — 원격 정본, 로컬본은 .conflict(장치 켜짐·표지 같음·로컬이 더 새것이어도)', async () => {
-  await gate(FRESH_START_MIN_APP);
+test('③ 평소 충돌은 종전 규칙 그대로 — 원격 정본, 로컬본은 .conflict(스위치 켜짐·표지 같음·로컬이 더 새것이어도)', async () => {
+  await gate(true);
   const WS = 'fs-normal-conflict';
   const dir = join(ROOT, WS, 'vault', 'notes');
   await mkdir(dir, { recursive: true });
@@ -286,5 +303,45 @@ test('③ 평소 충돌은 종전 규칙 그대로 — 원격 정본, 로컬본�
   assert.equal(await readFile(join(dir, 'a.md'), 'utf8'), '# 다른 기기\n', '평소 충돌은 원격 정본(종전)');
   const c = (await readdir(dir)).find((x) => x.includes('.conflict-'));
   assert.equal(await readFile(join(dir, c), 'utf8'), '# 이 기기(더 새것)\n');
-  await gate(null);
+  await gate(false);
 });
+
+// F7 — 새 시작 합치기에서 노트 밖 파일(.json·첨부)이 양쪽 다르면 늦은 쪽이 정본, 진 쪽은 기기 로컬 사본(.sync-conflicts/)으로 남는다(사본 없이 덮이지 않는다)
+// H2: 노트(.md)·원장(.jsonl)·스레드 밖 전부 — 제어 json(routines.json)·일반 json(chats/…)·바이너리(첨부 이미지)
+const F7_FILES = [
+  ['제어 json', 'routines.json', Buffer.from('{"r":0}'), Buffer.from('{"r":"이 기기"}'), Buffer.from('{"r":"다른 기기"}'), /^routines\.conflict-.+\.json$/],
+  ['일반 json', 'vault/data/a.json', Buffer.from('{"m":[]}'), Buffer.from('{"m":["이 기기"]}'), Buffer.from('{"m":["다른 기기"]}'), /^a\.conflict-.+\.json$/], // chats/*.json은 스레드 병합(양쪽 보존)이라 제외
+  ['바이너리', 'files/pic.png', Buffer.from([0x89, 0x50, 0x4e, 0x47, 0]), Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2]), Buffer.from([0x89, 0x50, 0x4e, 0x47, 9, 9, 9]), /^pic\.conflict-.+\.png$/],
+];
+for (const [kind, rel, base, mine, theirs, keptRe] of F7_FILES) for (const [name, localNewer] of [['로컬이 더 새것', true], ['원격이 더 새것', false]]) {
+  test(`F7·H2 합치기 ${kind} 충돌(${name}) — 늦은 쪽 정본, 진 쪽은 ${'.sync-conflicts'}/에 그대로, 사본은 올리지 않는다`, async () => {
+    await gate(false); // 합치기는 스위치와 무관
+    const WS = `fs-f7-${rel.split('/')[0].replace(/\W/g, '')}-${localNewer ? 'l' : 'r'}`;
+    await mkdir(join(ROOT, WS, rel, '..'), { recursive: true });
+    const p = join(ROOT, WS, rel);
+    await writeFile(p, mine);
+    const t = localNewer ? new Date(Date.now() - 60_000) : new Date(Date.now() - 3 * 86400_000);
+    await utimes(p, t, t);
+    await writeFile(join(ROOT, WS, '.sync-state.json'), JSON.stringify({ files: { [rel]: meta(base) }, ts: 1 }));
+    const rm_ = localNewer ? Date.now() - 3 * 86400_000 : Date.now() - 60_000;
+    const f = storage({
+      [`${OWNER}/${WS}/${rel}`]: theirs,
+      [`${OWNER}/${WS}/__manifest__.json`]: sealSecret(Buffer.from(JSON.stringify({ epoch: 'e7-cccccccc', files: { [rel]: meta(theirs, rm_) } }))),
+    });
+    _setSyncClientForTest(f.client);
+    const r = await syncCompany(WS, OWNER, false);
+    assert.equal(r.deletedL + r.deletedR, 0);
+    const winner = localNewer ? mine : theirs, loser = localNewer ? theirs : mine;
+    assert.ok((await readFile(p)).equals(winner), '늦은 쪽이 정본');
+    assert.ok(openSecretCompat(f.store.get(`${OWNER}/${WS}/${rel}`)).equals(winner), '원격도 정본');
+    const keptDir = join(ROOT, WS, SYNC_CONFLICTS_DIR, ...rel.split('/').slice(0, -1));
+    const kept = await readdir(keptDir);
+    assert.equal(kept.length, 1); assert.match(kept[0], keptRe);
+    assert.ok((await readFile(join(keptDir, kept[0]))).equals(loser), '진 쪽 바이트가 그대로 남는다');
+    assert.ok(![...f.store.keys()].some((k) => k.includes(SYNC_CONFLICTS_DIR)), '사본은 올리지 않는다(기기 로컬)');
+    assert.equal(EXCLUDE(`${SYNC_CONFLICTS_DIR}/x.json`), true);
+    _setSyncClientForTest(f.client);
+    const r2 = await syncCompany(WS, OWNER, false);
+    assert.equal(r2.pushed + r2.pulled + r2.deletedL + r2.deletedR, 0, '다음 사이클 할 일 없음(사본은 동기화 밖)');
+  });
+}
