@@ -114,7 +114,7 @@ test('App logout proceeds after push cleanup warning and reports it on the signe
   const start = source.indexOf('  const signOut = async () => {');
   const body = source.slice(start, source.indexOf('  useMobileViewport();', start)).replace('const signOut =', 'globalThis.signOut =');
   const calls = []; let notice;
-  const context = { logoutPending: { current: false }, session: { user: { id: 'fixture' } }, setSigningOut: () => {}, setLogoutNotice: (v) => { notice = v; },
+  const context = { V2: false, logoutPending: { current: false }, session: { user: { id: 'fixture' } }, setSigningOut: () => {}, setLogoutNotice: (v) => { notice = v; },
     detachPush: async () => { calls.push('detach'); return { warning: true }; },
     recoveryRef: { current: { restartSignIn: async () => { calls.push('local'); return {}; } } }, supabase: { auth: {} }, activatePush: () => calls.push('activate') };
   vm.runInNewContext(body, context); await context.signOut();
@@ -126,7 +126,7 @@ test('App failed logout re-registers the current account token without disposing
   const start = source.indexOf('  const signOut = async () => {');
   const body = source.slice(start, source.indexOf('  useMobileViewport();', start)).replace('const signOut =', 'globalThis.signOut =');
   let notice; let cleared = false; const order = [];
-  const context = { logoutPending: { current: false }, session: { user: { id: 'fixture' } }, setSigningOut: () => {}, setLogoutNotice: (v) => { notice = v; }, clearComposerSessions: () => { cleared = true; },
+  const context = { V2: false, logoutPending: { current: false }, session: { user: { id: 'fixture' } }, setSigningOut: () => {}, setLogoutNotice: (v) => { notice = v; }, clearComposerSessions: () => { cleared = true; },
     detachPush: async () => { order.push('detach'); return { warning: false }; },
     recoveryRef: { current: { restartSignIn: async () => { order.push('signout'); return { error: { message: 'offline' } }; } } },
     supabase: { auth: { getSession: async () => ({ data: { session: { user: { id: 'fixture' } } } }) } },
@@ -140,7 +140,7 @@ test('App failed logout never restores the previous account after another accoun
   const start = source.indexOf('  const signOut = async () => {');
   const body = source.slice(start, source.indexOf('  useMobileViewport();', start)).replace('const signOut =', 'globalThis.signOut =');
   const calls = [];
-  const context = { logoutPending: { current: false }, session: { user: { id: 'old-user' } }, setSigningOut: () => {}, setLogoutNotice: () => {},
+  const context = { V2: false, logoutPending: { current: false }, session: { user: { id: 'old-user' } }, setSigningOut: () => {}, setLogoutNotice: () => {},
     detachPush: async () => ({ warning: false }), recoveryRef: { current: { restartSignIn: async () => { throw new Error('offline'); } } },
     supabase: { auth: { getSession: async () => ({ data: { session: { user: { id: 'new-user' } } } }) } },
     activatePush: () => calls.push('activate'), registerPush: async () => { calls.push('register'); return 'registered'; } };
@@ -152,8 +152,23 @@ test('App reports a failed push restore after failed logout', async () => {
   const start = source.indexOf('  const signOut = async () => {');
   const body = source.slice(start, source.indexOf('  useMobileViewport();', start)).replace('const signOut =', 'globalThis.signOut =');
   let notice;
-  const context = { logoutPending: { current: false }, session: { user: { id: 'fixture' } }, setSigningOut: () => {}, setLogoutNotice: (v) => { notice = v; },
+  const context = { V2: false, logoutPending: { current: false }, session: { user: { id: 'fixture' } }, setSigningOut: () => {}, setLogoutNotice: (v) => { notice = v; },
     detachPush: async () => ({ warning: false }), recoveryRef: { current: { restartSignIn: async () => ({ error: { message: 'offline' } }) } },
     supabase: { auth: { getSession: async () => ({ data: { session: { user: { id: 'fixture' } } } }) } }, activatePush: () => {}, registerPush: async () => 'error:registration' };
   vm.runInNewContext(body, context); await context.signOut(); assert.equal(notice, 'push.logout.restoreFailed');
+});
+
+test('v2(R3): 로그아웃은 옛 detachPush 대신 이 기기 행의 토큰을 비우고(dropPushToken), 실패하면 안내를 남긴다', async () => {
+  const source = fs.readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
+  const start = source.indexOf('  const signOut = async () => {');
+  const body = source.slice(start, source.indexOf('  useMobileViewport();', start)).replace('const signOut =', 'globalThis.signOut =');
+  for (const [dropped, expect] of [[true, ''], [false, 'push.logout.detachFailed']]) {
+    const calls = []; let notice = '';
+    const context = { V2: true, isMobilePlatform: true, currentV2: () => ({ machine: { dropPushToken: async () => { calls.push('drop'); return dropped; } } }),
+      logoutPending: { current: false }, session: { user: { id: 'fixture' } }, setSigningOut: () => {}, setLogoutNotice: (v) => { notice = v; },
+      detachPush: async () => { calls.push('detach'); return { warning: false }; },
+      recoveryRef: { current: { restartSignIn: async () => { calls.push('local'); return {}; } } }, supabase: { auth: {} } };
+    vm.runInNewContext(body, context); await context.signOut();
+    assert.deepEqual(calls, ['drop', 'local']); assert.equal(notice, expect);
+  }
 });

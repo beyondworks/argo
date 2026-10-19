@@ -123,7 +123,8 @@ import { containsProfanity, readProfanityFilterOn, writeProfanityFilterOn, PROFA
 import { notifyPermission, requestNotifyPermission, askNotifyOnce, sendNotify, setBadge, clearTray, SOUNDS, getSound, setSound, playChime } from './notify.js';
 import { startPresence } from './presence.mjs';
 import { observeMobileResume } from './mobile-lifecycle.mjs';
-import { registerPush, activatePush, deactivatePush, detachPush, mountPush } from './push.js';
+import { registerPush, activatePush, deactivatePush, detachPush, mountPush, getPushToken } from './push.js';
+import { bindV2Push } from './v2/push-bind.mjs';
 import { pushDiag, readDiag, clearDiag } from './diag.jsx';
 setIosCopy(isIos); // iOS 빌드는 무료 한도 오류에서 결제 권유를 뺀다(App Store 3.1.1 — error-toast.mjs)
 setDeliveryReporter((kind, message) => pushDiag(kind, message)); // 전송 실패의 영어 원문은 카드에 보이지 않고 진단 기록(설정 > 진단)으로만 간다(검수 E, 2026-10-01)
@@ -423,13 +424,14 @@ export default function App() {
         const { data, error } = await supabase.auth.getSession();
         if (error) throw error;
         if (data.session?.user?.id !== session.user.id) return;
+        if (V2) { if (isMobilePlatform) { const r = await getPushToken(false); if (r.token) currentV2()?.machine.setPushToken(r.token); } return; } // v2: 비운 토큰을 기기 행에 되돌린다(R3)
         activatePush(supabase, session.user.id);
         const result = await registerPush(supabase);
         if (result !== 'registered' && result !== 'unsupported' && result !== 'cancelled') setLogoutNotice('push.logout.restoreFailed');
       } catch { setLogoutNotice('push.logout.restoreFailed'); }
     };
     try {
-      const { warning } = await detachPush(supabase, session.user.id);
+      const { warning } = V2 ? { warning: isMobilePlatform && !(await currentV2()?.machine.dropPushToken().catch(() => false) ?? true) } /* v2: 이 기기 행의 토큰을 비운다(R3) */ : await detachPush(supabase, session.user.id);
       if (warning) setLogoutNotice('push.logout.detachFailed');
       const { error } = await recoveryRef.current.restartSignIn();
       if (error) await restorePush();
@@ -936,12 +938,16 @@ function Shell({ session }) {
   const [syncEpoch, bumpSync] = useReducer((x) => x + 1, 0); // 방송이 없는 값(친구·차단·설정·목록)을 다시 읽는 때 — 모바일 복귀·데스크톱 창 복귀(30초 이상 가려진 뒤)·실시간 재연결
   const [uRejoin, bumpURejoin] = useReducer((x) => x + 1, 0); // u:<나>가 다시 붙은 회차(끊김 뒤·다시 건 구독) — 글 방송이 u:로만 오는 조직 비공개 방이 열려 있으면 그 방이 한 번 따라잡는다(Channel)
   useEffect(() => { // 모바일 푸시(유건 제보 2026-09-12): 로그인 뒤 토큰 등록. 알림 탭·전경 수신은 앱 수준 리스너(App)가 받아 대기함·shellLink로 넘긴다(2026-10-01)
-    if (!isMobilePlatform) return;
+    if (!isMobilePlatform || V2) return; // v2: 옛 msgr_push_register를 부르지 않는다 — 토큰은 아래 효과가 v2 기기 등록에 싣는다(R3)
     activatePush(supabase, uid);
     const reg = () => registerPush(supabase).then((r) => { if (r.startsWith('error:')) console.warn('[push]', r); });
     reg(); const stopResume = observeMobileResume(reg); // 토큰은 회전한다 — 앱 재개마다 다시 등록
     return () => { deactivatePush(supabase, uid); stopResume(); };
   }, [uid]);
+  useEffect(() => { // v2 휴대폰 푸시(R3, 2026-10-19): 토큰을 연결 상태 기계에 실어 v2 기기 행(p_push_token)에 둔다 — 없으면 휴대폰 알림이 오지 않는다
+    if (!V2 || !isMobilePlatform || !v2rt) return undefined;
+    return bindV2Push({ machine: v2rt.machine, getToken: getPushToken, observeResume: observeMobileResume });
+  }, [v2rt]);
   const [resumeEpoch, setResumeEpoch] = useState(0);
   // 아이콘 배지 재동기화(유건 제보 2026-09-15: 다 읽어도 폰 배지가 남음) — 배지는 서버가 읽음 커서 변경 때만 푸시로 내려보내는데, 토큰이 바뀌거나(앱 재설치)
   // 푸시를 놓치면 폰 숫자가 굳는다. 앱이 앞으로 올 때·알림함을 열거나 다 읽을 때 서버에 재계산·재전송을 요청한다(iOS 토큰 없는 사용자는 서버가 no-op). 3초 한 번.

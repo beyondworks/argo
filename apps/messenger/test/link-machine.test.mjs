@@ -899,3 +899,63 @@ test('#1086 검수 1: 다시 시도(retry) — 멈춘(gave_up) 상태에서만 �
   const n = fake.log.length;
   assert.equal(m.retry(), false, '붙어 있으면 아무것도 안 한다'); await flush(); assert.equal(fake.log.length, n);
 });
+
+// R3(2026-10-19 축소판 A+): v2 앱이 푸시 토큰을 기기 등록에 싣지 않아 휴대폰 알림이 오지 않았다(App.jsx createV2Runtime에 pushToken 없음).
+// 토큰은 플러그인이 늦게 주므로 setPushToken으로 싣는다 — 붙어 있으면 등록 1회, 같은 값이면 요청 0, 등록 중에 오면 ready에서 1회.
+test('R3 푸시 토큰: 붙은 뒤 setPushToken → 등록 RPC 1회에 p_push_token, 같은 값 다시 → 요청 0, 10분 유휴 0', async () => {
+  const { m, fake, clock } = setup();
+  await m.start(); await flush();
+  assert.equal(fake.log.find((l) => l.name === 'msgr2_device_register').args.p_push_token, null, '처음 등록은 토큰 없이');
+  const before = fake.log.length;
+  assert.equal(m.setPushToken('apns-token-1'), true);
+  await flush();
+  const regs = fake.log.slice(before);
+  assert.deepEqual(regs.map((l) => l.name), ['msgr2_device_register']);
+  assert.equal(regs[0].args.p_push_token, 'apns-token-1');
+  assert.equal(regs[0].args.p_kind, 'app');
+  const after = fake.log.length;
+  assert.equal(m.setPushToken('apns-token-1'), false); await flush();
+  await clock.advance(10 * MIN);
+  assert.equal(fake.log.length, after, '같은 토큰(앱 재개마다 다시 줌)·유휴 10분 — 요청 0');
+  assert.equal(m.getState(), 'ready');
+  m.setPushToken('apns-token-2'); await flush();
+  assert.equal(fake.log.at(-1).args.p_push_token, 'apns-token-2', '토큰이 바뀌면(회전) 다시 싣는다');
+});
+
+test('R3 푸시 토큰: 시작 전에 받은 토큰은 첫 등록에 실린다(등록 추가 0)', async () => {
+  const { m, fake } = setup();
+  m.setPushToken('fcm-token-1');
+  await m.start(); await flush();
+  const regs = fake.log.filter((l) => l.name === 'msgr2_device_register');
+  assert.equal(regs.length, 1);
+  assert.equal(regs[0].args.p_push_token, 'fcm-token-1');
+});
+
+test('R3 푸시 토큰: 싣기가 실패하면 되풀이하지 않고, 다음 setPushToken(앱 재개)에서 한 번 더 싣는다', async () => {
+  const { m, fake, clock } = setup();
+  await m.start(); await flush();
+  fake.fail.msgr2_device_register = [{ error: { message: 'TypeError: Failed to fetch', code: '' }, status: 0 }];
+  m.setPushToken('apns-token-1'); await flush();
+  const n = fake.count('msgr2_device_register');
+  await clock.advance(10 * MIN);
+  assert.equal(fake.count('msgr2_device_register'), n, '실패 뒤 스스로 다시 보내지 않는다(요청 예산)');
+  m.setPushToken('apns-token-1'); await flush();
+  assert.equal(fake.count('msgr2_device_register'), n + 1);
+  assert.equal(fake.log.at(-1).args.p_push_token, 'apns-token-1');
+  m.setPushToken('apns-token-1'); await flush();
+  assert.equal(fake.count('msgr2_device_register'), n + 1, '실린 뒤에는 요청 0');
+});
+
+test('R3 로그아웃: dropPushToken → 등록 1회에 p_push_token null(실린 토큰이 없으면 요청 0)', async () => {
+  const { m, fake } = setup();
+  await m.start(); await flush();
+  const n = fake.count('msgr2_device_register');
+  assert.equal(await m.dropPushToken(), true);
+  assert.equal(fake.count('msgr2_device_register'), n, '실린 토큰 없음 — 요청 0');
+  m.setPushToken('apns-token-1'); await flush();
+  assert.equal(await m.dropPushToken(), true);
+  assert.equal(fake.count('msgr2_device_register'), n + 2);
+  assert.equal(fake.log.at(-1).args.p_push_token, null);
+  assert.equal(await m.dropPushToken(), true);
+  assert.equal(fake.count('msgr2_device_register'), n + 2, '이미 비웠으면 요청 0');
+});
