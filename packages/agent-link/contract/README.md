@@ -53,6 +53,24 @@ id 형식: 봉투·일·에이전트·기기·방·토픽·승인·업로드 슬
 
 `work.error` 코드: `limit`·`no_runner`·`login`·`timeout`·`cancelled`·`unsupported`·`tier_denied`·`budget`·`internal`. 열린 값이라 받는 쪽은 모르는 코드를 `internal`로 읽는다(`normalizeWorkErrorCode`). 방에는 코드만 남기고 원문을 싣지 않는다(D15).
 
+## v1.1 — 회의방·외부 봇(같은 v=1 안의 덧붙임, 2026-10-19)
+
+규칙 1(필드·열린 값 추가만)을 지키므로 `v`는 1 그대로다(`LINK_MINOR = 1`). 새 필드를 모르는 v1.0 본체·앱은 무시하고 종전대로 돈다. 서버는 본체가 `agent.sync.features`로 알린 기능의 offer만 그 본체에 만든다 — v1.0 본체에는 회의·봇 offer가 가지 않는다.
+
+| 어디 | 새 필드(모두 선택) | 뜻 |
+|---|---|---|
+| `work.offer` | `kind`(열린 값: chat·meeting·bot, 없으면 chat) | 일의 종류. 모르는 kind를 받은 본체는 `work.error{unsupported}` |
+| `work.offer` | `meeting{participants[]{agent, name, role}(≤5), rounds(1..2)}` | 회의방. 사람 글 1개 = offer 1개(봉투 `agent` = 대표 에이전트). 본체가 참가자 S명 × R라운드를 돌린다. `kind:'meeting'`과 짝(둘 중 하나만 있으면 거부) |
+| `work.offer.limits` | `hop`(0..2)·`max_hops`(0..2)·`turns_left`(0..4) | 넘김 사슬 안의 위치. `hop ≤ max_hops`. 사람 글 1개에서 시작한 봇·에이전트 턴은 4까지 |
+| `work.result` | `posts[]{agent, round(1..2), text(1..3000자)}`(≤10) | 회의 결과. 서버가 글마다 `author_agent_id = post.agent`로 넣는다(참가자가 아니면 `post_denied`). posts가 있으면 `text`는 요약(≤2000자, 방에 넣지 않음)이고 `handoffs`는 빈 배열이어야 한다 |
+| `agent.sync.agents[]` | `kind`(열린 값: agent·bot), `bot{kind(hermes·openclaw 등), profile}` | 외부 봇. 주소·키는 본체 로컬 자격 저장소에만 두고 약속에 싣지 않는다 |
+| `agent.sync` | `features[]`(열린 값: meeting·bot, ≤16) | 이 본체가 처리할 수 있는 기능 |
+| `work.error` 코드 | `bot_unreachable`·`bot_limit` | 열린 값(v1.0 받는 쪽은 internal로 읽음) |
+| 거부 코드 | `post_denied`(다시 보내지 않음) | posts 글쓴이가 회의 참가자가 아니거나 회의가 아닌 일에 posts |
+
+상한(`LIMITS`): 회의 참가 5, 라운드 2(room.mjs 켜짐 값, 풀림 4는 회의방에서 쓰지 않음), 질문 1번당 에이전트 글 S×R ≤ 10, 봇 hop ≤ 2·턴 ≤ 4. 가장 큰 회의 결과(10 × 3000자 한글 + 요약 2000자)도 봉투 128KB 안에 든다(계약 시험).
+본체가 외부 봇 호출에 거는 속도(`BOT_RATE`, 약속 밖 상대를 믿지 않는다): 봇당 동시 1, 분당 6, 429면 Retry-After를 지켜 1회만 다시. 봇이 쓴 글은 다른 봇을 깨우지 않는다(사람 멘션만 트리거, 서버 규칙).
+
 ## 상태
 
 저장하는 상태: `offered → accepted → running ⇄ awaiting_approval → done | failed | cancelled`.
