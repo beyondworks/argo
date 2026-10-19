@@ -1898,7 +1898,7 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
           const dot = rel.lastIndexOf('.') > rel.lastIndexOf('/') ? rel.lastIndexOf('.') : rel.length;
           const keep = join(root, SYNC_CONFLICTS_DIR, ...`${rel.slice(0, dot)}.conflict-${me}-${Date.now()}${rel.slice(dot)}`.split('/'));
           await mkdir(dirname(keep), { recursive: true });
-          await writeFileAtomic(keep, loser);
+          await writeFileAtomic(keep, loser, (isSecretRel(rel) || isSecretNameRel(rel)) ? { mode: 0o600 } : undefined); // 자격 파일 사본은 평소 수신처럼 0600(P1-8)
           console.warn(`[argo] 동기화(${wsId}): 새 시작 합치기 — ${rel} 양쪽이 달라 늦은 쪽을 정본으로, 다른 쪽은 ${SYNC_CONFLICTS_DIR}/에 보관`);
         }
         if ((r.m ?? 0) >= (l.m ?? 0)) { await writeLocal(rel, remoteBuf, r.m, hashBuf(localBuf)); local[rel] = r; pulled++; }

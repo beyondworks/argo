@@ -345,3 +345,28 @@ for (const [kind, rel, base, mine, theirs, keptRe] of F7_FILES) for (const [name
     assert.equal(r2.pushed + r2.pulled + r2.deletedL + r2.deletedR, 0, '다음 사이클 할 일 없음(사본은 동기화 밖)');
   });
 }
+
+// S1(엄격 검수) — 합치기에서 진 쪽이 자격 파일(이름 규칙 isSecretNameRel — credentials.json·.env 등. 3종 저장소 connections.json 등은 세션 모드에서 동기화 밖)이면 사본도 평소 수신처럼 0600(평문 자격이 0644로 남지 않게)
+test('S1 합치기 자격 파일(credentials.json — 이름 규칙 자격, 세션 모드에서도 동기화됨) 충돌 — 진 쪽 사본 권한 0600', async () => {
+  await gate(false);
+  const WS = 'fs-s1';
+  await mkdir(join(ROOT, WS), { recursive: true });
+  const base = Buffer.from('{"v":0}'), mine = Buffer.from('{"v":"이 기기"}'), theirs = Buffer.from('{"v":"다른 기기"}');
+  const p = join(ROOT, WS, 'credentials.json');
+  await writeFile(p, mine);
+  const t = new Date(Date.now() - 60_000); await utimes(p, t, t); // 로컬이 더 새것 → 진 쪽 = 원격(다른 기기의 평문 자격)
+  await writeFile(join(ROOT, WS, '.sync-state.json'), JSON.stringify({ files: { 'credentials.json': meta(base) }, ts: 1 }));
+  const f = storage({
+    [`${OWNER}/${WS}/credentials.json`]: sealSecret(theirs),
+    [`${OWNER}/${WS}/__manifest__.json`]: sealSecret(Buffer.from(JSON.stringify({ epoch: 'e1-dddddddd', files: { 'credentials.json': meta(theirs, Date.now() - 3 * 86400_000) } }))),
+  });
+  _setSyncClientForTest(f.client);
+  const r = await syncCompany(WS, OWNER, false);
+  assert.equal(r.deletedL + r.deletedR, 0);
+  const dir = join(ROOT, WS, SYNC_CONFLICTS_DIR);
+  const kept = await readdir(dir);
+  assert.equal(kept.length, 1, `사본이 없다 — 자격 파일이 합치기 분기에 오지 않았다(${JSON.stringify(r)})`);
+  assert.equal((await readFile(join(dir, kept[0]))).toString(), theirs.toString());
+  const { stat } = await import('node:fs/promises');
+  assert.equal((await stat(join(dir, kept[0]))).mode & 0o777, 0o600, '자격 파일 사본은 0600');
+});
