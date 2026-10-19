@@ -5,7 +5,7 @@
 // 신원은 세션에서만(본인 게이트만 해제 가능) — 쿠키 세션 우선, 기기 연동 세션 폴백(billing GET과 동일 구조).
 import { cookies } from 'next/headers';
 import { createServerClient } from '@supabase/ssr';
-import { createClient } from '@supabase/supabase-js';
+import { argoCreateClient as createClient } from '../../../../../src/supabase-client.mjs'; // X-Client-Info 끝에 argo/<버전>(src/supabase-client.mjs)
 import { currentUser } from '../../../../auth.mjs';
 import { clearReconcileEmpty } from '../../../../../src/lsreconcile.mjs';
 

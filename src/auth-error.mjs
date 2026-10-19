@@ -5,7 +5,7 @@
 //   rejected    — 서버가 토큰을 거부(AuthApiError 4xx, 429·408 제외). 다시 로그인하면 된다.
 //   unknown     — 위 둘이 아님(5xx·429·모르는 오류). 토큰 탓으로 단정하지 않는다.
 // 순수 판정 + 토큰 값을 어디에도 싣지 않는 것이 계약이다(로그·응답·반환값 모두).
-import { createClient } from '@supabase/supabase-js';
+import { argoCreateClient as createClient } from './supabase-client.mjs'; // X-Client-Info 끝에 argo/<버전>(src/supabase-client.mjs)
 
 const MSG = {
   unreachable: '이 컴퓨터의 Argo가 로그인 서버(Supabase)에 연결하지 못했습니다. 회사 네트워크·VPN·프록시·보안 프로그램이 Argo의 인터넷 연결을 막고 있는지 확인해 주세요.',
