@@ -368,5 +368,5 @@ test('S1 합치기 자격 파일(credentials.json — 이름 규칙 자격, 세�
   assert.equal(kept.length, 1, `사본이 없다 — 자격 파일이 합치기 분기에 오지 않았다(${JSON.stringify(r)})`);
   assert.equal((await readFile(join(dir, kept[0]))).toString(), theirs.toString());
   const { stat } = await import('node:fs/promises');
-  assert.equal((await stat(join(dir, kept[0]))).mode & 0o777, 0o600, '자격 파일 사본은 0600');
+  if (process.platform !== 'win32') assert.equal((await stat(join(dir, kept[0]))).mode & 0o777, 0o600, '자격 파일 사본은 0600'); // win32: POSIX 모드 미지원(cli-service 시험과 같은 처리)
 });
