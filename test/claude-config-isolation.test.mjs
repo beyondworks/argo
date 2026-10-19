@@ -36,6 +36,9 @@ const srv = http.createServer((req, res) => {
     res.writeHead(200, { 'content-type': 'application/json' }); res.end('{}');
   });
 });
+// 가짜 서버는 프록시도 맡는다 — A3t 턴의 외부(https) 요청이 CONNECT로 들어오면 목적지만 적고 거절한다(실제 네트워크 0)
+const outbound = [];
+srv.on('connect', (req, sock) => { outbound.push(req.url); sock.end('HTTP/1.1 403 Forbidden\r\n\r\n'); });
 await new Promise((r) => srv.listen(0, '127.0.0.1', r));
 process.env.ARGO_CLAUDE_BASE_URL = `http://127.0.0.1:${srv.address().port}`;
 after(() => srv.close());
@@ -108,17 +111,32 @@ test('A3 host 실턴(파일 저장소 ~/.claude/.credentials.json) — 리눅스
   await company('iso-a3t', 'host', 'host');
   invalidateDetectCache(); // 앞 시험(A1·A2 턴)이 로그인 파일 없을 때의 감지 결과를 캐시해 두면 15초 재확인 전까지 host를 미연결로 본다(윈도우 CI 'AI 러너가 하나도 연결돼 있지 않습니다') — 사용자가 터미널에서 로그인한 뒤 재확인이 지난 상태로 맞춘다
   process.env.ANTHROPIC_BASE_URL = process.env.ARGO_CLAUDE_BASE_URL; // host는 env를 주입하지 않는다 — 가짜 끝점으로 보내려면 호스트 env로
+  // ANTHROPIC_BASE_URL을 따르지 않는 CLI 요청(OAuth 프로필·부속 질의 등 api.anthropic.com 고정)이 실제 서버에 닿으면 가짜 토큰에 401 →
+  // 강제 갱신 → 실제 토큰 끝점이 가짜 갱신 토큰을 invalid_grant로 거절 → CLI가 자격 파일 토큰을 비운다 → 본 턴이 "OAuth session expired"로 실패.
+  // 부속 요청이 본 턴보다 먼저 끝나느냐에 따라 갈려 윈도우 CI에서만 간헐적이었다. 외부 요청을 가짜 서버(프록시)에서 거절해 결정적으로 만든다.
+  const proxyEnv = { HTTPS_PROXY: process.env.ARGO_CLAUDE_BASE_URL, HTTP_PROXY: process.env.ARGO_CLAUDE_BASE_URL, NO_PROXY: '127.0.0.1,localhost' };
+  const savedProxy = Object.fromEntries(Object.keys(proxyEnv).flatMap((k) => [k, k.toLowerCase()]).map((k) => [k, process.env[k]]));
+  for (const k of Object.keys(savedProxy)) delete process.env[k];
+  Object.assign(process.env, proxyEnv);
   try {
-    const s0 = seen.length;
-    const t = await turn('iso-a3t');
-    const cred = JSON.parse(await readFile(join(userClaude, '.credentials.json'), 'utf8').catch(() => '{}')).claudeAiOauth ?? null;
-    const diag = { reply: t.r.reply, seen: seen.slice(s0), cred: cred && { access: cred.accessToken?.length ?? null, refresh: cred.refreshToken?.length ?? null, expiresInS: cred.expiresAt ? Math.round((cred.expiresAt - Date.now()) / 1000) : cred.expiresAt } };
-    console.log('[A3t 진단]', JSON.stringify(diag));
-    assert.equal(t.r.reply, 'done', `[A3t 진단] ${JSON.stringify(diag)}`);
+    const s0 = seen.length, o0 = outbound.length;
+    // 진단 — 실패해도 가짜 서버가 받은 경로·막은 외부 목적지·턴 뒤 자격 파일 모양(길이만)이 메시지에 남는다
+    const diag = async (extra) => {
+      const cred = JSON.parse(await readFile(join(userClaude, '.credentials.json'), 'utf8').catch(() => '{}')).claudeAiOauth ?? null;
+      return JSON.stringify({ ...extra, seen: seen.slice(s0), outbound: [...new Set(outbound.slice(o0))], cred: cred && { access: cred.accessToken?.length ?? null, refresh: cred.refreshToken?.length ?? null } });
+    };
+    let t;
+    try { t = await turn('iso-a3t'); } catch (e) { throw new Error(`${e.message}\n[A3t 진단] ${await diag({ error: true })}`); }
+    console.log('[A3t 진단]', await diag({ reply: t.r.reply }));
+    assert.equal(t.r.reply, 'done');
     assert.equal(t.reqs.at(-1)[0], 'bearer');
     if (process.platform === 'win32') assert.equal((await transcriptsIn(userClaude)).some((p) => p.includes('iso-a3t')), true);
     else { assert.deepEqual(t.added, []); assert.equal((await transcriptsIn(isoDir('iso-a3t'))).length, 1); }
-  } finally { delete process.env.ANTHROPIC_BASE_URL; await rm(join(userClaude, '.credentials.json'), { force: true }); }
+  } finally {
+    delete process.env.ANTHROPIC_BASE_URL;
+    for (const [k, v] of Object.entries(savedProxy)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    await rm(join(userClaude, '.credentials.json'), { force: true });
+  }
 });
 
 test('B1 옛 ~/.claude 세션(새 앱 + 옛 데이터) 이어 쓰기 — 격리 폴더로 복사해 같은 세션·맥락 유지, 원본 보존', async () => {
