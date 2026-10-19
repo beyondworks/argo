@@ -13,10 +13,73 @@
 import { createLink } from '../packages/agent-link/link.mjs';
 import { tierPolicy } from '../packages/agent-link/tiers.mjs';
 import { SUPPORTED } from '../packages/agent-link/contract/v1.mjs';
+import { msgrMeetingEnabled as msgrMeetingEnabledFlag } from './agent-link-flags.mjs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join, basename } from 'node:path';
 
-export { agentLinkEnabled, legacyMsgrBridgeEnabled } from './agent-link-flags.mjs';
+export { agentLinkEnabled, legacyMsgrBridgeEnabled, msgrMeetingEnabled } from './agent-link-flags.mjs';
+
+/** 회의방 일 꺼내기 — **약속 v1.1 확정 전 가정**(본체↔메신저 약속 정의 파일은 'Argo M2 - 워커' 몫). 확정 요약이 오면 이 함수와 runMeetingOffer의 결과 모양만 맞춘다.
+    가정: offer.data.room_kind === 'meeting', offer.data.participants[] = { kind:'agent', agent:<서버 에이전트 id>, name } | { kind:'bot', bot:<봇 id>, name }. 아니면 null(1:1 경로). */
+export function meetingOf(offer) {
+  const d = offer?.data;
+  if (d?.room_kind !== 'meeting' || !Array.isArray(d.participants)) return null;
+  return { participants: d.participants.filter((p) => p && (p.kind === 'agent' ? typeof p.agent === 'string' : p.kind === 'bot' && typeof p.bot === 'string')) };
+}
+
+/** 회의방 요금제 확인 간격 — 회의방 일이 왔을 때만 조회하고 1시간 동안 그 값을 쓴다(쉬는 동안 요청 0). */
+export const PLAN_CACHE_MS = 3_600_000;
+
+/** 요금제 조회를 1시간 캐시로 감싼다. 조회 실패(null)는 캐시하지 않는다(다음 회의방 일에서 다시 본다). */
+export function cachedPlanOf(fetchPlanFor, now = () => Date.now()) {
+  const c = { uid: null, at: -Infinity, plan: null };
+  return async (uid) => {
+    if (c.uid === uid && now() - c.at < PLAN_CACHE_MS) return c.plan;
+    const plan = await fetchPlanFor(uid);
+    if (plan) Object.assign(c, { uid, at: now(), plan });
+    return plan;
+  };
+}
+
+/**
+ * 회의방 일 한 건 — 방의 내 에이전트·봇으로 회의 실행기(meeting-room.mjs)를 돌려 글 여러 개(posts)를 돌려준다.
+ * 회의방은 Pro 전용: 확정 'free'면 회의 실행기·봇을 하나도 부르지 않는다(경로 0). 집행 권위는 서버(회의방 offer는 Pro 주인에게만)이고 이 검사는 그 뒤의 방어선이다.
+ * 조회 실패(null)는 서버 판정을 믿고 진행한다(entitlement.mjs syncEntitled와 같은 낙관 — 일시 오류로 유료 사용자를 막지 않는다).
+ * agents = 서버 에이전트 id → { ws, slug, name? }(이 기기가 맡은 것), deps = { planOf(uid), uid, runMeeting, chat, interruptTurn, callBot, resolveBot(ref) → { ws, id, name } | null }
+ * 결과(가정 v1.1): { text:'', posts:[{ agent|bot, text, round? }], notes:[{code,text}], handoffs:[] } — 회의방 결과의 넘김은 막는다(R9).
+ */
+export async function runMeetingOffer(offer, ctx, { agents, deps, meeting }) {
+  const plan = deps.planOf ? await deps.planOf(deps.uid) : null;
+  if (plan === 'free') throw Object.assign(new Error('meeting room is Pro only'), { code: 'tier_denied' });
+  const policy = tierPolicy(ctx.tier);
+  const participants = [];
+  for (const p of meeting.participants) {
+    if (p.kind === 'agent') {
+      const a = agents.get(p.agent);
+      if (a) participants.push({ kind: 'agent', ref: p.agent, ws: a.ws, slug: a.slug, name: String(p.name || a.name || a.slug) });
+    } else {
+      const b = await deps.resolveBot(p.bot);
+      if (b) participants.push({ kind: 'bot', ref: p.bot, ws: b.ws, id: b.id, name: String(p.name || b.name || b.id) });
+    }
+  }
+  if (!participants.length) throw Object.assign(new Error('no participant on this device'), { code: 'no_runner' });
+  ctx.progress?.('thinking');
+  const memoryOff = offer.data.memory === false;
+  const res = await deps.runMeeting({
+    text: offer.data.text, participants, signal: ctx.signal, maxTurnS: offer.data.limits?.max_turn_s, tag: offer.work, sessionKey: `argo:${offer.data.room}`,
+  }, {
+    chat: deps.chat, interruptTurn: deps.interruptTurn, callBot: deps.callBot,
+    mirrorCtxFor: () => ({ kind: 'scope', scope: { kind: 'link', work: offer.work, room: offer.data.room, owner: policy.ownerTools === true, ...(memoryOff ? { memoryOff: true } : {}) } }),
+    chatExtra: () => (memoryOff ? { journal: { off: true } } : {}),
+  });
+  if (ctx.signal?.aborted && res.stopped === 'cancelled') return null;
+  ctx.progress?.('writing');
+  return {
+    text: '',
+    posts: res.posts.map((p) => ({ ...(p.kind === 'bot' ? { bot: p.ref } : { agent: p.ref }), text: p.text, ...(p.round ? { round: p.round } : {}) })),
+    notes: res.notes, handoffs: [],
+  };
+}
 
 export const ATTACH_IN_MAX = 25 * 1024 * 1024; // 받은 첨부 한 개 상한(옛 브리지와 같은 25MB)
 const SESSION_RETRY_MS = [60_000, 120_000, 300_000, 600_000];
@@ -266,6 +329,7 @@ export function createAgentLinkHost(deps) {
   let catchUpAfterSync = false; // 시작 때 목록을 못 보냈다 — 처음 성공하면 그동안 못 받은 offer를 따라잡기로 한 번 가져온다
   const agents = new Map(); // 서버 에이전트 id → { ws, slug }
   const agentIds = new Set();
+  let currentUid = null; // 회의방 요금제 확인(runMeetingOffer)
 
   async function attachments(offer, ws, transport) {
     const out = [];
@@ -287,6 +351,9 @@ export function createAgentLinkHost(deps) {
   const host = {
     canAccept: (offer) => agents.has(offer.agent),
     async runTurn(offer, ctx) {
+      // 회의방 일(A+) — 설정이 켜졌을 때만. 꺼져 있으면 아래 1:1 경로 그대로(종전 동작)
+      const meeting = deps.meetingEnabled?.() ? meetingOf(offer) : null;
+      if (meeting) return runMeetingOffer(offer, ctx, { agents, meeting, deps: { ...deps.meeting, uid: currentUid, chat: deps.chat, interruptTurn: deps.interruptTurn } });
       const a = agents.get(offer.agent);
       if (!a) throw Object.assign(new Error('agent not on this device'), { code: 'no_runner' });
       const policy = tierPolicy(ctx.tier);
@@ -405,6 +472,7 @@ export function createAgentLinkHost(deps) {
     if (reg.error || !device) { log('device register failed', reg.error?.code ?? reg.data?.code ?? 'no device_id'); return retryLater(); }
     tries = 0;
     lastResync = clock.now();
+    currentUid = s.uid;
     link = createLink({ transport, host, uid: s.uid, device, agentIds, clock: deps.linkClock });
     // 목록을 못 보내도(중단 스위치·일시 오류 6번) 링크는 연다. 예전에는 여기서 던져 link만 남고 start()가 안 불려, retryLater의 boot가 `link`에서 빠져
     // 해제 뒤에도 구독 0이었다(#1091 검수). 목록은 host.resync가 1분마다 다시 보낸다(대응표가 비어 있는 동안 offer는 받지 않는다)
@@ -452,6 +520,28 @@ export async function startAgentLinkHost() {
     import('./notify.mjs'), import('./approval-actions.mjs'), import('./approvals.mjs'),
   ]);
   const host = createAgentLinkHost({
+    meetingEnabled: () => msgrMeetingEnabledFlag(),
+    meeting: {
+      // 회의방 일이 왔을 때만 부른다(lazy) — 쉬는 동안 요청 0. 1시간 캐시. 조회 실패(null)는 캐시하지 않는다
+      planOf: cachedPlanOf(async (uid) => {
+        const c = await sessionClient();
+        if (!c) return null;
+        const { fetchPlan } = await import('./entitlement.mjs');
+        return fetchPlan(c.client, uid);
+      }),
+      runMeeting: async (...a) => (await import('./meeting-room.mjs')).runMeeting(...a),
+      callBot: async (...a) => (await import('./ext-bots.mjs')).callBot(...a),
+      // 봇 찾기 — 주인 회사들의 기기 로컬 봇 목록에서 id(또는 '회사:id')로
+      async resolveBot(ref) {
+        const { listBots } = await import('./ext-bots.mjs');
+        const uid = (await sessionClient())?.uid;
+        for (const c of await listCompanies()) {
+          if (c.ownerId !== uid) continue;
+          for (const b of await listBots(c.id).catch(() => [])) if (b.id === ref || `${c.id}:${b.id}` === ref) return { ws: c.id, id: b.id, name: b.name };
+        }
+        return null;
+      },
+    },
     getSession: async () => { const c = await sessionClient(); return c ? { client: c.client, uid: c.uid } : null; },
     async listOwnedAgents(uid) {
       const out = [];
