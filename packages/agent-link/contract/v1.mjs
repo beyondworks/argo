@@ -122,7 +122,9 @@ export const REJECT_CODES = Object.freeze({
   effect_unknown: { retry: false }, // intent 없이 done·failed
   tier_denied: { retry: false }, // guest 등급 밖 행동
   upload_slot_invalid: { retry: false },
-  post_denied: { retry: false }, // v1.1 — result.posts[]의 글쓴이가 회의 참가자가 아니거나, 회의 아닌 일에 posts
+  // v1.1 서버 규칙(봉투만으로는 그 일이 회의였는지 모르므로 계약 검사가 아니라 서버가 본다): 회의가 아닌 일에 posts가 오거나,
+  // kind=meeting인 일의 work.result에 handoffs가 있으면(posts 유무와 무관) 거부한다. 글쓴이가 회의 참가자가 아니어도 같은 코드.
+  post_denied: { retry: false },
   pro_required: { retry: false }, // v1.1 — 메신저는 Pro 전용(2026-10-19 결정). 무료 계정 본체의 agent.sync 등 → 본체는 다시 보내지 않고 연결을 쉰다
   rate_limited: { retry: true },
   internal: { retry: true },
