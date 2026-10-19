@@ -370,8 +370,9 @@ test('v1.1 봇: limits.hop ≤ max_hops ≤ 2, turns_left ≤ 4, agent.sync의 �
   assert.ok(validateEnvelope(unknownKind).ok, '봇 종류·기능은 열린 값');
 });
 
-test('v1.1 오류·거부 코드: bot_unreachable·bot_limit는 열린 값, post_denied는 다시 보내지 않는다', () => {
+test('v1.1 오류·거부 코드: bot_unreachable·bot_limit는 열린 값, post_denied·pro_required는 다시 보내지 않는다', () => {
   assert.equal(normalizeWorkErrorCode('bot_unreachable'), 'bot_unreachable');
   assert.equal(normalizeWorkErrorCode('bot_limit'), 'bot_limit');
   assert.deepEqual(REJECT_CODES.post_denied, { retry: false });
+  assert.deepEqual(REJECT_CODES.pro_required, { retry: false });
 });

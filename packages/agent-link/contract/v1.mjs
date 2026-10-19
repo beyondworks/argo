@@ -123,6 +123,7 @@ export const REJECT_CODES = Object.freeze({
   tier_denied: { retry: false }, // guest 등급 밖 행동
   upload_slot_invalid: { retry: false },
   post_denied: { retry: false }, // v1.1 — result.posts[]의 글쓴이가 회의 참가자가 아니거나, 회의 아닌 일에 posts
+  pro_required: { retry: false }, // v1.1 — 메신저는 Pro 전용(2026-10-19 결정). 무료 계정 본체의 agent.sync 등 → 본체는 다시 보내지 않고 연결을 쉰다
   rate_limited: { retry: true },
   internal: { retry: true },
 });
