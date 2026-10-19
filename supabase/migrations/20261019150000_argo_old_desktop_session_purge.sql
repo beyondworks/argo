@@ -24,7 +24,7 @@
 --      다르면 예외(트랜잭션 전체 되돌림 = 0건 삭제). 지운 세션은 argo_old_app_sessions에 cut_at으로 남는다(#1107 보존 90일,
 --      같은 계정이 옛 앱으로 다시 로그인하면 #1107이 2시간을 기다리지 않고 바로 표시한다).
 -- 둘 다 직접 DB 연결(postgres)에서만 부른다 — API 역할(anon·authenticated·service_role)은 실행 권한이 없다.
--- 전제: #1107(20261018130000_argo_old_app_cutoff) 적용 + 0.1.114 발행. 관문 함수가 기록을 남기지 않으면 미리보기부터 멈춘다.
+-- 전제: #1107(20261019135000_argo_old_app_cutoff) 적용 + 0.1.114 발행. 관문 함수가 기록을 남기지 않으면 미리보기부터 멈춘다.
 -- 되돌림: scripts/rollback/20261019150000_argo_old_desktop_session_purge.down.sql(함수만 지운다). 지운 로그인 세션은 되살아나지 않는다.
 
 -- 0) 준비 확인 — #1107이 없거나 관문 함수가 옛 본문이면 멈춘다(관문 기록이 비어 있으면 새 앱까지 대상이 된다).
@@ -32,7 +32,7 @@ create or replace function public._argo_old_desktop_ready() returns void
   language plpgsql stable set search_path = public, pg_temp as $$
 begin
   if to_regclass('public.argo_gate_sessions') is null or to_regclass('public.argo_old_app_sessions') is null then
-    raise exception '옛 앱 장치(#1107, 20261018130000_argo_old_app_cutoff)가 없다 — 관문 기록 없이는 새 앱을 가를 수 없어 멈춘다';
+    raise exception '옛 앱 장치(#1107, 20261019135000_argo_old_app_cutoff)가 없다 — 관문 기록 없이는 새 앱을 가를 수 없어 멈춘다';
   end if;
   if to_regprocedure('public.argo_min_app_version(text)') is null
      or pg_get_functiondef('public.argo_min_app_version(text)'::regprocedure) not like '%argo_gate_sessions%' then
