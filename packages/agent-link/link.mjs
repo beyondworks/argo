@@ -22,8 +22,24 @@
 // - 따라잡기(msgr2_link_pending)로 받은 봉투 가운데 이 프로세스가 시작하지 않은 일은 offer만 받는다.
 // - 되돌릴 수 없는 일은 effect intent가 서버에 기록된 뒤에만 실행한다(D13). intent가 거부되면 실행하지 않는다.
 import {
-  LINK_V, SUPPORTED, DIRECTION, REJECT_CODES, TOPICS, validateEnvelope, tierAllows, unsupportedReply,
+  LINK_V, SUPPORTED, DIRECTION, REJECT_CODES, TOPICS, validateEnvelope, tierAllows, unsupportedReply, LIMITS, jsonBytes,
 } from './contract/v1.mjs';
+
+/**
+ * work.result 데이터를 봉투 상한(LIMITS.envelopeBytes, 128KB) 안에 맞춘다(v1.1 회의 결과). 글자 수 상한(3000자 × 10 + 요약 2000) 안이어도 제어 문자처럼
+ * JSON에서 6바이트로 늘어나는 글자가 많으면 봉투가 too_large로 통째로 거부되어 회의 결과를 모두 잃는다. 바이트가 가장 큰 글(posts[].text·text)부터 줄인다.
+ * wrap(data) = 잴 봉투. 반환 = 새 data(입력은 바꾸지 않는다). 글은 최소 1자를 남긴다(posts[].text는 1자 이상이 계약).
+ */
+export function fitResult(data, wrap) {
+  const out = { ...data, ...(data.posts ? { posts: data.posts.map((p) => ({ ...p })) } : {}) };
+  for (let guard = 0; guard < 500 && jsonBytes(wrap(out)) > LIMITS.envelopeBytes; guard++) {
+    const slots = [...(out.posts ?? []).map((p) => ({ o: p })), { o: out }].filter((x) => x.o.text.length > 1);
+    if (!slots.length) break;
+    const big = slots.reduce((a, b) => (jsonBytes(b.o.text) > jsonBytes(a.o.text) ? b : a));
+    big.o.text = big.o.text.slice(0, Math.max(1, Math.floor(big.o.text.length * 0.8)));
+  }
+  return out;
+}
 
 // v2 실시간 토픽은 약속 정본(contract TOPICS)을 그대로 쓴다 — 문자열을 따로 두지 않는다(옛 'u:'·'w:' 정책은 기기 확인이 없어 v2는 'v2:' 접두, #1076).
 export const topicWork = TOPICS.runner; // 서버→본체(offer·cancel·approval_decision)
@@ -97,6 +113,8 @@ export function createLink({ transport, host, uid, device, agentIds = null, cloc
     if (code === 'link_version_unsupported') { ev('update_required', { code }); stop(); return true; }
     if (code === 'device_revoked' || code === 'device_expired' || code === 'device_unknown') { ev('device_invalid', { code }); stop(); return true; }
     if (code === 'service_paused') { paused = true; ev('paused', { code }); return true; }
+    // v1.1 — 무료 계정 본체의 봉투. 다시 보내도 같은 답이라 링크를 멈춘다(구독 닫음·따라잡기 없음). 다시 여는 것은 호스트가 다음 플랜 확인에서 한다
+    if (code === 'pro_required') { ev('pro_required', { code }); stop(); return true; }
     return false;
   }
 
@@ -259,14 +277,21 @@ export function createLink({ transport, host, uid, device, agentIds = null, cloc
         await send(envelope(w, 'work.error', { code, runner: err?.runner ?? null, ...(err?.retry_at ? { retry_at: err.retry_at } : {}) }));
         return;
       }
-      const data = {
-        text: String(out.text ?? '').slice(0, 20000),
+      // v1.1 회의 결과: posts가 있으면 text는 요약(≤ 2000자), handoffs는 빈 배열(계약 교차 검사·서버 post_denied)
+      const posts = Array.isArray(out.posts) && out.posts.length
+        ? out.posts.slice(0, LIMITS.posts).map((p) => ({ agent: p.agent, round: p.round, text: String(p.text ?? '').slice(0, LIMITS.postText) || '…' }))
+        : null;
+      let data = {
+        text: String(out.text ?? '').slice(0, posts ? LIMITS.postsResultText : 20000),
         files: Array.isArray(out.files) ? out.files.slice(0, 20) : [],
-        handoffs: Array.isArray(out.handoffs) ? out.handoffs.slice(0, 8) : [],
+        handoffs: posts ? [] : Array.isArray(out.handoffs) ? out.handoffs.slice(0, 8) : [],
+        ...(posts ? { posts } : {}),
         ...(out.usage ? { usage: out.usage } : {}),
       };
       if (data.files.length && !tierAllows(w.offer.data.limits.tier, 'work.result', data)) data.files = [];
-      await send(envelope(w, 'work.result', data));
+      const env = envelope(w, 'work.result', data);
+      data = fitResult(data, (d) => ({ ...env, data: d }));
+      await send({ ...env, data });
     } catch (e) {
       ev('report_failed', { work: w.offer.work, code: e.code });
     } finally {
@@ -302,11 +327,11 @@ export function createLink({ transport, host, uid, device, agentIds = null, cloc
     for (const w of works.values()) { w.abort.abort(new LinkError('stopped')); if (w.renewTimer) clock.clearTimeout(w.renewTimer); }
   }
 
-  /** agent.sync: 목록이 바뀌었을 때만 보낸다(같은 목록이면 요청 0). */
-  async function syncAgents(agents) {
-    const key = JSON.stringify(agents);
+  /** agent.sync: 목록이 바뀌었을 때만 보낸다(같은 목록이면 요청 0). features(v1.1) = 이 본체가 처리할 수 있는 기능 — 서버는 알린 기능의 offer만 만든다. */
+  async function syncAgents(agents, { features = null } = {}) {
+    const key = JSON.stringify([agents, features]);
     if (key === lastSyncKey) return { sent: false };
-    const env = { ...envelope(null, 'agent.sync', { agents }), agent: null };
+    const env = { ...envelope(null, 'agent.sync', { agents, ...(features?.length ? { features } : {}) }), agent: null };
     const data = await send(env);
     lastSyncKey = key;
     return { sent: true, data }; // data.agents = [{ id, ws, slug }] — 서버 id ↔ 로컬 에이전트(U2가 답에 싣는다)

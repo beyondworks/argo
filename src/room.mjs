@@ -18,6 +18,7 @@ import { resetStamp, resumeStamp } from './reset-stamp.mjs';
 import { loadPins, activePin } from './workroots.mjs';
 import { monthCost } from './billing.mjs'; // 반응 라운드 착수 전 예산 게이트(검수 MEDIUM-1)
 import { ROOM_USER_SPEAKER as USER } from './legacy-terms.mjs'; // 회의 화자 표지 '사용자' — 1:1 카드(via-summary)가 이 줄을 읽는다(옛 기록의 화자는 legacy-terms가 같이 읽는다)
+import { LIMITS as LINK_LIMITS } from '../packages/agent-link/contract/v1.mjs'; // 회의방 상한(약속 v1.1)
 import { DELEGATION_LIMITS, limitsFor, isRelaxedStored, resetDelegationLimit, newTree } from './delegation-limits.mjs'; // 위임 제한 표 — 이어받기 인원·반응 라운드 상한(켜짐 3명·2라운드, 풀림 6명·4라운드)
 
 const file = (wsId) => join(paths(wsId).chats, 'room-main.json');
@@ -520,36 +521,86 @@ export async function runRoomTurn(wsId, text, attachments = [], { rounds = 2, co
     // 나란히 남아 Enter 한 번에 두 번 적립·과금 — 분리 검수 #392 HIGH-1 실측), 저장 전 실패(크루 0명 등)면
     // 되돌린다(안 그러면 폴링이 낙관 말풍선까지 지워 글이 완전히 사라진다). chat 라우트의 {error, saved} 계약과 동형.
     const state = { saved: false };
-    try { return await runRoomTurnInner(wsId, text, attachments, state, mark, { rounds, concurrency }); }
+    try { return await runRoomCore(fileRoomEnv(wsId), text, attachments, state, mark, { rounds, concurrency }); }
     catch (e) { if (state.saved && e && typeof e === 'object') e.saved = true; throw e; }
   });
 }
-async function runRoomTurnInner(wsId, text, attachments, state = {}, mark = async () => {}, { rounds = 2, concurrency = ROOM_CONCURRENCY } = {}) {
-  const agents = await listAgents(wsId);
-  if (!agents.length) throw new Error('아직 에이전트가 없습니다. 데크에서 먼저 영입해 주세요.');
+
+/** 데스크톱 회의실의 바깥(저장소·참여자) — 워크스페이스의 chats/room-main.json과 그 회사의 에이전트 명단. 회의 실행기(runRoomCore)는
+    이 객체로만 방을 읽고 쓴다. 메신저 v2 회의방은 같은 모양의 다른 객체를 넘긴다(src/meeting-room.mjs — 저장소는 메모리, 참여자는 방의 내 에이전트·외부 봇).
+    필드: wsId(위임 미러 필터), participants(), folder(), company(), begin(안건 msg) → {sid, relaxed}, push(msg, sid) → bool, load() → room,
+    speak(a, prompt, opts) → chat 결과, record(a, turn), overBudget() → bool, directives(cc·loop 처리 여부), mirrorDelegations(위임 미러 수집 여부),
+    meeting(있으면 회의방 상한 — 아래 runRoomCore 주석). */
+export function fileRoomEnv(wsId) {
+  return {
+    wsId,
+    participants: () => listAgents(wsId),
+    folder: () => roomFolder(wsId),
+    company: () => loadCompany(wsId).catch(() => ({})),
+    begin: (msg) => lockRoom(wsId, async () => {
+      const room = await loadRoom(wsId);
+      const relaxed = isRelaxedStored(room);
+      const sid = room.sid ?? 0;
+      room.messages.push(msg);
+      await saveRoom(wsId, room);
+      return { sid, relaxed };
+    }),
+    push: (msg, sid) => pushRoomMsg(wsId, msg, sid),
+    load: () => loadRoom(wsId),
+    speak: (a, prompt, opts) => chat(wsId, a.slug, prompt, null, opts),
+    async record(a, turn) {
+      const { appendTurn } = await import('./thread.mjs');
+      await appendTurn(wsId, a.slug, { ...turn, sessionId: null, via: 'room' })
+        .catch((e) => console.error(`[argo] 회의실 스레드 기록 실패(${wsId}/${a.slug}):`, e.message));
+    },
+    async overBudget() {
+      // 예산 게이트(검수 MEDIUM-1) — chat()의 월 한도 검사는 누적 이벤트를 읽는 TOCTOU라, 동시 발언에서는 첫 웨이브 전원이 기록 전에
+      // 통과해 한도를 최대 concurrency턴 초과할 수 있다. 라운드 경계마다 한 번 더 본다.
+      const { budgetUsd = 0 } = await loadCompany(wsId).catch(() => ({}));
+      return budgetUsd > 0 && (await monthCost(wsId).catch(() => ({ costUsd: 0 }))).costUsd >= budgetUsd;
+    },
+    directives: true,
+    mirrorDelegations: true,
+    meeting: null,
+  };
+}
+
+/** 회의방 상한(메신저 v2 A+ — 2026-10-19 유건 승인 설계 "상한 설계"). env.meeting이 있을 때만 걸린다 — 데스크톱 회의실은 종전 그대로.
+    rounds 2 고정(풀림 4 안 씀), 참가자 S≤5, 질문 1번당 에이전트 글 S×R≤10, 위임 0(발언 옵션은 env.speak가 정한다), cc·loop 없음. */
+export const MEETING_LIMITS = Object.freeze({ speakers: LINK_LIMITS.meetingAgents, rounds: LINK_LIMITS.meetingRounds, posts: LINK_LIMITS.posts }); // 값의 정본 = 약속 v1.1 LIMITS(5·2·10)
+
+/** 회의 실행기 — 데스크톱 회의실과 메신저 회의방이 같이 쓴다. env = fileRoomEnv(wsId) 모양(바깥), state.saved = 안건 저장 뒤 표식, mark = 진행 마커.
+    env.meeting = { signal } 이면 회의방 모드: 위 MEETING_LIMITS, 풀림 무시, 취소 신호가 서면 새 발언을 시작하지 않는다(진행 중 발언은 env.speak가 끊는다).
+    참여자의 kind === 'bot'(외부 봇)은 이름으로 직접 부를 때만 발언한다 — @전체·멘션 없음 폴백·반응 라운드에 끼지 않는다(봇 글이 다른 봇을 깨우지 않게). */
+export async function runRoomCore(env, text, attachments = [], state = {}, mark = async () => {}, { rounds = 2, concurrency = ROOM_CONCURRENCY } = {}) {
+  const meeting = env.meeting ?? null;
+  const signal = meeting?.signal ?? null;
+  const all = await env.participants();
+  const agents = all.filter((a) => a.kind !== 'bot'); // 에이전트(@전체·폴백·반응 라운드 대상)
+  const callable = meeting ? all : agents; // 이름으로 부를 수 있는 참여자 — 봇은 회의방에서만
+  if (!agents.length && !(meeting && callable.length)) throw new Error('아직 에이전트가 없습니다. 데크에서 먼저 영입해 주세요.');
   // 회의 작업 폴더 — 턴 시작에 **한 번** 재서(roomFolder) 발언자 전원이 같은 값을 받는다. 사장 발언에 그 값을
   // 각인해(workFolder) 회의록이 "이 회의가 실제로 쓴 폴더"를 적게 한다 — 마치기 시점의 고정 값은 그 회의가 쓴
   // 폴더가 아닐 수 있다(폴더 없이 다 하고 직전에 고정·사라진 폴더 — 분리 검수 MEDIUM-2 실측).
-  const { pin: folder, stale: staleFolder } = await roomFolder(wsId);
+  const { pin: folder, stale: staleFolder } = await env.folder();
   // 사장 발언 추가 + 현재 세션 sid 확보(이후 발언은 이 sid가 유지될 때만 기록)
   const agendaTs = Date.now(); // 이 턴의 안건 메시지 식별 — 반응 라운드 트랜스크립트가 창 밖으로 밀려도 선두에 고정한다(검수 HIGH-2)
-  let relaxed = false; // 이 회의의 위임 제한 스위치(풀림) — 턴 시작에 **한 번** 읽어 발언자 전원·모든 라운드가 같은 값을 쓴다(도중에 토글해도 이 턴은 일관)
-  const sid = await lockRoom(wsId, async () => {
-    const room = await loadRoom(wsId);
-    relaxed = isRelaxedStored(room);
-    const s = room.sid ?? 0;
-    room.messages.push({ who: 'user', text, ts: agendaTs, ...(attachments.length ? { attachments } : {}), ...(folder ? { workFolder: folder } : {}) });
-    await saveRoom(wsId, room);
-    return s;
-  });
+  // 이 회의의 위임 제한 스위치(풀림) — 턴 시작에 **한 번** 읽어 발언자 전원·모든 라운드가 같은 값을 쓴다(도중에 토글해도 이 턴은 일관). 회의방은 늘 켜짐
+  const begun = await env.begin({ who: 'user', text, ts: agendaTs, ...(attachments.length ? { attachments } : {}), ...(folder ? { workFolder: folder } : {}) });
+  const sid = begun.sid;
+  const relaxed = meeting ? false : begun.relaxed;
   state.saved = true; // 여기서부터의 실패는 "안건은 저장됨" — 화면이 입력을 되돌리지 않게(runRoomTurn 주석)
 
   const lim = limitsFor(relaxed, { room: true });
   const roomTree = lim.relaxed ? newTree({ kind: 'room' }) : null; // 이 회의 턴(사용자 메시지 하나)의 합계 예산 — 모든 발언자·모든 라운드가 같은 객체를 쓴다(위임 동료 턴·쪽지 배달 턴 합계 30) // 회의실 문맥 — 켜짐 3명·2라운드, 풀림 6명·4라운드(+ 발언 크루의 위임 상한은 chat이 같은 표로)
-  const dir = parseRoomDirectives(text, agents, { relayMax: lim.relay });
-  const { lang = 'ko' } = await loadCompany(wsId).catch(() => ({}));
+  const dir = parseRoomDirectives(text, callable, { relayMax: lim.relay });
+  const { lang = 'ko' } = await env.company();
   const en = lang === 'en';
-  const sys = (kind, body) => pushRoomMsg(wsId, { who: 'system', kind, text: body, ts: Date.now() }, sid);
+  const sys = (kind, body) => env.push({ who: 'system', kind, text: body, ts: Date.now() }, sid);
+  const loadRoomNow = () => env.load();
+  const aborted = () => signal?.aborted === true;
+  let posts = 0; // 회의방: 이 질문에서 방에 남긴 참여자 글 수(MEETING_LIMITS.posts)
+  const wsId = env.wsId; // 아래 cc·loop(데스크톱 전용)·위임 미러 필터가 쓴다
 
   // 못 알아본 멘션은 먼저 알린다 — 조용히 넘기면 사장은 지시가 먹은 줄 안다.
   if (dir.unknown.length) {
@@ -559,8 +610,17 @@ async function runRoomTurnInner(wsId, text, attachments, state = {}, mark = asyn
     // 부른 이름을 하나도 못 풀었으면 여기서 멈춘다. "멘션 없으면 첫 크루" 폴백에 걸리면
     // 사장이 지목하지도 않은 크루가 답하고, 오타는 그 답에 묻혀 안 보인다.
     if (!dir.to.length && !dir.relay.length && !dir.cc.length && !dir.allCall && !dir.loop) {
-      return { replies: [], room: await loadRoom(wsId) };
+      return { replies: [], room: await loadRoomNow() };
     }
+  }
+
+  // 회의방에는 반복(루틴 등록)·참조(쪽지 = 다른 크루 턴)가 없다 — 회의방 위임 0과 같은 이유(질문 1번이 방 밖 턴을 만들지 않게). 조용히 버리지 않고 알린다.
+  if (!env.directives && (dir.loop || dir.cc.length || dir.ccAll)) {
+    await sys('unsupported', en
+      ? 'Loops and CC are not available in this room — use them in the Argo app meeting room.'
+      : '반복·참조는 이 방에서 쓸 수 없습니다 — Argo 앱의 회의실에서 써 주세요.');
+    if (dir.loop) return { replies: [], room: await loadRoomNow() };
+    dir.cc = []; dir.ccAll = false;
   }
 
   // ── loop — 주기 루틴으로 등록하고 이번 턴은 발언 없이 끝낸다(등록과 실행을 섞지 않는다).
@@ -568,7 +628,7 @@ async function runRoomTurnInner(wsId, text, attachments, state = {}, mark = asyn
     const target = dir.relay[0] ?? dir.to[0] ?? (dir.allCall ? agents[0] : null);
     if (!target) {
       await sys('loop', en ? 'Mention the agent who should run the loop (e.g. loop 30m @slug ...).' : '루프를 돌 에이전트를 함께 멘션해 주세요 (예: 반복 30분 @슬러그 ...).');
-      return { replies: [], room: await loadRoom(wsId) };
+      return { replies: [], room: await loadRoomNow() };
     }
     // 파서와 같은 패턴이어야 한다 — 어긋나면 지시문에 "반복 30분"이 남아 루틴이 자기를 또 등록하려 든다
     const prompt = text.replace(/^\s*(?:loop|루프|반복)\s+\d+\s*(?:분|시간|mins|min|hrs|hr|m|h)?(?=[\s@]|$)\s*/i, '').trim();
@@ -587,7 +647,7 @@ async function runRoomTurnInner(wsId, text, attachments, state = {}, mark = asyn
       // 간격 하한(10분) 등 검증 실패 — 사유를 방에 그대로 돌려준다
       await sys('loop', en ? `Loop not registered: ${String(e.message || e)}` : `루프 등록 실패: ${String(e.message || e)}`);
     }
-    return { replies: [], room: await loadRoom(wsId) };
+    return { replies: [], room: await loadRoomNow() };
   }
 
   // ── cc — 방에서 말하지 않는다. 회의 발언을 참조 사본으로 우편함에 넣는다.
@@ -624,13 +684,21 @@ async function runRoomTurnInner(wsId, text, attachments, state = {}, mark = asyn
   // ── 발언자 결정. relay(hop)면 그 순서 그대로, @전체면 전원, 아니면 멘션한 크루 전원(멘션 없으면 첫 크루).
   // 이름 멘션 3명 상한(.slice(0, 3))은 해제했다(유건 지시 2026-09-02 — 회의실 개선 2/6). 부른 만큼 턴 비용이
   // 곱해지는 것은 그대로라, 아래 'speakers' 안내 줄이 인원·순서를 방에 정직하게 남긴다. 릴레이 상한(HOP_MAX)은 별개.
-  const speakers = dir.relay.length
+  let speakers = dir.relay.length
     ? dir.relay
-    : dir.allCall ? agents : (dir.to.length ? dir.to : [agents[0]]);
+    : dir.allCall ? agents : (dir.to.length ? dir.to : (agents[0] ? [agents[0]] : []));
   const isRelay = dir.relay.length > 0;
   // 참조만 지시했으면 여기서 끝 — 참조만 돌리려던 문장에 엉뚱한 크루가 답하지 않게.
   if (!speakers.length || (ccTargets.length && !dir.to.length && !dir.relay.length && !dir.allCall)) {
-    return { replies: [], room: await loadRoom(wsId) };
+    return { replies: [], room: await loadRoomNow() };
+  }
+  // 회의방 참가자 상한(S≤5) — 넘으면 앞 5명만, 빠진 사람은 이름으로 밝힌다(릴레이 절단 안내와 같은 규칙).
+  if (meeting && speakers.length > MEETING_LIMITS.speakers) {
+    const cut = speakers.slice(MEETING_LIMITS.speakers);
+    speakers = speakers.slice(0, MEETING_LIMITS.speakers);
+    await sys('cap', en
+      ? `Up to ${MEETING_LIMITS.speakers} speak per message — not included: ${cut.map((a) => a.name).join(', ')}`
+      : `한 번에 ${MEETING_LIMITS.speakers}명까지 발언합니다 — 제외: ${cut.map((a) => a.name).join(', ')}`);
   }
   // 릴레이가 연쇄 상한에 잘렸으면 누가 빠졌는지 밝힌다 — cc의 '제외' 안내와 같은 규칙(조용히 자르면 아래
   // 인원 안내가 부른 사람보다 적은 이유를 사장이 알 길이 없다).
@@ -647,7 +715,7 @@ async function runRoomTurnInner(wsId, text, attachments, state = {}, mark = asyn
   // 동의·반박·보완을 동시에. 사장이 빠른 의견 수집만 원하면 rounds:1(입력창 토글).
   const isParallel = !isRelay && speakers.length > 1;
   const doRound2 = isParallel && rounds >= 2; // 반응 라운드 사용 여부(입력창 토글) — 몇 라운드까지는 아래 maxRounds(위임 제한 표)
-  const maxRounds = doRound2 ? lim.rounds : 1; // 켜짐 2(1라운드+반응 1), 풀림 4 — 풀림은 보탤 말이 있는 한에서만 이어진다(전원 "추가 의견 없음"이면 거기서 끝)
+  const maxRounds = doRound2 ? (meeting ? Math.min(lim.rounds, MEETING_LIMITS.rounds) : lim.rounds) : 1; // 켜짐 2(1라운드+반응 1), 풀림 4 — 풀림은 보탤 말이 있는 한에서만 이어진다(전원 "추가 의견 없음"이면 거기서 끝)
   // 발언 인원·순서 안내 — 2명 이상일 때만(1명은 답 자체가 곧 표시). 상한을 없앤 대가는 턴 비용이라 "몇 명이
   // 어떤 방식으로 답하는지"를 발언 시작 전에 방에서 본다(참조·릴레이 절단 안내가 있으면 그 다음 줄). 시스템 줄은
   // 크루 프롬프트 트랜스크립트에서 빠지는 기존 규약.
@@ -689,7 +757,7 @@ async function runRoomTurnInner(wsId, text, attachments, state = {}, mark = asyn
   // 위임 미러(방 메시지로 쌓인다)가 창을 밀어내도 이 턴의 안건은 선두에 고정한다 — 실측(검수 HIGH-2): 22명·위임 포함 13명에서
   // 2라운드 프롬프트에 안건이 없었다.
   const transcriptNow = async ({ keep = 20, pinAgenda = false } = {}) => {
-    const all = (await loadRoom(wsId)).messages.filter((m) => m.who !== 'system');
+    const all = (await loadRoomNow()).messages.filter((m) => m.who !== 'system');
     let win = all.slice(-keep);
     if (pinAgenda) {
       const agenda = all.find((m) => m.who === 'user' && m.ts === agendaTs);
@@ -748,17 +816,20 @@ ${transcript}${folderLine}
     // mirrorCtx로 **이 발언의 위임만** 받는다 — 동시에 도는 다른 발언·다른 턴의 위임이 섞이지 않게.
     const mirrorCtx = { room: `${turnId}:${a.slug}:${i}:${round}` };
     const mirrored = [];
-    const { onNotify } = await import('./notify.mjs');
-    const off = onNotify((ev) => {
-      if (ev?.type === 'delegate' && ev.wsId === wsId && ev.ctx?.room === mirrorCtx.room) mirrored.push(ev);
-    });
+    let off = () => {};
+    if (env.mirrorDelegations) {
+      const { onNotify } = await import('./notify.mjs');
+      off = onNotify((ev) => {
+        if (ev?.type === 'delegate' && ev.wsId === wsId && ev.ctx?.room === mirrorCtx.room) mirrored.push(ev);
+      });
+    }
     let r;
     try {
       // 첨부는 발언 크루 전원에게 전달 — chat()이 attNote로 프롬프트에 싣고 파일은 vault/files에 이미 있다.
       // 반응 라운드는 첨부를 다시 보내지 않는다 — 1라운드 트랜스크립트에 `(첨부, Read로 열람: vault/…)` 경로가 이미 실려 있고,
       // 이미지를 또 임베드하면 이미지 토큰이 인원×2로 곱해진다(검수 MEDIUM-2 실측).
       const att = round >= 2 ? [] : attFor(i);
-      r = await chat(wsId, a.slug, prompt, null, { source: 'room', attachments: att, mirrorCtx, workFolder: folder, delegationRelaxed: lim.relaxed, delegationTree: roomTree }); // 풀린 회의는 발언 크루의 위임 도구·안내문·위임받은 동료 턴까지 같은 상한을 쓴다
+      r = await env.speak(a, prompt, { source: 'room', attachments: att, mirrorCtx, workFolder: folder, delegationRelaxed: lim.relaxed, delegationTree: roomTree }); // 풀린 회의는 발언 크루의 위임 도구·안내문·위임받은 동료 턴까지 같은 상한을 쓴다
     } finally {
       // emitNotify는 마이크로태스크로 핸들러를 돌린다 — 턴 종료 직후 한 틱 양보해야 마지막 위임을 놓치지 않는다
       await new Promise((res) => setTimeout(res, 0));
@@ -766,26 +837,28 @@ ${transcript}${folderLine}
     }
     // 위임 결과를 **답변보다 먼저** 방에 남긴다 — 실제 일어난 순서(위임 → 그걸 반영한 답)와 같게.
     for (const ev of mirrored) {
-      const live = await pushRoomMsg(wsId, {
+      if (meeting && posts >= MEETING_LIMITS.posts) return { live: false, reply: r.reply }; // 회의방 글 상한
+      const live = await env.push({
         who: ev.to, text: ev.reply, ts: Date.now(),
         via: { from: ev.from, fromName: ev.fromName, task: String(ev.task ?? '').slice(0, 200) },
         ...(ev.artifacts?.length ? { artifacts: ev.artifacts } : {}), // 위임받은 크루가 만든 파일도 방에서 바로 — chat.mjs delegate 이벤트가 싣는다
       }, sid);
       if (!live) return { live: false, reply: r.reply }; // 회의가 마쳐졌다
+      posts += 1;
     }
     // artifacts를 **방 메시지에도** 싣는다 — 지금까지 개인 스레드(appendTurn)에만 기록돼 회의실에선 크루가 만든 파일을
     // 볼 수도 갈 수도 없었다(유건 요청 2026-09-02). 없으면 필드 자체를 안 쓴다(thread.mjs appendTurn과 같은 규약 — 스레드 비대화 방지).
     // round — 반응 라운드 발언은 화면이 "반응"으로 구분한다(1라운드는 필드 없음 — 구형 메시지와 같은 모양).
     // noAdd — 반응 라운드의 "추가 의견 없음"(프롬프트가 지정한 한 줄)은 말풍선 대신 접힌 칩으로(12명이면 같은 줄 12개 — 검수 LOW).
     const noAdd = round >= 2 && NO_ADD_RE.test(String(r.reply ?? ''));
+    if (meeting && (posts >= MEETING_LIMITS.posts || aborted())) return { live: false, reply: r.reply }; // 회의방 글 상한·취소 — 남기지 않고 끝낸다
     // traceId — 이 발언의 작업 과정(turn-trace, 이 기기에만 저장). 방 줄은 동기화되지만 다른 기기엔 기록 파일이 없어 답만 보인다.
-    const live = await pushRoomMsg(wsId, { who: a.slug, text: r.reply, ts: Date.now(), ...(round >= 2 ? { round } : {}), ...(noAdd ? { noAdd: true } : {}), ...(r.artifacts?.length ? { artifacts: r.artifacts } : {}), ...(r.traceId ? { traceId: r.traceId } : {}) }, sid);
+    const live = await env.push({ who: a.slug, text: r.reply, ts: Date.now(), ...(round >= 2 ? { round } : {}), ...(noAdd ? { noAdd: true } : {}), ...(r.artifacts?.length ? { artifacts: r.artifacts } : {}), ...(r.traceId ? { traceId: r.traceId } : {}) }, sid);
     if (!live) return { live: false, reply: r.reply }; // 회의가 마쳐졌다 — 남은 발언을 빈 방에 남기지 않는다
+    posts += 1;
     // ponytail: 회의실 턴을 크루 개인 스레드에 기록한다 — 마지막 남은 비대칭(루틴 #157 교훈).
     // 안 하면 회의에서 시킨 일이 개인 채팅에 안 보이고 이어가기가 안 된다(유건 제보 2026-08-08).
-    const { appendTurn } = await import('./thread.mjs');
-    await appendTurn(wsId, a.slug, { userMsg: prompt, reply: r.reply, handover: r.handover, sessionId: null, via: 'room', artifacts: r.artifacts, traceId: r.traceId })
-      .catch((e) => console.error(`[argo] 회의실 스레드 기록 실패(${wsId}/${a.slug}):`, e.message));
+    await env.record(a, { userMsg: prompt, reply: r.reply, handover: r.handover, artifacts: r.artifacts, traceId: r.traceId });
     replies.push({ slug: a.slug, name: a.name, reply: r.reply, ...(round >= 2 ? { round } : {}), ...(r.artifacts?.length ? { artifacts: r.artifacts } : {}) }); // 화면의 폴백 경로(room 스냅샷 부재)도 칩을 잃지 않게
     return { live: true, reply: r.reply, noAdd };
   };
@@ -802,6 +875,7 @@ ${transcript}${folderLine}
     // 세 번째 구간 = 이 턴의 발언 인원 — 화면이 "3/12 발언 완료"를 계산한다. 앞 두 구간 해석은 그대로(구형 호환).
     const markerFor = (j) => (speakers[j] ? `${speakers[j].slug}|${speakers.slice(j + 1).map((s) => s.slug).join(',')}|${speakers.length}` : `||${speakers.length}`); // 마무리 중에도 인원은 남긴다 — "N/N명"이 마지막에 사라지지 않게(검수 LOW-2)
     for (const [i, a] of speakers.entries()) {
+      if (aborted()) break; // 회의방 취소 — 다음 발언을 시작하지 않는다
       // 매 발언 직전 최신 트랜스크립트 — 뒤 크루는 앞 크루의 답을 보고 겹치지 않게 보탠다(릴레이 계약).
       const prompt = promptFor(a, i, await transcriptNow(), 1);
       let out;
@@ -826,7 +900,7 @@ ${transcript}${folderLine}
       }
       if (!out.live) break; // 회의가 마쳐졌다
     }
-    return { replies, room: await loadRoom(wsId) };
+    return { replies, room: await loadRoomNow() };
   }
 
   // ── 동시 발언. 마커 v2 = JSON(발언자별 상태) — 화면이 발언 카드를 사람 수만큼 그린다. 상한(concurrency)까지 동시에 시작하고
@@ -834,14 +908,17 @@ ${transcript}${folderLine}
   const st = { v: 2, round: 1, rounds: maxRounds, total: speakers.length, active: [], queue: speakers.map((a) => a.slug), done: [], failed: [] };
   const push = () => mark(JSON.stringify(st));
   const runRound = async (round) => {
+    // 반응 라운드에는 외부 봇이 끼지 않는다 — 봇은 사람이 부른 1라운드에만 답한다(봇 글이 봇을 다시 깨우지 않게, 봇 턴 상한)
+    const who = round >= 2 ? speakers.filter((a) => a.kind !== 'bot') : speakers;
+    if (!who.length) return { results: [], ended: false };
     const transcript = round >= 2
       ? await transcriptNow({ keep: Math.max(20, speakers.length * 2 + 8), pinAgenda: true }) // 직전 라운드 전부 + 안건 고정
       : await transcriptNow(); // 라운드 시작 스냅샷 — 전원이 같은 대화를 본다
-    st.round = round; st.active = []; st.queue = speakers.map((a) => a.slug); st.done = []; st.failed = [];
+    st.round = round; st.active = []; st.queue = who.map((a) => a.slug); st.done = []; st.failed = [];
     await push();
     let ended = false;
-    const results = await runLimited(speakers, concurrency, async (a, i) => {
-      if (ended) return { live: false };
+    const results = await runLimited(who, concurrency, async (a, i) => {
+      if (ended || aborted()) return { live: false };
       st.queue = st.queue.filter((x) => x !== a.slug); st.active.push(a.slug); await push();
       try {
         const out = await speakOne(a, i, promptFor(a, i, transcript, round), round);
@@ -858,26 +935,24 @@ ${transcript}${folderLine}
   };
   const r1 = await runRound(1);
   if (!r1.results.some((r) => r.ok)) throw r1.results[0].e; // 전원 실패 — 호출 탭의 오류 표시 계약(안건은 저장됨)
-  if (r1.ended) return { replies, room: await loadRoom(wsId) }; // 회의가 마쳐졌다
+  if (r1.ended) return { replies, room: await loadRoomNow() }; // 회의가 마쳐졌다
   if (doRound2) {
     // 반응 라운드 — 켜짐은 1번(종전 그대로), 풀린 방은 maxRounds까지 반복한다. 다음 라운드는 **직전 라운드에서 누군가 실제로 보탰을 때만**
     // 간다(전원 "추가 의견 없음"이거나 전원 실패면 거기서 끝 — 같은 말을 되풀이하는 호출 0).
     let last = r1;
     for (let round = 2; round <= maxRounds; round += 1) {
-      if (round > 2 && !last.results.some((r) => r.ok && r.v?.live && !r.v.noAdd)) return { replies, room: await loadRoom(wsId) };
-      // 예산 게이트(검수 MEDIUM-1) — chat()의 월 한도 검사는 누적 이벤트를 읽는 TOCTOU라, 동시 발언에서는 첫 웨이브 전원이 기록 전에
-      // 통과해 한도를 최대 concurrency턴 초과할 수 있다. 라운드 경계마다 한 번 더 본다: 넘었으면 반응 라운드를 접고 방에 남긴다.
-      const { budgetUsd = 0 } = await loadCompany(wsId).catch(() => ({}));
-      const over = budgetUsd > 0 && (await monthCost(wsId).catch(() => ({ costUsd: 0 }))).costUsd >= budgetUsd;
-      if (over) {
+      if (round > 2 && !last.results.some((r) => r.ok && r.v?.live && !r.v.noAdd)) return { replies, room: await loadRoomNow() };
+      if (aborted() || (meeting && posts >= MEETING_LIMITS.posts)) return { replies, room: await loadRoomNow() }; // 회의방 취소·글 상한
+      // 예산 게이트(검수 MEDIUM-1) — 라운드 경계마다 한 번 더 본다(env.overBudget 주석): 넘었으면 반응 라운드를 접고 방에 남긴다.
+      if (await env.overBudget()) {
         await sys('round', en ? 'Reaction round skipped — monthly spend limit reached.' : '반응 라운드 생략 — 월 지출 한도에 도달했습니다.');
-        return { replies, room: await loadRoom(wsId) };
+        return { replies, room: await loadRoomNow() };
       }
       await sys('round', round === 2
         ? (en ? 'Reaction round — everyone replies to the first round.' : '반응 라운드 — 1라운드 발언에 서로 답합니다.')
         : (en ? `Reaction round — everyone replies to round ${round - 1}.` : `반응 라운드 — ${round - 1}라운드 발언에 서로 답합니다.`));
       last = await runRound(round); // 실패는 줄로 남는다 — 앞 라운드 답이 이미 있으므로 던지지 않는다
-      if (last.ended) return { replies, room: await loadRoom(wsId) }; // 회의가 마쳐졌다
+      if (last.ended) return { replies, room: await loadRoomNow() }; // 회의가 마쳐졌다
     }
     // 풀린 방이 상한 라운드까지 갔는데도 보탤 말이 남아 있으면 말없이 끊지 않고 알린다(켜짐은 종전처럼 조용히 끝)
     if (lim.relaxed && maxRounds > 2 && last.results.some((r) => r.ok && r.v?.live && !r.v.noAdd)) {
@@ -886,7 +961,7 @@ ${transcript}${folderLine}
         : `반응 라운드가 상한(${maxRounds}라운드)에 닿아 여기서 멈춥니다 — 더 이어가려면 이어서 말씀해 주세요.`);
     }
   }
-  return { replies, room: await loadRoom(wsId) };
+  return { replies, room: await loadRoomNow() };
 }
 
 /** 반응 라운드 "보탤 것 없음" 판정 — 프롬프트가 지정한 한 줄(ko) + 영어 회사 크루가 낼 법한 동의어. 화면이 칩으로 접는다. */

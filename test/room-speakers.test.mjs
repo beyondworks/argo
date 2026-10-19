@@ -132,7 +132,7 @@ test('cc가 함께 있으면 참조 안내가 먼저, 인원 안내가 그다음
 
 test('재등장 금지 — 발언자 결정에 상한 slice가 없고, 입력창 안내에 "최대 N명" 문구가 없다', async () => {
   const room = await readFile(new URL('../src/room.mjs', import.meta.url), 'utf8');
-  const i = room.indexOf('const speakers = dir.relay.length');
+  const i = room.indexOf('let speakers = dir.relay.length');
   assert.ok(i > 0, '발언자 결정 앵커');
   assert.doesNotMatch(room.slice(i, room.indexOf(';', i)), /slice\(/, '발언자 결정에 상한 재등장 금지(HOP_MAX 릴레이 상한은 파서 몫)');
   const line = (await readFile(new URL('../app/i18n.jsx', import.meta.url), 'utf8')).split('\n').find((l) => l.includes("'room.placeholder'"));

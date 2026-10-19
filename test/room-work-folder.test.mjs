@@ -197,8 +197,9 @@ test('⑤ chat.mjs: 폴더 조회 2곳(SDK·CLI) 모두 workFolder를 넘기고,
 
 test('⑤ room.mjs: 발언 호출이 workFolder=folder를 넘기고 프롬프트에 폴더 줄이 조립된다(스냅샷 1회)', async () => {
   const src = await load('../src/room.mjs');
-  assert.match(src, /chat\(wsId, a\.slug, prompt, null, \{[^}]*\bworkFolder: folder\b[^}]*\}\)/, '발언 호출이 회의 폴더를 안 넘긴다');
-  assert.equal((src.match(/await roomFolder\(wsId\)/g) ?? []).length, 1, '턴당 스냅샷은 정확히 한 번 — 발언자마다 다시 재면 도중 해제에 발언자별로 갈린다');
+  assert.match(src, /env\.speak\(a, prompt, \{[^}]*\bworkFolder: folder\b[^}]*\}\)/, '발언 호출이 회의 폴더를 안 넘긴다');
+  assert.match(src, /folder: \(\) => roomFolder\(wsId\),/, '데스크톱 바깥의 폴더 = roomFolder');
+  assert.equal((src.match(/await env\.folder\(\)/g) ?? []).length, 1, '턴당 스냅샷은 정확히 한 번 — 발언자마다 다시 재면 도중 해제에 발언자별로 갈린다');
   assert.match(src, /\$\{transcript\}\$\{folderLine\}/, '트랜스크립트 바로 아래에 폴더 줄');
   assert.match(src, /작업 폴더: \$\{oneLine\(folder\)\}/, '프롬프트 줄 개행 접기(검수 MEDIUM-1)');
   assert.match(src, /\.\.\.\(folder \? \{ workFolder: folder \} : \{\}\) \}\);/, '사장 발언에 실제 쓴 폴더 각인');
