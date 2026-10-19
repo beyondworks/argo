@@ -120,7 +120,11 @@ test('5GiB 경계: 합 + 신고 크기가 한도와 같으면 받고, 1바이트
   assert.match(upload(Q, '.tg-claims/0123456789abcdef01234568.json', 70000).stderr, /quota_exceeded/, '64KiB 넘는 신고는 예외가 아니다');
   assert.match(upload(Q, '.tg-claims/not-a-hash.json', 10).stderr, /quota_exceeded/, '모양이 다른 이름은 예외가 아니다');
   assert.match(upload(Q, 'co-q/_device-lease.json', 10).stderr, /quota_exceeded/, '회사 폴더 안의 같은 이름은 예외가 아니다');
-  sql(`delete from storage.objects where name in ('${Q}/_device-lease.json', '${Q}/.tg-claims/0123456789abcdef01234567.json')`);
+  sql(`delete from storage.objects where name = '${Q}/_device-lease.json'`);
+  assert.equal(upload(Q, '_device-lease.json', null).status, 0, '신고 크기가 없는 리스 쓰기도 받는다(C1 — 운영 storage-api가 contentLength를 안 실어도)');
+  assert.equal(upload(Q, '.tombstones/co-q.json', 120).status, 0, '회사 보관 표지(툼스톤)는 한도가 차도 받는다(삭제 전파, C2)');
+  assert.match(upload(Q, '.tombstones/x/y.json', 10).stderr, /quota_exceeded/, '툼스톤 직계가 아니면 예외가 아니다');
+  sql(`delete from storage.objects where name in ('${Q}/_device-lease.json', '${Q}/.tg-claims/0123456789abcdef01234567.json', '${Q}/.tombstones/co-q.json')`);
   // 기존 파일은 그대로(지우지 않는다)
   assert.equal(sql(`select count(*) from storage.objects where name like '${Q}/%'`), '2');
 });
@@ -137,6 +141,19 @@ test('한도 근처의 덮어쓰기는 옛 크기를 빼고 본다 — 같은 �
   const ups = asUserRaw(Q, `insert into storage.objects (bucket_id, name, owner, metadata) values ('companies', '${Q}/co-q/a.md', '${Q}', '{"contentLength": 1000}')
     on conflict (bucket_id, name) where archived_at is null do update set metadata = excluded.metadata`);
   assert.equal(ups.status, 0, ups.stderr);
+});
+
+test('이미 한도를 넘은 Pro(C2) — 같거나 작아지는 덮어쓰기는 받고, 커지는 덮어쓰기·새 파일은 거절, 지우면 한도 아래로 내려가 다시 올린다', { skip }, () => {
+  const O = 'abababab-abab-4bab-8bab-abababababab';
+  sql(`insert into public.test_pro values ('${O}')`);
+  stored(O, 'co-o/big.bin', LIMIT); stored(O, 'co-o/__manifest__.json', 5000); stored(O, 'co-o/a.md', 3000); // 합 = 한도 + 8000
+  const over = (path, bytes) => asUserRaw(O, `update storage.objects set metadata = '{"contentLength": ${bytes}}' where name = '${O}/${path}'`);
+  assert.equal(over('co-o/__manifest__.json', 4000).status, 0, '매니페스트를 작게 다시 쓰기는 받는다(지운 항목 반영)');
+  assert.equal(over('co-o/a.md', 3000).status, 0, '같은 크기 덮어쓰기는 받는다');
+  assert.match(over('co-o/a.md', 3001).stderr, /quota_exceeded/, '커지는 덮어쓰기는 거절');
+  assert.match(upload(O, 'co-o/new.md', 10).stderr, /quota_exceeded/, '새 파일은 거절');
+  asUser(O, `delete from storage.objects where name = '${O}/co-o/big.bin'`); // 앱이 큰 파일을 지움(삭제 전파)
+  assert.equal(upload(O, 'co-o/new.md', 10).status, 0, '지워서 한도 아래로 내려가면 다시 올린다');
 });
 
 test('보관본(archived_at)·삭제 표시·다른 사람·다른 버킷은 사용량에 안 들어간다', { skip }, () => {

@@ -12,7 +12,9 @@
 --   2) Pro 저장 한도 5GiB(5,368,709,120바이트) — companies 버킷 insert·update에 RESTRICTIVE 정책 argo_companies_quota.
 --      판정 = 그 계정의 지금 있는 companies 객체 크기 합(같은 이름 객체 제외 — 덮어쓰기는 옛 크기를 빼고 본다) + 이번 신고 크기 ≤ 한도.
 --      초과면 'quota_exceeded'(SQLSTATE PT402 — 메신저 첨부 한도와 같은 코드라 앱이 이미 'code: PT402'를 안다). 기존 파일은 지우지 않는다.
---      예외: 실행 담당 제어 파일 <uid>/_device-lease.json·<uid>/.tg-claims/<지문>.json(신고 64KiB 이하)은 한도를 보지 않는다 — 한도가 찬 Pro의 루틴·텔레그램 보존.
+--      예외: 제어 파일 <uid>/_device-lease.json·<uid>/.tg-claims/<지문>.json·<uid>/.tombstones/<회사>.json(신고 64KiB 이하 또는 신고 없음)은 한도를 보지 않는다 —
+--      한도가 찬 Pro의 루틴·텔레그램·회사 보관 전파 보존. 한도를 넘은 계정도 합계를 늘리지 않는 덮어쓰기(같은 이름, 같거나 작은 크기)는 받는다 — 매니페스트를 다시 쓰고
+--      파일을 지워 한도 아래로 내려갈 수 있게. 삭제는 정책과 무관하게 언제나 된다.
 --      왜 사용량 표가 없나: storage-api는 정책 판정을 사용자 권한 트랜잭션에서 시험한 뒤 되돌린다(supabase/storage src/storage/database/pg.ts
 --      testPermission — 일부러 오류를 던져 롤백). 판정 중에 쓴 사용량은 남지 않는다. 그래서 업로드마다 그 계정 범위를 색인으로 합산한다(쓰기 0).
 --      신고 크기 = storage-api가 판정용 행에 싣는 metadata.contentLength(supabase/storage #825). 없으면(옛 storage-api) 1바이트로 본다.
@@ -21,7 +23,7 @@
 --
 -- 비용(DB 위생): 정책 판정은 읽기만(쓰기 0, 업로드가 없으면 호출 0). 업로드 1건 = is_pro 1회 + 그 계정 범위 합계 1회(객체 수에 비례 — PR 본문 측정값).
 --   무료 계정은 is_pro가 거짓이면 합계를 내지 않는다.
--- 적용 전 확인(M1, 읽기만): 이미 5GiB를 넘은 Pro 계정 — 그 계정은 새 파일 업로드만 막힌다(리스·클레임은 예외라 루틴·텔레그램은 그대로).
+-- 적용 전 확인(M1, 읽기만): 이미 5GiB를 넘은 Pro 계정 — 그 계정은 새 파일 업로드와 커지는 덮어쓰기가 막힌다. 같거나 작아지는 덮어쓰기·삭제·제어 파일은 된다.
 --   select split_part(name, '/', 1) uid, sum((metadata->>'size')::bigint) bytes from storage.objects where bucket_id = 'companies'
 --    group by 1 having sum((metadata->>'size')::bigint) > 5368709120;
 -- 적용: bash scripts/msgr-live-apply.sh 20261019130000_companies_free_no_write_pro_quota (storage.objects 정책 교체 — 선잠금 대상)
@@ -81,22 +83,35 @@ begin
   execute format($f$create or replace function public._argo_companies_used(p_uid uuid, p_except text default null) returns bigint
     language sql stable security definer set search_path = public, pg_temp as $b$ %s $b$ $f$, body);
   execute 'revoke all on function public._argo_companies_used(uuid, text) from public, anon, authenticated';
+  -- 같은 이름의 지금 있는 객체 크기(덮어쓰기가 합계를 늘리는지 — 2-b) — (bucket_id, name) 색인 한 번
+  execute format($f$create or replace function public._argo_companies_size(p_name text) returns bigint
+    language sql stable security definer set search_path = public, pg_temp as $b$ %s $b$ $f$,
+    case when to_regclass('storage.objects') is null then 'select 0::bigint'
+         else format($g$select coalesce(sum(%s), 0)::bigint from storage.objects o where o.bucket_id = 'companies' and o.name = p_name%s$g$, sz, live) end);
+  execute 'revoke all on function public._argo_companies_size(text) from public, anon, authenticated';
 end $$;
 
 -- 2-b) 정책 판정 — 호출한 사람 자신만(uid를 받지 않는다 — 남의 사용량을 묻는 통로가 되지 않게). p_row = 넣거나 바꾸려는 행(to_jsonb).
 --      남의 경로·무료 계정은 여기서 판정하지 않는다(허용 정책 companies_owner_insert·update가 거절한다 — 합계를 낼 필요가 없다).
 create or replace function public.argo_companies_quota_check(p_row jsonb) returns boolean
   language plpgsql stable security definer set search_path = public, pg_temp as $$
-declare me uuid := auth.uid(); nm text := p_row->>'name'; n text := p_row->'metadata'->>'contentLength'; used bigint;
+declare me uuid := auth.uid(); nm text := p_row->>'name'; n text := p_row->'metadata'->>'contentLength'; used bigint; sz bigint; prev bigint;
 begin
   if me is null or nm is null or left(nm, 37) <> me::text || '/' then return true; end if;
   if not public.is_pro() then return true; end if;
-  -- 실행 담당 제어 파일(리스·텔레그램 토큰 클레임)은 한도를 보지 않는다 — 한도가 찬 Pro도 루틴·텔레그램이 멈추지 않게(분리 검수 1차 높음).
-  -- 이름이 정확히 그 모양이고 신고 크기가 64KiB 이하일 때만(이 통로로 큰 파일을 쌓지 못하게). 실제 글은 수백 바이트다.
-  if (nm = me::text || '/_device-lease.json' or nm ~ ('^' || me::text || '/\.tg-claims/[0-9a-f]{24}\.json$'))
-     and n ~ '^[0-9]{1,18}$' and n::bigint <= 65536 then return true; end if;
+  -- 제어 파일은 한도를 보지 않는다 — 실행 담당(리스·텔레그램 토큰 클레임)과 회사 보관 표지(툼스톤 — 삭제 전파에 필요)(분리 검수 1차 높음·엄격 검수 C1·C2).
+  -- 이름이 정확히 그 모양이고 신고 크기가 64KiB 이하이거나 신고 크기가 없을 때만(이 통로로 큰 파일을 쌓지 못하게 — 실제 글은 수백 바이트).
+  -- 신고 크기가 없는 storage-api에서도 리스가 막히지 않게 없음을 허용한다(C1).
+  if (nm = me::text || '/_device-lease.json' or nm ~ ('^' || me::text || '/\.tg-claims/[0-9a-f]{24}\.json$')
+      or nm ~ ('^' || me::text || '/\.tombstones/[^/]{1,200}\.json$'))
+     and (coalesce(n, '') = '' or (n ~ '^[0-9]{1,18}$' and n::bigint <= 65536)) then return true; end if;
+  sz := greatest(case when n ~ '^[0-9]{1,18}$' then n::bigint else 0 end, 1);
   used := public._argo_companies_used(me, nm);
-  if used + greatest(case when n ~ '^[0-9]{1,18}$' then n::bigint else 0 end, 1) <= public._argo_quota_bytes() then return true; end if;
+  if used + sz <= public._argo_quota_bytes() then return true; end if;
+  -- 이미 한도를 넘은 계정: 합계를 늘리지 않는 덮어쓰기(같은 이름, 크기가 같거나 작음)는 받는다 — 매니페스트를 다시 쓰고 파일을 줄여
+  -- 한도 아래로 내려갈 수 있게(엄격 검수 C2: 기준 "한도를 넘은 Pro가 앱에서 파일을 지우면 클라우드도 한도 아래로 내려간다"). 새 파일·커지는 덮어쓰기는 거절.
+  prev := public._argo_companies_size(nm);
+  if prev > 0 and sz <= prev then return true; end if;
   raise exception 'quota_exceeded' using errcode = 'PT402',
     detail = 'cloud storage for this plan is full; existing files are kept', hint = 'quota_bytes';
 end $$;
