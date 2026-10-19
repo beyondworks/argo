@@ -38,7 +38,8 @@ const srv = http.createServer((req, res) => {
 });
 // 가짜 서버는 프록시도 맡는다 — A3t 턴의 외부(https) 요청이 CONNECT로 들어오면 목적지만 적고 거절한다(실제 네트워크 0)
 const outbound = [];
-srv.on('connect', (req, sock) => { outbound.push(req.url); sock.end('HTTP/1.1 403 Forbidden\r\n\r\n'); });
+// 거절한 소켓을 상대가 끊으면 윈도우는 ECONNRESET을 낸다 — 처리기가 없으면 시험이 끝난 뒤 잡히지 않은 예외로 파일 전체가 실패한다
+srv.on('connect', (req, sock) => { sock.on('error', () => {}); outbound.push(req.url); sock.end('HTTP/1.1 403 Forbidden\r\n\r\n'); });
 await new Promise((r) => srv.listen(0, '127.0.0.1', r));
 process.env.ARGO_CLAUDE_BASE_URL = `http://127.0.0.1:${srv.address().port}`;
 after(() => srv.close());
