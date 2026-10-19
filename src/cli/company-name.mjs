@@ -32,7 +32,7 @@ export async function readerSession({ load, mk, now = Date.now } = {}) {
   const sess = read();
   if (!sess?.access_token || !sess.user?.id || !sess.url || !sess.anonKey) return null;
   if ((Number(sess.expires_at) || 0) * 1000 - now() < 60_000) return null;
-  const create = mk ?? (await import('@supabase/supabase-js')).createClient;
+  const create = mk ?? (await import('../supabase-client.mjs')).argoCreateClient;
   const client = create(sess.url, sess.anonKey, { auth: { persistSession: false, autoRefreshToken: false }, global: { headers: { Authorization: `Bearer ${sess.access_token}` } } });
   return { client, uid: sess.user.id };
 }

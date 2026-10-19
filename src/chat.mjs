@@ -7,6 +7,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { leanForgePosture } from './prompts/lean-forge-posture.mjs';
 import { join, relative, resolve, sep } from 'node:path';
 import { query, createSdkMcpServer, tool as sdkTool } from '@anthropic-ai/claude-agent-sdk';
+import { adoptLegacyTranscript } from './runners/claude-config.mjs';
 import { sdkNoDockOptions } from './sdk-no-dock.mjs';
 import { workContext } from './gateway/space.mjs'; // 공간 판정 기준 함수 — 작업 문맥(권한 조직)
 import { z } from 'zod';
@@ -2259,6 +2260,8 @@ ${lang === 'en'
   // 원문('grok token expired…')이 그대로 표면화된다(격리 서버 실측 2026-08-31).
   // SDK 러너(claude/glm) env — 회사 자격(API키/OAuth) 우선, 없으면 기존 폴백(claude=CLI/env, glm=호스트 GLM_API_KEY).
   const sdkEnv = await sdkEnvFor(wsId, runner);
+  // 격리 전 버전이 사용자 ~/.claude에 남긴 세션을 이어 쓰는 첫 턴 — 격리 폴더로 복사해 맥락을 잇는다(원본 보존, 실패하면 종전 새 세션 재시도)
+  if (!nativeOn && runner === 'claude' && resumeId && sdkEnv?.CLAUDE_CONFIG_DIR) await adoptLegacyTranscript(sdkEnv.CLAUDE_CONFIG_DIR, resumeId);
   if (!nativeOn) {
     browserBridge = await createBrowserMcpBridge({ wsId, slug: agentSlug,
       canUseTool: makePermissionGate(wsId, agentSlug, p.root, from ?? notOwnerDirect, lang, workRoots, { guest, msgr: gateMsgr }) });

@@ -2,7 +2,7 @@
 //  ① 서비스 계정 로그인(이메일·비밀번호는 env로만 — 값을 출력하지 않는다) ② 초대 수락 = 서버가 그 계정을 조직의 서비스 계정으로
 //  지정(msgr_accept_invite for_node) ③ 노드 데이터 루트(ARGO_ROOT)에 기기 세션 저장 ④ 조직 회사(ws) 생성·company.json.msgr =
 //  { enabled, nodeOrgId } ⑤ 첫 하트비트. 재실행은 멱등(회사가 있으면 재사용). 이후 게이트웨이 폴러가 nodeOrgId로 하트비트를 잇는다.
-import { createClient } from '@supabase/supabase-js';
+import { argoCreateClient as createClient } from './supabase-client.mjs'; // X-Client-Info 끝에 argo/<버전>(src/supabase-client.mjs)
 import { existsSync } from 'node:fs';
 import { saveDeviceSession, getFreshDeviceSession } from './devicesession.mjs';
 import { createCompany, updateCompany, paths } from './workspace.mjs';

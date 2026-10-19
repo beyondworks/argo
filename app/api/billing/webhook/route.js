@@ -6,7 +6,7 @@
 // ⚠ LS 재시도는 3회·약 155초(5s→25s→125s)가 전부다 — 그 안에 200을 못 주면 이벤트는 유실된다.
 // 그래서 5xx 경로는 [유실 위험] 접두 로그로 크게 남긴다. 유실 시 최후 방어는 /api/me/billing의
 // 대사(src/lsreconcile.mjs, O2)가 LS API 대조로 복구한다.
-import { createClient } from '@supabase/supabase-js';
+import { argoCreateClient as createClient } from '../../../../src/supabase-client.mjs'; // X-Client-Info 끝에 argo/<버전>(src/supabase-client.mjs)
 import { verifyLsSignature, mapSubscriptionEvent, applyLsEvent, unmatchedRow, recordUnmatched, lsGateOpts } from '../../../../src/lsbilling.mjs';
 
 export async function POST(req) {
