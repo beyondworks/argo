@@ -312,3 +312,21 @@ test('link.mjs — 회의 결과(posts)가 있으면 host가 넘김을 실어도
   assert.deepEqual(d.posts, [{ agent, round: 1, text: '글' }]);
   link.stop();
 });
+
+test('pro_required가 기기 등록에서 와도 같은 쉼 — 다시 등록하지 않고 다음 플랜 확인 전 요청 0', async () => {
+  const { server, host, calls, clock, planRef } = await setup({ plan: 'free' });
+  host.stop();
+  const rpc1 = server.transport.rpc;
+  let reject = true;
+  server.transport.rpc = async (name, args) => {
+    if (reject && name === 'msgr2_device_register') { server.log.push({ name, args }); return { data: { ok: false, code: 'pro_required' }, error: null }; }
+    return rpc1(name, args);
+  };
+  host.start(); await flush();
+  assert.equal(host.proBlocked, true);
+  const before = server.log.length;
+  for (let i = 0; i < 59; i++) { clock.advance(10_000); await host.resync(); }
+  assert.equal(server.log.length, before, '쉬는 동안 기기 등록 재시도 0');
+  reject = false; planRef.plan = 'pro'; clock.advance(10_000); await host.resync(); await flush();
+  assert.ok(host.link && calls.plans >= 1, 'Pro 확인 뒤 다시 연다');
+});
