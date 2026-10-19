@@ -2,10 +2,10 @@
 // auth.sessions는 Supabase GoTrue와 같은 열(user_agent·ip·refreshed_at·oauth_client_id)을 가진 대역, refresh_tokens는 FK on delete cascade.
 // #1107(…_argo_old_app_cutoff.sql)이 main에 없으면 origin/feat/old-app-cutoff에서 읽는다(병합 전 의존).
 // 실행: bash scripts/billing-pg-drill.sh test/argo-old-desktop-purge-pg.test.mjs
-import test, { before } from 'node:test';
+import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
-import { readFileSync, readdirSync, mkdtempSync, statSync, readdirSync as ls } from 'node:fs';
+import { readFileSync, readdirSync, mkdtempSync, statSync, rmSync, readdirSync as ls } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -235,7 +235,10 @@ test('되돌림 파일: 함수만 지우고 세션·기록 표는 그대로, 다
   assert.equal(preview().target_sessions, 1);
 });
 
-// 스크립트 — 로컬 접속 문자열(ARGO_PURGE_PG)로 끝까지
+// 스크립트 — 로컬 접속 문자열(ARGO_PURGE_PG)로 끝까지. 만든 임시 폴더는 정확한 경로만 지운다
+const temps = [];
+const tempOut = () => { const d = mkdtempSync(join(tmpdir(), 'odp-')); temps.push(d); return join(d, 'ops'); };
+after(() => { for (const d of temps) rmSync(d, { recursive: true, force: true }); });
 function script(args, env = {}) {
   return spawnSync('bash', [join(ROOT, 'scripts/old-desktop-session-purge.sh'), ...args], { cwd: ROOT, encoding: 'utf8', env: { ...process.env, ARGO_PURGE_PG: DB, ...env } });
 }
@@ -243,7 +246,7 @@ function script(args, env = {}) {
 test('스크립트: preview → run이 대상 id를 0600 파일(0700 폴더)로 남긴 뒤 지운다', { skip }, () => {
   reset(); newAppPresent();
   const a = session(), b = session({ gate: null }), keep = session({ ua: UA.ios });
-  const out = join(mkdtempSync(join(tmpdir(), 'odp-')), 'ops');
+  const out = tempOut();
   const pv = script(['preview'], { ARGO_PURGE_OUT: out });
   assert.equal(pv.status, 0, pv.stderr);
   const p = JSON.parse(pv.stdout.slice(pv.stdout.indexOf('{'), pv.stdout.lastIndexOf('}') + 1));
@@ -265,7 +268,7 @@ test('스크립트: 수나 digest가 미리보기와 다르면 목록만 남기�
   reset(); newAppPresent();
   const a = session();
   const p = preview();
-  const out = join(mkdtempSync(join(tmpdir(), 'odp-')), 'ops');
+  const out = tempOut();
   const bad = script(['run', String(p.target_sessions + 1), p.digest], { ARGO_PURGE_OUT: out });
   assert.equal(bad.status, 3, bad.stdout + bad.stderr); assert.match(bad.stdout, /0건 삭제/);
   const bad2 = script(['run', String(p.target_sessions), 'f'.repeat(32)], { ARGO_PURGE_OUT: out });
