@@ -4,6 +4,12 @@
 // 규칙: 같은 v 안에서는 필드·열린 값 추가만 한다. 모르는 필드는 무시하고(엄격 거부 금지), 모르는 type은 unsupported_type이다.
 
 export const LINK_V = 1;
+/**
+ * 같은 v 안의 판(사람이 부르는 이름 v1.1). 규칙 1(필드·열린 값 추가만)을 지키는 덧붙임이라 v는 1 그대로다 —
+ * 이미 설치된 앱·본체(v1.0)는 새 필드를 무시하고 종전대로 돈다. v1.1 = 회의방(offer.kind·meeting, result.posts)·외부 봇(agent.sync kind·bot, limits.hop)·기기 기능 알림(agent.sync.features).
+ * 서버는 본체가 agent.sync.features로 알린 기능만 그 본체에 보낸다 — 모르는 본체(v1.0)에는 회의·봇 offer를 만들지 않는다.
+ */
+export const LINK_MINOR = 1;
 /** 이 판이 주고받을 수 있는 v 범위. 서버는 msgr_settings link_min_v·link_max_v로 따로 든다. */
 export const SUPPORTED = Object.freeze({ min: 1, max: 1 });
 
@@ -26,7 +32,27 @@ export const LIMITS = Object.freeze({
   name: 200,
   peers: 50, // offer.peers[] — 넘김할 수 있는 동료 에이전트
   role: 2000,
+  // v1.1 — 회의방·외부 봇(2026-10-19 유건 지시 "A+": 라운드 2 고정, 질문당 에이전트 글 S×R ≤ 10, 봇 사람 멘션만·턴 ≤ 4·hop ≤ 2)
+  meetingAgents: 5, // offer.meeting.participants[] — 회의방 참가 에이전트 S
+  meetingRounds: 2, // offer.meeting.rounds·result.posts[].round — 라운드 R(room.mjs DELEGATION_LIMITS.on.rounds와 같은 값, 풀림 4는 회의방에서 쓰지 않음)
+  posts: 10, // result.posts[] — S×R 상한
+  postText: 3000, // posts[].text(자). 10개 × 3000자 × 3바이트 = 90KB로 봉투 128KB 안에 든다
+  postsResultText: 2000, // posts가 있는 result의 text(요약)
+  botHops: 2, // offer.limits.max_hops 상한 — 봇이 다른 봇·에이전트로 넘기는 깊이
+  botTurns: 4, // 사람 글 1개에서 시작한 봇 턴 합계 상한(offer.limits.turns_left 첫 값)
+  features: 16, // agent.sync.features[]
 });
+
+/** offer.kind(열린 값). 없으면 'chat'. 모르는 kind를 받은 본체는 work.error{unsupported}로 답한다. */
+export const OFFER_KINDS = Object.freeze(['chat', 'meeting', 'bot']);
+/** agent.sync.features — 본체가 처리할 수 있다고 알리는 기능(열린 값). 서버는 알린 기능의 offer만 만든다. */
+export const FEATURES = Object.freeze(['meeting', 'bot']);
+/** agent.sync.agents[].kind(열린 값). 없으면 'agent'. bot = 내 PC의 Argo가 HTTP로 부르는 외부 봇(헤르메스·오픈클로). */
+export const AGENT_KINDS = Object.freeze(['agent', 'bot']);
+/** agents[].bot.kind(열린 값). 주소·키는 본체 로컬 자격 저장소에만 두고 약속에 싣지 않는다. */
+export const BOT_KINDS = Object.freeze(['hermes', 'openclaw']);
+/** 본체가 외부 봇 호출에 거는 속도 상한(약속 밖 상대를 믿지 않는다). 서버 상한(D11)과 별개로 본체가 지킨다. */
+export const BOT_RATE = Object.freeze({ concurrent: 1, perMin: 6, retryOn429: 1 });
 
 /** type → 보내는 쪽. server = 서버→본체(v2:w:<uid> 방송·따라잡기), runner = 본체→서버. */
 export const DIRECTION = Object.freeze({
@@ -69,6 +95,7 @@ export const ACTOR_KINDS = Object.freeze(['user', 'agent', 'system']);
 /** work.error data.code — 열린 값. 받는 쪽은 모르는 코드를 internal로 읽는다(normalizeWorkErrorCode). */
 export const WORK_ERROR_CODES = Object.freeze([
   'limit', 'no_runner', 'login', 'timeout', 'cancelled', 'unsupported', 'tier_denied', 'budget', 'internal',
+  'bot_unreachable', 'bot_limit', // v1.1 — 외부 봇 연결 실패·봇 속도 상한
 ]);
 
 /**
@@ -95,6 +122,7 @@ export const REJECT_CODES = Object.freeze({
   effect_unknown: { retry: false }, // intent 없이 done·failed
   tier_denied: { retry: false }, // guest 등급 밖 행동
   upload_slot_invalid: { retry: false },
+  post_denied: { retry: false }, // v1.1 — result.posts[]의 글쓴이가 회의 참가자가 아니거나, 회의 아닌 일에 posts
   rate_limited: { retry: true },
   internal: { retry: true },
 });
@@ -151,7 +179,7 @@ function check(errors, path, val, rule) {
   switch (kind) {
     case 'uuid': if (!isUuid(val)) bad('uuid'); break;
     case 'ts': if (!isTs(val)) bad('timestamp'); break;
-    case 'int': if (!isInt(val, opt.min ?? 0)) bad('integer'); break;
+    case 'int': if (!isInt(val, opt.min ?? 0) || (opt.max != null && val > opt.max)) bad(opt.max != null ? `integer(${opt.min ?? 0}..${opt.max})` : 'integer'); break;
     // 글·첨부 id(msgr2_messages.id·msgr2_attachments.id — 옛 글 id 보존이라 bigint). JSON 숫자로 정확히 오가는 안전 정수(≤ 2^53-1)만 받는다
     case 'msgid': if (!Number.isSafeInteger(val) || val < 1) bad('message id(safe integer >= 1)'); break;
     case 'num': if (typeof val !== 'number' || !Number.isFinite(val) || val < 0) bad('number'); break;
@@ -196,6 +224,10 @@ export const DATA = Object.freeze({
       tier: ['enum', { of: TIERS }],
       max_turn_s: ['int', { min: 1 }],
       budget: ['obj', { nullable: true, fields: { max_tokens: ['int', { optional: true, min: 1 }], max_usd: ['num', { optional: true }] } }],
+      // v1.1 — 넘김 사슬 안의 위치. hop = 사람 글에서 이 일까지 넘김 수, max_hops ≤ 2, turns_left = 이 사슬에 남은 봇·에이전트 턴(첫 값 ≤ 4)
+      hop: ['int', { optional: true, min: 0, max: LIMITS.botHops }],
+      max_hops: ['int', { optional: true, min: 0, max: LIMITS.botHops }],
+      turns_left: ['int', { optional: true, min: 0, max: LIMITS.botTurns }],
     } }],
     expires_at: 'ts',
     // 이 방에서 이 에이전트가 넘김(result.handoffs[])할 수 있는 동료 에이전트. 서버가 등급·파견 허용으로 거른다(guest는 빈 배열).
@@ -203,6 +235,15 @@ export const DATA = Object.freeze({
     peers: ['arr', { optional: true, max: LIMITS.peers, items: ['obj', { fields: {
       agent: 'uuid', name: ['str', { min: 1 }], role: ['str', { max: LIMITS.role }],
     } }] }],
+    // v1.1 — 일의 종류(열린 값, OFFER_KINDS). 없으면 chat. meeting이면 meeting이 반드시 있다(validateEnvelope).
+    kind: ['code', { optional: true }],
+    // v1.1 — 회의방: 사람 글 1개 = offer 1개(봉투 agent = 대표 에이전트). 본체가 room.mjs로 참가자 S명 × R라운드를 돌리고 result.posts[]로 돌려준다.
+    meeting: ['obj', { optional: true, fields: {
+      participants: ['arr', { max: LIMITS.meetingAgents, items: ['obj', { fields: {
+        agent: 'uuid', name: ['str', { min: 1 }], role: ['str', { max: LIMITS.role }],
+      } }] }],
+      rounds: ['int', { min: 1, max: LIMITS.meetingRounds }],
+    } }],
   },
   'work.cancel': { by: actor(), reason: 'code' },
   'work.approval_decision': { approval_id: 'uuid', decision: ['enum', { of: DECISIONS }], by: actor(['user', 'system']) },
@@ -220,6 +261,10 @@ export const DATA = Object.freeze({
     text: ['str', { max: LIMITS.resultText }],
     files: ['arr', { max: LIMITS.files, items: 'uuid' }],
     handoffs: ['arr', { max: LIMITS.handoffs, items: ['obj', { fields: { agent: 'uuid', text: ['str', { min: 1, max: LIMITS.handoffText }] } }] }],
+    // v1.1 — 회의 결과: 에이전트별 글. 서버가 글마다 author_agent_id = post.agent로 넣는다(참가자 아니면 post_denied). posts가 있으면 text는 요약(≤ 2000자, 방에 넣지 않음)·handoffs는 빈 배열
+    posts: ['arr', { optional: true, max: LIMITS.posts, items: ['obj', { fields: {
+      agent: 'uuid', round: ['int', { min: 1, max: LIMITS.meetingRounds }], text: ['str', { min: 1, max: LIMITS.postText }],
+    } }] }],
     usage: ['obj', { nullable: true, optional: true, fields: {
       input_tokens: ['int', { optional: true }], output_tokens: ['int', { optional: true }], cost_usd: ['num', { optional: true }],
       runner: ['str', { optional: true, max: 64 }], model: ['str', { optional: true, max: 200 }],
@@ -229,7 +274,12 @@ export const DATA = Object.freeze({
   'agent.sync': {
     agents: ['arr', { max: LIMITS.agents, items: ['obj', { fields: {
       ws: ['str', { min: 1 }], slug: ['str', { min: 1 }], name: ['str', { min: 1 }], role: ['str', { max: 2000 }], face_hash: ['str', { nullable: true, max: 128 }],
+      // v1.1 — 외부 봇. kind 없으면 agent. bot은 종류·프로필 이름만(주소·키는 본체 로컬에만)
+      kind: ['code', { optional: true }],
+      bot: ['obj', { optional: true, nullable: true, fields: { kind: 'code', profile: ['str', { optional: true, max: 200 }] } }],
     } }] }],
+    // v1.1 — 이 본체가 처리할 수 있는 기능(FEATURES). 없으면 v1.0 본체로 본다(회의·봇 offer를 받지 않음)
+    features: ['arr', { optional: true, max: LIMITS.features, items: 'code' }],
   },
 });
 
@@ -262,6 +312,19 @@ export function validateEnvelope(env, { from, supported = SUPPORTED } = {}) {
   check(errors, 'data', env.data, ['obj', { fields: DATA[env.type] }]);
   if (!errors.length && env.type === 'work.offer' && jsonBytes(env.data.context) > LIMITS.contextBytes) {
     errors.push(`data.context: > ${LIMITS.contextBytes} bytes`);
+  }
+  // v1.1 교차 검사(JSON Schema로 적지 않는다)
+  if (!errors.length && env.type === 'work.offer') {
+    const d = env.data;
+    if (d.kind === 'meeting' && !d.meeting) errors.push('data.meeting: required when kind is meeting');
+    if (d.meeting && d.kind !== 'meeting') errors.push('data.kind: must be meeting when meeting is present');
+    if (d.meeting && d.meeting.participants.length * d.meeting.rounds > LIMITS.posts) errors.push(`data.meeting: participants × rounds > ${LIMITS.posts}`);
+    const l = d.limits;
+    if (l.hop != null && l.max_hops != null && l.hop > l.max_hops) errors.push('data.limits.hop: > max_hops');
+  }
+  if (!errors.length && env.type === 'work.result' && env.data.posts?.length) {
+    if (env.data.text.length > LIMITS.postsResultText) errors.push(`data.text: > ${LIMITS.postsResultText} when posts is present`);
+    if (env.data.handoffs.length) errors.push('data.handoffs: must be empty when posts is present');
   }
   return errors.length ? fail('invalid_envelope', errors) : { ok: true };
 }

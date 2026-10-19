@@ -1,7 +1,7 @@
 // v1.mjs의 필드 표(DATA)를 JSON Schema(2020-12)로 옮긴다. 결과는 schema/envelope.v1.schema.json에 커밋하고,
 // 계약 시험이 "파일 = 지금 생성 결과"를 확인해 두 정본이 어긋나지 않게 잠근다.
 // 다시 만들기: node packages/agent-link/contract/schema.mjs --write
-// JSON Schema로 못 적는 검사(봉투 128KB·context 16KB 바이트 상한, 시각의 달력 유효성)는 v1.mjs validateEnvelope에만 있다.
+// JSON Schema로 못 적는 검사(봉투 128KB·context 16KB 바이트 상한, 시각의 달력 유효성, v1.1 교차 검사 — meeting·kind 짝, S×R ≤ 10, hop ≤ max_hops, posts 있을 때 text·handoffs)는 v1.mjs validateEnvelope에만 있다.
 // additionalProperties는 어디에도 두지 않는다 — 모르는 필드는 무시한다(버전 규칙 1).
 import { DATA, DIRECTION, TYPES, LIMITS, SUPPORTED } from './v1.mjs';
 
@@ -15,7 +15,7 @@ function rule(r) {
   switch (kind) {
     case 'uuid': s = { type: 'string', pattern: UUID }; break;
     case 'ts': s = { type: 'string', pattern: TS }; break;
-    case 'int': s = { type: 'integer', minimum: opt.min ?? 0, maximum: Number.MAX_SAFE_INTEGER }; break;
+    case 'int': s = { type: 'integer', minimum: opt.min ?? 0, maximum: opt.max ?? Number.MAX_SAFE_INTEGER }; break;
     case 'msgid': s = { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER }; break;
     case 'num': s = { type: 'number', minimum: 0 }; break;
     case 'bool': s = { type: 'boolean' }; break;
