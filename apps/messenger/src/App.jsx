@@ -32,6 +32,8 @@ import { spaceList as v2SpaceList, liveSpaceIds as v2LiveSpaceIds } from './v2/s
 // 메신저 v2(U6c-1b, 옵트인): 플래그가 켜지면 같은 셸이 v2 표를 읽도록 조회 어댑터(v2/source.mjs)를 끼운다. 꺼지면 원래 클라이언트 그대로(아래 코드는 바뀌지 않는다).
 const V2 = v2Enabled(import.meta.env.VITE_MSGR_V2, (() => { try { return globalThis.localStorage; } catch { return null; } })());
 const supabase = V2 ? createV2ClientFor(rawSupabase) : rawSupabase;
+// 축소판 A+(2026-10-19): v2 위에서 A+ 셸만 그린다(1:1·회의방·외부 봇). 꺼져 있으면 지금 셸 그대로
+const APLUS = V2 && aplusEnabled(import.meta.env.VITE_MSGR_APLUS, (() => { try { return globalThis.localStorage; } catch { return null; } })());
 import { customServer, SB_URL, SB_ANON } from './supabase.js';
 import { readProfile, writeProfile, clearProfile, normalizeUrl, hostOf } from './server-profile.mjs';
 import { handoff, fetchProviderSettings, providerShown, noProviders, providerErrorKey } from './oauth-handoff.mjs';
@@ -125,6 +127,9 @@ import { startPresence } from './presence.mjs';
 import { observeMobileResume } from './mobile-lifecycle.mjs';
 import { registerPush, activatePush, deactivatePush, detachPush, mountPush, getPushToken } from './push.js';
 import { bindV2Push } from './v2/push-bind.mjs';
+import { aplusEnabled } from './aplus/flag.mjs';
+import APlusApp from './aplus/APlusApp.jsx';
+import { createAPlusSource } from './aplus/source.mjs';
 import { pushDiag, readDiag, clearDiag } from './diag.jsx';
 setIosCopy(isIos); // iOS 빌드는 무료 한도 오류에서 결제 권유를 뺀다(App Store 3.1.1 — error-toast.mjs)
 setDeliveryReporter((kind, message) => pushDiag(kind, message)); // 전송 실패의 영어 원문은 카드에 보이지 않고 진단 기록(설정 > 진단)으로만 간다(검수 E, 2026-10-01)
@@ -489,10 +494,20 @@ export default function App() {
   else if (sessionWaiting) body = <ConnectionWaiting t={t} onRetry={() => recoveryRef.current?.retryNow()} onSignIn={restartSignIn} error={sessionRecoveryError} busy={signingOut} />;
   else if (session === undefined) body = <div className="msgr-auth"><span className="msgr-klabel">{t('ui.loading')}</span></div>;
   else if (!session) body = <Auth logoutNotice={logoutNotice} />;
-  else body = <Shell key={session.user.id} session={session} />;
+  else body = APLUS ? <APlusRoot key={session.user.id} session={session} onSignOut={signOut} /> : <Shell key={session.user.id} session={session} />;
   const accountDeleted = async () => { deletingAccount.current = true; try { await detachPush(supabase, session?.user?.id); } catch { /* 서버 토큰 행은 이미 없다 */ } try { await recoveryRef.current?.restartSignIn(); } catch { /* 서버 세션은 이미 없다 — 로컬만 비운다 */ } setLogoutNotice('auth.deleted'); deletingAccount.current = false; };
   const signOutNotice = async (key) => { await signOut(); setLogoutNotice(key); }; // 메신저 v2: 기기 폐기·다시 로그인 필요·모든 기기 로그아웃 뒤 로그인 화면에 이유를 남긴다(U6c-2a)
   return <SignOutContext.Provider value={{ signOut, signingOut, accountDeleted, signOutNotice }}><Sprite /><UpdateBar t={t} /><MobileUpdateBar t={t} />{session && logoutNotice && <button type="button" className="msgr-toast err" role="alert" onClick={() => setLogoutNotice('')}>{t(logoutNotice)}</button>}{body}</SignOutContext.Provider>;
+}
+
+// 축소판 A+ 진입(2026-10-19) — 플랜 확인 → 무료는 안내만(기계·등록 0), Pro는 A+ 셸. 휴대폰이면 기계가 선 뒤 푸시 토큰을 싣는다(R3).
+function APlusRoot({ session, onSignOut }) {
+  const source = useMemo(() => createAPlusSource({ raw: rawSupabase, uid: session.user.id, appVersion: APP_VERSION }), [session.user.id]);
+  const unbindPush = useRef(null);
+  useEffect(() => { markAppReady(); return () => { unbindPush.current?.(); unbindPush.current = null; }; }, []);
+  const onStarted = useCallback(() => { if (!isMobilePlatform || unbindPush.current) return; unbindPush.current = bindV2Push({ machine: source.machine(), getToken: getPushToken, observeResume: observeMobileResume }); }, [source]);
+  const purchase = purchaseChannel({ ios: isIos, customServer }) === 'web' ? { url: proCheckoutUrl({ plan: 'free', user: session.user }) } : null; // iOS·회사 서버는 구매 경로 없음(App Store 3.1.1, #944)
+  return <APlusApp source={source} onSignOut={onSignOut} purchase={purchase} onStarted={onStarted} />;
 }
 
 function ConnectionWaiting({ t, onRetry, onSignIn, error, busy }) {

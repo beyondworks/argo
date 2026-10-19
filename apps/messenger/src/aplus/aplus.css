@@ -1,0 +1,141 @@
+/* 메신저 축소판 A+ 셸 — globals.css 토큰만 쓴다(graphite 기준, 다른 테마도 토큰을 따라간다). 그림자는 떠 있는 시트만(--shadow-float). */
+.ap-app, .ap-center { position: fixed; inset: 0; background: var(--bg); color: var(--fg); font-size: 14px; }
+.ap-app { display: flex; }
+.ap-app.phone { flex-direction: column; }
+.ap-muted { color: var(--fg-3); }
+.ap-center { display: flex; align-items: center; justify-content: center; padding: 24px 16px; overflow: auto; }
+.ap-app .ap-center { position: static; flex: 1; }
+.ap-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.ap-row.end { justify-content: flex-end; }
+.ap-scroll { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.ap-pad { padding: 20px 24px; }
+
+/* 무료·플랜 확인 */
+.ap-gate { width: 100%; max-width: 420px; display: flex; flex-direction: column; gap: 14px; padding: 28px 24px; background: var(--card); border: 1px solid var(--border-soft); border-radius: 20px; }
+.ap-gate h1 { font-size: 20px; line-height: 1.35; margin: 0; color: var(--fg); }
+.ap-gate p { margin: 0; line-height: 1.6; color: var(--fg-2); }
+.ap-gate .btn-primary { align-self: flex-start; text-decoration: none; }
+.ap-tag { align-self: flex-start; font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 999px; background: var(--primary); color: var(--primary-fg); }
+.ap-list-plain { margin: 0; padding-left: 18px; color: var(--fg-2); line-height: 1.7; }
+
+/* 왼쪽 목록(880·1280) */
+.ap-rail { width: 300px; flex: none; display: flex; flex-direction: column; gap: 10px; padding: 16px 10px 10px; background: var(--card-2); border-right: 1px solid var(--border-soft); min-height: 0; }
+@media (max-width: 960px) { .ap-rail { width: 260px; } }
+.ap-brand { font-weight: 700; font-size: 16px; padding: 0 8px; display: flex; gap: 8px; align-items: baseline; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ap-brand .ap-muted { font-weight: 500; font-size: 12px; }
+.ap-seg { display: flex; gap: 2px; padding: 3px; border-radius: 12px; background: var(--secondary); }
+.ap-seg button { flex: 1; min-width: 0; display: inline-flex; align-items: center; justify-content: center; gap: 5px; height: 30px; padding: 0 6px; border-radius: 9px; font-size: 12.5px; font-weight: 600; color: var(--fg-2); white-space: nowrap; }
+.ap-seg button.on { background: var(--card); color: var(--fg); }
+.ap-seg.small { align-self: flex-start; }
+.ap-seg.small button { flex: none; padding: 0 14px; }
+.ap-railbtn { align-self: flex-start; margin-left: 6px; }
+.ap-railfoot { display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 10px; border-radius: 10px; color: var(--fg-2); font-weight: 600; font-size: 13px; }
+.ap-railfoot.on, .ap-railfoot:hover { background: var(--secondary); color: var(--fg); }
+.ap-main { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+
+/* 목록 줄 */
+.ap-rows { list-style: none; margin: 0; padding: 0 2px; display: flex; flex-direction: column; gap: 2px; }
+.ap-rowbtn { width: 100%; display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 12px; text-align: left; min-width: 0; }
+.ap-rowbtn:not(.static):hover { background: var(--secondary); }
+.ap-rowbtn.on { background: var(--card); }
+.ap-rowtext { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.ap-rowname { display: flex; align-items: center; gap: 6px; font-weight: 600; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ap-rowsub { font-size: 12.5px; color: var(--fg-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ap-rowsub code { font-size: 11.5px; }
+.ap-face { flex: none; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; background: var(--primary); color: var(--primary-fg); font-weight: 700; }
+.ap-face.muted { background: var(--secondary); color: var(--fg-3); }
+.ap-stack { flex: none; display: inline-flex; }
+.ap-stack .ap-face { border: 2px solid var(--card-2); }
+.ap-stack .ap-face + .ap-face { margin-left: -8px; }
+.ap-chathead .ap-stack .ap-face { border-color: var(--bg); }
+.ap-badge { flex: none; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: var(--primary); color: var(--primary-fg); font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
+.ap-pill { flex: none; font-size: 10.5px; font-weight: 600; padding: 1px 7px; border-radius: 999px; background: var(--secondary); color: var(--fg-2); }
+.ap-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; flex: none; }
+.ap-dot.live { color: var(--ok); }
+.ap-status { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.ap-status .ap-muted { font-weight: 500; }
+.ap-rowbtn.static { align-items: flex-start; }
+.ap-status.connected { color: var(--ok); }
+.ap-status.off { color: var(--fg-3); }
+.ap-status.unknown { color: var(--warn); }
+.ap-note { padding: 12px 12px; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; line-height: 1.55; }
+.ap-note p { margin: 0; color: var(--fg-2); }
+.ap-note strong { color: var(--fg); }
+.ap-empty { display: flex; flex-direction: column; align-items: center; gap: 10px; color: var(--fg-3); text-align: center; max-width: 320px; line-height: 1.6; }
+.ap-empty p { margin: 0; }
+
+/* 휴대폰(390) */
+.ap-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: calc(env(safe-area-inset-top, 0px) + 14px) 16px 8px; }
+.ap-head h1 { margin: 0; font-size: 22px; white-space: nowrap; }
+.ap-app.phone .ap-scroll { padding: 0 8px 12px; }
+.ap-tabbar { flex: none; display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--border-soft); background: var(--card); padding-bottom: env(safe-area-inset-bottom, 0px); }
+.ap-tabbar button { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 0 6px; font-size: 11px; color: var(--fg-3); min-width: 0; }
+.ap-tabbar button span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.ap-tabbar button.on { color: var(--fg); font-weight: 600; }
+.ap-offline { flex: none; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 7px 12px; font-size: 12.5px; background: var(--warn-soft); color: var(--warn); font-weight: 600; }
+.ap-app.phone .ap-offline { padding-top: calc(env(safe-area-inset-top, 0px) + 7px); }
+
+/* 대화 */
+.ap-chat { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.ap-chathead { flex: none; display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--border-soft); min-width: 0; }
+.ap-app.phone .ap-chathead { padding-top: calc(env(safe-area-inset-top, 0px) + 10px); padding-left: 6px; }
+.ap-chattitle { min-width: 0; display: flex; flex-direction: column; }
+.ap-chattitle strong, .ap-chattitle span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ap-chattitle span { font-size: 12.5px; }
+.ap-iconbtn { flex: none; width: 36px; height: 36px; display: inline-flex; align-items: center; justify-content: center; border-radius: 10px; color: var(--fg-2); }
+.ap-iconbtn:hover { background: var(--secondary); }
+.ap-run { flex: none; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 16px; background: var(--card-2); border-bottom: 1px solid var(--border-soft); font-size: 12.5px; }
+.ap-runlabel { font-weight: 600; color: var(--fg); white-space: nowrap; }
+.ap-run.cancelled .ap-runlabel, .ap-run.failed .ap-runlabel { color: var(--fg-3); }
+.ap-runcount { color: var(--fg-2); white-space: nowrap; }
+.ap-steps { display: inline-flex; gap: 4px; }
+.ap-steps span { width: 28px; height: 4px; border-radius: 2px; background: var(--secondary); }
+.ap-steps span.done { background: var(--fg-3); }
+.ap-steps span.now { background: var(--ok); }
+.ap-run .btn { margin-left: auto; }
+.ap-danger { color: var(--danger); border-color: var(--danger-soft); }
+.ap-ghost { border-color: transparent; }
+.ap-msgs { flex: 1; min-height: 0; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.ap-msg { display: flex; gap: 8px; align-items: flex-start; max-width: min(640px, 88%); }
+.ap-msg.me { align-self: flex-end; }
+.ap-msgname { font-size: 12px; font-weight: 600; color: var(--fg-2); margin-bottom: 3px; display: flex; gap: 6px; align-items: center; }
+.ap-bubble { padding: 9px 12px; border-radius: 14px; background: var(--card); border: 1px solid var(--border-soft); line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ap-msg.me .ap-bubble { background: var(--primary); color: var(--primary-fg); border-color: var(--primary); }
+.ap-composer { flex: none; padding: 8px 12px 12px; border-top: 1px solid var(--border-soft); background: var(--bg); }
+.ap-app.phone .ap-composer { padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 10px); }
+.ap-inputrow { display: flex; align-items: flex-end; gap: 8px; padding: 6px 6px 6px 14px; border: 1px solid var(--border); border-radius: 20px; background: var(--card); }
+.ap-inputrow textarea { flex: 1; min-width: 0; border: 0; outline: none; resize: none; background: transparent; color: var(--fg); font: inherit; font-size: 16px; line-height: 1.4; padding: 6px 0; max-height: 140px; }
+.ap-inputrow textarea:disabled { color: var(--fg-3); }
+.ap-send { flex: none; width: 34px; height: 34px; border-radius: 50%; background: var(--primary); color: var(--primary-fg); display: inline-flex; align-items: center; justify-content: center; }
+.ap-send:disabled { opacity: .3; }
+.ap-blocked { margin: 0 4px 6px; font-size: 12.5px; }
+
+/* 시트 */
+.ap-overlay { position: fixed; inset: 0; z-index: 50; background: var(--overlay); display: flex; align-items: center; justify-content: center; padding: 16px; }
+.ap-sheet { width: 100%; max-width: 460px; max-height: calc(100% - 32px); overflow-y: auto; background: var(--card); border-radius: 18px; box-shadow: var(--shadow-float); padding: 16px 18px 18px; }
+.ap-app.phone .ap-overlay { align-items: flex-end; padding: 0; }
+.ap-app.phone .ap-sheet { max-width: none; border-radius: 18px 18px 0 0; max-height: 92%; padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 18px); }
+.ap-sheet > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.ap-sheet h2 { margin: 0; font-size: 17px; }
+.ap-form { display: flex; flex-direction: column; gap: 14px; }
+.ap-field { display: flex; flex-direction: column; gap: 6px; }
+.ap-field > span { font-size: 12.5px; font-weight: 600; color: var(--fg-2); }
+.ap-field input { height: 42px; padding: 0 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg); color: var(--fg); font: inherit; font-size: 16px; min-width: 0; }
+.ap-picks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.ap-pick { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: 10px; cursor: pointer; min-width: 0; }
+.ap-pick.on { background: var(--secondary); }
+.ap-pick.off { opacity: .45; cursor: default; }
+.ap-pick input { width: 18px; height: 18px; flex: none; accent-color: var(--primary); }
+.ap-hint { display: flex; gap: 6px; align-items: flex-start; margin: 0; font-size: 12.5px; color: var(--fg-2); line-height: 1.5; }
+.ap-hint svg { flex: none; margin-top: 2px; }
+.ap-error { margin: 0; font-size: 12.5px; color: var(--danger); line-height: 1.5; }
+.ap-callout { display: flex; gap: 10px; align-items: flex-start; padding: 12px; border-radius: 12px; background: var(--info-soft); color: var(--info); }
+.ap-callout svg { flex: none; margin-top: 2px; }
+.ap-callout p { margin: 4px 0 0; color: var(--fg-2); line-height: 1.55; font-size: 12.5px; }
+.ap-callout strong { color: var(--fg); font-size: 13px; }
+.ap-settings { display: flex; flex-direction: column; gap: 22px; max-width: 520px; }
+.ap-app.phone .ap-settings { padding: 8px 8px 0; }
+.ap-settings h2 { margin: 0 0 8px; font-size: 13px; color: var(--fg-2); }
+.ap-settings p { margin: 0; line-height: 1.6; }
+.ap-toast { position: fixed; left: 50%; bottom: 84px; transform: translateX(-50%); z-index: 60; max-width: calc(100% - 32px); padding: 9px 14px; border-radius: 12px; background: var(--primary); color: var(--primary-fg); font-size: 13px; }
+.ap-rowsub.ap-addr { white-space: normal; overflow-wrap: anywhere; }
