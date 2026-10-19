@@ -17,6 +17,7 @@ import { setApprovalMeta, approvalPlainText, approvalCommandLabel } from './appr
 import { onNotify, emitNotify } from './notify.mjs'; // emitNotify = 장시간 작업 완료 통지(잡 핸들러)
 import { daemonLease } from './lock.mjs';
 import { isCloudLeader, setClaimTokens, tokenOwnership, deviceLabel, standbyIdle } from './sync.mjs';
+import { planIsFreeLocal } from './plan-cache.mjs';
 import { appendEvent } from './events.mjs';
 import { jobHead, routineNoticeTail } from './inbound-marks.mjs'; // 장시간 작업 기록 머리말 = 1:1 화면 출처 카드와 같은 함수
 import { writeJsonAtomic } from './jsonstore.mjs';
@@ -1180,9 +1181,11 @@ export function ensureGateway() {
     // Result notifications belong to their creator's connections. Keep this
     // separate from the executing crew's Messenger bridge (which may be off or
     // hosted by someone else). SQL claims prevent two devices sending one row.
+    // 확정 무료 = 이 기기에서만(2026-10-19) — 팀 메신저(알림·자동 켜기·브리지)는 Pro 전용이라 클라우드 호출을 하지 않는다. 텔레그램·슬랙은 이 기기에서 직접 돈다.
+    const msgrCloud = !planIsFreeLocal();
     for (const [c] of loaded) {
       const previous = notificationTicks.get(c.id);
-      if (!legacyMsgr || msgrServicePaused() || !notificationTickDue(previous, Date.now())) continue; // 메신저 서비스 일시 중단 중에는 알림 경로 동기화·확인도 쉰다(msgr.mjs servicePause)
+      if (!legacyMsgr || !msgrCloud || msgrServicePaused() || !notificationTickDue(previous, Date.now())) continue; // 메신저 서비스 일시 중단 중에는 알림 경로 동기화·확인도 쉰다(msgr.mjs servicePause)
       const tick = { busy: true, at: Date.now() };
       notificationTicks.set(c.id, tick);
       deliverMessengerNotifications(c.id, { send: sendRoutineNotification })
@@ -1209,8 +1212,8 @@ export function ensureGateway() {
       for (const [slug, bot] of Object.entries(all.telegram.agents ?? {})) cfgMap[gwCfgKey(c.id, tgAgentQkey(slug))] = bot;
       const qkeys = new Set(['telegram', 'slack', ...Object.keys(all.telegram.agents ?? {}).map(tgAgentQkey)]);
       // 팀 메신저 자동 켜기 — 조직 멤버인데 꺼져 있으면 켠다(10분 스로틀, 세션 있을 때만). 같은 sync에서 아래 큐·브리지가 바로 시작되게 c.msgr을 갱신
-      if (legacyMsgr && !c.msgr?.enabled && await autoEnableMsgr(c.id, { company: c }).catch((e) => { console.error('[argo] msgr 자동 켜기 실패:', e.message); return false; })) c.msgr = { ...(c.msgr ?? {}), enabled: true };
-      if (legacyMsgr && c.msgr?.enabled) qkeys.add(MSGR_KEY); // 팀 메신저 — company.json.msgr.enabled(조직에 크루 등록 시 켜짐)
+      if (legacyMsgr && msgrCloud && !c.msgr?.enabled && await autoEnableMsgr(c.id, { company: c }).catch((e) => { console.error('[argo] msgr 자동 켜기 실패:', e.message); return false; })) c.msgr = { ...(c.msgr ?? {}), enabled: true };
+      if (legacyMsgr && msgrCloud && c.msgr?.enabled) qkeys.add(MSGR_KEY); // 팀 메신저 — company.json.msgr.enabled(조직에 크루 등록 시 켜짐)
       // 설정이 사라진 잔여 큐 디렉터리도 대상 — 핸들러가 cfg 부재 잡을 폐기해 스스로 청소된다
       try {
         for (const n of await readdir(paths(c.id).root)) if (n.startsWith('.gw-queue-')) qkeys.add(n.slice('.gw-queue-'.length));
@@ -1284,7 +1287,7 @@ export function ensureGateway() {
       // 팀 메신저 브리지 — 회사마다 1개. 폴+Realtime 깨우기로 멘션·DM을 큐에 적재(드레인 워커는 위에서 리더 무관 상시).
       // 기기 사이 단일화는 리스가 아니라 서버 실행권 클레임이다 — 일반·우선 기기는 담당이 아니어도 받는다(종전). 예비 기기(argo run --standby)만
       // 확인된 담당일 때 받는다: 맥이 켜져 담당인 동안 VPS가 먼저 집어 답하지 않게(맥 우선·VPS 예비, 2026-10-08). 공백 동안 온 글은 서버 커서부터 이어 받는다.
-      if (legacyMsgr && c.msgr?.enabled && !standbyIdle()) {
+      if (legacyMsgr && msgrCloud && c.msgr?.enabled && !standbyIdle()) {
         const id = `${c.id}:${MSGR_KEY}`;
         alive.add(id);
         if (!running.has(id)) running.set(id, { key: 'v1', stop: startMsgrBridge(c.id) });

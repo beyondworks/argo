@@ -8,12 +8,13 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { mkdir, writeFile, rename, rm, appendFile, chmod } from 'node:fs/promises';
 import { join } from 'node:path';
-import { createClient } from '@supabase/supabase-js';
+import { argoCreateClient as createClient } from './supabase-client.mjs'; // X-Client-Info 끝에 argo/<버전>(src/supabase-client.mjs)
 import { WS_ROOT } from './workspace.mjs';
 import { withLock, withDirLock } from './mutex.mjs';
 import { createHash } from 'node:crypto';
 import { appGateState, refreshAppGate, appGateClient as gateClient } from './app-gate.mjs';
 import { agentLinkEnabled } from './agent-link-flags.mjs'; // 메신저 v2 로그인 직후 runner 기기 잠금(옵트인 — 켜졌을 때만 연결부를 부른다)
+import { planIsFreeLocal } from './plan-cache.mjs';
 
 const FILE = '.device-session.json';
 const LOG = '.device-session.log';
@@ -299,7 +300,8 @@ async function rotateLocked(root, _mkClient) {
       // 이름은 같은 계정일 때만 이어 간다. 조회 시각(nameAt)은 조회하기 전에 먼저 적는다 — 실패해도 하루에 한 번만 다시 읽는다.
       const uid = s.user?.id ?? sess.user.id;
       const prevUser = uid === sess.user.id ? sess.user : {};
-      const nameDue = Date.now() - (Number(prevUser.nameAt) || 0) >= NAME_REFRESH_MS;
+      // 확정 무료는 메신저 프로필 이름을 읽지 않는다(2026-10-19 — 무료 = 로그인·플랜 확인만). 이름은 지난 값 그대로.
+      const nameDue = !planIsFreeLocal() && Date.now() - (Number(prevUser.nameAt) || 0) >= NAME_REFRESH_MS;
       const next = {
         ...sess,
         access_token: s.access_token,

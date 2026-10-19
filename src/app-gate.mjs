@@ -9,8 +9,8 @@
 import { readFileSync, statSync } from 'node:fs';
 import { mkdir, writeFile, rename } from 'node:fs/promises';
 import { join } from 'node:path';
-import { createClient } from '@supabase/supabase-js';
-import { APP_VERSION } from './app-version.mjs';
+import { argoCreateClient as createClient } from './supabase-client.mjs'; // X-Client-Info 끝에 argo/<버전>(src/supabase-client.mjs)
+import { APP_VERSION, withArgoClientInfo } from './app-version.mjs';
 import { cmpVersion } from './version-compare.mjs';
 import { WS_ROOT } from './workspace.mjs';
 
@@ -75,7 +75,9 @@ export async function refreshAppGate(root, sess, mk, { now = Date.now } = {}) {
 }
 
 /** 서버 확인용 클라이언트 — 5초 안에 끝나지 않으면 끊는다(확인 실패는 판정을 바꾸지 않는다) */
-export const appGateClient = (url, key, opts) => createClient(url, key, { ...opts, global: { ...opts?.global, fetch: (u, init = {}) => fetch(u, { ...init, signal: AbortSignal.timeout(5_000) }) } });
+// X-Client-Info 끝에 argo/<버전>(withArgoClientInfo) — 서버가 관문 기록에 이 세션의 앱 버전을 남겨, 옛 앱 사용 중지 장치(20261019135000)가 이 세션의
+// 꼬리 없는 다른 요청(결제 화면·프로필 조회 등)을 옛 앱으로 오인하지 않게 한다(0.1.114부터).
+export const appGateClient = (url, key, opts) => createClient(url, key, { ...opts, global: { ...opts?.global, fetch: withArgoClientInfo((u, init = {}) => fetch(u, { ...init, signal: AbortSignal.timeout(5_000) })) } });
 
 /** 이 프로세스의 데이터 루트(WS_ROOT) 기준 — 호출부가 루트를 들고 있지 않은 곳(메신저 세션 클라이언트)용 */
 export const appGateBlockedHere = () => appGateState(WS_ROOT).blocked;
