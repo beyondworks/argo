@@ -4,7 +4,7 @@
 // 않으며 ③ 기본 dry-run·--confirm 불일치는 삭제하지 않는다는 계약만 잠근다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { collectDeletable, reportFor, runCloudPurge } from '../scripts/cloud-purge.mjs';
+import { collectDeletable, reportFor, runCloudPurge, freeNowCandidates } from '../scripts/cloud-purge.mjs';
 
 // fakeStorage — test/cloudexport.test.mjs와 같은 list 계약(id 있으면 파일, 없으면 폴더) + metadata.size.
 function fakeStorage(initial = {}) {
@@ -12,7 +12,7 @@ function fakeStorage(initial = {}) {
   return {
     _store: store,
     async list(prefix, { offset = 0 } = {}) {
-      const p = prefix.endsWith('/') ? prefix : `${prefix}/`;
+      const p = prefix === '' ? '' : prefix.endsWith('/') ? prefix : `${prefix}/`;
       const names = new Map(); // name -> {isFile, size}
       for (const [k, v] of store) {
         if (!k.startsWith(p)) continue;
@@ -137,4 +137,41 @@ test('runCloudPurge: 재확인 값이 false가 아니면(null) 건너뛴다', as
   sb.rpc = async (name, args) => (name === 'is_pro_for' ? { data: null, error: null } : rpc(name, args));
   await runCloudPurge({ sb, execute: true, confirm: 1, log: () => {} });
   assert.equal(storage._store.size, 1, '재확인 값이 모호한데 지워졌다');
+});
+
+// --now(유건 2026-10-19): 보관 기간을 기다리지 않고 지금 무료인 계정만 — 체험·Pro·판정 실패·uuid 아닌 폴더는 제외.
+const A = '11111111-1111-4111-8111-111111111111', B = '22222222-2222-4222-8222-222222222222', C = '33333333-3333-4333-8333-333333333333', D = '44444444-4444-4444-8444-444444444444';
+function planSb(storage, plans, { proNow = new Set(), planAfter = null } = {}) {
+  let calls = 0;
+  return {
+    rpc: async (name, args) => {
+      if (name === 'my_plan') { calls++; const p = (planAfter && calls > Object.keys(plans).length) ? planAfter[args.p_uid] ?? plans[args.p_uid] : plans[args.p_uid]; return p === 'ERR' ? { data: null, error: { message: 'x' } } : { data: { plan: p }, error: null }; }
+      if (name === 'is_pro_for') return { data: proNow.has(args?.p_uid), error: null };
+      if (name === 'plan_purge_candidates') return { data: [], error: null };
+      return { data: null, error: { message: 'unknown' } };
+    },
+    storage: { from: () => storage },
+  };
+}
+
+test('freeNowCandidates: 무료만 고르고 체험·Pro·판정 실패·uuid 아닌 폴더는 뺀다', async () => {
+  const storage = fakeStorage({ [`${A}/ws/a`]: { size: 1 }, [`${B}/ws/a`]: { size: 1 }, [`${C}/ws/a`]: { size: 1 }, [`${D}/ws/a`]: { size: 1 }, ['not-a-uid/ws/a']: { size: 1 }, ['root.json']: { size: 1 } });
+  const rows = await freeNowCandidates(planSb(storage, { [A]: 'free', [B]: 'trial', [C]: 'pro', [D]: 'ERR' }), storage);
+  assert.deepEqual(rows.map((r) => r.user_id), [A]);
+});
+
+test('runCloudPurge --now: 무료 계정 회사 폴더만 지우고, 삭제 직전 체험이 된 계정은 남긴다', async () => {
+  const storage = fakeStorage({ [`${A}/ws/a`]: { size: 5 }, [`${A}/_device-lease.json`]: { size: 1 }, [`${B}/ws/b`]: { size: 5 }, [`${C}/ws/c`]: { size: 5 } });
+  const sb = planSb(storage, { [A]: 'free', [B]: 'free', [C]: 'pro' }, { planAfter: { [B]: 'trial' } });
+  const { deleted, reports } = await runCloudPurge({ sb, execute: true, confirm: 2, now: true, log: () => {} });
+  assert.equal(deleted, true);
+  assert.equal(reports.length, 2);
+  assert.deepEqual([...storage._store.keys()].sort(), [`${A}/_device-lease.json`, `${B}/ws/b`, `${C}/ws/c`].sort());
+});
+
+test('runCloudPurge --now: 기본은 dry-run', async () => {
+  const storage = fakeStorage({ [`${A}/ws/a`]: { size: 5 } });
+  const { deleted } = await runCloudPurge({ sb: planSb(storage, { [A]: 'free' }), now: true, log: () => {} });
+  assert.equal(deleted, false);
+  assert.equal(storage._store.size, 1);
 });

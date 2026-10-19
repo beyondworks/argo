@@ -22,6 +22,10 @@
 // 사용:
 //   node scripts/cloud-purge.mjs                        # dry-run — 대상 목록·용량만 보고
 //   node scripts/cloud-purge.mjs --execute --confirm=3  # 대상이 정확히 3명일 때만 실제 Storage 삭제
+//   node scripts/cloud-purge.mjs --now                  # 보관 기간(purge_after)을 기다리지 않고, 지금 무료(free)인 계정 전부를 대상으로
+//     (유건 2026-10-19 "무료 계정은 어차피 로컬에도 데이터가 있을테니까 지금 지워도 상관 없어"). 대상은 버킷 맨 위 폴더(<uid>)를
+//     훑어 my_plan(p_uid).plan === 'free'인 계정만 고른다 — 체험(trial)·Pro·판정 실패는 넣지 않는다. 삭제 직전 재확인도
+//     is_pro_for === false에 더해 my_plan이 여전히 'free'인지 본다(is_pro_for는 체험 계정에도 false다).
 // env: NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY (.env.local 자동 로드)
 //
 // ⚠ 이 스크립트는 test/cloud-purge.test.mjs의 로컬 가짜 storage/rpc로만 확인했다 — 라이브에서
@@ -79,15 +83,37 @@ export async function reportFor(storage, candidate) {
 
 /** 전체 실행 — sb(rpc·storage 인터페이스 주입)만 있으면 실 Supabase 없이 테스트된다. execute=true면
     확인된 키를 storage.remove()로 지운다(500개씩 배치 — Storage API 상한). */
-export async function runCloudPurge({ sb, execute = false, confirm = null, log = console.log }) {
-  const { data: candidates, error } = await sb.rpc('plan_purge_candidates');
-  if (error) throw new Error(error.message ?? String(error));
-  const rows = candidates ?? [];
+/** 지금 무료인 계정 — 버킷 맨 위 폴더(<uid>)마다 my_plan을 묻는다(export: 테스트용). 판정이 'free'가 아니거나 실패하면 넣지 않는다. */
+export async function freeNowCandidates(sb, storage) {
+  const out = [];
+  for (const e of await listAll(storage, '')) {
+    const uid = String(e.name);
+    if (e.id || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(uid)) continue;
+    if (await planOf(sb, uid) === 'free') out.push({ user_id: uid, purge_after: null });
+  }
+  return out;
+}
+
+async function planOf(sb, uid) {
+  const { data, error } = await sb.rpc('my_plan', { p_uid: uid });
+  if (error) return null;
+  return data?.plan ?? null;
+}
+
+export async function runCloudPurge({ sb, execute = false, confirm = null, now = false, log = console.log }) {
   const storage = sb.storage.from(BUCKET);
+  let rows;
+  if (now) rows = await freeNowCandidates(sb, storage);
+  else {
+    const { data: candidates, error } = await sb.rpc('plan_purge_candidates');
+    if (error) throw new Error(error.message ?? String(error));
+    rows = candidates ?? [];
+  }
   const reports = [];
   for (const c of rows) reports.push(await reportFor(storage, c));
 
-  log(`대상 ${reports.length}명 (dry-run=${!execute})`);
+  const total = reports.reduce((s, r) => s + r.bytes, 0);
+  log(`대상 ${reports.length}명 · 파일 ${reports.reduce((s, r) => s + r.files, 0)}개 · ${(total / 1_073_741_824).toFixed(2)}GB (dry-run=${!execute}, now=${now})`);
   for (const r of reports) {
     log(`  ${r.userId} · 폴더 ${r.folders}개 · 파일 ${r.files}개 · ${(r.bytes / 1_048_576).toFixed(1)}MB · purge_after=${r.purgeAfter}`);
   }
@@ -103,6 +129,10 @@ export async function runCloudPurge({ sb, execute = false, confirm = null, log =
     if (proErr) throw new Error(`${r.userId} Pro 재확인 실패: ${proErr.message ?? proErr} — 이 계정부터 삭제하지 않았습니다.`);
     // 분명한 false일 때만 지운다 — null 등 모호한 값은 보존(재검수 LOW).
     if (proNow !== false) { log(`  건너뜀: ${r.userId} (삭제 직전 재확인 결과 ${proNow})`); continue; }
+    if (now) {
+      const planNow = await planOf(sb, r.userId);
+      if (planNow !== 'free') { log(`  건너뜀: ${r.userId} (삭제 직전 플랜 ${planNow})`); continue; }
+    }
     const keys = r.keys;
     for (let i = 0; i < keys.length; i += 500) {
       const { error: rmErr } = await storage.remove(keys.slice(i, i + 500));
@@ -133,6 +163,7 @@ async function main() {
   const sb = createClient(URL_, KEY, { auth: { persistSession: false } });
 
   const execute = process.argv.includes('--execute');
+  const now = process.argv.includes('--now');
   const confirmArg = process.argv.find((a) => a.startsWith('--confirm='));
   const confirm = confirmArg ? Number(confirmArg.slice('--confirm='.length)) : null;
   if (execute && !Number.isInteger(confirm)) {
@@ -140,7 +171,7 @@ async function main() {
     process.exit(2);
   }
   try {
-    await runCloudPurge({ sb, execute, confirm });
+    await runCloudPurge({ sb, execute, confirm, now });
   } catch (e) {
     console.error('[cloud-purge] 실패:', e?.message ?? e);
     process.exit(1);
