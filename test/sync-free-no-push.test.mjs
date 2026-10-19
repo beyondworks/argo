@@ -215,7 +215,7 @@ test('배선(cycle은 export되지 않는다) — 바깥 catch가 noteUploadDeni
   assert.match(src, /if \(noteUploadDenial\(denialStrikes, wsId, e, freePlan\)\) \{ uploadBackoff\.set\(wsId/, '바깥 catch의 보류');
   assert.match(src, /const r = await syncCompany\(wsId, owner, restoring,[^\n]*\n\s*if \(r\.skipped !== 'retry-backoff'\) denialStrikes\.delete\(wsId\);/, '결과를 돌려주면 연속을 끊는다');
   assert.match(src, /if \(planResumes\(lastPlanSeen\(\), \{ key: planKey, plan: ent\.plan \}\)\) \{ uploadBackoff\.clear\(\); companyRetry\.clear\(\); denialStrikes\.clear\(\); \}/, '플랜 전이 때 보류 해제');
-  assert.match(src, /const upload = opts\.freePlan \? freePlanUpload : uploadToCloud;/, 'syncCompanyOnce의 무료 업로드 생략');
+  assert.match(src, /const upload = opts\.freePlan \? freePlanUpload : opts\.quotaFull \? quotaFullUpload\(manifestKey\) : uploadToCloud;/, 'syncCompanyOnce의 무료 업로드 생략(할당량이 찬 Pro는 매니페스트만)');
 });
 
 test('거절 throw에는 HTTP 상태가 실린다 — 바깥 보류(isUploadDenial)가 거절과 네트워크 오류를 가르는 재료', async () => {

@@ -91,6 +91,8 @@ before(() => {
   const dir = fileURLToPath(new URL('../supabase/migrations/', import.meta.url));
   const base = ['20260714150000_entitlements.sql', '20260724000100_trial_14d.sql', '20260728100000_entitlements_ls.sql', '20260728113000_billing_hardening.sql', '20260728150000_ls_reconcile_cooldown.sql', '20260929110000_plan_no_trial.sql'];
   for (const f of [...base, ...readdirSync(dir).filter((x) => /^\d+_msgr.*\.sql$/.test(x))].sort()) psql(['-c', readFileSync(mig(f), 'utf8').replace(/^create extension if not exists pg_net;$/m, '')]);
+  // 2026-10-19 무료 0명(20261019130200) — 이 파일은 되돌리기 설정(free_agent_limit '4')으로 종전 4명 규칙을 잠근다. 기본값 0명은 맨 끝 시험이 잠근다.
+  sql(`insert into public.msgr_settings (key, value) values ('free_agent_limit', '4') on conflict (key) do update set value = excluded.value`);
   for (const [k, id] of Object.entries(U)) sql(`insert into auth.users (id, created_at, email) values ('${id}', now() - interval '30 days', '${k}@example.test') on conflict do nothing`);
   sql(`insert into public.entitlements (user_id, plan) values ('${U.b}', 'pro')`);
   OF = last(asUser(U.f, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('Free', 'free', '${U.f}') returning id`));
@@ -805,4 +807,36 @@ test('[D5 B2] 무료 + 옛 앱·CLI(기기 심박 없이 행 last_seen_at만 PAT
   off(`update public.msgr_crews set status = 'paused', last_seen_at = now() where owner_user_id = '${L}'`); // 관문은 paused 직접 쓰기를 되돌린다 — 관문 끈 세션(sweep과 같은 길)
   assert.equal(slugsOf(L, 'paused'), 'l1');
   assert.equal(peer(L, 'mac-l')[0], 'false', '멈춘 행은 세지 않는다 — 무료 옛 앱의 에이전트는 멈춰 있어 답하지 못한다');
+});
+
+// ── 2026-10-19 무료 0명(20261019130200, 유건 "무료 사용자는 … 사용은 전적으로 로컬에서") — 설정이 없으면(기본) 무료 계정은 메신저 에이전트를 하나도 연결하지 못한다 ──
+test('[무료 0명] 설정 free_agent_limit이 없으면(기본) sweep이 무료 에이전트를 전부 멈추고, 새 연결·고르기는 거절 — Pro는 그대로, 설정 4로 되돌리면 종전 4명', { skip }, () => {
+  const Z = 'ad000006-0000-4000-8000-000000000001';
+  sql(`insert into auth.users (id, created_at, email) values ('${Z}', now() - interval '30 days', 'zero@example.test') on conflict do nothing`);
+  const mk = (slug, status) => last(off(`insert into public.msgr_crews (org_id, owner_user_id, ws_id, slug, display_name, hosting, status, allow) values (null, '${Z}', '${WS}', '${slug}', '${slug}', 'local', '${status}', 'owner') returning id`));
+  const z1 = mk('z1', 'active'), z2 = mk('z2', 'active'), z3 = mk('z3', 'available');
+  beatV(Z, 'mac-z', [z1, z2]); // 새 앱 켜짐(4명 규칙이면 둘 다 연결 유지)
+  assert.equal(slugsOf(Z, 'active'), 'z1,z2', '설정 4(이 파일의 기본) — 종전대로 연결 유지');
+  sql(`delete from public.msgr_settings where key = 'free_agent_limit'`); // 운영 기본(설정 없음) = 0명
+  try {
+    sweep(Z);
+    assert.equal(slugsOf(Z, 'active'), '', '무료 계정의 연결된 에이전트는 전부 멈춘다');
+    assert.equal(slugsOf(Z, 'paused'), 'z1,z2', '해제가 아니라 멈춤(채널·기억 보존)');
+    assert.equal(reason(Z).limit, 0);
+    fails(asUserRaw(Z, `update public.msgr_crews set status = 'active' where id = '${z3}'`), /msgr_free_agent_limit/, '무료 계정의 새 연결');
+    fails(asUserRaw(Z, `update public.msgr_crews set status = 'active' where id = '${z1}'`), /msgr_free_agent_limit/, '무료 계정의 멈춘 에이전트 재개');
+    fails(asUserRaw(Z, `select public.msgr_free_keep(array['${WS}:z1'])`), /msgr_bad_member/, '고를 수 있는 수가 0');
+    sweep(Z); assert.equal(slugsOf(Z, 'active'), '', '다시 판정해도 재개하지 않는다');
+    // Pro는 한도 판정 밖(is_pro_for 참이면 관문·sweep 모두 건너뜀 — 앞 시험들이 잠근다). 여기서는 Z를 잠시 Pro로 만들어 같은 판정을 본다.
+    sql(`insert into public.entitlements (user_id, plan) values ('${Z}', 'pro') on conflict (user_id) do update set plan = 'pro', ends_at = null`);
+    asUser(Z, `update public.msgr_crews set status = 'active' where id = '${z3}'`);
+    assert.equal(statusOf(z3), 'active', 'Pro는 0명 한도와 무관하게 연결');
+    sql(`update public.entitlements set plan = 'free' where user_id = '${Z}'`);
+    sweep(Z); assert.equal(slugsOf(Z, 'active'), '', '다시 무료가 되면 다음 판정에서 멈춘다');
+  } finally {
+    sql(`insert into public.msgr_settings (key, value) values ('free_agent_limit', '4') on conflict (key) do update set value = excluded.value`);
+  }
+  sweep(Z);
+  beatV(Z, 'mac-z', ids(Z, 'paused'));
+  assert.equal(slugsOf(Z, 'active'), 'z1,z2,z3', '설정 4로 되돌리면 다음 판정에서 종전 규칙대로 재개(4명 안)');
 });
