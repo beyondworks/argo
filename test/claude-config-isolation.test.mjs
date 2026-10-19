@@ -22,8 +22,10 @@ Object.assign(process.env, { ARGO_ROOT: root, ARGO_ENC_VAULT: '0', ARGO_MODEL_CA
 for (const k of ['NEXT_PUBLIC_SUPABASE_URL', 'NEXT_PUBLIC_SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY', 'CLAUDE_CONFIG_DIR', 'CLAUDE_SECURESTORAGE_CONFIG_DIR', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_BASE_URL']) delete process.env[k];
 
 const reqs = []; // [인증 방식, 요청 messages 수]
+const seen = []; // [진단] 가짜 서버가 받은 모든 요청(메서드·경로) — A3t 윈도우 간헐 실패 근거
 const sse = (res, evs) => { res.writeHead(200, { 'content-type': 'text/event-stream' }); for (const [e, d] of evs) res.write(`event: ${e}\ndata: ${JSON.stringify(d)}\n\n`); res.end(); };
 const srv = http.createServer((req, res) => {
+  seen.push(`${req.method} ${req.url}`);
   let b = ''; req.setEncoding('utf8'); req.on('data', (c) => { b += c; }); req.on('end', () => {
     if (req.method === 'POST' && req.url.startsWith('/v1/messages')) {
       reqs.push([req.headers['x-api-key'] ? 'apikey' : req.headers.authorization ? 'bearer' : 'none', JSON.parse(b || '{}').messages?.length ?? 0]);
@@ -107,8 +109,12 @@ test('A3 host 실턴(파일 저장소 ~/.claude/.credentials.json) — 리눅스
   invalidateDetectCache(); // 앞 시험(A1·A2 턴)이 로그인 파일 없을 때의 감지 결과를 캐시해 두면 15초 재확인 전까지 host를 미연결로 본다(윈도우 CI 'AI 러너가 하나도 연결돼 있지 않습니다') — 사용자가 터미널에서 로그인한 뒤 재확인이 지난 상태로 맞춘다
   process.env.ANTHROPIC_BASE_URL = process.env.ARGO_CLAUDE_BASE_URL; // host는 env를 주입하지 않는다 — 가짜 끝점으로 보내려면 호스트 env로
   try {
+    const s0 = seen.length;
     const t = await turn('iso-a3t');
-    assert.equal(t.r.reply, 'done');
+    const cred = JSON.parse(await readFile(join(userClaude, '.credentials.json'), 'utf8').catch(() => '{}')).claudeAiOauth ?? null;
+    const diag = { reply: t.r.reply, seen: seen.slice(s0), cred: cred && { access: cred.accessToken?.length ?? null, refresh: cred.refreshToken?.length ?? null, expiresInS: cred.expiresAt ? Math.round((cred.expiresAt - Date.now()) / 1000) : cred.expiresAt } };
+    console.log('[A3t 진단]', JSON.stringify(diag));
+    assert.equal(t.r.reply, 'done', `[A3t 진단] ${JSON.stringify(diag)}`);
     assert.equal(t.reqs.at(-1)[0], 'bearer');
     if (process.platform === 'win32') assert.equal((await transcriptsIn(userClaude)).some((p) => p.includes('iso-a3t')), true);
     else { assert.deepEqual(t.added, []); assert.equal((await transcriptsIn(isoDir('iso-a3t'))).length, 1); }
