@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
-import { setupFull, seedDevice } from './helpers/msgr2-work-pg.mjs';
+import { setupFull, v2FullMode, seedDevice } from './helpers/msgr2-work-pg.mjs';
 
 const DB = process.env.ARGO_PG_TEST_URL;
 const skip = !DB && 'ARGO_PG_TEST_URL 미설정 — bash scripts/billing-pg-drill.sh test/msgr2-backfill-pg.test.mjs';
@@ -49,6 +49,7 @@ let base, oldBefore, sentBefore, firstCounts, ids;
 before(() => {
   if (!DB) return;
   db = setupFull(DB);
+  v2FullMode(db); // A+ 1:1 밖 막기·Pro 검사를 끈다(이 시험은 A+ 앞 v2 전체 기능을 잠근다)
   // 합성 옛 데이터 — 옛 트리거(서버 시각·좌석·봇·푸시·중단 스위치 등)는 끄고 넣는다(운영의 "이미 쌓인 데이터" 모양을 그대로 만든다)
   const users = Object.values(U).map((u) => `('${u}')`).join(',');
   db.psql(['-c', `

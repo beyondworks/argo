@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { mkdtempSync, writeFileSync, chmodSync, mkdirSync, existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { setupFull } from './helpers/msgr2-work-pg.mjs';
+import { setupFull, v2FullMode } from './helpers/msgr2-work-pg.mjs';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const DB = process.env.ARGO_PG_TEST_URL;
@@ -77,6 +77,7 @@ const REAL = '00000000-0000-4000-8000-0000000000aa'; // 합성이 아닌 계정
 before(() => {
   if (!DB) return;
   db = setupFull(DB);
+  v2FullMode(db); // A+ 1:1 밖 막기·Pro 검사를 끈다(이 시험은 A+ 앞 v2 전체 기능을 잠근다)
   // 실 Supabase에 있고 대역에 없는 것: auth 열·identities·sessions, pgcrypto. pg_net은 호출을 표에 남기는 대역(가짜 엣지 — 경로만)
   db.psql(['-c', `create extension if not exists pgcrypto;
     alter table auth.users add column if not exists email_confirmed_at timestamptz, add column if not exists instance_id uuid, add column if not exists aud text, add column if not exists role text,

@@ -8,7 +8,7 @@ import test, { before } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
-import { setupFull, seedDevice } from './helpers/msgr2-work-pg.mjs';
+import { setupFull, v2FullMode, seedDevice } from './helpers/msgr2-work-pg.mjs';
 
 const DB = process.env.ARGO_PG_TEST_URL;
 const skip = !DB && 'ARGO_PG_TEST_URL 미설정 — bash scripts/billing-pg-drill.sh test/msgr2-gate-b-pg.test.mjs';
@@ -33,6 +33,7 @@ const net = () => Number(db.sql('select count(*) from public._gate_b_net'));
 before(() => {
   if (!DB) return;
   db = setupFull(DB);
+  v2FullMode(db); // A+ 1:1 밖 막기·Pro 검사를 끈다(이 시험은 A+ 앞 v2 전체 기능을 잠근다)
   // 쓰기 세기: public·realtime·auth 표에서 xmin = 그 트랜잭션인 행(넣거나 바꾼 행)
   db.sql(`create or replace function public._gate_b_writes(p_xid text) returns jsonb language plpgsql as $$
     declare r record; n bigint; tot bigint := 0; t jsonb := '{}'::jsonb;

@@ -18,6 +18,7 @@ const invitesTo = (uid) => sentTo(uid).filter((x) => x.event === 'invite');
 before(() => {
   if (!DB) return;
   db = setupFull(DB);
+  db.sql(`insert into public.msgr_settings (key, value) values ('msgr2_lite', 'off') on conflict (key) do update set value = excluded.value`); // A+ 1:1 밖 막기를 끈다 — 팀 초대 기능 시험
   d = { O: seedDevice(db, O, 'app'), N: seedDevice(db, N, 'app'), M: seedDevice(db, M, 'app') };
   TEAM = V(d.O, `public.msgr2_space_create('팀 취소', 'team-revoke')`);
 });
