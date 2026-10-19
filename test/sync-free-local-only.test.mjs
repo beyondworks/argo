@@ -18,8 +18,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // 앱 최소 버전 확인(30분마다) = 옛 앱 사용 중지 장치(#1107) — 로그인한 기기의 안전장치라 무료도 남긴다
 const ALLOWED_FREE = new Set(['GET /auth/v1/user', 'POST /rest/v1/rpc/my_plan', 'POST /auth/v1/token', 'POST /rest/v1/rpc/argo_min_app_version']);
 
-async function run(plan, { ms = 6000, fault = null } = {}) {
-  const root = await mkdtemp(join(tmpdir(), `argo-freelocal-${plan}-`)); roots.push(root);
+async function run(plan, { ms = 6000, fault = null, root = null } = {}) {
+  if (!root) { root = await mkdtemp(join(tmpdir(), `argo-freelocal-${plan}-`)); roots.push(root); }
   const fake = await startFakeSupabase({ plan, userId: 'u1' });
   if (fault) fake.fault = fault;
   seedRoot(root, { url: fake.url, userId: 'u1' });
@@ -30,7 +30,7 @@ async function run(plan, { ms = 6000, fault = null } = {}) {
   await fake.close();
   const kinds = {};
   for (const h of fake.hits) kinds[h.k.replace(/\/storage\/v1\/object\/.*/, '/storage/v1/object/*')] = (kinds[h.k.replace(/\/storage\/v1\/object\/.*/, '/storage/v1/object/*')] ?? 0) + 1;
-  return { hits: fake.hits, kinds, last, err: child.err };
+  return { hits: fake.hits, kinds, last, err: child.err, root, samples: child.samples };
 }
 
 test('확정 free — 6초(주기 0.5초 × 12)에 로그인·플랜 확인 말고는 요청 0, 이 기기가 실행 담당', async () => {
@@ -53,4 +53,12 @@ test('인접 핀 — Pro는 종전처럼 리스(Storage)·매니페스트를 쓴
 test('플랜 조회 실패(미확인)는 free로 보지 않는다 — 종전처럼 동기화를 시도한다(유료 오차단 방지)', async () => {
   const r = await run('free', { fault: (_req, path) => (path.endsWith('/rpc/my_plan') ? { status: 500 } : null) });
   assert.ok(r.hits.some((h) => h.k.startsWith('GET /storage/v1/object/') || h.k.startsWith('POST /storage/v1/object/')), `미확인인데 동기화를 멈췄다: ${JSON.stringify(r.kinds)}`);
+});
+
+test('F6 무료로 확정된 기기가 재시작 뒤 플랜 조회에 실패해도 실행 담당을 잃지 않는다(마지막 확정 판정 유지) — 리스 경로로 들어가지 않는다', async () => {
+  const first = await run('free', { ms: 3000 });
+  const r = await run('free', { ms: 5000, root: first.root, fault: (_req, path) => (path.endsWith('/rpc/my_plan') ? { status: 500 } : null) });
+  const tail = r.samples.slice(-5);
+  assert.ok(tail.length > 0 && tail.every((x) => x.cloud), `조회 실패 동안 담당을 잃었다: ${JSON.stringify(tail.map((x) => x.cloud))}`);
+  assert.deepEqual(r.hits.filter((h) => h.k.includes('/storage/')).map((h) => h.k), [], '리스·클레임을 부르지 않는다');
 });

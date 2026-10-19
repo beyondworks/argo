@@ -30,8 +30,9 @@ export function readAppGate(root) {
   let stamp = 'none';
   try { const st = statSync(fileOf(root)); stamp = `${st.mtimeMs}:${st.size}`; } catch { /* 없음 */ }
   if (memo && memo.root === root && memo.stamp === stamp) return memo.data;
-  let data = { min: null, checkedAt: 0 };
-  if (stamp !== 'none') try { const d = JSON.parse(readFileSync(fileOf(root), 'utf8')); data = { min: typeof d.min === 'string' && d.min ? d.min : null, checkedAt: Number(d.checkedAt) || 0 }; } catch { /* 손상 — 막지 않는다 */ }
+  let data = { min: null, checkedAt: 0, since: 0 };
+  // since = 지금 min 값을 처음 본 시각(새 시작 장치가 '모든 기기가 알아챌 시간'을 기다리는 데 쓴다 — sync.mjs freshStartAllowed)
+  if (stamp !== 'none') try { const d = JSON.parse(readFileSync(fileOf(root), 'utf8')); data = { min: typeof d.min === 'string' && d.min ? d.min : null, checkedAt: Number(d.checkedAt) || 0, since: Number(d.since) || 0 }; } catch { /* 손상 — 막지 않는다 */ }
   memo = { root, stamp, data };
   return data;
 }
@@ -63,9 +64,10 @@ export async function refreshAppGate(root, sess, mk, { now = Date.now } = {}) {
       const sb = mk(sess.url, sess.anonKey, { auth: { persistSession: false, autoRefreshToken: false }, global: { headers: { Authorization: `Bearer ${sess.access_token}` } } });
       const { data, error } = await sb.rpc('argo_min_app_version', { p_app: 'desktop' });
       if (error && !['PGRST202', '42883'].includes(error.code)) throw new Error(error.message);
-      next = { min: !error && typeof data === 'string' && data.trim() ? data.trim() : null, checkedAt: now() };
+      const min = !error && typeof data === 'string' && data.trim() ? data.trim() : null;
+      next = { min, checkedAt: now(), since: min && min === prev.min && prev.since ? prev.since : min ? now() : 0 };
     } catch {
-      next = { min: prev.min, checkedAt: now() - APP_GATE_RECHECK_MS + APP_GATE_RETRY_MS };
+      next = { min: prev.min, checkedAt: now() - APP_GATE_RECHECK_MS + APP_GATE_RETRY_MS, since: prev.since || 0 };
     }
     await writeAppGate(root, next).catch(() => {});
     return next;

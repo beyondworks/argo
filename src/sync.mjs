@@ -28,13 +28,13 @@ import { withLock, withDirLock, withFileLock } from './mutex.mjs';
 import { cryptoOn, isSecretRel, isSecretNameRel, isEncRel, encVaultOn, sealSecret, sealSecretV3, openSecret, openSecretCompat, isEnvelopeGeneration, CRED_WITHDRAWN, isCredWithdrawn } from './secretbox.mjs';
 import { dek, tryClaimDek } from './e2ee.mjs';
 import { APP_VERSION, withArgoClientInfo } from './app-version.mjs';
-import { readAppGate } from './app-gate.mjs';
+import { readAppGate, APP_GATE_RECHECK_MS } from './app-gate.mjs';
 import { cmpVersion } from './version-compare.mjs';
 import { loadSyncCreds, credsEpoch } from './synccreds.mjs';
 import { loadDeviceSession, getFreshDeviceSession } from './devicesession.mjs';
 import { accountKeyError, ensureAccountKey } from './accountkey.mjs';
 import { ensureDeviceKeyRegistered } from './e2ee.mjs';
-import { syncEntitled } from './entitlement.mjs';
+import { syncEntitled, fetchPlan } from './entitlement.mjs';
 import { cachedPlan, rememberPlan, invalidatePlanCache, planResumes, lastPlanSeen, notePlanSeen, planIsFreeLocal } from './plan-cache.mjs';
 import { resolveRunner } from './runners.mjs'; // 리더 양보 판단 — 이 기기에서 턴을 돌릴 러너가 있는가
 import { invalidatePath } from './memindex.mjs'; // 원격 mtime을 심는 수신 쓰기의 캐시 무효화
@@ -1085,11 +1085,21 @@ export const isText = (rel) => rel.endsWith('.md');       // 노트·일지 — 
    ② 다른 기기는 매니페스트의 epoch가 자기 기록의 epoch와 다르면 기록을 비우고 합치기만 한다(삭제 0 — 기록이 없으면 '지웠다'는 판정이 없다).
       그 사이클에 양쪽이 다른 노트(.md)는 수정 시각이 늦은 쪽을 정본으로, 다른 쪽을 .conflict 사본으로 남긴다(평소 충돌의 '원격 정본' 규칙은 그대로 —
       새 시작 합치기에서만. 옛 사본 기기가 먼저 올렸어도 최신 편집이 정본으로 남게).
-   켜는 조건: 서버 최소 앱 버전(argo_min_app_version, .app-gate.json)이 FRESH_START_MIN_APP 이상일 때만. 그보다 옛 앱(epoch를 모른다)이 같은 계정에 있으면
-   새로 쓴 매니페스트에 없는 자기 파일을 '다른 기기가 지움'으로 읽어 지울 수 있다 — 최소 버전이 그 앱을 멈춘 뒤에만 켠다. 꺼져 있으면 종전 동작과 같다. */
+   켜는 조건(①의 새 시작 개시만): 서버 최소 앱 버전(argo_min_app_version, .app-gate.json)이 FRESH_START_MIN_APP 이상이고, 이 기기가 그 값을 처음 본 지
+   FRESH_START_SETTLE_MS가 지났을 때. 그보다 옛 앱(epoch를 모른다)이 같은 계정에 있으면 새로 쓴 매니페스트에 없는 자기 파일을 '다른 기기가 지움'으로 읽어 지울 수 있다 —
+   최소 버전이 그 앱을 멈추고, 다른 기기가 확인 주기(30분) 안에 그 값을 알아챈 뒤에만 연다(분리 검수 F2). 꺼져 있으면 종전 보류와 같다.
+   ②의 합치기(epoch가 다르면 기록을 비우고 합침)는 장치와 무관하게 늘 한다 — 삭제가 0이라 안전하고, 매니페스트에 epoch가 없으면 종전과 같다. 장치가 아직 꺼진 새 앱이
+   다른 기기의 새 시작 매니페스트를 종전 규칙으로 읽어 자기만 가진 파일을 지우던 창(F2)을 닫는다.
+   장치가 켜져 있을 때 매니페스트 없음 + 기록 있음 + blob이 일부만 있으면 치유하지 않고 보류한다 — 다른 기기의 새 시작이 진행 중일 수 있고(blob만 올리고 매니페스트 전),
+   그 blob에 내 기록 메타를 적으면 옛 판이 내 최신 편집을 덮는다(F1). epoch 매니페스트가 생기면 다음 사이클이 합친다.
+   새 시작 직전에는 캐시를 건너뛴 플랜 조회로 Pro·체험인지 다시 확인한다 — 무료(서버가 읽기를 막아 모든 GET이 '없음')를 정리된 원격으로 오인하지 않게(F3). */
 export const FRESH_START_MIN_APP = '0.1.114';
 export const FRESH_START_PROBE = 20;
-export const freshStartAllowed = () => { const min = readAppGate(WS_ROOT).min; return !!min && cmpVersion(min, FRESH_START_MIN_APP) >= 0; };
+export const FRESH_START_SETTLE_MS = APP_GATE_RECHECK_MS + 15 * 60_000;
+export const freshStartAllowed = (now = Date.now()) => {
+  const { min, since } = readAppGate(WS_ROOT);
+  return !!min && cmpVersion(min, FRESH_START_MIN_APP) >= 0 && since > 0 && now - since >= FRESH_START_SETTLE_MS;
+};
 export const isThread = (rel) => /^chats\/[^/]+\.json$/.test(rel); // 진행 중 턴과 레이스 → 스레드 락
 /** 코어 모듈이 `<file>.lockd` 프로세스 간 잠금 안에서 읽고-고쳐-쓰는 파일(스레드 제외 — 스레드는 isThread). 동기화가 이 파일들을 쓸 때도 같은 잠금을 잡는다. (export: 회귀 테스트용) */
 export const isFileLockedRel = (rel) => /^(company|approvals|corrections|routines|connections|assistant)\.json$/.test(rel) || /^agents\/[^/]+\.md$/.test(rel); // assistant.json — 비서 설정·알리지 않기 목록(설정 API가 같은 잠금 안에서 고친다)
@@ -1280,7 +1290,7 @@ export function quotaStatus() {
 }
 /** 한도에 닿아 새 업로드를 멈출 때의 업로드 — 매니페스트만 보낸다(그 밖은 네트워크 없이 거절과 같은 모양으로 끝낸다 — freePlanUpload와 같은 집계) */
 const quotaFullUpload = (manifestKey) => (key, buf, extra) => {
-  if (key === manifestKey) return uploadToCloud(key, buf, extra);
+  if (key === manifestKey || (Buffer.isBuffer(buf) && buf.equals(CRED_WITHDRAWN))) return uploadToCloud(key, buf, extra); // 매니페스트·자격 회수 마커(작은 덮어쓰기 — F4)
   const e = new Error('cloud storage full: new upload paused (kept on this device)');
   e.uploadFailed = true; e.localOnly = true; e.quota = true;
   throw e;
@@ -1621,7 +1631,14 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
   let epoch = typeof remote.epoch === 'string' ? remote.epoch : null;
   let adopt = false; // 이번 사이클이 새 시작 합치기인가(양쪽이 다른 노트는 수정 시각이 늦은 쪽이 정본)
   const preProbe = new Map(); // 정리 판정에서 확인한 blob — 아래 사전 확인이 다시 묻지 않는다
-  if (freshStartAllowed() && Object.keys(state).length > 0) {
+  const freshOn = freshStartAllowed();
+  let freshStarted = false;
+  if (Object.keys(state).length > 0 && manifestExists && epoch && epoch !== stateDoc.epoch) { // 합치기 — 장치와 무관(F2)
+    console.warn(`[argo] 동기화(${wsId}): 다른 기기가 새로 시작한 클라우드 사본(${epoch}) — 이 기기 기록을 비우고 합친다(삭제 0)`);
+    for (const k of Object.keys(state)) delete state[k];
+    adopt = true;
+  }
+  if (freshOn && Object.keys(state).length > 0) {
     if (!manifestExists) {
       const cands = Object.keys(state).filter((rel) => local[rel] && !changed(state[rel], local[rel]) && !(noSecrets && isSecretRel(rel)) && !isDevArtifactRel(rel)
         && !(isEncRel(rel) && !cryptoOn()) && !tooBigToSync(local[rel].s)).slice(0, FRESH_START_PROBE);
@@ -1630,17 +1647,18 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
         const probe = blobExists(remoteKey(rel)); preProbe.set(rel, probe);
         if ((await probe.catch(() => true)) !== false) { gone = false; break; } // 확인 불가는 '있음'으로 — 정리됐다고 단정하지 않는다
       }
+      if (gone) { // 캐시를 건너뛴 플랜 확인 — Pro·체험이 아니면(무료: 서버 읽기 차단으로 모든 GET이 없음) 새 시작하지 않고 종전 보류로(F3)
+        const plan = await fetchPlan(client(), owner);
+        if (plan !== 'pro' && plan !== 'trial') gone = false;
+      }
       if (gone) {
         epoch = `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
+        freshStarted = true;
         console.warn(`[argo] 동기화(${wsId}): 클라우드 사본이 정리됐다(매니페스트·blob 없음) — 이 기기 파일 기준으로 새로 올린다(새 시작 ${epoch}, 로컬 삭제 0)`);
         for (const k of Object.keys(state)) delete state[k];
         preProbe.clear();
         await writeJsonAtomic(stateFile(wsId), { files: {}, ts: Date.now(), epoch, freshStart: true }); // 기록을 먼저 비운다 — 업로드 도중 끊겨도 다음 사이클은 첫 동기화
       }
-    } else if (epoch && epoch !== stateDoc.epoch) {
-      console.warn(`[argo] 동기화(${wsId}): 다른 기기가 새로 시작한 클라우드 사본(${epoch}) — 이 기기 기록을 비우고 합친다(삭제 0)`);
-      for (const k of Object.keys(state)) delete state[k];
-      adopt = true;
     }
   }
   if (!manifestExists && !epoch && stateDoc.freshStart && typeof stateDoc.epoch === 'string') epoch = stateDoc.epoch; // 새 시작 도중 끊긴 기기 — 같은 표지로 이어 간다
@@ -1714,8 +1732,12 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
       if (!(l && !remote.files[rel] && base && !changed(base, l))) continue;
       const probe = preProbe.get(rel) ?? blobExists(remoteKey(rel));
       blobProbe.set(rel, probe);
-      if ((await probe.catch(() => true)) === false) {
+      const exists = await probe.catch(() => true);
+      if (exists === false) {
         throw new Error('클라우드 사본이 비어 있어 이 회사 동기화를 멈췄습니다 — 이 기기 파일은 지우지도 다시 올리지도 않습니다');
+      }
+      if (freshOn) { // 장치 켜짐 + 매니페스트 없음 + blob 있음 — 다른 기기의 새 시작이 진행 중일 수 있다: 치유(내 기록 메타를 그 blob에 적음)하지 않고 보류(F1)
+        throw new Error('다른 기기가 클라우드 사본을 새로 올리는 중일 수 있어 이 회사 동기화를 잠시 멈췄습니다 — 이 기기 파일은 지우지도 다시 올리지도 않습니다');
       }
     }
   }
@@ -2008,7 +2030,7 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
     // 원인을 가리지 않는다(위 파일 루프와 같은 규칙) — free는 어차피 클라우드에 못 쓰므로 관용의
     // 부작용이 없고, free 한정이 안전 조건이다. pull 실패(failed>0)만이 관용을 막는 조건이다.
     if (e?.quota) quotaHit++;
-    if (!(localOnlyOk && failed === 0)) throw e;
+    if (!((opts.freePlan || (opts.quotaFull && e?.quota)) && failed === 0)) throw e; // 할당량 모드는 할당량 거절만 관용(네트워크 오류는 종전처럼 실패 — F5)
     manifestDenied = true;
   }
   }
@@ -2031,7 +2053,9 @@ async function syncCompanyOnce(wsId, owner, isRestore = false, opts = {}) {
       if (!(rel in remote.files) || isDevArtifactRel(rel)) { missingSeen.delete(k); continue; } // 빠진 항목·이제 불가시인 임시 파일은 잊는다
       if (kept < MISSING_STATE_MAX) { missingOut[rel] = { sig: v.sig, until: v.until, n: v.n ?? 1 }; kept++; }
     } }
-  await writeJsonAtomic(stateFile(wsId), { files: nextFiles, ts: Date.now(), ...(remote.epoch ? { epoch: remote.epoch } : stateDoc.epoch ? { epoch: stateDoc.epoch } : {}), ...(oversize.size ? { oversize: { n: oversize.size, rels: oversizeRels, limit: SYNC_MAX_OBJECT_BYTES } } : {}), ...(Object.keys(missingOut).length ? { missing: missingOut } : {}) });
+  await writeJsonAtomic(stateFile(wsId), { files: nextFiles, ts: Date.now(), ...(remote.epoch ? { epoch: remote.epoch } : stateDoc.epoch ? { epoch: stateDoc.epoch } : {}),
+    ...((freshStarted || stateDoc.freshStart) && manifestDenied ? { freshStart: true } : {}), // 매니페스트를 못 쓴 새 시작은 표시를 남겨 다음 사이클이 같은 표지로 잇는다(F5)
+    ...(oversize.size ? { oversize: { n: oversize.size, rels: oversizeRels, limit: SYNC_MAX_OBJECT_BYTES } } : {}), ...(Object.keys(missingOut).length ? { missing: missingOut } : {}) });
   return { pulled, pushed, deletedL, deletedR, merged, conflicts, failed, healed, denied, uploadDenied, ...(quotaHit ? { quotaHit } : {}), ...(deferred ? { deferred } : {}), ...(held ? { held } : {}), ...(withdrawn ? { withdrawn } : {}), ...(manifestDenied ? { manifestDenied: true } : {}), ...(failures.length ? { failures } : {}), ...(missing ? { missing, missingRels } : {}), ...(needsRecovery ? { needsRecovery, needsRecoveryRels } : {}), ...(concurrentDeletes ? { concurrentDeletes } : {}), ...(oversize.size ? { oversize: oversize.size, oversizeRels, oversizeLimit: SYNC_MAX_OBJECT_BYTES } : {}) };
 }
 
@@ -2367,6 +2391,7 @@ const syncKeyOwner = () => process.env.ARGO_SYNC_OWNER || loadSyncCreds()?.owner
 /** 요금제 판정 — 계정별 10분 캐시(src/plan-cache.mjs). 동기화 사이클과 리스 타이머가 같이 쓴다(같은 키라 한쪽이 물으면 다른 쪽은 캐시).
     같은 키의 동시 조회는 하나로 묶는다(기동 직후 두 루프가 함께 물어 my_plan이 두 번 나가지 않게). */
 const planInflight = new Map();
+const PLAN_SEEN_FILE = () => join(WS_ROOT, '.plan-seen.json');
 async function resolvePlan(planOwner, sessionUid) {
   const planKey = `${sessionUid ?? ''}|${planOwner ?? ''}`;
   const hit = cachedPlan(planKey);
@@ -2377,7 +2402,15 @@ async function resolvePlan(planOwner, sessionUid) {
     if (lastPlanSeen()?.key !== planKey) Object.assign(quotaState, { used: null, limit: null, at: 0, full: false, pushedSince: false, hitAt: 0 }); // 계정이 바뀌면 사용량을 다시 읽는다
     // 무료→Pro·체험, 계정 전환이면 거절 보류를 바로 푼다 — 결제하고 돌아온 사용자가 10분을 기다리지 않게(결제 화면 조회가 캐시를 비워 여기로 온다)
     if (planResumes(lastPlanSeen(), { key: planKey, plan: ent.plan })) { uploadBackoff.clear(); companyRetry.clear(); denialStrikes.clear(); }
-    notePlanSeen({ key: planKey, plan: ent.plan });
+    // 조회 실패(null)는 마지막 확정 판정을 덮지 않는다 — 덮으면 무료 기기가 실패 한 번마다 리스 경로로 들어가 실행 담당을 잃는다(분리 검수 F6).
+    // 확정 판정은 데이터 루트 파일에도 남겨, 재시작 직후 조회가 실패해도 같은 계정이면 그 판정을 쓴다(동기화 대상 아님 — 회사 폴더 밖).
+    if (ent.plan != null) {
+      notePlanSeen({ key: planKey, plan: ent.plan });
+      writeJsonAtomic(PLAN_SEEN_FILE(), { key: planKey, plan: ent.plan, at: Date.now() }).catch(() => {});
+    } else if (lastPlanSeen()?.key !== planKey) {
+      const disk = await readJsonLenient(PLAN_SEEN_FILE(), null).catch(() => null);
+      notePlanSeen(disk?.key === planKey && ['free', 'pro', 'trial'].includes(disk.plan) ? { key: planKey, plan: disk.plan } : { key: planKey, plan: null });
+    }
     return ent;
   })().finally(() => planInflight.delete(planKey));
   planInflight.set(planKey, run);
@@ -2399,7 +2432,7 @@ async function leaseTick() {
   // 확정 무료 = 이 기기 단독 — 리스·토큰 클레임을 읽지도 쓰지도 않는다(isCloudLeader·tokenOwnership이 이 기기를 담당으로 본다). 판정은 동기화 사이클과 같은 캐시.
   if (!(loadSyncCreds() && serviceCredsAllowed())) {
     const ent = await resolvePlan(syncKeyOwner() || owner, currentSessionUid()).catch(() => null);
-    if (ent?.plan === 'free') { leaseState.checkedAt = Date.now(); return; }
+    if (ent?.plan === 'free' || (ent?.plan == null && planIsFreeLocal())) { leaseState.checkedAt = Date.now(); return; } // 조회 실패면 마지막 확정 판정(F6)
   }
   await renewLease(owner, { runnerUsable: await probeRunnerUsable(targets) });
   if (holdsDaemonLease('gateway')) await renewTokenClaims(owner).catch((e) => console.warn('[argo] 텔레그램 토큰 클레임 갱신 실패:', String(e.message).slice(0, 80))); // 토큰 단위 소유 — 리더와 별개
@@ -2536,7 +2569,7 @@ async function cycleOnce() {
       const ent = await resolvePlan(keyOwner || localOwners[0] || null, sessionUid);
       status.plan = ent.plan; // 차단/통과 무관 — 조회했으면 기록 (globalThis 경유로 라우트 번들에서도 보임)
       if (!ent.ok) { status.lastError = '멀티기기 동기화는 Pro 플랜입니다'; status.paywalled = true; return; }
-      freePlan = ent.plan === 'free';
+      freePlan = ent.plan === 'free' || (ent.plan == null && planIsFreeLocal()); // 조회 실패면 같은 계정의 마지막 확정 판정(F6)
     } catch (e) {
       status.plan = null; // stale 잔존 차단 — 직전 사이클 plan이 설정 배지에 남지 않게(분리 검수 LOW)
       console.warn('[argo] 요금제 조회 실패(가용성 우선 통과):', e.message);
@@ -2641,7 +2674,7 @@ async function cycleOnce() {
       // 재봉인 완결은 **파일 실패 0**일 때만 — throw만 안 하면 지우던 이전 배선은 개별 push 실패
       // (r.failed>0) 파일을 영구 구세대로 남겼다(분리 검수 MEDIUM). 실패가 있으면 마커를 남겨
       // 다음 사이클이 회사째 재시도한다(무변경 재푸시 비용 < 영구 평문 잔존).
-      if (reseal && (r.failed ?? 0) === 0) await clearReseal(wsId).catch(() => {});
+      if (reseal && (r.failed ?? 0) === 0 && !((r.quotaHit ?? 0) > 0)) await clearReseal(wsId).catch(() => {}); // 할당량으로 못 다시 쓴 사본이 있으면 표시를 남긴다(F4)
       status.companies[wsId] = { ts: Date.now(), ...r };
       // 매니페스트 보류가 MANIFEST_STALE_STRIKES번 이어져 실패 대기에 들어갔다 — 화면에 원인 코드를 남긴다(대기 중에는 위 retry-backoff 분기가 이 오류를 유지한다)
       if (r.skipped === 'manifest-stale' && r.staleStrikes >= MANIFEST_STALE_STRIKES) { setCompanyError(wsId, manifestStaleMessage(wsId, r)); companyFailed++; }

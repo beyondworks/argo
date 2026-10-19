@@ -31,8 +31,8 @@ const OBJECT_NOT_FOUND = { message: 'Object not found', status: 400, statusCode:
 const NET_FAIL = { message: 'fetch failed', name: 'StorageUnknownError' };
 const isManifest = (k) => k.endsWith('/__manifest__.json');
 
-async function gate(min) { // 서버 최소 앱 버전(.app-gate.json) — null이면 파일 없음(장치 꺼짐)
-  if (min) await writeFile(join(ROOT, '.app-gate.json'), JSON.stringify({ min, checkedAt: Date.now() }));
+async function gate(min, sinceAgoMs = 2 * 3600_000) { // 서버 최소 앱 버전(.app-gate.json) — null이면 파일 없음(장치 꺼짐). since = 그 값을 처음 본 시각
+  if (min) await writeFile(join(ROOT, '.app-gate.json'), JSON.stringify({ min, checkedAt: Date.now(), since: Date.now() - sinceAgoMs }));
   else await rm(join(ROOT, '.app-gate.json'), { force: true });
   _resetAppGateForTest();
 }
@@ -57,7 +57,9 @@ function storage(initial = {}) {
     async remove(keys) { log.removed.push(...keys); for (const k of keys) store.delete(k); return { data: [], error: null }; },
     async list() { return { data: [], error: null }; },
   };
-  return { client: { storage: { from: () => bucket } }, store, state, log };
+  // 플랜 조회(rpc my_plan) — 새 시작 직전의 캐시 건너뛴 확인(F3). 기본 pro, state.plan으로 바꾼다
+  const rpc = async (name) => (name === 'my_plan' ? { data: { plan: state.plan ?? 'pro' }, error: null } : { data: null, error: { message: 'no rpc' } });
+  return { client: { storage: { from: () => bucket }, rpc }, store, state, log };
 }
 const manifestOf = (f, WS) => JSON.parse(openSecretCompat(f.store.get(`${OWNER}/${WS}/__manifest__.json`)).toString());
 const remoteText = (f, WS, rel) => openSecretCompat(f.store.get(`${OWNER}/${WS}/${rel}`)).toString();
@@ -136,10 +138,68 @@ test('⑤ 장치 켜짐이어도 일부 blob만 없으면 종전 보류(지우�
   for (let i = 0; i < 10; i += 2) store[`${OWNER}/${WS}/vault/notes/n${i}.md`] = Buffer.from(`# 원본 ${i}\n`); // 반만 남음
   const f = storage(store);
   _setSyncClientForTest(f.client);
-  await assert.rejects(() => syncCompany(WS, OWNER, false), /대량 삭제 감지|클라우드 사본이 비어/);
+  await assert.rejects(() => syncCompany(WS, OWNER, false), /대량 삭제 감지|클라우드 사본이 비어|새로 올리는 중/);
   assert.deepEqual(f.log.uploads, []); assert.deepEqual(f.log.removed, []);
   assert.equal(await count(), 10);
   await gate(null);
+});
+
+test('F1 장치 켜짐 + 매니페스트 없음 + 기록 있음 + blob 일부 있음(다른 기기의 새 시작이 매니페스트 전) — 치유하지 않고 보류, 내 편집 그대로', async () => {
+  await gate(FRESH_START_MIN_APP);
+  const WS = 'fs-f1';
+  const { dir } = await seedWiped(WS, 5, { edited: (i) => i < 3 }); // 무변경 2개 — 대량 삭제 브레이크 아래
+  const f = storage({ [`${OWNER}/${WS}/vault/notes/n3.md`]: Buffer.from('# 다른 기기의 옛 판 3\n'), [`${OWNER}/${WS}/vault/notes/n4.md`]: Buffer.from('# 다른 기기의 옛 판 4\n') });
+  _setSyncClientForTest(f.client);
+  await assert.rejects(() => syncCompany(WS, OWNER, false), /새로 올리는 중/);
+  assert.deepEqual(f.log.uploads, []); assert.deepEqual(f.log.removed, []);
+  assert.equal(await readFile(join(dir, 'n0.md'), 'utf8'), '# 이 기기에서 고침 0\n');
+  assert.equal((await stateOf(WS)).files['vault/notes/n3.md'].h, meta(Buffer.from('# 원본 3\n')).h, '기록을 다른 기기 blob에 맞춰 고치지 않는다');
+  await gate(null);
+});
+
+test('F3 장치 켜짐 + 정리된 원격처럼 보여도 캐시 건너뛴 플랜 확인이 Pro·체험이 아니면(무료: 서버가 읽기를 막음) 새 시작하지 않는다 — 종전 보류', async () => {
+  await gate(FRESH_START_MIN_APP);
+  const WS = 'fs-f3';
+  const { count } = await seedWiped(WS, 10);
+  const f = storage({});
+  f.state.plan = 'free';
+  _setSyncClientForTest(f.client);
+  await assert.rejects(() => syncCompany(WS, OWNER, false), /대량 삭제 감지|클라우드 사본이 비어/);
+  assert.deepEqual(f.log.uploads, []);
+  assert.equal(await count(), 10);
+  assert.equal((await stateOf(WS)).freshStart, undefined, '기록을 비우지 않는다');
+  await gate(null);
+});
+
+test('F2-b 최소 버전을 본 지 FRESH_START_SETTLE_MS가 안 됐으면 새 시작을 열지 않는다(다른 기기가 알아챌 시간) — 종전 보류', async () => {
+  await gate(FRESH_START_MIN_APP, 60_000);
+  const WS = 'fs-settle';
+  await seedWiped(WS, 10);
+  const f = storage({});
+  _setSyncClientForTest(f.client);
+  await assert.rejects(() => syncCompany(WS, OWNER, false), /대량 삭제 감지|클라우드 사본이 비어/);
+  assert.deepEqual(f.log.uploads, []);
+  await gate(null);
+});
+
+test('F2 장치가 아직 꺼진 기기도 다른 기기의 새 시작 매니페스트(epoch)를 보면 합친다 — 자기만 가진 파일을 지우지 않고 올린다', async () => {
+  await gate(null); // 이 기기는 아직 최소 버전을 모른다
+  const WS = 'fs-f2';
+  const dir = join(ROOT, WS, 'vault', 'notes');
+  await mkdir(dir, { recursive: true });
+  const a = Buffer.from('# a\n'), b = Buffer.from('# b만\n');
+  await writeFile(join(dir, 'a.md'), a); await writeFile(join(dir, 'b-only.md'), b);
+  await writeFile(join(ROOT, WS, '.sync-state.json'), JSON.stringify({ files: { 'vault/notes/a.md': meta(a), 'vault/notes/b-only.md': meta(b) }, ts: 1 }));
+  const f = storage({ // 다른 기기가 새로 시작해 a만 올렸다(b-only는 정리돼 없음)
+    [`${OWNER}/${WS}/vault/notes/a.md`]: a,
+    [`${OWNER}/${WS}/__manifest__.json`]: sealSecret(Buffer.from(JSON.stringify({ epoch: 'e9-bbbbbbbb', files: { 'vault/notes/a.md': meta(a) } }))),
+  });
+  _setSyncClientForTest(f.client);
+  const r = await syncCompany(WS, OWNER, false);
+  assert.equal(r.deletedL, 0, '종전 규칙이면 b-only를 다른 기기가 지운 것으로 읽어 지웠다');
+  assert.equal(await readFile(join(dir, 'b-only.md'), 'utf8'), '# b만\n');
+  assert.equal(remoteText(f, WS, 'vault/notes/b-only.md'), '# b만\n', '자기만 가진 파일을 올린다');
+  assert.equal((await stateOf(WS)).epoch, 'e9-bbbbbbbb');
 });
 
 for (const [name, min] of [['파일 없음', null], ['최소 버전이 낮음', '0.1.113']]) {

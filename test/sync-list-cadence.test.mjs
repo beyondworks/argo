@@ -90,7 +90,7 @@ test('리스 타이머는 동기화 주기 밖에 있고, 확정 무료면 리�
   const tick = SRC.slice(SRC.indexOf('async function leaseTick()'), SRC.indexOf('function startLeaseLoop()'));
   assert.ok(cycleBody.indexOf('resolvePlan(') > 0, 'cycle 안에 요금제 게이트가 없다');
   assert.equal(/renewLease\(|leaseTick\(/.test(cycleBody), false, '리스 판정이 다시 동기화 주기 안으로 들어왔다 — 요금제 게이트·긴 주기에 묶인다');
-  const free = tick.indexOf("if (ent?.plan === 'free')");
+  const free = tick.indexOf("if (ent?.plan === 'free' ||");
   assert.ok(free > 0 && free < tick.indexOf('await renewLease(') && free < tick.indexOf('renewTokenClaims('), '확정 무료 건너뛰기가 리스·클레임 갱신보다 앞이어야 한다');
   assert.match(SRC, /if \(!syncOn\(\) \|\| planIsFreeLocal\(\)\) return leaseRole\(\) !== 'standby';/, '확정 무료는 리스 없이 이 기기가 담당(isCloudLeader)');
   assert.match(SRC, /if \(!syncOn\(\) \|\| planIsFreeLocal\(\)\) return \{ mine: true, holder: null, pending: false \};/, '확정 무료는 텔레그램 토큰이 이 기기 것(tokenOwnership)');

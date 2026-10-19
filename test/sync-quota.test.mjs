@@ -112,3 +112,13 @@ test('② 한도가 찬 사이클(quotaFull) — 새 파일·수정은 보내지
   assert.equal(openSecretCompat(f.store.get(`${OWNER}/${WS}/vault/notes/n2.md`)).toString(), '# 2 이 기기에서 고침\n', '멈춰 있던 수정도 올라간다');
   assert.equal(await readFile(join(dir, 'n2.md'), 'utf8'), '# 2 이 기기에서 고침\n');
 });
+
+test('F5 할당량 모드에서도 매니페스트의 네트워크 실패는 관용하지 않는다(할당량 거절만 관용) — 사이클 실패로 다음에 다시', async () => {
+  const WS = 'q-mnet';
+  const { dir } = await seed(WS);
+  await rm(join(dir, 'n0.md')); // 로컬 삭제 → 원격 삭제 전파 → 매니페스트를 다시 써야 하는 사이클
+  const f = storage(Object.fromEntries((await seedStore(WS)).entries()));
+  f.state.uploadError = (k) => (isManifest(k) ? { message: 'fetch failed', name: 'StorageUnknownError' } : null);
+  _setSyncClientForTest(f.client);
+  await assert.rejects(() => syncCompany(WS, OWNER, false, { quotaFull: true }));
+});
