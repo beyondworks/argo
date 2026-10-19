@@ -8,6 +8,7 @@
 begin;
 set local lock_timeout = '5s';
 delete from public.msgr_settings where key = 'old_app_cutoff';
+delete from public.msgr_settings where key = 'old_app_cutoff_max'; -- 폐기 기준 버전 설정(2026-10-19)
 create or replace function public.argo_old_app_check() returns void language sql as $$ select $$;
 revoke all on function public.argo_old_app_check() from public;
 grant execute on function public.argo_old_app_check() to anon, authenticated, service_role;
