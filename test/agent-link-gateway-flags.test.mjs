@@ -2,6 +2,7 @@
 // ① 플래그 없음(배포본과 같은 기본): 옛 메신저 브리지가 돈다(msgr_crews 조회 > 0), 새 링크 요청은 0.
 // ② ARGO_MSGR_LEGACY=off: 옛 브리지 조회 0.
 // ③ ARGO_AGENT_LINK=1: 새 링크가 runner 기기 등록을 시도하고, 옛 브리지는 그대로 돈다(두 플래그는 따로다).
+// ④ ARGO_AGENT_LINK=1 + 확정 무료 계정: 새 링크도 옛 브리지도 클라우드 요청 0(메신저 Pro 전용, msgrCloud 판정).
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -49,9 +50,10 @@ test('게이트웨이 플래그: 기본(핀)·옛 브리지 끔·새 링크 켬'
     { label: '기본', env: {}, legacy: true, link: false },
     { label: 'ARGO_MSGR_LEGACY=off', env: { ARGO_MSGR_LEGACY: 'off' }, legacy: false, link: false },
     { label: 'ARGO_AGENT_LINK=1', env: { ARGO_AGENT_LINK: '1' }, legacy: true, link: true },
+    { label: 'ARGO_AGENT_LINK=1 + 무료', env: { ARGO_AGENT_LINK: '1' }, plan: 'free', legacy: false, link: false },
   ];
   const runs = await Promise.all(scenes.map(async (s) => {
-    const fake = await startFakeSupabase({ plan: 'pro' }); fakes.push(fake);
+    const fake = await startFakeSupabase({ plan: s.plan ?? 'pro' }); fakes.push(fake);
     const kid = gatewayChild(await device(fake), s.env);
     await sleep(16_000); // 게이트웨이 첫 확인 + 브리지 첫 조회(15초 주기)보다 길게
     await kid.kill();

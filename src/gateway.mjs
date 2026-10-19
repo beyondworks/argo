@@ -1318,7 +1318,8 @@ export function ensureGateway() {
       }
     }
     // 메신저 v2 연결(agent-link) — 계정당 하나(w:<uid> 구독). 옵트인 플래그일 때만. 예비 기기는 옛 브리지와 같이 담당일 때만 받는다.
-    if (agentLinkEnabled() && !standbyIdle()) {
+    // 확정 무료(msgrCloud 거짓)면 시작하지 않고, 돌던 연결도 내린다 — 메신저는 Pro 전용(무료 계정 클라우드 0). 서버의 pro_required는 판정이 어긋났을 때의 안전장치다
+    if (agentLinkEnabled() && msgrCloud && !standbyIdle()) {
       alive.add('agent-link');
       const cur = running.get('agent-link');
       if (!cur) {
