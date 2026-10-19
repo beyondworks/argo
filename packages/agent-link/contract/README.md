@@ -66,7 +66,7 @@ id 형식: 봉투·일·에이전트·기기·방·토픽·승인·업로드 슬
 | `agent.sync.agents[]` | `kind`(열린 값: agent·bot), `bot{kind(hermes·openclaw 등), profile}` | 외부 봇. 주소·키는 본체 로컬 자격 저장소에만 두고 약속에 싣지 않는다 |
 | `agent.sync` | `features[]`(열린 값: meeting·bot, ≤16) | 이 본체가 처리할 수 있는 기능 |
 | `work.error` 코드 | `bot_unreachable`·`bot_limit` | 열린 값(v1.0 받는 쪽은 internal로 읽음) |
-| 거부 코드 | `post_denied`(다시 보내지 않음) | posts 글쓴이가 회의 참가자가 아니거나 회의가 아닌 일에 posts |
+| 거부 코드 | `post_denied`(다시 보내지 않음) | 서버 규칙: 회의가 아닌 일에 posts가 오거나, **kind=meeting인 일의 work.result에 handoffs가 있으면(posts 유무와 무관)**, posts 글쓴이가 회의 참가자가 아니면 거부. result 봉투에는 그 일이 회의였는지가 없어 계약 검사(`validateEnvelope`)로는 못 막는다 |
 | 거부 코드 | `pro_required`(다시 보내지 않음) | 메신저는 Pro 전용. 무료 계정 본체의 봉투(agent.sync 등) — 본체는 연결을 쉰다 |
 
 상한(`LIMITS`): 회의 참가 5, 라운드 2(room.mjs 켜짐 값, 풀림 4는 회의방에서 쓰지 않음), 질문 1번당 에이전트 글 S×R ≤ 10, 봇 hop ≤ 2·턴 ≤ 4. 가장 큰 회의 결과(10 × 3000자 한글 + 요약 2000자)도 봉투 128KB 안에 든다(계약 시험).
