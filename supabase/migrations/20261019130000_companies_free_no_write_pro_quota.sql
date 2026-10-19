@@ -5,11 +5,14 @@
 -- 이 파일이 하는 것(쓰기·할당량). 무료 계정의 읽기(select) 차단과 argo_sync_index 빈 결과는 20261019130100_companies_free_no_read.sql(같은 PR).
 -- 적용 순서: 무료 사본 정리(Storage API, M1) 끝 → 130000·130100·130200.
 --   1) companies 버킷 insert·update = is_pro()만. 무료 예외였던 <uid>/_device-lease.json·<uid>/.tg-claims/<지문>.json(20260903122559)을 없앤다.
---      새 앱(무료면 클라우드 호출 0)은 리스·클레임을 쓰지 않는다. 옛 앱은 403을 받으므로 사용 중지 장치(#1107)와 함께 적용한다(PR 본문 순서).
+--      새 앱(무료면 클라우드 호출 0, 이 기기가 실행 담당)은 리스·클레임을 쓰지 않는다. 옛 앱(무료면서 리스를 쓰는 판)은 403을 받아 120초 뒤 실행 담당을 잃는다 —
+--      로컬 루틴·텔레그램이 멈춘다(분리 검수 1차 높음). 그래서 이 파일은 새 앱 발행 → 최소 앱 버전을 새 앱으로 올림(#1107 장치 — 옛 앱은 세션 없음으로 멈추고
+--      업데이트 화면) → 적용 순서로만 적용한다(PR 본문).
 --      delete는 그대로(플랜 무관 — 무료 사용자가 자기 사본을 지울 수 있게, 비용 없음).
 --   2) Pro 저장 한도 5GiB(5,368,709,120바이트) — companies 버킷 insert·update에 RESTRICTIVE 정책 argo_companies_quota.
 --      판정 = 그 계정의 지금 있는 companies 객체 크기 합(같은 이름 객체 제외 — 덮어쓰기는 옛 크기를 빼고 본다) + 이번 신고 크기 ≤ 한도.
 --      초과면 'quota_exceeded'(SQLSTATE PT402 — 메신저 첨부 한도와 같은 코드라 앱이 이미 'code: PT402'를 안다). 기존 파일은 지우지 않는다.
+--      예외: 실행 담당 제어 파일 <uid>/_device-lease.json·<uid>/.tg-claims/<지문>.json(신고 64KiB 이하)은 한도를 보지 않는다 — 한도가 찬 Pro의 루틴·텔레그램 보존.
 --      왜 사용량 표가 없나: storage-api는 정책 판정을 사용자 권한 트랜잭션에서 시험한 뒤 되돌린다(supabase/storage src/storage/database/pg.ts
 --      testPermission — 일부러 오류를 던져 롤백). 판정 중에 쓴 사용량은 남지 않는다. 그래서 업로드마다 그 계정 범위를 색인으로 합산한다(쓰기 0).
 --      신고 크기 = storage-api가 판정용 행에 싣는 metadata.contentLength(supabase/storage #825). 없으면(옛 storage-api) 1바이트로 본다.
@@ -18,7 +21,7 @@
 --
 -- 비용(DB 위생): 정책 판정은 읽기만(쓰기 0, 업로드가 없으면 호출 0). 업로드 1건 = is_pro 1회 + 그 계정 범위 합계 1회(객체 수에 비례 — PR 본문 측정값).
 --   무료 계정은 is_pro가 거짓이면 합계를 내지 않는다.
--- 적용 전 확인(M1, 읽기만): 이미 5GiB를 넘은 Pro 계정 — 그 계정은 새 업로드만 막힌다.
+-- 적용 전 확인(M1, 읽기만): 이미 5GiB를 넘은 Pro 계정 — 그 계정은 새 파일 업로드만 막힌다(리스·클레임은 예외라 루틴·텔레그램은 그대로).
 --   select split_part(name, '/', 1) uid, sum((metadata->>'size')::bigint) bytes from storage.objects where bucket_id = 'companies'
 --    group by 1 having sum((metadata->>'size')::bigint) > 5368709120;
 -- 적용: bash scripts/msgr-live-apply.sh 20261019130000_companies_free_no_write_pro_quota (storage.objects 정책 교체 — 선잠금 대상)
@@ -88,6 +91,10 @@ declare me uuid := auth.uid(); nm text := p_row->>'name'; n text := p_row->'meta
 begin
   if me is null or nm is null or left(nm, 37) <> me::text || '/' then return true; end if;
   if not public.is_pro() then return true; end if;
+  -- 실행 담당 제어 파일(리스·텔레그램 토큰 클레임)은 한도를 보지 않는다 — 한도가 찬 Pro도 루틴·텔레그램이 멈추지 않게(분리 검수 1차 높음).
+  -- 이름이 정확히 그 모양이고 신고 크기가 64KiB 이하일 때만(이 통로로 큰 파일을 쌓지 못하게). 실제 글은 수백 바이트다.
+  if (nm = me::text || '/_device-lease.json' or nm ~ ('^' || me::text || '/\.tg-claims/[0-9a-f]{24}\.json$'))
+     and n ~ '^[0-9]{1,18}$' and n::bigint <= 65536 then return true; end if;
   used := public._argo_companies_used(me, nm);
   if used + greatest(case when n ~ '^[0-9]{1,18}$' then n::bigint else 0 end, 1) <= public._argo_quota_bytes() then return true; end if;
   raise exception 'quota_exceeded' using errcode = 'PT402',

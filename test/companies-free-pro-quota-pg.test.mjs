@@ -114,6 +114,13 @@ test('5GiB 경계: 합 + 신고 크기가 한도와 같으면 받고, 1바이트
   // 신고 크기가 없으면(옛 storage-api) 1바이트로 본다 — 0으로 통과시키지 않는다
   const n = upload(Q, 'co-q/d.md', null);
   assert.notEqual(n.status, 0, '신고 크기 없는 업로드가 한도를 넘어 통과했다');
+  // 실행 담당 제어 파일(리스·텔레그램 클레임)은 한도가 차도 받는다 — 루틴·텔레그램이 멈추지 않게(분리 검수 1차 높음). 큰 신고 크기는 예외가 아니다.
+  assert.equal(upload(Q, '_device-lease.json', 300).status, 0, '한도가 찬 Pro의 리스 쓰기가 막혔다 — 실행 담당을 잃는다');
+  assert.equal(upload(Q, '.tg-claims/0123456789abcdef01234567.json', 200).status, 0, '한도가 찬 Pro의 텔레그램 클레임 쓰기가 막혔다');
+  assert.match(upload(Q, '.tg-claims/0123456789abcdef01234568.json', 70000).stderr, /quota_exceeded/, '64KiB 넘는 신고는 예외가 아니다');
+  assert.match(upload(Q, '.tg-claims/not-a-hash.json', 10).stderr, /quota_exceeded/, '모양이 다른 이름은 예외가 아니다');
+  assert.match(upload(Q, 'co-q/_device-lease.json', 10).stderr, /quota_exceeded/, '회사 폴더 안의 같은 이름은 예외가 아니다');
+  sql(`delete from storage.objects where name in ('${Q}/_device-lease.json', '${Q}/.tg-claims/0123456789abcdef01234567.json')`);
   // 기존 파일은 그대로(지우지 않는다)
   assert.equal(sql(`select count(*) from storage.objects where name like '${Q}/%'`), '2');
 });
