@@ -122,3 +122,19 @@ test('판정 파일은 동기화하지 않는다 — 기기마다 그 앱 버전
     assert.equal(EXCLUDE(`some-co/${G.APP_GATE_FILE}`), true, '회사 폴더 안에 생겨도');
   } finally { if (prev === undefined) delete process.env.ARGO_ENC_VAULT; else process.env.ARGO_ENC_VAULT = prev; }
 });
+
+// 0.1.114부터 관문 요청에도 X-Client-Info 끝 ' argo/<버전>' — 서버가 관문 기록에 이 세션의 앱 버전을 남겨, 옛 앱 사용 중지 장치(20261018130000)가
+// 이 세션의 꼬리 없는 다른 요청을 옛 앱으로 오인하지 않게 한다. 꼬리가 빠지면 기준 0.1.113에서 새 앱 세션이 폐기될 수 있다.
+test('appGateClient의 관문 요청은 X-Client-Info에 argo/<앱 버전> 꼬리를 단다(supabase-js 기본값 보존)', async () => {
+  const { appGateClient } = await import('../src/app-gate.mjs');
+  const { ARGO_CLIENT_INFO } = await import('../src/app-version.mjs');
+  assert.ok(ARGO_CLIENT_INFO, '시험 환경에서 앱 버전을 읽지 못했다');
+  const real = globalThis.fetch; let seen = null;
+  globalThis.fetch = async (u, init = {}) => { seen = new Headers(init.headers).get('x-client-info'); return new Response('"0.1.107"', { status: 200, headers: { 'content-type': 'application/json' } }); };
+  try {
+    const sb = appGateClient('http://127.0.0.1:9', 'anon', { auth: { persistSession: false, autoRefreshToken: false } });
+    await sb.rpc('argo_min_app_version', { p_app: 'desktop' });
+  } finally { globalThis.fetch = real; }
+  assert.match(seen ?? '', /^supabase-js\/[^ ]+; runtime=node/, 'supabase-js 기본 X-Client-Info가 남아 있어야 한다');
+  assert.ok((seen ?? '').split(' ').includes(ARGO_CLIENT_INFO), `꼬리가 없다: ${seen}`);
+});

@@ -23,7 +23,7 @@ import { mkdir, writeFile, rename, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
-import { createClient } from '@supabase/supabase-js';
+import { argoCreateClient as createClient } from './supabase-client.mjs'; // X-Client-Info 끝에 argo/<버전>(src/supabase-client.mjs)
 import { exportExcluded } from './export.mjs';
 import { openSecretCompat } from './secretbox.mjs';
 import { loadSyncCreds } from './synccreds.mjs';

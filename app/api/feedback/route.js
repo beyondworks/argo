@@ -3,7 +3,7 @@
 // 세션 출처는 currentUser와 같은 우선순위 — 기기 연동 모드는 쿠키가 없다(기기 파일이 세션의 단일 소유자,
 // devicesession.mjs). 쿠키 클라이언트로만 insert하면 anon이 되어 RLS(42501)에 걸린다.
 import { createServerClient } from '@supabase/ssr';
-import { createClient } from '@supabase/supabase-js';
+import { argoCreateClient as createClient } from '../../../src/supabase-client.mjs'; // X-Client-Info 끝에 argo/<버전>(src/supabase-client.mjs)
 import { cookies } from 'next/headers';
 import { after } from 'next/server';
 import { randomBytes } from 'node:crypto';
