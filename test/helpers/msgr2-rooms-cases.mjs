@@ -35,7 +35,8 @@ export function snapshot(db) {
 }
 
 // U6d 적용 전 판에서 빼는 후속 마이그레이션(U6d 표에 기댄다) — 각각 setupFull 시험이 따로 본다
-export const NEEDS_ROOMS = ['20261018061300_msgr2_invite_revoke_signal.sql']; // test/msgr2-invite-revoke-pg.test.mjs
+export const NEEDS_ROOMS = ['20261018061300_msgr2_invite_revoke_signal.sql', // test/msgr2-invite-revoke-pg.test.mjs
+  '20261019160000_msgr2_aplus.sql']; // test/msgr2-aplus-pg.test.mjs(A+ — 1:1 밖 막기 트리거가 초대 표에 걸린다)
 
 // msgr2 파일을 버전 순서로 적용하되 U6d(이 파일)만 뺀다 — 적용 전·후를 비교하려고(setup()은 U2b 뒤 파일을 모두 적용한다)
 function setupWithoutRooms(DB) {
@@ -91,6 +92,8 @@ export function run(mode) {
       db.psql(['-c', roomsText()]);
       d.reapplied = snapshot(db);
     }
+    // A+(20261019160000)의 1:1 밖 막기(msgr2_lite, 기본 켬)를 끈다 — 이 시험은 팀 공간·초대·여러 사람 방의 전체 기능을 잠근다(기능은 스위치 뒤에 그대로 있다)
+    db.sql(`insert into public.msgr_settings (key, value) values ('msgr2_lite', 'off') on conflict (key) do update set value = excluded.value`);
     for (const [k, v] of Object.entries(U)) { d[k] = seedDevice(db, v, 'app'); db.sql(`update auth.users set email = '${k.toLowerCase()}@ex.com' where id = '${v}'`); }
     d.Orun = seedDevice(db, U.O, 'runner'); d.Orev = seedDevice(db, U.O, 'app', { revoked: true }); d.Oexp = seedDevice(db, U.O, 'app', { expired: true });
     d.Xrun = seedDevice(db, U.X, 'runner');

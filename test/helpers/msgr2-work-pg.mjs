@@ -96,6 +96,13 @@ export function setupFull(DB) {
   return { ...db, files: all };
 }
 
+// A+(20261019160000) 앞의 v2 전체 기능을 잠그는 시험용 — 1:1 밖 막기(msgr2_lite)와 Pro 검사(msgr2_pro_gate)를 끈다.
+// 운영 기본은 둘 다 켬. setupFull은 요금제 마이그레이션까지 적용해 is_pro_for가 있으므로, 시드 사용자(무료)는 켠 채로는 일을 못 만든다.
+// A+ 동작 자체는 test/msgr2-aplus-pg.test.mjs가 켠 상태로 잠근다.
+export function v2FullMode(db) {
+  db.sql(`insert into public.msgr_settings (key, value) values ('msgr2_lite', 'off'), ('msgr2_pro_gate', 'off') on conflict (key) do update set value = excluded.value`);
+}
+
 // 적용 순서: U1 → U3(없으면 최소 판) → U2 → U2b(있으면)
 export const MSGR2_FILES = () => ({ u1: pick('_msgr2_space.sql'), u3: pick('_msgr2_device.sql'), u2: pick('_msgr2_work.sql'), u2b: pick('_msgr2_realtime_storage.sql'), u6b: pick('_msgr2_presence_attach.sql'), u6c1a: pick('_msgr2_work_signal.sql') });
 export const migText = (f) => readFileSync(mig(f), 'utf8');
