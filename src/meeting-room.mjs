@@ -17,7 +17,7 @@ const TIMEOUT_NOTE = { ko: (s) => `시간 상한(${s}초)에 닿아 회의를 �
  * participants = [{ kind:'agent', ref, ws, slug, name } | { kind:'bot', ref, ws, id, name }] — ref는 방에서 그 참여자를 가리키는 값(서버 에이전트 id 등).
  * deps = { chat, interruptTurn, callBot, mirrorCtxFor(p), chatExtra(p) → 추가 chat 옵션(일지 끄기 등), clock{setTimeout,clearTimeout} }
  */
-export async function runMeeting({ text, participants, attachments = [], lang = 'ko', signal = null, maxTurnS = MEETING_MAX_TURN_S, tag, sessionKey = 'argo' }, deps) {
+export async function runMeeting({ text, participants, attachments = [], lang = 'ko', signal = null, maxTurnS = MEETING_MAX_TURN_S, tag, sessionKey = 'argo', rounds = MEETING_LIMITS.rounds }, deps) {
   const clock = deps.clock ?? { setTimeout, clearTimeout };
   const ac = new AbortController();
   let stopped = null;
@@ -79,7 +79,7 @@ export async function runMeeting({ text, participants, attachments = [], lang = 
 
   let failure = null;
   try {
-    await runRoomCore(env, text, attachments, {}, async () => {}, { rounds: MEETING_LIMITS.rounds });
+    await runRoomCore(env, text, attachments, {}, async () => {}, { rounds: Math.max(1, Math.min(Number(rounds) || MEETING_LIMITS.rounds, MEETING_LIMITS.rounds)) }); // offer.meeting.rounds(1..2)
   } catch (e) {
     if (!stopped) failure = e;
   } finally {

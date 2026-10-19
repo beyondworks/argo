@@ -11,7 +11,7 @@ import { join } from 'node:path';
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-extbot-'));
 const bots = await import('../src/ext-bots.mjs');
 const { paths } = await import('../src/workspace.mjs');
-const { saveBot, listBots, callBot, checkBotUrl, isAllowedBotIp, guardedLookup, newBotBudget, _resetBotGates, BOT_LIMITS } = bots;
+const { saveBot, listBots, callBot, checkBotUrl, isAllowedBotIp, guardedLookup, newBotBudget, _resetBotGates, BOT_LIMITS, workErrorCodeFor } = bots;
 const KEY = 'sk-test-ext-bot-key-0001';
 
 /** 가짜 봇 서버 — handler(req, body) → {status, headers, json}. 받은 요청과 동시 진행 최댓값을 기록한다. */
@@ -211,4 +211,38 @@ test('localhost 이름 주소 — 연결 직전 풀이(가드)를 거쳐 실제�
     await saveBot(w, { id: 'h', kind: 'hermes', url: srv.url.replace('127.0.0.1', 'localhost'), key: KEY });
     assert.equal((await callBot({ ws: w, id: 'h' }, { text: 'x' })).text, '로컬 이름');
   } finally { await srv.close(); }
+});
+
+test('BOT_RATE(약속 v1.1 상수) — 동시 2번째는 앞 호출이 끝난 뒤 나가고(대기), 분당 7번째는 bot_limit, 429는 1회 재시도 뒤 실패(bot_limit)', async () => {
+  const { BOT_RATE } = await import('../packages/agent-link/contract/v1.mjs');
+  assert.deepEqual({ ...BOT_RATE }, { concurrent: 1, perMin: 6, retryOn429: 1 });
+  assert.equal(BOT_LIMITS.perMinute, BOT_RATE.perMin); assert.equal(BOT_LIMITS.retry429, BOT_RATE.retryOn429); assert.equal(BOT_LIMITS.concurrent, BOT_RATE.concurrent);
+  // 동시 2번째 대기 — 첫 요청이 끝나기 전에는 둘째 요청이 서버에 닿지 않는다
+  let releaseFirst; const firstHeld = new Promise((r) => { releaseFirst = r; });
+  const srv = await fakeBot(async (q, st) => { if (st.reqs.length === 1) await firstHeld; return hermesOk(`답${st.reqs.length}`); });
+  try {
+    const w = await ws();
+    await saveBot(w, { id: 'h', kind: 'hermes', url: srv.url, key: KEY });
+    const a = callBot({ ws: w, id: 'h' }, { text: '1' });
+    const b = callBot({ ws: w, id: 'h' }, { text: '2' });
+    await new Promise((r) => setTimeout(r, 60));
+    assert.equal(srv.reqs.length, 1, '둘째는 대기 중');
+    releaseFirst();
+    assert.deepEqual([(await a).text, (await b).text], ['답1', '답2']);
+    assert.equal(srv.reqs.length, 2);
+    for (let i = 0; i < 4; i++) await callBot({ ws: w, id: 'h' }, { text: 'x' });
+    const e = await callBot({ ws: w, id: 'h' }, { text: '7번째' }).catch((x) => x);
+    assert.equal(e.code, 'rate_limited'); assert.equal(workErrorCodeFor(e.code), 'bot_limit');
+    assert.equal(srv.reqs.length, 6);
+  } finally { await srv.close(); }
+  const srv2 = await fakeBot(() => ({ status: 429, headers: { 'retry-after': '0' } }));
+  try {
+    const w = await ws();
+    await saveBot(w, { id: 'h', kind: 'hermes', url: srv2.url, key: KEY });
+    const e = await callBot({ ws: w, id: 'h' }, { text: 'x' }).catch((x) => x);
+    assert.equal(srv2.reqs.length, 1 + BOT_RATE.retryOn429);
+    assert.equal(workErrorCodeFor(e.code), 'bot_limit');
+  } finally { await srv2.close(); }
+  for (const c of ['bot_unreachable', 'bot_off', 'no_key', 'public_address', 'bot_auth', 'bot_http', 'bot_empty', 'bot_missing']) assert.equal(workErrorCodeFor(c), 'bot_unreachable', c);
+  for (const c of ['bot_turn_cap', 'bot_hop_cap', 'bot_rate_limited']) assert.equal(workErrorCodeFor(c), 'bot_limit', c);
 });

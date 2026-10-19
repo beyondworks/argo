@@ -18,6 +18,7 @@ import { resetStamp, resumeStamp } from './reset-stamp.mjs';
 import { loadPins, activePin } from './workroots.mjs';
 import { monthCost } from './billing.mjs'; // 반응 라운드 착수 전 예산 게이트(검수 MEDIUM-1)
 import { ROOM_USER_SPEAKER as USER } from './legacy-terms.mjs'; // 회의 화자 표지 '사용자' — 1:1 카드(via-summary)가 이 줄을 읽는다(옛 기록의 화자는 legacy-terms가 같이 읽는다)
+import { LIMITS as LINK_LIMITS } from '../packages/agent-link/contract/v1.mjs'; // 회의방 상한(약속 v1.1)
 import { DELEGATION_LIMITS, limitsFor, isRelaxedStored, resetDelegationLimit, newTree } from './delegation-limits.mjs'; // 위임 제한 표 — 이어받기 인원·반응 라운드 상한(켜짐 3명·2라운드, 풀림 6명·4라운드)
 
 const file = (wsId) => join(paths(wsId).chats, 'room-main.json');
@@ -566,7 +567,7 @@ export function fileRoomEnv(wsId) {
 
 /** 회의방 상한(메신저 v2 A+ — 2026-10-19 유건 승인 설계 "상한 설계"). env.meeting이 있을 때만 걸린다 — 데스크톱 회의실은 종전 그대로.
     rounds 2 고정(풀림 4 안 씀), 참가자 S≤5, 질문 1번당 에이전트 글 S×R≤10, 위임 0(발언 옵션은 env.speak가 정한다), cc·loop 없음. */
-export const MEETING_LIMITS = Object.freeze({ speakers: 5, rounds: 2, posts: 10 });
+export const MEETING_LIMITS = Object.freeze({ speakers: LINK_LIMITS.meetingAgents, rounds: LINK_LIMITS.meetingRounds, posts: LINK_LIMITS.posts }); // 값의 정본 = 약속 v1.1 LIMITS(5·2·10)
 
 /** 회의 실행기 — 데스크톱 회의실과 메신저 회의방이 같이 쓴다. env = fileRoomEnv(wsId) 모양(바깥), state.saved = 안건 저장 뒤 표식, mark = 진행 마커.
     env.meeting = { signal } 이면 회의방 모드: 위 MEETING_LIMITS, 풀림 무시, 취소 신호가 서면 새 발언을 시작하지 않는다(진행 중 발언은 env.speak가 끊는다).

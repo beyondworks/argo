@@ -20,12 +20,15 @@ import { join } from 'node:path';
 import { paths } from './workspace.mjs';
 import { withLock } from './mutex.mjs';
 import { readJson, writeJsonAtomic } from './jsonstore.mjs';
+import { BOT_RATE, LIMITS as LINK_LIMITS } from '../packages/agent-link/contract/v1.mjs';
 
 export const EXT_BOT_KINDS = Object.freeze({
   hermes: Object.freeze({ label: 'Hermes', defaultUrl: 'http://127.0.0.1:8642', path: '/v1/responses' }),
   openclaw: Object.freeze({ label: 'OpenClaw', defaultUrl: 'http://127.0.0.1:18789', path: '/v1/chat/completions' }),
 });
-export const BOT_LIMITS = Object.freeze({ perMinute: 6, concurrent: 1, turnsPerMessage: 4, hops: 2, retry429: 1, retryAfterMaxMs: 30_000, timeoutMs: 900_000, replyMaxBytes: 1024 * 1024, textMax: 20_000 });
+// 속도·연쇄 상한의 정본 = 약속 v1.1(BOT_RATE{concurrent 1, perMin 6, retryOn429 1}, LIMITS.botTurns 4·botHops 2). 동시 1은 아래 줄 세우기(gate.chain)가 지킨다
+export const BOT_LIMITS = Object.freeze({ perMinute: BOT_RATE.perMin, concurrent: BOT_RATE.concurrent, turnsPerMessage: LINK_LIMITS.botTurns, hops: LINK_LIMITS.botHops, retry429: BOT_RATE.retryOn429, retryAfterMaxMs: 30_000, timeoutMs: 900_000, replyMaxBytes: 1024 * 1024, textMax: 20_000 });
+export { workErrorCodeFor } from './ext-bots-codes.mjs';
 
 const botErr = (code, message = code) => Object.assign(new Error(message), { code });
 
