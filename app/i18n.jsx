@@ -866,6 +866,8 @@ const DICT = {
   // 카운터는 회수가 실행된 사이클에만 잠깐 보인다(분리 검수 LOW-C) — 문구가 관측을 약속하지 않는다.
   'settings.sync.credOffHelp': ['이 회사의 자격 증명은 각 기기에만 저장됩니다. 클라우드에 있던 사본은 동기화가 실제로 도는 상태(Pro·체험)에서 다음 사이클에 회수되며, 무료 플랜은 클라우드 쓰기가 막혀 있어 회수가 보류됩니다. 새 기기(및 클라우드 워커)에서는 러너·봇을 다시 연결해야 합니다.', 'Credentials for this company stay on each device only. Cloud copies are withdrawn on the next cycle while sync actually runs (Pro/trial); on the free plan cloud writes are blocked, so withdrawal stays pending. New devices (and cloud workers) must reconnect runners and bots.'],
   'settings.sync.credWithdrawn': ['자격 회수 {n}건', 'credentials withdrawn: {n}'],
+  'settings.sync.quotaWarn': ['클라우드 용량 {used} / {limit} 사용({pct}%) — 가득 차면 새 파일과 수정은 이 기기에만 저장됩니다', 'Cloud storage {used} of {limit} used ({pct}%) — when it is full, new files and edits stay on this device only'],
+  'settings.sync.quotaFull': ['클라우드 용량이 가득 찼습니다({used} / {limit}) — 새 파일과 수정은 이 기기에만 저장되고, 기존 클라우드 사본과 받기는 그대로입니다. 파일을 정리하면 다시 올라갑니다.', 'Cloud storage is full ({used} of {limit}) — new files and edits stay on this device; existing cloud copies and downloads continue. Free up space and they upload again.'],
   'settings.sync.oversize': ['동기화 제외(크기 초과) {n}개 · {names} — {mb}MB를 넘는 파일은 기기 간에 주고받지 않습니다', 'Not synced (too large): {n} · {names} — files over {mb} MB aren\'t synced between devices'],
   'settings.sync.credErr': ['설정 저장에 실패했습니다', 'Failed to save the setting'],
   // E2EE(종단간 암호화) — 회사 데이터까지 본인만 여는 열쇠 구조
@@ -917,7 +919,7 @@ const DICT = {
   'billing.cancelledUntil': ['해지 예약됨 — {date}까지 이용 가능', 'Cancellation scheduled — available until {date}'],
   'billing.cloudPaused': ['구독이 종료돼 클라우드 동기화가 잠자는 중입니다 — 로컬 사용은 그대로이고, 데이터는 안전하게 보존됩니다. 재구독하면 그 자리에서 이어집니다.', 'Your subscription ended, so cloud sync is asleep — local use is unaffected and your data is safely preserved. Resubscribe and it resumes right where it left off.'],
   // 클라우드 사본 삭제 예정(R4, 2026-09-29) — Pro가 아닌 계정의 클라우드 사본은 30일 보관 후 삭제(운영 스크립트, 이번엔 자동 실행 아님).
-  'billing.purgeNotice': ['Pro가 아니어서 클라우드 사본은 {date}에 삭제됩니다 — 업그레이드하면 삭제되지 않습니다.', "You're not on Pro, so this cloud copy will be deleted on {date} — upgrade to keep it."],
+  'billing.purgeNotice': ['무료 플랜은 클라우드 사본을 두지 않습니다({date} 이후 정리) — 이 기기 파일이 정본이고, Pro로 바꾸면 이 기기 파일이 다시 올라갑니다.', "The Free plan keeps no cloud copy (cleared after {date}) — files on this device are the original, and upgrading to Pro uploads them again."],
   'settings.conn.token': ['봇 토큰', 'Bot Token'],
   'settings.conn.tokenSaved': ['저장됨', 'saved'],
   'settings.conn.tokenPlaceholder': ['변경할 때만 입력', 'Enter only to change'],
