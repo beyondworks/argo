@@ -1,6 +1,6 @@
 // 데스크톱 옛 세션 일괄 폐기(…_argo_old_desktop_session_purge.sql + scripts/old-desktop-session-purge.sh)를 실제 Postgres에서 본다.
 // auth.sessions는 Supabase GoTrue와 같은 열(user_agent·ip·refreshed_at·oauth_client_id)을 가진 대역, refresh_tokens는 FK on delete cascade.
-// #1107(…_argo_old_app_cutoff.sql)이 main에 없으면 origin/feat/old-app-cutoff에서 읽는다(병합 전 의존).
+// #1107(…_argo_old_app_cutoff.sql) 위에서 돈다.
 // 실행: bash scripts/billing-pg-drill.sh test/argo-old-desktop-purge-pg.test.mjs
 import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,14 +16,7 @@ const DB = process.env.ARGO_PG_TEST_URL;
 const skip = !DB && 'ARGO_PG_TEST_URL 미설정 — bash scripts/billing-pg-drill.sh test/argo-old-desktop-purge-pg.test.mjs';
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const MIG_DIR = join(ROOT, 'supabase/migrations/');
-function migByTail(tail, fallbackRef) {
-  const f = readdirSync(MIG_DIR).filter((n) => n.endsWith(tail));
-  if (f.length === 1) return readFileSync(MIG_DIR + f[0], 'utf8');
-  assert.ok(fallbackRef, `${tail} 없음`);
-  const r = spawnSync('git', ['show', `${fallbackRef}:supabase/migrations/20261018130000${tail}`], { cwd: ROOT, encoding: 'utf8' });
-  assert.equal(r.status, 0, `${tail}을 main에도 ${fallbackRef}에도 못 찾음 — git fetch origin feat/old-app-cutoff`);
-  return r.stdout;
-}
+const migByTail = (tail) => { const f = readdirSync(MIG_DIR).filter((n) => n.endsWith(tail)); assert.equal(f.length, 1, `${tail} 하나 (${f})`); return readFileSync(MIG_DIR + f[0], 'utf8'); };
 function psql(args) { const r = psqlSpawn(DB, args); if (r.status !== 0) throw new Error(`psql 실패: ${r.stderr || r.stdout}`); return r.stdout; }
 const sql = (q) => psql(['-A', '-t', '-c', q]).trim();
 const last = (s) => s.split('\n').filter(Boolean).pop() ?? '';
@@ -76,7 +69,7 @@ before(() => {
     create table if not exists public.msgr_settings (key text primary key, value text not null); alter table public.msgr_settings enable row level security;
   `]);
   psql(['-c', migByTail('_msgr_app_min_version.sql')]);
-  psql(['-c', migByTail('_argo_old_app_cutoff.sql', 'origin/feat/old-app-cutoff')]);
+  psql(['-c', migByTail('_argo_old_app_cutoff.sql')]);
   psql(['-c', migByTail('_argo_old_desktop_session_purge.sql')]);
 });
 
