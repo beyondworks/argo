@@ -30,12 +30,12 @@ const newId = () => (globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUI
 
 /**
  * opts.client: supabase-js 클라이언트(rpc·from·channel·removeChannel·storage). 시험은 같은 모양의 가짜를 넣는다.
- * opts.userId, opts.appVersion(이 앱 판), opts.pushToken(있으면 등록에 싣는다).
+ * opts.userId, opts.appVersion(이 앱 판), opts.pushToken(있으면 등록에 싣는다 — 토큰은 플러그인이 늦게 주므로 보통 setPushToken으로 나중에 싣는다, R3).
  * opts.storage(localStorage 모양), opts.clock({ now, setTimeout, clearTimeout }), opts.random, opts.names·reconnect·sendRetry(시험·U1~U3 맞춤용).
  */
 export function createLinkMachine(opts) {
   const {
-    client, userId, appVersion = null, pushToken = null, storage = defaultStorage(), clock = realClock, random = Math.random,
+    client, userId, appVersion = null, pushToken: initialPush = null, storage = defaultStorage(), clock = realClock, random = Math.random,
     names = NAMES, reconnect = RECONNECT, sendRetry = SEND_RETRY, registerEveryMs = REGISTER_EVERY_MS,
   } = opts || {};
   if (!client || !userId) throw new Error('link: client and userId are required');
@@ -44,6 +44,8 @@ export function createLinkMachine(opts) {
   let foreground = true; let stopped = false; let booted = false;
   let epoch = 0; // 끊김·뒤로 감·폐기 때 올린다 — 그 전에 시작한 비동기 이어짐을 버린다
   let deviceId = null; let registeredAt = 0;
+  let pushToken = initialPush || null; let sentPush; let pushSyncing = false; const regs = new Set(); // 진행 중인 등록 요청(로그아웃 때 끝나기를 기다린다) // 서버 기기 행에 실린 토큰(등록 성공 때의 값) — 다르면 한 번 더 등록한다(R3)
+  let pushLocked = false; // 로그아웃 중(dropPushToken 뒤) — 늦게 온 토큰을 옛 계정 행에 다시 쓰지 않는다
   let uChannel = null; let subscribed = false;
   let reopenedPaused = false;
   let attempts = 0; let timer = null; let nextAt = null; let lastAttemptAt = -Infinity;
@@ -157,6 +159,7 @@ export function createLinkMachine(opts) {
   // ── 시작 ───────────────────────────────────────────────────────────────────
   async function start() {
     if (stopped || state !== STATES.idle) return snapshot();
+    pushLocked = false;
     await boot();
     return snapshot();
   }
@@ -185,15 +188,15 @@ export function createLinkMachine(opts) {
     clearTimer();
     const gen = ++epoch;
     lastAttemptAt = clock.now();
-    if (!deviceId || clock.now() - registeredAt >= registerEveryMs) {
+    if (!deviceId || clock.now() - registeredAt >= registerEveryMs || pushToken !== sentPush) {
       setState(STATES.registering);
-      const r = await call(() => client.rpc(names.registerRpc, registerArgs()));
+      const args = registerArgs();
+      const r = await regCall(args);
       if (gen !== epoch || terminal()) return;
       if (r.code) {
         if (handleCode(r.code, 'register')) return;
         drop(r.code); return; // 만료 토큰 401 같은 일시 거부도 간격·상한(8회) 안에서 다시 붙는다(따라잡기와 같은 규칙)
       }
-      deviceId = deviceIdOf(r.data) ?? deviceId; registeredAt = clock.now();
     }
     setState(STATES.subscribing);
     catchWhenSettled = false;
@@ -361,6 +364,52 @@ export function createLinkMachine(opts) {
     attempts = 0;
     setState(STATES.ready);
     for (const id of watched.keys()) joinWork(id);
+    if (pushToken !== sentPush) void syncPush(); // 등록 중에 토큰이 왔다
+  }
+
+  // ── 푸시 토큰(R3: v2 앱이 토큰을 기기 등록에 싣지 않아 휴대폰 알림이 오지 않았다) ─────────────
+  /** 플러그인이 준 기기 푸시 토큰을 싣는다. 서버에 실린 값과 같으면 요청 0. 등록 전·등록 중이면 그 등록이 싣고, 붙어 있으면 등록 RPC 1회(서버는 값이 바뀐 때만 쓴다). */
+  function setPushToken(token) {
+    if (pushLocked) return false; // 로그아웃 중: 권한 창을 늦게 누르거나 앱 재개가 그 사이 와도 싣지 않는다(최종 검수 2026-10-20). 로그아웃이 실패하면 resumePush로 푼다
+    const next = typeof token === 'string' && token ? token : null;
+    const changed = next !== pushToken;
+    pushToken = next;
+    void syncPush(); // 같은 값이어도 앞서 싣기가 실패했으면(앱 재개) 한 번 더 — 실려 있으면 syncPush가 요청 없이 끝난다
+    return changed;
+  }
+  async function syncPush() {
+    if (pushSyncing || stopped || terminal() || !deviceId || state === STATES.paused || BUSY.includes(state) || pushToken === sentPush) return;
+    pushSyncing = true;
+    try {
+      const args = registerArgs();
+      const r = await regCall(args);
+      if (stopped || terminal()) return;
+      if (r.code) { handleCode(r.code, 'push'); return; } // 실패는 되풀이하지 않는다 — 다음 연결(재연결·앱 재개)의 등록이 싣는다(connect 조건)
+    } finally { pushSyncing = false; }
+    if (pushToken !== sentPush) void syncPush(); // 보내는 사이 또 바뀌었다
+  }
+  /** 로그아웃 직전: 이 기기 행의 토큰을 비운다(다음 계정·로그아웃한 폰으로 알림이 가지 않게). 실린 토큰이 없으면 요청 0. 비웠으면 true. */
+  /** 등록 RPC 1회 — 성공하면 그 자리에서 기기 id·등록 시각·실린 토큰을 적는다(로그아웃이 이 묶음이 끝나기를 기다린 뒤 판정한다). */
+  function regCall(args) {
+    const p = call(() => client.rpc(names.registerRpc, args)).then((r) => {
+      if (!r.code) { deviceId = deviceIdOf(r.data) ?? deviceId; registeredAt = clock.now(); sentPush = args.p_push_token; }
+      return r;
+    });
+    regs.add(p); void p.finally(() => regs.delete(p));
+    return p;
+  }
+  /** 로그아웃이 실패해 이 계정이 그대로일 때만 — 잠금을 풀어 토큰을 다시 실을 수 있게 한다. */
+  function resumePush() { pushLocked = false; }
+  async function dropPushToken() {
+    pushLocked = true;
+    pushToken = null;
+    if (regs.size) await Promise.allSettled([...regs]); // 토큰을 싣는 등록이 날아가는 중이면 그 결과를 보고 판정한다(#분리 검수: 끝난 뒤 토큰이 남는 틈)
+    if (sentPush == null) return true;
+    if (!deviceId || stopped || terminal()) return false;
+    const r = await call(() => client.rpc(names.registerRpc, registerArgs()));
+    if (r.code) return false;
+    sentPush = null;
+    return true;
   }
 
   // ── 큰 팀 open 방(v2:s:<공간>) ──────────────────────────────────────────────
@@ -609,7 +658,7 @@ export function createLinkMachine(opts) {
   }
 
   return {
-    start, stop, setForeground, nudge, retry, send, watchWork, setActiveRoom, clearMore, setSpaces, on,
+    start, stop, setForeground, nudge, retry, send, setPushToken, dropPushToken, resumePush, watchWork, setActiveRoom, clearMore, setSpaces, on,
     getState: () => state, getSnapshot: snapshot,
   };
 }

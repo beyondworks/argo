@@ -1,0 +1,8 @@
+<!doctype html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<script>
+// 축소판 A+ 화면 픽스처 — 가짜 원본(src/aplus/fake.mjs)으로만 띄운다. 운영·qbwr에 접속하지 않는다.
+// ?scenario=pro-many|pro-one|pro-none|free|unknown|offline|meeting-running|closed &lang=ko|en &theme=graphite-light|graphite-dark &tab=dm|meet|bots|me &open=1&row=<이름 일부> &sheet=meeting|bot &still=1
+(function () { var p = new URLSearchParams(location.search);
+  localStorage.setItem('argo-lang', p.get('lang') || 'ko'); localStorage.setItem('argo-theme', p.get('theme') || 'graphite-light');
+  if (p.get('still')) document.write('<style>*,*::before,*::after{animation:none!important;transition:none!important}</style>'); })();
+</script></head><body class="argo-messenger"><div id="root"></div><script type="module" src="/test/aplus.fixture.jsx"></script></body></html>
