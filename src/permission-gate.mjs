@@ -259,6 +259,7 @@ const WS_DOT_FILES = new Set([
   '.failure-digest.json', // 실패 서명 다이제스트 상태(보고 시각) — 크루가 고치면 반복 실패 경보를 영구 침묵시킬 수 있다(#446 검수 D1)
   '.runner-health.json', // 주기 검진 상태(P1-2 후속) — 크루가 고치면 죽은 자격이 초록으로 위장되거나 과금 스로틀이 풀린다
   '.runner-limits.json', // 구독 잔여 한도(K91, WS_ROOT 직속·계정 지문 키) — 크루가 고치면 입력줄 게이지가 거짓 한도를 보인다
+  '.sync-conflicts', // 새 시작 합치기에서 진 쪽 사본(회사 루트 직속, sync.mjs SYNC_CONFLICTS_DIR) — 기기 로컬 보관본이라 크루가 지우거나 고치면 그 사본이 사라진다
   '.plan-seen.json', // 마지막 확정 요금제(WS_ROOT 직속, sync.mjs resolvePlan) — 크루가 'free'로 고치면 Pro 기기의 동기화·리스가 멈추고, 'pro'로 고치면 무료 기기가 클라우드를 부른다
   '.msgr-cc', // scoped messenger CC receipts are runtime metadata, not crew-editable shared memory
   '.gw-queue-', '.gw-offset', // 게이트웨이 큐·오프셋(접두 — 채널 접미를 함께 덮는다)
