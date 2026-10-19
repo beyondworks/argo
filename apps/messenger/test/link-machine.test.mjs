@@ -952,6 +952,7 @@ test('R3 로그아웃: dropPushToken → 등록 1회에 p_push_token null(실린
   const n = fake.count('msgr2_device_register');
   assert.equal(await m.dropPushToken(), true);
   assert.equal(fake.count('msgr2_device_register'), n, '실린 토큰 없음 — 요청 0');
+  m.resumePush(); // 로그아웃이 실패해 같은 계정이 남은 경우(최종 검수 잠금 해제)
   m.setPushToken('apns-token-1'); await flush();
   assert.equal(await m.dropPushToken(), true);
   assert.equal(fake.count('msgr2_device_register'), n + 2);
@@ -972,4 +973,18 @@ test('R3 분리 검수: 토큰을 싣는 등록이 날아가는 중에 로그아
   assert.ok(toks.length <= 5, '비우기 요청은 상한 안(후속 싣기 1 + 로그아웃 1)');
   await flush();
   assert.equal(fake.log.filter((l) => l.name === 'msgr2_device_register').at(-1).args.p_push_token, null);
+});
+
+test('R3 최종 검수: 로그아웃(dropPushToken) 뒤 늦게 온 토큰(권한 창·앱 재개)은 옛 계정 행에 다시 쓰지 않는다, 로그아웃 실패면 resumePush로 다시 싣는다', async () => {
+  const { m, fake } = setup();
+  await m.start(); await flush();
+  m.setPushToken('apns-token-1'); await flush();
+  assert.equal(await m.dropPushToken(), true);
+  const n = fake.count('msgr2_device_register');
+  assert.equal(m.setPushToken('apns-token-1'), false, '잠금 중에는 받지 않는다');
+  m.setPushToken('apns-token-2'); await flush();
+  assert.equal(fake.count('msgr2_device_register'), n, '로그아웃 중 늦은 토큰 — 등록 0');
+  assert.equal(fake.log.filter((l) => l.name === 'msgr2_device_register').at(-1).args.p_push_token, null);
+  m.resumePush(); m.setPushToken('apns-token-1'); await flush();
+  assert.equal(fake.log.at(-1).args.p_push_token, 'apns-token-1', '로그아웃이 실패하면 다시 싣는다');
 });

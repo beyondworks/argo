@@ -45,6 +45,7 @@ export function createLinkMachine(opts) {
   let epoch = 0; // 끊김·뒤로 감·폐기 때 올린다 — 그 전에 시작한 비동기 이어짐을 버린다
   let deviceId = null; let registeredAt = 0;
   let pushToken = initialPush || null; let sentPush; let pushSyncing = false; const regs = new Set(); // 진행 중인 등록 요청(로그아웃 때 끝나기를 기다린다) // 서버 기기 행에 실린 토큰(등록 성공 때의 값) — 다르면 한 번 더 등록한다(R3)
+  let pushLocked = false; // 로그아웃 중(dropPushToken 뒤) — 늦게 온 토큰을 옛 계정 행에 다시 쓰지 않는다
   let uChannel = null; let subscribed = false;
   let reopenedPaused = false;
   let attempts = 0; let timer = null; let nextAt = null; let lastAttemptAt = -Infinity;
@@ -158,6 +159,7 @@ export function createLinkMachine(opts) {
   // ── 시작 ───────────────────────────────────────────────────────────────────
   async function start() {
     if (stopped || state !== STATES.idle) return snapshot();
+    pushLocked = false;
     await boot();
     return snapshot();
   }
@@ -368,6 +370,7 @@ export function createLinkMachine(opts) {
   // ── 푸시 토큰(R3: v2 앱이 토큰을 기기 등록에 싣지 않아 휴대폰 알림이 오지 않았다) ─────────────
   /** 플러그인이 준 기기 푸시 토큰을 싣는다. 서버에 실린 값과 같으면 요청 0. 등록 전·등록 중이면 그 등록이 싣고, 붙어 있으면 등록 RPC 1회(서버는 값이 바뀐 때만 쓴다). */
   function setPushToken(token) {
+    if (pushLocked) return false; // 로그아웃 중: 권한 창을 늦게 누르거나 앱 재개가 그 사이 와도 싣지 않는다(최종 검수 2026-10-20). 로그아웃이 실패하면 resumePush로 푼다
     const next = typeof token === 'string' && token ? token : null;
     const changed = next !== pushToken;
     pushToken = next;
@@ -395,7 +398,10 @@ export function createLinkMachine(opts) {
     regs.add(p); void p.finally(() => regs.delete(p));
     return p;
   }
+  /** 로그아웃이 실패해 이 계정이 그대로일 때만 — 잠금을 풀어 토큰을 다시 실을 수 있게 한다. */
+  function resumePush() { pushLocked = false; }
   async function dropPushToken() {
+    pushLocked = true;
     pushToken = null;
     if (regs.size) await Promise.allSettled([...regs]); // 토큰을 싣는 등록이 날아가는 중이면 그 결과를 보고 판정한다(#분리 검수: 끝난 뒤 토큰이 남는 틈)
     if (sentPush == null) return true;
@@ -652,7 +658,7 @@ export function createLinkMachine(opts) {
   }
 
   return {
-    start, stop, setForeground, nudge, retry, send, setPushToken, dropPushToken, watchWork, setActiveRoom, clearMore, setSpaces, on,
+    start, stop, setForeground, nudge, retry, send, setPushToken, dropPushToken, resumePush, watchWork, setActiveRoom, clearMore, setSpaces, on,
     getState: () => state, getSnapshot: snapshot,
   };
 }

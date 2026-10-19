@@ -429,7 +429,7 @@ export default function App() {
         const { data, error } = await supabase.auth.getSession();
         if (error) throw error;
         if (data.session?.user?.id !== session.user.id) return;
-        if (V2) { if (isMobilePlatform) { const r = await getPushToken(false); if (r.token) currentV2()?.machine.setPushToken(r.token); } return; } // v2: 비운 토큰을 기기 행에 되돌린다(R3)
+        if (V2) { const mc = currentV2()?.machine; mc?.resumePush?.(); if (isMobilePlatform) { const r = await getPushToken(false); if (r.token) mc?.setPushToken(r.token); } return; } // v2: 로그아웃이 실패했다 — 싣기 잠금을 풀고 비운 토큰을 기기 행에 되돌린다(R3)
         activatePush(supabase, session.user.id);
         const result = await registerPush(supabase);
         if (result !== 'registered' && result !== 'unsupported' && result !== 'cancelled') setLogoutNotice('push.logout.restoreFailed');

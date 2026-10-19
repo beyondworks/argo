@@ -172,3 +172,17 @@ test('v2(R3): 로그아웃은 옛 detachPush 대신 이 기기 행의 토큰을 
     assert.deepEqual(calls, ['drop', 'local']); assert.equal(notice, expect);
   }
 });
+
+test('v2(R3 최종 검수): 로그아웃이 실패하면 싣기 잠금을 풀고(resumePush) 이 기기 토큰을 다시 싣는다', async () => {
+  const source = fs.readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
+  const start = source.indexOf('  const signOut = async () => {');
+  const body = source.slice(start, source.indexOf('  useMobileViewport();', start)).replace('const signOut =', 'globalThis.signOut =');
+  const calls = []; let notice = '';
+  const machine = { dropPushToken: async () => { calls.push('drop'); return true; }, resumePush: () => calls.push('resume'), setPushToken: (t) => calls.push(`set:${t}`) };
+  const context = { V2: true, isMobilePlatform: true, currentV2: () => ({ machine }), getPushToken: async () => ({ token: 'tok' }),
+    logoutPending: { current: false }, session: { user: { id: 'fixture' } }, setSigningOut: () => {}, setLogoutNotice: (v) => { notice = v; },
+    recoveryRef: { current: { restartSignIn: async () => { calls.push('signout'); return { error: { message: 'offline' } }; } } },
+    supabase: { auth: { getSession: async () => ({ data: { session: { user: { id: 'fixture' } } } }) } } };
+  vm.runInNewContext(body, context); await context.signOut();
+  assert.deepEqual(calls, ['drop', 'signout', 'resume', 'set:tok']); assert.equal(notice, 'push.logout.failed');
+});
