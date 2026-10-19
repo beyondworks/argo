@@ -46,6 +46,8 @@ export const UPDATE_NOTES = Object.freeze({
   '0.1.112': Object.freeze(['updates.note.limitNotice', 'updates.note.fallbackOrder', 'updates.note.idleLess']),
   // 0.1.113 — msgrArchive: 메신저가 일시 중단된 동안 메신저 기록을 이 기기 Argo 보관 폴더로 한 번 복사, 끝나면 설정 › 연결에서 보관 폴더 열기(#1061 출시 알림 카드의 '옮겨진 메신저 기록' 줄), 기기 사이 동기화 없음, 에이전트 기억과 섞이지 않음(#1056) · msgrPausedQuiet: 일시 중단 동안 메신저 서버 확인을 30분에 한 번으로, 다시 열린 뒤 30분 안에 원래대로(#1055) · msgrPausedSettings: 일시 중단 동안 설정에서 메신저 항목을 숨기고 출시 알림 신청과 옮겨 둔 기록 폴더 열기만(#1061 — #1059의 '쉬는 중' 표시를 대신)
   '0.1.113': Object.freeze(['updates.note.msgrArchive', 'updates.note.msgrPausedQuiet', 'updates.note.msgrPausedSettings']),
+  // 0.1.114 — freeLocal: 무료는 이 기기에서만(로그인·플랜 확인 말고 클라우드 호출 0, 루틴·텔레그램은 이 기기에서, 메신저 연결은 Pro — #1109·#1110) · proQuota: Pro 클라우드 5GB, 80%부터 안내, 가득 차면 새 업로드만 멈춤(#1109·#1110)
+  '0.1.114': Object.freeze(['updates.note.freeLocal', 'updates.note.proQuota']),
 });
 
 export function stableVersion(value) {
