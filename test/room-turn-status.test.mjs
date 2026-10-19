@@ -244,13 +244,13 @@ test('DELETE /room(회의 마치기)은 턴 진행 중이면 409로 거절한다
 
 test('배선: runRoomTurn이 마커 래퍼를 타고, 순차 경로는 발언마다 발언자를 갱신하며, 실패를 방에 남긴다(소스 구간 불변식)', async () => {
   const src = stripComments(await readFile(new URL('../src/room.mjs', import.meta.url), 'utf8'));
-  // 불변식: runRoomTurn 본문은 withRoomTurnStatus 호출 하나이고, 실제 턴(runRoomTurnInner)은 그 안에서만 불린다.
-  const rt = src.slice(src.indexOf('export async function runRoomTurn('), src.indexOf('async function runRoomTurnInner('));
+  // 불변식: runRoomTurn 본문은 withRoomTurnStatus 호출 하나이고, 실제 턴(회의 실행기 runRoomCore + 데스크톱 바깥 fileRoomEnv)은 그 안에서만 불린다.
+  const rt = src.slice(src.indexOf('export async function runRoomTurn('), src.indexOf('export function fileRoomEnv('));
   assert.match(rt, /export async function runRoomTurn\(wsId, text, attachments = \[\], \{ rounds = 2, concurrency = ROOM_CONCURRENCY \} = \{\}\) \{\s*\n\s*return withRoomTurnStatus\(wsId, async \(mark\) => \{/,
     '래퍼를 우회하면 마커가 안 생겨 복원이 죽는다 — 반응 라운드 기본 2, 동시 상한 기본 ROOM_CONCURRENCY');
-  assert.match(rt, /return await runRoomTurnInner\(wsId, text, attachments, state, mark, \{ rounds, concurrency \}\);/, '실제 턴은 래퍼 안에서만, 발언자 갱신은 래퍼의 mark로');
-  assert.equal((src.match(/(?<!function )runRoomTurnInner\(wsId, text, attachments/g) ?? []).length, 1, '래퍼 밖 직접 호출 금지(정의부 제외)');
-  const inner = src.slice(src.indexOf('async function runRoomTurnInner('));
+  assert.match(rt, /return await runRoomCore\(fileRoomEnv\(wsId\), text, attachments, state, mark, \{ rounds, concurrency \}\);/, '실제 턴은 래퍼 안에서만, 발언자 갱신은 래퍼의 mark로');
+  assert.equal((src.match(/runRoomCore\(fileRoomEnv\(/g) ?? []).length, 1, '데스크톱 바깥으로 회의 실행기를 부르는 곳은 래퍼 안 한 곳(회의방은 meeting-room.mjs가 자기 바깥으로 부른다)');
+  const inner = src.slice(src.indexOf('export async function runRoomCore('));
   assert.doesNotMatch(inner, /setTurnStatus\(wsId, ROOM_TURN_SLUG/, '루프의 마커 직접 쓰기 금지 — 하트비트가 덮는다');
   // 순차(릴레이·1명) 경로 — 마커 인코딩·발언자 갱신 위치·실패 처리
   assert.match(src, /const markerFor = \(j\) => \(speakers\[j\] \? `\$\{speakers\[j\]\.slug\}\|\$\{speakers\.slice\(j \+ 1\)\.map\(\(s\) => s\.slug\)\.join\(','\)\}\|\$\{speakers\.length\}` : `\|\|\$\{speakers\.length\}`\);/,
