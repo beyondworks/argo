@@ -8,7 +8,7 @@ import { createV2Runtime, gaveUpOf } from '../v2/runtime.mjs';
 import { bindLifecycle } from '../link/lifecycle.mjs';
 import { loadRoom } from '../v2/data.mjs';
 import { planOf } from '../pro-checkout.mjs';
-import { runStateOf, errorKey } from './model.mjs';
+import { runStateOf, effectiveState, afterCancel, errorKey } from './model.mjs';
 
 const ok = (r) => { if (r?.error) throw Object.assign(new Error(r.error.message || 'request failed'), { code: r.error.code, status: r.status }); return r?.data ?? null; };
 const notReady = () => Object.assign(new Error('aplus_not_ready'), { code: 'aplus_not_ready' });
@@ -24,7 +24,8 @@ export function createAPlusSource({ raw, uid, appVersion = null }) {
   // 봇 일이 bot_unreachable·bot_limit 등으로 실패하면 그 방에 안내 줄 하나(글이 아니라 화면용 — 서버에 쓰지 않는다)
   const errNote = (w) => (w?.state === 'failed' && errorKey(w.error_code) ? { id: `werr-${w.id}`, author: 'system', kind: 'note', errKey: errorKey(w.error_code), at: Date.parse(w.updated_at ?? w.created_at ?? '') || Date.now() } : null);
   const meetingRooms = new Map(); // roomId → { workId, total } — 취소할 일, 사건으로 온 일의 진행
-  const runOf = (w, total) => ({ workId: w.id, state: runStateOf(w.state), total });
+  // 진행 = 서버가 읽을 때 계산하는 상태와 같은 계산(effectiveState). until = 기한이 지나면 끝남으로 바뀌는 시각(offered만 — 리스는 본체가 늘리므로 다시 읽을 때만 본다)
+  const runOf = (w, total) => ({ workId: w.id, state: runStateOf(effectiveState(w)), until: w.state === 'offered' ? Date.parse(w.expires_at ?? '') || null : null, total });
   return {
     uid,
     on(type, fn) { if (!listeners.has(type)) listeners.set(type, new Set()); listeners.get(type).add(fn); return () => listeners.get(type)?.delete(fn); },
@@ -72,7 +73,7 @@ export function createAPlusSource({ raw, uid, appVersion = null }) {
       const rooms = ok(await raw.from('msgr2_rooms').select('id, name, created_at, meeting').eq('space_id', sp).eq('meeting', true).is('archived_at', null)) ?? [];
       const ids = rooms.map((r) => r.id);
       const members = ids.length ? ok(await raw.from('msgr2_room_members').select('room_id, member_kind, member_id').in('room_id', ids).eq('member_kind', 'agent').is('removed_at', null)) ?? [] : [];
-      const works = ids.length ? ok(await raw.from('msgr2_works').select('id, room_id, state, created_at').in('room_id', ids).order('created_at', { ascending: false }).limit(200)) ?? [] : [];
+      const works = ids.length ? ok(await raw.from('msgr2_works').select('id, room_id, state, created_at, expires_at, lease_until, has_result').in('room_id', ids).order('created_at', { ascending: false }).limit(200)) ?? [] : [];
       return rooms.map((r) => {
         const agentIds = members.filter((m) => m.room_id === r.id).map((m) => m.member_id);
         const w = works.find((x) => x.room_id === r.id);
@@ -86,7 +87,10 @@ export function createAPlusSource({ raw, uid, appVersion = null }) {
       await ready();
       const m = meetingRooms.get(roomId); if (!m?.workId) return;
       emit('meeting', { roomId, run: { workId: m.workId, state: 'cancelling', total: m.total } });
-      ok(await raw.rpc('msgr2_work_cancel', { p_work: m.workId }));
+      let st;
+      try { st = ok(await raw.rpc('msgr2_work_cancel', { p_work: m.workId })); } catch (e) { emit('meeting', { roomId, run: { workId: m.workId, state: 'running', total: m.total } }); throw e; }
+      // 이미 끝난 일(done·failed·expired)이면 서버는 쓰지 않고 그 상태만 돌려준다(방송 없음) — 돌려받은 값으로 바로 바꾼다(재검수: 'cancelling'에 갇힘)
+      emit('meeting', { roomId, run: { workId: m.workId, state: afterCancel(st), total: m.total } });
     },
     /** 외부 봇: 내 에이전트 중 hosting 'bot'. 상태는 봇마다 마지막 일로(봇 상태 표는 서버에 없다). 탭을 열 때 1회(요청 2). */
     async bots() {

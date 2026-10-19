@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { accessOf, agentRows, togglePick, meetingDraftProblem, meetingView, meetingPickable, deriveRun, runStateOf, errorKey, limitKey, botStatusOf, layoutOf, notOpenYet, MEETING_MAX, MEETING_ROUNDS } from '../src/aplus/model.mjs';
+import { accessOf, agentRows, togglePick, meetingDraftProblem, meetingView, meetingPickable, deriveRun, runStateOf, effectiveState, afterCancel, errorKey, limitKey, botStatusOf, layoutOf, notOpenYet, MEETING_MAX, MEETING_ROUNDS } from '../src/aplus/model.mjs';
 import { aplusEnabled, APLUS_FLAG_KEY } from '../src/aplus/flag.mjs';
 import { createFakeSource } from '../src/aplus/fake.mjs';
 import { DICT } from '../src/i18n.js';
@@ -81,7 +81,8 @@ test('회의 진행 계산: 그 일(workId)의 글 meta.round 최대값과 그 �
   const msgs = [{ workId: 'w0', round: 2, author: 'a' }, { workId: 'w1', round: 1, author: 'a' }, { workId: 'w1', round: 1, author: 'b' }, { workId: 'w1', round: 1, author: 'c' }, { workId: 'w1', round: 2, author: 'a' }];
   assert.deepEqual(deriveRun(run, msgs), { ...run, round: 2, answered: 1 }, '다른 일(w0)의 글은 세지 않는다');
   assert.deepEqual(deriveRun({ state: 'running', round: 1, answered: 2, total: 3 }, msgs), { state: 'running', round: 1, answered: 2, total: 3 }, 'workId 없으면 주어진 값');
-  assert.equal(runStateOf('accepted'), 'running'); assert.equal(runStateOf('waiting_approval'), 'running');
+  assert.equal(runStateOf('accepted'), 'running'); assert.equal(runStateOf('awaiting_approval'), 'running', '서버 이름(awaiting_approval)');
+  assert.equal(runStateOf('stalled'), 'failed'); assert.equal(runStateOf('expired'), 'failed');
   assert.equal(runStateOf('done'), 'done'); assert.equal(runStateOf('cancelled'), 'cancelled'); assert.equal(runStateOf('expired'), 'failed'); assert.equal(runStateOf(null), null);
 });
 
@@ -172,4 +173,26 @@ test('App 배선: A+ 플래그는 v2가 켜진 때만, 켜지면 Shell 대신 AP
   assert.match(app, /body = APLUS \? <APlusRoot key=\{session\.user\.id\} session=\{session\} onSignOut=\{signOut\} \/> : <Shell key=\{session\.user\.id\} session=\{session\} \/>;/);
   assert.match(app, /function APlusRoot\(/);
   assert.match(app, /bindV2Push\(\{ machine: source\.machine\(\), getToken: getPushToken, observeResume: observeMobileResume \}\)/, 'A+에서도 휴대폰 토큰을 싣는다(R3)');
+});
+
+test('재검수(높음): 일의 지금 상태는 서버 _msgr2_effective_state와 같게 — 기한 지난 offered·리스 끝난 일은 끝남(입력이 영구히 막히지 않음)', () => {
+  const now = Date.parse('2026-10-20T00:00:00Z'); const past = '2026-10-19T23:00:00Z'; const future = '2026-10-20T01:00:00Z';
+  assert.equal(effectiveState({ state: 'offered', expires_at: past }, now), 'expired');
+  assert.equal(effectiveState({ state: 'offered', expires_at: future }, now), 'offered');
+  assert.equal(effectiveState({ state: 'running', lease_until: past, has_result: false }, now), 'stalled');
+  assert.equal(effectiveState({ state: 'awaiting_approval', lease_until: past, has_result: false }, now), 'stalled');
+  assert.equal(effectiveState({ state: 'running', lease_until: past, has_result: true }, now), 'running', '결과가 있으면 stalled 아님(서버와 같음)');
+  assert.equal(effectiveState({ state: 'accepted', lease_until: null, has_result: false }, now), 'accepted', '리스 null은 서버 not(null>now)=null → stalled 아님');
+  assert.equal(meetingView({ state: runStateOf(effectiveState({ state: 'offered', expires_at: past }, now)) }).canSend, true);
+});
+
+test('재검수: 회의 취소는 RPC가 돌려준 상태로 바로 바꾼다(이미 끝난 일은 방송이 없어 cancelling에 갇혔다)', () => {
+  const src = read('../src/aplus/source.mjs');
+  assert.match(src, /st = ok\(await raw\.rpc\('msgr2_work_cancel'/);
+  assert.match(src, /state: afterCancel\(st\)/);
+  for (const [st, want] of [['cancelled', 'cancelled'], ['expired', 'failed'], ['done', 'done'], ['failed', 'failed']]) {
+    assert.equal(afterCancel(st), want, st);
+    assert.equal(meetingView({ state: afterCancel(st) }).canSend, true, `${st} 뒤에는 다시 보낼 수 있다`);
+  }
+  assert.match(src, /select\('id, room_id, state, created_at, expires_at, lease_until, has_result'\)/);
 });

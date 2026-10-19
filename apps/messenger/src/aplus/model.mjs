@@ -73,14 +73,27 @@ export function botStatusOf(bot) {
   return 'unknown';
 }
 
-/** 서버 일의 상태(msgr2_works.state) → 회의 진행 상태. */
+/** 서버가 읽을 때 계산하는 지금 상태(_msgr2_effective_state, 20261018000000_msgr2_work.sql)와 같은 계산. 원래 값은 바뀌지 않으므로 앱도 이렇게 읽어야
+    기한 지난 offered(내 PC Argo가 꺼져 있음)·리스가 끝난 일이 '진행 중'으로 굳지 않는다(재검수 높음). */
+export function effectiveState(w, now = Date.now()) {
+  const st = w?.state ?? null;
+  const exp = Date.parse(w?.expires_at ?? ''); const lease = Date.parse(w?.lease_until ?? '');
+  if (st === 'offered' && Number.isFinite(exp) && exp <= now) return 'expired';
+  if (['accepted', 'running', 'awaiting_approval'].includes(st) && !w.has_result && Number.isFinite(lease) && lease <= now) return 'stalled';
+  return st;
+}
+
+/** 서버 일의 지금 상태 → 회의 진행 상태. expired·stalled·failed는 끝남(보내기 허용). */
 export function runStateOf(workState) {
-  if (['offered', 'accepted', 'running', 'waiting_approval'].includes(workState)) return 'running';
+  if (['offered', 'accepted', 'running', 'awaiting_approval'].includes(workState)) return 'running';
   if (workState === 'done') return 'done';
   if (workState === 'cancelled') return 'cancelled';
   if (!workState) return null;
   return 'failed';
 }
+
+/** 회의 취소 RPC(msgr2_work_cancel)가 돌려준 상태 → 진행 상태. 이미 끝난 일이면 그 상태(끝남 — 보내기 허용), 취소했으면 cancelled. */
+export const afterCancel = (st) => runStateOf(st === 'cancelled' ? 'cancelled' : st) ?? 'cancelled';
 
 /** 회의 진행을 글로 채운다: 그 일(workId)의 에이전트 글 meta.round 중 가장 큰 라운드, 그 라운드에 답한 에이전트 수.
     run.workId가 없으면(가짜 원본·옛 값) 주어진 round·answered를 그대로 쓴다. */

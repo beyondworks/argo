@@ -179,7 +179,15 @@ function Chat({ t, source, roomId, title, sub, paused = false, meeting = null, n
   useEffect(() => source.on('messages', (e) => { if (e.roomId !== roomId) return; setMsgs((cur) => { const have = new Set((cur ?? []).map((m) => m.id)); return [...(cur ?? []), ...e.messages.filter((m) => !have.has(m.id))]; }); }), [source, roomId]);
   useEffect(() => source.on('meeting', (e) => { if (e.roomId === roomId) onRun?.(e.run); }), [source, roomId, onRun]);
   useEffect(() => { endRef.current?.scrollIntoView?.({ block: 'end' }); }, [msgs]);
-  const v = meetingView(deriveRun(meeting?.run, msgs ?? [])); // 라운드·답한 수는 그 회의 일의 글(meta.round)로 센다
+  const [, rerender] = useState(0);
+  useEffect(() => { // 기한(offered)이 지나면 서버도 끝남으로 본다 — 그 시각에 한 번 다시 그린다(요청 없음)
+    const until = meeting?.run?.state === 'running' ? meeting.run.until : null;
+    if (!until) return undefined;
+    const id = setTimeout(() => rerender((x) => x + 1), Math.max(0, until - Date.now()) + 500);
+    return () => clearTimeout(id);
+  }, [meeting?.run]);
+  const run = meeting?.run?.state === 'running' && meeting.run.until && meeting.run.until <= Date.now() ? { ...meeting.run, state: 'failed' } : meeting?.run;
+  const v = meetingView(deriveRun(run, msgs ?? [])); // 라운드·답한 수는 그 회의 일의 글(meta.round)로 센다
   const blocked = paused ? t('aplus.chat.paused') : !v.canSend ? t('aplus.chat.meetingBusy') : '';
   const send = async () => {
     const body = draft.trim(); if (!body || blocked || sending) return;
